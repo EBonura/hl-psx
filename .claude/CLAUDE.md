@@ -172,6 +172,12 @@ HLM6; `tri_rgb` is 9 bytes/tri = one shade per corner). The runtime already drew
 `TriTexturedGouraud`, so this is just feeding it three colours -> smooth gradients
 across faces instead of flat-per-face.
 
+## Render state
+
+Backface culling is ON (`CULL=true` in main.rs) -- verified the winding is
+correct (cook reverses it to match the HL->world Y/Z swap), so back faces are
+skipped with no holes. PVS + cull + near-clip are the active culling stages.
+
 ## Next (pick per value)
 
 - **Entities**: doors/buttons/triggers (brush submodels) from the entity lump --

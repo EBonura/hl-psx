@@ -40,8 +40,9 @@ const MAX_TEX_SLOTS: usize = 512;
 const MAX_FACES: usize = 8192; // c1a0 has 3695
 const MAX_LEAVES: usize = 8192; // c1a0 has 1438
 const NEAR: u16 = 32;
-// ponytail: backface cull off; flip on once winding is confirmed from a capture.
-const CULL: bool = false;
+// Backface cull (area <= 0 = back-facing). Winding reversed in the cook to match
+// the HL->world axis swap; verified correct from a capture.
+const CULL: bool = true;
 const H_PROJ: u16 = 160; // ~90 deg horizontal FOV at 320px
 
 // Camera control rates. Angles are Q0.12 (4096 = one revolution) for `sincos`;
