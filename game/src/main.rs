@@ -39,6 +39,8 @@ const MAX_PRIMS: usize = 12000;
 const MAX_TEX_SLOTS: usize = 512;
 const MAX_FACES: usize = 8192; // c1a0 has 3695
 const MAX_LEAVES: usize = 8192; // c1a0 has 1438
+const MAX_ENTS: usize = 256; // c1a0 has 64
+const DOOR_SPEED: i32 = 120; // door phase units/frame (4096 = fully open)
 const NEAR: u16 = 32;
 // Backface cull (area <= 0 = back-facing). Winding reversed in the cook to match
 // the HL->world axis swap; verified correct from a capture.
@@ -65,6 +67,7 @@ static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 // PVS scratch: decompressed visible-leaf bits + per-face draw-once dedup.
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut FACE_FRAME: [u16; MAX_FACES] = [0; MAX_FACES];
+static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS]; // door open amount (Q0.12)
 
 /// World->view rotation: rotY(yaw)*rotX(pitch), rows 0/1 negated for the GPU's
 /// Y-down screen (same convention as oot-psx).
@@ -297,6 +300,41 @@ fn main() {
                 // Camera outside the world hull: draw everything.
                 for tt in 0..m.n_tris {
                     emit_tri(&m, tt, nv, &mut np);
+                }
+            }
+
+            // ---- Brush entities: render each submodel; func_doors slide open
+            // when the player is near. We render with a per-entity GTE
+            // translation (base view shifted by the entity offset) so the
+            // shared vertex data needs no copy.
+            for ei in 0..m.n_ents.min(MAX_ENTS) {
+                let e = m.entity(ei);
+                let off = if e.kind == 1 {
+                    let dx = (player.pos[0] - e.center[0]) as i64;
+                    let dy = (player.pos[1] - e.center[1]) as i64;
+                    let dz = (player.pos[2] - e.center[2]) as i64;
+                    let near = dx * dx + dy * dy + dz * dz < e.r2 as i64;
+                    let ph = &mut ENT_PHASE[ei];
+                    *ph = if near { (*ph + DOOR_SPEED).min(4096) } else { (*ph - DOOR_SPEED).max(0) };
+                    [
+                        ((e.mv[0] as i64 * *ph as i64) >> 12) as i32,
+                        ((e.mv[1] as i64 * *ph as i64) >> 12) as i32,
+                        ((e.mv[2] as i64 * *ph as i64) >> 12) as i32,
+                    ]
+                } else {
+                    e.origin
+                };
+                let es = [eye[0] - off[0], eye[1] - off[1], eye[2] - off[2]];
+                let et = [-dot12(rot.m[0], es), -dot12(rot.m[1], es), -dot12(rot.m[2], es)];
+                scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+                let (ff, nf) = m.submodel(e.submodel);
+                for f in ff..ff + nf {
+                    let (first, cnt) = m.face_tris(f);
+                    for tt in first..first + cnt {
+                        if tt < m.n_tris {
+                            emit_tri(&m, tt, nv, &mut np);
+                        }
+                    }
                 }
             }
 

@@ -474,6 +474,80 @@ fn find_spawn(ents: &[u8]) -> Option<([f32; 3], f32)> {
     None
 }
 
+fn to_world(p: [f32; 3], scale: f32) -> [i32; 3] {
+    [(p[0] / scale).round() as i32, (p[2] / scale).round() as i32, (p[1] / scale).round() as i32]
+}
+
+struct EntRec {
+    submodel: u16,
+    kind: u16, // 0 = static brush, 1 = func_door
+    origin: [i32; 3],
+    mv: [i32; 3], // door full-open displacement (world)
+    center: [i32; 3], // door trigger centre (world)
+    r2: i32, // trigger radius^2 (world)
+    wait: i32,
+}
+
+/// func_door move direction (HL) + distance: slides `size_along_axis - lip`.
+fn door_move(angle: f32, mins: [f32; 3], maxs: [f32; 3], lip: f32) -> ([f32; 3], f32) {
+    let sz = [maxs[0] - mins[0], maxs[1] - mins[1], maxs[2] - mins[2]];
+    if angle == -1.0 {
+        ([0.0, 0.0, 1.0], sz[2] - lip) // up
+    } else if angle == -2.0 {
+        ([0.0, 0.0, -1.0], sz[2] - lip) // down
+    } else {
+        let r = angle.to_radians();
+        let (c, s) = (r.cos(), r.sin());
+        ([c, s, 0.0], sz[0] * c.abs() + sz[1] * s.abs() - lip)
+    }
+}
+
+/// Collect renderable brush entities (skipping invisible triggers/ladders).
+fn collect_entities(ents: &[u8], models: &[u8], scale: f32) -> Vec<EntRec> {
+    let s = match std::str::from_utf8(ents) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let n_models = models.len() / SZ_MODEL;
+    let mut out = Vec::new();
+    for block in s.split('{') {
+        let model = match ent_value(block, "model") {
+            Some(m) if m.starts_with('*') => m,
+            _ => continue,
+        };
+        let submodel: usize = model[1..].parse().unwrap_or(0);
+        if submodel == 0 || submodel >= n_models {
+            continue;
+        }
+        let cls = ent_value(block, "classname").unwrap_or("");
+        if cls.starts_with("trigger") || cls == "func_ladder" {
+            continue; // invisible brush entity
+        }
+        let origin = to_world(ent_value(block, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]), scale);
+        let mo = submodel * SZ_MODEL;
+        let g = |o: usize| f32le(models, mo + o).unwrap_or(0.0);
+        let mins = [g(0), g(4), g(8)];
+        let maxs = [g(12), g(16), g(20)];
+        let center = to_world(
+            [(mins[0] + maxs[0]) * 0.5, (mins[1] + maxs[1]) * 0.5, (mins[2] + maxs[2]) * 0.5],
+            scale,
+        );
+        let sz = [maxs[0] - mins[0], maxs[1] - mins[1], maxs[2] - mins[2]];
+        let rad = (sz[0].max(sz[1]).max(sz[2]) * 0.5 + 80.0) / scale;
+        let r2 = (rad * rad) as i32;
+        if cls == "func_door" {
+            let angle = ent_value(block, "angle").and_then(|a| a.parse().ok()).unwrap_or(0.0);
+            let lip = ent_value(block, "lip").and_then(|a| a.parse().ok()).unwrap_or(8.0);
+            let (dir, dist) = door_move(angle, mins, maxs, lip);
+            let mv = to_world([dir[0] * dist, dir[1] * dist, dir[2] * dist], scale);
+            out.push(EntRec { submodel: submodel as u16, kind: 1, origin, mv, center, r2, wait: 180 });
+        } else {
+            out.push(EntRec { submodel: submodel as u16, kind: 0, origin, mv: [0; 3], center, r2: 0, wait: 0 });
+        }
+    }
+    out
+}
+
 fn cook(path: &str, out: &str) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {}", path, e))?;
     let bsp = Bsp::parse(&bytes)?;
@@ -634,7 +708,7 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
 
     let n_tris = tri_idx.len() / 3;
     let mut o: Vec<u8> = Vec::new();
-    o.extend_from_slice(b"HLM6");
+    o.extend_from_slice(b"HLM7");
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_tris as u32).to_le_bytes());
     o.extend_from_slice(&(n_texs as u32).to_le_bytes());
@@ -643,6 +717,8 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     o.extend_from_slice(&0u32.to_le_bytes()); // BSP section offset, patched below
     let clip_off_pos = o.len();
     o.extend_from_slice(&0u32.to_le_bytes()); // clip/phys section offset, patched below
+    let ent_off_pos = o.len();
+    o.extend_from_slice(&0u32.to_le_bytes()); // entity section offset, patched below
     for v in &verts {
         for c in v {
             o.extend_from_slice(&c.to_le_bytes());
@@ -779,10 +855,40 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.extend_from_slice(&((d / scale).round() as i32).to_le_bytes());
     }
 
+    // ---- Entities (brush models) ----
+    // u32 n_models | (u32 firstface, u32 numface) × n_models
+    // u32 n_ents   | EntRec[48B] × n_ents
+    let ent_off = o.len() as u32;
+    o[ent_off_pos..ent_off_pos + 4].copy_from_slice(&ent_off.to_le_bytes());
+    let n_models = models.len() / SZ_MODEL;
+    o.extend_from_slice(&(n_models as u32).to_le_bytes());
+    for mi in 0..n_models {
+        let mo = mi * SZ_MODEL;
+        o.extend_from_slice(&(i32le(models, mo + 56).unwrap_or(0) as u32).to_le_bytes()); // firstface
+        o.extend_from_slice(&(i32le(models, mo + 60).unwrap_or(0) as u32).to_le_bytes()); // numfaces
+    }
+    let ents = collect_entities(bsp.lump(LUMP_ENTITIES), models, scale);
+    o.extend_from_slice(&(ents.len() as u32).to_le_bytes());
+    for e in &ents {
+        o.extend_from_slice(&e.submodel.to_le_bytes());
+        o.extend_from_slice(&e.kind.to_le_bytes());
+        for c in e.origin {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        for c in e.mv {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        for c in e.center {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        o.extend_from_slice(&e.r2.to_le_bytes());
+        o.extend_from_slice(&e.wait.to_le_bytes());
+    }
+
     std::fs::write(out, &o).map_err(|e| format!("write {}: {}", out, e))?;
     println!(
-        "cooked {} -> {}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes, spawn [{},{},{}], {} KB)",
-        path, out, n_verts, n_tris, n_faces, n_leaves, n_clip, spawn[0], spawn[1], spawn[2], o.len() / 1024
+        "cooked {} -> {}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes, {} ents, spawn [{},{},{}], {} KB)",
+        path, out, n_verts, n_tris, n_faces, n_leaves, n_clip, ents.len(), spawn[0], spawn[1], spawn[2], o.len() / 1024
     );
     Ok(())
 }

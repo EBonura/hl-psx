@@ -178,16 +178,35 @@ Backface culling is ON (`CULL=true` in main.rs) -- verified the winding is
 correct (cook reverses it to match the HL->world Y/Z swap), so back faces are
 skipped with no holes. PVS + cull + near-clip are the active culling stages.
 
+## M8 -- brush entities + doors (DONE, verified)
+
+Brush entities now render (they were invisible before -- the PVS path only draws
+world/model-0 faces via leaf marksurfaces). `func_door`s slide open near the
+player and close when they leave.
+
+- Extractor (`.hlm` HLM7, header gains `ent_off`): a submodel face-range table
+  (dmodel firstface/numface × n_models) + an entity table. Brush ents parsed from
+  the entity lump (skipping invisible `trigger_*`/`func_ladder`); `func_door`
+  records its world move vector (`door_move`: angle/size/lip), trigger centre, and
+  radius². 64 ents in c1a0.
+- Runtime (`main.rs`): after the world draw, each entity draws its submodel's
+  faces with a per-entity GTE translation (base view shifted by the entity offset,
+  so shared vertex data needs no copy). Doors lerp the offset by a proximity-driven
+  phase (`ENT_PHASE`). Verified on c1a1a: blast door renders closed, opens on
+  approach.
+
+Simplifications: no door COLLISION yet (player walks through the panel; world
+frame still blocks, and doors auto-open so you pass the gap); ALL func_doors open
+on proximity (targetname/button triggering ignored); func_door_rotating treated
+as static; no func_button/func_breakable logic.
+
 ## Next (pick per value)
 
-- **Entities**: doors/buttons/triggers (brush submodels) from the entity lump --
-  the next gameplay layer. Brush models = BSP submodels 1..N (geometry we already
-  render statically); needs per-entity transforms + trigger/move logic. NOTE: the
-  PVS path only draws world (model 0) faces via leaf marksurfaces; submodel faces
-  currently render because the cook walks the WHOLE faces lump, but they won't
-  move until entity-linked.
-- **UV subdivision + affine correction**: fix tiling/warp on large tris.
+- **Door collision**: trace the door submodel's clip hull at its current offset
+  so a closed door blocks the player.
 - **func_tracktrain**: the tram ride (the actual opening of Half-Life).
+- **Buttons/triggers**: real targetname-based triggering instead of proximity.
+- **UV subdivision + affine correction**: fix tiling/warp on large tris.
 - **MDL models / skeletal animation**: the big wall -- NPCs, weapons, viewmodel.
 
 ## PSoXide SDK map (third_party/PSoXide/sdk/crates)

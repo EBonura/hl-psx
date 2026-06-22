@@ -71,15 +71,30 @@ pub struct Map {
     pub spawn_pos: [i32; 3],
     pub spawn_yaw: i32,
     clipn_off: usize,
+    // Entities (brush models)
+    pub n_models: usize,
+    pub n_ents: usize,
+    models_off: usize,
+    ents_off: usize,
 }
 
 const CLIPNODE_SZ: usize = 16;
+const ENT_SZ: usize = 48;
 
 pub struct ClipNode {
     pub n: [i16; 3],
     pub c0: i16,
     pub c1: i16,
     pub dist: i32,
+}
+
+pub struct Ent {
+    pub submodel: usize,
+    pub kind: u16, // 0 static, 1 door
+    pub origin: [i32; 3],
+    pub mv: [i32; 3],
+    pub center: [i32; 3],
+    pub r2: i32,
 }
 
 impl Map {
@@ -90,7 +105,8 @@ impl Map {
         let n_faces = rd_u32(data, 16) as usize;
         let bsp_off = rd_u32(data, 20) as usize;
         let clip_off = rd_u32(data, 24) as usize;
-        let v_off = 28;
+        let ent_off = rd_u32(data, 28) as usize;
+        let v_off = 32;
         let idx_off = v_off + n_verts * 6;
         let ttex_off = idx_off + n_tris * 6;
         let tuv_off = ttex_off + n_tris * 2;
@@ -114,12 +130,40 @@ impl Map {
         let spawn_yaw = rd_i32(data, clip_off + 20);
         let clipn_off = clip_off + 24;
 
+        let n_models = rd_u32(data, ent_off) as usize;
+        let models_off = ent_off + 4;
+        let n_ents_off = models_off + n_models * 8;
+        let n_ents = rd_u32(data, n_ents_off) as usize;
+        let ents_off = n_ents_off + 4;
+
         Map {
             data, n_verts, n_tris, n_texs, n_faces,
             v_off, idx_off, ttex_off, tuv_off, trgb_off, texblk_off,
             n_nodes, n_leaves, n_marks,
             ff_off, fn_off, nodes_off, leaves_off, marks_off, vis_off, vis_len,
             n_clip, hull1_head, spawn_pos, spawn_yaw, clipn_off,
+            n_models, n_ents, models_off, ents_off,
+        }
+    }
+
+    /// `(first_face, num_faces)` for BSP submodel `m` (0 = world).
+    #[inline]
+    pub fn submodel(&self, m: usize) -> (usize, usize) {
+        let o = self.models_off + m * 8;
+        (rd_u32(self.data, o) as usize, rd_u32(self.data, o + 4) as usize)
+    }
+
+    #[inline]
+    pub fn entity(&self, i: usize) -> Ent {
+        let o = self.ents_off + i * ENT_SZ;
+        let d = self.data;
+        Ent {
+            submodel: rd_u16(d, o) as usize,
+            kind: rd_u16(d, o + 2),
+            origin: [rd_i32(d, o + 4), rd_i32(d, o + 8), rd_i32(d, o + 12)],
+            mv: [rd_i32(d, o + 16), rd_i32(d, o + 20), rd_i32(d, o + 24)],
+            center: [rd_i32(d, o + 28), rd_i32(d, o + 32), rd_i32(d, o + 36)],
+            r2: rd_i32(d, o + 40),
         }
     }
 
