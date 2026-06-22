@@ -1,18 +1,26 @@
-//! Parse a cooked `.hlm` v2 map (produced by `tools/hl-bsp --cook`):
-//!   magic "HLM2" | u32 n_verts | u32 n_tris | u32 n_texs
-//!   verts:   i16 x,y,z          × n_verts
-//!   tri_idx: u16 a,b,c          × n_tris
-//!   tri_tex: u16                × n_tris
-//!   tri_uv:  u8 u0,v0,..,u2,v2  × n_tris   (pad to 4)
-//!   textures × n_texs: u16 w,h | u16 clut[16] | u8 pix[w*h/2]
+//! Parse a cooked `.hlm` v4 map (tools/hl-bsp --cook). HLM4 = HLM3 + BSP
+//! visibility (PVS) appended after the texture blob.
 //!
-//! `include_bytes!` only guarantees 1-byte alignment, so fields are read via
-//! `from_le_bytes`.
+//!   magic "HLM4" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
+//!   verts i16×3 | tri_idx u16×3 | tri_tex u16 | tri_uv u8×6 | tri_rgb u8×3 (pad)
+//!   textures × n_texs: u16 w,h | u16 clut[16] | u8 pix[w*h/2]
+//!   bsp @ bsp_off:
+//!     u32 n_nodes,n_leaves,n_marks,vis_len
+//!     face_first u32×n_faces | face_ntri u16×n_faces (pad 4)
+//!     nodes  (i16 nx,ny,nz, i16 pad, i32 dist, i32 c0, i32 c1) × n_nodes
+//!     leaves (i32 visofs, u16 mark_start, u16 mark_count) × n_leaves
+//!     marks  u16 × n_marks (pad 4)
+//!     vis    u8  × vis_len (pad 4)
+//!
+//! Fields are read via `from_le_bytes` (include_bytes! is only byte-aligned).
 
 use psx_gte::math::Vec3I16;
 
 fn rd_u32(d: &[u8], o: usize) -> u32 {
     u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]])
+}
+fn rd_i32(d: &[u8], o: usize) -> i32 {
+    rd_u32(d, o) as i32
 }
 fn rd_u16(d: &[u8], o: usize) -> u16 {
     u16::from_le_bytes([d[o], d[o + 1]])
@@ -20,18 +28,43 @@ fn rd_u16(d: &[u8], o: usize) -> u16 {
 fn rd_i16(d: &[u8], o: usize) -> i16 {
     i16::from_le_bytes([d[o], d[o + 1]])
 }
+fn align4(x: usize) -> usize {
+    (x + 3) & !3
+}
+
+const NODE_SZ: usize = 20;
+const LEAF_SZ: usize = 8;
+
+pub struct Node {
+    pub n: [i16; 3],
+    pub dist: i32,
+    pub c0: i32,
+    pub c1: i32,
+}
 
 pub struct Map {
     data: &'static [u8],
     pub n_verts: usize,
     pub n_tris: usize,
     pub n_texs: usize,
+    pub n_faces: usize,
     v_off: usize,
     idx_off: usize,
     ttex_off: usize,
     tuv_off: usize,
     trgb_off: usize,
     texblk_off: usize,
+    // BSP / PVS
+    pub n_nodes: usize,
+    pub n_leaves: usize,
+    pub n_marks: usize,
+    ff_off: usize,
+    fn_off: usize,
+    nodes_off: usize,
+    leaves_off: usize,
+    marks_off: usize,
+    vis_off: usize,
+    vis_len: usize,
 }
 
 impl Map {
@@ -39,13 +72,32 @@ impl Map {
         let n_verts = rd_u32(data, 4) as usize;
         let n_tris = rd_u32(data, 8) as usize;
         let n_texs = rd_u32(data, 12) as usize;
-        let v_off = 16;
+        let n_faces = rd_u32(data, 16) as usize;
+        let bsp_off = rd_u32(data, 20) as usize;
+        let v_off = 24;
         let idx_off = v_off + n_verts * 6;
         let ttex_off = idx_off + n_tris * 6;
         let tuv_off = ttex_off + n_tris * 2;
         let trgb_off = tuv_off + n_tris * 6;
-        let texblk_off = (trgb_off + n_tris * 3 + 3) & !3;
-        Map { data, n_verts, n_tris, n_texs, v_off, idx_off, ttex_off, tuv_off, trgb_off, texblk_off }
+        let texblk_off = align4(trgb_off + n_tris * 3);
+
+        let n_nodes = rd_u32(data, bsp_off) as usize;
+        let n_leaves = rd_u32(data, bsp_off + 4) as usize;
+        let n_marks = rd_u32(data, bsp_off + 8) as usize;
+        let vis_len = rd_u32(data, bsp_off + 12) as usize;
+        let ff_off = bsp_off + 16;
+        let fn_off = ff_off + n_faces * 4;
+        let nodes_off = align4(fn_off + n_faces * 2);
+        let leaves_off = nodes_off + n_nodes * NODE_SZ;
+        let marks_off = leaves_off + n_leaves * LEAF_SZ;
+        let vis_off = align4(marks_off + n_marks * 2);
+
+        Map {
+            data, n_verts, n_tris, n_texs, n_faces,
+            v_off, idx_off, ttex_off, tuv_off, trgb_off, texblk_off,
+            n_nodes, n_leaves, n_marks,
+            ff_off, fn_off, nodes_off, leaves_off, marks_off, vis_off, vis_len,
+        }
     }
 
     #[inline]
@@ -72,19 +124,53 @@ impl Map {
         [(d[o], d[o + 1]), (d[o + 2], d[o + 3]), (d[o + 4], d[o + 5])]
     }
 
-    /// Per-face lightmap shade (PS1 modulation tint).
     #[inline]
     pub fn tri_rgb(&self, t: usize) -> (u8, u8, u8) {
         let o = self.trgb_off + t * 3;
         (self.data[o], self.data[o + 1], self.data[o + 2])
     }
 
-    /// The texture blob (n_texs sequential records) for one-time upload.
     pub fn tex_blob(&self) -> &'static [u8] {
         &self.data[self.texblk_off..]
     }
 
-    /// World-space AABB (min, max) -- used to pick a fly-cam spawn.
+    // ---- BSP / PVS ----
+
+    #[inline]
+    pub fn node(&self, i: usize) -> Node {
+        let o = self.nodes_off + i * NODE_SZ;
+        Node {
+            n: [rd_i16(self.data, o), rd_i16(self.data, o + 2), rd_i16(self.data, o + 4)],
+            dist: rd_i32(self.data, o + 8),
+            c0: rd_i32(self.data, o + 12),
+            c1: rd_i32(self.data, o + 16),
+        }
+    }
+
+    /// `(visofs, mark_start, mark_count)` for leaf `i`.
+    #[inline]
+    pub fn leaf(&self, i: usize) -> (i32, usize, usize) {
+        let o = self.leaves_off + i * LEAF_SZ;
+        (rd_i32(self.data, o), rd_u16(self.data, o + 4) as usize, rd_u16(self.data, o + 6) as usize)
+    }
+
+    /// Face index referenced by marksurface `j`.
+    #[inline]
+    pub fn mark(&self, j: usize) -> usize {
+        rd_u16(self.data, self.marks_off + j * 2) as usize
+    }
+
+    /// `(first_tri, tri_count)` for face `f`.
+    #[inline]
+    pub fn face_tris(&self, f: usize) -> (usize, usize) {
+        (rd_u32(self.data, self.ff_off + f * 4) as usize, rd_u16(self.data, self.fn_off + f * 2) as usize)
+    }
+
+    pub fn vis(&self) -> &'static [u8] {
+        &self.data[self.vis_off..self.vis_off + self.vis_len]
+    }
+
+    /// World-space AABB (min, max) -- fly-cam spawn fallback.
     pub fn bounds(&self) -> ([i32; 3], [i32; 3]) {
         let mut mn = [i32::MAX; 3];
         let mut mx = [i32::MIN; 3];

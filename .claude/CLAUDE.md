@@ -118,15 +118,34 @@ Simplification: per-face flat shade (not per-vertex/per-pixel lightmaps); good
 mood, but no smooth gradients within a face. Per-vertex lightmap sampling is the
 upgrade.
 
+## M4 -- PVS leaf culling (DONE, verified)
+
+Each frame: walk the BSP tree to the camera's leaf, decompress its PVS, draw
+only the faces of visible leaves (per-face draw-once dedup). Verified: identical
+visible geometry to M3, correct across leaf transitions, no holes.
+
+- Extractor (`.hlm` HLM4, header gained `bsp_off`): appends nodes (planes
+  transformed to world space: swap Y/Z normal, dist/scale), leaves
+  (visofs + marksurface range), marksurfaces (face indices), raw vis (RLE), and
+  a per-face triangle range (`face_first`/`face_ntri`).
+- Runtime (`main.rs`): `camera_leaf` tree walk (i64 dot >> 12 vs world plane),
+  `decompress_vis` (Quake RLE, bit i -> leaf i+1), then per visible leaf draw
+  its marksurfaces' faces -> triangles (project per-tri via RTPT).
+
+Caveat: tri-count/fps delta not measured (no telemetry). Correct + active; the
+win is largest in enclosed areas. Fallback draws everything when the camera is
+in the solid/outside leaf 0.
+
 ## Next (pick per value)
 
-- **PVS leaf culling**: decompress vis, draw only visible leaves -> the perf win
-  and the architectural payoff (BSP+PVS -> OT). Also enables backface cull tuning.
-- **UV subdivision + affine correction**: runtime split of large/grazing tris so
-  tiling is correct and textures stop warping (oot's `subdiv_emit` pattern).
-- **Per-vertex lighting**: sample the lightmap per vertex for smooth gradients.
+- **Player collision + walking** -- the first real GAMEPLAY: BSP clipnode hull
+  trace + gravity + step, turning the fly-cam into an FPS controller. Uses
+  PLANES + CLIPNODES we can add to the cook. (User asked about gameplay; this is
+  the nearest element.)
+- **UV subdivision + affine correction**: fix tiling/warp on large tris.
+- **Per-vertex lighting**: smooth gradients (sample lightmap per vertex).
 - **Real spawn**: parse `info_player_start` from the entity lump.
-- **Multi-map streaming**: cook all campaign maps, stream per level change.
+- **Entities**: doors/buttons/triggers (brush submodels) from the entity lump.
 
 ## PSoXide SDK map (third_party/PSoXide/sdk/crates)
 

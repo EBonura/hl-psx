@@ -14,6 +14,7 @@ use std::process::exit;
 
 // GoldSrc BSP v30 lump indices.
 const LUMP_ENTITIES: usize = 0;
+const LUMP_PLANES: usize = 1;
 const LUMP_TEXTURES: usize = 2;
 const LUMP_VERTEXES: usize = 3;
 const LUMP_VISIBILITY: usize = 4;
@@ -39,6 +40,9 @@ const SZ_NODE: usize = 24;
 const SZ_LEAF: usize = 28;
 const SZ_MODEL: usize = 64;
 const SZ_MARKSURFACE: usize = 2;
+const SZ_PLANE: usize = 20; // f32 normal[3] + f32 dist + i32 type
+const SZ_LEAF_VISOFS: usize = 4; // dleaf_t.visofs at byte 4
+const SZ_LEAF_MARK0: usize = 20; // dleaf_t.firstmarksurface at byte 20
 
 fn u16le(b: &[u8], o: usize) -> Option<u16> {
     b.get(o..o + 2).map(|s| u16::from_le_bytes([s[0], s[1]]))
@@ -490,6 +494,10 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     let mut tri_tex: Vec<u16> = Vec::new();
     let mut tri_uv: Vec<u8> = Vec::new();
     let mut tri_rgb: Vec<u8> = Vec::new();
+    // Per-face triangle range (for PVS: leaf -> face -> tris). Skipped faces
+    // keep count 0.
+    let mut face_first = vec![0u32; n_faces];
+    let mut face_ntri = vec![0u16; n_faces];
 
     for f in 0..n_faces {
         let fo = f * SZ_FACE;
@@ -562,7 +570,9 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
                 ((u - shu).round().clamp(0.0, 255.0) as u8, (v - shv).round().clamp(0.0, 255.0) as u8)
             })
             .collect();
-        // Fan, reversed winding.
+        // Fan, reversed winding. Record this face's triangle range for PVS.
+        face_first[f] = (tri_idx.len() / 3) as u32;
+        face_ntri[f] = (poly.len() - 2) as u16;
         for k in 1..poly.len() - 1 {
             tri_idx.extend_from_slice(&[poly[0], poly[k + 1], poly[k]]);
             tri_tex.push(tex_id as u16);
@@ -574,10 +584,13 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
 
     let n_tris = tri_idx.len() / 3;
     let mut o: Vec<u8> = Vec::new();
-    o.extend_from_slice(b"HLM3");
+    o.extend_from_slice(b"HLM4");
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_tris as u32).to_le_bytes());
     o.extend_from_slice(&(n_texs as u32).to_le_bytes());
+    o.extend_from_slice(&(n_faces as u32).to_le_bytes());
+    let bsp_off_pos = o.len();
+    o.extend_from_slice(&0u32.to_le_bytes()); // BSP section offset, patched below
     for v in &verts {
         for c in v {
             o.extend_from_slice(&c.to_le_bytes());
@@ -603,10 +616,79 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         }
         o.extend_from_slice(&tx.pix4);
     }
+
+    // ---- BSP visibility (PVS) ----
+    // u32 n_nodes,n_leaves,n_marks,vis_len | face_first[u32×n_faces] |
+    // face_ntri[u16×n_faces] (pad) | nodes[20B] | leaves[8B] | marks (pad) |
+    // vis (raw RLE, pad). Node planes are transformed to world space so the
+    // runtime can walk the tree with the world-space camera directly.
+    let bsp_off = o.len() as u32;
+    o[bsp_off_pos..bsp_off_pos + 4].copy_from_slice(&bsp_off.to_le_bytes());
+    let planes = bsp.lump(LUMP_PLANES);
+    let nodes = bsp.lump(LUMP_NODES);
+    let leaves = bsp.lump(LUMP_LEAVES);
+    let marks = bsp.lump(LUMP_MARKSURFACES);
+    let vis = bsp.lump(LUMP_VISIBILITY);
+    let n_nodes = nodes.len() / SZ_NODE;
+    let n_leaves = leaves.len() / SZ_LEAF;
+    let n_marks = marks.len() / SZ_MARKSURFACE;
+
+    o.extend_from_slice(&(n_nodes as u32).to_le_bytes());
+    o.extend_from_slice(&(n_leaves as u32).to_le_bytes());
+    o.extend_from_slice(&(n_marks as u32).to_le_bytes());
+    o.extend_from_slice(&(vis.len() as u32).to_le_bytes());
+
+    for v in &face_first {
+        o.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in &face_ntri {
+        o.extend_from_slice(&v.to_le_bytes());
+    }
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+
+    for ni in 0..n_nodes {
+        let no = ni * SZ_NODE;
+        let planenum = i32le(nodes, no).unwrap_or(0).max(0) as usize;
+        let po = planenum * SZ_PLANE;
+        let nx = f32le(planes, po).unwrap_or(0.0);
+        let ny = f32le(planes, po + 4).unwrap_or(0.0);
+        let nz = f32le(planes, po + 8).unwrap_or(0.0);
+        let d = f32le(planes, po + 12).unwrap_or(0.0);
+        // World space: swap Y/Z of the normal, scale the distance.
+        o.extend_from_slice(&((nx * 4096.0).round() as i16).to_le_bytes());
+        o.extend_from_slice(&((nz * 4096.0).round() as i16).to_le_bytes());
+        o.extend_from_slice(&((ny * 4096.0).round() as i16).to_le_bytes());
+        o.extend_from_slice(&0i16.to_le_bytes()); // pad
+        o.extend_from_slice(&((d / scale).round() as i32).to_le_bytes());
+        o.extend_from_slice(&(i16::from_le_bytes([nodes[no + 4], nodes[no + 5]]) as i32).to_le_bytes());
+        o.extend_from_slice(&(i16::from_le_bytes([nodes[no + 6], nodes[no + 7]]) as i32).to_le_bytes());
+    }
+
+    for li in 0..n_leaves {
+        let lo = li * SZ_LEAF;
+        o.extend_from_slice(&i32le(leaves, lo + SZ_LEAF_VISOFS).unwrap_or(-1).to_le_bytes());
+        o.extend_from_slice(&u16le(leaves, lo + SZ_LEAF_MARK0).unwrap_or(0).to_le_bytes());
+        o.extend_from_slice(&u16le(leaves, lo + SZ_LEAF_MARK0 + 2).unwrap_or(0).to_le_bytes());
+    }
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+
+    o.extend_from_slice(marks);
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+    o.extend_from_slice(vis);
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+
     std::fs::write(out, &o).map_err(|e| format!("write {}: {}", out, e))?;
     println!(
-        "cooked {} -> {}  ({} verts, {} tris, {} texs, {} KB)",
-        path, out, n_verts, n_tris, n_texs, o.len() / 1024
+        "cooked {} -> {}  ({} verts, {} tris, {} texs, {} faces, {} nodes, {} leaves, {} KB)",
+        path, out, n_verts, n_tris, n_texs, n_faces, n_nodes, n_leaves, o.len() / 1024
     );
     Ok(())
 }
