@@ -240,7 +240,7 @@ fn report(path: &str, bsp: &Bsp) {
 //   tri_idx: u16 a,b,c   × n_tris           (indices into verts)
 //   tri_tex: u16         × n_tris           (texture id == miptex index)
 //   tri_uv:  u8 u0,v0,u1,v1,u2,v2 × n_tris  (per-corner, texture-local texels)
-//   tri_rgb: u8 r,g,b    × n_tris           (per-face lightmap shade tint)
+//   tri_rgb: u8 (r,g,b)×3 × n_tris          (per-corner lightmap shade tint)
 //   (pad to 4)
 //   textures × n_texs, each (already 4-byte aligned):
 //     u16 w | u16 h        (power-of-two, 8..=64)
@@ -408,32 +408,34 @@ fn median_cut16(colors: &[(u8, u8, u8)]) -> Vec<(u8, u8, u8)> {
 /// Neutral modulation tint (PS1: 128 = 1.0x, texture unchanged).
 const NEUTRAL: u8 = 128;
 
-/// Average a face's base-style lightmap into a PS1 modulation tint. Faces with
-/// no lightmap render full-bright (neutral). Boosted ~1.5x so lit surfaces
-/// aren't dim under 128=1.0x modulation.
-fn face_shade(lighting: &[u8], lightofs: i32, style0: u8, lmw: usize, lmh: usize) -> (u8, u8, u8) {
+/// Sample the base-style lightmap at one vertex's luxel (luxels are 16 texels
+/// apart in original texture space). Boosted ~1.5x so lit surfaces aren't dim
+/// under 128=1.0x modulation. Returns neutral where there is no lightmap.
+#[allow(clippy::too_many_arguments)]
+fn vertex_shade(
+    lighting: &[u8],
+    lightofs: i32,
+    style0: u8,
+    lmw: usize,
+    lmh: usize,
+    ou: f32,
+    ov: f32,
+    mins_s: i32,
+    mins_t: i32,
+) -> (u8, u8, u8) {
     if lightofs < 0 || style0 == 0xFF {
         return (NEUTRAL, NEUTRAL, NEUTRAL);
     }
-    let base = lightofs as usize;
-    let (mut r, mut g, mut b, mut c) = (0u64, 0u64, 0u64, 0u64);
-    for i in 0..(lmw * lmh) {
-        let o = base + i * 3;
-        match (lighting.get(o), lighting.get(o + 1), lighting.get(o + 2)) {
-            (Some(&pr), Some(&pg), Some(&pb)) => {
-                r += pr as u64;
-                g += pg as u64;
-                b += pb as u64;
-                c += 1;
-            }
-            _ => break,
+    let ls = (((ou / 16.0).floor() as i32) - mins_s).clamp(0, lmw as i32 - 1) as usize;
+    let lt = (((ov / 16.0).floor() as i32) - mins_t).clamp(0, lmh as i32 - 1) as usize;
+    let o = lightofs as usize + (lt * lmw + ls) * 3;
+    match (lighting.get(o), lighting.get(o + 1), lighting.get(o + 2)) {
+        (Some(&r), Some(&g), Some(&b)) => {
+            let boost = |v: u8| (v as u32 * 3 / 2).min(255) as u8;
+            (boost(r), boost(g), boost(b))
         }
+        _ => (NEUTRAL, NEUTRAL, NEUTRAL),
     }
-    if c == 0 {
-        return (NEUTRAL, NEUTRAL, NEUTRAL);
-    }
-    let boost = |v: u64| ((v / c) * 3 / 2).min(255) as u8;
-    (boost(r), boost(g), boost(b))
 }
 
 /// Pull `"key" "value"` from one entity text block.
@@ -576,6 +578,7 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         // Per-poly-vertex UV: cooked-texel for output, original-texel for the
         // lightmap extents.
         let mut uv: Vec<(f32, f32)> = Vec::with_capacity(poly.len());
+        let mut ouv: Vec<(f32, f32)> = Vec::with_capacity(poly.len());
         let (mut minu, mut minv) = (f32::MAX, f32::MAX);
         let (mut lu0, mut lu1, mut lv0, mut lv1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
         for &vi in &poly {
@@ -590,13 +593,19 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
             minu = minu.min(u);
             minv = minv.min(v);
             uv.push((u, v));
+            ouv.push((ou, ov));
         }
-        // Face lightmap shade: luxels are 16 texels apart (Quake/GoldSrc).
+        // Per-vertex lightmap shade: luxels are 16 texels apart (Quake/GoldSrc).
         let style0 = *faces.get(fo + 12).unwrap_or(&0xFF);
         let lightofs = i32le(faces, fo + 16).unwrap_or(-1);
         let lmw = (((lu1 / 16.0).ceil() - (lu0 / 16.0).floor()) as i64 + 1).clamp(1, 64) as usize;
         let lmh = (((lv1 / 16.0).ceil() - (lv0 / 16.0).floor()) as i64 + 1).clamp(1, 64) as usize;
-        let (sr, sg, sb) = face_shade(lighting, lightofs, style0, lmw, lmh);
+        let mins_s = (lu0 / 16.0).floor() as i32;
+        let mins_t = (lv0 / 16.0).floor() as i32;
+        let shade: Vec<(u8, u8, u8)> = ouv
+            .iter()
+            .map(|&(ou, ov)| vertex_shade(lighting, lightofs, style0, lmw, lmh, ou, ov, mins_s, mins_t))
+            .collect();
         // Shift by whole texture tiles so values start near 0 (preserves tiling
         // phase), then saturate to u8. Faces tiling more than ~4x clamp at the
         // far edge -- proper tiling of huge surfaces needs UV subdivision (M3).
@@ -616,13 +625,16 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
             tri_tex.push(tex_id as u16);
             let (a, b, c) = (uvb[0], uvb[k + 1], uvb[k]);
             tri_uv.extend_from_slice(&[a.0, a.1, b.0, b.1, c.0, c.1]);
-            tri_rgb.extend_from_slice(&[sr, sg, sb]);
+            let (s0, s1, s2) = (shade[0], shade[k + 1], shade[k]);
+            tri_rgb.extend_from_slice(&[
+                s0.0, s0.1, s0.2, s1.0, s1.1, s1.2, s2.0, s2.1, s2.2,
+            ]);
         }
     }
 
     let n_tris = tri_idx.len() / 3;
     let mut o: Vec<u8> = Vec::new();
-    o.extend_from_slice(b"HLM5");
+    o.extend_from_slice(b"HLM6");
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_tris as u32).to_le_bytes());
     o.extend_from_slice(&(n_texs as u32).to_le_bytes());

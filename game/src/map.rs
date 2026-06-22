@@ -2,7 +2,7 @@
 //! visibility (PVS) appended after the texture blob.
 //!
 //!   magic "HLM4" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
-//!   verts i16×3 | tri_idx u16×3 | tri_tex u16 | tri_uv u8×6 | tri_rgb u8×3 (pad)
+//!   verts i16×3 | tri_idx u16×3 | tri_tex u16 | tri_uv u8×6 | tri_rgb u8×9 (pad)
 //!   textures × n_texs: u16 w,h | u16 clut[16] | u8 pix[w*h/2]
 //!   bsp @ bsp_off:
 //!     u32 n_nodes,n_leaves,n_marks,vis_len
@@ -95,7 +95,7 @@ impl Map {
         let ttex_off = idx_off + n_tris * 6;
         let tuv_off = ttex_off + n_tris * 2;
         let trgb_off = tuv_off + n_tris * 6;
-        let texblk_off = align4(trgb_off + n_tris * 3);
+        let texblk_off = align4(trgb_off + n_tris * 9);
 
         let n_nodes = rd_u32(data, bsp_off) as usize;
         let n_leaves = rd_u32(data, bsp_off + 4) as usize;
@@ -158,10 +158,16 @@ impl Map {
         [(d[o], d[o + 1]), (d[o + 2], d[o + 3]), (d[o + 4], d[o + 5])]
     }
 
+    /// Per-corner lightmap shade (PS1 modulation tint), one (r,g,b) per vertex.
     #[inline]
-    pub fn tri_rgb(&self, t: usize) -> (u8, u8, u8) {
-        let o = self.trgb_off + t * 3;
-        (self.data[o], self.data[o + 1], self.data[o + 2])
+    pub fn tri_rgb(&self, t: usize) -> [(u8, u8, u8); 3] {
+        let o = self.trgb_off + t * 9;
+        let d = self.data;
+        [
+            (d[o], d[o + 1], d[o + 2]),
+            (d[o + 3], d[o + 4], d[o + 5]),
+            (d[o + 6], d[o + 7], d[o + 8]),
+        ]
     }
 
     pub fn tex_blob(&self) -> &'static [u8] {

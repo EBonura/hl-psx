@@ -163,16 +163,24 @@ hull (no crouch); simple velocity (no accel/friction/aircontrol).
 ## M6 -- map selection (DONE)
 
 Runtime builds from `data/maps/current.hlm`; `make cook MAP=<name>` writes it.
-The full pipeline (render + PVS + player + spawn) is map-general -- verified on
-c1a0 and c1a1a.
+The full pipeline is map-general -- verified on c1a0 and c1a1a.
+
+## M7 -- per-vertex lighting (DONE)
+
+Replaced M3's per-face average with per-vertex lightmap sampling (`.hlm` now
+HLM6; `tri_rgb` is 9 bytes/tri = one shade per corner). The runtime already drew
+`TriTexturedGouraud`, so this is just feeding it three colours -> smooth gradients
+across faces instead of flat-per-face.
 
 ## Next (pick per value)
 
 - **Entities**: doors/buttons/triggers (brush submodels) from the entity lump --
   the next gameplay layer. Brush models = BSP submodels 1..N (geometry we already
-  have); needs per-entity transforms + trigger/move logic.
+  render statically); needs per-entity transforms + trigger/move logic. NOTE: the
+  PVS path only draws world (model 0) faces via leaf marksurfaces; submodel faces
+  currently render because the cook walks the WHOLE faces lump, but they won't
+  move until entity-linked.
 - **UV subdivision + affine correction**: fix tiling/warp on large tris.
-- **Per-vertex lighting**: smooth gradients (sample lightmap per vertex).
 - **func_tracktrain**: the tram ride (the actual opening of Half-Life).
 - **MDL models / skeletal animation**: the big wall -- NPCs, weapons, viewmodel.
 

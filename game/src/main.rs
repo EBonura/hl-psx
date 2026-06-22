@@ -183,11 +183,10 @@ unsafe fn emit_tri(m: &Map, t: usize, nv: usize, np: &mut usize) {
     if *np >= MAX_PRIMS {
         return;
     }
-    let (sr, sg, sb) = m.tri_rgb(t);
     PRIMS[*np] = TriTexturedGouraud::with_material(
         [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
         m.tri_uv(t),
-        [(sr, sg, sb), (sr, sg, sb), (sr, sg, sb)],
+        m.tri_rgb(t),
         slot.material,
     );
     OT.add(otz, &mut PRIMS[*np], TriTexturedGouraud::WORDS);
