@@ -115,6 +115,42 @@ fn clip(v: [i32; 3], n: [i32; 3]) -> [i32; 3] {
     ]
 }
 
+/// Slide `vel` from `pos` for one frame, sliding along walls (4 iterations).
+/// Returns the new position and the wall-clipped velocity.
+fn slide_move(map: &Map, head: i32, mut pos: [i32; 3], mut vel: [i32; 3]) -> ([i32; 3], [i32; 3]) {
+    let mut d = vel;
+    for _ in 0..4 {
+        if d == [0, 0, 0] {
+            break;
+        }
+        let end = [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]];
+        let tr = trace(map, head, pos, end);
+        if tr.startsolid {
+            break;
+        }
+        pos = [
+            pos[0] + ((d[0] as i64 * tr.frac as i64) >> 12) as i32,
+            pos[1] + ((d[1] as i64 * tr.frac as i64) >> 12) as i32,
+            pos[2] + ((d[2] as i64 * tr.frac as i64) >> 12) as i32,
+        ];
+        if tr.frac >= 4096 {
+            break;
+        }
+        let rem = [end[0] - pos[0], end[1] - pos[1], end[2] - pos[2]];
+        d = clip(rem, tr.normal);
+        vel = clip(vel, tr.normal);
+    }
+    (pos, vel)
+}
+
+fn dist_xz(a: [i32; 3], b: [i32; 3]) -> i64 {
+    let dx = (b[0] - a[0]) as i64;
+    let dz = (b[2] - a[2]) as i64;
+    dx * dx + dz * dz
+}
+
+const STEP_UP: i32 = 18; // max stair/ledge height the player climbs
+
 pub struct Player {
     pub pos: [i32; 3],
     pub vel: [i32; 3],
@@ -150,29 +186,30 @@ impl Player {
             self.vel[1] -= GRAVITY;
         }
 
-        // Slide-move: trace, advance, clip the remainder to the hit plane, retry.
-        let mut d = self.vel;
+        // Move with stair-stepping: a plain slide, then (when grounded and
+        // moving) an up/forward/down "step" -- keep whichever advanced further
+        // along the ground, so the player climbs stairs/thresholds <= STEP_UP.
         let head = map.hull1_head;
-        for _ in 0..4 {
-            if d == [0, 0, 0] {
-                break;
+        let start = self.pos;
+        let (flat_pos, flat_vel) = slide_move(map, head, start, self.vel);
+        self.vel = flat_vel;
+
+        if self.on_ground && (self.vel[0] != 0 || self.vel[2] != 0) {
+            let up_end = [start[0], start[1] + STEP_UP, start[2]];
+            let tup = trace(map, head, start, up_end);
+            let up_pos = [start[0], start[1] + ((STEP_UP as i64 * tup.frac as i64) >> 12) as i32, start[2]];
+            let (sp, _) = slide_move(map, head, up_pos, [self.vel[0], 0, self.vel[2]]);
+            let dn_end = [sp[0], sp[1] - STEP_UP * 2, sp[2]];
+            let tdn = trace(map, head, sp, dn_end);
+            let step_pos = [sp[0], sp[1] - (((STEP_UP * 2) as i64 * tdn.frac as i64) >> 12) as i32, sp[2]];
+            let landed = tdn.frac < 4096 && tdn.normal[1] > GROUND_NY;
+            if landed && dist_xz(start, step_pos) > dist_xz(start, flat_pos) {
+                self.pos = step_pos;
+            } else {
+                self.pos = flat_pos;
             }
-            let end = [self.pos[0] + d[0], self.pos[1] + d[1], self.pos[2] + d[2]];
-            let tr = trace(map, head, self.pos, end);
-            if tr.startsolid {
-                break; // already embedded -- don't shove deeper
-            }
-            self.pos = [
-                self.pos[0] + ((d[0] as i64 * tr.frac as i64) >> 12) as i32,
-                self.pos[1] + ((d[1] as i64 * tr.frac as i64) >> 12) as i32,
-                self.pos[2] + ((d[2] as i64 * tr.frac as i64) >> 12) as i32,
-            ];
-            if tr.frac >= 4096 {
-                break;
-            }
-            let rem = [end[0] - self.pos[0], end[1] - self.pos[1], end[2] - self.pos[2]];
-            d = clip(rem, tr.normal);
-            self.vel = clip(self.vel, tr.normal);
+        } else {
+            self.pos = flat_pos;
         }
 
         // Ground check: probe straight down a little.
