@@ -30,6 +30,7 @@ pub struct Map {
     idx_off: usize,
     ttex_off: usize,
     tuv_off: usize,
+    trgb_off: usize,
     texblk_off: usize,
 }
 
@@ -42,8 +43,9 @@ impl Map {
         let idx_off = v_off + n_verts * 6;
         let ttex_off = idx_off + n_tris * 6;
         let tuv_off = ttex_off + n_tris * 2;
-        let texblk_off = (tuv_off + n_tris * 6 + 3) & !3;
-        Map { data, n_verts, n_tris, n_texs, v_off, idx_off, ttex_off, tuv_off, texblk_off }
+        let trgb_off = tuv_off + n_tris * 6;
+        let texblk_off = (trgb_off + n_tris * 3 + 3) & !3;
+        Map { data, n_verts, n_tris, n_texs, v_off, idx_off, ttex_off, tuv_off, trgb_off, texblk_off }
     }
 
     #[inline]
@@ -68,6 +70,13 @@ impl Map {
         let o = self.tuv_off + t * 6;
         let d = self.data;
         [(d[o], d[o + 1]), (d[o + 2], d[o + 3]), (d[o + 4], d[o + 5])]
+    }
+
+    /// Per-face lightmap shade (PS1 modulation tint).
+    #[inline]
+    pub fn tri_rgb(&self, t: usize) -> (u8, u8, u8) {
+        let o = self.trgb_off + t * 3;
+        (self.data[o], self.data[o + 1], self.data[o + 2])
     }
 
     /// The texture blob (n_texs sequential records) for one-time upload.

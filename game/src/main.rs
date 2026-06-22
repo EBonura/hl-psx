@@ -15,7 +15,7 @@ mod map;
 mod vram;
 
 use psx_gpu::ot::OrderingTable;
-use psx_gpu::prim::TriTextured;
+use psx_gpu::prim::TriTexturedGouraud;
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
 use psx_gte::math::{Mat3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
@@ -51,9 +51,14 @@ const VMOVE: i32 = 32;
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
 static mut SCRATCH: [Projected; MAX_VERTS] = [Projected { sx: 0, sy: 0, sz: 0 }; MAX_VERTS];
-const EMPTY_TRI: TriTextured =
-    TriTextured::new([(0, 0), (0, 0), (0, 0)], [(0, 0), (0, 0), (0, 0)], 0, 0, (128, 128, 128));
-static mut PRIMS: [TriTextured; MAX_PRIMS] = [EMPTY_TRI; MAX_PRIMS];
+const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
+    [(0, 0), (0, 0), (0, 0)],
+    [(0, 0), (0, 0), (0, 0)],
+    [(128, 128, 128), (128, 128, 128), (128, 128, 128)],
+    0,
+    0,
+);
+static mut PRIMS: [TriTexturedGouraud; MAX_PRIMS] = [EMPTY_TRI; MAX_PRIMS];
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 
 /// World->view rotation: look = rotY(yaw)·rotX(pitch), with rows 0 and 1
@@ -175,12 +180,14 @@ fn main() {
                 if np >= MAX_PRIMS {
                     break;
                 }
-                PRIMS[np] = TriTextured::with_material(
+                let (sr, sg, sb) = m.tri_rgb(tix);
+                PRIMS[np] = TriTexturedGouraud::with_material(
                     [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
                     m.tri_uv(tix),
+                    [(sr, sg, sb), (sr, sg, sb), (sr, sg, sb)],
                     slot.material,
                 );
-                OT.add(otz, &mut PRIMS[np], TriTextured::WORDS);
+                OT.add(otz, &mut PRIMS[np], TriTexturedGouraud::WORDS);
                 np += 1;
             }
 

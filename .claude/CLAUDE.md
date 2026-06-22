@@ -106,14 +106,25 @@ Known simplifications (M2): textures capped at 64x64 (one VRAM band fits all
 texture warp on big tris (no perspective correction); flat full-bright tint (no
 lighting); still `CULL=false`, no PVS, no collision, bbox-centre spawn.
 
+## M3 -- lighting (DONE, verified)
+
+c1a0 lit from its real BSP lightmaps. Extractor (`.hlm` "HLM3") averages each
+face's base-style lightmap (luxels 16 texels apart; extents from texinfo) into a
+per-face tint, boosted ~1.5x, stored as `tri_rgb`. Runtime emits
+`TriTexturedGouraud` with that tint on all 3 vertices, so the GPU modulates the
+texel (128 = 1.0x). Faces with no lightmap render neutral/full-bright.
+
+Simplification: per-face flat shade (not per-vertex/per-pixel lightmaps); good
+mood, but no smooth gradients within a face. Per-vertex lightmap sampling is the
+upgrade.
+
 ## Next (pick per value)
 
 - **PVS leaf culling**: decompress vis, draw only visible leaves -> the perf win
   and the architectural payoff (BSP+PVS -> OT). Also enables backface cull tuning.
 - **UV subdivision + affine correction**: runtime split of large/grazing tris so
   tiling is correct and textures stop warping (oot's `subdiv_emit` pattern).
-- **Vertex lighting**: bake BSP lightmaps (or face-normal shade) to per-vertex
-  colours via `TriTexturedGouraud` -> depth + mood instead of full-bright.
+- **Per-vertex lighting**: sample the lightmap per vertex for smooth gradients.
 - **Real spawn**: parse `info_player_start` from the entity lump.
 - **Multi-map streaming**: cook all campaign maps, stream per level change.
 
