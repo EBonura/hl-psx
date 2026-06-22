@@ -22,6 +22,7 @@ const LUMP_NODES: usize = 5;
 const LUMP_TEXINFO: usize = 6;
 const LUMP_FACES: usize = 7;
 const LUMP_LIGHTING: usize = 8;
+const LUMP_CLIPNODES: usize = 9;
 const LUMP_LEAVES: usize = 10;
 const LUMP_MARKSURFACES: usize = 11;
 const LUMP_EDGES: usize = 12;
@@ -41,6 +42,7 @@ const SZ_LEAF: usize = 28;
 const SZ_MODEL: usize = 64;
 const SZ_MARKSURFACE: usize = 2;
 const SZ_PLANE: usize = 20; // f32 normal[3] + f32 dist + i32 type
+const SZ_CLIPNODE: usize = 8; // i32 planenum + i16 children[2]
 const SZ_LEAF_VISOFS: usize = 4; // dleaf_t.visofs at byte 4
 const SZ_LEAF_MARK0: usize = 20; // dleaf_t.firstmarksurface at byte 20
 
@@ -434,6 +436,42 @@ fn face_shade(lighting: &[u8], lightofs: i32, style0: u8, lmw: usize, lmh: usize
     (boost(r), boost(g), boost(b))
 }
 
+/// Pull `"key" "value"` from one entity text block.
+fn ent_value<'a>(block: &'a str, key: &str) -> Option<&'a str> {
+    let pat = ["\"", key, "\""].concat();
+    let i = block.find(&pat)? + pat.len();
+    let rest = &block[i..];
+    let a = rest.find('"')? + 1;
+    let b = rest[a..].find('"')? + a;
+    Some(&rest[a..b])
+}
+
+fn parse_vec3(s: &str) -> Option<[f32; 3]> {
+    let mut it = s.split_whitespace();
+    Some([
+        it.next()?.parse().ok()?,
+        it.next()?.parse().ok()?,
+        it.next()?.parse().ok()?,
+    ])
+}
+
+/// Find the single-player spawn (`info_player_start`) origin + yaw (HL coords,
+/// degrees) from the entity lump.
+fn find_spawn(ents: &[u8]) -> Option<([f32; 3], f32)> {
+    let s = std::str::from_utf8(ents).ok()?;
+    for block in s.split('{') {
+        if block.contains("\"info_player_start\"") {
+            let origin = parse_vec3(ent_value(block, "origin")?)?;
+            let yaw = ent_value(block, "angles")
+                .and_then(parse_vec3)
+                .map(|a| a[1])
+                .unwrap_or(0.0);
+            return Some((origin, yaw));
+        }
+    }
+    None
+}
+
 fn cook(path: &str, out: &str) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {}", path, e))?;
     let bsp = Bsp::parse(&bytes)?;
@@ -584,13 +622,15 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
 
     let n_tris = tri_idx.len() / 3;
     let mut o: Vec<u8> = Vec::new();
-    o.extend_from_slice(b"HLM4");
+    o.extend_from_slice(b"HLM5");
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_tris as u32).to_le_bytes());
     o.extend_from_slice(&(n_texs as u32).to_le_bytes());
     o.extend_from_slice(&(n_faces as u32).to_le_bytes());
     let bsp_off_pos = o.len();
     o.extend_from_slice(&0u32.to_le_bytes()); // BSP section offset, patched below
+    let clip_off_pos = o.len();
+    o.extend_from_slice(&0u32.to_le_bytes()); // clip/phys section offset, patched below
     for v in &verts {
         for c in v {
             o.extend_from_slice(&c.to_le_bytes());
@@ -685,10 +725,52 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.push(0);
     }
 
+    // ---- Clip hull (player collision) + spawn ----
+    // u32 n_clip | i32 hull1_head | i32 spawn x,y,z (world) | i32 spawn_yaw (Q0.12)
+    // clipnodes (i16 nx,ny,nz, i16 c0, i16 c1, i16 pad, i32 dist) × n_clip [16B]
+    let clip_off = o.len() as u32;
+    o[clip_off_pos..clip_off_pos + 4].copy_from_slice(&clip_off.to_le_bytes());
+    let clipnodes = bsp.lump(LUMP_CLIPNODES);
+    let n_clip = clipnodes.len() / SZ_CLIPNODE;
+    let models = bsp.lump(LUMP_MODELS);
+    let hull1_head = i32le(models, 40).unwrap_or(0); // dmodel_t.headnode[1]
+    let (sp, syaw_deg) = find_spawn(bsp.lump(LUMP_ENTITIES)).unwrap_or(([0.0, 0.0, 0.0], 0.0));
+    // World space: swap Y/Z, scale.
+    let spawn = [
+        (sp[0] / scale).round() as i32,
+        (sp[2] / scale).round() as i32,
+        (sp[1] / scale).round() as i32,
+    ];
+    // HL yaw 0 = +X; our forward at yaw 0 = +Z (world Z = HL Y), so offset -90 deg.
+    let syaw = (((syaw_deg - 90.0) / 360.0 * 4096.0).round() as i32) & 0xFFF;
+
+    o.extend_from_slice(&(n_clip as u32).to_le_bytes());
+    o.extend_from_slice(&hull1_head.to_le_bytes());
+    for c in &spawn {
+        o.extend_from_slice(&c.to_le_bytes());
+    }
+    o.extend_from_slice(&syaw.to_le_bytes());
+    for ci in 0..n_clip {
+        let co = ci * SZ_CLIPNODE;
+        let planenum = i32le(clipnodes, co).unwrap_or(0).max(0) as usize;
+        let po = planenum * SZ_PLANE;
+        let nx = f32le(planes, po).unwrap_or(0.0);
+        let ny = f32le(planes, po + 4).unwrap_or(0.0);
+        let nz = f32le(planes, po + 8).unwrap_or(0.0);
+        let d = f32le(planes, po + 12).unwrap_or(0.0);
+        o.extend_from_slice(&((nx * 4096.0).round() as i16).to_le_bytes());
+        o.extend_from_slice(&((nz * 4096.0).round() as i16).to_le_bytes());
+        o.extend_from_slice(&((ny * 4096.0).round() as i16).to_le_bytes());
+        o.extend_from_slice(&i16::from_le_bytes([clipnodes[co + 4], clipnodes[co + 5]]).to_le_bytes());
+        o.extend_from_slice(&i16::from_le_bytes([clipnodes[co + 6], clipnodes[co + 7]]).to_le_bytes());
+        o.extend_from_slice(&0i16.to_le_bytes()); // pad
+        o.extend_from_slice(&((d / scale).round() as i32).to_le_bytes());
+    }
+
     std::fs::write(out, &o).map_err(|e| format!("write {}: {}", out, e))?;
     println!(
-        "cooked {} -> {}  ({} verts, {} tris, {} texs, {} faces, {} nodes, {} leaves, {} KB)",
-        path, out, n_verts, n_tris, n_texs, n_faces, n_nodes, n_leaves, o.len() / 1024
+        "cooked {} -> {}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes, spawn [{},{},{}], {} KB)",
+        path, out, n_verts, n_tris, n_faces, n_leaves, n_clip, spawn[0], spawn[1], spawn[2], o.len() / 1024
     );
     Ok(())
 }

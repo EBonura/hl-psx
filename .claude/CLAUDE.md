@@ -136,16 +136,31 @@ Caveat: tri-count/fps delta not measured (no telemetry). Correct + active; the
 win is largest in enclosed areas. Fallback draws everything when the camera is
 in the solid/outside leaf 0.
 
+## M5 -- player collision + walking (DONE, verified) -- FIRST GAMEPLAY
+
+The fly-cam is now a grounded FPS player. Spawns at the real `info_player_start`
+(parsed from the entity lump) and renders the actual HL tram-station start view.
+
+- Extractor (`.hlm` HLM5, header gains `clip_off`): appends the clip hull
+  (`CLIPNODES` planes transformed to world space + children), `hull1` headnode
+  (model[0].headnode[1]), and the spawn origin+yaw (HL->world, yaw-90deg).
+- Runtime (`game/src/phys.rs`): fixed-point port of Quake `SV_RecursiveHullCheck`
+  (point trace through the pre-expanded hull), a 4-iteration slide-move, gravity,
+  ground probe. `Player { pos, vel, on_ground }`. Camera eye = pos + 28 (world).
+- Controls: D-pad up/down walk, left/right turn, L1/R1 strafe, Triangle/Cross
+  look, Circle jump.
+- Verified: spawn view = real HL start; walk forward stops dead at a wall (no
+  void clip); grounded throughout.
+
+Simplification: no step-up yet (can't climb stairs/thresholds); single standing
+hull (no crouch); simple velocity (no accel/friction/aircontrol).
+
 ## Next (pick per value)
 
-- **Player collision + walking** -- the first real GAMEPLAY: BSP clipnode hull
-  trace + gravity + step, turning the fly-cam into an FPS controller. Uses
-  PLANES + CLIPNODES we can add to the cook. (User asked about gameplay; this is
-  the nearest element.)
+- **Step-up** (stairs/ledges) -- likely needed to traverse past the start room.
 - **UV subdivision + affine correction**: fix tiling/warp on large tris.
-- **Per-vertex lighting**: smooth gradients (sample lightmap per vertex).
-- **Real spawn**: parse `info_player_start` from the entity lump.
 - **Entities**: doors/buttons/triggers (brush submodels) from the entity lump.
+- **Per-vertex lighting**: smooth gradients (sample lightmap per vertex).
 
 ## PSoXide SDK map (third_party/PSoXide/sdk/crates)
 

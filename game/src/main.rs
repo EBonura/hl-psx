@@ -14,6 +14,7 @@
 extern crate psx_rt;
 
 mod map;
+mod phys;
 mod vram;
 
 use psx_gpu::ot::OrderingTable;
@@ -21,7 +22,6 @@ use psx_gpu::prim::TriTexturedGouraud;
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
 use psx_gte::math::{Mat3I16, Vec3I32};
 use psx_gte::scene;
-use psx_math::sincos;
 use psx_pad::{button, poll_port1};
 use psx_rt::tty;
 
@@ -47,8 +47,7 @@ const H_PROJ: u16 = 160; // ~90 deg horizontal FOV at 320px
 const YAW_STEP: u16 = 48;
 const PITCH_STEP: i16 = 32;
 const PITCH_MAX: i16 = 1000;
-const MOVE: i32 = 48;
-const VMOVE: i32 = 32;
+const VIEW_HEIGHT: i32 = 28; // eye above the player origin (world units)
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
 const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
@@ -212,9 +211,8 @@ fn main() {
         tty::println("hl-psx: some textures did not fit VRAM");
     }
 
-    let (mn, mx) = m.bounds();
-    let mut eye = [(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2 + 40, (mn[2] + mx[2]) / 2];
-    let mut yaw: u16 = 0;
+    let mut player = phys::Player::new(m.spawn_pos);
+    let mut yaw: u16 = (m.spawn_yaw as u16) & 0xFFF;
     let mut pitch: i16 = 0;
     let mut frame_no: u16 = 0;
 
@@ -232,22 +230,23 @@ fn main() {
         if held.is_held(button::CROSS) {
             pitch = (pitch - PITCH_STEP).max(-PITCH_MAX);
         }
-        let fx = sincos::sin_q12(yaw);
-        let fz = sincos::sin_q12((yaw + 1024) & 0xFFF);
-        if held.is_held(button::UP) {
-            eye[0] += (fx * MOVE) >> 12;
-            eye[2] += (fz * MOVE) >> 12;
-        }
-        if held.is_held(button::DOWN) {
-            eye[0] -= (fx * MOVE) >> 12;
-            eye[2] -= (fz * MOVE) >> 12;
-        }
-        if held.is_held(button::R1) {
-            eye[1] += VMOVE;
-        }
-        if held.is_held(button::L1) {
-            eye[1] -= VMOVE;
-        }
+        let fwd = if held.is_held(button::UP) {
+            1
+        } else if held.is_held(button::DOWN) {
+            -1
+        } else {
+            0
+        };
+        let strafe = if held.is_held(button::R1) {
+            1
+        } else if held.is_held(button::L1) {
+            -1
+        } else {
+            0
+        };
+        let jump = held.is_held(button::CIRCLE);
+        player.update(&m, fwd, strafe, jump, yaw);
+        let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
 
         let rot = view_rotation(yaw, pitch);
         scene::load_rotation(&rot);

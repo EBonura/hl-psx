@@ -65,6 +65,21 @@ pub struct Map {
     marks_off: usize,
     vis_off: usize,
     vis_len: usize,
+    // Clip hull + spawn
+    pub n_clip: usize,
+    pub hull1_head: i32,
+    pub spawn_pos: [i32; 3],
+    pub spawn_yaw: i32,
+    clipn_off: usize,
+}
+
+const CLIPNODE_SZ: usize = 16;
+
+pub struct ClipNode {
+    pub n: [i16; 3],
+    pub c0: i16,
+    pub c1: i16,
+    pub dist: i32,
 }
 
 impl Map {
@@ -74,7 +89,8 @@ impl Map {
         let n_texs = rd_u32(data, 12) as usize;
         let n_faces = rd_u32(data, 16) as usize;
         let bsp_off = rd_u32(data, 20) as usize;
-        let v_off = 24;
+        let clip_off = rd_u32(data, 24) as usize;
+        let v_off = 28;
         let idx_off = v_off + n_verts * 6;
         let ttex_off = idx_off + n_tris * 6;
         let tuv_off = ttex_off + n_tris * 2;
@@ -92,11 +108,29 @@ impl Map {
         let marks_off = leaves_off + n_leaves * LEAF_SZ;
         let vis_off = align4(marks_off + n_marks * 2);
 
+        let n_clip = rd_u32(data, clip_off) as usize;
+        let hull1_head = rd_i32(data, clip_off + 4);
+        let spawn_pos = [rd_i32(data, clip_off + 8), rd_i32(data, clip_off + 12), rd_i32(data, clip_off + 16)];
+        let spawn_yaw = rd_i32(data, clip_off + 20);
+        let clipn_off = clip_off + 24;
+
         Map {
             data, n_verts, n_tris, n_texs, n_faces,
             v_off, idx_off, ttex_off, tuv_off, trgb_off, texblk_off,
             n_nodes, n_leaves, n_marks,
             ff_off, fn_off, nodes_off, leaves_off, marks_off, vis_off, vis_len,
+            n_clip, hull1_head, spawn_pos, spawn_yaw, clipn_off,
+        }
+    }
+
+    #[inline]
+    pub fn clipnode(&self, i: usize) -> ClipNode {
+        let o = self.clipn_off + i * CLIPNODE_SZ;
+        ClipNode {
+            n: [rd_i16(self.data, o), rd_i16(self.data, o + 2), rd_i16(self.data, o + 4)],
+            c0: rd_i16(self.data, o + 6),
+            c1: rd_i16(self.data, o + 8),
+            dist: rd_i32(self.data, o + 12),
         }
     }
 
