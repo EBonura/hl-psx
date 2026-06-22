@@ -162,15 +162,16 @@ impl Player {
         Player { pos, vel: [0, 0, 0], on_ground: false }
     }
 
-    /// Advance the player one frame. `fwd`/`strafe` are -1/0/1 relative to
-    /// `yaw` (Q0.12); `jump` triggers when grounded.
+    /// Advance the player one frame. `fwd`/`strafe` are analog deltas in
+    /// `-128..=127` (D-pad sends ±127) relative to `yaw` (Q0.12); `jump`
+    /// triggers when grounded.
     pub fn update(&mut self, map: &Map, fwd: i32, strafe: i32, jump: bool, yaw: u16) {
-        // Forward = (sin yaw, 0, cos yaw); right = (cos yaw, 0, -sin yaw). Both
-        // sin/cos are ×4096, so a unit wish direction stays ×4096.
+        // Forward = (sin yaw, 0, cos yaw); right = (cos yaw, 0, -sin yaw). sin/cos
+        // are ×4096; dividing the ±127 input by 128 keeps a unit wish dir ≈ ×4096.
         let s = sincos::sin_q12(yaw);
         let c = sincos::sin_q12((yaw + 1024) & 0xFFF);
-        let wx = s * fwd + c * strafe;
-        let wz = c * fwd - s * strafe;
+        let wx = (s * fwd + c * strafe) / 128;
+        let wz = (c * fwd - s * strafe) / 128;
         self.vel[0] = (wx * MOVE_SPEED) >> 12;
         self.vel[2] = (wz * MOVE_SPEED) >> 12;
 

@@ -1,12 +1,14 @@
 //! hl-psx -- render a real Half-Life BSP map (cooked to `.hlm` by `tools/hl-bsp`)
-//! with a GTE-projected, ordering-table-sorted, pad-driven fly-camera.
+//! with a GTE-projected, ordering-table-sorted player walking Black Mesa.
 //!
-//! M1 geometry, M2 textures (4-bit CLUT), M3 per-face lightmap shading, M4 PVS:
-//! each frame we find the camera's BSP leaf, decompress its potentially-visible
-//! set, and draw only the faces of visible leaves.
+//! Pipeline: M1 geometry, M2 textures (4-bit CLUT), M3/M7 per-vertex lightmap
+//! shading, M4 PVS leaf culling, M5 player collision, M8 brush entities/doors.
+//! Triangles project once into a per-frame cache (RTPT batched); those that
+//! straddle the near plane are clipped + software-reprojected (render.rs) rather
+//! than dropped.
 //!
-//! Controls (digital pad): D-pad up/down = forward/back, left/right = turn,
-//! L1/R1 = down/up, Triangle/Cross = look up/down.
+//! Controls: left stick / D-pad = move + strafe, right stick / D-pad L-R = turn,
+//! Triangle/Cross = look up/down, Circle = jump.
 
 #![no_std]
 #![no_main]
@@ -15,44 +17,42 @@ extern crate psx_rt;
 
 mod map;
 mod phys;
+mod render;
 mod vram;
 
+use psx_gpu::material::TextureMaterial;
 use psx_gpu::ot::OrderingTable;
 use psx_gpu::prim::TriTexturedGouraud;
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
 use psx_gte::math::{Mat3I16, Vec3I32};
-use psx_gte::scene;
-use psx_pad::{button, poll_port1};
+use psx_gte::scene::{self, Projected};
+use psx_pad::{button, enable_analog_port1, poll_port1};
 use psx_rt::tty;
 
 use map::Map;
 use vram::{TexSlot, EMPTY_SLOT};
 
 // Cooked at build time from the user's own Half-Life install (git-ignored).
-// `make cook MAP=<name>` writes the chosen map here, so any level can be built
-// without editing this path.
+// `make cook MAP=<name>` writes the chosen map here.
 static MAP_BYTES: &[u8] = include_bytes!("../../data/maps/current.hlm");
 
 const OT_LEN: usize = 1024;
 const MAX_VERTS: usize = 8192;
 const MAX_PRIMS: usize = 12000;
 const MAX_TEX_SLOTS: usize = 512;
-const MAX_FACES: usize = 8192; // c1a0 has 3695
-const MAX_LEAVES: usize = 8192; // c1a0 has 1438
-const MAX_ENTS: usize = 256; // c1a0 has 64
-const DOOR_SPEED: i32 = 120; // door phase units/frame (4096 = fully open)
-const NEAR: u16 = 32;
-// Backface cull (area <= 0 = back-facing). Winding reversed in the cook to match
-// the HL->world axis swap; verified correct from a capture.
-const CULL: bool = true;
+const MAX_FACES: usize = 8192;
+const MAX_LEAVES: usize = 8192;
+const MAX_ENTS: usize = 256;
+const DOOR_SPEED: i32 = 120;
+const NEAR: u16 = 32; // GTE depth below which a vertex goes to the soft-clip path
+const CULL: bool = true; // backface cull (keep area > 0; winding verified)
 const H_PROJ: u16 = 160; // ~90 deg horizontal FOV at 320px
 
-// Camera control rates. Angles are Q0.12 (4096 = one revolution) for `sincos`;
-// the GTE matrix builders take 256/rev, hence `>> 4`.
-const YAW_STEP: u16 = 48;
 const PITCH_STEP: i16 = 32;
 const PITCH_MAX: i16 = 1000;
-const VIEW_HEIGHT: i32 = 28; // eye above the player origin (world units)
+const YAW_RATE: i32 = 64; // yaw units/frame at full stick (Q0.12)
+const DEADZONE: i16 = 24;
+const VIEW_HEIGHT: i32 = 28;
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
 const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
@@ -64,13 +64,13 @@ const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
 );
 static mut PRIMS: [TriTexturedGouraud; MAX_PRIMS] = [EMPTY_TRI; MAX_PRIMS];
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
-// PVS scratch: decompressed visible-leaf bits + per-face draw-once dedup.
+static mut SCRATCH: [Projected; MAX_VERTS] = [Projected { sx: 0, sy: 0, sz: 0 }; MAX_VERTS];
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut FACE_FRAME: [u16; MAX_FACES] = [0; MAX_FACES];
-static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS]; // door open amount (Q0.12)
+static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
 
 /// World->view rotation: rotY(yaw)*rotX(pitch), rows 0/1 negated for the GPU's
-/// Y-down screen (same convention as oot-psx).
+/// Y-down screen.
 fn view_rotation(yaw: u16, pitch: i16) -> Mat3I16 {
     let look = Mat3I16::rotate_y((yaw >> 4) as u16).mul(&Mat3I16::rotate_x((pitch >> 4) as u16));
     let mut r = look;
@@ -87,8 +87,18 @@ fn dot12(row: [i16; 3], e: [i32; 3]) -> i32 {
     ((row[0] as i32 * e[0]) + (row[1] as i32 * e[1]) + (row[2] as i32 * e[2])) >> 12
 }
 
-/// Walk the BSP tree to the leaf containing `eye` (world space). Returns 0 (the
-/// solid/outside leaf) if the tree is empty or the point falls outside.
+/// Cull when the screen triangle isn't front-facing (area <= 0). Matches the
+/// cook's reversed winding.
+#[inline]
+fn culled(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
+    (b.0 - a.0) * (c.1 - a.1) - (c.0 - a.0) * (b.1 - a.1) <= 0
+}
+
+#[inline]
+fn clamp_otz(z: usize) -> usize {
+    z.clamp(1, OT_LEN - 1)
+}
+
 fn camera_leaf(m: &Map, eye: [i32; 3]) -> i32 {
     if m.n_nodes == 0 {
         return 0;
@@ -108,13 +118,12 @@ fn camera_leaf(m: &Map, eye: [i32; 3]) -> i32 {
             - nd.dist;
         let next = if side >= 0 { nd.c0 } else { nd.c1 };
         if next < 0 {
-            return -next - 1; // leaf index
+            return -next - 1;
         }
         idx = next;
     }
 }
 
-/// Quake run-length vis decompression into `out` (bit i -> leaf i+1).
 fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
     let row = ((m.n_leaves.saturating_sub(1)) + 7) / 8;
     let row = row.min(out.len());
@@ -123,7 +132,7 @@ fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
     }
     if visofs < 0 {
         for b in out[..row].iter_mut() {
-            *b = 0xFF; // no vis info -> everything visible
+            *b = 0xFF;
         }
         return;
     }
@@ -154,9 +163,28 @@ fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
     }
 }
 
-/// Project one triangle, cull, and insert it into the OT. `np` is the running
-/// primitive-pool cursor.
-unsafe fn emit_tri(m: &Map, t: usize, nv: usize, np: &mut usize) {
+#[inline]
+unsafe fn push_tri(
+    np: &mut usize,
+    screen: [(i16, i16); 3],
+    uv: [(u8, u8); 3],
+    rgb: [(u8, u8, u8); 3],
+    mat: TextureMaterial,
+    otz: usize,
+) {
+    if *np >= MAX_PRIMS {
+        return;
+    }
+    PRIMS[*np] = TriTexturedGouraud::with_material(screen, uv, rgb, mat);
+    OT.add(otz, &mut PRIMS[*np], TriTexturedGouraud::WORDS);
+    *np += 1;
+}
+
+/// Emit triangle `t` given its three already-projected screen verts `p`. The
+/// fast path uses them directly; if any straddles the near plane, rebuild in
+/// view space (using the currently-loaded GTE matrix), near-clip, software
+/// re-project, and guard-band clip.
+unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &mut usize) {
     let (a, b, c) = m.tri_idx(t);
     if a >= nv || b >= nv || c >= nv {
         return;
@@ -165,41 +193,94 @@ unsafe fn emit_tri(m: &Map, t: usize, nv: usize, np: &mut usize) {
     if !slot.valid {
         return;
     }
-    let p = scene::project_triangle(m.vert(a), m.vert(b), m.vert(c));
+    let uv = m.tri_uv(t);
+    let rgb = m.tri_rgb(t);
     let (pa, pb, pc) = (p[0], p[1], p[2]);
-    if pa.sz < NEAR || pb.sz < NEAR || pc.sz < NEAR {
-        return;
-    }
-    if CULL {
-        let area = (pb.sx as i32 - pa.sx as i32) * (pc.sy as i32 - pa.sy as i32)
-            - (pc.sx as i32 - pa.sx as i32) * (pb.sy as i32 - pa.sy as i32);
-        if area <= 0 {
+    let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
+
+    // Fast path: all three comfortably in front and on-screen.
+    if pa.sz >= NEAR
+        && pb.sz >= NEAR
+        && pc.sz >= NEAR
+        && !clamped(&pa)
+        && !clamped(&pb)
+        && !clamped(&pc)
+    {
+        let (sa, sb, sc) = (
+            (pa.sx as i32, pa.sy as i32),
+            (pb.sx as i32, pb.sy as i32),
+            (pc.sx as i32, pc.sy as i32),
+        );
+        if CULL && culled(sa, sb, sc) {
             return;
         }
-    }
-    let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
-    let mut otz = (avgz >> 6) as usize;
-    if otz == 0 {
-        otz = 1;
-    } else if otz >= OT_LEN {
-        otz = OT_LEN - 1;
-    }
-    if *np >= MAX_PRIMS {
+        let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
+        push_tri(
+            np,
+            [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
+            uv,
+            rgb,
+            slot.material,
+            clamp_otz((avgz >> 6) as usize),
+        );
         return;
     }
-    PRIMS[*np] = TriTexturedGouraud::with_material(
-        [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
-        m.tri_uv(t),
-        m.tri_rgb(t),
-        slot.material,
-    );
-    OT.add(otz, &mut PRIMS[*np], TriTexturedGouraud::WORDS);
-    *np += 1;
+    if pa.sz == 0 && pb.sz == 0 && pc.sz == 0 {
+        return; // entirely behind the camera
+    }
+
+    // Soft path: rebuild in view space and near-clip.
+    let cvv = |idx: usize, k: usize| {
+        let v = scene::transform_vertex(m.vert(idx));
+        render::CVert {
+            v: [v.x, v.y, v.z],
+            rgb: (rgb[k].0 as i32, rgb[k].1 as i32, rgb[k].2 as i32),
+            uv: (uv[k].0 as i32, uv[k].1 as i32),
+        }
+    };
+    let cv = [cvv(a, 0), cvv(b, 1), cvv(c, 2)];
+    let mut clipped = [render::EMPTY_CV; 4];
+    let n = render::near_clip(&cv, &mut clipped);
+    if n < 3 {
+        return;
+    }
+    let mut sv = [render::EMPTY_SV; 4];
+    for k in 0..n {
+        sv[k] = render::project_soft(&clipped[k]);
+    }
+    if CULL && culled((sv[0].x, sv[0].y), (sv[1].x, sv[1].y), (sv[2].x, sv[2].y)) {
+        return;
+    }
+    let cl = |x: i32| x.clamp(0, 255) as u8;
+    for k in 1..n - 1 {
+        let tri = [sv[0], sv[k], sv[k + 1]];
+        let mut g = [render::EMPTY_SV; 8];
+        let gn = render::guard_clip(&tri, 3, &mut g);
+        if gn < 3 {
+            continue;
+        }
+        for j in 1..gn - 1 {
+            let (s0, s1, s2) = (g[0], g[j], g[j + 1]);
+            let avgz = ((s0.z + s1.z + s2.z) / 3).max(1);
+            push_tri(
+                np,
+                [(s0.x as i16, s0.y as i16), (s1.x as i16, s1.y as i16), (s2.x as i16, s2.y as i16)],
+                [(s0.uv.0 as u8, s0.uv.1 as u8), (s1.uv.0 as u8, s1.uv.1 as u8), (s2.uv.0 as u8, s2.uv.1 as u8)],
+                [
+                    (cl(s0.rgb.0), cl(s0.rgb.1), cl(s0.rgb.2)),
+                    (cl(s1.rgb.0), cl(s1.rgb.1), cl(s1.rgb.2)),
+                    (cl(s2.rgb.0), cl(s2.rgb.1), cl(s2.rgb.2)),
+                ],
+                slot.material,
+                clamp_otz((avgz >> 4) as usize),
+            );
+        }
+    }
 }
 
 #[no_mangle]
 fn main() {
-    tty::println("hl-psx: booting M4 (PVS) map renderer");
+    tty::println("hl-psx: booting renderer");
 
     gpu::init(VideoMode::Ntsc, Resolution::R320X240);
     let mut fb = FrameBuffer::new(320, 240);
@@ -207,6 +288,7 @@ fn main() {
     gpu::set_draw_offset(0, 0);
     scene::set_screen_offset(160 << 16, 120 << 16);
     scene::set_projection_plane(H_PROJ);
+    let _ = enable_analog_port1();
 
     let m = Map::load(MAP_BYTES);
     let nv = if m.n_verts < MAX_VERTS { m.n_verts } else { MAX_VERTS };
@@ -222,12 +304,38 @@ fn main() {
     let mut frame_no: u16 = 0;
 
     loop {
-        let held = poll_port1().buttons;
-        if held.is_held(button::LEFT) {
-            yaw = yaw.wrapping_sub(YAW_STEP) & 0xFFF;
+        let pad = poll_port1();
+        let held = pad.buttons;
+
+        // Movement: left stick (analog) + D-pad; right stick / LEFT-RIGHT turn.
+        let (mut fwd, mut strafe, mut turn) = (0i32, 0i32, 0i32);
+        if pad.is_analog() {
+            let (lx, ly) = pad.sticks.left_centered();
+            let (rx, _) = pad.sticks.right_centered();
+            if ly.abs() > DEADZONE {
+                fwd = -(ly as i32);
+            }
+            if lx.abs() > DEADZONE {
+                strafe = lx as i32;
+            }
+            if rx.abs() > DEADZONE {
+                turn = rx as i32;
+            }
+        }
+        if held.is_held(button::UP) {
+            fwd = 127;
+        } else if held.is_held(button::DOWN) {
+            fwd = -127;
+        }
+        if held.is_held(button::R1) {
+            strafe = 127;
+        } else if held.is_held(button::L1) {
+            strafe = -127;
         }
         if held.is_held(button::RIGHT) {
-            yaw = yaw.wrapping_add(YAW_STEP) & 0xFFF;
+            turn = 127;
+        } else if held.is_held(button::LEFT) {
+            turn = -127;
         }
         if held.is_held(button::TRIANGLE) {
             pitch = (pitch + PITCH_STEP).min(PITCH_MAX);
@@ -235,28 +343,16 @@ fn main() {
         if held.is_held(button::CROSS) {
             pitch = (pitch - PITCH_STEP).max(-PITCH_MAX);
         }
-        let fwd = if held.is_held(button::UP) {
-            1
-        } else if held.is_held(button::DOWN) {
-            -1
-        } else {
-            0
-        };
-        let strafe = if held.is_held(button::R1) {
-            1
-        } else if held.is_held(button::L1) {
-            -1
-        } else {
-            0
-        };
-        let jump = held.is_held(button::CIRCLE);
-        player.update(&m, fwd, strafe, jump, yaw);
+        let dyaw = (turn * YAW_RATE) / 128;
+        yaw = (((yaw as i32) + dyaw) & 0xFFF) as u16;
+
+        player.update(&m, fwd, strafe, held.is_held(button::CIRCLE), yaw);
         let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
 
         let rot = view_rotation(yaw, pitch);
         scene::load_rotation(&rot);
-        let t = [-dot12(rot.m[0], eye), -dot12(rot.m[1], eye), -dot12(rot.m[2], eye)];
-        scene::load_translation(Vec3I32::new(t[0], t[1], t[2]));
+        let base_t = [-dot12(rot.m[0], eye), -dot12(rot.m[1], eye), -dot12(rot.m[2], eye)];
+        scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
 
         frame_no = frame_no.wrapping_add(1);
 
@@ -269,12 +365,27 @@ fn main() {
             }
             OT.clear();
             let mut np = 0usize;
+
+            // Project every vertex once (RTPT batched) with the base view matrix.
+            let mut i = 0;
+            while i + 3 <= nv {
+                let p = scene::project_triangle(m.vert(i), m.vert(i + 1), m.vert(i + 2));
+                SCRATCH[i] = p[0];
+                SCRATCH[i + 1] = p[1];
+                SCRATCH[i + 2] = p[2];
+                i += 3;
+            }
+            while i < nv {
+                SCRATCH[i] = scene::project_vertex(m.vert(i));
+                i += 1;
+            }
+
+            // World (model 0) via PVS, drawing each visible leaf's faces once.
             let cam_leaf = camera_leaf(&m, eye);
             if cam_leaf > 0 && (cam_leaf as usize) < m.n_leaves {
                 let (visofs, _, _) = m.leaf(cam_leaf as usize);
                 decompress_vis(&m, visofs, &mut VIS_BITS);
-                let leaf_bits = m.n_leaves.saturating_sub(1);
-                for i in 0..leaf_bits {
+                for i in 0..m.n_leaves.saturating_sub(1) {
                     if VIS_BITS[i >> 3] & (1 << (i & 7)) == 0 {
                         continue;
                     }
@@ -290,23 +401,28 @@ fn main() {
                         FACE_FRAME[face] = frame_no;
                         let (first, cnt) = m.face_tris(face);
                         for tt in first..first + cnt {
-                            if tt < m.n_tris {
-                                emit_tri(&m, tt, nv, &mut np);
+                            if tt >= m.n_tris {
+                                continue;
+                            }
+                            let (a, b, c) = m.tri_idx(tt);
+                            if a < nv && b < nv && c < nv {
+                                emit_projected(&m, tt, [SCRATCH[a], SCRATCH[b], SCRATCH[c]], nv, &mut np);
                             }
                         }
                     }
                 }
             } else {
-                // Camera outside the world hull: draw everything.
                 for tt in 0..m.n_tris {
-                    emit_tri(&m, tt, nv, &mut np);
+                    let (a, b, c) = m.tri_idx(tt);
+                    if a < nv && b < nv && c < nv {
+                        emit_projected(&m, tt, [SCRATCH[a], SCRATCH[b], SCRATCH[c]], nv, &mut np);
+                    }
                 }
             }
 
-            // ---- Brush entities: render each submodel; func_doors slide open
-            // when the player is near. We render with a per-entity GTE
-            // translation (base view shifted by the entity offset) so the
-            // shared vertex data needs no copy.
+            // Brush entities: doors slide open near the player. Each renders with
+            // a per-entity GTE translation (base view shifted by the offset);
+            // its few tris are projected fresh (not from the world cache).
             for ei in 0..m.n_ents.min(MAX_ENTS) {
                 let e = m.entity(ei);
                 let off = if e.kind == 1 {
@@ -331,8 +447,13 @@ fn main() {
                 for f in ff..ff + nf {
                     let (first, cnt) = m.face_tris(f);
                     for tt in first..first + cnt {
-                        if tt < m.n_tris {
-                            emit_tri(&m, tt, nv, &mut np);
+                        if tt >= m.n_tris {
+                            continue;
+                        }
+                        let (a, b, c) = m.tri_idx(tt);
+                        if a < nv && b < nv && c < nv {
+                            let p = scene::project_triangle(m.vert(a), m.vert(b), m.vert(c));
+                            emit_projected(&m, tt, p, nv, &mut np);
                         }
                     }
                 }

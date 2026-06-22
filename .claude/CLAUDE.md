@@ -172,11 +172,26 @@ HLM6; `tri_rgb` is 9 bytes/tri = one shade per corner). The runtime already drew
 `TriTexturedGouraud`, so this is just feeding it three colours -> smooth gradients
 across faces instead of flat-per-face.
 
-## Render state
+## M9 -- robustness pass: clipping / framerate / controls (DONE)
 
-Backface culling is ON (`CULL=true` in main.rs) -- verified the winding is
-correct (cook reverses it to match the HL->world Y/Z swap), so back faces are
-skipped with no holes. PVS + cull + near-clip are the active culling stages.
+Playtest flagged near-camera clipping artifacts, sluggish framerate, clunky
+controls. Borrowed the proven oot-psx `room.rs` techniques (see `game/src/render.rs`):
+
+- **Near-plane clipping**: triangles straddling the near plane are rebuilt in
+  view space (`scene::transform_vertex`), Sutherland-Hodgman clipped to
+  `z >= NEAR_Z`, software-reprojected (`project_soft`: one `(H<<12)/z` Q12
+  reciprocal), then guard-band clipped to the GPU span limits -- instead of being
+  dropped (which popped geometry out near walls). All fixed-point `(num<<12)/den`
+  on i32 (the target miscompiles `i64 / runtime`).
+- **Framerate**: M5 had regressed to projecting each visible triangle separately;
+  reverted to projecting every vertex ONCE per frame into a cache (RTPT batched,
+  `SCRATCH`), assembling world tris from it. Entities still project their few tris
+  fresh (per-entity GTE translation). (Not fps-measured; undoes the regression.)
+- **Controls**: analog stick (`enable_analog_port1` + `left_centered` + deadzone)
+  with D-pad fallback; tunable turn rate; movement speed normalised (±127 input).
+
+Backface cull stays ON (`CULL=true`, winding verified). Active stages: PVS leaf
+cull -> backface cull -> near/guard clip.
 
 ## M8 -- brush entities + doors (DONE, verified)
 
