@@ -1,0 +1,37 @@
+# ---- Build output ----
+/target/
+**/target/
+build/
+dist/
+*.bin
+*.cue
+*.exe
+*.elf
+*.map
+
+# ---- BRING YOUR OWN ASSETS ----
+# Never commit Half-Life assets or anything derived from them. Point the
+# extractor at your own Half-Life install (Steam/retail). Source assets and
+# everything cooked from them stay local only.
+data/
+assets/
+*.wad
+*.bsp
+*.mdl
+*.spr
+*.pak
+*.gcf
+# Cooked PS1-native maps (derived from your BSPs).
+*.hlm
+
+# Local machine config (e.g. HL_DIR override pointing at your install).
+config.mk
+
+# ---- Local-only material (kept on disk, never committed) ----
+docs/
+reference/
+tools/*.py
+tools/*.sh
+
+# ---- OS / editor cruft ----
+.DS_Store

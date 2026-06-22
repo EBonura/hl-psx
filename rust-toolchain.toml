@@ -1,0 +1,9 @@
+[toolchain]
+# Nightly is required to build for the PlayStation 1:
+#   - the built-in `mipsel-sony-psx` target
+#   - `-Zbuild-std` (no prebuilt std for the PSX target)
+#   - the inline-asm BIOS trampolines inside PSoXide's psx-rt
+# Keep this in sync with the pinned PSoXide submodule's own
+# rust-toolchain.toml so host tools (mkisopsx) and device code agree.
+channel    = "nightly"
+components = ["rust-src", "llvm-tools", "rustfmt", "clippy"]

@@ -1,0 +1,13 @@
+[package]
+name    = "hl-bsp"
+version = "0.1.0"
+edition = "2021"
+
+# Host tool (runs on the dev machine, not the PS1). Standalone workspace so it
+# never inherits game/.cargo/config.toml's mipsel-sony-psx target. No deps --
+# std + byte slicing is all a lump parser needs.
+[workspace]
+
+[[bin]]
+name = "hl-bsp"
+path = "src/main.rs"
