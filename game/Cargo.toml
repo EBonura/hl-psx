@@ -1,0 +1,33 @@
+[package]
+name    = "hl-psx"
+version = "0.1.0"
+edition = "2021"
+
+# Standalone workspace, deliberately NOT at the repo root: keeping the crate
+# (and its device `.cargo/config.toml`) under game/ stops the PSX target config
+# from leaking onto the host tools built from the submodule (mkisopsx), and
+# stops cargo adopting the SDK path-deps as implicit workspace members. Same
+# layout as the proven oot-psx / pico8-psx games.
+[workspace]
+
+[[bin]]
+name = "hl-psx"
+path = "src/main.rs"
+
+[profile.release]
+# no_std has no unwinder; abort keeps the binary small.
+panic         = "abort"
+codegen-units = 1
+lto           = true
+
+# SDK crates from the pinned PSoXide submodule (one level up, under third_party).
+# Minimal set for the Milestone 0 GTE-cube smoke test. Add psx-vram (texture
+# upload), psx-io (CD streaming), psx-pad (input), etc. as the BSP renderer grows.
+[dependencies]
+psx-sdk  = { path = "../third_party/PSoXide/sdk/crates/psx-sdk" }
+psx-rt   = { path = "../third_party/PSoXide/sdk/crates/psx-rt" }
+psx-gpu  = { path = "../third_party/PSoXide/sdk/crates/psx-gpu" }
+psx-gte  = { path = "../third_party/PSoXide/sdk/crates/psx-gte" }
+psx-pad  = { path = "../third_party/PSoXide/sdk/crates/psx-pad" }
+psx-math = { path = "../third_party/PSoXide/sdk/crates/psx-math" }
+psx-vram = { path = "../third_party/PSoXide/sdk/crates/psx-vram" }
