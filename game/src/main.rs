@@ -29,7 +29,9 @@ use map::Map;
 use vram::{TexSlot, EMPTY_SLOT};
 
 // Cooked at build time from the user's own Half-Life install (git-ignored).
-static MAP_BYTES: &[u8] = include_bytes!("../../data/maps/c1a0.hlm");
+// `make cook MAP=<name>` writes the chosen map here, so any level can be built
+// without editing this path.
+static MAP_BYTES: &[u8] = include_bytes!("../../data/maps/current.hlm");
 
 const OT_LEN: usize = 1024;
 const MAX_VERTS: usize = 8192;

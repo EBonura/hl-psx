@@ -37,11 +37,16 @@ closed "Half-Life PSX" demake.
 ## Build / run
 
 ```bash
-make submodule   # init pinned PSoXide SDK (third_party/PSoXide @ bedcc21)
-make build       # -> game/target/mipsel-sony-psx/release/hl-psx.exe
-make disc        # -> dist/hl-psx.{bin,cue}  (boot this in PSoXide)
-make run         # build + install into the PSoXide game library
+make submodule        # init pinned PSoXide SDK (third_party/PSoXide @ bedcc21)
+make cook MAP=c1a0    # cook a level -> data/maps/current.hlm (any of 125 maps)
+make build            # -> game/target/mipsel-sony-psx/release/hl-psx.exe
+make disc             # -> dist/hl-psx.{bin,cue}  (boot this in PSoXide)
+make run              # build + install into the PSoXide game library
 ```
+
+The runtime `include_bytes!`s `data/maps/current.hlm`; `make cook MAP=<name>`
+writes it, so any map builds without editing source. Verified on c1a0 (tram
+start) and c1a1a (Anomalous Materials).
 
 Nightly toolchain + `mipsel-sony-psx` target via `-Zbuild-std` (see
 `rust-toolchain.toml`, `game/.cargo/config.toml`). `game/build.rs` injects
@@ -155,12 +160,21 @@ The fly-cam is now a grounded FPS player. Spawns at the real `info_player_start`
 Simplification: no step-up yet (can't climb stairs/thresholds); single standing
 hull (no crouch); simple velocity (no accel/friction/aircontrol).
 
+## M6 -- map selection (DONE)
+
+Runtime builds from `data/maps/current.hlm`; `make cook MAP=<name>` writes it.
+The full pipeline (render + PVS + player + spawn) is map-general -- verified on
+c1a0 and c1a1a.
+
 ## Next (pick per value)
 
-- **Step-up** (stairs/ledges) -- likely needed to traverse past the start room.
+- **Entities**: doors/buttons/triggers (brush submodels) from the entity lump --
+  the next gameplay layer. Brush models = BSP submodels 1..N (geometry we already
+  have); needs per-entity transforms + trigger/move logic.
 - **UV subdivision + affine correction**: fix tiling/warp on large tris.
-- **Entities**: doors/buttons/triggers (brush submodels) from the entity lump.
 - **Per-vertex lighting**: smooth gradients (sample lightmap per vertex).
+- **func_tracktrain**: the tram ride (the actual opening of Half-Life).
+- **MDL models / skeletal animation**: the big wall -- NPCs, weapons, viewmodel.
 
 ## PSoXide SDK map (third_party/PSoXide/sdk/crates)
 

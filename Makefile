@@ -108,13 +108,15 @@ bsp-info:
 	  exit 1; fi
 	$(HLBSP_BIN) "$(HL_GAME)/maps/$(MAP).bsp"
 
-# Cook a map to the PS1-native .hlm the runtime include_bytes!'s (data/maps/).
-# M1 hard-codes c1a0; cooking a different MAP also needs the path in
-# game/src/main.rs updated.
+# Cook a map to the PS1-native .hlm the runtime include_bytes!'s, and copy it to
+# data/maps/current.hlm (the path the runtime builds from). Pick any level with
+# MAP=<name>, e.g. `make cook MAP=c1a1a && make disc`.
 cook:
 	cd $(HLBSP) && cargo build --release
 	@mkdir -p $(ROOT)/data/maps
 	$(HLBSP_BIN) --cook "$(HL_GAME)/maps/$(MAP).bsp" $(ROOT)/data/maps/$(MAP).hlm
+	@cp $(ROOT)/data/maps/$(MAP).hlm $(ROOT)/data/maps/current.hlm
+	@echo "current map -> $(MAP)"
 
 clean:
 	cd $(GAME) && cargo clean
