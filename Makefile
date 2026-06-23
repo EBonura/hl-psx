@@ -118,6 +118,14 @@ cook:
 	@cp $(ROOT)/data/maps/$(MAP).hlm $(ROOT)/data/maps/current.hlm
 	@echo "current map -> $(MAP)"
 
+# Cook the studio models the runtime include_bytes!'s (data/models/). Add more
+# with MODEL=<name>, e.g. `make models MODEL=barney`.
+MODEL ?= can
+models:
+	cd $(HLBSP) && cargo build --release
+	@mkdir -p $(ROOT)/data/models
+	$(HLBSP_BIN) --mdl "$(HL_GAME)/models/$(MODEL).mdl" $(ROOT)/data/models/$(MODEL).hlmdl
+
 clean:
 	cd $(GAME) && cargo clean
 	rm -rf $(DIST)

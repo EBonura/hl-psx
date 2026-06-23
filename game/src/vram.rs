@@ -13,8 +13,8 @@ use crate::map::Map;
 
 const TEX_X0: u16 = 320; // first texture-page column (after the framebuffers)
 const COLS: u16 = 11; // X=320,384,..,960
-const PAGES: usize = 11; // one band (Y=0)
-const CLUT_ROWS: usize = 8; // Y=480..487
+const PAGES: usize = 22; // two bands (Y=0 and Y=256): map textures + model textures
+const CLUT_ROWS: usize = 24; // Y=480..503
 const CLUT_BASE_Y: u16 = 480;
 
 #[derive(Copy, Clone)]
@@ -31,13 +31,17 @@ pub const EMPTY_SLOT: TexSlot = TexSlot {
 static mut ATLAS: TextureWindowAtlas<PAGES> = TextureWindowAtlas::new();
 static mut CLUTS: ClutRowAllocator<CLUT_ROWS> = ClutRowAllocator::new(CLUT_BASE_Y);
 
-/// Upload every cooked texture, filling `slots`. Returns the count that did
-/// not fit (those faces draw untextured / are skipped).
+/// Upload every cooked map texture, filling `slots`.
 pub fn upload_textures(map: &Map, slots: &mut [TexSlot]) -> usize {
-    let data = map.tex_blob();
+    upload_tex_blob(map.tex_blob(), map.n_texs, slots)
+}
+
+/// Upload a `.hlm`/`.hlmdl` texture blob (u16 w,h | u16 clut[16] | u8 pix4 each)
+/// into `slots`. Returns the count that did not fit VRAM.
+pub fn upload_tex_blob(data: &[u8], n_texs: usize, slots: &mut [TexSlot]) -> usize {
     let mut off = 0usize;
     let mut failed = 0usize;
-    for i in 0..map.n_texs {
+    for i in 0..n_texs {
         if off + 36 > data.len() {
             break;
         }

@@ -1017,8 +1017,234 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ---- MDL (Half-Life studio model) -> .hlmdl ------------------------------
+//
+// Bakes the model's reference pose into a static posed textured mesh (bone
+// matrices applied at cook time). Layout matches .hlm geometry+textures:
+//   magic "HMDL" | u32 n_verts,n_tris,n_texs
+//   verts i16×3 | tri_idx u16×3 | tri_tex u16 | tri_uv u8×6 (pad4) | textures...
+
+type Mat34 = ([[f32; 3]; 3], [f32; 3]); // rotation, translation
+
+fn angle_quat(a: [f32; 3]) -> [f32; 4] {
+    let (sr, cr) = ((a[0] * 0.5).sin(), (a[0] * 0.5).cos());
+    let (sp, cp) = ((a[1] * 0.5).sin(), (a[1] * 0.5).cos());
+    let (sy, cy) = ((a[2] * 0.5).sin(), (a[2] * 0.5).cos());
+    [
+        sr * cp * cy - cr * sp * sy,
+        cr * sp * cy + sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+        cr * cp * cy + sr * sp * sy,
+    ]
+}
+
+fn quat_mat(q: [f32; 4]) -> [[f32; 3]; 3] {
+    let (x, y, z, w) = (q[0], q[1], q[2], q[3]);
+    [
+        [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - w * z), 2.0 * (x * z + w * y)],
+        [2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - w * x)],
+        [2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)],
+    ]
+}
+
+/// `p ∘ c` (apply c then p).
+fn concat(p: &Mat34, c: &Mat34) -> Mat34 {
+    let mut r = [[0.0f32; 3]; 3];
+    for i in 0..3 {
+        for j in 0..3 {
+            r[i][j] = p.0[i][0] * c.0[0][j] + p.0[i][1] * c.0[1][j] + p.0[i][2] * c.0[2][j];
+        }
+    }
+    let t = [
+        p.0[0][0] * c.1[0] + p.0[0][1] * c.1[1] + p.0[0][2] * c.1[2] + p.1[0],
+        p.0[1][0] * c.1[0] + p.0[1][1] * c.1[1] + p.0[1][2] * c.1[2] + p.1[1],
+        p.0[2][0] * c.1[0] + p.0[2][1] * c.1[1] + p.0[2][2] * c.1[2] + p.1[2],
+    ];
+    (r, t)
+}
+
+fn apply(m: &Mat34, v: [f32; 3]) -> [f32; 3] {
+    [
+        m.0[0][0] * v[0] + m.0[0][1] * v[1] + m.0[0][2] * v[2] + m.1[0],
+        m.0[1][0] * v[0] + m.0[1][1] * v[1] + m.0[1][2] * v[2] + m.1[1],
+        m.0[2][0] * v[0] + m.0[2][1] * v[1] + m.0[2][2] * v[2] + m.1[2],
+    ]
+}
+
+/// Cook an MDL texture (8-bit indices + 256-colour palette) to 4-bit + CLUT.
+fn cook_mdl_tex(b: &[u8], idx: usize, w0: usize, h0: usize) -> CookedTex {
+    let palo = idx + w0 * h0;
+    let pal = |p: usize| {
+        (
+            *b.get(palo + p * 3).unwrap_or(&0),
+            *b.get(palo + p * 3 + 1).unwrap_or(&0),
+            *b.get(palo + p * 3 + 2).unwrap_or(&0),
+        )
+    };
+    let fw = final_size(w0 as u32) as usize;
+    let fh = final_size(h0 as u32) as usize;
+    let mut colors: Vec<(u8, u8, u8)> = Vec::with_capacity(fw * fh);
+    for y in 0..fh {
+        for x in 0..fw {
+            let pi = *b.get(idx + (y * h0 / fh) * w0 + (x * w0 / fw)).unwrap_or(&0) as usize;
+            colors.push(pal(pi));
+        }
+    }
+    let pal16 = median_cut16(&colors);
+    let mut clut = [0u16; 16];
+    for (i, c) in pal16.iter().enumerate() {
+        clut[i] = to_bgr555(c.0, c.1, c.2);
+    }
+    let mut pix4 = vec![0u8; fw * fh / 2];
+    for (i, ch) in colors.chunks(2).enumerate() {
+        let lo = nearest16(&pal16, ch[0]);
+        let hi = ch.get(1).map(|c| nearest16(&pal16, *c)).unwrap_or(0);
+        pix4[i] = lo | (hi << 4);
+    }
+    CookedTex { w: fw as u16, h: fh as u16, clut, pix4 }
+}
+
+fn cook_mdl(path: &str, out: &str) -> Result<(), String> {
+    let b = std::fs::read(path).map_err(|e| format!("{}: {}", path, e))?;
+    if b.get(0..4) != Some(b"IDST") {
+        return Err(format!("{}: not a studio MDL", path));
+    }
+    let i = |o: usize| i32le(&b, o).unwrap_or(0);
+    let f = |o: usize| f32le(&b, o).unwrap_or(0.0);
+    let h16 = |o: usize| i16::from_le_bytes([b[o], b[o + 1]]);
+
+    // Bind-pose bone world matrices.
+    let (numbones, boneindex) = (i(140) as usize, i(144) as usize);
+    let mut bones: Vec<Mat34> = Vec::with_capacity(numbones);
+    for bi in 0..numbones {
+        let bo = boneindex + bi * 112;
+        let parent = i(bo + 32);
+        let pos = [f(bo + 64), f(bo + 68), f(bo + 72)];
+        let rot = [f(bo + 76), f(bo + 80), f(bo + 84)];
+        let local: Mat34 = (quat_mat(angle_quat(rot)), pos);
+        let world = if parent < 0 { local } else { concat(&bones[parent as usize], &local) };
+        bones.push(world);
+    }
+
+    let (textureindex, skinindex) = (i(184) as usize, i(200) as usize);
+    let bodypartindex = i(208) as usize;
+    let modelindex = i(bodypartindex + 72) as usize; // bodypart[0].model[0]
+    let (nummesh, meshindex) = (i(modelindex + 72) as usize, i(modelindex + 76) as usize);
+    let numverts = i(modelindex + 80) as usize;
+    let (vinfoindex, vertindex) = (i(modelindex + 84) as usize, i(modelindex + 88) as usize);
+
+    // Pose every vertex by its bone; convert to world orientation (swap Y/Z).
+    let ident: Mat34 = ([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [0.0; 3]);
+    let mut verts: Vec<[i16; 3]> = Vec::with_capacity(numverts);
+    for v in 0..numverts {
+        let vp = [f(vertindex + v * 12), f(vertindex + v * 12 + 4), f(vertindex + v * 12 + 8)];
+        let bone = *b.get(vinfoindex + v).unwrap_or(&0) as usize;
+        let p = apply(bones.get(bone).unwrap_or(&ident), vp);
+        verts.push([p[0].round() as i16, p[2].round() as i16, p[1].round() as i16]);
+    }
+
+    let mut tri_idx: Vec<u16> = Vec::new();
+    let mut tri_tex: Vec<u16> = Vec::new();
+    let mut tri_uv: Vec<u8> = Vec::new();
+    let mut texs: Vec<CookedTex> = Vec::new();
+    let mut slot_of: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+
+    for m in 0..nummesh {
+        let me = meshindex + m * 20;
+        let triindex = i(me + 4) as usize;
+        let skinref = i(me + 8) as usize;
+        let texid = h16(skinindex + skinref * 2) as usize; // skin family 0
+        let to = textureindex + texid * 80;
+        let (tw, th, tpix) = (i(to + 68) as usize, i(to + 72) as usize, i(to + 76) as usize);
+        let slot = *slot_of.entry(texid).or_insert_with(|| {
+            texs.push(cook_mdl_tex(&b, tpix, tw.max(1), th.max(1)));
+            texs.len() - 1
+        });
+        let (fw, fh) = (texs[slot].w as f32, texs[slot].h as f32);
+        let mut o = triindex;
+        loop {
+            let cmd = h16(o) as i32;
+            o += 2;
+            if cmd == 0 {
+                break;
+            }
+            let (n, fan) = (cmd.unsigned_abs() as usize, cmd < 0);
+            let mut s: Vec<(u16, u8, u8)> = Vec::with_capacity(n);
+            for _ in 0..n {
+                let vi = h16(o) as u16;
+                let (ss, tt) = (h16(o + 4) as f32, h16(o + 6) as f32);
+                o += 8;
+                let u = (ss * fw / tw.max(1) as f32).clamp(0.0, 255.0) as u8;
+                let vv = (tt * fh / th.max(1) as f32).clamp(0.0, 255.0) as u8;
+                s.push((vi, u, vv));
+            }
+            for k in 0..n.saturating_sub(2) {
+                let (a, bb, c) = if fan {
+                    (0, k + 1, k + 2)
+                } else if k % 2 == 0 {
+                    (k, k + 1, k + 2)
+                } else {
+                    (k + 1, k, k + 2)
+                };
+                let (va, vb, vc) = (s[a], s[bb], s[c]);
+                tri_idx.extend_from_slice(&[va.0, vb.0, vc.0]);
+                tri_tex.push(slot as u16);
+                tri_uv.extend_from_slice(&[va.1, va.2, vb.1, vb.2, vc.1, vc.2]);
+            }
+        }
+    }
+
+    let n_tris = tri_idx.len() / 3;
+    let mut o: Vec<u8> = Vec::new();
+    o.extend_from_slice(b"HMDL");
+    o.extend_from_slice(&(verts.len() as u32).to_le_bytes());
+    o.extend_from_slice(&(n_tris as u32).to_le_bytes());
+    o.extend_from_slice(&(texs.len() as u32).to_le_bytes());
+    for v in &verts {
+        for c in v {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    for x in &tri_idx {
+        o.extend_from_slice(&x.to_le_bytes());
+    }
+    for x in &tri_tex {
+        o.extend_from_slice(&x.to_le_bytes());
+    }
+    o.extend_from_slice(&tri_uv);
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+    for tx in &texs {
+        o.extend_from_slice(&tx.w.to_le_bytes());
+        o.extend_from_slice(&tx.h.to_le_bytes());
+        for c in &tx.clut {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        o.extend_from_slice(&tx.pix4);
+    }
+    std::fs::write(out, &o).map_err(|e| format!("write {}: {}", out, e))?;
+    println!("cooked {} -> {} ({} verts, {} tris, {} texs, {} KB)", path, out, verts.len(), n_tris, texs.len(), o.len() / 1024);
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|s| s.as_str()) == Some("--mdl") {
+        match (args.get(2), args.get(3)) {
+            (Some(inp), Some(out)) => {
+                if let Err(e) = cook_mdl(inp, out) {
+                    eprintln!("{}", e);
+                    exit(1);
+                }
+                return;
+            }
+            _ => {
+                eprintln!("usage: hl-bsp --mdl <in.mdl> <out.hlmdl>");
+                exit(2);
+            }
+        }
+    }
     // `--cook <in.bsp> <out.hlm>` cooks; otherwise `<map.bsp>` reports.
     if args.get(1).map(|s| s.as_str()) == Some("--cook") {
         match (args.get(2), args.get(3)) {

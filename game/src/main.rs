@@ -16,6 +16,7 @@
 extern crate psx_rt;
 
 mod map;
+mod model;
 mod phys;
 mod render;
 mod vram;
@@ -24,17 +25,20 @@ use psx_gpu::material::TextureMaterial;
 use psx_gpu::ot::OrderingTable;
 use psx_gpu::prim::TriTexturedGouraud;
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
-use psx_gte::math::{Mat3I16, Vec3I32};
+use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
+use psx_math::sincos;
 use psx_pad::{button, enable_analog_port1, poll_port1};
 use psx_rt::tty;
 
 use map::Map;
+use model::Model;
 use vram::{TexSlot, EMPTY_SLOT};
 
 // Cooked at build time from the user's own Half-Life install (git-ignored).
 // `make cook MAP=<name>` writes the chosen map here.
 static MAP_BYTES: &[u8] = include_bytes!("../../data/maps/current.hlm");
+static CAN_BYTES: &[u8] = include_bytes!("../../data/models/can.hlmdl");
 
 const OT_LEN: usize = 1024;
 const MAX_VERTS: usize = 8192;
@@ -68,6 +72,7 @@ const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
 );
 static mut PRIMS: [TriTexturedGouraud; MAX_PRIMS] = [EMPTY_TRI; MAX_PRIMS];
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
+static mut MODEL_SLOTS: [TexSlot; 16] = [EMPTY_SLOT; 16];
 static mut SCRATCH: [Projected; MAX_VERTS] = [Projected { sx: 0, sy: 0, sz: 0 }; MAX_VERTS];
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut FACE_FRAME: [u16; MAX_FACES] = [0; MAX_FACES];
@@ -348,6 +353,41 @@ unsafe fn emit_cv(cv: &[render::CVert; 3], depth: u8, mat: TextureMaterial, np: 
     }
 }
 
+/// Draw a static model at world `pos`, flat-shaded (no per-vertex lighting yet).
+unsafe fn draw_model(md: &Model, slots: &[TexSlot], pos: [i32; 3], eye: [i32; 3], rot: &Mat3I16, np: &mut usize) {
+    let es = [eye[0] - pos[0], eye[1] - pos[1], eye[2] - pos[2]];
+    let et = [-dot12(rot.m[0], es), -dot12(rot.m[1], es), -dot12(rot.m[2], es)];
+    scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+    for t in 0..md.n_tris {
+        let slot = slots[md.tri_tex(t).min(slots.len() - 1)];
+        if !slot.valid {
+            continue;
+        }
+        let (a, b, c) = md.tri_idx(t);
+        // ponytail: DEMO ×12 scale so the test can pokes past the tram car; real
+        // props render ×1 once placed at entity positions.
+        let sv = |i: usize| {
+            let v = md.vert(i);
+            Vec3I16::new((v.x as i32 * 12) as i16, (v.y as i32 * 12) as i16, (v.z as i32 * 12) as i16)
+        };
+        let p = scene::project_triangle(sv(a), sv(b), sv(c));
+        let (pa, pb, pc) = (p[0], p[1], p[2]);
+        if pa.sz < NEAR || pb.sz < NEAR || pc.sz < NEAR {
+            continue; // ponytail: drop near-straddling model tris (rare)
+        }
+        let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
+        // No backface cull yet (MDL winding unverified); flat full-bright shade.
+        push_tri(
+            np,
+            [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
+            md.tri_uv(t),
+            [(128, 128, 128); 3],
+            slot.material,
+            clamp_otz((avgz >> 6) as usize),
+        );
+    }
+}
+
 #[no_mangle]
 fn main() {
     tty::println("hl-psx: booting renderer");
@@ -366,6 +406,10 @@ fn main() {
     let failed = unsafe { vram::upload_textures(&m, &mut TEX_SLOTS) };
     if failed > 0 {
         tty::println("hl-psx: some textures did not fit VRAM");
+    }
+    let can = Model::load(CAN_BYTES);
+    unsafe {
+        vram::upload_tex_blob(can.tex_blob(), can.n_texs, &mut MODEL_SLOTS);
     }
 
     let mut player = phys::Player::new(m.spawn_pos);
@@ -615,6 +659,12 @@ fn main() {
                     }
                 }
             }
+
+            // MDL proof: a soda can floating in front of the camera.
+            let fwx = sincos::sin_q12(yaw);
+            let fwz = sincos::sin_q12((yaw + 1024) & 0xFFF);
+            let mpos = [eye[0] + ((fwx * 50) >> 12), eye[1] - 15, eye[2] + ((fwz * 50) >> 12)];
+            draw_model(&can, &MODEL_SLOTS, mpos, eye, &rot, &mut np);
 
             fb.clear(0, 0, 0);
             OT.submit();
