@@ -25,7 +25,7 @@ use psx_gpu::material::TextureMaterial;
 use psx_gpu::ot::OrderingTable;
 use psx_gpu::prim::TriTexturedGouraud;
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
-use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
+use psx_gte::math::{Mat3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
 use psx_pad::{button, enable_analog_port1, poll_port1};
 use psx_rt::tty;
@@ -59,6 +59,8 @@ const PITCH_RATE: i32 = 48; // pitch units/frame at full stick
 const DEADZONE: i16 = 24;
 const VIEW_HEIGHT: i32 = 28;
 const FAR_VIEW: i32 = 6000; // leaf cull distance (world units); generous to avoid pop
+const MODEL_CULL: bool = false; // backface-cull studio models (flip if inside-out)
+const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
 const TRAM_STEP_DIV: i32 = 15; // tram units/sec -> units/frame (demo pace)
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
@@ -352,33 +354,36 @@ unsafe fn emit_cv(cv: &[render::CVert; 3], depth: u8, mat: TextureMaterial, np: 
     }
 }
 
-/// Draw a static model at world `pos`, flat-shaded (no per-vertex lighting yet).
-unsafe fn draw_model(md: &Model, slots: &[TexSlot], pos: [i32; 3], scale: i32, eye: [i32; 3], rot: &Mat3I16, np: &mut usize) {
+/// Draw a static model at world `pos`, rotated by `yaw` (Q0.12), flat-shaded.
+unsafe fn draw_model(md: &Model, slots: &[TexSlot], pos: [i32; 3], yaw: u16, eye: [i32; 3], rot: &Mat3I16, np: &mut usize) {
+    // GTE rotation = view ∘ model-yaw; translation places the origin at `pos`.
+    let mr = rot.mul(&Mat3I16::rotate_y((yaw >> 4) as u16));
+    scene::load_rotation(&mr);
     let es = [eye[0] - pos[0], eye[1] - pos[1], eye[2] - pos[2]];
     let et = [-dot12(rot.m[0], es), -dot12(rot.m[1], es), -dot12(rot.m[2], es)];
     scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
-    let sv = |i: usize| {
-        let v = md.vert(i);
-        Vec3I16::new((v.x as i32 * scale) as i16, (v.y as i32 * scale) as i16, (v.z as i32 * scale) as i16)
-    };
     for t in 0..md.n_tris {
         let slot = slots[md.tri_tex(t).min(slots.len() - 1)];
         if !slot.valid {
             continue;
         }
         let (a, b, c) = md.tri_idx(t);
-        let p = scene::project_triangle(sv(a), sv(b), sv(c));
+        let p = scene::project_triangle(md.vert(a), md.vert(b), md.vert(c));
         let (pa, pb, pc) = (p[0], p[1], p[2]);
         if pa.sz < NEAR || pb.sz < NEAR || pc.sz < NEAR {
             continue;
         }
+        if MODEL_CULL
+            && culled((pa.sx as i32, pa.sy as i32), (pb.sx as i32, pb.sy as i32), (pc.sx as i32, pc.sy as i32))
+        {
+            continue;
+        }
         let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
-        // No backface cull yet (MDL winding unverified); flat full-bright shade.
         push_tri(
             np,
             [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
             md.tri_uv(t),
-            [(128, 128, 128); 3],
+            [(MODEL_SHADE, MODEL_SHADE, MODEL_SHADE); 3],
             slot.material,
             clamp_otz((avgz >> 6) as usize),
         );
@@ -661,7 +666,7 @@ fn main() {
             // by the prop's forward depth + horizontal FOV so off-screen ones
             // don't burn primitives.
             for pi in 0..m.n_props {
-                let (ty, org, _yaw) = m.prop(pi);
+                let (ty, org, yaw) = m.prop(pi);
                 if ty != 0 {
                     continue; // only scientists included for now
                 }
@@ -673,7 +678,7 @@ fn main() {
                 if vx.abs() > vz + 128 {
                     continue;
                 }
-                draw_model(&sci, &MODEL_SLOTS, org, 1, eye, &rot, &mut np);
+                draw_model(&sci, &MODEL_SLOTS, org, yaw as u16, eye, &rot, &mut np);
             }
 
             fb.clear(0, 0, 0);

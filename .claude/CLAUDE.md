@@ -337,9 +337,21 @@ Verified the scientist RENDERS (geometry + bind pose + external textures) via an
 isolated capture (clear human figure, white lab coat). NOT captured in-situ: the
 placed scientists are scattered deep in levels + occluded by the tram car, and
 the analog-only controls can't be driven headlessly to walk up to one -- user
-verifies in-game. Tunables: `draw_model` has no model backface cull (winding
-unverified; flat full-bright shade); yaw not applied (scientists face bind-pose
-dir); barney (type 1) parsed but not included/drawn yet.
+verifies in-game.
+
+## M14c -- model polish (DONE, in-game verify pending)
+
+- **Per-prop yaw**: `draw_model` rotates the model by the entity yaw
+  (`mr = view ∘ rotate_y(yaw)`). Facing convention may need an in-game tweak.
+- **Shade**: `MODEL_SHADE = 110` (dimmer than 128) to blend with the lit world.
+- **Winding**: the MDL cook now reverses tri winding (c,b,a) to match the BSP
+  Y/Z-swap convention.
+- **Backface cull**: `MODEL_CULL = false` (left OFF). Couldn't verify the winding
+  headlessly (debug model kept off-screen/occluded; analog-only blocks walking to
+  a placed scientist). Flip `MODEL_CULL` true and check in-game; if scientists go
+  invisible/inside-out, the winding reverse needs undoing.
+- **Barney** (type 1): parsed but not included/drawn (needs a 2nd model + slot
+  range + VRAM check).
 
 Next: animation (runtime skeleton + sequence playback) is the big follow-up.
 

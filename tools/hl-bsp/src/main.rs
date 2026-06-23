@@ -1236,10 +1236,12 @@ fn cook_mdl(path: &str, out: &str) -> Result<(), String> {
                 } else {
                     (k + 1, k, k + 2)
                 };
+                // Reversed winding (c,b,a) to match the BSP cook's Y/Z-swap convention,
+                // so the runtime's backface cull keeps front faces.
                 let (va, vb, vc) = (s[a], s[bb], s[c]);
-                tri_idx.extend_from_slice(&[va.0, vb.0, vc.0]);
+                tri_idx.extend_from_slice(&[vc.0, vb.0, va.0]);
                 tri_tex.push(slot as u16);
-                tri_uv.extend_from_slice(&[va.1, va.2, vb.1, vb.2, vc.1, vc.2]);
+                tri_uv.extend_from_slice(&[vc.1, vc.2, vb.1, vb.2, va.1, va.2]);
             }
         }
     }
