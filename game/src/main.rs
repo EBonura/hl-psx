@@ -47,6 +47,7 @@ const DOOR_SPEED: i32 = 120;
 const NEAR: u16 = 32; // GTE depth below which a vertex goes to the soft-clip path
 const SUBDIV_PX: i32 = 96; // split triangles wider than this on screen (affine fix)
 const SUBDIV_DEPTH: u8 = 1; // max split levels
+const SUBDIV_NEAR: u16 = 400; // only subdivide when this close (GTE depth); far warp is cheap
 const CULL: bool = true; // backface cull (keep area > 0; winding verified)
 const H_PROJ: u16 = 160; // ~90 deg horizontal FOV at 320px
 
@@ -70,6 +71,7 @@ static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 static mut SCRATCH: [Projected; MAX_VERTS] = [Projected { sx: 0, sy: 0, sz: 0 }; MAX_VERTS];
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut FACE_FRAME: [u16; MAX_FACES] = [0; MAX_FACES];
+static mut VERT_FRAME: [u16; MAX_VERTS] = [0; MAX_VERTS]; // project-once-per-frame cache marker
 static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
 
 /// World->view rotation: rotY(yaw)*rotX(pitch), rows 0/1 negated for the GPU's
@@ -197,6 +199,15 @@ fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
     }
 }
 
+/// Project vertex `i` into the cache once per frame (base view matrix).
+#[inline]
+unsafe fn proj_vert(m: &Map, i: usize, frame: u16) {
+    if VERT_FRAME[i] != frame {
+        SCRATCH[i] = scene::project_vertex(m.vert(i));
+        VERT_FRAME[i] = frame;
+    }
+}
+
 #[inline]
 unsafe fn push_tri(
     np: &mut usize,
@@ -241,7 +252,9 @@ unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &m
         );
         let spanx = sa.0.max(sb.0).max(sc.0) - sa.0.min(sb.0).min(sc.0);
         let spany = sa.1.max(sb.1).max(sc.1) - sa.1.min(sb.1).min(sc.1);
-        if spanx <= SUBDIV_PX && spany <= SUBDIV_PX {
+        let close = pa.sz.min(pb.sz).min(pc.sz) < SUBDIV_NEAR;
+        // Small, or far enough that affine warp is cheap -> emit straight from cache.
+        if !close || (spanx <= SUBDIV_PX && spany <= SUBDIV_PX) {
             if CULL && culled(sa, sb, sc) {
                 return;
             }
@@ -425,26 +438,16 @@ fn main() {
                 for f in FACE_FRAME.iter_mut() {
                     *f = 0;
                 }
+                for f in VERT_FRAME.iter_mut() {
+                    *f = 0;
+                }
                 frame_no = 1;
             }
             OT.clear();
             let mut np = 0usize;
 
-            // Project every vertex once (RTPT batched) with the base view matrix.
-            let mut i = 0;
-            while i + 3 <= nv {
-                let p = scene::project_triangle(m.vert(i), m.vert(i + 1), m.vert(i + 2));
-                SCRATCH[i] = p[0];
-                SCRATCH[i + 1] = p[1];
-                SCRATCH[i + 2] = p[2];
-                i += 3;
-            }
-            while i < nv {
-                SCRATCH[i] = scene::project_vertex(m.vert(i));
-                i += 1;
-            }
-
             // World (model 0) via PVS, drawing each visible leaf's faces once.
+            // Vertices are projected lazily (only those actually drawn).
             let cam_leaf = camera_leaf(&m, eye);
             if cam_leaf > 0 && (cam_leaf as usize) < m.n_leaves {
                 let (visofs, _, _) = m.leaf(cam_leaf as usize);
@@ -470,6 +473,9 @@ fn main() {
                             }
                             let (a, b, c) = m.tri_idx(tt);
                             if a < nv && b < nv && c < nv {
+                                proj_vert(&m, a, frame_no);
+                                proj_vert(&m, b, frame_no);
+                                proj_vert(&m, c, frame_no);
                                 emit_projected(&m, tt, [SCRATCH[a], SCRATCH[b], SCRATCH[c]], nv, &mut np);
                             }
                         }
@@ -479,6 +485,9 @@ fn main() {
                 for tt in 0..m.n_tris {
                     let (a, b, c) = m.tri_idx(tt);
                     if a < nv && b < nv && c < nv {
+                        proj_vert(&m, a, frame_no);
+                        proj_vert(&m, b, frame_no);
+                        proj_vert(&m, c, frame_no);
                         emit_projected(&m, tt, [SCRATCH[a], SCRATCH[b], SCRATCH[c]], nv, &mut np);
                     }
                 }
