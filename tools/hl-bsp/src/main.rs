@@ -520,8 +520,8 @@ fn collect_entities(ents: &[u8], models: &[u8], scale: f32) -> Vec<EntRec> {
             continue;
         }
         let cls = ent_value(block, "classname").unwrap_or("");
-        if cls.starts_with("trigger") || cls == "func_ladder" {
-            continue; // invisible brush entity
+        if cls.starts_with("trigger") || cls == "func_ladder" || cls == "func_tracktrain" {
+            continue; // invisible, or handled by the tram section
         }
         let origin = to_world(ent_value(block, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]), scale);
         let mo = submodel * SZ_MODEL;
@@ -546,6 +546,51 @@ fn collect_entities(ents: &[u8], models: &[u8], scale: f32) -> Vec<EntRec> {
         }
     }
     out
+}
+
+/// The `func_tracktrain` (tram) submodel, speed, and its `path_track` waypoint
+/// chain (world coords). Returns `(0, 0, [])` if the map has no tram.
+fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>) {
+    let s = match std::str::from_utf8(ents) {
+        Ok(s) => s,
+        Err(_) => return (0, 0, Vec::new()),
+    };
+    let mut tracks: Vec<(String, [f32; 3], String)> = Vec::new();
+    let (mut model, mut speed, mut first) = (0u16, 0i32, String::new());
+    for block in s.split('{') {
+        match ent_value(block, "classname") {
+            Some("path_track") => tracks.push((
+                ent_value(block, "targetname").unwrap_or("").to_string(),
+                ent_value(block, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]),
+                ent_value(block, "target").unwrap_or("").to_string(),
+            )),
+            Some("func_tracktrain") => {
+                if let Some(m) = ent_value(block, "model") {
+                    if let Some(n) = m.strip_prefix('*') {
+                        model = n.parse().unwrap_or(0);
+                    }
+                }
+                speed = ent_value(block, "speed").and_then(|v| v.parse::<f32>().ok()).unwrap_or(100.0) as i32;
+                first = ent_value(block, "target").unwrap_or("").to_string();
+            }
+            _ => {}
+        }
+    }
+    if model == 0 || first.is_empty() {
+        return (0, 0, Vec::new());
+    }
+    let mut way = Vec::new();
+    let mut name = first;
+    while !name.is_empty() && way.len() < 256 {
+        match tracks.iter().find(|t| t.0 == name) {
+            Some(t) => {
+                way.push(to_world(t.1, scale));
+                name = t.2.clone();
+            }
+            None => break,
+        }
+    }
+    (model, speed, way)
 }
 
 fn cook(path: &str, out: &str) -> Result<(), String> {
@@ -708,7 +753,7 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
 
     let n_tris = tri_idx.len() / 3;
     let mut o: Vec<u8> = Vec::new();
-    o.extend_from_slice(b"HLM7");
+    o.extend_from_slice(b"HLM8");
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_tris as u32).to_le_bytes());
     o.extend_from_slice(&(n_texs as u32).to_le_bytes());
@@ -719,6 +764,8 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     o.extend_from_slice(&0u32.to_le_bytes()); // clip/phys section offset, patched below
     let ent_off_pos = o.len();
     o.extend_from_slice(&0u32.to_le_bytes()); // entity section offset, patched below
+    let tram_off_pos = o.len();
+    o.extend_from_slice(&0u32.to_le_bytes()); // tram section offset, patched below
     for v in &verts {
         for c in v {
             o.extend_from_slice(&c.to_le_bytes());
@@ -885,10 +932,24 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.extend_from_slice(&e.wait.to_le_bytes());
     }
 
+    // ---- Tram (func_tracktrain ride) ----
+    // u16 submodel | u16 n_way | i32 speed | waypoints i32[3] × n_way (world)
+    let tram_off = o.len() as u32;
+    o[tram_off_pos..tram_off_pos + 4].copy_from_slice(&tram_off.to_le_bytes());
+    let (tram_model, tram_speed, way) = collect_tram(bsp.lump(LUMP_ENTITIES), scale);
+    o.extend_from_slice(&tram_model.to_le_bytes());
+    o.extend_from_slice(&(way.len() as u16).to_le_bytes());
+    o.extend_from_slice(&tram_speed.to_le_bytes());
+    for w in &way {
+        for c in w {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+
     std::fs::write(out, &o).map_err(|e| format!("write {}: {}", out, e))?;
     println!(
-        "cooked {} -> {}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes, {} ents, spawn [{},{},{}], {} KB)",
-        path, out, n_verts, n_tris, n_faces, n_leaves, n_clip, ents.len(), spawn[0], spawn[1], spawn[2], o.len() / 1024
+        "cooked {} -> {}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes, {} ents, tram {} waypts, spawn [{},{},{}], {} KB)",
+        path, out, n_verts, n_tris, n_faces, n_leaves, n_clip, ents.len(), way.len(), spawn[0], spawn[1], spawn[2], o.len() / 1024
     );
     Ok(())
 }

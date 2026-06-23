@@ -223,6 +223,25 @@ floors/walls. Gated: only tris with screen span > SUBDIV_PX (96), depth 1
 (<=4 sub-tris each), so the triangle count barely moves. Raise SUBDIV_DEPTH if
 warp persists.
 
+## M11 -- tram ride (func_tracktrain) (DONE, verified)
+
+The real Half-Life opening. NOTE: **c0a0** (not c1a0) is the game's first map --
+the Black Mesa Inbound tram ride. `make cook MAP=c0a0`.
+
+- Cook: `collect_tram` finds the `func_tracktrain` submodel + speed and follows
+  its `path_track` target chain into a waypoint list (.hlm HLM8, header gains
+  `tram_off`; `func_tracktrain` skipped in the entity list). c0a0 = 30 waypoints.
+- Runtime: scripted ride -- the player is locked to the tram (no physics), carried
+  along the waypoints at `tram_speed/TRAM_STEP_DIV` units/frame; `ride_off` =
+  tram displacement from its parked start. The tram submodel renders at `ride_off`
+  (per-entity GTE translation); the player can still look (right stick). When the
+  path ends, normal physics resume. Verified: camera rides through the tunnel,
+  tram car visible, world scrolls past.
+
+Simplifications: no walking on the moving tram (locked), no submodel collision
+(ride bypasses it), no stop triggers / control lever / sounds, demo pace
+(TRAM_STEP_DIV) faster than real.
+
 ## Next (pick per value)
 
 - **Door collision**: trace the door submodel's clip hull at its current offset

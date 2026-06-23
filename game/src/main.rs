@@ -55,6 +55,7 @@ const YAW_RATE: i32 = 64; // yaw units/frame at full stick (Q0.12)
 const PITCH_RATE: i32 = 48; // pitch units/frame at full stick
 const DEADZONE: i16 = 24;
 const VIEW_HEIGHT: i32 = 28;
+const TRAM_STEP_DIV: i32 = 15; // tram units/sec -> units/frame (demo pace)
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
 const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
@@ -87,6 +88,37 @@ fn view_rotation(yaw: u16, pitch: i16) -> Mat3I16 {
 
 fn dot12(row: [i16; 3], e: [i32; 3]) -> i32 {
     ((row[0] as i32 * e[0]) + (row[1] as i32 * e[1]) + (row[2] as i32 * e[2])) >> 12
+}
+
+/// Integer square root (for path-segment lengths). Verified by the tram ride
+/// playing back at the right pace.
+fn isqrt(n: i64) -> i32 {
+    if n <= 0 {
+        return 0;
+    }
+    let mut x = n;
+    let mut res = 0i64;
+    let mut bit = 1i64 << 62;
+    while bit > x {
+        bit >>= 2;
+    }
+    while bit != 0 {
+        if x >= res + bit {
+            x -= res + bit;
+            res = (res >> 1) + bit;
+        } else {
+            res >>= 1;
+        }
+        bit >>= 2;
+    }
+    res as i32
+}
+
+/// Length of a world-space segment.
+#[inline]
+fn seg_len(a: [i32; 3], b: [i32; 3]) -> i32 {
+    let d = [(b[0] - a[0]) as i64, (b[1] - a[1]) as i64, (b[2] - a[2]) as i64];
+    isqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1)
 }
 
 /// Cull when the screen triangle isn't front-facing (area <= 0). Matches the
@@ -315,6 +347,16 @@ fn main() {
     let mut pitch: i16 = 0;
     let mut frame_no: u16 = 0;
 
+    // Tram ride: carry the player along the path_track chain, then hand back
+    // control. ride_off is the tram's displacement from its parked start.
+    let spawn = m.spawn_pos;
+    let wp0 = if m.n_way > 0 { m.waypoint(0) } else { [0, 0, 0] };
+    let tram_step = (m.tram_speed / TRAM_STEP_DIV).max(3);
+    let mut riding = m.n_way >= 2;
+    let mut seg = 0usize;
+    let mut seg_dist = 0i32;
+    let mut ride_off = [0i32; 3];
+
     loop {
         // Modern twin-stick FPS: left stick moves/strafes, right stick looks
         // (X = turn, Y = pitch), Cross = jump. Analog only.
@@ -339,7 +381,36 @@ fn main() {
         yaw = (((yaw as i32) + (turn * YAW_RATE) / 128) & 0xFFF) as u16;
         pitch = (pitch + ((look * PITCH_RATE) / 128) as i16).clamp(-PITCH_MAX, PITCH_MAX);
 
-        player.update(&m, fwd, strafe, pad.buttons.is_held(button::CROSS), yaw);
+        if riding {
+            // Advance along the path, possibly crossing several waypoints.
+            let mut rem = tram_step;
+            while rem > 0 && seg + 1 < m.n_way {
+                let len = seg_len(m.waypoint(seg), m.waypoint(seg + 1));
+                if seg_dist + rem >= len {
+                    rem -= len - seg_dist;
+                    seg += 1;
+                    seg_dist = 0;
+                } else {
+                    seg_dist += rem;
+                    rem = 0;
+                }
+            }
+            let pos = if seg + 1 < m.n_way {
+                let a = m.waypoint(seg);
+                let b = m.waypoint(seg + 1);
+                let len = seg_len(a, b);
+                let f = (seg_dist * 4096 / len).clamp(0, 4096);
+                [a[0] + ((b[0] - a[0]) * f >> 12), a[1] + ((b[1] - a[1]) * f >> 12), a[2] + ((b[2] - a[2]) * f >> 12)]
+            } else {
+                riding = false; // reached the end of the line
+                m.waypoint(m.n_way - 1)
+            };
+            ride_off = [pos[0] - wp0[0], pos[1] - wp0[1], pos[2] - wp0[2]];
+            player.pos = [spawn[0] + ride_off[0], spawn[1] + ride_off[1], spawn[2] + ride_off[2]];
+            player.vel = [0, 0, 0];
+        } else {
+            player.update(&m, fwd, strafe, pad.buttons.is_held(button::CROSS), yaw);
+        }
         let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
 
         let rot = view_rotation(yaw, pitch);
@@ -437,6 +508,27 @@ fn main() {
                 let et = [-dot12(rot.m[0], es), -dot12(rot.m[1], es), -dot12(rot.m[2], es)];
                 scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
                 let (ff, nf) = m.submodel(e.submodel);
+                for f in ff..ff + nf {
+                    let (first, cnt) = m.face_tris(f);
+                    for tt in first..first + cnt {
+                        if tt >= m.n_tris {
+                            continue;
+                        }
+                        let (a, b, c) = m.tri_idx(tt);
+                        if a < nv && b < nv && c < nv {
+                            let p = scene::project_triangle(m.vert(a), m.vert(b), m.vert(c));
+                            emit_projected(&m, tt, p, nv, &mut np);
+                        }
+                    }
+                }
+            }
+
+            // Tram car: render its submodel at the current ride offset.
+            if m.tram_submodel > 0 && m.tram_submodel < m.n_models {
+                let es = [eye[0] - ride_off[0], eye[1] - ride_off[1], eye[2] - ride_off[2]];
+                let et = [-dot12(rot.m[0], es), -dot12(rot.m[1], es), -dot12(rot.m[2], es)];
+                scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+                let (ff, nf) = m.submodel(m.tram_submodel);
                 for f in ff..ff + nf {
                     let (first, cnt) = m.face_tris(f);
                     for tt in first..first + cnt {

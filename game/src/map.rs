@@ -76,6 +76,11 @@ pub struct Map {
     pub n_ents: usize,
     models_off: usize,
     ents_off: usize,
+    // Tram (func_tracktrain ride)
+    pub tram_submodel: usize,
+    pub tram_speed: i32,
+    pub n_way: usize,
+    way_off: usize,
 }
 
 const CLIPNODE_SZ: usize = 16;
@@ -106,7 +111,8 @@ impl Map {
         let bsp_off = rd_u32(data, 20) as usize;
         let clip_off = rd_u32(data, 24) as usize;
         let ent_off = rd_u32(data, 28) as usize;
-        let v_off = 32;
+        let tram_off = rd_u32(data, 32) as usize;
+        let v_off = 36;
         let idx_off = v_off + n_verts * 6;
         let ttex_off = idx_off + n_tris * 6;
         let tuv_off = ttex_off + n_tris * 2;
@@ -136,6 +142,11 @@ impl Map {
         let n_ents = rd_u32(data, n_ents_off) as usize;
         let ents_off = n_ents_off + 4;
 
+        let tram_submodel = rd_u16(data, tram_off) as usize;
+        let n_way = rd_u16(data, tram_off + 2) as usize;
+        let tram_speed = rd_i32(data, tram_off + 4);
+        let way_off = tram_off + 8;
+
         Map {
             data, n_verts, n_tris, n_texs, n_faces,
             v_off, idx_off, ttex_off, tuv_off, trgb_off, texblk_off,
@@ -143,7 +154,14 @@ impl Map {
             ff_off, fn_off, nodes_off, leaves_off, marks_off, vis_off, vis_len,
             n_clip, hull1_head, spawn_pos, spawn_yaw, clipn_off,
             n_models, n_ents, models_off, ents_off,
+            tram_submodel, tram_speed, n_way, way_off,
         }
+    }
+
+    #[inline]
+    pub fn waypoint(&self, i: usize) -> [i32; 3] {
+        let o = self.way_off + i * 12;
+        [rd_i32(self.data, o), rd_i32(self.data, o + 4), rd_i32(self.data, o + 8)]
     }
 
     /// `(first_face, num_faces)` for BSP submodel `m` (0 = world).
