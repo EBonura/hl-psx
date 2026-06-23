@@ -80,6 +80,7 @@ pub struct Map {
     pub tram_submodel: usize,
     pub tram_speed: i32,
     pub tram_head: i32,
+    pub tram_base: [i32; 3], // wp0 - tram origin: places the brush onto the track
     pub n_way: usize,
     way_off: usize,
 }
@@ -150,7 +151,8 @@ impl Map {
         let n_way = rd_u16(data, tram_off + 2) as usize;
         let tram_speed = rd_i32(data, tram_off + 4);
         let tram_head = rd_i32(data, tram_off + 8);
-        let way_off = tram_off + 12;
+        let tram_base = [rd_i32(data, tram_off + 12), rd_i32(data, tram_off + 16), rd_i32(data, tram_off + 20)];
+        let way_off = tram_off + 24;
 
         Map {
             data, n_verts, n_tris, n_texs, n_faces,
@@ -159,7 +161,7 @@ impl Map {
             ff_off, fn_off, fp_off, nodes_off, leaves_off, marks_off, vis_off, vis_len,
             n_clip, hull1_head, spawn_pos, spawn_yaw, clipn_off,
             n_models, n_ents, models_off, ents_off,
-            tram_submodel, tram_speed, tram_head, n_way, way_off,
+            tram_submodel, tram_speed, tram_head, tram_base, n_way, way_off,
         }
     }
 

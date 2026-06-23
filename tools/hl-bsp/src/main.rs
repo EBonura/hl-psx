@@ -573,13 +573,14 @@ fn collect_entities(ents: &[u8], models: &[u8], scale: f32) -> Vec<EntRec> {
 
 /// The `func_tracktrain` (tram) submodel, speed, and its `path_track` waypoint
 /// chain (world coords). Returns `(0, 0, [])` if the map has no tram.
-fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>) {
+fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) {
     let s = match std::str::from_utf8(ents) {
         Ok(s) => s,
-        Err(_) => return (0, 0, Vec::new()),
+        Err(_) => return (0, 0, Vec::new(), [0; 3]),
     };
     let mut tracks: Vec<(String, [f32; 3], String)> = Vec::new();
     let (mut model, mut speed, mut first) = (0u16, 0i32, String::new());
+    let mut origin = [0i32; 3]; // tram's editor origin (its reference point), world
     for block in s.split('{') {
         match ent_value(block, "classname") {
             Some("path_track") => tracks.push((
@@ -588,6 +589,7 @@ fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>) {
                 ent_value(block, "target").unwrap_or("").to_string(),
             )),
             Some("func_tracktrain") => {
+                // Last tracktrain wins (c0a0: the player "train"). ponytail.
                 if let Some(m) = ent_value(block, "model") {
                     if let Some(n) = m.strip_prefix('*') {
                         model = n.parse().unwrap_or(0);
@@ -595,12 +597,13 @@ fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>) {
                 }
                 speed = ent_value(block, "speed").and_then(|v| v.parse::<f32>().ok()).unwrap_or(100.0) as i32;
                 first = ent_value(block, "target").unwrap_or("").to_string();
+                origin = to_world(ent_value(block, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]), scale);
             }
             _ => {}
         }
     }
     if model == 0 || first.is_empty() {
-        return (0, 0, Vec::new());
+        return (0, 0, Vec::new(), [0; 3]);
     }
     let mut way = Vec::new();
     let mut name = first;
@@ -613,7 +616,7 @@ fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>) {
             None => break,
         }
     }
-    (model, speed, way)
+    (model, speed, way, origin)
 }
 
 fn cook(path: &str, out: &str) -> Result<(), String> {
@@ -987,12 +990,19 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     // u16 submodel | u16 n_way | i32 speed | waypoints i32[3] × n_way (world)
     let tram_off = o.len() as u32;
     o[tram_off_pos..tram_off_pos + 4].copy_from_slice(&tram_off.to_le_bytes());
-    let (tram_model, tram_speed, way) = collect_tram(bsp.lump(LUMP_ENTITIES), scale);
+    let (tram_model, tram_speed, way, _) = collect_tram(bsp.lump(LUMP_ENTITIES), scale);
     let tram_head = if tram_model > 0 { i32le(models, tram_model as usize * SZ_MODEL + 40).unwrap_or(0) } else { 0 };
+    // The tram brush verts are stored relative to the entity origin (bbox near
+    // 0); HL renders them at verts + pev->origin, which the path drives. So the
+    // render/collision offset is the full path position = wp0 + ride_off.
+    let tram_base = if !way.is_empty() { way[0] } else { [0, 0, 0] };
     o.extend_from_slice(&tram_model.to_le_bytes());
     o.extend_from_slice(&(way.len() as u16).to_le_bytes());
     o.extend_from_slice(&tram_speed.to_le_bytes());
     o.extend_from_slice(&tram_head.to_le_bytes());
+    for c in &tram_base {
+        o.extend_from_slice(&c.to_le_bytes());
+    }
     for w in &way {
         for c in w {
             o.extend_from_slice(&c.to_le_bytes());

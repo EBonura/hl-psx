@@ -423,7 +423,8 @@ fn main() {
                 nmov += 1;
             }
             if m.tram_submodel > 0 && nmov < movers.len() {
-                movers[nmov] = phys::Mover { head: m.tram_head, off: ride_off };
+                let toff = [ride_off[0] + m.tram_base[0], ride_off[1] + m.tram_base[1], ride_off[2] + m.tram_base[2]];
+                movers[nmov] = phys::Mover { head: m.tram_head, off: toff };
                 nmov += 1;
             }
         }
@@ -595,7 +596,8 @@ fn main() {
 
             // Tram car: render its submodel at the current ride offset.
             if m.tram_submodel > 0 && m.tram_submodel < m.n_models {
-                let es = [eye[0] - ride_off[0], eye[1] - ride_off[1], eye[2] - ride_off[2]];
+                let toff = [ride_off[0] + m.tram_base[0], ride_off[1] + m.tram_base[1], ride_off[2] + m.tram_base[2]];
+                let es = [eye[0] - toff[0], eye[1] - toff[1], eye[2] - toff[2]];
                 let et = [-dot12(rot.m[0], es), -dot12(rot.m[1], es), -dot12(rot.m[2], es)];
                 scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
                 let (ff, nf) = m.submodel(m.tram_submodel);
