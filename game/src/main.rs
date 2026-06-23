@@ -375,7 +375,6 @@ fn main() {
 
     // Tram ride: carry the player along the path_track chain, then hand back
     // control. ride_off is the tram's displacement from its parked start.
-    let spawn = m.spawn_pos;
     let wp0 = if m.n_way > 0 { m.waypoint(0) } else { [0, 0, 0] };
     let tram_step = (m.tram_speed / TRAM_STEP_DIV).max(3);
     let mut riding = m.n_way >= 2;
@@ -407,6 +406,29 @@ fn main() {
         yaw = (((yaw as i32) + (turn * YAW_RATE) / 128) & 0xFFF) as u16;
         pitch = (pitch + ((look * PITCH_RATE) / 128) as i16).clamp(-PITCH_MAX, PITCH_MAX);
 
+        // Collision movers: every brush entity at its current offset (doors at
+        // their open amount, statics at origin) + the tram at its ride offset.
+        let mut movers = [phys::NO_MOVER; MAX_ENTS + 1];
+        let mut nmov = 0;
+        unsafe {
+            for ei in 0..m.n_ents.min(MAX_ENTS) {
+                let e = m.entity(ei);
+                let off = if e.kind == 1 {
+                    let ph = ENT_PHASE[ei] as i64;
+                    [((e.mv[0] as i64 * ph) >> 12) as i32, ((e.mv[1] as i64 * ph) >> 12) as i32, ((e.mv[2] as i64 * ph) >> 12) as i32]
+                } else {
+                    e.origin
+                };
+                movers[nmov] = phys::Mover { head: e.head, off };
+                nmov += 1;
+            }
+            if m.tram_submodel > 0 && nmov < movers.len() {
+                movers[nmov] = phys::Mover { head: m.tram_head, off: ride_off };
+                nmov += 1;
+            }
+        }
+        let movers = &movers[..nmov];
+
         if riding {
             // Advance along the path, possibly crossing several waypoints.
             let mut rem = tram_step;
@@ -432,10 +454,12 @@ fn main() {
                 m.waypoint(m.n_way - 1)
             };
             ride_off = [pos[0] - wp0[0], pos[1] - wp0[1], pos[2] - wp0[2]];
-            player.pos = [spawn[0] + ride_off[0], spawn[1] + ride_off[1], spawn[2] + ride_off[2]];
+            // Locked to the tram (walking on a moving platform desyncs gravity).
+            player.pos = [m.spawn_pos[0] + ride_off[0], m.spawn_pos[1] + ride_off[1], m.spawn_pos[2] + ride_off[2]];
             player.vel = [0, 0, 0];
         } else {
-            player.update(&m, fwd, strafe, pad.buttons.is_held(button::CROSS), yaw);
+            // On foot: full physics, colliding with the world + brush movers.
+            player.update(&m, movers, fwd, strafe, pad.buttons.is_held(button::CROSS), yaw);
         }
         let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
 

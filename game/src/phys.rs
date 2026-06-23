@@ -105,6 +105,36 @@ fn trace(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> Trace {
     tr
 }
 
+/// A moving/brush collider: a submodel clip hull at a world offset.
+#[derive(Clone, Copy)]
+pub struct Mover {
+    pub head: i32,
+    pub off: [i32; 3],
+}
+
+pub const NO_MOVER: Mover = Mover { head: 0, off: [0, 0, 0] };
+
+/// Trace the world hull plus every mover hull (each shifted by its offset);
+/// return the nearest impact.
+fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Trace {
+    let mut best = trace(map, world_head, p1, p2);
+    for mv in movers {
+        if mv.head <= 0 {
+            continue; // no clip hull for this submodel
+        }
+        let o = mv.off;
+        let q1 = [p1[0] - o[0], p1[1] - o[1], p1[2] - o[2]];
+        let q2 = [p2[0] - o[0], p2[1] - o[1], p2[2] - o[2]];
+        let t = trace(map, mv.head, q1, q2);
+        best.startsolid |= t.startsolid;
+        if t.frac < best.frac {
+            best.frac = t.frac;
+            best.normal = t.normal;
+        }
+    }
+    best
+}
+
 /// Remove the component of `v` along `n` (×4096) -- slide along a plane.
 fn clip(v: [i32; 3], n: [i32; 3]) -> [i32; 3] {
     let proj = ((v[0] as i64 * n[0] as i64 + v[1] as i64 * n[1] as i64 + v[2] as i64 * n[2] as i64) >> 12) as i32;
@@ -117,14 +147,14 @@ fn clip(v: [i32; 3], n: [i32; 3]) -> [i32; 3] {
 
 /// Slide `vel` from `pos` for one frame, sliding along walls (4 iterations).
 /// Returns the new position and the wall-clipped velocity.
-fn slide_move(map: &Map, head: i32, mut pos: [i32; 3], mut vel: [i32; 3]) -> ([i32; 3], [i32; 3]) {
+fn slide_move(map: &Map, head: i32, movers: &[Mover], mut pos: [i32; 3], mut vel: [i32; 3]) -> ([i32; 3], [i32; 3]) {
     let mut d = vel;
     for _ in 0..4 {
         if d == [0, 0, 0] {
             break;
         }
         let end = [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]];
-        let tr = trace(map, head, pos, end);
+        let tr = trace_all(map, head, movers, pos, end);
         if tr.startsolid {
             break;
         }
@@ -165,7 +195,7 @@ impl Player {
     /// Advance the player one frame. `fwd`/`strafe` are analog deltas in
     /// `-128..=127` (D-pad sends ±127) relative to `yaw` (Q0.12); `jump`
     /// triggers when grounded.
-    pub fn update(&mut self, map: &Map, fwd: i32, strafe: i32, jump: bool, yaw: u16) {
+    pub fn update(&mut self, map: &Map, movers: &[Mover], fwd: i32, strafe: i32, jump: bool, yaw: u16) {
         // Forward = (sin yaw, 0, cos yaw); right = (cos yaw, 0, -sin yaw). sin/cos
         // are ×4096; dividing the ±127 input by 128 keeps a unit wish dir ≈ ×4096.
         let s = sincos::sin_q12(yaw);
@@ -192,16 +222,16 @@ impl Player {
         // along the ground, so the player climbs stairs/thresholds <= STEP_UP.
         let head = map.hull1_head;
         let start = self.pos;
-        let (flat_pos, flat_vel) = slide_move(map, head, start, self.vel);
+        let (flat_pos, flat_vel) = slide_move(map, head, movers, start, self.vel);
         self.vel = flat_vel;
 
         if self.on_ground && (self.vel[0] != 0 || self.vel[2] != 0) {
             let up_end = [start[0], start[1] + STEP_UP, start[2]];
-            let tup = trace(map, head, start, up_end);
+            let tup = trace_all(map, head, movers, start, up_end);
             let up_pos = [start[0], start[1] + ((STEP_UP as i64 * tup.frac as i64) >> 12) as i32, start[2]];
-            let (sp, _) = slide_move(map, head, up_pos, [self.vel[0], 0, self.vel[2]]);
+            let (sp, _) = slide_move(map, head, movers, up_pos, [self.vel[0], 0, self.vel[2]]);
             let dn_end = [sp[0], sp[1] - STEP_UP * 2, sp[2]];
-            let tdn = trace(map, head, sp, dn_end);
+            let tdn = trace_all(map, head, movers, sp, dn_end);
             let step_pos = [sp[0], sp[1] - (((STEP_UP * 2) as i64 * tdn.frac as i64) >> 12) as i32, sp[2]];
             let landed = tdn.frac < 4096 && tdn.normal[1] > GROUND_NY;
             if landed && dist_xz(start, step_pos) > dist_xz(start, flat_pos) {
@@ -215,7 +245,7 @@ impl Player {
 
         // Ground check: probe straight down a little.
         let down = [self.pos[0], self.pos[1] - STEP_DOWN, self.pos[2]];
-        let g = trace(map, head, self.pos, down);
+        let g = trace_all(map, head, movers, self.pos, down);
         self.on_ground = g.frac < 4096 && g.normal[1] > GROUND_NY;
         if self.on_ground {
             // Snap onto the floor and kill downward speed.

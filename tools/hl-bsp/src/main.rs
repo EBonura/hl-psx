@@ -507,7 +507,7 @@ struct EntRec {
     mv: [i32; 3], // door full-open displacement (world)
     center: [i32; 3], // door trigger centre (world)
     r2: i32, // trigger radius^2 (world)
-    wait: i32,
+    head: i32, // submodel hull-1 clipnode root (collision)
 }
 
 /// func_door move direction (HL) + distance: slides `size_along_axis - lip`.
@@ -557,14 +557,15 @@ fn collect_entities(ents: &[u8], models: &[u8], scale: f32) -> Vec<EntRec> {
         let sz = [maxs[0] - mins[0], maxs[1] - mins[1], maxs[2] - mins[2]];
         let rad = (sz[0].max(sz[1]).max(sz[2]) * 0.5 + 80.0) / scale;
         let r2 = (rad * rad) as i32;
+        let head = i32le(models, mo + 40).unwrap_or(0); // dmodel_t.headnode[1]
         if cls == "func_door" {
             let angle = ent_value(block, "angle").and_then(|a| a.parse().ok()).unwrap_or(0.0);
             let lip = ent_value(block, "lip").and_then(|a| a.parse().ok()).unwrap_or(8.0);
             let (dir, dist) = door_move(angle, mins, maxs, lip);
             let mv = to_world([dir[0] * dist, dir[1] * dist, dir[2] * dist], scale);
-            out.push(EntRec { submodel: submodel as u16, kind: 1, origin, mv, center, r2, wait: 180 });
+            out.push(EntRec { submodel: submodel as u16, kind: 1, origin, mv, center, r2, head });
         } else {
-            out.push(EntRec { submodel: submodel as u16, kind: 0, origin, mv: [0; 3], center, r2: 0, wait: 0 });
+            out.push(EntRec { submodel: submodel as u16, kind: 0, origin, mv: [0; 3], center, r2: 0, head });
         }
     }
     out
@@ -979,7 +980,7 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
             o.extend_from_slice(&c.to_le_bytes());
         }
         o.extend_from_slice(&e.r2.to_le_bytes());
-        o.extend_from_slice(&e.wait.to_le_bytes());
+        o.extend_from_slice(&e.head.to_le_bytes());
     }
 
     // ---- Tram (func_tracktrain ride) ----
@@ -987,9 +988,11 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     let tram_off = o.len() as u32;
     o[tram_off_pos..tram_off_pos + 4].copy_from_slice(&tram_off.to_le_bytes());
     let (tram_model, tram_speed, way) = collect_tram(bsp.lump(LUMP_ENTITIES), scale);
+    let tram_head = if tram_model > 0 { i32le(models, tram_model as usize * SZ_MODEL + 40).unwrap_or(0) } else { 0 };
     o.extend_from_slice(&tram_model.to_le_bytes());
     o.extend_from_slice(&(way.len() as u16).to_le_bytes());
     o.extend_from_slice(&tram_speed.to_le_bytes());
+    o.extend_from_slice(&tram_head.to_le_bytes());
     for w in &way {
         for c in w {
             o.extend_from_slice(&c.to_le_bytes());

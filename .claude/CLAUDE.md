@@ -292,10 +292,30 @@ reads + projection), not emit/fill.
 Further levers (bigger, diminishing): QUADS (cook-pair fan tris -> halve prim
 count + per-tri data work), faster/aligned per-tri data layout, geometry LOD.
 
+## M13 -- brush/door collision (DONE; walking unverified headlessly)
+
+On foot, the player now collides with brush entities, not just the world. Cook
+stores each submodel's hull-1 clipnode root (`Ent.head`, `tram_head`). Runtime
+builds a per-frame `Mover` list (every brush entity at its current offset -- doors
+at their open amount, statics at origin, tram at ride_off) and `phys::trace_all`
+traces the world hull plus each mover hull (shifted by -offset) per slide/step/
+ground probe, taking the nearest hit. So closed doors and `func_wall`s block you;
+the parked tram is solid. Reuses the verified `SV_RecursiveHullCheck` trace.
+
+Can't headlessly verify walking-into-walls (analog-only controls; the frametest
+harness is digital). Verified instead: ride + render intact, fps unchanged, build
+clean. **User to playtest the actual blocking.**
+
+Deferred -- **walk on the MOVING tram**: attempted (carry player by tram delta +
+full physics) but the player fell through (moving-platform gravity desync). The
+ride stays locked-carry. Needs proper moving-platform physics (re-seat rider on
+the platform floor each frame) -- a focused follow-up.
+
 ## Next (pick per value)
 
-- **Door collision**: trace the door submodel's clip hull at its current offset.
-- **More perf**: the levers above (throughput-bound now).
+- **Real triggers/buttons** (targetname) so doors open on cue, not proximity.
+- **Walk on the moving tram** (moving-platform physics).
+- **More perf**: quads / geometry LOD (throughput-bound).
 - **func_tracktrain**: the tram ride (the actual opening of Half-Life).
 - **Buttons/triggers**: real targetname-based triggering instead of proximity.
 - **UV subdivision + affine correction**: fix tiling/warp on large tris.
