@@ -307,24 +307,46 @@ fn cook_miptex(l: &[u8], mo: usize) -> (CookedTex, (u32, u32)) {
     let fw = final_size(w0 as u32) as usize;
     let fh = final_size(h0 as u32) as usize;
     let px = mo + off0;
-    // Nearest-neighbour downscale to RGB.
-    let mut colors: Vec<(u8, u8, u8)> = Vec::with_capacity(fw * fh);
+    // "{..." textures are masked: source palette index 255 is transparent.
+    let masked = l.get(mo) == Some(&b'{');
+    // Nearest-neighbour downscale, keeping the source palette index per texel.
+    let mut idxv: Vec<u8> = Vec::with_capacity(fw * fh);
     for y in 0..fh {
         for x in 0..fw {
-            let idx = *l.get(px + (y * h0 / fh) * w0 + (x * w0 / fw)).unwrap_or(&0) as usize;
-            colors.push(pal[idx]);
+            idxv.push(*l.get(px + (y * h0 / fh) * w0 + (x * w0 / fw)).unwrap_or(&0));
         }
     }
-    let pal16 = median_cut16(&colors);
     let mut clut = [0u16; 16];
-    for (i, c) in pal16.iter().enumerate() {
-        clut[i] = to_bgr555(c.0, c.1, c.2);
-    }
     let mut pix4 = vec![0u8; fw * fh / 2];
-    for (i, chunk) in colors.chunks(2).enumerate() {
-        let lo = nearest16(&pal16, chunk[0]);
-        let hi = chunk.get(1).map(|c| nearest16(&pal16, *c)).unwrap_or(0);
-        pix4[i] = lo | (hi << 4);
+    if masked {
+        // Slot 0 = 0x0000 (the PS1 GPU skips it); 15 opaque colours in 1..=15.
+        let opaque: Vec<(u8, u8, u8)> = idxv.iter().filter(|&&i| i != 255).map(|&i| pal[i as usize]).collect();
+        let pal15 = median_cut16(&opaque);
+        let n = pal15.len().min(15);
+        for i in 0..n {
+            clut[i + 1] = to_bgr555(pal15[i].0, pal15[i].1, pal15[i].2);
+        }
+        let map = |i: u8| -> u8 {
+            if i == 255 || n == 0 {
+                0
+            } else {
+                nearest16(&pal15[..n], pal[i as usize]) + 1
+            }
+        };
+        for (i, chunk) in idxv.chunks(2).enumerate() {
+            pix4[i] = map(chunk[0]) | (chunk.get(1).map(|&j| map(j)).unwrap_or(0) << 4);
+        }
+    } else {
+        let colors: Vec<(u8, u8, u8)> = idxv.iter().map(|&i| pal[i as usize]).collect();
+        let pal16 = median_cut16(&colors);
+        for (i, c) in pal16.iter().enumerate() {
+            clut[i] = to_bgr555(c.0, c.1, c.2);
+        }
+        for (i, chunk) in colors.chunks(2).enumerate() {
+            let lo = nearest16(&pal16, chunk[0]);
+            let hi = chunk.get(1).map(|c| nearest16(&pal16, *c)).unwrap_or(0);
+            pix4[i] = lo | (hi << 4);
+        }
     }
     (CookedTex { w: fw as u16, h: fh as u16, clut, pix4 }, (w0 as u32, h0 as u32))
 }

@@ -242,10 +242,28 @@ Simplifications: no walking on the moving tram (locked), no submodel collision
 (ride bypasses it), no stop triggers / control lever / sounds, demo pace
 (TRAM_STEP_DIV) faster than real.
 
+## M12 -- perf pass + masked transparency (DONE)
+
+Playtest: terrible framerate + transparent geometry rendered as opaque garbage.
+
+- **Subdivision gated** (`SUBDIV_NEAR`): only big AND near triangles take the
+  view-space subdivide path; far big tris emit straight from the cache. M10 had
+  routed every big tri through it (CPU + 4x fill) -- the main regression.
+- **Project only visible verts**: lazy per-frame `proj_vert` cache (`VERT_FRAME`)
+  instead of projecting all ~5000 verts every frame.
+- **Masked textures** (`{...`): cook maps the transparent key (palette index 255)
+  to CLUT slot 0 = 0x0000, which the PS1 GPU skips -- grates/fences/railings are
+  see-through (and cheaper) instead of opaque garbage. No runtime change.
+
+fps not measured headlessly (frametest is digital-only; analog-only controls) --
+user verifies. Further levers if still slow: fewer/smaller textured prims
+(overdraw), distance/fog cull, smaller OT.
+
 ## Next (pick per value)
 
 - **Door collision**: trace the door submodel's clip hull at its current offset
   so a closed door blocks the player.
+- **More perf**: overdraw/fill reduction, distance cull, measure via frontend CLI.
 - **func_tracktrain**: the tram ride (the actual opening of Half-Life).
 - **Buttons/triggers**: real targetname-based triggering instead of proximity.
 - **UV subdivision + affine correction**: fix tiling/warp on large tris.
