@@ -619,6 +619,28 @@ fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) 
     (model, speed, way, origin)
 }
 
+/// Point entities that place a studio model: `(model_type, origin_world, yaw)`.
+/// type 0 = scientist, 1 = barney.
+fn collect_props(ents: &[u8], scale: f32) -> Vec<(u16, [i32; 3], i32)> {
+    let s = match std::str::from_utf8(ents) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for block in s.split('{') {
+        let ty = match ent_value(block, "classname").unwrap_or("") {
+            "monster_scientist" | "monster_sitting_scientist" => 0u16,
+            "monster_barney" => 1u16,
+            _ => continue,
+        };
+        let origin = to_world(ent_value(block, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]), scale);
+        let deg = ent_value(block, "angles").and_then(parse_vec3).map(|a| a[1]).unwrap_or(0.0);
+        let yaw = (((deg - 90.0) / 360.0 * 4096.0).round() as i32) & 0xFFF;
+        out.push((ty, origin, yaw));
+    }
+    out
+}
+
 fn cook(path: &str, out: &str) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {}", path, e))?;
     let bsp = Bsp::parse(&bytes)?;
@@ -779,7 +801,7 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
 
     let n_tris = tri_idx.len() / 3;
     let mut o: Vec<u8> = Vec::new();
-    o.extend_from_slice(b"HLM8");
+    o.extend_from_slice(b"HLM9");
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_tris as u32).to_le_bytes());
     o.extend_from_slice(&(n_texs as u32).to_le_bytes());
@@ -792,6 +814,8 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     o.extend_from_slice(&0u32.to_le_bytes()); // entity section offset, patched below
     let tram_off_pos = o.len();
     o.extend_from_slice(&0u32.to_le_bytes()); // tram section offset, patched below
+    let prop_off_pos = o.len();
+    o.extend_from_slice(&0u32.to_le_bytes()); // prop (model placement) section offset
     for v in &verts {
         for c in v {
             o.extend_from_slice(&c.to_le_bytes());
@@ -1009,10 +1033,25 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         }
     }
 
+    // ---- Props (point-entity model placements) ----
+    // u32 n_props | (u16 type, u16 pad, i32 origin[3], i32 yaw) × n_props
+    let prop_off = o.len() as u32;
+    o[prop_off_pos..prop_off_pos + 4].copy_from_slice(&prop_off.to_le_bytes());
+    let props = collect_props(bsp.lump(LUMP_ENTITIES), scale);
+    o.extend_from_slice(&(props.len() as u32).to_le_bytes());
+    for (ty, org, yaw) in &props {
+        o.extend_from_slice(&ty.to_le_bytes());
+        o.extend_from_slice(&0u16.to_le_bytes());
+        for c in org {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        o.extend_from_slice(&yaw.to_le_bytes());
+    }
+
     std::fs::write(out, &o).map_err(|e| format!("write {}: {}", out, e))?;
     println!(
-        "cooked {} -> {}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes, {} ents, tram {} waypts, spawn [{},{},{}], {} KB)",
-        path, out, n_verts, n_tris, n_faces, n_leaves, n_clip, ents.len(), way.len(), spawn[0], spawn[1], spawn[2], o.len() / 1024
+        "cooked {} -> {}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes, {} ents, tram {} waypts, {} props, spawn [{},{},{}], {} KB)",
+        path, out, n_verts, n_tris, n_faces, n_leaves, n_clip, ents.len(), way.len(), props.len(), spawn[0], spawn[1], spawn[2], o.len() / 1024
     );
     Ok(())
 }
@@ -1126,7 +1165,18 @@ fn cook_mdl(path: &str, out: &str) -> Result<(), String> {
         bones.push(world);
     }
 
-    let (textureindex, skinindex) = (i(184) as usize, i(200) as usize);
+    // Textures: human models keep them in an external <base>T.mdl (numtextures==0).
+    let ext = i(180) == 0;
+    let tbuf: Vec<u8> = if ext {
+        let tp = path.strip_suffix(".mdl").map(|s| format!("{}T.mdl", s)).unwrap_or_else(|| format!("{}T.mdl", path));
+        std::fs::read(&tp).map_err(|e| format!("texture file {}: {}", tp, e))?
+    } else {
+        Vec::new()
+    };
+    let tb: &[u8] = if ext { &tbuf } else { &b };
+    let ti = |o: usize| i32le(tb, o).unwrap_or(0);
+    let th16 = |o: usize| i16::from_le_bytes([tb[o], tb[o + 1]]);
+    let (textureindex, skinindex) = (ti(184) as usize, ti(200) as usize);
     let bodypartindex = i(208) as usize;
     let modelindex = i(bodypartindex + 72) as usize; // bodypart[0].model[0]
     let (nummesh, meshindex) = (i(modelindex + 72) as usize, i(modelindex + 76) as usize);
@@ -1153,11 +1203,11 @@ fn cook_mdl(path: &str, out: &str) -> Result<(), String> {
         let me = meshindex + m * 20;
         let triindex = i(me + 4) as usize;
         let skinref = i(me + 8) as usize;
-        let texid = h16(skinindex + skinref * 2) as usize; // skin family 0
+        let texid = th16(skinindex + skinref * 2) as usize; // skin family 0 (texture file)
         let to = textureindex + texid * 80;
-        let (tw, th, tpix) = (i(to + 68) as usize, i(to + 72) as usize, i(to + 76) as usize);
+        let (tw, th, tpix) = (ti(to + 68) as usize, ti(to + 72) as usize, ti(to + 76) as usize);
         let slot = *slot_of.entry(texid).or_insert_with(|| {
-            texs.push(cook_mdl_tex(&b, tpix, tw.max(1), th.max(1)));
+            texs.push(cook_mdl_tex(tb, tpix, tw.max(1), th.max(1)));
             texs.len() - 1
         });
         let (fw, fh) = (texs[slot].w as f32, texs[slot].h as f32);

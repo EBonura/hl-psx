@@ -322,16 +322,26 @@ geometry+texture layout as `.hlm`. Runtime: `model.rs` loader + `vram::upload_te
 (now generic; VRAM gained a 2nd texture band) + `draw_model` (project + textured
 emit). Proven with `can.mdl` (a textured soda can renders correctly in the tram).
 
-Current limits / next:
-- **External textures**: human models (scientist/barney/gman) keep textures in a
-  separate `<name>T.mdl` (numtextures=0 in the main file) -- not yet loaded, so
-  they render untextured/garbage. Parse the `_T.mdl` for textures+skins.
-- **Entity placement**: the demo can floats in front of the camera (×12 scale).
-  Real use = parse point entities (monster_*, props) -> place models at their
-  origin/angle at ×1 scale. Needs a classname->model registry.
-- **Animation**: only the reference pose; runtime skeleton + sequence playback
-  is the big follow-up (per-frame bone matrices on the PS1, fixed-point).
-- No backface cull on models yet (winding unverified); flat full-bright shade.
+## M14b -- external textures + entity placement (DONE)
+
+- **External textures**: `cook_mdl` loads `<base>T.mdl` when the main file has
+  `numtextures==0` (scientist/barney/gman); uses the texture file's textureindex
+  + skin table. `make models MODEL=scientist` -> textured scientist.hlmdl.
+- **Placement**: the map cook emits a props section (`.hlm` HLM9, header gains
+  `prop_off`): `collect_props` -> (model_type, world origin, yaw) for
+  monster_scientist/sitting (type 0) + barney (type 1). Runtime includes
+  scientist.hlmdl, and `draw_model`s it at each type-0 prop (×1), frustum-culled
+  by forward depth + horizontal FOV. c0a0 = 13 props.
+
+Verified the scientist RENDERS (geometry + bind pose + external textures) via an
+isolated capture (clear human figure, white lab coat). NOT captured in-situ: the
+placed scientists are scattered deep in levels + occluded by the tram car, and
+the analog-only controls can't be driven headlessly to walk up to one -- user
+verifies in-game. Tunables: `draw_model` has no model backface cull (winding
+unverified; flat full-bright shade); yaw not applied (scientists face bind-pose
+dir); barney (type 1) parsed but not included/drawn yet.
+
+Next: animation (runtime skeleton + sequence playback) is the big follow-up.
 
 ## Next (pick per value)
 

@@ -83,6 +83,9 @@ pub struct Map {
     pub tram_base: [i32; 3], // wp0 - tram origin: places the brush onto the track
     pub n_way: usize,
     way_off: usize,
+    // Props (point-entity model placements)
+    pub n_props: usize,
+    props_off: usize,
 }
 
 const LEAF_SZ: usize = 16; // visofs i32 + mark range u16×2 + bbox centre i16×3 + radius u16
@@ -116,7 +119,8 @@ impl Map {
         let clip_off = rd_u32(data, 24) as usize;
         let ent_off = rd_u32(data, 28) as usize;
         let tram_off = rd_u32(data, 32) as usize;
-        let v_off = 36;
+        let prop_off = rd_u32(data, 36) as usize;
+        let v_off = 40;
         let idx_off = v_off + n_verts * 6;
         let ttex_off = idx_off + n_tris * 6;
         let tuv_off = ttex_off + n_tris * 2;
@@ -154,6 +158,9 @@ impl Map {
         let tram_base = [rd_i32(data, tram_off + 12), rd_i32(data, tram_off + 16), rd_i32(data, tram_off + 20)];
         let way_off = tram_off + 24;
 
+        let n_props = rd_u32(data, prop_off) as usize;
+        let props_off = prop_off + 4;
+
         Map {
             data, n_verts, n_tris, n_texs, n_faces,
             v_off, idx_off, ttex_off, tuv_off, trgb_off, texblk_off,
@@ -162,7 +169,19 @@ impl Map {
             n_clip, hull1_head, spawn_pos, spawn_yaw, clipn_off,
             n_models, n_ents, models_off, ents_off,
             tram_submodel, tram_speed, tram_head, tram_base, n_way, way_off,
+            n_props, props_off,
         }
+    }
+
+    /// `(model_type, origin, yaw)` for prop `i` (a placed studio model).
+    #[inline]
+    pub fn prop(&self, i: usize) -> (u16, [i32; 3], i32) {
+        let o = self.props_off + i * 20;
+        (
+            rd_u16(self.data, o),
+            [rd_i32(self.data, o + 4), rd_i32(self.data, o + 8), rd_i32(self.data, o + 12)],
+            rd_i32(self.data, o + 16),
+        )
     }
 
     #[inline]

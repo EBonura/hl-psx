@@ -27,7 +27,6 @@ use psx_gpu::prim::TriTexturedGouraud;
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
-use psx_math::sincos;
 use psx_pad::{button, enable_analog_port1, poll_port1};
 use psx_rt::tty;
 
@@ -38,7 +37,7 @@ use vram::{TexSlot, EMPTY_SLOT};
 // Cooked at build time from the user's own Half-Life install (git-ignored).
 // `make cook MAP=<name>` writes the chosen map here.
 static MAP_BYTES: &[u8] = include_bytes!("../../data/maps/current.hlm");
-static CAN_BYTES: &[u8] = include_bytes!("../../data/models/can.hlmdl");
+static SCI_BYTES: &[u8] = include_bytes!("../../data/models/scientist.hlmdl");
 
 const OT_LEN: usize = 1024;
 const MAX_VERTS: usize = 8192;
@@ -354,26 +353,24 @@ unsafe fn emit_cv(cv: &[render::CVert; 3], depth: u8, mat: TextureMaterial, np: 
 }
 
 /// Draw a static model at world `pos`, flat-shaded (no per-vertex lighting yet).
-unsafe fn draw_model(md: &Model, slots: &[TexSlot], pos: [i32; 3], eye: [i32; 3], rot: &Mat3I16, np: &mut usize) {
+unsafe fn draw_model(md: &Model, slots: &[TexSlot], pos: [i32; 3], scale: i32, eye: [i32; 3], rot: &Mat3I16, np: &mut usize) {
     let es = [eye[0] - pos[0], eye[1] - pos[1], eye[2] - pos[2]];
     let et = [-dot12(rot.m[0], es), -dot12(rot.m[1], es), -dot12(rot.m[2], es)];
     scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+    let sv = |i: usize| {
+        let v = md.vert(i);
+        Vec3I16::new((v.x as i32 * scale) as i16, (v.y as i32 * scale) as i16, (v.z as i32 * scale) as i16)
+    };
     for t in 0..md.n_tris {
         let slot = slots[md.tri_tex(t).min(slots.len() - 1)];
         if !slot.valid {
             continue;
         }
         let (a, b, c) = md.tri_idx(t);
-        // ponytail: DEMO ×12 scale so the test can pokes past the tram car; real
-        // props render ×1 once placed at entity positions.
-        let sv = |i: usize| {
-            let v = md.vert(i);
-            Vec3I16::new((v.x as i32 * 12) as i16, (v.y as i32 * 12) as i16, (v.z as i32 * 12) as i16)
-        };
         let p = scene::project_triangle(sv(a), sv(b), sv(c));
         let (pa, pb, pc) = (p[0], p[1], p[2]);
         if pa.sz < NEAR || pb.sz < NEAR || pc.sz < NEAR {
-            continue; // ponytail: drop near-straddling model tris (rare)
+            continue;
         }
         let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
         // No backface cull yet (MDL winding unverified); flat full-bright shade.
@@ -407,9 +404,9 @@ fn main() {
     if failed > 0 {
         tty::println("hl-psx: some textures did not fit VRAM");
     }
-    let can = Model::load(CAN_BYTES);
+    let sci = Model::load(SCI_BYTES);
     unsafe {
-        vram::upload_tex_blob(can.tex_blob(), can.n_texs, &mut MODEL_SLOTS);
+        vram::upload_tex_blob(sci.tex_blob(), sci.n_texs, &mut MODEL_SLOTS);
     }
 
     let mut player = phys::Player::new(m.spawn_pos);
@@ -660,11 +657,24 @@ fn main() {
                 }
             }
 
-            // MDL proof: a soda can floating in front of the camera.
-            let fwx = sincos::sin_q12(yaw);
-            let fwz = sincos::sin_q12((yaw + 1024) & 0xFFF);
-            let mpos = [eye[0] + ((fwx * 50) >> 12), eye[1] - 15, eye[2] + ((fwz * 50) >> 12)];
-            draw_model(&can, &MODEL_SLOTS, mpos, eye, &rot, &mut np);
+            // Studio models placed at point entities (scientists). Frustum-cull
+            // by the prop's forward depth + horizontal FOV so off-screen ones
+            // don't burn primitives.
+            for pi in 0..m.n_props {
+                let (ty, org, _yaw) = m.prop(pi);
+                if ty != 0 {
+                    continue; // only scientists included for now
+                }
+                let vz = dot12(rot.m[2], org) + base_t[2];
+                if vz < render::NEAR_Z - 72 || vz > FAR_VIEW {
+                    continue;
+                }
+                let vx = dot12(rot.m[0], org) + base_t[0];
+                if vx.abs() > vz + 128 {
+                    continue;
+                }
+                draw_model(&sci, &MODEL_SLOTS, org, 1, eye, &rot, &mut np);
+            }
 
             fb.clear(0, 0, 0);
             OT.submit();
