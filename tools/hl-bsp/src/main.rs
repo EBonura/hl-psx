@@ -845,6 +845,24 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.push(0);
     }
 
+    // Per-face world-space plane (side-adjusted): front-facing iff dot(n,eye) > dist.
+    // Lets the runtime backface-cull a whole face before any per-triangle work.
+    for f in 0..n_faces {
+        let fo2 = f * SZ_FACE;
+        let planenum = u16le(faces, fo2).unwrap_or(0) as usize;
+        let s = if u16le(faces, fo2 + 2).unwrap_or(0) == 0 { 1.0 } else { -1.0 };
+        let po = planenum * SZ_PLANE;
+        let nx = f32le(planes, po).unwrap_or(0.0) * s;
+        let ny = f32le(planes, po + 4).unwrap_or(0.0) * s;
+        let nz = f32le(planes, po + 8).unwrap_or(0.0) * s;
+        let d = f32le(planes, po + 12).unwrap_or(0.0) * s;
+        o.extend_from_slice(&((nx * 4096.0).round() as i16).to_le_bytes()); // world: swap Y/Z
+        o.extend_from_slice(&((nz * 4096.0).round() as i16).to_le_bytes());
+        o.extend_from_slice(&((ny * 4096.0).round() as i16).to_le_bytes());
+        o.extend_from_slice(&0i16.to_le_bytes());
+        o.extend_from_slice(&((d / scale).round() as i32).to_le_bytes());
+    }
+
     for ni in 0..n_nodes {
         let no = ni * SZ_NODE;
         let planenum = i32le(nodes, no).unwrap_or(0).max(0) as usize;

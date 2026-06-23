@@ -482,6 +482,12 @@ fn main() {
                     if vx.abs() > vz + lr * 2 {
                         continue;
                     }
+                    // Vertical FOV ~37deg (120px half-height / H_PROJ 160): cull
+                    // if |vy| > 0.75*vz, with 2*r slack -> 4|vy| > 3vz + 8r.
+                    let vy = dot12(rot.m[1], lc) + base_t[1];
+                    if vy.abs() * 4 > vz * 3 + lr * 8 {
+                        continue;
+                    }
                     let (_, m0, mc) = m.leaf(i + 1);
                     for mj in m0..m0 + mc {
                         if mj >= m.n_marks {
@@ -492,6 +498,11 @@ fn main() {
                             continue;
                         }
                         FACE_FRAME[face] = frame_no;
+                        // Backface cull the whole face before touching its tris.
+                        let (fnrm, fd) = m.face_plane(face);
+                        if dot12(fnrm, eye) <= fd {
+                            continue;
+                        }
                         let (first, cnt) = m.face_tris(face);
                         for tt in first..first + cnt {
                             if tt >= m.n_tris {

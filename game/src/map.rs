@@ -59,6 +59,7 @@ pub struct Map {
     pub n_marks: usize,
     ff_off: usize,
     fn_off: usize,
+    fp_off: usize,
     nodes_off: usize,
     leaves_off: usize,
     marks_off: usize,
@@ -125,7 +126,8 @@ impl Map {
         let vis_len = rd_u32(data, bsp_off + 12) as usize;
         let ff_off = bsp_off + 16;
         let fn_off = ff_off + n_faces * 4;
-        let nodes_off = align4(fn_off + n_faces * 2);
+        let fp_off = align4(fn_off + n_faces * 2);
+        let nodes_off = align4(fp_off + n_faces * 12);
         let leaves_off = nodes_off + n_nodes * NODE_SZ;
         let marks_off = leaves_off + n_leaves * LEAF_SZ;
         let vis_off = align4(marks_off + n_marks * 2);
@@ -151,7 +153,7 @@ impl Map {
             data, n_verts, n_tris, n_texs, n_faces,
             v_off, idx_off, ttex_off, tuv_off, trgb_off, texblk_off,
             n_nodes, n_leaves, n_marks,
-            ff_off, fn_off, nodes_off, leaves_off, marks_off, vis_off, vis_len,
+            ff_off, fn_off, fp_off, nodes_off, leaves_off, marks_off, vis_off, vis_len,
             n_clip, hull1_head, spawn_pos, spawn_yaw, clipn_off,
             n_models, n_ents, models_off, ents_off,
             tram_submodel, tram_speed, n_way, way_off,
@@ -270,6 +272,16 @@ impl Map {
     #[inline]
     pub fn mark(&self, j: usize) -> usize {
         rd_u16(self.data, self.marks_off + j * 2) as usize
+    }
+
+    /// Face `f`'s world plane `(normal ×4096, dist)` for backface culling.
+    #[inline]
+    pub fn face_plane(&self, f: usize) -> ([i16; 3], i32) {
+        let o = self.fp_off + f * 12;
+        (
+            [rd_i16(self.data, o), rd_i16(self.data, o + 2), rd_i16(self.data, o + 4)],
+            rd_i32(self.data, o + 8),
+        )
     }
 
     /// `(first_tri, tri_count)` for face `f`.

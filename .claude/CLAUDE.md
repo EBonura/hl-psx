@@ -282,8 +282,15 @@ Findings + fixes (each fps-verified):
 - Not fill-bound: emitting zero prims only gained ~0.6 fps. The remaining cost is
   flat per-triangle throughput + `gpu::vsync()` (~12%, the Timer1 frame sync).
 
-Further levers (bigger): cut triangle count (geometry LOD / tighter PVS use),
-reduce overdraw, batch RTPT projection, async OT submit (overlap CPU/GPU).
+Then (2nd pass, -> 7.3 fps): vertical FOV leaf cull, and **per-face backface
+cull** before any per-tri work -- the cook stores each face's side-adjusted world
+plane (`face_plane`), runtime skips a face if `dot(n,eye) <= dist`. Modest in a
+tube (most visible faces face you), bigger in open rooms. Emitting zero prims
+caps at ~8 fps, so the wall is now in-frustum per-triangle throughput (data
+reads + projection), not emit/fill.
+
+Further levers (bigger, diminishing): QUADS (cook-pair fan tris -> halve prim
+count + per-tri data work), faster/aligned per-tri data layout, geometry LOD.
 
 ## Next (pick per value)
 
