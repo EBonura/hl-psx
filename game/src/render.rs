@@ -85,6 +85,16 @@ pub fn near_clip(cv: &[CVert; 3], out: &mut [CVert; 4]) -> usize {
     m
 }
 
+/// Midpoint of two view-space vertices (position, colour, UV averaged). Used to
+/// split a large triangle for affine perspective correction.
+pub fn mid_cv(a: &CVert, b: &CVert) -> CVert {
+    CVert {
+        v: [(a.v[0] + b.v[0]) / 2, (a.v[1] + b.v[1]) / 2, (a.v[2] + b.v[2]) / 2],
+        rgb: ((a.rgb.0 + b.rgb.0) / 2, (a.rgb.1 + b.rgb.1) / 2, (a.rgb.2 + b.rgb.2) / 2),
+        uv: ((a.uv.0 + b.uv.0) / 2, (a.uv.1 + b.uv.1) / 2),
+    }
+}
+
 /// Project a clipped view-space vertex to true screen coords (one reciprocal
 /// `H/z` in Q12 shared by X and Y).
 pub fn project_soft(cv: &CVert) -> SVert {

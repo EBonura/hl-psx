@@ -7,8 +7,8 @@
 //! straddle the near plane are clipped + software-reprojected (render.rs) rather
 //! than dropped.
 //!
-//! Controls: left stick / D-pad = move + strafe, right stick / D-pad L-R = turn,
-//! Triangle/Cross = look up/down, Circle = jump.
+//! Controls (DualShock analog only): left stick = move/strafe, right stick =
+//! look (X turn, Y pitch), Cross = jump.
 
 #![no_std]
 #![no_main]
@@ -45,12 +45,14 @@ const MAX_LEAVES: usize = 8192;
 const MAX_ENTS: usize = 256;
 const DOOR_SPEED: i32 = 120;
 const NEAR: u16 = 32; // GTE depth below which a vertex goes to the soft-clip path
+const SUBDIV_PX: i32 = 96; // split triangles wider than this on screen (affine fix)
+const SUBDIV_DEPTH: u8 = 1; // max split levels
 const CULL: bool = true; // backface cull (keep area > 0; winding verified)
 const H_PROJ: u16 = 160; // ~90 deg horizontal FOV at 320px
 
-const PITCH_STEP: i16 = 32;
 const PITCH_MAX: i16 = 1000;
 const YAW_RATE: i32 = 64; // yaw units/frame at full stick (Q0.12)
+const PITCH_RATE: i32 = 48; // pitch units/frame at full stick
 const DEADZONE: i16 = 24;
 const VIEW_HEIGHT: i32 = 28;
 
@@ -180,10 +182,10 @@ unsafe fn push_tri(
     *np += 1;
 }
 
-/// Emit triangle `t` given its three already-projected screen verts `p`. The
-/// fast path uses them directly; if any straddles the near plane, rebuild in
-/// view space (using the currently-loaded GTE matrix), near-clip, software
-/// re-project, and guard-band clip.
+/// Emit triangle `t` from its three projected screen verts `p`. Small in-front
+/// triangles emit straight from the cache. Anything large (affine warp) or
+/// near-straddling drops to the view-space path: near-clip, then recursively
+/// split at view-space midpoints while it's big on screen, then guard-clip.
 unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &mut usize) {
     let (a, b, c) = m.tri_idx(t);
     if a >= nv || b >= nv || c >= nv {
@@ -198,38 +200,29 @@ unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &m
     let (pa, pb, pc) = (p[0], p[1], p[2]);
     let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
 
-    // Fast path: all three comfortably in front and on-screen.
-    if pa.sz >= NEAR
-        && pb.sz >= NEAR
-        && pc.sz >= NEAR
-        && !clamped(&pa)
-        && !clamped(&pb)
-        && !clamped(&pc)
-    {
+    // Fast path: fully in front, on-screen, and small enough not to warp.
+    if pa.sz >= NEAR && pb.sz >= NEAR && pc.sz >= NEAR && !clamped(&pa) && !clamped(&pb) && !clamped(&pc) {
         let (sa, sb, sc) = (
             (pa.sx as i32, pa.sy as i32),
             (pb.sx as i32, pb.sy as i32),
             (pc.sx as i32, pc.sy as i32),
         );
-        if CULL && culled(sa, sb, sc) {
+        let spanx = sa.0.max(sb.0).max(sc.0) - sa.0.min(sb.0).min(sc.0);
+        let spany = sa.1.max(sb.1).max(sc.1) - sa.1.min(sb.1).min(sc.1);
+        if spanx <= SUBDIV_PX && spany <= SUBDIV_PX {
+            if CULL && culled(sa, sb, sc) {
+                return;
+            }
+            let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
+            push_tri(np, [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)], uv, rgb, slot.material, clamp_otz((avgz >> 6) as usize));
             return;
         }
-        let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
-        push_tri(
-            np,
-            [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
-            uv,
-            rgb,
-            slot.material,
-            clamp_otz((avgz >> 6) as usize),
-        );
-        return;
     }
     if pa.sz == 0 && pb.sz == 0 && pc.sz == 0 {
         return; // entirely behind the camera
     }
 
-    // Soft path: rebuild in view space and near-clip.
+    // View-space path: rebuild, near-clip, then subdivide-and-emit.
     let cvv = |idx: usize, k: usize| {
         let v = scene::transform_vertex(m.vert(idx));
         render::CVert {
@@ -244,37 +237,56 @@ unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &m
     if n < 3 {
         return;
     }
-    let mut sv = [render::EMPTY_SV; 4];
-    for k in 0..n {
-        sv[k] = render::project_soft(&clipped[k]);
+    let q = [render::project_soft(&clipped[0]), render::project_soft(&clipped[1]), render::project_soft(&clipped[2])];
+    if CULL && culled((q[0].x, q[0].y), (q[1].x, q[1].y), (q[2].x, q[2].y)) {
+        return;
     }
-    if CULL && culled((sv[0].x, sv[0].y), (sv[1].x, sv[1].y), (sv[2].x, sv[2].y)) {
+    for k in 1..n - 1 {
+        emit_cv(&[clipped[0], clipped[k], clipped[k + 1]], SUBDIV_DEPTH, slot.material, np);
+    }
+}
+
+/// Recursively split a view-space triangle at its midpoints while it's larger
+/// than SUBDIV_PX on screen (affine perspective correction), then guard-clip and
+/// emit. ponytail: depth 1 (<=4 sub-tris per big tri); raise SUBDIV_DEPTH if warp
+/// is still visible, at the cost of more triangles.
+unsafe fn emit_cv(cv: &[render::CVert; 3], depth: u8, mat: TextureMaterial, np: &mut usize) {
+    let pa = render::project_soft(&cv[0]);
+    let pb = render::project_soft(&cv[1]);
+    let pc = render::project_soft(&cv[2]);
+    let spanx = pa.x.max(pb.x).max(pc.x) - pa.x.min(pb.x).min(pc.x);
+    let spany = pa.y.max(pb.y).max(pc.y) - pa.y.min(pb.y).min(pc.y);
+    if depth > 0 && (spanx > SUBDIV_PX || spany > SUBDIV_PX) {
+        let ab = render::mid_cv(&cv[0], &cv[1]);
+        let bc = render::mid_cv(&cv[1], &cv[2]);
+        let ca = render::mid_cv(&cv[2], &cv[0]);
+        emit_cv(&[cv[0], ab, ca], depth - 1, mat, np);
+        emit_cv(&[ab, cv[1], bc], depth - 1, mat, np);
+        emit_cv(&[ca, bc, cv[2]], depth - 1, mat, np);
+        emit_cv(&[ab, bc, ca], depth - 1, mat, np);
+        return;
+    }
+    let mut g = [render::EMPTY_SV; 8];
+    let gn = render::guard_clip(&[pa, pb, pc], 3, &mut g);
+    if gn < 3 {
         return;
     }
     let cl = |x: i32| x.clamp(0, 255) as u8;
-    for k in 1..n - 1 {
-        let tri = [sv[0], sv[k], sv[k + 1]];
-        let mut g = [render::EMPTY_SV; 8];
-        let gn = render::guard_clip(&tri, 3, &mut g);
-        if gn < 3 {
-            continue;
-        }
-        for j in 1..gn - 1 {
-            let (s0, s1, s2) = (g[0], g[j], g[j + 1]);
-            let avgz = ((s0.z + s1.z + s2.z) / 3).max(1);
-            push_tri(
-                np,
-                [(s0.x as i16, s0.y as i16), (s1.x as i16, s1.y as i16), (s2.x as i16, s2.y as i16)],
-                [(s0.uv.0 as u8, s0.uv.1 as u8), (s1.uv.0 as u8, s1.uv.1 as u8), (s2.uv.0 as u8, s2.uv.1 as u8)],
-                [
-                    (cl(s0.rgb.0), cl(s0.rgb.1), cl(s0.rgb.2)),
-                    (cl(s1.rgb.0), cl(s1.rgb.1), cl(s1.rgb.2)),
-                    (cl(s2.rgb.0), cl(s2.rgb.1), cl(s2.rgb.2)),
-                ],
-                slot.material,
-                clamp_otz((avgz >> 4) as usize),
-            );
-        }
+    for j in 1..gn - 1 {
+        let (s0, s1, s2) = (g[0], g[j], g[j + 1]);
+        let avgz = ((s0.z + s1.z + s2.z) / 3).max(1);
+        push_tri(
+            np,
+            [(s0.x as i16, s0.y as i16), (s1.x as i16, s1.y as i16), (s2.x as i16, s2.y as i16)],
+            [(s0.uv.0 as u8, s0.uv.1 as u8), (s1.uv.0 as u8, s1.uv.1 as u8), (s2.uv.0 as u8, s2.uv.1 as u8)],
+            [
+                (cl(s0.rgb.0), cl(s0.rgb.1), cl(s0.rgb.2)),
+                (cl(s1.rgb.0), cl(s1.rgb.1), cl(s1.rgb.2)),
+                (cl(s2.rgb.0), cl(s2.rgb.1), cl(s2.rgb.2)),
+            ],
+            mat,
+            clamp_otz((avgz >> 4) as usize),
+        );
     }
 }
 
@@ -304,16 +316,15 @@ fn main() {
     let mut frame_no: u16 = 0;
 
     loop {
+        // Modern twin-stick FPS: left stick moves/strafes, right stick looks
+        // (X = turn, Y = pitch), Cross = jump. Analog only.
         let pad = poll_port1();
-        let held = pad.buttons;
-
-        // Movement: left stick (analog) + D-pad; right stick / LEFT-RIGHT turn.
-        let (mut fwd, mut strafe, mut turn) = (0i32, 0i32, 0i32);
+        let (mut fwd, mut strafe, mut turn, mut look) = (0i32, 0i32, 0i32, 0i32);
         if pad.is_analog() {
             let (lx, ly) = pad.sticks.left_centered();
-            let (rx, _) = pad.sticks.right_centered();
+            let (rx, ry) = pad.sticks.right_centered();
             if ly.abs() > DEADZONE {
-                fwd = -(ly as i32);
+                fwd = -(ly as i32); // stick up = forward
             }
             if lx.abs() > DEADZONE {
                 strafe = lx as i32;
@@ -321,32 +332,14 @@ fn main() {
             if rx.abs() > DEADZONE {
                 turn = rx as i32;
             }
+            if ry.abs() > DEADZONE {
+                look = -(ry as i32); // stick up = look up
+            }
         }
-        if held.is_held(button::UP) {
-            fwd = 127;
-        } else if held.is_held(button::DOWN) {
-            fwd = -127;
-        }
-        if held.is_held(button::R1) {
-            strafe = 127;
-        } else if held.is_held(button::L1) {
-            strafe = -127;
-        }
-        if held.is_held(button::RIGHT) {
-            turn = 127;
-        } else if held.is_held(button::LEFT) {
-            turn = -127;
-        }
-        if held.is_held(button::TRIANGLE) {
-            pitch = (pitch + PITCH_STEP).min(PITCH_MAX);
-        }
-        if held.is_held(button::CROSS) {
-            pitch = (pitch - PITCH_STEP).max(-PITCH_MAX);
-        }
-        let dyaw = (turn * YAW_RATE) / 128;
-        yaw = (((yaw as i32) + dyaw) & 0xFFF) as u16;
+        yaw = (((yaw as i32) + (turn * YAW_RATE) / 128) & 0xFFF) as u16;
+        pitch = (pitch + ((look * PITCH_RATE) / 128) as i16).clamp(-PITCH_MAX, PITCH_MAX);
 
-        player.update(&m, fwd, strafe, held.is_held(button::CIRCLE), yaw);
+        player.update(&m, fwd, strafe, pad.buttons.is_held(button::CROSS), yaw);
         let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
 
         let rot = view_rotation(yaw, pitch);

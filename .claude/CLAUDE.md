@@ -215,6 +215,14 @@ frame still blocks, and doors auto-open so you pass the gap); ALL func_doors ope
 on proximity (targetname/button triggering ignored); func_door_rotating treated
 as static; no func_button/func_breakable logic.
 
+## M10 -- affine subdivision (DONE)
+
+`emit_cv` recursively splits big on-screen triangles at view-space midpoints
+(`render::mid_cv`) before `project_soft`, fixing affine texture warp on large
+floors/walls. Gated: only tris with screen span > SUBDIV_PX (96), depth 1
+(<=4 sub-tris each), so the triangle count barely moves. Raise SUBDIV_DEPTH if
+warp persists.
+
 ## Next (pick per value)
 
 - **Door collision**: trace the door submodel's clip hull at its current offset
