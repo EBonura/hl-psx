@@ -109,6 +109,12 @@ pub fn project_soft(cv: &CVert) -> SVert {
     }
 }
 
+/// Is this screen vertex inside the guard band (safe to draw without clipping)?
+#[inline]
+pub fn in_band(p: &SVert) -> bool {
+    p.x >= GX0 && p.x <= GX1 && p.y >= GY0 && p.y <= GY1
+}
+
 /// Screen-space back-face test (cross product; >= 0 = back-facing).
 #[inline]
 pub fn back_facing(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {

@@ -44,10 +44,9 @@ const MAX_FACES: usize = 8192;
 const MAX_LEAVES: usize = 8192;
 const MAX_ENTS: usize = 256;
 const DOOR_SPEED: i32 = 120;
-const NEAR: u16 = 32; // GTE depth below which a vertex goes to the soft-clip path
-const SUBDIV_PX: i32 = 96; // split triangles wider than this on screen (affine fix)
-const SUBDIV_DEPTH: u8 = 1; // max split levels
-const SUBDIV_NEAR: u16 = 400; // only subdivide when this close (GTE depth); far warp is cheap
+const NEAR: u16 = 2; // GTE depth: only verts at/behind the near plane take the soft-clip path
+const SUBDIV_PX: i32 = 96; // split near-clipped triangles wider than this (affine fix)
+const SUBDIV_DEPTH: u8 = 0; // ponytail: subdivision off (perf); affine warp accepted
 const CULL: bool = true; // backface cull (keep area > 0; winding verified)
 const H_PROJ: u16 = 160; // ~90 deg horizontal FOV at 320px
 
@@ -56,6 +55,7 @@ const YAW_RATE: i32 = 64; // yaw units/frame at full stick (Q0.12)
 const PITCH_RATE: i32 = 48; // pitch units/frame at full stick
 const DEADZONE: i16 = 24;
 const VIEW_HEIGHT: i32 = 28;
+const FAR_VIEW: i32 = 6000; // leaf cull distance (world units); generous to avoid pop
 const TRAM_STEP_DIV: i32 = 15; // tram units/sec -> units/frame (demo pace)
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
@@ -73,6 +73,7 @@ static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut FACE_FRAME: [u16; MAX_FACES] = [0; MAX_FACES];
 static mut VERT_FRAME: [u16; MAX_VERTS] = [0; MAX_VERTS]; // project-once-per-frame cache marker
 static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
+static mut CLIP_CV: [render::CVert; 4] = [render::EMPTY_CV; 4]; // near-clip scratch (reused)
 
 /// World->view rotation: rotY(yaw)*rotX(pitch), rows 0/1 negated for the GPU's
 /// Y-down screen.
@@ -243,31 +244,27 @@ unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &m
     let (pa, pb, pc) = (p[0], p[1], p[2]);
     let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
 
-    // Fast path: fully in front, on-screen, and small enough not to warp.
+    // Fast path: fully in front and on-screen -> emit straight from the cache.
+    // (Affine warp on big near surfaces is accepted; the view-space path is for
+    // near-plane straddlers only -- routing the whole scene through it tanked fps.)
     if pa.sz >= NEAR && pb.sz >= NEAR && pc.sz >= NEAR && !clamped(&pa) && !clamped(&pb) && !clamped(&pc) {
         let (sa, sb, sc) = (
             (pa.sx as i32, pa.sy as i32),
             (pb.sx as i32, pb.sy as i32),
             (pc.sx as i32, pc.sy as i32),
         );
-        let spanx = sa.0.max(sb.0).max(sc.0) - sa.0.min(sb.0).min(sc.0);
-        let spany = sa.1.max(sb.1).max(sc.1) - sa.1.min(sb.1).min(sc.1);
-        let close = pa.sz.min(pb.sz).min(pc.sz) < SUBDIV_NEAR;
-        // Small, or far enough that affine warp is cheap -> emit straight from cache.
-        if !close || (spanx <= SUBDIV_PX && spany <= SUBDIV_PX) {
-            if CULL && culled(sa, sb, sc) {
-                return;
-            }
-            let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
-            push_tri(np, [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)], uv, rgb, slot.material, clamp_otz((avgz >> 6) as usize));
+        if CULL && culled(sa, sb, sc) {
             return;
         }
+        let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
+        push_tri(np, [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)], uv, rgb, slot.material, clamp_otz((avgz >> 6) as usize));
+        return;
     }
     if pa.sz == 0 && pb.sz == 0 && pc.sz == 0 {
         return; // entirely behind the camera
     }
 
-    // View-space path: rebuild, near-clip, then subdivide-and-emit.
+    // View-space path (near-plane straddlers): rebuild, near-clip, emit.
     let cvv = |idx: usize, k: usize| {
         let v = scene::transform_vertex(m.vert(idx));
         render::CVert {
@@ -277,17 +274,12 @@ unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &m
         }
     };
     let cv = [cvv(a, 0), cvv(b, 1), cvv(c, 2)];
-    let mut clipped = [render::EMPTY_CV; 4];
-    let n = render::near_clip(&cv, &mut clipped);
+    let n = render::near_clip(&cv, &mut CLIP_CV);
     if n < 3 {
         return;
     }
-    let q = [render::project_soft(&clipped[0]), render::project_soft(&clipped[1]), render::project_soft(&clipped[2])];
-    if CULL && culled((q[0].x, q[0].y), (q[1].x, q[1].y), (q[2].x, q[2].y)) {
-        return;
-    }
     for k in 1..n - 1 {
-        emit_cv(&[clipped[0], clipped[k], clipped[k + 1]], SUBDIV_DEPTH, slot.material, np);
+        emit_cv(&[CLIP_CV[0], CLIP_CV[k], CLIP_CV[k + 1]], SUBDIV_DEPTH, slot.material, np);
     }
 }
 
@@ -311,12 +303,33 @@ unsafe fn emit_cv(cv: &[render::CVert; 3], depth: u8, mat: TextureMaterial, np: 
         emit_cv(&[ab, bc, ca], depth - 1, mat, np);
         return;
     }
+    if CULL && culled((pa.x, pa.y), (pb.x, pb.y), (pc.x, pc.y)) {
+        return;
+    }
+    let cl = |x: i32| x.clamp(0, 255) as u8;
+    // Common case: fully on-screen -> draw directly, no guard-clip buffer.
+    if render::in_band(&pa) && render::in_band(&pb) && render::in_band(&pc) {
+        let avgz = ((pa.z + pb.z + pc.z) / 3).max(1);
+        push_tri(
+            np,
+            [(pa.x as i16, pa.y as i16), (pb.x as i16, pb.y as i16), (pc.x as i16, pc.y as i16)],
+            [(pa.uv.0 as u8, pa.uv.1 as u8), (pb.uv.0 as u8, pb.uv.1 as u8), (pc.uv.0 as u8, pc.uv.1 as u8)],
+            [
+                (cl(pa.rgb.0), cl(pa.rgb.1), cl(pa.rgb.2)),
+                (cl(pb.rgb.0), cl(pb.rgb.1), cl(pb.rgb.2)),
+                (cl(pc.rgb.0), cl(pc.rgb.1), cl(pc.rgb.2)),
+            ],
+            mat,
+            clamp_otz((avgz >> 4) as usize),
+        );
+        return;
+    }
+    // Off-screen span: guard-clip (rare).
     let mut g = [render::EMPTY_SV; 8];
     let gn = render::guard_clip(&[pa, pb, pc], 3, &mut g);
     if gn < 3 {
         return;
     }
-    let cl = |x: i32| x.clamp(0, 255) as u8;
     for j in 1..gn - 1 {
         let (s0, s1, s2) = (g[0], g[j], g[j + 1]);
         let avgz = ((s0.z + s1.z + s2.z) / 3).max(1);
@@ -454,6 +467,19 @@ fn main() {
                 decompress_vis(&m, visofs, &mut VIS_BITS);
                 for i in 0..m.n_leaves.saturating_sub(1) {
                     if VIS_BITS[i >> 3] & (1 << (i & 7)) == 0 {
+                        continue;
+                    }
+                    // Frustum cull the leaf's bounding sphere: behind the near
+                    // plane, beyond the far distance, or outside the ~45deg
+                    // horizontal FOV (conservative 2*r slack -> never culls a
+                    // visible leaf). H_PROJ=160 over a 160px half-width = 45deg.
+                    let (lc, lr) = m.leaf_bounds(i + 1);
+                    let vz = dot12(rot.m[2], lc) + base_t[2];
+                    if vz + lr < render::NEAR_Z || vz - lr > FAR_VIEW {
+                        continue;
+                    }
+                    let vx = dot12(rot.m[0], lc) + base_t[0];
+                    if vx.abs() > vz + lr * 2 {
                         continue;
                     }
                     let (_, m0, mc) = m.leaf(i + 1);

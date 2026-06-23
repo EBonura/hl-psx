@@ -868,6 +868,16 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.extend_from_slice(&i32le(leaves, lo + SZ_LEAF_VISOFS).unwrap_or(-1).to_le_bytes());
         o.extend_from_slice(&u16le(leaves, lo + SZ_LEAF_MARK0).unwrap_or(0).to_le_bytes());
         o.extend_from_slice(&u16le(leaves, lo + SZ_LEAF_MARK0 + 2).unwrap_or(0).to_le_bytes());
+        // dleaf_t bbox (i16 mins@8, maxs@14) -> world centre + radius (frustum cull).
+        let g = |o2: usize| i16::from_le_bytes([leaves[lo + o2], leaves[lo + o2 + 1]]) as f32;
+        let (mn, mx) = ([g(8), g(10), g(12)], [g(14), g(16), g(18)]);
+        let c = to_world([(mn[0] + mx[0]) * 0.5, (mn[1] + mx[1]) * 0.5, (mn[2] + mx[2]) * 0.5], scale);
+        let d = [mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]];
+        let rad = ((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() * 0.5 / scale) as i32;
+        o.extend_from_slice(&(c[0] as i16).to_le_bytes());
+        o.extend_from_slice(&(c[1] as i16).to_le_bytes());
+        o.extend_from_slice(&(c[2] as i16).to_le_bytes());
+        o.extend_from_slice(&(rad.clamp(0, 65535) as u16).to_le_bytes());
     }
     while o.len() % 4 != 0 {
         o.push(0);

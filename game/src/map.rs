@@ -33,7 +33,6 @@ fn align4(x: usize) -> usize {
 }
 
 const NODE_SZ: usize = 20;
-const LEAF_SZ: usize = 8;
 
 pub struct Node {
     pub n: [i16; 3],
@@ -83,6 +82,7 @@ pub struct Map {
     way_off: usize,
 }
 
+const LEAF_SZ: usize = 16; // visofs i32 + mark range u16×2 + bbox centre i16×3 + radius u16
 const CLIPNODE_SZ: usize = 16;
 const ENT_SZ: usize = 48;
 
@@ -254,6 +254,16 @@ impl Map {
     pub fn leaf(&self, i: usize) -> (i32, usize, usize) {
         let o = self.leaves_off + i * LEAF_SZ;
         (rd_i32(self.data, o), rd_u16(self.data, o + 4) as usize, rd_u16(self.data, o + 6) as usize)
+    }
+
+    /// Leaf bounding sphere `(centre, radius)` in world space (frustum cull).
+    #[inline]
+    pub fn leaf_bounds(&self, i: usize) -> ([i32; 3], i32) {
+        let o = self.leaves_off + i * LEAF_SZ;
+        (
+            [rd_i16(self.data, o + 8) as i32, rd_i16(self.data, o + 10) as i32, rd_i16(self.data, o + 12) as i32],
+            rd_u16(self.data, o + 14) as i32,
+        )
     }
 
     /// Face index referenced by marksurface `j`.

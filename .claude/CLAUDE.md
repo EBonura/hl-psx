@@ -259,11 +259,36 @@ fps not measured headlessly (frametest is digital-only; analog-only controls) --
 user verifies. Further levers if still slow: fewer/smaller textured prims
 (overdraw), distance/fog cull, smaller OT.
 
+## Perf -- measured profiling pass (2.1 -> 6.9 fps on c0a0)
+
+**Measure headlessly**: `frametest --fps` (counts real framebuffer swaps) and
+`--profile [--profile-from N] --profile-out f.txt` (PC-sampling histogram). Map
+PCs to code by disassembling the `.exe` (flat binary, base 0x80010000, +0x800
+header) -- no symbols are kept. This is how the bottlenecks below were found.
+
+Findings + fixes (each fps-verified):
+- **Soft path was eating ~half the frame.** I routed every triangle with
+  `sz < 32` (and earlier every big triangle) through the view-space near-clip +
+  per-call array zeroing. In a tunnel that's most of the scene. Fix: `NEAR=2`
+  (only true near-plane crossers go soft), fast-path all in-front on-screen tris
+  straight from the cache, static near-clip scratch, and an in-band fast push in
+  `emit_cv` (skip `guard_clip` when on-screen). Subdivision off (`SUBDIV_DEPTH=0`).
+- **Processing all ~9000 PVS tris regardless of view direction.** Fix: per-leaf
+  frustum cull -- the cook stores each leaf's world bounding sphere (centre+radius,
+  `LEAF_SZ` 8->16); the runtime skips leaves behind the near plane, beyond
+  `FAR_VIEW`, or outside the ~45deg horizontal FOV (conservative 2*r slack).
+- **Project only visible verts** (lazy `proj_vert` cache) and **masked textures**
+  (prior commits).
+- Not fill-bound: emitting zero prims only gained ~0.6 fps. The remaining cost is
+  flat per-triangle throughput + `gpu::vsync()` (~12%, the Timer1 frame sync).
+
+Further levers (bigger): cut triangle count (geometry LOD / tighter PVS use),
+reduce overdraw, batch RTPT projection, async OT submit (overlap CPU/GPU).
+
 ## Next (pick per value)
 
-- **Door collision**: trace the door submodel's clip hull at its current offset
-  so a closed door blocks the player.
-- **More perf**: overdraw/fill reduction, distance cull, measure via frontend CLI.
+- **Door collision**: trace the door submodel's clip hull at its current offset.
+- **More perf**: the levers above (throughput-bound now).
 - **func_tracktrain**: the tram ride (the actual opening of Half-Life).
 - **Buttons/triggers**: real targetname-based triggering instead of proximity.
 - **UV subdivision + affine correction**: fix tiling/warp on large tris.
