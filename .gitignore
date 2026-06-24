@@ -4,6 +4,7 @@
 build/
 dist/
 captures/
+graphify-out/
 *.bin
 *.cue
 *.exe

@@ -512,6 +512,201 @@ fn vertex_shade(
     }
 }
 
+fn best_fan_anchor(uv: &[(f32, f32)]) -> usize {
+    let n = uv.len();
+    if n <= 3 {
+        return 0;
+    }
+
+    let mut best = 0usize;
+    let mut best_max = f32::MAX;
+    let mut best_sum = f32::MAX;
+    for anchor in 0..n {
+        let mut max_span = 0.0f32;
+        let mut sum_span = 0.0f32;
+        for k in 1..n - 1 {
+            let a = uv[anchor];
+            let b = uv[(anchor + k + 1) % n];
+            let c = uv[(anchor + k) % n];
+            let min_u = a.0.min(b.0).min(c.0);
+            let max_u = a.0.max(b.0).max(c.0);
+            let min_v = a.1.min(b.1).min(c.1);
+            let max_v = a.1.max(b.1).max(c.1);
+            let du = max_u - min_u;
+            let dv = max_v - min_v;
+            let span = du * du + dv * dv;
+            max_span = max_span.max(span);
+            sum_span += span;
+        }
+        if max_span < best_max || (max_span == best_max && sum_span < best_sum) {
+            best = anchor;
+            best_max = max_span;
+            best_sum = sum_span;
+        }
+    }
+    best
+}
+
+const MAX_COOK_VERTS: usize = 8192;
+const UV_SPLIT_SPAN: f32 = 96.0;
+const UV_SPLIT_DEPTH: u8 = 2;
+
+#[derive(Clone, Copy)]
+struct CookCorner {
+    idx: u16,
+    pos: [i16; 3],
+    uv: (f32, f32),
+    shade: (u8, u8, u8),
+}
+
+fn uv_split_needed(c: &[CookCorner; 3]) -> bool {
+    let min_u = c[0].uv.0.min(c[1].uv.0).min(c[2].uv.0);
+    let max_u = c[0].uv.0.max(c[1].uv.0).max(c[2].uv.0);
+    let min_v = c[0].uv.1.min(c[1].uv.1).min(c[2].uv.1);
+    let max_v = c[0].uv.1.max(c[1].uv.1).max(c[2].uv.1);
+    (max_u - min_u) > UV_SPLIT_SPAN || (max_v - min_v) > UV_SPLIT_SPAN
+}
+
+fn longest_uv_edge(c: &[CookCorner; 3]) -> usize {
+    let mut best = 0usize;
+    let mut best_len = -1.0f32;
+    for (i, j) in [(0usize, 1usize), (1, 2), (2, 0)] {
+        let du = c[i].uv.0 - c[j].uv.0;
+        let dv = c[i].uv.1 - c[j].uv.1;
+        let len = du * du + dv * dv;
+        if len > best_len {
+            best = i;
+            best_len = len;
+        }
+    }
+    best
+}
+
+fn mid_corner(a: CookCorner, b: CookCorner, verts: &mut Vec<[i16; 3]>) -> Option<CookCorner> {
+    if verts.len() >= MAX_COOK_VERTS {
+        return None;
+    }
+    let avg_i16 = |x: i16, y: i16| ((x as i32 + y as i32) / 2) as i16;
+    let pos = [
+        avg_i16(a.pos[0], b.pos[0]),
+        avg_i16(a.pos[1], b.pos[1]),
+        avg_i16(a.pos[2], b.pos[2]),
+    ];
+    let idx = verts.len() as u16;
+    verts.push(pos);
+    Some(CookCorner {
+        idx,
+        pos,
+        uv: ((a.uv.0 + b.uv.0) * 0.5, (a.uv.1 + b.uv.1) * 0.5),
+        shade: (
+            ((a.shade.0 as u16 + b.shade.0 as u16) / 2) as u8,
+            ((a.shade.1 as u16 + b.shade.1 as u16) / 2) as u8,
+            ((a.shade.2 as u16 + b.shade.2 as u16) / 2) as u8,
+        ),
+    })
+}
+
+fn emit_cooked_tri(
+    c: [CookCorner; 3],
+    tex_id: u16,
+    depth: u8,
+    verts: &mut Vec<[i16; 3]>,
+    tri_idx: &mut Vec<u16>,
+    tri_tex: &mut Vec<u16>,
+    tri_uv: &mut Vec<u8>,
+    tri_rgb: &mut Vec<u8>,
+) {
+    if depth > 0 && uv_split_needed(&c) {
+        let split = longest_uv_edge(&c);
+        let mid = match split {
+            0 => mid_corner(c[0], c[1], verts),
+            1 => mid_corner(c[1], c[2], verts),
+            _ => mid_corner(c[2], c[0], verts),
+        };
+        if let Some(m) = mid {
+            match split {
+                0 => {
+                    emit_cooked_tri(
+                        [c[0], m, c[2]],
+                        tex_id,
+                        depth - 1,
+                        verts,
+                        tri_idx,
+                        tri_tex,
+                        tri_uv,
+                        tri_rgb,
+                    );
+                    emit_cooked_tri(
+                        [m, c[1], c[2]],
+                        tex_id,
+                        depth - 1,
+                        verts,
+                        tri_idx,
+                        tri_tex,
+                        tri_uv,
+                        tri_rgb,
+                    );
+                }
+                1 => {
+                    emit_cooked_tri(
+                        [c[0], c[1], m],
+                        tex_id,
+                        depth - 1,
+                        verts,
+                        tri_idx,
+                        tri_tex,
+                        tri_uv,
+                        tri_rgb,
+                    );
+                    emit_cooked_tri(
+                        [c[0], m, c[2]],
+                        tex_id,
+                        depth - 1,
+                        verts,
+                        tri_idx,
+                        tri_tex,
+                        tri_uv,
+                        tri_rgb,
+                    );
+                }
+                _ => {
+                    emit_cooked_tri(
+                        [c[0], c[1], m],
+                        tex_id,
+                        depth - 1,
+                        verts,
+                        tri_idx,
+                        tri_tex,
+                        tri_uv,
+                        tri_rgb,
+                    );
+                    emit_cooked_tri(
+                        [m, c[1], c[2]],
+                        tex_id,
+                        depth - 1,
+                        verts,
+                        tri_idx,
+                        tri_tex,
+                        tri_uv,
+                        tri_rgb,
+                    );
+                }
+            }
+            return;
+        }
+    }
+
+    tri_idx.extend_from_slice(&[c[0].idx, c[1].idx, c[2].idx]);
+    tri_tex.push(tex_id);
+    for v in &c {
+        tri_uv.push(v.uv.0.round().clamp(0.0, 255.0) as u8);
+        tri_uv.push(v.uv.1.round().clamp(0.0, 255.0) as u8);
+    }
+    for v in &c {
+        tri_rgb.extend_from_slice(&[v.shade.0, v.shade.1, v.shade.2]);
+    }
+}
+
 /// Pull `"key" "value"` from one entity text block.
 fn ent_value<'a>(block: &'a str, key: &str) -> Option<&'a str> {
     let pat = ["\"", key, "\""].concat();
@@ -749,8 +944,8 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
 
     // Raw vertices (f32, HL Z-up). Power-of-two shift so coords fit i16.
     let vl = bsp.lump(LUMP_VERTEXES);
-    let n_verts = vl.len() / SZ_VERTEX;
-    let raw: Vec<[f32; 3]> = (0..n_verts)
+    let orig_n_verts = vl.len() / SZ_VERTEX;
+    let raw: Vec<[f32; 3]> = (0..orig_n_verts)
         .map(|i| {
             let o = i * SZ_VERTEX;
             [
@@ -774,7 +969,7 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     }
     let scale = (1 << shift) as f32;
     // HL right-handed Z-up -> world Y-up (world = [x, z, y]); winding reversed.
-    let verts: Vec<[i16; 3]> = raw
+    let mut verts: Vec<[i16; 3]> = raw
         .iter()
         .map(|v| {
             [
@@ -842,7 +1037,7 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
                 u16le(edges, e + 2)
             };
             if let Some(v) = v {
-                if (v as usize) < n_verts {
+                if (v as usize) < orig_n_verts {
                     poly.push(v);
                 }
             }
@@ -910,28 +1105,53 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         // far edge -- proper tiling of huge surfaces needs UV subdivision (M3).
         let shu = (minu / fw).floor() * fw;
         let shv = (minv / fh).floor() * fh;
-        let uvb: Vec<(u8, u8)> = uv
-            .iter()
-            .map(|&(u, v)| {
-                (
-                    (u - shu).round().clamp(0.0, 255.0) as u8,
-                    (v - shv).round().clamp(0.0, 255.0) as u8,
-                )
-            })
-            .collect();
-        // Fan, reversed winding. Record this face's triangle range for PVS.
-        face_first[f] = (tri_idx.len() / 3) as u32;
-        face_ntri[f] = (poly.len() - 2) as u16;
+        let shifted_uv: Vec<(f32, f32)> = uv.iter().map(|&(u, v)| (u - shu, v - shv)).collect();
+        // Fan, reversed winding. Pick the anchor that keeps each triangle's UV
+        // span small; PS1 affine mapping makes long diagonals through tiled
+        // textures smear into visible dark wedges. Then add support triangles
+        // only where the cooked UV span still exceeds the PS1-friendly range.
+        let fan0 = best_fan_anchor(&shifted_uv);
+        let first_tri = tri_idx.len() / 3;
+        face_first[f] = first_tri as u32;
         for k in 1..poly.len() - 1 {
-            tri_idx.extend_from_slice(&[poly[0], poly[k + 1], poly[k]]);
-            tri_tex.push(tex_id as u16);
-            let (a, b, c) = (uvb[0], uvb[k + 1], uvb[k]);
-            tri_uv.extend_from_slice(&[a.0, a.1, b.0, b.1, c.0, c.1]);
-            let (s0, s1, s2) = (shade[0], shade[k + 1], shade[k]);
-            tri_rgb.extend_from_slice(&[s0.0, s0.1, s0.2, s1.0, s1.1, s1.2, s2.0, s2.1, s2.2]);
+            let ia = fan0;
+            let ib = (fan0 + k + 1) % poly.len();
+            let ic = (fan0 + k) % poly.len();
+            let corners = [
+                CookCorner {
+                    idx: poly[ia],
+                    pos: verts[poly[ia] as usize],
+                    uv: shifted_uv[ia],
+                    shade: shade[ia],
+                },
+                CookCorner {
+                    idx: poly[ib],
+                    pos: verts[poly[ib] as usize],
+                    uv: shifted_uv[ib],
+                    shade: shade[ib],
+                },
+                CookCorner {
+                    idx: poly[ic],
+                    pos: verts[poly[ic] as usize],
+                    uv: shifted_uv[ic],
+                    shade: shade[ic],
+                },
+            ];
+            emit_cooked_tri(
+                corners,
+                tex_id as u16,
+                UV_SPLIT_DEPTH,
+                &mut verts,
+                &mut tri_idx,
+                &mut tri_tex,
+                &mut tri_uv,
+                &mut tri_rgb,
+            );
         }
+        face_ntri[f] = ((tri_idx.len() / 3) - first_tri).min(u16::MAX as usize) as u16;
     }
 
+    let n_verts = verts.len();
     let n_tris = tri_idx.len() / 3;
     let mut o: Vec<u8> = Vec::new();
     o.extend_from_slice(b"HLM9");
@@ -1375,6 +1595,17 @@ fn cook_mdl_tex(b: &[u8], idx: usize, w0: usize, h0: usize) -> CookedTex {
     }
 }
 
+const STUDIO_NF_CHROME: i32 = 0x0002;
+
+fn chrome_uv(n: [f32; 3], fw: f32, fh: f32) -> (u8, u8) {
+    let u = (0.5 + n[0].clamp(-1.0, 1.0) * 0.25) * (fw - 1.0).max(1.0);
+    let v = (0.5 - n[2].clamp(-1.0, 1.0) * 0.25) * (fh - 1.0).max(1.0);
+    (
+        u.round().clamp(0.0, 255.0) as u8,
+        v.round().clamp(0.0, 255.0) as u8,
+    )
+}
+
 fn cook_mdl(path: &str, out: &str, seq: i32) -> Result<(), String> {
     let b = std::fs::read(path).map_err(|e| format!("{}: {}", path, e))?;
     if b.get(0..4) != Some(b"IDST") {
@@ -1428,6 +1659,7 @@ fn cook_mdl(path: &str, out: &str, seq: i32) -> Result<(), String> {
         nummesh: usize,
         meshindex: usize,
         vert_base: usize,
+        norm_base: usize,
     }
 
     // Raw vertices + their bone (positions are constant; bone matrices animate).
@@ -1436,6 +1668,7 @@ fn cook_mdl(path: &str, out: &str, seq: i32) -> Result<(), String> {
     let mut parts: Vec<MdlPart> = Vec::new();
     let mut vp: Vec<[f32; 3]> = Vec::new();
     let mut vbone: Vec<usize> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
     for bp in 0..numbodyparts {
         let bpo = bodypartindex + bp * 76;
         let nummodels = i(bpo + 64).max(0) as usize;
@@ -1443,14 +1676,21 @@ fn cook_mdl(path: &str, out: &str, seq: i32) -> Result<(), String> {
             continue;
         }
         let modelindex = i(bpo + 72) as usize; // bodypart model 0 (default body)
-        let (nummesh, meshindex) = (i(modelindex + 72).max(0) as usize, i(modelindex + 76) as usize);
+        let (nummesh, meshindex) = (
+            i(modelindex + 72).max(0) as usize,
+            i(modelindex + 76) as usize,
+        );
         let numverts = i(modelindex + 80).max(0) as usize;
         let (vinfoindex, vertindex) = (i(modelindex + 84) as usize, i(modelindex + 88) as usize);
+        let numnorms = i(modelindex + 92).max(0) as usize;
+        let normindex = i(modelindex + 100) as usize;
         let vert_base = vp.len();
+        let norm_base = normals.len();
         parts.push(MdlPart {
             nummesh,
             meshindex,
             vert_base,
+            norm_base,
         });
         for v in 0..numverts {
             vp.push([
@@ -1459,6 +1699,13 @@ fn cook_mdl(path: &str, out: &str, seq: i32) -> Result<(), String> {
                 f(vertindex + v * 12 + 8),
             ]);
             vbone.push(*b.get(vinfoindex + v).unwrap_or(&0) as usize);
+        }
+        for n in 0..numnorms {
+            normals.push([
+                f(normindex + n * 12),
+                f(normindex + n * 12 + 4),
+                f(normindex + n * 12 + 8),
+            ]);
         }
     }
 
@@ -1542,6 +1789,7 @@ fn cook_mdl(path: &str, out: &str, seq: i32) -> Result<(), String> {
             let skinref = i(me + 8) as usize;
             let texid = th16(skinindex + skinref * 2) as usize; // skin family 0 (texture file)
             let to = textureindex + texid * 80;
+            let flags = ti(to + 64);
             let (tw, th, tpix) = (
                 ti(to + 68) as usize,
                 ti(to + 72) as usize,
@@ -1563,11 +1811,22 @@ fn cook_mdl(path: &str, out: &str, seq: i32) -> Result<(), String> {
                 let mut s: Vec<(u16, u8, u8)> = Vec::with_capacity(n);
                 for _ in 0..n {
                     let local_vi = h16(o).max(0) as usize;
+                    let local_ni = h16(o + 2).max(0) as usize;
                     let vi = (part.vert_base + local_vi).min(u16::MAX as usize) as u16;
                     let (ss, tt) = (h16(o + 4) as f32, h16(o + 6) as f32);
                     o += 8;
-                    let u = (ss * fw / tw.max(1) as f32).clamp(0.0, 255.0) as u8;
-                    let vv = (tt * fh / th.max(1) as f32).clamp(0.0, 255.0) as u8;
+                    let (u, vv) = if flags & STUDIO_NF_CHROME != 0 {
+                        let n = normals
+                            .get(part.norm_base + local_ni)
+                            .copied()
+                            .unwrap_or([0.0, 0.0, 1.0]);
+                        chrome_uv(n, fw, fh)
+                    } else {
+                        (
+                            (ss * fw / tw.max(1) as f32).clamp(0.0, 255.0) as u8,
+                            (tt * fh / th.max(1) as f32).clamp(0.0, 255.0) as u8,
+                        )
+                    };
                     s.push((vi, u, vv));
                 }
                 for k in 0..n.saturating_sub(2) {
@@ -1759,5 +2018,60 @@ mod tests {
         buf[4..8].copy_from_slice(&0i32.to_le_bytes());
         buf[8..12].copy_from_slice(&1_000_000i32.to_le_bytes());
         assert!(Bsp::parse(&buf).is_err());
+    }
+
+    #[test]
+    fn uv_split_adds_support_vertices_for_long_spans() {
+        let mut verts = vec![[0, 0, 0], [192, 0, 0], [0, 64, 0]];
+        let corners = [
+            CookCorner {
+                idx: 0,
+                pos: verts[0],
+                uv: (0.0, 0.0),
+                shade: (10, 20, 30),
+            },
+            CookCorner {
+                idx: 1,
+                pos: verts[1],
+                uv: (192.0, 0.0),
+                shade: (30, 40, 50),
+            },
+            CookCorner {
+                idx: 2,
+                pos: verts[2],
+                uv: (0.0, 64.0),
+                shade: (50, 60, 70),
+            },
+        ];
+        let mut tri_idx = Vec::new();
+        let mut tri_tex = Vec::new();
+        let mut tri_uv = Vec::new();
+        let mut tri_rgb = Vec::new();
+
+        emit_cooked_tri(
+            corners,
+            7,
+            UV_SPLIT_DEPTH,
+            &mut verts,
+            &mut tri_idx,
+            &mut tri_tex,
+            &mut tri_uv,
+            &mut tri_rgb,
+        );
+
+        assert!(verts.len() > 3);
+        assert!(tri_idx.len() / 3 > 1);
+        assert_eq!(tri_tex.len(), tri_idx.len() / 3);
+        assert_eq!(tri_uv.len(), tri_tex.len() * 6);
+        assert_eq!(tri_rgb.len(), tri_tex.len() * 9);
+
+        for uv in tri_uv.chunks_exact(6) {
+            let min_u = uv[0].min(uv[2]).min(uv[4]);
+            let max_u = uv[0].max(uv[2]).max(uv[4]);
+            let min_v = uv[1].min(uv[3]).min(uv[5]);
+            let max_v = uv[1].max(uv[3]).max(uv[5]);
+            assert!(max_u - min_u <= UV_SPLIT_SPAN as u8);
+            assert!(max_v - min_v <= UV_SPLIT_SPAN as u8);
+        }
     }
 }
