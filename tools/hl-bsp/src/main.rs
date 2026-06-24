@@ -2333,7 +2333,7 @@ fn chrome_uv(n: [f32; 3], fw: f32, fh: f32) -> (u8, u8) {
     )
 }
 
-fn cook_mdl(path: &str, out: &str, specs: &[SeqSpec]) -> Result<(), String> {
+fn cook_mdl(path: &str, out: &str, specs: &[SeqSpec], compact_frames: bool) -> Result<(), String> {
     let b = std::fs::read(path).map_err(|e| format!("{}: {}", path, e))?;
     if b.get(0..4) != Some(b"IDST") {
         return Err(format!("{}: not a studio MDL", path));
@@ -2587,24 +2587,81 @@ fn cook_mdl(path: &str, out: &str, specs: &[SeqSpec]) -> Result<(), String> {
 
     let n_tris = tri_idx.len() / 3;
     let n_verts = vp.len();
-    let multi_clip = clips.len() > 1;
     let mut o: Vec<u8> = Vec::new();
-    o.extend_from_slice(if multi_clip { b"HMD3" } else { b"HMD2" });
-    o.extend_from_slice(&(n_verts as u32).to_le_bytes());
-    o.extend_from_slice(&(n_tris as u32).to_le_bytes());
-    o.extend_from_slice(&(texs.len() as u32).to_le_bytes());
-    o.extend_from_slice(&(frames.len() as u32).to_le_bytes());
-    if multi_clip {
+    if compact_frames {
+        let base = frames.first().map(|f| f.as_slice()).unwrap_or(&[]);
+        let mut frame_descs: Vec<(u32, u8)> = Vec::with_capacity(frames.len());
+        let mut frame_data: Vec<u8> = Vec::new();
+        for (fi, fv) in frames.iter().enumerate() {
+            let offset = frame_data.len().min(u32::MAX as usize) as u32;
+            if fi > 0 {
+                let mut deltas: Vec<u8> = Vec::with_capacity(fv.len() * 3);
+                let mut fits = base.len() == fv.len();
+                if fits {
+                    for (v, b) in fv.iter().zip(base.iter()) {
+                        for c in 0..3 {
+                            let d = v[c] as i32 - b[c] as i32;
+                            if !(-128..=127).contains(&d) {
+                                fits = false;
+                                break;
+                            }
+                            deltas.push(d as i8 as u8);
+                        }
+                        if !fits {
+                            break;
+                        }
+                    }
+                }
+                if fits {
+                    frame_descs.push((offset, 1));
+                    frame_data.extend_from_slice(&deltas);
+                    continue;
+                }
+            }
+            frame_descs.push((offset, 0));
+            for v in fv {
+                for c in v {
+                    frame_data.extend_from_slice(&c.to_le_bytes());
+                }
+            }
+        }
+
+        o.extend_from_slice(b"HMD4");
+        o.extend_from_slice(&(n_verts as u32).to_le_bytes());
+        o.extend_from_slice(&(n_tris as u32).to_le_bytes());
+        o.extend_from_slice(&(texs.len() as u32).to_le_bytes());
+        o.extend_from_slice(&(frames.len() as u32).to_le_bytes());
         o.extend_from_slice(&(clips.len() as u32).to_le_bytes());
+        o.extend_from_slice(&(frame_data.len() as u32).to_le_bytes());
         for (first, count) in &clips {
             o.extend_from_slice(&first.to_le_bytes());
             o.extend_from_slice(&count.to_le_bytes());
         }
-    }
-    for fv in &frames {
-        for v in fv {
-            for c in v {
-                o.extend_from_slice(&c.to_le_bytes());
+        for (offset, mode) in &frame_descs {
+            o.extend_from_slice(&offset.to_le_bytes());
+            o.push(*mode);
+            o.extend_from_slice(&[0, 0, 0]);
+        }
+        o.extend_from_slice(&frame_data);
+    } else {
+        let multi_clip = clips.len() > 1;
+        o.extend_from_slice(if multi_clip { b"HMD3" } else { b"HMD2" });
+        o.extend_from_slice(&(n_verts as u32).to_le_bytes());
+        o.extend_from_slice(&(n_tris as u32).to_le_bytes());
+        o.extend_from_slice(&(texs.len() as u32).to_le_bytes());
+        o.extend_from_slice(&(frames.len() as u32).to_le_bytes());
+        if multi_clip {
+            o.extend_from_slice(&(clips.len() as u32).to_le_bytes());
+            for (first, count) in &clips {
+                o.extend_from_slice(&first.to_le_bytes());
+                o.extend_from_slice(&count.to_le_bytes());
+            }
+        }
+        for fv in &frames {
+            for v in fv {
+                for c in v {
+                    o.extend_from_slice(&c.to_le_bytes());
+                }
             }
         }
     }
@@ -2632,9 +2689,10 @@ fn cook_mdl(path: &str, out: &str, specs: &[SeqSpec]) -> Result<(), String> {
         .collect::<Vec<_>>()
         .join(",");
     println!(
-        "cooked {} -> {} (seqs {}, {} clips, {} frames, {} verts, {} tris, {} texs, {} KB)",
+        "cooked {} -> {} ({} seqs {}, {} clips, {} frames, {} verts, {} tris, {} texs, {} KB)",
         path,
         out,
+        if compact_frames { "HMD4" } else { "HMDL" },
         seq_desc,
         clips.len(),
         frames.len(),
@@ -2648,7 +2706,11 @@ fn cook_mdl(path: &str, out: &str, specs: &[SeqSpec]) -> Result<(), String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(|s| s.as_str()) == Some("--mdl") {
+    if matches!(
+        args.get(1).map(|s| s.as_str()),
+        Some("--mdl") | Some("--mdl4")
+    ) {
+        let compact_frames = args.get(1).map(|s| s.as_str()) == Some("--mdl4");
         match (args.get(2), args.get(3)) {
             (Some(inp), Some(out)) => {
                 let seq_text = args.get(4).map(|s| s.as_str()).unwrap_or("0");
@@ -2659,14 +2721,16 @@ fn main() {
                         exit(2);
                     }
                 };
-                if let Err(e) = cook_mdl(inp, out, &specs) {
+                if let Err(e) = cook_mdl(inp, out, &specs, compact_frames) {
                     eprintln!("{}", e);
                     exit(1);
                 }
                 return;
             }
             _ => {
-                eprintln!("usage: hl-bsp --mdl <in.mdl> <out.hlmdl> [seq|seq:max_frames,...]");
+                eprintln!(
+                    "usage: hl-bsp --mdl|--mdl4 <in.mdl> <out.hlmdl> [seq|seq:max_frames,...]"
+                );
                 exit(2);
             }
         }

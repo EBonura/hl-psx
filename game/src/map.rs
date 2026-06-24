@@ -27,6 +27,8 @@
 //!
 //! Fields are read via `from_le_bytes` (include_bytes! is only byte-aligned).
 
+use core::ptr;
+
 use psx_gte::math::Vec3I16;
 
 #[inline(always)]
@@ -130,11 +132,16 @@ pub struct Ent {
 }
 
 #[derive(Clone, Copy)]
-pub struct Tri {
+pub struct RenderTri {
     pub idx: [u16; 3],
     pub tex: usize,
-    pub uv: [(u8, u8); 3],
+    pub uv_words: [u16; 3],
     pub rgb: [(u8, u8, u8); 3],
+}
+
+#[inline(always)]
+const fn uv_word(u: u8, v: u8) -> u16 {
+    (u as u16) | ((v as u16) << 8)
 }
 
 impl Map {
@@ -322,23 +329,40 @@ impl Map {
     }
 
     #[inline]
-    pub fn tri(&self, t: usize) -> Tri {
+    pub fn tri_uv_words(&self, t: usize) -> [u16; 3] {
         let o = self.tri_off + t * TRI_SZ;
         let d = self.data;
-        Tri {
+        [
+            uv_word(d[o + 7], d[o + 8]),
+            uv_word(d[o + 9], d[o + 10]),
+            uv_word(d[o + 11], d[o + 12]),
+        ]
+    }
+
+    #[inline]
+    pub fn render_tri(&self, t: usize, uv_words: [u16; 3]) -> RenderTri {
+        let o = self.tri_off + t * TRI_SZ;
+        let d = self.data;
+        RenderTri {
             idx: [rd_u16(d, o), rd_u16(d, o + 2), rd_u16(d, o + 4)],
             tex: d[o + 6] as usize,
-            uv: [
-                (d[o + 7], d[o + 8]),
-                (d[o + 9], d[o + 10]),
-                (d[o + 11], d[o + 12]),
-            ],
+            uv_words,
             rgb: [
                 (d[o + 13], d[o + 14], d[o + 15]),
                 (d[o + 16], d[o + 17], d[o + 18]),
                 (d[o + 19], d[o + 20], d[o + 21]),
             ],
         }
+    }
+
+    pub unsafe fn fill_uv_words_raw(&self, out: *mut [u16; 3], out_len: usize) -> usize {
+        let n = self.n_tris.min(out_len);
+        let mut t = 0;
+        while t < n {
+            ptr::write(out.add(t), self.tri_uv_words(t));
+            t += 1;
+        }
+        n
     }
 
     // ---- BSP / PVS ----

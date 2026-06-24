@@ -298,27 +298,58 @@ fn rd32(p: *const u8, o: usize) -> u32 {
 pub fn load_chunk(chunk_id: u32, dst: &mut [u32]) -> Option<usize> {
     unsafe {
         let buf = core::ptr::addr_of_mut!(SECTOR_BUF) as *mut u32;
-        // Header sector: read the table and find the entry.
-        if !hw::prepare() || !hw::start_read(PACK_LBA) || !hw::read_sector(buf) {
-            hw::stop();
+        // Header/table: find the entry, including packs whose table spans more
+        // than one sector. Future full-game asset packs can easily exceed the
+        // old one-sector table limit.
+        let mut loaded_header_sector = u32::MAX;
+        if !load_pack_header_sector(buf, &mut loaded_header_sector, 0) {
             return None;
         }
-        hw::stop();
         let p = buf as *const u8;
         if rd32(p, 0) != u32::from_le_bytes(*b"PSOX") || rd32(p, 4) != u32::from_le_bytes(*b"WPAK")
         {
             return None;
         }
         let chunk_count = rd32(p, 12);
+        let header_sectors = rd32(p, 20).max(1);
         let mut entry: Option<(u32, u32, usize)> = None; // (sector_offset, sector_count, byte_size)
         let mut i = 0u32;
         while i < chunk_count {
-            let o = 28 + (i as usize) * 24;
-            if o + 24 > SECTOR_BYTES {
-                break; // table spans >1 sector (>84 chunks); not handled
+            let table_offset = 28 + (i as usize) * 24;
+            let sector = (table_offset / SECTOR_BYTES) as u32;
+            if sector >= header_sectors {
+                break;
             }
-            if rd32(p, o) == chunk_id {
-                entry = Some((rd32(p, o + 4), rd32(p, o + 8), rd32(p, o + 12) as usize));
+            let within = table_offset % SECTOR_BYTES;
+            if !load_pack_header_sector(buf, &mut loaded_header_sector, sector) {
+                return None;
+            }
+            let p = buf as *const u8;
+            let (entry_id, sector_offset, sector_count, byte_size) = if within + 24 <= SECTOR_BYTES
+            {
+                (
+                    rd32(p, within),
+                    rd32(p, within + 4),
+                    rd32(p, within + 8),
+                    rd32(p, within + 12) as usize,
+                )
+            } else {
+                let first = SECTOR_BYTES - within;
+                if sector + 1 >= header_sectors {
+                    break;
+                }
+                let mut entry_bytes = [0u8; 24];
+                core::ptr::copy_nonoverlapping(p.add(within), entry_bytes.as_mut_ptr(), first);
+                if !load_pack_header_sector(buf, &mut loaded_header_sector, sector + 1) {
+                    return None;
+                }
+                let p = buf as *const u8;
+                core::ptr::copy_nonoverlapping(p, entry_bytes.as_mut_ptr().add(first), 24 - first);
+                let e = entry_bytes.as_ptr();
+                (rd32(e, 0), rd32(e, 4), rd32(e, 8), rd32(e, 12) as usize)
+            };
+            if entry_id == chunk_id {
+                entry = Some((sector_offset, sector_count, byte_size));
                 break;
             }
             i += 1;
@@ -349,6 +380,23 @@ pub fn load_chunk(chunk_id: u32, dst: &mut [u32]) -> Option<usize> {
         hw::stop();
         Some(byte_size)
     }
+}
+
+#[cfg(target_arch = "mips")]
+unsafe fn load_pack_header_sector(buf: *mut u32, loaded_sector: &mut u32, sector: u32) -> bool {
+    if *loaded_sector == sector {
+        return true;
+    }
+    if !hw::prepare() || !hw::start_read(PACK_LBA + sector) {
+        hw::stop();
+        return false;
+    }
+    let ok = hw::read_sector(buf);
+    hw::stop();
+    if ok {
+        *loaded_sector = sector;
+    }
+    ok
 }
 
 #[cfg(not(target_arch = "mips"))]

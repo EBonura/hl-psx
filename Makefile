@@ -103,11 +103,12 @@ disc: compile
 		--exe $(EXE) \
 		--out $(DIST)/hl-psx.bin \
 		--volume HLPSX \
-		--world-pack-rooms-dir $(ROOMS)
+		--world-pack-rooms-dir $(ROOMS) \
+		--world-pack-extra-dir $(MODELPACK)
 	@echo "DISC -> $(DIST)/hl-psx.cue"
 
 assets: check-assets menu-assets rooms models
-	@echo "assets -> data/menu data/rooms data/models"
+	@echo "assets -> data/menu data/rooms data/models data/modelpack"
 
 full-disc: assets disc
 
@@ -163,6 +164,7 @@ psoxide-chart: psoxide-profile
 #   room_<2N+1>.psxc = temporary HLTX texture payload for VRAM upload
 # Keep MAPLIST in the same order as `game/src/menu.rs`'s chapter list.
 ROOMS := $(ROOT)/data/rooms
+MODELPACK := $(ROOT)/data/modelpack
 # One representative per gameplay chapter, staying below the current static
 # MAP_BUF budget. Some chapter starts are too large today, so use the first
 # fitting map from that chapter instead.
@@ -234,13 +236,24 @@ cook:
 # Cook the studio models the runtime include_bytes!'s (data/models). Most are
 # baked to sequence 0. Headcrab uses an HMD3 clip pack:
 #   0 idle1, 4 run, 10 jump/attack, 7 dieback
-MODELLIST := scientist barney v_9mmhandgun
+MODELLIST := scientist barney
+WEAPON_CHUNK_BASE := 1000
+WEAPONLIST := v_9mmhandgun v_357 v_9mmar v_crossbow v_crowbar v_chub v_egon v_gauss v_grenade v_hgun v_rpg v_satchel v_satchel_radio v_shotgun v_squeak v_tripmine
 models:
 	cd $(HLBSP) && cargo build --release
 	@mkdir -p $(ROOT)/data/models
+	@mkdir -p $(MODELPACK)
+	@rm -f $(MODELPACK)/chunk_*.psxm
 	@for m in $(MODELLIST); do \
 		$(HLBSP_BIN) --mdl "$(HL_GAME)/models/$$m.mdl" $(ROOT)/data/models/$$m.hlmdl 0; \
 	done
+	@i=0; for m in $(WEAPONLIST); do \
+		chunk=$$(( $(WEAPON_CHUNK_BASE) + i )); \
+		$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/$$m.mdl" "$(MODELPACK)/chunk_$$chunk.psxm" 0 >/dev/null; \
+		echo "  model chunk $$chunk = $$m"; \
+		i=$$((i+1)); \
+	done
+	@cp "$(MODELPACK)/chunk_$(WEAPON_CHUNK_BASE).psxm" $(ROOT)/data/models/v_9mmhandgun.hlmdl
 	$(HLBSP_BIN) --mdl "$(HL_GAME)/models/headcrab.mdl" $(ROOT)/data/models/headcrab.hlmdl 0:8,4:8,10:7,7:7
 
 clean:

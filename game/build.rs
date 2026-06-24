@@ -10,6 +10,8 @@ const FALLBACK_MAX_FACES: usize = 6144;
 const FALLBACK_MAX_LEAVES: usize = 8192;
 const FALLBACK_MAX_ENTS: usize = 192;
 const FALLBACK_MAX_TEX_SLOTS: usize = 256;
+const FALLBACK_MAX_TRIS: usize = 16_384;
+const FALLBACK_MODEL_WORDS: usize = 24_576;
 
 fn rd_u32(d: &[u8], o: usize) -> Option<u32> {
     Some(u32::from_le_bytes([
@@ -32,7 +34,7 @@ fn round_up(value: usize, step: usize) -> usize {
     }
 }
 
-fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize, usize) {
+fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize, usize, usize) {
     let rooms = repo_root.join("data/rooms");
     println!("cargo:rerun-if-changed={}", rooms.display());
 
@@ -43,6 +45,7 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
             FALLBACK_MAX_LEAVES,
             FALLBACK_MAX_ENTS,
             FALLBACK_MAX_TEX_SLOTS,
+            FALLBACK_MAX_TRIS,
         );
     };
 
@@ -51,6 +54,7 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
     let mut max_leaves = 0usize;
     let mut max_ents = 0usize;
     let mut max_texs = 0usize;
+    let mut max_tris = 0usize;
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -75,10 +79,12 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
 
         max_bytes = max_bytes.max(data.len());
         let n_texs = rd_u32(&data, 12).unwrap_or(0) as usize;
+        let n_tris = rd_u32(&data, 8).unwrap_or(0) as usize;
         let n_faces = rd_u32(&data, 16).unwrap_or(0) as usize;
         let bsp_off = rd_u32(&data, 20).unwrap_or(0) as usize;
         let ent_off = rd_u32(&data, 28).unwrap_or(0) as usize;
         max_texs = max_texs.max(n_texs);
+        max_tris = max_tris.max(n_tris);
 
         if bsp_off + 16 <= data.len() {
             let n_leaves = rd_u32(&data, bsp_off + 4).unwrap_or(0) as usize;
@@ -108,6 +114,7 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
             FALLBACK_MAX_LEAVES,
             FALLBACK_MAX_ENTS,
             FALLBACK_MAX_TEX_SLOTS,
+            FALLBACK_MAX_TRIS,
         );
     }
 
@@ -117,7 +124,38 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
         round_up(max_leaves + 64, 256),
         round_up(max_ents + 8, 16),
         round_up(max_texs + 8, 16),
+        round_up(max_tris + 32, 256),
     )
+}
+
+fn scan_model_budget(repo_root: &std::path::Path) -> usize {
+    let modelpack = repo_root.join("data/modelpack");
+    println!("cargo:rerun-if-changed={}", modelpack.display());
+
+    let Ok(entries) = fs::read_dir(&modelpack) else {
+        return FALLBACK_MODEL_WORDS;
+    };
+
+    let mut max_bytes = 0usize;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("chunk_") || !name.ends_with(".psxm") {
+            continue;
+        }
+        println!("cargo:rerun-if-changed={}", path.display());
+        if let Ok(meta) = entry.metadata() {
+            max_bytes = max_bytes.max(meta.len() as usize);
+        }
+    }
+
+    if max_bytes == 0 {
+        FALLBACK_MODEL_WORDS
+    } else {
+        round_up(max_bytes.div_ceil(4) + 256, 256)
+    }
 }
 
 fn main() {
@@ -141,14 +179,18 @@ fn main() {
     println!("cargo:rustc-link-arg=--oformat=binary");
     println!("cargo:rerun-if-changed={}", ld.display());
 
-    let (map_words, max_faces, max_leaves, max_ents, max_tex_slots) = scan_room_budget(repo_root);
+    let (map_words, max_faces, max_leaves, max_ents, max_tex_slots, max_tris) =
+        scan_room_budget(repo_root);
+    let model_words = scan_model_budget(repo_root);
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let budget = format!(
         "pub const MAP_WORDS: usize = {map_words};\n\
+         pub const MODEL_WORDS: usize = {model_words};\n\
          pub const MAX_FACES: usize = {max_faces};\n\
          pub const MAX_LEAVES: usize = {max_leaves};\n\
          pub const MAX_ENTS: usize = {max_ents};\n\
-         pub const MAX_TEX_SLOTS: usize = {max_tex_slots};\n"
+         pub const MAX_TEX_SLOTS: usize = {max_tex_slots};\n\
+         pub const MAX_TRIS: usize = {max_tris};\n"
     );
     fs::write(out_dir.join("room_budget.rs"), budget).expect("write generated room budget");
 }
