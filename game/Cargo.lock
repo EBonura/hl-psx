@@ -12,6 +12,7 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 name = "hl-psx"
 version = "0.1.0"
 dependencies = [
+ "psx-engine",
  "psx-font",
  "psx-gpu",
  "psx-gte",
@@ -20,6 +21,32 @@ dependencies = [
  "psx-pad",
  "psx-rt",
  "psx-sdk",
+ "psx-telemetry",
+ "psx-vram",
+]
+
+[[package]]
+name = "psx-asset"
+version = "0.1.0"
+dependencies = [
+ "psx-gte",
+ "psxed-format",
+]
+
+[[package]]
+name = "psx-engine"
+version = "0.1.0"
+dependencies = [
+ "psx-asset",
+ "psx-font",
+ "psx-gpu",
+ "psx-gte",
+ "psx-io",
+ "psx-level",
+ "psx-math",
+ "psx-pad",
+ "psx-rt",
+ "psx-spu",
  "psx-telemetry",
  "psx-vram",
 ]
@@ -72,6 +99,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "psx-level"
+version = "0.1.0"
+dependencies = [
+ "psx-math",
+]
+
+[[package]]
 name = "psx-math"
 version = "0.1.0"
 
@@ -104,6 +138,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "psx-spu"
+version = "0.1.0"
+dependencies = [
+ "psx-hw",
+ "psx-io",
+]
+
+[[package]]
 name = "psx-telemetry"
 version = "0.1.0"
 
@@ -114,3 +156,7 @@ dependencies = [
  "psx-hw",
  "psx-io",
 ]
+
+[[package]]
+name = "psxed-format"
+version = "0.1.0"

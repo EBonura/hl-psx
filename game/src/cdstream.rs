@@ -9,7 +9,9 @@
 //! then `chunk_count` × 24-byte entries
 //!   u32 chunk_id | u32 sector_offset | u32 sector_count | u32 byte_size
 //!   | u32 checksum (FNV-1a) | u32 reserved
-//! then sector-aligned chunk payloads. chunk N == map cooked to room_N.psxc.
+//! then sector-aligned chunk payloads. hl-psx stores menu room N as two chunks:
+//! resident world data in room_<2N>.psxc and temporary texture data in
+//! room_<2N+1>.psxc.
 
 #![allow(dead_code)]
 

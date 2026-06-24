@@ -254,8 +254,8 @@ fn report(path: &str, bsp: &Bsp) {
 // Layout (all little-endian):
 //   magic "HLMA" | u32 n_verts | u32 n_tris | u32 n_texs
 //   verts:   i16 x,y,z   × n_verts          (world space, Y-up)
-//   tri_rec[24] × n_tris:
-//     u16 a,b,c | u16 tex | u8 uv[6] | u8 rgb[9] | u8 pad
+//   tri_rec[22] × n_tris:
+//     u16 a,b,c | u8 tex | u8 uv[6] | u8 rgb[9]
 //   (pad to 4)
 //   textures × n_texs, each (already 4-byte aligned):
 //     u16 w | u16 h        (power-of-two, 8..=64)
@@ -298,6 +298,120 @@ fn placeholder_tex() -> CookedTex {
         h: 8,
         clut,
         pix4: vec![0u8; 8 * 8 / 2],
+    }
+}
+
+fn compact_used_textures(texs: Vec<CookedTex>, tri_tex: &mut [u16]) -> (Vec<CookedTex>, usize) {
+    let original_count = texs.len();
+    let mut source: Vec<Option<CookedTex>> = texs.into_iter().map(Some).collect();
+    let mut remap = vec![u16::MAX; source.len()];
+    let mut compact = Vec::new();
+    let mut fallback_slot = u16::MAX;
+
+    for slot in tri_tex {
+        let old = *slot as usize;
+        if old < remap.len() {
+            let new = if remap[old] == u16::MAX {
+                let next = compact.len().min(u16::MAX as usize) as u16;
+                remap[old] = next;
+                compact.push(source[old].take().unwrap_or_else(placeholder_tex));
+                next
+            } else {
+                remap[old]
+            };
+            *slot = new;
+        } else {
+            // Malformed texinfo should not reach here, but keep the cooked file
+            // internally valid if it does: all bad refs share one placeholder.
+            if fallback_slot == u16::MAX {
+                fallback_slot = compact.len().min(u16::MAX as usize) as u16;
+                compact.push(placeholder_tex());
+            }
+            *slot = fallback_slot;
+        }
+    }
+
+    let stripped = original_count.saturating_sub(compact.len());
+    (compact, stripped)
+}
+
+fn append_texture_blob(out: &mut Vec<u8>, texs: &[CookedTex]) {
+    for tx in texs {
+        out.extend_from_slice(&tx.w.to_le_bytes());
+        out.extend_from_slice(&tx.h.to_le_bytes());
+        for c in &tx.clut {
+            out.extend_from_slice(&c.to_le_bytes());
+        }
+        out.extend_from_slice(&tx.pix4);
+    }
+}
+
+fn build_texture_chunk(texs: &[CookedTex]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(b"HLTX");
+    out.extend_from_slice(&(texs.len() as u32).to_le_bytes());
+    append_texture_blob(&mut out, texs);
+    out
+}
+
+fn compact_clipnode_remap(clipnodes: &[u8], roots: &[i32]) -> Vec<i32> {
+    let n_clip = clipnodes.len() / SZ_CLIPNODE;
+    let mut reachable = vec![false; n_clip];
+    let mut stack: Vec<usize> = Vec::new();
+
+    for &root in roots {
+        if root >= 0 {
+            let idx = root as usize;
+            if idx < n_clip && !reachable[idx] {
+                reachable[idx] = true;
+                stack.push(idx);
+            }
+        }
+    }
+
+    while let Some(idx) = stack.pop() {
+        let co = idx * SZ_CLIPNODE;
+        for child_off in [4usize, 6usize] {
+            let child =
+                i16::from_le_bytes([clipnodes[co + child_off], clipnodes[co + child_off + 1]]);
+            if child >= 0 {
+                let child_idx = child as usize;
+                if child_idx < n_clip && !reachable[child_idx] {
+                    reachable[child_idx] = true;
+                    stack.push(child_idx);
+                }
+            }
+        }
+    }
+
+    let mut remap = vec![-1i32; n_clip];
+    let mut next = 0i32;
+    for (idx, is_reachable) in reachable.into_iter().enumerate() {
+        if is_reachable {
+            remap[idx] = next;
+            next += 1;
+        }
+    }
+    remap
+}
+
+fn remap_clip_head(head: i32, remap: &[i32]) -> i32 {
+    if head >= 0 {
+        remap.get(head as usize).copied().unwrap_or(-1)
+    } else {
+        head
+    }
+}
+
+fn remap_clip_child(child: i16, remap: &[i32]) -> i16 {
+    if child >= 0 {
+        remap
+            .get(child as usize)
+            .copied()
+            .filter(|&idx| idx >= 0 && idx <= i16::MAX as i32)
+            .unwrap_or(-1) as i16
+    } else {
+        child
     }
 }
 
@@ -1231,7 +1345,7 @@ fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) 
 }
 
 /// Point entities that place a studio model: `(model_type, origin_world, yaw, leaf)`.
-/// type 0 = scientist, 1 = barney.
+/// type 0 = scientist, 1 = barney, 2 = headcrab.
 fn collect_props(
     ents: &[u8],
     nodes: &[u8],
@@ -1247,6 +1361,7 @@ fn collect_props(
         let ty = match ent_value(block, "classname").unwrap_or("") {
             "monster_scientist" | "monster_sitting_scientist" => 0u16,
             "monster_barney" => 1u16,
+            "monster_headcrab" => 2u16,
             _ => continue,
         };
         let origin_hl = ent_value(block, "origin")
@@ -1280,7 +1395,7 @@ fn is_tool_texture(name: &str) -> bool {
         || n.starts_with("trigger")
 }
 
-fn cook(path: &str, out: &str) -> Result<(), String> {
+fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {}", path, e))?;
     let bsp = Bsp::parse(&bytes)?;
 
@@ -1322,7 +1437,9 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         })
         .collect();
 
-    // Cook every miptex (tex_id == miptex index). Keep original sizes for UVs.
+    // Cook every miptex up front because face UVs and texinfo use original BSP
+    // texture indices. After geometry emission, compact to only referenced
+    // render textures so triggers/tools/unused miptexes do not occupy RAM/VRAM.
     let tl = bsp.lump(LUMP_TEXTURES);
     let n_texs = i32le(tl, 0).filter(|&n| n >= 0).unwrap_or(0) as usize;
     let mut texs: Vec<CookedTex> = Vec::with_capacity(n_texs);
@@ -1645,11 +1762,26 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
 
     let n_verts = verts.len();
     let n_tris = tri_idx.len() / 3;
+    if n_tris > u16::MAX as usize {
+        return Err(format!(
+            "{}: {} cooked triangles exceeds compact FaceRec limit of 65535",
+            path, n_tris
+        ));
+    }
+    let original_tex_count = texs.len();
+    let (texs, stripped_tex_count) = compact_used_textures(texs, &mut tri_tex);
+    let n_cooked_texs = texs.len();
+    if n_cooked_texs > u8::MAX as usize + 1 {
+        return Err(format!(
+            "{}: {} cooked textures exceeds compact TriRec limit of 256",
+            path, n_cooked_texs
+        ));
+    }
     let mut o: Vec<u8> = Vec::new();
     o.extend_from_slice(b"HLMA");
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_tris as u32).to_le_bytes());
-    o.extend_from_slice(&(n_texs as u32).to_le_bytes());
+    o.extend_from_slice(&(n_cooked_texs as u32).to_le_bytes());
     o.extend_from_slice(&(n_faces as u32).to_le_bytes());
     let bsp_off_pos = o.len();
     o.extend_from_slice(&0u32.to_le_bytes()); // BSP section offset, patched below
@@ -1671,28 +1803,26 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.extend_from_slice(&tri_idx[ib].to_le_bytes());
         o.extend_from_slice(&tri_idx[ib + 1].to_le_bytes());
         o.extend_from_slice(&tri_idx[ib + 2].to_le_bytes());
-        o.extend_from_slice(&tri_tex[t].to_le_bytes());
+        o.push(tri_tex[t] as u8);
         o.extend_from_slice(&tri_uv[t * 6..t * 6 + 6]);
         o.extend_from_slice(&tri_rgb[t * 9..t * 9 + 9]);
-        o.push(0);
     }
     while o.len() % 4 != 0 {
         o.push(0);
     }
-    // Texture blob (each block is already a multiple of 4 bytes).
-    for tx in &texs {
-        o.extend_from_slice(&tx.w.to_le_bytes());
-        o.extend_from_slice(&tx.h.to_le_bytes());
-        for c in &tx.clut {
-            o.extend_from_slice(&c.to_le_bytes());
-        }
-        o.extend_from_slice(&tx.pix4);
+    let texture_chunk = tex_out.map(|_| build_texture_chunk(&texs));
+    if tex_out.is_none() {
+        // Legacy single-file cook: keep the texture blob inline before BSP.
+        // Runtime room builds pass `tex_out` and load the HLTX chunk only for
+        // VRAM upload, then overwrite that staging buffer with resident HLMA.
+        append_texture_blob(&mut o, &texs);
     }
 
     // ---- BSP visibility (PVS) ----
-    // u32 n_nodes,n_leaves,n_marks,vis_len | FaceRec[32B] | nodes[20B] |
+    // u32 n_nodes,n_leaves,n_marks,vis_len | FaceRec[28B] | nodes[14B] |
     // leaves[8B] | marks (pad) | vis (raw RLE, pad).
-    // FaceRec = u32 first_tri, u16 tri_count, i16 normal[3], i32 dist.
+    // FaceRec = u16 first_tri, u16 tri_count, i16 normal[3], i32 dist,
+    // u16 plane_group, i16 center[3], u16 extent[3].
     // Node/face planes are transformed to world space so the runtime can walk
     // and cull with the world-space camera directly.
     let bsp_off = o.len() as u32;
@@ -1755,14 +1885,13 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     o.extend_from_slice(&(vis.len() as u32).to_le_bytes());
 
     for f in 0..n_faces {
-        o.extend_from_slice(&face_first[f].to_le_bytes());
+        o.extend_from_slice(&(face_first[f] as u16).to_le_bytes());
         o.extend_from_slice(&face_ntri[f].to_le_bytes());
         for c in face_norm[f] {
             o.extend_from_slice(&c.to_le_bytes());
         }
         o.extend_from_slice(&face_dist[f].to_le_bytes());
         o.extend_from_slice(&face_group[f].to_le_bytes());
-        o.extend_from_slice(&0u16.to_le_bytes());
         for c in face_center[f] {
             o.extend_from_slice(&c.to_le_bytes());
         }
@@ -1783,14 +1912,9 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.extend_from_slice(&((nx * 4096.0).round() as i16).to_le_bytes());
         o.extend_from_slice(&((nz * 4096.0).round() as i16).to_le_bytes());
         o.extend_from_slice(&((ny * 4096.0).round() as i16).to_le_bytes());
-        o.extend_from_slice(&0i16.to_le_bytes()); // pad
         o.extend_from_slice(&((d / scale).round() as i32).to_le_bytes());
-        o.extend_from_slice(
-            &(i16::from_le_bytes([nodes[no + 4], nodes[no + 5]]) as i32).to_le_bytes(),
-        );
-        o.extend_from_slice(
-            &(i16::from_le_bytes([nodes[no + 6], nodes[no + 7]]) as i32).to_le_bytes(),
-        );
+        o.extend_from_slice(&i16::from_le_bytes([nodes[no + 4], nodes[no + 5]]).to_le_bytes());
+        o.extend_from_slice(&i16::from_le_bytes([nodes[no + 6], nodes[no + 7]]).to_le_bytes());
     }
 
     for li in 0..n_leaves {
@@ -1827,10 +1951,33 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     let clip_off = o.len() as u32;
     o[clip_off_pos..clip_off_pos + 4].copy_from_slice(&clip_off.to_le_bytes());
     let clipnodes = bsp.lump(LUMP_CLIPNODES);
-    let n_clip = clipnodes.len() / SZ_CLIPNODE;
+    let raw_n_clip = clipnodes.len() / SZ_CLIPNODE;
     let models = bsp.lump(LUMP_MODELS);
-    let hull0_head = i32le(models, 36).unwrap_or(0); // dmodel_t.headnode[0] (point hull)
-    let hull1_head = i32le(models, 40).unwrap_or(0); // dmodel_t.headnode[1] (player hull)
+    let hull0_head_raw = i32le(models, 36).unwrap_or(0); // dmodel_t.headnode[0] (point hull)
+    let hull1_head_raw = i32le(models, 40).unwrap_or(0); // dmodel_t.headnode[1] (player hull)
+    let mut ents = collect_entities(bsp.lump(LUMP_ENTITIES), models, nodes, planes, scale);
+    let (tram_model, tram_speed, way, _) = collect_tram(bsp.lump(LUMP_ENTITIES), scale);
+    let tram_head_raw = if tram_model > 0 {
+        i32le(models, tram_model as usize * SZ_MODEL + 40).unwrap_or(0)
+    } else {
+        0
+    };
+    let mut clip_roots = Vec::with_capacity(3 + ents.len());
+    clip_roots.push(hull0_head_raw);
+    clip_roots.push(hull1_head_raw);
+    clip_roots.push(tram_head_raw);
+    for e in &ents {
+        clip_roots.push(e.head);
+    }
+    let clip_remap = compact_clipnode_remap(clipnodes, &clip_roots);
+    let n_clip = clip_remap.iter().filter(|&&idx| idx >= 0).count();
+    let stripped_clip_count = raw_n_clip.saturating_sub(n_clip);
+    let hull0_head = remap_clip_head(hull0_head_raw, &clip_remap);
+    let hull1_head = remap_clip_head(hull1_head_raw, &clip_remap);
+    let tram_head = remap_clip_head(tram_head_raw, &clip_remap);
+    for e in &mut ents {
+        e.head = remap_clip_head(e.head, &clip_remap);
+    }
     let (sp, syaw_deg) = find_spawn(bsp.lump(LUMP_ENTITIES)).unwrap_or_else(|| {
         // Mid-chapter maps (changelevel targets) have no info_player_start; you
         // arrive via an info_landmark. Fall back to the world bbox center near
@@ -1863,7 +2010,13 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.extend_from_slice(&c.to_le_bytes());
     }
     o.extend_from_slice(&syaw.to_le_bytes());
-    for ci in 0..n_clip {
+    for ci in 0..raw_n_clip {
+        let Some(&new_ci) = clip_remap.get(ci) else {
+            continue;
+        };
+        if new_ci < 0 {
+            continue;
+        }
         let co = ci * SZ_CLIPNODE;
         let planenum = i32le(clipnodes, co).unwrap_or(0).max(0) as usize;
         let po = planenum * SZ_PLANE;
@@ -1874,12 +2027,10 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.extend_from_slice(&((nx * 4096.0).round() as i16).to_le_bytes());
         o.extend_from_slice(&((nz * 4096.0).round() as i16).to_le_bytes());
         o.extend_from_slice(&((ny * 4096.0).round() as i16).to_le_bytes());
-        o.extend_from_slice(
-            &i16::from_le_bytes([clipnodes[co + 4], clipnodes[co + 5]]).to_le_bytes(),
-        );
-        o.extend_from_slice(
-            &i16::from_le_bytes([clipnodes[co + 6], clipnodes[co + 7]]).to_le_bytes(),
-        );
+        let c0 = i16::from_le_bytes([clipnodes[co + 4], clipnodes[co + 5]]);
+        let c1 = i16::from_le_bytes([clipnodes[co + 6], clipnodes[co + 7]]);
+        o.extend_from_slice(&remap_clip_child(c0, &clip_remap).to_le_bytes());
+        o.extend_from_slice(&remap_clip_child(c1, &clip_remap).to_le_bytes());
         o.extend_from_slice(&0i16.to_le_bytes()); // pad
         o.extend_from_slice(&((d / scale).round() as i32).to_le_bytes());
     }
@@ -1897,7 +2048,6 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.extend_from_slice(&(i32le(models, mo + 60).unwrap_or(0) as u32).to_le_bytes());
         // numfaces
     }
-    let ents = collect_entities(bsp.lump(LUMP_ENTITIES), models, nodes, planes, scale);
     o.extend_from_slice(&(ents.len() as u32).to_le_bytes());
     let mut ent_leafs: Vec<u16> = Vec::new();
     for e in &ents {
@@ -1933,12 +2083,6 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     // u16 submodel | u16 n_way | i32 speed | waypoints i32[3] × n_way (world)
     let tram_off = o.len() as u32;
     o[tram_off_pos..tram_off_pos + 4].copy_from_slice(&tram_off.to_le_bytes());
-    let (tram_model, tram_speed, way, _) = collect_tram(bsp.lump(LUMP_ENTITIES), scale);
-    let tram_head = if tram_model > 0 {
-        i32le(models, tram_model as usize * SZ_MODEL + 40).unwrap_or(0)
-    } else {
-        0
-    };
     // The tram brush verts are stored relative to the entity origin (bbox near
     // 0); HL renders them at verts + pev->origin, which the path drives. So the
     // render/collision offset is the full path position = wp0 + ride_off.
@@ -1972,9 +2116,37 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     }
 
     std::fs::write(out, &o).map_err(|e| format!("write {}: {}", out, e))?;
+    let tex_kb = if let (Some(tex_out), Some(texture_chunk)) = (tex_out, texture_chunk.as_ref()) {
+        std::fs::write(tex_out, texture_chunk).map_err(|e| format!("write {}: {}", tex_out, e))?;
+        Some(texture_chunk.len() / 1024)
+    } else {
+        None
+    };
     println!(
-        "cooked {} -> {}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes, {} ents, tram {} waypts, {} props, spawn [{},{},{}], {} KB)",
-        path, out, n_verts, n_tris, n_faces, n_leaves, n_clip, ents.len(), way.len(), props.len(), spawn[0], spawn[1], spawn[2], o.len() / 1024
+        "cooked {} -> {}{}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes kept/{} stripped from {}, {} ents, tram {} waypts, {} props, {} texs kept/{} stripped from {}, spawn [{},{},{}], {} KB resident{})",
+        path,
+        out,
+        tex_out.map(|p| format!(" + {}", p)).unwrap_or_default(),
+        n_verts,
+        n_tris,
+        n_faces,
+        n_leaves,
+        n_clip,
+        stripped_clip_count,
+        raw_n_clip,
+        ents.len(),
+        way.len(),
+        props.len(),
+        n_cooked_texs,
+        stripped_tex_count,
+        original_tex_count,
+        spawn[0],
+        spawn[1],
+        spawn[2],
+        o.len() / 1024,
+        tex_kb
+            .map(|kb| format!(", {} KB textures", kb))
+            .unwrap_or_default()
     );
     Ok(())
 }
@@ -2120,6 +2292,38 @@ fn cook_mdl_tex(b: &[u8], idx: usize, w0: usize, h0: usize) -> CookedTex {
 
 const STUDIO_NF_CHROME: i32 = 0x0002;
 
+#[derive(Clone, Copy)]
+struct SeqSpec {
+    seq: i32,
+    max_frames: usize,
+}
+
+fn parse_seq_specs(text: &str) -> Result<Vec<SeqSpec>, String> {
+    let mut out = Vec::new();
+    for raw in text.split(',') {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let (seq_text, frame_text) = raw.split_once(':').unwrap_or((raw, "16"));
+        let seq = seq_text
+            .parse::<i32>()
+            .map_err(|_| format!("bad sequence index '{seq_text}'"))?;
+        let max_frames = frame_text
+            .parse::<usize>()
+            .map_err(|_| format!("bad frame cap '{frame_text}'"))?
+            .clamp(1, 16);
+        out.push(SeqSpec { seq, max_frames });
+    }
+    if out.is_empty() {
+        out.push(SeqSpec {
+            seq: 0,
+            max_frames: 16,
+        });
+    }
+    Ok(out)
+}
+
 fn chrome_uv(n: [f32; 3], fw: f32, fh: f32) -> (u8, u8) {
     let u = (0.5 + n[0].clamp(-1.0, 1.0) * 0.25) * (fw - 1.0).max(1.0);
     let v = (0.5 - n[2].clamp(-1.0, 1.0) * 0.25) * (fh - 1.0).max(1.0);
@@ -2129,7 +2333,7 @@ fn chrome_uv(n: [f32; 3], fw: f32, fh: f32) -> (u8, u8) {
     )
 }
 
-fn cook_mdl(path: &str, out: &str, seq: i32) -> Result<(), String> {
+fn cook_mdl(path: &str, out: &str, specs: &[SeqSpec]) -> Result<(), String> {
     let b = std::fs::read(path).map_err(|e| format!("{}: {}", path, e))?;
     if b.get(0..4) != Some(b"IDST") {
         return Err(format!("{}: not a studio MDL", path));
@@ -2232,71 +2436,81 @@ fn cook_mdl(path: &str, out: &str, seq: i32) -> Result<(), String> {
         }
     }
 
-    // Pick sequence `seq` (default 0) and bake up to MAX_FRAMES posed-vertex frames.
+    // Pick the requested sequence(s) and bake up to MAX_FRAMES posed-vertex
+    // frames per clip. Multiple clips share one triangle/texture section in
+    // HMD3, which is much cheaper than resident duplicate .hlmdl files.
     // seqdesc (176 B): numframes@56, animindex@124, seqgroup@156. mstudioanim per
     // bone is 12 B (6 u16 channel offsets) at animindex + bone*12; offset 0 = no
     // anim for that DOF (use the bone default). PS1 has no FPU, so we bake frames
     // host-side -- the runtime just swaps vertex sets.
-    const MAX_FRAMES: usize = 16;
     let (numseq, seqindex) = (i(164), i(168) as usize);
-    let (animindex, numframes) = if seq >= 0 && seq < numseq {
-        let sd = seqindex + seq as usize * 176;
-        if i(sd + 156) == 0 {
-            (i(sd + 124) as usize, i(sd + 56).max(1) as usize)
-        } else {
-            (0, 1) // sequence lives in a separate group file (not loaded)
-        }
-    } else {
-        (0, 1)
-    };
-    let nbake = if animindex == 0 {
-        1
-    } else {
-        numframes.min(MAX_FRAMES).max(1)
-    };
-
     let ident: Mat34 = (
         [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         [0.0; 3],
     );
-    let mut frames: Vec<Vec<[i16; 3]>> = Vec::with_capacity(nbake);
-    for fi in 0..nbake {
-        let sframe = if nbake > 1 { fi * numframes / nbake } else { 0 };
-        let mut bones: Vec<Mat34> = Vec::with_capacity(numbones);
-        for bi in 0..numbones {
-            let bm = &bmeta[bi];
-            let mut dof = bm.value;
-            if animindex != 0 {
-                let at = animindex + bi * 12; // this bone's mstudioanim_t
-                for d in 0..6 {
-                    let off = u16::from_le_bytes([b[at + d * 2], b[at + d * 2 + 1]]) as usize;
-                    if off != 0 {
-                        dof[d] =
-                            bm.value[d] + anim_value(&b, at + off, sframe) as f32 * bm.scale[d];
+    let mut frames: Vec<Vec<[i16; 3]>> = Vec::new();
+    let mut clips: Vec<(u16, u16)> = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let (animindex, numframes) = if spec.seq >= 0 && spec.seq < numseq {
+            let sd = seqindex + spec.seq as usize * 176;
+            if i(sd + 156) == 0 {
+                (i(sd + 124) as usize, i(sd + 56).max(1) as usize)
+            } else {
+                (0, 1) // sequence lives in a separate group file (not loaded)
+            }
+        } else {
+            (0, 1)
+        };
+        let nbake = if animindex == 0 {
+            1
+        } else {
+            numframes.min(spec.max_frames).max(1)
+        };
+        let clip_first = frames.len().min(u16::MAX as usize) as u16;
+
+        for fi in 0..nbake {
+            let sframe = if nbake > 1 && numframes > 1 {
+                fi * (numframes - 1) / (nbake - 1)
+            } else {
+                0
+            };
+            let mut bones: Vec<Mat34> = Vec::with_capacity(numbones);
+            for bi in 0..numbones {
+                let bm = &bmeta[bi];
+                let mut dof = bm.value;
+                if animindex != 0 {
+                    let at = animindex + bi * 12; // this bone's mstudioanim_t
+                    for d in 0..6 {
+                        let off = u16::from_le_bytes([b[at + d * 2], b[at + d * 2 + 1]]) as usize;
+                        if off != 0 {
+                            dof[d] =
+                                bm.value[d] + anim_value(&b, at + off, sframe) as f32 * bm.scale[d];
+                        }
                     }
                 }
+                let local: Mat34 = (
+                    quat_mat(angle_quat([dof[3], dof[4], dof[5]])),
+                    [dof[0], dof[1], dof[2]],
+                );
+                let world = if bm.parent < 0 {
+                    local
+                } else {
+                    concat(&bones[bm.parent as usize], &local)
+                };
+                bones.push(world);
             }
-            let local: Mat34 = (
-                quat_mat(angle_quat([dof[3], dof[4], dof[5]])),
-                [dof[0], dof[1], dof[2]],
-            );
-            let world = if bm.parent < 0 {
-                local
-            } else {
-                concat(&bones[bm.parent as usize], &local)
-            };
-            bones.push(world);
+            let mut fv: Vec<[i16; 3]> = Vec::with_capacity(vp.len());
+            for v in 0..vp.len() {
+                let p = apply(bones.get(vbone[v]).unwrap_or(&ident), vp[v]);
+                fv.push([
+                    p[0].round() as i16,
+                    p[2].round() as i16,
+                    p[1].round() as i16,
+                ]);
+            }
+            frames.push(fv);
         }
-        let mut fv: Vec<[i16; 3]> = Vec::with_capacity(vp.len());
-        for v in 0..vp.len() {
-            let p = apply(bones.get(vbone[v]).unwrap_or(&ident), vp[v]);
-            fv.push([
-                p[0].round() as i16,
-                p[2].round() as i16,
-                p[1].round() as i16,
-            ]);
-        }
-        frames.push(fv);
+        clips.push((clip_first, nbake.min(u16::MAX as usize) as u16));
     }
 
     let mut tri_idx: Vec<u16> = Vec::new();
@@ -2373,12 +2587,20 @@ fn cook_mdl(path: &str, out: &str, seq: i32) -> Result<(), String> {
 
     let n_tris = tri_idx.len() / 3;
     let n_verts = vp.len();
+    let multi_clip = clips.len() > 1;
     let mut o: Vec<u8> = Vec::new();
-    o.extend_from_slice(b"HMD2"); // multi-frame: header + n_frames x vert-set, then shared tris/tex
+    o.extend_from_slice(if multi_clip { b"HMD3" } else { b"HMD2" });
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_tris as u32).to_le_bytes());
     o.extend_from_slice(&(texs.len() as u32).to_le_bytes());
     o.extend_from_slice(&(frames.len() as u32).to_le_bytes());
+    if multi_clip {
+        o.extend_from_slice(&(clips.len() as u32).to_le_bytes());
+        for (first, count) in &clips {
+            o.extend_from_slice(&first.to_le_bytes());
+            o.extend_from_slice(&count.to_le_bytes());
+        }
+    }
     for fv in &frames {
         for v in fv {
             for c in v {
@@ -2404,11 +2626,17 @@ fn cook_mdl(path: &str, out: &str, seq: i32) -> Result<(), String> {
         o.extend_from_slice(&tx.pix4);
     }
     std::fs::write(out, &o).map_err(|e| format!("write {}: {}", out, e))?;
+    let seq_desc = specs
+        .iter()
+        .map(|s| format!("{}:{}", s.seq, s.max_frames))
+        .collect::<Vec<_>>()
+        .join(",");
     println!(
-        "cooked {} -> {} (seq {}, {} frames, {} verts, {} tris, {} texs, {} KB)",
+        "cooked {} -> {} (seqs {}, {} clips, {} frames, {} verts, {} tris, {} texs, {} KB)",
         path,
         out,
-        seq,
+        seq_desc,
+        clips.len(),
         frames.len(),
         n_verts,
         n_tris,
@@ -2423,31 +2651,38 @@ fn main() {
     if args.get(1).map(|s| s.as_str()) == Some("--mdl") {
         match (args.get(2), args.get(3)) {
             (Some(inp), Some(out)) => {
-                let seq = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
-                if let Err(e) = cook_mdl(inp, out, seq) {
+                let seq_text = args.get(4).map(|s| s.as_str()).unwrap_or("0");
+                let specs = match parse_seq_specs(seq_text) {
+                    Ok(specs) => specs,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        exit(2);
+                    }
+                };
+                if let Err(e) = cook_mdl(inp, out, &specs) {
                     eprintln!("{}", e);
                     exit(1);
                 }
                 return;
             }
             _ => {
-                eprintln!("usage: hl-bsp --mdl <in.mdl> <out.hlmdl> [seq]");
+                eprintln!("usage: hl-bsp --mdl <in.mdl> <out.hlmdl> [seq|seq:max_frames,...]");
                 exit(2);
             }
         }
     }
-    // `--cook <in.bsp> <out.hlm>` cooks; otherwise `<map.bsp>` reports.
+    // `--cook <in.bsp> <out.hlm> [out.hltx]` cooks; otherwise `<map.bsp>` reports.
     if args.get(1).map(|s| s.as_str()) == Some("--cook") {
         match (args.get(2), args.get(3)) {
             (Some(inp), Some(out)) => {
-                if let Err(e) = cook(inp, out) {
+                if let Err(e) = cook(inp, out, args.get(4).map(|s| s.as_str())) {
                     eprintln!("{}", e);
                     exit(1);
                 }
                 return;
             }
             _ => {
-                eprintln!("usage: hl-bsp --cook <in.bsp> <out.hlm>");
+                eprintln!("usage: hl-bsp --cook <in.bsp> <out.hlm> [out.hltx]");
                 exit(2);
             }
         }
@@ -2455,7 +2690,7 @@ fn main() {
     let path = match args.get(1) {
         Some(p) => p.clone(),
         None => {
-            eprintln!("usage: hl-bsp <map.bsp>  |  hl-bsp --cook <in.bsp> <out.hlm>");
+            eprintln!("usage: hl-bsp <map.bsp>  |  hl-bsp --cook <in.bsp> <out.hlm> [out.hltx]");
             exit(2);
         }
     };
@@ -2609,6 +2844,51 @@ mod tests {
         assert!(is_tool_texture("clip"));
         assert!(is_tool_texture("origin"));
         assert!(!is_tool_texture("c1a0_labw5"));
+    }
+
+    fn test_tex(w: u16) -> CookedTex {
+        let mut tex = placeholder_tex();
+        tex.w = w;
+        tex.h = 8;
+        tex.pix4 = vec![0; (w as usize * tex.h as usize) / 2];
+        tex
+    }
+
+    #[test]
+    fn compact_used_textures_remaps_triangle_texture_ids() {
+        let texs = vec![test_tex(8), test_tex(16), test_tex(32), test_tex(64)];
+        let mut tri_tex = vec![2, 0, 2, 1];
+
+        let (compact, stripped) = compact_used_textures(texs, &mut tri_tex);
+
+        assert_eq!(stripped, 1);
+        assert_eq!(tri_tex, vec![0, 1, 0, 2]);
+        assert_eq!(compact.len(), 3);
+        assert_eq!(compact[0].w, 32);
+        assert_eq!(compact[1].w, 8);
+        assert_eq!(compact[2].w, 16);
+    }
+
+    fn put_clipnode(buf: &mut Vec<u8>, planenum: i32, c0: i16, c1: i16) {
+        buf.extend_from_slice(&planenum.to_le_bytes());
+        buf.extend_from_slice(&c0.to_le_bytes());
+        buf.extend_from_slice(&c1.to_le_bytes());
+    }
+
+    #[test]
+    fn compact_clipnodes_keeps_only_reachable_hulls() {
+        let mut clipnodes = Vec::new();
+        put_clipnode(&mut clipnodes, 0, 1, -2);
+        put_clipnode(&mut clipnodes, 0, -1, -2);
+        put_clipnode(&mut clipnodes, 0, -2, -2);
+
+        let remap = compact_clipnode_remap(&clipnodes, &[0]);
+
+        assert_eq!(remap, vec![0, 1, -1]);
+        assert_eq!(remap_clip_head(0, &remap), 0);
+        assert_eq!(remap_clip_child(1, &remap), 1);
+        assert_eq!(remap_clip_child(2, &remap), -1);
+        assert_eq!(remap_clip_child(-2, &remap), -2);
     }
 
     #[test]

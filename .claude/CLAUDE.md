@@ -160,10 +160,11 @@ The fly-cam is now a grounded FPS player. Spawns at the real `info_player_start`
 Simplification: no step-up yet (can't climb stairs/thresholds); single standing
 hull (no crouch); simple velocity (no accel/friction/aircontrol).
 
-## M6 -- map selection (DONE)
+## M6 -- map selection (DONE; superseded by M15 streaming)
 
 Runtime builds from `data/maps/current.hlm`; `make cook MAP=<name>` writes it.
-The full pipeline is map-general -- verified on c1a0 and c1a1a.
+The full pipeline is map-general -- verified on c1a0 and c1a1a. **M15 replaced the
+baked map with runtime CD streaming + an in-game menu.**
 
 ## M7 -- per-vertex lighting (DONE)
 
@@ -354,6 +355,176 @@ verifies in-game.
   range + VRAM check).
 
 Next: animation (runtime skeleton + sequence playback) is the big follow-up.
+
+## M17 -- studio animation system (DONE, verified)
+
+Cook-time **baked vertex frames** (Crash-Bandicoot style) -- no skinning on the
+PS1 (no FPU, no heap in render path). The cook decodes the studio animation and
+pre-poses the vertices per frame; the runtime just selects a frame.
+- **Cook** (`cook_mdl`, `--mdl <in> <out> [seq]`): reads bone metadata
+  (parent + value[6] pos/rot defaults + scale[6]); picks sequence `seq` (default
+  0, seqgroup 0 only); for each baked frame decodes each bone's 6 DOF channels
+  (`mstudioanim` 12 B/bone at animindex+bone*12; offset 0 = use default, else RLE
+  via `anim_value`: `[valid:u8][total:u8]` + `valid` i16s), builds the bone matrix
+  (euler->quat->concat hierarchy), poses verts. Bakes up to **16 frames** (evenly
+  sampled). Output is **HMD2**: `magic | n_verts,n_tris,n_texs,n_frames |
+  n_frames x vertset | tris | uvs | tex`.
+- **Runtime** (`model.rs`): `Model.n_frames` + `vert(frame, i)`; `draw_model` and
+  `draw_viewmodel` take a frame; the loop cycles `frame_no / ANIM_DIV % n_frames`.
+- **Verified**: the viewmodel went from splayed (bind pose) to a coherent posed
+  pistol (idle), and a 2-frame diff on a static-camera map (c1a0) localized all
+  motion to the gun region -> the idle animation cycles. Scientists animate via
+  the same path.
+- **Viewmodel** ON (`SHOW_VIEWMODEL=true`), v_9mmhandgun. Scanned the MDL:
+  **seq 0 = idle1** (61 frames -- its sway is why cycling lurched; we draw static
+  **frame 0**), **seq 3 = shoot** (bake this for R2's real fire anim next).
+  Textures verified correct (the orange is the brass magazine, not corruption).
+  Faithful transform `viewmodel_rot()` = `VM_BASE` (HL forward -> view +Z, up ->
+  screen up -Y, left -> screen left -X; det -1 reflection, RH model -> LH view)
+  x rotate_y(VM_YAW) x rotate_x(VM_PITCH) x `VM_SCALE`, placed by `VM_OFF`
+  (right,down,fwd). Backface cull sign = `VM_CULL_POS`. **Key fix: HL renders
+  v_models near 1:1 -- the old 5-6x scale caused extreme foreshortening (huge
+  near, tiny far). VM_SCALE ~3 now.** Model/textures/cull are right; the exact
+  3/4 angle + corner placement is the last 10% -- can't judge it from static
+  headless crops, so VM_YAW/VM_PITCH/VM_SCALE/VM_OFF are left as live knobs.
+- **Controls** (analog twin-stick, required): left stick move/strafe, right stick
+  look, R2 fires (viewmodel recoil), Select -> menu.
+  - **Camera-roll bug FIXED**: `view_rotation` composed `rotY(yaw)*rotX(pitch)`,
+    which rolls the horizon when you pitch while turned (the "up/down rotate it"
+    complaint). Correct order is **`rotX(pitch)*rotY(yaw)`** (pitch in camera
+    space). Verified by hardcoding a turned+pitched camera: walls were tilted ~35
+    deg before, level after.
+  - **"Player doesn't move" was a collision jam (FIXED)**: the hull trace landed
+    the player EXACTLY on the floor plane, leaving them `startsolid` -> `slide_move`
+    broke every frame (no walk, no fall, `on_ground=0`). Added Quake's
+    **DIST_EPSILON** (`EPS=1`) to `recurse` so impacts stop just SHORT of the
+    plane. Diagnosed with on-screen probes: pad LX/LY/RX/RY (input fine), then a
+    vertical `point_contents` sweep (floor present), then frame-counter + pos +
+    on_ground (player wedged at spawn-12, on_ground=0). After EPS: on_ground=1,
+    pos walks. NB headless diffs were misleading -- the game runs ~6 fps, so
+    consecutive harness frames are the SAME game frame (0% diff != "not moving").
+  - **"Left stick does nothing" was also the tram**: c0a0 locked the player on
+    rails (`riding`); `TRAM_RIDE=false` now -> walk everywhere.
+  - **"Walks a few steps then stops dead" (FIXED)**: `trace_all` OR'd every
+    mover's `startsolid` into the result, so the moment the player stepped inside
+    ANY brush-entity hull (a non-solid func_illusionary, or slight penetration)
+    `slide_move` broke and froze them forever. Fix: movers no longer contribute
+    `startsolid` -- they still block ENTRY via `frac`; only the WORLD hull's
+    startsolid counts as truly stuck. Verified: forced-forward walks the full
+    484->3 with movers on (same as movers off).
+  - **Open perf issue**: gameplay runs ~6 fps (fill-bound) -- makes controls feel
+    laggy regardless. Next thing to attack for feel.
+  - Re-asserts `enable_analog_port1()` if the pad drops analog; radial deadzone;
+    `YAW_RATE=130`/`PITCH_RATE=95`. NB look speed is per-frame -> scales with fps.
+- `make models` cooks scientist + v_9mmhandgun (MODELLIST). EXE grew (~16x vert
+  data): scientist 40 KB, pistol 67 KB.
+
+## M16 -- HUD + weapon viewmodel (HUD DONE; viewmodel blocked on animation)
+
+- **HUD** (`game/src/hud.rs`): crosshair + health + ammo, drawn as immediate
+  prims AFTER `OT.submit()` so they overlay the world. The digits + health cross
+  are the REAL HL HUD sprites: `tools/extract_menu.py` decodes `sprites/640hud7.spr`
+  (a v2 IDSP sprite sheet; digit rects from hud.txt's `640 640hud7` lines:
+  number_d at `(d*24,0,20,24)`, cross at `(80,24,32,32)`) into `data/menu/hud.tex`
+  (256x64 4bpp, HEV amber baked into the CLUT, index 0 = transparent). Uploaded
+  once to a free gameplay tpage (VRAM X=960, band-1's last page -- maps use ~15 of
+  22 pages so it's never clobbered) + CLUT at (960,504); each digit/icon is one
+  `draw_quad_textured_material` sampling its sub-rect. Crosshair is still drawn
+  (the real crosshair sprite isn't wired). Values static (no combat yet).
+  **DO NOT invent assets that exist in the install** -- always extract the real
+  one (font/logo/bg/HUD all came from the player's files); see lesson below.
+- **Weapon viewmodel** (`draw_viewmodel`, gated off by `SHOW_VIEWMODEL=false`):
+  renders a `v_*.mdl` (e.g. `v_9mmhandgun`) in VIEW space (fixed `VM_ROT`+`VM_OFF`,
+  on top of the world). BUT the MDL cook poses the **static bind pose**, and HL
+  v-models are only correct in their **idle animation frame** -- the bind pose is
+  splayed (pistol = jumble, crowbar = invisible). So the viewmodel needs the
+  studio animation-pose system (decode seq 0 frame 0: seqdesc->mstudioanim RLE ->
+  per-bone Euler -> rebuild bone matrices, in `cook_mdl`). That same system is
+  what animates NPCs, so it's the shared next step. Plumbing (extract, upload to
+  WEAPON_SLOTS, view-space draw) is in place behind the flag.
+
+## M15 -- main menu + WORLD.PAK map streaming (DONE, verified)
+
+The map is no longer `include_bytes!`'d into the EXE. It streams from the disc's
+WORLD.PAK at runtime, picked from an in-game menu.
+
+- **Host pack** (`make rooms` + `make disc`): `MAPLIST` in the Makefile cooks each
+  map to `data/rooms/room_<N>.psxc`; mkisopsx `--world-pack-rooms-dir` packs them
+  into `WORLD.PAK` at fixed **LBA 1024** (chunk id == N). Verified: pack header
+  (magic `PSOXWPAK`, v1) + 24-byte entry table, byte sizes match the room files.
+  Keep maps **< ~900 KB** cooked (see RAM note).
+- **Runtime CD read** (`game/src/cdstream.rs`): the CD-DMA sector primitives
+  (SETLOC 0x02 + READN 0x06, manual DMA ch3 chcr `0x1140_0100`, IRQ-flag polling)
+  are ported from PSoXide's editor-playtest `cd_stream/hw.rs`. `load_chunk(id, dst)`
+  reads the header sector at LBA 1024, scans the table for `id`, then streams its
+  payload sectors into `dst`. Needs `psx-io` (added to Cargo.toml). A ~700 KB
+  chunk takes **~155 frames (~2.5 s)** at 2x.
+- **Menu** (`game/src/menu.rs`, `psx-font`): styled after Half-Life's original
+  (WON) main menu, modelled on a reference screenshot + the install's own assets.
+  Dark background, faint drawn lambda watermark, a white wide "HALF-LIFE" wordmark
+  across the top with the A drawn as a lambda, a left-aligned chapter list in HL
+  menu orange (hovered row brightened), and a grey detail line (map code + a short
+  description) under a rule. Chapter names are the real ones (c0a0 Black Mesa
+  Inbound, c1a0 Anomalous Materials, c1a1a Unforeseen Consequences, c1a3a We've
+  Got Hostiles). NB **HL1 has no chapter/level select** -- "New Game" just starts
+  c0a0; this picker is an original screen in HL style.
+  - **Follow the source, don't reconstruct.** The WON menu is defined by
+    `valve/640_textscheme.txt` "Primary Button Text": **FontName "Arial"**,
+    FontSize 16, FgColor `255 170 0` (orange), FgColorArmed `255 255 255`
+    (selected = white), BgColorArmed `255 170 0 @67`. The menu now uses those
+    exactly. (The fonts.wad qfont is the HUD/console font, NOT the menu font --
+    that was a wrong turn.)
+  - **Real font**: `tools/extract_menu.py` (`make menu-assets`) rasterizes the
+    system **Arial.ttf** (`MENU_FONT` to override) into `data/menu/hlfont.bin`
+    (git-ignored) -- `[u8 gw,gh | u16 count,first,pad | advances | 1bpp MSB
+    bitmap]`. The runtime `include_bytes!`s it and builds a `psx_font::BitmapFont`
+    at boot.
+  - **Real logo**: the same extractor converts `resource/logo.tga` (the actual
+    HALF-LIFE wordmark, λ for the A) into `data/menu/logo.tex` -- a 224-wide 4bpp
+    texture (CLUT index 0 = `0x0000` = transparent, so it composites over the bg).
+    Uploaded to a free tpage (VRAM X=640, clear of framebuffers/font atlas) and
+    drawn as one `draw_quad_textured_material` quad. So the wordmark is the real
+    image, not font-rendered.
+  - **Layout** (WON main-menu look, per a reference screenshot): white wide
+    "HALF-LIFE" wordmark (A drawn as a lambda) with soft light-streak glows
+    behind it; left-aligned chapter list in orange with the first letter
+    underlined (the WON mnemonic accent) + a grey description on the same line;
+    version string bottom-right. NB at 320px the long names + descriptions only
+    fit in the 12px FONT1, not FONT2.
+  - **Background**: the WON grungy `gfx/shell/splash.bmp` is NOT in a Steam
+    install. The only full-screen art it ships is `gfx/conback.lmp` (the console
+    background -- a Quake LMP: u32 w,h | indices | **embedded** 768-byte palette).
+    The extractor reads it, desaturates + darkens it, and emits `data/menu/bg.tex`
+    (256x240 4bpp), drawn stretched to 320x240 as one textured quad behind
+    everything. So the backdrop is the real conback grunge, not procedural. (The
+    earlier procedural lambda-circle/green-code/streaks were removed.)
+  - **VRAM map (menu)**: framebuffers X<320; font atlas tpage (320,0); logo tpage
+    (640,0); bg tpage (704,0); CLUTs at Y=256 under each. All re-uploaded per menu
+    entry (gameplay clobbers them).
+  - D-pad/left-stick up/down, Cross/Start to confirm. Drawn with GP0 rects + flat
+    polys (no OT); NB POLY_F4 needs Z-order verts (TL,TR,BL,BR), not perimeter
+    order, or quads draw as bowties. A loading screen is swapped in before
+    `play()` streams. Font VRAM (Tpage 320,0 / Clut 320,256) overlaps world
+    textures, so the atlas re-uploads each menu entry.
+- **Boot flow** (`main.rs`): `loop { sel = menu::run(); play(&sci, sel) }`.
+  `play()` streams into a static `MAP_BUF` (235_520 u32 = 920 KB), `Map::load`s it
+  in place, uploads textures, runs the renderer/physics, and returns to the menu
+  on **Select**. Analog is enabled in `play()` (the menu runs on the digital pad).
+- **Spawn fallback** (cook): mid-chapter maps (changelevel targets like c1a3a)
+  have no `info_player_start` -> the cook now falls back to the world bbox center
+  near the top (gravity drops the player to the floor). Was a black screen before.
+- **VRAM reset**: `vram::upload_textures` re-inits the atlas + CLUT allocators so
+  reloading a map (return-to-menu) starts clean instead of overflowing.
+- **RAM**: EXE dropped 1.3 MB -> 635 KB (map no longer baked). Static footprint
+  `__bss_end` = 0x801a6384 => ~327 KB free below the stack. Fits with margin.
+- **Verified headlessly** (frametest `--script`): menu renders, nav (early+late),
+  select all 4 chunks (c0a0/c1a0/c1a1a/c1a3a each render, pixel-distinct), LOADING
+  screen, and a full round trip play -> Select -> menu -> pick another -> play
+  (2nd stream + allocator reset OK). NB: streaming is ~155 frames, so give late
+  selections >200 capture frames or they look "stuck" on the menu mid-load.
+
+Menu maps are curated in two places that MUST stay in sync: Makefile `MAPLIST`
+(chunk order) and `menu::MAPS` (labels, index == chunk id).
 
 ## Next (pick per value)
 

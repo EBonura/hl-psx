@@ -39,3 +39,4 @@ psx-vram = { path = "../../PSoXide/sdk/crates/psx-vram" }
 psx-io   = { path = "../../PSoXide/sdk/crates/psx-io" }
 psx-font = { path = "../../PSoXide/sdk/crates/psx-font" }
 psx-telemetry = { path = "../../PSoXide/sdk/crates/psx-telemetry" }
+psx-engine = { path = "../../PSoXide/engine/crates/psx-engine" }

@@ -2,15 +2,17 @@
 //! plus brush-entity leaf membership for PVS culling.
 //!
 //!   magic "HLMA" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
-//!   verts i16×3 | TriRec[24B] × n_tris
-//!     TriRec = u16 idx[3], u16 tex, u8 uv[6], u8 rgb[9], u8 pad
-//!   textures × n_texs: u16 w,h | u16 clut[16] | u8 pix[w*h/2]
+//!   verts i16×3 | TriRec[22B] × n_tris
+//!     TriRec = u16 idx[3], u8 tex, u8 uv[6], u8 rgb[9]
+//!   optional legacy textures × n_texs: u16 w,h | u16 clut[16] | u8 pix[w*h/2]
+//!   modern streamed builds keep texture pixels in a separate HLTX chunk:
+//!     magic "HLTX" | u32 n_texs | textures...
 //!   bsp @ bsp_off:
 //!     u32 n_nodes,n_leaves,n_marks,vis_len
-//!     FaceRec[32B] × n_faces
-//!       FaceRec = u32 first_tri, u16 tri_count, i16 normal[3], i32 dist,
-//!                 u16 plane_group, u16 pad, i16 center[3], u16 extent[3]
-//!     nodes  (i16 nx,ny,nz, i16 pad, i32 dist, i32 c0, i32 c1) × n_nodes
+//!     FaceRec[28B] × n_faces
+//!       FaceRec = u16 first_tri, u16 tri_count, i16 normal[3], i32 dist,
+//!                 u16 plane_group, i16 center[3], u16 extent[3]
+//!     nodes  (i16 nx,ny,nz, i32 dist, i16 c0, i16 c1) × n_nodes
 //!     leaves (i32 visofs, u16 mark_start, u16 mark_count) × n_leaves
 //!     marks  u16 × n_marks (pad 4)
 //!     vis    u8  × vis_len (pad 4)
@@ -48,7 +50,7 @@ fn align4(x: usize) -> usize {
     (x + 3) & !3
 }
 
-const NODE_SZ: usize = 20;
+const NODE_SZ: usize = 14;
 
 pub struct Node {
     pub n: [i16; 3],
@@ -65,7 +67,6 @@ pub struct Map {
     pub n_faces: usize,
     v_off: usize,
     tri_off: usize,
-    texblk_off: usize,
     // BSP / PVS
     pub n_nodes: usize,
     pub n_leaves: usize,
@@ -103,8 +104,8 @@ pub struct Map {
 }
 
 const LEAF_SZ: usize = 8; // visofs i32 + marks u16×2
-const FACE_SZ: usize = 32;
-const TRI_SZ: usize = 24;
+const FACE_SZ: usize = 28;
+const TRI_SZ: usize = 22;
 const CLIPNODE_SZ: usize = 16;
 const ENT_SZ: usize = 52;
 
@@ -149,7 +150,6 @@ impl Map {
         let prop_off = rd_u32(data, 36) as usize;
         let v_off = 40;
         let tri_off = v_off + n_verts * 6;
-        let texblk_off = align4(tri_off + n_tris * TRI_SZ);
 
         let n_nodes = rd_u32(data, bsp_off) as usize;
         let n_leaves = rd_u32(data, bsp_off + 4) as usize;
@@ -203,7 +203,6 @@ impl Map {
             n_faces,
             v_off,
             tri_off,
-            texblk_off,
             n_nodes,
             n_leaves,
             n_marks,
@@ -328,22 +327,18 @@ impl Map {
         let d = self.data;
         Tri {
             idx: [rd_u16(d, o), rd_u16(d, o + 2), rd_u16(d, o + 4)],
-            tex: rd_u16(d, o + 6) as usize,
+            tex: d[o + 6] as usize,
             uv: [
-                (d[o + 8], d[o + 9]),
-                (d[o + 10], d[o + 11]),
-                (d[o + 12], d[o + 13]),
+                (d[o + 7], d[o + 8]),
+                (d[o + 9], d[o + 10]),
+                (d[o + 11], d[o + 12]),
             ],
             rgb: [
-                (d[o + 14], d[o + 15], d[o + 16]),
-                (d[o + 17], d[o + 18], d[o + 19]),
-                (d[o + 20], d[o + 21], d[o + 22]),
+                (d[o + 13], d[o + 14], d[o + 15]),
+                (d[o + 16], d[o + 17], d[o + 18]),
+                (d[o + 19], d[o + 20], d[o + 21]),
             ],
         }
-    }
-
-    pub fn tex_blob(&self) -> &'static [u8] {
-        &self.data[self.texblk_off..]
     }
 
     // ---- BSP / PVS ----
@@ -357,9 +352,9 @@ impl Map {
                 rd_i16(self.data, o + 2),
                 rd_i16(self.data, o + 4),
             ],
-            dist: rd_i32(self.data, o + 8),
-            c0: rd_i32(self.data, o + 12),
-            c1: rd_i32(self.data, o + 16),
+            dist: rd_i32(self.data, o + 6),
+            c0: rd_i16(self.data, o + 10) as i32,
+            c1: rd_i16(self.data, o + 12) as i32,
         }
     }
 
@@ -385,22 +380,22 @@ impl Map {
         let o = self.faces_off + f * FACE_SZ;
         (
             [
+                rd_i16(self.data, o + 4),
                 rd_i16(self.data, o + 6),
                 rd_i16(self.data, o + 8),
-                rd_i16(self.data, o + 10),
             ],
-            rd_i32(self.data, o + 12),
+            rd_i32(self.data, o + 10),
         )
     }
 
     #[inline]
     pub fn face_group(&self, f: usize) -> usize {
-        rd_u16(self.data, self.faces_off + f * FACE_SZ + 16) as usize
+        rd_u16(self.data, self.faces_off + f * FACE_SZ + 14) as usize
     }
 
     #[inline]
     pub fn face_bounds(&self, f: usize) -> ([i32; 3], [i32; 3]) {
-        let o = self.faces_off + f * FACE_SZ + 20;
+        let o = self.faces_off + f * FACE_SZ + 16;
         (
             [
                 rd_i16(self.data, o) as i32,
@@ -419,8 +414,8 @@ impl Map {
     pub fn face_tris(&self, f: usize) -> (usize, usize) {
         let o = self.faces_off + f * FACE_SZ;
         (
-            rd_u32(self.data, o) as usize,
-            rd_u16(self.data, o + 4) as usize,
+            rd_u16(self.data, o) as usize,
+            rd_u16(self.data, o + 2) as usize,
         )
     }
 

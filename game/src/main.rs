@@ -8,7 +8,7 @@
 //! than dropped.
 //!
 //! Controls (DualShock analog only): left stick = move/strafe, right stick =
-//! look (X turn, Y pitch), Cross = jump.
+//! look (X turn, Y pitch), Cross = jump, R2 = fire.
 
 #![no_std]
 #![no_main]
@@ -25,6 +25,10 @@ mod render;
 mod telemetry;
 mod vram;
 
+mod room_budget {
+    include!(concat!(env!("OUT_DIR"), "/room_budget.rs"));
+}
+
 use psx_gpu::material::TexturedGouraudPacketMaterial;
 use psx_gpu::ot::OrderingTable;
 use psx_gpu::prim::{QuadTexturedGouraud, TriTexturedGouraud};
@@ -36,15 +40,18 @@ use psx_rt::{interrupts, tty};
 
 use map::Map;
 use model::Model;
+use psx_engine::{PrimitivePacketArena, PrimitivePacketScratch, PrimitiveSink};
 use psx_gpu::prim::QuadTexturedMaterial;
 use vram::{TexSlot, EMPTY_SLOT};
 
 // Maps stream from the disc's WORLD.PAK at runtime (no longer baked into the
-// EXE). MAP_BUF holds one cooked `.hlm`; sized for the largest packed map.
-// `make rooms` cooks the selectable maps; chunk id == room_<N>.
-const MAP_WORDS: usize = 255_000; // 1,020,000 bytes; room_3.psxc is currently ~991 KiB
+// EXE). MAP_BUF holds either one temporary texture chunk or one resident map
+// chunk; build.rs sizes it from data/rooms. `make rooms` cooks menu room N as
+// room_<2N>.psxc (resident HLMA) and room_<2N+1>.psxc (temporary HLTX textures).
+const MAP_WORDS: usize = room_budget::MAP_WORDS;
 static mut MAP_BUF: [u32; MAP_WORDS] = [0; MAP_WORDS];
 static SCI_BYTES: &[u8] = include_bytes!("../../data/models/scientist.hlmdl");
+static HEADCRAB_BYTES: &[u8] = include_bytes!("../../data/models/headcrab.hlmdl");
 static WPN_BYTES: &[u8] = include_bytes!("../../data/models/v_9mmhandgun.hlmdl");
 
 const OT_LEN: usize = 1024;
@@ -52,14 +59,13 @@ const WEAPON_OT_LEN: usize = 64;
 const HUD_OT_LEN: usize = 1;
 const MAX_VERTS: usize = 8192;
 const MAX_MODEL_VERTS: usize = 1024;
-const MAX_PRIMS: usize = 3328;
-const MAX_QUADS: usize = 1024;
+const MAX_RENDER_PACKETS: usize = 3328;
 const MAX_WEAPON_CACHE_TRIS: usize = 320;
-const MAX_TEX_SLOTS: usize = 256;
-const MAX_FACES: usize = 6144;
-const MAX_LEAVES: usize = 8192;
-const MAX_ENTS: usize = 192;
-const MAX_PVS_TRIS: usize = 3072;
+const MAX_TEX_SLOTS: usize = room_budget::MAX_TEX_SLOTS;
+const MAX_FACES: usize = room_budget::MAX_FACES;
+const MAX_LEAVES: usize = room_budget::MAX_LEAVES;
+const MAX_ENTS: usize = room_budget::MAX_ENTS;
+const MAX_PROPS: usize = 128;
 const DOOR_SPEED: i32 = 120;
 const NEAR: u16 = 2; // GTE depth: only verts at/behind the near plane take the soft-clip path
 const SUBDIV_PX: i32 = 96; // split near-clipped triangles wider than this (affine fix)
@@ -78,8 +84,39 @@ const VIEW_HEIGHT: i32 = 28;
 const FAR_VIEW: i32 = 6000; // leaf cull distance (world units); generous to avoid pop
 const MODEL_CULL: bool = true; // backface-cull studio models
 const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
+const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
 const TRAM_STEP_DIV: i32 = 15; // tram units/sec -> units/frame (demo pace)
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
+const ROOM_WORLD_CHUNK_MUL: u32 = 2;
+const ROOM_TEXTURE_CHUNK_ADD: u32 = 1;
+const GLOCK_MAX_CLIP: u16 = 17;
+const GLOCK_DAMAGE: u8 = 8;
+const GLOCK_RANGE: i32 = 8192;
+const GLOCK_AIM_PIX_X: i32 = 22;
+const GLOCK_AIM_PIX_Y: i32 = 34;
+const PROP_TARGET_HEIGHT: i32 = 40;
+const PROP_TYPE_SCIENTIST: u8 = 0;
+const PROP_TYPE_BARNEY: u8 = 1;
+const PROP_TYPE_HEADCRAB: u8 = 2;
+const PROP_STATE_IDLE: u8 = 0;
+const PROP_STATE_MOVE: u8 = 1;
+const PROP_STATE_ATTACK: u8 = 2;
+const PROP_STATE_DEAD: u8 = 3;
+const PROP_CLIP_IDLE: usize = 0;
+const PROP_CLIP_MOVE: usize = 1;
+const PROP_CLIP_ATTACK: usize = 2;
+const PROP_CLIP_DEAD: usize = 3;
+const PLAYER_START_HEALTH: u16 = 100;
+const SCIENTIST_HEALTH: u8 = 24;
+const HEADCRAB_HEALTH: u8 = 16;
+const HEADCRAB_SPEED: i32 = 5;
+const HEADCRAB_WAKE_RANGE2: i32 = 1300 * 1300;
+const HEADCRAB_STOP_RANGE: i32 = 34;
+const HEADCRAB_ATTACK_RANGE2: i32 = HEADCRAB_STOP_RANGE * HEADCRAB_STOP_RANGE;
+const HEADCRAB_ATTACK_DAMAGE: u16 = 6;
+const HEADCRAB_ATTACK_COOLDOWN: u8 = 18;
+const HEADCRAB_TARGET_HEIGHT: i32 = 12;
+const PROP_HIT_FLASH_TICKS: u8 = 4;
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
 static mut WEAPON_OT: OrderingTable<WEAPON_OT_LEN> = OrderingTable::new();
@@ -91,11 +128,12 @@ const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
     0,
     0,
 );
-static mut PRIMS: [TriTexturedGouraud; MAX_PRIMS] = [EMPTY_TRI; MAX_PRIMS];
-static mut QUAD_PRIMS: [QuadTexturedGouraud; MAX_QUADS] = [QuadTexturedGouraud::EMPTY; MAX_QUADS];
+static mut PRIMITIVE_PACKETS: PrimitivePacketScratch<MAX_RENDER_PACKETS> =
+    PrimitivePacketScratch::ZERO;
 static mut HUD_PRIMS: [QuadTexturedMaterial; hud::DRAW_CAP] = [hud::EMPTY_QUAD; hud::DRAW_CAP];
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
-static mut MODEL_SLOTS: [TexSlot; 16] = [EMPTY_SLOT; 16];
+static mut SCI_SLOTS: [TexSlot; 24] = [EMPTY_SLOT; 24];
+static mut HEADCRAB_SLOTS: [TexSlot; 8] = [EMPTY_SLOT; 8];
 static mut WEAPON_SLOTS: [TexSlot; 12] = [EMPTY_SLOT; 12];
 const EMPTY_PROJECTED: Projected = Projected {
     sx: 0,
@@ -117,7 +155,6 @@ const PVS_LINK_END: u16 = u16::MAX;
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut PVS_LEAF_COUNT: usize = 0;
 static mut PVS_FACE_FIRST: [u16; MAX_FACES] = [0; MAX_FACES];
-static mut PVS_FACE_CACHE_FIRST: [u16; MAX_FACES] = [PVS_LINK_END; MAX_FACES];
 static mut PVS_FACE_TRI_COUNT: [u16; MAX_FACES] = [0; MAX_FACES];
 static mut PVS_FACE_CENTER: [[i16; 3]; MAX_FACES] = [[0; 3]; MAX_FACES];
 static mut PVS_FACE_EXTENT: [[u16; 3]; MAX_FACES] = [[0; 3]; MAX_FACES];
@@ -131,14 +168,7 @@ static mut PVS_GROUP_ACTIVE: [u16; MAX_FACES] = [0; MAX_FACES];
 static mut PVS_GROUP_NRM: [[i16; 3]; MAX_FACES] = [[0; 3]; MAX_FACES];
 static mut PVS_GROUP_DIST: [i32; MAX_FACES] = [0; MAX_FACES];
 static mut PVS_GROUP_COUNT: usize = 0;
-const EMPTY_MAP_TRI: map::Tri = map::Tri {
-    idx: [0; 3],
-    tex: 0,
-    uv: [(0, 0); 3],
-    rgb: [(0, 0, 0); 3],
-};
-static mut PVS_TRI_CACHE: [map::Tri; MAX_PVS_TRIS] = [EMPTY_MAP_TRI; MAX_PVS_TRIS];
-static mut PVS_TRI_COUNT: usize = 0;
+static mut PVS_TRI_REF_COUNT: usize = 0;
 static mut PVS_ENTS: [u16; MAX_ENTS] = [0; MAX_ENTS];
 static mut PVS_ENT_COUNT: usize = 0;
 static mut PVS_CAM_LEAF: i32 = -1;
@@ -159,6 +189,15 @@ const EMPTY_ENT: map::Ent = map::Ent {
 static mut ENT_CACHE: [map::Ent; MAX_ENTS] = [EMPTY_ENT; MAX_ENTS];
 static mut ENT_RADIUS: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
+static mut PROP_COUNT: usize = 0;
+static mut PROP_KIND: [u8; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_POS: [[i32; 3]; MAX_PROPS] = [[0; 3]; MAX_PROPS];
+static mut PROP_YAW: [u16; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_LEAF: [i16; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_STATE: [u8; MAX_PROPS] = [PROP_STATE_IDLE; MAX_PROPS];
+static mut PROP_ATTACK_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_HEALTH: [u8; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_HIT_FLASH: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut CLIP_CV: [render::CVert; 4] = [render::EMPTY_CV; 4]; // near-clip scratch (reused)
 
 /// World->view rotation. `yaw` is stored in player-space convention, where
@@ -277,6 +316,228 @@ fn sphere_visible(center: [i32; 3], radius: i32, rot: &Mat3I16, base_t: [i32; 3]
     }
     let vy = dot12(rot.m[1], center) + base_t[1];
     vy.abs() * 4 <= z * 3 + radius * 5
+}
+
+#[inline]
+fn prop_start_health(ty: u8) -> u8 {
+    match ty {
+        PROP_TYPE_SCIENTIST => SCIENTIST_HEALTH,
+        PROP_TYPE_HEADCRAB => HEADCRAB_HEALTH,
+        _ => 0,
+    }
+}
+
+#[inline]
+fn prop_target(ty: u8, org: [i32; 3]) -> [i32; 3] {
+    let h = if ty == PROP_TYPE_HEADCRAB {
+        HEADCRAB_TARGET_HEIGHT
+    } else {
+        PROP_TARGET_HEIGHT
+    };
+    [org[0], org[1] + h, org[2]]
+}
+
+fn prop_clip(ty: u8, state: u8) -> usize {
+    if ty != PROP_TYPE_HEADCRAB {
+        return PROP_CLIP_IDLE;
+    }
+    match state {
+        PROP_STATE_MOVE => PROP_CLIP_MOVE,
+        PROP_STATE_ATTACK => PROP_CLIP_ATTACK,
+        PROP_STATE_DEAD => PROP_CLIP_DEAD,
+        _ => PROP_CLIP_IDLE,
+    }
+}
+
+fn prop_anim_frame(md: &Model, ty: u8, state: u8, sim_frame_no: u32, pi: usize) -> usize {
+    let clip = prop_clip(ty, state);
+    let len = md.clip_len(clip);
+    if state == PROP_STATE_DEAD {
+        return md.clip_frame(clip, len.saturating_sub(1));
+    }
+    let phase = sim_frame_no as usize + pi.wrapping_mul(3);
+    let div = if ty == PROP_TYPE_HEADCRAB && state != PROP_STATE_IDLE {
+        2
+    } else {
+        ANIM_DIV
+    };
+    md.clip_frame(clip, (phase / div.max(1)) % len)
+}
+
+#[inline]
+fn dist2_xz(a: [i32; 3], b: [i32; 3]) -> i32 {
+    let dx = b[0] - a[0];
+    let dz = b[2] - a[2];
+    dx * dx + dz * dz
+}
+
+fn yaw_from_vec(dx: i32, dz: i32) -> u16 {
+    let ax = dx.abs();
+    let az = dz.abs();
+    if ax * 2 < az {
+        if dz >= 0 {
+            0
+        } else {
+            2048
+        }
+    } else if az * 2 < ax {
+        if dx >= 0 {
+            1024
+        } else {
+            3072
+        }
+    } else if dx >= 0 && dz >= 0 {
+        512
+    } else if dx >= 0 {
+        1536
+    } else if dz < 0 {
+        2560
+    } else {
+        3584
+    }
+}
+
+unsafe fn init_prop_state(m: &Map) {
+    let mut i = 0usize;
+    while i < MAX_PROPS {
+        PROP_KIND[i] = 0;
+        PROP_POS[i] = [0, 0, 0];
+        PROP_YAW[i] = 0;
+        PROP_LEAF[i] = 0;
+        PROP_STATE[i] = PROP_STATE_IDLE;
+        PROP_ATTACK_COOLDOWN[i] = 0;
+        PROP_HEALTH[i] = 0;
+        PROP_HIT_FLASH[i] = 0;
+        i += 1;
+    }
+
+    PROP_COUNT = 0;
+    let nprops = m.n_props.min(MAX_PROPS);
+    let mut pi = 0usize;
+    while pi < nprops {
+        let (ty, org, yaw, leaf) = m.prop(pi);
+        let kind = ty as u8;
+        PROP_KIND[pi] = kind;
+        PROP_POS[pi] = org;
+        PROP_YAW[pi] = yaw as u16;
+        PROP_LEAF[pi] = leaf;
+        PROP_HEALTH[pi] = prop_start_health(kind);
+        PROP_COUNT += 1;
+        pi += 1;
+    }
+}
+
+unsafe fn tick_props(m: &Map, movers: &[phys::Mover], player_pos: [i32; 3], health: &mut u16) {
+    let nprops = PROP_COUNT.min(MAX_PROPS);
+    let mut pi = 0usize;
+    while pi < nprops {
+        if PROP_HIT_FLASH[pi] > 0 {
+            PROP_HIT_FLASH[pi] -= 1;
+        }
+        if PROP_ATTACK_COOLDOWN[pi] > 0 {
+            PROP_ATTACK_COOLDOWN[pi] -= 1;
+        }
+
+        let ty = PROP_KIND[pi];
+        if PROP_HEALTH[pi] == 0 {
+            PROP_STATE[pi] = PROP_STATE_DEAD;
+            pi += 1;
+            continue;
+        }
+
+        if ty == PROP_TYPE_HEADCRAB {
+            let pos = PROP_POS[pi];
+            let d2 = dist2_xz(pos, player_pos);
+            if d2 < HEADCRAB_WAKE_RANGE2 {
+                let dx = player_pos[0] - pos[0];
+                let dz = player_pos[2] - pos[2];
+                PROP_YAW[pi] = yaw_from_vec(dx, dz);
+                if d2 <= HEADCRAB_ATTACK_RANGE2 {
+                    PROP_STATE[pi] = PROP_STATE_ATTACK;
+                    if PROP_ATTACK_COOLDOWN[pi] == 0 {
+                        *health = health.saturating_sub(HEADCRAB_ATTACK_DAMAGE);
+                        PROP_ATTACK_COOLDOWN[pi] = HEADCRAB_ATTACK_COOLDOWN;
+                    }
+                } else {
+                    PROP_STATE[pi] = PROP_STATE_MOVE;
+                    let len = isqrt(d2).max(1);
+                    let step = HEADCRAB_SPEED.min(len.saturating_sub(HEADCRAB_STOP_RANGE));
+                    if step > 0 {
+                        let np = [pos[0] + dx * step / len, pos[1], pos[2] + dz * step / len];
+                        let from = prop_target(ty, pos);
+                        let to = prop_target(ty, np);
+                        if phys::line_clear_world(m, from, to)
+                            && phys::line_clear_movers(m, movers, from, to)
+                        {
+                            PROP_POS[pi] = np;
+                        }
+                    }
+                }
+            } else {
+                PROP_STATE[pi] = PROP_STATE_IDLE;
+            }
+        }
+        pi += 1;
+    }
+}
+
+unsafe fn fire_glock(
+    m: &Map,
+    movers: &[phys::Mover],
+    eye: [i32; 3],
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) -> Option<usize> {
+    let mut best = usize::MAX;
+    let mut best_z = GLOCK_RANGE + 1;
+    let mut best_score = i32::MAX;
+    let mut pi = 0usize;
+    let nprops = PROP_COUNT.min(MAX_PROPS);
+    while pi < nprops {
+        let ty = PROP_KIND[pi];
+        if prop_start_health(ty) == 0 || PROP_HEALTH[pi] == 0 {
+            pi += 1;
+            continue;
+        }
+
+        let target = prop_target(ty, PROP_POS[pi]);
+        let vz = dot12(rot.m[2], target) + base_t[2];
+        if !(render::NEAR_Z..=GLOCK_RANGE).contains(&vz) {
+            pi += 1;
+            continue;
+        }
+
+        let vx = dot12(rot.m[0], target) + base_t[0];
+        let vy = dot12(rot.m[1], target) + base_t[1];
+        if vx.abs() * H_PROJ as i32 > vz * GLOCK_AIM_PIX_X
+            || vy.abs() * H_PROJ as i32 > vz * GLOCK_AIM_PIX_Y
+        {
+            pi += 1;
+            continue;
+        }
+        if !phys::line_clear_world(m, eye, target)
+            || !phys::line_clear_movers(m, movers, eye, target)
+        {
+            pi += 1;
+            continue;
+        }
+
+        let score = (vx.abs() * 2) + vy.abs();
+        if vz < best_z || (vz == best_z && score < best_score) {
+            best = pi;
+            best_z = vz;
+            best_score = score;
+        }
+        pi += 1;
+    }
+
+    if best == usize::MAX {
+        None
+    } else {
+        PROP_HEALTH[best] = PROP_HEALTH[best].saturating_sub(GLOCK_DAMAGE);
+        PROP_HIT_FLASH[best] = PROP_HIT_FLASH_TICKS;
+        Some(best)
+    }
 }
 
 #[inline]
@@ -452,7 +713,7 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
     PVS_LEAF_COUNT = 0;
     PVS_FACE_COUNT = 0;
     PVS_GROUP_COUNT = 0;
-    PVS_TRI_COUNT = 0;
+    PVS_TRI_REF_COUNT = 0;
     PVS_ENT_COUNT = 0;
     let mark_token = next_pvs_face_mark_token();
 
@@ -498,17 +759,7 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
             let entry = PVS_FACE_COUNT;
             PVS_FACE_FIRST[entry] = first as u16;
             PVS_FACE_TRI_COUNT[entry] = cnt as u16;
-            if PVS_TRI_COUNT + cnt <= MAX_PVS_TRIS {
-                PVS_FACE_CACHE_FIRST[entry] = PVS_TRI_COUNT as u16;
-                let mut ti = 0usize;
-                while ti < cnt {
-                    PVS_TRI_CACHE[PVS_TRI_COUNT + ti] = m.tri(first + ti);
-                    ti += 1;
-                }
-                PVS_TRI_COUNT += cnt;
-            } else {
-                PVS_FACE_CACHE_FIRST[entry] = PVS_LINK_END;
-            }
+            PVS_TRI_REF_COUNT += cnt;
             let (bc, be) = m.face_bounds(face);
             PVS_FACE_CENTER[entry] = [bc[0] as i16, bc[1] as i16, bc[2] as i16];
             PVS_FACE_EXTENT[entry] = [be[0] as u16, be[1] as u16, be[2] as u16];
@@ -594,6 +845,7 @@ const fn uv_word(uv: (u8, u8)) -> u16 {
 
 #[inline]
 unsafe fn push_tri(
+    packets: &mut PrimitivePacketArena<'_>,
     np: &mut usize,
     screen: [(i16, i16); 3],
     uv: [(u8, u8); 3],
@@ -601,16 +853,16 @@ unsafe fn push_tri(
     mat: TexturedGouraudPacketMaterial,
     otz: usize,
 ) {
-    if *np >= MAX_PRIMS {
-        return;
-    }
-    PRIMS[*np] = TriTexturedGouraud::with_packet_material_packed_uv_words(
+    let prim = TriTexturedGouraud::with_packet_material_packed_uv_words(
         screen,
         [uv_word(uv[0]), uv_word(uv[1]), uv_word(uv[2])],
         rgb,
         mat,
     );
-    OT.add(otz, &mut PRIMS[*np], TriTexturedGouraud::WORDS);
+    let Some(packet) = packets.push(prim) else {
+        return;
+    };
+    OT.add(otz, packet, TriTexturedGouraud::WORDS);
     *np += 1;
 }
 
@@ -618,7 +870,14 @@ unsafe fn push_tri(
 /// triangles emit straight from the cache. Anything large (affine warp) or
 /// near-straddling drops to the view-space path: near-clip, then recursively
 /// split at view-space midpoints while it's big on screen, then guard-clip.
-unsafe fn emit_projected(m: &Map, tri: map::Tri, p: [Projected; 3], nv: usize, np: &mut usize) {
+unsafe fn emit_projected(
+    packets: &mut PrimitivePacketArena<'_>,
+    m: &Map,
+    tri: map::Tri,
+    p: [Projected; 3],
+    nv: usize,
+    np: &mut usize,
+) {
     let (a, b, c) = (
         tri.idx[0] as usize,
         tri.idx[1] as usize,
@@ -658,6 +917,7 @@ unsafe fn emit_projected(m: &Map, tri: map::Tri, p: [Projected; 3], nv: usize, n
             return;
         }
         push_tri(
+            packets,
             np,
             [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
             uv,
@@ -687,6 +947,7 @@ unsafe fn emit_projected(m: &Map, tri: map::Tri, p: [Projected; 3], nv: usize, n
     }
     for k in 1..n - 1 {
         emit_cv(
+            packets,
             &[CLIP_CV[0], CLIP_CV[k], CLIP_CV[k + 1]],
             SUBDIV_DEPTH,
             slot.packet,
@@ -700,6 +961,7 @@ unsafe fn emit_projected(m: &Map, tri: map::Tri, p: [Projected; 3], nv: usize, n
 /// emit. ponytail: depth 1 (<=4 sub-tris per big tri); raise SUBDIV_DEPTH if warp
 /// is still visible, at the cost of more triangles.
 unsafe fn emit_cv(
+    packets: &mut PrimitivePacketArena<'_>,
     cv: &[render::CVert; 3],
     depth: u8,
     mat: TexturedGouraudPacketMaterial,
@@ -714,10 +976,10 @@ unsafe fn emit_cv(
         let ab = render::mid_cv(&cv[0], &cv[1]);
         let bc = render::mid_cv(&cv[1], &cv[2]);
         let ca = render::mid_cv(&cv[2], &cv[0]);
-        emit_cv(&[cv[0], ab, ca], depth - 1, mat, np);
-        emit_cv(&[ab, cv[1], bc], depth - 1, mat, np);
-        emit_cv(&[ca, bc, cv[2]], depth - 1, mat, np);
-        emit_cv(&[ab, bc, ca], depth - 1, mat, np);
+        emit_cv(packets, &[cv[0], ab, ca], depth - 1, mat, np);
+        emit_cv(packets, &[ab, cv[1], bc], depth - 1, mat, np);
+        emit_cv(packets, &[ca, bc, cv[2]], depth - 1, mat, np);
+        emit_cv(packets, &[ab, bc, ca], depth - 1, mat, np);
         return;
     }
     if CULL && culled((pa.x, pa.y), (pb.x, pb.y), (pc.x, pc.y)) {
@@ -727,6 +989,7 @@ unsafe fn emit_cv(
     // Common case: fully on-screen -> draw directly, no guard-clip buffer.
     if render::in_band(&pa) && render::in_band(&pb) && render::in_band(&pc) {
         push_tri(
+            packets,
             np,
             [
                 (pa.x as i16, pa.y as i16),
@@ -757,6 +1020,7 @@ unsafe fn emit_cv(
     for j in 1..gn - 1 {
         let (s0, s1, s2) = (g[0], g[j], g[j + 1]);
         push_tri(
+            packets,
             np,
             [
                 (s0.x as i16, s0.y as i16),
@@ -780,6 +1044,7 @@ unsafe fn emit_cv(
 }
 
 unsafe fn try_emit_tri_pair_quad_values(
+    packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
     t0: map::Tri,
     t1: map::Tri,
@@ -787,7 +1052,7 @@ unsafe fn try_emit_tri_pair_quad_values(
     frame: u16,
     nq: &mut usize,
 ) -> bool {
-    if *nq >= MAX_QUADS || t0.tex >= m.n_texs || t0.tex >= MAX_TEX_SLOTS {
+    if t0.tex >= m.n_texs || t0.tex >= MAX_TEX_SLOTS {
         return false;
     }
 
@@ -834,7 +1099,7 @@ unsafe fn try_emit_tri_pair_quad_values(
         return true;
     }
 
-    QUAD_PRIMS[*nq] = QuadTexturedGouraud::with_packet_material_packed_uv_words(
+    let prim = QuadTexturedGouraud::with_packet_material_packed_uv_words(
         [
             (pb.sx, pb.sy),
             (pa.sx, pa.sy),
@@ -850,9 +1115,12 @@ unsafe fn try_emit_tri_pair_quad_values(
         [t0.rgb[2], t0.rgb[0], t0.rgb[1], t1.rgb[1]],
         slot.packet,
     );
+    let Some(packet) = packets.push(prim) else {
+        return false;
+    };
     OT.add(
         world_otz_from_gte4(&pa, &pb, &pc, &pd),
-        &mut QUAD_PRIMS[*nq],
+        packet,
         QuadTexturedGouraud::WORDS,
     );
     *nq += 1;
@@ -860,6 +1128,7 @@ unsafe fn try_emit_tri_pair_quad_values(
 }
 
 unsafe fn try_emit_tri_pair_quad(
+    packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
     first: usize,
     nv: usize,
@@ -869,7 +1138,7 @@ unsafe fn try_emit_tri_pair_quad(
     if first + 1 >= m.n_tris {
         return false;
     }
-    try_emit_tri_pair_quad_values(m, m.tri(first), m.tri(first + 1), nv, frame, nq)
+    try_emit_tri_pair_quad_values(packets, m, m.tri(first), m.tri(first + 1), nv, frame, nq)
 }
 
 #[derive(Clone, Copy)]
@@ -891,48 +1160,8 @@ impl WorldCounters {
     }
 }
 
-unsafe fn emit_cached_world_face_tris(
-    m: &Map,
-    cache_first: usize,
-    cnt: usize,
-    nv: usize,
-    frame: u16,
-    np: &mut usize,
-    nq: &mut usize,
-    counts: &mut WorldCounters,
-) {
-    if cache_first + cnt > MAX_PVS_TRIS {
-        return;
-    }
-    if WORLD_QUAD_PAIRING && cnt == 2 {
-        let t0 = PVS_TRI_CACHE[cache_first];
-        let t1 = PVS_TRI_CACHE[cache_first + 1];
-        if try_emit_tri_pair_quad_values(m, t0, t1, nv, frame, nq) {
-            counts.emit_calls += 2;
-            return;
-        }
-    }
-    let end = cache_first + cnt;
-    let mut tt = cache_first;
-    while tt < end {
-        let tri = PVS_TRI_CACHE[tt];
-        let (a, b, c) = (
-            tri.idx[0] as usize,
-            tri.idx[1] as usize,
-            tri.idx[2] as usize,
-        );
-        if a < nv && b < nv && c < nv {
-            proj_vert(m, a, frame);
-            proj_vert(m, b, frame);
-            proj_vert(m, c, frame);
-            counts.emit_calls += 1;
-            emit_projected(m, tri, [SCRATCH[a], SCRATCH[b], SCRATCH[c]], nv, np);
-        }
-        tt += 1;
-    }
-}
-
 unsafe fn emit_world_face_tris(
+    packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
     first: usize,
     cnt: usize,
@@ -942,7 +1171,7 @@ unsafe fn emit_world_face_tris(
     nq: &mut usize,
     counts: &mut WorldCounters,
 ) {
-    if WORLD_QUAD_PAIRING && cnt == 2 && try_emit_tri_pair_quad(m, first, nv, frame, nq) {
+    if WORLD_QUAD_PAIRING && cnt == 2 && try_emit_tri_pair_quad(packets, m, first, nv, frame, nq) {
         counts.emit_calls += 2;
         return;
     }
@@ -964,13 +1193,21 @@ unsafe fn emit_world_face_tris(
             proj_vert(m, b, frame);
             proj_vert(m, c, frame);
             counts.emit_calls += 1;
-            emit_projected(m, tri, [SCRATCH[a], SCRATCH[b], SCRATCH[c]], nv, np);
+            emit_projected(
+                packets,
+                m,
+                tri,
+                [SCRATCH[a], SCRATCH[b], SCRATCH[c]],
+                nv,
+                np,
+            );
         }
         tt += 1;
     }
 }
 
 unsafe fn emit_world_face(
+    packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
     face: usize,
     nv: usize,
@@ -1001,16 +1238,18 @@ unsafe fn emit_world_face(
     if WORLD_BOUNDS_CULL && !box_visible(bc, be, rot, base_t) {
         return;
     }
-    emit_world_face_tris(m, first, cnt, nv, frame, np, nq, counts);
+    emit_world_face_tris(packets, m, first, cnt, nv, frame, np, nq, counts);
 }
 
 /// Draw a model at world `pos`, rotated by `yaw` (Q0.12), at animation `frame`.
 unsafe fn draw_model(
+    packets: &mut PrimitivePacketArena<'_>,
     md: &Model,
     slots: &[TexSlot],
     pos: [i32; 3],
     yaw: u16,
     frame: usize,
+    shade: u8,
     eye: [i32; 3],
     rot: &Mat3I16,
     np: &mut usize,
@@ -1058,10 +1297,11 @@ unsafe fn draw_model(
         }
         let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
         push_tri(
+            packets,
             np,
             [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
             tri.uv,
-            [(MODEL_SHADE, MODEL_SHADE, MODEL_SHADE); 3],
+            [(shade, shade, shade); 3],
             slot.packet,
             clamp_otz((avgz >> 6) as usize),
         );
@@ -1106,15 +1346,11 @@ fn viewmodel_otz(avgz: u32) -> usize {
     1 + (rel as usize).min(WEAPON_OT_LEN - 2)
 }
 
-#[inline]
-unsafe fn copy_cached_weapon_tri(dst: usize, src: usize) {
-    PRIMS[dst].copy_payload_from(&WEAPON_TRI_CACHE[src]);
-}
-
 /// Draw the held weapon in view space (attached to the camera), flat-shaded, on
 /// top of the world. `recoil_y` is a small screen-space kick layered over the
 /// source-authored origin.
 unsafe fn draw_viewmodel(
+    packets: &mut PrimitivePacketArena<'_>,
     md: &Model,
     slots: &[TexSlot],
     frame: usize,
@@ -1184,13 +1420,14 @@ unsafe fn draw_viewmodel(
     }
 
     for i in 0..WEAPON_TRI_COUNT {
-        if *np >= MAX_PRIMS {
+        let mut prim = EMPTY_TRI;
+        prim.copy_payload_from(&WEAPON_TRI_CACHE[i]);
+        let Some(packet) = packets.push(prim) else {
             break;
-        }
-        copy_cached_weapon_tri(*np, i);
+        };
         WEAPON_OT.add(
             WEAPON_TRI_OTZ[i] as usize,
-            &mut PRIMS[*np],
+            packet,
             TriTexturedGouraud::WORDS,
         );
         *np += 1;
@@ -1208,73 +1445,82 @@ fn main() {
     scene::set_screen_offset(160 << 16, 120 << 16);
     scene::set_projection_plane(H_PROJ);
     let sci = Model::load(SCI_BYTES);
+    let headcrab = Model::load(HEADCRAB_BYTES);
 
     // Boot flow: pick a map in the menu, stream + play it, return on Select.
     // (Analog is enabled inside play(); the menu runs on the digital pad.)
     loop {
         let sel = menu::run(&mut fb);
-        play(&mut fb, &sci, sel as u32);
+        play(&mut fb, &sci, &headcrab, sel as u32);
     }
 }
 
-/// Stream map `chunk_id` from WORLD.PAK, upload its textures, and run the
+#[inline(always)]
+fn room_world_chunk_id(room_id: u32) -> u32 {
+    room_id.saturating_mul(ROOM_WORLD_CHUNK_MUL)
+}
+
+#[inline(always)]
+fn room_texture_chunk_id(room_id: u32) -> u32 {
+    room_world_chunk_id(room_id).saturating_add(ROOM_TEXTURE_CHUNK_ADD)
+}
+
+/// Stream menu room `chunk_id` from WORLD.PAK, upload its textures, and run the
 /// renderer + physics loop until the player presses Select (back to menu).
-fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
+fn play(fb: &mut FrameBuffer, sci: &Model, headcrab: &Model, room_id: u32) {
     let _ = enable_analog_port1();
     telemetry::frame_begin(0);
     telemetry::task_begin(telemetry::task::FIXED_UPDATE);
+    let texture_chunk_id = room_texture_chunk_id(room_id);
+    let world_chunk_id = room_world_chunk_id(room_id);
+
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
-    let map_len = cdstream::load_chunk(chunk_id, unsafe { &mut MAP_BUF }).unwrap_or(0);
+    let tex_len = cdstream::load_chunk(texture_chunk_id, unsafe { &mut MAP_BUF }).unwrap_or(0);
     telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
-    telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, 1);
-    telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, map_len as u32);
-    telemetry::counter(
-        telemetry::counter::CD_WORLD_PACK_SECTORS,
-        ((map_len as u32) + 2047) / 2048,
-    );
-    telemetry::counter(
-        telemetry::counter::CD_WORLD_PACK_STATUS,
-        if map_len == 0 { 0 } else { 1 },
-    );
-    telemetry::task_end(telemetry::task::FIXED_UPDATE);
-    if map_len == 0 {
-        tty::println("hl-psx: WORLD.PAK stream failed");
-        telemetry::debug_log("hl-psx: WORLD.PAK stream failed");
+    let mut stream_bytes = tex_len as u32;
+    let mut stream_chunks = if tex_len == 0 { 0 } else { 1 };
+    let mut stream_sectors = if tex_len == 0 {
+        0
+    } else {
+        ((tex_len as u32) + 2047) / 2048
+    };
+    if tex_len == 0 {
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, 0);
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, 0);
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, 0);
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
+        telemetry::task_end(telemetry::task::FIXED_UPDATE);
+        tty::println("hl-psx: WORLD.PAK texture stream failed");
+        telemetry::debug_log("hl-psx: WORLD.PAK texture stream failed");
         return;
     }
-    telemetry::debug_log("hl-psx: WORLD.PAK chunk loaded");
-    let map_bytes = unsafe { core::slice::from_raw_parts(MAP_BUF.as_ptr() as *const u8, map_len) };
-    let m = Map::load(map_bytes);
-    unsafe {
-        PVS_CAM_LEAF = -1;
-        PVS_LEAF_COUNT = 0;
-        PVS_ENT_COUNT = 0;
-    }
-    let nents = m.n_ents.min(MAX_ENTS);
-    unsafe {
-        for ei in 0..nents {
-            let e = m.entity(ei);
-            ENT_CACHE[ei] = e;
-            ENT_RADIUS[ei] = isqrt(e.r2);
-        }
-    }
-    let nv = if m.n_verts < MAX_VERTS {
-        m.n_verts
-    } else {
-        MAX_VERTS
-    };
+    telemetry::debug_log("hl-psx: WORLD.PAK texture chunk loaded");
 
+    let tex_bytes = unsafe { core::slice::from_raw_parts(MAP_BUF.as_ptr() as *const u8, tex_len) };
     telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
-    let tex_failed = unsafe {
-        vram::upload_textures_raw(
-            &m,
+    let (room_texs, tex_failed) = match unsafe {
+        vram::upload_tex_chunk_raw(
+            tex_bytes,
             core::ptr::addr_of_mut!(TEX_SLOTS).cast::<TexSlot>(),
             MAX_TEX_SLOTS,
         )
+    } {
+        Some(v) => v,
+        None => {
+            telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
+            telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
+            telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
+            telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
+            telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
+            telemetry::task_end(telemetry::task::FIXED_UPDATE);
+            tty::println("hl-psx: WORLD.PAK texture chunk invalid");
+            telemetry::debug_log("hl-psx: WORLD.PAK texture chunk invalid");
+            return;
+        }
     };
     telemetry::counter(
         telemetry::counter::ROOM_TEXTURE_UPLOADS,
-        m.n_texs.saturating_sub(tex_failed) as u32,
+        room_texs.saturating_sub(tex_failed) as u32,
     );
     telemetry::counter(
         telemetry::counter::ROOM_MATERIAL_TEXTURE_DROPS,
@@ -1285,8 +1531,14 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
         vram::upload_tex_blob_raw(
             sci.tex_blob(),
             sci.n_texs,
-            core::ptr::addr_of_mut!(MODEL_SLOTS).cast::<TexSlot>(),
-            16,
+            core::ptr::addr_of_mut!(SCI_SLOTS).cast::<TexSlot>(),
+            24,
+        );
+        vram::upload_tex_blob_raw(
+            headcrab.tex_blob(),
+            headcrab.n_texs,
+            core::ptr::addr_of_mut!(HEADCRAB_SLOTS).cast::<TexSlot>(),
+            8,
         );
         vram::upload_tex_blob_raw(
             wpn.tex_blob(),
@@ -1302,12 +1554,63 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
     let hud_mat = hud::upload(); // real HUD sprite sheet -> free gameplay tpage
     telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
 
+    telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
+    let map_len = cdstream::load_chunk(world_chunk_id, unsafe { &mut MAP_BUF }).unwrap_or(0);
+    telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
+    if map_len > 0 {
+        stream_chunks += 1;
+        stream_bytes = stream_bytes.saturating_add(map_len as u32);
+        stream_sectors = stream_sectors.saturating_add(((map_len as u32) + 2047) / 2048);
+    }
+    telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
+    telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
+    telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
+    telemetry::counter(
+        telemetry::counter::CD_WORLD_PACK_STATUS,
+        if map_len == 0 { 0 } else { 1 },
+    );
+    telemetry::task_end(telemetry::task::FIXED_UPDATE);
+    if map_len == 0 {
+        tty::println("hl-psx: WORLD.PAK world stream failed");
+        telemetry::debug_log("hl-psx: WORLD.PAK world stream failed");
+        return;
+    }
+    telemetry::debug_log("hl-psx: WORLD.PAK world chunk loaded");
+
+    let map_bytes = unsafe { core::slice::from_raw_parts(MAP_BUF.as_ptr() as *const u8, map_len) };
+    let m = Map::load(map_bytes);
+    if room_texs != m.n_texs {
+        tty::println("hl-psx: texture/world count mismatch");
+        telemetry::debug_log("hl-psx: texture/world count mismatch");
+    }
+    unsafe {
+        PVS_CAM_LEAF = -1;
+        PVS_LEAF_COUNT = 0;
+        PVS_ENT_COUNT = 0;
+        init_prop_state(&m);
+    }
+    let nents = m.n_ents.min(MAX_ENTS);
+    unsafe {
+        for ei in 0..nents {
+            let e = m.entity(ei);
+            ENT_CACHE[ei] = e;
+            ENT_RADIUS[ei] = isqrt(e.r2);
+        }
+    }
+    let nv = if m.n_verts < MAX_VERTS {
+        m.n_verts
+    } else {
+        MAX_VERTS
+    };
+
     let mut player = phys::Player::new(m.spawn_pos);
     let mut yaw: u16 = (m.spawn_yaw as u16) & 0xFFF;
     let mut pitch: i16 = 0;
     let mut frame_no: u16 = 0;
     let mut telemetry_frame: u32 = 1;
     let mut sim_frame_no: u32 = 0;
+    let mut ammo: u16 = GLOCK_MAX_CLIP;
+    let mut health: u16 = PLAYER_START_HEALTH;
 
     // Tram ride: carry the player along the path_track chain, then hand back
     // control. ride_off is the tram's displacement from its parked start.
@@ -1340,13 +1643,21 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
             );
             telemetry::counter(
                 telemetry::counter::ROOM_SURFACE_CACHE_BUILD_VERTICES,
-                PVS_TRI_COUNT as u32,
+                PVS_TRI_REF_COUNT as u32,
             );
         }
 
         WEAPON_OT.clear();
+        let mut warm_packets = PrimitivePacketArena::new(&mut PRIMITIVE_PACKETS);
         let mut warm_np = 0usize;
-        draw_viewmodel(&wpn, &WEAPON_SLOTS, VM_FRAME, -recoil, &mut warm_np);
+        draw_viewmodel(
+            &mut warm_packets,
+            &wpn,
+            &WEAPON_SLOTS,
+            VM_FRAME,
+            -recoil,
+            &mut warm_np,
+        );
         WEAPON_OT.clear();
     }
     telemetry::stage_end(telemetry::stage::ROOM_SURFACE_CACHE);
@@ -1374,11 +1685,10 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
             if !pad.is_analog() {
                 let _ = enable_analog_port1();
             }
-            // R2 fires: kick the viewmodel; re-kicks while held (rapid fire feel).
+            // R2 fires at the Glock cadence; the actual hit-test runs after
+            // movement/movers update so it uses the current camera and doors.
             recoil = (recoil - 3).max(0);
-            if pad.buttons.is_held(button::R2) && recoil == 0 {
-                recoil = 16;
-            }
+            let want_fire = pad.buttons.is_held(button::R2) && recoil == 0 && ammo > 0;
             let (mut fwd, mut strafe, mut turn, mut look) = (0i32, 0i32, 0i32, 0i32);
             if pad.is_analog() {
                 let (lx, ly) = pad.sticks.left_centered();
@@ -1493,6 +1803,22 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                 telemetry::stage_end(telemetry::stage::SIM_COLLISION);
             }
             let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
+            if want_fire {
+                ammo = ammo.saturating_sub(1);
+                recoil = 16;
+                let fire_rot = view_rotation(yaw, pitch);
+                let fire_base_t = [
+                    -dot12(fire_rot.m[0], eye),
+                    -dot12(fire_rot.m[1], eye),
+                    -dot12(fire_rot.m[2], eye),
+                ];
+                unsafe {
+                    let _ = fire_glock(&m, movers, eye, &fire_rot, fire_base_t);
+                }
+            }
+            unsafe {
+                tick_props(&m, movers, player.pos, &mut health);
+            }
             telemetry::counter(
                 telemetry::counter::ROOM_CAMERA_GLOBAL_X_BIASED,
                 (eye[0] + 32768).max(0) as u32,
@@ -1535,24 +1861,6 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
         ];
         scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
 
-        let mut door_movers = [phys::NO_MOVER; MAX_ENTS];
-        let mut ndoor = 0usize;
-        unsafe {
-            for ei in 0..nents {
-                let e = ENT_CACHE[ei];
-                if e.kind == 1 && ndoor < door_movers.len() {
-                    door_movers[ndoor] = phys::Mover {
-                        head: e.head,
-                        off: scale12_vec(e.mv, ENT_PHASE[ei]),
-                        center: e.center,
-                        radius: ENT_RADIUS[ei],
-                    };
-                    ndoor += 1;
-                }
-            }
-        }
-        let door_movers = &door_movers[..ndoor];
-
         frame_no = frame_no.wrapping_add(1);
         telemetry::task_begin(telemetry::task::VISUAL_RENDER);
         telemetry::stage_begin(telemetry::stage::RENDER);
@@ -1567,6 +1875,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
             OT.clear();
             WEAPON_OT.clear();
             HUD_OT.clear();
+            let mut packets = PrimitivePacketArena::new(&mut PRIMITIVE_PACKETS);
             let mut np = 0usize;
             let mut nq = 0usize;
 
@@ -1599,29 +1908,17 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                         let be = [be16[0] as i32, be16[1] as i32, be16[2] as i32];
                         if !WORLD_BOUNDS_CULL || box_visible(bc, be, &rot, base_t) {
                             let cnt = PVS_FACE_TRI_COUNT[e] as usize;
-                            if PVS_FACE_CACHE_FIRST[e] != PVS_LINK_END {
-                                emit_cached_world_face_tris(
-                                    &m,
-                                    PVS_FACE_CACHE_FIRST[e] as usize,
-                                    cnt,
-                                    nv,
-                                    frame_no,
-                                    &mut np,
-                                    &mut nq,
-                                    &mut room_counts,
-                                );
-                            } else {
-                                emit_world_face_tris(
-                                    &m,
-                                    PVS_FACE_FIRST[e] as usize,
-                                    cnt,
-                                    nv,
-                                    frame_no,
-                                    &mut np,
-                                    &mut nq,
-                                    &mut room_counts,
-                                );
-                            }
+                            emit_world_face_tris(
+                                &mut packets,
+                                &m,
+                                PVS_FACE_FIRST[e] as usize,
+                                cnt,
+                                nv,
+                                frame_no,
+                                &mut np,
+                                &mut nq,
+                                &mut room_counts,
+                            );
                         }
                         entry = PVS_FACE_NEXT[e];
                     }
@@ -1650,6 +1947,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                 let mut face = 0usize;
                 while face < m.n_faces {
                     emit_world_face(
+                        &mut packets,
                         &m,
                         face,
                         nv,
@@ -1742,6 +2040,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                             proj_submodel_vert(&m, b, submodel_token);
                             proj_submodel_vert(&m, c, submodel_token);
                             emit_projected(
+                                &mut packets,
                                 &m,
                                 tri,
                                 [SCRATCH[a], SCRATCH[b], SCRATCH[c]],
@@ -1792,6 +2091,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                             proj_submodel_vert(&m, b, submodel_token);
                             proj_submodel_vert(&m, c, submodel_token);
                             emit_projected(
+                                &mut packets,
                                 &m,
                                 tri,
                                 [SCRATCH[a], SCRATCH[b], SCRATCH[c]],
@@ -1803,17 +2103,26 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                 }
             }
 
-            // Studio models placed at point entities (scientists). Frustum-cull
-            // by the prop's forward depth + horizontal FOV so off-screen ones
-            // don't burn primitives.
-            for pi in 0..m.n_props {
-                let (ty, org, yaw, cooked_leaf) = m.prop(pi);
-                if ty != 0 {
-                    continue; // only scientists included for now
-                }
+            // Studio actors placed by map entities plus any runtime fallback
+            // enemies. Models are baked to posed frames by the host cooker; the
+            // PS1 path only chooses the current actor frame.
+            let actor_count = PROP_COUNT.min(MAX_PROPS);
+            for pi in 0..actor_count {
+                let ty = PROP_KIND[pi];
+                let org = PROP_POS[pi];
+                let yaw = PROP_YAW[pi];
+                let cooked_leaf = PROP_LEAF[pi];
+                let (md, slots) = match ty {
+                    PROP_TYPE_SCIENTIST => (sci, &SCI_SLOTS[..]),
+                    PROP_TYPE_HEADCRAB => (headcrab, &HEADCRAB_SLOTS[..]),
+                    PROP_TYPE_BARNEY => continue,
+                    _ => continue,
+                };
                 model_bounds_tests = model_bounds_tests.saturating_add(1);
                 if have_pvs {
-                    let prop_leaf = if cooked_leaf > 0 {
+                    let prop_leaf = if ty == PROP_TYPE_HEADCRAB {
+                        camera_leaf(&m, org)
+                    } else if cooked_leaf > 0 {
                         cooked_leaf as i32
                     } else {
                         camera_leaf(&m, org)
@@ -1838,16 +2147,25 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                     model_bounds_culled = model_bounds_culled.saturating_add(1);
                     continue;
                 }
-                let sight = [org[0], org[1] + 40, org[2]];
-                if !phys::line_clear_world(&m, eye, sight)
-                    || !phys::line_clear_movers(&m, door_movers, eye, sight)
-                {
-                    model_bounds_culled = model_bounds_culled.saturating_add(1);
-                    continue;
-                }
                 model_draws = model_draws.saturating_add(1);
-                let sf = (sim_frame_no as usize / ANIM_DIV) % sci.n_frames.max(1);
-                draw_model(&sci, &MODEL_SLOTS, org, yaw as u16, sf, eye, &rot, &mut np);
+                let sf = prop_anim_frame(md, ty, PROP_STATE[pi], sim_frame_no, pi);
+                let shade = if pi < MAX_PROPS && PROP_HIT_FLASH[pi] > 0 {
+                    MODEL_HIT_SHADE
+                } else {
+                    MODEL_SHADE
+                };
+                draw_model(
+                    &mut packets,
+                    md,
+                    slots,
+                    org,
+                    yaw,
+                    sf,
+                    shade,
+                    eye,
+                    &rot,
+                    &mut np,
+                );
             }
             telemetry::stage_end(telemetry::stage::MODEL_INSTANCES);
             telemetry::counter(telemetry::counter::MODEL_INSTANCE_DRAWS, model_draws);
@@ -1872,14 +2190,21 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
             let world_quads = nq;
             if SHOW_VIEWMODEL {
                 telemetry::stage_begin(telemetry::stage::EQUIPMENT);
-                draw_viewmodel(&wpn, &WEAPON_SLOTS, VM_FRAME, -recoil, &mut np);
+                draw_viewmodel(
+                    &mut packets,
+                    &wpn,
+                    &WEAPON_SLOTS,
+                    VM_FRAME,
+                    -recoil,
+                    &mut np,
+                );
                 telemetry::stage_end(telemetry::stage::EQUIPMENT);
                 telemetry::counter(
                     telemetry::counter::EQUIPMENT_SUBMITTED_TRIS,
                     np.saturating_sub(world_prims) as u32,
                 );
             }
-            let _ = hud::draw(hud_mat, 100, 17, &mut HUD_OT, &mut HUD_PRIMS);
+            let _ = hud::draw(hud_mat, health, ammo, &mut HUD_OT, &mut HUD_PRIMS);
 
             telemetry::stage_begin(telemetry::stage::FRAME_CLEAR);
             fb.clear(0, 0, 0);
@@ -1906,11 +2231,11 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
             );
             telemetry::counter(
                 telemetry::counter::TRI_PRIMITIVE_REMAINING,
-                MAX_PRIMS.saturating_sub(np) as u32,
+                packets.remaining() as u32,
             );
             telemetry::counter(
                 telemetry::counter::ROOM_SUBMIT_PRIMITIVE_OVERFLOWS,
-                (np >= MAX_PRIMS || nq >= MAX_QUADS) as u32,
+                (packets.remaining() == 0) as u32,
             );
         }
 

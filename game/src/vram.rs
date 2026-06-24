@@ -9,7 +9,6 @@
 use psx_gpu::material::{TextureMaterial, TextureWindow, TexturedGouraudPacketMaterial};
 use psx_vram::{upload_bytes, ClutRowAllocator, TexDepth, TextureWindowAtlas, Tpage, VramRect};
 
-use crate::map::Map;
 use core::ptr;
 
 const TEX_X0: u16 = 320; // first texture-page column (after the framebuffers)
@@ -34,21 +33,40 @@ pub const EMPTY_SLOT: TexSlot = TexSlot {
 static mut ATLAS: TextureWindowAtlas<PAGES> = TextureWindowAtlas::new();
 static mut CLUTS: ClutRowAllocator<CLUT_ROWS> = ClutRowAllocator::new(CLUT_BASE_Y);
 
-/// Upload every cooked map texture, filling `slots`. Resets the VRAM allocators
-/// first so reloading a map (return-to-menu) starts from a clean atlas instead
-/// of running the cursors off the end.
-pub fn upload_textures(map: &Map, slots: &mut [TexSlot]) -> usize {
-    unsafe { upload_textures_raw(map, slots.as_mut_ptr(), slots.len()) }
+#[inline(always)]
+fn rd_u32(d: &[u8], o: usize) -> Option<u32> {
+    Some(u32::from_le_bytes([
+        *d.get(o)?,
+        *d.get(o + 1)?,
+        *d.get(o + 2)?,
+        *d.get(o + 3)?,
+    ]))
 }
 
-/// Raw-pointer variant for filling `static mut` slot tables without creating
-/// references to those statics.
-pub unsafe fn upload_textures_raw(map: &Map, slots: *mut TexSlot, slot_len: usize) -> usize {
+unsafe fn reset_allocators() {
     unsafe {
         ATLAS = TextureWindowAtlas::new();
         CLUTS = ClutRowAllocator::new(CLUT_BASE_Y);
     }
-    unsafe { upload_tex_blob_raw(map.tex_blob(), map.n_texs, slots, slot_len) }
+}
+
+/// Upload a streamed map texture chunk:
+/// `magic "HLTX" | u32 n_texs | texture blob`.
+///
+/// Returns `(n_texs, failed_uploads)` so the caller can report the same
+/// counters as the legacy inline map-texture path.
+pub unsafe fn upload_tex_chunk_raw(
+    data: &[u8],
+    slots: *mut TexSlot,
+    slot_len: usize,
+) -> Option<(usize, usize)> {
+    if data.len() < 8 || data.get(0..4)? != b"HLTX" {
+        return None;
+    }
+    let n_texs = rd_u32(data, 4)? as usize;
+    unsafe { reset_allocators() };
+    let failed = unsafe { upload_tex_blob_raw(&data[8..], n_texs, slots, slot_len) };
+    Some((n_texs, failed))
 }
 
 /// Upload a `.hlm`/`.hlmdl` texture blob (u16 w,h | u16 clut[16] | u8 pix4 each)

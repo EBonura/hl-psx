@@ -26,6 +26,8 @@ PSOXIDE_SMOKE_STEPS ?= 50000000
 PSOXIDE_GAMEPLAY_STEPS ?= 320000000
 PSOXIDE_PROFILE_STEPS ?= 600000000
 PSOXIDE_PROFILE_FRAMES ?= 180
+MEMORY_MAP ?= $(CAPTURE_DIR)/hl-psx.map
+MIN_HEADROOM_KB ?= 96
 # Default gameplay route selects c1a0: Down once, then Cross to play.
 PSOXIDE_MENU_PLAY_PULSES ?= 0x0040@40+4,0x4000@90+8
 
@@ -47,7 +49,7 @@ HLBSP_BIN := $(HLBSP)/target/release/hl-bsp
 MAP      ?= c1a0
 
 .DEFAULT_GOAL := build
-.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-chart
+.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-chart memory-report
 
 help:
 	@echo "hl-psx targets:"
@@ -65,6 +67,7 @@ help:
 	@echo "  make psoxide-gameplay - headless c1a0 gameplay screenshot/hash"
 	@echo "  make psoxide-profile  - telemetry build + CSV/profile screenshot"
 	@echo "  make psoxide-chart    - profile + HTML vblank chart"
+	@echo "  make memory-report    - linker-map RAM budget + top symbols"
 	@echo "  make check-assets - verify the source Half-Life install (HL_DIR)"
 	@echo "  make bsp-info   - geometry + texture-VRAM budget for one map (MAP=$(MAP))"
 	@echo "  make cook       - cook a map to data/maps/<MAP>.hlm (MAP=$(MAP))"
@@ -86,6 +89,13 @@ build: install
 compile:
 	cd $(GAME) && PSOXIDE="$(PSOXIDE)" cargo build --release $(CARGO_FEATURE_ARGS)
 	@echo "EXE -> $(EXE)"
+
+memory-report:
+	@mkdir -p $(CAPTURE_DIR)
+	cd $(GAME) && RUSTFLAGS='-Clink-arg=-Map -Clink-arg=$(MEMORY_MAP)' \
+		PSOXIDE="$(PSOXIDE)" cargo build --release $(CARGO_FEATURE_ARGS)
+	python3 $(ROOT)/tools/memory_report.py $(MEMORY_MAP) \
+		--min-headroom-kb $(MIN_HEADROOM_KB)
 
 disc: compile
 	@mkdir -p $(DIST)
@@ -148,18 +158,23 @@ psoxide-chart: psoxide-profile
 		--title "hl-psx per-frame work"
 	@echo "CHART -> $(CAPTURE_DIR)/hl-psx-profile.html"
 
-# Cook the streamed maps into data/rooms/room_<N>.psxc -- mkisopsx packs these
-# into WORLD.PAK (chunk id = N). The runtime menu maps id->name (see main.rs).
-# Edit the list here to add/remove selectable maps.
+# Cook streamed maps into WORLD.PAK chunks. Each menu room N gets two chunk IDs:
+#   room_<2N>.psxc   = resident HLMA world/collision/entity data
+#   room_<2N+1>.psxc = temporary HLTX texture payload for VRAM upload
+# Keep MAPLIST in the same order as `game/src/menu.rs`'s chapter list.
 ROOMS := $(ROOT)/data/rooms
-# c1a1b dropped: 1.12 MB cooked won't fit RAM next to PRIMS. Keep maps <~900 KB.
+# One representative per gameplay chapter, staying below the current static
+# MAP_BUF budget. Some chapter starts are too large today, so use the first
+# fitting map from that chapter instead.
 MAPLIST := c0a0 c1a0 c1a1a c1a3a
 rooms:
 	cd $(HLBSP) && cargo build --release
 	@mkdir -p $(ROOMS)
+	@rm -f $(ROOMS)/room_*.psxc $(ROOMS)/room_*.psxw
 	@i=0; for m in $(MAPLIST); do \
-		$(HLBSP_BIN) --cook "$(HL_GAME)/maps/$$m.bsp" $(ROOMS)/room_$$i.psxc >/dev/null && \
-		echo "  room_$$i = $$m"; i=$$((i+1)); \
+		w=$$((i * 2)); t=$$((w + 1)); \
+		$(HLBSP_BIN) --cook "$(HL_GAME)/maps/$$m.bsp" $(ROOMS)/room_$$w.psxc $(ROOMS)/room_$$t.psxc >/dev/null && \
+		echo "  room_$$w/$$t = $$m"; i=$$((i+1)); \
 	done
 	@echo "rooms -> $(ROOMS) ($(words $(MAPLIST)) maps)"
 
@@ -206,19 +221,19 @@ bsp-info:
 	  exit 1; fi
 	$(HLBSP_BIN) "$(HL_GAME)/maps/$(MAP).bsp"
 
-# Cook a map to the PS1-native .hlm the runtime include_bytes!'s, and copy it to
-# data/maps/current.hlm (the path the runtime builds from). Pick any level with
-# MAP=<name>, e.g. `make cook MAP=c1a1a && make disc`.
+# Cook a map to split PS1-native .hlm/.hltx files for inspection. Runtime disc
+# builds use `make rooms`.
 cook:
 	cd $(HLBSP) && cargo build --release
 	@mkdir -p $(ROOT)/data/maps
-	$(HLBSP_BIN) --cook "$(HL_GAME)/maps/$(MAP).bsp" $(ROOT)/data/maps/$(MAP).hlm
+	$(HLBSP_BIN) --cook "$(HL_GAME)/maps/$(MAP).bsp" $(ROOT)/data/maps/$(MAP).hlm $(ROOT)/data/maps/$(MAP).hltx
 	@cp $(ROOT)/data/maps/$(MAP).hlm $(ROOT)/data/maps/current.hlm
+	@cp $(ROOT)/data/maps/$(MAP).hltx $(ROOT)/data/maps/current.hltx
 	@echo "current map -> $(MAP)"
 
-# Cook the studio models the runtime include_bytes!'s (data/models). Each is
-# baked to per-frame posed vertices from sequence 0 (`--mdl <in> <out> [seq]`);
-# the runtime cycles frames. Edit MODELLIST to add models.
+# Cook the studio models the runtime include_bytes!'s (data/models). Most are
+# baked to sequence 0. Headcrab uses an HMD3 clip pack:
+#   0 idle1, 4 run, 10 jump/attack, 7 dieback
 MODELLIST := scientist v_9mmhandgun
 models:
 	cd $(HLBSP) && cargo build --release
@@ -226,6 +241,7 @@ models:
 	@for m in $(MODELLIST); do \
 		$(HLBSP_BIN) --mdl "$(HL_GAME)/models/$$m.mdl" $(ROOT)/data/models/$$m.hlmdl 0; \
 	done
+	$(HLBSP_BIN) --mdl "$(HL_GAME)/models/headcrab.mdl" $(ROOT)/data/models/headcrab.hlmdl 0:8,4:8,10:7,7:7
 
 clean:
 	cd $(GAME) && cargo clean
