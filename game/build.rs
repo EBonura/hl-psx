@@ -1,7 +1,7 @@
 //! Inject PSoXide's PSX linker script into the final link, by absolute
 //! path derived from this crate's location. This keeps the crate buildable
 //! from anywhere (no brittle relative `-T` paths in RUSTFLAGS) while the
-//! script itself lives in the pinned submodule.
+//! script itself lives in the sibling PSoXide checkout.
 
 use std::path::PathBuf;
 
@@ -9,7 +9,15 @@ fn main() {
     // This crate lives at <repo>/game, so the repo root is one level up.
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let repo_root = manifest.parent().expect("crate must live at <repo>/game");
-    let ld = repo_root.join("third_party/PSoXide/sdk/psoxide.ld");
+    let psoxide = std::env::var("PSOXIDE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            repo_root
+                .parent()
+                .expect("repo root must have a parent")
+                .join("PSoXide")
+        });
+    let ld = psoxide.join("sdk/psoxide.ld");
     let ld = ld.canonicalize().unwrap_or(ld);
 
     // `-T` selects the linker script; `--oformat=binary` dumps a flat PSX-EXE

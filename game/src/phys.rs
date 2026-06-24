@@ -17,10 +17,13 @@ const GRAVITY: i32 = 12;
 const MOVE_SPEED: i32 = 18;
 const JUMP: i32 = 64;
 const STEP_DOWN: i32 = 8; // ground probe depth
+const CONTACT_NUDGE: i32 = 2;
+const STOP_EPSILON: i32 = 1;
+const MAX_CLIP_PLANES: usize = 5;
 
 #[inline]
-fn dot(n: [i16; 3], p: [i32; 3]) -> i64 {
-    n[0] as i64 * p[0] as i64 + n[1] as i64 * p[1] as i64 + n[2] as i64 * p[2] as i64
+fn dot(n: [i16; 3], p: [i32; 3]) -> i32 {
+    ((n[0] as i32 * p[0]) + (n[1] as i32 * p[1]) + (n[2] as i32 * p[2])) >> 12
 }
 
 struct Trace {
@@ -38,7 +41,7 @@ fn point_contents(map: &Map, mut num: i16, p: [i32; 3]) -> i16 {
         }
         guard += 1;
         let cn = map.clipnode(num as usize);
-        let t = (dot(cn.n, p) >> 12) as i32 - cn.dist;
+        let t = dot(cn.n, p) - cn.dist;
         num = if t >= 0 { cn.c0 } else { cn.c1 };
     }
     num
@@ -70,8 +73,8 @@ fn recurse(
         return true;
     }
     let cn = map.clipnode(num as usize);
-    let t1 = (dot(cn.n, p1) >> 12) as i32 - cn.dist;
-    let t2 = (dot(cn.n, p2) >> 12) as i32 - cn.dist;
+    let t1 = dot(cn.n, p1) - cn.dist;
+    let t2 = dot(cn.n, p2) - cn.dist;
     if t1 >= 0 && t2 >= 0 {
         return recurse(map, cn.c0, p1f, p2f, p1, p2, tr, depth + 1);
     }
@@ -82,18 +85,18 @@ fn recurse(
     // trick) so we stop just SHORT of the plane instead of exactly on it, which
     // would leave the player startsolid (wedged) and unable to move next frame.
     const EPS: i32 = 1;
-    let denom = (t1 - t2) as i64;
+    let denom = t1 - t2;
     let nudged = if t1 < 0 { t1 + EPS } else { t1 - EPS };
     let frac = if denom == 0 {
         0
     } else {
-        ((nudged as i64 * 4096) / denom).clamp(0, 4096) as i32
+        ((nudged * 4096) / denom).clamp(0, 4096)
     };
-    let midf = p1f + (((p2f - p1f) as i64 * frac as i64) >> 12) as i32;
+    let midf = p1f + (((p2f - p1f) * frac) >> 12);
     let mid = [
-        p1[0] + (((p2[0] - p1[0]) as i64 * frac as i64) >> 12) as i32,
-        p1[1] + (((p2[1] - p1[1]) as i64 * frac as i64) >> 12) as i32,
-        p1[2] + (((p2[2] - p1[2]) as i64 * frac as i64) >> 12) as i32,
+        p1[0] + (((p2[0] - p1[0]) * frac) >> 12),
+        p1[1] + (((p2[1] - p1[1]) * frac) >> 12),
+        p1[2] + (((p2[2] - p1[2]) * frac) >> 12),
     ];
     let side = t1 < 0; // true -> back side first
     let (near, far) = if side { (cn.c1, cn.c0) } else { (cn.c0, cn.c1) };
@@ -132,12 +135,68 @@ fn trace(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> Trace {
 pub struct Mover {
     pub head: i32,
     pub off: [i32; 3],
+    pub center: [i32; 3],
+    pub radius: i32,
 }
 
 pub const NO_MOVER: Mover = Mover {
     head: 0,
     off: [0, 0, 0],
+    center: [0, 0, 0],
+    radius: 0,
 };
+
+#[inline]
+fn mover_may_touch_segment(mv: &Mover, p1: [i32; 3], p2: [i32; 3]) -> bool {
+    if mv.radius <= 0 {
+        return true;
+    }
+    let c = [
+        mv.center[0] + mv.off[0],
+        mv.center[1] + mv.off[1],
+        mv.center[2] + mv.off[2],
+    ];
+    let r = mv.radius;
+    let mut axis = 0;
+    while axis < 3 {
+        let lo = p1[axis].min(p2[axis]) - r;
+        let hi = p1[axis].max(p2[axis]) + r;
+        if c[axis] < lo || c[axis] > hi {
+            return false;
+        }
+        axis += 1;
+    }
+    true
+}
+
+/// True when the segment does not hit any shifted mover hull.
+pub fn line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> bool {
+    for mv in movers {
+        if mv.head <= 0 {
+            continue;
+        }
+        if !mover_may_touch_segment(mv, p1, p2) {
+            continue;
+        }
+        let o = mv.off;
+        let q1 = [p1[0] - o[0], p1[1] - o[1], p1[2] - o[2]];
+        let q2 = [p2[0] - o[0], p2[1] - o[1], p2[2] - o[2]];
+        let t = trace(map, mv.head, q1, q2);
+        if !t.startsolid && t.frac < 4096 {
+            return false;
+        }
+    }
+    true
+}
+
+/// True when the segment does not hit the static world point hull.
+pub fn line_clear_world(map: &Map, p1: [i32; 3], p2: [i32; 3]) -> bool {
+    if map.hull0_head <= 0 {
+        return true;
+    }
+    let t = trace(map, map.hull0_head, p1, p2);
+    t.startsolid || t.frac >= 4096
+}
 
 /// Trace the world hull plus every mover hull (each shifted by its offset);
 /// return the nearest impact.
@@ -146,6 +205,9 @@ fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i3
     for mv in movers {
         if mv.head <= 0 {
             continue; // no clip hull for this submodel
+        }
+        if !mover_may_touch_segment(mv, p1, p2) {
+            continue;
         }
         let o = mv.off;
         let q1 = [p1[0] - o[0], p1[1] - o[1], p1[2] - o[2]];
@@ -164,15 +226,89 @@ fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i3
     best
 }
 
-/// Remove the component of `v` along `n` (×4096) -- slide along a plane.
-fn clip(v: [i32; 3], n: [i32; 3]) -> [i32; 3] {
-    let proj = ((v[0] as i64 * n[0] as i64 + v[1] as i64 * n[1] as i64 + v[2] as i64 * n[2] as i64)
-        >> 12) as i32;
+#[inline]
+fn dot12_i32(a: [i32; 3], b: [i32; 3]) -> i32 {
+    ((a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2])) >> 12
+}
+
+#[inline]
+fn dot_raw(a: [i32; 3], b: [i32; 3]) -> i32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+#[inline]
+fn scale12(v: [i32; 3], s: i32) -> [i32; 3] {
+    [(v[0] * s) >> 12, (v[1] * s) >> 12, (v[2] * s) >> 12]
+}
+
+#[inline]
+fn add(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+fn cross12(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
     [
-        v[0] - ((n[0] as i64 * proj as i64) >> 12) as i32,
-        v[1] - ((n[1] as i64 * proj as i64) >> 12) as i32,
-        v[2] - ((n[2] as i64 * proj as i64) >> 12) as i32,
+        ((a[1] * b[2] - a[2] * b[1]) >> 12),
+        ((a[2] * b[0] - a[0] * b[2]) >> 12),
+        ((a[0] * b[1] - a[1] * b[0]) >> 12),
     ]
+}
+
+/// Remove the component of `v` along `n` (×4096) -- slide along a plane.
+fn clip_velocity(v: [i32; 3], n: [i32; 3]) -> [i32; 3] {
+    let proj = dot12_i32(v, n);
+    let mut out = [
+        v[0] - ((n[0] * proj) >> 12),
+        v[1] - ((n[1] * proj) >> 12),
+        v[2] - ((n[2] * proj) >> 12),
+    ];
+    let mut i = 0;
+    while i < 3 {
+        if out[i].abs() <= STOP_EPSILON {
+            out[i] = 0;
+        }
+        i += 1;
+    }
+    out
+}
+
+fn nudge_out(pos: [i32; 3], n: [i32; 3]) -> [i32; 3] {
+    add(pos, scale12(n, CONTACT_NUDGE))
+}
+
+fn clear_at(map: &Map, head: i32, movers: &[Mover], pos: [i32; 3]) -> bool {
+    !trace_all(map, head, movers, pos, pos).startsolid
+}
+
+fn try_unstick(map: &Map, head: i32, movers: &[Mover], pos: [i32; 3]) -> Option<[i32; 3]> {
+    if clear_at(map, head, movers, pos) {
+        return Some(pos);
+    }
+    const OFFSETS: [[i32; 3]; 14] = [
+        [0, 1, 0],
+        [0, 2, 0],
+        [1, 0, 0],
+        [-1, 0, 0],
+        [0, 0, 1],
+        [0, 0, -1],
+        [2, 0, 0],
+        [-2, 0, 0],
+        [0, 0, 2],
+        [0, 0, -2],
+        [1, 1, 0],
+        [-1, 1, 0],
+        [0, 1, 1],
+        [0, 1, -1],
+    ];
+    let mut i = 0;
+    while i < OFFSETS.len() {
+        let p = add(pos, OFFSETS[i]);
+        if clear_at(map, head, movers, p) {
+            return Some(p);
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Slide `vel` from `pos` for one frame, sliding along walls (4 iterations).
@@ -184,34 +320,90 @@ fn slide_move(
     mut pos: [i32; 3],
     mut vel: [i32; 3],
 ) -> ([i32; 3], [i32; 3]) {
-    let mut d = vel;
+    let mut planes = [[0i32; 3]; MAX_CLIP_PLANES];
+    let mut nplanes = 0usize;
+    let mut original_vel = vel;
+    let primal_vel = vel;
+    let mut time_left = 4096;
     for _ in 0..4 {
-        if d == [0, 0, 0] {
+        if vel == [0, 0, 0] || time_left <= 0 {
             break;
         }
-        let end = [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]];
+        let d = scale12(vel, time_left);
+        let end = add(pos, d);
         let tr = trace_all(map, head, movers, pos, end);
         if tr.startsolid {
-            break;
+            match try_unstick(map, head, movers, pos) {
+                Some(p) => {
+                    pos = p;
+                    continue;
+                }
+                None => {
+                    vel = [0, 0, 0];
+                    break;
+                }
+            }
         }
-        pos = [
-            pos[0] + ((d[0] as i64 * tr.frac as i64) >> 12) as i32,
-            pos[1] + ((d[1] as i64 * tr.frac as i64) >> 12) as i32,
-            pos[2] + ((d[2] as i64 * tr.frac as i64) >> 12) as i32,
-        ];
+        if tr.frac > 0 {
+            pos = add(pos, scale12(d, tr.frac));
+            original_vel = vel;
+            nplanes = 0;
+        }
         if tr.frac >= 4096 {
             break;
         }
-        let rem = [end[0] - pos[0], end[1] - pos[1], end[2] - pos[2]];
-        d = clip(rem, tr.normal);
-        vel = clip(vel, tr.normal);
+        pos = nudge_out(pos, tr.normal);
+        time_left = (time_left * (4096 - tr.frac)) >> 12;
+
+        if nplanes >= MAX_CLIP_PLANES {
+            vel = [0, 0, 0];
+            break;
+        }
+        planes[nplanes] = tr.normal;
+        nplanes += 1;
+
+        let mut new_vel = [0, 0, 0];
+        let mut found = false;
+        let mut i = 0;
+        while i < nplanes {
+            new_vel = clip_velocity(original_vel, planes[i]);
+            let mut ok = true;
+            let mut j = 0;
+            while j < nplanes {
+                if i != j && dot12_i32(new_vel, planes[j]) < 0 {
+                    ok = false;
+                    break;
+                }
+                j += 1;
+            }
+            if ok {
+                found = true;
+                break;
+            }
+            i += 1;
+        }
+
+        if found {
+            vel = new_vel;
+        } else if nplanes == 2 {
+            let dir = cross12(planes[0], planes[1]);
+            vel = scale12(dir, dot12_i32(vel, dir));
+        } else {
+            vel = [0, 0, 0];
+            break;
+        }
+
+        if dot_raw(vel, primal_vel) <= 0 {
+            vel = [0, 0, 0];
+            break;
+        }
     }
     (pos, vel)
 }
 
-fn dist_xz(a: [i32; 3], b: [i32; 3]) -> i64 {
-    let dx = (b[0] - a[0]) as i64;
-    let dz = (b[2] - a[2]) as i64;
+fn dist_xz(a: [i32; 3], b: [i32; 3]) -> i32 {
+    let dx = b[0] - a[0];
+    let dz = b[2] - a[2];
     dx * dx + dz * dz
 }
 
@@ -276,19 +468,11 @@ impl Player {
         if self.on_ground && (self.vel[0] != 0 || self.vel[2] != 0) {
             let up_end = [start[0], start[1] + STEP_UP, start[2]];
             let tup = trace_all(map, head, movers, start, up_end);
-            let up_pos = [
-                start[0],
-                start[1] + ((STEP_UP as i64 * tup.frac as i64) >> 12) as i32,
-                start[2],
-            ];
+            let up_pos = [start[0], start[1] + ((STEP_UP * tup.frac) >> 12), start[2]];
             let (sp, _) = slide_move(map, head, movers, up_pos, [self.vel[0], 0, self.vel[2]]);
             let dn_end = [sp[0], sp[1] - STEP_UP * 2, sp[2]];
             let tdn = trace_all(map, head, movers, sp, dn_end);
-            let step_pos = [
-                sp[0],
-                sp[1] - (((STEP_UP * 2) as i64 * tdn.frac as i64) >> 12) as i32,
-                sp[2],
-            ];
+            let step_pos = [sp[0], sp[1] - (((STEP_UP * 2) * tdn.frac) >> 12), sp[2]];
             let landed = tdn.frac < 4096 && tdn.normal[1] > GROUND_NY;
             if landed && dist_xz(start, step_pos) > dist_xz(start, flat_pos) {
                 self.pos = step_pos;
@@ -305,7 +489,7 @@ impl Player {
         self.on_ground = g.frac < 4096 && g.normal[1] > GROUND_NY;
         if self.on_ground {
             // Snap onto the floor and kill downward speed.
-            self.pos[1] += ((down[1] - self.pos[1]) as i64 * g.frac as i64 >> 12) as i32;
+            self.pos[1] += ((down[1] - self.pos[1]) * g.frac) >> 12;
             if self.vel[1] < 0 {
                 self.vel[1] = 0;
             }

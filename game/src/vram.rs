@@ -6,10 +6,11 @@
 //! in the free band Y=480.. (framebuffers own X=0..319 Y=0..479). All 164 c1a0
 //! textures are <=64x64, so one band of 11 pages (16 textures each) holds them.
 
-use psx_gpu::material::{TextureMaterial, TextureWindow};
+use psx_gpu::material::{TextureMaterial, TextureWindow, TexturedGouraudPacketMaterial};
 use psx_vram::{upload_bytes, ClutRowAllocator, TexDepth, TextureWindowAtlas, Tpage, VramRect};
 
 use crate::map::Map;
+use core::ptr;
 
 const TEX_X0: u16 = 320; // first texture-page column (after the framebuffers)
 const COLS: u16 = 11; // X=320,384,..,960
@@ -19,12 +20,14 @@ const CLUT_BASE_Y: u16 = 480;
 
 #[derive(Copy, Clone)]
 pub struct TexSlot {
-    pub material: TextureMaterial,
+    pub packet: TexturedGouraudPacketMaterial,
     pub valid: bool,
 }
 
+const EMPTY_MATERIAL: TextureMaterial = TextureMaterial::opaque(0, 0, (128, 128, 128));
+
 pub const EMPTY_SLOT: TexSlot = TexSlot {
-    material: TextureMaterial::opaque(0, 0, (128, 128, 128)),
+    packet: TexturedGouraudPacketMaterial::from_texture(EMPTY_MATERIAL),
     valid: false,
 };
 
@@ -35,16 +38,33 @@ static mut CLUTS: ClutRowAllocator<CLUT_ROWS> = ClutRowAllocator::new(CLUT_BASE_
 /// first so reloading a map (return-to-menu) starts from a clean atlas instead
 /// of running the cursors off the end.
 pub fn upload_textures(map: &Map, slots: &mut [TexSlot]) -> usize {
+    unsafe { upload_textures_raw(map, slots.as_mut_ptr(), slots.len()) }
+}
+
+/// Raw-pointer variant for filling `static mut` slot tables without creating
+/// references to those statics.
+pub unsafe fn upload_textures_raw(map: &Map, slots: *mut TexSlot, slot_len: usize) -> usize {
     unsafe {
         ATLAS = TextureWindowAtlas::new();
         CLUTS = ClutRowAllocator::new(CLUT_BASE_Y);
     }
-    upload_tex_blob(map.tex_blob(), map.n_texs, slots)
+    unsafe { upload_tex_blob_raw(map.tex_blob(), map.n_texs, slots, slot_len) }
 }
 
 /// Upload a `.hlm`/`.hlmdl` texture blob (u16 w,h | u16 clut[16] | u8 pix4 each)
 /// into `slots`. Returns the count that did not fit VRAM.
 pub fn upload_tex_blob(data: &[u8], n_texs: usize, slots: &mut [TexSlot]) -> usize {
+    unsafe { upload_tex_blob_raw(data, n_texs, slots.as_mut_ptr(), slots.len()) }
+}
+
+/// Raw-pointer variant for filling `static mut` slot tables without creating
+/// references to those statics.
+pub unsafe fn upload_tex_blob_raw(
+    data: &[u8],
+    n_texs: usize,
+    slots: *mut TexSlot,
+    slot_len: usize,
+) -> usize {
     let mut off = 0usize;
     let mut failed = 0usize;
     for i in 0..n_texs {
@@ -61,15 +81,18 @@ pub fn upload_tex_blob(data: &[u8], n_texs: usize, slots: &mut [TexSlot]) -> usi
         }
         let pix = &data[pix_off..pix_off + pix_len];
         off = pix_off + pix_len;
-        if i >= slots.len() {
+        if i >= slot_len {
             continue;
         }
-        match upload_one(w, h, clut, pix) {
-            Some(s) => slots[i] = s,
+        let slot = match upload_one(w, h, clut, pix) {
+            Some(s) => s,
             None => {
-                slots[i] = EMPTY_SLOT;
                 failed += 1;
+                EMPTY_SLOT
             }
+        };
+        unsafe {
+            ptr::write(slots.add(i), slot);
         }
     }
     failed
@@ -94,8 +117,9 @@ fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8]) -> Option<TexSlot> 
         let material =
             TextureMaterial::opaque(clut.uv_clut_word(), tpage.uv_tpage_word(0), (128, 128, 128))
                 .with_texture_window(win);
+        let packet = TexturedGouraudPacketMaterial::from_texture(material);
         Some(TexSlot {
-            material,
+            packet,
             valid: true,
         })
     }

@@ -3,8 +3,8 @@
 //!
 //! Pipeline: M1 geometry, M2 textures (4-bit CLUT), M3/M7 per-vertex lightmap
 //! shading, M4 PVS leaf culling, M5 player collision, M8 brush entities/doors.
-//! Triangles project once into a per-frame cache (RTPT batched); those that
-//! straddle the near plane are clipped + software-reprojected (render.rs) rather
+//! Vertices project once into per-frame/draw caches; triangles that straddle the
+//! near plane are clipped + software-reprojected (render.rs) rather
 //! than dropped.
 //!
 //! Controls (DualShock analog only): left stick = move/strafe, right stick =
@@ -25,14 +25,14 @@ mod render;
 mod telemetry;
 mod vram;
 
-use psx_gpu::material::TextureMaterial;
+use psx_gpu::material::TexturedGouraudPacketMaterial;
 use psx_gpu::ot::OrderingTable;
-use psx_gpu::prim::TriTexturedGouraud;
+use psx_gpu::prim::{QuadTexturedGouraud, TriTexturedGouraud};
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
 use psx_gte::math::{Mat3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
 use psx_pad::{button, enable_analog_port1, poll_port1};
-use psx_rt::tty;
+use psx_rt::{interrupts, tty};
 
 use map::Map;
 use model::Model;
@@ -42,7 +42,7 @@ use vram::{TexSlot, EMPTY_SLOT};
 // Maps stream from the disc's WORLD.PAK at runtime (no longer baked into the
 // EXE). MAP_BUF holds one cooked `.hlm`; sized for the largest packed map
 // (~900 KB). `make rooms` cooks the selectable maps; chunk id == room_<N>.
-const MAP_WORDS: usize = 235_520; // 942,080 bytes
+const MAP_WORDS: usize = 232_000; // 928,000 bytes; room_3.psxc is ~904 KiB
 static mut MAP_BUF: [u32; MAP_WORDS] = [0; MAP_WORDS];
 static SCI_BYTES: &[u8] = include_bytes!("../../data/models/scientist.hlmdl");
 static WPN_BYTES: &[u8] = include_bytes!("../../data/models/v_9mmhandgun.hlmdl");
@@ -52,11 +52,14 @@ const WEAPON_OT_LEN: usize = 64;
 const HUD_OT_LEN: usize = 1;
 const MAX_VERTS: usize = 8192;
 const MAX_MODEL_VERTS: usize = 1024;
-const MAX_PRIMS: usize = 12000;
-const MAX_TEX_SLOTS: usize = 512;
-const MAX_FACES: usize = 8192;
+const MAX_PRIMS: usize = 3328;
+const MAX_QUADS: usize = 1024;
+const MAX_WEAPON_CACHE_TRIS: usize = 320;
+const MAX_TEX_SLOTS: usize = 256;
+const MAX_FACES: usize = 6144;
 const MAX_LEAVES: usize = 8192;
-const MAX_ENTS: usize = 256;
+const MAX_ENTS: usize = 192;
+const MAX_PVS_TRIS: usize = 4096;
 const DOOR_SPEED: i32 = 120;
 const NEAR: u16 = 2; // GTE depth: only verts at/behind the near plane take the soft-clip path
 const SUBDIV_PX: i32 = 96; // split near-clipped triangles wider than this (affine fix)
@@ -70,9 +73,10 @@ const PITCH_RATE: i32 = 95; // pitch units/frame at full stick
 const DEADZONE: i32 = 28; // radial stick deadzone
 const VIEW_HEIGHT: i32 = 28;
 const FAR_VIEW: i32 = 6000; // leaf cull distance (world units); generous to avoid pop
-const MODEL_CULL: bool = false; // backface-cull studio models (flip if inside-out)
+const MODEL_CULL: bool = true; // backface-cull studio models
 const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
 const TRAM_STEP_DIV: i32 = 15; // tram units/sec -> units/frame (demo pace)
+const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
 static mut WEAPON_OT: OrderingTable<WEAPON_OT_LEN> = OrderingTable::new();
@@ -85,34 +89,83 @@ const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
     0,
 );
 static mut PRIMS: [TriTexturedGouraud; MAX_PRIMS] = [EMPTY_TRI; MAX_PRIMS];
+static mut QUAD_PRIMS: [QuadTexturedGouraud; MAX_QUADS] = [QuadTexturedGouraud::EMPTY; MAX_QUADS];
 static mut HUD_PRIMS: [QuadTexturedMaterial; hud::DRAW_CAP] = [hud::EMPTY_QUAD; hud::DRAW_CAP];
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 static mut MODEL_SLOTS: [TexSlot; 16] = [EMPTY_SLOT; 16];
 static mut WEAPON_SLOTS: [TexSlot; 12] = [EMPTY_SLOT; 12];
-static mut SCRATCH: [Projected; MAX_VERTS] = [Projected {
+const EMPTY_PROJECTED: Projected = Projected {
     sx: 0,
     sy: 0,
     sz: 0,
-}; MAX_VERTS];
-static mut WEAPON_SCRATCH: [Projected; MAX_MODEL_VERTS] = [Projected {
-    sx: 0,
-    sy: 0,
-    sz: 0,
-}; MAX_MODEL_VERTS];
+};
+static mut SCRATCH: [Projected; MAX_VERTS] = [EMPTY_PROJECTED; MAX_VERTS];
+static mut MODEL_SCRATCH: [Projected; MAX_MODEL_VERTS] = [EMPTY_PROJECTED; MAX_MODEL_VERTS];
 static mut WEAPON_CACHE_FRAME: usize = usize::MAX;
 static mut WEAPON_CACHE_RECOIL: i32 = i32::MIN;
 static mut WEAPON_CACHE_VERTS: usize = 0;
+static mut WEAPON_TRI_CACHE: [TriTexturedGouraud; MAX_WEAPON_CACHE_TRIS] =
+    [EMPTY_TRI; MAX_WEAPON_CACHE_TRIS];
+static mut WEAPON_TRI_OTZ: [u8; MAX_WEAPON_CACHE_TRIS] = [0; MAX_WEAPON_CACHE_TRIS];
+static mut WEAPON_TRI_COUNT: usize = 0;
+static mut SUBMODEL_VERT_TOKEN: [u16; MAX_VERTS] = [0; MAX_VERTS];
+static mut SUBMODEL_DRAW_TOKEN: u16 = 1;
+const PVS_LINK_END: u16 = u16::MAX;
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
-static mut FACE_FRAME: [u16; MAX_FACES] = [0; MAX_FACES];
+static mut PVS_LEAF_COUNT: usize = 0;
+static mut PVS_FACE_FIRST: [u16; MAX_FACES] = [0; MAX_FACES];
+static mut PVS_FACE_CACHE_FIRST: [u16; MAX_FACES] = [PVS_LINK_END; MAX_FACES];
+static mut PVS_FACE_TRI_COUNT: [u16; MAX_FACES] = [0; MAX_FACES];
+static mut PVS_FACE_CENTER: [[i16; 3]; MAX_FACES] = [[0; 3]; MAX_FACES];
+static mut PVS_FACE_EXTENT: [[u16; 3]; MAX_FACES] = [[0; 3]; MAX_FACES];
+static mut PVS_FACE_NEXT: [u16; MAX_FACES] = [PVS_LINK_END; MAX_FACES];
+static mut PVS_FACE_COUNT: usize = 0;
+static mut PVS_FACE_MARK: [u16; MAX_FACES] = [0; MAX_FACES];
+static mut PVS_FACE_MARK_TOKEN: u16 = 1;
+static mut PVS_GROUP_FIRST: [u16; MAX_FACES] = [PVS_LINK_END; MAX_FACES];
+static mut PVS_GROUP_MARK: [u16; MAX_FACES] = [0; MAX_FACES];
+static mut PVS_GROUP_ACTIVE: [u16; MAX_FACES] = [0; MAX_FACES];
+static mut PVS_GROUP_NRM: [[i16; 3]; MAX_FACES] = [[0; 3]; MAX_FACES];
+static mut PVS_GROUP_DIST: [i32; MAX_FACES] = [0; MAX_FACES];
+static mut PVS_GROUP_COUNT: usize = 0;
+const EMPTY_MAP_TRI: map::Tri = map::Tri {
+    idx: [0; 3],
+    tex: 0,
+    uv: [(0, 0); 3],
+    rgb: [(0, 0, 0); 3],
+};
+static mut PVS_TRI_CACHE: [map::Tri; MAX_PVS_TRIS] = [EMPTY_MAP_TRI; MAX_PVS_TRIS];
+static mut PVS_TRI_COUNT: usize = 0;
+static mut PVS_ENTS: [u16; MAX_ENTS] = [0; MAX_ENTS];
+static mut PVS_ENT_COUNT: usize = 0;
+static mut PVS_CAM_LEAF: i32 = -1;
+static mut DRAW_FACE_MARK: [u16; MAX_FACES] = [0; MAX_FACES];
+static mut DRAW_FACE_MARK_TOKEN: u16 = 1;
 static mut VERT_FRAME: [u16; MAX_VERTS] = [0; MAX_VERTS]; // project-once-per-frame cache marker
+const EMPTY_ENT: map::Ent = map::Ent {
+    submodel: 0,
+    kind: 2,
+    origin: [0, 0, 0],
+    mv: [0, 0, 0],
+    center: [0, 0, 0],
+    r2: 0,
+    head: 0,
+    leaf_start: 0,
+    leaf_count: 0,
+};
+static mut ENT_CACHE: [map::Ent; MAX_ENTS] = [EMPTY_ENT; MAX_ENTS];
+static mut ENT_RADIUS: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut CLIP_CV: [render::CVert; 4] = [render::EMPTY_CV; 4]; // near-clip scratch (reused)
 
-/// World->view rotation: rotX(pitch)*rotY(yaw) -- pitch in camera space so
-/// looking up/down while turned doesn't roll the horizon. Rows 0/1 negated for
-/// the GPU's Y-down screen.
+/// World->view rotation. `yaw` is stored in player-space convention, where
+/// positive yaw turns the forward vector toward +world X. A view matrix is the
+/// inverse of that camera rotation, so negate yaw before building rotY. Pitch is
+/// still camera-space so looking up/down while turned doesn't roll the horizon.
+/// Rows 0/1 are negated for the GPU's Y-down screen.
 fn view_rotation(yaw: u16, pitch: i16) -> Mat3I16 {
-    let look = Mat3I16::rotate_x((pitch >> 4) as u16).mul(&Mat3I16::rotate_y((yaw >> 4) as u16));
+    let view_yaw = 0u16.wrapping_sub(yaw >> 4);
+    let look = Mat3I16::rotate_x((pitch >> 4) as u16).mul(&Mat3I16::rotate_y(view_yaw));
     let mut r = look;
     let mut j = 0;
     while j < 3 {
@@ -123,19 +176,50 @@ fn view_rotation(yaw: u16, pitch: i16) -> Mat3I16 {
     r
 }
 
+#[inline(always)]
 fn dot12(row: [i16; 3], e: [i32; 3]) -> i32 {
     ((row[0] as i32 * e[0]) + (row[1] as i32 * e[1]) + (row[2] as i32 * e[2])) >> 12
 }
 
+#[inline(always)]
+fn scale12(x: i32, s: i32) -> i32 {
+    (x * s) >> 12
+}
+
+#[inline]
+fn scale12_vec(v: [i32; 3], s: i32) -> [i32; 3] {
+    [scale12(v[0], s), scale12(v[1], s), scale12(v[2], s)]
+}
+
+#[inline]
+fn vblank_reached(now: u32, target: u32) -> bool {
+    now.wrapping_sub(target) < 0x8000_0000
+}
+
+#[inline]
+fn wait_until_vblank(target: u32) {
+    while !vblank_reached(interrupts::vblank_count(), target) {}
+}
+
+fn wait_vblank_edge() -> u32 {
+    let entry = interrupts::vblank_count();
+    loop {
+        let now = interrupts::vblank_count();
+        if now != entry {
+            return now;
+        }
+    }
+}
+
 /// Integer square root (for path-segment lengths). Verified by the tram ride
 /// playing back at the right pace.
-fn isqrt(n: i64) -> i32 {
+fn isqrt(n: i32) -> i32 {
     if n <= 0 {
         return 0;
     }
-    let mut x = n;
-    let mut res = 0i64;
-    let mut bit = 1i64 << 62;
+    let mut x = n as u32;
+    let mut res = 0u32;
+    let mut bit = 1u32 << 30;
     while bit > x {
         bit >>= 2;
     }
@@ -151,15 +235,23 @@ fn isqrt(n: i64) -> i32 {
     res as i32
 }
 
+#[inline]
+fn dist2_3(a: [i32; 3], b: [i32; 3]) -> i32 {
+    let dx = a[0] - b[0];
+    let dy = a[1] - b[1];
+    let dz = a[2] - b[2];
+    dx * dx + dy * dy + dz * dz
+}
+
+#[inline]
+fn dist2_3_lt(a: [i32; 3], b: [i32; 3], limit: i32) -> bool {
+    dist2_3(a, b) < limit
+}
+
 /// Length of a world-space segment.
 #[inline]
 fn seg_len(a: [i32; 3], b: [i32; 3]) -> i32 {
-    let d = [
-        (b[0] - a[0]) as i64,
-        (b[1] - a[1]) as i64,
-        (b[2] - a[2]) as i64,
-    ];
-    isqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1)
+    isqrt(dist2_3(a, b)).max(1)
 }
 
 /// Cull when the screen triangle isn't front-facing (area <= 0). Matches the
@@ -177,11 +269,51 @@ fn sphere_visible(center: [i32; 3], radius: i32, rot: &Mat3I16, base_t: [i32; 3]
     }
     let z = vz.max(render::NEAR_Z);
     let vx = dot12(rot.m[0], center) + base_t[0];
-    if vx.abs() > z + radius * 2 {
+    if vx.abs() * 2 > z * 2 + radius * 3 {
         return false;
     }
     let vy = dot12(rot.m[1], center) + base_t[1];
-    vy.abs() * 4 <= z * 3 + radius * 8
+    vy.abs() * 4 <= z * 3 + radius * 5
+}
+
+#[inline]
+fn abs_dot12(row: [i16; 3], ext: [i32; 3]) -> i32 {
+    let ax = if row[0] < 0 {
+        -(row[0] as i32)
+    } else {
+        row[0] as i32
+    };
+    let ay = if row[1] < 0 {
+        -(row[1] as i32)
+    } else {
+        row[1] as i32
+    };
+    let az = if row[2] < 0 {
+        -(row[2] as i32)
+    } else {
+        row[2] as i32
+    };
+    ((ax * ext[0]) + (ay * ext[1]) + (az * ext[2])) >> 12
+}
+
+#[inline]
+fn box_visible(center: [i32; 3], ext: [i32; 3], rot: &Mat3I16, base_t: [i32; 3]) -> bool {
+    let vz = dot12(rot.m[2], center) + base_t[2];
+    let ez = abs_dot12(rot.m[2], ext);
+    if vz + ez < render::NEAR_Z || vz - ez > FAR_VIEW {
+        return false;
+    }
+    let zmax = (vz + ez).max(render::NEAR_Z);
+
+    let vx = dot12(rot.m[0], center) + base_t[0];
+    let ex = abs_dot12(rot.m[0], ext);
+    if (vx - ex) * 2 > zmax * 2 + 64 || (-vx - ex) * 2 > zmax * 2 + 64 {
+        return false;
+    }
+
+    let vy = dot12(rot.m[1], center) + base_t[1];
+    let ey = abs_dot12(rot.m[1], ext);
+    (vy - ey) * 4 <= zmax * 3 + 64 && (-vy - ey) * 4 <= zmax * 3 + 64
 }
 
 #[inline]
@@ -201,11 +333,7 @@ fn camera_leaf(m: &Map, eye: [i32; 3]) -> i32 {
         }
         guard += 1;
         let nd = m.node(idx as usize);
-        let side = ((nd.n[0] as i64 * eye[0] as i64
-            + nd.n[1] as i64 * eye[1] as i64
-            + nd.n[2] as i64 * eye[2] as i64)
-            >> 12) as i32
-            - nd.dist;
+        let side = dot12(nd.n, eye) - nd.dist;
         let next = if side >= 0 { nd.c0 } else { nd.c1 };
         if next < 0 {
             return -next - 1;
@@ -253,13 +381,179 @@ fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
     }
 }
 
+unsafe fn next_draw_face_mark_token() -> u16 {
+    let next = DRAW_FACE_MARK_TOKEN.wrapping_add(1);
+    if next == 0 {
+        for mark in DRAW_FACE_MARK.iter_mut() {
+            *mark = 0;
+        }
+        DRAW_FACE_MARK_TOKEN = 1;
+    } else {
+        DRAW_FACE_MARK_TOKEN = next;
+    }
+    DRAW_FACE_MARK_TOKEN
+}
+
+unsafe fn next_pvs_face_mark_token() -> u16 {
+    let next = PVS_FACE_MARK_TOKEN.wrapping_add(1);
+    if next == 0 {
+        for mark in PVS_FACE_MARK.iter_mut() {
+            *mark = 0;
+        }
+        for mark in PVS_GROUP_MARK.iter_mut() {
+            *mark = 0;
+        }
+        PVS_FACE_MARK_TOKEN = 1;
+    } else {
+        PVS_FACE_MARK_TOKEN = next;
+    }
+    PVS_FACE_MARK_TOKEN
+}
+
+unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
+    let (visofs, _, _) = m.leaf(cam_leaf as usize);
+    decompress_vis(m, visofs, &mut VIS_BITS);
+    PVS_LEAF_COUNT = 0;
+    PVS_FACE_COUNT = 0;
+    PVS_GROUP_COUNT = 0;
+    PVS_TRI_COUNT = 0;
+    PVS_ENT_COUNT = 0;
+    let mark_token = next_pvs_face_mark_token();
+
+    for i in 0..m.n_leaves.saturating_sub(1).min(MAX_LEAVES) {
+        if VIS_BITS[i >> 3] & (1u8 << (i & 7)) == 0 {
+            continue;
+        }
+        let leaf = i + 1;
+        PVS_LEAF_COUNT += 1;
+
+        let (_, m0, mc) = m.leaf(leaf);
+        for mj in m0..m0 + mc {
+            if mj >= m.n_marks {
+                break;
+            }
+            let face = m.mark(mj);
+            if face >= MAX_FACES || PVS_FACE_MARK[face] == mark_token {
+                continue;
+            }
+            PVS_FACE_MARK[face] = mark_token;
+            let (first, cnt) = m.face_tris(face);
+            if cnt == 0 || first > u16::MAX as usize || PVS_FACE_COUNT >= MAX_FACES {
+                continue;
+            }
+
+            let group = m.face_group(face);
+            if group >= MAX_FACES {
+                continue;
+            }
+            if PVS_GROUP_MARK[group] != mark_token {
+                if PVS_GROUP_COUNT >= MAX_FACES {
+                    break;
+                }
+                PVS_GROUP_MARK[group] = mark_token;
+                PVS_GROUP_FIRST[group] = PVS_LINK_END;
+                let (n, d) = m.face_plane(face);
+                PVS_GROUP_NRM[group] = n;
+                PVS_GROUP_DIST[group] = d;
+                PVS_GROUP_ACTIVE[PVS_GROUP_COUNT] = group as u16;
+                PVS_GROUP_COUNT += 1;
+            }
+
+            let entry = PVS_FACE_COUNT;
+            PVS_FACE_FIRST[entry] = first as u16;
+            PVS_FACE_TRI_COUNT[entry] = cnt as u16;
+            if PVS_TRI_COUNT + cnt <= MAX_PVS_TRIS {
+                PVS_FACE_CACHE_FIRST[entry] = PVS_TRI_COUNT as u16;
+                let mut ti = 0usize;
+                while ti < cnt {
+                    PVS_TRI_CACHE[PVS_TRI_COUNT + ti] = m.tri(first + ti);
+                    ti += 1;
+                }
+                PVS_TRI_COUNT += cnt;
+            } else {
+                PVS_FACE_CACHE_FIRST[entry] = PVS_LINK_END;
+            }
+            let (bc, be) = m.face_bounds(face);
+            PVS_FACE_CENTER[entry] = [bc[0] as i16, bc[1] as i16, bc[2] as i16];
+            PVS_FACE_EXTENT[entry] = [be[0] as u16, be[1] as u16, be[2] as u16];
+            PVS_FACE_NEXT[entry] = PVS_GROUP_FIRST[group];
+            PVS_GROUP_FIRST[group] = entry as u16;
+            PVS_FACE_COUNT += 1;
+        }
+    }
+    let mut ei = 0usize;
+    while ei < nents {
+        let e = ENT_CACHE[ei];
+        if entity_touches_pvs(m, &e) && PVS_ENT_COUNT < MAX_ENTS {
+            PVS_ENTS[PVS_ENT_COUNT] = ei as u16;
+            PVS_ENT_COUNT += 1;
+        }
+        ei += 1;
+    }
+    PVS_CAM_LEAF = cam_leaf;
+}
+
+#[inline]
+fn pvs_leaf_visible(m: &Map, leaf: usize) -> bool {
+    if leaf == 0 || leaf >= m.n_leaves {
+        return false;
+    }
+    let bit = leaf - 1;
+    if bit >= m.n_leaves.saturating_sub(1) || bit >= MAX_LEAVES {
+        return false;
+    }
+    unsafe { (VIS_BITS[bit >> 3] & (1u8 << (bit & 7))) != 0 }
+}
+
+#[inline]
+fn entity_touches_pvs(m: &Map, e: &map::Ent) -> bool {
+    if e.leaf_count == 0 {
+        return true;
+    }
+    let end = e.leaf_start.saturating_add(e.leaf_count);
+    let mut i = e.leaf_start;
+    while i < end {
+        if pvs_leaf_visible(m, m.ent_leaf(i)) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 /// Project vertex `i` into the cache once per frame (base view matrix).
 #[inline]
 unsafe fn proj_vert(m: &Map, i: usize, frame: u16) {
     if VERT_FRAME[i] != frame {
-        SCRATCH[i] = scene::project_vertex(m.vert(i));
+        SCRATCH[i] = scene::project_vertex_scheduled(m.vert(i));
         VERT_FRAME[i] = frame;
     }
+}
+
+unsafe fn next_submodel_draw_token() -> u16 {
+    let next = SUBMODEL_DRAW_TOKEN.wrapping_add(1);
+    if next == 0 {
+        for mark in SUBMODEL_VERT_TOKEN.iter_mut() {
+            *mark = 0;
+        }
+        SUBMODEL_DRAW_TOKEN = 1;
+    } else {
+        SUBMODEL_DRAW_TOKEN = next;
+    }
+    SUBMODEL_DRAW_TOKEN
+}
+
+#[inline]
+unsafe fn proj_submodel_vert(m: &Map, i: usize, token: u16) {
+    if SUBMODEL_VERT_TOKEN[i] != token {
+        SCRATCH[i] = scene::project_vertex_scheduled(m.vert(i));
+        SUBMODEL_VERT_TOKEN[i] = token;
+    }
+}
+
+#[inline]
+const fn uv_word(uv: (u8, u8)) -> u16 {
+    (uv.0 as u16) | ((uv.1 as u16) << 8)
 }
 
 #[inline]
@@ -269,13 +563,18 @@ unsafe fn push_tri_to<const N: usize>(
     screen: [(i16, i16); 3],
     uv: [(u8, u8); 3],
     rgb: [(u8, u8, u8); 3],
-    mat: TextureMaterial,
+    mat: TexturedGouraudPacketMaterial,
     otz: usize,
 ) {
     if *np >= MAX_PRIMS {
         return;
     }
-    PRIMS[*np] = TriTexturedGouraud::with_material(screen, uv, rgb, mat);
+    PRIMS[*np] = TriTexturedGouraud::with_packet_material_packed_uv_words(
+        screen,
+        [uv_word(uv[0]), uv_word(uv[1]), uv_word(uv[2])],
+        rgb,
+        mat,
+    );
     ot.add(otz, &mut PRIMS[*np], TriTexturedGouraud::WORDS);
     *np += 1;
 }
@@ -286,39 +585,34 @@ unsafe fn push_tri(
     screen: [(i16, i16); 3],
     uv: [(u8, u8); 3],
     rgb: [(u8, u8, u8); 3],
-    mat: TextureMaterial,
+    mat: TexturedGouraudPacketMaterial,
     otz: usize,
 ) {
     push_tri_to(&mut OT, np, screen, uv, rgb, mat, otz);
-}
-
-#[inline]
-unsafe fn push_weapon_tri(
-    np: &mut usize,
-    screen: [(i16, i16); 3],
-    uv: [(u8, u8); 3],
-    rgb: [(u8, u8, u8); 3],
-    mat: TextureMaterial,
-    otz: usize,
-) {
-    push_tri_to(&mut WEAPON_OT, np, screen, uv, rgb, mat, otz);
 }
 
 /// Emit triangle `t` from its three projected screen verts `p`. Small in-front
 /// triangles emit straight from the cache. Anything large (affine warp) or
 /// near-straddling drops to the view-space path: near-clip, then recursively
 /// split at view-space midpoints while it's big on screen, then guard-clip.
-unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &mut usize) {
-    let (a, b, c) = m.tri_idx(t);
+unsafe fn emit_projected(m: &Map, tri: map::Tri, p: [Projected; 3], nv: usize, np: &mut usize) {
+    let (a, b, c) = (
+        tri.idx[0] as usize,
+        tri.idx[1] as usize,
+        tri.idx[2] as usize,
+    );
     if a >= nv || b >= nv || c >= nv {
         return;
     }
-    let slot = TEX_SLOTS[m.tri_tex(t).min(MAX_TEX_SLOTS - 1)];
+    if tri.tex >= m.n_texs || tri.tex >= MAX_TEX_SLOTS {
+        return;
+    }
+    let slot = TEX_SLOTS[tri.tex];
     if !slot.valid {
         return;
     }
-    let uv = m.tri_uv(t);
-    let rgb = m.tri_rgb(t);
+    let uv = tri.uv;
+    let rgb = tri.rgb;
     let (pa, pb, pc) = (p[0], p[1], p[2]);
     let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
 
@@ -346,7 +640,7 @@ unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &m
             [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
             uv,
             rgb,
-            slot.material,
+            slot.packet,
             clamp_otz((avgz >> 6) as usize),
         );
         return;
@@ -357,7 +651,7 @@ unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &m
 
     // View-space path (near-plane straddlers): rebuild, near-clip, emit.
     let cvv = |idx: usize, k: usize| {
-        let v = scene::transform_vertex(m.vert(idx));
+        let v = scene::transform_vertex_scheduled(m.vert(idx));
         render::CVert {
             v: [v.x, v.y, v.z],
             rgb: (rgb[k].0 as i32, rgb[k].1 as i32, rgb[k].2 as i32),
@@ -373,7 +667,7 @@ unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &m
         emit_cv(
             &[CLIP_CV[0], CLIP_CV[k], CLIP_CV[k + 1]],
             SUBDIV_DEPTH,
-            slot.material,
+            slot.packet,
             np,
         );
     }
@@ -383,7 +677,12 @@ unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &m
 /// than SUBDIV_PX on screen (affine perspective correction), then guard-clip and
 /// emit. ponytail: depth 1 (<=4 sub-tris per big tri); raise SUBDIV_DEPTH if warp
 /// is still visible, at the cost of more triangles.
-unsafe fn emit_cv(cv: &[render::CVert; 3], depth: u8, mat: TextureMaterial, np: &mut usize) {
+unsafe fn emit_cv(
+    cv: &[render::CVert; 3],
+    depth: u8,
+    mat: TexturedGouraudPacketMaterial,
+    np: &mut usize,
+) {
     let pa = render::project_soft(&cv[0]);
     let pb = render::project_soft(&cv[1]);
     let pc = render::project_soft(&cv[2]);
@@ -460,6 +759,232 @@ unsafe fn emit_cv(cv: &[render::CVert; 3], depth: u8, mat: TextureMaterial, np: 
     }
 }
 
+unsafe fn try_emit_tri_pair_quad_values(
+    m: &Map,
+    t0: map::Tri,
+    t1: map::Tri,
+    nv: usize,
+    frame: u16,
+    nq: &mut usize,
+) -> bool {
+    if *nq >= MAX_QUADS || t0.tex >= m.n_texs || t0.tex >= MAX_TEX_SLOTS {
+        return false;
+    }
+
+    let a = t0.idx[0] as usize;
+    let c = t0.idx[1] as usize;
+    let b = t0.idx[2] as usize;
+    let d = t1.idx[1] as usize;
+    if t0.tex != t1.tex || t1.idx[0] as usize != a || t1.idx[2] as usize != c {
+        return false;
+    }
+    if a >= nv || b >= nv || c >= nv || d >= nv {
+        return true;
+    }
+
+    let slot = TEX_SLOTS[t0.tex];
+    if !slot.valid {
+        return true;
+    }
+
+    proj_vert(m, a, frame);
+    proj_vert(m, b, frame);
+    proj_vert(m, c, frame);
+    proj_vert(m, d, frame);
+    let (pa, pb, pc, pd) = (SCRATCH[a], SCRATCH[b], SCRATCH[c], SCRATCH[d]);
+    let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
+    if pa.sz < NEAR
+        || pb.sz < NEAR
+        || pc.sz < NEAR
+        || pd.sz < NEAR
+        || clamped(&pa)
+        || clamped(&pb)
+        || clamped(&pc)
+        || clamped(&pd)
+    {
+        return false;
+    }
+    if CULL
+        && culled(
+            (pa.sx as i32, pa.sy as i32),
+            (pc.sx as i32, pc.sy as i32),
+            (pb.sx as i32, pb.sy as i32),
+        )
+    {
+        return true;
+    }
+
+    let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32) + (pd.sz as u32)) / 4;
+    QUAD_PRIMS[*nq] = QuadTexturedGouraud::with_packet_material_packed_uv_words(
+        [
+            (pb.sx, pb.sy),
+            (pa.sx, pa.sy),
+            (pc.sx, pc.sy),
+            (pd.sx, pd.sy),
+        ],
+        [
+            uv_word(t0.uv[2]),
+            uv_word(t0.uv[0]),
+            uv_word(t0.uv[1]),
+            uv_word(t1.uv[1]),
+        ],
+        [t0.rgb[2], t0.rgb[0], t0.rgb[1], t1.rgb[1]],
+        slot.packet,
+    );
+    OT.add(
+        clamp_otz((avgz >> 6) as usize),
+        &mut QUAD_PRIMS[*nq],
+        QuadTexturedGouraud::WORDS,
+    );
+    *nq += 1;
+    true
+}
+
+unsafe fn try_emit_tri_pair_quad(
+    m: &Map,
+    first: usize,
+    nv: usize,
+    frame: u16,
+    nq: &mut usize,
+) -> bool {
+    if first + 1 >= m.n_tris {
+        return false;
+    }
+    try_emit_tri_pair_quad_values(m, m.tri(first), m.tri(first + 1), nv, frame, nq)
+}
+
+#[derive(Clone, Copy)]
+struct WorldCounters {
+    cells_considered: u32,
+    cells_drawn: u32,
+    surfaces_considered: u32,
+    emit_calls: u32,
+}
+
+impl WorldCounters {
+    const fn new() -> WorldCounters {
+        WorldCounters {
+            cells_considered: 0,
+            cells_drawn: 0,
+            surfaces_considered: 0,
+            emit_calls: 0,
+        }
+    }
+}
+
+unsafe fn emit_cached_world_face_tris(
+    m: &Map,
+    cache_first: usize,
+    cnt: usize,
+    nv: usize,
+    frame: u16,
+    np: &mut usize,
+    nq: &mut usize,
+    counts: &mut WorldCounters,
+) {
+    if cache_first + cnt > MAX_PVS_TRIS {
+        return;
+    }
+    if cnt == 2 {
+        let t0 = PVS_TRI_CACHE[cache_first];
+        let t1 = PVS_TRI_CACHE[cache_first + 1];
+        if try_emit_tri_pair_quad_values(m, t0, t1, nv, frame, nq) {
+            counts.emit_calls += 2;
+            return;
+        }
+    }
+    let end = cache_first + cnt;
+    let mut tt = cache_first;
+    while tt < end {
+        let tri = PVS_TRI_CACHE[tt];
+        let (a, b, c) = (
+            tri.idx[0] as usize,
+            tri.idx[1] as usize,
+            tri.idx[2] as usize,
+        );
+        if a < nv && b < nv && c < nv {
+            proj_vert(m, a, frame);
+            proj_vert(m, b, frame);
+            proj_vert(m, c, frame);
+            counts.emit_calls += 1;
+            emit_projected(m, tri, [SCRATCH[a], SCRATCH[b], SCRATCH[c]], nv, np);
+        }
+        tt += 1;
+    }
+}
+
+unsafe fn emit_world_face_tris(
+    m: &Map,
+    first: usize,
+    cnt: usize,
+    nv: usize,
+    frame: u16,
+    np: &mut usize,
+    nq: &mut usize,
+    counts: &mut WorldCounters,
+) {
+    if cnt == 2 && try_emit_tri_pair_quad(m, first, nv, frame, nq) {
+        counts.emit_calls += 2;
+        return;
+    }
+    let end = first + cnt;
+    let mut tt = first;
+    while tt < end {
+        if tt >= m.n_tris {
+            tt += 1;
+            continue;
+        }
+        let tri = m.tri(tt);
+        let (a, b, c) = (
+            tri.idx[0] as usize,
+            tri.idx[1] as usize,
+            tri.idx[2] as usize,
+        );
+        if a < nv && b < nv && c < nv {
+            proj_vert(m, a, frame);
+            proj_vert(m, b, frame);
+            proj_vert(m, c, frame);
+            counts.emit_calls += 1;
+            emit_projected(m, tri, [SCRATCH[a], SCRATCH[b], SCRATCH[c]], nv, np);
+        }
+        tt += 1;
+    }
+}
+
+unsafe fn emit_world_face(
+    m: &Map,
+    face: usize,
+    nv: usize,
+    frame: u16,
+    eye: [i32; 3],
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+    np: &mut usize,
+    nq: &mut usize,
+    counts: &mut WorldCounters,
+    draw_token: u16,
+) {
+    if face >= m.n_faces || face >= MAX_FACES || DRAW_FACE_MARK[face] == draw_token {
+        return;
+    }
+    DRAW_FACE_MARK[face] = draw_token;
+    counts.surfaces_considered += 1;
+
+    let (fnrm, fd) = m.face_plane(face);
+    if dot12(fnrm, eye) <= fd {
+        return;
+    }
+    let (first, cnt) = m.face_tris(face);
+    if cnt == 0 {
+        return;
+    }
+    let (bc, be) = m.face_bounds(face);
+    if !box_visible(bc, be, rot, base_t) {
+        return;
+    }
+    emit_world_face_tris(m, first, cnt, nv, frame, np, nq, counts);
+}
+
 /// Draw a model at world `pos`, rotated by `yaw` (Q0.12), at animation `frame`.
 unsafe fn draw_model(
     md: &Model,
@@ -481,14 +1006,25 @@ unsafe fn draw_model(
         -dot12(rot.m[2], es),
     ];
     scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+    let nv = md.n_verts.min(MAX_MODEL_VERTS);
+    for i in 0..nv {
+        MODEL_SCRATCH[i] = scene::project_vertex_scheduled(md.vert(frame, i));
+    }
     for t in 0..md.n_tris {
-        let slot = slots[md.tri_tex(t).min(slots.len() - 1)];
+        let tri = md.tri(t);
+        let slot = slots[tri.tex.min(slots.len() - 1)];
         if !slot.valid {
             continue;
         }
-        let (a, b, c) = md.tri_idx(t);
-        let p = scene::project_triangle(md.vert(frame, a), md.vert(frame, b), md.vert(frame, c));
-        let (pa, pb, pc) = (p[0], p[1], p[2]);
+        let (a, b, c) = (
+            tri.idx[0] as usize,
+            tri.idx[1] as usize,
+            tri.idx[2] as usize,
+        );
+        if a >= nv || b >= nv || c >= nv {
+            continue;
+        }
+        let (pa, pb, pc) = (MODEL_SCRATCH[a], MODEL_SCRATCH[b], MODEL_SCRATCH[c]);
         if pa.sz < NEAR || pb.sz < NEAR || pc.sz < NEAR {
             continue;
         }
@@ -505,9 +1041,9 @@ unsafe fn draw_model(
         push_tri(
             np,
             [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
-            md.tri_uv(t),
+            tri.uv,
             [(MODEL_SHADE, MODEL_SHADE, MODEL_SHADE); 3],
-            slot.material,
+            slot.packet,
             clamp_otz((avgz >> 6) as usize),
         );
     }
@@ -551,6 +1087,11 @@ fn viewmodel_otz(avgz: u32) -> usize {
     1 + (rel as usize).min(WEAPON_OT_LEN - 2)
 }
 
+#[inline]
+unsafe fn copy_cached_weapon_tri(dst: usize, src: usize) {
+    PRIMS[dst].copy_payload_from(&WEAPON_TRI_CACHE[src]);
+}
+
 /// Draw the held weapon in view space (attached to the camera), flat-shaded, on
 /// top of the world. `recoil_y` is a small screen-space kick layered over the
 /// source-authored origin.
@@ -561,56 +1102,79 @@ unsafe fn draw_viewmodel(
     recoil_y: i32,
     np: &mut usize,
 ) {
-    let r = viewmodel_rot();
-    scene::load_rotation(&r);
-    scene::load_translation(Vec3I32::new(
-        VM_VIEW_SHIFT[0],
-        VM_VIEW_SHIFT[1] + recoil_y,
-        VM_VIEW_SHIFT[2],
-    ));
     let nv = md.n_verts.min(MAX_MODEL_VERTS);
     if WEAPON_CACHE_FRAME != frame || WEAPON_CACHE_RECOIL != recoil_y || WEAPON_CACHE_VERTS != nv {
+        let r = viewmodel_rot();
+        scene::load_rotation(&r);
+        scene::load_translation(Vec3I32::new(
+            VM_VIEW_SHIFT[0],
+            VM_VIEW_SHIFT[1] + recoil_y,
+            VM_VIEW_SHIFT[2],
+        ));
         for i in 0..nv {
-            WEAPON_SCRATCH[i] = scene::project_vertex(md.vert(frame, i));
+            MODEL_SCRATCH[i] = scene::project_vertex_scheduled(md.vert(frame, i));
         }
         WEAPON_CACHE_FRAME = frame;
         WEAPON_CACHE_RECOIL = recoil_y;
         WEAPON_CACHE_VERTS = nv;
-    }
-    // HMDL keeps texture groups in source order (sleeve/glove before gun).
-    // It submits to a dedicated weapon OT, drawn after the world, so its own
-    // depth can sort normally without room polygons cutting through it.
-    for t in 0..md.n_tris {
-        let tex_id = md.tri_tex(t);
-        let slot = slots[tex_id.min(slots.len() - 1)];
-        if !slot.valid {
-            continue;
-        }
-        let (a, b, c) = md.tri_idx(t);
-        if a >= nv || b >= nv || c >= nv {
-            continue;
-        }
-        let (pa, pb, pc) = (WEAPON_SCRATCH[a], WEAPON_SCRATCH[b], WEAPON_SCRATCH[c]);
-        if pa.sz < NEAR || pb.sz < NEAR || pc.sz < NEAR {
-            continue;
-        }
-        // Backface cull (toggle/sign tunable while dialling in the transform).
-        if VM_CULL && tex_id != VM_TWO_SIDED_TEX {
-            let area = (pb.sx as i32 - pa.sx as i32) * (pc.sy as i32 - pa.sy as i32)
-                - (pc.sx as i32 - pa.sx as i32) * (pb.sy as i32 - pa.sy as i32);
-            if (area >= 0) == VM_CULL_POS {
+
+        WEAPON_TRI_COUNT = 0;
+        // HMDL keeps texture groups in source order (sleeve/glove before gun).
+        // The viewmodel is camera-locked, so cache the already-cullled packet
+        // stream until the authored frame or recoil offset changes.
+        for t in 0..md.n_tris {
+            if WEAPON_TRI_COUNT >= MAX_WEAPON_CACHE_TRIS {
+                break;
+            }
+            let tri = md.tri(t);
+            let tex_id = tri.tex;
+            let slot = slots[tex_id.min(slots.len() - 1)];
+            if !slot.valid {
                 continue;
             }
+            let (a, b, c) = (
+                tri.idx[0] as usize,
+                tri.idx[1] as usize,
+                tri.idx[2] as usize,
+            );
+            if a >= nv || b >= nv || c >= nv {
+                continue;
+            }
+            let (pa, pb, pc) = (MODEL_SCRATCH[a], MODEL_SCRATCH[b], MODEL_SCRATCH[c]);
+            if pa.sz < NEAR || pb.sz < NEAR || pc.sz < NEAR {
+                continue;
+            }
+            if VM_CULL && tex_id != VM_TWO_SIDED_TEX {
+                let area = (pb.sx as i32 - pa.sx as i32) * (pc.sy as i32 - pa.sy as i32)
+                    - (pc.sx as i32 - pa.sx as i32) * (pb.sy as i32 - pa.sy as i32);
+                if (area >= 0) == VM_CULL_POS {
+                    continue;
+                }
+            }
+            let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
+            WEAPON_TRI_CACHE[WEAPON_TRI_COUNT] =
+                TriTexturedGouraud::with_packet_material_packed_uv_words(
+                    [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
+                    [uv_word(tri.uv[0]), uv_word(tri.uv[1]), uv_word(tri.uv[2])],
+                    [(VM_SHADE, VM_SHADE, VM_SHADE); 3],
+                    slot.packet,
+                );
+            WEAPON_TRI_OTZ[WEAPON_TRI_COUNT] = viewmodel_otz(avgz) as u8;
+            WEAPON_TRI_COUNT += 1;
         }
-        let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
-        push_weapon_tri(
-            np,
-            [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
-            md.tri_uv(t),
-            [(VM_SHADE, VM_SHADE, VM_SHADE); 3],
-            slot.material,
-            viewmodel_otz(avgz),
+    }
+
+    for i in 0..WEAPON_TRI_COUNT {
+        if *np >= MAX_PRIMS {
+            break;
+        }
+        copy_cached_weapon_tri(*np, i);
+        WEAPON_OT.add(
+            WEAPON_TRI_OTZ[i] as usize,
+            &mut PRIMS[*np],
+            TriTexturedGouraud::WORDS,
         );
+        *np += 1;
     }
 }
 
@@ -662,6 +1226,19 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
     telemetry::debug_log("hl-psx: WORLD.PAK chunk loaded");
     let map_bytes = unsafe { core::slice::from_raw_parts(MAP_BUF.as_ptr() as *const u8, map_len) };
     let m = Map::load(map_bytes);
+    unsafe {
+        PVS_CAM_LEAF = -1;
+        PVS_LEAF_COUNT = 0;
+        PVS_ENT_COUNT = 0;
+    }
+    let nents = m.n_ents.min(MAX_ENTS);
+    unsafe {
+        for ei in 0..nents {
+            let e = m.entity(ei);
+            ENT_CACHE[ei] = e;
+            ENT_RADIUS[ei] = isqrt(e.r2);
+        }
+    }
     let nv = if m.n_verts < MAX_VERTS {
         m.n_verts
     } else {
@@ -669,11 +1246,39 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
     };
 
     telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
-    let _ = unsafe { vram::upload_textures(&m, &mut TEX_SLOTS) };
+    let tex_failed = unsafe {
+        vram::upload_textures_raw(
+            &m,
+            core::ptr::addr_of_mut!(TEX_SLOTS).cast::<TexSlot>(),
+            MAX_TEX_SLOTS,
+        )
+    };
+    telemetry::counter(
+        telemetry::counter::ROOM_TEXTURE_UPLOADS,
+        m.n_texs.saturating_sub(tex_failed) as u32,
+    );
+    telemetry::counter(
+        telemetry::counter::ROOM_MATERIAL_TEXTURE_DROPS,
+        tex_failed as u32,
+    );
     let wpn = Model::load(WPN_BYTES);
     unsafe {
-        vram::upload_tex_blob(sci.tex_blob(), sci.n_texs, &mut MODEL_SLOTS);
-        vram::upload_tex_blob(wpn.tex_blob(), wpn.n_texs, &mut WEAPON_SLOTS);
+        vram::upload_tex_blob_raw(
+            sci.tex_blob(),
+            sci.n_texs,
+            core::ptr::addr_of_mut!(MODEL_SLOTS).cast::<TexSlot>(),
+            16,
+        );
+        vram::upload_tex_blob_raw(
+            wpn.tex_blob(),
+            wpn.n_texs,
+            core::ptr::addr_of_mut!(WEAPON_SLOTS).cast::<TexSlot>(),
+            12,
+        );
+        WEAPON_CACHE_FRAME = usize::MAX;
+        WEAPON_CACHE_RECOIL = i32::MIN;
+        WEAPON_CACHE_VERTS = 0;
+        WEAPON_TRI_COUNT = 0;
     }
     let hud_mat = hud::upload(); // real HUD sprite sheet -> free gameplay tpage
     telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
@@ -683,6 +1288,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
     let mut pitch: i16 = 0;
     let mut frame_no: u16 = 0;
     let mut telemetry_frame: u32 = 1;
+    let mut sim_frame_no: u32 = 0;
 
     // Tram ride: carry the player along the path_track chain, then hand back
     // control. ride_off is the tram's displacement from its parked start.
@@ -702,127 +1308,206 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
     let mut seg_dist = 0i32;
     let mut ride_off = [0i32; 3];
 
-    loop {
-        telemetry::frame_begin(telemetry_frame);
-        telemetry::task_begin(telemetry::task::FIXED_UPDATE);
-        telemetry::stage_begin(telemetry::stage::UPDATE);
-        // Modern twin-stick FPS: left stick moves/strafes, right stick looks
-        // (X = turn, Y = pitch), Cross = jump. Analog only.
-        let pad = poll_port1();
-        if pad.buttons.is_held(button::SELECT) {
-            telemetry::stage_end(telemetry::stage::UPDATE);
-            telemetry::task_end(telemetry::task::FIXED_UPDATE);
-            return; // back to the map menu
-        }
-        // Analog is required: if the pad ever isn't in analog mode, re-assert it.
-        if !pad.is_analog() {
-            let _ = enable_analog_port1();
-        }
-        // R2 fires: kick the viewmodel; re-kicks while held (rapid fire feel).
-        recoil = (recoil - 3).max(0);
-        if pad.buttons.is_held(button::R2) && recoil == 0 {
-            recoil = 16;
-        }
-        let (mut fwd, mut strafe, mut turn, mut look) = (0i32, 0i32, 0i32, 0i32);
-        if pad.is_analog() {
-            let (lx, ly) = pad.sticks.left_centered();
-            let (rx, ry) = pad.sticks.right_centered();
-            let dz2 = DEADZONE * DEADZONE;
-            // Radial deadzone per stick (avoids axis drift / diagonal bias).
-            if (lx as i32) * (lx as i32) + (ly as i32) * (ly as i32) > dz2 {
-                fwd = -(ly as i32); // stick up = forward
-                strafe = lx as i32;
-            }
-            if (rx as i32) * (rx as i32) + (ry as i32) * (ry as i32) > dz2 {
-                turn = rx as i32;
-                look = -(ry as i32); // stick up = look up
-            }
-        }
-        yaw = (((yaw as i32) + (turn * YAW_RATE) / 128) & 0xFFF) as u16;
-        pitch = (pitch + ((look * PITCH_RATE) / 128) as i16).clamp(-PITCH_MAX, PITCH_MAX);
-
-        // Collision movers: every brush entity at its current offset (doors at
-        // their open amount, statics at origin) + the tram at its ride offset.
-        let mut movers = [phys::NO_MOVER; MAX_ENTS + 1];
-        let mut nmov = 0;
-        unsafe {
-            for ei in 0..m.n_ents.min(MAX_ENTS) {
-                let e = m.entity(ei);
-                let off = if e.kind == 1 {
-                    let ph = ENT_PHASE[ei] as i64;
-                    [
-                        ((e.mv[0] as i64 * ph) >> 12) as i32,
-                        ((e.mv[1] as i64 * ph) >> 12) as i32,
-                        ((e.mv[2] as i64 * ph) >> 12) as i32,
-                    ]
-                } else {
-                    e.origin
-                };
-                movers[nmov] = phys::Mover { head: e.head, off };
-                nmov += 1;
-            }
-            if m.tram_submodel > 0 && nmov < movers.len() {
-                let toff = [
-                    ride_off[0] + m.tram_base[0],
-                    ride_off[1] + m.tram_base[1],
-                    ride_off[2] + m.tram_base[2],
-                ];
-                movers[nmov] = phys::Mover {
-                    head: m.tram_head,
-                    off: toff,
-                };
-                nmov += 1;
-            }
-        }
-        let movers = &movers[..nmov];
-
-        if riding {
-            // Advance along the path, possibly crossing several waypoints.
-            let mut rem = tram_step;
-            while rem > 0 && seg + 1 < m.n_way {
-                let len = seg_len(m.waypoint(seg), m.waypoint(seg + 1));
-                if seg_dist + rem >= len {
-                    rem -= len - seg_dist;
-                    seg += 1;
-                    seg_dist = 0;
-                } else {
-                    seg_dist += rem;
-                    rem = 0;
-                }
-            }
-            let pos = if seg + 1 < m.n_way {
-                let a = m.waypoint(seg);
-                let b = m.waypoint(seg + 1);
-                let len = seg_len(a, b);
-                let f = (seg_dist * 4096 / len).clamp(0, 4096);
-                [
-                    a[0] + ((b[0] - a[0]) * f >> 12),
-                    a[1] + ((b[1] - a[1]) * f >> 12),
-                    a[2] + ((b[2] - a[2]) * f >> 12),
-                ]
-            } else {
-                riding = false; // reached the end of the line
-                m.waypoint(m.n_way - 1)
-            };
-            ride_off = [pos[0] - wp0[0], pos[1] - wp0[1], pos[2] - wp0[2]];
-            // Locked to the tram (walking on a moving platform desyncs gravity).
-            player.pos = [
-                m.spawn_pos[0] + ride_off[0],
-                m.spawn_pos[1] + ride_off[1],
-                m.spawn_pos[2] + ride_off[2],
-            ];
-            player.vel = [0, 0, 0];
-        } else {
-            // On foot: full physics, colliding with the world + brush movers.
-            player.update(
-                &m,
-                movers,
-                fwd,
-                strafe,
-                pad.buttons.is_held(button::CROSS),
-                yaw,
+    telemetry::stage_begin(telemetry::stage::ROOM_SURFACE_CACHE);
+    unsafe {
+        let initial_eye = [
+            player.pos[0],
+            player.pos[1] + VIEW_HEIGHT,
+            player.pos[2],
+        ];
+        let initial_leaf = camera_leaf(&m, initial_eye);
+        if initial_leaf > 0 && (initial_leaf as usize) < m.n_leaves {
+            rebuild_pvs_cache(&m, initial_leaf, nents);
+            telemetry::counter(telemetry::counter::ROOM_SURFACE_CACHE_BUILDS, 1);
+            telemetry::counter(
+                telemetry::counter::ROOM_SURFACE_CACHE_BUILD_SURFACES,
+                PVS_FACE_COUNT as u32,
+            );
+            telemetry::counter(
+                telemetry::counter::ROOM_SURFACE_CACHE_BUILD_VERTICES,
+                PVS_TRI_COUNT as u32,
             );
         }
+
+        WEAPON_OT.clear();
+        let mut warm_np = 0usize;
+        draw_viewmodel(&wpn, &WEAPON_SLOTS, VM_FRAME, -recoil, &mut warm_np);
+        WEAPON_OT.clear();
+    }
+    telemetry::stage_end(telemetry::stage::ROOM_SURFACE_CACHE);
+
+    gpu::configure_vsync_timer();
+    interrupts::install_vblank_counter();
+    let mut next_sim_vblank = interrupts::vblank_count();
+
+    loop {
+        wait_until_vblank(next_sim_vblank);
+        let mut ticks_this_visual = 0u16;
+        while vblank_reached(interrupts::vblank_count(), next_sim_vblank) {
+            telemetry::frame_begin(telemetry_frame);
+            telemetry::task_begin(telemetry::task::FIXED_UPDATE);
+            telemetry::stage_begin(telemetry::stage::UPDATE);
+            // Modern twin-stick FPS: left stick moves/strafes, right stick looks
+            // (X = turn, Y = pitch), Cross = jump. Analog only.
+            let pad = poll_port1();
+            if pad.buttons.is_held(button::SELECT) {
+                telemetry::stage_end(telemetry::stage::UPDATE);
+                telemetry::task_end(telemetry::task::FIXED_UPDATE);
+                return; // back to the map menu
+            }
+            // Analog is required: if the pad ever isn't in analog mode, re-assert it.
+            if !pad.is_analog() {
+                let _ = enable_analog_port1();
+            }
+            // R2 fires: kick the viewmodel; re-kicks while held (rapid fire feel).
+            recoil = (recoil - 3).max(0);
+            if pad.buttons.is_held(button::R2) && recoil == 0 {
+                recoil = 16;
+            }
+            let (mut fwd, mut strafe, mut turn, mut look) = (0i32, 0i32, 0i32, 0i32);
+            if pad.is_analog() {
+                let (lx, ly) = pad.sticks.left_centered();
+                let (rx, ry) = pad.sticks.right_centered();
+                let dz2 = DEADZONE * DEADZONE;
+                // Radial deadzone per stick (avoids axis drift / diagonal bias).
+                if (lx as i32) * (lx as i32) + (ly as i32) * (ly as i32) > dz2 {
+                    fwd = -(ly as i32); // stick up = forward
+                    strafe = -(lx as i32);
+                }
+                if (rx as i32) * (rx as i32) + (ry as i32) * (ry as i32) > dz2 {
+                    turn = -(rx as i32);
+                    look = -(ry as i32); // stick up = look up
+                }
+            }
+            yaw = (((yaw as i32) + (turn * YAW_RATE) / 128) & 0xFFF) as u16;
+            pitch = (pitch + ((look * PITCH_RATE) / 128) as i16).clamp(-PITCH_MAX, PITCH_MAX);
+
+            // Collision movers: every brush entity at its current offset (doors at
+            // their open amount, statics at origin) + the tram at its ride offset.
+            let mut movers = [phys::NO_MOVER; MAX_ENTS + 1];
+            let mut nmov = 0;
+            unsafe {
+                for ei in 0..nents {
+                    let e = ENT_CACHE[ei];
+                    let off = if e.kind == 1 {
+                        let near = dist2_3_lt(player.pos, e.center, e.r2);
+                        let ph = &mut ENT_PHASE[ei];
+                        *ph = if near {
+                            (*ph + DOOR_SPEED).min(4096)
+                        } else {
+                            (*ph - DOOR_SPEED).max(0)
+                        };
+                        scale12_vec(e.mv, *ph)
+                    } else {
+                        e.origin
+                    };
+                    if e.kind != 2 && nmov < movers.len() {
+                        movers[nmov] = phys::Mover {
+                            head: e.head,
+                            off,
+                            center: e.center,
+                            radius: ENT_RADIUS[ei],
+                        };
+                        nmov += 1;
+                    }
+                }
+                if m.tram_submodel > 0 && nmov < movers.len() {
+                    let toff = [
+                        ride_off[0] + m.tram_base[0],
+                        ride_off[1] + m.tram_base[1],
+                        ride_off[2] + m.tram_base[2],
+                    ];
+                    movers[nmov] = phys::Mover {
+                        head: m.tram_head,
+                        off: toff,
+                        center: [0, 0, 0],
+                        radius: 0,
+                    };
+                    nmov += 1;
+                }
+            }
+            let movers = &movers[..nmov];
+
+            if riding {
+                // Advance along the path, possibly crossing several waypoints.
+                let mut rem = tram_step;
+                while rem > 0 && seg + 1 < m.n_way {
+                    let len = seg_len(m.waypoint(seg), m.waypoint(seg + 1));
+                    if seg_dist + rem >= len {
+                        rem -= len - seg_dist;
+                        seg += 1;
+                        seg_dist = 0;
+                    } else {
+                        seg_dist += rem;
+                        rem = 0;
+                    }
+                }
+                let pos = if seg + 1 < m.n_way {
+                    let a = m.waypoint(seg);
+                    let b = m.waypoint(seg + 1);
+                    let len = seg_len(a, b);
+                    let f = (seg_dist * 4096 / len).clamp(0, 4096);
+                    [
+                        a[0] + ((b[0] - a[0]) * f >> 12),
+                        a[1] + ((b[1] - a[1]) * f >> 12),
+                        a[2] + ((b[2] - a[2]) * f >> 12),
+                    ]
+                } else {
+                    riding = false; // reached the end of the line
+                    m.waypoint(m.n_way - 1)
+                };
+                ride_off = [pos[0] - wp0[0], pos[1] - wp0[1], pos[2] - wp0[2]];
+                // Locked to the tram (walking on a moving platform desyncs gravity).
+                player.pos = [
+                    m.spawn_pos[0] + ride_off[0],
+                    m.spawn_pos[1] + ride_off[1],
+                    m.spawn_pos[2] + ride_off[2],
+                ];
+                player.vel = [0, 0, 0];
+            } else {
+                // On foot: full physics, colliding with the world + brush movers.
+                telemetry::stage_begin(telemetry::stage::SIM_COLLISION);
+                player.update(
+                    &m,
+                    movers,
+                    fwd,
+                    strafe,
+                    pad.buttons.is_held(button::CROSS),
+                    yaw,
+                );
+                telemetry::stage_end(telemetry::stage::SIM_COLLISION);
+            }
+            let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
+            telemetry::counter(
+                telemetry::counter::ROOM_CAMERA_GLOBAL_X_BIASED,
+                (eye[0] + 32768).max(0) as u32,
+            );
+            telemetry::counter(
+                telemetry::counter::ROOM_CAMERA_GLOBAL_Y_BIASED,
+                (eye[1] + 32768).max(0) as u32,
+            );
+            telemetry::counter(
+                telemetry::counter::ROOM_CAMERA_GLOBAL_Z_BIASED,
+                (eye[2] + 32768).max(0) as u32,
+            );
+
+            telemetry::stage_end(telemetry::stage::UPDATE);
+            telemetry::counter(telemetry::counter::SIM_TICKS, 1);
+            telemetry::counter(telemetry::counter::VISUAL_INTERVAL_VBLANKS, SIM_VBLANKS);
+            telemetry::task_end(telemetry::task::FIXED_UPDATE);
+
+            telemetry_frame = telemetry_frame.wrapping_add(1);
+            sim_frame_no = sim_frame_no.wrapping_add(1);
+            ticks_this_visual = ticks_this_visual.saturating_add(1);
+            next_sim_vblank = next_sim_vblank.wrapping_add(SIM_VBLANKS);
+        }
+        if ticks_this_visual > 1 {
+            telemetry::counter(
+                telemetry::counter::VISUAL_SKIPPED_VBLANKS,
+                ticks_this_visual.saturating_sub(1) as u32,
+            );
+        }
+
         let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
 
         let rot = view_rotation(yaw, pitch);
@@ -834,9 +1519,23 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
         ];
         scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
 
-        telemetry::stage_end(telemetry::stage::UPDATE);
-        telemetry::counter(telemetry::counter::SIM_TICKS, 1);
-        telemetry::task_end(telemetry::task::FIXED_UPDATE);
+        let mut door_movers = [phys::NO_MOVER; MAX_ENTS];
+        let mut ndoor = 0usize;
+        unsafe {
+            for ei in 0..nents {
+                let e = ENT_CACHE[ei];
+                if e.kind == 1 && ndoor < door_movers.len() {
+                    door_movers[ndoor] = phys::Mover {
+                        head: e.head,
+                        off: scale12_vec(e.mv, ENT_PHASE[ei]),
+                        center: e.center,
+                        radius: ENT_RADIUS[ei],
+                    };
+                    ndoor += 1;
+                }
+            }
+        }
+        let door_movers = &door_movers[..ndoor];
 
         frame_no = frame_no.wrapping_add(1);
         telemetry::task_begin(telemetry::task::VISUAL_RENDER);
@@ -844,9 +1543,6 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
 
         unsafe {
             if frame_no == 0 {
-                for f in FACE_FRAME.iter_mut() {
-                    *f = 0;
-                }
                 for f in VERT_FRAME.iter_mut() {
                     *f = 0;
                 }
@@ -856,94 +1552,115 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
             WEAPON_OT.clear();
             HUD_OT.clear();
             let mut np = 0usize;
-            let mut room_cells_drawn = 0u32;
-            let mut room_surfaces_considered = 0u32;
+            let mut nq = 0usize;
 
-            // World (model 0) via PVS, drawing each visible leaf's faces once.
-            // Vertices are projected lazily (only those actually drawn).
+            // World (model 0): PVS-visible faces cached by leaf. Runtime does
+            // one backface test per cooked plane group, cheap face-bounds
+            // rejection, then emits triangle fans with PS1 quad pairing.
             telemetry::stage_begin(telemetry::stage::ROOM);
             let cam_leaf = camera_leaf(&m, eye);
-            if cam_leaf > 0 && (cam_leaf as usize) < m.n_leaves {
-                let (visofs, _, _) = m.leaf(cam_leaf as usize);
-                decompress_vis(&m, visofs, &mut VIS_BITS);
-                for i in 0..m.n_leaves.saturating_sub(1) {
-                    if VIS_BITS[i >> 3] & (1 << (i & 7)) == 0 {
+            let have_pvs = cam_leaf > 0 && (cam_leaf as usize) < m.n_leaves;
+            if have_pvs {
+                if PVS_CAM_LEAF != cam_leaf {
+                    rebuild_pvs_cache(&m, cam_leaf, nents);
+                }
+                let mut room_counts = WorldCounters::new();
+                room_counts.cells_considered = PVS_LEAF_COUNT as u32;
+                room_counts.cells_drawn = PVS_LEAF_COUNT as u32;
+                room_counts.surfaces_considered = PVS_FACE_COUNT as u32;
+
+                for gi in 0..PVS_GROUP_COUNT {
+                    let group = PVS_GROUP_ACTIVE[gi] as usize;
+                    if dot12(PVS_GROUP_NRM[group], eye) <= PVS_GROUP_DIST[group] {
                         continue;
                     }
-                    // Frustum cull the leaf's bounding sphere: behind the near
-                    // plane, beyond the far distance, or outside the ~45deg
-                    // horizontal FOV (conservative 2*r slack -> never culls a
-                    // visible leaf). H_PROJ=160 over a 160px half-width = 45deg.
-                    let (lc, lr) = m.leaf_bounds(i + 1);
-                    let vz = dot12(rot.m[2], lc) + base_t[2];
-                    if vz + lr < render::NEAR_Z || vz - lr > FAR_VIEW {
-                        continue;
-                    }
-                    let vx = dot12(rot.m[0], lc) + base_t[0];
-                    if vx.abs() > vz + lr * 2 {
-                        continue;
-                    }
-                    // Vertical FOV ~37deg (120px half-height / H_PROJ 160): cull
-                    // if |vy| > 0.75*vz, with 2*r slack -> 4|vy| > 3vz + 8r.
-                    let vy = dot12(rot.m[1], lc) + base_t[1];
-                    if vy.abs() * 4 > vz * 3 + lr * 8 {
-                        continue;
-                    }
-                    room_cells_drawn = room_cells_drawn.saturating_add(1);
-                    let (_, m0, mc) = m.leaf(i + 1);
-                    for mj in m0..m0 + mc {
-                        if mj >= m.n_marks {
-                            break;
-                        }
-                        let face = m.mark(mj);
-                        if face >= MAX_FACES || FACE_FRAME[face] == frame_no {
-                            continue;
-                        }
-                        FACE_FRAME[face] = frame_no;
-                        room_surfaces_considered = room_surfaces_considered.saturating_add(1);
-                        // Backface cull the whole face before touching its tris.
-                        let (fnrm, fd) = m.face_plane(face);
-                        if dot12(fnrm, eye) <= fd {
-                            continue;
-                        }
-                        let (first, cnt) = m.face_tris(face);
-                        for tt in first..first + cnt {
-                            if tt >= m.n_tris {
-                                continue;
-                            }
-                            let (a, b, c) = m.tri_idx(tt);
-                            if a < nv && b < nv && c < nv {
-                                proj_vert(&m, a, frame_no);
-                                proj_vert(&m, b, frame_no);
-                                proj_vert(&m, c, frame_no);
-                                emit_projected(
+                    let mut entry = PVS_GROUP_FIRST[group];
+                    while entry != PVS_LINK_END {
+                        let e = entry as usize;
+                        let bc16 = PVS_FACE_CENTER[e];
+                        let be16 = PVS_FACE_EXTENT[e];
+                        let bc = [bc16[0] as i32, bc16[1] as i32, bc16[2] as i32];
+                        let be = [be16[0] as i32, be16[1] as i32, be16[2] as i32];
+                        if box_visible(bc, be, &rot, base_t) {
+                            let cnt = PVS_FACE_TRI_COUNT[e] as usize;
+                            if PVS_FACE_CACHE_FIRST[e] != PVS_LINK_END {
+                                emit_cached_world_face_tris(
                                     &m,
-                                    tt,
-                                    [SCRATCH[a], SCRATCH[b], SCRATCH[c]],
+                                    PVS_FACE_CACHE_FIRST[e] as usize,
+                                    cnt,
                                     nv,
+                                    frame_no,
                                     &mut np,
+                                    &mut nq,
+                                    &mut room_counts,
+                                );
+                            } else {
+                                emit_world_face_tris(
+                                    &m,
+                                    PVS_FACE_FIRST[e] as usize,
+                                    cnt,
+                                    nv,
+                                    frame_no,
+                                    &mut np,
+                                    &mut nq,
+                                    &mut room_counts,
                                 );
                             }
                         }
+                        entry = PVS_FACE_NEXT[e];
                     }
                 }
+
+                telemetry::counter(
+                    telemetry::counter::ROOM_CELLS_CONSIDERED,
+                    room_counts.cells_considered,
+                );
+                telemetry::counter(
+                    telemetry::counter::ROOM_CELLS_DRAWN,
+                    room_counts.cells_drawn,
+                );
+                telemetry::counter(telemetry::counter::ROOM_CELLS_CULLED, 0);
+                telemetry::counter(
+                    telemetry::counter::ROOM_SURFACES_CONSIDERED,
+                    room_counts.surfaces_considered,
+                );
+                telemetry::counter(
+                    telemetry::counter::ROOM_SURF_PROFILED,
+                    room_counts.emit_calls,
+                );
             } else {
-                for tt in 0..m.n_tris {
-                    let (a, b, c) = m.tri_idx(tt);
-                    if a < nv && b < nv && c < nv {
-                        proj_vert(&m, a, frame_no);
-                        proj_vert(&m, b, frame_no);
-                        proj_vert(&m, c, frame_no);
-                        emit_projected(&m, tt, [SCRATCH[a], SCRATCH[b], SCRATCH[c]], nv, &mut np);
-                    }
+                let draw_token = next_draw_face_mark_token();
+                let mut room_counts = WorldCounters::new();
+                let mut face = 0usize;
+                while face < m.n_faces {
+                    emit_world_face(
+                        &m,
+                        face,
+                        nv,
+                        frame_no,
+                        eye,
+                        &rot,
+                        base_t,
+                        &mut np,
+                        &mut nq,
+                        &mut room_counts,
+                        draw_token,
+                    );
+                    face += 1;
                 }
+                telemetry::counter(telemetry::counter::ROOM_CELLS_CONSIDERED, 0);
+                telemetry::counter(telemetry::counter::ROOM_CELLS_DRAWN, 0);
+                telemetry::counter(telemetry::counter::ROOM_CELLS_CULLED, 0);
+                telemetry::counter(
+                    telemetry::counter::ROOM_SURFACES_CONSIDERED,
+                    room_counts.surfaces_considered,
+                );
+                telemetry::counter(
+                    telemetry::counter::ROOM_SURF_PROFILED,
+                    room_counts.emit_calls,
+                );
             }
             telemetry::stage_end(telemetry::stage::ROOM);
-            telemetry::counter(telemetry::counter::ROOM_CELLS_DRAWN, room_cells_drawn);
-            telemetry::counter(
-                telemetry::counter::ROOM_SURFACES_CONSIDERED,
-                room_surfaces_considered,
-            );
 
             telemetry::stage_begin(telemetry::stage::MODEL_INSTANCES);
             let model_prims0 = np;
@@ -955,30 +1672,18 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
             // Brush entities: doors slide open near the player. Each renders with
             // a per-entity GTE translation (base view shifted by the offset);
             // its few tris are projected fresh (not from the world cache).
-            for ei in 0..m.n_ents.min(MAX_ENTS) {
-                let e = m.entity(ei);
+            let brush_iter_count = if have_pvs { PVS_ENT_COUNT } else { nents };
+            for bi in 0..brush_iter_count {
+                let ei = if have_pvs { PVS_ENTS[bi] as usize } else { bi };
+                let e = ENT_CACHE[ei];
                 let off = if e.kind == 1 {
-                    let dx = (player.pos[0] - e.center[0]) as i64;
-                    let dy = (player.pos[1] - e.center[1]) as i64;
-                    let dz = (player.pos[2] - e.center[2]) as i64;
-                    let near = dx * dx + dy * dy + dz * dz < e.r2 as i64;
-                    let ph = &mut ENT_PHASE[ei];
-                    *ph = if near {
-                        (*ph + DOOR_SPEED).min(4096)
-                    } else {
-                        (*ph - DOOR_SPEED).max(0)
-                    };
-                    [
-                        ((e.mv[0] as i64 * *ph as i64) >> 12) as i32,
-                        ((e.mv[1] as i64 * *ph as i64) >> 12) as i32,
-                        ((e.mv[2] as i64 * *ph as i64) >> 12) as i32,
-                    ]
+                    scale12_vec(e.mv, ENT_PHASE[ei])
                 } else {
                     e.origin
                 };
                 if e.r2 > 0 {
                     model_bounds_tests = model_bounds_tests.saturating_add(1);
-                    let radius = isqrt(e.r2 as i64);
+                    let radius = ENT_RADIUS[ei];
                     let center = [
                         e.center[0] + off[0],
                         e.center[1] + off[1],
@@ -997,6 +1702,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                     -dot12(rot.m[2], es),
                 ];
                 scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+                let submodel_token = next_submodel_draw_token();
                 let (ff, nf) = m.submodel(e.submodel);
                 for f in ff..ff + nf {
                     let (first, cnt) = m.face_tris(f);
@@ -1009,10 +1715,23 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                         if tt >= m.n_tris {
                             continue;
                         }
-                        let (a, b, c) = m.tri_idx(tt);
+                        let tri = m.tri(tt);
+                        let (a, b, c) = (
+                            tri.idx[0] as usize,
+                            tri.idx[1] as usize,
+                            tri.idx[2] as usize,
+                        );
                         if a < nv && b < nv && c < nv {
-                            let p = scene::project_triangle(m.vert(a), m.vert(b), m.vert(c));
-                            emit_projected(&m, tt, p, nv, &mut np);
+                            proj_submodel_vert(&m, a, submodel_token);
+                            proj_submodel_vert(&m, b, submodel_token);
+                            proj_submodel_vert(&m, c, submodel_token);
+                            emit_projected(
+                                &m,
+                                tri,
+                                [SCRATCH[a], SCRATCH[b], SCRATCH[c]],
+                                nv,
+                                &mut np,
+                            );
                         }
                     }
                 }
@@ -1033,6 +1752,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                     -dot12(rot.m[2], es),
                 ];
                 scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+                let submodel_token = next_submodel_draw_token();
                 let (ff, nf) = m.submodel(m.tram_submodel);
                 for f in ff..ff + nf {
                     let (first, cnt) = m.face_tris(f);
@@ -1045,10 +1765,23 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                         if tt >= m.n_tris {
                             continue;
                         }
-                        let (a, b, c) = m.tri_idx(tt);
+                        let tri = m.tri(tt);
+                        let (a, b, c) = (
+                            tri.idx[0] as usize,
+                            tri.idx[1] as usize,
+                            tri.idx[2] as usize,
+                        );
                         if a < nv && b < nv && c < nv {
-                            let p = scene::project_triangle(m.vert(a), m.vert(b), m.vert(c));
-                            emit_projected(&m, tt, p, nv, &mut np);
+                            proj_submodel_vert(&m, a, submodel_token);
+                            proj_submodel_vert(&m, b, submodel_token);
+                            proj_submodel_vert(&m, c, submodel_token);
+                            emit_projected(
+                                &m,
+                                tri,
+                                [SCRATCH[a], SCRATCH[b], SCRATCH[c]],
+                                nv,
+                                &mut np,
+                            );
                         }
                     }
                 }
@@ -1058,11 +1791,22 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
             // by the prop's forward depth + horizontal FOV so off-screen ones
             // don't burn primitives.
             for pi in 0..m.n_props {
-                let (ty, org, yaw) = m.prop(pi);
+                let (ty, org, yaw, cooked_leaf) = m.prop(pi);
                 if ty != 0 {
                     continue; // only scientists included for now
                 }
                 model_bounds_tests = model_bounds_tests.saturating_add(1);
+                if have_pvs {
+                    let prop_leaf = if cooked_leaf > 0 {
+                        cooked_leaf as i32
+                    } else {
+                        camera_leaf(&m, org)
+                    };
+                    if prop_leaf <= 0 || !pvs_leaf_visible(&m, prop_leaf as usize) {
+                        model_bounds_culled = model_bounds_culled.saturating_add(1);
+                        continue;
+                    }
+                }
                 let vz = dot12(rot.m[2], org) + base_t[2];
                 if vz < render::NEAR_Z - 72 || vz > FAR_VIEW {
                     model_bounds_culled = model_bounds_culled.saturating_add(1);
@@ -1073,8 +1817,20 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                     model_bounds_culled = model_bounds_culled.saturating_add(1);
                     continue;
                 }
+                let vy = dot12(rot.m[1], org) + base_t[1];
+                if vy.abs() * 4 > vz * 3 + 360 {
+                    model_bounds_culled = model_bounds_culled.saturating_add(1);
+                    continue;
+                }
+                let sight = [org[0], org[1] + 40, org[2]];
+                if !phys::line_clear_world(&m, eye, sight)
+                    || !phys::line_clear_movers(&m, door_movers, eye, sight)
+                {
+                    model_bounds_culled = model_bounds_culled.saturating_add(1);
+                    continue;
+                }
                 model_draws = model_draws.saturating_add(1);
-                let sf = (frame_no as usize / ANIM_DIV) % sci.n_frames.max(1);
+                let sf = (sim_frame_no as usize / ANIM_DIV) % sci.n_frames.max(1);
                 draw_model(&sci, &MODEL_SLOTS, org, yaw as u16, sf, eye, &rot, &mut np);
             }
             telemetry::stage_end(telemetry::stage::MODEL_INSTANCES);
@@ -1097,6 +1853,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
             );
 
             let world_prims = np;
+            let world_quads = nq;
             if SHOW_VIEWMODEL {
                 telemetry::stage_begin(telemetry::stage::EQUIPMENT);
                 draw_viewmodel(&wpn, &WEAPON_SLOTS, VM_FRAME, -recoil, &mut np);
@@ -1118,17 +1875,33 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
             WEAPON_OT.submit();
             HUD_OT.submit();
             telemetry::stage_end(telemetry::stage::OT_SUBMIT);
-            telemetry::counter(telemetry::counter::TRI_PRIMITIVES, np as u32);
-            telemetry::counter(telemetry::counter::WORLD_COMMANDS, world_prims as u32);
+            telemetry::counter(telemetry::counter::TRI_PRIMITIVES, (np + nq) as u32);
+            telemetry::counter(
+                telemetry::counter::WORLD_COMMANDS,
+                (world_prims + world_quads) as u32,
+            );
         }
 
         telemetry::stage_end(telemetry::stage::RENDER);
         telemetry::stage_begin(telemetry::stage::PRESENT);
-        gpu::vsync();
+        let present_vblank = wait_vblank_edge();
         fb.swap();
         telemetry::stage_end(telemetry::stage::PRESENT);
+        let lateness_vblanks = if vblank_reached(present_vblank, next_sim_vblank) {
+            present_vblank
+                .wrapping_sub(next_sim_vblank)
+                .min(u16::MAX as u32) as u16
+        } else {
+            0
+        };
         telemetry::counter(telemetry::counter::VISUAL_FRAMES, 1);
+        if lateness_vblanks > 0 {
+            telemetry::counter(telemetry::counter::VISUAL_DEADLINE_MISSES, 1);
+        }
+        telemetry::counter(
+            telemetry::counter::VISUAL_MAX_LATENESS_VBLANKS,
+            lateness_vblanks as u32,
+        );
         telemetry::task_end(telemetry::task::VISUAL_RENDER);
-        telemetry_frame = telemetry_frame.wrapping_add(1);
     }
 }

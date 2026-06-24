@@ -1,33 +1,49 @@
-//! Parse a cooked `.hlm` v4 map (tools/hl-bsp --cook). HLM4 = HLM3 + BSP
-//! visibility (PVS) appended after the texture blob.
+//! Parse a cooked `.hlm` map (tools/hl-bsp --cook). HLMA adds BSP visibility
+//! plus brush-entity leaf membership for PVS culling.
 //!
-//!   magic "HLM4" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
-//!   verts i16×3 | tri_idx u16×3 | tri_tex u16 | tri_uv u8×6 | tri_rgb u8×9 (pad)
+//!   magic "HLMA" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
+//!   verts i16×3 | TriRec[24B] × n_tris
+//!     TriRec = u16 idx[3], u16 tex, u8 uv[6], u8 rgb[9], u8 pad
 //!   textures × n_texs: u16 w,h | u16 clut[16] | u8 pix[w*h/2]
 //!   bsp @ bsp_off:
 //!     u32 n_nodes,n_leaves,n_marks,vis_len
-//!     face_first u32×n_faces | face_ntri u16×n_faces (pad 4)
+//!     FaceRec[32B] × n_faces
+//!       FaceRec = u32 first_tri, u16 tri_count, i16 normal[3], i32 dist,
+//!                 u16 plane_group, u16 pad, i16 center[3], u16 extent[3]
 //!     nodes  (i16 nx,ny,nz, i16 pad, i32 dist, i32 c0, i32 c1) × n_nodes
 //!     leaves (i32 visofs, u16 mark_start, u16 mark_count) × n_leaves
 //!     marks  u16 × n_marks (pad 4)
 //!     vis    u8  × vis_len (pad 4)
+//!   clip:
+//!     u32 n_clip | i32 hull0_head | i32 hull1_head | i32 spawn[3] |
+//!     i32 spawn_yaw | ClipNode[16B] × n_clip
+//!   entities:
+//!     u32 n_models | (u32 firstface,u32 numface) × n_models
+//!     u32 n_ents | EntRec[52B] × n_ents | u32 n_ent_leafs | u16 leaf_idx[]
+//!   props:
+//!     u32 n_props | (u16 type, i16 leaf, i32 origin[3], i32 yaw) × n_props
 //!
 //! Fields are read via `from_le_bytes` (include_bytes! is only byte-aligned).
 
 use psx_gte::math::Vec3I16;
 
+#[inline(always)]
 fn rd_u32(d: &[u8], o: usize) -> u32 {
     u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]])
 }
+#[inline(always)]
 fn rd_i32(d: &[u8], o: usize) -> i32 {
     rd_u32(d, o) as i32
 }
+#[inline(always)]
 fn rd_u16(d: &[u8], o: usize) -> u16 {
     u16::from_le_bytes([d[o], d[o + 1]])
 }
+#[inline(always)]
 fn rd_i16(d: &[u8], o: usize) -> i16 {
     i16::from_le_bytes([d[o], d[o + 1]])
 }
+#[inline(always)]
 fn align4(x: usize) -> usize {
     (x + 3) & !3
 }
@@ -48,18 +64,13 @@ pub struct Map {
     pub n_texs: usize,
     pub n_faces: usize,
     v_off: usize,
-    idx_off: usize,
-    ttex_off: usize,
-    tuv_off: usize,
-    trgb_off: usize,
+    tri_off: usize,
     texblk_off: usize,
     // BSP / PVS
     pub n_nodes: usize,
     pub n_leaves: usize,
     pub n_marks: usize,
-    ff_off: usize,
-    fn_off: usize,
-    fp_off: usize,
+    faces_off: usize,
     nodes_off: usize,
     leaves_off: usize,
     marks_off: usize,
@@ -67,6 +78,7 @@ pub struct Map {
     vis_len: usize,
     // Clip hull + spawn
     pub n_clip: usize,
+    pub hull0_head: i32,
     pub hull1_head: i32,
     pub spawn_pos: [i32; 3],
     pub spawn_yaw: i32,
@@ -76,6 +88,8 @@ pub struct Map {
     pub n_ents: usize,
     models_off: usize,
     ents_off: usize,
+    ent_leafs_off: usize,
+    n_ent_leafs: usize,
     // Tram (func_tracktrain ride)
     pub tram_submodel: usize,
     pub tram_speed: i32,
@@ -88,9 +102,11 @@ pub struct Map {
     props_off: usize,
 }
 
-const LEAF_SZ: usize = 16; // visofs i32 + mark range u16×2 + bbox centre i16×3 + radius u16
+const LEAF_SZ: usize = 8; // visofs i32 + marks u16×2
+const FACE_SZ: usize = 32;
+const TRI_SZ: usize = 24;
 const CLIPNODE_SZ: usize = 16;
-const ENT_SZ: usize = 48;
+const ENT_SZ: usize = 52;
 
 pub struct ClipNode {
     pub n: [i16; 3],
@@ -99,14 +115,25 @@ pub struct ClipNode {
     pub dist: i32,
 }
 
+#[derive(Clone, Copy)]
 pub struct Ent {
     pub submodel: usize,
-    pub kind: u16, // 0 static, 1 door
+    pub kind: u16, // 0 solid/static, 1 door, 2 nonsolid visual brush
     pub origin: [i32; 3],
     pub mv: [i32; 3],
     pub center: [i32; 3],
     pub r2: i32,
     pub head: i32, // submodel hull-1 clipnode root
+    pub leaf_start: usize,
+    pub leaf_count: usize,
+}
+
+#[derive(Clone, Copy)]
+pub struct Tri {
+    pub idx: [u16; 3],
+    pub tex: usize,
+    pub uv: [(u8, u8); 3],
+    pub rgb: [(u8, u8, u8); 3],
 }
 
 impl Map {
@@ -121,39 +148,38 @@ impl Map {
         let tram_off = rd_u32(data, 32) as usize;
         let prop_off = rd_u32(data, 36) as usize;
         let v_off = 40;
-        let idx_off = v_off + n_verts * 6;
-        let ttex_off = idx_off + n_tris * 6;
-        let tuv_off = ttex_off + n_tris * 2;
-        let trgb_off = tuv_off + n_tris * 6;
-        let texblk_off = align4(trgb_off + n_tris * 9);
+        let tri_off = v_off + n_verts * 6;
+        let texblk_off = align4(tri_off + n_tris * TRI_SZ);
 
         let n_nodes = rd_u32(data, bsp_off) as usize;
         let n_leaves = rd_u32(data, bsp_off + 4) as usize;
         let n_marks = rd_u32(data, bsp_off + 8) as usize;
         let vis_len = rd_u32(data, bsp_off + 12) as usize;
-        let ff_off = bsp_off + 16;
-        let fn_off = ff_off + n_faces * 4;
-        let fp_off = align4(fn_off + n_faces * 2);
-        let nodes_off = align4(fp_off + n_faces * 12);
+        let faces_off = bsp_off + 16;
+        let nodes_off = faces_off + n_faces * FACE_SZ;
         let leaves_off = nodes_off + n_nodes * NODE_SZ;
         let marks_off = leaves_off + n_leaves * LEAF_SZ;
         let vis_off = align4(marks_off + n_marks * 2);
 
         let n_clip = rd_u32(data, clip_off) as usize;
-        let hull1_head = rd_i32(data, clip_off + 4);
+        let hull0_head = rd_i32(data, clip_off + 4);
+        let hull1_head = rd_i32(data, clip_off + 8);
         let spawn_pos = [
-            rd_i32(data, clip_off + 8),
             rd_i32(data, clip_off + 12),
             rd_i32(data, clip_off + 16),
+            rd_i32(data, clip_off + 20),
         ];
-        let spawn_yaw = rd_i32(data, clip_off + 20);
-        let clipn_off = clip_off + 24;
+        let spawn_yaw = rd_i32(data, clip_off + 24);
+        let clipn_off = clip_off + 28;
 
         let n_models = rd_u32(data, ent_off) as usize;
         let models_off = ent_off + 4;
         let n_ents_off = models_off + n_models * 8;
         let n_ents = rd_u32(data, n_ents_off) as usize;
         let ents_off = n_ents_off + 4;
+        let n_ent_leafs_off = ents_off + n_ents * ENT_SZ;
+        let n_ent_leafs = rd_u32(data, n_ent_leafs_off) as usize;
+        let ent_leafs_off = n_ent_leafs_off + 4;
 
         let tram_submodel = rd_u16(data, tram_off) as usize;
         let n_way = rd_u16(data, tram_off + 2) as usize;
@@ -176,23 +202,19 @@ impl Map {
             n_texs,
             n_faces,
             v_off,
-            idx_off,
-            ttex_off,
-            tuv_off,
-            trgb_off,
+            tri_off,
             texblk_off,
             n_nodes,
             n_leaves,
             n_marks,
-            ff_off,
-            fn_off,
-            fp_off,
+            faces_off,
             nodes_off,
             leaves_off,
             marks_off,
             vis_off,
             vis_len,
             n_clip,
+            hull0_head,
             hull1_head,
             spawn_pos,
             spawn_yaw,
@@ -201,6 +223,8 @@ impl Map {
             n_ents,
             models_off,
             ents_off,
+            ent_leafs_off,
+            n_ent_leafs,
             tram_submodel,
             tram_speed,
             tram_head,
@@ -212,9 +236,9 @@ impl Map {
         }
     }
 
-    /// `(model_type, origin, yaw)` for prop `i` (a placed studio model).
+    /// `(model_type, origin, yaw, leaf)` for prop `i` (a placed studio model).
     #[inline]
-    pub fn prop(&self, i: usize) -> (u16, [i32; 3], i32) {
+    pub fn prop(&self, i: usize) -> (u16, [i32; 3], i32, i16) {
         let o = self.props_off + i * 20;
         (
             rd_u16(self.data, o),
@@ -224,6 +248,7 @@ impl Map {
                 rd_i32(self.data, o + 12),
             ],
             rd_i32(self.data, o + 16),
+            rd_i16(self.data, o + 2),
         )
     }
 
@@ -259,7 +284,17 @@ impl Map {
             center: [rd_i32(d, o + 28), rd_i32(d, o + 32), rd_i32(d, o + 36)],
             r2: rd_i32(d, o + 40),
             head: rd_i32(d, o + 44),
+            leaf_start: rd_u16(d, o + 48) as usize,
+            leaf_count: rd_u16(d, o + 50) as usize,
         }
+    }
+
+    #[inline]
+    pub fn ent_leaf(&self, i: usize) -> usize {
+        if i >= self.n_ent_leafs {
+            return 0;
+        }
+        rd_u16(self.data, self.ent_leafs_off + i * 2) as usize
     }
 
     #[inline]
@@ -288,37 +323,23 @@ impl Map {
     }
 
     #[inline]
-    pub fn tri_idx(&self, t: usize) -> (usize, usize, usize) {
-        let o = self.idx_off + t * 6;
-        (
-            rd_u16(self.data, o) as usize,
-            rd_u16(self.data, o + 2) as usize,
-            rd_u16(self.data, o + 4) as usize,
-        )
-    }
-
-    #[inline]
-    pub fn tri_tex(&self, t: usize) -> usize {
-        rd_u16(self.data, self.ttex_off + t * 2) as usize
-    }
-
-    #[inline]
-    pub fn tri_uv(&self, t: usize) -> [(u8, u8); 3] {
-        let o = self.tuv_off + t * 6;
+    pub fn tri(&self, t: usize) -> Tri {
+        let o = self.tri_off + t * TRI_SZ;
         let d = self.data;
-        [(d[o], d[o + 1]), (d[o + 2], d[o + 3]), (d[o + 4], d[o + 5])]
-    }
-
-    /// Per-corner lightmap shade (PS1 modulation tint), one (r,g,b) per vertex.
-    #[inline]
-    pub fn tri_rgb(&self, t: usize) -> [(u8, u8, u8); 3] {
-        let o = self.trgb_off + t * 9;
-        let d = self.data;
-        [
-            (d[o], d[o + 1], d[o + 2]),
-            (d[o + 3], d[o + 4], d[o + 5]),
-            (d[o + 6], d[o + 7], d[o + 8]),
-        ]
+        Tri {
+            idx: [rd_u16(d, o), rd_u16(d, o + 2), rd_u16(d, o + 4)],
+            tex: rd_u16(d, o + 6) as usize,
+            uv: [
+                (d[o + 8], d[o + 9]),
+                (d[o + 10], d[o + 11]),
+                (d[o + 12], d[o + 13]),
+            ],
+            rgb: [
+                (d[o + 14], d[o + 15], d[o + 16]),
+                (d[o + 17], d[o + 18], d[o + 19]),
+                (d[o + 20], d[o + 21], d[o + 22]),
+            ],
+        }
     }
 
     pub fn tex_blob(&self) -> &'static [u8] {
@@ -353,69 +374,57 @@ impl Map {
         )
     }
 
-    /// Leaf bounding sphere `(centre, radius)` in world space (frustum cull).
-    #[inline]
-    pub fn leaf_bounds(&self, i: usize) -> ([i32; 3], i32) {
-        let o = self.leaves_off + i * LEAF_SZ;
-        (
-            [
-                rd_i16(self.data, o + 8) as i32,
-                rd_i16(self.data, o + 10) as i32,
-                rd_i16(self.data, o + 12) as i32,
-            ],
-            rd_u16(self.data, o + 14) as i32,
-        )
-    }
-
     /// Face index referenced by marksurface `j`.
     #[inline]
     pub fn mark(&self, j: usize) -> usize {
         rd_u16(self.data, self.marks_off + j * 2) as usize
     }
 
-    /// Face `f`'s world plane `(normal ×4096, dist)` for backface culling.
     #[inline]
     pub fn face_plane(&self, f: usize) -> ([i16; 3], i32) {
-        let o = self.fp_off + f * 12;
+        let o = self.faces_off + f * FACE_SZ;
         (
             [
-                rd_i16(self.data, o),
-                rd_i16(self.data, o + 2),
-                rd_i16(self.data, o + 4),
+                rd_i16(self.data, o + 6),
+                rd_i16(self.data, o + 8),
+                rd_i16(self.data, o + 10),
             ],
-            rd_i32(self.data, o + 8),
+            rd_i32(self.data, o + 12),
         )
     }
 
-    /// `(first_tri, tri_count)` for face `f`.
+    #[inline]
+    pub fn face_group(&self, f: usize) -> usize {
+        rd_u16(self.data, self.faces_off + f * FACE_SZ + 16) as usize
+    }
+
+    #[inline]
+    pub fn face_bounds(&self, f: usize) -> ([i32; 3], [i32; 3]) {
+        let o = self.faces_off + f * FACE_SZ + 20;
+        (
+            [
+                rd_i16(self.data, o) as i32,
+                rd_i16(self.data, o + 2) as i32,
+                rd_i16(self.data, o + 4) as i32,
+            ],
+            [
+                rd_u16(self.data, o + 6) as i32,
+                rd_u16(self.data, o + 8) as i32,
+                rd_u16(self.data, o + 10) as i32,
+            ],
+        )
+    }
+
     #[inline]
     pub fn face_tris(&self, f: usize) -> (usize, usize) {
+        let o = self.faces_off + f * FACE_SZ;
         (
-            rd_u32(self.data, self.ff_off + f * 4) as usize,
-            rd_u16(self.data, self.fn_off + f * 2) as usize,
+            rd_u32(self.data, o) as usize,
+            rd_u16(self.data, o + 4) as usize,
         )
     }
 
     pub fn vis(&self) -> &'static [u8] {
         &self.data[self.vis_off..self.vis_off + self.vis_len]
-    }
-
-    /// World-space AABB (min, max) -- fly-cam spawn fallback.
-    pub fn bounds(&self) -> ([i32; 3], [i32; 3]) {
-        let mut mn = [i32::MAX; 3];
-        let mut mx = [i32::MIN; 3];
-        for i in 0..self.n_verts {
-            let v = self.vert(i);
-            let p = [v.x as i32, v.y as i32, v.z as i32];
-            for k in 0..3 {
-                if p[k] < mn[k] {
-                    mn[k] = p[k];
-                }
-                if p[k] > mx[k] {
-                    mx[k] = p[k];
-                }
-            }
-        }
-        (mn, mx)
     }
 }

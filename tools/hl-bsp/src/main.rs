@@ -249,15 +249,13 @@ fn report(path: &str, bsp: &Bsp) {
     println!("        textures resident, so this is the all-at-once worst case.");
 }
 
-// ---- Cook: BSP -> .hlm v3 (PS1-native textured + lit triangle mesh) -------
+// ---- Cook: BSP -> .hlm (PS1-native textured + lit triangle mesh) ----------
 //
 // Layout (all little-endian):
-//   magic "HLM3" | u32 n_verts | u32 n_tris | u32 n_texs
+//   magic "HLMA" | u32 n_verts | u32 n_tris | u32 n_texs
 //   verts:   i16 x,y,z   × n_verts          (world space, Y-up)
-//   tri_idx: u16 a,b,c   × n_tris           (indices into verts)
-//   tri_tex: u16         × n_tris           (texture id == miptex index)
-//   tri_uv:  u8 u0,v0,u1,v1,u2,v2 × n_tris  (per-corner, texture-local texels)
-//   tri_rgb: u8 (r,g,b)×3 × n_tris          (per-corner lightmap shade tint)
+//   tri_rec[24] × n_tris:
+//     u16 a,b,c | u16 tex | u8 uv[6] | u8 rgb[9] | u8 pad
 //   (pad to 4)
 //   textures × n_texs, each (already 4-byte aligned):
 //     u16 w | u16 h        (power-of-two, 8..=64)
@@ -726,6 +724,19 @@ fn parse_vec3(s: &str) -> Option<[f32; 3]> {
     ])
 }
 
+fn ent_yaw_degrees(block: &str) -> Option<f32> {
+    ent_value(block, "angles")
+        .and_then(parse_vec3)
+        .map(|a| a[1])
+        .or_else(|| ent_value(block, "angle").and_then(|a| a.parse().ok()))
+}
+
+fn hl_yaw_to_world_q12(deg: f32) -> i32 {
+    // HL yaw 0 = +X, yaw 90 = +Y. World is [HL X, HL Z, HL Y], and this
+    // runtime's yaw 0 forward is +world Z, so HL degrees map to 90 - yaw.
+    (((90.0 - deg) / 360.0 * 4096.0).round() as i32) & 0xFFF
+}
+
 /// Find the single-player spawn (`info_player_start`) origin + yaw (HL coords,
 /// degrees) from the entity lump.
 fn find_spawn(ents: &[u8]) -> Option<([f32; 3], f32)> {
@@ -733,10 +744,7 @@ fn find_spawn(ents: &[u8]) -> Option<([f32; 3], f32)> {
     for block in s.split('{') {
         if block.contains("\"info_player_start\"") {
             let origin = parse_vec3(ent_value(block, "origin")?)?;
-            let yaw = ent_value(block, "angles")
-                .and_then(parse_vec3)
-                .map(|a| a[1])
-                .unwrap_or(0.0);
+            let yaw = ent_yaw_degrees(block).unwrap_or(0.0);
             return Some((origin, yaw));
         }
     }
@@ -753,12 +761,148 @@ fn to_world(p: [f32; 3], scale: f32) -> [i32; 3] {
 
 struct EntRec {
     submodel: u16,
-    kind: u16, // 0 = static brush, 1 = func_door
+    kind: u16, // 0 = solid/static brush, 1 = func_door, 2 = nonsolid visual brush
     origin: [i32; 3],
     mv: [i32; 3],     // door full-open displacement (world)
     center: [i32; 3], // submodel bounds centre; doors use closed-world centre
     r2: i32,          // conservative bounds radius^2 (world)
     head: i32,        // submodel hull-1 clipnode root (collision)
+    leaves: Vec<u16>, // BSP leaves touched by this entity's bounds, for PVS culling
+}
+
+fn bbox_plane_sides(mins: [f32; 3], maxs: [f32; 3], normal: [f32; 3], dist: f32) -> i32 {
+    let mut front = 0.0;
+    let mut back = 0.0;
+    for i in 0..3 {
+        if normal[i] >= 0.0 {
+            front += normal[i] * maxs[i];
+            back += normal[i] * mins[i];
+        } else {
+            front += normal[i] * mins[i];
+            back += normal[i] * maxs[i];
+        }
+    }
+
+    let mut sides = 0;
+    if front >= dist {
+        sides |= 1;
+    }
+    if back < dist {
+        sides |= 2;
+    }
+    sides
+}
+
+fn push_leaf(out: &mut Vec<u16>, leaf: i32) {
+    if leaf <= 0 || leaf > u16::MAX as i32 {
+        return;
+    }
+    let leaf = leaf as u16;
+    if !out.contains(&leaf) {
+        out.push(leaf);
+    }
+}
+
+fn split_bbox_leafs(
+    node_idx: i32,
+    mins: [f32; 3],
+    maxs: [f32; 3],
+    nodes: &[u8],
+    planes: &[u8],
+    out: &mut Vec<u16>,
+) {
+    if node_idx < 0 {
+        push_leaf(out, -node_idx - 1);
+        return;
+    }
+    let ni = node_idx as usize;
+    if ni >= nodes.len() / SZ_NODE {
+        return;
+    }
+
+    let no = ni * SZ_NODE;
+    let planenum = i32le(nodes, no).unwrap_or(0).max(0) as usize;
+    if planenum >= planes.len() / SZ_PLANE {
+        return;
+    }
+    let po = planenum * SZ_PLANE;
+    let normal = [
+        f32le(planes, po).unwrap_or(0.0),
+        f32le(planes, po + 4).unwrap_or(0.0),
+        f32le(planes, po + 8).unwrap_or(0.0),
+    ];
+    let dist = f32le(planes, po + 12).unwrap_or(0.0);
+    let sides = bbox_plane_sides(mins, maxs, normal, dist);
+    let child0 = i16::from_le_bytes([nodes[no + 4], nodes[no + 5]]) as i32;
+    let child1 = i16::from_le_bytes([nodes[no + 6], nodes[no + 7]]) as i32;
+    if sides & 1 != 0 {
+        split_bbox_leafs(child0, mins, maxs, nodes, planes, out);
+    }
+    if sides & 2 != 0 {
+        split_bbox_leafs(child1, mins, maxs, nodes, planes, out);
+    }
+}
+
+fn entity_leafs(
+    mins: [f32; 3],
+    maxs: [f32; 3],
+    origin: [f32; 3],
+    mv: Option<[f32; 3]>,
+    nodes: &[u8],
+    planes: &[u8],
+) -> Vec<u16> {
+    let mut out = Vec::new();
+    let add_box = |offset: [f32; 3], out: &mut Vec<u16>| {
+        let emins = [
+            mins[0] + origin[0] + offset[0],
+            mins[1] + origin[1] + offset[1],
+            mins[2] + origin[2] + offset[2],
+        ];
+        let emaxs = [
+            maxs[0] + origin[0] + offset[0],
+            maxs[1] + origin[1] + offset[1],
+            maxs[2] + origin[2] + offset[2],
+        ];
+        split_bbox_leafs(0, emins, emaxs, nodes, planes, out);
+    };
+
+    add_box([0.0; 3], &mut out);
+    if let Some(mv) = mv {
+        add_box(mv, &mut out);
+    }
+    out.sort_unstable();
+    out
+}
+
+fn point_leaf(point: [f32; 3], nodes: &[u8], planes: &[u8]) -> i16 {
+    let mut node_idx = 0i32;
+    let mut guard = 0;
+    while node_idx >= 0 && guard < 256 {
+        guard += 1;
+        let ni = node_idx as usize;
+        if ni >= nodes.len() / SZ_NODE {
+            return 0;
+        }
+        let no = ni * SZ_NODE;
+        let planenum = i32le(nodes, no).unwrap_or(0).max(0) as usize;
+        if planenum >= planes.len() / SZ_PLANE {
+            return 0;
+        }
+        let po = planenum * SZ_PLANE;
+        let nx = f32le(planes, po).unwrap_or(0.0);
+        let ny = f32le(planes, po + 4).unwrap_or(0.0);
+        let nz = f32le(planes, po + 8).unwrap_or(0.0);
+        let dist = f32le(planes, po + 12).unwrap_or(0.0);
+        let side = point[0] * nx + point[1] * ny + point[2] * nz - dist;
+        let child0 = i16::from_le_bytes([nodes[no + 4], nodes[no + 5]]) as i32;
+        let child1 = i16::from_le_bytes([nodes[no + 6], nodes[no + 7]]) as i32;
+        node_idx = if side >= 0.0 { child0 } else { child1 };
+    }
+    if node_idx < 0 {
+        (-node_idx - 1).clamp(0, i16::MAX as i32) as i16
+    } else {
+        0
+    }
 }
 
 /// func_door move direction (HL) + distance: slides `size_along_axis - lip`.
@@ -776,7 +920,13 @@ fn door_move(angle: f32, mins: [f32; 3], maxs: [f32; 3], lip: f32) -> ([f32; 3],
 }
 
 /// Collect renderable brush entities (skipping invisible triggers/ladders).
-fn collect_entities(ents: &[u8], models: &[u8], scale: f32) -> Vec<EntRec> {
+fn collect_entities(
+    ents: &[u8],
+    models: &[u8],
+    nodes: &[u8],
+    planes: &[u8],
+    scale: f32,
+) -> Vec<EntRec> {
     let s = match std::str::from_utf8(ents) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
@@ -796,12 +946,10 @@ fn collect_entities(ents: &[u8], models: &[u8], scale: f32) -> Vec<EntRec> {
         if cls.starts_with("trigger") || cls == "func_ladder" || cls == "func_tracktrain" {
             continue; // invisible, or handled by the tram section
         }
-        let origin = to_world(
-            ent_value(block, "origin")
-                .and_then(parse_vec3)
-                .unwrap_or([0.0; 3]),
-            scale,
-        );
+        let origin_hl = ent_value(block, "origin")
+            .and_then(parse_vec3)
+            .unwrap_or([0.0; 3]);
+        let origin = to_world(origin_hl, scale);
         let mo = submodel * SZ_MODEL;
         let g = |o: usize| f32le(models, mo + o).unwrap_or(0.0);
         let mins = [g(0), g(4), g(8)];
@@ -829,6 +977,14 @@ fn collect_entities(ents: &[u8], models: &[u8], scale: f32) -> Vec<EntRec> {
                 .unwrap_or(8.0);
             let (dir, dist) = door_move(angle, mins, maxs, lip);
             let mv = to_world([dir[0] * dist, dir[1] * dist, dir[2] * dist], scale);
+            let leaves = entity_leafs(
+                mins,
+                maxs,
+                origin_hl,
+                Some([dir[0] * dist, dir[1] * dist, dir[2] * dist]),
+                nodes,
+                planes,
+            );
             out.push(EntRec {
                 submodel: submodel as u16,
                 kind: 1,
@@ -837,16 +993,19 @@ fn collect_entities(ents: &[u8], models: &[u8], scale: f32) -> Vec<EntRec> {
                 center,
                 r2,
                 head,
+                leaves,
             });
         } else {
+            let leaves = entity_leafs(mins, maxs, origin_hl, None, nodes, planes);
             out.push(EntRec {
                 submodel: submodel as u16,
-                kind: 0,
+                kind: if cls == "func_illusionary" { 2 } else { 0 },
                 origin,
                 mv: [0; 3],
                 center,
                 r2,
                 head,
+                leaves,
             });
         }
     }
@@ -910,9 +1069,14 @@ fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) 
     (model, speed, way, origin)
 }
 
-/// Point entities that place a studio model: `(model_type, origin_world, yaw)`.
+/// Point entities that place a studio model: `(model_type, origin_world, yaw, leaf)`.
 /// type 0 = scientist, 1 = barney.
-fn collect_props(ents: &[u8], scale: f32) -> Vec<(u16, [i32; 3], i32)> {
+fn collect_props(
+    ents: &[u8],
+    nodes: &[u8],
+    planes: &[u8],
+    scale: f32,
+) -> Vec<(u16, [i32; 3], i32, i16)> {
     let s = match std::str::from_utf8(ents) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
@@ -924,20 +1088,35 @@ fn collect_props(ents: &[u8], scale: f32) -> Vec<(u16, [i32; 3], i32)> {
             "monster_barney" => 1u16,
             _ => continue,
         };
-        let origin = to_world(
-            ent_value(block, "origin")
-                .and_then(parse_vec3)
-                .unwrap_or([0.0; 3]),
-            scale,
-        );
-        let deg = ent_value(block, "angles")
+        let origin_hl = ent_value(block, "origin")
             .and_then(parse_vec3)
-            .map(|a| a[1])
-            .unwrap_or(0.0);
-        let yaw = (((deg - 90.0) / 360.0 * 4096.0).round() as i32) & 0xFFF;
-        out.push((ty, origin, yaw));
+            .unwrap_or([0.0; 3]);
+        let origin = to_world(origin_hl, scale);
+        let deg = ent_yaw_degrees(block).unwrap_or(0.0);
+        let yaw = hl_yaw_to_world_q12(deg);
+        out.push((ty, origin, yaw, point_leaf(origin_hl, nodes, planes)));
     }
     out
+}
+
+fn miptex_name(l: &[u8], mo: usize) -> String {
+    let name = match l.get(mo..mo + 16) {
+        Some(n) => n,
+        None => return String::new(),
+    };
+    let end = name.iter().position(|&b| b == 0).unwrap_or(name.len());
+    String::from_utf8_lossy(&name[..end]).to_string()
+}
+
+fn is_tool_texture(name: &str) -> bool {
+    let n = name.trim().to_ascii_lowercase();
+    n == "origin"
+        || n == "clip"
+        || n == "skip"
+        || n == "hint"
+        || n == "null"
+        || n.starts_with("aaatrigger")
+        || n.starts_with("trigger")
 }
 
 fn cook(path: &str, out: &str) -> Result<(), String> {
@@ -987,14 +1166,17 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     let n_texs = i32le(tl, 0).filter(|&n| n >= 0).unwrap_or(0) as usize;
     let mut texs: Vec<CookedTex> = Vec::with_capacity(n_texs);
     let mut orig: Vec<(u32, u32)> = Vec::with_capacity(n_texs);
+    let mut tex_names: Vec<String> = Vec::with_capacity(n_texs);
     for i in 0..n_texs {
         match i32le(tl, 4 + i * 4) {
             Some(d) if d >= 0 => {
+                tex_names.push(miptex_name(tl, d as usize));
                 let (t, o) = cook_miptex(tl, d as usize);
                 texs.push(t);
                 orig.push(o);
             }
             _ => {
+                tex_names.push(String::new());
                 texs.push(placeholder_tex());
                 orig.push((64, 64));
             }
@@ -1016,6 +1198,8 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     // keep count 0.
     let mut face_first = vec![0u32; n_faces];
     let mut face_ntri = vec![0u16; n_faces];
+    let mut face_center = vec![[0i16; 3]; n_faces];
+    let mut face_extent = vec![[0u16; 3]; n_faces];
 
     for f in 0..n_faces {
         let fo = f * SZ_FACE;
@@ -1053,6 +1237,25 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         } else {
             0
         };
+        if is_tool_texture(&tex_names[tex_id]) {
+            continue;
+        }
+        let mut mn = [i32::MAX; 3];
+        let mut mx = [i32::MIN; 3];
+        for &vi in &poly {
+            let p = verts[vi as usize];
+            let q = [p[0] as i32, p[1] as i32, p[2] as i32];
+            for k in 0..3 {
+                mn[k] = mn[k].min(q[k]);
+                mx[k] = mx[k].max(q[k]);
+            }
+        }
+        for k in 0..3 {
+            let c = (mn[k] + mx[k]) / 2;
+            let e = ((mx[k] - mn[k]).abs() / 2 + 4).clamp(0, u16::MAX as i32);
+            face_center[f][k] = c.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+            face_extent[f][k] = e as u16;
+        }
         let (fw, fh) = (texs[tex_id].w as f32, texs[tex_id].h as f32);
         let (ow, oh) = orig[tex_id];
         // texinfo s/t planes (original texels).
@@ -1156,7 +1359,7 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     let n_verts = verts.len();
     let n_tris = tri_idx.len() / 3;
     let mut o: Vec<u8> = Vec::new();
-    o.extend_from_slice(b"HLM9");
+    o.extend_from_slice(b"HLMA");
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_tris as u32).to_le_bytes());
     o.extend_from_slice(&(n_texs as u32).to_le_bytes());
@@ -1176,14 +1379,16 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
             o.extend_from_slice(&c.to_le_bytes());
         }
     }
-    for i in &tri_idx {
-        o.extend_from_slice(&i.to_le_bytes());
+    for t in 0..n_tris {
+        let ib = t * 3;
+        o.extend_from_slice(&tri_idx[ib].to_le_bytes());
+        o.extend_from_slice(&tri_idx[ib + 1].to_le_bytes());
+        o.extend_from_slice(&tri_idx[ib + 2].to_le_bytes());
+        o.extend_from_slice(&tri_tex[t].to_le_bytes());
+        o.extend_from_slice(&tri_uv[t * 6..t * 6 + 6]);
+        o.extend_from_slice(&tri_rgb[t * 9..t * 9 + 9]);
+        o.push(0);
     }
-    for tx in &tri_tex {
-        o.extend_from_slice(&tx.to_le_bytes());
-    }
-    o.extend_from_slice(&tri_uv);
-    o.extend_from_slice(&tri_rgb);
     while o.len() % 4 != 0 {
         o.push(0);
     }
@@ -1198,10 +1403,11 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     }
 
     // ---- BSP visibility (PVS) ----
-    // u32 n_nodes,n_leaves,n_marks,vis_len | face_first[u32×n_faces] |
-    // face_ntri[u16×n_faces] (pad) | nodes[20B] | leaves[8B] | marks (pad) |
-    // vis (raw RLE, pad). Node planes are transformed to world space so the
-    // runtime can walk the tree with the world-space camera directly.
+    // u32 n_nodes,n_leaves,n_marks,vis_len | FaceRec[32B] | nodes[20B] |
+    // leaves[8B] | marks (pad) | vis (raw RLE, pad).
+    // FaceRec = u32 first_tri, u16 tri_count, i16 normal[3], i32 dist.
+    // Node/face planes are transformed to world space so the runtime can walk
+    // and cull with the world-space camera directly.
     let bsp_off = o.len() as u32;
     o[bsp_off_pos..bsp_off_pos + 4].copy_from_slice(&bsp_off.to_le_bytes());
     let planes = bsp.lump(LUMP_PLANES);
@@ -1213,41 +1419,69 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     let n_leaves = leaves.len() / SZ_LEAF;
     let n_marks = marks.len() / SZ_MARKSURFACE;
 
-    o.extend_from_slice(&(n_nodes as u32).to_le_bytes());
-    o.extend_from_slice(&(n_leaves as u32).to_le_bytes());
-    o.extend_from_slice(&(n_marks as u32).to_le_bytes());
-    o.extend_from_slice(&(vis.len() as u32).to_le_bytes());
-
-    for v in &face_first {
-        o.extend_from_slice(&v.to_le_bytes());
-    }
-    for v in &face_ntri {
-        o.extend_from_slice(&v.to_le_bytes());
-    }
-    while o.len() % 4 != 0 {
-        o.push(0);
-    }
-
-    // Per-face world-space plane (side-adjusted): front-facing iff dot(n,eye) > dist.
-    // Lets the runtime backface-cull a whole face before any per-triangle work.
+    let mut face_norm = vec![[0i16; 3]; n_faces];
+    let mut face_dist = vec![0i32; n_faces];
+    let mut face_group = vec![0u16; n_faces];
+    let mut plane_groups: Vec<([i16; 3], i32)> = Vec::new();
     for f in 0..n_faces {
+        // Per-face world-space plane (side-adjusted): front-facing iff
+        // dot(n,eye) > dist. Lets the runtime backface-cull a whole face
+        // before any per-triangle work. Plane groups are cooked once so the PS1
+        // can do one backface test for many coplanar faces.
         let fo2 = f * SZ_FACE;
         let planenum = u16le(faces, fo2).unwrap_or(0) as usize;
-        let s = if u16le(faces, fo2 + 2).unwrap_or(0) == 0 {
+        let side = if u16le(faces, fo2 + 2).unwrap_or(0) == 0 {
             1.0
         } else {
             -1.0
         };
         let po = planenum * SZ_PLANE;
-        let nx = f32le(planes, po).unwrap_or(0.0) * s;
-        let ny = f32le(planes, po + 4).unwrap_or(0.0) * s;
-        let nz = f32le(planes, po + 8).unwrap_or(0.0) * s;
-        let d = f32le(planes, po + 12).unwrap_or(0.0) * s;
-        o.extend_from_slice(&((nx * 4096.0).round() as i16).to_le_bytes()); // world: swap Y/Z
-        o.extend_from_slice(&((nz * 4096.0).round() as i16).to_le_bytes());
-        o.extend_from_slice(&((ny * 4096.0).round() as i16).to_le_bytes());
-        o.extend_from_slice(&0i16.to_le_bytes());
-        o.extend_from_slice(&((d / scale).round() as i32).to_le_bytes());
+        let nx = f32le(planes, po).unwrap_or(0.0) * side;
+        let ny = f32le(planes, po + 4).unwrap_or(0.0) * side;
+        let nz = f32le(planes, po + 8).unwrap_or(0.0) * side;
+        let d = f32le(planes, po + 12).unwrap_or(0.0) * side;
+        let n = [
+            (nx * 4096.0).round() as i16,
+            (nz * 4096.0).round() as i16,
+            (ny * 4096.0).round() as i16,
+        ];
+        let dist = (d / scale).round() as i32;
+        face_norm[f] = n;
+        face_dist[f] = dist;
+        let gid = match plane_groups
+            .iter()
+            .position(|&(gn, gd)| gn == n && gd == dist)
+        {
+            Some(id) => id,
+            None => {
+                let id = plane_groups.len();
+                plane_groups.push((n, dist));
+                id
+            }
+        };
+        face_group[f] = gid.min(u16::MAX as usize) as u16;
+    }
+
+    o.extend_from_slice(&(n_nodes as u32).to_le_bytes());
+    o.extend_from_slice(&(n_leaves as u32).to_le_bytes());
+    o.extend_from_slice(&(n_marks as u32).to_le_bytes());
+    o.extend_from_slice(&(vis.len() as u32).to_le_bytes());
+
+    for f in 0..n_faces {
+        o.extend_from_slice(&face_first[f].to_le_bytes());
+        o.extend_from_slice(&face_ntri[f].to_le_bytes());
+        for c in face_norm[f] {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        o.extend_from_slice(&face_dist[f].to_le_bytes());
+        o.extend_from_slice(&face_group[f].to_le_bytes());
+        o.extend_from_slice(&0u16.to_le_bytes());
+        for c in face_center[f] {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        for e in face_extent[f] {
+            o.extend_from_slice(&e.to_le_bytes());
+        }
     }
 
     for ni in 0..n_nodes {
@@ -1285,23 +1519,6 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
                 .unwrap_or(0)
                 .to_le_bytes(),
         );
-        // dleaf_t bbox (i16 mins@8, maxs@14) -> world centre + radius (frustum cull).
-        let g = |o2: usize| i16::from_le_bytes([leaves[lo + o2], leaves[lo + o2 + 1]]) as f32;
-        let (mn, mx) = ([g(8), g(10), g(12)], [g(14), g(16), g(18)]);
-        let c = to_world(
-            [
-                (mn[0] + mx[0]) * 0.5,
-                (mn[1] + mx[1]) * 0.5,
-                (mn[2] + mx[2]) * 0.5,
-            ],
-            scale,
-        );
-        let d = [mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]];
-        let rad = ((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() * 0.5 / scale) as i32;
-        o.extend_from_slice(&(c[0] as i16).to_le_bytes());
-        o.extend_from_slice(&(c[1] as i16).to_le_bytes());
-        o.extend_from_slice(&(c[2] as i16).to_le_bytes());
-        o.extend_from_slice(&(rad.clamp(0, 65535) as u16).to_le_bytes());
     }
     while o.len() % 4 != 0 {
         o.push(0);
@@ -1316,15 +1533,17 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.push(0);
     }
 
-    // ---- Clip hull (player collision) + spawn ----
-    // u32 n_clip | i32 hull1_head | i32 spawn x,y,z (world) | i32 spawn_yaw (Q0.12)
+    // ---- Clip hull (player collision / LOS) + spawn ----
+    // u32 n_clip | i32 hull0_head | i32 hull1_head | i32 spawn x,y,z (world) |
+    // i32 spawn_yaw (Q0.12)
     // clipnodes (i16 nx,ny,nz, i16 c0, i16 c1, i16 pad, i32 dist) × n_clip [16B]
     let clip_off = o.len() as u32;
     o[clip_off_pos..clip_off_pos + 4].copy_from_slice(&clip_off.to_le_bytes());
     let clipnodes = bsp.lump(LUMP_CLIPNODES);
     let n_clip = clipnodes.len() / SZ_CLIPNODE;
     let models = bsp.lump(LUMP_MODELS);
-    let hull1_head = i32le(models, 40).unwrap_or(0); // dmodel_t.headnode[1]
+    let hull0_head = i32le(models, 36).unwrap_or(0); // dmodel_t.headnode[0] (point hull)
+    let hull1_head = i32le(models, 40).unwrap_or(0); // dmodel_t.headnode[1] (player hull)
     let (sp, syaw_deg) = find_spawn(bsp.lump(LUMP_ENTITIES)).unwrap_or_else(|| {
         // Mid-chapter maps (changelevel targets) have no info_player_start; you
         // arrive via an info_landmark. Fall back to the world bbox center near
@@ -1348,10 +1567,10 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         (sp[2] / scale).round() as i32,
         (sp[1] / scale).round() as i32,
     ];
-    // HL yaw 0 = +X; our forward at yaw 0 = +Z (world Z = HL Y), so offset -90 deg.
-    let syaw = (((syaw_deg - 90.0) / 360.0 * 4096.0).round() as i32) & 0xFFF;
+    let syaw = hl_yaw_to_world_q12(syaw_deg);
 
     o.extend_from_slice(&(n_clip as u32).to_le_bytes());
+    o.extend_from_slice(&hull0_head.to_le_bytes());
     o.extend_from_slice(&hull1_head.to_le_bytes());
     for c in &spawn {
         o.extend_from_slice(&c.to_le_bytes());
@@ -1380,7 +1599,7 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
 
     // ---- Entities (brush models) ----
     // u32 n_models | (u32 firstface, u32 numface) × n_models
-    // u32 n_ents   | EntRec[48B] × n_ents
+    // u32 n_ents   | EntRec[52B] × n_ents | u32 n_ent_leafs | u16 leaf_idx[]
     let ent_off = o.len() as u32;
     o[ent_off_pos..ent_off_pos + 4].copy_from_slice(&ent_off.to_le_bytes());
     let n_models = models.len() / SZ_MODEL;
@@ -1391,9 +1610,14 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.extend_from_slice(&(i32le(models, mo + 60).unwrap_or(0) as u32).to_le_bytes());
         // numfaces
     }
-    let ents = collect_entities(bsp.lump(LUMP_ENTITIES), models, scale);
+    let ents = collect_entities(bsp.lump(LUMP_ENTITIES), models, nodes, planes, scale);
     o.extend_from_slice(&(ents.len() as u32).to_le_bytes());
+    let mut ent_leafs: Vec<u16> = Vec::new();
     for e in &ents {
+        let leaf_start = ent_leafs.len().min(u16::MAX as usize) as u16;
+        let room = (u16::MAX as usize).saturating_sub(leaf_start as usize);
+        let leaf_count = e.leaves.len().min(room).min(u16::MAX as usize) as u16;
+        ent_leafs.extend_from_slice(&e.leaves[..leaf_count as usize]);
         o.extend_from_slice(&e.submodel.to_le_bytes());
         o.extend_from_slice(&e.kind.to_le_bytes());
         for c in e.origin {
@@ -1407,6 +1631,15 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         }
         o.extend_from_slice(&e.r2.to_le_bytes());
         o.extend_from_slice(&e.head.to_le_bytes());
+        o.extend_from_slice(&leaf_start.to_le_bytes());
+        o.extend_from_slice(&leaf_count.to_le_bytes());
+    }
+    o.extend_from_slice(&(ent_leafs.len() as u32).to_le_bytes());
+    for leaf in &ent_leafs {
+        o.extend_from_slice(&leaf.to_le_bytes());
+    }
+    while o.len() % 4 != 0 {
+        o.push(0);
     }
 
     // ---- Tram (func_tracktrain ride) ----
@@ -1437,14 +1670,14 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     }
 
     // ---- Props (point-entity model placements) ----
-    // u32 n_props | (u16 type, u16 pad, i32 origin[3], i32 yaw) × n_props
+    // u32 n_props | (u16 type, i16 leaf, i32 origin[3], i32 yaw) × n_props
     let prop_off = o.len() as u32;
     o[prop_off_pos..prop_off_pos + 4].copy_from_slice(&prop_off.to_le_bytes());
-    let props = collect_props(bsp.lump(LUMP_ENTITIES), scale);
+    let props = collect_props(bsp.lump(LUMP_ENTITIES), nodes, planes, scale);
     o.extend_from_slice(&(props.len() as u32).to_le_bytes());
-    for (ty, org, yaw) in &props {
+    for (ty, org, yaw, leaf) in &props {
         o.extend_from_slice(&ty.to_le_bytes());
-        o.extend_from_slice(&0u16.to_le_bytes());
+        o.extend_from_slice(&leaf.to_le_bytes());
         for c in org {
             o.extend_from_slice(&c.to_le_bytes());
         }
@@ -1466,7 +1699,8 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
 // models keep separate visible pieces such as magazines/clips. Layout matches
 // .hlm geometry+textures:
 //   magic "HMD2" | u32 n_verts,n_tris,n_texs,n_frames
-//   verts i16×3 | tri_idx u16×3 | tri_tex u16 | tri_uv u8×6 (pad4) | textures...
+//   verts i16×3 per frame | tri_rec[16] × n_tris | textures...
+//     tri_rec = u16 a,b,c | u16 tex | u8 uv[6] | u16 pad
 
 type Mat34 = ([[f32; 3]; 3], [f32; 3]); // rotation, translation
 
@@ -1865,15 +2099,14 @@ fn cook_mdl(path: &str, out: &str, seq: i32) -> Result<(), String> {
             }
         }
     }
-    for x in &tri_idx {
-        o.extend_from_slice(&x.to_le_bytes());
-    }
-    for x in &tri_tex {
-        o.extend_from_slice(&x.to_le_bytes());
-    }
-    o.extend_from_slice(&tri_uv);
-    while o.len() % 4 != 0 {
-        o.push(0);
+    for t in 0..n_tris {
+        let ib = t * 3;
+        o.extend_from_slice(&tri_idx[ib].to_le_bytes());
+        o.extend_from_slice(&tri_idx[ib + 1].to_le_bytes());
+        o.extend_from_slice(&tri_idx[ib + 2].to_le_bytes());
+        o.extend_from_slice(&tri_tex[t].to_le_bytes());
+        o.extend_from_slice(&tri_uv[t * 6..t * 6 + 6]);
+        o.extend_from_slice(&0u16.to_le_bytes());
     }
     for tx in &texs {
         o.extend_from_slice(&tx.w.to_le_bytes());
@@ -1964,6 +2197,45 @@ mod tests {
     }
 
     #[test]
+    fn entity_leafs_split_by_bsp_plane() {
+        let mut planes = Vec::new();
+        planes.extend_from_slice(&1.0f32.to_le_bytes());
+        planes.extend_from_slice(&0.0f32.to_le_bytes());
+        planes.extend_from_slice(&0.0f32.to_le_bytes());
+        planes.extend_from_slice(&0.0f32.to_le_bytes());
+        planes.extend_from_slice(&0i32.to_le_bytes());
+
+        let mut nodes = Vec::new();
+        nodes.extend_from_slice(&0i32.to_le_bytes()); // planenum
+        nodes.extend_from_slice(&(-2i16).to_le_bytes()); // front -> leaf 1
+        nodes.extend_from_slice(&(-3i16).to_le_bytes()); // back -> leaf 2
+        nodes.resize(SZ_NODE, 0);
+
+        let front = entity_leafs(
+            [1.0, -1.0, -1.0],
+            [2.0, 1.0, 1.0],
+            [0.0; 3],
+            None,
+            &nodes,
+            &planes,
+        );
+        assert_eq!(front, vec![1]);
+
+        let crossing = entity_leafs(
+            [-1.0, -1.0, -1.0],
+            [1.0, 1.0, 1.0],
+            [0.0; 3],
+            None,
+            &nodes,
+            &planes,
+        );
+        assert_eq!(crossing, vec![1, 2]);
+
+        assert_eq!(point_leaf([8.0, 0.0, 0.0], &nodes, &planes), 1);
+        assert_eq!(point_leaf([-8.0, 0.0, 0.0], &nodes, &planes), 2);
+    }
+
+    #[test]
     fn parses_synthetic_bsp() {
         // 2 vertices (24 bytes).
         let verts = vec![0u8; 2 * SZ_VERTEX];
@@ -2020,6 +2292,36 @@ mod tests {
         buf[4..8].copy_from_slice(&0i32.to_le_bytes());
         buf[8..12].copy_from_slice(&1_000_000i32.to_le_bytes());
         assert!(Bsp::parse(&buf).is_err());
+    }
+
+    #[test]
+    fn spawn_yaw_accepts_single_angle_key() {
+        let ents = br#"
+        {
+        "origin" "484 318 -204"
+        "angle" "180"
+        "classname" "info_player_start"
+        }
+        "#;
+        let (origin, yaw) = find_spawn(ents).expect("spawn");
+        assert_eq!(origin, [484.0, 318.0, -204.0]);
+        assert_eq!(yaw, 180.0);
+    }
+
+    #[test]
+    fn hl_yaw_maps_to_world_forward_axes() {
+        assert_eq!(hl_yaw_to_world_q12(90.0), 0);
+        assert_eq!(hl_yaw_to_world_q12(0.0), 1024);
+        assert_eq!(hl_yaw_to_world_q12(180.0), 3072);
+        assert_eq!(hl_yaw_to_world_q12(270.0), 2048);
+    }
+
+    #[test]
+    fn tool_textures_are_not_renderable() {
+        assert!(is_tool_texture("aaatrigger"));
+        assert!(is_tool_texture("clip"));
+        assert!(is_tool_texture("origin"));
+        assert!(!is_tool_texture("c1a0_labw5"));
     }
 
     #[test]

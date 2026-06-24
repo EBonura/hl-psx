@@ -1,11 +1,11 @@
 # hl-psx -- a bring-your-own-assets Half-Life renderer for the PlayStation 1,
-# built on the PSoXide Rust SDK (pinned as a git submodule under third_party/).
+# built on the sibling PSoXide Rust SDK checkout.
 # A plain `cargo build --release` already produces a PSX-EXE (see
 # game/.cargo/config.toml + game/build.rs); these targets add disc packing.
 
 ROOT     := $(CURDIR)
 GAME     := $(ROOT)/game
-PSOXIDE  ?= $(ROOT)/third_party/PSoXide
+PSOXIDE  ?= $(abspath $(ROOT)/../PSoXide)
 MKISOPSX = $(PSOXIDE)/tools/mkisopsx
 TARGET   := mipsel-sony-psx
 DIST     := $(ROOT)/dist
@@ -16,7 +16,7 @@ CAPTURE_DIR ?= $(ROOT)/captures
 GAMES_DIR ?= $(HOME)/Downloads/ps1 games
 GAME_NAME ?= Half-Life (hl-psx)
 # The crate lives under game/ so its PSX-target .cargo/config can't leak onto
-# the host tools (mkisopsx) built from the submodule.
+# the host tools (mkisopsx) built from PSoXide.
 EXE      := $(GAME)/target/$(TARGET)/release/hl-psx.exe
 FEATURES ?=
 CARGO_FEATURE_ARGS := $(if $(strip $(FEATURES)),--features $(FEATURES),)
@@ -47,11 +47,11 @@ HLBSP_BIN := $(HLBSP)/target/release/hl-bsp
 MAP      ?= c1a0
 
 .DEFAULT_GOAL := build
-.PHONY: help submodule build compile disc assets full-disc install run check-assets bsp-info cook rooms menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-chart
+.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-chart
 
 help:
 	@echo "hl-psx targets:"
-	@echo "  make submodule  - init/update the pinned PSoXide submodule"
+	@echo "  make psoxide-check - verify the sibling PSoXide checkout"
 	@echo "  make            - build + install into PSoXide (default; every build is live)"
 	@echo "  make build      - same as 'make': build, pack, and install into PSoXide"
 	@echo "  make compile    - fast EXE-only rebuild, no disc/install -> $(EXE)"
@@ -73,8 +73,9 @@ help:
 	@echo "  Source assets read from HL_DIR (default: macOS Steam path)."
 	@echo "  Override: make check-assets HL_DIR=/path/to/Half-Life"
 
-submodule:
-	git submodule update --init --recursive
+psoxide-check:
+	@test -f "$(PSOXIDE)/sdk/psoxide.ld" || (echo "PSoXide checkout not found: $(PSOXIDE)"; exit 1)
+	@echo "PSoXide -> $(PSOXIDE)"
 
 # `make` / `make build` build AND install into the PSoXide library, so every
 # build is immediately playable there. `make compile` is the fast EXE-only path
@@ -83,7 +84,7 @@ build: install
 	@echo "build -> live in PSoXide ($(GAMES_DIR)/$(GAME_NAME))"
 
 compile:
-	cd $(GAME) && cargo build --release $(CARGO_FEATURE_ARGS)
+	cd $(GAME) && PSOXIDE="$(PSOXIDE)" cargo build --release $(CARGO_FEATURE_ARGS)
 	@echo "EXE -> $(EXE)"
 
 disc: compile
