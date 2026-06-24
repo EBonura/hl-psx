@@ -234,7 +234,7 @@ cook:
 # Cook the studio models the runtime include_bytes!'s (data/models). Most are
 # baked to sequence 0. Headcrab uses an HMD3 clip pack:
 #   0 idle1, 4 run, 10 jump/attack, 7 dieback
-MODELLIST := scientist v_9mmhandgun
+MODELLIST := scientist barney v_9mmhandgun
 models:
 	cd $(HLBSP) && cargo build --release
 	@mkdir -p $(ROOT)/data/models

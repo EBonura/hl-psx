@@ -51,6 +51,7 @@ use vram::{TexSlot, EMPTY_SLOT};
 const MAP_WORDS: usize = room_budget::MAP_WORDS;
 static mut MAP_BUF: [u32; MAP_WORDS] = [0; MAP_WORDS];
 static SCI_BYTES: &[u8] = include_bytes!("../../data/models/scientist.hlmdl");
+static BARNEY_BYTES: &[u8] = include_bytes!("../../data/models/barney.hlmdl");
 static HEADCRAB_BYTES: &[u8] = include_bytes!("../../data/models/headcrab.hlmdl");
 static WPN_BYTES: &[u8] = include_bytes!("../../data/models/v_9mmhandgun.hlmdl");
 
@@ -108,6 +109,7 @@ const PROP_CLIP_ATTACK: usize = 2;
 const PROP_CLIP_DEAD: usize = 3;
 const PLAYER_START_HEALTH: u16 = 100;
 const SCIENTIST_HEALTH: u8 = 24;
+const BARNEY_HEALTH: u8 = 35;
 const HEADCRAB_HEALTH: u8 = 16;
 const HEADCRAB_SPEED: i32 = 5;
 const HEADCRAB_WAKE_RANGE2: i32 = 1300 * 1300;
@@ -133,6 +135,7 @@ static mut PRIMITIVE_PACKETS: PrimitivePacketScratch<MAX_RENDER_PACKETS> =
 static mut HUD_PRIMS: [QuadTexturedMaterial; hud::DRAW_CAP] = [hud::EMPTY_QUAD; hud::DRAW_CAP];
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 static mut SCI_SLOTS: [TexSlot; 24] = [EMPTY_SLOT; 24];
+static mut BARNEY_SLOTS: [TexSlot; 24] = [EMPTY_SLOT; 24];
 static mut HEADCRAB_SLOTS: [TexSlot; 8] = [EMPTY_SLOT; 8];
 static mut WEAPON_SLOTS: [TexSlot; 12] = [EMPTY_SLOT; 12];
 const EMPTY_PROJECTED: Projected = Projected {
@@ -322,6 +325,7 @@ fn sphere_visible(center: [i32; 3], radius: i32, rot: &Mat3I16, base_t: [i32; 3]
 fn prop_start_health(ty: u8) -> u8 {
     match ty {
         PROP_TYPE_SCIENTIST => SCIENTIST_HEALTH,
+        PROP_TYPE_BARNEY => BARNEY_HEALTH,
         PROP_TYPE_HEADCRAB => HEADCRAB_HEALTH,
         _ => 0,
     }
@@ -1445,13 +1449,14 @@ fn main() {
     scene::set_screen_offset(160 << 16, 120 << 16);
     scene::set_projection_plane(H_PROJ);
     let sci = Model::load(SCI_BYTES);
+    let barney = Model::load(BARNEY_BYTES);
     let headcrab = Model::load(HEADCRAB_BYTES);
 
     // Boot flow: pick a map in the menu, stream + play it, return on Select.
     // (Analog is enabled inside play(); the menu runs on the digital pad.)
     loop {
         let sel = menu::run(&mut fb);
-        play(&mut fb, &sci, &headcrab, sel as u32);
+        play(&mut fb, &sci, &barney, &headcrab, sel as u32);
     }
 }
 
@@ -1467,7 +1472,7 @@ fn room_texture_chunk_id(room_id: u32) -> u32 {
 
 /// Stream menu room `chunk_id` from WORLD.PAK, upload its textures, and run the
 /// renderer + physics loop until the player presses Select (back to menu).
-fn play(fb: &mut FrameBuffer, sci: &Model, headcrab: &Model, room_id: u32) {
+fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, room_id: u32) {
     let _ = enable_analog_port1();
     telemetry::frame_begin(0);
     telemetry::task_begin(telemetry::task::FIXED_UPDATE);
@@ -1532,6 +1537,12 @@ fn play(fb: &mut FrameBuffer, sci: &Model, headcrab: &Model, room_id: u32) {
             sci.tex_blob(),
             sci.n_texs,
             core::ptr::addr_of_mut!(SCI_SLOTS).cast::<TexSlot>(),
+            24,
+        );
+        vram::upload_tex_blob_raw(
+            barney.tex_blob(),
+            barney.n_texs,
+            core::ptr::addr_of_mut!(BARNEY_SLOTS).cast::<TexSlot>(),
             24,
         );
         vram::upload_tex_blob_raw(
@@ -2114,8 +2125,8 @@ fn play(fb: &mut FrameBuffer, sci: &Model, headcrab: &Model, room_id: u32) {
                 let cooked_leaf = PROP_LEAF[pi];
                 let (md, slots) = match ty {
                     PROP_TYPE_SCIENTIST => (sci, &SCI_SLOTS[..]),
+                    PROP_TYPE_BARNEY => (barney, &BARNEY_SLOTS[..]),
                     PROP_TYPE_HEADCRAB => (headcrab, &HEADCRAB_SLOTS[..]),
-                    PROP_TYPE_BARNEY => continue,
                     _ => continue,
                 };
                 model_bounds_tests = model_bounds_tests.saturating_add(1);
