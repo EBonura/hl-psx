@@ -580,6 +580,10 @@ fn longest_uv_edge(c: &[CookCorner; 3]) -> usize {
     best
 }
 
+fn uv_byte(v: f32) -> u8 {
+    (v.round() as i32).rem_euclid(256) as u8
+}
+
 fn mid_corner(a: CookCorner, b: CookCorner, verts: &mut Vec<[i16; 3]>) -> Option<CookCorner> {
     if verts.len() >= MAX_COOK_VERTS {
         return None;
@@ -604,6 +608,144 @@ fn mid_corner(a: CookCorner, b: CookCorner, verts: &mut Vec<[i16; 3]>) -> Option
     })
 }
 
+fn uv_axis(c: &CookCorner, axis: usize) -> f32 {
+    if axis == 0 {
+        c.uv.0
+    } else {
+        c.uv.1
+    }
+}
+
+fn set_uv_axis(mut c: CookCorner, axis: usize, value: f32) -> CookCorner {
+    if axis == 0 {
+        c.uv.0 = value;
+    } else {
+        c.uv.1 = value;
+    }
+    c
+}
+
+fn uv_seam(c: &[CookCorner; 3], axis: usize) -> Option<f32> {
+    let min_v = uv_axis(&c[0], axis)
+        .min(uv_axis(&c[1], axis))
+        .min(uv_axis(&c[2], axis));
+    let max_v = uv_axis(&c[0], axis)
+        .max(uv_axis(&c[1], axis))
+        .max(uv_axis(&c[2], axis));
+    let seam = (min_v / 256.0).floor() * 256.0 + 256.0;
+    if min_v < seam && max_v >= seam {
+        Some(seam)
+    } else {
+        None
+    }
+}
+
+fn lerp_corner_at_uv_axis(
+    a: CookCorner,
+    b: CookCorner,
+    axis: usize,
+    target: f32,
+    verts: &mut Vec<[i16; 3]>,
+) -> Option<CookCorner> {
+    if verts.len() >= MAX_COOK_VERTS {
+        return None;
+    }
+    let av = uv_axis(&a, axis);
+    let bv = uv_axis(&b, axis);
+    let den = bv - av;
+    let t = if den.abs() < 0.0001 {
+        0.0
+    } else {
+        ((target - av) / den).clamp(0.0, 1.0)
+    };
+    let lerp_i16 = |x: i16, y: i16| (x as f32 + (y as f32 - x as f32) * t).round() as i16;
+    let lerp_u8 = |x: u8, y: u8| {
+        (x as f32 + (y as f32 - x as f32) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    let pos = [
+        lerp_i16(a.pos[0], b.pos[0]),
+        lerp_i16(a.pos[1], b.pos[1]),
+        lerp_i16(a.pos[2], b.pos[2]),
+    ];
+    let idx = verts.len() as u16;
+    verts.push(pos);
+    Some(CookCorner {
+        idx,
+        pos,
+        uv: (
+            a.uv.0 + (b.uv.0 - a.uv.0) * t,
+            a.uv.1 + (b.uv.1 - a.uv.1) * t,
+        ),
+        shade: (
+            lerp_u8(a.shade.0, b.shade.0),
+            lerp_u8(a.shade.1, b.shade.1),
+            lerp_u8(a.shade.2, b.shade.2),
+        ),
+    })
+}
+
+fn clip_uv_side(
+    input: &[CookCorner],
+    axis: usize,
+    seam: f32,
+    keep_low: bool,
+    boundary_uv: f32,
+    verts: &mut Vec<[i16; 3]>,
+) -> Option<Vec<CookCorner>> {
+    let mut out = Vec::with_capacity(input.len() + 2);
+    for i in 0..input.len() {
+        let cur = input[i];
+        let prev = input[(i + input.len() - 1) % input.len()];
+        let cur_in = if keep_low {
+            uv_axis(&cur, axis) < seam
+        } else {
+            uv_axis(&cur, axis) >= seam
+        };
+        let prev_in = if keep_low {
+            uv_axis(&prev, axis) < seam
+        } else {
+            uv_axis(&prev, axis) >= seam
+        };
+        if cur_in != prev_in {
+            let cut = lerp_corner_at_uv_axis(prev, cur, axis, seam, verts)?;
+            out.push(set_uv_axis(cut, axis, boundary_uv));
+        }
+        if cur_in {
+            out.push(cur);
+        }
+    }
+    Some(out)
+}
+
+fn emit_cooked_poly(
+    poly: &[CookCorner],
+    tex_id: u16,
+    depth: u8,
+    verts: &mut Vec<[i16; 3]>,
+    tri_idx: &mut Vec<u16>,
+    tri_tex: &mut Vec<u16>,
+    tri_uv: &mut Vec<u8>,
+    tri_rgb: &mut Vec<u8>,
+) {
+    if poly.len() < 3 {
+        return;
+    }
+    for i in 1..poly.len() - 1 {
+        emit_cooked_tri(
+            [poly[0], poly[i], poly[i + 1]],
+            tex_id,
+            depth,
+            verts,
+            tri_idx,
+            tri_tex,
+            tri_uv,
+            tri_rgb,
+        );
+    }
+}
+
 fn emit_cooked_tri(
     c: [CookCorner; 3],
     tex_id: u16,
@@ -614,6 +756,25 @@ fn emit_cooked_tri(
     tri_uv: &mut Vec<u8>,
     tri_rgb: &mut Vec<u8>,
 ) {
+    for axis in 0..2 {
+        if let Some(seam) = uv_seam(&c, axis) {
+            let input = [c[0], c[1], c[2]];
+            let Some(low) = clip_uv_side(&input, axis, seam, true, seam - 1.0, verts) else {
+                break;
+            };
+            let Some(high) = clip_uv_side(&input, axis, seam, false, seam, verts) else {
+                break;
+            };
+            emit_cooked_poly(
+                &low, tex_id, depth, verts, tri_idx, tri_tex, tri_uv, tri_rgb,
+            );
+            emit_cooked_poly(
+                &high, tex_id, depth, verts, tri_idx, tri_tex, tri_uv, tri_rgb,
+            );
+            return;
+        }
+    }
+
     if depth > 0 && uv_split_needed(&c) {
         let split = longest_uv_edge(&c);
         let mid = match split {
@@ -697,8 +858,8 @@ fn emit_cooked_tri(
     tri_idx.extend_from_slice(&[c[0].idx, c[1].idx, c[2].idx]);
     tri_tex.push(tex_id);
     for v in &c {
-        tri_uv.push(v.uv.0.round().clamp(0.0, 255.0) as u8);
-        tri_uv.push(v.uv.1.round().clamp(0.0, 255.0) as u8);
+        tri_uv.push(uv_byte(v.uv.0));
+        tri_uv.push(uv_byte(v.uv.1));
     }
     for v in &c {
         tri_rgb.extend_from_slice(&[v.shade.0, v.shade.1, v.shade.2]);
@@ -1189,6 +1350,7 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     let lighting = bsp.lump(LUMP_LIGHTING);
     let faces = bsp.lump(LUMP_FACES);
     let n_faces = faces.len() / SZ_FACE;
+    let n_edges = edges.len() / SZ_EDGE;
 
     let mut tri_idx: Vec<u16> = Vec::new();
     let mut tri_tex: Vec<u16> = Vec::new();
@@ -1200,6 +1362,110 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     let mut face_ntri = vec![0u16; n_faces];
     let mut face_center = vec![[0i16; 3]; n_faces];
     let mut face_extent = vec![[0u16; 3]; n_faces];
+    let mut raw_verts = raw.clone();
+
+    // The triangle UV splitter can otherwise create T-junctions: one face gets
+    // a midpoint on a shared BSP edge while its neighbour keeps the original
+    // unsplit edge. Pre-split BSP edges once, using the strongest subdivision
+    // requested by any face that references the edge, then all faces consume
+    // the same boundary vertices.
+    let mut edge_segments = vec![1u8; n_edges];
+    for f in 0..n_faces {
+        let fo = f * SZ_FACE;
+        let firstedge = i32le(faces, fo + 4).unwrap_or(0) as usize;
+        let numedges = u16le(faces, fo + 8).unwrap_or(0) as usize;
+        let ti = u16le(faces, fo + 10).unwrap_or(0) as usize;
+        if numedges < 3 {
+            continue;
+        }
+        let mtx = i32le(texinfo, ti * SZ_TEXINFO + 32).unwrap_or(-1);
+        let tex_id = if mtx >= 0 && (mtx as usize) < n_texs {
+            mtx as usize
+        } else {
+            0
+        };
+        if is_tool_texture(&tex_names[tex_id]) {
+            continue;
+        }
+        let (fw, fh) = (texs[tex_id].w as f32, texs[tex_id].h as f32);
+        let (ow, oh) = orig[tex_id];
+        let to = ti * SZ_TEXINFO;
+        let s = [
+            f32le(texinfo, to).unwrap_or(0.0),
+            f32le(texinfo, to + 4).unwrap_or(0.0),
+            f32le(texinfo, to + 8).unwrap_or(0.0),
+        ];
+        let s_off = f32le(texinfo, to + 12).unwrap_or(0.0);
+        let t = [
+            f32le(texinfo, to + 16).unwrap_or(0.0),
+            f32le(texinfo, to + 20).unwrap_or(0.0),
+            f32le(texinfo, to + 24).unwrap_or(0.0),
+        ];
+        let t_off = f32le(texinfo, to + 28).unwrap_or(0.0);
+        for j in 0..numedges {
+            let se = match i32le(surf, (firstedge + j) * SZ_SURFEDGE) {
+                Some(v) => v,
+                None => continue,
+            };
+            let edge_idx = se.unsigned_abs() as usize;
+            if edge_idx >= n_edges {
+                continue;
+            }
+            let eo = edge_idx * SZ_EDGE;
+            let (Some(v0), Some(v1)) = (u16le(edges, eo), u16le(edges, eo + 2)) else {
+                continue;
+            };
+            let (a, b) = if se >= 0 { (v0, v1) } else { (v1, v0) };
+            if (a as usize) >= orig_n_verts || (b as usize) >= orig_n_verts {
+                continue;
+            }
+            let uv_at = |p: [f32; 3]| {
+                let ou = p[0] * s[0] + p[1] * s[1] + p[2] * s[2] + s_off;
+                let ov = p[0] * t[0] + p[1] * t[1] + p[2] * t[2] + t_off;
+                (ou * fw / ow as f32, ov * fh / oh as f32)
+            };
+            let ua = uv_at(raw[a as usize]);
+            let ub = uv_at(raw[b as usize]);
+            let span = (ua.0 - ub.0).abs().max((ua.1 - ub.1).abs());
+            let segs = ((span / UV_SPLIT_SPAN).ceil() as u8).clamp(1, 1 << UV_SPLIT_DEPTH);
+            edge_segments[edge_idx] = edge_segments[edge_idx].max(segs);
+        }
+    }
+    let mut edge_split_verts = vec![[u16::MAX; 3]; n_edges];
+    for edge_idx in 0..n_edges {
+        let segs = edge_segments[edge_idx] as usize;
+        if segs <= 1 {
+            continue;
+        }
+        let eo = edge_idx * SZ_EDGE;
+        let (Some(v0), Some(v1)) = (u16le(edges, eo), u16le(edges, eo + 2)) else {
+            continue;
+        };
+        if (v0 as usize) >= orig_n_verts || (v1 as usize) >= orig_n_verts {
+            continue;
+        }
+        let a = raw[v0 as usize];
+        let b = raw[v1 as usize];
+        for r in 1..segs {
+            if verts.len() >= MAX_COOK_VERTS {
+                break;
+            }
+            let frac = r as f32 / segs as f32;
+            let p = [
+                a[0] + (b[0] - a[0]) * frac,
+                a[1] + (b[1] - a[1]) * frac,
+                a[2] + (b[2] - a[2]) * frac,
+            ];
+            let idx = verts.len() as u16;
+            raw_verts.push(p);
+            verts.push([
+                (p[0] / scale).round() as i16,
+                (p[2] / scale).round() as i16,
+                (p[1] / scale).round() as i16,
+            ]);
+            edge_split_verts[edge_idx][r - 1] = idx;
+        }
+    }
 
     for f in 0..n_faces {
         let fo = f * SZ_FACE;
@@ -1216,15 +1482,36 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
                 Some(v) => v,
                 None => break,
             };
-            let e = se.unsigned_abs() as usize * SZ_EDGE;
-            let v = if se >= 0 {
+            let edge_idx = se.unsigned_abs() as usize;
+            let e = edge_idx * SZ_EDGE;
+            let start = if se >= 0 {
                 u16le(edges, e)
             } else {
                 u16le(edges, e + 2)
             };
-            if let Some(v) = v {
-                if (v as usize) < orig_n_verts {
+            if let Some(v) = start {
+                if (v as usize) < raw_verts.len() {
                     poly.push(v);
+                }
+            }
+            if edge_idx < edge_split_verts.len() {
+                let segs = edge_segments[edge_idx] as usize;
+                if segs > 1 {
+                    if se >= 0 {
+                        for r in 1..segs {
+                            let v = edge_split_verts[edge_idx][r - 1];
+                            if v != u16::MAX && (v as usize) < raw_verts.len() {
+                                poly.push(v);
+                            }
+                        }
+                    } else {
+                        for r in (1..segs).rev() {
+                            let v = edge_split_verts[edge_idx][r - 1];
+                            if v != u16::MAX && (v as usize) < raw_verts.len() {
+                                poly.push(v);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1279,7 +1566,7 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         let (mut minu, mut minv) = (f32::MAX, f32::MAX);
         let (mut lu0, mut lu1, mut lv0, mut lv1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
         for &vi in &poly {
-            let p = raw[vi as usize];
+            let p = raw_verts[vi as usize];
             let ou = p[0] * s[0] + p[1] * s[1] + p[2] * s[2] + s_off; // original texels
             let ov = p[0] * t[0] + p[1] * t[1] + p[2] * t[2] + t_off;
             lu0 = lu0.min(ou);
@@ -2376,6 +2663,58 @@ mod tests {
             let max_v = uv[1].max(uv[3]).max(uv[5]);
             assert!(max_u - min_u <= UV_SPLIT_SPAN as u8);
             assert!(max_v - min_v <= UV_SPLIT_SPAN as u8);
+        }
+    }
+
+    #[test]
+    fn uv_seam_split_keeps_wrapped_bytes_local() {
+        let mut verts = vec![[0, 0, 0], [32, 0, 0], [0, 32, 0]];
+        let corners = [
+            CookCorner {
+                idx: 0,
+                pos: verts[0],
+                uv: (250.0, 12.0),
+                shade: (10, 20, 30),
+            },
+            CookCorner {
+                idx: 1,
+                pos: verts[1],
+                uv: (270.0, 12.0),
+                shade: (30, 40, 50),
+            },
+            CookCorner {
+                idx: 2,
+                pos: verts[2],
+                uv: (260.0, 44.0),
+                shade: (50, 60, 70),
+            },
+        ];
+        let mut tri_idx = Vec::new();
+        let mut tri_tex = Vec::new();
+        let mut tri_uv = Vec::new();
+        let mut tri_rgb = Vec::new();
+
+        emit_cooked_tri(
+            corners,
+            9,
+            UV_SPLIT_DEPTH,
+            &mut verts,
+            &mut tri_idx,
+            &mut tri_tex,
+            &mut tri_uv,
+            &mut tri_rgb,
+        );
+
+        assert!(tri_idx.len() / 3 > 1);
+        assert_eq!(tri_tex.len(), tri_idx.len() / 3);
+        for uv in tri_uv.chunks_exact(6) {
+            let min_u = uv[0].min(uv[2]).min(uv[4]);
+            let max_u = uv[0].max(uv[2]).max(uv[4]);
+            assert!(
+                max_u - min_u <= 24,
+                "triangle crosses the 255->0 byte seam: {:?}",
+                uv
+            );
         }
     }
 }

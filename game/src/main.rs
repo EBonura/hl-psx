@@ -40,9 +40,9 @@ use psx_gpu::prim::QuadTexturedMaterial;
 use vram::{TexSlot, EMPTY_SLOT};
 
 // Maps stream from the disc's WORLD.PAK at runtime (no longer baked into the
-// EXE). MAP_BUF holds one cooked `.hlm`; sized for the largest packed map
-// (~900 KB). `make rooms` cooks the selectable maps; chunk id == room_<N>.
-const MAP_WORDS: usize = 232_000; // 928,000 bytes; room_3.psxc is ~904 KiB
+// EXE). MAP_BUF holds one cooked `.hlm`; sized for the largest packed map.
+// `make rooms` cooks the selectable maps; chunk id == room_<N>.
+const MAP_WORDS: usize = 255_000; // 1,020,000 bytes; room_3.psxc is currently ~991 KiB
 static mut MAP_BUF: [u32; MAP_WORDS] = [0; MAP_WORDS];
 static SCI_BYTES: &[u8] = include_bytes!("../../data/models/scientist.hlmdl");
 static WPN_BYTES: &[u8] = include_bytes!("../../data/models/v_9mmhandgun.hlmdl");
@@ -59,13 +59,16 @@ const MAX_TEX_SLOTS: usize = 256;
 const MAX_FACES: usize = 6144;
 const MAX_LEAVES: usize = 8192;
 const MAX_ENTS: usize = 192;
-const MAX_PVS_TRIS: usize = 4096;
+const MAX_PVS_TRIS: usize = 3072;
 const DOOR_SPEED: i32 = 120;
 const NEAR: u16 = 2; // GTE depth: only verts at/behind the near plane take the soft-clip path
 const SUBDIV_PX: i32 = 96; // split near-clipped triangles wider than this (affine fix)
 const SUBDIV_DEPTH: u8 = 0; // ponytail: subdivision off (perf); affine warp accepted
 const CULL: bool = true; // backface cull (keep area > 0; winding verified)
 const H_PROJ: u16 = 160; // ~90 deg horizontal FOV at 320px
+const WORLD_QUAD_PAIRING: bool = true; // pair two-triangle BSP quads when safe
+const WORLD_BOUNDS_CULL: bool = true; // face AABB frustum test before projection
+const WORLD_BOUNDS_PAD: i32 = 256; // guard band for rotated face AABBs near screen edges
 
 const PITCH_MAX: i16 = 1000;
 const YAW_RATE: i32 = 130; // yaw units/frame at full stick (Q0.12)
@@ -307,18 +310,51 @@ fn box_visible(center: [i32; 3], ext: [i32; 3], rot: &Mat3I16, base_t: [i32; 3])
 
     let vx = dot12(rot.m[0], center) + base_t[0];
     let ex = abs_dot12(rot.m[0], ext);
-    if (vx - ex) * 2 > zmax * 2 + 64 || (-vx - ex) * 2 > zmax * 2 + 64 {
+    if (vx - ex) * 2 > zmax * 2 + WORLD_BOUNDS_PAD || (-vx - ex) * 2 > zmax * 2 + WORLD_BOUNDS_PAD {
         return false;
     }
 
     let vy = dot12(rot.m[1], center) + base_t[1];
     let ey = abs_dot12(rot.m[1], ext);
-    (vy - ey) * 4 <= zmax * 3 + 64 && (-vy - ey) * 4 <= zmax * 3 + 64
+    (vy - ey) * 4 <= zmax * 3 + WORLD_BOUNDS_PAD && (-vy - ey) * 4 <= zmax * 3 + WORLD_BOUNDS_PAD
 }
 
 #[inline]
 fn clamp_otz(z: usize) -> usize {
     z.clamp(1, OT_LEN - 1)
+}
+
+#[inline]
+fn farthest3_u16(a: u16, b: u16, c: u16) -> u32 {
+    a.max(b).max(c) as u32
+}
+
+#[inline]
+fn farthest4_u16(a: u16, b: u16, c: u16, d: u16) -> u32 {
+    a.max(b).max(c).max(d) as u32
+}
+
+#[inline]
+fn farthest3_i32(a: i32, b: i32, c: i32) -> i32 {
+    a.max(b).max(c).max(1)
+}
+
+#[inline]
+fn world_otz_from_gte3(a: &Projected, b: &Projected, c: &Projected) -> usize {
+    // PSoXide's renderer has a farthest-depth policy for depth-spanning world
+    // surfaces. Average depth lets long sloped BSP triangles draw over nearer
+    // geometry in a painter's-algorithm OT.
+    clamp_otz((farthest3_u16(a.sz, b.sz, c.sz) >> 6) as usize)
+}
+
+#[inline]
+fn world_otz_from_gte4(a: &Projected, b: &Projected, c: &Projected, d: &Projected) -> usize {
+    clamp_otz((farthest4_u16(a.sz, b.sz, c.sz, d.sz) >> 6) as usize)
+}
+
+#[inline]
+fn world_otz_from_view3(a: i32, b: i32, c: i32) -> usize {
+    clamp_otz((farthest3_i32(a, b, c) >> 4) as usize)
 }
 
 fn camera_leaf(m: &Map, eye: [i32; 3]) -> i32 {
@@ -557,8 +593,7 @@ const fn uv_word(uv: (u8, u8)) -> u16 {
 }
 
 #[inline]
-unsafe fn push_tri_to<const N: usize>(
-    ot: &mut OrderingTable<N>,
+unsafe fn push_tri(
     np: &mut usize,
     screen: [(i16, i16); 3],
     uv: [(u8, u8); 3],
@@ -575,20 +610,8 @@ unsafe fn push_tri_to<const N: usize>(
         rgb,
         mat,
     );
-    ot.add(otz, &mut PRIMS[*np], TriTexturedGouraud::WORDS);
+    OT.add(otz, &mut PRIMS[*np], TriTexturedGouraud::WORDS);
     *np += 1;
-}
-
-#[inline]
-unsafe fn push_tri(
-    np: &mut usize,
-    screen: [(i16, i16); 3],
-    uv: [(u8, u8); 3],
-    rgb: [(u8, u8, u8); 3],
-    mat: TexturedGouraudPacketMaterial,
-    otz: usize,
-) {
-    push_tri_to(&mut OT, np, screen, uv, rgb, mat, otz);
 }
 
 /// Emit triangle `t` from its three projected screen verts `p`. Small in-front
@@ -634,14 +657,13 @@ unsafe fn emit_projected(m: &Map, tri: map::Tri, p: [Projected; 3], nv: usize, n
         if CULL && culled(sa, sb, sc) {
             return;
         }
-        let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
         push_tri(
             np,
             [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
             uv,
             rgb,
             slot.packet,
-            clamp_otz((avgz >> 6) as usize),
+            world_otz_from_gte3(&pa, &pb, &pc),
         );
         return;
     }
@@ -704,7 +726,6 @@ unsafe fn emit_cv(
     let cl = |x: i32| x.clamp(0, 255) as u8;
     // Common case: fully on-screen -> draw directly, no guard-clip buffer.
     if render::in_band(&pa) && render::in_band(&pb) && render::in_band(&pc) {
-        let avgz = ((pa.z + pb.z + pc.z) / 3).max(1);
         push_tri(
             np,
             [
@@ -723,7 +744,7 @@ unsafe fn emit_cv(
                 (cl(pc.rgb.0), cl(pc.rgb.1), cl(pc.rgb.2)),
             ],
             mat,
-            clamp_otz((avgz >> 4) as usize),
+            world_otz_from_view3(pa.z, pb.z, pc.z),
         );
         return;
     }
@@ -735,7 +756,6 @@ unsafe fn emit_cv(
     }
     for j in 1..gn - 1 {
         let (s0, s1, s2) = (g[0], g[j], g[j + 1]);
-        let avgz = ((s0.z + s1.z + s2.z) / 3).max(1);
         push_tri(
             np,
             [
@@ -754,7 +774,7 @@ unsafe fn emit_cv(
                 (cl(s2.rgb.0), cl(s2.rgb.1), cl(s2.rgb.2)),
             ],
             mat,
-            clamp_otz((avgz >> 4) as usize),
+            world_otz_from_view3(s0.z, s1.z, s2.z),
         );
     }
 }
@@ -814,7 +834,6 @@ unsafe fn try_emit_tri_pair_quad_values(
         return true;
     }
 
-    let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32) + (pd.sz as u32)) / 4;
     QUAD_PRIMS[*nq] = QuadTexturedGouraud::with_packet_material_packed_uv_words(
         [
             (pb.sx, pb.sy),
@@ -832,7 +851,7 @@ unsafe fn try_emit_tri_pair_quad_values(
         slot.packet,
     );
     OT.add(
-        clamp_otz((avgz >> 6) as usize),
+        world_otz_from_gte4(&pa, &pb, &pc, &pd),
         &mut QUAD_PRIMS[*nq],
         QuadTexturedGouraud::WORDS,
     );
@@ -885,7 +904,7 @@ unsafe fn emit_cached_world_face_tris(
     if cache_first + cnt > MAX_PVS_TRIS {
         return;
     }
-    if cnt == 2 {
+    if WORLD_QUAD_PAIRING && cnt == 2 {
         let t0 = PVS_TRI_CACHE[cache_first];
         let t1 = PVS_TRI_CACHE[cache_first + 1];
         if try_emit_tri_pair_quad_values(m, t0, t1, nv, frame, nq) {
@@ -923,7 +942,7 @@ unsafe fn emit_world_face_tris(
     nq: &mut usize,
     counts: &mut WorldCounters,
 ) {
-    if cnt == 2 && try_emit_tri_pair_quad(m, first, nv, frame, nq) {
+    if WORLD_QUAD_PAIRING && cnt == 2 && try_emit_tri_pair_quad(m, first, nv, frame, nq) {
         counts.emit_calls += 2;
         return;
     }
@@ -979,7 +998,7 @@ unsafe fn emit_world_face(
         return;
     }
     let (bc, be) = m.face_bounds(face);
-    if !box_visible(bc, be, rot, base_t) {
+    if WORLD_BOUNDS_CULL && !box_visible(bc, be, rot, base_t) {
         return;
     }
     emit_world_face_tris(m, first, cnt, nv, frame, np, nq, counts);
@@ -1310,11 +1329,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
 
     telemetry::stage_begin(telemetry::stage::ROOM_SURFACE_CACHE);
     unsafe {
-        let initial_eye = [
-            player.pos[0],
-            player.pos[1] + VIEW_HEIGHT,
-            player.pos[2],
-        ];
+        let initial_eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
         let initial_leaf = camera_leaf(&m, initial_eye);
         if initial_leaf > 0 && (initial_leaf as usize) < m.n_leaves {
             rebuild_pvs_cache(&m, initial_leaf, nents);
@@ -1490,6 +1505,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                 telemetry::counter::ROOM_CAMERA_GLOBAL_Z_BIASED,
                 (eye[2] + 32768).max(0) as u32,
             );
+            telemetry::counter(telemetry::counter::ROOM_PLAYER_VIEW_YAW_Q12, yaw as u32);
 
             telemetry::stage_end(telemetry::stage::UPDATE);
             telemetry::counter(telemetry::counter::SIM_TICKS, 1);
@@ -1581,7 +1597,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                         let be16 = PVS_FACE_EXTENT[e];
                         let bc = [bc16[0] as i32, bc16[1] as i32, bc16[2] as i32];
                         let be = [be16[0] as i32, be16[1] as i32, be16[2] as i32];
-                        if box_visible(bc, be, &rot, base_t) {
+                        if !WORLD_BOUNDS_CULL || box_visible(bc, be, &rot, base_t) {
                             let cnt = PVS_FACE_TRI_COUNT[e] as usize;
                             if PVS_FACE_CACHE_FIRST[e] != PVS_LINK_END {
                                 emit_cached_world_face_tris(
@@ -1879,6 +1895,22 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
             telemetry::counter(
                 telemetry::counter::WORLD_COMMANDS,
                 (world_prims + world_quads) as u32,
+            );
+            telemetry::counter(
+                telemetry::counter::ROOM_SURF_SPLIT_TRIS,
+                model_prims0 as u32,
+            );
+            telemetry::counter(
+                telemetry::counter::ROOM_SURF_WHOLE_QUADS,
+                world_quads as u32,
+            );
+            telemetry::counter(
+                telemetry::counter::TRI_PRIMITIVE_REMAINING,
+                MAX_PRIMS.saturating_sub(np) as u32,
+            );
+            telemetry::counter(
+                telemetry::counter::ROOM_SUBMIT_PRIMITIVE_OVERFLOWS,
+                (np >= MAX_PRIMS || nq >= MAX_QUADS) as u32,
             );
         }
 
