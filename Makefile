@@ -5,10 +5,11 @@
 
 ROOT     := $(CURDIR)
 GAME     := $(ROOT)/game
-PSOXIDE  := $(ROOT)/third_party/PSoXide
-MKISOPSX := $(PSOXIDE)/tools/mkisopsx
+PSOXIDE  ?= $(ROOT)/third_party/PSoXide
+MKISOPSX = $(PSOXIDE)/tools/mkisopsx
 TARGET   := mipsel-sony-psx
 DIST     := $(ROOT)/dist
+CAPTURE_DIR ?= $(ROOT)/captures
 
 # Where `make install` drops a playable disc so you can boot it from the PSoXide
 # game library. Override via the environment or on the command line.
@@ -19,6 +20,14 @@ GAME_NAME ?= Half-Life (hl-psx)
 EXE      := $(GAME)/target/$(TARGET)/release/hl-psx.exe
 FEATURES ?=
 CARGO_FEATURE_ARGS := $(if $(strip $(FEATURES)),--features $(FEATURES),)
+PSOXIDE_LAUNCH = cd $(PSOXIDE)/emu && cargo run -p frontend --release -- launch
+PSOXIDE_DEV    = cargo run --manifest-path $(PSOXIDE)/tools/psoxide-dev/Cargo.toml --release --
+PSOXIDE_SMOKE_STEPS ?= 50000000
+PSOXIDE_GAMEPLAY_STEPS ?= 320000000
+PSOXIDE_PROFILE_STEPS ?= 600000000
+PSOXIDE_PROFILE_FRAMES ?= 180
+# Default gameplay route selects c1a0: Down once, then Cross to play.
+PSOXIDE_MENU_PLAY_PULSES ?= 0x0040@40+4,0x4000@90+8
 
 # ---- Source Half-Life assets (bring your own; never committed) ----
 # We read the original GoldSrc files (WAD textures, BSP maps, MDL models)
@@ -37,16 +46,25 @@ HLBSP    := $(ROOT)/tools/hl-bsp
 HLBSP_BIN := $(HLBSP)/target/release/hl-bsp
 MAP      ?= c1a0
 
-.PHONY: help submodule build disc install run check-assets bsp-info cook clean
+.DEFAULT_GOAL := build
+.PHONY: help submodule build compile disc assets full-disc install run check-assets bsp-info cook rooms menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-chart
 
 help:
 	@echo "hl-psx targets:"
 	@echo "  make submodule  - init/update the pinned PSoXide submodule"
-	@echo "  make build      - build the PSX-EXE  -> $(EXE)"
-	@echo "  make disc       - build + pack a burnable .bin/.cue into dist/"
-	@echo "  make install    - build + install the disc into the PSoXide game"
+	@echo "  make            - build + install into PSoXide (default; every build is live)"
+	@echo "  make build      - same as 'make': build, pack, and install into PSoXide"
+	@echo "  make compile    - fast EXE-only rebuild, no disc/install -> $(EXE)"
+	@echo "  make disc       - compile + pack a burnable .bin/.cue into dist/"
+	@echo "  make assets     - recook menu assets, rooms, and models from Half-Life"
+	@echo "  make full-disc  - assets + disc"
+	@echo "  make install    - pack + install the disc into the PSoXide game"
 	@echo "                    library ($(GAMES_DIR))"
-	@echo "  make run        - alias for install (build + drop in the library)"
+	@echo "  make run        - alias for build (build + drop in the library)"
+	@echo "  make psoxide-smoke    - headless menu screenshot/hash via PSoXide"
+	@echo "  make psoxide-gameplay - headless c1a0 gameplay screenshot/hash"
+	@echo "  make psoxide-profile  - telemetry build + CSV/profile screenshot"
+	@echo "  make psoxide-chart    - profile + HTML vblank chart"
 	@echo "  make check-assets - verify the source Half-Life install (HL_DIR)"
 	@echo "  make bsp-info   - geometry + texture-VRAM budget for one map (MAP=$(MAP))"
 	@echo "  make cook       - cook a map to data/maps/<MAP>.hlm (MAP=$(MAP))"
@@ -58,17 +76,96 @@ help:
 submodule:
 	git submodule update --init --recursive
 
-build:
+# `make` / `make build` build AND install into the PSoXide library, so every
+# build is immediately playable there. `make compile` is the fast EXE-only path
+# (no disc/install) for quick compile checks.
+build: install
+	@echo "build -> live in PSoXide ($(GAMES_DIR)/$(GAME_NAME))"
+
+compile:
 	cd $(GAME) && cargo build --release $(CARGO_FEATURE_ARGS)
 	@echo "EXE -> $(EXE)"
 
-disc: build
+disc: compile
 	@mkdir -p $(DIST)
 	cd $(MKISOPSX) && cargo run --release -- \
 		--exe $(EXE) \
 		--out $(DIST)/hl-psx.bin \
-		--volume HLPSX
+		--volume HLPSX \
+		--world-pack-rooms-dir $(ROOMS)
 	@echo "DISC -> $(DIST)/hl-psx.cue"
+
+assets: check-assets menu-assets rooms models
+	@echo "assets -> data/menu data/rooms data/models"
+
+full-disc: assets disc
+
+psoxide-smoke: disc
+	@mkdir -p $(CAPTURE_DIR)
+	$(PSOXIDE_LAUNCH) \
+		--path $(DIST)/hl-psx.cue \
+		--embedded-playtest \
+		--steps $(PSOXIDE_SMOKE_STEPS) \
+		--dump-hw $(CAPTURE_DIR)/hl-psx-menu-hw.ppm \
+		--dump-display $(CAPTURE_DIR)/hl-psx-menu-display.ppm \
+		--dump-hash
+	@echo "SMOKE -> $(CAPTURE_DIR)/hl-psx-menu-display.ppm"
+
+psoxide-gameplay: disc
+	@mkdir -p $(CAPTURE_DIR)
+	$(PSOXIDE_LAUNCH) \
+		--path $(DIST)/hl-psx.cue \
+		--embedded-playtest \
+		--steps $(PSOXIDE_GAMEPLAY_STEPS) \
+		--pad-pulses '$(PSOXIDE_MENU_PLAY_PULSES)' \
+		--dump-hw $(CAPTURE_DIR)/hl-psx-gameplay-hw.ppm \
+		--dump-display $(CAPTURE_DIR)/hl-psx-gameplay-display.ppm \
+		--dump-hash
+	@echo "GAMEPLAY -> $(CAPTURE_DIR)/hl-psx-gameplay-display.ppm"
+
+psoxide-profile:
+	$(MAKE) disc FEATURES=emulator-telemetry PSOXIDE="$(PSOXIDE)"
+	@mkdir -p $(CAPTURE_DIR)
+	$(PSOXIDE_LAUNCH) \
+		--path $(DIST)/hl-psx.cue \
+		--embedded-playtest \
+		--steps $(PSOXIDE_PROFILE_STEPS) \
+		--guest-frames $(PSOXIDE_PROFILE_FRAMES) \
+		--pad-pulses '$(PSOXIDE_MENU_PLAY_PULSES)' \
+		--profile-log $(CAPTURE_DIR)/hl-psx-profile.csv \
+		--counter-log $(CAPTURE_DIR)/hl-psx-counter.csv \
+		--dump-guest-profile \
+		--guest-debug-log \
+		--dump-hw $(CAPTURE_DIR)/hl-psx-profile-hw.ppm \
+		--dump-hash
+	@echo "PROFILE -> $(CAPTURE_DIR)/hl-psx-profile.csv"
+
+psoxide-chart: psoxide-profile
+	$(PSOXIDE_DEV) vblank-chart \
+		--in $(CAPTURE_DIR)/hl-psx-profile.csv \
+		--out $(CAPTURE_DIR)/hl-psx-profile.html \
+		--title "hl-psx per-frame work"
+	@echo "CHART -> $(CAPTURE_DIR)/hl-psx-profile.html"
+
+# Cook the streamed maps into data/rooms/room_<N>.psxc -- mkisopsx packs these
+# into WORLD.PAK (chunk id = N). The runtime menu maps id->name (see main.rs).
+# Edit the list here to add/remove selectable maps.
+ROOMS := $(ROOT)/data/rooms
+# c1a1b dropped: 1.12 MB cooked won't fit RAM next to PRIMS. Keep maps <~900 KB.
+MAPLIST := c0a0 c1a0 c1a1a c1a3a
+rooms:
+	cd $(HLBSP) && cargo build --release
+	@mkdir -p $(ROOMS)
+	@i=0; for m in $(MAPLIST); do \
+		$(HLBSP_BIN) --cook "$(HL_GAME)/maps/$$m.bsp" $(ROOMS)/room_$$i.psxc >/dev/null && \
+		echo "  room_$$i = $$m"; i=$$((i+1)); \
+	done
+	@echo "rooms -> $(ROOMS) ($(words $(MAPLIST)) maps)"
+
+# Extract the menu font (HL fonts.wad -> data/menu/hlfont.bin, git-ignored).
+# The runtime include_bytes!'s it, so run this once before building.
+menu-assets:
+	HL_GAME="$(HL_GAME)" python3 $(ROOT)/tools/extract_menu.py
 
 # Install the playable disc into the PSoXide game library as its own folder with
 # matching <name>.bin/.cue (the layout the library expects).
@@ -118,13 +215,16 @@ cook:
 	@cp $(ROOT)/data/maps/$(MAP).hlm $(ROOT)/data/maps/current.hlm
 	@echo "current map -> $(MAP)"
 
-# Cook the studio models the runtime include_bytes!'s (data/models/). Add more
-# with MODEL=<name>, e.g. `make models MODEL=barney`.
-MODEL ?= can
+# Cook the studio models the runtime include_bytes!'s (data/models). Each is
+# baked to per-frame posed vertices from sequence 0 (`--mdl <in> <out> [seq]`);
+# the runtime cycles frames. Edit MODELLIST to add models.
+MODELLIST := scientist v_9mmhandgun
 models:
 	cd $(HLBSP) && cargo build --release
 	@mkdir -p $(ROOT)/data/models
-	$(HLBSP_BIN) --mdl "$(HL_GAME)/models/$(MODEL).mdl" $(ROOT)/data/models/$(MODEL).hlmdl
+	@for m in $(MODELLIST); do \
+		$(HLBSP_BIN) --mdl "$(HL_GAME)/models/$$m.mdl" $(ROOT)/data/models/$$m.hlmdl 0; \
+	done
 
 clean:
 	cd $(GAME) && cargo clean

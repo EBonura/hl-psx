@@ -50,7 +50,8 @@ fn u16le(b: &[u8], o: usize) -> Option<u16> {
     b.get(o..o + 2).map(|s| u16::from_le_bytes([s[0], s[1]]))
 }
 fn u32le(b: &[u8], o: usize) -> Option<u32> {
-    b.get(o..o + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+    b.get(o..o + 4)
+        .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
 }
 fn i32le(b: &[u8], o: usize) -> Option<i32> {
     u32le(b, o).map(|v| v as i32)
@@ -73,7 +74,10 @@ struct Bsp<'a> {
 impl<'a> Bsp<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Bsp<'a>, String> {
         if bytes.len() < HEADER_LEN {
-            return Err(format!("file too small ({} bytes) to be a BSP", bytes.len()));
+            return Err(format!(
+                "file too small ({} bytes) to be a BSP",
+                bytes.len()
+            ));
         }
         let version = i32le(bytes, 0).unwrap();
         if version != 30 {
@@ -132,7 +136,13 @@ fn read_name(b: &[u8], o: usize) -> String {
 
 fn texture_stats(bsp: &Bsp) -> TexStats {
     let l = bsp.lump(LUMP_TEXTURES);
-    let mut s = TexStats { count: 0, embedded: 0, external: 0, texels: 0, largest: Vec::new() };
+    let mut s = TexStats {
+        count: 0,
+        embedded: 0,
+        external: 0,
+        texels: 0,
+        largest: Vec::new(),
+    };
     let nummip = match i32le(l, 0) {
         Some(n) if n >= 0 => n as usize,
         _ => return s,
@@ -192,7 +202,10 @@ fn report(path: &str, bsp: &Bsp) {
     println!("  vertices     {}", verts);
     println!("  faces        {}", faces);
     println!("  edges        {}  surfedges {}", edges, surfedges);
-    println!("  nodes        {}  leaves {}  models {}", nodes, leaves, models);
+    println!(
+        "  nodes        {}  leaves {}  models {}",
+        nodes, leaves, models
+    );
     println!("  marksurfaces {}  texinfo {}", marksurf, texinfo);
     let m = bsp.lump(LUMP_MODELS);
     if m.len() >= SZ_MODEL {
@@ -219,7 +232,11 @@ fn report(path: &str, bsp: &Bsp) {
     println!("\n[lightmaps / vis]  (PS1 drops lightmaps; vis drives leaf culling)");
     println!("  lighting     {} KB", lighting / 1024);
     println!("  visibility   {} KB", vis / 1024);
-    println!("  entities     {} ({} KB text)", ent_count, ents.len() / 1024);
+    println!(
+        "  entities     {} ({} KB text)",
+        ent_count,
+        ents.len() / 1024
+    );
 
     // PS1 texture VRAM region: X=320..1023 (704 px) × 512 lines × 2 bytes ≈ 704
     // KB, shared with CLUTs. Most HL textures are WAD-external, so this BSP-only
@@ -278,7 +295,12 @@ struct CookedTex {
 fn placeholder_tex() -> CookedTex {
     let mut clut = [0u16; 16];
     clut[0] = to_bgr555(110, 110, 110);
-    CookedTex { w: 8, h: 8, clut, pix4: vec![0u8; 8 * 8 / 2] }
+    CookedTex {
+        w: 8,
+        h: 8,
+        clut,
+        pix4: vec![0u8; 8 * 8 / 2],
+    }
 }
 
 /// Read a miptex's 256-colour palette (RGB triples) from the BSP.
@@ -287,7 +309,11 @@ fn read_palette(l: &[u8], mo: usize, w: usize, h: usize) -> Option<[(u8, u8, u8)
     let pal = mo + off3 + (w >> 3) * (h >> 3) + 2; // after mip3 + 2-byte count
     let mut p = [(0u8, 0u8, 0u8); 256];
     for (i, e) in p.iter_mut().enumerate() {
-        *e = (*l.get(pal + i * 3)?, *l.get(pal + i * 3 + 1)?, *l.get(pal + i * 3 + 2)?);
+        *e = (
+            *l.get(pal + i * 3)?,
+            *l.get(pal + i * 3 + 1)?,
+            *l.get(pal + i * 3 + 2)?,
+        );
     }
     Some(p)
 }
@@ -320,7 +346,11 @@ fn cook_miptex(l: &[u8], mo: usize) -> (CookedTex, (u32, u32)) {
     let mut pix4 = vec![0u8; fw * fh / 2];
     if masked {
         // Slot 0 = 0x0000 (the PS1 GPU skips it); 15 opaque colours in 1..=15.
-        let opaque: Vec<(u8, u8, u8)> = idxv.iter().filter(|&&i| i != 255).map(|&i| pal[i as usize]).collect();
+        let opaque: Vec<(u8, u8, u8)> = idxv
+            .iter()
+            .filter(|&&i| i != 255)
+            .map(|&i| pal[i as usize])
+            .collect();
         let pal15 = median_cut16(&opaque);
         let n = pal15.len().min(15);
         for i in 0..n {
@@ -348,14 +378,26 @@ fn cook_miptex(l: &[u8], mo: usize) -> (CookedTex, (u32, u32)) {
             pix4[i] = lo | (hi << 4);
         }
     }
-    (CookedTex { w: fw as u16, h: fh as u16, clut, pix4 }, (w0 as u32, h0 as u32))
+    (
+        CookedTex {
+            w: fw as u16,
+            h: fh as u16,
+            clut,
+            pix4,
+        },
+        (w0 as u32, h0 as u32),
+    )
 }
 
 fn nearest16(pal: &[(u8, u8, u8)], c: (u8, u8, u8)) -> u8 {
     let mut best = 0u8;
     let mut bd = i32::MAX;
     for (i, p) in pal.iter().enumerate() {
-        let (dr, dg, db) = (c.0 as i32 - p.0 as i32, c.1 as i32 - p.1 as i32, c.2 as i32 - p.2 as i32);
+        let (dr, dg, db) = (
+            c.0 as i32 - p.0 as i32,
+            c.1 as i32 - p.1 as i32,
+            c.2 as i32 - p.2 as i32,
+        );
         let d = dr * dr + dg * dg + db * db;
         if d < bd {
             bd = d;
@@ -379,8 +421,18 @@ fn box_extent(b: &[(u8, u8, u8)]) -> (u8, i32) {
         mn = (mn.0.min(c.0), mn.1.min(c.1), mn.2.min(c.2));
         mx = (mx.0.max(c.0), mx.1.max(c.1), mx.2.max(c.2));
     }
-    let (rr, rg, rb) = ((mx.0 - mn.0) as i32, (mx.1 - mn.1) as i32, (mx.2 - mn.2) as i32);
-    let ch = if rr >= rg && rr >= rb { 0 } else if rg >= rb { 1 } else { 2 };
+    let (rr, rg, rb) = (
+        (mx.0 - mn.0) as i32,
+        (mx.1 - mn.1) as i32,
+        (mx.2 - mn.2) as i32,
+    );
+    let ch = if rr >= rg && rr >= rb {
+        0
+    } else if rg >= rb {
+        1
+    } else {
+        2
+    };
     (ch, rr.max(rg).max(rb))
 }
 
@@ -497,17 +549,21 @@ fn find_spawn(ents: &[u8]) -> Option<([f32; 3], f32)> {
 }
 
 fn to_world(p: [f32; 3], scale: f32) -> [i32; 3] {
-    [(p[0] / scale).round() as i32, (p[2] / scale).round() as i32, (p[1] / scale).round() as i32]
+    [
+        (p[0] / scale).round() as i32,
+        (p[2] / scale).round() as i32,
+        (p[1] / scale).round() as i32,
+    ]
 }
 
 struct EntRec {
     submodel: u16,
     kind: u16, // 0 = static brush, 1 = func_door
     origin: [i32; 3],
-    mv: [i32; 3], // door full-open displacement (world)
+    mv: [i32; 3],     // door full-open displacement (world)
     center: [i32; 3], // door trigger centre (world)
-    r2: i32, // trigger radius^2 (world)
-    head: i32, // submodel hull-1 clipnode root (collision)
+    r2: i32,          // trigger radius^2 (world)
+    head: i32,        // submodel hull-1 clipnode root (collision)
 }
 
 /// func_door move direction (HL) + distance: slides `size_along_axis - lip`.
@@ -545,13 +601,22 @@ fn collect_entities(ents: &[u8], models: &[u8], scale: f32) -> Vec<EntRec> {
         if cls.starts_with("trigger") || cls == "func_ladder" || cls == "func_tracktrain" {
             continue; // invisible, or handled by the tram section
         }
-        let origin = to_world(ent_value(block, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]), scale);
+        let origin = to_world(
+            ent_value(block, "origin")
+                .and_then(parse_vec3)
+                .unwrap_or([0.0; 3]),
+            scale,
+        );
         let mo = submodel * SZ_MODEL;
         let g = |o: usize| f32le(models, mo + o).unwrap_or(0.0);
         let mins = [g(0), g(4), g(8)];
         let maxs = [g(12), g(16), g(20)];
         let center = to_world(
-            [(mins[0] + maxs[0]) * 0.5, (mins[1] + maxs[1]) * 0.5, (mins[2] + maxs[2]) * 0.5],
+            [
+                (mins[0] + maxs[0]) * 0.5,
+                (mins[1] + maxs[1]) * 0.5,
+                (mins[2] + maxs[2]) * 0.5,
+            ],
             scale,
         );
         let sz = [maxs[0] - mins[0], maxs[1] - mins[1], maxs[2] - mins[2]];
@@ -559,13 +624,33 @@ fn collect_entities(ents: &[u8], models: &[u8], scale: f32) -> Vec<EntRec> {
         let r2 = (rad * rad) as i32;
         let head = i32le(models, mo + 40).unwrap_or(0); // dmodel_t.headnode[1]
         if cls == "func_door" {
-            let angle = ent_value(block, "angle").and_then(|a| a.parse().ok()).unwrap_or(0.0);
-            let lip = ent_value(block, "lip").and_then(|a| a.parse().ok()).unwrap_or(8.0);
+            let angle = ent_value(block, "angle")
+                .and_then(|a| a.parse().ok())
+                .unwrap_or(0.0);
+            let lip = ent_value(block, "lip")
+                .and_then(|a| a.parse().ok())
+                .unwrap_or(8.0);
             let (dir, dist) = door_move(angle, mins, maxs, lip);
             let mv = to_world([dir[0] * dist, dir[1] * dist, dir[2] * dist], scale);
-            out.push(EntRec { submodel: submodel as u16, kind: 1, origin, mv, center, r2, head });
+            out.push(EntRec {
+                submodel: submodel as u16,
+                kind: 1,
+                origin,
+                mv,
+                center,
+                r2,
+                head,
+            });
         } else {
-            out.push(EntRec { submodel: submodel as u16, kind: 0, origin, mv: [0; 3], center, r2: 0, head });
+            out.push(EntRec {
+                submodel: submodel as u16,
+                kind: 0,
+                origin,
+                mv: [0; 3],
+                center,
+                r2: 0,
+                head,
+            });
         }
     }
     out
@@ -585,7 +670,9 @@ fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) 
         match ent_value(block, "classname") {
             Some("path_track") => tracks.push((
                 ent_value(block, "targetname").unwrap_or("").to_string(),
-                ent_value(block, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]),
+                ent_value(block, "origin")
+                    .and_then(parse_vec3)
+                    .unwrap_or([0.0; 3]),
                 ent_value(block, "target").unwrap_or("").to_string(),
             )),
             Some("func_tracktrain") => {
@@ -595,9 +682,16 @@ fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) 
                         model = n.parse().unwrap_or(0);
                     }
                 }
-                speed = ent_value(block, "speed").and_then(|v| v.parse::<f32>().ok()).unwrap_or(100.0) as i32;
+                speed = ent_value(block, "speed")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(100.0) as i32;
                 first = ent_value(block, "target").unwrap_or("").to_string();
-                origin = to_world(ent_value(block, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]), scale);
+                origin = to_world(
+                    ent_value(block, "origin")
+                        .and_then(parse_vec3)
+                        .unwrap_or([0.0; 3]),
+                    scale,
+                );
             }
             _ => {}
         }
@@ -633,8 +727,16 @@ fn collect_props(ents: &[u8], scale: f32) -> Vec<(u16, [i32; 3], i32)> {
             "monster_barney" => 1u16,
             _ => continue,
         };
-        let origin = to_world(ent_value(block, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]), scale);
-        let deg = ent_value(block, "angles").and_then(parse_vec3).map(|a| a[1]).unwrap_or(0.0);
+        let origin = to_world(
+            ent_value(block, "origin")
+                .and_then(parse_vec3)
+                .unwrap_or([0.0; 3]),
+            scale,
+        );
+        let deg = ent_value(block, "angles")
+            .and_then(parse_vec3)
+            .map(|a| a[1])
+            .unwrap_or(0.0);
         let yaw = (((deg - 90.0) / 360.0 * 4096.0).round() as i32) & 0xFFF;
         out.push((ty, origin, yaw));
     }
@@ -651,7 +753,11 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     let raw: Vec<[f32; 3]> = (0..n_verts)
         .map(|i| {
             let o = i * SZ_VERTEX;
-            [f32le(vl, o).unwrap(), f32le(vl, o + 4).unwrap(), f32le(vl, o + 8).unwrap()]
+            [
+                f32le(vl, o).unwrap(),
+                f32le(vl, o + 4).unwrap(),
+                f32le(vl, o + 8).unwrap(),
+            ]
         })
         .collect();
     let maxabs = raw.iter().flatten().fold(0.0f32, |m, &c| m.max(c.abs()));
@@ -660,14 +766,22 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         shift += 1;
     }
     if shift > 0 {
-        eprintln!("note: max |coord| {:.0} exceeds i16; scaling down by {}x", maxabs, 1 << shift);
+        eprintln!(
+            "note: max |coord| {:.0} exceeds i16; scaling down by {}x",
+            maxabs,
+            1 << shift
+        );
     }
     let scale = (1 << shift) as f32;
     // HL right-handed Z-up -> world Y-up (world = [x, z, y]); winding reversed.
     let verts: Vec<[i16; 3]> = raw
         .iter()
         .map(|v| {
-            [(v[0] / scale).round() as i16, (v[2] / scale).round() as i16, (v[1] / scale).round() as i16]
+            [
+                (v[0] / scale).round() as i16,
+                (v[2] / scale).round() as i16,
+                (v[1] / scale).round() as i16,
+            ]
         })
         .collect();
 
@@ -722,7 +836,11 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
                 None => break,
             };
             let e = se.unsigned_abs() as usize * SZ_EDGE;
-            let v = if se >= 0 { u16le(edges, e) } else { u16le(edges, e + 2) };
+            let v = if se >= 0 {
+                u16le(edges, e)
+            } else {
+                u16le(edges, e + 2)
+            };
             if let Some(v) = v {
                 if (v as usize) < n_verts {
                     poly.push(v);
@@ -733,14 +851,26 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
             continue;
         }
         let mtx = i32le(texinfo, ti * SZ_TEXINFO + 32).unwrap_or(-1);
-        let tex_id = if mtx >= 0 && (mtx as usize) < n_texs { mtx as usize } else { 0 };
+        let tex_id = if mtx >= 0 && (mtx as usize) < n_texs {
+            mtx as usize
+        } else {
+            0
+        };
         let (fw, fh) = (texs[tex_id].w as f32, texs[tex_id].h as f32);
         let (ow, oh) = orig[tex_id];
         // texinfo s/t planes (original texels).
         let to = ti * SZ_TEXINFO;
-        let s = [f32le(texinfo, to).unwrap(), f32le(texinfo, to + 4).unwrap(), f32le(texinfo, to + 8).unwrap()];
+        let s = [
+            f32le(texinfo, to).unwrap(),
+            f32le(texinfo, to + 4).unwrap(),
+            f32le(texinfo, to + 8).unwrap(),
+        ];
         let s_off = f32le(texinfo, to + 12).unwrap();
-        let t = [f32le(texinfo, to + 16).unwrap(), f32le(texinfo, to + 20).unwrap(), f32le(texinfo, to + 24).unwrap()];
+        let t = [
+            f32le(texinfo, to + 16).unwrap(),
+            f32le(texinfo, to + 20).unwrap(),
+            f32le(texinfo, to + 24).unwrap(),
+        ];
         let t_off = f32le(texinfo, to + 28).unwrap();
         // Per-poly-vertex UV: cooked-texel for output, original-texel for the
         // lightmap extents.
@@ -771,7 +901,9 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         let mins_t = (lv0 / 16.0).floor() as i32;
         let shade: Vec<(u8, u8, u8)> = ouv
             .iter()
-            .map(|&(ou, ov)| vertex_shade(lighting, lightofs, style0, lmw, lmh, ou, ov, mins_s, mins_t))
+            .map(|&(ou, ov)| {
+                vertex_shade(lighting, lightofs, style0, lmw, lmh, ou, ov, mins_s, mins_t)
+            })
             .collect();
         // Shift by whole texture tiles so values start near 0 (preserves tiling
         // phase), then saturate to u8. Faces tiling more than ~4x clamp at the
@@ -781,7 +913,10 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         let uvb: Vec<(u8, u8)> = uv
             .iter()
             .map(|&(u, v)| {
-                ((u - shu).round().clamp(0.0, 255.0) as u8, (v - shv).round().clamp(0.0, 255.0) as u8)
+                (
+                    (u - shu).round().clamp(0.0, 255.0) as u8,
+                    (v - shv).round().clamp(0.0, 255.0) as u8,
+                )
             })
             .collect();
         // Fan, reversed winding. Record this face's triangle range for PVS.
@@ -793,9 +928,7 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
             let (a, b, c) = (uvb[0], uvb[k + 1], uvb[k]);
             tri_uv.extend_from_slice(&[a.0, a.1, b.0, b.1, c.0, c.1]);
             let (s0, s1, s2) = (shade[0], shade[k + 1], shade[k]);
-            tri_rgb.extend_from_slice(&[
-                s0.0, s0.1, s0.2, s1.0, s1.1, s1.2, s2.0, s2.1, s2.2,
-            ]);
+            tri_rgb.extend_from_slice(&[s0.0, s0.1, s0.2, s1.0, s1.1, s1.2, s2.0, s2.1, s2.2]);
         }
     }
 
@@ -878,7 +1011,11 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     for f in 0..n_faces {
         let fo2 = f * SZ_FACE;
         let planenum = u16le(faces, fo2).unwrap_or(0) as usize;
-        let s = if u16le(faces, fo2 + 2).unwrap_or(0) == 0 { 1.0 } else { -1.0 };
+        let s = if u16le(faces, fo2 + 2).unwrap_or(0) == 0 {
+            1.0
+        } else {
+            -1.0
+        };
         let po = planenum * SZ_PLANE;
         let nx = f32le(planes, po).unwrap_or(0.0) * s;
         let ny = f32le(planes, po + 4).unwrap_or(0.0) * s;
@@ -905,19 +1042,38 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.extend_from_slice(&((ny * 4096.0).round() as i16).to_le_bytes());
         o.extend_from_slice(&0i16.to_le_bytes()); // pad
         o.extend_from_slice(&((d / scale).round() as i32).to_le_bytes());
-        o.extend_from_slice(&(i16::from_le_bytes([nodes[no + 4], nodes[no + 5]]) as i32).to_le_bytes());
-        o.extend_from_slice(&(i16::from_le_bytes([nodes[no + 6], nodes[no + 7]]) as i32).to_le_bytes());
+        o.extend_from_slice(
+            &(i16::from_le_bytes([nodes[no + 4], nodes[no + 5]]) as i32).to_le_bytes(),
+        );
+        o.extend_from_slice(
+            &(i16::from_le_bytes([nodes[no + 6], nodes[no + 7]]) as i32).to_le_bytes(),
+        );
     }
 
     for li in 0..n_leaves {
         let lo = li * SZ_LEAF;
-        o.extend_from_slice(&i32le(leaves, lo + SZ_LEAF_VISOFS).unwrap_or(-1).to_le_bytes());
+        o.extend_from_slice(
+            &i32le(leaves, lo + SZ_LEAF_VISOFS)
+                .unwrap_or(-1)
+                .to_le_bytes(),
+        );
         o.extend_from_slice(&u16le(leaves, lo + SZ_LEAF_MARK0).unwrap_or(0).to_le_bytes());
-        o.extend_from_slice(&u16le(leaves, lo + SZ_LEAF_MARK0 + 2).unwrap_or(0).to_le_bytes());
+        o.extend_from_slice(
+            &u16le(leaves, lo + SZ_LEAF_MARK0 + 2)
+                .unwrap_or(0)
+                .to_le_bytes(),
+        );
         // dleaf_t bbox (i16 mins@8, maxs@14) -> world centre + radius (frustum cull).
         let g = |o2: usize| i16::from_le_bytes([leaves[lo + o2], leaves[lo + o2 + 1]]) as f32;
         let (mn, mx) = ([g(8), g(10), g(12)], [g(14), g(16), g(18)]);
-        let c = to_world([(mn[0] + mx[0]) * 0.5, (mn[1] + mx[1]) * 0.5, (mn[2] + mx[2]) * 0.5], scale);
+        let c = to_world(
+            [
+                (mn[0] + mx[0]) * 0.5,
+                (mn[1] + mx[1]) * 0.5,
+                (mn[2] + mx[2]) * 0.5,
+            ],
+            scale,
+        );
         let d = [mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]];
         let rad = ((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() * 0.5 / scale) as i32;
         o.extend_from_slice(&(c[0] as i16).to_le_bytes());
@@ -947,7 +1103,23 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     let n_clip = clipnodes.len() / SZ_CLIPNODE;
     let models = bsp.lump(LUMP_MODELS);
     let hull1_head = i32le(models, 40).unwrap_or(0); // dmodel_t.headnode[1]
-    let (sp, syaw_deg) = find_spawn(bsp.lump(LUMP_ENTITIES)).unwrap_or(([0.0, 0.0, 0.0], 0.0));
+    let (sp, syaw_deg) = find_spawn(bsp.lump(LUMP_ENTITIES)).unwrap_or_else(|| {
+        // Mid-chapter maps (changelevel targets) have no info_player_start; you
+        // arrive via an info_landmark. Fall back to the world bbox center near
+        // the top so gravity drops the player onto the floor, not into the void.
+        // ponytail: bbox-center heuristic; a center that lands in solid will need
+        // a smarter pick (nearest empty leaf) -- revisit if a map spawns stuck.
+        let mn = |i| f32le(models, i).unwrap_or(0.0);
+        let (mins, maxs) = ([mn(0), mn(4), mn(8)], [mn(12), mn(16), mn(20)]);
+        (
+            [
+                (mins[0] + maxs[0]) * 0.5,
+                (mins[1] + maxs[1]) * 0.5,
+                maxs[2] - 32.0,
+            ],
+            0.0,
+        )
+    });
     // World space: swap Y/Z, scale.
     let spawn = [
         (sp[0] / scale).round() as i32,
@@ -974,8 +1146,12 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
         o.extend_from_slice(&((nx * 4096.0).round() as i16).to_le_bytes());
         o.extend_from_slice(&((nz * 4096.0).round() as i16).to_le_bytes());
         o.extend_from_slice(&((ny * 4096.0).round() as i16).to_le_bytes());
-        o.extend_from_slice(&i16::from_le_bytes([clipnodes[co + 4], clipnodes[co + 5]]).to_le_bytes());
-        o.extend_from_slice(&i16::from_le_bytes([clipnodes[co + 6], clipnodes[co + 7]]).to_le_bytes());
+        o.extend_from_slice(
+            &i16::from_le_bytes([clipnodes[co + 4], clipnodes[co + 5]]).to_le_bytes(),
+        );
+        o.extend_from_slice(
+            &i16::from_le_bytes([clipnodes[co + 6], clipnodes[co + 7]]).to_le_bytes(),
+        );
         o.extend_from_slice(&0i16.to_le_bytes()); // pad
         o.extend_from_slice(&((d / scale).round() as i32).to_le_bytes());
     }
@@ -990,7 +1166,8 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     for mi in 0..n_models {
         let mo = mi * SZ_MODEL;
         o.extend_from_slice(&(i32le(models, mo + 56).unwrap_or(0) as u32).to_le_bytes()); // firstface
-        o.extend_from_slice(&(i32le(models, mo + 60).unwrap_or(0) as u32).to_le_bytes()); // numfaces
+        o.extend_from_slice(&(i32le(models, mo + 60).unwrap_or(0) as u32).to_le_bytes());
+        // numfaces
     }
     let ents = collect_entities(bsp.lump(LUMP_ENTITIES), models, scale);
     o.extend_from_slice(&(ents.len() as u32).to_le_bytes());
@@ -1015,7 +1192,11 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
     let tram_off = o.len() as u32;
     o[tram_off_pos..tram_off_pos + 4].copy_from_slice(&tram_off.to_le_bytes());
     let (tram_model, tram_speed, way, _) = collect_tram(bsp.lump(LUMP_ENTITIES), scale);
-    let tram_head = if tram_model > 0 { i32le(models, tram_model as usize * SZ_MODEL + 40).unwrap_or(0) } else { 0 };
+    let tram_head = if tram_model > 0 {
+        i32le(models, tram_model as usize * SZ_MODEL + 40).unwrap_or(0)
+    } else {
+        0
+    };
     // The tram brush verts are stored relative to the entity origin (bbox near
     // 0); HL renders them at verts + pev->origin, which the path drives. So the
     // render/collision offset is the full path position = wp0 + ride_off.
@@ -1059,8 +1240,10 @@ fn cook(path: &str, out: &str) -> Result<(), String> {
 // ---- MDL (Half-Life studio model) -> .hlmdl ------------------------------
 //
 // Bakes the model's reference pose into a static posed textured mesh (bone
-// matrices applied at cook time). Layout matches .hlm geometry+textures:
-//   magic "HMDL" | u32 n_verts,n_tris,n_texs
+// matrices applied at cook time). Default bodyparts are concatenated so view
+// models keep separate visible pieces such as magazines/clips. Layout matches
+// .hlm geometry+textures:
+//   magic "HMD2" | u32 n_verts,n_tris,n_texs,n_frames
 //   verts i16×3 | tri_idx u16×3 | tri_tex u16 | tri_uv u8×6 (pad4) | textures...
 
 type Mat34 = ([[f32; 3]; 3], [f32; 3]); // rotation, translation
@@ -1080,9 +1263,21 @@ fn angle_quat(a: [f32; 3]) -> [f32; 4] {
 fn quat_mat(q: [f32; 4]) -> [[f32; 3]; 3] {
     let (x, y, z, w) = (q[0], q[1], q[2], q[3]);
     [
-        [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - w * z), 2.0 * (x * z + w * y)],
-        [2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - w * x)],
-        [2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)],
+        [
+            1.0 - 2.0 * (y * y + z * z),
+            2.0 * (x * y - w * z),
+            2.0 * (x * z + w * y),
+        ],
+        [
+            2.0 * (x * y + w * z),
+            1.0 - 2.0 * (x * x + z * z),
+            2.0 * (y * z - w * x),
+        ],
+        [
+            2.0 * (x * z - w * y),
+            2.0 * (y * z + w * x),
+            1.0 - 2.0 * (x * x + y * y),
+        ],
     ]
 }
 
@@ -1110,6 +1305,36 @@ fn apply(m: &Mat34, v: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+/// Decode one studio RLE animation channel value at `frame`. `base` is the byte
+/// offset of the `mstudioanimvalue_t` array (animindex + bone*12 + offset[dof]).
+/// Format: [valid:u8][total:u8] then `valid` i16 values, repeated per span.
+fn anim_value(b: &[u8], base: usize, frame: usize) -> i16 {
+    let mut p = base;
+    let mut k = frame as i32;
+    loop {
+        if p + 1 >= b.len() {
+            return 0;
+        }
+        let valid = b[p] as i32;
+        let total = b[p + 1] as i32;
+        if total > k {
+            let idx = if valid > k {
+                (k + 1) as usize
+            } else {
+                valid as usize
+            };
+            let o = p + idx * 2;
+            return if o + 1 < b.len() {
+                i16::from_le_bytes([b[o], b[o + 1]])
+            } else {
+                0
+            };
+        }
+        k -= total;
+        p += (valid as usize + 1) * 2;
+    }
+}
+
 /// Cook an MDL texture (8-bit indices + 256-colour palette) to 4-bit + CLUT.
 fn cook_mdl_tex(b: &[u8], idx: usize, w0: usize, h0: usize) -> CookedTex {
     let palo = idx + w0 * h0;
@@ -1125,7 +1350,9 @@ fn cook_mdl_tex(b: &[u8], idx: usize, w0: usize, h0: usize) -> CookedTex {
     let mut colors: Vec<(u8, u8, u8)> = Vec::with_capacity(fw * fh);
     for y in 0..fh {
         for x in 0..fw {
-            let pi = *b.get(idx + (y * h0 / fh) * w0 + (x * w0 / fw)).unwrap_or(&0) as usize;
+            let pi = *b
+                .get(idx + (y * h0 / fh) * w0 + (x * w0 / fw))
+                .unwrap_or(&0) as usize;
             colors.push(pal(pi));
         }
     }
@@ -1140,10 +1367,15 @@ fn cook_mdl_tex(b: &[u8], idx: usize, w0: usize, h0: usize) -> CookedTex {
         let hi = ch.get(1).map(|c| nearest16(&pal16, *c)).unwrap_or(0);
         pix4[i] = lo | (hi << 4);
     }
-    CookedTex { w: fw as u16, h: fh as u16, clut, pix4 }
+    CookedTex {
+        w: fw as u16,
+        h: fh as u16,
+        clut,
+        pix4,
+    }
 }
 
-fn cook_mdl(path: &str, out: &str) -> Result<(), String> {
+fn cook_mdl(path: &str, out: &str, seq: i32) -> Result<(), String> {
     let b = std::fs::read(path).map_err(|e| format!("{}: {}", path, e))?;
     if b.get(0..4) != Some(b"IDST") {
         return Err(format!("{}: not a studio MDL", path));
@@ -1152,23 +1384,37 @@ fn cook_mdl(path: &str, out: &str) -> Result<(), String> {
     let f = |o: usize| f32le(&b, o).unwrap_or(0.0);
     let h16 = |o: usize| i16::from_le_bytes([b[o], b[o + 1]]);
 
-    // Bind-pose bone world matrices.
+    // Bone metadata: parent + value[6] (pos/rot defaults) + scale[6] (anim deltas).
     let (numbones, boneindex) = (i(140) as usize, i(144) as usize);
-    let mut bones: Vec<Mat34> = Vec::with_capacity(numbones);
-    for bi in 0..numbones {
-        let bo = boneindex + bi * 112;
-        let parent = i(bo + 32);
-        let pos = [f(bo + 64), f(bo + 68), f(bo + 72)];
-        let rot = [f(bo + 76), f(bo + 80), f(bo + 84)];
-        let local: Mat34 = (quat_mat(angle_quat(rot)), pos);
-        let world = if parent < 0 { local } else { concat(&bones[parent as usize], &local) };
-        bones.push(world);
+    struct BMeta {
+        parent: i32,
+        value: [f32; 6],
+        scale: [f32; 6],
     }
+    let bmeta: Vec<BMeta> = (0..numbones)
+        .map(|bi| {
+            let bo = boneindex + bi * 112;
+            let mut value = [0.0f32; 6];
+            let mut scale = [0.0f32; 6];
+            for j in 0..6 {
+                value[j] = f(bo + 64 + j * 4);
+                scale[j] = f(bo + 88 + j * 4);
+            }
+            BMeta {
+                parent: i(bo + 32),
+                value,
+                scale,
+            }
+        })
+        .collect();
 
     // Textures: human models keep them in an external <base>T.mdl (numtextures==0).
     let ext = i(180) == 0;
     let tbuf: Vec<u8> = if ext {
-        let tp = path.strip_suffix(".mdl").map(|s| format!("{}T.mdl", s)).unwrap_or_else(|| format!("{}T.mdl", path));
+        let tp = path
+            .strip_suffix(".mdl")
+            .map(|s| format!("{}T.mdl", s))
+            .unwrap_or_else(|| format!("{}T.mdl", path));
         std::fs::read(&tp).map_err(|e| format!("texture file {}: {}", tp, e))?
     } else {
         Vec::new()
@@ -1177,20 +1423,110 @@ fn cook_mdl(path: &str, out: &str) -> Result<(), String> {
     let ti = |o: usize| i32le(tb, o).unwrap_or(0);
     let th16 = |o: usize| i16::from_le_bytes([tb[o], tb[o + 1]]);
     let (textureindex, skinindex) = (ti(184) as usize, ti(200) as usize);
-    let bodypartindex = i(208) as usize;
-    let modelindex = i(bodypartindex + 72) as usize; // bodypart[0].model[0]
-    let (nummesh, meshindex) = (i(modelindex + 72) as usize, i(modelindex + 76) as usize);
-    let numverts = i(modelindex + 80) as usize;
-    let (vinfoindex, vertindex) = (i(modelindex + 84) as usize, i(modelindex + 88) as usize);
+    let (numbodyparts, bodypartindex) = (i(204) as usize, i(208) as usize);
+    struct MdlPart {
+        nummesh: usize,
+        meshindex: usize,
+        vert_base: usize,
+    }
 
-    // Pose every vertex by its bone; convert to world orientation (swap Y/Z).
-    let ident: Mat34 = ([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [0.0; 3]);
-    let mut verts: Vec<[i16; 3]> = Vec::with_capacity(numverts);
-    for v in 0..numverts {
-        let vp = [f(vertindex + v * 12), f(vertindex + v * 12 + 4), f(vertindex + v * 12 + 8)];
-        let bone = *b.get(vinfoindex + v).unwrap_or(&0) as usize;
-        let p = apply(bones.get(bone).unwrap_or(&ident), vp);
-        verts.push([p[0].round() as i16, p[2].round() as i16, p[1].round() as i16]);
+    // Raw vertices + their bone (positions are constant; bone matrices animate).
+    // Studio MDLs can split a viewmodel across bodyparts; body value 0 selects
+    // model 0 in each bodypart, so concatenate those defaults into one mesh.
+    let mut parts: Vec<MdlPart> = Vec::new();
+    let mut vp: Vec<[f32; 3]> = Vec::new();
+    let mut vbone: Vec<usize> = Vec::new();
+    for bp in 0..numbodyparts {
+        let bpo = bodypartindex + bp * 76;
+        let nummodels = i(bpo + 64).max(0) as usize;
+        if nummodels == 0 {
+            continue;
+        }
+        let modelindex = i(bpo + 72) as usize; // bodypart model 0 (default body)
+        let (nummesh, meshindex) = (i(modelindex + 72).max(0) as usize, i(modelindex + 76) as usize);
+        let numverts = i(modelindex + 80).max(0) as usize;
+        let (vinfoindex, vertindex) = (i(modelindex + 84) as usize, i(modelindex + 88) as usize);
+        let vert_base = vp.len();
+        parts.push(MdlPart {
+            nummesh,
+            meshindex,
+            vert_base,
+        });
+        for v in 0..numverts {
+            vp.push([
+                f(vertindex + v * 12),
+                f(vertindex + v * 12 + 4),
+                f(vertindex + v * 12 + 8),
+            ]);
+            vbone.push(*b.get(vinfoindex + v).unwrap_or(&0) as usize);
+        }
+    }
+
+    // Pick sequence `seq` (default 0) and bake up to MAX_FRAMES posed-vertex frames.
+    // seqdesc (176 B): numframes@56, animindex@124, seqgroup@156. mstudioanim per
+    // bone is 12 B (6 u16 channel offsets) at animindex + bone*12; offset 0 = no
+    // anim for that DOF (use the bone default). PS1 has no FPU, so we bake frames
+    // host-side -- the runtime just swaps vertex sets.
+    const MAX_FRAMES: usize = 16;
+    let (numseq, seqindex) = (i(164), i(168) as usize);
+    let (animindex, numframes) = if seq >= 0 && seq < numseq {
+        let sd = seqindex + seq as usize * 176;
+        if i(sd + 156) == 0 {
+            (i(sd + 124) as usize, i(sd + 56).max(1) as usize)
+        } else {
+            (0, 1) // sequence lives in a separate group file (not loaded)
+        }
+    } else {
+        (0, 1)
+    };
+    let nbake = if animindex == 0 {
+        1
+    } else {
+        numframes.min(MAX_FRAMES).max(1)
+    };
+
+    let ident: Mat34 = (
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        [0.0; 3],
+    );
+    let mut frames: Vec<Vec<[i16; 3]>> = Vec::with_capacity(nbake);
+    for fi in 0..nbake {
+        let sframe = if nbake > 1 { fi * numframes / nbake } else { 0 };
+        let mut bones: Vec<Mat34> = Vec::with_capacity(numbones);
+        for bi in 0..numbones {
+            let bm = &bmeta[bi];
+            let mut dof = bm.value;
+            if animindex != 0 {
+                let at = animindex + bi * 12; // this bone's mstudioanim_t
+                for d in 0..6 {
+                    let off = u16::from_le_bytes([b[at + d * 2], b[at + d * 2 + 1]]) as usize;
+                    if off != 0 {
+                        dof[d] =
+                            bm.value[d] + anim_value(&b, at + off, sframe) as f32 * bm.scale[d];
+                    }
+                }
+            }
+            let local: Mat34 = (
+                quat_mat(angle_quat([dof[3], dof[4], dof[5]])),
+                [dof[0], dof[1], dof[2]],
+            );
+            let world = if bm.parent < 0 {
+                local
+            } else {
+                concat(&bones[bm.parent as usize], &local)
+            };
+            bones.push(world);
+        }
+        let mut fv: Vec<[i16; 3]> = Vec::with_capacity(vp.len());
+        for v in 0..vp.len() {
+            let p = apply(bones.get(vbone[v]).unwrap_or(&ident), vp[v]);
+            fv.push([
+                p[0].round() as i16,
+                p[2].round() as i16,
+                p[1].round() as i16,
+            ]);
+        }
+        frames.push(fv);
     }
 
     let mut tri_idx: Vec<u16> = Vec::new();
@@ -1199,62 +1535,73 @@ fn cook_mdl(path: &str, out: &str) -> Result<(), String> {
     let mut texs: Vec<CookedTex> = Vec::new();
     let mut slot_of: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
 
-    for m in 0..nummesh {
-        let me = meshindex + m * 20;
-        let triindex = i(me + 4) as usize;
-        let skinref = i(me + 8) as usize;
-        let texid = th16(skinindex + skinref * 2) as usize; // skin family 0 (texture file)
-        let to = textureindex + texid * 80;
-        let (tw, th, tpix) = (ti(to + 68) as usize, ti(to + 72) as usize, ti(to + 76) as usize);
-        let slot = *slot_of.entry(texid).or_insert_with(|| {
-            texs.push(cook_mdl_tex(tb, tpix, tw.max(1), th.max(1)));
-            texs.len() - 1
-        });
-        let (fw, fh) = (texs[slot].w as f32, texs[slot].h as f32);
-        let mut o = triindex;
-        loop {
-            let cmd = h16(o) as i32;
-            o += 2;
-            if cmd == 0 {
-                break;
-            }
-            let (n, fan) = (cmd.unsigned_abs() as usize, cmd < 0);
-            let mut s: Vec<(u16, u8, u8)> = Vec::with_capacity(n);
-            for _ in 0..n {
-                let vi = h16(o) as u16;
-                let (ss, tt) = (h16(o + 4) as f32, h16(o + 6) as f32);
-                o += 8;
-                let u = (ss * fw / tw.max(1) as f32).clamp(0.0, 255.0) as u8;
-                let vv = (tt * fh / th.max(1) as f32).clamp(0.0, 255.0) as u8;
-                s.push((vi, u, vv));
-            }
-            for k in 0..n.saturating_sub(2) {
-                let (a, bb, c) = if fan {
-                    (0, k + 1, k + 2)
-                } else if k % 2 == 0 {
-                    (k, k + 1, k + 2)
-                } else {
-                    (k + 1, k, k + 2)
-                };
-                // Reversed winding (c,b,a) to match the BSP cook's Y/Z-swap convention,
-                // so the runtime's backface cull keeps front faces.
-                let (va, vb, vc) = (s[a], s[bb], s[c]);
-                tri_idx.extend_from_slice(&[vc.0, vb.0, va.0]);
-                tri_tex.push(slot as u16);
-                tri_uv.extend_from_slice(&[vc.1, vc.2, vb.1, vb.2, va.1, va.2]);
+    for part in &parts {
+        for m in 0..part.nummesh {
+            let me = part.meshindex + m * 20;
+            let triindex = i(me + 4) as usize;
+            let skinref = i(me + 8) as usize;
+            let texid = th16(skinindex + skinref * 2) as usize; // skin family 0 (texture file)
+            let to = textureindex + texid * 80;
+            let (tw, th, tpix) = (
+                ti(to + 68) as usize,
+                ti(to + 72) as usize,
+                ti(to + 76) as usize,
+            );
+            let slot = *slot_of.entry(texid).or_insert_with(|| {
+                texs.push(cook_mdl_tex(tb, tpix, tw.max(1), th.max(1)));
+                texs.len() - 1
+            });
+            let (fw, fh) = (texs[slot].w as f32, texs[slot].h as f32);
+            let mut o = triindex;
+            loop {
+                let cmd = h16(o) as i32;
+                o += 2;
+                if cmd == 0 {
+                    break;
+                }
+                let (n, fan) = (cmd.unsigned_abs() as usize, cmd < 0);
+                let mut s: Vec<(u16, u8, u8)> = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let local_vi = h16(o).max(0) as usize;
+                    let vi = (part.vert_base + local_vi).min(u16::MAX as usize) as u16;
+                    let (ss, tt) = (h16(o + 4) as f32, h16(o + 6) as f32);
+                    o += 8;
+                    let u = (ss * fw / tw.max(1) as f32).clamp(0.0, 255.0) as u8;
+                    let vv = (tt * fh / th.max(1) as f32).clamp(0.0, 255.0) as u8;
+                    s.push((vi, u, vv));
+                }
+                for k in 0..n.saturating_sub(2) {
+                    let (a, bb, c) = if fan {
+                        (0, k + 1, k + 2)
+                    } else if k % 2 == 0 {
+                        (k, k + 1, k + 2)
+                    } else {
+                        (k + 1, k, k + 2)
+                    };
+                    // Reversed winding (c,b,a) to match the BSP cook's Y/Z-swap convention,
+                    // so the runtime's backface cull keeps front faces.
+                    let (va, vb, vc) = (s[a], s[bb], s[c]);
+                    tri_idx.extend_from_slice(&[vc.0, vb.0, va.0]);
+                    tri_tex.push(slot as u16);
+                    tri_uv.extend_from_slice(&[vc.1, vc.2, vb.1, vb.2, va.1, va.2]);
+                }
             }
         }
     }
 
     let n_tris = tri_idx.len() / 3;
+    let n_verts = vp.len();
     let mut o: Vec<u8> = Vec::new();
-    o.extend_from_slice(b"HMDL");
-    o.extend_from_slice(&(verts.len() as u32).to_le_bytes());
+    o.extend_from_slice(b"HMD2"); // multi-frame: header + n_frames x vert-set, then shared tris/tex
+    o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_tris as u32).to_le_bytes());
     o.extend_from_slice(&(texs.len() as u32).to_le_bytes());
-    for v in &verts {
-        for c in v {
-            o.extend_from_slice(&c.to_le_bytes());
+    o.extend_from_slice(&(frames.len() as u32).to_le_bytes());
+    for fv in &frames {
+        for v in fv {
+            for c in v {
+                o.extend_from_slice(&c.to_le_bytes());
+            }
         }
     }
     for x in &tri_idx {
@@ -1276,7 +1623,17 @@ fn cook_mdl(path: &str, out: &str) -> Result<(), String> {
         o.extend_from_slice(&tx.pix4);
     }
     std::fs::write(out, &o).map_err(|e| format!("write {}: {}", out, e))?;
-    println!("cooked {} -> {} ({} verts, {} tris, {} texs, {} KB)", path, out, verts.len(), n_tris, texs.len(), o.len() / 1024);
+    println!(
+        "cooked {} -> {} (seq {}, {} frames, {} verts, {} tris, {} texs, {} KB)",
+        path,
+        out,
+        seq,
+        frames.len(),
+        n_verts,
+        n_tris,
+        texs.len(),
+        o.len() / 1024
+    );
     Ok(())
 }
 
@@ -1285,14 +1642,15 @@ fn main() {
     if args.get(1).map(|s| s.as_str()) == Some("--mdl") {
         match (args.get(2), args.get(3)) {
             (Some(inp), Some(out)) => {
-                if let Err(e) = cook_mdl(inp, out) {
+                let seq = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
+                if let Err(e) = cook_mdl(inp, out, seq) {
                     eprintln!("{}", e);
                     exit(1);
                 }
                 return;
             }
             _ => {
-                eprintln!("usage: hl-bsp --mdl <in.mdl> <out.hlmdl>");
+                eprintln!("usage: hl-bsp --mdl <in.mdl> <out.hlmdl> [seq]");
                 exit(2);
             }
         }

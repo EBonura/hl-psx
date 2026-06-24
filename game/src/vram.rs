@@ -31,8 +31,14 @@ pub const EMPTY_SLOT: TexSlot = TexSlot {
 static mut ATLAS: TextureWindowAtlas<PAGES> = TextureWindowAtlas::new();
 static mut CLUTS: ClutRowAllocator<CLUT_ROWS> = ClutRowAllocator::new(CLUT_BASE_Y);
 
-/// Upload every cooked map texture, filling `slots`.
+/// Upload every cooked map texture, filling `slots`. Resets the VRAM allocators
+/// first so reloading a map (return-to-menu) starts from a clean atlas instead
+/// of running the cursors off the end.
 pub fn upload_textures(map: &Map, slots: &mut [TexSlot]) -> usize {
+    unsafe {
+        ATLAS = TextureWindowAtlas::new();
+        CLUTS = ClutRowAllocator::new(CLUT_BASE_Y);
+    }
     upload_tex_blob(map.tex_blob(), map.n_texs, slots)
 }
 
@@ -85,8 +91,12 @@ fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8]) -> Option<TexSlot> 
         upload_bytes(VramRect::new(clut.x(), clut.y(), 16, 1), clut_bytes);
 
         let win = TextureWindow::power_of_two_tile(pl.origin_u(), pl.origin_v(), w as u8, h as u8);
-        let material = TextureMaterial::opaque(clut.uv_clut_word(), tpage.uv_tpage_word(0), (128, 128, 128))
-            .with_texture_window(win);
-        Some(TexSlot { material, valid: true })
+        let material =
+            TextureMaterial::opaque(clut.uv_clut_word(), tpage.uv_tpage_word(0), (128, 128, 128))
+                .with_texture_window(win);
+        Some(TexSlot {
+            material,
+            valid: true,
+        })
     }
 }

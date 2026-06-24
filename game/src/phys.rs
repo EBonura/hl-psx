@@ -24,7 +24,7 @@ fn dot(n: [i16; 3], p: [i32; 3]) -> i64 {
 }
 
 struct Trace {
-    frac: i32, // Q0.12 along the move (4096 = reached end)
+    frac: i32,        // Q0.12 along the move (4096 = reached end)
     normal: [i32; 3], // hit plane normal (×4096)
     allsolid: bool,
     startsolid: bool,
@@ -44,7 +44,16 @@ fn point_contents(map: &Map, mut num: i16, p: [i32; 3]) -> i16 {
     num
 }
 
-fn recurse(map: &Map, num: i16, p1f: i32, p2f: i32, p1: [i32; 3], p2: [i32; 3], tr: &mut Trace, depth: u8) -> bool {
+fn recurse(
+    map: &Map,
+    num: i16,
+    p1f: i32,
+    p2f: i32,
+    p1: [i32; 3],
+    p2: [i32; 3],
+    tr: &mut Trace,
+    depth: u8,
+) -> bool {
     if depth > 120 {
         return true;
     }
@@ -69,9 +78,17 @@ fn recurse(map: &Map, num: i16, p1f: i32, p2f: i32, p1: [i32; 3], p2: [i32; 3], 
     if t1 < 0 && t2 < 0 {
         return recurse(map, cn.c1, p1f, p2f, p1, p2, tr, depth + 1);
     }
-    // Crosses the plane -- split the segment.
+    // Crosses the plane -- split the segment. Back off by DIST_EPSILON (Quake's
+    // trick) so we stop just SHORT of the plane instead of exactly on it, which
+    // would leave the player startsolid (wedged) and unable to move next frame.
+    const EPS: i32 = 1;
     let denom = (t1 - t2) as i64;
-    let frac = if denom == 0 { 0 } else { ((t1 as i64 * 4096) / denom).clamp(0, 4096) as i32 };
+    let nudged = if t1 < 0 { t1 + EPS } else { t1 - EPS };
+    let frac = if denom == 0 {
+        0
+    } else {
+        ((nudged as i64 * 4096) / denom).clamp(0, 4096) as i32
+    };
     let midf = p1f + (((p2f - p1f) as i64 * frac as i64) >> 12) as i32;
     let mid = [
         p1[0] + (((p2[0] - p1[0]) as i64 * frac as i64) >> 12) as i32,
@@ -100,7 +117,12 @@ fn recurse(map: &Map, num: i16, p1f: i32, p2f: i32, p1: [i32; 3], p2: [i32; 3], 
 }
 
 fn trace(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> Trace {
-    let mut tr = Trace { frac: 4096, normal: [0, 0, 0], allsolid: true, startsolid: false };
+    let mut tr = Trace {
+        frac: 4096,
+        normal: [0, 0, 0],
+        allsolid: true,
+        startsolid: false,
+    };
     recurse(map, head as i16, 0, 4096, p1, p2, &mut tr, 0);
     tr
 }
@@ -112,7 +134,10 @@ pub struct Mover {
     pub off: [i32; 3],
 }
 
-pub const NO_MOVER: Mover = Mover { head: 0, off: [0, 0, 0] };
+pub const NO_MOVER: Mover = Mover {
+    head: 0,
+    off: [0, 0, 0],
+};
 
 /// Trace the world hull plus every mover hull (each shifted by its offset);
 /// return the nearest impact.
@@ -126,7 +151,11 @@ fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i3
         let q1 = [p1[0] - o[0], p1[1] - o[1], p1[2] - o[2]];
         let q2 = [p2[0] - o[0], p2[1] - o[1], p2[2] - o[2]];
         let t = trace(map, mv.head, q1, q2);
-        best.startsolid |= t.startsolid;
+        // NB: do NOT propagate a mover's startsolid. If the player ends up inside
+        // a brush-entity hull (a non-solid func_illusionary, or slight
+        // penetration), startsolid would make slide_move break and freeze them
+        // forever. Movers still block ENTRY via frac; only the world hull's
+        // startsolid counts as truly stuck.
         if t.frac < best.frac {
             best.frac = t.frac;
             best.normal = t.normal;
@@ -137,7 +166,8 @@ fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i3
 
 /// Remove the component of `v` along `n` (×4096) -- slide along a plane.
 fn clip(v: [i32; 3], n: [i32; 3]) -> [i32; 3] {
-    let proj = ((v[0] as i64 * n[0] as i64 + v[1] as i64 * n[1] as i64 + v[2] as i64 * n[2] as i64) >> 12) as i32;
+    let proj = ((v[0] as i64 * n[0] as i64 + v[1] as i64 * n[1] as i64 + v[2] as i64 * n[2] as i64)
+        >> 12) as i32;
     [
         v[0] - ((n[0] as i64 * proj as i64) >> 12) as i32,
         v[1] - ((n[1] as i64 * proj as i64) >> 12) as i32,
@@ -147,7 +177,13 @@ fn clip(v: [i32; 3], n: [i32; 3]) -> [i32; 3] {
 
 /// Slide `vel` from `pos` for one frame, sliding along walls (4 iterations).
 /// Returns the new position and the wall-clipped velocity.
-fn slide_move(map: &Map, head: i32, movers: &[Mover], mut pos: [i32; 3], mut vel: [i32; 3]) -> ([i32; 3], [i32; 3]) {
+fn slide_move(
+    map: &Map,
+    head: i32,
+    movers: &[Mover],
+    mut pos: [i32; 3],
+    mut vel: [i32; 3],
+) -> ([i32; 3], [i32; 3]) {
     let mut d = vel;
     for _ in 0..4 {
         if d == [0, 0, 0] {
@@ -189,13 +225,25 @@ pub struct Player {
 
 impl Player {
     pub fn new(pos: [i32; 3]) -> Player {
-        Player { pos, vel: [0, 0, 0], on_ground: false }
+        Player {
+            pos,
+            vel: [0, 0, 0],
+            on_ground: false,
+        }
     }
 
     /// Advance the player one frame. `fwd`/`strafe` are analog deltas in
     /// `-128..=127` (D-pad sends ±127) relative to `yaw` (Q0.12); `jump`
     /// triggers when grounded.
-    pub fn update(&mut self, map: &Map, movers: &[Mover], fwd: i32, strafe: i32, jump: bool, yaw: u16) {
+    pub fn update(
+        &mut self,
+        map: &Map,
+        movers: &[Mover],
+        fwd: i32,
+        strafe: i32,
+        jump: bool,
+        yaw: u16,
+    ) {
         // Forward = (sin yaw, 0, cos yaw); right = (cos yaw, 0, -sin yaw). sin/cos
         // are ×4096; dividing the ±127 input by 128 keeps a unit wish dir ≈ ×4096.
         let s = sincos::sin_q12(yaw);
@@ -228,11 +276,19 @@ impl Player {
         if self.on_ground && (self.vel[0] != 0 || self.vel[2] != 0) {
             let up_end = [start[0], start[1] + STEP_UP, start[2]];
             let tup = trace_all(map, head, movers, start, up_end);
-            let up_pos = [start[0], start[1] + ((STEP_UP as i64 * tup.frac as i64) >> 12) as i32, start[2]];
+            let up_pos = [
+                start[0],
+                start[1] + ((STEP_UP as i64 * tup.frac as i64) >> 12) as i32,
+                start[2],
+            ];
             let (sp, _) = slide_move(map, head, movers, up_pos, [self.vel[0], 0, self.vel[2]]);
             let dn_end = [sp[0], sp[1] - STEP_UP * 2, sp[2]];
             let tdn = trace_all(map, head, movers, sp, dn_end);
-            let step_pos = [sp[0], sp[1] - (((STEP_UP * 2) as i64 * tdn.frac as i64) >> 12) as i32, sp[2]];
+            let step_pos = [
+                sp[0],
+                sp[1] - (((STEP_UP * 2) as i64 * tdn.frac as i64) >> 12) as i32,
+                sp[2],
+            ];
             let landed = tdn.frac < 4096 && tdn.normal[1] > GROUND_NY;
             if landed && dist_xz(start, step_pos) > dist_xz(start, flat_pos) {
                 self.pos = step_pos;

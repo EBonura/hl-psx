@@ -1,9 +1,10 @@
-//! Load a cooked `.hlmdl` (a Half-Life studio model baked to its reference pose
-//! by `hl-bsp --mdl`). Static posed textured mesh -- same geometry+texture
-//! layout as a map, minus BSP/PVS/clip data.
+//! Load a cooked `.hlmdl` (a Half-Life studio model, baked to per-frame posed
+//! vertices by `hl-bsp --mdl`). The cook bakes a chosen sequence's frames host
+//! side (no skinning on the PS1); the runtime just selects a frame.
 //!
-//!   magic "HMDL" | u32 n_verts, n_tris, n_texs
-//!   verts i16×3 | tri_idx u16×3 | tri_tex u16 | tri_uv u8×6 (pad4) | textures...
+//!   magic "HMD2" | u32 n_verts, n_tris, n_texs, n_frames
+//!   n_frames × (verts i16×3) | tri_idx u16×3 | tri_tex u16 | tri_uv u8×6 (pad4)
+//!   | textures...
 
 use psx_gte::math::Vec3I16;
 
@@ -22,7 +23,9 @@ pub struct Model {
     pub n_verts: usize,
     pub n_tris: usize,
     pub n_texs: usize,
+    pub n_frames: usize,
     v_off: usize,
+    frame_stride: usize,
     idx_off: usize,
     ttex_off: usize,
     tuv_off: usize,
@@ -34,24 +37,47 @@ impl Model {
         let n_verts = rd_u32(data, 4) as usize;
         let n_tris = rd_u32(data, 8) as usize;
         let n_texs = rd_u32(data, 12) as usize;
-        let v_off = 16;
-        let idx_off = v_off + n_verts * 6;
+        let n_frames = (rd_u32(data, 16) as usize).max(1);
+        let v_off = 20;
+        let frame_stride = n_verts * 6;
+        let idx_off = v_off + n_frames * frame_stride;
         let ttex_off = idx_off + n_tris * 6;
         let tuv_off = ttex_off + n_tris * 2;
         let texblk_off = (tuv_off + n_tris * 6 + 3) & !3;
-        Model { data, n_verts, n_tris, n_texs, v_off, idx_off, ttex_off, tuv_off, texblk_off }
+        Model {
+            data,
+            n_verts,
+            n_tris,
+            n_texs,
+            n_frames,
+            v_off,
+            frame_stride,
+            idx_off,
+            ttex_off,
+            tuv_off,
+            texblk_off,
+        }
     }
 
     #[inline]
-    pub fn vert(&self, i: usize) -> Vec3I16 {
-        let o = self.v_off + i * 6;
-        Vec3I16::new(rd_i16(self.data, o), rd_i16(self.data, o + 2), rd_i16(self.data, o + 4))
+    pub fn vert(&self, frame: usize, i: usize) -> Vec3I16 {
+        let f = if frame < self.n_frames { frame } else { 0 };
+        let o = self.v_off + f * self.frame_stride + i * 6;
+        Vec3I16::new(
+            rd_i16(self.data, o),
+            rd_i16(self.data, o + 2),
+            rd_i16(self.data, o + 4),
+        )
     }
 
     #[inline]
     pub fn tri_idx(&self, t: usize) -> (usize, usize, usize) {
         let o = self.idx_off + t * 6;
-        (rd_u16(self.data, o) as usize, rd_u16(self.data, o + 2) as usize, rd_u16(self.data, o + 4) as usize)
+        (
+            rd_u16(self.data, o) as usize,
+            rd_u16(self.data, o + 2) as usize,
+            rd_u16(self.data, o + 4) as usize,
+        )
     }
 
     #[inline]

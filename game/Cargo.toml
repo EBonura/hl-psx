@@ -20,6 +20,12 @@ panic         = "abort"
 codegen-units = 1
 lto           = true
 
+[features]
+default = []
+# Emits PSoXide-only MMIO telemetry so `frontend launch` can stop on guest
+# frames and write profile/counter CSVs. Keep it off for burn/shipping builds.
+emulator-telemetry = []
+
 # SDK crates from the pinned PSoXide submodule (one level up, under third_party).
 # Minimal set for the Milestone 0 GTE-cube smoke test. Add psx-vram (texture
 # upload), psx-io (CD streaming), psx-pad (input), etc. as the BSP renderer grows.
@@ -31,3 +37,6 @@ psx-gte  = { path = "../third_party/PSoXide/sdk/crates/psx-gte" }
 psx-pad  = { path = "../third_party/PSoXide/sdk/crates/psx-pad" }
 psx-math = { path = "../third_party/PSoXide/sdk/crates/psx-math" }
 psx-vram = { path = "../third_party/PSoXide/sdk/crates/psx-vram" }
+psx-io   = { path = "../third_party/PSoXide/sdk/crates/psx-io" }
+psx-font = { path = "../third_party/PSoXide/sdk/crates/psx-font" }
+psx-telemetry = { path = "../third_party/PSoXide/sdk/crates/psx-telemetry" }

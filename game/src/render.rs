@@ -40,8 +40,18 @@ pub struct SVert {
     pub uv: (i32, i32),
 }
 
-pub const EMPTY_CV: CVert = CVert { v: [0; 3], rgb: (0, 0, 0), uv: (0, 0) };
-pub const EMPTY_SV: SVert = SVert { x: 0, y: 0, z: 0, rgb: (0, 0, 0), uv: (0, 0) };
+pub const EMPTY_CV: CVert = CVert {
+    v: [0; 3],
+    rgb: (0, 0, 0),
+    uv: (0, 0),
+};
+pub const EMPTY_SV: SVert = SVert {
+    x: 0,
+    y: 0,
+    z: 0,
+    rgb: (0, 0, 0),
+    uv: (0, 0),
+};
 
 #[inline]
 fn t_q12(num: i32, den: i32) -> i32 {
@@ -60,7 +70,11 @@ fn lerp_cv_near(a: &CVert, b: &CVert) -> CVert {
     let t = t_q12(NEAR_Z - a.v[2], b.v[2] - a.v[2]);
     CVert {
         v: [mix(a.v[0], b.v[0], t), mix(a.v[1], b.v[1], t), NEAR_Z],
-        rgb: (mix(a.rgb.0, b.rgb.0, t), mix(a.rgb.1, b.rgb.1, t), mix(a.rgb.2, b.rgb.2, t)),
+        rgb: (
+            mix(a.rgb.0, b.rgb.0, t),
+            mix(a.rgb.1, b.rgb.1, t),
+            mix(a.rgb.2, b.rgb.2, t),
+        ),
         uv: (mix(a.uv.0, b.uv.0, t), mix(a.uv.1, b.uv.1, t)),
     }
 }
@@ -89,8 +103,16 @@ pub fn near_clip(cv: &[CVert; 3], out: &mut [CVert; 4]) -> usize {
 /// split a large triangle for affine perspective correction.
 pub fn mid_cv(a: &CVert, b: &CVert) -> CVert {
     CVert {
-        v: [(a.v[0] + b.v[0]) / 2, (a.v[1] + b.v[1]) / 2, (a.v[2] + b.v[2]) / 2],
-        rgb: ((a.rgb.0 + b.rgb.0) / 2, (a.rgb.1 + b.rgb.1) / 2, (a.rgb.2 + b.rgb.2) / 2),
+        v: [
+            (a.v[0] + b.v[0]) / 2,
+            (a.v[1] + b.v[1]) / 2,
+            (a.v[2] + b.v[2]) / 2,
+        ],
+        rgb: (
+            (a.rgb.0 + b.rgb.0) / 2,
+            (a.rgb.1 + b.rgb.1) / 2,
+            (a.rgb.2 + b.rgb.2) / 2,
+        ),
         uv: ((a.uv.0 + b.uv.0) / 2, (a.uv.1 + b.uv.1) / 2),
     }
 }
@@ -128,20 +150,41 @@ enum Axis {
 }
 
 fn lerp_sv(a: &SVert, b: &SVert, axis: Axis, bound: i32) -> SVert {
-    let (ca, cb) = if axis == Axis::X { (a.x, b.x) } else { (a.y, b.y) };
+    let (ca, cb) = if axis == Axis::X {
+        (a.x, b.x)
+    } else {
+        (a.y, b.y)
+    };
     let t = t_q12(bound - ca, cb - ca);
     SVert {
         x: mix(a.x, b.x, t),
         y: mix(a.y, b.y, t),
         z: mix(a.z, b.z, t),
-        rgb: (mix(a.rgb.0, b.rgb.0, t), mix(a.rgb.1, b.rgb.1, t), mix(a.rgb.2, b.rgb.2, t)),
+        rgb: (
+            mix(a.rgb.0, b.rgb.0, t),
+            mix(a.rgb.1, b.rgb.1, t),
+            mix(a.rgb.2, b.rgb.2, t),
+        ),
         uv: (mix(a.uv.0, b.uv.0, t), mix(a.uv.1, b.uv.1, t)),
     }
 }
 
-fn clip_edge(inp: &[SVert], n: usize, out: &mut [SVert; 8], axis: Axis, bound: i32, keep_ge: bool) -> usize {
+fn clip_edge(
+    inp: &[SVert],
+    n: usize,
+    out: &mut [SVert; 8],
+    axis: Axis,
+    bound: i32,
+    keep_ge: bool,
+) -> usize {
     let coord = |s: &SVert| if axis == Axis::X { s.x } else { s.y };
-    let inside = |s: &SVert| if keep_ge { coord(s) >= bound } else { coord(s) <= bound };
+    let inside = |s: &SVert| {
+        if keep_ge {
+            coord(s) >= bound
+        } else {
+            coord(s) <= bound
+        }
+    };
     let mut m = 0;
     for i in 0..n {
         let cur = inp[i];
@@ -161,7 +204,8 @@ fn clip_edge(inp: &[SVert], n: usize, out: &mut [SVert; 8], axis: Axis, bound: i
 /// Clip a convex screen polygon to the guard band. Returns vertices in `out`.
 pub fn guard_clip(poly: &[SVert], n: usize, out: &mut [SVert; 8]) -> usize {
     // Fast path: entirely inside.
-    if (0..n).all(|i| poly[i].x >= GX0 && poly[i].x <= GX1 && poly[i].y >= GY0 && poly[i].y <= GY1) {
+    if (0..n).all(|i| poly[i].x >= GX0 && poly[i].x <= GX1 && poly[i].y >= GY0 && poly[i].y <= GY1)
+    {
         for i in 0..n {
             out[i] = poly[i];
         }

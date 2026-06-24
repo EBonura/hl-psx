@@ -15,10 +15,14 @@
 
 extern crate psx_rt;
 
+mod cdstream;
+mod hud;
 mod map;
+mod menu;
 mod model;
 mod phys;
 mod render;
+mod telemetry;
 mod vram;
 
 use psx_gpu::material::TextureMaterial;
@@ -34,12 +38,16 @@ use map::Map;
 use model::Model;
 use vram::{TexSlot, EMPTY_SLOT};
 
-// Cooked at build time from the user's own Half-Life install (git-ignored).
-// `make cook MAP=<name>` writes the chosen map here.
-static MAP_BYTES: &[u8] = include_bytes!("../../data/maps/current.hlm");
+// Maps stream from the disc's WORLD.PAK at runtime (no longer baked into the
+// EXE). MAP_BUF holds one cooked `.hlm`; sized for the largest packed map
+// (~900 KB). `make rooms` cooks the selectable maps; chunk id == room_<N>.
+const MAP_WORDS: usize = 235_520; // 942,080 bytes
+static mut MAP_BUF: [u32; MAP_WORDS] = [0; MAP_WORDS];
 static SCI_BYTES: &[u8] = include_bytes!("../../data/models/scientist.hlmdl");
+static WPN_BYTES: &[u8] = include_bytes!("../../data/models/v_9mmhandgun.hlmdl");
 
 const OT_LEN: usize = 1024;
+const WEAPON_OT_LEN: usize = 64;
 const MAX_VERTS: usize = 8192;
 const MAX_PRIMS: usize = 12000;
 const MAX_TEX_SLOTS: usize = 512;
@@ -54,9 +62,9 @@ const CULL: bool = true; // backface cull (keep area > 0; winding verified)
 const H_PROJ: u16 = 160; // ~90 deg horizontal FOV at 320px
 
 const PITCH_MAX: i16 = 1000;
-const YAW_RATE: i32 = 64; // yaw units/frame at full stick (Q0.12)
-const PITCH_RATE: i32 = 48; // pitch units/frame at full stick
-const DEADZONE: i16 = 24;
+const YAW_RATE: i32 = 130; // yaw units/frame at full stick (Q0.12)
+const PITCH_RATE: i32 = 95; // pitch units/frame at full stick
+const DEADZONE: i32 = 28; // radial stick deadzone
 const VIEW_HEIGHT: i32 = 28;
 const FAR_VIEW: i32 = 6000; // leaf cull distance (world units); generous to avoid pop
 const MODEL_CULL: bool = false; // backface-cull studio models (flip if inside-out)
@@ -64,6 +72,7 @@ const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the li
 const TRAM_STEP_DIV: i32 = 15; // tram units/sec -> units/frame (demo pace)
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
+static mut WEAPON_OT: OrderingTable<WEAPON_OT_LEN> = OrderingTable::new();
 const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
     [(0, 0), (0, 0), (0, 0)],
     [(0, 0), (0, 0), (0, 0)],
@@ -74,17 +83,23 @@ const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
 static mut PRIMS: [TriTexturedGouraud; MAX_PRIMS] = [EMPTY_TRI; MAX_PRIMS];
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 static mut MODEL_SLOTS: [TexSlot; 16] = [EMPTY_SLOT; 16];
-static mut SCRATCH: [Projected; MAX_VERTS] = [Projected { sx: 0, sy: 0, sz: 0 }; MAX_VERTS];
+static mut WEAPON_SLOTS: [TexSlot; 12] = [EMPTY_SLOT; 12];
+static mut SCRATCH: [Projected; MAX_VERTS] = [Projected {
+    sx: 0,
+    sy: 0,
+    sz: 0,
+}; MAX_VERTS];
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut FACE_FRAME: [u16; MAX_FACES] = [0; MAX_FACES];
 static mut VERT_FRAME: [u16; MAX_VERTS] = [0; MAX_VERTS]; // project-once-per-frame cache marker
 static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut CLIP_CV: [render::CVert; 4] = [render::EMPTY_CV; 4]; // near-clip scratch (reused)
 
-/// World->view rotation: rotY(yaw)*rotX(pitch), rows 0/1 negated for the GPU's
-/// Y-down screen.
+/// World->view rotation: rotX(pitch)*rotY(yaw) -- pitch in camera space so
+/// looking up/down while turned doesn't roll the horizon. Rows 0/1 negated for
+/// the GPU's Y-down screen.
 fn view_rotation(yaw: u16, pitch: i16) -> Mat3I16 {
-    let look = Mat3I16::rotate_y((yaw >> 4) as u16).mul(&Mat3I16::rotate_x((pitch >> 4) as u16));
+    let look = Mat3I16::rotate_x((pitch >> 4) as u16).mul(&Mat3I16::rotate_y((yaw >> 4) as u16));
     let mut r = look;
     let mut j = 0;
     while j < 3 {
@@ -126,7 +141,11 @@ fn isqrt(n: i64) -> i32 {
 /// Length of a world-space segment.
 #[inline]
 fn seg_len(a: [i32; 3], b: [i32; 3]) -> i32 {
-    let d = [(b[0] - a[0]) as i64, (b[1] - a[1]) as i64, (b[2] - a[2]) as i64];
+    let d = [
+        (b[0] - a[0]) as i64,
+        (b[1] - a[1]) as i64,
+        (b[2] - a[2]) as i64,
+    ];
     isqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1)
 }
 
@@ -216,7 +235,8 @@ unsafe fn proj_vert(m: &Map, i: usize, frame: u16) {
 }
 
 #[inline]
-unsafe fn push_tri(
+unsafe fn push_tri_to<const N: usize>(
+    ot: &mut OrderingTable<N>,
     np: &mut usize,
     screen: [(i16, i16); 3],
     uv: [(u8, u8); 3],
@@ -228,8 +248,32 @@ unsafe fn push_tri(
         return;
     }
     PRIMS[*np] = TriTexturedGouraud::with_material(screen, uv, rgb, mat);
-    OT.add(otz, &mut PRIMS[*np], TriTexturedGouraud::WORDS);
+    ot.add(otz, &mut PRIMS[*np], TriTexturedGouraud::WORDS);
     *np += 1;
+}
+
+#[inline]
+unsafe fn push_tri(
+    np: &mut usize,
+    screen: [(i16, i16); 3],
+    uv: [(u8, u8); 3],
+    rgb: [(u8, u8, u8); 3],
+    mat: TextureMaterial,
+    otz: usize,
+) {
+    push_tri_to(&mut OT, np, screen, uv, rgb, mat, otz);
+}
+
+#[inline]
+unsafe fn push_weapon_tri(
+    np: &mut usize,
+    screen: [(i16, i16); 3],
+    uv: [(u8, u8); 3],
+    rgb: [(u8, u8, u8); 3],
+    mat: TextureMaterial,
+    otz: usize,
+) {
+    push_tri_to(&mut WEAPON_OT, np, screen, uv, rgb, mat, otz);
 }
 
 /// Emit triangle `t` from its three projected screen verts `p`. Small in-front
@@ -253,7 +297,13 @@ unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &m
     // Fast path: fully in front and on-screen -> emit straight from the cache.
     // (Affine warp on big near surfaces is accepted; the view-space path is for
     // near-plane straddlers only -- routing the whole scene through it tanked fps.)
-    if pa.sz >= NEAR && pb.sz >= NEAR && pc.sz >= NEAR && !clamped(&pa) && !clamped(&pb) && !clamped(&pc) {
+    if pa.sz >= NEAR
+        && pb.sz >= NEAR
+        && pc.sz >= NEAR
+        && !clamped(&pa)
+        && !clamped(&pb)
+        && !clamped(&pc)
+    {
         let (sa, sb, sc) = (
             (pa.sx as i32, pa.sy as i32),
             (pb.sx as i32, pb.sy as i32),
@@ -263,7 +313,14 @@ unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &m
             return;
         }
         let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
-        push_tri(np, [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)], uv, rgb, slot.material, clamp_otz((avgz >> 6) as usize));
+        push_tri(
+            np,
+            [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
+            uv,
+            rgb,
+            slot.material,
+            clamp_otz((avgz >> 6) as usize),
+        );
         return;
     }
     if pa.sz == 0 && pb.sz == 0 && pc.sz == 0 {
@@ -285,7 +342,12 @@ unsafe fn emit_projected(m: &Map, t: usize, p: [Projected; 3], nv: usize, np: &m
         return;
     }
     for k in 1..n - 1 {
-        emit_cv(&[CLIP_CV[0], CLIP_CV[k], CLIP_CV[k + 1]], SUBDIV_DEPTH, slot.material, np);
+        emit_cv(
+            &[CLIP_CV[0], CLIP_CV[k], CLIP_CV[k + 1]],
+            SUBDIV_DEPTH,
+            slot.material,
+            np,
+        );
     }
 }
 
@@ -318,8 +380,16 @@ unsafe fn emit_cv(cv: &[render::CVert; 3], depth: u8, mat: TextureMaterial, np: 
         let avgz = ((pa.z + pb.z + pc.z) / 3).max(1);
         push_tri(
             np,
-            [(pa.x as i16, pa.y as i16), (pb.x as i16, pb.y as i16), (pc.x as i16, pc.y as i16)],
-            [(pa.uv.0 as u8, pa.uv.1 as u8), (pb.uv.0 as u8, pb.uv.1 as u8), (pc.uv.0 as u8, pc.uv.1 as u8)],
+            [
+                (pa.x as i16, pa.y as i16),
+                (pb.x as i16, pb.y as i16),
+                (pc.x as i16, pc.y as i16),
+            ],
+            [
+                (pa.uv.0 as u8, pa.uv.1 as u8),
+                (pb.uv.0 as u8, pb.uv.1 as u8),
+                (pc.uv.0 as u8, pc.uv.1 as u8),
+            ],
             [
                 (cl(pa.rgb.0), cl(pa.rgb.1), cl(pa.rgb.2)),
                 (cl(pb.rgb.0), cl(pb.rgb.1), cl(pb.rgb.2)),
@@ -341,8 +411,16 @@ unsafe fn emit_cv(cv: &[render::CVert; 3], depth: u8, mat: TextureMaterial, np: 
         let avgz = ((s0.z + s1.z + s2.z) / 3).max(1);
         push_tri(
             np,
-            [(s0.x as i16, s0.y as i16), (s1.x as i16, s1.y as i16), (s2.x as i16, s2.y as i16)],
-            [(s0.uv.0 as u8, s0.uv.1 as u8), (s1.uv.0 as u8, s1.uv.1 as u8), (s2.uv.0 as u8, s2.uv.1 as u8)],
+            [
+                (s0.x as i16, s0.y as i16),
+                (s1.x as i16, s1.y as i16),
+                (s2.x as i16, s2.y as i16),
+            ],
+            [
+                (s0.uv.0 as u8, s0.uv.1 as u8),
+                (s1.uv.0 as u8, s1.uv.1 as u8),
+                (s2.uv.0 as u8, s2.uv.1 as u8),
+            ],
             [
                 (cl(s0.rgb.0), cl(s0.rgb.1), cl(s0.rgb.2)),
                 (cl(s1.rgb.0), cl(s1.rgb.1), cl(s1.rgb.2)),
@@ -354,13 +432,26 @@ unsafe fn emit_cv(cv: &[render::CVert; 3], depth: u8, mat: TextureMaterial, np: 
     }
 }
 
-/// Draw a static model at world `pos`, rotated by `yaw` (Q0.12), flat-shaded.
-unsafe fn draw_model(md: &Model, slots: &[TexSlot], pos: [i32; 3], yaw: u16, eye: [i32; 3], rot: &Mat3I16, np: &mut usize) {
+/// Draw a model at world `pos`, rotated by `yaw` (Q0.12), at animation `frame`.
+unsafe fn draw_model(
+    md: &Model,
+    slots: &[TexSlot],
+    pos: [i32; 3],
+    yaw: u16,
+    frame: usize,
+    eye: [i32; 3],
+    rot: &Mat3I16,
+    np: &mut usize,
+) {
     // GTE rotation = view ∘ model-yaw; translation places the origin at `pos`.
     let mr = rot.mul(&Mat3I16::rotate_y((yaw >> 4) as u16));
     scene::load_rotation(&mr);
     let es = [eye[0] - pos[0], eye[1] - pos[1], eye[2] - pos[2]];
-    let et = [-dot12(rot.m[0], es), -dot12(rot.m[1], es), -dot12(rot.m[2], es)];
+    let et = [
+        -dot12(rot.m[0], es),
+        -dot12(rot.m[1], es),
+        -dot12(rot.m[2], es),
+    ];
     scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
     for t in 0..md.n_tris {
         let slot = slots[md.tri_tex(t).min(slots.len() - 1)];
@@ -368,13 +459,17 @@ unsafe fn draw_model(md: &Model, slots: &[TexSlot], pos: [i32; 3], yaw: u16, eye
             continue;
         }
         let (a, b, c) = md.tri_idx(t);
-        let p = scene::project_triangle(md.vert(a), md.vert(b), md.vert(c));
+        let p = scene::project_triangle(md.vert(frame, a), md.vert(frame, b), md.vert(frame, c));
         let (pa, pb, pc) = (p[0], p[1], p[2]);
         if pa.sz < NEAR || pb.sz < NEAR || pc.sz < NEAR {
             continue;
         }
         if MODEL_CULL
-            && culled((pa.sx as i32, pa.sy as i32), (pb.sx as i32, pb.sy as i32), (pc.sx as i32, pc.sy as i32))
+            && culled(
+                (pa.sx as i32, pa.sy as i32),
+                (pb.sx as i32, pb.sy as i32),
+                (pc.sx as i32, pc.sy as i32),
+            )
         {
             continue;
         }
@@ -390,6 +485,96 @@ unsafe fn draw_model(md: &Model, slots: &[TexSlot], pos: [i32; 3], yaw: u16, eye
     }
 }
 
+// First-person viewmodel transform. GoldSrc attaches the model to the camera:
+// view.cpp copies the camera angles to the viewmodel and uses the predicted
+// view origin, while the MDL vertices carry the actual first-person placement.
+// Keep that authored placement here; only map HL's local axes into PSX view
+// space and scale to this port's cooked-world/projection units.
+const VM_BASE: Mat3I16 = Mat3I16 {
+    m: [[0, 0, -4096], [0, -4096, 0], [4096, 0, 0]],
+};
+const VM_SCALE: i32 = 5;
+const VM_VIEW_SHIFT: [i32; 3] = [30, 30, 40]; // PS1 viewport fit: right, down, deeper
+const VM_CULL: bool = true;
+const VM_OT_Z0: u32 = 48;
+const VM_OT_STEP: u32 = 2;
+const VM_CULL_POS: bool = true; // winding sign that is the backface
+const VM_TWO_SIDED_TEX: usize = 0; // GLOVED_sleeve: avoid punched gaps in the orange arm
+const VM_SHADE: u8 = 255;
+const VM_FRAME: usize = 0; // authored idle pose
+const SHOW_VIEWMODEL: bool = true;
+const ANIM_DIV: usize = 4; // game-frames per baked animation frame
+
+/// Build the viewmodel's GTE matrix: authored HL viewmodel axes, scale baked in.
+fn viewmodel_rot() -> Mat3I16 {
+    let r = VM_BASE;
+    let mut m = r;
+    for i in 0..3 {
+        for j in 0..3 {
+            m.m[i][j] = (r.m[i][j] as i32 * VM_SCALE) as i16;
+        }
+    }
+    m
+}
+
+#[inline]
+fn viewmodel_otz(avgz: u32) -> usize {
+    let rel = avgz.saturating_sub(VM_OT_Z0) / VM_OT_STEP;
+    1 + (rel as usize).min(WEAPON_OT_LEN - 2)
+}
+
+/// Draw the held weapon in view space (attached to the camera), flat-shaded, on
+/// top of the world. `recoil_y` is a small screen-space kick layered over the
+/// source-authored origin.
+unsafe fn draw_viewmodel(
+    md: &Model,
+    slots: &[TexSlot],
+    frame: usize,
+    recoil_y: i32,
+    np: &mut usize,
+) {
+    let r = viewmodel_rot();
+    scene::load_rotation(&r);
+    scene::load_translation(Vec3I32::new(
+        VM_VIEW_SHIFT[0],
+        VM_VIEW_SHIFT[1] + recoil_y,
+        VM_VIEW_SHIFT[2],
+    ));
+    // HMDL keeps texture groups in source order (sleeve/glove before gun).
+    // It submits to a dedicated weapon OT, drawn after the world, so its own
+    // depth can sort normally without room polygons cutting through it.
+    for t in 0..md.n_tris {
+        let tex_id = md.tri_tex(t);
+        let slot = slots[tex_id.min(slots.len() - 1)];
+        if !slot.valid {
+            continue;
+        }
+        let (a, b, c) = md.tri_idx(t);
+        let p = scene::project_triangle(md.vert(frame, a), md.vert(frame, b), md.vert(frame, c));
+        let (pa, pb, pc) = (p[0], p[1], p[2]);
+        if pa.sz < NEAR || pb.sz < NEAR || pc.sz < NEAR {
+            continue;
+        }
+        // Backface cull (toggle/sign tunable while dialling in the transform).
+        if VM_CULL && tex_id != VM_TWO_SIDED_TEX {
+            let area = (pb.sx as i32 - pa.sx as i32) * (pc.sy as i32 - pa.sy as i32)
+                - (pc.sx as i32 - pa.sx as i32) * (pb.sy as i32 - pa.sy as i32);
+            if (area >= 0) == VM_CULL_POS {
+                continue;
+            }
+        }
+        let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
+        push_weapon_tri(
+            np,
+            [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
+            md.tri_uv(t),
+            [(VM_SHADE, VM_SHADE, VM_SHADE); 3],
+            slot.material,
+            viewmodel_otz(avgz),
+        );
+    }
+}
+
 #[no_mangle]
 fn main() {
     tty::println("hl-psx: booting renderer");
@@ -400,52 +585,117 @@ fn main() {
     gpu::set_draw_offset(0, 0);
     scene::set_screen_offset(160 << 16, 120 << 16);
     scene::set_projection_plane(H_PROJ);
-    let _ = enable_analog_port1();
-
-    let m = Map::load(MAP_BYTES);
-    let nv = if m.n_verts < MAX_VERTS { m.n_verts } else { MAX_VERTS };
-
-    let failed = unsafe { vram::upload_textures(&m, &mut TEX_SLOTS) };
-    if failed > 0 {
-        tty::println("hl-psx: some textures did not fit VRAM");
-    }
     let sci = Model::load(SCI_BYTES);
+
+    // Boot flow: pick a map in the menu, stream + play it, return on Select.
+    // (Analog is enabled inside play(); the menu runs on the digital pad.)
+    loop {
+        let sel = menu::run(&mut fb);
+        play(&mut fb, &sci, sel as u32);
+    }
+}
+
+/// Stream map `chunk_id` from WORLD.PAK, upload its textures, and run the
+/// renderer + physics loop until the player presses Select (back to menu).
+fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
+    let _ = enable_analog_port1();
+    telemetry::frame_begin(0);
+    telemetry::task_begin(telemetry::task::FIXED_UPDATE);
+    telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
+    let map_len = cdstream::load_chunk(chunk_id, unsafe { &mut MAP_BUF }).unwrap_or(0);
+    telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
+    telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, 1);
+    telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, map_len as u32);
+    telemetry::counter(
+        telemetry::counter::CD_WORLD_PACK_SECTORS,
+        ((map_len as u32) + 2047) / 2048,
+    );
+    telemetry::counter(
+        telemetry::counter::CD_WORLD_PACK_STATUS,
+        if map_len == 0 { 0 } else { 1 },
+    );
+    telemetry::task_end(telemetry::task::FIXED_UPDATE);
+    if map_len == 0 {
+        tty::println("hl-psx: WORLD.PAK stream failed");
+        telemetry::debug_log("hl-psx: WORLD.PAK stream failed");
+        return;
+    }
+    telemetry::debug_log("hl-psx: WORLD.PAK chunk loaded");
+    let map_bytes = unsafe { core::slice::from_raw_parts(MAP_BUF.as_ptr() as *const u8, map_len) };
+    let m = Map::load(map_bytes);
+    let nv = if m.n_verts < MAX_VERTS {
+        m.n_verts
+    } else {
+        MAX_VERTS
+    };
+
+    telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
+    let _ = unsafe { vram::upload_textures(&m, &mut TEX_SLOTS) };
+    let wpn = Model::load(WPN_BYTES);
     unsafe {
         vram::upload_tex_blob(sci.tex_blob(), sci.n_texs, &mut MODEL_SLOTS);
+        vram::upload_tex_blob(wpn.tex_blob(), wpn.n_texs, &mut WEAPON_SLOTS);
     }
+    let hud_mat = hud::upload(); // real HUD sprite sheet -> free gameplay tpage
+    telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
 
     let mut player = phys::Player::new(m.spawn_pos);
     let mut yaw: u16 = (m.spawn_yaw as u16) & 0xFFF;
     let mut pitch: i16 = 0;
     let mut frame_no: u16 = 0;
+    let mut telemetry_frame: u32 = 1;
 
     // Tram ride: carry the player along the path_track chain, then hand back
     // control. ride_off is the tram's displacement from its parked start.
-    let wp0 = if m.n_way > 0 { m.waypoint(0) } else { [0, 0, 0] };
+    let wp0 = if m.n_way > 0 {
+        m.waypoint(0)
+    } else {
+        [0, 0, 0]
+    };
     let tram_step = (m.tram_speed / TRAM_STEP_DIV).max(3);
-    let mut riding = m.n_way >= 2;
+    // Tram cinematic OFF by default: it locks the player on rails (no walking),
+    // which read as "movement broken" on c0a0. Re-enable once walk-on-platform
+    // works. Flip TRAM_RIDE to restore the on-rails intro.
+    const TRAM_RIDE: bool = false;
+    let mut riding = TRAM_RIDE && m.n_way >= 2;
+    let mut recoil = 0i32; // viewmodel kick when firing
     let mut seg = 0usize;
     let mut seg_dist = 0i32;
     let mut ride_off = [0i32; 3];
 
     loop {
+        telemetry::frame_begin(telemetry_frame);
+        telemetry::task_begin(telemetry::task::FIXED_UPDATE);
+        telemetry::stage_begin(telemetry::stage::UPDATE);
         // Modern twin-stick FPS: left stick moves/strafes, right stick looks
         // (X = turn, Y = pitch), Cross = jump. Analog only.
         let pad = poll_port1();
+        if pad.buttons.is_held(button::SELECT) {
+            telemetry::stage_end(telemetry::stage::UPDATE);
+            telemetry::task_end(telemetry::task::FIXED_UPDATE);
+            return; // back to the map menu
+        }
+        // Analog is required: if the pad ever isn't in analog mode, re-assert it.
+        if !pad.is_analog() {
+            let _ = enable_analog_port1();
+        }
+        // R2 fires: kick the viewmodel; re-kicks while held (rapid fire feel).
+        recoil = (recoil - 3).max(0);
+        if pad.buttons.is_held(button::R2) && recoil == 0 {
+            recoil = 16;
+        }
         let (mut fwd, mut strafe, mut turn, mut look) = (0i32, 0i32, 0i32, 0i32);
         if pad.is_analog() {
             let (lx, ly) = pad.sticks.left_centered();
             let (rx, ry) = pad.sticks.right_centered();
-            if ly.abs() > DEADZONE {
+            let dz2 = DEADZONE * DEADZONE;
+            // Radial deadzone per stick (avoids axis drift / diagonal bias).
+            if (lx as i32) * (lx as i32) + (ly as i32) * (ly as i32) > dz2 {
                 fwd = -(ly as i32); // stick up = forward
-            }
-            if lx.abs() > DEADZONE {
                 strafe = lx as i32;
             }
-            if rx.abs() > DEADZONE {
+            if (rx as i32) * (rx as i32) + (ry as i32) * (ry as i32) > dz2 {
                 turn = rx as i32;
-            }
-            if ry.abs() > DEADZONE {
                 look = -(ry as i32); // stick up = look up
             }
         }
@@ -461,7 +711,11 @@ fn main() {
                 let e = m.entity(ei);
                 let off = if e.kind == 1 {
                     let ph = ENT_PHASE[ei] as i64;
-                    [((e.mv[0] as i64 * ph) >> 12) as i32, ((e.mv[1] as i64 * ph) >> 12) as i32, ((e.mv[2] as i64 * ph) >> 12) as i32]
+                    [
+                        ((e.mv[0] as i64 * ph) >> 12) as i32,
+                        ((e.mv[1] as i64 * ph) >> 12) as i32,
+                        ((e.mv[2] as i64 * ph) >> 12) as i32,
+                    ]
                 } else {
                     e.origin
                 };
@@ -469,8 +723,15 @@ fn main() {
                 nmov += 1;
             }
             if m.tram_submodel > 0 && nmov < movers.len() {
-                let toff = [ride_off[0] + m.tram_base[0], ride_off[1] + m.tram_base[1], ride_off[2] + m.tram_base[2]];
-                movers[nmov] = phys::Mover { head: m.tram_head, off: toff };
+                let toff = [
+                    ride_off[0] + m.tram_base[0],
+                    ride_off[1] + m.tram_base[1],
+                    ride_off[2] + m.tram_base[2],
+                ];
+                movers[nmov] = phys::Mover {
+                    head: m.tram_head,
+                    off: toff,
+                };
                 nmov += 1;
             }
         }
@@ -495,27 +756,52 @@ fn main() {
                 let b = m.waypoint(seg + 1);
                 let len = seg_len(a, b);
                 let f = (seg_dist * 4096 / len).clamp(0, 4096);
-                [a[0] + ((b[0] - a[0]) * f >> 12), a[1] + ((b[1] - a[1]) * f >> 12), a[2] + ((b[2] - a[2]) * f >> 12)]
+                [
+                    a[0] + ((b[0] - a[0]) * f >> 12),
+                    a[1] + ((b[1] - a[1]) * f >> 12),
+                    a[2] + ((b[2] - a[2]) * f >> 12),
+                ]
             } else {
                 riding = false; // reached the end of the line
                 m.waypoint(m.n_way - 1)
             };
             ride_off = [pos[0] - wp0[0], pos[1] - wp0[1], pos[2] - wp0[2]];
             // Locked to the tram (walking on a moving platform desyncs gravity).
-            player.pos = [m.spawn_pos[0] + ride_off[0], m.spawn_pos[1] + ride_off[1], m.spawn_pos[2] + ride_off[2]];
+            player.pos = [
+                m.spawn_pos[0] + ride_off[0],
+                m.spawn_pos[1] + ride_off[1],
+                m.spawn_pos[2] + ride_off[2],
+            ];
             player.vel = [0, 0, 0];
         } else {
             // On foot: full physics, colliding with the world + brush movers.
-            player.update(&m, movers, fwd, strafe, pad.buttons.is_held(button::CROSS), yaw);
+            player.update(
+                &m,
+                movers,
+                fwd,
+                strafe,
+                pad.buttons.is_held(button::CROSS),
+                yaw,
+            );
         }
         let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
 
         let rot = view_rotation(yaw, pitch);
         scene::load_rotation(&rot);
-        let base_t = [-dot12(rot.m[0], eye), -dot12(rot.m[1], eye), -dot12(rot.m[2], eye)];
+        let base_t = [
+            -dot12(rot.m[0], eye),
+            -dot12(rot.m[1], eye),
+            -dot12(rot.m[2], eye),
+        ];
         scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
 
+        telemetry::stage_end(telemetry::stage::UPDATE);
+        telemetry::counter(telemetry::counter::SIM_TICKS, 1);
+        telemetry::task_end(telemetry::task::FIXED_UPDATE);
+
         frame_no = frame_no.wrapping_add(1);
+        telemetry::task_begin(telemetry::task::VISUAL_RENDER);
+        telemetry::stage_begin(telemetry::stage::RENDER);
 
         unsafe {
             if frame_no == 0 {
@@ -528,10 +814,14 @@ fn main() {
                 frame_no = 1;
             }
             OT.clear();
+            WEAPON_OT.clear();
             let mut np = 0usize;
+            let mut room_cells_drawn = 0u32;
+            let mut room_surfaces_considered = 0u32;
 
             // World (model 0) via PVS, drawing each visible leaf's faces once.
             // Vertices are projected lazily (only those actually drawn).
+            telemetry::stage_begin(telemetry::stage::ROOM);
             let cam_leaf = camera_leaf(&m, eye);
             if cam_leaf > 0 && (cam_leaf as usize) < m.n_leaves {
                 let (visofs, _, _) = m.leaf(cam_leaf as usize);
@@ -559,6 +849,7 @@ fn main() {
                     if vy.abs() * 4 > vz * 3 + lr * 8 {
                         continue;
                     }
+                    room_cells_drawn = room_cells_drawn.saturating_add(1);
                     let (_, m0, mc) = m.leaf(i + 1);
                     for mj in m0..m0 + mc {
                         if mj >= m.n_marks {
@@ -569,6 +860,7 @@ fn main() {
                             continue;
                         }
                         FACE_FRAME[face] = frame_no;
+                        room_surfaces_considered = room_surfaces_considered.saturating_add(1);
                         // Backface cull the whole face before touching its tris.
                         let (fnrm, fd) = m.face_plane(face);
                         if dot12(fnrm, eye) <= fd {
@@ -584,7 +876,13 @@ fn main() {
                                 proj_vert(&m, a, frame_no);
                                 proj_vert(&m, b, frame_no);
                                 proj_vert(&m, c, frame_no);
-                                emit_projected(&m, tt, [SCRATCH[a], SCRATCH[b], SCRATCH[c]], nv, &mut np);
+                                emit_projected(
+                                    &m,
+                                    tt,
+                                    [SCRATCH[a], SCRATCH[b], SCRATCH[c]],
+                                    nv,
+                                    &mut np,
+                                );
                             }
                         }
                     }
@@ -600,6 +898,12 @@ fn main() {
                     }
                 }
             }
+            telemetry::stage_end(telemetry::stage::ROOM);
+            telemetry::counter(telemetry::counter::ROOM_CELLS_DRAWN, room_cells_drawn);
+            telemetry::counter(
+                telemetry::counter::ROOM_SURFACES_CONSIDERED,
+                room_surfaces_considered,
+            );
 
             // Brush entities: doors slide open near the player. Each renders with
             // a per-entity GTE translation (base view shifted by the offset);
@@ -612,7 +916,11 @@ fn main() {
                     let dz = (player.pos[2] - e.center[2]) as i64;
                     let near = dx * dx + dy * dy + dz * dz < e.r2 as i64;
                     let ph = &mut ENT_PHASE[ei];
-                    *ph = if near { (*ph + DOOR_SPEED).min(4096) } else { (*ph - DOOR_SPEED).max(0) };
+                    *ph = if near {
+                        (*ph + DOOR_SPEED).min(4096)
+                    } else {
+                        (*ph - DOOR_SPEED).max(0)
+                    };
                     [
                         ((e.mv[0] as i64 * *ph as i64) >> 12) as i32,
                         ((e.mv[1] as i64 * *ph as i64) >> 12) as i32,
@@ -622,7 +930,11 @@ fn main() {
                     e.origin
                 };
                 let es = [eye[0] - off[0], eye[1] - off[1], eye[2] - off[2]];
-                let et = [-dot12(rot.m[0], es), -dot12(rot.m[1], es), -dot12(rot.m[2], es)];
+                let et = [
+                    -dot12(rot.m[0], es),
+                    -dot12(rot.m[1], es),
+                    -dot12(rot.m[2], es),
+                ];
                 scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
                 let (ff, nf) = m.submodel(e.submodel);
                 for f in ff..ff + nf {
@@ -642,9 +954,17 @@ fn main() {
 
             // Tram car: render its submodel at the current ride offset.
             if m.tram_submodel > 0 && m.tram_submodel < m.n_models {
-                let toff = [ride_off[0] + m.tram_base[0], ride_off[1] + m.tram_base[1], ride_off[2] + m.tram_base[2]];
+                let toff = [
+                    ride_off[0] + m.tram_base[0],
+                    ride_off[1] + m.tram_base[1],
+                    ride_off[2] + m.tram_base[2],
+                ];
                 let es = [eye[0] - toff[0], eye[1] - toff[1], eye[2] - toff[2]];
-                let et = [-dot12(rot.m[0], es), -dot12(rot.m[1], es), -dot12(rot.m[2], es)];
+                let et = [
+                    -dot12(rot.m[0], es),
+                    -dot12(rot.m[1], es),
+                    -dot12(rot.m[2], es),
+                ];
                 scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
                 let (ff, nf) = m.submodel(m.tram_submodel);
                 for f in ff..ff + nf {
@@ -678,14 +998,36 @@ fn main() {
                 if vx.abs() > vz + 128 {
                     continue;
                 }
-                draw_model(&sci, &MODEL_SLOTS, org, yaw as u16, eye, &rot, &mut np);
+                let sf = (frame_no as usize / ANIM_DIV) % sci.n_frames.max(1);
+                draw_model(&sci, &MODEL_SLOTS, org, yaw as u16, sf, eye, &rot, &mut np);
+            }
+
+            let world_prims = np;
+            if SHOW_VIEWMODEL {
+                telemetry::stage_begin(telemetry::stage::EQUIPMENT);
+                draw_viewmodel(&wpn, &WEAPON_SLOTS, VM_FRAME, -recoil, &mut np);
+                telemetry::stage_end(telemetry::stage::EQUIPMENT);
+                telemetry::counter(
+                    telemetry::counter::EQUIPMENT_SUBMITTED_TRIS,
+                    np.saturating_sub(world_prims) as u32,
+                );
             }
 
             fb.clear(0, 0, 0);
             OT.submit();
+            WEAPON_OT.submit();
+            telemetry::counter(telemetry::counter::TRI_PRIMITIVES, np as u32);
+            telemetry::counter(telemetry::counter::WORLD_COMMANDS, world_prims as u32);
         }
 
+        hud::draw(hud_mat, 100, 17);
+        telemetry::stage_end(telemetry::stage::RENDER);
+        telemetry::stage_begin(telemetry::stage::PRESENT);
         gpu::vsync();
         fb.swap();
+        telemetry::stage_end(telemetry::stage::PRESENT);
+        telemetry::counter(telemetry::counter::VISUAL_FRAMES, 1);
+        telemetry::task_end(telemetry::task::VISUAL_RENDER);
+        telemetry_frame = telemetry_frame.wrapping_add(1);
     }
 }

@@ -12,12 +12,26 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 name = "hl-psx"
 version = "0.1.0"
 dependencies = [
+ "psx-font",
  "psx-gpu",
  "psx-gte",
+ "psx-io",
  "psx-math",
  "psx-pad",
  "psx-rt",
  "psx-sdk",
+ "psx-telemetry",
+ "psx-vram",
+]
+
+[[package]]
+name = "psx-font"
+version = "0.1.0"
+dependencies = [
+ "psx-gpu",
+ "psx-hw",
+ "psx-io",
+ "psx-math",
  "psx-vram",
 ]
 
@@ -88,6 +102,10 @@ dependencies = [
  "psx-pad",
  "psx-rt",
 ]
+
+[[package]]
+name = "psx-telemetry"
+version = "0.1.0"
 
 [[package]]
 name = "psx-vram"
