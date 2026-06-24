@@ -756,8 +756,8 @@ struct EntRec {
     kind: u16, // 0 = static brush, 1 = func_door
     origin: [i32; 3],
     mv: [i32; 3],     // door full-open displacement (world)
-    center: [i32; 3], // door trigger centre (world)
-    r2: i32,          // trigger radius^2 (world)
+    center: [i32; 3], // submodel bounds centre; doors use closed-world centre
+    r2: i32,          // conservative bounds radius^2 (world)
     head: i32,        // submodel hull-1 clipnode root (collision)
 }
 
@@ -815,7 +815,9 @@ fn collect_entities(ents: &[u8], models: &[u8], scale: f32) -> Vec<EntRec> {
             scale,
         );
         let sz = [maxs[0] - mins[0], maxs[1] - mins[1], maxs[2] - mins[2]];
-        let rad = (sz[0].max(sz[1]).max(sz[2]) * 0.5 + 80.0) / scale;
+        let half = [sz[0] * 0.5, sz[1] * 0.5, sz[2] * 0.5];
+        let rad =
+            ((half[0] * half[0] + half[1] * half[1] + half[2] * half[2]).sqrt() + 80.0) / scale;
         let r2 = (rad * rad) as i32;
         let head = i32le(models, mo + 40).unwrap_or(0); // dmodel_t.headnode[1]
         if cls == "func_door" {
@@ -843,7 +845,7 @@ fn collect_entities(ents: &[u8], models: &[u8], scale: f32) -> Vec<EntRec> {
                 origin,
                 mv: [0; 3],
                 center,
-                r2: 0,
+                r2,
                 head,
             });
         }

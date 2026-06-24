@@ -36,6 +36,7 @@ use psx_rt::tty;
 
 use map::Map;
 use model::Model;
+use psx_gpu::prim::QuadTexturedMaterial;
 use vram::{TexSlot, EMPTY_SLOT};
 
 // Maps stream from the disc's WORLD.PAK at runtime (no longer baked into the
@@ -48,7 +49,9 @@ static WPN_BYTES: &[u8] = include_bytes!("../../data/models/v_9mmhandgun.hlmdl")
 
 const OT_LEN: usize = 1024;
 const WEAPON_OT_LEN: usize = 64;
+const HUD_OT_LEN: usize = 1;
 const MAX_VERTS: usize = 8192;
+const MAX_MODEL_VERTS: usize = 1024;
 const MAX_PRIMS: usize = 12000;
 const MAX_TEX_SLOTS: usize = 512;
 const MAX_FACES: usize = 8192;
@@ -73,6 +76,7 @@ const TRAM_STEP_DIV: i32 = 15; // tram units/sec -> units/frame (demo pace)
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
 static mut WEAPON_OT: OrderingTable<WEAPON_OT_LEN> = OrderingTable::new();
+static mut HUD_OT: OrderingTable<HUD_OT_LEN> = OrderingTable::new();
 const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
     [(0, 0), (0, 0), (0, 0)],
     [(0, 0), (0, 0), (0, 0)],
@@ -81,6 +85,7 @@ const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
     0,
 );
 static mut PRIMS: [TriTexturedGouraud; MAX_PRIMS] = [EMPTY_TRI; MAX_PRIMS];
+static mut HUD_PRIMS: [QuadTexturedMaterial; hud::DRAW_CAP] = [hud::EMPTY_QUAD; hud::DRAW_CAP];
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 static mut MODEL_SLOTS: [TexSlot; 16] = [EMPTY_SLOT; 16];
 static mut WEAPON_SLOTS: [TexSlot; 12] = [EMPTY_SLOT; 12];
@@ -89,6 +94,14 @@ static mut SCRATCH: [Projected; MAX_VERTS] = [Projected {
     sy: 0,
     sz: 0,
 }; MAX_VERTS];
+static mut WEAPON_SCRATCH: [Projected; MAX_MODEL_VERTS] = [Projected {
+    sx: 0,
+    sy: 0,
+    sz: 0,
+}; MAX_MODEL_VERTS];
+static mut WEAPON_CACHE_FRAME: usize = usize::MAX;
+static mut WEAPON_CACHE_RECOIL: i32 = i32::MIN;
+static mut WEAPON_CACHE_VERTS: usize = 0;
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut FACE_FRAME: [u16; MAX_FACES] = [0; MAX_FACES];
 static mut VERT_FRAME: [u16; MAX_VERTS] = [0; MAX_VERTS]; // project-once-per-frame cache marker
@@ -154,6 +167,21 @@ fn seg_len(a: [i32; 3], b: [i32; 3]) -> i32 {
 #[inline]
 fn culled(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
     (b.0 - a.0) * (c.1 - a.1) - (c.0 - a.0) * (b.1 - a.1) <= 0
+}
+
+#[inline]
+fn sphere_visible(center: [i32; 3], radius: i32, rot: &Mat3I16, base_t: [i32; 3]) -> bool {
+    let vz = dot12(rot.m[2], center) + base_t[2];
+    if vz + radius < render::NEAR_Z || vz - radius > FAR_VIEW {
+        return false;
+    }
+    let z = vz.max(render::NEAR_Z);
+    let vx = dot12(rot.m[0], center) + base_t[0];
+    if vx.abs() > z + radius * 2 {
+        return false;
+    }
+    let vy = dot12(rot.m[1], center) + base_t[1];
+    vy.abs() * 4 <= z * 3 + radius * 8
 }
 
 #[inline]
@@ -540,6 +568,15 @@ unsafe fn draw_viewmodel(
         VM_VIEW_SHIFT[1] + recoil_y,
         VM_VIEW_SHIFT[2],
     ));
+    let nv = md.n_verts.min(MAX_MODEL_VERTS);
+    if WEAPON_CACHE_FRAME != frame || WEAPON_CACHE_RECOIL != recoil_y || WEAPON_CACHE_VERTS != nv {
+        for i in 0..nv {
+            WEAPON_SCRATCH[i] = scene::project_vertex(md.vert(frame, i));
+        }
+        WEAPON_CACHE_FRAME = frame;
+        WEAPON_CACHE_RECOIL = recoil_y;
+        WEAPON_CACHE_VERTS = nv;
+    }
     // HMDL keeps texture groups in source order (sleeve/glove before gun).
     // It submits to a dedicated weapon OT, drawn after the world, so its own
     // depth can sort normally without room polygons cutting through it.
@@ -550,8 +587,10 @@ unsafe fn draw_viewmodel(
             continue;
         }
         let (a, b, c) = md.tri_idx(t);
-        let p = scene::project_triangle(md.vert(frame, a), md.vert(frame, b), md.vert(frame, c));
-        let (pa, pb, pc) = (p[0], p[1], p[2]);
+        if a >= nv || b >= nv || c >= nv {
+            continue;
+        }
+        let (pa, pb, pc) = (WEAPON_SCRATCH[a], WEAPON_SCRATCH[b], WEAPON_SCRATCH[c]);
         if pa.sz < NEAR || pb.sz < NEAR || pc.sz < NEAR {
             continue;
         }
@@ -815,6 +854,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
             }
             OT.clear();
             WEAPON_OT.clear();
+            HUD_OT.clear();
             let mut np = 0usize;
             let mut room_cells_drawn = 0u32;
             let mut room_surfaces_considered = 0u32;
@@ -905,6 +945,13 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                 room_surfaces_considered,
             );
 
+            telemetry::stage_begin(telemetry::stage::MODEL_INSTANCES);
+            let model_prims0 = np;
+            let mut model_draws = 0u32;
+            let mut model_bounds_tests = 0u32;
+            let mut model_bounds_culled = 0u32;
+            let mut model_culled_tris = 0u32;
+
             // Brush entities: doors slide open near the player. Each renders with
             // a per-entity GTE translation (base view shifted by the offset);
             // its few tris are projected fresh (not from the world cache).
@@ -929,6 +976,20 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                 } else {
                     e.origin
                 };
+                if e.r2 > 0 {
+                    model_bounds_tests = model_bounds_tests.saturating_add(1);
+                    let radius = isqrt(e.r2 as i64);
+                    let center = [
+                        e.center[0] + off[0],
+                        e.center[1] + off[1],
+                        e.center[2] + off[2],
+                    ];
+                    if !sphere_visible(center, radius, &rot, base_t) {
+                        model_bounds_culled = model_bounds_culled.saturating_add(1);
+                        continue;
+                    }
+                }
+                model_draws = model_draws.saturating_add(1);
                 let es = [eye[0] - off[0], eye[1] - off[1], eye[2] - off[2]];
                 let et = [
                     -dot12(rot.m[0], es),
@@ -939,6 +1000,11 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                 let (ff, nf) = m.submodel(e.submodel);
                 for f in ff..ff + nf {
                     let (first, cnt) = m.face_tris(f);
+                    let (fnrm, fd) = m.face_plane(f);
+                    if dot12(fnrm, es) <= fd {
+                        model_culled_tris = model_culled_tris.saturating_add(cnt as u32);
+                        continue;
+                    }
                     for tt in first..first + cnt {
                         if tt >= m.n_tris {
                             continue;
@@ -954,6 +1020,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
 
             // Tram car: render its submodel at the current ride offset.
             if m.tram_submodel > 0 && m.tram_submodel < m.n_models {
+                model_draws = model_draws.saturating_add(1);
                 let toff = [
                     ride_off[0] + m.tram_base[0],
                     ride_off[1] + m.tram_base[1],
@@ -969,6 +1036,11 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                 let (ff, nf) = m.submodel(m.tram_submodel);
                 for f in ff..ff + nf {
                     let (first, cnt) = m.face_tris(f);
+                    let (fnrm, fd) = m.face_plane(f);
+                    if dot12(fnrm, es) <= fd {
+                        model_culled_tris = model_culled_tris.saturating_add(cnt as u32);
+                        continue;
+                    }
                     for tt in first..first + cnt {
                         if tt >= m.n_tris {
                             continue;
@@ -990,17 +1062,39 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                 if ty != 0 {
                     continue; // only scientists included for now
                 }
+                model_bounds_tests = model_bounds_tests.saturating_add(1);
                 let vz = dot12(rot.m[2], org) + base_t[2];
                 if vz < render::NEAR_Z - 72 || vz > FAR_VIEW {
+                    model_bounds_culled = model_bounds_culled.saturating_add(1);
                     continue;
                 }
                 let vx = dot12(rot.m[0], org) + base_t[0];
                 if vx.abs() > vz + 128 {
+                    model_bounds_culled = model_bounds_culled.saturating_add(1);
                     continue;
                 }
+                model_draws = model_draws.saturating_add(1);
                 let sf = (frame_no as usize / ANIM_DIV) % sci.n_frames.max(1);
                 draw_model(&sci, &MODEL_SLOTS, org, yaw as u16, sf, eye, &rot, &mut np);
             }
+            telemetry::stage_end(telemetry::stage::MODEL_INSTANCES);
+            telemetry::counter(telemetry::counter::MODEL_INSTANCE_DRAWS, model_draws);
+            telemetry::counter(
+                telemetry::counter::MODEL_INSTANCE_BOUNDS_TESTS,
+                model_bounds_tests,
+            );
+            telemetry::counter(
+                telemetry::counter::MODEL_INSTANCE_BOUNDS_CULLED,
+                model_bounds_culled,
+            );
+            telemetry::counter(
+                telemetry::counter::MODEL_INSTANCE_CULLED_TRIS,
+                model_culled_tris,
+            );
+            telemetry::counter(
+                telemetry::counter::MODEL_INSTANCE_SUBMITTED_TRIS,
+                np.saturating_sub(model_prims0) as u32,
+            );
 
             let world_prims = np;
             if SHOW_VIEWMODEL {
@@ -1012,15 +1106,22 @@ fn play(fb: &mut FrameBuffer, sci: &Model, chunk_id: u32) {
                     np.saturating_sub(world_prims) as u32,
                 );
             }
+            let _ = hud::draw(hud_mat, 100, 17, &mut HUD_OT, &mut HUD_PRIMS);
 
+            telemetry::stage_begin(telemetry::stage::FRAME_CLEAR);
             fb.clear(0, 0, 0);
+            telemetry::stage_end(telemetry::stage::FRAME_CLEAR);
+            telemetry::stage_begin(telemetry::stage::WORLD_FLUSH);
             OT.submit();
+            telemetry::stage_end(telemetry::stage::WORLD_FLUSH);
+            telemetry::stage_begin(telemetry::stage::OT_SUBMIT);
             WEAPON_OT.submit();
+            HUD_OT.submit();
+            telemetry::stage_end(telemetry::stage::OT_SUBMIT);
             telemetry::counter(telemetry::counter::TRI_PRIMITIVES, np as u32);
             telemetry::counter(telemetry::counter::WORLD_COMMANDS, world_prims as u32);
         }
 
-        hud::draw(hud_mat, 100, 17);
         telemetry::stage_end(telemetry::stage::RENDER);
         telemetry::stage_begin(telemetry::stage::PRESENT);
         gpu::vsync();
