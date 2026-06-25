@@ -7,10 +7,10 @@ use std::{fs, path::PathBuf};
 
 const FALLBACK_MAP_WORDS: usize = 255_000;
 const FALLBACK_MAX_FACES: usize = 6144;
+const FALLBACK_MAX_FACE_GROUPS: usize = 3072;
 const FALLBACK_MAX_LEAVES: usize = 8192;
 const FALLBACK_MAX_ENTS: usize = 192;
 const FALLBACK_MAX_TEX_SLOTS: usize = 256;
-const FALLBACK_MAX_TRIS: usize = 16_384;
 const FALLBACK_MODEL_WORDS: usize = 24_576;
 
 fn rd_u32(d: &[u8], o: usize) -> Option<u32> {
@@ -42,19 +42,19 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
         return (
             FALLBACK_MAP_WORDS,
             FALLBACK_MAX_FACES,
+            FALLBACK_MAX_FACE_GROUPS,
             FALLBACK_MAX_LEAVES,
             FALLBACK_MAX_ENTS,
             FALLBACK_MAX_TEX_SLOTS,
-            FALLBACK_MAX_TRIS,
         );
     };
 
     let mut max_bytes = 0usize;
     let mut max_face_records = 0usize;
+    let mut max_face_groups = 0usize;
     let mut max_leaves = 0usize;
     let mut max_ents = 0usize;
     let mut max_texs = 0usize;
-    let mut max_tris = 0usize;
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -73,29 +73,30 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
             max_texs = max_texs.max(rd_u32(&data, 4).unwrap_or(0) as usize);
             continue;
         }
-        if data.len() < 40 || &data[0..4] != b"HLMA" {
+        if data.len() < 52 || &data[0..4] != b"HLMA" {
             continue;
         }
 
         max_bytes = max_bytes.max(data.len());
         let n_texs = rd_u32(&data, 12).unwrap_or(0) as usize;
-        let n_tris = rd_u32(&data, 8).unwrap_or(0) as usize;
         let n_faces = rd_u32(&data, 16).unwrap_or(0) as usize;
         let bsp_off = rd_u32(&data, 20).unwrap_or(0) as usize;
         let ent_off = rd_u32(&data, 28).unwrap_or(0) as usize;
         max_texs = max_texs.max(n_texs);
-        max_tris = max_tris.max(n_tris);
 
-        if bsp_off + 16 <= data.len() {
-            let n_leaves = rd_u32(&data, bsp_off + 4).unwrap_or(0) as usize;
+        if bsp_off + 24 <= data.len() {
+            let n_face_groups = rd_u32(&data, bsp_off + 4).unwrap_or(0) as usize;
+            let n_leaves = rd_u32(&data, bsp_off + 12).unwrap_or(0) as usize;
             max_leaves = max_leaves.max(n_leaves);
-            let faces_off = bsp_off + 16;
+            let n_planes = rd_u32(&data, bsp_off).unwrap_or(0) as usize;
+            let faces_off = bsp_off + 24 + n_planes * 10 + n_face_groups * 2;
             let mut max_group = 0usize;
             for face in 0..n_faces {
-                let o = faces_off + face * 28 + 14;
+                let o = faces_off + face * 18 + 4;
                 max_group = max_group.max(rd_u16(&data, o).unwrap_or(0) as usize);
             }
-            max_face_records = max_face_records.max(n_faces.max(max_group.saturating_add(1)));
+            max_face_records = max_face_records.max(n_faces);
+            max_face_groups = max_face_groups.max(n_face_groups.max(max_group.saturating_add(1)));
         }
 
         if ent_off + 4 <= data.len() {
@@ -111,20 +112,20 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
         return (
             FALLBACK_MAP_WORDS,
             FALLBACK_MAX_FACES,
+            FALLBACK_MAX_FACE_GROUPS,
             FALLBACK_MAX_LEAVES,
             FALLBACK_MAX_ENTS,
             FALLBACK_MAX_TEX_SLOTS,
-            FALLBACK_MAX_TRIS,
         );
     }
 
     (
-        round_up(max_bytes.div_ceil(4) + 256, 256),
+        max_bytes.div_ceil(4),
         round_up(max_face_records + 32, 256),
+        round_up(max_face_groups + 32, 256),
         round_up(max_leaves + 64, 256),
         round_up(max_ents + 8, 16),
         round_up(max_texs + 8, 16),
-        round_up(max_tris + 32, 256),
     )
 }
 
@@ -179,7 +180,7 @@ fn main() {
     println!("cargo:rustc-link-arg=--oformat=binary");
     println!("cargo:rerun-if-changed={}", ld.display());
 
-    let (map_words, max_faces, max_leaves, max_ents, max_tex_slots, max_tris) =
+    let (map_words, max_faces, max_face_groups, max_leaves, max_ents, max_tex_slots) =
         scan_room_budget(repo_root);
     let model_words = scan_model_budget(repo_root);
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
@@ -187,10 +188,10 @@ fn main() {
         "pub const MAP_WORDS: usize = {map_words};\n\
          pub const MODEL_WORDS: usize = {model_words};\n\
          pub const MAX_FACES: usize = {max_faces};\n\
+         pub const MAX_FACE_GROUPS: usize = {max_face_groups};\n\
          pub const MAX_LEAVES: usize = {max_leaves};\n\
          pub const MAX_ENTS: usize = {max_ents};\n\
-         pub const MAX_TEX_SLOTS: usize = {max_tex_slots};\n\
-         pub const MAX_TRIS: usize = {max_tris};\n"
+         pub const MAX_TEX_SLOTS: usize = {max_tex_slots};\n"
     );
     fs::write(out_dir.join("room_budget.rs"), budget).expect("write generated room budget");
 }

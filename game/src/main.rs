@@ -29,16 +29,17 @@ mod room_budget {
     include!(concat!(env!("OUT_DIR"), "/room_budget.rs"));
 }
 
+use psx_fx::{LcgRng, ParticlePool};
 use psx_gpu::material::TexturedGouraudPacketMaterial;
 use psx_gpu::ot::OrderingTable;
-use psx_gpu::prim::{QuadTexturedGouraud, TriTexturedGouraud};
+use psx_gpu::prim::{QuadTexturedGouraud, RectFlat, TriTexturedGouraud};
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
 use psx_gte::math::{Mat3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
 use psx_pad::{button, enable_analog_port1, poll_port1};
 use psx_rt::{interrupts, tty};
 
-use map::Map;
+use map::{Map, SKY_TEX_NONE};
 use model::{Model, RenderFace as ModelRenderFace};
 use psx_engine::{PrimitivePacketArena, PrimitivePacketScratch, PrimitiveSink};
 use psx_gpu::prim::QuadTexturedMaterial;
@@ -55,24 +56,31 @@ static mut MODEL_BUF: [u32; MODEL_WORDS] = [0; MODEL_WORDS];
 static SCI_BYTES: &[u8] = include_bytes!("../../data/models/scientist.hlmdl");
 static BARNEY_BYTES: &[u8] = include_bytes!("../../data/models/barney.hlmdl");
 static HEADCRAB_BYTES: &[u8] = include_bytes!("../../data/models/headcrab.hlmdl");
+static SUIT_ITEM_BYTES: &[u8] = include_bytes!("../../data/models/w_suit.hlmdl");
+static BATTERY_ITEM_BYTES: &[u8] = include_bytes!("../../data/models/w_battery.hlmdl");
 
 const OT_LEN: usize = 1024;
 const WEAPON_OT_LEN: usize = 64;
 const HUD_OT_LEN: usize = 1;
+const FX_OT_LEN: usize = 1;
 const MAX_VERTS: usize = 8192;
 const MAX_MODEL_VERTS: usize = 1024;
 const SCI_FACE_CAP: usize = 768;
 const BARNEY_FACE_CAP: usize = 800;
 const HEADCRAB_FACE_CAP: usize = 512;
+const SUIT_ITEM_FACE_CAP: usize = 448;
+const BATTERY_ITEM_FACE_CAP: usize = 160;
 const MAX_RENDER_PACKETS: usize = 3328;
 const MAX_WEAPON_CACHE_TRIS: usize = 320;
 const MAX_TEX_SLOTS: usize = room_budget::MAX_TEX_SLOTS;
-const MAX_WORLD_TRIS: usize = room_budget::MAX_TRIS;
 const MAX_FACES: usize = room_budget::MAX_FACES;
+const MAX_FACE_GROUPS: usize = room_budget::MAX_FACE_GROUPS;
 const MAX_LEAVES: usize = room_budget::MAX_LEAVES;
 const MAX_ENTS: usize = room_budget::MAX_ENTS;
 const MAX_PROPS: usize = 128;
-const DOOR_SPEED: i32 = 120;
+const MAX_NAV_NODES: usize = 255;
+const MAX_LOGIC: usize = 384;
+const MAX_LOGIC_EVENTS: usize = 64;
 const NEAR: u16 = 2; // GTE depth: only verts at/behind the near plane take the soft-clip path
 const SUBDIV_PX: i32 = 96; // split near-clipped triangles wider than this (affine fix)
 const SUBDIV_DEPTH: u8 = 0; // ponytail: subdivision off (perf); affine warp accepted
@@ -87,6 +95,9 @@ const YAW_RATE: i32 = 130; // yaw units/frame at full stick (Q0.12)
 const PITCH_RATE: i32 = 95; // pitch units/frame at full stick
 const DEADZONE: i32 = 28; // radial stick deadzone
 const VIEW_HEIGHT: i32 = 28;
+const PLAYER_USE_REACH: i32 = 96;
+const PLAYER_TOUCH_HALF_XZ: i32 = 16;
+const PLAYER_TOUCH_HEIGHT: i32 = 56;
 const FAR_VIEW: i32 = 6000; // leaf cull distance (world units); generous to avoid pop
 const MODEL_CULL: bool = true; // backface-cull studio models
 const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
@@ -95,16 +106,31 @@ const TRAM_STEP_DIV: i32 = 15; // tram units/sec -> units/frame (demo pace)
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 const ROOM_WORLD_CHUNK_MUL: u32 = 2;
 const ROOM_TEXTURE_CHUNK_ADD: u32 = 1;
+const LANDMARK_NAME_MAX: usize = 31;
+const SKY_FACE_COUNT: usize = 6;
+const SKY_TEX_SIZE: usize = 128;
 const MODEL_CHUNK_V_9MMHANDGUN: u32 = 1000;
+const MODEL_CHUNK_SCIENTIST_TEX: u32 = 1100;
+const MODEL_CHUNK_BARNEY_TEX: u32 = 1101;
+const MODEL_CHUNK_HEADCRAB_TEX: u32 = 1102;
+const MODEL_CHUNK_SUIT_ITEM_TEX: u32 = 1200;
+const MODEL_CHUNK_BATTERY_ITEM_TEX: u32 = 1201;
+const MODEL_CHUNK_V_9MMHANDGUN_TEX: u32 = 2000;
 const GLOCK_MAX_CLIP: u16 = 17;
+const GLOCK_START_RESERVE: u16 = 35;
 const GLOCK_DAMAGE: u8 = 8;
 const GLOCK_RANGE: i32 = 8192;
 const GLOCK_AIM_PIX_X: i32 = 22;
 const GLOCK_AIM_PIX_Y: i32 = 34;
+const GLOCK_PRIMARY_COOLDOWN_TICKS: u8 = 6; // HL primary cycle is 0.3s; game tick is 20 Hz
+const GLOCK_EMPTY_COOLDOWN_TICKS: u8 = 4; // HL empty click cadence is 0.2s
+const GLOCK_RELOAD_TICKS: u8 = 30; // HL Glock reload is 1.5s
 const PROP_TARGET_HEIGHT: i32 = 40;
 const PROP_TYPE_SCIENTIST: u8 = 0;
 const PROP_TYPE_BARNEY: u8 = 1;
 const PROP_TYPE_HEADCRAB: u8 = 2;
+const PROP_TYPE_ITEM_SUIT: u8 = 3;
+const PROP_TYPE_ITEM_BATTERY: u8 = 4;
 const PROP_STATE_IDLE: u8 = 0;
 const PROP_STATE_MOVE: u8 = 1;
 const PROP_STATE_ATTACK: u8 = 2;
@@ -112,23 +138,58 @@ const PROP_STATE_DEAD: u8 = 3;
 const PROP_CLIP_IDLE: usize = 0;
 const PROP_CLIP_MOVE: usize = 1;
 const PROP_CLIP_ATTACK: usize = 2;
-const PROP_CLIP_DEAD: usize = 3;
+const PROP_CLIP_PAIN: usize = 3;
+const PROP_CLIP_DEAD: usize = 4;
 const PLAYER_START_HEALTH: u16 = 100;
+const PLAYER_START_ARMOR: u16 = 0;
+const HEV_MAX_ARMOR: u16 = 100;
+const HEV_BATTERY_ARMOR: u16 = 15;
+const HEV_PICKUP_TICKS: u8 = 36;
+const ITEM_TOUCH_RANGE2: i32 = 38 * 38;
+const ITEM_TOUCH_HEIGHT: i32 = 56;
 const SCIENTIST_HEALTH: u8 = 24;
 const BARNEY_HEALTH: u8 = 35;
 const HEADCRAB_HEALTH: u8 = 16;
 const HEADCRAB_SPEED: i32 = 5;
 const HEADCRAB_WAKE_RANGE2: i32 = 1300 * 1300;
 const HEADCRAB_STOP_RANGE: i32 = 34;
-const HEADCRAB_ATTACK_RANGE2: i32 = HEADCRAB_STOP_RANGE * HEADCRAB_STOP_RANGE;
+const HEADCRAB_LEAP_RANGE2: i32 = 256 * 256;
 const HEADCRAB_ATTACK_DAMAGE: u16 = 6;
-const HEADCRAB_ATTACK_COOLDOWN: u8 = 18;
+const HEADCRAB_ATTACK_COOLDOWN: u8 = 40;
+const HEADCRAB_ATTACK_TICKS: u8 = 12;
+const HEADCRAB_ATTACK_IMPACT_TICK: u8 = 5;
+const HEADCRAB_LEAP_SPEED: i32 = 18;
+const HEADCRAB_BITE_RANGE2: i32 = 48 * 48;
 const HEADCRAB_TARGET_HEIGHT: i32 = 12;
+const BARNEY_ATTACK_RANGE2: i32 = 1024 * 1024;
+const BARNEY_ATTACK_COOLDOWN: u8 = 9;
+const BARNEY_ATTACK_TICKS: u8 = 5;
+const BARNEY_DAMAGE: u8 = 8;
+const BARNEY_SPEED: i32 = 7;
+const BARNEY_FOLLOW_RANGE2: i32 = 640 * 640;
+const BARNEY_STOP_RANGE2: i32 = 128 * 128;
+const SCIENTIST_FEAR_RANGE2: i32 = 896 * 896;
+const SCIENTIST_FEAR_TICKS: u8 = 80;
+const SCIENTIST_FLEE_SPEED: i32 = 7;
+const SCIENTIST_FACE_RANGE2: i32 = 192 * 192;
 const PROP_HIT_FLASH_TICKS: u8 = 4;
+const PROP_TARGET_NONE: u8 = 254;
+const PROP_TARGET_PLAYER: u8 = 255;
+const NAV_NODE_NONE: u8 = 255;
+const NAV_NEAREST_RANGE2: i32 = 1024 * 1024;
+const NAV_NODE_REACHED_RANGE2: i32 = 48 * 48;
+const NAV_VERTICAL_MAX: i32 = 160;
+const NAV_FLEE_RANGE2: i32 = 1200 * 1200;
+const MAX_IMPACT_MARKS: usize = 24;
+const MAX_IMPACT_PARTICLES: usize = 64;
+const IMPACT_MARK_TICKS: u8 = 180;
+const IMPACT_KIND_WORLD: u8 = 0;
+const IMPACT_KIND_BLOOD: u8 = 1;
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
 static mut WEAPON_OT: OrderingTable<WEAPON_OT_LEN> = OrderingTable::new();
 static mut HUD_OT: OrderingTable<HUD_OT_LEN> = OrderingTable::new();
+static mut FX_OT: OrderingTable<FX_OT_LEN> = OrderingTable::new();
 const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
     [(0, 0), (0, 0), (0, 0)],
     [(0, 0), (0, 0), (0, 0)],
@@ -139,21 +200,33 @@ const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
 static mut PRIMITIVE_PACKETS: PrimitivePacketScratch<MAX_RENDER_PACKETS> =
     PrimitivePacketScratch::ZERO;
 static mut HUD_PRIMS: [QuadTexturedMaterial; hud::DRAW_CAP] = [hud::EMPTY_QUAD; hud::DRAW_CAP];
+static mut IMPACT_PARTICLES: ParticlePool<MAX_IMPACT_PARTICLES> = ParticlePool::new();
+static mut IMPACT_RNG: LcgRng = LcgRng::new(0x484c_5058);
+static mut IMPACT_PARTICLE_RECTS: [RectFlat; MAX_IMPACT_PARTICLES] =
+    [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_IMPACT_PARTICLES];
+static mut IMPACT_MARK_RECTS: [RectFlat; MAX_IMPACT_MARKS] =
+    [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_IMPACT_MARKS];
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 static mut SCI_SLOTS: [TexSlot; 24] = [EMPTY_SLOT; 24];
 static mut BARNEY_SLOTS: [TexSlot; 24] = [EMPTY_SLOT; 24];
 static mut HEADCRAB_SLOTS: [TexSlot; 8] = [EMPTY_SLOT; 8];
+static mut SUIT_ITEM_SLOTS: [TexSlot; 8] = [EMPTY_SLOT; 8];
+static mut BATTERY_ITEM_SLOTS: [TexSlot; 8] = [EMPTY_SLOT; 8];
 static mut WEAPON_SLOTS: [TexSlot; 12] = [EMPTY_SLOT; 12];
 static mut SCI_FACES: [ModelRenderFace; SCI_FACE_CAP] = [ModelRenderFace::ZERO; SCI_FACE_CAP];
 static mut BARNEY_FACES: [ModelRenderFace; BARNEY_FACE_CAP] =
     [ModelRenderFace::ZERO; BARNEY_FACE_CAP];
 static mut HEADCRAB_FACES: [ModelRenderFace; HEADCRAB_FACE_CAP] =
     [ModelRenderFace::ZERO; HEADCRAB_FACE_CAP];
+static mut SUIT_ITEM_FACES: [ModelRenderFace; SUIT_ITEM_FACE_CAP] =
+    [ModelRenderFace::ZERO; SUIT_ITEM_FACE_CAP];
+static mut BATTERY_ITEM_FACES: [ModelRenderFace; BATTERY_ITEM_FACE_CAP] =
+    [ModelRenderFace::ZERO; BATTERY_ITEM_FACE_CAP];
 static mut SCI_FACE_COUNT: usize = 0;
 static mut BARNEY_FACE_COUNT: usize = 0;
 static mut HEADCRAB_FACE_COUNT: usize = 0;
-static mut WORLD_UV_WORDS: [[u16; 3]; MAX_WORLD_TRIS] = [[0; 3]; MAX_WORLD_TRIS];
-static mut WORLD_UV_COUNT: usize = 0;
+static mut SUIT_ITEM_FACE_COUNT: usize = 0;
+static mut BATTERY_ITEM_FACE_COUNT: usize = 0;
 const EMPTY_PROJECTED: Projected = Projected {
     sx: 0,
     sy: 0,
@@ -173,19 +246,14 @@ static mut SUBMODEL_DRAW_TOKEN: u16 = 1;
 const PVS_LINK_END: u16 = u16::MAX;
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut PVS_LEAF_COUNT: usize = 0;
-static mut PVS_FACE_FIRST: [u16; MAX_FACES] = [0; MAX_FACES];
-static mut PVS_FACE_TRI_COUNT: [u16; MAX_FACES] = [0; MAX_FACES];
-static mut PVS_FACE_CENTER: [[i16; 3]; MAX_FACES] = [[0; 3]; MAX_FACES];
-static mut PVS_FACE_EXTENT: [[u16; 3]; MAX_FACES] = [[0; 3]; MAX_FACES];
+static mut PVS_FACE_INDEX: [u16; MAX_FACES] = [0; MAX_FACES];
 static mut PVS_FACE_NEXT: [u16; MAX_FACES] = [PVS_LINK_END; MAX_FACES];
 static mut PVS_FACE_COUNT: usize = 0;
 static mut PVS_FACE_MARK: [u16; MAX_FACES] = [0; MAX_FACES];
 static mut PVS_FACE_MARK_TOKEN: u16 = 1;
-static mut PVS_GROUP_FIRST: [u16; MAX_FACES] = [PVS_LINK_END; MAX_FACES];
-static mut PVS_GROUP_MARK: [u16; MAX_FACES] = [0; MAX_FACES];
-static mut PVS_GROUP_ACTIVE: [u16; MAX_FACES] = [0; MAX_FACES];
-static mut PVS_GROUP_NRM: [[i16; 3]; MAX_FACES] = [[0; 3]; MAX_FACES];
-static mut PVS_GROUP_DIST: [i32; MAX_FACES] = [0; MAX_FACES];
+static mut PVS_GROUP_FIRST: [u16; MAX_FACE_GROUPS] = [PVS_LINK_END; MAX_FACE_GROUPS];
+static mut PVS_GROUP_FACE: [u16; MAX_FACE_GROUPS] = [PVS_LINK_END; MAX_FACE_GROUPS];
+static mut PVS_GROUP_ACTIVE: [u16; MAX_FACE_GROUPS] = [0; MAX_FACE_GROUPS];
 static mut PVS_GROUP_COUNT: usize = 0;
 static mut PVS_TRI_REF_COUNT: usize = 0;
 static mut PVS_ENTS: [u16; MAX_ENTS] = [0; MAX_ENTS];
@@ -208,15 +276,69 @@ const EMPTY_ENT: map::Ent = map::Ent {
 static mut ENT_CACHE: [map::Ent; MAX_ENTS] = [EMPTY_ENT; MAX_ENTS];
 static mut ENT_RADIUS: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
+static mut ENT_ACTIVE: [u8; MAX_ENTS] = [0; MAX_ENTS];
+
+#[derive(Clone, Copy)]
+struct LogicEvent {
+    at: u16,
+    target: u16,
+    killtarget: u16,
+    use_type: u8,
+    active: u8,
+}
+
+const EMPTY_LOGIC_EVENT: LogicEvent = LogicEvent {
+    at: 0,
+    target: 0,
+    killtarget: 0,
+    use_type: map::USE_TOGGLE,
+    active: 0,
+};
+
+#[derive(Clone, Copy)]
+struct ImpactMark {
+    pos: [i32; 3],
+    ttl: u8,
+    kind: u8,
+}
+
+const EMPTY_IMPACT_MARK: ImpactMark = ImpactMark {
+    pos: [0; 3],
+    ttl: 0,
+    kind: IMPACT_KIND_WORLD,
+};
+
+static mut LOGIC_STATE: [u8; MAX_LOGIC] = [0; MAX_LOGIC];
+static mut LOGIC_NEXT: [u16; MAX_LOGIC] = [0; MAX_LOGIC];
+static mut LOGIC_TARGET: [u16; MAX_LOGIC] = [0; MAX_LOGIC];
+static mut LOGIC_COUNTER: [i16; MAX_LOGIC] = [0; MAX_LOGIC];
+static mut LOGIC_PROP_LINK: [u8; MAX_LOGIC] = [LOGIC_PROP_NONE; MAX_LOGIC];
+static mut LOGIC_EVENTS: [LogicEvent; MAX_LOGIC_EVENTS] = [EMPTY_LOGIC_EVENT; MAX_LOGIC_EVENTS];
+static mut LOGIC_PLAYER_POS: [i32; 3] = [0; 3];
+static mut LOGIC_PLAYER_YAW: u16 = 0;
+static mut LOGIC_PLAYER_PITCH: i16 = 0;
+static mut LOGIC_PLAYER_HEALTH: u16 = PLAYER_START_HEALTH;
+static mut LOGIC_PLAYER_SUIT: u8 = 0;
+static mut LOGIC_PLAYER_ARMOR: u16 = 0;
+static mut LOGIC_PLAYER_CLIP_AMMO: u16 = GLOCK_MAX_CLIP;
+static mut LOGIC_PLAYER_RESERVE_AMMO: u16 = GLOCK_START_RESERVE;
 static mut PROP_COUNT: usize = 0;
+static mut PROP_ACTIVE: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_KIND: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_POS: [[i32; 3]; MAX_PROPS] = [[0; 3]; MAX_PROPS];
 static mut PROP_YAW: [u16; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_LEAF: [i16; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_STATE: [u8; MAX_PROPS] = [PROP_STATE_IDLE; MAX_PROPS];
 static mut PROP_ATTACK_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_AI_TIMER: [u8; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_AI_TARGET: [u8; MAX_PROPS] = [PROP_TARGET_NONE; MAX_PROPS];
 static mut PROP_HEALTH: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_HIT_FLASH: [u8; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_LOGIC_LINK: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS];
+static mut NAV_QUEUE: [u8; MAX_NAV_NODES] = [0; MAX_NAV_NODES];
+static mut NAV_PREV: [u8; MAX_NAV_NODES] = [NAV_NODE_NONE; MAX_NAV_NODES];
+static mut IMPACT_MARKS: [ImpactMark; MAX_IMPACT_MARKS] = [EMPTY_IMPACT_MARK; MAX_IMPACT_MARKS];
+static mut IMPACT_MARK_CURSOR: usize = 0;
 static mut CLIP_CV: [render::CVert; 4] = [render::EMPTY_CV; 4]; // near-clip scratch (reused)
 
 /// World->view rotation. `yaw` is stored in player-space convention, where
@@ -304,15 +426,826 @@ fn dist2_3(a: [i32; 3], b: [i32; 3]) -> i32 {
     dx * dx + dy * dy + dz * dz
 }
 
-#[inline]
-fn dist2_3_lt(a: [i32; 3], b: [i32; 3], limit: i32) -> bool {
-    dist2_3(a, b) < limit
-}
-
 /// Length of a world-space segment.
 #[inline]
 fn seg_len(a: [i32; 3], b: [i32; 3]) -> i32 {
     isqrt(dist2_3(a, b)).max(1)
+}
+
+#[derive(Clone, Copy)]
+struct LandmarkName {
+    bytes: [u8; LANDMARK_NAME_MAX + 1],
+    len: u8,
+}
+
+const NO_LANDMARK: LandmarkName = LandmarkName {
+    bytes: [0; LANDMARK_NAME_MAX + 1],
+    len: 0,
+};
+
+#[derive(Clone, Copy)]
+struct RoomLaunch {
+    room_id: u16,
+    landmark: LandmarkName,
+    landmark_offset: [i32; 3],
+    yaw: u16,
+    pitch: i16,
+    health: u16,
+    suit_equipped: bool,
+    armor: u16,
+    clip_ammo: u16,
+    reserve_ammo: u16,
+    preserve_view: bool,
+}
+
+#[derive(Clone, Copy)]
+enum PlayExit {
+    BackToMenu,
+    ChangeLevel(RoomLaunch),
+}
+
+static mut CHANGE_REQUEST: RoomLaunch = RoomLaunch {
+    room_id: 0,
+    landmark: NO_LANDMARK,
+    landmark_offset: [0; 3],
+    yaw: 0,
+    pitch: 0,
+    health: PLAYER_START_HEALTH,
+    suit_equipped: false,
+    armor: 0,
+    clip_ammo: GLOCK_MAX_CLIP,
+    reserve_ammo: GLOCK_START_RESERVE,
+    preserve_view: false,
+};
+static mut CHANGE_REQUEST_ACTIVE: u8 = 0;
+
+#[inline]
+fn standalone_room_starts_with_hev(room_id: usize) -> bool {
+    // The first cooked item_suit is in c1a0d (room 9). Later standalone chapter
+    // launches should behave like campaign progress so batteries/enemy damage
+    // are testable, while c1a0d itself still exposes the pickup.
+    room_id > 9
+}
+
+fn menu_launch(room_id: usize) -> RoomLaunch {
+    RoomLaunch {
+        room_id: room_id.min(u16::MAX as usize) as u16,
+        landmark: NO_LANDMARK,
+        landmark_offset: [0; 3],
+        yaw: 0,
+        pitch: 0,
+        health: PLAYER_START_HEALTH,
+        suit_equipped: standalone_room_starts_with_hev(room_id),
+        armor: 0,
+        clip_ammo: GLOCK_MAX_CLIP,
+        reserve_ammo: GLOCK_START_RESERVE,
+        preserve_view: false,
+    }
+}
+
+fn landmark_from_str(name: &str) -> LandmarkName {
+    let mut out = NO_LANDMARK;
+    let src = name.as_bytes();
+    let n = src.len().min(LANDMARK_NAME_MAX);
+    let mut i = 0usize;
+    while i < n {
+        out.bytes[i] = src[i];
+        i += 1;
+    }
+    out.len = n as u8;
+    out
+}
+
+fn landmark_matches(name: LandmarkName, other: &str) -> bool {
+    let n = name.len as usize;
+    other.as_bytes().len() == n && &name.bytes[..n] == other.as_bytes()
+}
+
+const LOGIC_STATE_BOTTOM: u8 = 0;
+const LOGIC_STATE_GOING_UP: u8 = 1;
+const LOGIC_STATE_TOP: u8 = 2;
+const LOGIC_STATE_GOING_DOWN: u8 = 3;
+const LOGIC_STATE_WAITING: u8 = 4;
+const LOGIC_STATE_REMOVED: u8 = 255;
+const LOGIC_PROP_NONE: u8 = 255;
+const SF_DOOR_START_OPEN: u16 = 1;
+const SF_DOOR_TOGGLE: u16 = 32;
+const SF_DOOR_USE_ONLY: u16 = 256;
+const SF_BUTTON_DONTMOVE: u16 = 1;
+const SF_BUTTON_TOGGLE: u16 = 32;
+const SF_BUTTON_TOUCH_ONLY: u16 = 256;
+const SF_TRIGGER_HURT_TARGET_ONCE: u16 = 1;
+const SF_TRIGGER_HURT_START_OFF: u16 = 2;
+const TRIGGER_HURT_REPEAT_TICKS: u16 = 10;
+
+#[inline]
+fn time_reached(now: u16, at: u16) -> bool {
+    now.wrapping_sub(at) < 0x8000
+}
+
+#[inline]
+fn logic_valid_brush(brush: u16, nents: usize) -> Option<usize> {
+    let i = brush as usize;
+    if brush != map::LOGIC_BRUSH_NONE && i < nents {
+        Some(i)
+    } else {
+        None
+    }
+}
+
+#[inline]
+unsafe fn ent_draw_offset(ei: usize) -> [i32; 3] {
+    let e = ENT_CACHE[ei];
+    if e.kind == 1 || e.kind == 3 {
+        scale12_vec(e.mv, ENT_PHASE[ei])
+    } else {
+        e.origin
+    }
+}
+
+#[inline]
+unsafe fn logic_current_target(li: usize, rec: map::LogicEnt) -> u16 {
+    if li < MAX_LOGIC {
+        LOGIC_TARGET[li]
+    } else {
+        rec.target
+    }
+}
+
+#[inline]
+fn logic_item_prop_kind(kind: u8) -> Option<u8> {
+    match kind {
+        map::LOGIC_ITEM_SUIT => Some(PROP_TYPE_ITEM_SUIT),
+        map::LOGIC_ITEM_BATTERY => Some(PROP_TYPE_ITEM_BATTERY),
+        _ => None,
+    }
+}
+
+unsafe fn logic_find_by_targetname(m: &Map, nlogic: usize, targetname: u16) -> Option<usize> {
+    if targetname == 0 {
+        return None;
+    }
+    let mut li = 0usize;
+    while li < nlogic {
+        if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
+            let rec = m.logic(li);
+            if rec.targetname == targetname {
+                return Some(li);
+            }
+        }
+        li += 1;
+    }
+    None
+}
+
+unsafe fn logic_remove_entity(li: usize, rec: map::LogicEnt, nents: usize) {
+    if li >= MAX_LOGIC {
+        return;
+    }
+    LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+    LOGIC_TARGET[li] = 0;
+    LOGIC_COUNTER[li] = 0;
+    if let Some(ei) = logic_valid_brush(rec.brush, nents) {
+        ENT_ACTIVE[ei] = 0;
+    }
+    let pi = LOGIC_PROP_LINK[li];
+    if pi != LOGIC_PROP_NONE {
+        let p = pi as usize;
+        if p < MAX_PROPS {
+            PROP_ACTIVE[p] = 0;
+            PROP_LOGIC_LINK[p] = u16::MAX;
+        }
+        LOGIC_PROP_LINK[li] = LOGIC_PROP_NONE;
+    }
+}
+
+#[inline]
+fn logic_center(rec: map::LogicEnt) -> [i32; 3] {
+    [
+        (rec.mins[0] + rec.maxs[0]) >> 1,
+        (rec.mins[1] + rec.maxs[1]) >> 1,
+        (rec.mins[2] + rec.maxs[2]) >> 1,
+    ]
+}
+
+#[inline]
+fn player_touches_logic(pos: [i32; 3], rec: map::LogicEnt) -> bool {
+    let pmins = [
+        pos[0] - PLAYER_TOUCH_HALF_XZ,
+        pos[1],
+        pos[2] - PLAYER_TOUCH_HALF_XZ,
+    ];
+    let pmaxs = [
+        pos[0] + PLAYER_TOUCH_HALF_XZ,
+        pos[1] + PLAYER_TOUCH_HEIGHT,
+        pos[2] + PLAYER_TOUCH_HALF_XZ,
+    ];
+    pmins[0] <= rec.maxs[0]
+        && pmaxs[0] >= rec.mins[0]
+        && pmins[1] <= rec.maxs[1]
+        && pmaxs[1] >= rec.mins[1]
+        && pmins[2] <= rec.maxs[2]
+        && pmaxs[2] >= rec.mins[2]
+}
+
+#[inline]
+unsafe fn logic_enqueue_event(at: u16, target: u16, killtarget: u16, use_type: u8) {
+    if target == 0 && killtarget == 0 {
+        return;
+    }
+    let mut i = 0usize;
+    while i < MAX_LOGIC_EVENTS {
+        if LOGIC_EVENTS[i].active == 0 {
+            LOGIC_EVENTS[i] = LogicEvent {
+                at,
+                target,
+                killtarget,
+                use_type,
+                active: 1,
+            };
+            return;
+        }
+        i += 1;
+    }
+}
+
+unsafe fn logic_kill_targets(m: &Map, nlogic: usize, nents: usize, target: u16) {
+    if target == 0 {
+        return;
+    }
+    let mut li = 0usize;
+    while li < nlogic {
+        if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
+            let rec = m.logic(li);
+            if rec.targetname == target {
+                logic_remove_entity(li, rec, nents);
+            }
+        }
+        li += 1;
+    }
+}
+
+unsafe fn logic_landmark_origin_by_id(m: &Map, nlogic: usize, name_id: u16) -> Option<[i32; 3]> {
+    if name_id == 0 {
+        return None;
+    }
+    let mut li = 0usize;
+    while li < nlogic {
+        let rec = m.logic(li);
+        if rec.kind == map::LOGIC_INFO_LANDMARK && rec.targetname == name_id {
+            return Some(rec.origin);
+        }
+        li += 1;
+    }
+    None
+}
+
+fn launch_landmark_origin(m: &Map, nlogic: usize, name: LandmarkName) -> Option<[i32; 3]> {
+    if name.len == 0 {
+        return None;
+    }
+    let mut li = 0usize;
+    while li < nlogic {
+        let rec = m.logic(li);
+        if rec.kind == map::LOGIC_INFO_LANDMARK
+            && rec.targetname != 0
+            && landmark_matches(name, m.logic_name(rec.targetname))
+        {
+            return Some(rec.origin);
+        }
+        li += 1;
+    }
+    None
+}
+
+unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) {
+    let map_name = m.logic_name(rec.arg0);
+    let landmark_name = m.logic_name(rec.arg1);
+    let Some(room_id) = menu::room_for_map_name(map_name) else {
+        tty::println("hl-psx: changelevel target not cooked");
+        telemetry::debug_log("hl-psx: changelevel target not cooked");
+        telemetry::debug_log(map_name);
+        return;
+    };
+    telemetry::debug_log("hl-psx: changelevel request");
+    telemetry::debug_log(map_name);
+    if !landmark_name.is_empty() {
+        telemetry::debug_log("hl-psx: changelevel landmark");
+        telemetry::debug_log(landmark_name);
+    }
+    let old_landmark = logic_landmark_origin_by_id(m, nlogic, rec.arg1);
+    let offset = if let Some(origin) = old_landmark {
+        [
+            LOGIC_PLAYER_POS[0] - origin[0],
+            LOGIC_PLAYER_POS[1] - origin[1],
+            LOGIC_PLAYER_POS[2] - origin[2],
+        ]
+    } else {
+        [0, 0, 0]
+    };
+    CHANGE_REQUEST = RoomLaunch {
+        room_id: room_id.min(u16::MAX as usize) as u16,
+        landmark: landmark_from_str(landmark_name),
+        landmark_offset: offset,
+        yaw: LOGIC_PLAYER_YAW,
+        pitch: LOGIC_PLAYER_PITCH,
+        health: LOGIC_PLAYER_HEALTH,
+        suit_equipped: LOGIC_PLAYER_SUIT != 0,
+        armor: LOGIC_PLAYER_ARMOR,
+        clip_ammo: LOGIC_PLAYER_CLIP_AMMO,
+        reserve_ammo: LOGIC_PLAYER_RESERVE_AMMO,
+        preserve_view: true,
+    };
+    CHANGE_REQUEST_ACTIVE = 1;
+}
+
+unsafe fn logic_sub_use_targets(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    li: usize,
+    rec: map::LogicEnt,
+    now: u16,
+    use_type: u8,
+    depth: u8,
+) {
+    let target = logic_current_target(li, rec);
+    if rec.delay_ticks > 0 {
+        logic_enqueue_event(
+            now.wrapping_add(rec.delay_ticks),
+            target,
+            rec.killtarget,
+            use_type,
+        );
+        return;
+    }
+    logic_kill_targets(m, nlogic, nents, rec.killtarget);
+    logic_fire_targets(m, nlogic, nents, target, use_type, now, depth + 1);
+}
+
+unsafe fn logic_fire_targets(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    target: u16,
+    use_type: u8,
+    now: u16,
+    depth: u8,
+) {
+    if target == 0 || depth > 8 {
+        return;
+    }
+    let mut li = 0usize;
+    while li < nlogic {
+        if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
+            let rec = m.logic(li);
+            if rec.targetname == target {
+                logic_use_entity(m, nlogic, nents, li, use_type, now, depth + 1);
+            }
+        }
+        li += 1;
+    }
+}
+
+#[inline]
+unsafe fn logic_phase_step(rec: map::LogicEnt, ei: usize) -> i32 {
+    let e = ENT_CACHE[ei];
+    let len = isqrt(e.mv[0] * e.mv[0] + e.mv[1] * e.mv[1] + e.mv[2] * e.mv[2]).max(1);
+    let speed = (rec.speed as i32).max(1);
+    ((speed * 4096) / (20 * len)).max(1).min(4096)
+}
+
+unsafe fn logic_activate_door(nents: usize, li: usize, rec: map::LogicEnt, use_type: u8) {
+    let Some(_ei) = logic_valid_brush(rec.brush, nents) else {
+        return;
+    };
+    let state = LOGIC_STATE[li];
+    if state == LOGIC_STATE_REMOVED {
+        return;
+    }
+    match use_type {
+        map::USE_OFF => {
+            if state == LOGIC_STATE_TOP || state == LOGIC_STATE_GOING_UP {
+                LOGIC_STATE[li] = LOGIC_STATE_GOING_DOWN;
+            }
+        }
+        map::USE_ON => {
+            if state == LOGIC_STATE_BOTTOM || state == LOGIC_STATE_GOING_DOWN {
+                LOGIC_STATE[li] = LOGIC_STATE_GOING_UP;
+            }
+        }
+        _ => {
+            if state == LOGIC_STATE_BOTTOM || state == LOGIC_STATE_GOING_DOWN {
+                LOGIC_STATE[li] = LOGIC_STATE_GOING_UP;
+            } else if (rec.spawnflags & SF_DOOR_TOGGLE) != 0 {
+                LOGIC_STATE[li] = LOGIC_STATE_GOING_DOWN;
+            }
+        }
+    }
+}
+
+unsafe fn logic_activate_button(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    li: usize,
+    rec: map::LogicEnt,
+    now: u16,
+    depth: u8,
+    from_touch: bool,
+) {
+    if !from_touch && (rec.spawnflags & SF_BUTTON_TOUCH_ONLY) != 0 {
+        return;
+    }
+    let state = LOGIC_STATE[li];
+    if state == LOGIC_STATE_REMOVED
+        || state == LOGIC_STATE_GOING_UP
+        || state == LOGIC_STATE_GOING_DOWN
+        || state == LOGIC_STATE_WAITING
+    {
+        return;
+    }
+    if (rec.spawnflags & SF_BUTTON_DONTMOVE) != 0 {
+        logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, depth + 1);
+        if rec.wait_ticks >= 0 {
+            LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+            LOGIC_NEXT[li] = now.wrapping_add(rec.wait_ticks as u16);
+        }
+        return;
+    }
+    if state == LOGIC_STATE_TOP && (rec.spawnflags & SF_BUTTON_TOGGLE) != 0 {
+        LOGIC_STATE[li] = LOGIC_STATE_GOING_DOWN;
+    } else if state == LOGIC_STATE_BOTTOM {
+        LOGIC_STATE[li] = LOGIC_STATE_GOING_UP;
+    }
+}
+
+unsafe fn logic_use_entity(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    li: usize,
+    use_type: u8,
+    now: u16,
+    depth: u8,
+) {
+    if li >= nlogic || depth > 8 || LOGIC_STATE[li] == LOGIC_STATE_REMOVED {
+        return;
+    }
+    let rec = m.logic(li);
+    match rec.kind {
+        map::LOGIC_FUNC_DOOR => logic_activate_door(nents, li, rec, use_type),
+        map::LOGIC_FUNC_BUTTON => {
+            logic_activate_button(m, nlogic, nents, li, rec, now, depth + 1, false)
+        }
+        map::LOGIC_TRIGGER_RELAY => {
+            logic_sub_use_targets(m, nlogic, nents, li, rec, now, rec.use_type, depth + 1)
+        }
+        map::LOGIC_TRIGGER_AUTO => {
+            logic_sub_use_targets(m, nlogic, nents, li, rec, now, rec.use_type, depth + 1);
+            logic_remove_entity(li, rec, nents);
+        }
+        map::LOGIC_MULTI_MANAGER => {
+            logic_kill_targets(m, nlogic, nents, rec.killtarget);
+            let mut ai = 0usize;
+            while ai < rec.aux_count {
+                let aux = m.logic_aux(rec.first_aux + ai);
+                logic_enqueue_event(
+                    now.wrapping_add(aux.delay_ticks),
+                    aux.target,
+                    0,
+                    map::USE_TOGGLE,
+                );
+                ai += 1;
+            }
+        }
+        map::LOGIC_TRIGGER_COUNTER => {
+            if LOGIC_COUNTER[li] > 0 {
+                LOGIC_COUNTER[li] -= 1;
+                if LOGIC_COUNTER[li] == 0 {
+                    logic_sub_use_targets(
+                        m,
+                        nlogic,
+                        nents,
+                        li,
+                        rec,
+                        now,
+                        map::USE_TOGGLE,
+                        depth + 1,
+                    );
+                    logic_remove_entity(li, rec, nents);
+                }
+            }
+        }
+        map::LOGIC_TRIGGER_CHANGETARGET => {
+            if let Some(target_li) = logic_find_by_targetname(m, nlogic, rec.target) {
+                LOGIC_TARGET[target_li] = rec.arg0;
+            }
+        }
+        map::LOGIC_TRIGGER_HURT => match use_type {
+            map::USE_ON => LOGIC_STATE[li] = LOGIC_STATE_BOTTOM,
+            map::USE_OFF => LOGIC_STATE[li] = LOGIC_STATE_TOP,
+            _ => {
+                LOGIC_STATE[li] = if LOGIC_STATE[li] == LOGIC_STATE_TOP {
+                    LOGIC_STATE_BOTTOM
+                } else {
+                    LOGIC_STATE_TOP
+                };
+            }
+        },
+        map::LOGIC_TRIGGER_CHANGELEVEL => {
+            logic_sub_use_targets(m, nlogic, nents, li, rec, now, use_type, depth + 1);
+            logic_request_changelevel(m, nlogic, rec);
+        }
+        map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE => {
+            logic_sub_use_targets(m, nlogic, nents, li, rec, now, use_type, depth + 1)
+        }
+        _ => {}
+    }
+}
+
+unsafe fn logic_process_events(m: &Map, nlogic: usize, nents: usize, now: u16) {
+    let mut i = 0usize;
+    while i < MAX_LOGIC_EVENTS {
+        let ev = LOGIC_EVENTS[i];
+        if ev.active != 0 && time_reached(now, ev.at) {
+            LOGIC_EVENTS[i].active = 0;
+            logic_kill_targets(m, nlogic, nents, ev.killtarget);
+            logic_fire_targets(m, nlogic, nents, ev.target, ev.use_type, now, 0);
+        }
+        i += 1;
+    }
+}
+
+unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
+    logic_process_events(m, nlogic, nents, now);
+    let mut li = 0usize;
+    while li < nlogic {
+        let rec = m.logic(li);
+        match LOGIC_STATE[li] {
+            LOGIC_STATE_WAITING => {
+                if time_reached(now, LOGIC_NEXT[li]) {
+                    LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
+                }
+            }
+            LOGIC_STATE_GOING_UP | LOGIC_STATE_GOING_DOWN => {
+                if let Some(ei) = logic_valid_brush(rec.brush, nents) {
+                    let step = logic_phase_step(rec, ei);
+                    if LOGIC_STATE[li] == LOGIC_STATE_GOING_UP {
+                        ENT_PHASE[ei] = (ENT_PHASE[ei] + step).min(4096);
+                        if ENT_PHASE[ei] >= 4096 {
+                            LOGIC_STATE[li] = LOGIC_STATE_TOP;
+                            logic_sub_use_targets(
+                                m,
+                                nlogic,
+                                nents,
+                                li,
+                                rec,
+                                now,
+                                map::USE_TOGGLE,
+                                0,
+                            );
+                            if rec.kind == map::LOGIC_FUNC_DOOR {
+                                if rec.wait_ticks >= 0 && (rec.spawnflags & SF_DOOR_TOGGLE) == 0 {
+                                    LOGIC_NEXT[li] = now.wrapping_add(rec.wait_ticks as u16);
+                                }
+                            } else if rec.kind == map::LOGIC_FUNC_BUTTON {
+                                if rec.wait_ticks >= 0 && (rec.spawnflags & SF_BUTTON_TOGGLE) == 0 {
+                                    LOGIC_NEXT[li] = now.wrapping_add(rec.wait_ticks as u16);
+                                }
+                            }
+                        }
+                    } else {
+                        ENT_PHASE[ei] = (ENT_PHASE[ei] - step).max(0);
+                        if ENT_PHASE[ei] <= 0 {
+                            LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
+                            if rec.kind == map::LOGIC_FUNC_DOOR {
+                                logic_sub_use_targets(
+                                    m,
+                                    nlogic,
+                                    nents,
+                                    li,
+                                    rec,
+                                    now,
+                                    map::USE_TOGGLE,
+                                    0,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            LOGIC_STATE_TOP => {
+                if rec.kind == map::LOGIC_FUNC_DOOR
+                    && rec.wait_ticks >= 0
+                    && (rec.spawnflags & SF_DOOR_TOGGLE) == 0
+                    && time_reached(now, LOGIC_NEXT[li])
+                {
+                    LOGIC_STATE[li] = LOGIC_STATE_GOING_DOWN;
+                } else if rec.kind == map::LOGIC_FUNC_BUTTON
+                    && rec.wait_ticks >= 0
+                    && (rec.spawnflags & SF_BUTTON_TOGGLE) == 0
+                    && time_reached(now, LOGIC_NEXT[li])
+                {
+                    LOGIC_STATE[li] = LOGIC_STATE_GOING_DOWN;
+                }
+            }
+            _ => {}
+        }
+        li += 1;
+    }
+}
+
+unsafe fn logic_try_use(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    eye: [i32; 3],
+    yaw: u16,
+    pitch: i16,
+    movers: &[phys::Mover],
+    now: u16,
+) {
+    let rot = view_rotation(yaw, pitch);
+    let base_t = [
+        -dot12(rot.m[0], eye),
+        -dot12(rot.m[1], eye),
+        -dot12(rot.m[2], eye),
+    ];
+    let mut best = usize::MAX;
+    let mut best_score = i32::MAX;
+    let mut li = 0usize;
+    while li < nlogic {
+        if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
+            let rec = m.logic(li);
+            if rec.kind == map::LOGIC_FUNC_BUTTON || rec.kind == map::LOGIC_FUNC_DOOR {
+                let c = logic_center(rec);
+                let vz = dot12(rot.m[2], c) + base_t[2];
+                if vz > 0 && vz <= PLAYER_USE_REACH {
+                    let vx = dot12(rot.m[0], c) + base_t[0];
+                    let vy = dot12(rot.m[1], c) + base_t[1];
+                    if vx.abs() * 3 < vz * 2 && vy.abs() * 3 < vz * 2 {
+                        let score = vz + vx.abs() + vy.abs();
+                        if score < best_score
+                            && phys::line_clear_world(m, eye, c)
+                            && phys::line_clear_movers(m, movers, eye, c)
+                        {
+                            best = li;
+                            best_score = score;
+                        }
+                    }
+                }
+            }
+        }
+        li += 1;
+    }
+    if best != usize::MAX {
+        logic_use_entity(m, nlogic, nents, best, map::USE_TOGGLE, now, 0);
+    }
+}
+
+unsafe fn logic_touch_triggers(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    player_pos: [i32; 3],
+    health: &mut u16,
+    armor: &mut u16,
+    now: u16,
+) {
+    let mut li = 0usize;
+    while li < nlogic {
+        if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
+            let rec = m.logic(li);
+            match rec.kind {
+                map::LOGIC_TRIGGER_ONCE
+                | map::LOGIC_TRIGGER_MULTIPLE
+                | map::LOGIC_TRIGGER_CHANGELEVEL => {
+                    if LOGIC_STATE[li] != LOGIC_STATE_WAITING
+                        && player_touches_logic(player_pos, rec)
+                    {
+                        logic_use_entity(m, nlogic, nents, li, map::USE_TOGGLE, now, 0);
+                        if rec.kind == map::LOGIC_TRIGGER_ONCE {
+                            LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+                        } else if rec.kind == map::LOGIC_TRIGGER_MULTIPLE && rec.wait_ticks >= 0 {
+                            LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+                            LOGIC_NEXT[li] = now.wrapping_add(rec.wait_ticks as u16);
+                        }
+                    }
+                }
+                map::LOGIC_FUNC_BUTTON => {
+                    if (rec.spawnflags & SF_BUTTON_TOUCH_ONLY) != 0
+                        && player_touches_logic(player_pos, rec)
+                    {
+                        logic_activate_button(m, nlogic, nents, li, rec, now, 0, true);
+                    }
+                }
+                map::LOGIC_FUNC_DOOR => {
+                    if rec.targetname == 0
+                        && (rec.spawnflags & SF_DOOR_USE_ONLY) == 0
+                        && player_touches_logic(player_pos, rec)
+                    {
+                        logic_activate_door(nents, li, rec, map::USE_TOGGLE);
+                    }
+                }
+                map::LOGIC_TRIGGER_HURT => {
+                    if LOGIC_STATE[li] == LOGIC_STATE_BOTTOM
+                        && player_touches_logic(player_pos, rec)
+                        && time_reached(now, LOGIC_NEXT[li])
+                    {
+                        damage_player(health, armor, rec.arg0.max(1));
+                        logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, 0);
+                        LOGIC_NEXT[li] = now.wrapping_add(TRIGGER_HURT_REPEAT_TICKS);
+                        if (rec.spawnflags & SF_TRIGGER_HURT_TARGET_ONCE) != 0 {
+                            LOGIC_TARGET[li] = 0;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        li += 1;
+    }
+}
+
+unsafe fn logic_find_matching_prop(kind: u8, origin: [i32; 3]) -> u8 {
+    let Some(prop_kind) = logic_item_prop_kind(kind) else {
+        return LOGIC_PROP_NONE;
+    };
+    let nprops = PROP_COUNT.min(MAX_PROPS);
+    let mut pi = 0usize;
+    while pi < nprops {
+        if PROP_KIND[pi] == prop_kind && PROP_POS[pi] == origin && PROP_LOGIC_LINK[pi] == u16::MAX {
+            return pi as u8;
+        }
+        pi += 1;
+    }
+    LOGIC_PROP_NONE
+}
+
+unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
+    let mut ei = 0usize;
+    while ei < MAX_ENTS {
+        ENT_ACTIVE[ei] = if ei < nents { 1 } else { 0 };
+        ENT_PHASE[ei] = 0;
+        ei += 1;
+    }
+    let mut li = 0usize;
+    while li < MAX_LOGIC {
+        LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
+        LOGIC_NEXT[li] = 0;
+        LOGIC_TARGET[li] = 0;
+        LOGIC_COUNTER[li] = 0;
+        LOGIC_PROP_LINK[li] = LOGIC_PROP_NONE;
+        li += 1;
+    }
+    let mut ev = 0usize;
+    while ev < MAX_LOGIC_EVENTS {
+        LOGIC_EVENTS[ev] = EMPTY_LOGIC_EVENT;
+        ev += 1;
+    }
+    li = 0;
+    while li < nlogic {
+        let rec = m.logic(li);
+        LOGIC_TARGET[li] = rec.target;
+        LOGIC_COUNTER[li] = if rec.kind == map::LOGIC_TRIGGER_COUNTER {
+            (rec.arg0 as i16).max(1)
+        } else {
+            0
+        };
+        match rec.kind {
+            map::LOGIC_FUNC_DOOR => {
+                if let Some(ei) = logic_valid_brush(rec.brush, nents) {
+                    if (rec.spawnflags & SF_DOOR_START_OPEN) != 0 {
+                        LOGIC_STATE[li] = LOGIC_STATE_TOP;
+                        ENT_PHASE[ei] = 4096;
+                    }
+                }
+            }
+            map::LOGIC_TRIGGER_AUTO => {
+                logic_enqueue_event(
+                    now.wrapping_add(1),
+                    rec.target,
+                    rec.killtarget,
+                    rec.use_type,
+                );
+            }
+            map::LOGIC_ITEM_SUIT | map::LOGIC_ITEM_BATTERY => {
+                let pi = logic_find_matching_prop(rec.kind, rec.origin);
+                LOGIC_PROP_LINK[li] = pi;
+                if pi != LOGIC_PROP_NONE {
+                    PROP_LOGIC_LINK[pi as usize] = li as u16;
+                }
+            }
+            map::LOGIC_TRIGGER_HURT => {
+                if (rec.spawnflags & SF_TRIGGER_HURT_START_OFF) != 0 {
+                    LOGIC_STATE[li] = LOGIC_STATE_TOP;
+                }
+            }
+            _ => {}
+        }
+        li += 1;
+    }
 }
 
 /// Cull when the screen triangle isn't front-facing (area <= 0). Matches the
@@ -357,26 +1290,42 @@ fn prop_target(ty: u8, org: [i32; 3]) -> [i32; 3] {
     [org[0], org[1] + h, org[2]]
 }
 
-fn prop_clip(ty: u8, state: u8) -> usize {
-    if ty != PROP_TYPE_HEADCRAB {
-        return PROP_CLIP_IDLE;
+fn prop_clip(state: u8, hit_flash: bool) -> usize {
+    if state == PROP_STATE_DEAD {
+        return PROP_CLIP_DEAD;
+    }
+    if hit_flash {
+        return PROP_CLIP_PAIN;
     }
     match state {
         PROP_STATE_MOVE => PROP_CLIP_MOVE,
         PROP_STATE_ATTACK => PROP_CLIP_ATTACK,
-        PROP_STATE_DEAD => PROP_CLIP_DEAD,
         _ => PROP_CLIP_IDLE,
     }
 }
 
-fn prop_anim_frame(md: &Model, ty: u8, state: u8, sim_frame_no: u32, pi: usize) -> usize {
-    let clip = prop_clip(ty, state);
+fn prop_anim_frame(
+    md: &Model,
+    ty: u8,
+    state: u8,
+    hit_flash: u8,
+    sim_frame_no: u32,
+    pi: usize,
+) -> usize {
+    let clip = prop_clip(state, hit_flash > 0);
     let len = md.clip_len(clip);
     if state == PROP_STATE_DEAD {
         return md.clip_frame(clip, len.saturating_sub(1));
     }
+    if hit_flash > 0 {
+        let pain_frame = PROP_HIT_FLASH_TICKS.saturating_sub(hit_flash) as usize;
+        return md.clip_frame(clip, pain_frame.min(len.saturating_sub(1)));
+    }
     let phase = sim_frame_no as usize + pi.wrapping_mul(3);
-    let div = if ty == PROP_TYPE_HEADCRAB && state != PROP_STATE_IDLE {
+    let div = if state == PROP_STATE_ATTACK || ty == PROP_TYPE_HEADCRAB && state == PROP_STATE_MOVE
+    {
+        1
+    } else if state == PROP_STATE_MOVE {
         2
     } else {
         ANIM_DIV
@@ -417,17 +1366,625 @@ fn yaw_from_vec(dx: i32, dz: i32) -> u16 {
     }
 }
 
+#[inline]
+fn prop_is_human(ty: u8) -> bool {
+    ty == PROP_TYPE_SCIENTIST || ty == PROP_TYPE_BARNEY
+}
+
+#[inline]
+fn actor_line_clear(m: &Map, movers: &[phys::Mover], from: [i32; 3], to: [i32; 3]) -> bool {
+    phys::line_clear_world(m, from, to) && phys::line_clear_movers(m, movers, from, to)
+}
+
+unsafe fn prop_set_pos(m: &Map, pi: usize, pos: [i32; 3]) {
+    PROP_POS[pi] = pos;
+    let leaf = camera_leaf(m, pos);
+    PROP_LEAF[pi] = if leaf > 0 && leaf <= i16::MAX as i32 {
+        leaf as i16
+    } else {
+        0
+    };
+}
+
+unsafe fn prop_face_point(pi: usize, p: [i32; 3]) {
+    let pos = PROP_POS[pi];
+    let dx = p[0] - pos[0];
+    let dz = p[2] - pos[2];
+    if dx != 0 || dz != 0 {
+        PROP_YAW[pi] = yaw_from_vec(dx, dz);
+    }
+}
+
+unsafe fn prop_try_step(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    dx: i32,
+    dz: i32,
+    speed: i32,
+) -> bool {
+    if speed <= 0 {
+        return false;
+    }
+    let dirs = [
+        [dx, dz],
+        [dz, -dx],
+        [-dz, dx],
+        [dx + (dz >> 1), dz - (dx >> 1)],
+        [dx - (dz >> 1), dz + (dx >> 1)],
+    ];
+    let ty = PROP_KIND[pi];
+    let pos = PROP_POS[pi];
+    let from = prop_target(ty, pos);
+    let mut i = 0usize;
+    while i < dirs.len() {
+        let sx = dirs[i][0];
+        let sz = dirs[i][1];
+        let d2 = sx * sx + sz * sz;
+        if d2 > 0 {
+            let len = isqrt(d2).max(1);
+            let step = speed.min(len);
+            let np = [pos[0] + sx * step / len, pos[1], pos[2] + sz * step / len];
+            let to = prop_target(ty, np);
+            if actor_line_clear(m, movers, from, to) {
+                prop_set_pos(m, pi, np);
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+#[inline]
+fn nav_node_count(m: &Map) -> usize {
+    m.n_nav.min(MAX_NAV_NODES)
+}
+
+unsafe fn nav_nearest(m: &Map, pos: [i32; 3], max_d2: i32) -> u8 {
+    let n = nav_node_count(m);
+    let mut best = NAV_NODE_NONE;
+    let mut best_d2 = max_d2;
+    let mut i = 0usize;
+    while i < n {
+        let node = m.nav_node(i);
+        let dy = (node.pos[1] - pos[1]).abs();
+        if dy <= NAV_VERTICAL_MAX {
+            let d2 = dist2_xz(pos, node.pos);
+            if d2 < best_d2 {
+                best = i as u8;
+                best_d2 = d2;
+            }
+        }
+        i += 1;
+    }
+    best
+}
+
+unsafe fn nav_nearest_reachable(
+    m: &Map,
+    movers: &[phys::Mover],
+    from: [i32; 3],
+    pos: [i32; 3],
+    max_d2: i32,
+) -> u8 {
+    let n = nav_node_count(m);
+    let mut best = NAV_NODE_NONE;
+    let mut best_d2 = max_d2;
+    let mut i = 0usize;
+    while i < n {
+        let node = m.nav_node(i);
+        let dy = (node.pos[1] - pos[1]).abs();
+        if dy <= NAV_VERTICAL_MAX {
+            let d2 = dist2_xz(pos, node.pos);
+            let to = [node.pos[0], from[1], node.pos[2]];
+            if d2 < best_d2 && actor_line_clear(m, movers, from, to) {
+                best = i as u8;
+                best_d2 = d2;
+            }
+        }
+        i += 1;
+    }
+    best
+}
+
+unsafe fn nav_next_node(m: &Map, src: u8, dst: u8) -> u8 {
+    let n = nav_node_count(m);
+    let src_i = src as usize;
+    let dst_i = dst as usize;
+    if src_i >= n || dst_i >= n {
+        return NAV_NODE_NONE;
+    }
+    if src == dst {
+        return src;
+    }
+
+    let mut i = 0usize;
+    while i < n {
+        NAV_PREV[i] = NAV_NODE_NONE;
+        i += 1;
+    }
+
+    let mut head = 0usize;
+    let mut tail = 0usize;
+    NAV_QUEUE[tail] = src;
+    tail += 1;
+    NAV_PREV[src_i] = src;
+
+    while head < tail {
+        let cur = NAV_QUEUE[head];
+        head += 1;
+        let node = m.nav_node(cur as usize);
+        let end = node.first_link.saturating_add(node.link_count);
+        let mut li = node.first_link;
+        while li < end {
+            let next = m.nav_link(li);
+            if next < n && NAV_PREV[next] == NAV_NODE_NONE {
+                NAV_PREV[next] = cur;
+                if next == dst_i {
+                    let mut step = dst;
+                    while NAV_PREV[step as usize] != src {
+                        step = NAV_PREV[step as usize];
+                        if step == NAV_NODE_NONE {
+                            return NAV_NODE_NONE;
+                        }
+                    }
+                    return step;
+                }
+                if tail < MAX_NAV_NODES {
+                    NAV_QUEUE[tail] = next as u8;
+                    tail += 1;
+                }
+            }
+            li += 1;
+        }
+    }
+    NAV_NODE_NONE
+}
+
+unsafe fn nav_waypoint_towards(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    goal: [i32; 3],
+) -> Option<[i32; 3]> {
+    if m.n_nav == 0 {
+        return None;
+    }
+    let ty = PROP_KIND[pi];
+    let pos = PROP_POS[pi];
+    let from = prop_target(ty, pos);
+    let src = nav_nearest_reachable(m, movers, from, pos, NAV_NEAREST_RANGE2);
+    if src == NAV_NODE_NONE {
+        return None;
+    }
+    let dst = nav_nearest(m, goal, NAV_NEAREST_RANGE2);
+    if dst == NAV_NODE_NONE {
+        return None;
+    }
+
+    let src_pos = m.nav_node(src as usize).pos;
+    if dist2_xz(pos, src_pos) > NAV_NODE_REACHED_RANGE2
+        || (pos[1] - src_pos[1]).abs() > NAV_VERTICAL_MAX
+    {
+        return Some(src_pos);
+    }
+    if src == dst {
+        return Some(goal);
+    }
+
+    let next = nav_next_node(m, src, dst);
+    if next == NAV_NODE_NONE {
+        None
+    } else {
+        Some(m.nav_node(next as usize).pos)
+    }
+}
+
+unsafe fn nav_flee_goal(m: &Map, threat: [i32; 3], pos: [i32; 3]) -> Option<[i32; 3]> {
+    let n = nav_node_count(m);
+    let current_threat_d2 = dist2_xz(pos, threat);
+    let mut best = NAV_NODE_NONE;
+    let mut best_score = current_threat_d2;
+    let mut i = 0usize;
+    while i < n {
+        let node = m.nav_node(i);
+        if (node.pos[1] - pos[1]).abs() <= NAV_VERTICAL_MAX
+            && dist2_xz(pos, node.pos) <= NAV_FLEE_RANGE2
+        {
+            let score = dist2_xz(node.pos, threat);
+            if score > best_score {
+                best = i as u8;
+                best_score = score;
+            }
+        }
+        i += 1;
+    }
+    if best == NAV_NODE_NONE {
+        None
+    } else {
+        Some(m.nav_node(best as usize).pos)
+    }
+}
+
+unsafe fn prop_move_towards_point(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    goal: [i32; 3],
+    speed: i32,
+) -> bool {
+    let pos = PROP_POS[pi];
+    prop_face_point(pi, goal);
+    if prop_try_step(m, movers, pi, goal[0] - pos[0], goal[2] - pos[2], speed) {
+        return true;
+    }
+    if let Some(wp) = nav_waypoint_towards(m, movers, pi, goal) {
+        let pos = PROP_POS[pi];
+        prop_face_point(pi, wp);
+        prop_try_step(m, movers, pi, wp[0] - pos[0], wp[2] - pos[2], speed)
+    } else {
+        false
+    }
+}
+
+unsafe fn target_org(target: u8, player_pos: [i32; 3], nprops: usize) -> Option<[i32; 3]> {
+    if target == PROP_TARGET_PLAYER {
+        return Some(player_pos);
+    }
+    let ti = target as usize;
+    if ti < nprops && PROP_HEALTH[ti] > 0 {
+        Some(PROP_POS[ti])
+    } else {
+        None
+    }
+}
+
+unsafe fn target_aim_point(target: u8, player_pos: [i32; 3], nprops: usize) -> Option<[i32; 3]> {
+    if target == PROP_TARGET_PLAYER {
+        return Some([player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]]);
+    }
+    let ti = target as usize;
+    if ti < nprops && PROP_HEALTH[ti] > 0 {
+        Some(prop_target(PROP_KIND[ti], PROP_POS[ti]))
+    } else {
+        None
+    }
+}
+
+unsafe fn damage_prop(pi: usize, dmg: u8) {
+    if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
+        return;
+    }
+    PROP_HEALTH[pi] = PROP_HEALTH[pi].saturating_sub(dmg);
+    PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
+    if PROP_HEALTH[pi] == 0 {
+        PROP_STATE[pi] = PROP_STATE_DEAD;
+        PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+        PROP_AI_TIMER[pi] = 0;
+    }
+}
+
+fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
+    if dmg == 0 {
+        return;
+    }
+    if *armor > 0 {
+        // GoldSrc's HEV suit keeps only 20% of generic damage on health and
+        // spends half of the remaining damage as suit power.
+        let health_dmg = dmg / 5;
+        let armor_cost = (dmg.saturating_sub(health_dmg).saturating_add(1)) / 2;
+        if armor_cost <= *armor {
+            *armor -= armor_cost;
+            *health = health.saturating_sub(health_dmg);
+            return;
+        }
+
+        let absorbed = (*armor).saturating_mul(2);
+        *armor = 0;
+        *health = health.saturating_sub(dmg.saturating_sub(absorbed));
+    } else {
+        *health = health.saturating_sub(dmg);
+    }
+}
+
+unsafe fn damage_target(target: u8, dmg: u8, health: &mut u16, armor: &mut u16) {
+    if target == PROP_TARGET_PLAYER {
+        damage_player(health, armor, dmg as u16);
+    } else if target != PROP_TARGET_NONE {
+        damage_prop(target as usize, dmg);
+    }
+}
+
+unsafe fn find_headcrab_target(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    nprops: usize,
+) -> u8 {
+    let pos = PROP_POS[pi];
+    let from = prop_target(PROP_TYPE_HEADCRAB, pos);
+    let mut best_visible = PROP_TARGET_NONE;
+    let mut best_visible_d2 = HEADCRAB_WAKE_RANGE2;
+    let mut best_any = PROP_TARGET_NONE;
+    let mut best_any_d2 = HEADCRAB_WAKE_RANGE2;
+
+    let player_d2 = dist2_xz(pos, player_pos);
+    if player_d2 < best_any_d2 {
+        best_any = PROP_TARGET_PLAYER;
+        best_any_d2 = player_d2;
+    }
+    if player_d2 < best_visible_d2 {
+        let to = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
+        if actor_line_clear(m, movers, from, to) {
+            best_visible = PROP_TARGET_PLAYER;
+            best_visible_d2 = player_d2;
+        }
+    }
+
+    let mut ti = 0usize;
+    while ti < nprops {
+        if ti != pi && PROP_HEALTH[ti] > 0 && prop_is_human(PROP_KIND[ti]) {
+            let d2 = dist2_xz(pos, PROP_POS[ti]);
+            if d2 < best_any_d2 {
+                best_any = ti as u8;
+                best_any_d2 = d2;
+            }
+            if d2 < best_visible_d2 {
+                let to = prop_target(PROP_KIND[ti], PROP_POS[ti]);
+                if actor_line_clear(m, movers, from, to) {
+                    best_visible = ti as u8;
+                    best_visible_d2 = d2;
+                }
+            }
+        }
+        ti += 1;
+    }
+    if best_visible != PROP_TARGET_NONE {
+        best_visible
+    } else {
+        best_any
+    }
+}
+
+unsafe fn find_barney_target(m: &Map, movers: &[phys::Mover], pi: usize, nprops: usize) -> u8 {
+    let pos = PROP_POS[pi];
+    let from = prop_target(PROP_TYPE_BARNEY, pos);
+    let mut best = PROP_TARGET_NONE;
+    let mut best_d2 = BARNEY_ATTACK_RANGE2;
+    let mut ti = 0usize;
+    while ti < nprops {
+        if ti != pi && PROP_HEALTH[ti] > 0 && PROP_KIND[ti] == PROP_TYPE_HEADCRAB {
+            let d2 = dist2_xz(pos, PROP_POS[ti]);
+            if d2 < best_d2 {
+                let to = prop_target(PROP_TYPE_HEADCRAB, PROP_POS[ti]);
+                if actor_line_clear(m, movers, from, to) {
+                    best = ti as u8;
+                    best_d2 = d2;
+                }
+            }
+        }
+        ti += 1;
+    }
+    best
+}
+
+unsafe fn find_scientist_threat(m: &Map, movers: &[phys::Mover], pi: usize, nprops: usize) -> u8 {
+    let pos = PROP_POS[pi];
+    let from = prop_target(PROP_TYPE_SCIENTIST, pos);
+    let mut best = PROP_TARGET_NONE;
+    let mut best_d2 = SCIENTIST_FEAR_RANGE2;
+    let mut ti = 0usize;
+    while ti < nprops {
+        if ti != pi && PROP_HEALTH[ti] > 0 && PROP_KIND[ti] == PROP_TYPE_HEADCRAB {
+            let d2 = dist2_xz(pos, PROP_POS[ti]);
+            if d2 < best_d2 {
+                let to = prop_target(PROP_TYPE_HEADCRAB, PROP_POS[ti]);
+                if actor_line_clear(m, movers, from, to) {
+                    best = ti as u8;
+                    best_d2 = d2;
+                }
+            }
+        }
+        ti += 1;
+    }
+    best
+}
+
+unsafe fn tick_headcrab(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    health: &mut u16,
+    armor: &mut u16,
+    nprops: usize,
+) {
+    if PROP_STATE[pi] == PROP_STATE_ATTACK && PROP_AI_TIMER[pi] > 0 {
+        let target = PROP_AI_TARGET[pi];
+        if let Some(aim) = target_aim_point(target, player_pos, nprops) {
+            prop_face_point(pi, aim);
+            if PROP_AI_TIMER[pi] > HEADCRAB_ATTACK_IMPACT_TICK {
+                let pos = PROP_POS[pi];
+                prop_try_step(
+                    m,
+                    movers,
+                    pi,
+                    aim[0] - pos[0],
+                    aim[2] - pos[2],
+                    HEADCRAB_LEAP_SPEED,
+                );
+            } else if PROP_AI_TIMER[pi] == HEADCRAB_ATTACK_IMPACT_TICK {
+                let pos = PROP_POS[pi];
+                let from = prop_target(PROP_TYPE_HEADCRAB, pos);
+                if dist2_xz(pos, aim) <= HEADCRAB_BITE_RANGE2
+                    && actor_line_clear(m, movers, from, aim)
+                {
+                    damage_target(target, HEADCRAB_ATTACK_DAMAGE as u8, health, armor);
+                }
+            }
+        }
+        PROP_AI_TIMER[pi] -= 1;
+        if PROP_AI_TIMER[pi] == 0 {
+            PROP_STATE[pi] = PROP_STATE_IDLE;
+        }
+        return;
+    }
+
+    let target = find_headcrab_target(m, movers, pi, player_pos, nprops);
+    if target == PROP_TARGET_NONE {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+        return;
+    }
+
+    let Some(aim) = target_aim_point(target, player_pos, nprops) else {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+        return;
+    };
+    let pos = PROP_POS[pi];
+    let d2 = dist2_xz(pos, aim);
+    prop_face_point(pi, aim);
+    PROP_AI_TARGET[pi] = target;
+    let from = prop_target(PROP_TYPE_HEADCRAB, pos);
+    let visible = actor_line_clear(m, movers, from, aim);
+    if d2 <= HEADCRAB_LEAP_RANGE2 && PROP_ATTACK_COOLDOWN[pi] == 0 && visible {
+        PROP_STATE[pi] = PROP_STATE_ATTACK;
+        PROP_AI_TIMER[pi] = HEADCRAB_ATTACK_TICKS;
+        PROP_ATTACK_COOLDOWN[pi] = HEADCRAB_ATTACK_COOLDOWN;
+    } else {
+        PROP_STATE[pi] = PROP_STATE_MOVE;
+        let step_d2 = d2.saturating_sub(HEADCRAB_STOP_RANGE * HEADCRAB_STOP_RANGE);
+        if step_d2 > 0 {
+            prop_move_towards_point(m, movers, pi, aim, HEADCRAB_SPEED);
+        }
+    }
+}
+
+unsafe fn tick_barney(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    health: &mut u16,
+    armor: &mut u16,
+    nprops: usize,
+) {
+    if PROP_AI_TIMER[pi] > 0 {
+        PROP_AI_TIMER[pi] -= 1;
+    }
+
+    let target = find_barney_target(m, movers, pi, nprops);
+    if target != PROP_TARGET_NONE {
+        if let Some(aim) = target_aim_point(target, player_pos, nprops) {
+            prop_face_point(pi, aim);
+            PROP_AI_TARGET[pi] = target;
+            if PROP_ATTACK_COOLDOWN[pi] == 0 {
+                PROP_STATE[pi] = PROP_STATE_ATTACK;
+                PROP_AI_TIMER[pi] = BARNEY_ATTACK_TICKS;
+                PROP_ATTACK_COOLDOWN[pi] = BARNEY_ATTACK_COOLDOWN;
+                damage_target(target, BARNEY_DAMAGE, health, armor);
+            } else if PROP_AI_TIMER[pi] > 0 {
+                PROP_STATE[pi] = PROP_STATE_ATTACK;
+            } else {
+                PROP_STATE[pi] = PROP_STATE_IDLE;
+            }
+            return;
+        }
+    }
+
+    if PROP_AI_TIMER[pi] > 0 && PROP_STATE[pi] == PROP_STATE_ATTACK {
+        return;
+    }
+    PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+
+    let pos = PROP_POS[pi];
+    let d2 = dist2_xz(pos, player_pos);
+    if d2 < BARNEY_FOLLOW_RANGE2 {
+        let player_eye = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
+        if actor_line_clear(m, movers, prop_target(PROP_TYPE_BARNEY, pos), player_eye) {
+            prop_face_point(pi, player_eye);
+        } else {
+            prop_face_point(pi, player_pos);
+        }
+        if d2 > BARNEY_STOP_RANGE2 {
+            PROP_STATE[pi] = PROP_STATE_MOVE;
+            prop_move_towards_point(m, movers, pi, player_pos, BARNEY_SPEED);
+            return;
+        }
+    }
+    PROP_STATE[pi] = PROP_STATE_IDLE;
+}
+
+unsafe fn tick_scientist(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    nprops: usize,
+) {
+    let threat = find_scientist_threat(m, movers, pi, nprops);
+    if threat != PROP_TARGET_NONE {
+        PROP_AI_TARGET[pi] = threat;
+        PROP_AI_TIMER[pi] = SCIENTIST_FEAR_TICKS;
+    }
+
+    let remembered = PROP_AI_TARGET[pi];
+    let flee_from = if PROP_AI_TIMER[pi] > 0 {
+        target_org(remembered, player_pos, nprops)
+    } else {
+        None
+    };
+    if let Some(threat_pos) = flee_from {
+        let pos = PROP_POS[pi];
+        let mut dx = pos[0] - threat_pos[0];
+        let dz = pos[2] - threat_pos[2];
+        if dx == 0 && dz == 0 {
+            dx = 1;
+        }
+        PROP_YAW[pi] = yaw_from_vec(dx, dz);
+        PROP_STATE[pi] = PROP_STATE_MOVE;
+        if !prop_try_step(m, movers, pi, dx, dz, SCIENTIST_FLEE_SPEED) {
+            if let Some(goal) = nav_flee_goal(m, threat_pos, pos) {
+                prop_move_towards_point(m, movers, pi, goal, SCIENTIST_FLEE_SPEED);
+            }
+        }
+        if PROP_AI_TIMER[pi] > 0 {
+            PROP_AI_TIMER[pi] -= 1;
+        }
+        if PROP_AI_TIMER[pi] == 0 {
+            PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+        }
+        return;
+    }
+
+    let pos = PROP_POS[pi];
+    if dist2_xz(pos, player_pos) < SCIENTIST_FACE_RANGE2 {
+        let player_eye = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
+        if actor_line_clear(m, movers, prop_target(PROP_TYPE_SCIENTIST, pos), player_eye) {
+            prop_face_point(pi, player_eye);
+        }
+    }
+    PROP_STATE[pi] = PROP_STATE_IDLE;
+}
+
 unsafe fn init_prop_state(m: &Map) {
     let mut i = 0usize;
     while i < MAX_PROPS {
+        PROP_ACTIVE[i] = 0;
         PROP_KIND[i] = 0;
         PROP_POS[i] = [0, 0, 0];
         PROP_YAW[i] = 0;
         PROP_LEAF[i] = 0;
         PROP_STATE[i] = PROP_STATE_IDLE;
         PROP_ATTACK_COOLDOWN[i] = 0;
+        PROP_AI_TIMER[i] = 0;
+        PROP_AI_TARGET[i] = PROP_TARGET_NONE;
         PROP_HEALTH[i] = 0;
         PROP_HIT_FLASH[i] = 0;
+        PROP_LOGIC_LINK[i] = u16::MAX;
         i += 1;
     }
 
@@ -437,20 +1994,32 @@ unsafe fn init_prop_state(m: &Map) {
     while pi < nprops {
         let (ty, org, yaw, leaf) = m.prop(pi);
         let kind = ty as u8;
+        PROP_ACTIVE[pi] = 1;
         PROP_KIND[pi] = kind;
         PROP_POS[pi] = org;
         PROP_YAW[pi] = yaw as u16;
         PROP_LEAF[pi] = leaf;
         PROP_HEALTH[pi] = prop_start_health(kind);
+        PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_COUNT += 1;
         pi += 1;
     }
 }
 
-unsafe fn tick_props(m: &Map, movers: &[phys::Mover], player_pos: [i32; 3], health: &mut u16) {
+unsafe fn tick_props(
+    m: &Map,
+    movers: &[phys::Mover],
+    player_pos: [i32; 3],
+    health: &mut u16,
+    armor: &mut u16,
+) {
     let nprops = PROP_COUNT.min(MAX_PROPS);
     let mut pi = 0usize;
     while pi < nprops {
+        if PROP_ACTIVE[pi] == 0 {
+            pi += 1;
+            continue;
+        }
         if PROP_HIT_FLASH[pi] > 0 {
             PROP_HIT_FLASH[pi] -= 1;
         }
@@ -459,46 +2028,261 @@ unsafe fn tick_props(m: &Map, movers: &[phys::Mover], player_pos: [i32; 3], heal
         }
 
         let ty = PROP_KIND[pi];
+        if ty == PROP_TYPE_ITEM_SUIT || ty == PROP_TYPE_ITEM_BATTERY {
+            pi += 1;
+            continue;
+        }
         if PROP_HEALTH[pi] == 0 {
             PROP_STATE[pi] = PROP_STATE_DEAD;
+            PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+            PROP_AI_TIMER[pi] = 0;
             pi += 1;
             continue;
         }
 
         if ty == PROP_TYPE_HEADCRAB {
-            let pos = PROP_POS[pi];
-            let d2 = dist2_xz(pos, player_pos);
-            if d2 < HEADCRAB_WAKE_RANGE2 {
-                let dx = player_pos[0] - pos[0];
-                let dz = player_pos[2] - pos[2];
-                PROP_YAW[pi] = yaw_from_vec(dx, dz);
-                if d2 <= HEADCRAB_ATTACK_RANGE2 {
-                    PROP_STATE[pi] = PROP_STATE_ATTACK;
-                    if PROP_ATTACK_COOLDOWN[pi] == 0 {
-                        *health = health.saturating_sub(HEADCRAB_ATTACK_DAMAGE);
-                        PROP_ATTACK_COOLDOWN[pi] = HEADCRAB_ATTACK_COOLDOWN;
-                    }
-                } else {
-                    PROP_STATE[pi] = PROP_STATE_MOVE;
-                    let len = isqrt(d2).max(1);
-                    let step = HEADCRAB_SPEED.min(len.saturating_sub(HEADCRAB_STOP_RANGE));
-                    if step > 0 {
-                        let np = [pos[0] + dx * step / len, pos[1], pos[2] + dz * step / len];
-                        let from = prop_target(ty, pos);
-                        let to = prop_target(ty, np);
-                        if phys::line_clear_world(m, from, to)
-                            && phys::line_clear_movers(m, movers, from, to)
-                        {
-                            PROP_POS[pi] = np;
-                        }
-                    }
-                }
-            } else {
-                PROP_STATE[pi] = PROP_STATE_IDLE;
-            }
+            tick_headcrab(m, movers, pi, player_pos, health, armor, nprops);
+        } else if ty == PROP_TYPE_BARNEY {
+            tick_barney(m, movers, pi, player_pos, health, armor, nprops);
+        } else if ty == PROP_TYPE_SCIENTIST {
+            tick_scientist(m, movers, pi, player_pos, nprops);
         }
         pi += 1;
     }
+}
+
+#[inline]
+fn player_touches_pickup(player_pos: [i32; 3], item_pos: [i32; 3]) -> bool {
+    let dy = item_pos[1] - player_pos[1];
+    if dy < -8 || dy > ITEM_TOUCH_HEIGHT {
+        return false;
+    }
+    dist2_xz(player_pos, item_pos) <= ITEM_TOUCH_RANGE2
+}
+
+unsafe fn collect_pickups(
+    player_pos: [i32; 3],
+    suit_equipped: &mut bool,
+    armor: &mut u16,
+    pickup_kind: &mut u8,
+    pickup_ticks: &mut u8,
+) {
+    let nprops = PROP_COUNT.min(MAX_PROPS);
+    let mut pi = 0usize;
+    while pi < nprops {
+        if PROP_ACTIVE[pi] == 0 || !player_touches_pickup(player_pos, PROP_POS[pi]) {
+            pi += 1;
+            continue;
+        }
+        match PROP_KIND[pi] {
+            PROP_TYPE_ITEM_SUIT => {
+                if !*suit_equipped {
+                    *suit_equipped = true;
+                    PROP_ACTIVE[pi] = 0;
+                    let li = PROP_LOGIC_LINK[pi];
+                    if li != u16::MAX && (li as usize) < MAX_LOGIC {
+                        let l = li as usize;
+                        LOGIC_STATE[l] = LOGIC_STATE_REMOVED;
+                        LOGIC_TARGET[l] = 0;
+                        LOGIC_PROP_LINK[l] = LOGIC_PROP_NONE;
+                    }
+                    PROP_LOGIC_LINK[pi] = u16::MAX;
+                    *pickup_kind = hud::PICKUP_SUIT;
+                    *pickup_ticks = HEV_PICKUP_TICKS;
+                    telemetry::debug_log("hl-psx: HEV suit equipped");
+                }
+            }
+            PROP_TYPE_ITEM_BATTERY => {
+                if *suit_equipped && *armor < HEV_MAX_ARMOR {
+                    *armor = armor.saturating_add(HEV_BATTERY_ARMOR).min(HEV_MAX_ARMOR);
+                    PROP_ACTIVE[pi] = 0;
+                    let li = PROP_LOGIC_LINK[pi];
+                    if li != u16::MAX && (li as usize) < MAX_LOGIC {
+                        let l = li as usize;
+                        LOGIC_STATE[l] = LOGIC_STATE_REMOVED;
+                        LOGIC_TARGET[l] = 0;
+                        LOGIC_PROP_LINK[l] = LOGIC_PROP_NONE;
+                    }
+                    PROP_LOGIC_LINK[pi] = u16::MAX;
+                    *pickup_kind = hud::PICKUP_BATTERY;
+                    *pickup_ticks = HEV_PICKUP_TICKS;
+                    telemetry::debug_log("hl-psx: HEV battery picked up");
+                }
+            }
+            _ => {}
+        }
+        pi += 1;
+    }
+}
+
+#[derive(Clone, Copy)]
+struct WeaponState {
+    clip: u16,
+    reserve: u16,
+    cooldown: u8,
+    reload_ticks: u8,
+    dry_ticks: u8,
+}
+
+impl WeaponState {
+    fn new(clip: u16, reserve: u16) -> Self {
+        Self {
+            clip: clip.min(GLOCK_MAX_CLIP),
+            reserve,
+            cooldown: 0,
+            reload_ticks: 0,
+            dry_ticks: 0,
+        }
+    }
+
+    fn tick(&mut self) {
+        if self.cooldown > 0 {
+            self.cooldown -= 1;
+        }
+        if self.dry_ticks > 0 {
+            self.dry_ticks -= 1;
+        }
+        if self.reload_ticks > 0 {
+            self.reload_ticks -= 1;
+            if self.reload_ticks == 0 {
+                self.finish_reload();
+            }
+        }
+    }
+
+    fn start_reload(&mut self) -> bool {
+        if self.reload_ticks != 0 || self.clip >= GLOCK_MAX_CLIP || self.reserve == 0 {
+            return false;
+        }
+        self.reload_ticks = GLOCK_RELOAD_TICKS;
+        self.cooldown = self.cooldown.max(GLOCK_RELOAD_TICKS);
+        true
+    }
+
+    fn finish_reload(&mut self) {
+        let need = GLOCK_MAX_CLIP.saturating_sub(self.clip);
+        let take = need.min(self.reserve);
+        self.clip = self.clip.saturating_add(take).min(GLOCK_MAX_CLIP);
+        self.reserve = self.reserve.saturating_sub(take);
+    }
+
+    fn try_fire(&mut self) -> bool {
+        if self.cooldown != 0 || self.reload_ticks != 0 {
+            return false;
+        }
+        if self.clip == 0 {
+            self.cooldown = GLOCK_EMPTY_COOLDOWN_TICKS;
+            self.dry_ticks = GLOCK_EMPTY_COOLDOWN_TICKS;
+            let _ = self.start_reload();
+            return false;
+        }
+        self.clip -= 1;
+        self.cooldown = GLOCK_PRIMARY_COOLDOWN_TICKS;
+        true
+    }
+}
+
+#[inline]
+fn project_world_point(p: [i32; 3], rot: &Mat3I16, base_t: [i32; 3]) -> Option<(i16, i16, i32)> {
+    let vz = dot12(rot.m[2], p) + base_t[2];
+    if !(render::NEAR_Z..=FAR_VIEW).contains(&vz) {
+        return None;
+    }
+    let vx = dot12(rot.m[0], p) + base_t[0];
+    let vy = dot12(rot.m[1], p) + base_t[1];
+    let sx = 160 + (vx * H_PROJ as i32) / vz;
+    let sy = 120 + (vy * H_PROJ as i32) / vz;
+    if sx < -16 || sx > 336 || sy < -16 || sy > 256 {
+        return None;
+    }
+    Some((sx as i16, sy as i16, vz))
+}
+
+unsafe fn clear_combat_fx() {
+    IMPACT_PARTICLES.clear();
+    let mut i = 0usize;
+    while i < MAX_IMPACT_MARKS {
+        IMPACT_MARKS[i] = EMPTY_IMPACT_MARK;
+        i += 1;
+    }
+    IMPACT_MARK_CURSOR = 0;
+}
+
+unsafe fn decay_combat_fx() {
+    IMPACT_PARTICLES.update(1);
+    let mut i = 0usize;
+    while i < MAX_IMPACT_MARKS {
+        if IMPACT_MARKS[i].ttl > 0 {
+            IMPACT_MARKS[i].ttl -= 1;
+        }
+        i += 1;
+    }
+}
+
+unsafe fn spawn_impact_mark(pos: [i32; 3], kind: u8) {
+    let i = IMPACT_MARK_CURSOR % MAX_IMPACT_MARKS;
+    IMPACT_MARKS[i] = ImpactMark {
+        pos,
+        ttl: IMPACT_MARK_TICKS,
+        kind,
+    };
+    IMPACT_MARK_CURSOR = (IMPACT_MARK_CURSOR + 1) % MAX_IMPACT_MARKS;
+}
+
+unsafe fn spawn_impact_particles(screen: (i16, i16), kind: u8) {
+    let (color, count, spread, ttl) = if kind == IMPACT_KIND_BLOOD {
+        ((130, 14, 8), 5, 28, 12)
+    } else {
+        ((232, 186, 82), 7, 44, 10)
+    };
+    IMPACT_PARTICLES.spawn_burst(&mut IMPACT_RNG, screen, color, count, spread, ttl);
+}
+
+unsafe fn spawn_impact_fx(pos: [i32; 3], kind: u8, rot: &Mat3I16, base_t: [i32; 3]) {
+    spawn_impact_mark(pos, kind);
+    if let Some((sx, sy, _)) = project_world_point(pos, rot, base_t) {
+        spawn_impact_particles((sx, sy), kind);
+    }
+}
+
+unsafe fn render_impact_marks<const N: usize>(
+    ot: &mut OrderingTable<N>,
+    rects: &mut [RectFlat; MAX_IMPACT_MARKS],
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) -> usize {
+    let mut written = 0usize;
+    let mut i = 0usize;
+    while i < MAX_IMPACT_MARKS {
+        let mark = IMPACT_MARKS[i];
+        if mark.ttl != 0 {
+            if let Some((sx, sy, vz)) = project_world_point(mark.pos, rot, base_t) {
+                let size = if vz < 900 { 3 } else { 2 };
+                let scale = mark.ttl as u16;
+                let (r0, g0, b0) = if mark.kind == IMPACT_KIND_BLOOD {
+                    (90u16, 8u16, 5u16)
+                } else {
+                    (18u16, 17u16, 14u16)
+                };
+                rects[written] = RectFlat::new(
+                    sx - (size as i16 / 2),
+                    sy - (size as i16 / 2),
+                    size,
+                    size,
+                    ((r0 * scale) / IMPACT_MARK_TICKS as u16) as u8,
+                    ((g0 * scale) / IMPACT_MARK_TICKS as u16) as u8,
+                    ((b0 * scale) / IMPACT_MARK_TICKS as u16) as u8,
+                );
+                ot.add(0, &mut rects[written], RectFlat::WORDS);
+                written += 1;
+                if written >= MAX_IMPACT_MARKS {
+                    break;
+                }
+            }
+        }
+        i += 1;
+    }
+    written
 }
 
 unsafe fn fire_glock(
@@ -508,6 +2292,15 @@ unsafe fn fire_glock(
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) -> Option<usize> {
+    let end = [
+        eye[0] + (((rot.m[2][0] as i32) * GLOCK_RANGE) >> 12),
+        eye[1] + (((rot.m[2][1] as i32) * GLOCK_RANGE) >> 12),
+        eye[2] + (((rot.m[2][2] as i32) * GLOCK_RANGE) >> 12),
+    ];
+    let world_hit = phys::trace_line(m, movers, eye, end);
+    let world_limit_z = world_hit
+        .map(|hit| (GLOCK_RANGE * hit.frac) >> 12)
+        .unwrap_or(GLOCK_RANGE + 1);
     let mut best = usize::MAX;
     let mut best_z = GLOCK_RANGE + 1;
     let mut best_score = i32::MAX;
@@ -522,7 +2315,7 @@ unsafe fn fire_glock(
 
         let target = prop_target(ty, PROP_POS[pi]);
         let vz = dot12(rot.m[2], target) + base_t[2];
-        if !(render::NEAR_Z..=GLOCK_RANGE).contains(&vz) {
+        if !(render::NEAR_Z..=GLOCK_RANGE).contains(&vz) || vz > world_limit_z {
             pi += 1;
             continue;
         }
@@ -552,10 +2345,28 @@ unsafe fn fire_glock(
     }
 
     if best == usize::MAX {
+        if let Some(hit) = world_hit {
+            let decal_pos = [
+                hit.pos[0] + ((hit.normal[0] * 2) >> 12),
+                hit.pos[1] + ((hit.normal[1] * 2) >> 12),
+                hit.pos[2] + ((hit.normal[2] * 2) >> 12),
+            ];
+            spawn_impact_fx(decal_pos, IMPACT_KIND_WORLD, rot, base_t);
+        }
         None
     } else {
-        PROP_HEALTH[best] = PROP_HEALTH[best].saturating_sub(GLOCK_DAMAGE);
-        PROP_HIT_FLASH[best] = PROP_HIT_FLASH_TICKS;
+        let ty = PROP_KIND[best];
+        damage_prop(best, GLOCK_DAMAGE);
+        spawn_impact_fx(
+            prop_target(ty, PROP_POS[best]),
+            IMPACT_KIND_BLOOD,
+            rot,
+            base_t,
+        );
+        PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
+        if ty == PROP_TYPE_SCIENTIST {
+            PROP_AI_TIMER[best] = SCIENTIST_FEAR_TICKS;
+        }
         Some(best)
     }
 }
@@ -717,9 +2528,6 @@ unsafe fn next_pvs_face_mark_token() -> u16 {
         for mark in PVS_FACE_MARK.iter_mut() {
             *mark = 0;
         }
-        for mark in PVS_GROUP_MARK.iter_mut() {
-            *mark = 0;
-        }
         PVS_FACE_MARK_TOKEN = 1;
     } else {
         PVS_FACE_MARK_TOKEN = next;
@@ -730,6 +2538,11 @@ unsafe fn next_pvs_face_mark_token() -> u16 {
 unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
     let (visofs, _, _) = m.leaf(cam_leaf as usize);
     decompress_vis(m, visofs, &mut VIS_BITS);
+    let mut old_group = 0usize;
+    while old_group < PVS_GROUP_COUNT {
+        PVS_GROUP_FACE[PVS_GROUP_ACTIVE[old_group] as usize] = PVS_LINK_END;
+        old_group += 1;
+    }
     PVS_LEAF_COUNT = 0;
     PVS_FACE_COUNT = 0;
     PVS_GROUP_COUNT = 0;
@@ -760,29 +2573,22 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
             }
 
             let group = m.face_group(face);
-            if group >= MAX_FACES {
+            if group >= MAX_FACE_GROUPS {
                 continue;
             }
-            if PVS_GROUP_MARK[group] != mark_token {
-                if PVS_GROUP_COUNT >= MAX_FACES {
+            if PVS_GROUP_FACE[group] == PVS_LINK_END {
+                if PVS_GROUP_COUNT >= MAX_FACE_GROUPS {
                     break;
                 }
-                PVS_GROUP_MARK[group] = mark_token;
                 PVS_GROUP_FIRST[group] = PVS_LINK_END;
-                let (n, d) = m.face_plane(face);
-                PVS_GROUP_NRM[group] = n;
-                PVS_GROUP_DIST[group] = d;
+                PVS_GROUP_FACE[group] = face as u16;
                 PVS_GROUP_ACTIVE[PVS_GROUP_COUNT] = group as u16;
                 PVS_GROUP_COUNT += 1;
             }
 
             let entry = PVS_FACE_COUNT;
-            PVS_FACE_FIRST[entry] = first as u16;
-            PVS_FACE_TRI_COUNT[entry] = cnt as u16;
+            PVS_FACE_INDEX[entry] = face as u16;
             PVS_TRI_REF_COUNT += cnt;
-            let (bc, be) = m.face_bounds(face);
-            PVS_FACE_CENTER[entry] = [bc[0] as i16, bc[1] as i16, bc[2] as i16];
-            PVS_FACE_EXTENT[entry] = [be[0] as u16, be[1] as u16, be[2] as u16];
             PVS_FACE_NEXT[entry] = PVS_GROUP_FIRST[group];
             PVS_GROUP_FIRST[group] = entry as u16;
             PVS_FACE_COUNT += 1;
@@ -791,7 +2597,7 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
     let mut ei = 0usize;
     while ei < nents {
         let e = ENT_CACHE[ei];
-        if entity_touches_pvs(m, &e) && PVS_ENT_COUNT < MAX_ENTS {
+        if ENT_ACTIVE[ei] != 0 && entity_touches_pvs(m, &e) && PVS_ENT_COUNT < MAX_ENTS {
             PVS_ENTS[PVS_ENT_COUNT] = ei as u16;
             PVS_ENT_COUNT += 1;
         }
@@ -870,11 +2676,7 @@ const fn uv_word_pair_i32(word: u16) -> (i32, i32) {
 
 #[inline]
 unsafe fn cached_world_uv_words(m: &Map, tri_index: usize) -> [u16; 3] {
-    if tri_index < WORLD_UV_COUNT {
-        WORLD_UV_WORDS[tri_index]
-    } else {
-        m.tri_uv_words(tri_index)
-    }
+    m.tri_uv_words(tri_index)
 }
 
 #[inline]
@@ -1329,8 +3131,9 @@ unsafe fn draw_model(
     ];
     scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
     let nv = md.n_verts.min(MAX_MODEL_VERTS);
+    let verts = md.frame(frame);
     for i in 0..nv {
-        MODEL_SCRATCH[i] = scene::project_vertex_scheduled(md.vert(frame, i));
+        MODEL_SCRATCH[i] = scene::project_vertex_scheduled(verts.vert(i));
     }
     let nfaces = face_count.min(md.n_tris);
     for t in 0..nfaces {
@@ -1411,6 +3214,38 @@ fn viewmodel_otz(avgz: u32) -> usize {
     1 + (rel as usize).min(WEAPON_OT_LEN - 2)
 }
 
+fn draw_sky(m: &Map, yaw: u16, pitch: i16) {
+    if m.sky_tex_base == SKY_TEX_NONE || m.sky_tex_base + SKY_FACE_COUNT > MAX_TEX_SLOTS {
+        return;
+    }
+    // Cooker face order: ft, rt, bk, lf, up, dn.
+    let sky_yaw = ((yaw as usize) + 512) & 0xFFF;
+    let side = (sky_yaw >> 10) & 3;
+    let face = if pitch > 760 {
+        4
+    } else if pitch < -760 {
+        5
+    } else {
+        side
+    };
+    let slot = unsafe { TEX_SLOTS[m.sky_tex_base + face] };
+    if !slot.valid {
+        return;
+    }
+    let u0 = if face < 4 {
+        (((sky_yaw & 1023) * SKY_TEX_SIZE) >> 10) as u8
+    } else {
+        0
+    };
+    let u1 = u0.wrapping_add((SKY_TEX_SIZE - 1) as u8);
+    let v1 = (SKY_TEX_SIZE - 1) as u8;
+    gpu::draw_quad_textured_material(
+        [(0, 0), (319, 0), (0, 239), (319, 239)],
+        [(u0, 0), (u1, 0), (u0, v1), (u1, v1)],
+        slot.material,
+    );
+}
+
 /// Draw the held weapon in view space (attached to the camera), flat-shaded, on
 /// top of the world. `recoil_y` is a small screen-space kick layered over the
 /// source-authored origin.
@@ -1431,8 +3266,9 @@ unsafe fn draw_viewmodel(
             VM_VIEW_SHIFT[1] + recoil_y,
             VM_VIEW_SHIFT[2],
         ));
+        let verts = md.frame(frame);
         for i in 0..nv {
-            MODEL_SCRATCH[i] = scene::project_vertex_scheduled(md.vert(frame, i));
+            MODEL_SCRATCH[i] = scene::project_vertex_scheduled(verts.vert(i));
         }
         WEAPON_CACHE_FRAME = frame;
         WEAPON_CACHE_RECOIL = recoil_y;
@@ -1512,6 +3348,8 @@ fn main() {
     let sci = Model::load(SCI_BYTES);
     let barney = Model::load(BARNEY_BYTES);
     let headcrab = Model::load(HEADCRAB_BYTES);
+    let suit_item = Model::load(SUIT_ITEM_BYTES);
+    let battery_item = Model::load(BATTERY_ITEM_BYTES);
     unsafe {
         SCI_FACE_COUNT = sci.fill_render_faces_raw(
             core::ptr::addr_of_mut!(SCI_FACES).cast::<ModelRenderFace>(),
@@ -1525,13 +3363,35 @@ fn main() {
             core::ptr::addr_of_mut!(HEADCRAB_FACES).cast::<ModelRenderFace>(),
             HEADCRAB_FACE_CAP,
         );
+        SUIT_ITEM_FACE_COUNT = suit_item.fill_render_faces_raw(
+            core::ptr::addr_of_mut!(SUIT_ITEM_FACES).cast::<ModelRenderFace>(),
+            SUIT_ITEM_FACE_CAP,
+        );
+        BATTERY_ITEM_FACE_COUNT = battery_item.fill_render_faces_raw(
+            core::ptr::addr_of_mut!(BATTERY_ITEM_FACES).cast::<ModelRenderFace>(),
+            BATTERY_ITEM_FACE_CAP,
+        );
     }
 
     // Boot flow: pick a map in the menu, stream + play it, return on Select.
     // (Analog is enabled inside play(); the menu runs on the digital pad.)
     loop {
         let sel = menu::run(&mut fb);
-        play(&mut fb, &sci, &barney, &headcrab, sel as u32);
+        let mut launch = menu_launch(sel);
+        loop {
+            match play(
+                &mut fb,
+                &sci,
+                &barney,
+                &headcrab,
+                &suit_item,
+                &battery_item,
+                launch,
+            ) {
+                PlayExit::BackToMenu => break,
+                PlayExit::ChangeLevel(next) => launch = next,
+            }
+        }
     }
 }
 
@@ -1545,14 +3405,59 @@ fn room_texture_chunk_id(room_id: u32) -> u32 {
     room_world_chunk_id(room_id).saturating_add(ROOM_TEXTURE_CHUNK_ADD)
 }
 
-/// Stream menu room `chunk_id` from WORLD.PAK, upload its textures, and run the
-/// renderer + physics loop until the player presses Select (back to menu).
-fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, room_id: u32) {
+#[inline]
+fn account_streamed_chunk(len: usize, chunks: &mut u32, bytes: &mut u32, sectors: &mut u32) {
+    *chunks = chunks.saturating_add(1);
+    *bytes = bytes.saturating_add(len as u32);
+    *sectors = sectors.saturating_add(((len as u32) + 2047) / 2048);
+}
+
+fn stream_model_texture_chunk(
+    chunk_id: u32,
+    slots: *mut TexSlot,
+    slot_len: usize,
+    stream_chunks: &mut u32,
+    stream_bytes: &mut u32,
+    stream_sectors: &mut u32,
+) -> Option<(usize, usize)> {
+    telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
+    let len = cdstream::load_chunk(chunk_id, unsafe { &mut MODEL_BUF }).unwrap_or(0);
+    telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
+    if len == 0 {
+        return None;
+    }
+    account_streamed_chunk(len, stream_chunks, stream_bytes, stream_sectors);
+    let bytes = unsafe { core::slice::from_raw_parts(MODEL_BUF.as_ptr() as *const u8, len) };
+    telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
+    let uploaded = unsafe { vram::upload_tex_chunk_append_raw(bytes, slots, slot_len) };
+    telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
+    uploaded
+}
+
+/// Stream a room from WORLD.PAK, upload its textures, and run the renderer +
+/// physics loop until Select returns to menu or a trigger_changelevel requests
+/// the next room.
+fn play(
+    fb: &mut FrameBuffer,
+    sci: &Model,
+    barney: &Model,
+    headcrab: &Model,
+    suit_item: &Model,
+    battery_item: &Model,
+    launch: RoomLaunch,
+) -> PlayExit {
     let _ = enable_analog_port1();
+    unsafe {
+        CHANGE_REQUEST_ACTIVE = 0;
+    }
     telemetry::frame_begin(0);
     telemetry::task_begin(telemetry::task::FIXED_UPDATE);
-    let texture_chunk_id = room_texture_chunk_id(room_id);
-    let world_chunk_id = room_world_chunk_id(room_id);
+    let texture_chunk_id = room_texture_chunk_id(launch.room_id as u32);
+    let world_chunk_id = room_world_chunk_id(launch.room_id as u32);
+    telemetry::debug_log("hl-psx: loading room");
+    if (launch.room_id as usize) < menu::MAPS.len() {
+        telemetry::debug_log(menu::MAPS[launch.room_id as usize]);
+    }
 
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
     let tex_len = cdstream::load_chunk(texture_chunk_id, unsafe { &mut MAP_BUF }).unwrap_or(0);
@@ -1572,33 +3477,10 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
         telemetry::task_end(telemetry::task::FIXED_UPDATE);
         tty::println("hl-psx: WORLD.PAK texture stream failed");
         telemetry::debug_log("hl-psx: WORLD.PAK texture stream failed");
-        return;
+        return PlayExit::BackToMenu;
     }
     telemetry::debug_log("hl-psx: WORLD.PAK texture chunk loaded");
 
-    telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
-    let weapon_len =
-        cdstream::load_chunk(MODEL_CHUNK_V_9MMHANDGUN, unsafe { &mut MODEL_BUF }).unwrap_or(0);
-    telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
-    if weapon_len > 0 {
-        stream_chunks += 1;
-        stream_bytes = stream_bytes.saturating_add(weapon_len as u32);
-        stream_sectors = stream_sectors.saturating_add(((weapon_len as u32) + 2047) / 2048);
-    } else {
-        telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
-        telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
-        telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
-        telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
-        telemetry::task_end(telemetry::task::FIXED_UPDATE);
-        tty::println("hl-psx: WORLD.PAK weapon stream failed");
-        telemetry::debug_log("hl-psx: WORLD.PAK weapon stream failed");
-        return;
-    }
-    telemetry::debug_log("hl-psx: WORLD.PAK weapon chunk loaded");
-
-    let weapon_bytes: &'static [u8] =
-        unsafe { core::slice::from_raw_parts(MODEL_BUF.as_ptr() as *const u8, weapon_len) };
-    let wpn = Model::load(weapon_bytes);
     let tex_bytes = unsafe { core::slice::from_raw_parts(MAP_BUF.as_ptr() as *const u8, tex_len) };
     telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
     let (room_texs, tex_failed) = match unsafe {
@@ -1618,49 +3500,105 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
             telemetry::task_end(telemetry::task::FIXED_UPDATE);
             tty::println("hl-psx: WORLD.PAK texture chunk invalid");
             telemetry::debug_log("hl-psx: WORLD.PAK texture chunk invalid");
-            return;
+            return PlayExit::BackToMenu;
         }
     };
+    telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
+    let mut model_tex_failed = 0usize;
+    let mut model_texs = 0usize;
+    let mut upload_model_tex = |chunk_id: u32, slots: *mut TexSlot, slot_len: usize| -> bool {
+        match stream_model_texture_chunk(
+            chunk_id,
+            slots,
+            slot_len,
+            &mut stream_chunks,
+            &mut stream_bytes,
+            &mut stream_sectors,
+        ) {
+            Some((n, failed)) => {
+                model_texs = model_texs.saturating_add(n);
+                model_tex_failed = model_tex_failed.saturating_add(failed);
+                true
+            }
+            None => false,
+        }
+    };
+    if !upload_model_tex(
+        MODEL_CHUNK_SCIENTIST_TEX,
+        core::ptr::addr_of_mut!(SCI_SLOTS).cast::<TexSlot>(),
+        24,
+    ) || !upload_model_tex(
+        MODEL_CHUNK_BARNEY_TEX,
+        core::ptr::addr_of_mut!(BARNEY_SLOTS).cast::<TexSlot>(),
+        24,
+    ) || !upload_model_tex(
+        MODEL_CHUNK_HEADCRAB_TEX,
+        core::ptr::addr_of_mut!(HEADCRAB_SLOTS).cast::<TexSlot>(),
+        8,
+    ) || !upload_model_tex(
+        MODEL_CHUNK_SUIT_ITEM_TEX,
+        core::ptr::addr_of_mut!(SUIT_ITEM_SLOTS).cast::<TexSlot>(),
+        8,
+    ) || !upload_model_tex(
+        MODEL_CHUNK_BATTERY_ITEM_TEX,
+        core::ptr::addr_of_mut!(BATTERY_ITEM_SLOTS).cast::<TexSlot>(),
+        8,
+    ) || !upload_model_tex(
+        MODEL_CHUNK_V_9MMHANDGUN_TEX,
+        core::ptr::addr_of_mut!(WEAPON_SLOTS).cast::<TexSlot>(),
+        12,
+    ) {
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
+        telemetry::task_end(telemetry::task::FIXED_UPDATE);
+        tty::println("hl-psx: WORLD.PAK model texture stream failed");
+        telemetry::debug_log("hl-psx: WORLD.PAK model texture stream failed");
+        return PlayExit::BackToMenu;
+    }
     telemetry::counter(
         telemetry::counter::ROOM_TEXTURE_UPLOADS,
-        room_texs.saturating_sub(tex_failed) as u32,
+        (room_texs.saturating_sub(tex_failed) + model_texs.saturating_sub(model_tex_failed)) as u32,
     );
     telemetry::counter(
         telemetry::counter::ROOM_MATERIAL_TEXTURE_DROPS,
-        tex_failed as u32,
+        (tex_failed + model_tex_failed) as u32,
     );
+
+    telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
+    let weapon_len =
+        cdstream::load_chunk(MODEL_CHUNK_V_9MMHANDGUN, unsafe { &mut MODEL_BUF }).unwrap_or(0);
+    telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
+    if weapon_len > 0 {
+        account_streamed_chunk(
+            weapon_len,
+            &mut stream_chunks,
+            &mut stream_bytes,
+            &mut stream_sectors,
+        );
+    } else {
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
+        telemetry::task_end(telemetry::task::FIXED_UPDATE);
+        tty::println("hl-psx: WORLD.PAK weapon stream failed");
+        telemetry::debug_log("hl-psx: WORLD.PAK weapon stream failed");
+        return PlayExit::BackToMenu;
+    }
+    telemetry::debug_log("hl-psx: WORLD.PAK weapon chunk loaded");
+
+    let weapon_bytes: &'static [u8] =
+        unsafe { core::slice::from_raw_parts(MODEL_BUF.as_ptr() as *const u8, weapon_len) };
+    let wpn = Model::load(weapon_bytes);
     unsafe {
-        vram::upload_tex_blob_raw(
-            sci.tex_blob(),
-            sci.n_texs,
-            core::ptr::addr_of_mut!(SCI_SLOTS).cast::<TexSlot>(),
-            24,
-        );
-        vram::upload_tex_blob_raw(
-            barney.tex_blob(),
-            barney.n_texs,
-            core::ptr::addr_of_mut!(BARNEY_SLOTS).cast::<TexSlot>(),
-            24,
-        );
-        vram::upload_tex_blob_raw(
-            headcrab.tex_blob(),
-            headcrab.n_texs,
-            core::ptr::addr_of_mut!(HEADCRAB_SLOTS).cast::<TexSlot>(),
-            8,
-        );
-        vram::upload_tex_blob_raw(
-            wpn.tex_blob(),
-            wpn.n_texs,
-            core::ptr::addr_of_mut!(WEAPON_SLOTS).cast::<TexSlot>(),
-            12,
-        );
         WEAPON_CACHE_FRAME = usize::MAX;
         WEAPON_CACHE_RECOIL = i32::MIN;
         WEAPON_CACHE_VERTS = 0;
         WEAPON_TRI_COUNT = 0;
     }
     let hud_mat = hud::upload(); // real HUD sprite sheet -> free gameplay tpage
-    telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
 
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
     let map_len = cdstream::load_chunk(world_chunk_id, unsafe { &mut MAP_BUF }).unwrap_or(0);
@@ -1681,18 +3619,12 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
     if map_len == 0 {
         tty::println("hl-psx: WORLD.PAK world stream failed");
         telemetry::debug_log("hl-psx: WORLD.PAK world stream failed");
-        return;
+        return PlayExit::BackToMenu;
     }
     telemetry::debug_log("hl-psx: WORLD.PAK world chunk loaded");
 
     let map_bytes = unsafe { core::slice::from_raw_parts(MAP_BUF.as_ptr() as *const u8, map_len) };
     let m = Map::load(map_bytes);
-    unsafe {
-        WORLD_UV_COUNT = m.fill_uv_words_raw(
-            core::ptr::addr_of_mut!(WORLD_UV_WORDS).cast::<[u16; 3]>(),
-            MAX_WORLD_TRIS,
-        );
-    }
     if room_texs != m.n_texs {
         tty::println("hl-psx: texture/world count mismatch");
         telemetry::debug_log("hl-psx: texture/world count mismatch");
@@ -1702,14 +3634,17 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
         PVS_LEAF_COUNT = 0;
         PVS_ENT_COUNT = 0;
         init_prop_state(&m);
+        clear_combat_fx();
     }
     let nents = m.n_ents.min(MAX_ENTS);
+    let nlogic = m.n_logic.min(MAX_LOGIC);
     unsafe {
         for ei in 0..nents {
             let e = m.entity(ei);
             ENT_CACHE[ei] = e;
             ENT_RADIUS[ei] = isqrt(e.r2);
         }
+        init_logic_state(&m, nlogic, nents, 0);
     }
     let nv = if m.n_verts < MAX_VERTS {
         m.n_verts
@@ -1717,14 +3652,45 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
         MAX_VERTS
     };
 
-    let mut player = phys::Player::new(m.spawn_pos);
-    let mut yaw: u16 = (m.spawn_yaw as u16) & 0xFFF;
-    let mut pitch: i16 = 0;
+    let spawn_pos = if let Some(origin) = launch_landmark_origin(&m, nlogic, launch.landmark) {
+        telemetry::debug_log("hl-psx: spawning at landmark");
+        [
+            origin[0] + launch.landmark_offset[0],
+            origin[1] + launch.landmark_offset[1],
+            origin[2] + launch.landmark_offset[2],
+        ]
+    } else {
+        if launch.landmark.len > 0 {
+            telemetry::debug_log("hl-psx: landmark missing, using spawn");
+        }
+        m.spawn_pos
+    };
+    let mut player = phys::Player::new(spawn_pos);
+    let mut yaw: u16 = if launch.preserve_view {
+        launch.yaw
+    } else {
+        (m.spawn_yaw as u16) & 0xFFF
+    };
+    let mut pitch: i16 = if launch.preserve_view {
+        launch.pitch
+    } else {
+        0
+    };
     let mut frame_no: u16 = 0;
     let mut telemetry_frame: u32 = 1;
     let mut sim_frame_no: u32 = 0;
-    let mut ammo: u16 = GLOCK_MAX_CLIP;
-    let mut health: u16 = PLAYER_START_HEALTH;
+    let mut weapon = WeaponState::new(launch.clip_ammo, launch.reserve_ammo);
+    let mut health: u16 = launch.health;
+    let mut armor: u16 = launch.armor.min(HEV_MAX_ARMOR);
+    let mut suit_equipped = launch.suit_equipped
+        || standalone_room_starts_with_hev(launch.room_id as usize)
+        || armor > 0;
+    if !suit_equipped {
+        armor = PLAYER_START_ARMOR;
+    }
+    let mut pickup_kind: u8 = hud::PICKUP_NONE;
+    let mut pickup_ticks: u8 = 0;
+    let mut use_cooldown: u8 = 0;
 
     // Tram ride: carry the player along the path_track chain, then hand back
     // control. ride_off is the tram's displacement from its parked start.
@@ -1793,7 +3759,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
             if pad.buttons.is_held(button::SELECT) {
                 telemetry::stage_end(telemetry::stage::UPDATE);
                 telemetry::task_end(telemetry::task::FIXED_UPDATE);
-                return; // back to the map menu
+                return PlayExit::BackToMenu; // back to the map menu
             }
             // Analog is required: if the pad ever isn't in analog mode, re-assert it.
             if !pad.is_analog() {
@@ -1802,7 +3768,25 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
             // R2 fires at the Glock cadence; the actual hit-test runs after
             // movement/movers update so it uses the current camera and doors.
             recoil = (recoil - 3).max(0);
-            let want_fire = pad.buttons.is_held(button::R2) && recoil == 0 && ammo > 0;
+            weapon.tick();
+            unsafe {
+                decay_combat_fx();
+            }
+            if pickup_ticks > 0 {
+                pickup_ticks -= 1;
+                if pickup_ticks == 0 {
+                    pickup_kind = hud::PICKUP_NONE;
+                }
+            }
+            let want_fire = pad.buttons.is_held(button::R2);
+            let want_reload = pad.buttons.is_held(button::CIRCLE);
+            if use_cooldown > 0 {
+                use_cooldown -= 1;
+            }
+            let want_use = pad.buttons.is_held(button::SQUARE) && use_cooldown == 0;
+            if want_use {
+                use_cooldown = 8;
+            }
             let (mut fwd, mut strafe, mut turn, mut look) = (0i32, 0i32, 0i32, 0i32);
             if pad.is_analog() {
                 let (lx, ly) = pad.sticks.left_centered();
@@ -1820,6 +3804,17 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
             }
             yaw = (((yaw as i32) + (turn * YAW_RATE) / 128) & 0xFFF) as u16;
             pitch = (pitch + ((look * PITCH_RATE) / 128) as i16).clamp(-PITCH_MAX, PITCH_MAX);
+            unsafe {
+                LOGIC_PLAYER_POS = player.pos;
+                LOGIC_PLAYER_YAW = yaw;
+                LOGIC_PLAYER_PITCH = pitch;
+                LOGIC_PLAYER_HEALTH = health;
+                LOGIC_PLAYER_SUIT = if suit_equipped { 1 } else { 0 };
+                LOGIC_PLAYER_ARMOR = armor;
+                LOGIC_PLAYER_CLIP_AMMO = weapon.clip;
+                LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve;
+                logic_pre_tick(&m, nlogic, nents, sim_frame_no as u16);
+            }
 
             // Collision movers: every brush entity at its current offset (doors at
             // their open amount, statics at origin) + the tram at its ride offset.
@@ -1827,19 +3822,11 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
             let mut nmov = 0;
             unsafe {
                 for ei in 0..nents {
+                    if ENT_ACTIVE[ei] == 0 {
+                        continue;
+                    }
                     let e = ENT_CACHE[ei];
-                    let off = if e.kind == 1 {
-                        let near = dist2_3_lt(player.pos, e.center, e.r2);
-                        let ph = &mut ENT_PHASE[ei];
-                        *ph = if near {
-                            (*ph + DOOR_SPEED).min(4096)
-                        } else {
-                            (*ph - DOOR_SPEED).max(0)
-                        };
-                        scale12_vec(e.mv, *ph)
-                    } else {
-                        e.origin
-                    };
+                    let off = ent_draw_offset(ei);
                     if e.kind != 2 && nmov < movers.len() {
                         movers[nmov] = phys::Mover {
                             head: e.head,
@@ -1917,8 +3904,48 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
                 telemetry::stage_end(telemetry::stage::SIM_COLLISION);
             }
             let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
-            if want_fire {
-                ammo = ammo.saturating_sub(1);
+            unsafe {
+                collect_pickups(
+                    player.pos,
+                    &mut suit_equipped,
+                    &mut armor,
+                    &mut pickup_kind,
+                    &mut pickup_ticks,
+                );
+                LOGIC_PLAYER_POS = player.pos;
+                LOGIC_PLAYER_YAW = yaw;
+                LOGIC_PLAYER_PITCH = pitch;
+                LOGIC_PLAYER_HEALTH = health;
+                LOGIC_PLAYER_SUIT = if suit_equipped { 1 } else { 0 };
+                LOGIC_PLAYER_ARMOR = armor;
+                LOGIC_PLAYER_CLIP_AMMO = weapon.clip;
+                LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve;
+                if want_use {
+                    logic_try_use(
+                        &m,
+                        nlogic,
+                        nents,
+                        eye,
+                        yaw,
+                        pitch,
+                        movers,
+                        sim_frame_no as u16,
+                    );
+                }
+                logic_touch_triggers(
+                    &m,
+                    nlogic,
+                    nents,
+                    player.pos,
+                    &mut health,
+                    &mut armor,
+                    sim_frame_no as u16,
+                );
+            }
+            if want_reload {
+                let _ = weapon.start_reload();
+            }
+            if want_fire && weapon.try_fire() {
                 recoil = 16;
                 let fire_rot = view_rotation(yaw, pitch);
                 let fire_base_t = [
@@ -1931,7 +3958,11 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
                 }
             }
             unsafe {
-                tick_props(&m, movers, player.pos, &mut health);
+                tick_props(&m, movers, player.pos, &mut health, &mut armor);
+                LOGIC_PLAYER_HEALTH = health;
+                LOGIC_PLAYER_ARMOR = armor;
+                LOGIC_PLAYER_CLIP_AMMO = weapon.clip;
+                LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve;
             }
             telemetry::counter(
                 telemetry::counter::ROOM_CAMERA_GLOBAL_X_BIASED,
@@ -1952,6 +3983,12 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
             telemetry::counter(telemetry::counter::VISUAL_INTERVAL_VBLANKS, SIM_VBLANKS);
             telemetry::task_end(telemetry::task::FIXED_UPDATE);
 
+            unsafe {
+                if CHANGE_REQUEST_ACTIVE != 0 {
+                    CHANGE_REQUEST_ACTIVE = 0;
+                    return PlayExit::ChangeLevel(CHANGE_REQUEST);
+                }
+            }
             telemetry_frame = telemetry_frame.wrapping_add(1);
             sim_frame_no = sim_frame_no.wrapping_add(1);
             ticks_this_visual = ticks_this_visual.saturating_add(1);
@@ -1989,6 +4026,7 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
             OT.clear();
             WEAPON_OT.clear();
             HUD_OT.clear();
+            FX_OT.clear();
             let mut packets = PrimitivePacketArena::new(&mut PRIMITIVE_PACKETS);
             let mut np = 0usize;
             let mut nq = 0usize;
@@ -2010,22 +4048,22 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
 
                 for gi in 0..PVS_GROUP_COUNT {
                     let group = PVS_GROUP_ACTIVE[gi] as usize;
-                    if dot12(PVS_GROUP_NRM[group], eye) <= PVS_GROUP_DIST[group] {
+                    let plane_face = PVS_GROUP_FACE[group] as usize;
+                    let (plane_n, plane_d) = m.face_plane(plane_face);
+                    if dot12(plane_n, eye) <= plane_d {
                         continue;
                     }
                     let mut entry = PVS_GROUP_FIRST[group];
                     while entry != PVS_LINK_END {
                         let e = entry as usize;
-                        let bc16 = PVS_FACE_CENTER[e];
-                        let be16 = PVS_FACE_EXTENT[e];
-                        let bc = [bc16[0] as i32, bc16[1] as i32, bc16[2] as i32];
-                        let be = [be16[0] as i32, be16[1] as i32, be16[2] as i32];
+                        let face = PVS_FACE_INDEX[e] as usize;
+                        let (bc, be) = m.face_bounds(face);
                         if !WORLD_BOUNDS_CULL || box_visible(bc, be, &rot, base_t) {
-                            let cnt = PVS_FACE_TRI_COUNT[e] as usize;
+                            let (first, cnt) = m.face_tris(face);
                             emit_world_face_tris(
                                 &mut packets,
                                 &m,
-                                PVS_FACE_FIRST[e] as usize,
+                                first,
                                 cnt,
                                 nv,
                                 frame_no,
@@ -2104,12 +4142,11 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
             let brush_iter_count = if have_pvs { PVS_ENT_COUNT } else { nents };
             for bi in 0..brush_iter_count {
                 let ei = if have_pvs { PVS_ENTS[bi] as usize } else { bi };
+                if ENT_ACTIVE[ei] == 0 {
+                    continue;
+                }
                 let e = ENT_CACHE[ei];
-                let off = if e.kind == 1 {
-                    scale12_vec(e.mv, ENT_PHASE[ei])
-                } else {
-                    e.origin
-                };
+                let off = ent_draw_offset(ei);
                 if e.r2 > 0 {
                     model_bounds_tests = model_bounds_tests.saturating_add(1);
                     let radius = ENT_RADIUS[ei];
@@ -2223,6 +4260,9 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
             // PS1 path only chooses the current actor frame.
             let actor_count = PROP_COUNT.min(MAX_PROPS);
             for pi in 0..actor_count {
+                if PROP_ACTIVE[pi] == 0 {
+                    continue;
+                }
                 let ty = PROP_KIND[pi];
                 let org = PROP_POS[pi];
                 let yaw = PROP_YAW[pi];
@@ -2245,6 +4285,18 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
                         &HEADCRAB_SLOTS[..],
                         core::ptr::addr_of!(HEADCRAB_FACES).cast::<ModelRenderFace>(),
                         HEADCRAB_FACE_COUNT,
+                    ),
+                    PROP_TYPE_ITEM_SUIT => (
+                        suit_item,
+                        &SUIT_ITEM_SLOTS[..],
+                        core::ptr::addr_of!(SUIT_ITEM_FACES).cast::<ModelRenderFace>(),
+                        SUIT_ITEM_FACE_COUNT,
+                    ),
+                    PROP_TYPE_ITEM_BATTERY => (
+                        battery_item,
+                        &BATTERY_ITEM_SLOTS[..],
+                        core::ptr::addr_of!(BATTERY_ITEM_FACES).cast::<ModelRenderFace>(),
+                        BATTERY_ITEM_FACE_COUNT,
                     ),
                     _ => continue,
                 };
@@ -2278,8 +4330,14 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
                     continue;
                 }
                 model_draws = model_draws.saturating_add(1);
-                let sf = prop_anim_frame(md, ty, PROP_STATE[pi], sim_frame_no, pi);
-                let shade = if pi < MAX_PROPS && PROP_HIT_FLASH[pi] > 0 {
+                let sf = if ty == PROP_TYPE_ITEM_SUIT || ty == PROP_TYPE_ITEM_BATTERY {
+                    0
+                } else {
+                    prop_anim_frame(md, ty, PROP_STATE[pi], PROP_HIT_FLASH[pi], sim_frame_no, pi)
+                };
+                let shade = if ty == PROP_TYPE_ITEM_SUIT || ty == PROP_TYPE_ITEM_BATTERY {
+                    128
+                } else if pi < MAX_PROPS && PROP_HIT_FLASH[pi] > 0 {
                     MODEL_HIT_SHADE
                 } else {
                     MODEL_SHADE
@@ -2342,13 +4400,29 @@ fn play(fb: &mut FrameBuffer, sci: &Model, barney: &Model, headcrab: &Model, roo
                     np.saturating_sub(world_prims) as u32,
                 );
             }
-            let _ = hud::draw(hud_mat, health, ammo, &mut HUD_OT, &mut HUD_PRIMS);
+            let _ = hud::draw(
+                hud_mat,
+                suit_equipped,
+                health,
+                armor,
+                weapon.clip,
+                weapon.reserve,
+                pickup_kind,
+                pickup_ticks,
+                &mut HUD_OT,
+                &mut HUD_PRIMS,
+            );
+            let _ = render_impact_marks(&mut FX_OT, &mut IMPACT_MARK_RECTS, &rot, base_t);
+            let _ =
+                IMPACT_PARTICLES.render_into_ot(&mut FX_OT, &mut IMPACT_PARTICLE_RECTS, 0, (0, 0));
 
             telemetry::stage_begin(telemetry::stage::FRAME_CLEAR);
             fb.clear(0, 0, 0);
+            draw_sky(&m, yaw, pitch);
             telemetry::stage_end(telemetry::stage::FRAME_CLEAR);
             telemetry::stage_begin(telemetry::stage::WORLD_FLUSH);
             OT.submit();
+            FX_OT.submit();
             telemetry::stage_end(telemetry::stage::WORLD_FLUSH);
             telemetry::stage_begin(telemetry::stage::OT_SUBMIT);
             WEAPON_OT.submit();

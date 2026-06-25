@@ -33,6 +33,9 @@ config.mk
 docs/
 reference/
 tools/*.py
+!tools/memory_report.py
+!tools/campaign_map_report.py
+!tools/campaign_flow_report.py
 tools/*.sh
 
 # ---- OS / editor cruft ----

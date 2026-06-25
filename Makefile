@@ -49,7 +49,7 @@ HLBSP_BIN := $(HLBSP)/target/release/hl-bsp
 MAP      ?= c1a0
 
 .DEFAULT_GOAL := build
-.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-chart memory-report
+.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms campaign-map-report menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-chart memory-report
 
 help:
 	@echo "hl-psx targets:"
@@ -71,6 +71,7 @@ help:
 	@echo "  make check-assets - verify the source Half-Life install (HL_DIR)"
 	@echo "  make bsp-info   - geometry + texture-VRAM budget for one map (MAP=$(MAP))"
 	@echo "  make cook       - cook a map to data/maps/<MAP>.hlm (MAP=$(MAP))"
+	@echo "  make campaign-map-report - size every campaign BSP against MAP_BUF"
 	@echo "  make clean      - remove build output"
 	@echo ""
 	@echo "  Source assets read from HL_DIR (default: macOS Steam path)."
@@ -162,13 +163,25 @@ psoxide-chart: psoxide-profile
 # Cook streamed maps into WORLD.PAK chunks. Each menu room N gets two chunk IDs:
 #   room_<2N>.psxc   = resident HLMA world/collision/entity data
 #   room_<2N+1>.psxc = temporary HLTX texture payload for VRAM upload
-# Keep MAPLIST in the same order as `game/src/menu.rs`'s chapter list.
+# Keep MAPLIST in the same order as `game/src/menu.rs`'s MAPS registry.
 ROOMS := $(ROOT)/data/rooms
 MODELPACK := $(ROOT)/data/modelpack
-# One representative per gameplay chapter, staying below the current static
-# MAP_BUF budget. Some chapter starts are too large today, so use the first
-# fitting map from that chapter instead.
-MAPLIST := c0a0 c1a0 c1a1a c1a3a
+# Runnable campaign map registry, staying below the current static MAP_BUF
+# budget. Oversized maps are intentionally omitted until the streamed map format
+# grows a compression/chunking path. Keep this in sync with `game/src/menu.rs`.
+MAPLIST := \
+	c0a0 c0a0a c0a0b c0a0c c0a0d c0a0e c1a0 c1a0a \
+	c1a0b c1a0c c1a0d c1a0e c1a1 c1a1a c1a1b c1a1c \
+	c1a1d c1a1f c1a2 c1a2a c1a2b c1a2c c1a2d c1a3 \
+	c1a3a c1a3b c1a3c c1a3d c1a4 c1a4b c1a4d c1a4e \
+	c1a4f c1a4g c1a4i c1a4j c1a4k c2a1 c2a1a c2a1b \
+	c2a2 c2a2a c2a2b1 c2a2b2 c2a2c c2a2d c2a2e c2a2f \
+	c2a2g c2a2h c2a3 c2a3a c2a3b c2a3c c2a3d c2a3e \
+	c2a4 c2a4a c2a4b c2a4c c2a4d c2a4e c2a4f c2a4g \
+	c2a5 c2a5a c2a5b c2a5c c2a5d c2a5e c2a5f c2a5g \
+	c2a5w c2a5x c3a1 c3a1a c3a1b c3a2 c3a2a c3a2b \
+	c3a2c c3a2d c3a2e c3a2f c4a1 c4a1a c4a1b c4a1c \
+	c4a1d c4a1e c4a1f c4a2 c4a2a c4a2b c4a3 c5a1
 rooms:
 	cd $(HLBSP) && cargo build --release
 	@mkdir -p $(ROOMS)
@@ -179,6 +192,13 @@ rooms:
 		echo "  room_$$w/$$t = $$m"; i=$$((i+1)); \
 	done
 	@echo "rooms -> $(ROOMS) ($(words $(MAPLIST)) maps)"
+
+campaign-map-report:
+	cd $(HLBSP) && cargo build --release
+	python3 $(ROOT)/tools/campaign_map_report.py \
+		--hl-game "$(HL_GAME)" \
+		--hlbsp-bin "$(HLBSP_BIN)" \
+		--rooms-dir "$(ROOMS)"
 
 # Extract the menu font (HL fonts.wad -> data/menu/hlfont.bin, git-ignored).
 # The runtime include_bytes!'s it, so run this once before building.
@@ -233,28 +253,35 @@ cook:
 	@cp $(ROOT)/data/maps/$(MAP).hltx $(ROOT)/data/maps/current.hltx
 	@echo "current map -> $(MAP)"
 
-# Cook the studio models the runtime include_bytes!'s (data/models). Most are
-# baked to sequence 0. Headcrab uses an HMD3 clip pack:
-#   0 idle1, 4 run, 10 jump/attack, 7 dieback
-MODELLIST := scientist barney
+# Cook the studio models the runtime include_bytes!'s (data/models). NPCs use a
+# shared clip order: idle, move, attack, pain, death. The sequence ids come from
+# the shipped GoldSrc MDL activity metadata.
 WEAPON_CHUNK_BASE := 1000
+NPC_TEX_CHUNK_SCIENTIST := 1100
+NPC_TEX_CHUNK_BARNEY := 1101
+NPC_TEX_CHUNK_HEADCRAB := 1102
+ITEM_TEX_CHUNK_SUIT := 1200
+ITEM_TEX_CHUNK_BATTERY := 1201
+WEAPON_TEX_CHUNK_BASE := 2000
 WEAPONLIST := v_9mmhandgun v_357 v_9mmar v_crossbow v_crowbar v_chub v_egon v_gauss v_grenade v_hgun v_rpg v_satchel v_satchel_radio v_shotgun v_squeak v_tripmine
 models:
 	cd $(HLBSP) && cargo build --release
 	@mkdir -p $(ROOT)/data/models
 	@mkdir -p $(MODELPACK)
 	@rm -f $(MODELPACK)/chunk_*.psxm
-	@for m in $(MODELLIST); do \
-		$(HLBSP_BIN) --mdl "$(HL_GAME)/models/$$m.mdl" $(ROOT)/data/models/$$m.hlmdl 0; \
-	done
+	$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/scientist.mdl" $(ROOT)/data/models/scientist.hlmdl 13:16,0:12,24:12,8:9,31:16 "$(MODELPACK)/chunk_$(NPC_TEX_CHUNK_SCIENTIST).psxm"
+	$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/barney.mdl" $(ROOT)/data/models/barney.hlmdl 0:16,4:12,6:12,17:12,25:16 "$(MODELPACK)/chunk_$(NPC_TEX_CHUNK_BARNEY).psxm"
 	@i=0; for m in $(WEAPONLIST); do \
 		chunk=$$(( $(WEAPON_CHUNK_BASE) + i )); \
-		$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/$$m.mdl" "$(MODELPACK)/chunk_$$chunk.psxm" 0 >/dev/null; \
-		echo "  model chunk $$chunk = $$m"; \
+		texchunk=$$(( $(WEAPON_TEX_CHUNK_BASE) + i )); \
+		$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/$$m.mdl" "$(MODELPACK)/chunk_$$chunk.psxm" 0 "$(MODELPACK)/chunk_$$texchunk.psxm" >/dev/null; \
+		echo "  model chunk $$chunk + texture chunk $$texchunk = $$m"; \
 		i=$$((i+1)); \
 	done
 	@cp "$(MODELPACK)/chunk_$(WEAPON_CHUNK_BASE).psxm" $(ROOT)/data/models/v_9mmhandgun.hlmdl
-	$(HLBSP_BIN) --mdl "$(HL_GAME)/models/headcrab.mdl" $(ROOT)/data/models/headcrab.hlmdl 0:8,4:8,10:7,7:7
+	$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/headcrab.mdl" $(ROOT)/data/models/headcrab.hlmdl 0:12,4:12,10:10,6:8,7:12 "$(MODELPACK)/chunk_$(NPC_TEX_CHUNK_HEADCRAB).psxm"
+	$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/w_suit.mdl" $(ROOT)/data/models/w_suit.hlmdl 0 "$(MODELPACK)/chunk_$(ITEM_TEX_CHUNK_SUIT).psxm"
+	$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/w_battery.mdl" $(ROOT)/data/models/w_battery.hlmdl 0 "$(MODELPACK)/chunk_$(ITEM_TEX_CHUNK_BATTERY).psxm"
 
 clean:
 	cd $(GAME) && cargo clean

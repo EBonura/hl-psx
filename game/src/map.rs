@@ -2,32 +2,41 @@
 //! plus brush-entity leaf membership for PVS culling.
 //!
 //!   magic "HLMA" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
-//!   verts i16×3 | TriRec[22B] × n_tris
-//!     TriRec = u16 idx[3], u8 tex, u8 uv[6], u8 rgb[9]
+//!     | u32 clip_off,ent_off,tram_off,prop_off,sky_tex_base,nav_off,logic_off
+//!   verts i16×3 | TriRec[19B] × n_tris
+//!     TriRec = u16 idx[3], u8 uv[6], u8 tex, rgb555[3]
 //!   optional legacy textures × n_texs: u16 w,h | u16 clut[16] | u8 pix[w*h/2]
 //!   modern streamed builds keep texture pixels in a separate HLTX chunk:
 //!     magic "HLTX" | u32 n_texs | textures...
 //!   bsp @ bsp_off:
-//!     u32 n_nodes,n_leaves,n_marks,vis_len
-//!     FaceRec[28B] × n_faces
-//!       FaceRec = u16 first_tri, u16 tri_count, i16 normal[3], i32 dist,
-//!                 u16 plane_group, i16 center[3], u16 extent[3]
-//!     nodes  (i16 nx,ny,nz, i32 dist, i16 c0, i16 c1) × n_nodes
+//!     u32 n_planes,n_face_groups,n_nodes,n_leaves,n_marks,vis_len
+//!     PlaneRec[10B] × n_planes = i16 normal[3], i32 dist
+//!     FaceGroup[2B] × n_face_groups = signed plane reference
+//!     FaceRec[18B] × n_faces
+//!       FaceRec = u16 first_tri, u16 tri_count, u16 plane_group,
+//!                 i16 center[3], u16 extent[3]
+//!     nodes  (u16 plane, i16 c0, i16 c1) × n_nodes
 //!     leaves (i32 visofs, u16 mark_start, u16 mark_count) × n_leaves
 //!     marks  u16 × n_marks (pad 4)
 //!     vis    u8  × vis_len (pad 4)
 //!   clip:
 //!     u32 n_clip | i32 hull0_head | i32 hull1_head | i32 spawn[3] |
-//!     i32 spawn_yaw | ClipNode[16B] × n_clip
+//!     i32 spawn_yaw | ClipNode[6B] × n_clip
 //!   entities:
 //!     u32 n_models | (u32 firstface,u32 numface) × n_models
 //!     u32 n_ents | EntRec[52B] × n_ents | u32 n_ent_leafs | u16 leaf_idx[]
-//!   props:
+//!   props/items:
 //!     u32 n_props | (u16 type, i16 leaf, i32 origin[3], i32 yaw) × n_props
+//!   nav:
+//!     u16 n_nav,n_nav_links |
+//!     (i32 origin[3], i16 leaf, u16 first_link, u8 link_count, u8 pad) × n_nav |
+//!     u16 link_dest × n_nav_links
+//!   logic:
+//!     u16 n_logic,n_aux,n_names,name_bytes |
+//!     LogicRec[64B] × n_logic | LogicAux[4B] × n_aux |
+//!     u16 name_offsets[n_names] | u8 nul_terminated_names[name_bytes]
 //!
 //! Fields are read via `from_le_bytes` (include_bytes! is only byte-aligned).
-
-use core::ptr;
 
 use psx_gte::math::Vec3I16;
 
@@ -52,7 +61,25 @@ fn align4(x: usize) -> usize {
     (x + 3) & !3
 }
 
-const NODE_SZ: usize = 14;
+#[inline(always)]
+fn expand5(v: u16) -> u8 {
+    ((v << 3) | (v >> 2)) as u8
+}
+
+#[inline(always)]
+fn unpack_rgb555(v: u16) -> (u8, u8, u8) {
+    (
+        expand5(v & 31),
+        expand5((v >> 5) & 31),
+        expand5((v >> 10) & 31),
+    )
+}
+
+const PLANE_SZ: usize = 10;
+const FACE_GROUP_SZ: usize = 2;
+const NODE_SZ: usize = 6;
+const NAV_NODE_SZ: usize = 20;
+pub const SKY_TEX_NONE: usize = usize::MAX;
 
 pub struct Node {
     pub n: [i16; 3],
@@ -67,12 +94,17 @@ pub struct Map {
     pub n_tris: usize,
     pub n_texs: usize,
     pub n_faces: usize,
+    pub sky_tex_base: usize,
     v_off: usize,
     tri_off: usize,
     // BSP / PVS
+    pub n_planes: usize,
+    pub n_face_groups: usize,
     pub n_nodes: usize,
     pub n_leaves: usize,
     pub n_marks: usize,
+    planes_off: usize,
+    face_groups_off: usize,
     faces_off: usize,
     nodes_off: usize,
     leaves_off: usize,
@@ -100,22 +132,94 @@ pub struct Map {
     pub tram_base: [i32; 3], // wp0 - tram origin: places the brush onto the track
     pub n_way: usize,
     way_off: usize,
-    // Props (point-entity model placements)
+    // Props/items (point-entity model placements)
     pub n_props: usize,
     props_off: usize,
+    // AI navigation graph (land info_node graph)
+    pub n_nav: usize,
+    n_nav_links: usize,
+    nav_nodes_off: usize,
+    nav_links_off: usize,
+    // Half-Life-style target/use/touch entity graph
+    pub n_logic: usize,
+    pub n_logic_aux: usize,
+    pub n_logic_names: usize,
+    logic_off: usize,
+    logic_aux_off: usize,
+    logic_name_offsets_off: usize,
+    logic_names_off: usize,
 }
 
 const LEAF_SZ: usize = 8; // visofs i32 + marks u16×2
-const FACE_SZ: usize = 28;
-const TRI_SZ: usize = 22;
-const CLIPNODE_SZ: usize = 16;
+const FACE_SZ: usize = 18;
+const TRI_SZ: usize = 19;
+const CLIPNODE_SZ: usize = 6;
 const ENT_SZ: usize = 52;
+const LOGIC_SZ: usize = 64;
+
+pub const LOGIC_BRUSH_NONE: u16 = u16::MAX;
+pub const LOGIC_FUNC_DOOR: u8 = 1;
+pub const LOGIC_FUNC_BUTTON: u8 = 2;
+pub const LOGIC_TRIGGER_ONCE: u8 = 3;
+pub const LOGIC_TRIGGER_MULTIPLE: u8 = 4;
+pub const LOGIC_TRIGGER_RELAY: u8 = 5;
+pub const LOGIC_MULTI_MANAGER: u8 = 6;
+pub const LOGIC_TRIGGER_AUTO: u8 = 7;
+pub const LOGIC_TRIGGER_CHANGELEVEL: u8 = 8;
+pub const LOGIC_INFO_LANDMARK: u8 = 9;
+pub const LOGIC_TRIGGER_COUNTER: u8 = 10;
+pub const LOGIC_TRIGGER_CHANGETARGET: u8 = 11;
+pub const LOGIC_ITEM_SUIT: u8 = 12;
+pub const LOGIC_ITEM_BATTERY: u8 = 13;
+pub const LOGIC_TRIGGER_HURT: u8 = 14;
+
+pub const USE_OFF: u8 = 0;
+pub const USE_ON: u8 = 1;
+pub const USE_TOGGLE: u8 = 3;
 
 pub struct ClipNode {
     pub n: [i16; 3],
     pub c0: i16,
     pub c1: i16,
     pub dist: i32,
+}
+
+#[derive(Clone, Copy)]
+pub struct NavNode {
+    pub pos: [i32; 3],
+    #[allow(dead_code)]
+    pub leaf: i16,
+    pub first_link: usize,
+    pub link_count: usize,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+pub struct LogicEnt {
+    pub kind: u8,
+    pub use_type: u8,
+    pub spawnflags: u16,
+    pub targetname: u16,
+    pub target: u16,
+    pub killtarget: u16,
+    pub brush: u16,
+    pub first_aux: usize,
+    pub aux_count: usize,
+    pub flags: u8,
+    pub wait_ticks: i16,
+    pub delay_ticks: u16,
+    pub speed: u16,
+    pub arg0: u16,
+    pub arg1: u16,
+    pub origin: [i32; 3],
+    pub mins: [i32; 3],
+    pub maxs: [i32; 3],
+}
+
+#[derive(Clone, Copy)]
+pub struct LogicAux {
+    pub target: u16,
+    pub delay_ticks: u16,
 }
 
 #[derive(Clone, Copy)]
@@ -139,11 +243,6 @@ pub struct RenderTri {
     pub rgb: [(u8, u8, u8); 3],
 }
 
-#[inline(always)]
-const fn uv_word(u: u8, v: u8) -> u16 {
-    (u as u16) | ((v as u16) << 8)
-}
-
 impl Map {
     pub fn load(data: &'static [u8]) -> Map {
         let n_verts = rd_u32(data, 4) as usize;
@@ -155,14 +254,26 @@ impl Map {
         let ent_off = rd_u32(data, 28) as usize;
         let tram_off = rd_u32(data, 32) as usize;
         let prop_off = rd_u32(data, 36) as usize;
-        let v_off = 40;
+        let sky_tex_raw = rd_u32(data, 40);
+        let sky_tex_base = if sky_tex_raw == u32::MAX {
+            SKY_TEX_NONE
+        } else {
+            sky_tex_raw as usize
+        };
+        let nav_off = rd_u32(data, 44) as usize;
+        let logic_off = rd_u32(data, 48) as usize;
+        let v_off = 52;
         let tri_off = v_off + n_verts * 6;
 
-        let n_nodes = rd_u32(data, bsp_off) as usize;
-        let n_leaves = rd_u32(data, bsp_off + 4) as usize;
-        let n_marks = rd_u32(data, bsp_off + 8) as usize;
-        let vis_len = rd_u32(data, bsp_off + 12) as usize;
-        let faces_off = bsp_off + 16;
+        let n_planes = rd_u32(data, bsp_off) as usize;
+        let n_face_groups = rd_u32(data, bsp_off + 4) as usize;
+        let n_nodes = rd_u32(data, bsp_off + 8) as usize;
+        let n_leaves = rd_u32(data, bsp_off + 12) as usize;
+        let n_marks = rd_u32(data, bsp_off + 16) as usize;
+        let vis_len = rd_u32(data, bsp_off + 20) as usize;
+        let planes_off = bsp_off + 24;
+        let face_groups_off = planes_off + n_planes * PLANE_SZ;
+        let faces_off = face_groups_off + n_face_groups * FACE_GROUP_SZ;
         let nodes_off = faces_off + n_faces * FACE_SZ;
         let leaves_off = nodes_off + n_nodes * NODE_SZ;
         let marks_off = leaves_off + n_leaves * LEAF_SZ;
@@ -202,17 +313,37 @@ impl Map {
         let n_props = rd_u32(data, prop_off) as usize;
         let props_off = prop_off + 4;
 
+        let n_nav = rd_u16(data, nav_off) as usize;
+        let n_nav_links = rd_u16(data, nav_off + 2) as usize;
+        let nav_nodes_off = nav_off + 4;
+        let nav_links_off = nav_nodes_off + n_nav * NAV_NODE_SZ;
+
+        let n_logic = rd_u16(data, logic_off) as usize;
+        let n_logic_aux = rd_u16(data, logic_off + 2) as usize;
+        let n_logic_names = rd_u16(data, logic_off + 4) as usize;
+        let logic_name_bytes = rd_u16(data, logic_off + 6) as usize;
+        let logic_records_off = logic_off + 8;
+        let logic_aux_off = logic_records_off + n_logic * LOGIC_SZ;
+        let logic_name_offsets_off = logic_aux_off + n_logic_aux * 4;
+        let logic_names_off = logic_name_offsets_off + n_logic_names * 2;
+        let _ = logic_name_bytes;
+
         Map {
             data,
             n_verts,
             n_tris,
             n_texs,
             n_faces,
+            sky_tex_base,
             v_off,
             tri_off,
+            n_planes,
+            n_face_groups,
             n_nodes,
             n_leaves,
             n_marks,
+            planes_off,
+            face_groups_off,
             faces_off,
             nodes_off,
             leaves_off,
@@ -239,10 +370,21 @@ impl Map {
             way_off,
             n_props,
             props_off,
+            n_nav,
+            n_nav_links,
+            nav_nodes_off,
+            nav_links_off,
+            n_logic,
+            n_logic_aux,
+            n_logic_names,
+            logic_off: logic_records_off,
+            logic_aux_off,
+            logic_name_offsets_off,
+            logic_names_off,
         }
     }
 
-    /// `(model_type, origin, yaw, leaf)` for prop `i` (a placed studio model).
+    /// `(model_type, origin, yaw, leaf)` for point prop/item `i`.
     #[inline]
     pub fn prop(&self, i: usize) -> (u16, [i32; 3], i32, i16) {
         let o = self.props_off + i * 20;
@@ -304,17 +446,92 @@ impl Map {
     }
 
     #[inline]
+    pub fn nav_node(&self, i: usize) -> NavNode {
+        let o = self.nav_nodes_off + i * NAV_NODE_SZ;
+        let d = self.data;
+        NavNode {
+            pos: [rd_i32(d, o), rd_i32(d, o + 4), rd_i32(d, o + 8)],
+            leaf: rd_i16(d, o + 12),
+            first_link: rd_u16(d, o + 14) as usize,
+            link_count: d[o + 16] as usize,
+        }
+    }
+
+    #[inline]
+    pub fn nav_link(&self, i: usize) -> usize {
+        if i >= self.n_nav_links {
+            return 0;
+        }
+        rd_u16(self.data, self.nav_links_off + i * 2) as usize
+    }
+
+    #[inline]
+    pub fn logic(&self, i: usize) -> LogicEnt {
+        let o = self.logic_off + i * LOGIC_SZ;
+        let d = self.data;
+        LogicEnt {
+            kind: d[o],
+            use_type: d[o + 1],
+            spawnflags: rd_u16(d, o + 2),
+            targetname: rd_u16(d, o + 4),
+            target: rd_u16(d, o + 6),
+            killtarget: rd_u16(d, o + 8),
+            brush: rd_u16(d, o + 10),
+            first_aux: rd_u16(d, o + 12) as usize,
+            aux_count: d[o + 14] as usize,
+            flags: d[o + 15],
+            wait_ticks: rd_i16(d, o + 16),
+            delay_ticks: rd_u16(d, o + 18),
+            speed: rd_u16(d, o + 20),
+            arg0: rd_u16(d, o + 22),
+            arg1: rd_u16(d, o + 24),
+            origin: [rd_i32(d, o + 28), rd_i32(d, o + 32), rd_i32(d, o + 36)],
+            mins: [rd_i32(d, o + 40), rd_i32(d, o + 44), rd_i32(d, o + 48)],
+            maxs: [rd_i32(d, o + 52), rd_i32(d, o + 56), rd_i32(d, o + 60)],
+        }
+    }
+
+    #[inline]
+    pub fn logic_aux(&self, i: usize) -> LogicAux {
+        if i >= self.n_logic_aux {
+            return LogicAux {
+                target: 0,
+                delay_ticks: 0,
+            };
+        }
+        let o = self.logic_aux_off + i * 4;
+        LogicAux {
+            target: rd_u16(self.data, o),
+            delay_ticks: rd_u16(self.data, o + 2),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn logic_name(&self, id: u16) -> &'static str {
+        if id == 0 || id as usize > self.n_logic_names {
+            return "";
+        }
+        let idx = id as usize - 1;
+        let start = rd_u16(self.data, self.logic_name_offsets_off + idx * 2) as usize;
+        let mut end = start;
+        while self.logic_names_off + end < self.data.len()
+            && self.data[self.logic_names_off + end] != 0
+        {
+            end += 1;
+        }
+        core::str::from_utf8(&self.data[self.logic_names_off + start..self.logic_names_off + end])
+            .unwrap_or("")
+    }
+
+    #[inline]
     pub fn clipnode(&self, i: usize) -> ClipNode {
         let o = self.clipn_off + i * CLIPNODE_SZ;
+        let (n, dist) = self.plane(rd_u16(self.data, o) as usize);
         ClipNode {
-            n: [
-                rd_i16(self.data, o),
-                rd_i16(self.data, o + 2),
-                rd_i16(self.data, o + 4),
-            ],
-            c0: rd_i16(self.data, o + 6),
-            c1: rd_i16(self.data, o + 8),
-            dist: rd_i32(self.data, o + 12),
+            n,
+            c0: rd_i16(self.data, o + 2),
+            c1: rd_i16(self.data, o + 4),
+            dist,
         }
     }
 
@@ -332,37 +549,22 @@ impl Map {
     pub fn tri_uv_words(&self, t: usize) -> [u16; 3] {
         let o = self.tri_off + t * TRI_SZ;
         let d = self.data;
-        [
-            uv_word(d[o + 7], d[o + 8]),
-            uv_word(d[o + 9], d[o + 10]),
-            uv_word(d[o + 11], d[o + 12]),
-        ]
+        [rd_u16(d, o + 6), rd_u16(d, o + 8), rd_u16(d, o + 10)]
     }
 
     #[inline]
     pub fn render_tri(&self, t: usize, uv_words: [u16; 3]) -> RenderTri {
         let o = self.tri_off + t * TRI_SZ;
         let d = self.data;
+        let c0 = unpack_rgb555(rd_u16(d, o + 13));
+        let c1 = unpack_rgb555(rd_u16(d, o + 15));
+        let c2 = unpack_rgb555(rd_u16(d, o + 17));
         RenderTri {
             idx: [rd_u16(d, o), rd_u16(d, o + 2), rd_u16(d, o + 4)],
-            tex: d[o + 6] as usize,
+            tex: d[o + 12] as usize,
             uv_words,
-            rgb: [
-                (d[o + 13], d[o + 14], d[o + 15]),
-                (d[o + 16], d[o + 17], d[o + 18]),
-                (d[o + 19], d[o + 20], d[o + 21]),
-            ],
+            rgb: [c0, c1, c2],
         }
-    }
-
-    pub unsafe fn fill_uv_words_raw(&self, out: *mut [u16; 3], out_len: usize) -> usize {
-        let n = self.n_tris.min(out_len);
-        let mut t = 0;
-        while t < n {
-            ptr::write(out.add(t), self.tri_uv_words(t));
-            t += 1;
-        }
-        n
     }
 
     // ---- BSP / PVS ----
@@ -370,15 +572,38 @@ impl Map {
     #[inline]
     pub fn node(&self, i: usize) -> Node {
         let o = self.nodes_off + i * NODE_SZ;
+        let (n, dist) = self.plane(rd_u16(self.data, o) as usize);
         Node {
-            n: [
+            n,
+            dist,
+            c0: rd_i16(self.data, o + 2) as i32,
+            c1: rd_i16(self.data, o + 4) as i32,
+        }
+    }
+
+    #[inline]
+    fn plane(&self, i: usize) -> ([i16; 3], i32) {
+        if i >= self.n_planes {
+            return ([0, 4096, 0], 0);
+        }
+        let o = self.planes_off + i * PLANE_SZ;
+        (
+            [
                 rd_i16(self.data, o),
                 rd_i16(self.data, o + 2),
                 rd_i16(self.data, o + 4),
             ],
-            dist: rd_i32(self.data, o + 6),
-            c0: rd_i16(self.data, o + 10) as i32,
-            c1: rd_i16(self.data, o + 12) as i32,
+            rd_i32(self.data, o + 6),
+        )
+    }
+
+    #[inline]
+    fn signed_plane(&self, plane_ref: i16) -> ([i16; 3], i32) {
+        if plane_ref >= 0 {
+            self.plane(plane_ref as usize)
+        } else {
+            let (n, d) = self.plane((-(plane_ref as i32) - 1) as usize);
+            ([-n[0], -n[1], -n[2]], -d)
         }
     }
 
@@ -401,25 +626,24 @@ impl Map {
 
     #[inline]
     pub fn face_plane(&self, f: usize) -> ([i16; 3], i32) {
-        let o = self.faces_off + f * FACE_SZ;
-        (
-            [
-                rd_i16(self.data, o + 4),
-                rd_i16(self.data, o + 6),
-                rd_i16(self.data, o + 8),
-            ],
-            rd_i32(self.data, o + 10),
-        )
+        let group = self.face_group(f);
+        if group >= self.n_face_groups {
+            return ([0, 4096, 0], 0);
+        }
+        self.signed_plane(rd_i16(
+            self.data,
+            self.face_groups_off + group * FACE_GROUP_SZ,
+        ))
     }
 
     #[inline]
     pub fn face_group(&self, f: usize) -> usize {
-        rd_u16(self.data, self.faces_off + f * FACE_SZ + 14) as usize
+        rd_u16(self.data, self.faces_off + f * FACE_SZ + 4) as usize
     }
 
     #[inline]
     pub fn face_bounds(&self, f: usize) -> ([i32; 3], [i32; 3]) {
-        let o = self.faces_off + f * FACE_SZ + 16;
+        let o = self.faces_off + f * FACE_SZ + 6;
         (
             [
                 rd_i16(self.data, o) as i32,

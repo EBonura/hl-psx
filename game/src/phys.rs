@@ -33,6 +33,17 @@ struct Trace {
     startsolid: bool,
 }
 
+/// Public, allocation-free result for gameplay ray casts.
+#[derive(Clone, Copy)]
+pub struct RayHit {
+    /// Q0.12 fraction along the segment.
+    pub frac: i32,
+    /// World-space impact point.
+    pub pos: [i32; 3],
+    /// Impact plane normal in Q0.12.
+    pub normal: [i32; 3],
+}
+
 fn point_contents(map: &Map, mut num: i16, p: [i32; 3]) -> i16 {
     let mut guard = 0;
     while num >= 0 {
@@ -196,6 +207,26 @@ pub fn line_clear_world(map: &Map, p1: [i32; 3], p2: [i32; 3]) -> bool {
     }
     let t = trace(map, map.hull0_head, p1, p2);
     t.startsolid || t.frac >= 4096
+}
+
+/// Trace a point ray through static world and active mover hulls.
+pub fn trace_line(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Option<RayHit> {
+    if map.hull0_head <= 0 {
+        return None;
+    }
+    let t = trace_all(map, map.hull0_head, movers, p1, p2);
+    if t.startsolid || t.frac >= 4096 {
+        return None;
+    }
+    Some(RayHit {
+        frac: t.frac,
+        pos: [
+            p1[0] + (((p2[0] - p1[0]) * t.frac) >> 12),
+            p1[1] + (((p2[1] - p1[1]) * t.frac) >> 12),
+            p1[2] + (((p2[2] - p1[2]) * t.frac) >> 12),
+        ],
+        normal: t.normal,
+    })
 }
 
 /// Trace the world hull plus every mover hull (each shifted by its offset);

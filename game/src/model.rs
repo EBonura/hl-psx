@@ -39,7 +39,6 @@ pub struct Model {
     data: &'static [u8],
     pub n_verts: usize,
     pub n_tris: usize,
-    pub n_texs: usize,
     pub n_frames: usize,
     pub n_clips: usize,
     clips_off: usize,
@@ -47,8 +46,16 @@ pub struct Model {
     v_off: usize,
     frame_stride: usize,
     tri_off: usize,
-    texblk_off: usize,
     compact_frames: bool,
+    base_frame_off: usize,
+}
+
+#[derive(Clone, Copy)]
+pub struct ModelFrame<'a> {
+    data: &'a [u8],
+    compact_frames: bool,
+    mode: u8,
+    frame_off: usize,
     base_frame_off: usize,
 }
 
@@ -82,7 +89,6 @@ impl Model {
         let hmd4 = data.get(0..4) == Some(b"HMD4");
         let n_verts = rd_u32(data, 4) as usize;
         let n_tris = rd_u32(data, 8) as usize;
-        let n_texs = rd_u32(data, 12) as usize;
         let n_frames = (rd_u32(data, 16) as usize).max(1);
         let n_clips = if hmd3 || hmd4 {
             (rd_u32(data, 20) as usize).max(1)
@@ -111,7 +117,6 @@ impl Model {
         } else {
             v_off + n_frames * frame_stride
         };
-        let texblk_off = tri_off + n_tris * TRI_SZ;
         let base_frame_off = if hmd4 {
             v_off + rd_u32(data, frame_desc_off) as usize
         } else {
@@ -121,7 +126,6 @@ impl Model {
             data,
             n_verts,
             n_tris,
-            n_texs,
             n_frames,
             n_clips,
             clips_off,
@@ -129,7 +133,6 @@ impl Model {
             v_off,
             frame_stride,
             tri_off,
-            texblk_off,
             compact_frames: hmd4,
             base_frame_off,
         }
@@ -158,41 +161,23 @@ impl Model {
     }
 
     #[inline]
-    pub fn vert(&self, frame: usize, i: usize) -> Vec3I16 {
+    pub fn frame(&self, frame: usize) -> ModelFrame<'_> {
         let f = if frame < self.n_frames { frame } else { 0 };
-        if self.compact_frames {
-            return self.compact_vert(f, i);
-        }
-        let o = self.v_off + f * self.frame_stride + i * 6;
-        Vec3I16::new(
-            rd_i16(self.data, o),
-            rd_i16(self.data, o + 2),
-            rd_i16(self.data, o + 4),
-        )
-    }
-
-    #[inline]
-    fn compact_vert(&self, frame: usize, i: usize) -> Vec3I16 {
-        let desc = self.frame_desc_off + frame * FRAME_REC_SZ;
-        let frame_off = self.v_off + rd_u32(self.data, desc) as usize;
-        match self.data[desc + 4] {
-            FRAME_MODE_BASE_I8 => {
-                let base = self.base_frame_off + i * 6;
-                let delta = frame_off + i * 3;
-                Vec3I16::new(
-                    rd_i16(self.data, base) + self.data[delta] as i8 as i16,
-                    rd_i16(self.data, base + 2) + self.data[delta + 1] as i8 as i16,
-                    rd_i16(self.data, base + 4) + self.data[delta + 2] as i8 as i16,
-                )
-            }
-            _ => {
-                let o = frame_off + i * 6;
-                Vec3I16::new(
-                    rd_i16(self.data, o),
-                    rd_i16(self.data, o + 2),
-                    rd_i16(self.data, o + 4),
-                )
-            }
+        let (frame_off, mode) = if self.compact_frames {
+            let desc = self.frame_desc_off + f * FRAME_REC_SZ;
+            (
+                self.v_off + rd_u32(self.data, desc) as usize,
+                self.data[desc + 4],
+            )
+        } else {
+            (self.v_off + f * self.frame_stride, 0)
+        };
+        ModelFrame {
+            data: self.data,
+            compact_frames: self.compact_frames,
+            mode,
+            frame_off,
+            base_frame_off: self.base_frame_off,
         }
     }
 
@@ -227,8 +212,26 @@ impl Model {
         }
         n
     }
+}
 
-    pub fn tex_blob(&self) -> &'static [u8] {
-        &self.data[self.texblk_off..]
+impl ModelFrame<'_> {
+    #[inline]
+    pub fn vert(&self, i: usize) -> Vec3I16 {
+        if self.compact_frames && self.mode == FRAME_MODE_BASE_I8 {
+            let base = self.base_frame_off + i * 6;
+            let delta = self.frame_off + i * 3;
+            Vec3I16::new(
+                rd_i16(self.data, base) + self.data[delta] as i8 as i16,
+                rd_i16(self.data, base + 2) + self.data[delta + 1] as i8 as i16,
+                rd_i16(self.data, base + 4) + self.data[delta + 2] as i8 as i16,
+            )
+        } else {
+            let o = self.frame_off + i * 6;
+            Vec3I16::new(
+                rd_i16(self.data, o),
+                rd_i16(self.data, o + 2),
+                rd_i16(self.data, o + 4),
+            )
+        }
     }
 }

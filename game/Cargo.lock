@@ -14,6 +14,7 @@ version = "0.1.0"
 dependencies = [
  "psx-engine",
  "psx-font",
+ "psx-fx",
  "psx-gpu",
  "psx-gte",
  "psx-io",
@@ -60,6 +61,13 @@ dependencies = [
  "psx-io",
  "psx-math",
  "psx-vram",
+]
+
+[[package]]
+name = "psx-fx"
+version = "0.1.0"
+dependencies = [
+ "psx-gpu",
 ]
 
 [[package]]

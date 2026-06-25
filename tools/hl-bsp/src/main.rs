@@ -9,7 +9,10 @@
 //! Usage:  hl-bsp <path/to/map.bsp>
 //!     make bsp-info MAP=c1a0   # runs it on $(HL_GAME)/maps/c1a0.bsp
 
+use std::borrow::Cow;
 use std::cmp::Reverse;
+use std::collections::HashMap;
+use std::path::Path;
 use std::process::exit;
 
 // GoldSrc BSP v30 lump indices.
@@ -134,6 +137,90 @@ fn read_name(b: &[u8], o: usize) -> String {
     s
 }
 
+#[derive(Clone, Copy)]
+struct WadEntry {
+    file: usize,
+    ofs: usize,
+    len: usize,
+}
+
+struct WadIndex {
+    files: Vec<Vec<u8>>,
+    entries: HashMap<String, WadEntry>,
+}
+
+impl WadIndex {
+    fn load_for_bsp(path: &str) -> WadIndex {
+        let mut idx = WadIndex {
+            files: Vec::new(),
+            entries: HashMap::new(),
+        };
+        let Some(wad_dir) = Path::new(path).parent().and_then(|maps| maps.parent()) else {
+            return idx;
+        };
+        let Ok(read_dir) = std::fs::read_dir(wad_dir) else {
+            return idx;
+        };
+        let mut paths: Vec<_> = read_dir
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("wad"))
+            })
+            .collect();
+        paths.sort();
+        for path in paths {
+            let Ok(data) = std::fs::read(&path) else {
+                continue;
+            };
+            if data.len() < 12 || &data[0..4] != b"WAD3" {
+                continue;
+            }
+            let Some(n) = i32le(&data, 4).filter(|&n| n >= 0).map(|n| n as usize) else {
+                continue;
+            };
+            let Some(dir_ofs) = i32le(&data, 8).filter(|&o| o >= 0).map(|o| o as usize) else {
+                continue;
+            };
+            let file_idx = idx.files.len();
+            for i in 0..n {
+                let o = dir_ofs + i * 32;
+                let Some(filepos) = i32le(&data, o).filter(|&p| p >= 0).map(|p| p as usize) else {
+                    continue;
+                };
+                let Some(disksize) = i32le(&data, o + 4).filter(|&s| s >= 0).map(|s| s as usize)
+                else {
+                    continue;
+                };
+                let compression = *data.get(o + 13).unwrap_or(&1);
+                let name = read_name(&data, o + 16).to_ascii_lowercase();
+                if name.is_empty()
+                    || compression != 0
+                    || filepos
+                        .checked_add(disksize)
+                        .is_none_or(|end| end > data.len())
+                {
+                    continue;
+                }
+                idx.entries.entry(name).or_insert(WadEntry {
+                    file: file_idx,
+                    ofs: filepos,
+                    len: disksize,
+                });
+            }
+            idx.files.push(data);
+        }
+        idx
+    }
+
+    fn miptex(&self, name: &str) -> Option<&[u8]> {
+        let e = *self.entries.get(&name.to_ascii_lowercase())?;
+        self.files.get(e.file)?.get(e.ofs..e.ofs + e.len)
+    }
+}
+
 fn texture_stats(bsp: &Bsp) -> TexStats {
     let l = bsp.lump(LUMP_TEXTURES);
     let mut s = TexStats {
@@ -254,8 +341,8 @@ fn report(path: &str, bsp: &Bsp) {
 // Layout (all little-endian):
 //   magic "HLMA" | u32 n_verts | u32 n_tris | u32 n_texs
 //   verts:   i16 x,y,z   × n_verts          (world space, Y-up)
-//   tri_rec[22] × n_tris:
-//     u16 a,b,c | u8 tex | u8 uv[6] | u8 rgb[9]
+//   tri_rec[19] × n_tris:
+//     u16 a,b,c | u8 uv[6] | u8 tex | u16 rgb555[3]
 //   (pad to 4)
 //   textures × n_texs, each (already 4-byte aligned):
 //     u16 w | u16 h        (power-of-two, 8..=64)
@@ -289,6 +376,15 @@ struct CookedTex {
     clut: [u16; 16],
     pix4: Vec<u8>,
 }
+
+struct RgbImage {
+    w: usize,
+    h: usize,
+    pixels: Vec<(u8, u8, u8)>,
+}
+
+const SKY_TEX_SIZE: usize = 128;
+const SKY_FACE_SUFFIXES: [&str; 6] = ["ft", "rt", "bk", "lf", "up", "dn"];
 
 fn placeholder_tex() -> CookedTex {
     let mut clut = [0u16; 16];
@@ -354,6 +450,188 @@ fn build_texture_chunk(texs: &[CookedTex]) -> Vec<u8> {
     out
 }
 
+fn entity_text(ents: &[u8]) -> Cow<'_, str> {
+    let end = ents.iter().position(|&b| b == 0).unwrap_or(ents.len());
+    String::from_utf8_lossy(&ents[..end])
+}
+
+fn worldspawn_skyname(ents: &[u8]) -> Option<String> {
+    let s = entity_text(ents);
+    for block in s.split('{') {
+        if ent_value(block, "classname") == Some("worldspawn") {
+            return ent_value(block, "skyname")
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_ascii_lowercase());
+        }
+    }
+    None
+}
+
+fn sky_env_dir_for_bsp(path: &str) -> Option<std::path::PathBuf> {
+    let maps = Path::new(path).parent()?;
+    let valve = maps.parent()?;
+    Some(valve.join("gfx").join("env"))
+}
+
+fn read_sky_image(env_dir: &Path, sky: &str, suffix: &str) -> Option<RgbImage> {
+    let stem = format!("{}{}", sky, suffix);
+    for ext in ["tga", "bmp"] {
+        let path = env_dir.join(format!("{}.{}", stem, ext));
+        let Ok(data) = std::fs::read(&path) else {
+            continue;
+        };
+        let img = match ext {
+            "tga" => read_tga_rgb(&data),
+            "bmp" => read_bmp_rgb(&data),
+            _ => None,
+        };
+        if let Some(img) = img {
+            return Some(img);
+        }
+    }
+    None
+}
+
+fn read_tga_rgb(data: &[u8]) -> Option<RgbImage> {
+    if data.len() < 18 {
+        return None;
+    }
+    let id_len = data[0] as usize;
+    let cmap_type = data[1];
+    let image_type = data[2];
+    if cmap_type != 0 || image_type != 2 {
+        return None;
+    }
+    let w = u16le(data, 12)? as usize;
+    let h = u16le(data, 14)? as usize;
+    let bpp = data[16];
+    if w == 0 || h == 0 || (bpp != 24 && bpp != 32) {
+        return None;
+    }
+    let bytes_pp = (bpp / 8) as usize;
+    let src_off = 18usize.checked_add(id_len)?;
+    if src_off + w.checked_mul(h)?.checked_mul(bytes_pp)? > data.len() {
+        return None;
+    }
+    let top_origin = (data[17] & 0x20) != 0;
+    let mut pixels = vec![(0u8, 0u8, 0u8); w * h];
+    for y in 0..h {
+        let sy = if top_origin { y } else { h - 1 - y };
+        for x in 0..w {
+            let o = src_off + (sy * w + x) * bytes_pp;
+            pixels[y * w + x] = (data[o + 2], data[o + 1], data[o]);
+        }
+    }
+    Some(RgbImage { w, h, pixels })
+}
+
+fn read_bmp_rgb(data: &[u8]) -> Option<RgbImage> {
+    if data.len() < 54 || data.get(0..2)? != b"BM" {
+        return None;
+    }
+    let pix_off = u32le(data, 10)? as usize;
+    let dib = u32le(data, 14)? as usize;
+    if dib < 40 {
+        return None;
+    }
+    let w_raw = i32le(data, 18)?;
+    let h_raw = i32le(data, 22)?;
+    let planes = u16le(data, 26)?;
+    let bpp = u16le(data, 28)?;
+    let compression = u32le(data, 30)?;
+    if planes != 1 || compression != 0 || w_raw == 0 || h_raw == 0 {
+        return None;
+    }
+    let w = w_raw.unsigned_abs() as usize;
+    let h = h_raw.unsigned_abs() as usize;
+    if w == 0 || h == 0 || pix_off >= data.len() {
+        return None;
+    }
+    let top_down = h_raw < 0;
+    let row_bits = w.checked_mul(bpp as usize)?;
+    let stride = row_bits.div_ceil(32).checked_mul(4)?;
+    let mut pixels = vec![(0u8, 0u8, 0u8); w * h];
+    match bpp {
+        8 => {
+            let palette_off = 14 + dib;
+            if palette_off > pix_off {
+                return None;
+            }
+            let pal_count = ((pix_off - palette_off) / 4).min(256);
+            if pal_count == 0 {
+                return None;
+            }
+            for y in 0..h {
+                let sy = if top_down { y } else { h - 1 - y };
+                let row = pix_off + sy * stride;
+                if row + w > data.len() {
+                    return None;
+                }
+                for x in 0..w {
+                    let idx = data[row + x] as usize;
+                    let po = palette_off + idx.min(pal_count - 1) * 4;
+                    pixels[y * w + x] = (data[po + 2], data[po + 1], data[po]);
+                }
+            }
+        }
+        24 | 32 => {
+            let bytes_pp = (bpp / 8) as usize;
+            for y in 0..h {
+                let sy = if top_down { y } else { h - 1 - y };
+                let row = pix_off + sy * stride;
+                if row + w * bytes_pp > data.len() {
+                    return None;
+                }
+                for x in 0..w {
+                    let o = row + x * bytes_pp;
+                    pixels[y * w + x] = (data[o + 2], data[o + 1], data[o]);
+                }
+            }
+        }
+        _ => return None,
+    }
+    Some(RgbImage { w, h, pixels })
+}
+
+fn cook_rgb_texture(img: &RgbImage) -> CookedTex {
+    let mut colors: Vec<(u8, u8, u8)> = Vec::with_capacity(SKY_TEX_SIZE * SKY_TEX_SIZE);
+    for y in 0..SKY_TEX_SIZE {
+        let sy = y * img.h / SKY_TEX_SIZE;
+        for x in 0..SKY_TEX_SIZE {
+            let sx = x * img.w / SKY_TEX_SIZE;
+            colors.push(img.pixels[sy * img.w + sx]);
+        }
+    }
+    let pal16 = median_cut16(&colors);
+    let mut clut = [0u16; 16];
+    for (i, c) in pal16.iter().enumerate() {
+        clut[i] = to_bgr555(c.0, c.1, c.2);
+    }
+    let mut pix4 = vec![0u8; SKY_TEX_SIZE * SKY_TEX_SIZE / 2];
+    for (i, chunk) in colors.chunks(2).enumerate() {
+        let lo = nearest16(&pal16, chunk[0]);
+        let hi = chunk.get(1).map(|c| nearest16(&pal16, *c)).unwrap_or(0);
+        pix4[i] = lo | (hi << 4);
+    }
+    CookedTex {
+        w: SKY_TEX_SIZE as u16,
+        h: SKY_TEX_SIZE as u16,
+        clut,
+        pix4,
+    }
+}
+
+fn load_skybox_textures(path: &str, sky: &str) -> Option<Vec<CookedTex>> {
+    let env_dir = sky_env_dir_for_bsp(path)?;
+    let mut out = Vec::with_capacity(SKY_FACE_SUFFIXES.len());
+    for suffix in SKY_FACE_SUFFIXES {
+        let img = read_sky_image(&env_dir, sky, suffix)?;
+        out.push(cook_rgb_texture(&img));
+    }
+    Some(out)
+}
+
 fn compact_clipnode_remap(clipnodes: &[u8], roots: &[i32]) -> Vec<i32> {
     let n_clip = clipnodes.len() / SZ_CLIPNODE;
     let mut reachable = vec![false; n_clip];
@@ -415,6 +693,49 @@ fn remap_clip_child(child: i16, remap: &[i32]) -> i16 {
     }
 }
 
+fn pack_rgb555(r: u8, g: u8, b: u8) -> u16 {
+    ((r as u16 >> 3) & 31) | (((g as u16 >> 3) & 31) << 5) | (((b as u16 >> 3) & 31) << 10)
+}
+
+fn plane_rec(planes: &[u8], planenum: usize, scale: f32) -> ([i16; 3], i32) {
+    let po = planenum * SZ_PLANE;
+    let nx = f32le(planes, po).unwrap_or(0.0);
+    let ny = f32le(planes, po + 4).unwrap_or(0.0);
+    let nz = f32le(planes, po + 8).unwrap_or(0.0);
+    let d = f32le(planes, po + 12).unwrap_or(0.0);
+    (
+        [
+            (nx * 4096.0).round() as i16,
+            (nz * 4096.0).round() as i16,
+            (ny * 4096.0).round() as i16,
+        ],
+        (d / scale).round() as i32,
+    )
+}
+
+fn signed_plane_ref(planenum: usize, side: u16) -> i16 {
+    let idx = planenum.min(i16::MAX as usize) as i16;
+    if side == 0 {
+        idx
+    } else {
+        -idx - 1
+    }
+}
+
+fn remap_plane_index(src: usize, remap: &mut [u16], cooked: &mut Vec<usize>) -> u16 {
+    if src >= remap.len() {
+        return 0;
+    }
+    let old = remap[src];
+    if old != u16::MAX {
+        return old;
+    }
+    let id = cooked.len().min(u16::MAX as usize) as u16;
+    remap[src] = id;
+    cooked.push(src);
+    id
+}
+
 /// Read a miptex's 256-colour palette (RGB triples) from the BSP.
 fn read_palette(l: &[u8], mo: usize, w: usize, h: usize) -> Option<[(u8, u8, u8); 256]> {
     let off3 = u32le(l, mo + 36)? as usize;
@@ -432,26 +753,48 @@ fn read_palette(l: &[u8], mo: usize, w: usize, h: usize) -> Option<[(u8, u8, u8)
 
 /// Cook one embedded miptex. Returns the cooked texture + its original
 /// (width, height) so UVs (in original texels) can scale to the cooked size.
-fn cook_miptex(l: &[u8], mo: usize) -> (CookedTex, (u32, u32)) {
-    let (w0, h0) = match (u32le(l, mo + 16), u32le(l, mo + 20)) {
+fn cook_miptex(l: &[u8], mo: usize, wads: &WadIndex) -> (CookedTex, (u32, u32)) {
+    let name = miptex_name(l, mo);
+    let (mut src, mut src_mo) = (l, mo);
+    let (w0, h0) = match (u32le(src, src_mo + 16), u32le(src, src_mo + 20)) {
         (Some(w), Some(h)) if w > 0 && h > 0 => (w as usize, h as usize),
         _ => return (placeholder_tex(), (64, 64)),
     };
-    let off0 = u32le(l, mo + 24).unwrap_or(0) as usize;
-    let pal = match read_palette(l, mo, w0, h0) {
+    let mut off0 = u32le(src, src_mo + 24).unwrap_or(0) as usize;
+    let (w0, h0) = if off0 == 0 {
+        match wads.miptex(&name) {
+            Some(wad_miptex) => {
+                src = wad_miptex;
+                src_mo = 0;
+                let dims = match (u32le(src, 16), u32le(src, 20)) {
+                    (Some(w), Some(h)) if w > 0 && h > 0 => (w as usize, h as usize),
+                    _ => return (placeholder_tex(), (w0 as u32, h0 as u32)),
+                };
+                off0 = u32le(src, 24).unwrap_or(0) as usize;
+                dims
+            }
+            None => return (placeholder_tex(), (w0 as u32, h0 as u32)),
+        }
+    } else {
+        (w0, h0)
+    };
+    let pal = match read_palette(src, src_mo, w0, h0) {
         Some(p) if off0 != 0 => p,
         _ => return (placeholder_tex(), (w0 as u32, h0 as u32)),
     };
     let fw = final_size(w0 as u32) as usize;
     let fh = final_size(h0 as u32) as usize;
-    let px = mo + off0;
+    let px = src_mo + off0;
     // "{..." textures are masked: source palette index 255 is transparent.
-    let masked = l.get(mo) == Some(&b'{');
+    let masked = src.get(src_mo) == Some(&b'{');
     // Nearest-neighbour downscale, keeping the source palette index per texel.
     let mut idxv: Vec<u8> = Vec::with_capacity(fw * fh);
     for y in 0..fh {
         for x in 0..fw {
-            idxv.push(*l.get(px + (y * h0 / fh) * w0 + (x * w0 / fw)).unwrap_or(&0));
+            idxv.push(
+                *src.get(px + (y * h0 / fh) * w0 + (x * w0 / fw))
+                    .unwrap_or(&0),
+            );
         }
     }
     let mut clut = [0u16; 16];
@@ -1012,10 +1355,49 @@ fn hl_yaw_to_world_q12(deg: f32) -> i32 {
     (((90.0 - deg) / 360.0 * 4096.0).round() as i32) & 0xFFF
 }
 
+fn dot12_i16(row: [i16; 3], p: [i32; 3]) -> i32 {
+    ((row[0] as i32 * p[0]) + (row[1] as i32 * p[1]) + (row[2] as i32 * p[2])) >> 12
+}
+
+fn view_rotation_yaw_rows(yaw_q12: i32) -> [[i16; 3]; 3] {
+    let view_yaw = (-(yaw_q12 >> 4)) as f32 * std::f32::consts::TAU / 256.0;
+    let (s, c) = view_yaw.sin_cos();
+    let q = |v: f32| (v * 4096.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+    [[q(-c), 0, q(-s)], [0, -4096, 0], [q(-s), 0, q(c)]]
+}
+
+fn box_visible_offline(
+    center: [i16; 3],
+    ext: [u16; 3],
+    rot: [[i16; 3]; 3],
+    base_t: [i32; 3],
+) -> bool {
+    const WORLD_BOUNDS_PAD: i32 = 256;
+    let c = [center[0] as i32, center[1] as i32, center[2] as i32];
+    let e = [ext[0] as i32, ext[1] as i32, ext[2] as i32];
+    let abs_dot12 = |row: [i16; 3]| -> i32 {
+        ((row[0].abs() as i32 * e[0]) + (row[1].abs() as i32 * e[1]) + (row[2].abs() as i32 * e[2]))
+            >> 12
+    };
+    let vz = dot12_i16(rot[2], c) + base_t[2];
+    let zmax = vz + abs_dot12(rot[2]);
+    if zmax < 2 {
+        return false;
+    }
+    let vx = dot12_i16(rot[0], c) + base_t[0];
+    let ex = abs_dot12(rot[0]);
+    if (vx - ex) * 2 > zmax * 2 + WORLD_BOUNDS_PAD || (-vx - ex) * 2 > zmax * 2 + WORLD_BOUNDS_PAD {
+        return false;
+    }
+    let vy = dot12_i16(rot[1], c) + base_t[1];
+    let ey = abs_dot12(rot[1]);
+    (vy - ey) * 4 <= zmax * 3 + WORLD_BOUNDS_PAD && (-vy - ey) * 4 <= zmax * 3 + WORLD_BOUNDS_PAD
+}
+
 /// Find the single-player spawn (`info_player_start`) origin + yaw (HL coords,
 /// degrees) from the entity lump.
 fn find_spawn(ents: &[u8]) -> Option<([f32; 3], f32)> {
-    let s = std::str::from_utf8(ents).ok()?;
+    let s = entity_text(ents);
     for block in s.split('{') {
         if block.contains("\"info_player_start\"") {
             let origin = parse_vec3(ent_value(block, "origin")?)?;
@@ -1024,6 +1406,241 @@ fn find_spawn(ents: &[u8]) -> Option<([f32; 3], f32)> {
         }
     }
     None
+}
+
+#[derive(Clone, Copy)]
+struct SpawnCandidate {
+    origin_hl: [f32; 3],
+    yaw_q12: Option<i32>,
+    is_player_start: bool,
+}
+
+fn standalone_spawn_candidates(ents: &[u8]) -> Vec<SpawnCandidate> {
+    let s = entity_text(ents);
+    let mut out = Vec::new();
+    for block in s.split('{') {
+        let cls = ent_value(block, "classname").unwrap_or("");
+        if cls != "info_player_start" && cls != "info_landmark" {
+            continue;
+        }
+        let Some(origin) = ent_value(block, "origin").and_then(parse_vec3) else {
+            continue;
+        };
+        out.push(SpawnCandidate {
+            origin_hl: origin,
+            yaw_q12: ent_yaw_degrees(block).map(hl_yaw_to_world_q12),
+            is_player_start: cls == "info_player_start",
+        });
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn score_spawn_yaw(
+    origin_hl: [f32; 3],
+    yaw_q12: i32,
+    scale: f32,
+    nodes: &[u8],
+    planes: &[u8],
+    leaves: &[u8],
+    marks: &[u8],
+    vis: &[u8],
+    face_ntri: &[u16],
+    face_norm: &[[i16; 3]],
+    face_dist: &[i32],
+    face_center: &[[i16; 3]],
+    face_extent: &[[u16; 3]],
+) -> i32 {
+    const VIEW_HEIGHT: i32 = 28;
+    let n_leaves = leaves.len() / SZ_LEAF;
+    let n_marks = marks.len() / SZ_MARKSURFACE;
+    if n_leaves <= 1 {
+        return 0;
+    }
+    let eye_hl = [
+        origin_hl[0],
+        origin_hl[1],
+        origin_hl[2] + VIEW_HEIGHT as f32 * scale,
+    ];
+    let leaf = point_leaf(eye_hl, nodes, planes);
+    if leaf <= 0 || leaf as usize >= n_leaves {
+        return 0;
+    }
+    let lo = leaf as usize * SZ_LEAF;
+    let visofs = i32le(leaves, lo + SZ_LEAF_VISOFS).unwrap_or(-1);
+    let row = (n_leaves.saturating_sub(1) + 7) / 8;
+    let mut bits = vec![0u8; row];
+    if visofs < 0 {
+        bits.fill(0xFF);
+    } else {
+        let mut v = visofs as usize;
+        let mut c = 0usize;
+        while c < row && v < vis.len() {
+            if vis[v] != 0 {
+                bits[c] = vis[v];
+                v += 1;
+                c += 1;
+            } else {
+                v += 1;
+                if v >= vis.len() {
+                    break;
+                }
+                c = (c + vis[v] as usize).min(row);
+                v += 1;
+            }
+        }
+    }
+
+    let eye = to_world(origin_hl, scale);
+    let eye = [eye[0], eye[1] + VIEW_HEIGHT, eye[2]];
+    let rot = view_rotation_yaw_rows(yaw_q12);
+    let base_t = [
+        -dot12_i16(rot[0], eye),
+        -dot12_i16(rot[1], eye),
+        -dot12_i16(rot[2], eye),
+    ];
+    let mut seen = vec![false; face_ntri.len()];
+    let mut score = 0i32;
+    for bit in 0..n_leaves.saturating_sub(1).min(bits.len() * 8) {
+        if bits[bit >> 3] & (1u8 << (bit & 7)) == 0 {
+            continue;
+        }
+        let li = bit + 1;
+        let lo = li * SZ_LEAF;
+        let m0 = u16le(leaves, lo + SZ_LEAF_MARK0).unwrap_or(0) as usize;
+        let mc = u16le(leaves, lo + SZ_LEAF_MARK0 + 2).unwrap_or(0) as usize;
+        for mj in m0..m0 + mc {
+            if mj >= n_marks {
+                break;
+            }
+            let face = u16le(marks, mj * SZ_MARKSURFACE).unwrap_or(0) as usize;
+            if face >= face_ntri.len() || seen[face] || face_ntri[face] == 0 {
+                continue;
+            }
+            seen[face] = true;
+            if dot12_i16(face_norm[face], eye) <= face_dist[face] {
+                continue;
+            }
+            if !box_visible_offline(face_center[face], face_extent[face], rot, base_t) {
+                continue;
+            }
+            score += face_ntri[face] as i32;
+        }
+    }
+    score
+}
+
+fn spawn_leaf_contents(origin_hl: [f32; 3], nodes: &[u8], planes: &[u8], leaves: &[u8]) -> i32 {
+    let leaf = point_leaf(origin_hl, nodes, planes);
+    let lo = leaf as usize * SZ_LEAF;
+    if leaf <= 0 || lo + 4 > leaves.len() {
+        return CONTENTS_SOLID as i32;
+    }
+    i32le(leaves, lo).unwrap_or(CONTENTS_SOLID as i32)
+}
+
+fn spawn_candidate_clear(
+    origin_hl: [f32; 3],
+    nodes: &[u8],
+    planes: &[u8],
+    leaves: &[u8],
+    clipnodes: &[u8],
+    hull1_head: i32,
+) -> bool {
+    if spawn_leaf_contents(origin_hl, nodes, planes, leaves) == CONTENTS_SOLID as i32 {
+        return false;
+    }
+    if hull1_head < 0 || hull1_head as usize >= clipnodes.len() / SZ_CLIPNODE {
+        return true;
+    }
+    point_contents_raw(clipnodes, planes, hull1_head as i16, origin_hl) != CONTENTS_SOLID
+}
+
+#[allow(clippy::too_many_arguments)]
+fn choose_standalone_spawn(
+    ents: &[u8],
+    scale: f32,
+    nodes: &[u8],
+    planes: &[u8],
+    leaves: &[u8],
+    clipnodes: &[u8],
+    hull1_head: i32,
+    marks: &[u8],
+    vis: &[u8],
+    face_ntri: &[u16],
+    face_norm: &[[i16; 3]],
+    face_dist: &[i32],
+    face_center: &[[i16; 3]],
+    face_extent: &[[u16; 3]],
+) -> Option<([f32; 3], i32)> {
+    const GOOD_STANDALONE_SCORE: i32 = 900;
+    let candidates = standalone_spawn_candidates(ents);
+    let mut first_player: Option<([f32; 3], i32, i32)> = None;
+    let mut best_player: Option<([f32; 3], i32, i32)> = None;
+    let mut best_landmark: Option<([f32; 3], i32, i32)> = None;
+    for cand in candidates {
+        if !spawn_candidate_clear(cand.origin_hl, nodes, planes, leaves, clipnodes, hull1_head) {
+            continue;
+        }
+        let mut yaws = [0i32; 9];
+        for (i, yaw) in yaws[..8].iter_mut().enumerate() {
+            *yaw = (i as i32 * 512) & 0xFFF;
+        }
+        let original_yaw = cand.yaw_q12.unwrap_or(0);
+        yaws[8] = original_yaw;
+        if cand.is_player_start && first_player.is_none() {
+            let score = score_spawn_yaw(
+                cand.origin_hl,
+                original_yaw,
+                scale,
+                nodes,
+                planes,
+                leaves,
+                marks,
+                vis,
+                face_ntri,
+                face_norm,
+                face_dist,
+                face_center,
+                face_extent,
+            );
+            first_player = Some((cand.origin_hl, original_yaw, score));
+        }
+        for yaw in yaws {
+            let score = score_spawn_yaw(
+                cand.origin_hl,
+                yaw,
+                scale,
+                nodes,
+                planes,
+                leaves,
+                marks,
+                vis,
+                face_ntri,
+                face_norm,
+                face_dist,
+                face_center,
+                face_extent,
+            );
+            let target = if cand.is_player_start {
+                &mut best_player
+            } else {
+                &mut best_landmark
+            };
+            if target.map_or(true, |(_, _, best_score)| score > best_score) {
+                *target = Some((cand.origin_hl, yaw, score));
+            }
+        }
+    }
+    if let Some((origin, yaw, score)) = first_player {
+        if score >= GOOD_STANDALONE_SCORE {
+            return Some((origin, yaw));
+        }
+    }
+    if let Some((origin, yaw, _)) = best_player {
+        return Some((origin, yaw));
+    }
+    best_landmark.map(|(origin, yaw, _)| (origin, yaw))
 }
 
 fn to_world(p: [f32; 3], scale: f32) -> [i32; 3] {
@@ -1036,13 +1653,106 @@ fn to_world(p: [f32; 3], scale: f32) -> [i32; 3] {
 
 struct EntRec {
     submodel: u16,
-    kind: u16, // 0 = solid/static brush, 1 = func_door, 2 = nonsolid visual brush
+    kind: u16, // 0 = solid/static brush, 1 = func_door, 2 = nonsolid visual brush, 3 = func_button
     origin: [i32; 3],
-    mv: [i32; 3],     // door full-open displacement (world)
-    center: [i32; 3], // submodel bounds centre; doors use closed-world centre
+    mv: [i32; 3],     // full-open displacement (world)
+    center: [i32; 3], // submodel bounds centre; movers use closed-world centre
     r2: i32,          // conservative bounds radius^2 (world)
     head: i32,        // submodel hull-1 clipnode root (collision)
     leaves: Vec<u16>, // BSP leaves touched by this entity's bounds, for PVS culling
+}
+
+const LOGIC_BRUSH_NONE: u16 = u16::MAX;
+const LOGIC_FUNC_DOOR: u8 = 1;
+const LOGIC_FUNC_BUTTON: u8 = 2;
+const LOGIC_TRIGGER_ONCE: u8 = 3;
+const LOGIC_TRIGGER_MULTIPLE: u8 = 4;
+const LOGIC_TRIGGER_RELAY: u8 = 5;
+const LOGIC_MULTI_MANAGER: u8 = 6;
+const LOGIC_TRIGGER_AUTO: u8 = 7;
+const LOGIC_TRIGGER_CHANGELEVEL: u8 = 8;
+const LOGIC_INFO_LANDMARK: u8 = 9;
+const LOGIC_TRIGGER_COUNTER: u8 = 10;
+const LOGIC_TRIGGER_CHANGETARGET: u8 = 11;
+const LOGIC_ITEM_SUIT: u8 = 12;
+const LOGIC_ITEM_BATTERY: u8 = 13;
+const LOGIC_TRIGGER_HURT: u8 = 14;
+
+const USE_OFF: u8 = 0;
+const USE_ON: u8 = 1;
+const USE_TOGGLE: u8 = 3;
+
+#[derive(Default)]
+struct LogicNames {
+    names: Vec<String>,
+}
+
+impl LogicNames {
+    fn id(&mut self, name: Option<&str>) -> u16 {
+        let Some(name) = name else {
+            return 0;
+        };
+        let name = name.trim();
+        if name.is_empty() {
+            return 0;
+        }
+        if let Some(pos) = self.names.iter().position(|n| n == name) {
+            return (pos + 1).min(u16::MAX as usize) as u16;
+        }
+        if self.names.len() >= u16::MAX as usize {
+            return 0;
+        }
+        self.names.push(name.to_string());
+        self.names.len() as u16
+    }
+}
+
+#[derive(Clone)]
+struct LogicRec {
+    kind: u8,
+    use_type: u8,
+    spawnflags: u16,
+    targetname: u16,
+    target: u16,
+    killtarget: u16,
+    brush: u16,
+    first_aux: u16,
+    aux_count: u8,
+    flags: u8,
+    wait_ticks: i16,
+    delay_ticks: u16,
+    speed: u16,
+    arg0: u16,
+    arg1: u16,
+    origin: [i32; 3],
+    mins: [i32; 3],
+    maxs: [i32; 3],
+}
+
+struct LogicAuxRec {
+    target: u16,
+    delay_ticks: u16,
+}
+
+struct LogicCook {
+    ents: Vec<LogicRec>,
+    aux: Vec<LogicAuxRec>,
+    names: Vec<String>,
+}
+
+const NAV_NODE_HEIGHT: f32 = 8.0;
+const MAX_NAV_NODES_COOK: usize = 255;
+const NAV_LINKS_PER_NODE: usize = 8;
+const NAV_LINK_RANGE2: f32 = 1024.0 * 1024.0;
+const NAV_LINK_TRACE_LIFT: f32 = 24.0;
+const NAV_LINK_VERTICAL_MAX: f32 = 128.0;
+const CONTENTS_SOLID: i16 = -2;
+
+struct NavNodeRec {
+    origin_hl: [f32; 3],
+    origin: [i32; 3],
+    leaf: i16,
+    links: Vec<u8>,
 }
 
 fn bbox_plane_sides(mins: [f32; 3], maxs: [f32; 3], normal: [f32; 3], dist: f32) -> i32 {
@@ -1180,6 +1890,221 @@ fn point_leaf(point: [f32; 3], nodes: &[u8], planes: &[u8]) -> i16 {
     }
 }
 
+fn clip_plane(clipnodes: &[u8], planes: &[u8], clip_idx: usize) -> Option<([f32; 3], f32)> {
+    let co = clip_idx.checked_mul(SZ_CLIPNODE)?;
+    if co + SZ_CLIPNODE > clipnodes.len() {
+        return None;
+    }
+    let planenum = i32le(clipnodes, co)?.max(0) as usize;
+    let po = planenum.checked_mul(SZ_PLANE)?;
+    if po + SZ_PLANE > planes.len() {
+        return None;
+    }
+    Some((
+        [
+            f32le(planes, po).unwrap_or(0.0),
+            f32le(planes, po + 4).unwrap_or(0.0),
+            f32le(planes, po + 8).unwrap_or(0.0),
+        ],
+        f32le(planes, po + 12).unwrap_or(0.0),
+    ))
+}
+
+fn clip_child(clipnodes: &[u8], clip_idx: usize, child: usize) -> i16 {
+    let co = clip_idx * SZ_CLIPNODE + 4 + child * 2;
+    i16::from_le_bytes([clipnodes[co], clipnodes[co + 1]])
+}
+
+fn point_contents_raw(clipnodes: &[u8], planes: &[u8], mut node_idx: i16, p: [f32; 3]) -> i16 {
+    let mut guard = 0;
+    while node_idx >= 0 && guard < 256 {
+        guard += 1;
+        let ci = node_idx as usize;
+        let Some((n, d)) = clip_plane(clipnodes, planes, ci) else {
+            return -1;
+        };
+        let side = p[0] * n[0] + p[1] * n[1] + p[2] * n[2] - d;
+        node_idx = if side >= 0.0 {
+            clip_child(clipnodes, ci, 0)
+        } else {
+            clip_child(clipnodes, ci, 1)
+        };
+    }
+    node_idx
+}
+
+fn segment_clear_raw(
+    clipnodes: &[u8],
+    planes: &[u8],
+    node_idx: i16,
+    p1: [f32; 3],
+    p2: [f32; 3],
+    depth: u8,
+) -> bool {
+    if depth > 80 {
+        return true;
+    }
+    if node_idx < 0 {
+        return node_idx != CONTENTS_SOLID;
+    }
+    let ci = node_idx as usize;
+    let Some((n, d)) = clip_plane(clipnodes, planes, ci) else {
+        return true;
+    };
+    let t1 = p1[0] * n[0] + p1[1] * n[1] + p1[2] * n[2] - d;
+    let t2 = p2[0] * n[0] + p2[1] * n[1] + p2[2] * n[2] - d;
+    if t1 >= 0.0 && t2 >= 0.0 {
+        return segment_clear_raw(
+            clipnodes,
+            planes,
+            clip_child(clipnodes, ci, 0),
+            p1,
+            p2,
+            depth + 1,
+        );
+    }
+    if t1 < 0.0 && t2 < 0.0 {
+        return segment_clear_raw(
+            clipnodes,
+            planes,
+            clip_child(clipnodes, ci, 1),
+            p1,
+            p2,
+            depth + 1,
+        );
+    }
+
+    let denom = t1 - t2;
+    let frac = if denom.abs() <= f32::EPSILON {
+        0.0
+    } else {
+        (t1 / denom).clamp(0.0, 1.0)
+    };
+    let mid = [
+        p1[0] + (p2[0] - p1[0]) * frac,
+        p1[1] + (p2[1] - p1[1]) * frac,
+        p1[2] + (p2[2] - p1[2]) * frac,
+    ];
+    let side = t1 < 0.0;
+    let near = clip_child(clipnodes, ci, if side { 1 } else { 0 });
+    let far = clip_child(clipnodes, ci, if side { 0 } else { 1 });
+    if !segment_clear_raw(clipnodes, planes, near, p1, mid, depth + 1) {
+        return false;
+    }
+    if point_contents_raw(clipnodes, planes, far, mid) == CONTENTS_SOLID {
+        return false;
+    }
+    segment_clear_raw(clipnodes, planes, far, mid, p2, depth + 1)
+}
+
+fn nav_segment_clear(
+    clipnodes: &[u8],
+    planes: &[u8],
+    hull1_head: i32,
+    a: [f32; 3],
+    b: [f32; 3],
+) -> bool {
+    if hull1_head < 0 || hull1_head as usize >= clipnodes.len() / SZ_CLIPNODE {
+        return true;
+    }
+    segment_clear_raw(clipnodes, planes, hull1_head as i16, a, b, 0)
+}
+
+fn add_nav_link(nodes: &mut [NavNodeRec], a: usize, b: usize) {
+    if a == b || a >= nodes.len() || b >= nodes.len() || b > u8::MAX as usize {
+        return;
+    }
+    let b = b as u8;
+    if !nodes[a].links.contains(&b) {
+        nodes[a].links.push(b);
+    }
+}
+
+fn nav_dist2_hl(a: [f32; 3], b: [f32; 3]) -> f32 {
+    let dx = a[0] - b[0];
+    let dy = a[1] - b[1];
+    let dz = a[2] - b[2];
+    dx * dx + dy * dy + dz * dz
+}
+
+fn collect_nav_nodes(
+    ents: &[u8],
+    nodes_lump: &[u8],
+    planes: &[u8],
+    clipnodes: &[u8],
+    hull1_head: i32,
+    scale: f32,
+) -> Vec<NavNodeRec> {
+    let s = entity_text(ents);
+    let mut out = Vec::new();
+    for block in s.split('{') {
+        if ent_value(block, "classname").unwrap_or("") != "info_node" {
+            continue;
+        }
+        let mut origin_hl = ent_value(block, "origin")
+            .and_then(parse_vec3)
+            .unwrap_or([0.0; 3]);
+        origin_hl[2] += NAV_NODE_HEIGHT;
+        let origin = to_world(origin_hl, scale);
+        let leaf = point_leaf(origin_hl, nodes_lump, planes);
+        out.push(NavNodeRec {
+            origin_hl,
+            origin,
+            leaf,
+            links: Vec::new(),
+        });
+        if out.len() >= MAX_NAV_NODES_COOK {
+            break;
+        }
+    }
+
+    let n = out.len();
+    for i in 0..n {
+        let mut candidates: Vec<(usize, f32)> = Vec::new();
+        for j in 0..n {
+            if i == j {
+                continue;
+            }
+            let a = out[i].origin_hl;
+            let b = out[j].origin_hl;
+            if (a[2] - b[2]).abs() > NAV_LINK_VERTICAL_MAX {
+                continue;
+            }
+            let d2 = nav_dist2_hl(a, b);
+            if d2 > NAV_LINK_RANGE2 {
+                continue;
+            }
+            let mut ta = a;
+            let mut tb = b;
+            ta[2] += NAV_LINK_TRACE_LIFT;
+            tb[2] += NAV_LINK_TRACE_LIFT;
+            if nav_segment_clear(clipnodes, planes, hull1_head, ta, tb) {
+                candidates.push((j, d2));
+            }
+        }
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        for &(j, _) in candidates.iter().take(NAV_LINKS_PER_NODE) {
+            add_nav_link(&mut out, i, j);
+            add_nav_link(&mut out, j, i);
+        }
+    }
+
+    for i in 0..n {
+        let origin = out[i].origin_hl;
+        let mut links = std::mem::take(&mut out[i].links);
+        links.sort_by(|&a, &b| {
+            let da = nav_dist2_hl(origin, out[a as usize].origin_hl);
+            let db = nav_dist2_hl(origin, out[b as usize].origin_hl);
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        links.dedup();
+        links.truncate(NAV_LINKS_PER_NODE);
+        out[i].links = links;
+    }
+
+    out
+}
+
 /// func_door move direction (HL) + distance: slides `size_along_axis - lip`.
 fn door_move(angle: f32, mins: [f32; 3], maxs: [f32; 3], lip: f32) -> ([f32; 3], f32) {
     let sz = [maxs[0] - mins[0], maxs[1] - mins[1], maxs[2] - mins[2]];
@@ -1194,6 +2119,162 @@ fn door_move(angle: f32, mins: [f32; 3], maxs: [f32; 3], lip: f32) -> ([f32; 3],
     }
 }
 
+fn parse_spawnflags(block: &str) -> u16 {
+    ent_value(block, "spawnflags")
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0)
+        .min(u16::MAX as u32) as u16
+}
+
+fn parse_f32_key(block: &str, key: &str, default: f32) -> f32 {
+    ent_value(block, key)
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(default)
+}
+
+fn seconds_to_ticks_u16(seconds: f32) -> u16 {
+    if seconds <= 0.0 {
+        return 0;
+    }
+    (seconds * 20.0).round().clamp(0.0, u16::MAX as f32) as u16
+}
+
+fn seconds_to_ticks_i16(seconds: f32) -> i16 {
+    if seconds < 0.0 {
+        return -1;
+    }
+    (seconds * 20.0).round().clamp(0.0, i16::MAX as f32) as i16
+}
+
+fn triggerstate_use_type(block: &str) -> u8 {
+    match ent_value(block, "triggerstate")
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(1)
+    {
+        0 => USE_OFF,
+        2 => USE_TOGGLE,
+        _ => USE_ON,
+    }
+}
+
+fn block_model(block: &str) -> Option<usize> {
+    let model = ent_value(block, "model")?;
+    let rest = model.strip_prefix('*')?;
+    let submodel = rest.parse::<usize>().ok()?;
+    if submodel == 0 {
+        None
+    } else {
+        Some(submodel)
+    }
+}
+
+fn model_bounds_hl(models: &[u8], submodel: usize) -> Option<([f32; 3], [f32; 3])> {
+    if submodel >= models.len() / SZ_MODEL {
+        return None;
+    }
+    let mo = submodel * SZ_MODEL;
+    let g = |o: usize| f32le(models, mo + o).unwrap_or(0.0);
+    Some(([g(0), g(4), g(8)], [g(12), g(16), g(20)]))
+}
+
+fn transform_bounds_to_world(
+    mins: [f32; 3],
+    maxs: [f32; 3],
+    origin: [f32; 3],
+    scale: f32,
+) -> ([i32; 3], [i32; 3]) {
+    let mut wmin = [i32::MAX; 3];
+    let mut wmax = [i32::MIN; 3];
+    for &x in &[mins[0], maxs[0]] {
+        for &y in &[mins[1], maxs[1]] {
+            for &z in &[mins[2], maxs[2]] {
+                let p = to_world([x + origin[0], y + origin[1], z + origin[2]], scale);
+                for axis in 0..3 {
+                    wmin[axis] = wmin[axis].min(p[axis]);
+                    wmax[axis] = wmax[axis].max(p[axis]);
+                }
+            }
+        }
+    }
+    (wmin, wmax)
+}
+
+fn entity_bounds_world(block: &str, models: &[u8], scale: f32) -> ([i32; 3], [i32; 3], [i32; 3]) {
+    let origin_hl = ent_value(block, "origin")
+        .and_then(parse_vec3)
+        .unwrap_or([0.0; 3]);
+    let origin = to_world(origin_hl, scale);
+    if let Some(submodel) = block_model(block) {
+        if let Some((mins, maxs)) = model_bounds_hl(models, submodel) {
+            let (wmins, wmaxs) = transform_bounds_to_world(mins, maxs, origin_hl, scale);
+            return (origin, wmins, wmaxs);
+        }
+    }
+    (origin, origin, origin)
+}
+
+fn logic_common_key(key: &str) -> bool {
+    matches!(
+        key,
+        "classname"
+            | "model"
+            | "origin"
+            | "angle"
+            | "angles"
+            | "targetname"
+            | "target"
+            | "killtarget"
+            | "delay"
+            | "wait"
+            | "speed"
+            | "lip"
+            | "spawnflags"
+            | "renderamt"
+            | "rendercolor"
+            | "rendermode"
+            | "renderfx"
+            | "sounds"
+            | "health"
+            | "damage"
+            | "damagetype"
+            | "dmg"
+            | "message"
+            | "master"
+            | "noise"
+            | "netname"
+            | "triggerstate"
+            | "map"
+            | "landmark"
+            | "changetarget"
+            | "m_iszNewTarget"
+            | "changedelay"
+            | "count"
+            | "type"
+    ) || key.starts_with('_')
+}
+
+fn iter_ent_pairs(block: &str, mut f: impl FnMut(&str, &str)) {
+    let mut rest = block;
+    while let Some(k0) = rest.find('"') {
+        let rest1 = &rest[k0 + 1..];
+        let Some(k1) = rest1.find('"') else {
+            break;
+        };
+        let key = &rest1[..k1];
+        let rest2 = &rest1[k1 + 1..];
+        let Some(v0) = rest2.find('"') else {
+            break;
+        };
+        let rest3 = &rest2[v0 + 1..];
+        let Some(v1) = rest3.find('"') else {
+            break;
+        };
+        let value = &rest3[..v1];
+        f(key, value);
+        rest = &rest3[v1 + 1..];
+    }
+}
+
 /// Collect renderable brush entities (skipping invisible triggers/ladders).
 fn collect_entities(
     ents: &[u8],
@@ -1202,10 +2283,7 @@ fn collect_entities(
     planes: &[u8],
     scale: f32,
 ) -> Vec<EntRec> {
-    let s = match std::str::from_utf8(ents) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
+    let s = entity_text(ents);
     let n_models = models.len() / SZ_MODEL;
     let mut out = Vec::new();
     for block in s.split('{') {
@@ -1243,13 +2321,13 @@ fn collect_entities(
             ((half[0] * half[0] + half[1] * half[1] + half[2] * half[2]).sqrt() + 80.0) / scale;
         let r2 = (rad * rad) as i32;
         let head = i32le(models, mo + 40).unwrap_or(0); // dmodel_t.headnode[1]
-        if cls == "func_door" {
+        if cls == "func_door" || cls == "func_button" {
             let angle = ent_value(block, "angle")
                 .and_then(|a| a.parse().ok())
                 .unwrap_or(0.0);
             let lip = ent_value(block, "lip")
                 .and_then(|a| a.parse().ok())
-                .unwrap_or(8.0);
+                .unwrap_or(if cls == "func_button" { 4.0 } else { 8.0 });
             let (dir, dist) = door_move(angle, mins, maxs, lip);
             let mv = to_world([dir[0] * dist, dir[1] * dist, dir[2] * dist], scale);
             let leaves = entity_leafs(
@@ -1262,7 +2340,7 @@ fn collect_entities(
             );
             out.push(EntRec {
                 submodel: submodel as u16,
-                kind: 1,
+                kind: if cls == "func_button" { 3 } else { 1 },
                 origin,
                 mv,
                 center,
@@ -1287,13 +2365,165 @@ fn collect_entities(
     out
 }
 
+fn collect_logic_entities(
+    ents: &[u8],
+    models: &[u8],
+    brush_by_submodel: &[u16],
+    scale: f32,
+) -> LogicCook {
+    let s = entity_text(ents);
+    let mut names = LogicNames::default();
+    let mut out = Vec::new();
+    let mut aux = Vec::new();
+
+    for block in s.split('{') {
+        let cls = ent_value(block, "classname").unwrap_or("");
+        let kind = match cls {
+            "func_door" => LOGIC_FUNC_DOOR,
+            "func_button" => LOGIC_FUNC_BUTTON,
+            "trigger_once" => LOGIC_TRIGGER_ONCE,
+            "trigger_multiple" => LOGIC_TRIGGER_MULTIPLE,
+            "trigger_relay" => LOGIC_TRIGGER_RELAY,
+            "multi_manager" => LOGIC_MULTI_MANAGER,
+            "trigger_auto" => LOGIC_TRIGGER_AUTO,
+            "trigger_changelevel" => LOGIC_TRIGGER_CHANGELEVEL,
+            "info_landmark" => LOGIC_INFO_LANDMARK,
+            "trigger_counter" => LOGIC_TRIGGER_COUNTER,
+            "trigger_changetarget" => LOGIC_TRIGGER_CHANGETARGET,
+            "trigger_hurt" => LOGIC_TRIGGER_HURT,
+            "item_suit" => LOGIC_ITEM_SUIT,
+            "item_battery" => LOGIC_ITEM_BATTERY,
+            "world_items" => match ent_value(block, "type").and_then(|v| v.parse::<u16>().ok()) {
+                Some(45) => LOGIC_ITEM_SUIT,
+                Some(44) => LOGIC_ITEM_BATTERY,
+                _ => continue,
+            },
+            _ => continue,
+        };
+
+        let submodel = block_model(block);
+        let brush = submodel
+            .and_then(|sm| brush_by_submodel.get(sm).copied())
+            .filter(|&b| b != LOGIC_BRUSH_NONE)
+            .unwrap_or(LOGIC_BRUSH_NONE);
+        if matches!(kind, LOGIC_FUNC_DOOR | LOGIC_FUNC_BUTTON) && brush == LOGIC_BRUSH_NONE {
+            continue;
+        }
+
+        let (origin, mins, maxs) = entity_bounds_world(block, models, scale);
+        let spawnflags = parse_spawnflags(block);
+        let targetname = names.id(ent_value(block, "targetname"));
+        let mut target = names.id(ent_value(block, "target"));
+        let killtarget = names.id(ent_value(block, "killtarget"));
+        let delay_ticks = seconds_to_ticks_u16(parse_f32_key(block, "delay", 0.0));
+        let wait_default = match kind {
+            LOGIC_FUNC_DOOR => 3.0,
+            LOGIC_FUNC_BUTTON => 1.0,
+            LOGIC_TRIGGER_ONCE => -1.0,
+            LOGIC_TRIGGER_MULTIPLE => 0.2,
+            _ => 0.0,
+        };
+        let wait_ticks = seconds_to_ticks_i16(parse_f32_key(block, "wait", wait_default));
+        let speed_default = match kind {
+            LOGIC_FUNC_BUTTON => 40.0,
+            LOGIC_FUNC_DOOR => 100.0,
+            _ => 0.0,
+        };
+        let speed = if speed_default > 0.0 {
+            (parse_f32_key(block, "speed", speed_default) / scale)
+                .round()
+                .clamp(1.0, u16::MAX as f32) as u16
+        } else {
+            0
+        };
+        let use_type = match kind {
+            LOGIC_TRIGGER_RELAY | LOGIC_TRIGGER_AUTO => triggerstate_use_type(block),
+            _ => USE_TOGGLE,
+        };
+        let arg0 =
+            match kind {
+                LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "map")),
+                LOGIC_TRIGGER_COUNTER => parse_f32_key(block, "count", 2.0)
+                    .round()
+                    .clamp(1.0, u16::MAX as f32) as u16,
+                LOGIC_TRIGGER_CHANGETARGET => names
+                    .id(ent_value(block, "m_iszNewTarget")
+                        .or_else(|| ent_value(block, "changetarget"))),
+                LOGIC_TRIGGER_HURT => ent_value(block, "damage")
+                    .or_else(|| ent_value(block, "dmg"))
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(10.0)
+                    .round()
+                    .clamp(1.0, u16::MAX as f32) as u16,
+                _ => names.id(ent_value(block, "changetarget")),
+            };
+        let arg1 = match kind {
+            LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
+            _ => 0,
+        };
+
+        let first_aux = aux.len().min(u16::MAX as usize) as u16;
+        let mut aux_count = 0u8;
+        if kind == LOGIC_MULTI_MANAGER {
+            let mut targets: Vec<(u16, u16)> = Vec::new();
+            iter_ent_pairs(block, |key, value| {
+                if logic_common_key(key) || targets.len() >= 16 {
+                    return;
+                }
+                let target_id = names.id(Some(key));
+                if target_id == 0 {
+                    return;
+                }
+                let delay = value.parse::<f32>().unwrap_or(0.0);
+                targets.push((target_id, seconds_to_ticks_u16(delay)));
+            });
+            targets.sort_by(|a, b| a.1.cmp(&b.1));
+            for (target_id, delay) in targets {
+                if aux.len() >= u16::MAX as usize {
+                    break;
+                }
+                aux.push(LogicAuxRec {
+                    target: target_id,
+                    delay_ticks: delay,
+                });
+                aux_count = aux_count.saturating_add(1);
+            }
+            target = 0;
+        }
+
+        out.push(LogicRec {
+            kind,
+            use_type,
+            spawnflags,
+            targetname,
+            target,
+            killtarget,
+            brush,
+            first_aux,
+            aux_count,
+            flags: 0,
+            wait_ticks,
+            delay_ticks,
+            speed,
+            arg0,
+            arg1,
+            origin,
+            mins,
+            maxs,
+        });
+    }
+
+    LogicCook {
+        ents: out,
+        aux,
+        names: names.names,
+    }
+}
+
 /// The `func_tracktrain` (tram) submodel, speed, and its `path_track` waypoint
 /// chain (world coords). Returns `(0, 0, [])` if the map has no tram.
 fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) {
-    let s = match std::str::from_utf8(ents) {
-        Ok(s) => s,
-        Err(_) => return (0, 0, Vec::new(), [0; 3]),
-    };
+    let s = entity_text(ents);
     let mut tracks: Vec<(String, [f32; 3], String)> = Vec::new();
     let (mut model, mut speed, mut first) = (0u16, 0i32, String::new());
     let mut origin = [0i32; 3]; // tram's editor origin (its reference point), world
@@ -1344,24 +2574,28 @@ fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) 
     (model, speed, way, origin)
 }
 
-/// Point entities that place a studio model: `(model_type, origin_world, yaw, leaf)`.
-/// type 0 = scientist, 1 = barney, 2 = headcrab.
+/// Point entities that place an actor/item: `(model_type, origin_world, yaw, leaf)`.
+/// type 0 = scientist, 1 = barney, 2 = headcrab, 3 = item_suit, 4 = item_battery.
 fn collect_props(
     ents: &[u8],
     nodes: &[u8],
     planes: &[u8],
     scale: f32,
 ) -> Vec<(u16, [i32; 3], i32, i16)> {
-    let s = match std::str::from_utf8(ents) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
+    let s = entity_text(ents);
     let mut out = Vec::new();
     for block in s.split('{') {
         let ty = match ent_value(block, "classname").unwrap_or("") {
             "monster_scientist" | "monster_sitting_scientist" => 0u16,
             "monster_barney" => 1u16,
             "monster_headcrab" => 2u16,
+            "item_suit" => 3u16,
+            "item_battery" => 4u16,
+            "world_items" => match ent_value(block, "type").and_then(|v| v.parse::<u16>().ok()) {
+                Some(45) => 3u16, // ITEM_SUIT
+                Some(44) => 4u16, // ITEM_BATTERY
+                _ => continue,
+            },
             _ => continue,
         };
         let origin_hl = ent_value(block, "origin")
@@ -1387,6 +2621,7 @@ fn miptex_name(l: &[u8], mo: usize) -> String {
 fn is_tool_texture(name: &str) -> bool {
     let n = name.trim().to_ascii_lowercase();
     n == "origin"
+        || n == "sky"
         || n == "clip"
         || n == "skip"
         || n == "hint"
@@ -1398,6 +2633,7 @@ fn is_tool_texture(name: &str) -> bool {
 fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {}", path, e))?;
     let bsp = Bsp::parse(&bytes)?;
+    let wads = WadIndex::load_for_bsp(path);
 
     // Raw vertices (f32, HL Z-up). Power-of-two shift so coords fit i16.
     let vl = bsp.lump(LUMP_VERTEXES);
@@ -1449,7 +2685,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         match i32le(tl, 4 + i * 4) {
             Some(d) if d >= 0 => {
                 tex_names.push(miptex_name(tl, d as usize));
-                let (t, o) = cook_miptex(tl, d as usize);
+                let (t, o) = cook_miptex(tl, d as usize, &wads);
                 texs.push(t);
                 orig.push(o);
             }
@@ -1769,7 +3005,22 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         ));
     }
     let original_tex_count = texs.len();
-    let (texs, stripped_tex_count) = compact_used_textures(texs, &mut tri_tex);
+    let (mut texs, stripped_tex_count) = compact_used_textures(texs, &mut tri_tex);
+    let skyname = worldspawn_skyname(bsp.lump(LUMP_ENTITIES));
+    let sky_tex_base = match skyname.as_deref() {
+        Some(sky) => match load_skybox_textures(path, sky) {
+            Some(sky_texs) => {
+                let base = texs.len();
+                texs.extend(sky_texs);
+                Some(base)
+            }
+            None => {
+                eprintln!("warning: skybox '{}' not found under gfx/env", sky);
+                None
+            }
+        },
+        None => None,
+    };
     let n_cooked_texs = texs.len();
     if n_cooked_texs > u8::MAX as usize + 1 {
         return Err(format!(
@@ -1782,7 +3033,8 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_tris as u32).to_le_bytes());
     o.extend_from_slice(&(n_cooked_texs as u32).to_le_bytes());
-    o.extend_from_slice(&(n_faces as u32).to_le_bytes());
+    let face_count_pos = o.len();
+    o.extend_from_slice(&0u32.to_le_bytes()); // compact cooked face count, patched below
     let bsp_off_pos = o.len();
     o.extend_from_slice(&0u32.to_le_bytes()); // BSP section offset, patched below
     let clip_off_pos = o.len();
@@ -1793,6 +3045,11 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     o.extend_from_slice(&0u32.to_le_bytes()); // tram section offset, patched below
     let prop_off_pos = o.len();
     o.extend_from_slice(&0u32.to_le_bytes()); // prop (model placement) section offset
+    o.extend_from_slice(&(sky_tex_base.map(|i| i as u32).unwrap_or(u32::MAX)).to_le_bytes());
+    let nav_off_pos = o.len();
+    o.extend_from_slice(&0u32.to_le_bytes()); // AI navigation section offset
+    let logic_off_pos = o.len();
+    o.extend_from_slice(&0u32.to_le_bytes()); // target/use/touch logic section offset
     for v in &verts {
         for c in v {
             o.extend_from_slice(&c.to_le_bytes());
@@ -1803,9 +3060,14 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         o.extend_from_slice(&tri_idx[ib].to_le_bytes());
         o.extend_from_slice(&tri_idx[ib + 1].to_le_bytes());
         o.extend_from_slice(&tri_idx[ib + 2].to_le_bytes());
-        o.push(tri_tex[t] as u8);
         o.extend_from_slice(&tri_uv[t * 6..t * 6 + 6]);
-        o.extend_from_slice(&tri_rgb[t * 9..t * 9 + 9]);
+        o.push(tri_tex[t] as u8);
+        for k in 0..3 {
+            let rb = t * 9 + k * 3;
+            o.extend_from_slice(
+                &pack_rgb555(tri_rgb[rb], tri_rgb[rb + 1], tri_rgb[rb + 2]).to_le_bytes(),
+            );
+        }
     }
     while o.len() % 4 != 0 {
         o.push(0);
@@ -1819,12 +3081,12 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     }
 
     // ---- BSP visibility (PVS) ----
-    // u32 n_nodes,n_leaves,n_marks,vis_len | FaceRec[28B] | nodes[14B] |
+    // u32 n_planes,n_face_groups,n_nodes,n_leaves,n_marks,vis_len |
+    // PlaneRec[10B] | FaceGroup[2B] | FaceRec[18B] | nodes[6B] |
     // leaves[8B] | marks (pad) | vis (raw RLE, pad).
-    // FaceRec = u16 first_tri, u16 tri_count, i16 normal[3], i32 dist,
-    // u16 plane_group, i16 center[3], u16 extent[3].
-    // Node/face planes are transformed to world space so the runtime can walk
-    // and cull with the world-space camera directly.
+    // PlaneRec = i16 normal[3], i32 dist. FaceGroup is a signed plane ref:
+    // >=0 uses plane N, <0 uses inverted plane -N-1. FaceRec = u16 first_tri,
+    // u16 tri_count, u16 plane_group, i16 center[3], u16 extent[3].
     let bsp_off = o.len() as u32;
     o[bsp_off_pos..bsp_off_pos + 4].copy_from_slice(&bsp_off.to_le_bytes());
     let planes = bsp.lump(LUMP_PLANES);
@@ -1832,130 +3094,25 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let leaves = bsp.lump(LUMP_LEAVES);
     let marks = bsp.lump(LUMP_MARKSURFACES);
     let vis = bsp.lump(LUMP_VISIBILITY);
+    let n_planes = planes.len() / SZ_PLANE;
     let n_nodes = nodes.len() / SZ_NODE;
     let n_leaves = leaves.len() / SZ_LEAF;
-    let n_marks = marks.len() / SZ_MARKSURFACE;
-
-    let mut face_norm = vec![[0i16; 3]; n_faces];
-    let mut face_dist = vec![0i32; n_faces];
-    let mut face_group = vec![0u16; n_faces];
-    let mut plane_groups: Vec<([i16; 3], i32)> = Vec::new();
-    for f in 0..n_faces {
-        // Per-face world-space plane (side-adjusted): front-facing iff
-        // dot(n,eye) > dist. Lets the runtime backface-cull a whole face
-        // before any per-triangle work. Plane groups are cooked once so the PS1
-        // can do one backface test for many coplanar faces.
-        let fo2 = f * SZ_FACE;
-        let planenum = u16le(faces, fo2).unwrap_or(0) as usize;
-        let side = if u16le(faces, fo2 + 2).unwrap_or(0) == 0 {
-            1.0
-        } else {
-            -1.0
-        };
-        let po = planenum * SZ_PLANE;
-        let nx = f32le(planes, po).unwrap_or(0.0) * side;
-        let ny = f32le(planes, po + 4).unwrap_or(0.0) * side;
-        let nz = f32le(planes, po + 8).unwrap_or(0.0) * side;
-        let d = f32le(planes, po + 12).unwrap_or(0.0) * side;
-        let n = [
-            (nx * 4096.0).round() as i16,
-            (nz * 4096.0).round() as i16,
-            (ny * 4096.0).round() as i16,
-        ];
-        let dist = (d / scale).round() as i32;
-        face_norm[f] = n;
-        face_dist[f] = dist;
-        let gid = match plane_groups
-            .iter()
-            .position(|&(gn, gd)| gn == n && gd == dist)
-        {
-            Some(id) => id,
-            None => {
-                let id = plane_groups.len();
-                plane_groups.push((n, dist));
-                id
-            }
-        };
-        face_group[f] = gid.min(u16::MAX as usize) as u16;
-    }
-
-    o.extend_from_slice(&(n_nodes as u32).to_le_bytes());
-    o.extend_from_slice(&(n_leaves as u32).to_le_bytes());
-    o.extend_from_slice(&(n_marks as u32).to_le_bytes());
-    o.extend_from_slice(&(vis.len() as u32).to_le_bytes());
-
-    for f in 0..n_faces {
-        o.extend_from_slice(&(face_first[f] as u16).to_le_bytes());
-        o.extend_from_slice(&face_ntri[f].to_le_bytes());
-        for c in face_norm[f] {
-            o.extend_from_slice(&c.to_le_bytes());
-        }
-        o.extend_from_slice(&face_dist[f].to_le_bytes());
-        o.extend_from_slice(&face_group[f].to_le_bytes());
-        for c in face_center[f] {
-            o.extend_from_slice(&c.to_le_bytes());
-        }
-        for e in face_extent[f] {
-            o.extend_from_slice(&e.to_le_bytes());
-        }
-    }
-
-    for ni in 0..n_nodes {
-        let no = ni * SZ_NODE;
-        let planenum = i32le(nodes, no).unwrap_or(0).max(0) as usize;
-        let po = planenum * SZ_PLANE;
-        let nx = f32le(planes, po).unwrap_or(0.0);
-        let ny = f32le(planes, po + 4).unwrap_or(0.0);
-        let nz = f32le(planes, po + 8).unwrap_or(0.0);
-        let d = f32le(planes, po + 12).unwrap_or(0.0);
-        // World space: swap Y/Z of the normal, scale the distance.
-        o.extend_from_slice(&((nx * 4096.0).round() as i16).to_le_bytes());
-        o.extend_from_slice(&((nz * 4096.0).round() as i16).to_le_bytes());
-        o.extend_from_slice(&((ny * 4096.0).round() as i16).to_le_bytes());
-        o.extend_from_slice(&((d / scale).round() as i32).to_le_bytes());
-        o.extend_from_slice(&i16::from_le_bytes([nodes[no + 4], nodes[no + 5]]).to_le_bytes());
-        o.extend_from_slice(&i16::from_le_bytes([nodes[no + 6], nodes[no + 7]]).to_le_bytes());
-    }
-
-    for li in 0..n_leaves {
-        let lo = li * SZ_LEAF;
-        o.extend_from_slice(
-            &i32le(leaves, lo + SZ_LEAF_VISOFS)
-                .unwrap_or(-1)
-                .to_le_bytes(),
-        );
-        o.extend_from_slice(&u16le(leaves, lo + SZ_LEAF_MARK0).unwrap_or(0).to_le_bytes());
-        o.extend_from_slice(
-            &u16le(leaves, lo + SZ_LEAF_MARK0 + 2)
-                .unwrap_or(0)
-                .to_le_bytes(),
-        );
-    }
-    while o.len() % 4 != 0 {
-        o.push(0);
-    }
-
-    o.extend_from_slice(marks);
-    while o.len() % 4 != 0 {
-        o.push(0);
-    }
-    o.extend_from_slice(vis);
-    while o.len() % 4 != 0 {
-        o.push(0);
-    }
-
-    // ---- Clip hull (player collision / LOS) + spawn ----
-    // u32 n_clip | i32 hull0_head | i32 hull1_head | i32 spawn x,y,z (world) |
-    // i32 spawn_yaw (Q0.12)
-    // clipnodes (i16 nx,ny,nz, i16 c0, i16 c1, i16 pad, i32 dist) × n_clip [16B]
-    let clip_off = o.len() as u32;
-    o[clip_off_pos..clip_off_pos + 4].copy_from_slice(&clip_off.to_le_bytes());
+    let src_n_marks = marks.len() / SZ_MARKSURFACE;
     let clipnodes = bsp.lump(LUMP_CLIPNODES);
     let raw_n_clip = clipnodes.len() / SZ_CLIPNODE;
     let models = bsp.lump(LUMP_MODELS);
     let hull0_head_raw = i32le(models, 36).unwrap_or(0); // dmodel_t.headnode[0] (point hull)
     let hull1_head_raw = i32le(models, 40).unwrap_or(0); // dmodel_t.headnode[1] (player hull)
     let mut ents = collect_entities(bsp.lump(LUMP_ENTITIES), models, nodes, planes, scale);
+    let n_models = models.len() / SZ_MODEL;
+    let mut brush_by_submodel = vec![LOGIC_BRUSH_NONE; n_models];
+    for (ei, e) in ents.iter().enumerate() {
+        let sm = e.submodel as usize;
+        if sm < brush_by_submodel.len() {
+            brush_by_submodel[sm] = ei.min(u16::MAX as usize) as u16;
+        }
+    }
+    let logic = collect_logic_entities(bsp.lump(LUMP_ENTITIES), models, &brush_by_submodel, scale);
     let (tram_model, tram_speed, way, _) = collect_tram(bsp.lump(LUMP_ENTITIES), scale);
     let tram_head_raw = if tram_model > 0 {
         i32le(models, tram_model as usize * SZ_MODEL + 40).unwrap_or(0)
@@ -1978,7 +3135,190 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     for e in &mut ents {
         e.head = remap_clip_head(e.head, &clip_remap);
     }
-    let (sp, syaw_deg) = find_spawn(bsp.lump(LUMP_ENTITIES)).unwrap_or_else(|| {
+
+    let mut plane_remap = vec![u16::MAX; n_planes];
+    let mut cooked_planes: Vec<usize> = Vec::new();
+    for ni in 0..n_nodes {
+        let no = ni * SZ_NODE;
+        let planenum = i32le(nodes, no).unwrap_or(0).max(0) as usize;
+        remap_plane_index(planenum, &mut plane_remap, &mut cooked_planes);
+    }
+    for ci in 0..raw_n_clip {
+        let Some(&new_ci) = clip_remap.get(ci) else {
+            continue;
+        };
+        if new_ci < 0 {
+            continue;
+        }
+        let co = ci * SZ_CLIPNODE;
+        let planenum = i32le(clipnodes, co).unwrap_or(0).max(0) as usize;
+        remap_plane_index(planenum, &mut plane_remap, &mut cooked_planes);
+    }
+
+    let mut face_norm = vec![[0i16; 3]; n_faces];
+    let mut face_dist = vec![0i32; n_faces];
+    let mut face_group = vec![0u16; n_faces];
+    let mut plane_groups: Vec<i16> = Vec::new();
+    let mut plane_group_lookup: HashMap<i16, u16> = HashMap::new();
+    for f in 0..n_faces {
+        // Per-face world-space plane (side-adjusted): front-facing iff
+        // dot(n,eye) > dist. Lets the runtime backface-cull a whole face
+        // before any per-triangle work. Plane groups are cooked once so the PS1
+        // can do one backface test for many coplanar faces.
+        let fo2 = f * SZ_FACE;
+        let planenum = u16le(faces, fo2).unwrap_or(0) as usize;
+        let side = u16le(faces, fo2 + 2).unwrap_or(0);
+        let (mut n, mut dist) = plane_rec(planes, planenum, scale);
+        if side != 0 {
+            n = [-n[0], -n[1], -n[2]];
+            dist = -dist;
+        }
+        face_norm[f] = n;
+        face_dist[f] = dist;
+        let cooked_planenum =
+            remap_plane_index(planenum, &mut plane_remap, &mut cooked_planes) as usize;
+        let pref = signed_plane_ref(cooked_planenum, side);
+        let gid = match plane_group_lookup.get(&pref).copied() {
+            Some(id) => id,
+            None => {
+                let id = plane_groups.len().min(u16::MAX as usize) as u16;
+                plane_groups.push(pref);
+                plane_group_lookup.insert(pref, id);
+                id
+            }
+        };
+        face_group[f] = gid;
+    }
+
+    let mut face_remap = vec![u16::MAX; n_faces];
+    let mut compact_faces: Vec<usize> = Vec::new();
+    for f in 0..n_faces {
+        if face_ntri[f] != 0 {
+            let id = compact_faces.len().min(u16::MAX as usize) as u16;
+            face_remap[f] = id;
+            compact_faces.push(f);
+        }
+    }
+    let n_cooked_faces = compact_faces.len();
+    o[face_count_pos..face_count_pos + 4].copy_from_slice(&(n_cooked_faces as u32).to_le_bytes());
+
+    let mut compact_marks: Vec<u16> = Vec::new();
+    let mut leaf_mark_ranges = vec![(0u16, 0u16); n_leaves];
+    for li in 0..n_leaves {
+        let lo = li * SZ_LEAF;
+        let m0 = u16le(leaves, lo + SZ_LEAF_MARK0).unwrap_or(0) as usize;
+        let mc = u16le(leaves, lo + SZ_LEAF_MARK0 + 2).unwrap_or(0) as usize;
+        let start = compact_marks.len().min(u16::MAX as usize) as u16;
+        let end = m0.saturating_add(mc).min(src_n_marks);
+        for mj in m0..end {
+            let src_face = u16le(marks, mj * SZ_MARKSURFACE).unwrap_or(u16::MAX) as usize;
+            if src_face < face_remap.len() {
+                let mapped = face_remap[src_face];
+                if mapped != u16::MAX {
+                    compact_marks.push(mapped);
+                }
+            }
+        }
+        let count = compact_marks
+            .len()
+            .saturating_sub(start as usize)
+            .min(u16::MAX as usize) as u16;
+        leaf_mark_ranges[li] = (start, count);
+    }
+    let n_cooked_marks = compact_marks.len();
+
+    o.extend_from_slice(&(cooked_planes.len() as u32).to_le_bytes());
+    o.extend_from_slice(&(plane_groups.len() as u32).to_le_bytes());
+    o.extend_from_slice(&(n_nodes as u32).to_le_bytes());
+    o.extend_from_slice(&(n_leaves as u32).to_le_bytes());
+    o.extend_from_slice(&(n_cooked_marks as u32).to_le_bytes());
+    o.extend_from_slice(&(vis.len() as u32).to_le_bytes());
+
+    for &pi in &cooked_planes {
+        let (n, dist) = plane_rec(planes, pi, scale);
+        for c in n {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        o.extend_from_slice(&dist.to_le_bytes());
+    }
+
+    for pref in &plane_groups {
+        o.extend_from_slice(&pref.to_le_bytes());
+    }
+
+    for &f in &compact_faces {
+        o.extend_from_slice(&(face_first[f] as u16).to_le_bytes());
+        o.extend_from_slice(&face_ntri[f].to_le_bytes());
+        o.extend_from_slice(&face_group[f].to_le_bytes());
+        for c in face_center[f] {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        for e in face_extent[f] {
+            o.extend_from_slice(&e.to_le_bytes());
+        }
+    }
+
+    for ni in 0..n_nodes {
+        let no = ni * SZ_NODE;
+        let src_planenum = i32le(nodes, no).unwrap_or(0).max(0) as usize;
+        let planenum = plane_remap.get(src_planenum).copied().unwrap_or(0);
+        o.extend_from_slice(&planenum.to_le_bytes());
+        o.extend_from_slice(&i16::from_le_bytes([nodes[no + 4], nodes[no + 5]]).to_le_bytes());
+        o.extend_from_slice(&i16::from_le_bytes([nodes[no + 6], nodes[no + 7]]).to_le_bytes());
+    }
+
+    for li in 0..n_leaves {
+        let lo = li * SZ_LEAF;
+        o.extend_from_slice(
+            &i32le(leaves, lo + SZ_LEAF_VISOFS)
+                .unwrap_or(-1)
+                .to_le_bytes(),
+        );
+        o.extend_from_slice(&leaf_mark_ranges[li].0.to_le_bytes());
+        o.extend_from_slice(&leaf_mark_ranges[li].1.to_le_bytes());
+    }
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+
+    for mark in &compact_marks {
+        o.extend_from_slice(&mark.to_le_bytes());
+    }
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+    o.extend_from_slice(vis);
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+
+    // ---- Clip hull (player collision / LOS) + spawn ----
+    // u32 n_clip | i32 hull0_head | i32 hull1_head | i32 spawn x,y,z (world) |
+    // i32 spawn_yaw (Q0.12)
+    // clipnodes (u16 plane, i16 c0, i16 c1) × n_clip [6B]
+    let clip_off = o.len() as u32;
+    o[clip_off_pos..clip_off_pos + 4].copy_from_slice(&clip_off.to_le_bytes());
+    let (sp, syaw) = choose_standalone_spawn(
+        bsp.lump(LUMP_ENTITIES),
+        scale,
+        nodes,
+        planes,
+        leaves,
+        clipnodes,
+        hull1_head_raw,
+        marks,
+        vis,
+        &face_ntri,
+        &face_norm,
+        &face_dist,
+        &face_center,
+        &face_extent,
+    )
+    .or_else(|| {
+        find_spawn(bsp.lump(LUMP_ENTITIES))
+            .map(|(origin, yaw_deg)| (origin, hl_yaw_to_world_q12(yaw_deg)))
+    })
+    .unwrap_or_else(|| {
         // Mid-chapter maps (changelevel targets) have no info_player_start; you
         // arrive via an info_landmark. Fall back to the world bbox center near
         // the top so gravity drops the player onto the floor, not into the void.
@@ -1992,7 +3332,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
                 (mins[1] + maxs[1]) * 0.5,
                 maxs[2] - 32.0,
             ],
-            0.0,
+            0,
         )
     });
     // World space: swap Y/Z, scale.
@@ -2001,7 +3341,6 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         (sp[2] / scale).round() as i32,
         (sp[1] / scale).round() as i32,
     ];
-    let syaw = hl_yaw_to_world_q12(syaw_deg);
 
     o.extend_from_slice(&(n_clip as u32).to_le_bytes());
     o.extend_from_slice(&hull0_head.to_le_bytes());
@@ -2018,21 +3357,13 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             continue;
         }
         let co = ci * SZ_CLIPNODE;
-        let planenum = i32le(clipnodes, co).unwrap_or(0).max(0) as usize;
-        let po = planenum * SZ_PLANE;
-        let nx = f32le(planes, po).unwrap_or(0.0);
-        let ny = f32le(planes, po + 4).unwrap_or(0.0);
-        let nz = f32le(planes, po + 8).unwrap_or(0.0);
-        let d = f32le(planes, po + 12).unwrap_or(0.0);
-        o.extend_from_slice(&((nx * 4096.0).round() as i16).to_le_bytes());
-        o.extend_from_slice(&((nz * 4096.0).round() as i16).to_le_bytes());
-        o.extend_from_slice(&((ny * 4096.0).round() as i16).to_le_bytes());
+        let src_planenum = i32le(clipnodes, co).unwrap_or(0).max(0) as usize;
+        let planenum = plane_remap.get(src_planenum).copied().unwrap_or(0);
+        o.extend_from_slice(&planenum.to_le_bytes());
         let c0 = i16::from_le_bytes([clipnodes[co + 4], clipnodes[co + 5]]);
         let c1 = i16::from_le_bytes([clipnodes[co + 6], clipnodes[co + 7]]);
         o.extend_from_slice(&remap_clip_child(c0, &clip_remap).to_le_bytes());
         o.extend_from_slice(&remap_clip_child(c1, &clip_remap).to_le_bytes());
-        o.extend_from_slice(&0i16.to_le_bytes()); // pad
-        o.extend_from_slice(&((d / scale).round() as i32).to_le_bytes());
     }
 
     // ---- Entities (brush models) ----
@@ -2040,13 +3371,24 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // u32 n_ents   | EntRec[52B] × n_ents | u32 n_ent_leafs | u16 leaf_idx[]
     let ent_off = o.len() as u32;
     o[ent_off_pos..ent_off_pos + 4].copy_from_slice(&ent_off.to_le_bytes());
-    let n_models = models.len() / SZ_MODEL;
     o.extend_from_slice(&(n_models as u32).to_le_bytes());
     for mi in 0..n_models {
         let mo = mi * SZ_MODEL;
-        o.extend_from_slice(&(i32le(models, mo + 56).unwrap_or(0) as u32).to_le_bytes()); // firstface
-        o.extend_from_slice(&(i32le(models, mo + 60).unwrap_or(0) as u32).to_le_bytes());
-        // numfaces
+        let first_src = i32le(models, mo + 56).unwrap_or(0).max(0) as usize;
+        let count_src = i32le(models, mo + 60).unwrap_or(0).max(0) as usize;
+        let mut first = u32::MAX;
+        let mut count = 0u32;
+        for f in first_src..first_src.saturating_add(count_src).min(face_remap.len()) {
+            let mapped = face_remap[f];
+            if mapped != u16::MAX {
+                if first == u32::MAX {
+                    first = mapped as u32;
+                }
+                count += 1;
+            }
+        }
+        o.extend_from_slice(&first.min(u16::MAX as u32).to_le_bytes());
+        o.extend_from_slice(&count.to_le_bytes());
     }
     o.extend_from_slice(&(ents.len() as u32).to_le_bytes());
     let mut ent_leafs: Vec<u16> = Vec::new();
@@ -2100,7 +3442,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         }
     }
 
-    // ---- Props (point-entity model placements) ----
+    // ---- Props/items (point-entity model placements) ----
     // u32 n_props | (u16 type, i16 leaf, i32 origin[3], i32 yaw) × n_props
     let prop_off = o.len() as u32;
     o[prop_off_pos..prop_off_pos + 4].copy_from_slice(&prop_off.to_le_bytes());
@@ -2114,6 +3456,122 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         }
         o.extend_from_slice(&yaw.to_le_bytes());
     }
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+
+    // ---- AI navigation graph (land info_node graph) ----
+    // u16 n_nav | u16 n_links |
+    // NavNode[20B] × n_nav: i32 origin[3], i16 leaf, u16 first_link, u8 link_count, u8 pad
+    // u16 link_dest × n_links
+    let nav_off = o.len() as u32;
+    o[nav_off_pos..nav_off_pos + 4].copy_from_slice(&nav_off.to_le_bytes());
+    let nav = collect_nav_nodes(
+        bsp.lump(LUMP_ENTITIES),
+        nodes,
+        planes,
+        clipnodes,
+        hull1_head_raw,
+        scale,
+    );
+    let mut nav_links: Vec<u16> = Vec::new();
+    o.extend_from_slice(&(nav.len().min(u16::MAX as usize) as u16).to_le_bytes());
+    let nav_link_count_pos = o.len();
+    o.extend_from_slice(&0u16.to_le_bytes());
+    for node in &nav {
+        let first = nav_links.len().min(u16::MAX as usize) as u16;
+        let room = (u16::MAX as usize).saturating_sub(first as usize);
+        let count = node.links.len().min(room).min(u8::MAX as usize) as u8;
+        nav_links.extend(node.links[..count as usize].iter().map(|&v| v as u16));
+        for c in node.origin {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        o.extend_from_slice(&node.leaf.to_le_bytes());
+        o.extend_from_slice(&first.to_le_bytes());
+        o.push(count);
+        o.push(0);
+    }
+    let nav_link_count = nav_links.len().min(u16::MAX as usize) as u16;
+    o[nav_link_count_pos..nav_link_count_pos + 2].copy_from_slice(&nav_link_count.to_le_bytes());
+    for link in &nav_links {
+        o.extend_from_slice(&link.to_le_bytes());
+    }
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+
+    // ---- Half-Life target/use/touch logic graph ----
+    // u16 n_logic,n_aux,n_names,name_bytes |
+    // LogicRec[64B] × n_logic | LogicAux[4B] × n_aux |
+    // u16 name_offsets[n_names] | nul-terminated names
+    if logic.ents.len() > u16::MAX as usize || logic.aux.len() > u16::MAX as usize {
+        return Err(format!(
+            "{}: cooked logic overflow ({} ents, {} aux)",
+            path,
+            logic.ents.len(),
+            logic.aux.len()
+        ));
+    }
+    let mut name_blob = Vec::new();
+    let mut name_offsets = Vec::new();
+    for name in &logic.names {
+        if name_offsets.len() >= u16::MAX as usize {
+            return Err(format!("{}: too many logic names", path));
+        }
+        if name_blob.len() > u16::MAX as usize {
+            return Err(format!("{}: logic name blob too large", path));
+        }
+        name_offsets.push(name_blob.len() as u16);
+        name_blob.extend_from_slice(name.as_bytes());
+        name_blob.push(0);
+    }
+    if name_blob.len() > u16::MAX as usize {
+        return Err(format!("{}: logic name blob too large", path));
+    }
+    let logic_off = o.len() as u32;
+    o[logic_off_pos..logic_off_pos + 4].copy_from_slice(&logic_off.to_le_bytes());
+    o.extend_from_slice(&(logic.ents.len() as u16).to_le_bytes());
+    o.extend_from_slice(&(logic.aux.len() as u16).to_le_bytes());
+    o.extend_from_slice(&(logic.names.len() as u16).to_le_bytes());
+    o.extend_from_slice(&(name_blob.len() as u16).to_le_bytes());
+    for rec in &logic.ents {
+        o.push(rec.kind);
+        o.push(rec.use_type);
+        o.extend_from_slice(&rec.spawnflags.to_le_bytes());
+        o.extend_from_slice(&rec.targetname.to_le_bytes());
+        o.extend_from_slice(&rec.target.to_le_bytes());
+        o.extend_from_slice(&rec.killtarget.to_le_bytes());
+        o.extend_from_slice(&rec.brush.to_le_bytes());
+        o.extend_from_slice(&rec.first_aux.to_le_bytes());
+        o.push(rec.aux_count);
+        o.push(rec.flags);
+        o.extend_from_slice(&rec.wait_ticks.to_le_bytes());
+        o.extend_from_slice(&rec.delay_ticks.to_le_bytes());
+        o.extend_from_slice(&rec.speed.to_le_bytes());
+        o.extend_from_slice(&rec.arg0.to_le_bytes());
+        o.extend_from_slice(&rec.arg1.to_le_bytes());
+        o.extend_from_slice(&0u16.to_le_bytes());
+        for c in rec.origin {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        for c in rec.mins {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        for c in rec.maxs {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    for rec in &logic.aux {
+        o.extend_from_slice(&rec.target.to_le_bytes());
+        o.extend_from_slice(&rec.delay_ticks.to_le_bytes());
+    }
+    for off in &name_offsets {
+        o.extend_from_slice(&off.to_le_bytes());
+    }
+    o.extend_from_slice(&name_blob);
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
 
     std::fs::write(out, &o).map_err(|e| format!("write {}: {}", out, e))?;
     let tex_kb = if let (Some(tex_out), Some(texture_chunk)) = (tex_out, texture_chunk.as_ref()) {
@@ -2123,7 +3581,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         None
     };
     println!(
-        "cooked {} -> {}{}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes kept/{} stripped from {}, {} ents, tram {} waypts, {} props, {} texs kept/{} stripped from {}, spawn [{},{},{}], {} KB resident{})",
+        "cooked {} -> {}{}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes kept/{} stripped from {}, {} ents, tram {} waypts, {} props, {} nav nodes/{} links, {} logic/{} aux/{} names, {} texs kept/{} stripped from {}, spawn [{},{},{}], {} KB resident{})",
         path,
         out,
         tex_out.map(|p| format!(" + {}", p)).unwrap_or_default(),
@@ -2137,6 +3595,11 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         ents.len(),
         way.len(),
         props.len(),
+        nav.len(),
+        nav_links.len(),
+        logic.ents.len(),
+        logic.aux.len(),
+        logic.names.len(),
         n_cooked_texs,
         stripped_tex_count,
         original_tex_count,
@@ -2333,7 +3796,13 @@ fn chrome_uv(n: [f32; 3], fw: f32, fh: f32) -> (u8, u8) {
     )
 }
 
-fn cook_mdl(path: &str, out: &str, specs: &[SeqSpec], compact_frames: bool) -> Result<(), String> {
+fn cook_mdl(
+    path: &str,
+    out: &str,
+    tex_out: Option<&str>,
+    specs: &[SeqSpec],
+    compact_frames: bool,
+) -> Result<(), String> {
     let b = std::fs::read(path).map_err(|e| format!("{}: {}", path, e))?;
     if b.get(0..4) != Some(b"IDST") {
         return Err(format!("{}: not a studio MDL", path));
@@ -2674,24 +4143,27 @@ fn cook_mdl(path: &str, out: &str, specs: &[SeqSpec], compact_frames: bool) -> R
         o.extend_from_slice(&tri_uv[t * 6..t * 6 + 6]);
         o.extend_from_slice(&0u16.to_le_bytes());
     }
-    for tx in &texs {
-        o.extend_from_slice(&tx.w.to_le_bytes());
-        o.extend_from_slice(&tx.h.to_le_bytes());
-        for c in &tx.clut {
-            o.extend_from_slice(&c.to_le_bytes());
-        }
-        o.extend_from_slice(&tx.pix4);
+    let texture_chunk = tex_out.map(|_| build_texture_chunk(&texs));
+    if tex_out.is_none() {
+        append_texture_blob(&mut o, &texs);
     }
     std::fs::write(out, &o).map_err(|e| format!("write {}: {}", out, e))?;
+    let tex_kb = if let (Some(tex_out), Some(texture_chunk)) = (tex_out, texture_chunk.as_ref()) {
+        std::fs::write(tex_out, texture_chunk).map_err(|e| format!("write {}: {}", tex_out, e))?;
+        Some(texture_chunk.len() / 1024)
+    } else {
+        None
+    };
     let seq_desc = specs
         .iter()
         .map(|s| format!("{}:{}", s.seq, s.max_frames))
         .collect::<Vec<_>>()
         .join(",");
     println!(
-        "cooked {} -> {} ({} seqs {}, {} clips, {} frames, {} verts, {} tris, {} texs, {} KB)",
+        "cooked {} -> {}{} ({} seqs {}, {} clips, {} frames, {} verts, {} tris, {} texs, {} KB resident{})",
         path,
         out,
+        tex_out.map(|p| format!(" + {}", p)).unwrap_or_default(),
         if compact_frames { "HMD4" } else { "HMDL" },
         seq_desc,
         clips.len(),
@@ -2699,7 +4171,10 @@ fn cook_mdl(path: &str, out: &str, specs: &[SeqSpec], compact_frames: bool) -> R
         n_verts,
         n_tris,
         texs.len(),
-        o.len() / 1024
+        o.len() / 1024,
+        tex_kb
+            .map(|kb| format!(", {} KB textures", kb))
+            .unwrap_or_default()
     );
     Ok(())
 }
@@ -2714,6 +4189,7 @@ fn main() {
         match (args.get(2), args.get(3)) {
             (Some(inp), Some(out)) => {
                 let seq_text = args.get(4).map(|s| s.as_str()).unwrap_or("0");
+                let tex_out = args.get(5).map(|s| s.as_str());
                 let specs = match parse_seq_specs(seq_text) {
                     Ok(specs) => specs,
                     Err(e) => {
@@ -2721,7 +4197,7 @@ fn main() {
                         exit(2);
                     }
                 };
-                if let Err(e) = cook_mdl(inp, out, &specs, compact_frames) {
+                if let Err(e) = cook_mdl(inp, out, tex_out, &specs, compact_frames) {
                     eprintln!("{}", e);
                     exit(1);
                 }
@@ -2729,7 +4205,7 @@ fn main() {
             }
             _ => {
                 eprintln!(
-                    "usage: hl-bsp --mdl|--mdl4 <in.mdl> <out.hlmdl> [seq|seq:max_frames,...]"
+                    "usage: hl-bsp --mdl|--mdl4 <in.mdl> <out.hlmdl> [seq|seq:max_frames,...] [out.hltx]"
                 );
                 exit(2);
             }
@@ -2895,6 +4371,22 @@ mod tests {
     }
 
     #[test]
+    fn standalone_landmark_keeps_authored_origin() {
+        let ents = br#"
+        {
+        "origin" "1974 -256 -1068"
+        "targetname" "c1a4dtoc1a4e"
+        "classname" "info_landmark"
+        }
+        "#;
+        let candidates = standalone_spawn_candidates(ents);
+
+        assert_eq!(candidates.len(), 1);
+        assert!(!candidates[0].is_player_start);
+        assert_eq!(candidates[0].origin_hl, [1974.0, -256.0, -1068.0]);
+    }
+
+    #[test]
     fn hl_yaw_maps_to_world_forward_axes() {
         assert_eq!(hl_yaw_to_world_q12(90.0), 0);
         assert_eq!(hl_yaw_to_world_q12(0.0), 1024);
@@ -2903,10 +4395,76 @@ mod tests {
     }
 
     #[test]
+    fn cooks_counter_and_changetarget_logic() {
+        let ents = br#"
+        {
+        "classname" "trigger_counter"
+        "targetname" "counter_a"
+        "target" "relay_a"
+        "count" "3"
+        }
+        {
+        "classname" "trigger_changetarget"
+        "target" "relay_a"
+        "m_iszNewTarget" "door_b"
+        }
+        "#;
+        let logic = collect_logic_entities(ents, &[], &[], 1.0);
+
+        assert_eq!(logic.ents.len(), 2);
+        assert_eq!(logic.ents[0].kind, LOGIC_TRIGGER_COUNTER);
+        assert_eq!(logic.ents[0].arg0, 3);
+        assert_eq!(logic.names[logic.ents[0].target as usize - 1], "relay_a");
+
+        assert_eq!(logic.ents[1].kind, LOGIC_TRIGGER_CHANGETARGET);
+        assert_eq!(logic.names[logic.ents[1].target as usize - 1], "relay_a");
+        assert_eq!(logic.names[logic.ents[1].arg0 as usize - 1], "door_b");
+    }
+
+    #[test]
+    fn cooks_world_items_as_logic_identities() {
+        let ents = br#"
+        {
+        "classname" "world_items"
+        "type" "44"
+        "targetname" "hev_battery_once"
+        "origin" "10 20 30"
+        }
+        "#;
+        let logic = collect_logic_entities(ents, &[], &[], 1.0);
+
+        assert_eq!(logic.ents.len(), 1);
+        assert_eq!(logic.ents[0].kind, LOGIC_ITEM_BATTERY);
+        assert_eq!(
+            logic.names[logic.ents[0].targetname as usize - 1],
+            "hev_battery_once"
+        );
+    }
+
+    #[test]
+    fn cooks_trigger_hurt_damage() {
+        let ents = br#"
+        {
+        "classname" "trigger_hurt"
+        "targetname" "acid_hurt"
+        "target" "acid_alarm"
+        "damage" "12"
+        }
+        "#;
+        let logic = collect_logic_entities(ents, &[], &[], 1.0);
+
+        assert_eq!(logic.ents.len(), 1);
+        assert_eq!(logic.ents[0].kind, LOGIC_TRIGGER_HURT);
+        assert_eq!(logic.ents[0].arg0, 12);
+        assert_eq!(logic.names[logic.ents[0].target as usize - 1], "acid_alarm");
+    }
+
+    #[test]
     fn tool_textures_are_not_renderable() {
         assert!(is_tool_texture("aaatrigger"));
         assert!(is_tool_texture("clip"));
         assert!(is_tool_texture("origin"));
+        assert!(is_tool_texture("sky"));
         assert!(!is_tool_texture("c1a0_labw5"));
     }
 

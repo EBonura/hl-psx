@@ -19,6 +19,7 @@ const CLUT_BASE_Y: u16 = 480;
 
 #[derive(Copy, Clone)]
 pub struct TexSlot {
+    pub material: TextureMaterial,
     pub packet: TexturedGouraudPacketMaterial,
     pub valid: bool,
 }
@@ -26,6 +27,7 @@ pub struct TexSlot {
 const EMPTY_MATERIAL: TextureMaterial = TextureMaterial::opaque(0, 0, (128, 128, 128));
 
 pub const EMPTY_SLOT: TexSlot = TexSlot {
+    material: EMPTY_MATERIAL,
     packet: TexturedGouraudPacketMaterial::from_texture(EMPTY_MATERIAL),
     valid: false,
 };
@@ -65,6 +67,22 @@ pub unsafe fn upload_tex_chunk_raw(
     }
     let n_texs = rd_u32(data, 4)? as usize;
     unsafe { reset_allocators() };
+    let failed = unsafe { upload_tex_blob_raw(&data[8..], n_texs, slots, slot_len) };
+    Some((n_texs, failed))
+}
+
+/// Upload a streamed texture chunk without resetting the atlas. Use this for
+/// model textures after the room's material chunk has established the frame's
+/// VRAM allocation state.
+pub unsafe fn upload_tex_chunk_append_raw(
+    data: &[u8],
+    slots: *mut TexSlot,
+    slot_len: usize,
+) -> Option<(usize, usize)> {
+    if data.len() < 8 || data.get(0..4)? != b"HLTX" {
+        return None;
+    }
+    let n_texs = rd_u32(data, 4)? as usize;
     let failed = unsafe { upload_tex_blob_raw(&data[8..], n_texs, slots, slot_len) };
     Some((n_texs, failed))
 }
@@ -137,6 +155,7 @@ fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8]) -> Option<TexSlot> 
                 .with_texture_window(win);
         let packet = TexturedGouraudPacketMaterial::from_texture(material);
         Some(TexSlot {
+            material,
             packet,
             valid: true,
         })

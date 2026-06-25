@@ -1,6 +1,6 @@
-//! First-person HUD overlay: crosshair + health/ammo, queued as OT primitives
-//! after the weapon pass. The numbers + health cross are the REAL Half-Life HUD
-//! sprites (sprites/640hud7.spr), extracted by
+//! First-person HUD overlay, queued as OT primitives after the weapon pass. The
+//! numbers and status icons are generated from the real Half-Life HUD sprites at
+//! 75% source size by
 //! tools/extract_menu.py into git-ignored data/menu/hud.tex (4bpp, amber baked
 //! in, index 0 = transparent). Uploaded once to a free gameplay tpage.
 
@@ -10,7 +10,7 @@ use psx_gpu::prim::QuadTexturedMaterial;
 use psx_vram::{upload_bytes, Clut, TexDepth, Tpage, VramRect};
 
 const HUD_VRAM_X: u16 = 960; // band-1 last page; maps use far fewer pages, so it's free
-pub const DRAW_CAP: usize = 8;
+pub const DRAW_CAP: usize = 20;
 pub const EMPTY_QUAD: QuadTexturedMaterial = QuadTexturedMaterial::with_material(
     [(0, 0), (0, 0), (0, 0), (0, 0)],
     [(0, 0), (0, 0), (0, 0), (0, 0)],
@@ -19,9 +19,33 @@ pub const EMPTY_QUAD: QuadTexturedMaterial = QuadTexturedMaterial::with_material
 
 static HUD_BLOB: &[u8] = include_bytes!("../../data/menu/hud.tex");
 
-// Source layout inside hud.tex: digits 0-9 at u = d*20 (20x24), cross at (0,24,32,32).
-const DW: u8 = 20;
-const DH: u8 = 24;
+// Source layout inside hud.tex: digits 0-9 at u=d*15 (15x18), icons on row 18.
+const DW: u8 = 15;
+const DH: u8 = 18;
+const ICON_V: u8 = DH;
+const SUIT_FULL_U: u8 = 0;
+const SUIT_EMPTY_U: u8 = 30;
+const SUIT_W: u8 = 30;
+const SUIT_H: u8 = 30;
+const HEALTH_U: u8 = 60;
+const HEALTH_W: u8 = 24;
+const HEALTH_H: u8 = 24;
+const AMMO_U: u8 = 84;
+const AMMO_W: u8 = 18;
+const AMMO_H: u8 = 18;
+const CROSSHAIR_U: u8 = 108;
+const CROSSHAIR_W: u8 = 18;
+const CROSSHAIR_H: u8 = 18;
+const DIVIDER_U: u8 = 132;
+const DIVIDER_W: u8 = 2;
+const DIVIDER_H: u8 = 30;
+const BATTERY_U: u8 = 136;
+const BATTERY_W: u8 = 24;
+const BATTERY_H: u8 = 24;
+
+pub const PICKUP_NONE: u8 = 0;
+pub const PICKUP_SUIT: u8 = 1;
+pub const PICKUP_BATTERY: u8 = 2;
 
 /// Upload the HUD sprite sheet to a free gameplay tpage; returns its material.
 pub fn upload() -> TextureMaterial {
@@ -66,9 +90,20 @@ fn sprite<const N: usize>(
     *count += 1;
 }
 
-const GW: i16 = 16; // on-screen digit width
-const GH: i16 = 19;
+const GW: i16 = 15; // 75% Half-Life HUD digits, drawn 1:1
+const GH: i16 = 18;
 const GAP: i16 = 2;
+const HEALTH_DRAW_W: i16 = 24;
+const HEALTH_DRAW_H: i16 = 24;
+const SUIT_DRAW_W: i16 = 30;
+const SUIT_DRAW_H: i16 = 30;
+const AMMO_DRAW_W: i16 = 18;
+const AMMO_DRAW_H: i16 = 18;
+const CROSSHAIR_DRAW_W: i16 = 18;
+const CROSSHAIR_DRAW_H: i16 = 18;
+const DIVIDER_DRAW_W: i16 = 2;
+const DIVIDER_DRAW_H: i16 = 30;
+const PICKUP_ANIM_MAX_TICKS: i16 = 36;
 
 fn digit<const N: usize>(
     mat: TextureMaterial,
@@ -133,11 +168,16 @@ fn number_r<const N: usize>(
     }
 }
 
-/// Full HUD: crosshair + health (cross icon + number, bottom-left) + ammo (bottom-right).
+/// Full HUD: crosshair, health, armor, and pistol ammo cluster.
 pub fn draw<const N: usize>(
     mat: TextureMaterial,
+    suit_equipped: bool,
     health: u16,
-    ammo: u16,
+    armor: u16,
+    clip_ammo: u16,
+    reserve_ammo: u16,
+    pickup_kind: u8,
+    pickup_ticks: u8,
     ot: &mut OrderingTable<N>,
     prims: &mut [QuadTexturedMaterial; DRAW_CAP],
 ) -> usize {
@@ -147,18 +187,99 @@ pub fn draw<const N: usize>(
         ot,
         prims,
         &mut count,
-        40,
-        DH,
-        24,
-        24,
-        160 - 11,
-        120 - 11,
-        22,
-        22,
+        CROSSHAIR_U,
+        ICON_V,
+        CROSSHAIR_W,
+        CROSSHAIR_H,
+        160 - CROSSHAIR_DRAW_W / 2,
+        120 - CROSSHAIR_DRAW_H / 2,
+        CROSSHAIR_DRAW_W,
+        CROSSHAIR_DRAW_H,
     ); // real pistol crosshair
     let y = 240 - GH - 8;
-    sprite(mat, ot, prims, &mut count, 0, DH, 32, 32, 10, y - 4, 26, 26); // health cross icon
-    number_l(mat, ot, prims, &mut count, health, 42, y);
-    number_r(mat, ot, prims, &mut count, ammo, 308, y);
+    let icon_y = y - 3;
+    sprite(
+        mat,
+        ot,
+        prims,
+        &mut count,
+        HEALTH_U,
+        ICON_V,
+        HEALTH_W,
+        HEALTH_H,
+        10,
+        icon_y,
+        HEALTH_DRAW_W,
+        HEALTH_DRAW_H,
+    ); // health cross icon
+    number_l(mat, ot, prims, &mut count, health, 38, y);
+
+    let suit_u =
+        if armor > 0 || (suit_equipped && pickup_kind == PICKUP_SUIT && (pickup_ticks & 2) == 0) {
+            SUIT_FULL_U
+        } else {
+            SUIT_EMPTY_U
+        };
+    sprite(
+        mat,
+        ot,
+        prims,
+        &mut count,
+        suit_u,
+        ICON_V,
+        SUIT_W,
+        SUIT_H,
+        104,
+        y - 6,
+        SUIT_DRAW_W,
+        SUIT_DRAW_H,
+    ); // HEV armor/suit icon
+    number_l(mat, ot, prims, &mut count, armor, 139, y);
+
+    sprite(
+        mat,
+        ot,
+        prims,
+        &mut count,
+        AMMO_U,
+        ICON_V,
+        AMMO_W,
+        AMMO_H,
+        221,
+        y,
+        AMMO_DRAW_W,
+        AMMO_DRAW_H,
+    ); // pistol ammo icon
+    number_l(mat, ot, prims, &mut count, reserve_ammo, 243, y);
+    sprite(
+        mat,
+        ot,
+        prims,
+        &mut count,
+        DIVIDER_U,
+        ICON_V,
+        DIVIDER_W,
+        DIVIDER_H,
+        277,
+        y - 6,
+        DIVIDER_DRAW_W,
+        DIVIDER_DRAW_H,
+    );
+    number_r(mat, ot, prims, &mut count, clip_ammo, 308, y);
+
+    if pickup_kind != PICKUP_NONE && pickup_ticks > 0 {
+        let age = PICKUP_ANIM_MAX_TICKS - (pickup_ticks as i16).min(PICKUP_ANIM_MAX_TICKS);
+        let size = (42 - age).max(26);
+        let y = 132 - (age / 2);
+        let x = 160 - size / 2;
+        let (u, sw, sh) = if pickup_kind == PICKUP_BATTERY {
+            (BATTERY_U, BATTERY_W, BATTERY_H)
+        } else {
+            (SUIT_FULL_U, SUIT_W, SUIT_H)
+        };
+        sprite(
+            mat, ot, prims, &mut count, u, ICON_V, sw, sh, x, y, size, size,
+        );
+    }
     count
 }

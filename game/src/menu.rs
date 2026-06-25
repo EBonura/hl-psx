@@ -9,7 +9,7 @@
 //!                    darkened; the only full-screen art a Steam copy ships
 //!                    (the WON splash.bmp isn't present).
 //! Colors are the scheme's: items orange 255 170 0, selected white with a faint
-//! orange armed bar, first letter underlined. Returns the chosen chunk id.
+//! orange armed bar. Returns the chosen streamed room id.
 
 use psx_font::{BitOrder, BitmapFont, FontAtlas};
 use psx_gpu::material::TextureMaterial;
@@ -25,22 +25,49 @@ const WHITE: (u8, u8, u8) = (238, 238, 230);
 const ITEM: (u8, u8, u8) = (255, 170, 0); // FgColor
 const ITEM_SEL: (u8, u8, u8) = (255, 255, 255); // FgColorArmed (selected = white)
 const ARMED: (u8, u8, u8) = (75, 53, 10); // BgColorArmed 255 170 0 @67 over the dark bg
-const DESC: (u8, u8, u8) = (175, 175, 168); // grey description
 const DIM: (u8, u8, u8) = (110, 110, 104);
 
-pub const MAPS: [&str; 4] = ["c0a0", "c1a0", "c1a1a", "c1a3a"];
-const CHAPTERS: [&str; 4] = [
+// Keep the runnable map order in sync with Makefile's MAPLIST.
+pub const MAPS: [&str; 96] = [
+    "c0a0", "c0a0a", "c0a0b", "c0a0c", "c0a0d", "c0a0e", "c1a0", "c1a0a", "c1a0b", "c1a0c",
+    "c1a0d", "c1a0e", "c1a1", "c1a1a", "c1a1b", "c1a1c", "c1a1d", "c1a1f", "c1a2", "c1a2a",
+    "c1a2b", "c1a2c", "c1a2d", "c1a3", "c1a3a", "c1a3b", "c1a3c", "c1a3d", "c1a4", "c1a4b",
+    "c1a4d", "c1a4e", "c1a4f", "c1a4g", "c1a4i", "c1a4j", "c1a4k", "c2a1", "c2a1a", "c2a1b",
+    "c2a2", "c2a2a", "c2a2b1", "c2a2b2", "c2a2c", "c2a2d", "c2a2e", "c2a2f", "c2a2g", "c2a2h",
+    "c2a3", "c2a3a", "c2a3b", "c2a3c", "c2a3d", "c2a3e", "c2a4", "c2a4a", "c2a4b", "c2a4c",
+    "c2a4d", "c2a4e", "c2a4f", "c2a4g", "c2a5", "c2a5a", "c2a5b", "c2a5c", "c2a5d", "c2a5e",
+    "c2a5f", "c2a5g", "c2a5w", "c2a5x", "c3a1", "c3a1a", "c3a1b", "c3a2", "c3a2a", "c3a2b",
+    "c3a2c", "c3a2d", "c3a2e", "c3a2f", "c4a1", "c4a1a", "c4a1b", "c4a1c", "c4a1d", "c4a1e",
+    "c4a1f", "c4a2", "c4a2a", "c4a2b", "c4a3", "c5a1",
+];
+const CHAPTERS: [&str; 19] = [
     "Black Mesa Inbound",
     "Anomalous Materials",
     "Unforeseen Consequences",
+    "Office Complex",
     "We've Got Hostiles",
+    "Blast Pit",
+    "Power Up",
+    "On A Rail",
+    "Apprehension",
+    "Residue Processing",
+    "Questionable Ethics",
+    "Surface Tension",
+    "Forget About Freeman!",
+    "Lambda Core",
+    "Xen",
+    "Interloper",
+    "Gonarch's Lair",
+    "Nihilanth",
+    "Endgame",
 ];
-const DETAILS: [&str; 4] = [
-    "Ride the tram in",
-    "Experiment fails",
-    "Cascade hits",
-    "Military arrives",
+const CHAPTER_ROOM: [i16; 19] = [
+    0, 6, 12, 18, 23, 28, 37, 40, 50, 56, 60, 64, 74, 77, 84, 85, 91, 94, 95,
 ];
+const VISIBLE_ROWS: i32 = 7;
+const LIST_X: i16 = 20;
+const LIST_Y: i16 = 78;
+const ROW_H: i16 = 20;
 
 // Assets extracted from the user's install (git-ignored). Each .tex blob is
 // `u16 w | u16 h | u16 clut[16] | u8 pix4...`.
@@ -122,7 +149,7 @@ pub fn run(fb: &mut FrameBuffer) -> usize {
     let font = FontAtlas::upload(unsafe { hl_font() }, FONT_TPAGE, FONT_CLUT);
     let (logo, lw, lh) = upload_tex(LOGO_BLOB, LOGO_VRAM_X);
     let (bg, _, _) = upload_tex(BG_BLOB, BG_VRAM_X);
-    let n = MAPS.len() as i32;
+    let n = CHAPTERS.len() as i32;
     let mut sel = 0i32;
     let (mut p_up, mut p_dn, mut p_ok) = (true, true, true);
     let dz = 48i16;
@@ -148,55 +175,74 @@ pub fn run(fb: &mut FrameBuffer) -> usize {
         if dn && !p_dn {
             sel = (sel + 1) % n;
         }
-        if ok && !p_ok {
+        if ok && !p_ok && (sel as usize) < MAPS.len() && CHAPTER_ROOM[sel as usize] >= 0 {
             draw_bg(bg);
             draw_logo(logo, lw, lh);
             font.draw_text(40, 150, "Loading", ITEM_SEL);
             font.draw_text(124, 150, CHAPTERS[sel as usize], WHITE);
+            gpu::draw_sync();
             gpu::vsync();
             fb.swap();
-            return sel as usize;
+            return CHAPTER_ROOM[sel as usize] as usize;
         }
         p_up = up;
         p_dn = dn;
         p_ok = ok;
 
+        fb.clear(0, 0, 0);
         draw_bg(bg);
         draw_logo(logo, lw, lh);
 
-        let mut y = 94i16;
-        for i in 0..MAPS.len() {
-            let here = i as i32 == sel;
-            let ic = if here { ITEM_SEL } else { ITEM };
-            if here {
+        let max_first = (n - VISIBLE_ROWS).max(0);
+        let first = (sel - VISIBLE_ROWS / 2).clamp(0, max_first);
+        let last = (first + VISIBLE_ROWS).min(n);
+        let mut y = LIST_Y;
+        for i in first..last {
+            let idx = i as usize;
+            let here = i == sel;
+            let enabled = idx < MAPS.len() && CHAPTER_ROOM[idx] >= 0;
+            let ic = if !enabled {
+                DIM
+            } else if here {
+                ITEM_SEL
+            } else {
+                ITEM
+            };
+            if here && enabled {
                 gpu::draw_quad_flat(
-                    [(10, y - 3), (310, y - 3), (10, y + 18), (310, y + 18)],
+                    [(14, y - 3), (306, y - 3), (14, y + 17), (306, y + 17)],
                     ARMED.0,
                     ARMED.1,
                     ARMED.2,
                 );
             }
-            font.draw_text(14, y, CHAPTERS[i], ic);
-            let fw = font.text_width(&CHAPTERS[i][..1]) as i16; // underline first letter
-            gpu::draw_quad_flat(
-                [
-                    (14, y + 16),
-                    (14 + fw, y + 16),
-                    (14, y + 17),
-                    (14 + fw, y + 17),
-                ],
-                ic.0,
-                ic.1,
-                ic.2,
-            );
-            font.draw_text(208, y, DETAILS[i], DESC);
-            y += 26;
+            font.draw_text(LIST_X, y, CHAPTERS[idx], ic);
+            y += ROW_H;
         }
-        font.draw_text(36, 224, "Cross  Play", DIM);
+
+        if first > 0 {
+            gpu::draw_tri_flat([(154, 70), (166, 70), (160, 64)], ITEM.0, ITEM.1, ITEM.2);
+        }
+        if last < n {
+            gpu::draw_tri_flat([(154, 224), (166, 224), (160, 230)], ITEM.0, ITEM.1, ITEM.2);
+        }
+
         let ver = "hl-psx  v0.1";
         font.draw_text(300 - font.text_width(ver) as i16, 224, ver, DIM);
 
+        gpu::draw_sync();
         gpu::vsync();
         fb.swap();
     }
+}
+
+pub fn room_for_map_name(name: &str) -> Option<usize> {
+    let mut i = 0usize;
+    while i < MAPS.len() {
+        if MAPS[i].as_bytes() == name.as_bytes() {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
 }
