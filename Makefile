@@ -28,8 +28,8 @@ PSOXIDE_PROFILE_STEPS ?= 600000000
 PSOXIDE_PROFILE_FRAMES ?= 180
 MEMORY_MAP ?= $(CAPTURE_DIR)/hl-psx.map
 MIN_HEADROOM_KB ?= 96
-# Default gameplay route selects c1a0: Down once, then Cross to play.
-PSOXIDE_MENU_PLAY_PULSES ?= 0x0040@40+4,0x4000@90+8
+# Default gameplay route confirms New Game from the top-level menu.
+PSOXIDE_MENU_PLAY_PULSES ?= 0x4000@90+8
 
 # ---- Source Half-Life assets (bring your own; never committed) ----
 # We read the original GoldSrc files (WAD textures, BSP maps, MDL models)

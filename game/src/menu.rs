@@ -1,4 +1,4 @@
-//! Boot map selector styled after Half-Life's original (WON) main menu, built
+//! Boot menu styled after Half-Life's original (WON) main menu, built
 //! from the install's own assets via `tools/extract_menu.py` (git-ignored
 //! data/menu/, like every other extracted asset):
 //!   - hlfont.bin  -- the menu font (Arial 16, per valve/640_textscheme.txt),
@@ -66,8 +66,41 @@ const CHAPTER_ROOM: [i16; 19] = [
 ];
 const VISIBLE_ROWS: i32 = 7;
 const LIST_X: i16 = 20;
-const LIST_Y: i16 = 78;
+const LIST_Y: i16 = 84;
 const ROW_H: i16 = 20;
+const MAIN_X: i16 = 58;
+const MAIN_Y: i16 = 88;
+const FOOTER_Y: i16 = 224;
+
+const MAIN_ITEMS: [&str; 4] = ["New Game", "Chapter Select", "Options", "Credits"];
+const OPTIONS_ITEMS: [&str; 4] = [
+    "Target Framerate     20 FPS",
+    "Analog Look          Enabled",
+    "Status Display       Enabled",
+    "Back",
+];
+const CREDIT_LINES: [&str; 4] = [
+    "Half-Life by Valve",
+    "hl-psx by EBonura",
+    "Built with PSoXide",
+    "1998 - 2026",
+];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MenuScreen {
+    Main,
+    Chapters,
+    Options,
+    Credits,
+}
+
+#[derive(Clone, Copy)]
+struct MenuEdges {
+    up: bool,
+    down: bool,
+    ok: bool,
+    back: bool,
+}
 
 // Assets extracted from the user's install (git-ignored). Each .tex blob is
 // `u16 w | u16 h | u16 clut[16] | u8 pix4...`.
@@ -144,91 +177,244 @@ fn draw_logo(mat: TextureMaterial, w: u16, h: u16) {
     );
 }
 
-/// Run the selector until the player confirms a choice; returns its chunk id.
+fn draw_footer(font: &FontAtlas) {
+    let ver = "hl-psx  v0.1";
+    font.draw_text(300 - font.text_width(ver) as i16, FOOTER_Y, ver, DIM);
+}
+
+fn draw_centered(font: &FontAtlas, y: i16, text: &str, color: (u8, u8, u8)) {
+    let x = 160 - (font.text_width(text) as i16 / 2);
+    font.draw_text(x, y, text, color);
+}
+
+fn draw_select_bar(x: i16, y: i16, w: i16) {
+    gpu::draw_quad_flat(
+        [(x, y - 1), (x + w, y - 1), (x, y + 19), (x + w, y + 19)],
+        ARMED.0,
+        ARMED.1,
+        ARMED.2,
+    );
+}
+
+fn draw_simple_list(font: &FontAtlas, items: &[&str], sel: usize, x: i16, y0: i16, bar_w: i16) {
+    let mut y = y0;
+    let mut i = 0usize;
+    while i < items.len() {
+        if i == sel {
+            draw_select_bar(x - 6, y, bar_w);
+            font.draw_text(x, y, items[i], ITEM_SEL);
+        } else {
+            font.draw_text(x, y, items[i], ITEM);
+        }
+        y += ROW_H;
+        i += 1;
+    }
+}
+
+fn draw_loading(
+    fb: &mut FrameBuffer,
+    font: &FontAtlas,
+    bg: TextureMaterial,
+    logo: TextureMaterial,
+    lw: u16,
+    lh: u16,
+    label: &str,
+) {
+    fb.clear(0, 0, 0);
+    draw_bg(bg);
+    draw_logo(logo, lw, lh);
+    font.draw_text(40, 150, "Loading", ITEM_SEL);
+    font.draw_text(124, 150, label, WHITE);
+    gpu::draw_sync();
+    gpu::vsync();
+    fb.swap();
+}
+
+fn draw_shell(
+    fb: &mut FrameBuffer,
+    font: &FontAtlas,
+    bg: TextureMaterial,
+    logo: TextureMaterial,
+    lw: u16,
+    lh: u16,
+    title: &str,
+) {
+    fb.clear(0, 0, 0);
+    draw_bg(bg);
+    draw_logo(logo, lw, lh);
+    if !title.is_empty() {
+        draw_centered(font, 58, title, DIM);
+    }
+}
+
+fn wrap_move(sel: &mut i32, count: i32, input: MenuEdges) {
+    if input.up {
+        *sel = (*sel - 1 + count) % count;
+    }
+    if input.down {
+        *sel = (*sel + 1) % count;
+    }
+}
+
+fn poll_menu_edges(
+    p_up: &mut bool,
+    p_dn: &mut bool,
+    p_ok: &mut bool,
+    p_back: &mut bool,
+) -> MenuEdges {
+    let pad = poll_port1();
+    let b = pad.buttons;
+    let mut up = b.is_held(button::UP);
+    let mut dn = b.is_held(button::DOWN);
+    if pad.is_analog() {
+        let (_, ly) = pad.sticks.left_centered();
+        let dz = 48i16;
+        if ly < -dz {
+            up = true;
+        }
+        if ly > dz {
+            dn = true;
+        }
+    }
+    let ok = b.is_held(button::CROSS) || b.is_held(button::START);
+    let back = b.is_held(button::CIRCLE) || b.is_held(button::SELECT);
+    let edges = MenuEdges {
+        up: up && !*p_up,
+        down: dn && !*p_dn,
+        ok: ok && !*p_ok,
+        back: back && !*p_back,
+    };
+    *p_up = up;
+    *p_dn = dn;
+    *p_ok = ok;
+    *p_back = back;
+    edges
+}
+
+fn draw_main_menu(font: &FontAtlas, sel: usize) {
+    draw_simple_list(font, &MAIN_ITEMS, sel, MAIN_X, MAIN_Y, 220);
+}
+
+fn draw_chapter_menu(font: &FontAtlas, sel: i32) {
+    let n = CHAPTERS.len() as i32;
+    let max_first = (n - VISIBLE_ROWS).max(0);
+    let first = (sel - VISIBLE_ROWS / 2).clamp(0, max_first);
+    let last = (first + VISIBLE_ROWS).min(n);
+    let mut y = LIST_Y;
+    for i in first..last {
+        let idx = i as usize;
+        let here = i == sel;
+        let enabled = idx < MAPS.len() && CHAPTER_ROOM[idx] >= 0;
+        let ic = if !enabled {
+            DIM
+        } else if here {
+            ITEM_SEL
+        } else {
+            ITEM
+        };
+        if here && enabled {
+            draw_select_bar(14, y, 292);
+        }
+        font.draw_text(LIST_X, y, CHAPTERS[idx], ic);
+        y += ROW_H;
+    }
+
+    if first > 0 {
+        gpu::draw_tri_flat([(154, 70), (166, 70), (160, 64)], ITEM.0, ITEM.1, ITEM.2);
+    }
+    if last < n {
+        gpu::draw_tri_flat([(154, 224), (166, 224), (160, 230)], ITEM.0, ITEM.1, ITEM.2);
+    }
+}
+
+fn draw_options_menu(font: &FontAtlas, sel: usize) {
+    draw_simple_list(font, &OPTIONS_ITEMS, sel, 24, 92, 288);
+}
+
+fn draw_credits_menu(font: &FontAtlas) {
+    let mut y = 88i16;
+    let mut i = 0usize;
+    while i < CREDIT_LINES.len() {
+        draw_centered(font, y, CREDIT_LINES[i], if i == 0 { WHITE } else { ITEM });
+        y += ROW_H;
+        i += 1;
+    }
+    draw_select_bar(58, 184, 204);
+    draw_centered(font, 184, "Back", ITEM_SEL);
+}
+
+/// Run the menu until the player confirms a launch; returns its room id.
 pub fn run(fb: &mut FrameBuffer) -> usize {
     let font = FontAtlas::upload(unsafe { hl_font() }, FONT_TPAGE, FONT_CLUT);
     let (logo, lw, lh) = upload_tex(LOGO_BLOB, LOGO_VRAM_X);
     let (bg, _, _) = upload_tex(BG_BLOB, BG_VRAM_X);
-    let n = CHAPTERS.len() as i32;
-    let mut sel = 0i32;
-    let (mut p_up, mut p_dn, mut p_ok) = (true, true, true);
-    let dz = 48i16;
+    let mut screen = MenuScreen::Main;
+    let mut main_sel = 0i32;
+    let mut chapter_sel = 0i32;
+    let mut options_sel = 0i32;
+    let (mut p_up, mut p_dn, mut p_ok, mut p_back) = (true, true, true, true);
 
     loop {
-        let pad = poll_port1();
-        let b = pad.buttons;
-        let mut up = b.is_held(button::UP);
-        let mut dn = b.is_held(button::DOWN);
-        if pad.is_analog() {
-            let (_, ly) = pad.sticks.left_centered();
-            if ly < -dz {
-                up = true;
+        let input = poll_menu_edges(&mut p_up, &mut p_dn, &mut p_ok, &mut p_back);
+        match screen {
+            MenuScreen::Main => {
+                wrap_move(&mut main_sel, MAIN_ITEMS.len() as i32, input);
+                if input.ok {
+                    match main_sel {
+                        0 => {
+                            draw_loading(fb, &font, bg, logo, lw, lh, CHAPTERS[0]);
+                            return CHAPTER_ROOM[0] as usize;
+                        }
+                        1 => screen = MenuScreen::Chapters,
+                        2 => screen = MenuScreen::Options,
+                        _ => screen = MenuScreen::Credits,
+                    }
+                }
             }
-            if ly > dz {
-                dn = true;
+            MenuScreen::Chapters => {
+                wrap_move(&mut chapter_sel, CHAPTERS.len() as i32, input);
+                if input.back {
+                    screen = MenuScreen::Main;
+                } else if input.ok {
+                    let idx = chapter_sel as usize;
+                    if idx < MAPS.len() && CHAPTER_ROOM[idx] >= 0 {
+                        draw_loading(fb, &font, bg, logo, lw, lh, CHAPTERS[idx]);
+                        return CHAPTER_ROOM[idx] as usize;
+                    }
+                }
+            }
+            MenuScreen::Options => {
+                wrap_move(&mut options_sel, OPTIONS_ITEMS.len() as i32, input);
+                if input.back || (input.ok && options_sel as usize == OPTIONS_ITEMS.len() - 1) {
+                    screen = MenuScreen::Main;
+                }
+            }
+            MenuScreen::Credits => {
+                if input.back || input.ok {
+                    screen = MenuScreen::Main;
+                }
             }
         }
-        let ok = b.is_held(button::CROSS) || b.is_held(button::START);
-        if up && !p_up {
-            sel = (sel - 1 + n) % n;
-        }
-        if dn && !p_dn {
-            sel = (sel + 1) % n;
-        }
-        if ok && !p_ok && (sel as usize) < MAPS.len() && CHAPTER_ROOM[sel as usize] >= 0 {
-            draw_bg(bg);
-            draw_logo(logo, lw, lh);
-            font.draw_text(40, 150, "Loading", ITEM_SEL);
-            font.draw_text(124, 150, CHAPTERS[sel as usize], WHITE);
-            gpu::draw_sync();
-            gpu::vsync();
-            fb.swap();
-            return CHAPTER_ROOM[sel as usize] as usize;
-        }
-        p_up = up;
-        p_dn = dn;
-        p_ok = ok;
 
-        fb.clear(0, 0, 0);
-        draw_bg(bg);
-        draw_logo(logo, lw, lh);
-
-        let max_first = (n - VISIBLE_ROWS).max(0);
-        let first = (sel - VISIBLE_ROWS / 2).clamp(0, max_first);
-        let last = (first + VISIBLE_ROWS).min(n);
-        let mut y = LIST_Y;
-        for i in first..last {
-            let idx = i as usize;
-            let here = i == sel;
-            let enabled = idx < MAPS.len() && CHAPTER_ROOM[idx] >= 0;
-            let ic = if !enabled {
-                DIM
-            } else if here {
-                ITEM_SEL
-            } else {
-                ITEM
-            };
-            if here && enabled {
-                gpu::draw_quad_flat(
-                    [(14, y - 3), (306, y - 3), (14, y + 17), (306, y + 17)],
-                    ARMED.0,
-                    ARMED.1,
-                    ARMED.2,
-                );
+        match screen {
+            MenuScreen::Main => {
+                draw_shell(fb, &font, bg, logo, lw, lh, "");
+                draw_main_menu(&font, main_sel as usize);
             }
-            font.draw_text(LIST_X, y, CHAPTERS[idx], ic);
-            y += ROW_H;
+            MenuScreen::Chapters => {
+                draw_shell(fb, &font, bg, logo, lw, lh, "Chapter Select");
+                draw_chapter_menu(&font, chapter_sel);
+            }
+            MenuScreen::Options => {
+                draw_shell(fb, &font, bg, logo, lw, lh, "Options");
+                draw_options_menu(&font, options_sel as usize);
+            }
+            MenuScreen::Credits => {
+                draw_shell(fb, &font, bg, logo, lw, lh, "Credits");
+                draw_credits_menu(&font);
+            }
         }
-
-        if first > 0 {
-            gpu::draw_tri_flat([(154, 70), (166, 70), (160, 64)], ITEM.0, ITEM.1, ITEM.2);
-        }
-        if last < n {
-            gpu::draw_tri_flat([(154, 224), (166, 224), (160, 230)], ITEM.0, ITEM.1, ITEM.2);
-        }
-
-        let ver = "hl-psx  v0.1";
-        font.draw_text(300 - font.text_width(ver) as i16, 224, ver, DIM);
+        draw_footer(&font);
 
         gpu::draw_sync();
         gpu::vsync();
