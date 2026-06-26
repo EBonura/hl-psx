@@ -1694,6 +1694,37 @@ unsafe fn xhair_consider(m: &Map, tt: usize, pa: Projected, pb: Projected, pc: P
     }
 }
 
+/// DEBUG: fallback crosshair pick. The in-emit pick only sees triangles that
+/// reach an emit path -- quads (the dominant world path) and backface-culled
+/// faces are invisible to it, so a *missing* triangle never highlights. When the
+/// draw picked nothing (crosshair over a gap or a quad), sweep the PVS face set
+/// -- which includes culled faces -- for the nearest tri under the crosshair, so
+/// even an undrawn triangle gets highlighted and dumped. The caller must reload
+/// the world GTE transform first (the entity passes leave their own loaded).
+unsafe fn xhair_pick_pvs(m: &Map, nv: usize, frame: u16) {
+    let mut e = 0usize;
+    while e < PVS_FACE_COUNT && e < MAX_FACES {
+        let face = PVS_FACE_INDEX[e] as usize;
+        e += 1;
+        let (first, cnt) = m.face_tris(face);
+        let end = first + cnt;
+        let mut tt = first;
+        while tt < end && tt < m.n_tris {
+            let t = tt;
+            tt += 1;
+            let idx = m.tri_idx(t);
+            let (a, b, c) = (idx[0] as usize, idx[1] as usize, idx[2] as usize);
+            if a >= nv || b >= nv || c >= nv {
+                continue;
+            }
+            proj_vert(m, a, frame);
+            proj_vert(m, b, frame);
+            proj_vert(m, c, frame);
+            xhair_consider(m, t, SCRATCH[a], SCRATCH[b], SCRATCH[c]);
+        }
+    }
+}
+
 /// DEBUG: minimal no_std i32 -> decimal in a stack buffer.
 fn fmt_i32(v: i32, buf: &mut [u8; 12]) -> &str {
     let mut i = buf.len();
@@ -5269,6 +5300,16 @@ fn play(
             fb.clear(0, 0, 0);
             draw_sky(&m, yaw, pitch);
             telemetry::stage_end(telemetry::stage::FRAME_CLEAR);
+
+            // DEBUG: if the draw picked nothing under the crosshair (a quad or a
+            // genuinely missing/culled triangle), sweep the PVS faces so it still
+            // highlights + dumps. Reload the world GTE transform first -- the
+            // entity passes left their own loaded.
+            if DEBUG_XHAIR && XHAIR.valid == 0 && have_pvs {
+                scene::load_rotation(&rot);
+                scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
+                xhair_pick_pvs(&m, nv, frame_no);
+            }
 
             // DEBUG: fill the crosshair tri bright magenta (a POLYGON -- the HW
             // renderer skips PS1 line prims, so an outline is invisible in the GUI)
