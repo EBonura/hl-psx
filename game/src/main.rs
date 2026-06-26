@@ -1762,8 +1762,8 @@ fn append_kv(buf: &mut [u8], n: &mut usize, label: &str, v: i32) {
 
 /// DEBUG: one compact line per dump -> PSoXide's Play debug terminal. Two lines
 /// (the showing frame and the missing frame) are easy to eyeball side by side.
-unsafe fn xhair_dump(eye: [i32; 3], yaw: u16, pitch: i16, cam_leaf: i32) {
-    let mut buf = [0u8; 160];
+unsafe fn xhair_dump(eye: [i32; 3], yaw: u16, pitch: i16, cam_leaf: i32, prims: i32, vis_faces: i32) {
+    let mut buf = [0u8; 192];
     let mut n = 0usize;
     append_kv(&mut buf, &mut n, "XH v=", XHAIR.valid as i32);
     append_kv(&mut buf, &mut n, "tri=", XHAIR.tt as i32);
@@ -1776,6 +1776,12 @@ unsafe fn xhair_dump(eye: [i32; 3], yaw: u16, pitch: i16, cam_leaf: i32) {
     append_kv(&mut buf, &mut n, "z=", eye[2]);
     append_kv(&mut buf, &mut n, "yaw=", yaw as i32);
     append_kv(&mut buf, &mut n, "pit=", pitch as i32);
+    // prims emitted this frame vs the MAX_RENDER_PACKETS arena cap; vis_faces vs
+    // PVS_FACE budget. If prims is pinned at the cap, the arena overflowed and
+    // geometry past it was dropped (black voids).
+    append_kv(&mut buf, &mut n, "| prims=", prims);
+    append_kv(&mut buf, &mut n, "/", MAX_RENDER_PACKETS as i32);
+    append_kv(&mut buf, &mut n, "nf=", vis_faces);
     // Guest debug-log port: the PSoXide emulator frontend now eprintln's these to
     // the host console (drain_debug_logs), so they show in the terminal in the
     // plain library frontend too, not just the editor's Play debug terminal.
@@ -4859,7 +4865,6 @@ fn play(
         }
 
         let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
-
         let rot = view_rotation(yaw, pitch);
         scene::load_rotation(&rot);
         let base_t = [
@@ -5372,7 +5377,7 @@ fn play(
                 // aim still produces a visible line.
                 let periodic = frame_no % 64 == 0;
                 if (dump_now && !XHAIR_DUMP_PREV) || key != XHAIR_DUMP_LAST || periodic {
-                    xhair_dump(eye, yaw, pitch, cam_leaf);
+                    xhair_dump(eye, yaw, pitch, cam_leaf, (np + nq) as i32, PVS_FACE_COUNT as i32);
                     XHAIR_DUMP_LAST = key;
                 }
                 XHAIR_DUMP_PREV = dump_now;
