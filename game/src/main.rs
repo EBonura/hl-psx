@@ -3552,6 +3552,22 @@ unsafe fn try_emit_tri_pair_quad_values(
     {
         return false;
     }
+    // The 0x3C quad splits on the a-c diagonal into tri(b,a,c) + tri(a,d,c).
+    // That tiles a clean quad ONLY when b and d sit on opposite sides of a-c
+    // (the two halves wind the same way). At grazing angles a fan-pair can
+    // project so b and d land on the SAME side -- a bowtie whose halves overlap
+    // and rasterize to garbage/black. View-dependent, so it pops in and out as
+    // the camera moves. When that happens, defer to the single-tri path (each
+    // half is convex on its own and draws fine).
+    let area = |p: &Projected, q: &Projected, r: &Projected| -> i64 {
+        (q.sx as i64 - p.sx as i64) * (r.sy as i64 - p.sy as i64)
+            - (q.sy as i64 - p.sy as i64) * (r.sx as i64 - p.sx as i64)
+    };
+    let w_bac = area(&pb, &pa, &pc);
+    let w_adc = area(&pa, &pd, &pc);
+    if w_bac == 0 || w_adc == 0 || (w_bac > 0) != (w_adc > 0) {
+        return false;
+    }
     if CULL
         && culled(
             (pa.sx as i32, pa.sy as i32),
