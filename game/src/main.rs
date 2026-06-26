@@ -4919,51 +4919,80 @@ fn play(
                 room_counts.surfaces_considered = PVS_FACE_COUNT as u32;
 
                 telemetry::stage_begin(telemetry::stage::ROOM_SURFACE_DRAW);
-                for gi in 0..PVS_GROUP_COUNT {
-                    let group = PVS_GROUP_ACTIVE[gi] as usize;
-                    let plane_face = PVS_GROUP_FACE[group] as usize;
-                    let (plane_n, plane_d) = m.face_plane(plane_face);
-                    if dot12(plane_n, eye) <= plane_d {
-                        continue;
-                    }
-                    let mut entry = PVS_GROUP_FIRST[group];
-                    while entry != PVS_LINK_END {
-                        let e = entry as usize;
-                        if e < MAX_PVS_FACE_RECS {
-                            let rec = PVS_FACE_REC[e];
-                            if !WORLD_BOUNDS_CULL || cached_face_visible(rec, &rot, base_t) {
-                                emit_world_face_tris(
-                                    &mut packets,
-                                    &m,
-                                    rec.first as usize,
-                                    rec.count as usize,
-                                    nv,
-                                    frame_no,
-                                    &mut np,
-                                    &mut nq,
-                                    &mut room_counts,
-                                );
-                            }
-                        } else {
-                            let face = PVS_FACE_INDEX[e] as usize;
-                            let (bc, be) = m.face_bounds(face);
-                            if !WORLD_BOUNDS_CULL || face_bounds_visible(bc, be, &rot, base_t) {
-                                let (first, cnt) = m.face_tris(face);
-                                emit_world_face_tris(
-                                    &mut packets,
-                                    &m,
-                                    first,
-                                    cnt,
-                                    nv,
-                                    frame_no,
-                                    &mut np,
-                                    &mut nq,
-                                    &mut room_counts,
-                                );
+                // Front-to-back banded emit: when a view exposes more geometry
+                // than the packet arena can hold (huge open rooms), process near
+                // faces first so the arena fills with close geometry and only the
+                // farthest faces drop -- the wall in front of you always draws,
+                // never a black hole up close. Normal views run a single pass.
+                const N_DEPTH_BANDS: i32 = 8;
+                const DEPTH_BAND_SHIFT: u32 = 11; // 2048 world units per band
+                let nbands = if PVS_TRI_REF_COUNT > MAX_RENDER_PACKETS {
+                    N_DEPTH_BANDS
+                } else {
+                    1
+                };
+                let mut band = 0i32;
+                while band < nbands {
+                    for gi in 0..PVS_GROUP_COUNT {
+                        let group = PVS_GROUP_ACTIVE[gi] as usize;
+                        let plane_face = PVS_GROUP_FACE[group] as usize;
+                        let (plane_n, plane_d) = m.face_plane(plane_face);
+                        if dot12(plane_n, eye) <= plane_d {
+                            continue;
+                        }
+                        let mut entry = PVS_GROUP_FIRST[group];
+                        while entry != PVS_LINK_END {
+                            let e = entry as usize;
+                            entry = PVS_FACE_NEXT[e];
+                            if e < MAX_PVS_FACE_RECS {
+                                let rec = PVS_FACE_REC[e];
+                                let c = [
+                                    rec.center[0] as i32,
+                                    rec.center[1] as i32,
+                                    rec.center[2] as i32,
+                                ];
+                                let depth = (dot12(rot.m[2], c) + base_t[2]).max(0);
+                                if (depth >> DEPTH_BAND_SHIFT).min(nbands - 1) != band {
+                                    continue;
+                                }
+                                if !WORLD_BOUNDS_CULL || cached_face_visible(rec, &rot, base_t) {
+                                    emit_world_face_tris(
+                                        &mut packets,
+                                        &m,
+                                        rec.first as usize,
+                                        rec.count as usize,
+                                        nv,
+                                        frame_no,
+                                        &mut np,
+                                        &mut nq,
+                                        &mut room_counts,
+                                    );
+                                }
+                            } else {
+                                let face = PVS_FACE_INDEX[e] as usize;
+                                let (bc, be) = m.face_bounds(face);
+                                let depth = (dot12(rot.m[2], bc) + base_t[2]).max(0);
+                                if (depth >> DEPTH_BAND_SHIFT).min(nbands - 1) != band {
+                                    continue;
+                                }
+                                if !WORLD_BOUNDS_CULL || face_bounds_visible(bc, be, &rot, base_t) {
+                                    let (first, cnt) = m.face_tris(face);
+                                    emit_world_face_tris(
+                                        &mut packets,
+                                        &m,
+                                        first,
+                                        cnt,
+                                        nv,
+                                        frame_no,
+                                        &mut np,
+                                        &mut nq,
+                                        &mut room_counts,
+                                    );
+                                }
                             }
                         }
-                        entry = PVS_FACE_NEXT[e];
                     }
+                    band += 1;
                 }
                 telemetry::stage_end(telemetry::stage::ROOM_SURFACE_DRAW);
 
