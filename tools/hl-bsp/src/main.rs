@@ -1015,6 +1015,11 @@ fn best_fan_anchor(uv: &[(f32, f32)]) -> usize {
 const MAX_COOK_VERTS: usize = 8192;
 const UV_SPLIT_SPAN: f32 = 96.0;
 const UV_SPLIT_DEPTH: u8 = 2;
+// Per-triangle interior subdivision. Disabled: it splits a triangle at an edge
+// midpoint the neighbour never gets, cracking a T-junction at every shared edge
+// (thousands per map). Affine correction now comes from the watertight per-edge
+// `edge_segments` split, and `weld_tjunctions` stitches the few remaining cracks.
+const UV_SPLIT_RECURSE: bool = false;
 
 #[derive(Clone, Copy)]
 struct CookCorner {
@@ -1242,7 +1247,7 @@ fn emit_cooked_tri(
         }
     }
 
-    if depth > 0 && uv_split_needed(&c) {
+    if UV_SPLIT_RECURSE && depth > 0 && uv_split_needed(&c) {
         let split = longest_uv_edge(&c);
         let mid = match split {
             0 => mid_corner(c[0], c[1], verts),
@@ -2709,6 +2714,172 @@ fn is_tool_texture(name: &str) -> bool {
         || n.starts_with("trigger")
 }
 
+/// Watertight pass: split any triangle edge that another vertex lands on (a
+/// T-junction) so neighbouring faces meet exactly instead of cracking open into
+/// the background at grazing angles. The per-face UV subdivision adds vertices
+/// on shared edges inconsistently between neighbours; this stitches them back.
+/// Rebuilds the per-face triangle ranges since splitting changes tri counts.
+/// Returns the number of triangles added.
+fn weld_tjunctions(
+    verts: &[[i16; 3]],
+    tri_idx: &mut Vec<u16>,
+    tri_tex: &mut Vec<u16>,
+    tri_uv: &mut Vec<u8>,
+    tri_rgb: &mut Vec<u8>,
+    face_first: &mut [u32],
+    face_ntri: &mut [u16],
+    max_added: usize,
+) -> usize {
+    use std::collections::HashMap;
+    if max_added == 0 {
+        return 0; // no resident-RAM headroom on this map; leave it untouched
+    }
+    // One canonical index per distinct position so the coincident duplicate
+    // verts the subdivision emits collapse to a single split point.
+    let mut pos_idx: HashMap<[i16; 3], u16> = HashMap::new();
+    for (i, &p) in verts.iter().enumerate() {
+        pos_idx.entry(p).or_insert(i as u16);
+    }
+    const CELL: i32 = 128;
+    let cell = |p: [i16; 3]| (p[0] as i32 / CELL, p[1] as i32 / CELL, p[2] as i32 / CELL);
+    let mut grid: HashMap<(i32, i32, i32), Vec<u16>> = HashMap::new();
+    for (&p, &i) in pos_idx.iter() {
+        grid.entry(cell(p)).or_default().push(i);
+    }
+
+    // Verts strictly inside segment (a,b), as (parameter, index), sorted.
+    let on_edge = |a: u16, b: u16| -> Vec<(f32, u16)> {
+        let pa = verts[a as usize];
+        let pb = verts[b as usize];
+        let d = [
+            pb[0] as i64 - pa[0] as i64,
+            pb[1] as i64 - pa[1] as i64,
+            pb[2] as i64 - pa[2] as i64,
+        ];
+        let len2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        // Only stitch long edges. A T-junction crack is only visible when the
+        // edge spans enough screen at a grazing angle; short subdivision edges
+        // crack sub-pixel and welding them all would explode the triangle count
+        // on a fill-bound console for no visible gain.
+        const MIN_EDGE2: i64 = 80 * 80;
+        if len2 < MIN_EDGE2 {
+            return Vec::new();
+        }
+        let (ca, cb) = (cell(pa), cell(pb));
+        let rng = |x: i32, y: i32| (x.min(y) - 1, x.max(y) + 1);
+        let (x0, x1) = rng(ca.0, cb.0);
+        let (y0, y1) = rng(ca.1, cb.1);
+        let (z0, z1) = rng(ca.2, cb.2);
+        let mut out: Vec<(f32, u16)> = Vec::new();
+        for cx in x0..=x1 {
+            for cy in y0..=y1 {
+                for cz in z0..=z1 {
+                    let Some(bucket) = grid.get(&(cx, cy, cz)) else {
+                        continue;
+                    };
+                    for &ci in bucket {
+                        let pc = verts[ci as usize];
+                        if pc == pa || pc == pb {
+                            continue;
+                        }
+                        let ac = [
+                            pc[0] as i64 - pa[0] as i64,
+                            pc[1] as i64 - pa[1] as i64,
+                            pc[2] as i64 - pa[2] as i64,
+                        ];
+                        let dot = ac[0] * d[0] + ac[1] * d[1] + ac[2] * d[2];
+                        if dot <= 0 || dot >= len2 {
+                            continue; // not strictly between the endpoints
+                        }
+                        let ac2 = ac[0] * ac[0] + ac[1] * ac[1] + ac[2] * ac[2];
+                        // perpendicular dist^2 = ac2 - dot^2/len2; collinear when
+                        // < EPS^2 (EPS = 2 units). Cross-multiply to stay integer.
+                        if ac2 * len2 - dot * dot < 4 * len2 {
+                            out.push((dot as f32 / len2 as f32, ci));
+                        }
+                    }
+                }
+            }
+        }
+        out.sort_by(|p, q| p.0.partial_cmp(&q.0).unwrap());
+        out.dedup_by(|p, q| p.1 == q.1);
+        out
+    };
+
+    let lerp = |a: u8, b: u8, t: f32| -> u8 {
+        (a as f32 + (b as f32 - a as f32) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+
+    let mut new_idx: Vec<u16> = Vec::with_capacity(tri_idx.len());
+    let mut new_tex: Vec<u16> = Vec::with_capacity(tri_tex.len());
+    let mut new_uv: Vec<u8> = Vec::with_capacity(tri_uv.len());
+    let mut new_rgb: Vec<u8> = Vec::with_capacity(tri_rgb.len());
+    let mut added = 0usize;
+
+    for f in 0..face_first.len() {
+        let first = face_first[f] as usize;
+        let cnt = face_ntri[f] as usize;
+        let new_first = new_idx.len() / 3;
+        for t in first..first + cnt {
+            let corner = |k: usize| -> (u16, u8, u8, u8, u8, u8) {
+                (
+                    tri_idx[t * 3 + k],
+                    tri_uv[t * 6 + k * 2],
+                    tri_uv[t * 6 + k * 2 + 1],
+                    tri_rgb[t * 9 + k * 3],
+                    tri_rgb[t * 9 + k * 3 + 1],
+                    tri_rgb[t * 9 + k * 3 + 2],
+                )
+            };
+            let c = [corner(0), corner(1), corner(2)];
+            // Once the RAM-headroom budget for added tris is spent, copy the rest
+            // of the map's triangles through unsplit (some far-map cracks remain,
+            // but the map still fits its streaming buffer).
+            let weld_this = added < max_added;
+            // Boundary loop = corners with any on-edge verts inserted per edge.
+            let mut loopv: Vec<(u16, u8, u8, u8, u8, u8)> = Vec::with_capacity(4);
+            for e in 0..3 {
+                let a = c[e];
+                let b = c[(e + 1) % 3];
+                loopv.push(a);
+                for (param, ci) in if weld_this { on_edge(a.0, b.0) } else { Vec::new() } {
+                    loopv.push((
+                        ci,
+                        lerp(a.1, b.1, param),
+                        lerp(a.2, b.2, param),
+                        lerp(a.3, b.3, param),
+                        lerp(a.4, b.4, param),
+                        lerp(a.5, b.5, param),
+                    ));
+                }
+            }
+            let tex = tri_tex[t];
+            // Fan the (still convex) boundary loop from its first vertex.
+            for i in 1..loopv.len() - 1 {
+                for v in [loopv[0], loopv[i], loopv[i + 1]] {
+                    new_idx.push(v.0);
+                    new_uv.push(v.1);
+                    new_uv.push(v.2);
+                    new_rgb.push(v.3);
+                    new_rgb.push(v.4);
+                    new_rgb.push(v.5);
+                }
+                new_tex.push(tex);
+            }
+            added += loopv.len() - 3;
+        }
+        face_first[f] = new_first as u32;
+        face_ntri[f] = ((new_idx.len() / 3) - new_first).min(u16::MAX as usize) as u16;
+    }
+    *tri_idx = new_idx;
+    *tri_tex = new_tex;
+    *tri_uv = new_uv;
+    *tri_rgb = new_rgb;
+    added
+}
+
 fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {}", path, e))?;
     let bsp = Bsp::parse(&bytes)?;
@@ -3074,6 +3245,39 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         }
         face_ntri[f] = ((tri_idx.len() / 3) - first_tri).min(u16::MAX as usize) as u16;
     }
+
+    // Budget the weld to the runtime's streaming buffer (`room_budget::MAP_WORDS`
+    // u32 = ~914 KB). The resident size is everything-but-triangles (fixed by the
+    // BSP) plus 19 B per triangle. Over-estimate the non-triangle bytes from the
+    // raw BSP lumps (they are >= the compacted cooked sections) so the cap is
+    // conservative and a map can never overflow. Maps already at the limit get a
+    // zero budget and are left exactly as they were.
+    const MAP_RESIDENT_BYTES: usize = 234_125 * 4 - 8192; // MAP_WORDS*4, 8 KB margin
+    let lump_bytes = |i: usize| bsp.lump(i).len();
+    let non_tri_est = verts.len() * 6
+        + lump_bytes(LUMP_NODES)
+        + lump_bytes(LUMP_LEAVES)
+        + lump_bytes(LUMP_MARKSURFACES)
+        + lump_bytes(LUMP_PLANES)
+        + lump_bytes(LUMP_VISIBILITY)
+        + lump_bytes(LUMP_CLIPNODES)
+        + lump_bytes(LUMP_ENTITIES)
+        + lump_bytes(LUMP_FACES)
+        + 32768; // slop for nav/logic/prop/header sections not in the raw lumps
+    let base_tri_bytes = (tri_idx.len() / 3) * 19;
+    let max_added =
+        MAP_RESIDENT_BYTES.saturating_sub(non_tri_est + base_tri_bytes) / 19;
+    let tj_added = weld_tjunctions(
+        &verts,
+        &mut tri_idx,
+        &mut tri_tex,
+        &mut tri_uv,
+        &mut tri_rgb,
+        &mut face_first,
+        &mut face_ntri,
+        max_added,
+    );
+    eprintln!("  T-junction weld: +{tj_added} tris (cap {max_added})");
 
     let n_verts = verts.len();
     let n_tris = tri_idx.len() / 3;
