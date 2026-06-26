@@ -824,8 +824,18 @@ fn cook_miptex(l: &[u8], mo: usize, wads: &WadIndex) -> (CookedTex, (u32, u32)) 
     } else {
         let colors: Vec<(u8, u8, u8)> = idxv.iter().map(|&i| pal[i as usize]).collect();
         let pal16 = median_cut16(&colors);
+        // A texture that is entirely (near-)black (e.g. GoldSrc's `black`, used as
+        // a backdrop wall) renders as a solid black region that reads as a missing
+        // triangle on a CRT/emulator. Lift it to a faint dark grey so it looks like
+        // a wall. Targeted at all-black textures only, so shadow detail in normal
+        // textures (which keep their black texels) is untouched.
+        let all_black = pal16.iter().all(|c| c.0 < 8 && c.1 < 8 && c.2 < 8);
         for (i, c) in pal16.iter().enumerate() {
-            clut[i] = to_bgr555(c.0, c.1, c.2);
+            clut[i] = if all_black {
+                to_bgr555(28, 28, 28)
+            } else {
+                to_bgr555(c.0, c.1, c.2)
+            };
         }
         for (i, chunk) in colors.chunks(2).enumerate() {
             let lo = nearest16(&pal16, chunk[0]);
@@ -1574,10 +1584,13 @@ fn choose_standalone_spawn(
     face_extent: &[[u16; 3]],
 ) -> Option<([f32; 3], i32)> {
     const GOOD_STANDALONE_SCORE: i32 = 900;
+    const MIN_AUTHORED_STANDALONE_SCORE: i32 = 300;
     let candidates = standalone_spawn_candidates(ents);
     let mut first_player: Option<([f32; 3], i32, i32)> = None;
+    let mut best_authored_player: Option<([f32; 3], i32, i32)> = None;
     let mut best_player: Option<([f32; 3], i32, i32)> = None;
     let mut best_landmark: Option<([f32; 3], i32, i32)> = None;
+    let debug_spawn = std::env::var_os("HL_BSP_DEBUG_SPAWN").is_some();
     for cand in candidates {
         if !spawn_candidate_clear(cand.origin_hl, nodes, planes, leaves, clipnodes, hull1_head) {
             continue;
@@ -1606,6 +1619,26 @@ fn choose_standalone_spawn(
             );
             first_player = Some((cand.origin_hl, original_yaw, score));
         }
+        if cand.is_player_start && cand.yaw_q12.is_some() {
+            let score = score_spawn_yaw(
+                cand.origin_hl,
+                original_yaw,
+                scale,
+                nodes,
+                planes,
+                leaves,
+                marks,
+                vis,
+                face_ntri,
+                face_norm,
+                face_dist,
+                face_center,
+                face_extent,
+            );
+            if best_authored_player.map_or(true, |(_, _, best_score)| score > best_score) {
+                best_authored_player = Some((cand.origin_hl, original_yaw, score));
+            }
+        }
         for yaw in yaws {
             let score = score_spawn_yaw(
                 cand.origin_hl,
@@ -1631,9 +1664,48 @@ fn choose_standalone_spawn(
                 *target = Some((cand.origin_hl, yaw, score));
             }
         }
+        if debug_spawn {
+            let mut best_score = i32::MIN;
+            let mut best_yaw = 0;
+            for yaw in yaws {
+                let score = score_spawn_yaw(
+                    cand.origin_hl,
+                    yaw,
+                    scale,
+                    nodes,
+                    planes,
+                    leaves,
+                    marks,
+                    vis,
+                    face_ntri,
+                    face_norm,
+                    face_dist,
+                    face_center,
+                    face_extent,
+                );
+                if score > best_score {
+                    best_score = score;
+                    best_yaw = yaw;
+                }
+            }
+            eprintln!(
+                "spawn candidate player={} authored_yaw={} origin={:?} original_yaw={} best_yaw={} best_score={}",
+                cand.is_player_start,
+                cand.yaw_q12.is_some(),
+                cand.origin_hl,
+                original_yaw,
+                best_yaw,
+                best_score
+            );
+        }
     }
     if let Some((origin, yaw, score)) = first_player {
         if score >= GOOD_STANDALONE_SCORE {
+            return Some((origin, yaw));
+        }
+    }
+    if let Some((origin, yaw, score)) = best_authored_player {
+        if score >= MIN_AUTHORED_STANDALONE_SCORE {
             return Some((origin, yaw));
         }
     }
@@ -1677,6 +1749,7 @@ const LOGIC_TRIGGER_CHANGETARGET: u8 = 11;
 const LOGIC_ITEM_SUIT: u8 = 12;
 const LOGIC_ITEM_BATTERY: u8 = 13;
 const LOGIC_TRIGGER_HURT: u8 = 14;
+const LOGIC_FUNC_TRACKTRAIN: u8 = 15;
 
 const USE_OFF: u8 = 0;
 const USE_ON: u8 = 1;
@@ -2391,6 +2464,7 @@ fn collect_logic_entities(
             "trigger_counter" => LOGIC_TRIGGER_COUNTER,
             "trigger_changetarget" => LOGIC_TRIGGER_CHANGETARGET,
             "trigger_hurt" => LOGIC_TRIGGER_HURT,
+            "func_tracktrain" => LOGIC_FUNC_TRACKTRAIN,
             "item_suit" => LOGIC_ITEM_SUIT,
             "item_battery" => LOGIC_ITEM_BATTERY,
             "world_items" => match ent_value(block, "type").and_then(|v| v.parse::<u16>().ok()) {
@@ -2427,6 +2501,7 @@ fn collect_logic_entities(
         let speed_default = match kind {
             LOGIC_FUNC_BUTTON => 40.0,
             LOGIC_FUNC_DOOR => 100.0,
+            LOGIC_FUNC_TRACKTRAIN => 100.0,
             _ => 0.0,
         };
         let speed = if speed_default > 0.0 {
@@ -2455,10 +2530,14 @@ fn collect_logic_entities(
                     .unwrap_or(10.0)
                     .round()
                     .clamp(1.0, u16::MAX as f32) as u16,
+                LOGIC_FUNC_TRACKTRAIN => (parse_f32_key(block, "startspeed", 0.0) / scale)
+                    .round()
+                    .clamp(0.0, u16::MAX as f32) as u16,
                 _ => names.id(ent_value(block, "changetarget")),
             };
         let arg1 = match kind {
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
+            LOGIC_FUNC_TRACKTRAIN => submodel.unwrap_or(0).min(u16::MAX as usize) as u16,
             _ => 0,
         };
 
@@ -3267,15 +3346,15 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         o.extend_from_slice(&i16::from_le_bytes([nodes[no + 6], nodes[no + 7]]).to_le_bytes());
     }
 
-    for li in 0..n_leaves {
+    for (li, &(mark_start, mark_count)) in leaf_mark_ranges.iter().enumerate() {
         let lo = li * SZ_LEAF;
         o.extend_from_slice(
             &i32le(leaves, lo + SZ_LEAF_VISOFS)
                 .unwrap_or(-1)
                 .to_le_bytes(),
         );
-        o.extend_from_slice(&leaf_mark_ranges[li].0.to_le_bytes());
-        o.extend_from_slice(&leaf_mark_ranges[li].1.to_le_bytes());
+        o.extend_from_slice(&mark_start.to_le_bytes());
+        o.extend_from_slice(&mark_count.to_le_bytes());
     }
     while o.len() % 4 != 0 {
         o.push(0);
@@ -3620,11 +3699,66 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
 // matrices applied at cook time). Default bodyparts are concatenated so view
 // models keep separate visible pieces such as magazines/clips. Layout matches
 // .hlm geometry+textures:
-//   magic "HMD2" | u32 n_verts,n_tris,n_texs,n_frames
-//   verts i16×3 per frame | tri_rec[16] × n_tris | textures...
-//     tri_rec = u16 a,b,c | u16 tex | u8 uv[6] | u16 pad
+//   magic "HMD2"/"HMD6" | u32 n_verts,n_tris,n_texs,n_frames
+//   verts i16×3 per frame | tri_rec × n_tris | textures...
+//     HMD2 tri_rec[16] = u16 a,b,c | u16 tex | u8 uv[6] | u16 pad
+//     HMD6 tri_rec[20] = HMD2 payload | i8 normal[3] | u8 flags | u16 pad
 
 type Mat34 = ([[f32; 3]; 3], [f32; 3]); // rotation, translation
+
+const MDL_VERTEX_LOCAL_SCALE: i32 = 8;
+const MDL_VERTEX_LOCAL_SCALE_F32: f32 = MDL_VERTEX_LOCAL_SCALE as f32;
+const MDL_LOCAL_TO_WORLD_Q12: u16 = (4096 / MDL_VERTEX_LOCAL_SCALE) as u16;
+
+fn quantize_mdl_coord(v: f32) -> i16 {
+    (v * MDL_VERTEX_LOCAL_SCALE_F32)
+        .round()
+        .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+}
+
+fn mdl_face_normal_i8(base: &[[i16; 3]], a: u16, b: u16, c: u16) -> [i8; 3] {
+    let Some(va) = base.get(a as usize).copied() else {
+        return [0; 3];
+    };
+    let Some(vb) = base.get(b as usize).copied() else {
+        return [0; 3];
+    };
+    let Some(vc) = base.get(c as usize).copied() else {
+        return [0; 3];
+    };
+    let ux = vb[0] as f64 - va[0] as f64;
+    let uy = vb[1] as f64 - va[1] as f64;
+    let uz = vb[2] as f64 - va[2] as f64;
+    let vx = vc[0] as f64 - va[0] as f64;
+    let vy = vc[1] as f64 - va[1] as f64;
+    let vz = vc[2] as f64 - va[2] as f64;
+    let nx = uy * vz - uz * vy;
+    let ny = uz * vx - ux * vz;
+    let nz = ux * vy - uy * vx;
+    let len = (nx * nx + ny * ny + nz * nz).sqrt();
+    if len <= 0.0001 {
+        return [0; 3];
+    }
+    [
+        (nx * 127.0 / len).round().clamp(-127.0, 127.0) as i8,
+        (ny * 127.0 / len).round().clamp(-127.0, 127.0) as i8,
+        (nz * 127.0 / len).round().clamp(-127.0, 127.0) as i8,
+    ]
+}
+
+fn floor_anchor_mdl_frames(frames: &mut [Vec<[i16; 3]>]) {
+    for fv in frames {
+        let Some(min_y) = fv.iter().map(|v| v[1]).min() else {
+            continue;
+        };
+        if min_y == 0 {
+            continue;
+        }
+        for v in fv {
+            v[1] = (v[1] as i32 - min_y as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+        }
+    }
+}
 
 fn angle_quat(a: [f32; 3]) -> [f32; 4] {
     let (sr, cr) = ((a[0] * 0.5).sin(), (a[0] * 0.5).cos());
@@ -3802,11 +3936,16 @@ fn cook_mdl(
     tex_out: Option<&str>,
     specs: &[SeqSpec],
     compact_frames: bool,
+    compact_normals: bool,
 ) -> Result<(), String> {
     let b = std::fs::read(path).map_err(|e| format!("{}: {}", path, e))?;
     if b.get(0..4) != Some(b"IDST") {
         return Err(format!("{}: not a studio MDL", path));
     }
+    let floor_anchor_frames = std::path::Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map_or(true, |name| !name.starts_with("v_"));
     let i = |o: usize| i32le(&b, o).unwrap_or(0);
     let f = |o: usize| f32le(&b, o).unwrap_or(0.0);
     let h16 = |o: usize| i16::from_le_bytes([b[o], b[o + 1]]);
@@ -3972,19 +4111,23 @@ fn cook_mdl(
             for v in 0..vp.len() {
                 let p = apply(bones.get(vbone[v]).unwrap_or(&ident), vp[v]);
                 fv.push([
-                    p[0].round() as i16,
-                    p[2].round() as i16,
-                    p[1].round() as i16,
+                    quantize_mdl_coord(p[0]),
+                    quantize_mdl_coord(p[2]),
+                    quantize_mdl_coord(p[1]),
                 ]);
             }
             frames.push(fv);
         }
         clips.push((clip_first, nbake.min(u16::MAX as usize) as u16));
     }
+    if floor_anchor_frames {
+        floor_anchor_mdl_frames(&mut frames);
+    }
 
     let mut tri_idx: Vec<u16> = Vec::new();
     let mut tri_tex: Vec<u16> = Vec::new();
     let mut tri_uv: Vec<u8> = Vec::new();
+    let mut tri_norm: Vec<[i8; 3]> = Vec::new();
     let mut texs: Vec<CookedTex> = Vec::new();
     let mut slot_of: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
 
@@ -4049,6 +4192,11 @@ fn cook_mdl(
                     tri_idx.extend_from_slice(&[vc.0, vb.0, va.0]);
                     tri_tex.push(slot as u16);
                     tri_uv.extend_from_slice(&[vc.1, vc.2, vb.1, vb.2, va.1, va.2]);
+                    let normal = frames
+                        .first()
+                        .map(|base| mdl_face_normal_i8(base, vc.0, vb.0, va.0))
+                        .unwrap_or([0; 3]);
+                    tri_norm.push(normal);
                 }
             }
         }
@@ -4095,13 +4243,15 @@ fn cook_mdl(
             }
         }
 
-        o.extend_from_slice(b"HMD4");
+        o.extend_from_slice(if compact_normals { b"HMD6" } else { b"HMD5" });
         o.extend_from_slice(&(n_verts as u32).to_le_bytes());
         o.extend_from_slice(&(n_tris as u32).to_le_bytes());
         o.extend_from_slice(&(texs.len() as u32).to_le_bytes());
         o.extend_from_slice(&(frames.len() as u32).to_le_bytes());
         o.extend_from_slice(&(clips.len() as u32).to_le_bytes());
         o.extend_from_slice(&(frame_data.len() as u32).to_le_bytes());
+        o.extend_from_slice(&MDL_LOCAL_TO_WORLD_Q12.to_le_bytes());
+        o.extend_from_slice(&0u16.to_le_bytes());
         for (first, count) in &clips {
             o.extend_from_slice(&first.to_le_bytes());
             o.extend_from_slice(&count.to_le_bytes());
@@ -4141,7 +4291,13 @@ fn cook_mdl(
         o.extend_from_slice(&tri_idx[ib + 2].to_le_bytes());
         o.extend_from_slice(&tri_tex[t].to_le_bytes());
         o.extend_from_slice(&tri_uv[t * 6..t * 6 + 6]);
-        o.extend_from_slice(&0u16.to_le_bytes());
+        if compact_normals {
+            let n = tri_norm.get(t).copied().unwrap_or([0; 3]);
+            o.extend_from_slice(&[n[0] as u8, n[1] as u8, n[2] as u8, 0]);
+            o.extend_from_slice(&0u16.to_le_bytes());
+        } else {
+            o.extend_from_slice(&0u16.to_le_bytes());
+        }
     }
     let texture_chunk = tex_out.map(|_| build_texture_chunk(&texs));
     if tex_out.is_none() {
@@ -4164,7 +4320,13 @@ fn cook_mdl(
         path,
         out,
         tex_out.map(|p| format!(" + {}", p)).unwrap_or_default(),
-        if compact_frames { "HMD4" } else { "HMDL" },
+        if compact_normals {
+            "HMD6"
+        } else if compact_frames {
+            "HMD5"
+        } else {
+            "HMDL"
+        },
         seq_desc,
         clips.len(),
         frames.len(),
@@ -4183,9 +4345,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if matches!(
         args.get(1).map(|s| s.as_str()),
-        Some("--mdl") | Some("--mdl4")
+        Some("--mdl") | Some("--mdl4") | Some("--mdl6")
     ) {
-        let compact_frames = args.get(1).map(|s| s.as_str()) == Some("--mdl4");
+        let compact_normals = args.get(1).map(|s| s.as_str()) == Some("--mdl6");
+        let compact_frames = compact_normals || args.get(1).map(|s| s.as_str()) == Some("--mdl4");
         match (args.get(2), args.get(3)) {
             (Some(inp), Some(out)) => {
                 let seq_text = args.get(4).map(|s| s.as_str()).unwrap_or("0");
@@ -4197,7 +4360,8 @@ fn main() {
                         exit(2);
                     }
                 };
-                if let Err(e) = cook_mdl(inp, out, tex_out, &specs, compact_frames) {
+                if let Err(e) = cook_mdl(inp, out, tex_out, &specs, compact_frames, compact_normals)
+                {
                     eprintln!("{}", e);
                     exit(1);
                 }
@@ -4205,7 +4369,7 @@ fn main() {
             }
             _ => {
                 eprintln!(
-                    "usage: hl-bsp --mdl|--mdl4 <in.mdl> <out.hlmdl> [seq|seq:max_frames,...] [out.hltx]"
+                    "usage: hl-bsp --mdl|--mdl4|--mdl6 <in.mdl> <out.hlmdl> [seq|seq:max_frames,...] [out.hltx]"
                 );
                 exit(2);
             }
@@ -4256,6 +4420,17 @@ mod tests {
 
     fn put_i32(buf: &mut Vec<u8>, v: i32) {
         buf.extend_from_slice(&v.to_le_bytes());
+    }
+
+    // The runtime recovers the model inflation factor as `4096 /
+    // local_to_world_q12` and uses it to deflate translation/depth. That must
+    // round-trip exactly to the cook's MDL_VERTEX_LOCAL_SCALE, or world-placed
+    // models drift in size and OT depth. Guards the "bump the scale" knob.
+    #[test]
+    fn model_scale_round_trips_through_q12() {
+        let runtime_s = (4096 / MDL_LOCAL_TO_WORLD_Q12 as i32).max(1);
+        assert_eq!(runtime_s, MDL_VERTEX_LOCAL_SCALE);
+        assert!(quantize_mdl_coord(1.0) == MDL_VERTEX_LOCAL_SCALE as i16); // ×s before rounding
     }
 
     #[test]
@@ -4457,6 +4632,28 @@ mod tests {
         assert_eq!(logic.ents[0].kind, LOGIC_TRIGGER_HURT);
         assert_eq!(logic.ents[0].arg0, 12);
         assert_eq!(logic.names[logic.ents[0].target as usize - 1], "acid_alarm");
+    }
+
+    #[test]
+    fn cooks_tracktrain_as_logic_target() {
+        let ents = br#"
+        {
+        "classname" "func_tracktrain"
+        "targetname" "train"
+        "target" "trainstop1"
+        "model" "*12"
+        "speed" "300"
+        "startspeed" "50"
+        }
+        "#;
+        let logic = collect_logic_entities(ents, &[], &[], 1.0);
+
+        assert_eq!(logic.ents.len(), 1);
+        assert_eq!(logic.ents[0].kind, LOGIC_FUNC_TRACKTRAIN);
+        assert_eq!(logic.names[logic.ents[0].targetname as usize - 1], "train");
+        assert_eq!(logic.ents[0].speed, 300);
+        assert_eq!(logic.ents[0].arg0, 50);
+        assert_eq!(logic.ents[0].arg1, 12);
     }
 
     #[test]

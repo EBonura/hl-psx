@@ -11,6 +11,7 @@
 //! Colors are the scheme's: items orange 255 170 0, selected white with a faint
 //! orange armed bar. Returns the chosen streamed room id.
 
+use crate::hltext;
 use psx_font::{BitOrder, BitmapFont, FontAtlas};
 use psx_gpu::material::TextureMaterial;
 use psx_gpu::{self as gpu, framebuf::FrameBuffer};
@@ -79,11 +80,15 @@ const OPTIONS_ITEMS: [&str; 4] = [
     "Status Display       Enabled",
     "Back",
 ];
-const CREDIT_LINES: [&str; 4] = [
-    "Half-Life by Valve",
-    "hl-psx by EBonura",
-    "Built with PSoXide",
-    "1998 - 2026",
+const CREDIT_LINES: [(&str, (u8, u8, u8)); 8] = [
+    ("Half-Life   Valve 1998", WHITE),
+    ("PS1 Port   hl-psx", ITEM),
+    ("Built with PSoXide GPL-2.0", (96, 170, 170)),
+    ("PSoXide engine/runtime", (80, 130, 210)),
+    ("Public Half-Life SDK source", DIM),
+    ("Assets from your HL install", DIM),
+    ("Unofficial fan port", DIM),
+    ("All rights to original creators", DIM),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -220,14 +225,21 @@ fn draw_loading(
     lh: u16,
     label: &str,
 ) {
-    fb.clear(0, 0, 0);
-    draw_bg(bg);
-    draw_logo(logo, lw, lh);
-    font.draw_text(40, 150, "Loading", ITEM_SEL);
-    font.draw_text(124, 150, label, WHITE);
-    gpu::draw_sync();
-    gpu::vsync();
-    fb.swap();
+    const SPINNER: [&str; 4] = ["|", "/", "-", "\\"];
+    let mut frame = 0usize;
+    while frame < 8 {
+        fb.clear(0, 0, 0);
+        draw_bg(bg);
+        draw_logo(logo, lw, lh);
+        draw_centered(font, 146, "Loading", ITEM_SEL);
+        let x = 160 + font.text_width("Loading") as i16 / 2 + 8;
+        font.draw_text(x, 146, SPINNER[frame & 3], WHITE);
+        draw_centered(font, 170, label, WHITE);
+        gpu::draw_sync();
+        gpu::vsync();
+        fb.swap();
+        frame += 1;
+    }
 }
 
 fn draw_shell(
@@ -332,15 +344,15 @@ fn draw_options_menu(font: &FontAtlas, sel: usize) {
 }
 
 fn draw_credits_menu(font: &FontAtlas) {
-    let mut y = 88i16;
+    let mut y = 76i16;
     let mut i = 0usize;
     while i < CREDIT_LINES.len() {
-        draw_centered(font, y, CREDIT_LINES[i], if i == 0 { WHITE } else { ITEM });
-        y += ROW_H;
+        hltext::draw_centered_scaled(y, CREDIT_LINES[i].0, hltext::SMALL_Q8, CREDIT_LINES[i].1);
+        y += hltext::line_height_scaled(hltext::SMALL_Q8);
         i += 1;
     }
-    draw_select_bar(58, 184, 204);
-    draw_centered(font, 184, "Back", ITEM_SEL);
+    draw_select_bar(58, 208, 204);
+    draw_centered(font, 208, "Back", ITEM_SEL);
 }
 
 /// Run the menu until the player confirms a launch; returns its room id.

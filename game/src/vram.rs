@@ -16,12 +16,21 @@ const COLS: u16 = 11; // X=320,384,..,960
 const PAGES: usize = 22; // two bands (Y=0 and Y=256): map textures + model textures
 const CLUT_ROWS: usize = 24; // Y=480..503
 const CLUT_BASE_Y: u16 = 480;
+const VRAM_W: u16 = 1024;
+const VRAM_H: u16 = 512;
 
 #[derive(Copy, Clone)]
 pub struct TexSlot {
     pub material: TextureMaterial,
     pub packet: TexturedGouraudPacketMaterial,
     pub valid: bool,
+    /// A solid single-colour texture (every texel index 0) -- e.g. GoldSrc's
+    /// `black` backdrop wall. These sit nearly coplanar with the real geometry
+    /// in front of them; without a Z-buffer the per-triangle OT can tie-break the
+    /// wrong way and the backdrop occludes the detail. The renderer biases these
+    /// to the back of the OT so the foreground always wins (a backdrop is, by
+    /// definition, behind everything near it).
+    pub backdrop: bool,
 }
 
 const EMPTY_MATERIAL: TextureMaterial = TextureMaterial::opaque(0, 0, (128, 128, 128));
@@ -30,6 +39,7 @@ pub const EMPTY_SLOT: TexSlot = TexSlot {
     material: EMPTY_MATERIAL,
     packet: TexturedGouraudPacketMaterial::from_texture(EMPTY_MATERIAL),
     valid: false,
+    backdrop: false,
 };
 
 static mut ATLAS: TextureWindowAtlas<PAGES> = TextureWindowAtlas::new();
@@ -52,6 +62,28 @@ unsafe fn reset_allocators() {
     }
 }
 
+#[inline(always)]
+fn canonical_ram_const<T>(p: *const T) -> *const T {
+    #[cfg(target_arch = "mips")]
+    {
+        (((p as usize) & 0x001f_ffff) | 0x8000_0000) as *const T
+    }
+    #[cfg(not(target_arch = "mips"))]
+    {
+        p
+    }
+}
+
+#[inline(always)]
+fn canonical_ram_mut<T>(p: *mut T) -> *mut T {
+    canonical_ram_const(p as *const T) as *mut T
+}
+
+#[inline(always)]
+unsafe fn canonical_ram_bytes(data: &[u8]) -> &[u8] {
+    unsafe { core::slice::from_raw_parts(canonical_ram_const(data.as_ptr()), data.len()) }
+}
+
 /// Upload a streamed map texture chunk:
 /// `magic "HLTX" | u32 n_texs | texture blob`.
 ///
@@ -62,6 +94,7 @@ pub unsafe fn upload_tex_chunk_raw(
     slots: *mut TexSlot,
     slot_len: usize,
 ) -> Option<(usize, usize)> {
+    let data = unsafe { canonical_ram_bytes(data) };
     if data.len() < 8 || data.get(0..4)? != b"HLTX" {
         return None;
     }
@@ -79,6 +112,7 @@ pub unsafe fn upload_tex_chunk_append_raw(
     slots: *mut TexSlot,
     slot_len: usize,
 ) -> Option<(usize, usize)> {
+    let data = unsafe { canonical_ram_bytes(data) };
     if data.len() < 8 || data.get(0..4)? != b"HLTX" {
         return None;
     }
@@ -101,6 +135,8 @@ pub unsafe fn upload_tex_blob_raw(
     slots: *mut TexSlot,
     slot_len: usize,
 ) -> usize {
+    let data = unsafe { canonical_ram_bytes(data) };
+    let slots = canonical_ram_mut(slots);
     let mut off = 0usize;
     let mut failed = 0usize;
     for i in 0..n_texs {
@@ -144,9 +180,15 @@ fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8]) -> Option<TexSlot> 
         // 4-bit pixels pack 4 texels per VRAM halfword -> w/4 halfwords wide.
         let vram_x = tpage_x + (pl.origin_u() as u16) / 4;
         let vram_y = tpage_y + pl.origin_v() as u16;
+        if !rect_fits_vram(vram_x, vram_y, w / 4, h) {
+            return None;
+        }
         upload_bytes(VramRect::new(vram_x, vram_y, w / 4, h), pix);
 
         let clut = CLUTS.alloc(16)?;
+        if !rect_fits_vram(clut.x(), clut.y(), 16, 1) {
+            return None;
+        }
         upload_bytes(VramRect::new(clut.x(), clut.y(), 16, 1), clut_bytes);
 
         let win = TextureWindow::power_of_two_tile(pl.origin_u(), pl.origin_v(), w as u8, h as u8);
@@ -154,10 +196,22 @@ fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8]) -> Option<TexSlot> 
             TextureMaterial::opaque(clut.uv_clut_word(), tpage.uv_tpage_word(0), (128, 128, 128))
                 .with_texture_window(win);
         let packet = TexturedGouraudPacketMaterial::from_texture(material);
+        // Every texel index 0 -> a solid single-colour fill (the `black`
+        // backdrop, now grey-lifted by the cook). Flag it for OT back-biasing.
+        let backdrop = !pix.is_empty() && pix.iter().all(|&b| b == 0);
         Some(TexSlot {
             material,
             packet,
             valid: true,
+            backdrop,
         })
     }
+}
+
+#[inline(always)]
+fn rect_fits_vram(x: u16, y: u16, w: u16, h: u16) -> bool {
+    w > 0
+        && h > 0
+        && (x as u32 + w as u32) <= VRAM_W as u32
+        && (y as u32 + h as u32) <= VRAM_H as u32
 }

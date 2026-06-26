@@ -16,6 +16,7 @@
 extern crate psx_rt;
 
 mod cdstream;
+mod hltext;
 mod hud;
 mod map;
 mod menu;
@@ -59,7 +60,13 @@ static HEADCRAB_BYTES: &[u8] = include_bytes!("../../data/models/headcrab.hlmdl"
 static SUIT_ITEM_BYTES: &[u8] = include_bytes!("../../data/models/w_suit.hlmdl");
 static BATTERY_ITEM_BYTES: &[u8] = include_bytes!("../../data/models/w_battery.hlmdl");
 
-const OT_LEN: usize = 1024;
+// World ordering table. sz (view depth) tops out near FAR_VIEW; otz = sz>>OT_SHIFT
+// must stay < OT_LEN. OT_SHIFT=4 (16-unit buckets) spreads geometry across the
+// whole table -- at >>6 only ~10% of the OT was ever used (measured sz~6.9k on
+// c0a0), so far geometry that differed by <64 units tie-broke arbitrarily. With
+// OT_SHIFT=4, worst-case otz ~16000>>4=1000; OT_LEN=2048 leaves clamp headroom.
+const OT_LEN: usize = 2048;
+const OT_SHIFT: u32 = 4;
 const WEAPON_OT_LEN: usize = 64;
 const HUD_OT_LEN: usize = 1;
 const FX_OT_LEN: usize = 1;
@@ -70,13 +77,17 @@ const BARNEY_FACE_CAP: usize = 800;
 const HEADCRAB_FACE_CAP: usize = 512;
 const SUIT_ITEM_FACE_CAP: usize = 448;
 const BATTERY_ITEM_FACE_CAP: usize = 160;
-const MAX_RENDER_PACKETS: usize = 3328;
+#[cfg(not(feature = "emulator-telemetry"))]
+const MAX_RENDER_PACKETS: usize = 2560;
+#[cfg(feature = "emulator-telemetry")]
+const MAX_RENDER_PACKETS: usize = 2304;
 const MAX_WEAPON_CACHE_TRIS: usize = 320;
 const MAX_TEX_SLOTS: usize = room_budget::MAX_TEX_SLOTS;
 const MAX_FACES: usize = room_budget::MAX_FACES;
 const MAX_FACE_GROUPS: usize = room_budget::MAX_FACE_GROUPS;
 const MAX_LEAVES: usize = room_budget::MAX_LEAVES;
 const MAX_ENTS: usize = room_budget::MAX_ENTS;
+const MAX_PVS_FACE_RECS: usize = 2048;
 const MAX_PROPS: usize = 128;
 const MAX_NAV_NODES: usize = 255;
 const MAX_LOGIC: usize = 384;
@@ -88,7 +99,11 @@ const CULL: bool = true; // backface cull (keep area > 0; winding verified)
 const H_PROJ: u16 = 160; // ~90 deg horizontal FOV at 320px
 const WORLD_QUAD_PAIRING: bool = true; // pair two-triangle BSP quads when safe
 const WORLD_BOUNDS_CULL: bool = true; // face AABB frustum test before projection
-const WORLD_BOUNDS_PAD: i32 = 256; // guard band for rotated face AABBs near screen edges
+// Push solid backdrop walls (the `black` texture) this many OT buckets toward the
+// back so foreground detail that is nearly coplanar with them always wins the
+// painter's-order tie (no Z-buffer). A backdrop has nothing behind it, so the
+// bias is one-directional and safe.
+const BACKDROP_OTZ_BIAS: usize = 4;
 
 const PITCH_MAX: i16 = 1000;
 const YAW_RATE: i32 = 130; // yaw units/frame at full stick (Q0.12)
@@ -98,11 +113,15 @@ const VIEW_HEIGHT: i32 = 28;
 const PLAYER_USE_REACH: i32 = 96;
 const PLAYER_TOUCH_HALF_XZ: i32 = 16;
 const PLAYER_TOUCH_HEIGHT: i32 = 56;
-const FAR_VIEW: i32 = 6000; // leaf cull distance (world units); generous to avoid pop
+// Distance cull. MUST exceed the largest map's diagonal (max cooked ~13.5k) or
+// distant-but-visible geometry clips -- the old 6000 chopped the back half of
+// every level off. PVS already bounds visibility, so this only caps pathological
+// sightlines; it does not usefully fire on the campaign maps.
+const FAR_VIEW: i32 = 16000;
 const MODEL_CULL: bool = true; // backface-cull studio models
+const MODEL_OCCLUSION_CULL: bool = true; // skip actors fully hidden by static BSP
 const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
-const TRAM_STEP_DIV: i32 = 15; // tram units/sec -> units/frame (demo pace)
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 const ROOM_WORLD_CHUNK_MUL: u32 = 2;
 const ROOM_TEXTURE_CHUNK_ADD: u32 = 1;
@@ -126,6 +145,10 @@ const GLOCK_PRIMARY_COOLDOWN_TICKS: u8 = 6; // HL primary cycle is 0.3s; game ti
 const GLOCK_EMPTY_COOLDOWN_TICKS: u8 = 4; // HL empty click cadence is 0.2s
 const GLOCK_RELOAD_TICKS: u8 = 30; // HL Glock reload is 1.5s
 const PROP_TARGET_HEIGHT: i32 = 40;
+const SCIENTIST_RENDER_RADIUS: i32 = 72;
+const BARNEY_RENDER_RADIUS: i32 = 72;
+const HEADCRAB_RENDER_RADIUS: i32 = 36;
+const ITEM_RENDER_RADIUS: i32 = 36;
 const PROP_TYPE_SCIENTIST: u8 = 0;
 const PROP_TYPE_BARNEY: u8 = 1;
 const PROP_TYPE_HEADCRAB: u8 = 2;
@@ -147,6 +170,10 @@ const HEV_BATTERY_ARMOR: u16 = 15;
 const HEV_PICKUP_TICKS: u8 = 36;
 const ITEM_TOUCH_RANGE2: i32 = 38 * 38;
 const ITEM_TOUCH_HEIGHT: i32 = 56;
+const PROP_LINK_MATCH_XZ_EPS: i32 = 24;
+const PROP_LINK_MATCH_Y_EPS: i32 = 96;
+const PROP_GROUND_PROBE_UP: i32 = 24;
+const PROP_GROUND_PROBE_DOWN: i32 = 96;
 const SCIENTIST_HEALTH: u8 = 24;
 const BARNEY_HEALTH: u8 = 35;
 const HEADCRAB_HEALTH: u8 = 16;
@@ -227,6 +254,135 @@ static mut BARNEY_FACE_COUNT: usize = 0;
 static mut HEADCRAB_FACE_COUNT: usize = 0;
 static mut SUIT_ITEM_FACE_COUNT: usize = 0;
 static mut BATTERY_ITEM_FACE_COUNT: usize = 0;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PauseExit {
+    Resume,
+    MainMenu,
+}
+
+const PAUSE_ITEMS: [&str; 2] = ["Resume", "Main Menu"];
+const PAUSE_WHITE: (u8, u8, u8) = (238, 238, 230);
+const PAUSE_AMBER: (u8, u8, u8) = (255, 170, 0);
+const PAUSE_DIM: (u8, u8, u8) = (96, 96, 92);
+const PAUSE_ARMED: (u8, u8, u8) = (75, 53, 10);
+const LOADING_SPINNER: [&str; 4] = ["|", "/", "-", "\\"];
+
+fn loading_label_for_room(room_id: u16) -> &'static str {
+    let idx = room_id as usize;
+    if idx < menu::MAPS.len() {
+        menu::MAPS[idx]
+    } else {
+        "room"
+    }
+}
+
+fn draw_loading_screen(fb: &mut FrameBuffer, label: &str, frame: u8) {
+    fb.clear(0, 0, 0);
+    gpu::draw_quad_flat([(0, 0), (320, 0), (0, 240), (320, 240)], 6, 6, 6);
+    gpu::draw_quad_flat([(42, 64), (278, 64), (42, 176), (278, 176)], 14, 13, 11);
+    gpu::draw_quad_flat([(46, 68), (274, 68), (46, 172), (274, 172)], 24, 21, 16);
+    hltext::draw_centered_scaled(84, "HALF-LIFE", hltext::SMALL_Q8, PAUSE_WHITE);
+
+    let loading = "Loading";
+    let y = 118;
+    hltext::draw_centered_scaled(y, loading, hltext::SMALL_Q8, PAUSE_AMBER);
+    let x = 160 + hltext::text_width_scaled(loading, hltext::SMALL_Q8) / 2 + 8;
+    hltext::draw_text_scaled(
+        x,
+        y,
+        LOADING_SPINNER[(frame as usize) & 3],
+        hltext::SMALL_Q8,
+        PAUSE_WHITE,
+    );
+
+    hltext::draw_centered_scaled(144, label, hltext::SMALL_Q8, PAUSE_DIM);
+    gpu::draw_sync();
+    gpu::vsync();
+    fb.swap();
+}
+
+fn draw_next_loading_screen(fb: &mut FrameBuffer, label: &str, frame: &mut u8) {
+    draw_loading_screen(fb, label, *frame);
+    *frame = frame.wrapping_add(1);
+}
+
+fn draw_pause_menu(fb: &mut FrameBuffer, sel: usize) {
+    fb.clear(0, 0, 0);
+    gpu::draw_quad_flat([(44, 44), (276, 44), (44, 198), (276, 198)], 10, 10, 10);
+    gpu::draw_quad_flat([(48, 48), (272, 48), (48, 194), (272, 194)], 20, 18, 14);
+    hltext::draw_centered_scaled(66, "HALF-LIFE", hltext::SMALL_Q8, PAUSE_WHITE);
+    hltext::draw_centered_scaled(86, "Paused", hltext::SMALL_Q8, PAUSE_DIM);
+
+    let mut i = 0usize;
+    while i < PAUSE_ITEMS.len() {
+        let y = 116 + i as i16 * 22;
+        if i == sel {
+            gpu::draw_quad_flat(
+                [(88, y - 4), (232, y - 4), (88, y + 18), (232, y + 18)],
+                PAUSE_ARMED.0,
+                PAUSE_ARMED.1,
+                PAUSE_ARMED.2,
+            );
+            hltext::draw_centered_scaled(y, PAUSE_ITEMS[i], hltext::SMALL_Q8, PAUSE_WHITE);
+        } else {
+            hltext::draw_centered_scaled(y, PAUSE_ITEMS[i], hltext::SMALL_Q8, PAUSE_AMBER);
+        }
+        i += 1;
+    }
+
+    hltext::draw_centered_scaled(
+        174,
+        "Cross Select   Circle Back",
+        hltext::SMALL_Q8,
+        PAUSE_DIM,
+    );
+}
+
+fn run_pause_menu(fb: &mut FrameBuffer) -> PauseExit {
+    let mut sel = 0usize;
+    let mut p_up = true;
+    let mut p_dn = true;
+    let mut p_ok = true;
+    let mut p_back = true;
+
+    loop {
+        let pad = poll_port1();
+        let b = pad.buttons;
+        let up = b.is_held(button::UP);
+        let dn = b.is_held(button::DOWN);
+        let ok = b.is_held(button::CROSS) || b.is_held(button::START);
+        let back = b.is_held(button::CIRCLE);
+
+        if up && !p_up {
+            sel = (sel + PAUSE_ITEMS.len() - 1) % PAUSE_ITEMS.len();
+        }
+        if dn && !p_dn {
+            sel = (sel + 1) % PAUSE_ITEMS.len();
+        }
+        if back && !p_back {
+            return PauseExit::Resume;
+        }
+        if ok && !p_ok {
+            return if sel == 0 {
+                PauseExit::Resume
+            } else {
+                PauseExit::MainMenu
+            };
+        }
+
+        p_up = up;
+        p_dn = dn;
+        p_ok = ok;
+        p_back = back;
+
+        draw_pause_menu(fb, sel);
+        gpu::draw_sync();
+        gpu::vsync();
+        fb.swap();
+    }
+}
+
 const EMPTY_PROJECTED: Projected = Projected {
     sx: 0,
     sy: 0,
@@ -237,6 +393,7 @@ static mut MODEL_SCRATCH: [Projected; MAX_MODEL_VERTS] = [EMPTY_PROJECTED; MAX_M
 static mut WEAPON_CACHE_FRAME: usize = usize::MAX;
 static mut WEAPON_CACHE_RECOIL: i32 = i32::MIN;
 static mut WEAPON_CACHE_VERTS: usize = 0;
+static mut WEAPON_CACHE_SCALE: u16 = 0;
 static mut WEAPON_TRI_CACHE: [TriTexturedGouraud; MAX_WEAPON_CACHE_TRIS] =
     [EMPTY_TRI; MAX_WEAPON_CACHE_TRIS];
 static mut WEAPON_TRI_OTZ: [u8; MAX_WEAPON_CACHE_TRIS] = [0; MAX_WEAPON_CACHE_TRIS];
@@ -244,10 +401,24 @@ static mut WEAPON_TRI_COUNT: usize = 0;
 static mut SUBMODEL_VERT_TOKEN: [u16; MAX_VERTS] = [0; MAX_VERTS];
 static mut SUBMODEL_DRAW_TOKEN: u16 = 1;
 const PVS_LINK_END: u16 = u16::MAX;
+#[derive(Clone, Copy)]
+struct PvsFaceRec {
+    first: u16,
+    count: u16,
+    center: [i16; 3],
+    radius: u16,
+}
+const EMPTY_PVS_FACE_REC: PvsFaceRec = PvsFaceRec {
+    first: 0,
+    count: 0,
+    center: [0; 3],
+    radius: 0,
+};
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut PVS_LEAF_COUNT: usize = 0;
 static mut PVS_FACE_INDEX: [u16; MAX_FACES] = [0; MAX_FACES];
 static mut PVS_FACE_NEXT: [u16; MAX_FACES] = [PVS_LINK_END; MAX_FACES];
+static mut PVS_FACE_REC: [PvsFaceRec; MAX_PVS_FACE_RECS] = [EMPTY_PVS_FACE_REC; MAX_PVS_FACE_RECS];
 static mut PVS_FACE_COUNT: usize = 0;
 static mut PVS_FACE_MARK: [u16; MAX_FACES] = [0; MAX_FACES];
 static mut PVS_FACE_MARK_TOKEN: u16 = 1;
@@ -314,6 +485,10 @@ static mut LOGIC_TARGET: [u16; MAX_LOGIC] = [0; MAX_LOGIC];
 static mut LOGIC_COUNTER: [i16; MAX_LOGIC] = [0; MAX_LOGIC];
 static mut LOGIC_PROP_LINK: [u8; MAX_LOGIC] = [LOGIC_PROP_NONE; MAX_LOGIC];
 static mut LOGIC_EVENTS: [LogicEvent; MAX_LOGIC_EVENTS] = [EMPTY_LOGIC_EVENT; MAX_LOGIC_EVENTS];
+static mut TRACKTRAIN_SUBMODEL: u16 = 0;
+static mut TRACKTRAIN_CMD_ACTIVE: u8 = 0;
+static mut TRACKTRAIN_CMD_USE_TYPE: u8 = map::USE_TOGGLE;
+static mut TRACKTRAIN_CMD_SPEED: u16 = 0;
 static mut LOGIC_PLAYER_POS: [i32; 3] = [0; 3];
 static mut LOGIC_PLAYER_YAW: u16 = 0;
 static mut LOGIC_PLAYER_PITCH: i16 = 0;
@@ -341,6 +516,41 @@ static mut IMPACT_MARKS: [ImpactMark; MAX_IMPACT_MARKS] = [EMPTY_IMPACT_MARK; MA
 static mut IMPACT_MARK_CURSOR: usize = 0;
 static mut CLIP_CV: [render::CVert; 4] = [render::EMPTY_CV; 4]; // near-clip scratch (reused)
 
+// ---- DEBUG: crosshair triangle pick (find the world tri under screen centre) ----
+// Toggle DEBUG_XHAIR. Each frame the nearest world triangle containing the screen
+// centre is recorded into XHAIR + outlined on screen, and its leaf / PVS state is
+// resolved. Press L1 to dump XHAIR + camera state to the guest debug log, so the
+// same triangle can be compared between a frame where it shows and one where it
+// is missing. XHAIR is also peekable in RAM (see captures/hl-psx.map).
+const DEBUG_XHAIR: bool = true;
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct XhairHit {
+    valid: u32,
+    tt: u32,
+    idx: [u32; 3],
+    v: [[i32; 3]; 3],
+    sv: [(i16, i16); 3],
+    leaf: i32,
+    pvs_visible: u32,
+    depth: u32,
+    tex: u32,
+}
+const EMPTY_XHAIR: XhairHit = XhairHit {
+    valid: 0,
+    tt: 0,
+    idx: [0; 3],
+    v: [[0; 3]; 3],
+    sv: [(0, 0); 3],
+    leaf: -1,
+    pvs_visible: 0,
+    depth: u32::MAX,
+    tex: u32::MAX,
+};
+static mut XHAIR: XhairHit = EMPTY_XHAIR;
+static mut XHAIR_DUMP_PREV: bool = false;
+static mut XHAIR_DUMP_LAST: u32 = u32::MAX; // last auto-dumped key (tt, or sentinel)
+
 /// World->view rotation. `yaw` is stored in player-space convention, where
 /// positive yaw turns the forward vector toward +world X. A view matrix is the
 /// inverse of that camera rotation, so negate yaw before building rotY. Pitch is
@@ -362,6 +572,67 @@ fn view_rotation(yaw: u16, pitch: i16) -> Mat3I16 {
 #[inline(always)]
 fn dot12(row: [i16; 3], e: [i32; 3]) -> i32 {
     ((row[0] as i32 * e[0]) + (row[1] as i32 * e[1]) + (row[2] as i32 * e[2])) >> 12
+}
+
+#[inline(always)]
+fn model_local_to_world_q12(raw: u16) -> i32 {
+    if raw == 0 {
+        4096
+    } else {
+        raw as i32
+    }
+}
+
+#[inline(always)]
+fn model_local_scale(raw: u16) -> i32 {
+    (4096 / model_local_to_world_q12(raw)).max(1)
+}
+
+#[inline(always)]
+fn model_local_scale_and_shift(raw: u16) -> (i32, u8) {
+    let s = model_local_scale(raw);
+    let shift = match s {
+        1 => 0,
+        2 => 1,
+        4 => 2,
+        8 => 3,
+        16 => 4,
+        _ => 0xff,
+    };
+    (s, shift)
+}
+
+#[inline(always)]
+fn model_unscale_depth(depth: u32, scale: i32, shift: u8) -> u32 {
+    if shift != 0xff {
+        depth >> shift
+    } else {
+        depth / scale as u32
+    }
+}
+
+#[inline(always)]
+fn canonical_ram_const<T>(p: *const T) -> *const T {
+    #[cfg(target_arch = "mips")]
+    {
+        (((p as usize) & 0x001f_ffff) | 0x8000_0000) as *const T
+    }
+    #[cfg(not(target_arch = "mips"))]
+    {
+        p
+    }
+}
+
+#[inline(always)]
+unsafe fn streamed_map_bytes(len: usize) -> &'static [u8] {
+    let ptr = canonical_ram_const(core::ptr::addr_of!(MAP_BUF).cast::<u8>());
+    unsafe { core::slice::from_raw_parts(ptr, len) }
+}
+
+#[inline(always)]
+unsafe fn streamed_model_bytes(len: usize) -> &'static [u8] {
+    let ptr = canonical_ram_const(core::ptr::addr_of!(MODEL_BUF).cast::<u8>());
+    unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
 #[inline(always)]
@@ -430,6 +701,92 @@ fn dist2_3(a: [i32; 3], b: [i32; 3]) -> i32 {
 #[inline]
 fn seg_len(a: [i32; 3], b: [i32; 3]) -> i32 {
     isqrt(dist2_3(a, b)).max(1)
+}
+
+#[inline]
+fn tram_step_for_speed(speed: i32) -> i32 {
+    if speed <= 0 {
+        0
+    } else {
+        ((speed + 19) / 20).max(1)
+    }
+}
+
+#[inline]
+fn tram_path_pos(m: &Map, seg: usize, seg_dist: i32) -> [i32; 3] {
+    if m.n_way == 0 {
+        return [0, 0, 0];
+    }
+    if seg + 1 >= m.n_way {
+        return m.waypoint(m.n_way - 1);
+    }
+    let a = m.waypoint(seg);
+    let b = m.waypoint(seg + 1);
+    let len = seg_len(a, b);
+    let f = (seg_dist * 4096 / len).clamp(0, 4096);
+    [
+        a[0] + ((b[0] - a[0]) * f >> 12),
+        a[1] + ((b[1] - a[1]) * f >> 12),
+        a[2] + ((b[2] - a[2]) * f >> 12),
+    ]
+}
+
+fn tram_advance(m: &Map, seg: &mut usize, seg_dist: &mut i32, step: i32) -> bool {
+    if step <= 0 || m.n_way < 2 {
+        return false;
+    }
+    let mut rem = step;
+    while rem > 0 && *seg + 1 < m.n_way {
+        let len = seg_len(m.waypoint(*seg), m.waypoint(*seg + 1));
+        if *seg_dist + rem >= len {
+            rem -= len - *seg_dist;
+            *seg += 1;
+            *seg_dist = 0;
+        } else {
+            *seg_dist += rem;
+            rem = 0;
+        }
+    }
+    *seg + 1 < m.n_way
+}
+
+fn tram_apply_command(
+    use_type: u8,
+    requested_speed: i32,
+    active: &mut bool,
+    current_speed: &mut i32,
+) -> bool {
+    match use_type {
+        map::USE_OFF => {
+            *active = false;
+            *current_speed = 0;
+            false
+        }
+        map::USE_ON => {
+            *active = requested_speed > 0;
+            *current_speed = requested_speed.max(0);
+            *active
+        }
+        _ => {
+            if *active {
+                *active = false;
+                *current_speed = 0;
+                false
+            } else {
+                *active = requested_speed > 0;
+                *current_speed = requested_speed.max(0);
+                *active
+            }
+        }
+    }
+}
+
+#[inline]
+fn tram_should_carry_player(player_pos: [i32; 3], train_pos: [i32; 3]) -> bool {
+    let dx = player_pos[0] - train_pos[0];
+    let dz = player_pos[2] - train_pos[2];
+    let dy = player_pos[1] - train_pos[1];
+    dx * dx + dz * dz <= TRAM_CARRY_RADIUS2 && dy.abs() <= TRAM_CARRY_HEIGHT
 }
 
 #[derive(Clone, Copy)]
@@ -537,6 +894,8 @@ const SF_BUTTON_TOUCH_ONLY: u16 = 256;
 const SF_TRIGGER_HURT_TARGET_ONCE: u16 = 1;
 const SF_TRIGGER_HURT_START_OFF: u16 = 2;
 const TRIGGER_HURT_REPEAT_TICKS: u16 = 10;
+const TRAM_CARRY_RADIUS2: i32 = 384 * 384;
+const TRAM_CARRY_HEIGHT: i32 = 160;
 
 #[inline]
 fn time_reached(now: u16, at: u16) -> bool {
@@ -596,6 +955,25 @@ unsafe fn logic_find_by_targetname(m: &Map, nlogic: usize, targetname: u16) -> O
         li += 1;
     }
     None
+}
+
+#[inline]
+unsafe fn logic_queue_tracktrain_command(rec: map::LogicEnt, use_type: u8) {
+    if rec.arg1 == 0 || rec.arg1 != TRACKTRAIN_SUBMODEL {
+        return;
+    }
+    TRACKTRAIN_CMD_ACTIVE = 1;
+    TRACKTRAIN_CMD_USE_TYPE = use_type;
+    TRACKTRAIN_CMD_SPEED = rec.speed;
+}
+
+#[inline]
+unsafe fn logic_take_tracktrain_command() -> Option<(u8, i32)> {
+    if TRACKTRAIN_CMD_ACTIVE == 0 {
+        return None;
+    }
+    TRACKTRAIN_CMD_ACTIVE = 0;
+    Some((TRACKTRAIN_CMD_USE_TYPE, TRACKTRAIN_CMD_SPEED as i32))
 }
 
 unsafe fn logic_remove_entity(li: usize, rec: map::LogicEnt, nents: usize) {
@@ -953,6 +1331,9 @@ unsafe fn logic_use_entity(
                 };
             }
         },
+        map::LOGIC_FUNC_TRACKTRAIN => {
+            logic_queue_tracktrain_command(rec, use_type);
+        }
         map::LOGIC_TRIGGER_CHANGELEVEL => {
             logic_sub_use_targets(m, nlogic, nents, li, rec, now, use_type, depth + 1);
             logic_request_changelevel(m, nlogic, rec);
@@ -1175,7 +1556,11 @@ unsafe fn logic_find_matching_prop(kind: u8, origin: [i32; 3]) -> u8 {
     let nprops = PROP_COUNT.min(MAX_PROPS);
     let mut pi = 0usize;
     while pi < nprops {
-        if PROP_KIND[pi] == prop_kind && PROP_POS[pi] == origin && PROP_LOGIC_LINK[pi] == u16::MAX {
+        let pos = PROP_POS[pi];
+        let near_origin = (pos[0] - origin[0]).abs() <= PROP_LINK_MATCH_XZ_EPS
+            && (pos[1] - origin[1]).abs() <= PROP_LINK_MATCH_Y_EPS
+            && (pos[2] - origin[2]).abs() <= PROP_LINK_MATCH_XZ_EPS;
+        if PROP_KIND[pi] == prop_kind && near_origin && PROP_LOGIC_LINK[pi] == u16::MAX {
             return pi as u8;
         }
         pi += 1;
@@ -1184,6 +1569,10 @@ unsafe fn logic_find_matching_prop(kind: u8, origin: [i32; 3]) -> u8 {
 }
 
 unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
+    TRACKTRAIN_SUBMODEL = m.tram_submodel.min(u16::MAX as usize) as u16;
+    TRACKTRAIN_CMD_ACTIVE = 0;
+    TRACKTRAIN_CMD_USE_TYPE = map::USE_TOGGLE;
+    TRACKTRAIN_CMD_SPEED = 0;
     let mut ei = 0usize;
     while ei < MAX_ENTS {
         ENT_ACTIVE[ei] = if ei < nents { 1 } else { 0 };
@@ -1223,12 +1612,8 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                 }
             }
             map::LOGIC_TRIGGER_AUTO => {
-                logic_enqueue_event(
-                    now.wrapping_add(1),
-                    rec.target,
-                    rec.killtarget,
-                    rec.use_type,
-                );
+                let at = now.wrapping_add(rec.delay_ticks.max(1));
+                logic_enqueue_event(at, rec.target, rec.killtarget, rec.use_type);
             }
             map::LOGIC_ITEM_SUIT | map::LOGIC_ITEM_BATTERY => {
                 let pi = logic_find_matching_prop(rec.kind, rec.origin);
@@ -1242,6 +1627,13 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                     LOGIC_STATE[li] = LOGIC_STATE_TOP;
                 }
             }
+            map::LOGIC_FUNC_TRACKTRAIN => {
+                if rec.arg1 != 0 && rec.arg1 == TRACKTRAIN_SUBMODEL && rec.arg0 > 0 {
+                    TRACKTRAIN_CMD_ACTIVE = 1;
+                    TRACKTRAIN_CMD_USE_TYPE = map::USE_ON;
+                    TRACKTRAIN_CMD_SPEED = rec.arg0;
+                }
+            }
             _ => {}
         }
         li += 1;
@@ -1253,6 +1645,110 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
 #[inline]
 fn culled(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
     (b.0 - a.0) * (c.1 - a.1) - (c.0 - a.0) * (b.1 - a.1) <= 0
+}
+
+/// DEBUG: is screen point `p` inside triangle (a,b,c)? (winding-agnostic)
+fn point_in_tri(p: (i32, i32), a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
+    let s = |u: (i32, i32), v: (i32, i32)| (v.0 - u.0) * (p.1 - u.1) - (v.1 - u.1) * (p.0 - u.0);
+    let d1 = s(a, b);
+    let d2 = s(b, c);
+    let d3 = s(c, a);
+    let neg = d1 < 0 || d2 < 0 || d3 < 0;
+    let pos = d1 > 0 || d2 > 0 || d3 > 0;
+    !(neg && pos)
+}
+
+/// DEBUG: record world tri `tt` if it contains the screen centre and is nearest.
+#[inline]
+unsafe fn xhair_consider(m: &Map, tt: usize, pa: Projected, pb: Projected, pc: Projected) {
+    if !DEBUG_XHAIR {
+        return;
+    }
+    // Skip only near-plane crossers (garbage projection); clamped/off-screen-wide
+    // tris keep valid screen coords, so they're still pickable.
+    if pa.sz < NEAR || pb.sz < NEAR || pc.sz < NEAR {
+        return;
+    }
+    let depth = (pa.sz as u32 + pb.sz as u32 + pc.sz as u32) / 3;
+    if depth >= XHAIR.depth {
+        return;
+    }
+    let a = (pa.sx as i32, pa.sy as i32);
+    let b = (pb.sx as i32, pb.sy as i32);
+    let c = (pc.sx as i32, pc.sy as i32);
+    // Skip degenerate (zero/sub-pixel screen area) tris: point_in_tri treats them
+    // as containing every point, so they'd spuriously win the pick (and there are
+    // ~1000 zero-area cooked tris). Only real surfaces should be picked.
+    let cross = (b.0 - a.0) * (c.1 - a.1) - (c.0 - a.0) * (b.1 - a.1);
+    if cross.abs() < 4 {
+        return;
+    }
+    if point_in_tri((render::OFX, render::OFY), a, b, c) {
+        let idx = m.tri_idx(tt);
+        XHAIR.valid = 1;
+        XHAIR.tt = tt as u32;
+        XHAIR.idx = [idx[0] as u32, idx[1] as u32, idx[2] as u32];
+        XHAIR.sv = [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)];
+        XHAIR.depth = depth;
+        XHAIR.tex = m.tri_tex(tt) as u32;
+    }
+}
+
+/// DEBUG: minimal no_std i32 -> decimal in a stack buffer.
+fn fmt_i32(v: i32, buf: &mut [u8; 12]) -> &str {
+    let mut i = buf.len();
+    let neg = v < 0;
+    let mut u = (v as i64).unsigned_abs();
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (u % 10) as u8;
+        u /= 10;
+        if u == 0 {
+            break;
+        }
+    }
+    if neg && i > 0 {
+        i -= 1;
+        buf[i] = b'-';
+    }
+    core::str::from_utf8(&buf[i..]).unwrap_or("?")
+}
+
+/// DEBUG: append "label<value> " into `buf` at `*n` (saturating).
+fn append_kv(buf: &mut [u8], n: &mut usize, label: &str, v: i32) {
+    let mut nb = [0u8; 12];
+    for &c in label.as_bytes().iter().chain(fmt_i32(v, &mut nb).as_bytes()) {
+        if *n < buf.len() {
+            buf[*n] = c;
+            *n += 1;
+        }
+    }
+    if *n < buf.len() {
+        buf[*n] = b' ';
+        *n += 1;
+    }
+}
+
+/// DEBUG: one compact line per dump -> PSoXide's Play debug terminal. Two lines
+/// (the showing frame and the missing frame) are easy to eyeball side by side.
+unsafe fn xhair_dump(eye: [i32; 3], yaw: u16, pitch: i16, cam_leaf: i32) {
+    let mut buf = [0u8; 160];
+    let mut n = 0usize;
+    append_kv(&mut buf, &mut n, "XH v=", XHAIR.valid as i32);
+    append_kv(&mut buf, &mut n, "tri=", XHAIR.tt as i32);
+    append_kv(&mut buf, &mut n, "tex=", XHAIR.tex as i32);
+    append_kv(&mut buf, &mut n, "tleaf=", XHAIR.leaf);
+    append_kv(&mut buf, &mut n, "pvs=", XHAIR.pvs_visible as i32);
+    append_kv(&mut buf, &mut n, "| camleaf=", cam_leaf);
+    append_kv(&mut buf, &mut n, "x=", eye[0]);
+    append_kv(&mut buf, &mut n, "y=", eye[1]);
+    append_kv(&mut buf, &mut n, "z=", eye[2]);
+    append_kv(&mut buf, &mut n, "yaw=", yaw as i32);
+    append_kv(&mut buf, &mut n, "pit=", pitch as i32);
+    // Guest debug-log port: the PSoXide emulator frontend now eprintln's these to
+    // the host console (drain_debug_logs), so they show in the terminal in the
+    // plain library frontend too, not just the editor's Play debug terminal.
+    telemetry::console(core::str::from_utf8(&buf[..n]).unwrap_or("?"));
 }
 
 #[inline]
@@ -1288,6 +1784,17 @@ fn prop_target(ty: u8, org: [i32; 3]) -> [i32; 3] {
         PROP_TARGET_HEIGHT
     };
     [org[0], org[1] + h, org[2]]
+}
+
+#[inline]
+fn prop_occlusion_visible(m: &Map, eye: [i32; 3], ty: u8, org: [i32; 3]) -> bool {
+    if !MODEL_OCCLUSION_CULL {
+        return true;
+    }
+    if phys::line_clear_world(m, eye, prop_target(ty, org)) {
+        return true;
+    }
+    phys::line_clear_world(m, eye, [org[0], org[1] + (PROP_TARGET_HEIGHT / 2), org[2]])
 }
 
 fn prop_clip(state: u8, hit_flash: bool) -> usize {
@@ -1376,7 +1883,14 @@ fn actor_line_clear(m: &Map, movers: &[phys::Mover], from: [i32; 3], to: [i32; 3
     phys::line_clear_world(m, from, to) && phys::line_clear_movers(m, movers, from, to)
 }
 
-unsafe fn prop_set_pos(m: &Map, pi: usize, pos: [i32; 3]) {
+#[inline]
+fn prop_grounded_pos(m: &Map, movers: &[phys::Mover], pos: [i32; 3]) -> [i32; 3] {
+    phys::snap_to_ground(m, movers, pos, PROP_GROUND_PROBE_UP, PROP_GROUND_PROBE_DOWN)
+        .unwrap_or(pos)
+}
+
+unsafe fn prop_set_pos(m: &Map, movers: &[phys::Mover], pi: usize, pos: [i32; 3]) {
+    let pos = prop_grounded_pos(m, movers, pos);
     PROP_POS[pi] = pos;
     let leaf = camera_leaf(m, pos);
     PROP_LEAF[pi] = if leaf > 0 && leaf <= i16::MAX as i32 {
@@ -1424,10 +1938,14 @@ unsafe fn prop_try_step(
         if d2 > 0 {
             let len = isqrt(d2).max(1);
             let step = speed.min(len);
-            let np = [pos[0] + sx * step / len, pos[1], pos[2] + sz * step / len];
+            let np = prop_grounded_pos(
+                m,
+                movers,
+                [pos[0] + sx * step / len, pos[1], pos[2] + sz * step / len],
+            );
             let to = prop_target(ty, np);
             if actor_line_clear(m, movers, from, to) {
-                prop_set_pos(m, pi, np);
+                prop_set_pos(m, movers, pi, np);
                 return true;
             }
         }
@@ -1994,11 +2512,17 @@ unsafe fn init_prop_state(m: &Map) {
     while pi < nprops {
         let (ty, org, yaw, leaf) = m.prop(pi);
         let kind = ty as u8;
+        let org = prop_grounded_pos(m, &[], org);
         PROP_ACTIVE[pi] = 1;
         PROP_KIND[pi] = kind;
         PROP_POS[pi] = org;
         PROP_YAW[pi] = yaw as u16;
-        PROP_LEAF[pi] = leaf;
+        let grounded_leaf = camera_leaf(m, org);
+        PROP_LEAF[pi] = if grounded_leaf > 0 && grounded_leaf <= i16::MAX as i32 {
+            grounded_leaf as i16
+        } else {
+            leaf
+        };
         PROP_HEALTH[pi] = prop_start_health(kind);
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_COUNT += 1;
@@ -2372,43 +2896,24 @@ unsafe fn fire_glock(
 }
 
 #[inline]
-fn abs_dot12(row: [i16; 3], ext: [i32; 3]) -> i32 {
-    let ax = if row[0] < 0 {
-        -(row[0] as i32)
-    } else {
-        row[0] as i32
-    };
-    let ay = if row[1] < 0 {
-        -(row[1] as i32)
-    } else {
-        row[1] as i32
-    };
-    let az = if row[2] < 0 {
-        -(row[2] as i32)
-    } else {
-        row[2] as i32
-    };
-    ((ax * ext[0]) + (ay * ext[1]) + (az * ext[2])) >> 12
+fn face_bounds_visible(center: [i32; 3], ext: [i32; 3], rot: &Mat3I16, base_t: [i32; 3]) -> bool {
+    // Conservative sphere around the cooked face AABB. It is looser than the
+    // full AABB test but much cheaper across large PVS face lists.
+    sphere_visible(center, ext[0] + ext[1] + ext[2], rot, base_t)
 }
 
 #[inline]
-fn box_visible(center: [i32; 3], ext: [i32; 3], rot: &Mat3I16, base_t: [i32; 3]) -> bool {
-    let vz = dot12(rot.m[2], center) + base_t[2];
-    let ez = abs_dot12(rot.m[2], ext);
-    if vz + ez < render::NEAR_Z || vz - ez > FAR_VIEW {
-        return false;
-    }
-    let zmax = (vz + ez).max(render::NEAR_Z);
-
-    let vx = dot12(rot.m[0], center) + base_t[0];
-    let ex = abs_dot12(rot.m[0], ext);
-    if (vx - ex) * 2 > zmax * 2 + WORLD_BOUNDS_PAD || (-vx - ex) * 2 > zmax * 2 + WORLD_BOUNDS_PAD {
-        return false;
-    }
-
-    let vy = dot12(rot.m[1], center) + base_t[1];
-    let ey = abs_dot12(rot.m[1], ext);
-    (vy - ey) * 4 <= zmax * 3 + WORLD_BOUNDS_PAD && (-vy - ey) * 4 <= zmax * 3 + WORLD_BOUNDS_PAD
+fn cached_face_visible(rec: PvsFaceRec, rot: &Mat3I16, base_t: [i32; 3]) -> bool {
+    sphere_visible(
+        [
+            rec.center[0] as i32,
+            rec.center[1] as i32,
+            rec.center[2] as i32,
+        ],
+        rec.radius as i32,
+        rot,
+        base_t,
+    )
 }
 
 #[inline]
@@ -2433,20 +2938,21 @@ fn farthest3_i32(a: i32, b: i32, c: i32) -> i32 {
 
 #[inline]
 fn world_otz_from_gte3(a: &Projected, b: &Projected, c: &Projected) -> usize {
-    // PSoXide's renderer has a farthest-depth policy for depth-spanning world
-    // surfaces. Average depth lets long sloped BSP triangles draw over nearer
-    // geometry in a painter's-algorithm OT.
-    clamp_otz((farthest3_u16(a.sz, b.sz, c.sz) >> 6) as usize)
+    // Farthest-depth policy for depth-spanning world surfaces (lets long sloped
+    // BSP triangles draw behind nearer geometry in a painter's-algorithm OT).
+    // OT_SHIFT keeps the bucket size small so geometry spreads across the whole
+    // table -- sz tops out ~sz<FAR_VIEW, so `>> OT_SHIFT` must stay < OT_LEN.
+    clamp_otz((farthest3_u16(a.sz, b.sz, c.sz) >> OT_SHIFT) as usize)
 }
 
 #[inline]
 fn world_otz_from_gte4(a: &Projected, b: &Projected, c: &Projected, d: &Projected) -> usize {
-    clamp_otz((farthest4_u16(a.sz, b.sz, c.sz, d.sz) >> 6) as usize)
+    clamp_otz((farthest4_u16(a.sz, b.sz, c.sz, d.sz) >> OT_SHIFT) as usize)
 }
 
 #[inline]
 fn world_otz_from_view3(a: i32, b: i32, c: i32) -> usize {
-    clamp_otz((farthest3_i32(a, b, c) >> 4) as usize)
+    clamp_otz((farthest3_i32(a, b, c) >> OT_SHIFT) as usize)
 }
 
 fn camera_leaf(m: &Map, eye: [i32; 3]) -> i32 {
@@ -2468,6 +2974,56 @@ fn camera_leaf(m: &Map, eye: [i32; 3]) -> i32 {
         }
         idx = next;
     }
+}
+
+#[inline]
+fn valid_pvs_leaf(m: &Map, leaf: i32) -> bool {
+    leaf > 0 && (leaf as usize) < m.n_leaves
+}
+
+fn recover_camera_leaf(m: &Map, eye: [i32; 3], player_pos: [i32; 3], train_hint: [i32; 3]) -> i32 {
+    let leaf = camera_leaf(m, eye);
+    if valid_pvs_leaf(m, leaf) {
+        return leaf;
+    }
+
+    const CANDIDATE_OFFSETS: [[i32; 3]; 10] = [
+        [0, -VIEW_HEIGHT + 8, 0],
+        [0, -32, 0],
+        [0, 32, 0],
+        [48, 0, 0],
+        [-48, 0, 0],
+        [0, 0, 48],
+        [0, 0, -48],
+        [96, -16, 0],
+        [-96, -16, 0],
+        [0, -16, 96],
+    ];
+    let mut i = 0usize;
+    while i < CANDIDATE_OFFSETS.len() {
+        let o = CANDIDATE_OFFSETS[i];
+        let cand = [eye[0] + o[0], eye[1] + o[1], eye[2] + o[2]];
+        let cand_leaf = camera_leaf(m, cand);
+        if valid_pvs_leaf(m, cand_leaf) {
+            return cand_leaf;
+        }
+        i += 1;
+    }
+
+    let player_leaf = camera_leaf(m, [player_pos[0], player_pos[1] + 8, player_pos[2]]);
+    if valid_pvs_leaf(m, player_leaf) {
+        return player_leaf;
+    }
+
+    let train_leaf = camera_leaf(
+        m,
+        [train_hint[0], train_hint[1] + VIEW_HEIGHT, train_hint[2]],
+    );
+    if valid_pvs_leaf(m, train_leaf) {
+        return train_leaf;
+    }
+
+    leaf
 }
 
 fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
@@ -2568,7 +3124,11 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
             }
             PVS_FACE_MARK[face] = mark_token;
             let (first, cnt) = m.face_tris(face);
-            if cnt == 0 || first > u16::MAX as usize || PVS_FACE_COUNT >= MAX_FACES {
+            if cnt == 0
+                || first > u16::MAX as usize
+                || cnt > u16::MAX as usize
+                || PVS_FACE_COUNT >= MAX_FACES
+            {
                 continue;
             }
 
@@ -2588,6 +3148,19 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
 
             let entry = PVS_FACE_COUNT;
             PVS_FACE_INDEX[entry] = face as u16;
+            if entry < MAX_PVS_FACE_RECS {
+                let (bc, be) = m.face_bounds(face);
+                let radius = be[0]
+                    .saturating_add(be[1])
+                    .saturating_add(be[2])
+                    .min(u16::MAX as i32) as u16;
+                PVS_FACE_REC[entry] = PvsFaceRec {
+                    first: first as u16,
+                    count: cnt as u16,
+                    center: [bc[0] as i16, bc[1] as i16, bc[2] as i16],
+                    radius,
+                };
+            }
             PVS_TRI_REF_COUNT += cnt;
             PVS_FACE_NEXT[entry] = PVS_GROUP_FIRST[group];
             PVS_GROUP_FIRST[group] = entry as u16;
@@ -2957,7 +3530,6 @@ unsafe fn try_emit_tri_pair_quad_values(
     {
         return true;
     }
-
     let prim = QuadTexturedGouraud::with_packet_material_packed_uv_words(
         [
             (pb.sx, pb.sy),
@@ -2977,11 +3549,11 @@ unsafe fn try_emit_tri_pair_quad_values(
     let Some(packet) = packets.push(prim) else {
         return false;
     };
-    OT.add(
-        world_otz_from_gte4(&pa, &pb, &pc, &pd),
-        packet,
-        QuadTexturedGouraud::WORDS,
-    );
+    let mut otz = world_otz_from_gte4(&pa, &pb, &pc, &pd);
+    if slot.backdrop {
+        otz = clamp_otz(otz + BACKDROP_OTZ_BIAS);
+    }
+    OT.add(otz, packet, QuadTexturedGouraud::WORDS);
     *nq += 1;
     true
 }
@@ -2990,6 +3562,7 @@ unsafe fn try_emit_tri_pair_quad_values(
 struct WorldCounters {
     cells_considered: u32,
     cells_drawn: u32,
+    cells_culled: u32,
     surfaces_considered: u32,
     emit_calls: u32,
 }
@@ -2999,40 +3572,135 @@ impl WorldCounters {
         WorldCounters {
             cells_considered: 0,
             cells_drawn: 0,
+            cells_culled: 0,
             surfaces_considered: 0,
             emit_calls: 0,
         }
     }
 }
 
-unsafe fn emit_world_render_tri(
+/// Decode-after-cull fast path shared by the world and submodel triangle loops.
+///
+/// The caller has already projected the three verts (`pa`/`pb`/`pc`). Read only
+/// the indices to get here; the heavier per-triangle data (tex, uv, per-vertex
+/// rgb -- ~9 unaligned u16 reads + 3 rgb555 unpacks) is decoded only for
+/// survivors, so the triangles that back-face/off-screen cull pay almost
+/// nothing. Returns true when the triangle is fully handled (emitted or culled);
+/// false means it straddles the near plane and the caller must run the full
+/// decode + view-space clip path.
+#[inline]
+unsafe fn emit_proj_fast(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
-    tri: map::RenderTri,
+    tt: usize,
+    pa: Projected,
+    pb: Projected,
+    pc: Projected,
+    np: &mut usize,
+) -> bool {
+    let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
+    if pa.sz >= NEAR
+        && pb.sz >= NEAR
+        && pc.sz >= NEAR
+        && !clamped(&pa)
+        && !clamped(&pb)
+        && !clamped(&pc)
+    {
+        let (sa, sb, sc) = (
+            (pa.sx as i32, pa.sy as i32),
+            (pb.sx as i32, pb.sy as i32),
+            (pc.sx as i32, pc.sy as i32),
+        );
+        let tex = m.tri_tex(tt);
+        if CULL && culled(sa, sb, sc) {
+            return true;
+        }
+        if tex >= m.n_texs || tex >= MAX_TEX_SLOTS {
+            return true;
+        }
+        let slot = TEX_SLOTS[tex];
+        if !slot.valid {
+            return true;
+        }
+        let mut otz = world_otz_from_gte3(&pa, &pb, &pc);
+        if slot.backdrop {
+            otz = clamp_otz(otz + BACKDROP_OTZ_BIAS);
+        }
+        push_tri_uv_words(
+            packets,
+            np,
+            [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
+            m.tri_uv_words(tt),
+            m.tri_rgb(tt),
+            slot.packet,
+            otz,
+        );
+        return true;
+    }
+    // All-behind-camera counts as handled (nothing to draw); otherwise straddler.
+    pa.sz == 0 && pb.sz == 0 && pc.sz == 0
+}
+
+/// Emit world triangle `tt` from the per-frame projected-vertex cache.
+unsafe fn emit_world_tri(
+    packets: &mut PrimitivePacketArena<'_>,
+    m: &Map,
+    tt: usize,
     nv: usize,
     frame: u16,
     np: &mut usize,
     counts: &mut WorldCounters,
 ) {
-    let (a, b, c) = (
-        tri.idx[0] as usize,
-        tri.idx[1] as usize,
-        tri.idx[2] as usize,
-    );
-    if a < nv && b < nv && c < nv {
-        proj_vert(m, a, frame);
-        proj_vert(m, b, frame);
-        proj_vert(m, c, frame);
-        counts.emit_calls += 1;
-        emit_projected(
-            packets,
-            m,
-            tri,
-            [SCRATCH[a], SCRATCH[b], SCRATCH[c]],
-            nv,
-            np,
-        );
+    if tt >= m.n_tris {
+        return;
     }
+    let idx = m.tri_idx(tt);
+    let (a, b, c) = (idx[0] as usize, idx[1] as usize, idx[2] as usize);
+    if a >= nv || b >= nv || c >= nv {
+        return;
+    }
+    proj_vert(m, a, frame);
+    proj_vert(m, b, frame);
+    proj_vert(m, c, frame);
+    counts.emit_calls += 1;
+    let (pa, pb, pc) = (SCRATCH[a], SCRATCH[b], SCRATCH[c]);
+    xhair_consider(m, tt, pa, pb, pc); // pick covers fast + soft-clip paths
+    if emit_proj_fast(packets, m, tt, pa, pb, pc, np) {
+        return;
+    }
+    // Straddler/offscreen: full decode + view-space near-clip path.
+    let tri = m.render_tri(tt, cached_world_uv_words(m, tt));
+    emit_projected(packets, m, tri, [pa, pb, pc], nv, np);
+}
+
+/// Emit submodel triangle `tt` (brush entity / tram), decode-after-cull, using
+/// the submodel-token vertex cache (the GTE translation is the entity offset).
+unsafe fn emit_submodel_tri(
+    packets: &mut PrimitivePacketArena<'_>,
+    m: &Map,
+    tt: usize,
+    nv: usize,
+    token: u16,
+    np: &mut usize,
+) {
+    if tt >= m.n_tris {
+        return;
+    }
+    let idx = m.tri_idx(tt);
+    let (a, b, c) = (idx[0] as usize, idx[1] as usize, idx[2] as usize);
+    if a >= nv || b >= nv || c >= nv {
+        return;
+    }
+    proj_submodel_vert(m, a, token);
+    proj_submodel_vert(m, b, token);
+    proj_submodel_vert(m, c, token);
+    let (pa, pb, pc) = (SCRATCH[a], SCRATCH[b], SCRATCH[c]);
+    xhair_consider(m, tt, pa, pb, pc); // pick covers fast + soft-clip paths
+    if emit_proj_fast(packets, m, tt, pa, pb, pc, np) {
+        return;
+    }
+    let tri = m.render_tri(tt, cached_world_uv_words(m, tt));
+    emit_projected(packets, m, tri, [pa, pb, pc], nv, np);
 }
 
 unsafe fn emit_world_face_tris(
@@ -3046,26 +3714,24 @@ unsafe fn emit_world_face_tris(
     nq: &mut usize,
     counts: &mut WorldCounters,
 ) {
-    if cnt == 2 && first + 1 < m.n_tris {
-        let t0 = m.render_tri(first, cached_world_uv_words(m, first));
-        let t1 = m.render_tri(first + 1, cached_world_uv_words(m, first + 1));
-        if WORLD_QUAD_PAIRING && try_emit_tri_pair_quad_values(packets, m, t0, t1, nv, frame, nq) {
-            counts.emit_calls += 2;
-            return;
-        }
-        emit_world_render_tri(packets, m, t0, nv, frame, np, counts);
-        emit_world_render_tri(packets, m, t1, nv, frame, np, counts);
-        return;
-    }
+    // The cook fans every face as (anchor, V[k+1], V[k]), so any two consecutive
+    // triangles share the anchor edge and form a planar convex quad. Pair them
+    // into one PS1 quad (POLY_GT4) -- halving prim count, decode, and OT inserts
+    // on the dominant world path -- and fall back to a lean single triangle when
+    // a pair straddles the near plane / off-screen edge.
     let end = first + cnt;
     let mut tt = first;
     while tt < end {
-        if tt >= m.n_tris {
-            tt += 1;
-            continue;
+        if WORLD_QUAD_PAIRING && tt + 1 < end && tt + 1 < m.n_tris {
+            let t0 = m.render_tri(tt, cached_world_uv_words(m, tt));
+            let t1 = m.render_tri(tt + 1, cached_world_uv_words(m, tt + 1));
+            if try_emit_tri_pair_quad_values(packets, m, t0, t1, nv, frame, nq) {
+                counts.emit_calls += 2;
+                tt += 2;
+                continue;
+            }
         }
-        let tri = m.render_tri(tt, cached_world_uv_words(m, tt));
-        emit_world_render_tri(packets, m, tri, nv, frame, np, counts);
+        emit_world_tri(packets, m, tt, nv, frame, np, counts);
         tt += 1;
     }
 }
@@ -3099,7 +3765,7 @@ unsafe fn emit_world_face(
         return;
     }
     let (bc, be) = m.face_bounds(face);
-    if WORLD_BOUNDS_CULL && !box_visible(bc, be, rot, base_t) {
+    if WORLD_BOUNDS_CULL && !face_bounds_visible(bc, be, rot, base_t) {
         return;
     }
     emit_world_face_tris(packets, m, first, cnt, nv, frame, np, nq, counts);
@@ -3119,22 +3785,48 @@ unsafe fn draw_model(
     eye: [i32; 3],
     rot: &Mat3I16,
     np: &mut usize,
-) {
-    // GTE rotation = view ∘ model-yaw; translation places the origin at `pos`.
+) -> u32 {
+    // OoT/Crash vertex-precision trick. Vertices are baked at `s`x (cook), so
+    // keep the rotation matrix FULL precision and inflate the view-space
+    // translation by `s` instead of folding the 1/s down-scale into the matrix.
+    // The whole model is then `s`x in view space; the perspective divide
+    // (screen = H·x/z) cancels the uniform `s`, but the vertices keep their
+    // sub-unit resolution through the divide -> no coarse vertex grid. (Folding
+    // 1/s into the matrix -- the old path -- cancels ×s against ÷s BEFORE the
+    // GTE's >>12, collapsing right back to a 1-unit grid: no gain at any s.)
+    // ponytail: ceiling ~16x -- inflated view-Z fills SZ3's u16 (clips past
+    // ~16383 world units) and IR1/IR3's i16; fine for s=4 at model range.
+    let (s, scale_shift) = model_local_scale_and_shift(md.local_to_world_q12());
     let mr = rot.mul(&Mat3I16::rotate_y((yaw >> 4) as u16));
     scene::load_rotation(&mr);
     let es = [eye[0] - pos[0], eye[1] - pos[1], eye[2] - pos[2]];
+    // Translation uses the view rotation only (model yaw spins verts about the
+    // origin, not the origin itself); scale it into the same `s`x view space.
     let et = [
-        -dot12(rot.m[0], es),
-        -dot12(rot.m[1], es),
-        -dot12(rot.m[2], es),
+        -dot12(rot.m[0], es) * s,
+        -dot12(rot.m[1], es) * s,
+        -dot12(rot.m[2], es) * s,
     ];
     scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+    let near_s = (NEAR as i32 * s) as u16;
     let nv = md.n_verts.min(MAX_MODEL_VERTS);
     let verts = md.frame(frame);
-    for i in 0..nv {
-        MODEL_SCRATCH[i] = scene::project_vertex_scheduled(verts.vert(i));
+    telemetry::stage_begin(telemetry::stage::TEXTURED_MODEL_PROJECT);
+    let mut i = 0usize;
+    while i + 2 < nv {
+        let projected =
+            scene::project_triangle_scheduled(verts.vert(i), verts.vert(i + 1), verts.vert(i + 2));
+        MODEL_SCRATCH[i] = projected[0];
+        MODEL_SCRATCH[i + 1] = projected[1];
+        MODEL_SCRATCH[i + 2] = projected[2];
+        i += 3;
     }
+    while i < nv {
+        MODEL_SCRATCH[i] = scene::project_vertex_scheduled(verts.vert(i));
+        i += 1;
+    }
+    telemetry::stage_end(telemetry::stage::TEXTURED_MODEL_PROJECT);
+    telemetry::stage_begin(telemetry::stage::TEXTURED_MODEL_FACES);
     let nfaces = face_count.min(md.n_tris);
     for t in 0..nfaces {
         let render_face = *faces.add(t);
@@ -3147,7 +3839,7 @@ unsafe fn draw_model(
             continue;
         }
         let (pa, pb, pc) = (MODEL_SCRATCH[a], MODEL_SCRATCH[b], MODEL_SCRATCH[c]);
-        if pa.sz < NEAR || pb.sz < NEAR || pc.sz < NEAR {
+        if pa.sz < near_s || pb.sz < near_s || pc.sz < near_s {
             continue;
         }
         if MODEL_CULL
@@ -3163,7 +3855,13 @@ unsafe fn draw_model(
         if !slot.valid {
             continue;
         }
-        let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
+        // Deflate sz by `s` back to 1x world depth so models sort correctly in
+        // the shared OT against the (un-inflated) world geometry.
+        let avgz = model_unscale_depth(
+            ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3,
+            s,
+            scale_shift,
+        );
         push_tri_uv_words(
             packets,
             np,
@@ -3174,6 +3872,8 @@ unsafe fn draw_model(
             clamp_otz((avgz >> 6) as usize),
         );
     }
+    telemetry::stage_end(telemetry::stage::TEXTURED_MODEL_FACES);
+    nv as u32
 }
 
 // First-person viewmodel transform. GoldSrc attaches the model to the camera:
@@ -3196,14 +3896,20 @@ const VM_FRAME: usize = 0; // authored idle pose
 const SHOW_VIEWMODEL: bool = true;
 const ANIM_DIV: usize = 4; // game-frames per baked animation frame
 
-/// Build the viewmodel's GTE matrix: authored HL viewmodel axes, scale baked in.
+/// Build the viewmodel's GTE matrix: authored HL viewmodel axes plus the
+/// first-person fit scale. The model-local precision scale is kept out of the
+/// matrix and applied to translation/depth, matching the world-model path.
 fn viewmodel_rot() -> Mat3I16 {
-    let r = VM_BASE;
-    let mut m = r;
-    for i in 0..3 {
-        for j in 0..3 {
-            m.m[i][j] = (r.m[i][j] as i32 * VM_SCALE) as i16;
+    let mut m = VM_BASE;
+    let mut r = 0;
+    while r < 3 {
+        let mut c = 0;
+        while c < 3 {
+            m.m[r][c] =
+                (m.m[r][c] as i32 * VM_SCALE).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+            c += 1;
         }
+        r += 1;
     }
     m
 }
@@ -3258,21 +3964,42 @@ unsafe fn draw_viewmodel(
     np: &mut usize,
 ) {
     let nv = md.n_verts.min(MAX_MODEL_VERTS);
-    if WEAPON_CACHE_FRAME != frame || WEAPON_CACHE_RECOIL != recoil_y || WEAPON_CACHE_VERTS != nv {
+    let local_to_world = md.local_to_world_q12();
+    let (s, scale_shift) = model_local_scale_and_shift(local_to_world);
+    if WEAPON_CACHE_FRAME != frame
+        || WEAPON_CACHE_RECOIL != recoil_y
+        || WEAPON_CACHE_VERTS != nv
+        || WEAPON_CACHE_SCALE != local_to_world
+    {
         let r = viewmodel_rot();
         scene::load_rotation(&r);
         scene::load_translation(Vec3I32::new(
-            VM_VIEW_SHIFT[0],
-            VM_VIEW_SHIFT[1] + recoil_y,
-            VM_VIEW_SHIFT[2],
+            VM_VIEW_SHIFT[0] * s,
+            (VM_VIEW_SHIFT[1] + recoil_y) * s,
+            VM_VIEW_SHIFT[2] * s,
         ));
+        let near_s = (NEAR as i32 * s) as u16;
         let verts = md.frame(frame);
-        for i in 0..nv {
+        let mut i = 0usize;
+        while i + 2 < nv {
+            let projected = scene::project_triangle_scheduled(
+                verts.vert(i),
+                verts.vert(i + 1),
+                verts.vert(i + 2),
+            );
+            MODEL_SCRATCH[i] = projected[0];
+            MODEL_SCRATCH[i + 1] = projected[1];
+            MODEL_SCRATCH[i + 2] = projected[2];
+            i += 3;
+        }
+        while i < nv {
             MODEL_SCRATCH[i] = scene::project_vertex_scheduled(verts.vert(i));
+            i += 1;
         }
         WEAPON_CACHE_FRAME = frame;
         WEAPON_CACHE_RECOIL = recoil_y;
         WEAPON_CACHE_VERTS = nv;
+        WEAPON_CACHE_SCALE = local_to_world;
 
         WEAPON_TRI_COUNT = 0;
         // HMDL keeps texture groups in source order (sleeve/glove before gun).
@@ -3297,7 +4024,7 @@ unsafe fn draw_viewmodel(
                 continue;
             }
             let (pa, pb, pc) = (MODEL_SCRATCH[a], MODEL_SCRATCH[b], MODEL_SCRATCH[c]);
-            if pa.sz < NEAR || pb.sz < NEAR || pc.sz < NEAR {
+            if pa.sz < near_s || pb.sz < near_s || pc.sz < near_s {
                 continue;
             }
             if VM_CULL && tex_id != VM_TWO_SIDED_TEX {
@@ -3307,7 +4034,11 @@ unsafe fn draw_viewmodel(
                     continue;
                 }
             }
-            let avgz = ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3;
+            let avgz = model_unscale_depth(
+                ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3,
+                s,
+                scale_shift,
+            );
             WEAPON_TRI_CACHE[WEAPON_TRI_COUNT] =
                 TriTexturedGouraud::with_packet_material_packed_uv_words(
                     [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
@@ -3427,7 +4158,7 @@ fn stream_model_texture_chunk(
         return None;
     }
     account_streamed_chunk(len, stream_chunks, stream_bytes, stream_sectors);
-    let bytes = unsafe { core::slice::from_raw_parts(MODEL_BUF.as_ptr() as *const u8, len) };
+    let bytes = unsafe { streamed_model_bytes(len) };
     telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
     let uploaded = unsafe { vram::upload_tex_chunk_append_raw(bytes, slots, slot_len) };
     telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
@@ -3458,6 +4189,9 @@ fn play(
     if (launch.room_id as usize) < menu::MAPS.len() {
         telemetry::debug_log(menu::MAPS[launch.room_id as usize]);
     }
+    let loading_label = loading_label_for_room(launch.room_id);
+    let mut loading_frame = 0u8;
+    draw_next_loading_screen(fb, loading_label, &mut loading_frame);
 
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
     let tex_len = cdstream::load_chunk(texture_chunk_id, unsafe { &mut MAP_BUF }).unwrap_or(0);
@@ -3481,7 +4215,8 @@ fn play(
     }
     telemetry::debug_log("hl-psx: WORLD.PAK texture chunk loaded");
 
-    let tex_bytes = unsafe { core::slice::from_raw_parts(MAP_BUF.as_ptr() as *const u8, tex_len) };
+    draw_next_loading_screen(fb, loading_label, &mut loading_frame);
+    let tex_bytes = unsafe { streamed_map_bytes(tex_len) };
     telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
     let (room_texs, tex_failed) = match unsafe {
         vram::upload_tex_chunk_raw(
@@ -3523,31 +4258,53 @@ fn play(
             None => false,
         }
     };
-    if !upload_model_tex(
+    draw_next_loading_screen(fb, loading_label, &mut loading_frame);
+    let mut model_textures_ok = upload_model_tex(
         MODEL_CHUNK_SCIENTIST_TEX,
         core::ptr::addr_of_mut!(SCI_SLOTS).cast::<TexSlot>(),
         24,
-    ) || !upload_model_tex(
-        MODEL_CHUNK_BARNEY_TEX,
-        core::ptr::addr_of_mut!(BARNEY_SLOTS).cast::<TexSlot>(),
-        24,
-    ) || !upload_model_tex(
-        MODEL_CHUNK_HEADCRAB_TEX,
-        core::ptr::addr_of_mut!(HEADCRAB_SLOTS).cast::<TexSlot>(),
-        8,
-    ) || !upload_model_tex(
-        MODEL_CHUNK_SUIT_ITEM_TEX,
-        core::ptr::addr_of_mut!(SUIT_ITEM_SLOTS).cast::<TexSlot>(),
-        8,
-    ) || !upload_model_tex(
-        MODEL_CHUNK_BATTERY_ITEM_TEX,
-        core::ptr::addr_of_mut!(BATTERY_ITEM_SLOTS).cast::<TexSlot>(),
-        8,
-    ) || !upload_model_tex(
-        MODEL_CHUNK_V_9MMHANDGUN_TEX,
-        core::ptr::addr_of_mut!(WEAPON_SLOTS).cast::<TexSlot>(),
-        12,
-    ) {
+    );
+    if model_textures_ok {
+        draw_next_loading_screen(fb, loading_label, &mut loading_frame);
+        model_textures_ok = upload_model_tex(
+            MODEL_CHUNK_BARNEY_TEX,
+            core::ptr::addr_of_mut!(BARNEY_SLOTS).cast::<TexSlot>(),
+            24,
+        );
+    }
+    if model_textures_ok {
+        draw_next_loading_screen(fb, loading_label, &mut loading_frame);
+        model_textures_ok = upload_model_tex(
+            MODEL_CHUNK_HEADCRAB_TEX,
+            core::ptr::addr_of_mut!(HEADCRAB_SLOTS).cast::<TexSlot>(),
+            8,
+        );
+    }
+    if model_textures_ok {
+        draw_next_loading_screen(fb, loading_label, &mut loading_frame);
+        model_textures_ok = upload_model_tex(
+            MODEL_CHUNK_SUIT_ITEM_TEX,
+            core::ptr::addr_of_mut!(SUIT_ITEM_SLOTS).cast::<TexSlot>(),
+            8,
+        );
+    }
+    if model_textures_ok {
+        draw_next_loading_screen(fb, loading_label, &mut loading_frame);
+        model_textures_ok = upload_model_tex(
+            MODEL_CHUNK_BATTERY_ITEM_TEX,
+            core::ptr::addr_of_mut!(BATTERY_ITEM_SLOTS).cast::<TexSlot>(),
+            8,
+        );
+    }
+    if model_textures_ok {
+        draw_next_loading_screen(fb, loading_label, &mut loading_frame);
+        model_textures_ok = upload_model_tex(
+            MODEL_CHUNK_V_9MMHANDGUN_TEX,
+            core::ptr::addr_of_mut!(WEAPON_SLOTS).cast::<TexSlot>(),
+            12,
+        );
+    }
+    if !model_textures_ok {
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
@@ -3566,6 +4323,7 @@ fn play(
         (tex_failed + model_tex_failed) as u32,
     );
 
+    draw_next_loading_screen(fb, loading_label, &mut loading_frame);
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
     let weapon_len =
         cdstream::load_chunk(MODEL_CHUNK_V_9MMHANDGUN, unsafe { &mut MODEL_BUF }).unwrap_or(0);
@@ -3589,17 +4347,19 @@ fn play(
     }
     telemetry::debug_log("hl-psx: WORLD.PAK weapon chunk loaded");
 
-    let weapon_bytes: &'static [u8] =
-        unsafe { core::slice::from_raw_parts(MODEL_BUF.as_ptr() as *const u8, weapon_len) };
+    let weapon_bytes = unsafe { streamed_model_bytes(weapon_len) };
     let wpn = Model::load(weapon_bytes);
     unsafe {
         WEAPON_CACHE_FRAME = usize::MAX;
         WEAPON_CACHE_RECOIL = i32::MIN;
         WEAPON_CACHE_VERTS = 0;
+        WEAPON_CACHE_SCALE = 0;
         WEAPON_TRI_COUNT = 0;
     }
+    draw_next_loading_screen(fb, loading_label, &mut loading_frame);
     let hud_mat = hud::upload(); // real HUD sprite sheet -> free gameplay tpage
 
+    draw_next_loading_screen(fb, loading_label, &mut loading_frame);
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
     let map_len = cdstream::load_chunk(world_chunk_id, unsafe { &mut MAP_BUF }).unwrap_or(0);
     telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
@@ -3623,7 +4383,7 @@ fn play(
     }
     telemetry::debug_log("hl-psx: WORLD.PAK world chunk loaded");
 
-    let map_bytes = unsafe { core::slice::from_raw_parts(MAP_BUF.as_ptr() as *const u8, map_len) };
+    let map_bytes = unsafe { streamed_map_bytes(map_len) };
     let m = Map::load(map_bytes);
     if room_texs != m.n_texs {
         tty::println("hl-psx: texture/world count mismatch");
@@ -3692,29 +4452,38 @@ fn play(
     let mut pickup_ticks: u8 = 0;
     let mut use_cooldown: u8 = 0;
 
-    // Tram ride: carry the player along the path_track chain, then hand back
-    // control. ride_off is the tram's displacement from its parked start.
+    // Tracktrain mover: the BSP cooker stores the train's path_track chain, and
+    // the logic system toggles it through the func_tracktrain targetname.
     let wp0 = if m.n_way > 0 {
         m.waypoint(0)
     } else {
         [0, 0, 0]
     };
-    let tram_step = (m.tram_speed / TRAM_STEP_DIV).max(3);
-    // Tram cinematic OFF by default: it locks the player on rails (no walking),
-    // which read as "movement broken" on c0a0. Re-enable once walk-on-platform
-    // works. Flip TRAM_RIDE to restore the on-rails intro.
-    const TRAM_RIDE: bool = false;
-    let mut riding = TRAM_RIDE && m.n_way >= 2;
     let mut recoil = 0i32; // viewmodel kick when firing
-    let mut seg = 0usize;
-    let mut seg_dist = 0i32;
+    let mut tram_active = false;
+    let mut tram_speed = m.tram_speed.max(0);
+    let mut tram_player_attached = false;
+    let mut tram_seg = 0usize;
+    let mut tram_seg_dist = 0i32;
     let mut ride_off = [0i32; 3];
+    unsafe {
+        if let Some((use_type, speed)) = logic_take_tracktrain_command() {
+            let started = tram_apply_command(use_type, speed, &mut tram_active, &mut tram_speed);
+            if started {
+                tram_player_attached = tram_should_carry_player(
+                    player.pos,
+                    tram_path_pos(&m, tram_seg, tram_seg_dist),
+                );
+            }
+        }
+    }
 
     telemetry::stage_begin(telemetry::stage::ROOM_SURFACE_CACHE);
     unsafe {
         let initial_eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
-        let initial_leaf = camera_leaf(&m, initial_eye);
-        if initial_leaf > 0 && (initial_leaf as usize) < m.n_leaves {
+        let initial_train_hint = tram_path_pos(&m, tram_seg, tram_seg_dist);
+        let initial_leaf = recover_camera_leaf(&m, initial_eye, player.pos, initial_train_hint);
+        if valid_pvs_leaf(&m, initial_leaf) {
             rebuild_pvs_cache(&m, initial_leaf, nents);
             telemetry::counter(telemetry::counter::ROOM_SURFACE_CACHE_BUILDS, 1);
             telemetry::counter(
@@ -3742,11 +4511,22 @@ fn play(
     }
     telemetry::stage_end(telemetry::stage::ROOM_SURFACE_CACHE);
 
+    // Loading cards are drawn directly into the double buffers. Clear both
+    // pages once before the first gameplay frame so sparse world coverage
+    // cannot leave a stale loading panel behind.
+    fb.clear(0, 0, 0);
+    gpu::draw_sync();
+    fb.swap();
+    fb.clear(0, 0, 0);
+    gpu::draw_sync();
+    fb.swap();
+
     gpu::configure_vsync_timer();
     interrupts::install_vblank_counter();
-    let mut next_sim_vblank = interrupts::vblank_count();
+    let mut next_sim_vblank = interrupts::vblank_count().wrapping_add(SIM_VBLANKS);
+    let mut prev_pause_button = true;
 
-    loop {
+    'gameplay: loop {
         wait_until_vblank(next_sim_vblank);
         let mut ticks_this_visual = 0u16;
         while vblank_reached(interrupts::vblank_count(), next_sim_vblank) {
@@ -3756,11 +4536,22 @@ fn play(
             // Modern twin-stick FPS: left stick moves/strafes, right stick looks
             // (X = turn, Y = pitch), Cross = jump. Analog only.
             let pad = poll_port1();
-            if pad.buttons.is_held(button::SELECT) {
+            let pause_button =
+                pad.buttons.is_held(button::START) || pad.buttons.is_held(button::SELECT);
+            if pause_button && !prev_pause_button {
                 telemetry::stage_end(telemetry::stage::UPDATE);
                 telemetry::task_end(telemetry::task::FIXED_UPDATE);
-                return PlayExit::BackToMenu; // back to the map menu
+                match run_pause_menu(fb) {
+                    PauseExit::MainMenu => return PlayExit::BackToMenu,
+                    PauseExit::Resume => {
+                        let _ = enable_analog_port1();
+                        prev_pause_button = true;
+                        next_sim_vblank = interrupts::vblank_count().wrapping_add(SIM_VBLANKS);
+                        continue 'gameplay;
+                    }
+                }
             }
+            prev_pause_button = pause_button;
             // Analog is required: if the pad ever isn't in analog mode, re-assert it.
             if !pad.is_analog() {
                 let _ = enable_analog_port1();
@@ -3816,6 +4607,62 @@ fn play(
                 logic_pre_tick(&m, nlogic, nents, sim_frame_no as u16);
             }
 
+            let prev_train_pos = tram_path_pos(&m, tram_seg, tram_seg_dist);
+            unsafe {
+                if let Some((use_type, speed)) = logic_take_tracktrain_command() {
+                    let started =
+                        tram_apply_command(use_type, speed, &mut tram_active, &mut tram_speed);
+                    if !tram_active {
+                        tram_player_attached = false;
+                    } else if started && !tram_player_attached {
+                        tram_player_attached = tram_should_carry_player(player.pos, prev_train_pos);
+                    }
+                }
+            }
+            let prev_ride_off = ride_off;
+            if tram_active {
+                let still_moving = tram_advance(
+                    &m,
+                    &mut tram_seg,
+                    &mut tram_seg_dist,
+                    tram_step_for_speed(tram_speed),
+                );
+                let train_pos = tram_path_pos(&m, tram_seg, tram_seg_dist);
+                ride_off = [
+                    train_pos[0] - wp0[0],
+                    train_pos[1] - wp0[1],
+                    train_pos[2] - wp0[2],
+                ];
+                if !still_moving {
+                    tram_active = false;
+                    tram_speed = 0;
+                }
+            }
+            let tram_delta = [
+                ride_off[0] - prev_ride_off[0],
+                ride_off[1] - prev_ride_off[1],
+                ride_off[2] - prev_ride_off[2],
+            ];
+            if tram_delta != [0, 0, 0] {
+                let train_pos = tram_path_pos(&m, tram_seg, tram_seg_dist);
+                if !tram_player_attached && tram_should_carry_player(player.pos, prev_train_pos) {
+                    tram_player_attached = true;
+                }
+                if tram_player_attached {
+                    if tram_should_carry_player(player.pos, prev_train_pos)
+                        || tram_should_carry_player(player.pos, train_pos)
+                    {
+                        player.pos = [
+                            player.pos[0] + tram_delta[0],
+                            player.pos[1] + tram_delta[1],
+                            player.pos[2] + tram_delta[2],
+                        ];
+                    } else {
+                        tram_player_attached = false;
+                    }
+                }
+            }
+
             // Collision movers: every brush entity at its current offset (doors at
             // their open amount, statics at origin) + the tram at its ride offset.
             let mut movers = [phys::NO_MOVER; MAX_ENTS + 1];
@@ -3854,55 +4701,18 @@ fn play(
             }
             let movers = &movers[..nmov];
 
-            if riding {
-                // Advance along the path, possibly crossing several waypoints.
-                let mut rem = tram_step;
-                while rem > 0 && seg + 1 < m.n_way {
-                    let len = seg_len(m.waypoint(seg), m.waypoint(seg + 1));
-                    if seg_dist + rem >= len {
-                        rem -= len - seg_dist;
-                        seg += 1;
-                        seg_dist = 0;
-                    } else {
-                        seg_dist += rem;
-                        rem = 0;
-                    }
-                }
-                let pos = if seg + 1 < m.n_way {
-                    let a = m.waypoint(seg);
-                    let b = m.waypoint(seg + 1);
-                    let len = seg_len(a, b);
-                    let f = (seg_dist * 4096 / len).clamp(0, 4096);
-                    [
-                        a[0] + ((b[0] - a[0]) * f >> 12),
-                        a[1] + ((b[1] - a[1]) * f >> 12),
-                        a[2] + ((b[2] - a[2]) * f >> 12),
-                    ]
-                } else {
-                    riding = false; // reached the end of the line
-                    m.waypoint(m.n_way - 1)
-                };
-                ride_off = [pos[0] - wp0[0], pos[1] - wp0[1], pos[2] - wp0[2]];
-                // Locked to the tram (walking on a moving platform desyncs gravity).
-                player.pos = [
-                    m.spawn_pos[0] + ride_off[0],
-                    m.spawn_pos[1] + ride_off[1],
-                    m.spawn_pos[2] + ride_off[2],
-                ];
-                player.vel = [0, 0, 0];
-            } else {
-                // On foot: full physics, colliding with the world + brush movers.
-                telemetry::stage_begin(telemetry::stage::SIM_COLLISION);
-                player.update(
-                    &m,
-                    movers,
-                    fwd,
-                    strafe,
-                    pad.buttons.is_held(button::CROSS),
-                    yaw,
-                );
-                telemetry::stage_end(telemetry::stage::SIM_COLLISION);
-            }
+            // Full player physics always runs; moving trains carry the player by
+            // delta before the update, then block them through their shifted hull.
+            telemetry::stage_begin(telemetry::stage::SIM_COLLISION);
+            player.update(
+                &m,
+                movers,
+                fwd,
+                strafe,
+                pad.buttons.is_held(button::CROSS),
+                yaw,
+            );
+            telemetry::stage_end(telemetry::stage::SIM_COLLISION);
             let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
             unsafe {
                 collect_pickups(
@@ -4027,6 +4837,7 @@ fn play(
             WEAPON_OT.clear();
             HUD_OT.clear();
             FX_OT.clear();
+            XHAIR = EMPTY_XHAIR; // DEBUG: reset crosshair-tri pick for this frame
             let mut packets = PrimitivePacketArena::new(&mut PRIMITIVE_PACKETS);
             let mut np = 0usize;
             let mut nq = 0usize;
@@ -4035,17 +4846,27 @@ fn play(
             // one backface test per cooked plane group, cheap face-bounds
             // rejection, then emits triangle fans with PS1 quad pairing.
             telemetry::stage_begin(telemetry::stage::ROOM);
-            let cam_leaf = camera_leaf(&m, eye);
-            let have_pvs = cam_leaf > 0 && (cam_leaf as usize) < m.n_leaves;
+            let train_hint = tram_path_pos(&m, tram_seg, tram_seg_dist);
+            let mut cam_leaf = recover_camera_leaf(&m, eye, player.pos, train_hint);
+            let mut have_pvs = valid_pvs_leaf(&m, cam_leaf);
+            let mut reused_last_pvs = false;
+            if !have_pvs && valid_pvs_leaf(&m, PVS_CAM_LEAF) {
+                cam_leaf = PVS_CAM_LEAF;
+                have_pvs = true;
+                reused_last_pvs = true;
+            }
             if have_pvs {
-                if PVS_CAM_LEAF != cam_leaf {
+                if !reused_last_pvs && PVS_CAM_LEAF != cam_leaf {
+                    telemetry::stage_begin(telemetry::stage::ROOM_VISIBLE_LIST);
                     rebuild_pvs_cache(&m, cam_leaf, nents);
+                    telemetry::stage_end(telemetry::stage::ROOM_VISIBLE_LIST);
                 }
                 let mut room_counts = WorldCounters::new();
                 room_counts.cells_considered = PVS_LEAF_COUNT as u32;
                 room_counts.cells_drawn = PVS_LEAF_COUNT as u32;
                 room_counts.surfaces_considered = PVS_FACE_COUNT as u32;
 
+                telemetry::stage_begin(telemetry::stage::ROOM_SURFACE_DRAW);
                 for gi in 0..PVS_GROUP_COUNT {
                     let group = PVS_GROUP_ACTIVE[gi] as usize;
                     let plane_face = PVS_GROUP_FACE[group] as usize;
@@ -4056,25 +4877,43 @@ fn play(
                     let mut entry = PVS_GROUP_FIRST[group];
                     while entry != PVS_LINK_END {
                         let e = entry as usize;
-                        let face = PVS_FACE_INDEX[e] as usize;
-                        let (bc, be) = m.face_bounds(face);
-                        if !WORLD_BOUNDS_CULL || box_visible(bc, be, &rot, base_t) {
-                            let (first, cnt) = m.face_tris(face);
-                            emit_world_face_tris(
-                                &mut packets,
-                                &m,
-                                first,
-                                cnt,
-                                nv,
-                                frame_no,
-                                &mut np,
-                                &mut nq,
-                                &mut room_counts,
-                            );
+                        if e < MAX_PVS_FACE_RECS {
+                            let rec = PVS_FACE_REC[e];
+                            if !WORLD_BOUNDS_CULL || cached_face_visible(rec, &rot, base_t) {
+                                emit_world_face_tris(
+                                    &mut packets,
+                                    &m,
+                                    rec.first as usize,
+                                    rec.count as usize,
+                                    nv,
+                                    frame_no,
+                                    &mut np,
+                                    &mut nq,
+                                    &mut room_counts,
+                                );
+                            }
+                        } else {
+                            let face = PVS_FACE_INDEX[e] as usize;
+                            let (bc, be) = m.face_bounds(face);
+                            if !WORLD_BOUNDS_CULL || face_bounds_visible(bc, be, &rot, base_t) {
+                                let (first, cnt) = m.face_tris(face);
+                                emit_world_face_tris(
+                                    &mut packets,
+                                    &m,
+                                    first,
+                                    cnt,
+                                    nv,
+                                    frame_no,
+                                    &mut np,
+                                    &mut nq,
+                                    &mut room_counts,
+                                );
+                            }
                         }
                         entry = PVS_FACE_NEXT[e];
                     }
                 }
+                telemetry::stage_end(telemetry::stage::ROOM_SURFACE_DRAW);
 
                 telemetry::counter(
                     telemetry::counter::ROOM_CELLS_CONSIDERED,
@@ -4084,7 +4923,10 @@ fn play(
                     telemetry::counter::ROOM_CELLS_DRAWN,
                     room_counts.cells_drawn,
                 );
-                telemetry::counter(telemetry::counter::ROOM_CELLS_CULLED, 0);
+                telemetry::counter(
+                    telemetry::counter::ROOM_CELLS_CULLED,
+                    room_counts.cells_culled,
+                );
                 telemetry::counter(
                     telemetry::counter::ROOM_SURFACES_CONSIDERED,
                     room_counts.surfaces_considered,
@@ -4093,10 +4935,15 @@ fn play(
                     telemetry::counter::ROOM_SURF_PROFILED,
                     room_counts.emit_calls,
                 );
+                telemetry::counter(
+                    telemetry::counter::ROOM_VISIBILITY_FALLBACK_DRAWS,
+                    if reused_last_pvs { 1 } else { 0 },
+                );
             } else {
                 let draw_token = next_draw_face_mark_token();
                 let mut room_counts = WorldCounters::new();
                 let mut face = 0usize;
+                telemetry::stage_begin(telemetry::stage::ROOM_SURFACE_DRAW);
                 while face < m.n_faces {
                     emit_world_face(
                         &mut packets,
@@ -4114,6 +4961,7 @@ fn play(
                     );
                     face += 1;
                 }
+                telemetry::stage_end(telemetry::stage::ROOM_SURFACE_DRAW);
                 telemetry::counter(telemetry::counter::ROOM_CELLS_CONSIDERED, 0);
                 telemetry::counter(telemetry::counter::ROOM_CELLS_DRAWN, 0);
                 telemetry::counter(telemetry::counter::ROOM_CELLS_CULLED, 0);
@@ -4125,11 +4973,13 @@ fn play(
                     telemetry::counter::ROOM_SURF_PROFILED,
                     room_counts.emit_calls,
                 );
+                telemetry::counter(telemetry::counter::ROOM_VISIBILITY_FALLBACK_DRAWS, 1);
             }
             telemetry::stage_end(telemetry::stage::ROOM);
 
             telemetry::stage_begin(telemetry::stage::MODEL_INSTANCES);
             let model_prims0 = np;
+            let model_quads0 = nq;
             let mut model_draws = 0u32;
             let mut model_bounds_tests = 0u32;
             let mut model_bounds_culled = 0u32;
@@ -4139,6 +4989,7 @@ fn play(
             // Brush entities: doors slide open near the player. Each renders with
             // a per-entity GTE translation (base view shifted by the offset);
             // its few tris are projected fresh (not from the world cache).
+            telemetry::stage_begin(telemetry::stage::MODEL_BOUNDS);
             let brush_iter_count = if have_pvs { PVS_ENT_COUNT } else { nents };
             for bi in 0..brush_iter_count {
                 let ei = if have_pvs { PVS_ENTS[bi] as usize } else { bi };
@@ -4161,6 +5012,35 @@ fn play(
                     }
                 }
                 model_draws = model_draws.saturating_add(1);
+                if e.kind != 1 && e.kind != 3 {
+                    let mut static_counts = WorldCounters::new();
+                    let (ff, nf) = m.submodel(e.submodel);
+                    for f in ff..ff + nf {
+                        let (fnrm, fd) = m.face_plane(f);
+                        if dot12(fnrm, eye) <= fd {
+                            let (_, cnt) = m.face_tris(f);
+                            model_culled_tris = model_culled_tris.saturating_add(cnt as u32);
+                            continue;
+                        }
+                        let (bc, be) = m.face_bounds(f);
+                        if WORLD_BOUNDS_CULL && !face_bounds_visible(bc, be, &rot, base_t) {
+                            continue;
+                        }
+                        let (first, cnt) = m.face_tris(f);
+                        emit_world_face_tris(
+                            &mut packets,
+                            &m,
+                            first,
+                            cnt,
+                            nv,
+                            frame_no,
+                            &mut np,
+                            &mut nq,
+                            &mut static_counts,
+                        );
+                    }
+                    continue;
+                }
                 let es = [eye[0] - off[0], eye[1] - off[1], eye[2] - off[2]];
                 let et = [
                     -dot12(rot.m[0], es),
@@ -4177,34 +5057,20 @@ fn play(
                         model_culled_tris = model_culled_tris.saturating_add(cnt as u32);
                         continue;
                     }
+                    let (bc, be) = m.face_bounds(f);
+                    let moved_center = [bc[0] + off[0], bc[1] + off[1], bc[2] + off[2]];
+                    if WORLD_BOUNDS_CULL && !face_bounds_visible(moved_center, be, &rot, base_t) {
+                        continue;
+                    }
                     for tt in first..first + cnt {
-                        if tt >= m.n_tris {
-                            continue;
-                        }
-                        let tri = m.render_tri(tt, cached_world_uv_words(&m, tt));
-                        let (a, b, c) = (
-                            tri.idx[0] as usize,
-                            tri.idx[1] as usize,
-                            tri.idx[2] as usize,
-                        );
-                        if a < nv && b < nv && c < nv {
-                            proj_submodel_vert(&m, a, submodel_token);
-                            proj_submodel_vert(&m, b, submodel_token);
-                            proj_submodel_vert(&m, c, submodel_token);
-                            emit_projected(
-                                &mut packets,
-                                &m,
-                                tri,
-                                [SCRATCH[a], SCRATCH[b], SCRATCH[c]],
-                                nv,
-                                &mut np,
-                            );
-                        }
+                        emit_submodel_tri(&mut packets, &m, tt, nv, submodel_token, &mut np);
                     }
                 }
             }
+            telemetry::stage_end(telemetry::stage::MODEL_BOUNDS);
 
             // Tram car: render its submodel at the current ride offset.
+            telemetry::stage_begin(telemetry::stage::MODEL_DRAW);
             if m.tram_submodel > 0 && m.tram_submodel < m.n_models {
                 model_draws = model_draws.saturating_add(1);
                 let toff = [
@@ -4228,36 +5094,22 @@ fn play(
                         model_culled_tris = model_culled_tris.saturating_add(cnt as u32);
                         continue;
                     }
+                    let (bc, be) = m.face_bounds(f);
+                    let moved_center = [bc[0] + toff[0], bc[1] + toff[1], bc[2] + toff[2]];
+                    if WORLD_BOUNDS_CULL && !face_bounds_visible(moved_center, be, &rot, base_t) {
+                        continue;
+                    }
                     for tt in first..first + cnt {
-                        if tt >= m.n_tris {
-                            continue;
-                        }
-                        let tri = m.render_tri(tt, cached_world_uv_words(&m, tt));
-                        let (a, b, c) = (
-                            tri.idx[0] as usize,
-                            tri.idx[1] as usize,
-                            tri.idx[2] as usize,
-                        );
-                        if a < nv && b < nv && c < nv {
-                            proj_submodel_vert(&m, a, submodel_token);
-                            proj_submodel_vert(&m, b, submodel_token);
-                            proj_submodel_vert(&m, c, submodel_token);
-                            emit_projected(
-                                &mut packets,
-                                &m,
-                                tri,
-                                [SCRATCH[a], SCRATCH[b], SCRATCH[c]],
-                                nv,
-                                &mut np,
-                            );
-                        }
+                        emit_submodel_tri(&mut packets, &m, tt, nv, submodel_token, &mut np);
                     }
                 }
             }
+            telemetry::stage_end(telemetry::stage::MODEL_DRAW);
 
             // Studio actors placed by map entities plus any runtime fallback
             // enemies. Models are baked to posed frames by the host cooker; the
             // PS1 path only chooses the current actor frame.
+            telemetry::stage_begin(telemetry::stage::TEXTURED_MODEL_JOINTS);
             let actor_count = PROP_COUNT.min(MAX_PROPS);
             for pi in 0..actor_count {
                 if PROP_ACTIVE[pi] == 0 {
@@ -4267,36 +5119,41 @@ fn play(
                 let org = PROP_POS[pi];
                 let yaw = PROP_YAW[pi];
                 let cooked_leaf = PROP_LEAF[pi];
-                let (md, slots, faces, face_count) = match ty {
+                let (md, slots, faces, face_count, radius) = match ty {
                     PROP_TYPE_SCIENTIST => (
                         sci,
                         &SCI_SLOTS[..],
                         core::ptr::addr_of!(SCI_FACES).cast::<ModelRenderFace>(),
                         SCI_FACE_COUNT,
+                        SCIENTIST_RENDER_RADIUS,
                     ),
                     PROP_TYPE_BARNEY => (
                         barney,
                         &BARNEY_SLOTS[..],
                         core::ptr::addr_of!(BARNEY_FACES).cast::<ModelRenderFace>(),
                         BARNEY_FACE_COUNT,
+                        BARNEY_RENDER_RADIUS,
                     ),
                     PROP_TYPE_HEADCRAB => (
                         headcrab,
                         &HEADCRAB_SLOTS[..],
                         core::ptr::addr_of!(HEADCRAB_FACES).cast::<ModelRenderFace>(),
                         HEADCRAB_FACE_COUNT,
+                        HEADCRAB_RENDER_RADIUS,
                     ),
                     PROP_TYPE_ITEM_SUIT => (
                         suit_item,
                         &SUIT_ITEM_SLOTS[..],
                         core::ptr::addr_of!(SUIT_ITEM_FACES).cast::<ModelRenderFace>(),
                         SUIT_ITEM_FACE_COUNT,
+                        ITEM_RENDER_RADIUS,
                     ),
                     PROP_TYPE_ITEM_BATTERY => (
                         battery_item,
                         &BATTERY_ITEM_SLOTS[..],
                         core::ptr::addr_of!(BATTERY_ITEM_FACES).cast::<ModelRenderFace>(),
                         BATTERY_ITEM_FACE_COUNT,
+                        ITEM_RENDER_RADIUS,
                     ),
                     _ => continue,
                 };
@@ -4314,18 +5171,11 @@ fn play(
                         continue;
                     }
                 }
-                let vz = dot12(rot.m[2], org) + base_t[2];
-                if vz < render::NEAR_Z - 72 || vz > FAR_VIEW {
+                if !sphere_visible(org, radius, &rot, base_t) {
                     model_bounds_culled = model_bounds_culled.saturating_add(1);
                     continue;
                 }
-                let vx = dot12(rot.m[0], org) + base_t[0];
-                if vx.abs() > vz + 128 {
-                    model_bounds_culled = model_bounds_culled.saturating_add(1);
-                    continue;
-                }
-                let vy = dot12(rot.m[1], org) + base_t[1];
-                if vy.abs() * 4 > vz * 3 + 360 {
+                if !prop_occlusion_visible(&m, eye, ty, org) {
                     model_bounds_culled = model_bounds_culled.saturating_add(1);
                     continue;
                 }
@@ -4342,9 +5192,7 @@ fn play(
                 } else {
                     MODEL_SHADE
                 };
-                model_projected_vertices =
-                    model_projected_vertices.saturating_add(md.n_verts.min(MAX_MODEL_VERTS) as u32);
-                draw_model(
+                model_projected_vertices = model_projected_vertices.saturating_add(draw_model(
                     &mut packets,
                     md,
                     slots,
@@ -4357,8 +5205,9 @@ fn play(
                     eye,
                     &rot,
                     &mut np,
-                );
+                ));
             }
+            telemetry::stage_end(telemetry::stage::TEXTURED_MODEL_JOINTS);
             telemetry::stage_end(telemetry::stage::MODEL_INSTANCES);
             telemetry::counter(telemetry::counter::MODEL_INSTANCE_DRAWS, model_draws);
             telemetry::counter(
@@ -4375,7 +5224,7 @@ fn play(
             );
             telemetry::counter(
                 telemetry::counter::MODEL_INSTANCE_SUBMITTED_TRIS,
-                np.saturating_sub(model_prims0) as u32,
+                (np.saturating_sub(model_prims0) + nq.saturating_sub(model_quads0) * 2) as u32,
             );
             telemetry::counter(
                 telemetry::counter::MODEL_INSTANCE_PROJECTED_VERTICES,
@@ -4420,6 +5269,31 @@ fn play(
             fb.clear(0, 0, 0);
             draw_sky(&m, yaw, pitch);
             telemetry::stage_end(telemetry::stage::FRAME_CLEAR);
+
+            // DEBUG: fill the crosshair tri bright magenta (a POLYGON -- the HW
+            // renderer skips PS1 line prims, so an outline is invisible in the GUI)
+            // at the front OT slot so it draws on top. Also resolve its world verts /
+            // leaf / PVS state for the L1 dump.
+            if DEBUG_XHAIR && XHAIR.valid != 0 {
+                let mut cen = [0i32; 3];
+                let mut k = 0;
+                while k < 3 {
+                    let vv = m.vert(XHAIR.idx[k] as usize);
+                    XHAIR.v[k] = [vv.x as i32, vv.y as i32, vv.z as i32];
+                    cen[0] += XHAIR.v[k][0];
+                    cen[1] += XHAIR.v[k][1];
+                    cen[2] += XHAIR.v[k][2];
+                    k += 1;
+                }
+                XHAIR.leaf = camera_leaf(&m, [cen[0] / 3, cen[1] / 3, cen[2] / 3]);
+                XHAIR.pvs_visible = pvs_leaf_visible(&m, XHAIR.leaf.max(0) as usize) as u32;
+                let v = XHAIR.sv;
+                let fill = psx_gpu::prim::TriFlat::new([v[0], v[1], v[2]], 255, 0, 255);
+                if let Some(pk) = packets.push(fill) {
+                    OT.add(1, pk, psx_gpu::prim::TriFlat::WORDS);
+                }
+            }
+
             telemetry::stage_begin(telemetry::stage::WORLD_FLUSH);
             OT.submit();
             FX_OT.submit();
@@ -4428,6 +5302,24 @@ fn play(
             WEAPON_OT.submit();
             HUD_OT.submit();
             telemetry::stage_end(telemetry::stage::OT_SUBMIT);
+
+            // DEBUG: dump the crosshair tri + camera state to PSoXide's Play debug
+            // terminal. Auto-fires whenever the aimed triangle (or valid state)
+            // changes -- so you just aim, no controller button needed -- plus a
+            // manual L1 re-dump. Lets the same tri be compared between a frame
+            // where it shows and one where it is missing.
+            if DEBUG_XHAIR {
+                let dump_now = poll_port1().buttons.is_held(button::L1);
+                let key = if XHAIR.valid != 0 { XHAIR.tt } else { u32::MAX - 1 };
+                // Fire on L1, on aimed-triangle change, AND every ~2s so steady
+                // aim still produces a visible line.
+                let periodic = frame_no % 64 == 0;
+                if (dump_now && !XHAIR_DUMP_PREV) || key != XHAIR_DUMP_LAST || periodic {
+                    xhair_dump(eye, yaw, pitch, cam_leaf);
+                    XHAIR_DUMP_LAST = key;
+                }
+                XHAIR_DUMP_PREV = dump_now;
+            }
             telemetry::counter(telemetry::counter::TRI_PRIMITIVES, (np + nq) as u32);
             telemetry::counter(
                 telemetry::counter::WORLD_COMMANDS,

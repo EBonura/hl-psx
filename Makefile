@@ -25,7 +25,8 @@ PSOXIDE_DEV    = cargo run --manifest-path $(PSOXIDE)/tools/psoxide-dev/Cargo.to
 PSOXIDE_SMOKE_STEPS ?= 50000000
 PSOXIDE_GAMEPLAY_STEPS ?= 320000000
 PSOXIDE_PROFILE_STEPS ?= 600000000
-PSOXIDE_PROFILE_FRAMES ?= 180
+PSOXIDE_PROFILE_VISUAL_FRAMES ?= 24
+PSOXIDE_PROFILE_FRAMES ?= 1200
 MEMORY_MAP ?= $(CAPTURE_DIR)/hl-psx.map
 MIN_HEADROOM_KB ?= 96
 # Default gameplay route confirms New Game from the top-level menu.
@@ -143,6 +144,7 @@ psoxide-profile:
 		--path $(DIST)/hl-psx.cue \
 		--embedded-playtest \
 		--steps $(PSOXIDE_PROFILE_STEPS) \
+		--guest-visual-frames $(PSOXIDE_PROFILE_VISUAL_FRAMES) \
 		--guest-frames $(PSOXIDE_PROFILE_FRAMES) \
 		--pad-pulses '$(PSOXIDE_MENU_PLAY_PULSES)' \
 		--profile-log $(CAPTURE_DIR)/hl-psx-profile.csv \
@@ -269,8 +271,8 @@ models:
 	@mkdir -p $(ROOT)/data/models
 	@mkdir -p $(MODELPACK)
 	@rm -f $(MODELPACK)/chunk_*.psxm
-	$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/scientist.mdl" $(ROOT)/data/models/scientist.hlmdl 13:16,0:12,24:12,8:9,31:16 "$(MODELPACK)/chunk_$(NPC_TEX_CHUNK_SCIENTIST).psxm"
-	$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/barney.mdl" $(ROOT)/data/models/barney.hlmdl 0:16,4:12,6:12,17:12,25:16 "$(MODELPACK)/chunk_$(NPC_TEX_CHUNK_BARNEY).psxm"
+	$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/scientist.mdl" $(ROOT)/data/models/scientist.hlmdl 13:16,0:12,24:12,8:9,31:16 "$(MODELPACK)/chunk_$(NPC_TEX_CHUNK_SCIENTIST).psxm"
+	$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/barney.mdl" $(ROOT)/data/models/barney.hlmdl 0:16,4:12,6:12,17:12,25:16 "$(MODELPACK)/chunk_$(NPC_TEX_CHUNK_BARNEY).psxm"
 	@i=0; for m in $(WEAPONLIST); do \
 		chunk=$$(( $(WEAPON_CHUNK_BASE) + i )); \
 		texchunk=$$(( $(WEAPON_TEX_CHUNK_BASE) + i )); \
@@ -279,9 +281,9 @@ models:
 		i=$$((i+1)); \
 	done
 	@cp "$(MODELPACK)/chunk_$(WEAPON_CHUNK_BASE).psxm" $(ROOT)/data/models/v_9mmhandgun.hlmdl
-	$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/headcrab.mdl" $(ROOT)/data/models/headcrab.hlmdl 0:12,4:12,10:10,6:8,7:12 "$(MODELPACK)/chunk_$(NPC_TEX_CHUNK_HEADCRAB).psxm"
-	$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/w_suit.mdl" $(ROOT)/data/models/w_suit.hlmdl 0 "$(MODELPACK)/chunk_$(ITEM_TEX_CHUNK_SUIT).psxm"
-	$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/w_battery.mdl" $(ROOT)/data/models/w_battery.hlmdl 0 "$(MODELPACK)/chunk_$(ITEM_TEX_CHUNK_BATTERY).psxm"
+	$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/headcrab.mdl" $(ROOT)/data/models/headcrab.hlmdl 0:12,4:12,10:10,6:8,7:12 "$(MODELPACK)/chunk_$(NPC_TEX_CHUNK_HEADCRAB).psxm"
+	$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/w_suit.mdl" $(ROOT)/data/models/w_suit.hlmdl 0 "$(MODELPACK)/chunk_$(ITEM_TEX_CHUNK_SUIT).psxm"
+	$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/w_battery.mdl" $(ROOT)/data/models/w_battery.hlmdl 0 "$(MODELPACK)/chunk_$(ITEM_TEX_CHUNK_BATTERY).psxm"
 
 clean:
 	cd $(GAME) && cargo clean

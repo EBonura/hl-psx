@@ -229,6 +229,30 @@ pub fn trace_line(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Op
     })
 }
 
+/// Snap a point origin onto floor geometry near it.
+pub fn snap_to_ground(
+    map: &Map,
+    movers: &[Mover],
+    pos: [i32; 3],
+    probe_up: i32,
+    probe_down: i32,
+) -> Option<[i32; 3]> {
+    if map.hull0_head <= 0 {
+        return None;
+    }
+    let p1 = [pos[0], pos[1] + probe_up.max(0), pos[2]];
+    let p2 = [pos[0], pos[1] - probe_down.max(0), pos[2]];
+    let t = trace_all(map, map.hull0_head, movers, p1, p2);
+    if t.startsolid || t.frac >= 4096 || t.normal[1] <= GROUND_NY {
+        return None;
+    }
+    Some([
+        p1[0] + (((p2[0] - p1[0]) * t.frac) >> 12),
+        p1[1] + (((p2[1] - p1[1]) * t.frac) >> 12),
+        p1[2] + (((p2[2] - p1[2]) * t.frac) >> 12),
+    ])
+}
+
 /// Trace the world hull plus every mover hull (each shifted by its offset);
 /// return the nearest impact.
 fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Trace {

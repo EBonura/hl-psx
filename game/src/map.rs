@@ -40,9 +40,22 @@
 
 use psx_gte::math::Vec3I16;
 
+// ponytail: unchecked byte reads. The R3000 has no data cache, so every field
+// read hits RAM; the per-read bounds branch is pure overhead and, more
+// importantly, blocks LLVM from coalescing the consecutive byte loads into a
+// single MIPS unaligned word load (lwl/lwr). Offsets all come from header
+// counts in our own cooked blob (magic-checked at load), so they are in range
+// by construction. If a map ever fails to cook cleanly, re-add the checks.
 #[inline(always)]
 fn rd_u32(d: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]])
+    unsafe {
+        u32::from_le_bytes([
+            *d.get_unchecked(o),
+            *d.get_unchecked(o + 1),
+            *d.get_unchecked(o + 2),
+            *d.get_unchecked(o + 3),
+        ])
+    }
 }
 #[inline(always)]
 fn rd_i32(d: &[u8], o: usize) -> i32 {
@@ -50,11 +63,11 @@ fn rd_i32(d: &[u8], o: usize) -> i32 {
 }
 #[inline(always)]
 fn rd_u16(d: &[u8], o: usize) -> u16 {
-    u16::from_le_bytes([d[o], d[o + 1]])
+    unsafe { u16::from_le_bytes([*d.get_unchecked(o), *d.get_unchecked(o + 1)]) }
 }
 #[inline(always)]
 fn rd_i16(d: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([d[o], d[o + 1]])
+    rd_u16(d, o) as i16
 }
 #[inline(always)]
 fn align4(x: usize) -> usize {
@@ -172,6 +185,7 @@ pub const LOGIC_TRIGGER_CHANGETARGET: u8 = 11;
 pub const LOGIC_ITEM_SUIT: u8 = 12;
 pub const LOGIC_ITEM_BATTERY: u8 = 13;
 pub const LOGIC_TRIGGER_HURT: u8 = 14;
+pub const LOGIC_FUNC_TRACKTRAIN: u8 = 15;
 
 pub const USE_OFF: u8 = 0;
 pub const USE_ON: u8 = 1;
@@ -550,6 +564,32 @@ impl Map {
         let o = self.tri_off + t * TRI_SZ;
         let d = self.data;
         [rd_u16(d, o + 6), rd_u16(d, o + 8), rd_u16(d, o + 10)]
+    }
+
+    /// Just the three vertex indices -- the cheap read used to project + cull a
+    /// triangle before deciding whether to decode its (heavier) uv/rgb/tex.
+    #[inline]
+    pub fn tri_idx(&self, t: usize) -> [u16; 3] {
+        let o = self.tri_off + t * TRI_SZ;
+        let d = self.data;
+        [rd_u16(d, o), rd_u16(d, o + 2), rd_u16(d, o + 4)]
+    }
+
+    #[inline]
+    pub fn tri_tex(&self, t: usize) -> usize {
+        // ponytail: unchecked, matching rd_* -- offset bounded by t < n_tris.
+        unsafe { *self.data.get_unchecked(self.tri_off + t * TRI_SZ + 12) as usize }
+    }
+
+    #[inline]
+    pub fn tri_rgb(&self, t: usize) -> [(u8, u8, u8); 3] {
+        let o = self.tri_off + t * TRI_SZ;
+        let d = self.data;
+        [
+            unpack_rgb555(rd_u16(d, o + 13)),
+            unpack_rgb555(rd_u16(d, o + 15)),
+            unpack_rgb555(rd_u16(d, o + 17)),
+        ]
     }
 
     #[inline]

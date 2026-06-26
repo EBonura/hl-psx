@@ -57,6 +57,26 @@ pub fn debug_log(message: &str) {
     debug_byte(b'\n');
 }
 
+/// Write a line to the emulator's guest debug-log port (0xBF80_2F0C),
+/// UNCONDITIONALLY -- unlike `debug_log`, this is not gated behind the
+/// `emulator-telemetry` feature, so it reaches PSoXide's Play debug terminal
+/// from a normal (non-telemetry) build. Use sparingly (debug tooling only).
+#[inline(always)]
+pub fn console(message: &str) {
+    #[cfg(target_arch = "mips")]
+    {
+        const PORT: *mut u32 = 0xBF80_2F0C as *mut u32;
+        for &byte in message.as_bytes() {
+            unsafe { core::ptr::write_volatile(PORT, byte as u32) };
+        }
+        unsafe { core::ptr::write_volatile(PORT, b'\n' as u32) };
+    }
+    #[cfg(not(target_arch = "mips"))]
+    {
+        let _ = message;
+    }
+}
+
 #[inline(always)]
 fn debug_bytes(bytes: &[u8]) {
     for &byte in bytes {
