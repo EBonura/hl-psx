@@ -173,7 +173,8 @@ const ITEM_TOUCH_HEIGHT: i32 = 56;
 const PROP_LINK_MATCH_XZ_EPS: i32 = 24;
 const PROP_LINK_MATCH_Y_EPS: i32 = 96;
 const PROP_GROUND_PROBE_UP: i32 = 24;
-const PROP_GROUND_PROBE_DOWN: i32 = 96;
+const PROP_GROUND_PROBE_DOWN: i32 = 160;
+const GROUND_SCAN_STEP: i32 = 8;
 const SCIENTIST_HEALTH: u8 = 24;
 const BARNEY_HEALTH: u8 = 35;
 const HEADCRAB_HEALTH: u8 = 16;
@@ -1920,10 +1921,50 @@ fn actor_line_clear(m: &Map, movers: &[phys::Mover], from: [i32; 3], to: [i32; 3
     phys::line_clear_world(m, from, to) && phys::line_clear_movers(m, movers, from, to)
 }
 
+/// Find the world floor surface Y directly under `pos` by point-tracing the BSP
+/// node tree (leaf 0 == solid, the same tree `camera_leaf` walks). The cook
+/// conflates `dmodel.headnode[0]` (a node index) with the clipnode array, so the
+/// emitted `hull0_head` aliases the player hull and `phys::snap_to_ground`
+/// always returned None -- which left every prop floating at its raw entity
+/// origin (7..112 units above the floor). Models are floor-anchored (feet at
+/// y==0), so dropping the origin onto the floor seats the feet.
+/// ponytail: world-only -- props on moving platforms (movers) aren't tracked;
+/// rare for placed NPCs/items. Scan step 8u, refined to ~1u.
+fn prop_floor_y(m: &Map, pos: [i32; 3]) -> Option<i32> {
+    let (x, z) = (pos[0], pos[2]);
+    let top = pos[1] + PROP_GROUND_PROBE_UP;
+    if camera_leaf(m, [x, top, z]) == 0 {
+        return None; // headroom is solid -- no clean floor to drop onto
+    }
+    let bottom = pos[1] - PROP_GROUND_PROBE_DOWN;
+    let mut empty_y = top;
+    let mut y = top - GROUND_SCAN_STEP;
+    while y >= bottom {
+        if camera_leaf(m, [x, y, z]) == 0 {
+            // First solid below: the floor is between y (solid) and empty_y. Refine.
+            let (mut solid, mut empty) = (y, empty_y);
+            for _ in 0..4 {
+                let mid = (solid + empty) / 2;
+                if camera_leaf(m, [x, mid, z]) == 0 {
+                    solid = mid;
+                } else {
+                    empty = mid;
+                }
+            }
+            return Some(empty); // lowest empty = floor surface
+        }
+        empty_y = y;
+        y -= GROUND_SCAN_STEP;
+    }
+    None // no floor within probe range
+}
+
 #[inline]
-fn prop_grounded_pos(m: &Map, movers: &[phys::Mover], pos: [i32; 3]) -> [i32; 3] {
-    phys::snap_to_ground(m, movers, pos, PROP_GROUND_PROBE_UP, PROP_GROUND_PROBE_DOWN)
-        .unwrap_or(pos)
+fn prop_grounded_pos(m: &Map, _movers: &[phys::Mover], pos: [i32; 3]) -> [i32; 3] {
+    match prop_floor_y(m, pos) {
+        Some(y) => [pos[0], y, pos[2]],
+        None => pos,
+    }
 }
 
 unsafe fn prop_set_pos(m: &Map, movers: &[phys::Mover], pi: usize, pos: [i32; 3]) {
