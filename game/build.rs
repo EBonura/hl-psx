@@ -12,6 +12,10 @@ const FALLBACK_MAX_LEAVES: usize = 8192;
 const FALLBACK_MAX_ENTS: usize = 192;
 const FALLBACK_MAX_TEX_SLOTS: usize = 256;
 const FALLBACK_MODEL_WORDS: usize = 24_576;
+// MODEL_BUF must hold a whole per-map model SET (viewmodel + every NPC/enemy
+// type the map places), not just the largest single chunk. Floor it at 512 KB;
+// the per-map streamer drops the farthest types if a heavy map's set overflows.
+const MODEL_POOL_WORDS: usize = 94_208;
 
 fn rd_u32(d: &[u8], o: usize) -> Option<u32> {
     Some(u32::from_le_bytes([
@@ -153,9 +157,9 @@ fn scan_model_budget(repo_root: &std::path::Path) -> usize {
     }
 
     if max_bytes == 0 {
-        FALLBACK_MODEL_WORDS
+        FALLBACK_MODEL_WORDS.max(MODEL_POOL_WORDS)
     } else {
-        round_up(max_bytes.div_ceil(4) + 256, 256)
+        round_up(max_bytes.div_ceil(4) + 256, 256).max(MODEL_POOL_WORDS)
     }
 }
 

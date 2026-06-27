@@ -54,11 +54,8 @@ const MAP_WORDS: usize = room_budget::MAP_WORDS;
 const MODEL_WORDS: usize = room_budget::MODEL_WORDS;
 static mut MAP_BUF: [u32; MAP_WORDS] = [0; MAP_WORDS];
 static mut MODEL_BUF: [u32; MODEL_WORDS] = [0; MODEL_WORDS];
-static SCI_BYTES: &[u8] = include_bytes!("../../data/models/scientist.hlmdl");
-static BARNEY_BYTES: &[u8] = include_bytes!("../../data/models/barney.hlmdl");
-static HEADCRAB_BYTES: &[u8] = include_bytes!("../../data/models/headcrab.hlmdl");
-static SUIT_ITEM_BYTES: &[u8] = include_bytes!("../../data/models/w_suit.hlmdl");
-static BATTERY_ITEM_BYTES: &[u8] = include_bytes!("../../data/models/w_battery.hlmdl");
+// NPC/item geometry is no longer baked into the EXE: every model type streams
+// from WORLD.PAK per-map into MODEL_BUF via the model pool (see stream_map_models).
 
 // World ordering table. sz (view depth) tops out near FAR_VIEW; otz = sz>>OT_SHIFT
 // must stay < OT_LEN. OT_SHIFT=4 (16-unit buckets) spreads geometry across the
@@ -158,6 +155,95 @@ const PROP_STATE_IDLE: u8 = 0;
 const PROP_STATE_MOVE: u8 = 1;
 const PROP_STATE_ATTACK: u8 = 2;
 const PROP_STATE_DEAD: u8 = 3;
+
+// ---- per-map model pool registry ----
+// 25 model types (the cook's collect_props ids). Each streams from WORLD.PAK:
+// geometry chunk `1300+id`, texture chunk `1100+id`. The runtime keeps only the
+// types a map places resident (TYPE_TO_SLOT -> LOADED_MODELS).
+const N_MODEL_TYPES: usize = 25;
+const MAX_LOADED_MODELS: usize = 12; // distinct model types resident per map
+const POOL_TEX_SLOTS: usize = 240; // shared TexSlot pool across loaded models
+const POOL_FACE_CAP: usize = 4608; // shared RenderFace pool (worst per-map tri sum)
+const MODEL_SLOT_NONE: u8 = 0xFF;
+const MODEL_GEOM_CHUNK_BASE: u32 = 1300;
+const MODEL_TEX_CHUNK_BASE: u32 = 1100;
+const AI_ITEM: u8 = 0; // static pickup
+const AI_FLEE: u8 = 1; // scientist
+const AI_ALLY: u8 = 2; // barney
+const AI_MELEE: u8 = 3; // approach + bite (headcrab and friends)
+const AI_IDLE: u8 = 4; // render only (ranged/boss/flyer until they get real AI)
+
+#[derive(Clone, Copy)]
+struct ModelDef {
+    health: u8,
+    target_h: i32,
+    radius: i32,
+    ai: u8,
+}
+const fn mdef(health: u8, target_h: i32, radius: i32, ai: u8) -> ModelDef {
+    ModelDef {
+        health,
+        target_h,
+        radius,
+        ai,
+    }
+}
+const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
+    mdef(SCIENTIST_HEALTH, 40, SCIENTIST_RENDER_RADIUS, AI_FLEE), // 0 scientist
+    mdef(BARNEY_HEALTH, 40, BARNEY_RENDER_RADIUS, AI_ALLY),       // 1 barney
+    mdef(HEADCRAB_HEALTH, 12, HEADCRAB_RENDER_RADIUS, AI_MELEE),  // 2 headcrab
+    mdef(0, 16, ITEM_RENDER_RADIUS, AI_ITEM),                     // 3 item_suit
+    mdef(0, 16, ITEM_RENDER_RADIUS, AI_ITEM),                     // 4 item_battery
+    mdef(50, 40, 90, AI_MELEE),                                  // 5 zombie
+    mdef(20, 20, 70, AI_MELEE),                                  // 6 houndeye
+    mdef(40, 32, 90, AI_MELEE),                                  // 7 bullsquid
+    mdef(50, 40, 90, AI_IDLE),                                   // 8 hgrunt (ranged: idle for now)
+    mdef(30, 40, 90, AI_IDLE),                                   // 9 alien_slave
+    mdef(60, 48, 100, AI_IDLE),                                  // 10 alien_grunt
+    mdef(60, 40, 100, AI_IDLE),                                  // 11 alien_controller
+    mdef(40, 32, 90, AI_IDLE),                                   // 12 barnacle
+    mdef(16, 8, 40, AI_IDLE),                                    // 13 leech
+    mdef(6, 4, 30, AI_IDLE),                                     // 14 cockroach
+    mdef(30, 48, 90, AI_IDLE),                                   // 15 gman
+    mdef(200, 90, 220, AI_IDLE),                                 // 16 gargantua
+    mdef(200, 90, 240, AI_IDLE),                                 // 17 nihilanth
+    mdef(150, 70, 200, AI_IDLE),                                 // 18 bigmomma
+    mdef(40, 20, 90, AI_MELEE),                                  // 19 ichthyosaur
+    mdef(40, 40, 80, AI_IDLE),                                   // 20 sentry
+    mdef(50, 40, 80, AI_IDLE),                                   // 21 turret
+    mdef(30, 30, 60, AI_IDLE),                                   // 22 miniturret
+    mdef(80, 60, 150, AI_IDLE),                                  // 23 apache
+    mdef(10, 20, 60, AI_IDLE),                                   // 24 flyer_flock
+];
+
+#[inline]
+fn model_def(ty: u8) -> ModelDef {
+    MODEL_DEFS[(ty as usize).min(N_MODEL_TYPES - 1)]
+}
+
+#[derive(Clone, Copy)]
+struct LoadedModel {
+    valid: bool,
+    type_id: u8,
+    geom_off: usize, // byte offset into MODEL_BUF
+    geom_len: usize,
+    face_start: usize, // index into POOL_FACES
+    n_faces: usize,
+    tex_start: usize, // index into POOL_TEX
+    n_tex: usize,
+}
+impl LoadedModel {
+    const ZERO: Self = Self {
+        valid: false,
+        type_id: 0,
+        geom_off: 0,
+        geom_len: 0,
+        face_start: 0,
+        n_faces: 0,
+        tex_start: 0,
+        n_tex: 0,
+    };
+}
 const PROP_CLIP_IDLE: usize = 0;
 const PROP_CLIP_MOVE: usize = 1;
 const PROP_CLIP_ATTACK: usize = 2;
@@ -235,26 +321,15 @@ static mut IMPACT_PARTICLE_RECTS: [RectFlat; MAX_IMPACT_PARTICLES] =
 static mut IMPACT_MARK_RECTS: [RectFlat; MAX_IMPACT_MARKS] =
     [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_IMPACT_MARKS];
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
-static mut SCI_SLOTS: [TexSlot; 24] = [EMPTY_SLOT; 24];
-static mut BARNEY_SLOTS: [TexSlot; 24] = [EMPTY_SLOT; 24];
-static mut HEADCRAB_SLOTS: [TexSlot; 8] = [EMPTY_SLOT; 8];
-static mut SUIT_ITEM_SLOTS: [TexSlot; 8] = [EMPTY_SLOT; 8];
-static mut BATTERY_ITEM_SLOTS: [TexSlot; 8] = [EMPTY_SLOT; 8];
 static mut WEAPON_SLOTS: [TexSlot; 12] = [EMPTY_SLOT; 12];
-static mut SCI_FACES: [ModelRenderFace; SCI_FACE_CAP] = [ModelRenderFace::ZERO; SCI_FACE_CAP];
-static mut BARNEY_FACES: [ModelRenderFace; BARNEY_FACE_CAP] =
-    [ModelRenderFace::ZERO; BARNEY_FACE_CAP];
-static mut HEADCRAB_FACES: [ModelRenderFace; HEADCRAB_FACE_CAP] =
-    [ModelRenderFace::ZERO; HEADCRAB_FACE_CAP];
-static mut SUIT_ITEM_FACES: [ModelRenderFace; SUIT_ITEM_FACE_CAP] =
-    [ModelRenderFace::ZERO; SUIT_ITEM_FACE_CAP];
-static mut BATTERY_ITEM_FACES: [ModelRenderFace; BATTERY_ITEM_FACE_CAP] =
-    [ModelRenderFace::ZERO; BATTERY_ITEM_FACE_CAP];
-static mut SCI_FACE_COUNT: usize = 0;
-static mut BARNEY_FACE_COUNT: usize = 0;
-static mut HEADCRAB_FACE_COUNT: usize = 0;
-static mut SUIT_ITEM_FACE_COUNT: usize = 0;
-static mut BATTERY_ITEM_FACE_COUNT: usize = 0;
+// Shared per-map model pool: streamed geometry lives in MODEL_BUF (after the
+// viewmodel); textures, render faces, and slot bookkeeping live in these pools.
+static mut POOL_TEX: [TexSlot; POOL_TEX_SLOTS] = [EMPTY_SLOT; POOL_TEX_SLOTS];
+static mut POOL_FACES: [ModelRenderFace; POOL_FACE_CAP] =
+    [ModelRenderFace::ZERO; POOL_FACE_CAP];
+static mut LOADED_MODELS: [LoadedModel; MAX_LOADED_MODELS] =
+    [LoadedModel::ZERO; MAX_LOADED_MODELS];
+static mut TYPE_TO_SLOT: [u8; N_MODEL_TYPES] = [MODEL_SLOT_NONE; N_MODEL_TYPES];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PauseExit {
@@ -523,7 +598,7 @@ static mut CLIP_CV: [render::CVert; 4] = [render::EMPTY_CV; 4]; // near-clip scr
 // resolved. Press L1 to dump XHAIR + camera state to the guest debug log, so the
 // same triangle can be compared between a frame where it shows and one where it
 // is missing. XHAIR is also peekable in RAM (see captures/hl-psx.map).
-const DEBUG_XHAIR: bool = true;
+const DEBUG_XHAIR: bool = false;
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct XhairHit {
@@ -634,6 +709,85 @@ unsafe fn streamed_map_bytes(len: usize) -> &'static [u8] {
 unsafe fn streamed_model_bytes(len: usize) -> &'static [u8] {
     let ptr = canonical_ram_const(core::ptr::addr_of!(MODEL_BUF).cast::<u8>());
     unsafe { core::slice::from_raw_parts(ptr, len) }
+}
+
+unsafe fn streamed_model_bytes_at(byte_off: usize, len: usize) -> &'static [u8] {
+    let ptr = canonical_ram_const(core::ptr::addr_of!(MODEL_BUF).cast::<u8>());
+    unsafe { core::slice::from_raw_parts(ptr.add(byte_off), len) }
+}
+
+#[inline]
+unsafe fn loaded_model(slot: usize) -> Model {
+    let lm = LOADED_MODELS[slot];
+    Model::load(streamed_model_bytes_at(lm.geom_off, lm.geom_len))
+}
+
+/// Stream the model types this map places (distinct prop kinds) into the shared
+/// pool: geometry into MODEL_BUF after the viewmodel, render faces into
+/// POOL_FACES, textures into VRAM (POOL_TEX). `TYPE_TO_SLOT` maps a type id to
+/// its `LOADED_MODELS` entry; types that don't fit the buffers are skipped (the
+/// prop simply doesn't render).
+unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
+    for t in TYPE_TO_SLOT.iter_mut() {
+        *t = MODEL_SLOT_NONE;
+    }
+    for lm in LOADED_MODELS.iter_mut() {
+        *lm = LoadedModel::ZERO;
+    }
+    let buf_ptr = core::ptr::addr_of_mut!(MODEL_BUF).cast::<u32>();
+    let mut geom_word = weapon_len.div_ceil(4); // viewmodel reserves the head
+    let mut face_off = 0usize;
+    let mut tex_off = 0usize;
+    let mut slot_idx = 0usize;
+    let (mut sc, mut sb, mut ss) = (0u32, 0u32, 0u32);
+    let nprops = m.n_props.min(MAX_PROPS);
+    let mut pi = 0usize;
+    while pi < nprops {
+        let ty = m.prop(pi).0 as usize;
+        pi += 1;
+        if ty >= N_MODEL_TYPES || TYPE_TO_SLOT[ty] != MODEL_SLOT_NONE {
+            continue; // out of range, or this type is already resident
+        }
+        if slot_idx >= MAX_LOADED_MODELS || geom_word >= MODEL_WORDS {
+            break;
+        }
+        let dst = core::slice::from_raw_parts_mut(buf_ptr.add(geom_word), MODEL_WORDS - geom_word);
+        let glen = cdstream::load_chunk(MODEL_GEOM_CHUNK_BASE + ty as u32, dst).unwrap_or(0);
+        if glen == 0 || geom_word + glen.div_ceil(4) > MODEL_WORDS {
+            continue; // missing chunk or would overflow MODEL_BUF -> skip type
+        }
+        let md = Model::load(streamed_model_bytes_at(geom_word * 4, glen));
+        let nf = md.fill_render_faces_raw(
+            core::ptr::addr_of_mut!(POOL_FACES)
+                .cast::<ModelRenderFace>()
+                .add(face_off),
+            POOL_FACE_CAP - face_off,
+        );
+        let (ntex, _failed) = stream_model_texture_chunk(
+            MODEL_TEX_CHUNK_BASE + ty as u32,
+            core::ptr::addr_of_mut!(POOL_TEX).cast::<TexSlot>().add(tex_off),
+            POOL_TEX_SLOTS - tex_off,
+            &mut sc,
+            &mut sb,
+            &mut ss,
+        )
+        .unwrap_or((0, 0));
+        LOADED_MODELS[slot_idx] = LoadedModel {
+            valid: true,
+            type_id: ty as u8,
+            geom_off: geom_word * 4,
+            geom_len: glen,
+            face_start: face_off,
+            n_faces: nf,
+            tex_start: tex_off,
+            n_tex: ntex,
+        };
+        TYPE_TO_SLOT[ty] = slot_idx as u8;
+        geom_word += glen.div_ceil(4);
+        face_off += nf;
+        tex_off += ntex;
+        slot_idx += 1;
+    }
 }
 
 #[inline(always)]
@@ -1806,22 +1960,12 @@ fn sphere_visible(center: [i32; 3], radius: i32, rot: &Mat3I16, base_t: [i32; 3]
 
 #[inline]
 fn prop_start_health(ty: u8) -> u8 {
-    match ty {
-        PROP_TYPE_SCIENTIST => SCIENTIST_HEALTH,
-        PROP_TYPE_BARNEY => BARNEY_HEALTH,
-        PROP_TYPE_HEADCRAB => HEADCRAB_HEALTH,
-        _ => 0,
-    }
+    model_def(ty).health
 }
 
 #[inline]
 fn prop_target(ty: u8, org: [i32; 3]) -> [i32; 3] {
-    let h = if ty == PROP_TYPE_HEADCRAB {
-        HEADCRAB_TARGET_HEIGHT
-    } else {
-        PROP_TARGET_HEIGHT
-    };
-    [org[0], org[1] + h, org[2]]
+    [org[0], org[1] + model_def(ty).target_h, org[2]]
 }
 
 #[inline]
@@ -2642,12 +2786,13 @@ unsafe fn tick_props(
             continue;
         }
 
-        if ty == PROP_TYPE_HEADCRAB {
-            tick_headcrab(m, movers, pi, player_pos, health, armor, nprops);
-        } else if ty == PROP_TYPE_BARNEY {
-            tick_barney(m, movers, pi, player_pos, health, armor, nprops);
-        } else if ty == PROP_TYPE_SCIENTIST {
-            tick_scientist(m, movers, pi, player_pos, nprops);
+        match model_def(ty).ai {
+            // Melee aliens (zombie/houndeye/bullsquid/ichy) reuse the headcrab
+            // approach+bite AI; ranged/boss/flyer types render but don't move yet.
+            AI_MELEE => tick_headcrab(m, movers, pi, player_pos, health, armor, nprops),
+            AI_ALLY => tick_barney(m, movers, pi, player_pos, health, armor, nprops),
+            AI_FLEE => tick_scientist(m, movers, pi, player_pos, nprops),
+            _ => {}
         }
         pi += 1;
     }
@@ -4170,33 +4315,8 @@ fn main() {
     gpu::set_draw_offset(0, 0);
     scene::set_screen_offset(160 << 16, 120 << 16);
     scene::set_projection_plane(H_PROJ);
-    let sci = Model::load(SCI_BYTES);
-    let barney = Model::load(BARNEY_BYTES);
-    let headcrab = Model::load(HEADCRAB_BYTES);
-    let suit_item = Model::load(SUIT_ITEM_BYTES);
-    let battery_item = Model::load(BATTERY_ITEM_BYTES);
-    unsafe {
-        SCI_FACE_COUNT = sci.fill_render_faces_raw(
-            core::ptr::addr_of_mut!(SCI_FACES).cast::<ModelRenderFace>(),
-            SCI_FACE_CAP,
-        );
-        BARNEY_FACE_COUNT = barney.fill_render_faces_raw(
-            core::ptr::addr_of_mut!(BARNEY_FACES).cast::<ModelRenderFace>(),
-            BARNEY_FACE_CAP,
-        );
-        HEADCRAB_FACE_COUNT = headcrab.fill_render_faces_raw(
-            core::ptr::addr_of_mut!(HEADCRAB_FACES).cast::<ModelRenderFace>(),
-            HEADCRAB_FACE_CAP,
-        );
-        SUIT_ITEM_FACE_COUNT = suit_item.fill_render_faces_raw(
-            core::ptr::addr_of_mut!(SUIT_ITEM_FACES).cast::<ModelRenderFace>(),
-            SUIT_ITEM_FACE_CAP,
-        );
-        BATTERY_ITEM_FACE_COUNT = battery_item.fill_render_faces_raw(
-            core::ptr::addr_of_mut!(BATTERY_ITEM_FACES).cast::<ModelRenderFace>(),
-            BATTERY_ITEM_FACE_CAP,
-        );
-    }
+    // Models are no longer loaded here: play() streams each map's model set into
+    // the pool (stream_map_models) after the world loads.
 
     // Boot flow: pick a map in the menu, stream + play it, return on Select.
     // (Analog is enabled inside play(); the menu runs on the digital pad.)
@@ -4204,15 +4324,7 @@ fn main() {
         let sel = menu::run(&mut fb);
         let mut launch = menu_launch(sel);
         loop {
-            match play(
-                &mut fb,
-                &sci,
-                &barney,
-                &headcrab,
-                &suit_item,
-                &battery_item,
-                launch,
-            ) {
+            match play(&mut fb, launch) {
                 PlayExit::BackToMenu => break,
                 PlayExit::ChangeLevel(next) => launch = next,
             }
@@ -4262,15 +4374,7 @@ fn stream_model_texture_chunk(
 /// Stream a room from WORLD.PAK, upload its textures, and run the renderer +
 /// physics loop until Select returns to menu or a trigger_changelevel requests
 /// the next room.
-fn play(
-    fb: &mut FrameBuffer,
-    sci: &Model,
-    barney: &Model,
-    headcrab: &Model,
-    suit_item: &Model,
-    battery_item: &Model,
-    launch: RoomLaunch,
-) -> PlayExit {
+fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
     let _ = enable_analog_port1();
     unsafe {
         CHANGE_REQUEST_ACTIVE = 0;
@@ -4353,51 +4457,13 @@ fn play(
         }
     };
     draw_next_loading_screen(fb, loading_label, &mut loading_frame);
-    let mut model_textures_ok = upload_model_tex(
-        MODEL_CHUNK_SCIENTIST_TEX,
-        core::ptr::addr_of_mut!(SCI_SLOTS).cast::<TexSlot>(),
-        24,
+    // Only the viewmodel texture uploads here; NPC/enemy textures stream per-map
+    // in stream_map_models (after the world + props load).
+    let model_textures_ok = upload_model_tex(
+        MODEL_CHUNK_V_9MMHANDGUN_TEX,
+        core::ptr::addr_of_mut!(WEAPON_SLOTS).cast::<TexSlot>(),
+        12,
     );
-    if model_textures_ok {
-        draw_next_loading_screen(fb, loading_label, &mut loading_frame);
-        model_textures_ok = upload_model_tex(
-            MODEL_CHUNK_BARNEY_TEX,
-            core::ptr::addr_of_mut!(BARNEY_SLOTS).cast::<TexSlot>(),
-            24,
-        );
-    }
-    if model_textures_ok {
-        draw_next_loading_screen(fb, loading_label, &mut loading_frame);
-        model_textures_ok = upload_model_tex(
-            MODEL_CHUNK_HEADCRAB_TEX,
-            core::ptr::addr_of_mut!(HEADCRAB_SLOTS).cast::<TexSlot>(),
-            8,
-        );
-    }
-    if model_textures_ok {
-        draw_next_loading_screen(fb, loading_label, &mut loading_frame);
-        model_textures_ok = upload_model_tex(
-            MODEL_CHUNK_SUIT_ITEM_TEX,
-            core::ptr::addr_of_mut!(SUIT_ITEM_SLOTS).cast::<TexSlot>(),
-            8,
-        );
-    }
-    if model_textures_ok {
-        draw_next_loading_screen(fb, loading_label, &mut loading_frame);
-        model_textures_ok = upload_model_tex(
-            MODEL_CHUNK_BATTERY_ITEM_TEX,
-            core::ptr::addr_of_mut!(BATTERY_ITEM_SLOTS).cast::<TexSlot>(),
-            8,
-        );
-    }
-    if model_textures_ok {
-        draw_next_loading_screen(fb, loading_label, &mut loading_frame);
-        model_textures_ok = upload_model_tex(
-            MODEL_CHUNK_V_9MMHANDGUN_TEX,
-            core::ptr::addr_of_mut!(WEAPON_SLOTS).cast::<TexSlot>(),
-            12,
-        );
-    }
     if !model_textures_ok {
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
@@ -4488,6 +4554,7 @@ fn play(
         PVS_LEAF_COUNT = 0;
         PVS_ENT_COUNT = 0;
         init_prop_state(&m);
+        stream_map_models(&m, weapon_len);
         clear_combat_fx();
     }
     let nents = m.n_ents.min(MAX_ENTS);
@@ -5241,44 +5308,22 @@ fn play(
                 let org = PROP_POS[pi];
                 let yaw = PROP_YAW[pi];
                 let cooked_leaf = PROP_LEAF[pi];
-                let (md, slots, faces, face_count, radius) = match ty {
-                    PROP_TYPE_SCIENTIST => (
-                        sci,
-                        &SCI_SLOTS[..],
-                        core::ptr::addr_of!(SCI_FACES).cast::<ModelRenderFace>(),
-                        SCI_FACE_COUNT,
-                        SCIENTIST_RENDER_RADIUS,
-                    ),
-                    PROP_TYPE_BARNEY => (
-                        barney,
-                        &BARNEY_SLOTS[..],
-                        core::ptr::addr_of!(BARNEY_FACES).cast::<ModelRenderFace>(),
-                        BARNEY_FACE_COUNT,
-                        BARNEY_RENDER_RADIUS,
-                    ),
-                    PROP_TYPE_HEADCRAB => (
-                        headcrab,
-                        &HEADCRAB_SLOTS[..],
-                        core::ptr::addr_of!(HEADCRAB_FACES).cast::<ModelRenderFace>(),
-                        HEADCRAB_FACE_COUNT,
-                        HEADCRAB_RENDER_RADIUS,
-                    ),
-                    PROP_TYPE_ITEM_SUIT => (
-                        suit_item,
-                        &SUIT_ITEM_SLOTS[..],
-                        core::ptr::addr_of!(SUIT_ITEM_FACES).cast::<ModelRenderFace>(),
-                        SUIT_ITEM_FACE_COUNT,
-                        ITEM_RENDER_RADIUS,
-                    ),
-                    PROP_TYPE_ITEM_BATTERY => (
-                        battery_item,
-                        &BATTERY_ITEM_SLOTS[..],
-                        core::ptr::addr_of!(BATTERY_ITEM_FACES).cast::<ModelRenderFace>(),
-                        BATTERY_ITEM_FACE_COUNT,
-                        ITEM_RENDER_RADIUS,
-                    ),
-                    _ => continue,
-                };
+                let slot = TYPE_TO_SLOT[(ty as usize).min(N_MODEL_TYPES - 1)];
+                if slot == MODEL_SLOT_NONE {
+                    continue; // type not resident this map (overflow or missing)
+                }
+                let lm = LOADED_MODELS[slot as usize];
+                if !lm.valid {
+                    continue;
+                }
+                let md_owned = loaded_model(slot as usize);
+                let md = &md_owned;
+                let slots = &POOL_TEX[lm.tex_start..lm.tex_start + lm.n_tex];
+                let faces = core::ptr::addr_of!(POOL_FACES)
+                    .cast::<ModelRenderFace>()
+                    .add(lm.face_start);
+                let face_count = lm.n_faces;
+                let radius = model_def(ty).radius;
                 model_bounds_tests = model_bounds_tests.saturating_add(1);
                 if have_pvs {
                     let prop_leaf = if ty == PROP_TYPE_HEADCRAB {

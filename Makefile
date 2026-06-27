@@ -271,21 +271,21 @@ models:
 	@mkdir -p $(ROOT)/data/models
 	@mkdir -p $(MODELPACK)
 	@rm -f $(MODELPACK)/chunk_*.psxm
-	$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/scientist.mdl" $(ROOT)/data/models/scientist.hlmdl 13:16,0:12,24:12,8:9,31:16 "$(MODELPACK)/chunk_$(NPC_TEX_CHUNK_SCIENTIST).psxm"
-	$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/barney.mdl" $(ROOT)/data/models/barney.hlmdl 0:16,4:12,6:12,17:12,25:16 "$(MODELPACK)/chunk_$(NPC_TEX_CHUNK_BARNEY).psxm"
 	@i=0; for m in $(WEAPONLIST); do \
 		chunk=$$(( $(WEAPON_CHUNK_BASE) + i )); \
 		texchunk=$$(( $(WEAPON_TEX_CHUNK_BASE) + i )); \
 		$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/$$m.mdl" "$(MODELPACK)/chunk_$$chunk.psxm" 0 "$(MODELPACK)/chunk_$$texchunk.psxm" >/dev/null; \
-		echo "  model chunk $$chunk + texture chunk $$texchunk = $$m"; \
+		echo "  weapon chunk $$chunk + tex $$texchunk = $$m"; \
 		i=$$((i+1)); \
 	done
 	@cp "$(MODELPACK)/chunk_$(WEAPON_CHUNK_BASE).psxm" $(ROOT)/data/models/v_9mmhandgun.hlmdl
-	$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/headcrab.mdl" $(ROOT)/data/models/headcrab.hlmdl 0:12,4:12,10:10,6:8,7:12 "$(MODELPACK)/chunk_$(NPC_TEX_CHUNK_HEADCRAB).psxm"
-	$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/w_suit.mdl" $(ROOT)/data/models/w_suit.hlmdl 0 "$(MODELPACK)/chunk_$(ITEM_TEX_CHUNK_SUIT).psxm"
-	$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/w_battery.mdl" $(ROOT)/data/models/w_battery.hlmdl 0 "$(MODELPACK)/chunk_$(ITEM_TEX_CHUNK_BATTERY).psxm"
-	@echo "  --- enemy roster (streamed per-map): geom chunk 1300+id, tex chunk 1100+id ---"
+	@echo "  --- model roster (all streamed per-map): geom chunk 1300+id, tex chunk 1100+id ---"
 	@for entry in \
+	  "0|scientist|13:16,0:12,24:12,8:9,31:16" \
+	  "1|barney|0:16,4:12,6:12,17:12,25:16" \
+	  "2|headcrab|0:12,4:12,10:10,6:8,7:12" \
+	  "3|w_suit|0" \
+	  "4|w_battery|0" \
 	  "5|zombie|0:10,1:10,2:8,3:6,4:6" \
 	  "6|houndeye|0:10,1:10,2:8,3:6,4:6" \
 	  "7|bullsquid|0:10,1:10,2:8,3:6,4:6" \
