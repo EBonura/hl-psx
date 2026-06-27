@@ -1571,6 +1571,127 @@ fn spawn_candidate_clear(
     point_contents_raw(clipnodes, planes, hull1_head as i16, origin_hl) != CONTENTS_SOLID
 }
 
+/// Fallback spawn for chapter-select when every entity spawn sits in a tiny
+/// visibility pocket. HL's `info_player_start` is only a fresh-game start;
+/// in normal play you arrive elsewhere via a changelevel landmark. So a map
+/// like c1a1 spawns you in a 227-face dead pocket and the level reads as black.
+/// This picks the leaf that can see the most of the map and spawns at its
+/// centre (gravity drops the player to the floor at runtime), so the level is
+/// actually visible. Returns `(origin_hl, yaw_q12, score)`.
+#[allow(clippy::too_many_arguments)]
+fn best_visibility_spawn(
+    scale: f32,
+    nodes: &[u8],
+    planes: &[u8],
+    leaves: &[u8],
+    clipnodes: &[u8],
+    hull1_head: i32,
+    marks: &[u8],
+    vis: &[u8],
+    face_ntri: &[u16],
+    face_norm: &[[i16; 3]],
+    face_dist: &[i32],
+    face_center: &[[i16; 3]],
+    face_extent: &[[u16; 3]],
+) -> Option<([f32; 3], i32, i32)> {
+    let n_leaves = leaves.len() / SZ_LEAF;
+    let n_marks = marks.len() / SZ_MARKSURFACE;
+    if n_leaves <= 1 {
+        return None;
+    }
+    let row = (n_leaves.saturating_sub(1) + 7) / 8;
+    let mut bits = vec![0u8; row];
+    // Rank leaves by how many leaves they can see. This is a cheap proxy for an
+    // open view; ranking by raw face count would favour leaves whose PVS blows
+    // the render arena, whereas the most-connected leaves give a full, in-budget
+    // view.
+    let mut ranked: Vec<(u32, usize)> = Vec::new();
+    for l in 1..n_leaves {
+        let visofs = i32le(leaves, l * SZ_LEAF + SZ_LEAF_VISOFS).unwrap_or(-1);
+        if visofs < 0 {
+            continue; // degenerate "sees everything" leaf (outside/solid)
+        }
+        bits.fill(0);
+        let mut v = visofs as usize;
+        let mut c = 0usize;
+        while c < row && v < vis.len() {
+            if vis[v] != 0 {
+                bits[c] = vis[v];
+                v += 1;
+                c += 1;
+            } else {
+                v += 1;
+                if v >= vis.len() {
+                    break;
+                }
+                c = (c + vis[v] as usize).min(row);
+                v += 1;
+            }
+        }
+        let seen: u32 = bits.iter().map(|b| b.count_ones()).sum();
+        ranked.push((seen, l));
+    }
+    ranked.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+    // Take the most-visible leaf whose centre is actually clear (not solid, not
+    // mid-wall). The centroid of a convex BSP leaf's boundary faces lands inside
+    // it; runtime gravity settles the player onto the floor.
+    for (_, l) in ranked.into_iter().take(16) {
+        let lo = l * SZ_LEAF;
+        let m0 = u16le(leaves, lo + SZ_LEAF_MARK0).unwrap_or(0) as usize;
+        let mc = u16le(leaves, lo + SZ_LEAF_MARK0 + 2).unwrap_or(0) as usize;
+        let (mut sx, mut sy, mut sz, mut n) = (0i64, 0i64, 0i64, 0i64);
+        for mj in m0..m0 + mc {
+            if mj >= n_marks {
+                break;
+            }
+            let f = u16le(marks, mj * SZ_MARKSURFACE).unwrap_or(0) as usize;
+            if f >= face_center.len() {
+                continue;
+            }
+            let c = face_center[f];
+            sx += c[0] as i64;
+            sy += c[1] as i64;
+            sz += c[2] as i64;
+            n += 1;
+        }
+        if n == 0 {
+            continue;
+        }
+        let (wx, wy, wz) = ((sx / n) as f32, (sy / n) as f32, (sz / n) as f32);
+        // World centroid -> HL origin: world = (hl_x/scale, hl_z/scale, hl_y/scale).
+        let origin_hl = [wx * scale, wz * scale, wy * scale];
+        if !spawn_candidate_clear(origin_hl, nodes, planes, leaves, clipnodes, hull1_head) {
+            continue;
+        }
+        let mut best_yaw = 0;
+        let mut best_score = i32::MIN;
+        for i in 0..8 {
+            let yaw = (i * 512) & 0xFFF;
+            let score = score_spawn_yaw(
+                origin_hl,
+                yaw,
+                scale,
+                nodes,
+                planes,
+                leaves,
+                marks,
+                vis,
+                face_ntri,
+                face_norm,
+                face_dist,
+                face_center,
+                face_extent,
+            );
+            if score > best_score {
+                best_score = score;
+                best_yaw = yaw;
+            }
+        }
+        return Some((origin_hl, best_yaw, best_score));
+    }
+    None
+}
+
 #[allow(clippy::too_many_arguments)]
 fn choose_standalone_spawn(
     ents: &[u8],
@@ -1706,6 +1827,35 @@ fn choose_standalone_spawn(
     }
     if let Some((origin, yaw, score)) = first_player {
         if score >= GOOD_STANDALONE_SCORE {
+            return Some((origin, yaw));
+        }
+    }
+    // Only relocate when the authored spawn is a genuine dead pocket (mostly
+    // black, like c1a1's 227-face info_player_start) AND there's a genuinely
+    // good leaf to move to. A spawn that already sees a decent slice of the
+    // level keeps its authored position even if some leaf scores a bit higher --
+    // moving it would just drop the player somewhere arbitrary.
+    const DEAD_POCKET_SCORE: i32 = 700;
+    let best_entity_score = [
+        first_player.map(|(_, _, s)| s),
+        best_authored_player.map(|(_, _, s)| s),
+        best_player.map(|(_, _, s)| s),
+        best_landmark.map(|(_, _, s)| s),
+    ]
+    .into_iter()
+    .flatten()
+    .max()
+    .unwrap_or(0);
+    if let Some((origin, yaw, score)) = best_visibility_spawn(
+        scale, nodes, planes, leaves, clipnodes, hull1_head, marks, vis, face_ntri, face_norm,
+        face_dist, face_center, face_extent,
+    ) {
+        if best_entity_score < DEAD_POCKET_SCORE && score >= GOOD_STANDALONE_SCORE {
+            if debug_spawn {
+                eprintln!(
+                    "spawn override: most-visible leaf origin={origin:?} yaw={yaw} score={score} (best entity {best_entity_score})"
+                );
+            }
             return Some((origin, yaw));
         }
     }
@@ -2669,12 +2819,35 @@ fn collect_props(
     let s = entity_text(ents);
     let mut out = Vec::new();
     for block in s.split('{') {
+        // Model-type id space, shared with the runtime registry (game/src/model_defs).
+        // 0-4 = the original NPCs/items; 5-24 = the full enemy roster. `*_dead`
+        // corpses are skipped for now (decorative; they need a dead-spawn flag).
         let ty = match ent_value(block, "classname").unwrap_or("") {
             "monster_scientist" | "monster_sitting_scientist" => 0u16,
             "monster_barney" => 1u16,
             "monster_headcrab" => 2u16,
             "item_suit" => 3u16,
             "item_battery" => 4u16,
+            "monster_zombie" => 5u16,
+            "monster_houndeye" => 6u16,
+            "monster_bullchicken" => 7u16,
+            "monster_human_grunt" => 8u16,
+            "monster_alien_slave" => 9u16,
+            "monster_alien_grunt" => 10u16,
+            "monster_alien_controller" => 11u16,
+            "monster_barnacle" => 12u16,
+            "monster_leech" => 13u16,
+            "monster_cockroach" => 14u16,
+            "monster_gman" => 15u16,
+            "monster_gargantua" => 16u16,
+            "monster_nihilanth" => 17u16,
+            "monster_bigmomma" => 18u16,
+            "monster_ichthyosaur" => 19u16,
+            "monster_sentry" => 20u16,
+            "monster_turret" => 21u16,
+            "monster_miniturret" => 22u16,
+            "monster_apache" => 23u16,
+            "monster_flyer_flock" => 24u16,
             "world_items" => match ent_value(block, "type").and_then(|v| v.parse::<u16>().ok()) {
                 Some(45) => 3u16, // ITEM_SUIT
                 Some(44) => 4u16, // ITEM_BATTERY
@@ -3070,6 +3243,14 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         }
     }
 
+    // ponytail: TEMP quad-baking experiment counters (remove after decision).
+    // Sidedness histogram over faces that actually emit: native `numedges` and
+    // the emitted polygon length `poly.len()` (after T-junction edge splits).
+    let mut hist_ne = [0usize; 14];
+    let mut hist_pl = [0usize; 14];
+    let mut faces_emitted = 0usize;
+    let mut bakeable_quads = 0usize;
+    let mut fan_tris = 0usize;
     for f in 0..n_faces {
         let fo = f * SZ_FACE;
         let firstedge = i32le(faces, fo + 4).unwrap() as usize;
@@ -3206,6 +3387,15 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         // textures smear into visible dark wedges. Then add support triangles
         // only where the cooked UV span still exceeds the PS1-friendly range.
         let fan0 = best_fan_anchor(&shifted_uv);
+        // ponytail: TEMP quad-baking experiment tally (counted only for faces
+        // that reach emission). fan_tris = poly.len()-2; a face yields
+        // floor(fan_tris/2) cleanly bakeable quads.
+        faces_emitted += 1;
+        hist_ne[numedges.min(13)] += 1;
+        hist_pl[poly.len().min(13)] += 1;
+        let ft = poly.len() - 2;
+        fan_tris += ft;
+        bakeable_quads += ft / 2;
         let first_tri = tri_idx.len() / 3;
         face_first[f] = first_tri as u32;
         for k in 1..poly.len() - 1 {
@@ -3244,6 +3434,23 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             );
         }
         face_ntri[f] = ((tri_idx.len() / 3) - first_tri).min(u16::MAX as usize) as u16;
+    }
+
+    // ponytail: TEMP quad-baking experiment report (remove after decision).
+    {
+        let pct = |n: usize| if faces_emitted > 0 { 100.0 * n as f64 / faces_emitted as f64 } else { 0.0 };
+        let tri_after = fan_tris - bakeable_quads; // 1 record per quad + leftover tris
+        let red = if fan_tris > 0 { 100.0 * bakeable_quads as f64 / fan_tris as f64 } else { 0.0 };
+        eprintln!("  [quad-exp] faces_emitted={faces_emitted} fan_tris={fan_tris} bakeable_quads={bakeable_quads}");
+        eprintln!(
+            "  [quad-exp] native sided   3:{} 4:{} 5:{} 6:{} 7+:{}",
+            hist_ne[3], hist_ne[4], hist_ne[5], hist_ne[6], hist_ne[7..].iter().sum::<usize>()
+        );
+        eprintln!(
+            "  [quad-exp] emitted poly   3:{} 4:{} 5:{} 6:{} 7+:{}  (4-sided={:.0}% of faces)",
+            hist_pl[3], hist_pl[4], hist_pl[5], hist_pl[6], hist_pl[7..].iter().sum::<usize>(), pct(hist_pl[4])
+        );
+        eprintln!("  [quad-exp] tri records: now={fan_tris} after-bake={tri_after}  decode-record reduction={red:.0}% (pre split/weld)");
     }
 
     // Budget the weld to the runtime's streaming buffer (`room_budget::MAP_WORDS`

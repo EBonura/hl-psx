@@ -284,6 +284,34 @@ models:
 	$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/headcrab.mdl" $(ROOT)/data/models/headcrab.hlmdl 0:12,4:12,10:10,6:8,7:12 "$(MODELPACK)/chunk_$(NPC_TEX_CHUNK_HEADCRAB).psxm"
 	$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/w_suit.mdl" $(ROOT)/data/models/w_suit.hlmdl 0 "$(MODELPACK)/chunk_$(ITEM_TEX_CHUNK_SUIT).psxm"
 	$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/w_battery.mdl" $(ROOT)/data/models/w_battery.hlmdl 0 "$(MODELPACK)/chunk_$(ITEM_TEX_CHUNK_BATTERY).psxm"
+	@echo "  --- enemy roster (streamed per-map): geom chunk 1300+id, tex chunk 1100+id ---"
+	@for entry in \
+	  "5|zombie|0:10,1:10,2:8,3:6,4:6" \
+	  "6|houndeye|0:10,1:10,2:8,3:6,4:6" \
+	  "7|bullsquid|0:10,1:10,2:8,3:6,4:6" \
+	  "8|hgrunt|0:10,1:10,2:8,3:6,4:6" \
+	  "9|islave|0:10,1:10,2:8,3:6,4:6" \
+	  "10|agrunt|0:10,1:10,2:8,3:6,4:6" \
+	  "11|controller|0:8,1:8,2:6,3:4" \
+	  "12|barnacle|0:8,1:6,2:6,3:4" \
+	  "13|leech|0:8,1:8" \
+	  "14|roach|0:8,1:8" \
+	  "15|gman|0:10,1:10,2:8,3:6" \
+	  "16|garg|0:8,1:6,2:6,3:4" \
+	  "17|nihilanth|0:8,1:6,2:6,3:4" \
+	  "18|big_mom|0:8,1:6,2:6,3:4" \
+	  "20|sentry|0:8,1:6,2:6" \
+	  "21|turret|0:8,1:6,2:6" \
+	  "22|miniturret|0:8,1:6,2:6" \
+	  "23|apache|0:8,1:6" \
+	  "24|boid|0:8,1:6" \
+	  ; do \
+	  t=$${entry%%|*}; rest=$${entry#*|}; mdl=$${rest%%|*}; seq=$${rest##*|}; \
+	  geom=$$((1300+t)); tex=$$((1100+t)); \
+	  if $(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/$$mdl.mdl" "$(MODELPACK)/chunk_$$geom.psxm" "$$seq" "$(MODELPACK)/chunk_$$tex.psxm" >/tmp/mck_$$mdl.log 2>&1; then \
+	    echo "  T$$t $$mdl -> geom $$geom tex $$tex ($$(wc -c < $(MODELPACK)/chunk_$$geom.psxm) B)"; \
+	  else echo "  T$$t $$mdl FAILED: $$(tail -1 /tmp/mck_$$mdl.log | cut -c1-60)"; fi; \
+	done
 
 clean:
 	cd $(GAME) && cargo clean
