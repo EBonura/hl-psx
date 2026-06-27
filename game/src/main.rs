@@ -118,6 +118,7 @@ const FAR_VIEW: i32 = 16000;
 const MODEL_CULL: bool = true; // backface-cull studio models
 const MODEL_OCCLUSION_CULL: bool = true; // skip actors fully hidden by static BSP
 const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
+const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in front of the camera
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 const ROOM_WORLD_CHUNK_MUL: u32 = 2;
@@ -5373,6 +5374,43 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                     &rot,
                     &mut np,
                 ));
+            }
+            if DBG_MODEL_SHOWCASE {
+                let mut k = 0i32;
+                for slot in 0..MAX_LOADED_MODELS {
+                    let lm = LOADED_MODELS[slot];
+                    if !lm.valid || lm.type_id < 5 {
+                        continue; // enemies only (skip NPCs/items)
+                    }
+                    let md = loaded_model(slot);
+                    let slots = &POOL_TEX[lm.tex_start..lm.tex_start + lm.n_tex];
+                    let faces = core::ptr::addr_of!(POOL_FACES)
+                        .cast::<ModelRenderFace>()
+                        .add(lm.face_start);
+                    let fwd = rot.m[2];
+                    let right = rot.m[0];
+                    let side = k * 130 - 130;
+                    let pos = [
+                        eye[0] + ((fwd[0] as i32 * 240 + right[0] as i32 * side) >> 12),
+                        eye[1] + ((fwd[1] as i32 * 240 + right[1] as i32 * side) >> 12) - 40,
+                        eye[2] + ((fwd[2] as i32 * 240 + right[2] as i32 * side) >> 12),
+                    ];
+                    draw_model(
+                        &mut packets,
+                        &md,
+                        slots,
+                        faces,
+                        lm.n_faces,
+                        pos,
+                        0,
+                        0,
+                        MODEL_SHADE,
+                        eye,
+                        &rot,
+                        &mut np,
+                    );
+                    k += 1;
+                }
             }
             telemetry::stage_end(telemetry::stage::TEXTURED_MODEL_JOINTS);
             telemetry::stage_end(telemetry::stage::MODEL_INSTANCES);
