@@ -4467,6 +4467,24 @@ fn cook_mdl(
     // anim for that DOF (use the bone default). PS1 has no FPU, so we bake frames
     // host-side -- the runtime just swaps vertex sets.
     let (numseq, seqindex) = (i(164), i(168) as usize);
+    // Load external sequence-group files (<model>0N.mdl). Many HL monsters keep
+    // most animations in seqgroup 1+; without these their clips bake as the bind
+    // pose (splayed). seqgroup 0 lives in the main file.
+    let numseqgroups = i(172).max(1) as usize;
+    let seqgroup_files: Vec<Option<Vec<u8>>> = {
+        let p = std::path::Path::new(path);
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let dir = p.parent().unwrap_or_else(|| std::path::Path::new("."));
+        (0..numseqgroups)
+            .map(|g| {
+                if g == 0 {
+                    None
+                } else {
+                    std::fs::read(dir.join(format!("{stem}{g:02}.mdl"))).ok()
+                }
+            })
+            .collect()
+    };
     let ident: Mat34 = (
         [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         [0.0; 3],
@@ -4474,16 +4492,22 @@ fn cook_mdl(
     let mut frames: Vec<Vec<[i16; 3]>> = Vec::new();
     let mut clips: Vec<(u16, u16)> = Vec::with_capacity(specs.len());
     for spec in specs {
-        let (animindex, numframes) = if spec.seq >= 0 && spec.seq < numseq {
-            let sd = seqindex + spec.seq as usize * 176;
-            if i(sd + 156) == 0 {
-                (i(sd + 124) as usize, i(sd + 56).max(1) as usize)
+        let (anim_b, animindex, numframes): (&[u8], usize, usize) =
+            if spec.seq >= 0 && spec.seq < numseq {
+                let sd = seqindex + spec.seq as usize * 176;
+                let group = i(sd + 156) as usize;
+                let ai = i(sd + 124) as usize;
+                let nf = i(sd + 56).max(1) as usize;
+                if group == 0 {
+                    (&b, ai, nf)
+                } else if let Some(Some(gd)) = seqgroup_files.get(group) {
+                    (gd.as_slice(), ai, nf) // anim lives in <model>0N.mdl
+                } else {
+                    (&b, 0, 1) // seqgroup file missing -> bind pose
+                }
             } else {
-                (0, 1) // sequence lives in a separate group file (not loaded)
-            }
-        } else {
-            (0, 1)
-        };
+                (&b, 0, 1)
+            };
         let nbake = if animindex == 0 {
             1
         } else {
@@ -4504,10 +4528,11 @@ fn cook_mdl(
                 if animindex != 0 {
                     let at = animindex + bi * 12; // this bone's mstudioanim_t
                     for d in 0..6 {
-                        let off = u16::from_le_bytes([b[at + d * 2], b[at + d * 2 + 1]]) as usize;
+                        let off =
+                            u16::from_le_bytes([anim_b[at + d * 2], anim_b[at + d * 2 + 1]]) as usize;
                         if off != 0 {
-                            dof[d] =
-                                bm.value[d] + anim_value(&b, at + off, sframe) as f32 * bm.scale[d];
+                            dof[d] = bm.value[d]
+                                + anim_value(anim_b, at + off, sframe) as f32 * bm.scale[d];
                         }
                     }
                 }

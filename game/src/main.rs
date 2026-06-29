@@ -5555,7 +5555,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                         lm.n_faces,
                         pos,
                         0,
-                        0,
+                        (frame_no as usize / 8) % md.n_frames.max(1),
                         MODEL_SHADE,
                         eye,
                         &rot,
