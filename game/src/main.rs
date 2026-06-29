@@ -110,11 +110,14 @@ const VIEW_HEIGHT: i32 = 28;
 const PLAYER_USE_REACH: i32 = 96;
 const PLAYER_TOUCH_HALF_XZ: i32 = 16;
 const PLAYER_TOUCH_HEIGHT: i32 = 56;
-// Distance cull. MUST exceed the largest map's diagonal (max cooked ~13.5k) or
-// distant-but-visible geometry clips -- the old 6000 chopped the back half of
-// every level off. PVS already bounds visibility, so this only caps pathological
-// sightlines; it does not usefully fire on the campaign maps.
-const FAR_VIEW: i32 = 16000;
+// Distance cull on world face centers (sphere_visible). HL maps are enclosed, so
+// every spawn sightline terminates (corner/door/dark) well within 2000 units; the
+// conservative PVS still flags far geometry as potentially visible and the renderer
+// processes it for no visible pixel. Culling past 2000 reclaims that: ~30%
+// room_surface_draw at the c0a0 spawn, pixel-identical to the old 16000 across
+// c0a0/c1a0/c1a1/c1a2/c1a3/c1a4 spawns. No fog yet, so a long in-game sightline
+// could show the cut edge; raise this or add depth fog if that surfaces.
+const FAR_VIEW: i32 = 2000;
 const MODEL_CULL: bool = true; // backface-cull studio models
 const MODEL_OCCLUSION_CULL: bool = true; // skip actors fully hidden by static BSP
 const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
