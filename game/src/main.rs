@@ -175,7 +175,9 @@ const AI_ITEM: u8 = 0; // static pickup
 const AI_FLEE: u8 = 1; // scientist
 const AI_ALLY: u8 = 2; // barney
 const AI_MELEE: u8 = 3; // approach + bite (headcrab and friends)
-const AI_IDLE: u8 = 4; // render only (ranged/boss/flyer until they get real AI)
+const AI_IDLE: u8 = 4; // render only (flyers/ceiling/bosses until they get real AI)
+const AI_RANGED: u8 = 5; // approach to range, then fire (grunts, vorts, agrunt, controller)
+const AI_TURRET: u8 = 6; // stationary: rotate to face + fire (sentry/turret/miniturret)
 
 #[derive(Clone, Copy)]
 struct ModelDef {
@@ -183,6 +185,10 @@ struct ModelDef {
     target_h: i32,
     radius: i32,
     ai: u8,
+    speed: u8,        // move speed (world units/tick); 0 = stationary
+    atk_range: u16,   // attack engage distance (world units)
+    atk_damage: u8,   // HP per hit
+    atk_cooldown: u8, // ticks between attacks (20 Hz)
 }
 const fn mdef(health: u8, target_h: i32, radius: i32, ai: u8) -> ModelDef {
     ModelDef {
@@ -190,8 +196,35 @@ const fn mdef(health: u8, target_h: i32, radius: i32, ai: u8) -> ModelDef {
         target_h,
         radius,
         ai,
+        speed: 0,
+        atk_range: 0,
+        atk_damage: 0,
+        atk_cooldown: 0,
     }
 }
+const fn mdef_atk(
+    health: u8,
+    target_h: i32,
+    radius: i32,
+    ai: u8,
+    speed: u8,
+    atk_range: u16,
+    atk_damage: u8,
+    atk_cooldown: u8,
+) -> ModelDef {
+    ModelDef {
+        health,
+        target_h,
+        radius,
+        ai,
+        speed,
+        atk_range,
+        atk_damage,
+        atk_cooldown,
+    }
+}
+// Combat params (speed/range/damage/cooldown) for AI_RANGED + AI_TURRET come from
+// the per-enemy MDL/Half-Life survey; melee/idle/passive types ignore them.
 const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(SCIENTIST_HEALTH, 40, SCIENTIST_RENDER_RADIUS, AI_FLEE), // 0 scientist
     mdef(BARNEY_HEALTH, 40, BARNEY_RENDER_RADIUS, AI_ALLY),       // 1 barney
@@ -201,23 +234,23 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(50, 40, 90, AI_MELEE),                                  // 5 zombie
     mdef(20, 20, 70, AI_MELEE),                                  // 6 houndeye
     mdef(40, 32, 90, AI_MELEE),                                  // 7 bullsquid
-    mdef(50, 40, 90, AI_IDLE),                                   // 8 hgrunt (ranged: idle for now)
-    mdef(30, 40, 90, AI_IDLE),                                   // 9 alien_slave
-    mdef(60, 48, 100, AI_IDLE),                                  // 10 alien_grunt
-    mdef(60, 40, 100, AI_IDLE),                                  // 11 alien_controller
-    mdef(40, 32, 90, AI_IDLE),                                   // 12 barnacle
-    mdef(16, 8, 40, AI_IDLE),                                    // 13 leech
-    mdef(6, 4, 30, AI_IDLE),                                     // 14 cockroach
-    mdef(30, 48, 90, AI_IDLE),                                   // 15 gman
-    mdef(200, 90, 220, AI_IDLE),                                 // 16 gargantua
-    mdef(200, 90, 240, AI_IDLE),                                 // 17 nihilanth
-    mdef(150, 70, 200, AI_IDLE),                                 // 18 bigmomma
+    mdef_atk(50, 40, 90, AI_RANGED, 16, 1000, 5, 8),            // 8 hgrunt (mp5 bursts)
+    mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24),           // 9 alien_slave (zap)
+    mdef_atk(60, 48, 100, AI_RANGED, 16, 1000, 8, 16),          // 10 alien_grunt (hornets)
+    mdef_atk(60, 40, 100, AI_RANGED, 16, 1024, 3, 14),          // 11 alien_controller (energy)
+    mdef(40, 32, 90, AI_IDLE),                                   // 12 barnacle (ceiling: render only)
+    mdef(16, 8, 40, AI_IDLE),                                    // 13 leech (flyer: render only)
+    mdef(6, 4, 30, AI_IDLE),                                     // 14 cockroach (passive)
+    mdef(30, 48, 90, AI_IDLE),                                   // 15 gman (passive)
+    mdef(200, 90, 220, AI_IDLE),                                 // 16 gargantua (boss: render only)
+    mdef(200, 90, 240, AI_IDLE),                                 // 17 nihilanth (boss: render only)
+    mdef(150, 70, 200, AI_IDLE),                                 // 18 bigmomma (boss: render only)
     mdef(40, 20, 90, AI_MELEE),                                  // 19 ichthyosaur
-    mdef(40, 40, 80, AI_IDLE),                                   // 20 sentry
-    mdef(50, 40, 80, AI_IDLE),                                   // 21 turret
-    mdef(30, 30, 60, AI_IDLE),                                   // 22 miniturret
-    mdef(80, 60, 150, AI_IDLE),                                  // 23 apache
-    mdef(10, 20, 60, AI_IDLE),                                   // 24 flyer_flock
+    mdef_atk(40, 40, 80, AI_TURRET, 0, 1000, 7, 8),            // 20 sentry
+    mdef_atk(50, 40, 80, AI_TURRET, 0, 1200, 8, 7),            // 21 turret
+    mdef_atk(30, 30, 60, AI_TURRET, 0, 1000, 5, 3),            // 22 miniturret
+    mdef(80, 60, 150, AI_IDLE),                                 // 23 apache (flyer: render only)
+    mdef(10, 20, 60, AI_IDLE),                                  // 24 flyer_flock (passive)
 ];
 
 #[inline]
@@ -2536,6 +2569,120 @@ unsafe fn find_scientist_threat(m: &Map, movers: &[phys::Mover], pi: usize, npro
     best
 }
 
+/// Target acquisition for hostile actors: nearest player-or-human within `wake2`,
+/// preferring one with line of sight. Generalizes find_headcrab_target by wake
+/// range and uses the actor's own eye height.
+unsafe fn find_actor_target(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    nprops: usize,
+    wake2: i32,
+) -> u8 {
+    let ty = PROP_KIND[pi];
+    let pos = PROP_POS[pi];
+    let from = prop_target(ty, pos);
+    let mut best_visible = PROP_TARGET_NONE;
+    let mut best_visible_d2 = wake2;
+    let mut best_any = PROP_TARGET_NONE;
+    let mut best_any_d2 = wake2;
+
+    let player_d2 = dist2_xz(pos, player_pos);
+    if player_d2 < best_any_d2 {
+        best_any = PROP_TARGET_PLAYER;
+        best_any_d2 = player_d2;
+    }
+    if player_d2 < best_visible_d2 {
+        let to = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
+        if actor_line_clear(m, movers, from, to) {
+            best_visible = PROP_TARGET_PLAYER;
+            best_visible_d2 = player_d2;
+        }
+    }
+
+    let mut ti = 0usize;
+    while ti < nprops {
+        if ti != pi && PROP_HEALTH[ti] > 0 && prop_is_human(PROP_KIND[ti]) {
+            let d2 = dist2_xz(pos, PROP_POS[ti]);
+            if d2 < best_any_d2 {
+                best_any = ti as u8;
+                best_any_d2 = d2;
+            }
+            if d2 < best_visible_d2 {
+                let to = prop_target(PROP_KIND[ti], PROP_POS[ti]);
+                if actor_line_clear(m, movers, from, to) {
+                    best_visible = ti as u8;
+                    best_visible_d2 = d2;
+                }
+            }
+        }
+        ti += 1;
+    }
+    if best_visible != PROP_TARGET_NONE {
+        best_visible
+    } else {
+        best_any
+    }
+}
+
+/// Ranged + turret AI. Acquire a target, face it, and fire a hitscan shot every
+/// `atk_cooldown` ticks while it is within `atk_range` and in line of sight.
+/// Movers (`can_move`) close to range first; turrets (`!can_move`) hold still.
+unsafe fn tick_shooter(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    health: &mut u16,
+    armor: &mut u16,
+    nprops: usize,
+    can_move: bool,
+) {
+    let ty = PROP_KIND[pi];
+    let def = model_def(ty);
+    let range = def.atk_range as i32;
+    let range2 = range.saturating_mul(range);
+    // Wake a little beyond firing range so movers start closing; turrets only
+    // engage once the target is actually inside range.
+    let wake = if can_move { range + 384 } else { range };
+    let wake2 = wake.saturating_mul(wake);
+
+    let target = find_actor_target(m, movers, pi, player_pos, nprops, wake2);
+    if target == PROP_TARGET_NONE {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+        return;
+    }
+    let Some(aim) = target_aim_point(target, player_pos, nprops) else {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+        return;
+    };
+    PROP_AI_TARGET[pi] = target;
+    prop_face_point(pi, aim);
+
+    let pos = PROP_POS[pi];
+    let d2 = dist2_xz(pos, aim);
+    let from = prop_target(ty, pos);
+    let visible = actor_line_clear(m, movers, from, aim);
+
+    if d2 <= range2 && visible {
+        // In range + line of sight: hold and fire on the cooldown. The attack
+        // clip plays while STATE_ATTACK; the hit is instant (hitscan).
+        PROP_STATE[pi] = PROP_STATE_ATTACK;
+        if PROP_ATTACK_COOLDOWN[pi] == 0 {
+            damage_target(target, def.atk_damage, health, armor);
+            PROP_ATTACK_COOLDOWN[pi] = def.atk_cooldown;
+        }
+    } else if can_move {
+        PROP_STATE[pi] = PROP_STATE_MOVE;
+        prop_move_towards_point(m, movers, pi, aim, def.speed as i32);
+    } else {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+    }
+}
+
 unsafe fn tick_headcrab(
     m: &Map,
     movers: &[phys::Mover],
@@ -2794,6 +2941,8 @@ unsafe fn tick_props(
             // Melee aliens (zombie/houndeye/bullsquid/ichy) reuse the headcrab
             // approach+bite AI; ranged/boss/flyer types render but don't move yet.
             AI_MELEE => tick_headcrab(m, movers, pi, player_pos, health, armor, nprops),
+            AI_RANGED => tick_shooter(m, movers, pi, player_pos, health, armor, nprops, true),
+            AI_TURRET => tick_shooter(m, movers, pi, player_pos, health, armor, nprops, false),
             AI_ALLY => tick_barney(m, movers, pi, player_pos, health, armor, nprops),
             AI_FLEE => tick_scientist(m, movers, pi, player_pos, nprops),
             _ => {}
