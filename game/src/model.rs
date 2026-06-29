@@ -62,7 +62,6 @@ pub struct Model {
     tri_sz: usize,
     tri_has_normals: bool,
     compact_frames: bool,
-    base_frame_off: usize,
     local_to_world_q12: u16,
 }
 
@@ -156,11 +155,6 @@ impl Model {
             v_off + n_frames * frame_stride
         };
         let tri_sz = if hmd6 { TRI_SZ_HMD6 } else { TRI_SZ };
-        let base_frame_off = if compact {
-            v_off + rd_u32(data, frame_desc_off) as usize
-        } else {
-            v_off
-        };
         Model {
             data,
             n_verts,
@@ -175,7 +169,6 @@ impl Model {
             tri_sz,
             tri_has_normals: hmd6,
             compact_frames: compact,
-            base_frame_off,
             local_to_world_q12,
         }
     }
@@ -210,21 +203,30 @@ impl Model {
     #[inline]
     pub fn frame(&self, frame: usize) -> ModelFrame<'_> {
         let f = if frame < self.n_frames { frame } else { 0 };
-        let (frame_off, mode) = if self.compact_frames {
+        let (frame_off, mode, base_frame_off) = if self.compact_frames {
             let desc = self.frame_desc_off + f * FRAME_REC_SZ;
+            let mode = self.data[desc + 4];
+            // base index for i8-delta frames is in the FrameRec pad (bytes 5-6);
+            // 0 in legacy files = frame 0 = the old global-base behavior.
+            let mut base_idx = rd_u16(self.data, desc + 5) as usize;
+            if base_idx >= self.n_frames {
+                base_idx = 0;
+            }
+            let base_desc = self.frame_desc_off + base_idx * FRAME_REC_SZ;
             (
                 self.v_off + rd_u32(self.data, desc) as usize,
-                self.data[desc + 4],
+                mode,
+                self.v_off + rd_u32(self.data, base_desc) as usize,
             )
         } else {
-            (self.v_off + f * self.frame_stride, 0)
+            (self.v_off + f * self.frame_stride, 0, self.v_off)
         };
         ModelFrame {
             data: self.data,
             compact_frames: self.compact_frames,
             mode,
             frame_off,
-            base_frame_off: self.base_frame_off,
+            base_frame_off,
         }
     }
 

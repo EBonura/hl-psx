@@ -4117,12 +4117,15 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
 
 type Mat34 = ([[f32; 3]; 3], [f32; 3]); // rotation, translation
 
+// Default (viewmodel) vertex precision. Enemies/NPCs cook at a coarser scale
+// (see ENEMY_VERTEX_LOCAL_SCALE) since they are viewed at distance: lower scale
+// shrinks i8 deltas + the base, halving model RAM with no visible loss.
 const MDL_VERTEX_LOCAL_SCALE: i32 = 8;
-const MDL_VERTEX_LOCAL_SCALE_F32: f32 = MDL_VERTEX_LOCAL_SCALE as f32;
+const ENEMY_VERTEX_LOCAL_SCALE: i32 = 2;
 const MDL_LOCAL_TO_WORLD_Q12: u16 = (4096 / MDL_VERTEX_LOCAL_SCALE) as u16;
 
-fn quantize_mdl_coord(v: f32) -> i16 {
-    (v * MDL_VERTEX_LOCAL_SCALE_F32)
+fn quantize_mdl_coord(v: f32, scale: i32) -> i16 {
+    (v * scale as f32)
         .round()
         .clamp(i16::MIN as f32, i16::MAX as f32) as i16
 }
@@ -4348,6 +4351,7 @@ fn cook_mdl(
     specs: &[SeqSpec],
     compact_frames: bool,
     compact_normals: bool,
+    vertex_scale: i32,
 ) -> Result<(), String> {
     let b = std::fs::read(path).map_err(|e| format!("{}: {}", path, e))?;
     if b.get(0..4) != Some(b"IDST") {
@@ -4522,9 +4526,9 @@ fn cook_mdl(
             for v in 0..vp.len() {
                 let p = apply(bones.get(vbone[v]).unwrap_or(&ident), vp[v]);
                 fv.push([
-                    quantize_mdl_coord(p[0]),
-                    quantize_mdl_coord(p[2]),
-                    quantize_mdl_coord(p[1]),
+                    quantize_mdl_coord(p[0], vertex_scale),
+                    quantize_mdl_coord(p[2], vertex_scale),
+                    quantize_mdl_coord(p[1], vertex_scale),
                 ]);
             }
             frames.push(fv);
@@ -4617,36 +4621,48 @@ fn cook_mdl(
     let n_verts = vp.len();
     let mut o: Vec<u8> = Vec::new();
     if compact_frames {
-        let base = frames.first().map(|f| f.as_slice()).unwrap_or(&[]);
-        let mut frame_descs: Vec<(u32, u8)> = Vec::with_capacity(frames.len());
+        // Per-clip base: each frame stores an i8 delta from its CLIP's first
+        // frame, not the global frame 0. Intra-clip motion is small, so far more
+        // frames fit i8 (3 B/vert) than when delta'd across whole animations.
+        // Lossless: vert = base + delta exactly. base_idx goes in the FrameRec
+        // pad (old files left it 0 = frame 0 = the previous behavior).
+        let mut base_of = vec![0usize; frames.len()];
+        for (first, count) in &clips {
+            let f = *first as usize;
+            for k in 0..(*count as usize) {
+                if f + k < base_of.len() {
+                    base_of[f + k] = f;
+                }
+            }
+        }
+        let mut frame_descs: Vec<(u32, u8, u16)> = Vec::with_capacity(frames.len());
         let mut frame_data: Vec<u8> = Vec::new();
         for (fi, fv) in frames.iter().enumerate() {
             let offset = frame_data.len().min(u32::MAX as usize) as u32;
-            if fi > 0 {
+            let bidx = base_of[fi];
+            if fi != bidx {
+                let base = frames[bidx].as_slice();
                 let mut deltas: Vec<u8> = Vec::with_capacity(fv.len() * 3);
                 let mut fits = base.len() == fv.len();
                 if fits {
-                    for (v, b) in fv.iter().zip(base.iter()) {
+                    'fit: for (v, b) in fv.iter().zip(base.iter()) {
                         for c in 0..3 {
                             let d = v[c] as i32 - b[c] as i32;
                             if !(-128..=127).contains(&d) {
                                 fits = false;
-                                break;
+                                break 'fit;
                             }
                             deltas.push(d as i8 as u8);
-                        }
-                        if !fits {
-                            break;
                         }
                     }
                 }
                 if fits {
-                    frame_descs.push((offset, 1));
+                    frame_descs.push((offset, 1, bidx as u16));
                     frame_data.extend_from_slice(&deltas);
                     continue;
                 }
             }
-            frame_descs.push((offset, 0));
+            frame_descs.push((offset, 0, 0));
             for v in fv {
                 for c in v {
                     frame_data.extend_from_slice(&c.to_le_bytes());
@@ -4661,16 +4677,17 @@ fn cook_mdl(
         o.extend_from_slice(&(frames.len() as u32).to_le_bytes());
         o.extend_from_slice(&(clips.len() as u32).to_le_bytes());
         o.extend_from_slice(&(frame_data.len() as u32).to_le_bytes());
-        o.extend_from_slice(&MDL_LOCAL_TO_WORLD_Q12.to_le_bytes());
+        o.extend_from_slice(&((4096 / vertex_scale.max(1)) as u16).to_le_bytes());
         o.extend_from_slice(&0u16.to_le_bytes());
         for (first, count) in &clips {
             o.extend_from_slice(&first.to_le_bytes());
             o.extend_from_slice(&count.to_le_bytes());
         }
-        for (offset, mode) in &frame_descs {
+        for (offset, mode, base_idx) in &frame_descs {
             o.extend_from_slice(&offset.to_le_bytes());
             o.push(*mode);
-            o.extend_from_slice(&[0, 0, 0]);
+            o.extend_from_slice(&base_idx.to_le_bytes());
+            o.push(0);
         }
         o.extend_from_slice(&frame_data);
     } else {
@@ -4771,8 +4788,22 @@ fn main() {
                         exit(2);
                     }
                 };
-                if let Err(e) = cook_mdl(inp, out, tex_out, &specs, compact_frames, compact_normals)
-                {
+                // --mdl6 (enemies/NPCs) cook at the coarse enemy scale; --mdl4
+                // (viewmodel) keeps full precision for the close-up weapon.
+                let vertex_scale = if compact_normals {
+                    ENEMY_VERTEX_LOCAL_SCALE
+                } else {
+                    MDL_VERTEX_LOCAL_SCALE
+                };
+                if let Err(e) = cook_mdl(
+                    inp,
+                    out,
+                    tex_out,
+                    &specs,
+                    compact_frames,
+                    compact_normals,
+                    vertex_scale,
+                ) {
                     eprintln!("{}", e);
                     exit(1);
                 }
@@ -4841,7 +4872,7 @@ mod tests {
     fn model_scale_round_trips_through_q12() {
         let runtime_s = (4096 / MDL_LOCAL_TO_WORLD_Q12 as i32).max(1);
         assert_eq!(runtime_s, MDL_VERTEX_LOCAL_SCALE);
-        assert!(quantize_mdl_coord(1.0) == MDL_VERTEX_LOCAL_SCALE as i16); // ×s before rounding
+        assert!(quantize_mdl_coord(1.0, MDL_VERTEX_LOCAL_SCALE) == MDL_VERTEX_LOCAL_SCALE as i16); // ×s before rounding
     }
 
     #[test]
