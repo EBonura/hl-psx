@@ -122,6 +122,7 @@ const MODEL_CULL: bool = true; // backface-cull studio models
 const MODEL_OCCLUSION_CULL: bool = true; // skip actors fully hidden by static BSP
 const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
 const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in front of the camera
+const DBG_PAD_BOOT: bool = false; // debug: hold L1 | map_index (low byte) at boot to load any map headlessly
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 const ROOM_WORLD_CHUNK_MUL: u32 = 2;
@@ -4474,7 +4475,24 @@ fn main() {
     // Boot flow: pick a map in the menu, stream + play it, return on Select.
     // (Analog is enabled inside play(); the menu runs on the digital pad.)
     loop {
-        let sel = menu::run(&mut fb);
+        // Debug: the headless harness holds L1 with a map index in the pad's low
+        // byte to boot any map directly (the menu only exposes 19 chapter starts),
+        // for all-maps load verification. Released before gameplay.
+        let mut dbg_sel = None;
+        if DBG_PAD_BOOT {
+            let mut i = 0;
+            while i < 150 {
+                gpu::vsync();
+                fb.swap();
+                let b = poll_port1().buttons;
+                if b.is_held(button::L1) {
+                    dbg_sel = Some((b.bits() & 0xFF) as usize);
+                    break;
+                }
+                i += 1;
+            }
+        }
+        let sel = dbg_sel.unwrap_or_else(|| menu::run(&mut fb));
         let mut launch = menu_launch(sel);
         loop {
             match play(&mut fb, launch) {

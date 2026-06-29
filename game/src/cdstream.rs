@@ -100,9 +100,14 @@ mod hw {
         wr_index(0);
     }
     unsafe fn drain_responses() {
+        // The response FIFO is 16 bytes deep, so a real drain reads at most 16.
+        // Bound the loop: on heavy streaming the CD/emulator can wedge the FIFO
+        // "not-empty", and an unbounded drain spins forever (hung loader).
         wr_index(0);
-        while psx_io::read8(CD_STATUS) & STATUS_RESPONSE_FIFO_NOT_EMPTY != 0 {
+        let mut guard = 0;
+        while psx_io::read8(CD_STATUS) & STATUS_RESPONSE_FIFO_NOT_EMPTY != 0 && guard < 256 {
             let _ = psx_io::read8(CD_RESPONSE);
+            guard += 1;
         }
     }
     unsafe fn data_fifo_ready() -> bool {
@@ -364,8 +369,13 @@ pub fn load_chunk(chunk_id: u32, dst: &mut [u32]) -> Option<usize> {
             return None;
         }
         let dst_ptr = dst.as_mut_ptr() as *mut u8;
+        // Only read as many sectors as `byte_size` actually needs; the table's
+        // `sector_count` is padded and (on a malformed entry) could be garbage --
+        // looping on it would read thousands of sectors and hang the loader.
+        let _ = sector_count;
+        let needed = ((byte_size as u32) + (SECTOR_BYTES as u32) - 1) / (SECTOR_BYTES as u32);
         let mut s = 0u32;
-        while s < sector_count {
+        while s < needed {
             if !hw::read_sector(buf) {
                 hw::stop();
                 return None;
