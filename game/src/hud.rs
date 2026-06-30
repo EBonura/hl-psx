@@ -176,6 +176,7 @@ pub fn draw<const N: usize>(
     armor: u16,
     clip_ammo: u16,
     reserve_ammo: u16,
+    ammo_mode: u8, // 0 = melee (no ammo), 1 = reserve only, 2 = reserve | clip
     pickup_kind: u8,
     pickup_ticks: u8,
     ot: &mut OrderingTable<N>,
@@ -246,36 +247,42 @@ pub fn draw<const N: usize>(
         ); // HEV armor/suit icon
         number_l(mat, ot, prims, &mut count, armor, 139, y);
 
-        sprite(
-            mat,
-            ot,
-            prims,
-            &mut count,
-            AMMO_U,
-            ICON_V,
-            AMMO_W,
-            AMMO_H,
-            221,
-            y,
-            AMMO_DRAW_W,
-            AMMO_DRAW_H,
-        ); // pistol ammo icon
-        number_l(mat, ot, prims, &mut count, reserve_ammo, 243, y);
-        sprite(
-            mat,
-            ot,
-            prims,
-            &mut count,
-            DIVIDER_U,
-            ICON_V,
-            DIVIDER_W,
-            DIVIDER_H,
-            277,
-            y - 6,
-            DIVIDER_DRAW_W,
-            DIVIDER_DRAW_H,
-        );
-        number_r(mat, ot, prims, &mut count, clip_ammo, 308, y);
+        // Ammo cluster: hidden for melee (mode 0); reserve-only for no-magazine
+        // weapons (mode 1); reserve | clip for magazine weapons (mode 2).
+        if ammo_mode != 0 {
+            sprite(
+                mat,
+                ot,
+                prims,
+                &mut count,
+                AMMO_U,
+                ICON_V,
+                AMMO_W,
+                AMMO_H,
+                221,
+                y,
+                AMMO_DRAW_W,
+                AMMO_DRAW_H,
+            ); // ammo icon
+            number_l(mat, ot, prims, &mut count, reserve_ammo, 243, y);
+            if ammo_mode == 2 {
+                sprite(
+                    mat,
+                    ot,
+                    prims,
+                    &mut count,
+                    DIVIDER_U,
+                    ICON_V,
+                    DIVIDER_W,
+                    DIVIDER_H,
+                    277,
+                    y - 6,
+                    DIVIDER_DRAW_W,
+                    DIVIDER_DRAW_H,
+                );
+                number_r(mat, ot, prims, &mut count, clip_ammo, 308, y);
+            }
+        }
     }
 
     if pickup_kind != PICKUP_NONE && pickup_ticks > 0 {

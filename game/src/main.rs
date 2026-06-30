@@ -158,15 +158,12 @@ const MODEL_CHUNK_HEADCRAB_TEX: u32 = 1102;
 const MODEL_CHUNK_SUIT_ITEM_TEX: u32 = 1200;
 const MODEL_CHUNK_BATTERY_ITEM_TEX: u32 = 1201;
 const MODEL_CHUNK_V_9MMHANDGUN_TEX: u32 = 2000;
-const GLOCK_MAX_CLIP: u16 = 17;
-const GLOCK_START_RESERVE: u16 = 35;
-const GLOCK_DAMAGE: u8 = 8;
-const GLOCK_RANGE: i32 = 8192;
-const GLOCK_AIM_PIX_X: i32 = 22;
+const GLOCK_MAX_CLIP: u16 = 17; // glock magazine; also the initial-launch clip cap
+const GLOCK_START_RESERVE: u16 = 35; // 9mm reserve at game start
+const GLOCK_RANGE: i32 = 8192; // shared hitscan reach for the ballistic weapons
+const GLOCK_AIM_PIX_X: i32 = 22; // hitscan aim-cone half-width (screen px)
 const GLOCK_AIM_PIX_Y: i32 = 34;
-const GLOCK_PRIMARY_COOLDOWN_TICKS: u8 = 6; // HL primary cycle is 0.3s; game tick is 20 Hz
-const GLOCK_EMPTY_COOLDOWN_TICKS: u8 = 4; // HL empty click cadence is 0.2s
-const GLOCK_RELOAD_TICKS: u8 = 30; // HL Glock reload is 1.5s
+const GLOCK_EMPTY_COOLDOWN_TICKS: u8 = 4; // dry-click cadence (0.2s)
 const PROP_TARGET_HEIGHT: i32 = 40;
 const SCIENTIST_RENDER_RADIUS: i32 = 72;
 const BARNEY_RENDER_RADIUS: i32 = 72;
@@ -382,7 +379,38 @@ static mut IMPACT_MARK_RECTS: [RectFlat; MAX_IMPACT_MARKS] =
     [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_IMPACT_MARKS];
 static mut DEATH_OVERLAY: RectFlat = RectFlat::new(0, 0, 0, 0, 0, 0, 0);
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
-static mut WEAPON_SLOTS: [TexSlot; 12] = [EMPTY_SLOT; 12];
+// Resident viewmodel pool: the curated weapon set below loads at map start so
+// switching is instant. Geometry occupies the head of MODEL_BUF (RAM is too tight
+// for a separate buffer -- only ~16 KB spare); enemies stream after this reserve,
+// so the set trades a slice of the enemy budget for instant weapon switching.
+// Textures go in VM_SLOTS. Weapons outside the set fall back to the glock
+// viewmodel (they still fire). The loader stops when VM_POOL_WORDS fills.
+const VM_POOL_WORDS: usize = 20_480; // 80 KB head reserve of MODEL_BUF
+const VM_SLOTS_TOTAL: usize = 48;
+static mut VM_SLOTS: [TexSlot; VM_SLOTS_TOTAL] = [EMPTY_SLOT; VM_SLOTS_TOTAL];
+// Priority load order; covers all five fire archetypes (melee/semi/auto/spread/
+// projectile). The rest of the arsenal reuses the glock viewmodel.
+const VM_RESIDENT: [usize; 6] = [W_GLOCK, W_CROWBAR, W_MP5, W_SHOTGUN, W_RPG, W_357];
+
+#[derive(Clone, Copy)]
+struct VmEntry {
+    valid: bool,
+    geom_off: usize,
+    geom_len: usize,
+    slot_start: usize,
+    n_slots: usize,
+}
+impl VmEntry {
+    const NONE: VmEntry = VmEntry {
+        valid: false,
+        geom_off: 0,
+        geom_len: 0,
+        slot_start: 0,
+        n_slots: 0,
+    };
+}
+static mut VM_ENTRY: [VmEntry; N_WEAPONS] = [VmEntry::NONE; N_WEAPONS];
+
 // Shared per-map model pool: streamed geometry lives in MODEL_BUF (after the
 // viewmodel); textures, render faces, and slot bookkeeping live in these pools.
 static mut POOL_TEX: [TexSlot; POOL_TEX_SLOTS] = [EMPTY_SLOT; POOL_TEX_SLOTS];
@@ -777,15 +805,82 @@ unsafe fn streamed_map_bytes(len: usize) -> &'static [u8] {
     unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
-#[inline(always)]
-unsafe fn streamed_model_bytes(len: usize) -> &'static [u8] {
-    let ptr = canonical_ram_const(core::ptr::addr_of!(MODEL_BUF).cast::<u8>());
-    unsafe { core::slice::from_raw_parts(ptr, len) }
-}
-
 unsafe fn streamed_model_bytes_at(byte_off: usize, len: usize) -> &'static [u8] {
     let ptr = canonical_ram_const(core::ptr::addr_of!(MODEL_BUF).cast::<u8>());
     unsafe { core::slice::from_raw_parts(ptr.add(byte_off), len) }
+}
+
+#[inline(always)]
+unsafe fn viewmodel_bytes_at(byte_off: usize, len: usize) -> &'static [u8] {
+    let ptr = canonical_ram_const(core::ptr::addr_of!(MODEL_BUF).cast::<u8>());
+    unsafe { core::slice::from_raw_parts(ptr.add(byte_off), len) }
+}
+
+/// Stream the curated viewmodel set into MODEL_BUF's head reserve (geometry) +
+/// VM_SLOTS (textures). Textures stage transiently above the reserve, in the
+/// enemy region that stream_map_models fills later. Returns whether the glock
+/// (the fallback viewmodel) loaded.
+unsafe fn load_resident_viewmodels(
+    stream_chunks: &mut u32,
+    stream_bytes: &mut u32,
+    stream_sectors: &mut u32,
+) -> bool {
+    for e in VM_ENTRY.iter_mut() {
+        *e = VmEntry::NONE;
+    }
+    let buf_ptr = core::ptr::addr_of_mut!(MODEL_BUF).cast::<u32>();
+    let mut word = 0usize;
+    let mut slot = 0usize;
+    let mut wi = 0usize;
+    while wi < VM_RESIDENT.len() {
+        let wid = VM_RESIDENT[wi];
+        wi += 1;
+        if word >= VM_POOL_WORDS || slot >= VM_SLOTS_TOTAL {
+            break;
+        }
+        let wm = WEAPON_DEFS[wid].wm as u32;
+        let dst = core::slice::from_raw_parts_mut(buf_ptr.add(word), VM_POOL_WORDS - word);
+        let glen = cdstream::load_chunk(MODEL_CHUNK_V_9MMHANDGUN + wm, dst).unwrap_or(0);
+        if glen == 0 || word + glen.div_ceil(4) > VM_POOL_WORDS {
+            continue;
+        }
+        account_streamed_chunk(glen, stream_chunks, stream_bytes, stream_sectors);
+        let (ntex, _) = stream_model_texture_chunk(
+            MODEL_CHUNK_V_9MMHANDGUN_TEX + wm,
+            VM_POOL_WORDS,
+            core::ptr::addr_of_mut!(VM_SLOTS).cast::<TexSlot>().add(slot),
+            VM_SLOTS_TOTAL - slot,
+            stream_chunks,
+            stream_bytes,
+            stream_sectors,
+        )
+        .unwrap_or((0, 0));
+        VM_ENTRY[wid] = VmEntry {
+            valid: true,
+            geom_off: word * 4,
+            geom_len: glen,
+            slot_start: slot,
+            n_slots: ntex,
+        };
+        word += glen.div_ceil(4);
+        slot += ntex;
+    }
+    VM_ENTRY[W_GLOCK].valid
+}
+
+/// Resolve the viewmodel (Model + its VM_SLOTS sub-range) for a weapon, falling
+/// back to the glock for weapons outside the resident set.
+unsafe fn viewmodel_for(wid: usize) -> (Model, usize, usize) {
+    let e = if wid < N_WEAPONS && VM_ENTRY[wid].valid {
+        VM_ENTRY[wid]
+    } else {
+        VM_ENTRY[W_GLOCK]
+    };
+    (
+        Model::load(viewmodel_bytes_at(e.geom_off, e.geom_len)),
+        e.slot_start,
+        e.n_slots,
+    )
 }
 
 #[inline]
@@ -3075,23 +3170,208 @@ unsafe fn collect_pickups(
     }
 }
 
-#[derive(Clone, Copy)]
-struct WeaponState {
+// ---- Weapon system: data-driven HL1 arsenal ----------------------------------
+// Ammo reserve pools, shared by weapons of the same type (glock + mp5 share 9mm).
+const AMMO_NONE: usize = 0; // melee (crowbar): no ammo
+const AMMO_9MM: usize = 1;
+const AMMO_357: usize = 2;
+const AMMO_BUCK: usize = 3;
+const AMMO_BOLT: usize = 4;
+const AMMO_ROCKET: usize = 5;
+const AMMO_URANIUM: usize = 6;
+const AMMO_HORNET: usize = 7;
+const AMMO_GREN: usize = 8;
+const AMMO_SNARK: usize = 9;
+const AMMO_SATCHEL: usize = 10;
+const AMMO_TRIPMINE: usize = 11;
+const N_AMMO: usize = 12;
+
+// Fire archetypes.
+const FIRE_MELEE: u8 = 0; // short-range trace (crowbar)
+const FIRE_SEMI: u8 = 1; // one hitscan per trigger press (glock, .357, gauss)
+const FIRE_AUTO: u8 = 2; // hitscan while held (mp5, egon)
+const FIRE_SPREAD: u8 = 3; // multi-pellet hitscan per press (shotgun)
+const FIRE_PROJ: u8 = 4; // spawns a projectile (rpg, crossbow, grenade, hornet, ...)
+
+// Projectile kinds (FIRE_PROJ weapons). Explosive kinds do area damage.
+const PROJ_BOLT: u8 = 0;
+const PROJ_ROCKET: u8 = 1;
+const PROJ_GRENADE: u8 = 2;
+const PROJ_HORNET: u8 = 3;
+const PROJ_SNARK: u8 = 4;
+const PROJ_PLACED: u8 = 5; // satchel / tripmine (lobbed explosive)
+
+struct WeaponDef {
+    #[allow(dead_code)] // documents the table; a HUD weapon label is the next use
+    name: &'static str,
+    ammo: usize,      // AMMO_*
+    clip: u16,        // magazine size (0 = fires straight from the reserve)
+    reserve_max: u16, // carry cap for this ammo type
+    damage: u8,       // per hit / per pellet
+    range: i32,       // hitscan reach
+    pellets: u8,      // hitscan traces per press (shotgun > 1)
+    spread: i32,      // per-pellet aim jitter (aim-cone pixels)
+    cooldown: u8,     // ticks between shots
+    reload: u8,       // reload ticks (0 = no magazine reload)
+    fire: u8,         // FIRE_*
+    proj: u8,         // PROJ_* (FIRE_PROJ only)
+    wm: u8,           // viewmodel index: geom chunk 1000+wm, tex 2000+wm
+}
+
+// Weapon ids = index into WEAPON_DEFS. Switch order follows the HL1 slots.
+const W_CROWBAR: usize = 0;
+const W_GLOCK: usize = 1;
+const W_357: usize = 2;
+const W_MP5: usize = 3;
+const W_SHOTGUN: usize = 4;
+const W_CROSSBOW: usize = 5;
+const W_RPG: usize = 6;
+const W_GAUSS: usize = 7;
+const W_EGON: usize = 8;
+const W_HORNET: usize = 9;
+const W_GRENADE: usize = 10;
+const W_SNARK: usize = 11;
+const W_TRIPMINE: usize = 12;
+const W_SATCHEL: usize = 13;
+const N_WEAPONS: usize = 14;
+
+const fn wdef(
+    name: &'static str,
+    ammo: usize,
     clip: u16,
-    reserve: u16,
+    reserve_max: u16,
+    damage: u8,
+    range: i32,
+    pellets: u8,
+    spread: i32,
+    cooldown: u8,
+    reload: u8,
+    fire: u8,
+    proj: u8,
+    wm: u8,
+) -> WeaponDef {
+    WeaponDef {
+        name,
+        ammo,
+        clip,
+        reserve_max,
+        damage,
+        range,
+        pellets,
+        spread,
+        cooldown,
+        reload,
+        fire,
+        proj,
+        wm,
+    }
+}
+
+// Faithful-ish HL1 values (cooldown/reload in 20 Hz sim ticks). Exotic behaviours
+// (gauss charge, egon beam, snark AI, satchel/tripmine placement) are mapped to
+// the nearest archetype; the per-weapon stats and viewmodel are authentic.
+static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
+    wdef("CROWBAR", AMMO_NONE, 0, 0, 10, 96, 1, 0, 7, 0, FIRE_MELEE, 0, 4),
+    wdef("GLOCK", AMMO_9MM, 17, 250, 8, GLOCK_RANGE, 1, 0, 6, 30, FIRE_SEMI, 0, 0),
+    wdef("357", AMMO_357, 6, 36, 40, GLOCK_RANGE, 1, 0, 15, 40, FIRE_SEMI, 0, 1),
+    wdef("MP5", AMMO_9MM, 50, 250, 8, GLOCK_RANGE, 1, 5, 2, 30, FIRE_AUTO, 0, 2),
+    wdef("SHOTGUN", AMMO_BUCK, 8, 125, 5, GLOCK_RANGE, 6, 14, 16, 24, FIRE_SPREAD, 0, 13),
+    wdef("CROSSBOW", AMMO_BOLT, 5, 50, 50, GLOCK_RANGE, 1, 0, 15, 30, FIRE_PROJ, PROJ_BOLT, 3),
+    wdef("RPG", AMMO_ROCKET, 1, 5, 100, 0, 1, 0, 30, 30, FIRE_PROJ, PROJ_ROCKET, 10),
+    wdef("GAUSS", AMMO_URANIUM, 0, 100, 20, GLOCK_RANGE, 1, 0, 5, 0, FIRE_SEMI, 0, 7),
+    wdef("EGON", AMMO_URANIUM, 0, 100, 6, GLOCK_RANGE, 1, 0, 1, 0, FIRE_AUTO, 0, 6),
+    wdef("HORNET", AMMO_HORNET, 0, 8, 8, 0, 1, 0, 5, 0, FIRE_PROJ, PROJ_HORNET, 9),
+    wdef("GRENADE", AMMO_GREN, 0, 10, 100, 0, 1, 0, 20, 0, FIRE_PROJ, PROJ_GRENADE, 8),
+    wdef("SNARK", AMMO_SNARK, 0, 15, 10, 0, 1, 0, 10, 0, FIRE_PROJ, PROJ_SNARK, 14),
+    wdef("TRIPMINE", AMMO_TRIPMINE, 0, 5, 100, 0, 1, 0, 20, 0, FIRE_PROJ, PROJ_PLACED, 15),
+    wdef("SATCHEL", AMMO_SATCHEL, 0, 5, 100, 0, 1, 0, 20, 0, FIRE_PROJ, PROJ_PLACED, 11),
+];
+
+#[inline]
+fn wdef_of(id: usize) -> &'static WeaponDef {
+    &WEAPON_DEFS[id.min(N_WEAPONS - 1)]
+}
+
+/// The player's whole arsenal: owned set, per-weapon magazines, per-type reserve,
+/// and the live firing/reload/switch timers for the selected weapon.
+struct Arsenal {
+    owned: u16, // bit i set => weapon i owned
+    current: usize,
+    clip: [u16; N_WEAPONS],
+    ammo: [u16; N_AMMO],
     cooldown: u8,
     reload_ticks: u8,
     dry_ticks: u8,
+    switch_ticks: u8, // brief lockout after a weapon change
 }
 
-impl WeaponState {
-    fn new(clip: u16, reserve: u16) -> Self {
-        Self {
-            clip: clip.min(GLOCK_MAX_CLIP),
-            reserve,
+impl Arsenal {
+    fn new() -> Self {
+        let mut a = Arsenal {
+            owned: 0,
+            current: W_GLOCK,
+            clip: [0; N_WEAPONS],
+            ammo: [0; N_AMMO],
             cooldown: 0,
             reload_ticks: 0,
             dry_ticks: 0,
+            switch_ticks: 0,
+        };
+        // HL1 starts with the crowbar + glock; full clips.
+        a.give_weapon(W_CROWBAR);
+        a.give_weapon(W_GLOCK);
+        a.clip[W_GLOCK] = WEAPON_DEFS[W_GLOCK].clip;
+        a.ammo[AMMO_9MM] = GLOCK_START_RESERVE;
+        a.current = W_GLOCK;
+        a
+    }
+
+    #[inline]
+    fn def(&self) -> &'static WeaponDef {
+        wdef_of(self.current)
+    }
+
+    fn owns(&self, id: usize) -> bool {
+        id < N_WEAPONS && (self.owned & (1 << id)) != 0
+    }
+
+    fn give_weapon(&mut self, id: usize) {
+        if id < N_WEAPONS {
+            let fresh = !self.owns(id);
+            self.owned |= 1 << id;
+            // First pickup of a magazine weapon arrives loaded.
+            if fresh && WEAPON_DEFS[id].clip > 0 && self.clip[id] == 0 {
+                self.clip[id] = WEAPON_DEFS[id].clip;
+            }
+        }
+    }
+
+    fn give_ammo(&mut self, ammo: usize, n: u16) {
+        if ammo < N_AMMO && ammo != AMMO_NONE {
+            let cap = max_reserve_for(ammo);
+            self.ammo[ammo] = self.ammo[ammo].saturating_add(n).min(cap);
+        }
+    }
+
+    /// Live magazine count of the selected weapon (0 for no-magazine weapons).
+    fn clip_display(&self) -> u16 {
+        self.clip[self.current]
+    }
+
+    /// Reserve count of the selected weapon's ammo type.
+    fn reserve_display(&self) -> u16 {
+        self.ammo[self.def().ammo]
+    }
+
+    /// HUD ammo display mode: 0 = melee (none), 1 = reserve only, 2 = reserve|clip.
+    fn ammo_mode(&self) -> u8 {
+        let d = self.def();
+        if d.ammo == AMMO_NONE {
+            0
+        } else if d.clip == 0 {
+            1
+        } else {
+            2
         }
     }
 
@@ -3102,6 +3382,9 @@ impl WeaponState {
         if self.dry_ticks > 0 {
             self.dry_ticks -= 1;
         }
+        if self.switch_ticks > 0 {
+            self.switch_ticks -= 1;
+        }
         if self.reload_ticks > 0 {
             self.reload_ticks -= 1;
             if self.reload_ticks == 0 {
@@ -3111,35 +3394,122 @@ impl WeaponState {
     }
 
     fn start_reload(&mut self) -> bool {
-        if self.reload_ticks != 0 || self.clip >= GLOCK_MAX_CLIP || self.reserve == 0 {
+        let d = self.def();
+        if d.reload == 0 || d.clip == 0 || self.reload_ticks != 0 {
             return false;
         }
-        self.reload_ticks = GLOCK_RELOAD_TICKS;
-        self.cooldown = self.cooldown.max(GLOCK_RELOAD_TICKS);
+        if self.clip[self.current] >= d.clip || self.ammo[d.ammo] == 0 {
+            return false;
+        }
+        self.reload_ticks = d.reload;
+        self.cooldown = self.cooldown.max(d.reload);
         true
     }
 
     fn finish_reload(&mut self) {
-        let need = GLOCK_MAX_CLIP.saturating_sub(self.clip);
-        let take = need.min(self.reserve);
-        self.clip = self.clip.saturating_add(take).min(GLOCK_MAX_CLIP);
-        self.reserve = self.reserve.saturating_sub(take);
+        let d = self.def();
+        let need = d.clip.saturating_sub(self.clip[self.current]);
+        let take = need.min(self.ammo[d.ammo]);
+        self.clip[self.current] = self.clip[self.current].saturating_add(take);
+        self.ammo[d.ammo] = self.ammo[d.ammo].saturating_sub(take);
     }
 
+    /// Consume ammo for one shot. Returns true if the shot goes off (the caller
+    /// then runs the archetype). Handles dry-click + auto-reload.
     fn try_fire(&mut self) -> bool {
-        if self.cooldown != 0 || self.reload_ticks != 0 {
+        let d = self.def();
+        if self.cooldown != 0 || self.reload_ticks != 0 || self.switch_ticks != 0 {
             return false;
         }
-        if self.clip == 0 {
-            self.cooldown = GLOCK_EMPTY_COOLDOWN_TICKS;
-            self.dry_ticks = GLOCK_EMPTY_COOLDOWN_TICKS;
-            let _ = self.start_reload();
-            return false;
+        if d.ammo == AMMO_NONE {
+            self.cooldown = d.cooldown; // melee: never out of ammo
+            return true;
         }
-        self.clip -= 1;
-        self.cooldown = GLOCK_PRIMARY_COOLDOWN_TICKS;
+        if d.clip > 0 {
+            if self.clip[self.current] == 0 {
+                self.cooldown = GLOCK_EMPTY_COOLDOWN_TICKS;
+                self.dry_ticks = GLOCK_EMPTY_COOLDOWN_TICKS;
+                let _ = self.start_reload();
+                return false;
+            }
+            self.clip[self.current] -= 1;
+        } else {
+            if self.ammo[d.ammo] == 0 {
+                self.cooldown = GLOCK_EMPTY_COOLDOWN_TICKS;
+                self.dry_ticks = GLOCK_EMPTY_COOLDOWN_TICKS;
+                return false;
+            }
+            self.ammo[d.ammo] -= 1;
+        }
+        self.cooldown = d.cooldown;
         true
     }
+
+    /// Cycle to the next/prev owned weapon. Returns true if the selection changed
+    /// (the caller then streams the new viewmodel).
+    fn cycle(&mut self, forward: bool) -> bool {
+        if self.owned == 0 {
+            return false;
+        }
+        let mut i = self.current;
+        for _ in 0..N_WEAPONS {
+            i = if forward {
+                (i + 1) % N_WEAPONS
+            } else {
+                (i + N_WEAPONS - 1) % N_WEAPONS
+            };
+            if self.owns(i) {
+                if i != self.current {
+                    self.select(i);
+                    return true;
+                }
+                break;
+            }
+        }
+        false
+    }
+
+    fn select(&mut self, id: usize) {
+        self.current = id;
+        self.reload_ticks = 0;
+        self.cooldown = 0;
+        self.dry_ticks = 0;
+        self.switch_ticks = 8; // ~0.4 s raise lockout
+    }
+
+    /// Grant the full arsenal + ammo. NB this is a demake simplification: HL1
+    /// starts with crowbar+glock and you pick the rest up. Faithful weapon_* /
+    /// ammo_* pickups (with w_* world models) are the next step; for now the whole
+    /// system is given at spawn so every weapon is reachable.
+    fn give_full_arsenal(&mut self) {
+        self.owned = (1u16 << N_WEAPONS) - 1;
+        let mut i = 0;
+        while i < N_WEAPONS {
+            if WEAPON_DEFS[i].clip > 0 {
+                self.clip[i] = WEAPON_DEFS[i].clip;
+            }
+            i += 1;
+        }
+        let mut a = 0;
+        while a < N_AMMO {
+            self.ammo[a] = max_reserve_for(a);
+            a += 1;
+        }
+    }
+}
+
+#[inline]
+fn max_reserve_for(ammo: usize) -> u16 {
+    // The reserve cap is the largest reserve_max among weapons using this ammo.
+    let mut cap = 0u16;
+    let mut i = 0;
+    while i < N_WEAPONS {
+        if WEAPON_DEFS[i].ammo == ammo && WEAPON_DEFS[i].reserve_max > cap {
+            cap = WEAPON_DEFS[i].reserve_max;
+        }
+        i += 1;
+    }
+    cap
 }
 
 #[inline]
@@ -3159,6 +3529,7 @@ fn project_world_point(p: [i32; 3], rot: &Mat3I16, base_t: [i32; 3]) -> Option<(
 }
 
 unsafe fn clear_combat_fx() {
+    clear_projectiles();
     IMPACT_PARTICLES.clear();
     let mut i = 0usize;
     while i < MAX_IMPACT_MARKS {
@@ -3245,24 +3616,36 @@ unsafe fn render_impact_marks<const N: usize>(
     written
 }
 
-unsafe fn fire_glock(
+const MELEE_AIM_PIX: i32 = 70; // crowbar swing: wide forgiving cone
+
+/// One hitscan trace. `damage`/`range` from the weapon; (`aim_x`,`aim_y`) is the
+/// half-cone in screen px; (`cx_px`,`cy_px`) offsets the cone centre (shotgun
+/// pellets). Returns the enemy hit, applying damage + blood; else a world decal.
+#[allow(clippy::too_many_arguments)]
+unsafe fn fire_hitscan(
     m: &Map,
     movers: &[phys::Mover],
     eye: [i32; 3],
     rot: &Mat3I16,
     base_t: [i32; 3],
+    damage: u8,
+    range: i32,
+    aim_x: i32,
+    aim_y: i32,
+    cx_px: i32,
+    cy_px: i32,
 ) -> Option<usize> {
     let end = [
-        eye[0] + (((rot.m[2][0] as i32) * GLOCK_RANGE) >> 12),
-        eye[1] + (((rot.m[2][1] as i32) * GLOCK_RANGE) >> 12),
-        eye[2] + (((rot.m[2][2] as i32) * GLOCK_RANGE) >> 12),
+        eye[0] + (((rot.m[2][0] as i32) * range) >> 12),
+        eye[1] + (((rot.m[2][1] as i32) * range) >> 12),
+        eye[2] + (((rot.m[2][2] as i32) * range) >> 12),
     ];
     let world_hit = phys::trace_line(m, movers, eye, end);
     let world_limit_z = world_hit
-        .map(|hit| (GLOCK_RANGE * hit.frac) >> 12)
-        .unwrap_or(GLOCK_RANGE + 1);
+        .map(|hit| (range * hit.frac) >> 12)
+        .unwrap_or(range + 1);
     let mut best = usize::MAX;
-    let mut best_z = GLOCK_RANGE + 1;
+    let mut best_z = range + 1;
     let mut best_score = i32::MAX;
     let mut pi = 0usize;
     let nprops = PROP_COUNT.min(MAX_PROPS);
@@ -3275,16 +3658,17 @@ unsafe fn fire_glock(
 
         let target = prop_target(ty, PROP_POS[pi]);
         let vz = dot12(rot.m[2], target) + base_t[2];
-        if !(render::NEAR_Z..=GLOCK_RANGE).contains(&vz) || vz > world_limit_z {
+        if !(render::NEAR_Z..=range).contains(&vz) || vz > world_limit_z {
             pi += 1;
             continue;
         }
 
         let vx = dot12(rot.m[0], target) + base_t[0];
         let vy = dot12(rot.m[1], target) + base_t[1];
-        if vx.abs() * H_PROJ as i32 > vz * GLOCK_AIM_PIX_X
-            || vy.abs() * H_PROJ as i32 > vz * GLOCK_AIM_PIX_Y
-        {
+        // Cone centred on the pellet's screen offset (cx_px, cy_px).
+        let dx = vx * H_PROJ as i32 - cx_px * vz;
+        let dy = vy * H_PROJ as i32 - cy_px * vz;
+        if dx.abs() > vz * aim_x || dy.abs() > vz * aim_y {
             pi += 1;
             continue;
         }
@@ -3295,7 +3679,7 @@ unsafe fn fire_glock(
             continue;
         }
 
-        let score = (vx.abs() * 2) + vy.abs();
+        let score = (dx.abs() * 2 + dy.abs()) / vz.max(1);
         if vz < best_z || (vz == best_z && score < best_score) {
             best = pi;
             best_z = vz;
@@ -3316,7 +3700,7 @@ unsafe fn fire_glock(
         None
     } else {
         let ty = PROP_KIND[best];
-        damage_prop(best, GLOCK_DAMAGE);
+        damage_prop(best, damage);
         spawn_impact_fx(
             prop_target(ty, PROP_POS[best]),
             IMPACT_KIND_BLOOD,
@@ -3328,6 +3712,257 @@ unsafe fn fire_glock(
             PROP_AI_TIMER[best] = SCIENTIST_FEAR_TICKS;
         }
         Some(best)
+    }
+}
+
+/// Fixed spread pattern for shotgun pellets (no RNG in the render path); pellet
+/// `i` lands `spread` px off-centre in a small fixed rosette.
+#[inline]
+fn pellet_offset(i: u8, spread: i32) -> (i32, i32) {
+    const PAT: [(i32, i32); 6] = [(0, 0), (2, -1), (-2, 1), (1, 2), (-1, -2), (2, 2)];
+    let (px, py) = PAT[(i as usize) % PAT.len()];
+    (px * spread / 2, py * spread / 2)
+}
+
+/// Run a weapon's fire archetype for one shot already paid for by try_fire.
+unsafe fn fire_weapon(
+    d: &WeaponDef,
+    m: &Map,
+    movers: &[phys::Mover],
+    eye: [i32; 3],
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
+    match d.fire {
+        FIRE_MELEE => {
+            let _ = fire_hitscan(
+                m, movers, eye, rot, base_t, d.damage, d.range, MELEE_AIM_PIX, MELEE_AIM_PIX, 0,
+                0,
+            );
+        }
+        FIRE_SPREAD => {
+            let n = d.pellets.max(1);
+            let mut i = 0u8;
+            while i < n {
+                let (cx, cy) = pellet_offset(i, d.spread);
+                let _ = fire_hitscan(
+                    m,
+                    movers,
+                    eye,
+                    rot,
+                    base_t,
+                    d.damage,
+                    d.range,
+                    GLOCK_AIM_PIX_X,
+                    GLOCK_AIM_PIX_Y,
+                    cx,
+                    cy,
+                );
+                i += 1;
+            }
+        }
+        FIRE_PROJ => {
+            spawn_projectile(d.proj, d.damage, eye, rot);
+        }
+        _ => {
+            // FIRE_SEMI / FIRE_AUTO: single centred hitscan.
+            let _ = fire_hitscan(
+                m,
+                movers,
+                eye,
+                rot,
+                base_t,
+                d.damage,
+                d.range,
+                GLOCK_AIM_PIX_X,
+                GLOCK_AIM_PIX_Y,
+                0,
+                0,
+            );
+        }
+    }
+}
+
+// ---- Projectiles: rockets, bolts, grenades, hornets, lobbed explosives -------
+const MAX_PROJECTILES: usize = 12;
+const PROJ_GRAVITY: i32 = 12; // world units/tick^2 for arced kinds
+const PROJ_HIT_RADIUS: i32 = 56; // projectile-vs-enemy contact radius
+
+#[derive(Clone, Copy)]
+struct Projectile {
+    active: bool,
+    pos: [i32; 3],
+    vel: [i32; 3],
+    kind: u8,
+    damage: u8,
+    life: u8,
+}
+
+impl Projectile {
+    const ZERO: Projectile = Projectile {
+        active: false,
+        pos: [0; 3],
+        vel: [0; 3],
+        kind: 0,
+        damage: 0,
+        life: 0,
+    };
+}
+
+static mut PROJECTILES: [Projectile; MAX_PROJECTILES] = [Projectile::ZERO; MAX_PROJECTILES];
+static mut PROJ_RECTS: [RectFlat; MAX_PROJECTILES] =
+    [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_PROJECTILES];
+
+// (speed, life ticks, gravity?, AoE radius (0 = direct hit only), colour, size px)
+fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
+    match kind {
+        PROJ_ROCKET => (90, 50, false, 220, (250, 150, 50), 6),
+        PROJ_BOLT => (150, 40, false, 0, (210, 210, 170), 3),
+        PROJ_GRENADE => (64, 60, true, 200, (120, 150, 90), 5),
+        PROJ_HORNET => (85, 50, false, 0, (250, 230, 70), 3),
+        PROJ_SNARK => (48, 80, true, 110, (190, 170, 50), 5),
+        _ => (40, 100, true, 200, (170, 70, 50), 5), // PROJ_PLACED (satchel / tripmine)
+    }
+}
+
+unsafe fn clear_projectiles() {
+    let mut i = 0;
+    while i < MAX_PROJECTILES {
+        PROJECTILES[i] = Projectile::ZERO;
+        i += 1;
+    }
+}
+
+unsafe fn spawn_projectile(kind: u8, damage: u8, eye: [i32; 3], rot: &Mat3I16) {
+    let (speed, life, gravity, ..) = proj_params(kind);
+    let fwd = [rot.m[2][0] as i32, rot.m[2][1] as i32, rot.m[2][2] as i32];
+    let mut slot = usize::MAX;
+    let mut i = 0;
+    while i < MAX_PROJECTILES {
+        if !PROJECTILES[i].active {
+            slot = i;
+            break;
+        }
+        i += 1;
+    }
+    if slot == usize::MAX {
+        slot = 0; // pool full: recycle slot 0
+    }
+    let mut vel = [
+        (fwd[0] * speed) >> 12,
+        (fwd[1] * speed) >> 12,
+        (fwd[2] * speed) >> 12,
+    ];
+    if gravity {
+        vel[1] += speed / 3; // toss it up a little for an arc
+    }
+    PROJECTILES[slot] = Projectile {
+        active: true,
+        pos: [
+            eye[0] + ((fwd[0] * 24) >> 12),
+            eye[1] + ((fwd[1] * 24) >> 12),
+            eye[2] + ((fwd[2] * 24) >> 12),
+        ],
+        vel,
+        kind,
+        damage,
+        life,
+    };
+}
+
+unsafe fn explode(pos: [i32; 3], damage: u8, radius: i32) {
+    if radius <= 0 {
+        return;
+    }
+    let r2 = radius * radius;
+    let mut pi = 0;
+    let nprops = PROP_COUNT.min(MAX_PROPS);
+    while pi < nprops {
+        if prop_start_health(PROP_KIND[pi]) != 0 && PROP_HEALTH[pi] != 0 {
+            let t = prop_target(PROP_KIND[pi], PROP_POS[pi]);
+            let d2 = dist2_3(t, pos);
+            if d2 < r2 {
+                let dmg = (damage as i32 * (radius - isqrt(d2)) / radius).clamp(0, 255) as u8;
+                damage_prop(pi, dmg);
+                PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
+            }
+        }
+        pi += 1;
+    }
+}
+
+unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
+    let mut i = 0;
+    while i < MAX_PROJECTILES {
+        if !PROJECTILES[i].active {
+            i += 1;
+            continue;
+        }
+        let (_, _, gravity, aoe, _, _) = proj_params(PROJECTILES[i].kind);
+        let old = PROJECTILES[i].pos;
+        if gravity {
+            PROJECTILES[i].vel[1] -= PROJ_GRAVITY;
+        }
+        let v = PROJECTILES[i].vel;
+        let new = [old[0] + v[0], old[1] + v[1], old[2] + v[2]];
+        let mut hit = false;
+        let mut hit_pos = new;
+        if let Some(h) = phys::trace_line(m, movers, old, new) {
+            hit = true;
+            hit_pos = h.pos;
+        }
+        // Enemy contact: nearest living prop within PROJ_HIT_RADIUS of the new pos.
+        let mut best = usize::MAX;
+        let mut best_d2 = PROJ_HIT_RADIUS * PROJ_HIT_RADIUS;
+        let mut pi = 0;
+        let nprops = PROP_COUNT.min(MAX_PROPS);
+        while pi < nprops {
+            if prop_start_health(PROP_KIND[pi]) != 0 && PROP_HEALTH[pi] != 0 {
+                let d2 = dist2_3(prop_target(PROP_KIND[pi], PROP_POS[pi]), new);
+                if d2 < best_d2 {
+                    best_d2 = d2;
+                    best = pi;
+                }
+            }
+            pi += 1;
+        }
+        if best != usize::MAX {
+            hit = true;
+            hit_pos = prop_target(PROP_KIND[best], PROP_POS[best]);
+        }
+        PROJECTILES[i].pos = new;
+        if PROJECTILES[i].life > 0 {
+            PROJECTILES[i].life -= 1;
+        }
+        if hit || PROJECTILES[i].life == 0 {
+            if aoe > 0 {
+                explode(hit_pos, PROJECTILES[i].damage, aoe);
+            } else if best != usize::MAX {
+                damage_prop(best, PROJECTILES[i].damage);
+                PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
+            }
+            PROJECTILES[i].active = false;
+        }
+        i += 1;
+    }
+}
+
+unsafe fn render_projectiles<const N: usize>(
+    ot: &mut OrderingTable<N>,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
+    let mut i = 0;
+    while i < MAX_PROJECTILES {
+        if PROJECTILES[i].active {
+            let (_, _, _, _, (r, g, b), size) = proj_params(PROJECTILES[i].kind);
+            if let Some((sx, sy, _)) = project_world_point(PROJECTILES[i].pos, rot, base_t) {
+                let half = (size / 2) as i16;
+                PROJ_RECTS[i] = RectFlat::new(sx - half, sy - half, size, size, r, g, b);
+                ot.add(0, &mut PROJ_RECTS[i], RectFlat::WORDS);
+            }
+        }
+        i += 1;
     }
 }
 
@@ -4475,6 +5110,9 @@ unsafe fn draw_viewmodel(
     recoil_y: i32,
     np: &mut usize,
 ) {
+    if slots.is_empty() {
+        return; // viewmodel texture failed to upload: skip rather than index empty
+    }
     let nv = md.n_verts.min(MAX_MODEL_VERTS);
     let local_to_world = md.local_to_world_q12();
     let (s, scale_shift) = model_local_scale_and_shift(local_to_world);
@@ -4743,44 +5381,25 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
         }
     };
     telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
-    let mut model_tex_failed = 0usize;
-    let mut model_texs = 0usize;
-    let mut upload_model_tex = |chunk_id: u32, slots: *mut TexSlot, slot_len: usize| -> bool {
-        // dst_word 0: this runs before any model geometry is loaded, so the
-        // whole MODEL_BUF is free to stage the texture in.
-        match stream_model_texture_chunk(
-            chunk_id,
-            0,
-            slots,
-            slot_len,
-            &mut stream_chunks,
-            &mut stream_bytes,
-            &mut stream_sectors,
-        ) {
-            Some((n, failed)) => {
-                model_texs = model_texs.saturating_add(n);
-                model_tex_failed = model_tex_failed.saturating_add(failed);
-                true
-            }
-            None => false,
-        }
-    };
+    let model_tex_failed = 0usize;
+    let model_texs = 0usize;
     draw_next_loading_screen(fb, loading_label, &mut loading_frame);
-    // Only the viewmodel texture uploads here; NPC/enemy textures stream per-map
-    // in stream_map_models (after the world + props load).
-    let model_textures_ok = upload_model_tex(
-        MODEL_CHUNK_V_9MMHANDGUN_TEX,
-        core::ptr::addr_of_mut!(WEAPON_SLOTS).cast::<TexSlot>(),
-        12,
-    );
-    if !model_textures_ok {
+    // Stream the curated viewmodel set (geometry -> MODEL_BUF head reserve,
+    // textures -> VM_SLOTS) so weapon switching is instant. Textures stage above
+    // the reserve, in the enemy region stream_map_models fills afterwards.
+    telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
+    let glock_vm_ok = unsafe {
+        load_resident_viewmodels(&mut stream_chunks, &mut stream_bytes, &mut stream_sectors)
+    };
+    telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
+    if !glock_vm_ok {
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
         telemetry::task_end(telemetry::task::FIXED_UPDATE);
-        tty::println("hl-psx: WORLD.PAK model texture stream failed");
-        telemetry::debug_log("hl-psx: WORLD.PAK model texture stream failed");
+        tty::println("hl-psx: WORLD.PAK viewmodel stream failed");
+        telemetry::debug_log("hl-psx: WORLD.PAK viewmodel stream failed");
         return PlayExit::BackToMenu;
     }
     telemetry::counter(
@@ -4791,33 +5410,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
         telemetry::counter::ROOM_MATERIAL_TEXTURE_DROPS,
         (tex_failed + model_tex_failed) as u32,
     );
-
-    draw_next_loading_screen(fb, loading_label, &mut loading_frame);
-    telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
-    let weapon_len =
-        cdstream::load_chunk(MODEL_CHUNK_V_9MMHANDGUN, unsafe { &mut MODEL_BUF }).unwrap_or(0);
-    telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
-    if weapon_len > 0 {
-        account_streamed_chunk(
-            weapon_len,
-            &mut stream_chunks,
-            &mut stream_bytes,
-            &mut stream_sectors,
-        );
-    } else {
-        telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
-        telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
-        telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
-        telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
-        telemetry::task_end(telemetry::task::FIXED_UPDATE);
-        tty::println("hl-psx: WORLD.PAK weapon stream failed");
-        telemetry::debug_log("hl-psx: WORLD.PAK weapon stream failed");
-        return PlayExit::BackToMenu;
-    }
-    telemetry::debug_log("hl-psx: WORLD.PAK weapon chunk loaded");
-
-    let weapon_bytes = unsafe { streamed_model_bytes(weapon_len) };
-    let wpn = Model::load(weapon_bytes);
+    telemetry::debug_log("hl-psx: WORLD.PAK viewmodels loaded");
     unsafe {
         WEAPON_CACHE_FRAME = usize::MAX;
         WEAPON_CACHE_RECOIL = i32::MIN;
@@ -4863,7 +5456,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
         PVS_LEAF_COUNT = 0;
         PVS_ENT_COUNT = 0;
         init_prop_state(&m);
-        stream_map_models(&m, weapon_len);
+        stream_map_models(&m, VM_POOL_WORDS * 4); // enemies stream after the viewmodel reserve
         clear_combat_fx();
     }
     let nents = m.n_ents.min(MAX_ENTS);
@@ -4909,7 +5502,13 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
     let mut frame_no: u16 = 0;
     let mut telemetry_frame: u32 = 1;
     let mut sim_frame_no: u32 = 0;
-    let mut weapon = WeaponState::new(launch.clip_ammo, launch.reserve_ammo);
+    let mut weapon = Arsenal::new();
+    weapon.clip[W_GLOCK] = launch.clip_ammo.min(WEAPON_DEFS[W_GLOCK].clip);
+    weapon.ammo[AMMO_9MM] = launch.reserve_ammo.min(max_reserve_for(AMMO_9MM));
+    weapon.give_full_arsenal(); // demake: spawn with the whole arsenal (pickups TBD)
+    let mut fire_was_held = false; // rising-edge latch for non-auto weapons
+    let mut switch_prev = false; // rising-edge latch for L1/R1 weapon cycling
+    let mut pending_vm_switch = false; // re-stream the viewmodel after a weapon change
     let mut health: u16 = launch.health;
     let mut armor: u16 = launch.armor.min(HEV_MAX_ARMOR);
     let mut death_ticks: u8 = 0; // >0 while dead; respawns at 0
@@ -4970,10 +5569,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
         WEAPON_OT.clear();
         let mut warm_packets = PrimitivePacketArena::new(&mut PRIMITIVE_PACKETS);
         let mut warm_np = 0usize;
+        let (vm_model, vm_slot, vm_n) = viewmodel_for(weapon.current);
         draw_viewmodel(
             &mut warm_packets,
-            &wpn,
-            &WEAPON_SLOTS,
+            &vm_model,
+            &VM_SLOTS[vm_slot..vm_slot + vm_n],
             VM_FRAME,
             -recoil,
             &mut warm_np,
@@ -5050,12 +5650,28 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                     pitch = 0;
                     health = PLAYER_START_HEALTH;
                     armor = 0;
-                    weapon = WeaponState::new(GLOCK_MAX_CLIP, GLOCK_START_RESERVE);
+                    weapon = Arsenal::new();
+                    pending_vm_switch = true; // respawn forces the glock viewmodel
                 }
             }
             let dead = death_ticks > 0;
-            let want_fire = !dead && pad.buttons.is_held(button::R2);
+            // Auto weapons fire while held; everything else fires once per press.
+            let fire_held = !dead && pad.buttons.is_held(button::R2);
+            let want_fire = fire_held && (weapon.def().fire == FIRE_AUTO || !fire_was_held);
+            fire_was_held = fire_held;
             let want_reload = pad.buttons.is_held(button::CIRCLE);
+            // L1/R1 cycle owned weapons (rising edge so a hold steps once).
+            let sw_next = pad.buttons.is_held(button::R1);
+            let sw_prev = pad.buttons.is_held(button::L1);
+            let sw_held = sw_next || sw_prev;
+            if !dead && sw_held && !switch_prev && weapon.cycle(sw_next) {
+                pending_vm_switch = true;
+            }
+            switch_prev = sw_held;
+            if pending_vm_switch {
+                pending_vm_switch = false;
+                unsafe { WEAPON_CACHE_FRAME = usize::MAX } // re-cache the viewmodel for the new weapon
+            }
             if use_cooldown > 0 {
                 use_cooldown -= 1;
             }
@@ -5093,8 +5709,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                 LOGIC_PLAYER_HEALTH = health;
                 LOGIC_PLAYER_SUIT = if suit_equipped { 1 } else { 0 };
                 LOGIC_PLAYER_ARMOR = armor;
-                LOGIC_PLAYER_CLIP_AMMO = weapon.clip;
-                LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve;
+                LOGIC_PLAYER_CLIP_AMMO = weapon.clip_display();
+                LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve_display();
                 logic_pre_tick(&m, nlogic, nents, sim_frame_no as u16);
             }
 
@@ -5219,8 +5835,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                 LOGIC_PLAYER_HEALTH = health;
                 LOGIC_PLAYER_SUIT = if suit_equipped { 1 } else { 0 };
                 LOGIC_PLAYER_ARMOR = armor;
-                LOGIC_PLAYER_CLIP_AMMO = weapon.clip;
-                LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve;
+                LOGIC_PLAYER_CLIP_AMMO = weapon.clip_display();
+                LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve_display();
                 if want_use {
                     logic_try_use(
                         &m,
@@ -5255,15 +5871,16 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                     -dot12(fire_rot.m[2], eye),
                 ];
                 unsafe {
-                    let _ = fire_glock(&m, movers, eye, &fire_rot, fire_base_t);
+                    fire_weapon(weapon.def(), &m, movers, eye, &fire_rot, fire_base_t);
                 }
             }
             unsafe {
+                tick_projectiles(&m, movers);
                 tick_props(&m, movers, player.pos, &mut health, &mut armor);
                 LOGIC_PLAYER_HEALTH = health;
                 LOGIC_PLAYER_ARMOR = armor;
-                LOGIC_PLAYER_CLIP_AMMO = weapon.clip;
-                LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve;
+                LOGIC_PLAYER_CLIP_AMMO = weapon.clip_display();
+                LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve_display();
             }
             if health == 0 && death_ticks == 0 {
                 death_ticks = DEATH_TICKS; // enemies killed the player -> start the death window
@@ -5792,10 +6409,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
             let world_quads = nq;
             if SHOW_VIEWMODEL {
                 telemetry::stage_begin(telemetry::stage::EQUIPMENT);
+                let (vm_model, vm_slot, vm_n) = viewmodel_for(weapon.current);
                 draw_viewmodel(
                     &mut packets,
-                    &wpn,
-                    &WEAPON_SLOTS,
+                    &vm_model,
+                    &VM_SLOTS[vm_slot..vm_slot + vm_n],
                     VM_FRAME,
                     -recoil,
                     &mut np,
@@ -5817,8 +6435,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                     suit_equipped,
                     health,
                     armor,
-                    weapon.clip,
-                    weapon.reserve,
+                    weapon.clip_display(),
+                    weapon.reserve_display(),
+                    weapon.ammo_mode(),
                     pickup_kind,
                     pickup_ticks,
                     &mut HUD_OT,
@@ -5828,6 +6447,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
             let _ = render_impact_marks(&mut FX_OT, &mut IMPACT_MARK_RECTS, &rot, base_t);
             let _ =
                 IMPACT_PARTICLES.render_into_ot(&mut FX_OT, &mut IMPACT_PARTICLE_RECTS, 0, (0, 0));
+            render_projectiles(&mut FX_OT, &rot, base_t);
 
             telemetry::stage_begin(telemetry::stage::FRAME_CLEAR);
             fb.clear(0, 0, 0);
