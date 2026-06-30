@@ -309,6 +309,7 @@ const PROP_CLIP_ATTACK: usize = 2;
 const PROP_CLIP_PAIN: usize = 3;
 const PROP_CLIP_DEAD: usize = 4;
 const PLAYER_START_HEALTH: u16 = 100;
+const DEATH_TICKS: u8 = 60; // frozen "you died" window before respawn (3s at 20 Hz)
 const PLAYER_START_ARMOR: u16 = 0;
 const HEV_MAX_ARMOR: u16 = 100;
 const HEV_BATTERY_ARMOR: u16 = 15;
@@ -379,6 +380,7 @@ static mut IMPACT_PARTICLE_RECTS: [RectFlat; MAX_IMPACT_PARTICLES] =
     [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_IMPACT_PARTICLES];
 static mut IMPACT_MARK_RECTS: [RectFlat; MAX_IMPACT_MARKS] =
     [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_IMPACT_MARKS];
+static mut DEATH_OVERLAY: RectFlat = RectFlat::new(0, 0, 0, 0, 0, 0, 0);
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 static mut WEAPON_SLOTS: [TexSlot; 12] = [EMPTY_SLOT; 12];
 // Shared per-map model pool: streamed geometry lives in MODEL_BUF (after the
@@ -4910,6 +4912,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
     let mut weapon = WeaponState::new(launch.clip_ammo, launch.reserve_ammo);
     let mut health: u16 = launch.health;
     let mut armor: u16 = launch.armor.min(HEV_MAX_ARMOR);
+    let mut death_ticks: u8 = 0; // >0 while dead; respawns at 0
     let mut suit_equipped = launch.suit_equipped
         || standalone_room_starts_with_hev(launch.room_id as usize)
         || armor > 0;
@@ -5037,7 +5040,21 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                     pickup_kind = hud::PICKUP_NONE;
                 }
             }
-            let want_fire = pad.buttons.is_held(button::R2);
+            // Player death: freeze for DEATH_TICKS (a red death screen renders),
+            // then respawn at the map spawn -- suit kept, armor + ammo reset.
+            if death_ticks > 0 {
+                death_ticks -= 1;
+                if death_ticks == 0 {
+                    player = phys::Player::new(spawn_pos);
+                    yaw = (m.spawn_yaw as u16) & 0xFFF;
+                    pitch = 0;
+                    health = PLAYER_START_HEALTH;
+                    armor = 0;
+                    weapon = WeaponState::new(GLOCK_MAX_CLIP, GLOCK_START_RESERVE);
+                }
+            }
+            let dead = death_ticks > 0;
+            let want_fire = !dead && pad.buttons.is_held(button::R2);
             let want_reload = pad.buttons.is_held(button::CIRCLE);
             if use_cooldown > 0 {
                 use_cooldown -= 1;
@@ -5060,6 +5077,12 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                     turn = -(rx as i32);
                     look = -(ry as i32); // stick up = look up
                 }
+            }
+            if dead {
+                fwd = 0;
+                strafe = 0;
+                turn = 0;
+                look = 0;
             }
             yaw = (((yaw as i32) + (turn * YAW_RATE) / 128) & 0xFFF) as u16;
             pitch = (pitch + ((look * PITCH_RATE) / 128) as i16).clamp(-PITCH_MAX, PITCH_MAX);
@@ -5241,6 +5264,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                 LOGIC_PLAYER_ARMOR = armor;
                 LOGIC_PLAYER_CLIP_AMMO = weapon.clip;
                 LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve;
+            }
+            if health == 0 && death_ticks == 0 {
+                death_ticks = DEATH_TICKS; // enemies killed the player -> start the death window
             }
             telemetry::counter(
                 telemetry::counter::ROOM_CAMERA_GLOBAL_X_BIASED,
@@ -5780,18 +5806,25 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                     np.saturating_sub(world_prims) as u32,
                 );
             }
-            let _ = hud::draw(
-                hud_mat,
-                suit_equipped,
-                health,
-                armor,
-                weapon.clip,
-                weapon.reserve,
-                pickup_kind,
-                pickup_ticks,
-                &mut HUD_OT,
-                &mut HUD_PRIMS,
-            );
+            if death_ticks > 0 {
+                // Death screen: the view reddens over the death window, then respawn.
+                let r = (((DEATH_TICKS - death_ticks) as u32) * 5).min(190) as u8;
+                DEATH_OVERLAY = RectFlat::new(0, 0, 320, 240, r, r / 6, r / 6);
+                HUD_OT.add(0, &mut DEATH_OVERLAY, RectFlat::WORDS);
+            } else {
+                let _ = hud::draw(
+                    hud_mat,
+                    suit_equipped,
+                    health,
+                    armor,
+                    weapon.clip,
+                    weapon.reserve,
+                    pickup_kind,
+                    pickup_ticks,
+                    &mut HUD_OT,
+                    &mut HUD_PRIMS,
+                );
+            }
             let _ = render_impact_marks(&mut FX_OT, &mut IMPACT_MARK_RECTS, &rot, base_t);
             let _ =
                 IMPACT_PARTICLES.render_into_ot(&mut FX_OT, &mut IMPACT_PARTICLE_RECTS, 0, (0, 0));

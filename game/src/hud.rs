@@ -196,76 +196,87 @@ pub fn draw<const N: usize>(
         CROSSHAIR_DRAW_W,
         CROSSHAIR_DRAW_H,
     ); // real pistol crosshair
-    let y = 240 - GH - 8;
-    let icon_y = y - 3;
-    sprite(
-        mat,
-        ot,
-        prims,
-        &mut count,
-        HEALTH_U,
-        ICON_V,
-        HEALTH_W,
-        HEALTH_H,
-        10,
-        icon_y,
-        HEALTH_DRAW_W,
-        HEALTH_DRAW_H,
-    ); // health cross icon
-    number_l(mat, ot, prims, &mut count, health, 38, y);
-
-    let suit_u =
-        if armor > 0 || (suit_equipped && pickup_kind == PICKUP_SUIT && (pickup_ticks & 2) == 0) {
-            SUIT_FULL_U
+    // HEV HUD: no health/armor/ammo readout until the suit is equipped (HL shows
+    // no HUD before the suit). On suit pickup it boots up by sliding in from below
+    // over the pickup window; the crosshair above is always drawn (the weapon
+    // works without the suit).
+    if suit_equipped {
+        let slide = if pickup_kind == PICKUP_SUIT {
+            pickup_ticks as i16
         } else {
-            SUIT_EMPTY_U
+            0
         };
-    sprite(
-        mat,
-        ot,
-        prims,
-        &mut count,
-        suit_u,
-        ICON_V,
-        SUIT_W,
-        SUIT_H,
-        104,
-        y - 6,
-        SUIT_DRAW_W,
-        SUIT_DRAW_H,
-    ); // HEV armor/suit icon
-    number_l(mat, ot, prims, &mut count, armor, 139, y);
+        let y = 240 - GH - 8 + slide;
+        let icon_y = y - 3;
+        sprite(
+            mat,
+            ot,
+            prims,
+            &mut count,
+            HEALTH_U,
+            ICON_V,
+            HEALTH_W,
+            HEALTH_H,
+            10,
+            icon_y,
+            HEALTH_DRAW_W,
+            HEALTH_DRAW_H,
+        ); // health cross icon
+        number_l(mat, ot, prims, &mut count, health, 38, y);
 
-    sprite(
-        mat,
-        ot,
-        prims,
-        &mut count,
-        AMMO_U,
-        ICON_V,
-        AMMO_W,
-        AMMO_H,
-        221,
-        y,
-        AMMO_DRAW_W,
-        AMMO_DRAW_H,
-    ); // pistol ammo icon
-    number_l(mat, ot, prims, &mut count, reserve_ammo, 243, y);
-    sprite(
-        mat,
-        ot,
-        prims,
-        &mut count,
-        DIVIDER_U,
-        ICON_V,
-        DIVIDER_W,
-        DIVIDER_H,
-        277,
-        y - 6,
-        DIVIDER_DRAW_W,
-        DIVIDER_DRAW_H,
-    );
-    number_r(mat, ot, prims, &mut count, clip_ammo, 308, y);
+        let suit_u =
+            if armor > 0 || (suit_equipped && pickup_kind == PICKUP_SUIT && (pickup_ticks & 2) == 0) {
+                SUIT_FULL_U
+            } else {
+                SUIT_EMPTY_U
+            };
+        sprite(
+            mat,
+            ot,
+            prims,
+            &mut count,
+            suit_u,
+            ICON_V,
+            SUIT_W,
+            SUIT_H,
+            104,
+            y - 6,
+            SUIT_DRAW_W,
+            SUIT_DRAW_H,
+        ); // HEV armor/suit icon
+        number_l(mat, ot, prims, &mut count, armor, 139, y);
+
+        sprite(
+            mat,
+            ot,
+            prims,
+            &mut count,
+            AMMO_U,
+            ICON_V,
+            AMMO_W,
+            AMMO_H,
+            221,
+            y,
+            AMMO_DRAW_W,
+            AMMO_DRAW_H,
+        ); // pistol ammo icon
+        number_l(mat, ot, prims, &mut count, reserve_ammo, 243, y);
+        sprite(
+            mat,
+            ot,
+            prims,
+            &mut count,
+            DIVIDER_U,
+            ICON_V,
+            DIVIDER_W,
+            DIVIDER_H,
+            277,
+            y - 6,
+            DIVIDER_DRAW_W,
+            DIVIDER_DRAW_H,
+        );
+        number_r(mat, ot, prims, &mut count, clip_ammo, 308, y);
+    }
 
     if pickup_kind != PICKUP_NONE && pickup_ticks > 0 {
         let age = PICKUP_ANIM_MAX_TICKS - (pickup_ticks as i16).min(PICKUP_ANIM_MAX_TICKS);
