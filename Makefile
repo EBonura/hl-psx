@@ -278,6 +278,11 @@ models:
 		echo "  weapon chunk $$chunk + tex $$texchunk = $$m"; \
 		i=$$((i+1)); \
 	done
+	@# The viewmodel only ever draws frame 0 (static idle), so re-cook the pistol
+	@# with 2 frames instead of --mdl4's 16 -- frame 0 is identical (no visual
+	@# change) but it frees ~17 KB of MODEL_BUF, which the over-budget maps need.
+	@$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/v_9mmhandgun.mdl" "$(MODELPACK)/chunk_$(WEAPON_CHUNK_BASE).psxm" "0:2" "$(MODELPACK)/chunk_$(WEAPON_TEX_CHUNK_BASE).psxm" >/dev/null
+	@echo "  pistol chunk $(WEAPON_CHUNK_BASE) re-cooked 2-frame (frees ~17 KB model budget)"
 	@cp "$(MODELPACK)/chunk_$(WEAPON_CHUNK_BASE).psxm" $(ROOT)/data/models/v_9mmhandgun.hlmdl
 	@echo "  --- model roster (all streamed per-map): geom chunk 1300+id, tex chunk 1100+id ---"
 	@for entry in \
@@ -300,6 +305,7 @@ models:
 	  "16|garg|2:3,4:3,6:3,12:3,14:3" \
 	  "17|nihilanth|0:3,19:3,1:3,9:3,12:3" \
 	  "18|big_mom|0:3,2:3,9:3,10:3,4:3" \
+	  "19|icky|0:3,1:3,2:3,3:3,4:3" \
 	  "20|sentry|2:6,2:6,1:6,2:6,5:6" \
 	  "21|turret|2:6,2:6,1:6,2:6,5:6" \
 	  "22|miniturret|0:6,3:6,1:6,0:6,5:6" \

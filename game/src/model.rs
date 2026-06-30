@@ -79,6 +79,9 @@ const TRI_SZ_HMD6: usize = 20;
 const FRAME_REC_SZ: usize = 8;
 const FRAME_MODE_BASE_I8: u8 = 1;
 const LOCAL_TO_WORLD_IDENTITY_Q12: u16 = 4096;
+// Mirror of main.rs MAX_MODEL_VERTS (MODEL_SCRATCH size). A model with more
+// verts than this would overflow the projection scratch, so reject it here.
+const MAX_VERTS: usize = 1024;
 
 #[derive(Clone, Copy)]
 pub struct Tri {
@@ -155,6 +158,43 @@ impl Model {
             v_off + n_frames * frame_stride
         };
         let tri_sz = if hmd6 { TRI_SZ_HMD6 } else { TRI_SZ };
+
+        // Validate the parsed header against the actual buffer before trusting
+        // any of it. The per-field reads below are unchecked (no D-cache on the
+        // R3000), so a wrong-sized streamed chunk or a missing magic -- which
+        // makes the counts/offsets garbage -- would dereference wild memory and
+        // crash (this was c1a2a: heaviest map, first to hit it). An invalid
+        // model renders as nothing rather than taking the game down.
+        let magic_ok = hmd3 || hmd4 || hmd5 || hmd6 || data.get(0..4) == Some(b"HMD2");
+        let frame_end = if compact {
+            v_off.saturating_add(frame_data_len)
+        } else {
+            v_off.saturating_add(n_frames.saturating_mul(frame_stride))
+        };
+        let tri_end = tri_off.saturating_add(n_tris.saturating_mul(tri_sz));
+        let valid =
+            magic_ok && n_verts <= MAX_VERTS && frame_end <= data.len() && tri_end <= data.len();
+        if !valid {
+            // ponytail: null model = draws nothing. If a legit model trips this,
+            // fix the cook / raise MAX_VERTS rather than removing the guard.
+            return Model {
+                data,
+                n_verts: 0,
+                n_tris: 0,
+                n_frames: 1,
+                n_clips: 1,
+                clips_off: 0,
+                frame_desc_off: 0,
+                v_off: 0,
+                frame_stride: 0,
+                tri_off: 0,
+                tri_sz,
+                tri_has_normals: false,
+                compact_frames: false,
+                local_to_world_q12: LOCAL_TO_WORLD_IDENTITY_Q12,
+            };
+        }
+
         Model {
             data,
             n_verts,

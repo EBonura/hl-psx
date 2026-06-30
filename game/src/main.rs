@@ -58,11 +58,15 @@ static mut MODEL_BUF: [u32; MODEL_WORDS] = [0; MODEL_WORDS];
 // from WORLD.PAK per-map into MODEL_BUF via the model pool (see stream_map_models).
 
 // World ordering table. sz (view depth) tops out near FAR_VIEW; otz = sz>>OT_SHIFT
-// must stay < OT_LEN. OT_SHIFT=4 (16-unit buckets) spreads geometry across the
-// whole table -- at >>6 only ~10% of the OT was ever used (measured sz~6.9k on
-// c0a0), so far geometry that differed by <64 units tie-broke arbitrarily. With
-// OT_SHIFT=4, worst-case otz ~16000>>4=1000; OT_LEN=2048 leaves clamp headroom.
-const OT_LEN: usize = 2048;
+// indexes the table, back-to-front. OT_SHIFT=4 (16-unit buckets) keeps the depth
+// sort fine (at >>6 only ~10% of the OT was used and far geometry tie-broke
+// arbitrarily). The GPU submit DMA walks the WHOLE chain every frame -- every
+// empty slot is a forwarding link it still reads -- so an oversized table is pure
+// per-frame DMA cost. With FAR_VIEW=2000, otz tops out at 2000>>4=125; OT_LEN=512
+// covers that ~4x over (otz<512 => sz<8176, far beyond anything emitted) while
+// dropping the empty-slot walk ~4x and saving 6 KB RAM vs the old 2048. Raise it
+// only if FAR_VIEW grows past 512<<OT_SHIFT.
+const OT_LEN: usize = 512;
 const OT_SHIFT: u32 = 4;
 const WEAPON_OT_LEN: usize = 64;
 const HUD_OT_LEN: usize = 1;
@@ -117,12 +121,29 @@ const PLAYER_TOUCH_HEIGHT: i32 = 56;
 // room_surface_draw at the c0a0 spawn, pixel-identical to the old 16000 across
 // c0a0/c1a0/c1a1/c1a2/c1a3/c1a4 spawns. No fog yet, so a long in-game sightline
 // could show the cut edge; raise this or add depth fog if that surfaces.
-const FAR_VIEW: i32 = 2000;
+const FAR_VIEW: i32 = 1400;
+// Distance fog. World geometry fades to black between FOG_START and FAR_VIEW so
+// the far-cull edge dissolves instead of popping -- which lets FAR_VIEW sit much
+// closer than the old 2000 (distant geometry is a large share of the per-frame
+// triangle work; pulling the cull in is the biggest fps lever on open maps, and
+// measured ~+40% at FAR_VIEW 800 on c2a5). Sky/backdrop faces are exempt so the
+// horizon stays. Reciprocal is compile-time (no runtime divide). Raise FOG_START
+// toward FAR_VIEW for a lighter haze (more visible cull), lower it for more fps.
+const FOG_START: i32 = 900;
+const FOG_INV: i32 = (256i32 << 12) / (FAR_VIEW - FOG_START); // compile-time
+// Studio models (enemies/NPCs/items) cull at a tighter distance than world
+// geometry: each is hundreds of textured-gouraud tris (project + emit), but past
+// ~1600 units a 72-unit-tall actor is barely a dozen pixels. On enemy-laden maps
+// the far half of the roster is the dominant per-frame CPU cost for almost no
+// visible detail; culling it sooner is the biggest fps lever there for the least
+// degradation (a distant actor fades in a little nearer). World still draws to
+// FAR_VIEW. Tunable: raise toward FAR_VIEW if distant enemies pop in too visibly.
+const MODEL_FAR: i32 = 1600;
 const MODEL_CULL: bool = true; // backface-cull studio models
 const MODEL_OCCLUSION_CULL: bool = true; // skip actors fully hidden by static BSP
 const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
 const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in front of the camera
-const DBG_PAD_BOOT: bool = false; // debug: hold L1 | map_index (low byte) at boot to load any map headlessly
+const DBG_PAD_BOOT: bool = true; // debug: hold L1 | map_index (low byte) at boot to load any map headlessly
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 const ROOM_WORLD_CHUNK_MUL: u32 = 2;
@@ -621,6 +642,17 @@ static mut PROP_STATE: [u8; MAX_PROPS] = [PROP_STATE_IDLE; MAX_PROPS];
 static mut PROP_ATTACK_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_AI_TIMER: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_AI_TARGET: [u8; MAX_PROPS] = [PROP_TARGET_NONE; MAX_PROPS];
+// AI target re-acquisition is staggered: each prop re-runs the (BSP-trace-heavy)
+// find_*_target only every AI_REACQUIRE_INTERVAL sim-ticks, keeping its cached
+// PROP_AI_TARGET between -- cuts the per-frame line-of-sight trace count ~Nx on
+// enemy-dense maps. At 20 Hz a 4-tick lag is ~200 ms (imperceptible); per-frame
+// facing/firing LOS still runs every tick so combat stays accurate.
+static mut AI_TICK: u32 = 0;
+const AI_REACQUIRE_INTERVAL: u32 = 4;
+#[inline]
+unsafe fn ai_reacquire(pi: usize) -> bool {
+    (pi as u32).wrapping_add(AI_TICK) % AI_REACQUIRE_INTERVAL == 0
+}
 static mut PROP_HEALTH: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_HIT_FLASH: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_LOGIC_LINK: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS];
@@ -803,6 +835,7 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
         );
         let (ntex, _failed) = stream_model_texture_chunk(
             MODEL_TEX_CHUNK_BASE + ty as u32,
+            geom_word + glen.div_ceil(4), // stage tex in the free tail above this geom
             core::ptr::addr_of_mut!(POOL_TEX).cast::<TexSlot>().add(tex_off),
             POOL_TEX_SLOTS - tex_off,
             &mut sc,
@@ -2649,7 +2682,11 @@ unsafe fn tick_shooter(
     let wake = if can_move { range + 384 } else { range };
     let wake2 = wake.saturating_mul(wake);
 
-    let target = find_actor_target(m, movers, pi, player_pos, nprops, wake2);
+    let target = if ai_reacquire(pi) {
+        find_actor_target(m, movers, pi, player_pos, nprops, wake2)
+    } else {
+        PROP_AI_TARGET[pi]
+    };
     if target == PROP_TARGET_NONE {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
@@ -2724,7 +2761,11 @@ unsafe fn tick_headcrab(
         return;
     }
 
-    let target = find_headcrab_target(m, movers, pi, player_pos, nprops);
+    let target = if ai_reacquire(pi) {
+        find_headcrab_target(m, movers, pi, player_pos, nprops)
+    } else {
+        PROP_AI_TARGET[pi]
+    };
     if target == PROP_TARGET_NONE {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
@@ -2768,7 +2809,11 @@ unsafe fn tick_barney(
         PROP_AI_TIMER[pi] -= 1;
     }
 
-    let target = find_barney_target(m, movers, pi, nprops);
+    let target = if ai_reacquire(pi) {
+        find_barney_target(m, movers, pi, nprops)
+    } else {
+        PROP_AI_TARGET[pi]
+    };
     if target != PROP_TARGET_NONE {
         if let Some(aim) = target_aim_point(target, player_pos, nprops) {
             prop_face_point(pi, aim);
@@ -2911,6 +2956,7 @@ unsafe fn tick_props(
     health: &mut u16,
     armor: &mut u16,
 ) {
+    AI_TICK = AI_TICK.wrapping_add(1); // drives staggered AI target re-acquisition
     let nprops = PROP_COUNT.min(MAX_PROPS);
     let mut pi = 0usize;
     while pi < nprops {
@@ -3923,6 +3969,16 @@ unsafe fn try_emit_tri_pair_quad_values(
     {
         return true;
     }
+    let qrgb = if slot.backdrop {
+        [t0.rgb[2], t0.rgb[0], t0.rgb[1], t1.rgb[1]]
+    } else {
+        [
+            fog1(t0.rgb[2], pb.sz as i32),
+            fog1(t0.rgb[0], pa.sz as i32),
+            fog1(t0.rgb[1], pc.sz as i32),
+            fog1(t1.rgb[1], pd.sz as i32),
+        ]
+    };
     let prim = QuadTexturedGouraud::with_packet_material_packed_uv_words(
         [
             (pb.sx, pb.sy),
@@ -3936,7 +3992,7 @@ unsafe fn try_emit_tri_pair_quad_values(
             t0.uv_words[1],
             t1.uv_words[1],
         ],
-        [t0.rgb[2], t0.rgb[0], t0.rgb[1], t1.rgb[1]],
+        qrgb,
         slot.packet,
     );
     let Some(packet) = packets.push(prim) else {
@@ -3982,6 +4038,48 @@ impl WorldCounters {
 /// false means it straddles the near plane and the caller must run the full
 /// decode + view-space clip path.
 #[inline]
+/// Distance-fog factor for a view depth, 256 = unfogged, 0 = full (black) at
+/// FAR_VIEW. Compile-time reciprocal, so no runtime divide.
+#[inline]
+fn fog_factor(sz: i32) -> i32 {
+    if sz <= FOG_START {
+        256
+    } else if sz >= FAR_VIEW {
+        0
+    } else {
+        ((FAR_VIEW - sz) * FOG_INV) >> 12
+    }
+}
+
+/// Fade one vertex color toward black by its view depth.
+#[inline]
+fn fog1(rgb: (u8, u8, u8), sz: i32) -> (u8, u8, u8) {
+    let f = fog_factor(sz);
+    if f >= 256 {
+        rgb
+    } else {
+        (
+            ((rgb.0 as i32 * f) >> 8) as u8,
+            ((rgb.1 as i32 * f) >> 8) as u8,
+            ((rgb.2 as i32 * f) >> 8) as u8,
+        )
+    }
+}
+
+/// Fade a triangle's three vertex colors toward black by per-vertex depth.
+/// Backdrop/sky tris pass through so the horizon never darkens.
+#[inline]
+fn fog_world_rgb(rgb: [(u8, u8, u8); 3], sz: [i32; 3], backdrop: bool) -> [(u8, u8, u8); 3] {
+    if backdrop {
+        return rgb;
+    }
+    [
+        fog1(rgb[0], sz[0]),
+        fog1(rgb[1], sz[1]),
+        fog1(rgb[2], sz[2]),
+    ]
+}
+
 unsafe fn emit_proj_fast(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
@@ -4019,12 +4117,17 @@ unsafe fn emit_proj_fast(
         if slot.backdrop {
             otz = clamp_otz(otz + BACKDROP_OTZ_BIAS);
         }
+        let rgb = fog_world_rgb(
+            m.tri_rgb(tt),
+            [pa.sz as i32, pb.sz as i32, pc.sz as i32],
+            slot.backdrop,
+        );
         push_tri_uv_words(
             packets,
             np,
             [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
             m.tri_uv_words(tt),
-            m.tri_rgb(tt),
+            rgb,
             slot.packet,
             otz,
         );
@@ -4248,10 +4351,13 @@ unsafe fn draw_model(
         if !slot.valid {
             continue;
         }
-        // Deflate sz by `s` back to 1x world depth so models sort correctly in
-        // the shared OT against the (un-inflated) world geometry.
-        let avgz = model_unscale_depth(
-            ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3,
+        // Deflate sz by `s` back to 1x world depth, then sort by the FARTHEST
+        // vertex at the world's OT_SHIFT -- exactly like world_otz_from_gte3 --
+        // so models interleave correctly with world geometry. The old `>> 6`
+        // predated OT_SHIFT=4: it sorted models 4x too near, so they drew on top
+        // of walls/columns that should occlude them.
+        let depthz = model_unscale_depth(
+            (pa.sz as u32).max(pb.sz as u32).max(pc.sz as u32),
             s,
             scale_shift,
         );
@@ -4262,7 +4368,7 @@ unsafe fn draw_model(
             render_face.face.uv_words,
             [(shade, shade, shade); 3],
             slot.packet,
-            clamp_otz((avgz >> 6) as usize),
+            clamp_otz((depthz >> OT_SHIFT) as usize),
         );
     }
     telemetry::stage_end(telemetry::stage::TEXTURED_MODEL_FACES);
@@ -4522,6 +4628,7 @@ fn account_streamed_chunk(len: usize, chunks: &mut u32, bytes: &mut u32, sectors
 
 fn stream_model_texture_chunk(
     chunk_id: u32,
+    dst_word: usize,
     slots: *mut TexSlot,
     slot_len: usize,
     stream_chunks: &mut u32,
@@ -4529,13 +4636,28 @@ fn stream_model_texture_chunk(
     stream_sectors: &mut u32,
 ) -> Option<(usize, usize)> {
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
-    let len = cdstream::load_chunk(chunk_id, unsafe { &mut MODEL_BUF }).unwrap_or(0);
+    // Stage the texture in MODEL_BUF's free tail (above the geometry loaded so
+    // far), NOT at offset 0. Offset 0 holds the viewmodel and the per-map model
+    // geometry that draw_model reads at render time; a texture loaded at 0 that
+    // exceeds it would clobber live geometry and crash on the next draw -- this
+    // was c1a2a (heaviest map, biggest textures). The tail is only overwritten
+    // by the NEXT model's geometry, after this tex is already in VRAM.
+    // load_chunk refuses a chunk larger than its destination, so a tex that
+    // won't fit the tail is skipped (untextured) rather than overflowing.
+    let len = {
+        let buf = unsafe { &mut MODEL_BUF };
+        if dst_word >= buf.len() {
+            telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
+            return None;
+        }
+        cdstream::load_chunk(chunk_id, &mut buf[dst_word..]).unwrap_or(0)
+    };
     telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
     if len == 0 {
         return None;
     }
     account_streamed_chunk(len, stream_chunks, stream_bytes, stream_sectors);
-    let bytes = unsafe { streamed_model_bytes(len) };
+    let bytes = unsafe { streamed_model_bytes_at(dst_word * 4, len) };
     telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
     let uploaded = unsafe { vram::upload_tex_chunk_append_raw(bytes, slots, slot_len) };
     telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
@@ -4611,8 +4733,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
     let mut model_tex_failed = 0usize;
     let mut model_texs = 0usize;
     let mut upload_model_tex = |chunk_id: u32, slots: *mut TexSlot, slot_len: usize| -> bool {
+        // dst_word 0: this runs before any model geometry is loaded, so the
+        // whole MODEL_BUF is free to stage the texture in.
         match stream_model_texture_chunk(
             chunk_id,
+            0,
             slots,
             slot_len,
             &mut stream_chunks,
@@ -5205,7 +5330,15 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                 // never a black hole up close. Normal views run a single pass.
                 const N_DEPTH_BANDS: i32 = 8;
                 const DEPTH_BAND_SHIFT: u32 = 11; // 2048 world units per band
-                let nbands = if PVS_TRI_REF_COUNT > MAX_RENDER_PACKETS {
+                // Banding emits near faces first so an overflowing arena keeps the
+                // close geometry. It only partitions when a band is smaller than the
+                // view distance; with FAR_VIEW <= one band every face lands in band 0
+                // and bands 1.. become empty re-walks that recompute each face's depth
+                // 8x for nothing. Collapse to one pass then -- pixel-identical output,
+                // no wasted re-walks. Lower DEPTH_BAND_SHIFT below FAR_VIEW to restore
+                // real near-priority if an overflow view ever drops near geometry.
+                let banding_useful = FAR_VIEW > (1 << DEPTH_BAND_SHIFT);
+                let nbands = if banding_useful && PVS_TRI_REF_COUNT > MAX_RENDER_PACKETS {
                     N_DEPTH_BANDS
                 } else {
                     1
@@ -5225,14 +5358,20 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                             entry = PVS_FACE_NEXT[e];
                             if e < MAX_PVS_FACE_RECS {
                                 let rec = PVS_FACE_REC[e];
-                                let c = [
-                                    rec.center[0] as i32,
-                                    rec.center[1] as i32,
-                                    rec.center[2] as i32,
-                                ];
-                                let depth = (dot12(rot.m[2], c) + base_t[2]).max(0);
-                                if (depth >> DEPTH_BAND_SHIFT).min(nbands - 1) != band {
-                                    continue;
+                                // Depth-band gate only matters in multi-band mode;
+                                // with a single pass every face is band 0, so skip
+                                // the per-face dot12 depth entirely (faithful -- the
+                                // check always passed when nbands == 1).
+                                if nbands > 1 {
+                                    let c = [
+                                        rec.center[0] as i32,
+                                        rec.center[1] as i32,
+                                        rec.center[2] as i32,
+                                    ];
+                                    let depth = (dot12(rot.m[2], c) + base_t[2]).max(0);
+                                    if (depth >> DEPTH_BAND_SHIFT).min(nbands - 1) != band {
+                                        continue;
+                                    }
                                 }
                                 if !WORLD_BOUNDS_CULL || cached_face_visible(rec, &rot, base_t) {
                                     emit_world_face_tris(
@@ -5496,6 +5635,12 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                 let face_count = lm.n_faces;
                 let radius = model_def(ty).radius;
                 model_bounds_tests = model_bounds_tests.saturating_add(1);
+                // Far cull (tighter than world FAR_VIEW): skip distant detailed
+                // models before the costlier PVS/frustum/occlusion tests + draw.
+                if dot12(rot.m[2], org) + base_t[2] - radius > MODEL_FAR {
+                    model_bounds_culled = model_bounds_culled.saturating_add(1);
+                    continue;
+                }
                 if have_pvs {
                     let prop_leaf = if ty == PROP_TYPE_HEADCRAB {
                         camera_leaf(&m, org)
