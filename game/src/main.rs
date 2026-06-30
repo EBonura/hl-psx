@@ -143,7 +143,7 @@ const MODEL_CULL: bool = true; // backface-cull studio models
 const MODEL_OCCLUSION_CULL: bool = true; // skip actors fully hidden by static BSP
 const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
 const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in front of the camera
-const DBG_PAD_BOOT: bool = true; // debug: hold L1 | map_index (low byte) at boot to load any map headlessly
+const DBG_PAD_BOOT: bool = false; // debug: hold L1 | map_index (low byte) at boot to load any map headlessly
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 const ROOM_WORLD_CHUNK_MUL: u32 = 2;
@@ -2984,14 +2984,25 @@ unsafe fn tick_props(
             continue;
         }
 
+        // Props use WORLD-ONLY collision (no brush-entity mover hulls). trace_all
+        // is O(movers) per trace, so per-prop slide-move (x4 iters) + step + ground
+        // x the mover count is O(props x movers). On dense maps this explodes:
+        // c1a2 (Office Complex) has 70 props x 169 brush entities = ~100k hull-bbox
+        // checks/frame, dropping it to ~0.3 fps ("freezes as soon as you enter").
+        // World geometry still blocks enemies; them clipping a door/func_wall is
+        // non-essential. The PLAYER keeps full mover collision (its physics runs
+        // outside this loop). Restore per-prop mover collision via a spatial
+        // broadphase if it's ever needed.
+        let _ = movers;
+        let pm: &[phys::Mover] = &[];
         match model_def(ty).ai {
             // Melee aliens (zombie/houndeye/bullsquid/ichy) reuse the headcrab
             // approach+bite AI; ranged/boss/flyer types render but don't move yet.
-            AI_MELEE => tick_headcrab(m, movers, pi, player_pos, health, armor, nprops),
-            AI_RANGED => tick_shooter(m, movers, pi, player_pos, health, armor, nprops, true),
-            AI_TURRET => tick_shooter(m, movers, pi, player_pos, health, armor, nprops, false),
-            AI_ALLY => tick_barney(m, movers, pi, player_pos, health, armor, nprops),
-            AI_FLEE => tick_scientist(m, movers, pi, player_pos, nprops),
+            AI_MELEE => tick_headcrab(m, pm, pi, player_pos, health, armor, nprops),
+            AI_RANGED => tick_shooter(m, pm, pi, player_pos, health, armor, nprops, true),
+            AI_TURRET => tick_shooter(m, pm, pi, player_pos, health, armor, nprops, false),
+            AI_ALLY => tick_barney(m, pm, pi, player_pos, health, armor, nprops),
+            AI_FLEE => tick_scientist(m, pm, pi, player_pos, nprops),
             _ => {}
         }
         pi += 1;
