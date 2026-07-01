@@ -3,8 +3,8 @@
 //!
 //!   magic "HLMA" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
 //!     | u32 clip_off,ent_off,tram_off,prop_off,sky_tex_base,nav_off,logic_off
-//!   verts i16×3 | TriRec[19B] × n_tris
-//!     TriRec = u16 idx[3], u8 uv[6], u8 tex, rgb555[3]
+//!   verts i16×3 | TriRec[16B] × n_tris | light palette (u16 rgb555 × 256)
+//!     TriRec = u16 idx[3], u8 uv[6], u8 tex, u8 light_idx[3] (index into palette)
 //!   optional legacy textures × n_texs: u16 w,h | u16 clut[16] | u8 pix[w*h/2]
 //!   modern streamed builds keep texture pixels in a separate HLTX chunk:
 //!     magic "HLTX" | u32 n_texs | textures...
@@ -110,6 +110,7 @@ pub struct Map {
     pub sky_tex_base: usize,
     v_off: usize,
     tri_off: usize,
+    light_pal_off: usize, // 256 rgb555 entries, indexed by TriRec light_idx[3]
     // BSP / PVS
     pub n_planes: usize,
     pub n_face_groups: usize,
@@ -165,7 +166,7 @@ pub struct Map {
 
 const LEAF_SZ: usize = 8; // visofs i32 + marks u16×2
 const FACE_SZ: usize = 18;
-const TRI_SZ: usize = 19;
+const TRI_SZ: usize = 16; // u16 idx[3] | u8 uv[6] | u8 tex | u8 light_idx[3]
 const CLIPNODE_SZ: usize = 6;
 const ENT_SZ: usize = 52;
 const LOGIC_SZ: usize = 64;
@@ -278,6 +279,7 @@ impl Map {
         let logic_off = rd_u32(data, 48) as usize;
         let v_off = 52;
         let tri_off = v_off + n_verts * 6;
+        let light_pal_off = tri_off + n_tris * TRI_SZ; // palette follows the tris
 
         let n_planes = rd_u32(data, bsp_off) as usize;
         let n_face_groups = rd_u32(data, bsp_off + 4) as usize;
@@ -351,6 +353,7 @@ impl Map {
             sky_tex_base,
             v_off,
             tri_off,
+            light_pal_off,
             n_planes,
             n_face_groups,
             n_nodes,
@@ -581,14 +584,20 @@ impl Map {
         unsafe { *self.data.get_unchecked(self.tri_off + t * TRI_SZ + 12) as usize }
     }
 
+    /// Look up a per-corner lightmap colour through the map's 256-entry palette.
+    #[inline]
+    fn light_color(&self, idx: u8) -> (u8, u8, u8) {
+        unpack_rgb555(rd_u16(self.data, self.light_pal_off + idx as usize * 2))
+    }
+
     #[inline]
     pub fn tri_rgb(&self, t: usize) -> [(u8, u8, u8); 3] {
         let o = self.tri_off + t * TRI_SZ;
         let d = self.data;
         [
-            unpack_rgb555(rd_u16(d, o + 13)),
-            unpack_rgb555(rd_u16(d, o + 15)),
-            unpack_rgb555(rd_u16(d, o + 17)),
+            self.light_color(d[o + 13]),
+            self.light_color(d[o + 14]),
+            self.light_color(d[o + 15]),
         ]
     }
 
@@ -596,14 +605,15 @@ impl Map {
     pub fn render_tri(&self, t: usize, uv_words: [u16; 3]) -> RenderTri {
         let o = self.tri_off + t * TRI_SZ;
         let d = self.data;
-        let c0 = unpack_rgb555(rd_u16(d, o + 13));
-        let c1 = unpack_rgb555(rd_u16(d, o + 15));
-        let c2 = unpack_rgb555(rd_u16(d, o + 17));
         RenderTri {
             idx: [rd_u16(d, o), rd_u16(d, o + 2), rd_u16(d, o + 4)],
             tex: d[o + 12] as usize,
             uv_words,
-            rgb: [c0, c1, c2],
+            rgb: [
+                self.light_color(d[o + 13]),
+                self.light_color(d[o + 14]),
+                self.light_color(d[o + 15]),
+            ],
         }
     }
 

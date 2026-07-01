@@ -341,8 +341,9 @@ fn report(path: &str, bsp: &Bsp) {
 // Layout (all little-endian):
 //   magic "HLMA" | u32 n_verts | u32 n_tris | u32 n_texs
 //   verts:   i16 x,y,z   × n_verts          (world space, Y-up)
-//   tri_rec[19] × n_tris:
-//     u16 a,b,c | u8 uv[6] | u8 tex | u16 rgb555[3]
+//   tri_rec[16] × n_tris:
+//     u16 a,b,c | u8 uv[6] | u8 tex | u8 light_idx[3]
+//   light palette: u16 rgb555 × 256   (per-corner lightmap, indexed above)
 //   (pad to 4)
 //   textures × n_texs, each (already 4-byte aligned):
 //     u16 w | u16 h        (power-of-two, 8..=64)
@@ -903,11 +904,32 @@ fn box_extent(b: &[(u8, u8, u8)]) -> (u8, i32) {
 
 /// Median-cut to <=16 representative colours.
 fn median_cut16(colors: &[(u8, u8, u8)]) -> Vec<(u8, u8, u8)> {
+    median_cut(colors, 16)
+}
+
+/// Nearest palette entry (squared-distance) for one colour.
+fn nearest_pal_index(pal: &[(u8, u8, u8)], c: (u8, u8, u8)) -> u8 {
+    let mut best = 0usize;
+    let mut bd = i32::MAX;
+    for (i, p) in pal.iter().enumerate() {
+        let dr = c.0 as i32 - p.0 as i32;
+        let dg = c.1 as i32 - p.1 as i32;
+        let db = c.2 as i32 - p.2 as i32;
+        let d = dr * dr + dg * dg + db * db;
+        if d < bd {
+            bd = d;
+            best = i;
+        }
+    }
+    best as u8
+}
+
+fn median_cut(colors: &[(u8, u8, u8)], n_target: usize) -> Vec<(u8, u8, u8)> {
     if colors.is_empty() {
         return vec![(110, 110, 110)];
     }
     let mut boxes: Vec<Vec<(u8, u8, u8)>> = vec![colors.to_vec()];
-    while boxes.len() < 16 {
+    while boxes.len() < n_target {
         // Split the box with the widest channel range.
         let mut pick = None;
         let mut best = 0i32;
@@ -3545,6 +3567,19 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             o.extend_from_slice(&c.to_le_bytes());
         }
     }
+    // Palettise the per-vertex lightmap: median-cut every corner colour to <=256
+    // entries, store a u8 index per corner + one shared palette after the tris.
+    // Saves 3 B/tri vs inline rgb555 with ~imperceptible degradation (lightmaps
+    // have a narrow colour range and the GPU gouraud-interpolates each triangle).
+    let n_corners = n_tris * 3;
+    let corner_colors: Vec<(u8, u8, u8)> = (0..n_corners)
+        .map(|c| (tri_rgb[c * 3], tri_rgb[c * 3 + 1], tri_rgb[c * 3 + 2]))
+        .collect();
+    let light_pal = median_cut(&corner_colors, 256);
+    let light_idx: Vec<u8> = corner_colors
+        .iter()
+        .map(|&c| nearest_pal_index(&light_pal, c))
+        .collect();
     for t in 0..n_tris {
         let ib = t * 3;
         o.extend_from_slice(&tri_idx[ib].to_le_bytes());
@@ -3552,12 +3587,15 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         o.extend_from_slice(&tri_idx[ib + 2].to_le_bytes());
         o.extend_from_slice(&tri_uv[t * 6..t * 6 + 6]);
         o.push(tri_tex[t] as u8);
-        for k in 0..3 {
-            let rb = t * 9 + k * 3;
-            o.extend_from_slice(
-                &pack_rgb555(tri_rgb[rb], tri_rgb[rb + 1], tri_rgb[rb + 2]).to_le_bytes(),
-            );
-        }
+        o.push(light_idx[ib]);
+        o.push(light_idx[ib + 1]);
+        o.push(light_idx[ib + 2]);
+    }
+    // Light palette: exactly 256 rgb555 entries right after the tris (the runtime
+    // derives its offset from tri_off + n_tris*16). Padded so the layout is fixed.
+    for i in 0..256 {
+        let c = light_pal.get(i).copied().unwrap_or((110, 110, 110));
+        o.extend_from_slice(&pack_rgb555(c.0, c.1, c.2).to_le_bytes());
     }
     while o.len() % 4 != 0 {
         o.push(0);
