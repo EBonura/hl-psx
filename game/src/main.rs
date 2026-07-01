@@ -454,7 +454,8 @@ fn loading_label_for_room(room_id: u16) -> &'static str {
     }
 }
 
-fn draw_loading_screen(fb: &mut FrameBuffer, label: &str, frame: u8) {
+// Fresh load from the menu: a full loading card on a cleared buffer, then swap.
+fn draw_loading_card(fb: &mut FrameBuffer, label: &str, frame: u8) {
     fb.clear(0, 0, 0);
     gpu::draw_quad_flat([(0, 0), (320, 0), (0, 240), (320, 240)], 6, 6, 6);
     gpu::draw_quad_flat([(42, 64), (278, 64), (42, 176), (278, 176)], 14, 13, 11);
@@ -479,8 +480,49 @@ fn draw_loading_screen(fb: &mut FrameBuffer, label: &str, frame: u8) {
     fb.swap();
 }
 
-fn draw_next_loading_screen(fb: &mut FrameBuffer, label: &str, frame: &mut u8) {
-    draw_loading_screen(fb, label, *frame);
+// Level-to-level transition (HL-style): keep the current scene frozen on screen
+// and overlay only a tiny "Loading" strip, instead of clearing to a black card.
+// The displayed image lives in the FRONT buffer (the one we are NOT drawing to),
+// so we retarget the GPU at it, draw a small bottom strip, and DO NOT swap -- the
+// previous frame stays visible while the next level streams in. Drawing just
+// after vsync writes the small bottom strip before the beam scans down to it, so
+// there is no tearing on the live buffer.
+fn draw_loading_overlay(fb: &mut FrameBuffer, frame: u8) {
+    let front_y = fb.buffer_y(fb.drawing ^ 1);
+    gpu::vsync();
+    gpu::set_draw_area(0, front_y, fb.width - 1, front_y + fb.height - 1);
+    gpu::set_draw_offset(0, front_y as i16);
+
+    let (y0, y1) = (210i16, 232i16);
+    gpu::draw_quad_flat([(80, y0), (240, y0), (80, y1), (240, y1)], 5, 5, 7);
+    gpu::draw_quad_flat([(80, y0), (240, y0), (80, y0 + 1), (240, y0 + 1)], 24, 21, 16);
+    let loading = "Loading";
+    let ty = y0 + 5;
+    let lw = hltext::text_width_scaled(loading, hltext::SMALL_Q8);
+    let sw = hltext::text_width_scaled("-", hltext::SMALL_Q8);
+    let bx = 160 - (lw + 8 + sw) / 2; // centre "Loading <spin>" as a unit
+    hltext::draw_text_scaled(bx, ty, loading, hltext::SMALL_Q8, PAUSE_AMBER);
+    hltext::draw_text_scaled(
+        bx + lw + 8,
+        ty,
+        LOADING_SPINNER[(frame as usize) & 3],
+        hltext::SMALL_Q8,
+        PAUSE_WHITE,
+    );
+    gpu::draw_sync();
+
+    // Restore the draw target to the back buffer so the level renders there.
+    let back_y = fb.buffer_y(fb.drawing);
+    gpu::set_draw_area(0, back_y, fb.width - 1, back_y + fb.height - 1);
+    gpu::set_draw_offset(0, back_y as i16);
+}
+
+fn draw_next_loading_screen(fb: &mut FrameBuffer, label: &str, frame: &mut u8, keep_frame: bool) {
+    if keep_frame {
+        draw_loading_overlay(fb, *frame);
+    } else {
+        draw_loading_card(fb, label, *frame);
+    }
     *frame = frame.wrapping_add(1);
 }
 
@@ -5469,10 +5511,17 @@ fn main() {
         }
         let sel = dbg_sel.unwrap_or_else(|| menu::run(&mut fb));
         let mut launch = menu_launch(sel);
+        // First load comes from the menu (fresh -> full loading card). A
+        // changelevel re-enters play() with the previous frame still on screen,
+        // so keep it frozen and overlay only a tiny "Loading" strip.
+        let mut keep_frame = false;
         loop {
-            match play(&mut fb, launch) {
+            match play(&mut fb, launch, keep_frame) {
                 PlayExit::BackToMenu => break,
-                PlayExit::ChangeLevel(next) => launch = next,
+                PlayExit::ChangeLevel(next) => {
+                    launch = next;
+                    keep_frame = true;
+                }
             }
         }
     }
@@ -5537,7 +5586,7 @@ fn stream_model_texture_chunk(
 /// Stream a room from WORLD.PAK, upload its textures, and run the renderer +
 /// physics loop until Select returns to menu or a trigger_changelevel requests
 /// the next room.
-fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
+fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit {
     let _ = enable_analog_port1();
     unsafe {
         CHANGE_REQUEST_ACTIVE = 0;
@@ -5552,7 +5601,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
     }
     let loading_label = loading_label_for_room(launch.room_id);
     let mut loading_frame = 0u8;
-    draw_next_loading_screen(fb, loading_label, &mut loading_frame);
+    draw_next_loading_screen(fb, loading_label, &mut loading_frame, keep_frame);
 
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
     let tex_len = cdstream::load_chunk(texture_chunk_id, unsafe { &mut MAP_BUF }).unwrap_or(0);
@@ -5576,7 +5625,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
     }
     telemetry::debug_log("hl-psx: WORLD.PAK texture chunk loaded");
 
-    draw_next_loading_screen(fb, loading_label, &mut loading_frame);
+    draw_next_loading_screen(fb, loading_label, &mut loading_frame, keep_frame);
     let tex_bytes = unsafe { streamed_map_bytes(tex_len) };
     telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
     let (room_texs, tex_failed) = match unsafe {
@@ -5602,7 +5651,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
     telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
     let model_tex_failed = 0usize;
     let model_texs = 0usize;
-    draw_next_loading_screen(fb, loading_label, &mut loading_frame);
+    draw_next_loading_screen(fb, loading_label, &mut loading_frame, keep_frame);
     // Stream the curated viewmodel set (geometry -> MODEL_BUF head reserve,
     // textures -> VM_SLOTS) so weapon switching is instant. Textures stage above
     // the reserve, in the enemy region stream_map_models fills afterwards.
@@ -5637,10 +5686,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
         WEAPON_CACHE_SCALE = 0;
         WEAPON_TRI_COUNT = 0;
     }
-    draw_next_loading_screen(fb, loading_label, &mut loading_frame);
+    draw_next_loading_screen(fb, loading_label, &mut loading_frame, keep_frame);
     let hud_mat = hud::upload(); // real HUD sprite sheet -> free gameplay tpage
 
-    draw_next_loading_screen(fb, loading_label, &mut loading_frame);
+    draw_next_loading_screen(fb, loading_label, &mut loading_frame, keep_frame);
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
     let map_len = cdstream::load_chunk(world_chunk_id, unsafe { &mut MAP_BUF }).unwrap_or(0);
     telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
@@ -5819,15 +5868,20 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
     }
     telemetry::stage_end(telemetry::stage::ROOM_SURFACE_CACHE);
 
-    // Loading cards are drawn directly into the double buffers. Clear both
-    // pages once before the first gameplay frame so sparse world coverage
-    // cannot leave a stale loading panel behind.
-    fb.clear(0, 0, 0);
-    gpu::draw_sync();
-    fb.swap();
-    fb.clear(0, 0, 0);
-    gpu::draw_sync();
-    fb.swap();
+    // Menu loading cards are drawn directly into the double buffers, so clear
+    // both pages once before the first gameplay frame -- otherwise sparse world
+    // coverage could leave a stale loading panel behind. On a level->level
+    // transition (keep_frame) we deliberately DON'T clear: the previous scene
+    // stays frozen (with the tiny overlay) until the first rendered frame of the
+    // new level swaps over it, so there is no black flash between levels.
+    if !keep_frame {
+        fb.clear(0, 0, 0);
+        gpu::draw_sync();
+        fb.swap();
+        fb.clear(0, 0, 0);
+        gpu::draw_sync();
+        fb.swap();
+    }
 
     gpu::configure_vsync_timer();
     interrupts::install_vblank_counter();
