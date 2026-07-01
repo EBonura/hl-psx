@@ -443,7 +443,34 @@ const PAUSE_WHITE: (u8, u8, u8) = (238, 238, 230);
 const PAUSE_AMBER: (u8, u8, u8) = (255, 170, 0);
 const PAUSE_DIM: (u8, u8, u8) = (96, 96, 92);
 const PAUSE_ARMED: (u8, u8, u8) = (75, 53, 10);
-const LOADING_SPINNER: [&str; 4] = ["|", "/", "-", "\\"];
+// cli-spinners "dots" (the classic braille terminal spinner ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏),
+// drawn as its 2x3 dot grid since the bitmap font has no braille glyphs. Each
+// entry is the low 6 braille bits: bit0..2 = left column top->bottom, bit3..5 =
+// right column top->bottom. A rotating subset lights each frame.
+const SPINNER_DOTS: [u8; 10] = [
+    0x0B, 0x19, 0x39, 0x38, 0x3C, 0x34, 0x26, 0x27, 0x07, 0x0F,
+];
+
+/// Draw one "dots" spinner frame as a 2x3 grid of small dots at (x, y).
+fn draw_spinner_dots(x: i16, y: i16, frame: u8) {
+    let mask = SPINNER_DOTS[(frame as usize) % SPINNER_DOTS.len()];
+    const D: i16 = 3; // dot size
+    const G: i16 = 5; // dot spacing
+    let mut i = 0;
+    while i < 6 {
+        let col = (i / 3) as i16;
+        let row = (i % 3) as i16;
+        let dx = x + col * G;
+        let dy = y + row * G;
+        let (r, g, b) = if mask & (1 << i) != 0 {
+            (255, 214, 96) // lit: bright HEV amber
+        } else {
+            (40, 34, 20) // unlit: dim, so the grid reads as a spinner
+        };
+        gpu::draw_quad_flat([(dx, dy), (dx + D, dy), (dx, dy + D), (dx + D, dy + D)], r, g, b);
+        i += 1;
+    }
+}
 
 fn loading_label_for_room(room_id: u16) -> &'static str {
     let idx = room_id as usize;
@@ -466,13 +493,7 @@ fn draw_loading_card(fb: &mut FrameBuffer, label: &str, frame: u8) {
     let y = 118;
     hltext::draw_centered_scaled(y, loading, hltext::SMALL_Q8, PAUSE_AMBER);
     let x = 160 + hltext::text_width_scaled(loading, hltext::SMALL_Q8) / 2 + 8;
-    hltext::draw_text_scaled(
-        x,
-        y,
-        LOADING_SPINNER[(frame as usize) & 3],
-        hltext::SMALL_Q8,
-        PAUSE_WHITE,
-    );
+    draw_spinner_dots(x, y, frame);
 
     hltext::draw_centered_scaled(144, label, hltext::SMALL_Q8, PAUSE_DIM);
     gpu::draw_sync();
@@ -499,16 +520,10 @@ fn draw_loading_overlay(fb: &mut FrameBuffer, frame: u8) {
     let loading = "Loading";
     let ty = y0 + 5;
     let lw = hltext::text_width_scaled(loading, hltext::SMALL_Q8);
-    let sw = hltext::text_width_scaled("-", hltext::SMALL_Q8);
-    let bx = 160 - (lw + 8 + sw) / 2; // centre "Loading <spin>" as a unit
+    let spin_w = 8; // dots-grid width
+    let bx = 160 - (lw + 8 + spin_w) / 2; // centre "Loading <spinner>" as a unit
     hltext::draw_text_scaled(bx, ty, loading, hltext::SMALL_Q8, PAUSE_AMBER);
-    hltext::draw_text_scaled(
-        bx + lw + 8,
-        ty,
-        LOADING_SPINNER[(frame as usize) & 3],
-        hltext::SMALL_Q8,
-        PAUSE_WHITE,
-    );
+    draw_spinner_dots(bx + lw + 8, ty, frame);
     gpu::draw_sync();
 
     // Restore the draw target to the back buffer so the level renders there.
