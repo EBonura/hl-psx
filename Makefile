@@ -271,14 +271,14 @@ models:
 	@mkdir -p $(ROOT)/data/models
 	@mkdir -p $(MODELPACK)
 	@rm -f $(MODELPACK)/chunk_*.psxm
-	@# Viewmodels only ever draw frame 0 (static idle pose), so cook each with 2
-	@# frames (--mdl6 "0:2") instead of --mdl4's 16 -- frame 0 is identical but it
-	@# roughly halves each chunk, so the active weapon's stream-on-switch reserve
-	@# in MODEL_BUF stays small and the enemy pool keeps its budget.
+	@# Viewmodels draw one static full-bright frame, so cook them --mdl4 "0:1":
+	@# HMD5 drops the per-tri normals (--mdl6 keeps them for lit enemies, but the
+	@# viewmodel is flat-shaded so they are dead weight) and only frame 0 is baked.
+	@# That shrinks each chunk enough to keep more weapons resident.
 	@i=0; for m in $(WEAPONLIST); do \
 		chunk=$$(( $(WEAPON_CHUNK_BASE) + i )); \
 		texchunk=$$(( $(WEAPON_TEX_CHUNK_BASE) + i )); \
-		$(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/$$m.mdl" "$(MODELPACK)/chunk_$$chunk.psxm" "0:2" "$(MODELPACK)/chunk_$$texchunk.psxm" >/dev/null; \
+		$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/$$m.mdl" "$(MODELPACK)/chunk_$$chunk.psxm" "0:1" "$(MODELPACK)/chunk_$$texchunk.psxm" >/dev/null; \
 		echo "  weapon chunk $$chunk + tex $$texchunk = $$m ($$(wc -c < $(MODELPACK)/chunk_$$chunk.psxm) B)"; \
 		i=$$((i+1)); \
 	done
