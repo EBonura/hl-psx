@@ -412,6 +412,12 @@ impl VmEntry {
     };
 }
 static mut VM_ENTRY: [VmEntry; N_WEAPONS] = [VmEntry::NONE; N_WEAPONS];
+// Fill cursor into the viewmodel pool. Only the spawn weapon streams at map
+// load; the rest append here on first switch (stream_one_viewmodel), so a load
+// streams ~1 viewmodel instead of all 14. No eviction -- the pool is sized for
+// the whole arsenal, so every weapon still ends up resident once first drawn.
+static mut VM_FILL_WORD: usize = 0;
+static mut VM_FILL_SLOT: usize = 0;
 
 // Shared per-map model pool: streamed geometry lives in MODEL_BUF (after the
 // viewmodel); textures, render faces, and slot bookkeeping live in these pools.
@@ -822,10 +828,69 @@ unsafe fn viewmodel_bytes_at(byte_off: usize, len: usize) -> &'static [u8] {
     unsafe { core::slice::from_raw_parts(ptr.add(byte_off), len) }
 }
 
-/// Stream the curated viewmodel set into MODEL_BUF's head reserve (geometry) +
-/// VM_SLOTS (textures). Textures stage transiently above the reserve, in the
-/// enemy region that stream_map_models fills later. Returns whether the glock
-/// (the fallback viewmodel) loaded.
+/// Stream one weapon's viewmodel (geometry -> MODEL_BUF head reserve, textures
+/// -> VM_SLOTS), appending at the pool's fill cursor. Idempotent: an already-
+/// resident weapon returns `true` without touching the disc. Returns `false` if
+/// the pool is full or the chunk is missing (the caller falls back to the
+/// glock). Textures stage transiently above the reserve, in the enemy region
+/// stream_map_models fills later.
+unsafe fn stream_one_viewmodel(
+    wid: usize,
+    stream_chunks: &mut u32,
+    stream_bytes: &mut u32,
+    stream_sectors: &mut u32,
+) -> bool {
+    if wid >= N_WEAPONS {
+        return false;
+    }
+    if VM_ENTRY[wid].valid {
+        return true;
+    }
+    let word = VM_FILL_WORD;
+    let slot = VM_FILL_SLOT;
+    if word >= VM_POOL_WORDS || slot >= VM_SLOTS_TOTAL {
+        return false;
+    }
+    let buf_ptr = core::ptr::addr_of_mut!(MODEL_BUF).cast::<u32>();
+    let wm = WEAPON_DEFS[wid].wm as u32;
+    let dst = core::slice::from_raw_parts_mut(buf_ptr.add(word), VM_POOL_WORDS - word);
+    let glen = cdstream::load_chunk(MODEL_CHUNK_V_9MMHANDGUN + wm, dst).unwrap_or(0);
+    let glen_words = glen.div_ceil(4);
+    if glen == 0 || word + glen_words > VM_POOL_WORDS {
+        return false;
+    }
+    account_streamed_chunk(glen, stream_chunks, stream_bytes, stream_sectors);
+    // Stage the texture in the pool's free tail (after this geometry), bounded
+    // at VM_POOL_WORDS. A mid-switch stream runs while the enemies above the
+    // reserve are resident, so staging at VM_POOL_WORDS itself would clobber
+    // them; keeping it inside the pool is safe (a tex too big for the remaining
+    // pool is skipped -> untextured, never overflowing into the enemies).
+    let (ntex, _) = stream_model_texture_chunk(
+        MODEL_CHUNK_V_9MMHANDGUN_TEX + wm,
+        word + glen_words,
+        VM_POOL_WORDS,
+        core::ptr::addr_of_mut!(VM_SLOTS).cast::<TexSlot>().add(slot),
+        VM_SLOTS_TOTAL - slot,
+        stream_chunks,
+        stream_bytes,
+        stream_sectors,
+    )
+    .unwrap_or((0, 0));
+    VM_ENTRY[wid] = VmEntry {
+        valid: true,
+        geom_off: word * 4,
+        geom_len: glen,
+        slot_start: slot,
+        n_slots: ntex,
+    };
+    VM_FILL_WORD = word + glen_words;
+    VM_FILL_SLOT = slot + ntex;
+    true
+}
+
+/// Reset the viewmodel pool and preload only the glock (the spawn weapon + the
+/// fallback). Every other weapon streams in on first switch, so a map load
+/// streams one viewmodel instead of all 14. Returns whether the glock loaded.
 unsafe fn load_resident_viewmodels(
     stream_chunks: &mut u32,
     stream_bytes: &mut u32,
@@ -834,44 +899,9 @@ unsafe fn load_resident_viewmodels(
     for e in VM_ENTRY.iter_mut() {
         *e = VmEntry::NONE;
     }
-    let buf_ptr = core::ptr::addr_of_mut!(MODEL_BUF).cast::<u32>();
-    let mut word = 0usize;
-    let mut slot = 0usize;
-    let mut wi = 0usize;
-    while wi < VM_RESIDENT.len() {
-        let wid = VM_RESIDENT[wi];
-        wi += 1;
-        if word >= VM_POOL_WORDS || slot >= VM_SLOTS_TOTAL {
-            break;
-        }
-        let wm = WEAPON_DEFS[wid].wm as u32;
-        let dst = core::slice::from_raw_parts_mut(buf_ptr.add(word), VM_POOL_WORDS - word);
-        let glen = cdstream::load_chunk(MODEL_CHUNK_V_9MMHANDGUN + wm, dst).unwrap_or(0);
-        if glen == 0 || word + glen.div_ceil(4) > VM_POOL_WORDS {
-            continue;
-        }
-        account_streamed_chunk(glen, stream_chunks, stream_bytes, stream_sectors);
-        let (ntex, _) = stream_model_texture_chunk(
-            MODEL_CHUNK_V_9MMHANDGUN_TEX + wm,
-            VM_POOL_WORDS,
-            core::ptr::addr_of_mut!(VM_SLOTS).cast::<TexSlot>().add(slot),
-            VM_SLOTS_TOTAL - slot,
-            stream_chunks,
-            stream_bytes,
-            stream_sectors,
-        )
-        .unwrap_or((0, 0));
-        VM_ENTRY[wid] = VmEntry {
-            valid: true,
-            geom_off: word * 4,
-            geom_len: glen,
-            slot_start: slot,
-            n_slots: ntex,
-        };
-        word += glen.div_ceil(4);
-        slot += ntex;
-    }
-    VM_ENTRY[W_GLOCK].valid
+    VM_FILL_WORD = 0;
+    VM_FILL_SLOT = 0;
+    stream_one_viewmodel(W_GLOCK, stream_chunks, stream_bytes, stream_sectors)
 }
 
 /// Resolve the viewmodel (Model + its VM_SLOTS sub-range) for a weapon, falling
@@ -939,6 +969,7 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
         let (ntex, _failed) = stream_model_texture_chunk(
             MODEL_TEX_CHUNK_BASE + ty as u32,
             geom_word + glen.div_ceil(4), // stage tex in the free tail above this geom
+            MODEL_WORDS,                  // ... up to the end of the pool
             core::ptr::addr_of_mut!(POOL_TEX).cast::<TexSlot>().add(tex_off),
             POOL_TEX_SLOTS - tex_off,
             &mut sc,
@@ -5463,6 +5494,7 @@ fn account_streamed_chunk(len: usize, chunks: &mut u32, bytes: &mut u32, sectors
 fn stream_model_texture_chunk(
     chunk_id: u32,
     dst_word: usize,
+    stage_end: usize,
     slots: *mut TexSlot,
     slot_len: usize,
     stream_chunks: &mut u32,
@@ -5470,21 +5502,21 @@ fn stream_model_texture_chunk(
     stream_sectors: &mut u32,
 ) -> Option<(usize, usize)> {
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
-    // Stage the texture in MODEL_BUF's free tail (above the geometry loaded so
-    // far), NOT at offset 0. Offset 0 holds the viewmodel and the per-map model
-    // geometry that draw_model reads at render time; a texture loaded at 0 that
-    // exceeds it would clobber live geometry and crash on the next draw -- this
-    // was c1a2a (heaviest map, biggest textures). The tail is only overwritten
-    // by the NEXT model's geometry, after this tex is already in VRAM.
-    // load_chunk refuses a chunk larger than its destination, so a tex that
-    // won't fit the tail is skipped (untextured) rather than overflowing.
+    // Stage the texture in the free tail above the geometry loaded so far, NOT
+    // at offset 0 (offset 0 holds live geometry draw_model reads; a texture
+    // there would clobber it and crash -- this was c1a2a). `stage_end` bounds
+    // the scratch so it cannot spill into the NEXT region: a viewmodel streamed
+    // mid-switch stages inside the pool (stage_end = VM_POOL_WORDS) and never
+    // touches the resident enemies above it. load_chunk refuses a chunk larger
+    // than its destination, so a tex that won't fit is skipped (untextured).
     let len = {
         let buf = unsafe { &mut MODEL_BUF };
-        if dst_word >= buf.len() {
+        let end = stage_end.min(buf.len());
+        if dst_word >= end {
             telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
             return None;
         }
-        cdstream::load_chunk(chunk_id, &mut buf[dst_word..]).unwrap_or(0)
+        cdstream::load_chunk(chunk_id, &mut buf[dst_word..end]).unwrap_or(0)
     };
     telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
     if len == 0 {
@@ -5853,7 +5885,16 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
             switch_prev = sw_held;
             if pending_vm_switch {
                 pending_vm_switch = false;
-                unsafe { WEAPON_CACHE_FRAME = usize::MAX } // re-cache the viewmodel for the new weapon
+                unsafe {
+                    // Stream the newly-selected weapon's viewmodel if it is not
+                    // resident yet (first switch to it): a brief hitch, then it
+                    // stays resident for instant re-selection. Runs before the
+                    // draw below, so the frame shows the real model, not a flash
+                    // of the glock. Falls back to the glock if it cannot load.
+                    let mut d = (0u32, 0u32, 0u32);
+                    stream_one_viewmodel(weapon.current, &mut d.0, &mut d.1, &mut d.2);
+                    WEAPON_CACHE_FRAME = usize::MAX; // re-cache the viewmodel for the new weapon
+                }
             }
             if use_cooldown > 0 {
                 use_cooldown -= 1;
