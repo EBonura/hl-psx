@@ -2917,6 +2917,15 @@ fn is_tool_texture(name: &str) -> bool {
         || n.starts_with("trigger")
 }
 
+/// GoldSrc liquid surfaces (`!water`, `!lava`, `!slime`, plus the legacy Quake
+/// `*` prefix) render semi-transparent -- you see the geometry below the
+/// surface. These become the map's translucent faces (drawn in a second,
+/// blended pass over the opaque world).
+fn is_translucent_texture(name: &str) -> bool {
+    let n = name.trim();
+    n.starts_with('!') || n.starts_with('*')
+}
+
 /// Watertight pass: split any triangle edge that another vertex lands on (a
 /// T-junction) so neighbouring faces meet exactly instead of cracking open into
 /// the background at grazing angles. The per-face UV subdivision adds vertices
@@ -3170,6 +3179,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // final face_ntri still equals this was neither UV-split nor welded, so its
     // tris are the clean fan and it can be stored as a vertex loop.
     let mut face_fan_ntri = vec![0u16; n_faces];
+    let mut face_translucent = vec![false; n_faces];
     let mut face_center = vec![[0i16; 3]; n_faces];
     let mut face_extent = vec![[0u16; 3]; n_faces];
     let mut raw_verts = raw.clone();
@@ -3197,6 +3207,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         if is_tool_texture(&tex_names[tex_id]) {
             continue;
         }
+        face_translucent[f] = is_translucent_texture(&tex_names[tex_id]);
         let (fw, fh) = (texs[tex_id].w as f32, texs[tex_id].h as f32);
         let (ow, oh) = orig[tex_id];
         let to = ti * SZ_TEXINFO;
@@ -3826,7 +3837,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
 
     for &f in &compact_faces {
         // FaceRec[16B]: first | count | plane_group | center[3] | radius
-        //             | tex | flags (bit0: 1 = vertex loop, 0 = raw tris)
+        //             | tex | flags (bit0: 1=vertex loop; bit1: 1=translucent)
         o.extend_from_slice(&(face_lc_first[f] as u16).to_le_bytes());
         o.extend_from_slice(&face_lc_count[f].to_le_bytes());
         o.extend_from_slice(&face_group[f].to_le_bytes());
@@ -3841,7 +3852,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let radius = (e[0] as u32 + e[1] as u32 + e[2] as u32).min(u16::MAX as u32) as u16;
         o.extend_from_slice(&radius.to_le_bytes());
         o.push(face_lc_tex[f]);
-        o.push(face_lc_flag[f]);
+        o.push(face_lc_flag[f] | ((face_translucent[f] as u8) << 1));
     }
 
     for ni in 0..n_nodes {

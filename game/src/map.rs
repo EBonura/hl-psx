@@ -732,6 +732,13 @@ impl Map {
         self.data[self.faces_off + f * FACE_SZ + 15] & 1 != 0
     }
 
+    /// True if the face is a translucent surface (water/liquid) -- drawn with
+    /// semi-transparent blending over the opaque world.
+    #[inline]
+    pub fn face_translucent(&self, f: usize) -> bool {
+        self.data[self.faces_off + f * FACE_SZ + 15] & 2 != 0
+    }
+
     #[inline]
     pub fn face_tex(&self, f: usize) -> usize {
         self.data[self.faces_off + f * FACE_SZ + 14] as usize

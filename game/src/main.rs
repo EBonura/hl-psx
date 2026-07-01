@@ -31,7 +31,7 @@ mod room_budget {
 }
 
 use psx_fx::{LcgRng, ParticlePool};
-use psx_gpu::material::TexturedGouraudPacketMaterial;
+use psx_gpu::material::{BlendMode, TexturedGouraudPacketMaterial};
 use psx_gpu::ot::OrderingTable;
 use psx_gpu::prim::{QuadTexturedGouraud, RectFlat, TriTexturedGouraud};
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
@@ -5674,6 +5674,24 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
         PVS_CAM_LEAF = -1;
         PVS_LEAF_COUNT = 0;
         PVS_ENT_COUNT = 0;
+        // Water/liquid textures render translucent: a face flagged translucent
+        // (cook, by texture name) means its texture is a liquid, so blend every
+        // prim that samples it. Translucency follows the texture, so mark the
+        // material once here -- the hot emit path stays unchanged, and the
+        // back-to-front OT already draws the water over the scene behind it.
+        for f in 0..m.n_faces {
+            if m.face_translucent(f) {
+                let t = m.face_tex(f);
+                if t < MAX_TEX_SLOTS && TEX_SLOTS[t].valid {
+                    let blended = TEX_SLOTS[t].material.with_blend_mode(BlendMode::Average);
+                    TEX_SLOTS[t].material = blended;
+                    // The emit path samples the pre-packed `packet`, so rebuild it
+                    // (it carries the semi-transparent command bit + tpage blend).
+                    TEX_SLOTS[t].packet =
+                        psx_gpu::material::TexturedGouraudPacketMaterial::from_texture(blended);
+                }
+            }
+        }
         init_prop_state(&m);
         stream_map_models(&m, VM_POOL_WORDS * 4); // enemies stream after the viewmodel reserve
         clear_combat_fx();
