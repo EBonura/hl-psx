@@ -152,7 +152,12 @@ const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the li
 // look right; opaque liquids stay visible in the meantime.
 const LIQUID_TRANSPARENCY: bool = false;
 const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in front of the camera
-const DBG_PAD_BOOT: bool = false; // debug: hold L1 | map_index (low byte) at boot to load any map headlessly
+const DBG_PAD_BOOT: bool = true; // debug: hold L1 | map_index (low byte) at boot to load any map headlessly
+// Debug: pin the camera to a fixed pose (to reproduce a specific view headlessly).
+const DBG_CAM: bool = true;
+const DBG_CAM_POS: [i32; 3] = [-624, -184, -160];
+const DBG_CAM_YAW: u16 = 1024;
+const DBG_CAM_PITCH: i16 = 0;
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 const ROOM_WORLD_CHUNK_MUL: u32 = 2;
@@ -776,7 +781,7 @@ static mut CLIP_CV: [render::CVert; 4] = [render::EMPTY_CV; 4]; // near-clip scr
 // resolved. Press L1 to dump XHAIR + camera state to the guest debug log, so the
 // same triangle can be compared between a frame where it shows and one where it
 // is missing. XHAIR is also peekable in RAM (see captures/hl-psx.map).
-const DEBUG_XHAIR: bool = false;
+const DEBUG_XHAIR: bool = true;
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct XhairHit {
@@ -6247,6 +6252,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             );
         }
 
+        if DBG_CAM {
+            player.pos = DBG_CAM_POS;
+            yaw = DBG_CAM_YAW;
+            pitch = DBG_CAM_PITCH;
+        }
         let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
         let rot = view_rotation(yaw, pitch);
         scene::load_rotation(&rot);
@@ -6308,17 +6318,16 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 // farthest faces drop -- the wall in front of you always draws,
                 // never a black hole up close. Normal views run a single pass.
                 const N_DEPTH_BANDS: i32 = 8;
-                const DEPTH_BAND_SHIFT: u32 = 11; // 2048 world units per band
-                // Banding emits near faces first so an overflowing arena keeps the
-                // close geometry. It only partitions when a band is smaller than the
-                // view distance; with FAR_VIEW <= one band every face lands in band 0
-                // and bands 1.. become empty re-walks that recompute each face's depth
-                // 8x for nothing. Collapse to one pass then -- pixel-identical output,
-                // no wasted re-walks. Lower DEPTH_BAND_SHIFT below FAR_VIEW to restore
-                // real near-priority if an overflow view ever drops near geometry.
-                let banding_useful = FAR_VIEW > (1 << DEPTH_BAND_SHIFT);
-                let nbands = if banding_useful && PVS_TRI_REF_COUNT > MAX_RENDER_PACKETS {
-                    N_DEPTH_BANDS
+                const DEPTH_BAND_SHIFT: u32 = 8; // 256 world units per band
+                // Band only when the arena would overflow; otherwise one pass (the
+                // common case, no cost). On overflow use just enough bands to span
+                // FAR_VIEW -- no empty re-walks past the view distance, and if a band
+                // is wider than FAR_VIEW this collapses to 1 on its own. Emitting near
+                // bands first means an overflowing arena drops the FARTHEST faces, not
+                // the floor under your feet (which is what an unbanded late-group emit
+                // would drop -- the missing-near-geometry bug this fixes).
+                let nbands = if PVS_TRI_REF_COUNT > MAX_RENDER_PACKETS {
+                    ((FAR_VIEW >> DEPTH_BAND_SHIFT) + 1).min(N_DEPTH_BANDS)
                 } else {
                     1
                 };
@@ -6873,7 +6882,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 let key = if XHAIR.valid != 0 { XHAIR.tt } else { u32::MAX - 1 };
                 // Fire on L1, on aimed-triangle change, AND every ~2s so steady
                 // aim still produces a visible line.
-                let periodic = frame_no % 64 == 0;
+                let periodic = frame_no % 16 == 0;
                 if (dump_now && !XHAIR_DUMP_PREV) || key != XHAIR_DUMP_LAST || periodic {
                     xhair_dump(eye, yaw, pitch, cam_leaf, (np + nq) as i32, PVS_FACE_COUNT as i32);
                     XHAIR_DUMP_LAST = key;
