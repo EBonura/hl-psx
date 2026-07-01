@@ -71,7 +71,7 @@ const OT_SHIFT: u32 = 4;
 const WEAPON_OT_LEN: usize = 64;
 const HUD_OT_LEN: usize = 1;
 const FX_OT_LEN: usize = 1;
-const MAX_VERTS: usize = 8192;
+const MAX_VERTS: usize = 12288; // covers the biggest campaign map (room_140 = 11664 verts)
 const MAX_MODEL_VERTS: usize = 1024;
 const SCI_FACE_CAP: usize = 768;
 const BARNEY_FACE_CAP: usize = 800;
