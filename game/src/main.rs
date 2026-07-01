@@ -146,6 +146,11 @@ const MODEL_FAR: i32 = 1000;
 const MODEL_CULL: bool = true; // backface-cull studio models
 const MODEL_OCCLUSION_CULL: bool = true; // skip actors fully hidden by static BSP
 const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
+// Blend liquid surfaces (water/toxic/fluid) instead of drawing them opaque. OFF:
+// with no underwater scene drawn behind the surface, an Average blend goes near-
+// black over the void below a liquid brush. Needs real underwater rendering to
+// look right; opaque liquids stay visible in the meantime.
+const LIQUID_TRANSPARENCY: bool = false;
 const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in front of the camera
 const DBG_PAD_BOOT: bool = false; // debug: hold L1 | map_index (low byte) at boot to load any map headlessly
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
@@ -5738,21 +5743,26 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         PVS_CAM_LEAF = -1;
         PVS_LEAF_COUNT = 0;
         PVS_ENT_COUNT = 0;
-        // Water/liquid textures render translucent: a face flagged translucent
-        // (cook, by texture name) means its texture is a liquid, so blend every
-        // prim that samples it. Translucency follows the texture, so mark the
-        // material once here -- the hot emit path stays unchanged, and the
-        // back-to-front OT already draws the water over the scene behind it.
-        for f in 0..m.n_faces {
-            if m.face_translucent(f) {
-                let t = m.face_tex(f);
-                if t < MAX_TEX_SLOTS && TEX_SLOTS[t].valid {
-                    let blended = TEX_SLOTS[t].material.with_blend_mode(BlendMode::Average);
-                    TEX_SLOTS[t].material = blended;
-                    // The emit path samples the pre-packed `packet`, so rebuild it
-                    // (it carries the semi-transparent command bit + tpage blend).
-                    TEX_SLOTS[t].packet =
-                        psx_gpu::material::TexturedGouraudPacketMaterial::from_texture(blended);
+        // Water/liquid textures were rendered translucent (Average blend) here.
+        // DISABLED: HL liquid brushes have no geometry drawn behind the surface
+        // (the volume is solid, or it caps a deep/void pit), so an Average blend
+        // over the dark backdrop rendered liquids near-black -- reads as missing
+        // floor. Faithful transparent water needs the underwater scene drawn
+        // behind the surface (a real feature); until then liquids stay opaque
+        // (visible) instead of dark. The cook still flags them (face_translucent)
+        // so re-enabling is a one-line flip.
+        if LIQUID_TRANSPARENCY {
+            for f in 0..m.n_faces {
+                if m.face_translucent(f) {
+                    let t = m.face_tex(f);
+                    if t < MAX_TEX_SLOTS && TEX_SLOTS[t].valid {
+                        let blended = TEX_SLOTS[t].material.with_blend_mode(BlendMode::Average);
+                        TEX_SLOTS[t].material = blended;
+                        // The emit path samples the pre-packed `packet`, so rebuild
+                        // it (it carries the semi-transp bit + tpage blend).
+                        TEX_SLOTS[t].packet =
+                            psx_gpu::material::TexturedGouraudPacketMaterial::from_texture(blended);
+                    }
                 }
             }
         }
