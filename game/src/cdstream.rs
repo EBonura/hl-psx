@@ -21,6 +21,34 @@ const SECTOR_WORDS: usize = SECTOR_BYTES / 4;
 
 static mut SECTOR_BUF: [u32; SECTOR_WORDS] = [0; SECTOR_WORDS];
 
+/// Parsed WORLD.PAK table, cached on the first `load_chunk` so later loads skip
+/// re-reading + re-scanning the (4-sector) header. Loading a map streams ~30
+/// chunks (world, textures, 14 viewmodels, enemies); without the cache each one
+/// seeks back to the pack LBA and rescans the whole table -- the dominant cost
+/// of a map load. 512 covers the current 274-chunk pack with margin; a larger
+/// pack falls back to the on-disk scan (PACK_CACHE_LEN = -2).
+#[cfg(target_arch = "mips")]
+const PACK_CACHE_MAX: usize = 512;
+
+#[cfg(target_arch = "mips")]
+#[derive(Clone, Copy)]
+struct PackEntry {
+    id: u32,
+    sector_offset: u32,
+    byte_size: u32,
+}
+
+#[cfg(target_arch = "mips")]
+static mut PACK_CACHE: [PackEntry; PACK_CACHE_MAX] = [PackEntry {
+    id: u32::MAX,
+    sector_offset: 0,
+    byte_size: 0,
+}; PACK_CACHE_MAX];
+// -1 = not built yet, -2 = pack too big for the cache (use the disk scan),
+// >= 0 = number of cached entries.
+#[cfg(target_arch = "mips")]
+static mut PACK_CACHE_LEN: i32 = -1;
+
 #[cfg(target_arch = "mips")]
 mod hw {
     use super::{SECTOR_BUF, SECTOR_WORDS};
@@ -297,82 +325,150 @@ fn rd32(p: *const u8, o: usize) -> u32 {
     }
 }
 
+/// Read table entry `i` as (id, sector_offset, byte_size), handling an entry
+/// that straddles two header sectors. `loaded` tracks the currently-buffered
+/// header sector so sequential reads don't reload it.
+#[cfg(target_arch = "mips")]
+unsafe fn read_pack_entry(
+    buf: *mut u32,
+    loaded: &mut u32,
+    header_sectors: u32,
+    i: u32,
+) -> Option<(u32, u32, u32)> {
+    let table_offset = 28 + (i as usize) * 24;
+    let sector = (table_offset / SECTOR_BYTES) as u32;
+    if sector >= header_sectors {
+        return None;
+    }
+    let within = table_offset % SECTOR_BYTES;
+    if !load_pack_header_sector(buf, loaded, sector) {
+        return None;
+    }
+    let p = buf as *const u8;
+    if within + 24 <= SECTOR_BYTES {
+        Some((rd32(p, within), rd32(p, within + 4), rd32(p, within + 12)))
+    } else {
+        // Entry spans this sector and the next; stitch the 24 bytes together.
+        let first = SECTOR_BYTES - within;
+        if sector + 1 >= header_sectors {
+            return None;
+        }
+        let mut e = [0u8; 24];
+        core::ptr::copy_nonoverlapping(p.add(within), e.as_mut_ptr(), first);
+        if !load_pack_header_sector(buf, loaded, sector + 1) {
+            return None;
+        }
+        let p = buf as *const u8;
+        core::ptr::copy_nonoverlapping(p, e.as_mut_ptr().add(first), 24 - first);
+        let e = e.as_ptr();
+        Some((rd32(e, 0), rd32(e, 4), rd32(e, 12)))
+    }
+}
+
+/// Read the pack header once and cache every entry, or mark the cache disabled
+/// (`-2`) if the pack has more chunks than the cache holds.
+#[cfg(target_arch = "mips")]
+unsafe fn build_pack_cache() {
+    let buf = core::ptr::addr_of_mut!(SECTOR_BUF) as *mut u32;
+    let mut loaded = u32::MAX;
+    if !load_pack_header_sector(buf, &mut loaded, 0) {
+        return; // leave state -1 so a later call retries
+    }
+    let p = buf as *const u8;
+    if rd32(p, 0) != u32::from_le_bytes(*b"PSOX") || rd32(p, 4) != u32::from_le_bytes(*b"WPAK") {
+        return;
+    }
+    let chunk_count = rd32(p, 12);
+    let header_sectors = rd32(p, 20).max(1);
+    if chunk_count as usize > PACK_CACHE_MAX {
+        PACK_CACHE_LEN = -2;
+        return;
+    }
+    let mut n = 0usize;
+    let mut i = 0u32;
+    while i < chunk_count {
+        let Some((id, so, bs)) = read_pack_entry(buf, &mut loaded, header_sectors, i) else {
+            break;
+        };
+        PACK_CACHE[n] = PackEntry {
+            id,
+            sector_offset: so,
+            byte_size: bs,
+        };
+        n += 1;
+        i += 1;
+    }
+    PACK_CACHE_LEN = n as i32;
+}
+
+/// On-disk table scan (the pre-cache path), used only when the pack is too big
+/// to cache. Returns (sector_offset, byte_size) for `chunk_id`.
+#[cfg(target_arch = "mips")]
+unsafe fn scan_pack_table(chunk_id: u32) -> Option<(u32, usize)> {
+    let buf = core::ptr::addr_of_mut!(SECTOR_BUF) as *mut u32;
+    let mut loaded = u32::MAX;
+    if !load_pack_header_sector(buf, &mut loaded, 0) {
+        return None;
+    }
+    let p = buf as *const u8;
+    if rd32(p, 0) != u32::from_le_bytes(*b"PSOX") || rd32(p, 4) != u32::from_le_bytes(*b"WPAK") {
+        return None;
+    }
+    let chunk_count = rd32(p, 12);
+    let header_sectors = rd32(p, 20).max(1);
+    let mut i = 0u32;
+    while i < chunk_count {
+        let Some((id, so, bs)) = read_pack_entry(buf, &mut loaded, header_sectors, i) else {
+            break;
+        };
+        if id == chunk_id {
+            return Some((so, bs as usize));
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Resolve `chunk_id` to (sector_offset, byte_size), building the table cache on
+/// first use so later lookups touch no disc.
+#[cfg(target_arch = "mips")]
+unsafe fn lookup_entry(chunk_id: u32) -> Option<(u32, usize)> {
+    if PACK_CACHE_LEN == -1 {
+        build_pack_cache();
+    }
+    if PACK_CACHE_LEN >= 0 {
+        let n = PACK_CACHE_LEN as usize;
+        let mut k = 0;
+        while k < n {
+            let e = PACK_CACHE[k];
+            if e.id == chunk_id {
+                return Some((e.sector_offset, e.byte_size as usize));
+            }
+            k += 1;
+        }
+        return None;
+    }
+    scan_pack_table(chunk_id)
+}
+
 /// Stream chunk `chunk_id` from WORLD.PAK into `dst`. Returns the chunk's byte
 /// size on success, or `None` (no disc / not found / too big / read error).
 #[cfg(target_arch = "mips")]
 pub fn load_chunk(chunk_id: u32, dst: &mut [u32]) -> Option<usize> {
     unsafe {
         let buf = core::ptr::addr_of_mut!(SECTOR_BUF) as *mut u32;
-        // Header/table: find the entry, including packs whose table spans more
-        // than one sector. Future full-game asset packs can easily exceed the
-        // old one-sector table limit.
-        let mut loaded_header_sector = u32::MAX;
-        if !load_pack_header_sector(buf, &mut loaded_header_sector, 0) {
-            return None;
-        }
-        let p = buf as *const u8;
-        if rd32(p, 0) != u32::from_le_bytes(*b"PSOX") || rd32(p, 4) != u32::from_le_bytes(*b"WPAK")
-        {
-            return None;
-        }
-        let chunk_count = rd32(p, 12);
-        let header_sectors = rd32(p, 20).max(1);
-        let mut entry: Option<(u32, u32, usize)> = None; // (sector_offset, sector_count, byte_size)
-        let mut i = 0u32;
-        while i < chunk_count {
-            let table_offset = 28 + (i as usize) * 24;
-            let sector = (table_offset / SECTOR_BYTES) as u32;
-            if sector >= header_sectors {
-                break;
-            }
-            let within = table_offset % SECTOR_BYTES;
-            if !load_pack_header_sector(buf, &mut loaded_header_sector, sector) {
-                return None;
-            }
-            let p = buf as *const u8;
-            let (entry_id, sector_offset, sector_count, byte_size) = if within + 24 <= SECTOR_BYTES
-            {
-                (
-                    rd32(p, within),
-                    rd32(p, within + 4),
-                    rd32(p, within + 8),
-                    rd32(p, within + 12) as usize,
-                )
-            } else {
-                let first = SECTOR_BYTES - within;
-                if sector + 1 >= header_sectors {
-                    break;
-                }
-                let mut entry_bytes = [0u8; 24];
-                core::ptr::copy_nonoverlapping(p.add(within), entry_bytes.as_mut_ptr(), first);
-                if !load_pack_header_sector(buf, &mut loaded_header_sector, sector + 1) {
-                    return None;
-                }
-                let p = buf as *const u8;
-                core::ptr::copy_nonoverlapping(p, entry_bytes.as_mut_ptr().add(first), 24 - first);
-                let e = entry_bytes.as_ptr();
-                (rd32(e, 0), rd32(e, 4), rd32(e, 8), rd32(e, 12) as usize)
-            };
-            if entry_id == chunk_id {
-                entry = Some((sector_offset, sector_count, byte_size));
-                break;
-            }
-            i += 1;
-        }
-        let (sector_offset, sector_count, byte_size) = entry?;
+        let (sector_offset, byte_size) = lookup_entry(chunk_id)?;
         if byte_size > dst.len() * 4 {
             return None;
         }
-        // Payload: read sector_count sectors into dst.
+        // Payload: read the chunk's sectors into dst.
         if !hw::prepare() || !hw::start_read(PACK_LBA + sector_offset) {
             hw::stop();
             return None;
         }
         let dst_ptr = dst.as_mut_ptr() as *mut u8;
-        // Only read as many sectors as `byte_size` actually needs; the table's
-        // `sector_count` is padded and (on a malformed entry) could be garbage --
-        // looping on it would read thousands of sectors and hang the loader.
-        let _ = sector_count;
+        // Read only as many sectors as `byte_size` needs; the table's padded
+        // sector_count could be garbage and looping on it would hang the loader.
         let needed = ((byte_size as u32) + (SECTOR_BYTES as u32) - 1) / (SECTOR_BYTES as u32);
         let mut s = 0u32;
         while s < needed {
