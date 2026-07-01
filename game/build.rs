@@ -15,7 +15,11 @@ const FALLBACK_MODEL_WORDS: usize = 24_576;
 // MODEL_BUF must hold a whole per-map model SET (viewmodel + every NPC/enemy
 // type the map places), not just the largest single chunk. Floor it at 512 KB;
 // the per-map streamer drops the farthest types if a heavy map's set overflows.
-const MODEL_POOL_WORDS: usize = 94_208;
+// Raised +8192 words (+32 KB) to hand the enemy pool the budget the FaceRec
+// 20B->16B shrink freed from MAP_BUF (net .bss-neutral vs before that change):
+// enemy geometry pool = MODEL_WORDS - VM_POOL_WORDS, so this is ~185 -> ~217 KB,
+// fewer dropped enemy types on the heaviest maps.
+const MODEL_POOL_WORDS: usize = 102_400;
 
 fn rd_u32(d: &[u8], o: usize) -> Option<u32> {
     Some(u32::from_le_bytes([
