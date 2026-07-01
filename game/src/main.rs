@@ -379,18 +379,20 @@ static mut IMPACT_MARK_RECTS: [RectFlat; MAX_IMPACT_MARKS] =
     [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_IMPACT_MARKS];
 static mut DEATH_OVERLAY: RectFlat = RectFlat::new(0, 0, 0, 0, 0, 0, 0);
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
-// Resident viewmodel pool: the curated weapon set below loads at map start so
-// switching is instant. Geometry occupies the head of MODEL_BUF (RAM is too tight
-// for a separate buffer -- only ~16 KB spare); enemies stream after this reserve,
-// so the set trades a slice of the enemy budget for instant weapon switching.
-// Textures go in VM_SLOTS. Weapons outside the set fall back to the glock
-// viewmodel (they still fire). The loader stops when VM_POOL_WORDS fills.
-const VM_POOL_WORDS: usize = 20_480; // 80 KB head reserve of MODEL_BUF
-const VM_SLOTS_TOTAL: usize = 48;
+// Resident viewmodel pool: ALL weapons load at map start so switching is instant
+// and every weapon shows its real model. Geometry occupies the head of MODEL_BUF
+// (the lightmap + face-loop compression freed the map budget to afford this big a
+// reserve); enemies stream after it, trading a slice of the enemy pool for the
+// full visible arsenal. Textures go in VM_SLOTS. The loader stops if the pool
+// fills; any weapon that doesn't fit falls back to the glock viewmodel.
+const VM_POOL_WORDS: usize = 46_720; // ~183 KB head reserve of MODEL_BUF (all 14)
+const VM_SLOTS_TOTAL: usize = 176; // 14 viewmodels x up to ~24 skins (rpg)
 static mut VM_SLOTS: [TexSlot; VM_SLOTS_TOTAL] = [EMPTY_SLOT; VM_SLOTS_TOTAL];
-// Priority load order; covers all five fire archetypes (melee/semi/auto/spread/
-// projectile). The rest of the arsenal reuses the glock viewmodel.
-const VM_RESIDENT: [usize; 6] = [W_GLOCK, W_CROWBAR, W_MP5, W_SHOTGUN, W_RPG, W_357];
+// Load order = the HL1 slot order; the whole arsenal is resident.
+const VM_RESIDENT: [usize; N_WEAPONS] = [
+    W_CROWBAR, W_GLOCK, W_357, W_MP5, W_SHOTGUN, W_CROSSBOW, W_RPG, W_GAUSS, W_EGON, W_HORNET,
+    W_GRENADE, W_SNARK, W_TRIPMINE, W_SATCHEL,
+];
 
 #[derive(Clone, Copy)]
 struct VmEntry {
