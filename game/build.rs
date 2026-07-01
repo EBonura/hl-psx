@@ -96,7 +96,7 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
             let faces_off = bsp_off + 24 + n_planes * 10 + n_face_groups * 2;
             let mut max_group = 0usize;
             for face in 0..n_faces {
-                let o = faces_off + face * 18 + 4;
+                let o = faces_off + face * 20 + 4; // FaceRec is 20 bytes
                 max_group = max_group.max(rd_u16(&data, o).unwrap_or(0) as usize);
             }
             max_face_records = max_face_records.max(n_faces);

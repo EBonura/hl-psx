@@ -907,6 +907,14 @@ fn median_cut16(colors: &[(u8, u8, u8)]) -> Vec<(u8, u8, u8)> {
     median_cut(colors, 16)
 }
 
+/// Append one FaceVert (u16 idx | u8 uv[2] | u8 light_idx) for the given global
+/// triangle-corner index, reading from the flat cooked-triangle arrays.
+fn push_facevert(dst: &mut Vec<u8>, tri_idx: &[u16], tri_uv: &[u8], light_idx: &[u8], corner: usize) {
+    dst.extend_from_slice(&tri_idx[corner].to_le_bytes());
+    dst.extend_from_slice(&tri_uv[corner * 2..corner * 2 + 2]);
+    dst.push(light_idx[corner]);
+}
+
 /// Nearest palette entry (squared-distance) for one colour.
 fn nearest_pal_index(pal: &[(u8, u8, u8)], c: (u8, u8, u8)) -> u8 {
     let mut best = 0usize;
@@ -3158,6 +3166,10 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // keep count 0.
     let mut face_first = vec![0u32; n_faces];
     let mut face_ntri = vec![0u16; n_faces];
+    // Clean-fan tri count (poly.len()-2) recorded pre-split/weld. A face whose
+    // final face_ntri still equals this was neither UV-split nor welded, so its
+    // tris are the clean fan and it can be stored as a vertex loop.
+    let mut face_fan_ntri = vec![0u16; n_faces];
     let mut face_center = vec![[0i16; 3]; n_faces];
     let mut face_extent = vec![[0u16; 3]; n_faces];
     let mut raw_verts = raw.clone();
@@ -3418,6 +3430,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let ft = poly.len() - 2;
         fan_tris += ft;
         bakeable_quads += ft / 2;
+        face_fan_ntri[f] = ft.min(u16::MAX as usize) as u16;
         let first_tri = tri_idx.len() / 3;
         face_first[f] = first_tri as u32;
         for k in 1..poly.len() - 1 {
@@ -3540,10 +3553,67 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             path, n_cooked_texs
         ));
     }
+    // ---- Face geometry: palettise the lightmap, then split faces into vertex
+    // loops (clean fans) vs raw tris (UV-split / welded). ----
+    let n_corners = n_tris * 3;
+    let corner_colors: Vec<(u8, u8, u8)> = (0..n_corners)
+        .map(|c| (tri_rgb[c * 3], tri_rgb[c * 3 + 1], tri_rgb[c * 3 + 2]))
+        .collect();
+    let light_pal = median_cut(&corner_colors, 256);
+    let light_idx: Vec<u8> = corner_colors
+        .iter()
+        .map(|&c| nearest_pal_index(&light_pal, c))
+        .collect();
+    let mut loopverts: Vec<u8> = Vec::new(); // FaceVert[5B] = u16 idx | u8 uv[2] | u8 light
+    let mut raw_tris: Vec<u8> = Vec::new(); // TriRec[16B], dirty (UV-split/welded) faces only
+    let mut face_lc_first = vec![0u32; n_faces];
+    let mut face_lc_count = vec![0u16; n_faces];
+    let mut face_lc_flag = vec![0u8; n_faces]; // 1 = loop, 0 = raw tris
+    let mut face_lc_tex = vec![0u8; n_faces];
+    for f in 0..n_faces {
+        let first = face_first[f] as usize;
+        let ntri = face_ntri[f] as usize;
+        if ntri == 0 {
+            continue;
+        }
+        face_lc_tex[f] = tri_tex[first] as u8;
+        let lv_start = loopverts.len() / 5;
+        // Clean fan AND the loop-vertex index fits u16 -> store as a loop:
+        //   loop = [t0.c0, t0.c2, t0.c1, t1.c1, .., t_{ntri-1}.c1] (the fan poly).
+        if ntri == face_fan_ntri[f] as usize && lv_start + ntri + 2 <= u16::MAX as usize {
+            push_facevert(&mut loopverts, &tri_idx, &tri_uv, &light_idx, first * 3);
+            push_facevert(&mut loopverts, &tri_idx, &tri_uv, &light_idx, first * 3 + 2);
+            for j in 0..ntri {
+                push_facevert(&mut loopverts, &tri_idx, &tri_uv, &light_idx, (first + j) * 3 + 1);
+            }
+            face_lc_first[f] = lv_start as u32;
+            face_lc_count[f] = (ntri + 2) as u16;
+            face_lc_flag[f] = 1;
+        } else {
+            let rt_start = raw_tris.len() / 16;
+            for j in 0..ntri {
+                let t = first + j;
+                raw_tris.extend_from_slice(&tri_idx[t * 3].to_le_bytes());
+                raw_tris.extend_from_slice(&tri_idx[t * 3 + 1].to_le_bytes());
+                raw_tris.extend_from_slice(&tri_idx[t * 3 + 2].to_le_bytes());
+                raw_tris.extend_from_slice(&tri_uv[t * 6..t * 6 + 6]);
+                raw_tris.push(tri_tex[t] as u8);
+                raw_tris.push(light_idx[t * 3]);
+                raw_tris.push(light_idx[t * 3 + 1]);
+                raw_tris.push(light_idx[t * 3 + 2]);
+            }
+            face_lc_first[f] = rt_start as u32;
+            face_lc_count[f] = ntri as u16;
+            face_lc_flag[f] = 0;
+        }
+    }
+    let n_loopverts = loopverts.len() / 5;
+    let n_raw_tris = raw_tris.len() / 16;
+
     let mut o: Vec<u8> = Vec::new();
     o.extend_from_slice(b"HLMA");
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
-    o.extend_from_slice(&(n_tris as u32).to_le_bytes());
+    o.extend_from_slice(&(n_raw_tris as u32).to_le_bytes());
     o.extend_from_slice(&(n_cooked_texs as u32).to_le_bytes());
     let face_count_pos = o.len();
     o.extend_from_slice(&0u32.to_le_bytes()); // compact cooked face count, patched below
@@ -3567,32 +3637,12 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             o.extend_from_slice(&c.to_le_bytes());
         }
     }
-    // Palettise the per-vertex lightmap: median-cut every corner colour to <=256
-    // entries, store a u8 index per corner + one shared palette after the tris.
-    // Saves 3 B/tri vs inline rgb555 with ~imperceptible degradation (lightmaps
-    // have a narrow colour range and the GPU gouraud-interpolates each triangle).
-    let n_corners = n_tris * 3;
-    let corner_colors: Vec<(u8, u8, u8)> = (0..n_corners)
-        .map(|c| (tri_rgb[c * 3], tri_rgb[c * 3 + 1], tri_rgb[c * 3 + 2]))
-        .collect();
-    let light_pal = median_cut(&corner_colors, 256);
-    let light_idx: Vec<u8> = corner_colors
-        .iter()
-        .map(|&c| nearest_pal_index(&light_pal, c))
-        .collect();
-    for t in 0..n_tris {
-        let ib = t * 3;
-        o.extend_from_slice(&tri_idx[ib].to_le_bytes());
-        o.extend_from_slice(&tri_idx[ib + 1].to_le_bytes());
-        o.extend_from_slice(&tri_idx[ib + 2].to_le_bytes());
-        o.extend_from_slice(&tri_uv[t * 6..t * 6 + 6]);
-        o.push(tri_tex[t] as u8);
-        o.push(light_idx[ib]);
-        o.push(light_idx[ib + 1]);
-        o.push(light_idx[ib + 2]);
-    }
-    // Light palette: exactly 256 rgb555 entries right after the tris (the runtime
-    // derives its offset from tri_off + n_tris*16). Padded so the layout is fixed.
+    // Section layout after verts: u32 n_loopverts | FaceVert[5B]×n_loopverts |
+    // TriRec[16B]×n_raw_tris | light palette (u16 rgb555 × 256). Loop-faces store
+    // their fan as a de-duplicated vertex loop; UV-split/welded faces keep tris.
+    o.extend_from_slice(&(n_loopverts as u32).to_le_bytes());
+    o.extend_from_slice(&loopverts);
+    o.extend_from_slice(&raw_tris);
     for i in 0..256 {
         let c = light_pal.get(i).copied().unwrap_or((110, 110, 110));
         o.extend_from_slice(&pack_rgb555(c.0, c.1, c.2).to_le_bytes());
@@ -3775,8 +3825,10 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     }
 
     for &f in &compact_faces {
-        o.extend_from_slice(&(face_first[f] as u16).to_le_bytes());
-        o.extend_from_slice(&face_ntri[f].to_le_bytes());
+        // FaceRec[20B]: first | count | plane_group | center[3] | extent[3]
+        //             | tex | flags (bit0: 1 = vertex loop, 0 = raw tris)
+        o.extend_from_slice(&(face_lc_first[f] as u16).to_le_bytes());
+        o.extend_from_slice(&face_lc_count[f].to_le_bytes());
         o.extend_from_slice(&face_group[f].to_le_bytes());
         for c in face_center[f] {
             o.extend_from_slice(&c.to_le_bytes());
@@ -3784,6 +3836,8 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         for e in face_extent[f] {
             o.extend_from_slice(&e.to_le_bytes());
         }
+        o.push(face_lc_tex[f]);
+        o.push(face_lc_flag[f]);
     }
 
     for ni in 0..n_nodes {

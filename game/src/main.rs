@@ -572,12 +572,16 @@ struct PvsFaceRec {
     count: u16,
     center: [i16; 3],
     radius: u16,
+    tex: u8,       // per-face texture (loop faces store tex on the FaceRec)
+    is_loop: bool, // fan a vertex loop vs iterate raw tris
 }
 const EMPTY_PVS_FACE_REC: PvsFaceRec = PvsFaceRec {
     first: 0,
     count: 0,
     center: [0; 3],
     radius: 0,
+    tex: 0,
+    is_loop: false,
 };
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut PVS_LEAF_COUNT: usize = 0;
@@ -2029,6 +2033,9 @@ unsafe fn xhair_pick_pvs(m: &Map, nv: usize, frame: u16) {
     while e < PVS_FACE_COUNT && e < MAX_FACES {
         let face = PVS_FACE_INDEX[e] as usize;
         e += 1;
+        if m.face_is_loop(face) {
+            continue; // debug crosshair pick reads raw tris only (loop faces skip)
+        }
         let (first, cnt) = m.face_tris(face);
         let end = first + cnt;
         let mut tt = first;
@@ -4230,6 +4237,8 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
                     count: cnt as u16,
                     center: [bc[0] as i16, bc[1] as i16, bc[2] as i16],
                     radius,
+                    tex: m.face_tex(face) as u8,
+                    is_loop: m.face_is_loop(face),
                 };
             }
             PVS_TRI_REF_COUNT += cnt;
@@ -4785,6 +4794,63 @@ unsafe fn emit_proj_fast(
     pa.sz == 0 && pb.sz == 0 && pc.sz == 0
 }
 
+/// Like `emit_proj_fast` but reads tex/uv/rgb from a loop-built `RenderTri`
+/// (loop faces have no tri-array index to look them up by).
+unsafe fn emit_proj_fast_tri(
+    packets: &mut PrimitivePacketArena<'_>,
+    m: &Map,
+    tri: &map::RenderTri,
+    pa: Projected,
+    pb: Projected,
+    pc: Projected,
+    np: &mut usize,
+) -> bool {
+    let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
+    if pa.sz >= NEAR
+        && pb.sz >= NEAR
+        && pc.sz >= NEAR
+        && !clamped(&pa)
+        && !clamped(&pb)
+        && !clamped(&pc)
+    {
+        let (sa, sb, sc) = (
+            (pa.sx as i32, pa.sy as i32),
+            (pb.sx as i32, pb.sy as i32),
+            (pc.sx as i32, pc.sy as i32),
+        );
+        if CULL && culled(sa, sb, sc) {
+            return true;
+        }
+        if tri.tex >= m.n_texs || tri.tex >= MAX_TEX_SLOTS {
+            return true;
+        }
+        let slot = TEX_SLOTS[tri.tex];
+        if !slot.valid {
+            return true;
+        }
+        let mut otz = world_otz_from_gte3(&pa, &pb, &pc);
+        if slot.backdrop {
+            otz = clamp_otz(otz + BACKDROP_OTZ_BIAS);
+        }
+        let rgb = fog_world_rgb(
+            tri.rgb,
+            [pa.sz as i32, pb.sz as i32, pc.sz as i32],
+            slot.backdrop,
+        );
+        push_tri_uv_words(
+            packets,
+            np,
+            [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
+            tri.uv_words,
+            rgb,
+            slot.packet,
+            otz,
+        );
+        return true;
+    }
+    pa.sz == 0 && pb.sz == 0 && pc.sz == 0
+}
+
 /// Emit world triangle `tt` from the per-frame projected-vertex cache.
 unsafe fn emit_world_tri(
     packets: &mut PrimitivePacketArena<'_>,
@@ -4847,6 +4913,59 @@ unsafe fn emit_submodel_tri(
     emit_projected(packets, m, tri, [pa, pb, pc], nv, np);
 }
 
+/// Submodel version of emit_world_loop_tri: uses the entity-token vertex cache.
+unsafe fn emit_submodel_loop_tri(
+    packets: &mut PrimitivePacketArena<'_>,
+    m: &Map,
+    tri: &map::RenderTri,
+    nv: usize,
+    token: u16,
+    np: &mut usize,
+) {
+    let (a, b, c) = (
+        tri.idx[0] as usize,
+        tri.idx[1] as usize,
+        tri.idx[2] as usize,
+    );
+    if a >= nv || b >= nv || c >= nv {
+        return;
+    }
+    proj_submodel_vert(m, a, token);
+    proj_submodel_vert(m, b, token);
+    proj_submodel_vert(m, c, token);
+    let (pa, pb, pc) = (SCRATCH[a], SCRATCH[b], SCRATCH[c]);
+    if emit_proj_fast_tri(packets, m, tri, pa, pb, pc, np) {
+        return;
+    }
+    emit_projected(packets, m, *tri, [pa, pb, pc], nv, np);
+}
+
+/// Draw one brush-entity/tram face: fan its loop, or iterate its raw tris.
+unsafe fn emit_submodel_face(
+    packets: &mut PrimitivePacketArena<'_>,
+    m: &Map,
+    f: usize,
+    first: usize,
+    cnt: usize,
+    nv: usize,
+    token: u16,
+    np: &mut usize,
+) {
+    if m.face_is_loop(f) {
+        let tex = m.face_tex(f);
+        let mut k = 1;
+        while k + 1 < cnt {
+            let tri = m.loop_render_tri(tex, first, first + k + 1, first + k);
+            emit_submodel_loop_tri(packets, m, &tri, nv, token, np);
+            k += 1;
+        }
+    } else {
+        for tt in first..first + cnt {
+            emit_submodel_tri(packets, m, tt, nv, token, np);
+        }
+    }
+}
+
 unsafe fn emit_world_face_tris(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
@@ -4877,6 +4996,67 @@ unsafe fn emit_world_face_tris(
         }
         emit_world_tri(packets, m, tt, nv, frame, np, counts);
         tt += 1;
+    }
+}
+
+unsafe fn emit_world_loop_tri(
+    packets: &mut PrimitivePacketArena<'_>,
+    m: &Map,
+    tri: &map::RenderTri,
+    nv: usize,
+    frame: u16,
+    np: &mut usize,
+    counts: &mut WorldCounters,
+) {
+    let (a, b, c) = (
+        tri.idx[0] as usize,
+        tri.idx[1] as usize,
+        tri.idx[2] as usize,
+    );
+    if a >= nv || b >= nv || c >= nv {
+        return;
+    }
+    proj_vert(m, a, frame);
+    proj_vert(m, b, frame);
+    proj_vert(m, c, frame);
+    counts.emit_calls += 1;
+    let (pa, pb, pc) = (SCRATCH[a], SCRATCH[b], SCRATCH[c]);
+    if emit_proj_fast_tri(packets, m, tri, pa, pb, pc, np) {
+        return;
+    }
+    emit_projected(packets, m, *tri, [pa, pb, pc], nv, np);
+}
+
+/// Fan a loop face into triangles (tri k = anchor, loop[k+1], loop[k] -- the
+/// cook's exact fan), pairing consecutive fan tris into a POLY_GT4 where they
+/// form a convex on-screen quad. A 4-vertex face is one natural quad; pairs are
+/// exact consecutive fan tris, so no false pairing (avoids the grazing bowtie).
+unsafe fn emit_world_face_loop(
+    packets: &mut PrimitivePacketArena<'_>,
+    m: &Map,
+    tex: usize,
+    base: usize,
+    count: usize,
+    nv: usize,
+    frame: u16,
+    np: &mut usize,
+    nq: &mut usize,
+    counts: &mut WorldCounters,
+) {
+    let mut k = 1;
+    while k + 1 < count {
+        if WORLD_QUAD_PAIRING && k + 2 < count {
+            let t0 = m.loop_render_tri(tex, base, base + k + 1, base + k);
+            let t1 = m.loop_render_tri(tex, base, base + k + 2, base + k + 1);
+            if try_emit_tri_pair_quad_values(packets, m, t0, t1, nv, frame, nq) {
+                counts.emit_calls += 2;
+                k += 2;
+                continue;
+            }
+        }
+        let tri = m.loop_render_tri(tex, base, base + k + 1, base + k);
+        emit_world_loop_tri(packets, m, &tri, nv, frame, np, counts);
+        k += 1;
     }
 }
 
@@ -4912,7 +5092,11 @@ unsafe fn emit_world_face(
     if WORLD_BOUNDS_CULL && !face_bounds_visible(bc, be, rot, base_t) {
         return;
     }
-    emit_world_face_tris(packets, m, first, cnt, nv, frame, np, nq, counts);
+    if m.face_is_loop(face) {
+        emit_world_face_loop(packets, m, m.face_tex(face), first, cnt, nv, frame, np, nq, counts);
+    } else {
+        emit_world_face_tris(packets, m, first, cnt, nv, frame, np, nq, counts);
+    }
 }
 
 /// Draw a model at world `pos`, rotated by `yaw` (Q0.12), at animation `frame`.
@@ -6028,17 +6212,32 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                                     }
                                 }
                                 if !WORLD_BOUNDS_CULL || cached_face_visible(rec, &rot, base_t) {
-                                    emit_world_face_tris(
-                                        &mut packets,
-                                        &m,
-                                        rec.first as usize,
-                                        rec.count as usize,
-                                        nv,
-                                        frame_no,
-                                        &mut np,
-                                        &mut nq,
-                                        &mut room_counts,
-                                    );
+                                    if rec.is_loop {
+                                        emit_world_face_loop(
+                                            &mut packets,
+                                            &m,
+                                            rec.tex as usize,
+                                            rec.first as usize,
+                                            rec.count as usize,
+                                            nv,
+                                            frame_no,
+                                            &mut np,
+                                            &mut nq,
+                                            &mut room_counts,
+                                        );
+                                    } else {
+                                        emit_world_face_tris(
+                                            &mut packets,
+                                            &m,
+                                            rec.first as usize,
+                                            rec.count as usize,
+                                            nv,
+                                            frame_no,
+                                            &mut np,
+                                            &mut nq,
+                                            &mut room_counts,
+                                        );
+                                    }
                                 }
                             } else {
                                 let face = PVS_FACE_INDEX[e] as usize;
@@ -6049,17 +6248,32 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                                 }
                                 if !WORLD_BOUNDS_CULL || face_bounds_visible(bc, be, &rot, base_t) {
                                     let (first, cnt) = m.face_tris(face);
-                                    emit_world_face_tris(
-                                        &mut packets,
-                                        &m,
-                                        first,
-                                        cnt,
-                                        nv,
-                                        frame_no,
-                                        &mut np,
-                                        &mut nq,
-                                        &mut room_counts,
-                                    );
+                                    if m.face_is_loop(face) {
+                                        emit_world_face_loop(
+                                            &mut packets,
+                                            &m,
+                                            m.face_tex(face),
+                                            first,
+                                            cnt,
+                                            nv,
+                                            frame_no,
+                                            &mut np,
+                                            &mut nq,
+                                            &mut room_counts,
+                                        );
+                                    } else {
+                                        emit_world_face_tris(
+                                            &mut packets,
+                                            &m,
+                                            first,
+                                            cnt,
+                                            nv,
+                                            frame_no,
+                                            &mut np,
+                                            &mut nq,
+                                            &mut room_counts,
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -6180,17 +6394,32 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                             continue;
                         }
                         let (first, cnt) = m.face_tris(f);
-                        emit_world_face_tris(
-                            &mut packets,
-                            &m,
-                            first,
-                            cnt,
-                            nv,
-                            frame_no,
-                            &mut np,
-                            &mut nq,
-                            &mut static_counts,
-                        );
+                        if m.face_is_loop(f) {
+                            emit_world_face_loop(
+                                &mut packets,
+                                &m,
+                                m.face_tex(f),
+                                first,
+                                cnt,
+                                nv,
+                                frame_no,
+                                &mut np,
+                                &mut nq,
+                                &mut static_counts,
+                            );
+                        } else {
+                            emit_world_face_tris(
+                                &mut packets,
+                                &m,
+                                first,
+                                cnt,
+                                nv,
+                                frame_no,
+                                &mut np,
+                                &mut nq,
+                                &mut static_counts,
+                            );
+                        }
                     }
                     continue;
                 }
@@ -6215,9 +6444,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                     if WORLD_BOUNDS_CULL && !face_bounds_visible(moved_center, be, &rot, base_t) {
                         continue;
                     }
-                    for tt in first..first + cnt {
-                        emit_submodel_tri(&mut packets, &m, tt, nv, submodel_token, &mut np);
-                    }
+                    emit_submodel_face(&mut packets, &m, f, first, cnt, nv, submodel_token, &mut np);
                 }
             }
             telemetry::stage_end(telemetry::stage::MODEL_BOUNDS);
@@ -6252,9 +6479,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch) -> PlayExit {
                     if WORLD_BOUNDS_CULL && !face_bounds_visible(moved_center, be, &rot, base_t) {
                         continue;
                     }
-                    for tt in first..first + cnt {
-                        emit_submodel_tri(&mut packets, &m, tt, nv, submodel_token, &mut np);
-                    }
+                    emit_submodel_face(&mut packets, &m, f, first, cnt, nv, submodel_token, &mut np);
                 }
             }
             telemetry::stage_end(telemetry::stage::MODEL_DRAW);

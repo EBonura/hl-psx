@@ -3,8 +3,10 @@
 //!
 //!   magic "HLMA" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
 //!     | u32 clip_off,ent_off,tram_off,prop_off,sky_tex_base,nav_off,logic_off
-//!   verts i16×3 | TriRec[16B] × n_tris | light palette (u16 rgb555 × 256)
-//!     TriRec = u16 idx[3], u8 uv[6], u8 tex, u8 light_idx[3] (index into palette)
+//!   verts i16×3 | u32 n_loopverts | FaceVert[5B] × n_loopverts
+//!     | TriRec[16B] × n_tris (raw/dirty faces only) | light palette (u16 × 256)
+//!     FaceVert = u16 idx, u8 uv[2], u8 light_idx     (loop faces fan these)
+//!     TriRec   = u16 idx[3], u8 uv[6], u8 tex, u8 light_idx[3]
 //!   optional legacy textures × n_texs: u16 w,h | u16 clut[16] | u8 pix[w*h/2]
 //!   modern streamed builds keep texture pixels in a separate HLTX chunk:
 //!     magic "HLTX" | u32 n_texs | textures...
@@ -12,9 +14,10 @@
 //!     u32 n_planes,n_face_groups,n_nodes,n_leaves,n_marks,vis_len
 //!     PlaneRec[10B] × n_planes = i16 normal[3], i32 dist
 //!     FaceGroup[2B] × n_face_groups = signed plane reference
-//!     FaceRec[18B] × n_faces
-//!       FaceRec = u16 first_tri, u16 tri_count, u16 plane_group,
-//!                 i16 center[3], u16 extent[3]
+//!     FaceRec[20B] × n_faces
+//!       FaceRec = u16 first, u16 count, u16 plane_group, i16 center[3],
+//!                 u16 extent[3], u8 tex, u8 flags (bit0: 1=loop, 0=raw tris)
+//!       loop face: (first,count) = loopvert range; raw face: = tri range
 //!     nodes  (u16 plane, i16 c0, i16 c1) × n_nodes
 //!     leaves (i32 visofs, u16 mark_start, u16 mark_count) × n_leaves
 //!     marks  u16 × n_marks (pad 4)
@@ -109,8 +112,9 @@ pub struct Map {
     pub n_faces: usize,
     pub sky_tex_base: usize,
     v_off: usize,
+    lv_off: usize,        // FaceVert[5B] loop pool (loop-faces index into this)
     tri_off: usize,
-    light_pal_off: usize, // 256 rgb555 entries, indexed by TriRec light_idx[3]
+    light_pal_off: usize, // 256 rgb555 entries, indexed by light_idx
     // BSP / PVS
     pub n_planes: usize,
     pub n_face_groups: usize,
@@ -165,8 +169,9 @@ pub struct Map {
 }
 
 const LEAF_SZ: usize = 8; // visofs i32 + marks u16×2
-const FACE_SZ: usize = 18;
+const FACE_SZ: usize = 20; // first|count|plane_group|center[3]|extent[3]|tex|flags
 const TRI_SZ: usize = 16; // u16 idx[3] | u8 uv[6] | u8 tex | u8 light_idx[3]
+const LOOPVERT_SZ: usize = 5; // u16 idx | u8 uv[2] | u8 light_idx
 const CLIPNODE_SZ: usize = 6;
 const ENT_SZ: usize = 52;
 const LOGIC_SZ: usize = 64;
@@ -278,8 +283,13 @@ impl Map {
         let nav_off = rd_u32(data, 44) as usize;
         let logic_off = rd_u32(data, 48) as usize;
         let v_off = 52;
-        let tri_off = v_off + n_verts * 6;
-        let light_pal_off = tri_off + n_tris * TRI_SZ; // palette follows the tris
+        // verts | u32 n_loopverts + FaceVert[5B] loop pool | TriRec[16B] (dirty
+        // faces only, = n_tris) | light palette.
+        let lv_count_off = v_off + n_verts * 6;
+        let n_loopverts = rd_u32(data, lv_count_off) as usize;
+        let lv_off = lv_count_off + 4;
+        let tri_off = lv_off + n_loopverts * LOOPVERT_SZ;
+        let light_pal_off = tri_off + n_tris * TRI_SZ; // palette follows the raw tris
 
         let n_planes = rd_u32(data, bsp_off) as usize;
         let n_face_groups = rd_u32(data, bsp_off + 4) as usize;
@@ -352,6 +362,7 @@ impl Map {
             n_faces,
             sky_tex_base,
             v_off,
+            lv_off,
             tri_off,
             light_pal_off,
             n_planes,
@@ -708,6 +719,7 @@ impl Map {
         )
     }
 
+    /// (first, count): a loop face's loop-vertex range, or a raw face's tri range.
     #[inline]
     pub fn face_tris(&self, f: usize) -> (usize, usize) {
         let o = self.faces_off + f * FACE_SZ;
@@ -715,6 +727,61 @@ impl Map {
             rd_u16(self.data, o) as usize,
             rd_u16(self.data, o + 2) as usize,
         )
+    }
+
+    /// True if face `f` stores a vertex loop (fan at render time); else raw tris.
+    #[inline]
+    pub fn face_is_loop(&self, f: usize) -> bool {
+        self.data[self.faces_off + f * FACE_SZ + 19] & 1 != 0
+    }
+
+    #[inline]
+    pub fn face_tex(&self, f: usize) -> usize {
+        self.data[self.faces_off + f * FACE_SZ + 18] as usize
+    }
+
+    #[inline]
+    fn loopvert_o(&self, v: usize) -> usize {
+        self.lv_off + v * LOOPVERT_SZ
+    }
+
+    #[inline]
+    pub fn loop_vert_idx(&self, v: usize) -> u16 {
+        rd_u16(self.data, self.loopvert_o(v))
+    }
+
+    #[inline]
+    pub fn loop_vert_uv_word(&self, v: usize) -> u16 {
+        rd_u16(self.data, self.loopvert_o(v) + 2)
+    }
+
+    #[inline]
+    pub fn loop_vert_light(&self, v: usize) -> (u8, u8, u8) {
+        self.light_color(self.data[self.loopvert_o(v) + 4])
+    }
+
+    /// Build a RenderTri from three absolute loop-vertex indices (the runtime fan
+    /// of a loop face), carrying the face's single texture.
+    #[inline]
+    pub fn loop_render_tri(&self, tex: usize, va: usize, vb: usize, vc: usize) -> RenderTri {
+        RenderTri {
+            idx: [
+                self.loop_vert_idx(va),
+                self.loop_vert_idx(vb),
+                self.loop_vert_idx(vc),
+            ],
+            tex,
+            uv_words: [
+                self.loop_vert_uv_word(va),
+                self.loop_vert_uv_word(vb),
+                self.loop_vert_uv_word(vc),
+            ],
+            rgb: [
+                self.loop_vert_light(va),
+                self.loop_vert_light(vb),
+                self.loop_vert_light(vc),
+            ],
+        }
     }
 
     pub fn vis(&self) -> &'static [u8] {
