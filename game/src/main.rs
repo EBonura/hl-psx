@@ -3976,10 +3976,10 @@ unsafe fn render_projectiles<const N: usize>(
 }
 
 #[inline]
-fn face_bounds_visible(center: [i32; 3], ext: [i32; 3], rot: &Mat3I16, base_t: [i32; 3]) -> bool {
+fn face_bounds_visible(center: [i32; 3], radius: i32, rot: &Mat3I16, base_t: [i32; 3]) -> bool {
     // Conservative sphere around the cooked face AABB. It is looser than the
     // full AABB test but much cheaper across large PVS face lists.
-    sphere_visible(center, ext[0] + ext[1] + ext[2], rot, base_t)
+    sphere_visible(center, radius, rot, base_t)
 }
 
 #[inline]
@@ -4229,11 +4229,8 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
             let entry = PVS_FACE_COUNT;
             PVS_FACE_INDEX[entry] = face as u16;
             if entry < MAX_PVS_FACE_RECS {
-                let (bc, be) = m.face_bounds(face);
-                let radius = be[0]
-                    .saturating_add(be[1])
-                    .saturating_add(be[2])
-                    .min(u16::MAX as i32) as u16;
+                let (bc, radius) = m.face_bounds(face);
+                let radius = radius as u16;
                 PVS_FACE_REC[entry] = PvsFaceRec {
                     first: first as u16,
                     count: cnt as u16,

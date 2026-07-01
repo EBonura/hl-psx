@@ -3825,7 +3825,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     }
 
     for &f in &compact_faces {
-        // FaceRec[20B]: first | count | plane_group | center[3] | extent[3]
+        // FaceRec[16B]: first | count | plane_group | center[3] | radius
         //             | tex | flags (bit0: 1 = vertex loop, 0 = raw tris)
         o.extend_from_slice(&(face_lc_first[f] as u16).to_le_bytes());
         o.extend_from_slice(&face_lc_count[f].to_le_bytes());
@@ -3833,9 +3833,13 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         for c in face_center[f] {
             o.extend_from_slice(&c.to_le_bytes());
         }
-        for e in face_extent[f] {
-            o.extend_from_slice(&e.to_le_bytes());
-        }
+        // Frustum-cull sphere radius = sum of the box half-extents (the runtime
+        // only ever used the sum). Saturate to u16: an over-large radius just
+        // makes the face pass the cull more often (conservative, never wrongly
+        // culled), and saves 4 B/face vs storing extent[3].
+        let e = face_extent[f];
+        let radius = (e[0] as u32 + e[1] as u32 + e[2] as u32).min(u16::MAX as u32) as u16;
+        o.extend_from_slice(&radius.to_le_bytes());
         o.push(face_lc_tex[f]);
         o.push(face_lc_flag[f]);
     }

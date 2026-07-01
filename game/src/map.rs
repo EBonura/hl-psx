@@ -169,7 +169,7 @@ pub struct Map {
 }
 
 const LEAF_SZ: usize = 8; // visofs i32 + marks u16×2
-const FACE_SZ: usize = 20; // first|count|plane_group|center[3]|extent[3]|tex|flags
+const FACE_SZ: usize = 16; // first|count|plane_group|center[3]|radius|tex|flags
 const TRI_SZ: usize = 16; // u16 idx[3] | u8 uv[6] | u8 tex | u8 light_idx[3]
 const LOOPVERT_SZ: usize = 5; // u16 idx | u8 uv[2] | u8 light_idx
 const CLIPNODE_SZ: usize = 6;
@@ -703,7 +703,8 @@ impl Map {
     }
 
     #[inline]
-    pub fn face_bounds(&self, f: usize) -> ([i32; 3], [i32; 3]) {
+    /// (center, radius): the face's frustum-cull bounding sphere.
+    pub fn face_bounds(&self, f: usize) -> ([i32; 3], i32) {
         let o = self.faces_off + f * FACE_SZ + 6;
         (
             [
@@ -711,11 +712,7 @@ impl Map {
                 rd_i16(self.data, o + 2) as i32,
                 rd_i16(self.data, o + 4) as i32,
             ],
-            [
-                rd_u16(self.data, o + 6) as i32,
-                rd_u16(self.data, o + 8) as i32,
-                rd_u16(self.data, o + 10) as i32,
-            ],
+            rd_u16(self.data, o + 6) as i32,
         )
     }
 
@@ -732,12 +729,12 @@ impl Map {
     /// True if face `f` stores a vertex loop (fan at render time); else raw tris.
     #[inline]
     pub fn face_is_loop(&self, f: usize) -> bool {
-        self.data[self.faces_off + f * FACE_SZ + 19] & 1 != 0
+        self.data[self.faces_off + f * FACE_SZ + 15] & 1 != 0
     }
 
     #[inline]
     pub fn face_tex(&self, f: usize) -> usize {
-        self.data[self.faces_off + f * FACE_SZ + 18] as usize
+        self.data[self.faces_off + f * FACE_SZ + 14] as usize
     }
 
     #[inline]
