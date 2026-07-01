@@ -152,9 +152,9 @@ const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the li
 // look right; opaque liquids stay visible in the meantime.
 const LIQUID_TRANSPARENCY: bool = false;
 const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in front of the camera
-const DBG_PAD_BOOT: bool = true; // debug: hold L1 | map_index (low byte) at boot to load any map headlessly
+const DBG_PAD_BOOT: bool = false; // debug: hold L1 | map_index (low byte) at boot to load any map headlessly
 // Debug: pin the camera to a fixed pose (to reproduce a specific view headlessly).
-const DBG_CAM: bool = true;
+const DBG_CAM: bool = false;
 const DBG_CAM_POS: [i32; 3] = [-624, -184, -160];
 const DBG_CAM_YAW: u16 = 1024;
 const DBG_CAM_PITCH: i16 = 0;
@@ -781,7 +781,7 @@ static mut CLIP_CV: [render::CVert; 4] = [render::EMPTY_CV; 4]; // near-clip scr
 // resolved. Press L1 to dump XHAIR + camera state to the guest debug log, so the
 // same triangle can be compared between a frame where it shows and one where it
 // is missing. XHAIR is also peekable in RAM (see captures/hl-psx.map).
-const DEBUG_XHAIR: bool = true;
+const DEBUG_XHAIR: bool = false;
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct XhairHit {
@@ -4795,7 +4795,6 @@ impl WorldCounters {
 /// nothing. Returns true when the triangle is fully handled (emitted or culled);
 /// false means it straddles the near plane and the caller must run the full
 /// decode + view-space clip path.
-#[inline]
 /// Distance-fog factor for a view depth, 256 = unfogged, 0 = full (black) at
 /// FAR_VIEW. Compile-time reciprocal, so no runtime divide.
 #[inline]
