@@ -62,8 +62,8 @@ static mut MODEL_BUF: [u32; MODEL_WORDS] = [0; MODEL_WORDS];
 // sort fine (at >>6 only ~10% of the OT was used and far geometry tie-broke
 // arbitrarily). The GPU submit DMA walks the WHOLE chain every frame -- every
 // empty slot is a forwarding link it still reads -- so an oversized table is pure
-// per-frame DMA cost. With FAR_VIEW=2000, otz tops out at 2000>>4=125; OT_LEN=512
-// covers that ~4x over (otz<512 => sz<8176, far beyond anything emitted) while
+// per-frame DMA cost. With FAR_VIEW=1000, otz tops out at 1000>>4=62; OT_LEN=512
+// covers that ~8x over (otz<512 => sz<8176, far beyond anything emitted) while
 // dropping the empty-slot walk ~4x and saving 6 KB RAM vs the old 2048. Raise it
 // only if FAR_VIEW grows past 512<<OT_SHIFT.
 const OT_LEN: usize = 512;
@@ -119,26 +119,30 @@ const PLAYER_TOUCH_HEIGHT: i32 = 56;
 // conservative PVS still flags far geometry as potentially visible and the renderer
 // processes it for no visible pixel. Culling past 2000 reclaims that: ~30%
 // room_surface_draw at the c0a0 spawn, pixel-identical to the old 16000 across
-// c0a0/c1a0/c1a1/c1a2/c1a3/c1a4 spawns. No fog yet, so a long in-game sightline
-// could show the cut edge; raise this or add depth fog if that surfaces.
-const FAR_VIEW: i32 = 1400;
+// c0a0/c1a0/c1a1/c1a2/c1a3/c1a4 spawns. The depth fog below dissolves the cut
+// edge, so this can sit closer than the old 2000/1400 for fps on open maps.
+// VISUAL/FPS KNOB: 1000 measured 14.3->17.9 fps on c2a5 (Surface Tension,
+// GPU-fill-bound) vs 1400, with indoor maps unchanged (short sightlines) and
+// the vista still faithful (sky is fog-exempt). Raise toward 1400+ for longer
+// sightlines, lower toward 800 for more open-map fps (hazier).
+const FAR_VIEW: i32 = 1000;
 // Distance fog. World geometry fades to black between FOG_START and FAR_VIEW so
 // the far-cull edge dissolves instead of popping -- which lets FAR_VIEW sit much
 // closer than the old 2000 (distant geometry is a large share of the per-frame
-// triangle work; pulling the cull in is the biggest fps lever on open maps, and
-// measured ~+40% at FAR_VIEW 800 on c2a5). Sky/backdrop faces are exempt so the
-// horizon stays. Reciprocal is compile-time (no runtime divide). Raise FOG_START
-// toward FAR_VIEW for a lighter haze (more visible cull), lower it for more fps.
-const FOG_START: i32 = 900;
+// triangle work; pulling the cull in is the biggest fps lever on open maps).
+// Sky/backdrop faces are exempt so the horizon stays. Reciprocal is compile-time
+// (no runtime divide). Raise FOG_START toward FAR_VIEW for a lighter haze (more
+// visible cull), lower it for more fps. Kept at ~0.65*FAR_VIEW.
+const FOG_START: i32 = 650;
 const FOG_INV: i32 = (256i32 << 12) / (FAR_VIEW - FOG_START); // compile-time
-// Studio models (enemies/NPCs/items) cull at a tighter distance than world
-// geometry: each is hundreds of textured-gouraud tris (project + emit), but past
-// ~1600 units a 72-unit-tall actor is barely a dozen pixels. On enemy-laden maps
-// the far half of the roster is the dominant per-frame CPU cost for almost no
-// visible detail; culling it sooner is the biggest fps lever there for the least
-// degradation (a distant actor fades in a little nearer). World still draws to
-// FAR_VIEW. Tunable: raise toward FAR_VIEW if distant enemies pop in too visibly.
-const MODEL_FAR: i32 = 1600;
+// Studio models (enemies/NPCs/items) cull no farther than the world: each is
+// hundreds of textured-gouraud tris (project + emit), and an actor beyond the
+// world cull would float against culled void. Capped at FAR_VIEW (was a stale
+// 1600 that exceeded the pulled-in FAR_VIEW, drawing enemies past the world for
+// wasted CPU). On enemy-laden maps the far roster is the dominant per-frame CPU
+// cost for little visible detail. Tunable: lower for more headroom, but not
+// above FAR_VIEW.
+const MODEL_FAR: i32 = 1000;
 const MODEL_CULL: bool = true; // backface-cull studio models
 const MODEL_OCCLUSION_CULL: bool = true; // skip actors fully hidden by static BSP
 const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
