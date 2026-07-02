@@ -526,17 +526,62 @@ WORLD.PAK at runtime, picked from an in-game menu.
 Menu maps are curated in two places that MUST stay in sync: Makefile `MAPLIST`
 (chunk order) and `menu::MAPS` (labels, index == chunk id).
 
+## M18 -- missing-geometry ROOT CAUSE + NPC placement + corpses (DONE, verified)
+
+- **The map-wide view-invariant missing geometry** (floors vanishing, reported
+  across levels) was a cook-writer vs runtime-reader **alignment mismatch**: the
+  cook 4-aligns before the marksurface array; `map.rs` computed `marks_off`
+  unaligned. On parity-2 maps every leaf's mark window shifted one entry (lost
+  its last face); with odd n_marks the vis offset shifted too (garbage PVS
+  rows). One-line reader fix (`align4`) heals all cooked rooms without
+  recooking. NB the prior session's "arena overflow + banding" theory was a
+  misdiagnosis (its green=0.000 checks were actually black screens); the
+  adaptive banding it added is kept (harmless, real overflow safety).
+  Debug method: host python replicating camera_leaf/vis/marks on the cooked
+  file, diffed against the source BSP per leaf.
+- **Headless testing is now PSoXide-native**: `make psoxide-map-smoke
+  MAP_INDEX=N` boots any room directly (feature `debug-map-boot`, pad mask
+  0x400|N) and dumps display/profile/counter captures. frametest is retired.
+- **NPC placement**: `monster_sitting_scientist` is model type 25 (own baked
+  sit pose from scientist.mdl seqs 89/73/39) and keeps its authored seat height
+  (no ground snap -- chairs are brush entities the world-tree probe can't see).
+  AI walkers refuse steps with no floor under them (HL CheckLocalMove), so
+  chasers stop hovering off ledges (flying controller exempt).
+- **Authored corpses**: `monster_*_dead` cooks as live type | 0x8000; runtime
+  spawns them dead (death clip final frame). 54 corpses dress chapters 1-3.
+
+## M19 -- sound (DONE, verified headlessly)
+
+- `tools/extract_sfx.py` (local-only, like the other extractors) cooks 22 core
+  HL sounds (own install) to SPU-ADPCM via PSoXide's `psxed audio-pack`, packed
+  as WORLD.PAK chunk 3000 ("HSFX" header). `make sfx-assets`.
+- `game/src/sfx.rs`: boot-time stream (stages through MAP_BUF pre-menu) ->
+  SPU RAM upload (~295 KB of 512 KB; zero main-RAM afterwards); 16 rotating
+  one-shot voices; `play` (local) / `play_world` (distance-attenuated vs the
+  per-frame `set_ear`).
+- Wired: per-weapon fire (crowbar hit/miss), world-impact ricochet, explosions,
+  player pain (rate-limited), enemy attacks (grunt/turret MP5, vort zap, crab
+  shriek, zombie swipe, houndeye blast, barney glock), death thud, door
+  start/stop, buttons, suit/battery pickups, menu confirm.
+- Verified via `frontend launch --dump-audio`: the mixed SPU WAV shows the
+  glock shots exactly at scripted R2 presses. Chunk id space now: rooms 2N/2N+1,
+  viewmodels geom 1000+wm / tex 2000+wm, enemies geom 1300+id / tex 1100+id,
+  SFX 3000.
+
 ## Next (pick per value)
 
-- **MDL: external textures + entity placement** -- finish M14 into real scientists
-  standing in the world (the natural completion).
-- **Real triggers/buttons** (targetname) so doors open on cue, not proximity.
-- **Walk on the moving tram** (moving-platform physics).
-- **More perf**: quads / geometry LOD (throughput-bound).
-- **func_tracktrain**: the tram ride (the actual opening of Half-Life).
-- **Buttons/triggers**: real targetname-based triggering instead of proximity.
-- **UV subdivision + affine correction**: fix tiling/warp on large tris.
-- **MDL models / skeletal animation**: the big wall -- NPCs, weapons, viewmodel.
+- **Faithful weapon_* / ammo_* pickups** (w_* world models; drop
+  give_full_arsenal). The biggest remaining faithfulness gap.
+- **Real water transparency** (needs the underwater scene drawn behind the
+  surface; blend alone renders near-black -- see M-notes above).
+- **Walk on the moving tram** (moving-platform physics; earlier attempt fell
+  through the floor -- needs re-seat-on-platform-per-frame).
+- **More perf on fill-bound open maps** (c2a5-class): geometry LOD or
+  resolution tricks; CPU side is done to ~20fps.
+- **c4a3 chapter spawn** lands in a near-black pocket (campaign arrives via
+  teleport; brightness-aware spawn scoring is the noted fix).
+- **More SFX polish**: footsteps, weapon reloads, ambient loops (voices 16-23
+  reserved), fvox/HEV voice.
 
 ## PSoXide SDK map (third_party/PSoXide/sdk/crates)
 

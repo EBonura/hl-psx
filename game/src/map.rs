@@ -14,13 +14,13 @@
 //!     u32 n_planes,n_face_groups,n_nodes,n_leaves,n_marks,vis_len
 //!     PlaneRec[10B] × n_planes = i16 normal[3], i32 dist
 //!     FaceGroup[2B] × n_face_groups = signed plane reference
-//!     FaceRec[20B] × n_faces
+//!     FaceRec[16B] × n_faces
 //!       FaceRec = u16 first, u16 count, u16 plane_group, i16 center[3],
-//!                 u16 extent[3], u8 tex, u8 flags (bit0: 1=loop, 0=raw tris)
+//!                 u16 radius, u8 tex, u8 flags (bit0: 1=loop; bit1: translucent)
 //!       loop face: (first,count) = loopvert range; raw face: = tri range
 //!     nodes  (u16 plane, i16 c0, i16 c1) × n_nodes
 //!     leaves (i32 visofs, u16 mark_start, u16 mark_count) × n_leaves
-//!     marks  u16 × n_marks (pad 4)
+//!     marks  u16 × n_marks (4-aligned on BOTH sides -- see marks_off)
 //!     vis    u8  × vis_len (pad 4)
 //!   clip:
 //!     u32 n_clip | i32 hull0_head | i32 hull1_head | i32 spawn[3] |
