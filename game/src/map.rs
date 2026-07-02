@@ -302,7 +302,12 @@ impl Map {
         let faces_off = face_groups_off + n_face_groups * FACE_GROUP_SZ;
         let nodes_off = faces_off + n_faces * FACE_SZ;
         let leaves_off = nodes_off + n_nodes * NODE_SZ;
-        let marks_off = leaves_off + n_leaves * LEAF_SZ;
+        // The cook 4-aligns before the mark array (leaves are 8 B but the BSP
+        // region start parity varies per map); reading unaligned here shifted
+        // every marksurface window one entry back on parity-2 maps -- each leaf
+        // gained its neighbour's tail face and lost its own last face (the
+        // map-dependent "missing geometry" bug).
+        let marks_off = align4(leaves_off + n_leaves * LEAF_SZ);
         let vis_off = align4(marks_off + n_marks * 2);
 
         let n_clip = rd_u32(data, clip_off) as usize;
