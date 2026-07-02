@@ -372,6 +372,7 @@ pub fn run(fb: &mut FrameBuffer) -> usize {
             MenuScreen::Main => {
                 wrap_move(&mut main_sel, MAIN_ITEMS.len() as i32, input);
                 if input.ok {
+                    unsafe { crate::sfx::play(crate::sfx::BUTTON) };
                     match main_sel {
                         0 => {
                             draw_loading(fb, &font, bg, logo, lw, lh, CHAPTERS[0]);

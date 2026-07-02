@@ -191,6 +191,7 @@ const PROP_TYPE_ITEM_SUIT: u8 = 3;
 const PROP_TYPE_ITEM_BATTERY: u8 = 4;
 const PROP_TYPE_CONTROLLER: u8 = 11; // flies: exempt from walker floor checks
 const PROP_TYPE_SITTING_SCI: u8 = 25; // seated pose, keeps its authored chair height
+const PROP_DEAD_BIT: u16 = 0x8000; // cook flag: spawn as a corpse (death pose, 0 hp)
 const PROP_STATE_IDLE: u8 = 0;
 const PROP_STATE_MOVE: u8 = 1;
 const PROP_STATE_ATTACK: u8 = 2;
@@ -1021,7 +1022,7 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
     let nprops = m.n_props.min(MAX_PROPS);
     let mut pi = 0usize;
     while pi < nprops {
-        let ty = m.prop(pi).0 as usize;
+        let ty = (m.prop(pi).0 & !PROP_DEAD_BIT) as usize; // corpses stream their live model
         pi += 1;
         if ty >= N_MODEL_TYPES || TYPE_TO_SLOT[ty] != MODEL_SLOT_NONE {
             continue; // out of range, or this type is already resident
@@ -3178,7 +3179,8 @@ unsafe fn init_prop_state(m: &Map) {
     let mut pi = 0usize;
     while pi < nprops {
         let (ty, org, yaw, leaf) = m.prop(pi);
-        let kind = ty as u8;
+        let dead = ty & PROP_DEAD_BIT != 0; // authored corpse: death pose, no AI
+        let kind = (ty & !PROP_DEAD_BIT) as u8;
         // Sitting scientists are authored at seat height on chair brushes the
         // world tree can't see; snapping would drop them through the chair.
         let org = if kind == PROP_TYPE_SITTING_SCI {
@@ -3196,7 +3198,10 @@ unsafe fn init_prop_state(m: &Map) {
         } else {
             leaf
         };
-        PROP_HEALTH[pi] = prop_start_health(kind);
+        PROP_HEALTH[pi] = if dead { 0 } else { prop_start_health(kind) };
+        if dead {
+            PROP_STATE[pi] = PROP_STATE_DEAD;
+        }
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_COUNT += 1;
         pi += 1;

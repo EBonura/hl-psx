@@ -2852,10 +2852,15 @@ fn collect_props(
         // Model-type id space, shared with the runtime registry (game/src/model_defs).
         // 0-4 = the original NPCs/items; 5-24 = the full enemy roster; 25 = the
         // seated scientist (own baked sit pose, no ground snap). `*_dead`
-        // corpses are skipped for now (decorative; they need a dead-spawn flag).
+        // corpses spawn as their live type with the DEAD bit (0x8000): the
+        // runtime zeroes health and shows the death clip's final frame.
+        const DEAD: u16 = 0x8000;
         let ty = match ent_value(block, "classname").unwrap_or("") {
             "monster_scientist" => 0u16,
             "monster_sitting_scientist" => 25u16,
+            "monster_scientist_dead" | "monster_hevsuit_dead" => DEAD | 0,
+            "monster_barney_dead" => DEAD | 1,
+            "monster_human_grunt_dead" => DEAD | 8,
             "monster_barney" => 1u16,
             "monster_headcrab" => 2u16,
             "item_suit" => 3u16,
