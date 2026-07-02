@@ -3973,6 +3973,11 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // their fan as a de-duplicated vertex loop; UV-split/welded faces keep tris.
     o.extend_from_slice(&(n_loopverts as u32).to_le_bytes());
     o.extend_from_slice(&loopverts);
+    // 4-align the TriRec array (5-byte FaceVerts break parity): the runtime
+    // decodes each 16-byte record as four u32 loads.
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
     o.extend_from_slice(&raw_tris);
     for i in 0..256 {
         let c = light_pal.get(i).copied().unwrap_or((110, 110, 110));

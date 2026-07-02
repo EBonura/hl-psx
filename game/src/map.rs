@@ -92,7 +92,7 @@ fn unpack_rgb555(v: u16) -> (u8, u8, u8) {
 }
 
 // Load-time-expanded light palette (see `expand_light_palette`).
-static mut LIGHT_PAL_RGB: [[u8; 3]; 256] = [[0; 3]; 256];
+static mut LIGHT_PAL_RGB: [u32; 256] = [0; 256]; // 0x00BBGGRR, one lw per corner
 
 const PLANE_SZ: usize = 10;
 const FACE_GROUP_SZ: usize = 2;
@@ -300,7 +300,9 @@ impl Map {
         let lv_count_off = v_off + n_verts * 6;
         let n_loopverts = rd_u32(data, lv_count_off) as usize;
         let lv_off = lv_count_off + 4;
-        let tri_off = lv_off + n_loopverts * LOOPVERT_SZ;
+        // The cook 4-aligns the TriRec array (see the writer) so each record
+        // decodes as four u32 loads; the reader MUST mirror the padding.
+        let tri_off = align4(lv_off + n_loopverts * LOOPVERT_SZ);
         let light_pal_off = tri_off + n_tris * TRI_SZ; // palette follows the raw tris
 
         let n_planes = rd_u32(data, bsp_off) as usize;
@@ -593,26 +595,36 @@ impl Map {
         )
     }
 
+    /// One aligned u32 of a TriRec (the cook 4-aligns the array; word `w` of
+    /// record `t`). Unchecked: t < n_tris is the caller contract and the cook
+    /// sizes the section (this is the hottest data read in the game).
+    #[inline(always)]
+    fn tri_word(&self, t: usize, w: usize) -> u32 {
+        unsafe {
+            let p = self.data.as_ptr().add(self.tri_off + t * TRI_SZ + w * 4) as *const u32;
+            *p
+        }
+    }
+
     #[inline]
     pub fn tri_uv_words(&self, t: usize) -> [u16; 3] {
-        let o = self.tri_off + t * TRI_SZ;
-        let d = self.data;
-        [rd_u16(d, o + 6), rd_u16(d, o + 8), rd_u16(d, o + 10)]
+        let w1 = self.tri_word(t, 1);
+        let w2 = self.tri_word(t, 2);
+        [(w1 >> 16) as u16, w2 as u16, (w2 >> 16) as u16]
     }
 
     /// Just the three vertex indices -- the cheap read used to project + cull a
     /// triangle before deciding whether to decode its (heavier) uv/rgb/tex.
     #[inline]
     pub fn tri_idx(&self, t: usize) -> [u16; 3] {
-        let o = self.tri_off + t * TRI_SZ;
-        let d = self.data;
-        [rd_u16(d, o), rd_u16(d, o + 2), rd_u16(d, o + 4)]
+        let w0 = self.tri_word(t, 0);
+        let w1 = self.tri_word(t, 1);
+        [w0 as u16, (w0 >> 16) as u16, w1 as u16]
     }
 
     #[inline]
     pub fn tri_tex(&self, t: usize) -> usize {
-        // ponytail: unchecked, matching rd_* -- offset bounded by t < n_tris.
-        unsafe { *self.data.get_unchecked(self.tri_off + t * TRI_SZ + 12) as usize }
+        (self.tri_word(t, 3) & 0xFF) as usize
     }
 
     /// Look up a per-corner lightmap colour. Reads the palette pre-expanded at
@@ -622,8 +634,8 @@ impl Map {
     #[inline]
     fn light_color(&self, idx: u8) -> (u8, u8, u8) {
         unsafe {
-            let c = LIGHT_PAL_RGB[idx as usize];
-            (c[0], c[1], c[2])
+            let c = *LIGHT_PAL_RGB.get_unchecked(idx as usize);
+            (c as u8, (c >> 8) as u8, (c >> 16) as u8)
         }
     }
 
@@ -632,33 +644,33 @@ impl Map {
     pub fn expand_light_palette(&self) {
         for i in 0..256 {
             let (r, g, b) = unpack_rgb555(rd_u16(self.data, self.light_pal_off + i * 2));
-            unsafe { LIGHT_PAL_RGB[i] = [r, g, b] };
+            unsafe { LIGHT_PAL_RGB[i] = (r as u32) | ((g as u32) << 8) | ((b as u32) << 16) };
         }
     }
 
     #[inline]
     pub fn tri_rgb(&self, t: usize) -> [(u8, u8, u8); 3] {
-        let o = self.tri_off + t * TRI_SZ;
-        let d = self.data;
+        let w3 = self.tri_word(t, 3);
         [
-            self.light_color(d[o + 13]),
-            self.light_color(d[o + 14]),
-            self.light_color(d[o + 15]),
+            self.light_color((w3 >> 8) as u8),
+            self.light_color((w3 >> 16) as u8),
+            self.light_color((w3 >> 24) as u8),
         ]
     }
 
     #[inline]
     pub fn render_tri(&self, t: usize, uv_words: [u16; 3]) -> RenderTri {
-        let o = self.tri_off + t * TRI_SZ;
-        let d = self.data;
+        let w0 = self.tri_word(t, 0);
+        let w1 = self.tri_word(t, 1);
+        let w3 = self.tri_word(t, 3);
         RenderTri {
-            idx: [rd_u16(d, o), rd_u16(d, o + 2), rd_u16(d, o + 4)],
-            tex: d[o + 12] as usize,
+            idx: [w0 as u16, (w0 >> 16) as u16, w1 as u16],
+            tex: (w3 & 0xFF) as usize,
             uv_words,
             rgb: [
-                self.light_color(d[o + 13]),
-                self.light_color(d[o + 14]),
-                self.light_color(d[o + 15]),
+                self.light_color((w3 >> 8) as u8),
+                self.light_color((w3 >> 16) as u8),
+                self.light_color((w3 >> 24) as u8),
             ],
         }
     }

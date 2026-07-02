@@ -67,7 +67,7 @@ static mut MODEL_BUF: [u32; MODEL_WORDS] = [0; MODEL_WORDS];
 // covers that ~8x over (otz<512 => sz<8176, far beyond anything emitted) while
 // dropping the empty-slot walk ~4x and saving 6 KB RAM vs the old 2048. Raise it
 // only if FAR_VIEW grows past 512<<OT_SHIFT.
-const OT_LEN: usize = 512;
+const OT_LEN: usize = 128; // max real otz = FAR_VIEW>>4 = 62 (+backdrop bias) -- 128 covers it
 const OT_SHIFT: u32 = 4;
 const WEAPON_OT_LEN: usize = 64;
 const HUD_OT_LEN: usize = 1;
@@ -692,8 +692,7 @@ static mut WEAPON_TRI_CACHE: [TriTexturedGouraud; MAX_WEAPON_CACHE_TRIS] =
     [EMPTY_TRI; MAX_WEAPON_CACHE_TRIS];
 static mut WEAPON_TRI_OTZ: [u8; MAX_WEAPON_CACHE_TRIS] = [0; MAX_WEAPON_CACHE_TRIS];
 static mut WEAPON_TRI_COUNT: usize = 0;
-static mut SUBMODEL_VERT_TOKEN: [u16; MAX_VERTS] = [0; MAX_VERTS];
-static mut SUBMODEL_DRAW_TOKEN: u16 = 1;
+static mut PROJ_TOKEN: u16 = 1; // shared world/submodel projection token
 const PVS_LINK_END: u16 = u16::MAX;
 #[derive(Clone, Copy)]
 struct PvsFaceRec {
@@ -2764,45 +2763,195 @@ unsafe fn prop_point_solid(m: &Map, p: [i32; 3]) -> bool {
     camera_leaf(m, p) == 0 || point_in_ent_solid(m, p)
 }
 
-fn prop_floor_y(m: &Map, pos: [i32; 3]) -> Option<i32> {
+/// One brush entity's point-solid test at `p` (offset-adjusted subtree walk).
+#[inline]
+unsafe fn point_in_one_ent(m: &Map, ei: usize, p: [i32; 3]) -> bool {
+    let e = ENT_CACHE[ei];
+    let off = ent_draw_offset(ei);
+    let q = [p[0] - off[0], p[1] - off[1], p[2] - off[2]];
+    submodel_point_solid(m, e.head0, q)
+}
+
+/// Was 75% of the frame on walker-heavy maps: the old scan probed ~27 points
+/// per column, each walking the BSP AND sphere-testing EVERY brush entity.
+/// Now: filter the entities that can touch this vertical column ONCE (almost
+/// always none), get the world floor from a single hull-0 point trace, and
+/// only fall back to the point scan for the rare ent-overlapped column.
+/// Refresh one prop's nearby-ent shortlist (ents whose sphere can reach a
+/// probe column near the prop within the refresh window).
+unsafe fn refresh_prop_near_ents(m: &Map, pi: usize) {
+    let _ = m;
+    let p = PROP_POS[pi];
+    let mut n = 0usize;
+    let nents = ENT_SOLID_COUNT;
+    let mut ei = 0usize;
+    while ei < nents {
+        let e = ENT_CACHE[ei];
+        if ENT_ACTIVE[ei] != 0 && e.head0 > 0 && e.kind != 2 && e.kind != 4 {
+            let off = ent_draw_offset(ei);
+            let r = ENT_RADIUS[ei] + PROP_NEAR_SLACK;
+            if (e.center[0] + off[0] - p[0]).abs() <= r
+                && (e.center[2] + off[2] - p[2]).abs() <= r
+                && (e.center[1] + off[1] - p[1]).abs() <= r + PROP_GROUND_PROBE_DOWN
+            {
+                if n < 8 {
+                    PROP_NEAR_ENTS[pi][n] = ei as u16;
+                    n += 1;
+                }
+                // Over 8: keep the first 8 -- a probe missing a 9th distant
+                // brush is invisible next to the exhaustive-scan cost.
+            }
+        }
+        ei += 1;
+    }
+    PROP_NEAR_COUNT[pi] = n as u8;
+}
+
+fn prop_floor_y(m: &Map, pi: usize, pos: [i32; 3]) -> Option<i32> {
     let (x, z) = (pos[0], pos[2]);
     let top = pos[1] + PROP_GROUND_PROBE_UP;
-    if unsafe { prop_point_solid(m, [x, top, z]) } {
+    let bottom = pos[1] - PROP_GROUND_PROBE_DOWN;
+
+    // Column-touching brush ents from the per-prop shortlist (refreshed on a
+    // stagger); an unrefreshed/crowded prop falls back to scanning them all.
+    let mut col = [0u16; 8];
+    let mut ncol = 0usize;
+    unsafe {
+        let nc = PROP_NEAR_COUNT.get(pi).copied().unwrap_or(0xFF);
+        if nc == 0xFF {
+            // No shortlist: filter the full ent set for this column.
+            let nents = ENT_SOLID_COUNT;
+            let mut ei = 0usize;
+            while ei < nents {
+                let e = ENT_CACHE[ei];
+                if ENT_ACTIVE[ei] != 0 && e.head0 > 0 && e.kind != 2 && e.kind != 4 {
+                    let off = ent_draw_offset(ei);
+                    let r = ENT_RADIUS[ei];
+                    let cx = e.center[0] + off[0];
+                    let cy = e.center[1] + off[1];
+                    let cz = e.center[2] + off[2];
+                    if (cx - x).abs() <= r
+                        && (cz - z).abs() <= r
+                        && cy + r >= bottom
+                        && cy - r <= top
+                        && ncol < col.len()
+                    {
+                        col[ncol] = ei as u16;
+                        ncol += 1;
+                    }
+                }
+                ei += 1;
+            }
+        } else {
+            let mut k = 0usize;
+            while k < (nc as usize).min(8) {
+                let ei = PROP_NEAR_ENTS[pi][k] as usize;
+                let e = ENT_CACHE[ei];
+                if ENT_ACTIVE[ei] != 0 {
+                    let off = ent_draw_offset(ei);
+                    let r = ENT_RADIUS[ei];
+                    let cx = e.center[0] + off[0];
+                    let cy = e.center[1] + off[1];
+                    let cz = e.center[2] + off[2];
+                    if (cx - x).abs() <= r
+                        && (cz - z).abs() <= r
+                        && cy + r >= bottom
+                        && cy - r <= top
+                    {
+                        col[ncol] = ei as u16;
+                        ncol += 1;
+                    }
+                }
+                k += 1;
+            }
+        }
+    }
+
+    let solid_at = |p: [i32; 3]| -> bool {
+        unsafe {
+            if camera_leaf(m, p) == 0 {
+                return true;
+            }
+            let mut k = 0usize;
+            while k < ncol {
+                if point_in_one_ent(m, col[k] as usize, p) {
+                    return true;
+                }
+                k += 1;
+            }
+            false
+        }
+    };
+
+    if solid_at([x, top, z]) {
         return None; // headroom is solid -- no clean floor to drop onto
     }
-    let bottom = pos[1] - PROP_GROUND_PROBE_DOWN;
+    // World floor: one hull-0 point trace, no per-point BSP walks.
+    let world_y = phys::trace_line(m, &[], [x, top, z], [x, bottom, z]).map(|h| h.pos[1]);
+    if ncol == 0 {
+        return world_y;
+    }
+    // Ent in the column (door panel, crate, chair): scan for the highest ent
+    // surface, testing ONLY the column ents per point (the world part is
+    // already answered by the trace). Floor = the higher of the two.
+    let ent_solid_at = |p: [i32; 3]| -> bool {
+        unsafe {
+            let mut k = 0usize;
+            while k < ncol {
+                if point_in_one_ent(m, col[k] as usize, p) {
+                    return true;
+                }
+                k += 1;
+            }
+            false
+        }
+    };
+    let scan_floor = world_y.unwrap_or(bottom);
+    let mut ent_y = None;
     let mut empty_y = top;
     let mut y = top - GROUND_SCAN_STEP;
-    while y >= bottom {
-        if unsafe { prop_point_solid(m, [x, y, z]) } {
-            // First solid below: the floor is between y (solid) and empty_y. Refine.
+    while y >= scan_floor {
+        if ent_solid_at([x, y, z]) {
             let (mut solid, mut empty) = (y, empty_y);
             for _ in 0..4 {
                 let mid = (solid + empty) / 2;
-                if unsafe { prop_point_solid(m, [x, mid, z]) } {
+                if ent_solid_at([x, mid, z]) {
                     solid = mid;
                 } else {
                     empty = mid;
                 }
             }
-            return Some(empty); // lowest empty = floor surface
+            ent_y = Some(empty);
+            break;
         }
         empty_y = y;
         y -= GROUND_SCAN_STEP;
     }
-    None // no floor within probe range
+    match (ent_y, world_y) {
+        (Some(e), Some(w)) => Some(e.max(w)),
+        (Some(e), None) => Some(e),
+        (None, w) => w,
+    }
 }
 
+
 #[inline]
-fn prop_grounded_pos(m: &Map, _movers: &[phys::Mover], pos: [i32; 3]) -> [i32; 3] {
-    match prop_floor_y(m, pos) {
+fn prop_grounded_pos(m: &Map, pi: usize, pos: [i32; 3]) -> [i32; 3] {
+    match prop_floor_y(m, pi, pos) {
         Some(y) => [pos[0], y, pos[2]],
         None => pos,
     }
 }
 
 unsafe fn prop_set_pos(m: &Map, movers: &[phys::Mover], pi: usize, pos: [i32; 3]) {
-    let pos = prop_grounded_pos(m, movers, pos);
+    let _ = movers;
+    let pos = prop_grounded_pos(m, pi, pos);
+    prop_set_pos_grounded(m, pi, pos);
+}
+
+/// Position already carries a probed floor height (prop_try_step's winner):
+/// skip the second ground probe the plain setter would run.
+unsafe fn prop_set_pos_grounded(m: &Map, pi: usize, pos: [i32; 3]) {
     PROP_POS[pi] = pos;
     let leaf = camera_leaf(m, pos);
     PROP_LEAF[pi] = if leaf > 0 && leaf <= i16::MAX as i32 {
@@ -2851,10 +3000,16 @@ unsafe fn prop_try_step(
             let len = isqrt(d2).max(1);
             let step = speed.min(len);
             let cand = [pos[0] + sx * step / len, pos[1], pos[2] + sz * step / len];
-            // Walkers refuse a step with no floor under it (HL CheckLocalMove):
-            // accepting it froze the actor's height and sent it chasing on air
-            // over pits/ledges. The flying controller keeps its altitude.
-            let np = match prop_floor_y(m, cand) {
+            // Sight line first (one trace), floor probe only for the winning
+            // direction -- probing every candidate was the walker-heavy-map
+            // frame killer. Walkers still refuse steps with no floor under
+            // them (HL CheckLocalMove); the flying controller keeps altitude.
+            let to_flat = prop_target(ty, cand);
+            if !actor_line_clear(m, movers, from, to_flat) {
+                i += 1;
+                continue;
+            }
+            let np = match prop_floor_y(m, pi, cand) {
                 Some(y) => [cand[0], y, cand[2]],
                 None if ty == PROP_TYPE_CONTROLLER => cand,
                 None => {
@@ -2862,11 +3017,8 @@ unsafe fn prop_try_step(
                     continue;
                 }
             };
-            let to = prop_target(ty, np);
-            if actor_line_clear(m, movers, from, to) {
-                prop_set_pos(m, movers, pi, np);
-                return true;
-            }
+            prop_set_pos_grounded(m, pi, np);
+            return true;
         }
         i += 1;
     }
@@ -3051,18 +3203,35 @@ unsafe fn prop_move_towards_point(
     goal: [i32; 3],
     speed: i32,
 ) -> bool {
+    // Walkers move on alternating ticks with a doubled step (HL monsters
+    // think at 10 Hz): same world speed, half the floor probes and pathing.
+    if (pi as u16 ^ MOVE_TICK) & 1 != 0 {
+        return true; // "moved" as far as the caller's stuck-detection cares
+    }
+    // A walker that just failed every step direction pauses briefly before
+    // retrying (HL's failed-local-move wait). Wedged crowds were re-running
+    // the full probe fan every move tick.
+    if PROP_MOVE_COOLDOWN[pi] > 0 {
+        PROP_MOVE_COOLDOWN[pi] -= 1;
+        return false;
+    }
+    let speed = speed * 2;
     let pos = PROP_POS[pi];
     prop_face_point(pi, goal);
     if prop_try_step(m, movers, pi, goal[0] - pos[0], goal[2] - pos[2], speed) {
         return true;
     }
-    if let Some(wp) = nav_waypoint_towards(m, movers, pi, goal) {
+    let moved = if let Some(wp) = nav_waypoint_towards(m, movers, pi, goal) {
         let pos = PROP_POS[pi];
         prop_face_point(pi, wp);
         prop_try_step(m, movers, pi, wp[0] - pos[0], wp[2] - pos[2], speed)
     } else {
         false
+    };
+    if !moved {
+        PROP_MOVE_COOLDOWN[pi] = 6; // ~0.3 s pause before the next attempt
     }
+    moved
 }
 
 unsafe fn target_org(target: u8, player_pos: [i32; 3], nprops: usize) -> Option<[i32; 3]> {
@@ -3118,6 +3287,13 @@ static mut MON_PAIN_COOLDOWN: u8 = 0;
 static mut MOVERS: [phys::Mover; MAX_ENTS + 1] = [phys::NO_MOVER; MAX_ENTS + 1];
 static mut STEP_ACC: u32 = 0;
 static mut STEP_ALT: u8 = 0;
+static mut MOVE_TICK: u16 = 0; // walker half-rate phase
+static mut PROP_MOVE_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS]; // blocked-walker backoff
+// Per-prop shortlist of brush ents near enough to matter for floor probes.
+// Refreshed every 8 ticks (staggered); 0xFFFF count = overflow, full scan.
+static mut PROP_NEAR_ENTS: [[u16; 8]; MAX_PROPS] = [[0; 8]; MAX_PROPS];
+static mut PROP_NEAR_COUNT: [u8; MAX_PROPS] = [0xFF; MAX_PROPS];
+const PROP_NEAR_SLACK: i32 = 96; // covers max step + door travel between refreshes
 
 /// Per-class pain/death vocal (SFX_NONE = silent; scientists keep quiet
 /// rather than borrowing a wrong species' bark).
@@ -3616,7 +3792,7 @@ unsafe fn init_prop_state(m: &Map) {
         let org = if kind == PROP_TYPE_SITTING_SCI {
             org
         } else {
-            prop_grounded_pos(m, &[], org)
+            prop_grounded_pos(m, pi, org)
         };
         PROP_ACTIVE[pi] = if dormant { 0 } else { 1 };
         PROP_DORMANT[pi] = dormant as u8;
@@ -3654,6 +3830,12 @@ unsafe fn tick_props(
         if PROP_ACTIVE[pi] == 0 {
             pi += 1;
             continue;
+        }
+        // Nearby-ent shortlist for the floor probes, refreshed on an 8-tick
+        // stagger (probe columns then test <=4 ents instead of every brush
+        // entity on the map -- the walker-heavy-map frame killer).
+        if (pi as u32).wrapping_add(AI_TICK) & 7 == 0 {
+            refresh_prop_near_ents(m, pi);
         }
         if PROP_HIT_FLASH[pi] > 0 {
             PROP_HIT_FLASH[pi] -= 1;
@@ -4990,24 +5172,24 @@ unsafe fn proj_vert(m: &Map, i: usize, frame: u16) {
     }
 }
 
-unsafe fn next_submodel_draw_token() -> u16 {
-    let next = SUBMODEL_DRAW_TOKEN.wrapping_add(1);
+unsafe fn next_proj_token() -> u16 {
+    let next = PROJ_TOKEN.wrapping_add(1);
     if next == 0 {
-        for mark in SUBMODEL_VERT_TOKEN.iter_mut() {
+        for mark in VERT_FRAME.iter_mut() {
             *mark = 0;
         }
-        SUBMODEL_DRAW_TOKEN = 1;
+        PROJ_TOKEN = 1;
     } else {
-        SUBMODEL_DRAW_TOKEN = next;
+        PROJ_TOKEN = next;
     }
-    SUBMODEL_DRAW_TOKEN
+    PROJ_TOKEN
 }
 
 #[inline]
 unsafe fn proj_submodel_vert(m: &Map, i: usize, token: u16) {
-    if SUBMODEL_VERT_TOKEN[i] != token {
+    if VERT_FRAME[i] != token {
         SCRATCH[i] = scene::project_vertex_scheduled(m.vert(i));
-        SUBMODEL_VERT_TOKEN[i] = token;
+        VERT_FRAME[i] = token;
     }
 }
 
@@ -5443,16 +5625,21 @@ fn fog_factor(sz: i32) -> i32 {
 /// Fade one vertex color toward black by its view depth.
 #[inline]
 fn fog1(rgb: (u8, u8, u8), sz: i32) -> (u8, u8, u8) {
-    let f = fog_factor(sz);
-    if f >= 256 {
-        rgb
-    } else {
-        (
-            ((rgb.0 as i32 * f) >> 8) as u8,
-            ((rgb.1 as i32 * f) >> 8) as u8,
-            ((rgb.2 as i32 * f) >> 8) as u8,
-        )
+    // Branch on depth BEFORE touching the color: the near case (identity) is
+    // the common one, and the far case multiplies by zero -- both were paying
+    // the unpack + three mults.
+    if sz <= FOG_START {
+        return rgb;
     }
+    if sz >= FAR_VIEW {
+        return (0, 0, 0);
+    }
+    let f = ((FAR_VIEW - sz) * FOG_INV) >> 12;
+    (
+        ((rgb.0 as i32 * f) >> 8) as u8,
+        ((rgb.1 as i32 * f) >> 8) as u8,
+        ((rgb.2 as i32 * f) >> 8) as u8,
+    )
 }
 
 /// Fade a triangle's three vertex colors toward black by per-vertex depth.
@@ -6983,6 +7170,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 if PAIN_SFX_COOLDOWN > 0 {
                     PAIN_SFX_COOLDOWN -= 1;
                 }
+                MOVE_TICK = MOVE_TICK.wrapping_add(1);
                 if MON_PAIN_COOLDOWN > 0 {
                     MON_PAIN_COOLDOWN -= 1;
                 }
@@ -7055,16 +7243,14 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
 
         frame_no = frame_no.wrapping_add(1);
+        if frame_no == 0 {
+            frame_no = 1; // sway/anim phase counter; the proj cache has its own token
+        }
+        let proj_token = unsafe { next_proj_token() };
         telemetry::task_begin(telemetry::task::VISUAL_RENDER);
         telemetry::stage_begin(telemetry::stage::RENDER);
 
         unsafe {
-            if frame_no == 0 {
-                for f in VERT_FRAME.iter_mut() {
-                    *f = 0;
-                }
-                frame_no = 1;
-            }
             OT.clear();
             WEAPON_OT.clear();
             HUD_OT.clear();
@@ -7184,7 +7370,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                             rec.first as usize,
                                             rec.count as usize,
                                             nv,
-                                            frame_no,
+                                            proj_token,
                                             &mut np,
                                             &mut nq,
                                             &mut room_counts,
@@ -7196,7 +7382,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                             rec.first as usize,
                                             rec.count as usize,
                                             nv,
-                                            frame_no,
+                                            proj_token,
                                             &mut np,
                                             &mut nq,
                                             &mut room_counts,
@@ -7222,7 +7408,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                             first,
                                             cnt,
                                             nv,
-                                            frame_no,
+                                            proj_token,
                                             &mut np,
                                             &mut nq,
                                             &mut room_counts,
@@ -7234,7 +7420,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                             first,
                                             cnt,
                                             nv,
-                                            frame_no,
+                                            proj_token,
                                             &mut np,
                                             &mut nq,
                                             &mut room_counts,
@@ -7283,7 +7469,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         &m,
                         face,
                         nv,
-                        frame_no,
+                        proj_token,
                         eye,
                         &rot,
                         base_t,
@@ -7372,7 +7558,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                 first,
                                 cnt,
                                 nv,
-                                frame_no,
+                                proj_token,
                                 &mut np,
                                 &mut nq,
                                 &mut static_counts,
@@ -7384,7 +7570,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                 first,
                                 cnt,
                                 nv,
-                                frame_no,
+                                proj_token,
                                 &mut np,
                                 &mut nq,
                                 &mut static_counts,
@@ -7400,7 +7586,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     -dot12(rot.m[2], es),
                 ];
                 scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
-                let submodel_token = next_submodel_draw_token();
+                let submodel_token = next_proj_token();
                 let (ff, nf) = m.submodel(e.submodel);
                 EMIT_BLEND = e.blend; // glass doors etc.
                 EMIT_WAVE = false;
@@ -7438,7 +7624,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     -dot12(rot.m[2], es),
                 ];
                 scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
-                let submodel_token = next_submodel_draw_token();
+                let submodel_token = next_proj_token();
                 let (ff, nf) = m.submodel(m.tram_submodel);
                 for f in ff..ff + nf {
                     let (first, cnt) = m.face_tris(f);
@@ -7670,7 +7856,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             if DEBUG_XHAIR && XHAIR.valid == 0 && have_pvs {
                 scene::load_rotation(&rot);
                 scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
-                xhair_pick_pvs(&m, nv, frame_no);
+                xhair_pick_pvs(&m, nv, proj_token);
             }
 
             // DEBUG: fill the crosshair tri bright magenta (a POLYGON -- the HW
