@@ -23,6 +23,7 @@ mod menu;
 mod model;
 mod phys;
 mod render;
+mod sfx;
 mod telemetry;
 mod vram;
 
@@ -1677,6 +1678,7 @@ unsafe fn logic_activate_button(
     {
         return;
     }
+    sfx::play(sfx::BUTTON);
     if (rec.spawnflags & SF_BUTTON_DONTMOVE) != 0 {
         logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, depth + 1);
         if rec.wait_ticks >= 0 {
@@ -1807,8 +1809,12 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
                 if let Some(ei) = logic_valid_brush(rec.brush, nents) {
                     let step = logic_phase_step(rec, ei);
                     if LOGIC_STATE[li] == LOGIC_STATE_GOING_UP {
+                        if ENT_PHASE[ei] == 0 {
+                            sfx::play_world(sfx::DOOR_MOVE, ENT_CACHE[ei].center);
+                        }
                         ENT_PHASE[ei] = (ENT_PHASE[ei] + step).min(4096);
                         if ENT_PHASE[ei] >= 4096 {
+                            sfx::play_world(sfx::DOOR_STOP, ENT_CACHE[ei].center);
                             LOGIC_STATE[li] = LOGIC_STATE_TOP;
                             logic_sub_use_targets(
                                 m,
@@ -1831,8 +1837,12 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
                             }
                         }
                     } else {
+                        if ENT_PHASE[ei] == 4096 {
+                            sfx::play_world(sfx::DOOR_MOVE, ENT_CACHE[ei].center);
+                        }
                         ENT_PHASE[ei] = (ENT_PHASE[ei] - step).max(0);
                         if ENT_PHASE[ei] <= 0 {
+                            sfx::play_world(sfx::DOOR_STOP, ENT_CACHE[ei].center);
                             LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
                             if rec.kind == map::LOGIC_FUNC_DOOR {
                                 logic_sub_use_targets(
@@ -2691,12 +2701,22 @@ unsafe fn damage_prop(pi: usize, dmg: u8) {
         PROP_STATE[pi] = PROP_STATE_DEAD;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_AI_TIMER[pi] = 0;
+        sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
     }
 }
+
+static mut PAIN_SFX_COOLDOWN: u8 = 0;
 
 fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
     if dmg == 0 {
         return;
+    }
+    // Pain grunt, rate-limited so per-tick hazards (trigger_hurt) don't spam.
+    unsafe {
+        if PAIN_SFX_COOLDOWN == 0 {
+            sfx::play(sfx::PAIN);
+            PAIN_SFX_COOLDOWN = 12;
+        }
     }
     if *armor > 0 {
         // GoldSrc's HEV suit keeps only 20% of generic damage on health and
@@ -2930,6 +2950,9 @@ unsafe fn tick_shooter(
         if PROP_ATTACK_COOLDOWN[pi] == 0 {
             damage_target(target, def.atk_damage, health, armor);
             PROP_ATTACK_COOLDOWN[pi] = def.atk_cooldown;
+            // Human weapons crack like an MP5; alien ranged attacks zap.
+            let snd = if ty == 8 || ty >= 20 { sfx::MP5 } else { sfx::ELECTRO };
+            sfx::play_world(snd, pos);
         }
     } else if can_move {
         PROP_STATE[pi] = PROP_STATE_MOVE;
@@ -3005,6 +3028,12 @@ unsafe fn tick_headcrab(
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = HEADCRAB_ATTACK_TICKS;
         PROP_ATTACK_COOLDOWN[pi] = HEADCRAB_ATTACK_COOLDOWN;
+        let snd = match PROP_KIND[pi] {
+            5 => sfx::ZO_ATTACK,   // zombie swipe
+            6 => sfx::HE_BLAST,    // houndeye sonic blast
+            _ => sfx::HC_ATTACK,   // headcrab-family shriek
+        };
+        sfx::play_world(snd, pos);
     } else {
         PROP_STATE[pi] = PROP_STATE_MOVE;
         let step_d2 = d2.saturating_sub(HEADCRAB_STOP_RANGE * HEADCRAB_STOP_RANGE);
@@ -3041,6 +3070,7 @@ unsafe fn tick_barney(
                 PROP_AI_TIMER[pi] = BARNEY_ATTACK_TICKS;
                 PROP_ATTACK_COOLDOWN[pi] = BARNEY_ATTACK_COOLDOWN;
                 damage_target(target, BARNEY_DAMAGE, health, armor);
+                sfx::play_world(sfx::GLOCK, PROP_POS[pi]);
             } else if PROP_AI_TIMER[pi] > 0 {
                 PROP_STATE[pi] = PROP_STATE_ATTACK;
             } else {
@@ -3271,6 +3301,7 @@ unsafe fn collect_pickups(
                     PROP_LOGIC_LINK[pi] = u16::MAX;
                     *pickup_kind = hud::PICKUP_SUIT;
                     *pickup_ticks = HEV_PICKUP_TICKS;
+                    sfx::play(sfx::SUIT);
                     telemetry::debug_log("hl-psx: HEV suit equipped");
                 }
             }
@@ -3288,6 +3319,7 @@ unsafe fn collect_pickups(
                     PROP_LOGIC_LINK[pi] = u16::MAX;
                     *pickup_kind = hud::PICKUP_BATTERY;
                     *pickup_ticks = HEV_PICKUP_TICKS;
+                    sfx::play(sfx::PICKUP);
                     telemetry::debug_log("hl-psx: HEV battery picked up");
                 }
             }
@@ -3823,6 +3855,7 @@ unsafe fn fire_hitscan(
                 hit.pos[2] + ((hit.normal[2] * 2) >> 12),
             ];
             spawn_impact_fx(decal_pos, IMPACT_KIND_WORLD, rot, base_t);
+            sfx::play_world(sfx::RIC, decal_pos);
         }
         None
     } else {
@@ -3852,6 +3885,8 @@ fn pellet_offset(i: u8, spread: i32) -> (i32, i32) {
 }
 
 /// Run a weapon's fire archetype for one shot already paid for by try_fire.
+/// Returns true when a hitscan connected with an enemy (drives the crowbar
+/// hit-vs-miss sound).
 unsafe fn fire_weapon(
     d: &WeaponDef,
     m: &Map,
@@ -3859,20 +3894,19 @@ unsafe fn fire_weapon(
     eye: [i32; 3],
     rot: &Mat3I16,
     base_t: [i32; 3],
-) {
+) -> bool {
     match d.fire {
-        FIRE_MELEE => {
-            let _ = fire_hitscan(
-                m, movers, eye, rot, base_t, d.damage, d.range, MELEE_AIM_PIX, MELEE_AIM_PIX, 0,
-                0,
-            );
-        }
+        FIRE_MELEE => fire_hitscan(
+            m, movers, eye, rot, base_t, d.damage, d.range, MELEE_AIM_PIX, MELEE_AIM_PIX, 0, 0,
+        )
+        .is_some(),
         FIRE_SPREAD => {
             let n = d.pellets.max(1);
             let mut i = 0u8;
+            let mut hit = false;
             while i < n {
                 let (cx, cy) = pellet_offset(i, d.spread);
-                let _ = fire_hitscan(
+                hit |= fire_hitscan(
                     m,
                     movers,
                     eye,
@@ -3884,16 +3918,19 @@ unsafe fn fire_weapon(
                     GLOCK_AIM_PIX_Y,
                     cx,
                     cy,
-                );
+                )
+                .is_some();
                 i += 1;
             }
+            hit
         }
         FIRE_PROJ => {
             spawn_projectile(d.proj, d.damage, eye, rot);
+            false
         }
         _ => {
             // FIRE_SEMI / FIRE_AUTO: single centred hitscan.
-            let _ = fire_hitscan(
+            fire_hitscan(
                 m,
                 movers,
                 eye,
@@ -3905,8 +3942,31 @@ unsafe fn fire_weapon(
                 GLOCK_AIM_PIX_Y,
                 0,
                 0,
-            );
+            )
+            .is_some()
         }
+    }
+}
+
+/// The fire sound for a weapon id; melee picks hit vs miss.
+fn weapon_fire_sfx(id: usize, hit: bool) -> u8 {
+    match id {
+        W_CROWBAR => {
+            if hit {
+                sfx::CBAR_HIT
+            } else {
+                sfx::CBAR_MISS
+            }
+        }
+        W_GLOCK => sfx::GLOCK,
+        W_357 => sfx::PYTHON,
+        W_MP5 => sfx::MP5,
+        W_SHOTGUN => sfx::SHOTGUN,
+        W_CROSSBOW => sfx::XBOW,
+        W_RPG => sfx::RPG,
+        W_GAUSS | W_EGON => sfx::GAUSS,
+        W_HORNET => sfx::ELECTRO,
+        _ => sfx::CBAR_MISS, // thrown/placed: a swing whoosh
     }
 }
 
@@ -4001,6 +4061,7 @@ unsafe fn explode(pos: [i32; 3], damage: u8, radius: i32) {
     if radius <= 0 {
         return;
     }
+    sfx::play_world(sfx::EXPLODE, pos);
     let r2 = radius * radius;
     let mut pi = 0;
     let nprops = PROP_COUNT.min(MAX_PROPS);
@@ -5529,6 +5590,22 @@ fn main() {
     // Models are no longer loaded here: play() streams each map's model set into
     // the pool (stream_map_models) after the world loads.
 
+    // SFX: stream the cooked SPU-ADPCM pack once and park it in SPU RAM (its
+    // own 512 KB; no main-RAM cost). MAP_BUF is free until the first map loads,
+    // so stage through it.
+    let sfx_ready = {
+        let len = cdstream::load_chunk(sfx::CHUNK_ID, unsafe { &mut MAP_BUF }).unwrap_or(0);
+        let bytes = unsafe { streamed_map_bytes(len) };
+        if len > 0 {
+            unsafe { sfx::init_from_pack(bytes) }
+        } else {
+            0
+        }
+    };
+    if sfx_ready == 0 {
+        tty::println("hl-psx: SFX pack missing/failed (silent boot)");
+    }
+
     // Boot flow: pick a map in the menu, stream + play it, return on Select.
     // (Analog is enabled inside play(); the menu runs on the digital pad.)
     loop {
@@ -6216,10 +6293,15 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     -dot12(fire_rot.m[2], eye),
                 ];
                 unsafe {
-                    fire_weapon(weapon.def(), &m, movers, eye, &fire_rot, fire_base_t);
+                    let hit = fire_weapon(weapon.def(), &m, movers, eye, &fire_rot, fire_base_t);
+                    sfx::play(weapon_fire_sfx(weapon.current, hit));
                 }
             }
             unsafe {
+                sfx::set_ear(player.pos);
+                if PAIN_SFX_COOLDOWN > 0 {
+                    PAIN_SFX_COOLDOWN -= 1;
+                }
                 tick_projectiles(&m, movers);
                 tick_props(&m, movers, player.pos, &mut health, &mut armor);
                 LOGIC_PLAYER_HEALTH = health;

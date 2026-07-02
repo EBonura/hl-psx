@@ -110,11 +110,19 @@ disc: compile
 		--out $(DIST)/hl-psx.bin \
 		--volume HLPSX \
 		--world-pack-rooms-dir $(ROOMS) \
-		--world-pack-extra-dir $(MODELPACK)
+		--world-pack-extra-dir $(MODELPACK) \
+		--world-pack-extra-dir $(SFXPACK)
 	@echo "DISC -> $(DIST)/hl-psx.cue"
 
-assets: check-assets menu-assets rooms models
-	@echo "assets -> data/menu data/rooms data/models data/modelpack"
+# HL SFX -> SPU-ADPCM pack (one WORLD.PAK chunk, id 3000). Needs the sibling
+# PSoXide checkout for the psxed audio-pack encoder.
+sfx-assets:
+	cd $(PSOXIDE) && cargo build --release -p psxed
+	python3 tools/extract_sfx.py "$(HL_GAME)/sound" $(SFXPACK)/chunk_3000.psxa \
+		"$(PSOXIDE)/target/release/psxed"
+
+assets: check-assets menu-assets rooms models sfx-assets
+	@echo "assets -> data/menu data/rooms data/models data/modelpack data/sfx"
 
 full-disc: assets disc
 
@@ -192,6 +200,7 @@ psoxide-chart: psoxide-profile
 # Keep MAPLIST in the same order as `game/src/menu.rs`'s MAPS registry.
 ROOMS := $(ROOT)/data/rooms
 MODELPACK := $(ROOT)/data/modelpack
+SFXPACK   := $(ROOT)/data/sfx
 # Runnable campaign map registry, staying below the current static MAP_BUF
 # budget. Oversized maps are intentionally omitted until the streamed map format
 # grows a compression/chunking path. Keep this in sync with `game/src/menu.rs`.
