@@ -192,6 +192,23 @@ const PROP_TYPE_ITEM_BATTERY: u8 = 4;
 const PROP_TYPE_CONTROLLER: u8 = 11; // flies: exempt from walker floor checks
 const PROP_TYPE_SITTING_SCI: u8 = 25; // seated pose, keeps its authored chair height
 const PROP_DEAD_BIT: u16 = 0x8000; // cook flag: spawn as a corpse (death pose, 0 hp)
+const PROP_TYPE_WEAPON_FIRST: u8 = 26; // weapon pickups 26..=39 (index - 26 = weapon id)
+const PROP_TYPE_WEAPON_LAST: u8 = 39;
+const PROP_TYPE_AMMO_FIRST: u8 = 40; // ammo pickups 40..=47
+const PROP_TYPE_AMMO_LAST: u8 = 47;
+const PROP_TYPE_MEDKIT: u8 = 48;
+// (ammo pool, rounds) per ammo pickup type 40..=47.
+const AMMO_PICKUPS: [(usize, u16); 8] = [
+    (AMMO_9MM, 17),
+    (AMMO_9MM, 50),
+    (AMMO_BUCK, 12),
+    (AMMO_357, 6),
+    (AMMO_BOLT, 5),
+    (AMMO_ROCKET, 1),
+    (AMMO_URANIUM, 20),
+    (AMMO_GREN, 2),
+];
+const MEDKIT_HEAL: u16 = 15;
 const PROP_STATE_IDLE: u8 = 0;
 const PROP_STATE_MOVE: u8 = 1;
 const PROP_STATE_ATTACK: u8 = 2;
@@ -201,8 +218,8 @@ const PROP_STATE_DEAD: u8 = 3;
 // 26 model types (the cook's collect_props ids). Each streams from WORLD.PAK:
 // geometry chunk `1300+id`, texture chunk `1100+id`. The runtime keeps only the
 // types a map places resident (TYPE_TO_SLOT -> LOADED_MODELS).
-const N_MODEL_TYPES: usize = 26;
-const MAX_LOADED_MODELS: usize = 12; // distinct model types resident per map
+const N_MODEL_TYPES: usize = 49;
+const MAX_LOADED_MODELS: usize = 22; // distinct model types resident per map (enemies + pickups)
 const POOL_TEX_SLOTS: usize = 240; // shared TexSlot pool across loaded models
 const POOL_FACE_CAP: usize = 5248; // shared RenderFace pool (worst per-map tri sum, c4a3)
 const MODEL_SLOT_NONE: u8 = 0xFF;
@@ -289,6 +306,29 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(80, 60, 150, AI_IDLE),                                 // 23 apache (flyer: render only)
     mdef(10, 20, 60, AI_IDLE),                                  // 24 flyer_flock (passive)
     mdef(SCIENTIST_HEALTH, 25, SCIENTIST_RENDER_RADIUS, AI_IDLE), // 25 sitting scientist
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 26 weapon_crowbar
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 27 weapon_9mmhandgun
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 28 weapon_357
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 29 weapon_9mmAR
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 30 weapon_shotgun
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 31 weapon_crossbow
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 32 weapon_rpg
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 33 weapon_gauss
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 34 weapon_egon
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 35 weapon_hornetgun
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 36 weapon_handgrenade
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 37 weapon_snark
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 38 weapon_tripmine
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 39 weapon_satchel
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 40 ammo_9mmclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 41 ammo_9mmAR
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 42 ammo_buckshot
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 43 ammo_357
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 44 ammo_crossbow
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 45 ammo_rpgclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 46 ammo_gaussclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 47 ammo_ARgrenades
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 48 item_healthkit
 ];
 
 #[inline]
@@ -1295,6 +1335,13 @@ static mut CHANGE_REQUEST: RoomLaunch = RoomLaunch {
     preserve_view: false,
 };
 static mut CHANGE_REQUEST_ACTIVE: u8 = 0;
+// Arsenal carried across changelevel (menu launches reset it): owned mask,
+// per-weapon clips, ammo pools, selected weapon.
+static mut CARRY_VALID: bool = false;
+static mut CARRY_OWNED: u16 = 0;
+static mut CARRY_CLIPS: [u16; N_WEAPONS] = [0; N_WEAPONS];
+static mut CARRY_AMMO: [u16; N_AMMO] = [0; N_AMMO];
+static mut CARRY_CURRENT: u8 = 0;
 
 #[inline]
 fn standalone_room_starts_with_hev(room_id: usize) -> bool {
@@ -3431,6 +3478,8 @@ unsafe fn collect_pickups(
     player_pos: [i32; 3],
     suit_equipped: &mut bool,
     armor: &mut u16,
+    health: &mut u16,
+    weapon: &mut Arsenal,
     pickup_kind: &mut u8,
     pickup_ticks: &mut u8,
 ) {
@@ -3458,6 +3507,39 @@ unsafe fn collect_pickups(
                     *pickup_ticks = HEV_PICKUP_TICKS;
                     sfx::play(sfx::SUIT);
                     telemetry::debug_log("hl-psx: HEV suit equipped");
+                }
+            }
+            ty @ PROP_TYPE_WEAPON_FIRST..=PROP_TYPE_WEAPON_LAST => {
+                let wid = (ty - PROP_TYPE_WEAPON_FIRST) as usize;
+                // HL keeps the pickup if the weapon (or its default ammo) is
+                // maxed; simplified: weapons always collect on first touch.
+                if !weapon.owns(wid) {
+                    weapon.give_weapon(wid);
+                    PROP_ACTIVE[pi] = 0;
+                    sfx::play(sfx::PICKUP);
+                } else {
+                    // Duplicate weapon = its magazine's worth of ammo.
+                    let d = &WEAPON_DEFS[wid];
+                    if d.ammo != AMMO_NONE {
+                        weapon.give_ammo(d.ammo, d.clip.max(1));
+                        PROP_ACTIVE[pi] = 0;
+                        sfx::play(sfx::PICKUP);
+                    }
+                }
+            }
+            ty @ PROP_TYPE_AMMO_FIRST..=PROP_TYPE_AMMO_LAST => {
+                let (pool, rounds) = AMMO_PICKUPS[(ty - PROP_TYPE_AMMO_FIRST) as usize];
+                if weapon.ammo[pool] < max_reserve_for(pool) {
+                    weapon.give_ammo(pool, rounds);
+                    PROP_ACTIVE[pi] = 0;
+                    sfx::play(sfx::PICKUP);
+                }
+            }
+            PROP_TYPE_MEDKIT => {
+                if *health < PLAYER_START_HEALTH {
+                    *health = (*health + MEDKIT_HEAL).min(PLAYER_START_HEALTH);
+                    PROP_ACTIVE[pi] = 0;
+                    sfx::play(sfx::MEDSHOT);
                 }
             }
             PROP_TYPE_ITEM_BATTERY => {
@@ -6090,7 +6172,21 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     let mut weapon = Arsenal::new();
     weapon.clip[W_GLOCK] = launch.clip_ammo.min(WEAPON_DEFS[W_GLOCK].clip);
     weapon.ammo[AMMO_9MM] = launch.reserve_ammo.min(max_reserve_for(AMMO_9MM));
-    weapon.give_full_arsenal(); // demake: spawn with the whole arsenal (pickups TBD)
+    // Changelevel restores the carried arsenal; fresh/menu launches start with
+    // the HL crowbar+glock baseline and pick the rest up in the world.
+    unsafe {
+        if launch.preserve_view && CARRY_VALID {
+            weapon.owned = CARRY_OWNED;
+            weapon.clip = CARRY_CLIPS;
+            weapon.ammo = CARRY_AMMO;
+            let cur = CARRY_CURRENT as usize;
+            if cur < N_WEAPONS && weapon.owns(cur) {
+                weapon.current = cur;
+            }
+        } else {
+            CARRY_VALID = false;
+        }
+    }
     let mut fire_was_held = false; // rising-edge latch for non-auto weapons
     let mut switch_prev = false; // rising-edge latch for L1/R1 weapon cycling
     let mut pending_vm_switch = false; // re-stream the viewmodel after a weapon change
@@ -6468,6 +6564,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     player.pos,
                     &mut suit_equipped,
                     &mut armor,
+                    &mut health,
+                    &mut weapon,
                     &mut pickup_kind,
                     &mut pickup_ticks,
                 );
@@ -6582,6 +6680,12 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             unsafe {
                 if CHANGE_REQUEST_ACTIVE != 0 {
                     CHANGE_REQUEST_ACTIVE = 0;
+                    // Carry the whole arsenal into the next map.
+                    CARRY_VALID = true;
+                    CARRY_OWNED = weapon.owned;
+                    CARRY_CLIPS = weapon.clip;
+                    CARRY_AMMO = weapon.ammo;
+                    CARRY_CURRENT = weapon.current as u8;
                     return PlayExit::ChangeLevel(CHANGE_REQUEST);
                 }
             }

@@ -320,13 +320,13 @@ models:
 	@for entry in \
 	  "0|scientist|13:4,0:4,24:4,8:4,31:4" \
 	  "1|barney|0:4,4:4,6:4,17:4,25:4" \
-	  "2|headcrab|0:5,4:5,10:5,6:5,7:5" \
+	  "2|headcrab|0:4,4:4,10:4,6:4,7:4" \
 	  "3|w_suit|0" \
 	  "4|w_battery|0" \
 	  "5|zombie|0:4,10:4,8:4,3:4,17:4" \
 	  "6|houndeye|0:6,3:6,10:6,12:5,6:6" \
 	  "7|bullsquid|7:5,0:5,8:5,3:5,16:5" \
-	  "8|hgrunt|11:5,1:5,18:5,4:5,35:5" \
+	  "8|hgrunt|11:4,1:4,18:4,4:4,35:4" \
 	  "9|islave|0:4,4:4,12:4,13:4,19:4" \
 	  "10|agrunt|0:4,2:4,19:4,6:4,25:4" \
 	  "11|controller|15:4,16:4,0:4,6:4,18:4" \
@@ -344,6 +344,29 @@ models:
 	  "23|apache|0:1,0:1,0:1,0:1,0:1" \
 	  "24|boid|0:6,0:6" \
 	  "25|scientist|89:4,89:4,73:4,73:4,39:2" \
+	  "26|w_crowbar|0:1" \
+	  "27|w_9mmhandgun|0:1" \
+	  "28|w_357|0:1" \
+	  "29|w_9mmAR|0:1" \
+	  "30|w_shotgun|0:1" \
+	  "31|w_crossbow|0:1" \
+	  "32|w_rpg|0:1" \
+	  "33|w_gauss|0:1" \
+	  "34|w_egon|0:1" \
+	  "35|w_hgun|0:1" \
+	  "36|w_grenade|0:1" \
+	  "37|w_squeak|0:1" \
+	  "38|w_satchel|0:1" \
+	  "39|w_satchel|0:1" \
+	  "40|w_9mmclip|0:1" \
+	  "41|w_9mmARclip|0:1" \
+	  "42|w_shotbox|0:1" \
+	  "43|w_357ammobox|0:1" \
+	  "44|w_crossbow_clip|0:1" \
+	  "45|w_rpgammo|0:1" \
+	  "46|w_gaussammo|0:1" \
+	  "47|w_ARgrenade|0:1" \
+	  "48|w_medkit|0:1" \
 	  ; do \
 	  t=$${entry%%|*}; rest=$${entry#*|}; mdl=$${rest%%|*}; seq=$${rest##*|}; \
 	  geom=$$((1300+t)); tex=$$((1100+t)); \
