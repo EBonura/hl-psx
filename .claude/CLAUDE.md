@@ -780,6 +780,42 @@ Post-ghost-fix pc-sample round (pure build, c1a0, method in M22):
   mind the transient fit (geom full + tex must fit the pool tail during
   load; the resident audit does not model that).
 
+## M27 -- stable-20 pass: walker-map collapse fixed + instruction-level decode (DONE)
+
+Method that found it: per-map HEARTBEAT SWEEP (temp tty print every 64 frames,
+pure build, same step budget -> comparable per-map frame counts) + lockstep
+pc-sample. LESSON: rebuild the -Map exe and the disc in the SAME step or the
+profile attributes to garbage symbols (bit twice).
+
+- **Walker-heavy maps collapsed to 2 fps** (c1a2 office complex; c1a2b, c2a3b
+  similar): NPC floor probes were 75-87% of the frame -- 70 props x 169 brush
+  ents x ~27 probe points, each point walking the BSP AND sphere-testing every
+  entity. Fixes, all in main.rs prop code: per-prop nearby-ent shortlist
+  (8 slots, 8-tick stagger refresh, PROP_NEAR_SLACK 96 covers door travel);
+  world floor = ONE hull-0 trace_line; ent scan only over the shortlist;
+  walkers move on ALTERNATING ticks with doubled step (HL thinks at 10 Hz);
+  blocked walkers back off 6 ticks (wedged crowds re-probed every tick);
+  try_step floor-probes only the winning direction (sight line first);
+  prop_set_pos_grounded skips the redundant re-ground after try_step.
+  Sweep of 14 maps: ALL 14-18 hb (pace = 17). c1a2 2->14, c1a2b 4->16.
+- **Aligned TriRec decode**: cook 4-aligns the tri array (reader mirrors --
+  format change, recook needed); decode = four u32 loads (was ~14 byte loads
+  + 4 per-field bounds checks). Light palette = u32/entry, one load/corner.
+  render_tri disappeared from the profile; -14M cycles full-run on c1a0.
+- **fog1**: branch on depth BEFORE unpacking (identity near, black far; the
+  far path multiplied by zero).
+- **Proj-token merge**: VERT_FRAME + SUBMODEL_VERT_TOKEN were two 24 KB
+  arrays for disjoint phases; one PROJ_TOKEN space serves both (frame start
+  takes a token, each submodel draw takes the next). -24 KB static.
+  OT_LEN 512->128 (max real otz = FAR_VIEW>>4 + backdrop bias = 66).
+- Headroom 108 KiB with POOL_FACE_CAP 6352 + pool 99,584 restored (a probe
+  at POOL_FACE_CAP 5472 would have dropped models on 52 maps -- pickups grew
+  per-map tri sums; the audit gates that trade now).
+- SDK audit this round: packet ctors/OT insert are already minimal; the
+  wins were all game-side data layout + algorithmic. GTE still ~2%.
+- c1a2's black debug-boot view is the FAITHFUL blacked-out office intro
+  corridor (game live at 14 hb; profile shows normal AI) -- not a hang.
+
 ## Next (pick per value)
 
 - **scripted_sequence v1**: the biggest remaining faithfulness gap (intro set
