@@ -150,8 +150,6 @@ const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the li
 // Blend liquid surfaces (water/toxic/fluid) instead of drawing them opaque. OFF:
 // with no underwater scene drawn behind the surface, an Average blend goes near-
 // black over the void below a liquid brush. Needs real underwater rendering to
-// look right; opaque liquids stay visible in the meantime.
-const LIQUID_TRANSPARENCY: bool = false;
 const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in front of the camera
 const DBG_PAD_BOOT: bool = cfg!(feature = "debug-map-boot"); // hold L1 | map_index to boot any map headlessly
 // Debug: pin the camera to a fixed pose (to reproduce a specific view headlessly).
@@ -697,8 +695,9 @@ struct PvsFaceRec {
     count: u16,
     center: [i16; 3],
     radius: u16,
-    tex: u8,       // per-face texture (loop faces store tex on the FaceRec)
-    is_loop: bool, // fan a vertex loop vs iterate raw tris
+    tex: u8,           // per-face texture (loop faces store tex on the FaceRec)
+    is_loop: bool,     // fan a vertex loop vs iterate raw tris
+    translucent: bool, // liquid surface: blend + UV sway at emit
 }
 const EMPTY_PVS_FACE_REC: PvsFaceRec = PvsFaceRec {
     first: 0,
@@ -707,6 +706,7 @@ const EMPTY_PVS_FACE_REC: PvsFaceRec = PvsFaceRec {
     radius: 0,
     tex: 0,
     is_loop: false,
+    translucent: false,
 };
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut PVS_LEAF_COUNT: usize = 0;
@@ -730,6 +730,7 @@ static mut VERT_FRAME: [u16; MAX_VERTS] = [0; MAX_VERTS]; // project-once-per-fr
 const EMPTY_ENT: map::Ent = map::Ent {
     submodel: 0,
     kind: 2,
+    blend: 0,
     origin: [0, 0, 0],
     mv: [0, 0, 0],
     center: [0, 0, 0],
@@ -748,6 +749,56 @@ static mut LOGIC_BREAK_HP: [u16; MAX_LOGIC] = [0; MAX_LOGIC]; // remaining break
 // re-parsing the full 64 B LogicEnt from the uncached blob.
 static mut LOGIC_KIND: [u8; MAX_LOGIC] = [0; MAX_LOGIC];
 static mut TELEPORT_REQUEST: Option<([i32; 3], u16)> = None; // dest pos + yaw, applied post-touch
+// Per-face emit state: blend class (0 opaque / 1 average / 2 additive) and
+// liquid UV sway, set by the face/entity walkers right before their emits.
+static mut EMIT_BLEND: u8 = 0;
+static mut EMIT_WAVE: bool = false;
+static mut WAVE_DU: u8 = 0;
+static mut WAVE_DV: u8 = 0;
+// Gentle 128-frame sway cycle for liquid surfaces (+-4 texels; the GP0-E2
+// texture window wraps coordinates, so the byte add is always safe).
+const WAVE_TAB: [i8; 16] = [0, 2, 3, 4, 4, 4, 3, 2, 0, -2, -3, -4, -4, -4, -3, -2];
+
+// One-entry cache for the current translucent face's blended packet: water
+// and glass faces are a handful per frame, so building the variant on demand
+// costs nothing measurable and keeps TexSlot lean (RAM headroom).
+static mut BLEND_PACKET: TexturedGouraudPacketMaterial =
+    TexturedGouraudPacketMaterial::from_texture(vram::EMPTY_MATERIAL_PUB);
+static mut BLEND_PACKET_KEY: u32 = u32::MAX; // tex id | blend class << 16
+
+#[inline(always)]
+unsafe fn emit_packet_of(slot: &TexSlot, tex: usize) -> TexturedGouraudPacketMaterial {
+    if EMIT_BLEND == 0 {
+        return slot.packet;
+    }
+    let key = tex as u32 | ((EMIT_BLEND as u32) << 16);
+    if BLEND_PACKET_KEY != key {
+        let mode = if EMIT_BLEND == 2 {
+            psx_gpu::material::BlendMode::Add
+        } else {
+            psx_gpu::material::BlendMode::Average
+        };
+        BLEND_PACKET =
+            TexturedGouraudPacketMaterial::from_texture(slot.material.with_blend_mode(mode));
+        BLEND_PACKET_KEY = key;
+    }
+    BLEND_PACKET
+}
+
+#[inline(always)]
+unsafe fn sway_uv(w: u16) -> u16 {
+    let u = (w as u8).wrapping_add(WAVE_DU);
+    let v = ((w >> 8) as u8).wrapping_add(WAVE_DV);
+    u as u16 | ((v as u16) << 8)
+}
+
+#[inline(always)]
+unsafe fn sway_uv3(uv: [u16; 3]) -> [u16; 3] {
+    if !EMIT_WAVE {
+        return uv;
+    }
+    [sway_uv(uv[0]), sway_uv(uv[1]), sway_uv(uv[2])]
+}
 static mut PUSH_IMPULSE: [i32; 3] = [0; 3]; // per-tick trigger_push velocity add
 static mut ENT_ACTIVE: [u8; MAX_ENTS] = [0; MAX_ENTS];
 
@@ -4707,6 +4758,7 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
                     radius,
                     tex: m.face_tex(face) as u8,
                     is_loop: m.face_is_loop(face),
+                    translucent: m.face_translucent(face),
                 };
             }
             PVS_TRI_REF_COUNT += cnt;
@@ -4897,9 +4949,9 @@ unsafe fn emit_projected(
             packets,
             np,
             [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
-            tri.uv_words,
+            sway_uv3(tri.uv_words),
             rgb,
-            slot.packet,
+            emit_packet_of(&slot, tri.tex),
             world_otz_from_gte3(&pa, &pb, &pc),
         );
         return;
@@ -4935,7 +4987,7 @@ unsafe fn emit_projected(
             packets,
             &[CLIP_CV[0], CLIP_CV[k], CLIP_CV[k + 1]],
             SUBDIV_DEPTH,
-            slot.packet,
+            emit_packet_of(&slot, tri.tex),
             np,
         );
     }
@@ -5152,9 +5204,18 @@ unsafe fn try_emit_quad_corners(
             (pc.sx, pc.sy),
             (pd.sx, pd.sy),
         ],
-        [corners[1].1, corners[0].1, corners[2].1, corners[3].1],
+        if EMIT_WAVE {
+            [
+                sway_uv(corners[1].1),
+                sway_uv(corners[0].1),
+                sway_uv(corners[2].1),
+                sway_uv(corners[3].1),
+            ]
+        } else {
+            [corners[1].1, corners[0].1, corners[2].1, corners[3].1]
+        },
         qrgb,
-        slot.packet,
+        emit_packet_of(&slot, tex),
     );
     let Some(packet) = packets.push(prim) else {
         return false;
@@ -5286,9 +5347,9 @@ unsafe fn emit_proj_fast(
             packets,
             np,
             [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
-            m.tri_uv_words(tt),
+            sway_uv3(m.tri_uv_words(tt)),
             rgb,
-            slot.packet,
+            emit_packet_of(&slot, tex),
             otz,
         );
         return true;
@@ -5344,9 +5405,9 @@ unsafe fn emit_proj_fast_tri(
             packets,
             np,
             [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
-            tri.uv_words,
+            sway_uv3(tri.uv_words),
             rgb,
-            slot.packet,
+            emit_packet_of(&slot, tri.tex),
             otz,
         );
         return true;
@@ -6197,29 +6258,12 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         PVS_CAM_LEAF = -1;
         PVS_LEAF_COUNT = 0;
         PVS_ENT_COUNT = 0;
-        // Water/liquid textures were rendered translucent (Average blend) here.
-        // DISABLED: HL liquid brushes have no geometry drawn behind the surface
-        // (the volume is solid, or it caps a deep/void pit), so an Average blend
-        // over the dark backdrop rendered liquids near-black -- reads as missing
-        // floor. Faithful transparent water needs the underwater scene drawn
-        // behind the surface (a real feature); until then liquids stay opaque
-        // (visible) instead of dark. The cook still flags them (face_translucent)
-        // so re-enabling is a one-line flip.
-        if LIQUID_TRANSPARENCY {
-            for f in 0..m.n_faces {
-                if m.face_translucent(f) {
-                    let t = m.face_tex(f);
-                    if t < MAX_TEX_SLOTS && TEX_SLOTS[t].valid {
-                        let blended = TEX_SLOTS[t].material.with_blend_mode(BlendMode::Average);
-                        TEX_SLOTS[t].material = blended;
-                        // The emit path samples the pre-packed `packet`, so rebuild
-                        // it (it carries the semi-transp bit + tpage blend).
-                        TEX_SLOTS[t].packet =
-                            psx_gpu::material::TexturedGouraudPacketMaterial::from_texture(blended);
-                    }
-                }
-            }
-        }
+        // Liquid/glass translucency is per-face now: the cook keeps the
+        // translucent flag only where this map's vis shows the far side
+        // (watervis water); the emit paths pick a blended packet on demand
+        // (EMIT_BLEND) and sway liquid UVs. Blocked water renders opaque and
+        // animated, exactly like vanilla GoldSrc.
+        BLEND_PACKET_KEY = u32::MAX;
         init_prop_state(&m);
         stream_map_models(&m, VM_POOL_WORDS * 4); // enemies stream after the viewmodel reserve
         clear_combat_fx();
@@ -6873,6 +6917,12 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 // bands first means an overflowing arena drops the FARTHEST faces, not
                 // the floor under your feet (which is what an unbanded late-group emit
                 // would drop -- the missing-near-geometry bug this fixes).
+                // Liquid sway phase for this frame; blend state starts opaque.
+                let wi = ((frame_no >> 3) & 15) as usize;
+                WAVE_DU = WAVE_TAB[wi] as u8;
+                WAVE_DV = WAVE_TAB[(wi + 4) & 15] as u8;
+                EMIT_BLEND = 0;
+                EMIT_WAVE = false;
                 let nbands = if PVS_TRI_REF_COUNT > MAX_RENDER_PACKETS {
                     ((FAR_VIEW >> DEPTH_BAND_SHIFT) + 1).min(N_DEPTH_BANDS)
                 } else {
@@ -6909,6 +6959,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                     }
                                 }
                                 if !WORLD_BOUNDS_CULL || cached_face_visible(rec, &rot, base_t) {
+                                    EMIT_BLEND = rec.translucent as u8;
+                                    EMIT_WAVE = rec.translucent;
                                     if rec.is_loop {
                                         emit_world_face_loop(
                                             &mut packets,
@@ -6945,6 +6997,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                 }
                                 if !WORLD_BOUNDS_CULL || face_bounds_visible(bc, be, &rot, base_t) {
                                     let (first, cnt) = m.face_tris(face);
+                                    EMIT_BLEND = m.face_translucent(face) as u8;
+                                    EMIT_WAVE = EMIT_BLEND != 0;
                                     if m.face_is_loop(face) {
                                         emit_world_face_loop(
                                             &mut packets,
@@ -7091,6 +7145,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                             continue;
                         }
                         let (first, cnt) = m.face_tris(f);
+                        // Glass/glow entities blend; liquid faces also sway.
+                        let fl = m.face_translucent(f);
+                        EMIT_BLEND = if e.blend != 0 { e.blend } else { fl as u8 };
+                        EMIT_WAVE = fl;
                         if m.face_is_loop(f) {
                             emit_world_face_loop(
                                 &mut packets,
@@ -7129,6 +7187,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
                 let submodel_token = next_submodel_draw_token();
                 let (ff, nf) = m.submodel(e.submodel);
+                EMIT_BLEND = e.blend; // glass doors etc.
+                EMIT_WAVE = false;
                 for f in ff..ff + nf {
                     let (first, cnt) = m.face_tris(f);
                     let (fnrm, fd) = m.face_plane(f);
@@ -7143,6 +7203,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     }
                     emit_submodel_face(&mut packets, &m, f, first, cnt, nv, submodel_token, &mut np);
                 }
+                EMIT_BLEND = 0;
             }
             telemetry::stage_end(telemetry::stage::MODEL_BOUNDS);
 

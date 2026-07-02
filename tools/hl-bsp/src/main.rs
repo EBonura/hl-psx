@@ -2123,6 +2123,42 @@ fn entity_leafs(
     out
 }
 
+/// True when `to`'s PVS bit is set in `from`'s decompressed vis row.
+fn leaf_row_sees(leaves: &[u8], vis: &[u8], from: usize, to: usize) -> bool {
+    let n_leaves = leaves.len() / SZ_LEAF;
+    if from == 0 || to == 0 || from >= n_leaves || to >= n_leaves {
+        return false;
+    }
+    let visofs = i32le(leaves, from * SZ_LEAF + SZ_LEAF_VISOFS).unwrap_or(-1);
+    if visofs < 0 {
+        return true; // no vis data = everything visible
+    }
+    let bit = to - 1;
+    let want_byte = bit >> 3;
+    let mut v = visofs as usize;
+    let mut c = 0usize;
+    while v < vis.len() {
+        if vis[v] != 0 {
+            if c == want_byte {
+                return vis[v] & (1 << (bit & 7)) != 0;
+            }
+            v += 1;
+            c += 1;
+        } else {
+            v += 1;
+            if v >= vis.len() {
+                break;
+            }
+            c += vis[v] as usize;
+            if c > want_byte {
+                return false; // inside a zero run
+            }
+            v += 1;
+        }
+    }
+    false
+}
+
 fn point_leaf(point: [f32; 3], nodes: &[u8], planes: &[u8]) -> i16 {
     let mut node_idx = 0i32;
     let mut guard = 0;
@@ -2567,6 +2603,16 @@ fn collect_entities(
             .and_then(parse_vec3)
             .unwrap_or([0.0; 3]);
         let origin = to_world(origin_hl, scale);
+        // HL render modes -> PS1 blend class in the ent kind's high byte:
+        // 1 = semi-transparent (rendermode 2 texture / 3 glow with low amt),
+        // 2 = additive (rendermode 5). Everything else draws opaque.
+        let rendermode = parse_f32_key(block, "rendermode", 0.0) as i32;
+        let renderamt = parse_f32_key(block, "renderamt", 255.0) as i32;
+        let blend: u16 = match rendermode {
+            2 | 3 if renderamt < 250 => 1,
+            5 => 2,
+            _ => 0,
+        };
         let mo = submodel * SZ_MODEL;
         let g = |o: usize| f32le(models, mo + o).unwrap_or(0.0);
         let mins = [g(0), g(4), g(8)];
@@ -2621,7 +2667,7 @@ fn collect_entities(
             );
             out.push(EntRec {
                 submodel: submodel as u16,
-                kind: 1,
+                kind: 1 | (blend << 8),
                 origin,
                 mv,
                 center,
@@ -2650,7 +2696,7 @@ fn collect_entities(
             );
             out.push(EntRec {
                 submodel: submodel as u16,
-                kind: if cls == "func_button" { 3 } else { 1 },
+                kind: (if cls == "func_button" { 3 } else { 1 }) | (blend << 8),
                 origin,
                 mv,
                 center,
@@ -2662,7 +2708,7 @@ fn collect_entities(
             let leaves = entity_leafs(mins, maxs, origin_hl, None, nodes, planes);
             out.push(EntRec {
                 submodel: submodel as u16,
-                kind: if cls == "func_illusionary" { 2 } else { 0 },
+                kind: (if cls == "func_illusionary" { 2 } else { 0 }) | (blend << 8),
                 origin,
                 mv: [0; 3],
                 center,
@@ -4000,6 +4046,38 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
 
     for pref in &plane_groups {
         o.extend_from_slice(&pref.to_le_bytes());
+    }
+
+    // Translucency demotion: keep the blend flag only where this map's vis
+    // can actually see the far side of the surface (watervis-compiled water,
+    // e.g. the blast pit and the toxic pools). Everywhere else GoldSrc itself
+    // renders water opaque from above, so blending would show a void; demote
+    // those faces and they render solid + animated instead.
+    for f in 0..n_faces {
+        if !face_translucent[f] {
+            continue;
+        }
+        let c = face_center[f];
+        let n = face_norm[f];
+        // world -> HL space: swap Y/Z back and rescale.
+        let hl = [
+            c[0] as f32 * scale,
+            c[2] as f32 * scale,
+            c[1] as f32 * scale,
+        ];
+        let hn = [
+            n[0] as f32 / 4096.0,
+            n[2] as f32 / 4096.0,
+            n[1] as f32 / 4096.0,
+        ];
+        let step = 24.0 * scale;
+        let above = [hl[0] + hn[0] * step, hl[1] + hn[1] * step, hl[2] + hn[2] * step];
+        let below = [hl[0] - hn[0] * step, hl[1] - hn[1] * step, hl[2] - hn[2] * step];
+        let la = point_leaf(above, nodes, planes).max(0) as usize;
+        let lb = point_leaf(below, nodes, planes).max(0) as usize;
+        if !(leaf_row_sees(leaves, vis, la, lb) || leaf_row_sees(leaves, vis, lb, la)) {
+            face_translucent[f] = false;
+        }
     }
 
     for &f in &compact_faces {

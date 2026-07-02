@@ -33,7 +33,8 @@ pub struct TexSlot {
     pub backdrop: bool,
 }
 
-const EMPTY_MATERIAL: TextureMaterial = TextureMaterial::opaque(0, 0, (128, 128, 128));
+pub const EMPTY_MATERIAL_PUB: TextureMaterial = TextureMaterial::opaque(0, 0, (128, 128, 128));
+const EMPTY_MATERIAL: TextureMaterial = EMPTY_MATERIAL_PUB;
 
 pub const EMPTY_SLOT: TexSlot = TexSlot {
     material: EMPTY_MATERIAL,

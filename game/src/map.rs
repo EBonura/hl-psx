@@ -254,7 +254,8 @@ pub struct LogicAux {
 #[derive(Clone, Copy)]
 pub struct Ent {
     pub submodel: usize,
-    pub kind: u16, // 0 solid/static, 1 door, 2 nonsolid visual brush
+    pub kind: u16, // 0 solid/static, 1 door, 2 nonsolid visual, 3 button, 4 ladder
+    pub blend: u8, // 0 opaque, 1 semi-transparent (glass), 2 additive (glows)
     pub origin: [i32; 3],
     pub mv: [i32; 3],
     pub center: [i32; 3],
@@ -466,9 +467,11 @@ impl Map {
     pub fn entity(&self, i: usize) -> Ent {
         let o = self.ents_off + i * ENT_SZ;
         let d = self.data;
+        let raw_kind = rd_u16(d, o + 2);
         Ent {
             submodel: rd_u16(d, o) as usize,
-            kind: rd_u16(d, o + 2),
+            kind: raw_kind & 0xFF,
+            blend: (raw_kind >> 8) as u8,
             origin: [rd_i32(d, o + 4), rd_i32(d, o + 8), rd_i32(d, o + 12)],
             mv: [rd_i32(d, o + 16), rd_i32(d, o + 20), rd_i32(d, o + 24)],
             center: [rd_i32(d, o + 28), rd_i32(d, o + 32), rd_i32(d, o + 36)],
