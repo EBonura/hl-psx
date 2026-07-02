@@ -318,18 +318,18 @@ models:
 	@cp "$(MODELPACK)/chunk_$(WEAPON_CHUNK_BASE).psxm" $(ROOT)/data/models/v_9mmhandgun.hlmdl
 	@echo "  --- model roster (all streamed per-map): geom chunk 1300+id, tex chunk 1100+id ---"
 	@for entry in \
-	  "0|scientist|13:4,0:4,24:4,8:4,31:4" \
-	  "1|barney|0:4,4:4,6:4,17:4,25:4" \
-	  "2|headcrab|0:4,4:4,10:4,6:4,7:4" \
+	  "0|scientist|13:6,0:6,24:6,8:6,31:6" \
+	  "1|barney|0:6,4:6,6:6,17:6,25:6" \
+	  "2|headcrab|0:6,4:6,10:6,6:6,7:6" \
 	  "3|w_suit|0" \
 	  "4|w_battery|0" \
-	  "5|zombie|0:4,10:4,8:4,3:4,17:4" \
+	  "5|zombie|0:6,10:6,8:6,3:6,17:6" \
 	  "6|houndeye|0:6,3:6,10:6,12:5,6:6" \
-	  "7|bullsquid|7:5,0:5,8:5,3:5,16:5" \
-	  "8|hgrunt|11:4,1:4,18:4,4:4,35:4" \
-	  "9|islave|0:4,4:4,12:4,13:4,19:4" \
-	  "10|agrunt|0:4,2:4,19:4,6:4,25:4" \
-	  "11|controller|15:4,16:4,0:4,6:4,18:4" \
+	  "7|bullsquid|7:6,0:6,8:6,3:6,16:6" \
+	  "8|hgrunt|11:6,1:6,18:6,4:6,35:6" \
+	  "9|islave|0:6,4:6,12:6,13:6,19:6" \
+	  "10|agrunt|0:6,2:6,19:6,6:6,25:6" \
+	  "11|controller|15:6,16:6,0:6,6:6,18:6" \
 	  "12|barnacle|0:3,0:3,4:3,3:3,6:3" \
 	  "13|leech|3:6,0:6,2:6,3:6,6:6" \
 	  "14|roach|1:6,0:6" \

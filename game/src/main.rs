@@ -221,7 +221,7 @@ const PROP_STATE_DEAD: u8 = 3;
 const N_MODEL_TYPES: usize = 49;
 const MAX_LOADED_MODELS: usize = 22; // distinct model types resident per map (enemies + pickups)
 const POOL_TEX_SLOTS: usize = 240; // shared TexSlot pool across loaded models
-const POOL_FACE_CAP: usize = 5248; // shared RenderFace pool (worst per-map tri sum, c4a3)
+const POOL_FACE_CAP: usize = 6400; // shared RenderFace pool (worst per-map tri sum, c4a3 with statues)
 const MODEL_SLOT_NONE: u8 = 0xFF;
 const MODEL_GEOM_CHUNK_BASE: u32 = 1300;
 const MODEL_TEX_CHUNK_BASE: u32 = 1100;
@@ -1106,9 +1106,16 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
                 .add(face_off),
             POOL_FACE_CAP - face_off,
         );
+        // The pool draw reads topology from POOL_FACES (baked above) and only
+        // verts/clips from the blob, so the TriRec tail is dead weight now.
+        // Keep just the frame section; textures stage over the dropped tail and
+        // the next chunk loads there. Zeroing the header's tri count keeps
+        // future Model::loads of the shortened slice in bounds by construction.
+        let kept = md.frame_section_len().min(glen);
+        *buf_ptr.add(geom_word + 2) = 0; // header u32 n_tris at byte offset 8
         let (ntex, _failed) = stream_model_texture_chunk(
             MODEL_TEX_CHUNK_BASE + ty as u32,
-            geom_word + glen.div_ceil(4), // stage tex in the free tail above this geom
+            geom_word + kept.div_ceil(4), // stage tex in the free tail above the kept prefix
             MODEL_WORDS,                  // ... up to the end of the pool
             core::ptr::addr_of_mut!(POOL_TEX).cast::<TexSlot>().add(tex_off),
             POOL_TEX_SLOTS - tex_off,
@@ -1121,14 +1128,14 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
             valid: true,
             type_id: ty as u8,
             geom_off: geom_word * 4,
-            geom_len: glen,
+            geom_len: kept,
             face_start: face_off,
             n_faces: nf,
             tex_start: tex_off,
             n_tex: ntex,
         };
         TYPE_TO_SLOT[ty] = slot_idx as u8;
-        geom_word += glen.div_ceil(4);
+        geom_word += kept.div_ceil(4);
         face_off += nf;
         tex_off += ntex;
         slot_idx += 1;
@@ -5590,7 +5597,10 @@ unsafe fn draw_model(
     }
     telemetry::stage_end(telemetry::stage::TEXTURED_MODEL_PROJECT);
     telemetry::stage_begin(telemetry::stage::TEXTURED_MODEL_FACES);
-    let nfaces = face_count.min(md.n_tris);
+    // face_count comes from fill_render_faces_raw at stream time; the pool
+    // repack zeroes the blob's n_tris afterwards (TriRec tail dropped), so the
+    // baked count is the authoritative bound here.
+    let nfaces = face_count;
     for t in 0..nfaces {
         let render_face = *faces.add(t);
         let (a, b, c) = (

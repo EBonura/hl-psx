@@ -271,6 +271,14 @@ impl Model {
     }
 
     #[inline]
+    /// Byte length of the header + clips + frame recs + frame data prefix --
+    /// everything the per-frame draw needs. The TriRec/texture tail after it is
+    /// only read by `fill_render_faces_raw`/`tri()` (load-time or viewmodels),
+    /// so the enemy pool can drop it once the faces are baked.
+    pub fn frame_section_len(&self) -> usize {
+        self.tri_off
+    }
+
     pub fn tri(&self, t: usize) -> Tri {
         let o = self.tri_off + t * self.tri_sz;
         let d = self.data;
