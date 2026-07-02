@@ -5040,23 +5040,56 @@ unsafe fn try_emit_tri_pair_quad_values(
     if t0.tex >= m.n_texs || t0.tex >= MAX_TEX_SLOTS {
         return false;
     }
-
-    let a = t0.idx[0] as usize;
-    let c = t0.idx[1] as usize;
-    let b = t0.idx[2] as usize;
-    let d = t1.idx[1] as usize;
-    if t0.tex != t1.tex || t1.idx[0] as usize != a || t1.idx[2] as usize != c {
+    let a = t0.idx[0];
+    let c = t0.idx[1];
+    let b = t0.idx[2];
+    if t0.tex != t1.tex || t1.idx[0] != a || t1.idx[2] != c {
         return false;
     }
+    try_emit_quad_corners(
+        packets,
+        m,
+        t0.tex,
+        [
+            (a, t0.uv_words[0], t0.rgb[0]),
+            (b, t0.uv_words[2], t0.rgb[2]),
+            (c, t0.uv_words[1], t0.rgb[1]),
+            (t1.idx[1], t1.uv_words[1], t1.rgb[1]),
+        ],
+        nv,
+        frame,
+        nq,
+    )
+}
+
+/// Quad-pair core on pre-decoded corners (a=shared fan base, b/c = the shared
+/// diagonal pair's outer verts, d = the second tri's new vert). The world loop
+/// walker feeds this directly so each loop vertex is decoded exactly once.
+unsafe fn try_emit_quad_corners(
+    packets: &mut PrimitivePacketArena<'_>,
+    m: &Map,
+    tex: usize,
+    corners: [(u16, u16, (u8, u8, u8)); 4], // (vert idx, uv word, rgb) a,b,c,d
+    nv: usize,
+    frame: u16,
+    nq: &mut usize,
+) -> bool {
+    if tex >= m.n_texs || tex >= MAX_TEX_SLOTS {
+        return false;
+    }
+    let (a, b, c, d) = (
+        corners[0].0 as usize,
+        corners[1].0 as usize,
+        corners[2].0 as usize,
+        corners[3].0 as usize,
+    );
     if a >= nv || b >= nv || c >= nv || d >= nv {
         return true;
     }
-
-    let slot = TEX_SLOTS[t0.tex];
+    let slot = TEX_SLOTS[tex];
     if !slot.valid {
         return true;
     }
-
     proj_vert(m, a, frame);
     proj_vert(m, b, frame);
     proj_vert(m, c, frame);
@@ -5081,9 +5114,11 @@ unsafe fn try_emit_tri_pair_quad_values(
     // and rasterize to garbage/black. View-dependent, so it pops in and out as
     // the camera moves. When that happens, defer to the single-tri path (each
     // half is convex on its own and draws fine).
-    let area = |p: &Projected, q: &Projected, r: &Projected| -> i64 {
-        (q.sx as i64 - p.sx as i64) * (r.sy as i64 - p.sy as i64)
-            - (q.sy as i64 - p.sy as i64) * (r.sx as i64 - p.sx as i64)
+    // Screen coords are clamped to +-1023 above, so the cross products fit i32
+    // (2047 * 2047 max per term): no 64-bit multiply sequences on the R3000.
+    let area = |p: &Projected, q: &Projected, r: &Projected| -> i32 {
+        (q.sx as i32 - p.sx as i32) * (r.sy as i32 - p.sy as i32)
+            - (q.sy as i32 - p.sy as i32) * (r.sx as i32 - p.sx as i32)
     };
     let w_bac = area(&pb, &pa, &pc);
     let w_adc = area(&pa, &pd, &pc);
@@ -5099,14 +5134,15 @@ unsafe fn try_emit_tri_pair_quad_values(
     {
         return true;
     }
+    let (rgb_a, rgb_b, rgb_c, rgb_d) = (corners[0].2, corners[1].2, corners[2].2, corners[3].2);
     let qrgb = if slot.backdrop {
-        [t0.rgb[2], t0.rgb[0], t0.rgb[1], t1.rgb[1]]
+        [rgb_b, rgb_a, rgb_c, rgb_d]
     } else {
         [
-            fog1(t0.rgb[2], pb.sz as i32),
-            fog1(t0.rgb[0], pa.sz as i32),
-            fog1(t0.rgb[1], pc.sz as i32),
-            fog1(t1.rgb[1], pd.sz as i32),
+            fog1(rgb_b, pb.sz as i32),
+            fog1(rgb_a, pa.sz as i32),
+            fog1(rgb_c, pc.sz as i32),
+            fog1(rgb_d, pd.sz as i32),
         ]
     };
     let prim = QuadTexturedGouraud::with_packet_material_packed_uv_words(
@@ -5116,12 +5152,7 @@ unsafe fn try_emit_tri_pair_quad_values(
             (pc.sx, pc.sy),
             (pd.sx, pd.sy),
         ],
-        [
-            t0.uv_words[2],
-            t0.uv_words[0],
-            t0.uv_words[1],
-            t1.uv_words[1],
-        ],
+        [corners[1].1, corners[0].1, corners[2].1, corners[3].1],
         qrgb,
         slot.packet,
     );
@@ -5515,19 +5546,45 @@ unsafe fn emit_world_face_loop(
     nq: &mut usize,
     counts: &mut WorldCounters,
 ) {
+    // Rolling window over the fan: decode each loop vertex exactly once
+    // (the old path rebuilt full RenderTris per pair, re-decoding shared
+    // corners three to four times through the uncached blob).
+    let va = m.loop_vert(base); // shared fan base
+    let mut vk = m.loop_vert(base + 1);
     let mut k = 1;
     while k + 1 < count {
+        let vk1 = m.loop_vert(base + k + 1);
         if WORLD_QUAD_PAIRING && k + 2 < count {
-            let t0 = m.loop_render_tri(tex, base, base + k + 1, base + k);
-            let t1 = m.loop_render_tri(tex, base, base + k + 2, base + k + 1);
-            if try_emit_tri_pair_quad_values(packets, m, t0, t1, nv, frame, nq) {
+            let vk2 = m.loop_vert(base + k + 2);
+            // Fan structure guarantees the shared edge; go straight to the core.
+            if try_emit_quad_corners(
+                packets,
+                m,
+                tex,
+                [
+                    (va.0, va.1, va.2),
+                    (vk.0, vk.1, vk.2),
+                    (vk1.0, vk1.1, vk1.2),
+                    (vk2.0, vk2.1, vk2.2),
+                ],
+                nv,
+                frame,
+                nq,
+            ) {
                 counts.emit_calls += 2;
+                vk = vk2;
                 k += 2;
                 continue;
             }
         }
-        let tri = m.loop_render_tri(tex, base, base + k + 1, base + k);
+        let tri = map::RenderTri {
+            idx: [va.0, vk1.0, vk.0],
+            tex,
+            uv_words: [va.1, vk1.1, vk.1],
+            rgb: [va.2, vk1.2, vk.2],
+        };
         emit_world_loop_tri(packets, m, &tri, nv, frame, np, counts);
+        vk = vk1;
         k += 1;
     }
 }

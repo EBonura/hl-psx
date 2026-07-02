@@ -793,6 +793,22 @@ impl Map {
         self.light_color(self.data[self.loopvert_o(v) + 4])
     }
 
+    /// Fused single-pass decode of one loop vertex: (vert index, packed uv
+    /// word, lit rgb). One offset computation + 5 byte reads + a table hit,
+    /// instead of three separate accessor walks on the hottest world path.
+    #[inline]
+    pub fn loop_vert(&self, v: usize) -> (u16, u16, (u8, u8, u8)) {
+        let o = self.loopvert_o(v);
+        let d = self.data;
+        unsafe {
+            (
+                rd_u16(d, o),
+                rd_u16(d, o + 2),
+                self.light_color(*d.get_unchecked(o + 4)),
+            )
+        }
+    }
+
     /// Build a RenderTri from three absolute loop-vertex indices (the runtime fan
     /// of a loop face), carrying the face's single texture.
     #[inline]
