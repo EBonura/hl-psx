@@ -204,7 +204,7 @@ const PROP_STATE_DEAD: u8 = 3;
 const N_MODEL_TYPES: usize = 26;
 const MAX_LOADED_MODELS: usize = 12; // distinct model types resident per map
 const POOL_TEX_SLOTS: usize = 240; // shared TexSlot pool across loaded models
-const POOL_FACE_CAP: usize = 4608; // shared RenderFace pool (worst per-map tri sum)
+const POOL_FACE_CAP: usize = 5248; // shared RenderFace pool (worst per-map tri sum, c4a3)
 const MODEL_SLOT_NONE: u8 = 0xFF;
 const MODEL_GEOM_CHUNK_BASE: u32 = 1300;
 const MODEL_TEX_CHUNK_BASE: u32 = 1100;
@@ -1028,12 +1028,28 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
     let mut slot_idx = 0usize;
     let (mut sc, mut sb, mut ss) = (0u32, 0u32, 0u32);
     let nprops = m.n_props.min(MAX_PROPS);
+    // Two passes: combat/interactive types first, decorative render-only types
+    // (AI_IDLE: bosses, flyers, barnacles) last. If a heavy roster overflows the
+    // pool, a background statue drops instead of a fighting enemy.
+    let mut pass = 0;
     let mut pi = 0usize;
-    while pi < nprops {
+    loop {
+        if pi >= nprops {
+            if pass == 0 {
+                pass = 1;
+                pi = 0;
+                continue;
+            }
+            break;
+        }
         let ty = (m.prop(pi).0 & !PROP_DEAD_BIT) as usize; // corpses stream their live model
         pi += 1;
         if ty >= N_MODEL_TYPES || TYPE_TO_SLOT[ty] != MODEL_SLOT_NONE {
             continue; // out of range, or this type is already resident
+        }
+        let decorative = model_def(ty as u8).ai == AI_IDLE;
+        if (pass == 0) == decorative {
+            continue; // wrong pass for this type
         }
         if slot_idx >= MAX_LOADED_MODELS || geom_word >= MODEL_WORDS {
             break;
