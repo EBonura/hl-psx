@@ -568,20 +568,69 @@ Menu maps are curated in two places that MUST stay in sync: Makefile `MAPLIST`
   viewmodels geom 1000+wm / tex 2000+wm, enemies geom 1300+id / tex 1100+id,
   SFX 3000.
 
+## M20 -- progression systems (DONE)
+
+Everything a start-to-finish run needs, in one pass:
+
+- **Ladders**: func_ladder cooks as ent kind 4 (invisible AABB, world
+  half-extents in `mv`); overlapping it switches the player to
+  `Player::update_climb` (gravity off; look up + forward climbs, look down
+  descends, jump lets go). Kind 4 is excluded from draw/PVS/movers.
+- **Movers report identity**: `phys::Mover` carries its ent id; traces return
+  `mover` (RayHit too); the player tracks `ground_mover`. That enables:
+- **Ride-carry**: a mover you stood on last tick that shifted (door phase)
+  carries you by its delta (`ENT_PREV_OFF`) -- plats/elevators are ridable.
+- **func_plat**: cooked as a door-machinery mover (authored at top, mv =
+  straight down by `height` or size-8; untargeted = touch-activated).
+- **func_breakable / func_pushable**: LOGIC_FUNC_BREAKABLE (health arg0,
+  material arg1); hitscans and explosions hitting the brush damage it; at 0 HP
+  the ent deactivates, fires its targets, and plays glass vs wood break.
+  SF trigger-only respected.
+- **trigger_teleport** (dest resolved at cook into 2 aux entries, applied
+  mid-tick before the render eye), **trigger_push** (per-tick world vector in
+  aux; vertical adds velocity, lateral nudges position), **trigger_gravity**
+  (q12 scale -> `phys::set_gravity_scale`, reset each map load).
+- **Chargers**: func_healthcharger / func_recharge are use-aimables; juice in
+  LOGIC_COUNTER drains 4/pulse into health/armor with the medshot sound.
+- **Drivable tracktrain**: standing on the train + use toggles it at the
+  authored speed (On A Rail); triggers can still command it.
+
+## M21 -- faithful pickups + RAM fit for every roster (DONE)
+
+- **weapon_*/ammo_*/item_healthkit pickups** cook as prop types 26..48 with
+  real single-frame w_* models. Touch = give weapon (dupes -> one magazine),
+  capped ammo, or +15 health. `give_full_arsenal` is GONE: fresh starts are
+  crowbar+glock; **changelevel carries the whole arsenal** (owned mask, clips,
+  pools, selection) via CARRY_* statics; menu launches reset it.
+- **RAM audit (all 96 maps)**: MODEL_BUF +32 KB; actors bake 4 frames/clip,
+  render-only bosses 1 (statues); 22 resident type slots; POOL_FACE_CAP 5248.
+  `stream_map_models` is two-pass: combat/interactive types load before
+  AI_IDLE decoratives, so overflow drops a statue, never a fighting enemy.
+  Verified: every combat/ally/pickup model resident on all 96 maps (only the
+  c1a2b/c2a1 gman cameo + c4a3 background garg/icky statues drop). All maps
+  fit MAP_BUF (96/96); static headroom 97.3 KiB (min 96); the VM reserve
+  (182 K) is smaller than all-14 viewmodels (207 K) -- late-game switches can
+  fall back to the glock visual, graceful.
+- **Perf re-verified** post-systems: c1a0 direct boot ~18 fps (20 Hz pace with
+  occasional misses), c2a5 spawn at pace. NB `--dump-hw` replays a
+  capacity-truncated cmd log -- its display + GP1 05h swap trail are NOT
+  whole-run evidence (cost a false "freeze" diagnosis); use a tty heartbeat +
+  `--guest-debug-log` for liveness.
+
 ## Next (pick per value)
 
-- **Faithful weapon_* / ammo_* pickups** (w_* world models; drop
-  give_full_arsenal). The biggest remaining faithfulness gap.
 - **Real water transparency** (needs the underwater scene drawn behind the
   surface; blend alone renders near-black -- see M-notes above).
-- **Walk on the moving tram** (moving-platform physics; earlier attempt fell
-  through the floor -- needs re-seat-on-platform-per-frame).
 - **More perf on fill-bound open maps** (c2a5-class): geometry LOD or
   resolution tricks; CPU side is done to ~20fps.
 - **c4a3 chapter spawn** lands in a near-black pocket (campaign arrives via
   teleport; brightness-aware spawn scoring is the noted fix).
 - **More SFX polish**: footsteps, weapon reloads, ambient loops (voices 16-23
   reserved), fvox/HEV voice.
+- **Scripted sequences / monster spawners** (monstermaker, scripted_sequence)
+  for set pieces; func_rotating visuals.
+- **VM pool**: 182 K reserve < 207 K all-14 viewmodels; either +25 K or accept
+  the glock-visual fallback late-game.
 
 ## PSoXide SDK map (third_party/PSoXide/sdk/crates)
 
