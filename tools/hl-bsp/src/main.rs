@@ -2850,10 +2850,12 @@ fn collect_props(
     let mut out = Vec::new();
     for block in s.split('{') {
         // Model-type id space, shared with the runtime registry (game/src/model_defs).
-        // 0-4 = the original NPCs/items; 5-24 = the full enemy roster. `*_dead`
+        // 0-4 = the original NPCs/items; 5-24 = the full enemy roster; 25 = the
+        // seated scientist (own baked sit pose, no ground snap). `*_dead`
         // corpses are skipped for now (decorative; they need a dead-spawn flag).
         let ty = match ent_value(block, "classname").unwrap_or("") {
-            "monster_scientist" | "monster_sitting_scientist" => 0u16,
+            "monster_scientist" => 0u16,
+            "monster_sitting_scientist" => 25u16,
             "monster_barney" => 1u16,
             "monster_headcrab" => 2u16,
             "item_suit" => 3u16,

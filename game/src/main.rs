@@ -188,16 +188,18 @@ const PROP_TYPE_BARNEY: u8 = 1;
 const PROP_TYPE_HEADCRAB: u8 = 2;
 const PROP_TYPE_ITEM_SUIT: u8 = 3;
 const PROP_TYPE_ITEM_BATTERY: u8 = 4;
+const PROP_TYPE_CONTROLLER: u8 = 11; // flies: exempt from walker floor checks
+const PROP_TYPE_SITTING_SCI: u8 = 25; // seated pose, keeps its authored chair height
 const PROP_STATE_IDLE: u8 = 0;
 const PROP_STATE_MOVE: u8 = 1;
 const PROP_STATE_ATTACK: u8 = 2;
 const PROP_STATE_DEAD: u8 = 3;
 
 // ---- per-map model pool registry ----
-// 25 model types (the cook's collect_props ids). Each streams from WORLD.PAK:
+// 26 model types (the cook's collect_props ids). Each streams from WORLD.PAK:
 // geometry chunk `1300+id`, texture chunk `1100+id`. The runtime keeps only the
 // types a map places resident (TYPE_TO_SLOT -> LOADED_MODELS).
-const N_MODEL_TYPES: usize = 25;
+const N_MODEL_TYPES: usize = 26;
 const MAX_LOADED_MODELS: usize = 12; // distinct model types resident per map
 const POOL_TEX_SLOTS: usize = 240; // shared TexSlot pool across loaded models
 const POOL_FACE_CAP: usize = 4608; // shared RenderFace pool (worst per-map tri sum)
@@ -284,6 +286,7 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef_atk(30, 30, 60, AI_TURRET, 0, 1000, 5, 3),            // 22 miniturret
     mdef(80, 60, 150, AI_IDLE),                                 // 23 apache (flyer: render only)
     mdef(10, 20, 60, AI_IDLE),                                  // 24 flyer_flock (passive)
+    mdef(SCIENTIST_HEALTH, 25, SCIENTIST_RENDER_RADIUS, AI_IDLE), // 25 sitting scientist
 ];
 
 #[inline]
@@ -2439,11 +2442,18 @@ unsafe fn prop_try_step(
         if d2 > 0 {
             let len = isqrt(d2).max(1);
             let step = speed.min(len);
-            let np = prop_grounded_pos(
-                m,
-                movers,
-                [pos[0] + sx * step / len, pos[1], pos[2] + sz * step / len],
-            );
+            let cand = [pos[0] + sx * step / len, pos[1], pos[2] + sz * step / len];
+            // Walkers refuse a step with no floor under it (HL CheckLocalMove):
+            // accepting it froze the actor's height and sent it chasing on air
+            // over pits/ledges. The flying controller keeps its altitude.
+            let np = match prop_floor_y(m, cand) {
+                Some(y) => [cand[0], y, cand[2]],
+                None if ty == PROP_TYPE_CONTROLLER => cand,
+                None => {
+                    i += 1;
+                    continue;
+                }
+            };
             let to = prop_target(ty, np);
             if actor_line_clear(m, movers, from, to) {
                 prop_set_pos(m, movers, pi, np);
@@ -3139,7 +3149,13 @@ unsafe fn init_prop_state(m: &Map) {
     while pi < nprops {
         let (ty, org, yaw, leaf) = m.prop(pi);
         let kind = ty as u8;
-        let org = prop_grounded_pos(m, &[], org);
+        // Sitting scientists are authored at seat height on chair brushes the
+        // world tree can't see; snapping would drop them through the chair.
+        let org = if kind == PROP_TYPE_SITTING_SCI {
+            org
+        } else {
+            prop_grounded_pos(m, &[], org)
+        };
         PROP_ACTIVE[pi] = 1;
         PROP_KIND[pi] = kind;
         PROP_POS[pi] = org;
