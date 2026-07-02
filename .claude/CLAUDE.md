@@ -723,20 +723,46 @@ per-sequence anim baking + move-to), func_rotating (fans), func_train for
 brush platforms on paths, momentary_* (wheel valves), env_render/env_glow,
 monster gibs, ambient_generic loops, save/load.
 
+## M25 -- CPU perf close-out (DONE; every measured scene paces at 20 fps)
+
+Post-ghost-fix pc-sample round (pure build, c1a0, method in M22):
+- **Per-frame stack zeroing killed**: the movers array memset ~7.7 KB/frame
+  (play 32.8 -> 28.9%); emit_projected's inlined guard-clip buffer memset
+  256 B in the PROLOGUE of every soft-path call (even when the in-band fast
+  path returned early) + guard_clip zeroed 2x256 B ping-pong buffers per
+  call. All statics now. LESSON: grep hot fns for `let mut x = [ZERO; N]` --
+  LLVM hoists the zeroing to the prologue where it taxes every call path.
+- **guard_clip skips untouched edges**: bounds once, then only the crossed
+  band edges clip (was: 4 unconditional full copy passes). clip_edge
+  4.8 -> 2.8%.
+- **Per-tri vert bounds checks dropped**: the cook now asserts every cooked
+  corner < n_verts (raw tris, loop faceverts, model tris) and rejects maps
+  over MAX_VERTS; the runtime walks trust it. Implicit array bounds vs the
+  static scratch sizes remain the fail-safe.
+- **Quad-safe cook flag idea RETIRED**: the old 15.5% try_emit_tri_pair_
+  quad_values figure was mostly fused decode; the pairing compares are
+  already inlined-cheap, and the bowtie test is view-dependent (a planar
+  convex quad CAN project to a bowtie near-grazing) so it must stay.
+- **Verified paced**: c1a0, c1a1a, c2a4c, c2a5 spawn views all hold 20.00
+  fps (counter-log tail). Remaining dips = combat transients + GPU fill.
+  NB the counter CSV skips rows -- diff guest_frame BETWEEN rows or fake
+  "spikes" appear (a 4.4 M "frame" was 2-3 paced frames).
+- Profile shape now: play ~31% (pacer/DMA spin ~6.5% inside it),
+  quad_corners 13.7%, face_loop 9.7%, face_tris 7.8%, render_tri 5.7%,
+  soft path ~8%, ModelFrame::vert 3.9%, fog ~3.4%, GTE still ~2%.
+
 ## Next (pick per value)
 
 - **scripted_sequence v1**: the biggest remaining faithfulness gap (intro set
   pieces); needs prop targetnames + a move-to + per-sequence anim bake.
-- **More perf on fill-bound open maps** (c2a5-class): geometry LOD or
-  resolution tricks; CPU side is done to ~20fps.
+- **GPU fill on open maps** (c2a5-class vistas): the only perf frontier left;
+  mask-bit occlusion already tried = zero gain; geometry LOD is the credible
+  lever.
 - **c4a3 chapter spawn** lands in a near-black pocket (campaign arrives via
   teleport; brightness-aware spawn scoring is the noted fix).
 - **Ambient loops** (ambient_generic) + HEV fvox lines (~175 KB SPU free).
 - **VM pool**: 182 K reserve < 207 K all-14 viewmodels; either +25 K or accept
   the glock-visual fallback late-game.
-- **Quad-pair cook flag**: try_emit_tri_pair_quad_values is 15.5% of CPU;
-  precompute "quad-safe" per loop face at cook (FaceRec flags bit2 free) to
-  skip the runtime geometry checks on axis-aligned world faces.
 
 ## PSoXide SDK map (third_party/PSoXide/sdk/crates)
 
