@@ -751,13 +751,42 @@ Post-ghost-fix pc-sample round (pure build, c1a0, method in M22):
   quad_corners 13.7%, face_loop 9.7%, face_tris 7.8%, render_tri 5.7%,
   soft path ~8%, ModelFrame::vert 3.9%, fog ~3.4%, GTE still ~2%.
 
+## M26 -- non-CPU audit + WORLD.PAK compression (DONE)
+
+"Squeeze the non-CPU side" round; conclusions are evidence, not guesses:
+- **PSoXide charges NO cost for polygon rasterization** (busy credit only on
+  VRAM copies/fills; see gpu.rs charge_busy). The DMA chain completes before
+  the game even polls (DMA-wait spin = 0.00% of PC samples; the 7.5% "spin"
+  cluster is pure 20 Hz vsync pacing idle). There is NO GPU/DMA frame cost
+  to reclaim in-target -- "c2a5 is GPU-fill-bound" from earlier notes is
+  OBSOLETE. Frame perf work ends at the CPU (M25).
+- **CD loads**: sector cadence is CD_READ_TIME/2 = 225,792 cycles at 2x, but
+  the emulator delivers faster than cadence under load (world chunk: 45M
+  cycles for 350 sectors ~= 129k/sector). Load cost splits roughly: tex 27M
+  + viewmodels 21M + world 45M + ~30-40 model chunks (~90M, dominated by
+  per-chunk PAUSE ~1M + READN respin ~0.45M) + VRAM upload ~5M.
+- **WORLD.PAK room chunks are LZ4-compressed** (mkisopsx
+  --world-pack-compress-rooms; HLZC | raw_len | block). data/rooms stays RAW
+  (build.rs + audits parse those). Runtime: read to MAP_BUF head, shift to
+  tail, decode tail->head in place (build.rs pads MAP_WORDS +4 KB margin).
+  Disc 62.5 -> 51.5 MB, ~2.2:1 on geometry chunks, pixel-identical, load
+  time in-target UNCHANGED (saved sectors ~= decode cost under the lenient
+  delivery); real wins appear on any faithful-cadence backend.
+- **Open-READN chunk batching REVERTED**: keeping the read session across
+  model chunks (skip per-chunk PAUSE) made loads 3.4x SLOWER -- after a
+  chunk's last consumed sector the drive keeps delivering, and recovering
+  alignment mid-session fights the FIFO model. The safe lever is FEWER
+  chunks: merge each type's geom+tex chunk, or cook per-map bundles -- but
+  mind the transient fit (geom full + tex must fit the pool tail during
+  load; the resident audit does not model that).
+
 ## Next (pick per value)
 
 - **scripted_sequence v1**: the biggest remaining faithfulness gap (intro set
   pieces); needs prop targetnames + a move-to + per-sequence anim bake.
-- **GPU fill on open maps** (c2a5-class vistas): the only perf frontier left;
-  mask-bit occlusion already tried = zero gain; geometry LOD is the credible
-  lever.
+- **Load time**: per-chunk PAUSE dominates model streaming; merged geom+tex
+  chunks or per-map bundles halve/collapse the count (watch transient fit).
+  GPU fill is NOT a frontier (M26: rasterization is free in-target).
 - **c4a3 chapter spawn** lands in a near-black pocket (campaign arrives via
   teleport; brightness-aware spawn scoring is the noted fix).
 - **Ambient loops** (ambient_generic) + HEV fvox lines (~175 KB SPU free).
