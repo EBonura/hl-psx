@@ -152,7 +152,7 @@ const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the li
 // look right; opaque liquids stay visible in the meantime.
 const LIQUID_TRANSPARENCY: bool = false;
 const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in front of the camera
-const DBG_PAD_BOOT: bool = false; // debug: hold L1 | map_index (low byte) at boot to load any map headlessly
+const DBG_PAD_BOOT: bool = cfg!(feature = "debug-map-boot"); // hold L1 | map_index to boot any map headlessly
 // Debug: pin the camera to a fixed pose (to reproduce a specific view headlessly).
 const DBG_CAM: bool = false;
 const DBG_CAM_POS: [i32; 3] = [-624, -184, -160];

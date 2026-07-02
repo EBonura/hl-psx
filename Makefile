@@ -27,6 +27,9 @@ PSOXIDE_GAMEPLAY_STEPS ?= 320000000
 PSOXIDE_PROFILE_STEPS ?= 600000000
 PSOXIDE_PROFILE_VISUAL_FRAMES ?= 24
 PSOXIDE_PROFILE_FRAMES ?= 1200
+PSOXIDE_MAP_SMOKE_STEPS ?= 240000000
+PSOXIDE_MAP_SMOKE_VISUAL_FRAMES ?= 8
+MAP_INDEX ?= 0
 MEMORY_MAP ?= $(CAPTURE_DIR)/hl-psx.map
 MIN_HEADROOM_KB ?= 96
 # Default gameplay route confirms New Game from the top-level menu.
@@ -50,7 +53,7 @@ HLBSP_BIN := $(HLBSP)/target/release/hl-bsp
 MAP      ?= c1a0
 
 .DEFAULT_GOAL := build
-.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms campaign-map-report menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-chart memory-report
+.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms campaign-map-report menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-map-smoke psoxide-chart memory-report
 
 help:
 	@echo "hl-psx targets:"
@@ -67,6 +70,7 @@ help:
 	@echo "  make psoxide-smoke    - headless menu screenshot/hash via PSoXide"
 	@echo "  make psoxide-gameplay - headless c1a0 gameplay screenshot/hash"
 	@echo "  make psoxide-profile  - telemetry build + CSV/profile screenshot"
+	@echo "  make psoxide-map-smoke MAP_INDEX=N - boot map N directly in PSoXide"
 	@echo "  make psoxide-chart    - profile + HTML vblank chart"
 	@echo "  make memory-report    - linker-map RAM budget + top symbols"
 	@echo "  make check-assets - verify the source Half-Life install (HL_DIR)"
@@ -154,6 +158,26 @@ psoxide-profile:
 		--dump-hw $(CAPTURE_DIR)/hl-psx-profile-hw.ppm \
 		--dump-hash
 	@echo "PROFILE -> $(CAPTURE_DIR)/hl-psx-profile.csv"
+
+psoxide-map-smoke:
+	$(MAKE) disc FEATURES=emulator-telemetry,debug-map-boot PSOXIDE="$(PSOXIDE)"
+	@mkdir -p $(CAPTURE_DIR)
+	@mask=$$(printf "0x%04x" $$((0x0400 | $(MAP_INDEX)))); \
+	out="$(CAPTURE_DIR)/hl-psx-map-$$(printf "%03d" $(MAP_INDEX))"; \
+	echo "direct map boot MAP_INDEX=$(MAP_INDEX) pad=$$mask"; \
+	$(PSOXIDE_LAUNCH) \
+		--path $(DIST)/hl-psx.cue \
+		--embedded-playtest \
+		--steps $(PSOXIDE_MAP_SMOKE_STEPS) \
+		--guest-visual-frames $(PSOXIDE_MAP_SMOKE_VISUAL_FRAMES) \
+		--pad-pulses "$$mask@1+180" \
+		--profile-log "$$out.csv" \
+		--counter-log "$$out-counter.csv" \
+		--dump-guest-profile \
+		--guest-debug-log \
+		--dump-display "$$out.ppm" \
+		--dump-hash
+	@echo "MAP SMOKE -> $(CAPTURE_DIR)/hl-psx-map-$$(printf "%03d" $(MAP_INDEX)).ppm"
 
 psoxide-chart: psoxide-profile
 	$(PSOXIDE_DEV) vblank-chart \

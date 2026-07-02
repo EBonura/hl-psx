@@ -25,6 +25,9 @@ default = []
 # Emits PSoXide-only MMIO telemetry so `frontend launch` can stop on guest
 # frames and write profile/counter CSVs. Keep it off for burn/shipping builds.
 emulator-telemetry = []
+# Headless-only test hook: hold L1 plus a low-byte map index at boot to skip the
+# menu and load that map directly. Off for normal discs.
+debug-map-boot = []
 
 # SDK crates from the sibling main PSoXide checkout. hl-psx intentionally rides
 # the shared library so engine/SDK optimisations can be reused directly.
