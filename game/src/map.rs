@@ -91,6 +91,9 @@ fn unpack_rgb555(v: u16) -> (u8, u8, u8) {
     )
 }
 
+// Load-time-expanded light palette (see `expand_light_palette`).
+static mut LIGHT_PAL_RGB: [[u8; 3]; 256] = [[0; 3]; 256];
+
 const PLANE_SZ: usize = 10;
 const FACE_GROUP_SZ: usize = 2;
 const NODE_SZ: usize = 6;
@@ -606,10 +609,25 @@ impl Map {
         unsafe { *self.data.get_unchecked(self.tri_off + t * TRI_SZ + 12) as usize }
     }
 
-    /// Look up a per-corner lightmap colour through the map's 256-entry palette.
+    /// Look up a per-corner lightmap colour. Reads the palette pre-expanded at
+    /// load (`expand_light_palette`): one static read instead of an uncached
+    /// blob u16 load plus three shift/or unpacks per corner, on the hottest
+    /// per-triangle path in the game.
     #[inline]
     fn light_color(&self, idx: u8) -> (u8, u8, u8) {
-        unpack_rgb555(rd_u16(self.data, self.light_pal_off + idx as usize * 2))
+        unsafe {
+            let c = LIGHT_PAL_RGB[idx as usize];
+            (c[0], c[1], c[2])
+        }
+    }
+
+    /// Pre-expand the 256-entry rgb555 light palette into bytes. Call once
+    /// after `load` (the palette is per-map).
+    pub fn expand_light_palette(&self) {
+        for i in 0..256 {
+            let (r, g, b) = unpack_rgb555(rd_u16(self.data, self.light_pal_off + i * 2));
+            unsafe { LIGHT_PAL_RGB[i] = [r, g, b] };
+        }
     }
 
     #[inline]

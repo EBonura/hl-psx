@@ -744,6 +744,9 @@ static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PREV_OFF: [[i32; 3]; MAX_ENTS] = [[0; 3]; MAX_ENTS]; // ride-carry deltas
 static mut ENT_BREAK_LOGIC: [u16; MAX_ENTS] = [u16::MAX; MAX_ENTS]; // ent -> breakable logic rec
 static mut LOGIC_BREAK_HP: [u16; MAX_LOGIC] = [0; MAX_LOGIC]; // remaining breakable health
+// Per-rec kind byte, cached at load: the per-tick scans skip records without
+// re-parsing the full 64 B LogicEnt from the uncached blob.
+static mut LOGIC_KIND: [u8; MAX_LOGIC] = [0; MAX_LOGIC];
 static mut TELEPORT_REQUEST: Option<([i32; 3], u16)> = None; // dest pos + yaw, applied post-touch
 static mut PUSH_IMPULSE: [i32; 3] = [0; 3]; // per-tick trigger_push velocity add
 static mut ENT_ACTIVE: [u8; MAX_ENTS] = [0; MAX_ENTS];
@@ -821,6 +824,7 @@ unsafe fn ai_reacquire(pi: usize) -> bool {
 }
 static mut PROP_HEALTH: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_HIT_FLASH: [u8; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_OCC_VIS: [u8; MAX_PROPS] = [1; MAX_PROPS]; // staggered occlusion verdicts
 static mut PROP_LOGIC_LINK: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS];
 static mut NAV_QUEUE: [u8; MAX_NAV_NODES] = [0; MAX_NAV_NODES];
 static mut NAV_PREV: [u8; MAX_NAV_NODES] = [NAV_NODE_NONE; MAX_NAV_NODES];
@@ -1928,6 +1932,13 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
     logic_process_events(m, nlogic, nents, now);
     let mut li = 0usize;
     while li < nlogic {
+        // Fast skip without decoding the blob record: idle-at-bottom recs (the
+        // vast majority every tick) have nothing to do here.
+        let state = LOGIC_STATE[li];
+        if state == LOGIC_STATE_BOTTOM || state == LOGIC_STATE_REMOVED {
+            li += 1;
+            continue;
+        }
         let rec = m.logic(li);
         match LOGIC_STATE[li] {
             LOGIC_STATE_WAITING => {
@@ -2099,6 +2110,23 @@ unsafe fn logic_touch_triggers(
     let mut li = 0usize;
     while li < nlogic {
         if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
+            // Kind gate from the load-time cache: skip records that can never
+            // react to touch without re-decoding the 64 B blob rec each tick.
+            match LOGIC_KIND[li] {
+                map::LOGIC_TRIGGER_ONCE
+                | map::LOGIC_TRIGGER_MULTIPLE
+                | map::LOGIC_TRIGGER_CHANGELEVEL
+                | map::LOGIC_FUNC_BUTTON
+                | map::LOGIC_FUNC_DOOR
+                | map::LOGIC_TRIGGER_HURT
+                | map::LOGIC_TRIGGER_TELEPORT
+                | map::LOGIC_TRIGGER_PUSH
+                | map::LOGIC_TRIGGER_GRAVITY => {}
+                _ => {
+                    li += 1;
+                    continue;
+                }
+            }
             let rec = m.logic(li);
             match rec.kind {
                 map::LOGIC_TRIGGER_ONCE
@@ -2235,6 +2263,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     li = 0;
     while li < nlogic {
         let rec = m.logic(li);
+        LOGIC_KIND[li] = rec.kind;
         LOGIC_TARGET[li] = rec.target;
         LOGIC_COUNTER[li] = match rec.kind {
             map::LOGIC_TRIGGER_COUNTER => (rec.arg0 as i16).max(1),
@@ -3403,6 +3432,7 @@ unsafe fn init_prop_state(m: &Map) {
             leaf
         };
         PROP_HEALTH[pi] = if dead { 0 } else { prop_start_health(kind) };
+        PROP_OCC_VIS[pi] = 1;
         if dead {
             PROP_STATE[pi] = PROP_STATE_DEAD;
         }
@@ -6100,6 +6130,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
 
     let map_bytes = unsafe { streamed_map_bytes(map_len) };
     let m = Map::load(map_bytes);
+    m.expand_light_palette(); // per-corner light lookups read the expanded table
     if room_texs != m.n_texs {
         tty::println("hl-psx: texture/world count mismatch");
         telemetry::debug_log("hl-psx: texture/world count mismatch");
@@ -7114,13 +7145,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 if !lm.valid {
                     continue;
                 }
-                let md_owned = loaded_model(slot as usize);
-                let md = &md_owned;
-                let slots = &POOL_TEX[lm.tex_start..lm.tex_start + lm.n_tex];
-                let faces = core::ptr::addr_of!(POOL_FACES)
-                    .cast::<ModelRenderFace>()
-                    .add(lm.face_start);
-                let face_count = lm.n_faces;
                 let radius = model_def(ty).radius;
                 model_bounds_tests = model_bounds_tests.saturating_add(1);
                 // Far cull (tighter than world FAR_VIEW): skip distant detailed
@@ -7130,9 +7154,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     continue;
                 }
                 if have_pvs {
-                    let prop_leaf = if ty == PROP_TYPE_HEADCRAB {
-                        camera_leaf(&m, org)
-                    } else if cooked_leaf > 0 {
+                    // PROP_LEAF is maintained by prop_set_pos on every move, so
+                    // movers (headcrabs included) are as fresh as their last step;
+                    // only a bad/unknown leaf falls back to a full BSP walk.
+                    let prop_leaf = if cooked_leaf > 0 {
                         cooked_leaf as i32
                     } else {
                         camera_leaf(&m, org)
@@ -7146,10 +7171,26 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     model_bounds_culled = model_bounds_culled.saturating_add(1);
                     continue;
                 }
-                if !prop_occlusion_visible(&m, eye, ty, org) {
+                // Occlusion rays are hull traces (expensive): refresh each prop's
+                // verdict every 4th sim tick, reuse it between refreshes. Worst
+                // case a model appears/vanishes ~200 ms late around a corner.
+                let occ_slot = pi.min(MAX_PROPS - 1);
+                if (pi as u32).wrapping_add(sim_frame_no) % 4 == 0 {
+                    PROP_OCC_VIS[occ_slot] =
+                        prop_occlusion_visible(&m, eye, ty, org) as u8;
+                }
+                if PROP_OCC_VIS[occ_slot] == 0 {
                     model_bounds_culled = model_bounds_culled.saturating_add(1);
                     continue;
                 }
+                // Passed every cull: only now parse the blob header for drawing.
+                let md_owned = loaded_model(slot as usize);
+                let md = &md_owned;
+                let slots = &POOL_TEX[lm.tex_start..lm.tex_start + lm.n_tex];
+                let faces = core::ptr::addr_of!(POOL_FACES)
+                    .cast::<ModelRenderFace>()
+                    .add(lm.face_start);
+                let face_count = lm.n_faces;
                 model_draws = model_draws.saturating_add(1);
                 let sf = if ty == PROP_TYPE_ITEM_SUIT || ty == PROP_TYPE_ITEM_BATTERY {
                     0
