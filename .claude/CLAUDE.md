@@ -816,6 +816,36 @@ profile attributes to garbage symbols (bit twice).
 - c1a2's black debug-boot view is the FAITHFUL blacked-out office intro
   corridor (game live at 14 hb; profile shows normal AI) -- not a hang.
 
+## M28 -- absolute-limit pass: full-campaign sweep + the last probe fix (DONE)
+
+First COMPLETE 96-map measurement (4-lane parallel heartbeat sweep, pure
+builds, fixed step budget): 82/96 maps pace at 20 fps.
+
+- **Office-class fix (final)**: the ent-column floor scan still walked ~2000
+  brush-ent subtrees/frame (measured with temp call counters -- point_in_
+  one_ent walks the ent's NODE tree, which is what the profile's "Map::node"
+  actually was). Per-ent ANCHORED BISECTION (3 anchors in the ent's own
+  vertical extent + boundary bisect) replaces the 30-point linear scan:
+  ~360 walks/frame. c1a2 ended at ~16.5 fps -- it started this arc at 2.
+- **Open-vista class = the faithful-geometry limit**: 13 maps (c2a5x, c3a1x,
+  c4a1x spawns...) sit at 14-16 fps, emit-bound (quad packet build 18%,
+  loop walker 13%, vblank quantization idle 12%). Their PVS FITS the packet
+  arena (banding inactive), so the cost is per-triangle throughput on real
+  geometry. The next lever is geometry LOD = a visual trade -- DECLINED to
+  keep the faithful ethos. This is the honest PS1 limit for this renderer.
+- **Model::load cache**: draw paths re-parsed chunk headers per prop draw
+  (2.7% on prop-heavy frames); LOADED_MODEL_CACHE / VM_MODEL_CACHE hold the
+  parsed struct per slot (Model is Copy; EMPTY const for statics).
+- **Band-order bucketing**: overflow views counting-sort PVS faces into a
+  near-to-far order once (PVS_BAND_ORDER, cap 2560 faces) instead of
+  re-walking the face links per depth band; bigger views keep the old walk.
+  Engages on huge-room + combat overflow scenes, not the vista class.
+- Headroom 96.9 KiB; pool kept at 99,584 words (the roster audit CLIFFS
+  below it: 99,072 would drop types on 52 maps -- always audit both caps).
+- GOTCHA: `grep -c "^hb"` counted the "hb leaf=..." diag lines too -- keep
+  heartbeat output byte-identical between sweeps or normalize before
+  comparing.
+
 ## Next (pick per value)
 
 - **scripted_sequence v1**: the biggest remaining faithfulness gap (intro set
