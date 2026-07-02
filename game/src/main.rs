@@ -1077,6 +1077,7 @@ unsafe fn stream_one_viewmodel(
         slot_start: slot,
         n_slots: ntex,
     };
+    VM_MODEL_CACHE[wid] = Model::load(viewmodel_bytes_at(word * 4, glen));
     VM_FILL_WORD = word + glen_words;
     VM_FILL_SLOT = slot + ntex;
     true
@@ -1101,22 +1102,17 @@ unsafe fn load_resident_viewmodels(
 /// Resolve the viewmodel (Model + its VM_SLOTS sub-range) for a weapon, falling
 /// back to the glock for weapons outside the resident set.
 unsafe fn viewmodel_for(wid: usize) -> (Model, usize, usize) {
-    let e = if wid < N_WEAPONS && VM_ENTRY[wid].valid {
-        VM_ENTRY[wid]
+    let (w, e) = if wid < N_WEAPONS && VM_ENTRY[wid].valid {
+        (wid, VM_ENTRY[wid])
     } else {
-        VM_ENTRY[W_GLOCK]
+        (W_GLOCK, VM_ENTRY[W_GLOCK])
     };
-    (
-        Model::load(viewmodel_bytes_at(e.geom_off, e.geom_len)),
-        e.slot_start,
-        e.n_slots,
-    )
+    (VM_MODEL_CACHE[w], e.slot_start, e.n_slots)
 }
 
 #[inline]
 unsafe fn loaded_model(slot: usize) -> Model {
-    let lm = LOADED_MODELS[slot];
-    Model::load(streamed_model_bytes_at(lm.geom_off, lm.geom_len))
+    LOADED_MODEL_CACHE[slot]
 }
 
 /// Stream the model types this map places (distinct prop kinds) into the shared
@@ -1205,6 +1201,9 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
             n_tex: ntex,
         };
         TYPE_TO_SLOT[ty] = slot_idx as u8;
+        // Parse once (post-repack header) -- draws read the cached copy.
+        LOADED_MODEL_CACHE[slot_idx] =
+            Model::load(streamed_model_bytes_at(geom_word * 4, kept));
         geom_word += kept.div_ceil(4);
         face_off += nf;
         tex_off += ntex;
@@ -2894,38 +2893,57 @@ fn prop_floor_y(m: &Map, pi: usize, pos: [i32; 3]) -> Option<i32> {
     // Ent in the column (door panel, crate, chair): scan for the highest ent
     // surface, testing ONLY the column ents per point (the world part is
     // already answered by the trace). Floor = the higher of the two.
-    let ent_solid_at = |p: [i32; 3]| -> bool {
-        unsafe {
-            let mut k = 0usize;
-            while k < ncol {
-                if point_in_one_ent(m, col[k] as usize, p) {
-                    return true;
-                }
-                k += 1;
-            }
-            false
-        }
-    };
+    // Per-ent anchored bisection instead of a 30-point linear scan: probe a
+    // few anchor heights inside the ent's own vertical extent; if any is
+    // solid, bisect the empty->solid boundary above it. ~6 point tests per
+    // column ent instead of ~30 x ncol (this was ~2000 subtree walks per
+    // frame on the office complex).
     let scan_floor = world_y.unwrap_or(bottom);
-    let mut ent_y = None;
-    let mut empty_y = top;
-    let mut y = top - GROUND_SCAN_STEP;
-    while y >= scan_floor {
-        if ent_solid_at([x, y, z]) {
-            let (mut solid, mut empty) = (y, empty_y);
-            for _ in 0..4 {
-                let mid = (solid + empty) / 2;
-                if ent_solid_at([x, mid, z]) {
-                    solid = mid;
-                } else {
-                    empty = mid;
-                }
-            }
-            ent_y = Some(empty);
-            break;
+    let mut ent_y: Option<i32> = None;
+    let mut k = 0usize;
+    while k < ncol {
+        let ei = col[k] as usize;
+        k += 1;
+        let (seg_top, seg_bot) = unsafe {
+            let e = ENT_CACHE[ei];
+            let off = ent_draw_offset(ei);
+            let cy = e.center[1] + off[1];
+            let r = ENT_RADIUS[ei];
+            ((cy + r).min(top - 1), (cy - r).max(scan_floor))
+        };
+        if seg_top <= seg_bot {
+            continue;
         }
-        empty_y = y;
-        y -= GROUND_SCAN_STEP;
+        // Anchors top-down so the FIRST solid found is under the highest
+        // empty span (matching the old top-down scan's choice of surface).
+        let mut solid_y: Option<i32> = None;
+        let mut empty_above = top;
+        let anchors = [seg_top, (seg_top + seg_bot) / 2, seg_bot];
+        let mut a = 0usize;
+        while a < anchors.len() {
+            let ay = anchors[a];
+            a += 1;
+            if unsafe { point_in_one_ent(m, ei, [x, ay, z]) } {
+                solid_y = Some(ay);
+                break;
+            }
+            empty_above = ay;
+        }
+        let Some(mut solid) = solid_y else { continue };
+        let mut empty = empty_above;
+        let mut it = 0;
+        while it < 5 && empty - solid > 1 {
+            let mid = (solid + empty) / 2;
+            if unsafe { point_in_one_ent(m, ei, [x, mid, z]) } {
+                solid = mid;
+            } else {
+                empty = mid;
+            }
+            it += 1;
+        }
+        if ent_y.is_none_or(|cur| empty > cur) {
+            ent_y = Some(empty);
+        }
     }
     match (ent_y, world_y) {
         (Some(e), Some(w)) => Some(e.max(w)),
@@ -3288,6 +3306,15 @@ static mut MOVERS: [phys::Mover; MAX_ENTS + 1] = [phys::NO_MOVER; MAX_ENTS + 1];
 static mut STEP_ACC: u32 = 0;
 static mut STEP_ALT: u8 = 0;
 static mut MOVE_TICK: u16 = 0; // walker half-rate phase
+// Parsed-model caches: Model::load re-parsed headers on EVERY draw call
+// (2.7% of frame on prop-heavy views). Filled at stream time.
+static mut LOADED_MODEL_CACHE: [Model; MAX_LOADED_MODELS] = [Model::EMPTY; MAX_LOADED_MODELS];
+// Band-bucketed PVS face order (overflow views): the banded emit used to
+// re-walk the whole face link structure once per depth band.
+const PVS_BAND_CAP: usize = 2560; // views beyond this keep the link-walk path
+static mut PVS_BAND_ORDER: [u16; PVS_BAND_CAP] = [0; PVS_BAND_CAP];
+static mut PVS_BAND_START: [u16; 10] = [0; 10];
+static mut VM_MODEL_CACHE: [Model; N_WEAPONS] = [Model::EMPTY; N_WEAPONS];
 static mut PROP_MOVE_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS]; // blocked-walker backoff
 // Per-prop shortlist of brush ents near enough to matter for floor probes.
 // Refreshed every 8 ticks (staggered); 0xFFFF count = overflow, full scan.
@@ -7310,10 +7337,17 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 } else {
                     1
                 };
-                // Pre-pass, once per frame: each group's backface verdict, and
-                // (in multi-band mode) each cached face's depth band, so the
-                // per-band walks below are pure static reads instead of redoing
-                // the same blob plane fetches and dot products nbands times.
+                // Pre-pass, once per frame: each group's backface verdict.
+                // In multi-band (overflow) mode, faces of visible groups are
+                // COUNTING-SORTED into a near-to-far band order here, so the
+                // emit below makes one pass over a contiguous list instead of
+                // re-walking the whole link structure once per band.
+                let bucketed = nbands > 1 && PVS_FACE_COUNT <= PVS_BAND_CAP;
+                if bucketed {
+                    for c in PVS_BAND_START.iter_mut() {
+                        *c = 0;
+                    }
+                }
                 for gi in 0..PVS_GROUP_COUNT {
                     let group = PVS_GROUP_ACTIVE[gi] as usize;
                     let plane_face = PVS_GROUP_FACE[group] as usize;
@@ -7330,7 +7364,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         while entry != PVS_LINK_END {
                             let e = entry as usize;
                             entry = PVS_FACE_NEXT[e];
-                            if e < MAX_PVS_FACE_RECS {
+                            if !bucketed && e < MAX_PVS_FACE_RECS {
+                                // Non-bucketed overflow view: just refresh the
+                                // cached band for the link-walk emit below.
                                 let rec = &mut PVS_FACE_REC[e];
                                 let c = [
                                     rec.center[0] as i32,
@@ -7339,6 +7375,63 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                 ];
                                 let depth = (dot12(rot.m[2], c) + base_t[2]).max(0);
                                 rec.band = ((depth >> DEPTH_BAND_SHIFT).min(nbands - 1)) as u8;
+                                continue;
+                            }
+                            if !bucketed {
+                                continue;
+                            }
+                            let band = if e < MAX_PVS_FACE_RECS {
+                                let rec = &mut PVS_FACE_REC[e];
+                                let c = [
+                                    rec.center[0] as i32,
+                                    rec.center[1] as i32,
+                                    rec.center[2] as i32,
+                                ];
+                                let depth = (dot12(rot.m[2], c) + base_t[2]).max(0);
+                                let band = ((depth >> DEPTH_BAND_SHIFT).min(nbands - 1)) as u8;
+                                rec.band = band;
+                                band
+                            } else {
+                                let face = PVS_FACE_INDEX[e] as usize;
+                                let (bc, _) = m.face_bounds(face);
+                                let depth = (dot12(rot.m[2], bc) + base_t[2]).max(0);
+                                ((depth >> DEPTH_BAND_SHIFT).min(nbands - 1)) as u8
+                            };
+                            PVS_BAND_START[band as usize + 1] += 1;
+                        }
+                    }
+                }
+                if bucketed {
+                    // Prefix-sum the counts, then scatter (second link walk).
+                    let mut acc = 0u16;
+                    for k in 0..(nbands as usize + 1) {
+                        acc += PVS_BAND_START[k];
+                        PVS_BAND_START[k] = acc;
+                    }
+                    let mut cursor = [0u16; 10];
+                    cursor[..(nbands as usize + 1)]
+                        .copy_from_slice(&PVS_BAND_START[..(nbands as usize + 1)]);
+                    for gi in 0..PVS_GROUP_COUNT {
+                        if PVS_GROUP_VIS[gi >> 5] & (1 << (gi & 31)) == 0 {
+                            continue;
+                        }
+                        let group = PVS_GROUP_ACTIVE[gi] as usize;
+                        let mut entry = PVS_GROUP_FIRST[group];
+                        while entry != PVS_LINK_END {
+                            let e = entry as usize;
+                            entry = PVS_FACE_NEXT[e];
+                            let band = if e < MAX_PVS_FACE_RECS {
+                                PVS_FACE_REC[e].band as usize
+                            } else {
+                                let face = PVS_FACE_INDEX[e] as usize;
+                                let (bc, _) = m.face_bounds(face);
+                                let depth = (dot12(rot.m[2], bc) + base_t[2]).max(0);
+                                (depth >> DEPTH_BAND_SHIFT).min(nbands - 1) as usize
+                            };
+                            let slot = cursor[band] as usize;
+                            if slot < PVS_BAND_CAP {
+                                PVS_BAND_ORDER[slot] = e as u16;
+                                cursor[band] += 1;
                             }
                         }
                     }
@@ -7346,6 +7439,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 let mut band = 0i32;
                 while band < nbands {
                     for gi in 0..PVS_GROUP_COUNT {
+                        if bucketed {
+                            break; // bucketed path below handles multi-band
+                        }
                         if PVS_GROUP_VIS[gi >> 5] & (1 << (gi & 31)) == 0 {
                             continue;
                         }
@@ -7396,6 +7492,85 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                 if (depth >> DEPTH_BAND_SHIFT).min(nbands - 1) != band {
                                     continue;
                                 }
+                                if !WORLD_BOUNDS_CULL || face_bounds_visible(bc, be, &rot, base_t) {
+                                    let (first, cnt) = m.face_tris(face);
+                                    EMIT_BLEND = m.face_translucent(face) as u8;
+                                    EMIT_WAVE = EMIT_BLEND != 0;
+                                    if m.face_is_loop(face) {
+                                        emit_world_face_loop(
+                                            &mut packets,
+                                            &m,
+                                            m.face_tex(face),
+                                            first,
+                                            cnt,
+                                            nv,
+                                            proj_token,
+                                            &mut np,
+                                            &mut nq,
+                                            &mut room_counts,
+                                        );
+                                    } else {
+                                        emit_world_face_tris(
+                                            &mut packets,
+                                            &m,
+                                            first,
+                                            cnt,
+                                            nv,
+                                            proj_token,
+                                            &mut np,
+                                            &mut nq,
+                                            &mut room_counts,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if bucketed {
+                        // Bucketed multi-band path: one contiguous slice per
+                        // band (scattered near-to-far by the pre-pass).
+                        let b = band as usize;
+                        let start = PVS_BAND_START[b] as usize;
+                        let end = PVS_BAND_START[b + 1] as usize;
+                        let mut k = start;
+                        while k < end.min(PVS_BAND_CAP) {
+                            let e = PVS_BAND_ORDER[k] as usize;
+                            k += 1;
+                            if e < MAX_PVS_FACE_RECS {
+                                let rec = PVS_FACE_REC[e];
+                                if !WORLD_BOUNDS_CULL || cached_face_visible(rec, &rot, base_t) {
+                                    EMIT_BLEND = rec.translucent as u8;
+                                    EMIT_WAVE = rec.translucent;
+                                    if rec.is_loop {
+                                        emit_world_face_loop(
+                                            &mut packets,
+                                            &m,
+                                            rec.tex as usize,
+                                            rec.first as usize,
+                                            rec.count as usize,
+                                            nv,
+                                            proj_token,
+                                            &mut np,
+                                            &mut nq,
+                                            &mut room_counts,
+                                        );
+                                    } else {
+                                        emit_world_face_tris(
+                                            &mut packets,
+                                            &m,
+                                            rec.first as usize,
+                                            rec.count as usize,
+                                            nv,
+                                            proj_token,
+                                            &mut np,
+                                            &mut nq,
+                                            &mut room_counts,
+                                        );
+                                    }
+                                }
+                            } else {
+                                let face = PVS_FACE_INDEX[e] as usize;
+                                let (bc, be) = m.face_bounds(face);
                                 if !WORLD_BOUNDS_CULL || face_bounds_visible(bc, be, &rot, base_t) {
                                     let (first, cnt) = m.face_tris(face);
                                     EMIT_BLEND = m.face_translucent(face) as u8;

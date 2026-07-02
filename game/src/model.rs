@@ -48,6 +48,7 @@ fn rd_i16(d: &[u8], o: usize) -> i16 {
     rd_u16(d, o) as i16
 }
 
+#[derive(Clone, Copy)]
 pub struct Model {
     data: &'static [u8],
     pub n_verts: usize,
@@ -105,6 +106,24 @@ impl RenderFace {
 }
 
 impl Model {
+    /// Zero model for static cache slots (never drawn: n_tris = 0).
+    pub const EMPTY: Model = Model {
+        data: &[],
+        n_verts: 0,
+        n_tris: 0,
+        n_frames: 0,
+        n_clips: 0,
+        clips_off: 0,
+        frame_desc_off: 0,
+        v_off: 0,
+        frame_stride: 0,
+        tri_off: 0,
+        tri_sz: 0,
+        tri_has_normals: false,
+        compact_frames: false,
+        local_to_world_q12: 4096,
+    };
+
     pub fn load(data: &'static [u8]) -> Model {
         let hmd3 = data.get(0..4) == Some(b"HMD3");
         let hmd4 = data.get(0..4) == Some(b"HMD4");
