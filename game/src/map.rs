@@ -27,7 +27,7 @@
 //!     i32 spawn_yaw | ClipNode[6B] × n_clip
 //!   entities:
 //!     u32 n_models | (u32 firstface,u32 numface) × n_models
-//!     u32 n_ents | EntRec[52B] × n_ents | u32 n_ent_leafs | u16 leaf_idx[]
+//!     u32 n_ents | EntRec[56B] × n_ents | u32 n_ent_leafs | u16 leaf_idx[]
 //!   props/items:
 //!     u32 n_props | (u16 type, i16 leaf, i32 origin[3], i32 yaw) × n_props
 //!   nav:
@@ -176,7 +176,7 @@ const FACE_SZ: usize = 16; // first|count|plane_group|center[3]|radius|tex|flags
 const TRI_SZ: usize = 16; // u16 idx[3] | u8 uv[6] | u8 tex | u8 light_idx[3]
 const LOOPVERT_SZ: usize = 5; // u16 idx | u8 uv[2] | u8 light_idx
 const CLIPNODE_SZ: usize = 6;
-const ENT_SZ: usize = 52;
+const ENT_SZ: usize = 56;
 const LOGIC_SZ: usize = 64;
 
 pub const LOGIC_BRUSH_NONE: u16 = u16::MAX;
@@ -260,7 +260,8 @@ pub struct Ent {
     pub mv: [i32; 3],
     pub center: [i32; 3],
     pub r2: i32,
-    pub head: i32, // submodel hull-1 clipnode root
+    pub head: i32,  // submodel hull-1 clipnode root
+    pub head0: i32, // submodel hull-0 BSP node root (point solidity for grates)
     pub leaf_start: usize,
     pub leaf_count: usize,
 }
@@ -477,8 +478,9 @@ impl Map {
             center: [rd_i32(d, o + 28), rd_i32(d, o + 32), rd_i32(d, o + 36)],
             r2: rd_i32(d, o + 40),
             head: rd_i32(d, o + 44),
-            leaf_start: rd_u16(d, o + 48) as usize,
-            leaf_count: rd_u16(d, o + 50) as usize,
+            head0: rd_i32(d, o + 48),
+            leaf_start: rd_u16(d, o + 52) as usize,
+            leaf_count: rd_u16(d, o + 54) as usize,
         }
     }
 

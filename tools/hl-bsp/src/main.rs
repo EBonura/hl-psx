@@ -1916,6 +1916,7 @@ struct EntRec {
     center: [i32; 3], // submodel bounds centre; movers use closed-world centre
     r2: i32,          // conservative bounds radius^2 (world)
     head: i32,        // submodel hull-1 clipnode root (collision)
+    head0: i32,       // submodel hull-0 BSP node root (point solidity: grates etc.)
     leaves: Vec<u16>, // BSP leaves touched by this entity's bounds, for PVS culling
 }
 
@@ -2631,6 +2632,7 @@ fn collect_entities(
             ((half[0] * half[0] + half[1] * half[1] + half[2] * half[2]).sqrt() + 80.0) / scale;
         let r2 = (rad * rad) as i32;
         let head = i32le(models, mo + 40).unwrap_or(0); // dmodel_t.headnode[1]
+        let head0 = i32le(models, mo + 36).unwrap_or(0); // dmodel_t.headnode[0] (BSP tree)
         if cls == "func_ladder" {
             // Invisible climb volume: never drawn, never collides. The world
             // half-extents ride in `mv` (unused for non-movers) so the runtime
@@ -2644,6 +2646,7 @@ fn collect_entities(
                 center,
                 r2,
                 head: 0,
+                head0: 0,
                 leaves: Vec::new(),
             });
             continue;
@@ -2673,6 +2676,7 @@ fn collect_entities(
                 center,
                 r2,
                 head,
+                head0,
                 leaves,
             });
             continue;
@@ -2702,6 +2706,7 @@ fn collect_entities(
                 center,
                 r2,
                 head,
+                head0,
                 leaves,
             });
         } else {
@@ -2714,6 +2719,7 @@ fn collect_entities(
                 center,
                 r2,
                 head,
+                head0,
                 leaves,
             });
         }
@@ -4255,6 +4261,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         }
         o.extend_from_slice(&e.r2.to_le_bytes());
         o.extend_from_slice(&e.head.to_le_bytes());
+        o.extend_from_slice(&e.head0.to_le_bytes());
         o.extend_from_slice(&leaf_start.to_le_bytes());
         o.extend_from_slice(&leaf_count.to_le_bytes());
     }

@@ -154,9 +154,9 @@ const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in
 const DBG_PAD_BOOT: bool = cfg!(feature = "debug-map-boot"); // hold L1 | map_index to boot any map headlessly
 // Debug: pin the camera to a fixed pose (to reproduce a specific view headlessly).
 const DBG_CAM: bool = false;
-const DBG_CAM_POS: [i32; 3] = [-624, -184, -160];
-const DBG_CAM_YAW: u16 = 1024;
-const DBG_CAM_PITCH: i16 = 0;
+const DBG_CAM_POS: [i32; 3] = [714, 580, 2400];
+const DBG_CAM_YAW: u16 = 2048;
+const DBG_CAM_PITCH: i16 = -200;
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 const ROOM_WORLD_CHUNK_MUL: u32 = 2;
@@ -731,6 +731,7 @@ const EMPTY_ENT: map::Ent = map::Ent {
     submodel: 0,
     kind: 2,
     blend: 0,
+    head0: 0,
     origin: [0, 0, 0],
     mv: [0, 0, 0],
     center: [0, 0, 0],
@@ -743,6 +744,7 @@ static mut ENT_CACHE: [map::Ent; MAX_ENTS] = [EMPTY_ENT; MAX_ENTS];
 static mut ENT_RADIUS: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PREV_OFF: [[i32; 3]; MAX_ENTS] = [[0; 3]; MAX_ENTS]; // ride-carry deltas
+static mut ENT_SOLID_COUNT: usize = 0; // nents for prop point-solid checks
 static mut ENT_BREAK_LOGIC: [u16; MAX_ENTS] = [u16::MAX; MAX_ENTS]; // ent -> breakable logic rec
 static mut LOGIC_BREAK_HP: [u16; MAX_LOGIC] = [0; MAX_LOGIC]; // remaining breakable health
 // Per-rec kind byte, cached at load: the per-tick scans skip records without
@@ -2651,22 +2653,74 @@ fn actor_line_clear(m: &Map, movers: &[phys::Mover], from: [i32; 3], to: [i32; 3
 /// y==0), so dropping the origin onto the floor seats the feet.
 /// ponytail: world-only -- props on moving platforms (movers) aren't tracked;
 /// rare for placed NPCs/items. Scan step 8u, refined to ~1u.
+/// Walk a submodel's hull-0 BSP subtree: is `p` (already shifted by the
+/// entity offset) inside its solid?
+fn submodel_point_solid(m: &Map, head0: i32, p: [i32; 3]) -> bool {
+    let mut idx = head0;
+    let mut guard = 0;
+    loop {
+        if idx < 0 {
+            return (-idx - 1) == 0; // shared solid leaf
+        }
+        if idx as usize >= m.n_nodes || guard > 96 {
+            return false;
+        }
+        guard += 1;
+        let nd = m.node(idx as usize);
+        idx = if dot12(nd.n, p) - nd.dist >= 0 {
+            nd.c0
+        } else {
+            nd.c1
+        };
+    }
+}
+
+/// True when `p` sits inside any active solid brush entity at its current
+/// offset (grates, closed doors, plats, crates). Sphere-rejected per ent, so
+/// the common case costs one distance check per nearby entity.
+unsafe fn point_in_ent_solid(m: &Map, p: [i32; 3]) -> bool {
+    let nents = ENT_SOLID_COUNT;
+    let mut ei = 0usize;
+    while ei < nents {
+        let e = ENT_CACHE[ei];
+        if ENT_ACTIVE[ei] != 0 && e.head0 > 0 && e.kind != 2 && e.kind != 4 {
+            let off = ent_draw_offset(ei);
+            let dx = p[0] - (e.center[0] + off[0]);
+            let dy = p[1] - (e.center[1] + off[1]);
+            let dz = p[2] - (e.center[2] + off[2]);
+            if dx * dx + dy * dy + dz * dz <= e.r2 {
+                let q = [p[0] - off[0], p[1] - off[1], p[2] - off[2]];
+                if submodel_point_solid(m, e.head0, q) {
+                    return true;
+                }
+            }
+        }
+        ei += 1;
+    }
+    false
+}
+
+#[inline]
+unsafe fn prop_point_solid(m: &Map, p: [i32; 3]) -> bool {
+    camera_leaf(m, p) == 0 || point_in_ent_solid(m, p)
+}
+
 fn prop_floor_y(m: &Map, pos: [i32; 3]) -> Option<i32> {
     let (x, z) = (pos[0], pos[2]);
     let top = pos[1] + PROP_GROUND_PROBE_UP;
-    if camera_leaf(m, [x, top, z]) == 0 {
+    if unsafe { prop_point_solid(m, [x, top, z]) } {
         return None; // headroom is solid -- no clean floor to drop onto
     }
     let bottom = pos[1] - PROP_GROUND_PROBE_DOWN;
     let mut empty_y = top;
     let mut y = top - GROUND_SCAN_STEP;
     while y >= bottom {
-        if camera_leaf(m, [x, y, z]) == 0 {
+        if unsafe { prop_point_solid(m, [x, y, z]) } {
             // First solid below: the floor is between y (solid) and empty_y. Refine.
             let (mut solid, mut empty) = (y, empty_y);
             for _ in 0..4 {
                 let mid = (solid + empty) / 2;
-                if camera_leaf(m, [x, mid, z]) == 0 {
+                if unsafe { prop_point_solid(m, [x, mid, z]) } {
                     solid = mid;
                 } else {
                     empty = mid;
@@ -4552,7 +4606,11 @@ fn world_otz_from_gte4(a: &Projected, b: &Projected, c: &Projected, d: &Projecte
 
 #[inline]
 fn world_otz_from_view3(a: i32, b: i32, c: i32) -> usize {
-    clamp_otz((farthest3_i32(a, b, c) >> OT_SHIFT) as usize)
+    // The fast path buckets on the GTE's sz, which is view z / 4; these are
+    // raw view-space z from the near-clip rebuild, so shift two more bits or
+    // soft-clipped triangles sort four times too far, draw first, and get
+    // painted over -- the black wedges on close walls at grazing angles.
+    clamp_otz((farthest3_i32(a, b, c) >> (OT_SHIFT + 2)) as usize)
 }
 
 fn camera_leaf(m: &Map, eye: [i32; 3]) -> i32 {
@@ -6264,6 +6322,17 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         // (EMIT_BLEND) and sway liquid UVs. Blocked water renders opaque and
         // animated, exactly like vanilla GoldSrc.
         BLEND_PACKET_KEY = u32::MAX;
+        // Brush entities load BEFORE props so the spawn ground snap can treat
+        // grates/doors/crates as solid (point_in_ent_solid reads ENT_CACHE).
+        let nents_early = m.n_ents.min(MAX_ENTS);
+        for ei in 0..nents_early {
+            let e = m.entity(ei);
+            ENT_CACHE[ei] = e;
+            ENT_RADIUS[ei] = isqrt(e.r2);
+            ENT_ACTIVE[ei] = 1;
+            ENT_PHASE[ei] = 0;
+        }
+        ENT_SOLID_COUNT = nents_early;
         init_prop_state(&m);
         stream_map_models(&m, VM_POOL_WORDS * 4); // enemies stream after the viewmodel reserve
         clear_combat_fx();
@@ -6271,11 +6340,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     let nents = m.n_ents.min(MAX_ENTS);
     let nlogic = m.n_logic.min(MAX_LOGIC);
     unsafe {
-        for ei in 0..nents {
-            let e = m.entity(ei);
-            ENT_CACHE[ei] = e;
-            ENT_RADIUS[ei] = isqrt(e.r2);
-        }
         init_logic_state(&m, nlogic, nents, 0);
     }
     let nv = if m.n_verts < MAX_VERTS {
