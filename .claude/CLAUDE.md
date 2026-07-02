@@ -641,6 +641,30 @@ Everything a start-to-finish run needs, in one pass:
   face_plane 3.6%, ModelFrame::vert 3.3%. GTE is 1.8% -- the wall is data
   movement, not math.
 
+## M23 -- per-face translucency, water sway, glass (DONE, verified)
+
+- **Watervis ground truth**: HL1 maps mostly ship WITHOUT watervis, so real
+  GoldSrc renders water opaque from above (the earlier all-or-nothing blend
+  was chasing non-existent behaviour). The cook probes each liquid face
+  (leaf above vs below + vis row) and keeps flags bit1 only where the far
+  side is visible -- 619 faces (c1a4d/f blast pit, c2a4d/f toxic pools,
+  c2a1a, c3a2b...). Everything else demotes to opaque.
+- **Runtime**: EMIT_BLEND/EMIT_WAVE per-face statics set by the world/entity
+  walkers; blended packet built on demand (one-entry BLEND_PACKET cache;
+  TexSlot stays 1 packet -- 3 packets/slot cost 27 KB and broke headroom).
+  Liquid UVs sway via WAVE_TAB (128-frame cycle; GP0-E2 windows wrap the
+  byte adds safely). Verified: phase-shifted capture diff localizes on the
+  waterfall faces.
+- **Glass/glow**: ent kind high byte = blend class from HL rendermode
+  (2/3 low-amt -> Average, 5 -> Add), parsed for all brush ents (845 across
+  the campaign). Ent.blend on the runtime side (kind masks to low byte).
+  Verified: c1a0 monitor-room window shows the room through the pane.
+- **Perf follow-through (M22 targets)**: loop faces now decode each vertex
+  once (fused Map::loop_vert + rolling fan window; loop_render_tri vanished
+  from the PC profile; i32 bowtie cross products). Scratchpad investigated
+  and SKIPPED: PSoXide charges flat memory timing (BIAS=2 + 1/access, no
+  region penalty), so scratchpad moves measure zero in the target emulator.
+
 ## Next (pick per value)
 
 - **Real water transparency** (needs the underwater scene drawn behind the
