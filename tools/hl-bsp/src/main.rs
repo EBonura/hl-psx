@@ -3834,6 +3834,26 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
 
     let n_verts = verts.len();
     let n_tris = tri_idx.len() / 3;
+    // Runtime SCRATCH caps (main.rs MAX_VERTS): the render paths trust cooked
+    // indices, so an oversized map must fail HERE, not panic on console.
+    if n_verts > 12288 {
+        return Err(format!(
+            "{}: {} cooked verts exceeds the runtime MAX_VERTS cap of 12288",
+            path, n_verts
+        ));
+    }
+    // Hard guarantee for the runtime: every cooked corner (raw tris AND loop
+    // faceverts read from this same array) references a real vertex. The
+    // render hot paths trust this and skip per-tri bounds checks.
+    for (i, &vi) in tri_idx.iter().enumerate() {
+        assert!(
+            (vi as usize) < n_verts,
+            "tri corner {} references vert {} of {}",
+            i,
+            vi,
+            n_verts
+        );
+    }
     if n_tris > u16::MAX as usize {
         return Err(format!(
             "{}: {} cooked triangles exceeds compact FaceRec limit of 65535",
@@ -5096,6 +5116,11 @@ fn cook_mdl(
 
     let n_tris = tri_idx.len() / 3;
     let n_verts = vp.len();
+    // Same hard guarantee as the map cook: the runtime model walk trusts
+    // every corner index and skips per-tri bounds checks.
+    for &vi in &tri_idx {
+        assert!((vi as usize) < n_verts, "model tri corner out of range");
+    }
     let mut o: Vec<u8> = Vec::new();
     if compact_frames {
         // Per-clip base: each frame stores an i8 delta from its CLIP's first

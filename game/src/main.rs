@@ -2510,9 +2510,6 @@ unsafe fn xhair_pick_pvs(m: &Map, nv: usize, frame: u16) {
             tt += 1;
             let idx = m.tri_idx(t);
             let (a, b, c) = (idx[0] as usize, idx[1] as usize, idx[2] as usize);
-            if a >= nv || b >= nv || c >= nv {
-                continue;
-            }
             proj_vert(m, a, frame);
             proj_vert(m, b, frame);
             proj_vert(m, c, frame);
@@ -5085,9 +5082,7 @@ unsafe fn emit_projected(
         tri.idx[1] as usize,
         tri.idx[2] as usize,
     );
-    if a >= nv || b >= nv || c >= nv {
-        return;
-    }
+    let _ = nv; // indices are cook-guaranteed < n_verts
     let rgb = tri.rgb;
     let (pa, pb, pc) = (p[0], p[1], p[2]);
     let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
@@ -5310,9 +5305,7 @@ unsafe fn try_emit_quad_corners(
         corners[2].0 as usize,
         corners[3].0 as usize,
     );
-    if a >= nv || b >= nv || c >= nv || d >= nv {
-        return true;
-    }
+    let _ = nv; // indices are cook-guaranteed < n_verts
     let slot = TEX_SLOTS[tex];
     if !slot.valid {
         return true;
@@ -5605,9 +5598,6 @@ unsafe fn emit_world_tri(
     }
     let idx = m.tri_idx(tt);
     let (a, b, c) = (idx[0] as usize, idx[1] as usize, idx[2] as usize);
-    if a >= nv || b >= nv || c >= nv {
-        return;
-    }
     proj_vert(m, a, frame);
     proj_vert(m, b, frame);
     proj_vert(m, c, frame);
@@ -5637,9 +5627,6 @@ unsafe fn emit_submodel_tri(
     }
     let idx = m.tri_idx(tt);
     let (a, b, c) = (idx[0] as usize, idx[1] as usize, idx[2] as usize);
-    if a >= nv || b >= nv || c >= nv {
-        return;
-    }
     proj_submodel_vert(m, a, token);
     proj_submodel_vert(m, b, token);
     proj_submodel_vert(m, c, token);
@@ -5666,9 +5653,7 @@ unsafe fn emit_submodel_loop_tri(
         tri.idx[1] as usize,
         tri.idx[2] as usize,
     );
-    if a >= nv || b >= nv || c >= nv {
-        return;
-    }
+    let _ = nv; // cook-guaranteed
     proj_submodel_vert(m, a, token);
     proj_submodel_vert(m, b, token);
     proj_submodel_vert(m, c, token);
@@ -5752,9 +5737,7 @@ unsafe fn emit_world_loop_tri(
         tri.idx[1] as usize,
         tri.idx[2] as usize,
     );
-    if a >= nv || b >= nv || c >= nv {
-        return;
-    }
+    let _ = nv; // cook-guaranteed
     proj_vert(m, a, frame);
     proj_vert(m, b, frame);
     proj_vert(m, c, frame);
@@ -5934,9 +5917,6 @@ unsafe fn draw_model(
             render_face.face.vertex_indices[1] as usize,
             render_face.face.vertex_indices[2] as usize,
         );
-        if a >= nv || b >= nv || c >= nv {
-            continue;
-        }
         let (pa, pb, pc) = (MODEL_SCRATCH[a], MODEL_SCRATCH[b], MODEL_SCRATCH[c]);
         if pa.sz < near_s || pb.sz < near_s || pc.sz < near_s {
             continue;
@@ -6125,9 +6105,6 @@ unsafe fn draw_viewmodel(
                 tri.idx[1] as usize,
                 tri.idx[2] as usize,
             );
-            if a >= nv || b >= nv || c >= nv {
-                continue;
-            }
             let (pa, pb, pc) = (MODEL_SCRATCH[a], MODEL_SCRATCH[b], MODEL_SCRATCH[c]);
             if pa.sz < near_s || pb.sz < near_s || pc.sz < near_s {
                 continue;
