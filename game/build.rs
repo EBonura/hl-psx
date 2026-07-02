@@ -128,7 +128,10 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
     }
 
     (
-        max_bytes.div_ceil(4),
+        // +4 KB: LZ4 in-place slack. Compressed chunks are staged at the
+        // buffer TAIL and decoded back to the head; the margin keeps the
+        // write cursor behind the unread source even on the biggest map.
+        (max_bytes + 4096).div_ceil(4),
         round_up(max_face_records + 32, 256),
         round_up(max_face_groups + 32, 256),
         round_up(max_leaves + 64, 256),

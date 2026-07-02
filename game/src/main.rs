@@ -6292,7 +6292,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     draw_next_loading_screen(fb, loading_label, &mut loading_frame, keep_frame);
 
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
-    let tex_len = cdstream::load_chunk(texture_chunk_id, unsafe { &mut MAP_BUF }).unwrap_or(0);
+    let tex_len = cdstream::load_chunk(texture_chunk_id, unsafe { &mut MAP_BUF })
+        .map(|n| unsafe { cdstream::decompress_in_place(&mut MAP_BUF, n) })
+        .unwrap_or(0);
     telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
     let mut stream_bytes = tex_len as u32;
     let mut stream_chunks = if tex_len == 0 { 0 } else { 1 };
@@ -6379,7 +6381,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
 
     draw_next_loading_screen(fb, loading_label, &mut loading_frame, keep_frame);
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
-    let map_len = cdstream::load_chunk(world_chunk_id, unsafe { &mut MAP_BUF }).unwrap_or(0);
+    let map_len = cdstream::load_chunk(world_chunk_id, unsafe { &mut MAP_BUF })
+        .map(|n| unsafe { cdstream::decompress_in_place(&mut MAP_BUF, n) })
+        .unwrap_or(0);
     telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
     if map_len > 0 {
         stream_chunks += 1;

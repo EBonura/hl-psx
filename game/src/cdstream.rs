@@ -509,3 +509,111 @@ unsafe fn load_pack_header_sector(buf: *mut u32, loaded_sector: &mut u32, sector
 pub fn load_chunk(_chunk_id: u32, _dst: &mut [u32]) -> Option<usize> {
     None
 }
+
+/// LZ4-wrapped chunk support ("HLZC" | u32 raw_len | LZ4 block).
+///
+/// `load_chunk` leaves the (compressed) payload at buf[0..loaded]. Move it to
+/// the END of the buffer, then decode the LZ4 stream back to the head. Safe
+/// in place: build.rs pads MAP_WORDS past the biggest raw map by more than
+/// the worst-case LZ4 in-place margin (comp_len/255 + a few bytes), so the
+/// write cursor can never overrun the unread source bytes.
+///
+/// Returns the decompressed length, or `loaded` unchanged for non-HLZC
+/// chunks (raw passthrough -- models/SFX/old packs).
+pub unsafe fn decompress_in_place(buf: &mut [u32], loaded: usize) -> usize {
+    if loaded < 8 {
+        return loaded;
+    }
+    let base = buf.as_mut_ptr() as *mut u8;
+    let magic = u32::from_le_bytes([*base, *base.add(1), *base.add(2), *base.add(3)]);
+    if magic != u32::from_le_bytes(*b"HLZC") {
+        return loaded;
+    }
+    let raw_len = u32::from_le_bytes([
+        *base.add(4),
+        *base.add(5),
+        *base.add(6),
+        *base.add(7),
+    ]) as usize;
+    let cap = buf.len() * 4;
+    let comp_len = loaded - 8;
+    if raw_len > cap || comp_len > cap {
+        return 0;
+    }
+    // Shift the payload to the buffer tail (overlapping regions: copy back
+    // to front is safe because dst > src everywhere here).
+    let src_tail = base.add(cap - comp_len);
+    core::ptr::copy(base.add(8), src_tail, comp_len);
+    lz4_block_decode(src_tail, src_tail.add(comp_len), base, raw_len)
+}
+
+/// Minimal LZ4 block decoder over raw pointers (src and dst may live in the
+/// same buffer; the in-place margin guarantees dst never catches src).
+unsafe fn lz4_block_decode(
+    mut src: *const u8,
+    src_end: *const u8,
+    dst_base: *mut u8,
+    dst_cap: usize,
+) -> usize {
+    let mut di = 0usize;
+    loop {
+        if src >= src_end {
+            break;
+        }
+        let token = *src;
+        src = src.add(1);
+        // Literal run.
+        let mut lit = (token >> 4) as usize;
+        if lit == 15 {
+            loop {
+                let b = *src;
+                src = src.add(1);
+                lit += b as usize;
+                if b != 255 {
+                    break;
+                }
+            }
+        }
+        if lit > 0 {
+            if di + lit > dst_cap {
+                return 0;
+            }
+            core::ptr::copy(src, dst_base.add(di), lit);
+            src = src.add(lit);
+            di += lit;
+        }
+        if src >= src_end {
+            break; // final literal run has no match part
+        }
+        // Match: little-endian offset + extendable length.
+        let off = (*src as usize) | ((*src.add(1) as usize) << 8);
+        src = src.add(2);
+        if off == 0 || off > di {
+            return 0;
+        }
+        let mut mlen = (token & 15) as usize;
+        if mlen == 15 {
+            loop {
+                let b = *src;
+                src = src.add(1);
+                mlen += b as usize;
+                if b != 255 {
+                    break;
+                }
+            }
+        }
+        mlen += 4;
+        if di + mlen > dst_cap {
+            return 0;
+        }
+        // Byte-at-a-time forward copy: correct for overlapping matches
+        // (off < mlen replicates the window, exactly LZ4 semantics).
+        let mut mp = di - off;
+        for _ in 0..mlen {
+            *dst_base.add(di) = *dst_base.add(mp);
+            di += 1;
+            mp += 1;
+        }
+    }
+    di
+}

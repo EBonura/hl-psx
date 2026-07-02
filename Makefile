@@ -110,6 +110,7 @@ disc: compile
 		--out $(DIST)/hl-psx.bin \
 		--volume HLPSX \
 		--world-pack-rooms-dir $(ROOMS) \
+		--world-pack-compress-rooms \
 		--world-pack-extra-dir $(MODELPACK) \
 		--world-pack-extra-dir $(SFXPACK)
 	@echo "DISC -> $(DIST)/hl-psx.cue"
