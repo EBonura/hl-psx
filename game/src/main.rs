@@ -897,6 +897,7 @@ static mut NAV_PREV: [u8; MAX_NAV_NODES] = [NAV_NODE_NONE; MAX_NAV_NODES];
 static mut IMPACT_MARKS: [ImpactMark; MAX_IMPACT_MARKS] = [EMPTY_IMPACT_MARK; MAX_IMPACT_MARKS];
 static mut IMPACT_MARK_CURSOR: usize = 0;
 static mut CLIP_CV: [render::CVert; 4] = [render::EMPTY_CV; 4]; // near-clip scratch (reused)
+static mut CLIP_SV: [render::SVert; 8] = [render::EMPTY_SV; 8]; // guard-clip scratch (reused)
 
 // ---- DEBUG: crosshair triangle pick (find the world tri under screen centre) ----
 // Toggle DEBUG_XHAIR. Each frame the nearest world triangle containing the screen
@@ -3117,6 +3118,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8) {
 
 const SFX_NONE: u8 = 0xFF;
 static mut MON_PAIN_COOLDOWN: u8 = 0;
+static mut MOVERS: [phys::Mover; MAX_ENTS + 1] = [phys::NO_MOVER; MAX_ENTS + 1];
 static mut STEP_ACC: u32 = 0;
 static mut STEP_ALT: u8 = 0;
 
@@ -5218,9 +5220,12 @@ unsafe fn emit_cv(
         );
         return;
     }
-    // Off-screen span: guard-clip (rare).
-    let mut g = [render::EMPTY_SV; 8];
-    let gn = render::guard_clip(&[pa, pb, pc], 3, &mut g);
+    // Off-screen span: guard-clip (rare). Static scratch: a stack local here
+    // memset 256 B in the (inlined) caller's PROLOGUE, taxing every soft-path
+    // call even when the in-band fast path returned early. Safe: emit_cv's
+    // recursion happens before this point and g is consumed within the block.
+    let g = &mut *core::ptr::addr_of_mut!(CLIP_SV);
+    let gn = render::guard_clip(&[pa, pb, pc], 3, g);
     if gn < 3 {
         return;
     }
@@ -6793,7 +6798,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
 
             // Collision movers: every brush entity at its current offset (doors at
             // their open amount, statics at origin) + the tram at its ride offset.
-            let mut movers = [phys::NO_MOVER; MAX_ENTS + 1];
+            // Static: 0..nmov is fully written below; a local was memset-ing
+            // ~7.7 KB every frame (3.2% of the profile).
+            let movers = unsafe { &mut *core::ptr::addr_of_mut!(MOVERS) };
             let mut nmov = 0;
             unsafe {
                 for ei in 0..nents {

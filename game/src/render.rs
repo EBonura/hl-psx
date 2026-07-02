@@ -202,37 +202,70 @@ fn clip_edge(
 }
 
 /// Clip a convex screen polygon to the guard band. Returns vertices in `out`.
+// Ping-pong scratch for guard_clip. Statics, not locals: the stack arrays
+// memset 512 B per call. Single-threaded render loop, never live across calls.
+static mut GC_A: [SVert; 8] = [EMPTY_SV; 8];
+static mut GC_B: [SVert; 8] = [EMPTY_SV; 8];
+
 pub fn guard_clip(poly: &[SVert], n: usize, out: &mut [SVert; 8]) -> usize {
-    // Fast path: entirely inside.
-    if (0..n).all(|i| poly[i].x >= GX0 && poly[i].x <= GX1 && poly[i].y >= GY0 && poly[i].y <= GY1)
-    {
-        for i in 0..n {
-            out[i] = poly[i];
-        }
+    let n = n.min(8);
+    // Bounds once; run only the passes an edge actually crosses (most clipped
+    // triangles cross ONE band edge -- the old code always ran all four, each
+    // a full copy pass).
+    let (mut minx, mut maxx, mut miny, mut maxy) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+    for v in poly.iter().take(n) {
+        minx = minx.min(v.x);
+        maxx = maxx.max(v.x);
+        miny = miny.min(v.y);
+        maxy = maxy.max(v.y);
+    }
+    if minx >= GX0 && maxx <= GX1 && miny >= GY0 && maxy <= GY1 {
+        out[..n].copy_from_slice(&poly[..n]);
         return n;
     }
-    let mut a = [EMPTY_SV; 8];
-    for i in 0..n.min(8) {
-        a[i] = poly[i];
+    let (a, b) = unsafe {
+        (
+            &mut *core::ptr::addr_of_mut!(GC_A),
+            &mut *core::ptr::addr_of_mut!(GC_B),
+        )
+    };
+    a[..n].copy_from_slice(&poly[..n]);
+    let mut cur_is_a = true;
+    let mut na = n;
+    let mut pass = |na: usize, cur_is_a: &mut bool, axis: Axis, bound: i32, keep_ge: bool| {
+        let m = if *cur_is_a {
+            clip_edge(a, na, b, axis, bound, keep_ge)
+        } else {
+            clip_edge(b, na, a, axis, bound, keep_ge)
+        };
+        *cur_is_a = !*cur_is_a;
+        m
+    };
+    if minx < GX0 {
+        na = pass(na, &mut cur_is_a, Axis::X, GX0, true);
+        if na < 3 {
+            return 0;
+        }
     }
-    let mut na = n.min(8);
-    let mut b = [EMPTY_SV; 8];
-    na = clip_edge(&a, na, &mut b, Axis::X, GX0, true);
-    if na < 3 {
-        return 0;
+    if maxx > GX1 {
+        na = pass(na, &mut cur_is_a, Axis::X, GX1, false);
+        if na < 3 {
+            return 0;
+        }
     }
-    na = clip_edge(&b, na, &mut a, Axis::X, GX1, false);
-    if na < 3 {
-        return 0;
+    if miny < GY0 {
+        na = pass(na, &mut cur_is_a, Axis::Y, GY0, true);
+        if na < 3 {
+            return 0;
+        }
     }
-    na = clip_edge(&a, na, &mut b, Axis::Y, GY0, true);
-    if na < 3 {
-        return 0;
+    if maxy > GY1 {
+        na = pass(na, &mut cur_is_a, Axis::Y, GY1, false);
+        if na < 3 {
+            return 0;
+        }
     }
-    na = clip_edge(&b, na, out, Axis::Y, GY1, false);
-    if na < 3 {
-        0
-    } else {
-        na
-    }
+    let cur: &[SVert; 8] = if cur_is_a { a } else { b };
+    out[..na].copy_from_slice(&cur[..na]);
+    na
 }
