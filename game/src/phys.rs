@@ -14,6 +14,19 @@ const GROUND_NY: i32 = 2867; // floor if plane normal Y > ~0.7 (×4096)
 
 // Tunables (world units per frame). HL feel-ish; adjust from captures.
 const GRAVITY: i32 = 12;
+
+// trigger_gravity zones scale gravity (q12; 4096 = normal). Sticky until the
+// next zone or map load, matching GoldSrc's sv_gravity behaviour.
+static mut GRAVITY_SCALE: i32 = 4096;
+
+pub fn set_gravity_scale(scale_q12: i32) {
+    unsafe { GRAVITY_SCALE = scale_q12.clamp(0, 4096 * 4) };
+}
+
+#[inline]
+fn gravity_step() -> i32 {
+    unsafe { (GRAVITY * GRAVITY_SCALE) >> 12 }
+}
 const MOVE_SPEED: i32 = 18;
 const JUMP: i32 = 64;
 const STEP_DOWN: i32 = 8; // ground probe depth
@@ -31,6 +44,7 @@ struct Trace {
     normal: [i32; 3], // hit plane normal (×4096)
     allsolid: bool,
     startsolid: bool,
+    mover: i32, // ent id of the mover hit (-1 = static world)
 }
 
 /// Public, allocation-free result for gameplay ray casts.
@@ -42,6 +56,8 @@ pub struct RayHit {
     pub pos: [i32; 3],
     /// Impact plane normal in Q0.12.
     pub normal: [i32; 3],
+    /// Ent id of the brush entity hit, or -1 for static world.
+    pub mover: i32,
 }
 
 fn point_contents(map: &Map, mut num: i16, p: [i32; 3]) -> i16 {
@@ -136,6 +152,7 @@ fn trace(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> Trace {
         normal: [0, 0, 0],
         allsolid: true,
         startsolid: false,
+        mover: -1,
     };
     recurse(map, head as i16, 0, 4096, p1, p2, &mut tr, 0);
     tr
@@ -148,6 +165,7 @@ pub struct Mover {
     pub off: [i32; 3],
     pub center: [i32; 3],
     pub radius: i32,
+    pub id: i32, // owning brush-entity index (traces report it on hit)
 }
 
 pub const NO_MOVER: Mover = Mover {
@@ -155,6 +173,7 @@ pub const NO_MOVER: Mover = Mover {
     off: [0, 0, 0],
     center: [0, 0, 0],
     radius: 0,
+    id: -1,
 };
 
 #[inline]
@@ -226,6 +245,7 @@ pub fn trace_line(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Op
             p1[2] + (((p2[2] - p1[2]) * t.frac) >> 12),
         ],
         normal: t.normal,
+        mover: t.mover,
     })
 }
 
@@ -276,6 +296,7 @@ fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i3
         if t.frac < best.frac {
             best.frac = t.frac;
             best.normal = t.normal;
+            best.mover = mv.id;
         }
     }
     best
@@ -463,11 +484,15 @@ fn dist_xz(a: [i32; 3], b: [i32; 3]) -> i32 {
 }
 
 const STEP_UP: i32 = 18; // max stair/ledge height the player climbs
+const CLIMB_SPEED: i32 = 10; // ladder vertical units/tick at full stick
+const LATERAL_CLIMB: i32 = 6; // slow xz drift while on a ladder
+const CLIMB_PITCH_DOWN: i16 = 300; // pitch beyond this = looking down -> descend
 
 pub struct Player {
     pub pos: [i32; 3],
     pub vel: [i32; 3],
     pub on_ground: bool,
+    pub ground_mover: i32, // ent id of the mover under our feet (-1 = world/none)
 }
 
 impl Player {
@@ -476,7 +501,52 @@ impl Player {
             pos,
             vel: [0, 0, 0],
             on_ground: false,
+            ground_mover: -1,
         }
+    }
+
+    /// Ladder-climb frame: gravity off, forward input runs up or down the
+    /// ladder by view pitch (HL feel: look up + forward climbs up), strafe
+    /// slides along it, jump lets go with a push away from the view.
+    pub fn update_climb(
+        &mut self,
+        map: &Map,
+        movers: &[Mover],
+        fwd: i32,
+        strafe: i32,
+        jump: bool,
+        yaw: u16,
+        pitch: i16,
+    ) {
+        let s = sincos::sin_q12(yaw);
+        let c = sincos::sin_q12((yaw + 1024) & 0xFFF);
+        if jump {
+            // Let go: push back off the ladder and resume normal physics.
+            self.vel = [(-s * CLIMB_SPEED) >> 12, 0, (-c * CLIMB_SPEED) >> 12];
+            self.on_ground = false;
+            let head = map.hull1_head;
+            let (p, v) = slide_move(map, head, movers, self.pos, self.vel);
+            self.pos = p;
+            self.vel = v;
+            return;
+        }
+        // Positive pitch = looking up (stick up). Forward climbs up unless the
+        // player is looking clearly downward, then it descends (HL ladder feel).
+        let up = if pitch >= -CLIMB_PITCH_DOWN { 1 } else { -1 };
+        self.vel = [
+            (s * fwd / 128 * LATERAL_CLIMB) >> 12,
+            fwd * up * CLIMB_SPEED / 128,
+            (c * fwd / 128 * LATERAL_CLIMB) >> 12,
+        ];
+        // Strafe slides sideways along the wall.
+        self.vel[0] += (c * strafe / 128 * LATERAL_CLIMB) >> 12;
+        self.vel[2] += (-s * strafe / 128 * LATERAL_CLIMB) >> 12;
+        let head = map.hull1_head;
+        let (p, v) = slide_move(map, head, movers, self.pos, self.vel);
+        self.pos = p;
+        self.vel = v;
+        self.on_ground = false;
+        self.ground_mover = -1;
     }
 
     /// Advance the player one frame. `fwd`/`strafe` are analog deltas in
@@ -509,7 +579,7 @@ impl Player {
                 self.on_ground = false;
             }
         } else {
-            self.vel[1] -= GRAVITY;
+            self.vel[1] -= gravity_step();
         }
 
         // Move with stair-stepping: a plain slide, then (when grounded and
@@ -542,6 +612,7 @@ impl Player {
         let down = [self.pos[0], self.pos[1] - STEP_DOWN, self.pos[2]];
         let g = trace_all(map, head, movers, self.pos, down);
         self.on_ground = g.frac < 4096 && g.normal[1] > GROUND_NY;
+        self.ground_mover = if self.on_ground { g.mover } else { -1 };
         if self.on_ground {
             // Snap onto the floor and kill downward speed.
             self.pos[1] += ((down[1] - self.pos[1]) * g.frac) >> 12;

@@ -192,6 +192,12 @@ pub const LOGIC_ITEM_SUIT: u8 = 12;
 pub const LOGIC_ITEM_BATTERY: u8 = 13;
 pub const LOGIC_TRIGGER_HURT: u8 = 14;
 pub const LOGIC_FUNC_TRACKTRAIN: u8 = 15;
+pub const LOGIC_FUNC_BREAKABLE: u8 = 16;
+pub const LOGIC_TRIGGER_TELEPORT: u8 = 17;
+pub const LOGIC_TRIGGER_PUSH: u8 = 18;
+pub const LOGIC_TRIGGER_GRAVITY: u8 = 19;
+pub const LOGIC_HEALTH_CHARGER: u8 = 20;
+pub const LOGIC_HEV_CHARGER: u8 = 21;
 
 pub const USE_OFF: u8 = 0;
 pub const USE_ON: u8 = 1;

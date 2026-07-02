@@ -1935,6 +1935,12 @@ const LOGIC_ITEM_SUIT: u8 = 12;
 const LOGIC_ITEM_BATTERY: u8 = 13;
 const LOGIC_TRIGGER_HURT: u8 = 14;
 const LOGIC_FUNC_TRACKTRAIN: u8 = 15;
+const LOGIC_FUNC_BREAKABLE: u8 = 16;
+const LOGIC_TRIGGER_TELEPORT: u8 = 17;
+const LOGIC_TRIGGER_PUSH: u8 = 18;
+const LOGIC_TRIGGER_GRAVITY: u8 = 19;
+const LOGIC_HEALTH_CHARGER: u8 = 20;
+const LOGIC_HEV_CHARGER: u8 = 21;
 
 const USE_OFF: u8 = 0;
 const USE_ON: u8 = 1;
@@ -2554,7 +2560,7 @@ fn collect_entities(
             continue;
         }
         let cls = ent_value(block, "classname").unwrap_or("");
-        if cls.starts_with("trigger") || cls == "func_ladder" || cls == "func_tracktrain" {
+        if cls.starts_with("trigger") || cls == "func_tracktrain" {
             continue; // invisible, or handled by the tram section
         }
         let origin_hl = ent_value(block, "origin")
@@ -2579,6 +2585,52 @@ fn collect_entities(
             ((half[0] * half[0] + half[1] * half[1] + half[2] * half[2]).sqrt() + 80.0) / scale;
         let r2 = (rad * rad) as i32;
         let head = i32le(models, mo + 40).unwrap_or(0); // dmodel_t.headnode[1]
+        if cls == "func_ladder" {
+            // Invisible climb volume: never drawn, never collides. The world
+            // half-extents ride in `mv` (unused for non-movers) so the runtime
+            // can do a cheap AABB touch test against the player.
+            let hx = to_world([half[0], half[1], half[2]], scale);
+            out.push(EntRec {
+                submodel: submodel as u16,
+                kind: 4,
+                origin,
+                mv: [hx[0].abs(), hx[1].abs(), hx[2].abs()],
+                center,
+                r2,
+                head: 0,
+                leaves: Vec::new(),
+            });
+            continue;
+        }
+        if cls == "func_plat" {
+            // Platform authored at its TOP position; travel is straight down by
+            // `height` (or its own size minus the 8u lip). Runs on the door
+            // machinery: touch -> descend, wait, return.
+            let travel = ent_value(block, "height")
+                .and_then(|v| v.parse::<f32>().ok())
+                .filter(|h| *h > 1.0)
+                .unwrap_or((sz[2] - 8.0).max(8.0));
+            let mv = to_world([0.0, 0.0, -travel], scale);
+            let leaves = entity_leafs(
+                mins,
+                maxs,
+                origin_hl,
+                Some([0.0, 0.0, -travel]),
+                nodes,
+                planes,
+            );
+            out.push(EntRec {
+                submodel: submodel as u16,
+                kind: 1,
+                origin,
+                mv,
+                center,
+                r2,
+                head,
+                leaves,
+            });
+            continue;
+        }
         if cls == "func_door" || cls == "func_button" {
             let angle = ent_value(block, "angle")
                 .and_then(|a| a.parse().ok())
@@ -2634,11 +2686,32 @@ fn collect_logic_entities(
     let mut out = Vec::new();
     let mut aux = Vec::new();
 
+    // Teleport destinations, resolved at cook time (name -> world origin+yaw).
+    let mut tp_dests: Vec<(String, [i32; 3], u16)> = Vec::new();
+    for block in s.split('{') {
+        let cls = ent_value(block, "classname").unwrap_or("");
+        if cls == "info_teleport_destination" || cls == "info_target" {
+            if let (Some(name), Some(o)) = (
+                ent_value(block, "targetname"),
+                ent_value(block, "origin").and_then(parse_vec3),
+            ) {
+                let yaw = hl_yaw_to_world_q12(ent_yaw_degrees(block).unwrap_or(0.0));
+                tp_dests.push((name.to_string(), to_world(o, scale), yaw as u16));
+            }
+        }
+    }
+
     for block in s.split('{') {
         let cls = ent_value(block, "classname").unwrap_or("");
         let kind = match cls {
-            "func_door" => LOGIC_FUNC_DOOR,
+            "func_door" | "func_plat" => LOGIC_FUNC_DOOR,
             "func_button" => LOGIC_FUNC_BUTTON,
+            "func_breakable" | "func_pushable" => LOGIC_FUNC_BREAKABLE,
+            "trigger_teleport" => LOGIC_TRIGGER_TELEPORT,
+            "trigger_push" => LOGIC_TRIGGER_PUSH,
+            "trigger_gravity" => LOGIC_TRIGGER_GRAVITY,
+            "func_healthcharger" => LOGIC_HEALTH_CHARGER,
+            "func_recharge" => LOGIC_HEV_CHARGER,
             "trigger_once" => LOGIC_TRIGGER_ONCE,
             "trigger_multiple" => LOGIC_TRIGGER_MULTIPLE,
             "trigger_relay" => LOGIC_TRIGGER_RELAY,
@@ -2665,7 +2738,15 @@ fn collect_logic_entities(
             .and_then(|sm| brush_by_submodel.get(sm).copied())
             .filter(|&b| b != LOGIC_BRUSH_NONE)
             .unwrap_or(LOGIC_BRUSH_NONE);
-        if matches!(kind, LOGIC_FUNC_DOOR | LOGIC_FUNC_BUTTON) && brush == LOGIC_BRUSH_NONE {
+        if matches!(
+            kind,
+            LOGIC_FUNC_DOOR
+                | LOGIC_FUNC_BUTTON
+                | LOGIC_FUNC_BREAKABLE
+                | LOGIC_HEALTH_CHARGER
+                | LOGIC_HEV_CHARGER
+        ) && brush == LOGIC_BRUSH_NONE
+        {
             continue;
         }
 
@@ -2718,11 +2799,22 @@ fn collect_logic_entities(
                 LOGIC_FUNC_TRACKTRAIN => (parse_f32_key(block, "startspeed", 0.0) / scale)
                     .round()
                     .clamp(0.0, u16::MAX as f32) as u16,
+                LOGIC_FUNC_BREAKABLE => parse_f32_key(block, "health", 20.0)
+                    .round()
+                    .clamp(1.0, u16::MAX as f32) as u16,
+                LOGIC_TRIGGER_GRAVITY => (parse_f32_key(block, "gravity", 1.0) * 4096.0)
+                    .round()
+                    .clamp(0.0, u16::MAX as f32) as u16,
+                LOGIC_HEALTH_CHARGER => 50, // HL default juice
+                LOGIC_HEV_CHARGER => 75,
                 _ => names.id(ent_value(block, "changetarget")),
             };
         let arg1 = match kind {
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
             LOGIC_FUNC_TRACKTRAIN => submodel.unwrap_or(0).min(u16::MAX as usize) as u16,
+            LOGIC_FUNC_BREAKABLE => parse_f32_key(block, "material", 0.0)
+                .round()
+                .clamp(0.0, 7.0) as u16,
             _ => 0,
         };
 
@@ -2753,6 +2845,50 @@ fn collect_logic_entities(
                 aux_count = aux_count.saturating_add(1);
             }
             target = 0;
+        }
+        if kind == LOGIC_TRIGGER_TELEPORT {
+            // Resolve the destination at cook time; pack world (x,y),(z,yaw)
+            // as two aux entries (world coords fit i16).
+            let dest_name = ent_value(block, "target").unwrap_or("");
+            let Some((_, d, dyaw)) = tp_dests.iter().find(|(n, _, _)| n == dest_name) else {
+                continue; // unresolvable teleport: skip rather than strand players
+            };
+            aux.push(LogicAuxRec {
+                target: d[0] as i16 as u16,
+                delay_ticks: d[1] as i16 as u16,
+            });
+            aux.push(LogicAuxRec {
+                target: d[2] as i16 as u16,
+                delay_ticks: *dyaw,
+            });
+            aux_count = 2;
+            target = 0;
+        }
+        if kind == LOGIC_TRIGGER_PUSH {
+            // Per-tick world push vector from HL angles + speed (u/s at 20 Hz).
+            let spd = parse_f32_key(block, "speed", 100.0) / scale / 20.0;
+            let deg = ent_yaw_degrees(block).unwrap_or(0.0);
+            let hl_dir = if (deg + 1.0).abs() < 0.01 {
+                [0.0, 0.0, 1.0] // angle -1 = straight up (HL convention)
+            } else if (deg + 2.0).abs() < 0.01 {
+                [0.0, 0.0, -1.0]
+            } else {
+                let r = deg.to_radians();
+                [r.cos(), r.sin(), 0.0]
+            };
+            let w = to_world(
+                [hl_dir[0] * spd * scale, hl_dir[1] * spd * scale, hl_dir[2] * spd * scale],
+                scale,
+            );
+            aux.push(LogicAuxRec {
+                target: w[0] as i16 as u16,
+                delay_ticks: w[1] as i16 as u16,
+            });
+            aux.push(LogicAuxRec {
+                target: w[2] as i16 as u16,
+                delay_ticks: 0,
+            });
+            aux_count = 2;
         }
 
         out.push(LogicRec {

@@ -328,6 +328,7 @@ const PLAYER_START_HEALTH: u16 = 100;
 const DEATH_TICKS: u8 = 60; // frozen "you died" window before respawn (3s at 20 Hz)
 const PLAYER_START_ARMOR: u16 = 0;
 const HEV_MAX_ARMOR: u16 = 100;
+const CHARGER_RATE: u16 = 4; // health/armor points per use pulse (8-tick cadence)
 const HEV_BATTERY_ARMOR: u16 = 15;
 const HEV_PICKUP_TICKS: u8 = 36;
 const ITEM_TOUCH_RANGE2: i32 = 38 * 38;
@@ -700,6 +701,11 @@ const EMPTY_ENT: map::Ent = map::Ent {
 static mut ENT_CACHE: [map::Ent; MAX_ENTS] = [EMPTY_ENT; MAX_ENTS];
 static mut ENT_RADIUS: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
+static mut ENT_PREV_OFF: [[i32; 3]; MAX_ENTS] = [[0; 3]; MAX_ENTS]; // ride-carry deltas
+static mut ENT_BREAK_LOGIC: [u16; MAX_ENTS] = [u16::MAX; MAX_ENTS]; // ent -> breakable logic rec
+static mut LOGIC_BREAK_HP: [u16; MAX_LOGIC] = [0; MAX_LOGIC]; // remaining breakable health
+static mut TELEPORT_REQUEST: Option<([i32; 3], u16)> = None; // dest pos + yaw, applied post-touch
+static mut PUSH_IMPULSE: [i32; 3] = [0; 3]; // per-tick trigger_push velocity add
 static mut ENT_ACTIVE: [u8; MAX_ENTS] = [0; MAX_ENTS];
 
 #[derive(Clone, Copy)]
@@ -742,7 +748,9 @@ static mut TRACKTRAIN_SUBMODEL: u16 = 0;
 static mut TRACKTRAIN_CMD_ACTIVE: u8 = 0;
 static mut TRACKTRAIN_CMD_USE_TYPE: u8 = map::USE_TOGGLE;
 static mut TRACKTRAIN_CMD_SPEED: u16 = 0;
+static mut TRACKTRAIN_USE_SPEED: u16 = 60; // +use drive speed (On A Rail)
 static mut LOGIC_PLAYER_POS: [i32; 3] = [0; 3];
+static mut SIM_NOW: u16 = 0; // current sim tick, for fire-path logic hooks
 static mut LOGIC_PLAYER_YAW: u16 = 0;
 static mut LOGIC_PLAYER_PITCH: i16 = 0;
 static mut LOGIC_PLAYER_HEALTH: u16 = PLAYER_START_HEALTH;
@@ -1329,6 +1337,7 @@ const SF_BUTTON_TOGGLE: u16 = 32;
 const SF_BUTTON_TOUCH_ONLY: u16 = 256;
 const SF_TRIGGER_HURT_TARGET_ONCE: u16 = 1;
 const SF_TRIGGER_HURT_START_OFF: u16 = 2;
+const SF_BREAK_TRIGGER_ONLY: u16 = 1; // func_breakable: immune to gunfire
 const TRIGGER_HURT_REPEAT_TICKS: u16 = 10;
 const TRAM_CARRY_RADIUS2: i32 = 384 * 384;
 const TRAM_CARRY_HEIGHT: i32 = 160;
@@ -1345,6 +1354,56 @@ fn logic_valid_brush(brush: u16, nents: usize) -> Option<usize> {
         Some(i)
     } else {
         None
+    }
+}
+
+/// True when the player overlaps any func_ladder volume (kind 4). Ladders are
+/// invisible AABBs; expand them by the player hull so grabbing feels natural.
+unsafe fn ladder_touch(m: &Map, nents: usize, pos: [i32; 3]) -> bool {
+    let _ = m;
+    let mut ei = 0usize;
+    while ei < nents {
+        let e = ENT_CACHE[ei];
+        if e.kind == 4 && ENT_ACTIVE[ei] != 0 {
+            let dx = (pos[0] - e.center[0]).abs();
+            let dy = (pos[1] - e.center[1]).abs();
+            let dz = (pos[2] - e.center[2]).abs();
+            if dx <= e.mv[0] + 18 && dy <= e.mv[1] + 34 && dz <= e.mv[2] + 18 {
+                return true;
+            }
+        }
+        ei += 1;
+    }
+    false
+}
+
+/// Damage a brush entity; breakables shatter at 0 HP (vanish, fire targets).
+unsafe fn damage_brush_ent(m: &Map, nlogic: usize, nents: usize, ei: usize, dmg: u8, now: u16) {
+    if ei >= nents || ENT_ACTIVE[ei] == 0 {
+        return;
+    }
+    let li = ENT_BREAK_LOGIC[ei];
+    if li == u16::MAX || (li as usize) >= nlogic {
+        return;
+    }
+    let li = li as usize;
+    let rec = m.logic(li);
+    if (rec.spawnflags & SF_BREAK_TRIGGER_ONLY) != 0 {
+        return; // only breakable via its trigger, not gunfire
+    }
+    let hp = LOGIC_BREAK_HP[li];
+    if hp == 0 {
+        return;
+    }
+    let hp = hp.saturating_sub(dmg as u16);
+    LOGIC_BREAK_HP[li] = hp;
+    if hp == 0 {
+        ENT_ACTIVE[ei] = 0;
+        LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+        // Glass tinkles, everything else crunches (material key, arg1).
+        let snd = if rec.arg1 == 0 { sfx::GLASS_BREAK } else { sfx::WOOD_BREAK };
+        sfx::play_world(snd, ENT_CACHE[ei].center);
+        logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, 0);
     }
 }
 
@@ -1891,6 +1950,8 @@ unsafe fn logic_try_use(
     pitch: i16,
     movers: &[phys::Mover],
     now: u16,
+    health: &mut u16,
+    armor: &mut u16,
 ) {
     let rot = view_rotation(yaw, pitch);
     let base_t = [
@@ -1904,7 +1965,11 @@ unsafe fn logic_try_use(
     while li < nlogic {
         if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
             let rec = m.logic(li);
-            if rec.kind == map::LOGIC_FUNC_BUTTON || rec.kind == map::LOGIC_FUNC_DOOR {
+            if rec.kind == map::LOGIC_FUNC_BUTTON
+                || rec.kind == map::LOGIC_FUNC_DOOR
+                || rec.kind == map::LOGIC_HEALTH_CHARGER
+                || rec.kind == map::LOGIC_HEV_CHARGER
+            {
                 let c = logic_center(rec);
                 let vz = dot12(rot.m[2], c) + base_t[2];
                 if vz > 0 && vz <= PLAYER_USE_REACH {
@@ -1926,7 +1991,29 @@ unsafe fn logic_try_use(
         li += 1;
     }
     if best != usize::MAX {
-        logic_use_entity(m, nlogic, nents, best, map::USE_TOGGLE, now, 0);
+        let rec = m.logic(best);
+        match rec.kind {
+            // Wall chargers drain their juice into the player per use pulse.
+            map::LOGIC_HEALTH_CHARGER => {
+                if LOGIC_COUNTER[best] > 0 && *health < PLAYER_START_HEALTH {
+                    let give = (CHARGER_RATE as i16).min(LOGIC_COUNTER[best]) as u16;
+                    let give = give.min(PLAYER_START_HEALTH - *health);
+                    *health += give;
+                    LOGIC_COUNTER[best] -= give as i16;
+                    sfx::play(sfx::MEDSHOT);
+                }
+            }
+            map::LOGIC_HEV_CHARGER => {
+                if LOGIC_COUNTER[best] > 0 && *armor < HEV_MAX_ARMOR {
+                    let give = (CHARGER_RATE as i16).min(LOGIC_COUNTER[best]) as u16;
+                    let give = give.min(HEV_MAX_ARMOR - *armor);
+                    *armor += give;
+                    LOGIC_COUNTER[best] -= give as i16;
+                    sfx::play(sfx::MEDSHOT);
+                }
+            }
+            _ => logic_use_entity(m, nlogic, nents, best, map::USE_TOGGLE, now, 0),
+        }
     }
 }
 
@@ -1987,6 +2074,36 @@ unsafe fn logic_touch_triggers(
                         }
                     }
                 }
+                map::LOGIC_TRIGGER_TELEPORT => {
+                    if rec.aux_count >= 2 && player_touches_logic(player_pos, rec) {
+                        let a = m.logic_aux(rec.first_aux);
+                        let b = m.logic_aux(rec.first_aux + 1);
+                        TELEPORT_REQUEST = Some((
+                            [
+                                a.target as i16 as i32,
+                                a.delay_ticks as i16 as i32 + 4, // clear the floor
+                                b.target as i16 as i32,
+                            ],
+                            b.delay_ticks, // destination yaw (q12)
+                        ));
+                    }
+                }
+                map::LOGIC_TRIGGER_PUSH => {
+                    if rec.aux_count >= 2 && player_touches_logic(player_pos, rec) {
+                        let a = m.logic_aux(rec.first_aux);
+                        let b = m.logic_aux(rec.first_aux + 1);
+                        PUSH_IMPULSE = [
+                            a.target as i16 as i32,
+                            a.delay_ticks as i16 as i32,
+                            b.target as i16 as i32,
+                        ];
+                    }
+                }
+                map::LOGIC_TRIGGER_GRAVITY => {
+                    if player_touches_logic(player_pos, rec) {
+                        phys::set_gravity_scale(rec.arg0 as i32);
+                    }
+                }
                 _ => {}
             }
         }
@@ -2022,6 +2139,12 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     while ei < MAX_ENTS {
         ENT_ACTIVE[ei] = if ei < nents { 1 } else { 0 };
         ENT_PHASE[ei] = 0;
+        ENT_PREV_OFF[ei] = if ei < nents {
+            ent_draw_offset(ei)
+        } else {
+            [0; 3]
+        };
+        ENT_BREAK_LOGIC[ei] = u16::MAX;
         ei += 1;
     }
     let mut li = 0usize;
@@ -2030,6 +2153,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         LOGIC_NEXT[li] = 0;
         LOGIC_TARGET[li] = 0;
         LOGIC_COUNTER[li] = 0;
+        LOGIC_BREAK_HP[li] = 0;
         LOGIC_PROP_LINK[li] = LOGIC_PROP_NONE;
         li += 1;
     }
@@ -2042,10 +2166,11 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     while li < nlogic {
         let rec = m.logic(li);
         LOGIC_TARGET[li] = rec.target;
-        LOGIC_COUNTER[li] = if rec.kind == map::LOGIC_TRIGGER_COUNTER {
-            (rec.arg0 as i16).max(1)
-        } else {
-            0
+        LOGIC_COUNTER[li] = match rec.kind {
+            map::LOGIC_TRIGGER_COUNTER => (rec.arg0 as i16).max(1),
+            // Chargers store their remaining juice here (never counters).
+            map::LOGIC_HEALTH_CHARGER | map::LOGIC_HEV_CHARGER => rec.arg0 as i16,
+            _ => 0,
         };
         match rec.kind {
             map::LOGIC_FUNC_DOOR => {
@@ -2072,11 +2197,20 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                     LOGIC_STATE[li] = LOGIC_STATE_TOP;
                 }
             }
+            map::LOGIC_FUNC_BREAKABLE => {
+                LOGIC_BREAK_HP[li] = rec.arg0.max(1);
+                if let Some(ei) = logic_valid_brush(rec.brush, nents) {
+                    ENT_BREAK_LOGIC[ei] = li as u16;
+                }
+            }
             map::LOGIC_FUNC_TRACKTRAIN => {
-                if rec.arg1 != 0 && rec.arg1 == TRACKTRAIN_SUBMODEL && rec.arg0 > 0 {
-                    TRACKTRAIN_CMD_ACTIVE = 1;
-                    TRACKTRAIN_CMD_USE_TYPE = map::USE_ON;
-                    TRACKTRAIN_CMD_SPEED = rec.arg0;
+                if rec.arg1 != 0 && rec.arg1 == TRACKTRAIN_SUBMODEL {
+                    TRACKTRAIN_USE_SPEED = rec.speed.max(40); // player drive speed
+                    if rec.arg0 > 0 {
+                        TRACKTRAIN_CMD_ACTIVE = 1;
+                        TRACKTRAIN_CMD_USE_TYPE = map::USE_ON;
+                        TRACKTRAIN_CMD_SPEED = rec.arg0;
+                    }
                 }
             }
             _ => {}
@@ -3861,6 +3995,9 @@ unsafe fn fire_hitscan(
             ];
             spawn_impact_fx(decal_pos, IMPACT_KIND_WORLD, rot, base_t);
             sfx::play_world(sfx::RIC, decal_pos);
+            if hit.mover >= 0 {
+                damage_brush_ent(m, m.n_logic, m.n_ents, hit.mover as usize, damage, SIM_NOW);
+            }
         }
         None
     } else {
@@ -4062,11 +4199,24 @@ unsafe fn spawn_projectile(kind: u8, damage: u8, eye: [i32; 3], rot: &Mat3I16) {
     };
 }
 
-unsafe fn explode(pos: [i32; 3], damage: u8, radius: i32) {
+unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32) {
     if radius <= 0 {
         return;
     }
     sfx::play_world(sfx::EXPLODE, pos);
+    // Blast breakables in range (crates, boards, grates).
+    let nents = m.n_ents;
+    let mut ei = 0usize;
+    while ei < nents {
+        if ENT_ACTIVE[ei] != 0 && ENT_BREAK_LOGIC[ei] != u16::MAX {
+            let c = ENT_CACHE[ei].center;
+            let (dx, dy, dz) = (c[0] - pos[0], c[1] - pos[1], c[2] - pos[2]);
+            if dx.abs() < radius && dy.abs() < radius && dz.abs() < radius {
+                damage_brush_ent(m, m.n_logic, nents, ei, damage, SIM_NOW);
+            }
+        }
+        ei += 1;
+    }
     let r2 = radius * radius;
     let mut pi = 0;
     let nprops = PROP_COUNT.min(MAX_PROPS);
@@ -4129,7 +4279,7 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
         }
         if hit || PROJECTILES[i].life == 0 {
             if aoe > 0 {
-                explode(hit_pos, PROJECTILES[i].damage, aoe);
+                explode(m, hit_pos, PROJECTILES[i].damage, aoe);
             } else if best != usize::MAX {
                 damage_prop(best, PROJECTILES[i].damage);
                 PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
@@ -4433,7 +4583,12 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
     let mut ei = 0usize;
     while ei < nents {
         let e = ENT_CACHE[ei];
-        if ENT_ACTIVE[ei] != 0 && entity_touches_pvs(m, &e) && PVS_ENT_COUNT < MAX_ENTS {
+        // kind 4 = invisible ladder volume: physics only, never drawn.
+        if e.kind != 4
+            && ENT_ACTIVE[ei] != 0
+            && entity_touches_pvs(m, &e)
+            && PVS_ENT_COUNT < MAX_ENTS
+        {
             PVS_ENTS[PVS_ENT_COUNT] = ei as u16;
             PVS_ENT_COUNT += 1;
         }
@@ -5841,6 +5996,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         tty::println("hl-psx: texture/world count mismatch");
         telemetry::debug_log("hl-psx: texture/world count mismatch");
     }
+    phys::set_gravity_scale(4096); // fresh map: normal gravity until a zone says otherwise
     unsafe {
         PVS_CAM_LEAF = -1;
         PVS_LEAF_COUNT = 0;
@@ -6138,6 +6294,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 LOGIC_PLAYER_ARMOR = armor;
                 LOGIC_PLAYER_CLIP_AMMO = weapon.clip_display();
                 LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve_display();
+                SIM_NOW = sim_frame_no as u16;
                 logic_pre_tick(&m, nlogic, nents, sim_frame_no as u16);
             }
 
@@ -6208,12 +6365,14 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     }
                     let e = ENT_CACHE[ei];
                     let off = ent_draw_offset(ei);
-                    if e.kind != 2 && nmov < movers.len() {
+                    // kind 2 = nonsolid visual, kind 4 = ladder volume (no hull).
+                    if e.kind != 2 && e.kind != 4 && nmov < movers.len() {
                         movers[nmov] = phys::Mover {
                             head: e.head,
                             off,
                             center: e.center,
                             radius: ENT_RADIUS[ei],
+                            id: ei as i32,
                         };
                         nmov += 1;
                     }
@@ -6229,23 +6388,63 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         off: toff,
                         center: [0, 0, 0],
                         radius: 0,
+                        id: -2, // the tram has its own carry path
                     };
                     nmov += 1;
                 }
             }
             let movers = &movers[..nmov];
 
+            // Ride moving brushes: if a mover we stood on last tick shifted
+            // (plat/elevator door phase), carry the player by the same delta so
+            // they stay planted instead of sliding off or falling through.
+            unsafe {
+                if player.ground_mover >= 0 && (player.ground_mover as usize) < nents {
+                    let ei = player.ground_mover as usize;
+                    let now_off = ent_draw_offset(ei);
+                    let prev = ENT_PREV_OFF[ei];
+                    let d = [
+                        now_off[0] - prev[0],
+                        now_off[1] - prev[1],
+                        now_off[2] - prev[2],
+                    ];
+                    if d != [0, 0, 0] {
+                        player.pos[0] += d[0];
+                        player.pos[1] += d[1];
+                        player.pos[2] += d[2];
+                    }
+                }
+                let mut ei = 0usize;
+                while ei < nents {
+                    ENT_PREV_OFF[ei] = ent_draw_offset(ei);
+                    ei += 1;
+                }
+            }
+
             // Full player physics always runs; moving trains carry the player by
             // delta before the update, then block them through their shifted hull.
             telemetry::stage_begin(telemetry::stage::SIM_COLLISION);
-            player.update(
-                &m,
-                movers,
-                fwd,
-                strafe,
-                pad.buttons.is_held(button::CROSS),
-                yaw,
-            );
+            let on_ladder = unsafe { ladder_touch(&m, nents, player.pos) };
+            if on_ladder {
+                player.update_climb(
+                    &m,
+                    movers,
+                    fwd,
+                    strafe,
+                    pad.buttons.is_held(button::CROSS),
+                    yaw,
+                    pitch,
+                );
+            } else {
+                player.update(
+                    &m,
+                    movers,
+                    fwd,
+                    strafe,
+                    pad.buttons.is_held(button::CROSS),
+                    yaw,
+                );
+            }
             telemetry::stage_end(telemetry::stage::SIM_COLLISION);
             let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
             unsafe {
@@ -6265,16 +6464,28 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 LOGIC_PLAYER_CLIP_AMMO = weapon.clip_display();
                 LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve_display();
                 if want_use {
-                    logic_try_use(
-                        &m,
-                        nlogic,
-                        nents,
-                        eye,
-                        yaw,
-                        pitch,
-                        movers,
-                        sim_frame_no as u16,
-                    );
+                    // Standing on the tracktrain + use = drive it (On A Rail);
+                    // otherwise aim-use doors/buttons/chargers.
+                    let train_pos = tram_path_pos(&m, tram_seg, tram_seg_dist);
+                    if m.tram_submodel > 0 && tram_should_carry_player(player.pos, train_pos) {
+                        TRACKTRAIN_CMD_ACTIVE = 1;
+                        TRACKTRAIN_CMD_USE_TYPE = map::USE_TOGGLE;
+                        TRACKTRAIN_CMD_SPEED = TRACKTRAIN_USE_SPEED;
+                        sfx::play(sfx::BUTTON);
+                    } else {
+                        logic_try_use(
+                            &m,
+                            nlogic,
+                            nents,
+                            eye,
+                            yaw,
+                            pitch,
+                            movers,
+                            sim_frame_no as u16,
+                            &mut health,
+                            &mut armor,
+                        );
+                    }
                 }
                 logic_touch_triggers(
                     &m,
@@ -6285,6 +6496,22 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     &mut armor,
                     sim_frame_no as u16,
                 );
+                // Teleport lands before this frame renders (the render eye is
+                // recomputed below); push adds velocity while inside the volume.
+                if let Some((dest, dyaw)) = TELEPORT_REQUEST.take() {
+                    player.pos = dest;
+                    player.vel = [0, 0, 0];
+                    player.on_ground = false;
+                    yaw = dyaw & 0xFFF;
+                }
+                if PUSH_IMPULSE != [0, 0, 0] {
+                    player.vel[1] += PUSH_IMPULSE[1];
+                    // Lateral push nudges the position directly (vel xz is
+                    // recomputed from the stick every tick).
+                    player.pos[0] += PUSH_IMPULSE[0];
+                    player.pos[2] += PUSH_IMPULSE[2];
+                    PUSH_IMPULSE = [0; 3];
+                }
             }
             if want_reload {
                 let _ = weapon.start_reload();

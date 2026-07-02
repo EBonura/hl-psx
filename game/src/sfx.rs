@@ -35,8 +35,11 @@ pub const SUIT: u8 = 18;
 pub const HC_ATTACK: u8 = 19;
 pub const ZO_ATTACK: u8 = 20;
 pub const HE_BLAST: u8 = 21;
+pub const GLASS_BREAK: u8 = 22;
+pub const WOOD_BREAK: u8 = 23;
+pub const MEDSHOT: u8 = 24;
 
-const MAX_SFX: usize = 24;
+const MAX_SFX: usize = 25;
 const SPU_SAMPLE_BASE: u32 = 0x1010; // BIOS convention: 0x0000..0x1000 reserved
 const VOICE_POOL: u8 = 16; // voices 0..15 one-shots; 16..23 reserved (loops/music)
 
