@@ -617,6 +617,30 @@ Everything a start-to-finish run needs, in one pass:
   whole-run evidence (cost a false "freeze" diagnosis); use a tty heartbeat +
   `--guest-debug-log` for liveness.
 
+## M22 -- deep RAM + perf pass (DONE)
+
+- **Dead-tri repack**: the enemy pool draw reads topology from POOL_FACES
+  (baked once) and only verts/clips from the blob, so `stream_map_models`
+  keeps just each chunk's frame section (TriRec tail = 30% of an actor chunk,
+  half of a boss chunk). draw_model's face bound now comes from the baked
+  count (the old `.min(md.n_tris)` clamp read the zeroed header and drew
+  nothing -- visual verify caught it). Freed bytes restored **6-frame actor
+  animation** and moved 20 KB into POOL_FACES (6400 tris): every model incl.
+  statues resident on 95/96 maps (c4a3 background garg alone over the tri cap).
+- **PSoXide `--pc-sample`** (new, committed to PSoXide main): guest-PC
+  histogram CSV, `--pc-sample-every` stride + `--pc-sample-from` offset;
+  resolve against the linker map (build with `-Clink-arg=-Map`). No telemetry
+  MMIO observer effect (the stage-CSV numbers are inflated ~2-3x by it).
+- **Wins from the first profile** (c1a0, 4.1M samples): light palette
+  pre-expanded at load (tri decode 19.9% -> 13.9%); logic scans kind-gated via
+  a load-time cache + idle-skip (Map::logic off the profile); actor gates
+  reordered (header parse after culls, PROP_LEAF for headcrabs, occlusion rays
+  on a 4-tick stagger). ~8% CPU freed on the c1a0 scene, pixel-identical.
+- **Profile shape after**: play 32% (includes the vsync idle spin),
+  try_emit_tri_pair_quad_values 15.5%, loop/render_tri 14%, emits ~14%,
+  face_plane 3.6%, ModelFrame::vert 3.3%. GTE is 1.8% -- the wall is data
+  movement, not math.
+
 ## Next (pick per value)
 
 - **Real water transparency** (needs the underwater scene drawn behind the
@@ -631,6 +655,11 @@ Everything a start-to-finish run needs, in one pass:
   for set pieces; func_rotating visuals.
 - **VM pool**: 182 K reserve < 207 K all-14 viewmodels; either +25 K or accept
   the glock-visual fallback late-game.
+- **Quad-pair cook flag**: try_emit_tri_pair_quad_values is 15.5% of CPU;
+  precompute "quad-safe" per loop face at cook (FaceRec flags bit2 free) to
+  skip the runtime geometry checks on axis-aligned world faces.
+- **Scratchpad (0x1F800000, 1 KB)**: unused; candidates = near-clip scratch,
+  hot per-frame small state. Needs SDK linker-section support.
 
 ## PSoXide SDK map (third_party/PSoXide/sdk/crates)
 
