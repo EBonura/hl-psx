@@ -665,25 +665,78 @@ Everything a start-to-finish run needs, in one pass:
   and SKIPPED: PSoXide charges flat memory timing (BIAS=2 + 1/access, no
   region penalty), so scratchpad moves measure zero in the target emulator.
 
+## M24 -- ghost doors, monstermaker, suitless start, SFX batch 2 (DONE)
+
+- **GHOST-DOOR ROOT CAUSE (the big one)**: every cooked map's world leaf
+  MARKSURFACES included SUBMODEL faces (728 refs in c0a0; 113k campaign-wide;
+  GoldSrc compilers leave them in, the real engine filters at draw time). So
+  every brush entity rendered TWICE -- once static at base position via the PVS
+  world walk (the "ghost"), once animated via the entity path. Doors visibly
+  "duplicated" when opening and you walked through the static copy (collision
+  always followed the real hull). Cook now keeps only model-0 faces in the
+  marks (world_first..world_end filter in the leaf-mark compaction). Also a
+  free perf win: brush-ent faces are no longer double-emitted every frame.
+  Verified: 0 leaking marks on all 96 maps; static views pixel-identical
+  (rest-position ghosts overlapped exactly); c1a1a locker banks (all doors)
+  render intact via the ent path alone.
+- **Door linking**: untargeted touching double-door halves open together
+  (GoldSrc linked-door behaviour). Cook union-finds untargeted func_door AABBs
+  (2u slack) into arg0 groups; runtime activates the whole group on touch/use.
+  NB most HL doors are TARGETED (623 doors, only 40 untargeted) so this is a
+  small fix -- the ghost fix above was the real "doors are weird" bug.
+- **Monstermaker v1**: cook emits up to 4 DORMANT prop copies (type bit
+  0x4000) per monstermaker at its origin + a LOGIC_MONSTERMAKER(22) rec; each
+  fire wakes one dormant prop near the maker origin (ground-snapped). 400
+  dormant spawns across 46 maps (grunt reinforcements, slave teleport-ins,
+  test-chamber cascade). PROP_TYPE_MASK=0x3FFF everywhere kinds are read.
+- **Suitless start**: Arsenal::new() = empty hands; crowbar+glock loadout only
+  when launching with the suit (chapter select / post-suit changelevel).
+  try_fire owns-gates, viewmodel + crosshair render only when armed (HUD
+  draw gained has_weapon). Faithful: c0a0/c1a0 spawn bare-handed, HEV+weapon
+  pickups now mean something.
+- **Hitscan point traces**: Mover gained head0 (hull-0 root); trace_line and
+  line_clear_movers use the EXACT hull vs movers (bullets no longer stop ~16u
+  short of crates/doors); player movement keeps the inflated hull-1.
+- **SFX batch 2** (43 samples, 345 KB SPU): footsteps (input-cadence,
+  alternating), reload, dry-fire click, per-class monster pain/death vocals
+  (crab/zombie/grunt/barney/hound/slave/squid; scientists stay silent rather
+  than borrow a wrong species), HEV pickup bell. KEY: the extractor now cooks
+  at each source's NATIVE rate (HL voices are 11025 Hz; upsampling to 22050
+  doubled SPU cost for nothing -- the runtime honours per-sample rates).
+- **GTE audit conclusion**: draw_model + draw_viewmodel already batch RTPT
+  via project_triangle_scheduled; the world path's lazy per-vert RTPS cache is
+  the right design (most verts shared across faces). GTE = 1.8% of the frame;
+  data movement is the wall. No further GTE headroom worth chasing.
+- Pool rebalance: MODEL_POOL_WORDS 99584 (headroom 101.1 KiB). Roster audit:
+  24 maps drop tail pickup/background types under the 206 K enemy region (22
+  already dropped before this pass; combat types unaffected).
+
+## Systems inventory (honest gaps)
+
+Present: doors (+linking), buttons, plats, trains (tracktrain ride + use),
+breakables, teleports, push, gravity, chargers, multi_manager, triggers
+(once/multiple/hurt/changelevel), pickups (weapons/ammo/medkit/suit/battery),
+monstermaker, ladders, water/glass blend, full weapon set, enemy AI
+(melee/ranged/turret), footstep/voice SFX.
+Absent (candidates next): scripted_sequence (set-piece NPC walks; needs
+per-sequence anim baking + move-to), func_rotating (fans), func_train for
+brush platforms on paths, momentary_* (wheel valves), env_render/env_glow,
+monster gibs, ambient_generic loops, save/load.
+
 ## Next (pick per value)
 
-- **Real water transparency** (needs the underwater scene drawn behind the
-  surface; blend alone renders near-black -- see M-notes above).
+- **scripted_sequence v1**: the biggest remaining faithfulness gap (intro set
+  pieces); needs prop targetnames + a move-to + per-sequence anim bake.
 - **More perf on fill-bound open maps** (c2a5-class): geometry LOD or
   resolution tricks; CPU side is done to ~20fps.
 - **c4a3 chapter spawn** lands in a near-black pocket (campaign arrives via
   teleport; brightness-aware spawn scoring is the noted fix).
-- **More SFX polish**: footsteps, weapon reloads, ambient loops (voices 16-23
-  reserved), fvox/HEV voice.
-- **Scripted sequences / monster spawners** (monstermaker, scripted_sequence)
-  for set pieces; func_rotating visuals.
+- **Ambient loops** (ambient_generic) + HEV fvox lines (~175 KB SPU free).
 - **VM pool**: 182 K reserve < 207 K all-14 viewmodels; either +25 K or accept
   the glock-visual fallback late-game.
 - **Quad-pair cook flag**: try_emit_tri_pair_quad_values is 15.5% of CPU;
   precompute "quad-safe" per loop face at cook (FaceRec flags bit2 free) to
   skip the runtime geometry checks on axis-aligned world faces.
-- **Scratchpad (0x1F800000, 1 KB)**: unused; candidates = near-clip scratch,
-  hot per-frame small state. Needs SDK linker-section support.
 
 ## PSoXide SDK map (third_party/PSoXide/sdk/crates)
 

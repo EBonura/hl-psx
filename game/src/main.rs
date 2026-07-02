@@ -158,9 +158,9 @@ const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in
 const DBG_PAD_BOOT: bool = cfg!(feature = "debug-map-boot"); // hold L1 | map_index to boot any map headlessly
 // Debug: pin the camera to a fixed pose (to reproduce a specific view headlessly).
 const DBG_CAM: bool = false;
-const DBG_CAM_POS: [i32; 3] = [-470, -184, -320];
-const DBG_CAM_YAW: u16 = 30;
-const DBG_CAM_PITCH: i16 = 200;
+const DBG_CAM_POS: [i32; 3] = [-456, -184, -455];
+const DBG_CAM_YAW: u16 = 2048;
+const DBG_CAM_PITCH: i16 = 0;
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 const ROOM_WORLD_CHUNK_MUL: u32 = 2;
@@ -194,6 +194,8 @@ const PROP_TYPE_ITEM_BATTERY: u8 = 4;
 const PROP_TYPE_CONTROLLER: u8 = 11; // flies: exempt from walker floor checks
 const PROP_TYPE_SITTING_SCI: u8 = 25; // seated pose, keeps its authored chair height
 const PROP_DEAD_BIT: u16 = 0x8000; // cook flag: spawn as a corpse (death pose, 0 hp)
+const PROP_DORMANT_BIT: u16 = 0x4000; // cook flag: monstermaker stock, inactive until fired
+const PROP_TYPE_MASK: u16 = 0x3FFF;
 const PROP_TYPE_WEAPON_FIRST: u8 = 26; // weapon pickups 26..=39 (index - 26 = weapon id)
 const PROP_TYPE_WEAPON_LAST: u8 = 39;
 const PROP_TYPE_AMMO_FIRST: u8 = 40; // ammo pickups 40..=47
@@ -888,6 +890,7 @@ unsafe fn ai_reacquire(pi: usize) -> bool {
 static mut PROP_HEALTH: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_HIT_FLASH: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_OCC_VIS: [u8; MAX_PROPS] = [1; MAX_PROPS]; // staggered occlusion verdicts
+static mut PROP_DORMANT: [u8; MAX_PROPS] = [0; MAX_PROPS]; // monstermaker stock awaiting a fire
 static mut PROP_LOGIC_LINK: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS];
 static mut NAV_QUEUE: [u8; MAX_NAV_NODES] = [0; MAX_NAV_NODES];
 static mut NAV_PREV: [u8; MAX_NAV_NODES] = [NAV_NODE_NONE; MAX_NAV_NODES];
@@ -1149,7 +1152,7 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
             }
             break;
         }
-        let ty = (m.prop(pi).0 & !PROP_DEAD_BIT) as usize; // corpses stream their live model
+        let ty = (m.prop(pi).0 & PROP_TYPE_MASK) as usize; // corpses/spawner stock stream their live model
         pi += 1;
         if ty >= N_MODEL_TYPES || TYPE_TO_SLOT[ty] != MODEL_SLOT_NONE {
             continue; // out of range, or this type is already resident
@@ -1793,6 +1796,33 @@ unsafe fn logic_sub_use_targets(
     logic_fire_targets(m, nlogic, nents, target, use_type, now, depth + 1);
 }
 
+/// Activate an untargeted door plus every door sharing its cook-assigned
+/// link group (GoldSrc opens both halves of a touching split door together).
+unsafe fn logic_activate_door_linked(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    li: usize,
+    rec: map::LogicEnt,
+    use_type: u8,
+) {
+    logic_activate_door(nents, li, rec, use_type);
+    if rec.arg0 == 0 {
+        return;
+    }
+    let mut oi = 0usize;
+    while oi < nlogic {
+        if oi != li && LOGIC_STATE[oi] != LOGIC_STATE_REMOVED && LOGIC_KIND[oi] == map::LOGIC_FUNC_DOOR
+        {
+            let other = m.logic(oi);
+            if other.targetname == 0 && other.arg0 == rec.arg0 {
+                logic_activate_door(nents, oi, other, use_type);
+            }
+        }
+        oi += 1;
+    }
+}
+
 unsafe fn logic_fire_targets(
     m: &Map,
     nlogic: usize,
@@ -1905,7 +1935,7 @@ unsafe fn logic_use_entity(
     }
     let rec = m.logic(li);
     match rec.kind {
-        map::LOGIC_FUNC_DOOR => logic_activate_door(nents, li, rec, use_type),
+        map::LOGIC_FUNC_DOOR => logic_activate_door_linked(m, nlogic, nents, li, rec, use_type),
         map::LOGIC_FUNC_BUTTON => {
             logic_activate_button(m, nlogic, nents, li, rec, now, depth + 1, false)
         }
@@ -1966,6 +1996,27 @@ unsafe fn logic_use_entity(
         },
         map::LOGIC_FUNC_TRACKTRAIN => {
             logic_queue_tracktrain_command(rec, use_type);
+        }
+        map::LOGIC_MONSTERMAKER => {
+            // Wake one dormant spawn parked at this maker's origin.
+            let mut pi = 0usize;
+            let n = PROP_COUNT.min(MAX_PROPS);
+            while pi < n {
+                if PROP_DORMANT[pi] != 0 && PROP_ACTIVE[pi] == 0 {
+                    let d = [
+                        PROP_POS[pi][0] - rec.origin[0],
+                        PROP_POS[pi][1] - rec.origin[1],
+                        PROP_POS[pi][2] - rec.origin[2],
+                    ];
+                    if d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 64 * 64 {
+                        PROP_DORMANT[pi] = 0;
+                        PROP_ACTIVE[pi] = 1;
+                        prop_set_pos(m, &[], pi, PROP_POS[pi]); // ground snap on wake
+                        break;
+                    }
+                }
+                pi += 1;
+            }
         }
         map::LOGIC_TRIGGER_CHANGELEVEL => {
             logic_sub_use_targets(m, nlogic, nents, li, rec, now, use_type, depth + 1);
@@ -2219,7 +2270,7 @@ unsafe fn logic_touch_triggers(
                         && (rec.spawnflags & SF_DOOR_USE_ONLY) == 0
                         && player_touches_logic(player_pos, rec)
                     {
-                        logic_activate_door(nents, li, rec, map::USE_TOGGLE);
+                        logic_activate_door_linked(m, nlogic, nents, li, rec, map::USE_TOGGLE);
                     }
                 }
                 map::LOGIC_TRIGGER_HURT => {
@@ -3051,6 +3102,36 @@ unsafe fn damage_prop(pi: usize, dmg: u8) {
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_AI_TIMER[pi] = 0;
         sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
+        let v = prop_voice(PROP_KIND[pi], true);
+        if v != SFX_NONE {
+            sfx::play_world(v, PROP_POS[pi]);
+        }
+    } else if MON_PAIN_COOLDOWN == 0 {
+        let v = prop_voice(PROP_KIND[pi], false);
+        if v != SFX_NONE {
+            sfx::play_world(v, PROP_POS[pi]);
+            MON_PAIN_COOLDOWN = 10;
+        }
+    }
+}
+
+const SFX_NONE: u8 = 0xFF;
+static mut MON_PAIN_COOLDOWN: u8 = 0;
+static mut STEP_ACC: u32 = 0;
+static mut STEP_ALT: u8 = 0;
+
+/// Per-class pain/death vocal (SFX_NONE = silent; scientists keep quiet
+/// rather than borrowing a wrong species' bark).
+fn prop_voice(kind: u8, dying: bool) -> u8 {
+    match kind {
+        1 => if dying { sfx::BA_DIE } else { sfx::BA_PAIN },
+        2 | 3 | 4 => if dying { sfx::HC_DIE } else { sfx::HC_PAIN },
+        5 => sfx::ZO_PAIN, // zombies have no die vocal; pain growl covers both
+        6 => if dying { sfx::HE_DIE } else { sfx::HE_PAIN },
+        7 | 19 => if dying { sfx::BC_DIE } else { sfx::BC_PAIN },
+        8 => if dying { sfx::GR_DIE } else { sfx::GR_PAIN },
+        9 | 10 | 11 => if dying { sfx::SLV_DIE } else { sfx::SLV_PAIN },
+        _ => SFX_NONE,
     }
 }
 
@@ -3529,7 +3610,8 @@ unsafe fn init_prop_state(m: &Map) {
     while pi < nprops {
         let (ty, org, yaw, leaf) = m.prop(pi);
         let dead = ty & PROP_DEAD_BIT != 0; // authored corpse: death pose, no AI
-        let kind = (ty & !PROP_DEAD_BIT) as u8;
+        let dormant = ty & PROP_DORMANT_BIT != 0; // monstermaker stock
+        let kind = (ty & PROP_TYPE_MASK) as u8;
         // Sitting scientists are authored at seat height on chair brushes the
         // world tree can't see; snapping would drop them through the chair.
         let org = if kind == PROP_TYPE_SITTING_SCI {
@@ -3537,7 +3619,8 @@ unsafe fn init_prop_state(m: &Map) {
         } else {
             prop_grounded_pos(m, &[], org)
         };
-        PROP_ACTIVE[pi] = 1;
+        PROP_ACTIVE[pi] = if dormant { 0 } else { 1 };
+        PROP_DORMANT[pi] = dormant as u8;
         PROP_KIND[pi] = kind;
         PROP_POS[pi] = org;
         PROP_YAW[pi] = yaw as u16;
@@ -3659,6 +3742,7 @@ unsafe fn collect_pickups(
                     *pickup_kind = hud::PICKUP_SUIT;
                     *pickup_ticks = HEV_PICKUP_TICKS;
                     sfx::play(sfx::SUIT);
+                    sfx::play(sfx::HEV_BELL);
                     telemetry::debug_log("hl-psx: HEV suit equipped");
                 }
             }
@@ -3866,13 +3950,24 @@ impl Arsenal {
             dry_ticks: 0,
             switch_ticks: 0,
         };
-        // HL1 starts with the crowbar + glock; full clips.
-        a.give_weapon(W_CROWBAR);
-        a.give_weapon(W_GLOCK);
-        a.clip[W_GLOCK] = WEAPON_DEFS[W_GLOCK].clip;
-        a.ammo[AMMO_9MM] = GLOCK_START_RESERVE;
-        a.current = W_GLOCK;
+        // Faithful start: empty hands. The crowbar and glock are world pickups
+        // (c1a1 onwards); chapter-select launches grant them in play() so
+        // mid-campaign jumps stay playable.
         a
+    }
+
+    fn give_chapter_loadout(&mut self) {
+        self.give_weapon(W_CROWBAR);
+        self.give_weapon(W_GLOCK);
+        self.clip[W_GLOCK] = WEAPON_DEFS[W_GLOCK].clip;
+        self.ammo[AMMO_9MM] = GLOCK_START_RESERVE;
+        self.current = W_GLOCK;
+    }
+
+    /// True when the player holds any weapon at all (drives fire + viewmodel
+    /// + the ammo HUD; empty hands before the first pickup).
+    fn any_weapon(&self) -> bool {
+        self.owned != 0
     }
 
     #[inline]
@@ -3952,6 +4047,7 @@ impl Arsenal {
         }
         self.reload_ticks = d.reload;
         self.cooldown = self.cooldown.max(d.reload);
+        unsafe { sfx::play(sfx::RELOAD) };
         true
     }
 
@@ -3966,6 +4062,9 @@ impl Arsenal {
     /// Consume ammo for one shot. Returns true if the shot goes off (the caller
     /// then runs the archetype). Handles dry-click + auto-reload.
     fn try_fire(&mut self) -> bool {
+        if !self.owns(self.current) {
+            return false; // empty hands (pre-pickup)
+        }
         let d = self.def();
         if self.cooldown != 0 || self.reload_ticks != 0 || self.switch_ticks != 0 {
             return false;
@@ -3978,6 +4077,7 @@ impl Arsenal {
             if self.clip[self.current] == 0 {
                 self.cooldown = GLOCK_EMPTY_COOLDOWN_TICKS;
                 self.dry_ticks = GLOCK_EMPTY_COOLDOWN_TICKS;
+                unsafe { sfx::play(sfx::DRY) };
                 let _ = self.start_reload();
                 return false;
             }
@@ -3986,6 +4086,7 @@ impl Arsenal {
             if self.ammo[d.ammo] == 0 {
                 self.cooldown = GLOCK_EMPTY_COOLDOWN_TICKS;
                 self.dry_ticks = GLOCK_EMPTY_COOLDOWN_TICKS;
+                unsafe { sfx::play(sfx::DRY) };
                 return false;
             }
             self.ammo[d.ammo] -= 1;
@@ -6405,6 +6506,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             }
         } else {
             CARRY_VALID = false;
+            if launch.suit_equipped {
+                // Mid-campaign chapter select: baseline crowbar + glock.
+                weapon.give_chapter_loadout();
+            }
         }
     }
     let mut fire_was_held = false; // rising-edge latch for non-auto weapons
@@ -6701,6 +6806,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     if e.kind != 2 && e.kind != 4 && nmov < movers.len() {
                         movers[nmov] = phys::Mover {
                             head: e.head,
+                            head0: e.head0,
                             off,
                             center: e.center,
                             radius: ENT_RADIUS[ei],
@@ -6717,6 +6823,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     ];
                     movers[nmov] = phys::Mover {
                         head: m.tram_head,
+                        head0: 0, // no cooked point hull; hitscans use the inflated one
                         off: toff,
                         center: [0, 0, 0],
                         radius: 0,
@@ -6776,6 +6883,26 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     pad.buttons.is_held(button::CROSS),
                     yaw,
                 );
+            }
+            // Footsteps: input-magnitude cadence while grounded (full run =
+            // a step roughly every 8 ticks), alternating the two samples.
+            unsafe {
+                if player.on_ground {
+                    let mag = (fwd.unsigned_abs()).max(strafe.unsigned_abs()) as u32;
+                    if mag > 20 {
+                        STEP_ACC += mag;
+                        if STEP_ACC >= 1000 {
+                            STEP_ACC = 0;
+                            STEP_ALT ^= 1;
+                            sfx::play_vol(
+                                if STEP_ALT == 0 { sfx::STEP1 } else { sfx::STEP2 },
+                                3,
+                            );
+                        }
+                    } else {
+                        STEP_ACC = 0;
+                    }
+                }
             }
             telemetry::stage_end(telemetry::stage::SIM_COLLISION);
             let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
@@ -6867,6 +6994,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 sfx::set_ear(player.pos);
                 if PAIN_SFX_COOLDOWN > 0 {
                     PAIN_SFX_COOLDOWN -= 1;
+                }
+                if MON_PAIN_COOLDOWN > 0 {
+                    MON_PAIN_COOLDOWN -= 1;
                 }
                 tick_projectiles(&m, movers);
                 tick_props(&m, movers, player.pos, &mut health, &mut armor);
@@ -7497,7 +7627,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
 
             let world_prims = np;
             let world_quads = nq;
-            if SHOW_VIEWMODEL {
+            if SHOW_VIEWMODEL && weapon.any_weapon() {
                 telemetry::stage_begin(telemetry::stage::EQUIPMENT);
                 let (vm_model, vm_slot, vm_n) = viewmodel_for(weapon.current);
                 draw_viewmodel(
@@ -7523,6 +7653,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 let _ = hud::draw(
                     hud_mat,
                     suit_equipped,
+                    weapon.any_weapon(),
                     health,
                     armor,
                     weapon.clip_display(),

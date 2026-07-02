@@ -38,8 +38,26 @@ pub const HE_BLAST: u8 = 21;
 pub const GLASS_BREAK: u8 = 22;
 pub const WOOD_BREAK: u8 = 23;
 pub const MEDSHOT: u8 = 24;
+pub const STEP1: u8 = 25;
+pub const STEP2: u8 = 26;
+pub const RELOAD: u8 = 27;
+pub const DRY: u8 = 28;
+pub const ZO_PAIN: u8 = 29;
+pub const HC_PAIN: u8 = 30;
+pub const HC_DIE: u8 = 31;
+pub const GR_PAIN: u8 = 32;
+pub const GR_DIE: u8 = 33;
+pub const BA_PAIN: u8 = 34;
+pub const BA_DIE: u8 = 35;
+pub const HE_PAIN: u8 = 36;
+pub const HE_DIE: u8 = 37;
+pub const SLV_PAIN: u8 = 38;
+pub const SLV_DIE: u8 = 39;
+pub const BC_PAIN: u8 = 40;
+pub const BC_DIE: u8 = 41;
+pub const HEV_BELL: u8 = 42;
 
-const MAX_SFX: usize = 25;
+const MAX_SFX: usize = 43;
 const SPU_SAMPLE_BASE: u32 = 0x1010; // BIOS convention: 0x0000..0x1000 reserved
 const VOICE_POOL: u8 = 16; // voices 0..15 one-shots; 16..23 reserved (loops/music)
 

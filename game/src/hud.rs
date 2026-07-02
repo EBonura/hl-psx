@@ -172,6 +172,7 @@ fn number_r<const N: usize>(
 pub fn draw<const N: usize>(
     mat: TextureMaterial,
     suit_equipped: bool,
+    has_weapon: bool,
     health: u16,
     armor: u16,
     clip_ammo: u16,
@@ -183,20 +184,22 @@ pub fn draw<const N: usize>(
     prims: &mut [QuadTexturedMaterial; DRAW_CAP],
 ) -> usize {
     let mut count = 0usize;
-    sprite(
-        mat,
-        ot,
-        prims,
-        &mut count,
-        CROSSHAIR_U,
-        ICON_V,
-        CROSSHAIR_W,
-        CROSSHAIR_H,
-        160 - CROSSHAIR_DRAW_W / 2,
-        120 - CROSSHAIR_DRAW_H / 2,
-        CROSSHAIR_DRAW_W,
-        CROSSHAIR_DRAW_H,
-    ); // real pistol crosshair
+    if has_weapon {
+        sprite(
+            mat,
+            ot,
+            prims,
+            &mut count,
+            CROSSHAIR_U,
+            ICON_V,
+            CROSSHAIR_W,
+            CROSSHAIR_H,
+            160 - CROSSHAIR_DRAW_W / 2,
+            120 - CROSSHAIR_DRAW_H / 2,
+            CROSSHAIR_DRAW_W,
+            CROSSHAIR_DRAW_H,
+        ); // real pistol crosshair (empty hands draw nothing)
+    }
     // HEV HUD: no health/armor/ammo readout until the suit is equipped (HL shows
     // no HUD before the suit). On suit pickup it boots up by sliding in from below
     // over the pickup window; the crosshair above is always drawn (the weapon

@@ -19,7 +19,7 @@ const FALLBACK_MODEL_WORDS: usize = 24_576;
 // 20B->16B shrink freed from MAP_BUF (net .bss-neutral vs before that change):
 // enemy geometry pool = MODEL_WORDS - VM_POOL_WORDS, so this is ~185 -> ~217 KB,
 // fewer dropped enemy types on the heaviest maps.
-const MODEL_POOL_WORDS: usize = 102_400; // enemy region (rebalanced for emit-code growth)
+const MODEL_POOL_WORDS: usize = 99_584; // enemy region (rebalanced for emit-code growth)
 
 fn rd_u32(d: &[u8], o: usize) -> Option<u32> {
     Some(u32::from_le_bytes([

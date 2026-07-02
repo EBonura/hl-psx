@@ -162,6 +162,7 @@ fn trace(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> Trace {
 #[derive(Clone, Copy)]
 pub struct Mover {
     pub head: i32,
+    pub head0: i32, // point-hull root (hitscans; 0 = fall back to head)
     pub off: [i32; 3],
     pub center: [i32; 3],
     pub radius: i32,
@@ -170,6 +171,7 @@ pub struct Mover {
 
 pub const NO_MOVER: Mover = Mover {
     head: 0,
+    head0: 0,
     off: [0, 0, 0],
     center: [0, 0, 0],
     radius: 0,
@@ -202,7 +204,8 @@ fn mover_may_touch_segment(mv: &Mover, p1: [i32; 3], p2: [i32; 3]) -> bool {
 /// True when the segment does not hit any shifted mover hull.
 pub fn line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> bool {
     for mv in movers {
-        if mv.head <= 0 {
+        let head = if mv.head0 > 0 { mv.head0 } else { mv.head };
+        if head <= 0 {
             continue;
         }
         if !mover_may_touch_segment(mv, p1, p2) {
@@ -211,7 +214,7 @@ pub fn line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]
         let o = mv.off;
         let q1 = [p1[0] - o[0], p1[1] - o[1], p1[2] - o[2]];
         let q2 = [p2[0] - o[0], p2[1] - o[1], p2[2] - o[2]];
-        let t = trace(map, mv.head, q1, q2);
+        let t = trace(map, head, q1, q2);
         if !t.startsolid && t.frac < 4096 {
             return false;
         }
@@ -233,7 +236,7 @@ pub fn trace_line(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Op
     if map.hull0_head <= 0 {
         return None;
     }
-    let t = trace_all(map, map.hull0_head, movers, p1, p2);
+    let t = trace_all(map, map.hull0_head, movers, p1, p2, true);
     if t.startsolid || t.frac >= 4096 {
         return None;
     }
@@ -262,7 +265,7 @@ pub fn snap_to_ground(
     }
     let p1 = [pos[0], pos[1] + probe_up.max(0), pos[2]];
     let p2 = [pos[0], pos[1] - probe_down.max(0), pos[2]];
-    let t = trace_all(map, map.hull0_head, movers, p1, p2);
+    let t = trace_all(map, map.hull0_head, movers, p1, p2, true);
     if t.startsolid || t.frac >= 4096 || t.normal[1] <= GROUND_NY {
         return None;
     }
@@ -275,10 +278,18 @@ pub fn snap_to_ground(
 
 /// Trace the world hull plus every mover hull (each shifted by its offset);
 /// return the nearest impact.
-fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Trace {
+fn trace_all(
+    map: &Map,
+    world_head: i32,
+    movers: &[Mover],
+    p1: [i32; 3],
+    p2: [i32; 3],
+    point: bool,
+) -> Trace {
     let mut best = trace(map, world_head, p1, p2);
     for mv in movers {
-        if mv.head <= 0 {
+        let head = if point && mv.head0 > 0 { mv.head0 } else { mv.head };
+        if head <= 0 {
             continue; // no clip hull for this submodel
         }
         if !mover_may_touch_segment(mv, p1, p2) {
@@ -287,7 +298,7 @@ fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i3
         let o = mv.off;
         let q1 = [p1[0] - o[0], p1[1] - o[1], p1[2] - o[2]];
         let q2 = [p2[0] - o[0], p2[1] - o[1], p2[2] - o[2]];
-        let t = trace(map, mv.head, q1, q2);
+        let t = trace(map, head, q1, q2);
         // NB: do NOT propagate a mover's startsolid. If the player ends up inside
         // a brush-entity hull (a non-solid func_illusionary, or slight
         // penetration), startsolid would make slide_move break and freeze them
@@ -353,7 +364,7 @@ fn nudge_out(pos: [i32; 3], n: [i32; 3]) -> [i32; 3] {
 }
 
 fn clear_at(map: &Map, head: i32, movers: &[Mover], pos: [i32; 3]) -> bool {
-    !trace_all(map, head, movers, pos, pos).startsolid
+    !trace_all(map, head, movers, pos, pos, false).startsolid
 }
 
 fn try_unstick(map: &Map, head: i32, movers: &[Mover], pos: [i32; 3]) -> Option<[i32; 3]> {
@@ -407,7 +418,7 @@ fn slide_move(
         }
         let d = scale12(vel, time_left);
         let end = add(pos, d);
-        let tr = trace_all(map, head, movers, pos, end);
+        let tr = trace_all(map, head, movers, pos, end, false);
         if tr.startsolid {
             match try_unstick(map, head, movers, pos) {
                 Some(p) => {
@@ -592,11 +603,11 @@ impl Player {
 
         if self.on_ground && (self.vel[0] != 0 || self.vel[2] != 0) {
             let up_end = [start[0], start[1] + STEP_UP, start[2]];
-            let tup = trace_all(map, head, movers, start, up_end);
+            let tup = trace_all(map, head, movers, start, up_end, false);
             let up_pos = [start[0], start[1] + ((STEP_UP * tup.frac) >> 12), start[2]];
             let (sp, _) = slide_move(map, head, movers, up_pos, [self.vel[0], 0, self.vel[2]]);
             let dn_end = [sp[0], sp[1] - STEP_UP * 2, sp[2]];
-            let tdn = trace_all(map, head, movers, sp, dn_end);
+            let tdn = trace_all(map, head, movers, sp, dn_end, false);
             let step_pos = [sp[0], sp[1] - (((STEP_UP * 2) * tdn.frac) >> 12), sp[2]];
             let landed = tdn.frac < 4096 && tdn.normal[1] > GROUND_NY;
             if landed && dist_xz(start, step_pos) > dist_xz(start, flat_pos) {
@@ -610,7 +621,7 @@ impl Player {
 
         // Ground check: probe straight down a little.
         let down = [self.pos[0], self.pos[1] - STEP_DOWN, self.pos[2]];
-        let g = trace_all(map, head, movers, self.pos, down);
+        let g = trace_all(map, head, movers, self.pos, down, false);
         self.on_ground = g.frac < 4096 && g.normal[1] > GROUND_NY;
         self.ground_mover = if self.on_ground { g.mover } else { -1 };
         if self.on_ground {

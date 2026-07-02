@@ -1942,6 +1942,7 @@ const LOGIC_TRIGGER_PUSH: u8 = 18;
 const LOGIC_TRIGGER_GRAVITY: u8 = 19;
 const LOGIC_HEALTH_CHARGER: u8 = 20;
 const LOGIC_HEV_CHARGER: u8 = 21;
+const LOGIC_MONSTERMAKER: u8 = 22;
 
 const USE_OFF: u8 = 0;
 const USE_ON: u8 = 1;
@@ -2764,6 +2765,7 @@ fn collect_logic_entities(
             "trigger_gravity" => LOGIC_TRIGGER_GRAVITY,
             "func_healthcharger" => LOGIC_HEALTH_CHARGER,
             "func_recharge" => LOGIC_HEV_CHARGER,
+            "monstermaker" => LOGIC_MONSTERMAKER,
             "trigger_once" => LOGIC_TRIGGER_ONCE,
             "trigger_multiple" => LOGIC_TRIGGER_MULTIPLE,
             "trigger_relay" => LOGIC_TRIGGER_RELAY,
@@ -2965,6 +2967,41 @@ fn collect_logic_entities(
         });
     }
 
+        // GoldSrc links untargeted doors whose closed bounds touch: opening one
+    // half of a split door opens its partner(s). Group them here (union-find
+    // over AABB overlap) and stamp the group id into arg0 (doors otherwise
+    // leave it 0); the runtime activates the whole group on touch/use.
+    {
+        let door_idx: Vec<usize> = out
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.kind == LOGIC_FUNC_DOOR && r.targetname == 0)
+            .map(|(i, _)| i)
+            .collect();
+        let overlap = |a: &LogicRec, b: &LogicRec| -> bool {
+            (0..3).all(|k| a.mins[k] <= b.maxs[k] + 2 && b.mins[k] <= a.maxs[k] + 2)
+        };
+        let mut group_of = vec![usize::MAX; door_idx.len()];
+        let mut next_group = 1u16;
+        for i in 0..door_idx.len() {
+            for j in 0..i {
+                if overlap(&out[door_idx[i]], &out[door_idx[j]]) {
+                    if group_of[j] == usize::MAX {
+                        group_of[j] = next_group as usize;
+                        next_group += 1;
+                    }
+                    group_of[i] = group_of[j];
+                    break;
+                }
+            }
+        }
+        for (k, &di) in door_idx.iter().enumerate() {
+            if group_of[k] != usize::MAX {
+                out[di].arg0 = group_of[k] as u16;
+            }
+        }
+    }
+
     LogicCook {
         ents: out,
         aux,
@@ -3102,6 +3139,30 @@ fn collect_props(
                 Some(44) => 4u16, // ITEM_BATTERY
                 _ => continue,
             },
+            "monstermaker" => {
+                // Spawner: cook up to 4 DORMANT copies (bit 0x4000) of the
+                // monster it makes; the runtime activates them one per fire.
+                let mt = ent_value(block, "monstertype").unwrap_or("");
+                let Some(base) = monster_type_id(mt) else { continue };
+                let count = parse_f32_key(block, "monstercount", 1.0)
+                    .round()
+                    .clamp(1.0, 4.0) as usize;
+                let origin_hl = ent_value(block, "origin")
+                    .and_then(parse_vec3)
+                    .unwrap_or([0.0; 3]);
+                let origin = to_world(origin_hl, scale);
+                let deg = ent_yaw_degrees(block).unwrap_or(0.0);
+                let yaw = hl_yaw_to_world_q12(deg);
+                for _ in 0..count {
+                    out.push((
+                        base | 0x4000,
+                        origin,
+                        yaw,
+                        point_leaf(origin_hl, nodes, planes),
+                    ));
+                }
+                continue;
+            }
             _ => continue,
         };
         let origin_hl = ent_value(block, "origin")
@@ -3113,6 +3174,26 @@ fn collect_props(
         out.push((ty, origin, yaw, point_leaf(origin_hl, nodes, planes)));
     }
     out
+}
+
+/// Monster classname -> model type id (the monstermaker's monstertype key).
+fn monster_type_id(cls: &str) -> Option<u16> {
+    Some(match cls {
+        "monster_scientist" => 0,
+        "monster_barney" => 1,
+        "monster_headcrab" => 2,
+        "monster_zombie" => 5,
+        "monster_houndeye" => 6,
+        "monster_bullchicken" => 7,
+        "monster_human_grunt" => 8,
+        "monster_alien_slave" => 9,
+        "monster_alien_grunt" => 10,
+        "monster_alien_controller" => 11,
+        "monster_cockroach" => 14,
+        "monster_ichthyosaur" => 19,
+        "monster_sentry" => 20,
+        _ => return None,
+    })
 }
 
 fn miptex_name(l: &[u8], mo: usize) -> String {
@@ -4012,6 +4093,12 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
 
     let mut compact_marks: Vec<u16> = Vec::new();
     let mut leaf_mark_ranges = vec![(0u16, 0u16); n_leaves];
+    // World marks may reference SUBMODEL faces (the compiler leaves them in;
+    // GoldSrc filters at draw time). Keep model-0 faces only -- brush entities
+    // are drawn by the runtime entity path, so leaving them here rendered a
+    // static "ghost" copy under every animated door/plat.
+    let world_first = u32le(models, 56).unwrap_or(0) as usize;
+    let world_end = world_first + u32le(models, 60).unwrap_or(0) as usize;
     for li in 0..n_leaves {
         let lo = li * SZ_LEAF;
         let m0 = u16le(leaves, lo + SZ_LEAF_MARK0).unwrap_or(0) as usize;
@@ -4020,6 +4107,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let end = m0.saturating_add(mc).min(src_n_marks);
         for mj in m0..end {
             let src_face = u16le(marks, mj * SZ_MARKSURFACE).unwrap_or(u16::MAX) as usize;
+            if src_face < world_first || src_face >= world_end {
+                continue;
+            }
             if src_face < face_remap.len() {
                 let mapped = face_remap[src_face];
                 if mapped != u16::MAX {
