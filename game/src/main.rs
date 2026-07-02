@@ -154,9 +154,9 @@ const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in
 const DBG_PAD_BOOT: bool = cfg!(feature = "debug-map-boot"); // hold L1 | map_index to boot any map headlessly
 // Debug: pin the camera to a fixed pose (to reproduce a specific view headlessly).
 const DBG_CAM: bool = false;
-const DBG_CAM_POS: [i32; 3] = [714, 580, 2400];
-const DBG_CAM_YAW: u16 = 2048;
-const DBG_CAM_PITCH: i16 = -200;
+const DBG_CAM_POS: [i32; 3] = [-624, -184, -160];
+const DBG_CAM_YAW: u16 = 1024;
+const DBG_CAM_PITCH: i16 = 0;
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 const ROOM_WORLD_CHUNK_MUL: u32 = 2;
@@ -283,9 +283,9 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(HEADCRAB_HEALTH, 12, HEADCRAB_RENDER_RADIUS, AI_MELEE),  // 2 headcrab
     mdef(0, 16, ITEM_RENDER_RADIUS, AI_ITEM),                     // 3 item_suit
     mdef(0, 16, ITEM_RENDER_RADIUS, AI_ITEM),                     // 4 item_battery
-    mdef(50, 40, 90, AI_MELEE),                                  // 5 zombie
-    mdef(20, 20, 70, AI_MELEE),                                  // 6 houndeye
-    mdef(40, 32, 90, AI_MELEE),                                  // 7 bullsquid
+    mdef_atk(50, 40, 90, AI_MELEE, 2, 0, 0, 0),                 // 5 zombie (slow shambler)
+    mdef_atk(20, 20, 70, AI_MELEE, 7, 0, 0, 0),                 // 6 houndeye (fast skitter)
+    mdef_atk(40, 32, 90, AI_MELEE, 6, 0, 0, 0),                 // 7 bullsquid (charging run)
     mdef_atk(50, 40, 90, AI_RANGED, 16, 1000, 5, 8),            // 8 hgrunt (mp5 bursts)
     mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24),           // 9 alien_slave (zap)
     mdef_atk(60, 48, 100, AI_RANGED, 16, 1000, 8, 16),          // 10 alien_grunt (hornets)
@@ -297,7 +297,7 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(200, 90, 220, AI_IDLE),                                 // 16 gargantua (boss: render only)
     mdef(200, 90, 240, AI_IDLE),                                 // 17 nihilanth (boss: render only)
     mdef(150, 70, 200, AI_IDLE),                                 // 18 bigmomma (boss: render only)
-    mdef(40, 20, 90, AI_MELEE),                                  // 19 ichthyosaur
+    mdef_atk(40, 20, 90, AI_MELEE, 6, 0, 0, 0),                 // 19 ichthyosaur
     mdef_atk(40, 40, 80, AI_TURRET, 0, 1000, 7, 8),            // 20 sentry
     mdef_atk(50, 40, 80, AI_TURRET, 0, 1200, 8, 7),            // 21 turret
     mdef_atk(30, 30, 60, AI_TURRET, 0, 1000, 5, 3),            // 22 miniturret
@@ -3377,7 +3377,8 @@ unsafe fn tick_headcrab(
         PROP_STATE[pi] = PROP_STATE_MOVE;
         let step_d2 = d2.saturating_sub(HEADCRAB_STOP_RANGE * HEADCRAB_STOP_RANGE);
         if step_d2 > 0 {
-            prop_move_towards_point(m, movers, pi, aim, HEADCRAB_SPEED);
+            let spd = model_def(PROP_KIND[pi]).speed as i32;
+            prop_move_towards_point(m, movers, pi, aim, if spd > 0 { spd } else { HEADCRAB_SPEED });
         }
     }
 }
@@ -5773,7 +5774,10 @@ unsafe fn draw_model(
     // ponytail: ceiling ~16x -- inflated view-Z fills SZ3's u16 (clips past
     // ~16383 world units) and IR1/IR3's i16; fine for s=4 at model range.
     let (s, scale_shift) = model_local_scale_and_shift(md.local_to_world_q12());
-    let mr = rot.mul(&Mat3I16::rotate_y((yaw >> 4) as u16));
+    // Model bakes keep HL's +X local forward; rotate_y maps that to world
+    // yaw - 1024, so add a quarter turn to line actors up with their authored
+    // (and AI-updated) world yaw.
+    let mr = rot.mul(&Mat3I16::rotate_y((yaw.wrapping_sub(1024) & 0xFFF) >> 4));
     scene::load_rotation(&mr);
     let es = [eye[0] - pos[0], eye[1] - pos[1], eye[2] - pos[2]];
     // Translation uses the view rotation only (model yaw spins verts about the
