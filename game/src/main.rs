@@ -94,7 +94,11 @@ const MAX_PROPS: usize = 128;
 const MAX_NAV_NODES: usize = 255;
 const MAX_LOGIC: usize = 384;
 const MAX_LOGIC_EVENTS: usize = 64;
-const NEAR: u16 = 2; // GTE depth: only verts at/behind the near plane take the soft-clip path
+// Fast-path near gate. MUST equal render::NEAR_Z: the soft path clips its
+// rebuilt triangles at NEAR_Z, so if the fast path accepts closer vertices the
+// two paths disagree along shared edges and the mismatch band renders as black
+// wedges when looking down or hugging walls.
+const NEAR: u16 = render::NEAR_Z as u16;
 const SUBDIV_PX: i32 = 96; // split near-clipped triangles wider than this (affine fix)
 const SUBDIV_DEPTH: u8 = 0; // ponytail: subdivision off (perf); affine warp accepted
 const CULL: bool = true; // backface cull (keep area > 0; winding verified)
@@ -154,9 +158,9 @@ const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in
 const DBG_PAD_BOOT: bool = cfg!(feature = "debug-map-boot"); // hold L1 | map_index to boot any map headlessly
 // Debug: pin the camera to a fixed pose (to reproduce a specific view headlessly).
 const DBG_CAM: bool = false;
-const DBG_CAM_POS: [i32; 3] = [-624, -184, -160];
-const DBG_CAM_YAW: u16 = 1024;
-const DBG_CAM_PITCH: i16 = 0;
+const DBG_CAM_POS: [i32; 3] = [-470, -184, -320];
+const DBG_CAM_YAW: u16 = 30;
+const DBG_CAM_PITCH: i16 = 200;
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 const ROOM_WORLD_CHUNK_MUL: u32 = 2;
@@ -219,7 +223,7 @@ const PROP_STATE_DEAD: u8 = 3;
 const N_MODEL_TYPES: usize = 49;
 const MAX_LOADED_MODELS: usize = 22; // distinct model types resident per map (enemies + pickups)
 const POOL_TEX_SLOTS: usize = 240; // shared TexSlot pool across loaded models
-const POOL_FACE_CAP: usize = 6400; // shared RenderFace pool (worst per-map tri sum, c4a3 with statues)
+const POOL_FACE_CAP: usize = 6352; // shared RenderFace pool (worst per-map tri sum, c4a3 with statues)
 const MODEL_SLOT_NONE: u8 = 0xFF;
 const MODEL_GEOM_CHUNK_BASE: u32 = 1300;
 const MODEL_TEX_CHUNK_BASE: u32 = 1100;
@@ -698,6 +702,7 @@ struct PvsFaceRec {
     tex: u8,           // per-face texture (loop faces store tex on the FaceRec)
     is_loop: bool,     // fan a vertex loop vs iterate raw tris
     translucent: bool, // liquid surface: blend + UV sway at emit
+    band: u8,          // per-frame depth band (pre-pass; padding byte, no cost)
 }
 const EMPTY_PVS_FACE_REC: PvsFaceRec = PvsFaceRec {
     first: 0,
@@ -707,6 +712,7 @@ const EMPTY_PVS_FACE_REC: PvsFaceRec = PvsFaceRec {
     tex: 0,
     is_loop: false,
     translucent: false,
+    band: 0,
 };
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut PVS_LEAF_COUNT: usize = 0;
@@ -720,6 +726,10 @@ static mut PVS_GROUP_FIRST: [u16; MAX_FACE_GROUPS] = [PVS_LINK_END; MAX_FACE_GRO
 static mut PVS_GROUP_FACE: [u16; MAX_FACE_GROUPS] = [PVS_LINK_END; MAX_FACE_GROUPS];
 static mut PVS_GROUP_ACTIVE: [u16; MAX_FACE_GROUPS] = [0; MAX_FACE_GROUPS];
 static mut PVS_GROUP_COUNT: usize = 0;
+// Per-frame group backface verdicts (bit per ACTIVE-list index): the banded
+// walk used to redo every group's plane dot and every face's depth dot per
+// band; the pre-pass computes both once per frame.
+static mut PVS_GROUP_VIS: [u32; MAX_FACE_GROUPS / 32] = [0; MAX_FACE_GROUPS / 32];
 static mut PVS_TRI_REF_COUNT: usize = 0;
 static mut PVS_ENTS: [u16; MAX_ENTS] = [0; MAX_ENTS];
 static mut PVS_ENT_COUNT: usize = 0;
@@ -4607,11 +4617,10 @@ fn world_otz_from_gte4(a: &Projected, b: &Projected, c: &Projected, d: &Projecte
 
 #[inline]
 fn world_otz_from_view3(a: i32, b: i32, c: i32) -> usize {
-    // The fast path buckets on the GTE's sz, which is view z / 4; these are
-    // raw view-space z from the near-clip rebuild, so shift two more bits or
-    // soft-clipped triangles sort four times too far, draw first, and get
-    // painted over -- the black wedges on close walls at grazing angles.
-    clamp_otz((farthest3_i32(a, b, c) >> (OT_SHIFT + 2)) as usize)
+    // Projected.sz is the raw SZ3 register = full view z (verified in
+    // psx-gte's project_vertex_mips), so the soft path buckets with the same
+    // shift as the fast path.
+    clamp_otz((farthest3_i32(a, b, c) >> OT_SHIFT) as usize)
 }
 
 fn camera_leaf(m: &Map, eye: [i32; 3]) -> i32 {
@@ -4818,6 +4827,7 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
                     tex: m.face_tex(face) as u8,
                     is_loop: m.face_is_loop(face),
                     translucent: m.face_translucent(face),
+                    band: 0,
                 };
             }
             PVS_TRI_REF_COUNT += cnt;
@@ -6996,35 +7006,54 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 } else {
                     1
                 };
+                // Pre-pass, once per frame: each group's backface verdict, and
+                // (in multi-band mode) each cached face's depth band, so the
+                // per-band walks below are pure static reads instead of redoing
+                // the same blob plane fetches and dot products nbands times.
+                for gi in 0..PVS_GROUP_COUNT {
+                    let group = PVS_GROUP_ACTIVE[gi] as usize;
+                    let plane_face = PVS_GROUP_FACE[group] as usize;
+                    let (plane_n, plane_d) = m.face_plane(plane_face);
+                    let vis = dot12(plane_n, eye) > plane_d;
+                    let (w, b) = (gi >> 5, gi & 31);
+                    if vis {
+                        PVS_GROUP_VIS[w] |= 1 << b;
+                    } else {
+                        PVS_GROUP_VIS[w] &= !(1 << b);
+                    }
+                    if vis && nbands > 1 {
+                        let mut entry = PVS_GROUP_FIRST[group];
+                        while entry != PVS_LINK_END {
+                            let e = entry as usize;
+                            entry = PVS_FACE_NEXT[e];
+                            if e < MAX_PVS_FACE_RECS {
+                                let rec = &mut PVS_FACE_REC[e];
+                                let c = [
+                                    rec.center[0] as i32,
+                                    rec.center[1] as i32,
+                                    rec.center[2] as i32,
+                                ];
+                                let depth = (dot12(rot.m[2], c) + base_t[2]).max(0);
+                                rec.band = ((depth >> DEPTH_BAND_SHIFT).min(nbands - 1)) as u8;
+                            }
+                        }
+                    }
+                }
                 let mut band = 0i32;
                 while band < nbands {
                     for gi in 0..PVS_GROUP_COUNT {
-                        let group = PVS_GROUP_ACTIVE[gi] as usize;
-                        let plane_face = PVS_GROUP_FACE[group] as usize;
-                        let (plane_n, plane_d) = m.face_plane(plane_face);
-                        if dot12(plane_n, eye) <= plane_d {
+                        if PVS_GROUP_VIS[gi >> 5] & (1 << (gi & 31)) == 0 {
                             continue;
                         }
+                        let group = PVS_GROUP_ACTIVE[gi] as usize;
                         let mut entry = PVS_GROUP_FIRST[group];
                         while entry != PVS_LINK_END {
                             let e = entry as usize;
                             entry = PVS_FACE_NEXT[e];
                             if e < MAX_PVS_FACE_RECS {
                                 let rec = PVS_FACE_REC[e];
-                                // Depth-band gate only matters in multi-band mode;
-                                // with a single pass every face is band 0, so skip
-                                // the per-face dot12 depth entirely (faithful -- the
-                                // check always passed when nbands == 1).
-                                if nbands > 1 {
-                                    let c = [
-                                        rec.center[0] as i32,
-                                        rec.center[1] as i32,
-                                        rec.center[2] as i32,
-                                    ];
-                                    let depth = (dot12(rot.m[2], c) + base_t[2]).max(0);
-                                    if (depth >> DEPTH_BAND_SHIFT).min(nbands - 1) != band {
-                                        continue;
-                                    }
+                                if nbands > 1 && rec.band as i32 != band {
+                                    continue;
                                 }
                                 if !WORLD_BOUNDS_CULL || cached_face_visible(rec, &rot, base_t) {
                                     EMIT_BLEND = rec.translucent as u8;
