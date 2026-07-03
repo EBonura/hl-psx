@@ -846,10 +846,38 @@ builds, fixed step budget): 82/96 maps pace at 20 fps.
   heartbeat output byte-identical between sweeps or normalize before
   comparing.
 
+## M29 -- finalise: interp animation, squad AI, weapons polish, ending (DONE)
+
+- **Animation interpolation**: prop_anim_frame returns (frame, next, frac16);
+  draw_model lerps vertices between the two baked frames -- smoothness back
+  at CPU cost (no pool bytes), all measured maps still pace (17/16/16 hb on
+  c1a0/c1a2/c2a3b). Attack clips (div=1) play raw. Restoring the CUT frames
+  themselves was measured out: actors would need ~3x pool.
+- **AI**: damage aggros combat AI + wakes same-species squadmates within
+  400u (SQUAD_ALERT_RADIUS2). Scientists flee/barney ally/melee/ranged/
+  turret audited fine as-is.
+- **Weapons**: DEBUG_ALL_WEAPONS const (ships false) = full arsenal + 250
+  of every pool for testing; additive muzzle-flash star (4 spikes + core,
+  Add blend, first 2 recoil ticks, gun-class only via MUZZLE_FLASH_WEAPONS).
+  Viewmodel NORMALS remain dropped -- HMD6 costs ~4B/tri x 14 resident
+  viewmodels and the VM pool is the tightest region (documented trade).
+  NB the debug-boot pad mask's L1 bit leaks into gameplay input during the
+  180-frame hold and cycles weapons -- harness quirk, not a game bug.
+- **scripted_sequence v1**: cook repositions a monster to its AUTO-START
+  script mark (no-targetname scripts; 14 marks / 9 maps) -- how real HL
+  poses intro actors from frame one. Triggered scripts (403 of 417) still
+  absent (need move-to + per-sequence bakes).
+- **Intro/outro**: c0a0 tram ride verified working headlessly (camera
+  tracks the path, pauses at the station signal). Outro: c5a1 plays ~70s
+  (ENDING_SCENE_TICKS 1400), fades white, menu::ending shows the end card
+  (wordmark + THE END + credits), any button returns to the menu.
+- Headroom 96.1 KiB: MAX_RENDER_PACKETS 2560/2304 -> 2432/2176 funds the
+  new statics (emitted prims peak ~1800; banding is bucketed + cheap now).
+
 ## Next (pick per value)
 
-- **scripted_sequence v1**: the biggest remaining faithfulness gap (intro set
-  pieces); needs prop targetnames + a move-to + per-sequence anim bake.
+- **scripted_sequence v2**: triggered scripts (move-to + per-sequence anim
+  bake) -- the remaining 403 set pieces.
 - **Load time**: per-chunk PAUSE dominates model streaming; merged geom+tex
   chunks or per-map bundles halve/collapse the count (watch transient fit).
   GPU fill is NOT a frontier (M26: rasterization is free in-target).
