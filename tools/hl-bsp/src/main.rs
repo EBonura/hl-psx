@@ -2891,6 +2891,47 @@ fn parse_titles(valve_dir: &std::path::Path) -> std::collections::HashMap<String
     out
 }
 
+/// (type, lowercase clip name) -> clip slot, from the CLIPS_MANIFEST env file
+/// (written by `make models`). Lets scripts resolve m_iszPlay/m_iszIdle names
+/// at cook time with zero runtime string matching.
+fn load_clips_manifest() -> std::collections::HashMap<(u16, String), u8> {
+    let mut out = std::collections::HashMap::new();
+    let Ok(path) = std::env::var("CLIPS_MANIFEST") else {
+        return out;
+    };
+    let Ok(txt) = std::fs::read_to_string(&path) else {
+        eprintln!("warn: CLIPS_MANIFEST unreadable: {}", path);
+        return out;
+    };
+    for line in txt.lines() {
+        let mut it = line.trim().split('|');
+        let (Some(ty), Some(name), Some(slot)) = (it.next(), it.next(), it.next()) else {
+            continue;
+        };
+        if let (Ok(ty), Ok(slot)) = (ty.parse::<u16>(), slot.parse::<u8>()) {
+            out.insert((ty, name.to_ascii_lowercase()), slot);
+        }
+    }
+    out
+}
+
+/// Resolve a scripted_sequence's m_iszEntity targetname to its monster type id.
+fn script_monster_type(all: &str, entity_name: &str) -> Option<u16> {
+    if entity_name.is_empty() {
+        return None;
+    }
+    for cb in all.split('{') {
+        if ent_value(cb, "targetname") == Some(entity_name) {
+            if let Some(cls) = ent_value(cb, "classname") {
+                if cls.starts_with("monster_") {
+                    return monster_type_id(cls);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn collect_logic_entities(
     ents: &[u8],
     models: &[u8],
@@ -2902,6 +2943,7 @@ fn collect_logic_entities(
     let mut names = LogicNames::default();
     let mut out = Vec::new();
     let mut aux = Vec::new();
+    let clips = load_clips_manifest();
 
     // Teleport destinations, resolved at cook time (name -> world origin+yaw).
     let mut tp_dests: Vec<(String, [i32; 3], u16)> = Vec::new();
@@ -3182,6 +3224,30 @@ fn collect_logic_entities(
             });
             aux_count = 2;
             target = 0;
+        }
+        if kind == LOGIC_SCRIPTED {
+            // aux[0] = (play_slot+1, idle_slot+1); 0 = none. Resolved from the
+            // clips manifest against the target monster's type.
+            let ty = script_monster_type(&s, ent_value(block, "m_iszEntity").unwrap_or(""));
+            let lookup = |key: &str| -> u16 {
+                let Some(ty) = ty else { return 0 };
+                let Some(name) = ent_value(block, key) else {
+                    return 0;
+                };
+                clips
+                    .get(&(ty, name.to_ascii_lowercase()))
+                    .map(|&s| s as u16 + 1)
+                    .unwrap_or(0)
+            };
+            let play = lookup("m_iszPlay");
+            let idle = lookup("m_iszIdle");
+            if play != 0 || idle != 0 {
+                aux.push(LogicAuxRec {
+                    target: play,
+                    delay_ticks: idle,
+                });
+                aux_count = 1;
+            }
         }
         if kind == LOGIC_TRIGGER_PUSH {
             // Per-tick world push vector from HL angles + speed (u/s at 20 Hz).
@@ -3499,6 +3565,7 @@ fn monster_type_id(cls: &str) -> Option<u16> {
         "monster_alien_slave" => 9,
         "monster_alien_grunt" => 10,
         "monster_alien_controller" => 11,
+        "monster_gman" => 15,
         "monster_cockroach" => 14,
         "monster_ichthyosaur" => 19,
         "monster_sentry" => 20,
@@ -5106,9 +5173,10 @@ fn cook_mdl_tex(b: &[u8], idx: usize, w0: usize, h0: usize) -> CookedTex {
 
 const STUDIO_NF_CHROME: i32 = 0x0002;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct SeqSpec {
-    seq: i32,
+    seq: i32, // -2 = resolve `name` against the MDL's sequence labels
+    name: String,
     max_frames: usize,
 }
 
@@ -5116,22 +5184,31 @@ fn parse_seq_specs(text: &str) -> Result<Vec<SeqSpec>, String> {
     let mut out = Vec::new();
     for raw in text.split(',') {
         let raw = raw.trim();
-        if raw.is_empty() {
-            continue;
+        if raw.is_empty() || raw.contains('=') {
+            continue; // alias tokens (a=b) only feed the clips manifest
         }
         let (seq_text, frame_text) = raw.split_once(':').unwrap_or((raw, "16"));
-        let seq = seq_text
-            .parse::<i32>()
-            .map_err(|_| format!("bad sequence index '{seq_text}'"))?;
         let max_frames = frame_text
             .parse::<usize>()
             .map_err(|_| format!("bad frame cap '{frame_text}'"))?
             .clamp(1, 16);
-        out.push(SeqSpec { seq, max_frames });
+        match seq_text.parse::<i32>() {
+            Ok(seq) => out.push(SeqSpec {
+                seq,
+                name: String::new(),
+                max_frames,
+            }),
+            Err(_) => out.push(SeqSpec {
+                seq: -2,
+                name: seq_text.to_ascii_lowercase(),
+                max_frames,
+            }),
+        }
     }
     if out.is_empty() {
         out.push(SeqSpec {
             seq: 0,
+            name: String::new(),
             max_frames: 16,
         });
     }
@@ -5294,7 +5371,34 @@ fn cook_mdl(
     );
     let mut frames: Vec<Vec<[i16; 3]>> = Vec::new();
     let mut clips: Vec<(u16, u16)> = Vec::with_capacity(specs.len());
+    // Resolve name-labeled specs against the MDL's sequence labels (32-byte
+    // string at the head of each mstudioseqdesc).
+    let seq_by_label = |label: &str| -> i32 {
+        for si in 0..numseq {
+            let sd = seqindex + si as usize * 176;
+            let raw = &b[sd..sd + 32];
+            let end = raw.iter().position(|&c| c == 0).unwrap_or(32);
+            if let Ok(n) = core::str::from_utf8(&raw[..end]) {
+                if n.eq_ignore_ascii_case(label) {
+                    return si;
+                }
+            }
+        }
+        eprintln!("warn: {}: sequence '{}' not found (bind pose)", path, label);
+        -1
+    };
     for spec in specs {
+        let seq_resolved = if spec.seq == -2 {
+            seq_by_label(&spec.name)
+        } else {
+            spec.seq
+        };
+        let spec = SeqSpec {
+            seq: seq_resolved,
+            name: spec.name.clone(),
+            max_frames: spec.max_frames,
+        };
+        let spec = &spec;
         let (anim_b, animindex, numframes): (&[u8], usize, usize) =
             if spec.seq >= 0 && spec.seq < numseq {
                 let sd = seqindex + spec.seq as usize * 176;

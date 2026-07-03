@@ -225,6 +225,7 @@ rooms:
 	@rm -f $(ROOMS)/room_*.psxc $(ROOMS)/room_*.psxw
 	@i=0; for m in $(MAPLIST); do \
 		w=$$((i * 2)); t=$$((w + 1)); \
+		CLIPS_MANIFEST=$(MODELPACK)/clips.txt \
 		$(HLBSP_BIN) --cook "$(HL_GAME)/maps/$$m.bsp" $(ROOMS)/room_$$w.psxc $(ROOMS)/room_$$t.psxc >/dev/null && \
 		echo "  room_$$w/$$t = $$m"; i=$$((i+1)); \
 	done
@@ -319,23 +320,24 @@ models:
 		i=$$((i+1)); \
 	done
 	@echo "  --- model roster (all streamed per-map): geom chunk 1300+id, tex chunk 1100+id ---"
+	@rm -f $(MODELPACK)/roster.txt
 	@for entry in \
-	  "0|scientist|13:4,0:4,24:4,8:2,31:3" \
-	  "1|barney|0:4,4:4,6:4,17:2,25:3" \
-	  "2|headcrab|0:4,4:4,10:4,6:2,7:3" \
+	  "0|scientist|13:4,0:4,24:4,8:2,31:3,pondering:2,retina:2,beatdoor:2,pondering2=pondering,pondering3=pondering,pause=pondering,writeboard=pondering,converse1=pondering,converse2=pondering,push_button=beatdoor,wave=beatdoor,no=pondering,sitstand=pondering,tieshoe=pondering,buysoda=pondering,idle1=@0" \
+	  "1|barney|0:4,4:4,6:4,17:2,25:3,sit1:2,standing_idle:2,intropush:2,flashlight=standing_idle,cprbarney=sit1,sit2=sit1,sit3=sit1,relaxstand=sit1,almostidle=standing_idle,almost=standing_idle,barn_wave=intropush,c3a2_draw=standing_idle,idle1=@0" \
+	  "2|headcrab|0:4,4:4,10:4,6:2,7:3,idle1=@0" \
 	  "3|w_suit|0" \
 	  "4|w_battery|0" \
-	  "5|zombie|0:4,10:4,8:3,3:2,17:3" \
-	  "6|houndeye|0:4,3:4,10:4,12:2,6:3" \
-	  "7|bullsquid|7:4,1:4,8:4,3:2,16:3" \
-	  "8|hgrunt|11:4,1:4,18:3,4:2,35:3" \
-	  "9|islave|0:4,4:4,12:3,13:2,19:3" \
-	  "10|agrunt|0:4,2:4,19:4,6:2,25:3" \
+	  "5|zombie|0:4,10:4,8:3,3:2,17:3,eatbody:2,eatbodystand=eatbody,pause=@0,idle1=@0,attack1=@2" \
+	  "6|houndeye|0:4,3:4,10:4,12:2,6:3,idle1=@0" \
+	  "7|bullsquid|7:4,1:4,8:4,3:2,16:3,eat:2,idle=@0" \
+	  "8|hgrunt|11:4,1:4,18:3,4:2,35:3,idle1=@0,combatidle=@0,walk1=@1,divecover=@2" \
+	  "9|islave|0:4,4:4,12:3,13:2,19:3,grab:2,downup=grab,pushup=grab,updown=grab,jabber=grab,jibber=grab,idle1=@0" \
+	  "10|agrunt|0:4,2:4,19:4,6:2,25:3,idle1=@0,threat=@2" \
 	  "11|controller|15:4,16:4,0:4,6:2,18:3" \
 	  "12|barnacle|0:3,0:3,4:3,3:2,6:3" \
 	  "13|leech|3:4,0:4,2:4,3:2,6:3" \
 	  "14|roach|1:4,0:4" \
-	  "15|gman|0:3,6:3,0:3,0:2,0:3" \
+	  "15|gman|0:3,6:3,0:3,0:2,0:3,idle01=@0,idlebrush=@0,listen=@0,bigno=@0,bigyes=@0" \
 	  "16|garg|2:1,4:1,6:1,12:2,14:3" \
 	  "17|nihilanth|0:1,19:1,1:1,9:2,12:3" \
 	  "18|big_mom|0:1,2:1,9:1,10:2,4:3" \
@@ -374,12 +376,16 @@ models:
 	  "51|hassassin|0:4,2:4,10:4,1:2,17:3" \
 	  ; do \
 	  t=$${entry%%|*}; rest=$${entry#*|}; mdl=$${rest%%|*}; seq=$${rest##*|}; \
+	  echo "$$entry" >> $(MODELPACK)/roster.txt; \
 	  geom=$$((1300+t)); tex=$$((1100+t)); \
 	  if $(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/$$mdl.mdl" "$(MODELPACK)/chunk_$$geom.psxm" "$$seq" "$(MODELPACK)/chunk_$$tex.psxm" >/tmp/mck_$$mdl.log 2>&1; then \
 	    python3 tools/merge_model_chunk.py "$(MODELPACK)/chunk_$$geom.psxm" "$(MODELPACK)/chunk_$$tex.psxm"; \
 	    echo "  T$$t $$mdl -> merged $$geom ($$(wc -c < $(MODELPACK)/chunk_$$geom.psxm) B)"; \
 	  else echo "  T$$t $$mdl FAILED: $$(tail -1 /tmp/mck_$$mdl.log | cut -c1-60)"; fi; \
 	done
+	@python3 tools/gen_clips_manifest.py < $(MODELPACK)/roster.txt > $(MODELPACK)/clips.txt
+	@rm -f $(MODELPACK)/roster.txt
+	@echo "  clips manifest -> $(MODELPACK)/clips.txt ($$(wc -l < $(MODELPACK)/clips.txt) entries)"
 
 clean:
 	cd $(GAME) && cargo clean

@@ -453,7 +453,7 @@ static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 // reserve); enemies stream after it, trading a slice of the enemy pool for the
 // full visible arsenal. Textures go in VM_SLOTS. The loader stops if the pool
 // fills; any weapon that doesn't fit falls back to the glock viewmodel.
-const VM_POOL_WORDS: usize = 35_328; // ~141 KB viewmodel reserve (~10 switched guns; beyond = glock-visual fallback) -- the freed 43 KB keeps every COMBAT roster whole
+const VM_POOL_WORDS: usize = 24_192; // ~97 KB viewmodel reserve (~7 switched guns; beyond = glock-visual fallback) -- the freed 45 KB funds the scripted-clip bakes: zero combat OR pickup drops
 const VM_SLOTS_TOTAL: usize = 176; // 14 viewmodels x up to ~24 skins (rpg)
 static mut VM_SLOTS: [TexSlot; VM_SLOTS_TOTAL] = [EMPTY_SLOT; VM_SLOTS_TOTAL];
 // Load order = the HL1 slot order; the whole arsenal is resident.
@@ -2097,6 +2097,20 @@ unsafe fn logic_use_entity(
                     PROP_SCRIPT_YAW[pi] = rec.speed & 0xFFF;
                     PROP_SCRIPT_MODE[pi] = mode;
                     PROP_SCRIPT_LI[pi] = li as u16;
+                    // aux[0] = (play_slot+1, idle_slot+1) resolved at cook.
+                    if rec.aux_count >= 1 {
+                        let a = m.logic_aux(rec.first_aux);
+                        PROP_SCRIPT_PLAY_CLIP[pi] =
+                            if a.target != 0 { (a.target - 1) as u8 } else { 0xFF };
+                        PROP_SCRIPT_IDLE_CLIP[pi] = if a.delay_ticks != 0 {
+                            (a.delay_ticks - 1) as u8
+                        } else {
+                            0xFF
+                        };
+                    } else {
+                        PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
+                        PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
+                    }
                     break;
                 }
                 pi += 1;
@@ -2931,6 +2945,22 @@ fn prop_anim_frame(
     pi: usize,
 ) -> (usize, usize, u32) {
     let clip = prop_clip(state, hit_flash > 0);
+    // Scripted override: one-shot gesture while its window runs, else the
+    // scripted idle pose while the prop is idle (sit1, standing_idle, ...).
+    let clip = unsafe {
+        if state == PROP_STATE_DEAD || hit_flash > 0 {
+            clip
+        } else if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF
+            && !time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi])
+        {
+            PROP_SCRIPT_PLAY_CLIP[pi] as usize
+        } else if PROP_SCRIPT_IDLE_CLIP[pi] != 0xFF && state == PROP_STATE_IDLE {
+            PROP_SCRIPT_IDLE_CLIP[pi] as usize
+        } else {
+            clip
+        }
+    };
+    let clip = clip.min(md.n_clips.saturating_sub(1));
     let len = md.clip_len(clip);
     if state == PROP_STATE_DEAD {
         let f = md.clip_frame(clip, len.saturating_sub(1));
@@ -3585,6 +3615,10 @@ unsafe fn damage_prop(pi: usize, dmg: u8) {
     }
     PROP_HEALTH[pi] = PROP_HEALTH[pi].saturating_sub(dmg);
     PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
+    // Combat breaks any scripted pose/gesture (HL cine cancel on damage).
+    PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
+    PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
+    PROP_SCRIPT_MODE[pi] = 0;
     if PROP_HEALTH[pi] == 0 {
         PROP_STATE[pi] = PROP_STATE_DEAD;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
@@ -3647,6 +3681,9 @@ static mut PROP_SCRIPT_GOAL: [[i16; 3]; MAX_PROPS] = [[0; 3]; MAX_PROPS]; // wor
 static mut PROP_SCRIPT_YAW: [u16; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_SCRIPT_MODE: [u8; MAX_PROPS] = [0; MAX_PROPS]; // 0 none, 1 walk, 2 run, 4 instant
 static mut PROP_SCRIPT_LI: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS]; // firing script's logic index
+static mut PROP_SCRIPT_PLAY_CLIP: [u8; MAX_PROPS] = [0xFF; MAX_PROPS]; // one-shot gesture clip
+static mut PROP_SCRIPT_IDLE_CLIP: [u8; MAX_PROPS] = [0xFF; MAX_PROPS]; // scripted idle pose clip
+static mut PROP_SCRIPT_PLAY_UNTIL: [u16; MAX_PROPS] = [0; MAX_PROPS]; // gesture end (sim ticks)
 
 // func_train: brush platforms riding path_corner chains. Per-train state +
 // a per-ent slot map; ride-carry works through the generic ent-offset delta.
@@ -4278,6 +4315,9 @@ unsafe fn init_prop_state(m: &Map) {
         PROP_NAME[pi] = m.prop_name(pi);
         PROP_SCRIPT_MODE[pi] = 0;
         PROP_SCRIPT_LI[pi] = u16::MAX;
+        PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
+        PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
+        PROP_SCRIPT_PLAY_UNTIL[pi] = 0;
         PROP_KIND[pi] = kind;
         PROP_POS[pi] = org;
         PROP_YAW[pi] = yaw as u16;
@@ -4369,6 +4409,10 @@ unsafe fn tick_props(
                 PROP_YAW[pi] = PROP_SCRIPT_YAW[pi];
                 PROP_STATE[pi] = PROP_STATE_IDLE;
                 PROP_SCRIPT_MODE[pi] = 0;
+                if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF {
+                    // ~2 s gesture window, then fall back to the scripted idle
+                    PROP_SCRIPT_PLAY_UNTIL[pi] = SIM_NOW.wrapping_add(40);
+                }
                 let li = PROP_SCRIPT_LI[pi];
                 PROP_SCRIPT_LI[pi] = u16::MAX;
                 if (li as usize) < m.n_logic {
@@ -4386,6 +4430,14 @@ unsafe fn tick_props(
                     }
                 }
             }
+            pi += 1;
+            continue;
+        }
+        // Scripted idle pose (sit1, standing_idle, ...): the monster holds the
+        // pose with AI suspended, exactly like HL's script state. Damage clears
+        // the clip and releases the AI.
+        if PROP_SCRIPT_IDLE_CLIP[pi] != 0xFF && PROP_HEALTH[pi] > 0 {
+            PROP_STATE[pi] = PROP_STATE_IDLE;
             pi += 1;
             continue;
         }
@@ -7317,6 +7369,17 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     unsafe {
         init_logic_state(&m, nlogic, nents, 0);
         init_trains(&m, nlogic, nents);
+        // Auto-start scripts (no targetname) run on spawn in HL: fire them once
+        // so their monsters take scripted poses (desk sit, lean, ...) from
+        // frame one. The cook already parked each monster at its mark.
+        let mut li = 0usize;
+        while li < nlogic {
+            let rec = m.logic(li);
+            if rec.kind == map::LOGIC_SCRIPTED && rec.targetname == 0 {
+                logic_use_entity(&m, nlogic, nents, li, map::USE_TOGGLE, 0, 0);
+            }
+            li += 1;
+        }
     }
     let nv = if m.n_verts < MAX_VERTS {
         m.n_verts
