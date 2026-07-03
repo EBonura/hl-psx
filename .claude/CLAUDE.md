@@ -1001,10 +1001,57 @@ the c7daf19 cull fix) was TWO stacked bugs, the big one in the GTE itself:
   render of the cooked file, then per-tri tty traces of the emit chain, where
   the GTE's (257,255) vs true (330,356) exposed the x0.571 shrink instantly.
 
+## M34 -- faithfulness round: intro, train transfer, scripted anims, music, voices (DONE)
+
+- **Ride transfer**: RoomLaunch.riding (set from tram_active && attached at the
+  changelevel) re-seats the player on the new map's tram at waypoint 0 and
+  resumes the ride -- the Black Mesa Inbound chain (c0a0..c0a0e) is continuous.
+  c0a0a-style trains are authored parked out-of-world (GoldSrc globalname
+  transfer); startspeed already auto-runs them, placement was the missing half.
+- **Intro presentation**: titles.txt parsed at cook (stateful $directives);
+  env_message -> LOGIC_ENV_MESSAGE 27 (arg0 = text interned in the names pool,
+  arg1 = effect|low_left|fade<<8, speed = hold); env_fade -> 28; worldspawn ->
+  LOGIC_MAP_FLAGS 29 (startdark, gametitle bit noted-undrawn, chaptertitle text,
+  music track bits 8..13). Runtime: tick_screen_fx/draw_screen_fx -- hltext
+  overlays (typewriter effect 2, credits lower-left) + Subtract/Add blended
+  fullscreen fade (startdark holds black until env_fade). Verified: CR27
+  scan-out + Ted Backman credit on the c0a0 ride; chapter cards auto-fire ~1.5s
+  after load.
+- **Scripted animations**: seqspec entries accept sequence NAMES (cook_mdl
+  resolves labels; alias tokens a=b / a=@slot feed tools/gen_clips_manifest.py
+  -> data/modelpack/clips.txt); the map cook (CLIPS_MANIFEST env) resolves
+  m_iszPlay/m_iszIdle to clip slots in a script aux pair; runtime plays a ~2s
+  gesture window (play) or an AI-SUSPENDING idle pose until damage clears it.
+  Auto-start scripts (no targetname) fire once at load. Verified: the c1a0 desk
+  barney SITS (sit1). Baked: sci pondering/retina/beatdoor, barney sit1/
+  standing_idle/intropush, zombie eatbody, islave grab, squid eat (+aliases).
+  RAM: VM reserve 35,328 -> 24,192 words (~7 switched guns) funds it; roster
+  audit ZERO combat/pickup drops (decor-only trims on 3 maps).
+- **CD music**: tools/extract_music.py (media mp3 -> 44.1k raw via afconvert,
+  git-ignored) + mkisopsx --cdda-track-list appends 17 audio tracks (disc
+  ~330 MB); HL track numbers pass through (data=1, audio 2+). worldspawn
+  sounds + trigger_cdaudio/target_cdaudio -> LOGIC_CDTRACK 30 (touch = play
+  once + remove; -1 stops). music_apply() only acts when want != current;
+  every CD data read kills CDDA so loads mark-interrupt and the next tick
+  replays. Verified via --dump-audio: c0a0 plays track 3 through the ride.
+- **Voice sentences**: 9 short lines resident (SC_GMORN/BIGDAY/SAMPLE/fear,
+  BA_HEADDOWN/SCARED0/BUTTON/LATE, GM mumble) -- scripted_sentence ->
+  LOGIC_SENTENCE 31 (arg0 = SFX id from the cook's table; long lines like
+  BA_DESK 17s skipped -- SPU pack at 470 KB/512). play_world from the mark.
+- Perf research round (web): ranked list lives in Next below. NB the SDK
+  already REJECTED NCLIP deliberately (real-HW stale-MAC0 hazard, documented
+  in psx-gte scene.rs) -- software cross products stay.
+
 ## Next (pick per value)
 
-- **scripted custom anims**: bake per-script sequences for the big set
-  pieces (intro retina scan, CPR scientist) -- the last faithfulness tier.
+- **PERF (researched, ranked -- the emit wall)**: 1) cook-time PRE-BAKED GPU
+  packets (command byte/UVs/CLUT/tpage cooked as packet images; per-frame emit
+  writes only tag+XY+RGB) -- attacks the 30% packet-build + 15% decode slices,
+  the one big lever left for the 13 vista maps; 2) swc2 direct stores + RTPT
+  shadow pipelining; 3) fog via banded light palettes (kills fog1 muls);
+  4) GPF/GPL anim lerp. NCLIP rejected (SDK-documented HW hazard).
+- **scripted custom anims v2**: per-map clip chunks for one-off set pieces
+  (retina scan uses the baked retina clip already; CPR scene aliases to sit).
 - **Load time**: per-chunk PAUSE dominates model streaming; merged geom+tex
   chunks or per-map bundles halve/collapse the count (watch transient fit).
   GPU fill is NOT a frontier (M26: rasterization is free in-target).
