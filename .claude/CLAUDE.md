@@ -949,6 +949,28 @@ uncooked). What landed:
   env_* sprites, gibs, ambient loops (ADPCM loop flags), save/load,
   flashlight, scripted custom anims, func_tank -- none block progression.
 
+## M32 -- compression-for-speed: merged model chunks + LZ4 boot chunks (DONE)
+
+- **One HMRG chunk per model** ("HMRG" | u32 geom_len | geom | tex): the
+  map load does ONE CD handshake per type (was two -- PAUSE ~1M + READN
+  ~0.45M each dominated small chunks), and a weapon switch streams one
+  chunk. Textures upload to VRAM from their in-chunk tail (no staging
+  move); geometry starts +8 bytes (word-aligned); dead-tri repack
+  unchanged. tools/merge_model_chunk.py (committed -- pure byte shuffler,
+  no asset data) runs in `make models`.
+- **LZ4 extras >= 3000** (SFX pack + HUD atlas) at pack time -- they stage
+  through MAP_BUF where decompress_in_place already runs. Model chunks
+  (1000-2000) stay raw (no in-place margin where they land).
+- **Measured (c1a0 telemetry markers)**: boot+load 237.0M -> 208.2M bus
+  cycles = 7.00s -> 6.13s (-12%); viewmodel stage 20.8M -> 14.0M.
+- Verified: scientists + glock textured from merged chunks; roster audit
+  ZERO combat drops (model_pool_audit reads the HMRG geom length -- and
+  counts geometry bytes only, tex goes to VRAM); headroom 96.8 KiB.
+- In-frame compression audit: TriRec/faceverts/frames/vis are already at
+  their packed formats (aligned decode, i8-delta frames, RLE vis); the
+  remaining CD lever is per-map bundles (all of a map's types in one
+  chunk), which duplicates storage across maps -- disc has room, noted.
+
 ## Next (pick per value)
 
 - **scripted custom anims**: bake per-script sequences for the big set
