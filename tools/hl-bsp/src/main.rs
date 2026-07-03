@@ -5022,7 +5022,7 @@ type Mat34 = ([[f32; 3]; 3], [f32; 3]); // rotation, translation
 // (see ENEMY_VERTEX_LOCAL_SCALE) since they are viewed at distance: lower scale
 // shrinks i8 deltas + the base, halving model RAM with no visible loss.
 const MDL_VERTEX_LOCAL_SCALE: i32 = 8;
-const ENEMY_VERTEX_LOCAL_SCALE: i32 = 2;
+const ENEMY_VERTEX_LOCAL_SCALE: i32 = 4; // quarter-unit grid: same i16 RAM, half the near-GTE distortion zone (was 2)
 const MDL_LOCAL_TO_WORLD_Q12: u16 = (4096 / MDL_VERTEX_LOCAL_SCALE) as u16;
 
 fn quantize_mdl_coord(v: f32, scale: i32) -> i16 {
@@ -5061,16 +5061,43 @@ fn mdl_face_normal_i8(base: &[[i16; 3]], a: u16, b: u16, c: u16) -> [i8; 3] {
     ]
 }
 
-fn floor_anchor_mdl_frames(frames: &mut [Vec<[i16; 3]>]) {
-    for fv in frames {
-        let Some(min_y) = fv.iter().map(|v| v[1]).min() else {
+/// Anchor baked frames to the floor. The 5 canonical clips (idle/walk/attack/
+/// pain/death) anchor PER FRAME (min_y -> 0) so feet stay planted. Named
+/// script clips (sit1, ...) instead shift by the CONSTANT baseline taken from
+/// clip 0 frame 0: a seated pose keeps its authored root offset, so feet dip
+/// BELOW the script mark (mark = chair seat, feet = floor) instead of the
+/// whole body being lifted until its lowest vertex touches the mark -- the
+/// "sitting guy floats above the desk" bug.
+fn floor_anchor_mdl_frames(frames: &mut [Vec<[i16; 3]>], clips: &[(u16, u16)], canonical: usize) {
+    let base_shift: i32 = clips
+        .first()
+        .map(|&(f, _)| f as usize)
+        .and_then(|f0| frames.get(f0))
+        .and_then(|fv| fv.iter().map(|v| v[1] as i32).min())
+        .unwrap_or(0);
+    let mut script_frames = vec![false; frames.len()];
+    for (ci, &(first, count)) in clips.iter().enumerate() {
+        if ci < canonical {
             continue;
+        }
+        for f in first as usize..(first as usize + count as usize).min(frames.len()) {
+            script_frames[f] = true;
+        }
+    }
+    for (fi, fv) in frames.iter_mut().enumerate() {
+        let shift = if script_frames.get(fi).copied().unwrap_or(false) {
+            base_shift
+        } else {
+            match fv.iter().map(|v| v[1] as i32).min() {
+                Some(m) => m,
+                None => continue,
+            }
         };
-        if min_y == 0 {
+        if shift == 0 {
             continue;
         }
         for v in fv {
-            v[1] = (v[1] as i32 - min_y as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+            v[1] = (v[1] as i32 - shift).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
         }
     }
 }
@@ -5499,7 +5526,7 @@ fn cook_mdl(
         clips.push((clip_first, nbake.min(u16::MAX as usize) as u16));
     }
     if floor_anchor_frames {
-        floor_anchor_mdl_frames(&mut frames);
+        floor_anchor_mdl_frames(&mut frames, &clips, 5);
     }
 
     let mut tri_idx: Vec<u16> = Vec::new();

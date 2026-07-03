@@ -455,7 +455,7 @@ static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 // reserve); enemies stream after it, trading a slice of the enemy pool for the
 // full visible arsenal. Textures go in VM_SLOTS. The loader stops if the pool
 // fills; any weapon that doesn't fit falls back to the glock viewmodel.
-const VM_POOL_WORDS: usize = 24_192; // ~97 KB viewmodel reserve (~7 switched guns; beyond = glock-visual fallback) -- the freed 45 KB funds the scripted-clip bakes: zero combat OR pickup drops
+const VM_POOL_WORDS: usize = 20_224; // ~81 KB viewmodel reserve (~5 switched guns; beyond = glock-visual fallback) -- funds scripted clips + the x4 model precision: zero combat OR pickup drops on all 96 maps
 const VM_SLOTS_TOTAL: usize = 176; // 14 viewmodels x up to ~24 skins (rpg)
 static mut VM_SLOTS: [TexSlot; VM_SLOTS_TOTAL] = [EMPTY_SLOT; VM_SLOTS_TOTAL];
 // Load order = the HL1 slot order; the whole arsenal is resident.
@@ -8581,6 +8581,13 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     continue;
                 }
                 if e.kind != 1 && e.kind != 3 {
+                    // Statics draw at the world transform via the world proj
+                    // token. RELOAD it: the GTE translation register still
+                    // holds the previous entity's offset (a mid-open door),
+                    // which displaced every vert first-projected here -- the
+                    // "charger/grate rides the door" bug.
+                    scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
+                    set_view_fix(&rot, base_t);
                     let mut static_counts = WorldCounters::new();
                     let (ff, nf) = m.submodel(e.submodel);
                     for f in ff..ff + nf {
@@ -8626,6 +8633,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                             );
                         }
                     }
+                    EMIT_BLEND = 0;
+                    EMIT_WAVE = false;
                     continue;
                 }
                 let es = [eye[0] - off[0], eye[1] - off[1], eye[2] - off[2]];
@@ -8662,6 +8671,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             telemetry::stage_begin(telemetry::stage::MODEL_DRAW);
             if m.tram_submodel > 0 && m.tram_submodel < m.n_models {
                 model_draws = model_draws.saturating_add(1);
+                EMIT_BLEND = 0; // opaque: don't inherit a glass ent's blend
+                EMIT_WAVE = false;
                 let toff = [
                     ride_off[0] + m.tram_base[0],
                     ride_off[1] + m.tram_base[1],
