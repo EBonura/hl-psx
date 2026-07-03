@@ -17,7 +17,9 @@ pub const EMPTY_QUAD: QuadTexturedMaterial = QuadTexturedMaterial::with_material
     TextureMaterial::opaque(0, 0, (128, 128, 128)),
 );
 
-static HUD_BLOB: &[u8] = include_bytes!("../../data/menu/hud.tex");
+// The HUD atlas streams from WORLD.PAK chunk 3001 at play() start (MAP_BUF
+// is free then) -- keeping it out of the EXE saves ~15 KB of static RAM.
+pub const HUD_CHUNK_ID: u32 = 3001;
 
 // Source layout inside hud.tex: digits 0-9 at u=d*15 (15x18), icons on row 18.
 const DW: u8 = 15;
@@ -48,11 +50,11 @@ pub const PICKUP_SUIT: u8 = 1;
 pub const PICKUP_BATTERY: u8 = 2;
 
 /// Upload the HUD sprite sheet to a free gameplay tpage; returns its material.
-pub fn upload() -> TextureMaterial {
-    let w = u16::from_le_bytes([HUD_BLOB[0], HUD_BLOB[1]]);
-    let h = u16::from_le_bytes([HUD_BLOB[2], HUD_BLOB[3]]);
-    upload_bytes(VramRect::new(HUD_VRAM_X, 256, w / 4, h), &HUD_BLOB[36..]);
-    upload_bytes(VramRect::new(HUD_VRAM_X, 504, 16, 1), &HUD_BLOB[4..36]);
+pub fn upload(blob: &[u8]) -> TextureMaterial {
+    let w = u16::from_le_bytes([blob[0], blob[1]]);
+    let h = u16::from_le_bytes([blob[2], blob[3]]);
+    upload_bytes(VramRect::new(HUD_VRAM_X, 256, w / 4, h), &blob[36..]);
+    upload_bytes(VramRect::new(HUD_VRAM_X, 504, 16, 1), &blob[4..36]);
     let tp = Tpage::new(HUD_VRAM_X, 256, TexDepth::Bit4);
     let cl = Clut::new(HUD_VRAM_X, 504);
     TextureMaterial::new(cl.uv_clut_word(), tp.uv_tpage_word(0))
@@ -180,10 +182,31 @@ pub fn draw<const N: usize>(
     ammo_mode: u8, // 0 = melee (no ammo), 1 = reserve only, 2 = reserve | clip
     pickup_kind: u8,
     pickup_ticks: u8,
+    weapon_icon: i32, // >=0: weapon id whose select icon flashes top-right
     ot: &mut OrderingTable<N>,
     prims: &mut [QuadTexturedMaterial; DRAW_CAP],
 ) -> usize {
     let mut count = 0usize;
+    if weapon_icon >= 0 {
+        // Current-weapon select icon (the real 320-res weapon_s sprite),
+        // shown briefly after an L1/R1 switch. Atlas: 80x20 each, two per
+        // row from v=48, in W_* order.
+        let wi = weapon_icon as u8;
+        sprite(
+            mat,
+            ot,
+            prims,
+            &mut count,
+            (wi % 2) * 80,
+            48 + (wi / 2) * 20,
+            80,
+            20,
+            320 - 80 - 8,
+            8,
+            80,
+            20,
+        );
+    }
     if has_weapon {
         sprite(
             mat,

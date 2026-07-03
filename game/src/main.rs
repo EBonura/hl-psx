@@ -1552,6 +1552,8 @@ unsafe fn ent_draw_offset(ei: usize) -> [i32; 3] {
     let e = ENT_CACHE[ei];
     if e.kind == 1 || e.kind == 3 {
         scale12_vec(e.mv, ENT_PHASE[ei])
+    } else if e.kind == 5 {
+        [0; 3] // func_rotating: origin is the spin PIVOT, not a translation
     } else {
         e.origin
     }
@@ -1996,6 +1998,37 @@ unsafe fn logic_use_entity(
         },
         map::LOGIC_FUNC_TRACKTRAIN => {
             logic_queue_tracktrain_command(rec, use_type);
+        }
+        map::LOGIC_SCRIPTED => {
+            // scripted_sequence v2: send the named monster to the script mark.
+            // arg0 = monster name id, arg1 = m_flMoveTo (1 walk, 2 run,
+            // 4/5 instant), speed field = script yaw (q12), origin = mark.
+            let n = PROP_COUNT.min(MAX_PROPS);
+            let mut pi = 0usize;
+            while pi < n {
+                if PROP_ACTIVE[pi] != 0
+                    && PROP_HEALTH[pi] > 0
+                    && PROP_NAME[pi] != 0
+                    && PROP_NAME[pi] == rec.arg0
+                {
+                    let mode = match rec.arg1 {
+                        0 => 4, // pose in place = snap to the mark
+                        1 => 1,
+                        2 => 2,
+                        _ => 4,
+                    };
+                    PROP_SCRIPT_GOAL[pi] = [
+                        rec.origin[0] as i16,
+                        rec.origin[1] as i16,
+                        rec.origin[2] as i16,
+                    ];
+                    PROP_SCRIPT_YAW[pi] = rec.speed & 0xFFF;
+                    PROP_SCRIPT_MODE[pi] = mode;
+                    PROP_SCRIPT_LI[pi] = li as u16;
+                    break;
+                }
+                pi += 1;
+            }
         }
         map::LOGIC_MONSTERMAKER => {
             // Wake one dormant spawn parked at this maker's origin.
@@ -3348,11 +3381,16 @@ static mut MOVE_TICK: u16 = 0; // walker half-rate phase
 static mut LOADED_MODEL_CACHE: [Model; MAX_LOADED_MODELS] = [Model::EMPTY; MAX_LOADED_MODELS];
 // Band-bucketed PVS face order (overflow views): the banded emit used to
 // re-walk the whole face link structure once per depth band.
-const PVS_BAND_CAP: usize = 2496; // views beyond this keep the link-walk path
+const PVS_BAND_CAP: usize = 1408; // views beyond this keep the link-walk path
 static mut PVS_BAND_ORDER: [u16; PVS_BAND_CAP] = [0; PVS_BAND_CAP];
 static mut PVS_BAND_START: [u16; 10] = [0; 10];
 static mut VM_MODEL_CACHE: [Model; N_WEAPONS] = [Model::EMPTY; N_WEAPONS];
 static mut PROP_MOVE_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS]; // blocked-walker backoff
+static mut PROP_NAME: [u16; MAX_PROPS] = [0; MAX_PROPS]; // logic-name id of the targetname
+static mut PROP_SCRIPT_GOAL: [[i16; 3]; MAX_PROPS] = [[0; 3]; MAX_PROPS]; // world coords fit i16
+static mut PROP_SCRIPT_YAW: [u16; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_SCRIPT_MODE: [u8; MAX_PROPS] = [0; MAX_PROPS]; // 0 none, 1 walk, 2 run, 4 instant
+static mut PROP_SCRIPT_LI: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS]; // firing script's logic index
 // Per-prop shortlist of brush ents near enough to matter for floor probes.
 // Refreshed every 8 ticks (staggered); 0xFFFF count = overflow, full scan.
 static mut PROP_NEAR_ENTS: [[u16; 8]; MAX_PROPS] = [[0; 8]; MAX_PROPS];
@@ -3860,6 +3898,9 @@ unsafe fn init_prop_state(m: &Map) {
         };
         PROP_ACTIVE[pi] = if dormant { 0 } else { 1 };
         PROP_DORMANT[pi] = dormant as u8;
+        PROP_NAME[pi] = m.prop_name(pi);
+        PROP_SCRIPT_MODE[pi] = 0;
+        PROP_SCRIPT_LI[pi] = u16::MAX;
         PROP_KIND[pi] = kind;
         PROP_POS[pi] = org;
         PROP_YAW[pi] = yaw as u16;
@@ -3932,6 +3973,45 @@ unsafe fn tick_props(
         // broadphase if it's ever needed.
         let _ = movers;
         let pm: &[phys::Mover] = &[];
+        // Scripted-sequence override: walk/run/teleport to the script mark,
+        // then face the authored yaw and fire the script's target chain.
+        if PROP_SCRIPT_MODE[pi] != 0 {
+            let g = PROP_SCRIPT_GOAL[pi];
+            let goal = [g[0] as i32, g[1] as i32, g[2] as i32];
+            let mode = PROP_SCRIPT_MODE[pi];
+            let arrived = if mode == 4 {
+                prop_set_pos(m, pm, pi, goal);
+                true
+            } else {
+                let speed = if mode == 2 { 8 } else { 4 };
+                prop_move_towards_point(m, pm, pi, goal, speed);
+                PROP_STATE[pi] = PROP_STATE_MOVE;
+                dist2_xz(PROP_POS[pi], goal) < 32 * 32
+            };
+            if arrived {
+                PROP_YAW[pi] = PROP_SCRIPT_YAW[pi];
+                PROP_STATE[pi] = PROP_STATE_IDLE;
+                PROP_SCRIPT_MODE[pi] = 0;
+                let li = PROP_SCRIPT_LI[pi];
+                PROP_SCRIPT_LI[pi] = u16::MAX;
+                if (li as usize) < m.n_logic {
+                    let rec = m.logic(li as usize);
+                    if rec.target != 0 {
+                        logic_fire_targets(
+                            m,
+                            m.n_logic.min(MAX_LOGIC),
+                            m.n_ents.min(MAX_ENTS),
+                            rec.target,
+                            map::USE_TOGGLE,
+                            SIM_NOW,
+                            0,
+                        );
+                    }
+                }
+            }
+            pi += 1;
+            continue;
+        }
         match model_def(ty).ai {
             // Melee aliens (zombie/houndeye/bullsquid/ichy) reuse the headcrab
             // approach+bite AI; ranged/boss/flyer types render but don't move yet.
@@ -4103,6 +4183,7 @@ struct WeaponDef {
 const FINAL_ROOM_ID: u16 = 95;
 const ENDING_SCENE_TICKS: u32 = 1400; // ~70 s of G-Man tram before the fade
 const ENDING_FADE_TICKS: u32 = 60;
+const WEAPON_ICON_TICKS: u8 = 30; // ~1.5 s select-icon flash after L1/R1
 
 /// Debug: spawn with every weapon + full ammo (for testing the arsenal).
 /// Ships FALSE -- fresh starts are bare-handed, the suit gives crowbar+glock.
@@ -6740,7 +6821,14 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         WEAPON_TRI_COUNT = 0;
     }
     draw_next_loading_screen(fb, loading_label, &mut loading_frame, keep_frame);
-    let hud_mat = hud::upload(); // real HUD sprite sheet -> free gameplay tpage
+    // Real HUD sprite sheet -> free gameplay tpage. Streams from the pack
+    // (MAP_BUF is free until the world chunk below); a failed read leaves the
+    // stale VRAM copy from the previous map, which is the same sheet anyway.
+    let hud_mat = {
+        let n = cdstream::load_chunk(hud::HUD_CHUNK_ID, unsafe { &mut MAP_BUF }).unwrap_or(0);
+        let blob = unsafe { streamed_map_bytes(n.max(36)) };
+        hud::upload(blob)
+    };
 
     draw_next_loading_screen(fb, loading_label, &mut loading_frame, keep_frame);
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
@@ -6865,6 +6953,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     }
     let mut fire_was_held = false; // rising-edge latch for non-auto weapons
     let mut switch_prev = false; // rising-edge latch for L1/R1 weapon cycling
+    let mut weapon_icon_ticks = 0u8; // select-icon flash countdown after a switch
     let mut pending_vm_switch = false; // re-stream the viewmodel after a weapon change
     let mut health: u16 = launch.health;
     let mut armor: u16 = launch.armor.min(HEV_MAX_ARMOR);
@@ -7028,6 +7117,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             let sw_held = sw_next || sw_prev;
             if !dead && sw_held && !switch_prev && weapon.cycle(sw_next) {
                 pending_vm_switch = true;
+                weapon_icon_ticks = WEAPON_ICON_TICKS; // flash the select icon
+            }
+            if weapon_icon_ticks > 0 {
+                weapon_icon_ticks -= 1;
             }
             switch_prev = sw_held;
             if pending_vm_switch {
@@ -7857,6 +7950,44 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     }
                 }
                 model_draws = model_draws.saturating_add(1);
+                if e.kind == 5 && e.mv[0] != 0 {
+                    // func_rotating (fans): spin about the ent's authored
+                    // pivot. angle = frame x angular speed (q12/tick), no
+                    // per-ent state. Faces skip the plane/bounds gates --
+                    // their normals rotate; the ent sphere cull above stands.
+                    let ang =
+                        ((sim_frame_no as i32).wrapping_mul(e.mv[0]) as u16) & 0xFFF;
+                    let mr = rot.mul(&Mat3I16::rotate_y(ang >> 4));
+                    scene::load_rotation(&mr);
+                    let o = e.origin;
+                    let ome = [o[0] - eye[0], o[1] - eye[1], o[2] - eye[2]];
+                    let et = [
+                        dot12(rot.m[0], ome) - dot12(mr.m[0], o),
+                        dot12(rot.m[1], ome) - dot12(mr.m[1], o),
+                        dot12(rot.m[2], ome) - dot12(mr.m[2], o),
+                    ];
+                    scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+                    let submodel_token = next_proj_token();
+                    let (ff, nf) = m.submodel(e.submodel);
+                    EMIT_BLEND = e.blend;
+                    EMIT_WAVE = false;
+                    for f in ff..ff + nf {
+                        let (first, cnt) = m.face_tris(f);
+                        emit_submodel_face(
+                            &mut packets,
+                            &m,
+                            f,
+                            first,
+                            cnt,
+                            nv,
+                            submodel_token,
+                            &mut np,
+                        );
+                    }
+                    EMIT_BLEND = 0;
+                    scene::load_rotation(&rot); // restore the world transform
+                    continue;
+                }
                 if e.kind != 1 && e.kind != 3 {
                     let mut static_counts = WorldCounters::new();
                     let (ff, nf) = m.submodel(e.submodel);
@@ -8176,6 +8307,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     weapon.ammo_mode(),
                     pickup_kind,
                     pickup_ticks,
+                    if weapon_icon_ticks > 0 {
+                        weapon.current as i32
+                    } else {
+                        -1
+                    },
                     &mut HUD_OT,
                     &mut HUD_PRIMS,
                 );

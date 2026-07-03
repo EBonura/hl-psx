@@ -1961,6 +1961,7 @@ const LOGIC_TRIGGER_GRAVITY: u8 = 19;
 const LOGIC_HEALTH_CHARGER: u8 = 20;
 const LOGIC_HEV_CHARGER: u8 = 21;
 const LOGIC_MONSTERMAKER: u8 = 22;
+const LOGIC_SCRIPTED: u8 = 24;
 
 const USE_OFF: u8 = 0;
 const USE_ON: u8 = 1;
@@ -2746,6 +2747,35 @@ fn collect_entities(
                 head0,
                 leaves,
             });
+        } else if cls == "func_rotating" {
+            // Spinning brush (fans). kind 5: mv[0] carries the angular speed
+            // in q12 angle units per tick (HL speed is deg/sec; 20 ticks/s);
+            // SF bit1/bit2 pick X/Y axes -- only the common Z-up (world yaw)
+            // spin animates, others render static. origin = the pivot.
+            let sf = parse_f32_key(block, "spawnflags", 0.0) as u32;
+            let degs = parse_f32_key(block, "speed", 30.0);
+            let zaxis = sf & (4 | 8) == 0;
+            let reverse = sf & 2 != 0; // SF 2 = reverse direction
+            let mut w = if zaxis {
+                (degs * 4096.0 / 360.0 / 20.0).round() as i32
+            } else {
+                0
+            };
+            if reverse {
+                w = -w;
+            }
+            let leaves = entity_leafs(mins, maxs, origin_hl, None, nodes, planes);
+            out.push(EntRec {
+                submodel: submodel as u16,
+                kind: 5 | (blend << 8),
+                origin,
+                mv: [w, 0, 0],
+                center,
+                r2,
+                head,
+                head0,
+                leaves,
+            });
         } else {
             let leaves = entity_leafs(mins, maxs, origin_hl, None, nodes, planes);
             out.push(EntRec {
@@ -2802,6 +2832,7 @@ fn collect_logic_entities(
             "func_healthcharger" => LOGIC_HEALTH_CHARGER,
             "func_recharge" => LOGIC_HEV_CHARGER,
             "monstermaker" => LOGIC_MONSTERMAKER,
+            "scripted_sequence" => LOGIC_SCRIPTED,
             "trigger_once" => LOGIC_TRIGGER_ONCE,
             "trigger_multiple" => LOGIC_TRIGGER_MULTIPLE,
             "trigger_relay" => LOGIC_TRIGGER_RELAY,
@@ -2860,7 +2891,10 @@ fn collect_logic_entities(
             LOGIC_FUNC_TRACKTRAIN => 100.0,
             _ => 0.0,
         };
-        let speed = if speed_default > 0.0 {
+        let speed = if kind == LOGIC_SCRIPTED {
+            // Scripts carry their facing yaw here (q12); they have no speed key.
+            hl_yaw_to_world_q12(ent_yaw_degrees(block).unwrap_or(0.0)) as u16
+        } else if speed_default > 0.0 {
             (parse_f32_key(block, "speed", speed_default) / scale)
                 .round()
                 .clamp(1.0, u16::MAX as f32) as u16
@@ -2897,12 +2931,17 @@ fn collect_logic_entities(
                     .clamp(0.0, u16::MAX as f32) as u16,
                 LOGIC_HEALTH_CHARGER => 50, // HL default juice
                 LOGIC_HEV_CHARGER => 75,
+                LOGIC_SCRIPTED => names.id(ent_value(block, "m_iszEntity")),
                 _ => names.id(ent_value(block, "changetarget")),
             };
         let arg1 = match kind {
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
             LOGIC_FUNC_TRACKTRAIN => submodel.unwrap_or(0).min(u16::MAX as usize) as u16,
             LOGIC_FUNC_BREAKABLE => parse_f32_key(block, "material", 0.0)
+                .round()
+                .clamp(0.0, 7.0) as u16,
+            // m_flMoveTo: 0 = pose in place, 1 = walk, 2 = run, 4/5 = instant.
+            LOGIC_SCRIPTED => parse_f32_key(block, "m_flMoveTo", 0.0)
                 .round()
                 .clamp(0.0, 7.0) as u16,
             _ => 0,
@@ -3106,7 +3145,8 @@ fn collect_props(
     nodes: &[u8],
     planes: &[u8],
     scale: f32,
-) -> Vec<(u16, [i32; 3], i32, i16)> {
+    logic_names: &[String],
+) -> Vec<(u16, [i32; 3], i32, i16, u16)> {
     let s = entity_text(ents);
     let mut out = Vec::new();
     // scripted_sequence v1 (set dressing): an auto-start script (one with no
@@ -3213,6 +3253,7 @@ fn collect_props(
                         origin,
                         yaw,
                         point_leaf(origin_hl, nodes, planes),
+                        0,
                     ));
                 }
                 continue;
@@ -3239,7 +3280,11 @@ fn collect_props(
         }
         let origin = to_world(origin_hl, scale);
         let yaw = hl_yaw_to_world_q12(deg);
-        out.push((ty, origin, yaw, point_leaf(origin_hl, nodes, planes)));
+        let name_id = ent_value(block, "targetname")
+            .and_then(|tn| logic_names.iter().position(|n| n == tn))
+            .map(|p| (p + 1).min(u16::MAX as usize) as u16)
+            .unwrap_or(0);
+        out.push((ty, origin, yaw, point_leaf(origin_hl, nodes, planes), name_id));
     }
     out
 }
@@ -4481,15 +4526,19 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // u32 n_props | (u16 type, i16 leaf, i32 origin[3], i32 yaw) × n_props
     let prop_off = o.len() as u32;
     o[prop_off_pos..prop_off_pos + 4].copy_from_slice(&prop_off.to_le_bytes());
-    let props = collect_props(bsp.lump(LUMP_ENTITIES), nodes, planes, scale);
+    let props = collect_props(bsp.lump(LUMP_ENTITIES), nodes, planes, scale, &logic.names);
     o.extend_from_slice(&(props.len() as u32).to_le_bytes());
-    for (ty, org, yaw, leaf) in &props {
+    // PropRec 24B: ty u16 | leaf i16 | org i32[3] | yaw i32 | name u16 | pad u16
+    // (name = logic-name id of the monster's targetname; scripts find it).
+    for (ty, org, yaw, leaf, name) in &props {
         o.extend_from_slice(&ty.to_le_bytes());
         o.extend_from_slice(&leaf.to_le_bytes());
         for c in org {
             o.extend_from_slice(&c.to_le_bytes());
         }
         o.extend_from_slice(&yaw.to_le_bytes());
+        o.extend_from_slice(&name.to_le_bytes());
+        o.extend_from_slice(&0u16.to_le_bytes());
     }
     while o.len() % 4 != 0 {
         o.push(0);

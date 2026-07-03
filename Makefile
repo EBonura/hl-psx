@@ -121,6 +121,7 @@ sfx-assets:
 	cd $(PSOXIDE) && cargo build --release -p psxed
 	python3 tools/extract_sfx.py "$(HL_GAME)/sound" $(SFXPACK)/chunk_3000.psxa \
 		"$(PSOXIDE)/target/release/psxed"
+	@cp data/menu/hud.tex $(SFXPACK)/chunk_3001.psxa  # HUD atlas streams from the pack
 
 assets: check-assets menu-assets rooms models sfx-assets
 	@echo "assets -> data/menu data/rooms data/models data/modelpack data/sfx"

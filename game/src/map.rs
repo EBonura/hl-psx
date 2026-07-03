@@ -202,6 +202,7 @@ pub const LOGIC_TRIGGER_GRAVITY: u8 = 19;
 pub const LOGIC_HEALTH_CHARGER: u8 = 20;
 pub const LOGIC_HEV_CHARGER: u8 = 21;
 pub const LOGIC_MONSTERMAKER: u8 = 22;
+pub const LOGIC_SCRIPTED: u8 = 24;
 
 pub const USE_OFF: u8 = 0;
 pub const USE_ON: u8 = 1;
@@ -434,7 +435,7 @@ impl Map {
     /// `(model_type, origin, yaw, leaf)` for point prop/item `i`.
     #[inline]
     pub fn prop(&self, i: usize) -> (u16, [i32; 3], i32, i16) {
-        let o = self.props_off + i * 20;
+        let o = self.props_off + i * 24;
         (
             rd_u16(self.data, o),
             [
@@ -445,6 +446,13 @@ impl Map {
             rd_i32(self.data, o + 16),
             rd_i16(self.data, o + 2),
         )
+    }
+
+    /// Logic-name id of the prop's targetname (0 = unnamed); scripts and
+    /// triggers address monsters through this.
+    #[inline]
+    pub fn prop_name(&self, i: usize) -> u16 {
+        rd_u16(self.data, self.props_off + i * 24 + 20)
     }
 
     #[inline]
