@@ -971,6 +971,36 @@ uncooked). What landed:
   remaining CD lever is per-map bundles (all of a map's types in one
   chunk), which duplicates storage across maps -- disc has room, noted.
 
+## M33 -- black-triangle ROOT CAUSE: GTE near-quotient saturation (DONE, verified)
+
+The persistent "black wedges at the feet / walls vanish up close" (survived
+the c7daf19 cull fix) was TWO stacked bugs, the big one in the GTE itself:
+
+- **GTE RTPS quotient saturation**: the perspective divide H/SZ3 caps at ~2.0
+  (UNR result limit 0x1FFFF). Any vertex closer than H/2 = **80 world units**
+  projects SHRUNKEN toward the screen centre -- silently wrong screen coords
+  for the entire 16..80 depth band. Near floor/wall faces rendered displaced,
+  leaving their true screen area black (the wedges ARE that abandoned area).
+  Fix (`project_vert_fixed`): when `NEAR <= sz < 80`, recompute sx/sy with a
+  software reciprocal `(H<<12)/z` under `FIX_ROT`/`FIX_T` (mirrors of the live
+  GTE transform, set beside every `load_rotation`/`load_translation` that
+  feeds `proj_vert`/`proj_submodel_vert`), saturated to the GTE's +-1023 so
+  `clamped()` routing is unchanged. `draw_model` is excluded on purpose: its
+  xS vertex scaling already shrinks the saturation zone (~20 units at s=4)
+  and the viewmodel is hand-tuned around the current projection.
+- **Soft-path cull quantization**: c7daf19's `>>4` pre-scale (i32-overflow
+  fix) collapsed the two on-screen verts of thin near-plane slivers into the
+  same cell -> cross == 0 -> culled. Those slivers tile the floor strip at
+  the player's feet. Now `culled_soft` = exact i64 cross (one MIPS `mult`;
+  only i64 DIVISION is the known miscompile).
+- Verified at the repro pose (c1a0 reception desk, DBG_CAM `[-90,-190,140]`
+  yaw 0 pitch -200): bottom-strip black pixels **1737 -> 11**; the traced tri
+  projects (330,356) in-runtime = host-replica exact. Debug method that
+  cracked it: paint-don't-drop colors (NB textured tints can be invisible on
+  dark texels -- add fixed-position counter squares), a host-side replica
+  render of the cooked file, then per-tri tty traces of the emit chain, where
+  the GTE's (257,255) vs true (330,356) exposed the x0.571 shrink instantly.
+
 ## Next (pick per value)
 
 - **scripted custom anims**: bake per-script sequences for the big set

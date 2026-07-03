@@ -158,9 +158,9 @@ const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in
 const DBG_PAD_BOOT: bool = cfg!(feature = "debug-map-boot"); // hold L1 | map_index to boot any map headlessly
 // Debug: pin the camera to a fixed pose (to reproduce a specific view headlessly).
 const DBG_CAM: bool = false;
-const DBG_CAM_POS: [i32; 3] = [-456, -184, -400];
-const DBG_CAM_YAW: u16 = 2048;
-const DBG_CAM_PITCH: i16 = 0;
+const DBG_CAM_POS: [i32; 3] = [-90, -190, 140];
+const DBG_CAM_YAW: u16 = 0;
+const DBG_CAM_PITCH: i16 = -200;
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 const ROOM_WORLD_CHUNK_MUL: u32 = 2;
@@ -2534,10 +2534,26 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
 }
 
 /// Cull when the screen triangle isn't front-facing (area <= 0). Matches the
-/// cook's reversed winding.
+/// cook's reversed winding. 32-bit cross: exact ONLY for GTE-range coords
+/// (|x|,|y| <= 1023) -- the fast/quad paths. Soft-projected coords use
+/// `culled_soft`.
 #[inline]
 fn culled(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
     (b.0 - a.0) * (c.1 - a.1) - (c.0 - a.0) * (b.1 - a.1) <= 0
+}
+
+/// Backface cull for TRUE soft-projected coords (near-grazing tris reach tens
+/// of thousands of px). 64-bit cross: exact sign at any magnitude. The two
+/// prior attempts both broke here: raw i32 overflowed (random culls of visible
+/// floors/walls), and `>>4` pre-scaling quantized the two on-screen verts of a
+/// thin near-plane sliver into the SAME cell (cross == 0 -> culled), eating
+/// the floor strip at the player's feet -- the "black wedges" bug. A 32x32->64
+/// multiply is one MIPS `mult`; only i64 DIVISION is the known miscompile.
+#[inline]
+fn culled_soft(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
+    let cr = (b.0 - a.0) as i64 * (c.1 - a.1) as i64
+        - (c.0 - a.0) as i64 * (b.1 - a.1) as i64;
+    cr <= 0
 }
 
 /// DEBUG: is screen point `p` inside triangle (a,b,c)? (winding-agnostic)
@@ -5576,11 +5592,47 @@ fn entity_touches_pvs(m: &Map, e: &map::Ent) -> bool {
     false
 }
 
+/// The GTE's perspective quotient H/SZ3 saturates at ~2.0 (UNR result caps at
+/// 0x1FFFF). Any vertex closer than H/2 = 80 units projects SHRUNKEN toward
+/// the screen centre -- silently wrong screen coords for the whole 16..80
+/// depth band (the black-wedge-at-your-feet / wall-vanishes-up-close bug).
+/// Verts in that band get their sx/sy recomputed with a software reciprocal
+/// under the SAME transform (mirrored in FIX_ROT/FIX_T at every GTE load
+/// site), saturated to the GTE's +-1023 so `clamped()` routing is unchanged.
+const GTE_QDIV_SAT_Z: i32 = (render::SOFT_H / 2) as i32; // quotient caps below this z
+static mut FIX_ROT: Mat3I16 = Mat3I16 {
+    m: [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]],
+};
+static mut FIX_T: [i32; 3] = [0; 3];
+
+#[inline]
+unsafe fn set_view_fix(rot: &Mat3I16, t: [i32; 3]) {
+    FIX_ROT = *rot;
+    FIX_T = t;
+}
+
+#[inline]
+unsafe fn project_vert_fixed(m: &Map, i: usize) -> Projected {
+    let mut p = scene::project_vertex_scheduled(m.vert(i));
+    let z = p.sz as i32;
+    if z >= NEAR as i32 && z < GTE_QDIV_SAT_Z {
+        let v = m.vert(i);
+        let wv = [v.x as i32, v.y as i32, v.z as i32];
+        let vx = dot12(FIX_ROT.m[0], wv) + FIX_T[0];
+        let vy = dot12(FIX_ROT.m[1], wv) + FIX_T[1];
+        let inv = (render::SOFT_H << 12) / z; // z >= 16: inv <= 40960
+        // |v*inv| fits i32 for |v| <= 32767; saturate like the GTE (+-1023).
+        p.sx = (render::OFX + ((vx * inv) >> 12)).clamp(-1023, 1023) as i16;
+        p.sy = (render::OFY + ((vy * inv) >> 12)).clamp(-1023, 1023) as i16;
+    }
+    p
+}
+
 /// Project vertex `i` into the cache once per frame (base view matrix).
 #[inline]
 unsafe fn proj_vert(m: &Map, i: usize, frame: u16) {
     if VERT_FRAME[i] != frame {
-        SCRATCH[i] = scene::project_vertex_scheduled(m.vert(i));
+        SCRATCH[i] = project_vert_fixed(m, i);
         VERT_FRAME[i] = frame;
     }
 }
@@ -5601,7 +5653,7 @@ unsafe fn next_proj_token() -> u16 {
 #[inline]
 unsafe fn proj_submodel_vert(m: &Map, i: usize, token: u16) {
     if VERT_FRAME[i] != token {
-        SCRATCH[i] = scene::project_vertex_scheduled(m.vert(i));
+        SCRATCH[i] = project_vert_fixed(m, i);
         VERT_FRAME[i] = token;
     }
 }
@@ -5781,18 +5833,7 @@ unsafe fn emit_cv(
         emit_cv(packets, &[ab, bc, ca], depth - 1, mat, np);
         return;
     }
-    if CULL
-        && culled(
-            (pa.x >> 4, pa.y >> 4),
-            (pb.x >> 4, pb.y >> 4),
-            (pc.x >> 4, pc.y >> 4),
-        )
-    {
-        // >>4 keeps the cross product inside i32 for the huge soft-projected
-        // coords of near-grazing triangles. Unscaled, it overflowed and
-        // randomly culled visible floors/walls -- measured 5.6k wrong
-        // verdicts on the c1a0 station view alone (black wedge holes,
-        // walls vanishing up close).
+    if CULL && culled_soft((pa.x, pa.y), (pb.x, pb.y), (pc.x, pc.y)) {
         return;
     }
     let cl = |x: i32| x.clamp(0, 255) as u8;
@@ -7746,6 +7787,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             -dot12(rot.m[2], eye),
         ];
         scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
+        unsafe { set_view_fix(&rot, base_t) };
 
         frame_no = frame_no.wrapping_add(1);
         if frame_no == 0 {
@@ -8201,6 +8243,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         dot12(rot.m[2], ome) - dot12(mr.m[2], o),
                     ];
                     scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+                    set_view_fix(&mr, et);
                     let submodel_token = next_proj_token();
                     let (ff, nf) = m.submodel(e.submodel);
                     EMIT_BLEND = e.blend;
@@ -8220,6 +8263,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     }
                     EMIT_BLEND = 0;
                     scene::load_rotation(&rot); // restore the world transform
+                    set_view_fix(&rot, et); // mirror registers (translation still ent's)
                     continue;
                 }
                 if e.kind != 1 && e.kind != 3 {
@@ -8277,6 +8321,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     -dot12(rot.m[2], es),
                 ];
                 scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+                set_view_fix(&rot, et);
                 let submodel_token = next_proj_token();
                 let (ff, nf) = m.submodel(e.submodel);
                 EMIT_BLEND = e.blend; // glass doors etc.
@@ -8315,6 +8360,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     -dot12(rot.m[2], es),
                 ];
                 scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+                set_view_fix(&rot, et);
                 let submodel_token = next_proj_token();
                 let (ff, nf) = m.submodel(m.tram_submodel);
                 for f in ff..ff + nf {
@@ -8567,6 +8613,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             if DEBUG_XHAIR && XHAIR.valid == 0 && have_pvs {
                 scene::load_rotation(&rot);
                 scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
+                set_view_fix(&rot, base_t);
                 xhair_pick_pvs(&m, nv, proj_token);
             }
 
