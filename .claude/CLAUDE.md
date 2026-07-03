@@ -1042,6 +1042,34 @@ the c7daf19 cull fix) was TWO stacked bugs, the big one in the GTE itself:
   already REJECTED NCLIP deliberately (real-HW stale-MAC0 hazard, documented
   in psx-gte scene.rs) -- software cross products stay.
 
+## M35 -- playtest round 2: state leaks between entity draws (DONE)
+
+Four user reports, three root causes:
+
+- **"Charger/grate moves with the door"**: the static-ent draw branch (kind
+  != 1/3) projects through the WORLD proj token but never reloaded the GTE
+  translation -- it inherited the PREVIOUS entity's offset (a mid-open door).
+  Since M24 removed submodel faces from world marks, static-ent verts are
+  first-projected in the ent phase, so they rendered displaced by the door's
+  live offset. Fix: reload base_t + set_view_fix at the branch head (what
+  every other branch already did).
+- **"Intro train sometimes transparent"**: EMIT_BLEND leak -- the static-ent
+  branch sets blend per face and never cleared it; the tram draws next and
+  inherited a glass ent's Average blend (view-dependent, hence "sometimes").
+  Fix: reset EMIT_BLEND/EMIT_WAVE after the static branch and before the tram.
+- **"Sitting guy floats"**: floor_anchor_mdl_frames rebased EVERY frame's
+  min_y to 0, lifting seated poses until their lowest vertex touched the
+  script mark (mark = chair seat, feet should reach the floor BELOW it).
+  Fix: canonical clips 0-4 keep per-frame anchoring (planted feet); named
+  script clips shift by the constant clip-0 baseline, preserving authored
+  root offsets. Desk barney verified seated.
+- **"Models look weird / more precision"**: ENEMY_VERTEX_LOCAL_SCALE 2 -> 4
+  (quarter-unit vertex grid, same i16 RAM; also halves the model near-GTE
+  distortion zone to ~20 units). Chunk sizes +3%; VM reserve trimmed
+  24,192 -> 20,224 words (~5 switched guns resident) -- roster audit: zero
+  combat AND zero pickup drops on all 96 maps (c1a3 is the cliff map; its
+  full need is ~306 KB, measure before trimming elsewhere).
+
 ## Next (pick per value)
 
 - **PERF (researched, ranked -- the emit wall)**: 1) cook-time PRE-BAKED GPU
