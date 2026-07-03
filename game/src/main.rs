@@ -1051,38 +1051,41 @@ unsafe fn stream_one_viewmodel(
     }
     let buf_ptr = core::ptr::addr_of_mut!(MODEL_BUF).cast::<u32>();
     let wm = WEAPON_DEFS[wid].wm as u32;
+    // ONE merged chunk per weapon ("HMRG" | u32 geom_len | geom | tex): one
+    // CD handshake per switch instead of two.
     let dst = core::slice::from_raw_parts_mut(buf_ptr.add(word), VM_POOL_WORDS - word);
-    let glen = cdstream::load_chunk(MODEL_CHUNK_V_9MMHANDGUN + wm, dst).unwrap_or(0);
-    let glen_words = glen.div_ceil(4);
-    if glen == 0 || word + glen_words > VM_POOL_WORDS {
+    let clen = cdstream::load_chunk(MODEL_CHUNK_V_9MMHANDGUN + wm, dst).unwrap_or(0);
+    if clen < 8
+        || word + clen.div_ceil(4) > VM_POOL_WORDS
+        || *buf_ptr.add(word) != u32::from_le_bytes(*b"HMRG")
+    {
         return false;
     }
-    account_streamed_chunk(glen, stream_chunks, stream_bytes, stream_sectors);
-    // Stage the texture in the pool's free tail (after this geometry), bounded
-    // at VM_POOL_WORDS. A mid-switch stream runs while the enemies above the
-    // reserve are resident, so staging at VM_POOL_WORDS itself would clobber
-    // them; keeping it inside the pool is safe (a tex too big for the remaining
-    // pool is skipped -> untextured, never overflowing into the enemies).
-    let (ntex, _) = stream_model_texture_chunk(
-        MODEL_CHUNK_V_9MMHANDGUN_TEX + wm,
-        word + glen_words,
-        VM_POOL_WORDS,
+    account_streamed_chunk(clen, stream_chunks, stream_bytes, stream_sectors);
+    let glen = (*buf_ptr.add(word + 1)) as usize;
+    if glen + 8 > clen {
+        return false;
+    }
+    let gw = word + 2;
+    let glen_words = glen.div_ceil(4);
+    let tex_bytes = viewmodel_bytes_at(gw * 4 + glen, clen - 8 - glen);
+    telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
+    let (ntex, _) = vram::upload_tex_chunk_append_raw(
+        tex_bytes,
         core::ptr::addr_of_mut!(VM_SLOTS).cast::<TexSlot>().add(slot),
         VM_SLOTS_TOTAL - slot,
-        stream_chunks,
-        stream_bytes,
-        stream_sectors,
     )
     .unwrap_or((0, 0));
+    telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
     VM_ENTRY[wid] = VmEntry {
         valid: true,
-        geom_off: word * 4,
+        geom_off: gw * 4,
         geom_len: glen,
         slot_start: slot,
         n_slots: ntex,
     };
-    VM_MODEL_CACHE[wid] = Model::load(viewmodel_bytes_at(word * 4, glen));
-    VM_FILL_WORD = word + glen_words;
+    VM_MODEL_CACHE[wid] = Model::load(viewmodel_bytes_at(gw * 4, glen));
+    VM_FILL_WORD = gw + glen_words;
     VM_FILL_SLOT = slot + ntex;
     true
 }
@@ -1169,12 +1172,24 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
         if slot_idx >= MAX_LOADED_MODELS || geom_word >= MODEL_WORDS {
             break;
         }
+        // ONE merged chunk per type: "HMRG" | u32 geom_len | geom | tex.
+        // Halves the CD per-chunk handshake count (PAUSE + READN respin
+        // dominated small chunks). Geometry starts 2 words in (4-aligned).
         let dst = core::slice::from_raw_parts_mut(buf_ptr.add(geom_word), MODEL_WORDS - geom_word);
-        let glen = cdstream::load_chunk(MODEL_GEOM_CHUNK_BASE + ty as u32, dst).unwrap_or(0);
-        if glen == 0 || geom_word + glen.div_ceil(4) > MODEL_WORDS {
+        let clen = cdstream::load_chunk(MODEL_GEOM_CHUNK_BASE + ty as u32, dst).unwrap_or(0);
+        if clen < 8 || geom_word + clen.div_ceil(4) > MODEL_WORDS {
             continue; // missing chunk or would overflow MODEL_BUF -> skip type
         }
-        let md = Model::load(streamed_model_bytes_at(geom_word * 4, glen));
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, clen as u32);
+        if *buf_ptr.add(geom_word) != u32::from_le_bytes(*b"HMRG") {
+            continue; // unknown chunk format
+        }
+        let glen = (*buf_ptr.add(geom_word + 1)) as usize;
+        if glen + 8 > clen {
+            continue;
+        }
+        let gw = geom_word + 2; // geometry blob start (words)
+        let md = Model::load(streamed_model_bytes_at(gw * 4, glen));
         let nf = md.fill_render_faces_raw(
             core::ptr::addr_of_mut!(POOL_FACES)
                 .cast::<ModelRenderFace>()
@@ -1183,26 +1198,23 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
         );
         // The pool draw reads topology from POOL_FACES (baked above) and only
         // verts/clips from the blob, so the TriRec tail is dead weight now.
-        // Keep just the frame section; textures stage over the dropped tail and
-        // the next chunk loads there. Zeroing the header's tri count keeps
-        // future Model::loads of the shortened slice in bounds by construction.
+        // Keep just the frame section; the NEXT type's chunk loads over the
+        // dropped tail + the in-chunk texture once it's uploaded.
         let kept = md.frame_section_len().min(glen);
-        *buf_ptr.add(geom_word + 2) = 0; // header u32 n_tris at byte offset 8
-        let (ntex, _failed) = stream_model_texture_chunk(
-            MODEL_TEX_CHUNK_BASE + ty as u32,
-            geom_word + kept.div_ceil(4), // stage tex in the free tail above the kept prefix
-            MODEL_WORDS,                  // ... up to the end of the pool
+        *buf_ptr.add(gw + 2) = 0; // header u32 n_tris at byte offset 8
+        let tex_bytes = streamed_model_bytes_at(gw * 4 + glen, clen - 8 - glen);
+        telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
+        let (ntex, _tex_fail) = vram::upload_tex_chunk_append_raw(
+            tex_bytes,
             core::ptr::addr_of_mut!(POOL_TEX).cast::<TexSlot>().add(tex_off),
             POOL_TEX_SLOTS - tex_off,
-            &mut sc,
-            &mut sb,
-            &mut ss,
         )
         .unwrap_or((0, 0));
+        telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
         LOADED_MODELS[slot_idx] = LoadedModel {
             valid: true,
             type_id: ty as u8,
-            geom_off: geom_word * 4,
+            geom_off: gw * 4,
             geom_len: kept,
             face_start: face_off,
             n_faces: nf,
@@ -1211,9 +1223,8 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
         };
         TYPE_TO_SLOT[ty] = slot_idx as u8;
         // Parse once (post-repack header) -- draws read the cached copy.
-        LOADED_MODEL_CACHE[slot_idx] =
-            Model::load(streamed_model_bytes_at(geom_word * 4, kept));
-        geom_word += kept.div_ceil(4);
+        LOADED_MODEL_CACHE[slot_idx] = Model::load(streamed_model_bytes_at(gw * 4, kept));
+        geom_word = gw + kept.div_ceil(4);
         face_off += nf;
         tex_off += ntex;
         slot_idx += 1;
@@ -6790,7 +6801,9 @@ fn main() {
     // own 512 KB; no main-RAM cost). MAP_BUF is free until the first map loads,
     // so stage through it.
     let sfx_ready = {
-        let len = cdstream::load_chunk(sfx::CHUNK_ID, unsafe { &mut MAP_BUF }).unwrap_or(0);
+        let len = cdstream::load_chunk(sfx::CHUNK_ID, unsafe { &mut MAP_BUF })
+            .map(|n| unsafe { cdstream::decompress_in_place(&mut MAP_BUF, n) })
+            .unwrap_or(0);
         let bytes = unsafe { streamed_map_bytes(len) };
         if len > 0 {
             unsafe { sfx::init_from_pack(bytes) }
@@ -7010,7 +7023,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     // (MAP_BUF is free until the world chunk below); a failed read leaves the
     // stale VRAM copy from the previous map, which is the same sheet anyway.
     let hud_mat = {
-        let n = cdstream::load_chunk(hud::HUD_CHUNK_ID, unsafe { &mut MAP_BUF }).unwrap_or(0);
+        let n = cdstream::load_chunk(hud::HUD_CHUNK_ID, unsafe { &mut MAP_BUF })
+            .map(|k| unsafe { cdstream::decompress_in_place(&mut MAP_BUF, k) })
+            .unwrap_or(0);
         let blob = unsafe { streamed_map_bytes(n.max(36)) };
         hud::upload(blob)
     };

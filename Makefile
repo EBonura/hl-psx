@@ -314,10 +314,10 @@ models:
 		chunk=$$(( $(WEAPON_CHUNK_BASE) + i )); \
 		texchunk=$$(( $(WEAPON_TEX_CHUNK_BASE) + i )); \
 		$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/$$m.mdl" "$(MODELPACK)/chunk_$$chunk.psxm" "0:1" "$(MODELPACK)/chunk_$$texchunk.psxm" >/dev/null; \
-		echo "  weapon chunk $$chunk + tex $$texchunk = $$m ($$(wc -c < $(MODELPACK)/chunk_$$chunk.psxm) B)"; \
+		python3 tools/merge_model_chunk.py "$(MODELPACK)/chunk_$$chunk.psxm" "$(MODELPACK)/chunk_$$texchunk.psxm"; \
+		echo "  weapon chunk $$chunk (merged) = $$m ($$(wc -c < $(MODELPACK)/chunk_$$chunk.psxm) B)"; \
 		i=$$((i+1)); \
 	done
-	@cp "$(MODELPACK)/chunk_$(WEAPON_CHUNK_BASE).psxm" $(ROOT)/data/models/v_9mmhandgun.hlmdl
 	@echo "  --- model roster (all streamed per-map): geom chunk 1300+id, tex chunk 1100+id ---"
 	@for entry in \
 	  "0|scientist|13:4,0:4,24:4,8:2,31:3" \
@@ -376,7 +376,8 @@ models:
 	  t=$${entry%%|*}; rest=$${entry#*|}; mdl=$${rest%%|*}; seq=$${rest##*|}; \
 	  geom=$$((1300+t)); tex=$$((1100+t)); \
 	  if $(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/$$mdl.mdl" "$(MODELPACK)/chunk_$$geom.psxm" "$$seq" "$(MODELPACK)/chunk_$$tex.psxm" >/tmp/mck_$$mdl.log 2>&1; then \
-	    echo "  T$$t $$mdl -> geom $$geom tex $$tex ($$(wc -c < $(MODELPACK)/chunk_$$geom.psxm) B)"; \
+	    python3 tools/merge_model_chunk.py "$(MODELPACK)/chunk_$$geom.psxm" "$(MODELPACK)/chunk_$$tex.psxm"; \
+	    echo "  T$$t $$mdl -> merged $$geom ($$(wc -c < $(MODELPACK)/chunk_$$geom.psxm) B)"; \
 	  else echo "  T$$t $$mdl FAILED: $$(tail -1 /tmp/mck_$$mdl.log | cut -c1-60)"; fi; \
 	done
 
