@@ -226,11 +226,11 @@ fn draw_loading(
     label: &str,
 ) {
     const SPINNER: [&str; 4] = ["|", "/", "-", "\\"];
+    let _ = (logo, lw, lh); // loading stays unbranded (wordmark only on the menu)
     let mut frame = 0usize;
     while frame < 8 {
         fb.clear(0, 0, 0);
         draw_bg(bg);
-        draw_logo(logo, lw, lh);
         draw_centered(font, 146, "Loading", ITEM_SEL);
         let x = 160 + font.text_width("Loading") as i16 / 2 + 8;
         font.draw_text(x, 146, SPINNER[frame & 3], WHITE);

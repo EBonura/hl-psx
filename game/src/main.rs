@@ -158,7 +158,7 @@ const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in
 const DBG_PAD_BOOT: bool = cfg!(feature = "debug-map-boot"); // hold L1 | map_index to boot any map headlessly
 // Debug: pin the camera to a fixed pose (to reproduce a specific view headlessly).
 const DBG_CAM: bool = false;
-const DBG_CAM_POS: [i32; 3] = [-456, -184, -455];
+const DBG_CAM_POS: [i32; 3] = [-456, -184, -400];
 const DBG_CAM_YAW: u16 = 2048;
 const DBG_CAM_PITCH: i16 = 0;
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
@@ -549,17 +549,16 @@ fn loading_label_for_room(room_id: u16) -> &'static str {
 fn draw_loading_card(fb: &mut FrameBuffer, label: &str, frame: u8) {
     fb.clear(0, 0, 0);
     gpu::draw_quad_flat([(0, 0), (320, 0), (0, 240), (320, 240)], 6, 6, 6);
-    gpu::draw_quad_flat([(42, 64), (278, 64), (42, 176), (278, 176)], 14, 13, 11);
-    gpu::draw_quad_flat([(46, 68), (274, 68), (46, 172), (274, 172)], 24, 21, 16);
-    hltext::draw_centered_scaled(84, "HALF-LIFE", hltext::SMALL_Q8, PAUSE_WHITE);
+    gpu::draw_quad_flat([(42, 84), (278, 84), (42, 156), (278, 156)], 14, 13, 11);
+    gpu::draw_quad_flat([(46, 88), (274, 88), (46, 152), (274, 152)], 24, 21, 16);
 
     let loading = "Loading";
-    let y = 118;
+    let y = 104;
     hltext::draw_centered_scaled(y, loading, hltext::SMALL_Q8, PAUSE_AMBER);
     let x = 160 + hltext::text_width_scaled(loading, hltext::SMALL_Q8) / 2 + 8;
     draw_spinner_dots(x, y, frame);
 
-    hltext::draw_centered_scaled(144, label, hltext::SMALL_Q8, PAUSE_DIM);
+    hltext::draw_centered_scaled(130, label, hltext::SMALL_Q8, PAUSE_DIM);
     gpu::draw_sync();
     gpu::vsync();
     fb.swap();
@@ -5782,7 +5781,18 @@ unsafe fn emit_cv(
         emit_cv(packets, &[ab, bc, ca], depth - 1, mat, np);
         return;
     }
-    if CULL && culled((pa.x, pa.y), (pb.x, pb.y), (pc.x, pc.y)) {
+    if CULL
+        && culled(
+            (pa.x >> 4, pa.y >> 4),
+            (pb.x >> 4, pb.y >> 4),
+            (pc.x >> 4, pc.y >> 4),
+        )
+    {
+        // >>4 keeps the cross product inside i32 for the huge soft-projected
+        // coords of near-grazing triangles. Unscaled, it overflowed and
+        // randomly culled visible floors/walls -- measured 5.6k wrong
+        // verdicts on the c1a0 station view alone (black wedge holes,
+        // walls vanishing up close).
         return;
     }
     let cl = |x: i32| x.clamp(0, 255) as u8;
