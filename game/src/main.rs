@@ -40,6 +40,8 @@ use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
 use psx_pad::{button, enable_analog_port1, poll_port1};
 use psx_rt::{interrupts, tty};
+use psx_io;
+use psx_spu;
 
 use map::{Map, SKY_TEX_NONE};
 use model::{Model, RenderFace as ModelRenderFace};
@@ -1450,6 +1452,38 @@ static mut FADE_T: u16 = 0;
 static mut FADE_DUR: u16 = 40;
 static mut FADE_HOLD: u16 = 0;
 static mut FADE_STARTDARK: bool = false; // worldspawn startdark: black until a fade fires
+// ---- CD music (CDDA tracks appended to the disc; HL track numbers pass through) ----
+static mut CD_TRACK_WANT: i16 = 0; // >0 play, -1 stop, 0 none
+static mut CD_TRACK_CUR: i16 = 0;
+
+/// Start/stop CDDA to match the wanted track. Only call when the drive is idle
+/// (post-stream / mid-gameplay): any WORLD.PAK read preempts playback.
+unsafe fn music_apply() {
+    if CD_TRACK_WANT == CD_TRACK_CUR {
+        return;
+    }
+    CD_TRACK_CUR = CD_TRACK_WANT;
+    if CD_TRACK_CUR > 0 {
+        psx_spu::set_cd_volume(psx_spu::CdVolume::MAX, psx_spu::CdVolume::MAX);
+        psx_spu::enable_cd_audio(true);
+        let _ = psx_io::cdrom::try_set_mode(
+            psx_io::cdrom::MODE_DOUBLE_SPEED | psx_io::cdrom::MODE_CDDA,
+            2_000_000,
+        );
+        let _ = psx_io::cdrom::try_demute(2_000_000);
+        let _ = psx_io::cdrom::try_play_track(CD_TRACK_CUR as u8, 2_000_000);
+    } else {
+        let _ = psx_io::cdrom::try_pause(2_000_000);
+    }
+}
+
+/// A CD data read killed playback; re-request the current track.
+unsafe fn music_mark_interrupted() {
+    if CD_TRACK_CUR > 0 {
+        CD_TRACK_WANT = CD_TRACK_CUR;
+        CD_TRACK_CUR = 0;
+    }
+}
 // Arsenal carried across changelevel (menu launches reset it): owned mask,
 // per-weapon clips, ammo pools, selected weapon.
 static mut CARRY_VALID: bool = false;
@@ -2127,6 +2161,10 @@ unsafe fn logic_use_entity(
             TITLE_EFFECT = (rec.arg1 & 3) as u8;
             TITLE_LOW_LEFT = rec.arg1 & 4 != 0;
         }
+        map::LOGIC_CDTRACK => {
+            CD_TRACK_WANT = rec.arg0 as i16;
+            music_apply();
+        }
         map::LOGIC_ENV_FADE => {
             FADE_ACTIVE = true;
             FADE_IN = rec.arg1 & 1 != 0;
@@ -2185,6 +2223,7 @@ unsafe fn logic_use_entity(
 /// Advance the screen-title + fade timers once per sim tick; auto-fire the
 /// worldspawn chapter title shortly after load (like HL's chapter cards).
 unsafe fn tick_screen_fx(sim_frame_no: u32) {
+    music_apply(); // no-op when the wanted track already plays
     if TITLE_TEXT_ID != 0 {
         TITLE_T = TITLE_T.saturating_add(1);
         let total = TITLE_FADE + TITLE_HOLD + TITLE_FADE;
@@ -2593,6 +2632,18 @@ unsafe fn logic_touch_triggers(
                         phys::set_gravity_scale(rec.arg0 as i32);
                     }
                 }
+                map::LOGIC_CDTRACK => {
+                    // trigger_cdaudio: brush touch plays once then removes
+                    // itself (HL kills the trigger). target_cdaudio has no
+                    // volume and only fires via targets.
+                    if rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs {
+                        if player_touches_logic(player_pos, rec) {
+                            CD_TRACK_WANT = rec.arg0 as i16;
+                            music_apply();
+                            LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -2625,6 +2676,8 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     CHAPTER_TITLE_ID = 0;
     FADE_ACTIVE = false;
     FADE_STARTDARK = false;
+    CD_TRACK_CUR = 0; // the map streams silenced any CDDA
+    CD_TRACK_WANT = 0;
     TRACKTRAIN_SUBMODEL = m.tram_submodel.min(u16::MAX as usize) as u16;
     TRACKTRAIN_CMD_ACTIVE = 0;
     TRACKTRAIN_CMD_USE_TYPE = map::USE_TOGGLE;
@@ -2680,6 +2733,10 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                 FADE_STARTDARK = rec.arg1 & 1 != 0;
                 CHAPTER_TITLE_ID = rec.arg0;
                 CHAPTER_TITLE_HOLD = rec.speed;
+                let track = ((rec.arg1 >> 8) & 0x3F) as i16;
+                if track > 0 {
+                    CD_TRACK_WANT = track;
+                }
             }
             map::LOGIC_TRIGGER_AUTO => {
                 let at = now.wrapping_add(rec.delay_ticks.max(1));
@@ -7636,6 +7693,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     // of the glock. Falls back to the glock if it cannot load.
                     let mut d = (0u32, 0u32, 0u32);
                     stream_one_viewmodel(weapon.current, &mut d.0, &mut d.1, &mut d.2);
+                    music_mark_interrupted(); // the CD read killed CDDA; retick replays
                     WEAPON_CACHE_FRAME = usize::MAX; // re-cache the viewmodel for the new weapon
                 }
             }

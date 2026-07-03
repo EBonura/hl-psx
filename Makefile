@@ -112,8 +112,14 @@ disc: compile
 		--world-pack-rooms-dir $(ROOMS) \
 		--world-pack-compress-rooms \
 		--world-pack-extra-dir $(MODELPACK) \
-		--world-pack-extra-dir $(SFXPACK)
+		--world-pack-extra-dir $(SFXPACK) \
+		$(if $(wildcard $(ROOT)/data/music/tracks.txt),--cdda-track-list $(ROOT)/data/music/tracks.txt,)
 	@echo "DISC -> $(DIST)/hl-psx.cue"
+
+# HL music -> CDDA track payloads (data/music, git-ignored). The disc target
+# appends them as audio tracks when present.
+music-assets:
+	python3 tools/extract_music.py "$(HL_GAME)" $(ROOT)/data/music
 
 # HL SFX -> SPU-ADPCM pack (one WORLD.PAK chunk, id 3000). Needs the sibling
 # PSoXide checkout for the psxed audio-pack encoder.

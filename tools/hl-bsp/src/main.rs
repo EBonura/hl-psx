@@ -1967,6 +1967,7 @@ const LOGIC_WEAPONSTRIP: u8 = 26;
 const LOGIC_ENV_MESSAGE: u8 = 27; // titles.txt text overlay (arg0 = text name id)
 const LOGIC_ENV_FADE: u8 = 28; // screen fade (arg0 = duration ticks)
 const LOGIC_MAP_FLAGS: u8 = 29; // worldspawn: startdark/gametitle + chaptertitle
+const LOGIC_CDTRACK: u8 = 30; // trigger_cdaudio/target_cdaudio: arg0 = track (-1 stop)
 
 const USE_OFF: u8 = 0;
 const USE_ON: u8 = 1;
@@ -2983,6 +2984,7 @@ fn collect_logic_entities(
             "env_message" => LOGIC_ENV_MESSAGE,
             "env_fade" => LOGIC_ENV_FADE,
             "worldspawn" => LOGIC_MAP_FLAGS,
+            "trigger_cdaudio" | "target_cdaudio" => LOGIC_CDTRACK,
             "trigger_changelevel" => LOGIC_TRIGGER_CHANGELEVEL,
             "info_landmark" => LOGIC_INFO_LANDMARK,
             "trigger_counter" => LOGIC_TRIGGER_COUNTER,
@@ -3093,6 +3095,7 @@ fn collect_logic_entities(
                     }
                 }
                 LOGIC_ENV_FADE => seconds_to_ticks_u16(parse_f32_key(block, "duration", 2.0)),
+                LOGIC_CDTRACK => (parse_f32_key(block, "health", 0.0) as i16) as u16,
                 LOGIC_MAP_FLAGS => {
                     let key = ent_value(block, "chaptertitle").unwrap_or("").to_uppercase();
                     match titles.get(&key) {
@@ -3128,11 +3131,12 @@ fn collect_logic_entities(
                     .unwrap_or(false);
                 (spawnflags as u16 & 1) | ((white as u16) << 1)
             }
-            // bit0 startdark, bit1 gametitle
+            // bit0 startdark, bit1 gametitle, bits 8..13 = CD music track
             LOGIC_MAP_FLAGS => {
                 let dark = parse_f32_key(block, "startdark", 0.0) as u16 != 0;
                 let title = parse_f32_key(block, "gametitle", 0.0) as u16 != 0;
-                (dark as u16) | ((title as u16) << 1)
+                let track = parse_f32_key(block, "sounds", 0.0).round().clamp(0.0, 63.0) as u16;
+                (dark as u16) | ((title as u16) << 1) | (track << 8)
             }
             _ => 0,
         };
