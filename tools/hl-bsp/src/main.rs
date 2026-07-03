@@ -1968,6 +1968,26 @@ const LOGIC_ENV_MESSAGE: u8 = 27; // titles.txt text overlay (arg0 = text name i
 const LOGIC_ENV_FADE: u8 = 28; // screen fade (arg0 = duration ticks)
 const LOGIC_MAP_FLAGS: u8 = 29; // worldspawn: startdark/gametitle + chaptertitle
 const LOGIC_CDTRACK: u8 = 30; // trigger_cdaudio/target_cdaudio: arg0 = track (-1 stop)
+const LOGIC_SENTENCE: u8 = 31; // scripted_sentence: arg0 = resident SFX id
+
+/// Sentence name -> resident SFX id (mirrors extract_sfx.py's SOUNDS order).
+fn sentence_sfx_id(s: &str) -> Option<u16> {
+    Some(match s.trim_start_matches('!').to_ascii_uppercase().as_str() {
+        "SC_GMORN" => 43,
+        "SC_BIGDAY" => 44,
+        "SC_SAMPLE" => 45,
+        "SC_GETAWAY" => 46, // aliased to the fear bark (SPU budget)
+        "SC_PLFEAR0" => 46,
+        "BA_HEADDOWN" => 47,
+        "BA_SCARED0" => 48,
+        "BA_BUTTON" => 49,
+        "BA_LATE" => 50,
+        "GM_1MUMBLE" => 51,
+        "GM_4MUMBLE" => 51, // one mumble covers the loop
+        "GM_5MUMBLE" => 51,
+        _ => return None,
+    })
+}
 
 const USE_OFF: u8 = 0;
 const USE_ON: u8 = 1;
@@ -2985,6 +3005,7 @@ fn collect_logic_entities(
             "env_fade" => LOGIC_ENV_FADE,
             "worldspawn" => LOGIC_MAP_FLAGS,
             "trigger_cdaudio" | "target_cdaudio" => LOGIC_CDTRACK,
+            "scripted_sentence" => LOGIC_SENTENCE,
             "trigger_changelevel" => LOGIC_TRIGGER_CHANGELEVEL,
             "info_landmark" => LOGIC_INFO_LANDMARK,
             "trigger_counter" => LOGIC_TRIGGER_COUNTER,
@@ -3096,6 +3117,12 @@ fn collect_logic_entities(
                 }
                 LOGIC_ENV_FADE => seconds_to_ticks_u16(parse_f32_key(block, "duration", 2.0)),
                 LOGIC_CDTRACK => (parse_f32_key(block, "health", 0.0) as i16) as u16,
+                LOGIC_SENTENCE => {
+                    match ent_value(block, "sentence").and_then(sentence_sfx_id) {
+                        Some(id) => id,
+                        None => continue, // no resident wav for this line
+                    }
+                }
                 LOGIC_MAP_FLAGS => {
                     let key = ent_value(block, "chaptertitle").unwrap_or("").to_uppercase();
                     match titles.get(&key) {

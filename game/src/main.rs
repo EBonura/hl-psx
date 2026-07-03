@@ -2165,6 +2165,10 @@ unsafe fn logic_use_entity(
             CD_TRACK_WANT = rec.arg0 as i16;
             music_apply();
         }
+        map::LOGIC_SENTENCE => {
+            // scripted_sentence: the speaker's line, attenuated from its mark.
+            sfx::play_world(rec.arg0 as u8, rec.origin);
+        }
         map::LOGIC_ENV_FADE => {
             FADE_ACTIVE = true;
             FADE_IN = rec.arg1 & 1 != 0;

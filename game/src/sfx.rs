@@ -56,6 +56,9 @@ pub const SLV_DIE: u8 = 39;
 pub const BC_PAIN: u8 = 40;
 pub const BC_DIE: u8 = 41;
 pub const HEV_BELL: u8 = 42;
+// batch 3: scripted_sentence voice lines
+pub const V_SC_GMORN: u8 = 43;
+pub const V_GM_MUMBLE1: u8 = 51; // 43..=51 continuous (see extract_sfx.py order)
 
 const MAX_SFX: usize = 43;
 const SPU_SAMPLE_BASE: u32 = 0x1010; // BIOS convention: 0x0000..0x1000 reserved
