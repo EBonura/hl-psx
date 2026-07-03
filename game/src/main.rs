@@ -2492,9 +2492,17 @@ unsafe fn logic_try_use(
                     let vy = dot12(rot.m[1], c) + base_t[1];
                     if vx.abs() * 3 < vz * 2 && vy.abs() * 3 < vz * 2 {
                         let score = vz + vx.abs() + vy.abs();
+                        // LOS to the target ignores the target's OWN brush hull
+                        // (the trace ends inside it); other movers still block.
                         if score < best_score
                             && phys::line_clear_world(m, eye, c)
-                            && phys::line_clear_movers(m, movers, eye, c)
+                            && phys::line_clear_movers_except(
+                                m,
+                                movers,
+                                eye,
+                                c,
+                                rec.brush as i32,
+                            )
                         {
                             best = li;
                             best_score = score;

@@ -214,7 +214,24 @@ fn mover_may_touch_segment(mv: &Mover, p1: [i32; 3], p2: [i32; 3]) -> bool {
 
 /// True when the segment does not hit any shifted mover hull.
 pub fn line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> bool {
+    line_clear_movers_except(map, movers, p1, p2, i32::MIN)
+}
+
+/// Like [`line_clear_movers`] but ignores the mover whose id is `exclude_id`.
+/// Aim-use traces end INSIDE the target button/charger/door brush, so that
+/// brush's own hull would always report "blocked" -- exclude it so line of
+/// sight to the thing you're pressing isn't blocked by the thing itself.
+pub fn line_clear_movers_except(
+    map: &Map,
+    movers: &[Mover],
+    p1: [i32; 3],
+    p2: [i32; 3],
+    exclude_id: i32,
+) -> bool {
     for mv in movers {
+        if mv.id == exclude_id {
+            continue;
+        }
         let head = if mv.head0 > 0 { mv.head0 } else { mv.head };
         if head <= 0 {
             continue;
