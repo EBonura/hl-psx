@@ -118,7 +118,7 @@ const YAW_RATE: i32 = 130; // yaw units/frame at full stick (Q0.12)
 const PITCH_RATE: i32 = 95; // pitch units/frame at full stick
 const DEADZONE: i32 = 28; // radial stick deadzone
 const VIEW_HEIGHT: i32 = 28;
-const PLAYER_USE_REACH: i32 = 96;
+const PLAYER_USE_REACH: i32 = 120;
 const PLAYER_TOUCH_HALF_XZ: i32 = 16;
 const PLAYER_TOUCH_HEIGHT: i32 = 56;
 // Distance cull on world face centers (sphere_visible). HL maps are enclosed, so
@@ -1492,12 +1492,18 @@ static mut CARRY_CLIPS: [u16; N_WEAPONS] = [0; N_WEAPONS];
 static mut CARRY_AMMO: [u16; N_AMMO] = [0; N_AMMO];
 static mut CARRY_CURRENT: u8 = 0;
 
+// MAPLIST index of c1a0d, the map that holds the one HEV suit pickup. Rooms
+// AFTER it assume you already have the suit; this map and earlier expose the
+// item_suit. Keep in sync with the Makefile MAPLIST / menu::MAPS.
+const HEV_SUIT_ROOM: usize = 10; // c1a0d
+
 #[inline]
 fn standalone_room_starts_with_hev(room_id: usize) -> bool {
-    // The first cooked item_suit is in c1a0d (room 9). Later standalone chapter
-    // launches should behave like campaign progress so batteries/enemy damage
-    // are testable, while c1a0d itself still exposes the pickup.
-    room_id > 9
+    // Standalone/menu launches to a map PAST the suit start with it, so
+    // batteries/enemy damage are testable. c1a0d itself and earlier expose the
+    // pickup. NB this must NOT apply to changelevel arrivals -- a real
+    // playthrough carries the suit state and picks the suit up in c1a0d.
+    room_id > HEV_SUIT_ROOM
 }
 
 fn menu_launch(room_id: usize) -> RoomLaunch {
@@ -2475,9 +2481,50 @@ unsafe fn logic_try_use(
         -dot12(rot.m[2], eye),
     ];
     let mut best = usize::MAX;
+
+    // PRIMARY: a forward ray from the crosshair. Whatever use-target brush the
+    // player is actually looking at (within reach) wins -- this is what a player
+    // does ("point at the button, press use") and is immune to the cone/center
+    // subtleties that made low console buttons unclickable. Row 2 of the view
+    // matrix is the un-negated world forward (rows 0/1 are screen-negated).
+    let fwd_end = [
+        eye[0] + (rot.m[2][0] as i32 * PLAYER_USE_REACH) / 4096,
+        eye[1] + (rot.m[2][1] as i32 * PLAYER_USE_REACH) / 4096,
+        eye[2] + (rot.m[2][2] as i32 * PLAYER_USE_REACH) / 4096,
+    ];
+    if let Some(hit) = phys::trace_line(m, movers, eye, fwd_end) {
+        if hit.mover >= 0 {
+            let mut li = 0usize;
+            while li < nlogic {
+                if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
+                    let rec = m.logic(li);
+                    if rec.brush as i32 == hit.mover
+                        && matches!(
+                            rec.kind,
+                            map::LOGIC_FUNC_BUTTON
+                                | map::LOGIC_FUNC_DOOR
+                                | map::LOGIC_HEALTH_CHARGER
+                                | map::LOGIC_HEV_CHARGER
+                        )
+                    {
+                        best = li;
+                        break;
+                    }
+                }
+                li += 1;
+            }
+        }
+    }
+
+    // FALLBACK: cone/radius search for when the ray misses (aiming near but not
+    // exactly at the target, or the target brush is behind non-solid glass).
+    // `ray_missed` is a constant captured before the loop, so when the forward
+    // ray already found a target the loop is skipped; otherwise it scans ALL
+    // candidates and `best` accumulates the lowest score.
+    let ray_missed = best == usize::MAX;
     let mut best_score = i32::MAX;
     let mut li = 0usize;
-    while li < nlogic {
+    while ray_missed && li < nlogic {
         if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
             let rec = m.logic(li);
             if rec.kind == map::LOGIC_FUNC_BUTTON
@@ -2490,7 +2537,11 @@ unsafe fn logic_try_use(
                 if vz > 0 && vz <= PLAYER_USE_REACH {
                     let vx = dot12(rot.m[0], c) + base_t[0];
                     let vy = dot12(rot.m[1], c) + base_t[1];
-                    if vx.abs() * 3 < vz * 2 && vy.abs() * 3 < vz * 2 {
+                    // ~56 deg cone (was ~34). The tight cone couldn't reach low
+                    // console buttons -- you look DOWN at them, so their vertical
+                    // angle exceeds 34 deg at any distance inside reach. The score
+                    // below still prefers the most-centered target.
+                    if vx.abs() * 2 < vz * 3 && vy.abs() * 2 < vz * 3 {
                         let score = vz + vx.abs() + vy.abs();
                         // LOS to the target ignores the target's OWN brush hull
                         // (the trace ends inside it); other movers still block.
@@ -7526,7 +7577,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     let mut armor: u16 = launch.armor.min(HEV_MAX_ARMOR);
     let mut death_ticks: u8 = 0; // >0 while dead; respawns at 0
     let mut suit_equipped = launch.suit_equipped
-        || standalone_room_starts_with_hev(launch.room_id as usize)
+        // Standalone/menu convenience only: a changelevel arrival (preserve_view)
+        // carries the real suit state, so a playthrough picks the suit up in
+        // c1a0d instead of being handed it.
+        || (!launch.preserve_view && standalone_room_starts_with_hev(launch.room_id as usize))
         || armor > 0;
     if !suit_equipped {
         armor = PLAYER_START_ARMOR;
