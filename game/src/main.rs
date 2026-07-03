@@ -1408,6 +1408,7 @@ struct RoomLaunch {
     clip_ammo: u16,
     reserve_ammo: u16,
     preserve_view: bool,
+    riding: bool, // player was aboard a moving tracktrain at the transition
 }
 
 #[derive(Clone, Copy)]
@@ -1429,8 +1430,10 @@ static mut CHANGE_REQUEST: RoomLaunch = RoomLaunch {
     clip_ammo: GLOCK_MAX_CLIP,
     reserve_ammo: GLOCK_START_RESERVE,
     preserve_view: false,
+    riding: false,
 };
 static mut CHANGE_REQUEST_ACTIVE: u8 = 0;
+static mut LOGIC_TRAM_RIDING: u8 = 0;
 // Arsenal carried across changelevel (menu launches reset it): owned mask,
 // per-weapon clips, ammo pools, selected weapon.
 static mut CARRY_VALID: bool = false;
@@ -1460,6 +1463,7 @@ fn menu_launch(room_id: usize) -> RoomLaunch {
         clip_ammo: GLOCK_MAX_CLIP,
         reserve_ammo: GLOCK_START_RESERVE,
         preserve_view: false,
+        riding: false,
     }
 }
 
@@ -1821,6 +1825,7 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
         clip_ammo: LOGIC_PLAYER_CLIP_AMMO,
         reserve_ammo: LOGIC_PLAYER_RESERVE_AMMO,
         preserve_view: true,
+        riding: LOGIC_TRAM_RIDING != 0,
     };
     CHANGE_REQUEST_ACTIVE = 1;
 }
@@ -7165,6 +7170,16 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         }
         m.spawn_pos
     };
+    // Ride transfer (Black Mesa Inbound): the player crossed the changelevel
+    // aboard a moving tracktrain. GoldSrc transfers the train entity itself
+    // (globalname intro_train); our per-map tram starts at its own first
+    // path_track, so re-seat the rider there and the ride continues.
+    let spawn_pos = if launch.riding && m.n_way > 0 && m.tram_submodel > 0 {
+        let w = m.waypoint(0);
+        [w[0], w[1] + 70, w[2]]
+    } else {
+        spawn_pos
+    };
     let mut player = phys::Player::new(spawn_pos);
     let mut yaw: u16 = if launch.preserve_view {
         launch.yaw
@@ -7235,6 +7250,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     let mut tram_seg = 0usize;
     let mut tram_seg_dist = 0i32;
     let mut ride_off = [0i32; 3];
+    if launch.riding && m.n_way > 0 && m.tram_submodel > 0 {
+        tram_active = true; // ride carried across the changelevel
+        tram_player_attached = true;
+    }
     unsafe {
         if let Some((use_type, speed)) = logic_take_tracktrain_command() {
             let started = tram_apply_command(use_type, speed, &mut tram_active, &mut tram_speed);
@@ -7423,6 +7442,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 LOGIC_PLAYER_POS = player.pos;
                 LOGIC_PLAYER_YAW = yaw;
                 LOGIC_PLAYER_PITCH = pitch;
+                LOGIC_TRAM_RIDING = (tram_active && tram_player_attached) as u8;
                 LOGIC_PLAYER_HEALTH = health;
                 LOGIC_PLAYER_SUIT = if suit_equipped { 1 } else { 0 };
                 LOGIC_PLAYER_ARMOR = armor;
@@ -7631,6 +7651,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 LOGIC_PLAYER_POS = player.pos;
                 LOGIC_PLAYER_YAW = yaw;
                 LOGIC_PLAYER_PITCH = pitch;
+                LOGIC_TRAM_RIDING = (tram_active && tram_player_attached) as u8;
                 LOGIC_PLAYER_HEALTH = health;
                 LOGIC_PLAYER_SUIT = if suit_equipped { 1 } else { 0 };
                 LOGIC_PLAYER_ARMOR = armor;
