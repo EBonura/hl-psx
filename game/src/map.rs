@@ -203,6 +203,8 @@ pub const LOGIC_HEALTH_CHARGER: u8 = 20;
 pub const LOGIC_HEV_CHARGER: u8 = 21;
 pub const LOGIC_MONSTERMAKER: u8 = 22;
 pub const LOGIC_SCRIPTED: u8 = 24;
+pub const LOGIC_FUNC_TRAIN: u8 = 25;
+pub const LOGIC_WEAPONSTRIP: u8 = 26;
 
 pub const USE_OFF: u8 = 0;
 pub const USE_ON: u8 = 1;

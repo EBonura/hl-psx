@@ -1962,6 +1962,8 @@ const LOGIC_HEALTH_CHARGER: u8 = 20;
 const LOGIC_HEV_CHARGER: u8 = 21;
 const LOGIC_MONSTERMAKER: u8 = 22;
 const LOGIC_SCRIPTED: u8 = 24;
+const LOGIC_FUNC_TRAIN: u8 = 25;
+const LOGIC_WEAPONSTRIP: u8 = 26;
 
 const USE_OFF: u8 = 0;
 const USE_ON: u8 = 1;
@@ -2747,6 +2749,23 @@ fn collect_entities(
                 head0,
                 leaves,
             });
+        } else if cls == "func_water" {
+            // Swimmable volume: renders like any translucent brush, and the
+            // half-extents ride in mv (kind 6) so the runtime can switch the
+            // player into swim physics inside it. Non-solid (no hulls).
+            let hx = to_world([half[0], half[1], half[2]], scale);
+            let leaves = entity_leafs(mins, maxs, origin_hl, None, nodes, planes);
+            out.push(EntRec {
+                submodel: submodel as u16,
+                kind: 6 | (blend << 8),
+                origin: [0; 3],
+                mv: [hx[0].abs(), hx[1].abs(), hx[2].abs()],
+                center,
+                r2,
+                head: 0,
+                head0: 0,
+                leaves,
+            });
         } else if cls == "func_rotating" {
             // Spinning brush (fans). kind 5: mv[0] carries the angular speed
             // in q12 angle units per tick (HL speed is deg/sec; 20 ticks/s);
@@ -2827,12 +2846,14 @@ fn collect_logic_entities(
             "func_button" => LOGIC_FUNC_BUTTON,
             "func_breakable" | "func_pushable" => LOGIC_FUNC_BREAKABLE,
             "trigger_teleport" => LOGIC_TRIGGER_TELEPORT,
-            "trigger_push" => LOGIC_TRIGGER_PUSH,
+            "trigger_push" | "func_conveyor" => LOGIC_TRIGGER_PUSH,
             "trigger_gravity" => LOGIC_TRIGGER_GRAVITY,
             "func_healthcharger" => LOGIC_HEALTH_CHARGER,
             "func_recharge" => LOGIC_HEV_CHARGER,
             "monstermaker" => LOGIC_MONSTERMAKER,
             "scripted_sequence" => LOGIC_SCRIPTED,
+            "func_train" => LOGIC_FUNC_TRAIN,
+            "player_weaponstrip" => LOGIC_WEAPONSTRIP,
             "trigger_once" => LOGIC_TRIGGER_ONCE,
             "trigger_multiple" => LOGIC_TRIGGER_MULTIPLE,
             "trigger_relay" => LOGIC_TRIGGER_RELAY,
@@ -2949,6 +2970,48 @@ fn collect_logic_entities(
 
         let first_aux = aux.len().min(u16::MAX as usize) as u16;
         let mut aux_count = 0u8;
+        if kind == LOGIC_FUNC_TRAIN {
+            // Corner chain -> aux pairs: (x,y) then (z, wait ticks). World
+            // coords fit i16 (maps span +-4096). Loops are implicit (the
+            // runtime wraps to corner 0 when the chain ends).
+            let mut corner = ent_value(block, "target").unwrap_or("").to_string();
+            let mut hops = 0usize;
+            while !corner.is_empty() && hops < 24 {
+                let mut found = false;
+                for cb in s.split('{') {
+                    if ent_value(cb, "classname") != Some("path_corner") {
+                        continue;
+                    }
+                    if ent_value(cb, "targetname") != Some(corner.as_str()) {
+                        continue;
+                    }
+                    let o = to_world(
+                        ent_value(cb, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]),
+                        scale,
+                    );
+                    let wait = seconds_to_ticks_u16(parse_f32_key(cb, "wait", 0.0));
+                    if aux.len() + 2 <= u16::MAX as usize && aux_count < 250 {
+                        aux.push(LogicAuxRec {
+                            target: o[0].clamp(i16::MIN as i32, i16::MAX as i32) as u16,
+                            delay_ticks: o[1].clamp(i16::MIN as i32, i16::MAX as i32) as u16,
+                        });
+                        aux.push(LogicAuxRec {
+                            target: o[2].clamp(i16::MIN as i32, i16::MAX as i32) as u16,
+                            delay_ticks: wait,
+                        });
+                        aux_count += 2;
+                    }
+                    let next = ent_value(cb, "target").unwrap_or("").to_string();
+                    corner = if next == corner { String::new() } else { next };
+                    found = true;
+                    break;
+                }
+                if !found {
+                    break;
+                }
+                hops += 1;
+            }
+        }
         if kind == LOGIC_MULTI_MANAGER {
             let mut targets: Vec<(u16, u16)> = Vec::new();
             iter_ent_pairs(block, |key, value| {
@@ -2995,7 +3058,11 @@ fn collect_logic_entities(
         }
         if kind == LOGIC_TRIGGER_PUSH {
             // Per-tick world push vector from HL angles + speed (u/s at 20 Hz).
-            let spd = parse_f32_key(block, "speed", 100.0) / scale / 20.0;
+            // func_conveyor: the belt itself pushes standers -- same math, but
+            // the belt moves slower relative to its speed key in HL feel.
+            let is_conveyor = cls == "func_conveyor";
+            let spd_key = parse_f32_key(block, "speed", if is_conveyor { 100.0 } else { 100.0 });
+            let spd = (if is_conveyor { spd_key * 0.5 } else { spd_key }) / scale / 20.0;
             let deg = ent_yaw_degrees(block).unwrap_or(0.0);
             let hl_dir = if (deg + 1.0).abs() < 0.01 {
                 [0.0, 0.0, 1.0] // angle -1 = straight up (HL convention)
@@ -3228,6 +3295,9 @@ fn collect_props(
             "ammo_gaussclip" => 46u16,
             "ammo_ARgrenades" | "ammo_mp5grenades" => 47u16,
             "item_healthkit" => 48u16,
+            "item_longjump" => 49u16,
+            "monster_tentacle" => 50u16,
+            "monster_human_assassin" => 51u16,
             "world_items" => match ent_value(block, "type").and_then(|v| v.parse::<u16>().ok()) {
                 Some(45) => 3u16, // ITEM_SUIT
                 Some(44) => 4u16, // ITEM_BATTERY

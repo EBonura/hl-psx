@@ -23,6 +23,14 @@ pub fn set_gravity_scale(scale_q12: i32) {
     unsafe { GRAVITY_SCALE = scale_q12.clamp(0, 4096 * 4) };
 }
 
+// Long jump module: jumping while moving adds a strong horizontal boost
+// (the Xen crossings need it). Persists for the session once picked up.
+static mut LONGJUMP: bool = false;
+
+pub fn set_longjump(on: bool) {
+    unsafe { LONGJUMP = on };
+}
+
 #[inline]
 fn gravity_step() -> i32 {
     unsafe { (GRAVITY * GRAVITY_SCALE) >> 12 }
@@ -168,6 +176,9 @@ pub struct Mover {
     pub radius: i32,
     pub id: i32, // owning brush-entity index (traces report it on hit)
 }
+
+const SWIM_SPEED: i32 = 6;
+const SWIM_SINK: i32 = 1;
 
 pub const NO_MOVER: Mover = Mover {
     head: 0,
@@ -560,6 +571,43 @@ impl Player {
         self.ground_mover = -1;
     }
 
+    /// Swim physics inside a func_water volume: move along the LOOK direction
+    /// (pitch included), jump paddles straight up, and idle sinks slowly.
+    pub fn update_swim(
+        &mut self,
+        map: &Map,
+        movers: &[Mover],
+        fwd: i32,
+        strafe: i32,
+        jump: bool,
+        yaw: u16,
+        pitch: i16,
+    ) {
+        let s = sincos::sin_q12(yaw);
+        let c = sincos::sin_q12((yaw + 1024) & 0xFFF);
+        // Look-direction swim: split fwd into a horizontal part and a vertical
+        // part by pitch (positive pitch = looking up).
+        let vy_look = (fwd * pitch as i32) / 200; // gentle pitch-follow
+        self.vel = [
+            (s * fwd / 128 * SWIM_SPEED) >> 12,
+            (vy_look * SWIM_SPEED / 128).clamp(-SWIM_SPEED, SWIM_SPEED),
+            (c * fwd / 128 * SWIM_SPEED) >> 12,
+        ];
+        self.vel[0] += (c * strafe / 128 * SWIM_SPEED) >> 12;
+        self.vel[2] += (-s * strafe / 128 * SWIM_SPEED) >> 12;
+        if jump {
+            self.vel[1] = SWIM_SPEED; // paddle up (surfacing)
+        } else if fwd == 0 && strafe == 0 {
+            self.vel[1] -= SWIM_SINK; // idle: sink gently
+        }
+        let head = map.hull1_head;
+        let (p, v) = slide_move(map, head, movers, self.pos, self.vel);
+        self.pos = p;
+        self.vel = v;
+        self.on_ground = false;
+        self.ground_mover = -1;
+    }
+
     /// Advance the player one frame. `fwd`/`strafe` are analog deltas in
     /// `-128..=127` (D-pad sends ±127) relative to `yaw` (Q0.12); `jump`
     /// triggers when grounded.
@@ -587,6 +635,13 @@ impl Player {
             }
             if jump {
                 self.vel[1] = JUMP;
+                unsafe {
+                    if LONGJUMP && (self.vel[0].abs() + self.vel[2].abs()) > MOVE_SPEED {
+                        // Long jump: launch along the move direction.
+                        self.vel[0] = self.vel[0] * 5 / 2;
+                        self.vel[2] = self.vel[2] * 5 / 2;
+                    }
+                }
                 self.on_ground = false;
             }
         } else {

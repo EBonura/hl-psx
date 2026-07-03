@@ -201,6 +201,7 @@ const PROP_TYPE_WEAPON_LAST: u8 = 39;
 const PROP_TYPE_AMMO_FIRST: u8 = 40; // ammo pickups 40..=47
 const PROP_TYPE_AMMO_LAST: u8 = 47;
 const PROP_TYPE_MEDKIT: u8 = 48;
+const PROP_TYPE_LONGJUMP: u8 = 49;
 // (ammo pool, rounds) per ammo pickup type 40..=47.
 const AMMO_PICKUPS: [(usize, u16); 8] = [
     (AMMO_9MM, 17),
@@ -222,7 +223,7 @@ const PROP_STATE_DEAD: u8 = 3;
 // 26 model types (the cook's collect_props ids). Each streams from WORLD.PAK:
 // geometry chunk `1300+id`, texture chunk `1100+id`. The runtime keeps only the
 // types a map places resident (TYPE_TO_SLOT -> LOADED_MODELS).
-const N_MODEL_TYPES: usize = 49;
+const N_MODEL_TYPES: usize = 52;
 const MAX_LOADED_MODELS: usize = 22; // distinct model types resident per map (enemies + pickups)
 const POOL_TEX_SLOTS: usize = 240; // shared TexSlot pool across loaded models
 const POOL_FACE_CAP: usize = 6352; // shared RenderFace pool (worst per-map tri sum, c4a3 with statues)
@@ -333,6 +334,9 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 46 ammo_gaussclip
     mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 47 ammo_ARgrenades
     mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 48 item_healthkit
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 49 item_longjump
+    mdef(200, 90, 260, AI_IDLE),              // 50 tentacle (Blast Pit; killtargeted by the rocket)
+    mdef_atk(30, 40, 90, AI_RANGED, 16, 900, 6, 10), // 51 human assassin (silenced 9mm)
 ];
 
 #[inline]
@@ -449,7 +453,7 @@ static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 // reserve); enemies stream after it, trading a slice of the enemy pool for the
 // full visible arsenal. Textures go in VM_SLOTS. The loader stops if the pool
 // fills; any weapon that doesn't fit falls back to the glock viewmodel.
-const VM_POOL_WORDS: usize = 46_720; // ~183 KB head reserve of MODEL_BUF (all 14)
+const VM_POOL_WORDS: usize = 35_328; // ~141 KB viewmodel reserve (~10 switched guns; beyond = glock-visual fallback) -- the freed 43 KB keeps every COMBAT roster whole
 const VM_SLOTS_TOTAL: usize = 176; // 14 viewmodels x up to ~24 skins (rpg)
 static mut VM_SLOTS: [TexSlot; VM_SLOTS_TOTAL] = [EMPTY_SLOT; VM_SLOTS_TOTAL];
 // Load order = the HL1 slot order; the whole arsenal is resident.
@@ -1134,15 +1138,16 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
     let mut slot_idx = 0usize;
     let (mut sc, mut sb, mut ss) = (0u32, 0u32, 0u32);
     let nprops = m.n_props.min(MAX_PROPS);
-    // Two passes: combat/interactive types first, decorative render-only types
-    // (AI_IDLE: bosses, flyers, barnacles) last. If a heavy roster overflows the
-    // pool, a background statue drops instead of a fighting enemy.
+    // Three passes by importance: combat monsters, then pickups/items, then
+    // decorative render-only types (AI_IDLE: bosses, flyers, statues). A heavy
+    // roster drops a statue -- never a fighting enemy, and pickups outrank
+    // scenery (an invisible medkit still collects, but shouldn't happen).
     let mut pass = 0;
     let mut pi = 0usize;
     loop {
         if pi >= nprops {
-            if pass == 0 {
-                pass = 1;
+            if pass < 2 {
+                pass += 1;
                 pi = 0;
                 continue;
             }
@@ -1153,8 +1158,12 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
         if ty >= N_MODEL_TYPES || TYPE_TO_SLOT[ty] != MODEL_SLOT_NONE {
             continue; // out of range, or this type is already resident
         }
-        let decorative = model_def(ty as u8).ai == AI_IDLE;
-        if (pass == 0) == decorative {
+        let want_pass = match model_def(ty as u8).ai {
+            AI_IDLE => 2,
+            AI_ITEM => 1,
+            _ => 0,
+        };
+        if pass != want_pass {
             continue; // wrong pass for this type
         }
         if slot_idx >= MAX_LOADED_MODELS || geom_word >= MODEL_WORDS {
@@ -1499,6 +1508,24 @@ fn logic_valid_brush(brush: u16, nents: usize) -> Option<usize> {
 
 /// True when the player overlaps any func_ladder volume (kind 4). Ladders are
 /// invisible AABBs; expand them by the player hull so grabbing feels natural.
+/// Player-center-in-water test (kind 6 volumes; half-extents in mv).
+unsafe fn water_touch(nents: usize, pos: [i32; 3]) -> bool {
+    let mut ei = 0usize;
+    while ei < nents {
+        let e = ENT_CACHE[ei];
+        if e.kind == 6 && ENT_ACTIVE[ei] != 0 {
+            let dx = (pos[0] - e.center[0]).abs();
+            let dy = (pos[1] - e.center[1]).abs();
+            let dz = (pos[2] - e.center[2]).abs();
+            if dx <= e.mv[0] && dy <= e.mv[1] && dz <= e.mv[2] {
+                return true;
+            }
+        }
+        ei += 1;
+    }
+    false
+}
+
 unsafe fn ladder_touch(m: &Map, nents: usize, pos: [i32; 3]) -> bool {
     let _ = m;
     let mut ei = 0usize;
@@ -1549,6 +1576,10 @@ unsafe fn damage_brush_ent(m: &Map, nlogic: usize, nents: usize, ei: usize, dmg:
 
 #[inline]
 unsafe fn ent_draw_offset(ei: usize) -> [i32; 3] {
+    if ei < MAX_ENTS && ENT_TRAIN_SLOT[ei] != 0xFF {
+        let o = TRAIN_OFF[ENT_TRAIN_SLOT[ei] as usize];
+        return [o[0] as i32, o[1] as i32, o[2] as i32];
+    }
     let e = ENT_CACHE[ei];
     if e.kind == 1 || e.kind == 3 {
         scale12_vec(e.mv, ENT_PHASE[ei])
@@ -1697,6 +1728,16 @@ unsafe fn logic_kill_targets(m: &Map, nlogic: usize, nents: usize, target: u16) 
             }
         }
         li += 1;
+    }
+    // Named monsters die to killtargets too (the Blast Pit tentacles are
+    // removed by the rocket's multi_manager this way).
+    let n = PROP_COUNT.min(MAX_PROPS);
+    let mut pi = 0usize;
+    while pi < n {
+        if PROP_ACTIVE[pi] != 0 && PROP_NAME[pi] == target {
+            PROP_ACTIVE[pi] = 0;
+        }
+        pi += 1;
     }
 }
 
@@ -2028,6 +2069,23 @@ unsafe fn logic_use_entity(
                     break;
                 }
                 pi += 1;
+            }
+        }
+        map::LOGIC_WEAPONSTRIP => {
+            WEAPONSTRIP_REQUEST = true;
+        }
+        map::LOGIC_FUNC_TRAIN => {
+            let mut t = 0usize;
+            while t < TRAIN_COUNT {
+                if TRAIN_LI[t] as usize == li {
+                    TRAIN_ACTIVE[t] = match use_type {
+                        map::USE_ON => 1,
+                        map::USE_OFF => 0,
+                        _ => 1 - TRAIN_ACTIVE[t].min(1),
+                    };
+                    break;
+                }
+                t += 1;
             }
         }
         map::LOGIC_MONSTERMAKER => {
@@ -3391,6 +3449,127 @@ static mut PROP_SCRIPT_GOAL: [[i16; 3]; MAX_PROPS] = [[0; 3]; MAX_PROPS]; // wor
 static mut PROP_SCRIPT_YAW: [u16; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_SCRIPT_MODE: [u8; MAX_PROPS] = [0; MAX_PROPS]; // 0 none, 1 walk, 2 run, 4 instant
 static mut PROP_SCRIPT_LI: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS]; // firing script's logic index
+
+// func_train: brush platforms riding path_corner chains. Per-train state +
+// a per-ent slot map; ride-carry works through the generic ent-offset delta.
+const MAX_TRAINS: usize = 12;
+static mut TRAIN_LI: [u16; MAX_TRAINS] = [0; MAX_TRAINS];
+static mut TRAIN_ENT: [u8; MAX_TRAINS] = [0; MAX_TRAINS];
+static mut TRAIN_SEG: [u8; MAX_TRAINS] = [0; MAX_TRAINS];
+static mut TRAIN_DIST: [i16; MAX_TRAINS] = [0; MAX_TRAINS];
+static mut TRAIN_WAIT: [u16; MAX_TRAINS] = [0; MAX_TRAINS];
+static mut TRAIN_ACTIVE: [u8; MAX_TRAINS] = [0; MAX_TRAINS];
+static mut TRAIN_OFF: [[i16; 3]; MAX_TRAINS] = [[0; 3]; MAX_TRAINS];
+static mut TRAIN_COUNT: usize = 0;
+static mut WEAPONSTRIP_REQUEST: bool = false;
+static mut ENT_TRAIN_SLOT: [u8; MAX_ENTS] = [0xFF; MAX_ENTS];
+
+/// A train's path corner k: ((x,y,z) world, wait ticks). Corners are stored
+/// as aux pairs: (x,y) then (z,wait).
+unsafe fn train_corner(m: &Map, li: usize, k: usize) -> ([i32; 3], u16) {
+    let rec = m.logic(li);
+    let a = m.logic_aux(rec.first_aux + k * 2);
+    let b = m.logic_aux(rec.first_aux + k * 2 + 1);
+    (
+        [
+            a.target as i16 as i32,
+            a.delay_ticks as i16 as i32,
+            b.target as i16 as i32,
+        ],
+        b.delay_ticks,
+    )
+}
+
+/// Register the map's trains: teleport each brush to its first corner
+/// (HL spawns func_trains there); untargeted trains run immediately.
+unsafe fn init_trains(m: &Map, nlogic: usize, nents: usize) {
+    TRAIN_COUNT = 0;
+    for e in ENT_TRAIN_SLOT.iter_mut() {
+        *e = 0xFF;
+    }
+    let mut li = 0usize;
+    while li < nlogic {
+        let rec = m.logic(li);
+        if rec.kind == map::LOGIC_FUNC_TRAIN
+            && rec.aux_count >= 2
+            && (rec.brush as usize) < nents
+            && TRAIN_COUNT < MAX_TRAINS
+        {
+            let t = TRAIN_COUNT;
+            let (c0, _) = train_corner(m, li, 0);
+            let center = ENT_CACHE[rec.brush as usize].center;
+            TRAIN_LI[t] = li as u16;
+            TRAIN_ENT[t] = rec.brush as u8;
+            TRAIN_SEG[t] = 0;
+            TRAIN_DIST[t] = 0;
+            TRAIN_WAIT[t] = 0;
+            TRAIN_ACTIVE[t] = (rec.targetname == 0) as u8;
+            TRAIN_OFF[t] = [
+                (c0[0] - center[0]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+                (c0[1] - center[1]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+                (c0[2] - center[2]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+            ];
+            ENT_TRAIN_SLOT[rec.brush as usize] = t as u8;
+            TRAIN_COUNT += 1;
+        }
+        li += 1;
+    }
+}
+
+/// Advance every running train along its corner chain.
+unsafe fn tick_trains(m: &Map) {
+    let mut t = 0usize;
+    while t < TRAIN_COUNT {
+        if TRAIN_ACTIVE[t] == 0 {
+            t += 1;
+            continue;
+        }
+        if TRAIN_WAIT[t] > 0 {
+            TRAIN_WAIT[t] -= 1;
+            t += 1;
+            continue;
+        }
+        let li = TRAIN_LI[t] as usize;
+        let rec = m.logic(li);
+        let ncorners = rec.aux_count / 2;
+        if ncorners < 2 {
+            t += 1;
+            continue;
+        }
+        let seg = TRAIN_SEG[t] as usize;
+        let (a, _) = train_corner(m, li, seg);
+        let (b, wait_b) = train_corner(m, li, (seg + 1) % ncorners);
+        let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let len = isqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
+        let step = (rec.speed as i32 / 20).max(2);
+        let nd = TRAIN_DIST[t] as i32 + step;
+        let center = ENT_CACHE[TRAIN_ENT[t] as usize].center;
+        if nd >= len {
+            // Arrived: snap to corner b, honour its wait, advance the segment.
+            TRAIN_SEG[t] = ((seg + 1) % ncorners) as u8;
+            TRAIN_DIST[t] = 0;
+            TRAIN_WAIT[t] = wait_b;
+            TRAIN_OFF[t] = [
+                (b[0] - center[0]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+                (b[1] - center[1]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+                (b[2] - center[2]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+            ];
+        } else {
+            TRAIN_DIST[t] = nd as i16;
+            let p = [
+                a[0] + d[0] * nd / len,
+                a[1] + d[1] * nd / len,
+                a[2] + d[2] * nd / len,
+            ];
+            TRAIN_OFF[t] = [
+                (p[0] - center[0]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+                (p[1] - center[1]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+                (p[2] - center[2]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+            ];
+        }
+        t += 1;
+    }
+}
 // Per-prop shortlist of brush ents near enough to matter for floor probes.
 // Refreshed every 8 ticks (staggered); 0xFFFF count = overflow, full scan.
 static mut PROP_NEAR_ENTS: [[u16; 8]; MAX_PROPS] = [[0; 8]; MAX_PROPS];
@@ -4103,6 +4282,12 @@ unsafe fn collect_pickups(
                     PROP_ACTIVE[pi] = 0;
                     sfx::play(sfx::MEDSHOT);
                 }
+            }
+            PROP_TYPE_LONGJUMP => {
+                // Long jump module: doubles jump distance (Xen crossings).
+                phys::set_longjump(true);
+                PROP_ACTIVE[pi] = 0;
+                sfx::play(sfx::SUIT);
             }
             PROP_TYPE_ITEM_BATTERY => {
                 if *suit_equipped && *armor < HEV_MAX_ARMOR {
@@ -6893,6 +7078,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     let nlogic = m.n_logic.min(MAX_LOGIC);
     unsafe {
         init_logic_state(&m, nlogic, nents, 0);
+        init_trains(&m, nlogic, nents);
     }
     let nv = if m.n_verts < MAX_VERTS {
         m.n_verts
@@ -6943,6 +7129,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             }
         } else {
             CARRY_VALID = false;
+            phys::set_longjump(false); // fresh start: no module yet
             if DEBUG_ALL_WEAPONS {
                 weapon.give_all_debug();
             } else if launch.suit_equipped {
@@ -7235,6 +7422,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 }
             }
 
+            unsafe { tick_trains(&m) };
             // Collision movers: every brush entity at its current offset (doors at
             // their open amount, statics at origin) + the tram at its ride offset.
             // Static: 0..nmov is fully written below; a local was memset-ing
@@ -7310,8 +7498,20 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             // delta before the update, then block them through their shifted hull.
             telemetry::stage_begin(telemetry::stage::SIM_COLLISION);
             let on_ladder = unsafe { ladder_touch(&m, nents, player.pos) };
+            let in_water = !on_ladder
+                && unsafe { water_touch(nents, [player.pos[0], player.pos[1] + 12, player.pos[2]]) };
             if on_ladder {
                 player.update_climb(
+                    &m,
+                    movers,
+                    fwd,
+                    strafe,
+                    pad.buttons.is_held(button::CROSS),
+                    yaw,
+                    pitch,
+                );
+            } else if in_water {
+                player.update_swim(
                     &m,
                     movers,
                     fwd,
@@ -7418,6 +7618,15 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     player.pos[0] += PUSH_IMPULSE[0];
                     player.pos[2] += PUSH_IMPULSE[2];
                     PUSH_IMPULSE = [0; 3];
+                }
+            }
+            unsafe {
+                if WEAPONSTRIP_REQUEST {
+                    // player_weaponstrip (the Apprehension capture): empty
+                    // hands until the map hands gear back.
+                    WEAPONSTRIP_REQUEST = false;
+                    weapon.owned = 0;
+                    weapon.current = W_CROWBAR;
                 }
             }
             if want_reload {
