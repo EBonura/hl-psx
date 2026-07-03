@@ -1964,6 +1964,9 @@ const LOGIC_MONSTERMAKER: u8 = 22;
 const LOGIC_SCRIPTED: u8 = 24;
 const LOGIC_FUNC_TRAIN: u8 = 25;
 const LOGIC_WEAPONSTRIP: u8 = 26;
+const LOGIC_ENV_MESSAGE: u8 = 27; // titles.txt text overlay (arg0 = text name id)
+const LOGIC_ENV_FADE: u8 = 28; // screen fade (arg0 = duration ticks)
+const LOGIC_MAP_FLAGS: u8 = 29; // worldspawn: startdark/gametitle + chaptertitle
 
 const USE_OFF: u8 = 0;
 const USE_ON: u8 = 1;
@@ -2813,11 +2816,87 @@ fn collect_entities(
     out
 }
 
+#[derive(Clone, Default)]
+struct TitleDef {
+    text: String,   // lines joined with \n
+    effect: u8,     // 0 fade, 1 flicker credits, 2 typewriter scan-out
+    hold_ticks: u16,
+    fade_ticks: u16,
+    low_left: bool, // credits position (else centered)
+}
+
+/// Parse valve/titles.txt: stateful $directives then NAME { lines } blocks.
+fn parse_titles(valve_dir: &std::path::Path) -> std::collections::HashMap<String, TitleDef> {
+    let mut out = std::collections::HashMap::new();
+    let Ok(txt) = std::fs::read_to_string(valve_dir.join("titles.txt")) else {
+        return out;
+    };
+    let mut cur = TitleDef {
+        effect: 0,
+        hold_ticks: 60,
+        fade_ticks: 20,
+        low_left: false,
+        ..Default::default()
+    };
+    let mut name: Option<String> = None;
+    let mut lines: Vec<String> = Vec::new();
+    let mut in_block = false;
+    for raw in txt.lines() {
+        let line = raw.trim();
+        if line.starts_with("//") || line.is_empty() {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix('$') {
+            let mut it = rest.split_whitespace();
+            match it.next().unwrap_or("") {
+                "effect" => cur.effect = it.next().and_then(|v| v.parse().ok()).unwrap_or(0),
+                "holdtime" => {
+                    let sec: f32 = it.next().and_then(|v| v.parse().ok()).unwrap_or(3.0);
+                    cur.hold_ticks = (sec * 20.0).round().clamp(1.0, 65535.0) as u16;
+                }
+                "fadeout" => {
+                    let sec: f32 = it.next().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+                    cur.fade_ticks = (sec * 20.0).round().clamp(1.0, 255.0) as u16;
+                }
+                "position" => {
+                    let x: f32 = it.next().and_then(|v| v.parse().ok()).unwrap_or(-1.0);
+                    let y: f32 = it.next().and_then(|v| v.parse().ok()).unwrap_or(-1.0);
+                    cur.low_left = x >= 0.0 && y > 0.5;
+                }
+                _ => {}
+            }
+            continue;
+        }
+        if line == "{" {
+            in_block = true;
+            lines.clear();
+            continue;
+        }
+        if line == "}" {
+            if let Some(n) = name.take() {
+                let mut def = cur.clone();
+                def.text = lines.join("\n");
+                out.insert(n.to_uppercase(), def);
+            }
+            in_block = false;
+            lines.clear();
+            continue;
+        }
+        if in_block {
+            lines.push(line.to_string());
+        } else {
+            name = Some(line.to_string());
+        }
+    }
+    out
+}
+
 fn collect_logic_entities(
     ents: &[u8],
     models: &[u8],
     brush_by_submodel: &[u16],
     scale: f32,
+    titles: &std::collections::HashMap<String, TitleDef>,
 ) -> LogicCook {
     let s = entity_text(ents);
     let mut names = LogicNames::default();
@@ -2859,6 +2938,9 @@ fn collect_logic_entities(
             "trigger_relay" => LOGIC_TRIGGER_RELAY,
             "multi_manager" => LOGIC_MULTI_MANAGER,
             "trigger_auto" => LOGIC_TRIGGER_AUTO,
+            "env_message" => LOGIC_ENV_MESSAGE,
+            "env_fade" => LOGIC_ENV_FADE,
+            "worldspawn" => LOGIC_MAP_FLAGS,
             "trigger_changelevel" => LOGIC_TRIGGER_CHANGELEVEL,
             "info_landmark" => LOGIC_INFO_LANDMARK,
             "trigger_counter" => LOGIC_TRIGGER_COUNTER,
@@ -2915,6 +2997,14 @@ fn collect_logic_entities(
         let speed = if kind == LOGIC_SCRIPTED {
             // Scripts carry their facing yaw here (q12); they have no speed key.
             hl_yaw_to_world_q12(ent_yaw_degrees(block).unwrap_or(0.0)) as u16
+        } else if kind == LOGIC_ENV_MESSAGE {
+            let key = ent_value(block, "message").unwrap_or("").to_uppercase();
+            titles.get(&key).map(|t| t.hold_ticks).unwrap_or(60)
+        } else if kind == LOGIC_ENV_FADE {
+            seconds_to_ticks_u16(parse_f32_key(block, "holdtime", 0.0))
+        } else if kind == LOGIC_MAP_FLAGS {
+            let key = ent_value(block, "chaptertitle").unwrap_or("").to_uppercase();
+            titles.get(&key).map(|t| t.hold_ticks.max(80)).unwrap_or(120)
         } else if speed_default > 0.0 {
             (parse_f32_key(block, "speed", speed_default) / scale)
                 .round()
@@ -2953,6 +3043,21 @@ fn collect_logic_entities(
                 LOGIC_HEALTH_CHARGER => 50, // HL default juice
                 LOGIC_HEV_CHARGER => 75,
                 LOGIC_SCRIPTED => names.id(ent_value(block, "m_iszEntity")),
+                LOGIC_ENV_MESSAGE => {
+                    let key = ent_value(block, "message").unwrap_or("").to_uppercase();
+                    match titles.get(&key) {
+                        Some(t) if !t.text.is_empty() => names.id(Some(&t.text)),
+                        _ => continue, // unknown title: skip the rec entirely
+                    }
+                }
+                LOGIC_ENV_FADE => seconds_to_ticks_u16(parse_f32_key(block, "duration", 2.0)),
+                LOGIC_MAP_FLAGS => {
+                    let key = ent_value(block, "chaptertitle").unwrap_or("").to_uppercase();
+                    match titles.get(&key) {
+                        Some(t) if !t.text.is_empty() => names.id(Some(&t.text)),
+                        _ => 0,
+                    }
+                }
                 _ => names.id(ent_value(block, "changetarget")),
             };
         let arg1 = match kind {
@@ -2965,6 +3070,28 @@ fn collect_logic_entities(
             LOGIC_SCRIPTED => parse_f32_key(block, "m_flMoveTo", 0.0)
                 .round()
                 .clamp(0.0, 7.0) as u16,
+            // effect(0..2) | low_left<<2 | fade_ticks<<8
+            LOGIC_ENV_MESSAGE => {
+                let key = ent_value(block, "message").unwrap_or("").to_uppercase();
+                let t = titles.get(&key).cloned().unwrap_or_default();
+                (t.effect as u16 & 3)
+                    | ((t.low_left as u16) << 2)
+                    | ((t.fade_ticks.min(255)) << 8)
+            }
+            // bit0 = fade-in (HL SF_FADE_IN), bit1 = fade to white-ish
+            LOGIC_ENV_FADE => {
+                let white = ent_value(block, "rendercolor")
+                    .and_then(parse_vec3)
+                    .map(|c| c[0] + c[1] + c[2] > 384.0)
+                    .unwrap_or(false);
+                (spawnflags as u16 & 1) | ((white as u16) << 1)
+            }
+            // bit0 startdark, bit1 gametitle
+            LOGIC_MAP_FLAGS => {
+                let dark = parse_f32_key(block, "startdark", 0.0) as u16 != 0;
+                let title = parse_f32_key(block, "gametitle", 0.0) as u16 != 0;
+                (dark as u16) | ((title as u16) << 1)
+            }
             _ => 0,
         };
 
@@ -4209,7 +4336,19 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             brush_by_submodel[sm] = ei.min(u16::MAX as usize) as u16;
         }
     }
-    let logic = collect_logic_entities(bsp.lump(LUMP_ENTITIES), models, &brush_by_submodel, scale);
+    // titles.txt lives beside the maps dir (valve/titles.txt).
+    let titles = std::path::Path::new(path)
+        .parent()
+        .and_then(|maps| maps.parent())
+        .map(parse_titles)
+        .unwrap_or_default();
+    let logic = collect_logic_entities(
+        bsp.lump(LUMP_ENTITIES),
+        models,
+        &brush_by_submodel,
+        scale,
+        &titles,
+    );
     let (tram_model, tram_speed, way, _) = collect_tram(bsp.lump(LUMP_ENTITIES), scale);
     let tram_head_raw = if tram_model > 0 {
         i32le(models, tram_model as usize * SZ_MODEL + 40).unwrap_or(0)
@@ -5720,7 +5859,7 @@ mod tests {
         "m_iszNewTarget" "door_b"
         }
         "#;
-        let logic = collect_logic_entities(ents, &[], &[], 1.0);
+        let logic = collect_logic_entities(ents, &[], &[], 1.0, &Default::default());
 
         assert_eq!(logic.ents.len(), 2);
         assert_eq!(logic.ents[0].kind, LOGIC_TRIGGER_COUNTER);
@@ -5742,7 +5881,7 @@ mod tests {
         "origin" "10 20 30"
         }
         "#;
-        let logic = collect_logic_entities(ents, &[], &[], 1.0);
+        let logic = collect_logic_entities(ents, &[], &[], 1.0, &Default::default());
 
         assert_eq!(logic.ents.len(), 1);
         assert_eq!(logic.ents[0].kind, LOGIC_ITEM_BATTERY);
@@ -5762,7 +5901,7 @@ mod tests {
         "damage" "12"
         }
         "#;
-        let logic = collect_logic_entities(ents, &[], &[], 1.0);
+        let logic = collect_logic_entities(ents, &[], &[], 1.0, &Default::default());
 
         assert_eq!(logic.ents.len(), 1);
         assert_eq!(logic.ents[0].kind, LOGIC_TRIGGER_HURT);
@@ -5782,7 +5921,7 @@ mod tests {
         "startspeed" "50"
         }
         "#;
-        let logic = collect_logic_entities(ents, &[], &[], 1.0);
+        let logic = collect_logic_entities(ents, &[], &[], 1.0, &Default::default());
 
         assert_eq!(logic.ents.len(), 1);
         assert_eq!(logic.ents[0].kind, LOGIC_FUNC_TRACKTRAIN);

@@ -1434,6 +1434,22 @@ static mut CHANGE_REQUEST: RoomLaunch = RoomLaunch {
 };
 static mut CHANGE_REQUEST_ACTIVE: u8 = 0;
 static mut LOGIC_TRAM_RIDING: u8 = 0;
+// ---- Screen titles (env_message / chapter cards) + screen fades (env_fade) ----
+static mut TITLE_TEXT_ID: u16 = 0; // logic-names id of the text; 0 = none
+static mut TITLE_T: u16 = 0;
+static mut TITLE_HOLD: u16 = 0;
+static mut TITLE_FADE: u16 = 20;
+static mut TITLE_EFFECT: u8 = 0; // 0 fade, 1 flicker credits, 2 typewriter
+static mut TITLE_LOW_LEFT: bool = false;
+static mut CHAPTER_TITLE_ID: u16 = 0; // worldspawn chaptertitle, shown after load
+static mut CHAPTER_TITLE_HOLD: u16 = 0;
+static mut FADE_ACTIVE: bool = false;
+static mut FADE_IN: bool = false; // ramp 255 -> clear (else clear -> full + hold)
+static mut FADE_WHITE: bool = false;
+static mut FADE_T: u16 = 0;
+static mut FADE_DUR: u16 = 40;
+static mut FADE_HOLD: u16 = 0;
+static mut FADE_STARTDARK: bool = false; // worldspawn startdark: black until a fade fires
 // Arsenal carried across changelevel (menu launches reset it): owned mask,
 // per-weapon clips, ammo pools, selected weapon.
 static mut CARRY_VALID: bool = false;
@@ -2089,6 +2105,23 @@ unsafe fn logic_use_entity(
         map::LOGIC_WEAPONSTRIP => {
             WEAPONSTRIP_REQUEST = true;
         }
+        map::LOGIC_ENV_MESSAGE => {
+            TITLE_TEXT_ID = rec.arg0;
+            TITLE_T = 0;
+            TITLE_HOLD = rec.speed.max(20);
+            TITLE_FADE = ((rec.arg1 >> 8) & 0xFF).max(1);
+            TITLE_EFFECT = (rec.arg1 & 3) as u8;
+            TITLE_LOW_LEFT = rec.arg1 & 4 != 0;
+        }
+        map::LOGIC_ENV_FADE => {
+            FADE_ACTIVE = true;
+            FADE_IN = rec.arg1 & 1 != 0;
+            FADE_WHITE = rec.arg1 & 2 != 0;
+            FADE_T = 0;
+            FADE_DUR = rec.arg0.max(1);
+            FADE_HOLD = rec.speed;
+            FADE_STARTDARK = false; // a real fade takes over the boot black
+        }
         map::LOGIC_FUNC_TRAIN => {
             let mut t = 0usize;
             while t < TRAIN_COUNT {
@@ -2132,6 +2165,130 @@ unsafe fn logic_use_entity(
             logic_sub_use_targets(m, nlogic, nents, li, rec, now, use_type, depth + 1)
         }
         _ => {}
+    }
+}
+
+/// Advance the screen-title + fade timers once per sim tick; auto-fire the
+/// worldspawn chapter title shortly after load (like HL's chapter cards).
+unsafe fn tick_screen_fx(sim_frame_no: u32) {
+    if TITLE_TEXT_ID != 0 {
+        TITLE_T = TITLE_T.saturating_add(1);
+        let total = TITLE_FADE + TITLE_HOLD + TITLE_FADE;
+        if TITLE_T > total {
+            TITLE_TEXT_ID = 0;
+        }
+    }
+    if FADE_ACTIVE {
+        FADE_T = FADE_T.saturating_add(1);
+        let total = if FADE_IN {
+            FADE_DUR
+        } else {
+            FADE_DUR + FADE_HOLD + FADE_OUT_CLEAR_TICKS
+        };
+        if FADE_T > total {
+            FADE_ACTIVE = false;
+        }
+    }
+    if CHAPTER_TITLE_ID != 0 && sim_frame_no == CHAPTER_TITLE_AT {
+        TITLE_TEXT_ID = CHAPTER_TITLE_ID;
+        TITLE_T = 0;
+        TITLE_HOLD = CHAPTER_TITLE_HOLD.max(80);
+        TITLE_FADE = 30;
+        TITLE_EFFECT = 2; // HL chapter cards scan out
+        TITLE_LOW_LEFT = false;
+        CHAPTER_TITLE_ID = 0;
+    }
+}
+const CHAPTER_TITLE_AT: u32 = 30; // ~1.5 s after load
+const FADE_OUT_CLEAR_TICKS: u16 = 10;
+
+/// Draw the active title text + screen fade as immediate prims (on top of the
+/// whole frame; the fade also covers the HUD, like HL).
+unsafe fn draw_screen_fx(m: &Map) {
+    if TITLE_TEXT_ID != 0 {
+        let text = m.logic_name(TITLE_TEXT_ID);
+        if !text.is_empty() {
+            // Brightness ramp: up over TITLE_FADE, hold, down over TITLE_FADE.
+            let t = TITLE_T;
+            let a = if t < TITLE_FADE {
+                (t as i32 * 255) / TITLE_FADE.max(1) as i32
+            } else if t < TITLE_FADE + TITLE_HOLD {
+                255
+            } else {
+                let d = t - TITLE_FADE - TITLE_HOLD;
+                255 - ((d as i32 * 255) / TITLE_FADE.max(1) as i32).min(255)
+            }
+            .clamp(0, 255);
+            // HL intro credits are dim gray; scan-out titles a touch brighter.
+            let base: i32 = if TITLE_EFFECT == 2 { 235 } else { 190 };
+            let g = ((base * a) >> 8) as u8;
+            let col = (g, g, g);
+            // Typewriter reveal for effect 2 (chars per tick).
+            let reveal = if TITLE_EFFECT == 2 {
+                (TITLE_T as usize) * 2
+            } else {
+                usize::MAX
+            };
+            let n_lines = text.split('\n').count() as i16;
+            let lh = hltext::line_height_scaled(hltext::SMALL_Q8);
+            let mut y = if TITLE_LOW_LEFT {
+                200 - n_lines * lh
+            } else {
+                120 - (n_lines * lh) / 2
+            };
+            let mut shown = 0usize;
+            for line in text.split('\n') {
+                let take = line.chars().count().min(reveal.saturating_sub(shown));
+                shown += line.chars().count();
+                if take == 0 {
+                    y += lh;
+                    continue;
+                }
+                let end = line
+                    .char_indices()
+                    .nth(take)
+                    .map(|(i, _)| i)
+                    .unwrap_or(line.len());
+                let part = &line[..end];
+                if TITLE_LOW_LEFT {
+                    hltext::draw_text_scaled(24, y, part, hltext::SMALL_Q8, col);
+                } else {
+                    // centre on the FULL line width so the reveal doesn't slide
+                    let w = hltext::text_width_scaled(line, hltext::SMALL_Q8);
+                    hltext::draw_text_scaled(160 - w / 2, y, part, hltext::SMALL_Q8, col);
+                }
+                y += lh;
+            }
+        }
+    }
+    // Screen fade: level 0..255. Subtractive gray = fade to black; additive =
+    // fade to white. Drawn last so it covers world + HUD.
+    let mut level: i32 = 0;
+    let mut white = false;
+    if FADE_ACTIVE {
+        white = FADE_WHITE;
+        let t = FADE_T as i32;
+        let dur = FADE_DUR.max(1) as i32;
+        level = if FADE_IN {
+            255 - (t * 255 / dur).min(255)
+        } else if FADE_T <= FADE_DUR + FADE_HOLD {
+            (t * 255 / dur).min(255)
+        } else {
+            let d = (FADE_T - FADE_DUR - FADE_HOLD) as i32;
+            255 - (d * 255 / FADE_OUT_CLEAR_TICKS as i32).min(255)
+        };
+    } else if FADE_STARTDARK {
+        level = 255; // worldspawn startdark: hold black until a fade fires
+    }
+    if level > 0 {
+        let g = level.clamp(0, 255) as u8;
+        let mode = if white {
+            BlendMode::Add
+        } else {
+            BlendMode::Subtract
+        };
+        gpu::draw_tri_flat_blended([(0, 0), (320, 0), (0, 240)], g, g, g, mode);
+        gpu::draw_tri_flat_blended([(320, 0), (320, 240), (0, 240)], g, g, g, mode);
     }
 }
 
@@ -2449,6 +2606,11 @@ unsafe fn logic_find_matching_prop(kind: u8, origin: [i32; 3]) -> u8 {
 }
 
 unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
+    TITLE_TEXT_ID = 0;
+    TITLE_T = 0;
+    CHAPTER_TITLE_ID = 0;
+    FADE_ACTIVE = false;
+    FADE_STARTDARK = false;
     TRACKTRAIN_SUBMODEL = m.tram_submodel.min(u16::MAX as usize) as u16;
     TRACKTRAIN_CMD_ACTIVE = 0;
     TRACKTRAIN_CMD_USE_TYPE = map::USE_TOGGLE;
@@ -2499,6 +2661,11 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                         ENT_PHASE[ei] = 4096;
                     }
                 }
+            }
+            map::LOGIC_MAP_FLAGS => {
+                FADE_STARTDARK = rec.arg1 & 1 != 0;
+                CHAPTER_TITLE_ID = rec.arg0;
+                CHAPTER_TITLE_HOLD = rec.speed;
             }
             map::LOGIC_TRIGGER_AUTO => {
                 let at = now.wrapping_add(rec.delay_ticks.max(1));
@@ -7363,6 +7530,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     pickup_kind = hud::PICKUP_NONE;
                 }
             }
+            unsafe { tick_screen_fx(sim_frame_no) };
             // Player death: freeze for DEATH_TICKS (a red death screen renders),
             // then respawn at the map spawn -- suit kept, armor + ammo reset.
             if death_ticks > 0 {
@@ -8673,6 +8841,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             if SHOW_VIEWMODEL && recoil >= 13 && MUZZLE_FLASH_WEAPONS[weapon.current] {
                 draw_muzzle_flash(sim_frame_no);
             }
+            draw_screen_fx(&m);
 
             // DEBUG: dump the crosshair tri + camera state to PSoXide's Play debug
             // terminal. Auto-fires whenever the aimed triangle (or valid state)

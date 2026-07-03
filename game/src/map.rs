@@ -205,6 +205,9 @@ pub const LOGIC_MONSTERMAKER: u8 = 22;
 pub const LOGIC_SCRIPTED: u8 = 24;
 pub const LOGIC_FUNC_TRAIN: u8 = 25;
 pub const LOGIC_WEAPONSTRIP: u8 = 26;
+pub const LOGIC_ENV_MESSAGE: u8 = 27; // titles.txt overlay: arg0 = text name id
+pub const LOGIC_ENV_FADE: u8 = 28; // screen fade: arg0 = duration ticks
+pub const LOGIC_MAP_FLAGS: u8 = 29; // worldspawn startdark/gametitle + chaptertitle
 
 pub const USE_OFF: u8 = 0;
 pub const USE_ON: u8 = 1;
