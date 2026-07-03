@@ -711,17 +711,33 @@ Everything a start-to-finish run needs, in one pass:
   24 maps drop tail pickup/background types under the 206 K enemy region (22
   already dropped before this pass; combat types unaffected).
 
-## Systems inventory (honest gaps)
+## Systems inventory (final pass, M30)
 
 Present: doors (+linking), buttons, plats, trains (tracktrain ride + use),
 breakables, teleports, push, gravity, chargers, multi_manager, triggers
 (once/multiple/hurt/changelevel), pickups (weapons/ammo/medkit/suit/battery),
-monstermaker, ladders, water/glass blend, full weapon set, enemy AI
-(melee/ranged/turret), footstep/voice SFX.
-Absent (candidates next): scripted_sequence (set-piece NPC walks; needs
-per-sequence anim baking + move-to), func_rotating (fans), func_train for
-brush platforms on paths, momentary_* (wheel valves), env_render/env_glow,
-monster gibs, ambient_generic loops, save/load.
+monstermaker, ladders, water/glass blend, full weapon set + select-icon HUD,
+enemy AI (melee/ranged/turret/ally/flee + squad alert), footstep/voice SFX,
+scripted_sequence (spawn marks + triggered move-to), func_rotating fans,
+anim interpolation, muzzle flash, intro tram ride, ending card.
+Absent, with reasons (the honest close of the feature matrix):
+- **scripted custom ANIMATIONS**: scripts move/teleport + face + chain-fire,
+  but play generic idle/walk clips -- per-script sequence baking needs new
+  chunks per (monster, sequence) pair; RAM/pipeline cost unscoped.
+- **func_train** (brush platforms on path_corners): needs per-train path
+  state + the tram's carry logic generalised; the campaign's mandatory
+  rides are func_tracktrain/func_plat (done); func_trains are mostly decor
+  or crushers.
+- **ambient_generic loops**: SPU has ~130 KB free, but seamless loops need
+  ADPCM loop flags psxed audio-pack does not emit; a retrigger hack seams
+  audibly. Blocked on the cooker.
+- **momentary_* (valve wheels)**: niche input rig (hold-to-rotate);
+  affected doors open via their targets in practice.
+- **env_render/env_glow/gibs**: cosmetic sprite/render-mode tweaks.
+- **save/load**: memory-card infrastructure; changelevel carry covers a
+  session run.
+- **flashlight**: per-vertex dynamic light in the emit hot path -- the CPU
+  frontier this port already sits on; suit power UI also missing.
 
 ## M25 -- CPU perf close-out (DONE; every measured scene paces at 20 fps)
 
@@ -874,10 +890,34 @@ builds, fixed step budget): 82/96 maps pace at 20 fps.
 - Headroom 96.1 KiB: MAX_RENDER_PACKETS 2560/2304 -> 2432/2176 funds the
   new statics (emitted prims peak ~1800; banding is bucketed + cheap now).
 
+## M30 -- weapon-select HUD, scripted move-to, rotating fans (DONE)
+
+- **Weapon HUD complete**: all 14 real 320-res `weapon_s` select sprites in
+  the HUD atlas (80x20, two per row from v=48, W_* order); L1/R1 flashes
+  the icon top-right for 30 ticks (verified via a pinned-frame capture).
+  hud.tex (160x188) now streams from WORLD.PAK chunk 3001 at play() start
+  (MAP_BUF is free there) -- include_bytes cost 15 KB of static RAM.
+- **scripted_sequence v2**: PropRec 24 B (targetname as a logic-name id,
+  interned by the SAME LogicNames pass -- cook order: logic THEN props).
+  Kind-24 recs carry m_iszEntity (arg0), m_flMoveTo (arg1), yaw (speed
+  field). Firing sends the prop walking (4/tick) / running (8/tick) /
+  teleporting to the mark; arrival faces the yaw + fires the script's
+  target chain (SIM_NOW). Generic clips play during -- custom-anim baking
+  is the documented residual.
+- **func_rotating**: ent kind 5; mv[0] = q12 angle/tick (deg/s x 4096/360
+  / 20), SF2 reverses, only Z-axis fans animate. Draw composes
+  view x rotate_y(angle) about the PIVOT (ent origin; ent_draw_offset
+  returns zero for kind 5 -- origin is NOT a translation). Plane/bounds
+  gates skipped for rotating faces (normals rotate); the ent sphere cull
+  stands. Collision hull stays at the authored pose.
+- Headroom 96.8 KiB (hud.tex chunked -15 KB, PVS_BAND_CAP 1408, script
+  goals i16). GOTCHA: pad-pulse frames tick at GAME rate (~20 Hz), not
+  60 -- timing captures around short UI windows needs pinned-state builds.
+
 ## Next (pick per value)
 
-- **scripted_sequence v2**: triggered scripts (move-to + per-sequence anim
-  bake) -- the remaining 403 set pieces.
+- **scripted custom anims**: bake per-script sequences for the big set
+  pieces (intro retina scan, CPR scientist) -- the last faithfulness tier.
 - **Load time**: per-chunk PAUSE dominates model streaming; merged geom+tex
   chunks or per-map bundles halve/collapse the count (watch transient fit).
   GPU fill is NOT a frontier (M26: rasterization is free in-target).
