@@ -914,6 +914,41 @@ builds, fixed step budget): 82/96 maps pace at 20 fps.
   goals i16). GOTCHA: pad-pulse frames tick at GAME rate (~20 Hz), not
   60 -- timing captures around short UI windows needs pinned-state builds.
 
+## M31 -- bring it home: the campaign-completeness round (DONE)
+
+Driven by a full entity-classname audit (every class in every cooked map vs
+the cook's handled set). SP map coverage was already 96/96 (only MP maps
+uncooked). What landed:
+
+- **Swimming** (func_water x94): kind-6 volumes (half-extents in mv, still
+  rendered + non-solid); phys::update_swim = look-direction move, jump
+  paddles up, idle sinks. Deep water was a SOFTLOCK before.
+- **func_train x243**: corner chains packed as logic aux pairs ((x,y) +
+  (z,wait) per path_corner, cap 24); per-train state (MAX_TRAINS 12);
+  trains spawn AT their first corner; corner waits honored; targeted
+  trains toggle on fire, untargeted auto-run. ent_draw_offset override via
+  ENT_TRAIN_SLOT; ride-carry works through the generic ENT_PREV_OFF delta.
+- **func_conveyor x87** cooks as an always-on LOGIC_TRIGGER_PUSH volume
+  (belt movedir x speed/2).
+- **player_weaponstrip** (kind 26) empties the arsenal (Apprehension).
+- **item_longjump** (type 49) + phys longjump: moving jumps launch 2.5x
+  horizontal (Xen crossings). Reset on fresh starts, carried by statics.
+- **killtarget kills NAMED PROPS** too (PROP_NAME match -> deactivate);
+  the Blast Pit rocket now removes the tentacles (type 50, render-only in
+  the silo). **monster_human_assassin** (51) = fast AI_RANGED shooter.
+- **Roster = ZERO combat drops on 96/96 maps.** The unlock chain:
+  interpolation justified 4-frame clips (pain 2, death 3, humanoid attacks
+  3); VM reserve 46,720 -> 35,328 words (~10 switched guns resident, then
+  glock-visual fallback); streaming is 3-TIER (combat > pickups/items >
+  decoratives). Only statues/cameos trim on 5 heavy maps (c1a2b/c2a1 gman,
+  c4a1b garg+barnacle, c4a3 statues, c3a2d w_hgun dupe).
+- **Final sweep: all 96 maps boot, render, run** (parallel heartbeat
+  sweep; 94 at pace, c2a5e + c3a2d at ~15 fps -- the known vista class).
+- Audit tooling: model_pool_audit must mask PROP_TYPE (0x3FFF -- dormant
+  bit!), stride 24, VM 35,328, 3-tier order. Absent still: momentary_*,
+  env_* sprites, gibs, ambient loops (ADPCM loop flags), save/load,
+  flashlight, scripted custom anims, func_tank -- none block progression.
+
 ## Next (pick per value)
 
 - **scripted custom anims**: bake per-script sequences for the big set
