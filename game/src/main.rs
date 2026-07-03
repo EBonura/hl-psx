@@ -562,7 +562,7 @@ fn draw_loading_card(fb: &mut FrameBuffer, label: &str, frame: u8) {
 
     hltext::draw_centered_scaled(130, label, hltext::SMALL_Q8, PAUSE_DIM);
     gpu::draw_sync();
-    gpu::vsync();
+    interrupts::wait_vblank();
     fb.swap();
 }
 
@@ -575,7 +575,7 @@ fn draw_loading_card(fb: &mut FrameBuffer, label: &str, frame: u8) {
 // there is no tearing on the live buffer.
 fn draw_loading_overlay(fb: &mut FrameBuffer, frame: u8) {
     let front_y = fb.buffer_y(fb.drawing ^ 1);
-    gpu::vsync();
+    interrupts::wait_vblank();
     gpu::set_draw_area(0, front_y, fb.width - 1, front_y + fb.height - 1);
     gpu::set_draw_offset(0, front_y as i16);
 
@@ -677,7 +677,7 @@ fn run_pause_menu(fb: &mut FrameBuffer) -> PauseExit {
 
         draw_pause_menu(fb, sel);
         gpu::draw_sync();
-        gpu::vsync();
+        interrupts::wait_vblank();
         fb.swap();
     }
 }
@@ -7161,7 +7161,7 @@ fn main() {
         if DBG_PAD_BOOT {
             let mut i = 0;
             while i < 150 {
-                gpu::vsync();
+                interrupts::wait_vblank();
                 fb.swap();
                 let b = poll_port1().buttons;
                 if b.is_held(button::L1) {

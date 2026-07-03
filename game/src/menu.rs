@@ -16,6 +16,7 @@ use psx_font::{BitOrder, BitmapFont, FontAtlas};
 use psx_gpu::material::TextureMaterial;
 use psx_gpu::{self as gpu, framebuf::FrameBuffer};
 use psx_pad::{button, poll_port1};
+use psx_rt::interrupts;
 use psx_vram::{upload_bytes, Clut, TexDepth, Tpage, VramRect};
 
 const FONT_TPAGE: Tpage = Tpage::new(320, 0, TexDepth::Bit4);
@@ -236,7 +237,7 @@ fn draw_loading(
         font.draw_text(x, 146, SPINNER[frame & 3], WHITE);
         draw_centered(font, 170, label, WHITE);
         gpu::draw_sync();
-        gpu::vsync();
+        interrupts::wait_vblank();
         fb.swap();
         frame += 1;
     }
@@ -377,7 +378,7 @@ pub fn ending(fb: &mut FrameBuffer) {
             draw_centered(&font, 214, "Press any button", DIM);
         }
         gpu::draw_sync();
-        gpu::vsync();
+        interrupts::wait_vblank();
         fb.swap();
         let pad = poll_port1();
         let any = pad.buttons.bits() != 0;
@@ -465,7 +466,7 @@ pub fn run(fb: &mut FrameBuffer) -> usize {
         draw_footer(&font);
 
         gpu::draw_sync();
-        gpu::vsync();
+        interrupts::wait_vblank();
         fb.swap();
     }
 }
