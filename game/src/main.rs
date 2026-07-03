@@ -36,7 +36,7 @@ use psx_gpu::material::{BlendMode, TexturedGouraudPacketMaterial};
 use psx_gpu::ot::OrderingTable;
 use psx_gpu::prim::{QuadTexturedGouraud, RectFlat, TriTexturedGouraud};
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
-use psx_gte::math::{Mat3I16, Vec3I32};
+use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
 use psx_pad::{button, enable_analog_port1, poll_port1};
 use psx_rt::{interrupts, tty};
@@ -80,9 +80,9 @@ const HEADCRAB_FACE_CAP: usize = 512;
 const SUIT_ITEM_FACE_CAP: usize = 448;
 const BATTERY_ITEM_FACE_CAP: usize = 160;
 #[cfg(not(feature = "emulator-telemetry"))]
-const MAX_RENDER_PACKETS: usize = 2560;
+const MAX_RENDER_PACKETS: usize = 2432; // funds the finalise statics; emitted prims peak ~1800
 #[cfg(feature = "emulator-telemetry")]
-const MAX_RENDER_PACKETS: usize = 2304;
+const MAX_RENDER_PACKETS: usize = 2176;
 const MAX_WEAPON_CACHE_TRIS: usize = 320;
 const MAX_TEX_SLOTS: usize = room_budget::MAX_TEX_SLOTS;
 const MAX_FACES: usize = room_budget::MAX_FACES;
@@ -1395,6 +1395,7 @@ struct RoomLaunch {
 enum PlayExit {
     BackToMenu,
     ChangeLevel(RoomLaunch),
+    Ending, // c5a1 outro finished: show the end card, then the menu
 }
 
 static mut CHANGE_REQUEST: RoomLaunch = RoomLaunch {
@@ -2629,6 +2630,9 @@ fn prop_clip(state: u8, hit_flash: bool) -> usize {
     }
 }
 
+/// (baked frame, next baked frame, 0..15 sixteenths between them). The draw
+/// lerps vertices between the two frames, recovering the smoothness of the
+/// frames the cook cut for RAM (interpolation costs CPU, not pool bytes).
 fn prop_anim_frame(
     md: &Model,
     ty: u8,
@@ -2636,15 +2640,17 @@ fn prop_anim_frame(
     hit_flash: u8,
     sim_frame_no: u32,
     pi: usize,
-) -> usize {
+) -> (usize, usize, u32) {
     let clip = prop_clip(state, hit_flash > 0);
     let len = md.clip_len(clip);
     if state == PROP_STATE_DEAD {
-        return md.clip_frame(clip, len.saturating_sub(1));
+        let f = md.clip_frame(clip, len.saturating_sub(1));
+        return (f, f, 0);
     }
     if hit_flash > 0 {
         let pain_frame = PROP_HIT_FLASH_TICKS.saturating_sub(hit_flash) as usize;
-        return md.clip_frame(clip, pain_frame.min(len.saturating_sub(1)));
+        let f = md.clip_frame(clip, pain_frame.min(len.saturating_sub(1)));
+        return (f, f, 0);
     }
     let phase = sim_frame_no as usize + pi.wrapping_mul(3);
     let div = if state == PROP_STATE_ATTACK || ty == PROP_TYPE_HEADCRAB && state == PROP_STATE_MOVE
@@ -2655,7 +2661,15 @@ fn prop_anim_frame(
     } else {
         ANIM_DIV
     };
-    md.clip_frame(clip, (phase / div.max(1)) % len)
+    let div = div.max(1);
+    let k = phase / div;
+    let f0 = md.clip_frame(clip, k % len);
+    if div == 1 {
+        return (f0, f0, 0); // full-rate clips play the baked frames raw
+    }
+    let f1 = md.clip_frame(clip, (k + 1) % len);
+    let frac16 = ((phase % div) * 16 / div) as u32;
+    (f0, f1, frac16)
 }
 
 #[inline]
@@ -3298,8 +3312,31 @@ unsafe fn damage_prop(pi: usize, dmg: u8) {
             MON_PAIN_COOLDOWN = 10;
         }
     }
+    // Getting shot aggros the victim AND wakes same-species squadmates nearby
+    // (HL squad alert): back-shot grunts return fire, packs turn together.
+    let kind = PROP_KIND[pi];
+    let ai = model_def(kind).ai;
+    if PROP_HEALTH[pi] > 0 && matches!(ai, AI_MELEE | AI_RANGED | AI_TURRET) {
+        PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
+        let pos = PROP_POS[pi];
+        let n = PROP_COUNT.min(MAX_PROPS);
+        let mut qi = 0usize;
+        while qi < n {
+            if qi != pi
+                && PROP_ACTIVE[qi] != 0
+                && PROP_HEALTH[qi] > 0
+                && PROP_KIND[qi] == kind
+                && PROP_AI_TARGET[qi] == PROP_TARGET_NONE
+                && dist2_3(PROP_POS[qi], pos) < SQUAD_ALERT_RADIUS2
+            {
+                PROP_AI_TARGET[qi] = PROP_TARGET_PLAYER;
+            }
+            qi += 1;
+        }
+    }
 }
 
+const SQUAD_ALERT_RADIUS2: i32 = 400 * 400;
 const SFX_NONE: u8 = 0xFF;
 static mut MON_PAIN_COOLDOWN: u8 = 0;
 static mut MOVERS: [phys::Mover; MAX_ENTS + 1] = [phys::NO_MOVER; MAX_ENTS + 1];
@@ -3311,7 +3348,7 @@ static mut MOVE_TICK: u16 = 0; // walker half-rate phase
 static mut LOADED_MODEL_CACHE: [Model; MAX_LOADED_MODELS] = [Model::EMPTY; MAX_LOADED_MODELS];
 // Band-bucketed PVS face order (overflow views): the banded emit used to
 // re-walk the whole face link structure once per depth band.
-const PVS_BAND_CAP: usize = 2560; // views beyond this keep the link-walk path
+const PVS_BAND_CAP: usize = 2496; // views beyond this keep the link-walk path
 static mut PVS_BAND_ORDER: [u16; PVS_BAND_CAP] = [0; PVS_BAND_CAP];
 static mut PVS_BAND_START: [u16; 10] = [0; 10];
 static mut VM_MODEL_CACHE: [Model; N_WEAPONS] = [Model::EMPTY; N_WEAPONS];
@@ -4060,6 +4097,63 @@ struct WeaponDef {
 }
 
 // Weapon ids = index into WEAPON_DEFS. Switch order follows the HL1 slots.
+/// The campaign's final room (c5a1, the G-Man tram) -- index in menu::MAPS /
+/// the Makefile MAPLIST. Reaching it and letting the scene play out ends the
+/// game: fade to white, end card, back to the menu.
+const FINAL_ROOM_ID: u16 = 95;
+const ENDING_SCENE_TICKS: u32 = 1400; // ~70 s of G-Man tram before the fade
+const ENDING_FADE_TICKS: u32 = 60;
+
+/// Debug: spawn with every weapon + full ammo (for testing the arsenal).
+/// Ships FALSE -- fresh starts are bare-handed, the suit gives crowbar+glock.
+const DEBUG_ALL_WEAPONS: bool = false;
+
+/// Which weapons show a muzzle flash on fire (guns; not melee/throwables/bow).
+const MUZZLE_FLASH_WEAPONS: [bool; 14] = [
+    false, // crowbar
+    true,  // glock
+    true,  // 357
+    true,  // mp5
+    true,  // shotgun
+    false, // crossbow
+    true,  // rpg
+    true,  // gauss
+    true,  // egon
+    false, // hornet gun
+    false, // grenade
+    false, // snark
+    false, // tripmine
+    false, // satchel
+];
+
+/// GoldSrc-style additive muzzle star over the viewmodel barrel: a warm core
+/// quad + four spikes, size jittered per frame. Immediate draws (post-OT),
+/// Add blend so it brightens whatever is behind it.
+fn draw_muzzle_flash(phase: u32) {
+    use psx_gpu::material::BlendMode;
+    // Barrel tip in screen space: just right/below the crosshair, where the
+    // v_ models aim.
+    let (cx, cy) = (168i16, 132i16);
+    let r: i16 = if phase & 1 == 0 { 13 } else { 10 };
+    let core = r - 4;
+    let spikes = [
+        [(cx, cy - r), (cx + 3, cy), (cx - 3, cy)],
+        [(cx, cy + r), (cx - 3, cy), (cx + 3, cy)],
+        [(cx - r, cy), (cx, cy - 3), (cx, cy + 3)],
+        [(cx + r, cy), (cx, cy + 3), (cx, cy - 3)],
+    ];
+    for sp in spikes {
+        psx_gpu::draw_tri_flat_blended(sp, 255, 150, 40, BlendMode::Add);
+    }
+    psx_gpu::draw_tri_flat_blended(
+        [(cx - core, cy - core), (cx + core, cy - core), (cx, cy + core)],
+        255,
+        236,
+        170,
+        BlendMode::Add,
+    );
+}
+
 const W_CROWBAR: usize = 0;
 const W_GLOCK: usize = 1;
 const W_357: usize = 2;
@@ -4169,6 +4263,22 @@ impl Arsenal {
         self.give_weapon(W_GLOCK);
         self.clip[W_GLOCK] = WEAPON_DEFS[W_GLOCK].clip;
         self.ammo[AMMO_9MM] = GLOCK_START_RESERVE;
+        self.current = W_GLOCK;
+    }
+
+    /// Everything, loaded (DEBUG_ALL_WEAPONS test arsenal).
+    fn give_all_debug(&mut self) {
+        let mut w = 0usize;
+        while w < N_WEAPONS {
+            self.give_weapon(w);
+            self.clip[w] = WEAPON_DEFS[w].clip;
+            w += 1;
+        }
+        let mut a = 0usize;
+        while a < N_AMMO {
+            self.ammo[a] = 250;
+            a += 1;
+        }
         self.current = W_GLOCK;
     }
 
@@ -6071,6 +6181,8 @@ unsafe fn draw_model(
     pos: [i32; 3],
     yaw: u16,
     frame: usize,
+    frame2: usize,
+    frac16: u32,
     shade: u8,
     eye: [i32; 3],
     rot: &Mat3I16,
@@ -6106,17 +6218,50 @@ unsafe fn draw_model(
     let verts = md.frame(frame);
     telemetry::stage_begin(telemetry::stage::TEXTURED_MODEL_PROJECT);
     let mut i = 0usize;
-    while i + 2 < nv {
-        let projected =
-            scene::project_triangle_scheduled(verts.vert(i), verts.vert(i + 1), verts.vert(i + 2));
-        MODEL_SCRATCH[i] = projected[0];
-        MODEL_SCRATCH[i + 1] = projected[1];
-        MODEL_SCRATCH[i + 2] = projected[2];
-        i += 3;
-    }
-    while i < nv {
-        MODEL_SCRATCH[i] = scene::project_vertex_scheduled(verts.vert(i));
-        i += 1;
+    if frac16 != 0 && frame2 != frame {
+        // Interpolated pose: lerp each vertex between the two baked frames
+        // (16ths). Costs a second frame decode; buys back the animation
+        // smoothness the cook's frame cuts took away.
+        let vb = md.frame(frame2);
+        let f = frac16 as i32;
+        let lerp = |a: Vec3I16, b: Vec3I16| -> Vec3I16 {
+            Vec3I16::new(
+                a.x + (((b.x as i32 - a.x as i32) * f) >> 4) as i16,
+                a.y + (((b.y as i32 - a.y as i32) * f) >> 4) as i16,
+                a.z + (((b.z as i32 - a.z as i32) * f) >> 4) as i16,
+            )
+        };
+        while i + 2 < nv {
+            let projected = scene::project_triangle_scheduled(
+                lerp(verts.vert(i), vb.vert(i)),
+                lerp(verts.vert(i + 1), vb.vert(i + 1)),
+                lerp(verts.vert(i + 2), vb.vert(i + 2)),
+            );
+            MODEL_SCRATCH[i] = projected[0];
+            MODEL_SCRATCH[i + 1] = projected[1];
+            MODEL_SCRATCH[i + 2] = projected[2];
+            i += 3;
+        }
+        while i < nv {
+            MODEL_SCRATCH[i] = scene::project_vertex_scheduled(lerp(verts.vert(i), vb.vert(i)));
+            i += 1;
+        }
+    } else {
+        while i + 2 < nv {
+            let projected = scene::project_triangle_scheduled(
+                verts.vert(i),
+                verts.vert(i + 1),
+                verts.vert(i + 2),
+            );
+            MODEL_SCRATCH[i] = projected[0];
+            MODEL_SCRATCH[i + 1] = projected[1];
+            MODEL_SCRATCH[i + 2] = projected[2];
+            i += 3;
+        }
+        while i < nv {
+            MODEL_SCRATCH[i] = scene::project_vertex_scheduled(verts.vert(i));
+            i += 1;
+        }
     }
     telemetry::stage_end(telemetry::stage::TEXTURED_MODEL_PROJECT);
     telemetry::stage_begin(telemetry::stage::TEXTURED_MODEL_FACES);
@@ -6420,6 +6565,10 @@ fn main() {
         loop {
             match play(&mut fb, launch, keep_frame) {
                 PlayExit::BackToMenu => break,
+                PlayExit::Ending => {
+                    menu::ending(&mut fb);
+                    break;
+                }
                 PlayExit::ChangeLevel(next) => {
                     launch = next;
                     keep_frame = true;
@@ -6706,7 +6855,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             }
         } else {
             CARRY_VALID = false;
-            if launch.suit_equipped {
+            if DEBUG_ALL_WEAPONS {
+                weapon.give_all_debug();
+            } else if launch.suit_equipped {
                 // Mid-campaign chapter select: baseline crowbar + glock.
                 weapon.give_chapter_loadout();
             }
@@ -7886,8 +8037,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     .add(lm.face_start);
                 let face_count = lm.n_faces;
                 model_draws = model_draws.saturating_add(1);
-                let sf = if ty == PROP_TYPE_ITEM_SUIT || ty == PROP_TYPE_ITEM_BATTERY {
-                    0
+                let (sf, sf2, sfrac) = if ty == PROP_TYPE_ITEM_SUIT || ty == PROP_TYPE_ITEM_BATTERY {
+                    (0, 0, 0)
                 } else {
                     prop_anim_frame(md, ty, PROP_STATE[pi], PROP_HIT_FLASH[pi], sim_frame_no, pi)
                 };
@@ -7907,6 +8058,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     org,
                     yaw,
                     sf,
+                    sf2,
+                    sfrac,
                     shade,
                     eye,
                     &rot,
@@ -7942,6 +8095,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         pos,
                         0,
                         (frame_no as usize / 8) % md.n_frames.max(1),
+                        0,
+                        0,
                         MODEL_SHADE,
                         eye,
                         &rot,
@@ -7993,7 +8148,18 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     np.saturating_sub(world_prims) as u32,
                 );
             }
-            if death_ticks > 0 {
+            if launch.room_id == FINAL_ROOM_ID && sim_frame_no > ENDING_SCENE_TICKS {
+                // Outro: the G-Man scene has played out -- fade to white.
+                let t = (sim_frame_no - ENDING_SCENE_TICKS).min(ENDING_FADE_TICKS);
+                let w = (t * 255 / ENDING_FADE_TICKS) as u8;
+                unsafe {
+                    DEATH_OVERLAY = RectFlat::new(0, 0, 320, 240, w, w, w);
+                    HUD_OT.add(0, &mut DEATH_OVERLAY, RectFlat::WORDS);
+                }
+                if t >= ENDING_FADE_TICKS {
+                    return PlayExit::Ending;
+                }
+            } else if death_ticks > 0 {
                 // Death screen: the view reddens over the death window, then respawn.
                 let r = (((DEATH_TICKS - death_ticks) as u32) * 5).min(190) as u8;
                 DEATH_OVERLAY = RectFlat::new(0, 0, 320, 240, r, r / 6, r / 6);
@@ -8066,6 +8232,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             WEAPON_OT.submit();
             HUD_OT.submit();
             telemetry::stage_end(telemetry::stage::OT_SUBMIT);
+            if SHOW_VIEWMODEL && recoil >= 13 && MUZZLE_FLASH_WEAPONS[weapon.current] {
+                draw_muzzle_flash(sim_frame_no);
+            }
 
             // DEBUG: dump the crosshair tri + camera state to PSoXide's Play debug
             // terminal. Auto-fires whenever the aimed triangle (or valid state)

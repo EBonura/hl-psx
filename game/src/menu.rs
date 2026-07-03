@@ -355,6 +355,41 @@ fn draw_credits_menu(font: &FontAtlas) {
     draw_centered(font, 208, "Back", ITEM_SEL);
 }
 
+/// The campaign end card: white-in from the c5a1 fade, the wordmark, THE END,
+/// and the credit lines. Waits for a button, then returns (to the main menu).
+pub fn ending(fb: &mut FrameBuffer) {
+    let font = FontAtlas::upload(unsafe { hl_font() }, FONT_TPAGE, FONT_CLUT);
+    let (logo, lw, lh) = upload_tex(LOGO_BLOB, LOGO_VRAM_X);
+    let mut prev_any = true; // swallow the button that ended the fade
+    let mut frame = 0u32;
+    loop {
+        fb.clear(0, 0, 0);
+        draw_logo(logo, lw, lh);
+        draw_centered(&font, 88, "THE END", ITEM_SEL);
+        let mut y = 110i16;
+        let mut i = 0usize;
+        while i < CREDIT_LINES.len() {
+            hltext::draw_centered_scaled(y, CREDIT_LINES[i].0, hltext::SMALL_Q8, CREDIT_LINES[i].1);
+            y += hltext::line_height_scaled(hltext::SMALL_Q8);
+            i += 1;
+        }
+        if frame > 40 && (frame / 16) & 1 == 0 {
+            draw_centered(&font, 214, "Press any button", DIM);
+        }
+        gpu::draw_sync();
+        gpu::vsync();
+        fb.swap();
+        let pad = poll_port1();
+        let any = pad.buttons.bits() != 0;
+        if any && !prev_any && frame > 40 {
+            unsafe { crate::sfx::play(crate::sfx::BUTTON) };
+            return;
+        }
+        prev_any = any;
+        frame += 1;
+    }
+}
+
 /// Run the menu until the player confirms a launch; returns its room id.
 pub fn run(fb: &mut FrameBuffer) -> usize {
     let font = FontAtlas::upload(unsafe { hl_font() }, FONT_TPAGE, FONT_CLUT);

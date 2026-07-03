@@ -1463,6 +1463,24 @@ struct SpawnCandidate {
 fn standalone_spawn_candidates(ents: &[u8]) -> Vec<SpawnCandidate> {
     let s = entity_text(ents);
     let mut out = Vec::new();
+    // scripted_sequence v1 (set dressing): an auto-start script (one with no
+    // targetname) poses its monster at the script mark from frame one in real
+    // HL. Move the matching monster's spawn to the mark; triggered scripts
+    // (with a targetname) fire later and are left alone.
+    let mut script_marks: Vec<(String, [f32; 3], Option<f32>)> = Vec::new();
+    for block in s.split('{') {
+        if ent_value(block, "classname") != Some("scripted_sequence") {
+            continue;
+        }
+        if ent_value(block, "targetname").is_some() {
+            continue;
+        }
+        let Some(target) = ent_value(block, "m_iszEntity") else { continue };
+        let Some(origin) = ent_value(block, "origin").and_then(parse_vec3) else {
+            continue;
+        };
+        script_marks.push((target.to_string(), origin, ent_yaw_degrees(block)));
+    }
     for block in s.split('{') {
         let cls = ent_value(block, "classname").unwrap_or("");
         if cls != "info_player_start" && cls != "info_landmark" {
@@ -2339,6 +2357,24 @@ fn collect_nav_nodes(
 ) -> Vec<NavNodeRec> {
     let s = entity_text(ents);
     let mut out = Vec::new();
+    // scripted_sequence v1 (set dressing): an auto-start script (one with no
+    // targetname) poses its monster at the script mark from frame one in real
+    // HL. Move the matching monster's spawn to the mark; triggered scripts
+    // (with a targetname) fire later and are left alone.
+    let mut script_marks: Vec<(String, [f32; 3], Option<f32>)> = Vec::new();
+    for block in s.split('{') {
+        if ent_value(block, "classname") != Some("scripted_sequence") {
+            continue;
+        }
+        if ent_value(block, "targetname").is_some() {
+            continue;
+        }
+        let Some(target) = ent_value(block, "m_iszEntity") else { continue };
+        let Some(origin) = ent_value(block, "origin").and_then(parse_vec3) else {
+            continue;
+        };
+        script_marks.push((target.to_string(), origin, ent_yaw_degrees(block)));
+    }
     for block in s.split('{') {
         if ent_value(block, "classname").unwrap_or("") != "info_node" {
             continue;
@@ -3073,6 +3109,24 @@ fn collect_props(
 ) -> Vec<(u16, [i32; 3], i32, i16)> {
     let s = entity_text(ents);
     let mut out = Vec::new();
+    // scripted_sequence v1 (set dressing): an auto-start script (one with no
+    // targetname) poses its monster at the script mark from frame one in real
+    // HL. Move the matching monster's spawn to the mark; triggered scripts
+    // (with a targetname) fire later and are left alone.
+    let mut script_marks: Vec<(String, [f32; 3], Option<f32>)> = Vec::new();
+    for block in s.split('{') {
+        if ent_value(block, "classname") != Some("scripted_sequence") {
+            continue;
+        }
+        if ent_value(block, "targetname").is_some() {
+            continue;
+        }
+        let Some(target) = ent_value(block, "m_iszEntity") else { continue };
+        let Some(origin) = ent_value(block, "origin").and_then(parse_vec3) else {
+            continue;
+        };
+        script_marks.push((target.to_string(), origin, ent_yaw_degrees(block)));
+    }
     for block in s.split('{') {
         // Model-type id space, shared with the runtime registry (game/src/model_defs).
         // 0-4 = the original NPCs/items; 5-24 = the full enemy roster; 25 = the
@@ -3165,11 +3219,25 @@ fn collect_props(
             }
             _ => continue,
         };
-        let origin_hl = ent_value(block, "origin")
+        let mut origin_hl = ent_value(block, "origin")
             .and_then(parse_vec3)
             .unwrap_or([0.0; 3]);
+        let mut deg = ent_yaw_degrees(block).unwrap_or(0.0);
+        // Auto-start scripted_sequence targeting this monster's name: spawn
+        // at the script mark (matches where real HL poses it at map start).
+        if ty & DEAD == 0 {
+            if let Some(tn) = ent_value(block, "targetname") {
+                if let Some((_, mo, myaw)) =
+                    script_marks.iter().find(|(t, _, _)| t == tn)
+                {
+                    origin_hl = *mo;
+                    if let Some(d) = myaw {
+                        deg = *d;
+                    }
+                }
+            }
+        }
         let origin = to_world(origin_hl, scale);
-        let deg = ent_yaw_degrees(block).unwrap_or(0.0);
         let yaw = hl_yaw_to_world_q12(deg);
         out.push((ty, origin, yaw, point_leaf(origin_hl, nodes, planes)));
     }
