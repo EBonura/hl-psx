@@ -1070,6 +1070,36 @@ Four user reports, three root causes:
   combat AND zero pickup drops on all 96 maps (c1a3 is the cliff map; its
   full need is ~306 KB, measure before trimming elsewhere).
 
+## M36 -- interactables + per-map dialogue audio (DONE, verified)
+
+Two playtest rounds:
+- **Use-targets never activated** (buttons/chargers/use-doors): the aim-use LOS
+  trace (eye->target centroid) was blocked by the TARGET'S OWN brush hull (it's
+  a mover too). `phys::line_clear_movers_except(exclude=rec.brush)`. Then **low
+  console buttons still unclickable** (the ~34deg cone can't reach a button you
+  look DOWN at within reach): added a **forward crosshair ray** as the primary
+  pick (`trace_line(eye -> eye + rot.m[2]*reach)`, match hit.mover to a
+  use-target's brush), widened the fallback cone to ~56deg, reach 96->120.
+  Verified A/B (0 acquisitions -> button+glass-door state cycles).
+- **HEV suit auto-granted** (c1a0d): `standalone_room_starts_with_hev` used a
+  stale `room>9` -- the MAPLIST grew and c1a0d is now room 10, so it handed
+  over the suit AND applied to changelevel arrivals. `HEV_SUIT_ROOM=10` +
+  `!preserve_view` gate. Verified: enter suitless, pick up on touch (0->1).
+- **Per-map dialogue streaming**: dialogue no longer rides the global SFX pack
+  (which truncated at MAX_SFX=43 -- the voice lines never loaded). Core SFX (43,
+  337 KB) resident; per-map dialogue streams on load into the ~170 KB region
+  above it (WORLD.PAK chunk 3100+idx), on a dedicated voice channel.
+  `tools/extract_voices.py` cooks each map's scripted_sentence + speech
+  ambient_generic to one pack at the highest rate that FITS the per-map budget
+  (11025 where it fits, down to 4kHz for heavy maps -- PS1 SPU is fixed 4-bit
+  ADPCM so sample RATE is the size lever), + a manifest the map cook resolves
+  (VOICES_MANIFEST + MAP_INDEX). New LOGIC_AMBIENT(32); LOGIC_SENTENCE now plays
+  a per-map voice. **Intro tram PA verified** (27s SPU voice, music off);
+  **desk barney** (BA_DESK) cooked + trigger_once wired. 172 lines / 43 maps;
+  c3a2d + c5a1 overflow and drop tail lines at runtime (graceful). The
+  `speaker` PA-announcer presets (15 maps) are a separate sentence-group system,
+  still absent.
+
 ## Next (pick per value)
 
 - **PERF (researched, ranked -- the emit wall)**: 1) cook-time PRE-BAKED GPU
