@@ -1436,6 +1436,10 @@ static mut CHANGE_REQUEST: RoomLaunch = RoomLaunch {
 };
 static mut CHANGE_REQUEST_ACTIVE: u8 = 0;
 static mut LOGIC_TRAM_RIDING: u8 = 0;
+// env_shake: camera rattle. amplitude (world units) * remaining/duration decays.
+static mut SHAKE_TICKS: u16 = 0;
+static mut SHAKE_DUR: u16 = 1;
+static mut SHAKE_AMP: u16 = 0;
 // ---- Screen titles (env_message / chapter cards) + screen fades (env_fade) ----
 static mut TITLE_TEXT_ID: u16 = 0; // logic-names id of the text; 0 = none
 static mut TITLE_T: u16 = 0;
@@ -2185,6 +2189,11 @@ unsafe fn logic_use_entity(
                 sfx::play_voice_world(rec.arg0 as u8, rec.origin);
             }
         }
+        map::LOGIC_ENV_SHAKE => {
+            SHAKE_AMP = rec.arg0;
+            SHAKE_DUR = rec.speed.max(1);
+            SHAKE_TICKS = rec.speed.max(1);
+        }
         map::LOGIC_ENV_FADE => {
             FADE_ACTIVE = true;
             FADE_IN = rec.arg1 & 1 != 0;
@@ -2244,6 +2253,9 @@ unsafe fn logic_use_entity(
 /// worldspawn chapter title shortly after load (like HL's chapter cards).
 unsafe fn tick_screen_fx(sim_frame_no: u32) {
     music_apply(); // no-op when the wanted track already plays
+    if SHAKE_TICKS > 0 {
+        SHAKE_TICKS -= 1;
+    }
     if TITLE_TEXT_ID != 0 {
         TITLE_T = TITLE_T.saturating_add(1);
         let total = TITLE_FADE + TITLE_HOLD + TITLE_FADE;
@@ -8181,8 +8193,25 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             yaw = DBG_CAM_YAW;
             pitch = DBG_CAM_PITCH;
         }
-        let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
-        let rot = view_rotation(yaw, pitch);
+        // env_shake: jitter the view (yaw/pitch/eye height) by a decaying random
+        // amount while a shake is active -- explosions/quakes rattle the camera.
+        let (mut eye, mut view_yaw, mut view_pitch) = (
+            [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]],
+            yaw,
+            pitch,
+        );
+        unsafe {
+            if SHAKE_TICKS > 0 {
+                let amp = SHAKE_AMP as i32 * SHAKE_TICKS as i32 / SHAKE_DUR.max(1) as i32;
+                let j = |m: i32| (IMPACT_RNG.next() as i32 % (2 * m + 1)) - m;
+                view_yaw = ((view_yaw as i32 + j(amp * 6)) & 0xFFF) as u16;
+                view_pitch = (view_pitch as i32 + j(amp * 6))
+                    .clamp(-PITCH_MAX as i32, PITCH_MAX as i32) as i16;
+                eye[1] += j(amp);
+            }
+        }
+        let eye = eye;
+        let rot = view_rotation(view_yaw, view_pitch);
         scene::load_rotation(&rot);
         let base_t = [
             -dot12(rot.m[0], eye),

@@ -1970,6 +1970,7 @@ const LOGIC_MAP_FLAGS: u8 = 29; // worldspawn: startdark/gametitle + chaptertitl
 const LOGIC_CDTRACK: u8 = 30; // trigger_cdaudio/target_cdaudio: arg0 = track (-1 stop)
 const LOGIC_SENTENCE: u8 = 31; // scripted_sentence: arg0 = per-map local voice id
 const LOGIC_AMBIENT: u8 = 32; // ambient_generic (speech): arg0 = per-map local voice id
+const LOGIC_ENV_SHAKE: u8 = 33; // env_shake: arg0 = amplitude, speed = duration ticks
 
 /// (map_index, key) -> per-map local voice id, from the VOICES_MANIFEST env file
 /// written by tools/extract_voices.py. key = UPPERCASE sentence name (scripted_
@@ -3031,6 +3032,7 @@ fn collect_logic_entities(
             "ambient_generic" if is_voice_message(ent_value(block, "message").unwrap_or("")) => {
                 LOGIC_AMBIENT
             }
+            "env_shake" => LOGIC_ENV_SHAKE,
             "trigger_changelevel" => LOGIC_TRIGGER_CHANGELEVEL,
             "info_landmark" => LOGIC_INFO_LANDMARK,
             "trigger_counter" => LOGIC_TRIGGER_COUNTER,
@@ -3087,6 +3089,8 @@ fn collect_logic_entities(
         let speed = if kind == LOGIC_SCRIPTED {
             // Scripts carry their facing yaw here (q12); they have no speed key.
             hl_yaw_to_world_q12(ent_yaw_degrees(block).unwrap_or(0.0)) as u16
+        } else if kind == LOGIC_ENV_SHAKE {
+            seconds_to_ticks_u16(parse_f32_key(block, "duration", 1.0))
         } else if kind == LOGIC_ENV_MESSAGE {
             let key = ent_value(block, "message").unwrap_or("").to_uppercase();
             titles.get(&key).map(|t| t.hold_ticks).unwrap_or(60)
@@ -3159,6 +3163,9 @@ fn collect_logic_entities(
                         None => continue,
                     }
                 }
+                LOGIC_ENV_SHAKE => (parse_f32_key(block, "amplitude", 4.0) / scale)
+                    .round()
+                    .clamp(1.0, 64.0) as u16,
                 LOGIC_MAP_FLAGS => {
                     let key = ent_value(block, "chaptertitle").unwrap_or("").to_uppercase();
                     match titles.get(&key) {
