@@ -3524,6 +3524,9 @@ fn collect_logic_entities(
 fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) {
     let s = entity_text(ents);
     let mut tracks: Vec<(String, [f32; 3], String)> = Vec::new();
+    // func_trackchange junctions: (toptrack, bottomtrack) = the START names of
+    // the two path chains the platform swaps between.
+    let mut trackchanges: Vec<(String, String)> = Vec::new();
     let (mut model, mut speed, mut first) = (0u16, 0i32, String::new());
     let mut origin = [0i32; 3]; // tram's editor origin (its reference point), world
     for block in s.split('{') {
@@ -3534,6 +3537,10 @@ fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) 
                     .and_then(parse_vec3)
                     .unwrap_or([0.0; 3]),
                 ent_value(block, "target").unwrap_or("").to_string(),
+            )),
+            Some("func_trackchange") | Some("func_trackautochange") => trackchanges.push((
+                ent_value(block, "toptrack").unwrap_or("").to_string(),
+                ent_value(block, "bottomtrack").unwrap_or("").to_string(),
             )),
             Some("func_tracktrain") => {
                 // Last tracktrain wins (c0a0: the player "train"). ponytail.
@@ -3560,14 +3567,49 @@ fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) 
         return (0, 0, Vec::new(), [0; 3]);
     }
     let mut way = Vec::new();
-    let mut name = first;
-    while !name.is_empty() && way.len() < 256 {
-        match tracks.iter().find(|t| t.0 == name) {
-            Some(t) => {
-                way.push(to_world(t.1, scale));
-                name = t.2.clone();
+    // Follow the path_track `target` chain; when a segment dead-ends at a
+    // func_trackchange junction, stitch onto the platform's other chain so the
+    // train reaches the exit instead of stopping. ponytail: we skip the rotate-
+    // the-platform puzzle -- the train just drives straight through the junction.
+    let mut seg_start = first;
+    let mut used_tc = vec![false; trackchanges.len()];
+    loop {
+        let mut name = seg_start.clone();
+        let mut last_found = String::new();
+        while !name.is_empty() && way.len() < 256 {
+            match tracks.iter().find(|t| t.0 == name) {
+                Some(t) => {
+                    way.push(to_world(t.1, scale));
+                    last_found = name.clone();
+                    name = t.2.clone();
+                }
+                None => break,
             }
-            None => break,
+        }
+        // The junction node is where the ridden chain meets the platform -- it
+        // can be the segment's START (train parked on the platform, c2a1) or its
+        // END (train drives into the platform, c2a2). Match either against a
+        // trackchange's top/bottom and continue on the platform's other chain.
+        let hit = |n: &str| n == seg_start || n == last_found;
+        let mut next = None;
+        for (i, (top, bot)) in trackchanges.iter().enumerate() {
+            if used_tc[i] {
+                continue;
+            }
+            if hit(top) && !bot.is_empty() {
+                used_tc[i] = true;
+                next = Some(bot.clone());
+                break;
+            }
+            if hit(bot) && !top.is_empty() {
+                used_tc[i] = true;
+                next = Some(top.clone());
+                break;
+            }
+        }
+        match next {
+            Some(n) if way.len() < 256 => seg_start = n,
+            _ => break,
         }
     }
     (model, speed, way, origin)
