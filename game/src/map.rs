@@ -209,7 +209,8 @@ pub const LOGIC_ENV_MESSAGE: u8 = 27; // titles.txt overlay: arg0 = text name id
 pub const LOGIC_ENV_FADE: u8 = 28; // screen fade: arg0 = duration ticks
 pub const LOGIC_MAP_FLAGS: u8 = 29; // worldspawn startdark/gametitle + chaptertitle
 pub const LOGIC_CDTRACK: u8 = 30; // CD music trigger: arg0 = track (-1 stop)
-pub const LOGIC_SENTENCE: u8 = 31; // scripted_sentence: arg0 = resident SFX id
+pub const LOGIC_SENTENCE: u8 = 31; // scripted_sentence: arg0 = per-map voice id
+pub const LOGIC_AMBIENT: u8 = 32; // ambient_generic speech: arg0 = per-map voice id
 
 pub const USE_OFF: u8 = 0;
 pub const USE_ON: u8 = 1;

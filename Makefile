@@ -113,6 +113,7 @@ disc: compile
 		--world-pack-compress-rooms \
 		--world-pack-extra-dir $(MODELPACK) \
 		--world-pack-extra-dir $(SFXPACK) \
+		--world-pack-extra-dir $(VOICEPACK) \
 		$(if $(wildcard $(ROOT)/data/music/tracks.txt),--cdda-track-list $(ROOT)/data/music/tracks.txt,)
 	@echo "DISC -> $(DIST)/hl-psx.cue"
 
@@ -129,8 +130,16 @@ sfx-assets:
 		"$(PSOXIDE)/target/release/psxed"
 	@cp data/menu/hud.tex $(SFXPACK)/chunk_3001.psxa  # HUD atlas streams from the pack
 
-assets: check-assets menu-assets rooms models sfx-assets
-	@echo "assets -> data/menu data/rooms data/models data/modelpack data/sfx"
+# HL dialogue -> per-map 8kHz SPU-ADPCM voice packs (WORLD.PAK chunks
+# 3100+idx) + manifest. Must run BEFORE `rooms` (the map cook reads the
+# manifest to resolve scripted_sentence/ambient_generic to local voice ids).
+voices-assets:
+	cd $(PSOXIDE) && cargo build --release -p psxed
+	python3 tools/extract_voices.py "$(HL_GAME)" "$(MAPLIST)" $(VOICEPACK) \
+		"$(PSOXIDE)/target/release/psxed"
+
+assets: check-assets menu-assets voices-assets rooms models sfx-assets
+	@echo "assets -> data/menu data/rooms data/models data/modelpack data/sfx data/voices"
 
 full-disc: assets disc
 
@@ -209,6 +218,7 @@ psoxide-chart: psoxide-profile
 ROOMS := $(ROOT)/data/rooms
 MODELPACK := $(ROOT)/data/modelpack
 SFXPACK   := $(ROOT)/data/sfx
+VOICEPACK := $(ROOT)/data/voices
 # Runnable campaign map registry, staying below the current static MAP_BUF
 # budget. Oversized maps are intentionally omitted until the streamed map format
 # grows a compression/chunking path. Keep this in sync with `game/src/menu.rs`.
@@ -232,6 +242,8 @@ rooms:
 	@i=0; for m in $(MAPLIST); do \
 		w=$$((i * 2)); t=$$((w + 1)); \
 		CLIPS_MANIFEST=$(MODELPACK)/clips.txt \
+		VOICES_MANIFEST=$(VOICEPACK)/manifest.txt \
+		MAP_INDEX=$$i \
 		$(HLBSP_BIN) --cook "$(HL_GAME)/maps/$$m.bsp" $(ROOMS)/room_$$w.psxc $(ROOMS)/room_$$t.psxc >/dev/null && \
 		echo "  room_$$w/$$t = $$m"; i=$$((i+1)); \
 	done

@@ -56,18 +56,26 @@ pub const SLV_DIE: u8 = 39;
 pub const BC_PAIN: u8 = 40;
 pub const BC_DIE: u8 = 41;
 pub const HEV_BELL: u8 = 42;
-// batch 3: scripted_sentence voice lines
-pub const V_SC_GMORN: u8 = 43;
-pub const V_GM_MUMBLE1: u8 = 51; // 43..=51 continuous (see extract_sfx.py order)
+// Dialogue is not a global SFX id anymore -- it streams per-map (chunk
+// 3100+idx) and plays via play_voice / play_voice_world (local ids).
 
 const MAX_SFX: usize = 43;
 const SPU_SAMPLE_BASE: u32 = 0x1010; // BIOS convention: 0x0000..0x1000 reserved
-const VOICE_POOL: u8 = 16; // voices 0..15 one-shots; 16..23 reserved (loops/music)
+const VOICE_POOL: u8 = 15; // voices 0..14 one-shot SFX; 15 = dialogue; 16..23 reserved
+const DIALOGUE_VOICE: u8 = 15; // long voice lines play on their own channel (not cut by SFX)
 
 static mut ADDRS: [u32; MAX_SFX] = [0; MAX_SFX];
 static mut RATES: [u32; MAX_SFX] = [0; MAX_SFX];
 static mut COUNT: usize = 0;
 static mut NEXT_VOICE: u8 = 0;
+
+// ---- per-map dialogue region (streamed on map load, above the resident core) ----
+pub const VOICE_CHUNK_BASE: u32 = 3100; // WORLD.PAK chunk id = 3100 + map index
+const MAX_VOICES: usize = 40; // distinct dialogue lines per map
+static mut DIALOGUE_BASE: u32 = 0; // SPU addr where per-map dialogue starts (= end of core)
+static mut VOICE_ADDRS: [u32; MAX_VOICES] = [0; MAX_VOICES];
+static mut VOICE_RATES: [u32; MAX_VOICES] = [0; MAX_VOICES];
+static mut VOICE_COUNT: usize = 0;
 
 fn rd_u32(d: &[u8], o: usize) -> u32 {
     u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]])
@@ -104,7 +112,84 @@ pub unsafe fn init_from_pack(pack: &[u8]) -> usize {
         ready = i + 1;
     }
     COUNT = ready;
+    DIALOGUE_BASE = next_addr; // per-map dialogue streams in above the core
     ready
+}
+
+/// Stream a per-map dialogue pack (same HSFX layout) into the SPU region above
+/// the resident core SFX, replacing the previous map's dialogue. Local ids
+/// 0..count-1 index this map's lines. Returns the number of lines ready.
+pub unsafe fn load_dialogue_pack(pack: &[u8]) -> usize {
+    VOICE_COUNT = 0;
+    if pack.len() < 8 || &pack[0..4] != b"HSFX" || DIALOGUE_BASE == 0 {
+        return 0;
+    }
+    let n = (rd_u32(pack, 4) as usize).min(MAX_VOICES);
+    let mut next_addr = DIALOGUE_BASE;
+    let mut ready = 0usize;
+    for i in 0..n {
+        let off = rd_u32(pack, 8 + i * 8) as usize;
+        let len = rd_u32(pack, 12 + i * 8) as usize;
+        if off + len > pack.len() {
+            break;
+        }
+        let Ok(audio) = Audio::from_bytes(&pack[off..off + len]) else {
+            break;
+        };
+        let bytes = audio.adpcm_bytes();
+        if next_addr + bytes.len() as u32 > 512 * 1024 {
+            break; // out of SPU RAM: drop the rest of this map's dialogue
+        }
+        spu::upload_adpcm(SpuAddr::new(next_addr), bytes);
+        VOICE_ADDRS[i] = next_addr;
+        VOICE_RATES[i] = audio.sample_rate_hz();
+        next_addr = (next_addr + bytes.len() as u32 + 7) & !7;
+        ready = i + 1;
+    }
+    VOICE_COUNT = ready;
+    ready
+}
+
+/// Play a per-map dialogue line (local id from the streamed dialogue pack) on
+/// the dedicated dialogue voice, so a passing SFX one-shot never cuts it off.
+pub unsafe fn play_voice(local_id: u8, den: u16) {
+    let i = local_id as usize;
+    if i >= VOICE_COUNT {
+        return;
+    }
+    let v = Voice::new(DIALOGUE_VOICE);
+    v.configure_sample(
+        SpuAddr::new(VOICE_ADDRS[i]),
+        VOICE_RATES[i],
+        Volume::linear(1, den.max(1)),
+        Adsr::sample(),
+    );
+    Voice::key_on(v.mask());
+}
+
+/// Distance-attenuated dialogue line (vs the last `set_ear`). Voice carries
+/// further than SFX (people speak up), so the falloff is gentler.
+pub unsafe fn play_voice_world(local_id: u8, pos: [i32; 3]) {
+    let dx = pos[0] - EAR[0];
+    let dy = pos[1] - EAR[1];
+    let dz = pos[2] - EAR[2];
+    let d2 = (dx as i64 * dx as i64 + dy as i64 * dy as i64 + dz as i64 * dz as i64)
+        .min(i32::MAX as i64) as i32;
+    // den = 1 + dist/500: full within ~500u, ~1/2 at 1500u, audible to ~4000u.
+    let mut lo = 0i32;
+    let mut hi = 4000i32;
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if mid * mid < d2 {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if lo >= 4000 {
+        return;
+    }
+    play_voice(local_id, (1 + lo / 500) as u16);
 }
 
 /// Fire-and-forget one-shot. `den` is the inverse volume (1 = full, bigger =

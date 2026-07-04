@@ -1968,25 +1968,40 @@ const LOGIC_ENV_MESSAGE: u8 = 27; // titles.txt text overlay (arg0 = text name i
 const LOGIC_ENV_FADE: u8 = 28; // screen fade (arg0 = duration ticks)
 const LOGIC_MAP_FLAGS: u8 = 29; // worldspawn: startdark/gametitle + chaptertitle
 const LOGIC_CDTRACK: u8 = 30; // trigger_cdaudio/target_cdaudio: arg0 = track (-1 stop)
-const LOGIC_SENTENCE: u8 = 31; // scripted_sentence: arg0 = resident SFX id
+const LOGIC_SENTENCE: u8 = 31; // scripted_sentence: arg0 = per-map local voice id
+const LOGIC_AMBIENT: u8 = 32; // ambient_generic (speech): arg0 = per-map local voice id
 
-/// Sentence name -> resident SFX id (mirrors extract_sfx.py's SOUNDS order).
-fn sentence_sfx_id(s: &str) -> Option<u16> {
-    Some(match s.trim_start_matches('!').to_ascii_uppercase().as_str() {
-        "SC_GMORN" => 43,
-        "SC_BIGDAY" => 44,
-        "SC_SAMPLE" => 45,
-        "SC_GETAWAY" => 46, // aliased to the fear bark (SPU budget)
-        "SC_PLFEAR0" => 46,
-        "BA_HEADDOWN" => 47,
-        "BA_SCARED0" => 48,
-        "BA_BUTTON" => 49,
-        "BA_LATE" => 50,
-        "GM_1MUMBLE" => 51,
-        "GM_4MUMBLE" => 51, // one mumble covers the loop
-        "GM_5MUMBLE" => 51,
-        _ => return None,
-    })
+/// (map_index, key) -> per-map local voice id, from the VOICES_MANIFEST env file
+/// written by tools/extract_voices.py. key = UPPERCASE sentence name (scripted_
+/// sentence) or lowercase wav path (ambient_generic).
+fn load_voices_manifest() -> std::collections::HashMap<(u16, String), u16> {
+    let mut out = std::collections::HashMap::new();
+    let Ok(path) = std::env::var("VOICES_MANIFEST") else {
+        return out;
+    };
+    let Ok(txt) = std::fs::read_to_string(&path) else {
+        eprintln!("warn: VOICES_MANIFEST unreadable: {}", path);
+        return out;
+    };
+    for line in txt.lines() {
+        let mut it = line.trim().split('|');
+        let (Some(mi), Some(lid), Some(key)) = (it.next(), it.next(), it.next()) else {
+            continue;
+        };
+        if let (Ok(mi), Ok(lid)) = (mi.parse::<u16>(), lid.parse::<u16>()) {
+            out.insert((mi, key.to_string()), lid);
+        }
+    }
+    out
+}
+
+/// Is this ambient_generic message a speech voice line (vs looping ambience)?
+fn is_voice_message(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.ends_with(".wav")
+        && ["barney/", "scientist/", "gman/", "hgrunt/", "tride/", "vox/", "fvox/"]
+            .iter()
+            .any(|d| m.starts_with(d))
 }
 
 const USE_OFF: u8 = 0;
@@ -2965,6 +2980,13 @@ fn collect_logic_entities(
     let mut out = Vec::new();
     let mut aux = Vec::new();
     let clips = load_clips_manifest();
+    let voices = load_voices_manifest();
+    // This map's MAPLIST index -- keys the per-map voice manifest (set by the
+    // rooms recipe alongside VOICES_MANIFEST).
+    let map_index: u16 = std::env::var("MAP_INDEX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
 
     // Teleport destinations, resolved at cook time (name -> world origin+yaw).
     let mut tp_dests: Vec<(String, [i32; 3], u16)> = Vec::new();
@@ -3006,6 +3028,9 @@ fn collect_logic_entities(
             "worldspawn" => LOGIC_MAP_FLAGS,
             "trigger_cdaudio" | "target_cdaudio" => LOGIC_CDTRACK,
             "scripted_sentence" => LOGIC_SENTENCE,
+            "ambient_generic" if is_voice_message(ent_value(block, "message").unwrap_or("")) => {
+                LOGIC_AMBIENT
+            }
             "trigger_changelevel" => LOGIC_TRIGGER_CHANGELEVEL,
             "info_landmark" => LOGIC_INFO_LANDMARK,
             "trigger_counter" => LOGIC_TRIGGER_COUNTER,
@@ -3118,9 +3143,20 @@ fn collect_logic_entities(
                 LOGIC_ENV_FADE => seconds_to_ticks_u16(parse_f32_key(block, "duration", 2.0)),
                 LOGIC_CDTRACK => (parse_f32_key(block, "health", 0.0) as i16) as u16,
                 LOGIC_SENTENCE => {
-                    match ent_value(block, "sentence").and_then(sentence_sfx_id) {
-                        Some(id) => id,
-                        None => continue, // no resident wav for this line
+                    let s = ent_value(block, "sentence")
+                        .unwrap_or("")
+                        .trim_start_matches('!')
+                        .to_ascii_uppercase();
+                    match voices.get(&(map_index, s)) {
+                        Some(&id) => id,
+                        None => continue, // this line isn't in the per-map voice pack
+                    }
+                }
+                LOGIC_AMBIENT => {
+                    let key = ent_value(block, "message").unwrap_or("").to_ascii_lowercase();
+                    match voices.get(&(map_index, key)) {
+                        Some(&id) => id,
+                        None => continue,
                     }
                 }
                 LOGIC_MAP_FLAGS => {

@@ -2172,8 +2172,18 @@ unsafe fn logic_use_entity(
             music_apply();
         }
         map::LOGIC_SENTENCE => {
-            // scripted_sentence: the speaker's line, attenuated from its mark.
-            sfx::play_world(rec.arg0 as u8, rec.origin);
+            // scripted_sentence: the speaker's line (per-map dialogue voice),
+            // attenuated from its mark; plays on the dedicated dialogue channel.
+            sfx::play_voice_world(rec.arg0 as u8, rec.origin);
+        }
+        map::LOGIC_AMBIENT => {
+            // ambient_generic speech (tram PA, etc.) fired by name. spawnflag
+            // bit0 = "play everywhere" -> full volume; else distance-attenuated.
+            if rec.spawnflags & 1 != 0 {
+                sfx::play_voice(rec.arg0 as u8, 1);
+            } else {
+                sfx::play_voice_world(rec.arg0 as u8, rec.origin);
+            }
         }
         map::LOGIC_ENV_FADE => {
             FADE_ACTIVE = true;
@@ -7424,6 +7434,23 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         let blob = unsafe { streamed_map_bytes(n.max(36)) };
         hud::upload(blob)
     };
+
+    // Per-map dialogue: stream this map's voice pack (chunk 3100 + room) into
+    // the SPU region above the resident core SFX, replacing the previous map's
+    // lines. MAP_BUF is still free here (the world loads below). A missing
+    // chunk clears the dialogue table -> that map is simply silent.
+    {
+        let vc = sfx::VOICE_CHUNK_BASE + launch.room_id as u32;
+        let n = cdstream::load_chunk(vc, unsafe { &mut MAP_BUF })
+            .map(|k| unsafe { cdstream::decompress_in_place(&mut MAP_BUF, k) })
+            .unwrap_or(0);
+        if n >= 8 {
+            let blob = unsafe { streamed_map_bytes(n) };
+            unsafe { sfx::load_dialogue_pack(blob) };
+        } else {
+            unsafe { sfx::load_dialogue_pack(&[]) };
+        }
+    }
 
     draw_next_loading_screen(fb, loading_label, &mut loading_frame, keep_frame);
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
