@@ -212,6 +212,7 @@ pub const LOGIC_CDTRACK: u8 = 30; // CD music trigger: arg0 = track (-1 stop)
 pub const LOGIC_SENTENCE: u8 = 31; // scripted_sentence: arg0 = per-map voice id
 pub const LOGIC_AMBIENT: u8 = 32; // ambient_generic speech: arg0 = per-map voice id
 pub const LOGIC_ENV_SHAKE: u8 = 33; // env_shake: arg0 = amplitude, speed = duration ticks
+pub const LOGIC_WALL_TOGGLE: u8 = 34; // func_wall_toggle: toggle brush draw+collision
 
 pub const USE_OFF: u8 = 0;
 pub const USE_ON: u8 = 1;

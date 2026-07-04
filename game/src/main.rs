@@ -2200,6 +2200,12 @@ unsafe fn logic_use_entity(
             SHAKE_DUR = rec.speed.max(1);
             SHAKE_TICKS = rec.speed.max(1);
         }
+        map::LOGIC_WALL_TOGGLE => {
+            if let Some(ei) = logic_valid_brush(rec.brush, nents) {
+                ENT_ACTIVE[ei] = 1 - ENT_ACTIVE[ei].min(1);
+                PVS_CAM_LEAF = -1; // re-gather the visible-ent list next frame
+            }
+        }
         map::LOGIC_ENV_FADE => {
             FADE_ACTIVE = true;
             FADE_IN = rec.arg1 & 1 != 0;
@@ -2817,6 +2823,14 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                     if (rec.spawnflags & SF_DOOR_START_OPEN) != 0 {
                         LOGIC_STATE[li] = LOGIC_STATE_TOP;
                         ENT_PHASE[ei] = 4096;
+                    }
+                }
+            }
+            map::LOGIC_WALL_TOGGLE => {
+                // spawnflag bit0 = "starts invisible": hide the brush at load.
+                if rec.spawnflags & 1 != 0 {
+                    if let Some(ei) = logic_valid_brush(rec.brush, nents) {
+                        ENT_ACTIVE[ei] = 0;
                     }
                 }
             }

@@ -1971,6 +1971,7 @@ const LOGIC_CDTRACK: u8 = 30; // trigger_cdaudio/target_cdaudio: arg0 = track (-
 const LOGIC_SENTENCE: u8 = 31; // scripted_sentence: arg0 = per-map local voice id
 const LOGIC_AMBIENT: u8 = 32; // ambient_generic (speech): arg0 = per-map local voice id
 const LOGIC_ENV_SHAKE: u8 = 33; // env_shake: arg0 = amplitude, speed = duration ticks
+const LOGIC_WALL_TOGGLE: u8 = 34; // func_wall_toggle: toggles brush draw+collision on fire
 
 /// (map_index, key) -> per-map local voice id, from the VOICES_MANIFEST env file
 /// written by tools/extract_voices.py. key = UPPERCASE sentence name (scripted_
@@ -3063,6 +3064,7 @@ fn collect_logic_entities(
                 LOGIC_AMBIENT
             }
             "env_shake" => LOGIC_ENV_SHAKE,
+            "func_wall_toggle" => LOGIC_WALL_TOGGLE,
             "trigger_changelevel" => LOGIC_TRIGGER_CHANGELEVEL,
             "info_landmark" => LOGIC_INFO_LANDMARK,
             "trigger_counter" => LOGIC_TRIGGER_COUNTER,
@@ -3087,6 +3089,7 @@ fn collect_logic_entities(
         if matches!(
             kind,
             LOGIC_FUNC_DOOR
+                | LOGIC_WALL_TOGGLE
                 | LOGIC_FUNC_BUTTON
                 | LOGIC_FUNC_BREAKABLE
                 | LOGIC_HEALTH_CHARGER
