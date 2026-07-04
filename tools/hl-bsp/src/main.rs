@@ -2762,26 +2762,36 @@ fn collect_entities(
             });
             continue;
         }
-        if cls == "func_door" || cls == "func_button" {
+        if cls == "func_door"
+            || cls == "func_button"
+            || cls == "momentary_door"
+            || cls == "momentary_rot_button"
+        {
+            // momentary_rot_button (valve wheel) renders as a static +use button
+            // (kind 3, no visible move -- it rotates in HL, skipped); its linked
+            // momentary_door slides like a normal targeted door. This is the
+            // pragmatic port of the hold-to-turn valve: use the wheel -> the
+            // door opens (full hold-to-turn fidelity deferred).
+            let is_button = cls == "func_button" || cls == "momentary_rot_button";
             let angle = ent_value(block, "angle")
                 .and_then(|a| a.parse().ok())
                 .unwrap_or(0.0);
             let lip = ent_value(block, "lip")
                 .and_then(|a| a.parse().ok())
-                .unwrap_or(if cls == "func_button" { 4.0 } else { 8.0 });
-            let (dir, dist) = door_move(angle, mins, maxs, lip);
-            let mv = to_world([dir[0] * dist, dir[1] * dist, dir[2] * dist], scale);
-            let leaves = entity_leafs(
-                mins,
-                maxs,
-                origin_hl,
-                Some([dir[0] * dist, dir[1] * dist, dir[2] * dist]),
-                nodes,
-                planes,
-            );
+                .unwrap_or(if is_button { 4.0 } else { 8.0 });
+            let (mv, leaf_move) = if cls == "momentary_rot_button" {
+                ([0, 0, 0], None) // the wheel doesn't translate
+            } else {
+                let (dir, dist) = door_move(angle, mins, maxs, lip);
+                (
+                    to_world([dir[0] * dist, dir[1] * dist, dir[2] * dist], scale),
+                    Some([dir[0] * dist, dir[1] * dist, dir[2] * dist]),
+                )
+            };
+            let leaves = entity_leafs(mins, maxs, origin_hl, leaf_move, nodes, planes);
             out.push(EntRec {
                 submodel: submodel as u16,
-                kind: (if cls == "func_button" { 3 } else { 1 }) | (blend << 8),
+                kind: (if is_button { 3 } else { 1 }) | (blend << 8),
                 origin,
                 mv,
                 center,
@@ -3038,8 +3048,10 @@ fn collect_logic_entities(
     for block in s.split('{') {
         let cls = ent_value(block, "classname").unwrap_or("");
         let kind = match cls {
-            "func_door" | "func_plat" | "func_door_rotating" => LOGIC_FUNC_DOOR,
-            "func_button" => LOGIC_FUNC_BUTTON,
+            "func_door" | "func_plat" | "func_door_rotating" | "momentary_door" => {
+                LOGIC_FUNC_DOOR
+            }
+            "func_button" | "momentary_rot_button" => LOGIC_FUNC_BUTTON,
             "func_breakable" | "func_pushable" => LOGIC_FUNC_BREAKABLE,
             "trigger_teleport" => LOGIC_TRIGGER_TELEPORT,
             "trigger_push" | "func_conveyor" => LOGIC_TRIGGER_PUSH,
