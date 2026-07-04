@@ -2835,6 +2835,36 @@ fn collect_entities(
                 head0,
                 leaves,
             });
+        } else if cls == "func_door_rotating" {
+            // Swinging door. kind 7: mv[0] = signed open angle in q12
+            // (4096 = 360deg); the door state machine drives ENT_PHASE and the
+            // draw rotates about the pivot (origin) by phase*angle. Only Z-axis
+            // (yaw) doors animate; X/Y render static. Collision hull is static
+            // (solid closed, non-solid once open). The LOGIC_FUNC_DOOR rec is
+            // emitted separately by collect_logic_entities.
+            let sf = parse_f32_key(block, "spawnflags", 0.0) as u32;
+            let deg = parse_f32_key(block, "distance", 90.0);
+            let zaxis = sf & (4 | 8) == 0;
+            let mut a = if zaxis {
+                (deg * 4096.0 / 360.0).round() as i32
+            } else {
+                0
+            };
+            if sf & 2 != 0 {
+                a = -a; // SF 2 = reverse swing direction
+            }
+            let leaves = entity_leafs(mins, maxs, origin_hl, None, nodes, planes);
+            out.push(EntRec {
+                submodel: submodel as u16,
+                kind: 7 | (blend << 8),
+                origin,
+                mv: [a, 0, 0],
+                center,
+                r2,
+                head,
+                head0,
+                leaves,
+            });
         } else {
             let leaves = entity_leafs(mins, maxs, origin_hl, None, nodes, planes);
             out.push(EntRec {
@@ -3007,7 +3037,7 @@ fn collect_logic_entities(
     for block in s.split('{') {
         let cls = ent_value(block, "classname").unwrap_or("");
         let kind = match cls {
-            "func_door" | "func_plat" => LOGIC_FUNC_DOOR,
+            "func_door" | "func_plat" | "func_door_rotating" => LOGIC_FUNC_DOOR,
             "func_button" => LOGIC_FUNC_BUTTON,
             "func_breakable" | "func_pushable" => LOGIC_FUNC_BREAKABLE,
             "trigger_teleport" => LOGIC_TRIGGER_TELEPORT,

@@ -1657,8 +1657,8 @@ unsafe fn ent_draw_offset(ei: usize) -> [i32; 3] {
     let e = ENT_CACHE[ei];
     if e.kind == 1 || e.kind == 3 {
         scale12_vec(e.mv, ENT_PHASE[ei])
-    } else if e.kind == 5 {
-        [0; 3] // func_rotating: origin is the spin PIVOT, not a translation
+    } else if e.kind == 5 || e.kind == 7 {
+        [0; 3] // rotating (fan/door): origin is the PIVOT, not a translation
     } else {
         e.origin
     }
@@ -1968,8 +1968,14 @@ unsafe fn logic_fire_targets(
 #[inline]
 unsafe fn logic_phase_step(rec: map::LogicEnt, ei: usize) -> i32 {
     let e = ENT_CACHE[ei];
-    let len = isqrt(e.mv[0] * e.mv[0] + e.mv[1] * e.mv[1] + e.mv[2] * e.mv[2]).max(1);
     let speed = (rec.speed as i32).max(1);
+    if e.kind == 7 {
+        // Rotating door: mv[0] is an ANGLE, not a slide length, so the slide
+        // formula gives nonsense. Open over a fixed ~1s (speed = deg/s scaled
+        // against a nominal 100deg swing).
+        return ((speed * 4096) / (20 * 100)).clamp(150, 1024);
+    }
+    let len = isqrt(e.mv[0] * e.mv[0] + e.mv[1] * e.mv[1] + e.mv[2] * e.mv[2]).max(1);
     ((speed * 4096) / (20 * len)).max(1).min(4096)
 }
 
@@ -3215,7 +3221,7 @@ unsafe fn point_in_ent_solid(m: &Map, p: [i32; 3]) -> bool {
     let mut ei = 0usize;
     while ei < nents {
         let e = ENT_CACHE[ei];
-        if ENT_ACTIVE[ei] != 0 && e.head0 > 0 && e.kind != 2 && e.kind != 4 {
+        if ENT_ACTIVE[ei] != 0 && e.head0 > 0 && e.kind != 2 && e.kind != 4 && !(e.kind == 7 && ENT_PHASE[ei] >= 2048) {
             let off = ent_draw_offset(ei);
             let dx = p[0] - (e.center[0] + off[0]);
             let dy = p[1] - (e.center[1] + off[1]);
@@ -3261,7 +3267,7 @@ unsafe fn refresh_prop_near_ents(m: &Map, pi: usize) {
     let mut ei = 0usize;
     while ei < nents {
         let e = ENT_CACHE[ei];
-        if ENT_ACTIVE[ei] != 0 && e.head0 > 0 && e.kind != 2 && e.kind != 4 {
+        if ENT_ACTIVE[ei] != 0 && e.head0 > 0 && e.kind != 2 && e.kind != 4 && !(e.kind == 7 && ENT_PHASE[ei] >= 2048) {
             let off = ent_draw_offset(ei);
             let r = ENT_RADIUS[ei] + PROP_NEAR_SLACK;
             if (e.center[0] + off[0] - p[0]).abs() <= r
@@ -3298,7 +3304,7 @@ fn prop_floor_y(m: &Map, pi: usize, pos: [i32; 3]) -> Option<i32> {
             let mut ei = 0usize;
             while ei < nents {
                 let e = ENT_CACHE[ei];
-                if ENT_ACTIVE[ei] != 0 && e.head0 > 0 && e.kind != 2 && e.kind != 4 {
+                if ENT_ACTIVE[ei] != 0 && e.head0 > 0 && e.kind != 2 && e.kind != 4 && !(e.kind == 7 && ENT_PHASE[ei] >= 2048) {
                     let off = ent_draw_offset(ei);
                     let r = ENT_RADIUS[ei];
                     let cx = e.center[0] + off[0];
@@ -7917,7 +7923,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     let e = ENT_CACHE[ei];
                     let off = ent_draw_offset(ei);
                     // kind 2 = nonsolid visual, kind 4 = ladder volume (no hull).
-                    if e.kind != 2 && e.kind != 4 && nmov < movers.len() {
+                    if e.kind != 2 && e.kind != 4 && !(e.kind == 7 && ENT_PHASE[ei] >= 2048) && nmov < movers.len() {
                         movers[nmov] = phys::Mover {
                             head: e.head,
                             head0: e.head0,
@@ -8658,13 +8664,15 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     }
                 }
                 model_draws = model_draws.saturating_add(1);
-                if e.kind == 5 && e.mv[0] != 0 {
-                    // func_rotating (fans): spin about the ent's authored
-                    // pivot. angle = frame x angular speed (q12/tick), no
-                    // per-ent state. Faces skip the plane/bounds gates --
-                    // their normals rotate; the ent sphere cull above stands.
-                    let ang =
-                        ((sim_frame_no as i32).wrapping_mul(e.mv[0]) as u16) & 0xFFF;
+                // Rotating brushes (fans kind 5, swinging doors kind 7) draw
+                // rotated about their pivot. Fan angle = frame*speed (continuous);
+                // door angle = ENT_PHASE * open-angle (state-machine driven).
+                if (e.kind == 5 || e.kind == 7) && e.mv[0] != 0 {
+                    let ang = if e.kind == 5 {
+                        ((sim_frame_no as i32).wrapping_mul(e.mv[0]) as u16) & 0xFFF
+                    } else {
+                        (((ENT_PHASE[ei] * e.mv[0]) >> 12) as u16) & 0xFFF
+                    };
                     let mr = rot.mul(&Mat3I16::rotate_y(ang >> 4));
                     scene::load_rotation(&mr);
                     let o = e.origin;
