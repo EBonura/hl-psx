@@ -1139,6 +1139,59 @@ The audit's REMAINING high-value gaps (ranked, for the next pass):
 DEAD (safe to ignore): info_node/path_corner/path_track (consumed), infodecal
 (baked), trigger_autosave/camera/transition (no-op without save-load).
 
+## M38 -- the M37 roadmap's 5 remaining items (4 done, 1 partial)
+
+Took on all 5 audit gaps. Ranked by what shipped:
+
+- **multisource + env_global** (item 1, DONE): logic-only master/AND-lock +
+  persistent cross-map global state. `GLOBAL_HASH/GLOBAL_ON[32]` (FNV-1a-16 key,
+  matched cook<->runtime); LOGIC_MULTISOURCE(35) counts its inputs +
+  fires its target once when `count >= arg0 || global_is_on(arg1)`;
+  LOGIC_ENV_GLOBAL(36) sets/toggles a global then re-checks all multisources.
+  Cook: `master` unhandled before; multisource input count = the number of ents
+  targeting it. Verified the Blast Pit power chain hashes match cross-map
+  (c1a4f env_global <-> c1a4b multisource, hash 1698). GLOBAL_COUNT resets on a
+  fresh launch (not a changelevel carry).
+- **momentary valve doors** (item 2, DONE): momentary_rot_button ->
+  func_button (kind 3 +use) and momentary_door -> func_door in the cook, so the
+  3 SOLE-opener valve doors (On A Rail c2a1b, c2a3a cage, c1a4g pipe) now open
+  via +use instead of hard-blocking. ponytail: MVP treats the wheel as a use
+  button + targeted door, not a hold-to-turn accumulate-0..1 rig.
+- **func_trackchange** (item 3, DONE, cook-only): On A Rail train maps
+  (c2a1/c2a2/c2a2b1) baked a TRUNCATED path chain -- the path_track chain
+  dead-ends at the junction platform (which in HL rotates to splice the train
+  onto a 2nd chain), so the driven train just stopped (hard block).
+  `collect_tram` now stitches through the junction: when a ridden segment meets
+  a func_trackchange node (at the segment START -- train parked on the platform,
+  c2a1 -- OR its END -- train drives in, c2a2), continue onto the platform's
+  other chain (toptrack<->bottomtrack). c2a1 3->15 waypts, c2a2 6->13, c2a2b1
+  3->22; c0a0 intro tram + c2a2a (no junction) unchanged. ponytail: skips the
+  rotate-the-platform puzzle + lever -- the train drives straight through to the
+  exit. Faithful routing needs the full runtime trackchange rig.
+- **env_explosion visual** (item 4, PARTIAL): explosions had NO visual (the
+  audit's top cosmetic gap). `explode()` + LOGIC_ENV_EXPLOSION(37) now queue a
+  world point; the render loop projects it and spawns a big additive-orange
+  IMPACT_PARTICLES burst (cnt scales with magnitude). Verified: 260 orange
+  particle px at the blast. This is a cheap stand-in for the .spr explosion
+  sprite. The FULL sprite/beam billboard renderer (env_sprite 969, env_beam
+  677, env_glow 287, env_spark, env_laser) is STILL the biggest single
+  new-renderer investment -- needs `.spr` decode + a camera-facing billboard
+  quad pipeline + a sprite VRAM atlas. Deferred as the largest residual.
+- **func_tank** (item 5, DONE): the func_tank family cooks as LOGIC_TANK(38)
+  (arg0 = per-shot damage, speed = fire cooldown from firerate). The brush
+  already renders + collides as a kind-0 ent, so the +use crosshair ray acquires
+  it like a func_button. Mount = look + use; while mounted the player is rooted
+  (aim free) and R2 auto-fires hitscan from the barrel, rate-limited; any use
+  press dismounts; MOUNTED_TANK never carries across maps. Verified on c2a2e: map
+  renders clean + a forced-mount smoke fired hitscan on the cooldown cadence.
+  ponytail: barrel doesn't visually track the aim; laser/rocket/mortar variants
+  degrade to a bullet tank.
+
+Logic kinds now through 38. Ent kinds unchanged (0-7). Remaining from the audit:
+the FULL sprite/beam renderer (above), func_monsterclip (cheap AI win, not done),
+traincontrols (rare). RAM: func_tank added ~6 B of statics; no roster/pool
+change (cook-only trackchange, no new model types).
+
 ## Next (pick per value)
 
 - **PERF (researched, ranked -- the emit wall)**: 1) cook-time PRE-BAKED GPU
