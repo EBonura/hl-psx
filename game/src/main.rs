@@ -1456,6 +1456,9 @@ static mut LOGIC_TRAM_RIDING: u8 = 0;
 static mut SHAKE_TICKS: u16 = 0;
 static mut SHAKE_DUR: u16 = 1;
 static mut SHAKE_AMP: u16 = 0;
+// ---- func_tank: the mountable gun the player is currently operating ----
+static mut MOUNTED_TANK: i32 = -1; // logic index of the mounted tank, or -1
+static mut TANK_FIRE_CD: u16 = 0; // ticks until the tank can fire again
 // ---- Screen titles (env_message / chapter cards) + screen fades (env_fade) ----
 static mut TITLE_TEXT_ID: u16 = 0; // logic-names id of the text; 0 = none
 static mut TITLE_T: u16 = 0;
@@ -2642,6 +2645,7 @@ unsafe fn logic_try_use(
                                 | map::LOGIC_FUNC_DOOR
                                 | map::LOGIC_HEALTH_CHARGER
                                 | map::LOGIC_HEV_CHARGER
+                                | map::LOGIC_TANK
                         )
                     {
                         best = li;
@@ -2668,6 +2672,7 @@ unsafe fn logic_try_use(
                 || rec.kind == map::LOGIC_FUNC_DOOR
                 || rec.kind == map::LOGIC_HEALTH_CHARGER
                 || rec.kind == map::LOGIC_HEV_CHARGER
+                || rec.kind == map::LOGIC_TANK
             {
                 let c = logic_center(rec);
                 let vz = dot12(rot.m[2], c) + base_t[2];
@@ -2722,6 +2727,12 @@ unsafe fn logic_try_use(
                     LOGIC_COUNTER[best] -= give as i16;
                     sfx::play(sfx::MEDSHOT);
                 }
+            }
+            // Mount the tank the player is looking at. Firing + dismount are
+            // handled in the main loop (dismount = any use press while mounted).
+            map::LOGIC_TANK => {
+                MOUNTED_TANK = best as i32;
+                sfx::play(sfx::BUTTON);
             }
             _ => logic_use_entity(m, nlogic, nents, best, map::USE_TOGGLE, now, 0),
         }
@@ -7743,6 +7754,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     let mut health: u16 = launch.health;
     let mut armor: u16 = launch.armor.min(HEV_MAX_ARMOR);
     let mut death_ticks: u8 = 0; // >0 while dead; respawns at 0
+    unsafe {
+        MOUNTED_TANK = -1; // never carry a mount across maps
+        TANK_FIRE_CD = 0;
+    }
     let mut suit_equipped = launch.suit_equipped
         // Standalone/menu convenience only: a changelevel arrival (preserve_view)
         // carries the real suit state, so a playthrough picks the suit up in
@@ -7957,6 +7972,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 strafe = 0;
                 turn = 0;
                 look = 0;
+            }
+            // Mounted on a tank: rooted in place, but still free to aim + fire.
+            if unsafe { MOUNTED_TANK } >= 0 {
+                fwd = 0;
+                strafe = 0;
             }
             yaw = (((yaw as i32) + (turn * YAW_RATE) / 128) & 0xFFF) as u16;
             pitch = (pitch + ((look * PITCH_RATE) / 128) as i16).clamp(-PITCH_MAX, PITCH_MAX);
@@ -8179,9 +8199,14 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 LOGIC_PLAYER_ARMOR = armor;
                 LOGIC_PLAYER_CLIP_AMMO = weapon.clip_display();
                 LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve_display();
-                if want_use {
+                if want_use && MOUNTED_TANK >= 0 {
+                    // Any use press while mounted dismounts (works even if the
+                    // player has swung the view off the tank brush).
+                    MOUNTED_TANK = -1;
+                    sfx::play(sfx::BUTTON);
+                } else if want_use {
                     // Standing on the tracktrain + use = drive it (On A Rail);
-                    // otherwise aim-use doors/buttons/chargers.
+                    // otherwise aim-use doors/buttons/chargers/tanks.
                     let train_pos = tram_path_pos(&m, tram_seg, tram_seg_dist);
                     if m.tram_submodel > 0 && tram_should_carry_player(player.pos, train_pos) {
                         TRACKTRAIN_CMD_ACTIVE = 1;
@@ -8241,7 +8266,33 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             if want_reload {
                 let _ = weapon.start_reload();
             }
-            if want_fire && weapon.try_fire() {
+            if unsafe { MOUNTED_TANK } >= 0 {
+                // Operating a func_tank: auto-fire hitscan from the gun barrel
+                // along the view, rate-limited by the tank's cooldown. ponytail:
+                // the barrel does not visually track the aim (brush stays static).
+                unsafe {
+                    if TANK_FIRE_CD > 0 {
+                        TANK_FIRE_CD -= 1;
+                    }
+                    if fire_held && TANK_FIRE_CD == 0 {
+                        let trec = m.logic(MOUNTED_TANK as usize);
+                        let barrel = logic_center(trec);
+                        let fire_rot = view_rotation(yaw, pitch);
+                        let base_t = [
+                            -dot12(fire_rot.m[0], barrel),
+                            -dot12(fire_rot.m[1], barrel),
+                            -dot12(fire_rot.m[2], barrel),
+                        ];
+                        fire_hitscan(
+                            &m, movers, barrel, &fire_rot, base_t,
+                            trec.arg0 as u8, 8192, 2, 2, 0, 0,
+                        );
+                        sfx::play(sfx::MP5); // a mounted machine gun
+                        TANK_FIRE_CD = trec.speed.max(2);
+                        recoil = 8;
+                    }
+                }
+            } else if want_fire && weapon.try_fire() {
                 recoil = 16;
                 let fire_rot = view_rotation(yaw, pitch);
                 let fire_base_t = [

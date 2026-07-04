@@ -1975,6 +1975,7 @@ const LOGIC_WALL_TOGGLE: u8 = 34; // func_wall_toggle: toggles brush draw+collis
 const LOGIC_MULTISOURCE: u8 = 35; // AND-gate: arg0 = input count, arg1 = globalstate hash
 const LOGIC_ENV_GLOBAL: u8 = 36; // sets a persistent global: arg0 = hash, arg1 = triggermode
 const LOGIC_ENV_EXPLOSION: u8 = 37; // scripted explosion FX at origin: arg0 = magnitude
+const LOGIC_TANK: u8 = 38; // func_tank mountable gun: arg0 = bullet damage, speed = fire cooldown ticks
 
 /// FNV-1a 16-bit hash of a global-state name -- a stable cross-map key so the
 /// runtime can match an env_global's global to a multisource's globalstate
@@ -3098,6 +3099,11 @@ fn collect_logic_entities(
             "multisource" => LOGIC_MULTISOURCE,
             "env_global" => LOGIC_ENV_GLOBAL,
             "env_explosion" => LOGIC_ENV_EXPLOSION,
+            // Mountable guns: the whole func_tank family renders as its brush and
+            // is +use-mounted at runtime (aim with the view, fire hitscan). Laser/
+            // rocket/mortar variants degrade to a bullet tank (no special projectile).
+            "func_tank" | "func_tank2" | "func_tank3" | "func_tanklaser"
+            | "func_tankrocket" | "func_tankmortar" => LOGIC_TANK,
             "trigger_changelevel" => LOGIC_TRIGGER_CHANGELEVEL,
             "info_landmark" => LOGIC_INFO_LANDMARK,
             "trigger_counter" => LOGIC_TRIGGER_COUNTER,
@@ -3127,6 +3133,7 @@ fn collect_logic_entities(
                 | LOGIC_FUNC_BREAKABLE
                 | LOGIC_HEALTH_CHARGER
                 | LOGIC_HEV_CHARGER
+                | LOGIC_TANK
         ) && brush == LOGIC_BRUSH_NONE
         {
             continue;
@@ -3157,6 +3164,10 @@ fn collect_logic_entities(
             hl_yaw_to_world_q12(ent_yaw_degrees(block).unwrap_or(0.0)) as u16
         } else if kind == LOGIC_ENV_SHAKE {
             seconds_to_ticks_u16(parse_f32_key(block, "duration", 1.0))
+        } else if kind == LOGIC_TANK {
+            // firerate = shots/sec -> cooldown ticks at the 20Hz sim (min 2).
+            let rate = parse_f32_key(block, "firerate", 1.0).max(0.1);
+            (20.0 / rate).round().clamp(2.0, 60.0) as u16
         } else if kind == LOGIC_ENV_MESSAGE {
             let key = ent_value(block, "message").unwrap_or("").to_uppercase();
             titles.get(&key).map(|t| t.hold_ticks).unwrap_or(60)
@@ -3202,6 +3213,9 @@ fn collect_logic_entities(
                     .clamp(0.0, u16::MAX as f32) as u16,
                 LOGIC_HEALTH_CHARGER => 50, // HL default juice
                 LOGIC_HEV_CHARGER => 75,
+                // Per-shot damage. HL varies by the "bullet" enum; the common
+                // player tanks are 12mm (~20). Fixed default is close enough.
+                LOGIC_TANK => 20,
                 LOGIC_SCRIPTED => names.id(ent_value(block, "m_iszEntity")),
                 LOGIC_ENV_MESSAGE => {
                     let key = ent_value(block, "message").unwrap_or("").to_uppercase();

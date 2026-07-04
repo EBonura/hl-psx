@@ -216,6 +216,7 @@ pub const LOGIC_WALL_TOGGLE: u8 = 34; // func_wall_toggle: toggle brush draw+col
 pub const LOGIC_MULTISOURCE: u8 = 35; // AND-gate: arg0 = input count, arg1 = globalstate hash
 pub const LOGIC_ENV_GLOBAL: u8 = 36; // sets a persistent global: arg0 = hash, arg1 = triggermode
 pub const LOGIC_ENV_EXPLOSION: u8 = 37; // scripted explosion FX: arg0 = magnitude
+pub const LOGIC_TANK: u8 = 38; // func_tank mountable gun: arg0 = damage, speed = fire cooldown
 
 pub const USE_OFF: u8 = 0;
 pub const USE_ON: u8 = 1;
