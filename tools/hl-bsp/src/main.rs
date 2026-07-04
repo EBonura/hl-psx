@@ -1972,6 +1972,23 @@ const LOGIC_SENTENCE: u8 = 31; // scripted_sentence: arg0 = per-map local voice 
 const LOGIC_AMBIENT: u8 = 32; // ambient_generic (speech): arg0 = per-map local voice id
 const LOGIC_ENV_SHAKE: u8 = 33; // env_shake: arg0 = amplitude, speed = duration ticks
 const LOGIC_WALL_TOGGLE: u8 = 34; // func_wall_toggle: toggles brush draw+collision on fire
+const LOGIC_MULTISOURCE: u8 = 35; // AND-gate: arg0 = input count, arg1 = globalstate hash
+const LOGIC_ENV_GLOBAL: u8 = 36; // sets a persistent global: arg0 = hash, arg1 = triggermode
+
+/// FNV-1a 16-bit hash of a global-state name -- a stable cross-map key so the
+/// runtime can match an env_global's global to a multisource's globalstate
+/// without interning names across maps. Never 0 (0 = "no globalstate").
+fn global_hash(name: &str) -> u16 {
+    let n = name.trim().to_ascii_lowercase();
+    if n.is_empty() {
+        return 0;
+    }
+    let mut h: u32 = 0x811c_9dc5;
+    for b in n.bytes() {
+        h = (h ^ b as u32).wrapping_mul(0x0100_0193);
+    }
+    ((h ^ (h >> 16)) as u16).max(1)
+}
 
 /// (map_index, key) -> per-map local voice id, from the VOICES_MANIFEST env file
 /// written by tools/extract_voices.py. key = UPPERCASE sentence name (scripted_
@@ -3077,6 +3094,8 @@ fn collect_logic_entities(
             }
             "env_shake" => LOGIC_ENV_SHAKE,
             "func_wall_toggle" => LOGIC_WALL_TOGGLE,
+            "multisource" => LOGIC_MULTISOURCE,
+            "env_global" => LOGIC_ENV_GLOBAL,
             "trigger_changelevel" => LOGIC_TRIGGER_CHANGELEVEL,
             "info_landmark" => LOGIC_INFO_LANDMARK,
             "trigger_counter" => LOGIC_TRIGGER_COUNTER,
@@ -3211,6 +3230,20 @@ fn collect_logic_entities(
                 LOGIC_ENV_SHAKE => (parse_f32_key(block, "amplitude", 4.0) / scale)
                     .round()
                     .clamp(1.0, 64.0) as u16,
+                LOGIC_MULTISOURCE => {
+                    // input count = entities that fire this multisource
+                    // (their target == its targetname).
+                    let mname = ent_value(block, "targetname").unwrap_or("");
+                    if mname.is_empty() {
+                        0
+                    } else {
+                        s.split('{')
+                            .filter(|b| ent_value(b, "target") == Some(mname))
+                            .count()
+                            .min(255) as u16
+                    }
+                }
+                LOGIC_ENV_GLOBAL => global_hash(ent_value(block, "globalstate").unwrap_or("")),
                 LOGIC_MAP_FLAGS => {
                     let key = ent_value(block, "chaptertitle").unwrap_or("").to_uppercase();
                     match titles.get(&key) {
@@ -3246,6 +3279,10 @@ fn collect_logic_entities(
                     .unwrap_or(false);
                 (spawnflags as u16 & 1) | ((white as u16) << 1)
             }
+            LOGIC_MULTISOURCE => global_hash(ent_value(block, "globalstate").unwrap_or("")),
+            LOGIC_ENV_GLOBAL => parse_f32_key(block, "triggermode", 2.0)
+                .round()
+                .clamp(0.0, 3.0) as u16,
             // bit0 startdark, bit1 gametitle, bits 8..13 = CD music track
             LOGIC_MAP_FLAGS => {
                 let dark = parse_f32_key(block, "startdark", 0.0) as u16 != 0;

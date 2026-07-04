@@ -1496,6 +1496,37 @@ static mut CARRY_CLIPS: [u16; N_WEAPONS] = [0; N_WEAPONS];
 static mut CARRY_AMMO: [u16; N_AMMO] = [0; N_AMMO];
 static mut CARRY_CURRENT: u8 = 0;
 
+// Persistent global state (env_global / multisource globalstate), keyed by the
+// cook's global-name hash. Carried across changelevels like the arsenal (reset
+// only on a fresh menu launch) so cross-map gates work (Blast Pit c1a4fpower).
+static mut GLOBAL_HASH: [u16; 32] = [0; 32];
+static mut GLOBAL_ON: [bool; 32] = [false; 32];
+static mut GLOBAL_COUNT: usize = 0;
+
+unsafe fn set_global(hash: u16, on: bool) {
+    if hash == 0 {
+        return;
+    }
+    for i in 0..GLOBAL_COUNT {
+        if GLOBAL_HASH[i] == hash {
+            GLOBAL_ON[i] = on;
+            return;
+        }
+    }
+    if GLOBAL_COUNT < GLOBAL_HASH.len() {
+        GLOBAL_HASH[GLOBAL_COUNT] = hash;
+        GLOBAL_ON[GLOBAL_COUNT] = on;
+        GLOBAL_COUNT += 1;
+    }
+}
+
+unsafe fn global_is_on(hash: u16) -> bool {
+    if hash == 0 {
+        return false;
+    }
+    (0..GLOBAL_COUNT).any(|i| GLOBAL_HASH[i] == hash && GLOBAL_ON[i])
+}
+
 // MAPLIST index of c1a0d, the map that holds the one HEV suit pickup. Rooms
 // AFTER it assume you already have the suit; this map and earlier expose the
 // item_suit. Keep in sync with the Makefile MAPLIST / menu::MAPS.
@@ -1941,6 +1972,40 @@ unsafe fn logic_activate_door_linked(
     }
 }
 
+/// Fire a multisource's target once it is satisfied (all inputs fired, or its
+/// globalstate global is set). LOGIC_STATE_TOP marks it already-fired.
+unsafe fn logic_multisource_maybe_fire(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    li: usize,
+    rec: map::LogicEnt,
+    now: u16,
+) {
+    if LOGIC_STATE[li] == LOGIC_STATE_TOP {
+        return;
+    }
+    let inputs_done = rec.arg0 > 0 && LOGIC_COUNTER[li] >= rec.arg0 as i16;
+    let global_done = global_is_on(rec.arg1);
+    if inputs_done || global_done {
+        LOGIC_STATE[li] = LOGIC_STATE_TOP;
+        logic_fire_targets(m, nlogic, nents, rec.target, map::USE_TOGGLE, now, 0);
+    }
+}
+
+/// Re-evaluate every multisource (called when a global changes and once at map
+/// load, so a globalstate satisfied on a previous map fires its target here).
+unsafe fn logic_check_multisources(m: &Map, nlogic: usize, nents: usize, now: u16) {
+    let mut li = 0usize;
+    while li < nlogic {
+        if LOGIC_KIND[li] == map::LOGIC_MULTISOURCE {
+            let rec = m.logic(li);
+            logic_multisource_maybe_fire(m, nlogic, nents, li, rec, now);
+        }
+        li += 1;
+    }
+}
+
 unsafe fn logic_fire_targets(
     m: &Map,
     nlogic: usize,
@@ -2205,6 +2270,23 @@ unsafe fn logic_use_entity(
                 ENT_ACTIVE[ei] = 1 - ENT_ACTIVE[ei].min(1);
                 PVS_CAM_LEAF = -1; // re-gather the visible-ent list next frame
             }
+        }
+        map::LOGIC_ENV_GLOBAL => {
+            // Set the persistent global. triggermode: 0 off, 1 on, 2 toggle.
+            let on = match rec.arg1 {
+                0 => false,
+                1 => true,
+                _ => !global_is_on(rec.arg0),
+            };
+            set_global(rec.arg0, on);
+            // Re-evaluate multisources -- one may now be satisfied.
+            logic_check_multisources(m, nlogic, nents, now);
+        }
+        map::LOGIC_MULTISOURCE => {
+            // An input fired us. Count it; when all inputs (arg0) have fired, or
+            // our globalstate global is set, fire the target ONCE.
+            LOGIC_COUNTER[li] = LOGIC_COUNTER[li].saturating_add(1);
+            logic_multisource_maybe_fire(m, nlogic, nents, li, rec, now);
         }
         map::LOGIC_ENV_FADE => {
             FADE_ACTIVE = true;
@@ -7559,6 +7641,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             }
             li += 1;
         }
+        // A multisource whose globalstate was satisfied on a previous map fires
+        // its target here (Blast Pit: c1a4b's mspower on c1a4fpower).
+        logic_check_multisources(&m, nlogic, nents, 0);
     }
     let nv = if m.n_verts < MAX_VERTS {
         m.n_verts
@@ -7619,6 +7704,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             }
         } else {
             CARRY_VALID = false;
+            GLOBAL_COUNT = 0; // fresh menu launch: clear cross-map global state
             phys::set_longjump(false); // fresh start: no module yet
             if DEBUG_ALL_WEAPONS {
                 weapon.give_all_debug();

@@ -213,6 +213,8 @@ pub const LOGIC_SENTENCE: u8 = 31; // scripted_sentence: arg0 = per-map voice id
 pub const LOGIC_AMBIENT: u8 = 32; // ambient_generic speech: arg0 = per-map voice id
 pub const LOGIC_ENV_SHAKE: u8 = 33; // env_shake: arg0 = amplitude, speed = duration ticks
 pub const LOGIC_WALL_TOGGLE: u8 = 34; // func_wall_toggle: toggle brush draw+collision
+pub const LOGIC_MULTISOURCE: u8 = 35; // AND-gate: arg0 = input count, arg1 = globalstate hash
+pub const LOGIC_ENV_GLOBAL: u8 = 36; // sets a persistent global: arg0 = hash, arg1 = triggermode
 
 pub const USE_OFF: u8 = 0;
 pub const USE_ON: u8 = 1;
