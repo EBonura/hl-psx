@@ -442,6 +442,22 @@ static mut PRIMITIVE_PACKETS: PrimitivePacketScratch<MAX_RENDER_PACKETS> =
     PrimitivePacketScratch::ZERO;
 static mut HUD_PRIMS: [QuadTexturedMaterial; hud::DRAW_CAP] = [hud::EMPTY_QUAD; hud::DRAW_CAP];
 static mut IMPACT_PARTICLES: ParticlePool<MAX_IMPACT_PARTICLES> = ParticlePool::new();
+
+// Explosion visual FX: explode()/env_explosion queue a world point here; the
+// render loop projects it and spawns a big bright burst (explosions had no
+// visual before). Drained every frame.
+const MAX_PENDING_EXPLO: usize = 8;
+static mut PENDING_EXPLO: [[i32; 3]; MAX_PENDING_EXPLO] = [[0; 3]; MAX_PENDING_EXPLO];
+static mut PENDING_EXPLO_MAG: [u8; MAX_PENDING_EXPLO] = [0; MAX_PENDING_EXPLO];
+static mut PENDING_EXPLO_N: usize = 0;
+
+unsafe fn queue_explosion_fx(pos: [i32; 3], mag: u8) {
+    if PENDING_EXPLO_N < MAX_PENDING_EXPLO {
+        PENDING_EXPLO[PENDING_EXPLO_N] = pos;
+        PENDING_EXPLO_MAG[PENDING_EXPLO_N] = mag;
+        PENDING_EXPLO_N += 1;
+    }
+}
 static mut IMPACT_RNG: LcgRng = LcgRng::new(0x484c_5058);
 static mut IMPACT_PARTICLE_RECTS: [RectFlat; MAX_IMPACT_PARTICLES] =
     [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_IMPACT_PARTICLES];
@@ -2287,6 +2303,11 @@ unsafe fn logic_use_entity(
             // our globalstate global is set, fire the target ONCE.
             LOGIC_COUNTER[li] = LOGIC_COUNTER[li].saturating_add(1);
             logic_multisource_maybe_fire(m, nlogic, nents, li, rec, now);
+        }
+        map::LOGIC_ENV_EXPLOSION => {
+            // Scripted explosion: FX + sound only (real damage is trigger_hurt).
+            queue_explosion_fx(rec.origin, rec.arg0.min(255) as u8);
+            sfx::play_world(sfx::EXPLODE, rec.origin);
         }
         map::LOGIC_ENV_FADE => {
             FADE_ACTIVE = true;
@@ -5634,6 +5655,7 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32) {
         return;
     }
     sfx::play_world(sfx::EXPLODE, pos);
+    queue_explosion_fx(pos, (radius / 3).clamp(20, 255) as u8);
     // Blast breakables in range (crates, boards, grates).
     let nents = m.n_ents;
     let mut ei = 0usize;
@@ -8326,6 +8348,25 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         ];
         scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
         unsafe { set_view_fix(&rot, base_t) };
+
+        // Drain queued explosions: project each and spawn a big bright burst
+        // (weapon blasts + scripted env_explosion; they had no visual before).
+        unsafe {
+            for i in 0..PENDING_EXPLO_N {
+                if let Some((sx, sy, _)) = project_world_point(PENDING_EXPLO[i], &rot, base_t) {
+                    let cnt = (PENDING_EXPLO_MAG[i] as usize / 5).clamp(14, 44);
+                    IMPACT_PARTICLES.spawn_burst(
+                        &mut IMPACT_RNG,
+                        (sx, sy),
+                        (250, 170, 40),
+                        cnt,
+                        96,
+                        20,
+                    );
+                }
+            }
+            PENDING_EXPLO_N = 0;
+        }
 
         frame_no = frame_no.wrapping_add(1);
         if frame_no == 0 {

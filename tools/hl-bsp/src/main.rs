@@ -1974,6 +1974,7 @@ const LOGIC_ENV_SHAKE: u8 = 33; // env_shake: arg0 = amplitude, speed = duration
 const LOGIC_WALL_TOGGLE: u8 = 34; // func_wall_toggle: toggles brush draw+collision on fire
 const LOGIC_MULTISOURCE: u8 = 35; // AND-gate: arg0 = input count, arg1 = globalstate hash
 const LOGIC_ENV_GLOBAL: u8 = 36; // sets a persistent global: arg0 = hash, arg1 = triggermode
+const LOGIC_ENV_EXPLOSION: u8 = 37; // scripted explosion FX at origin: arg0 = magnitude
 
 /// FNV-1a 16-bit hash of a global-state name -- a stable cross-map key so the
 /// runtime can match an env_global's global to a multisource's globalstate
@@ -3096,6 +3097,7 @@ fn collect_logic_entities(
             "func_wall_toggle" => LOGIC_WALL_TOGGLE,
             "multisource" => LOGIC_MULTISOURCE,
             "env_global" => LOGIC_ENV_GLOBAL,
+            "env_explosion" => LOGIC_ENV_EXPLOSION,
             "trigger_changelevel" => LOGIC_TRIGGER_CHANGELEVEL,
             "info_landmark" => LOGIC_INFO_LANDMARK,
             "trigger_counter" => LOGIC_TRIGGER_COUNTER,
@@ -3244,6 +3246,9 @@ fn collect_logic_entities(
                     }
                 }
                 LOGIC_ENV_GLOBAL => global_hash(ent_value(block, "globalstate").unwrap_or("")),
+                LOGIC_ENV_EXPLOSION => parse_f32_key(block, "iMagnitude", 100.0)
+                    .round()
+                    .clamp(1.0, 255.0) as u16,
                 LOGIC_MAP_FLAGS => {
                     let key = ent_value(block, "chaptertitle").unwrap_or("").to_uppercase();
                     match titles.get(&key) {
