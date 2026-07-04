@@ -1100,6 +1100,45 @@ Two playtest rounds:
   `speaker` PA-announcer presets (15 maps) are a separate sentence-group system,
   still absent.
 
+## M37 -- entity-coverage audit + 3 missing systems (DONE, verified)
+
+Full entity-classname audit (all 96 maps vs the cook's handled set) drove this.
+Implemented, ranked by value:
+- **func_door_rotating** (220 doors / 51 maps -- the biggest functional gap):
+  swinging doors rendered STATIC and never opened. New ent kind 7: the door
+  state machine drives ENT_PHASE, the draw rotates the brush about its pivot by
+  phase*open_angle (reuses the func_rotating kind-5 fan path); mv[0] = signed
+  open angle q12, logic_phase_step special-cased (mv is an angle, not a slide).
+  Collision hull static: solid closed, dropped once open (phase>=2048) so you
+  can walk through. Verified: ENT_PHASE cycles 0->4096 on trigger.
+- **func_wall_toggle** (61 / 22 maps): removable barriers. kind-0 static +
+  LOGIC_WALL_TOGGLE(34); fire flips ENT_ACTIVE (draw+collision) and forces a PVS
+  re-gather so a re-shown wall draws that frame; SF bit0 = starts invisible.
+- **env_shake** (186 / 44 maps): LOGIC_ENV_SHAKE(33). Decaying view jitter
+  (yaw/pitch/eye by IMPACT_RNG, amp*remaining/duration) on scripted quakes.
+  Verified: forced-shake frames differ 73k px.
+
+The audit's REMAINING high-value gaps (ranked, for the next pass):
+1. **multisource** (115/40, "the sleeper") + **env_global** (16/9): master/AND
+   lock + persistent cross-map state (Blast Pit power). Logic-only. ~90
+   entities are master-gated -- currently fire freely (puzzle-skip, rarely a
+   hard block). `master` is only skipped as a common key today.
+2. **momentary_rot_button + momentary_door** (10+9): valve-wheel doors -- the
+   audit VERIFIED 3 are the SOLE opener (On A Rail c2a1b, c2a3a cage, c1a4g);
+   hard progression blocks. Needs a hold-to-turn input rig (accumulate 0..1,
+   door lerps). CLAUDE.md's old "open via targets in practice" is WRONG here.
+3. **func_trackchange/traincontrols** (On A Rail junction routing) -- blocks
+   c2a1/c2a2 train navigation.
+4. **Sprite/beam renderer** unlocks the whole cosmetic FX tier at once:
+   env_sprite (969), env_beam (677), env_glow (287), env_explosion (242),
+   env_spark (181), env_laser (77). Needs a camera-facing billboard quad +
+   `.spr` decode (biggest new-renderer investment; explosions have NO visual
+   today). env_glow/explosion/spark fall out of the same billboard.
+5. **func_tank** family (16+, mountable turrets) -- reuse hitscan + the +use ray.
+6. **func_monsterclip** (147/23): cheap AI win (block NPCs, pass the player).
+DEAD (safe to ignore): info_node/path_corner/path_track (consumed), infodecal
+(baked), trigger_autosave/camera/transition (no-op without save-load).
+
 ## Next (pick per value)
 
 - **PERF (researched, ranked -- the emit wall)**: 1) cook-time PRE-BAKED GPU
