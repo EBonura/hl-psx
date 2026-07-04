@@ -24,6 +24,7 @@ mod model;
 mod phys;
 mod render;
 mod sfx;
+mod sprite;
 mod telemetry;
 mod vram;
 
@@ -198,6 +199,8 @@ const PROP_TYPE_SITTING_SCI: u8 = 25; // seated pose, keeps its authored chair h
 const PROP_DEAD_BIT: u16 = 0x8000; // cook flag: spawn as a corpse (death pose, 0 hp)
 const PROP_DORMANT_BIT: u16 = 0x4000; // cook flag: monstermaker stock, inactive until fired
 const PROP_TYPE_MASK: u16 = 0x3FFF;
+const SPRITE_PROP_BIT: u16 = 0x2000; // prop type bit: this is a sprite billboard, not a model
+const SPRITE_PROP_ID_MASK: u16 = 0x1FFF; // low bits = sprite local id (0..MAX_SPRITES)
 const PROP_TYPE_WEAPON_FIRST: u8 = 26; // weapon pickups 26..=39 (index - 26 = weapon id)
 const PROP_TYPE_WEAPON_LAST: u8 = 39;
 const PROP_TYPE_AMMO_FIRST: u8 = 40; // ammo pickups 40..=47
@@ -4576,6 +4579,13 @@ unsafe fn init_prop_state(m: &Map) {
     let mut pi = 0usize;
     while pi < nprops {
         let (ty, org, yaw, leaf) = m.prop(pi);
+        // Sprite billboards (env_sprite/glow) ride the prop table with bit 0x2000
+        // set; they are drawn in their own pass (draw_billboard), not as models.
+        if ty & SPRITE_PROP_BIT != 0 {
+            PROP_ACTIVE[pi] = 0;
+            pi += 1;
+            continue;
+        }
         let dead = ty & PROP_DEAD_BIT != 0; // authored corpse: death pose, no AI
         let dormant = ty & PROP_DORMANT_BIT != 0; // monstermaker stock
         let kind = (ty & PROP_TYPE_MASK) as u8;
@@ -7146,6 +7156,73 @@ unsafe fn draw_model(
     nv as u32
 }
 
+/// Camera-facing sprite quad (env_sprite / env_glow / env_spark / env_explosion).
+/// Projects the world center, sizes the quad by perspective (world extent x
+/// H_PROJ / depth), and emits an additive textured quad into the OT at the
+/// center's depth so it sorts with the world. Screen-aligned (VP_PARALLEL);
+/// upright/oriented sprite types collapse to this, which reads fine at PS1 scale.
+unsafe fn draw_billboard(
+    packets: &mut PrimitivePacketArena<'_>,
+    np: &mut usize,
+    center: [i32; 3],
+    world_half_w: i32,
+    world_half_h: i32,
+    id: usize,
+    frame: usize,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
+    let sl = sprite::slot_for(id, frame);
+    if !sl.valid {
+        return;
+    }
+    let Some((sx, sy, sz)) = project_world_point(center, rot, base_t) else {
+        return;
+    };
+    // Perspective size: a world half-extent projects to world_half * H_PROJ / z.
+    let shw = ((world_half_w * H_PROJ as i32) / sz).clamp(1, 400);
+    let shh = ((world_half_h * H_PROJ as i32) / sz).clamp(1, 400);
+    let l = (sx as i32 - shw).clamp(-1023, 1023) as i16;
+    let r = (sx as i32 + shw).clamp(-1023, 1023) as i16;
+    let t = (sy as i32 - shh).clamp(-1023, 1023) as i16;
+    let b = (sy as i32 + shh).clamp(-1023, 1023) as i16;
+    let d = sprite::def(id);
+    let uw = d.crush_w.saturating_sub(1).min(255) as u8;
+    let uh = d.crush_h.saturating_sub(1).min(255) as u8;
+    // Sprites are additive (glows/explosions add light); the cook baked the dark
+    // background to black so it contributes nothing under Add, and set the
+    // per-texel semi-transparency bit so the GPU blends instead of drawing opaque.
+    let mat = sl.material.with_blend_mode(BlendMode::Add);
+    let packet = TexturedGouraudPacketMaterial::from_texture(mat);
+    let otz = clamp_otz((sz >> OT_SHIFT) as usize);
+    let (uv_tl, uv_tr, uv_bl, uv_br) = (
+        uv_word((0, 0)),
+        uv_word((uw, 0)),
+        uv_word((0, uh)),
+        uv_word((uw, uh)),
+    );
+    // Two triangles (the proven push_tri_uv_words path) rather than a quad, whose
+    // vertex-order convention flipped the UVs inside-out.
+    push_tri_uv_words(
+        packets,
+        np,
+        [(l, t), (r, t), (l, b)],
+        [uv_tl, uv_tr, uv_bl],
+        [(255, 255, 255); 3],
+        packet,
+        otz,
+    );
+    push_tri_uv_words(
+        packets,
+        np,
+        [(r, t), (r, b), (l, b)],
+        [uv_tr, uv_br, uv_bl],
+        [(255, 255, 255); 3],
+        packet,
+        otz,
+    );
+}
+
 // First-person viewmodel transform. GoldSrc attaches the model to the camera:
 // view.cpp copies the camera angles to the viewmodel and uses the predicted
 // view origin, while the MDL vertices carry the actual first-person placement.
@@ -7596,6 +7673,24 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             unsafe { sfx::load_dialogue_pack(blob) };
         } else {
             unsafe { sfx::load_dialogue_pack(&[]) };
+        }
+    }
+
+    // Sprite billboards: stream this map's pack (chunk 3200 + room) into the now-
+    // free MAP_BUF, decompress, and append its frame textures to the atlas. The
+    // map textures are already resident (uploaded above); models append after
+    // this, so sprites reserve their ~14 small slots between the two. Runs before
+    // the world chunk overwrites MAP_BUF; the DEFS/atlas persist past that.
+    {
+        let spr_chunk = sprite::SPRITE_CHUNK_BASE + launch.room_id as u32;
+        let sn = cdstream::load_chunk(spr_chunk, unsafe { &mut MAP_BUF })
+            .map(|k| unsafe { cdstream::decompress_in_place(&mut MAP_BUF, k) })
+            .unwrap_or(0);
+        if sn >= 8 {
+            let blob = unsafe { streamed_map_bytes(sn) };
+            unsafe { sprite::load_pack(blob) };
+        } else {
+            unsafe { sprite::reset() };
         }
     }
 
@@ -9160,6 +9255,35 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 }
             }
             telemetry::stage_end(telemetry::stage::TEXTURED_MODEL_JOINTS);
+            // ---- Sprite billboards (env_sprite / env_glow) ----
+            // These ride the prop table with SPRITE_PROP_BIT set (their `yaw`
+            // field carries the world half-size). Drawn as camera-facing additive
+            // quads; frustum-culled by project_world_point + PVS by leaf.
+            {
+                let nsp = m.n_props.min(MAX_PROPS);
+                let mut si = 0usize;
+                while si < nsp {
+                    let (ty, org, half, leaf) = m.prop(si);
+                    si += 1;
+                    if ty & SPRITE_PROP_BIT == 0 {
+                        continue;
+                    }
+                    let id = (ty & SPRITE_PROP_ID_MASK) as usize;
+                    if id >= sprite::n_sprites() {
+                        continue;
+                    }
+                    if have_pvs && leaf > 0 && !pvs_leaf_visible(&m, leaf as usize) {
+                        continue;
+                    }
+                    let d = sprite::def(id);
+                    let hh = if d.base_w > 0 {
+                        half * d.base_h as i32 / d.base_w as i32
+                    } else {
+                        half
+                    };
+                    draw_billboard(&mut packets, &mut np, org, half, hh, id, 0, &rot, base_t);
+                }
+            }
             telemetry::stage_end(telemetry::stage::MODEL_INSTANCES);
             telemetry::counter(telemetry::counter::MODEL_INSTANCE_DRAWS, model_draws);
             telemetry::counter(

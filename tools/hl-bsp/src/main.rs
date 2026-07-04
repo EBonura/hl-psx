@@ -2016,6 +2016,90 @@ fn load_voices_manifest() -> std::collections::HashMap<(u16, String), u16> {
     out
 }
 
+/// (map_index, spr_basename) -> (local_id, base_w, base_h) from SPRITES_MANIFEST
+/// (tools/extract_sprites.py). Resolves each env_sprite/env_glow model to its
+/// per-map sprite pack slot + native pixel size (for the world billboard scale).
+fn load_sprites_manifest() -> std::collections::HashMap<(u16, String), (u16, u16, u16)> {
+    let mut out = std::collections::HashMap::new();
+    let Ok(path) = std::env::var("SPRITES_MANIFEST") else {
+        return out;
+    };
+    let Ok(txt) = std::fs::read_to_string(&path) else {
+        eprintln!("warn: SPRITES_MANIFEST unreadable: {}", path);
+        return out;
+    };
+    // map_idx|local_id|base|blend|n_frames|base_w|base_h
+    for line in txt.lines() {
+        let f: Vec<&str> = line.trim().split('|').collect();
+        if f.len() < 7 {
+            continue;
+        }
+        if let (Ok(mi), Ok(lid), Ok(bw), Ok(bh)) = (
+            f[0].parse::<u16>(),
+            f[1].parse::<u16>(),
+            f[5].parse::<u16>(),
+            f[6].parse::<u16>(),
+        ) {
+            out.insert((mi, f[2].to_string()), (lid, bw, bh));
+        }
+    }
+    out
+}
+
+/// env_sprite / env_glow / cycler_sprite -> prop records with SPRITE_PROP_BIT
+/// (0x2000 | local_id); the `yaw` field carries the world half-size. Only
+/// always-on sprites (env_glow, or env_sprite with the START_ON spawnflag) are
+/// emitted -- toggled sprites need logic wiring (a later pass).
+fn collect_sprite_props(
+    ents: &[u8],
+    nodes: &[u8],
+    planes: &[u8],
+    scale: f32,
+    map_idx: u16,
+    sprites: &std::collections::HashMap<(u16, String), (u16, u16, u16)>,
+) -> Vec<(u16, [i32; 3], i32, i16, u16)> {
+    const SPRITE_PROP_BIT: u16 = 0x2000;
+    const SF_SPRITE_STARTON: u16 = 1;
+    let s = entity_text(ents);
+    let mut out = Vec::new();
+    for block in s.split('{') {
+        let cls = ent_value(block, "classname").unwrap_or("");
+        if cls != "env_sprite" && cls != "env_glow" && cls != "cycler_sprite" {
+            continue;
+        }
+        let sf = parse_spawnflags(block);
+        if cls == "env_sprite" && (sf & SF_SPRITE_STARTON) == 0 {
+            continue; // toggled sprite: waits for a trigger we don't wire yet
+        }
+        let model = ent_value(block, "model").unwrap_or("");
+        let base = model
+            .rsplit(|c| c == '/' || c == '\\')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let Some(&(lid, bw, _bh)) = sprites.get(&(map_idx, base)) else {
+            continue;
+        };
+        let Some(origin_hl) = ent_value(block, "origin").and_then(parse_vec3) else {
+            continue;
+        };
+        let origin = to_world(origin_hl, scale);
+        let ent_scale = parse_f32_key(block, "scale", 1.0).max(0.05);
+        // World half-width = native px/2 * entity scale * (HL->world scale).
+        let half = ((bw as f32 * 0.5 * ent_scale) * scale)
+            .round()
+            .clamp(1.0, 4000.0) as i32;
+        out.push((
+            SPRITE_PROP_BIT | (lid & 0x1FFF),
+            origin,
+            half,
+            point_leaf(origin_hl, nodes, planes),
+            0,
+        ));
+    }
+    out
+}
+
 /// Is this ambient_generic message a speech voice line (vs looping ambience)?
 fn is_voice_message(msg: &str) -> bool {
     let m = msg.to_ascii_lowercase();
@@ -5019,7 +5103,21 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // u32 n_props | (u16 type, i16 leaf, i32 origin[3], i32 yaw) × n_props
     let prop_off = o.len() as u32;
     o[prop_off_pos..prop_off_pos + 4].copy_from_slice(&prop_off.to_le_bytes());
-    let props = collect_props(bsp.lump(LUMP_ENTITIES), nodes, planes, scale, &logic.names);
+    let mut props = collect_props(bsp.lump(LUMP_ENTITIES), nodes, planes, scale, &logic.names);
+    // env_sprite / env_glow billboards ride the same table with SPRITE_PROP_BIT.
+    let sprite_map_idx: u16 = std::env::var("MAP_INDEX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let sprites_manifest = load_sprites_manifest();
+    props.extend(collect_sprite_props(
+        bsp.lump(LUMP_ENTITIES),
+        nodes,
+        planes,
+        scale,
+        sprite_map_idx,
+        &sprites_manifest,
+    ));
     o.extend_from_slice(&(props.len() as u32).to_le_bytes());
     // PropRec 24B: ty u16 | leaf i16 | org i32[3] | yaw i32 | name u16 | pad u16
     // (name = logic-name id of the monster's targetname; scripts find it).

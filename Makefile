@@ -114,6 +114,7 @@ disc: compile
 		--world-pack-extra-dir $(MODELPACK) \
 		--world-pack-extra-dir $(SFXPACK) \
 		--world-pack-extra-dir $(VOICEPACK) \
+		--world-pack-extra-dir $(SPRITEPACK) \
 		$(if $(wildcard $(ROOT)/data/music/tracks.txt),--cdda-track-list $(ROOT)/data/music/tracks.txt,)
 	@echo "DISC -> $(DIST)/hl-psx.cue"
 
@@ -138,8 +139,14 @@ voices-assets:
 	python3 tools/extract_voices.py "$(HL_GAME)" "$(MAPLIST)" $(VOICEPACK) \
 		"$(PSOXIDE)/target/release/psxed"
 
-assets: check-assets menu-assets voices-assets rooms models sfx-assets
-	@echo "assets -> data/menu data/rooms data/models data/modelpack data/sfx data/voices"
+# HL sprites -> per-map 4bpp billboard packs (WORLD.PAK chunks 3200+idx) +
+# manifest. Must run BEFORE `rooms` (the map cook reads the manifest to resolve
+# env_sprite/env_glow models to per-map sprite local ids).
+sprites-assets:
+	python3 tools/extract_sprites.py "$(HL_GAME)" "$(MAPLIST)" $(SPRITEPACK)
+
+assets: check-assets menu-assets voices-assets sprites-assets rooms models sfx-assets
+	@echo "assets -> data/menu data/rooms data/models data/modelpack data/sfx data/voices data/sprites"
 
 full-disc: assets disc
 
@@ -219,6 +226,7 @@ ROOMS := $(ROOT)/data/rooms
 MODELPACK := $(ROOT)/data/modelpack
 SFXPACK   := $(ROOT)/data/sfx
 VOICEPACK := $(ROOT)/data/voices
+SPRITEPACK := $(ROOT)/data/sprites
 # Runnable campaign map registry, staying below the current static MAP_BUF
 # budget. Oversized maps are intentionally omitted until the streamed map format
 # grows a compression/chunking path. Keep this in sync with `game/src/menu.rs`.
@@ -243,6 +251,7 @@ rooms:
 		w=$$((i * 2)); t=$$((w + 1)); \
 		CLIPS_MANIFEST=$(MODELPACK)/clips.txt \
 		VOICES_MANIFEST=$(VOICEPACK)/manifest.txt \
+		SPRITES_MANIFEST=$(SPRITEPACK)/manifest.txt \
 		MAP_INDEX=$$i \
 		$(HLBSP_BIN) --cook "$(HL_GAME)/maps/$$m.bsp" $(ROOMS)/room_$$w.psxc $(ROOMS)/room_$$t.psxc >/dev/null && \
 		echo "  room_$$w/$$t = $$m"; i=$$((i+1)); \
