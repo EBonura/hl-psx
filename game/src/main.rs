@@ -4049,6 +4049,21 @@ unsafe fn damage_prop(pi: usize, dmg: u8) {
             qi += 1;
         }
     }
+    // A fight anywhere nearby also spooks seated scientists: mark them alarmed
+    // (AI_TARGET != NONE) so tick_props stands them up and switches to flee AI.
+    let dp = PROP_POS[pi];
+    let n2 = PROP_COUNT.min(MAX_PROPS);
+    let mut si = 0usize;
+    while si < n2 {
+        if PROP_KIND[si] == PROP_TYPE_SITTING_SCI
+            && PROP_ACTIVE[si] != 0
+            && PROP_AI_TARGET[si] == PROP_TARGET_NONE
+            && dist2_3(PROP_POS[si], dp) < SQUAD_ALERT_RADIUS2
+        {
+            PROP_AI_TARGET[si] = PROP_TARGET_PLAYER;
+        }
+        si += 1;
+    }
 }
 
 const SQUAD_ALERT_RADIUS2: i32 = 400 * 400;
@@ -4496,11 +4511,19 @@ unsafe fn tick_headcrab(
     armor: &mut u16,
     nprops: usize,
 ) {
+    // Only headcrabs LEAP; big melee aliens (zombie/bullsquid/ichthyosaur) shamble
+    // in and swipe in place -- leaping made them look like giant headcrabs.
+    let leaper = PROP_KIND[pi] == PROP_TYPE_HEADCRAB;
+    let reach2 = if leaper {
+        HEADCRAB_BITE_RANGE2
+    } else {
+        HEADCRAB_BITE_RANGE2 * 3 // longer claw/tail reach for stationary big types
+    };
     if PROP_STATE[pi] == PROP_STATE_ATTACK && PROP_AI_TIMER[pi] > 0 {
         let target = PROP_AI_TARGET[pi];
         if let Some(aim) = target_aim_point(target, player_pos, nprops) {
             prop_face_point(pi, aim);
-            if PROP_AI_TIMER[pi] > HEADCRAB_ATTACK_IMPACT_TICK {
+            if leaper && PROP_AI_TIMER[pi] > HEADCRAB_ATTACK_IMPACT_TICK {
                 let pos = PROP_POS[pi];
                 prop_try_step(
                     m,
@@ -4513,9 +4536,7 @@ unsafe fn tick_headcrab(
             } else if PROP_AI_TIMER[pi] == HEADCRAB_ATTACK_IMPACT_TICK {
                 let pos = PROP_POS[pi];
                 let from = prop_target(PROP_TYPE_HEADCRAB, pos);
-                if dist2_xz(pos, aim) <= HEADCRAB_BITE_RANGE2
-                    && actor_line_clear(m, movers, from, aim)
-                {
+                if dist2_xz(pos, aim) <= reach2 && actor_line_clear(m, movers, from, aim) {
                     damage_target(target, HEADCRAB_ATTACK_DAMAGE as u8, health, armor);
                 }
             }
@@ -4549,7 +4570,9 @@ unsafe fn tick_headcrab(
     PROP_AI_TARGET[pi] = target;
     let from = prop_target(PROP_TYPE_HEADCRAB, pos);
     let visible = actor_line_clear(m, movers, from, aim);
-    if d2 <= HEADCRAB_LEAP_RANGE2 && PROP_ATTACK_COOLDOWN[pi] == 0 && visible {
+    // Leapers spring from leap range; big types must close to melee reach first.
+    let trigger2 = if leaper { HEADCRAB_LEAP_RANGE2 } else { reach2 };
+    if d2 <= trigger2 && PROP_ATTACK_COOLDOWN[pi] == 0 && visible {
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = HEADCRAB_ATTACK_TICKS;
         PROP_ATTACK_COOLDOWN[pi] = HEADCRAB_ATTACK_COOLDOWN;
@@ -4858,6 +4881,22 @@ unsafe fn tick_props(
         // the clip and releases the AI.
         if PROP_SCRIPT_IDLE_CLIP[pi] != 0xFF && PROP_HEALTH[pi] > 0 {
             PROP_STATE[pi] = PROP_STATE_IDLE;
+            pi += 1;
+            continue;
+        }
+        // Seated scientist: sits until a nearby fight alarms it (AI_TARGET set by
+        // damage_prop), then stands up and becomes a standing scientist -- switch
+        // the kind so it draws the standing model + runs flee AI, and drop it from
+        // the chair to the floor.
+        if ty == PROP_TYPE_SITTING_SCI {
+            if PROP_AI_TARGET[pi] != PROP_TARGET_NONE
+                && TYPE_TO_SLOT[0] != MODEL_SLOT_NONE
+            {
+                PROP_KIND[pi] = 0;
+                PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
+                PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
+                PROP_POS[pi] = prop_grounded_pos(m, pi, PROP_POS[pi]);
+            }
             pi += 1;
             continue;
         }
