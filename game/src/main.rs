@@ -4694,7 +4694,9 @@ unsafe fn tick_scientist(
         if dx == 0 && dz == 0 {
             dx = 1;
         }
-        PROP_YAW[pi] = yaw_from_vec(dx, dz);
+        // Slew toward the away-heading like every other actor (M40) instead of
+        // snapping -- a fleeing scientist was still teleport-rotating.
+        PROP_YAW[pi] = turn_toward(PROP_YAW[pi], yaw_from_vec(dx, dz), PROP_TURN_RATE);
         PROP_STATE[pi] = PROP_STATE_MOVE;
         if !prop_try_step(m, movers, pi, dx, dz, SCIENTIST_FLEE_SPEED) {
             if let Some(goal) = nav_flee_goal(m, threat_pos, pos) {
