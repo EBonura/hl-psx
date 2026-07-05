@@ -56,10 +56,14 @@ pub const SLV_DIE: u8 = 39;
 pub const BC_PAIN: u8 = 40;
 pub const BC_DIE: u8 = 41;
 pub const HEV_BELL: u8 = 42;
+pub const GEIGER: u8 = 43; // radiation/toxic-zone click
+pub const HEV_ACTIVATE: u8 = 44; // suit power-on voice (pickup)
+pub const HEV_HEALTH_CRIT: u8 = 45; // "health critical"
+pub const HEV_NEAR_DEATH: u8 = 46; // "near death"
 // Dialogue is not a global SFX id anymore -- it streams per-map (chunk
 // 3100+idx) and plays via play_voice / play_voice_world (local ids).
 
-const MAX_SFX: usize = 43;
+const MAX_SFX: usize = 47;
 const SPU_SAMPLE_BASE: u32 = 0x1010; // BIOS convention: 0x0000..0x1000 reserved
 const VOICE_POOL: u8 = 15; // voices 0..14 one-shot SFX; 15 = dialogue; 16..23 reserved
 const DIALOGUE_VOICE: u8 = 15; // long voice lines play on their own channel (not cut by SFX)

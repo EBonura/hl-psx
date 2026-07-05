@@ -1541,6 +1541,10 @@ static mut PUNCH_YAW: i32 = 0;
 static mut BOB_PHASE: u32 = 0;
 // Red damage overlay: alpha countdown set when the player takes damage.
 static mut DAMAGE_FLASH: u8 = 0;
+// HEV suit voice: 0 = fine, 1 = health critical, 2 = near death (fire once per
+// worsening threshold crossing). Geiger cooldown throttles the radiation click.
+static mut HEV_HEALTH_STATE: u8 = 0;
+static mut GEIGER_COOLDOWN: u8 = 0;
 
 /// Kick the view (decaying) -- HL's punchangle. `pitch` up is negative here to
 /// match the view pitch convention; `yaw` is a small left/right jolt.
@@ -2474,6 +2478,9 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
     if DAMAGE_FLASH > 0 {
         DAMAGE_FLASH = DAMAGE_FLASH.saturating_sub(24); // red overlay fades over ~8 ticks
     }
+    if GEIGER_COOLDOWN > 0 {
+        GEIGER_COOLDOWN -= 1;
+    }
     if TITLE_TEXT_ID != 0 {
         TITLE_T = TITLE_T.saturating_add(1);
         let total = TITLE_FADE + TITLE_HOLD + TITLE_FADE;
@@ -2903,13 +2910,22 @@ unsafe fn logic_touch_triggers(
                 map::LOGIC_TRIGGER_HURT => {
                     if LOGIC_STATE[li] == LOGIC_STATE_BOTTOM
                         && player_touches_logic(player_pos, rec)
-                        && time_reached(now, LOGIC_NEXT[li])
                     {
-                        damage_player(health, armor, rec.arg0.max(1));
-                        logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, 0);
-                        LOGIC_NEXT[li] = now.wrapping_add(TRIGGER_HURT_REPEAT_TICKS);
-                        if (rec.spawnflags & SF_TRIGGER_HURT_TARGET_ONCE) != 0 {
-                            LOGIC_TARGET[li] = 0;
+                        // Geiger crackle while standing in a hazard volume (most
+                        // linger-hurts are toxic/radioactive -- HL's suit clicks).
+                        if GEIGER_COOLDOWN == 0 {
+                            sfx::play(sfx::GEIGER);
+                            GEIGER_COOLDOWN = 7;
+                        }
+                        if time_reached(now, LOGIC_NEXT[li]) {
+                            damage_player(health, armor, rec.arg0.max(1));
+                            logic_sub_use_targets(
+                                m, nlogic, nents, li, rec, now, map::USE_TOGGLE, 0,
+                            );
+                            LOGIC_NEXT[li] = now.wrapping_add(TRIGGER_HURT_REPEAT_TICKS);
+                            if (rec.spawnflags & SF_TRIGGER_HURT_TARGET_ONCE) != 0 {
+                                LOGIC_TARGET[li] = 0;
+                            }
                         }
                     }
                 }
@@ -4956,6 +4972,7 @@ unsafe fn collect_pickups(
                     *pickup_ticks = HEV_PICKUP_TICKS;
                     sfx::play(sfx::SUIT);
                     sfx::play(sfx::HEV_BELL);
+                    sfx::play(sfx::HEV_ACTIVATE); // "HEV suit... power on"
                     telemetry::debug_log("hl-psx: HEV suit equipped");
                 }
             }
@@ -8570,6 +8587,26 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             // HUD red at low health). Reuses the damage-flash overlay on a beat.
             if health > 0 && health < 25 && (sim_frame_no % 22) < 5 {
                 unsafe { DAMAGE_FLASH = DAMAGE_FLASH.max(40) };
+            }
+            // HEV suit voice: announce each worsening health threshold once.
+            unsafe {
+                let hstate = if health == 0 || !suit_equipped {
+                    0
+                } else if health < 10 {
+                    2
+                } else if health < 25 {
+                    1
+                } else {
+                    0
+                };
+                if hstate > HEV_HEALTH_STATE {
+                    sfx::play(if hstate == 2 {
+                        sfx::HEV_NEAR_DEATH
+                    } else {
+                        sfx::HEV_HEALTH_CRIT
+                    });
+                }
+                HEV_HEALTH_STATE = hstate;
             }
             // Footsteps: input-magnitude cadence while grounded (full run =
             // a step roughly every 8 ticks), alternating the two samples.
