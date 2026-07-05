@@ -182,14 +182,14 @@ pub fn draw<const N: usize>(
     ammo_mode: u8, // 0 = melee (no ammo), 1 = reserve only, 2 = reserve | clip
     pickup_kind: u8,
     pickup_ticks: u8,
-    weapon_icon: i32, // >=0: weapon id whose select icon flashes top-right
+    weapon_icon: i32, // >=0: current weapon id whose select icon shows top-right
     ot: &mut OrderingTable<N>,
     prims: &mut [QuadTexturedMaterial; DRAW_CAP],
 ) -> usize {
     let mut count = 0usize;
     if weapon_icon >= 0 {
         // Current-weapon select icon (the real 320-res weapon_s sprite),
-        // shown briefly after an L1/R1 switch. Atlas: 80x20 each, two per
+        // shown persistently top-right while armed. Atlas: 80x20 each, two per
         // row from v=48, in W_* order.
         let wi = weapon_icon as u8;
         sprite(

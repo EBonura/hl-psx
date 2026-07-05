@@ -390,6 +390,7 @@ const PROP_LINK_MATCH_XZ_EPS: i32 = 24;
 const PROP_LINK_MATCH_Y_EPS: i32 = 96;
 const PROP_GROUND_PROBE_UP: i32 = 24;
 const PROP_GROUND_PROBE_DOWN: i32 = 160;
+const ITEM_GROUND_PROBE_DOWN: i32 = 4096; // items DROP_TO_FLOOR from any editor height
 const GROUND_SCAN_STEP: i32 = 8;
 const SCIENTIST_HEALTH: u8 = 24;
 const BARNEY_HEALTH: u8 = 35;
@@ -3461,9 +3462,16 @@ unsafe fn refresh_prop_near_ents(m: &Map, pi: usize) {
 }
 
 fn prop_floor_y(m: &Map, pi: usize, pos: [i32; 3]) -> Option<i32> {
+    prop_floor_y_down(m, pi, pos, PROP_GROUND_PROBE_DOWN)
+}
+
+/// As `prop_floor_y` but with an explicit downward probe range. Items placed high
+/// in the editor rely on HL's DROP_TO_FLOOR (any distance); they use a deep range
+/// so the HEV suit / weapons settle on the floor instead of floating in mid-air.
+fn prop_floor_y_down(m: &Map, pi: usize, pos: [i32; 3], down: i32) -> Option<i32> {
     let (x, z) = (pos[0], pos[2]);
     let top = pos[1] + PROP_GROUND_PROBE_UP;
-    let bottom = pos[1] - PROP_GROUND_PROBE_DOWN;
+    let bottom = pos[1] - down;
 
     // Column-touching brush ents from the per-prop shortlist (refreshed on a
     // stagger); an unrefreshed/crowded prop falls back to scanning them all.
@@ -4635,6 +4643,14 @@ unsafe fn init_prop_state(m: &Map) {
         // world tree can't see; snapping would drop them through the chair.
         let org = if kind == PROP_TYPE_SITTING_SCI {
             org
+        } else if model_def(kind).ai == AI_ITEM {
+            // Items (suit/battery/weapons/ammo/medkit) DROP_TO_FLOOR in HL from
+            // any height; a deep probe settles them on the floor instead of
+            // floating where the level designer parked them mid-air.
+            match prop_floor_y_down(m, pi, org, ITEM_GROUND_PROBE_DOWN) {
+                Some(y) => [org[0], y, org[2]],
+                None => org,
+            }
         } else {
             prop_grounded_pos(m, pi, org)
         };
@@ -9462,7 +9478,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     weapon.ammo_mode(),
                     pickup_kind,
                     pickup_ticks,
-                    if weapon_icon_ticks > 0 {
+                    // Persistently show the CURRENT weapon's select icon while
+                    // armed (was only a brief flash after L1/R1) -- the HUD now
+                    // always reflects which weapon is selected.
+                    if weapon.any_weapon() {
                         weapon.current as i32
                     } else {
                         -1
