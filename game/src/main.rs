@@ -23,6 +23,7 @@ mod menu;
 mod model;
 mod phys;
 mod render;
+mod settings;
 mod sfx;
 mod sprite;
 mod telemetry;
@@ -82,9 +83,10 @@ const BARNEY_FACE_CAP: usize = 800;
 const HEADCRAB_FACE_CAP: usize = 512;
 const SUIT_ITEM_FACE_CAP: usize = 448;
 const BATTERY_ITEM_FACE_CAP: usize = 160;
-#[cfg(not(feature = "emulator-telemetry"))]
-const MAX_RENDER_PACKETS: usize = 2432; // funds the finalise statics; emitted prims peak ~1800
-#[cfg(feature = "emulator-telemetry")]
+// 2176 packets (~14 KiB less than the old 2432): emitted prims peak ~1800-2000,
+// and the near->far band bucketing drops only the farthest faces on the rare
+// overflow. Trimmed to reclaim RAM for the options menu; both build variants
+// now match.
 const MAX_RENDER_PACKETS: usize = 2176;
 const MAX_WEAPON_CACHE_TRIS: usize = 320;
 const MAX_TEX_SLOTS: usize = room_budget::MAX_TEX_SLOTS;
@@ -1625,7 +1627,8 @@ unsafe fn music_apply() {
     }
     CD_TRACK_CUR = CD_TRACK_WANT;
     if CD_TRACK_CUR > 0 {
-        psx_spu::set_cd_volume(psx_spu::CdVolume::MAX, psx_spu::CdVolume::MAX);
+        let v = settings::music_cd_volume();
+        psx_spu::set_cd_volume(v, v);
         psx_spu::enable_cd_audio(true);
         let _ = psx_io::cdrom::try_set_mode(
             psx_io::cdrom::MODE_DOUBLE_SPEED | psx_io::cdrom::MODE_CDDA,
@@ -8440,6 +8443,7 @@ fn stream_model_texture_chunk(
 /// the next room.
 fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit {
     let _ = enable_analog_port1();
+    settings::apply_all(); // honour the options menu's screen offset + volumes
     unsafe {
         CHANGE_REQUEST_ACTIVE = 0;
     }

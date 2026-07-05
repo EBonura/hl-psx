@@ -75,12 +75,6 @@ const MAIN_Y: i16 = 88;
 const FOOTER_Y: i16 = 224;
 
 const MAIN_ITEMS: [&str; 4] = ["New Game", "Chapter Select", "Options", "Credits"];
-const OPTIONS_ITEMS: [&str; 4] = [
-    "Target Framerate     20 FPS",
-    "Analog Look          Enabled",
-    "Status Display       Enabled",
-    "Back",
-];
 const CREDIT_LINES: [(&str, (u8, u8, u8)); 8] = [
     ("Half-Life   Valve 1998", WHITE),
     ("PS1 Port   hl-psx", ITEM),
@@ -104,6 +98,8 @@ enum MenuScreen {
 struct MenuEdges {
     up: bool,
     down: bool,
+    left: bool,
+    right: bool,
     ok: bool,
     back: bool,
 }
@@ -272,6 +268,8 @@ fn wrap_move(sel: &mut i32, count: i32, input: MenuEdges) {
 fn poll_menu_edges(
     p_up: &mut bool,
     p_dn: &mut bool,
+    p_lf: &mut bool,
+    p_rt: &mut bool,
     p_ok: &mut bool,
     p_back: &mut bool,
 ) -> MenuEdges {
@@ -279,8 +277,10 @@ fn poll_menu_edges(
     let b = pad.buttons;
     let mut up = b.is_held(button::UP);
     let mut dn = b.is_held(button::DOWN);
+    let mut lf = b.is_held(button::LEFT);
+    let mut rt = b.is_held(button::RIGHT);
     if pad.is_analog() {
-        let (_, ly) = pad.sticks.left_centered();
+        let (lx, ly) = pad.sticks.left_centered();
         let dz = 48i16;
         if ly < -dz {
             up = true;
@@ -288,17 +288,27 @@ fn poll_menu_edges(
         if ly > dz {
             dn = true;
         }
+        if lx < -dz {
+            lf = true;
+        }
+        if lx > dz {
+            rt = true;
+        }
     }
     let ok = b.is_held(button::CROSS) || b.is_held(button::START);
     let back = b.is_held(button::CIRCLE) || b.is_held(button::SELECT);
     let edges = MenuEdges {
         up: up && !*p_up,
         down: dn && !*p_dn,
+        left: lf && !*p_lf,
+        right: rt && !*p_rt,
         ok: ok && !*p_ok,
         back: back && !*p_back,
     };
     *p_up = up;
     *p_dn = dn;
+    *p_lf = lf;
+    *p_rt = rt;
     *p_ok = ok;
     *p_back = back;
     edges
@@ -340,8 +350,74 @@ fn draw_chapter_menu(font: &FontAtlas, sel: i32) {
     }
 }
 
+const OPT_LABELS: [&str; 4] = ["Screen X", "Screen Y", "Music", "SFX"];
+pub const N_OPTIONS: i32 = 5; // 4 sliders + Back
+
+/// Format a signed int into `buf`, returning the slice as a str.
+fn fmt_num(v: i32, buf: &mut [u8; 12]) -> &str {
+    let neg = v < 0;
+    let mut n = v.unsigned_abs();
+    let mut i = buf.len();
+    if n == 0 {
+        i -= 1;
+        buf[i] = b'0';
+    }
+    while n > 0 {
+        i -= 1;
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    if neg {
+        i -= 1;
+        buf[i] = b'-';
+    }
+    core::str::from_utf8(&buf[i..]).unwrap_or("")
+}
+
+/// 8-segment volume bar; filled segments up to `v` are lit, the rest dim.
+fn draw_vol_bar(x: i16, y: i16, v: i32, bright: bool) {
+    let lit = if bright { ITEM_SEL } else { ITEM };
+    for i in 0..8i16 {
+        let sx = x + i * 13;
+        let (r, g, b) = if (i as i32) < v { lit } else { (56, 56, 56) };
+        gpu::draw_quad_flat(
+            [(sx, y + 2), (sx + 10, y + 2), (sx, y + 15), (sx + 10, y + 15)],
+            r,
+            g,
+            b,
+        );
+    }
+}
+
 fn draw_options_menu(font: &FontAtlas, sel: usize) {
-    draw_simple_list(font, &OPTIONS_ITEMS, sel, 24, 92, 288);
+    let x_label = 40i16;
+    let x_val = 172i16;
+    let mut y = 88i16;
+    for i in 0..4usize {
+        let is_sel = i == sel;
+        if is_sel {
+            draw_select_bar(x_label - 8, y, 120);
+        }
+        let col = if is_sel { ITEM_SEL } else { ITEM };
+        font.draw_text(x_label, y, OPT_LABELS[i], col);
+        if i < 2 {
+            let mut buf = [0u8; 12];
+            let s = fmt_num(crate::settings::value(i), &mut buf);
+            font.draw_text(x_val + 8, y, "<", col);
+            font.draw_text(x_val + 44, y, s, col);
+            font.draw_text(x_val + 96, y, ">", col);
+        } else {
+            draw_vol_bar(x_val, y, crate::settings::value(i), is_sel);
+        }
+        y += 22;
+    }
+    y += 8;
+    let is_sel = sel == 4;
+    if is_sel {
+        draw_select_bar(x_label - 8, y, 120);
+    }
+    font.draw_text(x_label, y, "Back", if is_sel { ITEM_SEL } else { ITEM });
+    hltext::draw_centered_scaled(212, "Left / Right to adjust", hltext::SMALL_Q8, DIM);
 }
 
 fn draw_credits_menu(font: &FontAtlas) {
@@ -401,9 +477,12 @@ pub fn run(fb: &mut FrameBuffer) -> usize {
     let mut chapter_sel = 0i32;
     let mut options_sel = 0i32;
     let (mut p_up, mut p_dn, mut p_ok, mut p_back) = (true, true, true, true);
+    let (mut p_lf, mut p_rt) = (true, true);
 
     loop {
-        let input = poll_menu_edges(&mut p_up, &mut p_dn, &mut p_ok, &mut p_back);
+        let input = poll_menu_edges(
+            &mut p_up, &mut p_dn, &mut p_lf, &mut p_rt, &mut p_ok, &mut p_back,
+        );
         match screen {
             MenuScreen::Main => {
                 wrap_move(&mut main_sel, MAIN_ITEMS.len() as i32, input);
@@ -433,8 +512,14 @@ pub fn run(fb: &mut FrameBuffer) -> usize {
                 }
             }
             MenuScreen::Options => {
-                wrap_move(&mut options_sel, OPTIONS_ITEMS.len() as i32, input);
-                if input.back || (input.ok && options_sel as usize == OPTIONS_ITEMS.len() - 1) {
+                wrap_move(&mut options_sel, N_OPTIONS, input);
+                let idx = options_sel as usize;
+                if idx < 4 && (input.left || input.right) {
+                    let step = if idx < 2 { 2 } else { 1 }; // screen +-2 px, volume +-1
+                    crate::settings::adjust(idx, if input.right { step } else { -step });
+                    unsafe { crate::sfx::play(crate::sfx::BUTTON) }; // click = live feedback
+                }
+                if input.back || (input.ok && idx == 4) {
                     screen = MenuScreen::Main;
                 }
             }
