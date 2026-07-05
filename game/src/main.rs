@@ -4077,6 +4077,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8) {
                 spawn_impact_mark([cp[0] + jx, cp[1] + 6, cp[2] + jz], IMPACT_KIND_BLOOD);
                 b += 1;
             }
+            spawn_gibs(cp, 3); // gore chunks arc out from the corpse
         }
         sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
         let v = prop_voice(PROP_KIND[pi], true);
@@ -5635,6 +5636,7 @@ unsafe fn clear_combat_fx() {
         t += 1;
     }
     TRACER_CURSOR = 0;
+    clear_debris();
 }
 
 unsafe fn decay_combat_fx() {
@@ -5649,6 +5651,7 @@ unsafe fn decay_combat_fx() {
         }
         i += 1;
     }
+    tick_debris();
 }
 
 unsafe fn spawn_impact_mark(pos: [i32; 3], kind: u8) {
@@ -6142,6 +6145,15 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32) {
     }
     sfx::play_world(sfx::EXPLODE, pos);
     queue_explosion_fx(pos, (radius / 3).clamp(20, 255) as u8);
+    // Flying sparks + debris chunks thrown outward, over the particle flash.
+    let mut s = 0;
+    while s < 7 {
+        let vx = (IMPACT_RNG.next() as i32 % 25) - 12;
+        let vy = 5 + (IMPACT_RNG.next() as i32 % 14);
+        let vz = (IMPACT_RNG.next() as i32 % 25) - 12;
+        spawn_debris(pos, [vx, vy, vz], DEBRIS_SPARK, 14);
+        s += 1;
+    }
     // Blast breakables in range (crates, boards, grates).
     let nents = m.n_ents;
     let mut ei = 0usize;
@@ -6277,6 +6289,139 @@ unsafe fn render_projectiles<const N: usize>(
             }
         }
         i += 1;
+    }
+}
+
+// ---- Transient world debris: shell casings, gibs, sparks -------------------
+// A small world-space pool: each entry falls under gravity, expires by ttl, and
+// draws as one small coloured rect. Shell casings, death gibs, and env_spark
+// showers all ride it (each just picks a kind + initial velocity).
+const MAX_DEBRIS: usize = 48;
+const DEBRIS_CASING: u8 = 0;
+const DEBRIS_GIB: u8 = 1;
+const DEBRIS_SPARK: u8 = 2;
+
+#[derive(Clone, Copy)]
+struct Debris {
+    pos: [i32; 3],
+    vel: [i32; 3],
+    ttl: u8,
+    kind: u8,
+}
+impl Debris {
+    const ZERO: Debris = Debris {
+        pos: [0; 3],
+        vel: [0; 3],
+        ttl: 0,
+        kind: 0,
+    };
+}
+static mut DEBRIS: [Debris; MAX_DEBRIS] = [Debris::ZERO; MAX_DEBRIS];
+static mut DEBRIS_CURSOR: usize = 0;
+static mut DEBRIS_RECTS: [RectFlat; MAX_DEBRIS] =
+    [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_DEBRIS];
+
+unsafe fn spawn_debris(pos: [i32; 3], vel: [i32; 3], kind: u8, ttl: u8) {
+    let i = DEBRIS_CURSOR % MAX_DEBRIS;
+    DEBRIS[i] = Debris { pos, vel, ttl, kind };
+    DEBRIS_CURSOR = (DEBRIS_CURSOR + 1) % MAX_DEBRIS;
+}
+
+unsafe fn clear_debris() {
+    let mut i = 0;
+    while i < MAX_DEBRIS {
+        DEBRIS[i].ttl = 0;
+        i += 1;
+    }
+    DEBRIS_CURSOR = 0;
+}
+
+/// Advance debris one sim tick: gravity + integrate, sparks fly straighter.
+unsafe fn tick_debris() {
+    let mut i = 0;
+    while i < MAX_DEBRIS {
+        if DEBRIS[i].ttl > 0 {
+            DEBRIS[i].ttl -= 1;
+            let g = if DEBRIS[i].kind == DEBRIS_SPARK { 6 } else { 12 };
+            DEBRIS[i].vel[1] -= g;
+            DEBRIS[i].pos[0] += DEBRIS[i].vel[0];
+            DEBRIS[i].pos[1] += DEBRIS[i].vel[1];
+            DEBRIS[i].pos[2] += DEBRIS[i].vel[2];
+        }
+        i += 1;
+    }
+}
+
+unsafe fn render_debris<const N: usize>(ot: &mut OrderingTable<N>, rot: &Mat3I16, base_t: [i32; 3]) {
+    let mut i = 0;
+    while i < MAX_DEBRIS {
+        if DEBRIS[i].ttl > 0 {
+            let (r, g, b, size) = match DEBRIS[i].kind {
+                DEBRIS_CASING => (200u8, 170u8, 80u8, 2i16),
+                DEBRIS_GIB => (150, 20, 15, 3),
+                _ => (255, 240, 150, 2), // spark
+            };
+            if let Some((sx, sy, _)) = project_world_point(DEBRIS[i].pos, rot, base_t) {
+                DEBRIS_RECTS[i] =
+                    RectFlat::new(sx - size / 2, sy - size / 2, size as u16, size as u16, r, g, b);
+                ot.add(0, &mut DEBRIS_RECTS[i], RectFlat::WORDS);
+            }
+        }
+        i += 1;
+    }
+}
+
+/// Eject a brass casing near the muzzle: up + to the right, tumbling away.
+unsafe fn eject_casing(eye: [i32; 3], rot: &Mat3I16) {
+    let jitter = (IMPACT_RNG.next() as i32 % 5) - 2;
+    // Right + up + a little forward from the eye (view axes in world coords).
+    let pos = [
+        eye[0] + ((rot.m[0][0] as i32 * 6 + rot.m[2][0] as i32 * 12) >> 12),
+        eye[1] + ((rot.m[0][1] as i32 * 6 + rot.m[2][1] as i32 * 12) >> 12) - 4,
+        eye[2] + ((rot.m[0][2] as i32 * 6 + rot.m[2][2] as i32 * 12) >> 12),
+    ];
+    let vel = [
+        (rot.m[0][0] as i32 * (7 + jitter)) >> 12,
+        6,
+        (rot.m[0][2] as i32 * (7 + jitter)) >> 12,
+    ];
+    spawn_debris(pos, vel, DEBRIS_CASING, 40);
+}
+
+/// Burst of gore chunks from a killed enemy.
+unsafe fn spawn_gibs(pos: [i32; 3], n: u8) {
+    let mut k = 0;
+    while k < n {
+        let vx = (IMPACT_RNG.next() as i32 % 15) - 7;
+        let vz = (IMPACT_RNG.next() as i32 % 15) - 7;
+        let vy = 8 + (IMPACT_RNG.next() as i32 % 8);
+        spawn_debris([pos[0], pos[1] + 20, pos[2]], [vx, vy, vz], DEBRIS_GIB, 70);
+        k += 1;
+    }
+}
+
+/// env_spark: each spark emitter throws a small shower now and then when the
+/// player is nearby (cheap -- a 1/64 per-tick chance, distance-gated).
+unsafe fn tick_env_sparks(m: &Map, nlogic: usize) {
+    let mut li = 0usize;
+    while li < nlogic {
+        let rec = m.logic(li);
+        if rec.kind == map::LOGIC_ENV_SPARK
+            && dist2_3(rec.origin, LOGIC_PLAYER_POS) < 1200 * 1200
+            && (IMPACT_RNG.next() & 0x3F) == 0
+        {
+            let o = rec.origin;
+            let mut s = 0;
+            while s < 4 {
+                let vx = (IMPACT_RNG.next() as i32 % 11) - 5;
+                let vy = 3 + (IMPACT_RNG.next() as i32 % 8);
+                let vz = (IMPACT_RNG.next() as i32 % 11) - 5;
+                spawn_debris(o, [vx, vy, vz], DEBRIS_SPARK, 10);
+                s += 1;
+            }
+            sfx::play_world(sfx::RIC, o); // spark crackle (reuse the ricochet click)
+        }
+        li += 1;
     }
 }
 
@@ -9112,6 +9257,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     let hit =
                         fire_weapon(weapon.def(), &m, movers, eye, &fire_rot, fire_base_t, inacc);
                     sfx::play(weapon_fire_sfx(weapon.current, hit));
+                    // Eject a brass casing (bullet weapons only).
+                    if matches!(weapon.current, W_GLOCK | W_357 | W_MP5 | W_SHOTGUN | W_GAUSS) {
+                        eject_casing(eye, &fire_rot);
+                    }
                 }
             }
             // Secondary fire (L2): grenade / double-barrel / gauss charge / hornet
@@ -9140,6 +9289,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     MON_PAIN_COOLDOWN -= 1;
                 }
                 tick_projectiles(&m, movers);
+                tick_env_sparks(&m, nlogic);
                 if PENDING_PLAYER_DAMAGE > 0 {
                     let d = PENDING_PLAYER_DAMAGE;
                     PENDING_PLAYER_DAMAGE = 0;
@@ -10156,6 +10306,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             let _ =
                 IMPACT_PARTICLES.render_into_ot(&mut FX_OT, &mut IMPACT_PARTICLE_RECTS, 0, (0, 0));
             render_projectiles(&mut FX_OT, &rot, base_t);
+            render_debris(&mut FX_OT, &rot, base_t);
 
             telemetry::stage_begin(telemetry::stage::FRAME_CLEAR);
             fb.clear(0, 0, 0);

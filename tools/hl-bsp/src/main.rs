@@ -1975,6 +1975,8 @@ const LOGIC_WALL_TOGGLE: u8 = 34; // func_wall_toggle: toggles brush draw+collis
 const LOGIC_MULTISOURCE: u8 = 35; // AND-gate: arg0 = input count, arg1 = globalstate hash
 const LOGIC_ENV_GLOBAL: u8 = 36; // sets a persistent global: arg0 = hash, arg1 = triggermode
 const LOGIC_ENV_EXPLOSION: u8 = 37; // scripted explosion FX at origin: arg0 = magnitude
+#[allow(dead_code)]
+const LOGIC_ENV_SPARK: u8 = 40; // env_spark: origin sparks intermittently
 const LOGIC_TANK: u8 = 38; // func_tank mountable gun: arg0 = bullet damage, speed = fire cooldown ticks
 const LOGIC_BEAM: u8 = 39; // env_beam/env_laser: aux = start xyz + end xyz, arg1 = half-width, speed = color
 
@@ -3184,6 +3186,7 @@ fn collect_logic_entities(
             "multisource" => LOGIC_MULTISOURCE,
             "env_global" => LOGIC_ENV_GLOBAL,
             "env_explosion" => LOGIC_ENV_EXPLOSION,
+            "env_spark" | "env_debris" => LOGIC_ENV_SPARK,
             // Mountable guns: the whole func_tank family renders as its brush and
             // is +use-mounted at runtime (aim with the view, fire hitscan). Laser/
             // rocket/mortar variants degrade to a bullet tank (no special projectile).
