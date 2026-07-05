@@ -192,6 +192,8 @@ const ITEM_RENDER_RADIUS: i32 = 36;
 const PROP_TYPE_SCIENTIST: u8 = 0;
 const PROP_TYPE_BARNEY: u8 = 1;
 const PROP_TYPE_HEADCRAB: u8 = 2;
+const PROP_TYPE_HOUNDEYE: u8 = 6; // sonic-blast ranged AoE
+const PROP_TYPE_BULLSQUID: u8 = 7; // acid-spit ranged projectile
 const PROP_TYPE_ITEM_SUIT: u8 = 3;
 const PROP_TYPE_ITEM_BATTERY: u8 = 4;
 const PROP_TYPE_CONTROLLER: u8 = 11; // flies: exempt from walker floor checks
@@ -296,8 +298,8 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(0, 16, ITEM_RENDER_RADIUS, AI_ITEM),                     // 3 item_suit
     mdef(0, 16, ITEM_RENDER_RADIUS, AI_ITEM),                     // 4 item_battery
     mdef_atk(50, 40, 90, AI_MELEE, 2, 0, 0, 0),                 // 5 zombie (slow shambler)
-    mdef_atk(20, 20, 70, AI_MELEE, 7, 0, 0, 0),                 // 6 houndeye (fast skitter)
-    mdef_atk(40, 32, 90, AI_MELEE, 6, 0, 0, 0),                 // 7 bullsquid (charging run)
+    mdef_atk(20, 20, 70, AI_RANGED, 7, 300, 15, 45),           // 6 houndeye (skitter in, sonic blast)
+    mdef_atk(40, 32, 90, AI_RANGED, 6, 600, 15, 55),           // 7 bullsquid (acid spit at range)
     mdef_atk(50, 40, 90, AI_RANGED, 16, 1000, 5, 8),            // 8 hgrunt (mp5 bursts)
     mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24),           // 9 alien_slave (zap)
     mdef_atk(60, 48, 100, AI_RANGED, 16, 1000, 8, 16),          // 10 alien_grunt (hornets)
@@ -725,7 +727,7 @@ const EMPTY_PROJECTED: Projected = Projected {
 static mut SCRATCH: [Projected; MAX_VERTS] = [EMPTY_PROJECTED; MAX_VERTS];
 static mut MODEL_SCRATCH: [Projected; MAX_MODEL_VERTS] = [EMPTY_PROJECTED; MAX_MODEL_VERTS];
 static mut WEAPON_CACHE_FRAME: usize = usize::MAX;
-static mut WEAPON_CACHE_RECOIL: i32 = i32::MIN;
+static mut WEAPON_CACHE_OFF: [i32; 3] = [i32::MIN, 0, 0];
 static mut WEAPON_CACHE_VERTS: usize = 0;
 static mut WEAPON_CACHE_SCALE: u16 = 0;
 static mut WEAPON_TRI_CACHE: [TriTexturedGouraud; MAX_WEAPON_CACHE_TRIS] =
@@ -4548,11 +4550,26 @@ unsafe fn tick_shooter(
             PROP_ATTACK_COOLDOWN[pi] = PROP_ATTACK_COOLDOWN[pi].max(ATTACK_WINDUP);
         }
         if PROP_ATTACK_COOLDOWN[pi] == 0 {
-            damage_target(target, def.atk_damage, health, armor);
+            match ty {
+                PROP_TYPE_HOUNDEYE => {
+                    // Sonic shockwave centred on the animal, not a hitscan.
+                    houndeye_blast(pos, range / 2, def.atk_damage);
+                    sfx::play_world(sfx::HE_BLAST, pos);
+                }
+                PROP_TYPE_BULLSQUID => {
+                    // Acid spit: a lobbed projectile toward the player.
+                    let dir = dir_q12(from, aim);
+                    spawn_projectile_dir(PROJ_SPIT, def.atk_damage, from, dir, true);
+                    sfx::play_world(sfx::HC_ATTACK, pos); // no dedicated spit sample
+                }
+                _ => {
+                    damage_target(target, def.atk_damage, health, armor);
+                    // Human weapons crack like an MP5; alien ranged attacks zap.
+                    let snd = if ty == 8 || ty >= 20 { sfx::MP5 } else { sfx::ELECTRO };
+                    sfx::play_world(snd, pos);
+                }
+            }
             PROP_ATTACK_COOLDOWN[pi] = def.atk_cooldown;
-            // Human weapons crack like an MP5; alien ranged attacks zap.
-            let snd = if ty == 8 || ty >= 20 { sfx::MP5 } else { sfx::ELECTRO };
-            sfx::play_world(snd, pos);
         }
     } else if can_move {
         PROP_STATE[pi] = PROP_STATE_MOVE;
@@ -5115,6 +5132,7 @@ const PROJ_GRENADE: u8 = 2;
 const PROJ_HORNET: u8 = 3;
 const PROJ_SNARK: u8 = 4;
 const PROJ_PLACED: u8 = 5; // satchel / tripmine (lobbed explosive)
+const PROJ_SPIT: u8 = 6; // bullsquid acid spit (enemy projectile)
 
 struct WeaponDef {
     #[allow(dead_code)] // documents the table; a HUD weapon label is the next use
@@ -5602,6 +5620,7 @@ fn project_world_point(p: [i32; 3], rot: &Mat3I16, base_t: [i32; 3]) -> Option<(
 
 unsafe fn clear_combat_fx() {
     clear_projectiles();
+    PENDING_PLAYER_DAMAGE = 0;
     IMPACT_PARTICLES.clear();
     let mut i = 0usize;
     while i < MAX_IMPACT_MARKS {
@@ -5905,6 +5924,87 @@ unsafe fn fire_weapon(
     }
 }
 
+/// Secondary fire (L2): weapon-specific alt attack. Spends its own ammo and sets
+/// its own cooldown (bypasses try_fire). Returns true when a shot went off.
+/// Crossbow zoom is NOT here -- it is a held aim state, handled at the input site.
+unsafe fn fire_secondary(
+    w: &mut Arsenal,
+    m: &Map,
+    movers: &[phys::Mover],
+    eye: [i32; 3],
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) -> bool {
+    if w.cooldown != 0 || w.reload_ticks != 0 || w.switch_ticks != 0 {
+        return false;
+    }
+    match w.current {
+        W_MP5 => {
+            // Grenade launcher: lobs a contact grenade, one AMMO_GREN per shot.
+            if w.ammo[AMMO_GREN] == 0 {
+                sfx::play(sfx::DRY);
+                return false;
+            }
+            w.ammo[AMMO_GREN] -= 1;
+            w.cooldown = 22;
+            spawn_projectile(PROJ_GRENADE, 100, eye, rot);
+            sfx::play(sfx::MP5);
+            true
+        }
+        W_SHOTGUN => {
+            // Double-barrel: both barrels at once -- two clip rounds, two blasts.
+            if w.clip[W_SHOTGUN] < 2 {
+                sfx::play(sfx::DRY);
+                return false;
+            }
+            w.clip[W_SHOTGUN] -= 2;
+            w.cooldown = 18;
+            let d = w.def();
+            fire_weapon(d, m, movers, eye, rot, base_t, 4);
+            fire_weapon(d, m, movers, eye, rot, base_t, 6);
+            sfx::play(sfx::SHOTGUN);
+            true
+        }
+        W_GAUSS => {
+            // Charged bolt: 5 uranium for a single ~3x-damage slug.
+            if w.ammo[AMMO_URANIUM] < 5 {
+                sfx::play(sfx::DRY);
+                return false;
+            }
+            w.ammo[AMMO_URANIUM] -= 5;
+            w.cooldown = 14;
+            let d = w.def();
+            fire_hitscan(
+                m,
+                movers,
+                eye,
+                rot,
+                base_t,
+                (d.damage as u16 * 3).min(255) as u8,
+                d.range,
+                GLOCK_AIM_PIX_X,
+                GLOCK_AIM_PIX_Y,
+                0,
+                0,
+            );
+            sfx::play(sfx::GAUSS);
+            true
+        }
+        W_HORNET => {
+            // Rapid burst: fire a hornet on a short cooldown (spammier than primary).
+            if w.ammo[AMMO_HORNET] == 0 {
+                return false;
+            }
+            w.ammo[AMMO_HORNET] -= 1;
+            w.cooldown = 2;
+            spawn_projectile(PROJ_HORNET, w.def().damage, eye, rot);
+            sfx::play(sfx::ELECTRO);
+            true
+        }
+        _ => false, // crowbar/glock/.357/rpg/snark/tripmine/satchel: no alt; crossbow zooms
+    }
+}
+
 /// The fire sound for a weapon id; melee picks hit vs miss.
 fn weapon_fire_sfx(id: usize, hit: bool) -> u8 {
     match id {
@@ -5940,6 +6040,7 @@ struct Projectile {
     kind: u8,
     damage: u8,
     life: u8,
+    from_enemy: bool, // enemy shots hit the player; player shots hit props
 }
 
 impl Projectile {
@@ -5950,12 +6051,16 @@ impl Projectile {
         kind: 0,
         damage: 0,
         life: 0,
+        from_enemy: false,
     };
 }
 
 static mut PROJECTILES: [Projectile; MAX_PROJECTILES] = [Projectile::ZERO; MAX_PROJECTILES];
 static mut PROJ_RECTS: [RectFlat; MAX_PROJECTILES] =
     [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_PROJECTILES];
+// Enemy AoE / projectiles / hazards deal damage here; the sim loop drains it into
+// health/armor once per tick (keeps explode() off the &mut health thread).
+static mut PENDING_PLAYER_DAMAGE: u16 = 0;
 
 // (speed, life ticks, gravity?, AoE radius (0 = direct hit only), colour, size px)
 fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
@@ -5965,8 +6070,16 @@ fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
         PROJ_GRENADE => (64, 60, true, 200, (120, 150, 90), 5),
         PROJ_HORNET => (85, 50, false, 0, (250, 230, 70), 3),
         PROJ_SNARK => (48, 80, true, 110, (190, 170, 50), 5),
+        PROJ_SPIT => (75, 55, true, 0, (150, 220, 80), 4), // bullsquid acid glob
         _ => (40, 100, true, 200, (170, 70, 50), 5), // PROJ_PLACED (satchel / tripmine)
     }
+}
+
+/// Unit-ish (q12) direction from a to b. Zero-length falls back to +Z forward.
+fn dir_q12(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
+    let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let len = isqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
+    [(d[0] << 12) / len, (d[1] << 12) / len, (d[2] << 12) / len]
 }
 
 unsafe fn clear_projectiles() {
@@ -5977,9 +6090,16 @@ unsafe fn clear_projectiles() {
     }
 }
 
+/// Player weapon projectile: fires forward along the view.
 unsafe fn spawn_projectile(kind: u8, damage: u8, eye: [i32; 3], rot: &Mat3I16) {
-    let (speed, life, gravity, ..) = proj_params(kind);
     let fwd = [rot.m[2][0] as i32, rot.m[2][1] as i32, rot.m[2][2] as i32];
+    spawn_projectile_dir(kind, damage, eye, fwd, false);
+}
+
+/// Spawn a projectile from `origin` along the q12 direction `dir`. `from_enemy`
+/// routes its damage at the player instead of props.
+unsafe fn spawn_projectile_dir(kind: u8, damage: u8, origin: [i32; 3], dir: [i32; 3], from_enemy: bool) {
+    let (speed, life, gravity, ..) = proj_params(kind);
     let mut slot = usize::MAX;
     let mut i = 0;
     while i < MAX_PROJECTILES {
@@ -5993,9 +6113,9 @@ unsafe fn spawn_projectile(kind: u8, damage: u8, eye: [i32; 3], rot: &Mat3I16) {
         slot = 0; // pool full: recycle slot 0
     }
     let mut vel = [
-        (fwd[0] * speed) >> 12,
-        (fwd[1] * speed) >> 12,
-        (fwd[2] * speed) >> 12,
+        (dir[0] * speed) >> 12,
+        (dir[1] * speed) >> 12,
+        (dir[2] * speed) >> 12,
     ];
     if gravity {
         vel[1] += speed / 3; // toss it up a little for an arc
@@ -6003,14 +6123,15 @@ unsafe fn spawn_projectile(kind: u8, damage: u8, eye: [i32; 3], rot: &Mat3I16) {
     PROJECTILES[slot] = Projectile {
         active: true,
         pos: [
-            eye[0] + ((fwd[0] * 24) >> 12),
-            eye[1] + ((fwd[1] * 24) >> 12),
-            eye[2] + ((fwd[2] * 24) >> 12),
+            origin[0] + ((dir[0] * 24) >> 12),
+            origin[1] + ((dir[1] * 24) >> 12),
+            origin[2] + ((dir[2] * 24) >> 12),
         ],
         vel,
         kind,
         damage,
         life,
+        from_enemy,
     };
 }
 
@@ -6048,6 +6169,24 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32) {
         }
         pi += 1;
     }
+    // The blast also catches the player (own rockets self-hurt too -- faithful).
+    let pd2 = dist2_3([LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]], pos);
+    if pd2 < r2 {
+        let dmg = (damage as i32 * (radius - isqrt(pd2)) / radius).clamp(0, 255) as u16;
+        PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(dmg);
+    }
+}
+
+/// Houndeye sonic shockwave: radius damage centred on the animal, player only
+/// (HL's houndeye pulse). Falls off with distance. Visual is the HE_BLAST sound
+/// plus the caller's particle burst.
+unsafe fn houndeye_blast(center: [i32; 3], radius: i32, dmg: u8) {
+    let d2 = dist2_3([LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]], center);
+    if d2 < radius * radius {
+        let scaled = (dmg as i32 * (radius - isqrt(d2)) / radius).clamp(0, 255) as u16;
+        PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(scaled);
+    }
+    queue_explosion_fx(center, 40); // pale burst stand-in (a proper ring lands with the FX pool)
 }
 
 unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
@@ -6070,24 +6209,36 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             hit = true;
             hit_pos = h.pos;
         }
-        // Enemy contact: nearest living prop within PROJ_HIT_RADIUS of the new pos.
+        let from_enemy = PROJECTILES[i].from_enemy;
+        // Contact: enemy shots home on the player, player shots on the nearest
+        // living prop (both within PROJ_HIT_RADIUS of the new pos).
         let mut best = usize::MAX;
-        let mut best_d2 = PROJ_HIT_RADIUS * PROJ_HIT_RADIUS;
-        let mut pi = 0;
-        let nprops = PROP_COUNT.min(MAX_PROPS);
-        while pi < nprops {
-            if prop_start_health(PROP_KIND[pi]) != 0 && PROP_HEALTH[pi] != 0 {
-                let d2 = dist2_3(prop_target(PROP_KIND[pi], PROP_POS[pi]), new);
-                if d2 < best_d2 {
-                    best_d2 = d2;
-                    best = pi;
-                }
+        let mut player_hit = false;
+        if from_enemy {
+            let ppos = [LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]];
+            if dist2_3(ppos, new) < PROJ_HIT_RADIUS * PROJ_HIT_RADIUS {
+                player_hit = true;
+                hit = true;
+                hit_pos = new;
             }
-            pi += 1;
-        }
-        if best != usize::MAX {
-            hit = true;
-            hit_pos = prop_target(PROP_KIND[best], PROP_POS[best]);
+        } else {
+            let mut best_d2 = PROJ_HIT_RADIUS * PROJ_HIT_RADIUS;
+            let mut pi = 0;
+            let nprops = PROP_COUNT.min(MAX_PROPS);
+            while pi < nprops {
+                if prop_start_health(PROP_KIND[pi]) != 0 && PROP_HEALTH[pi] != 0 {
+                    let d2 = dist2_3(prop_target(PROP_KIND[pi], PROP_POS[pi]), new);
+                    if d2 < best_d2 {
+                        best_d2 = d2;
+                        best = pi;
+                    }
+                }
+                pi += 1;
+            }
+            if best != usize::MAX {
+                hit = true;
+                hit_pos = prop_target(PROP_KIND[best], PROP_POS[best]);
+            }
         }
         PROJECTILES[i].pos = new;
         if PROJECTILES[i].life > 0 {
@@ -6099,6 +6250,9 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             } else if best != usize::MAX {
                 damage_prop(best, PROJECTILES[i].damage);
                 PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
+            } else if player_hit {
+                PENDING_PLAYER_DAMAGE =
+                    PENDING_PLAYER_DAMAGE.saturating_add(PROJECTILES[i].damage as u16);
             }
             PROJECTILES[i].active = false;
         }
@@ -7685,14 +7839,36 @@ fn draw_sky(m: &Map, yaw: u16, pitch: i16) {
 }
 
 /// Draw the held weapon in view space (attached to the camera), flat-shaded, on
-/// top of the world. `recoil_y` is a small screen-space kick layered over the
+/// Procedural viewmodel animation offset (right, down, depth in VM units) from
+/// weapon state -- no baked animation frames. Fire kicks the gun up + toward the
+/// camera, reload dips it down and out then back, idle adds a gentle sway.
+/// ponytail: a rigid-body transform of the static bind pose, not per-vertex
+/// weapon animation (which needs the frame bakes the VM RAM budget can't fit).
+fn viewmodel_offset(recoil: i32, reload_ticks: u8, reload_max: u8, phase: u32) -> [i32; 3] {
+    let sin = |p: u32| Mat3I16::rotate_z((p as u16) & 0xFF).m[1][0] as i32; // q12 sine
+    let bob_x = (sin(phase.wrapping_mul(4)) * 3) >> 12;
+    let bob_y = (sin(phase.wrapping_mul(8)) * 2) >> 12;
+    let fire_up = -recoil; // up = negative "down"
+    let fire_back = -(recoil / 3); // toward the camera = less depth
+    // Reload: a hump peaking mid-reload (reload_ticks counts down to 0).
+    let (rl_down, rl_right) = if reload_max > 1 && reload_ticks > 0 {
+        let elapsed = (reload_max - reload_ticks) as i32;
+        let hump = (elapsed.min(reload_ticks as i32) * 2 * 44 / reload_max as i32).min(44);
+        (hump, hump / 2)
+    } else {
+        (0, 0)
+    };
+    [bob_x + rl_right, fire_up + bob_y + rl_down, fire_back]
+}
+
+/// top of the world. `vm_off` is the procedural animation offset over the
 /// source-authored origin.
 unsafe fn draw_viewmodel(
     packets: &mut PrimitivePacketArena<'_>,
     md: &Model,
     slots: &[TexSlot],
     frame: usize,
-    recoil_y: i32,
+    vm_off: [i32; 3], // procedural animation offset (right, down, depth in VM units)
     np: &mut usize,
 ) {
     if slots.is_empty() {
@@ -7702,16 +7878,16 @@ unsafe fn draw_viewmodel(
     let local_to_world = md.local_to_world_q12();
     let (s, scale_shift) = model_local_scale_and_shift(local_to_world);
     if WEAPON_CACHE_FRAME != frame
-        || WEAPON_CACHE_RECOIL != recoil_y
+        || WEAPON_CACHE_OFF != vm_off
         || WEAPON_CACHE_VERTS != nv
         || WEAPON_CACHE_SCALE != local_to_world
     {
         let r = viewmodel_rot();
         scene::load_rotation(&r);
         scene::load_translation(Vec3I32::new(
-            VM_VIEW_SHIFT[0] * s,
-            (VM_VIEW_SHIFT[1] + recoil_y) * s,
-            VM_VIEW_SHIFT[2] * s,
+            (VM_VIEW_SHIFT[0] + vm_off[0]) * s,
+            (VM_VIEW_SHIFT[1] + vm_off[1]) * s,
+            (VM_VIEW_SHIFT[2] + vm_off[2]) * s,
         ));
         let near_s = (NEAR as i32 * s) as u16;
         let verts = md.frame(frame);
@@ -7732,7 +7908,7 @@ unsafe fn draw_viewmodel(
             i += 1;
         }
         WEAPON_CACHE_FRAME = frame;
-        WEAPON_CACHE_RECOIL = recoil_y;
+        WEAPON_CACHE_OFF = vm_off;
         WEAPON_CACHE_VERTS = nv;
         WEAPON_CACHE_SCALE = local_to_world;
 
@@ -8027,7 +8203,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     telemetry::debug_log("hl-psx: WORLD.PAK viewmodels loaded");
     unsafe {
         WEAPON_CACHE_FRAME = usize::MAX;
-        WEAPON_CACHE_RECOIL = i32::MIN;
+        WEAPON_CACHE_OFF = [i32::MIN, 0, 0];
         WEAPON_CACHE_VERTS = 0;
         WEAPON_CACHE_SCALE = 0;
         WEAPON_TRI_COUNT = 0;
@@ -8228,6 +8404,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         }
     }
     let mut fire_was_held = false; // rising-edge latch for non-auto weapons
+    let mut sec_was_held = false; // rising-edge latch for L2 secondary fire
     let mut switch_prev = false; // rising-edge latch for L1/R1 weapon cycling
     let mut weapon_icon_ticks = 0u8; // select-icon flash countdown after a switch
     let mut pending_vm_switch = false; // re-stream the viewmodel after a weapon change
@@ -8259,6 +8436,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         [0, 0, 0]
     };
     let mut recoil = 0i32; // viewmodel kick when firing
+    let mut zoom_aim = false; // crossbow L2 zoom (steady aim), persists into the render
     let mut tram_active = false;
     // The intro auto-ride runs at 3/4 of the authored max speed: HL decelerates at
     // each path_track (which we don't cook), so the constant max felt too fast.
@@ -8312,7 +8490,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             &vm_model,
             &VM_SLOTS[vm_slot..vm_slot + vm_n],
             VM_FRAME,
-            -recoil,
+            [0, 0, 0], // warmup pass (discarded): neutral pose
             &mut warm_np,
         );
         WEAPON_OT.clear();
@@ -8402,6 +8580,12 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             let fire_held = !dead && pad.buttons.is_held(button::R2);
             let want_fire = fire_held && (weapon.def().fire == FIRE_AUTO || !fire_was_held);
             fire_was_held = fire_held;
+            // L2 = secondary fire (edge-triggered). On the crossbow it is a held
+            // zoom (steady aim) rather than an attack.
+            let sec_held = !dead && pad.buttons.is_held(button::L2);
+            let want_sec = sec_held && !sec_was_held;
+            sec_was_held = sec_held;
+            zoom_aim = sec_held && weapon.current == W_CROSSBOW;
             let want_reload = pad.buttons.is_held(button::CIRCLE);
             // L1/R1 cycle owned weapons (rising edge so a hold steps once).
             let sw_next = pad.buttons.is_held(button::R1);
@@ -8464,8 +8648,15 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 fwd = 0;
                 strafe = 0;
             }
-            yaw = (((yaw as i32) + (turn * YAW_RATE) / 128) & 0xFFF) as u16;
-            pitch = (pitch + ((look * PITCH_RATE) / 128) as i16).clamp(-PITCH_MAX, PITCH_MAX);
+            // Crossbow zoom = steady aim: halve look rate while held. ponytail: a
+            // sensitivity cut, not a real FOV magnify (that needs a projection change).
+            let (yaw_rate, pitch_rate) = if zoom_aim {
+                (YAW_RATE / 2, PITCH_RATE / 2)
+            } else {
+                (YAW_RATE, PITCH_RATE)
+            };
+            yaw = (((yaw as i32) + (turn * yaw_rate) / 128) & 0xFFF) as u16;
+            pitch = (pitch + ((look * pitch_rate) / 128) as i16).clamp(-PITCH_MAX, PITCH_MAX);
             unsafe {
                 LOGIC_PLAYER_POS = player.pos;
                 LOGIC_PLAYER_YAW = yaw;
@@ -8870,6 +9061,22 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     sfx::play(weapon_fire_sfx(weapon.current, hit));
                 }
             }
+            // Secondary fire (L2): grenade / double-barrel / gauss charge / hornet
+            // burst. Independent of the primary chain (not while tank-mounted).
+            if want_sec && unsafe { MOUNTED_TANK } < 0 && weapon.any_weapon() {
+                let fire_rot = view_rotation(yaw, pitch);
+                let fire_base_t = [
+                    -dot12(fire_rot.m[0], eye),
+                    -dot12(fire_rot.m[1], eye),
+                    -dot12(fire_rot.m[2], eye),
+                ];
+                unsafe {
+                    if fire_secondary(&mut weapon, &m, movers, eye, &fire_rot, fire_base_t) {
+                        recoil = 16;
+                        add_view_punch(WEAPON_KICK[weapon.current], 0);
+                    }
+                }
+            }
             unsafe {
                 sfx::set_ear(player.pos);
                 if PAIN_SFX_COOLDOWN > 0 {
@@ -8880,6 +9087,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     MON_PAIN_COOLDOWN -= 1;
                 }
                 tick_projectiles(&m, movers);
+                if PENDING_PLAYER_DAMAGE > 0 {
+                    let d = PENDING_PLAYER_DAMAGE;
+                    PENDING_PLAYER_DAMAGE = 0;
+                    damage_player(&mut health, &mut armor, d);
+                }
                 tick_props(&m, movers, player.pos, &mut health, &mut armor);
                 LOGIC_PLAYER_HEALTH = health;
                 LOGIC_PLAYER_ARMOR = armor;
@@ -9810,12 +10022,18 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             if SHOW_VIEWMODEL && weapon.any_weapon() {
                 telemetry::stage_begin(telemetry::stage::EQUIPMENT);
                 let (vm_model, vm_slot, vm_n) = viewmodel_for(weapon.current);
+                let vm_off = viewmodel_offset(
+                    recoil,
+                    weapon.reload_ticks,
+                    weapon.def().reload,
+                    sim_frame_no,
+                );
                 draw_viewmodel(
                     &mut packets,
                     &vm_model,
                     &VM_SLOTS[vm_slot..vm_slot + vm_n],
                     VM_FRAME,
-                    -recoil,
+                    vm_off,
                     &mut np,
                 );
                 telemetry::stage_end(telemetry::stage::EQUIPMENT);
@@ -9843,11 +10061,15 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             } else {
                 // Per-weapon crosshair size: none for the crowbar (HL melee shows
                 // no crosshair), tight for precise guns, wide for the shotgun.
-                let crosshair_px: i16 = match weapon.current {
-                    W_CROWBAR => 0,
-                    W_357 | W_CROSSBOW => 12,
-                    W_SHOTGUN => 24,
-                    _ => 18,
+                let crosshair_px: i16 = if zoom_aim {
+                    6 // crossbow zoom: pinpoint
+                } else {
+                    match weapon.current {
+                        W_CROWBAR => 0,
+                        W_357 | W_CROSSBOW => 12,
+                        W_SHOTGUN => 24,
+                        _ => 18,
+                    }
                 };
                 let _ = hud::draw(
                     hud_mat,
