@@ -119,6 +119,7 @@ const YAW_RATE: i32 = 130; // yaw units/frame at full stick (Q0.12)
 const PITCH_RATE: i32 = 95; // pitch units/frame at full stick
 const DEADZONE: i32 = 28; // radial stick deadzone
 const VIEW_HEIGHT: i32 = 28;
+const CROUCH_VIEW_HEIGHT: i32 = 13; // lowered eye while crouched (TRIANGLE held)
 const PLAYER_USE_REACH: i32 = 120;
 const PLAYER_TOUCH_HALF_XZ: i32 = 16;
 const PLAYER_TOUCH_HEIGHT: i32 = 56;
@@ -7095,23 +7096,55 @@ fn fog_factor(sz: i32) -> i32 {
     }
 }
 
-/// Fade one vertex color toward black by its view depth.
+// Flashlight (HEV suit lamp): a near-depth brighten of world geometry. Only what
+// is close in front of the camera is drawn, so a depth-falloff boost reads as a
+// forward lamp. ponytail: omnidirectional near-light, not a real projected cone.
+const FLASH_RANGE: i32 = 600;
+const FLASH_STRENGTH: i32 = 110;
+static mut FLASHLIGHT_ON: bool = false;
+
+/// Fade one vertex color toward black by its view depth (plus the flashlight
+/// brighten when the lamp is on).
 #[inline]
 fn fog1(rgb: (u8, u8, u8), sz: i32) -> (u8, u8, u8) {
-    // Branch on depth BEFORE touching the color: the near case (identity) is
-    // the common one, and the far case multiplies by zero -- both were paying
-    // the unpack + three mults.
-    if sz <= FOG_START {
-        return rgb;
+    if !unsafe { FLASHLIGHT_ON } {
+        // Common case: branch on depth BEFORE touching the color. The near case
+        // (identity) is common, the far case multiplies by zero.
+        if sz <= FOG_START {
+            return rgb;
+        }
+        if sz >= FAR_VIEW {
+            return (0, 0, 0);
+        }
+        let f = ((FAR_VIEW - sz) * FOG_INV) >> 12;
+        return (
+            ((rgb.0 as i32 * f) >> 8) as u8,
+            ((rgb.1 as i32 * f) >> 8) as u8,
+            ((rgb.2 as i32 * f) >> 8) as u8,
+        );
     }
-    if sz >= FAR_VIEW {
-        return (0, 0, 0);
-    }
-    let f = ((FAR_VIEW - sz) * FOG_INV) >> 12;
+    // Flashlight on: fog the color, then add a depth-falloff brighten.
+    let base = if sz <= FOG_START {
+        rgb
+    } else if sz >= FAR_VIEW {
+        (0, 0, 0)
+    } else {
+        let f = ((FAR_VIEW - sz) * FOG_INV) >> 12;
+        (
+            ((rgb.0 as i32 * f) >> 8) as u8,
+            ((rgb.1 as i32 * f) >> 8) as u8,
+            ((rgb.2 as i32 * f) >> 8) as u8,
+        )
+    };
+    let add = if sz < FLASH_RANGE {
+        FLASH_STRENGTH * (FLASH_RANGE - sz) / FLASH_RANGE
+    } else {
+        0
+    };
     (
-        ((rgb.0 as i32 * f) >> 8) as u8,
-        ((rgb.1 as i32 * f) >> 8) as u8,
-        ((rgb.2 as i32 * f) >> 8) as u8,
+        (base.0 as i32 + add).min(255) as u8,
+        (base.1 as i32 + add).min(255) as u8,
+        (base.2 as i32 + add).min(255) as u8,
     )
 }
 
@@ -8437,6 +8470,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     };
     let mut recoil = 0i32; // viewmodel kick when firing
     let mut zoom_aim = false; // crossbow L2 zoom (steady aim), persists into the render
+    let mut crouching = false; // TRIANGLE held: lower eye + slower, persists into render
+    let mut flashlight = false; // L3 toggles the HEV lamp
+    let mut flash_prev = false; // rising-edge latch for the flashlight toggle
     let mut tram_active = false;
     // The intro auto-ride runs at 3/4 of the authored max speed: HL decelerates at
     // each path_track (which we don't cook), so the constant max felt too fast.
@@ -8586,6 +8622,18 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             let want_sec = sec_held && !sec_was_held;
             sec_was_held = sec_held;
             zoom_aim = sec_held && weapon.current == W_CROSSBOW;
+            // Crouch (TRIANGLE held): lower stance + slower move. ponytail: no
+            // shrunk collision hull (needs a cooked crouch hull), so this does not
+            // fit under low gaps yet -- it is a lower eye and reduced speed.
+            crouching = !dead && unsafe { MOUNTED_TANK } < 0 && pad.buttons.is_held(button::TRIANGLE);
+            // Flashlight (L3 toggles the HEV lamp; needs the suit).
+            let flash_now = pad.buttons.is_held(button::L3);
+            if flash_now && !flash_prev && suit_equipped && !dead {
+                flashlight = !flashlight;
+                unsafe { sfx::play(sfx::BUTTON) };
+            }
+            flash_prev = flash_now;
+            unsafe { FLASHLIGHT_ON = flashlight && suit_equipped && !dead };
             let want_reload = pad.buttons.is_held(button::CIRCLE);
             // L1/R1 cycle owned weapons (rising edge so a hold steps once).
             let sw_next = pad.buttons.is_held(button::R1);
@@ -8647,6 +8695,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             if unsafe { MOUNTED_TANK } >= 0 {
                 fwd = 0;
                 strafe = 0;
+            }
+            if crouching {
+                fwd /= 2; // crouch-walk is slower
+                strafe /= 2;
             }
             // Crossbow zoom = steady aim: halve look rate while held. ponytail: a
             // sensitivity cut, not a real FOV magnify (that needs a projection change).
@@ -8924,7 +8976,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 }
             }
             telemetry::stage_end(telemetry::stage::SIM_COLLISION);
-            let eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
+            let view_h = if crouching { CROUCH_VIEW_HEIGHT } else { VIEW_HEIGHT };
+            let eye = [player.pos[0], player.pos[1] + view_h, player.pos[2]];
             unsafe {
                 collect_pickups(
                     player.pos,
@@ -9152,7 +9205,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         // env_shake: jitter the view (yaw/pitch/eye height) by a decaying random
         // amount while a shake is active -- explosions/quakes rattle the camera.
         let (mut eye, mut view_yaw, mut view_pitch) = (
-            [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]],
+            [
+                player.pos[0],
+                player.pos[1] + if crouching { CROUCH_VIEW_HEIGHT } else { VIEW_HEIGHT },
+                player.pos[2],
+            ],
             yaw,
             pitch,
         );
