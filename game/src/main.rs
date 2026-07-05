@@ -5033,6 +5033,29 @@ const W_TRIPMINE: usize = 12;
 const W_SATCHEL: usize = 13;
 const N_WEAPONS: usize = 14;
 
+/// The MAPLIST index at which each weapon FIRST appears as a pickup in the
+/// campaign (measured by scanning every map's weapon_* entities). A chapter-
+/// select launch grants every weapon whose first-appearance index is <= the
+/// selected room, so you start a chapter with the arsenal you'd have earned by
+/// then -- and a late chapter hands you everything, which doubles as a way to
+/// test all weapons. Order matches the W_* ids (0..N_WEAPONS).
+const WEAPON_FIRST_MAP: [usize; N_WEAPONS] = [
+    12, // CROWBAR   c1a1
+    14, // GLOCK     c1a1b
+    33, // 357       c1a4g
+    23, // MP5       c1a3
+    18, // SHOTGUN   c1a2
+    51, // CROSSBOW  c2a3a
+    65, // RPG       c2a5a
+    62, // GAUSS     c2a4f
+    77, // EGON      c3a2
+    68, // HORNET    c2a5d
+    14, // GRENADE   c1a1b
+    61, // SNARK     c2a4e
+    43, // TRIPMINE  c2a2b2
+    43, // SATCHEL   c2a2b2
+];
+
 const fn wdef(
     name: &'static str,
     ammo: usize,
@@ -5121,12 +5144,36 @@ impl Arsenal {
         a
     }
 
-    fn give_chapter_loadout(&mut self) {
-        self.give_weapon(W_CROWBAR);
-        self.give_weapon(W_GLOCK);
-        self.clip[W_GLOCK] = WEAPON_DEFS[W_GLOCK].clip;
-        self.ammo[AMMO_9MM] = GLOCK_START_RESERVE;
-        self.current = W_GLOCK;
+    /// Grant the arsenal you'd have earned by `room_id` (chapter select): every
+    /// weapon whose first-appearance map index is <= the selected room, each with
+    /// a full clip and ~3 magazines of reserve so the loadout is immediately
+    /// usable (and testable). A late chapter thus hands you every weapon.
+    fn give_chapter_loadout(&mut self, room_id: usize) {
+        for w in 0..N_WEAPONS {
+            if WEAPON_FIRST_MAP[w] > room_id {
+                continue;
+            }
+            self.give_weapon(w);
+            let d = &WEAPON_DEFS[w];
+            self.clip[w] = d.clip;
+            if d.ammo != AMMO_NONE {
+                // ~3 clips (or a stack of 15 for clip-less thrown/energy weapons),
+                // capped at the pool's reserve max; never lower an existing stock.
+                let give = ((d.clip.max(5) as u32) * 3).min(d.reserve_max as u32) as u16;
+                if self.ammo[d.ammo] < give {
+                    self.ammo[d.ammo] = give;
+                }
+            }
+        }
+        // Select the glock if owned (the standard sidearm), else the crowbar,
+        // else whatever the earliest owned weapon is.
+        self.current = if self.owns(W_GLOCK) {
+            W_GLOCK
+        } else if self.owns(W_CROWBAR) {
+            W_CROWBAR
+        } else {
+            (0..N_WEAPONS).find(|&w| self.owns(w)).unwrap_or(W_CROWBAR)
+        };
     }
 
     /// Everything, loaded (DEBUG_ALL_WEAPONS test arsenal).
@@ -7940,8 +7987,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             if DEBUG_ALL_WEAPONS {
                 weapon.give_all_debug();
             } else if launch.suit_equipped {
-                // Mid-campaign chapter select: baseline crowbar + glock.
-                weapon.give_chapter_loadout();
+                // Mid-campaign chapter select: the arsenal earned by this chapter.
+                weapon.give_chapter_loadout(launch.room_id as usize);
             }
         }
     }
