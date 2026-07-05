@@ -664,6 +664,15 @@ impl Player {
         let accel = if self.on_ground { GROUND_ACCEL } else { AIR_ACCEL };
         self.vel[0] += ((wish_x - self.vel[0]) * accel) >> 4;
         self.vel[2] += ((wish_z - self.vel[2]) * accel) >> 4;
+        // The >>4 decel is an arithmetic shift: a small NEGATIVE residual floors
+        // at -1 and never reaches 0, so a released player would drift forever
+        // (self-movement with no input). Snap tiny idle velocity to a dead stop.
+        if wish_x == 0 && self.vel[0].abs() <= 2 {
+            self.vel[0] = 0;
+        }
+        if wish_z == 0 && self.vel[2].abs() <= 2 {
+            self.vel[2] = 0;
+        }
 
         self.land_impact = 0;
         let was_air = !self.on_ground;
