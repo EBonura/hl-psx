@@ -966,9 +966,30 @@ static mut XHAIR_DUMP_LAST: u32 = u32::MAX; // last auto-dumped key (tt, or sent
 /// inverse of that camera rotation, so negate yaw before building rotY. Pitch is
 /// still camera-space so looking up/down while turned doesn't roll the horizon.
 /// Rows 0/1 are negated for the GPU's Y-down screen.
+/// Aim-stick response curve: ~45% linear + ~55% cubic, so small tilts turn slowly
+/// (fine aim) and full tilt gives the full rate. `v` is a raw axis in ~-128..127.
+#[inline]
+fn aim_curve(v: i32) -> i32 {
+    let s = v.signum();
+    let a = v.abs().min(128);
+    let cubic = a * a / 128 * a / 128; // a^3 / 128^2, back in 0..128
+    s * ((a * 45 + cubic * 55) / 100)
+}
+
 fn view_rotation(yaw: u16, pitch: i16) -> Mat3I16 {
+    view_rotation_roll(yaw, pitch, 0)
+}
+
+/// As `view_rotation` but with a camera ROLL (rotation about the view forward
+/// axis) -- GoldSrc's `V_CalcRoll` banks the view slightly when you strafe. `roll`
+/// is an 8-bit angle (256 = full turn), applied in view space before the Y-down
+/// row flip so it tilts the horizon.
+fn view_rotation_roll(yaw: u16, pitch: i16, roll: i16) -> Mat3I16 {
     let view_yaw = 0u16.wrapping_sub(yaw >> 4);
-    let look = Mat3I16::rotate_x((pitch >> 4) as u16).mul(&Mat3I16::rotate_y(view_yaw));
+    let mut look = Mat3I16::rotate_x((pitch >> 4) as u16).mul(&Mat3I16::rotate_y(view_yaw));
+    if roll != 0 {
+        look = Mat3I16::rotate_z(roll as u16).mul(&look);
+    }
     let mut r = look;
     let mut j = 0;
     while j < 3 {
@@ -1505,6 +1526,24 @@ static mut LOGIC_TRAM_RIDING: u8 = 0;
 static mut SHAKE_TICKS: u16 = 0;
 static mut SHAKE_DUR: u16 = 1;
 static mut SHAKE_AMP: u16 = 0;
+// ---- Shared game-feel foundation: view punch + bob + damage flash ----
+// View punch: a decaying camera kick (pitch/yaw, 12-bit view units) reused by
+// weapon recoil, hard landings, taking damage, and enemy hits. HL's punchangle.
+static mut PUNCH_PITCH: i32 = 0;
+static mut PUNCH_YAW: i32 = 0;
+// Walk view-bob phase (advances with movement each sim tick) -> a vertical head
+// bob + a subtle strafe roll are derived from it in the render view setup.
+static mut BOB_PHASE: u32 = 0;
+// Red damage overlay: alpha countdown set when the player takes damage.
+static mut DAMAGE_FLASH: u8 = 0;
+
+/// Kick the view (decaying) -- HL's punchangle. `pitch` up is negative here to
+/// match the view pitch convention; `yaw` is a small left/right jolt.
+#[inline]
+unsafe fn add_view_punch(pitch: i32, yaw: i32) {
+    PUNCH_PITCH = (PUNCH_PITCH + pitch).clamp(-400, 400);
+    PUNCH_YAW = (PUNCH_YAW + yaw).clamp(-400, 400);
+}
 // ---- func_tank: the mountable gun the player is currently operating ----
 static mut MOUNTED_TANK: i32 = -1; // logic index of the mounted tank, or -1
 static mut TANK_FIRE_CD: u16 = 0; // ticks until the tank can fire again
@@ -2422,6 +2461,13 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
     music_apply(); // no-op when the wanted track already plays
     if SHAKE_TICKS > 0 {
         SHAKE_TICKS -= 1;
+    }
+    // Spring the view punch back to centre (HL's V_DropPunchAngle): decay ~30%
+    // per sim tick so a kick recovers over ~5-6 ticks. Snap tiny residuals to 0.
+    PUNCH_PITCH -= (PUNCH_PITCH * 5) / 16 + PUNCH_PITCH.signum();
+    PUNCH_YAW -= (PUNCH_YAW * 5) / 16 + PUNCH_YAW.signum();
+    if DAMAGE_FLASH > 0 {
+        DAMAGE_FLASH = DAMAGE_FLASH.saturating_sub(24); // red overlay fades over ~8 ticks
     }
     if TITLE_TEXT_ID != 0 {
         TITLE_T = TITLE_T.saturating_add(1);
@@ -4170,6 +4216,11 @@ fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
             sfx::play(sfx::PAIN);
             PAIN_SFX_COOLDOWN = 12;
         }
+        // Red damage flash (alpha scaled by hit size) + a random view jolt so
+        // getting shot has visible + felt feedback (HL's damage tint + punch).
+        DAMAGE_FLASH = DAMAGE_FLASH.max((60 + dmg.min(50) * 2).min(210) as u8);
+        let r = IMPACT_RNG.next() as i32;
+        add_view_punch(dmg.min(24) as i32 + (r % 16) - 8, (r % 24) - 12);
     }
     if *armor > 0 {
         // GoldSrc's HEV suit keeps only 20% of generic damage on health and
@@ -5039,6 +5090,25 @@ const N_WEAPONS: usize = 14;
 /// selected room, so you start a chapter with the arsenal you'd have earned by
 /// then -- and a late chapter hands you everything, which doubles as a way to
 /// test all weapons. Order matches the W_* ids (0..N_WEAPONS).
+/// Per-weapon upward view-punch on fire (12-bit view-pitch units) -- a glock taps,
+/// the .357/shotgun/RPG kick hard, the crowbar barely nudges. Order = W_* ids.
+const WEAPON_KICK: [i32; N_WEAPONS] = [
+    6,  // CROWBAR (swing nudge)
+    18, // GLOCK
+    70, // 357 (hand cannon)
+    12, // MP5 (per auto shot)
+    75, // SHOTGUN
+    28, // CROSSBOW
+    55, // RPG
+    30, // GAUSS
+    8,  // EGON (beam)
+    10, // HORNET
+    6,  // GRENADE (throw)
+    6,  // SNARK
+    6,  // TRIPMINE
+    6,  // SATCHEL
+];
+
 const WEAPON_FIRST_MAP: [usize; N_WEAPONS] = [
     12, // CROWBAR   c1a1
     14, // GLOCK     c1a1b
@@ -8212,8 +8282,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     strafe = -(lx as i32);
                 }
                 if (rx as i32) * (rx as i32) + (ry as i32) * (ry as i32) > dz2 {
-                    turn = -(rx as i32);
-                    look = -(ry as i32); // stick up = look up
+                    // Expo response: mostly cubic near centre for fine aim, full
+                    // rate at the edges -- and it softens the deadzone-edge jump.
+                    turn = aim_curve(-(rx as i32));
+                    look = aim_curve(-(ry as i32)); // stick up = look up
                 }
             }
             if dead {
@@ -8420,9 +8492,36 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     yaw,
                 );
             }
+            // Landing: any real touchdown dips the view (weight), and a hard fall
+            // does damage (HL's fall damage above a safe speed). Gives drops a
+            // sense of impact instead of feeling weightless.
+            {
+                let li = player.land_impact;
+                if li > 50 {
+                    unsafe { add_view_punch(-(li.min(260) / 6), 0) };
+                }
+                if li > 250 {
+                    let d = ((li - 250) / 8).clamp(1, 50) as u16;
+                    damage_player(&mut health, &mut armor, d);
+                }
+            }
+            // Low-health warning: a faint red heartbeat vignette (HL flashes the
+            // HUD red at low health). Reuses the damage-flash overlay on a beat.
+            if health > 0 && health < 25 && (sim_frame_no % 22) < 5 {
+                unsafe { DAMAGE_FLASH = DAMAGE_FLASH.max(40) };
+            }
             // Footsteps: input-magnitude cadence while grounded (full run =
             // a step roughly every 8 ticks), alternating the two samples.
             unsafe {
+                // View-bob phase advances with horizontal ground speed; the render
+                // derives a vertical head-bob + strafe roll from it. Frozen while
+                // airborne/stopped (the amplitude, speed-scaled, eases it to rest).
+                let hspeed = isqrt(
+                    player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2],
+                );
+                if player.on_ground && hspeed > 4 {
+                    BOB_PHASE = BOB_PHASE.wrapping_add(((hspeed as u32) / 3 + 3).min(22));
+                }
                 if player.on_ground {
                     let mag = (fwd.unsigned_abs()).max(strafe.unsigned_abs()) as u32;
                     if mag > 20 {
@@ -8556,6 +8655,13 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 }
             } else if want_fire && weapon.try_fire() {
                 recoil = 16;
+                unsafe {
+                    // Camera kick: up per the weapon's class + a small random
+                    // horizontal jolt so bursts wander like the real guns.
+                    let k = WEAPON_KICK[weapon.current];
+                    let yj = (IMPACT_RNG.next() as i32 % 5) - 2;
+                    add_view_punch(k, yj * k / 24);
+                }
                 let fire_rot = view_rotation(yaw, pitch);
                 let fire_base_t = [
                     -dot12(fire_rot.m[0], eye),
@@ -8641,7 +8747,28 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             yaw,
             pitch,
         );
+        // Head-bob: a vertical bob (doubled frequency, like HL) scaled by ground
+        // speed, plus a subtle strafe roll -- both derived from BOB_PHASE + the
+        // current horizontal velocity so a walking camera breathes instead of
+        // gliding on rails.
+        let mut view_roll = 0i16;
         unsafe {
+            let hspeed = isqrt(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
+            let bob_amp = (hspeed.min(90) * 5) >> 4; // world units of vertical bob
+            let bob_sin = Mat3I16::rotate_z(((BOB_PHASE * 2) as u16) & 0xFF).m[1][0] as i32;
+            eye[1] += (bob_amp * bob_sin) >> 12;
+            // Strafe bank: the perpendicular (right) component of velocity tilts
+            // the horizon a few degrees. rot.m[0] would be circular, so derive the
+            // world right vector straight from the yaw.
+            let right = Mat3I16::rotate_y(0u16.wrapping_sub(yaw >> 4));
+            let side = (right.m[0][0] as i32 * player.vel[0]
+                + right.m[0][2] as i32 * player.vel[2])
+                >> 12;
+            view_roll = (side / 12).clamp(-4, 4) as i16;
+            // View punch (recoil / landing / damage), decaying via tick_screen_fx.
+            view_pitch = (view_pitch as i32 + PUNCH_PITCH)
+                .clamp(-PITCH_MAX as i32, PITCH_MAX as i32) as i16;
+            view_yaw = ((view_yaw as i32 + PUNCH_YAW) & 0xFFF) as u16;
             if SHAKE_TICKS > 0 {
                 let amp = SHAKE_AMP as i32 * SHAKE_TICKS as i32 / SHAKE_DUR.max(1) as i32;
                 let j = |m: i32| (IMPACT_RNG.next() as i32 % (2 * m + 1)) - m;
@@ -8652,7 +8779,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             }
         }
         let eye = eye;
-        let rot = view_rotation(view_yaw, view_pitch);
+        let rot = view_rotation_roll(view_yaw, view_pitch, view_roll);
         scene::load_rotation(&rot);
         let base_t = [
             -dot12(rot.m[0], eye),
@@ -9632,6 +9759,14 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             }
             if SHOW_VIEWMODEL && recoil >= 13 && MUZZLE_FLASH_WEAPONS[weapon.current] {
                 draw_muzzle_flash(sim_frame_no);
+            }
+            // Damage flash: subtract green+blue full-screen so the view reddens +
+            // darkens for a few ticks after taking a hit (HL's hurt tint).
+            if unsafe { DAMAGE_FLASH } > 0 {
+                use psx_gpu::material::BlendMode;
+                let f = unsafe { DAMAGE_FLASH };
+                psx_gpu::draw_tri_flat_blended([(0, 0), (320, 0), (0, 240)], 0, f, f, BlendMode::Subtract);
+                psx_gpu::draw_tri_flat_blended([(320, 0), (320, 240), (0, 240)], 0, f, f, BlendMode::Subtract);
             }
             draw_screen_fx(&m);
 

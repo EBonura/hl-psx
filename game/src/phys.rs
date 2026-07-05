@@ -532,6 +532,7 @@ pub struct Player {
     pub vel: [i32; 3],
     pub on_ground: bool,
     pub ground_mover: i32, // ent id of the mover under our feet (-1 = world/none)
+    pub land_impact: i32,  // downward speed absorbed the tick we touched down (0 = none)
 }
 
 impl Player {
@@ -541,6 +542,7 @@ impl Player {
             vel: [0, 0, 0],
             on_ground: false,
             ground_mover: -1,
+            land_impact: 0,
         }
     }
 
@@ -646,6 +648,9 @@ impl Player {
         self.vel[0] = (wx * MOVE_SPEED) >> 12;
         self.vel[2] = (wz * MOVE_SPEED) >> 12;
 
+        self.land_impact = 0;
+        let was_air = !self.on_ground;
+
         if self.on_ground {
             if self.vel[1] < 0 {
                 self.vel[1] = 0;
@@ -697,9 +702,14 @@ impl Player {
         self.on_ground = g.frac < 4096 && g.normal[1] > GROUND_NY;
         self.ground_mover = if self.on_ground { g.mover } else { -1 };
         if self.on_ground {
-            // Snap onto the floor and kill downward speed.
+            // Snap onto the floor and kill downward speed. Capture the impact
+            // speed on the touchdown tick (was airborne) for fall damage + a
+            // landing view dip before it's zeroed.
             self.pos[1] += ((down[1] - self.pos[1]) * g.frac) >> 12;
             if self.vel[1] < 0 {
+                if was_air {
+                    self.land_impact = -self.vel[1];
+                }
                 self.vel[1] = 0;
             }
         }
