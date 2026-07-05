@@ -1283,6 +1283,48 @@ fire, houndeye sonic / bullsquid spit (ranged-AI path), crouch, per-weapon
 crosshair, ambient loops. Doc-drift reconciled: the sprite/beam renderer (M39)
 IS done -- earlier "Next" lines calling it deferred are stale.
 
+## M41 -- Tier 1 combat-feel quick wins (8 items, from the 2nd polish audit)
+
+Eight small, self-contained polish items (the audit's "Tier 1" row -- highest
+feel-per-line). All game-side; no new assets, ~240 B of statics.
+
+- **Persistent bullet/blood decals**: `decay_combat_fx` no longer ages the
+  `IMPACT_MARKS` ttl -- marks stay full-colour until the 24-slot ring recycles
+  the oldest (HL decals persist; ours used to fade in ~9 s). Cleared on map load.
+- **Death blood pool**: `damage_prop` scatters 2 persistent blood decals at the
+  corpse on death (world-space marks, so it covers every damage source -- bullets,
+  projectiles, explosions, melee). Turrets don't bleed (`ai != AI_TURRET`).
+- **Bullet tracers**: `fire_hitscan` pushes a muzzle->impact segment into a
+  `TRACERS` ring (ttl 2 sim ticks, decayed in `decay_combat_fx`); the render draws
+  each as one warm additive line via the existing `draw_beam`. Only long-range
+  shots (`range > 1000`) leave one -- never a crowbar swing. Muzzle sits a little
+  below/right of the eye so it streaks from the gun, not the crosshair.
+- **Movement inaccuracy + shotgun scatter**: `fire_weapon` gained an `inacc` px
+  arg (from player h-speed + airborne, computed at the fire site); a `jit(mag)`
+  RNG closure wanders each hitscan's aim by it. The shotgun adds its own scatter
+  (`inacc + spread/4`) per pellet so the pattern isn't a fixed rosette. Standing
+  still = tight; run-and-gun / bunny-hop = spray. Matches HL's cone-of-fire.
+- **Per-weapon crosshair**: `hud::draw` takes a `crosshair_px` size (0 = none) --
+  the same sprite scaled by weapon class: crowbar 0 (HL melee has none), 357 /
+  crossbow 12 (tight), shotgun 24 (wide), else 18. ponytail: scaled sprite, not
+  per-weapon art (that needs the sprite-atlas pass).
+- **Low-health HUD tint**: at `health < 25` the health cross + number modulate by
+  a red tint (`with_tint((0x80,0x28,0x18))` -> amber texels go red-orange). Pairs
+  with the existing red heartbeat pulse.
+- **Enemy separation**: `prop_move_towards_point` fans each walker's goal sideways
+  by a per-index amount (`((pi & 7) - 4) * 20` units, perpendicular to approach)
+  so a group closes on the player in an arc instead of stacking on one point;
+  drops to a straight line inside melee reach so a contact attack still lands.
+  ponytail: O(1) index spread, NOT an O(n^2) neighbour scan -- the office maps are
+  already near the frame budget.
+- **Jump input buffer**: a Cross press up to `JUMP_BUFFER_TICKS` (2) before
+  touchdown still jumps on the landing tick (`JUMP_BUFFER` latch in main, consumed
+  when grounded) -- forgives an early press on a fall. On-foot update only.
+
+Verified: clean build; c1a0 direct boot renders correctly (no regression). The
+combat-feel items can't be judged from a static headless boot (no fire input), so
+they're verified-by-construction + the boot check, per the session pattern.
+
 ## Next (pick per value)
 
 - **PERF (researched, ranked -- the emit wall)**: 1) cook-time PRE-BAKED GPU

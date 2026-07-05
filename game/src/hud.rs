@@ -101,8 +101,6 @@ const SUIT_DRAW_W: i16 = 30;
 const SUIT_DRAW_H: i16 = 30;
 const AMMO_DRAW_W: i16 = 18;
 const AMMO_DRAW_H: i16 = 18;
-const CROSSHAIR_DRAW_W: i16 = 18;
-const CROSSHAIR_DRAW_H: i16 = 18;
 const DIVIDER_DRAW_W: i16 = 2;
 const DIVIDER_DRAW_H: i16 = 30;
 const PICKUP_ANIM_MAX_TICKS: i16 = 36;
@@ -175,6 +173,7 @@ pub fn draw<const N: usize>(
     mat: TextureMaterial,
     suit_equipped: bool,
     has_weapon: bool,
+    crosshair_px: i16, // per-weapon crosshair size (0 = none, e.g. melee)
     health: u16,
     armor: u16,
     clip_ammo: u16,
@@ -207,7 +206,10 @@ pub fn draw<const N: usize>(
             20,
         );
     }
-    if has_weapon {
+    if has_weapon && crosshair_px > 0 {
+        // Per-weapon crosshair: the same sprite scaled by weapon class -- tight for
+        // precise guns, wide for spread, hidden for melee (0 px). ponytail: one
+        // sprite scaled, not per-weapon art (that needs the sprite atlas pass).
         sprite(
             mat,
             ot,
@@ -217,11 +219,11 @@ pub fn draw<const N: usize>(
             ICON_V,
             CROSSHAIR_W,
             CROSSHAIR_H,
-            160 - CROSSHAIR_DRAW_W / 2,
-            120 - CROSSHAIR_DRAW_H / 2,
-            CROSSHAIR_DRAW_W,
-            CROSSHAIR_DRAW_H,
-        ); // real pistol crosshair (empty hands draw nothing)
+            160 - crosshair_px / 2,
+            120 - crosshair_px / 2,
+            crosshair_px,
+            crosshair_px,
+        );
     }
     // HEV HUD: no health/armor/ammo readout until the suit is equipped (HL shows
     // no HUD before the suit). On suit pickup it boots up by sliding in from below
@@ -235,8 +237,15 @@ pub fn draw<const N: usize>(
         };
         let y = 240 - GH - 8 + slide;
         let icon_y = y - 3;
+        // Low health reddens the cross + number (HL's danger cue). The amber
+        // texels modulate by this tint -> red-orange; full amber otherwise.
+        let health_mat = if health < 25 {
+            mat.with_tint((0x80, 0x28, 0x18))
+        } else {
+            mat
+        };
         sprite(
-            mat,
+            health_mat,
             ot,
             prims,
             &mut count,
@@ -249,7 +258,7 @@ pub fn draw<const N: usize>(
             HEALTH_DRAW_W,
             HEALTH_DRAW_H,
         ); // health cross icon
-        number_l(mat, ot, prims, &mut count, health, 38, y);
+        number_l(health_mat, ot, prims, &mut count, health, 38, y);
 
         let suit_u =
             if armor > 0 || (suit_equipped && pickup_kind == PICKUP_SUIT && (pickup_ticks & 2) == 0) {

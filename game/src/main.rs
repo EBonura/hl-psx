@@ -471,6 +471,17 @@ static mut IMPACT_PARTICLE_RECTS: [RectFlat; MAX_IMPACT_PARTICLES] =
     [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_IMPACT_PARTICLES];
 static mut IMPACT_MARK_RECTS: [RectFlat; MAX_IMPACT_MARKS] =
     [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_IMPACT_MARKS];
+// Bullet tracers: a hitscan pushes a muzzle->impact world segment here; the
+// render draws it as one additive line (reuses draw_beam) for the sim ticks it
+// lives. A small ring -- old tracers just get overwritten.
+const MAX_TRACERS: usize = 8;
+static mut TRACERS: [([i32; 3], [i32; 3], u8); MAX_TRACERS] =
+    [([0; 3], [0; 3], 0); MAX_TRACERS];
+static mut TRACER_CURSOR: usize = 0;
+// Jump input buffer: a Cross press up to JUMP_BUFFER_TICKS before landing still
+// jumps (forgives an early press on a fall -- HL-ish landing feel).
+static mut JUMP_BUFFER: u8 = 0;
+const JUMP_BUFFER_TICKS: u8 = 2;
 static mut DEATH_OVERLAY: RectFlat = RectFlat::new(0, 0, 0, 0, 0, 0, 0);
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 // Resident viewmodel pool: ALL weapons load at map start so switching is instant
@@ -3975,6 +3986,26 @@ unsafe fn prop_move_towards_point(
     }
     let speed = speed * 2;
     let pos = PROP_POS[pi];
+    // Flanking spread (cheap separation): fan each walker's goal sideways by a
+    // per-index amount so a group closes on the player in a rough arc instead of
+    // stacking on one point. Drops to a straight line inside melee reach so a
+    // contact attack still lands. ponytail: index spread, not a neighbour scan --
+    // true repulsion is O(n^2) on the crowded office maps already near budget.
+    let goal = {
+        let dx = goal[0] - pos[0];
+        let dz = goal[2] - pos[2];
+        let d = isqrt(dx * dx + dz * dz);
+        if d > 64 {
+            let spread = ((pi as i32 & 7) - 4) * 20; // -80..+60 units off the approach
+            [
+                goal[0] + (-dz * spread) / d,
+                goal[1],
+                goal[2] + (dx * spread) / d,
+            ]
+        } else {
+            goal
+        }
+    };
     prop_face_point(pi, goal);
     if prop_try_step(m, movers, pi, goal[0] - pos[0], goal[2] - pos[2], speed) {
         return true;
@@ -4031,6 +4062,19 @@ unsafe fn damage_prop(pi: usize, dmg: u8) {
         PROP_DEATH_START[pi] = SIM_NOW; // play the death clip forward from now
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_AI_TIMER[pi] = 0;
+        // Death gore: a couple of persistent blood decals pooled at the corpse.
+        // World-space marks (no projection needed), so this covers every damage
+        // source -- bullets, projectiles, explosions, melee. Turrets don't bleed.
+        if model_def(PROP_KIND[pi]).ai != AI_TURRET {
+            let cp = PROP_POS[pi];
+            let mut b = 0;
+            while b < 2 {
+                let jx = (IMPACT_RNG.next() as i32 % 25) - 12;
+                let jz = (IMPACT_RNG.next() as i32 % 25) - 12;
+                spawn_impact_mark([cp[0] + jx, cp[1] + 6, cp[2] + jz], IMPACT_KIND_BLOOD);
+                b += 1;
+            }
+        }
         sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
         let v = prop_voice(PROP_KIND[pi], true);
         if v != SFX_NONE {
@@ -5565,14 +5609,23 @@ unsafe fn clear_combat_fx() {
         i += 1;
     }
     IMPACT_MARK_CURSOR = 0;
+    let mut t = 0usize;
+    while t < MAX_TRACERS {
+        TRACERS[t].2 = 0;
+        t += 1;
+    }
+    TRACER_CURSOR = 0;
 }
 
 unsafe fn decay_combat_fx() {
+    // Particle bursts are transient; bullet/blood MARKS now persist (like HL
+    // decals) -- they stay at full colour until the fixed-size ring buffer
+    // recycles the oldest, so a wall you shot keeps its holes.
     IMPACT_PARTICLES.update(1);
     let mut i = 0usize;
-    while i < MAX_IMPACT_MARKS {
-        if IMPACT_MARKS[i].ttl > 0 {
-            IMPACT_MARKS[i].ttl -= 1;
+    while i < MAX_TRACERS {
+        if TRACERS[i].2 > 0 {
+            TRACERS[i].2 -= 1;
         }
         i += 1;
     }
@@ -5586,6 +5639,14 @@ unsafe fn spawn_impact_mark(pos: [i32; 3], kind: u8) {
         kind,
     };
     IMPACT_MARK_CURSOR = (IMPACT_MARK_CURSOR + 1) % MAX_IMPACT_MARKS;
+}
+
+/// Queue a bullet tracer (muzzle -> impact) for a couple of sim ticks. Ring
+/// buffer: an eighth in flight at once just overwrites the oldest.
+unsafe fn push_tracer(start: [i32; 3], end: [i32; 3]) {
+    let i = TRACER_CURSOR % MAX_TRACERS;
+    TRACERS[i] = (start, end, 2);
+    TRACER_CURSOR = (TRACER_CURSOR + 1) % MAX_TRACERS;
 }
 
 unsafe fn spawn_impact_particles(screen: (i16, i16), kind: u8) {
@@ -5716,8 +5777,15 @@ unsafe fn fire_hitscan(
         pi += 1;
     }
 
+    // Muzzle a little below/right of the eye so the tracer streaks from the gun,
+    // not the crosshair. Only bullets (long range) leave a tracer, never a swing.
+    let muzzle = [
+        eye[0] + ((rot.m[2][0] as i32 * 20 + rot.m[0][0] as i32 * 7 + rot.m[1][0] as i32 * 7) >> 12),
+        eye[1] + ((rot.m[2][1] as i32 * 20 + rot.m[0][1] as i32 * 7 + rot.m[1][1] as i32 * 7) >> 12),
+        eye[2] + ((rot.m[2][2] as i32 * 20 + rot.m[0][2] as i32 * 7 + rot.m[1][2] as i32 * 7) >> 12),
+    ];
     if best == usize::MAX {
-        if let Some(hit) = world_hit {
+        let tracer_end = if let Some(hit) = world_hit {
             let decal_pos = [
                 hit.pos[0] + ((hit.normal[0] * 2) >> 12),
                 hit.pos[1] + ((hit.normal[1] * 2) >> 12),
@@ -5728,17 +5796,22 @@ unsafe fn fire_hitscan(
             if hit.mover >= 0 {
                 damage_brush_ent(m, m.n_logic, m.n_ents, hit.mover as usize, damage, SIM_NOW);
             }
+            hit.pos
+        } else {
+            end // shot into the void: streak to the far range point
+        };
+        if range > 1000 {
+            push_tracer(muzzle, tracer_end);
         }
         None
     } else {
         let ty = PROP_KIND[best];
+        let target = prop_target(ty, PROP_POS[best]);
         damage_prop(best, damage);
-        spawn_impact_fx(
-            prop_target(ty, PROP_POS[best]),
-            IMPACT_KIND_BLOOD,
-            rot,
-            base_t,
-        );
+        spawn_impact_fx(target, IMPACT_KIND_BLOOD, rot, base_t);
+        if range > 1000 {
+            push_tracer(muzzle, target);
+        }
         PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
         if ty == PROP_TYPE_SCIENTIST {
             PROP_AI_TIMER[best] = SCIENTIST_FEAR_TICKS;
@@ -5766,7 +5839,18 @@ unsafe fn fire_weapon(
     eye: [i32; 3],
     rot: &Mat3I16,
     base_t: [i32; 3],
+    inacc: i32,
 ) -> bool {
+    // Random screen-space aim jitter of magnitude +-mag px. `inacc` grows with
+    // player speed / being airborne (HL cone-of-fire); the shotgun adds its own
+    // scatter so the pellet pattern isn't a fixed rosette.
+    let jit = |mag: i32| {
+        if mag <= 0 {
+            0
+        } else {
+            (IMPACT_RNG.next() as i32 % (2 * mag + 1)) - mag
+        }
+    };
     match d.fire {
         FIRE_MELEE => fire_hitscan(
             m, movers, eye, rot, base_t, d.damage, d.range, MELEE_AIM_PIX, MELEE_AIM_PIX, 0, 0,
@@ -5774,6 +5858,7 @@ unsafe fn fire_weapon(
         .is_some(),
         FIRE_SPREAD => {
             let n = d.pellets.max(1);
+            let scatter = inacc + (d.spread as i32 / 4).max(1);
             let mut i = 0u8;
             let mut hit = false;
             while i < n {
@@ -5788,8 +5873,8 @@ unsafe fn fire_weapon(
                     d.range,
                     GLOCK_AIM_PIX_X,
                     GLOCK_AIM_PIX_Y,
-                    cx,
-                    cy,
+                    cx + jit(scatter),
+                    cy + jit(scatter),
                 )
                 .is_some();
                 i += 1;
@@ -5801,7 +5886,7 @@ unsafe fn fire_weapon(
             false
         }
         _ => {
-            // FIRE_SEMI / FIRE_AUTO: single centred hitscan.
+            // FIRE_SEMI / FIRE_AUTO: single hitscan, wandered by movement inaccuracy.
             fire_hitscan(
                 m,
                 movers,
@@ -5812,8 +5897,8 @@ unsafe fn fire_weapon(
                 d.range,
                 GLOCK_AIM_PIX_X,
                 GLOCK_AIM_PIX_Y,
-                0,
-                0,
+                jit(inacc),
+                jit(inacc),
             )
             .is_some()
         }
@@ -8539,6 +8624,21 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             // Full player physics always runs; moving trains carry the player by
             // delta before the update, then block them through their shifted hull.
             telemetry::stage_begin(telemetry::stage::SIM_COLLISION);
+            // Jump buffer: a Cross press up to JUMP_BUFFER_TICKS before touchdown
+            // still jumps the moment we land (forgives an early press on a fall).
+            let jump_pressed = pad.buttons.is_held(button::CROSS);
+            let jump_want = unsafe {
+                let want = jump_pressed || (JUMP_BUFFER > 0 && player.on_ground);
+                if jump_pressed && !player.on_ground {
+                    JUMP_BUFFER = JUMP_BUFFER_TICKS;
+                } else if JUMP_BUFFER > 0 {
+                    JUMP_BUFFER -= 1;
+                }
+                if want && player.on_ground {
+                    JUMP_BUFFER = 0; // consumed on the landing tick
+                }
+                want
+            };
             let on_ladder = unsafe { ladder_touch(&m, nents, player.pos) };
             let in_water = !on_ladder
                 && unsafe { water_touch(nents, [player.pos[0], player.pos[1] + 12, player.pos[2]]) };
@@ -8563,14 +8663,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     pitch,
                 );
             } else {
-                player.update(
-                    &m,
-                    movers,
-                    fwd,
-                    strafe,
-                    pad.buttons.is_held(button::CROSS),
-                    yaw,
-                );
+                player.update(&m, movers, fwd, strafe, jump_want, yaw);
             }
             // Landing: any real touchdown dips the view (weight), and a hard fall
             // does damage (HL's fall damage above a safe speed). Gives drops a
@@ -8769,7 +8862,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     -dot12(fire_rot.m[2], eye),
                 ];
                 unsafe {
-                    let hit = fire_weapon(weapon.def(), &m, movers, eye, &fire_rot, fire_base_t);
+                    // Cone-of-fire: shots wander more while moving fast or airborne.
+                    let hs = isqrt(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
+                    let inacc = (hs / 12).min(6) + if player.on_ground { 0 } else { 5 };
+                    let hit =
+                        fire_weapon(weapon.def(), &m, movers, eye, &fire_rot, fire_base_t, inacc);
                     sfx::play(weapon_fire_sfx(weapon.current, hit));
                 }
             }
@@ -9744,10 +9841,19 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 DEATH_OVERLAY = RectFlat::new(0, 0, 320, 240, r, r / 6, r / 6);
                 HUD_OT.add(0, &mut DEATH_OVERLAY, RectFlat::WORDS);
             } else {
+                // Per-weapon crosshair size: none for the crowbar (HL melee shows
+                // no crosshair), tight for precise guns, wide for the shotgun.
+                let crosshair_px: i16 = match weapon.current {
+                    W_CROWBAR => 0,
+                    W_357 | W_CROSSBOW => 12,
+                    W_SHOTGUN => 24,
+                    _ => 18,
+                };
                 let _ = hud::draw(
                     hud_mat,
                     suit_equipped,
                     weapon.any_weapon(),
+                    crosshair_px,
                     health,
                     armor,
                     weapon.clip_display(),
@@ -9855,6 +9961,18 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         draw_beam(start, end, rec.arg1 as i32, col, &rot, base_t);
                     }
                     li += 1;
+                }
+            }
+            // Bullet tracers: a warm additive streak from muzzle to impact for the
+            // ~2 sim ticks after each shot (reuses the beam line drawer).
+            {
+                let mut ti = 0usize;
+                while ti < MAX_TRACERS {
+                    let (s, e, ttl) = TRACERS[ti];
+                    if ttl > 0 {
+                        draw_beam(s, e, 3, (250, 220, 120), &rot, base_t);
+                    }
+                    ti += 1;
                 }
             }
             if SHOW_VIEWMODEL && recoil >= 13 && MUZZLE_FLASH_WEAPONS[weapon.current] {
