@@ -1240,6 +1240,49 @@ STILL the biggest residuals of the sprite tier:
 - **Textured beams**: the beam sprite (additive glow) instead of the flat quad,
   for the wide Xen energy nodes + texture scroll/noise.
 
+## M40 -- polish pass: the game-FEEL layer (Sprints 1-3, from a subsystem audit)
+
+Four parallel comparison agents (weapons, AI/anim, movement/camera, presentation)
+graded hl-psx vs GoldSrc's actual behaviour. Verdict: the SYSTEMS are complete;
+the FEEL layer was stubbed. Implemented in three committed sprints + a shared
+foundation.
+
+- **Shared foundation -- view-punch** (`PUNCH_PITCH/YAW`, HL's punchangle): a
+  decaying camera kick that recoil, landings, and damage all reuse; sprung back to
+  centre in `tick_screen_fx`. `add_view_punch(pitch, yaw)`.
+- **Sprint 1 (quick wins, all in the view/damage path)**: view **bob** (vertical
+  head-bob + subtle strafe **roll** via a new `view_rotation_roll`/`rotate_z`,
+  scaled by horizontal speed); per-weapon recoil **kick** (`WEAPON_KICK` table +
+  random horizontal jolt); **damage flash** (subtract-blend red screen tint scaled
+  by hit, verified rendering) + a view jolt; **low-health** red heartbeat pulse
+  (<25); **fall damage + landing dip** (phys `Player.land_impact` captures the
+  touchdown speed before it's zeroed); aim **expo curve** (`aim_curve`, 45%
+  linear + 55% cubic).
+- **Sprint 2 (movement + enemy motion)**: ground **accel/friction** (velocity
+  ramps to the wish / decays to a stop, `GROUND_ACCEL`/`AIR_ACCEL`; wish clamped so
+  diagonals aren't 1.41x); **smooth enemy turning** (`yaw_from_vec` -> full-res
+  `atan2_q12`, `prop_face_point` **slews** via `turn_toward`/`PROP_TURN_RATE`
+  instead of an 8-way snap); **death animation playthrough** (`PROP_DEATH_START`
+  plays the death clip forward then holds, was an instant pop; authored corpses
+  seeded in the past); ranged **attack windup** (`ATTACK_WINDUP` telegraph before
+  the first shot).
+- **Sprint 3 (identity)**: seated scientists **stand + flee** on a nearby fight
+  (`damage_prop` alarms them, `tick_props` switches kind 25->0 when the standing
+  model is resident); big melee aliens **stop leaping** (only headcrabs spring;
+  zombie/bullsquid/ichy shamble in + swipe at melee reach); **HEV suit voice**
+  (real fvox phrases: power-on on pickup, "health critical"/"near death" on
+  threshold crossings) + **Geiger** crackle in `trigger_hurt` hazard volumes (SFX
+  43->47, 405 KB core, ~107 KB left for dialogue -- heavy maps drop a few more
+  tail lines).
+
+Feel items are verified-by-construction + a boot regression (view level, no
+crash); the damage flash + HEV voice were captured firing. ponytail residuals
+from the audit table NOT done: viewmodel fire/reload/idle animation (RAM-tightest
+region), flashlight (CPU frontier), shell casings, persistent decals, secondary
+fire, houndeye sonic / bullsquid spit (ranged-AI path), crouch, per-weapon
+crosshair, ambient loops. Doc-drift reconciled: the sprite/beam renderer (M39)
+IS done -- earlier "Next" lines calling it deferred are stale.
+
 ## Next (pick per value)
 
 - **PERF (researched, ranked -- the emit wall)**: 1) cook-time PRE-BAKED GPU
