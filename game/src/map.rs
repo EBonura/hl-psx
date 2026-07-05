@@ -217,6 +217,7 @@ pub const LOGIC_MULTISOURCE: u8 = 35; // AND-gate: arg0 = input count, arg1 = gl
 pub const LOGIC_ENV_GLOBAL: u8 = 36; // sets a persistent global: arg0 = hash, arg1 = triggermode
 pub const LOGIC_ENV_EXPLOSION: u8 = 37; // scripted explosion FX: arg0 = magnitude
 pub const LOGIC_TANK: u8 = 38; // func_tank mountable gun: arg0 = damage, speed = fire cooldown
+pub const LOGIC_BEAM: u8 = 39; // env_beam/env_laser: aux = start+end xyz, arg1 = half-width, speed = color
 
 pub const USE_OFF: u8 = 0;
 pub const USE_ON: u8 = 1;

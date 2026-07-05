@@ -7223,6 +7223,48 @@ unsafe fn draw_billboard(
     );
 }
 
+/// A beam (env_beam / env_laser): a flat additive quad from world `start` to
+/// `end`, widened perpendicular in screen space by the world half-width scaled to
+/// the beam's average depth. Drawn immediate (after the OT submit) -- beams are
+/// bright FX in open space, so approximate occlusion is acceptable. Culled if
+/// either endpoint is off-screen/behind (long partly-off beams vanish; noted).
+fn draw_beam(
+    start: [i32; 3],
+    end: [i32; 3],
+    half_world: i32,
+    color: (u8, u8, u8),
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
+    let (Some((sx0, sy0, sz0)), Some((sx1, sy1, sz1))) = (
+        project_world_point(start, rot, base_t),
+        project_world_point(end, rot, base_t),
+    ) else {
+        return;
+    };
+    let (x0, y0, x1, y1) = (sx0 as i32, sy0 as i32, sx1 as i32, sy1 as i32);
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let len = isqrt(dx * dx + dy * dy);
+    if len < 3 {
+        return; // edge-on / zero-length: the beam is invisible, skip
+    }
+    let avg = ((sz0 + sz1) / 2).max(render::NEAR_Z);
+    // Beams read as thin bright lines; cap the half-width tightly (even a thick
+    // bolt is only a few px) and keep it well under the length so short beams do
+    // not become squares.
+    let hw = ((half_world * H_PROJ as i32) / avg)
+        .clamp(1, 4)
+        .min((len / 4).max(1));
+    // Screen-space perpendicular (-dy, dx), normalized to the half-width.
+    let (px, py) = ((-dy * hw) / len, (dx * hw) / len);
+    let a = ((x0 + px) as i16, (y0 + py) as i16);
+    let b = ((x0 - px) as i16, (y0 - py) as i16);
+    let d = ((x1 + px) as i16, (y1 + py) as i16);
+    let e = ((x1 - px) as i16, (y1 - py) as i16);
+    psx_gpu::draw_tri_flat_blended([a, b, d], color.0, color.1, color.2, BlendMode::Add);
+    psx_gpu::draw_tri_flat_blended([b, e, d], color.0, color.1, color.2, BlendMode::Add);
+}
+
 // First-person viewmodel transform. GoldSrc attaches the model to the camera:
 // view.cpp copies the camera angles to the viewmodel and uses the predicted
 // view origin, while the MDL vertices carry the actual first-person placement.
@@ -9416,6 +9458,43 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             WEAPON_OT.submit();
             HUD_OT.submit();
             telemetry::stage_end(telemetry::stage::OT_SUBMIT);
+            // Beams (env_beam / env_laser): flat additive lines from start to end,
+            // drawn over the world (immediate). Endpoints + width + colour ride the
+            // LOGIC_BEAM records' aux/args.
+            {
+                let nlb = nlogic;
+                let mut li = 0usize;
+                while li < nlb {
+                    let rec = m.logic(li);
+                    if rec.kind == map::LOGIC_BEAM {
+                        let fa = rec.first_aux as usize;
+                        let (a0, a1, a2, a3) = (
+                            m.logic_aux(fa),
+                            m.logic_aux(fa + 1),
+                            m.logic_aux(fa + 2),
+                            m.logic_aux(fa + 3),
+                        );
+                        let start = [
+                            a0.target as i16 as i32,
+                            a0.delay_ticks as i16 as i32,
+                            a1.target as i16 as i32,
+                        ];
+                        let end = [
+                            a2.target as i16 as i32,
+                            a2.delay_ticks as i16 as i32,
+                            a3.target as i16 as i32,
+                        ];
+                        let c = rec.speed;
+                        let col = (
+                            ((c & 0x1f) << 3) as u8,
+                            (((c >> 5) & 0x1f) << 3) as u8,
+                            (((c >> 10) & 0x1f) << 3) as u8,
+                        );
+                        draw_beam(start, end, rec.arg1 as i32, col, &rot, base_t);
+                    }
+                    li += 1;
+                }
+            }
             if SHOW_VIEWMODEL && recoil >= 13 && MUZZLE_FLASH_WEAPONS[weapon.current] {
                 draw_muzzle_flash(sim_frame_no);
             }

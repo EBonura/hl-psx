@@ -1976,6 +1976,7 @@ const LOGIC_MULTISOURCE: u8 = 35; // AND-gate: arg0 = input count, arg1 = global
 const LOGIC_ENV_GLOBAL: u8 = 36; // sets a persistent global: arg0 = hash, arg1 = triggermode
 const LOGIC_ENV_EXPLOSION: u8 = 37; // scripted explosion FX at origin: arg0 = magnitude
 const LOGIC_TANK: u8 = 38; // func_tank mountable gun: arg0 = bullet damage, speed = fire cooldown ticks
+const LOGIC_BEAM: u8 = 39; // env_beam/env_laser: aux = start xyz + end xyz, arg1 = half-width, speed = color
 
 /// FNV-1a 16-bit hash of a global-state name -- a stable cross-map key so the
 /// runtime can match an env_global's global to a multisource's globalstate
@@ -3593,6 +3594,86 @@ fn collect_logic_entities(
             if group_of[k] != usize::MAX {
                 out[di].arg0 = group_of[k] as u16;
             }
+        }
+    }
+
+    // env_beam / env_laser: static (START_ON) beams -> LOGIC_BEAM. Endpoints are
+    // LightningStart/LightningEnd targetnames (info_target origins), resolved here
+    // + stored as 4 aux entries (start xy/z, end xy/z; world coords fit i16). arg1
+    // = world half-width, speed = 15-bit packed color. Triggered beams (no
+    // START_ON) need logic wiring and are left for a later pass.
+    {
+        let tn_origin = |name: &str| -> Option<[i32; 3]> {
+            if name.is_empty() {
+                return None;
+            }
+            for b in s.split('{') {
+                if ent_value(b, "targetname") == Some(name) {
+                    if let Some(o) = ent_value(b, "origin").and_then(parse_vec3) {
+                        return Some(to_world(o, scale));
+                    }
+                }
+            }
+            None
+        };
+        for block in s.split('{') {
+            let cls = ent_value(block, "classname").unwrap_or("");
+            if cls != "env_beam" && cls != "env_laser" {
+                continue;
+            }
+            if (parse_spawnflags(block) & 1) == 0 {
+                continue; // not START_ON -> triggered (a later pass)
+            }
+            let own = ent_value(block, "origin")
+                .and_then(parse_vec3)
+                .map(|o| to_world(o, scale));
+            let start =
+                tn_origin(ent_value(block, "LightningStart").unwrap_or("")).or(own);
+            let end = tn_origin(ent_value(block, "LightningEnd").unwrap_or(""))
+                .or_else(|| tn_origin(ent_value(block, "target").unwrap_or("")));
+            let (Some(start), Some(end)) = (start, end) else {
+                continue;
+            };
+            let width_hl = parse_f32_key(block, "BoltWidth", 16.0).max(1.0);
+            let half = ((width_hl * 0.5 * scale).round() as i32).clamp(1, 4000) as u16;
+            let col = ent_value(block, "rendercolor")
+                .and_then(parse_vec3)
+                .unwrap_or([255.0, 255.0, 255.0]);
+            let bgr = to_bgr555(col[0] as u8, col[1] as u8, col[2] as u8);
+            if aux.len() + 4 > u16::MAX as usize {
+                continue;
+            }
+            let first = aux.len() as u16;
+            for p in [start, end] {
+                aux.push(LogicAuxRec {
+                    target: p[0] as i16 as u16,
+                    delay_ticks: p[1] as i16 as u16,
+                });
+                aux.push(LogicAuxRec {
+                    target: p[2] as i16 as u16,
+                    delay_ticks: 0,
+                });
+            }
+            out.push(LogicRec {
+                kind: LOGIC_BEAM,
+                use_type: 0,
+                spawnflags: 0,
+                targetname: 0,
+                target: 0,
+                killtarget: 0,
+                brush: LOGIC_BRUSH_NONE,
+                first_aux: first,
+                aux_count: 4,
+                flags: 0,
+                wait_ticks: 0,
+                delay_ticks: 0,
+                speed: bgr,
+                arg0: 0,
+                arg1: half,
+                origin: start,
+                mins: start,
+                maxs: end,
+            });
         }
     }
 
