@@ -384,8 +384,11 @@ const HEV_MAX_ARMOR: u16 = 100;
 const CHARGER_RATE: u16 = 4; // health/armor points per use pulse (8-tick cadence)
 const HEV_BATTERY_ARMOR: u16 = 15;
 const HEV_PICKUP_TICKS: u8 = 36;
-const ITEM_TOUCH_RANGE2: i32 = 38 * 38;
-const ITEM_TOUCH_HEIGHT: i32 = 56;
+const ITEM_TOUCH_RANGE2: i32 = 44 * 44;
+// Reach up to the player's standing height so items displayed at head level (the
+// HEV suit in its charger) can be collected -- 56 only reached items near the
+// feet, so the charger suit never registered a touch (no pickup, no sound).
+const ITEM_TOUCH_HEIGHT: i32 = 80;
 const PROP_LINK_MATCH_XZ_EPS: i32 = 24;
 const PROP_LINK_MATCH_Y_EPS: i32 = 96;
 const PROP_GROUND_PROBE_UP: i32 = 24;
