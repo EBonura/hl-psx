@@ -1192,6 +1192,54 @@ the FULL sprite/beam renderer (above), func_monsterclip (cheap AI win, not done)
 traincontrols (rare). RAM: func_tank added ~6 B of statics; no roster/pool
 change (cook-only trackchange, no new model types).
 
+## M39 -- the sprite/beam renderer (billboards + beams DONE; explosions/sparks next)
+
+The biggest single new-renderer investment, built in two committed phases. Covers
+env_sprite (969) + env_glow (287) + env_beam (677) + env_laser (77) = ~2010 of the
+~2400 sprite-tier entities.
+
+- **`.spr` decode + per-map packs** (`tools/extract_sprites.py`, git-ignored like
+  the other extractors): decodes each map's IDSP v2 sprites, crushes every frame
+  to a 4bpp **power-of-two** texture (the VRAM atlas REQUIRES pow2 -- a 48px cap
+  silently failed `allocate`). Additive sprites (texFormat 1) get the darkest
+  cluster forced to black AND the **per-texel semi-transparency bit (0x8000)** set
+  on every CLUT entry -- without it a textured additive prim draws OPAQUE, not
+  blended. One pack per map (WORLD.PAK chunk 3200+idx) + a manifest.
+- **Runtime** (`game/src/sprite.rs`): the pack streams into the now-free MAP_BUF
+  BEFORE the world chunk (which then reuses MAP_BUF), decompresses (extras >=3000
+  are LZ4), and appends its frame textures to the shared atlas between map textures
+  and models (like voices stage through MAP_BUF for SPU). KEY BUG dodged: loading
+  into MAP_BUF AFTER Map::load corrupts the live map -- sprites must load before
+  the world chunk.
+- **Billboards** (env_sprite START_ON / env_glow / cycler_sprite): cook as prop
+  records with **SPRITE_PROP_BIT (0x2000 | local_id)** -- no header/format change,
+  they ride the existing prop table (yaw field = world half-size). `draw_billboard`
+  projects the center (project_world_point), sizes by perspective (world_half x
+  H_PROJ / depth), and emits a camera-facing additive quad (two tris via the proven
+  push_tri_uv_words path -- the quad ctor's vertex order flipped the UVs) into the
+  OT. Verified c1a4: 23 glows render; a fixed-screen control draw confirmed the
+  crushed flare1 is a correct bright-center glow. The "dark object in a glow" on
+  c1a4 is real fixture geometry depth-sorted behind the billboard, not a bug.
+- **Beams** (env_beam / env_laser START_ON): cook as **LOGIC_BEAM(39)** -- resolve
+  LightningStart/End targetnames to world origins, store both endpoints in 4 aux
+  entries (world coords fit i16), half-width in arg1, packed rendercolor in speed.
+  `draw_beam` projects both endpoints + builds a screen-perpendicular flat additive
+  quad (immediate, post-OT). Verified c1a0a: 9 clean thin beams; c4a1d: 21. ponytail:
+  short + wide beams (Xen energy nodes, BoltWidth ~150 over ~40u) render as flat
+  bars, not textured energy -- the faithful look needs a textured beam (lgtning.spr
+  additive), a documented follow-up.
+
+STILL the biggest residuals of the sprite tier:
+- **env_explosion (242) animated sprites**: currently the M38 particle burst. The
+  real fexplo sprite is cooked per-map; needs a transient billboard pool (spawn on
+  explode() + cycle frames + expire). NB weapon-blast explosions happen anywhere,
+  so a RESIDENT explosion sprite (fixed VRAM region) is needed, not per-map.
+- **env_spark (181)**: intermittent spark billboards (timed spawns).
+- **Toggled sprites/beams** (non-START_ON, ~1150 hidden until triggered): need
+  logic wiring (a target sets ENT_ACTIVE-like state on the sprite/beam record).
+- **Textured beams**: the beam sprite (additive glow) instead of the flat quad,
+  for the wide Xen energy nodes + texture scroll/noise.
+
 ## Next (pick per value)
 
 - **PERF (researched, ranked -- the emit wall)**: 1) cook-time PRE-BAKED GPU
