@@ -1325,6 +1325,69 @@ Verified: clean build; c1a0 direct boot renders correctly (no regression). The
 combat-feel items can't be judged from a static headless boot (no fire input), so
 they're verified-by-construction + the boot check, per the session pattern.
 
+## M42 -- the missing-features round: 16 items from the 3rd audit table
+
+A big feature-completeness pass driven by the "missing features" table. All 16
+requested items landed (each with a `ponytail:` note where scoped). Four
+subsystem-mapping Explore agents seeded the implementation.
+
+- **Ranged alien attacks**: houndeye (6) + bullsquid (7) are now AI_RANGED.
+  Houndeye fires a sonic shockwave (radius damage centred on itself, player
+  only); bullsquid lobs an acid-spit projectile (PROJ_SPIT). **Enemy projectiles
+  + explosions can now hit the PLAYER** -- Projectile gained `from_enemy`;
+  `explode()` applies falloff to the player (own rockets self-hurt); damage
+  routes through a `PENDING_PLAYER_DAMAGE` accumulator drained each tick.
+- **Secondary fire (L2)**: MP5 grenade, shotgun double-barrel, gauss charged
+  slug, hornet burst; crossbow L2 = held zoom (half look-rate + pinpoint
+  crosshair). `fire_secondary` spends its own ammo/cooldown.
+- **Viewmodel animation (procedural)**: `viewmodel_offset` transforms the static
+  bind pose -- fire kicks up+back, reload dips down+out, idle sways. Zero RAM
+  (no baked frames -- the VM pool can't fit them).
+- **Crouch (TRIANGLE)**: lower eye (13) + half speed. ponytail: no shrunk hull
+  (needs a cooked crouch hull), so no low-gap fit yet.
+- **Flashlight (L3, needs suit)**: near-depth brighten in the fog path (only near
+  front geometry is drawn -> reads as a forward lamp). Fast path unchanged when
+  off. ponytail: omnidirectional near-light, no suit-power drain.
+- **Shared debris pool**: shell casings (bullet-weapon fire), gore gibs (on
+  death), sparks (explosions + env_spark) -- world-space, gravity, ttl. New
+  LOGIC_ENV_SPARK. env_explosion also throws sparks (the animated fireball
+  sprite is the residual).
+- **func_monsterclip**: LOGIC_MONSTERCLIP AABB (invisible, non-solid to player);
+  NPC pathing refuses steps inside; player walks through.
+- **Toggled sprites/beams**: the cook stopped skipping non-START_ON ones. Sprites
+  = dormant named props (PROP_SPRITE_VIS, revealed on target fire); beams carry a
+  START_ON flag + name and toggle via LOGIC_STATE. ~1150 hidden effects.
+- **Momentary valve rig**: momentary_rot_button -> LOGIC_MOMENTARY; hold +use to
+  ramp its target door open a notch at a time, stays where left (faithful
+  hold-to-turn vs the M38 single-press MVP).
+- **func_trackchange**: junction is a +use lever (M38 cook-stitch already routes
+  the train through). Full rotate-platform rig deferred.
+- **speaker PA**: recognized as a per-map voice (plays if its line is in the
+  pack; sentence-group audio extraction is the residual).
+- **gametitle**: the worldspawn gametitle bit flashes a large HALF-LIFE text card
+  at c0a0 start. ponytail: text, not the logo.tga bitmap (VRAM reused in play).
+- **c4a3 dark spawn**: `best_visibility_spawn` now prefers the brightest visible
+  clear leaf (per-face lightmap mean). NB c4a3 also has an info_player_start +
+  is startdark, so its debug-boot stays black (like c0a0); the fix helps the
+  fallback path generally.
+
+Verified: cook + game build clean; 96 maps recook; c1a0/c1a1a/c1a2/c4a3/c0a0
+boot + render (no regression; c1a2/c4a3/c0a0 black in debug-boot are the
+faithful startdark/dark-corridor views). Combat-feel items (fire/blood/ranged
+AI) can't be driven headlessly -> verified-by-construction + the boot checks.
+
+**RAM WARNING (needs a follow-up pass)**: static headroom is **32.5 KiB**, below
+the 96 KiB gate. This was **already 50.8 KiB before this goal** -- a pre-existing
+slide from M33-M41's features (the memory-report gate had gone unchecked; recent
+CLAUDE.md "~96 KiB" figures were the model-pool audit, a different metric). This
+round cost ~18 KiB: feature code (.text; `play()` is 115 KiB) + the recook
+growing the auto-sized MAP_BUF (toggled sprites/beams/monsterclip/momentary add
+per-map logic + prop records). The game boots + renders on every tested map at
+64.5 KiB stack. Reclaiming to 96 KiB is a dedicated task: cap toggled-sprite
+emission on the tightest map, tune core buffers (MAP_BUF/PRIMITIVE_PACKETS --
+mind that combat now emits more prims), or code-size reduction. Do NOT add more
+statics until this is addressed.
+
 ## Next (pick per value)
 
 - **PERF (researched, ranked -- the emit wall)**: 1) cook-time PRE-BAKED GPU
