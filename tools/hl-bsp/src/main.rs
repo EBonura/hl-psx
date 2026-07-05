@@ -5891,7 +5891,27 @@ fn cook_mdl(
         clips.push((clip_first, nbake.min(u16::MAX as usize) as u16));
     }
     if floor_anchor_frames {
-        floor_anchor_mdl_frames(&mut frames, &clips, 5);
+        // Seated models (sitting scientist) bake ONLY seated poses -- those must
+        // keep their authored root offset (script anchoring, canonical=0), else
+        // per-frame feet-planting lifts the figure until its lowest vertex meets
+        // the seat mark and it floats above the chair. Detect by the first clip's
+        // sequence label starting with "sit"; everything else keeps the 5
+        // canonical clips (idle/walk/attack/pain/death) feet-planted.
+        let first_seq = specs
+            .first()
+            .map(|s| if s.seq == -2 { seq_by_label(&s.name) } else { s.seq })
+            .unwrap_or(-1);
+        let seated = first_seq >= 0
+            && first_seq < numseq
+            && {
+                let sd = seqindex + first_seq as usize * 176;
+                let raw = &b[sd..sd + 32];
+                let end = raw.iter().position(|&c| c == 0).unwrap_or(32);
+                core::str::from_utf8(&raw[..end])
+                    .map(|n| n.to_ascii_lowercase().starts_with("sit"))
+                    .unwrap_or(false)
+            };
+        floor_anchor_mdl_frames(&mut frames, &clips, if seated { 0 } else { 5 });
     }
 
     let mut tri_idx: Vec<u16> = Vec::new();
