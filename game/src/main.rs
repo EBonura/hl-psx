@@ -7901,10 +7901,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     let mut telemetry_frame: u32 = 1;
     let mut sim_frame_no: u32 = 0;
     let mut weapon = Arsenal::new();
-    weapon.clip[W_GLOCK] = launch.clip_ammo.min(WEAPON_DEFS[W_GLOCK].clip);
-    weapon.ammo[AMMO_9MM] = launch.reserve_ammo.min(max_reserve_for(AMMO_9MM));
-    // Changelevel restores the carried arsenal; fresh/menu launches start with
-    // the HL crowbar+glock baseline and pick the rest up in the world.
+    // Ammo is granted only WITH a weapon: the changelevel carry restores it
+    // (CARRY_AMMO below), chapter-select seeds it in give_chapter_loadout. A
+    // suitless fresh start (c1a0 before you find a gun) keeps empty hands + no
+    // ammo -- seeding glock ammo here made the HUD show rounds you couldn't fire.
     unsafe {
         if launch.preserve_view && CARRY_VALID {
             weapon.owned = CARRY_OWNED;
