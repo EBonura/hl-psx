@@ -1347,6 +1347,48 @@ fn tram_path_pos(m: &Map, seg: usize, seg_dist: i32) -> [i32; 3] {
     ]
 }
 
+/// Integer atan2 -> 12-bit angle (0..4096 = one turn), piecewise-linear per
+/// octant (max error ~1.7 deg, fine for facing a tram). Avoids float/CORDIC.
+fn atan2_q12(y: i32, x: i32) -> u16 {
+    if x == 0 && y == 0 {
+        return 0;
+    }
+    let (ax, ay) = (x.unsigned_abs() as i64, y.unsigned_abs() as i64);
+    // first-quadrant angle 0..1024 (=90 deg): 45 deg at ax==ay.
+    let q = if ax >= ay {
+        (ay * 512 / ax) as i32
+    } else {
+        1024 - (ax * 512 / ay) as i32
+    };
+    let a = match (x >= 0, y >= 0) {
+        (true, true) => q,
+        (false, true) => 2048 - q,
+        (false, false) => 2048 + q,
+        (true, false) => 4096 - q,
+    };
+    (a & 0xFFF) as u16
+}
+
+/// The tram's facing yaw for its current segment RELATIVE to its parked
+/// (segment-0) heading -- 0 at the start, growing as the track curves. Drives
+/// both the car's world rotation and the ride camera so the two stay locked.
+fn tram_rel_yaw(m: &Map, seg: usize) -> u16 {
+    if m.n_way < 3 {
+        return 0;
+    }
+    let seg_yaw = |i: usize| -> u16 {
+        let a = m.waypoint(i);
+        let b = m.waypoint(i + 1);
+        atan2_q12(b[2] - a[2], b[0] - a[0]) // world (X,Z) heading
+    };
+    seg_yaw(seg.min(m.n_way - 2)).wrapping_sub(seg_yaw(0)) & 0xFFF
+}
+
+/// Car rotation matrix from the relative travel yaw (about world Y).
+fn tram_face_matrix(m: &Map, seg: usize) -> Mat3I16 {
+    Mat3I16::rotate_y(tram_rel_yaw(m, seg) >> 4)
+}
+
 fn tram_advance(m: &Map, seg: &mut usize, seg_dist: &mut i32, step: i32) -> bool {
     if step <= 0 || m.n_way < 2 {
         return false;
@@ -7917,9 +7959,13 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     };
     let mut recoil = 0i32; // viewmodel kick when firing
     let mut tram_active = false;
-    let mut tram_speed = m.tram_speed.max(0);
+    // The intro auto-ride runs at 3/4 of the authored max speed: HL decelerates at
+    // each path_track (which we don't cook), so the constant max felt too fast.
+    // ponytail: faithful pacing needs per-path_track speeds; this is the MVP trim.
+    let mut tram_speed = (m.tram_speed.max(0) * 3) / 4;
     let mut tram_player_attached = false;
     let mut tram_seg = 0usize;
+    let mut prev_tram_yaw = 0u16; // last tram travel yaw, to feed the camera the per-frame delta
     let mut tram_seg_dist = 0i32;
     let mut ride_off = [0i32; 3];
     if launch.riding && m.n_way > 0 && m.tram_submodel > 0 {
@@ -8161,6 +8207,18 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     tram_active = false;
                     tram_speed = 0;
                 }
+                // Carry the camera through the curves: add the tram's per-frame
+                // travel-yaw delta to the view yaw so the world turns as the car
+                // banks into a bend (free-look from the stick stays layered on top).
+                if tram_player_attached {
+                    let ty = tram_rel_yaw(&m, tram_seg);
+                    let mut d = (ty.wrapping_sub(prev_tram_yaw) & 0xFFF) as i32;
+                    if d > 2048 {
+                        d -= 4096;
+                    }
+                    yaw = (((yaw as i32) + d) & 0xFFF) as u16;
+                    prev_tram_yaw = ty;
+                }
             }
             let tram_delta = [
                 ride_off[0] - prev_ride_off[0],
@@ -8171,6 +8229,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 let train_pos = tram_path_pos(&m, tram_seg, tram_seg_dist);
                 if !tram_player_attached && tram_should_carry_player(player.pos, prev_train_pos) {
                     tram_player_attached = true;
+                    prev_tram_yaw = tram_rel_yaw(&m, tram_seg); // no yaw jump on attach
                 }
                 if tram_player_attached {
                     if tram_should_carry_player(player.pos, prev_train_pos)
@@ -9122,41 +9181,48 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             }
             telemetry::stage_end(telemetry::stage::MODEL_BOUNDS);
 
-            // Tram car: render its submodel at the current ride offset.
+            // Tram car: render its submodel at the current ride offset, ROTATED
+            // to face its direction of travel (the car yaws through the tunnel
+            // curves instead of sliding sideways). Rotation is about the car's
+            // path-attach point (wp0 + ride_off); mirrors the func_rotating pivot
+            // math. Plane/bounds culls are skipped (the normals rotate).
             telemetry::stage_begin(telemetry::stage::MODEL_DRAW);
             if m.tram_submodel > 0 && m.tram_submodel < m.n_models {
                 model_draws = model_draws.saturating_add(1);
                 EMIT_BLEND = 0; // opaque: don't inherit a glass ent's blend
                 EMIT_WAVE = false;
-                let toff = [
-                    ride_off[0] + m.tram_base[0],
-                    ride_off[1] + m.tram_base[1],
-                    ride_off[2] + m.tram_base[2],
+                let mr = rot.mul(&tram_face_matrix(&m, tram_seg));
+                let train_pos = [
+                    wp0[0] + ride_off[0],
+                    wp0[1] + ride_off[1],
+                    wp0[2] + ride_off[2],
                 ];
-                let es = [eye[0] - toff[0], eye[1] - toff[1], eye[2] - toff[2]];
+                let tp_e = [
+                    train_pos[0] - eye[0],
+                    train_pos[1] - eye[1],
+                    train_pos[2] - eye[2],
+                ];
+                let tbw = [
+                    m.tram_base[0] - wp0[0],
+                    m.tram_base[1] - wp0[1],
+                    m.tram_base[2] - wp0[2],
+                ];
                 let et = [
-                    -dot12(rot.m[0], es),
-                    -dot12(rot.m[1], es),
-                    -dot12(rot.m[2], es),
+                    dot12(rot.m[0], tp_e) + dot12(mr.m[0], tbw),
+                    dot12(rot.m[1], tp_e) + dot12(mr.m[1], tbw),
+                    dot12(rot.m[2], tp_e) + dot12(mr.m[2], tbw),
                 ];
+                scene::load_rotation(&mr);
                 scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
-                set_view_fix(&rot, et);
+                set_view_fix(&mr, et);
                 let submodel_token = next_proj_token();
                 let (ff, nf) = m.submodel(m.tram_submodel);
                 for f in ff..ff + nf {
                     let (first, cnt) = m.face_tris(f);
-                    let (fnrm, fd) = m.face_plane(f);
-                    if dot12(fnrm, es) <= fd {
-                        model_culled_tris = model_culled_tris.saturating_add(cnt as u32);
-                        continue;
-                    }
-                    let (bc, be) = m.face_bounds(f);
-                    let moved_center = [bc[0] + toff[0], bc[1] + toff[1], bc[2] + toff[2]];
-                    if WORLD_BOUNDS_CULL && !face_bounds_visible(moved_center, be, &rot, base_t) {
-                        continue;
-                    }
                     emit_submodel_face(&mut packets, &m, f, first, cnt, nv, submodel_token, &mut np);
                 }
+                scene::load_rotation(&rot); // restore the world transform for later draws
+                set_view_fix(&rot, base_t);
             }
             telemetry::stage_end(telemetry::stage::MODEL_DRAW);
 
