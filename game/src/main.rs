@@ -804,6 +804,31 @@ static mut LOGIC_BREAK_HP: [u16; MAX_LOGIC] = [0; MAX_LOGIC]; // remaining break
 // Per-rec kind byte, cached at load: the per-tick scans skip records without
 // re-parsing the full 64 B LogicEnt from the uncached blob.
 static mut LOGIC_KIND: [u8; MAX_LOGIC] = [0; MAX_LOGIC];
+// func_monsterclip AABBs (world mins/maxs): NPC pathing refuses steps inside
+// them; the player never tests them, so it walks through freely.
+const MAX_MONSTERCLIP: usize = 32;
+static mut MONSTERCLIP: [([i32; 3], [i32; 3]); MAX_MONSTERCLIP] =
+    [([0; 3], [0; 3]); MAX_MONSTERCLIP];
+static mut MONSTERCLIP_N: usize = 0;
+
+/// True when `p` is inside any func_monsterclip volume (NPC-only blocker).
+unsafe fn in_monsterclip(p: [i32; 3]) -> bool {
+    let mut i = 0usize;
+    while i < MONSTERCLIP_N {
+        let (mn, mx) = MONSTERCLIP[i];
+        if p[0] >= mn[0]
+            && p[0] <= mx[0]
+            && p[1] >= mn[1]
+            && p[1] <= mx[1]
+            && p[2] >= mn[2]
+            && p[2] <= mx[2]
+        {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
 static mut TELEPORT_REQUEST: Option<([i32; 3], u16)> = None; // dest pos + yaw, applied post-touch
 // Per-face emit state: blend class (0 opaque / 1 average / 2 additive) and
 // liquid UV sway, set by the face/entity walkers right before their emits.
@@ -937,6 +962,7 @@ static mut PROP_HIT_FLASH: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_DEATH_START: [u16; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_OCC_VIS: [u8; MAX_PROPS] = [1; MAX_PROPS]; // staggered occlusion verdicts
 static mut PROP_DORMANT: [u8; MAX_PROPS] = [0; MAX_PROPS]; // monstermaker stock awaiting a fire
+static mut PROP_SPRITE_VIS: [u8; MAX_PROPS] = [0; MAX_PROPS]; // sprite billboard shown (1) or hidden until fired (0)
 static mut PROP_LOGIC_LINK: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS];
 static mut NAV_QUEUE: [u8; MAX_NAV_NODES] = [0; MAX_NAV_NODES];
 static mut NAV_PREV: [u8; MAX_NAV_NODES] = [NAV_NODE_NONE; MAX_NAV_NODES];
@@ -1579,6 +1605,7 @@ static mut TITLE_EFFECT: u8 = 0; // 0 fade, 1 flicker credits, 2 typewriter
 static mut TITLE_LOW_LEFT: bool = false;
 static mut CHAPTER_TITLE_ID: u16 = 0; // worldspawn chaptertitle, shown after load
 static mut CHAPTER_TITLE_HOLD: u16 = 0;
+static mut GAMETITLE_TICKS: u16 = 0; // worldspawn gametitle: HALF-LIFE card countdown
 static mut FADE_ACTIVE: bool = false;
 static mut FADE_IN: bool = false; // ramp 255 -> clear (else clear -> full + hold)
 static mut FADE_WHITE: bool = false;
@@ -2158,6 +2185,18 @@ unsafe fn logic_fire_targets(
         }
         li += 1;
     }
+    // Toggled sprites: a fired target reveals a hidden env_sprite billboard.
+    let nprops = m.n_props.min(MAX_PROPS);
+    let mut pi = 0usize;
+    while pi < nprops {
+        if PROP_SPRITE_VIS[pi] == 0
+            && PROP_NAME[pi] == target
+            && (m.prop(pi).0 & SPRITE_PROP_BIT) != 0
+        {
+            PROP_SPRITE_VIS[pi] = 1;
+        }
+        pi += 1;
+    }
 }
 
 #[inline]
@@ -2401,6 +2440,15 @@ unsafe fn logic_use_entity(
                 PVS_CAM_LEAF = -1; // re-gather the visible-ent list next frame
             }
         }
+        map::LOGIC_BEAM => {
+            // Toggled beam: flip drawn/hidden. USE_ON/OFF force it, else toggle.
+            LOGIC_STATE[li] = match use_type {
+                map::USE_ON => LOGIC_STATE_TOP,
+                map::USE_OFF => LOGIC_STATE_BOTTOM,
+                _ if LOGIC_STATE[li] == LOGIC_STATE_TOP => LOGIC_STATE_BOTTOM,
+                _ => LOGIC_STATE_TOP,
+            };
+        }
         map::LOGIC_ENV_GLOBAL => {
             // Set the persistent global. triggermode: 0 off, 1 on, 2 toggle.
             let on = match rec.arg1 {
@@ -2495,6 +2543,9 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
     if GEIGER_COOLDOWN > 0 {
         GEIGER_COOLDOWN -= 1;
     }
+    if GAMETITLE_TICKS > 0 {
+        GAMETITLE_TICKS -= 1;
+    }
     if TITLE_TEXT_ID != 0 {
         TITLE_T = TITLE_T.saturating_add(1);
         let total = TITLE_FADE + TITLE_HOLD + TITLE_FADE;
@@ -2529,6 +2580,21 @@ const FADE_OUT_CLEAR_TICKS: u16 = 10;
 /// Draw the active title text + screen fade as immediate prims (on top of the
 /// whole frame; the fade also covers the HUD, like HL).
 unsafe fn draw_screen_fx(m: &Map) {
+    // gametitle: the big HALF-LIFE card at level start (c0a0). ponytail: rendered
+    // as large text, not the logo.tga bitmap (its VRAM band is reused in gameplay).
+    if GAMETITLE_TICKS > 0 {
+        let elapsed = 130u16.saturating_sub(GAMETITLE_TICKS);
+        let a = if GAMETITLE_TICKS < 30 {
+            (GAMETITLE_TICKS * 255 / 30) as u8 // fade out
+        } else if elapsed < 20 {
+            (elapsed * 255 / 20) as u8 // fade in
+        } else {
+            255
+        };
+        let scale = 512u16; // 200%
+        let w = hltext::text_width_scaled("HALF-LIFE", scale);
+        hltext::draw_text_scaled(160 - w / 2, 92, "HALF-LIFE", scale, (a, a, a));
+    }
     if TITLE_TEXT_ID != 0 {
         let text = m.logic_name(TITLE_TEXT_ID);
         if !text.is_empty() {
@@ -2720,6 +2786,72 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
             _ => {}
         }
         li += 1;
+    }
+}
+
+const MOMENTARY_STEP: i32 = 60; // valve-turn speed: ~3.4 s from shut to full open
+
+/// Hold-to-turn valve: while +use is held on a momentary_rot_button, ramp its
+/// target door open a notch. The door stays where the turning stops (turn it all
+/// the way to pass), which is the faithful accumulate rig vs the single-press MVP.
+unsafe fn tick_momentary(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    eye: [i32; 3],
+    yaw: u16,
+    pitch: i16,
+    movers: &[phys::Mover],
+) {
+    let rot = view_rotation(yaw, pitch);
+    let end = [
+        eye[0] + (rot.m[2][0] as i32 * PLAYER_USE_REACH) / 4096,
+        eye[1] + (rot.m[2][1] as i32 * PLAYER_USE_REACH) / 4096,
+        eye[2] + (rot.m[2][2] as i32 * PLAYER_USE_REACH) / 4096,
+    ];
+    let Some(hit) = phys::trace_line(m, movers, eye, end) else {
+        return;
+    };
+    if hit.mover < 0 {
+        return;
+    }
+    // The momentary wheel being aimed at -> its target door name.
+    let mut target = 0u16;
+    let mut li = 0usize;
+    while li < nlogic {
+        let rec = m.logic(li);
+        if rec.kind == map::LOGIC_MOMENTARY && rec.brush as i32 == hit.mover {
+            target = rec.target;
+            break;
+        }
+        li += 1;
+    }
+    if target == 0 {
+        return;
+    }
+    let mut turned = false;
+    let mut di = 0usize;
+    while di < nlogic {
+        let drec = m.logic(di);
+        if drec.kind == map::LOGIC_FUNC_DOOR && drec.targetname == target {
+            if let Some(ei) = logic_valid_brush(drec.brush, nents) {
+                if ENT_PHASE[ei] < 4096 {
+                    ENT_PHASE[ei] = (ENT_PHASE[ei] + MOMENTARY_STEP).min(4096);
+                    // Keep the door OUT of its own machinery so it holds this phase:
+                    // BOTTOM while partial, TOP once fully open.
+                    LOGIC_STATE[di] = if ENT_PHASE[ei] >= 4096 {
+                        LOGIC_STATE_TOP
+                    } else {
+                        LOGIC_STATE_BOTTOM
+                    };
+                    turned = true;
+                }
+            }
+        }
+        di += 1;
+    }
+    if turned && (MOVE_TICK & 7) == 0 {
+        sfx::play_world(sfx::DOOR_MOVE, eye);
     }
 }
 
@@ -3015,6 +3147,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     TITLE_TEXT_ID = 0;
     TITLE_T = 0;
     CHAPTER_TITLE_ID = 0;
+    GAMETITLE_TICKS = 0;
     FADE_ACTIVE = false;
     FADE_STARTDARK = false;
     CD_TRACK_CUR = 0; // the map streams silenced any CDDA
@@ -3050,10 +3183,15 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         LOGIC_EVENTS[ev] = EMPTY_LOGIC_EVENT;
         ev += 1;
     }
+    MONSTERCLIP_N = 0;
     li = 0;
     while li < nlogic {
         let rec = m.logic(li);
         LOGIC_KIND[li] = rec.kind;
+        if rec.kind == map::LOGIC_MONSTERCLIP && MONSTERCLIP_N < MAX_MONSTERCLIP {
+            MONSTERCLIP[MONSTERCLIP_N] = (rec.mins, rec.maxs);
+            MONSTERCLIP_N += 1;
+        }
         LOGIC_TARGET[li] = rec.target;
         LOGIC_COUNTER[li] = match rec.kind {
             map::LOGIC_TRIGGER_COUNTER => (rec.arg0 as i16).max(1),
@@ -3078,10 +3216,21 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                     }
                 }
             }
+            map::LOGIC_BEAM => {
+                // spawnflag bit0 = START_ON: draw from load (TOP). Toggled beams
+                // stay BOTTOM (hidden) until their target fires.
+                if rec.spawnflags & 1 != 0 {
+                    LOGIC_STATE[li] = LOGIC_STATE_TOP;
+                }
+            }
             map::LOGIC_MAP_FLAGS => {
                 FADE_STARTDARK = rec.arg1 & 1 != 0;
                 CHAPTER_TITLE_ID = rec.arg0;
                 CHAPTER_TITLE_HOLD = rec.speed;
+                // gametitle bit: flash the big HALF-LIFE card at level start (c0a0).
+                if rec.arg1 & 2 != 0 {
+                    GAMETITLE_TICKS = 130; // ~6.5 s
+                }
                 let track = ((rec.arg1 >> 8) & 0x3F) as i16;
                 if track > 0 {
                     CD_TRACK_WANT = track;
@@ -3777,7 +3926,7 @@ unsafe fn prop_try_step(
             // frame killer. Walkers still refuse steps with no floor under
             // them (HL CheckLocalMove); the flying controller keeps altitude.
             let to_flat = prop_target(ty, cand);
-            if !actor_line_clear(m, movers, from, to_flat) {
+            if !actor_line_clear(m, movers, from, to_flat) || in_monsterclip(to_flat) {
                 i += 1;
                 continue;
             }
@@ -4811,7 +4960,12 @@ unsafe fn init_prop_state(m: &Map) {
         // Sprite billboards (env_sprite/glow) ride the prop table with bit 0x2000
         // set; they are drawn in their own pass (draw_billboard), not as models.
         if ty & SPRITE_PROP_BIT != 0 {
+            // Sprites never enter the enemy/AI loops (PROP_ACTIVE stays 0). Their
+            // billboard visibility is a separate flag: START_ON sprites show from
+            // load, toggled ones (dormant bit) stay hidden until their name fires.
             PROP_ACTIVE[pi] = 0;
+            PROP_SPRITE_VIS[pi] = if ty & PROP_DORMANT_BIT != 0 { 0 } else { 1 };
+            PROP_NAME[pi] = m.prop_name(pi);
             pi += 1;
             continue;
         }
@@ -8809,7 +8963,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             if use_cooldown > 0 {
                 use_cooldown -= 1;
             }
-            let want_use = pad.buttons.is_held(button::SQUARE) && use_cooldown == 0;
+            let use_held_raw = !dead && pad.buttons.is_held(button::SQUARE);
+            let want_use = use_held_raw && use_cooldown == 0;
             if want_use {
                 use_cooldown = 8;
             }
@@ -9170,6 +9325,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                             &mut armor,
                         );
                     }
+                }
+                // Hold-to-turn valve wheels: ramp while +use is held (raw, not
+                // the edge-triggered want_use), independent of tank/train.
+                if use_held_raw && MOUNTED_TANK < 0 {
+                    tick_momentary(&m, nlogic, nents, eye, yaw, pitch, movers);
                 }
                 logic_touch_triggers(
                     &m,
@@ -10180,10 +10340,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 let nsp = m.n_props.min(MAX_PROPS);
                 let mut si = 0usize;
                 while si < nsp {
+                    let pi = si;
                     let (ty, org, half, leaf) = m.prop(si);
                     si += 1;
-                    if ty & SPRITE_PROP_BIT == 0 {
-                        continue;
+                    if ty & SPRITE_PROP_BIT == 0 || PROP_SPRITE_VIS[pi] == 0 {
+                        continue; // not a sprite, or a toggled sprite still hidden
                     }
                     let id = (ty & SPRITE_PROP_ID_MASK) as usize;
                     if id >= sprite::n_sprites() {
@@ -10364,7 +10525,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 let mut li = 0usize;
                 while li < nlb {
                     let rec = m.logic(li);
-                    if rec.kind == map::LOGIC_BEAM {
+                    if rec.kind == map::LOGIC_BEAM && LOGIC_STATE[li] == LOGIC_STATE_TOP {
                         let fa = rec.first_aux as usize;
                         let (a0, a1, a2, a3) = (
                             m.logic_aux(fa),

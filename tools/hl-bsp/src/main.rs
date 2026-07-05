@@ -1641,6 +1641,7 @@ fn best_visibility_spawn(
     face_dist: &[i32],
     face_center: &[[i16; 3]],
     face_extent: &[[u16; 3]],
+    face_bright: &[u8],
 ) -> Option<([f32; 3], i32, i32)> {
     let n_leaves = leaves.len() / SZ_LEAF;
     let n_marks = marks.len() / SZ_MARKSURFACE;
@@ -1683,11 +1684,15 @@ fn best_visibility_spawn(
     // Take the most-visible leaf whose centre is actually clear (not solid, not
     // mid-wall). The centroid of a convex BSP leaf's boundary faces lands inside
     // it; runtime gravity settles the player onto the floor.
+    // Among the most-visible clear leaves, prefer the BRIGHTEST one -- a well-lit
+    // open leaf, not a dark visible pocket (c4a3's chapter-select spawn landed in
+    // a near-black room). Brightness = mean of the leaf faces' lightmap levels.
+    let mut best_pick: Option<([f32; 3], i32, i32, i64)> = None;
     for (_, l) in ranked.into_iter().take(16) {
         let lo = l * SZ_LEAF;
         let m0 = u16le(leaves, lo + SZ_LEAF_MARK0).unwrap_or(0) as usize;
         let mc = u16le(leaves, lo + SZ_LEAF_MARK0 + 2).unwrap_or(0) as usize;
-        let (mut sx, mut sy, mut sz, mut n) = (0i64, 0i64, 0i64, 0i64);
+        let (mut sx, mut sy, mut sz, mut sb, mut n) = (0i64, 0i64, 0i64, 0i64, 0i64);
         for mj in m0..m0 + mc {
             if mj >= n_marks {
                 break;
@@ -1700,6 +1705,7 @@ fn best_visibility_spawn(
             sx += c[0] as i64;
             sy += c[1] as i64;
             sz += c[2] as i64;
+            sb += *face_bright.get(f).unwrap_or(&128) as i64;
             n += 1;
         }
         if n == 0 {
@@ -1711,6 +1717,7 @@ fn best_visibility_spawn(
         if !spawn_candidate_clear(origin_hl, nodes, planes, leaves, clipnodes, hull1_head) {
             continue;
         }
+        let brightness = sb / n;
         let mut best_yaw = 0;
         let mut best_score = i32::MIN;
         for i in 0..8 {
@@ -1735,9 +1742,11 @@ fn best_visibility_spawn(
                 best_yaw = yaw;
             }
         }
-        return Some((origin_hl, best_yaw, best_score));
+        if best_pick.map_or(true, |(_, _, _, b)| brightness > b) {
+            best_pick = Some((origin_hl, best_yaw, best_score, brightness));
+        }
     }
-    None
+    best_pick.map(|(o, y, s, _)| (o, y, s))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1756,6 +1765,7 @@ fn choose_standalone_spawn(
     face_dist: &[i32],
     face_center: &[[i16; 3]],
     face_extent: &[[u16; 3]],
+    face_bright: &[u8],
 ) -> Option<([f32; 3], i32)> {
     const GOOD_STANDALONE_SCORE: i32 = 900;
     const MIN_AUTHORED_STANDALONE_SCORE: i32 = 300;
@@ -1896,7 +1906,7 @@ fn choose_standalone_spawn(
     .unwrap_or(0);
     if let Some((origin, yaw, score)) = best_visibility_spawn(
         scale, nodes, planes, leaves, clipnodes, hull1_head, marks, vis, face_ntri, face_norm,
-        face_dist, face_center, face_extent,
+        face_dist, face_center, face_extent, face_bright,
     ) {
         if best_entity_score < DEAD_POCKET_SCORE && score >= GOOD_STANDALONE_SCORE {
             if debug_spawn {
@@ -1977,6 +1987,8 @@ const LOGIC_ENV_GLOBAL: u8 = 36; // sets a persistent global: arg0 = hash, arg1 
 const LOGIC_ENV_EXPLOSION: u8 = 37; // scripted explosion FX at origin: arg0 = magnitude
 #[allow(dead_code)]
 const LOGIC_ENV_SPARK: u8 = 40; // env_spark: origin sparks intermittently
+const LOGIC_MONSTERCLIP: u8 = 41; // func_monsterclip: mins/maxs AABB blocks NPCs, not the player
+const LOGIC_MOMENTARY: u8 = 42; // momentary_rot_button valve wheel: hold +use to ramp its target door
 const LOGIC_TANK: u8 = 38; // func_tank mountable gun: arg0 = bullet damage, speed = fire cooldown ticks
 const LOGIC_BEAM: u8 = 39; // env_beam/env_laser: aux = start xyz + end xyz, arg1 = half-width, speed = color
 
@@ -2060,8 +2072,10 @@ fn collect_sprite_props(
     scale: f32,
     map_idx: u16,
     sprites: &std::collections::HashMap<(u16, String), (u16, u16, u16)>,
+    logic_names: &[String],
 ) -> Vec<(u16, [i32; 3], i32, i16, u16)> {
     const SPRITE_PROP_BIT: u16 = 0x2000;
+    const DORMANT_BIT: u16 = 0x4000; // toggled sprite: hidden until its target fires
     const SF_SPRITE_STARTON: u16 = 1;
     let s = entity_text(ents);
     let mut out = Vec::new();
@@ -2071,9 +2085,18 @@ fn collect_sprite_props(
             continue;
         }
         let sf = parse_spawnflags(block);
-        if cls == "env_sprite" && (sf & SF_SPRITE_STARTON) == 0 {
-            continue; // toggled sprite: waits for a trigger we don't wire yet
-        }
+        let start_on = cls != "env_sprite" || (sf & SF_SPRITE_STARTON) != 0;
+        // A toggled env_sprite (no START_ON) is emitted hidden, but only if a
+        // trigger can reveal it -- resolve its targetname to a logic-name id.
+        let name = if start_on {
+            0u16
+        } else {
+            let tn = ent_value(block, "targetname").unwrap_or("").trim();
+            match logic_names.iter().position(|n| n == tn) {
+                Some(p) => (p + 1).min(u16::MAX as usize) as u16,
+                None => continue, // nothing fires it -> it would never appear
+            }
+        };
         let model = ent_value(block, "model").unwrap_or("");
         let base = model
             .rsplit(|c| c == '/' || c == '\\')
@@ -2092,12 +2115,17 @@ fn collect_sprite_props(
         let half = ((bw as f32 * 0.5 * ent_scale) * scale)
             .round()
             .clamp(1.0, 4000.0) as i32;
+        let type_word = if start_on {
+            SPRITE_PROP_BIT | (lid & 0x1FFF)
+        } else {
+            DORMANT_BIT | SPRITE_PROP_BIT | (lid & 0x1FFF)
+        };
         out.push((
-            SPRITE_PROP_BIT | (lid & 0x1FFF),
+            type_word,
             origin,
             half,
             point_leaf(origin_hl, nodes, planes),
-            0,
+            name,
         ));
     }
     out
@@ -2784,8 +2812,8 @@ fn collect_entities(
             continue;
         }
         let cls = ent_value(block, "classname").unwrap_or("");
-        if cls.starts_with("trigger") || cls == "func_tracktrain" {
-            continue; // invisible, or handled by the tram section
+        if cls.starts_with("trigger") || cls == "func_tracktrain" || cls == "func_monsterclip" {
+            continue; // invisible; monsterclip blocks NPCs only (emitted as a logic AABB)
         }
         let origin_hl = ent_value(block, "origin")
             .and_then(parse_vec3)
@@ -3157,7 +3185,8 @@ fn collect_logic_entities(
             "func_door" | "func_plat" | "func_door_rotating" | "momentary_door" => {
                 LOGIC_FUNC_DOOR
             }
-            "func_button" | "momentary_rot_button" => LOGIC_FUNC_BUTTON,
+            "func_button" => LOGIC_FUNC_BUTTON,
+            "momentary_rot_button" => LOGIC_MOMENTARY,
             "func_breakable" | "func_pushable" => LOGIC_FUNC_BREAKABLE,
             "trigger_teleport" => LOGIC_TRIGGER_TELEPORT,
             "trigger_push" | "func_conveyor" => LOGIC_TRIGGER_PUSH,
@@ -3181,12 +3210,24 @@ fn collect_logic_entities(
             "ambient_generic" if is_voice_message(ent_value(block, "message").unwrap_or("")) => {
                 LOGIC_AMBIENT
             }
+            // PA announcer (Black Mesa intercom): a speaker plays a sentence group.
+            // Reuses the per-map voice path -- it cooks only when its line is in the
+            // voice pack (the sentence-group extraction is the residual).
+            "speaker" if is_voice_message(ent_value(block, "message").unwrap_or("")) => {
+                LOGIC_AMBIENT
+            }
             "env_shake" => LOGIC_ENV_SHAKE,
             "func_wall_toggle" => LOGIC_WALL_TOGGLE,
             "multisource" => LOGIC_MULTISOURCE,
             "env_global" => LOGIC_ENV_GLOBAL,
             "env_explosion" => LOGIC_ENV_EXPLOSION,
             "env_spark" | "env_debris" => LOGIC_ENV_SPARK,
+            "func_monsterclip" => LOGIC_MONSTERCLIP,
+            // On A Rail junctions: the path chain is stitched at cook so the train
+            // drives straight through (progression). The platform also becomes a
+            // +use lever that fires its target -- the minimal runtime routing
+            // control (the full rotate-the-platform rig is deferred).
+            "func_trackchange" | "func_trackautochange" => LOGIC_FUNC_BUTTON,
             // Mountable guns: the whole func_tank family renders as its brush and
             // is +use-mounted at runtime (aim with the view, fire hitscan). Laser/
             // rocket/mortar variants degrade to a bullet tank (no special projectile).
@@ -3624,8 +3665,12 @@ fn collect_logic_entities(
             if cls != "env_beam" && cls != "env_laser" {
                 continue;
             }
-            if (parse_spawnflags(block) & 1) == 0 {
-                continue; // not START_ON -> triggered (a later pass)
+            // START_ON beams draw from load; toggled ones (no START_ON) stay off
+            // until their target fires. spawnflags bit0 carries that initial state.
+            let start_on = (parse_spawnflags(block) & 1) != 0;
+            let beam_targetname = names.id(ent_value(block, "targetname"));
+            if !start_on && beam_targetname == 0 {
+                continue; // never START_ON and nothing can toggle it -> skip
             }
             let own = ent_value(block, "origin")
                 .and_then(parse_vec3)
@@ -3660,8 +3705,8 @@ fn collect_logic_entities(
             out.push(LogicRec {
                 kind: LOGIC_BEAM,
                 use_type: 0,
-                spawnflags: 0,
-                targetname: 0,
+                spawnflags: start_on as u16, // bit0 = START_ON (draw from load)
+                targetname: beam_targetname,
                 target: 0,
                 killtarget: 0,
                 brush: LOGIC_BRUSH_NONE,
@@ -4244,6 +4289,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let mut face_translucent = vec![false; n_faces];
     let mut face_center = vec![[0i16; 3]; n_faces];
     let mut face_extent = vec![[0u16; 3]; n_faces];
+    let mut face_bright = vec![128u8; n_faces]; // mean lightmap level; drives spawn choice
     let mut raw_verts = raw.clone();
 
     // The triangle UV splitter can otherwise create T-junctions: one face gets
@@ -4483,6 +4529,17 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
                 vertex_shade(lighting, lightofs, style0, lmw, lmh, ou, ov, mins_s, mins_t)
             })
             .collect();
+        // Face brightness (spawn choice): mean corner luminance. Unlit faces
+        // (lightofs<0) render fullbright, so count them as bright.
+        face_bright[f] = if lightofs < 0 {
+            128
+        } else {
+            let sum: u32 = shade
+                .iter()
+                .map(|&(r, g, b)| (r as u32 + g as u32 + b as u32) / 3)
+                .sum();
+            (sum / shade.len().max(1) as u32).min(255) as u8
+        };
         // Shift by whole texture tiles so values start near 0 (preserves tiling
         // phase), then saturate to u8. Faces tiling more than ~4x clamp at the
         // far edge -- proper tiling of huge surfaces needs UV subdivision (M3).
@@ -5053,6 +5110,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         &face_dist,
         &face_center,
         &face_extent,
+        &face_bright,
     )
     .or_else(|| {
         find_spawn(bsp.lump(LUMP_ENTITIES))
@@ -5201,6 +5259,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         scale,
         sprite_map_idx,
         &sprites_manifest,
+        &logic.names,
     ));
     o.extend_from_slice(&(props.len() as u32).to_le_bytes());
     // PropRec 24B: ty u16 | leaf i16 | org i32[3] | yaw i32 | name u16 | pad u16
