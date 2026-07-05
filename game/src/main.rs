@@ -4263,7 +4263,7 @@ fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
         }
         // Red damage flash (alpha scaled by hit size) + a random view jolt so
         // getting shot has visible + felt feedback (HL's damage tint + punch).
-        DAMAGE_FLASH = DAMAGE_FLASH.max((60 + dmg.min(50) * 2).min(210) as u8);
+        DAMAGE_FLASH = DAMAGE_FLASH.max((50 + dmg.min(45) * 2).min(150) as u8);
         let r = IMPACT_RNG.next() as i32;
         add_view_punch(dmg.min(24) as i32 + (r % 16) - 8, (r % 24) - 12);
     }
