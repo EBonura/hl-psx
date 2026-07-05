@@ -421,6 +421,7 @@ const SCIENTIST_FEAR_TICKS: u8 = 80;
 const SCIENTIST_FLEE_SPEED: i32 = 7;
 const SCIENTIST_FACE_RANGE2: i32 = 192 * 192;
 const PROP_HIT_FLASH_TICKS: u8 = 4;
+const ATTACK_WINDUP: u8 = 5; // telegraph ticks before a ranged enemy's first shot
 const PROP_TARGET_NONE: u8 = 254;
 const PROP_TARGET_PLAYER: u8 = 255;
 const NAV_NODE_NONE: u8 = 255;
@@ -916,6 +917,10 @@ unsafe fn ai_reacquire(pi: usize) -> bool {
 }
 static mut PROP_HEALTH: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_HIT_FLASH: [u8; MAX_PROPS] = [0; MAX_PROPS];
+// Sim tick each prop died on -> the death clip plays forward from there, then
+// holds. Authored corpses are seeded far in the past so they spawn on the final
+// death frame instead of re-playing the fall.
+static mut PROP_DEATH_START: [u16; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_OCC_VIS: [u8; MAX_PROPS] = [1; MAX_PROPS]; // staggered occlusion verdicts
 static mut PROP_DORMANT: [u8; MAX_PROPS] = [0; MAX_PROPS]; // monstermaker stock awaiting a fire
 static mut PROP_LOGIC_LINK: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS];
@@ -3334,8 +3339,21 @@ fn prop_anim_frame(
     let clip = clip.min(md.n_clips.saturating_sub(1));
     let len = md.clip_len(clip);
     if state == PROP_STATE_DEAD {
-        let f = md.clip_frame(clip, len.saturating_sub(1));
-        return (f, f, 0);
+        // Play the death clip forward from the tick it died (~3 ticks/frame, a
+        // ~0.5 s fall, interpolated), then hold the final pose -- was an instant
+        // snap to the last frame.
+        let elapsed = (sim_frame_no as u16).wrapping_sub(unsafe { PROP_DEATH_START[pi] }) as usize;
+        let last = len.saturating_sub(1);
+        let div = 3usize;
+        let k = elapsed / div;
+        if k >= last {
+            let f = md.clip_frame(clip, last);
+            return (f, f, 0);
+        }
+        let f0 = md.clip_frame(clip, k);
+        let f1 = md.clip_frame(clip, k + 1);
+        let frac = ((elapsed % div) * 16 / div) as u32;
+        return (f0, f1, frac);
     }
     if hit_flash > 0 {
         let pain_frame = PROP_HIT_FLASH_TICKS.saturating_sub(hit_flash) as usize;
@@ -3369,31 +3387,24 @@ fn dist2_xz(a: [i32; 3], b: [i32; 3]) -> i32 {
     dx * dx + dz * dz
 }
 
+/// Full-resolution yaw (12-bit) for a world XZ direction -- 0 = +Z, 1024 = +X.
+/// (Was an 8-way compass quantise, which made enemies snap-rotate; enemies now
+/// slew toward this via `turn_toward`.)
 fn yaw_from_vec(dx: i32, dz: i32) -> u16 {
-    let ax = dx.abs();
-    let az = dz.abs();
-    if ax * 2 < az {
-        if dz >= 0 {
-            0
-        } else {
-            2048
-        }
-    } else if az * 2 < ax {
-        if dx >= 0 {
-            1024
-        } else {
-            3072
-        }
-    } else if dx >= 0 && dz >= 0 {
-        512
-    } else if dx >= 0 {
-        1536
-    } else if dz < 0 {
-        2560
-    } else {
-        3584
-    }
+    atan2_q12(dx, dz)
 }
+
+/// Rotate `cur` toward `target` by at most `rate` (12-bit units), the short way.
+fn turn_toward(cur: u16, target: u16, rate: u16) -> u16 {
+    let diff = (target.wrapping_sub(cur) & 0xFFF) as i32;
+    let signed = if diff > 2048 { diff - 4096 } else { diff };
+    let step = signed.clamp(-(rate as i32), rate as i32);
+    ((cur as i32 + step) & 0xFFF) as u16
+}
+
+/// How fast NPCs turn to face a target, 12-bit yaw units per sim tick
+/// (~22 deg/tick ≈ 440 deg/s -- brisk but visibly rotating, not instant).
+const PROP_TURN_RATE: u16 = 250;
 
 #[inline]
 fn prop_is_human(ty: u8) -> bool {
@@ -3695,7 +3706,9 @@ unsafe fn prop_face_point(pi: usize, p: [i32; 3]) {
     let dx = p[0] - pos[0];
     let dz = p[2] - pos[2];
     if dx != 0 || dz != 0 {
-        PROP_YAW[pi] = yaw_from_vec(dx, dz);
+        // Slew toward the target instead of snapping to it -- enemies visibly
+        // pivot to track you rather than teleport-rotating.
+        PROP_YAW[pi] = turn_toward(PROP_YAW[pi], yaw_from_vec(dx, dz), PROP_TURN_RATE);
     }
 }
 
@@ -3999,6 +4012,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8) {
     PROP_SCRIPT_MODE[pi] = 0;
     if PROP_HEALTH[pi] == 0 {
         PROP_STATE[pi] = PROP_STATE_DEAD;
+        PROP_DEATH_START[pi] = SIM_NOW; // play the death clip forward from now
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_AI_TIMER[pi] = 0;
         sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
@@ -4450,7 +4464,14 @@ unsafe fn tick_shooter(
     if d2 <= range2 && visible {
         // In range + line of sight: hold and fire on the cooldown. The attack
         // clip plays while STATE_ATTACK; the hit is instant (hitscan).
+        let was_attacking = PROP_STATE[pi] == PROP_STATE_ATTACK;
         PROP_STATE[pi] = PROP_STATE_ATTACK;
+        if !was_attacking {
+            // Just acquired the target: wind up first so the attack animation
+            // reads as a telegraph (and gives the player a dodge window) instead
+            // of an instant hitscan the tick the enemy sees you.
+            PROP_ATTACK_COOLDOWN[pi] = PROP_ATTACK_COOLDOWN[pi].max(ATTACK_WINDUP);
+        }
         if PROP_ATTACK_COOLDOWN[pi] == 0 {
             damage_target(target, def.atk_damage, health, armor);
             PROP_ATTACK_COOLDOWN[pi] = def.atk_cooldown;
@@ -4729,6 +4750,7 @@ unsafe fn init_prop_state(m: &Map) {
         PROP_OCC_VIS[pi] = 1;
         if dead {
             PROP_STATE[pi] = PROP_STATE_DEAD;
+            PROP_DEATH_START[pi] = 0u16.wrapping_sub(300); // already-fallen corpse
         }
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_COUNT += 1;

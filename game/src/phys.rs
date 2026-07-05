@@ -37,6 +37,11 @@ fn gravity_step() -> i32 {
 }
 const MOVE_SPEED: i32 = 18;
 const JUMP: i32 = 64;
+// Horizontal velocity ramps toward the target (accelerate) / toward 0 when idle
+// (friction) instead of snapping -- HL's PM_Accelerate/PM_Friction feel. Fraction
+// of the gap closed per sim tick, out of 16. Air is low so a jump keeps momentum.
+const GROUND_ACCEL: i32 = 8; // ~half the gap/tick: reaches speed in ~4 ticks, stops in ~4
+const AIR_ACCEL: i32 = 2; // gentle mid-air nudge; preserves jump momentum
 const STEP_DOWN: i32 = 8; // ground probe depth
 const CONTACT_NUDGE: i32 = 2;
 const STOP_EPSILON: i32 = 1;
@@ -645,8 +650,20 @@ impl Player {
         let c = sincos::sin_q12((yaw + 1024) & 0xFFF);
         let wx = (s * fwd + c * strafe) / 128;
         let wz = (c * fwd - s * strafe) / 128;
-        self.vel[0] = (wx * MOVE_SPEED) >> 12;
-        self.vel[2] = (wz * MOVE_SPEED) >> 12;
+        let mut wish_x = (wx * MOVE_SPEED) >> 12;
+        let mut wish_z = (wz * MOVE_SPEED) >> 12;
+        // Clamp the wish speed to MOVE_SPEED so a full diagonal isn't ~1.41x fast
+        // (octagonal |v| approximation, no sqrt needed).
+        let (ax, az) = (wish_x.abs(), wish_z.abs());
+        let wmag = ax.max(az) + ax.min(az) * 3 / 8;
+        if wmag > MOVE_SPEED {
+            wish_x = wish_x * MOVE_SPEED / wmag;
+            wish_z = wish_z * MOVE_SPEED / wmag;
+        }
+        // Accelerate toward the wish velocity / decelerate toward it when idle.
+        let accel = if self.on_ground { GROUND_ACCEL } else { AIR_ACCEL };
+        self.vel[0] += ((wish_x - self.vel[0]) * accel) >> 4;
+        self.vel[2] += ((wish_z - self.vel[2]) * accel) >> 4;
 
         self.land_impact = 0;
         let was_air = !self.on_ground;
