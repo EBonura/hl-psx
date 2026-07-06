@@ -3428,6 +3428,9 @@ fn collect_logic_entities(
                 (spawnflags as u16 & 1) | ((white as u16) << 1)
             }
             LOGIC_MULTISOURCE => global_hash(ent_value(block, "globalstate").unwrap_or("")),
+            // Doors/buttons carry their `master` (a multisource targetname) here;
+            // the runtime keeps them locked until that multisource is satisfied.
+            LOGIC_FUNC_DOOR | LOGIC_FUNC_BUTTON => names.id(ent_value(block, "master")),
             LOGIC_ENV_GLOBAL => parse_f32_key(block, "triggermode", 2.0)
                 .round()
                 .clamp(0.0, 3.0) as u16,

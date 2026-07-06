@@ -2107,6 +2107,29 @@ unsafe fn logic_sub_use_targets(
 
 /// Activate an untargeted door plus every door sharing its cook-assigned
 /// link group (GoldSrc opens both halves of a touching split door together).
+/// HL's `UTIL_IsMasterTriggered`: a door/button gated by a `master` (a
+/// multisource) only operates while that multisource is satisfied
+/// (LOGIC_STATE_TOP). Fail-safe: no master (arg1 == 0), or a master name that is
+/// NOT a present multisource, returns true (allowed) -- only a present-but-
+/// unsatisfied multisource locks it, so an unknown master can never hard-block.
+unsafe fn master_ok(m: &Map, nlogic: usize, master_name: u16) -> bool {
+    if master_name == 0 {
+        return true;
+    }
+    let mut found = false;
+    let mut li = 0usize;
+    while li < nlogic {
+        if LOGIC_KIND[li] == map::LOGIC_MULTISOURCE && m.logic(li).targetname == master_name {
+            found = true;
+            if LOGIC_STATE[li] == LOGIC_STATE_TOP {
+                return true; // satisfied -> unlocked
+            }
+        }
+        li += 1;
+    }
+    !found
+}
+
 unsafe fn logic_activate_door_linked(
     m: &Map,
     nlogic: usize,
@@ -2115,6 +2138,10 @@ unsafe fn logic_activate_door_linked(
     rec: map::LogicEnt,
     use_type: u8,
 ) {
+    // Master lock: a mastered door won't open until its multisource is satisfied.
+    if !master_ok(m, nlogic, rec.arg1) {
+        return;
+    }
     logic_activate_door(nents, li, rec, use_type);
     if rec.arg0 == 0 {
         return;
@@ -2256,6 +2283,11 @@ unsafe fn logic_activate_button(
     from_touch: bool,
 ) {
     if !from_touch && (rec.spawnflags & SF_BUTTON_TOUCH_ONLY) != 0 {
+        return;
+    }
+    // Master lock: a mastered button is inert until its multisource is satisfied.
+    if !master_ok(m, nlogic, rec.arg1) {
+        sfx::play(sfx::DRY); // locked click
         return;
     }
     let state = LOGIC_STATE[li];
@@ -2858,6 +2890,23 @@ unsafe fn tick_momentary(
     }
 }
 
+/// A brush the player can open/operate with a direct +use. Buttons, chargers,
+/// and tanks always qualify. A func_door qualifies ONLY when SF_DOOR_USE_ONLY is
+/// set -- that is HL's FCAP_IMPULSE_USE rule (`ObjectCaps`): a targeted door is
+/// opened by its button/trigger and a plain door by touch, but neither is
+/// directly +use-able by the player. This is what stops the player opening a
+/// button-operated door by walking up and pressing use.
+fn logic_is_use_target(rec: map::LogicEnt) -> bool {
+    match rec.kind {
+        map::LOGIC_FUNC_BUTTON
+        | map::LOGIC_HEALTH_CHARGER
+        | map::LOGIC_HEV_CHARGER
+        | map::LOGIC_TANK => true,
+        map::LOGIC_FUNC_DOOR => (rec.spawnflags & SF_DOOR_USE_ONLY) != 0,
+        _ => false,
+    }
+}
+
 unsafe fn logic_try_use(
     m: &Map,
     nlogic: usize,
@@ -2894,16 +2943,7 @@ unsafe fn logic_try_use(
             while li < nlogic {
                 if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
                     let rec = m.logic(li);
-                    if rec.brush as i32 == hit.mover
-                        && matches!(
-                            rec.kind,
-                            map::LOGIC_FUNC_BUTTON
-                                | map::LOGIC_FUNC_DOOR
-                                | map::LOGIC_HEALTH_CHARGER
-                                | map::LOGIC_HEV_CHARGER
-                                | map::LOGIC_TANK
-                        )
-                    {
+                    if rec.brush as i32 == hit.mover && logic_is_use_target(rec) {
                         best = li;
                         break;
                     }
@@ -2924,12 +2964,7 @@ unsafe fn logic_try_use(
     while ray_missed && li < nlogic {
         if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
             let rec = m.logic(li);
-            if rec.kind == map::LOGIC_FUNC_BUTTON
-                || rec.kind == map::LOGIC_FUNC_DOOR
-                || rec.kind == map::LOGIC_HEALTH_CHARGER
-                || rec.kind == map::LOGIC_HEV_CHARGER
-                || rec.kind == map::LOGIC_TANK
-            {
+            if logic_is_use_target(rec) {
                 let c = logic_center(rec);
                 let vz = dot12(rot.m[2], c) + base_t[2];
                 if vz > 0 && vz <= PLAYER_USE_REACH {
@@ -2965,9 +3000,13 @@ unsafe fn logic_try_use(
     if best != usize::MAX {
         let rec = m.logic(best);
         match rec.kind {
-            // Wall chargers drain their juice into the player per use pulse.
+            // Wall chargers drain their juice into the player per use pulse. HL
+            // denies a charger to a suitless player (CWallHealth/CRecharge check
+            // WEAPON_SUIT) -- no suit, no charge (and the deny click).
             map::LOGIC_HEALTH_CHARGER => {
-                if LOGIC_COUNTER[best] > 0 && *health < PLAYER_START_HEALTH {
+                if LOGIC_PLAYER_SUIT == 0 || LOGIC_COUNTER[best] == 0 {
+                    sfx::play(sfx::DRY); // empty / no-suit deny
+                } else if *health < PLAYER_START_HEALTH {
                     let give = (CHARGER_RATE as i16).min(LOGIC_COUNTER[best]) as u16;
                     let give = give.min(PLAYER_START_HEALTH - *health);
                     *health += give;
@@ -2976,7 +3015,9 @@ unsafe fn logic_try_use(
                 }
             }
             map::LOGIC_HEV_CHARGER => {
-                if LOGIC_COUNTER[best] > 0 && *armor < HEV_MAX_ARMOR {
+                if LOGIC_PLAYER_SUIT == 0 || LOGIC_COUNTER[best] == 0 {
+                    sfx::play(sfx::DRY);
+                } else if *armor < HEV_MAX_ARMOR {
                     let give = (CHARGER_RATE as i16).min(LOGIC_COUNTER[best]) as u16;
                     let give = give.min(HEV_MAX_ARMOR - *armor);
                     *armor += give;
