@@ -46,6 +46,29 @@ pub const EMPTY_SLOT: TexSlot = TexSlot {
 static mut ATLAS: TextureWindowAtlas<PAGES> = TextureWindowAtlas::new();
 static mut CLUTS: ClutRowAllocator<CLUT_ROWS> = ClutRowAllocator::new(CLUT_BASE_Y);
 
+// Viewmodel-pool checkpoint: both allocators are Copy, so we snapshot them once
+// the map's map/HUD/sprite/enemy/glock textures are all uploaded. Restoring frees
+// exactly the switched-viewmodel textures loaded afterwards (nothing else comes
+// after the checkpoint) so the VM pool can evict back to glock-only and reload
+// the held weapon -- fixing the "switched weapon shows the glock model" fallback.
+static mut VM_CP: Option<(TextureWindowAtlas<PAGES>, ClutRowAllocator<CLUT_ROWS>)> = None;
+
+/// Snapshot the allocators (call after all non-viewmodel textures are resident).
+pub fn vm_checkpoint() {
+    unsafe { VM_CP = Some((ATLAS, CLUTS)) };
+}
+
+/// Restore the allocators to the checkpoint, freeing every switched-viewmodel
+/// texture. No-op if no checkpoint was taken this map.
+pub fn vm_restore() {
+    unsafe {
+        if let Some((a, c)) = VM_CP {
+            ATLAS = a;
+            CLUTS = c;
+        }
+    }
+}
+
 #[inline(always)]
 fn rd_u32(d: &[u8], o: usize) -> Option<u32> {
     Some(u32::from_le_bytes([
@@ -60,6 +83,7 @@ unsafe fn reset_allocators() {
     unsafe {
         ATLAS = TextureWindowAtlas::new();
         CLUTS = ClutRowAllocator::new(CLUT_BASE_Y);
+        VM_CP = None; // invalidate the previous map's viewmodel checkpoint
     }
 }
 

@@ -522,12 +522,38 @@ impl VmEntry {
     };
 }
 static mut VM_ENTRY: [VmEntry; N_WEAPONS] = [VmEntry::NONE; N_WEAPONS];
-// Fill cursor into the viewmodel pool. Only the spawn weapon streams at map
-// load; the rest append here on first switch (stream_one_viewmodel), so a load
-// streams ~1 viewmodel instead of all 14. No eviction -- the pool is sized for
-// the whole arsenal, so every weapon still ends up resident once first drawn.
+// Fill cursor into the viewmodel pool. The glock streams at map load; the rest
+// append here on first switch (stream_one_viewmodel). The pool holds ~5 guns;
+// when it can't fit another, vm_evict_to_glock() rewinds it to just the glock
+// (VM_FILL_BASE_*, the post-map-load cursor + the vram checkpoint) and reloads
+// the held weapon -- so the CURRENT weapon always shows its real model instead
+// of falling back to the glock visual.
 static mut VM_FILL_WORD: usize = 0;
 static mut VM_FILL_SLOT: usize = 0;
+static mut VM_FILL_BASE_WORD: usize = 0; // cursor right after the resident glock
+static mut VM_FILL_BASE_SLOT: usize = 0;
+// Reserve enough pool for the largest single viewmodel LOAD. stream_one_viewmodel
+// reads the whole merged chunk (geom + tex, up to ~40 KB = ~10.2 K words) into the
+// pool tail before extracting; only the geom persists, but the load needs room for
+// the full chunk -- so evict before a switch that couldn't fit it.
+const VM_MAX_WORDS: usize = 10752; // > the largest viewmodel chunk (~10,194 words)
+const VM_MAX_SLOTS: usize = 28; // > the rpg's ~24 skins
+
+/// Evict every non-glock viewmodel: restore the vram allocators to the map-load
+/// checkpoint (frees the switched-VM textures) and rewind the geom/slot cursors
+/// to just past the glock. The held weapon is re-streamed by the caller.
+unsafe fn vm_evict_to_glock() {
+    vram::vm_restore();
+    VM_FILL_WORD = VM_FILL_BASE_WORD;
+    VM_FILL_SLOT = VM_FILL_BASE_SLOT;
+    let mut w = 0usize;
+    while w < N_WEAPONS {
+        if w != W_GLOCK {
+            VM_ENTRY[w] = VmEntry::NONE;
+        }
+        w += 1;
+    }
+}
 
 // Shared per-map model pool: streamed geometry lives in MODEL_BUF (after the
 // viewmodel); textures, render faces, and slot bookkeeping live in these pools.
@@ -1136,6 +1162,15 @@ unsafe fn stream_one_viewmodel(
     if VM_ENTRY[wid].valid {
         return true;
     }
+    // If another viewmodel won't fit, evict back to glock-only so the current
+    // weapon always loads (re-streamed on demand). Only after a checkpoint exists
+    // (post-map-load); glock itself loads at BASE 0 without ever evicting.
+    if VM_FILL_BASE_WORD > 0
+        && (VM_FILL_WORD + VM_MAX_WORDS > VM_POOL_WORDS
+            || VM_FILL_SLOT + VM_MAX_SLOTS > VM_SLOTS_TOTAL)
+    {
+        vm_evict_to_glock();
+    }
     let word = VM_FILL_WORD;
     let slot = VM_FILL_SLOT;
     if word >= VM_POOL_WORDS || slot >= VM_SLOTS_TOTAL {
@@ -1195,6 +1230,8 @@ unsafe fn load_resident_viewmodels(
     }
     VM_FILL_WORD = 0;
     VM_FILL_SLOT = 0;
+    VM_FILL_BASE_WORD = 0; // eviction disabled until vm_checkpoint() is taken
+    VM_FILL_BASE_SLOT = 0;
     stream_one_viewmodel(W_GLOCK, stream_chunks, stream_bytes, stream_sectors)
 }
 
@@ -8729,6 +8766,12 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         ENT_SOLID_COUNT = nents_early;
         init_prop_state(&m);
         stream_map_models(&m, VM_POOL_WORDS * 4); // enemies stream after the viewmodel reserve
+        // Every non-viewmodel texture (map/HUD/sprite/enemy/glock) is resident
+        // now, and VM_FILL_* points just past the glock -- snapshot both so a
+        // switched viewmodel can evict back to glock-only when the pool fills.
+        vram::vm_checkpoint();
+        VM_FILL_BASE_WORD = VM_FILL_WORD;
+        VM_FILL_BASE_SLOT = VM_FILL_SLOT;
         clear_combat_fx();
     }
     let nents = m.n_ents.min(MAX_ENTS);
