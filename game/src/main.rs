@@ -5230,29 +5230,42 @@ unsafe fn tick_props(
                 PROP_YAW[pi] = PROP_SCRIPT_YAW[pi];
                 PROP_STATE[pi] = PROP_STATE_IDLE;
                 PROP_SCRIPT_MODE[pi] = 0;
-                if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF {
-                    // ~2 s gesture window, then fall back to the scripted idle
-                    PROP_SCRIPT_PLAY_UNTIL[pi] = SIM_NOW.wrapping_add(40);
-                }
-                let li = PROP_SCRIPT_LI[pi];
-                PROP_SCRIPT_LI[pi] = u16::MAX;
-                if (li as usize) < m.n_logic {
-                    let rec = m.logic(li as usize);
-                    if rec.target != 0 {
-                        logic_fire_targets(
-                            m,
-                            m.n_logic.min(MAX_LOGIC),
-                            m.n_ents.min(MAX_ENTS),
-                            rec.target,
-                            map::USE_TOGGLE,
-                            SIM_NOW,
-                            0,
-                        );
-                    }
-                }
+                // Hold the ~2 s gesture AT the mark before firing the next script
+                // in the chain (deferred to the gesture-done check below); a
+                // move-only script with no gesture fires on the next tick. Firing
+                // immediately on arrival made looping chains (c1a0d's soda-machine
+                // scientist: machine1->m2->..->m6->machine1) slide between marks
+                // with no pause -- the NPC reads as "flickering" to a new position
+                // every frame. PROP_SCRIPT_LI stays set as the pending-fire marker.
+                PROP_SCRIPT_PLAY_UNTIL[pi] = if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF {
+                    SIM_NOW.wrapping_add(40)
+                } else {
+                    SIM_NOW
+                };
             }
             pi += 1;
             continue;
+        }
+        // Scripted move finished: after the gesture window holds the pose, fire
+        // the completed script's target chain (HL fires a script's target when
+        // its sequence ENDS, not when the monster arrives at the mark).
+        if PROP_SCRIPT_LI[pi] != u16::MAX && time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]) {
+            let li = PROP_SCRIPT_LI[pi];
+            PROP_SCRIPT_LI[pi] = u16::MAX;
+            if (li as usize) < m.n_logic {
+                let rec = m.logic(li as usize);
+                if rec.target != 0 {
+                    logic_fire_targets(
+                        m,
+                        m.n_logic.min(MAX_LOGIC),
+                        m.n_ents.min(MAX_ENTS),
+                        rec.target,
+                        map::USE_TOGGLE,
+                        SIM_NOW,
+                        0,
+                    );
+                }
+            }
         }
         // Scripted idle pose (sit1, standing_idle, ...): the monster holds the
         // pose with AI suspended, exactly like HL's script state. Damage clears
