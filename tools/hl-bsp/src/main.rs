@@ -3428,9 +3428,18 @@ fn collect_logic_entities(
                 (spawnflags as u16 & 1) | ((white as u16) << 1)
             }
             LOGIC_MULTISOURCE => global_hash(ent_value(block, "globalstate").unwrap_or("")),
-            // Doors/buttons carry their `master` (a multisource targetname) here;
-            // the runtime keeps them locked until that multisource is satisfied.
-            LOGIC_FUNC_DOOR | LOGIC_FUNC_BUTTON => names.id(ent_value(block, "master")),
+            // Master-gated entities carry their `master` (a multisource
+            // targetname) here; the runtime keeps them locked until that
+            // multisource is satisfied (SDK UTIL_IsMasterTriggered). These are
+            // the classes the SDK gates: doors, buttons, trigger_once/multiple/
+            // counter, trigger_teleport, func_tank. Their arg1 is otherwise 0.
+            LOGIC_FUNC_DOOR
+            | LOGIC_FUNC_BUTTON
+            | LOGIC_TRIGGER_ONCE
+            | LOGIC_TRIGGER_MULTIPLE
+            | LOGIC_TRIGGER_COUNTER
+            | LOGIC_TRIGGER_TELEPORT
+            | LOGIC_TANK => names.id(ent_value(block, "master")),
             LOGIC_ENV_GLOBAL => parse_f32_key(block, "triggermode", 2.0)
                 .round()
                 .clamp(0.0, 3.0) as u16,

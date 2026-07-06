@@ -1751,6 +1751,9 @@ const SF_BUTTON_TOGGLE: u16 = 32;
 const SF_BUTTON_TOUCH_ONLY: u16 = 256;
 const SF_TRIGGER_HURT_TARGET_ONCE: u16 = 1;
 const SF_TRIGGER_HURT_START_OFF: u16 = 2;
+const SF_TRIGGER_NOCLIENTS: u16 = 2; // player may NOT fire this trigger (monster-only)
+const SF_TRIGGER_PUSH_START_OFF: u16 = 2; // trigger_push spawns disabled
+const SF_RELAY_FIREONCE: u16 = 1; // trigger_relay removes itself after firing once
 const SF_BREAK_TRIGGER_ONLY: u16 = 1; // func_breakable: immune to gunfire
 const TRIGGER_HURT_REPEAT_TICKS: u16 = 10;
 const TRAM_CARRY_RADIUS2: i32 = 384 * 384;
@@ -2333,7 +2336,10 @@ unsafe fn logic_use_entity(
             logic_activate_button(m, nlogic, nents, li, rec, now, depth + 1, false)
         }
         map::LOGIC_TRIGGER_RELAY => {
-            logic_sub_use_targets(m, nlogic, nents, li, rec, now, rec.use_type, depth + 1)
+            logic_sub_use_targets(m, nlogic, nents, li, rec, now, rec.use_type, depth + 1);
+            if (rec.spawnflags & SF_RELAY_FIREONCE) != 0 {
+                logic_remove_entity(li, rec, nents); // fires exactly once
+            }
         }
         map::LOGIC_TRIGGER_AUTO => {
             logic_sub_use_targets(m, nlogic, nents, li, rec, now, rec.use_type, depth + 1);
@@ -2356,7 +2362,7 @@ unsafe fn logic_use_entity(
         map::LOGIC_TRIGGER_COUNTER => {
             if LOGIC_COUNTER[li] > 0 {
                 LOGIC_COUNTER[li] -= 1;
-                if LOGIC_COUNTER[li] == 0 {
+                if LOGIC_COUNTER[li] == 0 && master_ok(m, nlogic, rec.arg1) {
                     logic_sub_use_targets(
                         m,
                         nlogic,
@@ -2376,7 +2382,9 @@ unsafe fn logic_use_entity(
                 LOGIC_TARGET[target_li] = rec.arg0;
             }
         }
-        map::LOGIC_TRIGGER_HURT => match use_type {
+        // trigger_hurt and trigger_push share the START_OFF on/off toggle
+        // (TOP = off, BOTTOM = on): a fire on their targetname enables/disables.
+        map::LOGIC_TRIGGER_HURT | map::LOGIC_TRIGGER_PUSH => match use_type {
             map::USE_ON => LOGIC_STATE[li] = LOGIC_STATE_BOTTOM,
             map::USE_OFF => LOGIC_STATE[li] = LOGIC_STATE_TOP,
             _ => {
@@ -3027,9 +3035,14 @@ unsafe fn logic_try_use(
             }
             // Mount the tank the player is looking at. Firing + dismount are
             // handled in the main loop (dismount = any use press while mounted).
+            // SDK CFuncTank::StartControl is master-gated.
             map::LOGIC_TANK => {
-                MOUNTED_TANK = best as i32;
-                sfx::play(sfx::BUTTON);
+                if master_ok(m, nlogic, rec.arg1) {
+                    MOUNTED_TANK = best as i32;
+                    sfx::play(sfx::BUTTON);
+                } else {
+                    sfx::play(sfx::DRY); // locked
+                }
             }
             _ => logic_use_entity(m, nlogic, nents, best, map::USE_TOGGLE, now, 0),
         }
@@ -3070,7 +3083,15 @@ unsafe fn logic_touch_triggers(
                 map::LOGIC_TRIGGER_ONCE
                 | map::LOGIC_TRIGGER_MULTIPLE
                 | map::LOGIC_TRIGGER_CHANGELEVEL => {
-                    if LOGIC_STATE[li] != LOGIC_STATE_WAITING
+                    // changelevel's arg1 is the landmark, not a master, and it is
+                    // always player-fired -- so the NOCLIENTS/master gate applies
+                    // only to trigger_once/multiple (SDK CBaseTrigger).
+                    let is_cl = rec.kind == map::LOGIC_TRIGGER_CHANGELEVEL;
+                    let gated = !is_cl
+                        && ((rec.spawnflags & SF_TRIGGER_NOCLIENTS) != 0
+                            || !master_ok(m, nlogic, rec.arg1));
+                    if !gated
+                        && LOGIC_STATE[li] != LOGIC_STATE_WAITING
                         && player_touches_logic(player_pos, rec)
                     {
                         logic_use_entity(m, nlogic, nents, li, map::USE_TOGGLE, now, 0);
@@ -3120,7 +3141,11 @@ unsafe fn logic_touch_triggers(
                     }
                 }
                 map::LOGIC_TRIGGER_TELEPORT => {
-                    if rec.aux_count >= 2 && player_touches_logic(player_pos, rec) {
+                    if rec.aux_count >= 2
+                        && (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0
+                        && master_ok(m, nlogic, rec.arg1)
+                        && player_touches_logic(player_pos, rec)
+                    {
                         let a = m.logic_aux(rec.first_aux);
                         let b = m.logic_aux(rec.first_aux + 1);
                         TELEPORT_REQUEST = Some((
@@ -3134,7 +3159,15 @@ unsafe fn logic_touch_triggers(
                     }
                 }
                 map::LOGIC_TRIGGER_PUSH => {
-                    if rec.aux_count >= 2 && player_touches_logic(player_pos, rec) {
+                    // START_OFF pushes spawn disabled (LOGIC_STATE_TOP); a fire on
+                    // their targetname flips them on (logic_use_entity toggle). NB
+                    // bit 2 here is PUSH_START_OFF, not NOCLIENTS (push uses its
+                    // own touch, not CBaseTrigger::MultiTouch) -- so no NOCLIENTS
+                    // check; the state gate below covers START_OFF.
+                    if rec.aux_count >= 2
+                        && LOGIC_STATE[li] != LOGIC_STATE_TOP
+                        && player_touches_logic(player_pos, rec)
+                    {
                         let a = m.logic_aux(rec.first_aux);
                         let b = m.logic_aux(rec.first_aux + 1);
                         PUSH_IMPULSE = [
@@ -3145,7 +3178,9 @@ unsafe fn logic_touch_triggers(
                     }
                 }
                 map::LOGIC_TRIGGER_GRAVITY => {
-                    if player_touches_logic(player_pos, rec) {
+                    if (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0
+                        && player_touches_logic(player_pos, rec)
+                    {
                         phys::set_gravity_scale(rec.arg0 as i32);
                     }
                 }
@@ -3294,6 +3329,11 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
             map::LOGIC_TRIGGER_HURT => {
                 if (rec.spawnflags & SF_TRIGGER_HURT_START_OFF) != 0 {
                     LOGIC_STATE[li] = LOGIC_STATE_TOP;
+                }
+            }
+            map::LOGIC_TRIGGER_PUSH => {
+                if (rec.spawnflags & SF_TRIGGER_PUSH_START_OFF) != 0 {
+                    LOGIC_STATE[li] = LOGIC_STATE_TOP; // spawns disabled until fired on
                 }
             }
             map::LOGIC_FUNC_BREAKABLE => {
