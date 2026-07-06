@@ -470,6 +470,10 @@ unsafe fn queue_explosion_fx(pos: [i32; 3], mag: u8) {
         PENDING_EXPLO_MAG[PENDING_EXPLO_N] = mag;
         PENDING_EXPLO_N += 1;
     }
+    // The animated fireball billboard (resident s_explod.spr). half-size scales
+    // with blast magnitude; the particle spray above layers over it. ponytail:
+    // EXPL_SIZE_NUM the live knob if the fireball reads too big/small in-game.
+    spawn_explosion_fx(pos, (mag as i32 * 3 / 2).clamp(24, 160) as i16);
 }
 static mut IMPACT_RNG: LcgRng = LcgRng::new(0x484c_5058);
 static mut IMPACT_PARTICLE_RECTS: [RectFlat; MAX_IMPACT_PARTICLES] =
@@ -5912,6 +5916,7 @@ unsafe fn clear_combat_fx() {
     }
     TRACER_CURSOR = 0;
     clear_debris();
+    clear_explosions();
 }
 
 unsafe fn decay_combat_fx() {
@@ -5927,6 +5932,7 @@ unsafe fn decay_combat_fx() {
         i += 1;
     }
     tick_debris();
+    tick_explosions();
 }
 
 unsafe fn spawn_impact_mark(pos: [i32; 3], kind: u8) {
@@ -6641,6 +6647,95 @@ unsafe fn render_debris<const N: usize>(ot: &mut OrderingTable<N>, rot: &Mat3I16
                     RectFlat::new(sx - size / 2, sy - size / 2, size as u16, size as u16, r, g, b);
                 ot.add(0, &mut DEBRIS_RECTS[i], RectFlat::WORDS);
             }
+        }
+        i += 1;
+    }
+}
+
+// Animated explosion fireball: the resident s_explod.spr billboard. explode()
+// and env_explosion spawn one here (via queue_explosion_fx); it plays its frames
+// over ~10 sim ticks then expires. Layers over the spark debris + particle spray.
+const MAX_EXPLOSIONS: usize = 8;
+const EXPL_TICKS_PER_FRAME: u8 = 2; // 20 Hz sim -> ~5 frames over ~0.5 s
+#[derive(Clone, Copy)]
+struct ExplosionFx {
+    pos: [i32; 3],
+    age: u8,   // sim ticks since spawn (selects the frame)
+    ttl: u8,   // ticks remaining (0 = free slot)
+    half: i16, // world half-size
+}
+static mut EXPLOSIONS: [ExplosionFx; MAX_EXPLOSIONS] = [ExplosionFx {
+    pos: [0; 3],
+    age: 0,
+    ttl: 0,
+    half: 0,
+}; MAX_EXPLOSIONS];
+static mut EXPL_CURSOR: usize = 0;
+
+unsafe fn spawn_explosion_fx(pos: [i32; 3], half: i16) {
+    let nf = sprite::expl_def().n_frames;
+    if nf == 0 {
+        return; // resident sprite missing -> nothing to play (particles still fire)
+    }
+    let i = EXPL_CURSOR % MAX_EXPLOSIONS;
+    EXPLOSIONS[i] = ExplosionFx {
+        pos,
+        age: 0,
+        ttl: nf.saturating_mul(EXPL_TICKS_PER_FRAME).max(1),
+        half,
+    };
+    EXPL_CURSOR = (EXPL_CURSOR + 1) % MAX_EXPLOSIONS;
+}
+
+unsafe fn clear_explosions() {
+    let mut i = 0;
+    while i < MAX_EXPLOSIONS {
+        EXPLOSIONS[i].ttl = 0;
+        i += 1;
+    }
+    EXPL_CURSOR = 0;
+}
+
+/// Advance every live fireball one sim tick (frame = age / ticks-per-frame).
+unsafe fn tick_explosions() {
+    let mut i = 0;
+    while i < MAX_EXPLOSIONS {
+        if EXPLOSIONS[i].ttl > 0 {
+            EXPLOSIONS[i].ttl -= 1;
+            EXPLOSIONS[i].age = EXPLOSIONS[i].age.saturating_add(1);
+        }
+        i += 1;
+    }
+}
+
+/// Draw each live fireball as a camera-facing additive billboard of its frame.
+unsafe fn render_explosions(
+    packets: &mut PrimitivePacketArena<'_>,
+    np: &mut usize,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
+    let d = sprite::expl_def();
+    if d.n_frames == 0 {
+        return;
+    }
+    let mut i = 0;
+    while i < MAX_EXPLOSIONS {
+        let e = EXPLOSIONS[i];
+        if e.ttl > 0 {
+            let frame = (e.age / EXPL_TICKS_PER_FRAME).min(d.n_frames - 1) as usize;
+            emit_billboard(
+                packets,
+                np,
+                e.pos,
+                e.half as i32,
+                e.half as i32,
+                sprite::expl_slot(frame),
+                d.crush_w,
+                d.crush_h,
+                rot,
+                base_t,
+            );
         }
         i += 1;
     }
@@ -8122,7 +8217,37 @@ unsafe fn draw_billboard(
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) {
-    let sl = sprite::slot_for(id, frame);
+    let d = sprite::def(id);
+    emit_billboard(
+        packets,
+        np,
+        center,
+        world_half_w,
+        world_half_h,
+        sprite::slot_for(id, frame),
+        d.crush_w,
+        d.crush_h,
+        rot,
+        base_t,
+    );
+}
+
+/// Emit one camera-facing additive billboard for an explicit texture slot +
+/// crushed UV dims. Shared by placed sprites (draw_billboard) and the resident
+/// explosion pool, so both project + size + emit identically.
+#[allow(clippy::too_many_arguments)]
+unsafe fn emit_billboard(
+    packets: &mut PrimitivePacketArena<'_>,
+    np: &mut usize,
+    center: [i32; 3],
+    world_half_w: i32,
+    world_half_h: i32,
+    sl: TexSlot,
+    crush_w: u16,
+    crush_h: u16,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
     if !sl.valid {
         return;
     }
@@ -8136,9 +8261,8 @@ unsafe fn draw_billboard(
     let r = (sx as i32 + shw).clamp(-1023, 1023) as i16;
     let t = (sy as i32 - shh).clamp(-1023, 1023) as i16;
     let b = (sy as i32 + shh).clamp(-1023, 1023) as i16;
-    let d = sprite::def(id);
-    let uw = d.crush_w.saturating_sub(1).min(255) as u8;
-    let uh = d.crush_h.saturating_sub(1).min(255) as u8;
+    let uw = crush_w.saturating_sub(1).min(255) as u8;
+    let uh = crush_h.saturating_sub(1).min(255) as u8;
     // Sprites are additive (glows/explosions add light); the cook baked the dark
     // background to black so it contributes nothing under Add, and set the
     // per-texel semi-transparency bit so the GPU blends instead of drawing opaque.
@@ -8706,6 +8830,19 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             unsafe { sprite::load_pack(blob) };
         } else {
             unsafe { sprite::reset() };
+        }
+    }
+
+    // Resident explosion sprite (s_explod.spr): weapon blasts happen on any map,
+    // so load it every map (like the HUD) into its own slots, appended to the
+    // atlas right after the per-map sprites. MAP_BUF is still free (world below).
+    {
+        let en = cdstream::load_chunk(sprite::EXPL_CHUNK_ID, unsafe { &mut MAP_BUF })
+            .map(|k| unsafe { cdstream::decompress_in_place(&mut MAP_BUF, k) })
+            .unwrap_or(0);
+        if en >= 20 {
+            let blob = unsafe { streamed_map_bytes(en) };
+            unsafe { sprite::load_explosion(blob) };
         }
     }
 
@@ -10490,6 +10627,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     draw_billboard(&mut packets, &mut np, org, half, hh, id, 0, &rot, base_t);
                 }
             }
+            // Animated explosion fireballs (weapon blasts + env_explosion), same
+            // additive-billboard path as the placed sprites above.
+            render_explosions(&mut packets, &mut np, &rot, base_t);
             telemetry::stage_end(telemetry::stage::MODEL_INSTANCES);
             telemetry::counter(telemetry::counter::MODEL_INSTANCE_DRAWS, model_draws);
             telemetry::counter(

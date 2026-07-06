@@ -41,6 +41,15 @@ static mut SPRITE_DEFS: [SpriteDef; MAX_SPRITES] = [EMPTY_DEF; MAX_SPRITES];
 static mut SPRITE_SLOTS: [TexSlot; MAX_SPRITE_FRAMES] = [EMPTY_SLOT; MAX_SPRITE_FRAMES];
 static mut N_SPRITES: usize = 0;
 
+// Resident explosion sprite (s_explod.spr): its own single-sprite pack, loaded
+// every map into these dedicated slots (weapon blasts happen anywhere, not just
+// where env_explosion entities are placed). Separate from the per-map tables so
+// reset() never clears it; it re-appends to the atlas each map load.
+pub const EXPL_CHUNK_ID: u32 = 3002;
+pub const MAX_EXPL_FRAMES: usize = 5;
+static mut EXPL_DEF: SpriteDef = EMPTY_DEF;
+static mut EXPL_SLOTS: [TexSlot; MAX_EXPL_FRAMES] = [EMPTY_SLOT; MAX_EXPL_FRAMES];
+
 /// Reset the sprite tables (called each map load before the pack streams).
 pub unsafe fn reset() {
     N_SPRITES = 0;
@@ -84,6 +93,50 @@ pub unsafe fn load_pack(data: &[u8]) {
     // The frame section is exactly the upload_tex_blob layout.
     let slots = core::ptr::addr_of_mut!(SPRITE_SLOTS) as *mut TexSlot;
     upload_tex_blob_raw(&data[off..], n_frames, slots, MAX_SPRITE_FRAMES);
+}
+
+/// Parse the resident single-sprite explosion pack (same HSPR layout, n=1) into
+/// EXPL_DEF/EXPL_SLOTS, appending its frames to the atlas. Call each map load.
+pub unsafe fn load_explosion(data: &[u8]) {
+    EXPL_DEF = EMPTY_DEF;
+    for s in EXPL_SLOTS.iter_mut() {
+        *s = EMPTY_SLOT;
+    }
+    if data.len() < 20 || &data[0..4] != b"HSPR" {
+        return;
+    }
+    let n_frames = u16::from_le_bytes([data[6], data[7]]) as usize;
+    if n_frames == 0 || n_frames > MAX_EXPL_FRAMES {
+        return;
+    }
+    EXPL_DEF = SpriteDef {
+        n_frames: data[8],
+        blend: data[9],
+        first_frame: 0,
+        base_w: u16::from_le_bytes([data[12], data[13]]),
+        base_h: u16::from_le_bytes([data[14], data[15]]),
+        crush_w: u16::from_le_bytes([data[16], data[17]]),
+        crush_h: u16::from_le_bytes([data[18], data[19]]),
+    };
+    let slots = core::ptr::addr_of_mut!(EXPL_SLOTS) as *mut TexSlot;
+    upload_tex_blob_raw(&data[20..], n_frames, slots, MAX_EXPL_FRAMES);
+}
+
+#[inline]
+pub fn expl_def() -> SpriteDef {
+    unsafe { EXPL_DEF }
+}
+
+/// The texture slot for the resident explosion's frame (clamped to its range).
+#[inline]
+pub fn expl_slot(frame: usize) -> TexSlot {
+    unsafe {
+        if EXPL_DEF.n_frames == 0 {
+            return EMPTY_SLOT;
+        }
+        let fi = frame.min(EXPL_DEF.n_frames as usize - 1);
+        *EXPL_SLOTS.get(fi).unwrap_or(&EMPTY_SLOT)
+    }
 }
 
 #[inline]
