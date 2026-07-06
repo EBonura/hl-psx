@@ -136,6 +136,7 @@ pub struct Map {
     pub n_clip: usize,
     pub hull0_head: i32,
     pub hull1_head: i32,
+    pub hull3_head: i32, // crouch hull (32x32x36); < 0 = none -> fall back to hull1
     pub spawn_pos: [i32; 3],
     pub spawn_yaw: i32,
     clipn_off: usize,
@@ -346,13 +347,14 @@ impl Map {
         let n_clip = rd_u32(data, clip_off) as usize;
         let hull0_head = rd_i32(data, clip_off + 4);
         let hull1_head = rd_i32(data, clip_off + 8);
+        let hull3_head = rd_i32(data, clip_off + 12);
         let spawn_pos = [
-            rd_i32(data, clip_off + 12),
             rd_i32(data, clip_off + 16),
             rd_i32(data, clip_off + 20),
+            rd_i32(data, clip_off + 24),
         ];
-        let spawn_yaw = rd_i32(data, clip_off + 24);
-        let clipn_off = clip_off + 28;
+        let spawn_yaw = rd_i32(data, clip_off + 28);
+        let clipn_off = clip_off + 32;
 
         let n_models = rd_u32(data, ent_off) as usize;
         let models_off = ent_off + 4;
@@ -419,6 +421,7 @@ impl Map {
             n_clip,
             hull0_head,
             hull1_head,
+            hull3_head,
             spawn_pos,
             spawn_yaw,
             clipn_off,

@@ -9462,6 +9462,13 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             let on_ladder = unsafe { ladder_touch(&m, nents, player.pos) };
             let in_water = !on_ladder
                 && unsafe { water_touch(nents, [player.pos[0], player.pos[1] + 12, player.pos[2]]) };
+            // Duck -> trace the shorter hull-3 (fits vents). But can't stand up if
+            // the standing hull would be startsolid under a low ceiling: stay
+            // crouched (HL behaviour), else releasing duck in a vent wedges you.
+            if player.crouch && !crouching && !phys::standing_fits(&m, player.pos) {
+                crouching = true;
+            }
+            player.crouch = crouching;
             if on_ladder {
                 player.update_climb(
                     &m,

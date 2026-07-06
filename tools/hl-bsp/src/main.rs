@@ -4848,6 +4848,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let models = bsp.lump(LUMP_MODELS);
     let hull0_head_raw = i32le(models, 36).unwrap_or(0); // dmodel_t.headnode[0] (point hull)
     let hull1_head_raw = i32le(models, 40).unwrap_or(0); // dmodel_t.headnode[1] (player hull)
+    let hull3_head_raw = i32le(models, 44).unwrap_or(0); // dmodel_t.headnode[3] (crouch hull, 32x32x36)
     let mut ents = collect_entities(bsp.lump(LUMP_ENTITIES), models, nodes, planes, scale);
     let n_models = models.len() / SZ_MODEL;
     let mut brush_by_submodel = vec![LOGIC_BRUSH_NONE; n_models];
@@ -4876,9 +4877,10 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     } else {
         0
     };
-    let mut clip_roots = Vec::with_capacity(3 + ents.len());
+    let mut clip_roots = Vec::with_capacity(4 + ents.len());
     clip_roots.push(hull0_head_raw);
     clip_roots.push(hull1_head_raw);
+    clip_roots.push(hull3_head_raw); // crouch hull for the world model (fits low vents)
     clip_roots.push(tram_head_raw);
     for e in &ents {
         clip_roots.push(e.head);
@@ -4888,6 +4890,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let stripped_clip_count = raw_n_clip.saturating_sub(n_clip);
     let hull0_head = remap_clip_head(hull0_head_raw, &clip_remap);
     let hull1_head = remap_clip_head(hull1_head_raw, &clip_remap);
+    let hull3_head = remap_clip_head(hull3_head_raw, &clip_remap);
     let tram_head = remap_clip_head(tram_head_raw, &clip_remap);
     for e in &mut ents {
         e.head = remap_clip_head(e.head, &clip_remap);
@@ -5102,8 +5105,8 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     }
 
     // ---- Clip hull (player collision / LOS) + spawn ----
-    // u32 n_clip | i32 hull0_head | i32 hull1_head | i32 spawn x,y,z (world) |
-    // i32 spawn_yaw (Q0.12)
+    // u32 n_clip | i32 hull0_head | i32 hull1_head | i32 hull3_head (crouch) |
+    // i32 spawn x,y,z (world) | i32 spawn_yaw (Q0.12)
     // clipnodes (u16 plane, i16 c0, i16 c1) × n_clip [6B]
     let clip_off = o.len() as u32;
     o[clip_off_pos..clip_off_pos + 4].copy_from_slice(&clip_off.to_le_bytes());
@@ -5155,6 +5158,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     o.extend_from_slice(&(n_clip as u32).to_le_bytes());
     o.extend_from_slice(&hull0_head.to_le_bytes());
     o.extend_from_slice(&hull1_head.to_le_bytes());
+    o.extend_from_slice(&hull3_head.to_le_bytes());
     for c in &spawn {
         o.extend_from_slice(&c.to_le_bytes());
     }

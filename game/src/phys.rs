@@ -346,6 +346,14 @@ fn trace_all(
     best
 }
 
+/// True if the STANDING hull (hull-1) has room at `pos` (a point trace that is
+/// not startsolid). Lets the caller keep the player crouched when they can't
+/// stand under a low ceiling (HL behaviour) -- else un-ducking inside a vent
+/// switches to the startsolid hull-1 and wedges the player.
+pub fn standing_fits(map: &Map, pos: [i32; 3]) -> bool {
+    !trace(map, map.hull1_head, pos, pos).startsolid
+}
+
 #[inline]
 fn dot12_i32(a: [i32; 3], b: [i32; 3]) -> i32 {
     ((a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2])) >> 12
@@ -538,6 +546,7 @@ pub struct Player {
     pub on_ground: bool,
     pub ground_mover: i32, // ent id of the mover under our feet (-1 = world/none)
     pub land_impact: i32,  // downward speed absorbed the tick we touched down (0 = none)
+    pub crouch: bool,      // hold-duck: trace the world against the shorter hull-3
 }
 
 impl Player {
@@ -548,6 +557,19 @@ impl Player {
             on_ground: false,
             ground_mover: -1,
             land_impact: 0,
+            crouch: false,
+        }
+    }
+
+    /// The world clip-hull headnode to trace against: the shorter crouch hull
+    /// (hull-3, fits low vents) while ducking, else the standing hull-1. Falls
+    /// back to hull-1 if the map has no crouch hull (headnode[3] empty -> < 0).
+    #[inline]
+    fn head(&self, map: &Map) -> i32 {
+        if self.crouch && map.hull3_head >= 0 {
+            map.hull3_head
+        } else {
+            map.hull1_head
         }
     }
 
@@ -570,7 +592,7 @@ impl Player {
             // Let go: push back off the ladder and resume normal physics.
             self.vel = [(-s * CLIMB_SPEED) >> 12, 0, (-c * CLIMB_SPEED) >> 12];
             self.on_ground = false;
-            let head = map.hull1_head;
+            let head = self.head(map);
             let (p, v) = slide_move(map, head, movers, self.pos, self.vel);
             self.pos = p;
             self.vel = v;
@@ -587,7 +609,7 @@ impl Player {
         // Strafe slides sideways along the wall.
         self.vel[0] += (c * strafe / 128 * LATERAL_CLIMB) >> 12;
         self.vel[2] += (-s * strafe / 128 * LATERAL_CLIMB) >> 12;
-        let head = map.hull1_head;
+        let head = self.head(map);
         let (p, v) = slide_move(map, head, movers, self.pos, self.vel);
         self.pos = p;
         self.vel = v;
@@ -624,7 +646,7 @@ impl Player {
         } else if fwd == 0 && strafe == 0 {
             self.vel[1] -= SWIM_SINK; // idle: sink gently
         }
-        let head = map.hull1_head;
+        let head = self.head(map);
         let (p, v) = slide_move(map, head, movers, self.pos, self.vel);
         self.pos = p;
         self.vel = v;
@@ -699,7 +721,7 @@ impl Player {
         // Move with stair-stepping: a plain slide, then (when grounded and
         // moving) an up/forward/down "step" -- keep whichever advanced further
         // along the ground, so the player climbs stairs/thresholds <= STEP_UP.
-        let head = map.hull1_head;
+        let head = self.head(map);
         let start = self.pos;
         let (flat_pos, flat_vel) = slide_move(map, head, movers, start, self.vel);
         self.vel = flat_vel;
