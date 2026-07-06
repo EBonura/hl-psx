@@ -1388,6 +1388,41 @@ emission on the tightest map, tune core buffers (MAP_BUF/PRIMITIVE_PACKETS --
 mind that combat now emits more prims), or code-size reduction. Do NOT add more
 statics until this is addressed.
 
+## M43 -- faithful door/button/charger operation (from the HL SDK source)
+
+Cloned the Valve-released SDK into git-ignored `reference/halflife/` and surveyed
+dlls/{doors,buttons,plats}.cpp + healthkit.cpp/h_battery.cpp + util.cpp for the
+EXACT touch/use/trigger + master rules, then fixed three faithfulness gaps.
+
+- **The reported bug: button-doors opened by direct +use.** HL rule: a func_door
+  is player-+use-able ONLY when SF_DOOR_USE_ONLY is set (its FCAP_IMPULSE_USE);
+  a targeted door opens solely via its button/trigger, a plain door via touch.
+  `logic_try_use` now gates func_door on SF_DOOR_USE_ONLY (`logic_is_use_target`)
+  for both the crosshair-ray and cone-fallback picks. The touch path already
+  checked `targetname==0 && !USE_ONLY`, and the button->targeted-door trigger
+  path is separate/unchanged, so the +use pick was the only leak. NB the
+  momentary valve wheel (LOGIC_MOMENTARY) is handled by `tick_momentary`, not
+  `logic_try_use`, so it is unaffected.
+- **Master (multisource) lock.** HL gates open on `UTIL_IsMasterTriggered`. The
+  cook stores each door/button's `master` targetname in arg1 (unused for these
+  kinds before); `master_ok()` keeps them locked until that multisource is
+  satisfied (LOGIC_STATE_TOP). FAIL-SAFE: master_name 0, or a name that isn't a
+  present multisource, always allows -- only a present-but-unsatisfied
+  multisource can lock, so an unknown master can never hard-block. Gated at
+  `logic_activate_door_linked` (all touch/use/trigger door opens funnel through
+  it) + `logic_activate_button`.
+- **Charger suit gate.** CWallHealth/CRecharge deny a suitless player; the health
+  + HEV chargers now require the HEV suit (`LOGIC_PLAYER_SUIT`), deny-click
+  otherwise.
+
+Verified: builds clean, 96 maps recook, c1a0/c1a1a render unchanged, headroom
+34.5 KiB. **Door/button BEHAVIOR needs in-game playtesting** (button-doors need
+the button; master-locked doors on the power-puzzle maps like Blast Pit) -- the
+multisource puzzles can't be driven headlessly. Residual faithful polish (not
+done): locked-door sentence/click feedback when the player tries a door they
+can't open; SF_DOOR_ONEWAY rotating-door facing; charger recharge-after-delay
+(currently refills only on map load); exact charger give-rate tuning.
+
 ## Next (pick per value)
 
 - **PERF (researched, ranked -- the emit wall)**: 1) cook-time PRE-BAKED GPU
