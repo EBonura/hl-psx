@@ -1070,7 +1070,11 @@ fn view_rotation_roll(yaw: u16, pitch: i16, roll: i16) -> Mat3I16 {
     let mut r = look;
     let mut j = 0;
     while j < 3 {
-        r.m[0][j] = -r.m[0][j];
+        // Negate ONLY row 1 (screen Y, GPU Y-down). Leaving row 0 (screen X)
+        // un-negated makes the camera det -1, which cancels the cook's [x,z,y]
+        // reflection (det -1): net det +1, so the world renders UN-mirrored (it
+        // used to be a mirror image of real HL). The screen-space winding flips
+        // with it, so `culled`/`culled_soft` flip their sign to match.
         r.m[1][j] = -r.m[1][j];
         j += 1;
     }
@@ -3417,7 +3421,9 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
 /// `culled_soft`.
 #[inline]
 fn culled(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
-    (b.0 - a.0) * (c.1 - a.1) - (c.0 - a.0) * (b.1 - a.1) <= 0
+    // >= 0 (was <= 0): the det -1 camera (view_rotation) flips the projected
+    // winding, so a front face now has cross >= 0.
+    (b.0 - a.0) * (c.1 - a.1) - (c.0 - a.0) * (b.1 - a.1) >= 0
 }
 
 /// Backface cull for TRUE soft-projected coords (near-grazing tris reach tens
@@ -3431,7 +3437,7 @@ fn culled(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
 fn culled_soft(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
     let cr = (b.0 - a.0) as i64 * (c.1 - a.1) as i64
         - (c.0 - a.0) as i64 * (b.1 - a.1) as i64;
-    cr <= 0
+    cr >= 0 // >= 0 (was <= 0): det -1 camera flips the projected winding
 }
 
 /// DEBUG: is screen point `p` inside triangle (a,b,c)? (winding-agnostic)
@@ -9253,12 +9259,17 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 // Radial deadzone per stick (avoids axis drift / diagonal bias).
                 if (lx as i32) * (lx as i32) + (ly as i32) * (ly as i32) > dz2 {
                     fwd = -(ly as i32); // stick up = forward
-                    strafe = -(lx as i32);
+                    // strafe + turn are inverted vs the raw stick: the det -1
+                    // camera mirrors the rendered X, so physics (still in the
+                    // mirrored world) must take the opposite horizontal input for
+                    // controls to match what the player SEES. fwd/look (vertical)
+                    // are unaffected by the X flip.
+                    strafe = lx as i32;
                 }
                 if (rx as i32) * (rx as i32) + (ry as i32) * (ry as i32) > dz2 {
                     // Expo response: mostly cubic near centre for fine aim, full
                     // rate at the edges -- and it softens the deadzone-edge jump.
-                    turn = aim_curve(-(rx as i32));
+                    turn = aim_curve(rx as i32);
                     look = aim_curve(-(ry as i32)); // stick up = look up
                 }
             }
