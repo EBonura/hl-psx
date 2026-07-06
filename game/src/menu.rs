@@ -105,12 +105,27 @@ struct MenuEdges {
 }
 
 // Assets extracted from the user's install (git-ignored). Each .tex blob is
-// `u16 w | u16 h | u16 clut[16] | u8 pix4...`.
+// `u16 w | u16 h | u16 clut[16] | u8 pix4...`. The font stays baked (it is used
+// in-game by hltext too); the bg + logo art is menu-only, so it STREAMS from
+// WORLD.PAK chunk MENU_CHUNK_ID instead of sitting in always-resident .rodata
+// (~33 KiB reclaimed). `run`/`ending` take the streamed blob (see split_menu).
 static HLFONT_BLOB: &[u8] = include_bytes!("../../data/menu/hlfont.bin");
-static LOGO_BLOB: &[u8] = include_bytes!("../../data/menu/logo.tex");
-static BG_BLOB: &[u8] = include_bytes!("../../data/menu/bg.tex");
+pub const MENU_CHUNK_ID: u32 = 3003; // bg + logo pack: `u32 bg_len | u32 logo_len | bg | logo`
 const LOGO_VRAM_X: u16 = 640; // clear of framebuffers (X<320) and the font atlas (X320..)
 const BG_VRAM_X: u16 = 704;
+
+/// Split the streamed menu chunk into its bg + logo `.tex` blobs (empty on a
+/// short/failed read -> upload_tex no-ops, menu still runs unbranded).
+fn split_menu(blob: &[u8]) -> (&[u8], &[u8]) {
+    if blob.len() < 8 {
+        return (&[], &[]);
+    }
+    let bl = u32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
+    let ll = u32::from_le_bytes([blob[4], blob[5], blob[6], blob[7]]) as usize;
+    let bg = blob.get(8..8 + bl).unwrap_or(&[]);
+    let logo = blob.get(8 + bl..8 + bl + ll).unwrap_or(&[]);
+    (bg, logo)
+}
 
 static mut HL_FONT: BitmapFont = BitmapFont {
     glyph_w: 16,
@@ -142,9 +157,13 @@ unsafe fn hl_font() -> &'static BitmapFont {
 }
 
 /// Upload a `.tex` blob to a free tpage at VRAM X = `vx`; return its material + size.
+/// A too-short blob (failed stream) yields a 0x0 material the draw helpers skip.
 fn upload_tex(blob: &[u8], vx: u16) -> (TextureMaterial, u16, u16) {
     let w = u16::from_le_bytes([blob[0], blob[1]]);
     let h = u16::from_le_bytes([blob[2], blob[3]]);
+    if blob.len() < 36 + (w as usize * h as usize) / 2 || w == 0 || h == 0 {
+        return (TextureMaterial::new(0, 0), 0, 0);
+    }
     upload_bytes(VramRect::new(vx, 0, w / 4, h), &blob[36..]); // 4bpp pixels
     upload_bytes(VramRect::new(vx, 256, 16, 1), &blob[4..36]); // CLUT
     let tp = Tpage::new(vx, 0, TexDepth::Bit4);
@@ -434,9 +453,10 @@ fn draw_credits_menu(font: &FontAtlas) {
 
 /// The campaign end card: white-in from the c5a1 fade, the wordmark, THE END,
 /// and the credit lines. Waits for a button, then returns (to the main menu).
-pub fn ending(fb: &mut FrameBuffer) {
+pub fn ending(fb: &mut FrameBuffer, assets: &[u8]) {
     let font = FontAtlas::upload(unsafe { hl_font() }, FONT_TPAGE, FONT_CLUT);
-    let (logo, lw, lh) = upload_tex(LOGO_BLOB, LOGO_VRAM_X);
+    let (_, logo_blob) = split_menu(assets);
+    let (logo, lw, lh) = upload_tex(logo_blob, LOGO_VRAM_X);
     let mut prev_any = true; // swallow the button that ended the fade
     let mut frame = 0u32;
     loop {
@@ -468,10 +488,11 @@ pub fn ending(fb: &mut FrameBuffer) {
 }
 
 /// Run the menu until the player confirms a launch; returns its room id.
-pub fn run(fb: &mut FrameBuffer) -> usize {
+pub fn run(fb: &mut FrameBuffer, assets: &[u8]) -> usize {
     let font = FontAtlas::upload(unsafe { hl_font() }, FONT_TPAGE, FONT_CLUT);
-    let (logo, lw, lh) = upload_tex(LOGO_BLOB, LOGO_VRAM_X);
-    let (bg, _, _) = upload_tex(BG_BLOB, BG_VRAM_X);
+    let (bg_blob, logo_blob) = split_menu(assets);
+    let (logo, lw, lh) = upload_tex(logo_blob, LOGO_VRAM_X);
+    let (bg, _, _) = upload_tex(bg_blob, BG_VRAM_X);
     let mut screen = MenuScreen::Main;
     let mut main_sel = 0i32;
     let mut chapter_sel = 0i32;

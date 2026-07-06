@@ -1137,6 +1137,18 @@ unsafe fn streamed_map_bytes(len: usize) -> &'static [u8] {
     unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
+/// Stream the menu bg+logo art chunk into MAP_BUF (free before a map loads) and
+/// return the raw blob for `menu::run`/`ending`. These are no longer baked into
+/// the EXE (~33 KiB of .rodata reclaimed); re-streamed on every menu entry since
+/// play() clobbers MAP_BUF + the menu VRAM. Empty on a failed read -> menu still
+/// runs, just unbranded.
+unsafe fn stream_menu_assets() -> &'static [u8] {
+    let n = cdstream::load_chunk(menu::MENU_CHUNK_ID, &mut MAP_BUF)
+        .map(|k| cdstream::decompress_in_place(&mut MAP_BUF, k))
+        .unwrap_or(0);
+    streamed_map_bytes(n.max(8))
+}
+
 unsafe fn streamed_model_bytes_at(byte_off: usize, len: usize) -> &'static [u8] {
     let ptr = canonical_ram_const(core::ptr::addr_of!(MODEL_BUF).cast::<u8>());
     unsafe { core::slice::from_raw_parts(ptr.add(byte_off), len) }
@@ -8602,7 +8614,7 @@ fn main() {
                 i += 1;
             }
         }
-        let sel = dbg_sel.unwrap_or_else(|| menu::run(&mut fb));
+        let sel = dbg_sel.unwrap_or_else(|| menu::run(&mut fb, unsafe { stream_menu_assets() }));
         let mut launch = menu_launch(sel);
         // First load comes from the menu (fresh -> full loading card). A
         // changelevel re-enters play() with the previous frame still on screen,
@@ -8612,7 +8624,7 @@ fn main() {
             match play(&mut fb, launch, keep_frame) {
                 PlayExit::BackToMenu => break,
                 PlayExit::Ending => {
-                    menu::ending(&mut fb);
+                    menu::ending(&mut fb, unsafe { stream_menu_assets() });
                     break;
                 }
                 PlayExit::ChangeLevel(next) => {

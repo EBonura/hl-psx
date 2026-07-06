@@ -130,6 +130,7 @@ sfx-assets:
 	python3 tools/extract_sfx.py "$(HL_GAME)/sound" $(SFXPACK)/chunk_3000.psxa \
 		"$(PSOXIDE)/target/release/psxed"
 	@cp data/menu/hud.tex $(SFXPACK)/chunk_3001.psxa  # HUD atlas streams from the pack
+	@cp data/menu/menu.pak $(SFXPACK)/chunk_3003.psxa  # menu bg+logo stream from the pack (not baked)
 
 # HL dialogue -> per-map 8kHz SPU-ADPCM voice packs (WORLD.PAK chunks
 # 3100+idx) + manifest. Must run BEFORE `rooms` (the map cook reads the
