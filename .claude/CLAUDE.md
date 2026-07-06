@@ -1423,6 +1423,41 @@ done): locked-door sentence/click feedback when the player tries a door they
 can't open; SF_DOOR_ONEWAY rotating-door facing; charger recharge-after-delay
 (currently refills only on map load); exact charger give-rate tuning.
 
+## M44 -- faithfulness audit: the same door-class bugs elsewhere
+
+After the M43 door fix, a full pass (3 audit agents over the SDK's triggers.cpp,
+func_break.cpp, monstermaker.cpp, items/weapons, util.cpp vs my runtime) hunted
+the SAME class of bug -- activates too permissively / missing a gate. Found +
+fixed:
+
+- **Master gate missing on triggers + tank.** The SDK master-gates
+  trigger_once/multiple/counter (ActivateMultiTrigger), trigger_teleport
+  (TeleportTouch), and func_tank (StartControl) -- exactly like doors/buttons.
+  Extended the cook's arg1=`master` storage + the fail-safe `master_ok` gate to
+  those kinds. (arg1 was 0 for them; changelevel keeps arg1=landmark, excluded.)
+- **trigger_relay SF_RELAY_FIREONCE=1**: a fire-once relay removes itself after
+  firing (was re-firing forever).
+- **SF_TRIGGER_NOCLIENTS=2**: trigger_once/multiple/teleport/gravity no longer
+  fire for the player when flagged monster-only. NB bit 2 on trigger_push is
+  PUSH_START_OFF (its own touch), NOT NOCLIENTS -- excluded from that check (a
+  real bit collision in the SDK's own flag space).
+- **trigger_push SF_TRIGGER_PUSH_START_OFF=2**: START_OFF pushes spawn disabled
+  and enable on a target fire (shares the hurt on/off toggle).
+
+Audited-and-CONFIRMED-faithful (no change): single-player chargers return 0
+recharge (my no-recharge is correct -- recharge is MP only, singleplay_gamerules
+:376); func_breakable TRIGGER_ONLY; healthkit/battery/suit/ammo "already full"
+checks; trigger_counter; multi_manager per-target delays; trigger_hurt cadence +
+START_OFF + TARGET_ONCE. Residual (found, minor/uncommon, DEFERRED with reason):
+trigger_auto globalstate condition (cross-map state, rare + adds block risk);
+monstermaker m_iMaxLiveChildren (my port already 4-caps dormant spawns/maker);
+locked-door click feedback; SF_DOOR_ONEWAY facing.
+
+Verified: builds clean, 96 maps recook, c1a0/c1a1a render unchanged, headroom
+42.5 KiB. Behavior (master gates + NOCLIENTS + START_OFF) needs playtesting --
+same headless limit as doors; all gates are fail-safe. HL SDK stays cloned in
+git-ignored `reference/halflife/` for future faithfulness work.
+
 ## Next (pick per value)
 
 - **PERF (researched, ranked -- the emit wall)**: 1) cook-time PRE-BAKED GPU
