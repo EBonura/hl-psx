@@ -40,6 +40,7 @@ use psx_gpu::prim::{QuadTexturedGouraud, RectFlat, TriTexturedGouraud};
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
+use psx_math::atan2_q12;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_math::int32::isqrt_i32;
 use psx_pad::{button, enable_analog_port1, poll_port1};
@@ -1452,29 +1453,6 @@ fn tram_path_pos(m: &Map, seg: usize, seg_dist: i32) -> [i32; 3] {
         a[1] + ((b[1] - a[1]) * f >> 12),
         a[2] + ((b[2] - a[2]) * f >> 12),
     ]
-}
-
-/// Integer atan2 -> 12-bit angle (0..4096 = one turn), piecewise-linear per
-/// octant (max error ~1.7 deg, fine for facing a tram). Avoids float/CORDIC.
-// TODO: replace with psx_math::atan2_q12 once ../PSoXide is on current main (the API landed there).
-fn atan2_q12(y: i32, x: i32) -> u16 {
-    if x == 0 && y == 0 {
-        return 0;
-    }
-    let (ax, ay) = (x.unsigned_abs() as i64, y.unsigned_abs() as i64);
-    // first-quadrant angle 0..1024 (=90 deg): 45 deg at ax==ay.
-    let q = if ax >= ay {
-        (ay * 512 / ax) as i32
-    } else {
-        1024 - (ax * 512 / ay) as i32
-    };
-    let a = match (x >= 0, y >= 0) {
-        (true, true) => q,
-        (false, true) => 2048 - q,
-        (false, false) => 2048 + q,
-        (true, false) => 4096 - q,
-    };
-    (a & 0xFFF) as u16
 }
 
 /// The tram's facing yaw for its current segment RELATIVE to its parked
