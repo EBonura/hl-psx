@@ -40,6 +40,7 @@ use psx_gpu::prim::{QuadTexturedGouraud, RectFlat, TriTexturedGouraud};
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
+use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_math::int32::isqrt_i32;
 use psx_pad::{button, enable_analog_port1, poll_port1};
 use psx_rt::{interrupts, tty};
@@ -3496,31 +3497,10 @@ unsafe fn xhair_pick_pvs(m: &Map, nv: usize, frame: u16) {
     }
 }
 
-/// DEBUG: minimal no_std i32 -> decimal in a stack buffer.
-// TODO: replace with psx_math::fmt once ../PSoXide is on current main (the API landed there).
-fn fmt_i32(v: i32, buf: &mut [u8; 12]) -> &str {
-    let mut i = buf.len();
-    let neg = v < 0;
-    let mut u = (v as i64).unsigned_abs();
-    loop {
-        i -= 1;
-        buf[i] = b'0' + (u % 10) as u8;
-        u /= 10;
-        if u == 0 {
-            break;
-        }
-    }
-    if neg && i > 0 {
-        i -= 1;
-        buf[i] = b'-';
-    }
-    core::str::from_utf8(&buf[i..]).unwrap_or("?")
-}
-
 /// DEBUG: append "label<value> " into `buf` at `*n` (saturating).
 fn append_kv(buf: &mut [u8], n: &mut usize, label: &str, v: i32) {
-    let mut nb = [0u8; 12];
-    for &c in label.as_bytes().iter().chain(fmt_i32(v, &mut nb).as_bytes()) {
+    let mut nb = [0u8; I32_DEC_MAX];
+    for &c in label.as_bytes().iter().chain(i32_dec(&mut nb, v).as_bytes()) {
         if *n < buf.len() {
             buf[*n] = c;
             *n += 1;
