@@ -39,6 +39,7 @@ psx-pad  = { path = "../../PSoXide/sdk/crates/psx-pad" }
 psx-math = { path = "../../PSoXide/sdk/crates/psx-math" }
 psx-vram = { path = "../../PSoXide/sdk/crates/psx-vram" }
 psx-io   = { path = "../../PSoXide/sdk/crates/psx-io" }
+psx-pack = { path = "../../PSoXide/sdk/crates/psx-pack" }
 psx-spu  = { path = "../../PSoXide/sdk/crates/psx-spu" }
 psx-asset = { path = "../../PSoXide/sdk/crates/psx-asset" }
 psx-font = { path = "../../PSoXide/sdk/crates/psx-font" }
