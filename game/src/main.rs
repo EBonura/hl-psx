@@ -40,6 +40,7 @@ use psx_gpu::prim::{QuadTexturedGouraud, RectFlat, TriTexturedGouraud};
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
+use psx_math::int32::isqrt_i32;
 use psx_pad::{button, enable_analog_port1, poll_port1};
 use psx_rt::{interrupts, tty};
 use psx_io;
@@ -1410,30 +1411,6 @@ fn wait_vblank_edge() -> u32 {
     }
 }
 
-/// Integer square root (for path-segment lengths). Verified by the tram ride
-/// playing back at the right pace.
-fn isqrt(n: i32) -> i32 {
-    if n <= 0 {
-        return 0;
-    }
-    let mut x = n as u32;
-    let mut res = 0u32;
-    let mut bit = 1u32 << 30;
-    while bit > x {
-        bit >>= 2;
-    }
-    while bit != 0 {
-        if x >= res + bit {
-            x -= res + bit;
-            res = (res >> 1) + bit;
-        } else {
-            res >>= 1;
-        }
-        bit >>= 2;
-    }
-    res as i32
-}
-
 #[inline]
 fn dist2_3(a: [i32; 3], b: [i32; 3]) -> i32 {
     let dx = a[0] - b[0];
@@ -1445,7 +1422,7 @@ fn dist2_3(a: [i32; 3], b: [i32; 3]) -> i32 {
 /// Length of a world-space segment.
 #[inline]
 fn seg_len(a: [i32; 3], b: [i32; 3]) -> i32 {
-    isqrt(dist2_3(a, b)).max(1)
+    isqrt_i32(dist2_3(a, b)).max(1)
 }
 
 #[inline]
@@ -2299,7 +2276,7 @@ unsafe fn logic_phase_step(rec: map::LogicEnt, ei: usize) -> i32 {
         // against a nominal 100deg swing).
         return ((speed * 4096) / (20 * 100)).clamp(150, 1024);
     }
-    let len = isqrt(e.mv[0] * e.mv[0] + e.mv[1] * e.mv[1] + e.mv[2] * e.mv[2]).max(1);
+    let len = isqrt_i32(e.mv[0] * e.mv[0] + e.mv[1] * e.mv[1] + e.mv[2] * e.mv[2]).max(1);
     ((speed * 4096) / (20 * len)).max(1).min(4096)
 }
 
@@ -4061,7 +4038,7 @@ unsafe fn prop_try_step(
         let sz = dirs[i][1];
         let d2 = sx * sx + sz * sz;
         if d2 > 0 {
-            let len = isqrt(d2).max(1);
+            let len = isqrt_i32(d2).max(1);
             let step = speed.min(len);
             let cand = [pos[0] + sx * step / len, pos[1], pos[2] + sz * step / len];
             // Sight line first (one trace), floor probe only for the winning
@@ -4289,7 +4266,7 @@ unsafe fn prop_move_towards_point(
     let goal = {
         let dx = goal[0] - pos[0];
         let dz = goal[2] - pos[2];
-        let d = isqrt(dx * dx + dz * dz);
+        let d = isqrt_i32(dx * dx + dz * dz);
         if d > 64 {
             let spread = ((pi as i32 & 7) - 4) * 20; // -80..+60 units off the approach
             [
@@ -4538,7 +4515,7 @@ unsafe fn tick_trains(m: &Map) {
         let (a, _) = train_corner(m, li, seg);
         let (b, wait_b) = train_corner(m, li, (seg + 1) % ncorners);
         let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-        let len = isqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
+        let len = isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
         let step = (rec.speed as i32 / 20).max(2);
         let nd = TRAIN_DIST[t] as i32 + step;
         let center = ENT_CACHE[TRAIN_ENT[t] as usize].center;
@@ -6394,7 +6371,7 @@ fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
 /// Unit-ish (q12) direction from a to b. Zero-length falls back to +Z forward.
 fn dir_q12(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
     let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-    let len = isqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
+    let len = isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
     [(d[0] << 12) / len, (d[1] << 12) / len, (d[2] << 12) / len]
 }
 
@@ -6487,7 +6464,7 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32) {
             let t = prop_target(PROP_KIND[pi], PROP_POS[pi]);
             let d2 = dist2_3(t, pos);
             if d2 < r2 {
-                let dmg = (damage as i32 * (radius - isqrt(d2)) / radius).clamp(0, 255) as u8;
+                let dmg = (damage as i32 * (radius - isqrt_i32(d2)) / radius).clamp(0, 255) as u8;
                 damage_prop(pi, dmg);
                 PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
             }
@@ -6497,7 +6474,7 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32) {
     // The blast also catches the player (own rockets self-hurt too -- faithful).
     let pd2 = dist2_3([LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]], pos);
     if pd2 < r2 {
-        let dmg = (damage as i32 * (radius - isqrt(pd2)) / radius).clamp(0, 255) as u16;
+        let dmg = (damage as i32 * (radius - isqrt_i32(pd2)) / radius).clamp(0, 255) as u16;
         PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(dmg);
     }
 }
@@ -6508,7 +6485,7 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32) {
 unsafe fn houndeye_blast(center: [i32; 3], radius: i32, dmg: u8) {
     let d2 = dist2_3([LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]], center);
     if d2 < radius * radius {
-        let scaled = (dmg as i32 * (radius - isqrt(d2)) / radius).clamp(0, 255) as u16;
+        let scaled = (dmg as i32 * (radius - isqrt_i32(d2)) / radius).clamp(0, 255) as u16;
         PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(scaled);
     }
     queue_explosion_fx(center, 40); // pale burst stand-in (a proper ring lands with the FX pool)
@@ -8349,7 +8326,7 @@ fn draw_beam(
     };
     let (x0, y0, x1, y1) = (sx0 as i32, sy0 as i32, sx1 as i32, sy1 as i32);
     let (dx, dy) = (x1 - x0, y1 - y0);
-    let len = isqrt(dx * dx + dy * dy);
+    let len = isqrt_i32(dx * dx + dy * dy);
     if len < 3 {
         return; // edge-on / zero-length: the beam is invisible, skip
     }
@@ -8927,7 +8904,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         for ei in 0..nents_early {
             let e = m.entity(ei);
             ENT_CACHE[ei] = e;
-            ENT_RADIUS[ei] = isqrt(e.r2);
+            ENT_RADIUS[ei] = isqrt_i32(e.r2);
             ENT_ACTIVE[ei] = 1;
             ENT_PHASE[ei] = 0;
         }
@@ -9560,7 +9537,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 // View-bob phase advances with horizontal ground speed; the render
                 // derives a vertical head-bob + strafe roll from it. Frozen while
                 // airborne/stopped (the amplitude, speed-scaled, eases it to rest).
-                let hspeed = isqrt(
+                let hspeed = isqrt_i32(
                     player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2],
                 );
                 if player.on_ground && hspeed > 4 {
@@ -9720,7 +9697,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 ];
                 unsafe {
                     // Cone-of-fire: shots wander more while moving fast or airborne.
-                    let hs = isqrt(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
+                    let hs = isqrt_i32(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
                     let inacc = (hs / 12).min(6) + if player.on_ground { 0 } else { 5 };
                     let hit =
                         fire_weapon(weapon.def(), &m, movers, eye, &fire_rot, fire_base_t, inacc);
@@ -9837,7 +9814,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         // gliding on rails.
         let mut view_roll = 0i16;
         unsafe {
-            let hspeed = isqrt(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
+            let hspeed = isqrt_i32(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
             let bob_amp = (hspeed.min(90) * 5) >> 4; // world units of vertical bob
             let bob_sin = Mat3I16::rotate_z(((BOB_PHASE * 2) as u16) & 0xFF).m[1][0] as i32;
             eye[1] += (bob_amp * bob_sin) >> 12;
