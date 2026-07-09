@@ -36,6 +36,15 @@ tools/*.py
 !tools/memory_report.py
 !tools/campaign_map_report.py
 !tools/campaign_flow_report.py
+!tools/merge_model_chunk.py
+# Asset extractors needed by `make assets` (they read YOUR Half-Life install
+# and contain no Valve data, so a fresh clone can build).
+!tools/extract_menu.py
+!tools/extract_music.py
+!tools/extract_sfx.py
+!tools/extract_voices.py
+!tools/extract_sprites.py
+!tools/gen_clips_manifest.py
 tools/*.sh
 
 # ---- OS / editor cruft ----

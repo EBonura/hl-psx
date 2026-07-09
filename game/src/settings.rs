@@ -23,6 +23,7 @@ const H: i32 = 240;
 /// Re-issue the GP1 06h/07h display windows shifted by the screen offset. Moves
 /// the picture on the TV without touching the VRAM layout (so it also shifts the
 /// menu -- a live preview of the setting).
+// TODO: replace with gpu::set_display_offset once ../PSoXide is on current main (the API landed there).
 pub fn apply_display() {
     let (sx, sy) = unsafe { (SCREEN_X, SCREEN_Y) };
     let h0 = (H_START + sx * H_CLK).max(0) as u32;

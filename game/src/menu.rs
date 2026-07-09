@@ -284,6 +284,7 @@ fn wrap_move(sel: &mut i32, count: i32, input: MenuEdges) {
     }
 }
 
+// TODO: replace with psx_pad::PadTracker once ../PSoXide is on current main (the API landed there).
 fn poll_menu_edges(
     p_up: &mut bool,
     p_dn: &mut bool,

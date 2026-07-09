@@ -1455,6 +1455,7 @@ fn tram_path_pos(m: &Map, seg: usize, seg_dist: i32) -> [i32; 3] {
 
 /// Integer atan2 -> 12-bit angle (0..4096 = one turn), piecewise-linear per
 /// octant (max error ~1.7 deg, fine for facing a tram). Avoids float/CORDIC.
+// TODO: replace with psx_math::atan2_q12 once ../PSoXide is on current main (the API landed there).
 fn atan2_q12(y: i32, x: i32) -> u16 {
     if x == 0 && y == 0 {
         return 0;
@@ -3496,6 +3497,7 @@ unsafe fn xhair_pick_pvs(m: &Map, nv: usize, frame: u16) {
 }
 
 /// DEBUG: minimal no_std i32 -> decimal in a stack buffer.
+// TODO: replace with psx_math::fmt once ../PSoXide is on current main (the API landed there).
 fn fmt_i32(v: i32, buf: &mut [u8; 12]) -> &str {
     let mut i = buf.len();
     let neg = v < 0;
