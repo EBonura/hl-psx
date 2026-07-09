@@ -15,7 +15,7 @@ use crate::hltext;
 use psx_font::{BitOrder, BitmapFont, FontAtlas};
 use psx_gpu::material::TextureMaterial;
 use psx_gpu::{self as gpu, framebuf::FrameBuffer};
-use psx_pad::{button, poll_port1};
+use psx_pad::{button, poll_port1, PadTracker};
 use psx_rt::interrupts;
 use psx_vram::{upload_bytes, Clut, TexDepth, Tpage, VramRect};
 
@@ -284,54 +284,43 @@ fn wrap_move(sel: &mut i32, count: i32, input: MenuEdges) {
     }
 }
 
-// TODO: replace with psx_pad::PadTracker once ../PSoXide is on current main (the API landed there).
-fn poll_menu_edges(
-    p_up: &mut bool,
-    p_dn: &mut bool,
-    p_lf: &mut bool,
-    p_rt: &mut bool,
-    p_ok: &mut bool,
-    p_back: &mut bool,
-) -> MenuEdges {
+/// One pad poll folded into the tracker's active-high mask: when the pad is
+/// analog, left-stick deflection past a +-48 deadzone maps onto the d-pad bits.
+fn menu_buttons() -> u16 {
     let pad = poll_port1();
-    let b = pad.buttons;
-    let mut up = b.is_held(button::UP);
-    let mut dn = b.is_held(button::DOWN);
-    let mut lf = b.is_held(button::LEFT);
-    let mut rt = b.is_held(button::RIGHT);
+    let mut b = pad.buttons.bits();
     if pad.is_analog() {
         let (lx, ly) = pad.sticks.left_centered();
-        let dz = 48i16;
-        if ly < -dz {
-            up = true;
+        const DZ: i16 = 48;
+        if ly < -DZ {
+            b |= button::UP;
         }
-        if ly > dz {
-            dn = true;
+        if ly > DZ {
+            b |= button::DOWN;
         }
-        if lx < -dz {
-            lf = true;
+        if lx < -DZ {
+            b |= button::LEFT;
         }
-        if lx > dz {
-            rt = true;
+        if lx > DZ {
+            b |= button::RIGHT;
         }
     }
-    let ok = b.is_held(button::CROSS) || b.is_held(button::START);
-    let back = b.is_held(button::CIRCLE) || b.is_held(button::SELECT);
-    let edges = MenuEdges {
-        up: up && !*p_up,
-        down: dn && !*p_dn,
-        left: lf && !*p_lf,
-        right: rt && !*p_rt,
-        ok: ok && !*p_ok,
-        back: back && !*p_back,
-    };
-    *p_up = up;
-    *p_dn = dn;
-    *p_lf = lf;
-    *p_rt = rt;
-    *p_ok = ok;
-    *p_back = back;
-    edges
+    b
+}
+
+/// Poll the pad and reduce it to per-frame menu edges. Every cursor step is a
+/// fresh press (this menu has never auto-repeated; `pad.repeats(mask, delay,
+/// rate)` is the one-line change if hold-to-scroll is ever wanted).
+fn poll_menu_edges(pad: &mut PadTracker) -> MenuEdges {
+    pad.update(menu_buttons());
+    MenuEdges {
+        up: pad.just_pressed(button::UP),
+        down: pad.just_pressed(button::DOWN),
+        left: pad.just_pressed(button::LEFT),
+        right: pad.just_pressed(button::RIGHT),
+        ok: pad.just_pressed(button::CROSS | button::START),
+        back: pad.just_pressed(button::CIRCLE | button::SELECT),
+    }
 }
 
 fn draw_main_menu(font: &FontAtlas, sel: usize) {
@@ -498,13 +487,12 @@ pub fn run(fb: &mut FrameBuffer, assets: &[u8]) -> usize {
     let mut main_sel = 0i32;
     let mut chapter_sel = 0i32;
     let mut options_sel = 0i32;
-    let (mut p_up, mut p_dn, mut p_ok, mut p_back) = (true, true, true, true);
-    let (mut p_lf, mut p_rt) = (true, true);
+    let mut pad = PadTracker::new();
+    pad.update(menu_buttons());
+    pad.prime(); // swallow buttons (or stick) still held at menu entry until re-pressed
 
     loop {
-        let input = poll_menu_edges(
-            &mut p_up, &mut p_dn, &mut p_lf, &mut p_rt, &mut p_ok, &mut p_back,
-        );
+        let input = poll_menu_edges(&mut pad);
         match screen {
             MenuScreen::Main => {
                 wrap_move(&mut main_sel, MAIN_ITEMS.len() as i32, input);
