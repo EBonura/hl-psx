@@ -2,7 +2,7 @@
 //! -- they persist across menu<->play within a session and reset on power cycle
 //! (no memory-card save). Modelled on the Celeste Classic Collection's options.
 
-use psx_io::gpu::write_gp1;
+use psx_gpu::{set_display_offset, Resolution, VideoMode};
 use psx_spu::{CdVolume, Volume};
 
 pub const VOL_MAX: u8 = 8; // slider steps 0..8
@@ -13,25 +13,13 @@ pub static mut SCREEN_Y: i32 = 0; // vertical TV shift, lines
 pub static mut MUSIC_VOL: u8 = VOL_MAX; // CD-DA (music) 0..8
 pub static mut SFX_VOL: u8 = VOL_MAX; // SPU voices (SFX + speech) 0..8
 
-// NTSC 320x240 display-window defaults (must match psx_gpu::init).
-const H_START: i32 = 0x260;
-const H_CLK: i32 = 8; // GPU clocks per pixel
-const V_START: i32 = 0x10;
-const W: i32 = 320;
-const H: i32 = 240;
-
 /// Re-issue the GP1 06h/07h display windows shifted by the screen offset. Moves
 /// the picture on the TV without touching the VRAM layout (so it also shifts the
-/// menu -- a live preview of the setting).
-// TODO: replace with gpu::set_display_offset once ../PSoXide is on current main (the API landed there).
+/// menu -- a live preview of the setting). Mode and resolution must match what
+/// main passes to gpu::init.
 pub fn apply_display() {
     let (sx, sy) = unsafe { (SCREEN_X, SCREEN_Y) };
-    let h0 = (H_START + sx * H_CLK).max(0) as u32;
-    let h1 = h0 + (W * H_CLK) as u32;
-    let v0 = (V_START + sy).max(0) as u32;
-    let v1 = v0 + H as u32;
-    write_gp1(0x0600_0000 | (h1 << 12) | h0); // horizontal display range
-    write_gp1(0x0700_0000 | (v1 << 10) | v0); // vertical display range
+    set_display_offset(VideoMode::Ntsc, Resolution::R320X240, sx as i16, sy as i16);
 }
 
 /// Apply the audio volumes: music = CD input gain, SFX = SPU main (voice) volume.
