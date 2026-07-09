@@ -5,5 +5,5 @@
 #   - the inline-asm BIOS trampolines inside PSoXide's psx-rt
 # Keep this in sync with the sibling PSoXide checkout's own
 # rust-toolchain.toml so host tools (mkisopsx) and device code agree.
-channel    = "nightly"
+channel    = "nightly-2026-03-25"
 components = ["rust-src", "llvm-tools", "rustfmt", "clippy"]
