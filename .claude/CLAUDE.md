@@ -38,15 +38,17 @@ closed "Half-Life PSX" demake.
 
 ```bash
 make psoxide-check    # verify the sibling PSoXide checkout (../PSoXide, override with PSOXIDE=)
-make cook MAP=c1a0    # cook a level -> data/maps/current.hlm (any of 125 maps)
+make assets           # cook menu/rooms/models/sfx/voices/sprites from HL_DIR (96 campaign maps)
 make build            # -> game/target/mipsel-sony-psx/release/hl-psx.exe
 make disc             # -> dist/hl-psx.{bin,cue}  (boot this in PSoXide)
 make run              # build + install into the PSoXide game library
 ```
 
-The runtime `include_bytes!`s `data/maps/current.hlm`; `make cook MAP=<name>`
-writes it, so any map builds without editing source. Verified on c1a0 (tram
-start) and c1a1a (Anomalous Materials).
+Maps are NOT baked into the EXE. `make rooms` (part of `make assets`) cooks
+every MAPLIST map to `data/rooms/room_<N>.psxc`; `make disc` packs those into
+the disc's WORLD.PAK, and the runtime streams the selected map at load (M15).
+`make cook MAP=<name>` still exists as the host-side single-map cook (writes
+`data/maps/<MAP>.hlm`) for inspection; nothing at runtime reads `data/maps/`.
 
 Nightly toolchain + `mipsel-sony-psx` target via `-Zbuild-std` (see
 `rust-toolchain.toml`, `game/.cargo/config.toml`). `game/build.rs` injects
@@ -56,12 +58,14 @@ onto host tools (mkisopsx). Same proven wiring as oot-psx.
 
 ## State at handoff
 
-- **Milestone 0 (skeleton)**: `game/src/main.rs` is the GTE spinning-cube smoke
-  test (adapted from the SDK's `hello-gte`). It boots and proves the toolchain.
-  This is the next thing to replace with a real renderer.
-- **Nothing else is wired yet** -- no asset extractor, no BSP parser, no
-  streaming. The asset path (where Half-Life files come from, how they're
-  cooked) is the first design decision; check feasibility before building it.
+- **Playable campaign renderer.** All 96 MAPLIST campaign maps cook, stream
+  from the disc's WORLD.PAK, and play: textured/lit BSP rendering with PVS,
+  player collision (walk/jump/crouch), weapons with viewmodels, NPCs (studio
+  models, animation, combat, scripted sequences), doors/buttons/triggers,
+  per-map dialogue and sprites, SFX/music, HUD, and a main menu. The milestone
+  log below (M1..) is the history of how it got here, newest state last.
+- The asset pipeline is `make assets` (extractors under `tools/`, cooker
+  `tools/hl-bsp`), all reading the player's own install; see Build / run.
 
 ## Feasibility gate -- ANSWERED (green)
 
@@ -80,7 +84,8 @@ GTE-projected, OT-depth-sorted flat triangles with a pad fly-cam. Pipeline:
 - `tools/hl-bsp --cook <bsp> <hlm>` walks faces (surfedges->polygon->fan tris),
   remaps HL Z-up to world Y-up (winding reversed), and colours each triangle
   with its source texture's average RGB. Output `.hlm` (see `game/src/map.rs`).
-  `make cook MAP=c1a0` -> `data/maps/c1a0.hlm`, `include_bytes!`'d into the EXE.
+  `make cook MAP=c1a0` -> `data/maps/c1a0.hlm` (`include_bytes!`'d into the EXE
+  back then; since M15 maps stream from WORLD.PAK instead).
 - `game/src/main.rs`: project every vertex (RTPS) into a scratch buffer, then
   per triangle near-cull + OT-insert a `TriFlat`. Fly-cam: D-pad move/turn,
   L1/R1 vertical, Triangle/Cross pitch. Camera = oot's view convention
@@ -162,9 +167,10 @@ hull (no crouch); simple velocity (no accel/friction/aircontrol).
 
 ## M6 -- map selection (DONE; superseded by M15 streaming)
 
-Runtime builds from `data/maps/current.hlm`; `make cook MAP=<name>` writes it.
-The full pipeline is map-general -- verified on c1a0 and c1a1a. **M15 replaced the
-baked map with runtime CD streaming + an in-game menu.**
+The runtime used to build from a baked `data/maps/current.hlm` written by
+`make cook MAP=<name>`. The full pipeline is map-general -- verified on c1a0 and
+c1a1a. **M15 replaced the baked map with runtime CD streaming + an in-game
+menu; nothing reads `current.hlm` anymore.**
 
 ## M7 -- per-vertex lighting (DONE)
 
@@ -1481,14 +1487,19 @@ git-ignored `reference/halflife/` for future faithfulness work.
 
 | Crate | Use |
 |-------|-----|
-| `psx-rt` | runtime/entry (`#[no_mangle] fn main`, `extern crate psx_rt`), `tty` |
+| `psx-rt` | runtime/entry (`#[no_mangle] fn main`, `extern crate psx_rt`), `tty`, `interrupts` |
 | `psx-gpu` | `init`, `FrameBuffer`, `OrderingTable`, textured/gouraud tris + quads, `BlendMode`, texture pages, `draw_line_mono` |
-| `psx-gte` / `psx-gte-core` | `math::{Vec3I16, Vec3I32, Mat3I16}`, `scene::{...}` project/transform helpers, light rigs, depth-cue/fog |
+| `psx-gte` | `math::{Vec3I16, Vec3I32, Mat3I16}`, `scene::{...}` project/transform helpers, light rigs, depth-cue/fog |
 | `psx-pad` | controller input |
+| `psx-math` | `sincos`, `int32::isqrt_i32` fixed-point helpers |
 | `psx-vram` | VRAM texture/CLUT management |
 | `psx-spu` | audio (SPU-ADPCM) |
 | `psx-asset` | runtime asset blobs |
 | `psx-io` | async CD-ROM streaming |
+| `psx-font` | `BitmapFont` (menu/HUD text) |
+| `psx-fx` | `LcgRng`, `ParticlePool` |
+| `psx-telemetry` | emulator profiling stage markers (behind `emulator-telemetry`) |
+| `psx-engine` | `PrimitivePacketArena`/`Scratch`/`Sink` (lives under `../PSoXide/engine/crates`, not `sdk/crates`) |
 
 The SDK ships runnable examples under `../PSoXide/sdk/examples/`
 (`hello-gte`, `hello-ot`, `hello-tex`, `hello-tri`, `hello-input`,
