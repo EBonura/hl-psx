@@ -43,7 +43,7 @@ use psx_gte::scene::{self, Projected};
 use psx_math::atan2_q12;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_math::int32::isqrt_i32;
-use psx_pad::{button, enable_analog_port1, poll_port1};
+use psx_pad::{button, enable_analog_port1, poll_port1, PadTracker};
 use psx_rt::{interrupts, tty};
 use psx_io;
 use psx_spu;
@@ -713,40 +713,29 @@ fn draw_pause_menu(fb: &mut FrameBuffer, sel: usize) {
 
 fn run_pause_menu(fb: &mut FrameBuffer) -> PauseExit {
     let mut sel = 0usize;
-    let mut p_up = true;
-    let mut p_dn = true;
-    let mut p_ok = true;
-    let mut p_back = true;
+    let mut pad = PadTracker::new();
+    pad.update(poll_port1().buttons.bits());
+    pad.prime(); // swallow buttons still held from gameplay until re-pressed
 
     loop {
-        let pad = poll_port1();
-        let b = pad.buttons;
-        let up = b.is_held(button::UP);
-        let dn = b.is_held(button::DOWN);
-        let ok = b.is_held(button::CROSS) || b.is_held(button::START);
-        let back = b.is_held(button::CIRCLE);
+        pad.update(poll_port1().buttons.bits());
 
-        if up && !p_up {
+        if pad.just_pressed(button::UP) {
             sel = (sel + PAUSE_ITEMS.len() - 1) % PAUSE_ITEMS.len();
         }
-        if dn && !p_dn {
+        if pad.just_pressed(button::DOWN) {
             sel = (sel + 1) % PAUSE_ITEMS.len();
         }
-        if back && !p_back {
+        if pad.just_pressed(button::CIRCLE) {
             return PauseExit::Resume;
         }
-        if ok && !p_ok {
+        if pad.just_pressed(button::CROSS | button::START) {
             return if sel == 0 {
                 PauseExit::Resume
             } else {
                 PauseExit::MainMenu
             };
         }
-
-        p_up = up;
-        p_dn = dn;
-        p_ok = ok;
-        p_back = back;
 
         draw_pause_menu(fb, sel);
         gpu::draw_sync();

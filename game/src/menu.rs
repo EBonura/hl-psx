@@ -15,6 +15,7 @@ use crate::hltext;
 use psx_font::{BitOrder, BitmapFont, FontAtlas};
 use psx_gpu::material::TextureMaterial;
 use psx_gpu::{self as gpu, framebuf::FrameBuffer};
+use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_pad::{button, poll_port1, PadTracker};
 use psx_rt::interrupts;
 use psx_vram::{upload_bytes, Clut, TexDepth, Tpage, VramRect};
@@ -362,27 +363,6 @@ fn draw_chapter_menu(font: &FontAtlas, sel: i32) {
 const OPT_LABELS: [&str; 4] = ["Screen X", "Screen Y", "Music", "SFX"];
 pub const N_OPTIONS: i32 = 5; // 4 sliders + Back
 
-/// Format a signed int into `buf`, returning the slice as a str.
-fn fmt_num(v: i32, buf: &mut [u8; 12]) -> &str {
-    let neg = v < 0;
-    let mut n = v.unsigned_abs();
-    let mut i = buf.len();
-    if n == 0 {
-        i -= 1;
-        buf[i] = b'0';
-    }
-    while n > 0 {
-        i -= 1;
-        buf[i] = b'0' + (n % 10) as u8;
-        n /= 10;
-    }
-    if neg {
-        i -= 1;
-        buf[i] = b'-';
-    }
-    core::str::from_utf8(&buf[i..]).unwrap_or("")
-}
-
 /// 8-segment volume bar; filled segments up to `v` are lit, the rest dim.
 fn draw_vol_bar(x: i16, y: i16, v: i32, bright: bool) {
     let lit = if bright { ITEM_SEL } else { ITEM };
@@ -410,8 +390,8 @@ fn draw_options_menu(font: &FontAtlas, sel: usize) {
         let col = if is_sel { ITEM_SEL } else { ITEM };
         font.draw_text(x_label, y, OPT_LABELS[i], col);
         if i < 2 {
-            let mut buf = [0u8; 12];
-            let s = fmt_num(crate::settings::value(i), &mut buf);
+            let mut buf = [0u8; I32_DEC_MAX];
+            let s = i32_dec(&mut buf, crate::settings::value(i));
             font.draw_text(x_val + 8, y, "<", col);
             font.draw_text(x_val + 44, y, s, col);
             font.draw_text(x_val + 96, y, ">", col);
