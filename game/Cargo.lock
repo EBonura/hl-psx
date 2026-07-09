@@ -22,7 +22,6 @@ dependencies = [
  "psx-math",
  "psx-pad",
  "psx-rt",
- "psx-sdk",
  "psx-spu",
  "psx-telemetry",
  "psx-vram",
@@ -133,18 +132,6 @@ version = "0.1.0"
 dependencies = [
  "psx-hw",
  "psx-io",
-]
-
-[[package]]
-name = "psx-sdk"
-version = "0.1.0"
-dependencies = [
- "psx-gpu",
- "psx-gte",
- "psx-hw",
- "psx-io",
- "psx-pad",
- "psx-rt",
 ]
 
 [[package]]

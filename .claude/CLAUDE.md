@@ -37,7 +37,7 @@ closed "Half-Life PSX" demake.
 ## Build / run
 
 ```bash
-make submodule        # init pinned PSoXide SDK (third_party/PSoXide @ bedcc21)
+make psoxide-check    # verify the sibling PSoXide checkout (../PSoXide, override with PSOXIDE=)
 make cook MAP=c1a0    # cook a level -> data/maps/current.hlm (any of 125 maps)
 make build            # -> game/target/mipsel-sony-psx/release/hl-psx.exe
 make disc             # -> dist/hl-psx.{bin,cue}  (boot this in PSoXide)
@@ -1477,7 +1477,7 @@ git-ignored `reference/halflife/` for future faithfulness work.
 - **VM pool**: 182 K reserve < 207 K all-14 viewmodels; either +25 K or accept
   the glock-visual fallback late-game.
 
-## PSoXide SDK map (third_party/PSoXide/sdk/crates)
+## PSoXide SDK map (../PSoXide/sdk/crates, the sibling checkout; no submodule)
 
 | Crate | Use |
 |-------|-----|
@@ -1490,7 +1490,7 @@ git-ignored `reference/halflife/` for future faithfulness work.
 | `psx-asset` | runtime asset blobs |
 | `psx-io` | async CD-ROM streaming |
 
-The SDK ships runnable examples under `third_party/PSoXide/sdk/examples/`
+The SDK ships runnable examples under `../PSoXide/sdk/examples/`
 (`hello-gte`, `hello-ot`, `hello-tex`, `hello-tri`, `hello-input`,
 `hello-audio`) -- read these first; the cube boot is adapted from `hello-gte`.
 

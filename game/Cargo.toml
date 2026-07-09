@@ -32,7 +32,6 @@ debug-map-boot = []
 # SDK crates from the sibling main PSoXide checkout. hl-psx intentionally rides
 # the shared library so engine/SDK optimisations can be reused directly.
 [dependencies]
-psx-sdk  = { path = "../../PSoXide/sdk/crates/psx-sdk" }
 psx-rt   = { path = "../../PSoXide/sdk/crates/psx-rt" }
 psx-gpu  = { path = "../../PSoXide/sdk/crates/psx-gpu" }
 psx-gte  = { path = "../../PSoXide/sdk/crates/psx-gte" }
