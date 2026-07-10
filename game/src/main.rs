@@ -109,6 +109,10 @@ const MAX_PROPS: usize = 128;
 const MAX_SPRITE_INSTANCES: usize = 160;
 const SPRITE_STATE_WORDS: usize = MAX_SPRITE_INSTANCES.div_ceil(32);
 const MAX_NAV_NODES: usize = 255;
+// PROP_NEAR_ENTS keeps brush-entity ids in each u16's low byte and uses the
+// otherwise-dead high byte for the per-prop navigation memo below.  Refuse a
+// future room budget that could silently truncate an entity id.
+const _: () = assert!(MAX_ENTS <= 256);
 const MAX_LOGIC: usize = 384;
 const MAX_LOGIC_EVENTS: usize = 64;
 // Fast-path near gate. MUST equal render::NEAR_Z: the soft path clips its
@@ -2977,6 +2981,7 @@ unsafe fn logic_use_entity(
                         rec.origin[2] as i16,
                     ];
                     PROP_SCRIPT_YAW[pi] = rec.speed & 0xFFF;
+                    prop_nav_cache_invalidate(pi);
                     PROP_SCRIPT_MODE[pi] = mode;
                     PROP_SCRIPT_LI[pi] = li as u16;
                     // aux[0] = (play_slot+1, idle_slot+1) resolved at cook.
@@ -3105,6 +3110,7 @@ unsafe fn logic_use_entity(
                         PROP_POS[pi][2] - rec.origin[2],
                     ];
                     if d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 64 * 64 {
+                        prop_nav_cache_invalidate(pi);
                         PROP_DORMANT[pi] = 0;
                         PROP_ACTIVE[pi] = 1;
                         prop_set_pos(m, &[], pi, PROP_POS[pi]); // ground snap on wake
@@ -4451,6 +4457,49 @@ unsafe fn point_in_one_ent(m: &Map, ei: usize, p: [i32; 3]) -> bool {
     submodel_point_solid(m, e.head0, q)
 }
 
+const PROP_NEAR_ENT_ID_MASK: u16 = 0x00FF;
+const PROP_NAV_SRC_SLOT: usize = 0;
+const PROP_NAV_DST_SLOT: usize = 1;
+const PROP_NAV_NEXT_SLOT: usize = 2;
+
+#[inline]
+unsafe fn prop_nav_cache_get(pi: usize, slot: usize) -> u8 {
+    (PROP_NEAR_ENTS[pi][slot] >> 8) as u8
+}
+
+#[inline]
+unsafe fn prop_nav_cache_put(pi: usize, slot: usize, value: u8) {
+    let ent_id = PROP_NEAR_ENTS[pi][slot] & PROP_NEAR_ENT_ID_MASK;
+    PROP_NEAR_ENTS[pi][slot] = ent_id | ((value as u16) << 8);
+}
+
+/// Change the cached source without ever letting a next-hop computed for the
+/// old source masquerade as a hit for the new one.
+#[inline]
+unsafe fn prop_nav_cache_set_src(pi: usize, src: u8) {
+    if prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) != src {
+        prop_nav_cache_put(pi, PROP_NAV_DST_SLOT, NAV_NODE_NONE);
+        prop_nav_cache_put(pi, PROP_NAV_NEXT_SLOT, NAV_NODE_NONE);
+    }
+    prop_nav_cache_put(pi, PROP_NAV_SRC_SLOT, src);
+}
+
+#[inline]
+unsafe fn prop_nav_cache_set_route(pi: usize, src: u8, dst: u8, next: u8) {
+    prop_nav_cache_put(pi, PROP_NAV_SRC_SLOT, src);
+    prop_nav_cache_put(pi, PROP_NAV_DST_SLOT, dst);
+    prop_nav_cache_put(pi, PROP_NAV_NEXT_SLOT, next);
+}
+
+// Lifecycle-only cold path. Keeping this out of line avoids cloning three
+// packed-byte stores into every wake/script/damage call site.
+#[inline(never)]
+unsafe fn prop_nav_cache_invalidate(pi: usize) {
+    prop_nav_cache_put(pi, PROP_NAV_SRC_SLOT, NAV_NODE_NONE);
+    prop_nav_cache_put(pi, PROP_NAV_DST_SLOT, NAV_NODE_NONE);
+    prop_nav_cache_put(pi, PROP_NAV_NEXT_SLOT, NAV_NODE_NONE);
+}
+
 /// Was 75% of the frame on walker-heavy maps: the old scan probed ~27 points
 /// per column, each walking the BSP AND sphere-testing EVERY brush entity.
 /// Now: filter the entities that can touch this vertical column ONCE (almost
@@ -4474,7 +4523,8 @@ unsafe fn refresh_prop_near_ents(movers: &[phys::Mover], pi: usize) {
                 && (mv.center[1] + mv.off[1] - p[1]).abs() <= r + PROP_GROUND_PROBE_DOWN
             {
                 if n < 8 {
-                    PROP_NEAR_ENTS[pi][n] = mv.id as u16;
+                    let nav_cache = PROP_NEAR_ENTS[pi][n] & !PROP_NEAR_ENT_ID_MASK;
+                    PROP_NEAR_ENTS[pi][n] = nav_cache | (mv.id as u16 & PROP_NEAR_ENT_ID_MASK);
                     n += 1;
                 }
                 // Over 8: keep the first 8 -- a probe missing a 9th distant
@@ -4531,7 +4581,7 @@ fn prop_floor_y_down(m: &Map, pi: usize, pos: [i32; 3], down: i32) -> Option<i32
         } else {
             let mut k = 0usize;
             while k < (nc as usize).min(8) {
-                let ei = PROP_NEAR_ENTS[pi][k] as usize;
+                let ei = (PROP_NEAR_ENTS[pi][k] & PROP_NEAR_ENT_ID_MASK) as usize;
                 let e = ENT_CACHE[ei];
                 if ENT_ACTIVE[ei] != 0 {
                     let off = ent_draw_offset(ei);
@@ -4761,11 +4811,59 @@ unsafe fn nav_nearest(m: &Map, pos: [i32; 3], max_d2: i32) -> u8 {
 unsafe fn nav_nearest_reachable(
     m: &Map,
     movers: &[phys::Mover],
+    pi: usize,
     from: [i32; 3],
     pos: [i32; 3],
     max_d2: i32,
 ) -> u8 {
     let n = nav_node_count(m);
+
+    // The previous winner is only an incumbent, never an unverified answer:
+    // trace it again from the actor's exact current position.  If it is still
+    // reachable, only a geometrically closer reachable node can change the
+    // result.  Equal-distance nodes with a lower index are also tested because
+    // the original ascending scan's strict `<` comparison makes the first tie
+    // win.  This therefore returns exactly the same node as the full scan while
+    // avoiding its chain of progressively-closer BSP traces.
+    let cached = prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) as usize;
+    if cached < n {
+        let node = m.nav_node(cached);
+        let dy = (node.pos[1] - pos[1]).abs();
+        let d2 = dist2_xz(pos, node.pos);
+        if dy <= NAV_VERTICAL_MAX && d2 < max_d2 {
+            let to = [node.pos[0], from[1], node.pos[2]];
+            if actor_line_clear(m, movers, from, to) {
+                let mut best = cached as u8;
+                let mut best_d2 = d2;
+                let mut i = 0usize;
+                while i < n {
+                    if i != cached {
+                        let candidate = m.nav_node(i);
+                        let candidate_dy = (candidate.pos[1] - pos[1]).abs();
+                        if candidate_dy <= NAV_VERTICAL_MAX {
+                            let candidate_d2 = dist2_xz(pos, candidate.pos);
+                            let can_beat = candidate_d2 < best_d2
+                                || (candidate_d2 == best_d2 && i < best as usize);
+                            if can_beat {
+                                let candidate_to =
+                                    [candidate.pos[0], from[1], candidate.pos[2]];
+                                if actor_line_clear(m, movers, from, candidate_to) {
+                                    best = i as u8;
+                                    best_d2 = candidate_d2;
+                                }
+                            }
+                        }
+                    }
+                    i += 1;
+                }
+                prop_nav_cache_set_src(pi, best);
+                return best;
+            }
+        }
+    }
+
+    // No valid incumbent (map reset, blocked source, out of range): retain the
+    // old scan byte-for-byte as the conservative fallback.
     let mut best = NAV_NODE_NONE;
     let mut best_d2 = max_d2;
     let mut i = 0usize;
@@ -4782,17 +4880,25 @@ unsafe fn nav_nearest_reachable(
         }
         i += 1;
     }
+    prop_nav_cache_set_src(pi, best);
     best
 }
 
-unsafe fn nav_next_node(m: &Map, src: u8, dst: u8) -> u8 {
+unsafe fn nav_next_node(m: &Map, pi: usize, src: u8, dst: u8) -> u8 {
     let n = nav_node_count(m);
     let src_i = src as usize;
     let dst_i = dst as usize;
     if src_i >= n || dst_i >= n {
+        prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
         return NAV_NODE_NONE;
     }
+    if prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) == src
+        && prop_nav_cache_get(pi, PROP_NAV_DST_SLOT) == dst
+    {
+        return prop_nav_cache_get(pi, PROP_NAV_NEXT_SLOT);
+    }
     if src == dst {
+        prop_nav_cache_set_route(pi, src, dst, src);
         return src;
     }
 
@@ -4823,9 +4929,11 @@ unsafe fn nav_next_node(m: &Map, src: u8, dst: u8) -> u8 {
                     while NAV_PREV[step as usize] != src {
                         step = NAV_PREV[step as usize];
                         if step == NAV_NODE_NONE {
+                            prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
                             return NAV_NODE_NONE;
                         }
                     }
+                    prop_nav_cache_set_route(pi, src, dst, step);
                     return step;
                 }
                 if tail < MAX_NAV_NODES {
@@ -4836,6 +4944,7 @@ unsafe fn nav_next_node(m: &Map, src: u8, dst: u8) -> u8 {
             li += 1;
         }
     }
+    prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
     NAV_NODE_NONE
 }
 
@@ -4851,7 +4960,7 @@ unsafe fn nav_waypoint_towards(
     let ty = PROP_KIND[pi];
     let pos = PROP_POS[pi];
     let from = prop_target(ty, pos);
-    let src = nav_nearest_reachable(m, movers, from, pos, NAV_NEAREST_RANGE2);
+    let src = nav_nearest_reachable(m, movers, pi, from, pos, NAV_NEAREST_RANGE2);
     if src == NAV_NODE_NONE {
         return None;
     }
@@ -4870,7 +4979,7 @@ unsafe fn nav_waypoint_towards(
         return Some(goal);
     }
 
-    let next = nav_next_node(m, src, dst);
+    let next = nav_next_node(m, pi, src, dst);
     if next == NAV_NODE_NONE {
         None
     } else {
@@ -4996,6 +5105,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8) {
     PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
     PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
     PROP_SCRIPT_MODE[pi] = 0;
+    prop_nav_cache_invalidate(pi);
     if PROP_HEALTH[pi] == 0 {
         PROP_STATE[pi] = PROP_STATE_DEAD;
         PROP_DEATH_START[pi] = SIM_NOW; // play the death clip forward from now
@@ -5827,6 +5937,7 @@ unsafe fn init_prop_state(m: &Map) {
         // resident across changelevels can probe brush entities from the prior
         // room until that prop's staggered refresh comes around.
         PROP_NEAR_COUNT[i] = 0xFF;
+        prop_nav_cache_invalidate(i);
         PROP_STATE[i] = PROP_STATE_IDLE;
         PROP_ATTACK_COOLDOWN[i] = 0;
         PROP_AI_TIMER[i] = 0;
@@ -6084,6 +6195,7 @@ unsafe fn tick_props(
             let goal = [g[0] as i32, g[1] as i32, g[2] as i32];
             let mode = PROP_SCRIPT_MODE[pi];
             let arrived = if mode == 4 {
+                prop_nav_cache_invalidate(pi);
                 prop_set_pos(m, pm, pi, goal);
                 true
             } else {
@@ -6149,6 +6261,7 @@ unsafe fn tick_props(
             if PROP_AI_TARGET[pi] != PROP_TARGET_NONE
                 && TYPE_TO_SLOT[0] != MODEL_SLOT_NONE
             {
+                prop_nav_cache_invalidate(pi);
                 PROP_KIND[pi] = 0;
                 PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
                 PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
