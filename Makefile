@@ -31,15 +31,19 @@ PSOXIDE_MAP_SMOKE_STEPS ?= 240000000
 PSOXIDE_MAP_SMOKE_VISUAL_FRAMES ?= 8
 MAP_INDEX ?= 0
 MEMORY_MAP ?= $(CAPTURE_DIR)/hl-psx.map
-# Static headroom gate. The stack the headroom protects measures 14.9 KB peak
-# fleet-wide (stackwm probe, telemetry builds, all 96 maps boot + load +
-# gameplay; worst = c2a2a). The linker already guarantees 32 KB above
-# STATIC_LIMIT, so 32 KB headroom = a 64 KB total stack budget = ~4.3x the
-# measured peak. Re-measure with `--guest-debug-log` on a telemetry build
-# (grep stackwm) before lowering this further.
+# Static headroom gate. The linker reserves 32 KiB above STATIC_LIMIT, then this
+# gate requires another 32 KiB below it. The old 14.9 KiB fleet measurement is
+# stale: the current telemetry c0a0 route reports stackwm peak=33,524 B with
+# 34,344 B untouched above its larger telemetry statics. Re-run the 96-map
+# stackwm sweep before lowering this; the shared mark-array reclaim is the next
+# planned safety-margin increase.
 MIN_HEADROOM_KB ?= 32
 # Default gameplay route confirms New Game from the top-level menu.
-PSOXIDE_MENU_PLAY_PULSES ?= 0x4000@90+8
+# Menu assets + intro rendering run before menu::run primes its PadTracker. A
+# pulse at tick 90 can finish before that prime and is then swallowed; tick 500
+# is after menu readiness on the full 356 MB campaign disc and remains early
+# enough that a profile spends virtually all of its measured rows in gameplay.
+PSOXIDE_MENU_PLAY_PULSES ?= 0x4000@500+20
 
 # ---- Source Half-Life assets (bring your own; never committed) ----
 # We read the original GoldSrc files (WAD textures, BSP maps, MDL models)
@@ -59,7 +63,7 @@ HLBSP_BIN := $(HLBSP)/target/release/hl-bsp
 MAP      ?= c1a0
 
 .DEFAULT_GOAL := build
-.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms campaign-map-report roster-audit menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-map-smoke psoxide-chart memory-report
+.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms campaign-map-report placement-audit roster-audit menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-perf-report psoxide-perf-gate psoxide-map-smoke psoxide-chart memory-report
 
 help:
 	@echo "hl-psx targets:"
@@ -76,6 +80,8 @@ help:
 	@echo "  make psoxide-smoke    - headless menu screenshot/hash via PSoXide"
 	@echo "  make psoxide-gameplay - headless c1a0 gameplay screenshot/hash"
 	@echo "  make psoxide-profile  - telemetry build + CSV/profile screenshot"
+	@echo "  make psoxide-perf-report - report real visual FPS from the latest profile"
+	@echo "  make psoxide-perf-gate   - fresh 64-frame capture + strict 20 FPS gate"
 	@echo "  make psoxide-map-smoke MAP_INDEX=N - boot map N directly in PSoXide"
 	@echo "  make psoxide-chart    - profile + HTML vblank chart"
 	@echo "  make memory-report    - linker-map RAM budget + top symbols"
@@ -83,6 +89,7 @@ help:
 	@echo "  make bsp-info   - geometry + texture-VRAM budget for one map (MAP=$(MAP))"
 	@echo "  make cook       - cook a map to data/maps/<MAP>.hlm (MAP=$(MAP))"
 	@echo "  make campaign-map-report - size every campaign BSP against MAP_BUF"
+	@echo "  make placement-audit - verify every actor/sprite placement fits and cooks"
 	@echo "  make clean      - remove build output"
 	@echo ""
 	@echo "  Source assets read from HL_DIR (default: macOS Steam path)."
@@ -198,6 +205,29 @@ psoxide-profile:
 		--dump-hash
 	@echo "PROFILE -> $(CAPTURE_DIR)/hl-psx-profile.csv"
 
+# `cycles_per_tick` stays near the fixed 20 Hz scheduler period even when the
+# renderer misses multiple VBlanks. This report measures consecutive rendered
+# frame endpoints instead, including any catch-up simulation work between them.
+psoxide-perf-report:
+	python3 tools/perf/visual_perf_gate.py report \
+		--scenario c0a0=$(CAPTURE_DIR)/hl-psx-profile.csv \
+		--min-visual-samples 20
+
+# A gate-quality capture needs enough post-warmup visual frames for a useful
+# p95. Target-specific variables propagate to the psoxide-profile prerequisite.
+psoxide-perf-gate: PSOXIDE_PROFILE_VISUAL_FRAMES=64
+psoxide-perf-gate: psoxide-profile
+	python3 tools/perf/visual_perf_gate.py stamp \
+		--csv $(CAPTURE_DIR)/hl-psx-profile.csv \
+		--artifact $(DIST)/hl-psx.bin \
+		--visual-artifact $(CAPTURE_DIR)/hl-psx-profile-hw.ppm \
+		--scenario c0a0 --map-index 0 \
+		--route '$(PSOXIDE_MENU_PLAY_PULSES)' \
+		--command 'make psoxide-perf-gate'
+	python3 tools/perf/visual_perf_gate.py report --gate \
+		--scenario c0a0=$(CAPTURE_DIR)/hl-psx-profile.csv \
+		--min-visual-samples 60
+
 psoxide-map-smoke:
 	$(MAKE) disc FEATURES=emulator-telemetry,debug-map-boot PSOXIDE="$(PSOXIDE)"
 	@mkdir -p $(CAPTURE_DIR)
@@ -272,7 +302,10 @@ campaign-map-report:
 		--hlbsp-bin "$(HLBSP_BIN)" \
 		--rooms-dir "$(ROOMS)"
 
-# Model-pool fit gate: fails if any map would drop a combat/pickup model.
+placement-audit:
+	HL_GAME="$(HL_GAME)" python3 $(ROOT)/tools/placement_audit.py
+
+# Model-pool fit gate: fails if any placed model type would drop.
 # Run after `make models` or `make rooms`, and before trimming pool constants.
 roster-audit:
 	python3 $(ROOT)/tools/roster_audit.py

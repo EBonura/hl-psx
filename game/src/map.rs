@@ -28,8 +28,11 @@
 //!   entities:
 //!     u32 n_models | (u32 firstface,u32 numface) × n_models
 //!     u32 n_ents | EntRec[56B] × n_ents | u32 n_ent_leafs | u16 leaf_idx[]
+//!   tram (after the 24-byte header):
+//!     i32 way[3] × n_way | u16 way_speed × n_way | u16 way_pass × n_way
 //!   props/items:
-//!     u32 n_props | (u16 type, i16 leaf, i32 origin[3], i32 yaw) × n_props
+//!     u32 0x80000000|(n_sprites<<16)|n_props |
+//!     PropRec[24B] × n_props | SpriteRec[12B] × n_sprites
 //!   nav:
 //!     u16 n_nav,n_nav_links |
 //!     (i32 origin[3], i16 leaf, u16 first_link, u8 link_count, u8 pad) × n_nav |
@@ -157,6 +160,8 @@ pub struct Map {
     // Props/items (point-entity model placements)
     pub n_props: usize,
     props_off: usize,
+    pub n_sprites: usize,
+    sprites_off: usize,
     // AI navigation graph (land info_node graph)
     pub n_nav: usize,
     n_nav_links: usize,
@@ -178,7 +183,14 @@ const TRI_SZ: usize = 16; // u16 idx[3] | u8 uv[6] | u8 tex | u8 light_idx[3]
 const LOOPVERT_SZ: usize = 5; // u16 idx | u8 uv[2] | u8 light_idx
 const CLIPNODE_SZ: usize = 6;
 const ENT_SZ: usize = 56;
+const PROP_SZ: usize = 24;
+const SPRITE_REC_SZ: usize = 12;
 const LOGIC_SZ: usize = 64;
+const PROP_SPLIT_FORMAT: u32 = 0x8000_0000;
+
+pub const SPRITE_ID_MASK: u16 = 0x000F;
+pub const SPRITE_INITIAL_ON: u16 = 0x0010;
+pub const SPRITE_ONCE: u16 = 0x0020;
 
 pub const LOGIC_BRUSH_NONE: u16 = u16::MAX;
 pub const LOGIC_FUNC_DOOR: u8 = 1;
@@ -376,8 +388,20 @@ impl Map {
         ];
         let way_off = tram_off + 24;
 
-        let n_props = rd_u32(data, prop_off) as usize;
+        let prop_counts = rd_u32(data, prop_off);
+        let split_props = prop_counts & PROP_SPLIT_FORMAT != 0;
+        let n_props = if split_props {
+            (prop_counts & 0xFFFF) as usize
+        } else {
+            prop_counts as usize
+        };
+        let n_sprites = if split_props {
+            ((prop_counts >> 16) & 0x7FFF) as usize
+        } else {
+            0
+        };
         let props_off = prop_off + 4;
+        let sprites_off = props_off + n_props * PROP_SZ;
 
         let n_nav = rd_u16(data, nav_off) as usize;
         let n_nav_links = rd_u16(data, nav_off + 2) as usize;
@@ -439,6 +463,8 @@ impl Map {
             way_off,
             n_props,
             props_off,
+            n_sprites,
+            sprites_off,
             n_nav,
             n_nav_links,
             nav_nodes_off,
@@ -456,7 +482,7 @@ impl Map {
     /// `(model_type, origin, yaw, leaf)` for point prop/item `i`.
     #[inline]
     pub fn prop(&self, i: usize) -> (u16, [i32; 3], i32, i16) {
-        let o = self.props_off + i * 24;
+        let o = self.props_off + i * PROP_SZ;
         (
             rd_u16(self.data, o),
             [
@@ -473,7 +499,24 @@ impl Map {
     /// triggers address monsters through this.
     #[inline]
     pub fn prop_name(&self, i: usize) -> u16 {
-        rd_u16(self.data, self.props_off + i * 24 + 20)
+        rd_u16(self.data, self.props_off + i * PROP_SZ + 20)
+    }
+
+    /// `(origin, leaf, targetname, packed)` for placed sprite `i`.
+    /// `packed` holds local sprite id, initial/once flags, and half-width.
+    #[inline]
+    pub fn sprite_prop(&self, i: usize) -> ([i32; 3], i16, u16, u16) {
+        let o = self.sprites_off + i * SPRITE_REC_SZ;
+        (
+            [
+                rd_i16(self.data, o) as i32,
+                rd_i16(self.data, o + 2) as i32,
+                rd_i16(self.data, o + 4) as i32,
+            ],
+            rd_i16(self.data, o + 6),
+            rd_u16(self.data, o + 8),
+            rd_u16(self.data, o + 10),
+        )
     }
 
     #[inline]
@@ -484,6 +527,21 @@ impl Map {
             rd_i32(self.data, o + 4),
             rd_i32(self.data, o + 8),
         ]
+    }
+
+    /// Authored speed change at waypoint `i` (the path_track's "speed" key in
+    /// u/s; 0 = keep the current speed, matching HL's CPathTrack).
+    #[inline]
+    pub fn way_speed(&self, i: usize) -> i32 {
+        rd_u16(self.data, self.way_off + self.n_way * 12 + i * 2) as i32
+    }
+
+    /// Fire-on-pass logic-name id at waypoint `i` (path_track "message";
+    /// 0 = none). The intro ride's changelevels + station scripts fire this
+    /// way -- the train's passage, not the rider, is the trigger in HL.
+    #[inline]
+    pub fn way_pass(&self, i: usize) -> u16 {
+        rd_u16(self.data, self.way_off + self.n_way * 14 + i * 2)
     }
 
     /// `(first_face, num_faces)` for BSP submodel `m` (0 = world).

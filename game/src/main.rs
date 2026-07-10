@@ -99,6 +99,8 @@ const MAX_LEAVES: usize = room_budget::MAX_LEAVES;
 const MAX_ENTS: usize = room_budget::MAX_ENTS;
 const MAX_PVS_FACE_RECS: usize = 2048;
 const MAX_PROPS: usize = 128;
+const MAX_SPRITE_INSTANCES: usize = 160;
+const SPRITE_STATE_WORDS: usize = MAX_SPRITE_INSTANCES.div_ceil(32);
 const MAX_NAV_NODES: usize = 255;
 const MAX_LOGIC: usize = 384;
 const MAX_LOGIC_EVENTS: usize = 64;
@@ -207,8 +209,6 @@ const PROP_TYPE_SITTING_SCI: u8 = 25; // seated pose, keeps its authored chair h
 const PROP_DEAD_BIT: u16 = 0x8000; // cook flag: spawn as a corpse (death pose, 0 hp)
 const PROP_DORMANT_BIT: u16 = 0x4000; // cook flag: monstermaker stock, inactive until fired
 const PROP_TYPE_MASK: u16 = 0x3FFF;
-const SPRITE_PROP_BIT: u16 = 0x2000; // prop type bit: this is a sprite billboard, not a model
-const SPRITE_PROP_ID_MASK: u16 = 0x1FFF; // low bits = sprite local id (0..MAX_SPRITES)
 const PROP_TYPE_WEAPON_FIRST: u8 = 26; // weapon pickups 26..=39 (index - 26 = weapon id)
 const PROP_TYPE_WEAPON_LAST: u8 = 39;
 const PROP_TYPE_AMMO_FIRST: u8 = 40; // ammo pickups 40..=47
@@ -239,11 +239,10 @@ const PROP_STATE_DEAD: u8 = 3;
 const N_MODEL_TYPES: usize = 52;
 const MAX_LOADED_MODELS: usize = 22; // distinct model types resident per map (enemies + pickups)
 const POOL_TEX_SLOTS: usize = 240; // shared TexSlot pool across loaded models
-// Shared RenderFace pool. Covers every map's full tri sum except c4a3, whose
-// background garg statue (wants 7,922 total) stays a whole-type drop; c4a1b
-// (6,880 with its tentacle/barnacle dressing) fits. A type whose tris don't
-// fully fit is skipped outright in stream_map_models -- never baked partially.
-const POOL_FACE_CAP: usize = 6912;
+// Shared RenderFace pool. Campaign peak is c4a3 at 7,922 faces when its
+// Gargantua is retained; 7,936 leaves a small aligned guard. Whole-type drops
+// are forbidden by tools/roster_audit.py.
+const POOL_FACE_CAP: usize = 7936;
 const MODEL_SLOT_NONE: u8 = 0xFF;
 const MODEL_GEOM_CHUNK_BASE: u32 = 1300;
 const MODEL_TEX_CHUNK_BASE: u32 = 1100;
@@ -763,7 +762,6 @@ const EMPTY_PROJECTED: Projected = Projected {
 static mut SCRATCH: [Projected; MAX_VERTS] = [EMPTY_PROJECTED; MAX_VERTS];
 static mut MODEL_SCRATCH: [Projected; MAX_MODEL_VERTS] = [EMPTY_PROJECTED; MAX_MODEL_VERTS];
 static mut WEAPON_CACHE_FRAME: usize = usize::MAX;
-static mut WEAPON_CACHE_OFF: [i32; 3] = [i32::MIN, 0, 0];
 static mut WEAPON_CACHE_VERTS: usize = 0;
 static mut WEAPON_CACHE_SCALE: u16 = 0;
 static mut WEAPON_TRI_CACHE: [TriTexturedGouraud; MAX_WEAPON_CACHE_TRIS] =
@@ -799,8 +797,8 @@ static mut PVS_FACE_INDEX: [u16; MAX_FACES] = [0; MAX_FACES];
 static mut PVS_FACE_NEXT: [u16; MAX_FACES] = [PVS_LINK_END; MAX_FACES];
 static mut PVS_FACE_REC: [PvsFaceRec; MAX_PVS_FACE_RECS] = [EMPTY_PVS_FACE_REC; MAX_PVS_FACE_RECS];
 static mut PVS_FACE_COUNT: usize = 0;
-static mut PVS_FACE_MARK: [u16; MAX_FACES] = [0; MAX_FACES];
-static mut PVS_FACE_MARK_TOKEN: u16 = 1;
+static mut PVS_FACE_MARK: [u8; MAX_FACES] = [0; MAX_FACES];
+static mut PVS_FACE_MARK_TOKEN: u8 = 1;
 static mut PVS_GROUP_FIRST: [u16; MAX_FACE_GROUPS] = [PVS_LINK_END; MAX_FACE_GROUPS];
 static mut PVS_GROUP_FACE: [u16; MAX_FACE_GROUPS] = [PVS_LINK_END; MAX_FACE_GROUPS];
 static mut PVS_GROUP_ACTIVE: [u16; MAX_FACE_GROUPS] = [0; MAX_FACE_GROUPS];
@@ -813,8 +811,6 @@ static mut PVS_TRI_REF_COUNT: usize = 0;
 static mut PVS_ENTS: [u16; MAX_ENTS] = [0; MAX_ENTS];
 static mut PVS_ENT_COUNT: usize = 0;
 static mut PVS_CAM_LEAF: i32 = -1;
-static mut DRAW_FACE_MARK: [u16; MAX_FACES] = [0; MAX_FACES];
-static mut DRAW_FACE_MARK_TOKEN: u16 = 1;
 static mut VERT_FRAME: [u16; MAX_VERTS] = [0; MAX_VERTS]; // project-once-per-frame cache marker
 const EMPTY_ENT: map::Ent = map::Ent {
     submodel: 0,
@@ -997,14 +993,47 @@ static mut PROP_HIT_FLASH: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_DEATH_START: [u16; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_OCC_VIS: [u8; MAX_PROPS] = [1; MAX_PROPS]; // staggered occlusion verdicts
 static mut PROP_DORMANT: [u8; MAX_PROPS] = [0; MAX_PROPS]; // monstermaker stock awaiting a fire
-static mut PROP_SPRITE_VIS: [u8; MAX_PROPS] = [0; MAX_PROPS]; // sprite billboard shown (1) or hidden until fired (0)
 static mut PROP_LOGIC_LINK: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS];
+static mut SPRITE_COUNT: usize = 0;
+static mut SPRITE_VISIBLE: [u32; SPRITE_STATE_WORDS] = [0; SPRITE_STATE_WORDS];
+static mut SPRITE_REMOVED: [u32; SPRITE_STATE_WORDS] = [0; SPRITE_STATE_WORDS];
+static mut SPRITE_STARTED: [u16; MAX_SPRITE_INSTANCES] = [0; MAX_SPRITE_INSTANCES];
 static mut NAV_QUEUE: [u8; MAX_NAV_NODES] = [0; MAX_NAV_NODES];
 static mut NAV_PREV: [u8; MAX_NAV_NODES] = [NAV_NODE_NONE; MAX_NAV_NODES];
 static mut IMPACT_MARKS: [ImpactMark; MAX_IMPACT_MARKS] = [EMPTY_IMPACT_MARK; MAX_IMPACT_MARKS];
 static mut IMPACT_MARK_CURSOR: usize = 0;
 static mut CLIP_CV: [render::CVert; 4] = [render::EMPTY_CV; 4]; // near-clip scratch (reused)
 static mut CLIP_SV: [render::SVert; 8] = [render::EMPTY_SV; 8]; // guard-clip scratch (reused)
+
+#[inline]
+unsafe fn sprite_is_visible(i: usize) -> bool {
+    i < SPRITE_COUNT
+        && SPRITE_REMOVED[i >> 5] & (1 << (i & 31)) == 0
+        && SPRITE_VISIBLE[i >> 5] & (1 << (i & 31)) != 0
+}
+
+#[inline]
+unsafe fn sprite_set_visible(i: usize, visible: bool, now: u16) {
+    if i >= SPRITE_COUNT || SPRITE_REMOVED[i >> 5] & (1 << (i & 31)) != 0 {
+        return;
+    }
+    let mask = 1u32 << (i & 31);
+    if visible {
+        SPRITE_VISIBLE[i >> 5] |= mask;
+        SPRITE_STARTED[i] = now;
+    } else {
+        SPRITE_VISIBLE[i >> 5] &= !mask;
+    }
+}
+
+#[inline]
+unsafe fn sprite_remove(i: usize) {
+    if i < SPRITE_COUNT {
+        let mask = 1u32 << (i & 31);
+        SPRITE_VISIBLE[i >> 5] &= !mask;
+        SPRITE_REMOVED[i >> 5] |= mask;
+    }
+}
 
 // ---- DEBUG: crosshair triangle pick (find the world tri under screen centre) ----
 // Toggle DEBUG_XHAIR. Each frame the nearest world triangle containing the screen
@@ -1459,27 +1488,131 @@ fn tram_path_pos(m: &Map, seg: usize, seg_dist: i32) -> [i32; 3] {
     ]
 }
 
-/// The tram's facing yaw for its current segment RELATIVE to its parked
-/// (segment-0) heading -- 0 at the start, growing as the track curves. Drives
-/// both the car's world rotation and the ride camera so the two stay locked.
-fn tram_rel_yaw(m: &Map, seg: usize) -> u16 {
-    if m.n_way < 3 {
+/// Heading of path segment `i` in q12 (world X,Z).
+fn tram_seg_heading(m: &Map, i: usize) -> u16 {
+    let a = m.waypoint(i);
+    let b = m.waypoint(i + 1);
+    atan2_q12(b[2] - a[2], b[0] - a[0])
+}
+
+/// Continuous travel yaw RELATIVE to the parked (segment-0) heading. Within a
+/// segment it is that segment's heading; over the last TRAM_TURN_BLEND units
+/// it eases into the next segment's, so the car sweeps through bends instead
+/// of snapping at each waypoint. Drives the render, the collision hull, the
+/// rider carry, and the ride camera -- all four stay locked to one function.
+fn tram_travel_yaw(m: &Map, seg: usize, seg_dist: i32) -> u16 {
+    if m.n_way < 2 {
         return 0;
     }
-    let seg_yaw = |i: usize| -> u16 {
-        let a = m.waypoint(i);
-        let b = m.waypoint(i + 1);
-        atan2_q12(b[2] - a[2], b[0] - a[0]) // world (X,Z) heading
-    };
-    seg_yaw(seg.min(m.n_way - 2)).wrapping_sub(seg_yaw(0)) & 0xFFF
+    let last = m.n_way - 2;
+    let s = seg.min(last);
+    let mut yaw = tram_seg_heading(m, s);
+    if s < last {
+        let len = seg_len(m.waypoint(s), m.waypoint(s + 1));
+        let blend = (len / 2).min(TRAM_TURN_BLEND);
+        let into = seg_dist - (len - blend);
+        if blend > 0 && into > 0 {
+            let next = tram_seg_heading(m, s + 1);
+            let mut d = (next.wrapping_sub(yaw) & 0xFFF) as i32;
+            if d > 2048 {
+                d -= 4096;
+            }
+            yaw = ((yaw as i32 + d * into.min(blend) / blend) & 0xFFF) as u16;
+        }
+    }
+    yaw.wrapping_sub(tram_seg_heading(m, 0)) & 0xFFF
 }
 
-/// Car rotation matrix from the relative travel yaw (about world Y).
-fn tram_face_matrix(m: &Map, seg: usize) -> Mat3I16 {
-    Mat3I16::rotate_y(tram_rel_yaw(m, seg) >> 4)
+/// Car position including the synthetic approach leg a ride transfer may
+/// start on (`pre_left > 0`: between `pre_from` and waypoint 0 -- HL's
+/// transferred train drives toward its carried target track from wherever
+/// the landmark put it; the cooked chain only starts at that track).
+fn tram_pos_ext(
+    m: &Map,
+    seg: usize,
+    seg_dist: i32,
+    pre_from: [i32; 3],
+    pre_total: i32,
+    pre_left: i32,
+) -> [i32; 3] {
+    if pre_left > 0 && m.n_way > 0 {
+        let w = m.waypoint(0);
+        let f = (((pre_total - pre_left) << 12) / pre_total.max(1)).clamp(0, 4096);
+        [
+            pre_from[0] + ((w[0] - pre_from[0]) * f >> 12),
+            pre_from[1] + ((w[1] - pre_from[1]) * f >> 12),
+            pre_from[2] + ((w[2] - pre_from[2]) * f >> 12),
+        ]
+    } else {
+        tram_path_pos(m, seg, seg_dist)
+    }
 }
 
-fn tram_advance(m: &Map, seg: &mut usize, seg_dist: &mut i32, step: i32) -> bool {
+/// Travel yaw including the approach leg: the approach heading, easing to the
+/// chain's segment-0 heading (relative 0) over the last TRAM_TURN_BLEND units.
+fn tram_yaw_ext(
+    m: &Map,
+    seg: usize,
+    seg_dist: i32,
+    pre_from: [i32; 3],
+    pre_total: i32,
+    pre_left: i32,
+) -> u16 {
+    if pre_left > 0 && m.n_way >= 2 {
+        let w = m.waypoint(0);
+        let h = atan2_q12(w[2] - pre_from[2], w[0] - pre_from[0]);
+        let mut rel = (h.wrapping_sub(tram_seg_heading(m, 0)) & 0xFFF) as i32;
+        if rel > 2048 {
+            rel -= 4096;
+        }
+        // Ease across the WHOLE leg: a short blend window swings the car
+        // (and its hull walls) many degrees per tick, which physically
+        // ejects the rider through the doorway.
+        rel = rel * pre_left / pre_total.max(1);
+        ((rel + 4096) & 0xFFF) as u16
+    } else {
+        tram_travel_yaw(m, seg, seg_dist)
+    }
+}
+
+/// Nearest point on the tram path to `pos` as (segment, distance-into-segment).
+/// Ride transfer seats the arriving map's car where the landmark put the
+/// player. 16-sample projection per segment: no runtime i64 division (the
+/// known PSX-target miscompile), plenty of accuracy for seating a train.
+fn tram_seek_nearest(m: &Map, pos: [i32; 3]) -> (usize, i32) {
+    let (mut best_seg, mut best_dist) = (0usize, 0i32);
+    let mut best_d2 = i64::MAX;
+    if m.n_way < 2 {
+        return (0, 0);
+    }
+    for s in 0..m.n_way - 1 {
+        let a = m.waypoint(s);
+        let b = m.waypoint(s + 1);
+        let len = seg_len(a, b);
+        for k in 0..=16 {
+            let t = len * k / 16;
+            let p = [
+                a[0] + (b[0] - a[0]) * k / 16,
+                a[1] + (b[1] - a[1]) * k / 16,
+                a[2] + (b[2] - a[2]) * k / 16,
+            ];
+            let (dx, dy, dz) = (
+                (pos[0] - p[0]) as i64,
+                (pos[1] - p[1]) as i64,
+                (pos[2] - p[2]) as i64,
+            );
+            let d2 = dx * dx + dy * dy + dz * dz;
+            if d2 < best_d2 {
+                best_d2 = d2;
+                best_seg = s;
+                best_dist = t;
+            }
+        }
+    }
+    (best_seg, best_dist)
+}
+
+fn tram_advance(m: &Map, seg: &mut usize, seg_dist: &mut i32, step: i32, speed: &mut i32) -> bool {
     if step <= 0 || m.n_way < 2 {
         return false;
     }
@@ -1490,6 +1623,13 @@ fn tram_advance(m: &Map, seg: &mut usize, seg_dist: &mut i32, step: i32) -> bool
             rem -= len - *seg_dist;
             *seg += 1;
             *seg_dist = 0;
+            // Passing a path_track with a "speed" key changes the train's
+            // speed (CPathTrack, plats.cpp); 0 keeps the current one. c0a0
+            // is authored 200..400 u/s in sections.
+            let ws = m.way_speed(*seg);
+            if ws > 0 {
+                *speed = ws;
+            }
         } else {
             *seg_dist += rem;
             rem = 0;
@@ -1562,6 +1702,7 @@ struct RoomLaunch {
     reserve_ammo: u16,
     preserve_view: bool,
     riding: bool, // player was aboard a moving tracktrain at the transition
+    ride_seat: [i32; 3], // rider offset from the car pivot at the transition
 }
 
 #[derive(Clone, Copy)]
@@ -1584,9 +1725,11 @@ static mut CHANGE_REQUEST: RoomLaunch = RoomLaunch {
     reserve_ammo: GLOCK_START_RESERVE,
     preserve_view: false,
     riding: false,
+    ride_seat: [0; 3],
 };
 static mut CHANGE_REQUEST_ACTIVE: u8 = 0;
 static mut LOGIC_TRAM_RIDING: u8 = 0;
+static mut LOGIC_TRAM_SEAT: [i32; 3] = [0; 3]; // rider offset from the car pivot
 // env_shake: camera rattle. amplitude (world units) * remaining/duration decays.
 static mut SHAKE_TICKS: u16 = 0;
 static mut SHAKE_DUR: u16 = 1;
@@ -1733,6 +1876,7 @@ fn menu_launch(room_id: usize) -> RoomLaunch {
         reserve_ammo: GLOCK_START_RESERVE,
         preserve_view: false,
         riding: false,
+        ride_seat: [0; 3],
     }
 }
 
@@ -1775,7 +1919,8 @@ const SF_RELAY_FIREONCE: u16 = 1; // trigger_relay removes itself after firing o
 const SF_BREAK_TRIGGER_ONLY: u16 = 1; // func_breakable: immune to gunfire
 const TRIGGER_HURT_REPEAT_TICKS: u16 = 10;
 const TRAM_CARRY_RADIUS2: i32 = 384 * 384;
-const TRAM_CARRY_HEIGHT: i32 = 160;
+const TRAM_CARRY_HEIGHT: i32 = 224;
+const TRAM_TURN_BLEND: i32 = 96; // units before a waypoint over which the yaw eases
 
 #[inline]
 fn time_reached(now: u16, at: u16) -> bool {
@@ -2025,6 +2170,15 @@ unsafe fn logic_kill_targets(m: &Map, nlogic: usize, nents: usize, target: u16) 
         }
         pi += 1;
     }
+    // A killed sprite stays removed even if a later relay fires its name.
+    let nsp = m.n_sprites.min(MAX_SPRITE_INSTANCES);
+    let mut si = 0usize;
+    while si < nsp {
+        if m.sprite_prop(si).2 == target {
+            sprite_remove(si);
+        }
+        si += 1;
+    }
 }
 
 unsafe fn logic_landmark_origin_by_id(m: &Map, nlogic: usize, name_id: u16) -> Option<[i32; 3]> {
@@ -2098,7 +2252,18 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
         reserve_ammo: LOGIC_PLAYER_RESERVE_AMMO,
         preserve_view: true,
         riding: LOGIC_TRAM_RIDING != 0,
+        ride_seat: LOGIC_TRAM_SEAT,
     };
+    #[cfg(feature = "emulator-telemetry")]
+    debug_line(
+        "cl seat",
+        &[
+            ("sx=", LOGIC_TRAM_SEAT[0]),
+            ("sy=", LOGIC_TRAM_SEAT[1]),
+            ("sz=", LOGIC_TRAM_SEAT[2]),
+            ("riding=", (LOGIC_TRAM_RIDING != 0) as i32),
+        ],
+    );
     CHANGE_REQUEST_ACTIVE = 1;
 }
 
@@ -2236,17 +2401,20 @@ unsafe fn logic_fire_targets(
         }
         li += 1;
     }
-    // Toggled sprites: a fired target reveals a hidden env_sprite billboard.
-    let nprops = m.n_props.min(MAX_PROPS);
-    let mut pi = 0usize;
-    while pi < nprops {
-        if PROP_SPRITE_VIS[pi] == 0
-            && PROP_NAME[pi] == target
-            && (m.prop(pi).0 & SPRITE_PROP_BIT) != 0
-        {
-            PROP_SPRITE_VIS[pi] = 1;
+    // GoldSrc CSprite::Use honors explicit ON/OFF and TOGGLE, and restarts a
+    // one-shot animation whenever it turns on.
+    let nsp = m.n_sprites.min(MAX_SPRITE_INSTANCES);
+    let mut si = 0usize;
+    while si < nsp {
+        if m.sprite_prop(si).2 == target {
+            let visible = match use_type {
+                map::USE_OFF => false,
+                map::USE_ON => true,
+                _ => !sprite_is_visible(si),
+            };
+            sprite_set_visible(si, visible, now);
         }
-        pi += 1;
+        si += 1;
     }
 }
 
@@ -3480,6 +3648,30 @@ unsafe fn xhair_pick_pvs(m: &Map, nv: usize, frame: u16) {
 }
 
 /// DEBUG: append "label<value> " into `buf` at `*n` (saturating).
+
+/// Guest-debug-log a tag plus key=value pairs, out-of-line so the call sites
+/// in play() stay tiny (inlining these blew the MIPS PC16 branch range).
+#[cfg(feature = "emulator-telemetry")]
+#[inline(never)]
+fn debug_line(tag: &str, vals: &[(&str, i32)]) {
+    let mut buf = [0u8; 192];
+    let mut n = 0;
+    for &c in tag.as_bytes() {
+        if n < buf.len() {
+            buf[n] = c;
+            n += 1;
+        }
+    }
+    if n < buf.len() {
+        buf[n] = b' ';
+        n += 1;
+    }
+    for &(k, v) in vals {
+        append_kv(&mut buf, &mut n, k, v);
+    }
+    telemetry::debug_log(core::str::from_utf8(&buf[..n]).unwrap_or(tag));
+}
+
 fn append_kv(buf: &mut [u8], n: &mut usize, label: &str, v: i32) {
     let mut nb = [0u8; I32_DEC_MAX];
     for &c in label.as_bytes().iter().chain(i32_dec(&mut nb, v).as_bytes()) {
@@ -5052,23 +5244,28 @@ unsafe fn init_prop_state(m: &Map) {
         i += 1;
     }
 
+    let mut wi = 0usize;
+    while wi < SPRITE_STATE_WORDS {
+        SPRITE_VISIBLE[wi] = 0;
+        SPRITE_REMOVED[wi] = 0;
+        wi += 1;
+    }
+    SPRITE_COUNT = m.n_sprites.min(MAX_SPRITE_INSTANCES);
+    let mut si = 0usize;
+    while si < SPRITE_COUNT {
+        let packed = m.sprite_prop(si).3;
+        SPRITE_STARTED[si] = 0;
+        if packed & map::SPRITE_INITIAL_ON != 0 {
+            SPRITE_VISIBLE[si >> 5] |= 1u32 << (si & 31);
+        }
+        si += 1;
+    }
+
     PROP_COUNT = 0;
     let nprops = m.n_props.min(MAX_PROPS);
     let mut pi = 0usize;
     while pi < nprops {
         let (ty, org, yaw, leaf) = m.prop(pi);
-        // Sprite billboards (env_sprite/glow) ride the prop table with bit 0x2000
-        // set; they are drawn in their own pass (draw_billboard), not as models.
-        if ty & SPRITE_PROP_BIT != 0 {
-            // Sprites never enter the enemy/AI loops (PROP_ACTIVE stays 0). Their
-            // billboard visibility is a separate flag: START_ON sprites show from
-            // load, toggled ones (dormant bit) stay hidden until their name fires.
-            PROP_ACTIVE[pi] = 0;
-            PROP_SPRITE_VIS[pi] = if ty & PROP_DORMANT_BIT != 0 { 0 } else { 1 };
-            PROP_NAME[pi] = m.prop_name(pi);
-            pi += 1;
-            continue;
-        }
         let dead = ty & PROP_DEAD_BIT != 0; // authored corpse: death pose, no AI
         let dormant = ty & PROP_DORMANT_BIT != 0; // monstermaker stock
         let kind = (ty & PROP_TYPE_MASK) as u8;
@@ -7007,20 +7204,7 @@ fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
     }
 }
 
-unsafe fn next_draw_face_mark_token() -> u16 {
-    let next = DRAW_FACE_MARK_TOKEN.wrapping_add(1);
-    if next == 0 {
-        for mark in DRAW_FACE_MARK.iter_mut() {
-            *mark = 0;
-        }
-        DRAW_FACE_MARK_TOKEN = 1;
-    } else {
-        DRAW_FACE_MARK_TOKEN = next;
-    }
-    DRAW_FACE_MARK_TOKEN
-}
-
-unsafe fn next_pvs_face_mark_token() -> u16 {
+unsafe fn next_pvs_face_mark_token() -> u8 {
     let next = PVS_FACE_MARK_TOKEN.wrapping_add(1);
     if next == 0 {
         for mark in PVS_FACE_MARK.iter_mut() {
@@ -7183,7 +7367,7 @@ unsafe fn project_vert_fixed(m: &Map, i: usize) -> Projected {
         let wv = [v.x as i32, v.y as i32, v.z as i32];
         let vx = dot12(FIX_ROT.m[0], wv) + FIX_T[0];
         let vy = dot12(FIX_ROT.m[1], wv) + FIX_T[1];
-        let inv = (render::SOFT_H << 12) / z; // z >= 16: inv <= 40960
+        let inv = render::close_inv_q12(z); // z is in the exact 16..80 LUT band
         // |v*inv| fits i32 for |v| <= 32767; saturate like the GTE (+-1023).
         p.sx = (render::OFX + ((vx * inv) >> 12)).clamp(-1023, 1023) as i16;
         p.sy = (render::OFY + ((vy * inv) >> 12)).clamp(-1023, 1023) as i16;
@@ -8067,12 +8251,10 @@ unsafe fn emit_world_face(
     np: &mut usize,
     nq: &mut usize,
     counts: &mut WorldCounters,
-    draw_token: u16,
 ) {
-    if face >= m.n_faces || face >= MAX_FACES || DRAW_FACE_MARK[face] == draw_token {
+    if face >= m.n_faces || face >= MAX_FACES {
         return;
     }
-    DRAW_FACE_MARK[face] = draw_token;
     counts.surfaces_considered += 1;
 
     let (fnrm, fd) = m.face_plane(face);
@@ -8395,6 +8577,9 @@ const VM_CULL_POS: bool = true; // winding sign that is the backface
 const VM_TWO_SIDED_TEX: usize = 0; // GLOVED_sleeve: avoid punched gaps in the orange arm
 const VM_SHADE: u8 = 255;
 const VM_FRAME: usize = 0; // authored idle pose
+// 2 px per VM unit approximates H/Z at the viewmodel's representative depth
+// (160 / 80) while keeping the packet cache invariant under procedural motion.
+const VM_SCREEN_PX_PER_UNIT: i32 = 2;
 const SHOW_VIEWMODEL: bool = true;
 const ANIM_DIV: usize = 4; // game-frames per baked animation frame
 
@@ -8454,18 +8639,15 @@ fn draw_sky(m: &Map, yaw: u16, pitch: i16) {
     );
 }
 
-/// Draw the held weapon in view space (attached to the camera), flat-shaded, on
-/// Procedural viewmodel animation offset (right, down, depth in VM units) from
-/// weapon state -- no baked animation frames. Fire kicks the gun up + toward the
-/// camera, reload dips it down and out then back, idle adds a gentle sway.
-/// ponytail: a rigid-body transform of the static bind pose, not per-vertex
-/// weapon animation (which needs the frame bakes the VM RAM budget can't fit).
-fn viewmodel_offset(recoil: i32, reload_ticks: u8, reload_max: u8, phase: u32) -> [i32; 3] {
+/// Procedural viewmodel screen offset (right, down in VM units) from weapon
+/// state -- no baked animation frames. Fire kicks the gun up, reload dips it
+/// down and out then back, and idle adds a gentle sway. Keeping this a uniform
+/// screen translation lets the camera-locked packet cache remain valid.
+fn viewmodel_offset(recoil: i32, reload_ticks: u8, reload_max: u8, phase: u32) -> [i32; 2] {
     let sin = |p: u32| Mat3I16::rotate_z((p as u16) & 0xFF).m[1][0] as i32; // q12 sine
     let bob_x = (sin(phase.wrapping_mul(4)) * 3) >> 12;
     let bob_y = (sin(phase.wrapping_mul(8)) * 2) >> 12;
     let fire_up = -recoil; // up = negative "down"
-    let fire_back = -(recoil / 3); // toward the camera = less depth
     // Reload: a hump peaking mid-reload (reload_ticks counts down to 0).
     let (rl_down, rl_right) = if reload_max > 1 && reload_ticks > 0 {
         let elapsed = (reload_max - reload_ticks) as i32;
@@ -8474,17 +8656,16 @@ fn viewmodel_offset(recoil: i32, reload_ticks: u8, reload_max: u8, phase: u32) -
     } else {
         (0, 0)
     };
-    [bob_x + rl_right, fire_up + bob_y + rl_down, fire_back]
+    [bob_x + rl_right, fire_up + bob_y + rl_down]
 }
 
-/// top of the world. `vm_off` is the procedural animation offset over the
-/// source-authored origin.
+/// Draw the held weapon on top of the world. Procedural motion is applied later
+/// as a temporary GPU draw offset, so only authored frame/model changes rebuild
+/// this packet cache.
 unsafe fn draw_viewmodel(
-    packets: &mut PrimitivePacketArena<'_>,
     md: &Model,
     slots: &[TexSlot],
     frame: usize,
-    vm_off: [i32; 3], // procedural animation offset (right, down, depth in VM units)
     np: &mut usize,
 ) {
     if slots.is_empty() {
@@ -8494,16 +8675,15 @@ unsafe fn draw_viewmodel(
     let local_to_world = md.local_to_world_q12();
     let (s, scale_shift) = model_local_scale_and_shift(local_to_world);
     if WEAPON_CACHE_FRAME != frame
-        || WEAPON_CACHE_OFF != vm_off
         || WEAPON_CACHE_VERTS != nv
         || WEAPON_CACHE_SCALE != local_to_world
     {
         let r = viewmodel_rot();
         scene::load_rotation(&r);
         scene::load_translation(Vec3I32::new(
-            (VM_VIEW_SHIFT[0] + vm_off[0]) * s,
-            (VM_VIEW_SHIFT[1] + vm_off[1]) * s,
-            (VM_VIEW_SHIFT[2] + vm_off[2]) * s,
+            VM_VIEW_SHIFT[0] * s,
+            VM_VIEW_SHIFT[1] * s,
+            VM_VIEW_SHIFT[2] * s,
         ));
         let near_s = (NEAR as i32 * s) as u16;
         let verts = md.frame(frame);
@@ -8524,14 +8704,13 @@ unsafe fn draw_viewmodel(
             i += 1;
         }
         WEAPON_CACHE_FRAME = frame;
-        WEAPON_CACHE_OFF = vm_off;
         WEAPON_CACHE_VERTS = nv;
         WEAPON_CACHE_SCALE = local_to_world;
 
         WEAPON_TRI_COUNT = 0;
         // HMDL keeps texture groups in source order (sleeve/glove before gun).
         // The viewmodel is camera-locked, so cache the already-cullled packet
-        // stream until the authored frame or recoil offset changes.
+        // stream until the authored frame/model changes.
         for t in 0..md.n_tris {
             if WEAPON_TRI_COUNT >= MAX_WEAPON_CACHE_TRIS {
                 break;
@@ -8576,14 +8755,9 @@ unsafe fn draw_viewmodel(
     }
 
     for i in 0..WEAPON_TRI_COUNT {
-        let mut prim = EMPTY_TRI;
-        prim.copy_payload_from(&WEAPON_TRI_CACHE[i]);
-        let Some(packet) = packets.push(prim) else {
-            break;
-        };
         WEAPON_OT.add(
             WEAPON_TRI_OTZ[i] as usize,
-            packet,
+            &mut WEAPON_TRI_CACHE[i],
             TriTexturedGouraud::WORDS,
         );
         *np += 1;
@@ -8880,7 +9054,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     telemetry::debug_log("hl-psx: WORLD.PAK viewmodels loaded");
     unsafe {
         WEAPON_CACHE_FRAME = usize::MAX;
-        WEAPON_CACHE_OFF = [i32::MIN, 0, 0];
         WEAPON_CACHE_VERTS = 0;
         WEAPON_CACHE_SCALE = 0;
         WEAPON_TRI_COUNT = 0;
@@ -9036,7 +9209,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         MAX_VERTS
     };
 
-    let spawn_pos = if let Some(origin) = launch_landmark_origin(&m, nlogic, launch.landmark) {
+    let landmark_found = launch_landmark_origin(&m, nlogic, launch.landmark);
+    let spawn_pos = if let Some(origin) = landmark_found {
         telemetry::debug_log("hl-psx: spawning at landmark");
         [
             origin[0] + launch.landmark_offset[0],
@@ -9049,11 +9223,13 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         }
         m.spawn_pos
     };
-    // Ride transfer (Black Mesa Inbound): the player crossed the changelevel
-    // aboard a moving tracktrain. GoldSrc transfers the train entity itself
-    // (globalname intro_train); our per-map tram starts at its own first
-    // path_track, so re-seat the rider there and the ride continues.
-    let spawn_pos = if launch.riding && m.n_way > 0 && m.tram_submodel > 0 {
+    // Ride transfer (Black Mesa Inbound) WITHOUT a landmark: nothing anchors
+    // the arrival, so seat the rider at the track start. With a landmark the
+    // spawn above already puts the player where they left off, and the tram
+    // init below seeks the car to them (GoldSrc transfers the train entity
+    // itself via globalname; the landmark-relative seek is our equivalent).
+    let spawn_pos = if launch.riding && landmark_found.is_none() && m.n_way > 0 && m.tram_submodel > 0
+    {
         let w = m.waypoint(0);
         [w[0], w[1] + 70, w[2]]
     } else {
@@ -9139,27 +9315,110 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     let mut flashlight = false; // L3 toggles the HEV lamp
     let mut flash_prev = false; // rising-edge latch for the flashlight toggle
     let mut tram_active = false;
-    // The intro auto-ride runs at 3/4 of the authored max speed: HL decelerates at
-    // each path_track (which we don't cook), so the constant max felt too fast.
-    // ponytail: faithful pacing needs per-path_track speeds; this is the MVP trim.
-    let mut tram_speed = (m.tram_speed.max(0) * 3) / 4;
+    // Authored speed; path_track "speed" keys re-pace it per section as the
+    // ride passes them (tram_advance), exactly like CPathTrack.
+    let mut tram_speed = m.tram_speed.max(0);
     let mut tram_player_attached = false;
     let mut tram_seg = 0usize;
     let mut prev_tram_yaw = 0u16; // last tram travel yaw, to feed the camera the per-frame delta
     let mut tram_seg_dist = 0i32;
     let mut ride_off = [0i32; 3];
+    // Ride-transfer approach leg: the car may arrive BEFORE the new map's
+    // chain starts (HL's transferred train drives toward its carried target
+    // track). While pre_left > 0 the car runs pre_from -> waypoint 0.
+    let mut tram_pre_from = [0i32; 3];
+    let mut tram_pre_total = 0i32;
+    let mut tram_pre_left = 0i32;
+    let mut tram_yaw_render: u16 = 0; // last tick's travel yaw, for the render
     if launch.riding && m.n_way > 0 && m.tram_submodel > 0 {
         tram_active = true; // ride carried across the changelevel
         tram_player_attached = true;
+        // The car arrives exactly where the rider's seat offset says it is
+        // (carried across the changelevel). If that spot is on this map's
+        // chain, continue from there; otherwise drive the approach leg.
+        // Clamp the carried seat into the car interior: the descent can leave
+        // the rider sagged below the floor (no pitch on our car yet), and an
+        // out-of-body seat re-ejects them on arrival. The snap happens behind
+        // the loading screen.
+        let seat = [
+            launch.ride_seat[0].clamp(-120, 120),
+            launch.ride_seat[1].clamp(30, 70),
+            launch.ride_seat[2].clamp(-120, 120),
+        ];
+        let car = [
+            player.pos[0] - seat[0],
+            player.pos[1] - seat[1],
+            player.pos[2] - seat[2],
+        ];
+        player.pos = [car[0] + seat[0], car[1] + seat[1], car[2] + seat[2]];
+        let (s, d) = tram_seek_nearest(&m, car);
+        let on_path = tram_path_pos(&m, s, d);
+        if dist2_3(car, on_path) <= TRAM_CARRY_RADIUS2 {
+            tram_seg = s;
+            tram_seg_dist = d;
+        } else {
+            tram_pre_from = car;
+            tram_pre_total = seg_len(car, wp0).max(1);
+            tram_pre_left = tram_pre_total;
+        }
+        let tp = tram_pos_ext(
+            &m,
+            tram_seg,
+            tram_seg_dist,
+            tram_pre_from,
+            tram_pre_total,
+            tram_pre_left,
+        );
+        ride_off = [tp[0] - wp0[0], tp[1] - wp0[1], tp[2] - wp0[2]];
+        tram_yaw_render = prev_tram_yaw; // set below
+        prev_tram_yaw = tram_yaw_ext(
+            &m,
+            tram_seg,
+            tram_seg_dist,
+            tram_pre_from,
+            tram_pre_total,
+            tram_pre_left,
+        );
+        #[cfg(feature = "emulator-telemetry")]
+        debug_line(
+            "tram arrive",
+            &[
+                ("seg=", tram_seg as i32),
+                ("dist=", tram_seg_dist),
+                ("pre=", tram_pre_left),
+                ("nway=", m.n_way as i32),
+                ("spd=", tram_speed),
+                ("py=", player.pos[1]),
+                ("sx=", launch.ride_seat[0]),
+                ("sy=", launch.ride_seat[1]),
+                ("sz=", launch.ride_seat[2]),
+                ("cx=", car[0]),
+                ("cz=", car[2]),
+            ],
+        );
     }
     unsafe {
         if let Some((use_type, speed)) = logic_take_tracktrain_command() {
-            let started = tram_apply_command(use_type, speed, &mut tram_active, &mut tram_speed);
-            if started {
-                tram_player_attached = tram_should_carry_player(
-                    player.pos,
-                    tram_path_pos(&m, tram_seg, tram_seg_dist),
-                );
+            // A transferred ride arrives ALREADY moving (GoldSrc carries the
+            // train's state); the map's own trigger_auto start toggle is for
+            // fresh visits and would park the arriving car / later drive it
+            // off riderless. Ignore stop-ish commands during the approach.
+            if !(tram_pre_left > 0 && tram_active) {
+                let started =
+                    tram_apply_command(use_type, speed, &mut tram_active, &mut tram_speed);
+                if started {
+                    tram_player_attached = tram_should_carry_player(
+                        player.pos,
+                        tram_pos_ext(
+                            &m,
+                            tram_seg,
+                            tram_seg_dist,
+                            tram_pre_from,
+                            tram_pre_total,
+                            tram_pre_left,
+                        ),
+                    );
+                }
             }
         }
     }
@@ -9167,7 +9426,14 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     telemetry::stage_begin(telemetry::stage::ROOM_SURFACE_CACHE);
     unsafe {
         let initial_eye = [player.pos[0], player.pos[1] + VIEW_HEIGHT, player.pos[2]];
-        let initial_train_hint = tram_path_pos(&m, tram_seg, tram_seg_dist);
+        let initial_train_hint = tram_pos_ext(
+            &m,
+            tram_seg,
+            tram_seg_dist,
+            tram_pre_from,
+            tram_pre_total,
+            tram_pre_left,
+        );
         let initial_leaf = recover_camera_leaf(&m, initial_eye, player.pos, initial_train_hint);
         if valid_pvs_leaf(&m, initial_leaf) {
             rebuild_pvs_cache(&m, initial_leaf, nents);
@@ -9183,15 +9449,12 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         }
 
         WEAPON_OT.clear();
-        let mut warm_packets = PrimitivePacketArena::new(&mut PRIMITIVE_PACKETS);
         let mut warm_np = 0usize;
         let (vm_model, vm_slot, vm_n) = viewmodel_for(weapon.current);
         draw_viewmodel(
-            &mut warm_packets,
             &vm_model,
             &VM_SLOTS[vm_slot..vm_slot + vm_n],
             VM_FRAME,
-            [0, 0, 0], // warmup pass (discarded): neutral pose
             &mut warm_np,
         );
         WEAPON_OT.clear();
@@ -9224,8 +9487,49 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         while vblank_reached(interrupts::vblank_count(), next_sim_vblank) {
             telemetry::frame_begin(telemetry_frame);
             #[cfg(feature = "emulator-telemetry")]
-            if telemetry_frame & 255 == 0 {
+            if telemetry_frame & 63 == 0 {
                 stackprobe::report();
+                let cp = tram_pos_ext(
+                    &m,
+                    tram_seg,
+                    tram_seg_dist,
+                    tram_pre_from,
+                    tram_pre_total,
+                    tram_pre_left,
+                );
+                let cp2 = tram_pos_ext(
+                    &m,
+                    tram_seg,
+                    tram_seg_dist,
+                    tram_pre_from,
+                    tram_pre_total,
+                    tram_pre_left,
+                );
+                let w0 = m.waypoint(0);
+                debug_line(
+                    "tram",
+                    &[
+                        ("cx2=", cp2[0]),
+                        ("w0x=", w0[0]),
+                        ("w0z=", w0[2]),
+                        ("seg=", tram_seg as i32),
+                        ("dist=", tram_seg_dist),
+                        ("act=", tram_active as i32),
+                        ("att=", tram_player_attached as i32),
+                        ("spd=", tram_speed),
+                        ("px=", player.pos[0]),
+                        ("py=", player.pos[1]),
+                        ("pz=", player.pos[2]),
+                        ("cx=", cp[0]),
+                        ("cy=", cp[1]),
+                        ("cz=", cp[2]),
+                        ("pfx=", tram_pre_from[0]),
+                        ("pfy=", tram_pre_from[1]),
+                        ("pfz=", tram_pre_from[2]),
+                        ("ptot=", tram_pre_total),
+                        ("plft=", tram_pre_left),
+                    ],
+                );
             }
             telemetry::task_begin(telemetry::task::FIXED_UPDATE);
             telemetry::stage_begin(telemetry::stage::UPDATE);
@@ -9389,6 +9693,19 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 LOGIC_PLAYER_YAW = yaw;
                 LOGIC_PLAYER_PITCH = pitch;
                 LOGIC_TRAM_RIDING = (tram_active && tram_player_attached) as u8;
+                let car_now = tram_pos_ext(
+                    &m,
+                    tram_seg,
+                    tram_seg_dist,
+                    tram_pre_from,
+                    tram_pre_total,
+                    tram_pre_left,
+                );
+                LOGIC_TRAM_SEAT = [
+                    player.pos[0] - car_now[0],
+                    player.pos[1] - car_now[1],
+                    player.pos[2] - car_now[2],
+                ];
                 LOGIC_PLAYER_HEALTH = health;
                 LOGIC_PLAYER_SUIT = if suit_equipped { 1 } else { 0 };
                 LOGIC_PLAYER_ARMOR = armor;
@@ -9398,27 +9715,73 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 logic_pre_tick(&m, nlogic, nents, sim_frame_no as u16);
             }
 
-            let prev_train_pos = tram_path_pos(&m, tram_seg, tram_seg_dist);
+            let prev_train_pos = tram_pos_ext(
+                &m,
+                tram_seg,
+                tram_seg_dist,
+                tram_pre_from,
+                tram_pre_total,
+                tram_pre_left,
+            );
             unsafe {
                 if let Some((use_type, speed)) = logic_take_tracktrain_command() {
-                    let started =
-                        tram_apply_command(use_type, speed, &mut tram_active, &mut tram_speed);
-                    if !tram_active {
-                        tram_player_attached = false;
-                    } else if started && !tram_player_attached {
-                        tram_player_attached = tram_should_carry_player(player.pos, prev_train_pos);
+                    // Same transfer guard as the arrival: the approach leg
+                    // ignores the map's auto-start toggle (see above).
+                    if !(tram_pre_left > 0 && tram_active) {
+                        let started =
+                            tram_apply_command(use_type, speed, &mut tram_active, &mut tram_speed);
+                        if !tram_active {
+                            tram_player_attached = false;
+                        } else if started && !tram_player_attached {
+                            tram_player_attached =
+                                tram_should_carry_player(player.pos, prev_train_pos);
+                        }
                     }
                 }
             }
             let prev_ride_off = ride_off;
             if tram_active {
-                let still_moving = tram_advance(
+                // Consume the ride-transfer approach leg first; leftover step
+                // rolls straight onto the cooked chain.
+                let mut step = tram_step_for_speed(tram_speed);
+                if tram_pre_left > 0 {
+                    let used = step.min(tram_pre_left);
+                    tram_pre_left -= used;
+                    step -= used;
+                }
+                let seg_before = tram_seg;
+                let still_moving = if step > 0 {
+                    tram_advance(&m, &mut tram_seg, &mut tram_seg_dist, step, &mut tram_speed)
+                } else {
+                    true
+                };
+                // path_track fire-on-pass ("message"): the TRAIN's passage
+                // fires these in HL -- the intro ride's changelevels and
+                // station scripts hang off them.
+                for w in (seg_before + 1)..=tram_seg {
+                    let pid = m.way_pass(w);
+                    if pid != 0 {
+                        unsafe {
+                            logic_fire_targets(
+                                &m,
+                                nlogic,
+                                nents,
+                                pid,
+                                map::USE_TOGGLE,
+                                sim_frame_no as u16,
+                                0,
+                            );
+                        }
+                    }
+                }
+                let train_pos = tram_pos_ext(
                     &m,
-                    &mut tram_seg,
-                    &mut tram_seg_dist,
-                    tram_step_for_speed(tram_speed),
+                    tram_seg,
+                    tram_seg_dist,
+                    tram_pre_from,
+                    tram_pre_total,
+                    tram_pre_left,
                 );
-                let train_pos = tram_path_pos(&m, tram_seg, tram_seg_dist);
                 ride_off = [
                     train_pos[0] - wp0[0],
                     train_pos[1] - wp0[1],
@@ -9427,45 +9790,115 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 if !still_moving {
                     tram_active = false;
                     tram_speed = 0;
-                }
-                // Carry the camera through the curves: add the tram's per-frame
-                // travel-yaw delta to the view yaw so the world turns as the car
-                // banks into a bend (free-look from the stick stays layered on top).
-                if tram_player_attached {
-                    let ty = tram_rel_yaw(&m, tram_seg);
-                    let mut d = (ty.wrapping_sub(prev_tram_yaw) & 0xFFF) as i32;
-                    if d > 2048 {
-                        d -= 4096;
-                    }
-                    yaw = (((yaw as i32) + d) & 0xFFF) as u16;
-                    prev_tram_yaw = ty;
+                    telemetry::debug_log("hl-psx: tram path end");
                 }
             }
+            let tram_yaw_now = tram_yaw_ext(
+                &m,
+                tram_seg,
+                tram_seg_dist,
+                tram_pre_from,
+                tram_pre_total,
+                tram_pre_left,
+            );
+            tram_yaw_render = tram_yaw_now;
             let tram_delta = [
                 ride_off[0] - prev_ride_off[0],
                 ride_off[1] - prev_ride_off[1],
                 ride_off[2] - prev_ride_off[2],
             ];
             if tram_delta != [0, 0, 0] {
-                let train_pos = tram_path_pos(&m, tram_seg, tram_seg_dist);
+                let train_pos = tram_pos_ext(
+                &m,
+                tram_seg,
+                tram_seg_dist,
+                tram_pre_from,
+                tram_pre_total,
+                tram_pre_left,
+            );
                 if !tram_player_attached && tram_should_carry_player(player.pos, prev_train_pos) {
                     tram_player_attached = true;
-                    prev_tram_yaw = tram_rel_yaw(&m, tram_seg); // no yaw jump on attach
+                    prev_tram_yaw = tram_yaw_now; // no yaw jump on attach
                 }
                 if tram_player_attached {
                     if tram_should_carry_player(player.pos, prev_train_pos)
                         || tram_should_carry_player(player.pos, train_pos)
                     {
-                        player.pos = [
-                            player.pos[0] + tram_delta[0],
-                            player.pos[1] + tram_delta[1],
-                            player.pos[2] + tram_delta[2],
+                        // Carry the camera through the bend: the continuous
+                        // travel-yaw delta turns the view with the car
+                        // (free-look from the stick stays layered on top).
+                        let mut d =
+                            (tram_yaw_now.wrapping_sub(prev_tram_yaw) & 0xFFF) as i32;
+                        if d > 2048 {
+                            d -= 4096;
+                        }
+                        yaw = (((yaw as i32) + d) & 0xFFF) as u16;
+                        // Sweep the rider about the car's pivot by the SAME
+                        // quantized step the render + hull rotate by, then
+                        // carry the translation -- standing riders stay put
+                        // on the car through curves instead of drifting into
+                        // the (rotated) walls.
+                        // Re-seat in car-local space: rotate the rider's
+                        // seat with the car EXACTLY (fresh full-angle rotation
+                        // each tick -- composing quantized per-tick steps
+                        // drifted the seat out through the side wall over a
+                        // long bend), and clamp it into the interior. The
+                        // floor clamp also covers steep sections (the car
+                        // cannot pitch yet, so riders otherwise sag out
+                        // underneath and onto the rails).
+                        let rm = Mat3I16::rotate_y(tram_yaw_now >> 4);
+                        let dw = [
+                            player.pos[0] - prev_train_pos[0],
+                            player.pos[1] - prev_train_pos[1],
+                            player.pos[2] - prev_train_pos[2],
                         ];
+                        let pm = Mat3I16::rotate_y(prev_tram_yaw >> 4);
+                        // world -> previous car space (transpose rows of pm)
+                        let lo = [
+                            (pm.m[0][0] as i32 * dw[0] + pm.m[2][0] as i32 * dw[2]) >> 12,
+                            dw[1],
+                            (pm.m[0][2] as i32 * dw[0] + pm.m[2][2] as i32 * dw[2]) >> 12,
+                        ];
+                        // interior of the car (local bbox x +-144, z +-75,
+                        // floor ~ +30): riders stay seated, never wall-clipped
+                        let lo = [
+                            lo[0].clamp(-130, 130),
+                            lo[1].clamp(30, 100),
+                            lo[2].clamp(-62, 62),
+                        ];
+                        // previous-local seat -> new car pose in world
+                        player.pos = [
+                            train_pos[0] + dot12(rm.m[0], lo),
+                            train_pos[1] + lo[1],
+                            train_pos[2] + dot12(rm.m[2], lo),
+                        ];
+                        // The car supports the rider: without this, gravity
+                        // accumulates whenever the probe misses the receding
+                        // floor (descents/bends) and the eventual catch
+                        // registers as a lethal fall (land_impact) -- the
+                        // faithful fall damage was killing tram passengers.
+                        if player.vel[1] < 0 {
+                            player.vel[1] = 0;
+                        }
+                        player.land_impact = 0;
                     } else {
                         tram_player_attached = false;
+                        #[cfg(feature = "emulator-telemetry")]
+                        debug_line(
+                            "tram detach",
+                            &[
+                                ("px=", player.pos[0]),
+                                ("py=", player.pos[1]),
+                                ("pz=", player.pos[2]),
+                                ("cx=", train_pos[0]),
+                                ("cy=", train_pos[1]),
+                                ("cz=", train_pos[2]),
+                            ],
+                        );
                     }
                 }
             }
+            prev_tram_yaw = tram_yaw_now;
 
             unsafe { tick_trains(&m) };
             // Collision movers: every brush entity at its current offset (doors at
@@ -9490,6 +9923,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                             center: e.center,
                             radius: ENT_RADIUS[ei],
                             id: ei as i32,
+                            rc: 4096,
+                            rs: 0,
                         };
                         nmov += 1;
                     }
@@ -9500,6 +9935,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         ride_off[1] + m.tram_base[1],
                         ride_off[2] + m.tram_base[2],
                     ];
+                    // The tram's hull is entity-local (off = its world pivot),
+                    // so hand phys the SAME quantized rotation the render uses:
+                    // the car's collision turns with its walls through bends.
+                    let rm = Mat3I16::rotate_y(tram_yaw_now >> 4);
                     movers[nmov] = phys::Mover {
                         head: m.tram_head,
                         head0: 0, // no cooked point hull; hitscans use the inflated one
@@ -9507,6 +9946,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         center: [0, 0, 0],
                         radius: 0,
                         id: -2, // the tram has its own carry path
+                        rc: rm.m[0][0] as i32,
+                        rs: rm.m[0][2] as i32,
                     };
                     nmov += 1;
                 }
@@ -9718,6 +10159,19 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 LOGIC_PLAYER_YAW = yaw;
                 LOGIC_PLAYER_PITCH = pitch;
                 LOGIC_TRAM_RIDING = (tram_active && tram_player_attached) as u8;
+                let car_now = tram_pos_ext(
+                    &m,
+                    tram_seg,
+                    tram_seg_dist,
+                    tram_pre_from,
+                    tram_pre_total,
+                    tram_pre_left,
+                );
+                LOGIC_TRAM_SEAT = [
+                    player.pos[0] - car_now[0],
+                    player.pos[1] - car_now[1],
+                    player.pos[2] - car_now[2],
+                ];
                 LOGIC_PLAYER_HEALTH = health;
                 LOGIC_PLAYER_SUIT = if suit_equipped { 1 } else { 0 };
                 LOGIC_PLAYER_ARMOR = armor;
@@ -9731,7 +10185,14 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 } else if want_use {
                     // Standing on the tracktrain + use = drive it (On A Rail);
                     // otherwise aim-use doors/buttons/chargers/tanks.
-                    let train_pos = tram_path_pos(&m, tram_seg, tram_seg_dist);
+                    let train_pos = tram_pos_ext(
+                        &m,
+                        tram_seg,
+                        tram_seg_dist,
+                        tram_pre_from,
+                        tram_pre_total,
+                        tram_pre_left,
+                    );
                     if m.tram_submodel > 0 && tram_should_carry_player(player.pos, train_pos) {
                         TRACKTRAIN_CMD_ACTIVE = 1;
                         TRACKTRAIN_CMD_USE_TYPE = map::USE_TOGGLE;
@@ -10040,7 +10501,14 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             // one backface test per cooked plane group, cheap face-bounds
             // rejection, then emits triangle fans with PS1 quad pairing.
             telemetry::stage_begin(telemetry::stage::ROOM);
-            let train_hint = tram_path_pos(&m, tram_seg, tram_seg_dist);
+            let train_hint = tram_pos_ext(
+                &m,
+                tram_seg,
+                tram_seg_dist,
+                tram_pre_from,
+                tram_pre_total,
+                tram_pre_left,
+            );
             let mut cam_leaf = recover_camera_leaf(&m, eye, player.pos, train_hint);
             let mut have_pvs = valid_pvs_leaf(&m, cam_leaf);
             let mut reused_last_pvs = false;
@@ -10383,7 +10851,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     if reused_last_pvs { 1 } else { 0 },
                 );
             } else {
-                let draw_token = next_draw_face_mark_token();
                 let mut room_counts = WorldCounters::new();
                 let mut face = 0usize;
                 telemetry::stage_begin(telemetry::stage::ROOM_SURFACE_DRAW);
@@ -10400,7 +10867,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         &mut np,
                         &mut nq,
                         &mut room_counts,
-                        draw_token,
                     );
                     face += 1;
                 }
@@ -10594,7 +11060,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 model_draws = model_draws.saturating_add(1);
                 EMIT_BLEND = 0; // opaque: don't inherit a glass ent's blend
                 EMIT_WAVE = false;
-                let mr = rot.mul(&tram_face_matrix(&m, tram_seg));
+                let tram_rot = Mat3I16::rotate_y(tram_yaw_render >> 4);
+                let mr = rot.mul(&tram_rot);
                 let train_pos = [
                     wp0[0] + ride_off[0],
                     wp0[1] + ride_off[1],
@@ -10610,6 +11077,28 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     m.tram_base[1] - wp0[1],
                     m.tram_base[2] - wp0[2],
                 ];
+                // Face planes are authored in tram-local space. Transform the
+                // eye there once, then reject back-facing car surfaces before
+                // their vertices reach the expensive near-projection path.
+                let eye_from_train = [
+                    eye[0] - train_pos[0],
+                    eye[1] - train_pos[1],
+                    eye[2] - train_pos[2],
+                ];
+                let tram_eye = [
+                    dot12(
+                        [tram_rot.m[0][0], tram_rot.m[1][0], tram_rot.m[2][0]],
+                        eye_from_train,
+                    ) - tbw[0],
+                    dot12(
+                        [tram_rot.m[0][1], tram_rot.m[1][1], tram_rot.m[2][1]],
+                        eye_from_train,
+                    ) - tbw[1],
+                    dot12(
+                        [tram_rot.m[0][2], tram_rot.m[1][2], tram_rot.m[2][2]],
+                        eye_from_train,
+                    ) - tbw[2],
+                ];
                 let et = [
                     dot12(rot.m[0], tp_e) + dot12(mr.m[0], tbw),
                     dot12(rot.m[1], tp_e) + dot12(mr.m[1], tbw),
@@ -10622,6 +11111,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 let (ff, nf) = m.submodel(m.tram_submodel);
                 for f in ff..ff + nf {
                     let (first, cnt) = m.face_tris(f);
+                    let (fnrm, fd) = m.face_plane(f);
+                    if dot12(fnrm, tram_eye) <= fd {
+                        model_culled_tris = model_culled_tris.saturating_add(cnt as u32);
+                        continue;
+                    }
                     emit_submodel_face(&mut packets, &m, f, first, cnt, nv, submodel_token, &mut np);
                 }
                 scene::load_rotation(&rot); // restore the world transform for later draws
@@ -10767,20 +11261,19 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             }
             telemetry::stage_end(telemetry::stage::TEXTURED_MODEL_JOINTS);
             // ---- Sprite billboards (env_sprite / env_glow) ----
-            // These ride the prop table with SPRITE_PROP_BIT set (their `yaw`
-            // field carries the world half-size). Drawn as camera-facing additive
-            // quads; frustum-culled by project_world_point + PVS by leaf.
+            // Independent compact records keep dense effects from consuming actor
+            // slots. Drawn as camera-facing additive quads and PVS-culled by leaf.
             {
-                let nsp = m.n_props.min(MAX_PROPS);
+                let nsp = SPRITE_COUNT;
                 let mut si = 0usize;
                 while si < nsp {
-                    let pi = si;
-                    let (ty, org, half, leaf) = m.prop(si);
+                    let i = si;
+                    let (org, leaf, _name, packed) = m.sprite_prop(i);
                     si += 1;
-                    if ty & SPRITE_PROP_BIT == 0 || PROP_SPRITE_VIS[pi] == 0 {
-                        continue; // not a sprite, or a toggled sprite still hidden
+                    if !sprite_is_visible(i) {
+                        continue;
                     }
-                    let id = (ty & SPRITE_PROP_ID_MASK) as usize;
+                    let id = (packed & map::SPRITE_ID_MASK) as usize;
                     if id >= sprite::n_sprites() {
                         continue;
                     }
@@ -10788,12 +11281,31 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         continue;
                     }
                     let d = sprite::def(id);
+                    let nframes = d.n_frames.max(1) as usize;
+                    let age = (sim_frame_no as u16).wrapping_sub(SPRITE_STARTED[i]) as usize;
+                    let mut sprite_frame = age / 2; // GoldSrc sprites default to ~10 fps
+                    if packed & map::SPRITE_ONCE != 0 && sprite_frame >= nframes {
+                        sprite_set_visible(i, false, sim_frame_no as u16);
+                        continue;
+                    }
+                    sprite_frame %= nframes;
+                    let half = (packed >> 6) as i32;
                     let hh = if d.base_w > 0 {
                         half * d.base_h as i32 / d.base_w as i32
                     } else {
                         half
                     };
-                    draw_billboard(&mut packets, &mut np, org, half, hh, id, 0, &rot, base_t);
+                    draw_billboard(
+                        &mut packets,
+                        &mut np,
+                        org,
+                        half,
+                        hh,
+                        id,
+                        sprite_frame,
+                        &rot,
+                        base_t,
+                    );
                 }
             }
             // Animated explosion fireballs (weapon blasts + env_explosion), same
@@ -10824,6 +11336,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
 
             let world_prims = np;
             let world_quads = nq;
+            let mut viewmodel_screen_off = [0i16; 2];
             if SHOW_VIEWMODEL && weapon.any_weapon() {
                 telemetry::stage_begin(telemetry::stage::EQUIPMENT);
                 let (vm_model, vm_slot, vm_n) = viewmodel_for(weapon.current);
@@ -10833,12 +11346,14 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     weapon.def().reload,
                     sim_frame_no,
                 );
+                viewmodel_screen_off = [
+                    (vm_off[0] * VM_SCREEN_PX_PER_UNIT) as i16,
+                    (vm_off[1] * VM_SCREEN_PX_PER_UNIT) as i16,
+                ];
                 draw_viewmodel(
-                    &mut packets,
                     &vm_model,
                     &VM_SLOTS[vm_slot..vm_slot + vm_n],
                     VM_FRAME,
-                    vm_off,
                     &mut np,
                 );
                 telemetry::stage_end(telemetry::stage::EQUIPMENT);
@@ -10951,7 +11466,17 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             FX_OT.submit();
             telemetry::stage_end(telemetry::stage::WORLD_FLUSH);
             telemetry::stage_begin(telemetry::stage::OT_SUBMIT);
+            let draw_y = fb.buffer_y(fb.drawing) as i16;
+            if viewmodel_screen_off != [0; 2] {
+                gpu::set_draw_offset(
+                    viewmodel_screen_off[0],
+                    draw_y.saturating_add(viewmodel_screen_off[1]),
+                );
+            }
             WEAPON_OT.submit();
+            if viewmodel_screen_off != [0; 2] {
+                gpu::set_draw_offset(0, draw_y);
+            }
             HUD_OT.submit();
             telemetry::stage_end(telemetry::stage::OT_SUBMIT);
             // Beams (env_beam / env_laser): flat additive lines from start to end,
@@ -11033,7 +11558,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 }
                 XHAIR_DUMP_PREV = dump_now;
             }
-            telemetry::counter(telemetry::counter::TRI_PRIMITIVES, (np + nq) as u32);
+            // Arena pressure excludes the separately resident viewmodel packet
+            // cache; pair with packets.remaining() so used+free is invariant.
+            telemetry::counter(telemetry::counter::TRI_PRIMITIVES, packets.len() as u32);
             telemetry::counter(
                 telemetry::counter::WORLD_COMMANDS,
                 (world_prims + world_quads) as u32,

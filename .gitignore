@@ -50,3 +50,7 @@ tools/*.sh
 
 # ---- OS / editor cruft ----
 .DS_Store
+
+# Scratch/junk at the repo root (never committed)
+/tmp/
+__pycache__/

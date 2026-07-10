@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Model-pool roster audit: simulate `stream_map_models` (game/src/main.rs) for
-every MAPLIST map against the cooked chunks, and fail if any combat or pickup
-type would drop. This is the guardrail for trimming MODEL_POOL_WORDS /
+every MAPLIST map against the cooked chunks, and fail if any placed model type
+would drop. This is the guardrail for trimming MODEL_POOL_WORDS /
 POOL_FACE_CAP -- run it after `make models` or `make rooms`.
 
 Mirrors the runtime exactly: 3-tier passes (combat > pickups > decor), the
@@ -21,7 +21,7 @@ ROOMS, PACK = ROOT / "data/rooms", ROOT / "data/modelpack"
 MODEL_WORDS = 92_416     # build.rs MODEL_POOL_WORDS
 VM_POOL_WORDS = 20_224   # main.rs VM_POOL_WORDS
 MAX_LOADED = 22          # main.rs MAX_LOADED_MODELS
-FACE_CAP = 6_912         # main.rs POOL_FACE_CAP
+FACE_CAP = 7_936         # main.rs POOL_FACE_CAP
 TEX_SLOTS = 240          # main.rs POOL_TEX_SLOTS
 N_TYPES = 52             # main.rs N_MODEL_TYPES
 
@@ -118,24 +118,23 @@ def main():
     for mi, name in enumerate(maps):
         d = (ROOMS / f"room_{mi * 2}.psxc").read_bytes()
         po = u32(d, 36)
+        prop_counts = u32(d, po)
+        n_actors = prop_counts & 0xFFFF if prop_counts & 0x8000_0000 else prop_counts
         order, seen = [], set()
-        for i in range(u32(d, po)):
+        for i in range(n_actors):
             ty = u16(d, po + 4 + i * 24) & 0x3FFF  # PROP_TYPE_MASK
             if ty < N_TYPES and ty not in seen:
                 seen.add(ty)
                 order.append(ty)
         res, drop, gw, face, tex, slots, peak = simulate(chunks, order)
         stats.append((name, gw, peak, face, tex, slots))
-        bad = [(t, p) for t, p, _ in drop if p < 2]
-        decor = [t for t, p, _ in drop if p == 2]
+        bad = [(t, p) for t, p, _ in drop]
         if bad:
             fails.append(name)
-            print(f"  {name}: COMBAT/PICKUP DROP {[NAME[t] for t, _ in bad]}")
-        elif decor:
-            print(f"  {name}: decor drop {[NAME[t] for t in decor]} (accepted)")
+            print(f"  {name}: MODEL DROP {[NAME[t] for t, _ in bad]}")
     mx = {k: max(stats, key=lambda s: s[i]) for i, k in
           enumerate(("_", "resident", "peak", "faces", "tex", "slots")) if i}
-    print(f"maps audited: {len(maps)}; combat/pickup failures: {len(fails)} {fails}")
+    print(f"maps audited: {len(maps)}; model-drop failures: {len(fails)} {fails}")
     print(f"peak pool   : {mx['peak'][0]} {mx['peak'][2]} of {MODEL_WORDS} words "
           f"({(MODEL_WORDS - mx['peak'][2]) * 4} B slack)")
     print(f"peak faces  : {mx['faces'][0]} {mx['faces'][3]} of {FACE_CAP}")

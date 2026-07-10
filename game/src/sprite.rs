@@ -14,7 +14,11 @@ use crate::vram::{upload_tex_blob_raw, TexSlot, EMPTY_SLOT};
 
 pub const SPRITE_CHUNK_BASE: u32 = 3200; // WORLD.PAK chunk = base + map_index
 pub const MAX_SPRITES: usize = 12; // unique sprites per map (matches the cook cap)
-pub const MAX_SPRITE_FRAMES: usize = 14; // total frame textures per map
+// The full 96-map campaign peaks at 49 sampled frame textures (c2a5e).
+// Keeping the old 14-frame table silently dropped tail sprites on 38 maps;
+// clearing only the previous map's live prefix keeps the linked image within
+// 8 bytes of the 14-frame build, and the audited VRAM peak still fits.
+pub const MAX_SPRITE_FRAMES: usize = 49; // total frame textures per map
 
 #[derive(Copy, Clone)]
 pub struct SpriteDef {
@@ -40,6 +44,7 @@ pub const EMPTY_DEF: SpriteDef = SpriteDef {
 static mut SPRITE_DEFS: [SpriteDef; MAX_SPRITES] = [EMPTY_DEF; MAX_SPRITES];
 static mut SPRITE_SLOTS: [TexSlot; MAX_SPRITE_FRAMES] = [EMPTY_SLOT; MAX_SPRITE_FRAMES];
 static mut N_SPRITES: usize = 0;
+static mut N_SPRITE_FRAMES: usize = 0;
 
 // Resident explosion sprite (s_explod.spr): its own single-sprite pack, loaded
 // every map into these dedicated slots (weapon blasts happen anywhere, not just
@@ -52,12 +57,24 @@ static mut EXPL_SLOTS: [TexSlot; MAX_EXPL_FRAMES] = [EMPTY_SLOT; MAX_EXPL_FRAMES
 
 /// Reset the sprite tables (called each map load before the pack streams).
 pub unsafe fn reset() {
+    // Clear only the live prefix from the previous map. Runtime bounds keep the
+    // MIPS build as two compact loops; iterating whole fixed arrays caused LLVM
+    // to unroll the 49-slot clear and spent more code RAM than the slots did.
+    let old_sprites = N_SPRITES;
+    let old_frames = N_SPRITE_FRAMES;
     N_SPRITES = 0;
-    for d in SPRITE_DEFS.iter_mut() {
-        *d = EMPTY_DEF;
+    N_SPRITE_FRAMES = 0;
+    let defs = core::ptr::addr_of_mut!(SPRITE_DEFS).cast::<SpriteDef>();
+    let mut i = 0;
+    while i < old_sprites {
+        defs.add(i).write(EMPTY_DEF);
+        i += 1;
     }
-    for s in SPRITE_SLOTS.iter_mut() {
-        *s = EMPTY_SLOT;
+    let slots = core::ptr::addr_of_mut!(SPRITE_SLOTS).cast::<TexSlot>();
+    i = 0;
+    while i < old_frames {
+        slots.add(i).write(EMPTY_SLOT);
+        i += 1;
     }
 }
 
@@ -90,6 +107,7 @@ pub unsafe fn load_pack(data: &[u8]) {
         off += 12;
     }
     N_SPRITES = n_sprites;
+    N_SPRITE_FRAMES = n_frames;
     // The frame section is exactly the upload_tex_blob layout.
     let slots = core::ptr::addr_of_mut!(SPRITE_SLOTS) as *mut TexSlot;
     upload_tex_blob_raw(&data[off..], n_frames, slots, MAX_SPRITE_FRAMES);

@@ -14,6 +14,15 @@ pub const OFX: i32 = 160;
 pub const OFY: i32 = 120;
 /// Software projection focal length (matches `set_projection_plane(H_PROJ)`).
 pub const SOFT_H: i32 = 160;
+const CLOSE_INV_Q12: [u16; (SOFT_H / 2 - NEAR_Z) as usize] = {
+    let mut out = [0u16; (SOFT_H / 2 - NEAR_Z) as usize];
+    let mut i = 0;
+    while i < out.len() {
+        out[i] = ((SOFT_H << 12) / (NEAR_Z + i as i32)) as u16;
+        i += 1;
+    }
+    out
+};
 /// Guard band: keep screen coords within the GPU's span limits (±1023 / 511).
 const GX0: i32 = -340;
 const GX1: i32 = 660;
@@ -52,6 +61,11 @@ pub const EMPTY_SV: SVert = SVert {
     rgb: (0, 0, 0),
     uv: (0, 0),
 };
+
+#[inline(always)]
+pub fn close_inv_q12(z: i32) -> i32 {
+    CLOSE_INV_Q12[(z - NEAR_Z) as usize] as i32
+}
 
 #[inline]
 fn t_q12(num: i32, den: i32) -> i32 {
@@ -121,7 +135,11 @@ pub fn mid_cv(a: &CVert, b: &CVert) -> CVert {
 /// `H/z` in Q12 shared by X and Y).
 pub fn project_soft(cv: &CVert) -> SVert {
     let z = cv.v[2].max(NEAR_Z);
-    let inv = (SOFT_H << 12) / z; // Q12 H/z
+    let inv = if z < SOFT_H / 2 {
+        close_inv_q12(z)
+    } else {
+        (SOFT_H << 12) / z
+    }; // Q12 H/z
     SVert {
         x: ((cv.v[0] * inv) >> 12) + OFX,
         y: ((cv.v[1] * inv) >> 12) + OFY,

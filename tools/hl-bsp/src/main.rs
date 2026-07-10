@@ -2073,10 +2073,28 @@ fn load_sprites_manifest() -> std::collections::HashMap<(u16, String), (u16, u16
     out
 }
 
-/// env_sprite / env_glow / cycler_sprite -> prop records with SPRITE_PROP_BIT
-/// (0x2000 | local_id); the `yaw` field carries the world half-size. Only
-/// always-on sprites (env_glow, or env_sprite with the START_ON spawnflag) are
-/// emitted -- toggled sprites need logic wiring (a later pass).
+/// Intern a placed sprite's targetname into the shared logic-name table. Sprite
+/// records are written before the table itself, so appending here preserves all
+/// already-assigned logic ids and makes STARTON sprites targetable too.
+fn intern_logic_name(names: &mut Vec<String>, name: &str) -> Result<u16, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(0);
+    }
+    if let Some(pos) = names.iter().position(|n| n == name) {
+        return Ok((pos + 1) as u16);
+    }
+    if names.len() >= u16::MAX as usize {
+        return Err("too many logic names while interning sprites".to_string());
+    }
+    names.push(name.to_string());
+    Ok(names.len() as u16)
+}
+
+/// env_sprite / env_glow / cycler_sprite -> compact 12-byte SpriteRec payloads:
+/// `(origin i16[3], leaf i16, targetname u16, packed u16)`. GoldSrc starts an
+/// env_sprite OFF only when it is named and lacks STARTON; unnamed sprites are
+/// visible. Packed bits: id 0..3, initial-on 4, once 5, half-width 6..15.
 fn collect_sprite_props(
     ents: &[u8],
     nodes: &[u8],
@@ -2084,11 +2102,12 @@ fn collect_sprite_props(
     scale: f32,
     map_idx: u16,
     sprites: &std::collections::HashMap<(u16, String), (u16, u16, u16)>,
-    logic_names: &[String],
-) -> Vec<(u16, [i32; 3], i32, i16, u16)> {
-    const SPRITE_PROP_BIT: u16 = 0x2000;
-    const DORMANT_BIT: u16 = 0x4000; // toggled sprite: hidden until its target fires
+    logic_names: &mut Vec<String>,
+) -> Result<Vec<([i16; 3], i16, u16, u16)>, String> {
     const SF_SPRITE_STARTON: u16 = 1;
+    const SF_SPRITE_ONCE: u16 = 2;
+    const PACK_INITIAL_ON: u16 = 1 << 4;
+    const PACK_ONCE: u16 = 1 << 5;
     let s = entity_text(ents);
     let mut out = Vec::new();
     for block in s.split('{') {
@@ -2097,50 +2116,53 @@ fn collect_sprite_props(
             continue;
         }
         let sf = parse_spawnflags(block);
-        let start_on = cls != "env_sprite" || (sf & SF_SPRITE_STARTON) != 0;
-        // A toggled env_sprite (no START_ON) is emitted hidden, but only if a
-        // trigger can reveal it -- resolve its targetname to a logic-name id.
-        let name = if start_on {
-            0u16
-        } else {
-            let tn = ent_value(block, "targetname").unwrap_or("").trim();
-            match logic_names.iter().position(|n| n == tn) {
-                Some(p) => (p + 1).min(u16::MAX as usize) as u16,
-                None => continue, // nothing fires it -> it would never appear
-            }
-        };
+        let targetname = ent_value(block, "targetname").unwrap_or("").trim();
+        let name = intern_logic_name(logic_names, targetname)?;
+        let start_on = cls != "env_sprite"
+            || targetname.is_empty()
+            || (sf & SF_SPRITE_STARTON) != 0;
         let model = ent_value(block, "model").unwrap_or("");
         let base = model
             .rsplit(|c| c == '/' || c == '\\')
             .next()
             .unwrap_or("")
             .to_ascii_lowercase();
-        let Some(&(lid, bw, _bh)) = sprites.get(&(map_idx, base)) else {
+        let Some(&(lid, bw, _bh)) = sprites.get(&(map_idx, base.clone())) else {
             continue;
         };
+        if lid >= 16 {
+            return Err(format!("sprite local id {lid} exceeds packed 4-bit limit"));
+        }
         let Some(origin_hl) = ent_value(block, "origin").and_then(parse_vec3) else {
             continue;
         };
         let origin = to_world(origin_hl, scale);
+        if origin.iter().any(|&v| !(i16::MIN as i32..=i16::MAX as i32).contains(&v)) {
+            return Err(format!("sprite {base} origin {origin:?} exceeds i16"));
+        }
         let ent_scale = parse_f32_key(block, "scale", 1.0).max(0.05);
         // World half-width = native px/2 * entity scale * (HL->world scale).
         let half = ((bw as f32 * 0.5 * ent_scale) * scale)
             .round()
-            .clamp(1.0, 4000.0) as i32;
-        let type_word = if start_on {
-            SPRITE_PROP_BIT | (lid & 0x1FFF)
-        } else {
-            DORMANT_BIT | SPRITE_PROP_BIT | (lid & 0x1FFF)
-        };
+            .max(1.0) as i32;
+        if half > 1023 {
+            return Err(format!("sprite {base} half-width {half} exceeds packed 10-bit limit"));
+        }
+        let mut packed = lid | ((half as u16) << 6);
+        if start_on {
+            packed |= PACK_INITIAL_ON;
+        }
+        if sf & SF_SPRITE_ONCE != 0 {
+            packed |= PACK_ONCE;
+        }
         out.push((
-            type_word,
-            origin,
-            half,
+            [origin[0] as i16, origin[1] as i16, origin[2] as i16],
             point_leaf(origin_hl, nodes, planes),
             name,
+            packed,
         ));
     }
-    out
+    Ok(out)
 }
 
 /// Is this ambient_generic message a speech voice line (vs looping ambience)?
@@ -3758,9 +3780,17 @@ fn collect_logic_entities(
 
 /// The `func_tracktrain` (tram) submodel, speed, and its `path_track` waypoint
 /// chain (world coords). Returns `(0, 0, [])` if the map has no tram.
-fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) {
+fn collect_tram(
+    ents: &[u8],
+    scale: f32,
+) -> (u16, i32, Vec<([i32; 3], u16, String)>, [i32; 3]) {
     let s = entity_text(ents);
-    let mut tracks: Vec<(String, [f32; 3], String)> = Vec::new();
+    // (targetname, origin, target, speed, message): a nonzero path_track
+    // "speed" key changes the train's speed as it passes (CPathTrack), and
+    // "message" is HL's fire-on-pass -- c0a0b's ride fires the multi_manager
+    // that fires the c0a0c changelevel this way (the trigger brush itself is
+    // a rider-unreachable plate).
+    let mut tracks: Vec<(String, [f32; 3], String, u16, String)> = Vec::new();
     // func_trackchange junctions: (toptrack, bottomtrack) = the START names of
     // the two path chains the platform swaps between.
     let mut trackchanges: Vec<(String, String)> = Vec::new();
@@ -3774,6 +3804,11 @@ fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) 
                     .and_then(parse_vec3)
                     .unwrap_or([0.0; 3]),
                 ent_value(block, "target").unwrap_or("").to_string(),
+                ent_value(block, "speed")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .map(|v| (v / scale).max(0.0) as u16)
+                    .unwrap_or(0),
+                ent_value(block, "message").unwrap_or("").to_string(),
             )),
             Some("func_trackchange") | Some("func_trackautochange") => trackchanges.push((
                 ent_value(block, "toptrack").unwrap_or("").to_string(),
@@ -3816,7 +3851,7 @@ fn collect_tram(ents: &[u8], scale: f32) -> (u16, i32, Vec<[i32; 3]>, [i32; 3]) 
         while !name.is_empty() && way.len() < 256 {
             match tracks.iter().find(|t| t.0 == name) {
                 Some(t) => {
-                    way.push(to_world(t.1, scale));
+                    way.push((to_world(t.1, scale), t.3, t.4.clone()));
                     last_found = name.clone();
                     name = t.2.clone();
                 }
@@ -4876,7 +4911,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         .and_then(|maps| maps.parent())
         .map(parse_titles)
         .unwrap_or_default();
-    let logic = collect_logic_entities(
+    let mut logic = collect_logic_entities(
         bsp.lump(LUMP_ENTITIES),
         models,
         &brush_by_submodel,
@@ -5238,7 +5273,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // The tram brush verts are stored relative to the entity origin (bbox near
     // 0); HL renders them at verts + pev->origin, which the path drives. So the
     // render/collision offset is the full path position = wp0 + ride_off.
-    let tram_base = if !way.is_empty() { way[0] } else { [0, 0, 0] };
+    let tram_base = if !way.is_empty() { way[0].0 } else { [0, 0, 0] };
     o.extend_from_slice(&tram_model.to_le_bytes());
     o.extend_from_slice(&(way.len() as u16).to_le_bytes());
     o.extend_from_slice(&tram_speed.to_le_bytes());
@@ -5246,33 +5281,66 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     for c in &tram_base {
         o.extend_from_slice(&c.to_le_bytes());
     }
-    for w in &way {
+    for (w, _, _) in &way {
         for c in w {
             o.extend_from_slice(&c.to_le_bytes());
         }
     }
+    // Per-waypoint speed changes (path_track "speed", u/s; 0 = keep) so the
+    // ride paces itself as authored instead of one constant.
+    for (_, spd, _) in &way {
+        o.extend_from_slice(&spd.to_le_bytes());
+    }
+    // Per-waypoint fire-on-pass (path_track "message") as logic-name ids
+    // (0 = none). Only already-interned names resolve -- a message that
+    // targets nothing cooked fires nothing, same as HL.
+    for (_, _, msg) in &way {
+        let id = if msg.is_empty() {
+            0u16
+        } else {
+            logic
+                .names
+                .iter()
+                .position(|n| n == msg)
+                .map(|p| (p + 1).min(u16::MAX as usize) as u16)
+                .unwrap_or(0)
+        };
+        o.extend_from_slice(&id.to_le_bytes());
+    }
 
-    // ---- Props/items (point-entity model placements) ----
-    // u32 n_props | (u16 type, i16 leaf, i32 origin[3], i32 yaw) × n_props
+    // ---- Actors/items + independent sprite placements ----
+    // u32 split counts | ActorRec[24B] | SpriteRec[12B].
     let prop_off = o.len() as u32;
     o[prop_off_pos..prop_off_pos + 4].copy_from_slice(&prop_off.to_le_bytes());
-    let mut props = collect_props(bsp.lump(LUMP_ENTITIES), nodes, planes, scale, &logic.names);
-    // env_sprite / env_glow billboards ride the same table with SPRITE_PROP_BIT.
+    let props = collect_props(bsp.lump(LUMP_ENTITIES), nodes, planes, scale, &logic.names);
+    // Sprite billboards have a separate compact capacity: dense Xen maps no
+    // longer evict actors merely because both happened to share MAX_PROPS.
     let sprite_map_idx: u16 = std::env::var("MAP_INDEX")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     let sprites_manifest = load_sprites_manifest();
-    props.extend(collect_sprite_props(
+    let sprite_props = collect_sprite_props(
         bsp.lump(LUMP_ENTITIES),
         nodes,
         planes,
         scale,
         sprite_map_idx,
         &sprites_manifest,
-        &logic.names,
-    ));
-    o.extend_from_slice(&(props.len() as u32).to_le_bytes());
+        &mut logic.names,
+    )?;
+    if props.len() > u16::MAX as usize || sprite_props.len() > 0x7FFF {
+        return Err(format!(
+            "{}: prop section overflow ({} actors, {} sprites)",
+            path,
+            props.len(),
+            sprite_props.len()
+        ));
+    }
+    let prop_counts = 0x8000_0000u32
+        | ((sprite_props.len() as u32) << 16)
+        | props.len() as u32;
+    o.extend_from_slice(&prop_counts.to_le_bytes());
     // PropRec 24B: ty u16 | leaf i16 | org i32[3] | yaw i32 | name u16 | pad u16
     // (name = logic-name id of the monster's targetname; scripts find it).
     for (ty, org, yaw, leaf, name) in &props {
@@ -5284,6 +5352,15 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         o.extend_from_slice(&yaw.to_le_bytes());
         o.extend_from_slice(&name.to_le_bytes());
         o.extend_from_slice(&0u16.to_le_bytes());
+    }
+    // SpriteRec 12B: origin i16[3] | leaf i16 | targetname u16 | packed u16.
+    for (org, leaf, name, packed) in &sprite_props {
+        for c in org {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        o.extend_from_slice(&leaf.to_le_bytes());
+        o.extend_from_slice(&name.to_le_bytes());
+        o.extend_from_slice(&packed.to_le_bytes());
     }
     while o.len() % 4 != 0 {
         o.push(0);
@@ -5410,7 +5487,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         None
     };
     println!(
-        "cooked {} -> {}{}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes kept/{} stripped from {}, {} ents, tram {} waypts, {} props, {} nav nodes/{} links, {} logic/{} aux/{} names, {} texs kept/{} stripped from {}, spawn [{},{},{}], {} KB resident{})",
+        "cooked {} -> {}{}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes kept/{} stripped from {}, {} ents, tram {} waypts, {} actors/{} sprites, {} nav nodes/{} links, {} logic/{} aux/{} names, {} texs kept/{} stripped from {}, spawn [{},{},{}], {} KB resident{})",
         path,
         out,
         tex_out.map(|p| format!(" + {}", p)).unwrap_or_default(),
@@ -5424,6 +5501,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         ents.len(),
         way.len(),
         props.len(),
+        sprite_props.len(),
         nav.len(),
         nav_links.len(),
         logic.ents.len(),
@@ -6549,6 +6627,31 @@ mod tests {
         assert_eq!(logic.ents[0].speed, 300);
         assert_eq!(logic.ents[0].arg0, 50);
         assert_eq!(logic.ents[0].arg1, 12);
+    }
+
+    #[test]
+    fn cooks_sprite_initial_toggle_and_once_state() {
+        let ents = br#"
+        { "classname" "env_sprite" "model" "sprites/test.spr" "origin" "1 2 3" }
+        { "classname" "env_sprite" "model" "sprites/test.spr" "origin" "4 5 6" "targetname" "lamp" }
+        { "classname" "env_sprite" "model" "sprites/test.spr" "origin" "7 8 9" "targetname" "lamp" "spawnflags" "1" }
+        { "classname" "env_sprite" "model" "sprites/test.spr" "origin" "10 11 12" "targetname" "flash" "spawnflags" "3" }
+        "#;
+        let mut manifest = std::collections::HashMap::new();
+        manifest.insert((0u16, "test.spr".to_string()), (3u16, 20u16, 10u16));
+        let mut names = Vec::new();
+        let sprites = collect_sprite_props(ents, &[], &[], 1.0, 0, &manifest, &mut names)
+            .expect("sprite cook");
+
+        assert_eq!(sprites.len(), 4);
+        assert_ne!(sprites[0].3 & (1 << 4), 0, "unnamed sprites start on");
+        assert_eq!(sprites[1].3 & (1 << 4), 0, "named sprite starts off");
+        assert_ne!(sprites[2].3 & (1 << 4), 0, "STARTON is visible");
+        assert_ne!(sprites[3].3 & (1 << 5), 0, "ONCE is preserved");
+        assert_eq!(sprites[0].3 & 0xF, 3);
+        assert_eq!(sprites[0].3 >> 6, 10);
+        assert_eq!(names, vec!["lamp".to_string(), "flash".to_string()]);
+        assert_eq!(sprites[1].2, sprites[2].2, "same targetname shares id");
     }
 
     #[test]

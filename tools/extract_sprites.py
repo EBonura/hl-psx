@@ -30,7 +30,10 @@ import sys
 SPR_MAX = 64          # cap each frame to <=64px, power-of-2 (VRAM atlas requires it)
 MAX_FRAMES = 6        # explosion sheets: sample up to 6 frames
 MAX_SPR_PER_MAP = 12  # per-map unique sprite cap
-MAX_FRAMES_PER_MAP = 14  # atlas budget: sprites append after models per map
+# Full-campaign census: c2a5e is the maximum at 49 sampled frames; no map
+# references more than 10 valid sprites. The previous 14-frame cap stopped at
+# the first overflowing sprite and silently omitted tail FX on 38/96 maps.
+MAX_FRAMES_PER_MAP = 49
 CHUNK_BASE = 3200     # WORLD.PAK chunk id = CHUNK_BASE + map_index
 
 

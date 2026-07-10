@@ -178,7 +178,9 @@ fn trace(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> Trace {
     tr
 }
 
-/// A moving/brush collider: a submodel clip hull at a world offset.
+/// A moving/brush collider: a submodel clip hull at a world offset, optionally
+/// rotated about that offset (the tram: its verts/hull are entity-local, so
+/// `off` is both its world position and its rotation pivot).
 #[derive(Clone, Copy)]
 pub struct Mover {
     pub head: i32,
@@ -187,6 +189,33 @@ pub struct Mover {
     pub center: [i32; 3],
     pub radius: i32,
     pub id: i32, // owning brush-entity index (traces report it on hit)
+    // World yaw about `off` as the render matrix's own q12 cos/sin (extracted
+    // from Mat3I16::rotate_y so hull and visual quantize identically).
+    // Identity = (4096, 0): the plain translated fast path.
+    pub rc: i32,
+    pub rs: i32,
+}
+
+/// Rotate a vector by the render's rotate_y(c, s): x' = c·x + s·z, z' = −s·x + c·z.
+#[inline]
+fn rot_y(p: [i32; 3], c: i32, s: i32) -> [i32; 3] {
+    [(c * p[0] + s * p[2]) >> 12, p[1], (-s * p[0] + c * p[2]) >> 12]
+}
+
+/// Inverse (transpose) of [`rot_y`]: world -> mover-local space.
+#[inline]
+fn rot_y_inv(p: [i32; 3], c: i32, s: i32) -> [i32; 3] {
+    [(c * p[0] - s * p[2]) >> 12, p[1], (s * p[0] + c * p[2]) >> 12]
+}
+
+#[inline]
+fn mover_local(mv: &Mover, p: [i32; 3]) -> [i32; 3] {
+    let d = [p[0] - mv.off[0], p[1] - mv.off[1], p[2] - mv.off[2]];
+    if mv.rs != 0 || mv.rc != 4096 {
+        rot_y_inv(d, mv.rc, mv.rs)
+    } else {
+        d
+    }
 }
 
 const SWIM_SPEED: i32 = 13; // water wishspeed = 0.8 * maxspeed = 256 u/s (pm_shared.c:1356)
@@ -201,6 +230,8 @@ pub const NO_MOVER: Mover = Mover {
     center: [0, 0, 0],
     radius: 0,
     id: -1,
+    rc: 4096,
+    rs: 0,
 };
 
 #[inline]
@@ -253,9 +284,8 @@ pub fn line_clear_movers_except(
         if !mover_may_touch_segment(mv, p1, p2) {
             continue;
         }
-        let o = mv.off;
-        let q1 = [p1[0] - o[0], p1[1] - o[1], p1[2] - o[2]];
-        let q2 = [p2[0] - o[0], p2[1] - o[1], p2[2] - o[2]];
+        let q1 = mover_local(mv, p1);
+        let q2 = mover_local(mv, p2);
         let t = trace(map, head, q1, q2);
         if !t.startsolid && t.frac < 4096 {
             return false;
@@ -337,9 +367,8 @@ fn trace_all(
         if !mover_may_touch_segment(mv, p1, p2) {
             continue;
         }
-        let o = mv.off;
-        let q1 = [p1[0] - o[0], p1[1] - o[1], p1[2] - o[2]];
-        let q2 = [p2[0] - o[0], p2[1] - o[1], p2[2] - o[2]];
+        let q1 = mover_local(mv, p1);
+        let q2 = mover_local(mv, p2);
         let t = trace(map, head, q1, q2);
         // NB: do NOT propagate a mover's startsolid. If the player ends up inside
         // a brush-entity hull (a non-solid func_illusionary, or slight
@@ -348,7 +377,11 @@ fn trace_all(
         // startsolid counts as truly stuck.
         if t.frac < best.frac {
             best.frac = t.frac;
-            best.normal = t.normal;
+            best.normal = if mv.rs != 0 || mv.rc != 4096 {
+                rot_y(t.normal, mv.rc, mv.rs) // impact normal back to world space
+            } else {
+                t.normal
+            };
             best.mover = mv.id;
         }
     }
