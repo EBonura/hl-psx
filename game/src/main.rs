@@ -875,8 +875,15 @@ const EMPTY_PVS_FACE_REC: PvsFaceRec = PvsFaceRec {
 };
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut PVS_LEAF_COUNT: usize = 0;
-static mut PVS_FACE_INDEX: [u16; MAX_FACES] = [0; MAX_FACES];
-static mut PVS_FACE_NEXT: [u16; MAX_FACES] = [PVS_LINK_END; MAX_FACES];
+// The live PVS uses u16 links. Four-byte alignment lets the unused suffix hold
+// native u32 GPU packet words without unaligned R3000 loads; the cache begins at
+// the next even link index, so the live representation and byte count are
+// unchanged.
+#[repr(C, align(4))]
+struct AlignedPvsFaceLinks([u16; MAX_FACES]);
+static mut PVS_FACE_INDEX: AlignedPvsFaceLinks = AlignedPvsFaceLinks([0; MAX_FACES]);
+static mut PVS_FACE_NEXT: AlignedPvsFaceLinks =
+    AlignedPvsFaceLinks([PVS_LINK_END; MAX_FACES]);
 static mut PVS_FACE_REC: [PvsFaceRec; MAX_PVS_FACE_RECS] = [EMPTY_PVS_FACE_REC; MAX_PVS_FACE_RECS];
 static mut PVS_FACE_COUNT: usize = 0;
 static mut PVS_FACE_MARK: [u8; MAX_FACES] = [0; MAX_FACES];
@@ -969,6 +976,219 @@ static mut WORLD_BAND_STATE: u8 = WORLD_BAND_NEEDS;
 // Gentle 128-frame sway cycle for liquid surfaces (+-4 texels; the GP0-E2
 // texture window wraps coordinates, so the byte add is always safe).
 const WAVE_TAB: [i8; 16] = [0, 2, 3, 4, 4, 4, 3, 2, 0, -2, -3, -4, -4, -4, -3, -2];
+
+// Exact one-view world packet cache. Static room packets are rebuilt into the
+// normal per-frame arena on a hit: this keeps packet addresses, arena pressure,
+// and same-OTZ tie ordering identical to a fresh render while skipping the
+// projection/cull/fan work. The payload borrows the aligned unused suffixes of
+// the two PVS face-link arrays; packet kind + OTZ grow down from the
+// otherwise-idle band-order tail. No second packet arena is reserved in RAM.
+const WORLD_PACKET_CACHE: bool = true;
+const WORLD_CACHE_NONE: u8 = 0;
+const WORLD_CACHE_BUILD: u8 = 1;
+const WORLD_CACHE_HIT: u8 = 2;
+const WORLD_CACHE_CANDIDATE_ARMED: u8 = 1;
+const WORLD_CACHE_CANDIDATE_REJECTED: u8 = 2;
+const WORLD_CACHE_QUAD_META: u16 = 0x8000;
+const WORLD_CACHE_PACKET_HALFWORDS: usize =
+    core::mem::size_of::<QuadTexturedGouraud>() / core::mem::size_of::<u16>();
+const _: () = assert!(
+    core::mem::size_of::<TriTexturedGouraud>() <= core::mem::size_of::<QuadTexturedGouraud>()
+);
+const _: () = assert!(core::mem::size_of::<TriTexturedGouraud>() % 4 == 0);
+const _: () = assert!(core::mem::size_of::<QuadTexturedGouraud>() % 4 == 0);
+const _: () = assert!(OT_LEN <= WORLD_CACHE_QUAD_META as usize);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct WorldPacketCacheKey {
+    leaf: i32,
+    rot: [[i16; 3]; 3],
+    base_t: [i32; 3],
+    eye: [i32; 3],
+    flashlight: bool,
+    wave_du: u8,
+    wave_dv: u8,
+    band_mode: u8,
+}
+
+impl WorldPacketCacheKey {
+    const EMPTY: Self = Self {
+        leaf: -1,
+        rot: [[0; 3]; 3],
+        base_t: [0; 3],
+        eye: [0; 3],
+        flashlight: false,
+        wave_du: 0,
+        wave_dv: 0,
+        band_mode: 0,
+    };
+
+    #[inline]
+    fn same_view(self, other: Self) -> bool {
+        self.leaf == other.leaf
+            && self.rot == other.rot
+            && self.base_t == other.base_t
+            && self.eye == other.eye
+            && self.flashlight == other.flashlight
+            && self.band_mode == other.band_mode
+    }
+}
+
+static mut WORLD_CACHE_KEY: WorldPacketCacheKey = WorldPacketCacheKey::EMPTY;
+static mut WORLD_CACHE_CANDIDATE_KEY: WorldPacketCacheKey = WorldPacketCacheKey::EMPTY;
+static mut WORLD_CACHE_VALID: bool = false;
+static mut WORLD_CACHE_BUILDING: bool = false;
+static mut WORLD_CACHE_OVERFLOW: bool = false;
+static mut WORLD_CACHE_CANDIDATE_STATE: u8 = 0;
+static mut WORLD_CACHE_COUNT: usize = 0;
+static mut WORLD_CACHE_BAND_PREFIX: usize = 0;
+static mut WORLD_CACHE_NP: u16 = 0;
+static mut WORLD_CACHE_NQ: u16 = 0;
+static mut WORLD_CACHE_EMIT_CALLS: u32 = 0;
+static mut WORLD_CACHE_BAND_STATE: u8 = 0;
+static mut WORLD_CACHE_EMIT_BLEND: u8 = 0;
+static mut WORLD_CACHE_EMIT_WAVE: bool = false;
+
+#[inline]
+unsafe fn invalidate_world_packet_cache() {
+    WORLD_CACHE_VALID = false;
+    WORLD_CACHE_BUILDING = false;
+    WORLD_CACHE_OVERFLOW = false;
+    WORLD_CACHE_CANDIDATE_STATE = 0;
+    WORLD_CACHE_COUNT = 0;
+}
+
+#[inline]
+unsafe fn world_cache_tail_start() -> usize {
+    (PVS_FACE_COUNT + 1) & !1
+}
+
+#[inline]
+unsafe fn world_cache_slots_per_link_array() -> usize {
+    MAX_FACES
+        .saturating_sub(world_cache_tail_start())
+        / WORLD_CACHE_PACKET_HALFWORDS
+}
+
+#[inline]
+unsafe fn world_cache_packet_ptr(packet_index: usize) -> *mut u32 {
+    let start = world_cache_tail_start();
+    let per_array = world_cache_slots_per_link_array();
+    if packet_index < per_array {
+        core::ptr::addr_of_mut!(PVS_FACE_INDEX.0)
+            .cast::<u16>()
+            .add(start + packet_index * WORLD_CACHE_PACKET_HALFWORDS)
+            .cast::<u32>()
+    } else {
+        core::ptr::addr_of_mut!(PVS_FACE_NEXT.0)
+            .cast::<u16>()
+            .add(start + (packet_index - per_array) * WORLD_CACHE_PACKET_HALFWORDS)
+            .cast::<u32>()
+    }
+}
+
+/// Copy a just-built packet before OT.add writes its DMA link into `tag`.
+#[inline]
+unsafe fn world_cache_capture_packet<T>(packet: *const T, otz: usize, quad: bool) {
+    if !WORLD_CACHE_BUILDING || WORLD_CACHE_OVERFLOW {
+        return;
+    }
+    let i = WORLD_CACHE_COUNT;
+    if i >= PVS_BAND_CAP || i >= world_cache_slots_per_link_array() * 2 {
+        WORLD_CACHE_OVERFLOW = true;
+        return;
+    }
+    let meta = PVS_BAND_CAP - 1 - i;
+    if meta < WORLD_CACHE_BAND_PREFIX {
+        WORLD_CACHE_OVERFLOW = true;
+        return;
+    }
+    let src = packet.cast::<u32>();
+    let words = core::mem::size_of::<T>() / core::mem::size_of::<u32>();
+    core::ptr::copy_nonoverlapping(src, world_cache_packet_ptr(i), words);
+    PVS_BAND_ORDER[meta] = (otz.min(OT_LEN - 1) as u16)
+        | if quad { WORLD_CACHE_QUAD_META } else { 0 };
+    WORLD_CACHE_COUNT = i + 1;
+}
+
+#[inline]
+unsafe fn prepare_world_packet_cache(key: WorldPacketCacheKey, band_prefix: usize) -> u8 {
+    WORLD_CACHE_BUILDING = false;
+    // Debug picking observes the fresh triangle walk, including loop faces.
+    if !WORLD_PACKET_CACHE || DEBUG_XHAIR {
+        return WORLD_CACHE_NONE;
+    }
+    if WORLD_CACHE_VALID {
+        if WORLD_CACHE_KEY == key {
+            return WORLD_CACHE_HIT;
+        }
+        // The liquid phase changes every eight visual frames even while the
+        // camera is perfectly stationary. The unchanged view itself is the
+        // candidate proof in that case: rebuild this exact phase now, then hit
+        // for the other seven frames. Camera movement still takes the normal
+        // arm-first path and never pays payload-copy work.
+        if WORLD_CACHE_KEY.same_view(key)
+            && (WORLD_CACHE_KEY.wave_du != key.wave_du
+                || WORLD_CACHE_KEY.wave_dv != key.wave_dv)
+        {
+            WORLD_CACHE_VALID = false;
+            WORLD_CACHE_COUNT = 0;
+            WORLD_CACHE_OVERFLOW = false;
+            WORLD_CACHE_BAND_PREFIX = band_prefix;
+            WORLD_CACHE_CANDIDATE_KEY = key;
+            WORLD_CACHE_CANDIDATE_STATE = WORLD_CACHE_CANDIDATE_ARMED;
+            WORLD_CACHE_BUILDING = true;
+            return WORLD_CACHE_BUILD;
+        }
+    }
+    // A different band pass may overwrite PVS_BAND_ORDER metadata before this
+    // view ever returns, so the single stored stream is valid only while its
+    // exact key remains current.
+    WORLD_CACHE_VALID = false;
+    if WORLD_CACHE_CANDIDATE_STATE != 0 && WORLD_CACHE_CANDIDATE_KEY == key {
+        if WORLD_CACHE_CANDIDATE_STATE == WORLD_CACHE_CANDIDATE_ARMED {
+            // A build overwrites the sole payload store, so an older key can no
+            // longer remain valid even if this attempt later proves too large.
+            WORLD_CACHE_VALID = false;
+            WORLD_CACHE_COUNT = 0;
+            WORLD_CACHE_OVERFLOW = false;
+            WORLD_CACHE_BAND_PREFIX = band_prefix;
+            WORLD_CACHE_BUILDING = true;
+            return WORLD_CACHE_BUILD;
+        }
+        return WORLD_CACHE_NONE;
+    }
+    WORLD_CACHE_CANDIDATE_KEY = key;
+    WORLD_CACHE_CANDIDATE_STATE = WORLD_CACHE_CANDIDATE_ARMED;
+    WORLD_CACHE_NONE
+}
+
+#[inline]
+unsafe fn finish_world_packet_cache(
+    key: WorldPacketCacheKey,
+    np: usize,
+    nq: usize,
+    emit_calls: u32,
+) {
+    WORLD_CACHE_BUILDING = false;
+    if WORLD_CACHE_OVERFLOW
+        || WORLD_CACHE_COUNT != np + nq
+        || np > u16::MAX as usize
+        || nq > u16::MAX as usize
+    {
+        WORLD_CACHE_VALID = false;
+        WORLD_CACHE_CANDIDATE_STATE = WORLD_CACHE_CANDIDATE_REJECTED;
+        return;
+    }
+    WORLD_CACHE_KEY = key;
+    WORLD_CACHE_NP = np as u16;
+    WORLD_CACHE_NQ = nq as u16;
+    WORLD_CACHE_EMIT_CALLS = emit_calls;
+    WORLD_CACHE_BAND_STATE = WORLD_BAND_STATE;
+    WORLD_CACHE_EMIT_BLEND = EMIT_BLEND;
+    WORLD_CACHE_EMIT_WAVE = EMIT_WAVE;
+    WORLD_CACHE_VALID = true;
+}
 
 // One-entry cache for the current translucent face's blended packet: water
 // and glass faces are a handful per frame, so building the variant on demand
@@ -3886,7 +4106,7 @@ unsafe fn xhair_consider(m: &Map, tt: usize, pa: Projected, pb: Projected, pc: P
 unsafe fn xhair_pick_pvs(m: &Map, nv: usize, frame: u16) {
     let mut e = 0usize;
     while e < PVS_FACE_COUNT && e < MAX_FACES {
-        let face = PVS_FACE_INDEX[e] as usize;
+        let face = PVS_FACE_INDEX.0[e] as usize;
         e += 1;
         if m.face_is_loop(face) {
             continue; // debug crosshair pick reads raw tris only (loop faces skip)
@@ -7766,6 +7986,9 @@ unsafe fn next_pvs_face_mark_token() -> u8 {
 }
 
 unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
+    // The packet payload borrows the old PVS arrays' unused suffix. Invalidate
+    // before the new live prefix can overwrite any part of it.
+    invalidate_world_packet_cache();
     let (visofs, _, _) = m.leaf(cam_leaf as usize);
     decompress_vis(m, visofs, &mut VIS_BITS);
     let mut old_group = 0usize;
@@ -7821,7 +8044,7 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
             }
 
             let entry = PVS_FACE_COUNT;
-            PVS_FACE_INDEX[entry] = face as u16;
+            PVS_FACE_INDEX.0[entry] = face as u16;
             if entry < MAX_PVS_FACE_RECS {
                 let (bc, radius) = m.face_bounds(face);
                 let radius = radius as u16;
@@ -7837,7 +8060,7 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
                 };
             }
             PVS_TRI_REF_COUNT += cnt;
-            PVS_FACE_NEXT[entry] = PVS_GROUP_FIRST[group];
+            PVS_FACE_NEXT.0[entry] = PVS_GROUP_FIRST[group];
             PVS_GROUP_FIRST[group] = entry as u16;
             PVS_FACE_COUNT += 1;
         }
@@ -8044,6 +8267,7 @@ unsafe fn push_tri_uv_words_packed(
         }
         return;
     };
+    world_cache_capture_packet(packet as *const TriTexturedGouraud, otz, false);
     if TRAM_CACHE_BUILDING {
         let i = TRAM_TRI_COUNT;
         if i < MAX_TRAM_CACHE_TRIS {
@@ -8421,6 +8645,7 @@ unsafe fn try_emit_quad_corners(
     if slot.backdrop {
         otz = clamp_otz(otz + BACKDROP_OTZ_BIAS);
     }
+    world_cache_capture_packet(packet as *const QuadTexturedGouraud, otz, true);
     OT.add(otz, packet, QuadTexturedGouraud::WORDS);
     *nq += 1;
     true
@@ -8445,6 +8670,61 @@ impl WorldCounters {
             emit_calls: 0,
         }
     }
+}
+
+#[inline]
+unsafe fn world_cache_load_packet<T>(packet_index: usize) -> T {
+    core::ptr::read(world_cache_packet_ptr(packet_index).cast::<T>())
+}
+
+/// Recreate cached packets in the same arena slots and call OT.add in the same
+/// emission order as the fresh renderer. Unlike direct links to persistent
+/// storage, later brush/actor packets therefore retain their baseline addresses.
+#[inline]
+unsafe fn replay_world_packet_cache(
+    packets: &mut PrimitivePacketArena<'_>,
+    np: &mut usize,
+    nq: &mut usize,
+    counts: &mut WorldCounters,
+) -> bool {
+    let count = WORLD_CACHE_COUNT;
+    if count > packets.remaining()
+        || count > PVS_BAND_CAP
+        || count > world_cache_slots_per_link_array() * 2
+    {
+        invalidate_world_packet_cache();
+        return false;
+    }
+    let mut i = 0usize;
+    while i < count {
+        let meta = PVS_BAND_ORDER[PVS_BAND_CAP - 1 - i];
+        let otz = (meta & !WORLD_CACHE_QUAD_META) as usize;
+        if meta & WORLD_CACHE_QUAD_META != 0 {
+            let prim = world_cache_load_packet::<QuadTexturedGouraud>(i);
+            let Some(packet) = packets.push(prim) else {
+                invalidate_world_packet_cache();
+                WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
+                return false;
+            };
+            OT.add(otz, packet, QuadTexturedGouraud::WORDS);
+        } else {
+            let prim = world_cache_load_packet::<TriTexturedGouraud>(i);
+            let Some(packet) = packets.push(prim) else {
+                invalidate_world_packet_cache();
+                WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
+                return false;
+            };
+            OT.add(otz, packet, TriTexturedGouraud::WORDS);
+        }
+        i += 1;
+    }
+    *np += WORLD_CACHE_NP as usize;
+    *nq += WORLD_CACHE_NQ as usize;
+    counts.emit_calls = WORLD_CACHE_EMIT_CALLS;
+    WORLD_BAND_STATE = WORLD_CACHE_BAND_STATE;
+    EMIT_BLEND = WORLD_CACHE_EMIT_BLEND;
+    EMIT_WAVE = WORLD_CACHE_EMIT_WAVE;
+    true
 }
 
 /// Decode-after-cull fast path shared by the world and submodel triangle loops.
@@ -9860,6 +10140,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     }
     phys::set_gravity_scale(4096); // fresh map: normal gravity until a zone says otherwise
     unsafe {
+        invalidate_world_packet_cache();
         pvs_cam_leaf_store(-1);
         PVS_LEAF_COUNT = 0;
         PVS_ENT_COUNT = 0;
@@ -11310,12 +11591,36 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 // In multi-band (overflow) mode, faces of visible groups are
                 // counting-sorted into near-to-far order here.
                 let bucketed = nbands > 1 && PVS_FACE_COUNT <= PVS_BAND_CAP;
-                if bucketed {
+                let cache_key = WorldPacketCacheKey {
+                    leaf: cam_leaf,
+                    rot: rot.m,
+                    base_t,
+                    eye,
+                    flashlight: FLASHLIGHT_ON,
+                    wave_du: WAVE_DU,
+                    wave_dv: WAVE_DV,
+                    band_mode: nbands as u8
+                        | ((bucketed as u8) << 4)
+                        | ((use_bands as u8) << 5),
+                };
+                let cache_action = prepare_world_packet_cache(
+                    cache_key,
+                    if bucketed { PVS_FACE_COUNT } else { 0 },
+                );
+                let cache_hit = cache_action == WORLD_CACHE_HIT
+                    && replay_world_packet_cache(
+                        &mut packets,
+                        &mut np,
+                        &mut nq,
+                        &mut room_counts,
+                    );
+                if !cache_hit && bucketed {
                     for c in PVS_BAND_START.iter_mut() {
                         *c = 0;
                     }
                 }
-                for gi in 0..PVS_GROUP_COUNT {
+                let group_passes = if cache_hit { 0 } else { PVS_GROUP_COUNT };
+                for gi in 0..group_passes {
                     let group = PVS_GROUP_ACTIVE[gi] as usize;
                     let (plane_n, plane_d) = m.cooked_group_plane(group);
                     let vis = dot12(plane_n, eye) > plane_d;
@@ -11329,7 +11634,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         let mut entry = PVS_GROUP_FIRST[group];
                         while entry != PVS_LINK_END {
                             let e = entry as usize;
-                            entry = PVS_FACE_NEXT[e];
+                            entry = PVS_FACE_NEXT.0[e];
                             if !bucketed && e < MAX_PVS_FACE_RECS {
                                 // Non-bucketed overflow view: just refresh the
                                 // cached band for the link-walk emit below.
@@ -11358,7 +11663,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                 rec.band = band;
                                 band
                             } else {
-                                let face = PVS_FACE_INDEX[e] as usize;
+                                let face = PVS_FACE_INDEX.0[e] as usize;
                                 let (bc, _) = m.face_bounds(face);
                                 let depth = (dot12(rot.m[2], bc) + base_t[2]).max(0);
                                 ((depth >> DEPTH_BAND_SHIFT).min(nbands - 1)) as u8
@@ -11366,8 +11671,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                             PVS_BAND_START[band as usize + 1] += 1;
                         }
                     }
-                    }
-                    if bucketed {
+                }
+                if !cache_hit && bucketed {
                     // Prefix-sum the counts, then scatter (second link walk).
                     let mut acc = 0u16;
                     for k in 0..(nbands as usize + 1) {
@@ -11385,11 +11690,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         let mut entry = PVS_GROUP_FIRST[group];
                         while entry != PVS_LINK_END {
                             let e = entry as usize;
-                            entry = PVS_FACE_NEXT[e];
+                            entry = PVS_FACE_NEXT.0[e];
                             let band = if e < MAX_PVS_FACE_RECS {
                                 PVS_FACE_REC[e].band as usize
                             } else {
-                                let face = PVS_FACE_INDEX[e] as usize;
+                                let face = PVS_FACE_INDEX.0[e] as usize;
                                 let (bc, _) = m.face_bounds(face);
                                 let depth = (dot12(rot.m[2], bc) + base_t[2]).max(0);
                                 (depth >> DEPTH_BAND_SHIFT).min(nbands - 1) as usize
@@ -11401,9 +11706,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                             }
                         }
                     }
-                    }
-                    let mut band = 0i32;
-                    while band < nbands {
+                }
+                let mut band = if cache_hit { nbands } else { 0 };
+                while band < nbands {
                     for gi in 0..PVS_GROUP_COUNT {
                         if bucketed {
                             break; // bucketed path below handles multi-band
@@ -11415,7 +11720,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         let mut entry = PVS_GROUP_FIRST[group];
                         while entry != PVS_LINK_END {
                             let e = entry as usize;
-                            entry = PVS_FACE_NEXT[e];
+                            entry = PVS_FACE_NEXT.0[e];
                             if e < MAX_PVS_FACE_RECS {
                                 let rec = PVS_FACE_REC[e];
                                 if nbands > 1 && rec.band as i32 != band {
@@ -11450,7 +11755,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                     }
                                 }
                             } else {
-                                let face = PVS_FACE_INDEX[e] as usize;
+                                let face = PVS_FACE_INDEX.0[e] as usize;
                                 let (bc, be) = m.face_bounds(face);
                                 let depth = (dot12(rot.m[2], bc) + base_t[2]).max(0);
                                 if (depth >> DEPTH_BAND_SHIFT).min(nbands - 1) != band {
@@ -11529,7 +11834,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                     }
                                 }
                             } else {
-                                let face = PVS_FACE_INDEX[e] as usize;
+                                let face = PVS_FACE_INDEX.0[e] as usize;
                                 let (bc, be) = m.face_bounds(face);
                                 if !WORLD_BOUNDS_CULL || face_bounds_visible(bc, be, &rot, base_t) {
                                     let (first, cnt) = m.face_tris(face);
@@ -11564,6 +11869,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         }
                     }
                     band += 1;
+                }
+                if cache_action == WORLD_CACHE_BUILD {
+                    finish_world_packet_cache(cache_key, np, nq, room_counts.emit_calls);
                 }
                 telemetry::stage_end(telemetry::stage::ROOM_SURFACE_DRAW);
 
