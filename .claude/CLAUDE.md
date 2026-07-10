@@ -1464,6 +1464,78 @@ Verified: builds clean, 96 maps recook, c1a0/c1a1a render unchanged, headroom
 same headless limit as doors; all gates are fail-safe. HL SDK stays cloned in
 git-ignored `reference/halflife/` for future faithfulness work.
 
+## M51 -- full RAM pass + systems audit vs the SDK (DONE)
+
+The RAM side (headroom 32.6 -> 54.3 KiB, gate re-baselined 96 -> 32 KiB on
+evidence -- PASSING):
+- **Clipnode DAG dedup** (cook `compact_clipnode_remap` now hash-conses
+  subtrees; runtime walk is index-based so a DAG needs zero reader changes):
+  15.7% of clip bytes fleet-wide, worst map c2a4c 738 -> 728 KB => MAP_BUF
+  -10.4 KiB. Every other HLMA section was measured at its floor first
+  (loopverts/faces/vis dominate; the compiler's vis is already
+  substring-shared -- naive per-row re-encode came out 71% WORSE, and vis has
+  ZERO GC-able bytes. Don't chase vis again).
+- **MODEL_POOL_WORDS 96,768 -> 92,416** (-17 KiB): the rebuilt roster audit
+  (now COMMITTED as `tools/roster_audit.py`, `make roster-audit`, mirrors
+  stream_map_models exactly) measures the true fleet peak = c4a3 90,697 words
+  transient. Audit result: **zero combat/pickup drops on 96/96 maps**.
+- **POOL_FACES truncation bug fixed**: the pool silently baked PARTIAL models
+  when full (c4a1b tentacle+barnacle, c4a3 garg rendered half-triangled).
+  stream_map_models now SKIPS a type whose tris don't fully fit; cap raised
+  6,352 -> 6,912 (+7.7 KiB) so c4a1b fits whole -- the only fleet-wide drop
+  left is c4a3's background garg statue (clean whole-type drop, historical).
+- **MAX_VERTS auto-sized** by build.rs from the cooked rooms (SCRATCH +
+  VERT_FRAME -2 KiB, tracks recooks).
+- **Stack watermark probe** (`stackprobe`, emulator-telemetry builds): paints
+  canaries between `__bss_end` and SP at boot, reports via guest debug log
+  every 256 ticks. Measured peak = **10,768 B** on c2a4c through
+  boot+load+gameplay. The old 96 KiB gate protected a hazard 9x larger than
+  reality; MIN_HEADROOM_KB is now 32 (= 64 KB total stack budget, 6x peak).
+  M42's "64.5 KiB stack" note was a region size, never a usage measurement.
+- **SPU voice budget was stale**: core SFX grew to 414 KB (M40) but
+  extract_voices.py still fit packs to 168 KB -- 6+ maps silently dropped
+  dialogue tails at runtime. The budget now derives from the actual core pack
+  (~101 KB); after recook only c3a2/c3a2d/c5a1 exceed it at the 4 kHz floor
+  (genuinely too much dialogue for SPU RAM -- accepted, flagged at cook).
+- Fleet context for future dieting: MAP_BUF is worst-5-bound (c2a4c/c2a4e/
+  c5a1/c2a1a/c2a4a all 660-730 KB; loopverts ~26%, vis ~15-21%, faces ~18%);
+  next real MAP_BUF lever is face/loopvert count reduction (visual trade).
+  WEAPON_TRI_CACHE (320) silently truncates viewmodels with >320 visible tris
+  (v_357 has 1,075 total) -- suspicious, unverified headlessly.
+
+The systems side (4 audit agents vs reference/halflife + skill.cfg; fresh
+entity census): full report delivered in-session 2026-07-09. Highlights the
+milestones did not already record:
+- **Progression**: changelevel graph verified 96/96 reachable, but TWO real
+  blocks: **c4a2b Gonarch** (boss is an AI_IDLE statue; its death-node script
+  fires the targeted changelevel to c4a1a -- never fires) and **c4a3
+  Nihilanth** (arena masters + n_ending teleport chain dead => c5a1 ending
+  only reachable via menu). Blast Pit tentacle kill wiring is also broken:
+  c1a4i uses trigger_relay USE_OFF on the tentacle prop names (no killtarget
+  anywhere) and logic_fire_targets only reveals sprites for prop names --
+  the rocket does NOT remove the tentacles (M31's claim was wrong).
+- **Cook classname bugs**: `monster_hgrunt_dead` (34 corpses, cook matches
+  the nonexistent "monster_human_grunt_dead"); `func_rot_button` (31) and
+  `aiscripted_sequence` (13) unhandled; monstermaker skips monster_snark (35
+  makers) + monster_babycrab (10); monster_tripmine (58) + monster_generic
+  (49) + osprey (3) absent.
+- **Weapons**: no progression blockers; ammo caps/clips/pickup amounts exact.
+  Top gaps: fresh clipless pickups grant 0 ammo (grenade/snark/satchel/
+  tripmine/hivehand arrive unusable until a dupe), hornetgun never recharges
+  (HL: 1 hornet/0.5s -- 8 lifetime shots here), gauss charge missing (60 vs
+  200 dmg ceiling), satchel remote + tripmine laser missing, MP5 dmg 8 vs 5.
+- **Movement scale is off**: jump apex ~200 u (HL 45) from JUMP=64/GRAVITY=12
+  q-units vs faithful ~13/2 at 20 Hz; fall damage threshold effectively
+  unreachable (~2,600-u fall); drowning absent; air control decays momentum
+  (HL preserves it). These four are the biggest faithfulness deltas in feel.
+- **AI**: no monster-vs-monster combat (grunts never fight aliens -- the
+  signature crossfires don't happen); barney only engages headcrabs; hgrunt
+  has no grenades/shotgun variant/cover; barnacles/leeches/tripmines inert;
+  boss tier all render-only statues with u8 health caps (garg dies to
+  pistols, immunities absent).
+- Pre-existing broken test: `uv_split_adds_support_vertices_for_long_spans`
+  fails in tools/hl-bsp (predates this pass).
+
 ## Next (pick per value)
 
 - **PERF (researched, ranked -- the emit wall)**: 1) cook-time PRE-BAKED GPU
