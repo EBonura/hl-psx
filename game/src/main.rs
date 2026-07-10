@@ -60,7 +60,7 @@ use vram::{TexSlot, EMPTY_SLOT};
 // Maps stream from the disc's WORLD.PAK at runtime (no longer baked into the
 // EXE). MAP_BUF holds either one temporary texture chunk or one resident map
 // chunk; build.rs sizes it from data/rooms. `make rooms` cooks menu room N as
-// room_<2N>.psxc (resident HLMA) and room_<2N+1>.psxc (temporary HLTX textures).
+// room_<2N>.psxc (resident HLMA/HLMB) and room_<2N+1>.psxc (temporary HLTX textures).
 const MAP_WORDS: usize = room_budget::MAP_WORDS;
 const MODEL_WORDS: usize = room_budget::MODEL_WORDS;
 static mut MAP_BUF: [u32; MAP_WORDS] = [0; MAP_WORDS];
@@ -10245,6 +10245,17 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     telemetry::debug_log("hl-psx: WORLD.PAK world chunk loaded");
 
     let map_bytes = unsafe { streamed_map_bytes(map_len) };
+    // Map's field readers are intentionally unchecked on the PS1 hot path.
+    // Reject a truncated or unknown payload once, before any offset/count can
+    // turn into an out-of-bounds read. HLMA remains supported for previously
+    // cooked rooms; HLMB adds packed axial collision-plane tags.
+    if map_bytes.len() < 52
+        || (&map_bytes[0..4] != b"HLMA" && &map_bytes[0..4] != b"HLMB")
+    {
+        tty::println("hl-psx: unsupported world map format");
+        telemetry::debug_log("hl-psx: unsupported world map format");
+        return PlayExit::BackToMenu;
+    }
     let m = Map::load(map_bytes);
     m.expand_light_palette(); // per-corner light lookups read the expanded table
     if room_texs != m.n_texs {

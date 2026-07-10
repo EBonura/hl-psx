@@ -14,11 +14,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import train_audit as audit  # noqa: E402
 
 
-def _room(records: list[tuple[int, int, int, int]], n_ents: int = 2) -> bytes:
-    """Build an HLMA shell; records are (kind, aux_count, brush, speed)."""
+def _room(
+    records: list[tuple[int, int, int, int]],
+    n_ents: int = 2,
+    magic: bytes = b"HLMA",
+) -> bytes:
+    """Build an HLM shell; records are (kind, aux_count, brush, speed)."""
 
-    data = bytearray(audit.HLMA_HEADER_SIZE)
-    data[:4] = b"HLMA"
+    data = bytearray(audit.HLM_HEADER_SIZE)
+    data[:4] = magic
 
     ent_off = len(data)
     struct.pack_into("<I", data, 28, ent_off)
@@ -46,6 +50,15 @@ def _room(records: list[tuple[int, int, int, int]], n_ents: int = 2) -> bytes:
 
 
 class TrainAuditTests(unittest.TestCase):
+    def test_accepts_legacy_and_axial_world_magics(self) -> None:
+        for magic in audit.HLM_MAGICS:
+            with self.subTest(magic=magic):
+                stats = audit.parse_room(_room([], magic=magic))
+                self.assertEqual(stats.total, 0)
+
+        with self.assertRaisesRegex(audit.FormatError, "bad magic"):
+            audit.parse_room(_room([], magic=b"HLMX"))
+
     def test_runtime_validity_and_capacity_match_init_trains(self) -> None:
         room = _room(
             [
@@ -74,7 +87,7 @@ class TrainAuditTests(unittest.TestCase):
 
     def test_rejects_format_bounds_and_aux_overrun(self) -> None:
         with self.subTest("short header"):
-            with self.assertRaisesRegex(audit.FormatError, "HLMA header"):
+            with self.assertRaisesRegex(audit.FormatError, "HLM header"):
                 audit.parse_room(b"HLMA")
 
         with self.subTest("truncated logic record"):

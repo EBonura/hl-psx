@@ -59,6 +59,40 @@ fn dot(n: [i16; 3], p: [i32; 3]) -> i32 {
     ((n[0] as i32 * p[0]) + (n[1] as i32 * p[1]) + (n[2] as i32 * p[2])) >> 12
 }
 
+/// Exact wrapped equivalent of `(4096 * p) >> 12`, expressed as shifts so a
+/// tagged positive axial plane never pays for the R3000's MULT/MFLO pair.
+/// Keeping both shifts matters for out-of-range i32 inputs: returning `p`
+/// directly would change the existing release-mode wrapping semantics.
+#[inline(always)]
+fn axial_dot(p: i32) -> i32 {
+    p.wrapping_shl(12) >> 12
+}
+
+#[inline(always)]
+fn plane_delta(cn: &crate::map::ClipNode, p: [i32; 3]) -> i32 {
+    let projection = if cn.axis == 0 {
+        dot(cn.n, p)
+    } else {
+        // `axis` comes directly from a two-bit tag, so the non-zero values are
+        // exactly 1..=3. Avoid a switch/jump table in every tagged node visit.
+        let coord = unsafe { *p.get_unchecked(cn.axis as usize - 1) };
+        axial_dot(coord)
+    };
+    projection.wrapping_sub(cn.dist)
+}
+
+/// Materialize a tagged axial normal only when a full trace actually impacts.
+/// Point-content and LOS walks never need to fetch or construct one.
+#[inline(always)]
+fn plane_normal(cn: &crate::map::ClipNode) -> [i32; 3] {
+    match cn.axis {
+        1 => [4096, 0, 0],
+        2 => [0, 4096, 0],
+        3 => [0, 0, 4096],
+        _ => [cn.n[0] as i32, cn.n[1] as i32, cn.n[2] as i32],
+    }
+}
+
 struct Trace {
     frac: i32,        // Q0.12 along the move (4096 = reached end)
     normal: [i32; 3], // hit plane normal (×4096)
@@ -88,7 +122,7 @@ fn point_contents(map: &Map, mut num: i16, p: [i32; 3]) -> i16 {
         }
         guard += 1;
         let cn = map.clipnode(num as usize);
-        let t = dot(cn.n, p) - cn.dist;
+        let t = plane_delta(&cn, p);
         num = if t >= 0 { cn.c0 } else { cn.c1 };
     }
     num
@@ -121,8 +155,8 @@ fn recurse(
             return true;
         }
         let cn = map.clipnode(num as usize);
-        let t1 = dot(cn.n, p1) - cn.dist;
-        let t2 = dot(cn.n, p2) - cn.dist;
+        let t1 = plane_delta(&cn, p1);
+        let t2 = plane_delta(&cn, p2);
         // Most hull nodes put the complete segment on one side. Turn those
         // tail-recursive walks into a tight loop; recurse only at a real plane
         // crossing where the traversal must return to inspect the far side.
@@ -165,10 +199,11 @@ fn recurse(
             return false;
         }
         // Impact: the far side is solid at the split point.
+        let n = plane_normal(&cn);
         tr.normal = if side {
-            [-(cn.n[0] as i32), -(cn.n[1] as i32), -(cn.n[2] as i32)]
+            [-n[0], -n[1], -n[2]]
         } else {
-            [cn.n[0] as i32, cn.n[1] as i32, cn.n[2] as i32]
+            n
         };
         tr.frac = midf;
         return false;
@@ -219,8 +254,8 @@ fn recurse_clear(
             return true;
         }
         let cn = map.clipnode(num as usize);
-        let t1 = dot(cn.n, p1) - cn.dist;
-        let t2 = dot(cn.n, p2) - cn.dist;
+        let t1 = plane_delta(&cn, p1);
+        let t2 = plane_delta(&cn, p2);
         if t1 >= 0 && t2 >= 0 {
             num = cn.c0;
             depth += 1;

@@ -262,7 +262,7 @@ psoxide-chart: psoxide-profile
 	@echo "CHART -> $(CAPTURE_DIR)/hl-psx-profile.html"
 
 # Cook streamed maps into WORLD.PAK chunks. Each menu room N gets two chunk IDs:
-#   room_<2N>.psxc   = resident HLMA world/collision/entity data
+#   room_<2N>.psxc   = resident HLMA/HLMB world/collision/entity data
 #   room_<2N+1>.psxc = temporary HLTX texture payload for VRAM upload
 # Keep MAPLIST in the same order as `game/src/menu.rs`'s MAPS registry.
 ROOMS := $(ROOT)/data/rooms

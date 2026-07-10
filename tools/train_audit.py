@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Audit cooked func_train records against the runtime's fixed train pool.
 
-The source of truth is the resident HLMA room data.  This intentionally mirrors
+The source of truth is the resident HLM room data.  This intentionally mirrors
 ``init_trains``: a record consumes a slot only when it is a func_train, has at
 least one complete corner (two aux records), and references a cooked brush.
 """
@@ -18,7 +18,8 @@ from typing import Iterable
 
 
 ROOT = Path(__file__).resolve().parent.parent
-HLMA_HEADER_SIZE = 52
+HLM_MAGICS = (b"HLMA", b"HLMB")
+HLM_HEADER_SIZE = 52
 ENT_SIZE = 56
 LOGIC_SIZE = 64
 LOGIC_AUX_SIZE = 4
@@ -85,9 +86,9 @@ def parse_max_trains(path: Path) -> int:
 
 
 def _entity_count(data: bytes) -> int:
-    ent_off = _u32(data, 28, "HLMA entity offset")
-    if ent_off < HLMA_HEADER_SIZE:
-        raise FormatError(f"HLMA entity offset points into the header: {ent_off}")
+    ent_off = _u32(data, 28, "HLM entity offset")
+    if ent_off < HLM_HEADER_SIZE:
+        raise FormatError(f"HLM entity offset points into the header: {ent_off}")
     n_models = _u32(data, ent_off, "entity model count")
     n_ents_off = ent_off + 4 + n_models * 8
     n_ents = _u32(data, n_ents_off, "entity count")
@@ -105,7 +106,7 @@ def _entity_count(data: bytes) -> int:
 def _first_repeated_cycle(corners: list[tuple[int, int, int, int]]) -> tuple[int, int] | None:
     """Return a conservative candidate for a repeated path subsequence.
 
-    Names are absent from HLMA, so equal coordinates cannot prove node identity.
+    Names are absent from HLM, so equal coordinates cannot prove node identity.
     Requiring three adjacent copies avoids flagging a single authored revisit;
     callers must still treat the result as advisory.
     """
@@ -123,14 +124,16 @@ def _first_repeated_cycle(corners: list[tuple[int, int, int, int]]) -> tuple[int
 
 
 def parse_room(data: bytes, name: str = "<room>") -> RoomStats:
-    _require(data, 0, HLMA_HEADER_SIZE, "HLMA header")
-    if data[:4] != b"HLMA":
-        raise FormatError(f"{name}: bad magic {data[:4]!r}, expected b'HLMA'")
+    _require(data, 0, HLM_HEADER_SIZE, "HLM header")
+    if data[:4] not in HLM_MAGICS:
+        raise FormatError(
+            f"{name}: bad magic {data[:4]!r}, expected one of {HLM_MAGICS!r}"
+        )
 
     n_ents = _entity_count(data)
-    logic_off = _u32(data, 48, "HLMA logic offset")
-    if logic_off < HLMA_HEADER_SIZE:
-        raise FormatError(f"{name}: HLMA logic offset points into the header: {logic_off}")
+    logic_off = _u32(data, 48, "HLM logic offset")
+    if logic_off < HLM_HEADER_SIZE:
+        raise FormatError(f"{name}: HLM logic offset points into the header: {logic_off}")
     _require(data, logic_off, 8, "logic header")
     n_logic, n_aux, n_names, name_bytes = struct.unpack_from("<HHHH", data, logic_off)
     records_off = logic_off + 8
@@ -170,7 +173,7 @@ def parse_room(data: bytes, name: str = "<room>") -> RoomStats:
 
         # Each corner is two aux records: (x,y), then (z,wait).  Detect only
         # repeated subsequences, a possible signature of a serialized cycle
-        # reaching the cooker's hop limit. HLMA drops path-corner names, so this
+        # reaching the cooker's hop limit. HLM drops path-corner names, so this
         # remains advisory: distinct authored nodes may share a position/wait.
         corners: list[tuple[int, int, int, int]] = []
         for corner in range(aux_count // 2):

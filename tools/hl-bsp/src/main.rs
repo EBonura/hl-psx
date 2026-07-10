@@ -339,7 +339,7 @@ fn report(path: &str, bsp: &Bsp) {
 // ---- Cook: BSP -> .hlm (PS1-native textured + lit triangle mesh) ----------
 //
 // Layout (all little-endian):
-//   magic "HLMA" | u32 n_verts | u32 n_tris | u32 n_texs
+//   magic "HLMB" | u32 n_verts | u32 n_tris | u32 n_texs
 //   verts:   i16 x,y,z   × n_verts          (world space, Y-up)
 //   tri_rec[16] × n_tris:
 //     u16 a,b,c | u8 uv[6] | u8 tex | u8 light_idx[3]
@@ -724,6 +724,31 @@ fn plane_rec(planes: &[u8], planenum: usize, scale: f32) -> ([i16; 3], i32) {
         ],
         (d / scale).round() as i32,
     )
+}
+
+// HLMB clip PlaneRef: bits 13..0 are the remapped plane-table index; bits
+// 15..14 classify exact positive axial normals after plane_rec quantization:
+// 00=generic, 01=+X, 10=+Y, 11=+Z. Negative axes stay generic because their
+// sign cannot be represented by the two-bit fast-path tag.
+const CLIP_PLANE_INDEX_MASK: u16 = 0x3fff;
+const CLIP_PLANE_TAG_X: u16 = 0x4000;
+const CLIP_PLANE_TAG_Y: u16 = 0x8000;
+const CLIP_PLANE_TAG_Z: u16 = 0xc000;
+
+fn pack_clip_plane_ref(planenum: usize, normal: [i16; 3]) -> Result<u16, String> {
+    if planenum > CLIP_PLANE_INDEX_MASK as usize {
+        return Err(format!(
+            "remapped clip plane index {} exceeds packed 14-bit limit of {}",
+            planenum, CLIP_PLANE_INDEX_MASK
+        ));
+    }
+    let tag = match normal {
+        [4096, 0, 0] => CLIP_PLANE_TAG_X,
+        [0, 4096, 0] => CLIP_PLANE_TAG_Y,
+        [0, 0, 4096] => CLIP_PLANE_TAG_Z,
+        _ => 0,
+    };
+    Ok(tag | planenum as u16)
 }
 
 fn signed_plane_ref(planenum: usize, side: u16) -> i16 {
@@ -4171,7 +4196,7 @@ fn weld_tjunctions(
         let (x0, x1) = rng(ca.0, cb.0);
         let (y0, y1) = rng(ca.1, cb.1);
         let (z0, z1) = rng(ca.2, cb.2);
-        let mut out: Vec<(f32, u16)> = Vec::new();
+        let mut out: Vec<(i64, u16)> = Vec::new();
         for cx in x0..=x1 {
             for cy in y0..=y1 {
                 for cz in z0..=z1 {
@@ -4196,15 +4221,20 @@ fn weld_tjunctions(
                         // perpendicular dist^2 = ac2 - dot^2/len2; collinear when
                         // < EPS^2 (EPS = 2 units). Cross-multiply to stay integer.
                         if ac2 * len2 - dot * dot < 4 * len2 {
-                            out.push((dot as f32 / len2 as f32, ci));
+                            out.push((dot, ci));
                         }
                     }
                 }
             }
         }
-        out.sort_by(|p, q| p.0.partial_cmp(&q.0).unwrap());
+        // `grid` buckets inherit randomized HashMap iteration order. Sort by
+        // the exact projection, then by canonical vertex index, so distinct
+        // near-collinear points at the same parameter cook identically.
+        out.sort_unstable();
         out.dedup_by(|p, q| p.1 == q.1);
-        out
+        out.into_iter()
+            .map(|(dot, ci)| (dot as f32 / len2 as f32, ci))
+            .collect()
     };
 
     let lerp = |a: u8, b: u8, t: f32| -> u8 {
@@ -4843,7 +4873,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let n_raw_tris = raw_tris.len() / 16;
 
     let mut o: Vec<u8> = Vec::new();
-    o.extend_from_slice(b"HLMA");
+    o.extend_from_slice(b"HLMB");
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_raw_tris as u32).to_le_bytes());
     o.extend_from_slice(&(n_cooked_texs as u32).to_le_bytes());
@@ -4891,7 +4921,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     if tex_out.is_none() {
         // Legacy single-file cook: keep the texture blob inline before BSP.
         // Runtime room builds pass `tex_out` and load the HLTX chunk only for
-        // VRAM upload, then overwrite that staging buffer with resident HLMA.
+        // VRAM upload, then overwrite that staging buffer with resident HLMB.
         append_texture_blob(&mut o, &texs);
     }
 
@@ -5169,7 +5199,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // ---- Clip hull (player collision / LOS) + spawn ----
     // u32 n_clip | i32 hull0_head | i32 hull1_head | i32 hull3_head (crouch) |
     // i32 spawn x,y,z (world) | i32 spawn_yaw (Q0.12)
-    // clipnodes (u16 plane, i16 c0, i16 c1) × n_clip [6B]
+    // clipnodes (u16 plane_ref, i16 c0, i16 c1) × n_clip [6B]
+    // plane_ref: bits 13..0 remapped plane index; bits 15..14 are
+    // 00=generic, 01=exact +X, 10=exact +Y, 11=exact +Z.
     let clip_off = o.len() as u32;
     o[clip_off_pos..clip_off_pos + 4].copy_from_slice(&clip_off.to_le_bytes());
     let (sp, syaw) = choose_standalone_spawn(
@@ -5226,9 +5258,21 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     }
     o.extend_from_slice(&syaw.to_le_bytes());
     // Children in clip_out are already final DAG ids -- write them verbatim.
-    for &(src_planenum, c0, c1) in &clip_out {
-        let planenum = plane_remap.get(src_planenum).copied().unwrap_or(0);
-        o.extend_from_slice(&planenum.to_le_bytes());
+    for (clip_idx, &(src_planenum, c0, c1)) in clip_out.iter().enumerate() {
+        let planenum = plane_remap
+            .get(src_planenum)
+            .copied()
+            .filter(|&idx| idx != u16::MAX)
+            .ok_or_else(|| {
+                format!(
+                    "{}: clipnode {} source plane {} was not remapped",
+                    path, clip_idx, src_planenum
+                )
+            })? as usize;
+        let (normal, _) = plane_rec(planes, src_planenum, scale);
+        let plane_ref = pack_clip_plane_ref(planenum, normal)
+            .map_err(|e| format!("{}: clipnode {}: {}", path, clip_idx, e))?;
+        o.extend_from_slice(&plane_ref.to_le_bytes());
         o.extend_from_slice(&c0.to_le_bytes());
         o.extend_from_slice(&c1.to_le_bytes());
     }
@@ -6896,6 +6940,48 @@ mod tests {
     }
 
     #[test]
+    fn clip_plane_ref_tags_exact_positive_axes() {
+        assert_eq!(
+            pack_clip_plane_ref(7, [4096, 0, 0]).unwrap(),
+            CLIP_PLANE_TAG_X | 7
+        );
+        assert_eq!(
+            pack_clip_plane_ref(11, [0, 4096, 0]).unwrap(),
+            CLIP_PLANE_TAG_Y | 11
+        );
+        assert_eq!(
+            pack_clip_plane_ref(13, [0, 0, 4096]).unwrap(),
+            CLIP_PLANE_TAG_Z | 13
+        );
+    }
+
+    #[test]
+    fn clip_plane_ref_leaves_non_axial_normals_generic() {
+        assert_eq!(pack_clip_plane_ref(19, [4095, 0, 0]).unwrap(), 19);
+        assert_eq!(pack_clip_plane_ref(19, [4096, 1, 0]).unwrap(), 19);
+        assert_eq!(pack_clip_plane_ref(19, [2365, 2365, 2366]).unwrap(), 19);
+    }
+
+    #[test]
+    fn clip_plane_ref_leaves_negative_axes_generic() {
+        assert_eq!(pack_clip_plane_ref(23, [-4096, 0, 0]).unwrap(), 23);
+        assert_eq!(pack_clip_plane_ref(23, [0, -4096, 0]).unwrap(), 23);
+        assert_eq!(pack_clip_plane_ref(23, [0, 0, -4096]).unwrap(), 23);
+    }
+
+    #[test]
+    fn clip_plane_ref_enforces_14_bit_index_without_truncation() {
+        assert_eq!(CLIP_PLANE_INDEX_MASK, 16_383);
+        assert_eq!(
+            pack_clip_plane_ref(16_383, [0, 0, 4096]).unwrap(),
+            0xffff
+        );
+        let err = pack_clip_plane_ref(16_384, [4096, 0, 0]).unwrap_err();
+        assert!(err.contains("16384"));
+        assert!(err.contains("14-bit"));
+    }
+
+    #[test]
     fn compact_clipnodes_dedups_and_keeps_only_reachable() {
         let mut clipnodes = Vec::new();
         put_clipnode(&mut clipnodes, 0, 1, 3); // root: two structurally identical children
@@ -6913,6 +6999,45 @@ mod tests {
         assert_eq!(plane, 0);
         assert_eq!(c0, c1); // both children point at the shared node
         assert_eq!(out[c0 as usize], (5, -1, -2));
+    }
+
+    #[test]
+    fn tjunction_weld_orders_equal_projection_vertices_deterministically() {
+        let expected = vec![0, 2, 3, 0, 3, 1, 0, 1, 4];
+        for _ in 0..32 {
+            // Vertices 2 and 3 have the same projection onto the long 0->1
+            // edge but sit on opposite sides within the two-unit weld epsilon.
+            // Their spatial-bucket insertion order must not choose the cook.
+            let verts = vec![
+                [0, 0, 0],
+                [200, 0, 0],
+                [100, 1, 0],
+                [100, -1, 0],
+                [0, 200, 0],
+            ];
+            let mut tri_idx = vec![0, 1, 4];
+            let mut tri_tex = vec![0];
+            let mut tri_uv = vec![0, 0, 200, 0, 0, 200];
+            let mut tri_rgb = vec![128; 9];
+            let mut face_first = vec![0];
+            let mut face_ntri = vec![1];
+
+            let added = weld_tjunctions(
+                &verts,
+                &mut tri_idx,
+                &mut tri_tex,
+                &mut tri_uv,
+                &mut tri_rgb,
+                &mut face_first,
+                &mut face_ntri,
+                8,
+            );
+
+            assert_eq!(added, 2);
+            assert_eq!(tri_idx, expected);
+            assert_eq!(face_first, vec![0]);
+            assert_eq!(face_ntri, vec![3]);
+        }
     }
 
     // NB: the old `uv_split_adds_support_vertices_for_long_spans` test guarded

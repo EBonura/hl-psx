@@ -1,7 +1,8 @@
 //! Parse a cooked `.hlm` map (tools/hl-bsp --cook). HLMA adds BSP visibility
-//! plus brush-entity leaf membership for PVS culling.
+//! plus brush-entity leaf membership for PVS culling; HLMB additionally tags
+//! exact positive axial clip planes for faster collision traversal.
 //!
-//!   magic "HLMA" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
+//!   magic "HLMA" | "HLMB" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
 //!     | u32 clip_off,ent_off,tram_off,prop_off,sky_tex_base,nav_off,logic_off
 //!   verts i16×3 | u32 n_loopverts | FaceVert[5B] × n_loopverts
 //!     | TriRec[16B] × n_tris (raw/dirty faces only) | light palette (u16 × 256)
@@ -25,6 +26,9 @@
 //!   clip:
 //!     u32 n_clip | i32 hull0_head | i32 hull1_head | i32 spawn[3] |
 //!     i32 spawn_yaw | ClipNode[6B] × n_clip
+//!       HLMA plane_ref = untagged u16 plane index
+//!       HLMB plane_ref = tag[15:14] | plane_index[13:0]
+//!         tag 00=generic, 01=+X, 10=+Y, 11=+Z
 //!   entities:
 //!     u32 n_models | (u32 firstface,u32 numface) × n_models
 //!     u32 n_ents | EntRec[56B] × n_ents | u32 n_ent_leafs | u16 leaf_idx[]
@@ -143,6 +147,9 @@ pub struct Map {
     pub spawn_pos: [i32; 3],
     pub spawn_yaw: i32,
     clipn_off: usize,
+    // HLMA: 0 keeps its full untagged u16 plane index. HLMB: 0xc000 extracts
+    // the axial tag and clears it from the low-14-bit plane-table index.
+    clip_plane_tag_mask: u16,
     // Entities (brush models)
     pub n_models: usize,
     pub n_ents: usize,
@@ -187,6 +194,8 @@ const PROP_SZ: usize = 24;
 const SPRITE_REC_SZ: usize = 12;
 const LOGIC_SZ: usize = 64;
 const PROP_SPLIT_FORMAT: u32 = 0x8000_0000;
+const HLM_MAGIC_HLMB: u32 = u32::from_le_bytes(*b"HLMB");
+const CLIP_PLANE_TAG_MASK: u16 = 0xC000;
 
 pub const SPRITE_ID_MASK: u16 = 0x000F;
 pub const SPRITE_INITIAL_ON: u16 = 0x0010;
@@ -240,11 +249,19 @@ pub const USE_ON: u8 = 1;
 pub const USE_TOGGLE: u8 = 3;
 
 pub struct ClipNode {
+    /// Generic plane normal. Tagged axial nodes leave this zero and carry the
+    /// canonical positive axis in `axis`, avoiding three normal loads.
     pub n: [i16; 3],
     pub c0: i16,
     pub c1: i16,
+    /// 0 = generic, 1 = +X, 2 = +Y, 3 = +Z.
+    pub axis: u8,
     pub dist: i32,
 }
+
+// `axis` occupies the two bytes that were already padding before `dist`, so
+// the decoded hot-path record does not grow.
+const _: [(); 16] = [(); core::mem::size_of::<ClipNode>()];
 
 #[derive(Clone, Copy)]
 pub struct NavNode {
@@ -320,6 +337,11 @@ pub struct PackedLoopVert {
 
 impl Map {
     pub fn load(data: &'static [u8]) -> Map {
+        let clip_plane_tag_mask = if rd_u32(data, 0) == HLM_MAGIC_HLMB {
+            CLIP_PLANE_TAG_MASK
+        } else {
+            0
+        };
         let n_verts = rd_u32(data, 4) as usize;
         let n_tris = rd_u32(data, 8) as usize;
         let n_texs = rd_u32(data, 12) as usize;
@@ -460,6 +482,7 @@ impl Map {
             spawn_pos,
             spawn_yaw,
             clipn_off,
+            clip_plane_tag_mask,
             n_models,
             n_ents,
             models_off,
@@ -689,18 +712,31 @@ impl Map {
     #[inline(always)]
     pub fn clipnode(&self, i: usize) -> ClipNode {
         let o = self.clipn_off + i * CLIPNODE_SZ;
+        let plane_ref = rd_u16(self.data, o);
+        // Branchlessly version the reference. HLMA's mask is zero, preserving
+        // all 16 index bits; HLMB extracts the high tag and clears it from the
+        // 14-bit index. Only a generic node reads its three normal components.
+        let tag_bits = plane_ref & self.clip_plane_tag_mask;
+        let axis = (tag_bits >> 14) as u8;
+        let plane = (plane_ref ^ tag_bits) as usize;
         // Clipnode plane references are cook-validated. Decode the 10-byte
         // plane directly here: routing this hot traversal through plane() kept
         // a bounds branch and an out-of-line call on every BSP node visit.
-        let po = self.planes_off + rd_u16(self.data, o) as usize * PLANE_SZ;
-        ClipNode {
-            n: [
+        let po = self.planes_off + plane * PLANE_SZ;
+        let n = if axis == 0 {
+            [
                 rd_i16(self.data, po),
                 rd_i16(self.data, po + 2),
                 rd_i16(self.data, po + 4),
-            ],
+            ]
+        } else {
+            [0, 0, 0]
+        };
+        ClipNode {
+            n,
             c0: rd_i16(self.data, o + 2),
             c1: rd_i16(self.data, o + 4),
+            axis,
             dist: rd_i32(self.data, po + 6),
         }
     }

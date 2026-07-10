@@ -89,7 +89,9 @@ fn scan_room_budget(
             max_texs = max_texs.max(rd_u32(&data, 4).unwrap_or(0) as usize);
             continue;
         }
-        if data.len() < 52 || &data[0..4] != b"HLMA" {
+        if data.len() < 52
+            || (&data[0..4] != b"HLMA" && &data[0..4] != b"HLMB")
+        {
             continue;
         }
 
