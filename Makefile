@@ -31,11 +31,11 @@ PSOXIDE_MAP_SMOKE_STEPS ?= 240000000
 PSOXIDE_MAP_SMOKE_VISUAL_FRAMES ?= 8
 MAP_INDEX ?= 0
 MEMORY_MAP ?= $(CAPTURE_DIR)/hl-psx.map
-# Static headroom gate. The stack the headroom protects measures 13.5 KB peak
-# (stackwm probe, telemetry builds: boot + load + gameplay on c2a4c/c4a3/
-# c3a2d/c1a0/c4a1b; c4a3 is the worst). The linker already guarantees 32 KB
-# above STATIC_LIMIT, so 32 KB headroom = a 64 KB total stack budget = ~4.7x
-# the measured peak. Re-measure with `--guest-debug-log` on a telemetry build
+# Static headroom gate. The stack the headroom protects measures 14.9 KB peak
+# fleet-wide (stackwm probe, telemetry builds, all 96 maps boot + load +
+# gameplay; worst = c2a2a). The linker already guarantees 32 KB above
+# STATIC_LIMIT, so 32 KB headroom = a 64 KB total stack budget = ~4.3x the
+# measured peak. Re-measure with `--guest-debug-log` on a telemetry build
 # (grep stackwm) before lowering this further.
 MIN_HEADROOM_KB ?= 32
 # Default gameplay route confirms New Game from the top-level menu.

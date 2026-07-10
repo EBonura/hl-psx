@@ -12,8 +12,14 @@ use crate::map::Map;
 const SOLID: i16 = -2; // CONTENTS_SOLID
 const GROUND_NY: i32 = 2867; // floor if plane normal Y > ~0.7 (×4096)
 
-// Tunables (world units per frame). HL feel-ish; adjust from captures.
-const GRAVITY: i32 = 12;
+// Movement constants are HL values converted to per-tick units at the 20 Hz
+// sim (X u/s = X/20 u/tick; accelerations scale by dt = 0.05 twice). Every
+// number cites its pm_shared.c / SDK source.
+//
+// sv_gravity 800 u/s^2 (world.cpp:482) -> dv = 800*0.05 = 40 u/s = 2 u/tick
+// per tick. NB the discrete fall speed from height h is v = 2*sqrt(h) u/tick,
+// exactly HL's sqrt(2*800*h)/20 -- the fall-damage threshold maps 1:1.
+const GRAVITY: i32 = 2;
 
 // trigger_gravity zones scale gravity (q12; 4096 = normal). Sticky until the
 // next zone or map load, matching GoldSrc's sv_gravity behaviour.
@@ -35,13 +41,14 @@ pub fn set_longjump(on: bool) {
 fn gravity_step() -> i32 {
     unsafe { (GRAVITY * GRAVITY_SCALE) >> 12 }
 }
-const MOVE_SPEED: i32 = 18;
-const JUMP: i32 = 64;
-// Horizontal velocity ramps toward the target (accelerate) / toward 0 when idle
-// (friction) instead of snapping -- HL's PM_Accelerate/PM_Friction feel. Fraction
-// of the gap closed per sim tick, out of 16. Air is low so a jump keeps momentum.
-const GROUND_ACCEL: i32 = 8; // ~half the gap/tick: reaches speed in ~4 ticks, stops in ~4
-const AIR_ACCEL: i32 = 2; // gentle mid-air nudge; preserves jump momentum
+const MOVE_SPEED: i32 = 16; // sv_maxspeed 320 u/s (pm_shared.c:2865 clamp)
+const JUMP: i32 = 13; // sqrt(2*800*45) = 268 u/s (pm_shared.c:2596); apex ~49 u
+const STOP_SPEED: i32 = 5; // sv_stopspeed 100 u/s (PM_Friction floor)
+const AIR_WISH_CAP: i32 = 2; // PM_AirAccelerate caps wishspd at 30 u/s (pm_shared.c:1279)
+// Long jump module (pm_shared.c:2580-93): 350*1.6 = 560 u/s forward,
+// sqrt(2*800*56) = 299 u/s up, fired by a DUCKED jump while moving.
+const LONGJUMP_FWD: i32 = 28;
+const LONGJUMP_UP: i32 = 15;
 const STEP_DOWN: i32 = 8; // ground probe depth
 const CONTACT_NUDGE: i32 = 2;
 const STOP_EPSILON: i32 = 1;
@@ -182,8 +189,10 @@ pub struct Mover {
     pub id: i32, // owning brush-entity index (traces report it on hit)
 }
 
-const SWIM_SPEED: i32 = 6;
-const SWIM_SINK: i32 = 1;
+const SWIM_SPEED: i32 = 13; // water wishspeed = 0.8 * maxspeed = 256 u/s (pm_shared.c:1356)
+const SWIM_SINK: i32 = 3; // idle sink -60 u/s (pm_shared.c:1341)
+const SWIM_PADDLE: i32 = 5; // jump in water swims up 100 u/s (pm_shared.c:2513)
+const WATERJUMP_UP: i32 = 11; // hop-out boost 225 u/s (pm_shared.c:2617-79)
 
 pub const NO_MOVER: Mover = Mover {
     head: 0,
@@ -573,6 +582,41 @@ impl Player {
         }
     }
 
+    /// Duck/un-duck with HL's airborne origin shift (pm_shared.c:1920-2057):
+    /// ducking mid-air pulls the feet UP 18 units (half the hull-height
+    /// difference), which is what makes crouch-jumping clear taller ledges;
+    /// un-ducking reverses it. On the ground the origin stays put, and
+    /// standing up is refused while a ceiling would wedge the standing hull.
+    pub fn set_crouch(&mut self, map: &Map, movers: &[Mover], want: bool) {
+        if want == self.crouch {
+            return;
+        }
+        const DUCK_SHIFT: i32 = 18; // (72 - 36) / 2: hull-1 vs hull-3 height
+        if want {
+            self.crouch = true;
+            if !self.on_ground {
+                let up = [self.pos[0], self.pos[1] + DUCK_SHIFT, self.pos[2]];
+                let head = self.head(map);
+                let t = trace_all(map, head, movers, self.pos, up, false);
+                self.pos[1] += (DUCK_SHIFT * t.frac) >> 12;
+            }
+        } else {
+            // Try to stand: feet drop back down in the air; blocked heads
+            // stay crouched (the un-duck startsolid freeze from M48).
+            let down_pos = if self.on_ground {
+                self.pos
+            } else {
+                [self.pos[0], self.pos[1] - DUCK_SHIFT, self.pos[2]]
+            };
+            if !trace(map, map.hull1_head, down_pos, down_pos).startsolid {
+                self.crouch = false;
+                self.pos = down_pos;
+            } else if !trace(map, map.hull1_head, self.pos, self.pos).startsolid {
+                self.crouch = false;
+            }
+        }
+    }
+
     /// Ladder-climb frame: gravity off, forward input runs up or down the
     /// ladder by view pitch (HL feel: look up + forward climbs up), strafe
     /// slides along it, jump lets go with a push away from the view.
@@ -589,8 +633,9 @@ impl Player {
         let s = sincos::sin_q12(yaw);
         let c = sincos::sin_q12((yaw + 1024) & 0xFFF);
         if jump {
-            // Let go: push back off the ladder and resume normal physics.
-            self.vel = [(-s * CLIMB_SPEED) >> 12, 0, (-c * CLIMB_SPEED) >> 12];
+            // Let go: push back off the ladder (270 u/s, pm_shared.c:2131-35).
+            const DISMOUNT: i32 = 14;
+            self.vel = [(-s * DISMOUNT) >> 12, 0, (-c * DISMOUNT) >> 12];
             self.on_ground = false;
             let head = self.head(map);
             let (p, v) = slide_move(map, head, movers, self.pos, self.vel);
@@ -642,7 +687,21 @@ impl Player {
         self.vel[0] += (c * strafe / 128 * SWIM_SPEED) >> 12;
         self.vel[2] += (-s * strafe / 128 * SWIM_SPEED) >> 12;
         if jump {
-            self.vel[1] = SWIM_SPEED; // paddle up (surfacing)
+            // Paddle up (100 u/s); pressing into a low ledge fires the
+            // waterjump hop-out (225 u/s) so pools are exitable without
+            // step-up luck (pm_shared.c:2617-79, simplified probe).
+            let ahead = [
+                self.pos[0] + ((s * 24) >> 12),
+                self.pos[1],
+                self.pos[2] + ((c * 24) >> 12),
+            ];
+            let head = self.head(map);
+            let blocked = trace_all(map, head, movers, self.pos, ahead, false).frac < 4096;
+            self.vel[1] = if blocked && fwd > 0 {
+                WATERJUMP_UP
+            } else {
+                SWIM_PADDLE
+            };
         } else if fwd == 0 && strafe == 0 {
             self.vel[1] -= SWIM_SINK; // idle: sink gently
         }
@@ -657,6 +716,12 @@ impl Player {
     /// Advance the player one frame. `fwd`/`strafe` are analog deltas in
     /// `-128..=127` (D-pad sends ±127) relative to `yaw` (Q0.12); `jump`
     /// triggers when grounded.
+    ///
+    /// The horizontal model is the real PM_Friction + PM_Accelerate /
+    /// PM_AirAccelerate shape (pm_shared.c): friction drops speed toward zero
+    /// on the ground, acceleration adds along the wish DIRECTION capped by the
+    /// speed deficit, and air control can only add up to AIR_WISH_CAP along
+    /// the stick -- it never brakes, so knockback/longjump momentum carries.
     pub fn update(
         &mut self,
         map: &Map,
@@ -677,23 +742,45 @@ impl Player {
         // Clamp the wish speed to MOVE_SPEED so a full diagonal isn't ~1.41x fast
         // (octagonal |v| approximation, no sqrt needed).
         let (ax, az) = (wish_x.abs(), wish_z.abs());
-        let wmag = ax.max(az) + ax.min(az) * 3 / 8;
-        if wmag > MOVE_SPEED {
-            wish_x = wish_x * MOVE_SPEED / wmag;
-            wish_z = wish_z * MOVE_SPEED / wmag;
+        let mut wishspeed = ax.max(az) + ax.min(az) * 3 / 8;
+        if wishspeed > MOVE_SPEED {
+            wish_x = wish_x * MOVE_SPEED / wishspeed;
+            wish_z = wish_z * MOVE_SPEED / wishspeed;
+            wishspeed = MOVE_SPEED;
         }
-        // Accelerate toward the wish velocity / decelerate toward it when idle.
-        let accel = if self.on_ground { GROUND_ACCEL } else { AIR_ACCEL };
-        self.vel[0] += ((wish_x - self.vel[0]) * accel) >> 4;
-        self.vel[2] += ((wish_z - self.vel[2]) * accel) >> 4;
-        // The >>4 decel is an arithmetic shift: a small NEGATIVE residual floors
-        // at -1 and never reaches 0, so a released player would drift forever
-        // (self-movement with no input). Snap tiny idle velocity to a dead stop.
-        if wish_x == 0 && self.vel[0].abs() <= 2 {
-            self.vel[0] = 0;
+
+        if self.on_ground {
+            // PM_Friction (pm_shared.c:1202): drop = max(speed, stopspeed)
+            // * friction(4) * dt(0.05) = max(speed, 5) / 5 per tick.
+            let (vx, vz) = (self.vel[0], self.vel[2]);
+            let speed = vx.abs().max(vz.abs()) + vx.abs().min(vz.abs()) * 3 / 8;
+            if speed > 0 {
+                let drop = speed.max(STOP_SPEED) / 5;
+                let ns = (speed - drop.max(1)).max(0);
+                self.vel[0] = vx * ns / speed;
+                self.vel[2] = vz * ns / speed;
+            }
         }
-        if wish_z == 0 && self.vel[2].abs() <= 2 {
-            self.vel[2] = 0;
+        if wishspeed > 0 {
+            // PM_Accelerate (pm_shared.c:990) / PM_AirAccelerate (:1279):
+            // current speed ALONG the wish direction; add at most
+            // accel(10) * wishspeed * dt = wishspeed/2 per tick, never past
+            // the target. In the air the target caps at 30 u/s but the accel
+            // step still scales off the full wishspeed.
+            let dirx = wish_x * 4096 / wishspeed;
+            let dirz = wish_z * 4096 / wishspeed;
+            let current = (self.vel[0] * dirx + self.vel[2] * dirz) >> 12;
+            let target = if self.on_ground {
+                wishspeed
+            } else {
+                wishspeed.min(AIR_WISH_CAP)
+            };
+            let addspeed = target - current;
+            if addspeed > 0 {
+                let take = (wishspeed / 2).max(1).min(addspeed);
+                self.vel[0] += (dirx * take) >> 12;
+                self.vel[2] += (dirz * take) >> 12;
+            }
         }
 
         self.land_impact = 0;
@@ -704,13 +791,18 @@ impl Player {
                 self.vel[1] = 0;
             }
             if jump {
-                self.vel[1] = JUMP;
-                unsafe {
-                    if LONGJUMP && (self.vel[0].abs() + self.vel[2].abs()) > MOVE_SPEED {
-                        // Long jump: launch along the move direction.
-                        self.vel[0] = self.vel[0] * 5 / 2;
-                        self.vel[2] = self.vel[2] * 5 / 2;
-                    }
+                let moving = self.vel[0].abs() + self.vel[2].abs() > 2;
+                let longjumping = unsafe { LONGJUMP } && self.crouch && moving;
+                if longjumping {
+                    // Ducked jump with the module: launch along the move
+                    // direction at 560 u/s, 299 u/s up (pm_shared.c:2580-93).
+                    let (vx, vz) = (self.vel[0], self.vel[2]);
+                    let speed = vx.abs().max(vz.abs()) + vx.abs().min(vz.abs()) * 3 / 8;
+                    self.vel[0] = vx * LONGJUMP_FWD / speed.max(1);
+                    self.vel[2] = vz * LONGJUMP_FWD / speed.max(1);
+                    self.vel[1] = LONGJUMP_UP;
+                } else {
+                    self.vel[1] = JUMP;
                 }
                 self.on_ground = false;
             }

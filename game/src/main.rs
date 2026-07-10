@@ -124,7 +124,7 @@ const YAW_RATE: i32 = 130; // yaw units/frame at full stick (Q0.12)
 const PITCH_RATE: i32 = 95; // pitch units/frame at full stick
 const DEADZONE: i32 = 28; // radial stick deadzone
 const VIEW_HEIGHT: i32 = 28;
-const CROUCH_VIEW_HEIGHT: i32 = 13; // lowered eye while crouched (TRIANGLE held)
+const CROUCH_VIEW_HEIGHT: i32 = 12; // VEC_DUCK_VIEW (pm_shared duck eye)
 const PLAYER_USE_REACH: i32 = 120;
 const PLAYER_TOUCH_HALF_XZ: i32 = 16;
 const PLAYER_TOUCH_HEIGHT: i32 = 56;
@@ -498,6 +498,13 @@ static mut TRACER_CURSOR: usize = 0;
 // jumps (forgives an early press on a fall -- HL-ish landing feel).
 static mut JUMP_BUFFER: u8 = 0;
 const JUMP_BUFFER_TICKS: u8 = 2;
+// Drowning state (player.cpp:1215-1329): air timer, escalation, and the
+// recoverable damage tally. Self-resetting the first tick the eye surfaces.
+const DROWN_AIR_TICKS: u16 = 240; // AIRTIME 12 s at 20 Hz
+static mut DROWN_AIR: u16 = DROWN_AIR_TICKS;
+static mut DROWN_NEXT: u16 = 2;
+static mut DROWN_TICK: u8 = 0;
+static mut DROWN_TAKEN: u16 = 0;
 static mut DEATH_OVERLAY: RectFlat = RectFlat::new(0, 0, 0, 0, 0, 0, 0);
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
 // Resident viewmodel pool: ALL weapons load at map start so switching is instant
@@ -4525,6 +4532,22 @@ fn prop_voice(kind: u8, dying: bool) -> u8 {
 
 static mut PAIN_SFX_COOLDOWN: u8 = 0;
 
+/// Fall damage: same feedback as `damage_player`, but straight to health --
+/// the HEV suit does not absorb DMG_FALL (player.cpp TakeDamage bit set).
+fn fall_damage_player(health: &mut u16, dmg: u16) {
+    if dmg == 0 {
+        return;
+    }
+    unsafe {
+        if PAIN_SFX_COOLDOWN == 0 {
+            sfx::play(sfx::PAIN);
+            PAIN_SFX_COOLDOWN = 12;
+        }
+        DAMAGE_FLASH = DAMAGE_FLASH.max((50 + dmg.min(45) * 2).min(150) as u8);
+    }
+    *health = health.saturating_sub(dmg);
+}
+
 fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
     if dmg == 0 {
         return;
@@ -5320,10 +5343,13 @@ unsafe fn collect_pickups(
                 }
             }
             PROP_TYPE_LONGJUMP => {
-                // Long jump module: doubles jump distance (Xen crossings).
-                phys::set_longjump(true);
-                PROP_ACTIVE[pi] = 0;
-                sfx::play(sfx::SUIT);
+                // Long jump module (Xen crossings): needs the HEV suit to use
+                // (items.cpp:318-39); suitless, the pickup stays for later.
+                if *suit_equipped {
+                    phys::set_longjump(true);
+                    PROP_ACTIVE[pi] = 0;
+                    sfx::play(sfx::SUIT);
+                }
             }
             PROP_TYPE_ITEM_BATTERY => {
                 if *suit_equipped && *armor < HEV_MAX_ARMOR {
@@ -9075,6 +9101,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     }
     let mut fire_was_held = false; // rising-edge latch for non-auto weapons
     let mut sec_was_held = false; // rising-edge latch for L2 secondary fire
+    let mut jump_was_held = false; // HL requires a release between jumps
+    let mut view_h_cur: i32 = VIEW_HEIGHT; // eased duck eye (HL's 0.4 s spline, linearized)
     let mut switch_prev = false; // rising-edge latch for L1/R1 weapon cycling
     let mut weapon_icon_ticks = 0u8; // select-icon flash countdown after a switch
     let mut pending_vm_switch = false; // re-stream the viewmodel after a weapon change
@@ -9344,8 +9372,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 strafe = 0;
             }
             if crouching {
-                fwd /= 2; // crouch-walk is slower
-                strafe /= 2;
+                fwd /= 3; // duck factor 0.333 (pm_shared.c:1998)
+                strafe /= 3;
             }
             // Crossbow zoom = steady aim: halve look rate while held. ponytail: a
             // sensitivity cut, not a real FOV magnify (that needs a projection change).
@@ -9514,17 +9542,20 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             // Full player physics always runs; moving trains carry the player by
             // delta before the update, then block them through their shifted hull.
             telemetry::stage_begin(telemetry::stage::SIM_COLLISION);
-            // Jump buffer: a Cross press up to JUMP_BUFFER_TICKS before touchdown
-            // still jumps the moment we land (forgives an early press on a fall).
-            let jump_pressed = pad.buttons.is_held(button::CROSS);
+            // Jump is edge-triggered like HL (holding Cross does not pogo --
+            // pm_shared.c:2554 requires a release between jumps), with the
+            // 2-tick buffer forgiving a press just before touchdown.
+            let jump_held = pad.buttons.is_held(button::CROSS);
+            let jump_edge = jump_held && !jump_was_held;
+            jump_was_held = jump_held;
             let jump_want = unsafe {
-                let want = jump_pressed || (JUMP_BUFFER > 0 && player.on_ground);
-                if jump_pressed && !player.on_ground {
+                let want = (jump_edge || JUMP_BUFFER > 0) && player.on_ground;
+                if jump_edge && !player.on_ground {
                     JUMP_BUFFER = JUMP_BUFFER_TICKS;
                 } else if JUMP_BUFFER > 0 {
                     JUMP_BUFFER -= 1;
                 }
-                if want && player.on_ground {
+                if want {
                     JUMP_BUFFER = 0; // consumed on the landing tick
                 }
                 want
@@ -9532,13 +9563,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             let on_ladder = unsafe { ladder_touch(&m, nents, player.pos) };
             let in_water = !on_ladder
                 && unsafe { water_touch(nents, [player.pos[0], player.pos[1] + 12, player.pos[2]]) };
-            // Duck -> trace the shorter hull-3 (fits vents). But can't stand up if
-            // the standing hull would be startsolid under a low ceiling: stay
-            // crouched (HL behaviour), else releasing duck in a vent wedges you.
-            if player.crouch && !crouching && !phys::standing_fits(&m, player.pos) {
-                crouching = true;
-            }
-            player.crouch = crouching;
+            // Duck -> the shorter hull-3, with HL's airborne origin shift
+            // (crouch-jump pulls the feet up 18 u) and the can't-stand-here
+            // guard, all inside set_crouch. It may refuse the un-duck.
+            player.set_crouch(&m, movers, crouching);
+            crouching = player.crouch;
             if on_ladder {
                 player.update_climb(
                     &m,
@@ -9562,17 +9591,21 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             } else {
                 player.update(&m, movers, fwd, strafe, jump_want, yaw);
             }
-            // Landing: any real touchdown dips the view (weight), and a hard fall
-            // does damage (HL's fall damage above a safe speed). Gives drops a
-            // sense of impact instead of feeling weightless.
+            // Landing (per-tick units now: 1 u/t = 20 u/s). HL only dips the
+            // view above 350 u/s (a normal jump lands at ~260 and stays
+            // silent, pm_shared.c:2681), and fall damage starts at the
+            // PLAYER_MAX_SAFE_FALL_SPEED 580 u/s = 29 u/t, scaling by
+            // DAMAGE_FOR_FALL_SPEED to 100 at ~1024 u/s. Fall damage bypasses
+            // armor (DMG_FALL is not in the suit's absorb set) and is uncapped
+            // -- long drops are lethal, as authored.
             {
                 let li = player.land_impact;
-                if li > 50 {
-                    unsafe { add_view_punch(-(li.min(260) / 6), 0) };
+                if li > 17 {
+                    unsafe { add_view_punch(-(li.min(60) / 2), 0) };
                 }
-                if li > 250 {
-                    let d = ((li - 250) / 8).clamp(1, 50) as u16;
-                    damage_player(&mut health, &mut armor, d);
+                if li > 29 {
+                    let d = ((li - 29) * 9 / 2).max(1) as u16;
+                    fall_damage_player(&mut health, d);
                 }
             }
             // Low-health warning: a faint red heartbeat vignette (HL flashes the
@@ -9630,7 +9663,46 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 }
             }
             telemetry::stage_end(telemetry::stage::SIM_COLLISION);
-            let view_h = if crouching { CROUCH_VIEW_HEIGHT } else { VIEW_HEIGHT };
+            let view_h_target = if crouching { CROUCH_VIEW_HEIGHT } else { VIEW_HEIGHT };
+            view_h_cur += (view_h_target - view_h_cur).clamp(-4, 4);
+            let view_h = view_h_cur;
+            // Drowning (player.cpp:1215-1329): 12 s of air once the eye goes
+            // under, then escalating 2,3,4,5,5.. damage per second straight to
+            // health (the suit doesn't absorb DMG_DROWN); surfacing restores
+            // the drowned-off health.
+            unsafe {
+                let eye_under = health > 0
+                    && water_touch(
+                        nents,
+                        [player.pos[0], player.pos[1] + view_h, player.pos[2]],
+                    );
+                if eye_under {
+                    if DROWN_AIR > 0 {
+                        DROWN_AIR -= 1;
+                    } else {
+                        DROWN_TICK += 1;
+                        if DROWN_TICK >= 20 {
+                            DROWN_TICK = 0;
+                            let d = DROWN_NEXT.min(5);
+                            DROWN_NEXT += 1;
+                            DROWN_TAKEN = DROWN_TAKEN.saturating_add(d);
+                            fall_damage_player(&mut health, d);
+                        }
+                    }
+                } else {
+                    DROWN_AIR = DROWN_AIR_TICKS;
+                    DROWN_NEXT = 2;
+                    DROWN_TICK = 0;
+                    if DROWN_TAKEN > 0
+                        && health > 0
+                        && health < PLAYER_START_HEALTH
+                        && (sim_frame_no % 10) == 0
+                    {
+                        DROWN_TAKEN -= 1;
+                        health += 1;
+                    }
+                }
+            }
             let eye = [player.pos[0], player.pos[1] + view_h, player.pos[2]];
             unsafe {
                 collect_pickups(
@@ -9703,7 +9775,15 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     yaw = dyaw & 0xFFF;
                 }
                 if PUSH_IMPULSE != [0, 0, 0] {
-                    player.vel[1] += PUSH_IMPULSE[1];
+                    // HL applies push as basevelocity: the stream SETS your
+                    // vertical speed while inside (triggers.cpp), it does not
+                    // integrate -- integration would scale with gravity and
+                    // overshoot wildly now that gravity is the faithful 2 u/t^2.
+                    if PUSH_IMPULSE[1] > 0 {
+                        player.vel[1] = player.vel[1].max(PUSH_IMPULSE[1]);
+                    } else if PUSH_IMPULSE[1] < 0 {
+                        player.vel[1] = player.vel[1].min(PUSH_IMPULSE[1]);
+                    }
                     // Lateral push nudges the position directly (vel xz is
                     // recomputed from the stick every tick).
                     player.pos[0] += PUSH_IMPULSE[0];
@@ -9871,7 +9951,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         let (mut eye, mut view_yaw, mut view_pitch) = (
             [
                 player.pos[0],
-                player.pos[1] + if crouching { CROUCH_VIEW_HEIGHT } else { VIEW_HEIGHT },
+                player.pos[1] + view_h_cur,
                 player.pos[2],
             ],
             yaw,
