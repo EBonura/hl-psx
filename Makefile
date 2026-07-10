@@ -388,8 +388,8 @@ models:
 	@mkdir -p $(MODELPACK)
 	@rm -f $(MODELPACK)/chunk_*.psxm
 	@# Viewmodels draw one static full-bright frame, so cook them --mdl4 "0:1":
-	@# HMD5 drops the per-tri normals (--mdl6 keeps them for lit enemies, but the
-	@# viewmodel is flat-shaded so they are dead weight) and only frame 0 is baked.
+	@# HMD5 drops the per-tri normals (--mdl6 retains them for callers that need
+	@# them, but the viewmodel is flat-shaded) and only frame 0 is baked.
 	@# That shrinks each chunk enough to keep more weapons resident.
 	@i=0; for m in $(WEAPONLIST); do \
 		chunk=$$(( $(WEAPON_CHUNK_BASE) + i )); \
@@ -400,6 +400,8 @@ models:
 		i=$$((i+1)); \
 	done
 	@echo "  --- model roster (all streamed per-map): geom chunk 1300+id, tex chunk 1100+id ---"
+	@# Actors use --mdl5: compact animation frames and the same quarter-unit /
+	@# q12=1024 scale as --mdl6, without its runtime-unused per-triangle normals.
 	@rm -f $(MODELPACK)/roster.txt
 	@for entry in \
 	  "0|scientist|13:4,0:4,24:4,8:2,31:3,pondering:2,retina:2,beatdoor:2,pondering2=pondering,pondering3=pondering,pause=pondering,writeboard=pondering,converse1=pondering,converse2=pondering,push_button=beatdoor,wave=beatdoor,no=pondering,sitstand=pondering,tieshoe=pondering,buysoda=pondering,idle1=@0" \
@@ -458,7 +460,7 @@ models:
 	  t=$${entry%%|*}; rest=$${entry#*|}; mdl=$${rest%%|*}; seq=$${rest##*|}; \
 	  echo "$$entry" >> $(MODELPACK)/roster.txt; \
 	  geom=$$((1300+t)); tex=$$((1100+t)); \
-	  if $(HLBSP_BIN) --mdl6 "$(HL_GAME)/models/$$mdl.mdl" "$(MODELPACK)/chunk_$$geom.psxm" "$$seq" "$(MODELPACK)/chunk_$$tex.psxm" >/tmp/mck_$$mdl.log 2>&1; then \
+	  if $(HLBSP_BIN) --mdl5 "$(HL_GAME)/models/$$mdl.mdl" "$(MODELPACK)/chunk_$$geom.psxm" "$$seq" "$(MODELPACK)/chunk_$$tex.psxm" >/tmp/mck_$$mdl.log 2>&1; then \
 	    python3 tools/merge_model_chunk.py "$(MODELPACK)/chunk_$$geom.psxm" "$(MODELPACK)/chunk_$$tex.psxm"; \
 	    echo "  T$$t $$mdl -> merged $$geom ($$(wc -c < $(MODELPACK)/chunk_$$geom.psxm) B)"; \
 	  else echo "  T$$t $$mdl FAILED: $$(tail -1 /tmp/mck_$$mdl.log | cut -c1-60)"; fi; \

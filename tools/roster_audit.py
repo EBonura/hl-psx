@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ROOMS, PACK = ROOT / "data/rooms", ROOT / "data/modelpack"
 
 # --- mirrored constants (game/build.rs + game/src/main.rs) ---
-MODEL_WORDS = 92_416     # build.rs MODEL_POOL_WORDS
+MODEL_WORDS = 90_624     # build.rs MODEL_POOL_WORDS
 VM_POOL_WORDS = 20_224   # main.rs VM_POOL_WORDS
 MAX_LOADED = 22          # main.rs MAX_LOADED_MODELS
 FACE_CAP = 7_936         # main.rs POOL_FACE_CAP

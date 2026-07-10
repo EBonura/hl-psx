@@ -13,18 +13,17 @@ const FALLBACK_MAX_LEAVES: usize = 8192;
 const FALLBACK_MAX_ENTS: usize = 192;
 const FALLBACK_MAX_TEX_SLOTS: usize = 256;
 const FALLBACK_MODEL_WORDS: usize = 24_576;
-// MODEL_BUF must hold a whole per-map model SET (viewmodel + every NPC/enemy
-// type the map places), not just the largest single chunk. Floor it at 512 KB;
-// the per-map streamer drops the farthest types if a heavy map's set overflows.
-// Raised +8192 words (+32 KB) to hand the enemy pool the budget the FaceRec
-// 20B->16B shrink freed from MAP_BUF (net .bss-neutral vs before that change):
-// enemy geometry pool = MODEL_WORDS - VM_POOL_WORDS, so this is ~185 -> ~217 KB,
-// fewer dropped enemy types on the heaviest maps.
+// MODEL_BUF must hold a whole per-map model set (the fixed viewmodel reserve,
+// every resident NPC/enemy frame section, and one whole incoming HMRG chunk),
+// not just the largest individual asset. The per-map streamer drops whole
+// types if this arena, the face pools, or the texture slots overflow.
 // Audited against the worst per-map streaming peak (tools/roster_audit.py):
-// c4a3 peaks at 90,697 words transient (VM reserve + resident frame sections +
-// the whole in-flight HMRG chunk); 92,416 leaves ~6.7 KB for roster drift.
+// HMD5 actors remove runtime-unused face normals, so c4a3 now peaks at 88,803
+// words transient (VM reserve + resident frame sections + the whole in-flight
+// HMRG chunk); 90,624 leaves ~7.1 KB for roster drift while reclaiming 7 KiB
+// of static RAM from the previous 92,416-word arena.
 // Re-run the audit after `make models`/`make rooms` before trimming further.
-const MODEL_POOL_WORDS: usize = 92_416;
+const MODEL_POOL_WORDS: usize = 90_624;
 
 fn rd_u32(d: &[u8], o: usize) -> Option<u32> {
     Some(u32::from_le_bytes([

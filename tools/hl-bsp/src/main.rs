@@ -5538,9 +5538,10 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
 // matrices applied at cook time). Default bodyparts are concatenated so view
 // models keep separate visible pieces such as magazines/clips. Layout matches
 // .hlm geometry+textures:
-//   magic "HMD2"/"HMD6" | u32 n_verts,n_tris,n_texs,n_frames
+//   magic "HMD2"/"HMD5"/"HMD6" | u32 n_verts,n_tris,n_texs,n_frames
 //   verts i16×3 per frame | tri_rec × n_tris | textures...
 //     HMD2 tri_rec[16] = u16 a,b,c | u16 tex | u8 uv[6] | u16 pad
+//     HMD5 uses compact frames + HMD2 tri records (no per-triangle normals)
 //     HMD6 tri_rec[20] = HMD2 payload | i8 normal[3] | u8 flags | u16 pad
 
 type Mat34 = ([[f32; 3]; 3], [f32; 3]); // rotation, translation
@@ -5550,7 +5551,43 @@ type Mat34 = ([[f32; 3]; 3], [f32; 3]); // rotation, translation
 // shrinks i8 deltas + the base, halving model RAM with no visible loss.
 const MDL_VERTEX_LOCAL_SCALE: i32 = 8;
 const ENEMY_VERTEX_LOCAL_SCALE: i32 = 4; // quarter-unit grid: same i16 RAM, half the near-GTE distortion zone (was 2)
-const MDL_LOCAL_TO_WORLD_Q12: u16 = (4096 / MDL_VERTEX_LOCAL_SCALE) as u16;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MdlCookMode {
+    compact_frames: bool,
+    compact_normals: bool,
+    vertex_scale: i32,
+}
+
+fn mdl_cook_mode(flag: &str) -> Option<MdlCookMode> {
+    match flag {
+        "--mdl" => Some(MdlCookMode {
+            compact_frames: false,
+            compact_normals: false,
+            vertex_scale: MDL_VERTEX_LOCAL_SCALE,
+        }),
+        "--mdl4" => Some(MdlCookMode {
+            compact_frames: true,
+            compact_normals: false,
+            vertex_scale: MDL_VERTEX_LOCAL_SCALE,
+        }),
+        "--mdl5" => Some(MdlCookMode {
+            compact_frames: true,
+            compact_normals: false,
+            vertex_scale: ENEMY_VERTEX_LOCAL_SCALE,
+        }),
+        "--mdl6" => Some(MdlCookMode {
+            compact_frames: true,
+            compact_normals: true,
+            vertex_scale: ENEMY_VERTEX_LOCAL_SCALE,
+        }),
+        _ => None,
+    }
+}
+
+fn mdl_local_to_world_q12(vertex_scale: i32) -> u16 {
+    (4096 / vertex_scale.max(1)) as u16
+}
 
 fn quantize_mdl_coord(v: f32, scale: i32) -> i16 {
     (v * scale as f32)
@@ -6219,7 +6256,7 @@ fn cook_mdl(
         o.extend_from_slice(&(frames.len() as u32).to_le_bytes());
         o.extend_from_slice(&(clips.len() as u32).to_le_bytes());
         o.extend_from_slice(&(frame_data.len() as u32).to_le_bytes());
-        o.extend_from_slice(&((4096 / vertex_scale.max(1)) as u16).to_le_bytes());
+        o.extend_from_slice(&mdl_local_to_world_q12(vertex_scale).to_le_bytes());
         o.extend_from_slice(&0u16.to_le_bytes());
         for (first, count) in &clips {
             o.extend_from_slice(&first.to_le_bytes());
@@ -6313,12 +6350,7 @@ fn cook_mdl(
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if matches!(
-        args.get(1).map(|s| s.as_str()),
-        Some("--mdl") | Some("--mdl4") | Some("--mdl6")
-    ) {
-        let compact_normals = args.get(1).map(|s| s.as_str()) == Some("--mdl6");
-        let compact_frames = compact_normals || args.get(1).map(|s| s.as_str()) == Some("--mdl4");
+    if let Some(mode) = args.get(1).and_then(|flag| mdl_cook_mode(flag)) {
         match (args.get(2), args.get(3)) {
             (Some(inp), Some(out)) => {
                 let seq_text = args.get(4).map(|s| s.as_str()).unwrap_or("0");
@@ -6330,21 +6362,14 @@ fn main() {
                         exit(2);
                     }
                 };
-                // --mdl6 (enemies/NPCs) cook at the coarse enemy scale; --mdl4
-                // (viewmodel) keeps full precision for the close-up weapon.
-                let vertex_scale = if compact_normals {
-                    ENEMY_VERTEX_LOCAL_SCALE
-                } else {
-                    MDL_VERTEX_LOCAL_SCALE
-                };
                 if let Err(e) = cook_mdl(
                     inp,
                     out,
                     tex_out,
                     &specs,
-                    compact_frames,
-                    compact_normals,
-                    vertex_scale,
+                    mode.compact_frames,
+                    mode.compact_normals,
+                    mode.vertex_scale,
                 ) {
                     eprintln!("{}", e);
                     exit(1);
@@ -6353,7 +6378,7 @@ fn main() {
             }
             _ => {
                 eprintln!(
-                    "usage: hl-bsp --mdl|--mdl4|--mdl6 <in.mdl> <out.hlmdl> [seq|seq:max_frames,...] [out.hltx]"
+                    "usage: hl-bsp --mdl|--mdl4|--mdl5|--mdl6 <in.mdl> <out.hlmdl> [seq|seq:max_frames,...] [out.hltx]"
                 );
                 exit(2);
             }
@@ -6412,9 +6437,59 @@ mod tests {
     // models drift in size and OT depth. Guards the "bump the scale" knob.
     #[test]
     fn model_scale_round_trips_through_q12() {
-        let runtime_s = (4096 / MDL_LOCAL_TO_WORLD_Q12 as i32).max(1);
+        let q12 = mdl_local_to_world_q12(MDL_VERTEX_LOCAL_SCALE);
+        let runtime_s = (4096 / q12 as i32).max(1);
         assert_eq!(runtime_s, MDL_VERTEX_LOCAL_SCALE);
         assert!(quantize_mdl_coord(1.0, MDL_VERTEX_LOCAL_SCALE) == MDL_VERTEX_LOCAL_SCALE as i16); // ×s before rounding
+    }
+
+    #[test]
+    fn model_cook_modes_select_format_and_scale() {
+        assert_eq!(
+            mdl_cook_mode("--mdl"),
+            Some(MdlCookMode {
+                compact_frames: false,
+                compact_normals: false,
+                vertex_scale: 8,
+            })
+        );
+        assert_eq!(
+            mdl_cook_mode("--mdl4"),
+            Some(MdlCookMode {
+                compact_frames: true,
+                compact_normals: false,
+                vertex_scale: 8,
+            })
+        );
+        assert_eq!(
+            mdl_cook_mode("--mdl5"),
+            Some(MdlCookMode {
+                compact_frames: true,
+                compact_normals: false,
+                vertex_scale: 4,
+            })
+        );
+        assert_eq!(
+            mdl_cook_mode("--mdl6"),
+            Some(MdlCookMode {
+                compact_frames: true,
+                compact_normals: true,
+                vertex_scale: 4,
+            })
+        );
+        assert_eq!(mdl_cook_mode("--mdl7"), None);
+    }
+
+    #[test]
+    fn actor_mdl5_and_mdl6_share_q12_scale() {
+        let mdl5 = mdl_cook_mode("--mdl5").unwrap();
+        let mdl6 = mdl_cook_mode("--mdl6").unwrap();
+
+        assert_eq!(mdl5.vertex_scale, mdl6.vertex_scale);
+        assert_eq!(mdl_local_to_world_q12(mdl5.vertex_scale), 1024);
+        assert_eq!(mdl_local_to_world_q12(mdl6.vertex_scale), 1024);
+        assert!(!mdl5.compact_normals);
+        assert!(mdl6.compact_normals);
     }
 
     #[test]
