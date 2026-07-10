@@ -306,7 +306,10 @@ campaign-map-report:
 	python3 $(ROOT)/tools/campaign_map_report.py \
 		--hl-game "$(HL_GAME)" \
 		--hlbsp-bin "$(HLBSP_BIN)" \
-		--rooms-dir "$(ROOMS)"
+		--rooms-dir "$(ROOMS)" \
+		--clips-manifest "$(MODELPACK)/clips.txt" \
+		--voices-manifest "$(VOICEPACK)/manifest.txt" \
+		--sprites-manifest "$(SPRITEPACK)/manifest.txt"
 
 placement-audit:
 	HL_GAME="$(HL_GAME)" python3 $(ROOT)/tools/placement_audit.py

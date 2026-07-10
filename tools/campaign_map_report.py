@@ -9,6 +9,7 @@ next storage step: chunking, compression, or a smaller cooked representation.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import tempfile
@@ -41,15 +42,31 @@ def campaign_maps(maps_dir: Path) -> list[Path]:
     )
 
 
-def cook_size(hlbsp: Path, bsp: Path, tmp: Path) -> tuple[int, int]:
+def cook_size(
+    hlbsp: Path,
+    bsp: Path,
+    tmp: Path,
+    map_index: int,
+    clips_manifest: Path,
+    voices_manifest: Path,
+    sprites_manifest: Path,
+) -> tuple[int, int]:
     world = tmp / f"{bsp.stem}.world.psxc"
     tex = tmp / f"{bsp.stem}.tex.psxc"
+    env = os.environ.copy()
+    env.update(
+        CLIPS_MANIFEST=str(clips_manifest),
+        VOICES_MANIFEST=str(voices_manifest),
+        SPRITES_MANIFEST=str(sprites_manifest),
+        MAP_INDEX=str(map_index),
+    )
     subprocess.run(
         [str(hlbsp), "--cook", str(bsp), str(world), str(tex)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
         check=True,
+        env=env,
     )
     return world.stat().st_size, tex.stat().st_size
 
@@ -59,6 +76,9 @@ def main() -> int:
     parser.add_argument("--hl-game", required=True, type=Path)
     parser.add_argument("--hlbsp-bin", required=True, type=Path)
     parser.add_argument("--rooms-dir", required=True, type=Path)
+    parser.add_argument("--clips-manifest", required=True, type=Path)
+    parser.add_argument("--voices-manifest", required=True, type=Path)
+    parser.add_argument("--sprites-manifest", required=True, type=Path)
     parser.add_argument("--top", type=int, default=20)
     parser.add_argument("--fail-on-oversize", action="store_true")
     args = parser.parse_args()
@@ -73,9 +93,17 @@ def main() -> int:
     rows: list[tuple[str, int, int, str]] = []
     with tempfile.TemporaryDirectory(prefix="hl-psx-map-sizes-") as td:
         tmp = Path(td)
-        for bsp in maps:
+        for map_index, bsp in enumerate(maps):
             try:
-                world, tex = cook_size(args.hlbsp_bin, bsp, tmp)
+                world, tex = cook_size(
+                    args.hlbsp_bin,
+                    bsp,
+                    tmp,
+                    map_index,
+                    args.clips_manifest,
+                    args.voices_manifest,
+                    args.sprites_manifest,
+                )
                 fit = "ok" if world <= budget and tex <= budget else "too_big"
                 rows.append((bsp.stem, world, tex, fit))
             except subprocess.CalledProcessError as err:

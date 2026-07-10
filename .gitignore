@@ -42,6 +42,7 @@ tools/*.py
 !tools/spu_audit.py
 !tools/model_asset_audit.py
 !tools/test_model_asset_audit.py
+!tools/test_campaign_map_report.py
 !tools/test_train_audit.py
 !tools/merge_model_chunk.py
 # Asset extractors needed by `make assets` (they read YOUR Half-Life install
