@@ -633,45 +633,69 @@ fn load_skybox_textures(path: &str, sky: &str) -> Option<Vec<CookedTex>> {
     Some(out)
 }
 
-fn compact_clipnode_remap(clipnodes: &[u8], roots: &[i32]) -> Vec<i32> {
+/// Reachability-compact AND hash-cons the clipnode array: identical subtrees
+/// (same source plane, same canonical children) collapse into one node, so the
+/// output is a DAG. The runtime trace walks child indices without caring about
+/// sharing, so this is a pure size win (~16% of clip bytes fleet-wide -- the
+/// three world hulls repeat a lot of structure). Returns the old->new remap
+/// (-1 = unreachable) plus the deduped node list as (src_planenum, c0, c1)
+/// with children already in final id space.
+fn compact_clipnode_remap(clipnodes: &[u8], roots: &[i32]) -> (Vec<i32>, Vec<(usize, i16, i16)>) {
     let n_clip = clipnodes.len() / SZ_CLIPNODE;
-    let mut reachable = vec![false; n_clip];
-    let mut stack: Vec<usize> = Vec::new();
-
-    for &root in roots {
-        if root >= 0 {
-            let idx = root as usize;
-            if idx < n_clip && !reachable[idx] {
-                reachable[idx] = true;
-                stack.push(idx);
-            }
-        }
-    }
-
-    while let Some(idx) = stack.pop() {
+    let node = |idx: usize| -> (usize, i16, i16) {
         let co = idx * SZ_CLIPNODE;
-        for child_off in [4usize, 6usize] {
-            let child =
-                i16::from_le_bytes([clipnodes[co + child_off], clipnodes[co + child_off + 1]]);
-            if child >= 0 {
-                let child_idx = child as usize;
-                if child_idx < n_clip && !reachable[child_idx] {
-                    reachable[child_idx] = true;
-                    stack.push(child_idx);
-                }
-            }
-        }
-    }
+        (
+            i32le(clipnodes, co).unwrap_or(0).max(0) as usize,
+            i16::from_le_bytes([clipnodes[co + 4], clipnodes[co + 5]]),
+            i16::from_le_bytes([clipnodes[co + 6], clipnodes[co + 7]]),
+        )
+    };
 
     let mut remap = vec![-1i32; n_clip];
-    let mut next = 0i32;
-    for (idx, is_reachable) in reachable.into_iter().enumerate() {
-        if is_reachable {
-            remap[idx] = next;
-            next += 1;
+    let mut interned: std::collections::HashMap<(usize, i16, i16), i32> =
+        std::collections::HashMap::new();
+    let mut out: Vec<(usize, i16, i16)> = Vec::new();
+
+    // Iterative post-order from every root: children canonicalized first, then
+    // the node interns on (plane, canonical c0, canonical c1).
+    let mut stack: Vec<usize> = Vec::new();
+    for &root in roots {
+        if root >= 0 && (root as usize) < n_clip {
+            stack.push(root as usize);
         }
     }
-    remap
+    while let Some(&idx) = stack.last() {
+        if remap[idx] >= 0 {
+            stack.pop();
+            continue;
+        }
+        let (plane, c0, c1) = node(idx);
+        let mut ready = true;
+        for child in [c0, c1] {
+            if child >= 0 && (child as usize) < n_clip && remap[child as usize] < 0 {
+                stack.push(child as usize);
+                ready = false;
+            }
+        }
+        if !ready {
+            continue;
+        }
+        stack.pop();
+        let canon = |child: i16| -> i16 {
+            if child >= 0 && (child as usize) < n_clip {
+                remap[child as usize] as i16
+            } else {
+                child.min(-1) // out-of-range refs degrade to -1 (empty), as before
+            }
+        };
+        let key = (plane, canon(c0), canon(c1));
+        let id = *interned.entry(key).or_insert_with(|| {
+            out.push(key);
+            (out.len() - 1) as i32
+        });
+        remap[idx] = id;
+    }
+    (remap, out)
 }
 
 fn remap_clip_head(head: i32, remap: &[i32]) -> i32 {
@@ -679,18 +703,6 @@ fn remap_clip_head(head: i32, remap: &[i32]) -> i32 {
         remap.get(head as usize).copied().unwrap_or(-1)
     } else {
         head
-    }
-}
-
-fn remap_clip_child(child: i16, remap: &[i32]) -> i16 {
-    if child >= 0 {
-        remap
-            .get(child as usize)
-            .copied()
-            .filter(|&idx| idx >= 0 && idx <= i16::MAX as i32)
-            .unwrap_or(-1) as i16
-    } else {
-        child
     }
 }
 
@@ -4885,8 +4897,8 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     for e in &ents {
         clip_roots.push(e.head);
     }
-    let clip_remap = compact_clipnode_remap(clipnodes, &clip_roots);
-    let n_clip = clip_remap.iter().filter(|&&idx| idx >= 0).count();
+    let (clip_remap, clip_out) = compact_clipnode_remap(clipnodes, &clip_roots);
+    let n_clip = clip_out.len();
     let stripped_clip_count = raw_n_clip.saturating_sub(n_clip);
     let hull0_head = remap_clip_head(hull0_head_raw, &clip_remap);
     let hull1_head = remap_clip_head(hull1_head_raw, &clip_remap);
@@ -4903,15 +4915,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let planenum = i32le(nodes, no).unwrap_or(0).max(0) as usize;
         remap_plane_index(planenum, &mut plane_remap, &mut cooked_planes);
     }
-    for ci in 0..raw_n_clip {
-        let Some(&new_ci) = clip_remap.get(ci) else {
-            continue;
-        };
-        if new_ci < 0 {
-            continue;
-        }
-        let co = ci * SZ_CLIPNODE;
-        let planenum = i32le(clipnodes, co).unwrap_or(0).max(0) as usize;
+    for &(planenum, _, _) in &clip_out {
         remap_plane_index(planenum, &mut plane_remap, &mut cooked_planes);
     }
 
@@ -5163,21 +5167,12 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         o.extend_from_slice(&c.to_le_bytes());
     }
     o.extend_from_slice(&syaw.to_le_bytes());
-    for ci in 0..raw_n_clip {
-        let Some(&new_ci) = clip_remap.get(ci) else {
-            continue;
-        };
-        if new_ci < 0 {
-            continue;
-        }
-        let co = ci * SZ_CLIPNODE;
-        let src_planenum = i32le(clipnodes, co).unwrap_or(0).max(0) as usize;
+    // Children in clip_out are already final DAG ids -- write them verbatim.
+    for &(src_planenum, c0, c1) in &clip_out {
         let planenum = plane_remap.get(src_planenum).copied().unwrap_or(0);
         o.extend_from_slice(&planenum.to_le_bytes());
-        let c0 = i16::from_le_bytes([clipnodes[co + 4], clipnodes[co + 5]]);
-        let c1 = i16::from_le_bytes([clipnodes[co + 6], clipnodes[co + 7]]);
-        o.extend_from_slice(&remap_clip_child(c0, &clip_remap).to_le_bytes());
-        o.extend_from_slice(&remap_clip_child(c1, &clip_remap).to_le_bytes());
+        o.extend_from_slice(&c0.to_le_bytes());
+        o.extend_from_slice(&c1.to_le_bytes());
     }
 
     // ---- Entities (brush models) ----
@@ -6595,19 +6590,23 @@ mod tests {
     }
 
     #[test]
-    fn compact_clipnodes_keeps_only_reachable_hulls() {
+    fn compact_clipnodes_dedups_and_keeps_only_reachable() {
         let mut clipnodes = Vec::new();
-        put_clipnode(&mut clipnodes, 0, 1, -2);
-        put_clipnode(&mut clipnodes, 0, -1, -2);
-        put_clipnode(&mut clipnodes, 0, -2, -2);
+        put_clipnode(&mut clipnodes, 0, 1, 3); // root: two structurally identical children
+        put_clipnode(&mut clipnodes, 5, -1, -2); // subtree A
+        put_clipnode(&mut clipnodes, 9, -2, -2); // unreachable -> stripped
+        put_clipnode(&mut clipnodes, 5, -1, -2); // subtree B == A -> collapses
 
-        let remap = compact_clipnode_remap(&clipnodes, &[0]);
+        let (remap, out) = compact_clipnode_remap(&clipnodes, &[0]);
 
-        assert_eq!(remap, vec![0, 1, -1]);
-        assert_eq!(remap_clip_head(0, &remap), 0);
-        assert_eq!(remap_clip_child(1, &remap), 1);
-        assert_eq!(remap_clip_child(2, &remap), -1);
-        assert_eq!(remap_clip_child(-2, &remap), -2);
+        assert_eq!(remap[2], -1); // unreachable stays stripped
+        assert_eq!(remap[1], remap[3]); // identical subtrees share one id
+        assert_eq!(out.len(), 2); // root + the shared leaf
+        let root = remap_clip_head(0, &remap) as usize;
+        let (plane, c0, c1) = out[root];
+        assert_eq!(plane, 0);
+        assert_eq!(c0, c1); // both children point at the shared node
+        assert_eq!(out[c0 as usize], (5, -1, -2));
     }
 
     #[test]

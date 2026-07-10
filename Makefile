@@ -31,7 +31,13 @@ PSOXIDE_MAP_SMOKE_STEPS ?= 240000000
 PSOXIDE_MAP_SMOKE_VISUAL_FRAMES ?= 8
 MAP_INDEX ?= 0
 MEMORY_MAP ?= $(CAPTURE_DIR)/hl-psx.map
-MIN_HEADROOM_KB ?= 96
+# Static headroom gate. The stack the headroom protects measures 13.5 KB peak
+# (stackwm probe, telemetry builds: boot + load + gameplay on c2a4c/c4a3/
+# c3a2d/c1a0/c4a1b; c4a3 is the worst). The linker already guarantees 32 KB
+# above STATIC_LIMIT, so 32 KB headroom = a 64 KB total stack budget = ~4.7x
+# the measured peak. Re-measure with `--guest-debug-log` on a telemetry build
+# (grep stackwm) before lowering this further.
+MIN_HEADROOM_KB ?= 32
 # Default gameplay route confirms New Game from the top-level menu.
 PSOXIDE_MENU_PLAY_PULSES ?= 0x4000@90+8
 
@@ -53,7 +59,7 @@ HLBSP_BIN := $(HLBSP)/target/release/hl-bsp
 MAP      ?= c1a0
 
 .DEFAULT_GOAL := build
-.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms campaign-map-report menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-map-smoke psoxide-chart memory-report
+.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms campaign-map-report roster-audit menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-map-smoke psoxide-chart memory-report
 
 help:
 	@echo "hl-psx targets:"
@@ -265,6 +271,11 @@ campaign-map-report:
 		--hl-game "$(HL_GAME)" \
 		--hlbsp-bin "$(HLBSP_BIN)" \
 		--rooms-dir "$(ROOMS)"
+
+# Model-pool fit gate: fails if any map would drop a combat/pickup model.
+# Run after `make models` or `make rooms`, and before trimming pool constants.
+roster-audit:
+	python3 $(ROOT)/tools/roster_audit.py
 
 # Extract the menu font (HL fonts.wad -> data/menu/hlfont.bin, git-ignored).
 # The runtime include_bytes!'s it, so run this once before building.

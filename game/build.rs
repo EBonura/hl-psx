@@ -6,6 +6,7 @@
 use std::{fs, path::PathBuf};
 
 const FALLBACK_MAP_WORDS: usize = 255_000;
+const FALLBACK_MAX_VERTS: usize = 12_288;
 const FALLBACK_MAX_FACES: usize = 6144;
 const FALLBACK_MAX_FACE_GROUPS: usize = 3072;
 const FALLBACK_MAX_LEAVES: usize = 8192;
@@ -19,7 +20,11 @@ const FALLBACK_MODEL_WORDS: usize = 24_576;
 // 20B->16B shrink freed from MAP_BUF (net .bss-neutral vs before that change):
 // enemy geometry pool = MODEL_WORDS - VM_POOL_WORDS, so this is ~185 -> ~217 KB,
 // fewer dropped enemy types on the heaviest maps.
-const MODEL_POOL_WORDS: usize = 96_768; // rebalanced for train/water/script map growth; VM cut funds the roster
+// Audited against the worst per-map streaming peak (tools/roster_audit.py):
+// c4a3 peaks at 90,697 words transient (VM reserve + resident frame sections +
+// the whole in-flight HMRG chunk); 92,416 leaves ~6.7 KB for roster drift.
+// Re-run the audit after `make models`/`make rooms` before trimming further.
+const MODEL_POOL_WORDS: usize = 92_416;
 
 fn rd_u32(d: &[u8], o: usize) -> Option<u32> {
     Some(u32::from_le_bytes([
@@ -42,13 +47,16 @@ fn round_up(value: usize, step: usize) -> usize {
     }
 }
 
-fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize, usize, usize) {
+fn scan_room_budget(
+    repo_root: &std::path::Path,
+) -> (usize, usize, usize, usize, usize, usize, usize) {
     let rooms = repo_root.join("data/rooms");
     println!("cargo:rerun-if-changed={}", rooms.display());
 
     let Ok(entries) = fs::read_dir(&rooms) else {
         return (
             FALLBACK_MAP_WORDS,
+            FALLBACK_MAX_VERTS,
             FALLBACK_MAX_FACES,
             FALLBACK_MAX_FACE_GROUPS,
             FALLBACK_MAX_LEAVES,
@@ -58,6 +66,7 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
     };
 
     let mut max_bytes = 0usize;
+    let mut max_verts = 0usize;
     let mut max_face_records = 0usize;
     let mut max_face_groups = 0usize;
     let mut max_leaves = 0usize;
@@ -86,6 +95,7 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
         }
 
         max_bytes = max_bytes.max(data.len());
+        max_verts = max_verts.max(rd_u32(&data, 4).unwrap_or(0) as usize);
         let n_texs = rd_u32(&data, 12).unwrap_or(0) as usize;
         let n_faces = rd_u32(&data, 16).unwrap_or(0) as usize;
         let bsp_off = rd_u32(&data, 20).unwrap_or(0) as usize;
@@ -119,6 +129,7 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
     if max_bytes == 0 {
         return (
             FALLBACK_MAP_WORDS,
+            FALLBACK_MAX_VERTS,
             FALLBACK_MAX_FACES,
             FALLBACK_MAX_FACE_GROUPS,
             FALLBACK_MAX_LEAVES,
@@ -132,6 +143,7 @@ fn scan_room_budget(repo_root: &std::path::Path) -> (usize, usize, usize, usize,
         // buffer TAIL and decoded back to the head; the margin keeps the
         // write cursor behind the unread source even on the biggest map.
         (max_bytes + 4096).div_ceil(4),
+        round_up(max_verts + 128, 256),
         round_up(max_face_records + 32, 256),
         round_up(max_face_groups + 32, 256),
         round_up(max_leaves + 64, 256),
@@ -191,13 +203,14 @@ fn main() {
     println!("cargo:rustc-link-arg=--oformat=binary");
     println!("cargo:rerun-if-changed={}", ld.display());
 
-    let (map_words, max_faces, max_face_groups, max_leaves, max_ents, max_tex_slots) =
+    let (map_words, max_verts, max_faces, max_face_groups, max_leaves, max_ents, max_tex_slots) =
         scan_room_budget(repo_root);
     let model_words = scan_model_budget(repo_root);
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let budget = format!(
         "pub const MAP_WORDS: usize = {map_words};\n\
          pub const MODEL_WORDS: usize = {model_words};\n\
+         pub const MAX_VERTS: usize = {max_verts};\n\
          pub const MAX_FACES: usize = {max_faces};\n\
          pub const MAX_FACE_GROUPS: usize = {max_face_groups};\n\
          pub const MAX_LEAVES: usize = {max_leaves};\n\

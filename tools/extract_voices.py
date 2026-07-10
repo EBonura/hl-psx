@@ -24,10 +24,24 @@ import wave
 import zipfile
 
 # Per-map dialogue streams into the SPU region above the resident core SFX
-# (~172 KB free). Cook at the highest rate that fits; drop only when a map's
-# dialogue overflows -- voice stays intelligible down to ~5 kHz.
+# (512 KB total, samples from 0x1010; see game/src/sfx.rs). Cook at the highest
+# rate that fits; drop only when a map's dialogue overflows -- voice stays
+# intelligible down to ~5 kHz. The budget is derived from the CURRENT core pack
+# so it tracks core-SFX growth (a stale constant here silently drops runtime
+# tail lines on every map whose pack exceeds the real region).
 VOICE_RATES = (11025, 8000, 6000, 5000, 4000)
-VOICE_BUDGET = 168 * 1024
+
+
+def voice_budget():
+    core = os.path.join(os.path.dirname(__file__), "..", "data", "sfx", "chunk_3000.psxa")
+    try:
+        core_bytes = os.path.getsize(core)
+    except OSError:
+        core_bytes = 414 * 1024  # last known core size; recook sfx first for exactness
+    return 512 * 1024 - 0x1010 - core_bytes - 4096  # 4K slack for ADPCM 8-align
+
+
+VOICE_BUDGET = voice_budget()
 VOICE_DIRS = ("barney/", "scientist/", "gman/", "hgrunt/", "tride/", "vox/", "fvox/")
 
 

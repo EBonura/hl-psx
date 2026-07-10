@@ -79,7 +79,7 @@ const OT_SHIFT: u32 = 4;
 const WEAPON_OT_LEN: usize = 64;
 const HUD_OT_LEN: usize = 1;
 const FX_OT_LEN: usize = 1;
-const MAX_VERTS: usize = 12288; // covers the biggest campaign map (room_140 = 11664 verts)
+const MAX_VERTS: usize = room_budget::MAX_VERTS; // auto-sized to the biggest cooked map
 const MAX_MODEL_VERTS: usize = 1024;
 const SCI_FACE_CAP: usize = 768;
 const BARNEY_FACE_CAP: usize = 800;
@@ -239,7 +239,11 @@ const PROP_STATE_DEAD: u8 = 3;
 const N_MODEL_TYPES: usize = 52;
 const MAX_LOADED_MODELS: usize = 22; // distinct model types resident per map (enemies + pickups)
 const POOL_TEX_SLOTS: usize = 240; // shared TexSlot pool across loaded models
-const POOL_FACE_CAP: usize = 6352; // shared RenderFace pool (worst per-map tri sum, c4a3 with statues)
+// Shared RenderFace pool. Covers every map's full tri sum except c4a3, whose
+// background garg statue (wants 7,922 total) stays a whole-type drop; c4a1b
+// (6,880 with its tentacle/barnacle dressing) fits. A type whose tris don't
+// fully fit is skipped outright in stream_map_models -- never baked partially.
+const POOL_FACE_CAP: usize = 6912;
 const MODEL_SLOT_NONE: u8 = 0xFF;
 const MODEL_GEOM_CHUNK_BASE: u32 = 1300;
 const MODEL_TEX_CHUNK_BASE: u32 = 1100;
@@ -1331,6 +1335,10 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
         }
         let gw = geom_word + 2; // geometry blob start (words)
         let md = Model::load(streamed_model_bytes_at(gw * 4, glen));
+        if face_off + md.n_tris > POOL_FACE_CAP {
+            continue; // face pool exhausted: drop the whole type (a pass-2
+                      // statue by tier order) instead of baking it partially
+        }
         let nf = md.fill_render_faces_raw(
             core::ptr::addr_of_mut!(POOL_FACES)
                 .cast::<ModelRenderFace>()
@@ -8508,9 +8516,69 @@ unsafe fn draw_viewmodel(
     }
 }
 
+/// Stack high-water probe (telemetry builds only): paint the free region
+/// between the statics and the live stack at boot, then report the lowest
+/// canary the stack ever clobbered. This measures the real stack need that
+/// the memory-report headroom gate (MIN_HEADROOM_KB) is protecting.
+#[cfg(feature = "emulator-telemetry")]
+mod stackprobe {
+    use psx_math::fmt::{i32_dec, I32_DEC_MAX};
+
+    const CANARY: u32 = 0x5AC4_57AC;
+    extern "C" {
+        static __bss_end: u8;
+    }
+
+    fn region() -> (usize, usize) {
+        let lo = (unsafe { core::ptr::addr_of!(__bss_end) } as usize + 3) & !3;
+        // A local's address stands in for SP (inline asm is unstable on MIPS);
+        // the guard below keeps us clear of the live frame either way.
+        let marker = 0u32;
+        let sp = core::ptr::addr_of!(marker) as usize;
+        (lo, sp.saturating_sub(256) & !3)
+    }
+
+    pub fn paint() {
+        let (lo, hi) = region();
+        let mut p = lo;
+        while p < hi {
+            unsafe { (p as *mut u32).write_volatile(CANARY) };
+            p += 4;
+        }
+    }
+
+    /// Guest-debug-log one line: bytes never touched above the statics, and
+    /// the peak stack depth measured from the 0x8020_0000 RAM top.
+    pub fn report() {
+        let (lo, _) = region();
+        let mut p = lo;
+        while unsafe { (p as *const u32).read_volatile() } == CANARY {
+            p += 4;
+        }
+        let mut line = [0u8; 64];
+        let mut n = 0;
+        let mut push = |s: &[u8]| {
+            for &b in s {
+                if n < line.len() {
+                    line[n] = b;
+                    n += 1;
+                }
+            }
+        };
+        let mut buf = [0u8; I32_DEC_MAX];
+        push(b"stackwm free=");
+        push(i32_dec(&mut buf, (p - lo) as i32).as_bytes());
+        push(b" peak=");
+        push(i32_dec(&mut buf, (0x8020_0000 - p) as i32).as_bytes());
+        crate::telemetry::debug_log(core::str::from_utf8(&line[..n]).unwrap_or("stackwm"));
+    }
+}
+
 #[no_mangle]
 fn main() {
     tty::println("hl-psx: booting renderer");
+    #[cfg(feature = "emulator-telemetry")]
+    stackprobe::paint();
 
     gpu::init(VideoMode::Ntsc, Resolution::R320X240);
     let mut fb = FrameBuffer::new(320, 240);
@@ -9079,6 +9147,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         let mut ticks_this_visual = 0u16;
         while vblank_reached(interrupts::vblank_count(), next_sim_vblank) {
             telemetry::frame_begin(telemetry_frame);
+            #[cfg(feature = "emulator-telemetry")]
+            if telemetry_frame & 255 == 0 {
+                stackprobe::report();
+            }
             telemetry::task_begin(telemetry::task::FIXED_UPDATE);
             telemetry::stage_begin(telemetry::stage::UPDATE);
             // Modern twin-stick FPS: left stick moves/strafes, right stick looks
