@@ -63,7 +63,7 @@ HLBSP_BIN := $(HLBSP)/target/release/hl-bsp
 MAP      ?= c1a0
 
 .DEFAULT_GOAL := build
-.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms campaign-map-report placement-audit roster-audit spu-audit menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-perf-report psoxide-perf-gate psoxide-map-smoke psoxide-chart memory-report
+.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms campaign-map-report placement-audit train-audit roster-audit spu-audit menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-perf-report psoxide-perf-gate psoxide-map-smoke psoxide-chart memory-report
 
 help:
 	@echo "hl-psx targets:"
@@ -90,6 +90,7 @@ help:
 	@echo "  make cook       - cook a map to data/maps/<MAP>.hlm (MAP=$(MAP))"
 	@echo "  make campaign-map-report - size every campaign BSP against MAP_BUF"
 	@echo "  make placement-audit - verify every actor/sprite placement fits and cooks"
+	@echo "  make train-audit - verify cooked func_train records fit the runtime pool"
 	@echo "  make roster-audit - verify all placed model types fit the shared pool"
 	@echo "  make spu-audit - verify core SFX + every voice bank fit SPU RAM"
 	@echo "  make clean      - remove build output"
@@ -309,6 +310,9 @@ campaign-map-report:
 
 placement-audit:
 	HL_GAME="$(HL_GAME)" python3 $(ROOT)/tools/placement_audit.py
+
+train-audit:
+	python3 $(ROOT)/tools/train_audit.py
 
 # Model-pool fit gate: fails if any placed model type would drop.
 # Run after `make models` or `make rooms`, and before trimming pool constants.

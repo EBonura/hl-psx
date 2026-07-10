@@ -38,9 +38,11 @@ tools/*.py
 !tools/campaign_flow_report.py
 !tools/roster_audit.py
 !tools/placement_audit.py
+!tools/train_audit.py
 !tools/spu_audit.py
 !tools/model_asset_audit.py
 !tools/test_model_asset_audit.py
+!tools/test_train_audit.py
 !tools/merge_model_chunk.py
 # Asset extractors needed by `make assets` (they read YOUR Half-Life install
 # and contain no Valve data, so a fresh clone can build).

@@ -2943,23 +2943,24 @@ fn collect_entities(
         }
         if cls == "func_door"
             || cls == "func_button"
+            || cls == "func_rot_button"
             || cls == "momentary_door"
             || cls == "momentary_rot_button"
         {
-            // momentary_rot_button (valve wheel) renders as a static +use button
-            // (kind 3, no visible move -- it rotates in HL, skipped); its linked
-            // momentary_door slides like a normal targeted door. This is the
-            // pragmatic port of the hold-to-turn valve: use the wheel -> the
-            // door opens (full hold-to-turn fidelity deferred).
-            let is_button = cls == "func_button" || cls == "momentary_rot_button";
+            // Rotating buttons render at their authored angle as static +use
+            // buttons (kind 3, no visible move); their target behavior is still
+            // preserved. A momentary wheel's linked momentary_door slides like
+            // a normal targeted door. Visible lever/wheel rotation is deferred.
+            let is_rot_button = cls == "func_rot_button" || cls == "momentary_rot_button";
+            let is_button = cls == "func_button" || is_rot_button;
             let angle = ent_value(block, "angle")
                 .and_then(|a| a.parse().ok())
                 .unwrap_or(0.0);
             let lip = ent_value(block, "lip")
                 .and_then(|a| a.parse().ok())
                 .unwrap_or(if is_button { 4.0 } else { 8.0 });
-            let (mv, leaf_move) = if cls == "momentary_rot_button" {
-                ([0, 0, 0], None) // the wheel doesn't translate
+            let (mv, leaf_move) = if is_rot_button {
+                ([0, 0, 0], None) // rotating buttons do not translate
             } else {
                 let (dir, dist) = door_move(angle, mins, maxs, lip);
                 (
@@ -3230,7 +3231,7 @@ fn collect_logic_entities(
             "func_door" | "func_plat" | "func_door_rotating" | "momentary_door" => {
                 LOGIC_FUNC_DOOR
             }
-            "func_button" => LOGIC_FUNC_BUTTON,
+            "func_button" | "func_rot_button" => LOGIC_FUNC_BUTTON,
             "momentary_rot_button" => LOGIC_MOMENTARY,
             "func_breakable" | "func_pushable" => LOGIC_FUNC_BREAKABLE,
             "trigger_teleport" => LOGIC_TRIGGER_TELEPORT,
@@ -3330,6 +3331,7 @@ fn collect_logic_entities(
         let speed_default = match kind {
             LOGIC_FUNC_BUTTON => 40.0,
             LOGIC_FUNC_DOOR => 100.0,
+            LOGIC_FUNC_TRAIN => 100.0,
             LOGIC_FUNC_TRACKTRAIN => 100.0,
             _ => 0.0,
         };
@@ -3351,7 +3353,9 @@ fn collect_logic_entities(
             let key = ent_value(block, "chaptertitle").unwrap_or("").to_uppercase();
             titles.get(&key).map(|t| t.hold_ticks.max(80)).unwrap_or(120)
         } else if speed_default > 0.0 {
-            (parse_f32_key(block, "speed", speed_default) / scale)
+            let authored = parse_f32_key(block, "speed", speed_default);
+            let authored = if authored > 0.0 { authored } else { speed_default };
+            (authored / scale)
                 .round()
                 .clamp(1.0, u16::MAX as f32) as u16
         } else {
@@ -3505,6 +3509,7 @@ fn collect_logic_entities(
             // coords fit i16 (maps span +-4096). Loops are implicit (the
             // runtime wraps to corner 0 when the chain ends).
             let mut corner = ent_value(block, "target").unwrap_or("").to_string();
+            let first_corner = corner.clone();
             let mut hops = 0usize;
             while !corner.is_empty() && hops < 24 {
                 let mut found = false;
@@ -3532,7 +3537,14 @@ fn collect_logic_entities(
                         aux_count += 2;
                     }
                     let next = ent_value(cb, "target").unwrap_or("").to_string();
-                    corner = if next == corner { String::new() } else { next };
+                    // A cycle back to the train's first corner is represented
+                    // implicitly by the runtime wrap. Stop here instead of
+                    // serializing the same cycle repeatedly up to the hop cap.
+                    corner = if next == corner || next == first_corner {
+                        String::new()
+                    } else {
+                        next
+                    };
                     found = true;
                     break;
                 }
@@ -6713,6 +6725,80 @@ mod tests {
         assert_eq!(logic.ents[0].speed, 300);
         assert_eq!(logic.ents[0].arg0, 50);
         assert_eq!(logic.ents[0].arg1, 12);
+    }
+
+    #[test]
+    fn cooks_func_train_default_speed_and_single_path_cycle() {
+        let ents = br#"
+        {
+        "classname" "func_train"
+        "model" "*1"
+        "target" "corner_a"
+        }
+        {
+        "classname" "path_corner"
+        "targetname" "corner_a"
+        "target" "corner_b"
+        "origin" "10 20 30"
+        }
+        {
+        "classname" "path_corner"
+        "targetname" "corner_b"
+        "target" "corner_a"
+        "origin" "40 50 60"
+        }
+        "#;
+        let brush_by_submodel = [LOGIC_BRUSH_NONE, 3];
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &brush_by_submodel,
+            1.0,
+            &Default::default(),
+        );
+
+        assert_eq!(logic.ents.len(), 1);
+        assert_eq!(logic.ents[0].kind, LOGIC_FUNC_TRAIN);
+        assert_eq!(logic.ents[0].brush, 3);
+        assert_eq!(logic.ents[0].speed, 100);
+        assert_eq!(logic.ents[0].aux_count, 4, "two corners, not 24 repeated hops");
+        assert_eq!(logic.aux.len(), 4);
+    }
+
+    #[test]
+    fn cooks_rotating_button_as_static_usable_button() {
+        let ents = br#"
+        {
+        "classname" "func_rot_button"
+        "model" "*1"
+        "origin" "10 20 30"
+        "target" "water_doormm"
+        "speed" "40"
+        }
+        "#;
+        let brush_by_submodel = [LOGIC_BRUSH_NONE, 7];
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &brush_by_submodel,
+            1.0,
+            &Default::default(),
+        );
+
+        assert_eq!(logic.ents.len(), 1);
+        assert_eq!(logic.ents[0].kind, LOGIC_FUNC_BUTTON);
+        assert_eq!(logic.ents[0].brush, 7);
+        assert_eq!(logic.names[logic.ents[0].target as usize - 1], "water_doormm");
+
+        // Two valid dmodel_t records are sufficient for the entity classifier.
+        // Kind 3 keeps the authored brush in place: it fires like a button but
+        // does not apply the pivot origin as a translation or visibly rotate.
+        let models = vec![0u8; 2 * SZ_MODEL];
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0);
+        assert_eq!(cooked.len(), 1);
+        assert_eq!(cooked[0].submodel, 1);
+        assert_eq!(cooked[0].kind & 0xff, 3);
+        assert_eq!(cooked[0].mv, [0; 3]);
     }
 
     #[test]

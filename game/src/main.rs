@@ -2859,17 +2859,18 @@ unsafe fn logic_use_entity(
             FADE_STARTDARK = false; // a real fade takes over the boot black
         }
         map::LOGIC_FUNC_TRAIN => {
-            let mut t = 0usize;
-            while t < TRAIN_COUNT {
-                if TRAIN_LI[t] as usize == li {
-                    TRAIN_ACTIVE[t] = match use_type {
-                        map::USE_ON => 1,
+            let brush = rec.brush as usize;
+            if brush < MAX_ENTS {
+                let t = ENT_TRAIN_SLOT[brush] as usize;
+                if t < TRAIN_COUNT && TRAIN_LI[t] as usize == li {
+                    let active = TRAIN_STATE[t] & TRAIN_ACTIVE_BIT;
+                    TRAIN_STATE[t] = match use_type {
+                        map::USE_ON => TRAIN_ACTIVE_BIT,
                         map::USE_OFF => 0,
-                        _ => 1 - TRAIN_ACTIVE[t].min(1),
+                        _ if active != 0 => 0,
+                        _ => TRAIN_ACTIVE_BIT,
                     };
-                    break;
                 }
-                t += 1;
             }
         }
         map::LOGIC_MONSTERMAKER => {
@@ -4873,13 +4874,16 @@ static mut PROP_SCRIPT_PLAY_UNTIL: [u16; MAX_PROPS] = [0; MAX_PROPS]; // gesture
 
 // func_train: brush platforms riding path_corner chains. Per-train state +
 // a per-ent slot map; ride-carry works through the generic ent-offset delta.
-const MAX_TRAINS: usize = 12;
+// Campaign-wide cook audit peaks at c5a1 with 50 valid func_train brushes;
+// keep a modest margin for source/cooker drift.
+const MAX_TRAINS: usize = 64;
 static mut TRAIN_LI: [u16; MAX_TRAINS] = [0; MAX_TRAINS];
-static mut TRAIN_ENT: [u8; MAX_TRAINS] = [0; MAX_TRAINS];
 static mut TRAIN_SEG: [u8; MAX_TRAINS] = [0; MAX_TRAINS];
 static mut TRAIN_DIST: [i16; MAX_TRAINS] = [0; MAX_TRAINS];
 static mut TRAIN_WAIT: [u16; MAX_TRAINS] = [0; MAX_TRAINS];
-static mut TRAIN_ACTIVE: [u8; MAX_TRAINS] = [0; MAX_TRAINS];
+// bit0 = active, bits1..5 = sub-unit speed accumulator (remainder / 20 Hz).
+const TRAIN_ACTIVE_BIT: u8 = 1;
+static mut TRAIN_STATE: [u8; MAX_TRAINS] = [0; MAX_TRAINS];
 static mut TRAIN_OFF: [[i16; 3]; MAX_TRAINS] = [[0; 3]; MAX_TRAINS];
 static mut TRAIN_COUNT: usize = 0;
 static mut WEAPONSTRIP_REQUEST: bool = false;
@@ -4920,11 +4924,14 @@ unsafe fn init_trains(m: &Map, nlogic: usize, nents: usize) {
             let (c0, _) = train_corner(m, li, 0);
             let center = ENT_CACHE[rec.brush as usize].center;
             TRAIN_LI[t] = li as u16;
-            TRAIN_ENT[t] = rec.brush as u8;
             TRAIN_SEG[t] = 0;
             TRAIN_DIST[t] = 0;
             TRAIN_WAIT[t] = 0;
-            TRAIN_ACTIVE[t] = (rec.targetname == 0) as u8;
+            TRAIN_STATE[t] = if rec.targetname == 0 {
+                TRAIN_ACTIVE_BIT
+            } else {
+                0
+            };
             TRAIN_OFF[t] = [
                 (c0[0] - center[0]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
                 (c0[1] - center[1]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
@@ -4941,7 +4948,7 @@ unsafe fn init_trains(m: &Map, nlogic: usize, nents: usize) {
 unsafe fn tick_trains(m: &Map) {
     let mut t = 0usize;
     while t < TRAIN_COUNT {
-        if TRAIN_ACTIVE[t] == 0 {
+        if TRAIN_STATE[t] & TRAIN_ACTIVE_BIT == 0 {
             t += 1;
             continue;
         }
@@ -4962,9 +4969,19 @@ unsafe fn tick_trains(m: &Map) {
         let (b, wait_b) = train_corner(m, li, (seg + 1) % ncorners);
         let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
         let len = isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
-        let step = (rec.speed as i32 / 20).max(2);
+        // Preserve slow authored trains without another array: accumulate the
+        // speed/20 remainder in TRAIN_STATE's upper bits. This also removes the
+        // old forced 40-units/s minimum while staying integer-only on R3000.
+        let speed = rec.speed.max(1) as i32;
+        let frac = (TRAIN_STATE[t] >> 1) as i32 + speed % 20;
+        let step = speed / 20 + frac / 20;
+        TRAIN_STATE[t] = TRAIN_ACTIVE_BIT | (((frac % 20) as u8) << 1);
+        if step == 0 {
+            t += 1;
+            continue;
+        }
         let nd = TRAIN_DIST[t] as i32 + step;
-        let center = ENT_CACHE[TRAIN_ENT[t] as usize].center;
+        let center = ENT_CACHE[rec.brush as usize].center;
         if nd >= len {
             // Arrived: snap to corner b, honour its wait, advance the segment.
             TRAIN_SEG[t] = ((seg + 1) % ncorners) as u8;
