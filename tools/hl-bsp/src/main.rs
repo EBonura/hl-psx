@@ -6609,60 +6609,10 @@ mod tests {
         assert_eq!(out[c0 as usize], (5, -1, -2));
     }
 
-    #[test]
-    fn uv_split_adds_support_vertices_for_long_spans() {
-        let mut verts = vec![[0, 0, 0], [192, 0, 0], [0, 64, 0]];
-        let corners = [
-            CookCorner {
-                idx: 0,
-                pos: verts[0],
-                uv: (0.0, 0.0),
-                shade: (10, 20, 30),
-            },
-            CookCorner {
-                idx: 1,
-                pos: verts[1],
-                uv: (192.0, 0.0),
-                shade: (30, 40, 50),
-            },
-            CookCorner {
-                idx: 2,
-                pos: verts[2],
-                uv: (0.0, 64.0),
-                shade: (50, 60, 70),
-            },
-        ];
-        let mut tri_idx = Vec::new();
-        let mut tri_tex = Vec::new();
-        let mut tri_uv = Vec::new();
-        let mut tri_rgb = Vec::new();
-
-        emit_cooked_tri(
-            corners,
-            7,
-            UV_SPLIT_DEPTH,
-            &mut verts,
-            &mut tri_idx,
-            &mut tri_tex,
-            &mut tri_uv,
-            &mut tri_rgb,
-        );
-
-        assert!(verts.len() > 3);
-        assert!(tri_idx.len() / 3 > 1);
-        assert_eq!(tri_tex.len(), tri_idx.len() / 3);
-        assert_eq!(tri_uv.len(), tri_tex.len() * 6);
-        assert_eq!(tri_rgb.len(), tri_tex.len() * 9);
-
-        for uv in tri_uv.chunks_exact(6) {
-            let min_u = uv[0].min(uv[2]).min(uv[4]);
-            let max_u = uv[0].max(uv[2]).max(uv[4]);
-            let min_v = uv[1].min(uv[3]).min(uv[5]);
-            let max_v = uv[1].max(uv[3]).max(uv[5]);
-            assert!(max_u - min_u <= UV_SPLIT_SPAN as u8);
-            assert!(max_v - min_v <= UV_SPLIT_SPAN as u8);
-        }
-    }
+    // NB: the old `uv_split_adds_support_vertices_for_long_spans` test guarded
+    // per-triangle interior subdivision, which UV_SPLIT_RECURSE=false retired
+    // on purpose (it cracked T-junctions; the watertight per-edge
+    // edge_segments split + weld_tjunctions replaced it). Deleted with it.
 
     #[test]
     fn uv_seam_split_keeps_wrapped_bytes_local() {

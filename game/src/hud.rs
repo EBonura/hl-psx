@@ -299,8 +299,9 @@ pub fn draw<const N: usize>(
                 AMMO_DRAW_W,
                 AMMO_DRAW_H,
             ); // ammo icon
-            number_l(mat, ot, prims, &mut count, reserve_ammo, 243, y);
             if ammo_mode == 2 {
+                // HL order: clip left of the divider, reserve right (ammo.cpp).
+                number_l(mat, ot, prims, &mut count, clip_ammo, 243, y);
                 sprite(
                     mat,
                     ot,
@@ -315,7 +316,9 @@ pub fn draw<const N: usize>(
                     DIVIDER_DRAW_W,
                     DIVIDER_DRAW_H,
                 );
-                number_r(mat, ot, prims, &mut count, clip_ammo, 308, y);
+                number_r(mat, ot, prims, &mut count, reserve_ammo, 308, y);
+            } else {
+                number_l(mat, ot, prims, &mut count, reserve_ammo, 243, y);
             }
         }
     }

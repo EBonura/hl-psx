@@ -224,7 +224,7 @@ const AMMO_PICKUPS: [(usize, u16); 8] = [
     (AMMO_BOLT, 5),
     (AMMO_ROCKET, 1),
     (AMMO_URANIUM, 20),
-    (AMMO_GREN, 2),
+    (AMMO_ARGREN, 2),
 ];
 const MEDKIT_HEAL: u16 = 15;
 const PROP_STATE_IDLE: u8 = 0;
@@ -5291,13 +5291,14 @@ unsafe fn collect_pickups(
                 // maxed; simplified: weapons always collect on first touch.
                 if !weapon.owns(wid) {
                     weapon.give_weapon(wid);
+                    weapon.set_pickup_rounds(wid);
                     PROP_ACTIVE[pi] = 0;
                     sfx::play(sfx::PICKUP);
                 } else {
-                    // Duplicate weapon = its magazine's worth of ammo.
+                    // Duplicate weapon = its DEFAULT_GIVE into the pool.
                     let d = &WEAPON_DEFS[wid];
                     if d.ammo != AMMO_NONE {
-                        weapon.give_ammo(d.ammo, d.clip.max(1));
+                        weapon.give_ammo(d.ammo, WEAPON_DEFAULT_GIVE[wid].max(1));
                         PROP_ACTIVE[pi] = 0;
                         sfx::play(sfx::PICKUP);
                     }
@@ -5362,7 +5363,11 @@ const AMMO_GREN: usize = 8;
 const AMMO_SNARK: usize = 9;
 const AMMO_SATCHEL: usize = 10;
 const AMMO_TRIPMINE: usize = 11;
-const N_AMMO: usize = 12;
+// M203 grenades are their own pool in HL (M203_GRENADE_MAX_CARRY, weapons.h) --
+// hand grenades no longer starve the MP5 launcher.
+const AMMO_ARGREN: usize = 12;
+const N_AMMO: usize = 13;
+const ARGREN_MAX_CARRY: u16 = 10; // weapons.h M203_GRENADE_MAX_CARRY
 
 // Fire archetypes.
 const FIRE_MELEE: u8 = 0; // short-range trace (crowbar)
@@ -5553,7 +5558,7 @@ static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
     wdef("CROWBAR", AMMO_NONE, 0, 0, 10, 96, 1, 0, 7, 0, FIRE_MELEE, 0, 4),
     wdef("GLOCK", AMMO_9MM, 17, 250, 8, GLOCK_RANGE, 1, 0, 6, 30, FIRE_SEMI, 0, 0),
     wdef("357", AMMO_357, 6, 36, 40, GLOCK_RANGE, 1, 0, 15, 40, FIRE_SEMI, 0, 1),
-    wdef("MP5", AMMO_9MM, 50, 250, 8, GLOCK_RANGE, 1, 5, 2, 30, FIRE_AUTO, 0, 2),
+    wdef("MP5", AMMO_9MM, 50, 250, 5, GLOCK_RANGE, 1, 5, 2, 30, FIRE_AUTO, 0, 2),
     wdef("SHOTGUN", AMMO_BUCK, 8, 125, 5, GLOCK_RANGE, 6, 14, 16, 24, FIRE_SPREAD, 0, 13),
     wdef("CROSSBOW", AMMO_BOLT, 5, 50, 50, GLOCK_RANGE, 1, 0, 15, 30, FIRE_PROJ, PROJ_BOLT, 3),
     wdef("RPG", AMMO_ROCKET, 1, 5, 100, 0, 1, 0, 30, 30, FIRE_PROJ, PROJ_ROCKET, 10),
@@ -5565,6 +5570,13 @@ static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
     wdef("TRIPMINE", AMMO_TRIPMINE, 0, 5, 100, 0, 1, 0, 20, 0, FIRE_PROJ, PROJ_PLACED, 15),
     wdef("SATCHEL", AMMO_SATCHEL, 0, 5, 100, 0, 1, 0, 20, 0, FIRE_PROJ, PROJ_PLACED, 11),
 ];
+
+// SDK DEFAULT_GIVE per weapon (weapons.h:144-158): the total rounds a weapon
+// pickup grants. A fresh pickup loads its clip from this (rest to the pool);
+// a duplicate adds it to the pool. Clipless weapons arrive usable (grenade 5,
+// snark 5, satchel 1, tripmine 1, hivehand 8, gauss/egon 20).
+const WEAPON_DEFAULT_GIVE: [u16; N_WEAPONS] = [0, 17, 6, 25, 12, 5, 1, 20, 20, 8, 5, 5, 1, 1];
+const HORNET_REGEN_TICKS: u8 = 10; // 1 hornet / 0.5 s (hornetgun.cpp:33)
 
 #[inline]
 fn wdef_of(id: usize) -> &'static WeaponDef {
@@ -5582,6 +5594,7 @@ struct Arsenal {
     reload_ticks: u8,
     dry_ticks: u8,
     switch_ticks: u8, // brief lockout after a weapon change
+    hornet_regen: u8, // ticks toward the next self-recharged hornet
 }
 
 impl Arsenal {
@@ -5595,6 +5608,7 @@ impl Arsenal {
             reload_ticks: 0,
             dry_ticks: 0,
             switch_ticks: 0,
+            hornet_regen: 0,
         };
         // Faithful start: empty hands. The crowbar and glock are world pickups
         // (c1a1 onwards); chapter-select launches grant them in play() so
@@ -5622,6 +5636,11 @@ impl Arsenal {
                     self.ammo[d.ammo] = give;
                 }
             }
+        }
+        // A testable launcher out of chapter select (M203 rounds are otherwise
+        // pickup-only; the pool is separate from hand grenades).
+        if self.owns(W_MP5) {
+            self.give_ammo(AMMO_ARGREN, 4);
         }
         // Select the glock if owned (the standard sidearm), else the crowbar,
         // else whatever the earliest owned weapon is.
@@ -5683,6 +5702,20 @@ impl Arsenal {
         }
     }
 
+    /// Apply a fresh weapon pickup's DEFAULT_GIVE: the clip fills first, the
+    /// remainder lands in the pool (net rounds match the SDK's give-then-
+    /// autoreload). Clipless weapons get the whole give as pool ammo.
+    fn set_pickup_rounds(&mut self, id: usize) {
+        let d = &WEAPON_DEFS[id];
+        if d.ammo == AMMO_NONE {
+            return;
+        }
+        let give = WEAPON_DEFAULT_GIVE[id];
+        let to_clip = give.min(d.clip);
+        self.clip[id] = to_clip;
+        self.give_ammo(d.ammo, give - to_clip);
+    }
+
     /// Live magazine count of the selected weapon (0 for no-magazine weapons).
     fn clip_display(&self) -> u16 {
         self.clip[self.current]
@@ -5706,6 +5739,17 @@ impl Arsenal {
     }
 
     fn tick(&mut self) {
+        // The hornetgun self-recharges once owned (HL's infinite-ammo weapon);
+        // without this it is 8 lifetime shots.
+        if self.owns(W_HORNET) && self.ammo[AMMO_HORNET] < WEAPON_DEFS[W_HORNET].reserve_max {
+            self.hornet_regen += 1;
+            if self.hornet_regen >= HORNET_REGEN_TICKS {
+                self.hornet_regen = 0;
+                self.ammo[AMMO_HORNET] += 1;
+            }
+        } else {
+            self.hornet_regen = 0;
+        }
         if self.cooldown > 0 {
             self.cooldown -= 1;
         }
@@ -5837,6 +5881,9 @@ impl Arsenal {
 #[inline]
 fn max_reserve_for(ammo: usize) -> u16 {
     // The reserve cap is the largest reserve_max among weapons using this ammo.
+    if ammo == AMMO_ARGREN {
+        return ARGREN_MAX_CARRY; // no weapon def carries this pool (MP5 alt fire)
+    }
     let mut cap = 0u16;
     let mut i = 0;
     while i < N_WEAPONS {
@@ -6190,12 +6237,13 @@ unsafe fn fire_secondary(
     }
     match w.current {
         W_MP5 => {
-            // Grenade launcher: lobs a contact grenade, one AMMO_GREN per shot.
-            if w.ammo[AMMO_GREN] == 0 {
+            // Grenade launcher: lobs a contact grenade, one M203 round per shot
+            // (its own pool -- ammo_ARgrenades pickups feed it, not hand grenades).
+            if w.ammo[AMMO_ARGREN] == 0 {
                 sfx::play(sfx::DRY);
                 return false;
             }
-            w.ammo[AMMO_GREN] -= 1;
+            w.ammo[AMMO_ARGREN] -= 1;
             w.cooldown = 22;
             spawn_projectile(PROJ_GRENADE, 100, eye, rot);
             sfx::play(sfx::MP5);
@@ -9215,9 +9263,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             let want_sec = sec_held && !sec_was_held;
             sec_was_held = sec_held;
             zoom_aim = sec_held && weapon.current == W_CROSSBOW;
-            // Crouch (TRIANGLE held): lower stance + slower move. ponytail: no
-            // shrunk collision hull (needs a cooked crouch hull), so this does not
-            // fit under low gaps yet -- it is a lower eye and reduced speed.
+            // Crouch (TRIANGLE held): lower stance + slower move; the world
+            // trace runs on the cooked GoldSrc crouch hull (M48), so ducking
+            // fits under low vents.
             crouching = !dead && unsafe { MOUNTED_TANK } < 0 && pad.buttons.is_held(button::TRIANGLE);
             // Flashlight (L3 toggles the HEV lamp; needs the suit).
             let flash_now = pad.buttons.is_held(button::L3);
