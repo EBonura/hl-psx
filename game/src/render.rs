@@ -155,6 +155,17 @@ pub fn in_band(p: &SVert) -> bool {
     p.x >= GX0 && p.x <= GX1 && p.y >= GY0 && p.y <= GY1
 }
 
+/// A fully-front projected triangle wholly beyond one guard-band edge cannot
+/// contribute a pixel. Strict comparisons match `guard_clip`: a vertex on the
+/// edge is retained, while GTE saturation preserves which side it is on.
+#[inline(always)]
+pub fn tri_outside_band(p: [(i16, i16); 3]) -> bool {
+    ((p[0].0 as i32) < GX0 && (p[1].0 as i32) < GX0 && (p[2].0 as i32) < GX0)
+        || ((p[0].0 as i32) > GX1 && (p[1].0 as i32) > GX1 && (p[2].0 as i32) > GX1)
+        || ((p[0].1 as i32) < GY0 && (p[1].1 as i32) < GY0 && (p[2].1 as i32) < GY0)
+        || ((p[0].1 as i32) > GY1 && (p[1].1 as i32) > GY1 && (p[2].1 as i32) > GY1)
+}
+
 /// Screen-space back-face test (cross product; >= 0 = back-facing).
 #[inline]
 pub fn back_facing(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {

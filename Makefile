@@ -63,7 +63,7 @@ HLBSP_BIN := $(HLBSP)/target/release/hl-bsp
 MAP      ?= c1a0
 
 .DEFAULT_GOAL := build
-.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms campaign-map-report placement-audit roster-audit menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-perf-report psoxide-perf-gate psoxide-map-smoke psoxide-chart memory-report
+.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms campaign-map-report placement-audit roster-audit spu-audit menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-perf-report psoxide-perf-gate psoxide-map-smoke psoxide-chart memory-report
 
 help:
 	@echo "hl-psx targets:"
@@ -81,7 +81,7 @@ help:
 	@echo "  make psoxide-gameplay - headless c1a0 gameplay screenshot/hash"
 	@echo "  make psoxide-profile  - telemetry build + CSV/profile screenshot"
 	@echo "  make psoxide-perf-report - report real visual FPS from the latest profile"
-	@echo "  make psoxide-perf-gate   - fresh 64-frame capture + strict 20 FPS gate"
+	@echo "  make psoxide-perf-gate   - fresh 65-frame capture + strict 20 FPS gate"
 	@echo "  make psoxide-map-smoke MAP_INDEX=N - boot map N directly in PSoXide"
 	@echo "  make psoxide-chart    - profile + HTML vblank chart"
 	@echo "  make memory-report    - linker-map RAM budget + top symbols"
@@ -90,6 +90,8 @@ help:
 	@echo "  make cook       - cook a map to data/maps/<MAP>.hlm (MAP=$(MAP))"
 	@echo "  make campaign-map-report - size every campaign BSP against MAP_BUF"
 	@echo "  make placement-audit - verify every actor/sprite placement fits and cooks"
+	@echo "  make roster-audit - verify all placed model types fit the shared pool"
+	@echo "  make spu-audit - verify core SFX + every voice bank fit SPU RAM"
 	@echo "  make clean      - remove build output"
 	@echo ""
 	@echo "  Source assets read from HL_DIR (default: macOS Steam path)."
@@ -213,9 +215,11 @@ psoxide-perf-report:
 		--scenario c0a0=$(CAPTURE_DIR)/hl-psx-profile.csv \
 		--min-visual-samples 20
 
-# A gate-quality capture needs enough post-warmup visual frames for a useful
-# p95. Target-specific variables propagate to the psoxide-profile prerequisite.
-psoxide-perf-gate: PSOXIDE_PROFILE_VISUAL_FRAMES=64
+# Four cold visual frames cover room-cache construction plus the tram packet
+# cache settling as its initial camera pose locks. Keep 61 measured frames after
+# that explicit warmup so the strict gate has 60 delivery intervals and a useful
+# p95. Target-specific variables propagate to the profile prerequisite.
+psoxide-perf-gate: PSOXIDE_PROFILE_VISUAL_FRAMES=65
 psoxide-perf-gate: psoxide-profile
 	python3 tools/perf/visual_perf_gate.py stamp \
 		--csv $(CAPTURE_DIR)/hl-psx-profile.csv \
@@ -226,6 +230,7 @@ psoxide-perf-gate: psoxide-profile
 		--command 'make psoxide-perf-gate'
 	python3 tools/perf/visual_perf_gate.py report --gate \
 		--scenario c0a0=$(CAPTURE_DIR)/hl-psx-profile.csv \
+		--warmup-visuals 4 \
 		--min-visual-samples 60
 
 psoxide-map-smoke:
@@ -309,6 +314,9 @@ placement-audit:
 # Run after `make models` or `make rooms`, and before trimming pool constants.
 roster-audit:
 	python3 $(ROOT)/tools/roster_audit.py
+
+spu-audit:
+	python3 $(ROOT)/tools/spu_audit.py
 
 # Extract the menu font (HL fonts.wad -> data/menu/hlfont.bin, git-ignored).
 # The runtime include_bytes!'s it, so run this once before building.

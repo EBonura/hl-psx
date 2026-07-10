@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Cook the HL SFX set into a single WORLD.PAK chunk (data/sfx/chunk_3000.psxa).
 
-Reads WAVs from the player's install (HL_DIR), normalises to 16-bit mono
-22050 Hz, cooks each to SPU-ADPCM .psau via `psxed audio-pack`, then packs:
+Reads WAVs from the player's install (HL_DIR), normalises to 16-bit mono,
+resamples to a PS1-appropriate 11.025/8 kHz tier, cooks each to SPU-ADPCM
+`.psau` via `psxed audio-pack`, then packs:
 
   "HSFX" | u32 count | count x (u32 offset, u32 len) | psau blobs
 
@@ -73,9 +74,19 @@ SOUNDS = [
     # Dialogue/voice lines are NOT here -- they stream per-map (extract_voices.py
     # -> chunk 3100+idx) so each map loads only its own lines at a reduced rate.
 ]
+
+# Keep crisp 22 kHz source effects at 11.025 kHz; long voice/monster/ambient
+# samples authored at 11.025 kHz use 8 kHz. The old native-rate bank occupied
+# ~414 KiB and left too little of the PS1's 512 KiB SPU RAM for several maps'
+# dialogue. This tier keeps weapon transients sharper while bringing the core
+# bank below ~270 KiB so the audited worst dialogue bank also fits.
+HIGH_SOURCE_RATE = 22050
+HIGH_TARGET_RATE = 11025
+LOW_TARGET_RATE = 8000
+
+
 def to_pcm16_mono(src, dst):
-    """Normalise to 16-bit mono at the source's NATIVE rate (the runtime
-    honours per-sample rates; upsampling 11k voices to 22k doubled SPU cost)."""
+    """Normalise and downsample to the core SFX residency policy."""
     with wave.open(src, "rb") as w:
         nch, sw, rate, nfr = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
         raw = w.readframes(nfr)
@@ -87,16 +98,29 @@ def to_pcm16_mono(src, dst):
     if nch == 2:  # average to mono
         mono = bytearray()
         for i in range(0, len(raw), 4):
-            l = struct.unpack_from("<h", raw, i)[0]
-            r = struct.unpack_from("<h", raw, i + 2)[0]
-            mono += struct.pack("<h", (l + r) // 2)
+            left = struct.unpack_from("<h", raw, i)[0]
+            right = struct.unpack_from("<h", raw, i + 2)[0]
+            mono += struct.pack("<h", (left + right) // 2)
         raw = bytes(mono)
+    target_rate = HIGH_TARGET_RATE if rate >= HIGH_SOURCE_RATE else LOW_TARGET_RATE
+    if rate != target_rate:
+        n_in = len(raw) // 2
+        n_out = max(1, n_in * target_rate // max(rate, 1))
+        resampled = bytearray(n_out * 2)
+        for out_index in range(n_out):
+            source_index = min(n_in - 1, out_index * rate // target_rate)
+            source_offset = source_index * 2
+            output_offset = out_index * 2
+            resampled[output_offset : output_offset + 2] = raw[
+                source_offset : source_offset + 2
+            ]
+        raw = bytes(resampled)
     with wave.open(dst, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
-        w.setframerate(rate)
+        w.setframerate(target_rate)
         w.writeframes(raw)
-    return rate
+    return target_rate
 
 
 def main():

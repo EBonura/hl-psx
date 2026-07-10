@@ -21,7 +21,6 @@
 
 use core::ptr;
 
-use psx_engine::TexturedModelRenderFace;
 use psx_gte::math::Vec3I16;
 
 // ponytail: unchecked reads, same rationale as map.rs -- no D-cache on the
@@ -46,6 +45,10 @@ fn rd_u16(d: &[u8], o: usize) -> u16 {
 #[inline(always)]
 fn rd_i16(d: &[u8], o: usize) -> i16 {
     rd_u16(d, o) as i16
+}
+#[inline(always)]
+fn rd_i8(d: &[u8], o: usize) -> i16 {
+    unsafe { *d.get_unchecked(o) as i8 as i16 }
 }
 
 #[derive(Clone, Copy)]
@@ -75,10 +78,26 @@ pub struct ModelFrame<'a> {
     base_frame_off: usize,
 }
 
+/// Two baked poses prepared for per-vertex interpolation. Compact frames in
+/// the same clip share one full i16 base pose, so the hot path loads that base
+/// once and combines the two i8 deltas instead of decoding it twice.
+#[derive(Clone, Copy)]
+pub struct InterpolatedModelFrame<'a> {
+    a: ModelFrame<'a>,
+    b: ModelFrame<'a>,
+    shared_base_off: usize,
+    shared_kind: u8,
+    frac16: i32,
+}
+
 const TRI_SZ: usize = 16;
 const TRI_SZ_HMD6: usize = 20;
 const FRAME_REC_SZ: usize = 8;
 const FRAME_MODE_BASE_I8: u8 = 1;
+const SHARED_NONE: u8 = 0;
+const SHARED_DELTA_DELTA: u8 = 1;
+const SHARED_BASE_DELTA: u8 = 2;
+const SHARED_DELTA_BASE: u8 = 3;
 const LOCAL_TO_WORLD_IDENTITY_Q12: u16 = 4096;
 // Mirror of main.rs MAX_MODEL_VERTS (MODEL_SCRATCH size). A model with more
 // verts than this would overflow the projection scratch, so reject it here.
@@ -92,17 +111,48 @@ pub struct Tri {
     pub normal: [i8; 3],
 }
 
+/// Cold UV payload for a projected model face. Vertex indices live in a
+/// separate packed-u32 stream so near/backface rejects touch only four
+/// uncached bytes. Texture ids live once per ordered face run, not once per
+/// face; the current 52-model set has only 463 runs across 23,452 faces.
 #[derive(Clone, Copy)]
-pub struct RenderFace {
-    pub face: TexturedModelRenderFace,
-    pub tex: u16,
+#[repr(C)]
+pub struct RenderFacePayload {
+    pub uv_words: [u16; 3],
 }
 
-impl RenderFace {
+impl RenderFacePayload {
     pub const ZERO: Self = Self {
-        face: TexturedModelRenderFace::ZERO,
-        tex: 0,
+        uv_words: [0; 3],
     };
+}
+
+/// Model loading rejects meshes above 1024 vertices, so three ten-bit indices
+/// fit one hot word exactly (with the top two bits unused).
+pub const RENDER_FACE_INDEX_MASK: u32 = 0x3ff;
+
+#[inline(always)]
+fn uv_word(uv: (u8, u8)) -> u16 {
+    (uv.0 as u16) | ((uv.1 as u16) << 8)
+}
+
+#[inline(always)]
+unsafe fn write_render_face(
+    indices: *mut u32,
+    payloads: *mut RenderFacePayload,
+    t: usize,
+    tri: &Tri,
+) {
+    let packed = (tri.idx[0] as u32 & RENDER_FACE_INDEX_MASK)
+        | ((tri.idx[1] as u32 & RENDER_FACE_INDEX_MASK) << 10)
+        | ((tri.idx[2] as u32 & RENDER_FACE_INDEX_MASK) << 20);
+    ptr::write(indices.add(t), packed);
+    ptr::write(
+        payloads.add(t),
+        RenderFacePayload {
+            uv_words: [uv_word(tri.uv[0]), uv_word(tri.uv[1]), uv_word(tri.uv[2])],
+        },
+    );
 }
 
 impl Model {
@@ -327,34 +377,106 @@ impl Model {
         [d[o] as i8, d[o + 1] as i8, d[o + 2] as i8]
     }
 
-    pub unsafe fn fill_render_faces_raw(&self, out: *mut RenderFace, out_len: usize) -> usize {
-        let n = self.n_tris.min(out_len);
-        let mut t = 0;
-        while t < n {
-            let tri = self.tri(t);
-            ptr::write(
-                out.add(t),
-                RenderFace {
-                    face: TexturedModelRenderFace::new(tri.idx, tri.uv),
-                    tex: tri.tex.min(u16::MAX as usize) as u16,
-                },
-            );
+    /// Number of consecutive texture runs in the authored face order.
+    pub fn render_face_run_count(&self) -> usize {
+        let mut runs = 0usize;
+        let mut last_tex = usize::MAX;
+        let mut t = 0usize;
+        while t < self.n_tris {
+            let tex = self.tri(t).tex;
+            if tex != last_tex {
+                runs += 1;
+                last_tex = tex;
+            }
             t += 1;
         }
-        n
+        runs
+    }
+
+    /// Split GPU face records into a hot packed-index stream, a cold UV stream,
+    /// and ordered texture runs. Each run word is `end_face:u16 | tex:u8<<16`;
+    /// `end_face` is relative to this model. The caller guarantees enough face
+    /// and run storage (checked before streaming a whole model).
+    pub unsafe fn fill_render_faces_split_raw(
+        &self,
+        indices: *mut u32,
+        payloads: *mut RenderFacePayload,
+        runs: *mut u32,
+        out_len: usize,
+    ) -> (usize, usize) {
+        let n = self.n_tris.min(out_len);
+        if n == 0 {
+            return (0, 0);
+        }
+        let mut t = 0usize;
+        let mut run_count = 0usize;
+        let mut run_tex = usize::MAX;
+        while t < n {
+            let a = self.tri(t);
+            if a.tex != run_tex {
+                if run_count != 0 {
+                    ptr::write(
+                        runs.add(run_count - 1),
+                        (t as u32) | ((run_tex.min(u8::MAX as usize) as u32) << 16),
+                    );
+                }
+                run_tex = a.tex;
+                run_count += 1;
+            }
+            write_render_face(indices, payloads, t, &a);
+            t += 1;
+        }
+        ptr::write(
+            runs.add(run_count - 1),
+            (n as u32) | ((run_tex.min(u8::MAX as usize) as u32) << 16),
+        );
+        (n, run_count)
     }
 }
 
-impl ModelFrame<'_> {
+impl<'a> ModelFrame<'a> {
+    #[inline(always)]
+    fn is_base_i8(&self) -> bool {
+        self.compact_frames && self.mode == FRAME_MODE_BASE_I8
+    }
+
+    #[inline]
+    pub fn interpolate(self, b: Self, frac16: u32) -> InterpolatedModelFrame<'a> {
+        let a = self;
+        let same_data = a.data.as_ptr() == b.data.as_ptr() && a.data.len() == b.data.len();
+        let ad = a.is_base_i8();
+        let bd = b.is_base_i8();
+        let (shared_base_off, shared_kind) = if same_data
+            && ad
+            && bd
+            && a.base_frame_off == b.base_frame_off
+        {
+            (a.base_frame_off, SHARED_DELTA_DELTA)
+        } else if same_data && !ad && bd && a.frame_off == b.base_frame_off {
+            (a.frame_off, SHARED_BASE_DELTA)
+        } else if same_data && ad && !bd && a.base_frame_off == b.frame_off {
+            (b.frame_off, SHARED_DELTA_BASE)
+        } else {
+            (0, SHARED_NONE)
+        };
+        InterpolatedModelFrame {
+            a,
+            b,
+            shared_base_off,
+            shared_kind,
+            frac16: frac16 as i32,
+        }
+    }
+
     #[inline]
     pub fn vert(&self, i: usize) -> Vec3I16 {
         if self.compact_frames && self.mode == FRAME_MODE_BASE_I8 {
             let base = self.base_frame_off + i * 6;
             let delta = self.frame_off + i * 3;
             Vec3I16::new(
-                rd_i16(self.data, base) + self.data[delta] as i8 as i16,
-                rd_i16(self.data, base + 2) + self.data[delta + 1] as i8 as i16,
-                rd_i16(self.data, base + 4) + self.data[delta + 2] as i8 as i16,
+                rd_i16(self.data, base).wrapping_add(rd_i8(self.data, delta)),
+                rd_i16(self.data, base + 2).wrapping_add(rd_i8(self.data, delta + 1)),
+                rd_i16(self.data, base + 4).wrapping_add(rd_i8(self.data, delta + 2)),
             )
         } else {
             let o = self.frame_off + i * 6;
@@ -364,5 +486,74 @@ impl ModelFrame<'_> {
                 rd_i16(self.data, o + 4),
             )
         }
+    }
+
+}
+
+impl InterpolatedModelFrame<'_> {
+    #[inline(always)]
+    fn component(base: i16, da: i16, db: i16, frac16: i32) -> i16 {
+        // Form both endpoints exactly as two independent ModelFrame::vert calls
+        // do. Keeping the wrapping operations explicit also makes malformed
+        // boundary data deterministic in host/debug equivalence tests.
+        let a = base.wrapping_add(da);
+        let b = base.wrapping_add(db);
+        a.wrapping_add((((b as i32 - a as i32) * frac16) >> 4) as i16)
+    }
+
+    #[inline(always)]
+    fn generic_component(a: i16, b: i16, frac16: i32) -> i16 {
+        a.wrapping_add((((b as i32 - a as i32) * frac16) >> 4) as i16)
+    }
+
+    // Keeping this decoder out of line avoids triplicating it at each GTE
+    // triangle call. Forced inlining currently overflows a PC16 relocation in
+    // the already-large play() function on the PSX target.
+    #[inline(never)]
+    pub fn vert(&self, i: usize) -> Vec3I16 {
+        if self.shared_kind != SHARED_NONE {
+            let base = self.shared_base_off + i * 6;
+            let ao = self.a.frame_off + i * 3;
+            let bo = self.b.frame_off + i * 3;
+            let (dax, day, daz, dbx, dby, dbz) = match self.shared_kind {
+                SHARED_DELTA_DELTA => (
+                    rd_i8(self.a.data, ao),
+                    rd_i8(self.a.data, ao + 1),
+                    rd_i8(self.a.data, ao + 2),
+                    rd_i8(self.a.data, bo),
+                    rd_i8(self.a.data, bo + 1),
+                    rd_i8(self.a.data, bo + 2),
+                ),
+                SHARED_BASE_DELTA => (
+                    0,
+                    0,
+                    0,
+                    rd_i8(self.a.data, bo),
+                    rd_i8(self.a.data, bo + 1),
+                    rd_i8(self.a.data, bo + 2),
+                ),
+                _ => (
+                    rd_i8(self.a.data, ao),
+                    rd_i8(self.a.data, ao + 1),
+                    rd_i8(self.a.data, ao + 2),
+                    0,
+                    0,
+                    0,
+                ),
+            };
+            return Vec3I16::new(
+                Self::component(rd_i16(self.a.data, base), dax, dbx, self.frac16),
+                Self::component(rd_i16(self.a.data, base + 2), day, dby, self.frac16),
+                Self::component(rd_i16(self.a.data, base + 4), daz, dbz, self.frac16),
+            );
+        }
+
+        let a = self.a.vert(i);
+        let b = self.b.vert(i);
+        Vec3I16::new(
+            Self::generic_component(a.x, b.x, self.frac16),
+            Self::generic_component(a.y, b.y, self.frac16),
+            Self::generic_component(a.z, b.z, self.frac16),
+        )
     }
 }

@@ -2846,8 +2846,19 @@ fn collect_entities(
             continue;
         }
         let cls = ent_value(block, "classname").unwrap_or("");
-        if cls.starts_with("trigger") || cls == "func_tracktrain" || cls == "func_monsterclip" {
-            continue; // invisible; monsterclip blocks NPCs only (emitted as a logic AABB)
+        if cls.starts_with("trigger")
+            || cls == "func_tracktrain"
+            || cls == "func_monsterclip"
+            || cls == "func_friction"
+            || cls == "func_mortar_field"
+        {
+            // Invisible/non-world-solid volumes. GoldSrc spawns func_friction
+            // as SOLID_TRIGGER and func_mortar_field as SOLID_NOT|EF_NODRAW;
+            // neither may fall through to the static-solid brush path. Their
+            // BSP model bounds remain available to collect_logic_entities for
+            // a dedicated volume record without retaining a render/collision
+            // EntRec (as func_monsterclip already does).
+            continue;
         }
         let origin_hl = ent_value(block, "origin")
             .and_then(parse_vec3)
@@ -6627,6 +6638,37 @@ mod tests {
         assert_eq!(logic.ents[0].speed, 300);
         assert_eq!(logic.ents[0].arg0, 50);
         assert_eq!(logic.ents[0].arg1, 12);
+    }
+
+    #[test]
+    fn friction_and_mortar_brushes_do_not_cook_as_render_or_solid_entities() {
+        let ents = br#"
+        {
+        "classname" "func_wall"
+        "model" "*1"
+        }
+        {
+        "classname" "func_friction"
+        "model" "*2"
+        "modifier" "20"
+        }
+        {
+        "classname" "func_mortar_field"
+        "model" "*3"
+        "targetname" "mortar_field"
+        }
+        "#;
+        // Four valid dmodel_t records are enough for this classification test.
+        // Empty BSP node/plane lumps make the visible control's PVS leaf list
+        // empty but do not change whether it is emitted as an EntRec.
+        let models = vec![0u8; 4 * SZ_MODEL];
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0);
+
+        assert_eq!(cooked.len(), 1, "only the visible func_wall is emitted");
+        assert_eq!(cooked[0].submodel, 1);
+        assert_eq!(cooked[0].kind & 0xff, 0, "control remains a solid brush");
+        assert!(cooked.iter().all(|ent| ent.submodel != 2));
+        assert!(cooked.iter().all(|ent| ent.submodel != 3));
     }
 
     #[test]

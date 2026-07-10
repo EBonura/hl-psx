@@ -16,6 +16,7 @@ from pathlib import Path
 
 
 FALLBACK_MAP_WORDS = 255_000
+IN_PLACE_DECOMPRESS_SLACK = 4096
 
 
 def room_budget_bytes(rooms_dir: Path) -> int:
@@ -25,7 +26,11 @@ def room_budget_bytes(rooms_dir: Path) -> int:
             max_bytes = max(max_bytes, path.stat().st_size)
     if max_bytes == 0:
         return FALLBACK_MAP_WORDS * 4
-    return ((max_bytes + 3) // 4) * 4
+    # Mirror game/build.rs exactly: MAP_BUF is the largest cooked chunk plus
+    # 4 KiB so an LZ4 chunk staged at the tail can decode safely to the head.
+    return (
+        (max_bytes + IN_PLACE_DECOMPRESS_SLACK + 3) // 4
+    ) * 4
 
 
 def campaign_maps(maps_dir: Path) -> list[Path]:
@@ -85,7 +90,10 @@ def main() -> int:
     print(f"MAP_BUF budget: {budget} bytes ({budget / 1024:.1f} KiB)")
     print(f"campaign maps: {len(rows)}  ok: {len(rows) - len(oversized) - len(failures)}  oversized: {len(oversized)}  failed: {len(failures)}")
     if largest_fit:
-        print(f"largest fitting map: {largest_fit[0]} world={largest_fit[1]} bytes")
+        print(
+            f"largest fitting map: {largest_fit[0]} world={largest_fit[1]} bytes "
+            f"headroom={budget - largest_fit[1]} bytes"
+        )
     print()
     print("largest cooked world chunks:")
     for name, world, tex, fit in rows_by_world[: args.top]:

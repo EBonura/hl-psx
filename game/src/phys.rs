@@ -96,74 +96,83 @@ fn point_contents(map: &Map, mut num: i16, p: [i32; 3]) -> i16 {
 
 fn recurse(
     map: &Map,
-    num: i16,
+    mut num: i16,
     p1f: i32,
     p2f: i32,
     p1: [i32; 3],
     p2: [i32; 3],
     tr: &mut Trace,
-    depth: u8,
+    mut depth: u8,
 ) -> bool {
-    if depth > 120 {
-        return true;
-    }
-    if num < 0 {
-        if num != SOLID {
-            tr.allsolid = false;
-        } else {
-            tr.startsolid = true;
+    loop {
+        if depth > 120 {
+            return true;
         }
-        return true; // empty subtree -> no impact
-    }
-    if num as usize >= map.n_clip {
-        tr.allsolid = false;
-        return true;
-    }
-    let cn = map.clipnode(num as usize);
-    let t1 = dot(cn.n, p1) - cn.dist;
-    let t2 = dot(cn.n, p2) - cn.dist;
-    if t1 >= 0 && t2 >= 0 {
-        return recurse(map, cn.c0, p1f, p2f, p1, p2, tr, depth + 1);
-    }
-    if t1 < 0 && t2 < 0 {
-        return recurse(map, cn.c1, p1f, p2f, p1, p2, tr, depth + 1);
-    }
-    // Crosses the plane -- split the segment. Back off by DIST_EPSILON (Quake's
-    // trick) so we stop just SHORT of the plane instead of exactly on it, which
-    // would leave the player startsolid (wedged) and unable to move next frame.
-    const EPS: i32 = 1;
-    let denom = t1 - t2;
-    let nudged = if t1 < 0 { t1 + EPS } else { t1 - EPS };
-    let frac = if denom == 0 {
-        0
-    } else {
-        ((nudged * 4096) / denom).clamp(0, 4096)
-    };
-    let midf = p1f + (((p2f - p1f) * frac) >> 12);
-    let mid = [
-        p1[0] + (((p2[0] - p1[0]) * frac) >> 12),
-        p1[1] + (((p2[1] - p1[1]) * frac) >> 12),
-        p1[2] + (((p2[2] - p1[2]) * frac) >> 12),
-    ];
-    let side = t1 < 0; // true -> back side first
-    let (near, far) = if side { (cn.c1, cn.c0) } else { (cn.c0, cn.c1) };
-    if !recurse(map, near, p1f, midf, p1, mid, tr, depth + 1) {
+        if num < 0 {
+            if num != SOLID {
+                tr.allsolid = false;
+            } else {
+                tr.startsolid = true;
+            }
+            return true; // empty subtree -> no impact
+        }
+        if num as usize >= map.n_clip {
+            tr.allsolid = false;
+            return true;
+        }
+        let cn = map.clipnode(num as usize);
+        let t1 = dot(cn.n, p1) - cn.dist;
+        let t2 = dot(cn.n, p2) - cn.dist;
+        // Most hull nodes put the complete segment on one side. Turn those
+        // tail-recursive walks into a tight loop; recurse only at a real plane
+        // crossing where the traversal must return to inspect the far side.
+        if t1 >= 0 && t2 >= 0 {
+            num = cn.c0;
+            depth += 1;
+            continue;
+        }
+        if t1 < 0 && t2 < 0 {
+            num = cn.c1;
+            depth += 1;
+            continue;
+        }
+        // Crosses the plane -- split the segment. Back off by DIST_EPSILON (Quake's
+        // trick) so we stop just SHORT of the plane instead of exactly on it, which
+        // would leave the player startsolid (wedged) and unable to move next frame.
+        const EPS: i32 = 1;
+        let denom = t1 - t2;
+        let nudged = if t1 < 0 { t1 + EPS } else { t1 - EPS };
+        let frac = if denom == 0 {
+            0
+        } else {
+            ((nudged * 4096) / denom).clamp(0, 4096)
+        };
+        let midf = p1f + (((p2f - p1f) * frac) >> 12);
+        let mid = [
+            p1[0] + (((p2[0] - p1[0]) * frac) >> 12),
+            p1[1] + (((p2[1] - p1[1]) * frac) >> 12),
+            p1[2] + (((p2[2] - p1[2]) * frac) >> 12),
+        ];
+        let side = t1 < 0; // true -> back side first
+        let (near, far) = if side { (cn.c1, cn.c0) } else { (cn.c0, cn.c1) };
+        if !recurse(map, near, p1f, midf, p1, mid, tr, depth + 1) {
+            return false;
+        }
+        if point_contents(map, far, mid) != SOLID {
+            return recurse(map, far, midf, p2f, mid, p2, tr, depth + 1);
+        }
+        if tr.allsolid {
+            return false;
+        }
+        // Impact: the far side is solid at the split point.
+        tr.normal = if side {
+            [-(cn.n[0] as i32), -(cn.n[1] as i32), -(cn.n[2] as i32)]
+        } else {
+            [cn.n[0] as i32, cn.n[1] as i32, cn.n[2] as i32]
+        };
+        tr.frac = midf;
         return false;
     }
-    if point_contents(map, far, mid) != SOLID {
-        return recurse(map, far, midf, p2f, mid, p2, tr, depth + 1);
-    }
-    if tr.allsolid {
-        return false;
-    }
-    // Impact: the far side is solid at the split point.
-    tr.normal = if side {
-        [-(cn.n[0] as i32), -(cn.n[1] as i32), -(cn.n[2] as i32)]
-    } else {
-        [cn.n[0] as i32, cn.n[1] as i32, cn.n[2] as i32]
-    };
-    tr.frac = midf;
-    false
 }
 
 fn trace(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> Trace {
@@ -176,6 +185,87 @@ fn trace(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> Trace {
     };
     recurse(map, head as i16, 0, 4096, p1, p2, &mut tr, 0);
     tr
+}
+
+/// Minimal state for a segment-visibility trace. LOS callers only ask whether
+/// the segment was blocked; carrying Q12 fractions, impact normals, and mover
+/// ids through every recursive split made their many AI probes pay for a full
+/// gameplay ray cast.
+struct ClearTrace {
+    startsolid: bool,
+}
+
+/// Boolean twin of `recurse`. The split side, epsilon, midpoint rounding, bad
+/// data guards, and start-solid convention intentionally match it exactly.
+fn recurse_clear(
+    map: &Map,
+    mut num: i16,
+    p1: [i32; 3],
+    p2: [i32; 3],
+    tr: &mut ClearTrace,
+    mut depth: u8,
+) -> bool {
+    loop {
+        if depth > 120 {
+            return true;
+        }
+        if num < 0 {
+            if num == SOLID {
+                tr.startsolid = true;
+            }
+            return true;
+        }
+        if num as usize >= map.n_clip {
+            return true;
+        }
+        let cn = map.clipnode(num as usize);
+        let t1 = dot(cn.n, p1) - cn.dist;
+        let t2 = dot(cn.n, p2) - cn.dist;
+        if t1 >= 0 && t2 >= 0 {
+            num = cn.c0;
+            depth += 1;
+            continue;
+        }
+        if t1 < 0 && t2 < 0 {
+            num = cn.c1;
+            depth += 1;
+            continue;
+        }
+
+        const EPS: i32 = 1;
+        let denom = t1 - t2;
+        let nudged = if t1 < 0 { t1 + EPS } else { t1 - EPS };
+        let frac = if denom == 0 {
+            0
+        } else {
+            ((nudged * 4096) / denom).clamp(0, 4096)
+        };
+        let mid = [
+            p1[0] + (((p2[0] - p1[0]) * frac) >> 12),
+            p1[1] + (((p2[1] - p1[1]) * frac) >> 12),
+            p1[2] + (((p2[2] - p1[2]) * frac) >> 12),
+        ];
+        let side = t1 < 0;
+        let (near, far) = if side { (cn.c1, cn.c0) } else { (cn.c0, cn.c1) };
+        if !recurse_clear(map, near, p1, mid, tr, depth + 1) {
+            return false;
+        }
+        if point_contents(map, far, mid) != SOLID {
+            return recurse_clear(map, far, mid, p2, tr, depth + 1);
+        }
+        return false;
+    }
+}
+
+#[inline]
+fn trace_clear(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> bool {
+    let mut tr = ClearTrace {
+        startsolid: false,
+    };
+    let no_impact = recurse_clear(map, head as i16, p1, p2, &mut tr, 0);
+    // Preserve line_clear_world's historical convention: a ray beginning in
+    // solid is treated as clear even when traversal reports an impact.
+    tr.startsolid || no_impact
 }
 
 /// A moving/brush collider: a submodel clip hull at a world offset, optionally
@@ -286,8 +376,7 @@ pub fn line_clear_movers_except(
         }
         let q1 = mover_local(mv, p1);
         let q2 = mover_local(mv, p2);
-        let t = trace(map, head, q1, q2);
-        if !t.startsolid && t.frac < 4096 {
+        if !trace_clear(map, head, q1, q2) {
             return false;
         }
     }
@@ -299,8 +388,7 @@ pub fn line_clear_world(map: &Map, p1: [i32; 3], p2: [i32; 3]) -> bool {
     if map.hull0_head <= 0 {
         return true;
     }
-    let t = trace(map, map.hull0_head, p1, p2);
-    t.startsolid || t.frac >= 4096
+    trace_clear(map, map.hull0_head, p1, p2)
 }
 
 /// Trace a point ray through static world and active mover hulls.

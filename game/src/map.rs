@@ -304,7 +304,18 @@ pub struct RenderTri {
     pub idx: [u16; 3],
     pub tex: usize,
     pub uv_words: [u16; 3],
-    pub rgb: [(u8, u8, u8); 3],
+    pub rgb: [u32; 3],
+}
+
+/// PS1-ready loop vertex used by the hot world fan walker. Keeping the light
+/// colour in the palette's packed 0x00BBGGRR form avoids unpacking three bytes,
+/// spilling a nested tuple, and repacking the same colour into the GPU packet.
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct PackedLoopVert {
+    pub idx: u16,
+    pub uv: u16,
+    pub rgb: u32,
 }
 
 impl Map {
@@ -628,6 +639,21 @@ impl Map {
         }
     }
 
+    /// AABB-only precheck for the per-tick touch hotlist. Logic records are
+    /// 64 bytes; reject the overwhelmingly common non-overlap after reading
+    /// only the six bounds words, before decoding the rest of the record.
+    #[inline]
+    pub fn logic_touches_bounds(&self, i: usize, pmins: [i32; 3], pmaxs: [i32; 3]) -> bool {
+        let o = self.logic_off + i * LOGIC_SZ;
+        let d = self.data;
+        pmins[0] <= rd_i32(d, o + 52)
+            && pmaxs[0] >= rd_i32(d, o + 40)
+            && pmins[1] <= rd_i32(d, o + 56)
+            && pmaxs[1] >= rd_i32(d, o + 44)
+            && pmins[2] <= rd_i32(d, o + 60)
+            && pmaxs[2] >= rd_i32(d, o + 48)
+    }
+
     #[inline]
     pub fn logic_aux(&self, i: usize) -> LogicAux {
         if i >= self.n_logic_aux {
@@ -660,15 +686,22 @@ impl Map {
             .unwrap_or("")
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn clipnode(&self, i: usize) -> ClipNode {
         let o = self.clipn_off + i * CLIPNODE_SZ;
-        let (n, dist) = self.plane(rd_u16(self.data, o) as usize);
+        // Clipnode plane references are cook-validated. Decode the 10-byte
+        // plane directly here: routing this hot traversal through plane() kept
+        // a bounds branch and an out-of-line call on every BSP node visit.
+        let po = self.planes_off + rd_u16(self.data, o) as usize * PLANE_SZ;
         ClipNode {
-            n,
+            n: [
+                rd_i16(self.data, po),
+                rd_i16(self.data, po + 2),
+                rd_i16(self.data, po + 4),
+            ],
             c0: rd_i16(self.data, o + 2),
             c1: rd_i16(self.data, o + 4),
-            dist,
+            dist: rd_i32(self.data, po + 6),
         }
     }
 
@@ -719,11 +752,14 @@ impl Map {
     /// blob u16 load plus three shift/or unpacks per corner, on the hottest
     /// per-triangle path in the game.
     #[inline]
+    fn light_word(&self, idx: u8) -> u32 {
+        unsafe { *LIGHT_PAL_RGB.get_unchecked(idx as usize) }
+    }
+
+    #[inline]
     fn light_color(&self, idx: u8) -> (u8, u8, u8) {
-        unsafe {
-            let c = *LIGHT_PAL_RGB.get_unchecked(idx as usize);
-            (c as u8, (c >> 8) as u8, (c >> 16) as u8)
-        }
+        let c = self.light_word(idx);
+        (c as u8, (c >> 8) as u8, (c >> 16) as u8)
     }
 
     /// Pre-expand the 256-entry rgb555 light palette into bytes. Call once
@@ -746,6 +782,16 @@ impl Map {
     }
 
     #[inline]
+    pub fn tri_rgb_words(&self, t: usize) -> [u32; 3] {
+        let w3 = self.tri_word(t, 3);
+        [
+            self.light_word((w3 >> 8) as u8),
+            self.light_word((w3 >> 16) as u8),
+            self.light_word((w3 >> 24) as u8),
+        ]
+    }
+
+    #[inline]
     pub fn render_tri(&self, t: usize, uv_words: [u16; 3]) -> RenderTri {
         let w0 = self.tri_word(t, 0);
         let w1 = self.tri_word(t, 1);
@@ -755,9 +801,9 @@ impl Map {
             tex: (w3 & 0xFF) as usize,
             uv_words,
             rgb: [
-                self.light_color((w3 >> 8) as u8),
-                self.light_color((w3 >> 16) as u8),
-                self.light_color((w3 >> 24) as u8),
+                self.light_word((w3 >> 8) as u8),
+                self.light_word((w3 >> 16) as u8),
+                self.light_word((w3 >> 24) as u8),
             ],
         }
     }
@@ -821,7 +867,11 @@ impl Map {
 
     #[inline]
     pub fn face_plane(&self, f: usize) -> ([i16; 3], i32) {
-        let group = self.face_group(f);
+        self.group_plane(self.face_group(f))
+    }
+
+    #[inline]
+    pub fn group_plane(&self, group: usize) -> ([i16; 3], i32) {
         if group >= self.n_face_groups {
             return ([0, 4096, 0], 0);
         }
@@ -829,6 +879,36 @@ impl Map {
             self.data,
             self.face_groups_off + group * FACE_GROUP_SZ,
         ))
+    }
+
+    /// Fused plane-group decode for the PVS active-group hot loop. Both the
+    /// group id and its signed plane reference are cook-validated, so avoid the
+    /// two generic bounds branches and nested calls paid once per visible group
+    /// per frame.
+    #[inline(always)]
+    pub fn cooked_group_plane(&self, group: usize) -> ([i16; 3], i32) {
+        let plane_ref = rd_i16(
+            self.data,
+            self.face_groups_off + group * FACE_GROUP_SZ,
+        );
+        let flipped = plane_ref < 0;
+        let plane = if flipped {
+            (-(plane_ref as i32) - 1) as usize
+        } else {
+            plane_ref as usize
+        };
+        let o = self.planes_off + plane * PLANE_SZ;
+        let n = [
+            rd_i16(self.data, o),
+            rd_i16(self.data, o + 2),
+            rd_i16(self.data, o + 4),
+        ];
+        let d = rd_i32(self.data, o + 6);
+        if flipped {
+            ([-n[0], -n[1], -n[2]], -d)
+        } else {
+            (n, d)
+        }
     }
 
     #[inline]
@@ -898,19 +978,18 @@ impl Map {
         self.light_color(self.data[self.loopvert_o(v) + 4])
     }
 
-    /// Fused single-pass decode of one loop vertex: (vert index, packed uv
-    /// word, lit rgb). One offset computation + 5 byte reads + a table hit,
-    /// instead of three separate accessor walks on the hottest world path.
+    /// Fused single-pass decode of one loop vertex in PS1-ready packed form.
+    /// One offset computation + two halfword reads + one palette-table hit.
     #[inline]
-    pub fn loop_vert(&self, v: usize) -> (u16, u16, (u8, u8, u8)) {
+    pub fn loop_vert(&self, v: usize) -> PackedLoopVert {
         let o = self.loopvert_o(v);
         let d = self.data;
         unsafe {
-            (
-                rd_u16(d, o),
-                rd_u16(d, o + 2),
-                self.light_color(*d.get_unchecked(o + 4)),
-            )
+            PackedLoopVert {
+                idx: rd_u16(d, o),
+                uv: rd_u16(d, o + 2),
+                rgb: *LIGHT_PAL_RGB.get_unchecked(*d.get_unchecked(o + 4) as usize),
+            }
         }
     }
 
@@ -918,23 +997,14 @@ impl Map {
     /// of a loop face), carrying the face's single texture.
     #[inline]
     pub fn loop_render_tri(&self, tex: usize, va: usize, vb: usize, vc: usize) -> RenderTri {
+        let a = self.loop_vert(va);
+        let b = self.loop_vert(vb);
+        let c = self.loop_vert(vc);
         RenderTri {
-            idx: [
-                self.loop_vert_idx(va),
-                self.loop_vert_idx(vb),
-                self.loop_vert_idx(vc),
-            ],
+            idx: [a.idx, b.idx, c.idx],
             tex,
-            uv_words: [
-                self.loop_vert_uv_word(va),
-                self.loop_vert_uv_word(vb),
-                self.loop_vert_uv_word(vc),
-            ],
-            rgb: [
-                self.loop_vert_light(va),
-                self.loop_vert_light(vb),
-                self.loop_vert_light(vc),
-            ],
+            uv_words: [a.uv, b.uv, c.uv],
+            rgb: [a.rgb, b.rgb, c.rgb],
         }
     }
 

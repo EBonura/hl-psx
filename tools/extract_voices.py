@@ -124,9 +124,9 @@ def concat_wavs(valve, wavs, dst, target_rate):
         if nch == 2:
             mono = bytearray()
             for i in range(0, len(raw) - 3, 4):
-                l = struct.unpack_from("<h", raw, i)[0]
-                r = struct.unpack_from("<h", raw, i + 2)[0]
-                mono += struct.pack("<h", (l + r) // 2)
+                left = struct.unpack_from("<h", raw, i)[0]
+                right = struct.unpack_from("<h", raw, i + 2)[0]
+                mono += struct.pack("<h", (left + right) // 2)
             raw = bytes(mono)
         # nearest-neighbour resample (voice; quality is secondary to SPU RAM)
         n_in = len(raw) // 2
@@ -197,7 +197,12 @@ def main():
         for rate in VOICE_RATES:
             with tempfile.TemporaryDirectory(prefix="hlvox-") as tmp:
                 wav_ids, used = [], []
-                for local_id, (key, wavs) in enumerate(keys):
+                for key, wavs in keys:
+                    # Only successfully resolved sources occupy the pack, so
+                    # assign ids after resolution. Preserving an earlier failed
+                    # source's index creates a manifest gap while HSFX blobs
+                    # remain contiguous, shifting every later runtime lookup.
+                    local_id = len(wav_ids)
                     sid = f"v{local_id:02d}"
                     if concat_wavs(valve, wavs, os.path.join(tmp, sid + ".wav"), rate):
                         wav_ids.append(sid)

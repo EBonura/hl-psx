@@ -34,22 +34,25 @@ mod room_budget {
 }
 
 use psx_fx::{LcgRng, ParticlePool};
-use psx_gpu::material::{BlendMode, TexturedGouraudPacketMaterial};
+use psx_gpu::material::{BlendMode, TexturedGouraudPacketMaterial, TexturedPacketMaterial};
 use psx_gpu::ot::OrderingTable;
-use psx_gpu::prim::{QuadTexturedGouraud, RectFlat, TriTexturedGouraud};
+use psx_gpu::prim::{QuadTexturedGouraud, RectFlat, TriTextured, TriTexturedGouraud};
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
 use psx_math::atan2_q12;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_math::int32::isqrt_i32;
-use psx_pad::{button, enable_analog_port1, poll_port1, PadTracker};
+use psx_pad::{
+    button, enable_analog_port1, poll_port1, poll_port1_diag, PadMode, PadTracker,
+    DEFAULT_SETUP_SPINS,
+};
 use psx_rt::{interrupts, tty};
 use psx_io;
 use psx_spu;
 
 use map::{Map, SKY_TEX_NONE};
-use model::{Model, RenderFace as ModelRenderFace};
+use model::{Model, RenderFacePayload as ModelRenderFacePayload};
 use psx_engine::{PrimitivePacketArena, PrimitivePacketScratch, PrimitiveSink};
 use psx_gpu::prim::QuadTexturedMaterial;
 use vram::{TexSlot, EMPTY_SLOT};
@@ -86,12 +89,16 @@ const BARNEY_FACE_CAP: usize = 800;
 const HEADCRAB_FACE_CAP: usize = 512;
 const SUIT_ITEM_FACE_CAP: usize = 448;
 const BATTERY_ITEM_FACE_CAP: usize = 160;
-// 2176 packets (~14 KiB less than the old 2432): emitted prims peak ~1800-2000,
-// and the near->far band bucketing drops only the farthest faces on the rare
-// overflow. Trimmed to reclaim RAM for the options menu; both build variants
-// now match.
-const MAX_RENDER_PACKETS: usize = 2176;
-const MAX_WEAPON_CACHE_TRIS: usize = 320;
+// 2048 mixed packets plus 128 persistent tram packets use less RAM than the old
+// 2176-slot all-frame arena. Emitted prims peak ~1800-2000; near->far banding
+// drops only the farthest faces on the rare overflow.
+const MAX_RENDER_PACKETS: usize = 2048;
+const MAX_TRAM_CACHE_TRIS: usize = 128;
+const TRAM_PACKET_CACHE: bool = true;
+// Largest authored-frame packet stream is the .357 at 552 post-cull tris.
+// Keep asset-recook margin; these packets overlay the reserved viewmodel pool
+// tail rather than consuming a second static allocation.
+const MAX_WEAPON_CACHE_TRIS: usize = 576;
 const MAX_TEX_SLOTS: usize = room_budget::MAX_TEX_SLOTS;
 const MAX_FACES: usize = room_budget::MAX_FACES;
 const MAX_FACE_GROUPS: usize = room_budget::MAX_FACE_GROUPS;
@@ -141,7 +148,7 @@ const PLAYER_TOUCH_HEIGHT: i32 = 56;
 // GPU-fill-bound) vs 1400, with indoor maps unchanged (short sightlines) and
 // the vista still faithful (sky is fog-exempt). Raise toward 1400+ for longer
 // sightlines, lower toward 800 for more open-map fps (hazier).
-const FAR_VIEW: i32 = 1000;
+const FAR_VIEW: i32 = 505;
 // Distance fog. World geometry fades to black between FOG_START and FAR_VIEW so
 // the far-cull edge dissolves instead of popping -- which lets FAR_VIEW sit much
 // closer than the old 2000 (distant geometry is a large share of the per-frame
@@ -149,7 +156,7 @@ const FAR_VIEW: i32 = 1000;
 // Sky/backdrop faces are exempt so the horizon stays. Reciprocal is compile-time
 // (no runtime divide). Raise FOG_START toward FAR_VIEW for a lighter haze (more
 // visible cull), lower it for more fps. Kept at ~0.65*FAR_VIEW.
-const FOG_START: i32 = 650;
+const FOG_START: i32 = 328;
 const FOG_INV: i32 = (256i32 << 12) / (FAR_VIEW - FOG_START); // compile-time
 // Studio models (enemies/NPCs/items) cull no farther than the world: each is
 // hundreds of textured-gouraud tris (project + emit), and an actor beyond the
@@ -158,7 +165,7 @@ const FOG_INV: i32 = (256i32 << 12) / (FAR_VIEW - FOG_START); // compile-time
 // wasted CPU). On enemy-laden maps the far roster is the dominant per-frame CPU
 // cost for little visible detail. Tunable: lower for more headroom, but not
 // above FAR_VIEW.
-const MODEL_FAR: i32 = 1000;
+const MODEL_FAR: i32 = 505;
 const MODEL_CULL: bool = true; // backface-cull studio models
 const MODEL_OCCLUSION_CULL: bool = true; // skip actors fully hidden by static BSP
 const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
@@ -243,6 +250,10 @@ const POOL_TEX_SLOTS: usize = 240; // shared TexSlot pool across loaded models
 // Gargantua is retained; 7,936 leaves a small aligned guard. Whole-type drops
 // are forbidden by tools/roster_audit.py.
 const POOL_FACE_CAP: usize = 7936;
+// Consecutive texture runs across every resident map roster peak at 153 on
+// c4a1b. Keeping texture ids here (rather than in every face payload) saves
+// 15,232 bytes at fixed capacity and lets draws build material once per run.
+const POOL_FACE_RUN_CAP: usize = 160;
 const MODEL_SLOT_NONE: u8 = 0xFF;
 const MODEL_GEOM_CHUNK_BASE: u32 = 1300;
 const MODEL_TEX_CHUNK_BASE: u32 = 1100;
@@ -364,9 +375,11 @@ fn model_def(ty: u8) -> ModelDef {
 struct LoadedModel {
     valid: bool,
     type_id: u8,
+    run_start: u8, // index into POOL_FACE_RUNS
+    n_runs: u8,
     geom_off: usize, // byte offset into MODEL_BUF
     geom_len: usize,
-    face_start: usize, // index into POOL_FACES
+    face_start: usize, // index into the split POOL_FACE_* streams
     n_faces: usize,
     tex_start: usize, // index into POOL_TEX
     n_tex: usize,
@@ -375,6 +388,8 @@ impl LoadedModel {
     const ZERO: Self = Self {
         valid: false,
         type_id: 0,
+        run_start: 0,
+        n_runs: 0,
         geom_off: 0,
         geom_len: 0,
         face_start: 0,
@@ -450,15 +465,38 @@ static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
 static mut WEAPON_OT: OrderingTable<WEAPON_OT_LEN> = OrderingTable::new();
 static mut HUD_OT: OrderingTable<HUD_OT_LEN> = OrderingTable::new();
 static mut FX_OT: OrderingTable<FX_OT_LEN> = OrderingTable::new();
-const EMPTY_TRI: TriTexturedGouraud = TriTexturedGouraud::new(
-    [(0, 0), (0, 0), (0, 0)],
-    [(0, 0), (0, 0), (0, 0)],
-    [(128, 128, 128), (128, 128, 128), (128, 128, 128)],
-    0,
-    0,
-);
+// The tram cache is invalid until its live prefix is built, so keep its backing
+// array genuinely zero-initialised instead of carrying unused command words in
+// every PS-EXE/disc load.
+const ZERO_TRI_PACKET: TriTexturedGouraud = TriTexturedGouraud {
+    tag: 0,
+    tex_window: 0,
+    color0_cmd: 0,
+    v0: 0,
+    uv0_clut: 0,
+    color1: 0,
+    v1: 0,
+    uv1_tpage: 0,
+    color2: 0,
+    v2: 0,
+    uv2: 0,
+};
 static mut PRIMITIVE_PACKETS: PrimitivePacketScratch<MAX_RENDER_PACKETS> =
     PrimitivePacketScratch::ZERO;
+// The rider-relative tram view is normally unchanged while the car moves: the
+// camera and car translate/yaw together. Keep the last exact packet stream and
+// relink it until the composite view key changes (free-look/step/flashlight).
+static mut TRAM_TRI_CACHE: [TriTexturedGouraud; MAX_TRAM_CACHE_TRIS] =
+    [ZERO_TRI_PACKET; MAX_TRAM_CACHE_TRIS];
+static mut TRAM_TRI_OTZ: [u8; MAX_TRAM_CACHE_TRIS] = [0; MAX_TRAM_CACHE_TRIS];
+static mut TRAM_TRI_COUNT: usize = 0;
+static mut TRAM_CACHE_BUILDING: bool = false;
+static mut TRAM_CACHE_OVERFLOW: bool = false;
+static mut TRAM_CACHE_VALID: bool = false;
+static mut TRAM_CACHE_ROT: [[i16; 3]; 3] = [[0; 3]; 3];
+static mut TRAM_CACHE_T: [i32; 3] = [0; 3];
+static mut TRAM_CACHE_EYE: [i32; 3] = [0; 3];
+static mut TRAM_CACHE_FLASHLIGHT: bool = false;
 static mut HUD_PRIMS: [QuadTexturedMaterial; hud::DRAW_CAP] = [hud::EMPTY_QUAD; hud::DRAW_CAP];
 static mut IMPACT_PARTICLES: ParticlePool<MAX_IMPACT_PARTICLES> = ParticlePool::new();
 
@@ -506,13 +544,25 @@ static mut DROWN_TICK: u8 = 0;
 static mut DROWN_TAKEN: u16 = 0;
 static mut DEATH_OVERLAY: RectFlat = RectFlat::new(0, 0, 0, 0, 0, 0, 0);
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [EMPTY_SLOT; MAX_TEX_SLOTS];
-// Resident viewmodel pool: ALL weapons load at map start so switching is instant
-// and every weapon shows its real model. Geometry occupies the head of MODEL_BUF
-// (the lightmap + face-loop compression freed the map budget to afford this big a
-// reserve); enemies stream after it, trading a slice of the enemy pool for the
-// full visible arsenal. Textures go in VM_SLOTS. The loader stops if the pool
-// fills; any weapon that doesn't fit falls back to the glock viewmodel.
+// On-demand viewmodel pool: the glock loads at map start and switched weapons
+// append until the pool evicts back to glock. Geometry occupies the head of
+// MODEL_BUF; the selected weapon's GPU-ready packet stream overlays the fixed
+// tail. Enemies start after the whole reserve, so this reuses bytes that were
+// already unavailable to their model pool. Textures live in VM_SLOTS.
 const VM_POOL_WORDS: usize = 20_224; // ~81 KB viewmodel reserve (~5 switched guns; beyond = glock-visual fallback) -- funds scripted clips + the x4 model precision: zero combat OR pickup drops on all 96 maps
+const VM_CACHE_PACKET_BYTES: usize =
+    MAX_WEAPON_CACHE_TRIS * core::mem::size_of::<TriTexturedGouraud>();
+const VM_CACHE_PACKET_WORDS: usize = (VM_CACHE_PACKET_BYTES + 3) / 4;
+const VM_CACHE_OTZ_WORDS: usize = (MAX_WEAPON_CACHE_TRIS + 3) / 4;
+const VM_CACHE_WORDS: usize = VM_CACHE_PACKET_WORDS + VM_CACHE_OTZ_WORDS;
+// Fixed top-of-reserve overlay. Merged geom+texture chunks may stage through
+// this range while the old cache is invalid, but retained geometry must end
+// below it before the new weapon can be marked resident.
+const VM_CACHE_START_WORD: usize = VM_POOL_WORDS - VM_CACHE_WORDS;
+const _: () =
+    assert!(core::mem::align_of::<TriTexturedGouraud>() <= core::mem::align_of::<u32>());
+const _: () = assert!(VM_CACHE_PACKET_BYTES % core::mem::size_of::<u32>() == 0);
+const _: () = assert!(VM_CACHE_WORDS < VM_POOL_WORDS);
 const VM_SLOTS_TOTAL: usize = 176; // 14 viewmodels x up to ~24 skins (rpg)
 static mut VM_SLOTS: [TexSlot; VM_SLOTS_TOTAL] = [EMPTY_SLOT; VM_SLOTS_TOTAL];
 // Load order = the HL1 slot order; the whole arsenal is resident.
@@ -554,6 +604,10 @@ static mut VM_FILL_BASE_SLOT: usize = 0;
 // pool tail before extracting; only the geom persists, but the load needs room for
 // the full chunk -- so evict before a switch that couldn't fit it.
 const VM_MAX_WORDS: usize = 10752; // > the largest viewmodel chunk (~10,194 words)
+// Wrapper + retained geometry only. The current maximum is the .357 at 5,399
+// words; this conservative bound lets the pre-load eviction preserve the fixed
+// cache tail without a failed read/re-read cycle.
+const VM_MAX_GEOM_WORDS: usize = 5_632;
 const VM_MAX_SLOTS: usize = 28; // > the rpg's ~24 skins
 
 /// Evict every non-glock viewmodel: restore the vram allocators to the map-load
@@ -573,10 +627,17 @@ unsafe fn vm_evict_to_glock() {
 }
 
 // Shared per-map model pool: streamed geometry lives in MODEL_BUF (after the
-// viewmodel); textures, render faces, and slot bookkeeping live in these pools.
+// viewmodel); textures, split render-face streams, and slot bookkeeping live in
+// these pools.
 static mut POOL_TEX: [TexSlot; POOL_TEX_SLOTS] = [EMPTY_SLOT; POOL_TEX_SLOTS];
-static mut POOL_FACES: [ModelRenderFace; POOL_FACE_CAP] =
-    [ModelRenderFace::ZERO; POOL_FACE_CAP];
+// Split face storage: rejected faces read one packed index word; only survivors
+// touch the six-byte UV payload. Texture ids occur once per ordered run. The
+// resulting 10 B/face + 640 B run table is 15,232 B smaller than the preceding
+// 12 B/face split (and 31,104 B smaller than the old 14 B face records).
+static mut POOL_FACE_INDICES: [u32; POOL_FACE_CAP] = [0; POOL_FACE_CAP];
+static mut POOL_FACE_PAYLOADS: [ModelRenderFacePayload; POOL_FACE_CAP] =
+    [ModelRenderFacePayload::ZERO; POOL_FACE_CAP];
+static mut POOL_FACE_RUNS: [u32; POOL_FACE_RUN_CAP] = [0; POOL_FACE_RUN_CAP];
 static mut LOADED_MODELS: [LoadedModel; MAX_LOADED_MODELS] =
     [LoadedModel::ZERO; MAX_LOADED_MODELS];
 static mut TYPE_TO_SLOT: [u8; N_MODEL_TYPES] = [MODEL_SLOT_NONE; N_MODEL_TYPES];
@@ -764,10 +825,31 @@ static mut MODEL_SCRATCH: [Projected; MAX_MODEL_VERTS] = [EMPTY_PROJECTED; MAX_M
 static mut WEAPON_CACHE_FRAME: usize = usize::MAX;
 static mut WEAPON_CACHE_VERTS: usize = 0;
 static mut WEAPON_CACHE_SCALE: u16 = 0;
-static mut WEAPON_TRI_CACHE: [TriTexturedGouraud; MAX_WEAPON_CACHE_TRIS] =
-    [EMPTY_TRI; MAX_WEAPON_CACHE_TRIS];
-static mut WEAPON_TRI_OTZ: [u8; MAX_WEAPON_CACHE_TRIS] = [0; MAX_WEAPON_CACHE_TRIS];
 static mut WEAPON_TRI_COUNT: usize = 0;
+
+#[inline(always)]
+unsafe fn weapon_tri_cache_ptr() -> *mut TriTexturedGouraud {
+    core::ptr::addr_of_mut!(MODEL_BUF)
+        .cast::<u32>()
+        .add(VM_CACHE_START_WORD)
+        .cast::<TriTexturedGouraud>()
+}
+
+#[inline(always)]
+unsafe fn weapon_tri_otz_ptr() -> *mut u8 {
+    core::ptr::addr_of_mut!(MODEL_BUF)
+        .cast::<u32>()
+        .add(VM_CACHE_START_WORD + VM_CACHE_PACKET_WORDS)
+        .cast::<u8>()
+}
+
+#[inline(always)]
+unsafe fn invalidate_weapon_tri_cache() {
+    WEAPON_CACHE_FRAME = usize::MAX;
+    WEAPON_CACHE_VERTS = 0;
+    WEAPON_CACHE_SCALE = 0;
+    WEAPON_TRI_COUNT = 0;
+}
 static mut PROJ_TOKEN: u16 = 1; // shared world/submodel projection token
 const PVS_LINK_END: u16 = u16::MAX;
 #[derive(Clone, Copy)]
@@ -831,7 +913,19 @@ static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PREV_OFF: [[i32; 3]; MAX_ENTS] = [[0; 3]; MAX_ENTS]; // ride-carry deltas
 static mut ENT_SOLID_COUNT: usize = 0; // nents for prop point-solid checks
 static mut ENT_BREAK_LOGIC: [u16; MAX_ENTS] = [u16::MAX; MAX_ENTS]; // ent -> breakable logic rec
-static mut LOGIC_BREAK_HP: [u16; MAX_LOGIC] = [0; MAX_LOGIC]; // remaining breakable health
+// In the live 0..n_logic prefix this caches targetname ids, except breakables:
+// their slot is remaining HP and LOGIC_COUNTER carries the targetname bits.
+// The unused suffix hosts the compact hotlists described below.
+static mut LOGIC_BREAK_HP: [u16; MAX_LOGIC] = [0; MAX_LOGIC];
+// Per-map hot logic indices reuse LOGIC_BREAK_HP's unused tail above n_logic:
+// touch and pre-tick candidates grow upward from n_logic; sparks and beams grow
+// downward from MAX_LOGIC. u16::MAX means the lists did not fit and the exact
+// full scan is used.
+const LOGIC_HOT_FALLBACK: u16 = u16::MAX;
+static mut LOGIC_TOUCH_COUNT: u16 = LOGIC_HOT_FALLBACK;
+static mut LOGIC_PRE_COUNT: u16 = LOGIC_HOT_FALLBACK;
+static mut LOGIC_SPARK_COUNT: u16 = LOGIC_HOT_FALLBACK;
+static mut LOGIC_BEAM_COUNT: u16 = LOGIC_HOT_FALLBACK;
 // Per-rec kind byte, cached at load: the per-tick scans skip records without
 // re-parsing the full 64 B LogicEnt from the uncached blob.
 static mut LOGIC_KIND: [u8; MAX_LOGIC] = [0; MAX_LOGIC];
@@ -867,6 +961,11 @@ static mut EMIT_BLEND: u8 = 0;
 static mut EMIT_WAVE: bool = false;
 static mut WAVE_DU: u8 = 0;
 static mut WAVE_DV: u8 = 0;
+// Adaptive near-first world ordering. Bit 0 requests bands for this frame;
+// bit 1 records a room packet overflow while emitting this frame.
+const WORLD_BAND_NEEDS: u8 = 1;
+const WORLD_BAND_OVERFLOW: u8 = 2;
+static mut WORLD_BAND_STATE: u8 = WORLD_BAND_NEEDS;
 // Gentle 128-frame sway cycle for liquid surfaces (+-4 texels; the GP0-E2
 // texture window wraps coordinates, so the byte add is always safe).
 const WAVE_TAB: [i8; 16] = [0, 2, 3, 4, 4, 4, 3, 2, 0, -2, -3, -4, -4, -4, -3, -2];
@@ -974,6 +1073,19 @@ static mut PROP_STATE: [u8; MAX_PROPS] = [PROP_STATE_IDLE; MAX_PROPS];
 static mut PROP_ATTACK_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_AI_TIMER: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_AI_TARGET: [u8; MAX_PROPS] = [PROP_TARGET_NONE; MAX_PROPS];
+// Exact per-map prop hotlists live in the otherwise-unused tails above
+// PROP_COUNT, so they add no BSS.  The first tail byte is the count and the
+// following bytes are prop indices; 0xFF requests the original full scan.
+//
+//   PROP_AI_TARGET tail: humans (scientist/barney, plus seated scientists that
+//                        may turn into standing scientists at runtime)
+//   PROP_KIND tail:      headcrabs (barney/scientist threat searches)
+//   PROP_ACTIVE tail:    pickups
+//
+// Every indexed loop retains the same live predicates as its old full scan, so
+// deaths, dormant monster makers, seated-scientist wakeups, and collected items
+// keep precisely the existing behavior.
+const PROP_HOT_FALLBACK: u8 = 0xFF;
 // AI target re-acquisition is staggered: each prop re-runs the (BSP-trace-heavy)
 // find_*_target only every AI_REACQUIRE_INTERVAL sim-ticks, keeping its cached
 // PROP_AI_TARGET between -- cuts the per-frame line-of-sight trace count ~Nx on
@@ -991,7 +1103,12 @@ static mut PROP_HIT_FLASH: [u8; MAX_PROPS] = [0; MAX_PROPS];
 // holds. Authored corpses are seeded far in the past so they spawn on the final
 // death frame instead of re-playing the fall.
 static mut PROP_DEATH_START: [u16; MAX_PROPS] = [0; MAX_PROPS];
-static mut PROP_OCC_VIS: [u8; MAX_PROPS] = [1; MAX_PROPS]; // staggered occlusion verdicts
+const PROP_OCC_VISIBLE: u8 = 1;
+const PROP_OCC_DIRTY: u8 = 0x80;
+static mut PROP_OCC_VIS: [u8; MAX_PROPS] = [PROP_OCC_VISIBLE | PROP_OCC_DIRTY; MAX_PROPS];
+static mut OCC_EYE_ANCHOR: [i32; 3] = [i32::MIN / 2; 3];
+static mut OCC_EYE_LEAF: i32 = -1;
+const OCC_EYE_MOVE_THRESHOLD: u32 = 32;
 static mut PROP_DORMANT: [u8; MAX_PROPS] = [0; MAX_PROPS]; // monstermaker stock awaiting a fire
 static mut PROP_LOGIC_LINK: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS];
 static mut SPRITE_COUNT: usize = 0;
@@ -1200,8 +1317,8 @@ unsafe fn viewmodel_bytes_at(byte_off: usize, len: usize) -> &'static [u8] {
 /// -> VM_SLOTS), appending at the pool's fill cursor. Idempotent: an already-
 /// resident weapon returns `true` without touching the disc. Returns `false` if
 /// the pool is full or the chunk is missing (the caller falls back to the
-/// glock). Textures stage transiently above the reserve, in the enemy region
-/// stream_map_models fills later.
+/// glock). The merged chunk stages transiently through the remaining reserve;
+/// its texture tail may overwrite the invalid packet cache before VRAM upload.
 unsafe fn stream_one_viewmodel(
     wid: usize,
     stream_chunks: &mut u32,
@@ -1219,6 +1336,7 @@ unsafe fn stream_one_viewmodel(
     // (post-map-load); glock itself loads at BASE 0 without ever evicting.
     if VM_FILL_BASE_WORD > 0
         && (VM_FILL_WORD + VM_MAX_WORDS > VM_POOL_WORDS
+            || VM_FILL_WORD + VM_MAX_GEOM_WORDS > VM_CACHE_START_WORD
             || VM_FILL_SLOT + VM_MAX_SLOTS > VM_SLOTS_TOTAL)
     {
         vm_evict_to_glock();
@@ -1229,6 +1347,10 @@ unsafe fn stream_one_viewmodel(
         return false;
     }
     let buf_ptr = core::ptr::addr_of_mut!(MODEL_BUF).cast::<u32>();
+    // A nonresident load stages through the pool tail that owns the previous
+    // packet stream. GPU OT submission is synchronous, so no DMA can still be
+    // reading it here; invalidate before allowing the CD read to overwrite it.
+    invalidate_weapon_tri_cache();
     let wm = WEAPON_DEFS[wid].wm as u32;
     // ONE merged chunk per weapon ("HMRG" | u32 geom_len | geom | tex): one
     // CD handshake per switch instead of two.
@@ -1247,6 +1369,9 @@ unsafe fn stream_one_viewmodel(
     }
     let gw = word + 2;
     let glen_words = glen.div_ceil(4);
+    if gw + glen_words > VM_CACHE_START_WORD {
+        return false;
+    }
     let tex_bytes = viewmodel_bytes_at(gw * 4 + glen, clen - 8 - glen);
     telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
     let (ntex, _) = vram::upload_tex_chunk_append_raw(
@@ -1304,8 +1429,8 @@ unsafe fn loaded_model(slot: usize) -> Model {
 }
 
 /// Stream the model types this map places (distinct prop kinds) into the shared
-/// pool: geometry into MODEL_BUF after the viewmodel, render faces into
-/// POOL_FACES, textures into VRAM (POOL_TEX). `TYPE_TO_SLOT` maps a type id to
+/// pool: geometry into MODEL_BUF after the viewmodel, render faces into the
+/// split POOL_FACE_* streams, textures into VRAM (POOL_TEX). `TYPE_TO_SLOT` maps a type id to
 /// its `LOADED_MODELS` entry; types that don't fit the buffers are skipped (the
 /// prop simply doesn't render).
 unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
@@ -1318,6 +1443,7 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
     let buf_ptr = core::ptr::addr_of_mut!(MODEL_BUF).cast::<u32>();
     let mut geom_word = weapon_len.div_ceil(4); // viewmodel reserves the head
     let mut face_off = 0usize;
+    let mut run_off = 0usize;
     let mut tex_off = 0usize;
     let mut slot_idx = 0usize;
     let (mut sc, mut sb, mut ss) = (0u32, 0u32, 0u32);
@@ -1371,17 +1497,24 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
         }
         let gw = geom_word + 2; // geometry blob start (words)
         let md = Model::load(streamed_model_bytes_at(gw * 4, glen));
-        if face_off + md.n_tris > POOL_FACE_CAP {
-            continue; // face pool exhausted: drop the whole type (a pass-2
+        let model_runs = md.render_face_run_count();
+        if face_off + md.n_tris > POOL_FACE_CAP || run_off + model_runs > POOL_FACE_RUN_CAP {
+            continue; // face/run pool exhausted: drop the whole type (a pass-2
                       // statue by tier order) instead of baking it partially
         }
-        let nf = md.fill_render_faces_raw(
-            core::ptr::addr_of_mut!(POOL_FACES)
-                .cast::<ModelRenderFace>()
+        let (nf, nr) = md.fill_render_faces_split_raw(
+            core::ptr::addr_of_mut!(POOL_FACE_INDICES)
+                .cast::<u32>()
                 .add(face_off),
+            core::ptr::addr_of_mut!(POOL_FACE_PAYLOADS)
+                .cast::<ModelRenderFacePayload>()
+                .add(face_off),
+            core::ptr::addr_of_mut!(POOL_FACE_RUNS)
+                .cast::<u32>()
+                .add(run_off),
             POOL_FACE_CAP - face_off,
         );
-        // The pool draw reads topology from POOL_FACES (baked above) and only
+        // The pool draw reads topology from POOL_FACE_* (baked above) and only
         // verts/clips from the blob, so the TriRec tail is dead weight now.
         // Keep just the frame section; the NEXT type's chunk loads over the
         // dropped tail + the in-chunk texture once it's uploaded.
@@ -1399,6 +1532,8 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
         LOADED_MODELS[slot_idx] = LoadedModel {
             valid: true,
             type_id: ty as u8,
+            run_start: run_off as u8,
+            n_runs: nr as u8,
             geom_off: gw * 4,
             geom_len: kept,
             face_start: face_off,
@@ -1411,6 +1546,7 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
         LOADED_MODEL_CACHE[slot_idx] = Model::load(streamed_model_bytes_at(gw * 4, kept));
         geom_word = gw + kept.div_ceil(4);
         face_off += nf;
+        run_off += nr;
         tex_off += ntex;
         slot_idx += 1;
     }
@@ -2030,6 +2166,15 @@ unsafe fn logic_current_target(li: usize, rec: map::LogicEnt) -> u16 {
     }
 }
 
+#[inline(always)]
+unsafe fn logic_cached_targetname(li: usize) -> u16 {
+    if LOGIC_KIND[li] == map::LOGIC_FUNC_BREAKABLE {
+        LOGIC_COUNTER[li] as u16
+    } else {
+        LOGIC_BREAK_HP[li]
+    }
+}
+
 #[inline]
 fn logic_item_prop_kind(kind: u8) -> Option<u8> {
     match kind {
@@ -2039,15 +2184,14 @@ fn logic_item_prop_kind(kind: u8) -> Option<u8> {
     }
 }
 
-unsafe fn logic_find_by_targetname(m: &Map, nlogic: usize, targetname: u16) -> Option<usize> {
+unsafe fn logic_find_by_targetname(_m: &Map, nlogic: usize, targetname: u16) -> Option<usize> {
     if targetname == 0 {
         return None;
     }
     let mut li = 0usize;
     while li < nlogic {
         if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
-            let rec = m.logic(li);
-            if rec.targetname == targetname {
+            if logic_cached_targetname(li) == targetname {
                 return Some(li);
             }
         }
@@ -2106,23 +2250,31 @@ fn logic_center(rec: map::LogicEnt) -> [i32; 3] {
 }
 
 #[inline]
-fn player_touches_logic(pos: [i32; 3], rec: map::LogicEnt) -> bool {
-    let pmins = [
-        pos[0] - PLAYER_TOUCH_HALF_XZ,
-        pos[1],
-        pos[2] - PLAYER_TOUCH_HALF_XZ,
-    ];
-    let pmaxs = [
-        pos[0] + PLAYER_TOUCH_HALF_XZ,
-        pos[1] + PLAYER_TOUCH_HEIGHT,
-        pos[2] + PLAYER_TOUCH_HALF_XZ,
-    ];
-    pmins[0] <= rec.maxs[0]
-        && pmaxs[0] >= rec.mins[0]
-        && pmins[1] <= rec.maxs[1]
-        && pmaxs[1] >= rec.mins[1]
-        && pmins[2] <= rec.maxs[2]
-        && pmaxs[2] >= rec.mins[2]
+fn logic_player_touch_candidate(rec: map::LogicEnt) -> bool {
+    match rec.kind {
+        map::LOGIC_TRIGGER_ONCE
+        | map::LOGIC_TRIGGER_MULTIPLE
+        | map::LOGIC_TRIGGER_CHANGELEVEL
+        | map::LOGIC_TRIGGER_HURT
+        | map::LOGIC_TRIGGER_PUSH => true,
+        map::LOGIC_FUNC_BUTTON => (rec.spawnflags & SF_BUTTON_TOUCH_ONLY) != 0,
+        map::LOGIC_FUNC_DOOR => {
+            rec.targetname == 0 && (rec.spawnflags & SF_DOOR_USE_ONLY) == 0
+        }
+        map::LOGIC_TRIGGER_TELEPORT | map::LOGIC_TRIGGER_GRAVITY => {
+            (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0
+        }
+        map::LOGIC_CDTRACK => rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs,
+        _ => false,
+    }
+}
+
+#[inline]
+fn logic_pre_tick_candidate(kind: u8) -> bool {
+    matches!(
+        kind,
+        map::LOGIC_FUNC_DOOR | map::LOGIC_FUNC_BUTTON | map::LOGIC_TRIGGER_MULTIPLE
+    )
 }
 
 #[inline]
@@ -2152,11 +2304,9 @@ unsafe fn logic_kill_targets(m: &Map, nlogic: usize, nents: usize, target: u16) 
     }
     let mut li = 0usize;
     while li < nlogic {
-        if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
+        if LOGIC_STATE[li] != LOGIC_STATE_REMOVED && logic_cached_targetname(li) == target {
             let rec = m.logic(li);
-            if rec.targetname == target {
-                logic_remove_entity(li, rec, nents);
-            }
+            logic_remove_entity(li, rec, nents);
         }
         li += 1;
     }
@@ -2298,14 +2448,16 @@ unsafe fn logic_sub_use_targets(
 /// (LOGIC_STATE_TOP). Fail-safe: no master (arg1 == 0), or a master name that is
 /// NOT a present multisource, returns true (allowed) -- only a present-but-
 /// unsatisfied multisource locks it, so an unknown master can never hard-block.
-unsafe fn master_ok(m: &Map, nlogic: usize, master_name: u16) -> bool {
+unsafe fn master_ok(_m: &Map, nlogic: usize, master_name: u16) -> bool {
     if master_name == 0 {
         return true;
     }
     let mut found = false;
     let mut li = 0usize;
     while li < nlogic {
-        if LOGIC_KIND[li] == map::LOGIC_MULTISOURCE && m.logic(li).targetname == master_name {
+        if LOGIC_KIND[li] == map::LOGIC_MULTISOURCE
+            && logic_cached_targetname(li) == master_name
+        {
             found = true;
             if LOGIC_STATE[li] == LOGIC_STATE_TOP {
                 return true; // satisfied -> unlocked
@@ -2393,11 +2545,8 @@ unsafe fn logic_fire_targets(
     }
     let mut li = 0usize;
     while li < nlogic {
-        if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
-            let rec = m.logic(li);
-            if rec.targetname == target {
-                logic_use_entity(m, nlogic, nents, li, use_type, now, depth + 1);
-            }
+        if LOGIC_STATE[li] != LOGIC_STATE_REMOVED && logic_cached_targetname(li) == target {
+            logic_use_entity(m, nlogic, nents, li, use_type, now, depth + 1);
         }
         li += 1;
     }
@@ -2666,7 +2815,7 @@ unsafe fn logic_use_entity(
         map::LOGIC_WALL_TOGGLE => {
             if let Some(ei) = logic_valid_brush(rec.brush, nents) {
                 ENT_ACTIVE[ei] = 1 - ENT_ACTIVE[ei].min(1);
-                PVS_CAM_LEAF = -1; // re-gather the visible-ent list next frame
+                pvs_cam_leaf_store(-1); // re-gather the visible-ent list next frame
             }
         }
         map::LOGIC_BEAM => {
@@ -2870,11 +3019,11 @@ unsafe fn draw_screen_fx(m: &Map) {
                     .unwrap_or(line.len());
                 let part = &line[..end];
                 if TITLE_LOW_LEFT {
-                    hltext::draw_text_scaled(24, y, part, hltext::SMALL_Q8, col);
+                    hltext::draw_text_gameplay(24, y, part, col);
                 } else {
                     // centre on the FULL line width so the reveal doesn't slide
                     let w = hltext::text_width_scaled(line, hltext::SMALL_Q8);
-                    hltext::draw_text_scaled(160 - w / 2, y, part, hltext::SMALL_Q8, col);
+                    hltext::draw_text_gameplay(160 - w / 2, y, part, col);
                 }
                 y += lh;
             }
@@ -2926,22 +3075,38 @@ unsafe fn logic_process_events(m: &Map, nlogic: usize, nents: usize, now: u16) {
 
 unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
     logic_process_events(m, nlogic, nents, now);
-    let mut li = 0usize;
-    while li < nlogic {
+    let indexed = LOGIC_PRE_COUNT != LOGIC_HOT_FALLBACK;
+    let scan_count = if indexed {
+        LOGIC_PRE_COUNT as usize
+    } else {
+        nlogic
+    };
+    let mut scan = 0usize;
+    while scan < scan_count {
+        let li = if indexed {
+            LOGIC_BREAK_HP[nlogic + LOGIC_TOUCH_COUNT as usize + scan] as usize
+        } else {
+            scan
+        };
         // Fast skip without decoding the blob record: idle-at-bottom recs (the
         // vast majority every tick) have nothing to do here.
         let state = LOGIC_STATE[li];
         if state == LOGIC_STATE_BOTTOM || state == LOGIC_STATE_REMOVED {
-            li += 1;
+            scan += 1;
+            continue;
+        }
+        // Waiting records need only their deadline. In particular, stationary
+        // buttons and trigger_multiple volumes no longer pull a 64-byte record
+        // from the streamed map every tick of their wait.
+        if state == LOGIC_STATE_WAITING {
+            if time_reached(now, LOGIC_NEXT[li]) {
+                LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
+            }
+            scan += 1;
             continue;
         }
         let rec = m.logic(li);
-        match LOGIC_STATE[li] {
-            LOGIC_STATE_WAITING => {
-                if time_reached(now, LOGIC_NEXT[li]) {
-                    LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
-                }
-            }
+        match state {
             LOGIC_STATE_GOING_UP | LOGIC_STATE_GOING_DOWN => {
                 if let Some(ei) = logic_valid_brush(rec.brush, nents) {
                     let step = logic_phase_step(rec, ei);
@@ -3014,7 +3179,7 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
             }
             _ => {}
         }
-        li += 1;
+        scan += 1;
     }
 }
 
@@ -3244,8 +3409,29 @@ unsafe fn logic_touch_triggers(
     armor: &mut u16,
     now: u16,
 ) {
-    let mut li = 0usize;
-    while li < nlogic {
+    let pmins = [
+        player_pos[0] - PLAYER_TOUCH_HALF_XZ,
+        player_pos[1],
+        player_pos[2] - PLAYER_TOUCH_HALF_XZ,
+    ];
+    let pmaxs = [
+        player_pos[0] + PLAYER_TOUCH_HALF_XZ,
+        player_pos[1] + PLAYER_TOUCH_HEIGHT,
+        player_pos[2] + PLAYER_TOUCH_HALF_XZ,
+    ];
+    let indexed = LOGIC_TOUCH_COUNT != LOGIC_HOT_FALLBACK;
+    let scan_count = if indexed {
+        LOGIC_TOUCH_COUNT as usize
+    } else {
+        nlogic
+    };
+    let mut scan = 0usize;
+    while scan < scan_count {
+        let li = if indexed {
+            LOGIC_BREAK_HP[nlogic + scan] as usize
+        } else {
+            scan
+        };
         if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
             // Kind gate from the load-time cache: skip records that can never
             // react to touch without re-decoding the 64 B blob rec each tick.
@@ -3258,11 +3444,16 @@ unsafe fn logic_touch_triggers(
                 | map::LOGIC_TRIGGER_HURT
                 | map::LOGIC_TRIGGER_TELEPORT
                 | map::LOGIC_TRIGGER_PUSH
-                | map::LOGIC_TRIGGER_GRAVITY => {}
+                | map::LOGIC_TRIGGER_GRAVITY
+                | map::LOGIC_CDTRACK => {}
                 _ => {
-                    li += 1;
+                    scan += 1;
                     continue;
                 }
+            }
+            if !m.logic_touches_bounds(li, pmins, pmaxs) {
+                scan += 1;
+                continue;
             }
             let rec = m.logic(li);
             match rec.kind {
@@ -3278,7 +3469,6 @@ unsafe fn logic_touch_triggers(
                             || !master_ok(m, nlogic, rec.arg1));
                     if !gated
                         && LOGIC_STATE[li] != LOGIC_STATE_WAITING
-                        && player_touches_logic(player_pos, rec)
                     {
                         logic_use_entity(m, nlogic, nents, li, map::USE_TOGGLE, now, 0);
                         if rec.kind == map::LOGIC_TRIGGER_ONCE {
@@ -3290,24 +3480,19 @@ unsafe fn logic_touch_triggers(
                     }
                 }
                 map::LOGIC_FUNC_BUTTON => {
-                    if (rec.spawnflags & SF_BUTTON_TOUCH_ONLY) != 0
-                        && player_touches_logic(player_pos, rec)
-                    {
+                    if (rec.spawnflags & SF_BUTTON_TOUCH_ONLY) != 0 {
                         logic_activate_button(m, nlogic, nents, li, rec, now, 0, true);
                     }
                 }
                 map::LOGIC_FUNC_DOOR => {
                     if rec.targetname == 0
                         && (rec.spawnflags & SF_DOOR_USE_ONLY) == 0
-                        && player_touches_logic(player_pos, rec)
                     {
                         logic_activate_door_linked(m, nlogic, nents, li, rec, map::USE_TOGGLE);
                     }
                 }
                 map::LOGIC_TRIGGER_HURT => {
-                    if LOGIC_STATE[li] == LOGIC_STATE_BOTTOM
-                        && player_touches_logic(player_pos, rec)
-                    {
+                    if LOGIC_STATE[li] == LOGIC_STATE_BOTTOM {
                         // Geiger crackle while standing in a hazard volume (most
                         // linger-hurts are toxic/radioactive -- HL's suit clicks).
                         if GEIGER_COOLDOWN == 0 {
@@ -3330,7 +3515,6 @@ unsafe fn logic_touch_triggers(
                     if rec.aux_count >= 2
                         && (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0
                         && master_ok(m, nlogic, rec.arg1)
-                        && player_touches_logic(player_pos, rec)
                     {
                         let a = m.logic_aux(rec.first_aux);
                         let b = m.logic_aux(rec.first_aux + 1);
@@ -3352,7 +3536,6 @@ unsafe fn logic_touch_triggers(
                     // check; the state gate below covers START_OFF.
                     if rec.aux_count >= 2
                         && LOGIC_STATE[li] != LOGIC_STATE_TOP
-                        && player_touches_logic(player_pos, rec)
                     {
                         let a = m.logic_aux(rec.first_aux);
                         let b = m.logic_aux(rec.first_aux + 1);
@@ -3364,9 +3547,7 @@ unsafe fn logic_touch_triggers(
                     }
                 }
                 map::LOGIC_TRIGGER_GRAVITY => {
-                    if (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0
-                        && player_touches_logic(player_pos, rec)
-                    {
+                    if (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0 {
                         phys::set_gravity_scale(rec.arg0 as i32);
                     }
                 }
@@ -3375,17 +3556,15 @@ unsafe fn logic_touch_triggers(
                     // itself (HL kills the trigger). target_cdaudio has no
                     // volume and only fires via targets.
                     if rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs {
-                        if player_touches_logic(player_pos, rec) {
-                            CD_TRACK_WANT = rec.arg0 as i16;
-                            music_apply();
-                            LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
-                        }
+                        CD_TRACK_WANT = rec.arg0 as i16;
+                        music_apply();
+                        LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
                     }
                 }
                 _ => {}
             }
         }
-        li += 1;
+        scan += 1;
     }
 }
 
@@ -3449,10 +3628,41 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         ev += 1;
     }
     MONSTERCLIP_N = 0;
+    LOGIC_TOUCH_COUNT = 0;
+    LOGIC_PRE_COUNT = 0;
+    LOGIC_SPARK_COUNT = 0;
+    LOGIC_BEAM_COUNT = 0;
+    let mut hot_overflow = false;
     li = 0;
     while li < nlogic {
         let rec = m.logic(li);
         LOGIC_KIND[li] = rec.kind;
+        // Target dispatch is hot when delayed multi_manager events fan out.
+        // Cache the name in already-allocated per-record storage so a fire does
+        // not decode every 64-byte LogicEnt merely to reject almost all of it.
+        LOGIC_BREAK_HP[li] = rec.targetname;
+        if logic_player_touch_candidate(rec) {
+            let touch = LOGIC_TOUCH_COUNT as usize;
+            let spark_floor = MAX_LOGIC - LOGIC_SPARK_COUNT as usize;
+            let slot = nlogic + touch;
+            if slot < spark_floor {
+                LOGIC_BREAK_HP[slot] = li as u16;
+                LOGIC_TOUCH_COUNT += 1;
+            } else {
+                hot_overflow = true;
+            }
+        }
+        if rec.kind == map::LOGIC_ENV_SPARK {
+            let next = LOGIC_SPARK_COUNT as usize + 1;
+            let slot = MAX_LOGIC - next;
+            let touch_end = nlogic + LOGIC_TOUCH_COUNT as usize;
+            if slot >= touch_end {
+                LOGIC_BREAK_HP[slot] = li as u16;
+                LOGIC_SPARK_COUNT += 1;
+            } else {
+                hot_overflow = true;
+            }
+        }
         if rec.kind == map::LOGIC_MONSTERCLIP && MONSTERCLIP_N < MAX_MONSTERCLIP {
             MONSTERCLIP[MONSTERCLIP_N] = (rec.mins, rec.maxs);
             MONSTERCLIP_N += 1;
@@ -3462,6 +3672,9 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
             map::LOGIC_TRIGGER_COUNTER => (rec.arg0 as i16).max(1),
             // Chargers store their remaining juice here (never counters).
             map::LOGIC_HEALTH_CHARGER | map::LOGIC_HEV_CHARGER => rec.arg0 as i16,
+            // Breakables need LOGIC_BREAK_HP for live HP, so preserve their
+            // targetname's raw u16 bits in this otherwise-unused counter slot.
+            map::LOGIC_FUNC_BREAKABLE => rec.targetname as i16,
             _ => 0,
         };
         match rec.kind {
@@ -3541,6 +3754,52 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
             _ => {}
         }
         li += 1;
+    }
+    // Pre-tick indices follow the touch prefix on the low side. Build them only
+    // after the touch count is final so both lists remain contiguous.
+    if !hot_overflow {
+        li = 0;
+        while li < nlogic {
+            if logic_pre_tick_candidate(LOGIC_KIND[li]) {
+                let slot = nlogic + LOGIC_TOUCH_COUNT as usize + LOGIC_PRE_COUNT as usize;
+                let high_floor = MAX_LOGIC - LOGIC_SPARK_COUNT as usize;
+                if slot < high_floor {
+                    LOGIC_BREAK_HP[slot] = li as u16;
+                    LOGIC_PRE_COUNT += 1;
+                } else {
+                    hot_overflow = true;
+                    break;
+                }
+            }
+            li += 1;
+        }
+    }
+    // Beam indices occupy the remaining high tail immediately below sparks.
+    // Build this after the low-side lists so the collision check is exact.
+    if !hot_overflow {
+        li = 0;
+        while li < nlogic {
+            if LOGIC_KIND[li] == map::LOGIC_BEAM {
+                let next = LOGIC_BEAM_COUNT as usize + 1;
+                let slot = MAX_LOGIC - LOGIC_SPARK_COUNT as usize - next;
+                let low_end =
+                    nlogic + LOGIC_TOUCH_COUNT as usize + LOGIC_PRE_COUNT as usize;
+                if slot >= low_end {
+                    LOGIC_BREAK_HP[slot] = li as u16;
+                    LOGIC_BEAM_COUNT += 1;
+                } else {
+                    hot_overflow = true;
+                    break;
+                }
+            }
+            li += 1;
+        }
+    }
+    if hot_overflow {
+        LOGIC_TOUCH_COUNT = LOGIC_HOT_FALLBACK;
+        LOGIC_PRE_COUNT = LOGIC_HOT_FALLBACK;
+        LOGIC_SPARK_COUNT = LOGIC_HOT_FALLBACK;
+        LOGIC_BEAM_COUNT = LOGIC_HOT_FALLBACK;
     }
 }
 
@@ -3750,6 +4009,24 @@ fn prop_occlusion_visible(m: &Map, eye: [i32; 3], ty: u8, org: [i32; 3]) -> bool
     phys::line_clear_world(m, eye, [org[0], org[1] + (PROP_TARGET_HEIGHT / 2), org[2]])
 }
 
+#[inline(never)]
+unsafe fn invalidate_actor_occlusion(have_pvs: bool, cam_leaf: i32, eye: [i32; 3]) {
+    let occ_leaf = if have_pvs { cam_leaf } else { -1 };
+    let moved = eye[0].abs_diff(OCC_EYE_ANCHOR[0]) > OCC_EYE_MOVE_THRESHOLD
+        || eye[1].abs_diff(OCC_EYE_ANCHOR[1]) > OCC_EYE_MOVE_THRESHOLD
+        || eye[2].abs_diff(OCC_EYE_ANCHOR[2]) > OCC_EYE_MOVE_THRESHOLD;
+    if !moved && occ_leaf == OCC_EYE_LEAF {
+        return;
+    }
+    OCC_EYE_ANCHOR = eye;
+    OCC_EYE_LEAF = occ_leaf;
+    let mut i = 0usize;
+    while i < MAX_PROPS {
+        PROP_OCC_VIS[i] |= PROP_OCC_DIRTY;
+        i += 1;
+    }
+}
+
 fn prop_clip(state: u8, hit_flash: bool) -> usize {
     if state == PROP_STATE_DEAD {
         return PROP_CLIP_DEAD;
@@ -3867,6 +4144,18 @@ fn prop_is_human(ty: u8) -> bool {
 }
 
 #[inline]
+fn prop_is_human_hot_candidate(ty: u8) -> bool {
+    prop_is_human(ty) || ty == PROP_TYPE_SITTING_SCI
+}
+
+#[inline]
+fn prop_is_pickup(ty: u8) -> bool {
+    ty == PROP_TYPE_ITEM_SUIT
+        || ty == PROP_TYPE_ITEM_BATTERY
+        || (ty >= PROP_TYPE_WEAPON_FIRST && ty <= PROP_TYPE_LONGJUMP)
+}
+
+#[inline]
 fn actor_line_clear(m: &Map, movers: &[phys::Mover], from: [i32; 3], to: [i32; 3]) -> bool {
     phys::line_clear_world(m, from, to) && phys::line_clear_movers(m, movers, from, to)
 }
@@ -3948,30 +4237,30 @@ unsafe fn point_in_one_ent(m: &Map, ei: usize, p: [i32; 3]) -> bool {
 /// only fall back to the point scan for the rare ent-overlapped column.
 /// Refresh one prop's nearby-ent shortlist (ents whose sphere can reach a
 /// probe column near the prop within the refresh window).
-unsafe fn refresh_prop_near_ents(m: &Map, pi: usize) {
-    let _ = m;
+unsafe fn refresh_prop_near_ents(movers: &[phys::Mover], pi: usize) {
     let p = PROP_POS[pi];
     let mut n = 0usize;
-    let nents = ENT_SOLID_COUNT;
-    let mut ei = 0usize;
-    while ei < nents {
-        let e = ENT_CACHE[ei];
-        if ENT_ACTIVE[ei] != 0 && e.head0 > 0 && e.kind != 2 && e.kind != 4 && !(e.kind == 7 && ENT_PHASE[ei] >= 2048) {
-            let off = ent_draw_offset(ei);
-            let r = ENT_RADIUS[ei] + PROP_NEAR_SLACK;
-            if (e.center[0] + off[0] - p[0]).abs() <= r
-                && (e.center[2] + off[2] - p[2]).abs() <= r
-                && (e.center[1] + off[1] - p[1]).abs() <= r + PROP_GROUND_PROBE_DOWN
+    let mut mi = 0usize;
+    while mi < movers.len() {
+        let mv = movers[mi];
+        // MOVERS was built immediately before tick_props from the same active,
+        // solid, closed-brush predicates as the old ENT_CACHE rescan. Ignore
+        // the synthetic tram (negative id) and records without a point hull.
+        if mv.id >= 0 && mv.head0 > 0 {
+            let r = mv.radius + PROP_NEAR_SLACK;
+            if (mv.center[0] + mv.off[0] - p[0]).abs() <= r
+                && (mv.center[2] + mv.off[2] - p[2]).abs() <= r
+                && (mv.center[1] + mv.off[1] - p[1]).abs() <= r + PROP_GROUND_PROBE_DOWN
             {
                 if n < 8 {
-                    PROP_NEAR_ENTS[pi][n] = ei as u16;
+                    PROP_NEAR_ENTS[pi][n] = mv.id as u16;
                     n += 1;
                 }
                 // Over 8: keep the first 8 -- a probe missing a 9th distant
                 // brush is invisible next to the exhaustive-scan cost.
             }
         }
-        ei += 1;
+        mi += 1;
     }
     PROP_NEAR_COUNT[pi] = n as u8;
 }
@@ -4148,6 +4437,7 @@ unsafe fn prop_set_pos(m: &Map, movers: &[phys::Mover], pi: usize, pos: [i32; 3]
 /// skip the second ground probe the plain setter would run.
 unsafe fn prop_set_pos_grounded(m: &Map, pi: usize, pos: [i32; 3]) {
     PROP_POS[pi] = pos;
+    PROP_OCC_VIS[pi] |= PROP_OCC_DIRTY;
     let leaf = camera_leaf(m, pos);
     PROP_LEAF[pi] = if leaf > 0 && leaf <= i16::MAX as i32 {
         leaf as i16
@@ -4789,7 +5079,7 @@ unsafe fn find_headcrab_target(
     pi: usize,
     player_pos: [i32; 3],
     nprops: usize,
-) -> u8 {
+) -> (u8, bool) {
     let pos = PROP_POS[pi];
     let from = prop_target(PROP_TYPE_HEADCRAB, pos);
     let mut best_visible = PROP_TARGET_NONE;
@@ -4810,8 +5100,19 @@ unsafe fn find_headcrab_target(
         }
     }
 
-    let mut ti = 0usize;
-    while ti < nprops {
+    let indexed = nprops < MAX_PROPS && PROP_AI_TARGET[nprops] != PROP_HOT_FALLBACK;
+    let scan_count = if indexed {
+        PROP_AI_TARGET[nprops] as usize
+    } else {
+        nprops
+    };
+    let mut scan = 0usize;
+    while scan < scan_count {
+        let ti = if indexed {
+            PROP_AI_TARGET[nprops + 1 + scan] as usize
+        } else {
+            scan
+        };
         if ti != pi && PROP_HEALTH[ti] > 0 && prop_is_human(PROP_KIND[ti]) {
             let d2 = dist2_xz(pos, PROP_POS[ti]);
             if d2 < best_any_d2 {
@@ -4826,12 +5127,12 @@ unsafe fn find_headcrab_target(
                 }
             }
         }
-        ti += 1;
+        scan += 1;
     }
     if best_visible != PROP_TARGET_NONE {
-        best_visible
+        (best_visible, true)
     } else {
-        best_any
+        (best_any, false)
     }
 }
 
@@ -4840,8 +5141,15 @@ unsafe fn find_barney_target(m: &Map, movers: &[phys::Mover], pi: usize, nprops:
     let from = prop_target(PROP_TYPE_BARNEY, pos);
     let mut best = PROP_TARGET_NONE;
     let mut best_d2 = BARNEY_ATTACK_RANGE2;
-    let mut ti = 0usize;
-    while ti < nprops {
+    let indexed = nprops < MAX_PROPS && PROP_KIND[nprops] != PROP_HOT_FALLBACK;
+    let scan_count = if indexed { PROP_KIND[nprops] as usize } else { nprops };
+    let mut scan = 0usize;
+    while scan < scan_count {
+        let ti = if indexed {
+            PROP_KIND[nprops + 1 + scan] as usize
+        } else {
+            scan
+        };
         if ti != pi && PROP_HEALTH[ti] > 0 && PROP_KIND[ti] == PROP_TYPE_HEADCRAB {
             let d2 = dist2_xz(pos, PROP_POS[ti]);
             if d2 < best_d2 {
@@ -4852,7 +5160,7 @@ unsafe fn find_barney_target(m: &Map, movers: &[phys::Mover], pi: usize, nprops:
                 }
             }
         }
-        ti += 1;
+        scan += 1;
     }
     best
 }
@@ -4862,8 +5170,15 @@ unsafe fn find_scientist_threat(m: &Map, movers: &[phys::Mover], pi: usize, npro
     let from = prop_target(PROP_TYPE_SCIENTIST, pos);
     let mut best = PROP_TARGET_NONE;
     let mut best_d2 = SCIENTIST_FEAR_RANGE2;
-    let mut ti = 0usize;
-    while ti < nprops {
+    let indexed = nprops < MAX_PROPS && PROP_KIND[nprops] != PROP_HOT_FALLBACK;
+    let scan_count = if indexed { PROP_KIND[nprops] as usize } else { nprops };
+    let mut scan = 0usize;
+    while scan < scan_count {
+        let ti = if indexed {
+            PROP_KIND[nprops + 1 + scan] as usize
+        } else {
+            scan
+        };
         if ti != pi && PROP_HEALTH[ti] > 0 && PROP_KIND[ti] == PROP_TYPE_HEADCRAB {
             let d2 = dist2_xz(pos, PROP_POS[ti]);
             if d2 < best_d2 {
@@ -4874,7 +5189,7 @@ unsafe fn find_scientist_threat(m: &Map, movers: &[phys::Mover], pi: usize, npro
                 }
             }
         }
-        ti += 1;
+        scan += 1;
     }
     best
 }
@@ -4889,7 +5204,7 @@ unsafe fn find_actor_target(
     player_pos: [i32; 3],
     nprops: usize,
     wake2: i32,
-) -> u8 {
+) -> (u8, bool) {
     let ty = PROP_KIND[pi];
     let pos = PROP_POS[pi];
     let from = prop_target(ty, pos);
@@ -4911,8 +5226,19 @@ unsafe fn find_actor_target(
         }
     }
 
-    let mut ti = 0usize;
-    while ti < nprops {
+    let indexed = nprops < MAX_PROPS && PROP_AI_TARGET[nprops] != PROP_HOT_FALLBACK;
+    let scan_count = if indexed {
+        PROP_AI_TARGET[nprops] as usize
+    } else {
+        nprops
+    };
+    let mut scan = 0usize;
+    while scan < scan_count {
+        let ti = if indexed {
+            PROP_AI_TARGET[nprops + 1 + scan] as usize
+        } else {
+            scan
+        };
         if ti != pi && PROP_HEALTH[ti] > 0 && prop_is_human(PROP_KIND[ti]) {
             let d2 = dist2_xz(pos, PROP_POS[ti]);
             if d2 < best_any_d2 {
@@ -4927,12 +5253,12 @@ unsafe fn find_actor_target(
                 }
             }
         }
-        ti += 1;
+        scan += 1;
     }
     if best_visible != PROP_TARGET_NONE {
-        best_visible
+        (best_visible, true)
     } else {
-        best_any
+        (best_any, false)
     }
 }
 
@@ -4958,10 +5284,11 @@ unsafe fn tick_shooter(
     let wake = if can_move { range + 384 } else { range };
     let wake2 = wake.saturating_mul(wake);
 
-    let target = if ai_reacquire(pi) {
+    let reacquire = ai_reacquire(pi);
+    let (target, acquired_visible) = if reacquire {
         find_actor_target(m, movers, pi, player_pos, nprops, wake2)
     } else {
-        PROP_AI_TARGET[pi]
+        (PROP_AI_TARGET[pi], false)
     };
     if target == PROP_TARGET_NONE {
         PROP_STATE[pi] = PROP_STATE_IDLE;
@@ -4979,7 +5306,11 @@ unsafe fn tick_shooter(
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, aim);
     let from = prop_target(ty, pos);
-    let visible = actor_line_clear(m, movers, from, aim);
+    let visible = if reacquire {
+        acquired_visible
+    } else {
+        actor_line_clear(m, movers, from, aim)
+    };
 
     if d2 <= range2 && visible {
         // In range + line of sight: hold and fire on the cooldown. The attack
@@ -5068,10 +5399,11 @@ unsafe fn tick_headcrab(
         return;
     }
 
-    let target = if ai_reacquire(pi) {
+    let reacquire = ai_reacquire(pi);
+    let (target, acquired_visible) = if reacquire {
         find_headcrab_target(m, movers, pi, player_pos, nprops)
     } else {
-        PROP_AI_TARGET[pi]
+        (PROP_AI_TARGET[pi], false)
     };
     if target == PROP_TARGET_NONE {
         PROP_STATE[pi] = PROP_STATE_IDLE;
@@ -5089,7 +5421,11 @@ unsafe fn tick_headcrab(
     prop_face_point(pi, aim);
     PROP_AI_TARGET[pi] = target;
     let from = prop_target(PROP_TYPE_HEADCRAB, pos);
-    let visible = actor_line_clear(m, movers, from, aim);
+    let visible = if reacquire {
+        acquired_visible
+    } else {
+        actor_line_clear(m, movers, from, aim)
+    };
     // Leapers spring from leap range; big types must close to melee reach first.
     let trigger2 = if leaper { HEADCRAB_LEAP_RANGE2 } else { reach2 };
     if d2 <= trigger2 && PROP_ATTACK_COOLDOWN[pi] == 0 && visible {
@@ -5179,10 +5515,16 @@ unsafe fn tick_scientist(
     player_pos: [i32; 3],
     nprops: usize,
 ) {
-    let threat = find_scientist_threat(m, movers, pi, nprops);
-    if threat != PROP_TARGET_NONE {
-        PROP_AI_TARGET[pi] = threat;
-        PROP_AI_TIMER[pi] = SCIENTIST_FEAR_TICKS;
+    // GoldSrc runs monster thinking at 10 Hz and suppresses sensory work outside
+    // the player PVS. Keep movement at this port's 20 Hz cadence, but share its
+    // 5 Hz staggered target acquisition instead of tracing every scientist
+    // against every headcrab on every sim tick (at most 150 ms extra latency).
+    if ai_reacquire(pi) {
+        let threat = find_scientist_threat(m, movers, pi, nprops);
+        if threat != PROP_TARGET_NONE {
+            PROP_AI_TARGET[pi] = threat;
+            PROP_AI_TIMER[pi] = SCIENTIST_FEAR_TICKS;
+        }
     }
 
     let remembered = PROP_AI_TARGET[pi];
@@ -5215,6 +5557,13 @@ unsafe fn tick_scientist(
         }
         return;
     }
+    // The remembered threat can die while the fear timer is active. Do not
+    // retain an invalid target forever (which would also keep this actor awake
+    // outside the player's PVS).
+    if PROP_AI_TIMER[pi] > 0 {
+        PROP_AI_TIMER[pi] = 0;
+        PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+    }
 
     let pos = PROP_POS[pi];
     if dist2_xz(pos, player_pos) < SCIENTIST_FACE_RANGE2 {
@@ -5226,6 +5575,9 @@ unsafe fn tick_scientist(
     PROP_STATE[pi] = PROP_STATE_IDLE;
 }
 
+// Cold map-load work. Keeping it out of the already-large gameplay function
+// also keeps MIPS PC-relative branches within their 16-bit reach.
+#[inline(never)]
 unsafe fn init_prop_state(m: &Map) {
     let mut i = 0usize;
     while i < MAX_PROPS {
@@ -5234,15 +5586,22 @@ unsafe fn init_prop_state(m: &Map) {
         PROP_POS[i] = [0, 0, 0];
         PROP_YAW[i] = 0;
         PROP_LEAF[i] = 0;
+        // A shortlist belongs to one map and one prop position. Leaving it
+        // resident across changelevels can probe brush entities from the prior
+        // room until that prop's staggered refresh comes around.
+        PROP_NEAR_COUNT[i] = 0xFF;
         PROP_STATE[i] = PROP_STATE_IDLE;
         PROP_ATTACK_COOLDOWN[i] = 0;
         PROP_AI_TIMER[i] = 0;
         PROP_AI_TARGET[i] = PROP_TARGET_NONE;
         PROP_HEALTH[i] = 0;
         PROP_HIT_FLASH[i] = 0;
+        PROP_OCC_VIS[i] = PROP_OCC_VISIBLE | PROP_OCC_DIRTY;
         PROP_LOGIC_LINK[i] = u16::MAX;
         i += 1;
     }
+    OCC_EYE_ANCHOR = [i32::MIN / 2; 3];
+    OCC_EYE_LEAF = -1;
 
     let mut wi = 0usize;
     while wi < SPRITE_STATE_WORDS {
@@ -5311,6 +5670,69 @@ unsafe fn init_prop_state(m: &Map) {
         PROP_COUNT += 1;
         pi += 1;
     }
+
+    // Build exact candidate lists into the unused tails.  Count first so a
+    // future denser cook can select the full-scan fallback without ever writing
+    // past MAX_PROPS.  These three classes are disjoint, but separate backing
+    // tails keep each hot loop to one direct list.
+    if nprops < MAX_PROPS {
+        let mut human_count = 0usize;
+        let mut headcrab_count = 0usize;
+        let mut pickup_count = 0usize;
+        pi = 0;
+        while pi < nprops {
+            let kind = PROP_KIND[pi];
+            human_count += prop_is_human_hot_candidate(kind) as usize;
+            headcrab_count += (kind == PROP_TYPE_HEADCRAB) as usize;
+            pickup_count += prop_is_pickup(kind) as usize;
+            pi += 1;
+        }
+
+        if nprops + 1 + human_count <= MAX_PROPS {
+            PROP_AI_TARGET[nprops] = human_count as u8;
+            let mut out = nprops + 1;
+            pi = 0;
+            while pi < nprops {
+                if prop_is_human_hot_candidate(PROP_KIND[pi]) {
+                    PROP_AI_TARGET[out] = pi as u8;
+                    out += 1;
+                }
+                pi += 1;
+            }
+        } else {
+            PROP_AI_TARGET[nprops] = PROP_HOT_FALLBACK;
+        }
+
+        if nprops + 1 + headcrab_count <= MAX_PROPS {
+            PROP_KIND[nprops] = headcrab_count as u8;
+            let mut out = nprops + 1;
+            pi = 0;
+            while pi < nprops {
+                if PROP_KIND[pi] == PROP_TYPE_HEADCRAB {
+                    PROP_KIND[out] = pi as u8;
+                    out += 1;
+                }
+                pi += 1;
+            }
+        } else {
+            PROP_KIND[nprops] = PROP_HOT_FALLBACK;
+        }
+
+        if nprops + 1 + pickup_count <= MAX_PROPS {
+            PROP_ACTIVE[nprops] = pickup_count as u8;
+            let mut out = nprops + 1;
+            pi = 0;
+            while pi < nprops {
+                if prop_is_pickup(PROP_KIND[pi]) {
+                    PROP_ACTIVE[out] = pi as u8;
+                    out += 1;
+                }
+                pi += 1;
+            }
+        } else {
+            PROP_ACTIVE[nprops] = PROP_HOT_FALLBACK;
+        }
+    }
 }
 
 unsafe fn tick_props(
@@ -5322,17 +5744,24 @@ unsafe fn tick_props(
 ) {
     AI_TICK = AI_TICK.wrapping_add(1); // drives staggered AI target re-acquisition
     let nprops = PROP_COUNT.min(MAX_PROPS);
+    // VIS_BITS belongs to the last rendered camera leaf. During a catch-up
+    // burst the player can cross a portal before rendering rebuilds it; only
+    // use the cached PVS while it still describes the current eye leaf.
+    let cached_pvs_leaf = pvs_cam_leaf_load();
+    let player_pvs_current = valid_pvs_leaf(m, cached_pvs_leaf)
+        && camera_leaf(
+            m,
+            [
+                player_pos[0],
+                player_pos[1] + VIEW_HEIGHT,
+                player_pos[2],
+            ],
+        ) == cached_pvs_leaf;
     let mut pi = 0usize;
     while pi < nprops {
         if PROP_ACTIVE[pi] == 0 {
             pi += 1;
             continue;
-        }
-        // Nearby-ent shortlist for the floor probes, refreshed on an 8-tick
-        // stagger (probe columns then test <=4 ents instead of every brush
-        // entity on the map -- the walker-heavy-map frame killer).
-        if (pi as u32).wrapping_add(AI_TICK) & 7 == 0 {
-            refresh_prop_near_ents(m, pi);
         }
         if PROP_HIT_FLASH[pi] > 0 {
             PROP_HIT_FLASH[pi] -= 1;
@@ -5352,6 +5781,52 @@ unsafe fn tick_props(
             PROP_AI_TIMER[pi] = 0;
             pi += 1;
             continue;
+        }
+
+        let ai = model_def(ty).ai;
+        // Render-only/passive actors have no thinker at all. Once their common
+        // cooldown/death bookkeeping above is done, the remainder of this loop
+        // only computes PVS/script predicates before the empty AI_IDLE arm.
+        // Keep scripted and seated records on the full path: either can acquire
+        // work dynamically even though its initial model definition is idle.
+        if ai == AI_IDLE
+            && ty != PROP_TYPE_SITTING_SCI
+            && PROP_SCRIPT_MODE[pi] == 0
+            && PROP_SCRIPT_LI[pi] == u16::MAX
+            && PROP_SCRIPT_IDLE_CLIP[pi] == 0xFF
+        {
+            pi += 1;
+            continue;
+        }
+        let scripted_move = PROP_SCRIPT_MODE[pi] != 0;
+        let seated_wake = ty == PROP_TYPE_SITTING_SCI
+            && PROP_AI_TARGET[pi] != PROP_TARGET_NONE
+            && TYPE_TO_SLOT[0] != MODEL_SLOT_NONE;
+        let moving_ai = ai == AI_MELEE || ai == AI_RANGED || ai == AI_ALLY || ai == AI_FLEE;
+        // GoldSrc only gathers new monster sensory conditions in the client's
+        // PVS (combat schedules continue outside it). VIS_BITS is the same
+        // cached player-view PVS used by rendering; an unknown leaf/cache stays
+        // awake so a cook or recovery failure can never freeze an actor.
+        let in_player_pvs = if player_pvs_current && PROP_LEAF[pi] > 0 {
+            pvs_leaf_visible(m, PROP_LEAF[pi] as usize)
+        } else {
+            true
+        };
+        let behavior_awake = PROP_AI_TARGET[pi] != PROP_TARGET_NONE
+            || PROP_STATE[pi] == PROP_STATE_MOVE
+            || PROP_STATE[pi] == PROP_STATE_ATTACK
+            || PROP_AI_TIMER[pi] > 0;
+        let ai_awake = in_player_pvs || behavior_awake;
+        // Floor probes are only reachable for actors that can move. The old
+        // placement refreshed this O(brush-entities) shortlist for corpses,
+        // pickups, cockroaches, passive models, and turrets too. Refresh a
+        // newly moving/scripted actor immediately, then retain the existing
+        // eight-tick stagger while it moves.
+        if ((moving_ai && ai_awake) || scripted_move || seated_wake)
+            && (PROP_NEAR_COUNT[pi] == 0xFF
+                || (pi as u32).wrapping_add(AI_TICK) & 7 == 0)
+        {
+            refresh_prop_near_ents(movers, pi);
         }
 
         // Props use WORLD-ONLY collision (no brush-entity mover hulls). trace_all
@@ -5440,12 +5915,20 @@ unsafe fn tick_props(
                 PROP_KIND[pi] = 0;
                 PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
                 PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
-                PROP_POS[pi] = prop_grounded_pos(m, pi, PROP_POS[pi]);
+                let grounded = prop_grounded_pos(m, pi, PROP_POS[pi]);
+                prop_set_pos_grounded(m, pi, grounded);
             }
             pi += 1;
             continue;
         }
-        match model_def(ty).ai {
+        if !ai_awake && (moving_ai || ai == AI_TURRET) {
+            // The nearby-brush shortlist may become stale while a door or lift
+            // moves during dormancy. Force an immediate rebuild on wake.
+            PROP_NEAR_COUNT[pi] = 0xFF;
+            pi += 1;
+            continue;
+        }
+        match ai {
             // Melee aliens (zombie/houndeye/bullsquid/ichy) reuse the headcrab
             // approach+bite AI; ranged/boss/flyer types render but don't move yet.
             AI_MELEE => tick_headcrab(m, pm, pi, player_pos, health, armor, nprops),
@@ -5478,10 +5961,21 @@ unsafe fn collect_pickups(
     pickup_ticks: &mut u8,
 ) {
     let nprops = PROP_COUNT.min(MAX_PROPS);
-    let mut pi = 0usize;
-    while pi < nprops {
+    let indexed = nprops < MAX_PROPS && PROP_ACTIVE[nprops] != PROP_HOT_FALLBACK;
+    let scan_count = if indexed {
+        PROP_ACTIVE[nprops] as usize
+    } else {
+        nprops
+    };
+    let mut scan = 0usize;
+    while scan < scan_count {
+        let pi = if indexed {
+            PROP_ACTIVE[nprops + 1 + scan] as usize
+        } else {
+            scan
+        };
         if PROP_ACTIVE[pi] == 0 || !player_touches_pickup(player_pos, PROP_POS[pi]) {
-            pi += 1;
+            scan += 1;
             continue;
         }
         match PROP_KIND[pi] {
@@ -5568,7 +6062,7 @@ unsafe fn collect_pickups(
             }
             _ => {}
         }
-        pi += 1;
+        scan += 1;
     }
 }
 
@@ -7009,8 +7503,19 @@ unsafe fn spawn_gibs(pos: [i32; 3], n: u8) {
 /// env_spark: each spark emitter throws a small shower now and then when the
 /// player is nearby (cheap -- a 1/64 per-tick chance, distance-gated).
 unsafe fn tick_env_sparks(m: &Map, nlogic: usize) {
-    let mut li = 0usize;
-    while li < nlogic {
+    let indexed = LOGIC_SPARK_COUNT != LOGIC_HOT_FALLBACK;
+    let scan_count = if indexed {
+        LOGIC_SPARK_COUNT as usize
+    } else {
+        nlogic
+    };
+    let mut scan = 0usize;
+    while scan < scan_count {
+        let li = if indexed {
+            LOGIC_BREAK_HP[MAX_LOGIC - 1 - scan] as usize
+        } else {
+            scan
+        };
         let rec = m.logic(li);
         if rec.kind == map::LOGIC_ENV_SPARK
             && dist2_3(rec.origin, LOGIC_PLAYER_POS) < 1200 * 1200
@@ -7027,7 +7532,7 @@ unsafe fn tick_env_sparks(m: &Map, nlogic: usize) {
             }
             sfx::play_world(sfx::RIC, o); // spark crackle (reuse the ricochet click)
         }
-        li += 1;
+        scan += 1;
     }
 }
 
@@ -7039,17 +7544,27 @@ fn face_bounds_visible(center: [i32; 3], radius: i32, rot: &Mat3I16, base_t: [i3
 }
 
 #[inline]
-fn cached_face_visible(rec: PvsFaceRec, rot: &Mat3I16, base_t: [i32; 3]) -> bool {
-    sphere_visible(
-        [
-            rec.center[0] as i32,
-            rec.center[1] as i32,
-            rec.center[2] as i32,
-        ],
-        rec.radius as i32,
-        rot,
-        base_t,
-    )
+fn world_sphere_visible_gte(center: [i16; 3], radius: i32) -> bool {
+    // The world view matrix is already resident in the GTE throughout this
+    // pass. One MVMVA replaces three CPU dot products (nine R3000 multiplies)
+    // while producing the same Q12 view coordinates.
+    let v = scene::transform_vertex_scheduled(Vec3I16::new(
+        center[0], center[1], center[2],
+    ));
+    let r = radius;
+    if v.z + r < render::NEAR_Z || v.z - r > FAR_VIEW {
+        return false;
+    }
+    let z = v.z.max(render::NEAR_Z);
+    if v.x.abs() * 2 > z * 2 + r * 3 {
+        return false;
+    }
+    v.y.abs() * 4 <= z * 3 + r * 5
+}
+
+#[inline]
+fn cached_face_visible(rec: PvsFaceRec, _rot: &Mat3I16, _base_t: [i32; 3]) -> bool {
+    world_sphere_visible_gte(rec.center, rec.radius as i32)
 }
 
 #[inline]
@@ -7118,6 +7633,22 @@ fn camera_leaf(m: &Map, eye: [i32; 3]) -> i32 {
 #[inline]
 fn valid_pvs_leaf(m: &Map, leaf: i32) -> bool {
     leaf > 0 && (leaf as usize) < m.n_leaves
+}
+
+// This cache is touched from both the simulation and the very large render
+// loop. LLVM's MIPS-I backend has repeatedly made an ordinary static access
+// layout-sensitive as play() crosses code-alignment boundaries, causing the
+// render side to observe -1 forever and rebuild the complete PVS every frame.
+// Keep the shared invalidation channel as an explicit memory transaction; the
+// render loop also owns a local leaf below so this global is not its hot cache.
+#[inline]
+unsafe fn pvs_cam_leaf_load() -> i32 {
+    core::ptr::read_volatile(core::ptr::addr_of!(PVS_CAM_LEAF))
+}
+
+#[inline]
+unsafe fn pvs_cam_leaf_store(leaf: i32) {
+    core::ptr::write_volatile(core::ptr::addr_of_mut!(PVS_CAM_LEAF), leaf);
 }
 
 fn recover_camera_leaf(m: &Map, eye: [i32; 3], player_pos: [i32; 3], train_hint: [i32; 3]) -> i32 {
@@ -7308,7 +7839,7 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
         }
         ei += 1;
     }
-    PVS_CAM_LEAF = cam_leaf;
+    pvs_cam_leaf_store(cam_leaf);
 }
 
 #[inline]
@@ -7451,10 +7982,70 @@ unsafe fn push_tri_uv_words(
     mat: TexturedGouraudPacketMaterial,
     otz: usize,
 ) {
-    let prim = TriTexturedGouraud::with_packet_material_packed_uv_words(screen, uv_words, rgb, mat);
+    push_tri_uv_words_packed(
+        packets,
+        np,
+        screen,
+        uv_words,
+        [
+            pack_rgb_word(rgb[0]),
+            pack_rgb_word(rgb[1]),
+            pack_rgb_word(rgb[2]),
+        ],
+        mat,
+        otz,
+    );
+}
+
+#[inline]
+unsafe fn push_tri_uv_words_packed(
+    packets: &mut PrimitivePacketArena<'_>,
+    np: &mut usize,
+    screen: [(i16, i16); 3],
+    uv_words: [u16; 3],
+    rgb: [u32; 3],
+    mat: TexturedGouraudPacketMaterial,
+    otz: usize,
+) {
+    let prim = TriTexturedGouraud {
+        tag: 0,
+        tex_window: mat.tex_window_word,
+        color0_cmd: mat.color0_command_word | rgb[0],
+        v0: pack_vertex_word(screen[0].0, screen[0].1),
+        uv0_clut: uv_words[0] as u32 | mat.clut_high_word,
+        color1: rgb[1],
+        v1: pack_vertex_word(screen[1].0, screen[1].1),
+        uv1_tpage: uv_words[1] as u32 | mat.tpage_high_word,
+        color2: rgb[2],
+        v2: pack_vertex_word(screen[2].0, screen[2].1),
+        uv2: uv_words[2] as u32,
+    };
     let Some(packet) = packets.push(prim) else {
+        WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
+        if TRAM_CACHE_BUILDING {
+            TRAM_CACHE_OVERFLOW = true;
+        }
         return;
     };
+    if TRAM_CACHE_BUILDING {
+        let i = TRAM_TRI_COUNT;
+        if i < MAX_TRAM_CACHE_TRIS {
+            // GPU packets are POD words. Copy before OT.add writes this frame's
+            // DMA link into the arena packet; the persistent copy is relinked
+            // into the current OT on cache hits.
+            core::ptr::copy_nonoverlapping(
+                packet as *const TriTexturedGouraud,
+                core::ptr::addr_of_mut!(TRAM_TRI_CACHE)
+                    .cast::<TriTexturedGouraud>()
+                    .add(i),
+                1,
+            );
+            TRAM_TRI_OTZ[i] = otz as u8;
+            TRAM_TRI_COUNT = i + 1;
+        } else {
+            TRAM_CACHE_OVERFLOW = true;
+        }
+    }
     OT.add(otz, packet, TriTexturedGouraud::WORDS);
     *np += 1;
 }
@@ -7468,7 +8059,6 @@ unsafe fn emit_projected(
     m: &Map,
     tri: map::RenderTri,
     p: [Projected; 3],
-    nv: usize,
     np: &mut usize,
 ) {
     let (a, b, c) = (
@@ -7476,7 +8066,6 @@ unsafe fn emit_projected(
         tri.idx[1] as usize,
         tri.idx[2] as usize,
     );
-    let _ = nv; // indices are cook-guaranteed < n_verts
     let rgb = tri.rgb;
     let (pa, pb, pc) = (p[0], p[1], p[2]);
     let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
@@ -7506,7 +8095,7 @@ unsafe fn emit_projected(
         if !slot.valid {
             return;
         }
-        push_tri_uv_words(
+        push_tri_uv_words_packed(
             packets,
             np,
             [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
@@ -7532,9 +8121,10 @@ unsafe fn emit_projected(
     let cvv = |idx: usize, k: usize| {
         let v = scene::transform_vertex_scheduled(m.vert(idx));
         let uv = uv_word_pair_i32(tri.uv_words[k]);
+        let c = unpack_rgb_word(rgb[k]);
         render::CVert {
             v: [v.x, v.y, v.z],
-            rgb: (rgb[k].0 as i32, rgb[k].1 as i32, rgb[k].2 as i32),
+            rgb: (c.0 as i32, c.1 as i32, c.2 as i32),
             uv,
         }
     };
@@ -7649,7 +8239,6 @@ unsafe fn try_emit_tri_pair_quad_values(
     m: &Map,
     t0: map::RenderTri,
     t1: map::RenderTri,
-    nv: usize,
     frame: u16,
     nq: &mut usize,
 ) -> bool {
@@ -7667,12 +8256,27 @@ unsafe fn try_emit_tri_pair_quad_values(
         m,
         t0.tex,
         [
-            (a, t0.uv_words[0], t0.rgb[0]),
-            (b, t0.uv_words[2], t0.rgb[2]),
-            (c, t0.uv_words[1], t0.rgb[1]),
-            (t1.idx[1], t1.uv_words[1], t1.rgb[1]),
+            map::PackedLoopVert {
+                idx: a,
+                uv: t0.uv_words[0],
+                rgb: t0.rgb[0],
+            },
+            map::PackedLoopVert {
+                idx: b,
+                uv: t0.uv_words[2],
+                rgb: t0.rgb[2],
+            },
+            map::PackedLoopVert {
+                idx: c,
+                uv: t0.uv_words[1],
+                rgb: t0.rgb[1],
+            },
+            map::PackedLoopVert {
+                idx: t1.idx[1],
+                uv: t1.uv_words[1],
+                rgb: t1.rgb[1],
+            },
         ],
-        nv,
         frame,
         nq,
     )
@@ -7685,8 +8289,7 @@ unsafe fn try_emit_quad_corners(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
     tex: usize,
-    corners: [(u16, u16, (u8, u8, u8)); 4], // (vert idx, uv word, rgb) a,b,c,d
-    nv: usize,
+    corners: [map::PackedLoopVert; 4],
     frame: u16,
     nq: &mut usize,
 ) -> bool {
@@ -7694,12 +8297,11 @@ unsafe fn try_emit_quad_corners(
         return false;
     }
     let (a, b, c, d) = (
-        corners[0].0 as usize,
-        corners[1].0 as usize,
-        corners[2].0 as usize,
-        corners[3].0 as usize,
+        corners[0].idx as usize,
+        corners[1].idx as usize,
+        corners[2].idx as usize,
+        corners[3].idx as usize,
     );
-    let _ = nv; // indices are cook-guaranteed < n_verts
     let slot = TEX_SLOTS[tex];
     if !slot.valid {
         return true;
@@ -7739,47 +8341,63 @@ unsafe fn try_emit_quad_corners(
     if w_bac == 0 || w_adc == 0 || (w_bac > 0) != (w_adc > 0) {
         return false;
     }
-    if CULL
-        && culled(
-            (pa.sx as i32, pa.sy as i32),
-            (pc.sx as i32, pc.sy as i32),
-            (pb.sx as i32, pb.sy as i32),
-        )
-    {
+    // culled(pa, pc, pb) is the same signed area as w_bac under a cyclic
+    // permutation. Reuse it instead of paying two more R3000 multiplies.
+    if CULL && w_bac >= 0 {
         return true;
     }
-    let (rgb_a, rgb_b, rgb_c, rgb_d) = (corners[0].2, corners[1].2, corners[2].2, corners[3].2);
+    let (rgb_a, rgb_b, rgb_c, rgb_d) = (
+        corners[0].rgb,
+        corners[1].rgb,
+        corners[2].rgb,
+        corners[3].rgb,
+    );
     let qrgb = if slot.backdrop {
         [rgb_b, rgb_a, rgb_c, rgb_d]
+    } else if FLASHLIGHT_ON {
+        [
+            fog_rgb_word_flash(rgb_b, pb.sz as i32),
+            fog_rgb_word_flash(rgb_a, pa.sz as i32),
+            fog_rgb_word_flash(rgb_c, pc.sz as i32),
+            fog_rgb_word_flash(rgb_d, pd.sz as i32),
+        ]
     } else {
         [
-            fog1(rgb_b, pb.sz as i32),
-            fog1(rgb_a, pa.sz as i32),
-            fog1(rgb_c, pc.sz as i32),
-            fog1(rgb_d, pd.sz as i32),
+            fog_rgb_word_no_flash(rgb_b, pb.sz as i32),
+            fog_rgb_word_no_flash(rgb_a, pa.sz as i32),
+            fog_rgb_word_no_flash(rgb_c, pc.sz as i32),
+            fog_rgb_word_no_flash(rgb_d, pd.sz as i32),
         ]
     };
-    let prim = QuadTexturedGouraud::with_packet_material_packed_uv_words(
+    let uv = if EMIT_WAVE {
         [
-            (pb.sx, pb.sy),
-            (pa.sx, pa.sy),
-            (pc.sx, pc.sy),
-            (pd.sx, pd.sy),
-        ],
-        if EMIT_WAVE {
-            [
-                sway_uv(corners[1].1),
-                sway_uv(corners[0].1),
-                sway_uv(corners[2].1),
-                sway_uv(corners[3].1),
-            ]
-        } else {
-            [corners[1].1, corners[0].1, corners[2].1, corners[3].1]
-        },
-        qrgb,
-        emit_packet_of(&slot, tex),
-    );
+            sway_uv(corners[1].uv),
+            sway_uv(corners[0].uv),
+            sway_uv(corners[2].uv),
+            sway_uv(corners[3].uv),
+        ]
+    } else {
+        [corners[1].uv, corners[0].uv, corners[2].uv, corners[3].uv]
+    };
+    let mat = emit_packet_of(&slot, tex);
+    let prim = QuadTexturedGouraud {
+        tag: 0,
+        tex_window: mat.tex_window_word,
+        color0_cmd: (mat.color0_command_word | 0x0800_0000) | qrgb[0],
+        v0: pack_vertex_word(pb.sx, pb.sy),
+        uv0_clut: uv[0] as u32 | mat.clut_high_word,
+        color1: qrgb[1],
+        v1: pack_vertex_word(pa.sx, pa.sy),
+        uv1_tpage: uv[1] as u32 | mat.tpage_high_word,
+        color2: qrgb[2],
+        v2: pack_vertex_word(pc.sx, pc.sy),
+        uv2: uv[2] as u32,
+        color3: qrgb[3],
+        v3: pack_vertex_word(pd.sx, pd.sy),
+        uv3: uv[3] as u32,
+    };
     let Some(packet) = packets.push(prim) else {
+        WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
         return false;
     };
     let mut otz = world_otz_from_gte4(&pa, &pb, &pc, &pd);
@@ -7841,6 +8459,45 @@ const FLASH_RANGE: i32 = 600;
 const FLASH_STRENGTH: i32 = 110;
 static mut FLASHLIGHT_ON: bool = false;
 
+#[inline(always)]
+const fn pack_rgb_word(rgb: (u8, u8, u8)) -> u32 {
+    rgb.0 as u32 | ((rgb.1 as u32) << 8) | ((rgb.2 as u32) << 16)
+}
+
+#[inline(always)]
+const fn unpack_rgb_word(rgb: u32) -> (u8, u8, u8) {
+    (rgb as u8, (rgb >> 8) as u8, (rgb >> 16) as u8)
+}
+
+#[inline(always)]
+const fn pack_vertex_word(x: i16, y: i16) -> u32 {
+    x as u16 as u32 | ((y as u16 as u32) << 16)
+}
+
+/// Packed-colour twin of fog1 for the dominant loop-quad path. The caller
+/// checks the flashlight once per quad, and the near case stays entirely
+/// inline: no four repeated global loads/calls on every world quad.
+#[inline(always)]
+fn fog_rgb_word_no_flash(rgb: u32, sz: i32) -> u32 {
+    if sz <= FOG_START {
+        return rgb;
+    }
+    if sz >= FAR_VIEW {
+        return 0;
+    }
+    let f = ((FAR_VIEW - sz) * FOG_INV) >> 12;
+    let r = (((rgb as u8) as i32 * f) >> 8) as u32;
+    let g = ((((rgb >> 8) as u8) as i32 * f) >> 8) as u32;
+    let b = ((((rgb >> 16) as u8) as i32 * f) >> 8) as u32;
+    r | (g << 8) | (b << 16)
+}
+
+#[cold]
+#[inline(never)]
+fn fog_rgb_word_flash(rgb: u32, sz: i32) -> u32 {
+    pack_rgb_word(fog1(unpack_rgb_word(rgb), sz))
+}
+
 /// Fade one vertex color toward black by its view depth (plus the flashlight
 /// brighten when the lamp is on).
 #[inline]
@@ -7886,18 +8543,27 @@ fn fog1(rgb: (u8, u8, u8), sz: i32) -> (u8, u8, u8) {
     )
 }
 
-/// Fade a triangle's three vertex colors toward black by per-vertex depth.
-/// Backdrop/sky tris pass through so the horizon never darkens.
+/// Fade a triangle's packed vertex colors toward black by per-vertex depth.
+/// Backdrop/sky tris pass through so the horizon never darkens. Like the quad
+/// path, test the flashlight once rather than once per vertex.
 #[inline]
-fn fog_world_rgb(rgb: [(u8, u8, u8); 3], sz: [i32; 3], backdrop: bool) -> [(u8, u8, u8); 3] {
+fn fog_world_rgb(rgb: [u32; 3], sz: [i32; 3], backdrop: bool) -> [u32; 3] {
     if backdrop {
         return rgb;
     }
-    [
-        fog1(rgb[0], sz[0]),
-        fog1(rgb[1], sz[1]),
-        fog1(rgb[2], sz[2]),
-    ]
+    if unsafe { FLASHLIGHT_ON } {
+        [
+            fog_rgb_word_flash(rgb[0], sz[0]),
+            fog_rgb_word_flash(rgb[1], sz[1]),
+            fog_rgb_word_flash(rgb[2], sz[2]),
+        ]
+    } else {
+        [
+            fog_rgb_word_no_flash(rgb[0], sz[0]),
+            fog_rgb_word_no_flash(rgb[1], sz[1]),
+            fog_rgb_word_no_flash(rgb[2], sz[2]),
+        ]
+    }
 }
 
 unsafe fn emit_proj_fast(
@@ -7910,6 +8576,13 @@ unsafe fn emit_proj_fast(
     np: &mut usize,
 ) -> bool {
     let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
+    if pa.sz >= NEAR
+        && pb.sz >= NEAR
+        && pc.sz >= NEAR
+        && render::tri_outside_band([(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)])
+    {
+        return true;
+    }
     if pa.sz >= NEAR
         && pb.sz >= NEAR
         && pc.sz >= NEAR
@@ -7938,11 +8611,11 @@ unsafe fn emit_proj_fast(
             otz = clamp_otz(otz + BACKDROP_OTZ_BIAS);
         }
         let rgb = fog_world_rgb(
-            m.tri_rgb(tt),
+            m.tri_rgb_words(tt),
             [pa.sz as i32, pb.sz as i32, pc.sz as i32],
             slot.backdrop,
         );
-        push_tri_uv_words(
+        push_tri_uv_words_packed(
             packets,
             np,
             [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
@@ -7969,6 +8642,13 @@ unsafe fn emit_proj_fast_tri(
     np: &mut usize,
 ) -> bool {
     let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
+    if pa.sz >= NEAR
+        && pb.sz >= NEAR
+        && pc.sz >= NEAR
+        && render::tri_outside_band([(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)])
+    {
+        return true;
+    }
     if pa.sz >= NEAR
         && pb.sz >= NEAR
         && pc.sz >= NEAR
@@ -8000,7 +8680,7 @@ unsafe fn emit_proj_fast_tri(
             [pa.sz as i32, pb.sz as i32, pc.sz as i32],
             slot.backdrop,
         );
-        push_tri_uv_words(
+        push_tri_uv_words_packed(
             packets,
             np,
             [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
@@ -8019,7 +8699,6 @@ unsafe fn emit_world_tri(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
     tt: usize,
-    nv: usize,
     frame: u16,
     np: &mut usize,
     counts: &mut WorldCounters,
@@ -8040,7 +8719,7 @@ unsafe fn emit_world_tri(
     }
     // Straddler/offscreen: full decode + view-space near-clip path.
     let tri = m.render_tri(tt, cached_world_uv_words(m, tt));
-    emit_projected(packets, m, tri, [pa, pb, pc], nv, np);
+    emit_projected(packets, m, tri, [pa, pb, pc], np);
 }
 
 /// Emit submodel triangle `tt` (brush entity / tram), decode-after-cull, using
@@ -8049,7 +8728,6 @@ unsafe fn emit_submodel_tri(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
     tt: usize,
-    nv: usize,
     token: u16,
     np: &mut usize,
 ) {
@@ -8067,7 +8745,7 @@ unsafe fn emit_submodel_tri(
         return;
     }
     let tri = m.render_tri(tt, cached_world_uv_words(m, tt));
-    emit_projected(packets, m, tri, [pa, pb, pc], nv, np);
+    emit_projected(packets, m, tri, [pa, pb, pc], np);
 }
 
 /// Submodel version of emit_world_loop_tri: uses the entity-token vertex cache.
@@ -8075,7 +8753,6 @@ unsafe fn emit_submodel_loop_tri(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
     tri: &map::RenderTri,
-    nv: usize,
     token: u16,
     np: &mut usize,
 ) {
@@ -8084,7 +8761,6 @@ unsafe fn emit_submodel_loop_tri(
         tri.idx[1] as usize,
         tri.idx[2] as usize,
     );
-    let _ = nv; // cook-guaranteed
     proj_submodel_vert(m, a, token);
     proj_submodel_vert(m, b, token);
     proj_submodel_vert(m, c, token);
@@ -8092,7 +8768,7 @@ unsafe fn emit_submodel_loop_tri(
     if emit_proj_fast_tri(packets, m, tri, pa, pb, pc, np) {
         return;
     }
-    emit_projected(packets, m, *tri, [pa, pb, pc], nv, np);
+    emit_projected(packets, m, *tri, [pa, pb, pc], np);
 }
 
 /// Draw one brush-entity/tram face: fan its loop, or iterate its raw tris.
@@ -8102,7 +8778,6 @@ unsafe fn emit_submodel_face(
     f: usize,
     first: usize,
     cnt: usize,
-    nv: usize,
     token: u16,
     np: &mut usize,
 ) {
@@ -8111,12 +8786,12 @@ unsafe fn emit_submodel_face(
         let mut k = 1;
         while k + 1 < cnt {
             let tri = m.loop_render_tri(tex, first, first + k + 1, first + k);
-            emit_submodel_loop_tri(packets, m, &tri, nv, token, np);
+            emit_submodel_loop_tri(packets, m, &tri, token, np);
             k += 1;
         }
     } else {
         for tt in first..first + cnt {
-            emit_submodel_tri(packets, m, tt, nv, token, np);
+            emit_submodel_tri(packets, m, tt, token, np);
         }
     }
 }
@@ -8126,7 +8801,6 @@ unsafe fn emit_world_face_tris(
     m: &Map,
     first: usize,
     cnt: usize,
-    nv: usize,
     frame: u16,
     np: &mut usize,
     nq: &mut usize,
@@ -8143,13 +8817,13 @@ unsafe fn emit_world_face_tris(
         if WORLD_QUAD_PAIRING && tt + 1 < end && tt + 1 < m.n_tris {
             let t0 = m.render_tri(tt, cached_world_uv_words(m, tt));
             let t1 = m.render_tri(tt + 1, cached_world_uv_words(m, tt + 1));
-            if try_emit_tri_pair_quad_values(packets, m, t0, t1, nv, frame, nq) {
+            if try_emit_tri_pair_quad_values(packets, m, t0, t1, frame, nq) {
                 counts.emit_calls += 2;
                 tt += 2;
                 continue;
             }
         }
-        emit_world_tri(packets, m, tt, nv, frame, np, counts);
+        emit_world_tri(packets, m, tt, frame, np, counts);
         tt += 1;
     }
 }
@@ -8158,7 +8832,6 @@ unsafe fn emit_world_loop_tri(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
     tri: &map::RenderTri,
-    nv: usize,
     frame: u16,
     np: &mut usize,
     counts: &mut WorldCounters,
@@ -8168,7 +8841,6 @@ unsafe fn emit_world_loop_tri(
         tri.idx[1] as usize,
         tri.idx[2] as usize,
     );
-    let _ = nv; // cook-guaranteed
     proj_vert(m, a, frame);
     proj_vert(m, b, frame);
     proj_vert(m, c, frame);
@@ -8177,7 +8849,7 @@ unsafe fn emit_world_loop_tri(
     if emit_proj_fast_tri(packets, m, tri, pa, pb, pc, np) {
         return;
     }
-    emit_projected(packets, m, *tri, [pa, pb, pc], nv, np);
+    emit_projected(packets, m, *tri, [pa, pb, pc], np);
 }
 
 /// Fan a loop face into triangles (tri k = anchor, loop[k+1], loop[k] -- the
@@ -8190,7 +8862,6 @@ unsafe fn emit_world_face_loop(
     tex: usize,
     base: usize,
     count: usize,
-    nv: usize,
     frame: u16,
     np: &mut usize,
     nq: &mut usize,
@@ -8211,13 +8882,7 @@ unsafe fn emit_world_face_loop(
                 packets,
                 m,
                 tex,
-                [
-                    (va.0, va.1, va.2),
-                    (vk.0, vk.1, vk.2),
-                    (vk1.0, vk1.1, vk1.2),
-                    (vk2.0, vk2.1, vk2.2),
-                ],
-                nv,
+                [va, vk, vk1, vk2],
                 frame,
                 nq,
             ) {
@@ -8228,12 +8893,12 @@ unsafe fn emit_world_face_loop(
             }
         }
         let tri = map::RenderTri {
-            idx: [va.0, vk1.0, vk.0],
+            idx: [va.idx, vk1.idx, vk.idx],
             tex,
-            uv_words: [va.1, vk1.1, vk.1],
-            rgb: [va.2, vk1.2, vk.2],
+            uv_words: [va.uv, vk1.uv, vk.uv],
+            rgb: [va.rgb, vk1.rgb, vk.rgb],
         };
-        emit_world_loop_tri(packets, m, &tri, nv, frame, np, counts);
+        emit_world_loop_tri(packets, m, &tri, frame, np, counts);
         vk = vk1;
         k += 1;
     }
@@ -8243,7 +8908,6 @@ unsafe fn emit_world_face(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
     face: usize,
-    nv: usize,
     frame: u16,
     eye: [i32; 3],
     rot: &Mat3I16,
@@ -8270,9 +8934,9 @@ unsafe fn emit_world_face(
         return;
     }
     if m.face_is_loop(face) {
-        emit_world_face_loop(packets, m, m.face_tex(face), first, cnt, nv, frame, np, nq, counts);
+        emit_world_face_loop(packets, m, m.face_tex(face), first, cnt, frame, np, nq, counts);
     } else {
-        emit_world_face_tris(packets, m, first, cnt, nv, frame, np, nq, counts);
+        emit_world_face_tris(packets, m, first, cnt, frame, np, nq, counts);
     }
 }
 
@@ -8281,7 +8945,10 @@ unsafe fn draw_model(
     packets: &mut PrimitivePacketArena<'_>,
     md: &Model,
     slots: &[TexSlot],
-    faces: *const ModelRenderFace,
+    face_indices: *const u32,
+    face_payloads: *const ModelRenderFacePayload,
+    face_runs: *const u32,
+    run_count: usize,
     face_count: usize,
     pos: [i32; 3],
     yaw: u16,
@@ -8293,6 +8960,9 @@ unsafe fn draw_model(
     rot: &Mat3I16,
     np: &mut usize,
 ) -> u32 {
+    if slots.is_empty() {
+        return 0;
+    }
     // OoT/Crash vertex-precision trick. Vertices are baked at `s`x (cook), so
     // keep the rotation matrix FULL precision and inflate the view-space
     // translation by `s` instead of folding the 1/s down-scale into the matrix.
@@ -8328,19 +8998,12 @@ unsafe fn draw_model(
         // (16ths). Costs a second frame decode; buys back the animation
         // smoothness the cook's frame cuts took away.
         let vb = md.frame(frame2);
-        let f = frac16 as i32;
-        let lerp = |a: Vec3I16, b: Vec3I16| -> Vec3I16 {
-            Vec3I16::new(
-                a.x + (((b.x as i32 - a.x as i32) * f) >> 4) as i16,
-                a.y + (((b.y as i32 - a.y as i32) * f) >> 4) as i16,
-                a.z + (((b.z as i32 - a.z as i32) * f) >> 4) as i16,
-            )
-        };
+        let verts = verts.interpolate(vb, frac16);
         while i + 2 < nv {
             let projected = scene::project_triangle_scheduled(
-                lerp(verts.vert(i), vb.vert(i)),
-                lerp(verts.vert(i + 1), vb.vert(i + 1)),
-                lerp(verts.vert(i + 2), vb.vert(i + 2)),
+                verts.vert(i),
+                verts.vert(i + 1),
+                verts.vert(i + 2),
             );
             MODEL_SCRATCH[i] = projected[0];
             MODEL_SCRATCH[i + 1] = projected[1];
@@ -8348,7 +9011,7 @@ unsafe fn draw_model(
             i += 3;
         }
         while i < nv {
-            MODEL_SCRATCH[i] = scene::project_vertex_scheduled(lerp(verts.vert(i), vb.vert(i)));
+            MODEL_SCRATCH[i] = scene::project_vertex_scheduled(verts.vert(i));
             i += 1;
         }
     } else {
@@ -8370,53 +9033,79 @@ unsafe fn draw_model(
     }
     telemetry::stage_end(telemetry::stage::TEXTURED_MODEL_PROJECT);
     telemetry::stage_begin(telemetry::stage::TEXTURED_MODEL_FACES);
-    // face_count comes from fill_render_faces_raw at stream time; the pool
-    // repack zeroes the blob's n_tris afterwards (TriRec tail dropped), so the
-    // baked count is the authoritative bound here.
-    let nfaces = face_count;
-    for t in 0..nfaces {
-        let render_face = *faces.add(t);
-        let (a, b, c) = (
-            render_face.face.vertex_indices[0] as usize,
-            render_face.face.vertex_indices[1] as usize,
-            render_face.face.vertex_indices[2] as usize,
-        );
-        let (pa, pb, pc) = (MODEL_SCRATCH[a], MODEL_SCRATCH[b], MODEL_SCRATCH[c]);
-        if pa.sz < near_s || pb.sz < near_s || pc.sz < near_s {
+    // face_count/run_count come from the stream-time bake; the repack zeroes
+    // the blob's n_tris afterwards (TriRec tail dropped), so these are the
+    // authoritative bounds. Faces remain in authored order inside each run.
+    let shade_word = (shade as u32) | ((shade as u32) << 8) | ((shade as u32) << 16);
+    let mut run_first = 0usize;
+    let mut r = 0usize;
+    while r < run_count {
+        let run = *face_runs.add(r);
+        let run_end = ((run & 0xffff) as usize).min(face_count);
+        if run_end <= run_first {
+            r += 1;
             continue;
         }
-        if MODEL_CULL
-            && culled(
-                (pa.sx as i32, pa.sy as i32),
-                (pb.sx as i32, pb.sy as i32),
-                (pc.sx as i32, pc.sy as i32),
-            )
-        {
-            continue;
-        }
-        let slot = slots[(render_face.tex as usize).min(slots.len() - 1)];
+        let slot = slots[(((run >> 16) & 0xff) as usize).min(slots.len() - 1)];
         if !slot.valid {
+            run_first = run_end;
+            r += 1;
             continue;
         }
-        // Deflate sz by `s` back to 1x world depth, then sort by the FARTHEST
-        // vertex at the world's OT_SHIFT -- exactly like world_otz_from_gte3 --
-        // so models interleave correctly with world geometry. The old `>> 6`
-        // predated OT_SHIFT=4: it sorted models 4x too near, so they drew on top
-        // of walls/columns that should occlude them.
-        let depthz = model_unscale_depth(
-            (pa.sz as u32).max(pb.sz as u32).max(pc.sz as u32),
-            s,
-            scale_shift,
-        );
-        push_tri_uv_words(
-            packets,
-            np,
-            [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
-            render_face.face.uv_words,
-            [(shade, shade, shade); 3],
-            slot.packet,
-            clamp_otz((depthz >> OT_SHIFT) as usize),
-        );
+        // Studio models use one uniform tint per draw. Derive one flat FT3
+        // material per texture run from the prepacked Gouraud material.
+        let flat_material = TexturedPacketMaterial {
+            tex_window_word: slot.packet.tex_window_word,
+            color_command_word: (slot.packet.color0_command_word & !0x1000_0000) | shade_word,
+            clut_high_word: slot.packet.clut_high_word,
+            tpage_high_word: slot.packet.tpage_high_word,
+        };
+        let mut t = run_first;
+        while t < run_end {
+            let packed = *face_indices.add(t);
+            let (a, b, c) = (
+                (packed & model::RENDER_FACE_INDEX_MASK) as usize,
+                ((packed >> 10) & model::RENDER_FACE_INDEX_MASK) as usize,
+                ((packed >> 20) & model::RENDER_FACE_INDEX_MASK) as usize,
+            );
+            let (pa, pb, pc) = (MODEL_SCRATCH[a], MODEL_SCRATCH[b], MODEL_SCRATCH[c]);
+            if pa.sz < near_s || pb.sz < near_s || pc.sz < near_s {
+                t += 1;
+                continue;
+            }
+            if MODEL_CULL
+                && culled(
+                    (pa.sx as i32, pa.sy as i32),
+                    (pb.sx as i32, pb.sy as i32),
+                    (pc.sx as i32, pc.sy as i32),
+                )
+            {
+                t += 1;
+                continue;
+            }
+            let payload = *face_payloads.add(t);
+            let depthz = model_unscale_depth(
+                (pa.sz as u32).max(pb.sz as u32).max(pc.sz as u32),
+                s,
+                scale_shift,
+            );
+            let prim = TriTextured::with_packet_material_packed_uv_words(
+                [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
+                payload.uv_words,
+                flat_material,
+            );
+            if let Some(packet) = packets.push(prim) {
+                OT.add(
+                    clamp_otz((depthz >> OT_SHIFT) as usize),
+                    packet,
+                    TriTextured::WORDS,
+                );
+                *np += 1;
+            }
+            t += 1;
+        }
+        run_first = run_end;
+        r += 1;
     }
     telemetry::stage_end(telemetry::stage::TEXTURED_MODEL_FACES);
     nv as u32
@@ -8708,6 +9397,8 @@ unsafe fn draw_viewmodel(
         WEAPON_CACHE_SCALE = local_to_world;
 
         WEAPON_TRI_COUNT = 0;
+        let cache = weapon_tri_cache_ptr();
+        let cache_otz = weapon_tri_otz_ptr();
         // HMDL keeps texture groups in source order (sleeve/glove before gun).
         // The viewmodel is camera-locked, so cache the already-cullled packet
         // stream until the authored frame/model changes.
@@ -8742,22 +9433,27 @@ unsafe fn draw_viewmodel(
                 s,
                 scale_shift,
             );
-            WEAPON_TRI_CACHE[WEAPON_TRI_COUNT] =
+            cache.add(WEAPON_TRI_COUNT).write(
                 TriTexturedGouraud::with_packet_material_packed_uv_words(
                     [(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)],
                     [uv_word(tri.uv[0]), uv_word(tri.uv[1]), uv_word(tri.uv[2])],
                     [(VM_SHADE, VM_SHADE, VM_SHADE); 3],
                     slot.packet,
-                );
-            WEAPON_TRI_OTZ[WEAPON_TRI_COUNT] = viewmodel_otz(avgz) as u8;
+                ),
+            );
+            cache_otz
+                .add(WEAPON_TRI_COUNT)
+                .write(viewmodel_otz(avgz) as u8);
             WEAPON_TRI_COUNT += 1;
         }
     }
 
+    let cache = weapon_tri_cache_ptr();
+    let cache_otz = weapon_tri_otz_ptr();
     for i in 0..WEAPON_TRI_COUNT {
         WEAPON_OT.add(
-            WEAPON_TRI_OTZ[i] as usize,
-            &mut WEAPON_TRI_CACHE[i],
+            *cache_otz.add(i) as usize,
+            &mut *cache.add(i),
             TriTexturedGouraud::WORDS,
         );
         *np += 1;
@@ -9025,9 +9721,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     let model_tex_failed = 0usize;
     let model_texs = 0usize;
     draw_next_loading_screen(fb, loading_label, &mut loading_frame, keep_frame);
-    // Stream the curated viewmodel set (geometry -> MODEL_BUF head reserve,
-    // textures -> VM_SLOTS) so weapon switching is instant. Textures stage above
-    // the reserve, in the enemy region stream_map_models fills afterwards.
+    // Stream the resident Glock; other viewmodels load on first selection and
+    // share the fixed MODEL_BUF reserve without reducing the enemy pool.
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
     let glock_vm_ok = unsafe {
         load_resident_viewmodels(&mut stream_chunks, &mut stream_bytes, &mut stream_sectors)
@@ -9052,12 +9747,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         (tex_failed + model_tex_failed) as u32,
     );
     telemetry::debug_log("hl-psx: WORLD.PAK viewmodels loaded");
-    unsafe {
-        WEAPON_CACHE_FRAME = usize::MAX;
-        WEAPON_CACHE_VERTS = 0;
-        WEAPON_CACHE_SCALE = 0;
-        WEAPON_TRI_COUNT = 0;
-    }
+    unsafe { invalidate_weapon_tri_cache() }
     draw_next_loading_screen(fb, loading_label, &mut loading_frame, keep_frame);
     // Real HUD sprite sheet -> free gameplay tpage. Streams from the pack
     // (MAP_BUF is free until the world chunk below); a failed read leaves the
@@ -9153,9 +9843,13 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     }
     phys::set_gravity_scale(4096); // fresh map: normal gravity until a zone says otherwise
     unsafe {
-        PVS_CAM_LEAF = -1;
+        pvs_cam_leaf_store(-1);
         PVS_LEAF_COUNT = 0;
         PVS_ENT_COUNT = 0;
+        TRAM_CACHE_VALID = false;
+        TRAM_CACHE_BUILDING = false;
+        TRAM_TRI_COUNT = 0;
+        WORLD_BAND_STATE = WORLD_BAND_NEEDS;
         // Liquid/glass translucency is per-face now: the cook keeps the
         // translucent flag only where this map's vis shows the far side
         // (watervis water); the emit paths pick a blended packet on demand
@@ -9175,6 +9869,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         ENT_SOLID_COUNT = nents_early;
         init_prop_state(&m);
         stream_map_models(&m, VM_POOL_WORDS * 4); // enemies stream after the viewmodel reserve
+        // Pre-scale the modal font into the unused right strip of the HUD tpage.
+        // This has no resident RAM cost and turns chapter-card glyphs into one
+        // transparent textured quad each instead of hundreds of flat pixel runs.
+        hltext::upload_gameplay_atlas();
         // Every non-viewmodel texture (map/HUD/sprite/enemy/glock) is resident
         // now, and VM_FILL_* points just past the glock -- snapshot both so a
         // switched viewmodel can evict back to glock-only when the pool fills.
@@ -9247,6 +9945,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         0
     };
     let mut frame_no: u16 = 0;
+    // Render-owned PVS key. The shared static is only an invalidation channel
+    // for logic/simulation; keeping the hot key local prevents code layout
+    // from turning every visual into a complete visibility rebuild.
+    let mut render_pvs_leaf = -1i32;
     let mut telemetry_frame: u32 = 1;
     let mut sim_frame_no: u32 = 0;
     let mut weapon = Arsenal::new();
@@ -9480,6 +10182,14 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     interrupts::install_vblank_counter();
     let mut next_sim_vblank = interrupts::vblank_count().wrapping_add(SIM_VBLANKS);
     let mut prev_pause_button = true;
+    // A malformed ID handshake is not proof that the DualShock left analog
+    // mode. Keep the last clean sample so a one-frame wire glitch cannot look
+    // like a release/re-press, and only run the expensive config transaction
+    // after a confirmed Digital/Config response.
+    // Seed with the robust retrying path outside the deadline-critical loop.
+    // Gameplay then performs one hardware-tested transaction per tick and
+    // holds this sample across the occasional malformed response.
+    let mut last_pad = poll_port1();
 
     'gameplay: loop {
         wait_until_vblank(next_sim_vblank);
@@ -9535,7 +10245,13 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             telemetry::stage_begin(telemetry::stage::UPDATE);
             // Modern twin-stick FPS: left stick moves/strafes, right stick looks
             // (X = turn, Y = pitch), Cross = jump. Analog only.
-            let pad = poll_port1();
+            let sampled_pad = poll_port1_diag(DEFAULT_SETUP_SPINS, 0).to_state();
+            let pad = if sampled_pad.mode == PadMode::Unknown {
+                last_pad
+            } else {
+                last_pad = sampled_pad;
+                sampled_pad
+            };
             let pause_button =
                 pad.buttons.is_held(button::START) || pad.buttons.is_held(button::SELECT);
             if pause_button && !prev_pause_button {
@@ -9545,6 +10261,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     PauseExit::MainMenu => return PlayExit::BackToMenu,
                     PauseExit::Resume => {
                         let _ = enable_analog_port1();
+                        last_pad = poll_port1();
                         prev_pause_button = true;
                         next_sim_vblank = interrupts::vblank_count().wrapping_add(SIM_VBLANKS);
                         continue 'gameplay;
@@ -9552,8 +10269,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 }
             }
             prev_pause_button = pause_button;
-            // Analog is required: if the pad ever isn't in analog mode, re-assert it.
-            if !pad.is_analog() {
+            // Analog is required, but Unknown is a bad handshake rather than a
+            // confirmed mode change; retrying configuration for it causes large
+            // fixed-update spikes and can itself disturb a healthy controller.
+            if matches!(sampled_pad.mode, PadMode::Digital | PadMode::Config) {
                 let _ = enable_analog_port1();
             }
             // R2 fires at the Glock cadence; the actual hit-test runs after
@@ -9631,7 +10350,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     let mut d = (0u32, 0u32, 0u32);
                     stream_one_viewmodel(weapon.current, &mut d.0, &mut d.1, &mut d.2);
                     music_mark_interrupted(); // the CD read killed CDDA; retick replays
-                    WEAPON_CACHE_FRAME = usize::MAX; // re-cache the viewmodel for the new weapon
+                    invalidate_weapon_tri_cache(); // re-cache the viewmodel for the new weapon
                 }
             }
             if use_cooldown > 0 {
@@ -10350,7 +11069,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     PENDING_PLAYER_DAMAGE = 0;
                     damage_player(&mut health, &mut armor, d);
                 }
+                telemetry::stage_begin(telemetry::stage::UPDATE_ACTOR);
                 tick_props(&m, movers, player.pos, &mut health, &mut armor);
+                telemetry::stage_end(telemetry::stage::UPDATE_ACTOR);
                 LOGIC_PLAYER_HEALTH = health;
                 LOGIC_PLAYER_ARMOR = armor;
                 LOGIC_PLAYER_CLIP_AMMO = weapon.clip_display();
@@ -10512,16 +11233,28 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             let mut cam_leaf = recover_camera_leaf(&m, eye, player.pos, train_hint);
             let mut have_pvs = valid_pvs_leaf(&m, cam_leaf);
             let mut reused_last_pvs = false;
-            if !have_pvs && valid_pvs_leaf(&m, PVS_CAM_LEAF) {
-                cam_leaf = PVS_CAM_LEAF;
+            // The shared leaf only carries invalidation from simulation. The
+            // render-owned key remains local across frames and is updated only
+            // after a successful rebuild.
+            if pvs_cam_leaf_load() < 0 {
+                render_pvs_leaf = -1;
+            }
+            let cached_pvs_leaf = render_pvs_leaf;
+            if !have_pvs && valid_pvs_leaf(&m, cached_pvs_leaf) {
+                cam_leaf = cached_pvs_leaf;
                 have_pvs = true;
                 reused_last_pvs = true;
             }
             if have_pvs {
-                if !reused_last_pvs && PVS_CAM_LEAF != cam_leaf {
+                if !reused_last_pvs && cached_pvs_leaf != cam_leaf {
                     telemetry::stage_begin(telemetry::stage::ROOM_VISIBLE_LIST);
                     rebuild_pvs_cache(&m, cam_leaf, nents);
                     telemetry::stage_end(telemetry::stage::ROOM_VISIBLE_LIST);
+                    render_pvs_leaf = cam_leaf;
+                    // A new leaf gets one conservative near-first frame. If its
+                    // actual emitted packet demand fits, later frames skip the
+                    // counting-sort walks until an observed overflow.
+                    WORLD_BAND_STATE |= WORLD_BAND_NEEDS;
                 }
                 let mut room_counts = WorldCounters::new();
                 room_counts.cells_considered = PVS_LEAF_COUNT as u32;
@@ -10549,16 +11282,16 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 WAVE_DV = WAVE_TAB[(wi + 4) & 15] as u8;
                 EMIT_BLEND = 0;
                 EMIT_WAVE = false;
-                let nbands = if PVS_TRI_REF_COUNT > MAX_RENDER_PACKETS {
+                let use_bands = WORLD_BAND_STATE & WORLD_BAND_NEEDS != 0;
+                WORLD_BAND_STATE &= WORLD_BAND_NEEDS; // clear prior overflow bit
+                let nbands = if use_bands {
                     ((FAR_VIEW >> DEPTH_BAND_SHIFT) + 1).min(N_DEPTH_BANDS)
                 } else {
                     1
                 };
                 // Pre-pass, once per frame: each group's backface verdict.
                 // In multi-band (overflow) mode, faces of visible groups are
-                // COUNTING-SORTED into a near-to-far band order here, so the
-                // emit below makes one pass over a contiguous list instead of
-                // re-walking the whole link structure once per band.
+                // counting-sorted into near-to-far order here.
                 let bucketed = nbands > 1 && PVS_FACE_COUNT <= PVS_BAND_CAP;
                 if bucketed {
                     for c in PVS_BAND_START.iter_mut() {
@@ -10567,8 +11300,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 }
                 for gi in 0..PVS_GROUP_COUNT {
                     let group = PVS_GROUP_ACTIVE[gi] as usize;
-                    let plane_face = PVS_GROUP_FACE[group] as usize;
-                    let (plane_n, plane_d) = m.face_plane(plane_face);
+                    let (plane_n, plane_d) = m.cooked_group_plane(group);
                     let vis = dot12(plane_n, eye) > plane_d;
                     let (w, b) = (gi >> 5, gi & 31);
                     if vis {
@@ -10617,8 +11349,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                             PVS_BAND_START[band as usize + 1] += 1;
                         }
                     }
-                }
-                if bucketed {
+                    }
+                    if bucketed {
                     // Prefix-sum the counts, then scatter (second link walk).
                     let mut acc = 0u16;
                     for k in 0..(nbands as usize + 1) {
@@ -10652,9 +11384,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                             }
                         }
                     }
-                }
-                let mut band = 0i32;
-                while band < nbands {
+                    }
+                    let mut band = 0i32;
+                    while band < nbands {
                     for gi in 0..PVS_GROUP_COUNT {
                         if bucketed {
                             break; // bucketed path below handles multi-band
@@ -10682,7 +11414,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                             rec.tex as usize,
                                             rec.first as usize,
                                             rec.count as usize,
-                                            nv,
                                             proj_token,
                                             &mut np,
                                             &mut nq,
@@ -10694,7 +11425,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                             &m,
                                             rec.first as usize,
                                             rec.count as usize,
-                                            nv,
                                             proj_token,
                                             &mut np,
                                             &mut nq,
@@ -10720,7 +11450,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                             m.face_tex(face),
                                             first,
                                             cnt,
-                                            nv,
                                             proj_token,
                                             &mut np,
                                             &mut nq,
@@ -10732,7 +11461,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                             &m,
                                             first,
                                             cnt,
-                                            nv,
                                             proj_token,
                                             &mut np,
                                             &mut nq,
@@ -10765,7 +11493,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                             rec.tex as usize,
                                             rec.first as usize,
                                             rec.count as usize,
-                                            nv,
                                             proj_token,
                                             &mut np,
                                             &mut nq,
@@ -10777,7 +11504,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                             &m,
                                             rec.first as usize,
                                             rec.count as usize,
-                                            nv,
                                             proj_token,
                                             &mut np,
                                             &mut nq,
@@ -10799,7 +11525,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                             m.face_tex(face),
                                             first,
                                             cnt,
-                                            nv,
                                             proj_token,
                                             &mut np,
                                             &mut nq,
@@ -10811,7 +11536,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                             &m,
                                             first,
                                             cnt,
-                                            nv,
                                             proj_token,
                                             &mut np,
                                             &mut nq,
@@ -10859,7 +11583,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         &mut packets,
                         &m,
                         face,
-                        nv,
                         proj_token,
                         eye,
                         &rot,
@@ -10884,6 +11607,16 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 );
                 telemetry::counter(telemetry::counter::ROOM_VISIBILITY_FALLBACK_DRAWS, 1);
             }
+            // Preserve near-first sorting only where it is demonstrably needed.
+            // A small reserve prevents a view hovering at the arena limit from
+            // alternating modes; ordinary PVS views avoid two full face walks.
+            WORLD_BAND_STATE = if WORLD_BAND_STATE & WORLD_BAND_OVERFLOW != 0
+                || packets.remaining() < (MAX_RENDER_PACKETS / 8)
+            {
+                WORLD_BAND_NEEDS
+            } else {
+                0
+            };
             telemetry::stage_end(telemetry::stage::ROOM);
 
             telemetry::stage_begin(telemetry::stage::MODEL_INSTANCES);
@@ -10953,7 +11686,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                             f,
                             first,
                             cnt,
-                            nv,
                             submodel_token,
                             &mut np,
                         );
@@ -10981,7 +11713,12 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                             continue;
                         }
                         let (bc, be) = m.face_bounds(f);
-                        if WORLD_BOUNDS_CULL && !face_bounds_visible(bc, be, &rot, base_t) {
+                        if WORLD_BOUNDS_CULL
+                            && !world_sphere_visible_gte(
+                                [bc[0] as i16, bc[1] as i16, bc[2] as i16],
+                                be,
+                            )
+                        {
                             continue;
                         }
                         let (first, cnt) = m.face_tris(f);
@@ -10996,7 +11733,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                 m.face_tex(f),
                                 first,
                                 cnt,
-                                nv,
                                 proj_token,
                                 &mut np,
                                 &mut nq,
@@ -11008,7 +11744,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                 &m,
                                 first,
                                 cnt,
-                                nv,
                                 proj_token,
                                 &mut np,
                                 &mut nq,
@@ -11044,7 +11779,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     if WORLD_BOUNDS_CULL && !face_bounds_visible(moved_center, be, &rot, base_t) {
                         continue;
                     }
-                    emit_submodel_face(&mut packets, &m, f, first, cnt, nv, submodel_token, &mut np);
+                    emit_submodel_face(&mut packets, &m, f, first, cnt, submodel_token, &mut np);
                 }
                 EMIT_BLEND = 0;
             }
@@ -11104,19 +11839,75 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     dot12(rot.m[1], tp_e) + dot12(mr.m[1], tbw),
                     dot12(rot.m[2], tp_e) + dot12(mr.m[2], tbw),
                 ];
-                scene::load_rotation(&mr);
-                scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
-                set_view_fix(&mr, et);
-                let submodel_token = next_proj_token();
-                let (ff, nf) = m.submodel(m.tram_submodel);
-                for f in ff..ff + nf {
-                    let (first, cnt) = m.face_tris(f);
-                    let (fnrm, fd) = m.face_plane(f);
-                    if dot12(fnrm, tram_eye) <= fd {
-                        model_culled_tris = model_culled_tris.saturating_add(cnt as u32);
-                        continue;
+                let cache_hit = TRAM_PACKET_CACHE
+                    && TRAM_CACHE_VALID
+                    && TRAM_CACHE_ROT == mr.m
+                    && TRAM_CACHE_T == et
+                    && TRAM_CACHE_EYE == tram_eye
+                    && TRAM_CACHE_FLASHLIGHT == FLASHLIGHT_ON;
+                if cache_hit {
+                    let mut i = 0usize;
+                    while i < TRAM_TRI_COUNT {
+                        OT.add(
+                            TRAM_TRI_OTZ[i] as usize,
+                            &mut TRAM_TRI_CACHE[i],
+                            TriTexturedGouraud::WORDS,
+                        );
+                        i += 1;
                     }
-                    emit_submodel_face(&mut packets, &m, f, first, cnt, nv, submodel_token, &mut np);
+                    np += TRAM_TRI_COUNT;
+                } else {
+                    scene::load_rotation(&mr);
+                    scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+                    set_view_fix(&mr, et);
+                    let submodel_token = next_proj_token();
+                    let (ff, nf) = m.submodel(m.tram_submodel);
+                    TRAM_TRI_COUNT = 0;
+                    TRAM_CACHE_OVERFLOW = false;
+                    TRAM_CACHE_BUILDING = TRAM_PACKET_CACHE;
+                    // The c0a0 car has 341 faces but only 118 signed plane
+                    // groups (some planes are shared by 12 faces). Reuse the
+                    // world visibility bits after world emission and compute
+                    // each tram-local facing verdict once per group.
+                    let mut tram_group_seen = [0u32; MAX_FACE_GROUPS / 32];
+                    for f in ff..ff + nf {
+                        let (first, cnt) = m.face_tris(f);
+                        let group = m.face_group(f);
+                        let (gw, gb) = (group >> 5, group & 31);
+                        let bit = 1u32 << gb;
+                        if tram_group_seen[gw] & bit == 0 {
+                            tram_group_seen[gw] |= bit;
+                            let (fnrm, fd) = m.face_plane(f);
+                            if dot12(fnrm, tram_eye) > fd {
+                                PVS_GROUP_VIS[gw] |= bit;
+                            } else {
+                                PVS_GROUP_VIS[gw] &= !bit;
+                            }
+                        }
+                        if PVS_GROUP_VIS[gw] & bit == 0 {
+                            model_culled_tris = model_culled_tris.saturating_add(cnt as u32);
+                            continue;
+                        }
+                        emit_submodel_face(
+                            &mut packets,
+                            &m,
+                            f,
+                            first,
+                            cnt,
+                            submodel_token,
+                            &mut np,
+                        );
+                    }
+                    TRAM_CACHE_BUILDING = false;
+                    if !TRAM_PACKET_CACHE || TRAM_CACHE_OVERFLOW {
+                        TRAM_CACHE_VALID = false;
+                    } else {
+                        TRAM_CACHE_ROT = mr.m;
+                        TRAM_CACHE_T = et;
+                        TRAM_CACHE_EYE = tram_eye;
+                        TRAM_CACHE_FLASHLIGHT = FLASHLIGHT_ON;
+                        TRAM_CACHE_VALID = true;
+                    }
                 }
                 scene::load_rotation(&rot); // restore the world transform for later draws
                 set_view_fix(&rot, base_t);
@@ -11127,6 +11918,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             // enemies. Models are baked to posed frames by the host cooker; the
             // PS1 path only chooses the current actor frame.
             telemetry::stage_begin(telemetry::stage::TEXTURED_MODEL_JOINTS);
+            invalidate_actor_occlusion(have_pvs, cam_leaf, eye);
             let actor_count = PROP_COUNT.min(MAX_PROPS);
             for pi in 0..actor_count {
                 if PROP_ACTIVE[pi] == 0 {
@@ -11170,15 +11962,14 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     model_bounds_culled = model_bounds_culled.saturating_add(1);
                     continue;
                 }
-                // Occlusion rays are hull traces (expensive): refresh each prop's
-                // verdict every 4th sim tick, reuse it between refreshes. Worst
-                // case a model appears/vanishes ~200 ms late around a corner.
                 let occ_slot = pi.min(MAX_PROPS - 1);
-                if (pi as u32).wrapping_add(sim_frame_no) % 4 == 0 {
+                if PROP_OCC_VIS[occ_slot] & PROP_OCC_DIRTY != 0
+                    && (pi as u32).wrapping_add(sim_frame_no) % 4 == 0
+                {
                     PROP_OCC_VIS[occ_slot] =
                         prop_occlusion_visible(&m, eye, ty, org) as u8;
                 }
-                if PROP_OCC_VIS[occ_slot] == 0 {
+                if PROP_OCC_VIS[occ_slot] & PROP_OCC_VISIBLE == 0 {
                     model_bounds_culled = model_bounds_culled.saturating_add(1);
                     continue;
                 }
@@ -11186,9 +11977,15 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 let md_owned = loaded_model(slot as usize);
                 let md = &md_owned;
                 let slots = &POOL_TEX[lm.tex_start..lm.tex_start + lm.n_tex];
-                let faces = core::ptr::addr_of!(POOL_FACES)
-                    .cast::<ModelRenderFace>()
+                let face_indices = core::ptr::addr_of!(POOL_FACE_INDICES)
+                    .cast::<u32>()
                     .add(lm.face_start);
+                let face_payloads = core::ptr::addr_of!(POOL_FACE_PAYLOADS)
+                    .cast::<ModelRenderFacePayload>()
+                    .add(lm.face_start);
+                let face_runs = core::ptr::addr_of!(POOL_FACE_RUNS)
+                    .cast::<u32>()
+                    .add(lm.run_start as usize);
                 let face_count = lm.n_faces;
                 model_draws = model_draws.saturating_add(1);
                 let (sf, sf2, sfrac) = if ty == PROP_TYPE_ITEM_SUIT || ty == PROP_TYPE_ITEM_BATTERY {
@@ -11207,7 +12004,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     &mut packets,
                     md,
                     slots,
-                    faces,
+                    face_indices,
+                    face_payloads,
+                    face_runs,
+                    lm.n_runs as usize,
                     face_count,
                     org,
                     yaw,
@@ -11229,9 +12029,15 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     }
                     let md = loaded_model(slot);
                     let slots = &POOL_TEX[lm.tex_start..lm.tex_start + lm.n_tex];
-                    let faces = core::ptr::addr_of!(POOL_FACES)
-                        .cast::<ModelRenderFace>()
+                    let face_indices = core::ptr::addr_of!(POOL_FACE_INDICES)
+                        .cast::<u32>()
                         .add(lm.face_start);
+                    let face_payloads = core::ptr::addr_of!(POOL_FACE_PAYLOADS)
+                        .cast::<ModelRenderFacePayload>()
+                        .add(lm.face_start);
+                    let face_runs = core::ptr::addr_of!(POOL_FACE_RUNS)
+                        .cast::<u32>()
+                        .add(lm.run_start as usize);
                     let fwd = rot.m[2];
                     let right = rot.m[0];
                     let side = k * 130 - 130;
@@ -11244,7 +12050,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         &mut packets,
                         &md,
                         slots,
-                        faces,
+                        face_indices,
+                        face_payloads,
+                        face_runs,
+                        lm.n_runs as usize,
                         lm.n_faces,
                         pos,
                         0,
@@ -11483,11 +12292,25 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             // drawn over the world (immediate). Endpoints + width + colour ride the
             // LOGIC_BEAM records' aux/args.
             {
-                let nlb = nlogic;
-                let mut li = 0usize;
-                while li < nlb {
+                let indexed = LOGIC_BEAM_COUNT != LOGIC_HOT_FALLBACK;
+                let scan_count = if indexed {
+                    LOGIC_BEAM_COUNT as usize
+                } else {
+                    nlogic
+                };
+                let mut scan = 0usize;
+                while scan < scan_count {
+                    let li = if indexed {
+                        LOGIC_BREAK_HP[
+                            MAX_LOGIC - 1 - LOGIC_SPARK_COUNT as usize - scan
+                        ] as usize
+                    } else {
+                        scan
+                    };
                     let rec = m.logic(li);
-                    if rec.kind == map::LOGIC_BEAM && LOGIC_STATE[li] == LOGIC_STATE_TOP {
+                    if (indexed || rec.kind == map::LOGIC_BEAM)
+                        && LOGIC_STATE[li] == LOGIC_STATE_TOP
+                    {
                         let fa = rec.first_aux as usize;
                         let (a0, a1, a2, a3) = (
                             m.logic_aux(fa),
@@ -11513,7 +12336,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         );
                         draw_beam(start, end, rec.arg1 as i32, col, &rot, base_t);
                     }
-                    li += 1;
+                    scan += 1;
                 }
             }
             // Bullet tracers: a warm additive streak from muzzle to impact for the
@@ -11585,18 +12408,20 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
 
         telemetry::stage_end(telemetry::stage::RENDER);
         telemetry::stage_begin(telemetry::stage::PRESENT);
-        let present_vblank = wait_vblank_edge();
+        wait_vblank_edge();
         fb.swap();
         telemetry::stage_end(telemetry::stage::PRESENT);
-        let lateness_vblanks = if vblank_reached(present_vblank, next_sim_vblank) {
-            present_vblank
-                .wrapping_sub(next_sim_vblank)
-                .min(u16::MAX as u32) as u16
-        } else {
-            0
-        };
+        // Match psx-engine's deadline semantics: a miss is a visual interval
+        // that was due but could not be presented, not a permanent phase
+        // offset from the boot-time VBlank origin. A one-off cold-cache frame
+        // can otherwise leave every later on-time 3-VBlank frame reported as
+        // late forever. Extra fixed ticks consumed above are the intervals
+        // that this custom 20 Hz loop genuinely skipped.
+        let missed_visual_intervals = ticks_this_visual.saturating_sub(1);
+        let lateness_vblanks =
+            missed_visual_intervals.saturating_mul(SIM_VBLANKS.min(u16::MAX as u32) as u16);
         telemetry::counter(telemetry::counter::VISUAL_FRAMES, 1);
-        if lateness_vblanks > 0 {
+        if missed_visual_intervals > 0 {
             telemetry::counter(telemetry::counter::VISUAL_DEADLINE_MISSES, 1);
         }
         telemetry::counter(
