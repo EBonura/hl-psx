@@ -132,6 +132,26 @@ python3 "$HLPSX/tools/reference/run_goldsrc_reference.py" \
   --map c1a0 --semantic-input /tmp/anomalous-materials-to-hev.hlinput \
   --max-ticks 1500 --entity-interval 1000 \
   --output /tmp/gold-anomalous-materials-to-hev.trace
+
+HLPSX_SEMANTIC_INPUT=/tmp/anomalous-materials-to-hev.hlinput \
+  make -C "$HLPSX" disc FEATURES=semantic-input
+"$PSOXIDE/target/release/frontend" launch \
+  --path "$HLPSX/dist/hl-psx.cue" --embedded-playtest \
+  --steps 100000000000 --guest-frames 5200 \
+  --input-tape "$HLPSX/captures/reference/c1a0-neutral.pxitape" \
+  --guest-debug-log 2>/tmp/psx-anomalous-materials-to-hev.trace
+
+python3 "$HLPSX/tools/reference/trace_tools.py" compare \
+  /tmp/gold-anomalous-materials-to-hev.trace \
+  /tmp/psx-anomalous-materials-to-hev.trace \
+  --require-map c1a0 --require-map c1a0d \
+  --require-event c1a0d:target_fire:rr1 \
+  --require-event c1a0d:target_fire:step \
+  --require-event c1a0d:target_fire:hevmaster1 \
+  --require-event c1a0d:target_fire:redspot
+
+# Never leave a semantic-input tape in a shipping/test disc.
+make -C "$HLPSX" disc
 ```
 
 The current GoldSrc proof fires `rr1` twice while crossing the lounge door,

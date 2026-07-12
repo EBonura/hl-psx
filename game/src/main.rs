@@ -9275,7 +9275,11 @@ unsafe fn init_prop_state(m: &Map) {
         let kind = (ty & PROP_TYPE_MASK) as u8;
         // Sitting scientists are authored at seat height on chair brushes the
         // world tree can't see; snapping would drop them through the chair.
-        let org = if kind == PROP_TYPE_SITTING_SCI {
+        // The campaign's sole HEV suit is likewise authored on c1a0d's moving
+        // cabinet at HL z=-248. A point-only floor probe misses that support
+        // and drops it to the world at z=-280, below the player's touch hull,
+        // permanently preventing hevmaster1/redspot and the airlock sequence.
+        let org = if kind == PROP_TYPE_SITTING_SCI || kind == PROP_TYPE_ITEM_SUIT {
             org
         } else if model_def(kind).ai == AI_ITEM {
             // Items (suit/battery/weapons/ammo/medkit) DROP_TO_FLOOR in HL from
