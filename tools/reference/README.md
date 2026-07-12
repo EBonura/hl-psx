@@ -119,32 +119,34 @@ ordered segment and can be selected for inspection with `expand --occurrence`.
 ### Anomalous Materials route
 
 The checked-in route generator proves the retail c1a0 spawn through the c1a0d
-HEV pickup and the real c1a0a airlock transition. It includes the security-desk
-sequence, both map transitions, the lounge door in each direction, the suit-case
-control, the suit pickup, Barney's retinal scan, and both airlock doors.
+HEV pickup, both c1a0a/c1a0b elevator rides, and the c1a0e sample-delivery
+transition. It includes the security-desk sequence, four map transitions, the
+lounge door in each direction, the suit-case control, the suit pickup, both
+retinal scans, both airlocks, all elevator controls, and the lower lab doors.
 
 ```sh
 python3 "$HLPSX/tools/reference/anomalous_materials_route.py" \
-  /tmp/anomalous-materials-through-airlock.hlinput
+  /tmp/anomalous-materials-to-c1a0e.hlinput
 python3 "$HLPSX/tools/reference/run_goldsrc_reference.py" \
   --runtime-dir "$RUNTIME" --half-life-dir "$HALF_LIFE" \
   --framework-dir "$(dirname "$SDL_FRAMEWORK")" \
-  --map c1a0 --semantic-input /tmp/anomalous-materials-through-airlock.hlinput \
-  --max-ticks 2400 --entity-interval 100 \
-  --output /tmp/gold-anomalous-materials-through-airlock.trace
+  --map c1a0 --semantic-input /tmp/anomalous-materials-to-c1a0e.hlinput \
+  --max-ticks 6200 --entity-interval 100 \
+  --output /tmp/gold-anomalous-materials-to-c1a0e.trace
 
-HLPSX_SEMANTIC_INPUT=/tmp/anomalous-materials-through-airlock.hlinput \
+HLPSX_SEMANTIC_INPUT=/tmp/anomalous-materials-to-c1a0e.hlinput \
   make -C "$HLPSX" disc FEATURES=semantic-input
 "$PSOXIDE/target/release/frontend" launch \
   --path "$HLPSX/dist/hl-psx.cue" --embedded-playtest \
-  --steps 100000000000 --guest-frames 7900 \
+  --steps 300000000000 --guest-frames 20000 \
   --input-tape "$HLPSX/captures/reference/c1a0-neutral.pxitape" \
-  --guest-debug-log 2>/tmp/psx-anomalous-materials-through-airlock.trace
+  --guest-debug-log 2>/tmp/psx-anomalous-materials-to-c1a0e.trace
 
 python3 "$HLPSX/tools/reference/trace_tools.py" compare \
-  /tmp/gold-anomalous-materials-through-airlock.trace \
-  /tmp/psx-anomalous-materials-through-airlock.trace \
+  /tmp/gold-anomalous-materials-to-c1a0e.trace \
+  /tmp/psx-anomalous-materials-to-c1a0e.trace \
   --require-map c1a0 --require-map c1a0d --require-map c1a0a \
+  --require-map c1a0b --require-map c1a0e \
   --require-event c1a0d:target_fire:rr1 \
   --require-event c1a0d:target_fire:step \
   --require-event c1a0d:target_fire:hevmaster1 \
@@ -155,6 +157,22 @@ python3 "$HLPSX/tools/reference/trace_tools.py" compare \
   --require-event c1a0d:target_fire:airlockdoorbuzzmm1 \
   --require-event c1a0d:target_fire:lk1 \
   --require-event c1a0d:target_fire:lk2 \
+  --require-event c1a0a:target_fire:elebuttonmm1 \
+  --require-event c1a0a:target_fire:lk3 \
+  --require-event c1a0a:target_fire:plat1 \
+  --require-event c1a0a:target_fire:elemm1 \
+  --require-event c1a0a:target_fire:vdeath \
+  --require-event c1a0a:target_fire:lk5 \
+  --require-event c1a0a:target_fire:labs1 \
+  --require-event c1a0b:target_fire:ld2 \
+  --require-event c1a0b:target_fire:ctrltalkmm \
+  --require-event c1a0b:target_fire:control_retinal \
+  --require-event c1a0b:target_fire:control_retinal1mm \
+  --require-event c1a0b:target_fire:retinal_scanner_door \
+  --require-event c1a0b:target_fire:ele_x \
+  --require-event c1a0b:target_fire:ele_2 \
+  --require-event c1a0b:target_fire:edoor_1 \
+  --require-event c1a0b:target_fire:edoor_2 \
   --require-input-parity
 
 # Never leave a semantic-input tape in a shipping/test disc.
@@ -163,9 +181,15 @@ make -C "$HLPSX" disc
 
 The proof fires `rr1` in both directions, `step` when opening the HEV case,
 `hevmaster1` plus `redspot` when the suit is collected, the full retinal-scan
-chain, and `lk1`/`lk2` before entering c1a0a. The two-tick south correction on
-the return route is intentional: it centers both engines in the retail rr1
-door clearance despite a 19-unit fixed-point landing difference.
+chain, and `lk1`/`lk2` before entering c1a0a. It then fires `elebuttonmm1`,
+`lk3`, `plat1`, `elemm1`, and `vdeath` for the complete elevator ride, followed
+by `lk5` and `labs1` on the way to c1a0b. The two-tick south correction on the
+HEV return centers both engines in the retail rr1 door clearance despite a
+19-unit fixed-point landing difference. The explicit east correction before
+the lower labs similarly avoids relying on engine-specific west-wall deflection.
+In c1a0b it preserves the full control-room dialogue and retinal scan, calls
+the round elevator, rides its authentic translating/rotating brush, opens
+`edoor_2`, and crosses the retail c1a0e transition.
 
 ## Capture and verify
 

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Build the deterministic Anomalous Materials route through the c1a0a airlock.
+"""Build the deterministic Anomalous Materials route through the c1a0b elevator.
 
 The route starts at the retail c1a0 player spawn, crosses into c1a0d, follows
 the green personnel stripe, opens the suit case, collects the HEV suit, and
 returns along the blue security line. It waits for Barney's retinal scan and
-crosses both airlock doors through the real c1a0a changelevel trigger.
+crosses both airlock doors, rides the c1a0a elevator, and follows the lower
+laboratory corridor through the real c1a0b changelevel trigger.
+It continues through the control-room retinal scan and rotating elevator to
+the real c1a0e sample-delivery transition.
 """
 
 from __future__ import annotations
@@ -162,13 +165,188 @@ def c1a0d_hev_to_c1a0a() -> tuple[InputSample, ...]:
     return tuple(route.values)
 
 
+def c1a0a_to_c1a0b() -> tuple[InputSample, ...]:
+    """Call and ride the elevator, then cross the lower labs into c1a0b."""
+    route = Samples()
+
+    # Leave the incoming airlock and approach the external elevator control.
+    # The short counter-movements keep both engines off the button's brush.
+    route.add(40)
+    route.add(20, forward=-127)
+    route.add(5, forward=127)
+    route.add(5)
+    route.add(20, strafe=-127)
+    route.add(28, forward=-127)
+    route.add(20, strafe=127)
+    route.add(12, forward=-127)
+    route.add(8)
+    route.add(10, strafe=127)
+    route.add(8)
+    route.add(4, forward=127)
+    route.add(6)
+    route.add(5, strafe=-127)
+    route.add(5)
+    route.add(4, look=-127)
+    route.add(3, actions=ACTION_USE)
+    route.add(4, look=127)
+    route.add(100)
+
+    # Enter the arrived car, center inside its upper doorway, and face the
+    # interior control. Restoring the view after use leaves the navigation axes
+    # unchanged while the player is carried by the real vdeath brush mover.
+    route.add(6, strafe=127)
+    route.add(2, strafe=-127)
+    route.add(15, forward=127)
+    route.add(2, forward=-127)
+    route.add(10)
+    route.add(4, strafe=127)
+    route.add(2, strafe=-127)
+    route.add(1, forward=-127)
+    route.add(1, forward=127)
+    route.add(10)
+    route.add(8, turn=127)
+    route.add(4, turn=127, look=-127)
+    route.add(3, actions=ACTION_USE)
+    route.add(4, turn=-127, look=127)
+    route.add(8, turn=-127)
+    route.add(400)
+
+    # Recenter at the lower doorway before walking east. The long pauses in the
+    # east hall preserve the retail scientist crossings, whose exact collision
+    # timing differs slightly between GoldSrc and PSX fixed-point movement.
+    route.add(2, strafe=-127)
+    route.add(1, strafe=127)
+    route.add(100, forward=-127)
+    route.add(40)
+    route.add(20, strafe=127)
+    route.add(50, forward=-127)
+    route.add(30)
+    route.add(100, strafe=-127)
+    route.add(30)
+    route.add(6, forward=127)
+    route.add(2, forward=-127)
+    route.add(100, strafe=-127)
+    route.add(30)
+
+    # Cross the main west corridor. Repeated pushes and waits deterministically
+    # resolve the two scripted scientists without depending on their side.
+    route.add(2, strafe=127)
+    route.add(1, strafe=-127)
+    route.add(100, forward=127)
+    route.add(30)
+    route.add(1, strafe=127)
+    route.add(100, forward=127)
+    route.add(20)
+    route.add(100, forward=127)
+
+    # Explicitly move east before turning south. GoldSrc naturally deflects
+    # from the west wall here, but relying on that left PSX in a different lane.
+    route.add(10, forward=-127)
+    route.add(2, forward=127)
+    route.add(8)
+    route.add(50, strafe=-127)
+    route.add(20)
+
+    # Follow the lower laboratory zig-zag and cross the retail c1a0b trigger.
+    route.add(4, strafe=127)
+    route.add(2, strafe=-127)
+    route.add(100, forward=-127)
+    route.add(20)
+    route.add(50, forward=-127, strafe=127)
+    route.add(20)
+    route.add(100, strafe=-127)
+    route.add(20)
+    route.add(30, forward=-127)
+    return tuple(route.values)
+
+
+def c1a0b_to_c1a0e() -> tuple[InputSample, ...]:
+    """Complete the control-room script and descend to sample delivery."""
+    route = Samples()
+
+    # Enter the control room through ld2. The east correction clears the open
+    # sliding slab before crossing its trigger a second time.
+    route.add(40)
+    route.add(50, forward=-127)
+    route.add(2, forward=127)
+    route.add(20, strafe=-127)
+    route.add(30)
+    route.add(10, forward=-127)
+    route.add(2, forward=127)
+    route.add(50, strafe=-127)
+    route.add(2, strafe=127)
+
+    # Preserve the complete four-scientist briefing and retinal scan, then
+    # cross the now-open scanner door into the western elevator corridor.
+    route.add(620)
+    route.add(100, strafe=-127)
+    route.add(40)
+    route.add(44, forward=127)
+    route.add(2, forward=-127)
+    route.add(14, strafe=127)
+    route.add(2, strafe=-127)
+    route.add(10)
+
+    # Call the rotating elevator from its upper landing. It rises and turns 90
+    # degrees before the delayed upper doors open.
+    route.add(8, turn=127)
+    route.add(3, actions=ACTION_USE)
+    route.add(8, turn=-127)
+    route.add(130)
+
+    # Align with the narrow round-car doorway, enter it, and settle beside the
+    # interior control without relying on collision deflection.
+    route.add(18, forward=40)
+    route.add(3, forward=-40)
+    route.add(5)
+    route.add(20, strafe=127)
+    route.add(2, strafe=-127)
+    route.add(20)
+    route.add(8, forward=-40)
+    route.add(2, forward=40)
+    route.add(5)
+
+    # Face the interior button, start the authentic translating/rotating
+    # descent, and restore view input while the pusher carries the player.
+    route.add(16, turn=127)
+    route.add(3, actions=ACTION_USE)
+    route.add(16, turn=-127)
+    route.add(200)
+
+    # At the bottom, center the east doorway, turn with the car's final yaw,
+    # open edoor_2, and cross into the lower laboratory passage.
+    route.add(7, forward=40)
+    route.add(2, forward=-40)
+    route.add(3)
+    route.add(8, turn=-127)
+    route.add(3)
+    route.add(10, forward=127)
+    route.add(25)
+    route.add(20, forward=127)
+    route.add(2, forward=-127)
+    route.add(20)
+
+    # East to the central junction, south around its curved wall, then east
+    # through the real c1a0e changelevel volume.
+    route.add(50, forward=127)
+    route.add(2, forward=-127)
+    route.add(5)
+    route.add(100, strafe=127)
+    route.add(2, strafe=-127)
+    route.add(20)
+    route.add(30, forward=127)
+    return tuple(route.values)
+
+
 def build_route() -> Route:
     c1a0d = c1a0d_to_hev() + c1a0d_hev_to_c1a0a()
     return Route(
         (
             Segment("c1a0", "c1a0d", rle(c1a0_to_c1a0d()), neutral_tail_ticks=200),
             Segment("c1a0d", "c1a0a", rle(c1a0d), neutral_tail_ticks=200),
-            Segment("c1a0a", "", rle((InputSample(),) * 40), neutral_tail_ticks=200),
+            Segment("c1a0a", "c1a0b", rle(c1a0a_to_c1a0b()), neutral_tail_ticks=200),
+            Segment("c1a0b", "c1a0e", rle(c1a0b_to_c1a0e()), neutral_tail_ticks=200),
+            Segment("c1a0e", "", rle((InputSample(),) * 40), neutral_tail_ticks=200),
         )
     )
 

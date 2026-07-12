@@ -25,6 +25,7 @@ pub struct TickState {
     pub clip: u16,
     pub reserve: u16,
     pub on_ground: bool,
+    pub ground_mover: i32,
     pub train_pos: [i32; 3],
     pub train_seg: u16,
     pub train_dist: i32,
@@ -294,6 +295,7 @@ pub fn tick(state: TickState) {
     line.field_u32("clip", state.clip as u32);
     line.field_u32("reserve", state.reserve as u32);
     line.field_u32("ground", state.on_ground as u32);
+    line.field_i32("ground_mover", state.ground_mover);
     line.field_i32("train_x", state.train_pos[0]);
     line.field_i32("train_y", state.train_pos[1]);
     line.field_i32("train_z", state.train_pos[2]);

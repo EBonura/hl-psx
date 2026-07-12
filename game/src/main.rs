@@ -974,6 +974,14 @@ static mut ENT_CACHE: [map::Ent; MAX_ENTS] = [EMPTY_ENT; MAX_ENTS];
 static mut ENT_RADIUS: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PREV_OFF: [[i32; 3]; MAX_ENTS] = [[0; 3]; MAX_ENTS]; // ride-carry deltas
+
+// One player can stand on one func_platrot. Retaining its mover-local seat
+// avoids losing a sub-unit angular step every tick at small platform radii.
+// i16 is ample for entity-local BSP coordinates; the seat plus exact previous
+// authored yaw cost ten static bytes.
+static mut PLATROT_RIDER_ENT: i16 = -1;
+static mut PLATROT_RIDER_LOCAL: [i16; 3] = [0; 3];
+static mut PLATROT_RIDER_YAW: u16 = 0;
 static mut ENT_SOLID_COUNT: usize = 0; // nents for prop point-solid checks
                                        // Brush -> stateful logic record. Breakables and targeted func_rotating share
                                        // this existing slot; LOGIC_KIND disambiguates damage from fan state.
@@ -2986,6 +2994,15 @@ fn platrot_yaw(e: map::Ent, phase: i32) -> u16 {
     ((((e.mv[0] * phase.clamp(0, 4096)) >> 12) as u16) & 0x0fff) & !0x000f
 }
 
+/// Convert the authored GoldSrc Z-up yaw to the PSX Y-up world transform.
+/// `to_world` swaps HL Y/Z, changing handedness: entity geometry rotates by
+/// the negative angle. The PSX view convention is `90 degrees - HL yaw`, so a
+/// standing player's view gains this same converted delta.
+#[inline(never)]
+fn platrot_world_yaw(e: map::Ent, phase: i32) -> u16 {
+    0u16.wrapping_sub(platrot_yaw(e, phase)) & 0x0fff
+}
+
 #[inline(never)]
 fn platrot_phase_from_offset(e: map::Ent, off: [i32; 3]) -> i32 {
     if e.mv[1] == 0 {
@@ -3016,17 +3033,18 @@ fn platrot_local_to_world(p: [i32; 3], off: [i32; 3], yaw: u16) -> [i32; 3] {
     ]
 }
 
-#[inline(never)]
-fn platrot_carry_point(
-    e: map::Ent,
-    point: [i32; 3],
-    prev_off: [i32; 3],
-    now_off: [i32; 3],
-    now_phase: i32,
-) -> [i32; 3] {
-    let prev_phase = platrot_phase_from_offset(e, prev_off);
-    let local = platrot_world_to_local(point, prev_off, platrot_yaw(e, prev_phase));
-    platrot_local_to_world(local, now_off, platrot_yaw(e, now_phase))
+#[inline(always)]
+fn platrot_local_i16(p: [i32; 3]) -> [i16; 3] {
+    [
+        p[0].clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+        p[1].clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+        p[2].clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+    ]
+}
+
+#[inline(always)]
+fn platrot_local_i32(p: [i16; 3]) -> [i32; 3] {
+    [p[0] as i32, p[1] as i32, p[2] as i32]
 }
 
 /// Publish one cart translation to render, collision, PVS and actor LOS in the
@@ -3392,25 +3410,41 @@ unsafe fn tick_pushables(
 /// rotating-platform path is cold on nearly every campaign map.
 #[inline(never)]
 unsafe fn carry_player_on_brush_mover(player: &mut phys::Player, yaw: &mut u16, nents: usize) {
+    let mut riding_platrot = false;
     if player.ground_mover >= 0 && (player.ground_mover as usize) < nents {
         let ei = player.ground_mover as usize;
         let e = ENT_CACHE[ei];
         let now_off = ent_draw_offset(ei);
         let prev = ENT_PREV_OFF[ei];
         if e.kind == ENT_KIND_PLATROT {
+            riding_platrot = true;
             let prev_phase = platrot_phase_from_offset(e, prev);
-            let prev_yaw = platrot_yaw(e, prev_phase);
-            let now_yaw = platrot_yaw(e, ENT_PHASE[ei]);
+            let prev_yaw = platrot_world_yaw(e, prev_phase);
+            let now_yaw = platrot_world_yaw(e, ENT_PHASE[ei]);
+            if PLATROT_RIDER_ENT != ei as i16 {
+                PLATROT_RIDER_ENT = ei as i16;
+                PLATROT_RIDER_YAW = prev_yaw;
+                PLATROT_RIDER_LOCAL = platrot_local_i16(platrot_world_to_local(
+                    player.pos,
+                    prev,
+                    prev_yaw,
+                ));
+            }
             if prev != now_off || prev_yaw != now_yaw {
-                player.pos = platrot_carry_point(e, player.pos, prev, now_off, ENT_PHASE[ei]);
+                player.pos = platrot_local_to_world(
+                    platrot_local_i32(PLATROT_RIDER_LOCAL),
+                    now_off,
+                    now_yaw,
+                );
             }
             // GoldSrc rotating pushers turn a standing client's delta angles;
             // add only this tick's shortest quantized delta to preserve free-look.
-            let mut turn = (now_yaw.wrapping_sub(prev_yaw) & 0x0fff) as i32;
+            let mut turn = (now_yaw.wrapping_sub(PLATROT_RIDER_YAW) & 0x0fff) as i32;
             if turn > 2048 {
                 turn -= 4096;
             }
             *yaw = (((*yaw as i32) + turn) & 0x0fff) as u16;
+            PLATROT_RIDER_YAW = now_yaw;
         } else {
             let d = [
                 now_off[0] - prev[0],
@@ -3424,11 +3458,40 @@ unsafe fn carry_player_on_brush_mover(player: &mut phys::Player, yaw: &mut u16, 
             }
         }
     }
+    if !riding_platrot {
+        PLATROT_RIDER_ENT = -1;
+    }
     let mut ei = 0usize;
     while ei < nents {
         ENT_PREV_OFF[ei] = ent_draw_offset(ei);
         ei += 1;
     }
+}
+
+/// Publish deliberate player movement back into the stable func_platrot seat.
+/// Neutral pusher motion keeps the original local coordinate, avoiding the
+/// integer round-trip drift that previously walked the rider off c1a0b's lift.
+#[inline(never)]
+unsafe fn update_platrot_rider_local(player: &phys::Player, nents: usize, moved: bool) {
+    if !moved && player.vel[0] == 0 && player.vel[2] == 0 {
+        return;
+    }
+    if player.ground_mover < 0 || player.ground_mover as usize >= nents {
+        PLATROT_RIDER_ENT = -1;
+        return;
+    }
+    let ei = player.ground_mover as usize;
+    let e = ENT_CACHE[ei];
+    if e.kind != ENT_KIND_PLATROT {
+        PLATROT_RIDER_ENT = -1;
+        return;
+    }
+    PLATROT_RIDER_ENT = ei as i16;
+    PLATROT_RIDER_LOCAL = platrot_local_i16(platrot_world_to_local(
+        player.pos,
+        ent_draw_offset(ei),
+        platrot_world_yaw(e, ENT_PHASE[ei]),
+    ));
 }
 
 #[inline]
@@ -6359,6 +6422,9 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     TRACKTRAIN_CMD_ACTIVE = 0;
     TRACKTRAIN_CMD_USE_TYPE = map::USE_TOGGLE;
     TRACKTRAIN_CMD_SPEED = 0;
+    PLATROT_RIDER_ENT = -1;
+    PLATROT_RIDER_LOCAL = [0; 3];
+    PLATROT_RIDER_YAW = 0;
     let mut ei = 0usize;
     while ei < MAX_ENTS {
         ENT_ACTIVE[ei] = if ei < nents { 1 } else { 0 };
@@ -12788,7 +12854,7 @@ unsafe fn emit_platrot_entity(
     np: &mut usize,
     model_culled_tris: &mut u32,
 ) {
-    let ang = platrot_yaw(e, phase);
+    let ang = platrot_world_yaw(e, phase);
     let local_rot = Mat3I16::rotate_y(ang >> 4);
     let mr = rot.mul(&local_rot);
     let ome = [off[0] - eye[0], off[1] - eye[1], off[2] - eye[2]];
@@ -13780,7 +13846,7 @@ unsafe fn trace_brush_entities(m: &Map, map_tick: u32) {
             0
         };
         let center = if e.kind == ENT_KIND_PLATROT {
-            platrot_local_to_world(e.center, off, yaw_q12 as u16)
+            platrot_local_to_world(e.center, off, platrot_world_yaw(e, ENT_PHASE[ei]))
         } else if e.kind == 5 {
             let r = fan_rotation(e, yaw_q12 as u16);
             [
@@ -15086,7 +15152,7 @@ fn play(
                             e.head0
                         };
                         let (rc, rs) = if e.kind == ENT_KIND_PLATROT {
-                            let rm = Mat3I16::rotate_y(platrot_yaw(e, ENT_PHASE[ei]) >> 4);
+                            let rm = Mat3I16::rotate_y(platrot_world_yaw(e, ENT_PHASE[ei]) >> 4);
                             (rm.m[0][0] as i32, rm.m[0][2] as i32)
                         } else if e.kind == 5 && e.mv[1] == 0 {
                             // phys::Mover rotates around world Y. This is the
@@ -15240,6 +15306,7 @@ fn play(
                         sim_frame_no as u16,
                     );
                 }
+                update_platrot_rider_local(&player, nents, fwd != 0 || strafe != 0);
             }
             // Landing (per-tick units now: 1 u/t = 20 u/s). HL only dips the
             // view above 350 u/s (a normal jump lands at ~260 and stays
@@ -15670,6 +15737,7 @@ fn play(
                             clip: weapon.clip_display(),
                             reserve: weapon.reserve_display(),
                             on_ground: player.on_ground,
+                            ground_mover: player.ground_mover,
                             train_pos: trace_train,
                             train_seg: tram_seg.min(u16::MAX as usize) as u16,
                             train_dist: tram_seg_dist,
@@ -16270,7 +16338,7 @@ fn play(
                     model_bounds_tests = model_bounds_tests.saturating_add(1);
                     let radius = ENT_RADIUS[ei];
                     let center = if e.kind == ENT_KIND_PLATROT {
-                        platrot_local_to_world(e.center, off, platrot_yaw(e, ENT_PHASE[ei]))
+                        platrot_local_to_world(e.center, off, platrot_world_yaw(e, ENT_PHASE[ei]))
                     } else if e.kind == 5 {
                         let rm = fan_rotation(e, fan_angle_q12(ei, sim_frame_no));
                         [
