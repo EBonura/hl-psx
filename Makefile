@@ -63,7 +63,7 @@ HLBSP_BIN := $(HLBSP)/target/release/hl-bsp
 MAP      ?= c1a0
 
 .DEFAULT_GOAL := build
-.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms campaign-map-report placement-audit train-audit roster-audit spu-audit menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-perf-report psoxide-perf-gate psoxide-map-smoke psoxide-chart memory-report
+.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms transition-props campaign-map-report placement-audit train-audit roster-audit spu-audit menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-perf-report psoxide-perf-gate psoxide-map-smoke psoxide-chart memory-report
 
 help:
 	@echo "hl-psx targets:"
@@ -262,7 +262,7 @@ psoxide-chart: psoxide-profile
 	@echo "CHART -> $(CAPTURE_DIR)/hl-psx-profile.html"
 
 # Cook streamed maps into WORLD.PAK chunks. Each menu room N gets two chunk IDs:
-#   room_<2N>.psxc   = resident HLMA/HLMB world/collision/entity data
+#   room_<2N>.psxc   = resident HLMA/HLMB/HLMC world/collision/entity data
 #   room_<2N+1>.psxc = temporary HLTX texture payload for VRAM upload
 # Keep MAPLIST in the same order as `game/src/menu.rs`'s MAPS registry.
 ROOMS := $(ROOT)/data/rooms
@@ -286,7 +286,11 @@ MAPLIST := \
 	c2a5w c2a5x c3a1 c3a1a c3a1b c3a2 c3a2a c3a2b \
 	c3a2c c3a2d c3a2e c3a2f c4a1 c4a1a c4a1b c4a1c \
 	c4a1d c4a1e c4a1f c4a2 c4a2a c4a2b c4a3 c5a1
-rooms:
+transition-props:
+	python3 tools/gen_transition_props.py "$(HL_GAME)/maps" \
+		$(MODELPACK)/transition_props.txt $(MAPLIST)
+
+rooms: transition-props
 	cd $(HLBSP) && cargo build --release
 	@mkdir -p $(ROOMS)
 	@rm -f $(ROOMS)/room_*.psxc $(ROOMS)/room_*.psxw
@@ -295,6 +299,7 @@ rooms:
 		CLIPS_MANIFEST=$(MODELPACK)/clips.txt \
 		VOICES_MANIFEST=$(VOICEPACK)/manifest.txt \
 		SPRITES_MANIFEST=$(SPRITEPACK)/manifest.txt \
+		TRANSITION_PROPS_MANIFEST=$(MODELPACK)/transition_props.txt \
 		MAP_INDEX=$$i \
 		$(HLBSP_BIN) --cook "$(HL_GAME)/maps/$$m.bsp" $(ROOMS)/room_$$w.psxc $(ROOMS)/room_$$t.psxc >/dev/null && \
 		echo "  room_$$w/$$t = $$m"; i=$$((i+1)); \
@@ -320,7 +325,7 @@ train-audit:
 # Model-pool fit gate: fails if any placed model type would drop.
 # Run after `make models` or `make rooms`, and before trimming pool constants.
 roster-audit:
-	python3 $(ROOT)/tools/roster_audit.py
+	HL_GAME="$(HL_GAME)" python3 $(ROOT)/tools/roster_audit.py
 
 spu-audit:
 	python3 $(ROOT)/tools/spu_audit.py
@@ -335,8 +340,13 @@ menu-assets:
 install: disc
 	@mkdir -p "$(GAMES_DIR)/$(GAME_NAME)"
 	@cp "$(DIST)/hl-psx.bin" "$(GAMES_DIR)/$(GAME_NAME)/$(GAME_NAME).bin"
-	@printf 'FILE "%s.bin" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n' \
-		"$(GAME_NAME)" > "$(GAMES_DIR)/$(GAME_NAME)/$(GAME_NAME).cue"
+	@awk -v bin="$(GAME_NAME).bin" 'BEGIN { replaced = 0 } \
+		!replaced && /^[[:space:]]*FILE[[:space:]]/ { \
+			print "FILE \"" bin "\" BINARY"; replaced = 1; next \
+		} { print }' "$(DIST)/hl-psx.cue" \
+		> "$(GAMES_DIR)/$(GAME_NAME)/$(GAME_NAME).cue.tmp"
+	@mv "$(GAMES_DIR)/$(GAME_NAME)/$(GAME_NAME).cue.tmp" \
+		"$(GAMES_DIR)/$(GAME_NAME)/$(GAME_NAME).cue"
 	@echo "INSTALLED -> $(GAMES_DIR)/$(GAME_NAME)/"
 
 run: install
@@ -411,7 +421,7 @@ models:
 	@# q12=1024 scale as --mdl6, without its runtime-unused per-triangle normals.
 	@rm -f $(MODELPACK)/roster.txt
 	@for entry in \
-	  "0|scientist|13:4,0:4,24:4,8:2,31:3,pondering:2,retina:2,beatdoor:2,pondering2=pondering,pondering3=pondering,pause=pondering,writeboard=pondering,converse1=pondering,converse2=pondering,push_button=beatdoor,wave=beatdoor,no=pondering,sitstand=pondering,tieshoe=pondering,buysoda=pondering,idle1=@0" \
+	  "0|scientist|13:4,0:4,24:4,8:2,31:3,pondering:2,retina:2,beatdoor:2,ceiling_dangle:2,pondering2=pondering,pondering3=pondering,pause=pondering,writeboard=pondering,converse1=pondering,converse2=pondering,push_button=beatdoor,wave=beatdoor,no=pondering,sitstand=pondering,tieshoe=pondering,buysoda=pondering,idle1=@0" \
 	  "1|barney|0:4,4:4,6:4,17:2,25:3,sit1:2,standing_idle:2,intropush:2,flashlight=standing_idle,cprbarney=sit1,sit2=sit1,sit3=sit1,relaxstand=sit1,almostidle=standing_idle,almost=standing_idle,barn_wave=intropush,c3a2_draw=standing_idle,idle1=@0" \
 	  "2|headcrab|0:4,4:4,10:4,6:2,7:3,idle1=@0" \
 	  "3|w_suit|0" \
@@ -463,6 +473,7 @@ models:
 	  "49|w_longjump|0:1" \
 	  "50|tentacle2|0:2,0:2,2:2,5:2,10:3" \
 	  "51|hassassin|0:4,2:4,10:4,1:2,17:3" \
+	  "52|loader|idle:2,boxwalk:4,0:1,0:1,herodie:2,rampwalk:8,idle1=idle" \
 	  ; do \
 	  t=$${entry%%|*}; rest=$${entry#*|}; mdl=$${rest%%|*}; seq=$${rest##*|}; \
 	  echo "$$entry" >> $(MODELPACK)/roster.txt; \

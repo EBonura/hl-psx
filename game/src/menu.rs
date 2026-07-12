@@ -370,7 +370,12 @@ fn draw_vol_bar(x: i16, y: i16, v: i32, bright: bool) {
         let sx = x + i * 13;
         let (r, g, b) = if (i as i32) < v { lit } else { (56, 56, 56) };
         gpu::draw_quad_flat(
-            [(sx, y + 2), (sx + 10, y + 2), (sx, y + 15), (sx + 10, y + 15)],
+            [
+                (sx, y + 2),
+                (sx + 10, y + 2),
+                (sx, y + 15),
+                (sx + 10, y + 15),
+            ],
             r,
             g,
             b,

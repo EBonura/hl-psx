@@ -119,8 +119,7 @@ pub fn upload_gameplay_atlas() {
                     }
                     let run_start = col;
                     while col < gw {
-                        let byte =
-                            src[base + row as usize * src_row_bytes + col as usize / 8];
+                        let byte = src[base + row as usize * src_row_bytes + col as usize / 8];
                         let mask = 0x80u8 >> (col & 7);
                         if byte & mask == 0 {
                             break;
@@ -141,12 +140,7 @@ pub fn upload_gameplay_atlas() {
                     while py < y1.min(GAME_CELL_H) {
                         let mut px = x0;
                         while px < x1.min(GAME_CELL_W) {
-                            set_4bpp_pixel(
-                                &mut row_pixels,
-                                GAME_ATLAS_W,
-                                cell_x + px,
-                                py,
-                            );
+                            set_4bpp_pixel(&mut row_pixels, GAME_ATLAS_W, cell_x + px, py);
                             px += 1;
                         }
                         py += 1;

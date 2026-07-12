@@ -18,20 +18,33 @@ extern crate psx_rt;
 mod cdstream;
 mod hltext;
 mod hud;
+mod logic_state;
 mod map;
 mod menu;
 mod model;
 mod phys;
+mod pushable;
+#[cfg(feature = "reference-trace")]
+mod reference_trace;
 mod render;
+mod scientist_logic;
+mod semantic_input;
 mod settings;
 mod sfx;
 mod sprite;
 mod telemetry;
+mod tram_logic;
 mod vram;
 
 mod room_budget {
     include!(concat!(env!("OUT_DIR"), "/room_budget.rs"));
 }
+
+// HLINPUT1 is embedded only in an explicitly diagnostic build. Keeping this
+// behind its own feature prevents route bytes from consuming shipping RAM;
+// chapter-sized deterministic routes can still span ordered changelevels.
+#[cfg(feature = "semantic-input")]
+static SEMANTIC_INPUT_BYTES: &[u8] = include_bytes!(env!("HLPSX_SEMANTIC_INPUT"));
 
 use psx_fx::{LcgRng, ParticlePool};
 use psx_gpu::material::{BlendMode, TexturedGouraudPacketMaterial, TexturedPacketMaterial};
@@ -40,15 +53,15 @@ use psx_gpu::prim::{QuadTexturedGouraud, RectFlat, TriTextured, TriTexturedGoura
 use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
-use psx_math::atan2_q12;
+use psx_io;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_math::int32::isqrt_i32;
+use psx_math::{atan2_q12, sincos};
 use psx_pad::{
     button, enable_analog_port1, poll_port1, poll_port1_diag, PadMode, PadTracker,
     DEFAULT_SETUP_SPINS,
 };
 use psx_rt::{interrupts, tty};
-use psx_io;
 use psx_spu;
 
 use map::{Map, SKY_TEX_NONE};
@@ -60,7 +73,7 @@ use vram::{TexSlot, EMPTY_SLOT};
 // Maps stream from the disc's WORLD.PAK at runtime (no longer baked into the
 // EXE). MAP_BUF holds either one temporary texture chunk or one resident map
 // chunk; build.rs sizes it from data/rooms. `make rooms` cooks menu room N as
-// room_<2N>.psxc (resident HLMA/HLMB) and room_<2N+1>.psxc (temporary HLTX textures).
+// room_<2N>.psxc (resident HLMA/HLMB/HLMC) and room_<2N+1>.psxc (temporary HLTX textures).
 const MAP_WORDS: usize = room_budget::MAP_WORDS;
 const MODEL_WORDS: usize = room_budget::MODEL_WORDS;
 static mut MAP_BUF: [u32; MAP_WORDS] = [0; MAP_WORDS];
@@ -83,7 +96,7 @@ const WEAPON_OT_LEN: usize = 64;
 const HUD_OT_LEN: usize = 1;
 const FX_OT_LEN: usize = 1;
 const MAX_VERTS: usize = room_budget::MAX_VERTS; // auto-sized to the biggest cooked map
-const MAX_MODEL_VERTS: usize = 1024;
+const MAX_MODEL_VERTS: usize = room_budget::MAX_MODEL_VERTS;
 const SCI_FACE_CAP: usize = 768;
 const BARNEY_FACE_CAP: usize = 800;
 const HEADCRAB_FACE_CAP: usize = 512;
@@ -106,15 +119,35 @@ const MAX_LEAVES: usize = room_budget::MAX_LEAVES;
 const MAX_ENTS: usize = room_budget::MAX_ENTS;
 const MAX_PVS_FACE_RECS: usize = 2048;
 const MAX_PROPS: usize = 128;
+// Fifteen transition records borrow the prop-neighbour rows that campaign
+// cooks never reach. Runtime live props are capped at 113, so a final tick can
+// neither read nor overwrite the mailbox after the changelevel snapshot.
+const CARRY_CAPACITY: usize = 15;
+const CARRY_MAILBOX_FIRST: usize = MAX_PROPS - CARRY_CAPACITY;
+const CARRY_GLOBAL_BIT: u16 = 0x8000;
+const CARRY_ID_NONE: u16 = u16::MAX;
+const CARRY_TRAIN_TAG: u8 = 0xfe;
+const _: () = assert!(CARRY_MAILBOX_FIRST == 113);
+const _: () = assert!(CARRY_CAPACITY <= logic_state::CARRY_COUNT_MASK as usize);
 const MAX_SPRITE_INSTANCES: usize = 160;
 const SPRITE_STATE_WORDS: usize = MAX_SPRITE_INSTANCES.div_ceil(32);
 const MAX_NAV_NODES: usize = 255;
 // PROP_NEAR_ENTS keeps brush-entity ids in each u16's low byte and uses the
-// otherwise-dead high byte for the per-prop navigation memo below.  Refuse a
+// otherwise-dead high byte for the per-prop navigation memo below. Refuse a
 // future room budget that could silently truncate an entity id.
 const _: () = assert!(MAX_ENTS <= 256);
 const MAX_LOGIC: usize = 384;
 const MAX_LOGIC_EVENTS: usize = 64;
+// Script logic indices need nine bits (MAX_LOGIC=384). While an actor owns a
+// script, the otherwise-unused high nibbles of LI and authored yaw retain its
+// signed-Q4 Z/X movement remainders. This is actor-local and never aliases the
+// transition mailbox.
+const PROP_SCRIPT_LI_MASK: u16 = 0x01FF;
+const PROP_SCRIPT_LI_RESIDUE_SHIFT: u32 = 9;
+const PROP_SCRIPT_YAW_MASK: u16 = 0x0FFF;
+const PROP_SCRIPT_YAW_RESIDUE_SHIFT: u32 = 12;
+const PROP_SCRIPT_RESIDUE_MASK: u16 = 0xF;
+const _: () = assert!(MAX_LOGIC <= PROP_SCRIPT_LI_MASK as usize + 1);
 // Fast-path near gate. MUST equal render::NEAR_Z: the soft path clips its
 // rebuilt triangles at NEAR_Z, so if the fast path accepts closer vertices the
 // two paths disagree along shared edges and the mismatch band renders as black
@@ -126,10 +159,10 @@ const CULL: bool = true; // backface cull (keep area > 0; winding verified)
 const H_PROJ: u16 = 160; // ~90 deg horizontal FOV at 320px
 const WORLD_QUAD_PAIRING: bool = true; // pair two-triangle BSP quads when safe
 const WORLD_BOUNDS_CULL: bool = true; // face AABB frustum test before projection
-// Push solid backdrop walls (the `black` texture) this many OT buckets toward the
-// back so foreground detail that is nearly coplanar with them always wins the
-// painter's-order tie (no Z-buffer). A backdrop has nothing behind it, so the
-// bias is one-directional and safe.
+                                      // Push solid backdrop walls (the `black` texture) this many OT buckets toward the
+                                      // back so foreground detail that is nearly coplanar with them always wins the
+                                      // painter's-order tie (no Z-buffer). A backdrop has nothing behind it, so the
+                                      // bias is one-directional and safe.
 const BACKDROP_OTZ_BIAS: usize = 4;
 
 const PITCH_MAX: i16 = 1000;
@@ -152,7 +185,7 @@ const PLAYER_TOUCH_HEIGHT: i32 = 56;
 // GPU-fill-bound) vs 1400, with indoor maps unchanged (short sightlines) and
 // the vista still faithful (sky is fog-exempt). Raise toward 1400+ for longer
 // sightlines, lower toward 800 for more open-map fps (hazier).
-const FAR_VIEW: i32 = 505;
+const FAR_VIEW: i32 = 1000;
 // Distance fog. World geometry fades to black between FOG_START and FAR_VIEW so
 // the far-cull edge dissolves instead of popping -- which lets FAR_VIEW sit much
 // closer than the old 2000 (distant geometry is a large share of the per-frame
@@ -160,25 +193,25 @@ const FAR_VIEW: i32 = 505;
 // Sky/backdrop faces are exempt so the horizon stays. Reciprocal is compile-time
 // (no runtime divide). Raise FOG_START toward FAR_VIEW for a lighter haze (more
 // visible cull), lower it for more fps. Kept at ~0.65*FAR_VIEW.
-const FOG_START: i32 = 328;
+const FOG_START: i32 = 650;
 const FOG_INV: i32 = (256i32 << 12) / (FAR_VIEW - FOG_START); // compile-time
-// Studio models (enemies/NPCs/items) cull no farther than the world: each is
-// hundreds of textured-gouraud tris (project + emit), and an actor beyond the
-// world cull would float against culled void. Capped at FAR_VIEW (was a stale
-// 1600 that exceeded the pulled-in FAR_VIEW, drawing enemies past the world for
-// wasted CPU). On enemy-laden maps the far roster is the dominant per-frame CPU
-// cost for little visible detail. Tunable: lower for more headroom, but not
-// above FAR_VIEW.
-const MODEL_FAR: i32 = 505;
+                                                              // Studio models (enemies/NPCs/items) cull no farther than the world: each is
+                                                              // hundreds of textured-gouraud tris (project + emit), and an actor beyond the
+                                                              // world cull would float against culled void. Capped at FAR_VIEW (was a stale
+                                                              // 1600 that exceeded the pulled-in FAR_VIEW, drawing enemies past the world for
+                                                              // wasted CPU). On enemy-laden maps the far roster is the dominant per-frame CPU
+                                                              // cost for little visible detail. Tunable: lower for more headroom, but not
+                                                              // above FAR_VIEW.
+const MODEL_FAR: i32 = FAR_VIEW;
 const MODEL_CULL: bool = true; // backface-cull studio models
 const MODEL_OCCLUSION_CULL: bool = true; // skip actors fully hidden by static BSP
 const MODEL_SHADE: u8 = 110; // flat model tint (dimmer than 128 to match the lit world)
-// Blend liquid surfaces (water/toxic/fluid) instead of drawing them opaque. OFF:
-// with no underwater scene drawn behind the surface, an Average blend goes near-
-// black over the void below a liquid brush. Needs real underwater rendering to
+                             // Blend liquid surfaces (water/toxic/fluid) instead of drawing them opaque. OFF:
+                             // with no underwater scene drawn behind the surface, an Average blend goes near-
+                             // black over the void below a liquid brush. Needs real underwater rendering to
 const DBG_MODEL_SHOWCASE: bool = false; // debug: line up loaded enemy models in front of the camera
 const DBG_PAD_BOOT: bool = cfg!(feature = "debug-map-boot"); // hold L1 | map_index to boot any map headlessly
-// Debug: pin the camera to a fixed pose (to reproduce a specific view headlessly).
+                                                             // Debug: pin the camera to a fixed pose (to reproduce a specific view headlessly).
 const DBG_CAM: bool = false;
 const DBG_CAM_POS: [i32; 3] = [-90, -190, 140];
 const DBG_CAM_YAW: u16 = 0;
@@ -203,9 +236,11 @@ const GLOCK_RANGE: i32 = 8192; // shared hitscan reach for the ballistic weapons
 const GLOCK_AIM_PIX_X: i32 = 22; // hitscan aim-cone half-width (screen px)
 const GLOCK_AIM_PIX_Y: i32 = 34;
 const GLOCK_EMPTY_COOLDOWN_TICKS: u8 = 4; // dry-click cadence (0.2s)
-const PROP_TARGET_HEIGHT: i32 = 40;
-const SCIENTIST_RENDER_RADIUS: i32 = 72;
-const BARNEY_RENDER_RADIUS: i32 = 72;
+                                          // `ceiling_dangle` extends the scientist pose well beyond the standing hull.
+                                          // Keep the model sphere large enough for every baked frame or the hanging
+                                          // scientist can be frustum/occlusion-culled while part of it is on-screen.
+const SCIENTIST_RENDER_RADIUS: i32 = 138;
+const BARNEY_RENDER_RADIUS: i32 = 77;
 const HEADCRAB_RENDER_RADIUS: i32 = 36;
 const ITEM_RENDER_RADIUS: i32 = 36;
 const PROP_TYPE_SCIENTIST: u8 = 0;
@@ -217,9 +252,11 @@ const PROP_TYPE_ITEM_SUIT: u8 = 3;
 const PROP_TYPE_ITEM_BATTERY: u8 = 4;
 const PROP_TYPE_CONTROLLER: u8 = 11; // flies: exempt from walker floor checks
 const PROP_TYPE_SITTING_SCI: u8 = 25; // seated pose, keeps its authored chair height
+const PROP_TYPE_LOADER: u8 = 52; // c0a0d scripted monster_generic construction loader
 const PROP_DEAD_BIT: u16 = 0x8000; // cook flag: spawn as a corpse (death pose, 0 hp)
 const PROP_DORMANT_BIT: u16 = 0x4000; // cook flag: monstermaker stock, inactive until fired
-const PROP_TYPE_MASK: u16 = 0x3FFF;
+const PROP_PREDISASTER_BIT: u16 = 0x2000; // cook flag: SF_MONSTER_PREDISASTER
+const PROP_TYPE_MASK: u16 = 0x0FFF;
 const PROP_TYPE_WEAPON_FIRST: u8 = 26; // weapon pickups 26..=39 (index - 26 = weapon id)
 const PROP_TYPE_WEAPON_LAST: u8 = 39;
 const PROP_TYPE_AMMO_FIRST: u8 = 40; // ammo pickups 40..=47
@@ -244,12 +281,15 @@ const PROP_STATE_ATTACK: u8 = 2;
 const PROP_STATE_DEAD: u8 = 3;
 
 // ---- per-map model pool registry ----
-// 26 model types (the cook's collect_props ids). Each streams from WORLD.PAK:
+// Cooked actor/item types. Each streams from WORLD.PAK:
 // geometry chunk `1300+id`, texture chunk `1100+id`. The runtime keeps only the
 // types a map places resident (TYPE_TO_SLOT -> LOADED_MODELS).
-const N_MODEL_TYPES: usize = 52;
+const N_MODEL_TYPES: usize = 53;
 const MAX_LOADED_MODELS: usize = 22; // distinct model types resident per map (enemies + pickups)
-const POOL_TEX_SLOTS: usize = 240; // shared TexSlot pool across loaded models
+                                     // Full 96-map + 222-transition roster audit peaks at 152 resident actor
+                                     // textures (c4a1b).  Eight spare slots cover roster churn; the old 240-slot
+                                     // pool reserved 2.5 KiB that no authored map could use.
+const POOL_TEX_SLOTS: usize = 160;
 // Shared RenderFace pool. Campaign peak is c4a3 at 7,922 faces when its
 // Gargantua is retained; 7,936 leaves a small aligned guard. Whole-type drops
 // are forbidden by tools/roster_audit.py.
@@ -319,55 +359,58 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(SCIENTIST_HEALTH, 40, SCIENTIST_RENDER_RADIUS, AI_FLEE), // 0 scientist
     mdef(BARNEY_HEALTH, 40, BARNEY_RENDER_RADIUS, AI_ALLY),       // 1 barney
     mdef(HEADCRAB_HEALTH, 12, HEADCRAB_RENDER_RADIUS, AI_MELEE),  // 2 headcrab
-    mdef(0, 16, ITEM_RENDER_RADIUS, AI_ITEM),                     // 3 item_suit
+    mdef(0, 16, 70, AI_ITEM),                                     // 3 item_suit
     mdef(0, 16, ITEM_RENDER_RADIUS, AI_ITEM),                     // 4 item_battery
-    mdef_atk(50, 40, 90, AI_MELEE, 2, 0, 0, 0),                 // 5 zombie (slow shambler)
-    mdef_atk(20, 20, 70, AI_RANGED, 7, 300, 15, 45),           // 6 houndeye (skitter in, sonic blast)
-    mdef_atk(40, 32, 90, AI_RANGED, 6, 600, 15, 55),           // 7 bullsquid (acid spit at range)
-    mdef_atk(50, 40, 90, AI_RANGED, 16, 1000, 5, 8),            // 8 hgrunt (mp5 bursts)
-    mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24),           // 9 alien_slave (zap)
-    mdef_atk(60, 48, 100, AI_RANGED, 16, 1000, 8, 16),          // 10 alien_grunt (hornets)
-    mdef_atk(60, 40, 100, AI_RANGED, 16, 1024, 3, 14),          // 11 alien_controller (energy)
-    mdef(40, 32, 90, AI_IDLE),                                   // 12 barnacle (ceiling: render only)
-    mdef(16, 8, 40, AI_IDLE),                                    // 13 leech (flyer: render only)
-    mdef(6, 4, 30, AI_IDLE),                                     // 14 cockroach (passive)
-    mdef(30, 48, 90, AI_IDLE),                                   // 15 gman (passive)
-    mdef(200, 90, 220, AI_IDLE),                                 // 16 gargantua (boss: render only)
-    mdef(200, 90, 240, AI_IDLE),                                 // 17 nihilanth (boss: render only)
-    mdef(150, 70, 200, AI_IDLE),                                 // 18 bigmomma (boss: render only)
-    mdef_atk(40, 20, 90, AI_MELEE, 6, 0, 0, 0),                 // 19 ichthyosaur
-    mdef_atk(40, 40, 80, AI_TURRET, 0, 1000, 7, 8),            // 20 sentry
-    mdef_atk(50, 40, 80, AI_TURRET, 0, 1200, 8, 7),            // 21 turret
-    mdef_atk(30, 30, 60, AI_TURRET, 0, 1000, 5, 3),            // 22 miniturret
-    mdef(80, 60, 150, AI_IDLE),                                 // 23 apache (flyer: render only)
-    mdef(10, 20, 60, AI_IDLE),                                  // 24 flyer_flock (passive)
+    mdef_atk(50, 40, 90, AI_MELEE, 2, 0, 0, 0),                   // 5 zombie (slow shambler)
+    mdef_atk(20, 20, 70, AI_RANGED, 7, 300, 15, 45), // 6 houndeye (skitter in, sonic blast)
+    mdef_atk(40, 32, 91, AI_RANGED, 6, 600, 15, 55), // 7 bullsquid (acid spit at range)
+    mdef_atk(50, 40, 90, AI_RANGED, 16, 1000, 5, 8), // 8 hgrunt (mp5 bursts)
+    mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24), // 9 alien_slave (zap)
+    mdef_atk(60, 48, 100, AI_RANGED, 16, 1000, 8, 16), // 10 alien_grunt (hornets)
+    mdef_atk(60, 40, 100, AI_RANGED, 16, 1024, 3, 14), // 11 alien_controller (energy)
+    mdef(40, 32, 170, AI_IDLE),                      // 12 barnacle (ceiling: render only)
+    mdef(16, 8, 40, AI_IDLE),                        // 13 leech (flyer: render only)
+    mdef(6, 4, 30, AI_IDLE),                         // 14 cockroach (passive)
+    mdef(30, 48, 90, AI_IDLE),                       // 15 gman (passive)
+    mdef(200, 90, 360, AI_IDLE),                     // 16 gargantua (boss: render only)
+    mdef(200, 90, 1748, AI_IDLE),                    // 17 nihilanth (boss: render only)
+    mdef(150, 70, 200, AI_IDLE),                     // 18 bigmomma (boss: render only)
+    mdef_atk(40, 20, 223, AI_MELEE, 6, 0, 0, 0),     // 19 ichthyosaur
+    mdef_atk(40, 40, 80, AI_TURRET, 0, 1000, 7, 8),  // 20 sentry
+    mdef_atk(50, 40, 80, AI_TURRET, 0, 1200, 8, 7),  // 21 turret
+    mdef_atk(30, 30, 60, AI_TURRET, 0, 1000, 5, 3),  // 22 miniturret
+    mdef(80, 60, 408, AI_IDLE),                      // 23 apache (flyer: render only)
+    mdef(10, 20, 60, AI_IDLE),                       // 24 flyer_flock (passive)
     mdef(SCIENTIST_HEALTH, 25, SCIENTIST_RENDER_RADIUS, AI_IDLE), // 25 sitting scientist
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 26 weapon_crowbar
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 27 weapon_9mmhandgun
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 28 weapon_357
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 29 weapon_9mmAR
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 30 weapon_shotgun
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 31 weapon_crossbow
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 32 weapon_rpg
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 33 weapon_gauss
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 34 weapon_egon
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 35 weapon_hornetgun
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 36 weapon_handgrenade
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 37 weapon_snark
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 38 weapon_tripmine
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 39 weapon_satchel
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 40 ammo_9mmclip
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 41 ammo_9mmAR
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 42 ammo_buckshot
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 43 ammo_357
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 44 ammo_crossbow
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 45 ammo_rpgclip
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 46 ammo_gaussclip
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 47 ammo_ARgrenades
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 48 item_healthkit
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM), // 49 item_longjump
-    mdef(200, 90, 260, AI_IDLE),              // 50 tentacle (Blast Pit; killtargeted by the rocket)
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 26 weapon_crowbar
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 27 weapon_9mmhandgun
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 28 weapon_357
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 29 weapon_9mmAR
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 30 weapon_shotgun
+    mdef(0, 12, 56, AI_ITEM),                        // 31 weapon_crossbow
+    mdef(0, 12, 45, AI_ITEM),                        // 32 weapon_rpg
+    mdef(0, 12, 51, AI_ITEM),                        // 33 weapon_gauss
+    mdef(0, 12, 40, AI_ITEM),                        // 34 weapon_egon
+    mdef(0, 12, 45, AI_ITEM),                        // 35 weapon_hornetgun
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 36 weapon_handgrenade
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 37 weapon_snark
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 38 weapon_tripmine
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 39 weapon_satchel
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 40 ammo_9mmclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 41 ammo_9mmAR
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 42 ammo_buckshot
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 43 ammo_357
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 44 ammo_crossbow
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 45 ammo_rpgclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 46 ammo_gaussclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 47 ammo_ARgrenades
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 48 item_healthkit
+    mdef(0, 12, 38, AI_ITEM),                        // 49 item_longjump
+    mdef(200, 90, 912, AI_IDLE), // 50 tentacle (Blast Pit; killtargeted by the rocket)
     mdef_atk(30, 40, 90, AI_RANGED, 16, 900, 6, 10), // 51 human assassin (silenced 9mm)
+    // Script-only monster_generic. Health must stay nonzero so its exact
+    // targetname can be possessed by c0a0d's goingdown sequence.
+    mdef(1, 48, 1242, AI_IDLE), // 52 construction loader (rampwalk translates ~1,241 units)
 ];
 
 #[inline]
@@ -425,7 +468,7 @@ const PROP_GROUND_PROBE_UP: i32 = 24;
 const PROP_GROUND_PROBE_DOWN: i32 = 160;
 const ITEM_GROUND_PROBE_DOWN: i32 = 4096; // items DROP_TO_FLOOR from any editor height
 const GROUND_SCAN_STEP: i32 = 8;
-const SCIENTIST_HEALTH: u8 = 24;
+const SCIENTIST_HEALTH: u8 = 20;
 const BARNEY_HEALTH: u8 = 35;
 const HEADCRAB_HEALTH: u8 = 16;
 const HEADCRAB_SPEED: i32 = 5;
@@ -450,6 +493,9 @@ const SCIENTIST_FEAR_RANGE2: i32 = 896 * 896;
 const SCIENTIST_FEAR_TICKS: u8 = 80;
 const SCIENTIST_FLEE_SPEED: i32 = 7;
 const SCIENTIST_FACE_RANGE2: i32 = 192 * 192;
+const SCIENTIST_FOLLOW_SPEED: i32 = 7;
+const SCIENTIST_FOLLOW_STOP_RANGE2: i32 = 128 * 128;
+const SCIENTIST_USE_REACH: i32 = 64; // PlayerUse radius in the GoldSrc SDK
 const PROP_HIT_FLASH_TICKS: u8 = 4;
 const ATTACK_WINDUP: u8 = 5; // telegraph ticks before a ranged enemy's first shot
 const PROP_TARGET_NONE: u8 = 254;
@@ -532,8 +578,7 @@ static mut IMPACT_MARK_RECTS: [RectFlat; MAX_IMPACT_MARKS] =
 // render draws it as one additive line (reuses draw_beam) for the sim ticks it
 // lives. A small ring -- old tracers just get overwritten.
 const MAX_TRACERS: usize = 8;
-static mut TRACERS: [([i32; 3], [i32; 3], u8); MAX_TRACERS] =
-    [([0; 3], [0; 3], 0); MAX_TRACERS];
+static mut TRACERS: [([i32; 3], [i32; 3], u8); MAX_TRACERS] = [([0; 3], [0; 3], 0); MAX_TRACERS];
 static mut TRACER_CURSOR: usize = 0;
 // Jump input buffer: a Cross press up to JUMP_BUFFER_TICKS before landing still
 // jumps (forgives an early press on a fall -- HL-ish landing feel).
@@ -563,8 +608,7 @@ const VM_CACHE_WORDS: usize = VM_CACHE_PACKET_WORDS + VM_CACHE_OTZ_WORDS;
 // this range while the old cache is invalid, but retained geometry must end
 // below it before the new weapon can be marked resident.
 const VM_CACHE_START_WORD: usize = VM_POOL_WORDS - VM_CACHE_WORDS;
-const _: () =
-    assert!(core::mem::align_of::<TriTexturedGouraud>() <= core::mem::align_of::<u32>());
+const _: () = assert!(core::mem::align_of::<TriTexturedGouraud>() <= core::mem::align_of::<u32>());
 const _: () = assert!(VM_CACHE_PACKET_BYTES % core::mem::size_of::<u32>() == 0);
 const _: () = assert!(VM_CACHE_WORDS < VM_POOL_WORDS);
 const VM_SLOTS_TOTAL: usize = 176; // 14 viewmodels x up to ~24 skins (rpg)
@@ -608,9 +652,9 @@ static mut VM_FILL_BASE_SLOT: usize = 0;
 // pool tail before extracting; only the geom persists, but the load needs room for
 // the full chunk -- so evict before a switch that couldn't fit it.
 const VM_MAX_WORDS: usize = 10752; // > the largest viewmodel chunk (~10,194 words)
-// Wrapper + retained geometry only. The current maximum is the .357 at 5,399
-// words; this conservative bound lets the pre-load eviction preserve the fixed
-// cache tail without a failed read/re-read cycle.
+                                   // Wrapper + retained geometry only. The current maximum is the .357 at 5,399
+                                   // words; this conservative bound lets the pre-load eviction preserve the fixed
+                                   // cache tail without a failed read/re-read cycle.
 const VM_MAX_GEOM_WORDS: usize = 5_632;
 const VM_MAX_SLOTS: usize = 28; // > the rpg's ~24 skins
 
@@ -642,8 +686,7 @@ static mut POOL_FACE_INDICES: [u32; POOL_FACE_CAP] = [0; POOL_FACE_CAP];
 static mut POOL_FACE_PAYLOADS: [ModelRenderFacePayload; POOL_FACE_CAP] =
     [ModelRenderFacePayload::ZERO; POOL_FACE_CAP];
 static mut POOL_FACE_RUNS: [u32; POOL_FACE_RUN_CAP] = [0; POOL_FACE_RUN_CAP];
-static mut LOADED_MODELS: [LoadedModel; MAX_LOADED_MODELS] =
-    [LoadedModel::ZERO; MAX_LOADED_MODELS];
+static mut LOADED_MODELS: [LoadedModel; MAX_LOADED_MODELS] = [LoadedModel::ZERO; MAX_LOADED_MODELS];
 static mut TYPE_TO_SLOT: [u8; N_MODEL_TYPES] = [MODEL_SLOT_NONE; N_MODEL_TYPES];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -661,9 +704,7 @@ const PAUSE_ARMED: (u8, u8, u8) = (75, 53, 10);
 // drawn as its 2x3 dot grid since the bitmap font has no braille glyphs. Each
 // entry is the low 6 braille bits: bit0..2 = left column top->bottom, bit3..5 =
 // right column top->bottom. A rotating subset lights each frame.
-const SPINNER_DOTS: [u8; 10] = [
-    0x0B, 0x19, 0x39, 0x38, 0x3C, 0x34, 0x26, 0x27, 0x07, 0x0F,
-];
+const SPINNER_DOTS: [u8; 10] = [0x0B, 0x19, 0x39, 0x38, 0x3C, 0x34, 0x26, 0x27, 0x07, 0x0F];
 
 /// Draw one "dots" spinner frame as a 2x3 grid of small dots at (x, y).
 fn draw_spinner_dots(x: i16, y: i16, frame: u8) {
@@ -681,7 +722,12 @@ fn draw_spinner_dots(x: i16, y: i16, frame: u8) {
         } else {
             (40, 34, 20) // unlit: dim, so the grid reads as a spinner
         };
-        gpu::draw_quad_flat([(dx, dy), (dx + D, dy), (dx, dy + D), (dx + D, dy + D)], r, g, b);
+        gpu::draw_quad_flat(
+            [(dx, dy), (dx + D, dy), (dx, dy + D), (dx + D, dy + D)],
+            r,
+            g,
+            b,
+        );
         i += 1;
     }
 }
@@ -729,7 +775,12 @@ fn draw_loading_overlay(fb: &mut FrameBuffer, frame: u8) {
 
     let (y0, y1) = (210i16, 232i16);
     gpu::draw_quad_flat([(80, y0), (240, y0), (80, y1), (240, y1)], 5, 5, 7);
-    gpu::draw_quad_flat([(80, y0), (240, y0), (80, y0 + 1), (240, y0 + 1)], 24, 21, 16);
+    gpu::draw_quad_flat(
+        [(80, y0), (240, y0), (80, y0 + 1), (240, y0 + 1)],
+        24,
+        21,
+        16,
+    );
     let loading = "Loading";
     let ty = y0 + 5;
     let lw = hltext::text_width_scaled(loading, hltext::SMALL_Q8);
@@ -886,8 +937,7 @@ static mut PVS_LEAF_COUNT: usize = 0;
 #[repr(C, align(4))]
 struct AlignedPvsFaceLinks([u16; MAX_FACES]);
 static mut PVS_FACE_INDEX: AlignedPvsFaceLinks = AlignedPvsFaceLinks([0; MAX_FACES]);
-static mut PVS_FACE_NEXT: AlignedPvsFaceLinks =
-    AlignedPvsFaceLinks([PVS_LINK_END; MAX_FACES]);
+static mut PVS_FACE_NEXT: AlignedPvsFaceLinks = AlignedPvsFaceLinks([PVS_LINK_END; MAX_FACES]);
 static mut PVS_FACE_REC: [PvsFaceRec; MAX_PVS_FACE_RECS] = [EMPTY_PVS_FACE_REC; MAX_PVS_FACE_RECS];
 static mut PVS_FACE_COUNT: usize = 0;
 static mut PVS_FACE_MARK: [u8; MAX_FACES] = [0; MAX_FACES];
@@ -923,7 +973,9 @@ static mut ENT_RADIUS: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PREV_OFF: [[i32; 3]; MAX_ENTS] = [[0; 3]; MAX_ENTS]; // ride-carry deltas
 static mut ENT_SOLID_COUNT: usize = 0; // nents for prop point-solid checks
-static mut ENT_BREAK_LOGIC: [u16; MAX_ENTS] = [u16::MAX; MAX_ENTS]; // ent -> breakable logic rec
+                                       // Brush -> stateful logic record. Breakables and targeted func_rotating share
+                                       // this existing slot; LOGIC_KIND disambiguates damage from fan state.
+static mut ENT_BRUSH_LOGIC: [u16; MAX_ENTS] = [u16::MAX; MAX_ENTS];
 // In the live 0..n_logic prefix this caches targetname ids, except breakables:
 // their slot is remaining HP and LOGIC_COUNTER carries the targetname bits.
 // The unused suffix hosts the compact hotlists described below.
@@ -966,8 +1018,8 @@ unsafe fn in_monsterclip(p: [i32; 3]) -> bool {
     false
 }
 static mut TELEPORT_REQUEST: Option<([i32; 3], u16)> = None; // dest pos + yaw, applied post-touch
-// Per-face emit state: blend class (0 opaque / 1 average / 2 additive) and
-// liquid UV sway, set by the face/entity walkers right before their emits.
+                                                             // Per-face emit state: blend class (0 opaque / 1 average / 2 additive) and
+                                                             // liquid UV sway, set by the face/entity walkers right before their emits.
 static mut EMIT_BLEND: u8 = 0;
 static mut EMIT_WAVE: bool = false;
 static mut WAVE_DU: u8 = 0;
@@ -1069,9 +1121,7 @@ unsafe fn world_cache_tail_start() -> usize {
 
 #[inline]
 unsafe fn world_cache_slots_per_link_array() -> usize {
-    MAX_FACES
-        .saturating_sub(world_cache_tail_start())
-        / WORLD_CACHE_PACKET_HALFWORDS
+    MAX_FACES.saturating_sub(world_cache_tail_start()) / WORLD_CACHE_PACKET_HALFWORDS
 }
 
 #[inline]
@@ -1110,8 +1160,8 @@ unsafe fn world_cache_capture_packet<T>(packet: *const T, otz: usize, quad: bool
     let src = packet.cast::<u32>();
     let words = core::mem::size_of::<T>() / core::mem::size_of::<u32>();
     core::ptr::copy_nonoverlapping(src, world_cache_packet_ptr(i), words);
-    PVS_BAND_ORDER[meta] = (otz.min(OT_LEN - 1) as u16)
-        | if quad { WORLD_CACHE_QUAD_META } else { 0 };
+    PVS_BAND_ORDER[meta] =
+        (otz.min(OT_LEN - 1) as u16) | if quad { WORLD_CACHE_QUAD_META } else { 0 };
     WORLD_CACHE_COUNT = i + 1;
 }
 
@@ -1132,8 +1182,7 @@ unsafe fn prepare_world_packet_cache(key: WorldPacketCacheKey, band_prefix: usiz
         // for the other seven frames. Camera movement still takes the normal
         // arm-first path and never pays payload-copy work.
         if WORLD_CACHE_KEY.same_view(key)
-            && (WORLD_CACHE_KEY.wave_du != key.wave_du
-                || WORLD_CACHE_KEY.wave_dv != key.wave_dv)
+            && (WORLD_CACHE_KEY.wave_du != key.wave_du || WORLD_CACHE_KEY.wave_dv != key.wave_dv)
         {
             WORLD_CACHE_VALID = false;
             WORLD_CACHE_COUNT = 0;
@@ -1242,16 +1291,17 @@ struct LogicEvent {
     at: u16,
     target: u16,
     killtarget: u16,
-    use_type: u8,
-    active: u8,
+    // active/use_type/caller logic index, packed without growing this hot queue.
+    meta: u16,
 }
+
+const _: [(); 8] = [(); core::mem::size_of::<LogicEvent>()];
 
 const EMPTY_LOGIC_EVENT: LogicEvent = LogicEvent {
     at: 0,
     target: 0,
     killtarget: 0,
-    use_type: map::USE_TOGGLE,
-    active: 0,
+    meta: logic_state::event_meta(false, map::USE_TOGGLE, logic_state::CALLER_NONE),
 };
 
 #[derive(Clone, Copy)]
@@ -1310,11 +1360,21 @@ static mut PROP_AI_TARGET: [u8; MAX_PROPS] = [PROP_TARGET_NONE; MAX_PROPS];
 // deaths, dormant monster makers, seated-scientist wakeups, and collected items
 // keep precisely the existing behavior.
 const PROP_HOT_FALLBACK: u8 = 0xFF;
+#[inline(always)]
+fn prop_hotlist_count(raw: u8, nprops: usize) -> Option<usize> {
+    let count = raw as usize;
+    if raw != PROP_HOT_FALLBACK && count <= nprops && nprops + 1 + count <= MAX_PROPS {
+        Some(count)
+    } else {
+        None
+    }
+}
 // AI target re-acquisition is staggered: each prop re-runs the (BSP-trace-heavy)
 // find_*_target only every AI_REACQUIRE_INTERVAL sim-ticks, keeping its cached
 // PROP_AI_TARGET between -- cuts the per-frame line-of-sight trace count ~Nx on
-// enemy-dense maps. At 20 Hz a 4-tick lag is ~200 ms (imperceptible); per-frame
-// facing/firing LOS still runs every tick so combat stays accurate.
+// enemy-dense maps. At 20 Hz a 4-tick lag is ~200 ms (imperceptible). The same
+// stagger now owns the target LOS verdict as well: tracing the unchanged target
+// every intervening tick was over half of c2a4e's actor-update cost.
 static mut AI_TICK: u32 = 0;
 const AI_REACQUIRE_INTERVAL: u32 = 4;
 #[inline]
@@ -1328,8 +1388,50 @@ static mut PROP_HIT_FLASH: [u8; MAX_PROPS] = [0; MAX_PROPS];
 // death frame instead of re-playing the fall.
 static mut PROP_DEATH_START: [u16; MAX_PROPS] = [0; MAX_PROPS];
 const PROP_OCC_VISIBLE: u8 = 1;
+// Reuse an otherwise-free bit in the render-occlusion byte for the AI target's
+// most recent LOS verdict. Render cache writes preserve it, so this costs no RAM.
+const PROP_AI_TARGET_VISIBLE: u8 = 2;
+// Scientist relationship/script state shares the same spare byte.  These bits
+// are gameplay state, so render's visibility refresh must preserve all of them.
+const PROP_SCI_FOLLOWING: u8 = 4;
+const PROP_SCI_PROVOKED: u8 = 8;
+const PROP_SCI_PREDISASTER: u8 = 16;
+const PROP_SCRIPT_NOINTERRUPT: u8 = 32;
+const PROP_OCC_GAMEPLAY_MASK: u8 = PROP_AI_TARGET_VISIBLE
+    | PROP_SCI_FOLLOWING
+    | PROP_SCI_PROVOKED
+    | PROP_SCI_PREDISASTER
+    | PROP_SCRIPT_NOINTERRUPT;
 const PROP_OCC_DIRTY: u8 = 0x80;
 static mut PROP_OCC_VIS: [u8; MAX_PROPS] = [PROP_OCC_VISIBLE | PROP_OCC_DIRTY; MAX_PROPS];
+
+#[inline]
+unsafe fn prop_ai_target_visible(pi: usize) -> bool {
+    PROP_OCC_VIS[pi] & PROP_AI_TARGET_VISIBLE != 0
+}
+
+#[inline]
+unsafe fn prop_ai_set_target_visible(pi: usize, visible: bool) {
+    if visible {
+        PROP_OCC_VIS[pi] |= PROP_AI_TARGET_VISIBLE;
+    } else {
+        PROP_OCC_VIS[pi] &= !PROP_AI_TARGET_VISIBLE;
+    }
+}
+
+#[inline(always)]
+unsafe fn prop_scientist_flag(pi: usize, flag: u8) -> bool {
+    PROP_OCC_VIS[pi] & flag != 0
+}
+
+#[inline(always)]
+unsafe fn prop_scientist_set_flag(pi: usize, flag: u8, enabled: bool) {
+    if enabled {
+        PROP_OCC_VIS[pi] |= flag;
+    } else {
+        PROP_OCC_VIS[pi] &= !flag;
+    }
+}
 static mut OCC_EYE_ANCHOR: [i32; 3] = [i32::MIN / 2; 3];
 static mut OCC_EYE_LEAF: i32 = -1;
 const OCC_EYE_MOVE_THRESHOLD: u32 = 32;
@@ -1339,8 +1441,6 @@ static mut SPRITE_COUNT: usize = 0;
 static mut SPRITE_VISIBLE: [u32; SPRITE_STATE_WORDS] = [0; SPRITE_STATE_WORDS];
 static mut SPRITE_REMOVED: [u32; SPRITE_STATE_WORDS] = [0; SPRITE_STATE_WORDS];
 static mut SPRITE_STARTED: [u16; MAX_SPRITE_INSTANCES] = [0; MAX_SPRITE_INSTANCES];
-static mut NAV_QUEUE: [u8; MAX_NAV_NODES] = [0; MAX_NAV_NODES];
-static mut NAV_PREV: [u8; MAX_NAV_NODES] = [NAV_NODE_NONE; MAX_NAV_NODES];
 static mut IMPACT_MARKS: [ImpactMark; MAX_IMPACT_MARKS] = [EMPTY_IMPACT_MARK; MAX_IMPACT_MARKS];
 static mut IMPACT_MARK_CURSOR: usize = 0;
 static mut CLIP_CV: [render::CVert; 4] = [render::EMPTY_CV; 4]; // near-clip scratch (reused)
@@ -1424,6 +1524,91 @@ fn aim_curve(v: i32) -> i32 {
     let a = v.abs().min(128);
     let cubic = a * a / 128 * a / 128; // a^3 / 128^2, back in 0..128
     s * ((a * 45 + cubic * 55) / 100)
+}
+
+/// Convert one clean DualShock sample to the cross-engine HLINPUT1 command.
+/// Keep this outlined: the reference build is close to MIPS-I's PC16 branch
+/// span inside `play`, while the conversion is needed only once per fixed tick.
+#[cfg(not(feature = "semantic-input"))]
+#[inline(never)]
+fn live_semantic_sample(pad: psx_pad::PadState) -> semantic_input::Sample {
+    let (mut fwd, mut strafe, mut turn, mut look) = (0i32, 0i32, 0i32, 0i32);
+    if pad.is_analog() {
+        let (lx, ly) = pad.sticks.left_centered();
+        let (rx, ry) = pad.sticks.right_centered();
+        let dz2 = DEADZONE * DEADZONE;
+        if (lx as i32) * (lx as i32) + (ly as i32) * (ly as i32) > dz2 {
+            fwd = -(ly as i32);
+            strafe = lx as i32;
+        }
+        if (rx as i32) * (rx as i32) + (ry as i32) * (ry as i32) > dz2 {
+            turn = aim_curve(rx as i32);
+            look = aim_curve(-(ry as i32));
+        }
+    }
+    let mut actions = 0u16;
+    actions |= (pad.buttons.is_held(button::R2) as u16) * semantic_input::ACTION_ATTACK;
+    actions |= (pad.buttons.is_held(button::CROSS) as u16) * semantic_input::ACTION_JUMP;
+    actions |= (pad.buttons.is_held(button::TRIANGLE) as u16) * semantic_input::ACTION_DUCK;
+    actions |= (pad.buttons.is_held(button::SQUARE) as u16) * semantic_input::ACTION_USE;
+    actions |= (pad.buttons.is_held(button::L2) as u16) * semantic_input::ACTION_ATTACK2;
+    actions |= (pad.buttons.is_held(button::CIRCLE) as u16) * semantic_input::ACTION_RELOAD;
+    actions |= (pad.buttons.is_held(button::R1) as u16) * semantic_input::ACTION_NEXT_WEAPON;
+    actions |= (pad.buttons.is_held(button::L1) as u16) * semantic_input::ACTION_PREV_WEAPON;
+    actions |= (pad.buttons.is_held(button::L3) as u16) * semantic_input::ACTION_FLASHLIGHT;
+    semantic_input::Sample {
+        forward: fwd.clamp(i8::MIN as i32, i8::MAX as i32) as i8,
+        strafe: strafe.clamp(i8::MIN as i32, i8::MAX as i32) as i8,
+        turn: turn.clamp(i8::MIN as i32, i8::MAX as i32) as i8,
+        look: look.clamp(i8::MIN as i32, i8::MAX as i32) as i8,
+        actions,
+    }
+}
+
+#[cfg(not(feature = "semantic-input"))]
+enum LiveInputPoll {
+    Sample(semantic_input::Sample),
+    Resumed,
+    MainMenu,
+}
+
+/// Poll/configure the controller and own the pause transaction outside the
+/// already branch-span-sensitive gameplay loop.
+#[cfg(not(feature = "semantic-input"))]
+#[inline(never)]
+fn poll_live_semantic_input(
+    fb: &mut FrameBuffer,
+    last_pad: &mut psx_pad::PadState,
+    prev_pause_button: &mut bool,
+    next_sim_vblank: &mut u32,
+) -> LiveInputPoll {
+    let sampled_pad = poll_port1_diag(DEFAULT_SETUP_SPINS, 0).to_state();
+    let pad = if sampled_pad.mode == PadMode::Unknown {
+        *last_pad
+    } else {
+        *last_pad = sampled_pad;
+        sampled_pad
+    };
+    let pause_button = pad.buttons.is_held(button::START) || pad.buttons.is_held(button::SELECT);
+    if pause_button && !*prev_pause_button {
+        telemetry::stage_end(telemetry::stage::UPDATE);
+        telemetry::task_end(telemetry::task::FIXED_UPDATE);
+        return match run_pause_menu(fb) {
+            PauseExit::MainMenu => LiveInputPoll::MainMenu,
+            PauseExit::Resume => {
+                let _ = enable_analog_port1();
+                *last_pad = poll_port1();
+                *prev_pause_button = true;
+                *next_sim_vblank = interrupts::vblank_count().wrapping_add(SIM_VBLANKS);
+                LiveInputPoll::Resumed
+            }
+        };
+    }
+    *prev_pause_button = pause_button;
+    if matches!(sampled_pad.mode, PadMode::Digital | PadMode::Config) {
+        let _ = enable_analog_port1();
+    }
+    LiveInputPoll::Sample(live_semantic_sample(pad))
 }
 
 fn view_rotation(yaw: u16, pitch: i16) -> Mat3I16 {
@@ -1600,7 +1785,9 @@ unsafe fn stream_one_viewmodel(
     telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
     let (ntex, _) = vram::upload_tex_chunk_append_raw(
         tex_bytes,
-        core::ptr::addr_of_mut!(VM_SLOTS).cast::<TexSlot>().add(slot),
+        core::ptr::addr_of_mut!(VM_SLOTS)
+            .cast::<TexSlot>()
+            .add(slot),
         VM_SLOTS_TOTAL - slot,
     )
     .unwrap_or((0, 0));
@@ -1657,7 +1844,7 @@ unsafe fn loaded_model(slot: usize) -> Model {
 /// split POOL_FACE_* streams, textures into VRAM (POOL_TEX). `TYPE_TO_SLOT` maps a type id to
 /// its `LOADED_MODELS` entry; types that don't fit the buffers are skipped (the
 /// prop simply doesn't render).
-unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
+unsafe fn stream_map_models(weapon_len: usize, carry_count: u8) {
     for t in TYPE_TO_SLOT.iter_mut() {
         *t = MODEL_SLOT_NONE;
     }
@@ -1671,23 +1858,39 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
     let mut tex_off = 0usize;
     let mut slot_idx = 0usize;
     let (mut sc, mut sb, mut ss) = (0u32, 0u32, 0u32);
-    let nprops = m.n_props.min(MAX_PROPS);
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let ncarry = logic_state::carry_record_count(carry_count).min(CARRY_CAPACITY);
     // Three passes by importance: combat monsters, then pickups/items, then
     // decorative render-only types (AI_IDLE: bosses, flyers, statues). A heavy
     // roster drops a statue -- never a fighting enemy, and pickups outrank
     // scenery (an invisible medkit still collects, but shouldn't happen).
     let mut pass = 0;
+    let mut source = 0; // incoming mailbox first, then the complete live roster
     let mut pi = 0usize;
     loop {
-        if pi >= nprops {
+        let source_len = if source == 0 { ncarry } else { nprops };
+        if pi >= source_len {
+            if source == 0 {
+                source = 1;
+                pi = 0;
+                continue;
+            }
             if pass < 2 {
                 pass += 1;
+                source = 0;
                 pi = 0;
                 continue;
             }
             break;
         }
-        let ty = (m.prop(pi).0 & PROP_TYPE_MASK) as usize; // corpses/spawner stock stream their live model
+        // Carry-only types get first refusal within each importance tier. This
+        // prevents a progression actor (Barney/BigMomma/Apache) from losing its
+        // model to a destination decoration when a pool is tight.
+        let ty = if source == 0 {
+            carry_mail_read(pi).0 as usize
+        } else {
+            PROP_KIND[pi] as usize
+        };
         pi += 1;
         if ty >= N_MODEL_TYPES || TYPE_TO_SLOT[ty] != MODEL_SLOT_NONE {
             continue; // out of range, or this type is already resident
@@ -1748,7 +1951,9 @@ unsafe fn stream_map_models(m: &Map, weapon_len: usize) {
         telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
         let (ntex, _tex_fail) = vram::upload_tex_chunk_append_raw(
             tex_bytes,
-            core::ptr::addr_of_mut!(POOL_TEX).cast::<TexSlot>().add(tex_off),
+            core::ptr::addr_of_mut!(POOL_TEX)
+                .cast::<TexSlot>()
+                .add(tex_off),
             POOL_TEX_SLOTS - tex_off,
         )
         .unwrap_or((0, 0));
@@ -1821,11 +2026,14 @@ fn seg_len(a: [i32; 3], b: [i32; 3]) -> i32 {
 }
 
 #[inline]
-fn tram_step_for_speed(speed: i32) -> i32 {
+fn tram_step_for_speed(speed: i32, remainder: &mut i32) -> i32 {
     if speed <= 0 {
+        *remainder = 0;
         0
     } else {
-        ((speed + 19) / 20).max(1)
+        let scaled = remainder.saturating_add(speed);
+        *remainder = scaled % 20;
+        scaled / 20
     }
 }
 
@@ -1848,45 +2056,243 @@ fn tram_path_pos(m: &Map, seg: usize, seg_dist: i32) -> [i32; 3] {
     ]
 }
 
-/// Heading of path segment `i` in q12 (world X,Z).
-fn tram_seg_heading(m: &Map, i: usize) -> u16 {
-    let a = m.waypoint(i);
-    let b = m.waypoint(i + 1);
-    atan2_q12(b[2] - a[2], b[0] - a[0])
+#[inline(always)]
+fn tram_lerp_q8(a: [i32; 3], b: [i32; 3], dist: i32, len: i32) -> [i32; 3] {
+    let f = (dist.max(0) << 12) / len.max(1);
+    [
+        (a[0] << 8) + ((b[0] - a[0]) * f >> 4),
+        (a[1] << 8) + ((b[1] - a[1]) * f >> 4),
+        (a[2] << 8) + ((b[2] - a[2]) * f >> 4),
+    ]
 }
 
-/// Continuous travel yaw RELATIVE to the parked (segment-0) heading. Within a
-/// segment it is that segment's heading; over the last TRAM_TURN_BLEND units
-/// it eases into the next segment's, so the car sweeps through bends instead
-/// of snapping at each waypoint. Drives the render, the collision hull, the
-/// rider carry, and the ride camera -- all four stay locked to one function.
-fn tram_travel_yaw(m: &Map, seg: usize, seg_dist: i32) -> u16 {
-    if m.n_way < 2 {
-        return 0;
+/// Point `ahead` 3-D path units beyond `(seg,seg_dist)`, in Q8 world space.
+/// CPathTrack::LookAhead crosses as many nodes as necessary and projects past
+/// a terminal node along the final segment; clamping at the last point makes a
+/// train turn too sharply immediately before a changelevel.
+#[inline(never)]
+fn tram_path_lookahead_q8(m: &Map, mut seg: usize, mut seg_dist: i32, mut ahead: i32) -> [i32; 3] {
+    if m.n_way == 0 {
+        return [0; 3];
     }
-    let last = m.n_way - 2;
-    let s = seg.min(last);
-    let mut yaw = tram_seg_heading(m, s);
-    if s < last {
-        let len = seg_len(m.waypoint(s), m.waypoint(s + 1));
-        let blend = (len / 2).min(TRAM_TURN_BLEND);
-        let into = seg_dist - (len - blend);
-        if blend > 0 && into > 0 {
-            let next = tram_seg_heading(m, s + 1);
-            let mut d = (next.wrapping_sub(yaw) & 0xFFF) as i32;
-            if d > 2048 {
-                d -= 4096;
-            }
-            yaw = ((yaw as i32 + d * into.min(blend) / blend) & 0xFFF) as u16;
+    if m.n_way == 1 {
+        let p = m.waypoint(0);
+        return [p[0] << 8, p[1] << 8, p[2] << 8];
+    }
+    seg = seg.min(m.n_way - 2);
+    ahead = ahead.max(0);
+    loop {
+        let a = m.waypoint(seg);
+        let b = m.waypoint(seg + 1);
+        let len = seg_len(a, b).max(1);
+        let left = (len - seg_dist).max(0);
+        if ahead <= left {
+            return tram_lerp_q8(a, b, seg_dist + ahead, len);
+        }
+        ahead -= left;
+        if seg + 2 < m.n_way {
+            seg += 1;
+            seg_dist = 0;
+            continue;
+        }
+        // Project along the terminal segment, matching CPathTrack::Project.
+        let f = (ahead << 12) / len;
+        return [
+            (b[0] << 8) + ((b[0] - a[0]) * f >> 4),
+            (b[1] << 8) + ((b[1] - a[1]) * f >> 4),
+            (b[2] << 8) + ((b[2] - a[2]) * f >> 4),
+        ];
+    }
+}
+
+/// CPathTrack look-ahead including the synthetic cross-BSP approach leg.
+#[inline(never)]
+fn tram_lookahead_q8(
+    m: &Map,
+    seg: usize,
+    seg_dist: i32,
+    pre_from: [i32; 3],
+    pre_total: i32,
+    pre_left: i32,
+    ahead: i32,
+) -> [i32; 3] {
+    if pre_left > 0 && m.n_way > 0 {
+        let w = tram_reference_waypoint(m);
+        if ahead <= pre_left {
+            return tram_lerp_q8(pre_from, w, pre_total - pre_left + ahead, pre_total.max(1));
+        }
+        return tram_path_lookahead_q8(m, seg, seg_dist, ahead - pre_left);
+    }
+    tram_path_lookahead_q8(m, seg, seg_dist, ahead)
+}
+
+/// GoldSrc's absolute desired train yaw from a `wheels`-unit forward point.
+/// A purely vertical synthetic trackchange leg has no horizontal heading, so
+/// retain the previous target while the platform descends.
+#[inline(never)]
+fn tram_desired_yaw_q28(
+    m: &Map,
+    seg: usize,
+    seg_dist: i32,
+    pre_from: [i32; 3],
+    pre_total: i32,
+    pre_left: i32,
+    fallback_q28: i32,
+) -> i32 {
+    let here = tram_pos_ext(m, seg, seg_dist, pre_from, pre_total, pre_left);
+    let front = tram_lookahead_q8(
+        m,
+        seg,
+        seg_dist,
+        pre_from,
+        pre_total,
+        pre_left,
+        m.tram_wheels().max(1),
+    );
+    let dx = front[0] - (here[0] << 8);
+    let dz = front[2] - (here[2] << 8);
+    if dx == 0 && dz == 0 {
+        fallback_q28
+    } else {
+        tram_logic::atan2_q28(dz, dx)
+    }
+}
+
+#[inline(always)]
+fn tram_is_trackchange_segment(m: &Map, seg: usize) -> bool {
+    if seg + 1 >= m.n_way {
+        return false;
+    }
+    let a = m.waypoint(seg);
+    let b = m.waypoint(seg + 1);
+    a[0] == b[0] && a[2] == b[2] && a[1] != b[1]
+}
+
+/// A func_trackchange carries the train while translating/rotating its
+/// platform; CFuncTrackTrain is stopped during that interval. The cooker
+/// represents the translation as a vertical path segment. Return the signed
+/// angular OFFSET contributed by that platform plus its full authored delta.
+/// Applying offset(after)-offset(before) preserves the train's incoming
+/// residual angle, matching CFuncTrackChange::UpdateTrain's copied avelocity.
+#[inline(never)]
+fn tram_trackchange_offset_q28(m: &Map, seg: usize, seg_dist: i32) -> Option<(i32, i32)> {
+    if !tram_is_trackchange_segment(m, seg) {
+        return None;
+    }
+    let a = m.waypoint(seg);
+    let b = m.waypoint(seg + 1);
+    let mut before = None;
+    let mut i = seg;
+    while i > 0 {
+        i -= 1;
+        let p = m.waypoint(i);
+        let q = m.waypoint(i + 1);
+        if p[0] != q[0] || p[2] != q[2] {
+            before = Some(tram_seg_heading_q28(m, i));
+            break;
         }
     }
-    yaw.wrapping_sub(tram_seg_heading(m, 0)) & 0xFFF
+    let mut after = None;
+    i = seg + 1;
+    while i + 1 < m.n_way {
+        let p = m.waypoint(i);
+        let q = m.waypoint(i + 1);
+        if p[0] != q[0] || p[2] != q[2] {
+            after = Some(tram_seg_heading_q28(m, i));
+            break;
+        }
+        i += 1;
+    }
+    let (before, after) = (before?, after?);
+    let delta = tram_logic::shortest_angle_delta_q28(before, after);
+    let len = seg_len(a, b).max(1);
+    Some((
+        tram_logic::scale_angle_offset_q28(delta, seg_dist, len),
+        delta,
+    ))
+}
+
+#[inline(never)]
+fn tram_integrate_yaw_q28(
+    m: &Map,
+    integrate: bool,
+    seg_before: usize,
+    dist_before: i32,
+    seg_after: usize,
+    dist_after: i32,
+    actual: i32,
+    target: i32,
+) -> (i32, i32) {
+    if !integrate {
+        return (actual, 0);
+    }
+    let before_platform = tram_trackchange_offset_q28(m, seg_before, dist_before);
+    let after_platform = tram_trackchange_offset_q28(m, seg_after, dist_after);
+    let platform_step = if seg_before == seg_after {
+        match (before_platform, after_platform) {
+            (Some((before, _)), Some((after, _))) => Some(after - before),
+            _ => None,
+        }
+    } else if let Some((after, _)) = after_platform {
+        // Entering the platform at distance zero deliberately contributes
+        // zero and suppresses the ordinary tracktrain controller for this
+        // frame; Gold starts the platform pusher on the following frame.
+        Some(after)
+    } else {
+        // On the platform's terminal frame Gold hands control back to the
+        // tracktrain rather than snapping the final fractional unit to the
+        // authored rail. Its half-error controller closes that tiny tail.
+        None
+    };
+    let step = platform_step.unwrap_or_else(|| tram_logic::half_angle_step_q28(actual, target));
+    let next = (actual + step) & (tram_logic::TRAM_YAW_Q28_TURN - 1);
+    (next, tram_logic::shortest_angle_delta_q28(actual, next))
+}
+
+/// Heading of path segment `i` in Q28 turns (world X,Z).
+fn tram_seg_heading_q28(m: &Map, i: usize) -> i32 {
+    let a = m.waypoint(i);
+    let b = m.waypoint(i + 1);
+    tram_logic::atan2_q28(b[2] - a[2], b[0] - a[0])
+}
+
+#[inline(always)]
+fn tram_reference_waypoint(m: &Map) -> [i32; 3] {
+    if m.n_way > 0 {
+        m.waypoint(m.tram_start)
+    } else {
+        [0, 0, 0]
+    }
+}
+
+#[inline(always)]
+fn tram_authored_heading_q28(m: &Map) -> i32 {
+    if m.n_way < 2 {
+        0
+    } else {
+        tram_seg_heading_q28(
+            m,
+            tram_logic::authored_heading_segment(m.tram_start, m.n_way),
+        )
+    }
+}
+
+#[inline(always)]
+fn tram_relative_yaw_q12(authored_q28: i32, absolute_q28: i32) -> u16 {
+    (((absolute_q28 - authored_q28) >> 16) & 0x0fff) as u16
+}
+
+/// Convert positive GoldSrc path yaw to the inverse PSX Y-up world rotation.
+/// Camera yaw deliberately remains in positive travel space.
+#[inline(always)]
+fn tram_world_rotation(yaw_q12: u16) -> Mat3I16 {
+    Mat3I16::rotate_y(tram_logic::world_rotation_angle_q8(yaw_q12))
 }
 
 /// Car position including the synthetic approach leg a ride transfer may
-/// start on (`pre_left > 0`: between `pre_from` and waypoint 0 -- HL's
-/// transferred train drives toward its carried target track from wherever
-/// the landmark put it; the cooked chain only starts at that track).
+/// start on (`pre_left > 0`: between `pre_from` and the authored waypoint --
+/// HL's transferred train drives toward its carried target track from wherever
+/// the landmark put it).
 fn tram_pos_ext(
     m: &Map,
     seg: usize,
@@ -1896,42 +2302,21 @@ fn tram_pos_ext(
     pre_left: i32,
 ) -> [i32; 3] {
     if pre_left > 0 && m.n_way > 0 {
-        let w = m.waypoint(0);
-        let f = (((pre_total - pre_left) << 12) / pre_total.max(1)).clamp(0, 4096);
+        let w = tram_reference_waypoint(m);
+        let travelled = (pre_total - pre_left).clamp(0, pre_total);
+        let total = pre_total.max(1);
+        // Keep this as a direct integer lerp. The nested Q12 form
+        // `(delta * (((travelled << 12) / total)) >> 12)` is mis-lowered by
+        // the experimental MIPS-I backend: c0a0b advanced ~28K units per tick
+        // and wrapped the rider through +/-524K during its transfer approach.
+        // Intro approach legs keep delta*travelled safely inside i32.
         [
-            pre_from[0] + ((w[0] - pre_from[0]) * f >> 12),
-            pre_from[1] + ((w[1] - pre_from[1]) * f >> 12),
-            pre_from[2] + ((w[2] - pre_from[2]) * f >> 12),
+            pre_from[0] + (w[0] - pre_from[0]) * travelled / total,
+            pre_from[1] + (w[1] - pre_from[1]) * travelled / total,
+            pre_from[2] + (w[2] - pre_from[2]) * travelled / total,
         ]
     } else {
         tram_path_pos(m, seg, seg_dist)
-    }
-}
-
-/// Travel yaw including the approach leg: the approach heading, easing to the
-/// chain's segment-0 heading (relative 0) over the last TRAM_TURN_BLEND units.
-fn tram_yaw_ext(
-    m: &Map,
-    seg: usize,
-    seg_dist: i32,
-    pre_from: [i32; 3],
-    pre_total: i32,
-    pre_left: i32,
-) -> u16 {
-    if pre_left > 0 && m.n_way >= 2 {
-        let w = m.waypoint(0);
-        let h = atan2_q12(w[2] - pre_from[2], w[0] - pre_from[0]);
-        let mut rel = (h.wrapping_sub(tram_seg_heading(m, 0)) & 0xFFF) as i32;
-        if rel > 2048 {
-            rel -= 4096;
-        }
-        // Ease across the WHOLE leg: a short blend window swings the car
-        // (and its hull walls) many degrees per tick, which physically
-        // ejects the rider through the doorway.
-        rel = rel * pre_left / pre_total.max(1);
-        ((rel + 4096) & 0xFFF) as u16
-    } else {
-        tram_travel_yaw(m, seg, seg_dist)
     }
 }
 
@@ -1972,15 +2357,24 @@ fn tram_seek_nearest(m: &Map, pos: [i32; 3]) -> (usize, i32) {
     (best_seg, best_dist)
 }
 
-fn tram_advance(m: &Map, seg: &mut usize, seg_dist: &mut i32, step: i32, speed: &mut i32) -> bool {
+#[inline(never)]
+fn tram_advance(
+    m: &Map,
+    seg: &mut usize,
+    seg_dist: &mut i32,
+    step: i32,
+    speed: &mut i32,
+) -> (bool, bool) {
     if step <= 0 || m.n_way < 2 {
-        return false;
+        return (false, false);
     }
     let mut rem = step;
+    let mut phase_boundary = false;
     while rem > 0 && *seg + 1 < m.n_way {
         let len = seg_len(m.waypoint(*seg), m.waypoint(*seg + 1));
         if *seg_dist + rem >= len {
             rem -= len - *seg_dist;
+            let leaving_trackchange = tram_is_trackchange_segment(m, *seg);
             *seg += 1;
             *seg_dist = 0;
             // Passing a path_track with a "speed" key changes the train's
@@ -1990,12 +2384,22 @@ fn tram_advance(m: &Map, seg: &mut usize, seg_dist: &mut i32, step: i32, speed: 
             if ws > 0 {
                 *speed = ws;
             }
+            let entering_trackchange = tram_is_trackchange_segment(m, *seg);
+            if leaving_trackchange != entering_trackchange {
+                // A trackchange is a separate pusher phase. Gold fires the
+                // boundary path_track while the car is still at the endpoint,
+                // then begins the new mover on the next 50 ms frame; carrying
+                // rail-distance remainder into it starts c0a0b/d 2-4 ticks
+                // early and also skips their exact distance-zero state.
+                rem = 0;
+                phase_boundary = true;
+            }
         } else {
             *seg_dist += rem;
             rem = 0;
         }
     }
-    *seg + 1 < m.n_way
+    (*seg + 1 < m.n_way, phase_boundary)
 }
 
 fn tram_apply_command(
@@ -2037,6 +2441,33 @@ fn tram_should_carry_player(player_pos: [i32; 3], train_pos: [i32; 3]) -> bool {
     dx * dx + dz * dz <= TRAM_CARRY_RADIUS2 && dy.abs() <= TRAM_CARRY_HEIGHT
 }
 
+#[inline(never)]
+fn tram_seat_to_local(player_pos: [i32; 3], train_pos: [i32; 3], yaw: u16) -> [i32; 3] {
+    let r = tram_world_rotation(yaw);
+    let xz = tram_logic::inverse_rotate_rider_xz(
+        r.m[0][0] as i32,
+        r.m[0][2] as i32,
+        player_pos[0] - train_pos[0],
+        player_pos[2] - train_pos[2],
+    );
+    [
+        xz[0].clamp(-130, 130),
+        (player_pos[1] - train_pos[1]).clamp(30, 100),
+        tram_logic::clamp_rider_local_z(xz[1]),
+    ]
+}
+
+#[inline(never)]
+fn tram_seat_to_world(train_pos: [i32; 3], local: [i32; 3], yaw: u16) -> [i32; 3] {
+    let r = tram_world_rotation(yaw);
+    let xz = tram_logic::rotate_rider_xz(r.m[0][0] as i32, r.m[0][2] as i32, local[0], local[2]);
+    [
+        train_pos[0] + xz[0],
+        train_pos[1] + local[1],
+        train_pos[2] + xz[1],
+    ]
+}
+
 #[derive(Clone, Copy)]
 struct LandmarkName {
     bytes: [u8; LANDMARK_NAME_MAX + 1],
@@ -2057,13 +2488,16 @@ struct RoomLaunch {
     pitch: i16,
     health: u16,
     suit_equipped: bool,
+    // Occupies the byte that was padding before armor; RoomLaunch remains 76 B.
+    carry_count: u8,
     armor: u16,
     clip_ammo: u16,
     reserve_ammo: u16,
     preserve_view: bool,
-    riding: bool, // player was aboard a moving tracktrain at the transition
+    riding: bool,        // player was aboard a moving tracktrain at the transition
     ride_seat: [i32; 3], // rider offset from the car pivot at the transition
 }
+const _: [(); 76] = [(); core::mem::size_of::<RoomLaunch>()];
 
 #[derive(Clone, Copy)]
 enum PlayExit {
@@ -2080,6 +2514,7 @@ static mut CHANGE_REQUEST: RoomLaunch = RoomLaunch {
     pitch: 0,
     health: PLAYER_START_HEALTH,
     suit_equipped: false,
+    carry_count: 0,
     armor: 0,
     clip_ammo: GLOCK_MAX_CLIP,
     reserve_ammo: GLOCK_START_RESERVE,
@@ -2090,6 +2525,22 @@ static mut CHANGE_REQUEST: RoomLaunch = RoomLaunch {
 static mut CHANGE_REQUEST_ACTIVE: u8 = 0;
 static mut LOGIC_TRAM_RIDING: u8 = 0;
 static mut LOGIC_TRAM_SEAT: [i32; 3] = [0; 3]; // rider offset from the car pivot
+#[derive(Clone, Copy)]
+struct TramDynamicsCarry {
+    // Absolute turn angles in Q28; remaining camera fraction is Q16 low bits.
+    actual_yaw_q28: i32,
+    desired_yaw_q28: i32,
+    pending_push_q28: i32,
+    meta: u32, // bits 0..3 camera fraction, bit4 primed, bit5 valid
+}
+const TRAM_DYNAMICS_ZERO: TramDynamicsCarry = TramDynamicsCarry {
+    actual_yaw_q28: 0,
+    desired_yaw_q28: 0,
+    pending_push_q28: 0,
+    meta: 0,
+};
+const _: [(); 16] = [(); core::mem::size_of::<TramDynamicsCarry>()];
+static mut TRAM_DYNAMICS_CARRY: TramDynamicsCarry = TRAM_DYNAMICS_ZERO;
 // env_shake: camera rattle. amplitude (world units) * remaining/duration decays.
 static mut SHAKE_TICKS: u16 = 0;
 static mut SHAKE_DUR: u16 = 1;
@@ -2119,7 +2570,7 @@ unsafe fn add_view_punch(pitch: i32, yaw: i32) {
 // ---- func_tank: the mountable gun the player is currently operating ----
 static mut MOUNTED_TANK: i32 = -1; // logic index of the mounted tank, or -1
 static mut TANK_FIRE_CD: u16 = 0; // ticks until the tank can fire again
-// ---- Screen titles (env_message / chapter cards) + screen fades (env_fade) ----
+                                  // ---- Screen titles (env_message / chapter cards) + screen fades (env_fade) ----
 static mut TITLE_TEXT_ID: u16 = 0; // logic-names id of the text; 0 = none
 static mut TITLE_T: u16 = 0;
 static mut TITLE_HOLD: u16 = 0;
@@ -2136,7 +2587,7 @@ static mut FADE_T: u16 = 0;
 static mut FADE_DUR: u16 = 40;
 static mut FADE_HOLD: u16 = 0;
 static mut FADE_STARTDARK: bool = false; // worldspawn startdark: black until a fade fires
-// ---- CD music (CDDA tracks appended to the disc; HL track numbers pass through) ----
+                                         // ---- CD music (CDDA tracks appended to the disc; HL track numbers pass through) ----
 static mut CD_TRACK_WANT: i16 = 0; // >0 play, -1 stop, 0 none
 static mut CD_TRACK_CUR: i16 = 0;
 
@@ -2231,6 +2682,7 @@ fn menu_launch(room_id: usize) -> RoomLaunch {
         pitch: 0,
         health: PLAYER_START_HEALTH,
         suit_equipped: standalone_room_starts_with_hev(room_id),
+        carry_count: 0,
         armor: 0,
         clip_ammo: GLOCK_MAX_CLIP,
         reserve_ammo: GLOCK_START_RESERVE,
@@ -2268,19 +2720,36 @@ const LOGIC_PROP_NONE: u8 = 255;
 const SF_DOOR_START_OPEN: u16 = 1;
 const SF_DOOR_TOGGLE: u16 = 32;
 const SF_DOOR_USE_ONLY: u16 = 256;
+const SF_SCRIPT_REPEATABLE: u16 = 4;
+const SF_SCRIPT_NOINTERRUPT: u16 = 32;
 const SF_BUTTON_DONTMOVE: u16 = 1;
 const SF_BUTTON_TOGGLE: u16 = 32;
 const SF_BUTTON_TOUCH_ONLY: u16 = 256;
 const SF_TRIGGER_HURT_TARGET_ONCE: u16 = 1;
 const SF_TRIGGER_HURT_START_OFF: u16 = 2;
 const SF_TRIGGER_NOCLIENTS: u16 = 2; // player may NOT fire this trigger (monster-only)
+const SF_TRIGGER_PUSHABLES: u16 = 4; // func_pushable may fire independently of NOCLIENTS
 const SF_TRIGGER_PUSH_START_OFF: u16 = 2; // trigger_push spawns disabled
 const SF_RELAY_FIREONCE: u16 = 1; // trigger_relay removes itself after firing once
 const SF_BREAK_TRIGGER_ONLY: u16 = 1; // func_breakable: immune to gunfire
+const SF_TRACKTRAIN_NOCONTROL: u16 = 2; // scripted train: +use must not drive/toggle it
+const SF_CHANGELEVEL_USE_ONLY: u16 = 2; // named/target-fired, never Touch()
+const SF_ROTATING_INSTANT: u16 = 1;
+const SF_ROTATING_ACCDCC: u16 = 16;
+const SF_ROTATING_NOT_SOLID: u16 = 64;
+const LOGIC_TRAIN_EXTENDED: u8 = 2;
+const LOGIC_TRAIN_CYCLE_SHIFT: u8 = 2;
+const TRAIN_CORNER_TELEPORT: u16 = 0x8000;
+const TRAIN_CORNER_WAIT_TRIGGER_TELEPORT: u16 = 0xfffe;
+const ENT_KIND_PLATROT: u16 = 8;
+const ENT_KIND_PUSHABLE: u16 = 9;
 const TRIGGER_HURT_REPEAT_TICKS: u16 = 10;
 const TRAM_CARRY_RADIUS2: i32 = 384 * 384;
-const TRAM_CARRY_HEIGHT: i32 = 224;
-const TRAM_TURN_BLEND: i32 = 96; // units before a waypoint over which the yaw eases
+// Tracktrain pivots are not consistently near the passenger floor. c0a0b's
+// car floor is about 245 units below its path pivot while the surrounding intro
+// cars are near +30; keep enough vertical tolerance to retain a rider through
+// authored stop/resume points without broadening the already-bounded XZ test.
+const TRAM_CARRY_HEIGHT: i32 = 320;
 
 #[inline]
 fn time_reached(now: u16, at: u16) -> bool {
@@ -2305,9 +2774,10 @@ unsafe fn water_touch(nents: usize, pos: [i32; 3]) -> bool {
     while ei < nents {
         let e = ENT_CACHE[ei];
         if e.kind == 6 && ENT_ACTIVE[ei] != 0 {
-            let dx = (pos[0] - e.center[0]).abs();
-            let dy = (pos[1] - e.center[1]).abs();
-            let dz = (pos[2] - e.center[2]).abs();
+            let off = ent_draw_offset(ei);
+            let dx = (pos[0] - (e.center[0] + off[0])).abs();
+            let dy = (pos[1] - (e.center[1] + off[1])).abs();
+            let dz = (pos[2] - (e.center[2] + off[2])).abs();
             if dx <= e.mv[0] && dy <= e.mv[1] && dz <= e.mv[2] {
                 return true;
             }
@@ -2335,13 +2805,58 @@ unsafe fn ladder_touch(m: &Map, nents: usize, pos: [i32; 3]) -> bool {
     false
 }
 
+/// Finish a breakable's Die() path. +Use reaches this directly even for
+/// trigger-only brushes; weapon damage applies its immunity check before here.
+unsafe fn shatter_breakable(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    li: usize,
+    rec: map::LogicEnt,
+    now: u16,
+    depth: u8,
+) {
+    let Some(ei) = logic_valid_brush(rec.brush, nents) else {
+        return;
+    };
+    if ENT_ACTIVE[ei] == 0 || LOGIC_STATE[li] == LOGIC_STATE_REMOVED {
+        return;
+    }
+    LOGIC_BREAK_HP[li] = 0;
+    ENT_ACTIVE[ei] = 0;
+    LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+    pvs_cam_leaf_store(-1);
+    // Glass tinkles, everything else crunches (material key, arg1).
+    let snd = if rec.arg1 == 0 {
+        sfx::GLASS_BREAK
+    } else {
+        sfx::WOOD_BREAK
+    };
+    let e = ENT_CACHE[ei];
+    let sound_pos = if e.kind == ENT_KIND_PUSHABLE {
+        pushable_world_center(e, e.origin)
+    } else {
+        let off = ent_draw_offset(ei);
+        [
+            e.center[0] + off[0],
+            e.center[1] + off[1],
+            e.center[2] + off[2],
+        ]
+    };
+    sfx::play_world(snd, sound_pos);
+    logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, depth);
+}
+
 /// Damage a brush entity; breakables shatter at 0 HP (vanish, fire targets).
 unsafe fn damage_brush_ent(m: &Map, nlogic: usize, nents: usize, ei: usize, dmg: u8, now: u16) {
     if ei >= nents || ENT_ACTIVE[ei] == 0 {
         return;
     }
-    let li = ENT_BREAK_LOGIC[ei];
-    if li == u16::MAX || (li as usize) >= nlogic {
+    let li = ENT_BRUSH_LOGIC[ei];
+    if li == u16::MAX
+        || (li as usize) >= nlogic
+        || LOGIC_KIND[li as usize] != map::LOGIC_FUNC_BREAKABLE
+    {
         return;
     }
     let li = li as usize;
@@ -2356,12 +2871,7 @@ unsafe fn damage_brush_ent(m: &Map, nlogic: usize, nents: usize, ei: usize, dmg:
     let hp = hp.saturating_sub(dmg as u16);
     LOGIC_BREAK_HP[li] = hp;
     if hp == 0 {
-        ENT_ACTIVE[ei] = 0;
-        LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
-        // Glass tinkles, everything else crunches (material key, arg1).
-        let snd = if rec.arg1 == 0 { sfx::GLASS_BREAK } else { sfx::WOOD_BREAK };
-        sfx::play_world(snd, ENT_CACHE[ei].center);
-        logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, 0);
+        shatter_breakable(m, nlogic, nents, li, rec, now, 0);
     }
 }
 
@@ -2372,12 +2882,550 @@ unsafe fn ent_draw_offset(ei: usize) -> [i32; 3] {
         return [o[0] as i32, o[1] as i32, o[2] as i32];
     }
     let e = ENT_CACHE[ei];
-    if e.kind == 1 || e.kind == 3 {
+    if e.kind == ENT_KIND_PLATROT {
+        platrot_offset(e, ENT_PHASE[ei])
+    } else if e.kind == 1 || e.kind == 3 {
         scale12_vec(e.mv, ENT_PHASE[ei])
     } else if e.kind == 5 || e.kind == 7 {
-        [0; 3] // rotating (fan/door): origin is the PIVOT, not a translation
+        // Origin-brush vertices/hulls are entity-local in the BSP. The pivot
+        // is therefore their world translation (rotation is applied separately).
+        e.origin
     } else {
         e.origin
+    }
+}
+
+#[inline(always)]
+unsafe fn fan_logic_index(ei: usize) -> Option<usize> {
+    if ei >= MAX_ENTS {
+        return None;
+    }
+    let li = ENT_BRUSH_LOGIC[ei] as usize;
+    if li < MAX_LOGIC && LOGIC_KIND[li] == map::LOGIC_FUNC_ROTATING {
+        Some(li)
+    } else {
+        None
+    }
+}
+
+/// Current fan angle in the renderer's Q12 turn units. Targeted fans retain a
+/// physical Q16 phase in ENT_PHASE; untargeted cosmetic fans stay allocation-
+/// free by deriving the same phase from the local map tick.
+#[inline(always)]
+unsafe fn fan_angle_q12(ei: usize, map_tick: u32) -> u16 {
+    let e = ENT_CACHE[ei];
+    let phase_q16 = if fan_logic_index(ei).is_some() {
+        ENT_PHASE[ei]
+    } else {
+        let flags = e.mv[2] as u16;
+        logic_state::rotating_cosmetic_phase_q16(
+            map_tick,
+            e.mv[0] as i16,
+            (flags & SF_ROTATING_INSTANT) != 0,
+            (flags & SF_ROTATING_ACCDCC) != 0,
+            (e.mv[2] as u32 >> 16) as u16,
+        )
+    };
+    ((phase_q16 >> 4) as u16) & 0x0fff
+}
+
+#[inline(always)]
+fn fan_rotation(e: map::Ent, angle_q12: u16) -> Mat3I16 {
+    let a = angle_q12 >> 4;
+    match e.mv[1] {
+        1 => Mat3I16::rotate_x(a),
+        2 => Mat3I16::rotate_z(a),
+        _ => Mat3I16::rotate_y(a),
+    }
+}
+
+/// GoldSrc's SF_ROTATING_NOT_SOLID brushes never enter collision. Solid fans,
+/// including a stopped c1a2 fan, keep their live pivot-aware yaw hull so the
+/// authored gap between the blades remains the traversable route.
+#[inline(always)]
+unsafe fn fan_collision_disabled(ei: usize, e: map::Ent) -> bool {
+    let _ = ei;
+    e.kind == 5 && (e.mv[2] as u16 & SF_ROTATING_NOT_SOLID) != 0
+}
+
+#[inline(always)]
+fn pushable_max_speed(e: map::Ent) -> i32 {
+    (e.mv[0] as u32 & 0xffff) as i32
+}
+
+#[inline(always)]
+fn pushable_half_extents(e: map::Ent) -> [i32; 3] {
+    [(e.mv[0] as u32 >> 16) as i32, e.mv[1].abs(), e.mv[2].abs()]
+}
+
+#[inline(always)]
+fn pushable_world_center(e: map::Ent, off: [i32; 3]) -> [i32; 3] {
+    [
+        e.center[0] + off[0],
+        e.center[1] + off[1],
+        e.center[2] + off[2],
+    ]
+}
+
+/// `func_platrot` is stored in bottom->top phase order. Its BSP vertices and
+/// hull planes are entity-local, so this is the full world-space pivot rather
+/// than a delta applied to already-world-space geometry.
+#[inline(never)]
+fn platrot_offset(e: map::Ent, phase: i32) -> [i32; 3] {
+    [
+        e.origin[0],
+        e.origin[1] + ((e.mv[1] * phase.clamp(0, 4096)) >> 12),
+        e.origin[2],
+    ]
+}
+
+#[inline(never)]
+fn platrot_yaw(e: map::Ent, phase: i32) -> u16 {
+    ((((e.mv[0] * phase.clamp(0, 4096)) >> 12) as u16) & 0x0fff) & !0x000f
+}
+
+#[inline(never)]
+fn platrot_phase_from_offset(e: map::Ent, off: [i32; 3]) -> i32 {
+    if e.mv[1] == 0 {
+        0
+    } else {
+        (((off[1] - e.origin[1]) * 4096) / e.mv[1]).clamp(0, 4096)
+    }
+}
+
+#[inline(never)]
+fn platrot_world_to_local(p: [i32; 3], off: [i32; 3], yaw: u16) -> [i32; 3] {
+    let r = Mat3I16::rotate_y(yaw >> 4);
+    let d = [p[0] - off[0], p[1] - off[1], p[2] - off[2]];
+    [
+        ((r.m[0][0] as i32 * d[0]) + (r.m[2][0] as i32 * d[2])) >> 12,
+        d[1],
+        ((r.m[0][2] as i32 * d[0]) + (r.m[2][2] as i32 * d[2])) >> 12,
+    ]
+}
+
+#[inline(never)]
+fn platrot_local_to_world(p: [i32; 3], off: [i32; 3], yaw: u16) -> [i32; 3] {
+    let r = Mat3I16::rotate_y(yaw >> 4);
+    [
+        off[0] + dot12(r.m[0], p),
+        off[1] + p[1],
+        off[2] + dot12(r.m[2], p),
+    ]
+}
+
+#[inline(never)]
+fn platrot_carry_point(
+    e: map::Ent,
+    point: [i32; 3],
+    prev_off: [i32; 3],
+    now_off: [i32; 3],
+    now_phase: i32,
+) -> [i32; 3] {
+    let prev_phase = platrot_phase_from_offset(e, prev_off);
+    let local = platrot_world_to_local(point, prev_off, platrot_yaw(e, prev_phase));
+    platrot_local_to_world(local, now_off, platrot_yaw(e, now_phase))
+}
+
+/// Publish one cart translation to render, collision, PVS and actor LOS in the
+/// same simulation tick. Kept out of `play` for MIPS branch-span safety.
+#[inline(never)]
+unsafe fn pushable_publish_offset(m: &Map, movers: &mut [phys::Mover], ei: usize, next: [i32; 3]) {
+    let e = ENT_CACHE[ei];
+    let prev = e.origin;
+    if prev == next {
+        return;
+    }
+    let prev_center = pushable_world_center(e, prev);
+    let next_center = pushable_world_center(e, next);
+    ENT_CACHE[ei].origin = next;
+    let mut mi = 0usize;
+    while mi < movers.len() {
+        if movers[mi].id == ei as i32 {
+            movers[mi].off = next;
+            break;
+        }
+        mi += 1;
+    }
+    // Rebuild brush membership only when the live cart crosses a BSP leaf;
+    // ordinary within-leaf pushes avoid a full world-PVS rebuild every tick.
+    if camera_leaf(m, prev_center) != camera_leaf(m, next_center) {
+        pvs_cam_leaf_store(-1);
+    }
+    let mut pi = 0usize;
+    while pi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
+        PROP_OCC_VIS[pi] |= PROP_OCC_VISIBLE | PROP_OCC_DIRTY;
+        pi += 1;
+    }
+}
+
+/// Probe the cart's asymmetric live AABB a short distance below its bottom.
+/// Self collision is disabled only for this cold query; mover/world support is
+/// encoded back into ENT_PHASE without another array.
+#[inline(never)]
+unsafe fn pushable_detect_support(m: &Map, movers: &mut [phys::Mover], ei: usize) -> u16 {
+    let e = ENT_CACHE[ei];
+    let off = e.origin;
+    let c = pushable_world_center(e, off);
+    let h = pushable_half_extents(e);
+    let p1 = [c[0], c[1] - h[1] + 2, c[2]];
+    let p2 = [p1[0], p1[1] - 14, p1[2]];
+    let hit = phys::trace_down_support(m, movers, p1, p2, ei as i32);
+    match hit {
+        Some(hit) if hit.normal[1] > 2048 && hit.mover >= 0 => hit.mover as u16,
+        Some(hit) if hit.normal[1] > 2048 => pushable::SUPPORT_WORLD,
+        _ => pushable::SUPPORT_NONE,
+    }
+}
+
+/// Swept 3x3 samples on every leading AABB face. One Q12 minimum fraction
+/// clamps the whole move, so a 9-unit cart step cannot tunnel through a thin
+/// wall or another mover even though the cart's own hull is translated.
+#[inline(never)]
+unsafe fn pushable_sweep_fraction(
+    m: &Map,
+    movers: &mut [phys::Mover],
+    ei: usize,
+    delta: [i32; 3],
+) -> i32 {
+    if delta == [0, 0, 0] {
+        return 4096;
+    }
+    let e = ENT_CACHE[ei];
+    let c = pushable_world_center(e, e.origin);
+    let h = pushable_half_extents(e);
+    let mut self_slot = usize::MAX;
+    let mut mi = 0usize;
+    while mi < movers.len() {
+        if movers[mi].id == ei as i32 {
+            self_slot = mi;
+            break;
+        }
+        mi += 1;
+    }
+    let saved = if self_slot != usize::MAX {
+        let saved = movers[self_slot];
+        movers[self_slot].head = 0;
+        movers[self_slot].head0 = 0;
+        Some(saved)
+    } else {
+        None
+    };
+    let mut best = 4096;
+    let mut axis = 0usize;
+    while axis < 3 {
+        if delta[axis] != 0 {
+            let a = (axis + 1) % 3;
+            let b = (axis + 2) % 3;
+            let av = [-h[a], 0, h[a]];
+            let bv = [-h[b], 0, h[b]];
+            let mut ia = 0usize;
+            while ia < 3 {
+                let mut ib = 0usize;
+                while ib < 3 {
+                    let mut local = [0; 3];
+                    local[axis] = if delta[axis] > 0 { h[axis] } else { -h[axis] };
+                    local[a] = av[ia];
+                    local[b] = bv[ib];
+                    let p1 = [c[0] + local[0], c[1] + local[1], c[2] + local[2]];
+                    let p2 = [p1[0] + delta[0], p1[1] + delta[1], p1[2] + delta[2]];
+                    if let Some(hit) = phys::trace_line(m, movers, p1, p2) {
+                        best = best.min(pushable::safe_hit_fraction(hit.frac));
+                    }
+                    ib += 1;
+                }
+                ia += 1;
+            }
+        }
+        axis += 1;
+    }
+    if let Some(saved) = saved {
+        movers[self_slot] = saved;
+    }
+    best
+}
+
+#[inline(always)]
+fn pushable_player_overlap(e: map::Ent, player: &phys::Player) -> bool {
+    let c = pushable_world_center(e, e.origin);
+    let h = pushable_half_extents(e);
+    player.pos[0] - 18 <= c[0] + h[0]
+        && player.pos[0] + 18 >= c[0] - h[0]
+        && player.pos[1] <= c[1] + h[1] + 2
+        && player.pos[1] + 56 >= c[1] - h[1] - 2
+        && player.pos[2] - 18 <= c[2] + h[2]
+        && player.pos[2] + 18 >= c[2] - h[2]
+}
+
+#[inline(always)]
+fn pushable_wish(fwd: i32, strafe: i32, yaw: u16, max_speed: i32) -> (i32, i32) {
+    let s = sincos::sin_q12(yaw);
+    let c = sincos::sin_q12((yaw + 1024) & 0x0fff);
+    let wx = (s * fwd + c * strafe) / 128;
+    let wz = (c * fwd - s * strafe) / 128;
+    let round = |v: i32| {
+        if v >= 0 {
+            (v * max_speed + 2048) >> 12
+        } else {
+            -((-v * max_speed + 2048) >> 12)
+        }
+    };
+    let (x, z) = pushable::clamp_velocity(round(wx), round(wz), max_speed);
+    (x as i32, z as i32)
+}
+
+/// GoldSrc trigger flag 4 accepts func_pushable even when flag 2 rejects the
+/// player. This is a cold moved-cart pass, independent of the player hotlist.
+#[inline(never)]
+unsafe fn pushable_touch_triggers(m: &Map, nlogic: usize, nents: usize, ei: usize, now: u16) {
+    let e = ENT_CACHE[ei];
+    let c = pushable_world_center(e, e.origin);
+    let h = pushable_half_extents(e);
+    let mins = [c[0] - h[0], c[1] - h[1], c[2] - h[2]];
+    let maxs = [c[0] + h[0], c[1] + h[1], c[2] + h[2]];
+    let mut li = 0usize;
+    while li < nlogic {
+        if LOGIC_STATE[li] != LOGIC_STATE_REMOVED
+            && LOGIC_STATE[li] != LOGIC_STATE_WAITING
+            && matches!(
+                LOGIC_KIND[li],
+                map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE
+            )
+        {
+            let rec = m.logic(li);
+            if rec.spawnflags & SF_TRIGGER_PUSHABLES != 0
+                && master_ok(m, nlogic, rec.arg1)
+                && mins[0] <= rec.maxs[0]
+                && maxs[0] >= rec.mins[0]
+                && mins[1] <= rec.maxs[1]
+                && maxs[1] >= rec.mins[1]
+                && mins[2] <= rec.maxs[2]
+                && maxs[2] >= rec.mins[2]
+            {
+                logic_use_entity(
+                    m,
+                    nlogic,
+                    nents,
+                    li,
+                    map::USE_TOGGLE,
+                    now,
+                    0,
+                    logic_state::CALLER_NONE,
+                );
+                if rec.kind == map::LOGIC_TRIGGER_ONCE {
+                    LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+                } else if rec.wait_ticks >= 0 {
+                    LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+                    LOGIC_NEXT[li] = now.wrapping_add(rec.wait_ticks as u16);
+                }
+            }
+        }
+        li += 1;
+    }
+}
+
+/// Carry carts physically resting on a brush mover before the player carry
+/// publishes ENT_PREV_OFF. This is the sample-cart/lift parent relationship:
+/// no target link or extra resident array is involved.
+#[inline(never)]
+unsafe fn carry_pushables_on_support(m: &Map, movers: &mut [phys::Mover], nents: usize) {
+    let mut ei = 0usize;
+    while ei < nents {
+        if ENT_ACTIVE[ei] != 0 && ENT_CACHE[ei].kind == ENT_KIND_PUSHABLE {
+            let mut state = pushable::unpack(ENT_PHASE[ei]);
+            if state.support != pushable::SUPPORT_NONE && state.support != pushable::SUPPORT_WORLD {
+                let support = state.support as usize;
+                if support >= nents || support == ei || ENT_ACTIVE[support] == 0 {
+                    state.support = pushable::SUPPORT_NONE;
+                } else {
+                    let now = ent_draw_offset(support);
+                    let prev = ENT_PREV_OFF[support];
+                    let d = [now[0] - prev[0], now[1] - prev[1], now[2] - prev[2]];
+                    if d != [0, 0, 0] {
+                        let old = ENT_CACHE[ei].origin;
+                        pushable_publish_offset(
+                            m,
+                            movers,
+                            ei,
+                            [old[0] + d[0], old[1] + d[1], old[2] + d[2]],
+                        );
+                        state.dirty = true;
+                    }
+                    state.vy = 0;
+                }
+            } else if state.support == pushable::SUPPORT_WORLD {
+                state.vy = 0;
+            }
+            ENT_PHASE[ei] =
+                pushable::pack(state.vx, state.vz, state.vy, state.support, state.dirty);
+        }
+        ei += 1;
+    }
+}
+
+/// Player/cart contact, swept planar motion, gravity/support and PUSHABLES
+/// trigger dispatch. All heavy work stays outlined from the fixed-update loop.
+#[inline(never)]
+unsafe fn tick_pushables(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    movers: &mut [phys::Mover],
+    player: &mut phys::Player,
+    fwd: i32,
+    strafe: i32,
+    yaw: u16,
+    use_held: bool,
+    now: u16,
+) {
+    let mut ei = 0usize;
+    while ei < nents {
+        if ENT_ACTIVE[ei] == 0 || ENT_CACHE[ei].kind != ENT_KIND_PUSHABLE {
+            ei += 1;
+            continue;
+        }
+        let e = ENT_CACHE[ei];
+        let max_speed = pushable_max_speed(e);
+        let mut state = pushable::unpack(ENT_PHASE[ei]);
+        let mut contacted = false;
+        if player.on_ground
+            && player.ground_mover != ei as i32
+            && pushable_player_overlap(e, player)
+        {
+            let (wish_x, wish_z) = pushable_wish(fwd, strafe, yaw, max_speed);
+            let center = pushable_world_center(e, e.origin);
+            let toward =
+                wish_x * (center[0] - player.pos[0]) + wish_z * (center[2] - player.pos[2]);
+            let contact = pushable::contact_mode(
+                player.on_ground,
+                player.ground_mover == ei as i32,
+                true,
+                use_held,
+                wish_x != 0 || wish_z != 0,
+                toward,
+            );
+            if contact != pushable::CONTACT_NONE {
+                let (cart_wish_x, cart_wish_z) = if contact == pushable::CONTACT_PULL {
+                    (
+                        pushable::pull_component(wish_x),
+                        pushable::pull_component(wish_z),
+                    )
+                } else {
+                    (wish_x, wish_z)
+                };
+                state = pushable::accelerate(state, cart_wish_x, cart_wish_z, max_speed);
+                if contact == pushable::CONTACT_PUSH {
+                    // Normal touch synchronizes player/cart velocity like
+                    // CPushable::Touch. +use pull leaves player velocity alone.
+                    player.set_planar_velocity(state.vx as i32, state.vz as i32);
+                }
+                contacted = true;
+            }
+        }
+        if !contacted {
+            state = pushable::decay(state);
+        }
+
+        let planar = [state.vx as i32, 0, state.vz as i32];
+        if planar != [0, 0, 0] {
+            let frac = pushable_sweep_fraction(m, movers, ei, planar);
+            let step = [
+                pushable::swept_component(planar[0], frac),
+                0,
+                pushable::swept_component(planar[2], frac),
+            ];
+            if step != [0, 0, 0] {
+                let old = ENT_CACHE[ei].origin;
+                pushable_publish_offset(
+                    m,
+                    movers,
+                    ei,
+                    [old[0] + step[0], old[1], old[2] + step[2]],
+                );
+                state.dirty = true;
+            }
+            if frac < 4096 {
+                state.vx = 0;
+                state.vz = 0;
+            }
+            state.support = pushable_detect_support(m, movers, ei);
+        } else if state.dirty && state.support == pushable::SUPPORT_NONE {
+            // Initial map tick and a just-carried cart establish support once.
+            state.support = pushable_detect_support(m, movers, ei);
+        }
+
+        state = pushable::fall_step(state, 2);
+        if state.support == pushable::SUPPORT_NONE && state.vy != 0 {
+            let vertical = [0, state.vy as i32, 0];
+            let frac = pushable_sweep_fraction(m, movers, ei, vertical);
+            let dy = pushable::swept_component(vertical[1], frac);
+            if dy != 0 {
+                let old = ENT_CACHE[ei].origin;
+                pushable_publish_offset(m, movers, ei, [old[0], old[1] + dy, old[2]]);
+                state.dirty = true;
+            }
+            if frac < 4096 {
+                state.vy = 0;
+            }
+            let support = pushable_detect_support(m, movers, ei);
+            if support != pushable::SUPPORT_NONE {
+                state.support = support;
+                state.vy = 0;
+            }
+        }
+
+        ENT_PHASE[ei] = pushable::pack(state.vx, state.vz, state.vy, state.support, state.dirty);
+        if state.dirty {
+            pushable_touch_triggers(m, nlogic, nents, ei, now);
+            state.dirty = false;
+            ENT_PHASE[ei] = pushable::pack(state.vx, state.vz, state.vy, state.support, false);
+        }
+        ei += 1;
+    }
+}
+
+/// Apply one tick of brush-platform motion to a standing player, then publish
+/// every mover's current pose for the next tick. Keep this out of `play`: the
+/// diagnostic trace build is close to MIPS-I's PC16 branch-span limit, and the
+/// rotating-platform path is cold on nearly every campaign map.
+#[inline(never)]
+unsafe fn carry_player_on_brush_mover(player: &mut phys::Player, yaw: &mut u16, nents: usize) {
+    if player.ground_mover >= 0 && (player.ground_mover as usize) < nents {
+        let ei = player.ground_mover as usize;
+        let e = ENT_CACHE[ei];
+        let now_off = ent_draw_offset(ei);
+        let prev = ENT_PREV_OFF[ei];
+        if e.kind == ENT_KIND_PLATROT {
+            let prev_phase = platrot_phase_from_offset(e, prev);
+            let prev_yaw = platrot_yaw(e, prev_phase);
+            let now_yaw = platrot_yaw(e, ENT_PHASE[ei]);
+            if prev != now_off || prev_yaw != now_yaw {
+                player.pos = platrot_carry_point(e, player.pos, prev, now_off, ENT_PHASE[ei]);
+            }
+            // GoldSrc rotating pushers turn a standing client's delta angles;
+            // add only this tick's shortest quantized delta to preserve free-look.
+            let mut turn = (now_yaw.wrapping_sub(prev_yaw) & 0x0fff) as i32;
+            if turn > 2048 {
+                turn -= 4096;
+            }
+            *yaw = (((*yaw as i32) + turn) & 0x0fff) as u16;
+        } else {
+            let d = [
+                now_off[0] - prev[0],
+                now_off[1] - prev[1],
+                now_off[2] - prev[2],
+            ];
+            if d != [0, 0, 0] {
+                player.pos[0] += d[0];
+                player.pos[1] += d[1];
+                player.pos[2] += d[2];
+            }
+        }
+    }
+    let mut ei = 0usize;
+    while ei < nents {
+        ENT_PREV_OFF[ei] = ent_draw_offset(ei);
+        ei += 1;
     }
 }
 
@@ -2434,6 +3482,46 @@ unsafe fn logic_queue_tracktrain_command(rec: map::LogicEnt, use_type: u8) {
     TRACKTRAIN_CMD_SPEED = rec.speed;
 }
 
+/// Toggle a non-player func_tracktrain or a func_train in the shared brush
+/// train pool. The selected player tram stays on its dedicated curved path.
+unsafe fn logic_apply_brush_train_command(li: usize, rec: map::LogicEnt, use_type: u8) {
+    let brush = rec.brush as usize;
+    if brush >= MAX_ENTS {
+        return;
+    }
+    let t = ENT_TRAIN_SLOT[brush] as usize;
+    if t >= TRAIN_COUNT || train_logic_index(TRAIN_LI[t]) != li {
+        return;
+    }
+    let active = TRAIN_STATE[t] & TRAIN_ACTIVE_BIT != 0;
+    let enable = match use_type {
+        map::USE_ON => true,
+        map::USE_OFF => false,
+        _ => !active,
+    };
+    if enable {
+        // GoldSrc restarts a stopped tracktrain at its authored base speed;
+        // TRAIN_WAIT is the current-speed slot for tracktrains (func_train
+        // uses it as an actual wait countdown).
+        if !active && rec.kind == map::LOGIC_FUNC_TRACKTRAIN {
+            TRAIN_WAIT[t] = rec.speed.max(1);
+        } else if !active
+            && rec.kind == map::LOGIC_FUNC_TRAIN
+            && TRAIN_STATE[t] & TRAIN_WAITING_BIT != 0
+            && TRAIN_WAIT[t] == 0
+        {
+            // A path_corner wait=-1 stops for retrigger. Resuming consumes the
+            // stop marker and restores the effective speed from TRAIN_DIST.
+            TRAIN_WAIT[t] = (TRAIN_DIST[t] as u16).max(1);
+            TRAIN_DIST[t] = 0;
+            TRAIN_STATE[t] &= !TRAIN_WAITING_BIT;
+        }
+        TRAIN_STATE[t] |= TRAIN_ACTIVE_BIT;
+    } else {
+        TRAIN_STATE[t] &= !TRAIN_ACTIVE_BIT;
+    }
+}
+
 #[inline]
 unsafe fn logic_take_tracktrain_command() -> Option<(u8, i32)> {
     if TRACKTRAIN_CMD_ACTIVE == 0 {
@@ -2478,13 +3566,11 @@ fn logic_player_touch_candidate(rec: map::LogicEnt) -> bool {
     match rec.kind {
         map::LOGIC_TRIGGER_ONCE
         | map::LOGIC_TRIGGER_MULTIPLE
-        | map::LOGIC_TRIGGER_CHANGELEVEL
         | map::LOGIC_TRIGGER_HURT
         | map::LOGIC_TRIGGER_PUSH => true,
+        map::LOGIC_TRIGGER_CHANGELEVEL => (rec.spawnflags & SF_CHANGELEVEL_USE_ONLY) == 0,
         map::LOGIC_FUNC_BUTTON => (rec.spawnflags & SF_BUTTON_TOUCH_ONLY) != 0,
-        map::LOGIC_FUNC_DOOR => {
-            rec.targetname == 0 && (rec.spawnflags & SF_DOOR_USE_ONLY) == 0
-        }
+        map::LOGIC_FUNC_DOOR => rec.targetname == 0 && (rec.spawnflags & SF_DOOR_USE_ONLY) == 0,
         map::LOGIC_TRIGGER_TELEPORT | map::LOGIC_TRIGGER_GRAVITY => {
             (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0
         }
@@ -2497,24 +3583,27 @@ fn logic_player_touch_candidate(rec: map::LogicEnt) -> bool {
 fn logic_pre_tick_candidate(kind: u8) -> bool {
     matches!(
         kind,
-        map::LOGIC_FUNC_DOOR | map::LOGIC_FUNC_BUTTON | map::LOGIC_TRIGGER_MULTIPLE
+        map::LOGIC_FUNC_DOOR
+            | map::LOGIC_FUNC_BUTTON
+            | map::LOGIC_TRIGGER_MULTIPLE
+            | map::LOGIC_FUNC_ROTATING
+            | map::LOGIC_SCRIPTED
     )
 }
 
 #[inline]
-unsafe fn logic_enqueue_event(at: u16, target: u16, killtarget: u16, use_type: u8) {
+unsafe fn logic_enqueue_event(at: u16, target: u16, killtarget: u16, use_type: u8, caller_li: u16) {
     if target == 0 && killtarget == 0 {
         return;
     }
     let mut i = 0usize;
     while i < MAX_LOGIC_EVENTS {
-        if LOGIC_EVENTS[i].active == 0 {
+        if !logic_state::event_active(LOGIC_EVENTS[i].meta) {
             LOGIC_EVENTS[i] = LogicEvent {
                 at,
                 target,
                 killtarget,
-                use_type,
-                active: 1,
+                meta: logic_state::event_meta(true, use_type, caller_li),
             };
             return;
         }
@@ -2536,7 +3625,7 @@ unsafe fn logic_kill_targets(m: &Map, nlogic: usize, nents: usize, target: u16) 
     }
     // Named monsters die to killtargets too (the Blast Pit tentacles are
     // removed by the rocket's multi_manager this way).
-    let n = PROP_COUNT.min(MAX_PROPS);
+    let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     let mut pi = 0usize;
     while pi < n {
         if PROP_ACTIVE[pi] != 0 && PROP_NAME[pi] == target {
@@ -2571,6 +3660,10 @@ unsafe fn logic_landmark_origin_by_id(m: &Map, nlogic: usize, name_id: u16) -> O
 }
 
 fn launch_landmark_origin(m: &Map, nlogic: usize, name: LandmarkName) -> Option<[i32; 3]> {
+    launch_landmark_record(m, nlogic, name).map(|(_, origin)| origin)
+}
+
+fn launch_landmark_record(m: &Map, nlogic: usize, name: LandmarkName) -> Option<(u16, [i32; 3])> {
     if name.len == 0 {
         return None;
     }
@@ -2581,11 +3674,591 @@ fn launch_landmark_origin(m: &Map, nlogic: usize, name: LandmarkName) -> Option<
             && rec.targetname != 0
             && landmark_matches(name, m.logic_name(rec.targetname))
         {
-            return Some(rec.origin);
+            return Some((rec.targetname, rec.origin));
         }
         li += 1;
     }
     None
+}
+
+#[inline]
+fn actor_carry_hash(name: &str, global: bool) -> u16 {
+    let bytes = name.as_bytes();
+    let mut start = 0usize;
+    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    let mut end = bytes.len();
+    while end > start && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    if start == end {
+        return 0;
+    }
+    let mut h: u32 = 0x811c_9dc5;
+    let mut i = start;
+    while i < end {
+        h = (h ^ bytes[i].to_ascii_lowercase() as u32).wrapping_mul(0x0100_0193);
+        i += 1;
+    }
+    let mut id = ((h ^ (h >> 16)) as u16 & !CARRY_GLOBAL_BIT).max(1);
+    if global && id == 0x7fff {
+        id = 0x7ffe;
+    }
+    id | if global { CARRY_GLOBAL_BIT } else { 0 }
+}
+
+#[inline]
+fn carry_actor_capable(kind: u8) -> bool {
+    kind < N_MODEL_TYPES as u8
+        && !matches!(
+            kind,
+            PROP_TYPE_ITEM_SUIT
+                | PROP_TYPE_ITEM_BATTERY
+                | 16 // Gargantua: FCAP_DONT_SAVE
+                | PROP_TYPE_WEAPON_FIRST..=PROP_TYPE_LONGJUMP | 50 // Tentacle: !FCAP_ACROSS_TRANSITION
+        )
+}
+
+/// GoldSrc collision bounds mapped from HL (x,y,z-up) to runtime (x,y-up,z).
+/// This is deliberately independent of render radii: BigMomma and sentries
+/// have transition-visible boxes that their origins do not represent.
+#[inline]
+fn carry_actor_bounds(kind: u8, pos: [i32; 3]) -> ([i32; 3], [i32; 3]) {
+    let (mins, maxs) = match kind {
+        2 => ([-12, 0, -12], [12, 24, 12]), // headcrab
+        6 => ([-16, 0, -16], [16, 36, 16]), // houndeye
+        7 | 10 | 11 | 17 | 18 => ([-32, 0, -32], [32, 64, 32]), // broad aliens/bosses
+        12 => ([-16, -32, -16], [16, 0, 16]), // barnacle
+        13 | 14 => ([-1, 0, -1], [1, 2, 1]), // leech/cockroach
+        19 => ([-32, -32, -32], [32, 32, 32]), // ichthyosaur
+        20 => ([-16, -64, -16], [16, 64, 16]), // sentry
+        21 => ([-32, -16, -32], [32, 16, 32]), // turret
+        22 => ([-16, -16, -16], [16, 16, 16]), // miniturret
+        23 => ([-32, -64, -32], [32, 0, 32]), // Apache
+        24 => ([-5, 0, -5], [5, 2, 5]),     // flyer flock
+        PROP_TYPE_SITTING_SCI => ([-14, 0, -14], [14, 36, 14]),
+        _ => ([-16, 0, -16], [16, 72, 16]), // humanoids
+    };
+    (
+        [pos[0] + mins[0], pos[1] + mins[1], pos[2] + mins[2]],
+        [pos[0] + maxs[0], pos[1] + maxs[1], pos[2] + maxs[2]],
+    )
+}
+
+#[inline]
+fn aabb_overlaps(amins: [i32; 3], amaxs: [i32; 3], bmins: [i32; 3], bmaxs: [i32; 3]) -> bool {
+    amins[0] <= bmaxs[0]
+        && amaxs[0] >= bmins[0]
+        && amins[1] <= bmaxs[1]
+        && amaxs[1] >= bmins[1]
+        && amins[2] <= bmaxs[2]
+        && amaxs[2] >= bmins[2]
+}
+
+/// Recursively visit every BSP leaf touched by an AABB, matching Mod_BoxVisible
+/// instead of the tempting (and wrong for BigMomma) origin-only shortcut.
+fn carry_box_touches_pvs_node(
+    m: &Map,
+    node: i32,
+    mins: [i32; 3],
+    maxs: [i32; 3],
+    depth: u16,
+) -> bool {
+    if node < 0 {
+        return pvs_leaf_visible(m, (-node - 1) as usize);
+    }
+    if node as usize >= m.n_nodes || depth > 256 {
+        return true; // malformed/cyclic tree: preserve the actor conservatively
+    }
+    let nd = m.node(node as usize);
+    let mut near = [0; 3];
+    let mut far = [0; 3];
+    let mut axis = 0usize;
+    while axis < 3 {
+        if nd.n[axis] >= 0 {
+            near[axis] = mins[axis];
+            far[axis] = maxs[axis];
+        } else {
+            near[axis] = maxs[axis];
+            far[axis] = mins[axis];
+        }
+        axis += 1;
+    }
+    let min_side = dot12(nd.n, near) - nd.dist;
+    let max_side = dot12(nd.n, far) - nd.dist;
+    if min_side >= 0 {
+        carry_box_touches_pvs_node(m, nd.c0, mins, maxs, depth + 1)
+    } else if max_side < 0 {
+        carry_box_touches_pvs_node(m, nd.c1, mins, maxs, depth + 1)
+    } else {
+        carry_box_touches_pvs_node(m, nd.c0, mins, maxs, depth + 1)
+            || carry_box_touches_pvs_node(m, nd.c1, mins, maxs, depth + 1)
+    }
+}
+
+#[inline]
+unsafe fn carry_mail_write(
+    slot: usize,
+    kind: u8,
+    health: u8,
+    state: u8,
+    id: u16,
+    rel: [i16; 3],
+    yaw: u16,
+) {
+    let row = &mut PROP_NEAR_ENTS[CARRY_MAILBOX_FIRST + slot];
+    // init_prop_state invalidates nav high bytes in words 0..2 on arrival;
+    // the mailbox intentionally keeps its three byte fields in the low bytes.
+    row[0] = kind as u16;
+    row[1] = health as u16;
+    row[2] = state as u16;
+    row[3] = id;
+    row[4] = rel[0] as u16;
+    row[5] = rel[1] as u16;
+    row[6] = rel[2] as u16;
+    row[7] = yaw;
+}
+
+#[inline]
+unsafe fn carry_mail_read(slot: usize) -> (u8, u8, u8, u16, [i16; 3], u16) {
+    let row = &PROP_NEAR_ENTS[CARRY_MAILBOX_FIRST + slot];
+    (
+        row[0] as u8,
+        row[1] as u8,
+        row[2] as u8,
+        row[3],
+        [row[4] as i16, row[5] as i16, row[6] as i16],
+        row[7],
+    )
+}
+
+fn carry_name_id(m: &Map, carry_id: u16) -> u16 {
+    if carry_id == 0 || carry_id & CARRY_GLOBAL_BIT != 0 {
+        return 0;
+    }
+    let mut id = 1usize;
+    while id <= m.n_logic_names {
+        if actor_carry_hash(m.logic_name(id as u16), false) == carry_id {
+            return id as u16;
+        }
+        id += 1;
+    }
+    0
+}
+
+#[inline(never)]
+unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkName) -> u8 {
+    if PROP_COUNT > CARRY_MAILBOX_FIRST {
+        telemetry::debug_log("hl-psx: transition live-prop invariant exceeded");
+        return 0;
+    }
+    let Some((landmark_id, landmark_origin)) = launch_landmark_record(m, nlogic, landmark) else {
+        return 0;
+    };
+
+    let landmark_leaf = camera_leaf(m, landmark_origin);
+    let use_pvs = valid_pvs_leaf(m, landmark_leaf);
+    if use_pvs {
+        let (visofs, _, _) = m.leaf(landmark_leaf as usize);
+        decompress_vis(m, visofs, &mut VIS_BITS);
+    }
+
+    let mut carried = 0usize;
+    let mut pi = 0usize;
+    while pi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) && carried < CARRY_CAPACITY {
+        let kind = PROP_KIND[pi];
+        let mut carry_id = PROP_LOGIC_LINK[pi];
+        if carry_id == CARRY_ID_NONE && PROP_NAME[pi] != 0 {
+            // Compatibility with rooms cooked before PropRec gained carry_id.
+            carry_id = actor_carry_hash(m.logic_name(PROP_NAME[pi]), false);
+        }
+        if PROP_ACTIVE[pi] == 0
+            || PROP_DORMANT[pi] != 0
+            || carry_id == 0
+            || carry_id == CARRY_ID_NONE
+            || !carry_actor_capable(kind)
+        {
+            pi += 1;
+            continue;
+        }
+
+        let (mins, maxs) = carry_actor_bounds(kind, PROP_POS[pi]);
+        if use_pvs && !carry_box_touches_pvs_node(m, 0, mins, maxs, 0) {
+            pi += 1;
+            continue;
+        }
+
+        // A matching trigger_transition narrows the carry set. With no matching
+        // brush, GoldSrc accepts every PVS actor for this landmark.
+        let mut has_volume = false;
+        let mut inside_volume = false;
+        let mut li = 0usize;
+        while li < nlogic {
+            let rec = m.logic(li);
+            if rec.kind == map::LOGIC_TRIGGER_TRANSITION && rec.targetname == landmark_id {
+                has_volume = true;
+                inside_volume |= aabb_overlaps(mins, maxs, rec.mins, rec.maxs);
+            }
+            li += 1;
+        }
+        if has_volume && !inside_volume {
+            pi += 1;
+            continue;
+        }
+
+        let delta = [
+            PROP_POS[pi][0] - landmark_origin[0],
+            PROP_POS[pi][1] - landmark_origin[1],
+            PROP_POS[pi][2] - landmark_origin[2],
+        ];
+        if delta[0] < i16::MIN as i32
+            || delta[0] > i16::MAX as i32
+            || delta[1] < i16::MIN as i32
+            || delta[1] > i16::MAX as i32
+            || delta[2] < i16::MIN as i32
+            || delta[2] > i16::MAX as i32
+        {
+            telemetry::debug_log("hl-psx: transition actor offset overflow");
+            pi += 1;
+            continue;
+        }
+        let rel = [delta[0] as i16, delta[1] as i16, delta[2] as i16];
+        let carry_state = scientist_logic::pack_carry_state(
+            PROP_STATE[pi],
+            prop_scientist_flag(pi, PROP_SCI_FOLLOWING),
+            prop_scientist_flag(pi, PROP_SCI_PROVOKED),
+            prop_scientist_flag(pi, PROP_SCI_PREDISASTER),
+        );
+        carry_mail_write(
+            carried,
+            kind,
+            PROP_HEALTH[pi],
+            carry_state,
+            carry_id,
+            rel,
+            PROP_YAW[pi],
+        );
+        #[cfg(feature = "reference-trace")]
+        reference_trace::carry(
+            SIM_NOW,
+            "out",
+            carry_id,
+            kind,
+            PROP_HEALTH[pi],
+            PROP_STATE[pi],
+            PROP_POS[pi],
+        );
+        carried += 1;
+        pi += 1;
+    }
+
+    // GoldSrc overlays live global func_trains onto the destination copy even
+    // though CBasePlatTrain itself does not advertise ACROSS_TRANSITION. Reuse
+    // the remaining actor-mailbox rows: the 0xfe kind is outside every model
+    // type, so actor restore/model streaming skip it naturally.
+    let mut li = 0usize;
+    while li < nlogic && carried < CARRY_CAPACITY {
+        let rec = m.logic(li);
+        if rec.kind != map::LOGIC_FUNC_TRAIN || rec.arg0 == 0 || rec.arg0 & CARRY_GLOBAL_BIT == 0 {
+            li += 1;
+            continue;
+        }
+        let Some(ei) = logic_valid_brush(rec.brush, ENT_SOLID_COUNT) else {
+            li += 1;
+            continue;
+        };
+        let t = ENT_TRAIN_SLOT[ei] as usize;
+        if t >= TRAIN_COUNT || train_logic_index(TRAIN_LI[t]) != li || ENT_ACTIVE[ei] == 0 {
+            li += 1;
+            continue;
+        }
+
+        let off = ent_draw_offset(ei);
+        let mins = [
+            rec.mins[0] + off[0],
+            rec.mins[1] + off[1],
+            rec.mins[2] + off[2],
+        ];
+        let maxs = [
+            rec.maxs[0] + off[0],
+            rec.maxs[1] + off[1],
+            rec.maxs[2] + off[2],
+        ];
+        if use_pvs && !carry_box_touches_pvs_node(m, 0, mins, maxs, 0) {
+            li += 1;
+            continue;
+        }
+
+        let mut has_volume = false;
+        let mut inside_volume = false;
+        let mut vi = 0usize;
+        while vi < nlogic {
+            let volume = m.logic(vi);
+            if volume.kind == map::LOGIC_TRIGGER_TRANSITION && volume.targetname == landmark_id {
+                has_volume = true;
+                inside_volume |= aabb_overlaps(mins, maxs, volume.mins, volume.maxs);
+            }
+            vi += 1;
+        }
+        if has_volume && !inside_volume {
+            li += 1;
+            continue;
+        }
+
+        let e = ENT_CACHE[ei];
+        let center = [
+            e.center[0] + off[0],
+            e.center[1] + off[1],
+            e.center[2] + off[2],
+        ];
+        let delta = [
+            center[0] - landmark_origin[0],
+            center[1] - landmark_origin[1],
+            center[2] - landmark_origin[2],
+        ];
+        if delta[0] < i16::MIN as i32
+            || delta[0] > i16::MAX as i32
+            || delta[1] < i16::MIN as i32
+            || delta[1] > i16::MAX as i32
+            || delta[2] < i16::MIN as i32
+            || delta[2] > i16::MAX as i32
+        {
+            telemetry::debug_log("hl-psx: transition train offset overflow");
+            li += 1;
+            continue;
+        }
+        let waiting = TRAIN_STATE[t] & TRAIN_WAITING_BIT != 0;
+        let speed = if waiting {
+            TRAIN_DIST[t] as u16
+        } else {
+            TRAIN_WAIT[t]
+        };
+        let payload =
+            logic_state::pack_train_speed_wait(speed, if waiting { TRAIN_WAIT[t] } else { 0 });
+        carry_mail_write(
+            carried,
+            CARRY_TRAIN_TAG,
+            train_direction_code(m, li, TRAIN_SEG[t] as usize),
+            TRAIN_STATE[t],
+            rec.arg0,
+            [delta[0] as i16, delta[1] as i16, delta[2] as i16],
+            payload,
+        );
+        #[cfg(feature = "reference-trace")]
+        reference_trace::carry(
+            SIM_NOW,
+            "train-out",
+            rec.arg0,
+            CARRY_TRAIN_TAG,
+            TRAIN_SEG[t],
+            TRAIN_STATE[t],
+            center,
+        );
+        carried += 1;
+        li += 1;
+    }
+    carried as u8
+}
+
+#[inline(never)]
+unsafe fn restore_transition_actors(
+    m: &Map,
+    destination_landmark: Option<[i32; 3]>,
+    requested: u8,
+) -> u8 {
+    let Some(landmark_origin) = destination_landmark else {
+        return 0;
+    };
+    let mut applied = 0u8;
+    let mut slot = 0usize;
+    while slot < logic_state::carry_record_count(requested).min(CARRY_CAPACITY) {
+        let (kind, health, packed_state, carry_id, rel, yaw) = carry_mail_read(slot);
+        let (state, following, provoked, predisaster) =
+            scientist_logic::unpack_carry_state(packed_state);
+        if carry_id == 0 || carry_id == CARRY_ID_NONE || !carry_actor_capable(kind) {
+            slot += 1;
+            continue;
+        }
+
+        let global = carry_id & CARRY_GLOBAL_BIT != 0;
+        let mut pi = usize::MAX;
+        if global {
+            let mut existing = 0usize;
+            while existing < PROP_COUNT {
+                if PROP_LOGIC_LINK[existing] == carry_id {
+                    pi = existing;
+                    break;
+                }
+                existing += 1;
+            }
+        }
+        let overlay = pi != usize::MAX;
+        if !overlay {
+            if PROP_COUNT >= CARRY_MAILBOX_FIRST {
+                telemetry::debug_log("hl-psx: transition destination prop cap reached");
+                slot += 1;
+                continue;
+            }
+            pi = PROP_COUNT;
+            PROP_COUNT += 1;
+        }
+
+        let old_name = if overlay { PROP_NAME[pi] } else { 0 };
+        let pos = [
+            landmark_origin[0] + rel[0] as i32,
+            landmark_origin[1] + rel[1] as i32,
+            landmark_origin[2] + rel[2] as i32,
+        ];
+        PROP_ACTIVE[pi] = 1;
+        PROP_DORMANT[pi] = 0;
+        PROP_KIND[pi] = kind;
+        PROP_POS[pi] = pos;
+        PROP_YAW[pi] = yaw & 0x0fff;
+        let leaf = camera_leaf(m, pos);
+        PROP_LEAF[pi] = if leaf >= i16::MIN as i32 && leaf <= i16::MAX as i32 {
+            leaf as i16
+        } else {
+            0
+        };
+        PROP_STATE[pi] = if health == 0 {
+            PROP_STATE_DEAD
+        } else {
+            state.min(PROP_STATE_ATTACK)
+        };
+        PROP_ATTACK_COOLDOWN[pi] = 0;
+        PROP_MOVE_COOLDOWN[pi] = 0;
+        PROP_AI_TIMER[pi] = 0;
+        PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+        PROP_HEALTH[pi] = health;
+        PROP_HIT_FLASH[pi] = 0;
+        PROP_DEATH_START[pi] = if health == 0 {
+            0u16.wrapping_sub(300)
+        } else {
+            0
+        };
+        PROP_OCC_VIS[pi] = PROP_OCC_VISIBLE
+            | PROP_OCC_DIRTY
+            | if following { PROP_SCI_FOLLOWING } else { 0 }
+            | if provoked { PROP_SCI_PROVOKED } else { 0 }
+            | if predisaster { PROP_SCI_PREDISASTER } else { 0 };
+        PROP_LOGIC_LINK[pi] = carry_id;
+        PROP_NAME[pi] = if overlay {
+            old_name
+        } else {
+            carry_name_id(m, carry_id)
+        };
+        PROP_SCRIPT_GOAL[pi] = [0; 3];
+        PROP_SCRIPT_YAW[pi] = 0;
+        PROP_SCRIPT_MODE[pi] = 0;
+        PROP_SCRIPT_LI[pi] = u16::MAX;
+        PROP_SCRIPT_PLAY_CLIP[pi] = 0xff;
+        PROP_SCRIPT_IDLE_CLIP[pi] = 0xff;
+        PROP_SCRIPT_PLAY_UNTIL[pi] = 0;
+        PROP_NEAR_COUNT[pi] = 0xff;
+        prop_nav_cache_invalidate(pi);
+        #[cfg(feature = "reference-trace")]
+        reference_trace::carry(SIM_NOW, "in", carry_id, kind, health, PROP_STATE[pi], pos);
+        applied = applied.saturating_add(1);
+        slot += 1;
+    }
+    applied
+}
+
+#[inline(never)]
+unsafe fn restore_transition_trains(
+    m: &Map,
+    nlogic: usize,
+    destination_landmark: Option<[i32; 3]>,
+    requested: u8,
+) {
+    let Some(landmark_origin) = destination_landmark else {
+        return;
+    };
+    // A destination copy of a global train is dormant unless the engine's
+    // transition table actually carries that identity. This prevents an
+    // out-of-PVS global (notably c4a3a_1) from respawning as a fresh duplicate.
+    let mut li = 0usize;
+    while li < nlogic {
+        let rec = m.logic(li);
+        if rec.kind == map::LOGIC_FUNC_TRAIN
+            && rec.arg0 & CARRY_GLOBAL_BIT != 0
+            && rec.arg0 != CARRY_ID_NONE
+        {
+            if let Some(ei) = logic_valid_brush(rec.brush, ENT_SOLID_COUNT) {
+                ENT_ACTIVE[ei] = 0;
+                let t = ENT_TRAIN_SLOT[ei] as usize;
+                if t < TRAIN_COUNT {
+                    TRAIN_STATE[t] = 0;
+                }
+            }
+        }
+        li += 1;
+    }
+    let mut slot = 0usize;
+    while slot < logic_state::carry_record_count(requested).min(CARRY_CAPACITY) {
+        let (tag, direction, packed_state, carry_id, rel, payload) = carry_mail_read(slot);
+        if tag != CARRY_TRAIN_TAG || carry_id == 0 || carry_id == CARRY_ID_NONE {
+            slot += 1;
+            continue;
+        }
+
+        li = 0;
+        while li < nlogic {
+            let rec = m.logic(li);
+            if rec.kind == map::LOGIC_FUNC_TRAIN && rec.arg0 == carry_id {
+                let Some(ei) = logic_valid_brush(rec.brush, ENT_SOLID_COUNT) else {
+                    break;
+                };
+                let t = ENT_TRAIN_SLOT[ei] as usize;
+                if t >= TRAIN_COUNT || train_logic_index(TRAIN_LI[t]) != li {
+                    break;
+                }
+                let stride = if rec.flags & LOGIC_TRAIN_EXTENDED != 0 {
+                    3
+                } else {
+                    2
+                };
+                let ncorners = rec.aux_count / stride;
+                if ncorners == 0 {
+                    break;
+                }
+                let carried_center = [
+                    landmark_origin[0] + rel[0] as i32,
+                    landmark_origin[1] + rel[1] as i32,
+                    landmark_origin[2] + rel[2] as i32,
+                ];
+                let (seg, dist, center) = train_seek_position(m, li, carried_center, direction);
+                let (speed, wait_ticks) = logic_state::unpack_train_speed_wait(payload);
+                let waiting = packed_state & TRAIN_WAITING_BIT != 0;
+                TRAIN_SEG[t] = seg as u8;
+                TRAIN_STATE[t] = packed_state;
+                TRAIN_WAIT[t] = if waiting { wait_ticks } else { speed.max(1) };
+                TRAIN_DIST[t] = if waiting {
+                    speed.max(1).min(i16::MAX as u16) as i16
+                } else {
+                    dist
+                };
+                TRAIN_LI[t] = li as u16;
+                train_set_offset(rec, t, center);
+                ENT_ACTIVE[ei] = 1;
+                ENT_PREV_OFF[ei] = ent_draw_offset(ei);
+                #[cfg(feature = "reference-trace")]
+                reference_trace::carry(
+                    SIM_NOW,
+                    "train-in",
+                    carry_id,
+                    CARRY_TRAIN_TAG,
+                    TRAIN_SEG[t],
+                    TRAIN_STATE[t],
+                    center,
+                );
+                break;
+            }
+            li += 1;
+        }
+        slot += 1;
+    }
 }
 
 unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) {
@@ -2597,6 +4270,35 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
         telemetry::debug_log(map_name);
         return;
     };
+    // GoldSrc requires the player to be inside a matching transition volume,
+    // when one exists, in addition to touching trigger_changelevel.
+    let pmins = [
+        LOGIC_PLAYER_POS[0] - PLAYER_TOUCH_HALF_XZ,
+        LOGIC_PLAYER_POS[1],
+        LOGIC_PLAYER_POS[2] - PLAYER_TOUCH_HALF_XZ,
+    ];
+    let pmaxs = [
+        LOGIC_PLAYER_POS[0] + PLAYER_TOUCH_HALF_XZ,
+        LOGIC_PLAYER_POS[1] + PLAYER_TOUCH_HEIGHT,
+        LOGIC_PLAYER_POS[2] + PLAYER_TOUCH_HALF_XZ,
+    ];
+    let mut has_transition_volume = false;
+    let mut inside_transition_volume = false;
+    let mut li = 0usize;
+    while li < nlogic {
+        let volume = m.logic(li);
+        if volume.kind == map::LOGIC_TRIGGER_TRANSITION && volume.targetname == rec.arg1 {
+            has_transition_volume = true;
+            inside_transition_volume |= aabb_overlaps(pmins, pmaxs, volume.mins, volume.maxs);
+        }
+        li += 1;
+    }
+    if has_transition_volume && !inside_transition_volume {
+        telemetry::debug_log("hl-psx: player outside transition volume");
+        return;
+    }
+    #[cfg(feature = "reference-trace")]
+    reference_trace::changelevel(SIM_NOW, map_name, landmark_name);
     telemetry::debug_log("hl-psx: changelevel request");
     telemetry::debug_log(map_name);
     if !landmark_name.is_empty() {
@@ -2613,6 +4315,15 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
     } else {
         [0, 0, 0]
     };
+    let (post_target_hash, post_delay) = if rec.aux_count > 0 {
+        let post = m.logic_aux(rec.first_aux);
+        (
+            logic_state::logic_name_hash32(m.logic_name(post.target)),
+            post.delay_ticks,
+        )
+    } else {
+        (0, 0)
+    };
     CHANGE_REQUEST = RoomLaunch {
         room_id: room_id.min(u16::MAX as usize) as u16,
         landmark: landmark_from_str(landmark_name),
@@ -2621,12 +4332,17 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
         pitch: LOGIC_PLAYER_PITCH,
         health: LOGIC_PLAYER_HEALTH,
         suit_equipped: LOGIC_PLAYER_SUIT != 0,
+        carry_count: 0,
         armor: LOGIC_PLAYER_ARMOR,
         clip_ammo: LOGIC_PLAYER_CLIP_AMMO,
         reserve_ammo: LOGIC_PLAYER_RESERVE_AMMO,
         preserve_view: true,
         riding: LOGIC_TRAM_RIDING != 0,
-        ride_seat: LOGIC_TRAM_SEAT,
+        ride_seat: logic_state::pack_changelevel_payload(
+            LOGIC_TRAM_SEAT,
+            post_target_hash,
+            post_delay,
+        ),
     };
     #[cfg(feature = "emulator-telemetry")]
     debug_line(
@@ -2639,6 +4355,32 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
         ],
     );
     CHANGE_REQUEST_ACTIVE = 1;
+}
+
+/// Restore trigger_changelevel's engine-owned `changetarget` after the
+/// destination map has initialized. Cooked name ids are room-local, so the
+/// transition carries a stable hash and resolves it before the first tick.
+unsafe fn logic_schedule_changelevel_post_target(m: &Map, payload: [i32; 3], now: u16) {
+    let (target_hash, delay) = logic_state::unpack_changelevel_payload(payload);
+    if target_hash == 0 {
+        return;
+    }
+    let mut id = 1usize;
+    while id <= m.n_logic_names {
+        let name_id = id as u16;
+        if logic_state::logic_name_hash32(m.logic_name(name_id)) == target_hash {
+            logic_enqueue_event(
+                now.wrapping_add(delay),
+                name_id,
+                0,
+                map::USE_TOGGLE,
+                logic_state::CALLER_NONE,
+            );
+            return;
+        }
+        id += 1;
+    }
+    telemetry::debug_log("hl-psx: changelevel changetarget missing in destination");
 }
 
 unsafe fn logic_sub_use_targets(
@@ -2658,11 +4400,21 @@ unsafe fn logic_sub_use_targets(
             target,
             rec.killtarget,
             use_type,
+            li as u16,
         );
         return;
     }
     logic_kill_targets(m, nlogic, nents, rec.killtarget);
-    logic_fire_targets(m, nlogic, nents, target, use_type, now, depth + 1);
+    logic_fire_targets(
+        m,
+        nlogic,
+        nents,
+        target,
+        use_type,
+        now,
+        depth + 1,
+        li as u16,
+    );
 }
 
 /// Activate an untargeted door plus every door sharing its cook-assigned
@@ -2679,9 +4431,7 @@ unsafe fn master_ok(_m: &Map, nlogic: usize, master_name: u16) -> bool {
     let mut found = false;
     let mut li = 0usize;
     while li < nlogic {
-        if LOGIC_KIND[li] == map::LOGIC_MULTISOURCE
-            && logic_cached_targetname(li) == master_name
-        {
+        if LOGIC_KIND[li] == map::LOGIC_MULTISOURCE && logic_cached_targetname(li) == master_name {
             found = true;
             if LOGIC_STATE[li] == LOGIC_STATE_TOP {
                 return true; // satisfied -> unlocked
@@ -2710,7 +4460,9 @@ unsafe fn logic_activate_door_linked(
     }
     let mut oi = 0usize;
     while oi < nlogic {
-        if oi != li && LOGIC_STATE[oi] != LOGIC_STATE_REMOVED && LOGIC_KIND[oi] == map::LOGIC_FUNC_DOOR
+        if oi != li
+            && LOGIC_STATE[oi] != LOGIC_STATE_REMOVED
+            && LOGIC_KIND[oi] == map::LOGIC_FUNC_DOOR
         {
             let other = m.logic(oi);
             if other.targetname == 0 && other.arg0 == rec.arg0 {
@@ -2721,35 +4473,42 @@ unsafe fn logic_activate_door_linked(
     }
 }
 
-/// Fire a multisource's target once it is satisfied (all inputs fired, or its
-/// globalstate global is set). LOGIC_STATE_TOP marks it already-fired.
-unsafe fn logic_multisource_maybe_fire(
-    m: &Map,
-    nlogic: usize,
-    nents: usize,
-    li: usize,
-    rec: map::LogicEnt,
-    now: u16,
-) {
-    if LOGIC_STATE[li] == LOGIC_STATE_TOP {
-        return;
-    }
-    let inputs_done = rec.arg0 > 0 && LOGIC_COUNTER[li] >= rec.arg0 as i16;
-    let global_done = global_is_on(rec.arg1);
-    if inputs_done || global_done {
-        LOGIC_STATE[li] = LOGIC_STATE_TOP;
-        logic_fire_targets(m, nlogic, nents, rec.target, map::USE_TOGGLE, now, 0);
-    }
+#[inline(always)]
+unsafe fn logic_multisource_bits(li: usize) -> u32 {
+    LOGIC_COUNTER[li] as u16 as u32 | ((LOGIC_NEXT[li] as u32) << 16)
 }
 
-/// Re-evaluate every multisource (called when a global changes and once at map
-/// load, so a globalstate satisfied on a previous map fires its target here).
-unsafe fn logic_check_multisources(m: &Map, nlogic: usize, nents: usize, now: u16) {
+#[inline(always)]
+unsafe fn logic_multisource_store_bits(li: usize, bits: u32) {
+    LOGIC_COUNTER[li] = bits as u16 as i16;
+    LOGIC_NEXT[li] = (bits >> 16) as u16;
+}
+
+#[inline(always)]
+unsafe fn logic_multisource_refresh(li: usize, rec: map::LogicEnt) -> bool {
+    let complete = logic_state::multisource_complete(
+        logic_multisource_bits(li),
+        rec.aux_count.min(32) as u8,
+        rec.arg1 != 0,
+        global_is_on(rec.arg1),
+    );
+    LOGIC_STATE[li] = if complete {
+        LOGIC_STATE_TOP
+    } else {
+        LOGIC_STATE_BOTTOM
+    };
+    complete
+}
+
+/// Refresh cached master state after initialization or a global change. This
+/// intentionally never fires outputs: only an exact registered caller's input
+/// transition can produce a multisource completion edge.
+unsafe fn logic_check_multisources(m: &Map, nlogic: usize, _nents: usize, _now: u16) {
     let mut li = 0usize;
     while li < nlogic {
         if LOGIC_KIND[li] == map::LOGIC_MULTISOURCE {
             let rec = m.logic(li);
-            logic_multisource_maybe_fire(m, nlogic, nents, li, rec, now);
+            logic_multisource_refresh(li, rec);
         }
         li += 1;
     }
@@ -2763,14 +4522,17 @@ unsafe fn logic_fire_targets(
     use_type: u8,
     now: u16,
     depth: u8,
+    caller_li: u16,
 ) {
     if target == 0 || depth > 8 {
         return;
     }
+    #[cfg(feature = "reference-trace")]
+    reference_trace::target_fire(now, m.logic_name(target), use_type, depth);
     let mut li = 0usize;
     while li < nlogic {
         if LOGIC_STATE[li] != LOGIC_STATE_REMOVED && logic_cached_targetname(li) == target {
-            logic_use_entity(m, nlogic, nents, li, use_type, now, depth + 1);
+            logic_use_entity(m, nlogic, nents, li, use_type, now, depth + 1, caller_li);
         }
         li += 1;
     }
@@ -2795,7 +4557,14 @@ unsafe fn logic_fire_targets(
 unsafe fn logic_phase_step(rec: map::LogicEnt, ei: usize) -> i32 {
     let e = ENT_CACHE[ei];
     let speed = (rec.speed as i32).max(1);
-    if e.kind == 7 {
+    if e.kind == ENT_KIND_PLATROT {
+        // CFuncPlatRot uses the linear platform travel time for BOTH origin
+        // and angles. Round the per-tick phase upward so 216u at 80u/s lands
+        // in exactly ceil(216/80*20) = 54 simulation ticks.
+        let len = e.mv[1].abs().max(1);
+        let denom = 20 * len;
+        return ((speed * 4096 + denom - 1) / denom).clamp(1, 4096);
+    } else if e.kind == 7 {
         // Rotating door: mv[0] is an ANGLE, not a slide length, so the slide
         // formula gives nonsense. Open over a fixed ~1s (speed = deg/s scaled
         // against a nominal 100deg swing).
@@ -2806,11 +4575,34 @@ unsafe fn logic_phase_step(rec: map::LogicEnt, ei: usize) -> i32 {
 }
 
 unsafe fn logic_activate_door(nents: usize, li: usize, rec: map::LogicEnt, use_type: u8) {
-    let Some(_ei) = logic_valid_brush(rec.brush, nents) else {
+    let Some(ei) = logic_valid_brush(rec.brush, nents) else {
         return;
     };
     let state = LOGIC_STATE[li];
     if state == LOGIC_STATE_REMOVED {
+        return;
+    }
+    if ENT_CACHE[ei].kind == ENT_KIND_PLATROT {
+        // GoldSrc CFuncPlat::PlatUse ignores use while moving. For a toggle
+        // platform TOP is off and BOTTOM is on, the inverse of the shared
+        // door convention: ON requests bottom, OFF requests top.
+        if state != LOGIC_STATE_TOP && state != LOGIC_STATE_BOTTOM {
+            return;
+        }
+        let at_bottom = state == LOGIC_STATE_BOTTOM;
+        let should_toggle = match use_type {
+            map::USE_ON => !at_bottom,
+            map::USE_OFF => at_bottom,
+            _ => true,
+        };
+        if !should_toggle {
+            return;
+        }
+        if state == LOGIC_STATE_TOP {
+            LOGIC_STATE[li] = LOGIC_STATE_GOING_DOWN;
+        } else if (rec.spawnflags & SF_DOOR_TOGGLE) != 0 {
+            LOGIC_STATE[li] = LOGIC_STATE_GOING_UP;
+        }
         return;
     }
     match use_type {
@@ -2876,6 +4668,389 @@ unsafe fn logic_activate_button(
     }
 }
 
+#[inline(always)]
+unsafe fn prop_script_busy(pi: usize) -> bool {
+    PROP_SCRIPT_MODE[pi] != 0 || PROP_SCRIPT_LI[pi] != u16::MAX
+}
+
+#[inline(always)]
+unsafe fn prop_script_li(pi: usize) -> usize {
+    (PROP_SCRIPT_LI[pi] & PROP_SCRIPT_LI_MASK) as usize
+}
+
+#[inline(always)]
+unsafe fn prop_script_move_residue(pi: usize) -> (i32, i32) {
+    (
+        scientist_logic::script_q4_decode(PROP_SCRIPT_YAW[pi] >> PROP_SCRIPT_YAW_RESIDUE_SHIFT),
+        scientist_logic::script_q4_decode(PROP_SCRIPT_LI[pi] >> PROP_SCRIPT_LI_RESIDUE_SHIFT),
+    )
+}
+
+#[inline(always)]
+unsafe fn prop_script_move_residue_put(pi: usize, x: i32, z: i32) {
+    PROP_SCRIPT_YAW[pi] = (PROP_SCRIPT_YAW[pi] & PROP_SCRIPT_YAW_MASK)
+        | (scientist_logic::script_q4_encode(x) << PROP_SCRIPT_YAW_RESIDUE_SHIFT);
+    let li = PROP_SCRIPT_LI[pi];
+    if li != u16::MAX {
+        PROP_SCRIPT_LI[pi] = (li & !(PROP_SCRIPT_RESIDUE_MASK << PROP_SCRIPT_LI_RESIDUE_SHIFT))
+            | (scientist_logic::script_q4_encode(z) << PROP_SCRIPT_LI_RESIDUE_SHIFT);
+    }
+}
+
+#[inline(always)]
+unsafe fn prop_script_move_residue_clear(pi: usize) {
+    PROP_SCRIPT_YAW[pi] &= PROP_SCRIPT_YAW_MASK;
+    let li = PROP_SCRIPT_LI[pi];
+    if li != u16::MAX {
+        PROP_SCRIPT_LI[pi] = li & !(PROP_SCRIPT_RESIDUE_MASK << PROP_SCRIPT_LI_RESIDUE_SHIFT);
+    }
+}
+
+/// Release every piece of actor-side cinematic state before another script or
+/// normal AI is allowed to run.  In particular LI must be cleared on cancel so
+/// an interrupted sequence can never fire its completion outputs later.
+#[inline]
+unsafe fn prop_script_clear(pi: usize) {
+    PROP_SCRIPT_MODE[pi] = 0;
+    PROP_SCRIPT_LI[pi] = u16::MAX;
+    PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
+    PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
+    PROP_SCRIPT_PLAY_UNTIL[pi] = 0;
+    prop_scientist_set_flag(pi, PROP_SCRIPT_NOINTERRUPT, false);
+    prop_nav_cache_invalidate(pi);
+}
+
+/// Exact targetname selection is always attempted first.  A cooked classname
+/// selector is only the fallback, matching `CCineMonster::FindEntity`; it picks
+/// the first eligible living actor in cooked engine order inside m_flRadius.
+unsafe fn script_find_actor(rec: map::LogicEnt) -> Option<usize> {
+    let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut pi = 0usize;
+    while pi < n {
+        if PROP_ACTIVE[pi] != 0
+            && PROP_HEALTH[pi] > 0
+            && model_def(PROP_KIND[pi]).ai != AI_ITEM
+            && PROP_NAME[pi] != 0
+            && PROP_NAME[pi] == rec.arg0
+            && !prop_script_busy(pi)
+        {
+            return Some(pi);
+        }
+        pi += 1;
+    }
+
+    let wanted = scientist_logic::selector_kind(rec.flags)?;
+    let radius = (rec.wait_ticks as i32).max(0);
+    pi = 0;
+    while pi < n {
+        let p = PROP_POS[pi];
+        let delta = [
+            p[0] - rec.origin[0],
+            p[1] - rec.origin[1],
+            p[2] - rec.origin[2],
+        ];
+        if scientist_logic::script_candidate_eligible(
+            PROP_KIND[pi],
+            wanted,
+            PROP_ACTIVE[pi] != 0,
+            PROP_HEALTH[pi],
+            prop_script_busy(pi),
+            delta,
+            radius,
+        ) {
+            return Some(pi);
+        }
+        pi += 1;
+    }
+    None
+}
+
+#[inline(never)]
+unsafe fn script_assign_actor(m: &Map, li: usize, rec: map::LogicEnt, pi: usize, now: u16) {
+    let mode = match rec.arg1 {
+        0 | 5 => 3, // SCRIPT_WAIT: play in place, do not move/turn
+        1 => 1,
+        2 => 2,
+        4 => 4,
+        _ => 3,
+    };
+    PROP_SCRIPT_GOAL[pi] = [
+        rec.origin[0] as i16,
+        rec.origin[1] as i16,
+        rec.origin[2] as i16,
+    ];
+    PROP_SCRIPT_YAW[pi] = rec.speed & 0xFFF;
+    prop_nav_cache_invalidate(pi);
+    let pos = PROP_POS[pi];
+    // GoldSrc chooses the route once: full human-hull local move first, node
+    // graph only when that complete chord is obstructed. A succession of tiny
+    // point-clear steps walks straight toward a distant wall and selects the
+    // graph far too late (the c0a0e Barney route exposed this exactly).
+    let routed = (mode == 1 || mode == 2)
+        && m.n_nav != 0
+        && !phys::human_hull_line_clear(
+            m,
+            [pos[0], pos[1] + 36, pos[2]],
+            [rec.origin[0], rec.origin[1] + 36, rec.origin[2]],
+        )
+        // BuildRoute sets a node route only after FGetNodeRoute has found
+        // visible source/destination nodes and a real first hop. Merely seeing
+        // an obstructed local chord left the route bit armed with no waypoint,
+        // freezing the actor until its cinematic timeout.
+        && nav_route_available(m, pi, rec.origin);
+    PROP_SCRIPT_MODE[pi] = scientist_logic::script_route_mode(mode, routed);
+    PROP_SCRIPT_LI[pi] = li as u16;
+    if mode == 1 || mode == 2 {
+        PROP_MOVE_COOLDOWN[pi] = scientist_logic::SCRIPT_MOVE_START_ACTIVE_TICKS;
+        let dx = rec.origin[0] - pos[0];
+        let dz = rec.origin[2] - pos[2];
+        let distance =
+            isqrt_i32(dx.saturating_mul(dx).saturating_add(dz.saturating_mul(dz))).max(0) as u32;
+        let speed = scientist_logic::script_timeout_speed(mode, PROP_KIND[pi] == PROP_TYPE_BARNEY);
+        PROP_SCRIPT_PLAY_UNTIL[pi] =
+            now.wrapping_add(scientist_logic::script_move_timeout_ticks(distance, speed));
+    } else {
+        PROP_MOVE_COOLDOWN[pi] = 0;
+        PROP_SCRIPT_PLAY_UNTIL[pi] = now;
+    }
+    prop_scientist_set_flag(
+        pi,
+        PROP_SCRIPT_NOINTERRUPT,
+        rec.spawnflags & SF_SCRIPT_NOINTERRUPT != 0,
+    );
+    // aux[0] = (play_slot+1, idle_slot+1) resolved at cook.
+    if rec.aux_count >= 1 {
+        let a = m.logic_aux(rec.first_aux);
+        PROP_SCRIPT_PLAY_CLIP[pi] = if a.target != 0 {
+            (a.target - 1) as u8
+        } else {
+            0xFF
+        };
+        PROP_SCRIPT_IDLE_CLIP[pi] = if a.delay_ticks != 0 {
+            (a.delay_ticks - 1) as u8
+        } else {
+            0xFF
+        };
+    } else {
+        PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
+        PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
+    }
+}
+
+#[inline]
+unsafe fn script_play_hold_ticks(pi: usize) -> u16 {
+    const FALLBACK_TICKS: u16 = 40;
+    let clip = PROP_SCRIPT_PLAY_CLIP[pi];
+    if clip == 0xFF {
+        return 0;
+    }
+    let ty = (PROP_KIND[pi] as usize).min(N_MODEL_TYPES - 1);
+    let slot = TYPE_TO_SLOT[ty];
+    if slot == MODEL_SLOT_NONE {
+        FALLBACK_TICKS
+    } else {
+        loaded_model(slot as usize).clip_hold_ticks(clip as usize)
+    }
+}
+
+/// GoldSrc starts CineThink for a targeted scripted_sequence when m_iszIdle is
+/// present. It possesses the actor and moves it to the mark, but holds the idle
+/// clip until Use advances m_startTime. Encode that ownership in the existing
+/// script-mode high bit; no new actor array is required.
+unsafe fn script_prime_idle_actor(m: &Map, li: usize, rec: map::LogicEnt, pi: usize) {
+    script_assign_actor(m, li, rec, pi, 0);
+    PROP_SCRIPT_MODE[pi] = scientist_logic::script_primed_mode(PROP_SCRIPT_MODE[pi]);
+    // The play gesture begins only when this same script is later fired. The
+    // idle clip remains loaded and suspends ordinary AI while primed.
+    PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
+    PROP_STATE[pi] = PROP_STATE_IDLE;
+    // The gameplay clock is map-local, but SIM_NOW still contains the previous
+    // room's last tick while a changelevel initializes this room.
+    PROP_SCRIPT_PLAY_UNTIL[pi] = scientist_logic::SCRIPT_PRIME_DELAY_TICKS;
+}
+
+/// Gate the staged half of a targeted scripted_sequence outside tick_props so
+/// semantic/reference builds do not push that already-large MIPS function past
+/// a PC16 branch span. Returns true while the actor must remain held.
+#[inline(never)]
+unsafe fn script_primed_actor_holds(pi: usize, now: u16) -> bool {
+    let encoded_mode = PROP_SCRIPT_MODE[pi];
+    match scientist_logic::script_prime_gate(
+        encoded_mode,
+        PROP_STATE[pi] == PROP_STATE_MOVE,
+        time_reached(now, PROP_SCRIPT_PLAY_UNTIL[pi]),
+    ) {
+        scientist_logic::ScriptPrimeGate::Hold => true,
+        scientist_logic::ScriptPrimeGate::Execute => false,
+        scientist_logic::ScriptPrimeGate::StartMove => {
+            let g = PROP_SCRIPT_GOAL[pi];
+            let dx = g[0] as i32 - PROP_POS[pi][0];
+            let dz = g[2] as i32 - PROP_POS[pi][2];
+            let distance = isqrt_i32(dx.saturating_mul(dx).saturating_add(dz.saturating_mul(dz)))
+                .max(0) as u32;
+            let speed = scientist_logic::script_timeout_speed(
+                scientist_logic::script_base_mode(encoded_mode),
+                PROP_KIND[pi] == PROP_TYPE_BARNEY,
+            );
+            PROP_SCRIPT_PLAY_UNTIL[pi] =
+                now.wrapping_add(scientist_logic::script_move_timeout_ticks(distance, speed));
+            PROP_STATE[pi] = PROP_STATE_MOVE;
+            false
+        }
+    }
+}
+
+/// Advance one actor's cinematic state outside tick_props. Besides keeping the
+/// hot function's MIPS branches in range, this call is paid only by actors that
+/// actually carry script state; ordinary combat props stay on the direct path.
+#[inline(never)]
+unsafe fn tick_scripted_actor(m: &Map, pi: usize, primed_hold: bool) -> bool {
+    let scripted_mode = scientist_logic::script_base_mode(PROP_SCRIPT_MODE[pi]);
+    if primed_hold {
+        // Possessed by a targeted idle script, either waiting for CineThink or
+        // planted at the mark and waiting for this same script's Use.
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        return true;
+    }
+    if scripted_mode != 0 {
+        let g = PROP_SCRIPT_GOAL[pi];
+        let goal = [g[0] as i32, g[1] as i32, g[2] as i32];
+        let primed = scientist_logic::script_is_primed(PROP_SCRIPT_MODE[pi]);
+        let mode = scripted_mode;
+        let move_timed_out =
+            (mode == 1 || mode == 2) && time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]);
+        let arrived = if move_timed_out {
+            // Route/floor approximation may fail on an exotic set-piece.
+            // Planting at a deterministic deadline is preferable to suppressing
+            // this script's completion outputs forever.
+            #[cfg(feature = "reference-trace")]
+            reference_trace::nav_step(
+                SIM_NOW as u32,
+                pi as u16,
+                goal[0] - PROP_POS[pi][0],
+                goal[2] - PROP_POS[pi][2],
+                0x40,
+            );
+            prop_nav_cache_invalidate(pi);
+            // GoldSrc's TASK_PLANT_ON_SCRIPT copies the authored script
+            // origin verbatim.  It must not DROP_TO_FLOOR: hanging/crawling
+            // marks such as c1a1b's ceiling_dangle intentionally sit in 3D.
+            prop_set_pos_exact(m, pi, goal);
+            true
+        } else if mode == 3 {
+            true
+        } else if mode == 4 {
+            prop_nav_cache_invalidate(pi);
+            prop_set_pos_exact(m, pi, goal);
+            true
+        } else {
+            let start_pending = PROP_MOVE_COOLDOWN[pi] != 0;
+            // GoldSrc tests the 8-unit waypoint boundary before moving, then
+            // TASK_PLANT_ON_SCRIPT copies the exact mark. A post-step test
+            // silently widens the gate by one whole movement quantum.
+            if scientist_logic::script_at_mark(dist2_xz(PROP_POS[pi], goal), start_pending) {
+                true
+            } else {
+                let speed = scientist_logic::script_move_speed(
+                    mode,
+                    MOVE_TICK,
+                    PROP_KIND[pi] == PROP_TYPE_BARNEY,
+                ) as i32;
+                prop_move_towards_point(m, &[], pi, goal, speed);
+                PROP_STATE[pi] = PROP_STATE_MOVE;
+                false
+            }
+        };
+        if arrived {
+            if mode != 3 {
+                // TASK_PLANT_ON_SCRIPT snaps the actor exactly to the mark
+                // before the play sequence starts.
+                prop_set_pos_exact(m, pi, goal);
+                PROP_YAW[pi] = PROP_SCRIPT_YAW[pi] & PROP_SCRIPT_YAW_MASK;
+                prop_script_move_residue_clear(pi);
+            }
+            PROP_STATE[pi] = PROP_STATE_IDLE;
+            PROP_SCRIPT_MODE[pi] = if primed {
+                scientist_logic::script_primed_mode(0)
+            } else {
+                0
+            };
+            if primed {
+                // A staged idle script has reached its mark; do not complete it
+                // or fire outputs until the script is explicitly used.
+                PROP_SCRIPT_PLAY_UNTIL[pi] = 0;
+                return true;
+            }
+            // Hold the gesture at the mark before firing the script chain. A
+            // move-only script with no gesture completes on the next tick.
+            PROP_SCRIPT_PLAY_UNTIL[pi] = if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF {
+                SIM_NOW.wrapping_add(script_play_hold_ticks(pi))
+            } else {
+                SIM_NOW
+            };
+        }
+        return true;
+    }
+
+    // Scripted move finished: release the actor before firing outputs so the
+    // next script in a chain can immediately acquire the same actor.
+    if PROP_SCRIPT_LI[pi] != u16::MAX && time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]) {
+        let li = prop_script_li(pi);
+        prop_script_clear(pi);
+        if li < m.n_logic.min(MAX_LOGIC) {
+            let rec = m.logic(li);
+            logic_sub_use_targets(
+                m,
+                m.n_logic.min(MAX_LOGIC),
+                m.n_ents.min(MAX_ENTS),
+                li,
+                rec,
+                SIM_NOW,
+                map::USE_TOGGLE,
+                0,
+            );
+            if rec.spawnflags & SF_SCRIPT_REPEATABLE == 0 {
+                logic_remove_entity(li, rec, m.n_ents.min(MAX_ENTS));
+            }
+        }
+    }
+    if PROP_SCRIPT_IDLE_CLIP[pi] != 0xFF && PROP_HEALTH[pi] > 0 {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        return true;
+    }
+    false
+}
+
+enum ScriptOwnedActor {
+    None,
+    Primed(usize),
+    Playing,
+}
+
+#[inline]
+unsafe fn script_find_owned_actor(li: usize) -> ScriptOwnedActor {
+    let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut pi = 0usize;
+    while pi < n {
+        if PROP_ACTIVE[pi] != 0
+            && PROP_HEALTH[pi] > 0
+            && PROP_SCRIPT_LI[pi] != u16::MAX
+            && prop_script_li(pi) == li
+        {
+            return match scientist_logic::script_owned_use(
+                true,
+                scientist_logic::script_is_primed(PROP_SCRIPT_MODE[pi]),
+            ) {
+                scientist_logic::ScriptOwnedUse::AssignPrimed => ScriptOwnedActor::Primed(pi),
+                scientist_logic::ScriptOwnedUse::IgnorePlaying => ScriptOwnedActor::Playing,
+                scientist_logic::ScriptOwnedUse::Search => ScriptOwnedActor::None,
+            };
+        }
+        pi += 1;
+    }
+    ScriptOwnedActor::None
+}
+
 unsafe fn logic_use_entity(
     m: &Map,
     nlogic: usize,
@@ -2884,6 +5059,7 @@ unsafe fn logic_use_entity(
     use_type: u8,
     now: u16,
     depth: u8,
+    caller_li: u16,
 ) {
     if li >= nlogic || depth > 8 || LOGIC_STATE[li] == LOGIC_STATE_REMOVED {
         return;
@@ -2914,6 +5090,7 @@ unsafe fn logic_use_entity(
                     aux.target,
                     0,
                     map::USE_TOGGLE,
+                    li as u16,
                 );
                 ai += 1;
             }
@@ -2955,52 +5132,40 @@ unsafe fn logic_use_entity(
             }
         },
         map::LOGIC_FUNC_TRACKTRAIN => {
-            logic_queue_tracktrain_command(rec, use_type);
+            if rec.arg1 != 0 && rec.arg1 == TRACKTRAIN_SUBMODEL {
+                logic_queue_tracktrain_command(rec, use_type);
+            } else {
+                logic_apply_brush_train_command(li, rec, use_type);
+            }
         }
+        // CBreakable::Use calls Die immediately. This is intentionally distinct
+        // from weapon damage: SF_BREAK_TRIGGER_ONLY blocks bullets but exists
+        // specifically so path corners/managers can shatter the brush.
+        map::LOGIC_FUNC_BREAKABLE => shatter_breakable(m, nlogic, nents, li, rec, now, depth + 1),
+        // GoldSrc RotatingUse ignores USE_ON/OFF and looks only at current
+        // angular velocity. This makes c1a2's relay-authored USE_OFF stop the
+        // already-running fan while preserving ordinary toggle behavior.
+        map::LOGIC_FUNC_ROTATING => logic_use_rotating(nents, li, rec, now),
         map::LOGIC_SCRIPTED => {
-            // scripted_sequence v2: send the named monster to the script mark.
-            // arg0 = monster name id, arg1 = m_flMoveTo (1 walk, 2 run,
-            // 4/5 instant), speed field = script yaw (q12), origin = mark.
-            let n = PROP_COUNT.min(MAX_PROPS);
-            let mut pi = 0usize;
-            while pi < n {
-                if PROP_ACTIVE[pi] != 0
-                    && PROP_HEALTH[pi] > 0
-                    && PROP_NAME[pi] != 0
-                    && PROP_NAME[pi] == rec.arg0
-                {
-                    let mode = match rec.arg1 {
-                        0 => 4, // pose in place = snap to the mark
-                        1 => 1,
-                        2 => 2,
-                        _ => 4,
-                    };
-                    PROP_SCRIPT_GOAL[pi] = [
-                        rec.origin[0] as i16,
-                        rec.origin[1] as i16,
-                        rec.origin[2] as i16,
-                    ];
-                    PROP_SCRIPT_YAW[pi] = rec.speed & 0xFFF;
-                    prop_nav_cache_invalidate(pi);
-                    PROP_SCRIPT_MODE[pi] = mode;
-                    PROP_SCRIPT_LI[pi] = li as u16;
-                    // aux[0] = (play_slot+1, idle_slot+1) resolved at cook.
-                    if rec.aux_count >= 1 {
-                        let a = m.logic_aux(rec.first_aux);
-                        PROP_SCRIPT_PLAY_CLIP[pi] =
-                            if a.target != 0 { (a.target - 1) as u8 } else { 0xFF };
-                        PROP_SCRIPT_IDLE_CLIP[pi] = if a.delay_ticks != 0 {
-                            (a.delay_ticks - 1) as u8
-                        } else {
-                            0xFF
-                        };
-                    } else {
-                        PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
-                        PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
-                    }
-                    break;
-                }
-                pi += 1;
+            // arg0 remains the exact monster targetname. flags optionally
+            // carries classname type+1 and wait_ticks carries m_flRadius.
+            let actor = match script_find_owned_actor(li) {
+                ScriptOwnedActor::Primed(pi) => Some(pi),
+                // `CCineMonster::Use` deliberately ignores a duplicate Use
+                // while this same sequence is already playing.
+                ScriptOwnedActor::Playing => return,
+                ScriptOwnedActor::None => script_find_actor(rec),
+            };
+            if let Some(pi) = actor {
+                LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
+                script_assign_actor(m, li, rec, pi, now);
+            } else {
+                // The selected actor may belong to another cinematic. GoldSrc
+                // leaves this scripted_sequence alive and retries CineThink in
+                // one second; dropping the one-shot Use breaks c0a0e's
+                // barnwalk3 -> entrymm chain.
+                LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+                LOGIC_NEXT[li] = now.wrapping_add(scientist_logic::SCRIPT_RETRY_TICKS);
             }
         }
         map::LOGIC_WEAPONSTRIP => {
@@ -3064,10 +5229,41 @@ unsafe fn logic_use_entity(
             logic_check_multisources(m, nlogic, nents, now);
         }
         map::LOGIC_MULTISOURCE => {
-            // An input fired us. Count it; when all inputs (arg0) have fired, or
-            // our globalstate global is set, fire the target ONCE.
-            LOGIC_COUNTER[li] = LOGIC_COUNTER[li].saturating_add(1);
-            logic_multisource_maybe_fire(m, nlogic, nents, li, rec, now);
+            // Registration aux stores exact source LogicRec indices. Unknown
+            // callers (player/world/synthetic paths) do not mutate the gate.
+            let mut member = u8::MAX;
+            let mut ai = 0usize;
+            while ai < rec.aux_count.min(32) {
+                if m.logic_aux(rec.first_aux + ai).target == caller_li {
+                    member = ai as u8;
+                    break;
+                }
+                ai += 1;
+            }
+            let toggled = logic_state::multisource_toggle(
+                logic_multisource_bits(li),
+                rec.aux_count.min(32) as u8,
+                member,
+                rec.arg1 != 0,
+                global_is_on(rec.arg1),
+            );
+            if !toggled.accepted {
+                return;
+            }
+            logic_multisource_store_bits(li, toggled.bits);
+            LOGIC_STATE[li] = if toggled.complete {
+                LOGIC_STATE_TOP
+            } else {
+                LOGIC_STATE_BOTTOM
+            };
+            if toggled.became_complete {
+                let output_use = if rec.arg1 != 0 {
+                    map::USE_ON
+                } else {
+                    map::USE_TOGGLE
+                };
+                logic_fire_targets(m, nlogic, nents, rec.target, output_use, now, 0, li as u16);
+            }
         }
         map::LOGIC_ENV_EXPLOSION => {
             // Scripted explosion: FX + sound only (real damage is trigger_hurt).
@@ -3083,25 +5279,11 @@ unsafe fn logic_use_entity(
             FADE_HOLD = rec.speed;
             FADE_STARTDARK = false; // a real fade takes over the boot black
         }
-        map::LOGIC_FUNC_TRAIN => {
-            let brush = rec.brush as usize;
-            if brush < MAX_ENTS {
-                let t = ENT_TRAIN_SLOT[brush] as usize;
-                if t < TRAIN_COUNT && TRAIN_LI[t] as usize == li {
-                    let active = TRAIN_STATE[t] & TRAIN_ACTIVE_BIT;
-                    TRAIN_STATE[t] = match use_type {
-                        map::USE_ON => TRAIN_ACTIVE_BIT,
-                        map::USE_OFF => 0,
-                        _ if active != 0 => 0,
-                        _ => TRAIN_ACTIVE_BIT,
-                    };
-                }
-            }
-        }
+        map::LOGIC_FUNC_TRAIN => logic_apply_brush_train_command(li, rec, use_type),
         map::LOGIC_MONSTERMAKER => {
             // Wake one dormant spawn parked at this maker's origin.
             let mut pi = 0usize;
-            let n = PROP_COUNT.min(MAX_PROPS);
+            let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
             while pi < n {
                 if PROP_DORMANT[pi] != 0 && PROP_ACTIVE[pi] == 0 {
                     let d = [
@@ -3291,13 +5473,98 @@ unsafe fn logic_process_events(m: &Map, nlogic: usize, nents: usize, now: u16) {
     let mut i = 0usize;
     while i < MAX_LOGIC_EVENTS {
         let ev = LOGIC_EVENTS[i];
-        if ev.active != 0 && time_reached(now, ev.at) {
-            LOGIC_EVENTS[i].active = 0;
+        if logic_state::event_active(ev.meta) && time_reached(now, ev.at) {
+            LOGIC_EVENTS[i].meta = logic_state::event_meta(
+                false,
+                logic_state::event_use_type(ev.meta),
+                logic_state::event_caller(ev.meta),
+            );
             logic_kill_targets(m, nlogic, nents, ev.killtarget);
-            logic_fire_targets(m, nlogic, nents, ev.target, ev.use_type, now, 0);
+            logic_fire_targets(
+                m,
+                nlogic,
+                nents,
+                ev.target,
+                logic_state::event_use_type(ev.meta),
+                now,
+                0,
+                logic_state::event_caller(ev.meta),
+            );
         }
         i += 1;
     }
+}
+
+#[inline]
+unsafe fn logic_fire_door_close_target(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    li: usize,
+    rec: map::LogicEnt,
+    now: u16,
+) {
+    if rec.aux_count == 0 {
+        return;
+    }
+    let close_target = m.logic_aux(rec.first_aux).target;
+    logic_fire_targets(
+        m,
+        nlogic,
+        nents,
+        close_target,
+        map::USE_TOGGLE,
+        now,
+        0,
+        li as u16,
+    );
+}
+
+#[inline(always)]
+unsafe fn rotating_state(li: usize, ei: usize) -> logic_state::RotatingState {
+    logic_state::RotatingState {
+        phase_q16: ENT_PHASE[ei],
+        speed_percent: LOGIC_COUNTER[li],
+        state: LOGIC_STATE[li],
+        next_tick: LOGIC_NEXT[li],
+    }
+}
+
+#[inline(always)]
+unsafe fn store_rotating_state(li: usize, ei: usize, state: logic_state::RotatingState) {
+    ENT_PHASE[ei] = state.phase_q16;
+    LOGIC_COUNTER[li] = state.speed_percent;
+    LOGIC_STATE[li] = state.state;
+    LOGIC_NEXT[li] = state.next_tick;
+}
+
+#[inline]
+unsafe fn logic_use_rotating(nents: usize, li: usize, rec: map::LogicEnt, now: u16) {
+    let Some(ei) = logic_valid_brush(rec.brush, nents) else {
+        return;
+    };
+    let next = logic_state::rotating_use(
+        rotating_state(li, ei),
+        (rec.spawnflags & SF_ROTATING_ACCDCC) != 0,
+        now,
+    );
+    store_rotating_state(li, ei, next);
+}
+
+#[inline]
+unsafe fn logic_tick_rotating(nents: usize, li: usize, rec: map::LogicEnt, now: u16) {
+    let Some(ei) = logic_valid_brush(rec.brush, nents) else {
+        return;
+    };
+    let e = ENT_CACHE[ei];
+    let next = logic_state::rotating_tick(
+        rotating_state(li, ei),
+        e.mv[0] as i16,
+        rec.arg0,
+        (rec.spawnflags & SF_ROTATING_ACCDCC) != 0,
+        now,
+    );
+    store_rotating_state(li, ei, next);
 }
 
 unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
@@ -3315,6 +5582,11 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
         } else {
             scan
         };
+        if LOGIC_KIND[li] == map::LOGIC_FUNC_ROTATING {
+            logic_tick_rotating(nents, li, m.logic(li), now);
+            scan += 1;
+            continue;
+        }
         // Fast skip without decoding the blob record: idle-at-bottom recs (the
         // vast majority every tick) have nothing to do here.
         let state = LOGIC_STATE[li];
@@ -3328,6 +5600,18 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
         if state == LOGIC_STATE_WAITING {
             if time_reached(now, LOGIC_NEXT[li]) {
                 LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
+                if LOGIC_KIND[li] == map::LOGIC_SCRIPTED {
+                    logic_use_entity(
+                        m,
+                        nlogic,
+                        nents,
+                        li,
+                        map::USE_TOGGLE,
+                        now,
+                        0,
+                        logic_state::CALLER_NONE,
+                    );
+                }
             }
             scan += 1;
             continue;
@@ -3345,6 +5629,11 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
                         if ENT_PHASE[ei] >= 4096 {
                             sfx::play_world(sfx::DOOR_STOP, ENT_CACHE[ei].center);
                             LOGIC_STATE[li] = LOGIC_STATE_TOP;
+                            if rec.kind == map::LOGIC_FUNC_DOOR
+                                && rec.spawnflags & SF_DOOR_START_OPEN != 0
+                            {
+                                logic_fire_door_close_target(m, nlogic, nents, li, rec, now);
+                            }
                             logic_sub_use_targets(
                                 m,
                                 nlogic,
@@ -3384,6 +5673,9 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
                                     map::USE_TOGGLE,
                                     0,
                                 );
+                                if rec.spawnflags & SF_DOOR_START_OPEN == 0 {
+                                    logic_fire_door_close_target(m, nlogic, nents, li, rec, now);
+                                }
                             }
                         }
                     }
@@ -3497,6 +5789,7 @@ unsafe fn logic_try_use(
     m: &Map,
     nlogic: usize,
     nents: usize,
+    player_pos: [i32; 3],
     eye: [i32; 3],
     yaw: u16,
     pitch: i16,
@@ -3512,6 +5805,8 @@ unsafe fn logic_try_use(
         -dot12(rot.m[2], eye),
     ];
     let mut best = usize::MAX;
+    let mut best_prop = usize::MAX;
+    let mut best_score = i32::MAX;
 
     // PRIMARY: a forward ray from the crosshair. Whatever use-target brush the
     // player is actually looking at (within reach) wins -- this is what a player
@@ -3531,6 +5826,7 @@ unsafe fn logic_try_use(
                     let rec = m.logic(li);
                     if rec.brush as i32 == hit.mover && logic_is_use_target(rec) {
                         best = li;
+                        best_score = 0; // exact crosshair hit outranks cone candidates
                         break;
                     }
                 }
@@ -3539,51 +5835,113 @@ unsafe fn logic_try_use(
         }
     }
 
-    // FALLBACK: cone/radius search for when the ray misses (aiming near but not
-    // exactly at the target, or the target brush is behind non-solid glass).
-    // `ray_missed` is a constant captured before the loop, so when the forward
-    // ray already found a target the loop is skipped; otherwise it scans ALL
-    // candidates and `best` accumulates the lowest score.
-    let ray_missed = best == usize::MAX;
-    let mut best_score = i32::MAX;
+    // Cone/radius search for brushes and talk allies. Both use the same
+    // screen-space score, so whichever is more centred wins; an exact brush
+    // ray above has score zero and cannot be stolen by a nearby ally.
     let mut li = 0usize;
-    while ray_missed && li < nlogic {
+    while li < nlogic {
         if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
             let rec = m.logic(li);
             if logic_is_use_target(rec) {
                 let c = logic_center(rec);
                 let vz = dot12(rot.m[2], c) + base_t[2];
-                if vz > 0 && vz <= PLAYER_USE_REACH {
-                    let vx = dot12(rot.m[0], c) + base_t[0];
-                    let vy = dot12(rot.m[1], c) + base_t[1];
-                    // ~56 deg cone (was ~34). The tight cone couldn't reach low
-                    // console buttons -- you look DOWN at them, so their vertical
-                    // angle exceeds 34 deg at any distance inside reach. The score
-                    // below still prefers the most-centered target.
-                    if vx.abs() * 2 < vz * 3 && vy.abs() * 2 < vz * 3 {
-                        let score = vz + vx.abs() + vy.abs();
-                        // LOS to the target ignores the target's OWN brush hull
-                        // (the trace ends inside it); other movers still block.
-                        if score < best_score
-                            && phys::line_clear_world(m, eye, c)
-                            && phys::line_clear_movers_except(
-                                m,
-                                movers,
-                                eye,
-                                c,
-                                rec.brush as i32,
-                            )
-                        {
-                            best = li;
-                            best_score = score;
-                        }
+                let vx = dot12(rot.m[0], c) + base_t[0];
+                let vy = dot12(rot.m[1], c) + base_t[1];
+                if let Some(score) = scientist_logic::brush_use_score(vx, vy, vz, PLAYER_USE_REACH)
+                {
+                    // LOS to the target ignores the target's OWN brush hull
+                    // (the trace ends inside it); other movers still block.
+                    if score < best_score
+                        && phys::line_clear_world(m, eye, c)
+                        && phys::line_clear_movers_except(m, movers, eye, c, rec.brush as i32)
+                    {
+                        best = li;
+                        best_prop = usize::MAX;
+                        best_score = score;
                     }
                 }
             }
         }
         li += 1;
     }
-    if best != usize::MAX {
+
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut pi = 0usize;
+    while pi < nprops {
+        if (PROP_KIND[pi] == PROP_TYPE_SCIENTIST || PROP_KIND[pi] == PROP_TYPE_BARNEY)
+            && PROP_ACTIVE[pi] != 0
+        {
+            let following = prop_scientist_flag(pi, PROP_SCI_FOLLOWING);
+            let action = scientist_logic::follow_use(
+                PROP_HEALTH[pi] > 0,
+                following,
+                prop_scientist_flag(pi, PROP_SCI_PREDISASTER),
+                prop_scientist_flag(pi, PROP_SCI_PROVOKED),
+                prop_script_busy(pi),
+                prop_scientist_flag(pi, PROP_SCRIPT_NOINTERRUPT),
+            );
+            if action != scientist_logic::FollowUse::Ignore
+                && dist2_3(PROP_POS[pi], player_pos) <= SCIENTIST_USE_REACH * SCIENTIST_USE_REACH
+            {
+                // PlayerUse aims at the nearest point of the NPC bbox, not its
+                // render origin, and deliberately does not trace LOS.
+                let delta = scientist_logic::scientist_bbox_delta(eye, PROP_POS[pi]);
+                let vz = dot12(rot.m[2], delta);
+                let vx = dot12(rot.m[0], delta);
+                let vy = dot12(rot.m[1], delta);
+                if let Some(score) = scientist_logic::scientist_use_score(vx, vy, vz) {
+                    if score < best_score {
+                        best = usize::MAX;
+                        best_prop = pi;
+                        best_score = score;
+                    }
+                }
+            }
+        }
+        pi += 1;
+    }
+
+    if best_prop != usize::MAX {
+        let following = prop_scientist_flag(best_prop, PROP_SCI_FOLLOWING);
+        match scientist_logic::follow_use(
+            PROP_HEALTH[best_prop] > 0,
+            following,
+            prop_scientist_flag(best_prop, PROP_SCI_PREDISASTER),
+            prop_scientist_flag(best_prop, PROP_SCI_PROVOKED),
+            prop_script_busy(best_prop),
+            prop_scientist_flag(best_prop, PROP_SCRIPT_NOINTERRUPT),
+        ) {
+            scientist_logic::FollowUse::Start => {
+                // StartFollowing cancels an interruptible cinematic and never
+                // fires that script's target/killtarget.
+                if prop_script_busy(best_prop) {
+                    prop_script_clear(best_prop);
+                }
+                // SDK LimitFollowers(player, 1) prunes older talk followers
+                // beyond the first before adding this scientist. With the new
+                // actor that permits at most two total followers.
+                let mut kept = false;
+                let mut qi = 0usize;
+                while qi < nprops {
+                    if qi != best_prop && prop_scientist_flag(qi, PROP_SCI_FOLLOWING) {
+                        if kept {
+                            prop_scientist_set_flag(qi, PROP_SCI_FOLLOWING, false);
+                            prop_nav_cache_invalidate(qi);
+                        } else {
+                            kept = true;
+                        }
+                    }
+                    qi += 1;
+                }
+                prop_scientist_set_flag(best_prop, PROP_SCI_FOLLOWING, true);
+            }
+            scientist_logic::FollowUse::Stop => {
+                prop_scientist_set_flag(best_prop, PROP_SCI_FOLLOWING, false);
+                prop_nav_cache_invalidate(best_prop);
+            }
+            scientist_logic::FollowUse::Ignore => {}
+        }
+    } else if best != usize::MAX {
         let rec = m.logic(best);
         match rec.kind {
             // Wall chargers drain their juice into the player per use pulse. HL
@@ -3622,7 +5980,16 @@ unsafe fn logic_try_use(
                     sfx::play(sfx::DRY); // locked
                 }
             }
-            _ => logic_use_entity(m, nlogic, nents, best, map::USE_TOGGLE, now, 0),
+            _ => logic_use_entity(
+                m,
+                nlogic,
+                nents,
+                best,
+                map::USE_TOGGLE,
+                now,
+                0,
+                logic_state::CALLER_NONE,
+            ),
         }
     }
 }
@@ -3691,13 +6058,23 @@ unsafe fn logic_touch_triggers(
                     // always player-fired -- so the NOCLIENTS/master gate applies
                     // only to trigger_once/multiple (SDK CBaseTrigger).
                     let is_cl = rec.kind == map::LOGIC_TRIGGER_CHANGELEVEL;
-                    let gated = !is_cl
-                        && ((rec.spawnflags & SF_TRIGGER_NOCLIENTS) != 0
-                            || !master_ok(m, nlogic, rec.arg1));
-                    if !gated
-                        && LOGIC_STATE[li] != LOGIC_STATE_WAITING
-                    {
-                        logic_use_entity(m, nlogic, nents, li, map::USE_TOGGLE, now, 0);
+                    let gated = if is_cl {
+                        (rec.spawnflags & SF_CHANGELEVEL_USE_ONLY) != 0
+                    } else {
+                        (rec.spawnflags & SF_TRIGGER_NOCLIENTS) != 0
+                            || !master_ok(m, nlogic, rec.arg1)
+                    };
+                    if !gated && LOGIC_STATE[li] != LOGIC_STATE_WAITING {
+                        logic_use_entity(
+                            m,
+                            nlogic,
+                            nents,
+                            li,
+                            map::USE_TOGGLE,
+                            now,
+                            0,
+                            logic_state::CALLER_NONE,
+                        );
                         if rec.kind == map::LOGIC_TRIGGER_ONCE {
                             LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
                         } else if rec.kind == map::LOGIC_TRIGGER_MULTIPLE && rec.wait_ticks >= 0 {
@@ -3712,9 +6089,7 @@ unsafe fn logic_touch_triggers(
                     }
                 }
                 map::LOGIC_FUNC_DOOR => {
-                    if rec.targetname == 0
-                        && (rec.spawnflags & SF_DOOR_USE_ONLY) == 0
-                    {
+                    if rec.targetname == 0 && (rec.spawnflags & SF_DOOR_USE_ONLY) == 0 {
                         logic_activate_door_linked(m, nlogic, nents, li, rec, map::USE_TOGGLE);
                     }
                 }
@@ -3729,7 +6104,14 @@ unsafe fn logic_touch_triggers(
                         if time_reached(now, LOGIC_NEXT[li]) {
                             damage_player(health, armor, rec.arg0.max(1));
                             logic_sub_use_targets(
-                                m, nlogic, nents, li, rec, now, map::USE_TOGGLE, 0,
+                                m,
+                                nlogic,
+                                nents,
+                                li,
+                                rec,
+                                now,
+                                map::USE_TOGGLE,
+                                0,
                             );
                             LOGIC_NEXT[li] = now.wrapping_add(TRIGGER_HURT_REPEAT_TICKS);
                             if (rec.spawnflags & SF_TRIGGER_HURT_TARGET_ONCE) != 0 {
@@ -3761,9 +6143,7 @@ unsafe fn logic_touch_triggers(
                     // bit 2 here is PUSH_START_OFF, not NOCLIENTS (push uses its
                     // own touch, not CBaseTrigger::MultiTouch) -- so no NOCLIENTS
                     // check; the state gate below covers START_OFF.
-                    if rec.aux_count >= 2
-                        && LOGIC_STATE[li] != LOGIC_STATE_TOP
-                    {
+                    if rec.aux_count >= 2 && LOGIC_STATE[li] != LOGIC_STATE_TOP {
                         let a = m.logic_aux(rec.first_aux);
                         let b = m.logic_aux(rec.first_aux + 1);
                         PUSH_IMPULSE = [
@@ -3799,7 +6179,7 @@ unsafe fn logic_find_matching_prop(kind: u8, origin: [i32; 3]) -> u8 {
     let Some(prop_kind) = logic_item_prop_kind(kind) else {
         return LOGIC_PROP_NONE;
     };
-    let nprops = PROP_COUNT.min(MAX_PROPS);
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     let mut pi = 0usize;
     while pi < nprops {
         let pos = PROP_POS[pi];
@@ -3830,13 +6210,20 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     let mut ei = 0usize;
     while ei < MAX_ENTS {
         ENT_ACTIVE[ei] = if ei < nents { 1 } else { 0 };
-        ENT_PHASE[ei] = 0;
+        ENT_PHASE[ei] = if ei < nents && ENT_CACHE[ei].kind == ENT_KIND_PUSHABLE {
+            // The initial dirty bit requests one cold support/trigger probe.
+            // Position remains in ENT_CACHE.origin, so carts consume no new
+            // resident array even with signed fall velocity and mover support.
+            pushable::pack(0, 0, 0, pushable::SUPPORT_NONE, true)
+        } else {
+            0
+        };
         ENT_PREV_OFF[ei] = if ei < nents {
             ent_draw_offset(ei)
         } else {
             [0; 3]
         };
-        ENT_BREAK_LOGIC[ei] = u16::MAX;
+        ENT_BRUSH_LOGIC[ei] = u16::MAX;
         ei += 1;
     }
     let mut li = 0usize;
@@ -3943,7 +6330,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
             }
             map::LOGIC_TRIGGER_AUTO => {
                 let at = now.wrapping_add(rec.delay_ticks.max(1));
-                logic_enqueue_event(at, rec.target, rec.killtarget, rec.use_type);
+                logic_enqueue_event(at, rec.target, rec.killtarget, rec.use_type, li as u16);
             }
             map::LOGIC_ITEM_SUIT | map::LOGIC_ITEM_BATTERY => {
                 let pi = logic_find_matching_prop(rec.kind, rec.origin);
@@ -3965,12 +6352,31 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
             map::LOGIC_FUNC_BREAKABLE => {
                 LOGIC_BREAK_HP[li] = rec.arg0.max(1);
                 if let Some(ei) = logic_valid_brush(rec.brush, nents) {
-                    ENT_BREAK_LOGIC[ei] = li as u16;
+                    ENT_BRUSH_LOGIC[ei] = li as u16;
+                }
+            }
+            map::LOGIC_FUNC_ROTATING => {
+                if let Some(ei) = logic_valid_brush(rec.brush, nents) {
+                    ENT_BRUSH_LOGIC[ei] = li as u16;
+                    ENT_PHASE[ei] = 0;
+                    LOGIC_COUNTER[li] = 0;
+                    if (rec.spawnflags & SF_ROTATING_INSTANT) != 0 {
+                        // SDK SUB_CallUseToggle waits 1.5 seconds after spawn
+                        // before starting an INSTANT fan.
+                        LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+                        // Client/server startup puts the first SUB_CallUseToggle
+                        // on local fixed tick 31 in the deterministic reference.
+                        LOGIC_NEXT[li] = now.wrapping_add(logic_state::ROTATING_AUTO_START_TICKS);
+                    }
                 }
             }
             map::LOGIC_FUNC_TRACKTRAIN => {
                 if rec.arg1 != 0 && rec.arg1 == TRACKTRAIN_SUBMODEL {
-                    TRACKTRAIN_USE_SPEED = rec.speed.max(40); // player drive speed
+                    TRACKTRAIN_USE_SPEED = if rec.spawnflags & SF_TRACKTRAIN_NOCONTROL != 0 {
+                        0
+                    } else {
+                        rec.speed.max(40)
+                    };
                     if rec.arg0 > 0 {
                         TRACKTRAIN_CMD_ACTIVE = 1;
                         TRACKTRAIN_CMD_USE_TYPE = map::USE_ON;
@@ -4009,8 +6415,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
             if LOGIC_KIND[li] == map::LOGIC_BEAM {
                 let next = LOGIC_BEAM_COUNT as usize + 1;
                 let slot = MAX_LOGIC - LOGIC_SPARK_COUNT as usize - next;
-                let low_end =
-                    nlogic + LOGIC_TOUCH_COUNT as usize + LOGIC_PRE_COUNT as usize;
+                let low_end = nlogic + LOGIC_TOUCH_COUNT as usize + LOGIC_PRE_COUNT as usize;
                 if slot >= low_end {
                     LOGIC_BREAK_HP[slot] = li as u16;
                     LOGIC_BEAM_COUNT += 1;
@@ -4050,8 +6455,7 @@ fn culled(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
 /// multiply is one MIPS `mult`; only i64 DIVISION is the known miscompile.
 #[inline]
 fn culled_soft(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
-    let cr = (b.0 - a.0) as i64 * (c.1 - a.1) as i64
-        - (c.0 - a.0) as i64 * (b.1 - a.1) as i64;
+    let cr = (b.0 - a.0) as i64 * (c.1 - a.1) as i64 - (c.0 - a.0) as i64 * (b.1 - a.1) as i64;
     cr >= 0 // >= 0 (was <= 0): det -1 camera flips the projected winding
 }
 
@@ -4160,7 +6564,11 @@ fn debug_line(tag: &str, vals: &[(&str, i32)]) {
 
 fn append_kv(buf: &mut [u8], n: &mut usize, label: &str, v: i32) {
     let mut nb = [0u8; I32_DEC_MAX];
-    for &c in label.as_bytes().iter().chain(i32_dec(&mut nb, v).as_bytes()) {
+    for &c in label
+        .as_bytes()
+        .iter()
+        .chain(i32_dec(&mut nb, v).as_bytes())
+    {
         if *n < buf.len() {
             buf[*n] = c;
             *n += 1;
@@ -4174,7 +6582,14 @@ fn append_kv(buf: &mut [u8], n: &mut usize, label: &str, v: i32) {
 
 /// DEBUG: one compact line per dump -> PSoXide's Play debug terminal. Two lines
 /// (the showing frame and the missing frame) are easy to eyeball side by side.
-unsafe fn xhair_dump(eye: [i32; 3], yaw: u16, pitch: i16, cam_leaf: i32, prims: i32, vis_faces: i32) {
+unsafe fn xhair_dump(
+    eye: [i32; 3],
+    yaw: u16,
+    pitch: i16,
+    cam_leaf: i32,
+    prims: i32,
+    vis_faces: i32,
+) {
     let mut buf = [0u8; 192];
     let mut n = 0usize;
     append_kv(&mut buf, &mut n, "XH v=", XHAIR.valid as i32);
@@ -4226,14 +6641,43 @@ fn prop_target(ty: u8, org: [i32; 3]) -> [i32; 3] {
 }
 
 #[inline]
-fn prop_occlusion_visible(m: &Map, eye: [i32; 3], ty: u8, org: [i32; 3]) -> bool {
+fn prop_visual_ray_clear(
+    m: &Map,
+    movers: &[phys::Mover],
+    eye: [i32; 3],
+    target: [i32; 3],
+    ignore_center: [i32; 3],
+    ignore_radius: i32,
+) -> bool {
+    phys::line_clear_world_visual(m, eye, target)
+        && phys::line_clear_movers_visual(m, movers, eye, target, ignore_center, ignore_radius)
+}
+
+#[inline]
+fn prop_occlusion_visible(
+    m: &Map,
+    movers: &[phys::Mover],
+    eye: [i32; 3],
+    ty: u8,
+    org: [i32; 3],
+) -> bool {
     if !MODEL_OCCLUSION_CULL {
         return true;
     }
-    if phys::line_clear_world(m, eye, prop_target(ty, org)) {
-        return true;
-    }
-    phys::line_clear_world(m, eye, [org[0], org[1] + (PROP_TARGET_HEIGHT / 2), org[2]])
+    let def = model_def(ty);
+    let h = def.target_h.max(8);
+    // Barney is sometimes staged touching a moving door brush. Ignore only a
+    // mover whose bounds overlap his render sphere; unrelated doors still
+    // occlude him normally.
+    let ignore_radius = if ty == PROP_TYPE_BARNEY {
+        def.radius
+    } else {
+        0
+    };
+    let high = [org[0], org[1] + h, org[2]];
+    let mid = [org[0], org[1] + (h / 2).max(20), org[2]];
+    prop_visual_ray_clear(m, movers, eye, high, org, ignore_radius)
+        || prop_visual_ray_clear(m, movers, eye, mid, org, ignore_radius)
 }
 
 #[inline(never)]
@@ -4282,17 +6726,19 @@ fn prop_anim_frame(
     let clip = prop_clip(state, hit_flash > 0);
     // Scripted override: one-shot gesture while its window runs, else the
     // scripted idle pose while the prop is idle (sit1, standing_idle, ...).
-    let clip = unsafe {
+    let (clip, scripted_play) = unsafe {
         if state == PROP_STATE_DEAD || hit_flash > 0 {
-            clip
-        } else if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF
+            (clip, false)
+        } else if PROP_SCRIPT_MODE[pi] == 0
+            && PROP_SCRIPT_LI[pi] != u16::MAX
+            && PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF
             && !time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi])
         {
-            PROP_SCRIPT_PLAY_CLIP[pi] as usize
+            (PROP_SCRIPT_PLAY_CLIP[pi] as usize, true)
         } else if PROP_SCRIPT_IDLE_CLIP[pi] != 0xFF && state == PROP_STATE_IDLE {
-            PROP_SCRIPT_IDLE_CLIP[pi] as usize
+            (PROP_SCRIPT_IDLE_CLIP[pi] as usize, false)
         } else {
-            clip
+            (clip, false)
         }
     };
     let clip = clip.min(md.n_clips.saturating_sub(1));
@@ -4318,6 +6764,24 @@ fn prop_anim_frame(
         let pain_frame = PROP_HIT_FLASH_TICKS.saturating_sub(hit_flash) as usize;
         let f = md.clip_frame(clip, pain_frame.min(len.saturating_sub(1)));
         return (f, f, 0);
+    }
+    if scripted_play {
+        // Script clips are aggressively RAM-sampled (often just first/last
+        // pose). Traverse those poses once over the source MDL's packed
+        // duration instead of looping them every few ticks while the script
+        // waits to complete.
+        let duration = md.clip_hold_ticks(clip).max(1) as usize;
+        let start = unsafe { PROP_SCRIPT_PLAY_UNTIL[pi] }.wrapping_sub(duration as u16);
+        let elapsed = unsafe { SIM_NOW }.wrapping_sub(start) as usize;
+        let span16 = len.saturating_sub(1).saturating_mul(16);
+        let phase16 = elapsed.min(duration).saturating_mul(span16) / duration;
+        let local = (phase16 / 16).min(len.saturating_sub(1));
+        let next = (local + 1).min(len.saturating_sub(1));
+        return (
+            md.clip_frame(clip, local),
+            md.clip_frame(clip, next),
+            (phase16 & 15) as u32,
+        );
     }
     let phase = sim_frame_no as usize + pi.wrapping_mul(3);
     let div = if state == PROP_STATE_ATTACK || ty == PROP_TYPE_HEADCRAB && state == PROP_STATE_MOVE
@@ -4388,14 +6852,11 @@ fn actor_line_clear(m: &Map, movers: &[phys::Mover], from: [i32; 3], to: [i32; 3
 }
 
 /// Find the world floor surface Y directly under `pos` by point-tracing the BSP
-/// node tree (leaf 0 == solid, the same tree `camera_leaf` walks). The cook
-/// conflates `dmodel.headnode[0]` (a node index) with the clipnode array, so the
-/// emitted `hull0_head` aliases the player hull and `phys::snap_to_ground`
-/// always returned None -- which left every prop floating at its raw entity
-/// origin (7..112 units above the floor). Models are floor-anchored (feet at
-/// y==0), so dropping the origin onto the floor seats the feet.
-/// ponytail: world-only -- props on moving platforms (movers) aren't tracked;
-/// rare for placed NPCs/items. Scan step 8u, refined to ~1u.
+/// node tree (leaf 0 == solid, the same tree `camera_leaf` walks). GoldSrc's
+/// dmodel.headnode[0] is a render-node root, whereas hulls 1/3 are expanded
+/// clipnode roots; `phys::trace_line` preserves that distinction. Models are
+/// floor-anchored (feet at y==0), so dropping the origin onto the floor seats
+/// the feet. Nearby brush entities are considered separately below.
 /// Walk a submodel's hull-0 BSP subtree: is `p` (already shifted by the
 /// entity offset) inside its solid?
 fn submodel_point_solid(m: &Map, head0: i32, p: [i32; 3]) -> bool {
@@ -4426,7 +6887,13 @@ unsafe fn point_in_ent_solid(m: &Map, p: [i32; 3]) -> bool {
     let mut ei = 0usize;
     while ei < nents {
         let e = ENT_CACHE[ei];
-        if ENT_ACTIVE[ei] != 0 && e.head0 > 0 && e.kind != 2 && e.kind != 4 && !(e.kind == 7 && ENT_PHASE[ei] >= 2048) {
+        if ENT_ACTIVE[ei] != 0
+            && e.head0 > 0
+            && e.kind != 2
+            && e.kind != 4
+            && !(e.kind == 7 && ENT_PHASE[ei] >= 2048)
+            && !fan_collision_disabled(ei, e)
+        {
             let off = ent_draw_offset(ei);
             let dx = p[0] - (e.center[0] + off[0]);
             let dy = p[1] - (e.center[1] + off[1]);
@@ -4516,7 +6983,7 @@ unsafe fn refresh_prop_near_ents(movers: &[phys::Mover], pi: usize) {
         // MOVERS was built immediately before tick_props from the same active,
         // solid, closed-brush predicates as the old ENT_CACHE rescan. Ignore
         // the synthetic tram (negative id) and records without a point hull.
-        if mv.id >= 0 && mv.head0 > 0 {
+        if mv.id >= 0 && mv.point_head() > 0 {
             let r = mv.radius + PROP_NEAR_SLACK;
             if (mv.center[0] + mv.off[0] - p[0]).abs() <= r
                 && (mv.center[2] + mv.off[2] - p[2]).abs() <= r
@@ -4560,7 +7027,13 @@ fn prop_floor_y_down(m: &Map, pi: usize, pos: [i32; 3], down: i32) -> Option<i32
             let mut ei = 0usize;
             while ei < nents {
                 let e = ENT_CACHE[ei];
-                if ENT_ACTIVE[ei] != 0 && e.head0 > 0 && e.kind != 2 && e.kind != 4 && !(e.kind == 7 && ENT_PHASE[ei] >= 2048) {
+                if ENT_ACTIVE[ei] != 0
+                    && e.head0 > 0
+                    && e.kind != 2
+                    && e.kind != 4
+                    && !(e.kind == 7 && ENT_PHASE[ei] >= 2048)
+                    && !fan_collision_disabled(ei, e)
+                {
                     let off = ent_draw_offset(ei);
                     let r = ENT_RADIUS[ei];
                     let cx = e.center[0] + off[0];
@@ -4622,7 +7095,7 @@ fn prop_floor_y_down(m: &Map, pi: usize, pos: [i32; 3], down: i32) -> Option<i32
     if solid_at([x, top, z]) {
         return None; // headroom is solid -- no clean floor to drop onto
     }
-    // World floor: one hull-0 point trace, no per-point BSP walks.
+    // World floor: one render-node hull-0 segment trace, no stepped scan.
     let world_y = phys::trace_line(m, &[], [x, top, z], [x, bottom, z]).map(|h| h.pos[1]);
     if ncol == 0 {
         return world_y;
@@ -4689,7 +7162,6 @@ fn prop_floor_y_down(m: &Map, pi: usize, pos: [i32; 3], down: i32) -> Option<i32
     }
 }
 
-
 #[inline]
 fn prop_grounded_pos(m: &Map, pi: usize, pos: [i32; 3]) -> [i32; 3] {
     match prop_floor_y(m, pi, pos) {
@@ -4701,12 +7173,13 @@ fn prop_grounded_pos(m: &Map, pi: usize, pos: [i32; 3]) -> [i32; 3] {
 unsafe fn prop_set_pos(m: &Map, movers: &[phys::Mover], pi: usize, pos: [i32; 3]) {
     let _ = movers;
     let pos = prop_grounded_pos(m, pi, pos);
-    prop_set_pos_grounded(m, pi, pos);
+    prop_set_pos_exact(m, pi, pos);
 }
 
-/// Position already carries a probed floor height (prop_try_step's winner):
-/// skip the second ground probe the plain setter would run.
-unsafe fn prop_set_pos_grounded(m: &Map, pi: usize, pos: [i32; 3]) {
+/// Set an authored/probed origin verbatim, without an implicit floor trace.
+/// Script marks use this for GoldSrc TASK_PLANT_ON_SCRIPT; movement callers
+/// use it after they have already selected a grounded step candidate.
+unsafe fn prop_set_pos_exact(m: &Map, pi: usize, pos: [i32; 3]) {
     PROP_POS[pi] = pos;
     PROP_OCC_VIS[pi] |= PROP_OCC_DIRTY;
     let leaf = camera_leaf(m, pos);
@@ -4715,6 +7188,13 @@ unsafe fn prop_set_pos_grounded(m: &Map, pi: usize, pos: [i32; 3]) {
     } else {
         0
     };
+}
+
+/// Position already carries a probed floor height (prop_try_step's winner):
+/// skip the second ground probe the plain setter would run.
+#[inline(always)]
+unsafe fn prop_set_pos_grounded(m: &Map, pi: usize, pos: [i32; 3]) {
+    prop_set_pos_exact(m, pi, pos);
 }
 
 unsafe fn prop_face_point(pi: usize, p: [i32; 3]) {
@@ -4728,6 +7208,7 @@ unsafe fn prop_face_point(pi: usize, p: [i32; 3]) {
     }
 }
 
+#[inline(never)]
 unsafe fn prop_try_step(
     m: &Map,
     movers: &[phys::Mover],
@@ -4735,6 +7216,7 @@ unsafe fn prop_try_step(
     dx: i32,
     dz: i32,
     speed: i32,
+    steer: bool,
 ) -> bool {
     if speed <= 0 {
         return false;
@@ -4749,36 +7231,91 @@ unsafe fn prop_try_step(
     let ty = PROP_KIND[pi];
     let pos = PROP_POS[pi];
     let from = prop_target(ty, pos);
+    let scripted_q4 = PROP_SCRIPT_MODE[pi] != 0 && PROP_SCRIPT_LI[pi] != u16::MAX;
+    let (residue_x, residue_z) = if scripted_q4 {
+        prop_script_move_residue(pi)
+    } else {
+        (0, 0)
+    };
+    #[cfg(feature = "reference-trace")]
+    let mut probe_result = 0u8;
     let mut i = 0usize;
-    while i < dirs.len() {
+    let dir_count = if steer { dirs.len() } else { 1 };
+    while i < dir_count {
         let sx = dirs[i][0];
         let sz = dirs[i][1];
         let d2 = sx * sx + sz * sz;
         if d2 > 0 {
             let len = isqrt_i32(d2).max(1);
             let step = speed.min(len);
-            let cand = [pos[0] + sx * step / len, pos[1], pos[2] + sz * step / len];
+            let (cand, next_residue_x, next_residue_z) = if step == len {
+                ([pos[0] + sx, pos[1], pos[2] + sz], 0, 0)
+            } else if scripted_q4 {
+                let (ix, rx) = scientist_logic::script_q4_component_step(sx, step, len, residue_x);
+                let (iz, rz) = scientist_logic::script_q4_component_step(sz, step, len, residue_z);
+                ([pos[0] + ix, pos[1], pos[2] + iz], rx, rz)
+            } else {
+                (
+                    [pos[0] + sx * step / len, pos[1], pos[2] + sz * step / len],
+                    0,
+                    0,
+                )
+            };
             // Sight line first (one trace), floor probe only for the winning
             // direction -- probing every candidate was the walker-heavy-map
             // frame killer. Walkers still refuse steps with no floor under
             // them (HL CheckLocalMove); the flying controller keeps altitude.
             let to_flat = prop_target(ty, cand);
-            if !actor_line_clear(m, movers, from, to_flat) || in_monsterclip(to_flat) {
+            if !actor_line_clear(m, movers, from, to_flat) {
+                #[cfg(feature = "reference-trace")]
+                {
+                    probe_result |= 1;
+                }
+                i += 1;
+                continue;
+            }
+            if in_monsterclip(to_flat) {
+                #[cfg(feature = "reference-trace")]
+                {
+                    probe_result |= 2;
+                }
                 i += 1;
                 continue;
             }
             let np = match prop_floor_y(m, pi, cand) {
                 Some(y) => [cand[0], y, cand[2]],
                 None if ty == PROP_TYPE_CONTROLLER => cand,
+                // Scripted actors are allowed to retain their current height
+                // across authored brush floors. Some set-piece walkways have
+                // no world floor below them and their supporting submodel can
+                // fall outside the eight-entry broadphase shortlist after the
+                // first step (c1a0's introwalkerguy1b). The horizontal hull ray
+                // and monsterclip test above still prevent walking through a
+                // wall; preserving Y prevents a stalled cinematic/target chain
+                // without adding support state or per-frame full ent scans.
+                None if PROP_SCRIPT_MODE[pi] != 0 && camera_leaf(m, to_flat) > 0 => cand,
                 None => {
+                    #[cfg(feature = "reference-trace")]
+                    {
+                        probe_result |= 4;
+                    }
                     i += 1;
                     continue;
                 }
             };
             prop_set_pos_grounded(m, pi, np);
+            if scripted_q4 {
+                // Rejected steering probes never consume a remainder; commit
+                // only the direction that actually changed actor position.
+                prop_script_move_residue_put(pi, next_residue_x, next_residue_z);
+            }
             return true;
         }
         i += 1;
+    }
+    #[cfg(feature = "reference-trace")]
+    if PROP_SCRIPT_MODE[pi] != 0 {
+        reference_trace::nav_step(SIM_NOW as u32, pi as u16, dx, dz, probe_result);
     }
     false
 }
@@ -4788,6 +7325,11 @@ fn nav_node_count(m: &Map) -> usize {
     m.n_nav.min(MAX_NAV_NODES)
 }
 
+#[inline(never)]
+fn nav_land_node(m: &Map, i: usize) -> bool {
+    m.nav_node_type(i) & 1 != 0
+}
+
 unsafe fn nav_nearest(m: &Map, pos: [i32; 3], max_d2: i32) -> u8 {
     let n = nav_node_count(m);
     let mut best = NAV_NODE_NONE;
@@ -4795,10 +7337,18 @@ unsafe fn nav_nearest(m: &Map, pos: [i32; 3], max_d2: i32) -> u8 {
     let mut i = 0usize;
     while i < n {
         let node = m.nav_node(i);
-        let dy = (node.pos[1] - pos[1]).abs();
-        if dy <= NAV_VERTICAL_MAX {
-            let d2 = dist2_xz(pos, node.pos);
-            if d2 < best_d2 {
+        if nav_land_node(m, i) {
+            // Retail LAND-node m_vecOriginPeek is exactly eight units above
+            // m_vecOrigin. FindNearestNode ranks that 3D point, not the
+            // ground-plane origin used by movement steering.
+            let peek = [node.pos[0], node.pos[1] + 8, node.pos[2]];
+            let dy = peek[1] - pos[1];
+            let d2 = dist2_xz(pos, peek) + dy * dy;
+            // GoldSrc CheckNode accepts the nearest candidate only when a
+            // point trace reaches its exact peek origin. Without the trace a
+            // geometrically close node behind a wall can strand the last
+            // authored chord.
+            if d2 < best_d2 && phys::line_clear_world(m, pos, peek) {
                 best = i as u8;
                 best_d2 = d2;
             }
@@ -4826,7 +7376,7 @@ unsafe fn nav_nearest_reachable(
     // win.  This therefore returns exactly the same node as the full scan while
     // avoiding its chain of progressively-closer BSP traces.
     let cached = prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) as usize;
-    if cached < n {
+    if cached < n && nav_land_node(m, cached) {
         let node = m.nav_node(cached);
         let dy = (node.pos[1] - pos[1]).abs();
         let d2 = dist2_xz(pos, node.pos);
@@ -4837,7 +7387,7 @@ unsafe fn nav_nearest_reachable(
                 let mut best_d2 = d2;
                 let mut i = 0usize;
                 while i < n {
-                    if i != cached {
+                    if i != cached && nav_land_node(m, i) {
                         let candidate = m.nav_node(i);
                         let candidate_dy = (candidate.pos[1] - pos[1]).abs();
                         if candidate_dy <= NAV_VERTICAL_MAX {
@@ -4845,8 +7395,7 @@ unsafe fn nav_nearest_reachable(
                             let can_beat = candidate_d2 < best_d2
                                 || (candidate_d2 == best_d2 && i < best as usize);
                             if can_beat {
-                                let candidate_to =
-                                    [candidate.pos[0], from[1], candidate.pos[2]];
+                                let candidate_to = [candidate.pos[0], from[1], candidate.pos[2]];
                                 if actor_line_clear(m, movers, from, candidate_to) {
                                     best = i as u8;
                                     best_d2 = candidate_d2;
@@ -4870,7 +7419,7 @@ unsafe fn nav_nearest_reachable(
     while i < n {
         let node = m.nav_node(i);
         let dy = (node.pos[1] - pos[1]).abs();
-        if dy <= NAV_VERTICAL_MAX {
+        if nav_land_node(m, i) && dy <= NAV_VERTICAL_MAX {
             let d2 = dist2_xz(pos, node.pos);
             let to = [node.pos[0], from[1], node.pos[2]];
             if d2 < best_d2 && actor_line_clear(m, movers, from, to) {
@@ -4895,57 +7444,77 @@ unsafe fn nav_next_node(m: &Map, pi: usize, src: u8, dst: u8) -> u8 {
     if prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) == src
         && prop_nav_cache_get(pi, PROP_NAV_DST_SLOT) == dst
     {
-        return prop_nav_cache_get(pi, PROP_NAV_NEXT_SLOT);
+        let cached = prop_nav_cache_get(pi, PROP_NAV_NEXT_SLOT);
+        // NONE also represents a route validated at assignment but not yet
+        // advanced from its source node. Compute that first real hop only once
+        // the actor has physically reached the source anchor.
+        if cached != NAV_NODE_NONE {
+            return cached;
+        }
     }
     if src == dst {
         prop_nav_cache_set_route(pi, src, dst, src);
         return src;
     }
 
-    let mut i = 0usize;
-    while i < n {
-        NAV_PREV[i] = NAV_NODE_NONE;
-        i += 1;
-    }
-
-    let mut head = 0usize;
-    let mut tail = 0usize;
-    NAV_QUEUE[tail] = src;
-    tail += 1;
-    NAV_PREV[src_i] = src;
-
-    while head < tail {
-        let cur = NAV_QUEUE[head];
-        head += 1;
-        let node = m.nav_node(cur as usize);
-        let end = node.first_link.saturating_add(node.link_count);
-        let mut li = node.first_link;
-        while li < end {
-            let next = m.nav_link(li);
-            if next < n && NAV_PREV[next] == NAV_NODE_NONE {
-                NAV_PREV[next] = cur;
-                if next == dst_i {
-                    let mut step = dst;
-                    while NAV_PREV[step as usize] != src {
-                        step = NAV_PREV[step as usize];
-                        if step == NAV_NODE_NONE {
-                            prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
-                            return NAV_NODE_NONE;
-                        }
-                    }
-                    prop_nav_cache_set_route(pi, src, dst, step);
-                    return step;
-                }
-                if tail < MAX_NAV_NODES {
-                    NAV_QUEUE[tail] = next as u8;
-                    tail += 1;
-                }
-            }
-            li += 1;
+    let next = if m.nav_has_exact_routes() {
+        let exact = m.nav_route_next(src_i, dst_i);
+        if exact == src_i || exact >= n {
+            NAV_NODE_NONE
+        } else {
+            exact as u8
         }
+    } else {
+        // Official campaign maps with nodes always ship a retail `.nod`; the
+        // cooker warns for custom maps that fall back to synthesized links.
+        // Keep the runtime static-RAM win rather than reserving a 510-byte BFS
+        // workspace for an unaudited compatibility path.
+        NAV_NODE_NONE
+    };
+    prop_nav_cache_set_route(pi, src, dst, next);
+    next
+}
+
+/// Cold BuildRoute/FGetNodeRoute gate for a newly possessed scripted actor.
+/// Cache the validated endpoints but deliberately defer the first table hop:
+/// Gold's route begins at the source node, which can be the obstacle's corner.
+#[inline(never)]
+unsafe fn nav_route_available(m: &Map, pi: usize, goal: [i32; 3]) -> bool {
+    let pos = PROP_POS[pi];
+    let from = prop_target(PROP_KIND[pi], pos);
+    let src = nav_nearest_reachable(m, &[], pi, from, pos, NAV_NEAREST_RANGE2);
+    if src == NAV_NODE_NONE {
+        prop_nav_cache_invalidate(pi);
+        return false;
     }
+    let dst = nav_nearest(m, goal, NAV_NEAREST_RANGE2);
+    if dst == NAV_NODE_NONE {
+        prop_nav_cache_invalidate(pi);
+        return false;
+    }
+    if nav_next_node(m, pi, src, dst) == NAV_NODE_NONE {
+        prop_nav_cache_invalidate(pi);
+        return false;
+    }
+    // FGetNodeRoute starts with the source node. The actor must reach that
+    // corner anchor before following the first table hop; caching the hop here
+    // skipped the anchor and recreated the obstructed straight chord.
     prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
-    NAV_NODE_NONE
+    true
+}
+
+/// A cached graph route can become unusable only through malformed/cook-drift
+/// data. Scripted actors must immediately return to their authored local chord
+/// instead of retaining the route bit and idling until a forced teleport.
+#[inline(never)]
+unsafe fn nav_route_fail_open(pi: usize, goal: [i32; 3]) -> Option<[i32; 3]> {
+    if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]) {
+        PROP_SCRIPT_MODE[pi] = scientist_logic::script_route_mode(PROP_SCRIPT_MODE[pi], false);
+        prop_nav_cache_invalidate(pi);
+        Some(goal)
+    } else {
+        None
+    }
 }
 
 unsafe fn nav_waypoint_towards(
@@ -4957,31 +7526,108 @@ unsafe fn nav_waypoint_towards(
     if m.n_nav == 0 {
         return None;
     }
+    let n = nav_node_count(m);
     let ty = PROP_KIND[pi];
     let pos = PROP_POS[pi];
     let from = prop_target(ty, pos);
-    let src = nav_nearest_reachable(m, movers, pi, from, pos, NAV_NEAREST_RANGE2);
-    if src == NAV_NODE_NONE {
-        return None;
+    let reached_range2 = if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]) {
+        scientist_logic::SCRIPT_PLANT_RADIUS * scientist_logic::SCRIPT_PLANT_RADIUS
+    } else {
+        NAV_NODE_REACHED_RANGE2
+    };
+
+    // Keep following the already-proven route waypoint until it is reached.
+    // Re-running a 128-node nearest-reachable scan every time local movement
+    // failed consumed ~73K cycles per c2a4e frame; the world is static and prop
+    // movement deliberately ignores movers, so a previously reachable waypoint
+    // cannot become invalid en route. This is also standard waypoint behavior:
+    // choose a route, advance it at node boundaries, do not re-seed it per step.
+    let cached_next = prop_nav_cache_get(pi, PROP_NAV_NEXT_SLOT) as usize;
+    if cached_next < n && nav_land_node(m, cached_next) {
+        let next_pos = m.nav_node(cached_next).pos;
+        let next_d2 = dist2_xz(pos, next_pos);
+        if (pos[1] - next_pos[1]).abs() <= NAV_VERTICAL_MAX
+            && next_d2 > reached_range2
+            && next_d2 < NAV_NEAREST_RANGE2
+        {
+            return Some(next_pos);
+        }
+        if next_d2 <= reached_range2 && (pos[1] - next_pos[1]).abs() <= NAV_VERTICAL_MAX {
+            // FGetNodeRoute selects its destination once. Keep that exact
+            // endpoint instead of repeating FindNearestNode (and its BSP
+            // traces) at every hop.
+            let dst = prop_nav_cache_get(pi, PROP_NAV_DST_SLOT);
+            if dst as usize >= n || !nav_land_node(m, dst as usize) {
+                return nav_route_fail_open(pi, goal);
+            }
+            if cached_next as u8 == dst {
+                // The graph route ends at its destination node, not at the
+                // scripted mark. Hand the final local chord back to the
+                // straight script mover; retaining route steering here made
+                // c0a0e Barney orbit node 5 until his timeout.
+                PROP_SCRIPT_MODE[pi] =
+                    scientist_logic::script_route_mode(PROP_SCRIPT_MODE[pi], false);
+                prop_nav_cache_invalidate(pi);
+                return Some(goal);
+            }
+            let following = nav_next_node(m, pi, cached_next as u8, dst);
+            return if following == NAV_NODE_NONE {
+                nav_route_fail_open(pi, goal)
+            } else {
+                Some(m.nav_node(following as usize).pos)
+            };
+        }
     }
-    let dst = nav_nearest(m, goal, NAV_NEAREST_RANGE2);
+
+    // Before a route has a `next` node, retain its verified source waypoint
+    // while the actor approaches it. Once reached, accepting the cached source
+    // avoids a second exact nearest scan before the route BFS below.
+    let cached_src = prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) as usize;
+    let mut src = NAV_NODE_NONE;
+    if cached_src < n && nav_land_node(m, cached_src) {
+        let src_pos = m.nav_node(cached_src).pos;
+        let src_d2 = dist2_xz(pos, src_pos);
+        if (pos[1] - src_pos[1]).abs() <= NAV_VERTICAL_MAX && src_d2 < NAV_NEAREST_RANGE2 {
+            if src_d2 > reached_range2 {
+                return Some(src_pos);
+            }
+            src = cached_src as u8;
+        }
+    }
+    if src == NAV_NODE_NONE {
+        src = nav_nearest_reachable(m, movers, pi, from, pos, NAV_NEAREST_RANGE2);
+    }
+    if src == NAV_NODE_NONE {
+        return nav_route_fail_open(pi, goal);
+    }
+    let cached_dst = prop_nav_cache_get(pi, PROP_NAV_DST_SLOT);
+    let dst = if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi])
+        && (cached_dst as usize) < n
+        && nav_land_node(m, cached_dst as usize)
+    {
+        cached_dst
+    } else {
+        nav_nearest(m, goal, NAV_NEAREST_RANGE2)
+    };
     if dst == NAV_NODE_NONE {
-        return None;
+        return nav_route_fail_open(pi, goal);
     }
 
     let src_pos = m.nav_node(src as usize).pos;
-    if dist2_xz(pos, src_pos) > NAV_NODE_REACHED_RANGE2
-        || (pos[1] - src_pos[1]).abs() > NAV_VERTICAL_MAX
-    {
+    if dist2_xz(pos, src_pos) > reached_range2 || (pos[1] - src_pos[1]).abs() > NAV_VERTICAL_MAX {
         return Some(src_pos);
     }
     if src == dst {
+        if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]) {
+            PROP_SCRIPT_MODE[pi] = scientist_logic::script_route_mode(PROP_SCRIPT_MODE[pi], false);
+            prop_nav_cache_invalidate(pi);
+        }
         return Some(goal);
     }
 
     let next = nav_next_node(m, pi, src, dst);
     if next == NAV_NODE_NONE {
-        None
+        nav_route_fail_open(pi, goal)
     } else {
         Some(m.nav_node(next as usize).pos)
     }
@@ -4995,7 +7641,8 @@ unsafe fn nav_flee_goal(m: &Map, threat: [i32; 3], pos: [i32; 3]) -> Option<[i32
     let mut i = 0usize;
     while i < n {
         let node = m.nav_node(i);
-        if (node.pos[1] - pos[1]).abs() <= NAV_VERTICAL_MAX
+        if nav_land_node(m, i)
+            && (node.pos[1] - pos[1]).abs() <= NAV_VERTICAL_MAX
             && dist2_xz(pos, node.pos) <= NAV_FLEE_RANGE2
         {
             let score = dist2_xz(node.pos, threat);
@@ -5034,16 +7681,16 @@ unsafe fn prop_move_towards_point(
     }
     let speed = speed * 2;
     let pos = PROP_POS[pi];
-    // Flanking spread (cheap separation): fan each walker's goal sideways by a
-    // per-index amount so a group closes on the player in a rough arc instead of
-    // stacking on one point. Drops to a straight line inside melee reach so a
-    // contact attack still lands. ponytail: index spread, not a neighbour scan --
-    // true repulsion is O(n^2) on the crowded office maps already near budget.
+    // Flanking spread (cheap separation): fan ordinary AI sideways so a group
+    // closes on the player in a rough arc instead of stacking on one point.
+    // Scripted sequences must approach their exact authored mark: applying the
+    // index spread to c0a0e's Barney leaves him ~100 units beside `barnwalk`, so
+    // the sequence never completes and the station door never opens.
     let goal = {
         let dx = goal[0] - pos[0];
         let dz = goal[2] - pos[2];
         let d = isqrt_i32(dx * dx + dz * dz);
-        if d > 64 {
+        if PROP_SCRIPT_MODE[pi] == 0 && d > 64 {
             let spread = ((pi as i32 & 7) - 4) * 20; // -80..+60 units off the approach
             [
                 goal[0] + (-dz * spread) / d,
@@ -5054,14 +7701,48 @@ unsafe fn prop_move_towards_point(
             goal
         }
     };
+    if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]) {
+        // BuildRoute chose the graph for this cine at assignment time. Follow
+        // its cached next hop before attempting any final-goal step; otherwise
+        // a series of clear short steps recreates the invalid straight chord.
+        let moved = if let Some(wp) = nav_waypoint_towards(m, movers, pi, goal) {
+            let pos = PROP_POS[pi];
+            prop_face_point(pi, wp);
+            // nav_waypoint_towards clears the route bit at the destination
+            // node. The final authored chord must not use the recovery fan.
+            let steer = scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]);
+            prop_try_step(m, movers, pi, wp[0] - pos[0], wp[2] - pos[2], speed, steer)
+        } else {
+            false
+        };
+        if !moved {
+            PROP_MOVE_COOLDOWN[pi] = 6;
+        }
+        return moved;
+    }
     prop_face_point(pi, goal);
-    if prop_try_step(m, movers, pi, goal[0] - pos[0], goal[2] - pos[2], speed) {
+    // Try the authored direction first without the old five-direction fan.
+    // A sideways fan can always make *some* local progress beside a wall, so
+    // it used to orbit the obstacle forever and the info_node graph was never
+    // consulted. This was most visible in c1a0's two entrance scientists.
+    if prop_try_step(
+        m,
+        movers,
+        pi,
+        goal[0] - pos[0],
+        goal[2] - pos[2],
+        speed,
+        false,
+    ) {
         return true;
     }
     let moved = if let Some(wp) = nav_waypoint_towards(m, movers, pi, goal) {
         let pos = PROP_POS[pi];
         prop_face_point(pi, wp);
-        prop_try_step(m, movers, pi, wp[0] - pos[0], wp[2] - pos[2], speed)
+        // The selected waypoint is line-of-sight reachable. Retain the small
+        // steering fan only as a last-inch floor/monsterclip recovery around
+        // that waypoint, rather than around the unreachable final goal.
+        prop_try_step(m, movers, pi, wp[0] - pos[0], wp[2] - pos[2], speed, true)
     } else {
         false
     };
@@ -5095,17 +7776,25 @@ unsafe fn target_aim_point(target: u8, player_pos: [i32; 3], nprops: usize) -> O
     }
 }
 
-unsafe fn damage_prop(pi: usize, dmg: u8) {
+unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
         return;
     }
     PROP_HEALTH[pi] = PROP_HEALTH[pi].saturating_sub(dmg);
     PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
-    // Combat breaks any scripted pose/gesture (HL cine cancel on damage).
-    PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
-    PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
-    PROP_SCRIPT_MODE[pi] = 0;
-    prop_nav_cache_invalidate(pi);
+    if player_inflicted
+        && (PROP_KIND[pi] == PROP_TYPE_SCIENTIST || PROP_KIND[pi] == PROP_TYPE_BARNEY)
+    {
+        // Talk allies remember player provocation permanently and immediately
+        // stop following.
+        prop_scientist_set_flag(pi, PROP_SCI_PROVOKED, true);
+        prop_scientist_set_flag(pi, PROP_SCI_FOLLOWING, false);
+    }
+    // Damage cancels an interruptible cine without firing completion outputs.
+    // NOINTERRUPT suppresses that break condition, but death always releases it.
+    if PROP_HEALTH[pi] == 0 || !prop_scientist_flag(pi, PROP_SCRIPT_NOINTERRUPT) {
+        prop_script_clear(pi);
+    }
     if PROP_HEALTH[pi] == 0 {
         PROP_STATE[pi] = PROP_STATE_DEAD;
         PROP_DEATH_START[pi] = SIM_NOW; // play the death clip forward from now
@@ -5144,7 +7833,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8) {
     if PROP_HEALTH[pi] > 0 && matches!(ai, AI_MELEE | AI_RANGED | AI_TURRET) {
         PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
         let pos = PROP_POS[pi];
-        let n = PROP_COUNT.min(MAX_PROPS);
+        let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
         let mut qi = 0usize;
         while qi < n {
             if qi != pi
@@ -5162,7 +7851,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8) {
     // A fight anywhere nearby also spooks seated scientists: mark them alarmed
     // (AI_TARGET != NONE) so tick_props stands them up and switches to flee AI.
     let dp = PROP_POS[pi];
-    let n2 = PROP_COUNT.min(MAX_PROPS);
+    let n2 = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     let mut si = 0usize;
     while si < n2 {
         if PROP_KIND[si] == PROP_TYPE_SITTING_SCI
@@ -5180,15 +7869,23 @@ const SQUAD_ALERT_RADIUS2: i32 = 400 * 400;
 const SFX_NONE: u8 = 0xFF;
 static mut MON_PAIN_COOLDOWN: u8 = 0;
 static mut MOVERS: [phys::Mover; MAX_ENTS + 1] = [phys::NO_MOVER; MAX_ENTS + 1];
+static mut MOVER_COUNT: usize = 0;
 static mut STEP_ACC: u32 = 0;
 static mut STEP_ALT: u8 = 0;
 static mut MOVE_TICK: u16 = 0; // walker half-rate phase
-// Parsed-model caches: Model::load re-parsed headers on EVERY draw call
-// (2.7% of frame on prop-heavy views). Filled at stream time.
+                               // Parsed-model caches: Model::load re-parsed headers on EVERY draw call
+                               // (2.7% of frame on prop-heavy views). Filled at stream time.
 static mut LOADED_MODEL_CACHE: [Model; MAX_LOADED_MODELS] = [Model::EMPTY; MAX_LOADED_MODELS];
 // Band-bucketed PVS face order (overflow views): the banded emit used to
 // re-walk the whole face link structure once per depth band.
-const PVS_BAND_CAP: usize = 1408; // views beyond this keep the link-walk path
+// Reference builds spend extra RAM on the embedded semantic route and trace
+// formatter. Their renderer may fall back to the equivalent link walk a little
+// earlier; shipping keeps the audited 1,408-entry fast path unchanged.
+const PVS_BAND_CAP: usize = if cfg!(feature = "reference-trace") {
+    640
+} else {
+    1408
+};
 static mut PVS_BAND_ORDER: [u16; PVS_BAND_CAP] = [0; PVS_BAND_CAP];
 static mut PVS_BAND_START: [u16; 10] = [0; 10];
 static mut VM_MODEL_CACHE: [Model; N_WEAPONS] = [Model::EMPTY; N_WEAPONS];
@@ -5196,7 +7893,7 @@ static mut PROP_MOVE_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS]; // blocked-walk
 static mut PROP_NAME: [u16; MAX_PROPS] = [0; MAX_PROPS]; // logic-name id of the targetname
 static mut PROP_SCRIPT_GOAL: [[i16; 3]; MAX_PROPS] = [[0; 3]; MAX_PROPS]; // world coords fit i16
 static mut PROP_SCRIPT_YAW: [u16; MAX_PROPS] = [0; MAX_PROPS];
-static mut PROP_SCRIPT_MODE: [u8; MAX_PROPS] = [0; MAX_PROPS]; // 0 none, 1 walk, 2 run, 4 instant
+static mut PROP_SCRIPT_MODE: [u8; MAX_PROPS] = [0; MAX_PROPS]; // 0 none, 1 walk, 2 run, 3 wait, 4 instant
 static mut PROP_SCRIPT_LI: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS]; // firing script's logic index
 static mut PROP_SCRIPT_PLAY_CLIP: [u8; MAX_PROPS] = [0xFF; MAX_PROPS]; // one-shot gesture clip
 static mut PROP_SCRIPT_IDLE_CLIP: [u8; MAX_PROPS] = [0xFF; MAX_PROPS]; // scripted idle pose clip
@@ -5211,20 +7908,49 @@ static mut TRAIN_LI: [u16; MAX_TRAINS] = [0; MAX_TRAINS];
 static mut TRAIN_SEG: [u8; MAX_TRAINS] = [0; MAX_TRAINS];
 static mut TRAIN_DIST: [i16; MAX_TRAINS] = [0; MAX_TRAINS];
 static mut TRAIN_WAIT: [u16; MAX_TRAINS] = [0; MAX_TRAINS];
-// bit0 = active, bits1..5 = sub-unit speed accumulator (remainder / 20 Hz).
+// bit0 = active, bits1..5 = sub-unit speed accumulator (remainder / 20 Hz),
+// bit6 remembers a cycle wrap, bit7 means TRAIN_WAIT is a corner-wait timer
+// and TRAIN_DIST temporarily holds the effective speed.
 const TRAIN_ACTIVE_BIT: u8 = 1;
+const TRAIN_REMAINDER_MASK: u8 = 0x3e;
+const TRAIN_WRAPPED_BIT: u8 = 0x40;
+const TRAIN_WAITING_BIT: u8 = 0x80;
 static mut TRAIN_STATE: [u8; MAX_TRAINS] = [0; MAX_TRAINS];
 static mut TRAIN_OFF: [[i16; 3]; MAX_TRAINS] = [[0; 3]; MAX_TRAINS];
 static mut TRAIN_COUNT: usize = 0;
 static mut WEAPONSTRIP_REQUEST: bool = false;
 static mut ENT_TRAIN_SLOT: [u8; MAX_ENTS] = [0xFF; MAX_ENTS];
 
-/// A train's path corner k: ((x,y,z) world, wait ticks). Corners are stored
-/// as aux pairs: (x,y) then (z,wait).
-unsafe fn train_corner(m: &Map, li: usize, k: usize) -> ([i32; 3], u16) {
+// MAX_LOGIC is 384, so nine bits are sufficient even though the storage word
+// remains u16 for alignment and for mailbox compatibility.
+const TRAIN_LOGIC_MASK: u16 = 0x01ff;
+
+#[inline(always)]
+fn train_logic_index(packed: u16) -> usize {
+    (packed & TRAIN_LOGIC_MASK) as usize
+}
+
+/// A train's path node: position, func_train wait, tracktrain pass target, and
+/// tracktrain speed override. func_train uses aux pairs; func_tracktrain uses
+/// triples, keeping the runtime arrays shared and RAM-flat.
+unsafe fn train_corner(m: &Map, li: usize, k: usize) -> ([i32; 3], u16, u16, u16) {
     let rec = m.logic(li);
-    let a = m.logic_aux(rec.first_aux + k * 2);
-    let b = m.logic_aux(rec.first_aux + k * 2 + 1);
+    let stride = if rec.kind == map::LOGIC_FUNC_TRACKTRAIN || rec.flags & LOGIC_TRAIN_EXTENDED != 0
+    {
+        3
+    } else {
+        2
+    };
+    let a = m.logic_aux(rec.first_aux + k * stride);
+    let b = m.logic_aux(rec.first_aux + k * stride + 1);
+    let c = if stride == 3 {
+        m.logic_aux(rec.first_aux + k * stride + 2)
+    } else {
+        map::LogicAux {
+            target: 0,
+            delay_ticks: 0,
+        }
+    };
     (
         [
             a.target as i16 as i32,
@@ -5232,7 +7958,238 @@ unsafe fn train_corner(m: &Map, li: usize, k: usize) -> ([i32; 3], u16) {
             b.target as i16 as i32,
         ],
         b.delay_ticks,
+        c.target,
+        c.delay_ticks,
     )
+}
+
+#[inline(always)]
+fn train_corner_wait_for_trigger(packed: u16) -> bool {
+    packed >= TRAIN_CORNER_WAIT_TRIGGER_TELEPORT
+}
+
+#[inline(always)]
+fn train_corner_teleports(packed: u16) -> bool {
+    packed == TRAIN_CORNER_WAIT_TRIGGER_TELEPORT
+        || (packed < TRAIN_CORNER_WAIT_TRIGGER_TELEPORT && packed & TRAIN_CORNER_TELEPORT != 0)
+}
+
+#[inline(always)]
+fn train_corner_wait_ticks(packed: u16) -> u16 {
+    if train_corner_wait_for_trigger(packed) {
+        0
+    } else {
+        packed & !TRAIN_CORNER_TELEPORT
+    }
+}
+
+#[inline(always)]
+fn train_cycle_start(rec: map::LogicEnt) -> Option<usize> {
+    let code = rec.flags >> LOGIC_TRAIN_CYCLE_SHIFT;
+    if code == 0 {
+        None
+    } else {
+        Some(code as usize - 1)
+    }
+}
+
+#[inline(always)]
+fn train_next_corner(
+    rec: map::LogicEnt,
+    is_track: bool,
+    seg: usize,
+    ncorners: usize,
+) -> Option<usize> {
+    if seg + 1 < ncorners {
+        Some(seg + 1)
+    } else if !is_track {
+        train_cycle_start(rec).filter(|start| *start < ncorners)
+    } else {
+        None
+    }
+}
+
+#[inline(always)]
+fn train_direction_from_delta(d: [i32; 3]) -> u8 {
+    let ax = d[0].abs();
+    let ay = d[1].abs();
+    let az = d[2].abs();
+    if ax == 0 && ay == 0 && az == 0 {
+        0
+    } else if ax >= ay && ax >= az {
+        if d[0] >= 0 {
+            1
+        } else {
+            2
+        }
+    } else if ay >= az {
+        if d[1] >= 0 {
+            3
+        } else {
+            4
+        }
+    } else if d[2] >= 0 {
+        5
+    } else {
+        6
+    }
+}
+
+unsafe fn train_direction_code(m: &Map, li: usize, seg: usize) -> u8 {
+    let rec = m.logic(li);
+    let stride = if rec.flags & LOGIC_TRAIN_EXTENDED != 0 {
+        3
+    } else {
+        2
+    };
+    let ncorners = rec.aux_count / stride;
+    if ncorners == 0 {
+        return 0;
+    }
+    let seg = seg.min(ncorners - 1);
+    if let Some(next) = train_next_corner(rec, false, seg, ncorners) {
+        let (a, _, _, _) = train_corner(m, li, seg);
+        let (b, _, _, _) = train_corner(m, li, next);
+        return train_direction_from_delta([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+    }
+    if seg > 0 {
+        let (a, _, _, _) = train_corner(m, li, seg - 1);
+        let (b, _, _, _) = train_corner(m, li, seg);
+        return train_direction_from_delta([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+    }
+    0
+}
+
+#[inline(never)]
+fn train_isqrt_u64(n: u64) -> u64 {
+    if n < 2 {
+        return n;
+    }
+    let mut x = n;
+    let mut y = (x + 1) >> 1;
+    while y < x {
+        x = y;
+        y = (x + n / x) >> 1;
+    }
+    x
+}
+
+/// Project a carried global train's authoritative center onto the destination
+/// path. Segment indices are map-local and differ on several real transitions;
+/// deriving them here prevents the first destination tick from snapping the
+/// brush back to an unrelated copied segment. Teleport edges are not continuous
+/// positions and therefore do not participate in projection.
+#[inline(never)]
+unsafe fn train_seek_position(
+    m: &Map,
+    li: usize,
+    center: [i32; 3],
+    wanted_direction: u8,
+) -> (usize, i16, [i32; 3]) {
+    let rec = m.logic(li);
+    let stride = if rec.flags & LOGIC_TRAIN_EXTENDED != 0 {
+        3
+    } else {
+        2
+    };
+    let ncorners = rec.aux_count / stride;
+    if ncorners <= 1 {
+        let pos = if ncorners == 1 {
+            train_corner(m, li, 0).0
+        } else {
+            center
+        };
+        return (0, 0, pos);
+    }
+    let mut best_seg = 0usize;
+    let mut best_dist = 0i16;
+    let mut best_error = i64::MAX;
+    let mut best_direction = false;
+    let mut best_pos = center;
+    let mut seg = 0usize;
+    while seg < ncorners {
+        let Some(next) = train_next_corner(rec, false, seg, ncorners) else {
+            seg += 1;
+            continue;
+        };
+        let (a, _, _, _) = train_corner(m, li, seg);
+        let (b, packed_wait, _, _) = train_corner(m, li, next);
+        if train_corner_teleports(packed_wait) || next == seg {
+            seg += 1;
+            continue;
+        }
+        let d = [
+            (b[0] - a[0]) as i64,
+            (b[1] - a[1]) as i64,
+            (b[2] - a[2]) as i64,
+        ];
+        let len2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        if len2 == 0 {
+            seg += 1;
+            continue;
+        }
+        let rel = [
+            (center[0] - a[0]) as i64,
+            (center[1] - a[1]) as i64,
+            (center[2] - a[2]) as i64,
+        ];
+        let along_num = (rel[0] * d[0] + rel[1] * d[1] + rel[2] * d[2]).clamp(0, len2);
+        let q = [
+            a[0] as i64 + d[0] * along_num / len2,
+            a[1] as i64 + d[1] * along_num / len2,
+            a[2] as i64 + d[2] * along_num / len2,
+        ];
+        let error = (center[0] as i64 - q[0]).pow(2)
+            + (center[1] as i64 - q[1]).pow(2)
+            + (center[2] as i64 - q[2]).pow(2);
+        let length = train_isqrt_u64(len2 as u64);
+        let distance = (length * along_num as u64 / len2 as u64).min(i16::MAX as u64) as i16;
+        let direction = train_direction_from_delta([d[0] as i32, d[1] as i32, d[2] as i32]);
+        let direction_match = wanted_direction == 0 || direction == wanted_direction;
+        // At a shared corner prefer the outgoing segment (distance zero) over
+        // the incoming segment's endpoint, matching CFuncTrain's current target.
+        if error < best_error
+            || (error == best_error && direction_match && !best_direction)
+            || (error == best_error && direction_match == best_direction && distance < best_dist)
+        {
+            best_error = error;
+            best_seg = seg;
+            best_dist = distance;
+            best_direction = direction_match;
+            best_pos = [q[0] as i32, q[1] as i32, q[2] as i32];
+        }
+        seg += 1;
+    }
+    if best_error != i64::MAX {
+        return (best_seg, best_dist, best_pos);
+    }
+
+    // All edges may be teleports. Preserve the nearest authored corner and let
+    // the next active tick perform the teleport normally.
+    let mut corner = 0usize;
+    while corner < ncorners {
+        let (p, _, _, _) = train_corner(m, li, corner);
+        let error = (center[0] as i64 - p[0] as i64).pow(2)
+            + (center[1] as i64 - p[1] as i64).pow(2)
+            + (center[2] as i64 - p[2] as i64).pow(2);
+        if error < best_error {
+            best_error = error;
+            best_seg = corner;
+            best_pos = p;
+        }
+        corner += 1;
+    }
+    (best_seg, 0, best_pos)
+}
+
+#[inline]
+unsafe fn train_set_offset(rec: map::LogicEnt, t: usize, pos: [i32; 3]) {
+    let center = ENT_CACHE[rec.brush as usize].center;
+    TRAIN_OFF[t] = [
+        (pos[0] - center[0]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+        (pos[1] - center[1]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+        (pos[2] - center[2]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+    ];
 }
 
 /// Register the map's trains: teleport each brush to its first corner
@@ -5245,29 +8202,43 @@ unsafe fn init_trains(m: &Map, nlogic: usize, nents: usize) {
     let mut li = 0usize;
     while li < nlogic {
         let rec = m.logic(li);
-        if rec.kind == map::LOGIC_FUNC_TRAIN
-            && rec.aux_count >= 2
+        let is_track = rec.kind == map::LOGIC_FUNC_TRACKTRAIN;
+        let extended = rec.flags & LOGIC_TRAIN_EXTENDED != 0;
+        let stride = if is_track || extended { 3 } else { 2 };
+        let is_brush_train =
+            rec.kind == map::LOGIC_FUNC_TRAIN || (is_track && rec.arg1 != TRACKTRAIN_SUBMODEL);
+        let min_aux = stride * if is_track { 2 } else { 1 };
+        if is_brush_train
+            && rec.aux_count >= min_aux
             && (rec.brush as usize) < nents
             && TRAIN_COUNT < MAX_TRAINS
         {
             let t = TRAIN_COUNT;
-            let (c0, _) = train_corner(m, li, 0);
-            let center = ENT_CACHE[rec.brush as usize].center;
+            let (c0, _, _, speed0) = train_corner(m, li, 0);
             TRAIN_LI[t] = li as u16;
             TRAIN_SEG[t] = 0;
             TRAIN_DIST[t] = 0;
-            TRAIN_WAIT[t] = 0;
-            TRAIN_STATE[t] = if rec.targetname == 0 {
+            TRAIN_WAIT[t] = if is_track {
+                if rec.arg0 > 0 {
+                    rec.arg0
+                } else {
+                    rec.speed.max(1)
+                }
+            } else {
+                if speed0 > 0 {
+                    speed0
+                } else {
+                    rec.speed.max(1)
+                }
+            };
+            TRAIN_STATE[t] = if (is_track && rec.arg0 > 0) || (!is_track && rec.targetname == 0) {
                 TRAIN_ACTIVE_BIT
             } else {
                 0
             };
-            TRAIN_OFF[t] = [
-                (c0[0] - center[0]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-                (c0[1] - center[1]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-                (c0[2] - center[2]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-            ];
+            train_set_offset(rec, t, c0);
             ENT_TRAIN_SLOT[rec.brush as usize] = t as u8;
+            ENT_PREV_OFF[rec.brush as usize] = ent_draw_offset(rec.brush as usize);
             TRAIN_COUNT += 1;
         }
         li += 1;
@@ -5275,53 +8246,121 @@ unsafe fn init_trains(m: &Map, nlogic: usize, nents: usize) {
 }
 
 /// Advance every running train along its corner chain.
-unsafe fn tick_trains(m: &Map) {
+unsafe fn tick_trains(m: &Map, nlogic: usize, nents: usize) {
     let mut t = 0usize;
     while t < TRAIN_COUNT {
         if TRAIN_STATE[t] & TRAIN_ACTIVE_BIT == 0 {
             t += 1;
             continue;
         }
-        if TRAIN_WAIT[t] > 0 {
-            TRAIN_WAIT[t] -= 1;
-            t += 1;
-            continue;
-        }
-        let li = TRAIN_LI[t] as usize;
+        let li = train_logic_index(TRAIN_LI[t]);
         let rec = m.logic(li);
-        let ncorners = rec.aux_count / 2;
-        if ncorners < 2 {
+        let is_track = rec.kind == map::LOGIC_FUNC_TRACKTRAIN;
+        if !is_track && TRAIN_STATE[t] & TRAIN_WAITING_BIT != 0 {
+            if TRAIN_WAIT[t] > 0 {
+                TRAIN_WAIT[t] -= 1;
+                t += 1;
+                continue;
+            }
+            TRAIN_WAIT[t] = (TRAIN_DIST[t] as u16).max(1);
+            TRAIN_DIST[t] = 0;
+            TRAIN_STATE[t] &= !TRAIN_WAITING_BIT;
+        }
+        let extended = rec.flags & LOGIC_TRAIN_EXTENDED != 0;
+        let stride = if is_track || extended { 3 } else { 2 };
+        let ncorners = rec.aux_count / stride;
+        if ncorners == 0 {
+            TRAIN_STATE[t] = 0;
             t += 1;
             continue;
         }
-        let seg = TRAIN_SEG[t] as usize;
-        let (a, _) = train_corner(m, li, seg);
-        let (b, wait_b) = train_corner(m, li, (seg + 1) % ncorners);
+        let seg = (TRAIN_SEG[t] as usize).min(ncorners - 1);
+        let Some(next) = train_next_corner(rec, is_track, seg, ncorners) else {
+            TRAIN_STATE[t] = 0;
+            t += 1;
+            continue;
+        };
+        if next == seg {
+            TRAIN_STATE[t] = 0;
+            t += 1;
+            continue;
+        }
+        let (a, _, _, _) = train_corner(m, li, seg);
+        let (b, packed_wait_b, pass_b, speed_b) = train_corner(m, li, next);
         let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
         let len = isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
         // Preserve slow authored trains without another array: accumulate the
         // speed/20 remainder in TRAIN_STATE's upper bits. This also removes the
         // old forced 40-units/s minimum while staying integer-only on R3000.
-        let speed = rec.speed.max(1) as i32;
-        let frac = (TRAIN_STATE[t] >> 1) as i32 + speed % 20;
+        let speed = TRAIN_WAIT[t].max(1) as i32;
+        let frac = ((TRAIN_STATE[t] & TRAIN_REMAINDER_MASK) >> 1) as i32 + speed % 20;
         let step = speed / 20 + frac / 20;
-        TRAIN_STATE[t] = TRAIN_ACTIVE_BIT | (((frac % 20) as u8) << 1);
+        TRAIN_STATE[t] =
+            (TRAIN_STATE[t] & TRAIN_WRAPPED_BIT) | TRAIN_ACTIVE_BIT | (((frac % 20) as u8) << 1);
         if step == 0 {
             t += 1;
             continue;
         }
-        let nd = TRAIN_DIST[t] as i32 + step;
-        let center = ENT_CACHE[rec.brush as usize].center;
+        let nd = if train_corner_teleports(packed_wait_b) {
+            len
+        } else {
+            TRAIN_DIST[t] as i32 + step
+        };
         if nd >= len {
             // Arrived: snap to corner b, honour its wait, advance the segment.
-            TRAIN_SEG[t] = ((seg + 1) % ncorners) as u8;
+            TRAIN_SEG[t] = next as u8;
             TRAIN_DIST[t] = 0;
-            TRAIN_WAIT[t] = wait_b;
-            TRAIN_OFF[t] = [
-                (b[0] - center[0]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-                (b[1] - center[1]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-                (b[2] - center[2]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-            ];
+            if !is_track && next <= seg {
+                TRAIN_STATE[t] |= TRAIN_WRAPPED_BIT;
+            }
+            let next_speed = if speed_b > 0 { speed_b } else { speed as u16 };
+            if is_track {
+                TRAIN_WAIT[t] = next_speed.max(1);
+            } else if train_corner_wait_for_trigger(packed_wait_b) {
+                TRAIN_WAIT[t] = 0;
+                TRAIN_DIST[t] = next_speed.min(i16::MAX as u16) as i16;
+                TRAIN_STATE[t] = (TRAIN_STATE[t] & TRAIN_WRAPPED_BIT) | TRAIN_WAITING_BIT;
+            } else if train_corner_wait_ticks(packed_wait_b) > 0 {
+                TRAIN_WAIT[t] = train_corner_wait_ticks(packed_wait_b);
+                TRAIN_DIST[t] = next_speed.min(i16::MAX as u16) as i16;
+                TRAIN_STATE[t] =
+                    (TRAIN_STATE[t] & TRAIN_WRAPPED_BIT) | TRAIN_ACTIVE_BIT | TRAIN_WAITING_BIT;
+            } else {
+                TRAIN_WAIT[t] = next_speed.max(1);
+                TRAIN_STATE[t] = (TRAIN_STATE[t] & TRAIN_WRAPPED_BIT) | TRAIN_ACTIVE_BIT;
+            }
+            train_set_offset(rec, t, b);
+            if pass_b != 0 {
+                logic_fire_targets(
+                    m,
+                    nlogic,
+                    nents,
+                    pass_b,
+                    map::USE_TOGGLE,
+                    SIM_NOW,
+                    0,
+                    li as u16,
+                );
+            }
+            if is_track && train_next_corner(rec, true, next, ncorners).is_none() {
+                // CFuncTrackTrain::DeadEnd: stop and fire the terminal
+                // path_track's netname (packed in rec.target by the cooker).
+                TRAIN_STATE[t] = 0;
+                if rec.target != 0 {
+                    logic_fire_targets(
+                        m,
+                        nlogic,
+                        nents,
+                        rec.target,
+                        map::USE_TOGGLE,
+                        SIM_NOW,
+                        0,
+                        li as u16,
+                    );
+                }
+            } else if !is_track && train_next_corner(rec, false, next, ncorners).is_none() {
+                TRAIN_STATE[t] = 0;
+            }
         } else {
             TRAIN_DIST[t] = nd as i16;
             let p = [
@@ -5329,11 +8368,7 @@ unsafe fn tick_trains(m: &Map) {
                 a[1] + d[1] * nd / len,
                 a[2] + d[2] * nd / len,
             ];
-            TRAIN_OFF[t] = [
-                (p[0] - center[0]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-                (p[1] - center[1]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-                (p[2] - center[2]).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-            ];
+            train_set_offset(rec, t, p);
         }
         t += 1;
     }
@@ -5348,13 +8383,49 @@ const PROP_NEAR_SLACK: i32 = 96; // covers max step + door travel between refres
 /// rather than borrowing a wrong species' bark).
 fn prop_voice(kind: u8, dying: bool) -> u8 {
     match kind {
-        1 => if dying { sfx::BA_DIE } else { sfx::BA_PAIN },
-        2 | 3 | 4 => if dying { sfx::HC_DIE } else { sfx::HC_PAIN },
+        1 => {
+            if dying {
+                sfx::BA_DIE
+            } else {
+                sfx::BA_PAIN
+            }
+        }
+        2 | 3 | 4 => {
+            if dying {
+                sfx::HC_DIE
+            } else {
+                sfx::HC_PAIN
+            }
+        }
         5 => sfx::ZO_PAIN, // zombies have no die vocal; pain growl covers both
-        6 => if dying { sfx::HE_DIE } else { sfx::HE_PAIN },
-        7 | 19 => if dying { sfx::BC_DIE } else { sfx::BC_PAIN },
-        8 => if dying { sfx::GR_DIE } else { sfx::GR_PAIN },
-        9 | 10 | 11 => if dying { sfx::SLV_DIE } else { sfx::SLV_PAIN },
+        6 => {
+            if dying {
+                sfx::HE_DIE
+            } else {
+                sfx::HE_PAIN
+            }
+        }
+        7 | 19 => {
+            if dying {
+                sfx::BC_DIE
+            } else {
+                sfx::BC_PAIN
+            }
+        }
+        8 => {
+            if dying {
+                sfx::GR_DIE
+            } else {
+                sfx::GR_PAIN
+            }
+        }
+        9 | 10 | 11 => {
+            if dying {
+                sfx::SLV_DIE
+            } else {
+                sfx::SLV_PAIN
+            }
+        }
         _ => SFX_NONE,
     }
 }
@@ -5416,7 +8487,7 @@ unsafe fn damage_target(target: u8, dmg: u8, health: &mut u16, armor: &mut u16) 
     if target == PROP_TARGET_PLAYER {
         damage_player(health, armor, dmg as u16);
     } else if target != PROP_TARGET_NONE {
-        damage_prop(target as usize, dmg);
+        damage_prop(target as usize, dmg, false);
     }
 }
 
@@ -5447,12 +8518,9 @@ unsafe fn find_headcrab_target(
         }
     }
 
-    let indexed = nprops < MAX_PROPS && PROP_AI_TARGET[nprops] != PROP_HOT_FALLBACK;
-    let scan_count = if indexed {
-        PROP_AI_TARGET[nprops] as usize
-    } else {
-        nprops
-    };
+    let hot_count = prop_hotlist_count(PROP_AI_TARGET[nprops], nprops);
+    let indexed = hot_count.is_some();
+    let scan_count = hot_count.unwrap_or(nprops);
     let mut scan = 0usize;
     while scan < scan_count {
         let ti = if indexed {
@@ -5460,7 +8528,7 @@ unsafe fn find_headcrab_target(
         } else {
             scan
         };
-        if ti != pi && PROP_HEALTH[ti] > 0 && prop_is_human(PROP_KIND[ti]) {
+        if ti < nprops && ti != pi && PROP_HEALTH[ti] > 0 && prop_is_human(PROP_KIND[ti]) {
             let d2 = dist2_xz(pos, PROP_POS[ti]);
             if d2 < best_any_d2 {
                 best_any = ti as u8;
@@ -5488,8 +8556,9 @@ unsafe fn find_barney_target(m: &Map, movers: &[phys::Mover], pi: usize, nprops:
     let from = prop_target(PROP_TYPE_BARNEY, pos);
     let mut best = PROP_TARGET_NONE;
     let mut best_d2 = BARNEY_ATTACK_RANGE2;
-    let indexed = nprops < MAX_PROPS && PROP_KIND[nprops] != PROP_HOT_FALLBACK;
-    let scan_count = if indexed { PROP_KIND[nprops] as usize } else { nprops };
+    let hot_count = prop_hotlist_count(PROP_KIND[nprops], nprops);
+    let indexed = hot_count.is_some();
+    let scan_count = hot_count.unwrap_or(nprops);
     let mut scan = 0usize;
     while scan < scan_count {
         let ti = if indexed {
@@ -5497,7 +8566,7 @@ unsafe fn find_barney_target(m: &Map, movers: &[phys::Mover], pi: usize, nprops:
         } else {
             scan
         };
-        if ti != pi && PROP_HEALTH[ti] > 0 && PROP_KIND[ti] == PROP_TYPE_HEADCRAB {
+        if ti < nprops && ti != pi && PROP_HEALTH[ti] > 0 && PROP_KIND[ti] == PROP_TYPE_HEADCRAB {
             let d2 = dist2_xz(pos, PROP_POS[ti]);
             if d2 < best_d2 {
                 let to = prop_target(PROP_TYPE_HEADCRAB, PROP_POS[ti]);
@@ -5517,8 +8586,9 @@ unsafe fn find_scientist_threat(m: &Map, movers: &[phys::Mover], pi: usize, npro
     let from = prop_target(PROP_TYPE_SCIENTIST, pos);
     let mut best = PROP_TARGET_NONE;
     let mut best_d2 = SCIENTIST_FEAR_RANGE2;
-    let indexed = nprops < MAX_PROPS && PROP_KIND[nprops] != PROP_HOT_FALLBACK;
-    let scan_count = if indexed { PROP_KIND[nprops] as usize } else { nprops };
+    let hot_count = prop_hotlist_count(PROP_KIND[nprops], nprops);
+    let indexed = hot_count.is_some();
+    let scan_count = hot_count.unwrap_or(nprops);
     let mut scan = 0usize;
     while scan < scan_count {
         let ti = if indexed {
@@ -5526,7 +8596,7 @@ unsafe fn find_scientist_threat(m: &Map, movers: &[phys::Mover], pi: usize, npro
         } else {
             scan
         };
-        if ti != pi && PROP_HEALTH[ti] > 0 && PROP_KIND[ti] == PROP_TYPE_HEADCRAB {
+        if ti < nprops && ti != pi && PROP_HEALTH[ti] > 0 && PROP_KIND[ti] == PROP_TYPE_HEADCRAB {
             let d2 = dist2_xz(pos, PROP_POS[ti]);
             if d2 < best_d2 {
                 let to = prop_target(PROP_TYPE_HEADCRAB, PROP_POS[ti]);
@@ -5573,12 +8643,9 @@ unsafe fn find_actor_target(
         }
     }
 
-    let indexed = nprops < MAX_PROPS && PROP_AI_TARGET[nprops] != PROP_HOT_FALLBACK;
-    let scan_count = if indexed {
-        PROP_AI_TARGET[nprops] as usize
-    } else {
-        nprops
-    };
+    let hot_count = prop_hotlist_count(PROP_AI_TARGET[nprops], nprops);
+    let indexed = hot_count.is_some();
+    let scan_count = hot_count.unwrap_or(nprops);
     let mut scan = 0usize;
     while scan < scan_count {
         let ti = if indexed {
@@ -5586,7 +8653,7 @@ unsafe fn find_actor_target(
         } else {
             scan
         };
-        if ti != pi && PROP_HEALTH[ti] > 0 && prop_is_human(PROP_KIND[ti]) {
+        if ti < nprops && ti != pi && PROP_HEALTH[ti] > 0 && prop_is_human(PROP_KIND[ti]) {
             let d2 = dist2_xz(pos, PROP_POS[ti]);
             if d2 < best_any_d2 {
                 best_any = ti as u8;
@@ -5632,19 +8699,23 @@ unsafe fn tick_shooter(
     let wake2 = wake.saturating_mul(wake);
 
     let reacquire = ai_reacquire(pi);
-    let (target, acquired_visible) = if reacquire {
-        find_actor_target(m, movers, pi, player_pos, nprops, wake2)
+    let (target, visible) = if reacquire {
+        let found = find_actor_target(m, movers, pi, player_pos, nprops, wake2);
+        prop_ai_set_target_visible(pi, found.1);
+        found
     } else {
-        (PROP_AI_TARGET[pi], false)
+        (PROP_AI_TARGET[pi], prop_ai_target_visible(pi))
     };
     if target == PROP_TARGET_NONE {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+        prop_ai_set_target_visible(pi, false);
         return;
     }
     let Some(aim) = target_aim_point(target, player_pos, nprops) else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+        prop_ai_set_target_visible(pi, false);
         return;
     };
     PROP_AI_TARGET[pi] = target;
@@ -5653,11 +8724,6 @@ unsafe fn tick_shooter(
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, aim);
     let from = prop_target(ty, pos);
-    let visible = if reacquire {
-        acquired_visible
-    } else {
-        actor_line_clear(m, movers, from, aim)
-    };
 
     if d2 <= range2 && visible {
         // In range + line of sight: hold and fire on the cooldown. The attack
@@ -5686,7 +8752,11 @@ unsafe fn tick_shooter(
                 _ => {
                     damage_target(target, def.atk_damage, health, armor);
                     // Human weapons crack like an MP5; alien ranged attacks zap.
-                    let snd = if ty == 8 || ty >= 20 { sfx::MP5 } else { sfx::ELECTRO };
+                    let snd = if ty == 8 || ty >= 20 {
+                        sfx::MP5
+                    } else {
+                        sfx::ELECTRO
+                    };
                     sfx::play_world(snd, pos);
                 }
             }
@@ -5730,6 +8800,7 @@ unsafe fn tick_headcrab(
                     aim[0] - pos[0],
                     aim[2] - pos[2],
                     HEADCRAB_LEAP_SPEED,
+                    true,
                 );
             } else if PROP_AI_TIMER[pi] == HEADCRAB_ATTACK_IMPACT_TICK {
                 let pos = PROP_POS[pi];
@@ -5747,32 +8818,30 @@ unsafe fn tick_headcrab(
     }
 
     let reacquire = ai_reacquire(pi);
-    let (target, acquired_visible) = if reacquire {
-        find_headcrab_target(m, movers, pi, player_pos, nprops)
+    let (target, visible) = if reacquire {
+        let found = find_headcrab_target(m, movers, pi, player_pos, nprops);
+        prop_ai_set_target_visible(pi, found.1);
+        found
     } else {
-        (PROP_AI_TARGET[pi], false)
+        (PROP_AI_TARGET[pi], prop_ai_target_visible(pi))
     };
     if target == PROP_TARGET_NONE {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+        prop_ai_set_target_visible(pi, false);
         return;
     }
 
     let Some(aim) = target_aim_point(target, player_pos, nprops) else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+        prop_ai_set_target_visible(pi, false);
         return;
     };
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, aim);
     prop_face_point(pi, aim);
     PROP_AI_TARGET[pi] = target;
-    let from = prop_target(PROP_TYPE_HEADCRAB, pos);
-    let visible = if reacquire {
-        acquired_visible
-    } else {
-        actor_line_clear(m, movers, from, aim)
-    };
     // Leapers spring from leap range; big types must close to melee reach first.
     let trigger2 = if leaper { HEADCRAB_LEAP_RANGE2 } else { reach2 };
     if d2 <= trigger2 && PROP_ATTACK_COOLDOWN[pi] == 0 && visible {
@@ -5780,9 +8849,9 @@ unsafe fn tick_headcrab(
         PROP_AI_TIMER[pi] = HEADCRAB_ATTACK_TICKS;
         PROP_ATTACK_COOLDOWN[pi] = HEADCRAB_ATTACK_COOLDOWN;
         let snd = match PROP_KIND[pi] {
-            5 => sfx::ZO_ATTACK,   // zombie swipe
-            6 => sfx::HE_BLAST,    // houndeye sonic blast
-            _ => sfx::HC_ATTACK,   // headcrab-family shriek
+            5 => sfx::ZO_ATTACK, // zombie swipe
+            6 => sfx::HE_BLAST,  // houndeye sonic blast
+            _ => sfx::HC_ATTACK, // headcrab-family shriek
         };
         sfx::play_world(snd, pos);
     } else {
@@ -5790,7 +8859,13 @@ unsafe fn tick_headcrab(
         let step_d2 = d2.saturating_sub(HEADCRAB_STOP_RANGE * HEADCRAB_STOP_RANGE);
         if step_d2 > 0 {
             let spd = model_def(PROP_KIND[pi]).speed as i32;
-            prop_move_towards_point(m, movers, pi, aim, if spd > 0 { spd } else { HEADCRAB_SPEED });
+            prop_move_towards_point(
+                m,
+                movers,
+                pi,
+                aim,
+                if spd > 0 { spd } else { HEADCRAB_SPEED },
+            );
         }
     }
 }
@@ -5808,8 +8883,12 @@ unsafe fn tick_barney(
         PROP_AI_TIMER[pi] -= 1;
     }
 
-    let target = if ai_reacquire(pi) {
-        find_barney_target(m, movers, pi, nprops)
+    let reacquire = ai_reacquire(pi);
+    let target = if reacquire {
+        let found = find_barney_target(m, movers, pi, nprops);
+        // Barney's target search only returns candidates with clear LOS.
+        prop_ai_set_target_visible(pi, found != PROP_TARGET_NONE);
+        found
     } else {
         PROP_AI_TARGET[pi]
     };
@@ -5839,9 +8918,16 @@ unsafe fn tick_barney(
 
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, player_pos);
-    if d2 < BARNEY_FOLLOW_RANGE2 {
+    if prop_scientist_flag(pi, PROP_SCI_FOLLOWING) {
         let player_eye = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
-        if actor_line_clear(m, movers, prop_target(PROP_TYPE_BARNEY, pos), player_eye) {
+        let sees_player = if reacquire {
+            let clear = actor_line_clear(m, movers, prop_target(PROP_TYPE_BARNEY, pos), player_eye);
+            prop_ai_set_target_visible(pi, clear);
+            clear
+        } else {
+            prop_ai_target_visible(pi)
+        };
+        if sees_player {
             prop_face_point(pi, player_eye);
         } else {
             prop_face_point(pi, player_pos);
@@ -5851,6 +8937,17 @@ unsafe fn tick_barney(
             prop_move_towards_point(m, movers, pi, player_pos, BARNEY_SPEED);
             return;
         }
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        return;
+    }
+    // GoldSrc's talk monsters do not silently become followers merely because
+    // the player is nearby. An idle Barney may look at the player, but only an
+    // explicit +use toggles the shared follower flag and permits movement.
+    if d2 < BARNEY_FOLLOW_RANGE2 {
+        prop_face_point(
+            pi,
+            [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
+        );
     }
     PROP_STATE[pi] = PROP_STATE_IDLE;
 }
@@ -5866,8 +8963,10 @@ unsafe fn tick_scientist(
     // the player PVS. Keep movement at this port's 20 Hz cadence, but share its
     // 5 Hz staggered target acquisition instead of tracing every scientist
     // against every headcrab on every sim tick (at most 150 ms extra latency).
-    if ai_reacquire(pi) {
+    let reacquire = ai_reacquire(pi);
+    if reacquire {
         let threat = find_scientist_threat(m, movers, pi, nprops);
+        prop_ai_set_target_visible(pi, threat != PROP_TARGET_NONE);
         if threat != PROP_TARGET_NONE {
             PROP_AI_TARGET[pi] = threat;
             PROP_AI_TIMER[pi] = SCIENTIST_FEAR_TICKS;
@@ -5891,7 +8990,7 @@ unsafe fn tick_scientist(
         // snapping -- a fleeing scientist was still teleport-rotating.
         PROP_YAW[pi] = turn_toward(PROP_YAW[pi], yaw_from_vec(dx, dz), PROP_TURN_RATE);
         PROP_STATE[pi] = PROP_STATE_MOVE;
-        if !prop_try_step(m, movers, pi, dx, dz, SCIENTIST_FLEE_SPEED) {
+        if !prop_try_step(m, movers, pi, dx, dz, SCIENTIST_FLEE_SPEED, true) {
             if let Some(goal) = nav_flee_goal(m, threat_pos, pos) {
                 prop_move_towards_point(m, movers, pi, goal, SCIENTIST_FLEE_SPEED);
             }
@@ -5913,9 +9012,31 @@ unsafe fn tick_scientist(
     }
 
     let pos = PROP_POS[pi];
+    if prop_scientist_flag(pi, PROP_SCI_FOLLOWING) {
+        let d2 = dist2_xz(pos, player_pos);
+        if d2 > SCIENTIST_FOLLOW_STOP_RANGE2 {
+            PROP_STATE[pi] = PROP_STATE_MOVE;
+            prop_move_towards_point(m, movers, pi, player_pos, SCIENTIST_FOLLOW_SPEED);
+        } else {
+            PROP_STATE[pi] = PROP_STATE_IDLE;
+            prop_face_point(
+                pi,
+                [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
+            );
+        }
+        return;
+    }
     if dist2_xz(pos, player_pos) < SCIENTIST_FACE_RANGE2 {
         let player_eye = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
-        if actor_line_clear(m, movers, prop_target(PROP_TYPE_SCIENTIST, pos), player_eye) {
+        let sees_player = if reacquire {
+            let clear =
+                actor_line_clear(m, movers, prop_target(PROP_TYPE_SCIENTIST, pos), player_eye);
+            prop_ai_set_target_visible(pi, clear);
+            clear
+        } else {
+            prop_ai_target_visible(pi)
+        };
+        if sees_player {
             prop_face_point(pi, player_eye);
         }
     }
@@ -5945,11 +9066,13 @@ unsafe fn init_prop_state(m: &Map) {
         PROP_HEALTH[i] = 0;
         PROP_HIT_FLASH[i] = 0;
         PROP_OCC_VIS[i] = PROP_OCC_VISIBLE | PROP_OCC_DIRTY;
+        PROP_DORMANT[i] = 0;
         PROP_LOGIC_LINK[i] = u16::MAX;
         i += 1;
     }
     OCC_EYE_ANCHOR = [i32::MIN / 2; 3];
     OCC_EYE_LEAF = -1;
+    MOVER_COUNT = 0;
 
     let mut wi = 0usize;
     while wi < SPRITE_STATE_WORDS {
@@ -5969,12 +9092,13 @@ unsafe fn init_prop_state(m: &Map) {
     }
 
     PROP_COUNT = 0;
-    let nprops = m.n_props.min(MAX_PROPS);
+    let nprops = m.n_props.min(CARRY_MAILBOX_FIRST);
     let mut pi = 0usize;
     while pi < nprops {
         let (ty, org, yaw, leaf) = m.prop(pi);
         let dead = ty & PROP_DEAD_BIT != 0; // authored corpse: death pose, no AI
         let dormant = ty & PROP_DORMANT_BIT != 0; // monstermaker stock
+        let predisaster = ty & PROP_PREDISASTER_BIT != 0;
         let kind = (ty & PROP_TYPE_MASK) as u8;
         // Sitting scientists are authored at seat height on chair brushes the
         // world tree can't see; snapping would drop them through the chair.
@@ -5994,6 +9118,12 @@ unsafe fn init_prop_state(m: &Map) {
         PROP_ACTIVE[pi] = if dormant { 0 } else { 1 };
         PROP_DORMANT[pi] = dormant as u8;
         PROP_NAME[pi] = m.prop_name(pi);
+        let carry_id = m.prop_carry_id(pi);
+        PROP_LOGIC_LINK[pi] = if carry_id == 0 {
+            CARRY_ID_NONE
+        } else {
+            carry_id
+        };
         PROP_SCRIPT_MODE[pi] = 0;
         PROP_SCRIPT_LI[pi] = u16::MAX;
         PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
@@ -6009,7 +9139,12 @@ unsafe fn init_prop_state(m: &Map) {
             leaf
         };
         PROP_HEALTH[pi] = if dead { 0 } else { prop_start_health(kind) };
-        PROP_OCC_VIS[pi] = 1;
+        PROP_OCC_VIS[pi] = PROP_OCC_VISIBLE
+            | if predisaster && (kind == PROP_TYPE_SCIENTIST || kind == PROP_TYPE_BARNEY) {
+                PROP_SCI_PREDISASTER
+            } else {
+                0
+            };
         if dead {
             PROP_STATE[pi] = PROP_STATE_DEAD;
             PROP_DEATH_START[pi] = 0u16.wrapping_sub(300); // already-fallen corpse
@@ -6018,7 +9153,18 @@ unsafe fn init_prop_state(m: &Map) {
         PROP_COUNT += 1;
         pi += 1;
     }
+}
 
+// Build exact candidate lists only after incoming actors have been appended or
+// overlaid. Keeping this separate from base prop init prevents the mailbox
+// restore from leaving the hot paths blind to carried humans/headcrabs/items.
+#[inline(never)]
+unsafe fn rebuild_prop_hotlists() {
+    // Read inside the cold function. Passing PROP_COUNT through the surrounding
+    // giant play() load block was miscompiled as the pre-init zero by the
+    // current experimental MIPS-I backend, leaving the tail at 0xFE.
+    let nprops = core::ptr::read_volatile(core::ptr::addr_of!(PROP_COUNT)).min(CARRY_MAILBOX_FIRST);
+    let mut pi: usize;
     // Build exact candidate lists into the unused tails.  Count first so a
     // future denser cook can select the full-scan fallback without ever writing
     // past MAX_PROPS.  These three classes are disjoint, but separate backing
@@ -6083,6 +9229,24 @@ unsafe fn init_prop_state(m: &Map) {
     }
 }
 
+#[cfg(feature = "reference-trace")]
+#[inline(never)]
+unsafe fn trace_prop_hotlist_state(stage: u8) {
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let count = if nprops < MAX_PROPS {
+        PROP_AI_TARGET[nprops]
+    } else {
+        PROP_HOT_FALLBACK
+    };
+    let mut entries = [PROP_HOT_FALLBACK; 6];
+    let mut i = 0usize;
+    while i < entries.len() && nprops + 1 + i < MAX_PROPS {
+        entries[i] = PROP_AI_TARGET[nprops + 1 + i];
+        i += 1;
+    }
+    reference_trace::prop_hotlist(0, stage, nprops, count, entries);
+}
+
 unsafe fn tick_props(
     m: &Map,
     movers: &[phys::Mover],
@@ -6091,7 +9255,7 @@ unsafe fn tick_props(
     armor: &mut u16,
 ) {
     AI_TICK = AI_TICK.wrapping_add(1); // drives staggered AI target re-acquisition
-    let nprops = PROP_COUNT.min(MAX_PROPS);
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     // VIS_BITS belongs to the last rendered camera leaf. During a catch-up
     // burst the player can cross a portal before rendering rebuilds it; only
     // use the cached PVS while it still describes the current eye leaf.
@@ -6099,11 +9263,7 @@ unsafe fn tick_props(
     let player_pvs_current = valid_pvs_leaf(m, cached_pvs_leaf)
         && camera_leaf(
             m,
-            [
-                player_pos[0],
-                player_pos[1] + VIEW_HEIGHT,
-                player_pos[2],
-            ],
+            [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
         ) == cached_pvs_leaf;
     let mut pi = 0usize;
     while pi < nprops {
@@ -6124,6 +9284,7 @@ unsafe fn tick_props(
             continue;
         }
         if PROP_HEALTH[pi] == 0 {
+            prop_scientist_set_flag(pi, PROP_SCI_FOLLOWING, false);
             PROP_STATE[pi] = PROP_STATE_DEAD;
             PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
             PROP_AI_TIMER[pi] = 0;
@@ -6146,7 +9307,10 @@ unsafe fn tick_props(
             pi += 1;
             continue;
         }
-        let scripted_move = PROP_SCRIPT_MODE[pi] != 0;
+        let scripted_mode = scientist_logic::script_base_mode(PROP_SCRIPT_MODE[pi]);
+        let primed_hold = scientist_logic::script_is_primed(PROP_SCRIPT_MODE[pi])
+            && script_primed_actor_holds(pi, SIM_NOW);
+        let scripted_move = scripted_mode != 0 && !primed_hold;
         let seated_wake = ty == PROP_TYPE_SITTING_SCI
             && PROP_AI_TARGET[pi] != PROP_TARGET_NONE
             && TYPE_TO_SLOT[0] != MODEL_SLOT_NONE;
@@ -6163,7 +9327,8 @@ unsafe fn tick_props(
         let behavior_awake = PROP_AI_TARGET[pi] != PROP_TARGET_NONE
             || PROP_STATE[pi] == PROP_STATE_MOVE
             || PROP_STATE[pi] == PROP_STATE_ATTACK
-            || PROP_AI_TIMER[pi] > 0;
+            || PROP_AI_TIMER[pi] > 0
+            || prop_scientist_flag(pi, PROP_SCI_FOLLOWING);
         let ai_awake = in_player_pvs || behavior_awake;
         // Floor probes are only reachable for actors that can move. The old
         // placement refreshed this O(brush-entities) shortlist for corpses,
@@ -6171,8 +9336,7 @@ unsafe fn tick_props(
         // newly moving/scripted actor immediately, then retain the existing
         // eight-tick stagger while it moves.
         if ((moving_ai && ai_awake) || scripted_move || seated_wake)
-            && (PROP_NEAR_COUNT[pi] == 0xFF
-                || (pi as u32).wrapping_add(AI_TICK) & 7 == 0)
+            && (PROP_NEAR_COUNT[pi] == 0xFF || (pi as u32).wrapping_add(AI_TICK) & 7 == 0)
         {
             refresh_prop_near_ents(movers, pi);
         }
@@ -6188,68 +9352,13 @@ unsafe fn tick_props(
         // broadphase if it's ever needed.
         let _ = movers;
         let pm: &[phys::Mover] = &[];
-        // Scripted-sequence override: walk/run/teleport to the script mark,
-        // then face the authored yaw and fire the script's target chain.
-        if PROP_SCRIPT_MODE[pi] != 0 {
-            let g = PROP_SCRIPT_GOAL[pi];
-            let goal = [g[0] as i32, g[1] as i32, g[2] as i32];
-            let mode = PROP_SCRIPT_MODE[pi];
-            let arrived = if mode == 4 {
-                prop_nav_cache_invalidate(pi);
-                prop_set_pos(m, pm, pi, goal);
-                true
-            } else {
-                let speed = if mode == 2 { 8 } else { 4 };
-                prop_move_towards_point(m, pm, pi, goal, speed);
-                PROP_STATE[pi] = PROP_STATE_MOVE;
-                dist2_xz(PROP_POS[pi], goal) < 32 * 32
-            };
-            if arrived {
-                PROP_YAW[pi] = PROP_SCRIPT_YAW[pi];
-                PROP_STATE[pi] = PROP_STATE_IDLE;
-                PROP_SCRIPT_MODE[pi] = 0;
-                // Hold the ~2 s gesture AT the mark before firing the next script
-                // in the chain (deferred to the gesture-done check below); a
-                // move-only script with no gesture fires on the next tick. Firing
-                // immediately on arrival made looping chains (c1a0d's soda-machine
-                // scientist: machine1->m2->..->m6->machine1) slide between marks
-                // with no pause -- the NPC reads as "flickering" to a new position
-                // every frame. PROP_SCRIPT_LI stays set as the pending-fire marker.
-                PROP_SCRIPT_PLAY_UNTIL[pi] = if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF {
-                    SIM_NOW.wrapping_add(40)
-                } else {
-                    SIM_NOW
-                };
-            }
-            pi += 1;
-            continue;
-        }
-        // Scripted move finished: after the gesture window holds the pose, fire
-        // the completed script's target chain (HL fires a script's target when
-        // its sequence ENDS, not when the monster arrives at the mark).
-        if PROP_SCRIPT_LI[pi] != u16::MAX && time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]) {
-            let li = PROP_SCRIPT_LI[pi];
-            PROP_SCRIPT_LI[pi] = u16::MAX;
-            if (li as usize) < m.n_logic {
-                let rec = m.logic(li as usize);
-                if rec.target != 0 {
-                    logic_fire_targets(
-                        m,
-                        m.n_logic.min(MAX_LOGIC),
-                        m.n_ents.min(MAX_ENTS),
-                        rec.target,
-                        map::USE_TOGGLE,
-                        SIM_NOW,
-                        0,
-                    );
-                }
-            }
-        }
-        // Scripted idle pose (sit1, standing_idle, ...): the monster holds the
-        // pose with AI suspended, exactly like HL's script state. Damage clears
-        // the clip and releases the AI.
-        if PROP_SCRIPT_IDLE_CLIP[pi] != 0xFF && PROP_HEALTH[pi] > 0 {
-            PROP_STATE[pi] = PROP_STATE_IDLE;
+        // Scripted actor work lives out of line to keep this MIPS function's
+        // conditional branches in PC16 range. Ordinary props avoid the call.
+        if (PROP_SCRIPT_MODE[pi] != 0
+            || PROP_SCRIPT_LI[pi] != u16::MAX
+            || PROP_SCRIPT_IDLE_CLIP[pi] != 0xFF)
+            && tick_scripted_actor(m, pi, primed_hold)
+        {
             pi += 1;
             continue;
         }
@@ -6258,9 +9367,7 @@ unsafe fn tick_props(
         // the kind so it draws the standing model + runs flee AI, and drop it from
         // the chair to the floor.
         if ty == PROP_TYPE_SITTING_SCI {
-            if PROP_AI_TARGET[pi] != PROP_TARGET_NONE
-                && TYPE_TO_SLOT[0] != MODEL_SLOT_NONE
-            {
+            if PROP_AI_TARGET[pi] != PROP_TARGET_NONE && TYPE_TO_SLOT[0] != MODEL_SLOT_NONE {
                 prop_nav_cache_invalidate(pi);
                 PROP_KIND[pi] = 0;
                 PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
@@ -6302,6 +9409,10 @@ fn player_touches_pickup(player_pos: [i32; 3], item_pos: [i32; 3]) -> bool {
 }
 
 unsafe fn collect_pickups(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    now: u16,
     player_pos: [i32; 3],
     suit_equipped: &mut bool,
     armor: &mut u16,
@@ -6310,13 +9421,10 @@ unsafe fn collect_pickups(
     pickup_kind: &mut u8,
     pickup_ticks: &mut u8,
 ) {
-    let nprops = PROP_COUNT.min(MAX_PROPS);
-    let indexed = nprops < MAX_PROPS && PROP_ACTIVE[nprops] != PROP_HOT_FALLBACK;
-    let scan_count = if indexed {
-        PROP_ACTIVE[nprops] as usize
-    } else {
-        nprops
-    };
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let hot_count = prop_hotlist_count(PROP_ACTIVE[nprops], nprops);
+    let indexed = hot_count.is_some();
+    let scan_count = hot_count.unwrap_or(nprops);
     let mut scan = 0usize;
     while scan < scan_count {
         let pi = if indexed {
@@ -6324,7 +9432,8 @@ unsafe fn collect_pickups(
         } else {
             scan
         };
-        if PROP_ACTIVE[pi] == 0 || !player_touches_pickup(player_pos, PROP_POS[pi]) {
+        if pi >= nprops || PROP_ACTIVE[pi] == 0 || !player_touches_pickup(player_pos, PROP_POS[pi])
+        {
             scan += 1;
             continue;
         }
@@ -6332,15 +9441,21 @@ unsafe fn collect_pickups(
             PROP_TYPE_ITEM_SUIT => {
                 if !*suit_equipped {
                     *suit_equipped = true;
-                    PROP_ACTIVE[pi] = 0;
                     let li = PROP_LOGIC_LINK[pi];
-                    if li != u16::MAX && (li as usize) < MAX_LOGIC {
+                    if li != u16::MAX && (li as usize) < nlogic {
                         let l = li as usize;
-                        LOGIC_STATE[l] = LOGIC_STATE_REMOVED;
-                        LOGIC_TARGET[l] = 0;
-                        LOGIC_PROP_LINK[l] = LOGIC_PROP_NONE;
+                        let rec = m.logic(l);
+                        // CItem::ItemTouch calls SUB_UseTargets after a
+                        // successful MyTouch and only then removes the item.
+                        // c1a0d's HEV suit must satisfy `hevmaster1`, which
+                        // starts the Barney retinal/airlock chain; silently
+                        // deleting the item hard-locks the forward route.
+                        logic_sub_use_targets(m, nlogic, nents, l, rec, now, map::USE_TOGGLE, 0);
+                        logic_remove_entity(l, rec, nents);
+                    } else {
+                        PROP_ACTIVE[pi] = 0;
+                        PROP_LOGIC_LINK[pi] = u16::MAX;
                     }
-                    PROP_LOGIC_LINK[pi] = u16::MAX;
                     *pickup_kind = hud::PICKUP_SUIT;
                     *pickup_ticks = HEV_PICKUP_TICKS;
                     sfx::play(sfx::SUIT);
@@ -6395,15 +9510,16 @@ unsafe fn collect_pickups(
             PROP_TYPE_ITEM_BATTERY => {
                 if *suit_equipped && *armor < HEV_MAX_ARMOR {
                     *armor = armor.saturating_add(HEV_BATTERY_ARMOR).min(HEV_MAX_ARMOR);
-                    PROP_ACTIVE[pi] = 0;
                     let li = PROP_LOGIC_LINK[pi];
-                    if li != u16::MAX && (li as usize) < MAX_LOGIC {
+                    if li != u16::MAX && (li as usize) < nlogic {
                         let l = li as usize;
-                        LOGIC_STATE[l] = LOGIC_STATE_REMOVED;
-                        LOGIC_TARGET[l] = 0;
-                        LOGIC_PROP_LINK[l] = LOGIC_PROP_NONE;
+                        let rec = m.logic(l);
+                        logic_sub_use_targets(m, nlogic, nents, l, rec, now, map::USE_TOGGLE, 0);
+                        logic_remove_entity(l, rec, nents);
+                    } else {
+                        PROP_ACTIVE[pi] = 0;
+                        PROP_LOGIC_LINK[pi] = u16::MAX;
                     }
-                    PROP_LOGIC_LINK[pi] = u16::MAX;
                     *pickup_kind = hud::PICKUP_BATTERY;
                     *pickup_ticks = HEV_PICKUP_TICKS;
                     sfx::play(sfx::PICKUP);
@@ -6520,7 +9636,11 @@ fn draw_muzzle_flash(phase: u32) {
         psx_gpu::draw_tri_flat_blended(sp, 255, 150, 40, BlendMode::Add);
     }
     psx_gpu::draw_tri_flat_blended(
-        [(cx - core, cy - core), (cx + core, cy - core), (cx, cy + core)],
+        [
+            (cx - core, cy - core),
+            (cx + core, cy - core),
+            (cx, cy + core),
+        ],
         255,
         236,
         170,
@@ -6622,20 +9742,192 @@ const fn wdef(
 // (gauss charge, egon beam, snark AI, satchel/tripmine placement) are mapped to
 // the nearest archetype; the per-weapon stats and viewmodel are authentic.
 static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
-    wdef("CROWBAR", AMMO_NONE, 0, 0, 10, 96, 1, 0, 7, 0, FIRE_MELEE, 0, 4),
-    wdef("GLOCK", AMMO_9MM, 17, 250, 8, GLOCK_RANGE, 1, 0, 6, 30, FIRE_SEMI, 0, 0),
-    wdef("357", AMMO_357, 6, 36, 40, GLOCK_RANGE, 1, 0, 15, 40, FIRE_SEMI, 0, 1),
-    wdef("MP5", AMMO_9MM, 50, 250, 5, GLOCK_RANGE, 1, 5, 2, 30, FIRE_AUTO, 0, 2),
-    wdef("SHOTGUN", AMMO_BUCK, 8, 125, 5, GLOCK_RANGE, 6, 14, 16, 24, FIRE_SPREAD, 0, 13),
-    wdef("CROSSBOW", AMMO_BOLT, 5, 50, 50, GLOCK_RANGE, 1, 0, 15, 30, FIRE_PROJ, PROJ_BOLT, 3),
-    wdef("RPG", AMMO_ROCKET, 1, 5, 100, 0, 1, 0, 30, 30, FIRE_PROJ, PROJ_ROCKET, 10),
-    wdef("GAUSS", AMMO_URANIUM, 0, 100, 20, GLOCK_RANGE, 1, 0, 5, 0, FIRE_SEMI, 0, 7),
-    wdef("EGON", AMMO_URANIUM, 0, 100, 6, GLOCK_RANGE, 1, 0, 1, 0, FIRE_AUTO, 0, 6),
-    wdef("HORNET", AMMO_HORNET, 0, 8, 8, 0, 1, 0, 5, 0, FIRE_PROJ, PROJ_HORNET, 9),
-    wdef("GRENADE", AMMO_GREN, 0, 10, 100, 0, 1, 0, 20, 0, FIRE_PROJ, PROJ_GRENADE, 8),
-    wdef("SNARK", AMMO_SNARK, 0, 15, 10, 0, 1, 0, 10, 0, FIRE_PROJ, PROJ_SNARK, 14),
-    wdef("TRIPMINE", AMMO_TRIPMINE, 0, 5, 100, 0, 1, 0, 20, 0, FIRE_PROJ, PROJ_PLACED, 15),
-    wdef("SATCHEL", AMMO_SATCHEL, 0, 5, 100, 0, 1, 0, 20, 0, FIRE_PROJ, PROJ_PLACED, 11),
+    wdef(
+        "CROWBAR", AMMO_NONE, 0, 0, 10, 96, 1, 0, 7, 0, FIRE_MELEE, 0, 4,
+    ),
+    wdef(
+        "GLOCK",
+        AMMO_9MM,
+        17,
+        250,
+        8,
+        GLOCK_RANGE,
+        1,
+        0,
+        6,
+        30,
+        FIRE_SEMI,
+        0,
+        0,
+    ),
+    wdef(
+        "357",
+        AMMO_357,
+        6,
+        36,
+        40,
+        GLOCK_RANGE,
+        1,
+        0,
+        15,
+        40,
+        FIRE_SEMI,
+        0,
+        1,
+    ),
+    wdef(
+        "MP5",
+        AMMO_9MM,
+        50,
+        250,
+        5,
+        GLOCK_RANGE,
+        1,
+        5,
+        2,
+        30,
+        FIRE_AUTO,
+        0,
+        2,
+    ),
+    wdef(
+        "SHOTGUN",
+        AMMO_BUCK,
+        8,
+        125,
+        5,
+        GLOCK_RANGE,
+        6,
+        14,
+        16,
+        24,
+        FIRE_SPREAD,
+        0,
+        13,
+    ),
+    wdef(
+        "CROSSBOW",
+        AMMO_BOLT,
+        5,
+        50,
+        50,
+        GLOCK_RANGE,
+        1,
+        0,
+        15,
+        30,
+        FIRE_PROJ,
+        PROJ_BOLT,
+        3,
+    ),
+    wdef(
+        "RPG",
+        AMMO_ROCKET,
+        1,
+        5,
+        100,
+        0,
+        1,
+        0,
+        30,
+        30,
+        FIRE_PROJ,
+        PROJ_ROCKET,
+        10,
+    ),
+    wdef(
+        "GAUSS",
+        AMMO_URANIUM,
+        0,
+        100,
+        20,
+        GLOCK_RANGE,
+        1,
+        0,
+        5,
+        0,
+        FIRE_SEMI,
+        0,
+        7,
+    ),
+    wdef(
+        "EGON",
+        AMMO_URANIUM,
+        0,
+        100,
+        6,
+        GLOCK_RANGE,
+        1,
+        0,
+        1,
+        0,
+        FIRE_AUTO,
+        0,
+        6,
+    ),
+    wdef(
+        "HORNET",
+        AMMO_HORNET,
+        0,
+        8,
+        8,
+        0,
+        1,
+        0,
+        5,
+        0,
+        FIRE_PROJ,
+        PROJ_HORNET,
+        9,
+    ),
+    wdef(
+        "GRENADE",
+        AMMO_GREN,
+        0,
+        10,
+        100,
+        0,
+        1,
+        0,
+        20,
+        0,
+        FIRE_PROJ,
+        PROJ_GRENADE,
+        8,
+    ),
+    wdef(
+        "SNARK", AMMO_SNARK, 0, 15, 10, 0, 1, 0, 10, 0, FIRE_PROJ, PROJ_SNARK, 14,
+    ),
+    wdef(
+        "TRIPMINE",
+        AMMO_TRIPMINE,
+        0,
+        5,
+        100,
+        0,
+        1,
+        0,
+        20,
+        0,
+        FIRE_PROJ,
+        PROJ_PLACED,
+        15,
+    ),
+    wdef(
+        "SATCHEL",
+        AMMO_SATCHEL,
+        0,
+        5,
+        100,
+        0,
+        1,
+        0,
+        20,
+        0,
+        FIRE_PROJ,
+        PROJ_PLACED,
+        11,
+    ),
 ];
 
 // SDK DEFAULT_GIVE per weapon (weapons.h:144-158): the total rounds a weapon
@@ -7120,7 +10412,7 @@ unsafe fn fire_hitscan(
     let mut best_z = range + 1;
     let mut best_score = i32::MAX;
     let mut pi = 0usize;
-    let nprops = PROP_COUNT.min(MAX_PROPS);
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     while pi < nprops {
         let ty = PROP_KIND[pi];
         if prop_start_health(ty) == 0 || PROP_HEALTH[pi] == 0 {
@@ -7163,9 +10455,12 @@ unsafe fn fire_hitscan(
     // Muzzle a little below/right of the eye so the tracer streaks from the gun,
     // not the crosshair. Only bullets (long range) leave a tracer, never a swing.
     let muzzle = [
-        eye[0] + ((rot.m[2][0] as i32 * 20 + rot.m[0][0] as i32 * 7 + rot.m[1][0] as i32 * 7) >> 12),
-        eye[1] + ((rot.m[2][1] as i32 * 20 + rot.m[0][1] as i32 * 7 + rot.m[1][1] as i32 * 7) >> 12),
-        eye[2] + ((rot.m[2][2] as i32 * 20 + rot.m[0][2] as i32 * 7 + rot.m[1][2] as i32 * 7) >> 12),
+        eye[0]
+            + ((rot.m[2][0] as i32 * 20 + rot.m[0][0] as i32 * 7 + rot.m[1][0] as i32 * 7) >> 12),
+        eye[1]
+            + ((rot.m[2][1] as i32 * 20 + rot.m[0][1] as i32 * 7 + rot.m[1][1] as i32 * 7) >> 12),
+        eye[2]
+            + ((rot.m[2][2] as i32 * 20 + rot.m[0][2] as i32 * 7 + rot.m[1][2] as i32 * 7) >> 12),
     ];
     if best == usize::MAX {
         let tracer_end = if let Some(hit) = world_hit {
@@ -7190,7 +10485,7 @@ unsafe fn fire_hitscan(
     } else {
         let ty = PROP_KIND[best];
         let target = prop_target(ty, PROP_POS[best]);
-        damage_prop(best, damage);
+        damage_prop(best, damage, true);
         spawn_impact_fx(target, IMPACT_KIND_BLOOD, rot, base_t);
         if range > 1000 {
             push_tracer(muzzle, target);
@@ -7236,7 +10531,17 @@ unsafe fn fire_weapon(
     };
     match d.fire {
         FIRE_MELEE => fire_hitscan(
-            m, movers, eye, rot, base_t, d.damage, d.range, MELEE_AIM_PIX, MELEE_AIM_PIX, 0, 0,
+            m,
+            movers,
+            eye,
+            rot,
+            base_t,
+            d.damage,
+            d.range,
+            MELEE_AIM_PIX,
+            MELEE_AIM_PIX,
+            0,
+            0,
         )
         .is_some(),
         FIRE_SPREAD => {
@@ -7436,7 +10741,7 @@ fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
         PROJ_HORNET => (85, 50, false, 0, (250, 230, 70), 3),
         PROJ_SNARK => (48, 80, true, 110, (190, 170, 50), 5),
         PROJ_SPIT => (75, 55, true, 0, (150, 220, 80), 4), // bullsquid acid glob
-        _ => (40, 100, true, 200, (170, 70, 50), 5), // PROJ_PLACED (satchel / tripmine)
+        _ => (40, 100, true, 200, (170, 70, 50), 5),       // PROJ_PLACED (satchel / tripmine)
     }
 }
 
@@ -7463,7 +10768,13 @@ unsafe fn spawn_projectile(kind: u8, damage: u8, eye: [i32; 3], rot: &Mat3I16) {
 
 /// Spawn a projectile from `origin` along the q12 direction `dir`. `from_enemy`
 /// routes its damage at the player instead of props.
-unsafe fn spawn_projectile_dir(kind: u8, damage: u8, origin: [i32; 3], dir: [i32; 3], from_enemy: bool) {
+unsafe fn spawn_projectile_dir(
+    kind: u8,
+    damage: u8,
+    origin: [i32; 3],
+    dir: [i32; 3],
+    from_enemy: bool,
+) {
     let (speed, life, gravity, ..) = proj_params(kind);
     let mut slot = usize::MAX;
     let mut i = 0;
@@ -7500,7 +10811,7 @@ unsafe fn spawn_projectile_dir(kind: u8, damage: u8, origin: [i32; 3], dir: [i32
     };
 }
 
-unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32) {
+unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_inflicted: bool) {
     if radius <= 0 {
         return;
     }
@@ -7519,8 +10830,16 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32) {
     let nents = m.n_ents;
     let mut ei = 0usize;
     while ei < nents {
-        if ENT_ACTIVE[ei] != 0 && ENT_BREAK_LOGIC[ei] != u16::MAX {
-            let c = ENT_CACHE[ei].center;
+        if ENT_ACTIVE[ei] != 0
+            && ENT_BRUSH_LOGIC[ei] != u16::MAX
+            && LOGIC_KIND[ENT_BRUSH_LOGIC[ei] as usize] == map::LOGIC_FUNC_BREAKABLE
+        {
+            let e = ENT_CACHE[ei];
+            let c = if e.kind == ENT_KIND_PUSHABLE {
+                pushable_world_center(e, e.origin)
+            } else {
+                e.center
+            };
             let (dx, dy, dz) = (c[0] - pos[0], c[1] - pos[1], c[2] - pos[2]);
             if dx.abs() < radius && dy.abs() < radius && dz.abs() < radius {
                 damage_brush_ent(m, m.n_logic, nents, ei, damage, SIM_NOW);
@@ -7530,21 +10849,28 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32) {
     }
     let r2 = radius * radius;
     let mut pi = 0;
-    let nprops = PROP_COUNT.min(MAX_PROPS);
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     while pi < nprops {
         if prop_start_health(PROP_KIND[pi]) != 0 && PROP_HEALTH[pi] != 0 {
             let t = prop_target(PROP_KIND[pi], PROP_POS[pi]);
             let d2 = dist2_3(t, pos);
             if d2 < r2 {
                 let dmg = (damage as i32 * (radius - isqrt_i32(d2)) / radius).clamp(0, 255) as u8;
-                damage_prop(pi, dmg);
+                damage_prop(pi, dmg, player_inflicted);
                 PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
             }
         }
         pi += 1;
     }
     // The blast also catches the player (own rockets self-hurt too -- faithful).
-    let pd2 = dist2_3([LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]], pos);
+    let pd2 = dist2_3(
+        [
+            LOGIC_PLAYER_POS[0],
+            LOGIC_PLAYER_POS[1] + 18,
+            LOGIC_PLAYER_POS[2],
+        ],
+        pos,
+    );
     if pd2 < r2 {
         let dmg = (damage as i32 * (radius - isqrt_i32(pd2)) / radius).clamp(0, 255) as u16;
         PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(dmg);
@@ -7555,7 +10881,14 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32) {
 /// (HL's houndeye pulse). Falls off with distance. Visual is the HE_BLAST sound
 /// plus the caller's particle burst.
 unsafe fn houndeye_blast(center: [i32; 3], radius: i32, dmg: u8) {
-    let d2 = dist2_3([LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]], center);
+    let d2 = dist2_3(
+        [
+            LOGIC_PLAYER_POS[0],
+            LOGIC_PLAYER_POS[1] + 18,
+            LOGIC_PLAYER_POS[2],
+        ],
+        center,
+    );
     if d2 < radius * radius {
         let scaled = (dmg as i32 * (radius - isqrt_i32(d2)) / radius).clamp(0, 255) as u16;
         PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(scaled);
@@ -7589,7 +10922,11 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
         let mut best = usize::MAX;
         let mut player_hit = false;
         if from_enemy {
-            let ppos = [LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]];
+            let ppos = [
+                LOGIC_PLAYER_POS[0],
+                LOGIC_PLAYER_POS[1] + 18,
+                LOGIC_PLAYER_POS[2],
+            ];
             if dist2_3(ppos, new) < PROJ_HIT_RADIUS * PROJ_HIT_RADIUS {
                 player_hit = true;
                 hit = true;
@@ -7598,7 +10935,7 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
         } else {
             let mut best_d2 = PROJ_HIT_RADIUS * PROJ_HIT_RADIUS;
             let mut pi = 0;
-            let nprops = PROP_COUNT.min(MAX_PROPS);
+            let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
             while pi < nprops {
                 if prop_start_health(PROP_KIND[pi]) != 0 && PROP_HEALTH[pi] != 0 {
                     let d2 = dist2_3(prop_target(PROP_KIND[pi], PROP_POS[pi]), new);
@@ -7620,9 +10957,9 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
         }
         if hit || PROJECTILES[i].life == 0 {
             if aoe > 0 {
-                explode(m, hit_pos, PROJECTILES[i].damage, aoe);
+                explode(m, hit_pos, PROJECTILES[i].damage, aoe, !from_enemy);
             } else if best != usize::MAX {
-                damage_prop(best, PROJECTILES[i].damage);
+                damage_prop(best, PROJECTILES[i].damage, true);
                 PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
             } else if player_hit {
                 PENDING_PLAYER_DAMAGE =
@@ -7684,7 +11021,12 @@ static mut DEBRIS_RECTS: [RectFlat; MAX_DEBRIS] =
 
 unsafe fn spawn_debris(pos: [i32; 3], vel: [i32; 3], kind: u8, ttl: u8) {
     let i = DEBRIS_CURSOR % MAX_DEBRIS;
-    DEBRIS[i] = Debris { pos, vel, ttl, kind };
+    DEBRIS[i] = Debris {
+        pos,
+        vel,
+        ttl,
+        kind,
+    };
     DEBRIS_CURSOR = (DEBRIS_CURSOR + 1) % MAX_DEBRIS;
 }
 
@@ -7703,7 +11045,11 @@ unsafe fn tick_debris() {
     while i < MAX_DEBRIS {
         if DEBRIS[i].ttl > 0 {
             DEBRIS[i].ttl -= 1;
-            let g = if DEBRIS[i].kind == DEBRIS_SPARK { 6 } else { 12 };
+            let g = if DEBRIS[i].kind == DEBRIS_SPARK {
+                6
+            } else {
+                12
+            };
             DEBRIS[i].vel[1] -= g;
             DEBRIS[i].pos[0] += DEBRIS[i].vel[0];
             DEBRIS[i].pos[1] += DEBRIS[i].vel[1];
@@ -7713,7 +11059,11 @@ unsafe fn tick_debris() {
     }
 }
 
-unsafe fn render_debris<const N: usize>(ot: &mut OrderingTable<N>, rot: &Mat3I16, base_t: [i32; 3]) {
+unsafe fn render_debris<const N: usize>(
+    ot: &mut OrderingTable<N>,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
     let mut i = 0;
     while i < MAX_DEBRIS {
         if DEBRIS[i].ttl > 0 {
@@ -7723,8 +11073,15 @@ unsafe fn render_debris<const N: usize>(ot: &mut OrderingTable<N>, rot: &Mat3I16
                 _ => (255, 240, 150, 2), // spark
             };
             if let Some((sx, sy, _)) = project_world_point(DEBRIS[i].pos, rot, base_t) {
-                DEBRIS_RECTS[i] =
-                    RectFlat::new(sx - size / 2, sy - size / 2, size as u16, size as u16, r, g, b);
+                DEBRIS_RECTS[i] = RectFlat::new(
+                    sx - size / 2,
+                    sy - size / 2,
+                    size as u16,
+                    size as u16,
+                    r,
+                    g,
+                    b,
+                );
                 ot.add(0, &mut DEBRIS_RECTS[i], RectFlat::WORDS);
             }
         }
@@ -7898,9 +11255,7 @@ fn world_sphere_visible_gte(center: [i16; 3], radius: i32) -> bool {
     // The world view matrix is already resident in the GTE throughout this
     // pass. One MVMVA replaces three CPU dot products (nine R3000 multiplies)
     // while producing the same Q12 view coordinates.
-    let v = scene::transform_vertex_scheduled(Vec3I16::new(
-        center[0], center[1], center[2],
-    ));
+    let v = scene::transform_vertex_scheduled(Vec3I16::new(center[0], center[1], center[2]));
     let r = radius;
     if v.z + r < render::NEAR_Z || v.z - r > FAR_VIEW {
         return false;
@@ -7982,7 +11337,7 @@ fn camera_leaf(m: &Map, eye: [i32; 3]) -> i32 {
 
 #[inline]
 fn valid_pvs_leaf(m: &Map, leaf: i32) -> bool {
-    leaf > 0 && (leaf as usize) < m.n_leaves
+    leaf > 0 && (leaf as usize) <= m.n_visleaves
 }
 
 // This cache is touched from both the simulation and the very large render
@@ -8047,7 +11402,10 @@ fn recover_camera_leaf(m: &Map, eye: [i32; 3], player_pos: [i32; 3], train_hint:
 }
 
 fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
-    let row = ((m.n_leaves.saturating_sub(1)) + 7) / 8;
+    // GoldSrc rows are model[0].visleafs bits wide. The BSP leaf lump also
+    // contains submodel-only leaves; decoding to that larger count consumes
+    // bytes from the next compressed row and produces unstable visibility.
+    let row = (m.n_visleaves + 7) / 8;
     let row = row.min(out.len());
     for b in out[..row].iter_mut() {
         *b = 0;
@@ -8116,7 +11474,7 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
     PVS_ENT_COUNT = 0;
     let mark_token = next_pvs_face_mark_token();
 
-    for i in 0..m.n_leaves.saturating_sub(1).min(MAX_LEAVES) {
+    for i in 0..m.n_visleaves.min(MAX_LEAVES) {
         if VIS_BITS[i >> 3] & (1u8 << (i & 7)) == 0 {
             continue;
         }
@@ -8184,7 +11542,11 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
         // kind 4 = invisible ladder volume: physics only, never drawn.
         if e.kind != 4
             && ENT_ACTIVE[ei] != 0
-            && entity_touches_pvs(m, &e)
+            && (if e.kind == ENT_KIND_PUSHABLE {
+                pushable_touches_pvs(m, e)
+            } else {
+                entity_touches_pvs(m, &e)
+            })
             && PVS_ENT_COUNT < MAX_ENTS
         {
             PVS_ENTS[PVS_ENT_COUNT] = ei as u16;
@@ -8197,11 +11559,11 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
 
 #[inline]
 fn pvs_leaf_visible(m: &Map, leaf: usize) -> bool {
-    if leaf == 0 || leaf >= m.n_leaves {
+    if leaf == 0 || leaf > m.n_visleaves {
         return false;
     }
     let bit = leaf - 1;
-    if bit >= m.n_leaves.saturating_sub(1) || bit >= MAX_LEAVES {
+    if bit >= m.n_visleaves || bit >= MAX_LEAVES {
         return false;
     }
     unsafe { (VIS_BITS[bit >> 3] & (1u8 << (bit & 7))) != 0 }
@@ -8219,6 +11581,34 @@ fn entity_touches_pvs(m: &Map, e: &map::Ent) -> bool {
             return true;
         }
         i += 1;
+    }
+    false
+}
+
+/// Moving pushables cannot use their spawn-time cooked leaf list. Test the
+/// live asymmetric AABB at its centre and four horizontal corners; this keeps
+/// carts out of the render list when genuinely hidden without making every
+/// push invalidate/rebuild the world PVS cache.
+#[inline(never)]
+fn pushable_touches_pvs(m: &Map, e: map::Ent) -> bool {
+    let center = pushable_world_center(e, e.origin);
+    let half = pushable_half_extents(e);
+    let xs = [-half[0], half[0]];
+    let zs = [-half[2], half[2]];
+    if pvs_leaf_visible(m, camera_leaf(m, center).max(0) as usize) {
+        return true;
+    }
+    let mut xi = 0usize;
+    while xi < 2 {
+        let mut zi = 0usize;
+        while zi < 2 {
+            let sample = [center[0] + xs[xi], center[1], center[2] + zs[zi]];
+            if pvs_leaf_visible(m, camera_leaf(m, sample).max(0) as usize) {
+                return true;
+            }
+            zi += 1;
+        }
+        xi += 1;
     }
     false
 }
@@ -8252,7 +11642,7 @@ unsafe fn project_vert_fixed(m: &Map, i: usize) -> Projected {
         let vx = dot12(FIX_ROT.m[0], wv) + FIX_T[0];
         let vy = dot12(FIX_ROT.m[1], wv) + FIX_T[1];
         let inv = render::close_inv_q12(z); // z is in the exact 16..80 LUT band
-        // |v*inv| fits i32 for |v| <= 32767; saturate like the GTE (+-1023).
+                                            // |v*inv| fits i32 for |v| <= 32767; saturate like the GTE (+-1023).
         p.sx = (render::OFX + ((vx * inv) >> 12)).clamp(-1023, 1023) as i16;
         p.sy = (render::OFY + ((vy * inv) >> 12)).clamp(-1023, 1023) as i16;
     }
@@ -9206,6 +12596,62 @@ unsafe fn emit_submodel_face(
     }
 }
 
+/// Draw an entity-local `func_platrot`. Keep this cold/out-of-line: the main
+/// render loop is already near the MIPS PC16 branch span in diagnostic builds.
+#[inline(never)]
+unsafe fn emit_platrot_entity(
+    packets: &mut PrimitivePacketArena<'_>,
+    m: &Map,
+    e: map::Ent,
+    phase: i32,
+    eye: [i32; 3],
+    off: [i32; 3],
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+    np: &mut usize,
+    model_culled_tris: &mut u32,
+) {
+    let ang = platrot_yaw(e, phase);
+    let local_rot = Mat3I16::rotate_y(ang >> 4);
+    let mr = rot.mul(&local_rot);
+    let ome = [off[0] - eye[0], off[1] - eye[1], off[2] - eye[2]];
+    let et = [
+        dot12(rot.m[0], ome),
+        dot12(rot.m[1], ome),
+        dot12(rot.m[2], ome),
+    ];
+    scene::load_rotation(&mr);
+    scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
+    set_view_fix(&mr, et);
+    let eye_local = platrot_world_to_local(eye, off, ang);
+    let submodel_token = next_proj_token();
+    let (ff, nf) = m.submodel(e.submodel);
+    for f in ff..ff + nf {
+        let (fnrm, fd) = m.face_plane(f);
+        if dot12(fnrm, eye_local) <= fd {
+            let (_, cnt) = m.face_tris(f);
+            *model_culled_tris = model_culled_tris.saturating_add(cnt as u32);
+            continue;
+        }
+        let (bc, be) = m.face_bounds(f);
+        if WORLD_BOUNDS_CULL
+            && !world_sphere_visible_gte([bc[0] as i16, bc[1] as i16, bc[2] as i16], be)
+        {
+            continue;
+        }
+        let (first, cnt) = m.face_tris(f);
+        let fl = m.face_translucent(f);
+        EMIT_BLEND = if e.blend != 0 { e.blend } else { fl as u8 };
+        EMIT_WAVE = fl;
+        emit_submodel_face(packets, m, f, first, cnt, submodel_token, np);
+    }
+    EMIT_BLEND = 0;
+    EMIT_WAVE = false;
+    scene::load_rotation(rot);
+    scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
+    set_view_fix(rot, base_t);
+}
+
 unsafe fn emit_world_face_tris(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
@@ -9288,14 +12734,7 @@ unsafe fn emit_world_face_loop(
         if WORLD_QUAD_PAIRING && k + 2 < count {
             let vk2 = m.loop_vert(base + k + 2);
             // Fan structure guarantees the shared edge; go straight to the core.
-            if try_emit_quad_corners(
-                packets,
-                m,
-                tex,
-                [va, vk, vk1, vk2],
-                frame,
-                nq,
-            ) {
+            if try_emit_quad_corners(packets, m, tex, [va, vk, vk1, vk2], frame, nq) {
                 counts.emit_calls += 2;
                 vk = vk2;
                 k += 2;
@@ -9344,7 +12783,17 @@ unsafe fn emit_world_face(
         return;
     }
     if m.face_is_loop(face) {
-        emit_world_face_loop(packets, m, m.face_tex(face), first, cnt, frame, np, nq, counts);
+        emit_world_face_loop(
+            packets,
+            m,
+            m.face_tex(face),
+            first,
+            cnt,
+            frame,
+            np,
+            nq,
+            counts,
+        );
     } else {
         emit_world_face_tris(packets, m, first, cnt, frame, np, nq, counts);
     }
@@ -9676,8 +13125,8 @@ const VM_CULL_POS: bool = true; // winding sign that is the backface
 const VM_TWO_SIDED_TEX: usize = 0; // GLOVED_sleeve: avoid punched gaps in the orange arm
 const VM_SHADE: u8 = 255;
 const VM_FRAME: usize = 0; // authored idle pose
-// 2 px per VM unit approximates H/Z at the viewmodel's representative depth
-// (160 / 80) while keeping the packet cache invariant under procedural motion.
+                           // 2 px per VM unit approximates H/Z at the viewmodel's representative depth
+                           // (160 / 80) while keeping the packet cache invariant under procedural motion.
 const VM_SCREEN_PX_PER_UNIT: i32 = 2;
 const SHOW_VIEWMODEL: bool = true;
 const ANIM_DIV: usize = 4; // game-frames per baked animation frame
@@ -9747,7 +13196,7 @@ fn viewmodel_offset(recoil: i32, reload_ticks: u8, reload_max: u8, phase: u32) -
     let bob_x = (sin(phase.wrapping_mul(4)) * 3) >> 12;
     let bob_y = (sin(phase.wrapping_mul(8)) * 2) >> 12;
     let fire_up = -recoil; // up = negative "down"
-    // Reload: a hump peaking mid-reload (reload_ticks counts down to 0).
+                           // Reload: a hump peaking mid-reload (reload_ticks counts down to 0).
     let (rl_down, rl_right) = if reload_max > 1 && reload_ticks > 0 {
         let elapsed = (reload_max - reload_ticks) as i32;
         let hump = (elapsed.min(reload_ticks as i32) * 2 * 44 / reload_max as i32).min(44);
@@ -9761,12 +13210,7 @@ fn viewmodel_offset(recoil: i32, reload_ticks: u8, reload_max: u8, phase: u32) -
 /// Draw the held weapon on top of the world. Procedural motion is applied later
 /// as a temporary GPU draw offset, so only authored frame/model changes rebuild
 /// this packet cache.
-unsafe fn draw_viewmodel(
-    md: &Model,
-    slots: &[TexSlot],
-    frame: usize,
-    np: &mut usize,
-) {
+unsafe fn draw_viewmodel(md: &Model, slots: &[TexSlot], frame: usize, np: &mut usize) {
     if slots.is_empty() {
         return; // viewmodel texture failed to upload: skip rather than index empty
     }
@@ -9983,12 +13427,38 @@ fn main() {
         }
         let sel = dbg_sel.unwrap_or_else(|| menu::run(&mut fb, unsafe { stream_menu_assets() }));
         let mut launch = menu_launch(sel);
+        #[cfg(feature = "semantic-input")]
+        let mut semantic_player = {
+            let tape = match semantic_input::Tape::parse(SEMANTIC_INPUT_BYTES) {
+                Ok(tape) => tape,
+                Err(_) => panic!("invalid HLINPUT1 route"),
+            };
+            let mut player = semantic_input::Player::new(tape);
+            // Direct-map debug boots may begin in the middle of a full route.
+            // Seek once here; later changelevels still consume the remaining
+            // HLINPUT1 segments in strict order.
+            if let Some(_) = dbg_sel {
+                let Some(map_name) = menu::MAPS.get(sel) else {
+                    panic!("debug map index outside campaign registry");
+                };
+                if player.seek_to_map(map_name).is_err() {
+                    panic!("HLINPUT1 direct map missing from route");
+                }
+            }
+            player
+        };
         // First load comes from the menu (fresh -> full loading card). A
         // changelevel re-enters play() with the previous frame still on screen,
         // so keep it frozen and overlay only a tiny "Loading" strip.
         let mut keep_frame = false;
         loop {
-            match play(&mut fb, launch, keep_frame) {
+            match play(
+                &mut fb,
+                launch,
+                keep_frame,
+                #[cfg(feature = "semantic-input")]
+                &mut semantic_player,
+            ) {
                 PlayExit::BackToMenu => break,
                 PlayExit::Ending => {
                     menu::ending(&mut fb, unsafe { stream_menu_assets() });
@@ -10062,7 +13532,260 @@ fn stream_model_texture_chunk(
 /// Stream a room from WORLD.PAK, upload its textures, and run the renderer +
 /// physics loop until Select returns to menu or a trigger_changelevel requests
 /// the next room.
-fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit {
+#[cfg(feature = "reference-trace")]
+#[inline(never)]
+unsafe fn trace_brush_entities(m: &Map, map_tick: u32) {
+    let nents = m.n_ents.min(MAX_ENTS);
+    let nlogic = m.n_logic.min(MAX_LOGIC);
+    let mut ei = 0usize;
+    while ei < nents {
+        let e = ENT_CACHE[ei];
+        let mut logic_match = None;
+        let mut li = 0usize;
+        while li < nlogic {
+            let rec = m.logic(li);
+            if rec.brush as usize == ei {
+                logic_match = Some((li, rec));
+                break;
+            }
+            li += 1;
+        }
+
+        let base_class = match e.kind {
+            0 => Some("func_wall"),
+            1 => Some("func_door"),
+            5 => Some("func_rotating"),
+            7 => Some("func_door_rotating"),
+            ENT_KIND_PLATROT => Some("func_platrot"),
+            ENT_KIND_PUSHABLE => Some("func_pushable"),
+            _ => None,
+        };
+        let class = match logic_match.map(|(_, rec)| rec.kind) {
+            Some(map::LOGIC_FUNC_TRAIN) => Some("func_train"),
+            Some(map::LOGIC_FUNC_TRACKTRAIN) => Some("func_tracktrain"),
+            Some(map::LOGIC_FUNC_BREAKABLE) if e.kind == ENT_KIND_PUSHABLE => Some("func_pushable"),
+            Some(map::LOGIC_FUNC_BREAKABLE) => Some("func_breakable"),
+            Some(map::LOGIC_WALL_TOGGLE) => Some("func_wall_toggle"),
+            Some(map::LOGIC_FUNC_DOOR) if e.kind == 7 => Some("func_door_rotating"),
+            Some(map::LOGIC_FUNC_DOOR) if e.kind == ENT_KIND_PLATROT => Some("func_platrot"),
+            Some(map::LOGIC_FUNC_DOOR) => Some("func_door"),
+            _ => base_class,
+        };
+        let Some(class) = class else {
+            ei += 1;
+            continue;
+        };
+
+        let (targetname, health, state, spawnflags) = if let Some((li, rec)) = logic_match {
+            (
+                m.logic_name(rec.targetname),
+                if rec.kind == map::LOGIC_FUNC_BREAKABLE {
+                    LOGIC_BREAK_HP[li]
+                } else {
+                    0
+                },
+                LOGIC_STATE[li],
+                rec.spawnflags,
+            )
+        } else {
+            // Untargeted fans intentionally have no LogicEnt, but their raw
+            // SDK flags still matter to parity traces and the stateless phase.
+            ("", 0, 0, if e.kind == 5 { e.mv[2] as u16 } else { 0 })
+        };
+        let off = ent_draw_offset(ei);
+        let yaw_q12 = if e.kind == ENT_KIND_PLATROT {
+            platrot_yaw(e, ENT_PHASE[ei]) as i32
+        } else if e.kind == 5 {
+            fan_angle_q12(ei, map_tick) as i32
+        } else if e.kind == 7 {
+            (ENT_PHASE[ei].wrapping_mul(e.mv[0]) >> 12) & 0x0fff
+        } else {
+            0
+        };
+        let center = if e.kind == ENT_KIND_PLATROT {
+            platrot_local_to_world(e.center, off, yaw_q12 as u16)
+        } else if e.kind == 5 {
+            let r = fan_rotation(e, yaw_q12 as u16);
+            [
+                e.origin[0] + dot12(r.m[0], e.center),
+                e.origin[1] + dot12(r.m[1], e.center),
+                e.origin[2] + dot12(r.m[2], e.center),
+            ]
+        } else if e.kind == 7 {
+            let r = Mat3I16::rotate_y((yaw_q12 as u16) >> 4);
+            [
+                e.origin[0] + dot12(r.m[0], e.center),
+                e.origin[1] + e.center[1],
+                e.origin[2] + dot12(r.m[2], e.center),
+            ]
+        } else {
+            [
+                e.center[0] + off[0],
+                e.center[1] + off[1],
+                e.center[2] + off[2],
+            ]
+        };
+        reference_trace::entity(reference_trace::EntityState {
+            map_tick,
+            slot: ei as u16,
+            class,
+            targetname,
+            brush: e.submodel as i32,
+            pos: if e.kind == 5 || e.kind == 7 {
+                e.origin
+            } else {
+                off
+            },
+            center,
+            vel: [0; 3],
+            yaw_q12,
+            health,
+            active: ENT_ACTIVE[ei] != 0,
+            state,
+            phase: if e.kind == 5 {
+                fan_angle_q12(ei, map_tick) as i32
+            } else {
+                ENT_PHASE[ei]
+            },
+            spawnflags,
+        });
+        ei += 1;
+    }
+}
+
+#[cfg(feature = "reference-trace")]
+#[inline(never)]
+unsafe fn trace_human_entities(m: &Map, map_tick: u32) {
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut pi = 0usize;
+    while pi < nprops {
+        let class = match PROP_KIND[pi] {
+            PROP_TYPE_SCIENTIST => Some("monster_scientist"),
+            PROP_TYPE_BARNEY => Some("monster_barney"),
+            PROP_TYPE_LOADER => Some("monster_generic"),
+            _ => None,
+        };
+        if let Some(class) = class {
+            let pos = PROP_POS[pi];
+            reference_trace::entity(reference_trace::EntityState {
+                map_tick,
+                slot: 0x8000 | pi as u16,
+                class,
+                targetname: m.logic_name(PROP_NAME[pi]),
+                brush: -1,
+                pos,
+                center: [pos[0], pos[1] + 36, pos[2]],
+                vel: [0; 3],
+                yaw_q12: PROP_YAW[pi] as i32,
+                health: PROP_HEALTH[pi] as u16,
+                active: PROP_ACTIVE[pi] != 0,
+                state: PROP_STATE[pi],
+                phase: PROP_SCRIPT_MODE[pi] as i32,
+                spawnflags: 0,
+            });
+        }
+        pi += 1;
+    }
+}
+
+#[cfg(feature = "reference-trace")]
+#[inline(never)]
+unsafe fn trace_sim_tick(m: &Map, state: reference_trace::TickState) {
+    let map_tick = state.map_tick;
+    // Named/set-piece actors are checkpointed once per simulated second. Keep
+    // this loop out of play(): the reference feature otherwise pushes MIPS-I's
+    // largest function beyond a PC16 branch span.
+    if map_tick % 20 == 0 {
+        trace_brush_entities(m, map_tick);
+        trace_human_entities(m, map_tick);
+        let mut pi = 0usize;
+        while pi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
+            let prop_pos = PROP_POS[pi];
+            let prop_top = [prop_pos[0], prop_pos[1] + PROP_GROUND_PROBE_UP, prop_pos[2]];
+            let prop_bottom = [
+                prop_pos[0],
+                prop_pos[1] - PROP_GROUND_PROBE_DOWN,
+                prop_pos[2],
+            ];
+            reference_trace::prop(reference_trace::PropState {
+                map_tick,
+                index: pi as u16,
+                name: m.logic_name(PROP_NAME[pi]),
+                kind: PROP_KIND[pi],
+                active: PROP_ACTIVE[pi] != 0,
+                pos: PROP_POS[pi],
+                yaw: PROP_YAW[pi],
+                state: PROP_STATE[pi],
+                health: PROP_HEALTH[pi],
+                script_mode: PROP_SCRIPT_MODE[pi],
+                script_goal: PROP_SCRIPT_GOAL[pi],
+                nav_src: prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT),
+                nav_dst: prop_nav_cache_get(pi, PROP_NAV_DST_SLOT),
+                nav_next: prop_nav_cache_get(pi, PROP_NAV_NEXT_SLOT),
+                move_cooldown: PROP_MOVE_COOLDOWN[pi],
+                world_floor: phys::trace_line(m, &[], prop_top, prop_bottom)
+                    .map(|hit| hit.pos[1])
+                    .unwrap_or(i32::MIN),
+                top_leaf: camera_leaf(m, prop_top),
+                top_ent_solid: point_in_ent_solid(m, prop_top),
+            });
+            pi += 1;
+        }
+    }
+    reference_trace::tick(state);
+}
+
+// Keep map-logic bootstrap out of play(): semantic/reference instrumentation
+// makes that already-large MIPS function sensitive to PC16 branch span.
+#[inline(never)]
+unsafe fn init_room_logic(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    landmark: Option<[i32; 3]>,
+    launch: &RoomLaunch,
+) {
+    init_logic_state(m, nlogic, nents, 0);
+    // Cache every multisource's initial master state before any auto script
+    // can consult it. Refresh never fires outputs.
+    logic_check_multisources(m, nlogic, nents, 0);
+    init_trains(m, nlogic, nents);
+    restore_transition_trains(m, nlogic, landmark, launch.carry_count);
+    logic_schedule_changelevel_post_target(m, launch.ride_seat, 0);
+    // Untargeted scripted_sequences run at spawn in GoldSrc. A targeted script
+    // with m_iszIdle also starts CineThink: it possesses/moves its actor now,
+    // then remains primed until the sequence targetname is fired.
+    let mut li = 0usize;
+    while li < nlogic {
+        let rec = m.logic(li);
+        if rec.kind == map::LOGIC_SCRIPTED {
+            if rec.targetname == 0 {
+                logic_use_entity(
+                    m,
+                    nlogic,
+                    nents,
+                    li,
+                    map::USE_TOGGLE,
+                    0,
+                    0,
+                    logic_state::CALLER_NONE,
+                );
+            } else if rec.flags & map::LOGIC_SCRIPTED_HAS_IDLE != 0 {
+                if let Some(pi) = script_find_actor(rec) {
+                    script_prime_idle_actor(m, li, rec, pi);
+                }
+            }
+        }
+        li += 1;
+    }
+}
+
+fn play(
+    fb: &mut FrameBuffer,
+    launch: RoomLaunch,
+    keep_frame: bool,
+    #[cfg(feature = "semantic-input")] semantic_player: &mut semantic_input::Player<'static>,
+) -> PlayExit {
     let _ = enable_analog_port1();
     settings::apply_all(); // honour the options menu's screen offset + volumes
     unsafe {
@@ -10072,10 +13795,12 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     telemetry::task_begin(telemetry::task::FIXED_UPDATE);
     let texture_chunk_id = room_texture_chunk_id(launch.room_id as u32);
     let world_chunk_id = room_world_chunk_id(launch.room_id as u32);
+    let map_name = menu::MAPS
+        .get(launch.room_id as usize)
+        .copied()
+        .unwrap_or("unknown");
     telemetry::debug_log("hl-psx: loading room");
-    if (launch.room_id as usize) < menu::MAPS.len() {
-        telemetry::debug_log(menu::MAPS[launch.room_id as usize]);
-    }
+    telemetry::debug_log(map_name);
     let loading_label = loading_label_for_room(launch.room_id);
     let mut loading_frame = 0u8;
     draw_next_loading_screen(fb, loading_label, &mut loading_frame, keep_frame);
@@ -10247,22 +13972,38 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     let map_bytes = unsafe { streamed_map_bytes(map_len) };
     // Map's field readers are intentionally unchecked on the PS1 hot path.
     // Reject a truncated or unknown payload once, before any offset/count can
-    // turn into an out-of-bounds read. HLMA remains supported for previously
-    // cooked rooms; HLMB adds packed axial collision-plane tags.
+    // turn into an out-of-bounds read. HLMA/B remain supported for previously
+    // cooked rooms; HLMC separates world PVS clusters from submodel leaves.
     if map_bytes.len() < 52
-        || (&map_bytes[0..4] != b"HLMA" && &map_bytes[0..4] != b"HLMB")
+        || (&map_bytes[0..4] != b"HLMA"
+            && &map_bytes[0..4] != b"HLMB"
+            && &map_bytes[0..4] != b"HLMC")
     {
         tty::println("hl-psx: unsupported world map format");
         telemetry::debug_log("hl-psx: unsupported world map format");
         return PlayExit::BackToMenu;
     }
     let m = Map::load(map_bytes);
+    #[cfg(feature = "semantic-input")]
+    if semantic_player.begin_map(map_name).is_err() {
+        panic!("HLINPUT1 map order mismatch");
+    }
+    #[cfg(feature = "reference-trace")]
+    reference_trace::begin_map(map_name, launch.room_id);
     m.expand_light_palette(); // per-corner light lookups read the expanded table
     if room_texs != m.n_texs {
         tty::println("hl-psx: texture/world count mismatch");
         telemetry::debug_log("hl-psx: texture/world count mismatch");
     }
     phys::set_gravity_scale(4096); // fresh map: normal gravity until a zone says otherwise
+    let nents = m.n_ents.min(MAX_ENTS);
+    let nlogic = m.n_logic.min(MAX_LOGIC);
+    // Stack-local map capability bit: maps without func_pushable pay no
+    // per-tick entity scan and the fixed resident/BSS layout stays unchanged.
+    let mut has_pushables = false;
+    // Resolve before prop init: incoming actor coordinates are relative to the
+    // same destination landmark used for the player spawn.
+    let landmark_found = launch_landmark_origin(&m, nlogic, launch.landmark);
     unsafe {
         invalidate_world_packet_cache();
         pvs_cam_leaf_store(-1);
@@ -10287,13 +14028,22 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             ENT_RADIUS[ei] = isqrt_i32(e.r2);
             ENT_ACTIVE[ei] = 1;
             ENT_PHASE[ei] = 0;
+            has_pushables |= e.kind == ENT_KIND_PUSHABLE;
         }
         ENT_SOLID_COUNT = nents_early;
         init_prop_state(&m);
-        stream_map_models(&m, VM_POOL_WORDS * 4); // enemies stream after the viewmodel reserve
-        // Pre-scale the modal font into the unused right strip of the HUD tpage.
-        // This has no resident RAM cost and turns chapter-card glyphs into one
-        // transparent textured quad each instead of hundreds of flat pixel runs.
+        let restored = restore_transition_actors(&m, landmark_found, launch.carry_count);
+        stream_map_models(
+            VM_POOL_WORDS * 4,
+            if landmark_found.is_some() {
+                launch.carry_count
+            } else {
+                restored
+            },
+        ); // enemies stream after the viewmodel reserve
+           // Pre-scale the modal font into the unused right strip of the HUD tpage.
+           // This has no resident RAM cost and turns chapter-card glyphs into one
+           // transparent textured quad each instead of hundreds of flat pixel runs.
         hltext::upload_gameplay_atlas();
         // Every non-viewmodel texture (map/HUD/sprite/enemy/glock) is resident
         // now, and VM_FILL_* points just past the glock -- snapshot both so a
@@ -10303,25 +14053,15 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         VM_FILL_BASE_SLOT = VM_FILL_SLOT;
         clear_combat_fx();
     }
-    let nents = m.n_ents.min(MAX_ENTS);
-    let nlogic = m.n_logic.min(MAX_LOGIC);
     unsafe {
-        init_logic_state(&m, nlogic, nents, 0);
-        init_trains(&m, nlogic, nents);
-        // Auto-start scripts (no targetname) run on spawn in HL: fire them once
-        // so their monsters take scripted poses (desk sit, lean, ...) from
-        // frame one. The cook already parked each monster at its mark.
-        let mut li = 0usize;
-        while li < nlogic {
-            let rec = m.logic(li);
-            if rec.kind == map::LOGIC_SCRIPTED && rec.targetname == 0 {
-                logic_use_entity(&m, nlogic, nents, li, map::USE_TOGGLE, 0, 0);
-            }
-            li += 1;
-        }
-        // A multisource whose globalstate was satisfied on a previous map fires
-        // its target here (Blast Pit: c1a4b's mspower on c1a4fpower).
-        logic_check_multisources(&m, nlogic, nents, 0);
+        init_room_logic(&m, nlogic, nents, landmark_found, &launch);
+        // Build tail-indexed actor candidate lists only after every map-load
+        // initializer has finished. Reading the live count explicitly here
+        // also prevents this cold optimization from observing the pre-init
+        // zero across the large inlined load block on MIPS LTO builds.
+        rebuild_prop_hotlists();
+        #[cfg(feature = "reference-trace")]
+        trace_prop_hotlist_state(1);
     }
     let nv = if m.n_verts < MAX_VERTS {
         m.n_verts
@@ -10329,7 +14069,6 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         MAX_VERTS
     };
 
-    let landmark_found = launch_landmark_origin(&m, nlogic, launch.landmark);
     let spawn_pos = if let Some(origin) = landmark_found {
         telemetry::debug_log("hl-psx: spawning at landmark");
         [
@@ -10344,17 +14083,17 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         m.spawn_pos
     };
     // Ride transfer (Black Mesa Inbound) WITHOUT a landmark: nothing anchors
-    // the arrival, so seat the rider at the track start. With a landmark the
-    // spawn above already puts the player where they left off, and the tram
-    // init below seeks the car to them (GoldSrc transfers the train entity
+    // the arrival, so seat the rider at the authored track start. With a
+    // landmark the spawn above already puts the player where they left off;
+    // the tram init below seeks the car to them (GoldSrc transfers the train entity
     // itself via globalname; the landmark-relative seek is our equivalent).
-    let spawn_pos = if launch.riding && landmark_found.is_none() && m.n_way > 0 && m.tram_submodel > 0
-    {
-        let w = m.waypoint(0);
-        [w[0], w[1] + 70, w[2]]
-    } else {
-        spawn_pos
-    };
+    let spawn_pos =
+        if launch.riding && landmark_found.is_none() && m.n_way > 0 && m.tram_submodel > 0 {
+            let w = tram_reference_waypoint(&m);
+            [w[0], w[1] + 70, w[2]]
+        } else {
+            spawn_pos
+        };
     let mut player = phys::Player::new(spawn_pos);
     let mut yaw: u16 = if launch.preserve_view {
         launch.yaw
@@ -10428,11 +14167,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
 
     // Tracktrain mover: the BSP cooker stores the train's path_track chain, and
     // the logic system toggles it through the func_tracktrain targetname.
-    let wp0 = if m.n_way > 0 {
-        m.waypoint(0)
-    } else {
-        [0, 0, 0]
-    };
+    let tram_ref = tram_reference_waypoint(&m);
     let mut recoil = 0i32; // viewmodel kick when firing
     let mut zoom_aim = false; // crossbow L2 zoom (steady aim), persists into the render
     let mut crouching = false; // TRIANGLE held: lower eye + slower, persists into render
@@ -10442,20 +14177,52 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     // Authored speed; path_track "speed" keys re-pace it per section as the
     // ride passes them (tram_advance), exactly like CPathTrack.
     let mut tram_speed = m.tram_speed.max(0);
+    let mut tram_speed_remainder = 0i32;
     let mut tram_player_attached = false;
-    let mut tram_seg = 0usize;
-    let mut prev_tram_yaw = 0u16; // last tram travel yaw, to feed the camera the per-frame delta
+    let mut tram_player_left_stopped = false;
+    // Fresh visits park at the map-authored func_tracktrain target. Upstream
+    // waypoints remain searchable only for a train carried across a transition.
+    let mut tram_seg = m.tram_start;
     let mut tram_seg_dist = 0i32;
     let mut ride_off = [0i32; 3];
     // Ride-transfer approach leg: the car may arrive BEFORE the new map's
     // chain starts (HL's transferred train drives toward its carried target
-    // track). While pre_left > 0 the car runs pre_from -> waypoint 0.
+    // track). While pre_left > 0 the car runs pre_from -> authored waypoint.
     let mut tram_pre_from = [0i32; 3];
     let mut tram_pre_total = 0i32;
     let mut tram_pre_left = 0i32;
-    let mut tram_yaw_render: u16 = 0; // last tick's travel yaw, for the render
+    // GoldSrc keeps the global train's physical angle and angular controller
+    // through changelevels. Q28 preserves the sub-Q12 motion that its 16-bit
+    // svc_addangle flooring turns into the opening ride's visible view drift.
+    let carried_dynamics = unsafe { TRAM_DYNAMICS_CARRY };
+    let tram_controller_carried = launch.riding && carried_dynamics.meta & 0x20 != 0;
+    let authored_yaw_q28 = tram_authored_heading_q28(&m);
+    let mut tram_actual_yaw_q28 = if tram_controller_carried {
+        carried_dynamics.actual_yaw_q28
+    } else {
+        authored_yaw_q28
+    };
+    let mut tram_target_yaw_q28 = if tram_controller_carried {
+        carried_dynamics.desired_yaw_q28
+    } else {
+        authored_yaw_q28
+    };
+    let mut tram_pending_push_q28 = if tram_controller_carried {
+        carried_dynamics.pending_push_q28
+    } else {
+        0
+    };
+    let mut tram_camera_frac_q16 = if tram_controller_carried {
+        (carried_dynamics.meta & 0x0f) as u8
+    } else {
+        0
+    };
+    let mut tram_controller_primed = tram_controller_carried && carried_dynamics.meta & 0x10 != 0;
+    let mut prev_tram_yaw = tram_relative_yaw_q12(authored_yaw_q28, tram_actual_yaw_q28);
+    let mut tram_yaw_render = prev_tram_yaw;
+    let launch_ride_seat = logic_state::unpack_ride_seat(launch.ride_seat);
     if launch.riding && m.n_way > 0 && m.tram_submodel > 0 {
-        tram_active = true; // ride carried across the changelevel
+        tram_active = logic_state::carry_tram_active(launch.carry_count);
         tram_player_attached = true;
         // The car arrives exactly where the rider's seat offset says it is
         // (carried across the changelevel). If that spot is on this map's
@@ -10465,9 +14232,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         // out-of-body seat re-ejects them on arrival. The snap happens behind
         // the loading screen.
         let seat = [
-            launch.ride_seat[0].clamp(-120, 120),
-            launch.ride_seat[1].clamp(30, 70),
-            launch.ride_seat[2].clamp(-120, 120),
+            launch_ride_seat[0].clamp(-120, 120),
+            launch_ride_seat[1].clamp(30, 70),
+            launch_ride_seat[2].clamp(-120, 120),
         ];
         let car = [
             player.pos[0] - seat[0],
@@ -10477,12 +14244,20 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         player.pos = [car[0] + seat[0], car[1] + seat[1], car[2] + seat[2]];
         let (s, d) = tram_seek_nearest(&m, car);
         let on_path = tram_path_pos(&m, s, d);
-        if dist2_3(car, on_path) <= TRAM_CARRY_RADIUS2 {
+        // A train transferred a few units before waypoint zero projects to
+        // exactly (0,0). Keep that authored cross-BSP overlap as the existing
+        // approach leg instead of snapping it forward to the waypoint.
+        let short_upstream = m.tram_start == 0
+            && m.n_way >= 2
+            && s == 0
+            && d == 0
+            && tram_logic::is_upstream_of_first(car, m.waypoint(0), m.waypoint(1));
+        if dist2_3(car, on_path) <= TRAM_CARRY_RADIUS2 && !short_upstream {
             tram_seg = s;
             tram_seg_dist = d;
         } else {
             tram_pre_from = car;
-            tram_pre_total = seg_len(car, wp0).max(1);
+            tram_pre_total = seg_len(car, tram_ref).max(1);
             tram_pre_left = tram_pre_total;
         }
         let tp = tram_pos_ext(
@@ -10493,16 +14268,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             tram_pre_total,
             tram_pre_left,
         );
-        ride_off = [tp[0] - wp0[0], tp[1] - wp0[1], tp[2] - wp0[2]];
-        tram_yaw_render = prev_tram_yaw; // set below
-        prev_tram_yaw = tram_yaw_ext(
-            &m,
-            tram_seg,
-            tram_seg_dist,
-            tram_pre_from,
-            tram_pre_total,
-            tram_pre_left,
-        );
+        ride_off = [
+            tp[0] - tram_ref[0],
+            tp[1] - tram_ref[1],
+            tp[2] - tram_ref[2],
+        ];
         #[cfg(feature = "emulator-telemetry")]
         debug_line(
             "tram arrive",
@@ -10513,35 +14283,66 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 ("nway=", m.n_way as i32),
                 ("spd=", tram_speed),
                 ("py=", player.pos[1]),
-                ("sx=", launch.ride_seat[0]),
-                ("sy=", launch.ride_seat[1]),
-                ("sz=", launch.ride_seat[2]),
+                ("sx=", launch_ride_seat[0]),
+                ("sy=", launch_ride_seat[1]),
+                ("sz=", launch_ride_seat[2]),
                 ("cx=", car[0]),
                 ("cz=", car[2]),
             ],
         );
     }
+    if !tram_controller_carried {
+        tram_target_yaw_q28 = tram_desired_yaw_q28(
+            &m,
+            tram_seg,
+            tram_seg_dist,
+            tram_pre_from,
+            tram_pre_total,
+            tram_pre_left,
+            tram_actual_yaw_q28,
+        );
+    }
+    let initial_tram_pos = tram_pos_ext(
+        &m,
+        tram_seg,
+        tram_seg_dist,
+        tram_pre_from,
+        tram_pre_total,
+        tram_pre_left,
+    );
+    let mut tram_rider_local = tram_seat_to_local(player.pos, initial_tram_pos, prev_tram_yaw);
+    if tram_player_attached {
+        if launch.riding {
+            tram_rider_local[2] = tram_logic::clamp_transfer_rider_local_z(tram_rider_local[2]);
+        }
+        // Keep one stable car-local seat for the whole neutral ride. Repeating
+        // world->car->world with Q12 matrices every tick drifts several units
+        // even with symmetric rounding; by c0a0e that put the passenger just
+        // outside the stopped-car support edge.
+        player.pos = tram_seat_to_world(initial_tram_pos, tram_rider_local, prev_tram_yaw);
+    }
     unsafe {
         if let Some((use_type, speed)) = logic_take_tracktrain_command() {
-            // A transferred ride arrives ALREADY moving (GoldSrc carries the
-            // train's state); the map's own trigger_auto start toggle is for
-            // fresh visits and would park the arriving car / later drive it
-            // off riderless. Ignore stop-ish commands during the approach.
-            if !(tram_pre_left > 0 && tram_active) {
+            // init_logic_state queues the selected func_tracktrain's authored
+            // startspeed here. GoldSrc's global transition overlay supersedes
+            // that spawn state; delayed trigger_auto commands arrive through
+            // the ordinary per-tick command path below and remain effective.
+            if tram_logic::should_apply_spawn_startspeed(launch.riding) {
                 let started =
                     tram_apply_command(use_type, speed, &mut tram_active, &mut tram_speed);
                 if started {
-                    tram_player_attached = tram_should_carry_player(
-                        player.pos,
-                        tram_pos_ext(
-                            &m,
-                            tram_seg,
-                            tram_seg_dist,
-                            tram_pre_from,
-                            tram_pre_total,
-                            tram_pre_left,
-                        ),
+                    let train_pos = tram_pos_ext(
+                        &m,
+                        tram_seg,
+                        tram_seg_dist,
+                        tram_pre_from,
+                        tram_pre_total,
+                        tram_pre_left,
                     );
+                    tram_player_attached = tram_should_carry_player(player.pos, train_pos);
+                    if tram_player_attached {
+                        tram_rider_local = tram_seat_to_local(player.pos, train_pos, prev_tram_yaw);
+                    }
                 }
             }
         }
@@ -10603,6 +14404,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     gpu::configure_vsync_timer();
     interrupts::install_vblank_counter();
     let mut next_sim_vblank = interrupts::vblank_count().wrapping_add(SIM_VBLANKS);
+    #[cfg(not(feature = "semantic-input"))]
     let mut prev_pause_button = true;
     // A malformed ID handshake is not proof that the DualShock left analog
     // mode. Keep the last clean sample so a one-frame wire glitch cannot look
@@ -10611,6 +14413,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
     // Seed with the robust retrying path outside the deadline-critical loop.
     // Gameplay then performs one hardware-tested transaction per tick and
     // holds this sample across the occasional malformed response.
+    #[cfg(not(feature = "semantic-input"))]
     let mut last_pad = poll_port1();
 
     'gameplay: loop {
@@ -10637,7 +14440,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     tram_pre_total,
                     tram_pre_left,
                 );
-                let w0 = m.waypoint(0);
+                let w0 = tram_reference_waypoint(&m);
                 debug_line(
                     "tram",
                     &[
@@ -10665,38 +14468,34 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             }
             telemetry::task_begin(telemetry::task::FIXED_UPDATE);
             telemetry::stage_begin(telemetry::stage::UPDATE);
-            // Modern twin-stick FPS: left stick moves/strafes, right stick looks
-            // (X = turn, Y = pitch), Cross = jump. Analog only.
-            let sampled_pad = poll_port1_diag(DEFAULT_SETUP_SPINS, 0).to_state();
-            let pad = if sampled_pad.mode == PadMode::Unknown {
-                last_pad
-            } else {
-                last_pad = sampled_pad;
-                sampled_pad
+            // Normalize either the live DualShock or the deterministic route
+            // to the same post-deadzone semantic command. Replay builds never
+            // consult hardware, pause, or controller mode inside gameplay.
+            #[cfg(feature = "semantic-input")]
+            let input_sample = match semantic_player.consume(map_name, sim_frame_no) {
+                Ok(sample) => sample,
+                Err(_) => panic!("HLINPUT1 replay exhausted or out of sequence"),
             };
-            let pause_button =
-                pad.buttons.is_held(button::START) || pad.buttons.is_held(button::SELECT);
-            if pause_button && !prev_pause_button {
-                telemetry::stage_end(telemetry::stage::UPDATE);
-                telemetry::task_end(telemetry::task::FIXED_UPDATE);
-                match run_pause_menu(fb) {
-                    PauseExit::MainMenu => return PlayExit::BackToMenu,
-                    PauseExit::Resume => {
-                        let _ = enable_analog_port1();
-                        last_pad = poll_port1();
-                        prev_pause_button = true;
-                        next_sim_vblank = interrupts::vblank_count().wrapping_add(SIM_VBLANKS);
-                        continue 'gameplay;
-                    }
-                }
-            }
-            prev_pause_button = pause_button;
-            // Analog is required, but Unknown is a bad handshake rather than a
-            // confirmed mode change; retrying configuration for it causes large
-            // fixed-update spikes and can itself disturb a healthy controller.
-            if matches!(sampled_pad.mode, PadMode::Digital | PadMode::Config) {
-                let _ = enable_analog_port1();
-            }
+            #[cfg(not(feature = "semantic-input"))]
+            let input_sample = match poll_live_semantic_input(
+                fb,
+                &mut last_pad,
+                &mut prev_pause_button,
+                &mut next_sim_vblank,
+            ) {
+                LiveInputPoll::Sample(sample) => sample,
+                LiveInputPoll::Resumed => continue 'gameplay,
+                LiveInputPoll::MainMenu => return PlayExit::BackToMenu,
+            };
+            #[cfg(feature = "reference-trace")]
+            reference_trace::input(
+                sim_frame_no,
+                input_sample.forward,
+                input_sample.strafe,
+                input_sample.turn,
+                input_sample.look,
+                input_sample.actions,
+            );
             // R2 fires at the Glock cadence; the actual hit-test runs after
             // movement/movers update so it uses the current camera and doors.
             recoil = (recoil - 3).max(0);
@@ -10727,31 +14526,33 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             }
             let dead = death_ticks > 0;
             // Auto weapons fire while held; everything else fires once per press.
-            let fire_held = !dead && pad.buttons.is_held(button::R2);
+            let fire_held = !dead && input_sample.held(semantic_input::ACTION_ATTACK);
             let want_fire = fire_held && (weapon.def().fire == FIRE_AUTO || !fire_was_held);
             fire_was_held = fire_held;
             // L2 = secondary fire (edge-triggered). On the crossbow it is a held
             // zoom (steady aim) rather than an attack.
-            let sec_held = !dead && pad.buttons.is_held(button::L2);
+            let sec_held = !dead && input_sample.held(semantic_input::ACTION_ATTACK2);
             let want_sec = sec_held && !sec_was_held;
             sec_was_held = sec_held;
             zoom_aim = sec_held && weapon.current == W_CROSSBOW;
             // Crouch (TRIANGLE held): lower stance + slower move; the world
             // trace runs on the cooked GoldSrc crouch hull (M48), so ducking
             // fits under low vents.
-            crouching = !dead && unsafe { MOUNTED_TANK } < 0 && pad.buttons.is_held(button::TRIANGLE);
+            crouching = !dead
+                && unsafe { MOUNTED_TANK } < 0
+                && input_sample.held(semantic_input::ACTION_DUCK);
             // Flashlight (L3 toggles the HEV lamp; needs the suit).
-            let flash_now = pad.buttons.is_held(button::L3);
+            let flash_now = input_sample.held(semantic_input::ACTION_FLASHLIGHT);
             if flash_now && !flash_prev && suit_equipped && !dead {
                 flashlight = !flashlight;
                 unsafe { sfx::play(sfx::BUTTON) };
             }
             flash_prev = flash_now;
             unsafe { FLASHLIGHT_ON = flashlight && suit_equipped && !dead };
-            let want_reload = pad.buttons.is_held(button::CIRCLE);
+            let want_reload = input_sample.held(semantic_input::ACTION_RELOAD);
             // L1/R1 cycle owned weapons (rising edge so a hold steps once).
-            let sw_next = pad.buttons.is_held(button::R1);
-            let sw_prev = pad.buttons.is_held(button::L1);
+            let sw_next = input_sample.held(semantic_input::ACTION_NEXT_WEAPON);
+            let sw_prev = input_sample.held(semantic_input::ACTION_PREV_WEAPON);
             let sw_held = sw_next || sw_prev;
             if !dead && sw_held && !switch_prev && weapon.cycle(sw_next) {
                 pending_vm_switch = true;
@@ -10778,33 +14579,17 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             if use_cooldown > 0 {
                 use_cooldown -= 1;
             }
-            let use_held_raw = !dead && pad.buttons.is_held(button::SQUARE);
+            let use_held_raw = !dead && input_sample.held(semantic_input::ACTION_USE);
             let want_use = use_held_raw && use_cooldown == 0;
             if want_use {
                 use_cooldown = 8;
             }
-            let (mut fwd, mut strafe, mut turn, mut look) = (0i32, 0i32, 0i32, 0i32);
-            if pad.is_analog() {
-                let (lx, ly) = pad.sticks.left_centered();
-                let (rx, ry) = pad.sticks.right_centered();
-                let dz2 = DEADZONE * DEADZONE;
-                // Radial deadzone per stick (avoids axis drift / diagonal bias).
-                if (lx as i32) * (lx as i32) + (ly as i32) * (ly as i32) > dz2 {
-                    fwd = -(ly as i32); // stick up = forward
-                    // strafe + turn are inverted vs the raw stick: the det -1
-                    // camera mirrors the rendered X, so physics (still in the
-                    // mirrored world) must take the opposite horizontal input for
-                    // controls to match what the player SEES. fwd/look (vertical)
-                    // are unaffected by the X flip.
-                    strafe = lx as i32;
-                }
-                if (rx as i32) * (rx as i32) + (ry as i32) * (ry as i32) > dz2 {
-                    // Expo response: mostly cubic near centre for fine aim, full
-                    // rate at the edges -- and it softens the deadzone-edge jump.
-                    turn = aim_curve(rx as i32);
-                    look = aim_curve(-(ry as i32)); // stick up = look up
-                }
-            }
+            let (mut fwd, mut strafe, mut turn, mut look) = (
+                input_sample.forward as i32,
+                input_sample.strafe as i32,
+                input_sample.turn as i32,
+                input_sample.look as i32,
+            );
             if dead {
                 fwd = 0;
                 strafe = 0;
@@ -10827,13 +14612,18 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             } else {
                 (YAW_RATE, PITCH_RATE)
             };
-            yaw = (((yaw as i32) + (turn * yaw_rate) / 128) & 0xFFF) as u16;
-            pitch = (pitch + ((look * pitch_rate) / 128) as i16).clamp(-PITCH_MAX, PITCH_MAX);
+            yaw = (((yaw as i32) + semantic_input::angle_step_nearest(turn, yaw_rate)) & 0xFFF)
+                as u16;
+            pitch = (pitch + semantic_input::angle_step_nearest(look, pitch_rate) as i16)
+                .clamp(-PITCH_MAX, PITCH_MAX);
             unsafe {
                 LOGIC_PLAYER_POS = player.pos;
                 LOGIC_PLAYER_YAW = yaw;
                 LOGIC_PLAYER_PITCH = pitch;
-                LOGIC_TRAM_RIDING = (tram_active && tram_player_attached) as u8;
+                // A stopped tracktrain still carries its standing passenger
+                // across a changelevel. GoldSrc transfers the ground entity;
+                // tying this to motion stranded the neutral rider in c0a0b.
+                LOGIC_TRAM_RIDING = tram_player_attached as u8;
                 let car_now = tram_pos_ext(
                     &m,
                     tram_seg,
@@ -10864,6 +14654,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 tram_pre_total,
                 tram_pre_left,
             );
+            let mut tram_started_this_tick = false;
             unsafe {
                 if let Some((use_type, speed)) = logic_take_tracktrain_command() {
                     // Same transfer guard as the arrival: the approach leg
@@ -10871,35 +14662,71 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     if !(tram_pre_left > 0 && tram_active) {
                         let started =
                             tram_apply_command(use_type, speed, &mut tram_active, &mut tram_speed);
+                        tram_started_this_tick = started;
                         if !tram_active {
-                            tram_player_attached = false;
+                            // Keep the passenger attached while the authored
+                            // tram pauses. They are detached by the geometric
+                            // carry check when the car moves again, not merely
+                            // because its speed reached zero.
+                            tram_speed_remainder = 0;
                         } else if started && !tram_player_attached {
                             tram_player_attached =
                                 tram_should_carry_player(player.pos, prev_train_pos);
+                            if tram_player_attached {
+                                tram_rider_local =
+                                    tram_seat_to_local(player.pos, prev_train_pos, prev_tram_yaw);
+                            }
                         }
                     }
                 }
             }
+            if tram_started_this_tick {
+                // Use computes the next linear/angular velocity immediately,
+                // but GoldSrc's pusher does not integrate it until the next
+                // 50 ms physics frame.
+                tram_controller_primed = false;
+                tram_player_left_stopped = false;
+            }
+
+            // The client's svc_addangle FIFO is one physical frame behind the
+            // pusher. Apply the saved high-resolution step after 16-bit floor
+            // quantization, retaining four sub-Q12 view bits across maps.
+            if tram_pending_push_q28 != 0 {
+                let (next_yaw, next_frac) = tram_logic::add_camera_step_q16(
+                    yaw,
+                    tram_camera_frac_q16,
+                    tram_logic::camera_step_q16_from_physical_q28(tram_pending_push_q28),
+                );
+                yaw = next_yaw;
+                tram_camera_frac_q16 = next_frac;
+            }
+            tram_pending_push_q28 = 0;
+
+            let integrate_tram = tram_active && tram_controller_primed;
+            let seg_before_move = tram_seg;
+            let dist_before_move = tram_seg_dist;
             let prev_ride_off = ride_off;
-            if tram_active {
+            if integrate_tram {
                 // Consume the ride-transfer approach leg first; leftover step
                 // rolls straight onto the cooked chain.
-                let mut step = tram_step_for_speed(tram_speed);
+                let mut step = tram_step_for_speed(tram_speed, &mut tram_speed_remainder);
                 if tram_pre_left > 0 {
                     let used = step.min(tram_pre_left);
                     tram_pre_left -= used;
                     step -= used;
                 }
-                let seg_before = tram_seg;
-                let still_moving = if step > 0 {
+                let (still_moving, crossed_tram_phase) = if step > 0 {
                     tram_advance(&m, &mut tram_seg, &mut tram_seg_dist, step, &mut tram_speed)
                 } else {
-                    true
+                    (true, false)
                 };
+                if crossed_tram_phase {
+                    tram_speed_remainder = 0;
+                }
                 // path_track fire-on-pass ("message"): the TRAIN's passage
                 // fires these in HL -- the intro ride's changelevels and
                 // station scripts hang off them.
-                for w in (seg_before + 1)..=tram_seg {
+                for w in (seg_before_move + 1)..=tram_seg {
                     let pid = m.way_pass(w);
                     if pid != 0 {
                         unsafe {
@@ -10911,6 +14738,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                                 map::USE_TOGGLE,
                                 sim_frame_no as u16,
                                 0,
+                                logic_state::CALLER_NONE,
                             );
                         }
                     }
@@ -10924,95 +14752,72 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     tram_pre_left,
                 );
                 ride_off = [
-                    train_pos[0] - wp0[0],
-                    train_pos[1] - wp0[1],
-                    train_pos[2] - wp0[2],
+                    train_pos[0] - tram_ref[0],
+                    train_pos[1] - tram_ref[1],
+                    train_pos[2] - tram_ref[2],
                 ];
                 if !still_moving {
                     tram_active = false;
                     tram_speed = 0;
+                    tram_speed_remainder = 0;
                     telemetry::debug_log("hl-psx: tram path end");
                 }
             }
-            let tram_yaw_now = tram_yaw_ext(
+            let (next_actual_yaw_q28, physical_yaw_step_q28) = tram_integrate_yaw_q28(
                 &m,
+                integrate_tram,
+                seg_before_move,
+                dist_before_move,
                 tram_seg,
                 tram_seg_dist,
-                tram_pre_from,
-                tram_pre_total,
-                tram_pre_left,
+                tram_actual_yaw_q28,
+                tram_target_yaw_q28,
             );
+            tram_actual_yaw_q28 = next_actual_yaw_q28;
+            // Next() runs after pusher integration and prepares the following
+            // frame's angular velocity from a wheels-unit forward path point.
+            if tram_active {
+                tram_target_yaw_q28 = tram_desired_yaw_q28(
+                    &m,
+                    tram_seg,
+                    tram_seg_dist,
+                    tram_pre_from,
+                    tram_pre_total,
+                    tram_pre_left,
+                    tram_target_yaw_q28,
+                );
+                tram_controller_primed = true;
+            }
+            let tram_yaw_now = tram_relative_yaw_q12(authored_yaw_q28, tram_actual_yaw_q28);
             tram_yaw_render = tram_yaw_now;
             let tram_delta = [
                 ride_off[0] - prev_ride_off[0],
                 ride_off[1] - prev_ride_off[1],
                 ride_off[2] - prev_ride_off[2],
             ];
-            if tram_delta != [0, 0, 0] {
+            if tram_delta != [0, 0, 0] || tram_yaw_now != prev_tram_yaw {
                 let train_pos = tram_pos_ext(
-                &m,
-                tram_seg,
-                tram_seg_dist,
-                tram_pre_from,
-                tram_pre_total,
-                tram_pre_left,
-            );
+                    &m,
+                    tram_seg,
+                    tram_seg_dist,
+                    tram_pre_from,
+                    tram_pre_total,
+                    tram_pre_left,
+                );
                 if !tram_player_attached && tram_should_carry_player(player.pos, prev_train_pos) {
                     tram_player_attached = true;
                     prev_tram_yaw = tram_yaw_now; // no yaw jump on attach
+                    tram_rider_local = tram_seat_to_local(player.pos, prev_train_pos, tram_yaw_now);
                 }
                 if tram_player_attached {
                     if tram_should_carry_player(player.pos, prev_train_pos)
                         || tram_should_carry_player(player.pos, train_pos)
                     {
-                        // Carry the camera through the bend: the continuous
-                        // travel-yaw delta turns the view with the car
-                        // (free-look from the stick stays layered on top).
-                        let mut d =
-                            (tram_yaw_now.wrapping_sub(prev_tram_yaw) & 0xFFF) as i32;
-                        if d > 2048 {
-                            d -= 4096;
-                        }
-                        yaw = (((yaw as i32) + d) & 0xFFF) as u16;
-                        // Sweep the rider about the car's pivot by the SAME
-                        // quantized step the render + hull rotate by, then
-                        // carry the translation -- standing riders stay put
-                        // on the car through curves instead of drifting into
-                        // the (rotated) walls.
-                        // Re-seat in car-local space: rotate the rider's
-                        // seat with the car EXACTLY (fresh full-angle rotation
-                        // each tick -- composing quantized per-tick steps
-                        // drifted the seat out through the side wall over a
-                        // long bend), and clamp it into the interior. The
-                        // floor clamp also covers steep sections (the car
-                        // cannot pitch yet, so riders otherwise sag out
-                        // underneath and onto the rails).
-                        let rm = Mat3I16::rotate_y(tram_yaw_now >> 4);
-                        let dw = [
-                            player.pos[0] - prev_train_pos[0],
-                            player.pos[1] - prev_train_pos[1],
-                            player.pos[2] - prev_train_pos[2],
-                        ];
-                        let pm = Mat3I16::rotate_y(prev_tram_yaw >> 4);
-                        // world -> previous car space (transpose rows of pm)
-                        let lo = [
-                            (pm.m[0][0] as i32 * dw[0] + pm.m[2][0] as i32 * dw[2]) >> 12,
-                            dw[1],
-                            (pm.m[0][2] as i32 * dw[0] + pm.m[2][2] as i32 * dw[2]) >> 12,
-                        ];
-                        // interior of the car (local bbox x +-144, z +-75,
-                        // floor ~ +30): riders stay seated, never wall-clipped
-                        let lo = [
-                            lo[0].clamp(-130, 130),
-                            lo[1].clamp(30, 100),
-                            lo[2].clamp(-62, 62),
-                        ];
-                        // previous-local seat -> new car pose in world
-                        player.pos = [
-                            train_pos[0] + dot12(rm.m[0], lo),
-                            train_pos[1] + lo[1],
-                            train_pos[2] + dot12(rm.m[2], lo),
-                        ];
+                        // Rotate one stable car-local seat by the full physical
+                        // yaw. Re-deriving the seat from a quantized world pose
+                        // each tick accumulated five units of edge drift by
+                        // c0a0e even though the input was perfectly neutral.
+                        player.pos = tram_seat_to_world(train_pos, tram_rider_local, tram_yaw_now);
                         // The car supports the rider: without this, gravity
                         // accumulates whenever the probe misses the receding
                         // floor (descents/bends) and the eventual catch
@@ -11021,6 +14826,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         if player.vel[1] < 0 {
                             player.vel[1] = 0;
                         }
+                        player.on_ground = true;
+                        player.ground_mover = -2; // compact synthetic tram support
                         player.land_impact = 0;
                     } else {
                         tram_player_attached = false;
@@ -11039,14 +14846,30 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     }
                 }
             }
+            if tram_player_attached && physical_yaw_step_q28 != 0 {
+                tram_pending_push_q28 = physical_yaw_step_q28;
+            }
             prev_tram_yaw = tram_yaw_now;
 
-            unsafe { tick_trains(&m) };
+            unsafe {
+                TRAM_DYNAMICS_CARRY = TramDynamicsCarry {
+                    actual_yaw_q28: tram_actual_yaw_q28,
+                    desired_yaw_q28: tram_target_yaw_q28,
+                    pending_push_q28: tram_pending_push_q28,
+                    meta: tram_camera_frac_q16 as u32
+                        | ((tram_controller_primed as u32) << 4)
+                        | 0x20,
+                };
+            }
+
+            unsafe { tick_trains(&m, nlogic, nents) };
             // Collision movers: every brush entity at its current offset (doors at
             // their open amount, statics at origin) + the tram at its ride offset.
             // Static: 0..nmov is fully written below; a local was memset-ing
             // ~7.7 KB every frame (3.2% of the profile).
             let movers = unsafe { &mut *core::ptr::addr_of_mut!(MOVERS) };
+            let previous_mover_count = unsafe { MOVER_COUNT };
+            let mut mover_visibility_changed = false;
             let mut nmov = 0;
             unsafe {
                 for ei in 0..nents {
@@ -11056,21 +14879,61 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     let e = ENT_CACHE[ei];
                     let off = ent_draw_offset(ei);
                     // kind 2 = nonsolid visual, kind 4 = ladder volume (no hull).
-                    if e.kind != 2 && e.kind != 4 && !(e.kind == 7 && ENT_PHASE[ei] >= 2048) && nmov < movers.len() {
+                    if e.kind != 2
+                        && e.kind != 4
+                        && !(e.kind == 7 && ENT_PHASE[ei] >= 2048)
+                        && !fan_collision_disabled(ei, e)
+                        && nmov < movers.len()
+                    {
+                        // A continuously rotating fan, or a swinging door while
+                        // between endpoints, cannot use the translated BSP LOS
+                        // walker: its cooked nodes are in world coordinates and
+                        // need pivot-aware rotation. Tag it out of actor LOS so
+                        // stale/unrotated geometry can never hide a model. A
+                        // fully closed swinging door remains a valid occluder.
+                        let visual_rotating = e.kind == 5 || (e.kind == 7 && ENT_PHASE[ei] != 0);
+                        let head0 = if visual_rotating {
+                            e.head0 | phys::MOVER_VISUAL_DISABLED
+                        } else {
+                            e.head0
+                        };
+                        let (rc, rs) = if e.kind == ENT_KIND_PLATROT {
+                            let rm = Mat3I16::rotate_y(platrot_yaw(e, ENT_PHASE[ei]) >> 4);
+                            (rm.m[0][0] as i32, rm.m[0][2] as i32)
+                        } else if e.kind == 5 && e.mv[1] == 0 {
+                            // phys::Mover rotates around world Y. This is the
+                            // c1a2 fan's mapped Z_AXIS, so its collision stops at
+                            // the same retained blade angle as the renderer.
+                            let rm = fan_rotation(e, fan_angle_q12(ei, sim_frame_no));
+                            (rm.m[0][0] as i32, rm.m[0][2] as i32)
+                        } else {
+                            (4096, 0)
+                        };
+                        let old = movers[nmov];
+                        let visual_pose_changed = (head0 & phys::MOVER_VISUAL_DISABLED) == 0
+                            && (old.rc != rc || old.rs != rs);
+                        if nmov >= previous_mover_count
+                            || old.id != ei as i32
+                            || old.off != off
+                            || old.head0 != head0
+                            || visual_pose_changed
+                        {
+                            mover_visibility_changed = true;
+                        }
                         movers[nmov] = phys::Mover {
                             head: e.head,
-                            head0: e.head0,
+                            head0,
                             off,
                             center: e.center,
                             radius: ENT_RADIUS[ei],
                             id: ei as i32,
-                            rc: 4096,
-                            rs: 0,
+                            rc,
+                            rs,
                         };
                         nmov += 1;
                     }
                 }
-                if m.tram_submodel > 0 && nmov < movers.len() {
+                if m.tram_submodel > 0 && !tram_player_left_stopped && nmov < movers.len() {
                     let toff = [
                         ride_off[0] + m.tram_base[0],
                         ride_off[1] + m.tram_base[1],
@@ -11079,10 +14942,21 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     // The tram's hull is entity-local (off = its world pivot),
                     // so hand phys the SAME quantized rotation the render uses:
                     // the car's collision turns with its walls through bends.
-                    let rm = Mat3I16::rotate_y(tram_yaw_now >> 4);
+                    let rm = tram_world_rotation(tram_yaw_now);
+                    let old = movers[nmov];
+                    if nmov >= previous_mover_count
+                        || old.id != -2
+                        || old.off != toff
+                        || old.rc != rm.m[0][0] as i32
+                        || old.rs != rm.m[0][2] as i32
+                    {
+                        mover_visibility_changed = true;
+                    }
                     movers[nmov] = phys::Mover {
                         head: m.tram_head,
-                        head0: 0, // no cooked point hull; hitscans use the inflated one
+                        // No cooked render-BSP root; visual LOS recognizes the
+                        // synthetic tram id and skips its inflated gameplay hull.
+                        head0: 0,
                         off: toff,
                         center: [0, 0, 0],
                         radius: 0,
@@ -11093,32 +14967,32 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     nmov += 1;
                 }
             }
-            let movers = &movers[..nmov];
-
-            // Ride moving brushes: if a mover we stood on last tick shifted
-            // (plat/elevator door phase), carry the player by the same delta so
-            // they stay planted instead of sliding off or falling through.
+            if nmov != previous_mover_count {
+                mover_visibility_changed = true;
+            }
             unsafe {
-                if player.ground_mover >= 0 && (player.ground_mover as usize) < nents {
-                    let ei = player.ground_mover as usize;
-                    let now_off = ent_draw_offset(ei);
-                    let prev = ENT_PREV_OFF[ei];
-                    let d = [
-                        now_off[0] - prev[0],
-                        now_off[1] - prev[1],
-                        now_off[2] - prev[2],
-                    ];
-                    if d != [0, 0, 0] {
-                        player.pos[0] += d[0];
-                        player.pos[1] += d[1];
-                        player.pos[2] += d[2];
+                if mover_visibility_changed {
+                    // Fail open immediately while a door/plat/tram moves, then
+                    // let the staggered probes converge. Opening geometry can
+                    // never leave an actor hidden behind a stale verdict.
+                    let mut oi = 0usize;
+                    while oi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
+                        PROP_OCC_VIS[oi] |= PROP_OCC_VISIBLE | PROP_OCC_DIRTY;
+                        oi += 1;
                     }
                 }
-                let mut ei = 0usize;
-                while ei < nents {
-                    ENT_PREV_OFF[ei] = ent_draw_offset(ei);
-                    ei += 1;
+                MOVER_COUNT = nmov;
+            }
+            let movers = &mut movers[..nmov];
+
+            // Ride moving brushes: establish cart-on-lift motion first, then
+            // carry a player standing on either the lift or the translated
+            // cart before publishing every mover's previous pose.
+            unsafe {
+                if has_pushables {
+                    carry_pushables_on_support(&m, movers, nents);
                 }
+                carry_player_on_brush_mover(&mut player, &mut yaw, nents);
             }
 
             // Full player physics always runs; moving trains carry the player by
@@ -11127,7 +15001,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             // Jump is edge-triggered like HL (holding Cross does not pogo --
             // pm_shared.c:2554 requires a release between jumps), with the
             // 2-tick buffer forgiving a press just before touchdown.
-            let jump_held = pad.buttons.is_held(button::CROSS);
+            let jump_held = input_sample.held(semantic_input::ACTION_JUMP);
             let jump_edge = jump_held && !jump_was_held;
             jump_was_held = jump_held;
             let jump_want = unsafe {
@@ -11144,34 +15018,40 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             };
             let on_ladder = unsafe { ladder_touch(&m, nents, player.pos) };
             let in_water = !on_ladder
-                && unsafe { water_touch(nents, [player.pos[0], player.pos[1] + 12, player.pos[2]]) };
+                && unsafe {
+                    water_touch(nents, [player.pos[0], player.pos[1] + 12, player.pos[2]])
+                };
             // Duck -> the shorter hull-3, with HL's airborne origin shift
             // (crouch-jump pulls the feet up 18 u) and the can't-stand-here
             // guard, all inside set_crouch. It may refuse the un-duck.
             player.set_crouch(&m, movers, crouching);
             crouching = player.crouch;
             if on_ladder {
-                player.update_climb(
-                    &m,
-                    movers,
-                    fwd,
-                    strafe,
-                    pad.buttons.is_held(button::CROSS),
-                    yaw,
-                    pitch,
-                );
+                player.update_climb(&m, movers, fwd, strafe, jump_held, yaw, pitch);
             } else if in_water {
-                player.update_swim(
-                    &m,
-                    movers,
-                    fwd,
-                    strafe,
-                    pad.buttons.is_held(button::CROSS),
-                    yaw,
-                    pitch,
-                );
+                player.update_swim(&m, movers, fwd, strafe, jump_held, yaw, pitch);
             } else {
                 player.update(&m, movers, fwd, strafe, jump_want, yaw);
+            }
+            // GoldSrc pushables react only to a grounded side touch. Resolve
+            // their sweep after player movement, then publish the translated
+            // mover immediately so combat, actor LOS and trigger logic in this
+            // same simulation tick all observe the new cart position.
+            unsafe {
+                if has_pushables {
+                    tick_pushables(
+                        &m,
+                        nlogic,
+                        nents,
+                        movers,
+                        &mut player,
+                        fwd,
+                        strafe,
+                        yaw,
+                        use_held_raw,
+                        sim_frame_no as u16,
+                    );
+                }
             }
             // Landing (per-tick units now: 1 u/t = 20 u/s). HL only dips the
             // view above 350 u/s (a normal jump lands at ~260 and stays
@@ -11221,9 +15101,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 // View-bob phase advances with horizontal ground speed; the render
                 // derives a vertical head-bob + strafe roll from it. Frozen while
                 // airborne/stopped (the amplitude, speed-scaled, eases it to rest).
-                let hspeed = isqrt_i32(
-                    player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2],
-                );
+                let hspeed =
+                    isqrt_i32(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
                 if player.on_ground && hspeed > 4 {
                     BOB_PHASE = BOB_PHASE.wrapping_add(((hspeed as u32) / 3 + 3).min(22));
                 }
@@ -11235,7 +15114,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                             STEP_ACC = 0;
                             STEP_ALT ^= 1;
                             sfx::play_vol(
-                                if STEP_ALT == 0 { sfx::STEP1 } else { sfx::STEP2 },
+                                if STEP_ALT == 0 {
+                                    sfx::STEP1
+                                } else {
+                                    sfx::STEP2
+                                },
                                 3,
                             );
                         }
@@ -11245,7 +15128,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 }
             }
             telemetry::stage_end(telemetry::stage::SIM_COLLISION);
-            let view_h_target = if crouching { CROUCH_VIEW_HEIGHT } else { VIEW_HEIGHT };
+            let view_h_target = if crouching {
+                CROUCH_VIEW_HEIGHT
+            } else {
+                VIEW_HEIGHT
+            };
             view_h_cur += (view_h_target - view_h_cur).clamp(-4, 4);
             let view_h = view_h_cur;
             // Drowning (player.cpp:1215-1329): 12 s of air once the eye goes
@@ -11285,9 +15172,62 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     }
                 }
             }
+            // A paused tracktrain remains the rider's ground entity in
+            // GoldSrc. Our generic player trace sees only the car's authored
+            // brush floor, which can sit hundreds of units below the path
+            // pivot (c0a0c is ~695); during a scripted pause the rider fell to
+            // that floor and failed the carry check when the car resumed.
+            // Support a non-jumping attached rider at the same normalized seat
+            // height. Horizontal movement can still leave the carry radius,
+            // and an upward jump explicitly detaches into normal physics.
+            if tram_player_attached && !tram_active {
+                let car_now = tram_pos_ext(
+                    &m,
+                    tram_seg,
+                    tram_seg_dist,
+                    tram_pre_from,
+                    tram_pre_total,
+                    tram_pre_left,
+                );
+                if player.vel[1] > 0 {
+                    tram_player_attached = false;
+                } else {
+                    let car_rot = tram_world_rotation(prev_tram_yaw);
+                    let dx = player.pos[0] - car_now[0];
+                    let dz = player.pos[2] - car_now[2];
+                    // World -> car space (transpose the Y-rotation), matching
+                    // the moving-rider carry path above.
+                    let local_xz = tram_logic::inverse_rotate_rider_xz(
+                        car_rot.m[0][0] as i32,
+                        car_rot.m[0][2] as i32,
+                        dx,
+                        dz,
+                    );
+                    if tram_logic::rider_over_tram_footprint(local_xz[0], local_xz[1]) {
+                        let seat_y = (player.pos[1] - car_now[1]).clamp(30, 100);
+                        player.pos[1] = car_now[1] + seat_y;
+                        player.vel[1] = 0;
+                        player.land_impact = 0;
+                        player.on_ground = true;
+                    } else {
+                        tram_player_attached = false;
+                        // The compact rotated tram hull is conservative around
+                        // its doorway. Once the rider has crossed the real
+                        // stopped-car footprint it can leave them startsolid
+                        // and freeze every subsequent input. Gold no longer
+                        // treats the car as their ground entity here; retire
+                        // this synthetic mover until the train starts again.
+                        tram_player_left_stopped = true;
+                    }
+                }
+            }
             let eye = [player.pos[0], player.pos[1] + view_h, player.pos[2]];
             unsafe {
                 collect_pickups(
+                    &m,
+                    nlogic,
+                    nents,
+                    sim_frame_no as u16,
                     player.pos,
                     &mut suit_equipped,
                     &mut armor,
@@ -11299,7 +15239,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 LOGIC_PLAYER_POS = player.pos;
                 LOGIC_PLAYER_YAW = yaw;
                 LOGIC_PLAYER_PITCH = pitch;
-                LOGIC_TRAM_RIDING = (tram_active && tram_player_attached) as u8;
+                LOGIC_TRAM_RIDING = tram_player_attached as u8;
                 let car_now = tram_pos_ext(
                     &m,
                     tram_seg,
@@ -11334,7 +15274,10 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                         tram_pre_total,
                         tram_pre_left,
                     );
-                    if m.tram_submodel > 0 && tram_should_carry_player(player.pos, train_pos) {
+                    if m.tram_submodel > 0
+                        && TRACKTRAIN_USE_SPEED > 0
+                        && tram_should_carry_player(player.pos, train_pos)
+                    {
                         TRACKTRAIN_CMD_ACTIVE = 1;
                         TRACKTRAIN_CMD_USE_TYPE = map::USE_TOGGLE;
                         TRACKTRAIN_CMD_SPEED = TRACKTRAIN_USE_SPEED;
@@ -11344,6 +15287,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                             &m,
                             nlogic,
                             nents,
+                            player.pos,
                             eye,
                             yaw,
                             pitch,
@@ -11372,7 +15316,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 // recomputed below); push adds velocity while inside the volume.
                 if let Some((dest, dyaw)) = TELEPORT_REQUEST.take() {
                     player.pos = dest;
-                    player.vel = [0, 0, 0];
+                    player.clear_velocity();
                     player.on_ground = false;
                     yaw = dyaw & 0xFFF;
                 }
@@ -11423,8 +15367,17 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                             -dot12(fire_rot.m[2], barrel),
                         ];
                         fire_hitscan(
-                            &m, movers, barrel, &fire_rot, base_t,
-                            trec.arg0 as u8, 8192, 2, 2, 0, 0,
+                            &m,
+                            movers,
+                            barrel,
+                            &fire_rot,
+                            base_t,
+                            trec.arg0 as u8,
+                            8192,
+                            2,
+                            2,
+                            0,
+                            0,
                         );
                         sfx::play(sfx::MP5); // a mounted machine gun
                         TANK_FIRE_CD = trec.speed.max(2);
@@ -11448,13 +15401,17 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 ];
                 unsafe {
                     // Cone-of-fire: shots wander more while moving fast or airborne.
-                    let hs = isqrt_i32(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
+                    let hs =
+                        isqrt_i32(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
                     let inacc = (hs / 12).min(6) + if player.on_ground { 0 } else { 5 };
                     let hit =
                         fire_weapon(weapon.def(), &m, movers, eye, &fire_rot, fire_base_t, inacc);
                     sfx::play(weapon_fire_sfx(weapon.current, hit));
                     // Eject a brass casing (bullet weapons only).
-                    if matches!(weapon.current, W_GLOCK | W_357 | W_MP5 | W_SHOTGUN | W_GAUSS) {
+                    if matches!(
+                        weapon.current,
+                        W_GLOCK | W_357 | W_MP5 | W_SHOTGUN | W_GAUSS
+                    ) {
                         eject_casing(eye, &fire_rot);
                     }
                 }
@@ -11499,6 +15456,43 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 LOGIC_PLAYER_CLIP_AMMO = weapon.clip_display();
                 LOGIC_PLAYER_RESERVE_AMMO = weapon.reserve_display();
             }
+            #[cfg(feature = "reference-trace")]
+            {
+                let trace_train = tram_pos_ext(
+                    &m,
+                    tram_seg,
+                    tram_seg_dist,
+                    tram_pre_from,
+                    tram_pre_total,
+                    tram_pre_left,
+                );
+                unsafe {
+                    trace_sim_tick(
+                        &m,
+                        reference_trace::TickState {
+                            map_tick: sim_frame_no,
+                            player_pos: player.pos,
+                            player_vel: player.vel,
+                            yaw,
+                            pitch,
+                            health,
+                            armor,
+                            weapon: weapon.current as u8,
+                            owned: weapon.owned,
+                            clip: weapon.clip_display(),
+                            reserve: weapon.reserve_display(),
+                            on_ground: player.on_ground,
+                            train_pos: trace_train,
+                            train_seg: tram_seg.min(u16::MAX as usize) as u16,
+                            train_dist: tram_seg_dist,
+                            train_speed: tram_speed,
+                            train_active: tram_active,
+                            train_attached: tram_player_attached,
+                            train_pre_left: tram_pre_left,
+                        },
+                    );
+                }
+            }
             if health == 0 && death_ticks == 0 {
                 death_ticks = DEATH_TICKS; // enemies killed the player -> start the death window
             }
@@ -11524,6 +15518,13 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             unsafe {
                 if CHANGE_REQUEST_ACTIVE != 0 {
                     CHANGE_REQUEST_ACTIVE = 0;
+                    // Snapshot after the final actor tick. The cold pass may
+                    // repurpose VIS_BITS and mailbox rows without exposing
+                    // either mutation to live simulation.
+                    let landmark = CHANGE_REQUEST.landmark;
+                    let carry_count = snapshot_transition_actors(&m, nlogic, landmark);
+                    CHANGE_REQUEST.carry_count =
+                        logic_state::encode_carry_state(carry_count, tram_active);
                     // Carry the whole arsenal into the next map.
                     CARRY_VALID = true;
                     CARRY_OWNED = weapon.owned;
@@ -11553,11 +15554,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
         // env_shake: jitter the view (yaw/pitch/eye height) by a decaying random
         // amount while a shake is active -- explosions/quakes rattle the camera.
         let (mut eye, mut view_yaw, mut view_pitch) = (
-            [
-                player.pos[0],
-                player.pos[1] + view_h_cur,
-                player.pos[2],
-            ],
+            [player.pos[0], player.pos[1] + view_h_cur, player.pos[2]],
             yaw,
             pitch,
         );
@@ -11575,13 +15572,12 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             // the horizon a few degrees. rot.m[0] would be circular, so derive the
             // world right vector straight from the yaw.
             let right = Mat3I16::rotate_y(0u16.wrapping_sub(yaw >> 4));
-            let side = (right.m[0][0] as i32 * player.vel[0]
-                + right.m[0][2] as i32 * player.vel[2])
-                >> 12;
+            let side =
+                (right.m[0][0] as i32 * player.vel[0] + right.m[0][2] as i32 * player.vel[2]) >> 12;
             view_roll = (side / 12).clamp(-4, 4) as i16;
             // View punch (recoil / landing / damage), decaying via tick_screen_fx.
-            view_pitch = (view_pitch as i32 + PUNCH_PITCH)
-                .clamp(-PITCH_MAX as i32, PITCH_MAX as i32) as i16;
+            view_pitch =
+                (view_pitch as i32 + PUNCH_PITCH).clamp(-PITCH_MAX as i32, PITCH_MAX as i32) as i16;
             view_yaw = ((view_yaw as i32 + PUNCH_YAW) & 0xFFF) as u16;
             if SHAKE_TICKS > 0 {
                 let amp = SHAKE_AMP as i32 * SHAKE_TICKS as i32 / SHAKE_DUR.max(1) as i32;
@@ -11691,14 +15687,14 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 // never a black hole up close. Normal views run a single pass.
                 const N_DEPTH_BANDS: i32 = 8;
                 const DEPTH_BAND_SHIFT: u32 = 8; // 256 world units per band
-                // Band only when the arena would overflow; otherwise one pass (the
-                // common case, no cost). On overflow use just enough bands to span
-                // FAR_VIEW -- no empty re-walks past the view distance, and if a band
-                // is wider than FAR_VIEW this collapses to 1 on its own. Emitting near
-                // bands first means an overflowing arena drops the FARTHEST faces, not
-                // the floor under your feet (which is what an unbanded late-group emit
-                // would drop -- the missing-near-geometry bug this fixes).
-                // Liquid sway phase for this frame; blend state starts opaque.
+                                                 // Band only when the arena would overflow; otherwise one pass (the
+                                                 // common case, no cost). On overflow use just enough bands to span
+                                                 // FAR_VIEW -- no empty re-walks past the view distance, and if a band
+                                                 // is wider than FAR_VIEW this collapses to 1 on its own. Emitting near
+                                                 // bands first means an overflowing arena drops the FARTHEST faces, not
+                                                 // the floor under your feet (which is what an unbanded late-group emit
+                                                 // would drop -- the missing-near-geometry bug this fixes).
+                                                 // Liquid sway phase for this frame; blend state starts opaque.
                 let wi = ((frame_no >> 3) & 15) as usize;
                 WAVE_DU = WAVE_TAB[wi] as u8;
                 WAVE_DV = WAVE_TAB[(wi + 4) & 15] as u8;
@@ -11723,21 +15719,14 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     flashlight: FLASHLIGHT_ON,
                     wave_du: WAVE_DU,
                     wave_dv: WAVE_DV,
-                    band_mode: nbands as u8
-                        | ((bucketed as u8) << 4)
-                        | ((use_bands as u8) << 5),
+                    band_mode: nbands as u8 | ((bucketed as u8) << 4) | ((use_bands as u8) << 5),
                 };
                 let cache_action = prepare_world_packet_cache(
                     cache_key,
                     if bucketed { PVS_FACE_COUNT } else { 0 },
                 );
                 let cache_hit = cache_action == WORLD_CACHE_HIT
-                    && replay_world_packet_cache(
-                        &mut packets,
-                        &mut np,
-                        &mut nq,
-                        &mut room_counts,
-                    );
+                    && replay_world_packet_cache(&mut packets, &mut np, &mut nq, &mut room_counts);
                 if !cache_hit && bucketed {
                     for c in PVS_BAND_START.iter_mut() {
                         *c = 0;
@@ -12092,34 +16081,74 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 if e.r2 > 0 {
                     model_bounds_tests = model_bounds_tests.saturating_add(1);
                     let radius = ENT_RADIUS[ei];
-                    let center = [
-                        e.center[0] + off[0],
-                        e.center[1] + off[1],
-                        e.center[2] + off[2],
-                    ];
+                    let center = if e.kind == ENT_KIND_PLATROT {
+                        platrot_local_to_world(e.center, off, platrot_yaw(e, ENT_PHASE[ei]))
+                    } else if e.kind == 5 {
+                        let rm = fan_rotation(e, fan_angle_q12(ei, sim_frame_no));
+                        [
+                            e.origin[0] + dot12(rm.m[0], e.center),
+                            e.origin[1] + dot12(rm.m[1], e.center),
+                            e.origin[2] + dot12(rm.m[2], e.center),
+                        ]
+                    } else if e.kind == 7 {
+                        let ang = (((ENT_PHASE[ei] * e.mv[0]) >> 12) as u16) & 0x0fff;
+                        let rm = Mat3I16::rotate_y(ang >> 4);
+                        [
+                            e.origin[0] + dot12(rm.m[0], e.center),
+                            e.origin[1] + e.center[1],
+                            e.origin[2] + dot12(rm.m[2], e.center),
+                        ]
+                    } else {
+                        [
+                            e.center[0] + off[0],
+                            e.center[1] + off[1],
+                            e.center[2] + off[2],
+                        ]
+                    };
                     if !sphere_visible(center, radius, &rot, base_t) {
                         model_bounds_culled = model_bounds_culled.saturating_add(1);
                         continue;
                     }
                 }
                 model_draws = model_draws.saturating_add(1);
-                // Rotating brushes (fans kind 5, swinging doors kind 7) draw
-                // rotated about their pivot. Fan angle = frame*speed (continuous);
-                // door angle = ENT_PHASE * open-angle (state-machine driven).
+                if e.kind == ENT_KIND_PLATROT {
+                    emit_platrot_entity(
+                        &mut packets,
+                        &m,
+                        e,
+                        ENT_PHASE[ei],
+                        eye,
+                        off,
+                        &rot,
+                        base_t,
+                        &mut np,
+                        &mut model_culled_tris,
+                    );
+                    continue;
+                }
+                // Rotating brushes (fans kind 5, swinging doors kind 7) have
+                // entity-local vertices and draw at pivot + rotation*vertex.
+                // Targeted fans retain their integrated phase; cosmetic fans
+                // derive it from the map tick. Doors use their state phase.
                 if (e.kind == 5 || e.kind == 7) && e.mv[0] != 0 {
                     let ang = if e.kind == 5 {
-                        ((sim_frame_no as i32).wrapping_mul(e.mv[0]) as u16) & 0xFFF
+                        fan_angle_q12(ei, sim_frame_no)
                     } else {
                         (((ENT_PHASE[ei] * e.mv[0]) >> 12) as u16) & 0xFFF
                     };
-                    let mr = rot.mul(&Mat3I16::rotate_y(ang >> 4));
+                    let local_rotation = if e.kind == 5 {
+                        fan_rotation(e, ang)
+                    } else {
+                        Mat3I16::rotate_y(ang >> 4)
+                    };
+                    let mr = rot.mul(&local_rotation);
                     scene::load_rotation(&mr);
                     let o = e.origin;
                     let ome = [o[0] - eye[0], o[1] - eye[1], o[2] - eye[2]];
                     let et = [
-                        dot12(rot.m[0], ome) - dot12(mr.m[0], o),
-                        dot12(rot.m[1], ome) - dot12(mr.m[1], o),
-                        dot12(rot.m[2], ome) - dot12(mr.m[2], o),
+                        dot12(rot.m[0], ome),
+                        dot12(rot.m[1], ome),
+                        dot12(rot.m[2], ome),
                     ];
                     scene::load_translation(Vec3I32::new(et[0], et[1], et[2]));
                     set_view_fix(&mr, et);
@@ -12144,7 +16173,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     set_view_fix(&rot, et); // mirror registers (translation still ent's)
                     continue;
                 }
-                if e.kind != 1 && e.kind != 3 {
+                if e.kind != 1 && e.kind != 3 && e.kind != ENT_KIND_PUSHABLE {
                     // Statics draw at the world transform via the world proj
                     // token. RELOAD it: the GTE translation register still
                     // holds the previous entity's offset (a mid-open door),
@@ -12237,19 +16266,19 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             // Tram car: render its submodel at the current ride offset, ROTATED
             // to face its direction of travel (the car yaws through the tunnel
             // curves instead of sliding sideways). Rotation is about the car's
-            // path-attach point (wp0 + ride_off); mirrors the func_rotating pivot
-            // math. Plane/bounds culls are skipped (the normals rotate).
+            // authored path-attach point (tram_ref + ride_off); mirrors the
+            // func_rotating pivot math. Plane/bounds culls are skipped.
             telemetry::stage_begin(telemetry::stage::MODEL_DRAW);
             if m.tram_submodel > 0 && m.tram_submodel < m.n_models {
                 model_draws = model_draws.saturating_add(1);
                 EMIT_BLEND = 0; // opaque: don't inherit a glass ent's blend
                 EMIT_WAVE = false;
-                let tram_rot = Mat3I16::rotate_y(tram_yaw_render >> 4);
+                let tram_rot = tram_world_rotation(tram_yaw_render);
                 let mr = rot.mul(&tram_rot);
                 let train_pos = [
-                    wp0[0] + ride_off[0],
-                    wp0[1] + ride_off[1],
-                    wp0[2] + ride_off[2],
+                    tram_ref[0] + ride_off[0],
+                    tram_ref[1] + ride_off[1],
+                    tram_ref[2] + ride_off[2],
                 ];
                 let tp_e = [
                     train_pos[0] - eye[0],
@@ -12257,9 +16286,9 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     train_pos[2] - eye[2],
                 ];
                 let tbw = [
-                    m.tram_base[0] - wp0[0],
-                    m.tram_base[1] - wp0[1],
-                    m.tram_base[2] - wp0[2],
+                    m.tram_base[0] - tram_ref[0],
+                    m.tram_base[1] - tram_ref[1],
+                    m.tram_base[2] - tram_ref[2],
                 ];
                 // Face planes are authored in tram-local space. Transform the
                 // eye there once, then reject back-facing car surfaces before
@@ -12368,7 +16397,11 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             // PS1 path only chooses the current actor frame.
             telemetry::stage_begin(telemetry::stage::TEXTURED_MODEL_JOINTS);
             invalidate_actor_occlusion(have_pvs, cam_leaf, eye);
-            let actor_count = PROP_COUNT.min(MAX_PROPS);
+            let render_movers = core::slice::from_raw_parts(
+                core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),
+                MOVER_COUNT.min(MAX_ENTS + 1),
+            );
+            let actor_count = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
             for pi in 0..actor_count {
                 if PROP_ACTIVE[pi] == 0 {
                     continue;
@@ -12387,7 +16420,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 }
                 let radius = model_def(ty).radius;
                 model_bounds_tests = model_bounds_tests.saturating_add(1);
-                // Far cull (tighter than world FAR_VIEW): skip distant detailed
+                // Far cull (bounded by world FAR_VIEW): skip distant detailed
                 // models before the costlier PVS/frustum/occlusion tests + draw.
                 if dot12(rot.m[2], org) + base_t[2] - radius > MODEL_FAR {
                     model_bounds_culled = model_bounds_culled.saturating_add(1);
@@ -12412,11 +16445,13 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     continue;
                 }
                 let occ_slot = pi.min(MAX_PROPS - 1);
-                if PROP_OCC_VIS[occ_slot] & PROP_OCC_DIRTY != 0
+                let occ = PROP_OCC_VIS[occ_slot];
+                if (occ & PROP_OCC_DIRTY != 0 || occ & PROP_OCC_VISIBLE == 0)
                     && (pi as u32).wrapping_add(sim_frame_no) % 4 == 0
                 {
+                    let gameplay = PROP_OCC_VIS[occ_slot] & PROP_OCC_GAMEPLAY_MASK;
                     PROP_OCC_VIS[occ_slot] =
-                        prop_occlusion_visible(&m, eye, ty, org) as u8;
+                        gameplay | prop_occlusion_visible(&m, render_movers, eye, ty, org) as u8;
                 }
                 if PROP_OCC_VIS[occ_slot] & PROP_OCC_VISIBLE == 0 {
                     model_bounds_culled = model_bounds_culled.saturating_add(1);
@@ -12437,7 +16472,8 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                     .add(lm.run_start as usize);
                 let face_count = lm.n_faces;
                 model_draws = model_draws.saturating_add(1);
-                let (sf, sf2, sfrac) = if ty == PROP_TYPE_ITEM_SUIT || ty == PROP_TYPE_ITEM_BATTERY {
+                let (sf, sf2, sfrac) = if ty == PROP_TYPE_ITEM_SUIT || ty == PROP_TYPE_ITEM_BATTERY
+                {
                     (0, 0, 0)
                 } else {
                     prop_anim_frame(md, ty, PROP_STATE[pi], PROP_HIT_FLASH[pi], sim_frame_no, pi)
@@ -12750,9 +16786,7 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
                 let mut scan = 0usize;
                 while scan < scan_count {
                     let li = if indexed {
-                        LOGIC_BREAK_HP[
-                            MAX_LOGIC - 1 - LOGIC_SPARK_COUNT as usize - scan
-                        ] as usize
+                        LOGIC_BREAK_HP[MAX_LOGIC - 1 - LOGIC_SPARK_COUNT as usize - scan] as usize
                     } else {
                         scan
                     };
@@ -12808,8 +16842,20 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             if unsafe { DAMAGE_FLASH } > 0 {
                 use psx_gpu::material::BlendMode;
                 let f = unsafe { DAMAGE_FLASH };
-                psx_gpu::draw_tri_flat_blended([(0, 0), (320, 0), (0, 240)], 0, f, f, BlendMode::Subtract);
-                psx_gpu::draw_tri_flat_blended([(320, 0), (320, 240), (0, 240)], 0, f, f, BlendMode::Subtract);
+                psx_gpu::draw_tri_flat_blended(
+                    [(0, 0), (320, 0), (0, 240)],
+                    0,
+                    f,
+                    f,
+                    BlendMode::Subtract,
+                );
+                psx_gpu::draw_tri_flat_blended(
+                    [(320, 0), (320, 240), (0, 240)],
+                    0,
+                    f,
+                    f,
+                    BlendMode::Subtract,
+                );
             }
             draw_screen_fx(&m);
 
@@ -12820,12 +16866,23 @@ fn play(fb: &mut FrameBuffer, launch: RoomLaunch, keep_frame: bool) -> PlayExit 
             // where it shows and one where it is missing.
             if DEBUG_XHAIR {
                 let dump_now = poll_port1().buttons.is_held(button::L1);
-                let key = if XHAIR.valid != 0 { XHAIR.tt } else { u32::MAX - 1 };
+                let key = if XHAIR.valid != 0 {
+                    XHAIR.tt
+                } else {
+                    u32::MAX - 1
+                };
                 // Fire on L1, on aimed-triangle change, AND every ~2s so steady
                 // aim still produces a visible line.
                 let periodic = frame_no % 16 == 0;
                 if (dump_now && !XHAIR_DUMP_PREV) || key != XHAIR_DUMP_LAST || periodic {
-                    xhair_dump(eye, yaw, pitch, cam_leaf, (np + nq) as i32, PVS_FACE_COUNT as i32);
+                    xhair_dump(
+                        eye,
+                        yaw,
+                        pitch,
+                        cam_leaf,
+                        (np + nq) as i32,
+                        PVS_FACE_COUNT as i32,
+                    );
                     XHAIR_DUMP_LAST = key;
                 }
                 XHAIR_DUMP_PREV = dump_now;

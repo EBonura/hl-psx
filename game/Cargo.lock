@@ -12,6 +12,7 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 name = "hl-psx"
 version = "0.1.0"
 dependencies = [
+ "lz4_flex",
  "psx-asset",
  "psx-engine",
  "psx-font",
@@ -27,6 +28,12 @@ dependencies = [
  "psx-telemetry",
  "psx-vram",
 ]
+
+[[package]]
+name = "lz4_flex"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
 
 [[package]]
 name = "psx-asset"

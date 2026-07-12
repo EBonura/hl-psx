@@ -13,7 +13,7 @@ finish.
 - `game/build.rs` sizes `MAP_BUF`, face caches, leaf caches, entity caches, and
   texture slots from the largest cooked `data/rooms/room_*.psxc` currently on
   disk. Adding one large chapter map increases RAM pressure everywhere.
-- `game/src/map.rs` parses a monolithic `HLMA`/`HLMB` blob: render geometry, textures,
+- `game/src/map.rs` parses a monolithic `HLMA`/`HLMB`/`HLMC` blob: render geometry, textures,
   BSP/PVS, clip hulls, brush entities, tram data, and props all share one
   residency lifetime.
 - `tools/hl-bsp/src/main.rs` emits all mip textures per map, so repeated

@@ -10,6 +10,11 @@ This tool deliberately mirrors the binary contracts in ``game/src/model.rs``,
 all offsets before reading records, then checks the relationships the runtime
 trusts: clips, compact frames, triangle indices, and embedded textures.
 
+``ClipRec`` remains four bytes. The low 15 bits of ``u16 first_frame`` select
+the first pose and its high bit stores duration bit 8. The following packed
+``u16`` stores baked-frame count in its low byte and duration bits 0..7 in its
+high byte. Duration uses 100 ms quanta; zero denotes a legacy chunk.
+
 Roster gaps and missing conventional pain/death clips are advisory for now.
 Malformed files are structural errors and make the command fail.
 """
@@ -17,6 +22,7 @@ Malformed files are structural errors and make the command fail.
 from __future__ import annotations
 
 import argparse
+import math
 import re
 import struct
 import sys
@@ -33,7 +39,7 @@ DEFAULT_MODELPACK = ROOT / "data" / "modelpack"
 # game/src/main.rs and Makefile's model roster.  Viewmodel order mirrors
 # Makefile's WEAPONLIST and game/src/main.rs N_WEAPONS.
 ACTOR_CHUNK_BASE = 1300
-ACTOR_COUNT = 52
+ACTOR_COUNT = 53
 VIEWMODEL_CHUNK_BASE = 1000
 VIEWMODEL_COUNT = 16
 
@@ -90,6 +96,7 @@ ACTOR_NAMES: tuple[str, ...] = (
     "w_longjump",
     "tentacle2",
     "hassassin",
+    "loader",
 )
 
 VIEWMODEL_NAMES: tuple[str, ...] = (
@@ -114,6 +121,18 @@ VIEWMODEL_NAMES: tuple[str, ...] = (
 assert len(ACTOR_NAMES) == ACTOR_COUNT
 assert len(VIEWMODEL_NAMES) == VIEWMODEL_COUNT
 
+# Mirrored from game/src/main.rs MODEL_DEFS.  These are render/frustum radii,
+# not physics hulls.  The audit below derives the minimum conservative radius
+# from every cooked frame so an undersized hand-tuned value cannot make a model
+# disappear at a view edge.  Each entry includes one world-unit rounding guard.
+ACTOR_RENDER_RADII: tuple[int, ...] = (
+    138, 77, 36, 70, 36, 90, 70, 91, 90, 90, 100, 100, 170,
+    40, 30, 90, 360, 1748, 200, 223, 80, 80, 60, 408, 60, 72,
+    36, 36, 36, 36, 36, 56, 45, 51, 40, 45, 36, 36, 36, 36,
+    36, 36, 36, 36, 36, 36, 36, 36, 36, 38, 912, 90, 1242,
+)
+assert len(ACTOR_RENDER_RADII) == ACTOR_COUNT
+
 # Positive-health entries in main.rs MODEL_DEFS.  The renderer requests clip 3
 # during hit flash and clip 4 after death for every such type.  Keep this list
 # synchronized with MODEL_DEFS until the definitions become generated data.
@@ -132,6 +151,10 @@ FRAME_MODE_FULL_I16 = 0
 FRAME_MODE_BASE_I8 = 1
 FRAME_RECORD_BYTES = 8
 CLIP_RECORD_BYTES = 4
+CLIP_FRAME_COUNT_MASK = 0x00FF
+CLIP_FIRST_FRAME_MASK = 0x7FFF
+CLIP_DURATION_EXT_BIT = 0x8000
+CLIP_DURATION_SHIFT = 8
 TRIANGLE_BYTES = {b"HMD4": 16, b"HMD5": 16, b"HMD6": 20}
 
 
@@ -143,6 +166,7 @@ class FormatError(ValueError):
 class ClipRecord:
     first_frame: int
     frame_count: int
+    source_duration_100ms: int
 
 
 @dataclass(frozen=True)
@@ -175,6 +199,7 @@ class ParsedModel:
     frame_data_bytes: int
     triangle_bytes: int
     local_to_world_q12: int
+    minimum_render_radius: int
     flags: int
     clip_records: tuple[ClipRecord, ...]
     frame_records: tuple[FrameRecord, ...]
@@ -295,6 +320,7 @@ def _parse_geometry(
     int,
     int,
     int,
+    int,
     tuple[ClipRecord, ...],
     tuple[FrameRecord, ...],
 ]:
@@ -341,15 +367,20 @@ def _parse_geometry(
     clip_records: list[ClipRecord] = []
     for index in range(clips):
         offset = clips_offset + index * CLIP_RECORD_BYTES
-        first = _u16(data, offset)
-        count = _u16(data, offset + 2)
+        packed_first = _u16(data, offset)
+        first = packed_first & CLIP_FIRST_FRAME_MASK
+        packed = _u16(data, offset + 2)
+        count = packed & CLIP_FRAME_COUNT_MASK
+        source_duration_100ms = (packed >> CLIP_DURATION_SHIFT) | (
+            0x100 if packed_first & CLIP_DURATION_EXT_BIT else 0
+        )
         if count == 0:
             raise FormatError(f"clip {index} has zero frames")
         if first >= frames or first + count > frames:
             raise FormatError(
                 f"clip {index} range [{first}, {first + count}) exceeds {frames} frames"
             )
-        clip_records.append(ClipRecord(first, count))
+        clip_records.append(ClipRecord(first, count, source_duration_100ms))
 
     frame_table_offset = clips_offset + clips_bytes
     frame_table_bytes = frames * FRAME_RECORD_BYTES
@@ -414,6 +445,75 @@ def _parse_geometry(
     frame_data_offset = frame_table_offset + frame_table_bytes
     _need(data, frame_data_offset, frame_data_bytes, "frame data")
 
+    # Decode every authored endpoint exactly as ModelFrame::vert does. Delta
+    # additions and interpolation both wrap as i16 at runtime.
+    def wrap_i16(value: int) -> int:
+        return ((value + 32768) & 0xFFFF) - 32768
+
+    decoded_frames: list[list[tuple[int, int, int]]] = []
+    max_norm_sq = 0
+    for record in frame_records:
+        frame_offset = frame_data_offset + record.data_offset
+        decoded: list[tuple[int, int, int]] = []
+        if record.mode == FRAME_MODE_FULL_I16:
+            for vertex in range(vertices):
+                xyz = struct.unpack_from("<hhh", data, frame_offset + vertex * 6)
+                decoded.append(xyz)
+        else:
+            # Runtime resolves the referenced full-frame descriptor directly;
+            # the base may legally appear after this delta in the packed stream.
+            base_record = frame_records[record.base_frame]
+            base_offset = frame_data_offset + base_record.data_offset
+            for vertex in range(vertices):
+                base = struct.unpack_from("<hhh", data, base_offset + vertex * 6)
+                delta = struct.unpack_from("<bbb", data, frame_offset + vertex * 3)
+                xyz = (
+                    wrap_i16(base[0] + delta[0]),
+                    wrap_i16(base[1] + delta[1]),
+                    wrap_i16(base[2] + delta[2]),
+                )
+                decoded.append(xyz)
+        decoded_frames.append(decoded)
+        for xyz in decoded:
+            max_norm_sq = max(
+                max_norm_sq,
+                sum(component * component for component in xyz),
+            )
+
+    # Component-wise signed shifts can round an interpolated vertex just
+    # outside both endpoint norms. Enumerate every fraction the runtime accepts
+    # for each consecutive clip pair (including the loop-back pair), so the
+    # radius proof covers the actual integer decoder rather than ideal lerp.
+    for clip in clip_records:
+        for local_frame in range(clip.frame_count):
+            a = decoded_frames[clip.first_frame + local_frame]
+            b = decoded_frames[
+                clip.first_frame + ((local_frame + 1) % clip.frame_count)
+            ]
+            for frac16 in range(1, 16):
+                for av, bv in zip(a, b):
+                    xyz = tuple(
+                        wrap_i16(
+                            av[axis]
+                            + (((bv[axis] - av[axis]) * frac16) >> 4)
+                        )
+                        for axis in range(3)
+                    )
+                    max_norm_sq = max(
+                        max_norm_sq,
+                        sum(component * component for component in xyz),
+                    )
+
+    # Mirror main.rs model_local_scale exactly. The projection path inflates
+    # both vertices and translation by this reciprocal integer, so the model's
+    # world-space radius is raw_radius / local_scale.
+    scale_q12 = local_to_world_q12 or 4096
+    local_scale = max(4096 // scale_q12, 1)
+    exact_ceil = math.isqrt(max_norm_sq) // local_scale
+    if (exact_ceil * local_scale) ** 2 < max_norm_sq:
+        exact_ceil += 1
+    minimum_render_radius = exact_ceil + 1
+
     triangle_bytes = TRIANGLE_BYTES[magic]
     triangles_offset = frame_data_offset + frame_data_bytes
     triangle_section_bytes = triangles * triangle_bytes
@@ -451,6 +551,7 @@ def _parse_geometry(
         frame_data_bytes,
         triangle_bytes,
         local_to_world_q12,
+        minimum_render_radius,
         flags,
         tuple(clip_records),
         frame_records,
@@ -481,6 +582,7 @@ def parse_hmrg_bytes(data: bytes, source: str = "<memory>") -> ParsedModel:
         frame_data_bytes,
         triangle_bytes,
         local_to_world_q12,
+        minimum_render_radius,
         flags,
         clip_records,
         frame_records,
@@ -501,6 +603,7 @@ def parse_hmrg_bytes(data: bytes, source: str = "<memory>") -> ParsedModel:
         frame_data_bytes=frame_data_bytes,
         triangle_bytes=triangle_bytes,
         local_to_world_q12=local_to_world_q12,
+        minimum_render_radius=minimum_render_radius,
         flags=flags,
         clip_records=clip_records,
         frame_records=frame_records,
@@ -587,6 +690,12 @@ def audit_modelpack(modelpack: Path) -> AuditResult:
             output.append(Asset(cohort, asset_id, name, path, model))
 
     for asset in actors:
+        configured_radius = ACTOR_RENDER_RADII[asset.asset_id]
+        if configured_radius < asset.model.minimum_render_radius:
+            errors.append(
+                f"{asset.label}: configured render radius {configured_radius} is below "
+                f"cooked-frame minimum {asset.model.minimum_render_radius}"
+            )
         if asset.asset_id not in LIVING_ACTOR_IDS:
             continue
         missing: list[str] = []
@@ -638,6 +747,7 @@ def _print_cohort(name: str, assets: Sequence[Asset], expected: int) -> None:
         ("frames", "frames"),
         ("clips", "clips"),
         ("frame_data_bytes", "frame data bytes"),
+        ("minimum_render_radius", "minimum radius"),
         ("max_texture_width", "max texture width"),
         ("max_texture_height", "max texture height"),
         ("max_texture_area", "max texture texels"),

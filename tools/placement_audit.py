@@ -19,7 +19,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ROOMS = ROOT / "data/rooms"
 SPRITE_MANIFEST = ROOT / "data/sprites/manifest.txt"
-ACTOR_CAP = 128
+# Runtime reserves the final 15 PROP_NEAR_ENTS rows as the zero-BSS
+# transition mailbox; live authored+carried actors occupy indices 0..112.
+ACTOR_CAP = 113
 SPRITE_CAP = 160
 SPLIT_MARKER = 0x8000_0000
 SPRITE_CLASSES = {"env_sprite", "env_glow", "cycler_sprite"}

@@ -32,11 +32,14 @@ config.mk
 # ---- Local-only material (kept on disk, never committed) ----
 docs/
 reference/
+!tools/reference/
+!tools/reference/**
 tools/*.py
 !tools/memory_report.py
 !tools/campaign_map_report.py
 !tools/campaign_flow_report.py
 !tools/roster_audit.py
+!tools/test_roster_audit.py
 !tools/placement_audit.py
 !tools/train_audit.py
 !tools/spu_audit.py
@@ -53,6 +56,8 @@ tools/*.py
 !tools/extract_voices.py
 !tools/extract_sprites.py
 !tools/gen_clips_manifest.py
+!tools/gen_transition_props.py
+!tools/test_transition_props.py
 tools/*.sh
 
 # ---- OS / editor cruft ----

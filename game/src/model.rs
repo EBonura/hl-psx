@@ -8,7 +8,7 @@
 //! Clip-aware files use HMD3:
 //!   magic "HMD3" | u32 n_verts, n_tris, n_texs, n_frames, n_clips
 //!   ClipRec[4B] × n_clips | n_frames × verts | TriRec[16B] × n_tris | textures...
-//!     ClipRec = u16 first_frame, u16 frame_count
+//!     ClipRec = packed u16 first_frame, packed u16 frame_count/duration
 //!     TriRec = u16 idx[3], u16 tex, u8 uv[6], u16 pad
 //!
 //! Compact-frame files use HMD4/HMD5:
@@ -94,14 +94,19 @@ const TRI_SZ: usize = 16;
 const TRI_SZ_HMD6: usize = 20;
 const FRAME_REC_SZ: usize = 8;
 const FRAME_MODE_BASE_I8: u8 = 1;
+const CLIP_FRAME_COUNT_MASK: u16 = 0x00ff;
+const CLIP_FIRST_FRAME_MASK: u16 = 0x7fff;
+const CLIP_DURATION_EXT_BIT: u16 = 0x8000;
+const LEGACY_CLIP_HOLD_TICKS: u16 = 40;
 const SHARED_NONE: u8 = 0;
 const SHARED_DELTA_DELTA: u8 = 1;
 const SHARED_BASE_DELTA: u8 = 2;
 const SHARED_DELTA_BASE: u8 = 3;
 const LOCAL_TO_WORLD_IDENTITY_Q12: u16 = 4096;
-// Mirror of main.rs MAX_MODEL_VERTS (MODEL_SCRATCH size). A model with more
-// verts than this would overflow the projection scratch, so reject it here.
-const MAX_VERTS: usize = 1024;
+// Generated from the same cooked model scan that sizes main.rs MODEL_SCRATCH.
+// A larger model would overflow projection scratch, so reject it here rather
+// than merely clamping the draw and leaving face indices out of bounds.
+const MAX_VERTS: usize = crate::room_budget::MAX_MODEL_VERTS;
 
 #[derive(Clone, Copy)]
 pub struct Tri {
@@ -122,9 +127,7 @@ pub struct RenderFacePayload {
 }
 
 impl RenderFacePayload {
-    pub const ZERO: Self = Self {
-        uv_words: [0; 3],
-    };
+    pub const ZERO: Self = Self { uv_words: [0; 3] };
 }
 
 /// Model loading rejects meshes above 1024 vertices, so three ten-bit indices
@@ -294,7 +297,32 @@ impl Model {
         }
         let c = clip.min(self.n_clips.saturating_sub(1));
         let o = self.clips_off + c * 4;
-        (rd_u16(self.data, o + 2) as usize).max(1)
+        ((rd_u16(self.data, o + 2) & CLIP_FRAME_COUNT_MASK) as usize).max(1)
+    }
+
+    /// GoldSrc source-sequence duration at the 20 Hz game clock. New HMD5/6
+    /// cooks pack 100 ms quanta in ClipRec.frame_count's unused high byte and
+    /// duration bit 8 in ClipRec.first_frame's unused high bit. Legacy chunks
+    /// retain the old two-second approximation.
+    #[inline]
+    pub fn clip_hold_ticks(&self, clip: usize) -> u16 {
+        if self.clips_off == 0 {
+            return LEGACY_CLIP_HOLD_TICKS;
+        }
+        let c = clip.min(self.n_clips.saturating_sub(1));
+        let o = self.clips_off + c * 4;
+        let packed_first = rd_u16(self.data, o);
+        let quanta = (rd_u16(self.data, o + 2) >> 8)
+            | if packed_first & CLIP_DURATION_EXT_BIT != 0 {
+                0x0100
+            } else {
+                0
+            };
+        if quanta == 0 {
+            LEGACY_CLIP_HOLD_TICKS
+        } else {
+            quanta.saturating_mul(2)
+        }
     }
 
     #[inline]
@@ -304,8 +332,8 @@ impl Model {
         }
         let c = clip.min(self.n_clips.saturating_sub(1));
         let o = self.clips_off + c * 4;
-        let first = rd_u16(self.data, o) as usize;
-        let count = (rd_u16(self.data, o + 2) as usize).max(1);
+        let first = (rd_u16(self.data, o) & CLIP_FIRST_FRAME_MASK) as usize;
+        let count = ((rd_u16(self.data, o + 2) & CLIP_FRAME_COUNT_MASK) as usize).max(1);
         (first + (local_frame % count)).min(self.n_frames.saturating_sub(1))
     }
 
@@ -446,19 +474,16 @@ impl<'a> ModelFrame<'a> {
         let same_data = a.data.as_ptr() == b.data.as_ptr() && a.data.len() == b.data.len();
         let ad = a.is_base_i8();
         let bd = b.is_base_i8();
-        let (shared_base_off, shared_kind) = if same_data
-            && ad
-            && bd
-            && a.base_frame_off == b.base_frame_off
-        {
-            (a.base_frame_off, SHARED_DELTA_DELTA)
-        } else if same_data && !ad && bd && a.frame_off == b.base_frame_off {
-            (a.frame_off, SHARED_BASE_DELTA)
-        } else if same_data && ad && !bd && a.base_frame_off == b.frame_off {
-            (b.frame_off, SHARED_DELTA_BASE)
-        } else {
-            (0, SHARED_NONE)
-        };
+        let (shared_base_off, shared_kind) =
+            if same_data && ad && bd && a.base_frame_off == b.base_frame_off {
+                (a.base_frame_off, SHARED_DELTA_DELTA)
+            } else if same_data && !ad && bd && a.frame_off == b.base_frame_off {
+                (a.frame_off, SHARED_BASE_DELTA)
+            } else if same_data && ad && !bd && a.base_frame_off == b.frame_off {
+                (b.frame_off, SHARED_DELTA_BASE)
+            } else {
+                (0, SHARED_NONE)
+            };
         InterpolatedModelFrame {
             a,
             b,
@@ -487,7 +512,6 @@ impl<'a> ModelFrame<'a> {
             )
         }
     }
-
 }
 
 impl InterpolatedModelFrame<'_> {

@@ -260,12 +260,13 @@ pub fn draw<const N: usize>(
         ); // health cross icon
         number_l(health_mat, ot, prims, &mut count, health, 38, y);
 
-        let suit_u =
-            if armor > 0 || (suit_equipped && pickup_kind == PICKUP_SUIT && (pickup_ticks & 2) == 0) {
-                SUIT_FULL_U
-            } else {
-                SUIT_EMPTY_U
-            };
+        let suit_u = if armor > 0
+            || (suit_equipped && pickup_kind == PICKUP_SUIT && (pickup_ticks & 2) == 0)
+        {
+            SUIT_FULL_U
+        } else {
+            SUIT_EMPTY_U
+        };
         sprite(
             mat,
             ot,

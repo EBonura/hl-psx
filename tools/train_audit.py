@@ -18,12 +18,13 @@ from typing import Iterable
 
 
 ROOT = Path(__file__).resolve().parent.parent
-HLM_MAGICS = (b"HLMA", b"HLMB")
+HLM_MAGICS = (b"HLMA", b"HLMB", b"HLMC")
 HLM_HEADER_SIZE = 52
 ENT_SIZE = 56
 LOGIC_SIZE = 64
 LOGIC_AUX_SIZE = 4
 LOGIC_FUNC_TRAIN = 25
+LOGIC_TRAIN_EXTENDED = 2
 
 
 class FormatError(ValueError):
@@ -163,7 +164,9 @@ def parse_room(data: bytes, name: str = "<room>") -> RoomStats:
 
         total += 1
         brush = _u16(data, offset + 10, f"logic[{index}] brush")
-        is_valid = aux_count >= 2 and brush < n_ents
+        flags = data[offset + 15]
+        stride = 3 if flags & LOGIC_TRAIN_EXTENDED else 2
+        is_valid = aux_count >= stride and aux_count % stride == 0 and brush < n_ents
         if not is_valid:
             continue
         valid += 1
@@ -171,13 +174,14 @@ def parse_room(data: bytes, name: str = "<room>") -> RoomStats:
         if speed == 0:
             zero_speed.append(index)
 
-        # Each corner is two aux records: (x,y), then (z,wait).  Detect only
+        # A compact corner is two aux records; an extended speed/message path
+        # uses three. Detect only
         # repeated subsequences, a possible signature of a serialized cycle
         # reaching the cooker's hop limit. HLM drops path-corner names, so this
         # remains advisory: distinct authored nodes may share a position/wait.
         corners: list[tuple[int, int, int, int]] = []
-        for corner in range(aux_count // 2):
-            first = aux_off + (first_aux + corner * 2) * LOGIC_AUX_SIZE
+        for corner in range(aux_count // stride):
+            first = aux_off + (first_aux + corner * stride) * LOGIC_AUX_SIZE
             second = first + LOGIC_AUX_SIZE
             x, y = struct.unpack_from("<hh", data, first)
             z = struct.unpack_from("<h", data, second)[0]

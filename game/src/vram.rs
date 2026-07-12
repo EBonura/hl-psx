@@ -13,11 +13,11 @@ use core::ptr;
 
 const TEX_X0: u16 = 320; // first texture-page column (after the framebuffers)
 const COLS: u16 = 11; // X=320,384,..,960
-// Allocator pages 0..20 cover X=320..960 in band 0 and X=320..896 in
-// band 1. The final band-1 page at X=960 is deliberately excluded: HUD pixels,
-// the pre-scaled gameplay font, and their CLUTs live there at fixed addresses.
-// The all-96 asset simulation peaks at page 13 for map+models and page 19 even
-// under the impossible upper bound of appending every viewmodel at once.
+                      // Allocator pages 0..20 cover X=320..960 in band 0 and X=320..896 in
+                      // band 1. The final band-1 page at X=960 is deliberately excluded: HUD pixels,
+                      // the pre-scaled gameplay font, and their CLUTs live there at fixed addresses.
+                      // The all-96 asset simulation peaks at page 13 for map+models and page 19 even
+                      // under the impossible upper bound of appending every viewmodel at once.
 const PAGES: usize = 21;
 const CLUT_ROWS: usize = 24; // Y=480..503
 const CLUT_BASE_Y: u16 = 480;

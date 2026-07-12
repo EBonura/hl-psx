@@ -3,7 +3,7 @@
 //! from anywhere (no brittle relative `-T` paths in RUSTFLAGS) while the
 //! script itself lives in the sibling PSoXide checkout.
 
-use std::{fs, path::PathBuf};
+use std::{collections::HashSet, fs, path::PathBuf};
 
 const FALLBACK_MAP_WORDS: usize = 255_000;
 const FALLBACK_MAX_VERTS: usize = 12_288;
@@ -13,15 +13,16 @@ const FALLBACK_MAX_LEAVES: usize = 8192;
 const FALLBACK_MAX_ENTS: usize = 192;
 const FALLBACK_MAX_TEX_SLOTS: usize = 256;
 const FALLBACK_MODEL_WORDS: usize = 24_576;
+const FALLBACK_PACK_CACHE_ENTRIES: usize = 512;
+const MODEL_INDEX_VERTEX_LIMIT: usize = 1024;
 // MODEL_BUF must hold a whole per-map model set (the fixed viewmodel reserve,
 // every resident NPC/enemy frame section, and one whole incoming HMRG chunk),
 // not just the largest individual asset. The per-map streamer drops whole
 // types if this arena, the face pools, or the texture slots overflow.
 // Audited against the worst per-map streaming peak (tools/roster_audit.py):
-// HMD5 actors remove runtime-unused face normals, so c4a3 now peaks at 88,803
-// words transient (VM reserve + resident frame sections + the whole in-flight
-// HMRG chunk); 90,624 leaves ~7.1 KB for roster drift while reclaiming 7 KiB
-// of static RAM from the previous 92,416-word arena.
+// HMD5 actors remove runtime-unused face normals. The current c4a3 roster peaks
+// at 90,008 words transient (VM reserve + resident frame sections + the whole
+// in-flight HMRG chunk); 90,624 leaves 616 words / 2,464 bytes of drift.
 // Re-run the audit after `make models`/`make rooms` before trimming further.
 const MODEL_POOL_WORDS: usize = 90_624;
 
@@ -44,6 +45,41 @@ fn round_up(value: usize, step: usize) -> usize {
     } else {
         value.div_ceil(step) * step
     }
+}
+
+/// Minimum byte capacity in which the SDK's tail-staged decoder accepts the
+/// exact LZ4 stream mkisopsx will write, plus a small non-format guard. Success
+/// is monotonic as the staged source moves farther above the output, so a
+/// binary search avoids baking a conservative worst-case overlap allowance
+/// into two megabytes of console RAM.
+fn packed_map_capacity(raw: &[u8]) -> usize {
+    const GUARD_BYTES: usize = 64;
+    let comp = lz4_flex::block::compress(raw);
+    if comp.len() + 8 >= raw.len() {
+        return raw.len() + GUARD_BYTES;
+    }
+    let mut framed = Vec::with_capacity(comp.len() + 8);
+    framed.extend_from_slice(b"HLZC");
+    framed.extend_from_slice(&(raw.len() as u32).to_le_bytes());
+    framed.extend_from_slice(&comp);
+
+    let accepts = |cap: usize| {
+        let mut buf = vec![0u8; cap];
+        buf[..framed.len()].copy_from_slice(&framed);
+        psx_pack::decompress_hlzc_in_place(&mut buf, framed.len()) == Some(raw.len())
+    };
+    let mut low = raw.len().max(framed.len());
+    let mut high = raw.len() + comp.len(); // disjoint output/source always fits
+    assert!(accepts(high), "HLZC decoder rejected disjoint staging");
+    while low < high {
+        let mid = low + (high - low) / 2;
+        if accepts(mid) {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    low + GUARD_BYTES
 }
 
 fn scan_room_budget(
@@ -77,7 +113,7 @@ fn scan_room_budget(
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        if !name.starts_with("room_") || !name.ends_with(".psxc") {
+        if !name.starts_with("room_") || !(name.ends_with(".psxc") || name.ends_with(".psxw")) {
             continue;
         }
         println!("cargo:rerun-if-changed={}", path.display());
@@ -85,17 +121,17 @@ fn scan_room_budget(
             continue;
         };
         if data.len() >= 8 && &data[0..4] == b"HLTX" {
-            max_bytes = max_bytes.max(data.len());
+            max_bytes = max_bytes.max(packed_map_capacity(&data));
             max_texs = max_texs.max(rd_u32(&data, 4).unwrap_or(0) as usize);
             continue;
         }
         if data.len() < 52
-            || (&data[0..4] != b"HLMA" && &data[0..4] != b"HLMB")
+            || (&data[0..4] != b"HLMA" && &data[0..4] != b"HLMB" && &data[0..4] != b"HLMC")
         {
             continue;
         }
 
-        max_bytes = max_bytes.max(data.len());
+        max_bytes = max_bytes.max(packed_map_capacity(&data));
         max_verts = max_verts.max(rd_u32(&data, 4).unwrap_or(0) as usize);
         let n_texs = rd_u32(&data, 12).unwrap_or(0) as usize;
         let n_faces = rd_u32(&data, 16).unwrap_or(0) as usize;
@@ -105,8 +141,16 @@ fn scan_room_budget(
 
         if bsp_off + 24 <= data.len() {
             let n_face_groups = rd_u32(&data, bsp_off + 4).unwrap_or(0) as usize;
-            let n_leaves = rd_u32(&data, bsp_off + 12).unwrap_or(0) as usize;
-            max_leaves = max_leaves.max(n_leaves);
+            let leaf_counts = rd_u32(&data, bsp_off + 12).unwrap_or(0);
+            // VIS_BITS only holds world PVS clusters. HLMC separates those
+            // from submodel-only leaf records; legacy formats assumed every
+            // non-solid leaf was a PVS bit.
+            let n_visleaves = if &data[0..4] == b"HLMC" {
+                (leaf_counts >> 16) as usize
+            } else {
+                (leaf_counts as usize).saturating_sub(1)
+            };
+            max_leaves = max_leaves.max(n_visleaves);
             let n_planes = rd_u32(&data, bsp_off).unwrap_or(0) as usize;
             let faces_off = bsp_off + 24 + n_planes * 10 + n_face_groups * 2;
             let mut max_group = 0usize;
@@ -127,6 +171,32 @@ fn scan_room_budget(
         }
     }
 
+    // These chunk families are also HLZC-compressed by mkisopsx and staged in
+    // MAP_BUF before the resident world chunk replaces them. Model chunks use
+    // MODEL_BUF and have ids below the packer's compression threshold.
+    for relative in ["data/sfx", "data/voices", "data/sprites"] {
+        let dir = repo_root.join(relative);
+        println!("cargo:rerun-if-changed={}", dir.display());
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            let Some(raw_id) = stem.strip_prefix("chunk_") else {
+                continue;
+            };
+            if raw_id.parse::<u32>().ok().is_some_and(|id| id >= 3000) {
+                println!("cargo:rerun-if-changed={}", path.display());
+                if let Ok(data) = fs::read(path) {
+                    max_bytes = max_bytes.max(packed_map_capacity(&data));
+                }
+            }
+        }
+    }
+
     if max_bytes == 0 {
         return (
             FALLBACK_MAP_WORDS,
@@ -140,28 +210,33 @@ fn scan_room_budget(
     }
 
     (
-        // +4 KB: LZ4 in-place slack. Compressed chunks are staged at the
-        // buffer TAIL and decoded back to the head; the margin keeps the
-        // write cursor behind the unread source even on the biggest map.
-        (max_bytes + 4096).div_ceil(4),
-        round_up(max_verts + 128, 256),
+        max_bytes.div_ceil(4),
+        // Projection scratch is indexed directly, but has no SIMD/alignment
+        // requirement. Preserve the audited +128-vertex recook guard while
+        // avoiding up to 255 vertices of dead linker allocation.
+        round_up(max_verts + 128, 32),
         round_up(max_face_records + 32, 256),
-        round_up(max_face_groups + 32, 256),
+        // PVS_GROUP_VIS stores one bit per group, so keep this divisible by 32.
+        round_up(max_face_groups + 32, 32),
         round_up(max_leaves + 64, 256),
-        round_up(max_ents + 8, 16),
+        // Every entity-backed table is build-time sized from this value and
+        // rooms are immutable at runtime. Keep two spare records for cooker
+        // drift; a recook automatically grows the generated cap.
+        round_up(max_ents + 2, 2),
         round_up(max_texs + 8, 16),
     )
 }
 
-fn scan_model_budget(repo_root: &std::path::Path) -> usize {
+fn scan_model_budget(repo_root: &std::path::Path) -> (usize, usize) {
     let modelpack = repo_root.join("data/modelpack");
     println!("cargo:rerun-if-changed={}", modelpack.display());
 
     let Ok(entries) = fs::read_dir(&modelpack) else {
-        return FALLBACK_MODEL_WORDS;
+        return (FALLBACK_MODEL_WORDS, MODEL_INDEX_VERTEX_LIMIT);
     };
 
     let mut max_bytes = 0usize;
+    let mut max_verts = 0usize;
     for entry in entries.flatten() {
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
@@ -171,15 +246,80 @@ fn scan_model_budget(repo_root: &std::path::Path) -> usize {
             continue;
         }
         println!("cargo:rerun-if-changed={}", path.display());
-        if let Ok(meta) = entry.metadata() {
-            max_bytes = max_bytes.max(meta.len() as usize);
+        if let Ok(data) = fs::read(&path) {
+            max_bytes = max_bytes.max(data.len());
+            // HMRG wrapper (8 bytes), followed by HMDx's u32 vertex count at
+            // geometry offset +4. Face indices are ten-bit at runtime.
+            if data.get(0..4) == Some(b"HMRG") && data.len() >= 16 {
+                max_verts = max_verts.max(rd_u32(&data, 12).unwrap_or(0) as usize);
+            }
         }
     }
 
-    if max_bytes == 0 {
+    let model_words = if max_bytes == 0 {
         FALLBACK_MODEL_WORDS.max(MODEL_POOL_WORDS)
     } else {
         round_up(max_bytes.div_ceil(4) + 256, 256).max(MODEL_POOL_WORDS)
+    };
+    let model_verts = if max_verts == 0 {
+        MODEL_INDEX_VERTEX_LIMIT
+    } else {
+        assert!(
+            max_verts <= MODEL_INDEX_VERTEX_LIMIT,
+            "cooked model has {max_verts} vertices; packed face indices support at most {MODEL_INDEX_VERTEX_LIMIT}"
+        );
+        // Projection is in-place into MODEL_SCRATCH. Keep a small asset-drift
+        // guard and let the shipping linker/memory gate expose future growth.
+        round_up(max_verts + 16, 16).min(MODEL_INDEX_VERTEX_LIMIT)
+    };
+    (model_words, model_verts)
+}
+
+fn scan_pack_cache_budget(repo_root: &std::path::Path) -> usize {
+    let inputs = [
+        ("data/rooms", "room_"),
+        ("data/modelpack", "chunk_"),
+        ("data/sfx", "chunk_"),
+        ("data/voices", "chunk_"),
+        ("data/sprites", "chunk_"),
+    ];
+    let mut ids = HashSet::new();
+    for (relative, prefix) in inputs {
+        let dir = repo_root.join(relative);
+        println!("cargo:rerun-if-changed={}", dir.display());
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return FALLBACK_PACK_CACHE_ENTRIES;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            if prefix == "room_"
+                && !matches!(
+                    path.extension().and_then(|ext| ext.to_str()),
+                    Some("psxc" | "psxw")
+                )
+            {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            let Some(raw_id) = stem.strip_prefix(prefix) else {
+                continue;
+            };
+            let id = raw_id
+                .parse::<u32>()
+                .unwrap_or_else(|_| panic!("invalid WORLD.PAK chunk filename: {}", path.display()));
+            assert!(ids.insert(id), "duplicate WORLD.PAK chunk id {id}");
+        }
+    }
+    if ids.is_empty() {
+        FALLBACK_PACK_CACHE_ENTRIES
+    } else {
+        // Keep 16 spare chunks, rounded to a stable cache-allocation step.
+        round_up(ids.len() + 16, 32)
     }
 }
 
@@ -206,17 +346,22 @@ fn main() {
 
     let (map_words, max_verts, max_faces, max_face_groups, max_leaves, max_ents, max_tex_slots) =
         scan_room_budget(repo_root);
-    let model_words = scan_model_budget(repo_root);
+    let (model_words, max_model_verts) = scan_model_budget(repo_root);
+    let pack_cache_entries = scan_pack_cache_budget(repo_root);
+    assert_eq!(max_face_groups % 32, 0);
+    assert!(MODEL_INDEX_VERTEX_LIMIT <= 1 << 10);
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let budget = format!(
         "pub const MAP_WORDS: usize = {map_words};\n\
          pub const MODEL_WORDS: usize = {model_words};\n\
          pub const MAX_VERTS: usize = {max_verts};\n\
+         pub const MAX_MODEL_VERTS: usize = {max_model_verts};\n\
          pub const MAX_FACES: usize = {max_faces};\n\
          pub const MAX_FACE_GROUPS: usize = {max_face_groups};\n\
          pub const MAX_LEAVES: usize = {max_leaves};\n\
          pub const MAX_ENTS: usize = {max_ents};\n\
-         pub const MAX_TEX_SLOTS: usize = {max_tex_slots};\n"
+         pub const MAX_TEX_SLOTS: usize = {max_tex_slots};\n\
+         pub const PACK_CACHE_ENTRIES: usize = {pack_cache_entries};\n"
     );
     fs::write(out_dir.join("room_budget.rs"), budget).expect("write generated room budget");
 }

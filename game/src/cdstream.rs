@@ -35,11 +35,12 @@ static mut SECTOR_BUF: [u32; SECTOR_WORDS] = [0; SECTOR_WORDS];
 /// re-reading + re-scanning the (4-sector) header. Loading a map streams ~30
 /// chunks (world, textures, 14 viewmodels, enemies); without the cache each one
 /// seeks back to the pack LBA and rescans the whole table -- the dominant cost
-/// of a map load. 512 covers the current 274-chunk pack with margin; a larger
-/// pack falls back to the SDK's on-disc scan (PACK_CACHE_LEN = -2). The SDK
-/// deliberately does no caching at its layer, so the cache stays game-side.
+/// of a map load. 416 covers the current 387-chunk pack with 29 spare entries;
+/// a larger pack falls back to the SDK's on-disc scan (PACK_CACHE_LEN = -2).
+/// The SDK deliberately does no caching at its layer, so the cache stays
+/// game-side.
 #[cfg(target_arch = "mips")]
-const PACK_CACHE_MAX: usize = 512;
+const PACK_CACHE_MAX: usize = crate::room_budget::PACK_CACHE_ENTRIES;
 
 #[cfg(target_arch = "mips")]
 #[derive(Clone, Copy)]
@@ -214,10 +215,10 @@ pub fn load_chunk(_chunk_id: u32, _dst: &mut [u32]) -> Option<usize> {
 ///
 /// `load_chunk` leaves the (compressed) payload at buf[0..loaded]; the SDK
 /// stages it at the END of the buffer and decodes the LZ4 stream back to the
-/// head. Safe in place: build.rs pads MAP_WORDS past the biggest raw map by
-/// more than the worst-case LZ4 in-place margin (comp_len/255 + a few bytes),
-/// and the SDK decoder re-checks that margin per step, failing cleanly
-/// instead of corrupting.
+/// head. Safe in place: build.rs runs this same decoder over mkisopsx's exact
+/// compressed streams, sizes MAP_WORDS to the maximum accepted capacity plus
+/// a guard, and reruns after asset changes. The guest still checks every step
+/// and fails cleanly instead of corrupting if a pack/build mismatch occurs.
 ///
 /// Returns the decompressed length, `loaded` unchanged for non-HLZC chunks
 /// (raw passthrough -- models/SFX/old packs), or 0 on a corrupt stream.

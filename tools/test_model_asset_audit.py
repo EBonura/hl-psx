@@ -28,7 +28,9 @@ def _chunk(
     vertices: int = 3,
     frame_specs: tuple[tuple[int, int], ...] = ((0, 0), (1, 0)),
     frame_offsets: tuple[int, ...] | None = None,
+    frame_payloads: tuple[bytes, ...] | None = None,
     clips: tuple[tuple[int, int], ...] = ((0, 2),),
+    clip_durations_100ms: tuple[int, ...] | None = None,
     triangle_indices: tuple[int, int, int] = (0, 1, 2),
     triangle_texture: int = 0,
     declared_textures: int = 1,
@@ -37,13 +39,28 @@ def _chunk(
 ) -> bytes:
     if frame_offsets is not None and len(frame_offsets) != len(frame_specs):
         raise ValueError("frame_offsets length must match frame_specs")
+    if frame_payloads is not None and len(frame_payloads) != len(frame_specs):
+        raise ValueError("frame_payloads length must match frame_specs")
+    if (
+        clip_durations_100ms is not None
+        and len(clip_durations_100ms) != len(clips)
+    ):
+        raise ValueError("clip_durations_100ms length must match clips")
 
     frame_data = bytearray()
     descriptors = bytearray()
     for index, (mode, base) in enumerate(frame_specs):
         offset = len(frame_data) if frame_offsets is None else frame_offsets[index]
         descriptors += struct.pack("<IBHB", offset, mode, base, 0)
-        frame_data += bytes(vertices * (3 if mode == 1 else 6))
+        payload = (
+            bytes(vertices * (3 if mode == 1 else 6))
+            if frame_payloads is None
+            else frame_payloads[index]
+        )
+        expected = vertices * (3 if mode == 1 else 6)
+        if len(payload) != expected:
+            raise ValueError(f"frame {index} payload is {len(payload)} bytes, expected {expected}")
+        frame_data += payload
 
     geometry = bytearray(
         struct.pack(
@@ -59,7 +76,19 @@ def _chunk(
     )
     if magic in (b"HMD5", b"HMD6"):
         geometry += struct.pack("<HH", 4096, 0)
-    geometry += b"".join(struct.pack("<HH", first, count) for first, count in clips)
+    for index, (first, count) in enumerate(clips):
+        duration = 0 if clip_durations_100ms is None else clip_durations_100ms[index]
+        if first & ~audit.CLIP_FIRST_FRAME_MASK:
+            raise ValueError("clip first frame exceeds packed format")
+        if duration > 0x1FF:
+            raise ValueError("clip duration exceeds packed format")
+        packed_first = first | (
+            audit.CLIP_DURATION_EXT_BIT if duration & 0x100 else 0
+        )
+        packed = (count & audit.CLIP_FRAME_COUNT_MASK) | (
+            (duration & 0xFF) << audit.CLIP_DURATION_SHIFT
+        )
+        geometry += struct.pack("<HH", packed_first, packed)
     geometry += descriptors
     geometry += frame_data
     geometry += struct.pack(
@@ -97,6 +126,27 @@ class ModelAssetFormatTests(unittest.TestCase):
 
     def test_rejects_clip_out_of_frame_bounds(self) -> None:
         self.assert_format_error(_chunk(clips=((1, 2),)), "clip 0 range")
+
+    def test_decodes_packed_clip_frame_count_and_source_duration(self) -> None:
+        parsed = audit.parse_hmrg_bytes(
+            _chunk(clips=((0, 2),), clip_durations_100ms=(38,))
+        )
+        self.assertEqual(parsed.clip_records[0].frame_count, 2)
+        self.assertEqual(parsed.clip_records[0].source_duration_100ms, 38)
+
+    def test_decodes_extended_source_duration_from_first_frame_high_bit(self) -> None:
+        parsed = audit.parse_hmrg_bytes(
+            _chunk(clips=((0, 2),), clip_durations_100ms=(334,))
+        )
+        self.assertEqual(parsed.clip_records[0].first_frame, 0)
+        self.assertEqual(parsed.clip_records[0].frame_count, 2)
+        self.assertEqual(parsed.clip_records[0].source_duration_100ms, 334)
+
+    def test_rejects_zero_low_byte_even_with_packed_source_duration(self) -> None:
+        self.assert_format_error(
+            _chunk(clips=((0, 0),), clip_durations_100ms=(38,)),
+            "clip 0 has zero frames",
+        )
 
     def test_rejects_unknown_frame_mode(self) -> None:
         self.assert_format_error(
@@ -143,6 +193,53 @@ class ModelAssetFormatTests(unittest.TestCase):
         self.assertTrue(
             any("pain[3]" in w and "death[4]" in w for w in result.warnings)
         )
+
+    def test_rejects_actor_radius_smaller_than_cooked_frames(self) -> None:
+        far_vertex = struct.pack("<hhh", 200, 0, 0)
+        payload = far_vertex * 3
+        with tempfile.TemporaryDirectory() as directory:
+            modelpack = Path(directory)
+            (modelpack / "chunk_1300.psxm").write_bytes(
+                _chunk(
+                    frame_specs=((0, 0),),
+                    frame_payloads=(payload,),
+                    clips=((0, 1),),
+                )
+            )
+            result = audit.audit_modelpack(modelpack)
+        self.assertTrue(
+            any(
+                "configured render radius 138" in error
+                and "cooked-frame minimum 201" in error
+                for error in result.errors
+            )
+        )
+
+    def test_radius_decode_accepts_delta_before_its_full_base(self) -> None:
+        delta = struct.pack("<bbb", 1, 0, 0) * 3
+        base = struct.pack("<hhh", 100, 0, 0) * 3
+        parsed = audit.parse_hmrg_bytes(
+            _chunk(
+                frame_specs=((1, 1), (0, 0)),
+                frame_payloads=(delta, base),
+                clips=((0, 2),),
+            )
+        )
+        self.assertEqual(parsed.minimum_render_radius, 102)
+
+    def test_radius_covers_integer_interpolation_overshoot(self) -> None:
+        # At frac=1 the signed right shifts produce (-20,-20,-19), whose
+        # ceil(norm) is 35 even though both endpoints ceil to only 34.
+        a = struct.pack("<hhh", -20, -20, -18) * 3
+        b = struct.pack("<hhh", -20, -19, -19) * 3
+        parsed = audit.parse_hmrg_bytes(
+            _chunk(
+                frame_specs=((0, 0), (0, 0)),
+                frame_payloads=(a, b),
+                clips=((0, 2),),
+            )
+        )
+        self.assertEqual(parsed.minimum_render_radius, 36)
 
 
 if __name__ == "__main__":

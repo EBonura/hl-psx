@@ -60,8 +60,8 @@ pub const GEIGER: u8 = 43; // radiation/toxic-zone click
 pub const HEV_ACTIVATE: u8 = 44; // suit power-on voice (pickup)
 pub const HEV_HEALTH_CRIT: u8 = 45; // "health critical"
 pub const HEV_NEAR_DEATH: u8 = 46; // "near death"
-// Dialogue is not a global SFX id anymore -- it streams per-map (chunk
-// 3100+idx) and plays via play_voice / play_voice_world (local ids).
+                                   // Dialogue is not a global SFX id anymore -- it streams per-map (chunk
+                                   // 3100+idx) and plays via play_voice / play_voice_world (local ids).
 
 const MAX_SFX: usize = 47;
 const SPU_SAMPLE_BASE: u32 = 0x1010; // BIOS convention: 0x0000..0x1000 reserved

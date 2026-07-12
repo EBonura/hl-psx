@@ -15,11 +15,11 @@ import train_audit as audit  # noqa: E402
 
 
 def _room(
-    records: list[tuple[int, int, int, int]],
+    records: list[tuple[int, ...]],
     n_ents: int = 2,
     magic: bytes = b"HLMA",
 ) -> bytes:
-    """Build an HLM shell; records are (kind, aux_count, brush, speed)."""
+    """Build an HLM shell; records are (kind, aux_count, brush, speed[, flags])."""
 
     data = bytearray(audit.HLM_HEADER_SIZE)
     data[:4] = magic
@@ -32,15 +32,18 @@ def _room(
 
     logic_off = len(data)
     struct.pack_into("<I", data, 48, logic_off)
-    n_aux = sum(aux_count for _, aux_count, _, _ in records)
+    n_aux = sum(record[1] for record in records)
     data.extend(struct.pack("<HHHH", len(records), n_aux, 0, 0))
     first_aux = 0
-    for kind, aux_count, brush, speed in records:
+    for record in records:
+        kind, aux_count, brush, speed = record[:4]
+        flags = record[4] if len(record) > 4 else 0
         rec = bytearray(audit.LOGIC_SIZE)
         rec[0] = kind
         struct.pack_into("<H", rec, 10, brush)
         struct.pack_into("<H", rec, 12, first_aux)
         rec[14] = aux_count
+        rec[15] = flags
         struct.pack_into("<H", rec, 20, speed)
         data.extend(rec)
         first_aux += aux_count
@@ -50,7 +53,7 @@ def _room(
 
 
 class TrainAuditTests(unittest.TestCase):
-    def test_accepts_legacy_and_axial_world_magics(self) -> None:
+    def test_accepts_all_supported_world_magics(self) -> None:
         for magic in audit.HLM_MAGICS:
             with self.subTest(magic=magic):
                 stats = audit.parse_room(_room([], magic=magic))
@@ -84,6 +87,19 @@ class TrainAuditTests(unittest.TestCase):
         )
         self.assertEqual(stats.zero_speed, (0,))
         self.assertIn("valid zero-speed trains", audit.evaluate_rooms([stats], 8)[0])
+
+    def test_extended_train_uses_three_aux_records_per_corner(self) -> None:
+        stats = audit.parse_room(
+            _room(
+                [
+                    (25, 3, 0, 100, audit.LOGIC_TRAIN_EXTENDED),
+                    (25, 6, 0, 100, audit.LOGIC_TRAIN_EXTENDED),
+                    (25, 4, 0, 100, audit.LOGIC_TRAIN_EXTENDED),
+                ]
+            ),
+            "extended_map",
+        )
+        self.assertEqual((stats.total, stats.valid, stats.invalid), (3, 2, 1))
 
     def test_rejects_format_bounds_and_aux_overrun(self) -> None:
         with self.subTest("short header"):

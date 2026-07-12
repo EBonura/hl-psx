@@ -14,10 +14,10 @@ use crate::vram::{upload_tex_blob_raw, TexSlot, EMPTY_SLOT};
 
 pub const SPRITE_CHUNK_BASE: u32 = 3200; // WORLD.PAK chunk = base + map_index
 pub const MAX_SPRITES: usize = 12; // unique sprites per map (matches the cook cap)
-// The full 96-map campaign peaks at 49 sampled frame textures (c2a5e).
-// Keeping the old 14-frame table silently dropped tail sprites on 38 maps;
-// clearing only the previous map's live prefix keeps the linked image within
-// 8 bytes of the 14-frame build, and the audited VRAM peak still fits.
+                                   // The full 96-map campaign peaks at 49 sampled frame textures (c2a5e).
+                                   // Keeping the old 14-frame table silently dropped tail sprites on 38 maps;
+                                   // clearing only the previous map's live prefix keeps the linked image within
+                                   // 8 bytes of the 14-frame build, and the audited VRAM peak still fits.
 pub const MAX_SPRITE_FRAMES: usize = 49; // total frame textures per map
 
 #[derive(Copy, Clone)]

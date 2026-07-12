@@ -11,7 +11,7 @@
 
 use std::borrow::Cow;
 use std::cmp::Reverse;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::process::exit;
 
@@ -48,6 +48,7 @@ const SZ_PLANE: usize = 20; // f32 normal[3] + f32 dist + i32 type
 const SZ_CLIPNODE: usize = 8; // i32 planenum + i16 children[2]
 const SZ_LEAF_VISOFS: usize = 4; // dleaf_t.visofs at byte 4
 const SZ_LEAF_MARK0: usize = 20; // dleaf_t.firstmarksurface at byte 20
+const SZ_MODEL_VISLEAFS: usize = 52; // dmodel_t.visleafs in world model 0
 
 fn u16le(b: &[u8], o: usize) -> Option<u16> {
     b.get(o..o + 2).map(|s| u16::from_le_bytes([s[0], s[1]]))
@@ -61,6 +62,31 @@ fn i32le(b: &[u8], o: usize) -> Option<i32> {
 }
 fn f32le(b: &[u8], o: usize) -> Option<f32> {
     u32le(b, o).map(f32::from_bits)
+}
+
+/// GoldSrc's PVS rows cover `dmodel[0].visleafs`, not every record in the
+/// leaf lump. BSP compilers append submodel-only leaves after the world set.
+fn world_visleaf_count(models: &[u8], n_leaves: usize) -> Result<usize, String> {
+    let raw = i32le(models, SZ_MODEL_VISLEAFS)
+        .ok_or_else(|| "BSP model lump has no world dmodel visleaf count".to_string())?;
+    if raw < 0 || raw as usize > n_leaves.saturating_sub(1) {
+        return Err(format!(
+            "world dmodel visleaf count {raw} exceeds {} non-solid leaf records",
+            n_leaves.saturating_sub(1)
+        ));
+    }
+    Ok(raw as usize)
+}
+
+/// HLMC keeps the BSP header at 24 bytes: low 16 bits are total leaf records,
+/// high 16 bits are world PVS clusters. GoldSrc's map limits fit both fields.
+fn pack_leaf_counts(n_leaves: usize, n_visleaves: usize) -> Result<u32, String> {
+    if n_leaves > u16::MAX as usize || n_visleaves > u16::MAX as usize {
+        return Err(format!(
+            "HLMC leaf counts exceed u16 (records {n_leaves}, visleafs {n_visleaves})"
+        ));
+    }
+    Ok(n_leaves as u32 | ((n_visleaves as u32) << 16))
 }
 
 #[derive(Clone, Copy)]
@@ -339,7 +365,7 @@ fn report(path: &str, bsp: &Bsp) {
 // ---- Cook: BSP -> .hlm (PS1-native textured + lit triangle mesh) ----------
 //
 // Layout (all little-endian):
-//   magic "HLMB" | u32 n_verts | u32 n_tris | u32 n_texs
+//   magic "HLMC" | u32 n_verts | u32 n_tris | u32 n_texs
 //   verts:   i16 x,y,z   × n_verts          (world space, Y-up)
 //   tri_rec[16] × n_tris:
 //     u16 a,b,c | u8 uv[6] | u8 tex | u8 light_idx[3]
@@ -726,7 +752,7 @@ fn plane_rec(planes: &[u8], planenum: usize, scale: f32) -> ([i16; 3], i32) {
     )
 }
 
-// HLMB clip PlaneRef: bits 13..0 are the remapped plane-table index; bits
+// HLMB/C clip PlaneRef: bits 13..0 are the remapped plane-table index; bits
 // 15..14 classify exact positive axial normals after plane_rec quantization:
 // 00=generic, 01=+X, 10=+Y, 11=+Z. Negative axes stay generic because their
 // sign cannot be represented by the two-bit fast-path tag.
@@ -946,7 +972,13 @@ fn median_cut16(colors: &[(u8, u8, u8)]) -> Vec<(u8, u8, u8)> {
 
 /// Append one FaceVert (u16 idx | u8 uv[2] | u8 light_idx) for the given global
 /// triangle-corner index, reading from the flat cooked-triangle arrays.
-fn push_facevert(dst: &mut Vec<u8>, tri_idx: &[u16], tri_uv: &[u8], light_idx: &[u8], corner: usize) {
+fn push_facevert(
+    dst: &mut Vec<u8>,
+    tri_idx: &[u16],
+    tri_uv: &[u8],
+    light_idx: &[u8],
+    corner: usize,
+) {
     dst.extend_from_slice(&tri_idx[corner].to_le_bytes());
     dst.extend_from_slice(&tri_uv[corner * 2..corner * 2 + 2]);
     dst.push(light_idx[corner]);
@@ -1500,19 +1532,29 @@ struct SpawnCandidate {
 fn standalone_spawn_candidates(ents: &[u8]) -> Vec<SpawnCandidate> {
     let s = entity_text(ents);
     let mut out = Vec::new();
-    // scripted_sequence v1 (set dressing): an auto-start script (one with no
-    // targetname) poses its monster at the script mark from frame one in real
-    // HL. Move the matching monster's spawn to the mark; triggered scripts
-    // (with a targetname) fire later and are left alone.
+    // Only MoveTo=4 teleports an auto-start scripted actor to the mark.
+    // MoveTo=0 waits at its authored origin; 1/2 walk/run there at runtime.
     let mut script_marks: Vec<(String, [f32; 3], Option<f32>)> = Vec::new();
     for block in s.split('{') {
-        if ent_value(block, "classname") != Some("scripted_sequence") {
+        if !matches!(
+            ent_value(block, "classname"),
+            Some("scripted_sequence" | "aiscripted_sequence")
+        ) {
             continue;
         }
         if ent_value(block, "targetname").is_some() {
             continue;
         }
-        let Some(target) = ent_value(block, "m_iszEntity") else { continue };
+        let move_to = ent_value(block, "m_fMoveTo")
+            .or_else(|| ent_value(block, "m_flMoveTo"))
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or(0);
+        if move_to != 4 {
+            continue;
+        }
+        let Some(target) = ent_value(block, "m_iszEntity") else {
+            continue;
+        };
         let Some(origin) = ent_value(block, "origin").and_then(parse_vec3) else {
             continue;
         };
@@ -1543,6 +1585,7 @@ fn score_spawn_yaw(
     nodes: &[u8],
     planes: &[u8],
     leaves: &[u8],
+    n_visleaves: usize,
     marks: &[u8],
     vis: &[u8],
     face_ntri: &[u16],
@@ -1554,7 +1597,7 @@ fn score_spawn_yaw(
     const VIEW_HEIGHT: i32 = 28;
     let n_leaves = leaves.len() / SZ_LEAF;
     let n_marks = marks.len() / SZ_MARKSURFACE;
-    if n_leaves <= 1 {
+    if n_leaves <= 1 || n_visleaves == 0 {
         return 0;
     }
     let eye_hl = [
@@ -1563,12 +1606,12 @@ fn score_spawn_yaw(
         origin_hl[2] + VIEW_HEIGHT as f32 * scale,
     ];
     let leaf = point_leaf(eye_hl, nodes, planes);
-    if leaf <= 0 || leaf as usize >= n_leaves {
+    if leaf <= 0 || leaf as usize > n_visleaves {
         return 0;
     }
     let lo = leaf as usize * SZ_LEAF;
     let visofs = i32le(leaves, lo + SZ_LEAF_VISOFS).unwrap_or(-1);
-    let row = (n_leaves.saturating_sub(1) + 7) / 8;
+    let row = (n_visleaves + 7) / 8;
     let mut bits = vec![0u8; row];
     if visofs < 0 {
         bits.fill(0xFF);
@@ -1601,7 +1644,7 @@ fn score_spawn_yaw(
     ];
     let mut seen = vec![false; face_ntri.len()];
     let mut score = 0i32;
-    for bit in 0..n_leaves.saturating_sub(1).min(bits.len() * 8) {
+    for bit in 0..n_visleaves.min(bits.len() * 8) {
         if bits[bit >> 3] & (1u8 << (bit & 7)) == 0 {
             continue;
         }
@@ -1669,6 +1712,7 @@ fn best_visibility_spawn(
     nodes: &[u8],
     planes: &[u8],
     leaves: &[u8],
+    n_visleaves: usize,
     clipnodes: &[u8],
     hull1_head: i32,
     marks: &[u8],
@@ -1682,17 +1726,17 @@ fn best_visibility_spawn(
 ) -> Option<([f32; 3], i32, i32)> {
     let n_leaves = leaves.len() / SZ_LEAF;
     let n_marks = marks.len() / SZ_MARKSURFACE;
-    if n_leaves <= 1 {
+    if n_leaves <= 1 || n_visleaves == 0 {
         return None;
     }
-    let row = (n_leaves.saturating_sub(1) + 7) / 8;
+    let row = (n_visleaves + 7) / 8;
     let mut bits = vec![0u8; row];
     // Rank leaves by how many leaves they can see. This is a cheap proxy for an
     // open view; ranking by raw face count would favour leaves whose PVS blows
     // the render arena, whereas the most-connected leaves give a full, in-budget
     // view.
     let mut ranked: Vec<(u32, usize)> = Vec::new();
-    for l in 1..n_leaves {
+    for l in 1..=n_visleaves {
         let visofs = i32le(leaves, l * SZ_LEAF + SZ_LEAF_VISOFS).unwrap_or(-1);
         if visofs < 0 {
             continue; // degenerate "sees everything" leaf (outside/solid)
@@ -1766,6 +1810,7 @@ fn best_visibility_spawn(
                 nodes,
                 planes,
                 leaves,
+                n_visleaves,
                 marks,
                 vis,
                 face_ntri,
@@ -1793,6 +1838,7 @@ fn choose_standalone_spawn(
     nodes: &[u8],
     planes: &[u8],
     leaves: &[u8],
+    n_visleaves: usize,
     clipnodes: &[u8],
     hull1_head: i32,
     marks: &[u8],
@@ -1830,6 +1876,7 @@ fn choose_standalone_spawn(
                 nodes,
                 planes,
                 leaves,
+                n_visleaves,
                 marks,
                 vis,
                 face_ntri,
@@ -1848,6 +1895,7 @@ fn choose_standalone_spawn(
                 nodes,
                 planes,
                 leaves,
+                n_visleaves,
                 marks,
                 vis,
                 face_ntri,
@@ -1868,6 +1916,7 @@ fn choose_standalone_spawn(
                 nodes,
                 planes,
                 leaves,
+                n_visleaves,
                 marks,
                 vis,
                 face_ntri,
@@ -1896,6 +1945,7 @@ fn choose_standalone_spawn(
                     nodes,
                     planes,
                     leaves,
+                    n_visleaves,
                     marks,
                     vis,
                     face_ntri,
@@ -1942,8 +1992,21 @@ fn choose_standalone_spawn(
     .max()
     .unwrap_or(0);
     if let Some((origin, yaw, score)) = best_visibility_spawn(
-        scale, nodes, planes, leaves, clipnodes, hull1_head, marks, vis, face_ntri, face_norm,
-        face_dist, face_center, face_extent, face_bright,
+        scale,
+        nodes,
+        planes,
+        leaves,
+        n_visleaves,
+        clipnodes,
+        hull1_head,
+        marks,
+        vis,
+        face_ntri,
+        face_norm,
+        face_dist,
+        face_center,
+        face_extent,
+        face_bright,
     ) {
         if best_entity_score < DEAD_POCKET_SCORE && score >= GOOD_STANDALONE_SCORE {
             if debug_spawn {
@@ -1985,6 +2048,21 @@ struct EntRec {
     leaves: Vec<u16>, // BSP leaves touched by this entity's bounds, for PVS culling
 }
 
+// Entity-local rotating platform. `origin` is the bottom pose/pivot,
+// `mv[0]` is the signed full yaw in Q12 turns, and `mv[1]` is the vertical
+// bottom-to-top displacement. The fixed EntRec stays 56 bytes.
+const ENT_KIND_PLATROT: u16 = 8;
+// Translated SOLID_BBOX brush. `origin` is the live runtime offset; mv packs
+// max speed + local AABB half-extents without growing the 56-byte EntRec.
+const ENT_KIND_PUSHABLE: u16 = 9;
+const SF_PUSH_BREAKABLE: u16 = 128;
+
+#[inline]
+fn pack_pushable_speed_half_x(max_speed: i32, half_x: i32) -> i32 {
+    (((half_x.clamp(0, u16::MAX as i32) as u32) << 16) | max_speed.clamp(0, u16::MAX as i32) as u32)
+        as i32
+}
+
 const LOGIC_BRUSH_NONE: u16 = u16::MAX;
 const LOGIC_FUNC_DOOR: u8 = 1;
 const LOGIC_FUNC_BUTTON: u8 = 2;
@@ -2009,7 +2087,14 @@ const LOGIC_HEALTH_CHARGER: u8 = 20;
 const LOGIC_HEV_CHARGER: u8 = 21;
 const LOGIC_MONSTERMAKER: u8 = 22;
 const LOGIC_SCRIPTED: u8 = 24;
+const LOGIC_SCRIPTED_HAS_IDLE: u8 = 0x80;
 const LOGIC_FUNC_TRAIN: u8 = 25;
+const LOGIC_TRAIN_TERMINAL: u8 = 1;
+const LOGIC_TRAIN_EXTENDED: u8 = 2;
+const LOGIC_TRAIN_CYCLE_SHIFT: u8 = 2;
+const TRAIN_CORNER_TELEPORT: u16 = 0x8000;
+const TRAIN_CORNER_WAIT_TRIGGER_TELEPORT: u16 = 0xfffe;
+const TRAIN_CORNER_WAIT_TRIGGER: u16 = 0xffff;
 const LOGIC_WEAPONSTRIP: u8 = 26;
 const LOGIC_ENV_MESSAGE: u8 = 27; // titles.txt text overlay (arg0 = text name id)
 const LOGIC_ENV_FADE: u8 = 28; // screen fade (arg0 = duration ticks)
@@ -2026,6 +2111,9 @@ const LOGIC_ENV_EXPLOSION: u8 = 37; // scripted explosion FX at origin: arg0 = m
 const LOGIC_ENV_SPARK: u8 = 40; // env_spark: origin sparks intermittently
 const LOGIC_MONSTERCLIP: u8 = 41; // func_monsterclip: mins/maxs AABB blocks NPCs, not the player
 const LOGIC_MOMENTARY: u8 = 42; // momentary_rot_button valve wheel: hold +use to ramp its target door
+const LOGIC_TRIGGER_TRANSITION: u8 = 43; // carry filter: targetname = landmark, bounds = volume
+const LOGIC_FUNC_ROTATING: u8 = 44; // targeted fan: persistent angle + GoldSrc start/stop ramp
+const MAX_RUNTIME_LIVE_PROPS: usize = 113; // 128 minus 15 zero-BSS carry mailbox rows
 const LOGIC_TANK: u8 = 38; // func_tank mountable gun: arg0 = bullet damage, speed = fire cooldown ticks
 const LOGIC_BEAM: u8 = 39; // env_beam/env_laser: aux = start xyz + end xyz, arg1 = half-width, speed = color
 
@@ -2042,6 +2130,44 @@ fn global_hash(name: &str) -> u16 {
         h = (h ^ b as u32).wrapping_mul(0x0100_0193);
     }
     ((h ^ (h >> 16)) as u16).max(1)
+}
+
+const CARRY_GLOBAL_BIT: u16 = 0x8000;
+
+/// Stable actor identity stored in PropRec's former padding word. Ordinary
+/// targetnames and globalnames share the same folded hash, with bit 15 keeping
+/// their namespaces distinct. 0 and 0xffff remain runtime sentinels.
+fn actor_carry_id(name: &str, global: bool) -> u16 {
+    let n = name.trim().to_ascii_lowercase();
+    if n.is_empty() {
+        return 0;
+    }
+    let mut h: u32 = 0x811c_9dc5;
+    for b in n.bytes() {
+        h = (h ^ b as u32).wrapping_mul(0x0100_0193);
+    }
+    let mut id = ((h ^ (h >> 16)) as u16 & !CARRY_GLOBAL_BIT).max(1);
+    if global && id == 0x7fff {
+        id = 0x7ffe; // 0xffff is PROP_LOGIC_LINK's "none" sentinel.
+    }
+    id | if global { CARRY_GLOBAL_BIT } else { 0 }
+}
+
+fn entity_carry_id(block: &str) -> u16 {
+    let global = ent_value(block, "globalname").unwrap_or("").trim();
+    if !global.is_empty() {
+        actor_carry_id(global, true)
+    } else {
+        actor_carry_id(ent_value(block, "targetname").unwrap_or(""), false)
+    }
+}
+
+#[inline]
+fn prop_type_crosses_transition(ty: u16) -> bool {
+    let base = ty & 0x0fff;
+    // FCAP_DONT_SAVE / !FCAP_ACROSS_TRANSITION plus non-actors. Authored dead
+    // bodies and monstermaker stock are map-local state, never live carries.
+    ty & 0xc000 == 0 && !matches!(base, 3 | 4 | 16 | 26..=49 | 50) && base < 53
 }
 
 /// (map_index, key) -> per-map local voice id, from the VOICES_MANIFEST env file
@@ -2143,9 +2269,8 @@ fn collect_sprite_props(
         let sf = parse_spawnflags(block);
         let targetname = ent_value(block, "targetname").unwrap_or("").trim();
         let name = intern_logic_name(logic_names, targetname)?;
-        let start_on = cls != "env_sprite"
-            || targetname.is_empty()
-            || (sf & SF_SPRITE_STARTON) != 0;
+        let start_on =
+            cls != "env_sprite" || targetname.is_empty() || (sf & SF_SPRITE_STARTON) != 0;
         let model = ent_value(block, "model").unwrap_or("");
         let base = model
             .rsplit(|c| c == '/' || c == '\\')
@@ -2162,16 +2287,19 @@ fn collect_sprite_props(
             continue;
         };
         let origin = to_world(origin_hl, scale);
-        if origin.iter().any(|&v| !(i16::MIN as i32..=i16::MAX as i32).contains(&v)) {
+        if origin
+            .iter()
+            .any(|&v| !(i16::MIN as i32..=i16::MAX as i32).contains(&v))
+        {
             return Err(format!("sprite {base} origin {origin:?} exceeds i16"));
         }
         let ent_scale = parse_f32_key(block, "scale", 1.0).max(0.05);
         // World half-width = native px/2 * entity scale * (HL->world scale).
-        let half = ((bw as f32 * 0.5 * ent_scale) * scale)
-            .round()
-            .max(1.0) as i32;
+        let half = ((bw as f32 * 0.5 * ent_scale) * scale).round().max(1.0) as i32;
         if half > 1023 {
-            return Err(format!("sprite {base} half-width {half} exceeds packed 10-bit limit"));
+            return Err(format!(
+                "sprite {base} half-width {half} exceeds packed 10-bit limit"
+            ));
         }
         let mut packed = lid | ((half as u16) << 6);
         if start_on {
@@ -2194,9 +2322,17 @@ fn collect_sprite_props(
 fn is_voice_message(msg: &str) -> bool {
     let m = msg.to_ascii_lowercase();
     m.ends_with(".wav")
-        && ["barney/", "scientist/", "gman/", "hgrunt/", "tride/", "vox/", "fvox/"]
-            .iter()
-            .any(|d| m.starts_with(d))
+        && [
+            "barney/",
+            "scientist/",
+            "gman/",
+            "hgrunt/",
+            "tride/",
+            "vox/",
+            "fvox/",
+        ]
+        .iter()
+        .any(|d| m.starts_with(d))
 }
 
 const USE_OFF: u8 = 0;
@@ -2263,17 +2399,60 @@ struct LogicCook {
 
 const NAV_NODE_HEIGHT: f32 = 8.0;
 const MAX_NAV_NODES_COOK: usize = 255;
+const COOKED_NAV_NODE_BYTES: usize = 18;
 const NAV_LINKS_PER_NODE: usize = 8;
 const NAV_LINK_RANGE2: f32 = 1024.0 * 1024.0;
 const NAV_LINK_TRACE_LIFT: f32 = 24.0;
 const NAV_LINK_VERTICAL_MAX: f32 = 128.0;
 const CONTENTS_SOLID: i16 = -2;
+const NAV_NODE_LAND: u8 = 1;
+const NAV_EXACT_ROUTES: u16 = 0x8000;
+const NAV_ROUTE_BYTES_MAX: usize = (NAV_EXACT_ROUTES - 1) as usize;
+
+// Retail Half-Life writes its 32-bit CGraph ABI image straight to `.nod`.
+// Parse fixed little-endian offsets explicitly: using host Rust/C layouts would
+// break on 64-bit machines and on any compiler with different padding.
+const RETAIL_GRAPH_VERSION: i32 = 16;
+const RETAIL_GRAPH_BYTES: usize = 8396;
+const RETAIL_NODE_BYTES: usize = 88;
+const RETAIL_LINK_BYTES: usize = 24;
+const RETAIL_DIST_BYTES: usize = 16;
+const RETAIL_GRAPH_NODES: usize = 24;
+const RETAIL_GRAPH_LINKS: usize = 28;
+const RETAIL_GRAPH_ROUTE_BYTES: usize = 32;
+const RETAIL_GRAPH_HASH_LINKS: usize = 8384;
+const RETAIL_NODE_HUMAN_DOOR_ROUTE: usize = 40 + (1 * 2 + 1) * 4;
+const RETAIL_LINK_HUMAN: i32 = 1 << 1;
 
 struct NavNodeRec {
     origin_hl: [f32; 3],
     origin: [i32; 3],
     leaf: i16,
     links: Vec<u8>,
+    route_offset: u16,
+    node_type: u8,
+}
+
+struct NavCook {
+    nodes: Vec<NavNodeRec>,
+    /// Exact GoldSrc compressed next-hop streams. `None` retains the synthetic
+    /// adjacency fallback used by custom maps that ship no compatible `.nod`.
+    routes: Option<Vec<u8>>,
+}
+
+struct RetailNavNode {
+    origin: [f32; 3],
+    peek: [f32; 3],
+    node_type: u8,
+    first_link: usize,
+    link_count: usize,
+    route_offset: usize,
+}
+
+struct RetailNavLink {
+    source: usize,
+    dest: usize,
+    mask: i32,
 }
 
 fn bbox_plane_sides(mins: [f32; 3], maxs: [f32; 3], normal: [f32; 3], dist: f32) -> i32 {
@@ -2381,9 +2560,15 @@ fn entity_leafs(
 }
 
 /// True when `to`'s PVS bit is set in `from`'s decompressed vis row.
-fn leaf_row_sees(leaves: &[u8], vis: &[u8], from: usize, to: usize) -> bool {
+fn leaf_row_sees(leaves: &[u8], vis: &[u8], n_visleaves: usize, from: usize, to: usize) -> bool {
     let n_leaves = leaves.len() / SZ_LEAF;
-    if from == 0 || to == 0 || from >= n_leaves || to >= n_leaves {
+    if from == 0
+        || to == 0
+        || from > n_visleaves
+        || to > n_visleaves
+        || from >= n_leaves
+        || to >= n_leaves
+    {
         return false;
     }
     let visofs = i32le(leaves, from * SZ_LEAF + SZ_LEAF_VISOFS).unwrap_or(-1);
@@ -2594,10 +2779,8 @@ fn collect_nav_nodes(
 ) -> Vec<NavNodeRec> {
     let s = entity_text(ents);
     let mut out = Vec::new();
-    // scripted_sequence v1 (set dressing): an auto-start script (one with no
-    // targetname) poses its monster at the script mark from frame one in real
-    // HL. Move the matching monster's spawn to the mark; triggered scripts
-    // (with a targetname) fire later and are left alone.
+    // Only MoveTo=4 teleports an auto-start scripted actor to the mark.
+    // MoveTo=0 waits at its authored origin; 1/2 walk/run there at runtime.
     let mut script_marks: Vec<(String, [f32; 3], Option<f32>)> = Vec::new();
     for block in s.split('{') {
         if ent_value(block, "classname") != Some("scripted_sequence") {
@@ -2606,7 +2789,16 @@ fn collect_nav_nodes(
         if ent_value(block, "targetname").is_some() {
             continue;
         }
-        let Some(target) = ent_value(block, "m_iszEntity") else { continue };
+        let move_to = ent_value(block, "m_fMoveTo")
+            .or_else(|| ent_value(block, "m_flMoveTo"))
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or(0);
+        if move_to != 4 {
+            continue;
+        }
+        let Some(target) = ent_value(block, "m_iszEntity") else {
+            continue;
+        };
         let Some(origin) = ent_value(block, "origin").and_then(parse_vec3) else {
             continue;
         };
@@ -2627,6 +2819,8 @@ fn collect_nav_nodes(
             origin,
             leaf,
             links: Vec::new(),
+            route_offset: 0,
+            node_type: NAV_NODE_LAND,
         });
         if out.len() >= MAX_NAV_NODES_COOK {
             break;
@@ -2680,18 +2874,298 @@ fn collect_nav_nodes(
     out
 }
 
-/// func_door move direction (HL) + distance: slides `size_along_axis - lip`.
+fn retail_route_row(
+    route: &[u8],
+    offset: usize,
+    node_count: usize,
+    source: usize,
+) -> Result<(Vec<u8>, Vec<usize>), String> {
+    if offset >= route.len() && node_count != 0 {
+        return Err(format!(
+            "route offset {offset} exceeds {} bytes",
+            route.len()
+        ));
+    }
+    let mut encoded = Vec::new();
+    let mut decoded = Vec::with_capacity(node_count);
+    let mut p = offset;
+    while decoded.len() < node_count {
+        let raw = *route.get(p).ok_or_else(|| {
+            format!(
+                "route row {source} ends before destination {}",
+                decoded.len()
+            )
+        })?;
+        p += 1;
+        encoded.push(raw);
+        let phrase = raw as i8;
+        if phrase < 0 {
+            let count = -(phrase as i16) as usize;
+            if count == 0 || decoded.len() + count > node_count {
+                return Err(format!("route row {source} has invalid direct run {count}"));
+            }
+            let first = decoded.len();
+            decoded.extend(first..first + count);
+        } else {
+            let delta_raw = *route
+                .get(p)
+                .ok_or_else(|| format!("route row {source} is missing a repeat delta"))?;
+            p += 1;
+            encoded.push(delta_raw);
+            let count = phrase as usize + 1;
+            if decoded.len() + count > node_count {
+                return Err(format!("route row {source} has invalid repeat run {count}"));
+            }
+            let delta = delta_raw as i8 as i32;
+            let next = (source as i32 + delta).rem_euclid(node_count as i32) as usize;
+            decoded.resize(decoded.len() + count, next);
+        }
+    }
+    Ok((encoded, decoded))
+}
+
+fn parse_retail_nav(
+    data: &[u8],
+    nodes_lump: &[u8],
+    planes: &[u8],
+    scale: f32,
+) -> Result<NavCook, String> {
+    if i32le(data, 0) != Some(RETAIL_GRAPH_VERSION) {
+        return Err("not a retail version-16 graph".to_string());
+    }
+    let graph = 4usize;
+    let read_count = |offset: usize, label: &str| -> Result<usize, String> {
+        let value = i32le(data, graph + offset)
+            .ok_or_else(|| format!("retail graph is missing {label}"))?;
+        if value < 0 {
+            Err(format!("retail graph has negative {label} {value}"))
+        } else {
+            Ok(value as usize)
+        }
+    };
+    let node_count = read_count(RETAIL_GRAPH_NODES, "node count")?;
+    let link_count = read_count(RETAIL_GRAPH_LINKS, "link count")?;
+    let route_len = read_count(RETAIL_GRAPH_ROUTE_BYTES, "route byte count")?;
+    let hash_count = read_count(RETAIL_GRAPH_HASH_LINKS, "hash-link count")?;
+    if node_count > MAX_NAV_NODES_COOK {
+        return Err(format!(
+            "retail graph has {node_count} nodes, runtime cap is {MAX_NAV_NODES_COOK}"
+        ));
+    }
+    if i32le(data, graph + 8) != Some(1) {
+        return Err("retail graph has no completed routing table".to_string());
+    }
+
+    let nodes_off = graph
+        .checked_add(RETAIL_GRAPH_BYTES)
+        .ok_or_else(|| "retail graph node offset overflow".to_string())?;
+    let links_off = nodes_off
+        .checked_add(node_count.saturating_mul(RETAIL_NODE_BYTES))
+        .ok_or_else(|| "retail graph link offset overflow".to_string())?;
+    let dist_off = links_off
+        .checked_add(link_count.saturating_mul(RETAIL_LINK_BYTES))
+        .ok_or_else(|| "retail graph distance offset overflow".to_string())?;
+    let route_off = dist_off
+        .checked_add(node_count.saturating_mul(RETAIL_DIST_BYTES))
+        .ok_or_else(|| "retail graph route offset overflow".to_string())?;
+    let hash_off = route_off
+        .checked_add(route_len)
+        .ok_or_else(|| "retail graph hash offset overflow".to_string())?;
+    let expected = hash_off
+        .checked_add(hash_count.saturating_mul(2))
+        .ok_or_else(|| "retail graph size overflow".to_string())?;
+    if expected != data.len() {
+        return Err(format!(
+            "retail graph length is {}, fixed-layout decode expects {expected}",
+            data.len()
+        ));
+    }
+    if route_len > NAV_ROUTE_BYTES_MAX {
+        // We repack one of the eight tables below, but reject absurd source
+        // metadata before slicing it.
+        if route_off + route_len > data.len() {
+            return Err("retail graph route section is truncated".to_string());
+        }
+    }
+
+    let mut original_nodes = Vec::with_capacity(node_count);
+    for i in 0..node_count {
+        let o = nodes_off + i * RETAIL_NODE_BYTES;
+        let origin = [
+            f32le(data, o).ok_or_else(|| format!("node {i} has no X origin"))?,
+            f32le(data, o + 4).ok_or_else(|| format!("node {i} has no Y origin"))?,
+            f32le(data, o + 8).ok_or_else(|| format!("node {i} has no Z origin"))?,
+        ];
+        let peek = [
+            f32le(data, o + 12).ok_or_else(|| format!("node {i} has no peek X"))?,
+            f32le(data, o + 16).ok_or_else(|| format!("node {i} has no peek Y"))?,
+            f32le(data, o + 20).ok_or_else(|| format!("node {i} has no peek Z"))?,
+        ];
+        if !origin.iter().chain(peek.iter()).all(|v| v.is_finite()) {
+            return Err(format!("node {i} contains a non-finite coordinate"));
+        }
+        let node_type = i32le(data, o + 28).unwrap_or(0) as u8;
+        let links = read_count_at(data, o + 32, "node link count")?;
+        let first = read_count_at(data, o + 36, "node first link")?;
+        if first.checked_add(links).is_none_or(|end| end > link_count) {
+            return Err(format!(
+                "node {i} link range {first}+{links} exceeds {link_count}"
+            ));
+        }
+        let route_offset = read_count_at(
+            data,
+            o + RETAIL_NODE_HUMAN_DOOR_ROUTE,
+            "node human route offset",
+        )?;
+        original_nodes.push(RetailNavNode {
+            origin,
+            peek,
+            node_type,
+            first_link: first,
+            link_count: links,
+            route_offset,
+        });
+    }
+
+    let mut original_links = Vec::with_capacity(link_count);
+    for i in 0..link_count {
+        let o = links_off + i * RETAIL_LINK_BYTES;
+        let source = read_count_at(data, o, "link source")?;
+        let dest = read_count_at(data, o + 4, "link destination")?;
+        let mask = i32le(data, o + 16).ok_or_else(|| format!("link {i} has no mask"))?;
+        if source >= node_count || dest >= node_count {
+            return Err(format!(
+                "link {i} references {source}->{dest} outside {node_count} nodes"
+            ));
+        }
+        original_links.push(RetailNavLink { source, dest, mask });
+    }
+
+    let source_route = &data[route_off..route_off + route_len];
+    let mut routes = Vec::new();
+    let mut dedup: HashMap<Vec<u8>, u16> = HashMap::new();
+    let mut nodes = Vec::with_capacity(node_count);
+    for (source, raw_node) in original_nodes.iter().enumerate() {
+        let (row, decoded) =
+            retail_route_row(source_route, raw_node.route_offset, node_count, source)?;
+        for &next in &decoded {
+            if next == source {
+                continue; // unreachable/self entries intentionally stay put
+            }
+            let usable = original_links
+                [raw_node.first_link..raw_node.first_link + raw_node.link_count]
+                .iter()
+                .any(|link| {
+                    link.source == source && link.dest == next && link.mask & RETAIL_LINK_HUMAN != 0
+                });
+            if !usable {
+                return Err(format!(
+                    "node {source} route selects non-human or non-adjacent next hop {next}"
+                ));
+            }
+        }
+        let route_offset = if let Some(&offset) = dedup.get(&row) {
+            offset
+        } else {
+            if routes.len() > NAV_ROUTE_BYTES_MAX
+                || routes.len().saturating_add(row.len()) > NAV_ROUTE_BYTES_MAX
+            {
+                return Err(format!(
+                    "repacked human route table exceeds {NAV_ROUTE_BYTES_MAX} bytes"
+                ));
+            }
+            let offset = routes.len() as u16;
+            routes.extend_from_slice(&row);
+            dedup.insert(row, offset);
+            offset
+        };
+        nodes.push(NavNodeRec {
+            origin_hl: raw_node.origin,
+            origin: to_world(raw_node.origin, scale),
+            leaf: point_leaf(raw_node.peek, nodes_lump, planes),
+            links: Vec::new(),
+            route_offset,
+            node_type: raw_node.node_type,
+        });
+    }
+    Ok(NavCook {
+        nodes,
+        routes: Some(routes),
+    })
+}
+
+fn read_count_at(data: &[u8], offset: usize, label: &str) -> Result<usize, String> {
+    let value = i32le(data, offset).ok_or_else(|| format!("retail graph is missing {label}"))?;
+    if value < 0 {
+        Err(format!("retail graph has negative {label} {value}"))
+    } else {
+        Ok(value as usize)
+    }
+}
+
+fn collect_nav(
+    bsp_path: &str,
+    ents: &[u8],
+    nodes_lump: &[u8],
+    planes: &[u8],
+    clipnodes: &[u8],
+    hull1_head: i32,
+    scale: f32,
+) -> NavCook {
+    let bsp_path = Path::new(bsp_path);
+    let nod_path = bsp_path.parent().and_then(|parent| {
+        let stem = bsp_path.file_stem()?.to_str()?;
+        Some(parent.join("graphs").join(format!("{stem}.nod")))
+    });
+    if let Some(path) = nod_path {
+        match std::fs::read(&path) {
+            Ok(data) => match parse_retail_nav(&data, nodes_lump, planes, scale) {
+                Ok(nav) => return nav,
+                Err(error) => eprintln!(
+                    "warn: {}: cannot use authoritative GoldSrc graph ({error}); synthesizing links",
+                    path.display()
+                ),
+            },
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                eprintln!("warn: {}: {error}; synthesizing links", path.display());
+            }
+            Err(_) => {}
+        }
+    }
+    let nodes = collect_nav_nodes(ents, nodes_lump, planes, clipnodes, hull1_head, scale);
+    if !nodes.is_empty() {
+        eprintln!(
+            "warn: {}: no compatible retail .nod; {} synthesized navigation nodes are not Gold-exact",
+            bsp_path.display(),
+            nodes.len()
+        );
+    }
+    NavCook {
+        nodes,
+        routes: None,
+    }
+}
+
+/// func_door move direction (HL) + distance. GoldSrc brush bounds include the
+/// one-unit hull pad at both ends, so authored travel is `size - 2 - lip`.
 fn door_move(angle: f32, mins: [f32; 3], maxs: [f32; 3], lip: f32) -> ([f32; 3], f32) {
     let sz = [maxs[0] - mins[0], maxs[1] - mins[1], maxs[2] - mins[2]];
-    if angle == -1.0 {
-        ([0.0, 0.0, 1.0], sz[2] - lip) // up
+    let dir = if angle == -1.0 {
+        [0.0, 0.0, 1.0] // up
     } else if angle == -2.0 {
-        ([0.0, 0.0, -1.0], sz[2] - lip) // down
+        [0.0, 0.0, -1.0] // down
     } else {
         let r = angle.to_radians();
         let (c, s) = (r.cos(), r.sin());
-        ([c, s, 0.0], sz[0] * c.abs() + sz[1] * s.abs() - lip)
-    }
+        [c, s, 0.0]
+    };
+    // Exact SDK formula (doors.cpp/buttons.cpp): subtract the two-unit hull
+    // pad on each contributing brush axis before projecting onto movedir.
+    let dist = (dir[0] * (sz[0] - 2.0)).abs()
+        + (dir[1] * (sz[1] - 2.0)).abs()
+        + (dir[2] * (sz[2] - 2.0)).abs()
+        - lip;
+    (dir, dist)
 }
 
 fn parse_spawnflags(block: &str) -> u16 {
@@ -2719,6 +3193,22 @@ fn seconds_to_ticks_i16(seconds: f32) -> i16 {
         return -1;
     }
     (seconds * 20.0).round().clamp(0.0, i16::MAX as f32) as i16
+}
+
+#[inline]
+fn pack_train_corner_wait(wait_seconds: f32, spawnflags: u16) -> u16 {
+    let wait_for_trigger = wait_seconds < 0.0 || spawnflags & 1 != 0;
+    let teleport = spawnflags & 2 != 0;
+    if wait_for_trigger {
+        if teleport {
+            TRAIN_CORNER_WAIT_TRIGGER_TELEPORT
+        } else {
+            TRAIN_CORNER_WAIT_TRIGGER
+        }
+    } else {
+        let wait = seconds_to_ticks_u16(wait_seconds).min(0x7ffd);
+        wait | if teleport { TRAIN_CORNER_TELEPORT } else { 0 }
+    }
 }
 
 fn triggerstate_use_type(block: &str) -> u8 {
@@ -2797,6 +3287,7 @@ fn logic_common_key(key: &str) -> bool {
             | "angle"
             | "angles"
             | "targetname"
+            | "globalname"
             | "target"
             | "killtarget"
             | "delay"
@@ -2850,6 +3341,130 @@ fn iter_ent_pairs(block: &str, mut f: impl FnMut(&str, &str)) {
     }
 }
 
+#[inline]
+fn multi_manager_target_key(key: &str) -> &str {
+    key.split_once('#').map_or(key, |(base, _)| base)
+}
+
+/// PVS membership for every authored func_train stop. A train brush is stored
+/// in model-local space and teleported to its first path_corner at spawn, so
+/// using only the raw entity origin makes terminal lifts disappear as soon as
+/// they leave that leaf (c1a1c's main elevator). The union costs only the leaf
+/// ids actually touched by the authored stops and no runtime state.
+fn func_train_leafs(
+    all_entities: &str,
+    train_block: &str,
+    mins: [f32; 3],
+    maxs: [f32; 3],
+    fallback_origin: [f32; 3],
+    nodes: &[u8],
+    planes: &[u8],
+) -> Vec<u16> {
+    let center = [
+        (mins[0] + maxs[0]) * 0.5,
+        (mins[1] + maxs[1]) * 0.5,
+        (mins[2] + maxs[2]) * 0.5,
+    ];
+    let mut corner = ent_value(train_block, "target").unwrap_or("").to_string();
+    let mut previous = None;
+    let mut seen = Vec::<(String, [f32; 3], bool)>::new();
+    let mut out = Vec::new();
+    let mut hops = 0usize;
+    while !corner.is_empty() && hops < 80 {
+        let mut found = false;
+        for block in all_entities.split('{') {
+            if ent_value(block, "classname") != Some("path_corner")
+                || ent_value(block, "targetname") != Some(corner.as_str())
+            {
+                continue;
+            }
+            let origin = ent_value(block, "origin")
+                .and_then(parse_vec3)
+                .unwrap_or(fallback_origin);
+            let teleport = parse_spawnflags(block) & 2 != 0;
+            let add_sweep = |from: Option<[f32; 3]>, to: [f32; 3], out: &mut Vec<u16>| {
+                let from = from.unwrap_or(to);
+                let mut swept_min = [0.0; 3];
+                let mut swept_max = [0.0; 3];
+                for axis in 0..3 {
+                    let lo = from[axis].min(to[axis]) - center[axis];
+                    let hi = from[axis].max(to[axis]) - center[axis];
+                    swept_min[axis] = mins[axis] + lo;
+                    swept_max[axis] = maxs[axis] + hi;
+                }
+                split_bbox_leafs(0, swept_min, swept_max, nodes, planes, out);
+            };
+            // A dmodel's bounds are authored in its original world position.
+            // Runtime motion sets TRAIN_OFF = corner - model_center, so adding
+            // the absolute corner itself double-translates most lifts. Union
+            // the swept brush AABB in that same coordinate system. Teleport
+            // corners include only their endpoint, avoiding a giant false PVS
+            // bridge across the skipped space.
+            add_sweep(if teleport { None } else { previous }, origin, &mut out);
+            previous = Some(origin);
+            seen.push((corner.clone(), origin, teleport));
+            let next = ent_value(block, "target").unwrap_or("").to_string();
+            if let Some((_, cycle_pos, cycle_teleport)) =
+                seen.iter().find(|(name, _, _)| name == &next)
+            {
+                if !next.is_empty() {
+                    add_sweep(
+                        if *cycle_teleport { None } else { previous },
+                        *cycle_pos,
+                        &mut out,
+                    );
+                }
+            }
+            corner = if seen.iter().any(|(name, _, _)| name == &next) {
+                String::new()
+            } else {
+                next
+            };
+            found = true;
+            break;
+        }
+        if !found {
+            break;
+        }
+        hops += 1;
+    }
+    if out.is_empty() {
+        out = entity_leafs(mins, maxs, fallback_origin, None, nodes, planes);
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// Conservative local AABB for a complete func_rotating sweep. GoldSrc axis
+/// bits describe its angle component before the world=[HL x,HL z,HL y]
+/// remap, so compute this in HL coordinates and let entity_leafs transform it.
+fn rotating_sweep_bounds(mins: [f32; 3], maxs: [f32; 3], spawnflags: u32) -> ([f32; 3], [f32; 3]) {
+    let radial = |a: usize, b: usize| {
+        [mins[a], maxs[a]]
+            .into_iter()
+            .flat_map(|x| {
+                [mins[b], maxs[b]]
+                    .into_iter()
+                    .map(move |y| (x * x + y * y).sqrt())
+            })
+            .fold(0.0f32, f32::max)
+    };
+    if spawnflags & 4 != 0 {
+        // GoldSrc Z component -> physical HL Z / PSX world Y axis.
+        let r = radial(0, 1);
+        ([-r, -r, mins[2]], [r, r, maxs[2]])
+    } else if spawnflags & 8 != 0 {
+        // GoldSrc X component -> physical HL X / PSX world X axis.
+        let r = radial(1, 2);
+        ([mins[0], -r, -r], [maxs[0], r, r])
+    } else {
+        // Default GoldSrc Y component -> physical HL Y / PSX world Z axis.
+        let r = radial(0, 2);
+        ([-r, mins[1], -r], [r, maxs[1], r])
+    }
+}
+
 /// Collect renderable brush entities (skipping invisible triggers/ladders).
 fn collect_entities(
     ents: &[u8],
@@ -2857,6 +3472,7 @@ fn collect_entities(
     nodes: &[u8],
     planes: &[u8],
     scale: f32,
+    main_tram_submodel: usize,
 ) -> Vec<EntRec> {
     let s = entity_text(ents);
     let n_models = models.len() / SZ_MODEL;
@@ -2872,17 +3488,21 @@ fn collect_entities(
         }
         let cls = ent_value(block, "classname").unwrap_or("");
         if cls.starts_with("trigger")
-            || cls == "func_tracktrain"
+            || (cls == "func_tracktrain" && submodel == main_tram_submodel)
             || cls == "func_monsterclip"
             || cls == "func_friction"
             || cls == "func_mortar_field"
+            || cls == "env_bubbles"
         {
-            // Invisible/non-world-solid volumes. GoldSrc spawns func_friction
-            // as SOLID_TRIGGER and func_mortar_field as SOLID_NOT|EF_NODRAW;
-            // neither may fall through to the static-solid brush path. Their
-            // BSP model bounds remain available to collect_logic_entities for
-            // a dedicated volume record without retaining a render/collision
-            // EntRec (as func_monsterclip already does).
+            // Invisible/non-world-solid volumes. The selected player tram has
+            // its own rotated render/collision path; other func_tracktrains are
+            // retained here and driven through the generic train pool.
+            // GoldSrc spawns func_friction as SOLID_TRIGGER and both
+            // func_mortar_field and env_bubbles as non-solid, invisible
+            // controller volumes; none may fall through to the static-solid
+            // brush path. Their BSP model bounds remain available to a
+            // dedicated logic/effect collector without retaining a
+            // render/collision EntRec (as func_monsterclip already does).
             continue;
         }
         let origin_hl = ent_value(block, "origin")
@@ -2918,6 +3538,35 @@ fn collect_entities(
         let r2 = (rad * rad) as i32;
         let head = i32le(models, mo + 40).unwrap_or(0); // dmodel_t.headnode[1]
         let head0 = i32le(models, mo + 36).unwrap_or(0); // dmodel_t.headnode[0] (BSP tree)
+        if cls == "func_pushable" {
+            // CPushable::Spawn raises the SOLID_BBOX one HL unit so it does not
+            // start embedded in its floor. The `friction` key is actually its
+            // horizontal speed cap: (400-friction) u/s, converted to 20 Hz.
+            let mut lifted_hl = origin_hl;
+            lifted_hl[2] += 1.0;
+            let lifted = to_world(lifted_hl, scale);
+            let friction = parse_f32_key(block, "friction", 0.0).clamp(0.0, 399.0);
+            let max_speed = ((400.0 - friction) / scale / 20.0)
+                .round()
+                .clamp(1.0, i8::MAX as f32) as i32;
+            let h = to_world([half[0], half[1], half[2]], scale);
+            let hx = h[0].abs();
+            let hy = h[1].abs();
+            let hz = h[2].abs();
+            let leaves = entity_leafs(mins, maxs, lifted_hl, None, nodes, planes);
+            out.push(EntRec {
+                submodel: submodel as u16,
+                kind: ENT_KIND_PUSHABLE | (blend << 8),
+                origin: lifted,
+                mv: [pack_pushable_speed_half_x(max_speed, hx), hy, hz],
+                center,
+                r2,
+                head,
+                head0,
+                leaves,
+            });
+            continue;
+        }
         if cls == "func_ladder" {
             // Invisible climb volume: never drawn, never collides. The world
             // half-extents ride in `mv` (unused for non-movers) so the runtime
@@ -2933,6 +3582,55 @@ fn collect_entities(
                 head: 0,
                 head0: 0,
                 leaves: Vec::new(),
+            });
+            continue;
+        }
+        if cls == "func_platrot" {
+            // CFuncPlat::Setup defines position1 as the authored TOP and
+            // position2.z = top.z - height. CFuncPlatRot then synchronizes its
+            // full rotation to that linear travel time. Store the bottom as
+            // the entity-local pivot so the runtime's ordinary 0..4096 phase
+            // maps directly from bottom/angle 0 to top/full angle.
+            let authored_height = parse_f32_key(block, "height", 0.0);
+            let travel = if authored_height != 0.0 {
+                authored_height
+            } else {
+                (sz[2] - 8.0).max(8.0)
+            };
+            let bottom_hl = [origin_hl[0], origin_hl[1], origin_hl[2] - travel];
+            let bottom = to_world(bottom_hl, scale);
+            let top_delta = to_world([0.0, 0.0, travel], scale);
+            let full_yaw = (parse_f32_key(block, "rotation", 0.0) * 4096.0 / 360.0).round() as i32;
+
+            // A rotating origin-brush is entity-local. PVS membership must
+            // cover the whole yaw sweep, not just its endpoint AABBs, or a
+            // long/off-centre platform can disappear mid-turn.
+            let sweep_r = [mins[0], maxs[0]]
+                .into_iter()
+                .flat_map(|x| {
+                    [mins[1], maxs[1]]
+                        .into_iter()
+                        .map(move |y| (x * x + y * y).sqrt())
+                })
+                .fold(0.0f32, f32::max);
+            let leaves = entity_leafs(
+                [-sweep_r, -sweep_r, mins[2]],
+                [sweep_r, sweep_r, maxs[2]],
+                bottom_hl,
+                Some([0.0, 0.0, travel]),
+                nodes,
+                planes,
+            );
+            out.push(EntRec {
+                submodel: submodel as u16,
+                kind: ENT_KIND_PLATROT | (blend << 8),
+                origin: bottom,
+                mv: [full_yaw, top_delta[1], 0],
+                center,
+                r2,
+                head,
+                head0,
+                leaves,
             });
             continue;
         }
@@ -3005,12 +3703,20 @@ fn collect_entities(
                 head0,
                 leaves,
             });
-        } else if cls == "func_water" {
+        } else if cls == "func_water"
+            || (cls == "func_train" && parse_f32_key(block, "skin", 0.0) as i32 == -3)
+        {
             // Swimmable volume: renders like any translucent brush, and the
             // half-extents ride in mv (kind 6) so the runtime can switch the
-            // player into swim physics inside it. Non-solid (no hulls).
+            // player into swim physics inside it. GoldSrc also uses skin=-3
+            // on a func_train for moving water (c1a1b); it remains non-solid
+            // while the shared train pool supplies its live draw offset.
             let hx = to_world([half[0], half[1], half[2]], scale);
-            let leaves = entity_leafs(mins, maxs, origin_hl, None, nodes, planes);
+            let leaves = if cls == "func_train" {
+                func_train_leafs(&s, block, mins, maxs, origin_hl, nodes, planes)
+            } else {
+                entity_leafs(mins, maxs, origin_hl, None, nodes, planes)
+            };
             out.push(EntRec {
                 submodel: submodel as u16,
                 kind: 6 | (blend << 8),
@@ -3023,32 +3729,49 @@ fn collect_entities(
                 leaves,
             });
         } else if cls == "func_rotating" {
-            // Spinning brush (fans). kind 5: mv[0] carries the angular speed
-            // in q12 angle units per tick (HL speed is deg/sec; 20 ticks/s);
-            // SF bit1/bit2 pick X/Y axes -- only the common Z-up (world yaw)
-            // spin animates, others render static. origin = the pivot.
+            // Spinning brush (fans). kind 5: mv[0] carries signed angular speed
+            // in Q16-turn units per 20 Hz tick (four fractional bits beyond the
+            // renderer's Q12 angle), mv[1] selects the PSX rotation axis, and
+            // mv[2] packs fanfriction in the high half and raw spawnflags in
+            // the low half for the stateless cosmetic/collision path. Targeted fans integrate
+            // this speed into ENT_PHASE; untargeted cosmetic fans derive their
+            // angle from the map tick. origin is the pivot.
             let sf = parse_f32_key(block, "spawnflags", 0.0) as u32;
-            let degs = parse_f32_key(block, "speed", 30.0);
-            let zaxis = sf & (4 | 8) == 0;
-            let reverse = sf & 2 != 0; // SF 2 = reverse direction
-            let mut w = if zaxis {
-                (degs * 4096.0 / 360.0 / 20.0).round() as i32
+            let raw_friction = parse_f32_key(block, "fanfriction", 0.0);
+            let friction = (if raw_friction > 0.0 {
+                raw_friction
             } else {
+                100.0
+            })
+            .round()
+            .clamp(1.0, 100.0) as u32;
+            let degs = parse_f32_key(block, "speed", 100.0);
+            let reverse = sf & 2 != 0; // SF 2 = reverse direction
+            let hl_w = (degs * 65536.0 / 360.0 / 20.0)
+                .round()
+                .clamp(1.0, i16::MAX as f32) as i32;
+            // world=[HL x,HL z,HL y] is a reflection, so axial rotation signs
+            // invert. GoldSrc components map Z_AXIS -> PSX Y, X_AXIS -> PSX X,
+            // and the default Y component -> PSX Z.
+            let w = if reverse { hl_w } else { -hl_w };
+            let axis = if sf & 4 != 0 {
                 0
+            } else if sf & 8 != 0 {
+                1
+            } else {
+                2
             };
-            if reverse {
-                w = -w;
-            }
-            let leaves = entity_leafs(mins, maxs, origin_hl, None, nodes, planes);
+            let (sweep_mins, sweep_maxs) = rotating_sweep_bounds(mins, maxs, sf);
+            let leaves = entity_leafs(sweep_mins, sweep_maxs, origin_hl, None, nodes, planes);
             out.push(EntRec {
                 submodel: submodel as u16,
                 kind: 5 | (blend << 8),
                 origin,
-                mv: [w, 0, 0],
+                mv: [w, axis, ((friction << 16) | (sf & 0xffff)) as i32],
                 center,
                 r2,
-                head,
-                head0,
+                head: if sf & 64 != 0 { 0 } else { head },
+                head0: if sf & 64 != 0 { 0 } else { head0 },
                 leaves,
             });
         } else if cls == "func_door_rotating" {
@@ -3082,7 +3805,11 @@ fn collect_entities(
                 leaves,
             });
         } else {
-            let leaves = entity_leafs(mins, maxs, origin_hl, None, nodes, planes);
+            let leaves = if cls == "func_train" {
+                func_train_leafs(&s, block, mins, maxs, origin_hl, nodes, planes)
+            } else {
+                entity_leafs(mins, maxs, origin_hl, None, nodes, planes)
+            };
             out.push(EntRec {
                 submodel: submodel as u16,
                 kind: (if cls == "func_illusionary" { 2 } else { 0 }) | (blend << 8),
@@ -3101,8 +3828,8 @@ fn collect_entities(
 
 #[derive(Clone, Default)]
 struct TitleDef {
-    text: String,   // lines joined with \n
-    effect: u8,     // 0 fade, 1 flicker credits, 2 typewriter scan-out
+    text: String, // lines joined with \n
+    effect: u8,   // 0 fade, 1 flicker credits, 2 typewriter scan-out
     hold_ticks: u16,
     fade_ticks: u16,
     low_left: bool, // credits position (else centered)
@@ -3198,6 +3925,40 @@ fn load_clips_manifest() -> std::collections::HashMap<(u16, String), u8> {
     out
 }
 
+#[derive(Clone)]
+struct TransitionTypeHint {
+    ty: u16,
+    targetname: String,
+}
+
+/// Type hints for scripts that name an actor supplied only by an incoming
+/// transition. They resolve animation clips at cook time, but never synthesize
+/// a destination prop: the runtime carry mailbox supplies the actual actor.
+fn load_transition_type_hints(map_name: &str) -> Vec<TransitionTypeHint> {
+    let mut out = Vec::new();
+    let Ok(path) = std::env::var("TRANSITION_PROPS_MANIFEST") else {
+        return out;
+    };
+    let Ok(txt) = std::fs::read_to_string(&path) else {
+        eprintln!("warn: TRANSITION_PROPS_MANIFEST unreadable: {}", path);
+        return out;
+    };
+    for line in txt.lines() {
+        let fields: Vec<&str> = line.trim().split('|').collect();
+        if fields.len() != 8 || fields[0] != map_name {
+            continue;
+        }
+        let Ok(ty) = fields[1].parse::<u16>() else {
+            continue;
+        };
+        out.push(TransitionTypeHint {
+            ty,
+            targetname: fields[2].to_string(),
+        });
+    }
+    out
+}
+
 /// Resolve a scripted_sequence's m_iszEntity targetname to its monster type id.
 fn script_monster_type(all: &str, entity_name: &str) -> Option<u16> {
     if entity_name.is_empty() {
@@ -3206,6 +3967,9 @@ fn script_monster_type(all: &str, entity_name: &str) -> Option<u16> {
     for cb in all.split('{') {
         if ent_value(cb, "targetname") == Some(entity_name) {
             if let Some(cls) = ent_value(cb, "classname") {
+                if cls == "monster_generic" {
+                    return monster_generic_type(cb);
+                }
                 if cls.starts_with("monster_") {
                     return monster_type_id(cls);
                 }
@@ -3215,17 +3979,62 @@ fn script_monster_type(all: &str, entity_name: &str) -> Option<u16> {
     None
 }
 
+/// Cooked classname fallback for `CCineMonster::FindEntity`.  The flags byte
+/// stores type+1 so zero remains the exact-targetname-only representation.
+fn script_class_selector(entity_name: &str) -> u8 {
+    monster_type_id(entity_name)
+        .and_then(|ty| u8::try_from(ty).ok())
+        .map(|ty| ty.saturating_add(1))
+        .unwrap_or(0)
+}
+
+fn script_target_monster_type(
+    all: &str,
+    entity_name: &str,
+    transition_types: &std::collections::HashMap<String, u16>,
+) -> Option<u16> {
+    script_monster_type(all, entity_name)
+        .or_else(|| transition_types.get(entity_name).copied())
+        .or_else(|| monster_type_id(entity_name))
+}
+
+fn script_clip_slots(
+    all: &str,
+    block: &str,
+    transition_types: &std::collections::HashMap<String, u16>,
+    clips: &std::collections::HashMap<(u16, String), u8>,
+) -> (u16, u16) {
+    let entity_name = ent_value(block, "m_iszEntity").unwrap_or("");
+    let ty = script_target_monster_type(all, entity_name, transition_types);
+    let lookup = |key: &str| -> u16 {
+        let Some(ty) = ty else { return 0 };
+        let Some(name) = ent_value(block, key) else {
+            return 0;
+        };
+        clips
+            .get(&(ty, name.to_ascii_lowercase()))
+            .map(|&slot| slot as u16 + 1)
+            .unwrap_or(0)
+    };
+    (lookup("m_iszPlay"), lookup("m_iszIdle"))
+}
+
 fn collect_logic_entities(
     ents: &[u8],
     models: &[u8],
     brush_by_submodel: &[u16],
     scale: f32,
     titles: &std::collections::HashMap<String, TitleDef>,
-) -> LogicCook {
+    transition_types: &std::collections::HashMap<String, u16>,
+) -> Result<LogicCook, String> {
     let s = entity_text(ents);
     let mut names = LogicNames::default();
     let mut out = Vec::new();
     let mut aux = Vec::new();
+    // One entry per record emitted by the main raw-entity pass. Registration
+    // of multisource inputs happens only after every source has its final logic
+    // index, so the runtime can compare an exact caller without name scans.
+    let mut source_raw_index: Vec<usize> = Vec::new();
     let clips = load_clips_manifest();
     let voices = load_voices_manifest();
     // This map's MAPLIST index -- keys the per-map voice manifest (set by the
@@ -3234,6 +4043,28 @@ fn collect_logic_entities(
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
+
+    // Several authored set pieces put multiple func_tracktrains on one shared
+    // path (c0a0c's three forklifts). A path_track FIREONCE message belongs to
+    // the shared node, not to each cooked train copy. Assign those messages to
+    // the first train on a start path so they cannot toggle progression three
+    // times when the followers arrive.
+    let mut track_path_owner: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for block in s.split('{') {
+        if ent_value(block, "classname") != Some("func_tracktrain") {
+            continue;
+        }
+        let start = ent_value(block, "target").unwrap_or("");
+        let owner = ent_value(block, "model")
+            .or_else(|| ent_value(block, "targetname"))
+            .unwrap_or("");
+        if !start.is_empty() && !owner.is_empty() {
+            track_path_owner
+                .entry(start.to_string())
+                .or_insert_with(|| owner.to_string());
+        }
+    }
 
     // Teleport destinations, resolved at cook time (name -> world origin+yaw).
     let mut tp_dests: Vec<(String, [i32; 3], u16)> = Vec::new();
@@ -3250,22 +4081,33 @@ fn collect_logic_entities(
         }
     }
 
-    for block in s.split('{') {
+    for (raw_index, block) in s.split('{').enumerate() {
         let cls = ent_value(block, "classname").unwrap_or("");
         let kind = match cls {
-            "func_door" | "func_plat" | "func_door_rotating" | "momentary_door" => {
-                LOGIC_FUNC_DOOR
-            }
+            "func_door" | "func_plat" | "func_platrot" | "func_door_rotating"
+            | "momentary_door" => LOGIC_FUNC_DOOR,
             "func_button" | "func_rot_button" => LOGIC_FUNC_BUTTON,
             "momentary_rot_button" => LOGIC_MOMENTARY,
-            "func_breakable" | "func_pushable" => LOGIC_FUNC_BREAKABLE,
+            // Untargeted fans keep the cheaper map-tick-derived cosmetic path.
+            // A named fan participates in FireTargets and therefore needs a
+            // persistent angle/velocity state at runtime.
+            "func_rotating" if !ent_value(block, "targetname").unwrap_or("").is_empty() => {
+                LOGIC_FUNC_ROTATING
+            }
+            "func_breakable" => LOGIC_FUNC_BREAKABLE,
+            "func_pushable" if parse_spawnflags(block) & SF_PUSH_BREAKABLE != 0 => {
+                LOGIC_FUNC_BREAKABLE
+            }
+            // CPushable ignores health/material unless SF_PUSH_BREAKABLE is
+            // explicitly authored. Its targetname still lives on EntRec kind9.
+            "func_pushable" => continue,
             "trigger_teleport" => LOGIC_TRIGGER_TELEPORT,
             "trigger_push" | "func_conveyor" => LOGIC_TRIGGER_PUSH,
             "trigger_gravity" => LOGIC_TRIGGER_GRAVITY,
             "func_healthcharger" => LOGIC_HEALTH_CHARGER,
             "func_recharge" => LOGIC_HEV_CHARGER,
             "monstermaker" => LOGIC_MONSTERMAKER,
-            "scripted_sequence" => LOGIC_SCRIPTED,
+            "scripted_sequence" | "aiscripted_sequence" => LOGIC_SCRIPTED,
             "func_train" => LOGIC_FUNC_TRAIN,
             "player_weaponstrip" => LOGIC_WEAPONSTRIP,
             "trigger_once" => LOGIC_TRIGGER_ONCE,
@@ -3302,9 +4144,10 @@ fn collect_logic_entities(
             // Mountable guns: the whole func_tank family renders as its brush and
             // is +use-mounted at runtime (aim with the view, fire hitscan). Laser/
             // rocket/mortar variants degrade to a bullet tank (no special projectile).
-            "func_tank" | "func_tank2" | "func_tank3" | "func_tanklaser"
-            | "func_tankrocket" | "func_tankmortar" => LOGIC_TANK,
+            "func_tank" | "func_tank2" | "func_tank3" | "func_tanklaser" | "func_tankrocket"
+            | "func_tankmortar" => LOGIC_TANK,
             "trigger_changelevel" => LOGIC_TRIGGER_CHANGELEVEL,
+            "trigger_transition" => LOGIC_TRIGGER_TRANSITION,
             "info_landmark" => LOGIC_INFO_LANDMARK,
             "trigger_counter" => LOGIC_TRIGGER_COUNTER,
             "trigger_changetarget" => LOGIC_TRIGGER_CHANGETARGET,
@@ -3334,14 +4177,22 @@ fn collect_logic_entities(
                 | LOGIC_HEALTH_CHARGER
                 | LOGIC_HEV_CHARGER
                 | LOGIC_TANK
+                | LOGIC_FUNC_ROTATING
         ) && brush == LOGIC_BRUSH_NONE
         {
             continue;
         }
 
         let (origin, mins, maxs) = entity_bounds_world(block, models, scale);
-        let spawnflags = parse_spawnflags(block);
         let targetname = names.id(ent_value(block, "targetname"));
+        let raw_spawnflags = parse_spawnflags(block);
+        let spawnflags = if cls == "func_platrot" {
+            // Plat bit 0 is TOGGLE, while the shared door state machine uses
+            // bit 5. A named plat starts at its authored TOP/end angle.
+            (if targetname != 0 { 1 } else { 0 }) | (if raw_spawnflags & 1 != 0 { 32 } else { 0 })
+        } else {
+            raw_spawnflags
+        };
         let mut target = names.id(ent_value(block, "target"));
         let killtarget = names.id(ent_value(block, "killtarget"));
         let delay_ticks = seconds_to_ticks_u16(parse_f32_key(block, "delay", 0.0));
@@ -3352,12 +4203,22 @@ fn collect_logic_entities(
             LOGIC_TRIGGER_MULTIPLE => 0.2,
             _ => 0.0,
         };
-        let wait_ticks = seconds_to_ticks_i16(parse_f32_key(block, "wait", wait_default));
+        let wait_ticks = if kind == LOGIC_SCRIPTED {
+            // Scripts do not use CBaseToggle::wait. Reuse this signed word for
+            // the classname search radius in cooked world units.
+            (parse_f32_key(block, "m_flRadius", 0.0) / scale)
+                .round()
+                .clamp(0.0, i16::MAX as f32) as i16
+        } else {
+            seconds_to_ticks_i16(parse_f32_key(block, "wait", wait_default))
+        };
         let speed_default = match kind {
             LOGIC_FUNC_BUTTON => 40.0,
+            LOGIC_FUNC_DOOR if cls == "func_platrot" => 150.0,
             LOGIC_FUNC_DOOR => 100.0,
             LOGIC_FUNC_TRAIN => 100.0,
             LOGIC_FUNC_TRACKTRAIN => 100.0,
+            LOGIC_FUNC_ROTATING => 100.0,
             _ => 0.0,
         };
         let speed = if kind == LOGIC_SCRIPTED {
@@ -3375,14 +4236,21 @@ fn collect_logic_entities(
         } else if kind == LOGIC_ENV_FADE {
             seconds_to_ticks_u16(parse_f32_key(block, "holdtime", 0.0))
         } else if kind == LOGIC_MAP_FLAGS {
-            let key = ent_value(block, "chaptertitle").unwrap_or("").to_uppercase();
-            titles.get(&key).map(|t| t.hold_ticks.max(80)).unwrap_or(120)
+            let key = ent_value(block, "chaptertitle")
+                .unwrap_or("")
+                .to_uppercase();
+            titles
+                .get(&key)
+                .map(|t| t.hold_ticks.max(80))
+                .unwrap_or(120)
         } else if speed_default > 0.0 {
             let authored = parse_f32_key(block, "speed", speed_default);
-            let authored = if authored > 0.0 { authored } else { speed_default };
-            (authored / scale)
-                .round()
-                .clamp(1.0, u16::MAX as f32) as u16
+            let authored = if authored > 0.0 {
+                authored
+            } else {
+                speed_default
+            };
+            (authored / scale).round().clamp(1.0, u16::MAX as f32) as u16
         } else {
             0
         };
@@ -3390,108 +4258,118 @@ fn collect_logic_entities(
             LOGIC_TRIGGER_RELAY | LOGIC_TRIGGER_AUTO => triggerstate_use_type(block),
             _ => USE_TOGGLE,
         };
-        let arg0 =
-            match kind {
-                LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "map")),
-                LOGIC_TRIGGER_COUNTER => parse_f32_key(block, "count", 2.0)
-                    .round()
-                    .clamp(1.0, u16::MAX as f32) as u16,
-                LOGIC_TRIGGER_CHANGETARGET => names
+        let arg0 = match kind {
+            LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "map")),
+            LOGIC_TRIGGER_COUNTER => parse_f32_key(block, "count", 2.0)
+                .round()
+                .clamp(1.0, u16::MAX as f32) as u16,
+            LOGIC_TRIGGER_CHANGETARGET => {
+                names
                     .id(ent_value(block, "m_iszNewTarget")
-                        .or_else(|| ent_value(block, "changetarget"))),
-                LOGIC_TRIGGER_HURT => ent_value(block, "damage")
-                    .or_else(|| ent_value(block, "dmg"))
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(10.0)
+                        .or_else(|| ent_value(block, "changetarget")))
+            }
+            LOGIC_TRIGGER_HURT => ent_value(block, "damage")
+                .or_else(|| ent_value(block, "dmg"))
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(10.0)
+                .round()
+                .clamp(1.0, u16::MAX as f32) as u16,
+            LOGIC_FUNC_TRACKTRAIN => (parse_f32_key(block, "startspeed", 0.0) / scale)
+                .round()
+                .clamp(0.0, u16::MAX as f32) as u16,
+            // Stable cross-map identity for CBasePlatTrain's global
+            // overlay. func_train otherwise leaves arg0 unused.
+            LOGIC_FUNC_TRAIN => actor_carry_id(ent_value(block, "globalname").unwrap_or(""), true),
+            LOGIC_FUNC_BREAKABLE => parse_f32_key(block, "health", 20.0)
+                .round()
+                .clamp(1.0, u16::MAX as f32) as u16,
+            // CFuncRotating::KeyValue converts this authored percentage
+            // to a 0.01 multiplier. Zero/missing is replaced by 100% in
+            // Spawn, so an ordinary fan reaches its endpoint in one think.
+            LOGIC_FUNC_ROTATING => {
+                let raw = parse_f32_key(block, "fanfriction", 0.0);
+                (if raw > 0.0 { raw } else { 100.0 })
                     .round()
-                    .clamp(1.0, u16::MAX as f32) as u16,
-                LOGIC_FUNC_TRACKTRAIN => (parse_f32_key(block, "startspeed", 0.0) / scale)
-                    .round()
-                    .clamp(0.0, u16::MAX as f32) as u16,
-                LOGIC_FUNC_BREAKABLE => parse_f32_key(block, "health", 20.0)
-                    .round()
-                    .clamp(1.0, u16::MAX as f32) as u16,
-                LOGIC_TRIGGER_GRAVITY => (parse_f32_key(block, "gravity", 1.0) * 4096.0)
-                    .round()
-                    .clamp(0.0, u16::MAX as f32) as u16,
-                LOGIC_HEALTH_CHARGER => 50, // HL default juice
-                LOGIC_HEV_CHARGER => 75,
-                // Per-shot damage. HL varies by the "bullet" enum; the common
-                // player tanks are 12mm (~20). Fixed default is close enough.
-                LOGIC_TANK => 20,
-                LOGIC_SCRIPTED => names.id(ent_value(block, "m_iszEntity")),
-                LOGIC_ENV_MESSAGE => {
-                    let key = ent_value(block, "message").unwrap_or("").to_uppercase();
-                    match titles.get(&key) {
-                        Some(t) if !t.text.is_empty() => names.id(Some(&t.text)),
-                        _ => continue, // unknown title: skip the rec entirely
-                    }
+                    .clamp(1.0, u16::MAX as f32) as u16
+            }
+            LOGIC_TRIGGER_GRAVITY => (parse_f32_key(block, "gravity", 1.0) * 4096.0)
+                .round()
+                .clamp(0.0, u16::MAX as f32) as u16,
+            LOGIC_HEALTH_CHARGER => 50, // HL default juice
+            LOGIC_HEV_CHARGER => 75,
+            // Per-shot damage. HL varies by the "bullet" enum; the common
+            // player tanks are 12mm (~20). Fixed default is close enough.
+            LOGIC_TANK => 20,
+            LOGIC_SCRIPTED => names.id(ent_value(block, "m_iszEntity")),
+            LOGIC_ENV_MESSAGE => {
+                let key = ent_value(block, "message").unwrap_or("").to_uppercase();
+                match titles.get(&key) {
+                    Some(t) if !t.text.is_empty() => names.id(Some(&t.text)),
+                    _ => continue, // unknown title: skip the rec entirely
                 }
-                LOGIC_ENV_FADE => seconds_to_ticks_u16(parse_f32_key(block, "duration", 2.0)),
-                LOGIC_CDTRACK => (parse_f32_key(block, "health", 0.0) as i16) as u16,
-                LOGIC_SENTENCE => {
-                    let s = ent_value(block, "sentence")
-                        .unwrap_or("")
-                        .trim_start_matches('!')
-                        .to_ascii_uppercase();
-                    match voices.get(&(map_index, s)) {
-                        Some(&id) => id,
-                        None => continue, // this line isn't in the per-map voice pack
-                    }
+            }
+            LOGIC_ENV_FADE => seconds_to_ticks_u16(parse_f32_key(block, "duration", 2.0)),
+            LOGIC_CDTRACK => (parse_f32_key(block, "health", 0.0) as i16) as u16,
+            LOGIC_SENTENCE => {
+                let s = ent_value(block, "sentence")
+                    .unwrap_or("")
+                    .trim_start_matches('!')
+                    .to_ascii_uppercase();
+                match voices.get(&(map_index, s)) {
+                    Some(&id) => id,
+                    None => continue, // this line isn't in the per-map voice pack
                 }
-                LOGIC_AMBIENT => {
-                    let key = ent_value(block, "message").unwrap_or("").to_ascii_lowercase();
-                    match voices.get(&(map_index, key)) {
-                        Some(&id) => id,
-                        None => continue,
-                    }
+            }
+            LOGIC_AMBIENT => {
+                let key = ent_value(block, "message")
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                match voices.get(&(map_index, key)) {
+                    Some(&id) => id,
+                    None => continue,
                 }
-                LOGIC_ENV_SHAKE => (parse_f32_key(block, "amplitude", 4.0) / scale)
-                    .round()
-                    .clamp(1.0, 64.0) as u16,
-                LOGIC_MULTISOURCE => {
-                    // input count = entities that fire this multisource
-                    // (their target == its targetname).
-                    let mname = ent_value(block, "targetname").unwrap_or("");
-                    if mname.is_empty() {
-                        0
-                    } else {
-                        s.split('{')
-                            .filter(|b| ent_value(b, "target") == Some(mname))
-                            .count()
-                            .min(255) as u16
-                    }
+            }
+            LOGIC_ENV_SHAKE => (parse_f32_key(block, "amplitude", 4.0) / scale)
+                .round()
+                .clamp(1.0, 64.0) as u16,
+            // Filled by the registration post-pass once every source has
+            // a stable cooked logic index.
+            LOGIC_MULTISOURCE => 0,
+            LOGIC_ENV_GLOBAL => global_hash(ent_value(block, "globalstate").unwrap_or("")),
+            LOGIC_ENV_EXPLOSION => parse_f32_key(block, "iMagnitude", 100.0)
+                .round()
+                .clamp(1.0, 255.0) as u16,
+            LOGIC_MAP_FLAGS => {
+                let key = ent_value(block, "chaptertitle")
+                    .unwrap_or("")
+                    .to_uppercase();
+                match titles.get(&key) {
+                    Some(t) if !t.text.is_empty() => names.id(Some(&t.text)),
+                    _ => 0,
                 }
-                LOGIC_ENV_GLOBAL => global_hash(ent_value(block, "globalstate").unwrap_or("")),
-                LOGIC_ENV_EXPLOSION => parse_f32_key(block, "iMagnitude", 100.0)
-                    .round()
-                    .clamp(1.0, 255.0) as u16,
-                LOGIC_MAP_FLAGS => {
-                    let key = ent_value(block, "chaptertitle").unwrap_or("").to_uppercase();
-                    match titles.get(&key) {
-                        Some(t) if !t.text.is_empty() => names.id(Some(&t.text)),
-                        _ => 0,
-                    }
-                }
-                _ => names.id(ent_value(block, "changetarget")),
-            };
+            }
+            _ => names.id(ent_value(block, "changetarget")),
+        };
         let arg1 = match kind {
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
             LOGIC_FUNC_TRACKTRAIN => submodel.unwrap_or(0).min(u16::MAX as usize) as u16,
             LOGIC_FUNC_BREAKABLE => parse_f32_key(block, "material", 0.0)
                 .round()
                 .clamp(0.0, 7.0) as u16,
-            // m_flMoveTo: 0 = pose in place, 1 = walk, 2 = run, 4/5 = instant.
-            LOGIC_SCRIPTED => parse_f32_key(block, "m_flMoveTo", 0.0)
+            // GoldSrc's authored key is m_fMoveTo: 0 = pose in place,
+            // 1 = walk, 2 = run, 4/5 = instant. Keep accepting the old
+            // misspelling so already-modified/custom maps do not regress.
+            LOGIC_SCRIPTED => ent_value(block, "m_fMoveTo")
+                .or_else(|| ent_value(block, "m_flMoveTo"))
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(0.0)
                 .round()
                 .clamp(0.0, 7.0) as u16,
             // effect(0..2) | low_left<<2 | fade_ticks<<8
             LOGIC_ENV_MESSAGE => {
                 let key = ent_value(block, "message").unwrap_or("").to_uppercase();
                 let t = titles.get(&key).cloned().unwrap_or_default();
-                (t.effect as u16 & 3)
-                    | ((t.low_left as u16) << 2)
-                    | ((t.fade_ticks.min(255)) << 8)
+                (t.effect as u16 & 3) | ((t.low_left as u16) << 2) | ((t.fade_ticks.min(255)) << 8)
             }
             // bit0 = fade-in (HL SF_FADE_IN), bit1 = fade to white-ish
             LOGIC_ENV_FADE => {
@@ -3527,30 +4405,140 @@ fn collect_logic_entities(
             _ => 0,
         };
 
+        let mut record_flags = if kind == LOGIC_SCRIPTED {
+            script_class_selector(ent_value(block, "m_iszEntity").unwrap_or(""))
+        } else {
+            0
+        };
+        if kind == LOGIC_SCRIPTED
+            && ent_value(block, "m_iszIdle").is_some_and(|idle| !idle.is_empty())
+        {
+            // Spawn starts CineThink for an authored idle even when the script
+            // itself is targeted. Keep this independent of clip availability:
+            // unsupported clips still need their actor primed at the mark.
+            record_flags |= LOGIC_SCRIPTED_HAS_IDLE;
+        }
+
         let first_aux = aux.len().min(u16::MAX as usize) as u16;
         let mut aux_count = 0u8;
-        if kind == LOGIC_FUNC_TRAIN {
-            // Corner chain -> aux pairs: (x,y) then (z, wait ticks). World
-            // coords fit i16 (maps span +-4096). Loops are implicit (the
-            // runtime wraps to corner 0 when the chain ends).
+        if kind == LOGIC_TRIGGER_CHANGELEVEL {
+            // CHANGE_LEVEL stores this post-load output in the engine's
+            // transition list, not as the changelevel entity's ordinary
+            // target. Name ids are map-local; the runtime converts this id to
+            // a stable hash before leaving and resolves it in the destination.
+            let post_target = names.id(ent_value(block, "changetarget"));
+            if post_target != 0 {
+                aux.push(LogicAuxRec {
+                    target: post_target,
+                    delay_ticks: seconds_to_ticks_u16(parse_f32_key(block, "changedelay", 0.0)),
+                });
+                aux_count = 1;
+            }
+        }
+        if kind == LOGIC_FUNC_DOOR {
+            // GoldSrc uses netname as the close-only output, separate from the
+            // ordinary target that fires at both travel endpoints.
+            let close_target = names.id(ent_value(block, "netname"));
+            if close_target != 0 {
+                aux.push(LogicAuxRec {
+                    target: close_target,
+                    delay_ticks: 0,
+                });
+                aux_count = 1;
+            }
+        }
+        if kind == LOGIC_FUNC_TRAIN || kind == LOGIC_FUNC_TRACKTRAIN {
+            // func_train: aux pairs (x,y), (z,wait), conditionally extended
+            // to triples with (pass target,speed) only where a path_corner
+            // actually authors either value.
+            // func_tracktrain: aux triples (x,y), (z,0), (pass target,speed).
+            // The selected player tram still uses the compact dedicated path;
+            // these records let every secondary tracktrain render, move, and
+            // fire its authored path_track messages.
+            let is_track = kind == LOGIC_FUNC_TRACKTRAIN;
+            let path_class = if is_track {
+                "path_track"
+            } else {
+                "path_corner"
+            };
             let mut corner = ent_value(block, "target").unwrap_or("").to_string();
             let first_corner = corner.clone();
+            let mut extended = false;
+            if !is_track {
+                let mut scan_corner = corner.clone();
+                let mut scan_seen = Vec::<String>::new();
+                let mut scan_hops = 0usize;
+                while !scan_corner.is_empty() && scan_hops < 80 {
+                    if scan_seen.iter().any(|name| name == &scan_corner) {
+                        break;
+                    }
+                    scan_seen.push(scan_corner.clone());
+                    let mut found = false;
+                    for cb in s.split('{') {
+                        if ent_value(cb, "classname") != Some(path_class)
+                            || ent_value(cb, "targetname") != Some(scan_corner.as_str())
+                        {
+                            continue;
+                        }
+                        extended |= parse_f32_key(cb, "speed", 0.0) > 0.0
+                            || !ent_value(cb, "message").unwrap_or("").is_empty();
+                        let next = ent_value(cb, "target").unwrap_or("").to_string();
+                        scan_corner = next;
+                        found = true;
+                        break;
+                    }
+                    if !found {
+                        break;
+                    }
+                    scan_hops += 1;
+                }
+                if extended {
+                    record_flags |= LOGIC_TRAIN_EXTENDED;
+                }
+            }
+            let stride = if is_track || extended { 3u8 } else { 2u8 };
+            let owner_id = ent_value(block, "model")
+                .or_else(|| ent_value(block, "targetname"))
+                .unwrap_or("");
+            let owns_fire_once = track_path_owner
+                .get(&first_corner)
+                .map(|owner| owner == owner_id)
+                .unwrap_or(true);
+            let height = if is_track {
+                (parse_f32_key(block, "height", 0.0) / scale).round() as i32
+            } else {
+                0
+            };
+            let mut dead_end_target = 0u16;
+            let mut cycle_start = None;
+            let mut seen_corners = Vec::<String>::new();
             let mut hops = 0usize;
-            while !corner.is_empty() && hops < 24 {
+            while !corner.is_empty() && hops < 80 {
+                seen_corners.push(corner.clone());
                 let mut found = false;
                 for cb in s.split('{') {
-                    if ent_value(cb, "classname") != Some("path_corner") {
+                    if ent_value(cb, "classname") != Some(path_class) {
                         continue;
                     }
                     if ent_value(cb, "targetname") != Some(corner.as_str()) {
                         continue;
                     }
-                    let o = to_world(
-                        ent_value(cb, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]),
+                    let mut o = to_world(
+                        ent_value(cb, "origin")
+                            .and_then(parse_vec3)
+                            .unwrap_or([0.0; 3]),
                         scale,
                     );
-                    let wait = seconds_to_ticks_u16(parse_f32_key(cb, "wait", 0.0));
-                    if aux.len() + 2 <= u16::MAX as usize && aux_count < 250 {
+                    o[1] += height;
+                    let wait_seconds = parse_f32_key(cb, "wait", 0.0);
+                    let wait = if is_track {
+                        0
+                    } else {
+                        pack_train_corner_wait(wait_seconds, parse_spawnflags(cb))
+                    };
+                    if aux.len() + stride as usize <= u16::MAX as usize
+                        && aux_count <= u8::MAX - stride
+                    {
                         aux.push(LogicAuxRec {
                             target: o[0].clamp(i16::MIN as i32, i16::MAX as i32) as u16,
                             delay_ticks: o[1].clamp(i16::MIN as i32, i16::MAX as i32) as u16,
@@ -3559,13 +4547,41 @@ fn collect_logic_entities(
                             target: o[2].clamp(i16::MIN as i32, i16::MAX as i32) as u16,
                             delay_ticks: wait,
                         });
-                        aux_count += 2;
+                        if is_track || extended {
+                            let pass = if is_track {
+                                let fire_once = parse_spawnflags(cb) & 2 != 0;
+                                if fire_once && !owns_fire_once {
+                                    0
+                                } else {
+                                    names.id(ent_value(cb, "message"))
+                                }
+                            } else {
+                                names.id(ent_value(cb, "message"))
+                            };
+                            let node_speed = (parse_f32_key(cb, "speed", 0.0) / scale)
+                                .round()
+                                .clamp(0.0, u16::MAX as f32)
+                                as u16;
+                            aux.push(LogicAuxRec {
+                                target: pass,
+                                delay_ticks: node_speed,
+                            });
+                        }
+                        aux_count += stride;
                     }
                     let next = ent_value(cb, "target").unwrap_or("").to_string();
-                    // A cycle back to the train's first corner is represented
-                    // implicitly by the runtime wrap. Stop here instead of
-                    // serializing the same cycle repeatedly up to the hop cap.
-                    corner = if next == corner || next == first_corner {
+                    if is_track && next.is_empty() {
+                        dead_end_target = names.id(ent_value(cb, "netname"));
+                    }
+                    // Any repeated target closes a cycle, including a tail
+                    // cycle that does not return to the train's first corner.
+                    // Store its start index in LogicEnt.flags instead of
+                    // serializing the repeated suffix up to the hop cap.
+                    corner = if let Some(index) = seen_corners.iter().position(|name| name == &next)
+                    {
+                        if !next.is_empty() {
+                            cycle_start = Some(index);
+                        }
                         String::new()
                     } else {
                         next
@@ -3578,6 +4594,15 @@ fn collect_logic_entities(
                 }
                 hops += 1;
             }
+            if is_track {
+                // The path name is no longer needed after cooking. Reuse the
+                // record's target for CFuncTrackTrain::DeadEnd's netname fire.
+                target = dead_end_target;
+            } else if let Some(start) = cycle_start.filter(|start| *start < 63) {
+                record_flags |= ((start as u8 + 1) << LOGIC_TRAIN_CYCLE_SHIFT) as u8;
+            } else {
+                record_flags |= LOGIC_TRAIN_TERMINAL;
+            }
         }
         if kind == LOGIC_MULTI_MANAGER {
             let mut targets: Vec<(u16, u16)> = Vec::new();
@@ -3585,7 +4610,14 @@ fn collect_logic_entities(
                 if logic_common_key(key) || targets.len() >= 16 {
                     return;
                 }
-                let target_id = names.id(Some(key));
+                // GoldSrc's CMultiManager passes every authored key through
+                // UTIL_StripToken: Hammer represents duplicate outputs as
+                // `target`, `target#1`, `target#2`, but every one fires the
+                // same targetname. Keeping the suffix strands the c0a0d tram
+                // after pausemm because its delayed `train#1` resume never
+                // reaches the entity named `train`.
+                let target = multi_manager_target_key(key);
+                let target_id = names.id(Some(target));
                 if target_id == 0 {
                     return;
                 }
@@ -3626,19 +4658,7 @@ fn collect_logic_entities(
         if kind == LOGIC_SCRIPTED {
             // aux[0] = (play_slot+1, idle_slot+1); 0 = none. Resolved from the
             // clips manifest against the target monster's type.
-            let ty = script_monster_type(&s, ent_value(block, "m_iszEntity").unwrap_or(""));
-            let lookup = |key: &str| -> u16 {
-                let Some(ty) = ty else { return 0 };
-                let Some(name) = ent_value(block, key) else {
-                    return 0;
-                };
-                clips
-                    .get(&(ty, name.to_ascii_lowercase()))
-                    .map(|&s| s as u16 + 1)
-                    .unwrap_or(0)
-            };
-            let play = lookup("m_iszPlay");
-            let idle = lookup("m_iszIdle");
+            let (play, idle) = script_clip_slots(&s, block, transition_types, &clips);
             if play != 0 || idle != 0 {
                 aux.push(LogicAuxRec {
                     target: play,
@@ -3664,7 +4684,11 @@ fn collect_logic_entities(
                 [r.cos(), r.sin(), 0.0]
             };
             let w = to_world(
-                [hl_dir[0] * spd * scale, hl_dir[1] * spd * scale, hl_dir[2] * spd * scale],
+                [
+                    hl_dir[0] * spd * scale,
+                    hl_dir[1] * spd * scale,
+                    hl_dir[2] * spd * scale,
+                ],
                 scale,
             );
             aux.push(LogicAuxRec {
@@ -3688,7 +4712,7 @@ fn collect_logic_entities(
             brush,
             first_aux,
             aux_count,
-            flags: 0,
+            flags: record_flags,
             wait_ticks,
             delay_ticks,
             speed,
@@ -3698,9 +4722,92 @@ fn collect_logic_entities(
             mins,
             maxs,
         });
+        source_raw_index.push(raw_index);
     }
 
-        // GoldSrc links untargeted doors whose closed bounds touch: opening one
+    // GoldSrc CMultiSource::Register first finds every raw entity whose
+    // `target` names this multisource, then registers each multi_manager that
+    // has a (suffix-stripped) output for it. Keep duplicate MM outputs as
+    // separate timed aux records above, but the manager itself is one input.
+    // Membership aux records store the exact cooked source LogicRec index.
+    {
+        let cooked_by_raw: std::collections::HashMap<usize, usize> = source_raw_index
+            .iter()
+            .enumerate()
+            .map(|(logic_index, raw_index)| (*raw_index, logic_index))
+            .collect();
+        let raw_blocks: Vec<&str> = s.split('{').collect();
+        let mut plans: Vec<(usize, Vec<u16>)> = Vec::new();
+
+        for (ms_index, ms) in out.iter().enumerate() {
+            if ms.kind != LOGIC_MULTISOURCE || ms.targetname == 0 {
+                continue;
+            }
+            let ms_name = names
+                .names
+                .get(ms.targetname as usize - 1)
+                .cloned()
+                .unwrap_or_default();
+            let mut members = Vec::new();
+
+            // Direct raw-target sources retain raw entity order. An entity that
+            // GoldSrc would register but this cooker discarded must not silently
+            // turn a required AND input into an impossible anonymous count.
+            for (raw_index, raw) in raw_blocks.iter().enumerate() {
+                if ent_value(raw, "target") != Some(ms_name.as_str()) {
+                    continue;
+                }
+                let Some(&source_index) = cooked_by_raw.get(&raw_index) else {
+                    let cls = ent_value(raw, "classname").unwrap_or("<unknown>");
+                    return Err(format!(
+                        "multisource {ms_name:?} requires uncooked direct source #{raw_index} ({cls})"
+                    ));
+                };
+                members.push(source_index as u16);
+            }
+
+            // Register a matching manager once even when Hammer authored
+            // target, target#1, target#2 as separate delayed outputs.
+            for (source_index, source) in out.iter().enumerate() {
+                if source.kind != LOGIC_MULTI_MANAGER {
+                    continue;
+                }
+                let has_target = (0..source.aux_count as usize).any(|ai| {
+                    aux.get(source.first_aux as usize + ai)
+                        .is_some_and(|a| a.target == ms.targetname)
+                });
+                if has_target && !members.contains(&(source_index as u16)) {
+                    members.push(source_index as u16);
+                }
+            }
+
+            if members.len() > 32 {
+                return Err(format!(
+                    "multisource {ms_name:?} has {} inputs; GoldSrc/runtime limit is 32",
+                    members.len()
+                ));
+            }
+            plans.push((ms_index, members));
+        }
+
+        for (ms_index, members) in plans {
+            if aux.len() + members.len() > u16::MAX as usize {
+                return Err("logic aux table overflow while registering multisources".into());
+            }
+            let first = aux.len() as u16;
+            for source_index in &members {
+                aux.push(LogicAuxRec {
+                    target: *source_index,
+                    delay_ticks: 0,
+                });
+            }
+            out[ms_index].first_aux = first;
+            out[ms_index].aux_count = members.len() as u8;
+            out[ms_index].arg0 = members.len() as u16;
+        }
+    }
+
+    // GoldSrc links untargeted doors whose closed bounds touch: opening one
     // half of a split door opens its partner(s). Group them here (union-find
     // over AABB overlap) and stamp the group id into arg0 (doors otherwise
     // leave it 0); the runtime activates the whole group on touch/use.
@@ -3769,8 +4876,7 @@ fn collect_logic_entities(
             let own = ent_value(block, "origin")
                 .and_then(parse_vec3)
                 .map(|o| to_world(o, scale));
-            let start =
-                tn_origin(ent_value(block, "LightningStart").unwrap_or("")).or(own);
+            let start = tn_origin(ent_value(block, "LightningStart").unwrap_or("")).or(own);
             let end = tn_origin(ent_value(block, "LightningEnd").unwrap_or(""))
                 .or_else(|| tn_origin(ent_value(block, "target").unwrap_or("")));
             let (Some(start), Some(end)) = (start, end) else {
@@ -3819,30 +4925,46 @@ fn collect_logic_entities(
         }
     }
 
-    LogicCook {
+    Ok(LogicCook {
         ents: out,
         aux,
         names: names.names,
-    }
+    })
 }
 
-/// The `func_tracktrain` (tram) submodel, speed, and its `path_track` waypoint
-/// chain (world coords). Returns `(0, 0, [])` if the map has no tram.
+#[inline]
+fn pack_tram_motion(speed: i32, start: usize, wheels: i32) -> u32 {
+    // Marker + speed[11:0] + wheels[9:0] + start[7:0]. This retains the
+    // original tracktrain look-ahead without growing the room format.
+    0x8000_0000
+        | speed.clamp(0, 0x0fff) as u32
+        | ((wheels.clamp(0, 0x03ff) as u32) << 12)
+        | ((start.min(0xff) as u32) << 22)
+}
+
+/// The `func_tracktrain` (tram) submodel, speed, authored-start index, and its
+/// `path_track` waypoint chain (world coords). Returns an empty chain if the map
+/// has no tram. Unique upstream predecessors are retained so a train carried
+/// across a changelevel can reattach before the map-authored starting node.
 fn collect_tram(
     ents: &[u8],
     scale: f32,
-) -> (u16, i32, Vec<([i32; 3], u16, String)>, [i32; 3]) {
+) -> (u16, i32, u16, i32, Vec<([i32; 3], u16, String)>, [i32; 3]) {
     let s = entity_text(ents);
     // (targetname, origin, target, speed, message): a nonzero path_track
     // "speed" key changes the train's speed as it passes (CPathTrack), and
     // "message" is HL's fire-on-pass -- c0a0b's ride fires the multi_manager
     // that fires the c0a0c changelevel this way (the trigger brush itself is
     // a rider-unreachable plate).
-    let mut tracks: Vec<(String, [f32; 3], String, u16, String)> = Vec::new();
-    // func_trackchange junctions: (toptrack, bottomtrack) = the START names of
-    // the two path chains the platform swaps between.
-    let mut trackchanges: Vec<(String, String)> = Vec::new();
+    let mut tracks: Vec<(String, [f32; 3], String, u16, String, String)> = Vec::new();
+    // func_trackchange junctions: (toptrack, bottomtrack, speed) = the START
+    // names of the two path chains the platform swaps between, plus the
+    // platform travel speed. A vertical change is serialized as one synthetic
+    // tram waypoint, so this needs no new room-format field.
+    let mut trackchanges: Vec<(String, String, u16)> = Vec::new();
     let (mut model, mut speed, mut first) = (0u16, 0i32, String::new());
+    let mut wheels = 100i32;
+    let mut height = 0i32;
     let mut origin = [0i32; 3]; // tram's editor origin (its reference point), world
     for block in s.split('{') {
         match ent_value(block, "classname") {
@@ -3857,10 +4979,15 @@ fn collect_tram(
                     .map(|v| (v / scale).max(0.0) as u16)
                     .unwrap_or(0),
                 ent_value(block, "message").unwrap_or("").to_string(),
+                ent_value(block, "netname").unwrap_or("").to_string(),
             )),
             Some("func_trackchange") | Some("func_trackautochange") => trackchanges.push((
                 ent_value(block, "toptrack").unwrap_or("").to_string(),
                 ent_value(block, "bottomtrack").unwrap_or("").to_string(),
+                ent_value(block, "speed")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .map(|v| (v / scale).max(0.0) as u16)
+                    .unwrap_or(100),
             )),
             Some("func_tracktrain") => {
                 // Last tracktrain wins (c0a0: the player "train"). ponytail.
@@ -3872,7 +4999,21 @@ fn collect_tram(
                 speed = ent_value(block, "speed")
                     .and_then(|v| v.parse::<f32>().ok())
                     .unwrap_or(100.0) as i32;
+                // CFuncTrackTrain::Spawn substitutes 100 when this key is
+                // absent or zero. Convert it through the same map scale as the
+                // waypoint coordinates.
+                wheels = ent_value(block, "wheels")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .filter(|v| *v != 0.0)
+                    .map(|v| (v / scale).round() as i32)
+                    .unwrap_or(100);
                 first = ent_value(block, "target").unwrap_or("").to_string();
+                // CFuncTrackTrain offsets its path reference vertically by
+                // `height`. Gold Z becomes world Y after the axis swap.
+                height = ent_value(block, "height")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .map(|v| (v / scale).round() as i32)
+                    .unwrap_or(0);
                 origin = to_world(
                     ent_value(block, "origin")
                         .and_then(parse_vec3)
@@ -3884,22 +5025,136 @@ fn collect_tram(
         }
     }
     if model == 0 || first.is_empty() {
-        return (0, 0, Vec::new(), [0; 3]);
+        return (0, 0, 0, 100, Vec::new(), [0; 3]);
     }
+
+    // Walk backward only while the predecessor is unique. Ambiguous forks are
+    // not safe to guess, and a name set prevents circular tracks from filling
+    // the compact 256-node budget. A trackchange is also a path edge even
+    // though GoldSrc records it as toptrack/bottomtrack instead of `target`.
+    let mut prefix = Vec::<String>::new();
+    let mut cursor = first.clone();
+    let mut prefix_synthetic = 0usize;
+    let mut upstream_seen = HashSet::new();
+    upstream_seen.insert(cursor.clone());
+    loop {
+        let mut predecessor = None;
+        let mut ambiguous = false;
+        for track in tracks.iter().filter(|track| track.2 == cursor) {
+            if predecessor.is_some() {
+                ambiguous = true;
+                break;
+            }
+            predecessor = Some(track.0.clone());
+        }
+        if ambiguous {
+            break;
+        }
+
+        // c0a0b's real incoming rail ends at upper1, whose connection to
+        // lower1 is implicit in the `goingdown` autochange. Cross that edge
+        // only when no ordinary predecessor exists and the partner is unique.
+        let mut crossed_trackchange = false;
+        if predecessor.is_none() {
+            let mut partner: Option<String> = None;
+            for (top, bottom, _) in &trackchanges {
+                let other = if top == &cursor {
+                    bottom
+                } else if bottom == &cursor {
+                    top
+                } else {
+                    continue;
+                };
+                if other.is_empty() || !tracks.iter().any(|track| &track.0 == other) {
+                    continue;
+                }
+                if let Some(existing) = &partner {
+                    if existing != other {
+                        ambiguous = true;
+                        break;
+                    }
+                } else {
+                    partner = Some(other.clone());
+                }
+            }
+            if ambiguous {
+                break;
+            }
+            if let Some(name) = partner {
+                // Seeing the partner already means we reached the reverse side
+                // of this same two-way junction. Keep the useful prefix rather
+                // than clearing it as though it were a path_track cycle.
+                if upstream_seen.contains(&name) {
+                    break;
+                }
+                predecessor = Some(name);
+                crossed_trackchange = true;
+            }
+        }
+
+        let Some(name) = predecessor else { break };
+        if name.is_empty() {
+            break;
+        }
+        // Leave room for the authored node and a forward suffix. A crossed
+        // trackchange costs both its named endpoint and one synthetic platform
+        // point in the emitted route.
+        let emitted_cost = 1 + usize::from(crossed_trackchange);
+        if prefix.len() + prefix_synthetic + emitted_cost >= 255 {
+            prefix.clear();
+            break;
+        }
+        if !upstream_seen.insert(name.clone()) {
+            // A circular predecessor walk cannot produce a meaningful root.
+            // Retain one authored-first lap instead of starting at its tail.
+            prefix.clear();
+            break;
+        }
+        prefix.push(name.clone());
+        prefix_synthetic += usize::from(crossed_trackchange);
+        cursor = name;
+    }
+    prefix.reverse();
+
     let mut way = Vec::new();
+    let mut tram_start = None;
+    let mut pending_speed = HashMap::<String, u16>::new();
     // Follow the path_track `target` chain; when a segment dead-ends at a
     // func_trackchange junction, stitch onto the platform's other chain so the
     // train reaches the exit instead of stopping. ponytail: we skip the rotate-
     // the-platform puzzle -- the train just drives straight through the junction.
-    let mut seg_start = first;
+    let mut seg_start = prefix.first().cloned().unwrap_or(first.clone());
     let mut used_tc = vec![false; trackchanges.len()];
-    loop {
+    let mut forward_seen = HashSet::new();
+    'segments: loop {
         let mut name = seg_start.clone();
         let mut last_found = String::new();
         while !name.is_empty() && way.len() < 256 {
+            if !forward_seen.insert(name.clone()) {
+                break;
+            }
             match tracks.iter().find(|t| t.0 == name) {
                 Some(t) => {
-                    way.push((to_world(t.1, scale), t.3, t.4.clone()));
+                    // `message` fires when the train passes this node;
+                    // `netname` fires at a dead end (CFuncTrackTrain::DeadEnd).
+                    // The compact tram format has one pass slot, so use the
+                    // dead-end target at the terminal node. Authored intro
+                    // nodes do not combine both keys.
+                    let pass = if t.2.is_empty() && !t.5.is_empty() {
+                        t.5.clone()
+                    } else {
+                        t.4.clone()
+                    };
+                    let resume = pending_speed.remove(&t.0).unwrap_or(0);
+                    let node_speed = if t.3 > 0 { t.3 } else { resume };
+                    let mut point = to_world(t.1, scale);
+                    point[1] = point[1].saturating_add(height);
+                    if t.0 == first && tram_start.is_none() {
+                        // Synthetic trackchange points can precede the authored
+                        // target, so prefix.len() is not a safe start index.
+                        tram_start = Some(way.len());
+                    }
+                    way.push((point, node_speed, pass));
                     last_found = name.clone();
                     name = t.2.clone();
                 }
@@ -3910,32 +5165,99 @@ fn collect_tram(
         // can be the segment's START (train parked on the platform, c2a1) or its
         // END (train drives into the platform, c2a2). Match either against a
         // trackchange's top/bottom and continue on the platform's other chain.
-        let hit = |n: &str| n == seg_start || n == last_found;
-        let mut next = None;
-        for (i, (top, bot)) in trackchanges.iter().enumerate() {
-            if used_tc[i] {
+        // Prefer a junction at the dead-end just reached. Retain the prior
+        // segment-start fallback for maps whose train begins parked on a
+        // platform, but never guess between multiple eligible junctions.
+        let mut next: Option<(usize, String, bool)> = None;
+        let mut tc_ambiguous = false;
+        for at_end in [true, false] {
+            let at = if at_end { &last_found } else { &seg_start };
+            if at.is_empty() {
                 continue;
             }
-            if hit(top) && !bot.is_empty() {
-                used_tc[i] = true;
-                next = Some(bot.clone());
-                break;
+            for (i, (top, bottom, _)) in trackchanges.iter().enumerate() {
+                if used_tc[i] {
+                    continue;
+                }
+                let other = if top == at {
+                    bottom
+                } else if bottom == at {
+                    top
+                } else {
+                    continue;
+                };
+                if other.is_empty() || !tracks.iter().any(|track| &track.0 == other) {
+                    continue;
+                }
+                if next.is_some() {
+                    tc_ambiguous = true;
+                    break;
+                }
+                next = Some((i, other.clone(), at_end));
             }
-            if hit(bot) && !top.is_empty() {
-                used_tc[i] = true;
-                next = Some(top.clone());
+            if tc_ambiguous || next.is_some() {
                 break;
             }
         }
+        if tc_ambiguous {
+            break;
+        }
         match next {
-            Some(n) if way.len() < 256 => seg_start = n,
+            Some((tc_index, n, at_end)) if way.len() < 256 => {
+                used_tc[tc_index] = true;
+                if at_end {
+                    let tc_speed = trackchanges[tc_index].2;
+                    let resume_speed = way
+                        .iter()
+                        .rev()
+                        .find_map(|(_, node_speed, _)| (*node_speed > 0).then_some(*node_speed))
+                        .unwrap_or_else(|| speed.clamp(0, u16::MAX as i32) as u16);
+                    if let Some(last) = way.last_mut() {
+                        // Preserve tuple field 2: upper1's terminal netname
+                        // `goingdown` still fires as the platform starts.
+                        last.1 = tc_speed;
+                    }
+
+                    let from = tracks.iter().find(|track| track.0 == last_found);
+                    let to = tracks.iter().find(|track| track.0 == n);
+                    if let (Some(from), Some(to)) = (from, to) {
+                        // The intro autochange first translates vertically at
+                        // the upper track's GoldSrc X/Y, then releases the car
+                        // toward the lower path node. Splitting those components
+                        // reproduces the 1271-unit descent with existing waypoint
+                        // data: upper1 -> synthetic bottom -> lower1.
+                        let mut synthetic = to_world([from.1[0], from.1[1], to.1[2]], scale);
+                        synthetic[1] = synthetic[1].saturating_add(height);
+                        let mut destination = to_world(to.1, scale);
+                        destination[1] = destination[1].saturating_add(height);
+                        if way.last().map(|last| last.0) != Some(synthetic) {
+                            if synthetic == destination {
+                                // Purely vertical junction: the destination is
+                                // itself the platform endpoint, so restore the
+                                // train speed when that named node is emitted.
+                                pending_speed.insert(n.clone(), resume_speed);
+                            } else if way.len() + 1 < 256 {
+                                way.push((synthetic, resume_speed, String::new()));
+                            } else {
+                                break 'segments;
+                            }
+                        } else {
+                            pending_speed.insert(n.clone(), resume_speed);
+                        }
+                    }
+                }
+                seg_start = n;
+            }
             _ => break,
         }
     }
-    (model, speed, way, origin)
+    let tram_start = tram_start.unwrap_or(0).min(u16::MAX as usize) as u16;
+    (model, speed, tram_start, wheels, way, origin)
 }
 
-/// Point entities that place an actor/item: `(model_type, origin_world, yaw, leaf)`.
+/// Point entities that place an actor/item. The final word is a stable carry id
+/// (targetname hash, or globalname hash with bit 15 set); it occupies PropRec's
+/// existing padding and therefore does not grow map data.
 /// type 0 = scientist, 1 = barney, 2 = headcrab, 3 = item_suit, 4 = item_battery.
 fn collect_props(
     ents: &[u8],
@@ -3943,13 +5265,11 @@ fn collect_props(
     planes: &[u8],
     scale: f32,
     logic_names: &[String],
-) -> Vec<(u16, [i32; 3], i32, i16, u16)> {
+) -> Vec<(u16, [i32; 3], i32, i16, u16, u16)> {
     let s = entity_text(ents);
     let mut out = Vec::new();
-    // scripted_sequence v1 (set dressing): an auto-start script (one with no
-    // targetname) poses its monster at the script mark from frame one in real
-    // HL. Move the matching monster's spawn to the mark; triggered scripts
-    // (with a targetname) fire later and are left alone.
+    // Only MoveTo=4 teleports an auto-start scripted actor to the mark.
+    // MoveTo=0 waits at its authored origin; 1/2 walk/run there at runtime.
     let mut script_marks: Vec<(String, [f32; 3], Option<f32>)> = Vec::new();
     for block in s.split('{') {
         if ent_value(block, "classname") != Some("scripted_sequence") {
@@ -3958,7 +5278,16 @@ fn collect_props(
         if ent_value(block, "targetname").is_some() {
             continue;
         }
-        let Some(target) = ent_value(block, "m_iszEntity") else { continue };
+        let move_to = ent_value(block, "m_fMoveTo")
+            .or_else(|| ent_value(block, "m_flMoveTo"))
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or(0);
+        if move_to != 4 {
+            continue;
+        }
+        let Some(target) = ent_value(block, "m_iszEntity") else {
+            continue;
+        };
         let Some(origin) = ent_value(block, "origin").and_then(parse_vec3) else {
             continue;
         };
@@ -3971,6 +5300,7 @@ fn collect_props(
         // corpses spawn as their live type with the DEAD bit (0x8000): the
         // runtime zeroes health and shows the death clip's final frame.
         const DEAD: u16 = 0x8000;
+        const PREDISASTER: u16 = 0x2000;
         let ty = match ent_value(block, "classname").unwrap_or("") {
             "monster_scientist" => 0u16,
             "monster_sitting_scientist" => 25u16,
@@ -4028,6 +5358,10 @@ fn collect_props(
             "item_longjump" => 49u16,
             "monster_tentacle" => 50u16,
             "monster_human_assassin" => 51u16,
+            "monster_generic" => match monster_generic_type(block) {
+                Some(ty) => ty,
+                None => continue,
+            },
             "world_items" => match ent_value(block, "type").and_then(|v| v.parse::<u16>().ok()) {
                 Some(45) => 3u16, // ITEM_SUIT
                 Some(44) => 4u16, // ITEM_BATTERY
@@ -4037,7 +5371,9 @@ fn collect_props(
                 // Spawner: cook up to 4 DORMANT copies (bit 0x4000) of the
                 // monster it makes; the runtime activates them one per fire.
                 let mt = ent_value(block, "monstertype").unwrap_or("");
-                let Some(base) = monster_type_id(mt) else { continue };
+                let Some(base) = monster_type_id(mt) else {
+                    continue;
+                };
                 let count = parse_f32_key(block, "monstercount", 1.0)
                     .round()
                     .clamp(1.0, 4.0) as usize;
@@ -4054,11 +5390,17 @@ fn collect_props(
                         yaw,
                         point_leaf(origin_hl, nodes, planes),
                         0,
+                        0,
                     ));
                 }
                 continue;
             }
             _ => continue,
+        };
+        let ty = if ty == 0 && parse_spawnflags(block) & 256 != 0 {
+            ty | PREDISASTER
+        } else {
+            ty
         };
         let mut origin_hl = ent_value(block, "origin")
             .and_then(parse_vec3)
@@ -4068,9 +5410,7 @@ fn collect_props(
         // at the script mark (matches where real HL poses it at map start).
         if ty & DEAD == 0 {
             if let Some(tn) = ent_value(block, "targetname") {
-                if let Some((_, mo, myaw)) =
-                    script_marks.iter().find(|(t, _, _)| t == tn)
-                {
+                if let Some((_, mo, myaw)) = script_marks.iter().find(|(t, _, _)| t == tn) {
                     origin_hl = *mo;
                     if let Some(d) = myaw {
                         deg = *d;
@@ -4084,7 +5424,19 @@ fn collect_props(
             .and_then(|tn| logic_names.iter().position(|n| n == tn))
             .map(|p| (p + 1).min(u16::MAX as usize) as u16)
             .unwrap_or(0);
-        out.push((ty, origin, yaw, point_leaf(origin_hl, nodes, planes), name_id));
+        let carry_id = if prop_type_crosses_transition(ty) {
+            entity_carry_id(block)
+        } else {
+            0
+        };
+        out.push((
+            ty,
+            origin,
+            yaw,
+            point_leaf(origin_hl, nodes, planes),
+            name_id,
+            carry_id,
+        ));
     }
     out
 }
@@ -4108,6 +5460,20 @@ fn monster_type_id(cls: &str) -> Option<u16> {
         "monster_sentry" => 20,
         _ => return None,
     })
+}
+
+/// `monster_generic` selects its studio model through the entity's `model`
+/// key, so classname alone cannot identify the streamed actor type. Keep this
+/// deliberately allowlisted: unsupported generics remain absent instead of
+/// silently rendering as the wrong set-piece model.
+fn monster_generic_type(block: &str) -> Option<u16> {
+    let model = ent_value(block, "model")?
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    match model.rsplit('/').next().unwrap_or(model.as_str()) {
+        "loader.mdl" => Some(52),
+        _ => None,
+    }
 }
 
 fn miptex_name(l: &[u8], mo: usize) -> String {
@@ -4275,7 +5641,11 @@ fn weld_tjunctions(
                 let a = c[e];
                 let b = c[(e + 1) % 3];
                 loopv.push(a);
-                for (param, ci) in if weld_this { on_edge(a.0, b.0) } else { Vec::new() } {
+                for (param, ci) in if weld_this {
+                    on_edge(a.0, b.0)
+                } else {
+                    Vec::new()
+                } {
                     loopv.push((
                         ci,
                         lerp(a.1, b.1, param),
@@ -4715,17 +6085,36 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
 
     // ponytail: TEMP quad-baking experiment report (remove after decision).
     {
-        let pct = |n: usize| if faces_emitted > 0 { 100.0 * n as f64 / faces_emitted as f64 } else { 0.0 };
+        let pct = |n: usize| {
+            if faces_emitted > 0 {
+                100.0 * n as f64 / faces_emitted as f64
+            } else {
+                0.0
+            }
+        };
         let tri_after = fan_tris - bakeable_quads; // 1 record per quad + leftover tris
-        let red = if fan_tris > 0 { 100.0 * bakeable_quads as f64 / fan_tris as f64 } else { 0.0 };
+        let red = if fan_tris > 0 {
+            100.0 * bakeable_quads as f64 / fan_tris as f64
+        } else {
+            0.0
+        };
         eprintln!("  [quad-exp] faces_emitted={faces_emitted} fan_tris={fan_tris} bakeable_quads={bakeable_quads}");
         eprintln!(
             "  [quad-exp] native sided   3:{} 4:{} 5:{} 6:{} 7+:{}",
-            hist_ne[3], hist_ne[4], hist_ne[5], hist_ne[6], hist_ne[7..].iter().sum::<usize>()
+            hist_ne[3],
+            hist_ne[4],
+            hist_ne[5],
+            hist_ne[6],
+            hist_ne[7..].iter().sum::<usize>()
         );
         eprintln!(
             "  [quad-exp] emitted poly   3:{} 4:{} 5:{} 6:{} 7+:{}  (4-sided={:.0}% of faces)",
-            hist_pl[3], hist_pl[4], hist_pl[5], hist_pl[6], hist_pl[7..].iter().sum::<usize>(), pct(hist_pl[4])
+            hist_pl[3],
+            hist_pl[4],
+            hist_pl[5],
+            hist_pl[6],
+            hist_pl[7..].iter().sum::<usize>(),
+            pct(hist_pl[4])
         );
         eprintln!("  [quad-exp] tri records: now={fan_tris} after-bake={tri_after}  decode-record reduction={red:.0}% (pre split/weld)");
     }
@@ -4749,8 +6138,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         + lump_bytes(LUMP_FACES)
         + 32768; // slop for nav/logic/prop/header sections not in the raw lumps
     let base_tri_bytes = (tri_idx.len() / 3) * 19;
-    let max_added =
-        MAP_RESIDENT_BYTES.saturating_sub(non_tri_est + base_tri_bytes) / 19;
+    let max_added = MAP_RESIDENT_BYTES.saturating_sub(non_tri_est + base_tri_bytes) / 19;
     let tj_added = weld_tjunctions(
         &verts,
         &mut tri_idx,
@@ -4846,7 +6234,13 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             push_facevert(&mut loopverts, &tri_idx, &tri_uv, &light_idx, first * 3);
             push_facevert(&mut loopverts, &tri_idx, &tri_uv, &light_idx, first * 3 + 2);
             for j in 0..ntri {
-                push_facevert(&mut loopverts, &tri_idx, &tri_uv, &light_idx, (first + j) * 3 + 1);
+                push_facevert(
+                    &mut loopverts,
+                    &tri_idx,
+                    &tri_uv,
+                    &light_idx,
+                    (first + j) * 3 + 1,
+                );
             }
             face_lc_first[f] = lv_start as u32;
             face_lc_count[f] = (ntri + 2) as u16;
@@ -4873,7 +6267,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let n_raw_tris = raw_tris.len() / 16;
 
     let mut o: Vec<u8> = Vec::new();
-    o.extend_from_slice(b"HLMB");
+    o.extend_from_slice(b"HLMC");
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_raw_tris as u32).to_le_bytes());
     o.extend_from_slice(&(n_cooked_texs as u32).to_le_bytes());
@@ -4921,12 +6315,13 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     if tex_out.is_none() {
         // Legacy single-file cook: keep the texture blob inline before BSP.
         // Runtime room builds pass `tex_out` and load the HLTX chunk only for
-        // VRAM upload, then overwrite that staging buffer with resident HLMB.
+        // VRAM upload, then overwrite that staging buffer with resident HLMC.
         append_texture_blob(&mut o, &texs);
     }
 
     // ---- BSP visibility (PVS) ----
-    // u32 n_planes,n_face_groups,n_nodes,n_leaves,n_marks,vis_len |
+    // u32 n_planes,n_face_groups,n_nodes,leaf_counts,n_marks,vis_len |
+    // leaf_counts = total n_leaves in low 16 | dmodel[0].visleafs in high 16.
     // PlaneRec[10B] | FaceGroup[2B] | FaceRec[18B] | nodes[6B] |
     // leaves[8B] | marks (pad) | vis (raw RLE, pad).
     // PlaneRec = i16 normal[3], i32 dist. FaceGroup is a signed plane ref:
@@ -4946,10 +6341,24 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let clipnodes = bsp.lump(LUMP_CLIPNODES);
     let raw_n_clip = clipnodes.len() / SZ_CLIPNODE;
     let models = bsp.lump(LUMP_MODELS);
-    let hull0_head_raw = i32le(models, 36).unwrap_or(0); // dmodel_t.headnode[0] (point hull)
+    let n_visleaves = world_visleaf_count(models, n_leaves)?;
+    let packed_leaf_counts = pack_leaf_counts(n_leaves, n_visleaves)?;
+    // dmodel_t.headnode[0] indexes LUMP_NODES, not LUMP_CLIPNODES. Runtime
+    // point traces walk the already-cooked render-node tree directly; feeding
+    // this value into the clipnode compactor aliases an unrelated expanded
+    // hull (c1a1b prop floors ended up 37 units too high).
     let hull1_head_raw = i32le(models, 40).unwrap_or(0); // dmodel_t.headnode[1] (player hull)
     let hull3_head_raw = i32le(models, 44).unwrap_or(0); // dmodel_t.headnode[3] (crouch hull, 32x32x36)
-    let mut ents = collect_entities(bsp.lump(LUMP_ENTITIES), models, nodes, planes, scale);
+    let (tram_model, tram_speed, tram_start, tram_wheels, way, _) =
+        collect_tram(bsp.lump(LUMP_ENTITIES), scale);
+    let mut ents = collect_entities(
+        bsp.lump(LUMP_ENTITIES),
+        models,
+        nodes,
+        planes,
+        scale,
+        tram_model as usize,
+    );
     let n_models = models.len() / SZ_MODEL;
     let mut brush_by_submodel = vec![LOGIC_BRUSH_NONE; n_models];
     for (ei, e) in ents.iter().enumerate() {
@@ -4964,21 +6373,29 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         .and_then(|maps| maps.parent())
         .map(parse_titles)
         .unwrap_or_default();
+    let map_name = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let transition_hints = load_transition_type_hints(map_name);
+    let transition_types: std::collections::HashMap<String, u16> = transition_hints
+        .iter()
+        .map(|prop| (prop.targetname.clone(), prop.ty))
+        .collect();
     let mut logic = collect_logic_entities(
         bsp.lump(LUMP_ENTITIES),
         models,
         &brush_by_submodel,
         scale,
         &titles,
-    );
-    let (tram_model, tram_speed, way, _) = collect_tram(bsp.lump(LUMP_ENTITIES), scale);
+        &transition_types,
+    )?;
     let tram_head_raw = if tram_model > 0 {
         i32le(models, tram_model as usize * SZ_MODEL + 40).unwrap_or(0)
     } else {
         0
     };
-    let mut clip_roots = Vec::with_capacity(4 + ents.len());
-    clip_roots.push(hull0_head_raw);
+    let mut clip_roots = Vec::with_capacity(3 + ents.len());
     clip_roots.push(hull1_head_raw);
     clip_roots.push(hull3_head_raw); // crouch hull for the world model (fits low vents)
     clip_roots.push(tram_head_raw);
@@ -4988,7 +6405,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let (clip_remap, clip_out) = compact_clipnode_remap(clipnodes, &clip_roots);
     let n_clip = clip_out.len();
     let stripped_clip_count = raw_n_clip.saturating_sub(n_clip);
-    let hull0_head = remap_clip_head(hull0_head_raw, &clip_remap);
+    // Preserve the on-disc field for format compatibility, but make accidental
+    // legacy use fail open instead of silently tracing an expanded clip hull.
+    let hull0_head = -1i32;
     let hull1_head = remap_clip_head(hull1_head_raw, &clip_remap);
     let hull3_head = remap_clip_head(hull3_head_raw, &clip_remap);
     let tram_head = remap_clip_head(tram_head_raw, &clip_remap);
@@ -5091,7 +6510,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     o.extend_from_slice(&(cooked_planes.len() as u32).to_le_bytes());
     o.extend_from_slice(&(plane_groups.len() as u32).to_le_bytes());
     o.extend_from_slice(&(n_nodes as u32).to_le_bytes());
-    o.extend_from_slice(&(n_leaves as u32).to_le_bytes());
+    o.extend_from_slice(&packed_leaf_counts.to_le_bytes());
     o.extend_from_slice(&(n_cooked_marks as u32).to_le_bytes());
     o.extend_from_slice(&(vis.len() as u32).to_le_bytes());
 
@@ -5130,11 +6549,21 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             n[1] as f32 / 4096.0,
         ];
         let step = 24.0 * scale;
-        let above = [hl[0] + hn[0] * step, hl[1] + hn[1] * step, hl[2] + hn[2] * step];
-        let below = [hl[0] - hn[0] * step, hl[1] - hn[1] * step, hl[2] - hn[2] * step];
+        let above = [
+            hl[0] + hn[0] * step,
+            hl[1] + hn[1] * step,
+            hl[2] + hn[2] * step,
+        ];
+        let below = [
+            hl[0] - hn[0] * step,
+            hl[1] - hn[1] * step,
+            hl[2] - hn[2] * step,
+        ];
         let la = point_leaf(above, nodes, planes).max(0) as usize;
         let lb = point_leaf(below, nodes, planes).max(0) as usize;
-        if !(leaf_row_sees(leaves, vis, la, lb) || leaf_row_sees(leaves, vis, lb, la)) {
+        if !(leaf_row_sees(leaves, vis, n_visleaves, la, lb)
+            || leaf_row_sees(leaves, vis, n_visleaves, lb, la))
+        {
             face_translucent[f] = false;
         }
     }
@@ -5197,7 +6626,8 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     }
 
     // ---- Clip hull (player collision / LOS) + spawn ----
-    // u32 n_clip | i32 hull0_head | i32 hull1_head | i32 hull3_head (crouch) |
+    // u32 n_clip | i32 legacy_hull0_head (-1; point hull uses render nodes) |
+    // i32 hull1_head | i32 hull3_head (crouch) |
     // i32 spawn x,y,z (world) | i32 spawn_yaw (Q0.12)
     // clipnodes (u16 plane_ref, i16 c0, i16 c1) × n_clip [6B]
     // plane_ref: bits 13..0 remapped plane index; bits 15..14 are
@@ -5210,6 +6640,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         nodes,
         planes,
         leaves,
+        n_visleaves,
         clipnodes,
         hull1_head_raw,
         marks,
@@ -5334,16 +6765,22 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     }
 
     // ---- Tram (func_tracktrain ride) ----
-    // u16 submodel | u16 n_way | i32 speed | waypoints i32[3] × n_way (world)
+    // u16 submodel | u16 n_way | u32 (start_index<<16 | speed_u16) |
+    // i32 clip_head | i32 base[3] | waypoints i32[3] × n_way (world).
+    // Legacy rooms stored an ordinary positive i32 speed, whose high half is
+    // zero and therefore decodes as authored start index 0.
     let tram_off = o.len() as u32;
     o[tram_off_pos..tram_off_pos + 4].copy_from_slice(&tram_off.to_le_bytes());
     // The tram brush verts are stored relative to the entity origin (bbox near
     // 0); HL renders them at verts + pev->origin, which the path drives. So the
-    // render/collision offset is the full path position = wp0 + ride_off.
-    let tram_base = if !way.is_empty() { way[0].0 } else { [0, 0, 0] };
+    // render/collision offset is the full path position = authored waypoint +
+    // ride_off. Predecessor nodes exist only for transferred-train reattachment.
+    let tram_start = (tram_start as usize).min(way.len().saturating_sub(1));
+    let tram_base = way.get(tram_start).map(|w| w.0).unwrap_or([0, 0, 0]);
+    let tram_motion = pack_tram_motion(tram_speed, tram_start, tram_wheels);
     o.extend_from_slice(&tram_model.to_le_bytes());
     o.extend_from_slice(&(way.len() as u16).to_le_bytes());
-    o.extend_from_slice(&tram_speed.to_le_bytes());
+    o.extend_from_slice(&tram_motion.to_le_bytes());
     o.extend_from_slice(&tram_head.to_le_bytes());
     for c in &tram_base {
         o.extend_from_slice(&c.to_le_bytes());
@@ -5396,6 +6833,14 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         &sprites_manifest,
         &mut logic.names,
     )?;
+    if props.len() > MAX_RUNTIME_LIVE_PROPS {
+        return Err(format!(
+            "{}: {} authored actors exceed the runtime live-prop cap {}",
+            path,
+            props.len(),
+            MAX_RUNTIME_LIVE_PROPS
+        ));
+    }
     if props.len() > u16::MAX as usize || sprite_props.len() > 0x7FFF {
         return Err(format!(
             "{}: prop section overflow ({} actors, {} sprites)",
@@ -5404,13 +6849,11 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             sprite_props.len()
         ));
     }
-    let prop_counts = 0x8000_0000u32
-        | ((sprite_props.len() as u32) << 16)
-        | props.len() as u32;
+    let prop_counts = 0x8000_0000u32 | ((sprite_props.len() as u32) << 16) | props.len() as u32;
     o.extend_from_slice(&prop_counts.to_le_bytes());
-    // PropRec 24B: ty u16 | leaf i16 | org i32[3] | yaw i32 | name u16 | pad u16
-    // (name = logic-name id of the monster's targetname; scripts find it).
-    for (ty, org, yaw, leaf, name) in &props {
+    // PropRec 24B: ty u16 | leaf i16 | org i32[3] | yaw i32 | name u16 | carry u16
+    // (name = local targetname id; carry = stable target/global identity).
+    for (ty, org, yaw, leaf, name, carry) in &props {
         o.extend_from_slice(&ty.to_le_bytes());
         o.extend_from_slice(&leaf.to_le_bytes());
         for c in org {
@@ -5418,7 +6861,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         }
         o.extend_from_slice(&yaw.to_le_bytes());
         o.extend_from_slice(&name.to_le_bytes());
-        o.extend_from_slice(&0u16.to_le_bytes());
+        o.extend_from_slice(&carry.to_le_bytes());
     }
     // SpriteRec 12B: origin i16[3] | leaf i16 | targetname u16 | packed u16.
     for (org, leaf, name, packed) in &sprite_props {
@@ -5433,13 +6876,19 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         o.push(0);
     }
 
-    // ---- AI navigation graph (land info_node graph) ----
-    // u16 n_nav | u16 n_links |
-    // NavNode[20B] × n_nav: i32 origin[3], i16 leaf, u16 first_link, u8 link_count, u8 pad
-    // u16 link_dest × n_links
+    // ---- AI navigation graph ----
+    // Exact retail mode:
+    //   u16 n_nav | u16 0x8000|route_bytes |
+    //   NavNode[18B] × n_nav: i32 origin[3], i16 leaf, u16 route_offset,
+    //     u8 node_type, u8 pad | GoldSrc compressed route bytes.
+    // Custom-map fallback retains the legacy synthesized adjacency layout:
+    //   u16 n_nav | u16 n_links | NavNode(first_link,link_count) | u16 dest[].
+    // Both keep the packed 18-byte node record; exact mode replaces runtime
+    // BFS with the shipped graph's deterministic NextNodeInRoute stream.
     let nav_off = o.len() as u32;
     o[nav_off_pos..nav_off_pos + 4].copy_from_slice(&nav_off.to_le_bytes());
-    let nav = collect_nav_nodes(
+    let nav = collect_nav(
+        path,
         bsp.lump(LUMP_ENTITIES),
         nodes,
         planes,
@@ -5447,28 +6896,54 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         hull1_head_raw,
         scale,
     );
-    let mut nav_links: Vec<u16> = Vec::new();
-    o.extend_from_slice(&(nav.len().min(u16::MAX as usize) as u16).to_le_bytes());
-    let nav_link_count_pos = o.len();
+    o.extend_from_slice(&(nav.nodes.len().min(u16::MAX as usize) as u16).to_le_bytes());
+    let nav_meta_pos = o.len();
     o.extend_from_slice(&0u16.to_le_bytes());
-    for node in &nav {
-        let first = nav_links.len().min(u16::MAX as usize) as u16;
-        let room = (u16::MAX as usize).saturating_sub(first as usize);
-        let count = node.links.len().min(room).min(u8::MAX as usize) as u8;
-        nav_links.extend(node.links[..count as usize].iter().map(|&v| v as u16));
-        for c in node.origin {
-            o.extend_from_slice(&c.to_le_bytes());
+    let nav_nodes_start = o.len();
+    let nav_payload_count = if let Some(routes) = nav.routes.as_ref() {
+        let meta = NAV_EXACT_ROUTES | routes.len() as u16;
+        o[nav_meta_pos..nav_meta_pos + 2].copy_from_slice(&meta.to_le_bytes());
+        for node in &nav.nodes {
+            for c in node.origin {
+                o.extend_from_slice(&c.to_le_bytes());
+            }
+            o.extend_from_slice(&node.leaf.to_le_bytes());
+            o.extend_from_slice(&node.route_offset.to_le_bytes());
+            o.push(node.node_type);
+            o.push(0);
         }
-        o.extend_from_slice(&node.leaf.to_le_bytes());
-        o.extend_from_slice(&first.to_le_bytes());
-        o.push(count);
-        o.push(0);
-    }
-    let nav_link_count = nav_links.len().min(u16::MAX as usize) as u16;
-    o[nav_link_count_pos..nav_link_count_pos + 2].copy_from_slice(&nav_link_count.to_le_bytes());
-    for link in &nav_links {
-        o.extend_from_slice(&link.to_le_bytes());
-    }
+        debug_assert_eq!(
+            o.len() - nav_nodes_start,
+            nav.nodes.len() * COOKED_NAV_NODE_BYTES
+        );
+        o.extend_from_slice(routes);
+        routes.len()
+    } else {
+        let mut nav_links: Vec<u16> = Vec::new();
+        for node in &nav.nodes {
+            let first = nav_links.len().min(u16::MAX as usize) as u16;
+            let room = (u16::MAX as usize).saturating_sub(first as usize);
+            let count = node.links.len().min(room).min(u8::MAX as usize) as u8;
+            nav_links.extend(node.links[..count as usize].iter().map(|&v| v as u16));
+            for c in node.origin {
+                o.extend_from_slice(&c.to_le_bytes());
+            }
+            o.extend_from_slice(&node.leaf.to_le_bytes());
+            o.extend_from_slice(&first.to_le_bytes());
+            o.push(count);
+            o.push(0);
+        }
+        debug_assert_eq!(
+            o.len() - nav_nodes_start,
+            nav.nodes.len() * COOKED_NAV_NODE_BYTES
+        );
+        let count = nav_links.len().min((NAV_EXACT_ROUTES - 1) as usize) as u16;
+        o[nav_meta_pos..nav_meta_pos + 2].copy_from_slice(&count.to_le_bytes());
+        for link in nav_links.iter().take(count as usize) {
+            o.extend_from_slice(&link.to_le_bytes());
+        }
+        count as usize
+    };
     while o.len() % 4 != 0 {
         o.push(0);
     }
@@ -5554,7 +7029,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         None
     };
     println!(
-        "cooked {} -> {}{}  ({} verts, {} tris, {} faces, {} leaves, {} clipnodes kept/{} stripped from {}, {} ents, tram {} waypts, {} actors/{} sprites, {} nav nodes/{} links, {} logic/{} aux/{} names, {} texs kept/{} stripped from {}, spawn [{},{},{}], {} KB resident{})",
+        "cooked {} -> {}{}  ({} verts, {} tris, {} faces, {} leaves/{} vis, {} clipnodes kept/{} stripped from {}, {} ents, tram {} waypts, {} actors/{} sprites, {} nav nodes/{} route-or-link bytes, {} logic/{} aux/{} names, {} texs kept/{} stripped from {}, spawn [{},{},{}], {} KB resident{})",
         path,
         out,
         tex_out.map(|p| format!(" + {}", p)).unwrap_or_default(),
@@ -5562,6 +7037,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         n_tris,
         n_faces,
         n_leaves,
+        n_visleaves,
         n_clip,
         stripped_clip_count,
         raw_n_clip,
@@ -5569,8 +7045,8 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         way.len(),
         props.len(),
         sprite_props.len(),
-        nav.len(),
-        nav_links.len(),
+        nav.nodes.len(),
+        nav_payload_count,
         logic.ents.len(),
         logic.aux.len(),
         logic.names.len(),
@@ -5645,6 +7121,40 @@ fn mdl_local_to_world_q12(vertex_scale: i32) -> u16 {
     (4096 / vertex_scale.max(1)) as u16
 }
 
+// ClipRec keeps its original four bytes. Actor cooks never use more than 16
+// baked poses per clip, so the high byte of frame_count stores the low eight
+// bits of the source duration in 100 ms monster-think quanta. The unused high
+// bit of first_frame stores duration bit 8, extending the range to 51.1 s for
+// long set-piece clips such as loader/rampwalk without growing resident data.
+const MDL_CLIP_FRAME_COUNT_MASK: u16 = 0x00ff;
+const MDL_CLIP_FIRST_FRAME_MASK: u16 = 0x7fff;
+const MDL_CLIP_DURATION_EXT_BIT: u16 = 0x8000;
+const MDL_CLIP_MAX_HOLD_QUANTA: u16 = 0x01ff;
+const MDL_RUNTIME_VERTEX_LIMIT: usize = 1024;
+const MDL_SIMPLIFIED_VERTEX_TARGET: usize = 960;
+
+fn mdl_sequence_hold_quanta(numframes: usize, fps: f32) -> u16 {
+    if numframes <= 1 || !fps.is_finite() || fps <= 0.0 {
+        return 1;
+    }
+    ((((numframes - 1) as f32 * 10.0) / fps).ceil() as usize)
+        .clamp(1, MDL_CLIP_MAX_HOLD_QUANTA as usize) as u16
+}
+
+fn mdl_pack_clip(first_frame: u16, frame_count: u16, hold_quanta: u16) -> (u16, u16) {
+    debug_assert_eq!(first_frame & !MDL_CLIP_FIRST_FRAME_MASK, 0);
+    debug_assert!(frame_count > 0 && frame_count <= MDL_CLIP_FRAME_COUNT_MASK);
+    debug_assert!(hold_quanta <= MDL_CLIP_MAX_HOLD_QUANTA);
+    let packed_first = (first_frame & MDL_CLIP_FIRST_FRAME_MASK)
+        | if hold_quanta & 0x0100 != 0 {
+            MDL_CLIP_DURATION_EXT_BIT
+        } else {
+            0
+        };
+    let packed_count = (frame_count & MDL_CLIP_FRAME_COUNT_MASK) | ((hold_quanta & 0x00ff) << 8);
+    (packed_first, packed_count)
+}
+
 fn quantize_mdl_coord(v: f32, scale: i32) -> i16 {
     (v * scale as f32)
         .round()
@@ -5679,6 +7189,204 @@ fn mdl_face_normal_i8(base: &[[i16; 3]], a: u16, b: u16, c: u16) -> [i8; 3] {
         (ny * 127.0 / len).round().clamp(-127.0, 127.0) as i8,
         (nz * 127.0 / len).round().clamp(-127.0, 127.0) as i8,
     ]
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SimplifiedMdlMesh {
+    frames: Vec<Vec<[i16; 3]>>,
+    tri_idx: Vec<u16>,
+    tri_tex: Vec<u16>,
+    tri_uv: Vec<u8>,
+    tri_norm: Vec<[i8; 3]>,
+    grid_size: u32,
+}
+
+fn rounded_i16_mean(sum: i64, count: i64) -> i16 {
+    debug_assert!(count > 0);
+    let mean = if sum < 0 {
+        -((-sum + count / 2) / count)
+    } else {
+        (sum + count / 2) / count
+    };
+    mean.clamp(i16::MIN as i64, i16::MAX as i64) as i16
+}
+
+fn mdl_triangle_is_degenerate(frame: &[[i16; 3]], idx: [u16; 3]) -> bool {
+    if idx[0] == idx[1] || idx[1] == idx[2] || idx[2] == idx[0] {
+        return true;
+    }
+    let (Some(a), Some(b), Some(c)) = (
+        frame.get(idx[0] as usize),
+        frame.get(idx[1] as usize),
+        frame.get(idx[2] as usize),
+    ) else {
+        return true;
+    };
+    let u = [
+        b[0] as i64 - a[0] as i64,
+        b[1] as i64 - a[1] as i64,
+        b[2] as i64 - a[2] as i64,
+    ];
+    let v = [
+        c[0] as i64 - a[0] as i64,
+        c[1] as i64 - a[1] as i64,
+        c[2] as i64 - a[2] as i64,
+    ];
+    let cross = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    ];
+    cross == [0; 3]
+}
+
+/// Reduce an oversized baked studio mesh without mixing vertices controlled by
+/// different bones. The smallest integer cell size that meets `target` is
+/// selected from frame zero. Cells are relative to the model minimum so a cell
+/// larger than its span deterministically converges to one cluster per bone.
+///
+/// The stable original-vertex walk assigns cluster indices, then the same map
+/// averages every baked frame. Triangle corner metadata remains per-corner;
+/// triangles collapsed by welding are removed and normals are regenerated from
+/// the simplified base frame. Inputs at or below `target` are exact no-ops.
+fn simplify_mdl_animated_mesh(
+    frames: &[Vec<[i16; 3]>],
+    vbone: &[usize],
+    tri_idx: &[u16],
+    tri_tex: &[u16],
+    tri_uv: &[u8],
+    tri_norm: &[[i8; 3]],
+    target: usize,
+) -> SimplifiedMdlMesh {
+    assert!(target > 0 && target <= u16::MAX as usize);
+    let nverts = vbone.len();
+    assert!(!frames.is_empty(), "studio model has no baked frames");
+    for frame in frames {
+        assert_eq!(frame.len(), nverts, "studio frame vertex count changed");
+    }
+    assert_eq!(tri_idx.len() % 3, 0, "studio triangle index tail");
+    let ntris = tri_idx.len() / 3;
+    assert_eq!(tri_tex.len(), ntris, "studio texture metadata drift");
+    assert_eq!(tri_uv.len(), ntris * 6, "studio UV metadata drift");
+    assert_eq!(tri_norm.len(), ntris, "studio normal metadata drift");
+
+    if nverts <= target {
+        return SimplifiedMdlMesh {
+            frames: frames.to_vec(),
+            tri_idx: tri_idx.to_vec(),
+            tri_tex: tri_tex.to_vec(),
+            tri_uv: tri_uv.to_vec(),
+            tri_norm: tri_norm.to_vec(),
+            grid_size: 0,
+        };
+    }
+
+    let mut used_bones = vbone.to_vec();
+    used_bones.sort_unstable();
+    used_bones.dedup();
+    assert!(
+        used_bones.len() <= target,
+        "bone-safe studio target is smaller than the used bone count"
+    );
+
+    let base = &frames[0];
+    let mut mins = [i16::MAX; 3];
+    for v in base {
+        for axis in 0..3 {
+            mins[axis] = mins[axis].min(v[axis]);
+        }
+    }
+
+    let mut grid_size = 1u32;
+    let (remap, nclusters) = loop {
+        let mut cluster_for_key: BTreeMap<(usize, u32, u32, u32), usize> = BTreeMap::new();
+        let mut remap = Vec::with_capacity(nverts);
+        for (vi, v) in base.iter().enumerate() {
+            let key = (
+                vbone[vi],
+                (v[0] as i32 - mins[0] as i32) as u32 / grid_size,
+                (v[1] as i32 - mins[1] as i32) as u32 / grid_size,
+                (v[2] as i32 - mins[2] as i32) as u32 / grid_size,
+            );
+            let next = cluster_for_key.len();
+            let cluster = *cluster_for_key.entry(key).or_insert(next);
+            remap.push(cluster);
+        }
+        if cluster_for_key.len() <= target {
+            break (remap, cluster_for_key.len());
+        }
+        // Oversized studio meshes are rare and small enough that testing each
+        // integer grid is cheap at cook time. Doubling here made the loader
+        // jump from 1,114 vertices straight down to 553 even though a grid of
+        // 37 reaches the 960-vertex target with nearly twice the detail.
+        grid_size = grid_size
+            .checked_add(1)
+            .expect("studio simplification grid overflow");
+    };
+    assert!(nclusters <= target);
+
+    let mut counts = vec![0i64; nclusters];
+    for &cluster in &remap {
+        counts[cluster] += 1;
+    }
+    let mut simplified_frames = Vec::with_capacity(frames.len());
+    for frame in frames {
+        let mut sums = vec![[0i64; 3]; nclusters];
+        for (vi, v) in frame.iter().enumerate() {
+            let sum = &mut sums[remap[vi]];
+            for axis in 0..3 {
+                sum[axis] += v[axis] as i64;
+            }
+        }
+        let mut simplified = Vec::with_capacity(nclusters);
+        for (cluster, sum) in sums.iter().enumerate() {
+            simplified.push([
+                rounded_i16_mean(sum[0], counts[cluster]),
+                rounded_i16_mean(sum[1], counts[cluster]),
+                rounded_i16_mean(sum[2], counts[cluster]),
+            ]);
+        }
+        simplified_frames.push(simplified);
+    }
+
+    let mut simplified_idx = Vec::with_capacity(tri_idx.len());
+    let mut simplified_tex = Vec::with_capacity(tri_tex.len());
+    let mut simplified_uv = Vec::with_capacity(tri_uv.len());
+    let mut simplified_norm = Vec::with_capacity(tri_norm.len());
+    for tri in 0..ntris {
+        let old = [
+            tri_idx[tri * 3] as usize,
+            tri_idx[tri * 3 + 1] as usize,
+            tri_idx[tri * 3 + 2] as usize,
+        ];
+        assert!(old.iter().all(|&vi| vi < nverts));
+        let mapped = [
+            remap[old[0]] as u16,
+            remap[old[1]] as u16,
+            remap[old[2]] as u16,
+        ];
+        if mdl_triangle_is_degenerate(&simplified_frames[0], mapped) {
+            continue;
+        }
+        simplified_idx.extend_from_slice(&mapped);
+        simplified_tex.push(tri_tex[tri]);
+        simplified_uv.extend_from_slice(&tri_uv[tri * 6..tri * 6 + 6]);
+        simplified_norm.push(mdl_face_normal_i8(
+            &simplified_frames[0],
+            mapped[0],
+            mapped[1],
+            mapped[2],
+        ));
+    }
+
+    SimplifiedMdlMesh {
+        frames: simplified_frames,
+        tri_idx: simplified_idx,
+        tri_tex: simplified_tex,
+        tri_uv: simplified_uv,
+        tri_norm: simplified_norm,
+        grid_size,
+    }
 }
 
 /// Anchor baked frames to the floor. The 5 canonical clips (idle/walk/attack/
@@ -6049,6 +7757,7 @@ fn cook_mdl(
     );
     let mut frames: Vec<Vec<[i16; 3]>> = Vec::new();
     let mut clips: Vec<(u16, u16)> = Vec::with_capacity(specs.len());
+    let mut clip_hold_quanta: Vec<u16> = Vec::with_capacity(specs.len());
     // Resolve name-labeled specs against the MDL's sequence labels (32-byte
     // string at the head of each mstudioseqdesc).
     let seq_by_label = |label: &str| -> i32 {
@@ -6077,21 +7786,22 @@ fn cook_mdl(
             max_frames: spec.max_frames,
         };
         let spec = &spec;
-        let (anim_b, animindex, numframes): (&[u8], usize, usize) =
+        let (anim_b, animindex, numframes, fps): (&[u8], usize, usize, f32) =
             if spec.seq >= 0 && spec.seq < numseq {
                 let sd = seqindex + spec.seq as usize * 176;
                 let group = i(sd + 156) as usize;
                 let ai = i(sd + 124) as usize;
                 let nf = i(sd + 56).max(1) as usize;
+                let fps = f(sd + 32);
                 if group == 0 {
-                    (&b, ai, nf)
+                    (&b, ai, nf, fps)
                 } else if let Some(Some(gd)) = seqgroup_files.get(group) {
-                    (gd.as_slice(), ai, nf) // anim lives in <model>0N.mdl
+                    (gd.as_slice(), ai, nf, fps) // anim lives in <model>0N.mdl
                 } else {
-                    (&b, 0, 1) // seqgroup file missing -> bind pose
+                    (&b, 0, 1, fps) // seqgroup file missing -> bind pose
                 }
             } else {
-                (&b, 0, 1)
+                (&b, 0, 1, 10.0)
             };
         let nbake = if animindex == 0 {
             1
@@ -6113,8 +7823,8 @@ fn cook_mdl(
                 if animindex != 0 {
                     let at = animindex + bi * 12; // this bone's mstudioanim_t
                     for d in 0..6 {
-                        let off =
-                            u16::from_le_bytes([anim_b[at + d * 2], anim_b[at + d * 2 + 1]]) as usize;
+                        let off = u16::from_le_bytes([anim_b[at + d * 2], anim_b[at + d * 2 + 1]])
+                            as usize;
                         if off != 0 {
                             dof[d] = bm.value[d]
                                 + anim_value(anim_b, at + off, sframe) as f32 * bm.scale[d];
@@ -6144,6 +7854,7 @@ fn cook_mdl(
             frames.push(fv);
         }
         clips.push((clip_first, nbake.min(u16::MAX as usize) as u16));
+        clip_hold_quanta.push(mdl_sequence_hold_quanta(numframes, fps));
     }
     if floor_anchor_frames {
         // Seated models (sitting scientist) bake ONLY seated poses -- those must
@@ -6154,18 +7865,22 @@ fn cook_mdl(
         // canonical clips (idle/walk/attack/pain/death) feet-planted.
         let first_seq = specs
             .first()
-            .map(|s| if s.seq == -2 { seq_by_label(&s.name) } else { s.seq })
+            .map(|s| {
+                if s.seq == -2 {
+                    seq_by_label(&s.name)
+                } else {
+                    s.seq
+                }
+            })
             .unwrap_or(-1);
-        let seated = first_seq >= 0
-            && first_seq < numseq
-            && {
-                let sd = seqindex + first_seq as usize * 176;
-                let raw = &b[sd..sd + 32];
-                let end = raw.iter().position(|&c| c == 0).unwrap_or(32);
-                core::str::from_utf8(&raw[..end])
-                    .map(|n| n.to_ascii_lowercase().starts_with("sit"))
-                    .unwrap_or(false)
-            };
+        let seated = first_seq >= 0 && first_seq < numseq && {
+            let sd = seqindex + first_seq as usize * 176;
+            let raw = &b[sd..sd + 32];
+            let end = raw.iter().position(|&c| c == 0).unwrap_or(32);
+            core::str::from_utf8(&raw[..end])
+                .map(|n| n.to_ascii_lowercase().starts_with("sit"))
+                .unwrap_or(false)
+        };
         floor_anchor_mdl_frames(&mut frames, &clips, if seated { 0 } else { 5 });
     }
 
@@ -6247,8 +7962,44 @@ fn cook_mdl(
         }
     }
 
+    let source_n_verts = vp.len();
+    if source_n_verts > MDL_RUNTIME_VERTEX_LIMIT {
+        let source_n_tris = tri_idx.len() / 3;
+        let simplified = simplify_mdl_animated_mesh(
+            &frames,
+            &vbone,
+            &tri_idx,
+            &tri_tex,
+            &tri_uv,
+            &tri_norm,
+            MDL_SIMPLIFIED_VERTEX_TARGET,
+        );
+        let simplified_n_verts = simplified.frames[0].len();
+        let simplified_n_tris = simplified.tri_idx.len() / 3;
+        eprintln!(
+            "simplified oversized studio mesh: {} -> {} verts, {} -> {} tris (bone-local grid {} = {:.2} source units)",
+            source_n_verts,
+            simplified_n_verts,
+            source_n_tris,
+            simplified_n_tris,
+            simplified.grid_size,
+            simplified.grid_size as f32 / vertex_scale.max(1) as f32,
+        );
+        frames = simplified.frames;
+        tri_idx = simplified.tri_idx;
+        tri_tex = simplified.tri_tex;
+        tri_uv = simplified.tri_uv;
+        tri_norm = simplified.tri_norm;
+    }
+
     let n_tris = tri_idx.len() / 3;
-    let n_verts = vp.len();
+    // Keep the legacy count expression for ordinary models: simplification is
+    // deliberately absent from their output path, including all frame bytes.
+    let n_verts = if source_n_verts > MDL_RUNTIME_VERTEX_LIMIT {
+        frames[0].len()
+    } else {
+        source_n_verts
+    };
     // Same hard guarantee as the map cook: the runtime model walk trusts
     // every corner index and skips per-tri bounds checks.
     for &vi in &tri_idx {
@@ -6314,9 +8065,10 @@ fn cook_mdl(
         o.extend_from_slice(&(frame_data.len() as u32).to_le_bytes());
         o.extend_from_slice(&mdl_local_to_world_q12(vertex_scale).to_le_bytes());
         o.extend_from_slice(&0u16.to_le_bytes());
-        for (first, count) in &clips {
-            o.extend_from_slice(&first.to_le_bytes());
-            o.extend_from_slice(&count.to_le_bytes());
+        for ((first, count), hold_quanta) in clips.iter().zip(clip_hold_quanta.iter()) {
+            let (packed_first, packed_count) = mdl_pack_clip(*first, *count, *hold_quanta);
+            o.extend_from_slice(&packed_first.to_le_bytes());
+            o.extend_from_slice(&packed_count.to_le_bytes());
         }
         for (offset, mode, base_idx) in &frame_descs {
             o.extend_from_slice(&offset.to_le_bytes());
@@ -6334,9 +8086,10 @@ fn cook_mdl(
         o.extend_from_slice(&(frames.len() as u32).to_le_bytes());
         if multi_clip {
             o.extend_from_slice(&(clips.len() as u32).to_le_bytes());
-            for (first, count) in &clips {
-                o.extend_from_slice(&first.to_le_bytes());
-                o.extend_from_slice(&count.to_le_bytes());
+            for ((first, count), hold_quanta) in clips.iter().zip(clip_hold_quanta.iter()) {
+                let (packed_first, packed_count) = mdl_pack_clip(*first, *count, *hold_quanta);
+                o.extend_from_slice(&packed_first.to_le_bytes());
+                o.extend_from_slice(&packed_count.to_le_bytes());
             }
         }
         for fv in &frames {
@@ -6487,6 +8240,96 @@ mod tests {
         buf.extend_from_slice(&v.to_le_bytes());
     }
 
+    #[test]
+    fn retail_route_phrase_decode_matches_goldsrc() {
+        // c0a0e node zero: destinations 0..3 are direct, destinations 4..6
+        // all take node 3 as their first hop.
+        let (encoded, decoded) = retail_route_row(&[0xfc, 0x02, 0x03], 0, 7, 0).expect("route row");
+        assert_eq!(encoded, [0xfc, 0x02, 0x03]);
+        assert_eq!(decoded, [0, 1, 2, 3, 3, 3, 3]);
+        assert!(retail_route_row(&[0x02], 0, 7, 0).is_err());
+    }
+
+    #[test]
+    fn retail_nav_parser_repacks_and_deduplicates_human_routes() {
+        let n = 2usize;
+        let l = 2usize;
+        let route = [0xfeu8]; // both destinations are direct
+        let total = 4
+            + RETAIL_GRAPH_BYTES
+            + n * RETAIL_NODE_BYTES
+            + l * RETAIL_LINK_BYTES
+            + n * RETAIL_DIST_BYTES
+            + route.len();
+        let mut data = vec![0u8; total];
+        data[0..4].copy_from_slice(&RETAIL_GRAPH_VERSION.to_le_bytes());
+        data[12..16].copy_from_slice(&1i32.to_le_bytes()); // routing complete
+        data[28..32].copy_from_slice(&(n as i32).to_le_bytes());
+        data[32..36].copy_from_slice(&(l as i32).to_le_bytes());
+        data[36..40].copy_from_slice(&(route.len() as i32).to_le_bytes());
+        data[8388..8392].copy_from_slice(&0i32.to_le_bytes());
+
+        let nodes_off = 4 + RETAIL_GRAPH_BYTES;
+        for i in 0..n {
+            let o = nodes_off + i * RETAIL_NODE_BYTES;
+            let origin = [i as f32 * 64.0, 0.0, 0.0];
+            for (axis, value) in origin.into_iter().enumerate() {
+                data[o + axis * 4..o + axis * 4 + 4].copy_from_slice(&value.to_le_bytes());
+                data[o + 12 + axis * 4..o + 16 + axis * 4].copy_from_slice(&value.to_le_bytes());
+            }
+            data[o + 28..o + 32].copy_from_slice(&(NAV_NODE_LAND as i32).to_le_bytes());
+            data[o + 32..o + 36].copy_from_slice(&1i32.to_le_bytes());
+            data[o + 36..o + 40].copy_from_slice(&(i as i32).to_le_bytes());
+            data[o + RETAIL_NODE_HUMAN_DOOR_ROUTE..o + RETAIL_NODE_HUMAN_DOOR_ROUTE + 4]
+                .copy_from_slice(&0i32.to_le_bytes());
+        }
+        let links_off = nodes_off + n * RETAIL_NODE_BYTES;
+        for (i, (source, dest)) in [(0i32, 1i32), (1, 0)].into_iter().enumerate() {
+            let o = links_off + i * RETAIL_LINK_BYTES;
+            data[o..o + 4].copy_from_slice(&source.to_le_bytes());
+            data[o + 4..o + 8].copy_from_slice(&dest.to_le_bytes());
+            data[o + 16..o + 20].copy_from_slice(&RETAIL_LINK_HUMAN.to_le_bytes());
+        }
+        let route_off = links_off + l * RETAIL_LINK_BYTES + n * RETAIL_DIST_BYTES;
+        data[route_off..route_off + route.len()].copy_from_slice(&route);
+
+        let nav = parse_retail_nav(&data, &[], &[], 1.0).expect("retail nav");
+        assert_eq!(nav.nodes.len(), 2);
+        assert_eq!(nav.routes.as_deref(), Some(route.as_slice()));
+        assert_eq!(nav.nodes[0].route_offset, 0);
+        assert_eq!(nav.nodes[1].route_offset, 0, "identical rows share storage");
+        assert_eq!(nav.nodes[1].origin, [64, 0, 0]);
+    }
+
+    #[test]
+    fn world_pvs_count_comes_from_dmodel_not_leaf_lump() {
+        let mut models = vec![0u8; SZ_MODEL];
+        models[SZ_MODEL_VISLEAFS..SZ_MODEL_VISLEAFS + 4].copy_from_slice(&856i32.to_le_bytes());
+
+        assert_eq!(world_visleaf_count(&models, 1326).unwrap(), 856);
+        assert!(world_visleaf_count(&models, 800).is_err());
+    }
+
+    #[test]
+    fn hlmc_leaf_counts_pack_without_growing_bsp_header() {
+        let packed = pack_leaf_counts(1326, 856).unwrap();
+        assert_eq!(packed & 0xffff, 1326);
+        assert_eq!(packed >> 16, 856);
+        assert!(pack_leaf_counts(u16::MAX as usize + 1, 856).is_err());
+    }
+
+    #[test]
+    fn pvs_lookup_rejects_submodel_only_leaf_records() {
+        let mut leaves = vec![0u8; 4 * SZ_LEAF];
+        leaves[SZ_LEAF + SZ_LEAF_VISOFS..SZ_LEAF + SZ_LEAF_VISOFS + 4]
+            .copy_from_slice(&0i32.to_le_bytes());
+        let vis = [0b0000_0111];
+
+        assert!(leaf_row_sees(&leaves, &vis, 2, 1, 2));
+        assert!(!leaf_row_sees(&leaves, &vis, 2, 1, 3));
+        assert!(!leaf_row_sees(&leaves, &vis, 2, 3, 1));
+    }
+
     // The runtime recovers the model inflation factor as `4096 /
     // local_to_world_q12` and uses it to deflate translation/depth. That must
     // round-trip exactly to the cook's MDL_VERTEX_LOCAL_SCALE, or world-placed
@@ -6496,7 +8339,8 @@ mod tests {
         let q12 = mdl_local_to_world_q12(MDL_VERTEX_LOCAL_SCALE);
         let runtime_s = (4096 / q12 as i32).max(1);
         assert_eq!(runtime_s, MDL_VERTEX_LOCAL_SCALE);
-        assert!(quantize_mdl_coord(1.0, MDL_VERTEX_LOCAL_SCALE) == MDL_VERTEX_LOCAL_SCALE as i16); // ×s before rounding
+        assert!(quantize_mdl_coord(1.0, MDL_VERTEX_LOCAL_SCALE) == MDL_VERTEX_LOCAL_SCALE as i16);
+        // ×s before rounding
     }
 
     #[test]
@@ -6549,6 +8393,121 @@ mod tests {
     }
 
     #[test]
+    fn mdl_simplification_is_deterministic() {
+        let frame: Vec<[i16; 3]> = (0..33)
+            .map(|i| [(i * 3) as i16, (i % 5) as i16, (i % 3) as i16])
+            .collect();
+        let frames = vec![frame];
+        let bones = vec![0usize; 33];
+        let a = simplify_mdl_animated_mesh(&frames, &bones, &[], &[], &[], &[], 12);
+        let b = simplify_mdl_animated_mesh(&frames, &bones, &[], &[], &[], &[], 12);
+
+        assert_eq!(a, b);
+        assert!(a.grid_size > 0);
+    }
+
+    #[test]
+    fn mdl_simplification_keeps_triangle_metadata_aligned() {
+        let frames = vec![vec![
+            [0, 0, 0],
+            [0, 0, 0],
+            [10, 0, 0],
+            [10, 10, 0],
+            [0, 10, 0],
+            [20, 20, 5],
+        ]];
+        let simplified = simplify_mdl_animated_mesh(
+            &frames,
+            &[0; 6],
+            &[0, 1, 2, 2, 3, 4],
+            &[7, 9],
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            &[[1, 2, 3], [4, 5, 6]],
+            5,
+        );
+
+        assert_eq!(simplified.tri_idx, [1, 2, 3]);
+        assert_eq!(simplified.tri_tex, [9]);
+        assert_eq!(simplified.tri_uv, [6, 7, 8, 9, 10, 11]);
+        assert_eq!(simplified.tri_norm, [[0, 0, 127]]);
+    }
+
+    #[test]
+    fn mdl_simplification_averages_every_baked_frame() {
+        let frames = vec![
+            vec![[0, 0, 0], [0, 0, 0], [10, 0, 0], [20, 0, 0]],
+            vec![[1, -2, 0], [4, -3, 0], [12, 1, 0], [24, 2, 0]],
+        ];
+        let simplified = simplify_mdl_animated_mesh(&frames, &[0; 4], &[], &[], &[], &[], 3);
+
+        assert_eq!(simplified.frames[0], [[0, 0, 0], [10, 0, 0], [20, 0, 0]]);
+        assert_eq!(simplified.frames[1], [[3, -3, 0], [12, 1, 0], [24, 2, 0]]);
+    }
+
+    #[test]
+    fn mdl_simplification_reaches_ps1_headroom_target() {
+        let frame: Vec<[i16; 3]> = (0..1025)
+            .map(|i| [i as i16, (i % 17) as i16, (i % 11) as i16])
+            .collect();
+        let simplified = simplify_mdl_animated_mesh(
+            &[frame],
+            &vec![0usize; 1025],
+            &[],
+            &[],
+            &[],
+            &[],
+            MDL_SIMPLIFIED_VERTEX_TARGET,
+        );
+
+        assert!(simplified.frames[0].len() <= MDL_SIMPLIFIED_VERTEX_TARGET);
+        assert!(simplified.frames[0].len() < 1025);
+    }
+
+    #[test]
+    fn mdl_simplification_is_exact_noop_at_target() {
+        let frames = vec![vec![[0, 0, 0], [8, 0, 0], [0, 8, 0]]];
+        let simplified = simplify_mdl_animated_mesh(
+            &frames,
+            &[0; 3],
+            &[0, 1, 2],
+            &[4],
+            &[1, 2, 3, 4, 5, 6],
+            &[[7, 8, 9]],
+            3,
+        );
+
+        assert_eq!(simplified.frames, frames);
+        assert_eq!(simplified.tri_idx, [0, 1, 2]);
+        assert_eq!(simplified.tri_tex, [4]);
+        assert_eq!(simplified.tri_uv, [1, 2, 3, 4, 5, 6]);
+        assert_eq!(simplified.tri_norm, [[7, 8, 9]]);
+        assert_eq!(simplified.grid_size, 0);
+    }
+
+    #[test]
+    fn model_clip_record_packs_source_duration_without_growing() {
+        let quanta = mdl_sequence_hold_quanta(61, 16.0);
+        assert_eq!(quanta, 38, "intropush is 3.75 seconds, rounded to 3.8");
+        let (first, count) = mdl_pack_clip(7, 2, quanta);
+        assert_eq!(first, 7);
+        assert_eq!(count & MDL_CLIP_FRAME_COUNT_MASK, 2);
+        assert_eq!(count >> 8, 38);
+        assert_eq!(core::mem::size_of_val(&(first, count)), 4);
+    }
+
+    #[test]
+    fn model_clip_record_extends_loader_duration_without_growing() {
+        let quanta = mdl_sequence_hold_quanta(501, 15.0);
+        assert_eq!(quanta, 334, "rampwalk is 33.33 seconds, rounded to 33.4");
+        let (first, count) = mdl_pack_clip(11, 8, quanta);
+        assert_eq!(first & MDL_CLIP_FIRST_FRAME_MASK, 11);
+        assert_ne!(first & MDL_CLIP_DURATION_EXT_BIT, 0);
+        assert_eq!(count & MDL_CLIP_FRAME_COUNT_MASK, 8);
+        assert_eq!((count >> 8) | 0x100, 334);
+        assert_eq!(core::mem::size_of_val(&(first, count)), 4);
+    }
+
+    #[test]
     fn entity_leafs_split_by_bsp_plane() {
         let mut planes = Vec::new();
         planes.extend_from_slice(&1.0f32.to_le_bytes());
@@ -6585,6 +8544,41 @@ mod tests {
 
         assert_eq!(point_leaf([8.0, 0.0, 0.0], &nodes, &planes), 1);
         assert_eq!(point_leaf([-8.0, 0.0, 0.0], &nodes, &planes), 2);
+    }
+
+    #[test]
+    fn func_train_leafs_use_corner_minus_model_center_and_swept_bounds() {
+        let mut planes = Vec::new();
+        planes.extend_from_slice(&1.0f32.to_le_bytes());
+        planes.extend_from_slice(&0.0f32.to_le_bytes());
+        planes.extend_from_slice(&0.0f32.to_le_bytes());
+        planes.extend_from_slice(&50.0f32.to_le_bytes());
+        planes.extend_from_slice(&0i32.to_le_bytes());
+
+        let mut nodes = Vec::new();
+        nodes.extend_from_slice(&0i32.to_le_bytes());
+        nodes.extend_from_slice(&(-2i16).to_le_bytes());
+        nodes.extend_from_slice(&(-3i16).to_le_bytes());
+        nodes.resize(SZ_NODE, 0);
+
+        let ents = r#"
+        { "classname" "func_train" "target" "a" }
+        { "classname" "path_corner" "targetname" "a" "target" "b" "origin" "10 0 0" }
+        { "classname" "path_corner" "targetname" "b" "origin" "20 0 0" }
+        "#;
+        // This model was authored at x=100..120 (center 110), but its live
+        // center travels 10..20. Correct swept bounds are x=0..30: back leaf.
+        let train = ents.split('{').nth(1).unwrap();
+        let leaves = func_train_leafs(
+            ents,
+            train,
+            [100.0, -1.0, -1.0],
+            [120.0, 1.0, 1.0],
+            [0.0; 3],
+            &nodes,
+            &planes,
+        );
+        assert_eq!(leaves, vec![2]);
     }
 
     #[test]
@@ -6699,7 +8693,15 @@ mod tests {
         "m_iszNewTarget" "door_b"
         }
         "#;
-        let logic = collect_logic_entities(ents, &[], &[], 1.0, &Default::default());
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
 
         assert_eq!(logic.ents.len(), 2);
         assert_eq!(logic.ents[0].kind, LOGIC_TRIGGER_COUNTER);
@@ -6721,7 +8723,15 @@ mod tests {
         "origin" "10 20 30"
         }
         "#;
-        let logic = collect_logic_entities(ents, &[], &[], 1.0, &Default::default());
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
 
         assert_eq!(logic.ents.len(), 1);
         assert_eq!(logic.ents[0].kind, LOGIC_ITEM_BATTERY);
@@ -6741,7 +8751,15 @@ mod tests {
         "damage" "12"
         }
         "#;
-        let logic = collect_logic_entities(ents, &[], &[], 1.0, &Default::default());
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
 
         assert_eq!(logic.ents.len(), 1);
         assert_eq!(logic.ents[0].kind, LOGIC_TRIGGER_HURT);
@@ -6761,7 +8779,15 @@ mod tests {
         "startspeed" "50"
         }
         "#;
-        let logic = collect_logic_entities(ents, &[], &[], 1.0, &Default::default());
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
 
         assert_eq!(logic.ents.len(), 1);
         assert_eq!(logic.ents[0].kind, LOGIC_FUNC_TRACKTRAIN);
@@ -6769,6 +8795,685 @@ mod tests {
         assert_eq!(logic.ents[0].speed, 300);
         assert_eq!(logic.ents[0].arg0, 50);
         assert_eq!(logic.ents[0].arg1, 12);
+    }
+
+    #[test]
+    fn multi_manager_strips_duplicate_key_suffixes_like_goldsrc() {
+        let ents = br#"
+        {
+        "classname" "multi_manager"
+        "targetname" "pausemm"
+        "train" "0"
+        "train#1" "5"
+        }
+        "#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
+
+        assert_eq!(logic.ents.len(), 1);
+        let manager = &logic.ents[0];
+        assert_eq!(manager.kind, LOGIC_MULTI_MANAGER);
+        assert_eq!(manager.aux_count, 2);
+        let first = &logic.aux[manager.first_aux as usize];
+        let second = &logic.aux[manager.first_aux as usize + 1];
+        assert_eq!(first.target, second.target);
+        assert_eq!(logic.names[first.target as usize - 1], "train");
+        assert_eq!(first.delay_ticks, 0);
+        assert_eq!(second.delay_ticks, 100);
+    }
+
+    #[test]
+    fn multisource_registers_direct_sources_then_each_matching_manager_once() {
+        let ents = br#"
+        { "classname" "trigger_relay" "targetname" "direct" "target" "gate" }
+        { "classname" "multi_manager" "targetname" "manager"
+          "gate" "0.5" "gate#1" "1.0" }
+        { "classname" "multisource" "targetname" "gate" "target" "done" }
+        "#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
+
+        let ms = logic
+            .ents
+            .iter()
+            .find(|rec| rec.kind == LOGIC_MULTISOURCE)
+            .expect("multisource");
+        assert_eq!(ms.arg0, 2);
+        assert_eq!(ms.aux_count, 2);
+        let members: Vec<u16> = (0..ms.aux_count as usize)
+            .map(|i| logic.aux[ms.first_aux as usize + i].target)
+            .collect();
+        assert_eq!(members, vec![0, 1], "direct relay, then one manager");
+
+        let manager = &logic.ents[1];
+        assert_eq!(manager.kind, LOGIC_MULTI_MANAGER);
+        assert_eq!(manager.aux_count, 2, "duplicate outputs remain timed");
+        assert_eq!(
+            logic.aux[manager.first_aux as usize].target,
+            logic.aux[manager.first_aux as usize + 1].target
+        );
+    }
+
+    #[test]
+    fn multisource_rejects_required_source_that_was_not_cooked() {
+        let ents = br#"
+        { "classname" "info_target" "targetname" "marker" "target" "gate" }
+        { "classname" "multisource" "targetname" "gate" "target" "done" }
+        "#;
+        let err = collect_logic_entities(
+            ents,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .err()
+        .expect("uncooked source must fail");
+        assert!(err.contains("uncooked direct source"), "{err}");
+    }
+
+    #[test]
+    fn multisource_rejects_more_than_32_members() {
+        let mut ents = String::new();
+        for i in 0..33 {
+            ents.push_str(&format!(
+                "{{ \"classname\" \"trigger_relay\" \"targetname\" \"r{i}\" \"target\" \"gate\" }}\n"
+            ));
+        }
+        ents.push_str(
+            "{ \"classname\" \"multisource\" \"targetname\" \"gate\" \"target\" \"done\" }",
+        );
+        let err = collect_logic_entities(
+            ents.as_bytes(),
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .err()
+        .expect("33-member source must fail");
+        assert!(err.contains("limit is 32"), "{err}");
+    }
+
+    #[test]
+    fn cooks_secondary_tracktrain_path_events_and_dead_end() {
+        let ents = br#"
+        { "classname" "func_tracktrain" "model" "*1" "targetname" "forktruck" "target" "f1" "speed" "150" "height" "4" }
+        { "classname" "path_track" "targetname" "f1" "target" "f2" "origin" "10 20 30" }
+        { "classname" "path_track" "targetname" "f2" "target" "f3" "origin" "40 50 60" "message" "gate1mm" "speed" "200" }
+        { "classname" "path_track" "targetname" "f3" "origin" "70 80 90" "netname" "done_mm" }
+        "#;
+        let brush_by_submodel = [LOGIC_BRUSH_NONE, 7];
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &brush_by_submodel,
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
+
+        assert_eq!(logic.ents.len(), 1);
+        let train = &logic.ents[0];
+        assert_eq!(train.kind, LOGIC_FUNC_TRACKTRAIN);
+        assert_eq!(train.brush, 7);
+        assert_eq!(train.aux_count, 9, "three path nodes use aux triples");
+        assert_eq!(
+            (logic.aux[0].target as i16, logic.aux[0].delay_ticks as i16),
+            (10, 34),
+            "HL z=30 plus height=4 becomes world y=34"
+        );
+        assert_eq!(logic.aux[5].delay_ticks, 200);
+        assert_eq!(logic.names[logic.aux[5].target as usize - 1], "gate1mm");
+        assert_eq!(logic.names[train.target as usize - 1], "done_mm");
+    }
+
+    #[test]
+    fn shared_track_fireonce_message_has_one_owner() {
+        let ents = br#"
+        { "classname" "func_tracktrain" "model" "*1" "targetname" "fork1" "target" "f1" "speed" "150" }
+        { "classname" "func_tracktrain" "model" "*2" "targetname" "fork2" "target" "f1" "speed" "150" }
+        { "classname" "path_track" "targetname" "f1" "target" "f2" "origin" "0 0 0" }
+        { "classname" "path_track" "targetname" "f2" "origin" "100 0 0" "message" "gate_once" "spawnflags" "2" }
+        "#;
+        let brush_by_submodel = [LOGIC_BRUSH_NONE, 3, 4];
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &brush_by_submodel,
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
+
+        assert_eq!(logic.ents.len(), 2);
+        let first_pass = logic.aux[logic.ents[0].first_aux as usize + 5].target;
+        let second_pass = logic.aux[logic.ents[1].first_aux as usize + 5].target;
+        assert_ne!(first_pass, 0);
+        assert_eq!(second_pass, 0, "shared FIREONCE node must not be copied");
+    }
+
+    #[test]
+    fn tram_terminal_netname_becomes_final_pass() {
+        let ents = br#"
+        { "classname" "func_tracktrain" "model" "*2" "targetname" "train" "target" "lower1" "speed" "300" }
+        { "classname" "path_track" "targetname" "lower1" "target" "lower2" "origin" "0 0 0" }
+        { "classname" "path_track" "targetname" "lower2" "origin" "100 0 0" "netname" "levelchangetoemm" }
+        "#;
+        let (_, _, _, _, way, _) = collect_tram(ents, 1.0);
+
+        assert_eq!(way.len(), 2);
+        assert_eq!(way[1].2, "levelchangetoemm");
+    }
+
+    #[test]
+    fn tram_prepends_unique_predecessors_but_preserves_authored_start_and_height() {
+        let ents = br#"
+        { "classname" "path_track" "targetname" "stop16" "target" "stop17" "origin" "-2525 -1476 0" }
+        { "classname" "path_track" "targetname" "stop17" "target" "stop18" "origin" "-2222 -1476 0" }
+        { "classname" "path_track" "targetname" "stop18" "target" "stop27" "origin" "-1999 -1476 0" }
+        { "classname" "path_track" "targetname" "stop27" "target" "stop28" "origin" "0 -876 0" }
+        { "classname" "path_track" "targetname" "stop28" "origin" "0 -592 0" }
+        { "classname" "func_tracktrain" "model" "*24" "target" "stop27" "speed" "300" "height" "4" }
+        "#;
+        let (model, speed, start, wheels, way, _) = collect_tram(ents, 1.0);
+
+        assert_eq!((model, speed, start, way.len()), (24, 300, 3, 5));
+        assert_eq!(wheels, 100);
+        assert_eq!(pack_tram_motion(speed, start as usize, wheels), 0x80c6_412c);
+        assert_eq!(way[0].0, [-2525, 4, -1476]);
+        assert_eq!(way[1].0, [-2222, 4, -1476]);
+        assert_eq!(way[start as usize].0, [0, 4, -876]);
+        assert_eq!(way[4].0, [0, 4, -592]);
+    }
+
+    #[test]
+    fn c0a0b_tram_cooks_incoming_upper_rail_and_timed_autochange_descent() {
+        let ents = br#"
+        { "classname" "path_track" "targetname" "trainstop55" "target" "trainstop56" "origin" "-2022 3138 -473" }
+        { "classname" "path_track" "targetname" "trainstop56" "target" "upper1" "origin" "-3200 3138 -473" }
+        { "classname" "path_track" "targetname" "upper1" "netname" "goingdown" "speed" "0" "origin" "-3543 3138 -473" }
+        { "classname" "func_trackautochange" "targetname" "goingdown" "toptrack" "upper1" "bottomtrack" "lower1" "train" "train" "speed" "100" "height" "1271" }
+        { "classname" "path_track" "targetname" "lower1" "target" "lower2" "speed" "0" "origin" "-3543 2946 -1744" }
+        { "classname" "path_track" "targetname" "lower2" "target" "lower3" "speed" "0" "origin" "-3543 2782 -1744" }
+        { "classname" "path_track" "targetname" "lower3" "target" "lower4" "speed" "0" "origin" "-3498 2698 -1744" }
+        { "classname" "path_track" "targetname" "lower4" "target" "lower5" "speed" "0" "origin" "-3405 2625 -1744" }
+        { "classname" "path_track" "targetname" "lower5" "target" "lower6" "speed" "300" "origin" "-3279 2570 -1744" }
+        { "classname" "path_track" "targetname" "lower6" "target" "lower7" "speed" "400" "origin" "-3120 2526 -1744" }
+        { "classname" "path_track" "targetname" "lower7" "target" "lower8" "speed" "450" "origin" "-2944 2504 -1744" }
+        { "classname" "path_track" "targetname" "lower8" "target" "lower9" "speed" "500" "origin" "-2752 2504 -1744" }
+        { "classname" "path_track" "targetname" "lower9" "target" "lower10" "speed" "0" "origin" "-2050 2504 -1744" }
+        { "classname" "path_track" "targetname" "lower10" "target" "lower11" "speed" "0" "origin" "-1062 2504 -1744" }
+        { "classname" "path_track" "targetname" "lower11" "target" "lower12" "speed" "0" "origin" "-72 2504 -1744" }
+        { "classname" "path_track" "targetname" "lower12" "target" "lower13" "speed" "0" "origin" "928 2504 -1744" }
+        { "classname" "path_track" "targetname" "lower13" "target" "lower14" "speed" "400" "origin" "1920 2504 -1749" }
+        { "classname" "path_track" "targetname" "lower14" "target" "lower15" "speed" "330" "origin" "2256 2504 -1749" }
+        { "classname" "path_track" "targetname" "lower15" "target" "lower16" "speed" "0" "origin" "2432 2458 -1749" }
+        { "classname" "path_track" "targetname" "lower16" "target" "lower17" "speed" "0" "origin" "2580 2356 -1749" }
+        { "classname" "path_track" "targetname" "lower17" "target" "lower18" "speed" "0" "origin" "2697 2217 -1749" }
+        { "classname" "path_track" "targetname" "lower18" "target" "lower19" "speed" "0" "origin" "2736 2041 -1749" }
+        { "classname" "path_track" "targetname" "lower19" "target" "lower20" "speed" "0" "origin" "2736 1730 -1749" }
+        { "classname" "path_track" "targetname" "lower20" "target" "lower20a" "speed" "0" "origin" "2736 1674 -1749" }
+        { "classname" "path_track" "targetname" "lower20a" "target" "lower28" "message" "helirun1" "speed" "0" "origin" "2751 1398 -1749" }
+        { "classname" "path_track" "targetname" "lower28" "target" "lower29a" "message" "scatter" "speed" "300" "origin" "2857 -1000 -1748" }
+        { "classname" "path_track" "targetname" "lower29a" "target" "lower29" "speed" "200" "origin" "2891 -2237 -1748" }
+        { "classname" "path_track" "targetname" "lower29" "target" "lower30" "speed" "150" "origin" "2868 -2324 -1748" }
+        { "classname" "path_track" "targetname" "lower30" "target" "lower31" "speed" "0" "origin" "2767 -2481 -1748" }
+        { "classname" "path_track" "targetname" "lower31" "target" "lower32" "message" "mountain1" "speed" "0" "origin" "2608 -2579 -1748" }
+        { "classname" "path_track" "targetname" "lower32" "target" "lower33" "speed" "0" "origin" "2427 -2620 -1748" }
+        { "classname" "path_track" "targetname" "lower33" "target" "lower34" "message" "connectionmm" "speed" "100" "origin" "1192 -2620 -1748" }
+        { "classname" "path_track" "targetname" "lower34" "target" "lower34a" "message" "train" "speed" "0" "origin" "1143 -2620 -1748" }
+        { "classname" "path_track" "targetname" "lower34a" "target" "lower35" "speed" "100" "origin" "1134 -2620 -1748" }
+        { "classname" "path_track" "targetname" "lower35" "target" "lower36" "message" "connection2mm" "speed" "0" "origin" "-43 -2620 -1748" }
+        { "classname" "path_track" "targetname" "lower36" "target" "lower37" "message" "transitionmm" "netname" "transitionmm" "speed" "0" "origin" "-95 -2620 -1748" }
+        { "classname" "path_track" "targetname" "lower37" "speed" "0" "origin" "-117 -2620 -1748" }
+        { "classname" "func_tracktrain" "model" "*15" "globalname" "intro_train" "targetname" "train" "target" "lower19" "speed" "300" "height" "4" "spawnflags" "3" }
+        "#;
+        let (model, speed, start, wheels, way, _) = collect_tram(ents, 1.0);
+
+        assert_eq!((model, speed, start, way.len()), (15, 300, 22, 37));
+        assert_eq!(wheels, 100);
+        assert_eq!(way[0].0, [-2022, -469, 3138]);
+        assert_eq!(way[1].0, [-3200, -469, 3138]);
+        assert_eq!(way[2], ([-3543, -469, 3138], 100, "goingdown".into()));
+        assert_eq!(way[3], ([-3543, -1740, 3138], 300, String::new()));
+        assert_eq!(way[4].0, [-3543, -1740, 2946]);
+        assert_eq!(way[start as usize].0, [2736, -1745, 1730]);
+        assert_eq!(way.last().map(|entry| entry.0), Some([-117, -1744, -2620]));
+        assert_eq!(
+            way.iter()
+                .filter(|entry| entry.0 == [-3543, -469, 3138])
+                .count(),
+            1,
+            "upper1 belongs at the incoming head, never after lower37"
+        );
+    }
+
+    #[test]
+    fn tram_predecessor_walk_stops_at_ambiguous_fork_and_circular_track() {
+        let fork = br#"
+        { "classname" "path_track" "targetname" "left" "target" "start" "origin" "-10 0 0" }
+        { "classname" "path_track" "targetname" "right" "target" "start" "origin" "10 0 0" }
+        { "classname" "path_track" "targetname" "start" "target" "end" "origin" "0 0 0" }
+        { "classname" "path_track" "targetname" "end" "origin" "0 100 0" }
+        { "classname" "func_tracktrain" "model" "*1" "target" "start" }
+        "#;
+        let (_, _, fork_start, _, fork_way, _) = collect_tram(fork, 1.0);
+        assert_eq!(fork_start, 0, "an ambiguous upstream branch is not guessed");
+        assert_eq!(fork_way.len(), 2);
+
+        let cycle = br#"
+        { "classname" "path_track" "targetname" "a" "target" "b" "origin" "0 0 0" }
+        { "classname" "path_track" "targetname" "b" "target" "c" "origin" "100 0 0" }
+        { "classname" "path_track" "targetname" "c" "target" "a" "origin" "200 0 0" }
+        { "classname" "func_tracktrain" "model" "*1" "target" "a" }
+        "#;
+        let (_, _, cycle_start, _, cycle_way, _) = collect_tram(cycle, 1.0);
+        assert_eq!(cycle_start, 0, "a cycle retains the authored start");
+        assert_eq!(cycle_way.len(), 3, "one authored A,B,C lap is retained");
+        assert_eq!(cycle_way[0].0, [0, 0, 0]);
+        assert_eq!(cycle_way[1].0, [100, 0, 0]);
+        assert_eq!(cycle_way[2].0, [200, 0, 0]);
+    }
+
+    #[test]
+    fn tram_trackchange_predecessor_preserves_unique_cycle_and_rejects_ambiguity() {
+        let unique_cycle = br#"
+        { "classname" "path_track" "targetname" "upper" "origin" "0 0 100" "netname" "drop" }
+        { "classname" "path_track" "targetname" "lower" "target" "end" "origin" "0 50 0" }
+        { "classname" "path_track" "targetname" "end" "origin" "100 50 0" }
+        { "classname" "func_trackautochange" "toptrack" "upper" "bottomtrack" "lower" "speed" "20" }
+        { "classname" "func_tracktrain" "model" "*1" "target" "lower" "speed" "60" }
+        "#;
+        let (_, _, start, _, way, _) = collect_tram(unique_cycle, 1.0);
+        assert_eq!((start, way.len()), (2, 4));
+        assert_eq!(way[0], ([0, 100, 0], 20, "drop".into()));
+        assert_eq!(way[1], ([0, 0, 0], 60, String::new()));
+        assert_eq!(way[2].0, [0, 0, 50]);
+        assert_eq!(way[3].0, [100, 0, 50]);
+
+        let ambiguous = br#"
+        { "classname" "path_track" "targetname" "upper_left" "origin" "-10 0 100" }
+        { "classname" "path_track" "targetname" "upper_right" "origin" "10 0 100" }
+        { "classname" "path_track" "targetname" "lower" "target" "end" "origin" "0 0 0" }
+        { "classname" "path_track" "targetname" "end" "origin" "0 100 0" }
+        { "classname" "func_trackchange" "toptrack" "upper_left" "bottomtrack" "lower" }
+        { "classname" "func_trackchange" "toptrack" "upper_right" "bottomtrack" "lower" }
+        { "classname" "func_tracktrain" "model" "*1" "target" "lower" "speed" "60" }
+        "#;
+        let (_, _, start, _, way, _) = collect_tram(ambiguous, 1.0);
+        assert_eq!(start, 0, "ambiguous implicit predecessors are not guessed");
+        assert_eq!(way.len(), 2, "forward stitching also rejects the fork");
+        assert_eq!(way[0].0, [0, 0, 0]);
+        assert_eq!(way[1].0, [0, 0, 100]);
+    }
+
+    #[test]
+    fn tram_predecessor_budget_falls_back_to_authored_start() {
+        let mut ents = String::new();
+        for i in 0..260 {
+            let target = if i + 1 < 260 {
+                format!(" \"target\" \"p{}\"", i + 1)
+            } else {
+                String::new()
+            };
+            ents.push_str(&format!(
+                "{{ \"classname\" \"path_track\" \"targetname\" \"p{i}\"{target} \"origin\" \"{i} 0 0\" }}\n"
+            ));
+        }
+        ents.push_str("{ \"classname\" \"func_tracktrain\" \"model\" \"*1\" \"target\" \"p259\" }");
+
+        let (_, _, start, _, way, _) = collect_tram(ents.as_bytes(), 1.0);
+        assert_eq!(start, 0);
+        assert_eq!(way.len(), 1, "oversized prefixes use authored-first order");
+        assert_eq!(way[0].0, [259, 0, 0]);
+    }
+
+    #[test]
+    fn secondary_tracktrain_brush_is_retained_but_player_tram_is_not() {
+        let ents = br#"
+        { "classname" "func_tracktrain" "model" "*1" "targetname" "forktruck" "target" "f1" }
+        { "classname" "func_tracktrain" "model" "*2" "targetname" "train" "target" "main1" }
+        "#;
+        let models = vec![0u8; 3 * SZ_MODEL];
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0, 2);
+
+        assert_eq!(cooked.len(), 1);
+        assert_eq!(cooked[0].submodel, 1);
+    }
+
+    #[test]
+    fn actor_carry_ids_are_stable_and_namespaced() {
+        let ordinary = actor_carry_id("Barney1", false);
+        assert_eq!(ordinary, actor_carry_id(" barney1 ", false));
+        assert_ne!(ordinary, 0);
+        assert_eq!(ordinary & CARRY_GLOBAL_BIT, 0);
+        assert_eq!(actor_carry_id("barney1", true), ordinary | CARRY_GLOBAL_BIT);
+        assert_ne!(actor_carry_id("barney1", true), u16::MAX);
+        assert_eq!(actor_carry_id("", false), 0);
+    }
+
+    #[test]
+    fn absent_transition_actor_is_not_synthesized_on_direct_load() {
+        let names = vec!["barney1".to_string()];
+        let props = collect_props(b"", &[], &[], 1.0, &names);
+        assert!(props.is_empty());
+    }
+
+    #[test]
+    fn prop_carry_ids_include_live_actors_and_exclude_sdk_non_carries() {
+        let ents = br#"
+        { "classname" "monster_barney" "targetname" "barney1" }
+        { "classname" "monster_apache" "globalname" "apache1" }
+        { "classname" "monster_tentacle" "targetname" "tentacle1" }
+        { "classname" "monster_barney_dead" "targetname" "dead_barney" }
+        { "classname" "item_suit" "targetname" "suit1" }
+        "#;
+        let names = vec!["barney1".to_string()];
+        let props = collect_props(ents, &[], &[], 1.0, &names);
+
+        assert_eq!(props.len(), 5);
+        assert_eq!(props[0].5, actor_carry_id("barney1", false));
+        assert_eq!(props[1].5, actor_carry_id("apache1", true));
+        assert_eq!(props[1].5 & CARRY_GLOBAL_BIT, CARRY_GLOBAL_BIT);
+        assert_eq!(props[2].5, 0, "tentacle lacks ACROSS_TRANSITION");
+        assert_eq!(props[3].5, 0, "authored corpses are map-local");
+        assert_eq!(props[4].5, 0, "items use their own player inventory path");
+    }
+
+    #[test]
+    fn trigger_transition_cooks_landmark_and_brush_bounds_without_entrec() {
+        let ents = br#"
+        { "classname" "trigger_transition" "model" "*1"
+          "targetname" "c0a0dtoe" "origin" "10 20 30" }
+        "#;
+        let mut models = vec![0u8; 2 * SZ_MODEL];
+        for (offset, value) in [
+            (0usize, -1.0f32),
+            (4, -2.0),
+            (8, -3.0),
+            (12, 4.0),
+            (16, 5.0),
+            (20, 6.0),
+        ] {
+            let at = SZ_MODEL + offset;
+            models[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let logic = collect_logic_entities(
+            ents,
+            &models,
+            &[LOGIC_BRUSH_NONE; 2],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
+
+        assert_eq!(logic.ents.len(), 1);
+        let rec = &logic.ents[0];
+        assert_eq!(rec.kind, LOGIC_TRIGGER_TRANSITION);
+        assert_eq!(logic.names[rec.targetname as usize - 1], "c0a0dtoe");
+        assert_eq!(rec.mins, [9, 27, 18]);
+        assert_eq!(rec.maxs, [14, 36, 25]);
+        assert_eq!(rec.brush, LOGIC_BRUSH_NONE);
+    }
+
+    #[test]
+    fn changelevel_cooks_destination_target_and_delay_as_one_aux_record() {
+        let ents = br#"
+        { "classname" "trigger_changelevel" "model" "*1"
+          "map" "c1a2" "landmark" "c1a1ctoc1a2"
+          "changetarget" "EleStartMM" "changedelay" "1.25" }
+        "#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[LOGIC_BRUSH_NONE; 2],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("changelevel cook");
+
+        let rec = &logic.ents[0];
+        assert_eq!(rec.kind, LOGIC_TRIGGER_CHANGELEVEL);
+        assert_eq!(rec.aux_count, 1);
+        let post = &logic.aux[rec.first_aux as usize];
+        assert_eq!(logic.names[post.target as usize - 1], "EleStartMM");
+        assert_eq!(post.delay_ticks, 25);
+    }
+
+    #[test]
+    fn door_netname_cooks_as_close_only_aux_output() {
+        let ents = br#"
+        { "classname" "func_door" "model" "*1" "target" "opened_or_closed"
+          "netname" "eledoordelaymm" }
+        "#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[LOGIC_BRUSH_NONE, 3],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("door close target cook");
+
+        let door = &logic.ents[0];
+        assert_eq!(door.kind, LOGIC_FUNC_DOOR);
+        assert_eq!(door.aux_count, 1);
+        let close = &logic.aux[door.first_aux as usize];
+        assert_eq!(logic.names[close.target as usize - 1], "eledoordelaymm");
+    }
+
+    #[test]
+    fn only_instant_auto_script_repositions_actor_at_cook() {
+        let ents = br#"
+        { "classname" "monster_barney" "targetname" "walker" "origin" "1 2 3" }
+        { "classname" "scripted_sequence" "m_iszEntity" "walker" "m_fMoveTo" "1" "origin" "10 20 30" }
+        { "classname" "monster_barney" "targetname" "teleporter" "origin" "4 5 6" }
+        { "classname" "scripted_sequence" "m_iszEntity" "teleporter" "m_fMoveTo" "4" "origin" "40 50 60" }
+        "#;
+        let names = vec!["walker".to_string(), "teleporter".to_string()];
+        let props = collect_props(ents, &[], &[], 1.0, &names);
+
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0].1, [1, 3, 2], "walk script keeps source spawn");
+        assert_eq!(props[1].1, [40, 60, 50], "MoveTo=4 teleports to mark");
+    }
+
+    #[test]
+    fn cooks_scripted_move_mode_from_goldsrc_key() {
+        let ents = br#"
+        {
+        "classname" "scripted_sequence"
+        "targetname" "forklift_path"
+        "m_iszEntity" "forklift_actor"
+        "m_fMoveTo" "2"
+        "origin" "10 20 30"
+        }
+        "#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
+
+        assert_eq!(logic.ents.len(), 1);
+        assert_eq!(logic.ents[0].kind, LOGIC_SCRIPTED);
+        assert_eq!(logic.ents[0].arg1, 2, "m_fMoveTo=2 must cook as run");
+        assert_eq!(
+            logic.names[logic.ents[0].arg0 as usize - 1],
+            "forklift_actor"
+        );
+    }
+
+    #[test]
+    fn targeted_scripted_idle_primes_even_when_the_clip_is_not_baked() {
+        let ents = br#"
+        {
+        "classname" "scripted_sequence"
+        "targetname" "vent_pull"
+        "m_iszEntity" "vent_pull_sci"
+        "m_fMoveTo" "4"
+        "m_iszIdle" "ceiling_dangle"
+        "m_iszPlay" "ceiling_dangle"
+        "origin" "-493 -725 -72"
+        }
+        { "classname" "monster_scientist" "targetname" "vent_pull_sci" }
+        "#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("targeted idle cook");
+
+        let rec = &logic.ents[0];
+        assert_eq!(rec.kind, LOGIC_SCRIPTED);
+        assert_ne!(rec.flags & LOGIC_SCRIPTED_HAS_IDLE, 0);
+        assert_eq!(rec.flags & !LOGIC_SCRIPTED_HAS_IDLE, 0);
+        assert_eq!(rec.aux_count, 0, "missing clip must not suppress priming");
+    }
+
+    #[test]
+    fn cooks_c1a0c_class_retinal_selector_radius_and_completion_links() {
+        let ents = br#"
+        {
+        "classname" "scripted_sequence"
+        "targetname" "control_retinal1"
+        "m_iszEntity" "monster_scientist"
+        "m_flRadius" "150"
+        "m_fMoveTo" "1"
+        "spawnflags" "32"
+        "killtarget" "trigger_for_retinal"
+        "target" "control_retinal1mm"
+        "origin" "784 278 -144"
+        }
+        "#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("retinal script cook");
+
+        let rec = &logic.ents[0];
+        assert_eq!(rec.kind, LOGIC_SCRIPTED);
+        assert_eq!(rec.flags, 1, "scientist type zero is encoded as selector 1");
+        assert_eq!(
+            rec.wait_ticks, 150,
+            "m_flRadius reuses the script wait word"
+        );
+        assert_eq!(rec.spawnflags, 32);
+        assert_eq!(logic.names[rec.arg0 as usize - 1], "monster_scientist");
+        assert_eq!(
+            logic.names[rec.killtarget as usize - 1],
+            "trigger_for_retinal"
+        );
+        assert_eq!(logic.names[rec.target as usize - 1], "control_retinal1mm");
+    }
+
+    #[test]
+    fn c1a1b_class_selector_resolves_retina_clip_as_scientist() {
+        let all = r#"
+        { "classname" "scripted_sequence" "m_iszEntity" "monster_scientist"
+          "m_iszPlay" "retina" "m_flRadius" "150" }
+        "#;
+        let block = all.split('{').nth(1).unwrap();
+        let mut clips = std::collections::HashMap::new();
+        clips.insert((0u16, "retina".to_string()), 7u8);
+        let slots = script_clip_slots(all, block, &Default::default(), &clips);
+
+        assert_eq!(
+            script_target_monster_type(all, "monster_scientist", &Default::default()),
+            Some(0)
+        );
+        assert_eq!(slots, (8, 0), "clip slots are stored plus one in LogicAux");
+    }
+
+    #[test]
+    fn exact_script_targetname_remains_primary_over_class_fallback() {
+        let all = r#"
+        { "classname" "monster_barney" "targetname" "monster_scientist" }
+        { "classname" "scripted_sequence" "m_iszEntity" "monster_scientist" }
+        "#;
+        assert_eq!(
+            script_target_monster_type(all, "monster_scientist", &Default::default()),
+            Some(1),
+            "exact named Barney determines clips before scientist classname fallback"
+        );
+        assert_eq!(script_class_selector("monster_scientist"), 1);
+    }
+
+    #[test]
+    fn loader_generic_cooks_as_type_52_and_resolves_its_script_clips() {
+        let all = r#"
+        { "classname" "monster_generic" "model" "models/loader.mdl"
+          "targetname" "lo" "origin" "1 2 3" }
+        { "classname" "scripted_sequence" "m_iszEntity" "lo"
+          "m_iszPlay" "rampwalk" "m_iszIdle" "idle" }
+        "#;
+        let block = all.split('{').nth(2).unwrap();
+        let mut clips = std::collections::HashMap::new();
+        clips.insert((52u16, "idle".to_string()), 0u8);
+        clips.insert((52u16, "rampwalk".to_string()), 1u8);
+
+        assert_eq!(script_monster_type(all, "lo"), Some(52));
+        assert_eq!(
+            script_clip_slots(all, block, &Default::default(), &clips),
+            (2, 1)
+        );
+        let props = collect_props(all.as_bytes(), &[], &[], 1.0, &["lo".to_string()]);
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0].0, 52);
+        assert_eq!(props[0].4, 1);
+    }
+
+    #[test]
+    fn scientist_predisaster_flag_packs_without_growing_prop_record() {
+        let ents = br#"
+        { "classname" "monster_scientist" "spawnflags" "256" "targetname" "before" }
+        { "classname" "monster_scientist" "spawnflags" "16" "targetname" "prisoner" }
+        "#;
+        let names = vec!["before".to_string(), "prisoner".to_string()];
+        let props = collect_props(ents, &[], &[], 1.0, &names);
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0].0 & 0x2000, 0x2000);
+        assert_eq!(props[0].0 & 0x0fff, 0);
+        assert_eq!(
+            props[1].0 & 0x2000,
+            0,
+            "prisoner flag 16 stays follow-usable"
+        );
     }
 
     #[test]
@@ -6799,14 +9504,180 @@ mod tests {
             &brush_by_submodel,
             1.0,
             &Default::default(),
-        );
+            &Default::default(),
+        )
+        .expect("logic cook");
 
         assert_eq!(logic.ents.len(), 1);
         assert_eq!(logic.ents[0].kind, LOGIC_FUNC_TRAIN);
         assert_eq!(logic.ents[0].brush, 3);
         assert_eq!(logic.ents[0].speed, 100);
-        assert_eq!(logic.ents[0].aux_count, 4, "two corners, not 24 repeated hops");
+        assert_eq!(logic.ents[0].flags & LOGIC_TRAIN_TERMINAL, 0);
+        assert_eq!(
+            logic.ents[0].aux_count, 4,
+            "two corners, not 24 repeated hops"
+        );
         assert_eq!(logic.aux.len(), 4);
+    }
+
+    #[test]
+    fn terminal_func_train_and_wait_for_trigger_are_packed_without_extra_state() {
+        let ents = br#"
+        { "classname" "func_train" "model" "*1" "target" "corner_a" }
+        { "classname" "path_corner" "targetname" "corner_a" "target" "corner_b"
+          "origin" "0 0 0" }
+        { "classname" "path_corner" "targetname" "corner_b" "origin" "0 0 64"
+          "wait" "-1" }
+        "#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[LOGIC_BRUSH_NONE, 3],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("terminal train cook");
+
+        let train = &logic.ents[0];
+        assert_eq!(train.flags & LOGIC_TRAIN_TERMINAL, LOGIC_TRAIN_TERMINAL);
+        assert_eq!(train.aux_count, 4);
+        assert_eq!(logic.aux[3].delay_ticks, u16::MAX);
+    }
+
+    #[test]
+    fn path_corner_wait_and_teleport_spawnflags_share_the_wait_word() {
+        let ents = br#"
+        { "classname" "func_train" "model" "*1" "target" "a" }
+        { "classname" "path_corner" "targetname" "a" "target" "b"
+          "origin" "0 0 0" "spawnflags" "1" }
+        { "classname" "path_corner" "targetname" "b" "origin" "100 0 0"
+          "spawnflags" "2" "wait" "1.5" }
+        "#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[LOGIC_BRUSH_NONE, 3],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("corner flags cook");
+        assert_eq!(logic.aux[1].delay_ticks, TRAIN_CORNER_WAIT_TRIGGER);
+        assert_eq!(logic.aux[3].delay_ticks, TRAIN_CORNER_TELEPORT | 30);
+    }
+
+    #[test]
+    fn func_train_tail_cycle_is_serialized_once_with_exact_cycle_start() {
+        let ents = br#"
+        { "classname" "func_train" "model" "*1" "target" "a" }
+        { "classname" "path_corner" "targetname" "a" "target" "b" "origin" "0 0 0" }
+        { "classname" "path_corner" "targetname" "b" "target" "c" "origin" "100 0 0" }
+        { "classname" "path_corner" "targetname" "c" "target" "b" "origin" "200 0 0" }
+        "#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[LOGIC_BRUSH_NONE, 3],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("tail cycle cook");
+        let train = &logic.ents[0];
+        assert_eq!(train.aux_count, 6, "a,b,c are each serialized once");
+        assert_eq!(train.flags & LOGIC_TRAIN_TERMINAL, 0);
+        assert_eq!(
+            train.flags >> LOGIC_TRAIN_CYCLE_SHIFT,
+            2,
+            "cycle begins at b/index 1"
+        );
+    }
+
+    #[test]
+    fn func_train_conditionally_cooks_path_corner_speed_and_message() {
+        let ents = br#"
+        { "classname" "func_train" "model" "*1" "target" "waterpath1" "speed" "100" }
+        { "classname" "path_corner" "targetname" "waterpath1" "target" "waterpath2"
+          "origin" "2676 -814 -872" "speed" "150" "message" "water_started" }
+        { "classname" "path_corner" "targetname" "waterpath2"
+          "origin" "1776 -814 -707" }
+        "#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[LOGIC_BRUSH_NONE, 3],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("extended train cook");
+
+        let train = &logic.ents[0];
+        assert_eq!(train.flags & LOGIC_TRAIN_EXTENDED, LOGIC_TRAIN_EXTENDED);
+        assert_eq!(train.aux_count, 6);
+        assert_eq!(logic.aux[2].delay_ticks, 150);
+        assert_eq!(
+            logic.names[logic.aux[2].target as usize - 1],
+            "water_started"
+        );
+        assert_eq!(logic.aux[5].delay_ticks, 0);
+    }
+
+    #[test]
+    fn global_func_train_cooks_stable_transition_identity_in_spare_arg0() {
+        let ents = br#"
+        { "classname" "func_train" "model" "*1" "target" "vent1"
+          "globalname" "c1a1b_floor_vent1" }
+        { "classname" "path_corner" "targetname" "vent1" "target" "vent2"
+          "origin" "0 0 0" }
+        { "classname" "path_corner" "targetname" "vent2" "origin" "0 0 64" }
+        "#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[LOGIC_BRUSH_NONE, 3],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("global train cook");
+
+        let train = &logic.ents[0];
+        assert_eq!(train.arg0, actor_carry_id("c1a1b_floor_vent1", true));
+        assert_ne!(train.arg0, 0);
+        assert_ne!(train.arg0 & CARRY_GLOBAL_BIT, 0);
+    }
+
+    #[test]
+    fn skin_minus_three_func_train_cooks_as_moving_swimmable_water() {
+        let ents = br#"
+        { "classname" "func_train" "model" "*1" "skin" "-3"
+          "rendermode" "2" "renderamt" "120" "target" "water1" }
+        { "classname" "path_corner" "targetname" "water1" "target" "water2"
+          "origin" "10 20 30" }
+        { "classname" "path_corner" "targetname" "water2" "origin" "40 50 60" }
+        "#;
+        let mut models = vec![0u8; 2 * SZ_MODEL];
+        for (offset, value) in [
+            (0usize, -16.0f32),
+            (4, -32.0),
+            (8, -8.0),
+            (12, 16.0),
+            (16, 32.0),
+            (20, 8.0),
+        ] {
+            let at = SZ_MODEL + offset;
+            models[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        }
+
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0, 0);
+        assert_eq!(cooked.len(), 1);
+        let water = &cooked[0];
+        assert_eq!(water.kind & 0xff, 6);
+        assert_eq!(water.kind >> 8, 1, "rendermode 2 remains translucent");
+        assert_eq!(water.mv, [16, 8, 32]);
+        assert_eq!((water.head, water.head0), (0, 0), "water is non-solid");
     }
 
     #[test]
@@ -6827,18 +9698,23 @@ mod tests {
             &brush_by_submodel,
             1.0,
             &Default::default(),
-        );
+            &Default::default(),
+        )
+        .expect("logic cook");
 
         assert_eq!(logic.ents.len(), 1);
         assert_eq!(logic.ents[0].kind, LOGIC_FUNC_BUTTON);
         assert_eq!(logic.ents[0].brush, 7);
-        assert_eq!(logic.names[logic.ents[0].target as usize - 1], "water_doormm");
+        assert_eq!(
+            logic.names[logic.ents[0].target as usize - 1],
+            "water_doormm"
+        );
 
         // Two valid dmodel_t records are sufficient for the entity classifier.
         // Kind 3 keeps the authored brush in place: it fires like a button but
         // does not apply the pivot origin as a translation or visibly rotate.
         let models = vec![0u8; 2 * SZ_MODEL];
-        let cooked = collect_entities(ents, &models, &[], &[], 1.0);
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0, 0);
         assert_eq!(cooked.len(), 1);
         assert_eq!(cooked[0].submodel, 1);
         assert_eq!(cooked[0].kind & 0xff, 3);
@@ -6846,7 +9722,419 @@ mod tests {
     }
 
     #[test]
-    fn friction_and_mortar_brushes_do_not_cook_as_render_or_solid_entities() {
+    fn cooks_c1a2_targeted_fan_with_persistent_q16_spin_metadata() {
+        let ents = br#"
+        {
+        "classname" "func_rotating"
+        "model" "*1"
+        "origin" "1860 -254 -532"
+        "targetname" "fanpwr"
+        "speed" "400"
+        "fanfriction" "2"
+        "spawnflags" "151"
+        }
+        "#;
+        let brush_by_submodel = [LOGIC_BRUSH_NONE, 9];
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &brush_by_submodel,
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("fan logic cook");
+
+        assert_eq!(logic.ents.len(), 1);
+        let fan = &logic.ents[0];
+        assert_eq!(fan.kind, LOGIC_FUNC_ROTATING);
+        assert_eq!(fan.brush, 9);
+        assert_eq!(fan.spawnflags, 151);
+        assert_eq!(fan.speed, 400);
+        assert_eq!(fan.arg0, 2, "fanfriction remains an authored percentage");
+        assert_eq!(logic.names[fan.targetname as usize - 1], "fanpwr");
+
+        let models = vec![0u8; 2 * SZ_MODEL];
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0, 0);
+        assert_eq!(cooked.len(), 1);
+        assert_eq!(cooked[0].kind & 0xff, 5);
+        assert_eq!(cooked[0].origin, [1860, -532, -254]);
+        assert_eq!(
+            cooked[0].mv,
+            [3641, 0, (2 << 16) | 151],
+            "reverse Z_AXIS fan maps to reflected PSX Y rotation"
+        );
+    }
+
+    #[test]
+    fn rotating_sweep_bounds_follow_each_goldsrc_axis() {
+        let mins = [-2.0, -64.0, -10.0];
+        let maxs = [18.0, 32.0, 20.0];
+        let (zmin, zmax) = rotating_sweep_bounds(mins, maxs, 4);
+        let rz = (18.0f32 * 18.0 + 64.0 * 64.0).sqrt();
+        assert_eq!((zmin[2], zmax[2]), (-10.0, 20.0));
+        assert!((zmin[0] + rz).abs() < 0.001 && (zmax[1] - rz).abs() < 0.001);
+
+        // A leaf boundary beyond the authored x=18 extent is still part of
+        // the Z-axis fan's ±66.48 sweep, preventing the blade from vanishing
+        // as it rotates into that leaf.
+        let mut planes = Vec::new();
+        planes.extend_from_slice(&1.0f32.to_le_bytes());
+        planes.extend_from_slice(&0.0f32.to_le_bytes());
+        planes.extend_from_slice(&0.0f32.to_le_bytes());
+        planes.extend_from_slice(&30.0f32.to_le_bytes());
+        planes.extend_from_slice(&0i32.to_le_bytes());
+        let mut nodes = Vec::new();
+        nodes.extend_from_slice(&0i32.to_le_bytes());
+        nodes.extend_from_slice(&(-2i16).to_le_bytes());
+        nodes.extend_from_slice(&(-3i16).to_le_bytes());
+        nodes.resize(SZ_NODE, 0);
+        assert_eq!(
+            entity_leafs(mins, maxs, [0.0; 3], None, &nodes, &planes),
+            vec![2]
+        );
+        assert_eq!(
+            entity_leafs(zmin, zmax, [0.0; 3], None, &nodes, &planes),
+            vec![1, 2]
+        );
+
+        let (xmin, xmax) = rotating_sweep_bounds(mins, maxs, 8);
+        let rx = (64.0f32 * 64.0 + 20.0 * 20.0).sqrt();
+        assert_eq!((xmin[0], xmax[0]), (-2.0, 18.0));
+        assert!((xmin[1] + rx).abs() < 0.001 && (xmax[2] - rx).abs() < 0.001);
+
+        let (ymin, ymax) = rotating_sweep_bounds(mins, maxs, 0);
+        let ry = (18.0f32 * 18.0 + 20.0 * 20.0).sqrt();
+        assert_eq!((ymin[1], ymax[1]), (-64.0, 32.0));
+        assert!((ymin[0] + ry).abs() < 0.001 && (ymax[2] - ry).abs() < 0.001);
+    }
+
+    #[test]
+    fn untargeted_rotating_brush_stays_on_cosmetic_path() {
+        let ents = br#"
+        { "classname" "func_rotating" "model" "*1" "speed" "200" "spawnflags" "65" }
+        "#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[LOGIC_BRUSH_NONE, 4],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("untargeted fan cook");
+        assert!(logic.ents.is_empty());
+
+        let mut models = vec![0u8; 2 * SZ_MODEL];
+        models[SZ_MODEL + 36..SZ_MODEL + 40].copy_from_slice(&7i32.to_le_bytes());
+        models[SZ_MODEL + 40..SZ_MODEL + 44].copy_from_slice(&8i32.to_le_bytes());
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0, 0);
+        assert_eq!(cooked[0].kind & 0xff, 5);
+        assert_eq!(
+            cooked[0].mv[2],
+            (100 << 16) | 65,
+            "START_ON and NOT_SOLID survive without a logic record"
+        );
+        assert_eq!((cooked[0].head, cooked[0].head0), (0, 0));
+    }
+
+    #[test]
+    fn cooks_c1a0_platrot_as_local_synchronous_toggle() {
+        let ents = br#"
+        {
+        "classname" "func_platrot"
+        "model" "*1"
+        "origin" "136 608 -218"
+        "targetname" "ele_2"
+        "speed" "80"
+        "height" "-216"
+        "rotation" "90"
+        "spawnflags" "1"
+        }
+        "#;
+
+        let mut models = vec![0u8; 2 * SZ_MODEL];
+        let mo = SZ_MODEL;
+        for (off, value) in [
+            (0, -68.0f32),
+            (4, -68.0),
+            (8, -142.0),
+            (12, 68.0),
+            (16, 68.0),
+            (20, 298.0),
+        ] {
+            models[mo + off..mo + off + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        models[mo + 36..mo + 40].copy_from_slice(&123i32.to_le_bytes());
+        models[mo + 40..mo + 44].copy_from_slice(&456i32.to_le_bytes());
+
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0, 0);
+        assert_eq!(cooked.len(), 1);
+        let plat = &cooked[0];
+        assert_eq!(plat.kind & 0xff, ENT_KIND_PLATROT);
+        assert_eq!(plat.submodel, 1);
+        assert_eq!(
+            plat.origin,
+            [136, -2, 608],
+            "phase zero is the physical bottom"
+        );
+        assert_eq!(plat.mv, [1024, -216, 0], "phase one is top + yaw 90");
+        assert_eq!(plat.center, [0, 78, 0]);
+        assert_eq!(plat.head0, 123);
+        assert_eq!(plat.head, 456);
+
+        let brush_by_submodel = [LOGIC_BRUSH_NONE, 7];
+        let logic = collect_logic_entities(
+            ents,
+            &models,
+            &brush_by_submodel,
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
+        assert_eq!(logic.ents.len(), 1);
+        let rec = &logic.ents[0];
+        assert_eq!(rec.kind, LOGIC_FUNC_DOOR);
+        assert_eq!(rec.brush, 7);
+        assert_eq!(rec.speed, 80);
+        assert_eq!(rec.spawnflags, 1 | 32, "named TOP + SF_PLAT_TOGGLE");
+        assert_eq!(logic.names[rec.targetname as usize - 1], "ele_2");
+    }
+
+    #[test]
+    fn cooks_pushable_as_kind9_with_speed_lift_and_packed_bounds() {
+        let ents = br#"
+        {
+        "classname" "func_pushable"
+        "model" "*1"
+        "origin" "1302 620 -504"
+        "friction" "220"
+        "health" "1"
+        "material" "6"
+        }
+        "#;
+        let mut models = vec![0u8; 2 * SZ_MODEL];
+        let mo = SZ_MODEL;
+        for (off, value) in [
+            (0, -120.0f32),
+            (4, -32.0),
+            (8, -35.0),
+            (12, 12.0),
+            (16, 32.0),
+            (20, 28.0),
+        ] {
+            models[mo + off..mo + off + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        models[mo + 36..mo + 40].copy_from_slice(&123i32.to_le_bytes());
+        models[mo + 40..mo + 44].copy_from_slice(&456i32.to_le_bytes());
+
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0, 0);
+        assert_eq!(cooked.len(), 1);
+        let cart = &cooked[0];
+        assert_eq!(cart.kind & 0xff, ENT_KIND_PUSHABLE);
+        assert_eq!(
+            cart.origin,
+            [1302, -503, 620],
+            "CPushable raises HL Z by one"
+        );
+        assert_eq!(
+            cart.mv[0] as u32 & 0xffff,
+            9,
+            "friction 220 => 180u/s => 9u/tick"
+        );
+        assert_eq!(cart.mv[0] as u32 >> 16, 66, "local half-X");
+        assert_eq!((cart.mv[1], cart.mv[2]), (32, 32));
+        assert_eq!((cart.head0, cart.head), (123, 456));
+    }
+
+    #[test]
+    fn c1a0e_lift_travel_is_159_and_raised_cart_reaches_probe_trigger() {
+        // Exact stock c1a0e brush bounds/keys, remapped to compact synthetic
+        // submodel indices. This guards the mandatory sample-delivery route:
+        // lift *29 carries cart *30, then SF_PUSHABLES trigger *48 starts
+        // probe_arm_mm once the player pushes the raised cart 208 HL units.
+        let ents = br#"
+        {
+        "classname" "func_door"
+        "model" "*1"
+        "targetname" "sample_cart2_lift"
+        "angle" "-1"
+        "lip" "16"
+        "speed" "30"
+        "spawnflags" "32"
+        }
+        {
+        "classname" "func_pushable"
+        "model" "*2"
+        "origin" "1302 620 -504"
+        "targetname" "sample_cart2"
+        "friction" "220"
+        }
+        {
+        "classname" "trigger_once"
+        "model" "*3"
+        "target" "probe_arm_mm"
+        "spawnflags" "6"
+        }
+        "#;
+        let mut models = vec![0u8; 4 * SZ_MODEL];
+        let mut put_bounds = |submodel: usize, mins: [f32; 3], maxs: [f32; 3]| {
+            let mo = submodel * SZ_MODEL;
+            for (axis, value) in mins.into_iter().chain(maxs).enumerate() {
+                let off = mo + axis * 4;
+                models[off..off + 4].copy_from_slice(&value.to_le_bytes());
+            }
+        };
+        put_bounds(1, [1144.0, 560.0, -720.0], [1321.0, 680.0, -543.0]);
+        put_bounds(2, [-120.0, -32.0, -35.0], [12.0, 32.0, 28.0]);
+        put_bounds(3, [1522.0, 567.0, -360.0], [1616.0, 679.0, -305.0]);
+
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0, 0);
+        let lift = cooked.iter().find(|e| e.kind & 0xff == 1).unwrap();
+        let cart = cooked
+            .iter()
+            .find(|e| e.kind & 0xff == ENT_KIND_PUSHABLE)
+            .unwrap();
+        assert_eq!(lift.mv, [0, 159, 0], "177 - 2 - lip 16");
+
+        let brushes = [LOGIC_BRUSH_NONE, 0, LOGIC_BRUSH_NONE, LOGIC_BRUSH_NONE];
+        let logic = collect_logic_entities(
+            ents,
+            &models,
+            &brushes,
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("c1a0e delivery logic");
+        let trigger = logic
+            .ents
+            .iter()
+            .find(|rec| rec.kind == LOGIC_TRIGGER_ONCE)
+            .unwrap();
+        assert_eq!(
+            trigger.spawnflags, 6,
+            "NOCLIENTS and PUSHABLES stay independent"
+        );
+
+        let half = [
+            (cart.mv[0] as u32 >> 16) as i32,
+            cart.mv[1].abs(),
+            cart.mv[2].abs(),
+        ];
+        let raised_and_pushed = [
+            cart.origin[0] + 208,
+            cart.origin[1] + lift.mv[1],
+            cart.origin[2],
+        ];
+        let center = [
+            raised_and_pushed[0] + cart.center[0],
+            raised_and_pushed[1] + cart.center[1],
+            raised_and_pushed[2] + cart.center[2],
+        ];
+        let cart_mins = [
+            center[0] - half[0],
+            center[1] - half[1],
+            center[2] - half[2],
+        ];
+        let cart_maxs = [
+            center[0] + half[0],
+            center[1] + half[1],
+            center[2] + half[2],
+        ];
+        assert_eq!(cart_mins, [1390, -380, 588]);
+        assert_eq!(cart_maxs, [1522, -316, 652]);
+        for axis in 0..3 {
+            assert!(
+                cart_mins[axis] <= trigger.maxs[axis] && cart_maxs[axis] >= trigger.mins[axis],
+                "raised cart and probe trigger must overlap on axis {axis}"
+            );
+        }
+    }
+
+    #[test]
+    fn diagonal_door_projects_each_axis_after_two_unit_hull_pad() {
+        let (dir, dist) = door_move(45.0, [0.0; 3], [102.0, 202.0, 52.0], 8.0);
+        let q = core::f32::consts::FRAC_1_SQRT_2;
+        assert!((dir[0] - q).abs() < 0.0001 && (dir[1] - q).abs() < 0.0001);
+        let sdk_dist = q * 100.0 + q * 200.0 - 8.0;
+        assert!((dist - sdk_dist).abs() < 0.001);
+        let wrong_project_then_subtract = q * 102.0 + q * 202.0 - 2.0 - 8.0;
+        assert!((dist - wrong_project_then_subtract).abs() > 0.5);
+    }
+
+    #[test]
+    fn pushable_only_cooks_breakable_logic_with_spawnflag_128() {
+        let ordinary = br#"
+        { "classname" "func_pushable" "model" "*1" "health" "1" "material" "6" }
+        "#;
+        let breakable = br#"
+        { "classname" "func_pushable" "model" "*1" "spawnflags" "128"
+          "health" "15" "material" "6" }
+        "#;
+        let brushes = [LOGIC_BRUSH_NONE, 7];
+        let plain = collect_logic_entities(
+            ordinary,
+            &[],
+            &brushes,
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("ordinary pushable cook");
+        assert!(
+            plain.ents.is_empty(),
+            "health alone must not make it breakable"
+        );
+
+        let armed = collect_logic_entities(
+            breakable,
+            &[],
+            &brushes,
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("breakable pushable cook");
+        assert_eq!(armed.ents.len(), 1);
+        assert_eq!(armed.ents[0].kind, LOGIC_FUNC_BREAKABLE);
+        assert_eq!(armed.ents[0].arg0, 15);
+        assert_eq!(armed.ents[0].brush, 7);
+    }
+
+    #[test]
+    fn platrot_keeps_signed_height_and_multi_turn_rotation() {
+        let ents = br#"
+        {
+        "classname" "func_platrot"
+        "model" "*1"
+        "origin" "10 20 30"
+        "targetname" "dn_3"
+        "height" "-976"
+        "rotation" "720"
+        "spawnflags" "1"
+        }
+        "#;
+        let mut models = vec![0u8; 2 * SZ_MODEL];
+        let mo = SZ_MODEL;
+        for (off, value) in [
+            (0, -16.0f32),
+            (4, -32.0),
+            (8, -8.0),
+            (12, 16.0),
+            (16, 32.0),
+            (20, 8.0),
+        ] {
+            models[mo + off..mo + off + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0, 0);
+        assert_eq!(cooked[0].origin, [10, 1006, 20]);
+        assert_eq!(cooked[0].mv, [8192, -976, 0]);
+    }
+
+    #[test]
+    fn controller_volumes_do_not_cook_as_render_or_solid_entities() {
         let ents = br#"
         {
         "classname" "func_wall"
@@ -6862,18 +10150,24 @@ mod tests {
         "model" "*3"
         "targetname" "mortar_field"
         }
+        {
+        "classname" "env_bubbles"
+        "model" "*4"
+        "density" "8"
+        }
         "#;
-        // Four valid dmodel_t records are enough for this classification test.
+        // Five valid dmodel_t records are enough for this classification test.
         // Empty BSP node/plane lumps make the visible control's PVS leaf list
         // empty but do not change whether it is emitted as an EntRec.
-        let models = vec![0u8; 4 * SZ_MODEL];
-        let cooked = collect_entities(ents, &models, &[], &[], 1.0);
+        let models = vec![0u8; 5 * SZ_MODEL];
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0, 0);
 
         assert_eq!(cooked.len(), 1, "only the visible func_wall is emitted");
         assert_eq!(cooked[0].submodel, 1);
         assert_eq!(cooked[0].kind & 0xff, 0, "control remains a solid brush");
         assert!(cooked.iter().all(|ent| ent.submodel != 2));
         assert!(cooked.iter().all(|ent| ent.submodel != 3));
+        assert!(cooked.iter().all(|ent| ent.submodel != 4));
     }
 
     #[test]
@@ -6972,10 +10266,7 @@ mod tests {
     #[test]
     fn clip_plane_ref_enforces_14_bit_index_without_truncation() {
         assert_eq!(CLIP_PLANE_INDEX_MASK, 16_383);
-        assert_eq!(
-            pack_clip_plane_ref(16_383, [0, 0, 4096]).unwrap(),
-            0xffff
-        );
+        assert_eq!(pack_clip_plane_ref(16_383, [0, 0, 4096]).unwrap(), 0xffff);
         let err = pack_clip_plane_ref(16_384, [4096, 0, 0]).unwrap_err();
         assert!(err.contains("16384"));
         assert!(err.contains("14-bit"));

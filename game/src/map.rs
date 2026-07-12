@@ -1,8 +1,10 @@
 //! Parse a cooked `.hlm` map (tools/hl-bsp --cook). HLMA adds BSP visibility
 //! plus brush-entity leaf membership for PVS culling; HLMB additionally tags
-//! exact positive axial clip planes for faster collision traversal.
+//! exact positive axial clip planes for faster collision traversal. HLMC packs
+//! the world model's GoldSrc PVS-cluster count separately from the BSP's total
+//! leaf-record count (submodels append leaves which are not PVS bits).
 //!
-//!   magic "HLMA" | "HLMB" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
+//!   magic "HLMA" | "HLMB" | "HLMC" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
 //!     | u32 clip_off,ent_off,tram_off,prop_off,sky_tex_base,nav_off,logic_off
 //!   verts i16×3 | u32 n_loopverts | FaceVert[5B] × n_loopverts
 //!     | TriRec[16B] × n_tris (raw/dirty faces only) | light palette (u16 × 256)
@@ -12,7 +14,9 @@
 //!   modern streamed builds keep texture pixels in a separate HLTX chunk:
 //!     magic "HLTX" | u32 n_texs | textures...
 //!   bsp @ bsp_off:
-//!     u32 n_planes,n_face_groups,n_nodes,n_leaves,n_marks,vis_len
+//!     u32 n_planes,n_face_groups,n_nodes,leaf_counts,n_marks,vis_len
+//!       HLMA/B leaf_counts = n_leaves (legacy; PVS bits assumed n_leaves-1)
+//!       HLMC   leaf_counts = n_leaves | (n_visleaves << 16)
 //!     PlaneRec[10B] × n_planes = i16 normal[3], i32 dist
 //!     FaceGroup[2B] × n_face_groups = signed plane reference
 //!     FaceRec[16B] × n_faces
@@ -24,23 +28,30 @@
 //!     marks  u16 × n_marks (4-aligned on BOTH sides -- see marks_off)
 //!     vis    u8  × vis_len (pad 4)
 //!   clip:
-//!     u32 n_clip | i32 hull0_head | i32 hull1_head | i32 spawn[3] |
+//!     u32 n_clip | i32 legacy_hull0_head | i32 hull1_head | i32 hull3_head |
+//!     i32 spawn[3] |
 //!     i32 spawn_yaw | ClipNode[6B] × n_clip
 //!       HLMA plane_ref = untagged u16 plane index
-//!       HLMB plane_ref = tag[15:14] | plane_index[13:0]
+//!       HLMB/C plane_ref = tag[15:14] | plane_index[13:0]
 //!         tag 00=generic, 01=+X, 10=+Y, 11=+Z
 //!   entities:
 //!     u32 n_models | (u32 firstface,u32 numface) × n_models
 //!     u32 n_ents | EntRec[56B] × n_ents | u32 n_ent_leafs | u16 leaf_idx[]
-//!   tram (after the 24-byte header):
+//!   tram header (24 bytes):
+//!     u16 submodel,n_way | u32 packed speed/wheels/authored_start |
+//!     i32 clip_head | i32 authored_base[3]
+//!   tram payload:
 //!     i32 way[3] × n_way | u16 way_speed × n_way | u16 way_pass × n_way
 //!   props/items:
 //!     u32 0x80000000|(n_sprites<<16)|n_props |
 //!     PropRec[24B] × n_props | SpriteRec[12B] × n_sprites
-//!   nav:
-//!     u16 n_nav,n_nav_links |
-//!     (i32 origin[3], i16 leaf, u16 first_link, u8 link_count, u8 pad) × n_nav |
-//!     u16 link_dest × n_nav_links
+//!   nav (18-byte packed nodes in both modes):
+//!     exact retail route: u16 n_nav,0x8000|route_bytes |
+//!       (i32 origin[3],i16 leaf,u16 route_off,u8 node_type,u8 pad) × n_nav |
+//!       GoldSrc compressed NextNodeInRoute bytes
+//!     legacy/custom fallback: u16 n_nav,n_nav_links |
+//!       (i32 origin[3],i16 leaf,u16 first_link,u8 link_count,u8 pad) × n_nav |
+//!       u16 link_dest × n_nav_links
 //!   logic:
 //!     u16 n_logic,n_aux,n_names,name_bytes |
 //!     LogicRec[64B] × n_logic | LogicAux[4B] × n_aux |
@@ -104,7 +115,12 @@ static mut LIGHT_PAL_RGB: [u32; 256] = [0; 256]; // 0x00BBGGRR, one lw per corne
 const PLANE_SZ: usize = 10;
 const FACE_GROUP_SZ: usize = 2;
 const NODE_SZ: usize = 6;
-const NAV_NODE_SZ: usize = 20;
+// The cooker writes the fields back-to-back: 12 + 2 + 2 + 1 + 1 = 18 bytes.
+// Do not use Rust's naturally aligned struct size here. A stale 20-byte stride
+// corrupted every waypoint after node zero and made scripted actors walk into
+// walls instead of following the authored info_node graph.
+const NAV_NODE_SZ: usize = 18;
+const NAV_EXACT_ROUTES: u16 = 0x8000;
 pub const SKY_TEX_NONE: usize = usize::MAX;
 
 pub struct Node {
@@ -122,14 +138,16 @@ pub struct Map {
     pub n_faces: usize,
     pub sky_tex_base: usize,
     v_off: usize,
-    lv_off: usize,        // FaceVert[5B] loop pool (loop-faces index into this)
+    lv_off: usize, // FaceVert[5B] loop pool (loop-faces index into this)
     tri_off: usize,
     light_pal_off: usize, // 256 rgb555 entries, indexed by light_idx
     // BSP / PVS
     pub n_planes: usize,
     pub n_face_groups: usize,
     pub n_nodes: usize,
-    pub n_leaves: usize,
+    /// PVS clusters in world dmodel[0]. GoldSrc RLE rows contain exactly this
+    /// many bits; later leaf records belong to brush submodels.
+    pub n_visleaves: usize,
     pub n_marks: usize,
     planes_off: usize,
     face_groups_off: usize,
@@ -141,13 +159,12 @@ pub struct Map {
     vis_len: usize,
     // Clip hull + spawn
     pub n_clip: usize,
-    pub hull0_head: i32,
     pub hull1_head: i32,
     pub hull3_head: i32, // crouch hull (32x32x36); < 0 = none -> fall back to hull1
     pub spawn_pos: [i32; 3],
     pub spawn_yaw: i32,
     clipn_off: usize,
-    // HLMA: 0 keeps its full untagged u16 plane index. HLMB: 0xc000 extracts
+    // HLMA: 0 keeps its full untagged u16 plane index. HLMB/C: 0xc000 extracts
     // the axial tag and clears it from the low-14-bit plane-table index.
     clip_plane_tag_mask: u16,
     // Entities (brush models)
@@ -160,8 +177,9 @@ pub struct Map {
     // Tram (func_tracktrain ride)
     pub tram_submodel: usize,
     pub tram_speed: i32,
+    pub tram_start: usize,
     pub tram_head: i32,
-    pub tram_base: [i32; 3], // wp0 - tram origin: places the brush onto the track
+    pub tram_base: [i32; 3], // authored-start waypoint: places the brush on the track
     pub n_way: usize,
     way_off: usize,
     // Props/items (point-entity model placements)
@@ -171,7 +189,7 @@ pub struct Map {
     sprites_off: usize,
     // AI navigation graph (land info_node graph)
     pub n_nav: usize,
-    n_nav_links: usize,
+    nav_meta: u16,
     nav_nodes_off: usize,
     nav_links_off: usize,
     // Half-Life-style target/use/touch entity graph
@@ -195,6 +213,7 @@ const SPRITE_REC_SZ: usize = 12;
 const LOGIC_SZ: usize = 64;
 const PROP_SPLIT_FORMAT: u32 = 0x8000_0000;
 const HLM_MAGIC_HLMB: u32 = u32::from_le_bytes(*b"HLMB");
+const HLM_MAGIC_HLMC: u32 = u32::from_le_bytes(*b"HLMC");
 const CLIP_PLANE_TAG_MASK: u16 = 0xC000;
 
 pub const SPRITE_ID_MASK: u16 = 0x000F;
@@ -225,6 +244,7 @@ pub const LOGIC_HEALTH_CHARGER: u8 = 20;
 pub const LOGIC_HEV_CHARGER: u8 = 21;
 pub const LOGIC_MONSTERMAKER: u8 = 22;
 pub const LOGIC_SCRIPTED: u8 = 24;
+pub const LOGIC_SCRIPTED_HAS_IDLE: u8 = 0x80; // flags high bit; selector stays in low 7 bits
 pub const LOGIC_FUNC_TRAIN: u8 = 25;
 pub const LOGIC_WEAPONSTRIP: u8 = 26;
 pub const LOGIC_ENV_MESSAGE: u8 = 27; // titles.txt overlay: arg0 = text name id
@@ -243,6 +263,10 @@ pub const LOGIC_BEAM: u8 = 39; // env_beam/env_laser: aux = start+end xyz, arg1 
 pub const LOGIC_ENV_SPARK: u8 = 40; // env_spark: origin sparks intermittently
 pub const LOGIC_MONSTERCLIP: u8 = 41; // func_monsterclip: mins/maxs AABB blocks NPCs, not the player
 pub const LOGIC_MOMENTARY: u8 = 42; // momentary_rot_button valve wheel: hold +use ramps target door
+/// GoldSrc transition-volume marker. It is never touched/fired in normal
+/// gameplay; changelevel snapshots use its targetname and cooked brush AABB.
+pub const LOGIC_TRIGGER_TRANSITION: u8 = 43;
+pub const LOGIC_FUNC_ROTATING: u8 = 44; // targeted fan: persistent angle + start/stop ramp
 
 pub const USE_OFF: u8 = 0;
 pub const USE_ON: u8 = 1;
@@ -304,7 +328,7 @@ pub struct LogicAux {
 #[derive(Clone, Copy)]
 pub struct Ent {
     pub submodel: usize,
-    pub kind: u16, // 0 solid/static, 1 door, 2 nonsolid visual, 3 button, 4 ladder
+    pub kind: u16, // 0 static, 1 door, 2 visual, 3 button, 4 ladder, 5 rotating, 8 platrot, 9 pushable
     pub blend: u8, // 0 opaque, 1 semi-transparent (glass), 2 additive (glows)
     pub origin: [i32; 3],
     pub mv: [i32; 3],
@@ -337,7 +361,8 @@ pub struct PackedLoopVert {
 
 impl Map {
     pub fn load(data: &'static [u8]) -> Map {
-        let clip_plane_tag_mask = if rd_u32(data, 0) == HLM_MAGIC_HLMB {
+        let magic = rd_u32(data, 0);
+        let clip_plane_tag_mask = if magic == HLM_MAGIC_HLMB || magic == HLM_MAGIC_HLMC {
             CLIP_PLANE_TAG_MASK
         } else {
             0
@@ -373,7 +398,15 @@ impl Map {
         let n_planes = rd_u32(data, bsp_off) as usize;
         let n_face_groups = rd_u32(data, bsp_off + 4) as usize;
         let n_nodes = rd_u32(data, bsp_off + 8) as usize;
-        let n_leaves = rd_u32(data, bsp_off + 12) as usize;
+        let leaf_counts = rd_u32(data, bsp_off + 12);
+        let (n_leaves, n_visleaves) = if magic == HLM_MAGIC_HLMC {
+            let n_leaves = (leaf_counts & 0xffff) as usize;
+            let n_visleaves = (leaf_counts >> 16) as usize;
+            (n_leaves, n_visleaves.min(n_leaves.saturating_sub(1)))
+        } else {
+            let n_leaves = leaf_counts as usize;
+            (n_leaves, n_leaves.saturating_sub(1))
+        };
         let n_marks = rd_u32(data, bsp_off + 16) as usize;
         let vis_len = rd_u32(data, bsp_off + 20) as usize;
         let planes_off = bsp_off + 24;
@@ -390,7 +423,9 @@ impl Map {
         let vis_off = align4(marks_off + n_marks * 2);
 
         let n_clip = rd_u32(data, clip_off) as usize;
-        let hull0_head = rd_i32(data, clip_off + 4);
+        // Reserved legacy field. GoldSrc hull 0 uses render-node root 0; new
+        // cooks write -1 here so it can never alias a compact clipnode.
+        let _legacy_hull0_head = rd_i32(data, clip_off + 4);
         let hull1_head = rd_i32(data, clip_off + 8);
         let hull3_head = rd_i32(data, clip_off + 12);
         let spawn_pos = [
@@ -412,7 +447,8 @@ impl Map {
 
         let tram_submodel = rd_u16(data, tram_off) as usize;
         let n_way = rd_u16(data, tram_off + 2) as usize;
-        let tram_speed = rd_i32(data, tram_off + 4);
+        let (tram_speed, tram_start, _tram_wheels) =
+            crate::tram_logic::decode_motion_word(rd_u32(data, tram_off + 4), n_way);
         let tram_head = rd_i32(data, tram_off + 8);
         let tram_base = [
             rd_i32(data, tram_off + 12),
@@ -437,7 +473,7 @@ impl Map {
         let sprites_off = props_off + n_props * PROP_SZ;
 
         let n_nav = rd_u16(data, nav_off) as usize;
-        let n_nav_links = rd_u16(data, nav_off + 2) as usize;
+        let nav_meta = rd_u16(data, nav_off + 2);
         let nav_nodes_off = nav_off + 4;
         let nav_links_off = nav_nodes_off + n_nav * NAV_NODE_SZ;
 
@@ -465,7 +501,7 @@ impl Map {
             n_planes,
             n_face_groups,
             n_nodes,
-            n_leaves,
+            n_visleaves,
             n_marks,
             planes_off,
             face_groups_off,
@@ -476,7 +512,6 @@ impl Map {
             vis_off,
             vis_len,
             n_clip,
-            hull0_head,
             hull1_head,
             hull3_head,
             spawn_pos,
@@ -491,6 +526,7 @@ impl Map {
             n_ent_leafs,
             tram_submodel,
             tram_speed,
+            tram_start,
             tram_head,
             tram_base,
             n_way,
@@ -500,7 +536,7 @@ impl Map {
             n_sprites,
             sprites_off,
             n_nav,
-            n_nav_links,
+            nav_meta,
             nav_nodes_off,
             nav_links_off,
             n_logic,
@@ -536,6 +572,13 @@ impl Map {
         rd_u16(self.data, self.props_off + i * PROP_SZ + 20)
     }
 
+    /// Stable cross-map identity cooked into PropRec's former padding word.
+    /// Bit 15 marks `globalname`; zero means the actor does not transition.
+    #[inline]
+    pub fn prop_carry_id(&self, i: usize) -> u16 {
+        rd_u16(self.data, self.props_off + i * PROP_SZ + 22)
+    }
+
     /// `(origin, leaf, targetname, packed)` for placed sprite `i`.
     /// `packed` holds local sprite id, initial/once flags, and half-width.
     #[inline]
@@ -563,6 +606,13 @@ impl Map {
         ]
     }
 
+    /// GoldSrc tracktrain forward look-ahead (`wheels`). Read it lazily from
+    /// the already-resident room blob so the parsed `Map` grows by zero bytes.
+    #[inline(always)]
+    pub fn tram_wheels(&self) -> i32 {
+        crate::tram_logic::decode_motion_word(rd_u32(self.data, self.way_off - 20), self.n_way).2
+    }
+
     /// Authored speed change at waypoint `i` (the path_track's "speed" key in
     /// u/s; 0 = keep the current speed, matching HL's CPathTrack).
     #[inline]
@@ -570,9 +620,10 @@ impl Map {
         rd_u16(self.data, self.way_off + self.n_way * 12 + i * 2) as i32
     }
 
-    /// Fire-on-pass logic-name id at waypoint `i` (path_track "message";
-    /// 0 = none). The intro ride's changelevels + station scripts fire this
-    /// way -- the train's passage, not the rider, is the trigger in HL.
+    /// Fire-on-pass logic-name id at waypoint `i` (`path_track.message`, or a
+    /// terminal `path_track.netname` fired by CFuncTrackTrain::DeadEnd; 0 =
+    /// none). The intro ride's changelevels + station scripts fire this way --
+    /// the train's passage, not the rider, is the trigger in HL.
     #[inline]
     pub fn way_pass(&self, i: usize) -> u16 {
         rd_u16(self.data, self.way_off + self.n_way * 14 + i * 2)
@@ -630,10 +681,68 @@ impl Map {
 
     #[inline]
     pub fn nav_link(&self, i: usize) -> usize {
-        if i >= self.n_nav_links {
+        let count = (self.nav_meta & !NAV_EXACT_ROUTES) as usize;
+        if self.nav_meta & NAV_EXACT_ROUTES != 0 || i >= count {
             return 0;
         }
         rd_u16(self.data, self.nav_links_off + i * 2) as usize
+    }
+
+    #[inline]
+    pub fn nav_has_exact_routes(&self) -> bool {
+        self.nav_meta & NAV_EXACT_ROUTES != 0
+    }
+
+    /// GoldSrc `CGraph::NextNodeInRoute`, operating directly on the cooker-
+    /// repacked human-hull/door-capable table from the retail `.nod` file.
+    /// Returning `current` means the source graph considers the destination
+    /// unreachable (the SDK uses the same sentinel behavior).
+    #[inline(never)]
+    pub fn nav_route_next(&self, current: usize, dest: usize) -> usize {
+        if !self.nav_has_exact_routes() || current >= self.n_nav || dest >= self.n_nav {
+            return current;
+        }
+        let route_len = (self.nav_meta & !NAV_EXACT_ROUTES) as usize;
+        let mut p = self.nav_links_off + self.nav_node(current).first_link;
+        let end = self.nav_links_off + route_len;
+        let mut left = dest + 1;
+        while left > 0 && p < end {
+            let phrase = self.data[p] as i8;
+            p += 1;
+            if phrase < 0 {
+                let count = -(phrase as i16) as usize;
+                if left <= count {
+                    return dest;
+                }
+                left -= count;
+            } else {
+                if p >= end {
+                    return current;
+                }
+                let delta = self.data[p] as i8 as i32;
+                p += 1;
+                let count = phrase as usize + 1;
+                if left <= count {
+                    let mut next = current as i32 + delta;
+                    if next >= self.n_nav as i32 {
+                        next -= self.n_nav as i32;
+                    } else if next < 0 {
+                        next += self.n_nav as i32;
+                    }
+                    return next as usize;
+                }
+                left -= count;
+            }
+        }
+        current
+    }
+
+    #[inline]
+    pub fn nav_node_type(&self, i: usize) -> u8 {
+        if !self.nav_has_exact_routes() || i >= self.n_nav {
+            return 1; // legacy nodes were all cooked from land info_node ents
+        }
+        self.data[self.nav_nodes_off + i * NAV_NODE_SZ + 16]
     }
 
     #[inline]
@@ -714,7 +823,7 @@ impl Map {
         let o = self.clipn_off + i * CLIPNODE_SZ;
         let plane_ref = rd_u16(self.data, o);
         // Branchlessly version the reference. HLMA's mask is zero, preserving
-        // all 16 index bits; HLMB extracts the high tag and clears it from the
+        // all 16 index bits; HLMB/C extracts the high tag and clears it from the
         // 14-bit index. Only a generic node reads its three normal components.
         let tag_bits = plane_ref & self.clip_plane_tag_mask;
         let axis = (tag_bits >> 14) as u8;
@@ -923,10 +1032,7 @@ impl Map {
     /// per frame.
     #[inline(always)]
     pub fn cooked_group_plane(&self, group: usize) -> ([i16; 3], i32) {
-        let plane_ref = rd_i16(
-            self.data,
-            self.face_groups_off + group * FACE_GROUP_SZ,
-        );
+        let plane_ref = rd_i16(self.data, self.face_groups_off + group * FACE_GROUP_SZ);
         let flipped = plane_ref < 0;
         let plane = if flipped {
             (-(plane_ref as i32) - 1) as usize
