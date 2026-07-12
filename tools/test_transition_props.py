@@ -54,6 +54,16 @@ class TransitionPropTests(unittest.TestCase):
             actor_type({"classname": "monster_generic", "model": "models/other.mdl"})
         )
 
+    def test_opening_generic_models_reuse_scientist_and_add_forklift(self) -> None:
+        self.assertEqual(
+            actor_type({"classname": "monster_generic", "model": "models/scientist.mdl"}),
+            0,
+        )
+        self.assertEqual(
+            actor_type({"classname": "monster_generic", "model": r"models\forklift.mdl"}),
+            53,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

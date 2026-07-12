@@ -253,6 +253,7 @@ const PROP_TYPE_ITEM_BATTERY: u8 = 4;
 const PROP_TYPE_CONTROLLER: u8 = 11; // flies: exempt from walker floor checks
 const PROP_TYPE_SITTING_SCI: u8 = 25; // seated pose, keeps its authored chair height
 const PROP_TYPE_LOADER: u8 = 52; // c0a0d scripted monster_generic construction loader
+const PROP_TYPE_FORKLIFT: u8 = 53; // c0a0/c0a0a scripted monster_generic forklifts
 const PROP_DEAD_BIT: u16 = 0x8000; // cook flag: spawn as a corpse (death pose, 0 hp)
 const PROP_DORMANT_BIT: u16 = 0x4000; // cook flag: monstermaker stock, inactive until fired
 const PROP_PREDISASTER_BIT: u16 = 0x2000; // cook flag: SF_MONSTER_PREDISASTER
@@ -284,7 +285,7 @@ const PROP_STATE_DEAD: u8 = 3;
 // Cooked actor/item types. Each streams from WORLD.PAK:
 // geometry chunk `1300+id`, texture chunk `1100+id`. The runtime keeps only the
 // types a map places resident (TYPE_TO_SLOT -> LOADED_MODELS).
-const N_MODEL_TYPES: usize = 53;
+const N_MODEL_TYPES: usize = 54;
 const MAX_LOADED_MODELS: usize = 22; // distinct model types resident per map (enemies + pickups)
                                      // Full 96-map + 222-transition roster audit peaks at 152 resident actor
                                      // textures (c4a1b).  Eight spare slots cover roster churn; the old 240-slot
@@ -410,7 +411,8 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef_atk(30, 40, 90, AI_RANGED, 16, 900, 6, 10), // 51 human assassin (silenced 9mm)
     // Script-only monster_generic. Health must stay nonzero so its exact
     // targetname can be possessed by c0a0d's goingdown sequence.
-    mdef(1, 48, 1242, AI_IDLE), // 52 construction loader (rampwalk translates ~1,241 units)
+    mdef(8, 48, 1242, AI_IDLE), // 52 construction loader (rampwalk translates ~1,241 units)
+    mdef(8, 48, 1930, AI_IDLE), // 53 forklift (path clips translate ~1,929 units)
 ];
 
 #[inline]
@@ -4844,12 +4846,68 @@ unsafe fn script_play_hold_ticks(pi: usize) -> u16 {
     if clip == 0xFF {
         return 0;
     }
+    script_clip_hold_ticks(pi, clip, FALLBACK_TICKS)
+}
+
+#[inline]
+unsafe fn script_clip_hold_ticks(pi: usize, clip: u8, fallback: u16) -> u16 {
     let ty = (PROP_KIND[pi] as usize).min(N_MODEL_TYPES - 1);
     let slot = TYPE_TO_SLOT[ty];
     if slot == MODEL_SLOT_NONE {
-        FALLBACK_TICKS
+        fallback
     } else {
         loaded_model(slot as usize).clip_hold_ticks(clip as usize)
+    }
+}
+
+/// Fire source MDL event 1003 records folded into this scripted_sequence's
+/// LogicAux tail. Idle events loop over the authored sequence duration; play
+/// events run once. The actor's existing gesture timer doubles as the phase
+/// origin, so target-event fidelity costs no additional per-prop RAM.
+#[inline(never)]
+unsafe fn script_tick_studio_events(m: &Map, pi: usize, idle: bool) {
+    if PROP_SCRIPT_LI[pi] == u16::MAX {
+        return;
+    }
+    let li = prop_script_li(pi);
+    if li >= m.n_logic.min(MAX_LOGIC) {
+        return;
+    }
+    let rec = m.logic(li);
+    if rec.aux_count <= 1 {
+        return;
+    }
+    let play_clip = PROP_SCRIPT_PLAY_CLIP[pi];
+    if !idle && play_clip == 0xFF {
+        return;
+    }
+    let start = if idle {
+        PROP_SCRIPT_PLAY_UNTIL[pi]
+    } else {
+        let duration = script_clip_hold_ticks(pi, play_clip, 40).max(1);
+        PROP_SCRIPT_PLAY_UNTIL[pi].wrapping_sub(duration)
+    };
+    let elapsed = SIM_NOW.wrapping_sub(start);
+    let mut ai = 1usize;
+    while ai + 1 < rec.aux_count as usize {
+        let event = m.logic_aux(rec.first_aux as usize + ai);
+        let metadata = m.logic_aux(rec.first_aux as usize + ai + 1);
+        let play_event = metadata.delay_ticks != 0;
+        let period = metadata.target.max(1);
+        let phase = if idle { elapsed % period } else { elapsed };
+        if play_event == !idle && event.delay_ticks == phase {
+            logic_fire_targets(
+                m,
+                m.n_logic.min(MAX_LOGIC),
+                m.n_ents.min(MAX_ENTS),
+                event.target,
+                map::USE_TOGGLE,
+                SIM_NOW,
+                0,
+                li as u16,
+            );
+        }
+        ai += 2;
     }
 }
 
@@ -4900,6 +4958,27 @@ unsafe fn script_primed_actor_holds(pi: usize, now: u16) -> bool {
     }
 }
 
+/// Leave the internal face-mark phase and either hold a startup-primed idle
+/// or begin the authored play gesture. The ordinary completion path remains
+/// one tick later, matching SequenceDone's schedule transition.
+#[inline]
+unsafe fn script_finish_face_phase(pi: usize, primed: bool) {
+    PROP_SCRIPT_MODE[pi] = if primed {
+        scientist_logic::script_primed_mode(0)
+    } else {
+        0
+    };
+    if primed {
+        PROP_SCRIPT_PLAY_UNTIL[pi] = SIM_NOW;
+    } else {
+        PROP_SCRIPT_PLAY_UNTIL[pi] = if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF {
+            SIM_NOW.wrapping_add(script_play_hold_ticks(pi))
+        } else {
+            SIM_NOW
+        };
+    }
+}
+
 /// Advance one actor's cinematic state outside tick_props. Besides keeping the
 /// hot function's MIPS branches in range, this call is paid only by actors that
 /// actually carry script state; ordinary combat props stay on the direct path.
@@ -4910,6 +4989,9 @@ unsafe fn tick_scripted_actor(m: &Map, pi: usize, primed_hold: bool) -> bool {
         // Possessed by a targeted idle script, either waiting for CineThink or
         // planted at the mark and waiting for this same script's Use.
         PROP_STATE[pi] = PROP_STATE_IDLE;
+        if scientist_logic::script_base_mode(PROP_SCRIPT_MODE[pi]) == 0 {
+            script_tick_studio_events(m, pi, true);
+        }
         return true;
     }
     if scripted_mode != 0 {
@@ -4917,6 +4999,46 @@ unsafe fn tick_scripted_actor(m: &Map, pi: usize, primed_hold: bool) -> bool {
         let goal = [g[0] as i32, g[1] as i32, g[2] as i32];
         let primed = scientist_logic::script_is_primed(PROP_SCRIPT_MODE[pi]);
         let mode = scripted_mode;
+        if mode == scientist_logic::SCRIPT_FACE_MODE {
+            PROP_STATE[pi] = PROP_STATE_IDLE;
+            let phase = PROP_MOVE_COOLDOWN[pi];
+            if phase != 0 && phase <= scientist_logic::SCRIPT_FACE_SETTLE_TICKS {
+                PROP_MOVE_COOLDOWN[pi] = phase - 1;
+                if phase == 1 {
+                    script_finish_face_phase(pi, primed);
+                }
+                return true;
+            }
+            // Monsters update scripted facing at 10 Hz, on the same parity as
+            // their preceding walk/run. The first Xash ChangeYaw update gets
+            // the 0.25 s delta clamp; later updates use the regular 0.1 s.
+            if (pi as u16 ^ MOVE_TICK) & 1 != 0 {
+                return true;
+            }
+            let target = PROP_SCRIPT_YAW[pi] & PROP_SCRIPT_YAW_MASK;
+            #[cfg(feature = "reference-trace")]
+            reference_trace::nav_step(
+                SIM_NOW as u32,
+                pi as u16,
+                PROP_YAW[pi] as i32,
+                target as i32,
+                if phase == scientist_logic::SCRIPT_FACE_FIRST_PENDING {
+                    0x61
+                } else {
+                    0x60
+                },
+            );
+            PROP_YAW[pi] = scientist_logic::script_face_yaw_step(
+                PROP_YAW[pi],
+                target,
+                phase == scientist_logic::SCRIPT_FACE_FIRST_PENDING,
+            );
+            PROP_MOVE_COOLDOWN[pi] = 0;
+            if PROP_YAW[pi] == target {
+                PROP_MOVE_COOLDOWN[pi] = scientist_logic::SCRIPT_FACE_SETTLE_TICKS;
+            }
+            return true;
+        }
         let move_timed_out =
             (mode == 1 || mode == 2) && time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]);
         let arrived = if move_timed_out {
@@ -4966,10 +5088,32 @@ unsafe fn tick_scripted_actor(m: &Map, pi: usize, primed_hold: bool) -> bool {
                 // TASK_PLANT_ON_SCRIPT snaps the actor exactly to the mark
                 // before the play sequence starts.
                 prop_set_pos_exact(m, pi, goal);
-                PROP_YAW[pi] = PROP_SCRIPT_YAW[pi] & PROP_SCRIPT_YAW_MASK;
                 prop_script_move_residue_clear(pi);
             }
             PROP_STATE[pi] = PROP_STATE_IDLE;
+            let explicit_idle_face = (mode == 1 || mode == 2)
+                && PROP_SCRIPT_LI[pi] != u16::MAX
+                && prop_script_li(pi) < m.n_logic.min(MAX_LOGIC)
+                && m.logic(prop_script_li(pi)).flags & map::LOGIC_SCRIPTED_HAS_IDLE != 0;
+            if explicit_idle_face {
+                // GoldSrc plants first, then turns through
+                // TASK_FACE_SCRIPT/TASK_FACE_IDEAL. The explicit phase is
+                // needed for authored idle sequences: their wait animation
+                // otherwise hides this schedule time entirely. Play-only
+                // scripts already account for their post-plant schedule in
+                // the cooked clip hold; adding both misses one-second actor
+                // retry windows (c0a0e's barnwalk3 progression gate).
+                PROP_SCRIPT_MODE[pi] = if primed {
+                    scientist_logic::script_primed_mode(scientist_logic::SCRIPT_FACE_MODE)
+                } else {
+                    scientist_logic::SCRIPT_FACE_MODE
+                };
+                PROP_MOVE_COOLDOWN[pi] = scientist_logic::SCRIPT_FACE_FIRST_PENDING;
+                return true;
+            }
+            if mode != 3 {
+                PROP_YAW[pi] = PROP_SCRIPT_YAW[pi] & PROP_SCRIPT_YAW_MASK;
+            }
             PROP_SCRIPT_MODE[pi] = if primed {
                 scientist_logic::script_primed_mode(0)
             } else {
@@ -4978,7 +5122,9 @@ unsafe fn tick_scripted_actor(m: &Map, pi: usize, primed_hold: bool) -> bool {
             if primed {
                 // A staged idle script has reached its mark; do not complete it
                 // or fire outputs until the script is explicitly used.
-                PROP_SCRIPT_PLAY_UNTIL[pi] = 0;
+                // Once base mode is zero the prime gate no longer consults the
+                // timer, so it becomes the idle animation/event phase origin.
+                PROP_SCRIPT_PLAY_UNTIL[pi] = SIM_NOW;
                 return true;
             }
             // Hold the gesture at the mark before firing the script chain. A
@@ -4990,6 +5136,12 @@ unsafe fn tick_scripted_actor(m: &Map, pi: usize, primed_hold: bool) -> bool {
             };
         }
         return true;
+    }
+
+    if PROP_SCRIPT_LI[pi] != u16::MAX
+        && !time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi])
+    {
+        script_tick_studio_events(m, pi, false);
     }
 
     // Scripted move finished: release the actor before firing outputs so the
@@ -6726,19 +6878,24 @@ fn prop_anim_frame(
     let clip = prop_clip(state, hit_flash > 0);
     // Scripted override: one-shot gesture while its window runs, else the
     // scripted idle pose while the prop is idle (sit1, standing_idle, ...).
-    let (clip, scripted_play) = unsafe {
+    let (clip, scripted_play, scripted_idle) = unsafe {
         if state == PROP_STATE_DEAD || hit_flash > 0 {
-            (clip, false)
+            (clip, false, false)
         } else if PROP_SCRIPT_MODE[pi] == 0
             && PROP_SCRIPT_LI[pi] != u16::MAX
             && PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF
             && !time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi])
         {
-            (PROP_SCRIPT_PLAY_CLIP[pi] as usize, true)
+            (PROP_SCRIPT_PLAY_CLIP[pi] as usize, true, false)
         } else if PROP_SCRIPT_IDLE_CLIP[pi] != 0xFF && state == PROP_STATE_IDLE {
-            (PROP_SCRIPT_IDLE_CLIP[pi] as usize, false)
+            (
+                PROP_SCRIPT_IDLE_CLIP[pi] as usize,
+                false,
+                scientist_logic::script_is_primed(PROP_SCRIPT_MODE[pi])
+                    && scientist_logic::script_base_mode(PROP_SCRIPT_MODE[pi]) == 0,
+            )
         } else {
-            (clip, false)
+            (clip, false, false)
         }
     };
     let clip = clip.min(md.n_clips.saturating_sub(1));
@@ -6777,6 +6934,22 @@ fn prop_anim_frame(
         let phase16 = elapsed.min(duration).saturating_mul(span16) / duration;
         let local = (phase16 / 16).min(len.saturating_sub(1));
         let next = (local + 1).min(len.saturating_sub(1));
+        return (
+            md.clip_frame(clip, local),
+            md.clip_frame(clip, next),
+            (phase16 & 15) as u32,
+        );
+    }
+    if scripted_idle {
+        // Scripted idles loop at the retail sequence duration. The ordinary
+        // two/three-frame idle cadence was visually frantic and could not
+        // share a deterministic phase with source studio target events.
+        let duration = md.clip_hold_ticks(clip).max(1) as usize;
+        let start = unsafe { PROP_SCRIPT_PLAY_UNTIL[pi] };
+        let elapsed = unsafe { SIM_NOW }.wrapping_sub(start) as usize % duration;
+        let phase16 = elapsed.saturating_mul(len.saturating_mul(16)) / duration;
+        let local = (phase16 / 16) % len;
+        let next = (local + 1) % len;
         return (
             md.clip_frame(clip, local),
             md.clip_frame(clip, next),
@@ -13663,6 +13836,7 @@ unsafe fn trace_human_entities(m: &Map, map_tick: u32) {
             PROP_TYPE_SCIENTIST => Some("monster_scientist"),
             PROP_TYPE_BARNEY => Some("monster_barney"),
             PROP_TYPE_LOADER => Some("monster_generic"),
+            PROP_TYPE_FORKLIFT => Some("monster_generic"),
             _ => None,
         };
         if let Some(class) = class {
@@ -13760,16 +13934,26 @@ unsafe fn init_room_logic(
         let rec = m.logic(li);
         if rec.kind == map::LOGIC_SCRIPTED {
             if rec.targetname == 0 {
-                logic_use_entity(
-                    m,
-                    nlogic,
-                    nents,
-                    li,
-                    map::USE_TOGGLE,
-                    0,
-                    0,
-                    logic_state::CALLER_NONE,
+                let idle_only = scientist_logic::script_untargeted_idle_holds(
+                    rec.flags & map::LOGIC_SCRIPTED_HAS_IDLE != 0,
+                    rec.flags & map::LOGIC_SCRIPTED_HAS_PLAY != 0,
                 );
+                if idle_only {
+                    if let Some(pi) = script_find_actor(rec) {
+                        script_prime_idle_actor(m, li, rec, pi);
+                    }
+                } else {
+                    logic_use_entity(
+                        m,
+                        nlogic,
+                        nents,
+                        li,
+                        map::USE_TOGGLE,
+                        0,
+                        0,
+                        logic_state::CALLER_NONE,
+                    );
+                }
             } else if rec.flags & map::LOGIC_SCRIPTED_HAS_IDLE != 0 {
                 if let Some(pi) = script_find_actor(rec) {
                     script_prime_idle_actor(m, li, rec, pi);

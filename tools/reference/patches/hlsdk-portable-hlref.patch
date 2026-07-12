@@ -130,6 +130,7 @@ index fd03e6e0..bcb64f91 100644
 +		|| !strcmp( name, "func_wall" )
 +		|| !strcmp( name, "func_wall_toggle" )
 +		|| !strcmp( name, "func_rotating" )
++		|| !strcmp( name, "monster_generic" )
 +		|| !strcmp( name, "monster_scientist" )
 +		|| !strcmp( name, "monster_barney" );
 +}

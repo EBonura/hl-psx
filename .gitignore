@@ -35,6 +35,8 @@ reference/
 !tools/reference/
 !tools/reference/**
 tools/*.py
+!tools/gen_studio_events.py
+!tools/test_studio_events.py
 !tools/memory_report.py
 !tools/campaign_map_report.py
 !tools/campaign_flow_report.py

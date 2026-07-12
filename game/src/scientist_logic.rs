@@ -5,7 +5,7 @@
 //! progression-critical rules host-testable without pulling in the PSX runtime.
 
 pub const SCRIPT_SELECTOR_NONE: u8 = 0;
-pub const SCRIPT_SELECTOR_MASK: u8 = 0x7F;
+pub const SCRIPT_SELECTOR_MASK: u8 = 0x3F;
 pub const CARRY_FOLLOW_BIT: u8 = 0x80;
 pub const CARRY_PROVOKED_BIT: u8 = 0x40;
 pub const CARRY_PREDISASTER_BIT: u8 = 0x20;
@@ -22,6 +22,19 @@ pub const SCRIPT_RETRY_TICKS: u16 = 20;
 /// enabling movement before their first step. Reuse the existing failed-move
 /// cooldown for five active thinks (about 0.5 seconds), with no new state.
 pub const SCRIPT_MOVE_START_ACTIVE_TICKS: u8 = 5;
+/// Internal actor mode used after TASK_PLANT_ON_SCRIPT while GoldSrc runs
+/// TASK_FACE_SCRIPT/TASK_FACE_IDEAL. It is outside the authored m_fMoveTo
+/// range and lives in the existing script-mode byte.
+pub const SCRIPT_FACE_MODE: u8 = 6;
+/// ChangeYaw's first fixed-rate update may consume the 0.25 s clamp because
+/// m_flLastYawTime is unset. At 120 deg/s with the Xash yaw-speed fix this is
+/// 60 degrees, then 24 degrees on each 10 Hz monster think.
+pub const SCRIPT_FACE_FIRST_STEP_Q12: u16 = 683;
+pub const SCRIPT_FACE_STEP_Q12: u16 = 273;
+pub const SCRIPT_FACE_FIRST_PENDING: u8 = 0x80;
+/// Two 20 Hz ticks cover TASK_ENABLE_SCRIPT and TASK_WAIT_FOR_SCRIPT after the
+/// actor reaches its ideal yaw. The completion itself runs on the next tick.
+pub const SCRIPT_FACE_SETTLE_TICKS: u8 = 2;
 /// `TASK_PLANT_ON_SCRIPT` is an exact placement task, not an ordinary monster
 /// path goal. Keep the tolerance small so a scripted actor does not begin its
 /// sequence from the general AI's 32-unit waypoint acceptance radius.
@@ -30,6 +43,27 @@ pub const SCRIPT_PLANT_RADIUS: i32 = 8;
 #[inline(always)]
 pub const fn script_at_mark(distance_sq: i32, start_pending: bool) -> bool {
     !start_pending && distance_sq <= SCRIPT_PLANT_RADIUS * SCRIPT_PLANT_RADIUS
+}
+
+/// Rotate a 12-bit yaw toward its target by the short arc, matching the
+/// clamped steps produced by GoldSrc ChangeYaw.
+#[inline(always)]
+pub const fn script_face_yaw_step(cur: u16, target: u16, first: bool) -> u16 {
+    let diff = (target.wrapping_sub(cur) & 0x0fff) as i32;
+    let signed = if diff > 2048 { diff - 4096 } else { diff };
+    let rate = if first {
+        SCRIPT_FACE_FIRST_STEP_Q12
+    } else {
+        SCRIPT_FACE_STEP_Q12
+    } as i32;
+    let step = if signed < -rate {
+        -rate
+    } else if signed > rate {
+        rate
+    } else {
+        signed
+    };
+    ((cur as i32 + step) & 0x0fff) as u16
 }
 
 /// Deterministic actor-aware scripted movement. The source MDLs report
@@ -182,12 +216,22 @@ pub const fn script_prime_gate(
     }
     match script_base_mode(encoded_mode) {
         0 => ScriptPrimeGate::Hold,
+        SCRIPT_FACE_MODE => ScriptPrimeGate::Execute,
         1 | 2 if actor_is_moving => ScriptPrimeGate::Execute,
         1 | 2 if start_deadline_reached => ScriptPrimeGate::StartMove,
         1 | 2 => ScriptPrimeGate::Hold,
         _ if start_deadline_reached => ScriptPrimeGate::Execute,
         _ => ScriptPrimeGate::Hold,
     }
+}
+
+/// Untargeted scripted_sequences with only an idle sequence possess their
+/// actor forever in GoldSrc; they do not immediately complete and fire their
+/// ordinary target. Authored-key flags are used instead of cooked clip
+/// availability so an unsupported animation cannot change entity semantics.
+#[inline(always)]
+pub const fn script_untargeted_idle_holds(has_idle: bool, has_play: bool) -> bool {
+    has_idle && !has_play
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -519,6 +563,17 @@ mod tests {
     }
 
     #[test]
+    fn scripted_face_uses_goldsrc_first_step_and_short_arc() {
+        let deg = |d: u16| ((d as u32 * 4096 + 180) / 360) as u16 & 0x0fff;
+        let target = 0;
+        let first = script_face_yaw_step(deg(164), target, true);
+        assert_eq!(first, deg(104));
+        assert_eq!(script_face_yaw_step(first, target, false), deg(80));
+        assert_eq!(script_face_yaw_step(deg(350), target, true), target);
+        assert_eq!(script_face_yaw_step(deg(10), target, true), target);
+    }
+
+    #[test]
     fn scripted_q4_motion_retains_exact_centered_remainders() {
         for residue in -8..=7 {
             assert_eq!(script_q4_decode(script_q4_encode(residue)), residue);
@@ -605,6 +660,14 @@ mod tests {
     }
 
     #[test]
+    fn primed_actor_keeps_turning_after_it_reaches_the_mark() {
+        assert_eq!(
+            script_prime_gate(script_primed_mode(SCRIPT_FACE_MODE), false, false),
+            ScriptPrimeGate::Execute
+        );
+    }
+
+    #[test]
     fn scripted_use_retries_busy_actors_but_not_its_own_playing_actor() {
         assert_eq!(script_owned_use(false, false), ScriptOwnedUse::Search);
         assert_eq!(script_owned_use(true, true), ScriptOwnedUse::AssignPrimed);
@@ -615,5 +678,12 @@ mod tests {
             14,
             "retry deadlines must retain the runtime's wrapping-tick contract"
         );
+    }
+
+    #[test]
+    fn untargeted_idle_only_script_holds_without_firing_its_output() {
+        assert!(script_untargeted_idle_holds(true, false));
+        assert!(!script_untargeted_idle_holds(true, true));
+        assert!(!script_untargeted_idle_holds(false, false));
     }
 }

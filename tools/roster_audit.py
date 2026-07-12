@@ -36,14 +36,14 @@ MAX_LOADED = 22          # main.rs MAX_LOADED_MODELS
 FACE_CAP = 7_936         # main.rs POOL_FACE_CAP
 POOL_FACE_RUN_CAP = 160   # main.rs POOL_FACE_RUN_CAP
 POOL_TEX_SLOTS = 160      # main.rs POOL_TEX_SLOTS
-N_TYPES = 53             # main.rs N_MODEL_TYPES
+N_TYPES = 54             # main.rs N_MODEL_TYPES
 PROP_TYPE_MASK = 0x0FFF  # excludes dead/dormant/predisaster cook metadata
 
 # main.rs MODEL_DEFS ai classes -> streaming pass (0 combat, 1 item, 2 decor)
 AI_ITEM, AI_IDLE = 0, 4
 AI = {0: 1, 1: 2, 2: 3, 3: 0, 4: 0, 5: 3, 6: 5, 7: 5, 8: 5, 9: 5, 10: 5,
       11: 5, 12: 4, 13: 4, 14: 4, 15: 4, 16: 4, 17: 4, 18: 4, 19: 3, 20: 6,
-      21: 6, 22: 6, 23: 4, 24: 4, 25: 4, 50: 4, 51: 5, 52: 4}
+      21: 6, 22: 6, 23: 4, 24: 4, 25: 4, 50: 4, 51: 5, 52: 4, 53: 4}
 for t in range(26, 50):
     AI[t] = AI_ITEM
 NAME = {0: "scientist", 1: "barney", 2: "headcrab", 3: "w_suit", 4: "w_battery",
@@ -51,7 +51,7 @@ NAME = {0: "scientist", 1: "barney", 2: "headcrab", 3: "w_suit", 4: "w_battery",
         10: "agrunt", 11: "controller", 12: "barnacle", 13: "leech", 14: "roach",
         15: "gman", 16: "garg", 17: "nihilanth", 18: "bigmom", 19: "icky",
         20: "sentry", 21: "turret", 22: "miniturret", 23: "apache", 24: "boid",
-        25: "sit_sci", 50: "tentacle", 51: "hassassin", 52: "loader"}
+        25: "sit_sci", 50: "tentacle", 51: "hassassin", 52: "loader", 53: "forklift"}
 for t in range(26, 50):
     NAME[t] = f"pickup{t}"
 

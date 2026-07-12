@@ -119,7 +119,7 @@ pub struct Tri {
 /// Cold UV payload for a projected model face. Vertex indices live in a
 /// separate packed-u32 stream so near/backface rejects touch only four
 /// uncached bytes. Texture ids live once per ordered face run, not once per
-/// face; the current 52-model set has only 463 runs across 23,452 faces.
+/// face; the streamed actor set keeps those ids out of every face payload.
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct RenderFacePayload {

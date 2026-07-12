@@ -244,7 +244,8 @@ pub const LOGIC_HEALTH_CHARGER: u8 = 20;
 pub const LOGIC_HEV_CHARGER: u8 = 21;
 pub const LOGIC_MONSTERMAKER: u8 = 22;
 pub const LOGIC_SCRIPTED: u8 = 24;
-pub const LOGIC_SCRIPTED_HAS_IDLE: u8 = 0x80; // flags high bit; selector stays in low 7 bits
+pub const LOGIC_SCRIPTED_HAS_IDLE: u8 = 0x80;
+pub const LOGIC_SCRIPTED_HAS_PLAY: u8 = 0x40;
 pub const LOGIC_FUNC_TRAIN: u8 = 25;
 pub const LOGIC_WEAPONSTRIP: u8 = 26;
 pub const LOGIC_ENV_MESSAGE: u8 = 27; // titles.txt overlay: arg0 = text name id

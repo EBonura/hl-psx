@@ -63,7 +63,11 @@ def actor_type(entity: dict[str, str]) -> int | None:
     if entity.get("classname") != "monster_generic":
         return None
     model = entity.get("model", "").replace("\\", "/").rsplit("/", 1)[-1].lower()
-    return 52 if model == "loader.mdl" else None
+    return {
+        "scientist.mdl": 0,
+        "loader.mdl": 52,
+        "forklift.mdl": 53,
+    }.get(model)
 
 # GoldSrc collision hulls in native HL axes (x, y, z-up). These are transition
 # boxes, not render radii; the distinction is required for BigMomma/sentries.

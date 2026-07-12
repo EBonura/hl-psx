@@ -39,7 +39,7 @@ DEFAULT_MODELPACK = ROOT / "data" / "modelpack"
 # game/src/main.rs and Makefile's model roster.  Viewmodel order mirrors
 # Makefile's WEAPONLIST and game/src/main.rs N_WEAPONS.
 ACTOR_CHUNK_BASE = 1300
-ACTOR_COUNT = 53
+ACTOR_COUNT = 54
 VIEWMODEL_CHUNK_BASE = 1000
 VIEWMODEL_COUNT = 16
 
@@ -97,6 +97,7 @@ ACTOR_NAMES: tuple[str, ...] = (
     "tentacle2",
     "hassassin",
     "loader",
+    "forklift",
 )
 
 VIEWMODEL_NAMES: tuple[str, ...] = (
@@ -129,7 +130,7 @@ ACTOR_RENDER_RADII: tuple[int, ...] = (
     138, 77, 36, 70, 36, 90, 70, 91, 90, 90, 100, 100, 170,
     40, 30, 90, 360, 1748, 200, 223, 80, 80, 60, 408, 60, 72,
     36, 36, 36, 36, 36, 56, 45, 51, 40, 45, 36, 36, 36, 36,
-    36, 36, 36, 36, 36, 36, 36, 36, 36, 38, 912, 90, 1242,
+    36, 36, 36, 36, 36, 36, 36, 36, 36, 38, 912, 90, 1242, 1930,
 )
 assert len(ACTOR_RENDER_RADII) == ACTOR_COUNT
 

@@ -2088,6 +2088,7 @@ const LOGIC_HEV_CHARGER: u8 = 21;
 const LOGIC_MONSTERMAKER: u8 = 22;
 const LOGIC_SCRIPTED: u8 = 24;
 const LOGIC_SCRIPTED_HAS_IDLE: u8 = 0x80;
+const LOGIC_SCRIPTED_HAS_PLAY: u8 = 0x40;
 const LOGIC_FUNC_TRAIN: u8 = 25;
 const LOGIC_TRAIN_TERMINAL: u8 = 1;
 const LOGIC_TRAIN_EXTENDED: u8 = 2;
@@ -2167,7 +2168,7 @@ fn prop_type_crosses_transition(ty: u16) -> bool {
     let base = ty & 0x0fff;
     // FCAP_DONT_SAVE / !FCAP_ACROSS_TRANSITION plus non-actors. Authored dead
     // bodies and monstermaker stock are map-local state, never live carries.
-    ty & 0xc000 == 0 && !matches!(base, 3 | 4 | 16 | 26..=49 | 50) && base < 53
+    ty & 0xc000 == 0 && !matches!(base, 3 | 4 | 16 | 26..=49 | 50) && base < 54
 }
 
 /// (map_index, key) -> per-map local voice id, from the VOICES_MANIFEST env file
@@ -3926,6 +3927,54 @@ fn load_clips_manifest() -> std::collections::HashMap<(u16, String), u8> {
 }
 
 #[derive(Clone)]
+struct StudioTargetEvent {
+    tick: u16,
+    period: u16,
+    target: String,
+}
+
+/// (actor type, authored clip name) -> GoldSrc studio event 1003 records. The
+/// model extractor reads the retail MDL event tables; map cooking then folds
+/// only events reachable by this room's scripted_sequences into LogicAux.
+fn load_studio_events_manifest() -> std::collections::HashMap<(u16, String), Vec<StudioTargetEvent>>
+{
+    let mut out = std::collections::HashMap::new();
+    let Ok(path) = std::env::var("STUDIO_EVENTS_MANIFEST") else {
+        return out;
+    };
+    let Ok(txt) = std::fs::read_to_string(&path) else {
+        eprintln!("warn: STUDIO_EVENTS_MANIFEST unreadable: {}", path);
+        return out;
+    };
+    for line in txt.lines() {
+        let fields: Vec<&str> = line.trim().split('|').collect();
+        if fields.len() != 5 {
+            continue;
+        }
+        let (Ok(ty), Ok(tick), Ok(period)) = (
+            fields[0].parse::<u16>(),
+            fields[2].parse::<u16>(),
+            fields[3].parse::<u16>(),
+        ) else {
+            continue;
+        };
+        let name = fields[1].trim().to_ascii_lowercase();
+        let target = fields[4].trim();
+        if name.is_empty() || target.is_empty() || tick == 0 || period == 0 {
+            continue;
+        }
+        out.entry((ty, name))
+            .or_insert_with(Vec::new)
+            .push(StudioTargetEvent {
+                tick,
+                period,
+                target: target.to_string(),
+            });
+    }
+    out
+}
+
+#[derive(Clone)]
 struct TransitionTypeHint {
     ty: u16,
     targetname: String,
@@ -4036,6 +4085,7 @@ fn collect_logic_entities(
     // index, so the runtime can compare an exact caller without name scans.
     let mut source_raw_index: Vec<usize> = Vec::new();
     let clips = load_clips_manifest();
+    let studio_events = load_studio_events_manifest();
     let voices = load_voices_manifest();
     // This map's MAPLIST index -- keys the per-map voice manifest (set by the
     // rooms recipe alongside VOICES_MANIFEST).
@@ -4418,6 +4468,11 @@ fn collect_logic_entities(
             // unsupported clips still need their actor primed at the mark.
             record_flags |= LOGIC_SCRIPTED_HAS_IDLE;
         }
+        if kind == LOGIC_SCRIPTED
+            && ent_value(block, "m_iszPlay").is_some_and(|play| !play.is_empty())
+        {
+            record_flags |= LOGIC_SCRIPTED_HAS_PLAY;
+        }
 
         let first_aux = aux.len().min(u16::MAX as usize) as u16;
         let mut aux_count = 0u8;
@@ -4657,14 +4712,52 @@ fn collect_logic_entities(
         }
         if kind == LOGIC_SCRIPTED {
             // aux[0] = (play_slot+1, idle_slot+1); 0 = none. Resolved from the
-            // clips manifest against the target monster's type.
+            // clips manifest against the target monster's type. Remaining aux
+            // records are pairs for source MDL event 1003: (target name id,
+            // event tick), then (source period, 0 idle / 1 play).
             let (play, idle) = script_clip_slots(&s, block, transition_types, &clips);
-            if play != 0 || idle != 0 {
+            let entity_name = ent_value(block, "m_iszEntity").unwrap_or("");
+            let ty = script_target_monster_type(&s, entity_name, transition_types);
+            let mut events: Vec<(bool, StudioTargetEvent)> = Vec::new();
+            if let Some(ty) = ty {
+                for (key, play_event) in [("m_iszPlay", true), ("m_iszIdle", false)] {
+                    let Some(name) = ent_value(block, key) else {
+                        continue;
+                    };
+                    events.extend(
+                        studio_events
+                            .get(&(ty, name.to_ascii_lowercase()))
+                            .into_iter()
+                            .flatten()
+                            .cloned()
+                            .map(|event| (play_event, event)),
+                    );
+                }
+            }
+            if play != 0 || idle != 0 || !events.is_empty() {
                 aux.push(LogicAuxRec {
                     target: play,
                     delay_ticks: idle,
                 });
                 aux_count = 1;
+                for (play_event, event) in events {
+                    if aux_count > u8::MAX - 2 {
+                        break;
+                    }
+                    let target = names.id(Some(&event.target));
+                    if target == 0 {
+                        continue;
+                    }
+                    aux.push(LogicAuxRec {
+                        target,
+                        delay_ticks: event.tick,
+                    });
+                    aux.push(LogicAuxRec {
+                        target: event.period,
+                        delay_ticks: play_event as u16,
+                    });
+                    aux_count += 2;
+                }
             }
         }
         if kind == LOGIC_TRIGGER_PUSH {
@@ -5471,7 +5564,9 @@ fn monster_generic_type(block: &str) -> Option<u16> {
         .replace('\\', "/")
         .to_ascii_lowercase();
     match model.rsplit('/').next().unwrap_or(model.as_str()) {
+        "scientist.mdl" => Some(0),
         "loader.mdl" => Some(52),
+        "forklift.mdl" => Some(53),
         _ => None,
     }
 }
@@ -9357,7 +9452,11 @@ mod tests {
         let rec = &logic.ents[0];
         assert_eq!(rec.kind, LOGIC_SCRIPTED);
         assert_ne!(rec.flags & LOGIC_SCRIPTED_HAS_IDLE, 0);
-        assert_eq!(rec.flags & !LOGIC_SCRIPTED_HAS_IDLE, 0);
+        assert_ne!(rec.flags & LOGIC_SCRIPTED_HAS_PLAY, 0);
+        assert_eq!(
+            rec.flags & !(LOGIC_SCRIPTED_HAS_IDLE | LOGIC_SCRIPTED_HAS_PLAY),
+            0
+        );
         assert_eq!(rec.aux_count, 0, "missing clip must not suppress priming");
     }
 
@@ -9456,6 +9555,18 @@ mod tests {
         assert_eq!(props.len(), 1);
         assert_eq!(props[0].0, 52);
         assert_eq!(props[0].4, 1);
+    }
+
+    #[test]
+    fn opening_generic_models_resolve_to_reused_and_dedicated_types() {
+        let scientist = r#""classname" "monster_generic" "model" "models/scientist.mdl""#;
+        let forklift = r#""classname" "monster_generic" "model" "models\\forklift.mdl""#;
+        let unsupported = r#""classname" "monster_generic" "model" "models/otis.mdl""#;
+
+        assert_eq!(monster_generic_type(scientist), Some(0));
+        assert_eq!(monster_generic_type(forklift), Some(53));
+        assert_eq!(monster_generic_type(unsupported), None);
+        assert!(prop_type_crosses_transition(53));
     }
 
     #[test]

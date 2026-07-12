@@ -290,13 +290,14 @@ transition-props:
 	python3 tools/gen_transition_props.py "$(HL_GAME)/maps" \
 		$(MODELPACK)/transition_props.txt $(MAPLIST)
 
-rooms: transition-props
+rooms: transition-props models
 	cd $(HLBSP) && cargo build --release
 	@mkdir -p $(ROOMS)
 	@rm -f $(ROOMS)/room_*.psxc $(ROOMS)/room_*.psxw
 	@i=0; for m in $(MAPLIST); do \
 		w=$$((i * 2)); t=$$((w + 1)); \
 		CLIPS_MANIFEST=$(MODELPACK)/clips.txt \
+		STUDIO_EVENTS_MANIFEST=$(MODELPACK)/studio_events.txt \
 		VOICES_MANIFEST=$(VOICEPACK)/manifest.txt \
 		SPRITES_MANIFEST=$(SPRITEPACK)/manifest.txt \
 		TRANSITION_PROPS_MANIFEST=$(MODELPACK)/transition_props.txt \
@@ -421,7 +422,7 @@ models:
 	@# q12=1024 scale as --mdl6, without its runtime-unused per-triangle normals.
 	@rm -f $(MODELPACK)/roster.txt
 	@for entry in \
-	  "0|scientist|13:4,0:4,24:4,8:2,31:3,pondering:2,retina:2,beatdoor:2,ceiling_dangle:2,pondering2=pondering,pondering3=pondering,pause=pondering,writeboard=pondering,converse1=pondering,converse2=pondering,push_button=beatdoor,wave=beatdoor,no=pondering,sitstand=pondering,tieshoe=pondering,buysoda=pondering,idle1=@0" \
+	  "0|scientist|13:4,0:4,24:4,8:2,31:3,pondering:2,retina:2,beatdoor:2,ceiling_dangle:2,deskidle=pondering,pondering2=pondering,pondering3=pondering,pause=pondering,writeboard=pondering,converse1=pondering,converse2=pondering,push_button=beatdoor,wave=beatdoor,no=pondering,sitstand=pondering,tieshoe=pondering,buysoda=pondering,idle1=@0" \
 	  "1|barney|0:4,4:4,6:4,17:2,25:3,sit1:2,standing_idle:2,intropush:2,flashlight=standing_idle,cprbarney=sit1,sit2=sit1,sit3=sit1,relaxstand=sit1,almostidle=standing_idle,almost=standing_idle,barn_wave=intropush,c3a2_draw=standing_idle,idle1=@0" \
 	  "2|headcrab|0:4,4:4,10:4,6:2,7:3,idle1=@0" \
 	  "3|w_suit|0" \
@@ -474,6 +475,7 @@ models:
 	  "50|tentacle2|0:2,0:2,2:2,5:2,10:3" \
 	  "51|hassassin|0:4,2:4,10:4,1:2,17:3" \
 	  "52|loader|idle:2,boxwalk:4,0:1,0:1,herodie:2,rampwalk:8,idle1=idle" \
+	  "53|forklift|idle2:2,0:1,0:1,0:1,0:1,patha:8,pathb:8,idle1=idle2" \
 	  ; do \
 	  t=$${entry%%|*}; rest=$${entry#*|}; mdl=$${rest%%|*}; seq=$${rest##*|}; \
 	  echo "$$entry" >> $(MODELPACK)/roster.txt; \
@@ -484,6 +486,8 @@ models:
 	  else echo "  T$$t $$mdl FAILED: $$(tail -1 /tmp/mck_$$mdl.log | cut -c1-60)"; fi; \
 	done
 	@python3 tools/gen_clips_manifest.py < $(MODELPACK)/roster.txt > $(MODELPACK)/clips.txt
+	@python3 tools/gen_studio_events.py "$(HL_GAME)/models" \
+		$(MODELPACK)/roster.txt $(MODELPACK)/studio_events.txt
 	@rm -f $(MODELPACK)/roster.txt
 	@echo "  clips manifest -> $(MODELPACK)/clips.txt ($$(wc -l < $(MODELPACK)/clips.txt) entries)"
 
