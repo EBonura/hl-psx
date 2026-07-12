@@ -118,46 +118,54 @@ ordered segment and can be selected for inspection with `expand --occurrence`.
 
 ### Anomalous Materials route
 
-The checked-in route generator currently proves the retail c1a0 spawn through
-the c1a0d HEV pickup. It includes the security-desk sequence, the real map
-transition, the lounge door, the suit-case control, and the suit pickup; it
-does not yet claim the return trip to c1a0a.
+The checked-in route generator proves the retail c1a0 spawn through the c1a0d
+HEV pickup and the real c1a0a airlock transition. It includes the security-desk
+sequence, both map transitions, the lounge door in each direction, the suit-case
+control, the suit pickup, Barney's retinal scan, and both airlock doors.
 
 ```sh
 python3 "$HLPSX/tools/reference/anomalous_materials_route.py" \
-  /tmp/anomalous-materials-to-hev.hlinput
+  /tmp/anomalous-materials-through-airlock.hlinput
 python3 "$HLPSX/tools/reference/run_goldsrc_reference.py" \
   --runtime-dir "$RUNTIME" --half-life-dir "$HALF_LIFE" \
   --framework-dir "$(dirname "$SDL_FRAMEWORK")" \
-  --map c1a0 --semantic-input /tmp/anomalous-materials-to-hev.hlinput \
-  --max-ticks 1500 --entity-interval 1000 \
-  --output /tmp/gold-anomalous-materials-to-hev.trace
+  --map c1a0 --semantic-input /tmp/anomalous-materials-through-airlock.hlinput \
+  --max-ticks 2400 --entity-interval 100 \
+  --output /tmp/gold-anomalous-materials-through-airlock.trace
 
-HLPSX_SEMANTIC_INPUT=/tmp/anomalous-materials-to-hev.hlinput \
+HLPSX_SEMANTIC_INPUT=/tmp/anomalous-materials-through-airlock.hlinput \
   make -C "$HLPSX" disc FEATURES=semantic-input
 "$PSOXIDE/target/release/frontend" launch \
   --path "$HLPSX/dist/hl-psx.cue" --embedded-playtest \
-  --steps 100000000000 --guest-frames 5200 \
+  --steps 100000000000 --guest-frames 7900 \
   --input-tape "$HLPSX/captures/reference/c1a0-neutral.pxitape" \
-  --guest-debug-log 2>/tmp/psx-anomalous-materials-to-hev.trace
+  --guest-debug-log 2>/tmp/psx-anomalous-materials-through-airlock.trace
 
 python3 "$HLPSX/tools/reference/trace_tools.py" compare \
-  /tmp/gold-anomalous-materials-to-hev.trace \
-  /tmp/psx-anomalous-materials-to-hev.trace \
-  --require-map c1a0 --require-map c1a0d \
+  /tmp/gold-anomalous-materials-through-airlock.trace \
+  /tmp/psx-anomalous-materials-through-airlock.trace \
+  --require-map c1a0 --require-map c1a0d --require-map c1a0a \
   --require-event c1a0d:target_fire:rr1 \
   --require-event c1a0d:target_fire:step \
   --require-event c1a0d:target_fire:hevmaster1 \
-  --require-event c1a0d:target_fire:redspot
+  --require-event c1a0d:target_fire:redspot \
+  --require-event c1a0d:target_fire:airlockwalker \
+  --require-event c1a0d:target_fire:airlockbarneymm1 \
+  --require-event c1a0d:target_fire:control_retinal1mm \
+  --require-event c1a0d:target_fire:airlockdoorbuzzmm1 \
+  --require-event c1a0d:target_fire:lk1 \
+  --require-event c1a0d:target_fire:lk2 \
+  --require-input-parity
 
 # Never leave a semantic-input tape in a shipping/test disc.
 make -C "$HLPSX" disc
 ```
 
-The current GoldSrc proof fires `rr1` twice while crossing the lounge door,
-`step` when opening the HEV case, and `hevmaster1` plus `redspot` when the suit
-is collected. Keep those event milestones in the trace when extending the
-route toward c1a0a.
+The proof fires `rr1` in both directions, `step` when opening the HEV case,
+`hevmaster1` plus `redspot` when the suit is collected, the full retinal-scan
+chain, and `lk1`/`lk2` before entering c1a0a. The two-tick south correction on
+the return route is intentional: it centers both engines in the retail rr1
+door clearance despite a 19-unit fixed-point landing difference.
 
 ## Capture and verify
 

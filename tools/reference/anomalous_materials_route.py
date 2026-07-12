@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build the deterministic Anomalous Materials route through HEV acquisition.
+"""Build the deterministic Anomalous Materials route through the c1a0a airlock.
 
 The route starts at the retail c1a0 player spawn, crosses into c1a0d, follows
-the green personnel stripe, opens the suit case, and collects the HEV suit.
-It deliberately ends at that milestone; the return trip to the blue security
-line and c1a0a is appended only after it has its own GoldSrc proof.
+the green personnel stripe, opens the suit case, collects the HEV suit, and
+returns along the blue security line. It waits for Barney's retinal scan and
+crosses both airlock doors through the real c1a0a changelevel trigger.
 """
 
 from __future__ import annotations
@@ -105,11 +105,70 @@ def c1a0d_to_hev() -> tuple[InputSample, ...]:
     return tuple(route.values)
 
 
+def c1a0d_hev_to_c1a0a() -> tuple[InputSample, ...]:
+    """Return from the HEV cabinet and complete the scripted c1a0a airlock."""
+    route = Samples()
+
+    # Drop back into the lower locker aisle and climb its eastern staircase.
+    # The wall at x=-3216 requires reaching the upper landing before turning
+    # north; cutting that corner leaves the player hull trapped in the pit.
+    route.add(20, forward=-127, strafe=-127, actions=ACTION_JUMP)
+    route.add(12, strafe=-127)
+    route.add(15, forward=-127)
+    route.add(3, forward=40)
+    route.add(5)
+    route.add(8, strafe=127)
+    route.add(8, strafe=-40)
+    route.add(30)
+
+    # Rejoin the lounge, reopen rr1, and settle on the upper perimeter lane.
+    route.add(5, forward=127)
+    route.add(8, forward=-40)
+    route.add(5)
+    route.add(19, strafe=127)
+    route.add(8, strafe=-40)
+    route.add(5)
+    # The PSX fixed-point staircase return settles 19 units farther north than
+    # GoldSrc. Two south ticks put both paths inside rr1's fully-open clearance
+    # instead of letting the PSX hull graze the translated door slab.
+    route.add(2, strafe=-127)
+    route.add(60, forward=-127)
+    route.add(16, forward=40)
+    route.add(5)
+    route.add(16, strafe=-127)
+    route.add(8, strafe=40)
+    route.add(30)
+
+    # Follow the perimeter around the central hall. Staying on the east wall
+    # avoids the scripted scientist crossing at (-1884, 424); the small north
+    # correction enters the only walkable lane through the lower connector.
+    route.add(65, forward=-127)
+    route.add(5)
+    route.add(65, strafe=-127)
+    route.add(5)
+    route.add(5, strafe=127)
+    route.add(10)
+    route.add(90, forward=127)
+    route.add(5)
+
+    # Cross the HEV-gated trigger, center both airlock trigger volumes, and
+    # preserve the complete Barney retinal-scan sequence before moving again.
+    route.add(55, strafe=-127)
+    route.add(5)
+    route.add(2, strafe=127)
+    route.add(10)
+    route.add(220)
+    route.add(70, forward=-127)
+    return tuple(route.values)
+
+
 def build_route() -> Route:
+    c1a0d = c1a0d_to_hev() + c1a0d_hev_to_c1a0a()
     return Route(
         (
             Segment("c1a0", "c1a0d", rle(c1a0_to_c1a0d()), neutral_tail_ticks=200),
-            Segment("c1a0d", "", rle(c1a0d_to_hev()), neutral_tail_ticks=200),
+            Segment("c1a0d", "c1a0a", rle(c1a0d), neutral_tail_ticks=200),
+            Segment("c1a0a", "", rle((InputSample(),) * 40), neutral_tail_ticks=200),
         )
     )
 
