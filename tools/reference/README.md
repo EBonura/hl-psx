@@ -116,6 +116,29 @@ consecutive maps, records the required next-map order, and RLE-compresses
 identical samples. A repeated visit to the same BSP is represented by another
 ordered segment and can be selected for inspection with `expand --occurrence`.
 
+### Anomalous Materials route
+
+The checked-in route generator currently proves the retail c1a0 spawn through
+the c1a0d HEV pickup. It includes the security-desk sequence, the real map
+transition, the lounge door, the suit-case control, and the suit pickup; it
+does not yet claim the return trip to c1a0a.
+
+```sh
+python3 "$HLPSX/tools/reference/anomalous_materials_route.py" \
+  /tmp/anomalous-materials-to-hev.hlinput
+python3 "$HLPSX/tools/reference/run_goldsrc_reference.py" \
+  --runtime-dir "$RUNTIME" --half-life-dir "$HALF_LIFE" \
+  --framework-dir "$(dirname "$SDL_FRAMEWORK")" \
+  --map c1a0 --semantic-input /tmp/anomalous-materials-to-hev.hlinput \
+  --max-ticks 1500 --entity-interval 1000 \
+  --output /tmp/gold-anomalous-materials-to-hev.trace
+```
+
+The current GoldSrc proof fires `rr1` twice while crossing the lounge door,
+`step` when opening the HEV case, and `hevmaster1` plus `redspot` when the suit
+is collected. Keep those event milestones in the trace when extending the
+route toward c1a0a.
+
 ## Capture and verify
 
 The runner sets all determinism controls, invokes the null renderer, strips any
