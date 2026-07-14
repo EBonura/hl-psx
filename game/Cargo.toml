@@ -28,10 +28,13 @@ emulator-telemetry = []
 # Headless-only test hook: hold L1 plus a low-byte map index at boot to skip the
 # menu and load that map directly. Off for normal discs.
 debug-map-boot = []
-# Deterministic state/event stream consumed by tools/reference. This is an
+# Deterministic state/event stream consumed by the local reference harness. This is an
 # emulator-only diagnostic build: it includes telemetry and direct map boot,
 # while shipping builds retain zero trace code/data.
 reference-trace = ["emulator-telemetry", "debug-map-boot"]
+# Extra per-attempt NPC navigation diagnostics. Keep these out of ordinary
+# semantic replays so the trace build itself still fits PS1 RAM.
+deep-reference-trace = ["reference-trace"]
 # Replay a build-time HLINPUT1 route instead of reading the controller. This is
 # diagnostic-only and implies the trace stream; route bytes must never enter a
 # shipping build or its RAM budget.

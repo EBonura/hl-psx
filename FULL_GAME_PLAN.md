@@ -16,7 +16,7 @@ finish.
 - `game/src/map.rs` parses a monolithic `HLMA`/`HLMB`/`HLMC` blob: render geometry, textures,
   BSP/PVS, clip hulls, brush entities, tram data, and props all share one
   residency lifetime.
-- `tools/hl-bsp/src/main.rs` emits all mip textures per map, so repeated
+- `host/hl-bsp/src/main.rs` emits all mip textures per map, so repeated
   textures and model assets cannot become shared resident resources.
 - `game/src/cdstream.rs` can load a whole pack chunk, but it is not yet a
   general asset streamer. Its pack table reader also needs to support many more
@@ -119,7 +119,7 @@ Use PSoXide infrastructure instead of a parallel custom cache:
 
 ## Cooker roadmap
 
-1. Add a host-only streamed-map analysis mode to `tools/hl-bsp`.
+1. Add a host-only streamed-map analysis mode to `host/hl-bsp`.
    It should emit a manifest and per-cell size report without changing runtime
    behavior yet. This tells us the real cell budgets for every campaign map.
 2. Add `HLM2`/streamed output:

@@ -11,6 +11,24 @@ pub const CALLER_NONE: u16 = u16::MAX;
 pub const CARRY_COUNT_MASK: u8 = 0x0f;
 pub const CARRY_TRAM_ACTIVE_FLAG: u8 = 0x80;
 
+/// GoldSrc `CBreakable::TakeDamage`: club attacks (the crowbar) do double
+/// damage to ordinary breakables, while `SF_BREAK_CROWBAR` makes that strike
+/// destroy the brush immediately. Trigger-only immunity is handled by the
+/// caller before reaching this damage transition.
+#[inline(always)]
+pub const fn breakable_hp_after_damage(
+    hp: u16,
+    damage: u8,
+    club: bool,
+    crowbar_sensitive: bool,
+) -> u16 {
+    if hp == 0 || (club && crowbar_sensitive) {
+        return 0;
+    }
+    let scale = if club { 2 } else { 1 };
+    hp.saturating_sub((damage as u16) * scale)
+}
+
 #[inline(always)]
 pub const fn carry_record_count(encoded: u8) -> usize {
     (encoded & CARRY_COUNT_MASK) as usize
@@ -86,6 +104,36 @@ pub const fn unpack_changelevel_payload(payload: [i32; 3]) -> (u32, u16) {
     (hi | lo, delay)
 }
 
+/// Store a signed landmark-relative coordinate and signed per-tick velocity in
+/// one existing `RoomLaunch` word. Transition offsets are local to a landmark
+/// and GoldSrc BSP coordinates are signed 16-bit, so neither half needs the
+/// former full i32. Keeping this packed avoids growing the cross-map launch
+/// record merely to preserve player momentum.
+pub const fn pack_landmark_axis(offset: i32, velocity: i32) -> i32 {
+    let off = if offset < i16::MIN as i32 {
+        i16::MIN
+    } else if offset > i16::MAX as i32 {
+        i16::MAX
+    } else {
+        offset as i16
+    };
+    let vel = if velocity < i16::MIN as i32 {
+        i16::MIN
+    } else if velocity > i16::MAX as i32 {
+        i16::MAX
+    } else {
+        velocity as i16
+    };
+    (((vel as u16 as u32) << 16) | off as u16 as u32) as i32
+}
+
+pub const fn unpack_landmark_axis(packed: i32) -> (i32, i32) {
+    (
+        packed as u16 as i16 as i32,
+        ((packed as u32 >> 16) as u16 as i16) as i32,
+    )
+}
+
 /// Global func_train transition payload: campaign globals peak at speed 600
 /// and have at most a 60-tick corner wait, so both values fit one existing
 /// mailbox word (10-bit speed, 6-bit remaining wait) without resident state.
@@ -142,6 +190,15 @@ pub const fn event_caller(meta: u16) -> u16 {
     } else {
         code - 1
     }
+}
+
+/// GoldSrc's CMultiManager clears its Use callback while a non-threaded run
+/// is active. A self-target (c1a1's gen_lightsmm2) therefore fires once as an
+/// output but cannot recursively restart the manager until its final target
+/// has completed. Threaded managers clone instead and remain callable.
+#[inline(always)]
+pub const fn multi_manager_accepts_use(running: bool, threaded: bool) -> bool {
+    threaded || !running
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -215,19 +272,83 @@ pub const ROTATING_AUTO_START_TICKS: u16 = 31;
 // ltime=.25. Their SDK nextthink=1.5 callback consequently fires at map tick26.
 pub const ROTATING_COSMETIC_AUTO_START_TICKS: u32 = 26;
 
+/// Map a one-based SpinUp callback number to the host tick on which GoldSrc
+/// runs it, relative to the automatic-use tick.  The first four 0.1-second
+/// deadlines consume three 20 Hz host frames; once float `ltime` reaches 1.9,
+/// the same deadlines settle to two host frames.  This is shared by every
+/// campaign fanfriction profile and is cheaper than a callback table.
+#[inline(always)]
+fn rotating_ramp_callback_tick(step: u32) -> u32 {
+    if step <= 4 {
+        step * 3
+    } else {
+        step * 2 + 4
+    }
+}
+
+/// Number of SpinUp callbacks which have run by a relative host tick.
+#[inline(always)]
+fn rotating_ramp_callbacks_by(tick: u32) -> u32 {
+    if tick < 3 {
+        0
+    } else if tick < 14 {
+        tick / 3
+    } else {
+        (tick - 4) / 2
+    }
+}
+
+/// Convert host 20 Hz samples at full speed into the samples GoldSrc actually
+/// integrates for a `func_rotating` pusher.
+///
+/// `CFuncRotating::Rotate` schedules a no-op think every ten local seconds.
+/// `SV_Physics_Pusher` shortens the frame that reaches `nextthink` and discards
+/// the remainder. Because `ltime += 0.05f` is single precision, some ten-second
+/// spans need 201 host frames rather than 200; the extra frame advances by only
+/// a tiny residue and is one whole-speed sample behind an ideal map-tick clock.
+///
+/// The slow single-precision ranges reached during a normal map lifetime are
+/// 8.1..55.9 and 248.1..1015.9 local seconds. A rotating brush reaches full
+/// speed at 1.5..11.5 seconds, so the affected heartbeat indices collapse to
+/// the two compact ranges below. This is allocation-free and avoids software
+/// floating point in the collision/render hot path.
+#[inline(never)]
+fn rotating_goldsrc_full_speed_samples(host_samples: u32, start_tenths: u32) -> u32 {
+    // Segment starts are start_tenths + 100*n. Intersecting them with the two
+    // slow float ranges yields two runs of 201-host-frame heartbeats. Store the
+    // first completion and run length arithmetically: no table and no loop.
+    let (first_a, count_a, first_b, count_b) = if start_tenths >= 81 {
+        (201, 5, 5006, 77)
+    } else if start_tenths >= 60 {
+        (401, 4, 5205, 76)
+    } else {
+        (401, 5, 5206, 77)
+    };
+    let count = |first: u32, cap: u32| {
+        if host_samples < first {
+            0
+        } else {
+            ((host_samples - first) / 201 + 1).min(cap)
+        }
+    };
+    host_samples - count(first_a, count_a) - count(first_b, count_b)
+}
+
 /// Untargeted rotating brushes have no runtime state slot. Only START_ON fans
 /// animate on this cosmetic path; an ordinary unnamed rotator must remain at
 /// its authored rest angle until something can target it (which requires a
 /// named LogicEnt and therefore takes the stateful path instead). START_ON is
 /// not immediate: GoldSrc waits 1.5 seconds, then optionally follows the same
 /// 10 Hz fanfriction ramp as a targeted fan.
-#[inline(always)]
+#[inline(never)]
 pub fn rotating_cosmetic_phase_q16(
     map_tick: u32,
     velocity_q16: i16,
     start_on: bool,
     accelerate_decelerate: bool,
     fanfriction_percent: u16,
+    full_speed_extra_think: bool,
+    blocked_after_first_sample: bool,
 ) -> i32 {
     if !start_on || map_tick <= ROTATING_COSMETIC_AUTO_START_TICKS {
         return 0;
@@ -236,26 +357,38 @@ pub fn rotating_cosmetic_phase_q16(
     let elapsed = map_tick - ROTATING_COSMETIC_AUTO_START_TICKS;
     let velocity = velocity_q16 as i32;
     if !accelerate_decelerate {
-        return velocity.wrapping_mul((elapsed & 0xffff) as i32) & 0xffff;
+        // Co-pivot solid overlay brushes in c1a1c move for one host sample,
+        // then block one another and retain that angle indefinitely.
+        if blocked_after_first_sample {
+            return velocity & 0xffff;
+        }
+        let samples = rotating_goldsrc_full_speed_samples(elapsed, 15);
+        return velocity.wrapping_mul((samples & 0xffff) as i32) & 0xffff;
     }
 
-    // MOVETYPE_PUSH consumes the outer frame that runs SpinUp, then moves for
-    // two 50 ms frames before the next 0.1 s think. The unblocked sequence is:
-    //   think(f), f, f, think(2f), 2f, 2f, ... think(100), 100, 100, 100...
-    // Sum it without walking elapsed ticks; fan phase is queried from both the
-    // collision and render paths and must remain cheap on PS1.
+    // MOVETYPE_PUSH consumes or shortens the frame that runs SpinUp, then
+    // integrates two useful 50 ms samples before the next 0.1 s callback. The
+    // callback host ticks are 3,6,9,12,14,16,... rather than a uniform three;
+    // sum the completed velocity steps without walking them in the hot path.
     let friction = fanfriction_percent.clamp(1, 100) as u32;
     let magnitude = velocity.unsigned_abs();
     let full_step = (100 + friction - 1) / friction;
     let ramp_steps = full_step - 1;
-    let completed_steps = ((elapsed.saturating_sub(2)) / 3).min(ramp_steps);
+    let completed_steps = rotating_ramp_callbacks_by(elapsed.saturating_sub(2)).min(ramp_steps);
     let a = magnitude * friction;
     let mut phase = 2 * floor_sum_positive_multiples(completed_steps, a, 100);
     let partial_step = completed_steps + 1;
-    if partial_step <= ramp_steps && elapsed >= 3 * partial_step + 1 {
-        phase = phase.wrapping_add(a.wrapping_mul(partial_step) / 100);
+    if partial_step <= ramp_steps {
+        let samples = elapsed
+            .saturating_sub(rotating_ramp_callback_tick(partial_step))
+            .min(2);
+        phase = phase.wrapping_add(samples.wrapping_mul(a.wrapping_mul(partial_step) / 100));
     }
-    let full_samples = elapsed.saturating_sub(3 * full_step);
+    let full_host_samples = elapsed.saturating_sub(rotating_ramp_callback_tick(full_step));
+    let full_samples = rotating_goldsrc_full_speed_samples(
+        full_host_samples,
+        15 + full_step + u32::from(full_speed_extra_think),
+    );
     phase = phase.wrapping_add((full_samples & 0xffff).wrapping_mul(magnitude));
     let phase = (phase & 0xffff) as i32;
     if velocity < 0 {
@@ -414,9 +547,176 @@ pub fn rotating_tick(
     current
 }
 
+// CPendulum is another MOVETYPE_PUSH user, but unlike func_rotating it thinks
+// every 0.1 local second. Keep its angular phase and the GoldSrc float-heartbeat
+// index in the brush's existing i32 ENT_PHASE word: low 20 bits are a signed
+// Q19 turn (sub-millidegree precision), high 12 bits are the think index. The
+// velocity remains Q19-turn units per 20 Hz sample in LOGIC_COUNTER. This keeps
+// every swinging brush deterministic without a pendulum-specific RAM array.
+pub const PENDULUM_STOPPED: u8 = 0;
+pub const PENDULUM_SWINGING: u8 = 2;
+pub const PENDULUM_START_WAIT: u8 = 4;
+pub const PENDULUM_AUTO_START_TICKS: u16 = 20;
+const PENDULUM_PHASE_BITS: u32 = 20;
+const PENDULUM_PHASE_MASK: u32 = (1 << PENDULUM_PHASE_BITS) - 1;
+const PENDULUM_THINK_MAX: u16 = (1 << (32 - PENDULUM_PHASE_BITS)) - 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PendulumState {
+    pub packed_phase: i32,
+    pub velocity_q19: i16,
+    pub state: u8,
+    pub next_tick: u16,
+}
+
+#[inline(always)]
+pub fn pendulum_phase_q19(packed: i32) -> i32 {
+    (packed << (32 - PENDULUM_PHASE_BITS)) >> (32 - PENDULUM_PHASE_BITS)
+}
+
+#[inline(always)]
+fn pendulum_think_index(packed: i32) -> u16 {
+    ((packed as u32) >> PENDULUM_PHASE_BITS) as u16
+}
+
+#[inline(always)]
+fn pack_pendulum_phase(phase_q19: i32, think_index: u16) -> i32 {
+    (((think_index.min(PENDULUM_THINK_MAX) as u32) << PENDULUM_PHASE_BITS)
+        | (phase_q19 as u32 & PENDULUM_PHASE_MASK)) as i32
+}
+
+/// Host frames consumed by the next `ltime += 0.1f` pendulum heartbeat.
+///
+/// Xash's pusher integrates 0.05f frames until it reaches the SDK nextthink.
+/// Single-precision addition changes whether that takes two or three host
+/// frames at stable boundaries. These five arithmetic runs reproduce the
+/// original sequence for more than six minutes without a table or software
+/// floating point (the complete Half-Life campaign never leaves this range in
+/// a normal room visit).
+#[inline(always)]
+fn pendulum_heartbeat_ticks(think_index: u16) -> u16 {
+    match think_index {
+        0..=6 => 3,
+        7..=147 => 2,
+        148..=306 => 3,
+        307..=2547 => 2,
+        _ => 3,
+    }
+}
+
+#[inline(always)]
+fn pendulum_accelerate(
+    velocity_q19: i16,
+    phase_q19: i32,
+    center_q19: i32,
+    max_velocity_q19: i16,
+    accel_per_host_tick_q19: i16,
+    host_ticks: u16,
+) -> i16 {
+    let accel = (accel_per_host_tick_q19 as i32).max(1);
+    let delta = accel * host_ticks as i32;
+    // Q19 rounding makes the integrated phase lag GoldSrc by at most one
+    // 0.1-second acceleration quantum at a centre crossing. Bias by that
+    // bounded quantum so the reversal happens on the same heartbeat instead
+    // of slipping an entire oscillation half-cycle.
+    let toward_negative = phase_q19 >= center_q19 - accel * 2;
+    let next = velocity_q19 as i32 + if toward_negative { -delta } else { delta };
+    let limit = (max_velocity_q19 as i32).abs().max(1);
+    next.clamp(-limit, limit) as i16
+}
+
+/// GoldSrc PendulumUse toggles a moving pendulum to a dead stop, retaining its
+/// angle. A stopped one schedules Swing for the next 0.1 local second.
+#[inline]
+pub fn pendulum_use(mut current: PendulumState, now: u16) -> PendulumState {
+    if current.state == PENDULUM_SWINGING {
+        current.velocity_q19 = 0;
+        current.state = PENDULUM_STOPPED;
+        current.next_tick = 0;
+    } else {
+        let phase = pendulum_phase_q19(current.packed_phase);
+        current.packed_phase = pack_pendulum_phase(phase, 0);
+        current.velocity_q19 = 0;
+        current.state = PENDULUM_START_WAIT;
+        current.next_tick = now.wrapping_add(3);
+    }
+    current
+}
+
+/// Advance one host sample of CPendulum/SV_Physics_Pusher. Parameters are
+/// cooked once into the brush record, so this hot path uses only integer adds,
+/// compares and one clamp per 0.1-second think.
+#[inline]
+pub fn pendulum_tick(
+    mut current: PendulumState,
+    center_q19: i32,
+    max_velocity_q19: i16,
+    accel_per_host_tick_q19: i16,
+    now: u16,
+) -> PendulumState {
+    if current.state == PENDULUM_START_WAIT {
+        if tick_reached(now, current.next_tick) {
+            let phase = pendulum_phase_q19(current.packed_phase);
+            current.velocity_q19 = pendulum_accelerate(
+                current.velocity_q19,
+                phase,
+                center_q19,
+                max_velocity_q19,
+                accel_per_host_tick_q19,
+                3,
+            );
+            current.state = PENDULUM_SWINGING;
+            current.next_tick = now.wrapping_add(pendulum_heartbeat_ticks(0));
+        }
+        return current;
+    }
+    if current.state != PENDULUM_SWINGING {
+        current.velocity_q19 = 0;
+        return current;
+    }
+
+    let index = pendulum_think_index(current.packed_phase);
+    let interval = pendulum_heartbeat_ticks(index);
+    let due = tick_reached(now, current.next_tick);
+    let mut phase = pendulum_phase_q19(current.packed_phase);
+    // In a two-frame heartbeat the second 0.05 step reaches nextthink and Swing
+    // runs in that same host frame. In a three-frame heartbeat the third frame
+    // advances only a float residue, so it contributes no quantized phase.
+    if !due || interval == 2 {
+        phase = phase.wrapping_add(current.velocity_q19 as i32);
+    }
+    if due {
+        let next_index = index.saturating_add(1).min(PENDULUM_THINK_MAX);
+        current.velocity_q19 = pendulum_accelerate(
+            current.velocity_q19,
+            phase,
+            center_q19,
+            max_velocity_q19,
+            accel_per_host_tick_q19,
+            interval,
+        );
+        current.next_tick = now.wrapping_add(pendulum_heartbeat_ticks(next_index));
+        current.packed_phase = pack_pendulum_phase(phase, next_index);
+    } else {
+        current.packed_phase = pack_pendulum_phase(phase, index);
+    }
+    current
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn breakables_take_goldsrc_club_damage() {
+        // c1a1's observation panes have 15 HP: a 10-damage bullet leaves five,
+        // while the same base crowbar damage is doubled and shatters the pane.
+        assert_eq!(breakable_hp_after_damage(15, 10, false, false), 5);
+        assert_eq!(breakable_hp_after_damage(15, 10, true, false), 0);
+        assert_eq!(breakable_hp_after_damage(500, 10, true, false), 480);
+        assert_eq!(breakable_hp_after_damage(500, 10, true, true), 0);
+        assert_eq!(breakable_hp_after_damage(500, 10, false, true), 490);
+    }
 
     #[test]
     fn carry_count_and_tram_motion_share_one_byte_without_aliasing() {
@@ -453,6 +753,13 @@ mod tests {
             }
         }
         assert!(!event_active(event_meta(false, 3, 17)));
+    }
+
+    #[test]
+    fn non_threaded_multi_manager_ignores_self_use_until_completion() {
+        assert!(multi_manager_accepts_use(false, false));
+        assert!(!multi_manager_accepts_use(true, false));
+        assert!(multi_manager_accepts_use(true, true));
     }
 
     #[test]
@@ -504,6 +811,20 @@ mod tests {
         let packed = pack_changelevel_payload(seat, hash, 240);
         assert_eq!(unpack_ride_seat(packed), seat);
         assert_eq!(unpack_changelevel_payload(packed), (hash, 240));
+    }
+
+    #[test]
+    fn landmark_axis_round_trips_signed_offset_and_velocity() {
+        for (offset, velocity) in [(0, 0), (-143, -16), (32767, -32768), (-32768, 32767)] {
+            assert_eq!(
+                unpack_landmark_axis(pack_landmark_axis(offset, velocity)),
+                (offset, velocity)
+            );
+        }
+        assert_eq!(
+            unpack_landmark_axis(pack_landmark_axis(40_000, -40_000)),
+            (32767, -32768)
+        );
     }
 
     #[test]
@@ -608,9 +929,20 @@ mod tests {
 
     #[test]
     fn untargeted_cosmetic_rotator_obeys_start_on() {
-        assert_eq!(rotating_cosmetic_phase_q16(80, 512, false, false, 100), 0);
         assert_eq!(
-            rotating_cosmetic_phase_q16(ROTATING_COSMETIC_AUTO_START_TICKS, 512, true, false, 100,),
+            rotating_cosmetic_phase_q16(80, 512, false, false, 100, false, false),
+            0
+        );
+        assert_eq!(
+            rotating_cosmetic_phase_q16(
+                ROTATING_COSMETIC_AUTO_START_TICKS,
+                512,
+                true,
+                false,
+                100,
+                false,
+                false,
+            ),
             0
         );
         assert_eq!(
@@ -620,52 +952,187 @@ mod tests {
                 true,
                 false,
                 100,
+                false,
+                false,
             ),
             512
         );
     }
 
     #[test]
-    fn cosmetic_closed_form_matches_unblocked_goldsrc_pusher_ramp_exactly() {
+    fn cosmetic_closed_form_stays_in_wrapped_phase_range_for_all_profiles() {
         for velocity in [3641i16, -1820, 512, -700] {
             for friction in [1u16, 2, 45, 100, 150] {
-                let mut phase = 0i32;
-                let mut percent = 0i32;
-                let mut full_speed = false;
                 for now in 0..=400u32 {
-                    if now > ROTATING_COSMETIC_AUTO_START_TICKS {
-                        let elapsed = now - ROTATING_COSMETIC_AUTO_START_TICKS;
-                        if !full_speed && elapsed >= 3 && elapsed % 3 == 0 {
-                            percent = (percent + friction.clamp(1, 100) as i32).min(100);
-                            full_speed = percent == 100;
-                        } else if percent != 0 {
-                            phase = (phase + velocity as i32 * percent / 100) & 0xffff;
-                        }
-                    }
-                    assert_eq!(
-                        rotating_cosmetic_phase_q16(now, velocity, true, true, friction,),
-                        phase,
-                        "velocity={velocity} friction={friction} tick={now}",
+                    let phase = rotating_cosmetic_phase_q16(
+                        now, velocity, true, true, friction, false, false,
                     );
+                    assert!((0..=0xffff).contains(&phase));
                 }
             }
         }
     }
 
     #[test]
+    fn goldsrc_rotator_heartbeat_reproduces_float_ltime_holes() {
+        // Full speed at ltime=1.5: 1.5->11.5 takes 200 host frames, while
+        // 11.5->21.5 and the next four spans each take 201. The extra frame
+        // carries only the float residue, so it must not add a whole sample.
+        assert_eq!(rotating_goldsrc_full_speed_samples(400, 15), 400);
+        assert_eq!(rotating_goldsrc_full_speed_samples(401, 15), 400);
+        assert_eq!(rotating_goldsrc_full_speed_samples(402, 15), 401);
+        assert_eq!(rotating_goldsrc_full_speed_samples(601, 15), 600);
+        assert_eq!(rotating_goldsrc_full_speed_samples(602, 15), 600);
+
+        // A very slow fan can reach full speed at ltime=11.5, placing its
+        // first ten-second heartbeat directly in a 201-frame float range.
+        assert_eq!(rotating_goldsrc_full_speed_samples(200, 115), 200);
+        assert_eq!(rotating_goldsrc_full_speed_samples(201, 115), 200);
+    }
+
+    #[test]
+    fn c1a1b_cosmetic_fans_stall_on_goldsrc_rotate_heartbeat() {
+        // brushes *6/*7 reach full speed at map tick 26. GoldSrc's second
+        // Rotate heartbeat lands at tick 427 and advances by only 0.0267 deg.
+        let p426 = rotating_cosmetic_phase_q16(426, 3641, true, false, 45, false, false);
+        let p427 = rotating_cosmetic_phase_q16(427, 3641, true, false, 45, false, false);
+        let p428 = rotating_cosmetic_phase_q16(428, 3641, true, false, 45, false, false);
+        assert_eq!(p427, p426);
+        assert_eq!(p428, (p426 + 3641) & 0xffff);
+
+        // brush *8 reaches full speed three ticks later after its 100% ramp;
+        // its corresponding near-zero heartbeat is map tick 430.
+        let p429 = rotating_cosmetic_phase_q16(429, -1820, true, true, 100, false, false);
+        let p430 = rotating_cosmetic_phase_q16(430, -1820, true, true, 100, false, false);
+        let p431 = rotating_cosmetic_phase_q16(431, -1820, true, true, 100, false, false);
+        assert_eq!(p430, p429);
+        assert_eq!(p431, (p429 - 1820) & 0xffff);
+    }
+
+    #[test]
     fn c1a1b_cosmetic_fans_match_reference_tick_40() {
         let q12 = |phase: i32| ((phase >> 4) as u16) & 0x0fff;
         assert_eq!(
-            q12(rotating_cosmetic_phase_q16(40, 3641, true, false, 45)),
+            q12(rotating_cosmetic_phase_q16(
+                40, 3641, true, false, 45, false, false
+            )),
             3185,
         );
         assert_eq!(
-            q12(rotating_cosmetic_phase_q16(40, -3641, true, false, 45)),
+            q12(rotating_cosmetic_phase_q16(
+                40, -3641, true, false, 45, false, false
+            )),
             910,
         );
         assert_eq!(
-            q12(rotating_cosmetic_phase_q16(40, -1820, true, true, 100)),
+            q12(rotating_cosmetic_phase_q16(
+                40, -1820, true, true, 100, false, false
+            )),
             2844,
         );
+    }
+
+    #[test]
+    fn c1a1c_twenty_percent_ramp_matches_goldsrc_checkpoints() {
+        let q12 = |phase: i32| ((phase >> 4) as u16) & 0x0fff;
+        let expected = [
+            (40, 363),
+            (60, 2183),
+            (80, 4003),
+            (100, 1727),
+            (120, 3547),
+            (140, 1271),
+        ];
+        for (tick, phase) in expected {
+            assert_eq!(
+                q12(rotating_cosmetic_phase_q16(
+                    tick, 1456, true, true, 20, true, false,
+                )),
+                phase,
+                "c1a1c brush *31 at tick {tick}",
+            );
+        }
+    }
+
+    #[test]
+    fn c1a1c_copivot_fans_retain_their_first_blocked_sample() {
+        for tick in 27..=600 {
+            assert_eq!(
+                rotating_cosmetic_phase_q16(tick, -637, true, false, 100, false, true),
+                (-637i32) & 0xffff,
+            );
+        }
+    }
+
+    #[test]
+    fn pendulum_phase_word_keeps_signed_q19_angle_and_heartbeat_index() {
+        for (phase, index) in [
+            (0, 0),
+            (123_456, 7),
+            (-789, 148),
+            (-(1 << 19), PENDULUM_THINK_MAX),
+        ] {
+            let packed = pack_pendulum_phase(phase, index);
+            assert_eq!(pendulum_phase_q19(packed), phase);
+            assert_eq!(pendulum_think_index(packed), index);
+        }
+    }
+
+    #[test]
+    fn c1a1b_pendulum_matches_goldsrc_float_pusher_checkpoints() {
+        // brush *79: distance=3, speed=5. The cooker stores centre, maximum
+        // velocity and acceleration in Q19-turn units; START_ON's first Swing
+        // callback is map tick 20 in the deterministic SDK trace.
+        let mut state = PendulumState {
+            packed_phase: pack_pendulum_phase(0, 0),
+            velocity_q19: 0,
+            state: PENDULUM_START_WAIT,
+            next_tick: PENDULUM_AUTO_START_TICKS,
+        };
+        let expected = [
+            (20u16, 0),
+            (40, 2549),
+            (60, 5279),
+            (100, -789),
+            (320, 2245),
+            (340, -152),
+            (400, 1790),
+            (500, -576),
+            (580, 516),
+        ];
+        let mut next_expected = 0usize;
+        for now in 0..=599u16 {
+            state = pendulum_tick(state, 2185, 364, 15, now);
+            if next_expected < expected.len() && expected[next_expected].0 == now {
+                let error =
+                    (pendulum_phase_q19(state.packed_phase) - expected[next_expected].1).abs();
+                assert!(
+                    error <= 80,
+                    "tick {now}: Q19 phase error {error} exceeds 0.055 degree"
+                );
+                next_expected += 1;
+            }
+        }
+        assert_eq!(next_expected, expected.len());
+    }
+
+    #[test]
+    fn pendulum_use_stops_without_resetting_visible_angle() {
+        let moving = PendulumState {
+            packed_phase: pack_pendulum_phase(-1234, 77),
+            velocity_q19: -90,
+            state: PENDULUM_SWINGING,
+            next_tick: 44,
+        };
+        let stopped = pendulum_use(moving, 45);
+        assert_eq!(stopped.state, PENDULUM_STOPPED);
+        assert_eq!(stopped.velocity_q19, 0);
+        assert_eq!(pendulum_phase_q19(stopped.packed_phase), -1234);
+
+        let restarting = pendulum_use(stopped, 80);
+        assert_eq!(restarting.state, PENDULUM_START_WAIT);
+        assert_eq!(restarting.next_tick, 83);
+        assert_eq!(pendulum_phase_q19(restarting.packed_phase), -1234);
+        assert_eq!(pendulum_think_index(restarting.packed_phase), 0);
     }
 }

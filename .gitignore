@@ -32,35 +32,7 @@ config.mk
 # ---- Local-only material (kept on disk, never committed) ----
 docs/
 reference/
-!tools/reference/
-!tools/reference/**
-tools/*.py
-!tools/gen_studio_events.py
-!tools/test_studio_events.py
-!tools/memory_report.py
-!tools/campaign_map_report.py
-!tools/campaign_flow_report.py
-!tools/roster_audit.py
-!tools/test_roster_audit.py
-!tools/placement_audit.py
-!tools/train_audit.py
-!tools/spu_audit.py
-!tools/model_asset_audit.py
-!tools/test_model_asset_audit.py
-!tools/test_campaign_map_report.py
-!tools/test_train_audit.py
-!tools/merge_model_chunk.py
-# Asset extractors needed by `make assets` (they read YOUR Half-Life install
-# and contain no Valve data, so a fresh clone can build).
-!tools/extract_menu.py
-!tools/extract_music.py
-!tools/extract_sfx.py
-!tools/extract_voices.py
-!tools/extract_sprites.py
-!tools/gen_clips_manifest.py
-!tools/gen_transition_props.py
-!tools/test_transition_props.py
-tools/*.sh
+tools/
 
 # ---- OS / editor cruft ----
 .DS_Store

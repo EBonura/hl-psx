@@ -48,6 +48,7 @@ const SZ_PLANE: usize = 20; // f32 normal[3] + f32 dist + i32 type
 const SZ_CLIPNODE: usize = 8; // i32 planenum + i16 children[2]
 const SZ_LEAF_VISOFS: usize = 4; // dleaf_t.visofs at byte 4
 const SZ_LEAF_MARK0: usize = 20; // dleaf_t.firstmarksurface at byte 20
+const SZ_MODEL_HEADNODE0: usize = 36; // dmodel_t.headnode[0], followed by hulls 1..3
 const SZ_MODEL_VISLEAFS: usize = 52; // dmodel_t.visleafs in world model 0
 
 fn u16le(b: &[u8], o: usize) -> Option<u16> {
@@ -59,6 +60,16 @@ fn u32le(b: &[u8], o: usize) -> Option<u32> {
 }
 fn i32le(b: &[u8], o: usize) -> Option<i32> {
     u32le(b, o).map(|v| v as i32)
+}
+
+fn model_headnode(models: &[u8], model: usize, hull: usize) -> Option<i32> {
+    if hull >= 4 {
+        return None;
+    }
+    i32le(
+        models,
+        model * SZ_MODEL + SZ_MODEL_HEADNODE0 + hull * core::mem::size_of::<i32>(),
+    )
 }
 fn f32le(b: &[u8], o: usize) -> Option<f32> {
     u32le(b, o).map(f32::from_bits)
@@ -78,12 +89,12 @@ fn world_visleaf_count(models: &[u8], n_leaves: usize) -> Result<usize, String> 
     Ok(raw as usize)
 }
 
-/// HLMC keeps the BSP header at 24 bytes: low 16 bits are total leaf records,
+/// HLMD keeps the BSP header at 24 bytes: low 16 bits are total leaf records,
 /// high 16 bits are world PVS clusters. GoldSrc's map limits fit both fields.
 fn pack_leaf_counts(n_leaves: usize, n_visleaves: usize) -> Result<u32, String> {
     if n_leaves > u16::MAX as usize || n_visleaves > u16::MAX as usize {
         return Err(format!(
-            "HLMC leaf counts exceed u16 (records {n_leaves}, visleafs {n_visleaves})"
+            "HLMD leaf counts exceed u16 (records {n_leaves}, visleafs {n_visleaves})"
         ));
     }
     Ok(n_leaves as u32 | ((n_visleaves as u32) << 16))
@@ -365,7 +376,7 @@ fn report(path: &str, bsp: &Bsp) {
 // ---- Cook: BSP -> .hlm (PS1-native textured + lit triangle mesh) ----------
 //
 // Layout (all little-endian):
-//   magic "HLMC" | u32 n_verts | u32 n_tris | u32 n_texs
+//   magic "HLMD" | u32 n_verts | u32 n_tris | u32 n_texs
 //   verts:   i16 x,y,z   × n_verts          (world space, Y-up)
 //   tri_rec[16] × n_tris:
 //     u16 a,b,c | u8 uv[6] | u8 tex | u8 light_idx[3]
@@ -752,7 +763,26 @@ fn plane_rec(planes: &[u8], planenum: usize, scale: f32) -> ([i16; 3], i32) {
     )
 }
 
-// HLMB/C clip PlaneRef: bits 13..0 are the remapped plane-table index; bits
+/// Runtime collision/BSP plane with a Q5 distance. The record remains the
+/// same 10 bytes (`i16[3] + i32`), but retaining GoldSrc's 1/32-unit plane
+/// precision avoids moving expanded hulls by up to a unit at cook time.
+fn plane_rec_q5(planes: &[u8], planenum: usize, scale: f32) -> ([i16; 3], i32) {
+    let po = planenum * SZ_PLANE;
+    let nx = f32le(planes, po).unwrap_or(0.0);
+    let ny = f32le(planes, po + 4).unwrap_or(0.0);
+    let nz = f32le(planes, po + 8).unwrap_or(0.0);
+    let d = f32le(planes, po + 12).unwrap_or(0.0);
+    (
+        [
+            (nx * 4096.0).round() as i16,
+            (nz * 4096.0).round() as i16,
+            (ny * 4096.0).round() as i16,
+        ],
+        (d / scale * 32.0).round() as i32,
+    )
+}
+
+// HLMB/C/D clip PlaneRef: bits 13..0 are the remapped plane-table index; bits
 // 15..14 classify exact positive axial normals after plane_rec quantization:
 // 00=generic, 01=+X, 10=+Y, 11=+Z. Negative axes stay generic because their
 // sign cannot be represented by the two-bit fast-path tag.
@@ -2038,7 +2068,7 @@ fn to_world(p: [f32; 3], scale: f32) -> [i32; 3] {
 
 struct EntRec {
     submodel: u16,
-    kind: u16, // 0 = solid/static brush, 1 = func_door, 2 = nonsolid visual brush, 3 = func_button
+    kind: u16, // 0 static, 1 door, 2 visual, 3 button, 5 fan, 8 platrot, 9 pushable, 10 pendulum
     origin: [i32; 3],
     mv: [i32; 3],     // full-open displacement (world)
     center: [i32; 3], // submodel bounds centre; movers use closed-world centre
@@ -2048,19 +2078,60 @@ struct EntRec {
     leaves: Vec<u16>, // BSP leaves touched by this entity's bounds, for PVS culling
 }
 
+// High-half profile bits in func_rotating EntRec.mv[2]. Authored fanfriction
+// occupies only 1..100; these two cook-time facts reproduce GoldSrc pusher
+// behavior without a runtime array or a larger streamed record.
+const FAN_PROFILE_FRICTION_MASK: u16 = 0x007f;
+const FAN_PROFILE_RAMP_EXTRA_THINK: u16 = 0x4000;
+const FAN_PROFILE_BLOCKED_AFTER_FIRST_SAMPLE: u16 = 0x8000;
+
 // Entity-local rotating platform. `origin` is the bottom pose/pivot,
 // `mv[0]` is the signed full yaw in Q12 turns, and `mv[1]` is the vertical
 // bottom-to-top displacement. The fixed EntRec stays 56 bytes.
 const ENT_KIND_PLATROT: u16 = 8;
 // Translated SOLID_BBOX brush. `origin` is the live runtime offset; mv packs
 // max speed + local AABB half-extents without growing the 56-byte EntRec.
+// The low speed word also carries GoldSrc's world-hull selection and the
+// one-unit SET_MODEL mins padding. GoldSrc does not sweep the full visual box:
+// SV_HullForBsp selects one of four canonical hulls and anchors it at mins.
 const ENT_KIND_PUSHABLE: u16 = 9;
+// Pivot-local CPendulum brush. mv[0] is its centre angle in signed Q19 turns;
+// mv[1] packs max Q19-per-tick velocity + world rotation axis; mv[2] packs
+// per-host-tick acceleration + authored spawnflags. Runtime phase shares the
+// existing ENT_PHASE word with a compact GoldSrc heartbeat index.
+const ENT_KIND_PENDULUM: u16 = 10;
 const SF_PUSH_BREAKABLE: u16 = 128;
 
+const PUSHABLE_COLLISION_META_VALID: u16 = 0x8000;
+const PUSHABLE_COLLISION_HULL_SHIFT: u16 = 8;
+const PUSHABLE_COLLISION_MIN_CORR_SHIFT: u16 = 10;
+
+fn pushable_collision_hull(mins: [f32; 3], maxs: [f32; 3]) -> u16 {
+    let sx = maxs[0] - mins[0] + 2.0;
+    let sz = maxs[2] - mins[2] + 2.0;
+    if sx <= 8.0 {
+        0 // hull 0: point
+    } else if sx <= 36.0 && sz <= 36.0 {
+        1 // hull 3: duck, 32x32x36
+    } else if sx <= 36.0 {
+        2 // hull 1: standing, 32x32x72
+    } else {
+        3 // hull 2: large, 64x64x64
+    }
+}
+
 #[inline]
-fn pack_pushable_speed_half_x(max_speed: i32, half_x: i32) -> i32 {
-    (((half_x.clamp(0, u16::MAX as i32) as u32) << 16) | max_speed.clamp(0, u16::MAX as i32) as u32)
-        as i32
+fn pack_pushable_speed_half_x(
+    max_speed: i32,
+    half_x: i32,
+    collision_hull: u16,
+    min_correction_mask: u16,
+) -> i32 {
+    let low = PUSHABLE_COLLISION_META_VALID
+        | ((collision_hull & 3) << PUSHABLE_COLLISION_HULL_SHIFT)
+        | ((min_correction_mask & 7) << PUSHABLE_COLLISION_MIN_CORR_SHIFT)
+        | max_speed.clamp(0, u8::MAX as i32) as u16;
+    (((half_x.clamp(0, u16::MAX as i32) as u32) << 16) | low as u32) as i32
 }
 
 const LOGIC_BRUSH_NONE: u16 = u16::MAX;
@@ -2114,6 +2185,7 @@ const LOGIC_MONSTERCLIP: u8 = 41; // func_monsterclip: mins/maxs AABB blocks NPC
 const LOGIC_MOMENTARY: u8 = 42; // momentary_rot_button valve wheel: hold +use to ramp its target door
 const LOGIC_TRIGGER_TRANSITION: u8 = 43; // carry filter: targetname = landmark, bounds = volume
 const LOGIC_FUNC_ROTATING: u8 = 44; // targeted fan: persistent angle + GoldSrc start/stop ramp
+const LOGIC_FUNC_PENDULUM: u8 = 45; // targeted/START_ON pendulum: fixed-point Swing state
 const MAX_RUNTIME_LIVE_PROPS: usize = 113; // 128 minus 15 zero-BSS carry mailbox rows
 const LOGIC_TANK: u8 = 38; // func_tank mountable gun: arg0 = bullet damage, speed = fire cooldown ticks
 const LOGIC_BEAM: u8 = 39; // env_beam/env_laser: aux = start xyz + end xyz, arg1 = half-width, speed = color
@@ -2168,11 +2240,11 @@ fn prop_type_crosses_transition(ty: u16) -> bool {
     let base = ty & 0x0fff;
     // FCAP_DONT_SAVE / !FCAP_ACROSS_TRANSITION plus non-actors. Authored dead
     // bodies and monstermaker stock are map-local state, never live carries.
-    ty & 0xc000 == 0 && !matches!(base, 3 | 4 | 16 | 26..=49 | 50) && base < 54
+    ty & 0xc000 == 0 && !matches!(base, 3 | 4 | 16 | 26..=49 | 50) && base < 56
 }
 
 /// (map_index, key) -> per-map local voice id, from the VOICES_MANIFEST env file
-/// written by tools/extract_voices.py. key = UPPERCASE sentence name (scripted_
+/// written by `host/hl-content`. key = UPPERCASE sentence name (scripted_
 /// sentence) or lowercase wav path (ambient_generic).
 fn load_voices_manifest() -> std::collections::HashMap<(u16, String), u16> {
     let mut out = std::collections::HashMap::new();
@@ -2196,7 +2268,7 @@ fn load_voices_manifest() -> std::collections::HashMap<(u16, String), u16> {
 }
 
 /// (map_index, spr_basename) -> (local_id, base_w, base_h) from SPRITES_MANIFEST
-/// (tools/extract_sprites.py). Resolves each env_sprite/env_glow model to its
+/// (`host/hl-content`). Resolves each env_sprite/env_glow model to its
 /// per-map sprite pack slot + native pixel size (for the world billboard scale).
 fn load_sprites_manifest() -> std::collections::HashMap<(u16, String), (u16, u16, u16)> {
     let mut out = std::collections::HashMap::new();
@@ -3147,8 +3219,10 @@ fn collect_nav(
     }
 }
 
-/// func_door move direction (HL) + distance. GoldSrc brush bounds include the
-/// one-unit hull pad at both ends, so authored travel is `size - 2 - lip`.
+/// func_door move direction (HL) + distance. GoldSrc evaluates
+/// `pev->size - 2`, but SET_MODEL's linked brush size is two units larger than
+/// the BSP dmodel bounds read here. The terms cancel, leaving the raw cooked
+/// model size minus lip. Subtracting two again made every PS1 door/lift short.
 fn door_move(angle: f32, mins: [f32; 3], maxs: [f32; 3], lip: f32) -> ([f32; 3], f32) {
     let sz = [maxs[0] - mins[0], maxs[1] - mins[1], maxs[2] - mins[2]];
     let dir = if angle == -1.0 {
@@ -3160,12 +3234,8 @@ fn door_move(angle: f32, mins: [f32; 3], maxs: [f32; 3], lip: f32) -> ([f32; 3],
         let (c, s) = (r.cos(), r.sin());
         [c, s, 0.0]
     };
-    // Exact SDK formula (doors.cpp/buttons.cpp): subtract the two-unit hull
-    // pad on each contributing brush axis before projecting onto movedir.
-    let dist = (dir[0] * (sz[0] - 2.0)).abs()
-        + (dir[1] * (sz[1] - 2.0)).abs()
-        + (dir[2] * (sz[2] - 2.0)).abs()
-        - lip;
+    // Equivalent to doors.cpp after accounting for SET_MODEL's link padding.
+    let dist = (dir[0] * sz[0]).abs() + (dir[1] * sz[1]).abs() + (dir[2] * sz[2]).abs() - lip;
     (dir, dist)
 }
 
@@ -3215,7 +3285,10 @@ fn pack_train_corner_wait(wait_seconds: f32, spawnflags: u16) -> u16 {
 fn triggerstate_use_type(block: &str) -> u8 {
     match ent_value(block, "triggerstate")
         .and_then(|v| v.parse::<i32>().ok())
-        .unwrap_or(1)
+        // The SDK stores CAutoTrigger/CTriggerRelay::triggerType in
+        // zero-initialized entity memory. With no authored key the enum is
+        // therefore USE_OFF (0), not Hammer's commonly-authored USE_ON (1).
+        .unwrap_or(0)
     {
         0 => USE_OFF,
         2 => USE_TOGGLE,
@@ -3466,6 +3539,90 @@ fn rotating_sweep_bounds(mins: [f32; 3], maxs: [f32; 3], spawnflags: u32) -> ([f
     }
 }
 
+fn fan_ramp_needs_extra_think(speed: f32, friction_percent: u16) -> bool {
+    let friction = friction_percent.clamp(1, 100) as u32;
+    let steps = (100 + friction - 1) / friction;
+    let increment = speed.abs() * (friction as f32 * 0.01);
+    let mut reached = 0.0f32;
+    for _ in 0..steps {
+        reached += increment;
+    }
+    reached < speed.abs()
+}
+
+#[derive(Clone, Copy)]
+struct CosmeticRotatorCandidate {
+    submodel: usize,
+    key: ([i32; 3], i16, u8),
+    mins: [f32; 3],
+    maxs: [f32; 3],
+}
+
+fn bounds_overlap(a: CosmeticRotatorCandidate, b: CosmeticRotatorCandidate) -> bool {
+    // GoldSrc links BSP pushers with one-unit-expanded abs bounds. The c1a1c
+    // light/blade overlays meet exactly at their authored model boundary, so
+    // boundary contact is sufficient for the pair to block after one sample.
+    (0..3).all(|axis| a.mins[axis] <= b.maxs[axis] && a.maxs[axis] >= b.mins[axis])
+}
+
+/// Identify the solid co-pivot overlay pairs which GoldSrc advances once and
+/// then leaves blocked. Requiring the same signed angular velocity, axis and
+/// overlapping local bounds avoids tagging opposite-running coaxial fans.
+fn blocked_cosmetic_rotators(s: &str, models: &[u8], scale: f32) -> HashSet<usize> {
+    let mut candidates = Vec::new();
+    for block in s.split('{') {
+        if ent_value(block, "classname") != Some("func_rotating")
+            || !ent_value(block, "targetname").unwrap_or("").is_empty()
+        {
+            continue;
+        }
+        let sf = parse_spawnflags(block) as u32;
+        if sf & 1 == 0 || sf & 16 != 0 || sf & 64 != 0 {
+            continue;
+        }
+        let Some(submodel) = block_model(block) else {
+            continue;
+        };
+        let Some((mins, maxs)) = model_bounds_hl(models, submodel) else {
+            continue;
+        };
+        let origin_hl = ent_value(block, "origin")
+            .and_then(parse_vec3)
+            .unwrap_or([0.0; 3]);
+        let degrees = parse_f32_key(block, "speed", 100.0);
+        let q16 = (degrees * 65536.0 / 360.0 / 20.0)
+            .round()
+            .clamp(1.0, i16::MAX as f32) as i16;
+        let signed_q16 = if sf & 2 != 0 { q16 } else { -q16 };
+        let axis = if sf & 4 != 0 {
+            0
+        } else if sf & 8 != 0 {
+            1
+        } else {
+            2
+        };
+        candidates.push(CosmeticRotatorCandidate {
+            submodel,
+            key: (to_world(origin_hl, scale), signed_q16, axis),
+            mins,
+            maxs,
+        });
+    }
+
+    let mut blocked = HashSet::new();
+    for i in 0..candidates.len() {
+        for j in i + 1..candidates.len() {
+            if candidates[i].key == candidates[j].key
+                && bounds_overlap(candidates[i], candidates[j])
+            {
+                blocked.insert(candidates[i].submodel);
+                blocked.insert(candidates[j].submodel);
+            }
+        }
+    }
+    blocked
+}
+
 /// Collect renderable brush entities (skipping invisible triggers/ladders).
 fn collect_entities(
     ents: &[u8],
@@ -3477,6 +3634,7 @@ fn collect_entities(
 ) -> Vec<EntRec> {
     let s = entity_text(ents);
     let n_models = models.len() / SZ_MODEL;
+    let blocked_rotators = blocked_cosmetic_rotators(&s, models, scale);
     let mut out = Vec::new();
     for block in s.split('{') {
         let model = match ent_value(block, "model") {
@@ -3537,8 +3695,8 @@ fn collect_entities(
         let rad =
             ((half[0] * half[0] + half[1] * half[1] + half[2] * half[2]).sqrt() + 80.0) / scale;
         let r2 = (rad * rad) as i32;
-        let head = i32le(models, mo + 40).unwrap_or(0); // dmodel_t.headnode[1]
-        let head0 = i32le(models, mo + 36).unwrap_or(0); // dmodel_t.headnode[0] (BSP tree)
+        let head = model_headnode(models, submodel, 1).unwrap_or(0);
+        let head0 = model_headnode(models, submodel, 0).unwrap_or(0); // BSP tree
         if cls == "func_pushable" {
             // CPushable::Spawn raises the SOLID_BBOX one HL unit so it does not
             // start embedded in its floor. The `friction` key is actually its
@@ -3554,12 +3712,29 @@ fn collect_entities(
             let hx = h[0].abs();
             let hy = h[1].abs();
             let hz = h[2].abs();
+            // SET_MODEL expands every model bound by one HL unit. Our rounded
+            // centre/half representation has already absorbed that unit on
+            // some odd-sized negative axes, so retain a three-bit correction
+            // mask instead of pessimistically subtracting one everywhere.
+            let padded_min = to_world([mins[0] - 1.0, mins[1] - 1.0, mins[2] - 1.0], scale);
+            let rounded_min = [center[0] - hx, center[1] - hy, center[2] - hz];
+            let mut min_correction_mask = 0u16;
+            for axis in 0..3 {
+                if padded_min[axis] < rounded_min[axis] {
+                    min_correction_mask |= 1 << axis;
+                }
+            }
+            let collision_hull = pushable_collision_hull(mins, maxs);
             let leaves = entity_leafs(mins, maxs, lifted_hl, None, nodes, planes);
             out.push(EntRec {
                 submodel: submodel as u16,
                 kind: ENT_KIND_PUSHABLE | (blend << 8),
                 origin: lifted,
-                mv: [pack_pushable_speed_half_x(max_speed, hx), hy, hz],
+                mv: [
+                    pack_pushable_speed_half_x(max_speed, hx, collision_hull, min_correction_mask),
+                    hy,
+                    hz,
+                ],
                 center,
                 r2,
                 head,
@@ -3729,14 +3904,77 @@ fn collect_entities(
                 head0: 0,
                 leaves,
             });
+        } else if cls == "func_pendulum" {
+            // CPendulum rotates an origin brush about AxisDir. Keep its Swing
+            // constants in the existing three mover words so runtime needs no
+            // pendulum-specific resident array. One turn is 2^19 phase units;
+            // velocity is phase units per 20 Hz host sample and acceleration
+            // is the velocity delta produced by one 0.05-second host sample.
+            const PHASE_PER_TURN: f32 = 524_288.0;
+            let sf = parse_spawnflags(block) as u32;
+            let distance = parse_f32_key(block, "distance", 0.0);
+            let authored_speed = parse_f32_key(block, "speed", 100.0);
+            let speed = if authored_speed > 0.0 {
+                authored_speed
+            } else {
+                100.0
+            };
+            let center_q19 = (distance * 0.5 * PHASE_PER_TURN / 360.0).round() as i32;
+            let max_velocity_q19 = (speed * PHASE_PER_TURN / 360.0 / 20.0)
+                .round()
+                .clamp(1.0, i16::MAX as f32) as i32;
+            let angular_accel = if distance.abs() > f32::EPSILON {
+                speed * speed / (2.0 * distance.abs())
+            } else {
+                0.0
+            };
+            let accel_per_host_tick_q19 = (angular_accel * PHASE_PER_TURN / 360.0 / 400.0)
+                .round()
+                .clamp(1.0, i16::MAX as f32) as i32;
+            // GoldSrc components map Z -> PSX Y, X -> PSX X and default Y ->
+            // PSX Z. The coordinate swap is a reflection; runtime negates the
+            // axial angle before building the matrix.
+            let axis = if sf & 64 != 0 {
+                0
+            } else if sf & 128 != 0 {
+                1
+            } else {
+                2
+            };
+            let sweep_flags = if sf & 64 != 0 {
+                4
+            } else if sf & 128 != 0 {
+                8
+            } else {
+                0
+            };
+            let (sweep_mins, sweep_maxs) = rotating_sweep_bounds(mins, maxs, sweep_flags);
+            let leaves = entity_leafs(sweep_mins, sweep_maxs, origin_hl, None, nodes, planes);
+            let passable = sf & 8 != 0; // SDK Spawn checks SF_DOOR_PASSABLE
+            out.push(EntRec {
+                submodel: submodel as u16,
+                kind: ENT_KIND_PENDULUM | (blend << 8),
+                origin,
+                mv: [
+                    center_q19,
+                    ((max_velocity_q19 as u32) << 16 | axis as u32) as i32,
+                    ((accel_per_host_tick_q19 as u32) << 16 | (sf & 0xffff)) as i32,
+                ],
+                center,
+                r2,
+                head: if passable { 0 } else { head },
+                head0: if passable { 0 } else { head0 },
+                leaves,
+            });
         } else if cls == "func_rotating" {
             // Spinning brush (fans). kind 5: mv[0] carries signed angular speed
             // in Q16-turn units per 20 Hz tick (four fractional bits beyond the
             // renderer's Q12 angle), mv[1] selects the PSX rotation axis, and
-            // mv[2] packs fanfriction in the high half and raw spawnflags in
-            // the low half for the stateless cosmetic/collision path. Targeted fans integrate
-            // this speed into ENT_PHASE; untargeted cosmetic fans derive their
-            // angle from the map tick. origin is the pivot.
+            // mv[2] packs the friction/profile in the high half and raw
+            // spawnflags in the low half for the stateless cosmetic/collision
+            // path. Targeted fans integrate this speed into ENT_PHASE;
+            // untargeted cosmetic fans derive their angle from the map tick.
+            // origin is the pivot.
             let sf = parse_f32_key(block, "spawnflags", 0.0) as u32;
             let raw_friction = parse_f32_key(block, "fanfriction", 0.0);
             let friction = (if raw_friction > 0.0 {
@@ -3764,11 +4002,18 @@ fn collect_entities(
             };
             let (sweep_mins, sweep_maxs) = rotating_sweep_bounds(mins, maxs, sf);
             let leaves = entity_leafs(sweep_mins, sweep_maxs, origin_hl, None, nodes, planes);
+            let mut profile = (friction as u16) & FAN_PROFILE_FRICTION_MASK;
+            if fan_ramp_needs_extra_think(degs, friction as u16) {
+                profile |= FAN_PROFILE_RAMP_EXTRA_THINK;
+            }
+            if blocked_rotators.contains(&submodel) {
+                profile |= FAN_PROFILE_BLOCKED_AFTER_FIRST_SAMPLE;
+            }
             out.push(EntRec {
                 submodel: submodel as u16,
                 kind: 5 | (blend << 8),
                 origin,
-                mv: [w, axis, ((friction << 16) | (sf & 0xffff)) as i32],
+                mv: [w, axis, ((profile as u32) << 16 | (sf & 0xffff)) as i32],
                 center,
                 r2,
                 head: if sf & 64 != 0 { 0 } else { head },
@@ -4008,6 +4253,36 @@ fn load_transition_type_hints(map_name: &str) -> Vec<TransitionTypeHint> {
     out
 }
 
+// c1a1b and c4a3 author a standing monster_scientist in a seated idle before
+// playing the retail sitstand sequence. A compact dedicated scientist stream
+// carries those two clips without making every ordinary scientist map pay for
+// them (c4a3 is the campaign-wide model-pool peak).
+const SCRIPTED_SITTING_SCIENTIST_TYPE: u16 = 54;
+const VENT_SCRIPT_ZOMBIE_TYPE: u16 = 55;
+
+fn scripted_sitting_scientist_target(all: &str, entity_name: &str) -> bool {
+    !entity_name.is_empty()
+        && all.split('{').any(|block| {
+            ent_value(block, "classname") == Some("scripted_sequence")
+                && ent_value(block, "m_iszEntity") == Some(entity_name)
+                && ent_value(block, "m_iszIdle")
+                    .map(|name| name.eq_ignore_ascii_case("sitidle"))
+                    .unwrap_or(false)
+        })
+}
+
+fn map_uses_vent_zombie_stream(all: &str) -> bool {
+    all.split('{').any(|block| {
+        ent_value(block, "classname") == Some("scripted_sequence")
+            && (ent_value(block, "m_iszIdle")
+                .map(|name| name.eq_ignore_ascii_case("ventclimbidle"))
+                .unwrap_or(false)
+                || ent_value(block, "m_iszPlay")
+                    .map(|name| name.eq_ignore_ascii_case("ventclimb"))
+                    .unwrap_or(false))
+    })
+}
+
 /// Resolve a scripted_sequence's m_iszEntity targetname to its monster type id.
 fn script_monster_type(all: &str, entity_name: &str) -> Option<u16> {
     if entity_name.is_empty() {
@@ -4016,6 +4291,13 @@ fn script_monster_type(all: &str, entity_name: &str) -> Option<u16> {
     for cb in all.split('{') {
         if ent_value(cb, "targetname") == Some(entity_name) {
             if let Some(cls) = ent_value(cb, "classname") {
+                if cls == "monster_scientist" && scripted_sitting_scientist_target(all, entity_name)
+                {
+                    return Some(SCRIPTED_SITTING_SCIENTIST_TYPE);
+                }
+                if cls == "monster_zombie" && map_uses_vent_zombie_stream(all) {
+                    return Some(VENT_SCRIPT_ZOMBIE_TYPE);
+                }
                 if cls == "monster_generic" {
                     return monster_generic_type(cb);
                 }
@@ -4144,6 +4426,13 @@ fn collect_logic_entities(
             "func_rotating" if !ent_value(block, "targetname").unwrap_or("").is_empty() => {
                 LOGIC_FUNC_ROTATING
             }
+            "func_pendulum"
+                if parse_f32_key(block, "distance", 0.0) != 0.0
+                    && (parse_spawnflags(block) & 1 != 0
+                        || !ent_value(block, "targetname").unwrap_or("").is_empty()) =>
+            {
+                LOGIC_FUNC_PENDULUM
+            }
             "func_breakable" => LOGIC_FUNC_BREAKABLE,
             "func_pushable" if parse_spawnflags(block) & SF_PUSH_BREAKABLE != 0 => {
                 LOGIC_FUNC_BREAKABLE
@@ -4228,6 +4517,7 @@ fn collect_logic_entities(
                 | LOGIC_HEV_CHARGER
                 | LOGIC_TANK
                 | LOGIC_FUNC_ROTATING
+                | LOGIC_FUNC_PENDULUM
         ) && brush == LOGIC_BRUSH_NONE
         {
             continue;
@@ -4269,6 +4559,7 @@ fn collect_logic_entities(
             LOGIC_FUNC_TRAIN => 100.0,
             LOGIC_FUNC_TRACKTRAIN => 100.0,
             LOGIC_FUNC_ROTATING => 100.0,
+            LOGIC_FUNC_PENDULUM => 100.0,
             _ => 0.0,
         };
         let speed = if kind == LOGIC_SCRIPTED {
@@ -4280,6 +4571,15 @@ fn collect_logic_entities(
             // firerate = shots/sec -> cooldown ticks at the 20Hz sim (min 2).
             let rate = parse_f32_key(block, "firerate", 1.0).max(0.1);
             (20.0 / rate).round().clamp(2.0, 60.0) as u16
+        } else if kind == LOGIC_FUNC_PENDULUM {
+            let authored = parse_f32_key(block, "speed", speed_default);
+            (if authored > 0.0 {
+                authored
+            } else {
+                speed_default
+            })
+            .round()
+            .clamp(1.0, u16::MAX as f32) as u16
         } else if kind == LOGIC_ENV_MESSAGE {
             let key = ent_value(block, "message").unwrap_or("").to_uppercase();
             titles.get(&key).map(|t| t.hold_ticks).unwrap_or(60)
@@ -4342,6 +4642,10 @@ fn collect_logic_entities(
                     .round()
                     .clamp(1.0, u16::MAX as f32) as u16
             }
+            LOGIC_FUNC_PENDULUM => parse_f32_key(block, "distance", 0.0)
+                .abs()
+                .round()
+                .clamp(1.0, u16::MAX as f32) as u16,
             LOGIC_TRIGGER_GRAVITY => (parse_f32_key(block, "gravity", 1.0) * 4096.0)
                 .round()
                 .clamp(0.0, u16::MAX as f32) as u16,
@@ -5356,11 +5660,63 @@ fn collect_props(
     ents: &[u8],
     nodes: &[u8],
     planes: &[u8],
+    models: &[u8],
     scale: f32,
-    logic_names: &[String],
+    logic_names: &mut Vec<String>,
 ) -> Vec<(u16, [i32; 3], i32, i16, u16, u16)> {
     let s = entity_text(ents);
     let mut out = Vec::new();
+    let map_uses_scripted_sitter = s.split('{').any(|candidate| {
+        ent_value(candidate, "classname") == Some("monster_scientist")
+            && ent_value(candidate, "targetname")
+                .map(|name| scripted_sitting_scientist_target(&s, name))
+                .unwrap_or(false)
+    });
+    let map_uses_vent_zombies = map_uses_vent_zombie_stream(&s);
+    // Monster makers above an ALLOWMONSTERS teleport are a stock GoldSrc
+    // set-piece idiom. Resolve the eventual destination at cook time: the PS1
+    // runtime can wake the dormant actor directly in the remote room instead
+    // of carrying a full second monster physics/trigger path in scarce code
+    // RAM. The source portal FX still fires through its authored manager.
+    let mut teleport_dests: Vec<(String, [f32; 3], i32)> = Vec::new();
+    for block in s.split('{') {
+        let cls = ent_value(block, "classname").unwrap_or("");
+        if cls != "info_teleport_destination" && cls != "info_target" {
+            continue;
+        }
+        if let (Some(name), Some(origin)) = (
+            ent_value(block, "targetname"),
+            ent_value(block, "origin").and_then(parse_vec3),
+        ) {
+            teleport_dests.push((
+                name.to_string(),
+                origin,
+                hl_yaw_to_world_q12(ent_yaw_degrees(block).unwrap_or(0.0)),
+            ));
+        }
+    }
+    let mut monster_portals: Vec<([i32; 3], [i32; 3], [f32; 3], i32)> = Vec::new();
+    for block in s.split('{') {
+        if ent_value(block, "classname") != Some("trigger_teleport")
+            || parse_spawnflags(block) & 1 == 0
+        {
+            continue;
+        }
+        let Some(submodel) = block_model(block) else {
+            continue;
+        };
+        let Some((mins, maxs)) = model_bounds_hl(models, submodel) else {
+            continue;
+        };
+        let origin_hl = ent_value(block, "origin")
+            .and_then(parse_vec3)
+            .unwrap_or([0.0; 3]);
+        let (wmins, wmaxs) = transform_bounds_to_world(mins, maxs, origin_hl, scale);
+        let target = ent_value(block, "target").unwrap_or("");
+        if let Some((_, dest_hl, yaw)) = teleport_dests.iter().find(|(n, _, _)| n == target) {
+            monster_portals.push((wmins, wmaxs, *dest_hl, *yaw));
+        }
+    }
     // Only MoveTo=4 teleports an auto-start scripted actor to the mark.
     // MoveTo=0 waits at its authored origin; 1/2 walk/run there at runtime.
     let mut script_marks: Vec<(String, [f32; 3], Option<f32>)> = Vec::new();
@@ -5394,16 +5750,32 @@ fn collect_props(
         // runtime zeroes health and shows the death clip's final frame.
         const DEAD: u16 = 0x8000;
         const PREDISASTER: u16 = 0x2000;
-        let ty = match ent_value(block, "classname").unwrap_or("") {
-            "monster_scientist" => 0u16,
+        const PRISONER: u16 = 0x1000;
+        let cls = ent_value(block, "classname").unwrap_or("");
+        let ty = match cls {
+            "monster_scientist" => {
+                if ent_value(block, "targetname")
+                    .map(|name| scripted_sitting_scientist_target(&s, name))
+                    .unwrap_or(false)
+                {
+                    SCRIPTED_SITTING_SCIENTIST_TYPE
+                } else {
+                    0u16
+                }
+            }
             "monster_sitting_scientist" => 25u16,
-            "monster_scientist_dead" | "monster_hevsuit_dead" => DEAD | 0,
+            "monster_scientist_dead" => DEAD | 0,
+            "monster_hevsuit_dead" if map_uses_scripted_sitter => {
+                DEAD | SCRIPTED_SITTING_SCIENTIST_TYPE
+            }
+            "monster_hevsuit_dead" => DEAD | 0,
             "monster_barney_dead" => DEAD | 1,
             "monster_human_grunt_dead" => DEAD | 8,
             "monster_barney" => 1u16,
             "monster_headcrab" => 2u16,
             "item_suit" => 3u16,
             "item_battery" => 4u16,
+            "monster_zombie" if map_uses_vent_zombies => VENT_SCRIPT_ZOMBIE_TYPE,
             "monster_zombie" => 5u16,
             "monster_houndeye" => 6u16,
             "monster_bullchicken" => 7u16,
@@ -5475,14 +5847,36 @@ fn collect_props(
                     .unwrap_or([0.0; 3]);
                 let origin = to_world(origin_hl, scale);
                 let deg = ent_yaw_degrees(block).unwrap_or(0.0);
-                let yaw = hl_yaw_to_world_q12(deg);
+                let mut spawn_hl = origin_hl;
+                let mut spawn = origin;
+                let mut yaw = hl_yaw_to_world_q12(deg);
+                if let Some((_, _, dest_hl, dest_yaw)) = monster_portals
+                    .iter()
+                    .filter(|(mins, maxs, _, _)| {
+                        origin[0] + 16 >= mins[0]
+                            && origin[0] - 16 <= maxs[0]
+                            && origin[2] + 16 >= mins[2]
+                            && origin[2] - 16 <= maxs[2]
+                            && maxs[1] < origin[1]
+                            && origin[1] - maxs[1] <= 4096
+                    })
+                    .min_by_key(|(_, maxs, _, _)| origin[1] - maxs[1])
+                {
+                    spawn_hl = *dest_hl;
+                    spawn = to_world(*dest_hl, scale);
+                    yaw = *dest_yaw;
+                }
+                let maker_name = ent_value(block, "targetname")
+                    .and_then(|tn| logic_names.iter().position(|n| n == tn))
+                    .map(|p| (p + 1).min(u16::MAX as usize) as u16)
+                    .unwrap_or(0);
                 for _ in 0..count {
                     out.push((
                         base | 0x4000,
-                        origin,
+                        spawn,
                         yaw,
-                        point_leaf(origin_hl, nodes, planes),
-                        0,
+                        point_leaf(spawn_hl, nodes, planes),
+                        maker_name,
                         0,
                     ));
                 }
@@ -5490,8 +5884,29 @@ fn collect_props(
             }
             _ => continue,
         };
-        let ty = if ty == 0 && parse_spawnflags(block) & 256 != 0 {
+        // CGenericMonster is a passive/script puppet even when it reuses a
+        // normal scientist/Barney studio model. Reuse the existing PRISONER
+        // cook bit: scripted work runs before that runtime guard, while the
+        // actor cannot acquire ordinary follow/combat schedules between
+        // sequences. This costs no PropRec or resident-state bytes.
+        let ty = if cls == "monster_generic" {
+            ty | PRISONER
+        } else {
+            ty
+        };
+        let spawnflags = parse_spawnflags(block);
+        let ty = if ty == 0 && spawnflags & 256 != 0 {
             ty | PREDISASTER
+        } else {
+            ty
+        };
+        // SF_MONSTER_PRISONER suppresses combat schedules while retaining the
+        // actor for scripts and set pieces. c1a0e relies on this for the Xen
+        // vision-room bullsquids/vorts; dropping it lets them kill the player
+        // during an otherwise non-interactive teleport sequence.
+        let hostile_type = ty & 0x0fff;
+        let ty = if (5..=24).contains(&hostile_type) && spawnflags & 16 != 0 {
+            ty | PRISONER
         } else {
             ty
         };
@@ -5513,9 +5928,12 @@ fn collect_props(
         }
         let origin = to_world(origin_hl, scale);
         let yaw = hl_yaw_to_world_q12(deg);
+        // Actor targetnames are semantic identities in GoldSrc even when no
+        // other cooked logic record happens to refer to them. Intern them here
+        // after the logic pass: appending preserves every already-issued id and
+        // keeps FireTargets, transition overlays, and reference traces exact.
         let name_id = ent_value(block, "targetname")
-            .and_then(|tn| logic_names.iter().position(|n| n == tn))
-            .map(|p| (p + 1).min(u16::MAX as usize) as u16)
+            .map(|tn| intern_logic_name(logic_names, tn).unwrap_or(0))
             .unwrap_or(0);
         let carry_id = if prop_type_crosses_transition(ty) {
             entity_carry_id(block)
@@ -5565,6 +5983,7 @@ fn monster_generic_type(block: &str) -> Option<u16> {
         .to_ascii_lowercase();
     match model.rsplit('/').next().unwrap_or(model.as_str()) {
         "scientist.mdl" => Some(0),
+        "barney.mdl" => Some(1),
         "loader.mdl" => Some(52),
         "forklift.mdl" => Some(53),
         _ => None,
@@ -6362,7 +6781,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let n_raw_tris = raw_tris.len() / 16;
 
     let mut o: Vec<u8> = Vec::new();
-    o.extend_from_slice(b"HLMC");
+    o.extend_from_slice(b"HLMD");
     o.extend_from_slice(&(n_verts as u32).to_le_bytes());
     o.extend_from_slice(&(n_raw_tris as u32).to_le_bytes());
     o.extend_from_slice(&(n_cooked_texs as u32).to_le_bytes());
@@ -6410,7 +6829,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     if tex_out.is_none() {
         // Legacy single-file cook: keep the texture blob inline before BSP.
         // Runtime room builds pass `tex_out` and load the HLTX chunk only for
-        // VRAM upload, then overwrite that staging buffer with resident HLMC.
+        // VRAM upload, then overwrite that staging buffer with resident HLMD.
         append_texture_blob(&mut o, &texs);
     }
 
@@ -6419,7 +6838,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // leaf_counts = total n_leaves in low 16 | dmodel[0].visleafs in high 16.
     // PlaneRec[10B] | FaceGroup[2B] | FaceRec[18B] | nodes[6B] |
     // leaves[8B] | marks (pad) | vis (raw RLE, pad).
-    // PlaneRec = i16 normal[3], i32 dist. FaceGroup is a signed plane ref:
+    // PlaneRec = i16 normal[3], i32 dist_q5. FaceGroup is a signed plane ref:
     // >=0 uses plane N, <0 uses inverted plane -N-1. FaceRec = u16 first_tri,
     // u16 tri_count, u16 plane_group, i16 center[3], u16 extent[3].
     let bsp_off = o.len() as u32;
@@ -6442,8 +6861,8 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // point traces walk the already-cooked render-node tree directly; feeding
     // this value into the clipnode compactor aliases an unrelated expanded
     // hull (c1a1b prop floors ended up 37 units too high).
-    let hull1_head_raw = i32le(models, 40).unwrap_or(0); // dmodel_t.headnode[1] (player hull)
-    let hull3_head_raw = i32le(models, 44).unwrap_or(0); // dmodel_t.headnode[3] (crouch hull, 32x32x36)
+    let hull1_head_raw = model_headnode(models, 0, 1).unwrap_or(0); // standing player hull
+    let hull3_head_raw = model_headnode(models, 0, 3).unwrap_or(0); // crouch hull, 32x32x36
     let (tram_model, tram_speed, tram_start, tram_wheels, way, _) =
         collect_tram(bsp.lump(LUMP_ENTITIES), scale);
     let mut ents = collect_entities(
@@ -6486,7 +6905,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         &transition_types,
     )?;
     let tram_head_raw = if tram_model > 0 {
-        i32le(models, tram_model as usize * SZ_MODEL + 40).unwrap_or(0)
+        model_headnode(models, tram_model as usize, 1).unwrap_or(0)
     } else {
         0
     };
@@ -6610,7 +7029,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     o.extend_from_slice(&(vis.len() as u32).to_le_bytes());
 
     for &pi in &cooked_planes {
-        let (n, dist) = plane_rec(planes, pi, scale);
+        let (n, dist) = plane_rec_q5(planes, pi, scale);
         for c in n {
             o.extend_from_slice(&c.to_le_bytes());
         }
@@ -6911,7 +7330,14 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // u32 split counts | ActorRec[24B] | SpriteRec[12B].
     let prop_off = o.len() as u32;
     o[prop_off_pos..prop_off_pos + 4].copy_from_slice(&prop_off.to_le_bytes());
-    let props = collect_props(bsp.lump(LUMP_ENTITIES), nodes, planes, scale, &logic.names);
+    let props = collect_props(
+        bsp.lump(LUMP_ENTITIES),
+        nodes,
+        planes,
+        models,
+        scale,
+        &mut logic.names,
+    );
     // Sprite billboards have a separate compact capacity: dense Xen maps no
     // longer evict actors merely because both happened to share MAX_PROPS.
     let sprite_map_idx: u16 = std::env::var("MAP_INDEX")
@@ -7234,6 +7660,21 @@ fn mdl_sequence_hold_quanta(numframes: usize, fps: f32) -> u16 {
     }
     ((((numframes - 1) as f32 * 10.0) / fps).ceil() as usize)
         .clamp(1, MDL_CLIP_MAX_HOLD_QUANTA as usize) as u16
+}
+
+/// Select source poses for an aggressively RAM-sampled studio clip. GoldSrc
+/// looping sequences repeat their terminal pose at the cycle boundary; baking
+/// both endpoints made every two-pose loop static (notably zombie/eatbody).
+/// Non-looping gestures still include the exact last pose so their held finish
+/// matches SequenceDone.
+fn mdl_sample_frame(fi: usize, nbake: usize, numframes: usize, looping: bool) -> usize {
+    if nbake <= 1 || numframes <= 1 {
+        0
+    } else if looping {
+        fi * (numframes - 1) / nbake
+    } else {
+        fi * (numframes - 1) / (nbake - 1)
+    }
 }
 
 fn mdl_pack_clip(first_frame: u16, frame_count: u16, hold_quanta: u16) -> (u16, u16) {
@@ -7881,22 +8322,23 @@ fn cook_mdl(
             max_frames: spec.max_frames,
         };
         let spec = &spec;
-        let (anim_b, animindex, numframes, fps): (&[u8], usize, usize, f32) =
+        let (anim_b, animindex, numframes, fps, looping): (&[u8], usize, usize, f32, bool) =
             if spec.seq >= 0 && spec.seq < numseq {
                 let sd = seqindex + spec.seq as usize * 176;
                 let group = i(sd + 156) as usize;
                 let ai = i(sd + 124) as usize;
                 let nf = i(sd + 56).max(1) as usize;
                 let fps = f(sd + 32);
+                let looping = i(sd + 36) & 1 != 0; // STUDIO_LOOPING
                 if group == 0 {
-                    (&b, ai, nf, fps)
+                    (&b, ai, nf, fps, looping)
                 } else if let Some(Some(gd)) = seqgroup_files.get(group) {
-                    (gd.as_slice(), ai, nf, fps) // anim lives in <model>0N.mdl
+                    (gd.as_slice(), ai, nf, fps, looping) // anim lives in <model>0N.mdl
                 } else {
-                    (&b, 0, 1, fps) // seqgroup file missing -> bind pose
+                    (&b, 0, 1, fps, looping) // seqgroup file missing -> bind pose
                 }
             } else {
-                (&b, 0, 1, 10.0)
+                (&b, 0, 1, 10.0, false)
             };
         let nbake = if animindex == 0 {
             1
@@ -7906,11 +8348,7 @@ fn cook_mdl(
         let clip_first = frames.len().min(u16::MAX as usize) as u16;
 
         for fi in 0..nbake {
-            let sframe = if nbake > 1 && numframes > 1 {
-                fi * (numframes - 1) / (nbake - 1)
-            } else {
-                0
-            };
+            let sframe = mdl_sample_frame(fi, nbake, numframes, looping);
             let mut bones: Vec<Mat34> = Vec::with_capacity(numbones);
             for bi in 0..numbones {
                 let bm = &bmeta[bi];
@@ -8406,11 +8844,26 @@ mod tests {
     }
 
     #[test]
-    fn hlmc_leaf_counts_pack_without_growing_bsp_header() {
+    fn hlmd_leaf_counts_pack_without_growing_bsp_header() {
         let packed = pack_leaf_counts(1326, 856).unwrap();
         assert_eq!(packed & 0xffff, 1326);
         assert_eq!(packed >> 16, 856);
         assert!(pack_leaf_counts(u16::MAX as usize + 1, 856).is_err());
+    }
+
+    #[test]
+    fn q5_plane_distance_preserves_c1a1f_ramp_fraction_without_growing_record() {
+        let mut planes = Vec::with_capacity(SZ_PLANE);
+        planes.extend_from_slice(&0.0f32.to_le_bytes());
+        planes.extend_from_slice(&0.5002776f32.to_le_bytes());
+        planes.extend_from_slice(&0.86586505f32.to_le_bytes());
+        planes.extend_from_slice(&(-80.48697f32).to_le_bytes());
+        planes.extend_from_slice(&0i32.to_le_bytes()); // BSP plane type
+
+        let (normal, dist_q5) = plane_rec_q5(&planes, 0, 1.0);
+        assert_eq!(normal, [0, 3547, 2049]);
+        assert_eq!(dist_q5, -2576);
+        assert_eq!(2 * 3 + 4, 10, "PlaneRec stays byte-for-byte the same size");
     }
 
     #[test]
@@ -8600,6 +9053,19 @@ mod tests {
         assert_eq!(count & MDL_CLIP_FRAME_COUNT_MASK, 8);
         assert_eq!((count >> 8) | 0x100, 334);
         assert_eq!(core::mem::size_of_val(&(first, count)), 4);
+    }
+
+    #[test]
+    fn looped_model_sampling_does_not_bake_the_duplicate_endpoint() {
+        assert_eq!(mdl_sample_frame(0, 2, 41, true), 0);
+        assert_eq!(mdl_sample_frame(1, 2, 41, true), 20);
+        assert_eq!(mdl_sample_frame(1, 2, 41, false), 40);
+        assert_eq!(
+            (0..4)
+                .map(|fi| mdl_sample_frame(fi, 4, 81, false))
+                .collect::<Vec<_>>(),
+            [0, 26, 53, 80]
+        );
     }
 
     #[test]
@@ -8922,6 +9388,26 @@ mod tests {
         assert_eq!(logic.names[first.target as usize - 1], "train");
         assert_eq!(first.delay_ticks, 0);
         assert_eq!(second.delay_ticks, 100);
+    }
+
+    #[test]
+    fn relay_and_auto_triggerstate_default_to_sdk_use_off() {
+        assert_eq!(
+            triggerstate_use_type(r#"{ "classname" "trigger_auto" }"#),
+            USE_OFF
+        );
+        assert_eq!(
+            triggerstate_use_type(r#"{ "classname" "trigger_relay" }"#),
+            USE_OFF
+        );
+        assert_eq!(
+            triggerstate_use_type(r#"{ "classname" "trigger_auto" "triggerstate" "1" }"#,),
+            USE_ON,
+        );
+        assert_eq!(
+            triggerstate_use_type(r#"{ "classname" "trigger_relay" "triggerstate" "2" }"#,),
+            USE_TOGGLE,
+        );
     }
 
     #[test]
@@ -9268,8 +9754,8 @@ mod tests {
 
     #[test]
     fn absent_transition_actor_is_not_synthesized_on_direct_load() {
-        let names = vec!["barney1".to_string()];
-        let props = collect_props(b"", &[], &[], 1.0, &names);
+        let mut names = vec!["barney1".to_string()];
+        let props = collect_props(b"", &[], &[], &[], 1.0, &mut names);
         assert!(props.is_empty());
     }
 
@@ -9282,8 +9768,8 @@ mod tests {
         { "classname" "monster_barney_dead" "targetname" "dead_barney" }
         { "classname" "item_suit" "targetname" "suit1" }
         "#;
-        let names = vec!["barney1".to_string()];
-        let props = collect_props(ents, &[], &[], 1.0, &names);
+        let mut names = vec!["barney1".to_string()];
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names);
 
         assert_eq!(props.len(), 5);
         assert_eq!(props[0].5, actor_carry_id("barney1", false));
@@ -9387,8 +9873,8 @@ mod tests {
         { "classname" "monster_barney" "targetname" "teleporter" "origin" "4 5 6" }
         { "classname" "scripted_sequence" "m_iszEntity" "teleporter" "m_fMoveTo" "4" "origin" "40 50 60" }
         "#;
-        let names = vec!["walker".to_string(), "teleporter".to_string()];
-        let props = collect_props(ents, &[], &[], 1.0, &names);
+        let mut names = vec!["walker".to_string(), "teleporter".to_string()];
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names);
 
         assert_eq!(props.len(), 2);
         assert_eq!(props[0].1, [1, 3, 2], "walk script keeps source spawn");
@@ -9520,6 +10006,80 @@ mod tests {
     }
 
     #[test]
+    fn c1a1b_seated_script_uses_the_compact_hybrid_scientist_stream() {
+        let all = r#"
+        { "classname" "monster_scientist" "targetname" "sitting_scientist"
+          "origin" "609 -1185 -72" }
+        { "classname" "scripted_sequence" "m_iszEntity" "sitting_scientist"
+          "m_iszPlay" "sitstand" "m_iszIdle" "sitidle" "m_fMoveTo" "4" }
+        "#;
+        let script = all.split('{').nth(2).unwrap();
+        let mut clips = std::collections::HashMap::new();
+        clips.insert(
+            (SCRIPTED_SITTING_SCIENTIST_TYPE, "sitidle".to_string()),
+            5u8,
+        );
+        clips.insert(
+            (SCRIPTED_SITTING_SCIENTIST_TYPE, "sitstand".to_string()),
+            6u8,
+        );
+
+        assert!(scripted_sitting_scientist_target(all, "sitting_scientist"));
+        assert_eq!(
+            script_monster_type(all, "sitting_scientist"),
+            Some(SCRIPTED_SITTING_SCIENTIST_TYPE)
+        );
+        assert_eq!(
+            script_clip_slots(all, script, &Default::default(), &clips),
+            (7, 6)
+        );
+
+        let mut names = vec!["sitting_scientist".to_string()];
+        let props = collect_props(all.as_bytes(), &[], &[], &[], 1.0, &mut names);
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0].0, SCRIPTED_SITTING_SCIENTIST_TYPE);
+    }
+
+    #[test]
+    fn c1a1b_zombies_share_the_compact_vent_script_stream() {
+        let all = r#"
+        { "classname" "monster_zombie" "targetname" "hungry" }
+        { "classname" "monster_zombie" "targetname" "vent_zombie" }
+        { "classname" "scripted_sequence" "m_iszEntity" "vent_zombie"
+          "m_iszPlay" "ventclimb" "m_iszIdle" "ventclimbidle" }
+        "#;
+        assert!(map_uses_vent_zombie_stream(all));
+        assert_eq!(
+            script_monster_type(all, "hungry"),
+            Some(VENT_SCRIPT_ZOMBIE_TYPE)
+        );
+        assert_eq!(
+            script_monster_type(all, "vent_zombie"),
+            Some(VENT_SCRIPT_ZOMBIE_TYPE)
+        );
+
+        let mut names = vec!["hungry".to_string(), "vent_zombie".to_string()];
+        let props = collect_props(all.as_bytes(), &[], &[], &[], 1.0, &mut names);
+        assert_eq!(props.len(), 2);
+        assert!(props.iter().all(|prop| prop.0 == VENT_SCRIPT_ZOMBIE_TYPE));
+    }
+
+    #[test]
+    fn c4a3_hev_corpses_reuse_the_scripted_scientist_stream() {
+        let all = br#"
+        { "classname" "monster_scientist" "targetname" "sitting_scientist" }
+        { "classname" "scripted_sequence" "m_iszEntity" "sitting_scientist"
+          "m_iszPlay" "sitstand" "m_iszIdle" "sitidle" }
+        { "classname" "monster_hevsuit_dead" }
+        "#;
+        let mut names = vec!["sitting_scientist".to_string()];
+        let props = collect_props(all, &[], &[], &[], 1.0, &mut names);
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0].0, SCRIPTED_SITTING_SCIENTIST_TYPE);
+        assert_eq!(props[1].0, 0x8000 | SCRIPTED_SITTING_SCIENTIST_TYPE);
+    }
+
+    #[test]
     fn exact_script_targetname_remains_primary_over_class_fallback() {
         let all = r#"
         { "classname" "monster_barney" "targetname" "monster_scientist" }
@@ -9551,22 +10111,44 @@ mod tests {
             script_clip_slots(all, block, &Default::default(), &clips),
             (2, 1)
         );
-        let props = collect_props(all.as_bytes(), &[], &[], 1.0, &["lo".to_string()]);
+        let mut names = vec!["lo".to_string()];
+        let props = collect_props(all.as_bytes(), &[], &[], &[], 1.0, &mut names);
         assert_eq!(props.len(), 1);
-        assert_eq!(props[0].0, 52);
+        assert_eq!(props[0].0, 0x1000 | 52, "generic puppets stay passive");
         assert_eq!(props[0].4, 1);
     }
 
     #[test]
     fn opening_generic_models_resolve_to_reused_and_dedicated_types() {
         let scientist = r#""classname" "monster_generic" "model" "models/scientist.mdl""#;
+        let barney = r#""classname" "monster_generic" "model" "models/barney.mdl""#;
         let forklift = r#""classname" "monster_generic" "model" "models\\forklift.mdl""#;
         let unsupported = r#""classname" "monster_generic" "model" "models/otis.mdl""#;
 
         assert_eq!(monster_generic_type(scientist), Some(0));
+        assert_eq!(monster_generic_type(barney), Some(1));
         assert_eq!(monster_generic_type(forklift), Some(53));
         assert_eq!(monster_generic_type(unsupported), None);
         assert!(prop_type_crosses_transition(53));
+    }
+
+    #[test]
+    fn c1a1_generic_barneys_reuse_the_model_passively_and_actor_names_are_interned() {
+        let ents = br#"
+        { "classname" "monster_generic" "model" "models/barney.mdl"
+          "targetname" "b1" "origin" "1697 1731 -144" "spawnflags" "4" }
+        { "classname" "monster_barney" "targetname" "fighting_barney"
+          "origin" "1168 1968 728" }
+        "#;
+        let mut names = Vec::new();
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names);
+
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0].0, 0x1000 | 1, "monster_generic has no Barney AI");
+        assert_eq!(props[0].4, 1);
+        assert_eq!(props[1].0, 1);
+        assert_eq!(props[1].4, 2);
+        assert_eq!(names, ["b1", "fighting_barney"]);
     }
 
     #[test]
@@ -9575,8 +10157,8 @@ mod tests {
         { "classname" "monster_scientist" "spawnflags" "256" "targetname" "before" }
         { "classname" "monster_scientist" "spawnflags" "16" "targetname" "prisoner" }
         "#;
-        let names = vec!["before".to_string(), "prisoner".to_string()];
-        let props = collect_props(ents, &[], &[], 1.0, &names);
+        let mut names = vec!["before".to_string(), "prisoner".to_string()];
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names);
         assert_eq!(props.len(), 2);
         assert_eq!(props[0].0 & 0x2000, 0x2000);
         assert_eq!(props[0].0 & 0x0fff, 0);
@@ -9585,6 +10167,51 @@ mod tests {
             0,
             "prisoner flag 16 stays follow-usable"
         );
+        assert_eq!(props[1].0 & 0x1000, 0, "human followers keep normal AI");
+    }
+
+    #[test]
+    fn hostile_prisoner_flag_packs_without_growing_prop_record() {
+        let ents = br#"
+        { "classname" "monster_bullchicken" "spawnflags" "16" }
+        { "classname" "monster_alien_slave" "spawnflags" "0" }
+        "#;
+        let mut names = Vec::new();
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names);
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0].0 & 0x1000, 0x1000);
+        assert_eq!(props[0].0 & 0x0fff, 7);
+        assert_eq!(props[1].0 & 0x1000, 0);
+        assert_eq!(props[1].0 & 0x0fff, 9);
+    }
+
+    #[test]
+    fn monstermaker_over_monster_portal_cooks_at_destination() {
+        let ents = br#"
+        { "classname" "info_target" "targetname" "arrival" "origin" "100 200 300" "angle" "90" }
+        { "classname" "trigger_teleport" "model" "*1" "spawnflags" "3" "target" "arrival" }
+        { "classname" "monstermaker" "targetname" "maker" "monstertype" "monster_alien_slave"
+          "monstercount" "1" "origin" "10 20 100" }
+        "#;
+        let mut models = vec![0u8; 2 * SZ_MODEL];
+        for (offset, value) in [
+            (0usize, 0.0f32),
+            (4, 10.0),
+            (8, 0.0),
+            (12, 20.0),
+            (16, 30.0),
+            (20, 20.0),
+        ] {
+            let at = SZ_MODEL + offset;
+            models[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let mut names = vec!["maker".to_string()];
+        let props = collect_props(ents, &[], &[], &models, 1.0, &mut names);
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0].0, 0x4000 | 9);
+        assert_eq!(props[0].1, [100, 300, 200]);
+        assert_eq!(props[0].2, hl_yaw_to_world_q12(90.0));
+        assert_eq!(props[0].4, 1, "runtime wakes stock by maker name");
     }
 
     #[test]
@@ -9878,6 +10505,110 @@ mod tests {
     }
 
     #[test]
+    fn fan_profile_cooks_float_clamp_and_copivot_blocking_without_new_ram() {
+        assert!(!fan_ramp_needs_extra_think(400.0, 2));
+        assert!(fan_ramp_needs_extra_think(300.0, 10));
+        assert!(fan_ramp_needs_extra_think(160.0, 20));
+        assert!(fan_ramp_needs_extra_think(200.0, 20));
+        assert!(!fan_ramp_needs_extra_think(200.0, 100));
+
+        let ents = br#"
+        { "classname" "func_rotating" "model" "*1" "origin" "4 5 6"
+          "speed" "160" "fanfriction" "20" "spawnflags" "1" }
+        { "classname" "func_rotating" "model" "*2" "origin" "4 5 6"
+          "speed" "160" "fanfriction" "20" "spawnflags" "1" }
+        { "classname" "func_rotating" "model" "*3" "origin" "4 5 6"
+          "speed" "160" "fanfriction" "20" "spawnflags" "1" }
+        "#;
+        let mut models = vec![0u8; 4 * SZ_MODEL];
+        for (submodel, mins, maxs) in [
+            (1usize, [-5.0f32; 3], [5.0f32; 3]),
+            (2, [5.0f32, -4.0, -4.0], [9.0f32, 4.0, 4.0]),
+            (3, [20.0f32; 3], [30.0f32; 3]),
+        ] {
+            let base = submodel * SZ_MODEL;
+            for axis in 0..3 {
+                models[base + axis * 4..base + axis * 4 + 4]
+                    .copy_from_slice(&mins[axis].to_le_bytes());
+                models[base + 12 + axis * 4..base + 16 + axis * 4]
+                    .copy_from_slice(&maxs[axis].to_le_bytes());
+            }
+        }
+
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0, 0);
+        assert_eq!(cooked.len(), 3);
+        let profile = |submodel: u16| {
+            (cooked
+                .iter()
+                .find(|ent| ent.submodel == submodel)
+                .unwrap()
+                .mv[2] as u32
+                >> 16) as u16
+        };
+        assert_eq!(
+            profile(1),
+            20 | FAN_PROFILE_RAMP_EXTRA_THINK | FAN_PROFILE_BLOCKED_AFTER_FIRST_SAMPLE
+        );
+        assert_eq!(profile(2), profile(1));
+        assert_eq!(profile(3), 20 | FAN_PROFILE_RAMP_EXTRA_THINK);
+    }
+
+    #[test]
+    fn cooks_c1a1b_pendulum_with_fixed_swing_and_axis_metadata() {
+        let ents = br#"
+        {
+        "classname" "func_pendulum"
+        "model" "*1"
+        "origin" "1750 -429 -261"
+        "distance" "3"
+        "speed" "5"
+        "spawnflags" "65"
+        }
+        "#;
+        let brush_by_submodel = [LOGIC_BRUSH_NONE, 11];
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &brush_by_submodel,
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("pendulum logic cook");
+        assert_eq!(logic.ents.len(), 1);
+        let rec = &logic.ents[0];
+        assert_eq!(rec.kind, LOGIC_FUNC_PENDULUM);
+        assert_eq!(rec.brush, 11);
+        assert_eq!(rec.spawnflags, 65);
+        assert_eq!(rec.speed, 5);
+        assert_eq!(rec.arg0, 3);
+
+        let mut models = vec![0u8; 2 * SZ_MODEL];
+        let mo = SZ_MODEL;
+        for (off, value) in [
+            (0, -132.0f32),
+            (4, -2.0),
+            (8, -11.0),
+            (12, 132.0),
+            (16, 1.0),
+            (20, 1.0),
+        ] {
+            models[mo + off..mo + off + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        models[mo + 36..mo + 40].copy_from_slice(&123i32.to_le_bytes());
+        models[mo + 40..mo + 44].copy_from_slice(&456i32.to_le_bytes());
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0, 0);
+        assert_eq!(cooked.len(), 1);
+        let pendulum = &cooked[0];
+        assert_eq!(pendulum.kind & 0xff, ENT_KIND_PENDULUM);
+        assert_eq!(pendulum.origin, [1750, -261, -429]);
+        assert_eq!(pendulum.mv[0], 2185, "1.5 degrees in Q19 turns");
+        assert_eq!(pendulum.mv[1] as u32, 364u32 << 16, "PSX Y axis");
+        assert_eq!(pendulum.mv[2] as u32, (15u32 << 16) | 65);
+        assert_eq!((pendulum.head0, pendulum.head), (123, 456));
+    }
+
+    #[test]
     fn rotating_sweep_bounds_follow_each_goldsrc_axis() {
         let mins = [-2.0, -64.0, -10.0];
         let maxs = [18.0, 32.0, 20.0];
@@ -10050,9 +10781,21 @@ mod tests {
             "CPushable raises HL Z by one"
         );
         assert_eq!(
-            cart.mv[0] as u32 & 0xffff,
+            cart.mv[0] as u32 & 0xff,
             9,
             "friction 220 => 180u/s => 9u/tick"
+        );
+        let collision_meta = cart.mv[0] as u16;
+        assert_ne!(collision_meta & PUSHABLE_COLLISION_META_VALID, 0);
+        assert_eq!(
+            (collision_meta >> PUSHABLE_COLLISION_HULL_SHIFT) & 3,
+            3,
+            "134-unit SET_MODEL width selects GoldSrc large hull 2"
+        );
+        assert_eq!(
+            (collision_meta >> PUSHABLE_COLLISION_MIN_CORR_SHIFT) & 7,
+            0b101,
+            "even X/Y bounds still need SET_MODEL's lower padding"
         );
         assert_eq!(cart.mv[0] as u32 >> 16, 66, "local half-X");
         assert_eq!((cart.mv[1], cart.mv[2]), (32, 32));
@@ -10060,7 +10803,7 @@ mod tests {
     }
 
     #[test]
-    fn c1a0e_lift_travel_is_159_and_raised_cart_reaches_probe_trigger() {
+    fn c1a0e_lift_travel_and_settled_cart_reach_probe_trigger() {
         // Exact stock c1a0e brush bounds/keys, remapped to compact synthetic
         // submodel indices. This guards the mandatory sample-delivery route:
         // lift *29 carries cart *30, then SF_PUSHABLES trigger *48 starts
@@ -10107,7 +10850,7 @@ mod tests {
             .iter()
             .find(|e| e.kind & 0xff == ENT_KIND_PUSHABLE)
             .unwrap();
-        assert_eq!(lift.mv, [0, 159, 0], "177 - 2 - lip 16");
+        assert_eq!(lift.mv, [0, 161, 0], "raw dmodel 177 - lip 16");
 
         let brushes = [LOGIC_BRUSH_NONE, 0, LOGIC_BRUSH_NONE, LOGIC_BRUSH_NONE];
         let logic = collect_logic_entities(
@@ -10136,7 +10879,9 @@ mod tests {
         ];
         let raised_and_pushed = [
             cart.origin[0] + 208,
-            cart.origin[1] + lift.mv[1],
+            // GoldSrc gravity settles the authored five-unit gap onto the lift
+            // before the lift carries the cart through its full travel.
+            cart.origin[1] - 5 + lift.mv[1],
             cart.origin[2],
         ];
         let center = [
@@ -10154,8 +10899,8 @@ mod tests {
             center[1] + half[1],
             center[2] + half[2],
         ];
-        assert_eq!(cart_mins, [1390, -380, 588]);
-        assert_eq!(cart_maxs, [1522, -316, 652]);
+        assert_eq!(cart_mins, [1390, -383, 588]);
+        assert_eq!(cart_maxs, [1522, -319, 652]);
         for axis in 0..3 {
             assert!(
                 cart_mins[axis] <= trigger.maxs[axis] && cart_maxs[axis] >= trigger.mins[axis],
@@ -10165,14 +10910,14 @@ mod tests {
     }
 
     #[test]
-    fn diagonal_door_projects_each_axis_after_two_unit_hull_pad() {
+    fn diagonal_door_uses_raw_dmodel_size_after_link_pad_cancels() {
         let (dir, dist) = door_move(45.0, [0.0; 3], [102.0, 202.0, 52.0], 8.0);
         let q = core::f32::consts::FRAC_1_SQRT_2;
         assert!((dir[0] - q).abs() < 0.0001 && (dir[1] - q).abs() < 0.0001);
-        let sdk_dist = q * 100.0 + q * 200.0 - 8.0;
+        let sdk_dist = q * 102.0 + q * 202.0 - 8.0;
         assert!((dist - sdk_dist).abs() < 0.001);
-        let wrong_project_then_subtract = q * 102.0 + q * 202.0 - 2.0 - 8.0;
-        assert!((dist - wrong_project_then_subtract).abs() > 0.5);
+        let double_subtracted_pad = q * 100.0 + q * 200.0 - 8.0;
+        assert!((dist - double_subtracted_pad).abs() > 0.5);
     }
 
     #[test]
@@ -10342,6 +11087,21 @@ mod tests {
         buf.extend_from_slice(&planenum.to_le_bytes());
         buf.extend_from_slice(&c0.to_le_bytes());
         buf.extend_from_slice(&c1.to_le_bytes());
+    }
+
+    #[test]
+    fn reads_all_four_dmodel_headnodes_at_their_goldsrc_offsets() {
+        let mut models = vec![0u8; SZ_MODEL];
+        for (hull, value) in [101i32, 202, 303, 404].into_iter().enumerate() {
+            let off = SZ_MODEL_HEADNODE0 + hull * core::mem::size_of::<i32>();
+            models[off..off + 4].copy_from_slice(&value.to_le_bytes());
+        }
+
+        assert_eq!(model_headnode(&models, 0, 0), Some(101));
+        assert_eq!(model_headnode(&models, 0, 1), Some(202));
+        assert_eq!(model_headnode(&models, 0, 2), Some(303));
+        assert_eq!(model_headnode(&models, 0, 3), Some(404));
+        assert_eq!(model_headnode(&models, 0, 4), None);
     }
 
     #[test]

@@ -20,7 +20,9 @@ on any make invocation.
 - A sibling `../PSoXide` checkout (SDK, emulator, and the `mkisopsx` disc tool).
 - Nightly Rust (see `rust-toolchain.toml`): the `mipsel-sony-psx` target has no
   prebuilt std, so the build uses `-Zbuild-std`.
-- Python 3 for the asset extractors under `tools/`.
+
+No Python, external media converter, or C/C++ compiler is required. The host
+content pipeline—including MP3 decoding—is built and run by Cargo.
 
 ## Quickstart
 
@@ -39,7 +41,7 @@ rebuild) and `make disc` (burnable .bin/.cue into `dist/`).
 | Directory   | Contents |
 | ----------- | -------- |
 | `game/`     | The PS1 game crate (its own Cargo workspace, builds for `mipsel-sony-psx` by default) |
-| `tools/`    | Asset extractors (Python) and the `hl-bsp` map cooker/inspector (Rust) |
+| `host/`     | Rust content compiler and BSP/model cooker (runs on the development machine) |
 | `data/`     | Cooked assets from your install (git-ignored, never committed) |
 | `dist/`     | Packed disc images (git-ignored) |
 | `captures/` | Headless screenshots, profiles, and reports (git-ignored) |
@@ -56,7 +58,6 @@ make psoxide-gameplay             # New Game into c1a0, gameplay screenshot + ha
 make psoxide-profile              # telemetry build, per-vblank CSV + screenshot
 make psoxide-map-smoke MAP_INDEX=N  # boot campaign map N directly
 make psoxide-chart                # profile + self-contained HTML vblank chart
-make memory-report                # linker-map RAM budget + top symbols
 ```
 
 ## Licensing

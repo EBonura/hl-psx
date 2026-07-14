@@ -10,6 +10,10 @@ pub const CONTACT_NONE: u8 = 0;
 pub const CONTACT_PUSH: u8 = 1;
 pub const CONTACT_PULL: u8 = 2;
 
+const COLLISION_META_VALID: u16 = 0x8000;
+const COLLISION_HULL_SHIFT: u16 = 8;
+const COLLISION_MIN_CORR_SHIFT: u16 = 10;
+
 const SUPPORT_SHIFT: u32 = 16;
 const SUPPORT_MASK: u32 = 0x1ff;
 const DIRTY_BIT: u32 = 1 << 25;
@@ -21,6 +25,63 @@ pub struct State {
     pub vy: i8,
     pub support: u16,
     pub dirty: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CollisionProxy {
+    pub center: [i32; 3],
+    pub half: [i32; 3],
+}
+
+/// Decode the cooked GoldSrc CPushable speed without exposing collision
+/// metadata stored in the old upper byte of the low word.
+#[inline(always)]
+pub const fn max_speed(packed_speed_half_x: i32) -> i32 {
+    packed_speed_half_x as u32 as u8 as i32
+}
+
+/// Reconstruct the canonical world-collision hull selected by
+/// `SV_HullForBsp`. GoldSrc renders and links the full brush-model AABB, but
+/// movement through BSP geometry uses a point/duck/standing/large hull anchored
+/// at the model's padded mins. Keeping this proxy transient costs no PS1 RAM.
+#[inline(always)]
+pub const fn collision_proxy(
+    local_center: [i32; 3],
+    visual_half: [i32; 3],
+    packed_speed_half_x: i32,
+) -> CollisionProxy {
+    let meta = packed_speed_half_x as u16;
+    if meta & COLLISION_META_VALID == 0 {
+        // Backwards compatibility for previously cooked rooms.
+        return CollisionProxy {
+            center: local_center,
+            half: visual_half,
+        };
+    }
+    let hull = (meta >> COLLISION_HULL_SHIFT) & 3;
+    if hull == 0 {
+        return CollisionProxy {
+            center: [0, 0, 0],
+            half: [0, 0, 0],
+        };
+    }
+    let half = if hull == 1 {
+        [16, 18, 16] // Gold hull 3 after HL Z -> PSX Y remap
+    } else if hull == 2 {
+        [16, 36, 16] // Gold hull 1
+    } else {
+        [32, 32, 32] // Gold hull 2
+    };
+    let correction = (meta >> COLLISION_MIN_CORR_SHIFT) & 7;
+    let mins = [
+        local_center[0] - visual_half[0] - (correction & 1) as i32,
+        local_center[1] - visual_half[1] - ((correction >> 1) & 1) as i32,
+        local_center[2] - visual_half[2] - ((correction >> 2) & 1) as i32,
+    ];
+    CollisionProxy {
+        center: [mins[0] + half[0], mins[1] + half[1], mins[2] + half[2]],
+        half,
+    }
 }
 
 #[inline(always)]
@@ -245,6 +306,18 @@ pub const fn swept_component(delta: i32, fraction: i32) -> i32 {
     (delta * fraction) >> 12
 }
 
+/// Convert a downward support probe hit to cart-origin settlement. The probe
+/// begins two units above the AABB bottom, so its raw hit delta would sink the
+/// cart two units too far into the support plane.
+pub const fn support_settle(probe_y: i32, hit_y: i32) -> i32 {
+    let dy = hit_y - probe_y + 2;
+    if dy < 0 {
+        dy
+    } else {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,6 +358,34 @@ mod tests {
         let oblique = clamp_velocity(10, 3, 9);
         assert_eq!(oblique, (8, 2));
         assert!(oblique.0 as i32 * oblique.0 as i32 + oblique.1 as i32 * oblique.1 as i32 <= 81);
+    }
+
+    #[test]
+    fn collision_metadata_reconstructs_goldsrc_large_hull_at_padded_mins() {
+        // c1a0e sample_cart2: speed 9, hull 2 (encoded 3), corrections on
+        // world X/Z, local visual centre -54/-4/0 and half 66/32/32.
+        let packed = (66i32 << 16) | 0x9709;
+        assert_eq!(max_speed(packed), 9);
+        assert_eq!(
+            collision_proxy([-54, -4, 0], [66, 32, 32], packed),
+            CollisionProxy {
+                center: [-89, -4, -1],
+                half: [32, 32, 32],
+            }
+        );
+    }
+
+    #[test]
+    fn legacy_room_keeps_its_visual_sweep_box() {
+        let packed = (66i32 << 16) | 9;
+        assert_eq!(max_speed(packed), 9);
+        assert_eq!(
+            collision_proxy([-54, -4, 0], [66, 32, 32], packed),
+            CollisionProxy {
+                center: [-54, -4, 0],
+                half: [66, 32, 32],
+            }
+        );
     }
 
     #[test]
@@ -364,5 +465,12 @@ mod tests {
             ..unsupported
         };
         assert_eq!(fall_step(lift, 2).vy, 0);
+    }
+
+    #[test]
+    fn support_probe_settles_from_the_cart_bottom_not_probe_origin() {
+        assert_eq!(support_settle(-537, -544), -5);
+        assert_eq!(support_settle(-542, -543), 0);
+        assert_eq!(support_settle(-543, -543), 0);
     }
 }

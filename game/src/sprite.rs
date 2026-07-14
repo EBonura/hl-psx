@@ -4,7 +4,7 @@
 //! the shared texture atlas right after the map's models (so they reset per map
 //! and share the residency budget). The draw itself lives in `main.rs`.
 //!
-//! Pack format ("HSPR", see tools/extract_sprites.py):
+//! Pack format ("HSPR", see `host/hl-content`):
 //!   magic "HSPR" | u16 n_sprites, u16 n_frames_total
 //!   per sprite (12B): u8 n_frames, u8 blend(0 normal/1 add), u16 first_frame,
 //!                     u16 base_w, u16 base_h, u16 crush_w, u16 crush_h
@@ -80,6 +80,10 @@ pub unsafe fn reset() {
 
 /// Parse an HSPR pack and append its frame textures to the shared atlas. Must
 /// run after the map + model textures are uploaded (it appends, no atlas reset).
+/// This is a once-per-map loader, not frame work. Keep it out of `play()` so
+/// LTO cannot fold its parser and bounds exits into that already huge function;
+/// doing so can exceed the MIPS-I PC16 branch span in diagnostic builds.
+#[inline(never)]
 pub unsafe fn load_pack(data: &[u8]) {
     reset();
     if data.len() < 8 || &data[0..4] != b"HSPR" {
@@ -115,6 +119,7 @@ pub unsafe fn load_pack(data: &[u8]) {
 
 /// Parse the resident single-sprite explosion pack (same HSPR layout, n=1) into
 /// EXPL_DEF/EXPL_SLOTS, appending its frames to the atlas. Call each map load.
+#[inline(never)]
 pub unsafe fn load_explosion(data: &[u8]) {
     EXPL_DEF = EMPTY_DEF;
     for s in EXPL_SLOTS.iter_mut() {

@@ -1,7 +1,7 @@
 //! HL sound effects: one WORLD.PAK chunk of cooked SPU-ADPCM samples,
 //! uploaded to SPU RAM once at boot (zero main-RAM cost afterwards).
 //!
-//! Pack layout (tools/extract_sfx.py -- ID ORDER MUST MATCH the consts here):
+//! Pack layout (`host/hl-content` -- ID ORDER MUST MATCH the consts here):
 //!   "HSFX" | u32 count | count x (u32 offset, u32 len) | .psau blobs
 //!
 //! Playback rotates a pool of one-shot voices; volume is a linear fraction

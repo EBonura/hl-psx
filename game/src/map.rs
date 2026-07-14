@@ -1,10 +1,12 @@
-//! Parse a cooked `.hlm` map (tools/hl-bsp --cook). HLMA adds BSP visibility
+//! Parse a cooked `.hlm` map (`host/hl-bsp --cook`). HLMA adds BSP visibility
 //! plus brush-entity leaf membership for PVS culling; HLMB additionally tags
 //! exact positive axial clip planes for faster collision traversal. HLMC packs
 //! the world model's GoldSrc PVS-cluster count separately from the BSP's total
-//! leaf-record count (submodels append leaves which are not PVS bits).
+//! leaf-record count (submodels append leaves which are not PVS bits). HLMD
+//! keeps that layout and stores plane distances in Q27.5 so collision retains
+//! GoldSrc's 1/32-unit `DIST_EPSILON` without growing any plane record.
 //!
-//!   magic "HLMA" | "HLMB" | "HLMC" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
+//!   magic "HLMA" | "HLMB" | "HLMC" | "HLMD" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
 //!     | u32 clip_off,ent_off,tram_off,prop_off,sky_tex_base,nav_off,logic_off
 //!   verts i16×3 | u32 n_loopverts | FaceVert[5B] × n_loopverts
 //!     | TriRec[16B] × n_tris (raw/dirty faces only) | light palette (u16 × 256)
@@ -16,8 +18,8 @@
 //!   bsp @ bsp_off:
 //!     u32 n_planes,n_face_groups,n_nodes,leaf_counts,n_marks,vis_len
 //!       HLMA/B leaf_counts = n_leaves (legacy; PVS bits assumed n_leaves-1)
-//!       HLMC   leaf_counts = n_leaves | (n_visleaves << 16)
-//!     PlaneRec[10B] × n_planes = i16 normal[3], i32 dist
+//!       HLMC/D leaf_counts = n_leaves | (n_visleaves << 16)
+//!     PlaneRec[10B] × n_planes = i16 normal[3], i32 dist_q5
 //!     FaceGroup[2B] × n_face_groups = signed plane reference
 //!     FaceRec[16B] × n_faces
 //!       FaceRec = u16 first, u16 count, u16 plane_group, i16 center[3],
@@ -32,7 +34,7 @@
 //!     i32 spawn[3] |
 //!     i32 spawn_yaw | ClipNode[6B] × n_clip
 //!       HLMA plane_ref = untagged u16 plane index
-//!       HLMB/C plane_ref = tag[15:14] | plane_index[13:0]
+//!       HLMB/C/D plane_ref = tag[15:14] | plane_index[13:0]
 //!         tag 00=generic, 01=+X, 10=+Y, 11=+Z
 //!   entities:
 //!     u32 n_models | (u32 firstface,u32 numface) × n_models
@@ -95,6 +97,17 @@ fn align4(x: usize) -> usize {
     (x + 3) & !3
 }
 
+/// Convert a Q27.5 plane distance for render-only callers which still operate
+/// on whole world units. Collision and BSP-side tests retain Q5 end to end.
+#[inline(always)]
+fn q5_to_world_nearest(value: i32) -> i32 {
+    if value >= 0 {
+        value.wrapping_add(16) >> 5
+    } else {
+        -((-value).wrapping_add(16) >> 5)
+    }
+}
+
 #[inline(always)]
 fn expand5(v: u16) -> u8 {
     ((v << 3) | (v >> 2)) as u8
@@ -125,7 +138,7 @@ pub const SKY_TEX_NONE: usize = usize::MAX;
 
 pub struct Node {
     pub n: [i16; 3],
-    pub dist: i32,
+    pub dist_q5: i32,
     pub c0: i32,
     pub c1: i32,
 }
@@ -214,6 +227,7 @@ const LOGIC_SZ: usize = 64;
 const PROP_SPLIT_FORMAT: u32 = 0x8000_0000;
 const HLM_MAGIC_HLMB: u32 = u32::from_le_bytes(*b"HLMB");
 const HLM_MAGIC_HLMC: u32 = u32::from_le_bytes(*b"HLMC");
+const HLM_MAGIC_HLMD: u32 = u32::from_le_bytes(*b"HLMD");
 const CLIP_PLANE_TAG_MASK: u16 = 0xC000;
 
 pub const SPRITE_ID_MASK: u16 = 0x000F;
@@ -268,6 +282,7 @@ pub const LOGIC_MOMENTARY: u8 = 42; // momentary_rot_button valve wheel: hold +u
 /// gameplay; changelevel snapshots use its targetname and cooked brush AABB.
 pub const LOGIC_TRIGGER_TRANSITION: u8 = 43;
 pub const LOGIC_FUNC_ROTATING: u8 = 44; // targeted fan: persistent angle + start/stop ramp
+pub const LOGIC_FUNC_PENDULUM: u8 = 45; // targeted/START_ON pendulum Swing state
 
 pub const USE_OFF: u8 = 0;
 pub const USE_ON: u8 = 1;
@@ -281,7 +296,7 @@ pub struct ClipNode {
     pub c1: i16,
     /// 0 = generic, 1 = +X, 2 = +Y, 3 = +Z.
     pub axis: u8,
-    pub dist: i32,
+    pub dist_q5: i32,
 }
 
 // `axis` occupies the two bytes that were already padding before `dist`, so
@@ -329,7 +344,7 @@ pub struct LogicAux {
 #[derive(Clone, Copy)]
 pub struct Ent {
     pub submodel: usize,
-    pub kind: u16, // 0 static, 1 door, 2 visual, 3 button, 4 ladder, 5 rotating, 8 platrot, 9 pushable
+    pub kind: u16, // 0 static, 1 door, 2 visual, 3 button, 4 ladder, 5 fan, 8 platrot, 9 pushable, 10 pendulum
     pub blend: u8, // 0 opaque, 1 semi-transparent (glass), 2 additive (glows)
     pub origin: [i32; 3],
     pub mv: [i32; 3],
@@ -363,11 +378,12 @@ pub struct PackedLoopVert {
 impl Map {
     pub fn load(data: &'static [u8]) -> Map {
         let magic = rd_u32(data, 0);
-        let clip_plane_tag_mask = if magic == HLM_MAGIC_HLMB || magic == HLM_MAGIC_HLMC {
-            CLIP_PLANE_TAG_MASK
-        } else {
-            0
-        };
+        let clip_plane_tag_mask =
+            if magic == HLM_MAGIC_HLMB || magic == HLM_MAGIC_HLMC || magic == HLM_MAGIC_HLMD {
+                CLIP_PLANE_TAG_MASK
+            } else {
+                0
+            };
         let n_verts = rd_u32(data, 4) as usize;
         let n_tris = rd_u32(data, 8) as usize;
         let n_texs = rd_u32(data, 12) as usize;
@@ -400,7 +416,7 @@ impl Map {
         let n_face_groups = rd_u32(data, bsp_off + 4) as usize;
         let n_nodes = rd_u32(data, bsp_off + 8) as usize;
         let leaf_counts = rd_u32(data, bsp_off + 12);
-        let (n_leaves, n_visleaves) = if magic == HLM_MAGIC_HLMC {
+        let (n_leaves, n_visleaves) = if magic == HLM_MAGIC_HLMC || magic == HLM_MAGIC_HLMD {
             let n_leaves = (leaf_counts & 0xffff) as usize;
             let n_visleaves = (leaf_counts >> 16) as usize;
             (n_leaves, n_visleaves.min(n_leaves.saturating_sub(1)))
@@ -824,7 +840,7 @@ impl Map {
         let o = self.clipn_off + i * CLIPNODE_SZ;
         let plane_ref = rd_u16(self.data, o);
         // Branchlessly version the reference. HLMA's mask is zero, preserving
-        // all 16 index bits; HLMB/C extracts the high tag and clears it from the
+        // all 16 index bits; HLMB/C/D extracts the high tag and clears it from the
         // 14-bit index. Only a generic node reads its three normal components.
         let tag_bits = plane_ref & self.clip_plane_tag_mask;
         let axis = (tag_bits >> 14) as u8;
@@ -847,7 +863,7 @@ impl Map {
             c0: rd_i16(self.data, o + 2),
             c1: rd_i16(self.data, o + 4),
             axis,
-            dist: rd_i32(self.data, po + 6),
+            dist_q5: rd_i32(self.data, po + 6),
         }
     }
 
@@ -959,10 +975,10 @@ impl Map {
     #[inline]
     pub fn node(&self, i: usize) -> Node {
         let o = self.nodes_off + i * NODE_SZ;
-        let (n, dist) = self.plane(rd_u16(self.data, o) as usize);
+        let (n, dist_q5) = self.plane_q5(rd_u16(self.data, o) as usize);
         Node {
             n,
-            dist,
+            dist_q5,
             c0: rd_i16(self.data, o + 2) as i32,
             c1: rd_i16(self.data, o + 4) as i32,
         }
@@ -970,6 +986,12 @@ impl Map {
 
     #[inline]
     fn plane(&self, i: usize) -> ([i16; 3], i32) {
+        let (n, dist_q5) = self.plane_q5(i);
+        (n, q5_to_world_nearest(dist_q5))
+    }
+
+    #[inline]
+    fn plane_q5(&self, i: usize) -> ([i16; 3], i32) {
         if i >= self.n_planes {
             return ([0, 4096, 0], 0);
         }
@@ -1046,7 +1068,7 @@ impl Map {
             rd_i16(self.data, o + 2),
             rd_i16(self.data, o + 4),
         ];
-        let d = rd_i32(self.data, o + 6);
+        let d = q5_to_world_nearest(rd_i32(self.data, o + 6));
         if flipped {
             ([-n[0], -n[1], -n[2]], -d)
         } else {

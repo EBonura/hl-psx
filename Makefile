@@ -30,14 +30,6 @@ PSOXIDE_PROFILE_FRAMES ?= 1200
 PSOXIDE_MAP_SMOKE_STEPS ?= 240000000
 PSOXIDE_MAP_SMOKE_VISUAL_FRAMES ?= 8
 MAP_INDEX ?= 0
-MEMORY_MAP ?= $(CAPTURE_DIR)/hl-psx.map
-# Static headroom gate. The linker reserves 32 KiB above STATIC_LIMIT, then this
-# gate requires another 32 KiB below it. The old 14.9 KiB fleet measurement is
-# stale: the current telemetry c0a0 route reports stackwm peak=33,524 B with
-# 34,344 B untouched above its larger telemetry statics. Re-run the 96-map
-# stackwm sweep before lowering this; the shared mark-array reclaim is the next
-# planned safety-margin increase.
-MIN_HEADROOM_KB ?= 32
 # Default gameplay route confirms New Game from the top-level menu.
 # Menu assets + intro rendering run before menu::run primes its PadTracker. A
 # pulse at tick 90 can finish before that prime and is then swallowed; tick 500
@@ -57,13 +49,17 @@ HL_DIR  ?= $(HOME)/Library/Application Support/Steam/steamapps/common/Half-Life
 # GoldSrc base-game content lives in the valve/ sub-mod.
 HL_GAME ?= $(HL_DIR)/valve
 
-# Host-side map inspector (tools/hl-bsp): geometry + texture-VRAM budget report.
-HLBSP    := $(ROOT)/tools/hl-bsp
+# Rust host-side content compilers. These are product build sources: a fresh
+# Steam install is converted without Python or platform media utilities.
+HLBSP    := $(ROOT)/host/hl-bsp
 HLBSP_BIN := $(HLBSP)/target/release/hl-bsp
+HLCONTENT := $(ROOT)/host/hl-content
+HLCONTENT_BIN := $(HLCONTENT)/target/release/hl-content
+MODEL_ROSTER := $(HLCONTENT)/model-roster.txt
 MAP      ?= c1a0
 
 .DEFAULT_GOAL := build
-.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms transition-props campaign-map-report placement-audit train-audit roster-audit spu-audit menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-perf-report psoxide-perf-gate psoxide-map-smoke psoxide-chart memory-report
+.PHONY: help psoxide-check build compile disc assets full-disc install run check-assets bsp-info cook rooms transition-props menu-assets clean psoxide-smoke psoxide-gameplay psoxide-profile psoxide-map-smoke psoxide-chart
 
 help:
 	@echo "hl-psx targets:"
@@ -80,19 +76,11 @@ help:
 	@echo "  make psoxide-smoke    - headless menu screenshot/hash via PSoXide"
 	@echo "  make psoxide-gameplay - headless c1a0 gameplay screenshot/hash"
 	@echo "  make psoxide-profile  - telemetry build + CSV/profile screenshot"
-	@echo "  make psoxide-perf-report - report real visual FPS from the latest profile"
-	@echo "  make psoxide-perf-gate   - fresh 65-frame capture + strict 20 FPS gate"
 	@echo "  make psoxide-map-smoke MAP_INDEX=N - boot map N directly in PSoXide"
 	@echo "  make psoxide-chart    - profile + HTML vblank chart"
-	@echo "  make memory-report    - linker-map RAM budget + top symbols"
 	@echo "  make check-assets - verify the source Half-Life install (HL_DIR)"
 	@echo "  make bsp-info   - geometry + texture-VRAM budget for one map (MAP=$(MAP))"
 	@echo "  make cook       - cook a map to data/maps/<MAP>.hlm (MAP=$(MAP))"
-	@echo "  make campaign-map-report - size every campaign BSP against MAP_BUF"
-	@echo "  make placement-audit - verify every actor/sprite placement fits and cooks"
-	@echo "  make train-audit - verify cooked func_train records fit the runtime pool"
-	@echo "  make roster-audit - verify all placed model types fit the shared pool"
-	@echo "  make spu-audit - verify core SFX + every voice bank fit SPU RAM"
 	@echo "  make clean      - remove build output"
 	@echo ""
 	@echo "  Source assets read from HL_DIR (default: macOS Steam path)."
@@ -112,13 +100,6 @@ compile:
 	cd $(GAME) && PSOXIDE="$(PSOXIDE)" cargo build --release $(CARGO_FEATURE_ARGS)
 	@echo "EXE -> $(EXE)"
 
-memory-report:
-	@mkdir -p $(CAPTURE_DIR)
-	cd $(GAME) && RUSTFLAGS='-Clink-arg=-Map -Clink-arg=$(MEMORY_MAP)' \
-		PSOXIDE="$(PSOXIDE)" cargo build --release $(CARGO_FEATURE_ARGS)
-	python3 $(ROOT)/tools/memory_report.py $(MEMORY_MAP) \
-		--min-headroom-kb $(MIN_HEADROOM_KB)
-
 disc: compile
 	@mkdir -p $(DIST)
 	cd $(MKISOPSX) && cargo run --release -- \
@@ -136,14 +117,17 @@ disc: compile
 
 # HL music -> CDDA track payloads (data/music, git-ignored). The disc target
 # appends them as audio tracks when present.
-music-assets:
-	python3 tools/extract_music.py "$(HL_GAME)" $(ROOT)/data/music
+$(HLCONTENT_BIN): $(HLCONTENT)/Cargo.toml $(wildcard $(HLCONTENT)/src/*.rs)
+	cd $(HLCONTENT) && cargo build --release
+
+music-assets: $(HLCONTENT_BIN)
+	$(HLCONTENT_BIN) music "$(HL_GAME)" $(ROOT)/data/music
 
 # HL SFX -> SPU-ADPCM pack (one WORLD.PAK chunk, id 3000). Needs the sibling
 # PSoXide checkout for the psxed audio-pack encoder.
-sfx-assets:
+sfx-assets: $(HLCONTENT_BIN)
 	cd $(PSOXIDE) && cargo build --release -p psxed
-	python3 tools/extract_sfx.py "$(HL_GAME)/sound" $(SFXPACK)/chunk_3000.psxa \
+	$(HLCONTENT_BIN) sfx "$(HL_GAME)/sound" $(SFXPACK)/chunk_3000.psxa \
 		"$(PSOXIDE)/target/release/psxed"
 	@cp data/menu/hud.tex $(SFXPACK)/chunk_3001.psxa  # HUD atlas streams from the pack
 	@cp data/menu/menu.pak $(SFXPACK)/chunk_3003.psxa  # menu bg+logo stream from the pack (not baked)
@@ -151,16 +135,16 @@ sfx-assets:
 # HL dialogue -> per-map 8kHz SPU-ADPCM voice packs (WORLD.PAK chunks
 # 3100+idx) + manifest. Must run BEFORE `rooms` (the map cook reads the
 # manifest to resolve scripted_sentence/ambient_generic to local voice ids).
-voices-assets:
+voices-assets: $(HLCONTENT_BIN)
 	cd $(PSOXIDE) && cargo build --release -p psxed
-	python3 tools/extract_voices.py "$(HL_GAME)" "$(MAPLIST)" $(VOICEPACK) \
+	$(HLCONTENT_BIN) voices "$(HL_GAME)" "$(MAPLIST)" $(VOICEPACK) \
 		"$(PSOXIDE)/target/release/psxed"
 
 # HL sprites -> per-map 4bpp billboard packs (WORLD.PAK chunks 3200+idx) +
 # manifest. Must run BEFORE `rooms` (the map cook reads the manifest to resolve
 # env_sprite/env_glow models to per-map sprite local ids).
-sprites-assets:
-	python3 tools/extract_sprites.py "$(HL_GAME)" "$(MAPLIST)" $(SPRITEPACK)
+sprites-assets: $(HLCONTENT_BIN)
+	$(HLCONTENT_BIN) sprites "$(HL_GAME)" "$(MAPLIST)" $(SPRITEPACK)
 
 assets: check-assets menu-assets voices-assets sprites-assets rooms models sfx-assets
 	@echo "assets -> data/menu data/rooms data/models data/modelpack data/sfx data/voices data/sprites"
@@ -208,32 +192,6 @@ psoxide-profile:
 		--dump-hash
 	@echo "PROFILE -> $(CAPTURE_DIR)/hl-psx-profile.csv"
 
-# `cycles_per_tick` stays near the fixed 20 Hz scheduler period even when the
-# renderer misses multiple VBlanks. This report measures consecutive rendered
-# frame endpoints instead, including any catch-up simulation work between them.
-psoxide-perf-report:
-	python3 tools/perf/visual_perf_gate.py report \
-		--scenario c0a0=$(CAPTURE_DIR)/hl-psx-profile.csv \
-		--min-visual-samples 20
-
-# Four cold visual frames cover room-cache construction plus the tram packet
-# cache settling as its initial camera pose locks. Keep 61 measured frames after
-# that explicit warmup so the strict gate has 60 delivery intervals and a useful
-# p95. Target-specific variables propagate to the profile prerequisite.
-psoxide-perf-gate: PSOXIDE_PROFILE_VISUAL_FRAMES=65
-psoxide-perf-gate: psoxide-profile
-	python3 tools/perf/visual_perf_gate.py stamp \
-		--csv $(CAPTURE_DIR)/hl-psx-profile.csv \
-		--artifact $(DIST)/hl-psx.bin \
-		--visual-artifact $(CAPTURE_DIR)/hl-psx-profile-hw.ppm \
-		--scenario c0a0 --map-index 0 \
-		--route '$(PSOXIDE_MENU_PLAY_PULSES)' \
-		--command 'make psoxide-perf-gate'
-	python3 tools/perf/visual_perf_gate.py report --gate \
-		--scenario c0a0=$(CAPTURE_DIR)/hl-psx-profile.csv \
-		--warmup-visuals 4 \
-		--min-visual-samples 60
-
 psoxide-map-smoke:
 	$(MAKE) disc FEATURES=emulator-telemetry,debug-map-boot PSOXIDE="$(PSOXIDE)"
 	@mkdir -p $(CAPTURE_DIR)
@@ -262,7 +220,7 @@ psoxide-chart: psoxide-profile
 	@echo "CHART -> $(CAPTURE_DIR)/hl-psx-profile.html"
 
 # Cook streamed maps into WORLD.PAK chunks. Each menu room N gets two chunk IDs:
-#   room_<2N>.psxc   = resident HLMA/HLMB/HLMC world/collision/entity data
+#   room_<2N>.psxc   = resident HLMA/HLMB/HLMC/HLMD world/collision/entity data
 #   room_<2N+1>.psxc = temporary HLTX texture payload for VRAM upload
 # Keep MAPLIST in the same order as `game/src/menu.rs`'s MAPS registry.
 ROOMS := $(ROOT)/data/rooms
@@ -286,8 +244,8 @@ MAPLIST := \
 	c2a5w c2a5x c3a1 c3a1a c3a1b c3a2 c3a2a c3a2b \
 	c3a2c c3a2d c3a2e c3a2f c4a1 c4a1a c4a1b c4a1c \
 	c4a1d c4a1e c4a1f c4a2 c4a2a c4a2b c4a3 c5a1
-transition-props:
-	python3 tools/gen_transition_props.py "$(HL_GAME)/maps" \
+transition-props: $(HLCONTENT_BIN)
+	$(HLCONTENT_BIN) transition-props "$(HL_GAME)/maps" \
 		$(MODELPACK)/transition_props.txt $(MAPLIST)
 
 rooms: transition-props models
@@ -307,34 +265,10 @@ rooms: transition-props models
 	done
 	@echo "rooms -> $(ROOMS) ($(words $(MAPLIST)) maps)"
 
-campaign-map-report:
-	cd $(HLBSP) && cargo build --release
-	python3 $(ROOT)/tools/campaign_map_report.py \
-		--hl-game "$(HL_GAME)" \
-		--hlbsp-bin "$(HLBSP_BIN)" \
-		--rooms-dir "$(ROOMS)" \
-		--clips-manifest "$(MODELPACK)/clips.txt" \
-		--voices-manifest "$(VOICEPACK)/manifest.txt" \
-		--sprites-manifest "$(SPRITEPACK)/manifest.txt"
-
-placement-audit:
-	HL_GAME="$(HL_GAME)" python3 $(ROOT)/tools/placement_audit.py
-
-train-audit:
-	python3 $(ROOT)/tools/train_audit.py
-
-# Model-pool fit gate: fails if any placed model type would drop.
-# Run after `make models` or `make rooms`, and before trimming pool constants.
-roster-audit:
-	HL_GAME="$(HL_GAME)" python3 $(ROOT)/tools/roster_audit.py
-
-spu-audit:
-	python3 $(ROOT)/tools/spu_audit.py
-
 # Extract the menu font (HL fonts.wad -> data/menu/hlfont.bin, git-ignored).
 # The runtime include_bytes!'s it, so run this once before building.
-menu-assets:
-	HL_GAME="$(HL_GAME)" python3 $(ROOT)/tools/extract_menu.py
+menu-assets: $(HLCONTENT_BIN)
+	$(HLCONTENT_BIN) menu "$(HL_GAME)" $(ROOT)/data/menu
 
 # Install the playable disc into the PSoXide game library as its own folder with
 # matching <name>.bin/.cue (the layout the library expects).
@@ -400,7 +334,7 @@ ITEM_TEX_CHUNK_SUIT := 1200
 ITEM_TEX_CHUNK_BATTERY := 1201
 WEAPON_TEX_CHUNK_BASE := 2000
 WEAPONLIST := v_9mmhandgun v_357 v_9mmar v_crossbow v_crowbar v_chub v_egon v_gauss v_grenade v_hgun v_rpg v_satchel v_satchel_radio v_shotgun v_squeak v_tripmine
-models:
+models: $(HLCONTENT_BIN)
 	cd $(HLBSP) && cargo build --release
 	@mkdir -p $(ROOT)/data/models
 	@mkdir -p $(MODELPACK)
@@ -413,80 +347,28 @@ models:
 		chunk=$$(( $(WEAPON_CHUNK_BASE) + i )); \
 		texchunk=$$(( $(WEAPON_TEX_CHUNK_BASE) + i )); \
 		$(HLBSP_BIN) --mdl4 "$(HL_GAME)/models/$$m.mdl" "$(MODELPACK)/chunk_$$chunk.psxm" "0:1" "$(MODELPACK)/chunk_$$texchunk.psxm" >/dev/null; \
-		python3 tools/merge_model_chunk.py "$(MODELPACK)/chunk_$$chunk.psxm" "$(MODELPACK)/chunk_$$texchunk.psxm"; \
+		$(HLCONTENT_BIN) merge-model "$(MODELPACK)/chunk_$$chunk.psxm" "$(MODELPACK)/chunk_$$texchunk.psxm"; \
 		echo "  weapon chunk $$chunk (merged) = $$m ($$(wc -c < $(MODELPACK)/chunk_$$chunk.psxm) B)"; \
 		i=$$((i+1)); \
 	done
 	@echo "  --- model roster (all streamed per-map): geom chunk 1300+id, tex chunk 1100+id ---"
 	@# Actors use --mdl5: compact animation frames and the same quarter-unit /
 	@# q12=1024 scale as --mdl6, without its runtime-unused per-triangle normals.
-	@rm -f $(MODELPACK)/roster.txt
-	@for entry in \
-	  "0|scientist|13:4,0:4,24:4,8:2,31:3,pondering:2,retina:2,beatdoor:2,ceiling_dangle:2,deskidle=pondering,pondering2=pondering,pondering3=pondering,pause=pondering,writeboard=pondering,converse1=pondering,converse2=pondering,push_button=beatdoor,wave=beatdoor,no=pondering,sitstand=pondering,tieshoe=pondering,buysoda=pondering,idle1=@0" \
-	  "1|barney|0:4,4:4,6:4,17:2,25:3,sit1:2,standing_idle:2,intropush:2,flashlight=standing_idle,cprbarney=sit1,sit2=sit1,sit3=sit1,relaxstand=sit1,almostidle=standing_idle,almost=standing_idle,barn_wave=intropush,c3a2_draw=standing_idle,idle1=@0" \
-	  "2|headcrab|0:4,4:4,10:4,6:2,7:3,idle1=@0" \
-	  "3|w_suit|0" \
-	  "4|w_battery|0" \
-	  "5|zombie|0:4,10:4,8:3,3:2,17:3,eatbody:2,eatbodystand=eatbody,pause=@0,idle1=@0,attack1=@2" \
-	  "6|houndeye|0:4,3:4,10:4,12:2,6:3,idle1=@0" \
-	  "7|bullsquid|7:4,1:4,8:4,3:2,16:3,eat:2,idle=@0" \
-	  "8|hgrunt|11:4,1:4,18:3,4:2,35:3,idle1=@0,combatidle=@0,walk1=@1,divecover=@2" \
-	  "9|islave|0:4,4:4,12:3,13:2,19:3,grab:2,downup=grab,pushup=grab,updown=grab,jabber=grab,jibber=grab,idle1=@0" \
-	  "10|agrunt|0:4,2:4,19:4,6:2,25:3,idle1=@0,threat=@2" \
-	  "11|controller|15:4,16:4,0:4,6:2,18:3" \
-	  "12|barnacle|0:3,0:3,4:3,3:2,6:3" \
-	  "13|leech|3:4,0:4,2:4,3:2,6:3" \
-	  "14|roach|1:4,0:4" \
-	  "15|gman|0:3,6:3,0:3,0:2,0:3,idle01=@0,idlebrush=@0,listen=@0,bigno=@0,bigyes=@0" \
-	  "16|garg|2:1,4:1,6:1,12:2,14:3" \
-	  "17|nihilanth|0:1,19:1,1:1,9:2,12:3" \
-	  "18|big_mom|0:1,2:1,9:1,10:2,4:3" \
-	  "19|icky|0:1,1:1,2:1,3:2,4:3" \
-	  "20|sentry|2:2,2:2,1:2,2:2,5:3" \
-	  "21|turret|2:3,2:3,1:3,2:2,5:3" \
-	  "22|miniturret|0:3,3:3,1:3,0:2,5:3" \
-	  "23|apache|0:1,0:1,0:1,0:2,0:3" \
-	  "24|boid|0:4,0:4" \
-	  "25|scientist|89:4,89:4,73:4,73:2,39:3" \
-	  "26|w_crowbar|0:1" \
-	  "27|w_9mmhandgun|0:1" \
-	  "28|w_357|0:1" \
-	  "29|w_9mmAR|0:1" \
-	  "30|w_shotgun|0:1" \
-	  "31|w_crossbow|0:1" \
-	  "32|w_rpg|0:1" \
-	  "33|w_gauss|0:1" \
-	  "34|w_egon|0:1" \
-	  "35|w_hgun|0:1" \
-	  "36|w_grenade|0:1" \
-	  "37|w_squeak|0:1" \
-	  "38|w_satchel|0:1" \
-	  "39|w_satchel|0:1" \
-	  "40|w_9mmclip|0:1" \
-	  "41|w_9mmARclip|0:1" \
-	  "42|w_shotbox|0:1" \
-	  "43|w_357ammobox|0:1" \
-	  "44|w_crossbow_clip|0:1" \
-	  "45|w_rpgammo|0:1" \
-	  "46|w_gaussammo|0:1" \
-	  "47|w_ARgrenade|0:1" \
-	  "48|w_medkit|0:1" \
-	  "49|w_longjump|0:1" \
-	  "50|tentacle2|0:2,0:2,2:2,5:2,10:3" \
-	  "51|hassassin|0:4,2:4,10:4,1:2,17:3" \
-	  "52|loader|idle:2,boxwalk:4,0:1,0:1,herodie:2,rampwalk:8,idle1=idle" \
-	  "53|forklift|idle2:2,0:1,0:1,0:1,0:1,patha:8,pathb:8,idle1=idle2" \
-	  ; do \
-	  t=$${entry%%|*}; rest=$${entry#*|}; mdl=$${rest%%|*}; seq=$${rest##*|}; \
-	  echo "$$entry" >> $(MODELPACK)/roster.txt; \
+	@cp $(MODEL_ROSTER) $(MODELPACK)/roster.txt
+	@while IFS='|' read -r t mdl seq; do \
+	  case "$$t" in ''|'#'*) continue ;; esac; \
 	  geom=$$((1300+t)); tex=$$((1100+t)); \
 	  if $(HLBSP_BIN) --mdl5 "$(HL_GAME)/models/$$mdl.mdl" "$(MODELPACK)/chunk_$$geom.psxm" "$$seq" "$(MODELPACK)/chunk_$$tex.psxm" >/tmp/mck_$$mdl.log 2>&1; then \
-	    python3 tools/merge_model_chunk.py "$(MODELPACK)/chunk_$$geom.psxm" "$(MODELPACK)/chunk_$$tex.psxm"; \
-	    echo "  T$$t $$mdl -> merged $$geom ($$(wc -c < $(MODELPACK)/chunk_$$geom.psxm) B)"; \
+	    if [ "$$t" -eq 15 ]; then \
+	      echo "  T$$t $$mdl -> split $$geom/$$tex ($$(wc -c < $(MODELPACK)/chunk_$$geom.psxm)+$$(wc -c < $(MODELPACK)/chunk_$$tex.psxm) B)"; \
+	    else \
+	      $(HLCONTENT_BIN) merge-model "$(MODELPACK)/chunk_$$geom.psxm" "$(MODELPACK)/chunk_$$tex.psxm"; \
+	      echo "  T$$t $$mdl -> merged $$geom ($$(wc -c < $(MODELPACK)/chunk_$$geom.psxm) B)"; \
+	    fi; \
 	  else echo "  T$$t $$mdl FAILED: $$(tail -1 /tmp/mck_$$mdl.log | cut -c1-60)"; fi; \
-	done
-	@python3 tools/gen_clips_manifest.py < $(MODELPACK)/roster.txt > $(MODELPACK)/clips.txt
-	@python3 tools/gen_studio_events.py "$(HL_GAME)/models" \
+	done < $(MODEL_ROSTER)
+	@$(HLCONTENT_BIN) clips $(MODELPACK)/roster.txt $(MODELPACK)/clips.txt
+	@$(HLCONTENT_BIN) studio-events "$(HL_GAME)/models" \
 		$(MODELPACK)/roster.txt $(MODELPACK)/studio_events.txt
 	@rm -f $(MODELPACK)/roster.txt
 	@echo "  clips manifest -> $(MODELPACK)/clips.txt ($$(wc -l < $(MODELPACK)/clips.txt) entries)"

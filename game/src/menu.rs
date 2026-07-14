@@ -1,5 +1,5 @@
 //! Boot menu styled after Half-Life's original (WON) main menu, built
-//! from the install's own assets via `tools/extract_menu.py` (git-ignored
+//! from the install's own assets via `host/hl-content` (git-ignored
 //! data/menu/, like every other extracted asset):
 //!   - hlfont.bin  -- the menu font (Arial 16, per valve/640_textscheme.txt),
 //!                    built into a `psx_font::BitmapFont` at boot.

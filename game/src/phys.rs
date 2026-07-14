@@ -17,9 +17,10 @@ const GROUND_NY: i32 = 2867; // floor if plane normal Y > ~0.7 (×4096)
 // number cites its pm_shared.c / SDK source.
 //
 // sv_gravity 800 u/s^2 (world.cpp:482) -> dv = 800*0.05 = 40 u/s = 2 u/tick
-// per tick. NB the discrete fall speed from height h is v = 2*sqrt(h) u/tick,
-// exactly HL's sqrt(2*800*h)/20 -- the fall-damage threshold maps 1:1.
-const GRAVITY: i32 = 2;
+// per tick. GoldSrc applies half in PM_AddCorrectGravity before movement and
+// half in PM_FixupGravityVelocity afterwards. Keep it in Q6 so trigger_gravity
+// scales and jump-launch fractions survive without floats.
+const GRAVITY_Q6: i32 = 2 * 64;
 
 // trigger_gravity zones scale gravity (q12; 4096 = normal). Sticky until the
 // next zone or map load, matching GoldSrc's sv_gravity behaviour.
@@ -38,18 +39,26 @@ pub fn set_longjump(on: bool) {
 }
 
 #[inline]
-fn gravity_step() -> i32 {
-    unsafe { (GRAVITY * GRAVITY_SCALE) >> 12 }
+fn gravity_step_q6() -> i32 {
+    unsafe { (GRAVITY_Q6 * GRAVITY_SCALE) >> 12 }
 }
 const MOVE_SPEED: i32 = 16; // sv_maxspeed 320 u/s (pm_shared.c:2865 clamp)
-const JUMP: i32 = 13; // sqrt(2*800*45) = 268 u/s (pm_shared.c:2596); apex ~49 u
+                            // sqrt(2*800*45)/20 in Q6. PM_Jump subtracts one half-gravity step before
+                            // the first movement sweep, yielding GoldSrc's 12.416-unit launch displacement.
+const JUMP_Q6: i32 = 859;
 const STOP_SPEED: i32 = 5; // sv_stopspeed 100 u/s (PM_Friction floor)
-const AIR_WISH_CAP: i32 = 2; // PM_AirAccelerate caps wishspd at 30 u/s (pm_shared.c:1279)
-                             // Long jump module (pm_shared.c:2580-93): 350*1.6 = 560 u/s forward,
-                             // sqrt(2*800*56) = 299 u/s up, fired by a DUCKED jump while moving.
+                           // PM_AirAccelerate caps wishspd at 30 u/s = 1.5 u/tick. Keep the half-unit:
+                           // rounding this to two materially over-accelerates repeated air-control ticks.
+const AIR_WISH_CAP_Q6: i32 = 96;
+// Long jump module (pm_shared.c:2580-93): 350*1.6 = 560 u/s forward,
+// sqrt(2*800*56) = 299 u/s up, fired by a DUCKED jump while moving.
 const LONGJUMP_FWD: i32 = 28;
-const LONGJUMP_UP: i32 = 15;
-const STEP_DOWN: i32 = 8; // ground probe depth
+const LONGJUMP_UP_Q6: i32 = 958;
+// PM_CatagorizePosition traces the player origin exactly two units down after
+// movement.  This is deliberately much shorter than the separate 18-unit
+// PM_WalkMove stair descent: an eight-unit categorization probe snapped the
+// ascending c1a1d player onto hanging crate 1 five ticks before GoldSrc.
+const GROUND_PROBE_DOWN: i32 = 2;
 const MAX_CLIP_PLANES: usize = 5;
 
 #[inline]
@@ -57,26 +66,33 @@ fn dot(n: [i16; 3], p: [i32; 3]) -> i32 {
     ((n[0] as i32 * p[0]) + (n[1] as i32 * p[1]) + (n[2] as i32 * p[2])) >> 12
 }
 
+/// Plane projection in Q27.5. Keeping five fractional bits here lets the
+/// existing `i32` cooked distance preserve GoldSrc's 1/32-unit trace epsilon.
+#[inline(always)]
+fn dot_q5(n: [i16; 3], p: [i32; 3]) -> i32 {
+    ((n[0] as i32 * p[0]) + (n[1] as i32 * p[1]) + (n[2] as i32 * p[2])) >> 7
+}
+
 /// Exact wrapped equivalent of `(4096 * p) >> 12`, expressed as shifts so a
 /// tagged positive axial plane never pays for the R3000's MULT/MFLO pair.
 /// Keeping both shifts matters for out-of-range i32 inputs: returning `p`
 /// directly would change the existing release-mode wrapping semantics.
 #[inline(always)]
-fn axial_dot(p: i32) -> i32 {
-    p.wrapping_shl(12) >> 12
+fn axial_dot_q5(p: i32) -> i32 {
+    p.wrapping_shl(12) >> 7
 }
 
 #[inline(always)]
 fn plane_delta(cn: &crate::map::ClipNode, p: [i32; 3]) -> i32 {
     let projection = if cn.axis == 0 {
-        dot(cn.n, p)
+        dot_q5(cn.n, p)
     } else {
         // `axis` comes directly from a two-bit tag, so the non-zero values are
         // exactly 1..=3. Avoid a switch/jump table in every tagged node visit.
         let coord = unsafe { *p.get_unchecked(cn.axis as usize - 1) };
-        axial_dot(coord)
+        axial_dot_q5(coord)
     };
-    projection.wrapping_sub(cn.dist)
+    projection.wrapping_sub(cn.dist_q5)
 }
 
 /// Materialize a tagged axial normal only when a full trace actually impacts.
@@ -97,6 +113,66 @@ struct Trace {
     allsolid: bool,
     startsolid: bool,
     mover: i32, // ent id of the mover hit (-1 = static world)
+}
+
+/// Exact active-player-hull result used only by the deep deterministic trace.
+/// Keeping the BSP and mover result together lets a replay distinguish a bad
+/// crouch hull from a stale brush mover without changing shipping telemetry.
+#[cfg(feature = "deep-reference-trace")]
+#[derive(Clone, Copy)]
+pub struct PlayerHullProbe {
+    pub frac: i32,
+    pub normal: [i32; 3],
+    pub startsolid: bool,
+    pub mover: i32,
+}
+
+/// Deep-reference snapshot of GoldSrc's flat versus raised PM_WalkMove paths.
+/// This type and every producer/consumer disappear from shipping builds.
+#[cfg(feature = "deep-reference-trace")]
+#[derive(Clone, Copy)]
+pub struct PlayerStepProbe {
+    pub head: i32,
+    pub move_delta: [i32; 3],
+    pub direct_frac: i32,
+    pub direct_normal: [i32; 3],
+    pub flat_pos: [i32; 3],
+    pub up_frac: i32,
+    pub up_startsolid: bool,
+    pub up_pos: [i32; 3],
+    pub raised_direct_frac: i32,
+    pub raised_direct_normal: [i32; 3],
+    pub raised_pos: [i32; 3],
+    pub down_frac: i32,
+    pub down_startsolid: bool,
+    pub down_normal: [i32; 3],
+    pub step_pos: [i32; 3],
+    pub landed: bool,
+    pub chose_step: bool,
+}
+
+#[cfg(feature = "deep-reference-trace")]
+static mut PLAYER_STEP_TICK: u32 = 0;
+#[cfg(feature = "deep-reference-trace")]
+static mut PLAYER_SLIDE_CALL: u8 = 0;
+
+#[cfg(feature = "deep-reference-trace")]
+#[inline(always)]
+pub fn set_player_step_tick(map_tick: u32) {
+    unsafe {
+        PLAYER_STEP_TICK = map_tick;
+        PLAYER_SLIDE_CALL = 0;
+    }
+}
+
+#[cfg(feature = "deep-reference-trace")]
+#[inline(always)]
+fn next_player_slide_call() -> u8 {
+    unsafe {
+        let call = PLAYER_SLIDE_CALL;
+        PLAYER_SLIDE_CALL = PLAYER_SLIDE_CALL.wrapping_add(1);
+        call
+    }
 }
 
 /// Public, allocation-free result for gameplay ray casts.
@@ -155,6 +231,23 @@ fn recurse(
         let cn = map.clipnode(num as usize);
         let t1 = plane_delta(&cn, p1);
         let t2 = plane_delta(&cn, p2);
+        // Integer error diffusion can put an intended fractional endpoint
+        // exactly on a blocking plane. GoldSrc's float endpoint is then just
+        // across it and PM_FlyMove clips the velocity (c1a1f's ramp lip is the
+        // first campaign example). Treat a solid far subtree at an exact
+        // endpoint as contact: keep the integer endpoint, but return a fraction
+        // one Q12 quantum short so slide_move applies the plane clip.
+        if t2 == 0 && t1 != 0 {
+            let side = t1 < 0;
+            let far = if side { cn.c0 } else { cn.c1 };
+            if point_contents(map, far, p2) == SOLID {
+                let n = plane_normal(&cn);
+                tr.normal = if side { [-n[0], -n[1], -n[2]] } else { n };
+                tr.frac = (p2f - 1).max(p1f);
+                tr.allsolid = false;
+                return false;
+            }
+        }
         // Most hull nodes put the complete segment on one side. Turn those
         // tail-recursive walks into a tight loop; recurse only at a real plane
         // crossing where the traversal must return to inspect the far side.
@@ -171,9 +264,9 @@ fn recurse(
         // Crosses the plane -- split the segment. Back off by DIST_EPSILON (Quake's
         // trick) so we stop just SHORT of the plane instead of exactly on it, which
         // would leave the player startsolid (wedged) and unable to move next frame.
-        const EPS: i32 = 1;
+        const EPS_Q5: i32 = 1;
         let denom = t1 - t2;
-        let nudged = if t1 < 0 { t1 + EPS } else { t1 - EPS };
+        let nudged = if t1 < 0 { t1 + EPS_Q5 } else { t1 - EPS_Q5 };
         let frac = if denom == 0 {
             0
         } else {
@@ -249,8 +342,8 @@ fn recurse_node_trace(
         }
 
         let nd = map.node(num as usize);
-        let t1 = dot(nd.n, p1).wrapping_sub(nd.dist);
-        let t2 = dot(nd.n, p2).wrapping_sub(nd.dist);
+        let t1 = dot_q5(nd.n, p1).wrapping_sub(nd.dist_q5);
+        let t2 = dot_q5(nd.n, p2).wrapping_sub(nd.dist_q5);
         if t1 >= 0 && t2 >= 0 {
             num = nd.c0;
             depth += 1;
@@ -262,11 +355,9 @@ fn recurse_node_trace(
             continue;
         }
 
-        // Player clip-hull movement backs away from a plane by one integer
-        // world unit to avoid re-entering it next frame. GoldSrc point hull 0
-        // uses DIST_EPSILON=1/32; at this runtime's integer precision that is
-        // zero. Keeping the exact split is what makes DROP_TO_FLOOR land at
-        // -216/-80 rather than one unit above those c1a1b surfaces.
+        // Hull 0 uses the same Q5 plane representation, but keeps the exact
+        // split here: DROP_TO_FLOOR must land on the authored -216/-80 floors
+        // rather than one whole unit above them.
         let denom = t1.wrapping_sub(t2);
         let frac = if denom == 0 {
             0
@@ -359,9 +450,9 @@ fn recurse_clear(
             continue;
         }
 
-        const EPS: i32 = 1;
+        const EPS_Q5: i32 = 1;
         let denom = t1 - t2;
-        let nudged = if t1 < 0 { t1 + EPS } else { t1 - EPS };
+        let nudged = if t1 < 0 { t1 + EPS_Q5 } else { t1 - EPS_Q5 };
         let frac = if denom == 0 {
             0
         } else {
@@ -407,52 +498,78 @@ pub struct Mover {
     pub center: [i32; 3],
     pub radius: i32,
     pub id: i32, // owning brush-entity index (traces report it on hit)
-    // World yaw about `off` as the render matrix's own q12 cos/sin (extracted
-    // from Mat3I16::rotate_y so hull and visual quantize identically).
+    // World axial rotation about `off` as the render matrix's own q12 cos/sin.
+    // The axis is packed into spare high head0 bits (Y is zero/legacy) so the
+    // full XYZ pendulum collision path does not grow this RAM-hot structure.
     // Identity = (4096, 0): the plain translated fast path.
     pub rc: i32,
     pub rs: i32,
 }
 
 pub const MOVER_VISUAL_DISABLED: i32 = i32::MIN;
+const MOVER_ROT_AXIS_SHIFT: u32 = 29;
+const MOVER_ROT_AXIS_MASK: i32 = 3 << MOVER_ROT_AXIS_SHIFT;
+
+/// Pack runtime axis 0=Y, 1=X, 2=Z into a mover's point-head metadata.
+#[inline(always)]
+pub const fn mover_rotation_axis_tag(axis: u16) -> i32 {
+    ((axis as i32) & 3) << MOVER_ROT_AXIS_SHIFT
+}
 
 impl Mover {
     #[inline]
     pub fn point_head(self) -> i32 {
-        self.head0 & !MOVER_VISUAL_DISABLED
+        self.head0 & !(MOVER_VISUAL_DISABLED | MOVER_ROT_AXIS_MASK)
     }
 
     #[inline]
     fn visual_disabled(self) -> bool {
         self.head0 & MOVER_VISUAL_DISABLED != 0
     }
+
+    #[inline(always)]
+    fn rotation_axis(self) -> u16 {
+        ((self.head0 & MOVER_ROT_AXIS_MASK) >> MOVER_ROT_AXIS_SHIFT) as u16
+    }
 }
 
-/// Rotate a vector by the render's rotate_y(c, s): x' = c·x + s·z, z' = −s·x + c·z.
-#[inline]
-fn rot_y(p: [i32; 3], c: i32, s: i32) -> [i32; 3] {
-    [
-        (c * p[0] + s * p[2]) >> 12,
-        p[1],
-        (-s * p[0] + c * p[2]) >> 12,
-    ]
+/// Rotate a vector by the render's matching axial matrix. Axis 0 is the legacy
+/// Y path used by doors/trams/fans; 1 and 2 add X/Z pendulum hulls.
+// This transform is used by five trace paths. Keeping one shared copy saves
+// several kilobytes of MIPS text while the call cost is paid only for a live
+// rotated mover (the identity fast paths never reach it).
+#[inline(never)]
+fn rot_axis(p: [i32; 3], c: i32, s: i32, axis: u16) -> [i32; 3] {
+    match axis {
+        1 => [
+            p[0],
+            (c * p[1] - s * p[2]) >> 12,
+            (s * p[1] + c * p[2]) >> 12,
+        ],
+        2 => [
+            (c * p[0] - s * p[1]) >> 12,
+            (s * p[0] + c * p[1]) >> 12,
+            p[2],
+        ],
+        _ => [
+            (c * p[0] + s * p[2]) >> 12,
+            p[1],
+            (-s * p[0] + c * p[2]) >> 12,
+        ],
+    }
 }
 
-/// Inverse (transpose) of [`rot_y`]: world -> mover-local space.
+/// Inverse (transpose) of [`rot_axis`]: world -> mover-local space.
 #[inline]
-fn rot_y_inv(p: [i32; 3], c: i32, s: i32) -> [i32; 3] {
-    [
-        (c * p[0] - s * p[2]) >> 12,
-        p[1],
-        (s * p[0] + c * p[2]) >> 12,
-    ]
+fn rot_axis_inv(p: [i32; 3], c: i32, s: i32, axis: u16) -> [i32; 3] {
+    rot_axis(p, c, -s, axis)
 }
 
 #[inline]
 fn mover_local(mv: &Mover, p: [i32; 3]) -> [i32; 3] {
     let d = [p[0] - mv.off[0], p[1] - mv.off[1], p[2] - mv.off[2]];
     if mv.rs != 0 || mv.rc != 4096 {
-        rot_y_inv(d, mv.rc, mv.rs)
+        rot_axis_inv(d, mv.rc, mv.rs, mv.rotation_axis())
     } else {
         d
     }
@@ -469,7 +586,7 @@ fn mover_local_segment(mv: &Mover, p1: [i32; 3], p2: [i32; 3]) -> ([i32; 3], [i3
 #[inline]
 fn mover_world_center(mv: &Mover) -> [i32; 3] {
     let local = if mv.rs != 0 || mv.rc != 4096 {
-        rot_y(mv.center, mv.rc, mv.rs)
+        rot_axis(mv.center, mv.rc, mv.rs, mv.rotation_axis())
     } else {
         mv.center
     };
@@ -518,6 +635,28 @@ fn mover_may_touch_segment(mv: &Mover, p1: [i32; 3], p2: [i32; 3]) -> bool {
 /// True when the segment does not hit any shifted mover hull.
 pub fn line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> bool {
     line_clear_movers_except(map, movers, p1, p2, i32::MIN)
+}
+
+/// True when an actor-sized segment does not enter any nearby brush collider.
+///
+/// Actor movement must use the submodel clip hull, not hull 0: a small actor's
+/// centre can pass underneath a glass pane while the top of its bounding box
+/// still intersects it (c1a0c's headcrab display is exactly that shape). A
+/// mover which already contains the start point is deliberately ignored so a
+/// spawned actor can escape an overlapping brush; every other mover continues
+/// to block entry. This matches the start-solid convention used by `trace_all`.
+pub fn actor_line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> bool {
+    for mv in movers {
+        if mv.head <= 0 || !mover_may_touch_segment(mv, p1, p2) {
+            continue;
+        }
+        let (q1, q2) = mover_local_segment(mv, p1, p2);
+        let tr = trace(map, mv.head, q1, q2);
+        if !tr.startsolid && tr.frac < 4096 {
+            return false;
+        }
+    }
+    true
 }
 
 /// Like [`line_clear_movers`] but ignores the mover whose id is `exclude_id`.
@@ -593,8 +732,8 @@ fn recurse_visual_clear(
         }
 
         let nd = map.node(num as usize);
-        let t1 = dot(nd.n, p1).wrapping_sub(nd.dist);
-        let t2 = dot(nd.n, p2).wrapping_sub(nd.dist);
+        let t1 = dot_q5(nd.n, p1).wrapping_sub(nd.dist_q5);
+        let t2 = dot_q5(nd.n, p2).wrapping_sub(nd.dist_q5);
         if t1 >= 0 && t2 >= 0 {
             num = nd.c0;
             depth += 1;
@@ -656,7 +795,7 @@ fn node_point_solid_from(map: &Map, mut num: i32, p: [i32; 3]) -> bool {
             return false;
         }
         let nd = map.node(num as usize);
-        num = if dot(nd.n, p).wrapping_sub(nd.dist) >= 0 {
+        num = if dot_q5(nd.n, p).wrapping_sub(nd.dist_q5) >= 0 {
             nd.c0
         } else {
             nd.c1
@@ -679,11 +818,12 @@ fn visual_sphere_solid_from(map: &Map, num: i32, p: [i32; 3], radius: i32, depth
         return false;
     }
     let nd = map.node(num as usize);
-    let d = dot(nd.n, p).wrapping_sub(nd.dist);
-    if d > radius {
+    let d = dot_q5(nd.n, p).wrapping_sub(nd.dist_q5);
+    let radius_q5 = radius.wrapping_shl(5);
+    if d > radius_q5 {
         return visual_sphere_solid_from(map, nd.c0, p, radius, depth + 1);
     }
-    if d < -radius {
+    if d < -radius_q5 {
         return visual_sphere_solid_from(map, nd.c1, p, radius, depth + 1);
     }
     visual_sphere_solid_from(map, nd.c0, p, radius, depth + 1)
@@ -790,7 +930,7 @@ fn trace_point_all(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> T
         if t.frac < best.frac {
             best.frac = t.frac;
             best.normal = if mv.rs != 0 || mv.rc != 4096 {
-                rot_y(t.normal, mv.rc, mv.rs)
+                rot_axis(t.normal, mv.rc, mv.rs, mv.rotation_axis())
             } else {
                 t.normal
             };
@@ -815,6 +955,40 @@ pub fn trace_line(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Op
         ],
         normal: t.normal,
         mover: t.mover,
+    })
+}
+
+/// Trace one translated brush entity's hull-0 subtree. Actor floor probes
+/// already broad-phase the small set of brush entities touching their vertical
+/// column, so walking each exact BSP segment is both cheaper and more reliable
+/// than sampling points through the entity's bounding sphere. In particular,
+/// wide four-unit func_wall floors can have a hundred-unit sphere radius and be
+/// missed completely by sparse height samples.
+pub fn trace_submodel_line(
+    map: &Map,
+    head0: i32,
+    off: [i32; 3],
+    p1: [i32; 3],
+    p2: [i32; 3],
+) -> Option<RayHit> {
+    if head0 <= 0 {
+        return None;
+    }
+    let q1 = [p1[0] - off[0], p1[1] - off[1], p1[2] - off[2]];
+    let q2 = [p2[0] - off[0], p2[1] - off[1], p2[2] - off[2]];
+    let t = trace_nodes(map, head0, q1, q2);
+    if t.startsolid || t.frac >= 4096 {
+        return None;
+    }
+    Some(RayHit {
+        frac: t.frac,
+        pos: [
+            p1[0] + (((p2[0] - p1[0]) * t.frac) >> 12),
+            p1[1] + (((p2[1] - p1[1]) * t.frac) >> 12),
+            p1[2] + (((p2[2] - p1[2]) * t.frac) >> 12),
+        ],
+        normal: t.normal,
+        mover: -1,
     })
 }
 
@@ -869,7 +1043,7 @@ pub fn trace_down_support(
         if hit.frac < best_frac {
             best_frac = hit.frac;
             best_normal = if mv.rs != 0 || mv.rc != 4096 {
-                rot_y(hit.normal, mv.rc, mv.rs)
+                rot_axis(hit.normal, mv.rc, mv.rs, mv.rotation_axis())
             } else {
                 hit.normal
             };
@@ -934,7 +1108,7 @@ fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i3
         if t.frac < best.frac {
             best.frac = t.frac;
             best.normal = if mv.rs != 0 || mv.rc != 4096 {
-                rot_y(t.normal, mv.rc, mv.rs) // impact normal back to world space
+                rot_axis(t.normal, mv.rc, mv.rs, mv.rotation_axis()) // impact normal back to world space
             } else {
                 t.normal
             };
@@ -976,6 +1150,18 @@ fn scale12(v: [i32; 3], s: i32) -> [i32; 3] {
     [(v[0] * s) >> 12, (v[1] * s) >> 12, (v[2] * s) >> 12]
 }
 
+/// Sign-symmetric nearest scaling used only as a recovery candidate for an
+/// integer contact that landed inside a diagonal plane. Ordinary movement and
+/// already-clear impacts retain the conservative arithmetic-shift path.
+#[inline(always)]
+fn scale12_round(v: [i32; 3], s: i32) -> [i32; 3] {
+    [
+        mul_q12_round(v[0], s),
+        mul_q12_round(v[1], s),
+        mul_q12_round(v[2], s),
+    ]
+}
+
 /// Sign-symmetric nearest-integer Q12 product. PM_Accelerate operates in
 /// floats; always flooring a small positive tangent to zero while retaining
 /// the corresponding negative value biases cardinal turns in integer space.
@@ -1001,17 +1187,6 @@ fn split_planar_round(value: i32) -> (i32, i8) {
         -((-value + PLANAR_FRAC_HALF) >> PLANAR_FRAC_BITS)
     };
     (whole, (value - whole * PLANAR_FRAC_ONE) as i8)
-}
-
-#[inline(always)]
-fn q12_to_planar_round(value: i32) -> i32 {
-    const SHIFT: i32 = 12 - PLANAR_FRAC_BITS;
-    const HALF: i32 = 1 << (SHIFT - 1);
-    if value >= 0 {
-        (value + HALF) >> SHIFT
-    } else {
-        -((-value + HALF) >> SHIFT)
-    }
 }
 
 #[inline]
@@ -1044,7 +1219,11 @@ fn clear_at(map: &Map, head: i32, movers: &[Mover], pos: [i32; 3]) -> bool {
     !trace_all(map, head, movers, pos, pos).startsolid
 }
 
+#[inline(never)]
 fn try_unstick(map: &Map, head: i32, movers: &[Mover], pos: [i32; 3]) -> Option<[i32; 3]> {
+    // Actor sweeps deliberately do not report startsolid: an actor that walks
+    // into the player must be escapable. Therefore this recovery path is only
+    // entered for BSP penetration and needs the original BSP clearance test.
     if clear_at(map, head, movers, pos) {
         return Some(pos);
     }
@@ -1084,18 +1263,35 @@ fn slide_move(
     mut pos: [i32; 3],
     mut vel: [i32; 3],
 ) -> ([i32; 3], [i32; 3]) {
+    #[cfg(feature = "deep-reference-trace")]
+    let trace_call = next_player_slide_call();
     let mut planes = [[0i32; 3]; MAX_CLIP_PLANES];
     let mut nplanes = 0usize;
     let mut original_vel = vel;
     let primal_vel = vel;
     let mut time_left = 4096;
-    for _ in 0..4 {
+    for bump in 0..4 {
         if vel == [0, 0, 0] || time_left <= 0 {
             break;
         }
         let d = scale12(vel, time_left);
         let end = add(pos, d);
         let tr = trace_all(map, head, movers, pos, end);
+        #[cfg(feature = "deep-reference-trace")]
+        crate::reference_trace::player_slide(
+            unsafe { PLAYER_STEP_TICK },
+            trace_call,
+            bump,
+            pos,
+            vel,
+            d,
+            end,
+            time_left,
+            tr.frac,
+            tr.normal,
+            tr.startsolid,
+            tr.mover,
+        );
         if tr.startsolid {
             match try_unstick(map, head, movers, pos) {
                 Some(p) => {
@@ -1109,7 +1305,23 @@ fn slide_move(
             }
         }
         if tr.frac > 0 {
-            pos = add(pos, scale12(d, tr.frac));
+            let impact_start = pos;
+            let floor = add(impact_start, scale12(d, tr.frac));
+            pos = floor;
+            if tr.frac < 4096
+                && crate::ground_logic::is_diagonal_contact_plane(tr.normal)
+                && !clear_at(map, head, movers, floor)
+            {
+                // On a diagonal plane, independent negative-component floors
+                // can turn the trace's clear backed-off fraction into an
+                // integer startsolid point. Retry nearest rounding only for
+                // that proven failure. This avoids the following bump's broad
+                // try_unstick search without perturbing axial or clear paths.
+                let nearest = add(impact_start, scale12_round(d, tr.frac));
+                if clear_at(map, head, movers, nearest) {
+                    pos = nearest;
+                }
+            }
             original_vel = vel;
             nplanes = 0;
         }
@@ -1175,9 +1387,7 @@ fn dist_xz(a: [i32; 3], b: [i32; 3]) -> i32 {
 }
 
 const STEP_UP: i32 = 18; // max stair/ledge height the player climbs
-const CLIMB_SPEED: i32 = 10; // ladder vertical units/tick at full stick
-const LATERAL_CLIMB: i32 = 6; // slow xz drift while on a ladder
-const CLIMB_PITCH_DOWN: i16 = 300; // pitch beyond this = looking down -> descend
+const CLIMB_SPEED_Q6: i32 = 10 * PLANAR_FRAC_ONE; // MAX_CLIMB_SPEED / 20 Hz
 
 pub struct Player {
     pub pos: [i32; 3],
@@ -1186,10 +1396,20 @@ pub struct Player {
     // two bytes occupy Player's former alignment padding, so this prevents
     // PM_Accelerate/friction from erasing small wall tangents at zero RAM cost.
     vel_frac_xz: [i8; 2],
+    // Q6 error diffusion for the integer BSP origin. GoldSrc retains a float
+    // origin, so a 15.875-unit velocity must not become 16 units every tick.
+    move_frac_xz: [i8; 2],
+    // Vertical velocity and origin residues keep GoldSrc's split-gravity and
+    // fractional jump launch exact enough for deterministic hull-plane order.
+    vel_frac_y: i8,
+    move_frac_y: i8,
     pub on_ground: bool,
-    pub ground_mover: i32, // ent id of the mover under our feet (-1 = world/none)
-    pub land_impact: i32,  // downward speed absorbed the tick we touched down (0 = none)
-    pub crouch: bool,      // hold-duck: trace the world against the shorter hull-3
+    // Cooked entity pools are far below i16::MAX. Narrowing this index funds
+    // both vertical Q6 residues while preserving Player's 36-byte footprint.
+    pub ground_mover: i16, // ent id under our feet (-1 world/none, -2 synthetic tram)
+    // sv_maxvelocity caps this at 100 units/tick; u8 retains every legal fall.
+    pub land_impact: u8, // downward speed absorbed the tick we touched down (0 = none)
+    pub crouch: bool,    // hold-duck: trace the world against the shorter hull-3
 }
 const _: [(); 36] = [(); core::mem::size_of::<Player>()];
 
@@ -1199,6 +1419,9 @@ impl Player {
             pos,
             vel: [0, 0, 0],
             vel_frac_xz: [0, 0],
+            move_frac_xz: [0, 0],
+            vel_frac_y: 0,
+            move_frac_y: 0,
             on_ground: false,
             ground_mover: -1,
             land_impact: 0,
@@ -1212,11 +1435,92 @@ impl Player {
         self.vel[0] = x;
         self.vel[2] = z;
         self.vel_frac_xz = [0, 0];
+        self.move_frac_xz = [0, 0];
     }
 
     pub fn clear_velocity(&mut self) {
         self.vel = [0, 0, 0];
         self.vel_frac_xz = [0, 0];
+        self.move_frac_xz = [0, 0];
+        self.vel_frac_y = 0;
+        self.move_frac_y = 0;
+    }
+
+    /// Replace a scripted vertical velocity and discard PM's old fractional
+    /// state, matching a GoldSrc basevelocity/trigger assignment.
+    pub fn set_vertical_velocity(&mut self, y: i32) {
+        self.vel[1] = y;
+        self.vel_frac_y = 0;
+        self.move_frac_y = 0;
+    }
+
+    #[inline(always)]
+    fn vertical_velocity_q6(&self) -> i32 {
+        self.vel[1] * PLANAR_FRAC_ONE + self.vel_frac_y as i32
+    }
+
+    #[inline(always)]
+    fn set_vertical_velocity_q6(&mut self, fine: i32) {
+        (self.vel[1], self.vel_frac_y) = split_planar_round(fine);
+    }
+
+    #[cfg(feature = "deep-reference-trace")]
+    pub fn hull_probe(&self, map: &Map, movers: &[Mover], delta: [i32; 3]) -> PlayerHullProbe {
+        let end = add(self.pos, delta);
+        let trace = trace_all(map, self.head(map), movers, self.pos, end);
+        PlayerHullProbe {
+            frac: trace.frac,
+            normal: trace.normal,
+            startsolid: trace.startsolid,
+            mover: trace.mover,
+        }
+    }
+
+    /// Exact next pre-move ballistic displacement for differential probes.
+    #[cfg(feature = "deep-reference-trace")]
+    pub fn next_fall_delta(&self) -> [i32; 3] {
+        let fine_x = self.vel[0] * PLANAR_FRAC_ONE + self.vel_frac_xz[0] as i32;
+        let fine_y = self.vertical_velocity_q6() - gravity_step_q6() / 2;
+        let fine_z = self.vel[2] * PLANAR_FRAC_ONE + self.vel_frac_xz[1] as i32;
+        [
+            crate::ground_logic::integrate_planar_q6(fine_x, self.move_frac_xz[0]).0,
+            crate::ground_logic::integrate_planar_q6(fine_y, self.move_frac_y).0,
+            crate::ground_logic::integrate_planar_q6(fine_z, self.move_frac_xz[1]).0,
+        ]
+    }
+
+    /// Stop one axis at a dynamic actor face and discard its sub-unit motion
+    /// carry, just as a BSP plane clip inside `update` would.
+    #[inline]
+    pub fn block_actor_axis(&mut self, axis: usize) {
+        self.vel[axis] = 0;
+        if axis == 0 {
+            self.vel_frac_xz[0] = 0;
+            self.move_frac_xz[0] = 0;
+        } else if axis == 2 {
+            self.vel_frac_xz[1] = 0;
+            self.move_frac_xz[1] = 0;
+        } else if axis == 1 {
+            self.vel_frac_y = 0;
+            self.move_frac_y = 0;
+        }
+    }
+
+    /// Reposition a ladder mount on the horizontal plane only when the active
+    /// player hull is clear at the destination. This keeps mount assistance
+    /// from pulling the player through an adjacent solid brush.
+    pub fn try_set_planar_position(&mut self, map: &Map, movers: &[Mover], x: i32, z: i32) -> bool {
+        let target = [x, self.pos[1], z];
+        if clear_at(map, self.head(map), movers, target) {
+            self.pos = target;
+            self.vel[0] = 0;
+            self.vel[2] = 0;
+            self.vel_frac_xz = [0, 0];
+            self.move_frac_xz = [0, 0];
+            true
+        } else {
+            false
+        }
     }
 
     /// The world clip-hull headnode to trace against: the shorter crouch hull
@@ -1231,37 +1535,38 @@ impl Player {
         }
     }
 
-    /// Duck/un-duck with HL's airborne origin shift (pm_shared.c:1920-2057):
-    /// ducking mid-air pulls the feet UP 18 units (half the hull-height
-    /// difference), which is what makes crouch-jumping clear taller ledges;
-    /// un-ducking reverses it. On the ground the origin stays put, and
-    /// standing up is refused while a ceiling would wedge the standing hull.
+    #[inline(always)]
+    fn half_height(&self) -> i32 {
+        if self.crouch {
+            18
+        } else {
+            36
+        }
+    }
+
+    /// Duck/un-duck with HL's centred-hull origin rules
+    /// (pm_shared.c:1920-2057). Grounded switches move the origin by the
+    /// 18-unit half-height difference to keep the feet fixed; airborne
+    /// switches keep the origin fixed. The caller owns GoldSrc's 0.4-second
+    /// activation timer. Standing up is refused if the taller hull is stuck.
     pub fn set_crouch(&mut self, map: &Map, movers: &[Mover], want: bool) {
         if want == self.crouch {
             return;
         }
-        const DUCK_SHIFT: i32 = 18; // (72 - 36) / 2: hull-1 vs hull-3 height
+        let shift = crate::ground_logic::crouch_origin_shift(self.on_ground, want);
         if want {
             self.crouch = true;
-            if !self.on_ground {
-                let up = [self.pos[0], self.pos[1] + DUCK_SHIFT, self.pos[2]];
+            if shift != 0 {
+                let shifted = [self.pos[0], self.pos[1] + shift, self.pos[2]];
                 let head = self.head(map);
-                let t = trace_all(map, head, movers, self.pos, up);
-                self.pos[1] += (DUCK_SHIFT * t.frac) >> 12;
+                let t = trace_all(map, head, movers, self.pos, shifted);
+                self.pos[1] += (shift * t.frac) >> 12;
             }
         } else {
-            // Try to stand: feet drop back down in the air; blocked heads
-            // stay crouched (the un-duck startsolid freeze from M48).
-            let down_pos = if self.on_ground {
-                self.pos
-            } else {
-                [self.pos[0], self.pos[1] - DUCK_SHIFT, self.pos[2]]
-            };
-            if !trace(map, map.hull1_head, down_pos, down_pos).startsolid {
+            let stand_pos = [self.pos[0], self.pos[1] + shift, self.pos[2]];
+            if clear_at(map, map.hull1_head, movers, stand_pos) {
                 self.crouch = false;
-                self.pos = down_pos;
-            } else if !trace(map, map.hull1_head, self.pos, self.pos).startsolid {
-                self.crouch = false;
+                self.pos = stand_pos;
             }
         }
     }
@@ -1278,14 +1583,22 @@ impl Player {
         jump: bool,
         yaw: u16,
         pitch: i16,
+        ladder_center: [i32; 3],
+        ladder_half: [i32; 3],
     ) {
-        self.vel_frac_xz = [0, 0];
         let s = sincos::sin_q12(yaw);
         let c = sincos::sin_q12((yaw + 1024) & 0xFFF);
+        let (normal_axis, normal_sign) =
+            crate::ladder_logic::cardinal_normal(self.pos, ladder_center, ladder_half);
         if jump {
             // Let go: push back off the ladder (270 u/s, pm_shared.c:2131-35).
             const DISMOUNT: i32 = 14;
-            self.vel = [(-s * DISMOUNT) >> 12, 0, (-c * DISMOUNT) >> 12];
+            self.vel = [0, 0, 0];
+            self.vel[normal_axis] = normal_sign * DISMOUNT;
+            self.vel_frac_xz = [0, 0];
+            self.move_frac_xz = [0, 0];
+            self.vel_frac_y = 0;
+            self.move_frac_y = 0;
             self.on_ground = false;
             let head = self.head(map);
             let (p, v) = slide_move(map, head, movers, self.pos, self.vel);
@@ -1293,21 +1606,93 @@ impl Player {
             self.vel = v;
             return;
         }
-        // Positive pitch = looking up (stick up). Forward climbs up unless the
-        // player is looking clearly downward, then it descends (HL ladder feel).
-        let up = if pitch >= -CLIMB_PITCH_DOWN { 1 } else { -1 };
-        self.vel = [
-            (s * fwd / 128 * LATERAL_CLIMB) >> 12,
-            fwd * up * CLIMB_SPEED / 128,
-            (c * fwd / 128 * LATERAL_CLIMB) >> 12,
+        let pitch_angle = (pitch as i32 & 0xFFF) as u16;
+        let sp = sincos::sin_q12(pitch_angle);
+        let cp = sincos::sin_q12((pitch_angle + 1024) & 0xFFF);
+        let forward = [
+            crate::ladder_logic::mul_q12_nearest(s, cp),
+            sp,
+            crate::ladder_logic::mul_q12_nearest(c, cp),
         ];
-        // Strafe slides sideways along the wall.
-        self.vel[0] += (c * strafe / 128 * LATERAL_CLIMB) >> 12;
-        self.vel[2] += (-s * strafe / 128 * LATERAL_CLIMB) >> 12;
+        let right = [c, 0, -s];
+        let speed_q6 = if self.crouch {
+            CLIMB_SPEED_Q6 / 3
+        } else {
+            CLIMB_SPEED_Q6
+        };
+        let fine = crate::ladder_logic::goldsrc_velocity_q6(
+            forward,
+            right,
+            fwd,
+            strafe,
+            speed_q6,
+            normal_axis,
+            normal_sign,
+            self.on_ground,
+        );
+        (self.vel[0], self.vel_frac_xz[0]) = split_planar_round(fine[0]);
+        (self.vel[1], self.vel_frac_y) = split_planar_round(fine[1]);
+        (self.vel[2], self.vel_frac_xz[1]) = split_planar_round(fine[2]);
+        let physical_vel = self.vel;
+        let (move_x, next_move_frac_x) =
+            crate::ground_logic::integrate_planar_q6(fine[0], self.move_frac_xz[0]);
+        let (move_y, next_move_frac_y) =
+            crate::ground_logic::integrate_planar_q6(fine[1], self.move_frac_y);
+        let (move_z, next_move_frac_z) =
+            crate::ground_logic::integrate_planar_q6(fine[2], self.move_frac_xz[1]);
+        let move_vel = [move_x, move_y, move_z];
         let head = self.head(map);
-        let (p, v) = slide_move(map, head, movers, self.pos, self.vel);
+        let start = self.pos;
+        #[cfg(feature = "deep-reference-trace")]
+        let first = trace_all(map, head, movers, start, add(start, move_vel));
+        let (mut p, mut v) = slide_move(map, head, movers, start, move_vel);
+        if crate::ladder_logic::should_retry_vertical(start[1], p[1], move_y) {
+            // A thin ladder beside an integer-quantized frame can make the
+            // combined move hit a corner.  Gold's multi-plane float slide
+            // keeps the vertical tangent; recover it without moving through
+            // any solid by tracing the same hull vertically once.
+            let (vertical_p, vertical_v) = slide_move(map, head, movers, start, [0, move_y, 0]);
+            if vertical_p[1] != start[1] {
+                p = vertical_p;
+                v = vertical_v;
+            }
+        }
+        #[cfg(feature = "deep-reference-trace")]
+        crate::reference_trace::player_ladder(
+            unsafe { PLAYER_STEP_TICK },
+            start,
+            fine,
+            move_vel,
+            first.frac,
+            first.normal,
+            first.startsolid,
+            first.mover,
+            p,
+            v,
+        );
         self.pos = p;
         self.vel = v;
+        if v[0] == move_x {
+            self.vel[0] = physical_vel[0];
+            self.move_frac_xz[0] = next_move_frac_x;
+        } else {
+            self.vel_frac_xz[0] = 0;
+            self.move_frac_xz[0] = 0;
+        }
+        if v[1] == move_y {
+            self.vel[1] = physical_vel[1];
+            self.move_frac_y = next_move_frac_y;
+        } else {
+            self.vel_frac_y = 0;
+            self.move_frac_y = 0;
+        }
+        if v[2] == move_z {
+            self.vel[2] = physical_vel[2];
+            self.move_frac_xz[1] = next_move_frac_z;
+        } else {
+            self.vel_frac_xz[1] = 0;
+            self.move_frac_xz[1] = 0;
+        }
         self.on_ground = false;
         self.ground_mover = -1;
     }
@@ -1325,6 +1710,9 @@ impl Player {
         pitch: i16,
     ) {
         self.vel_frac_xz = [0, 0];
+        self.move_frac_xz = [0, 0];
+        self.vel_frac_y = 0;
+        self.move_frac_y = 0;
         let s = sincos::sin_q12(yaw);
         let c = sincos::sin_q12((yaw + 1024) & 0xFFF);
         // Look-direction swim: split fwd into a horizontal part and a vertical
@@ -1373,6 +1761,7 @@ impl Player {
     /// on the ground, acceleration adds along the wish DIRECTION capped by the
     /// speed deficit, and air control can only add up to AIR_WISH_CAP along
     /// the stick -- it never brakes, so knockback/longjump momentum carries.
+    #[cfg_attr(feature = "deep-reference-trace", inline(never))]
     pub fn update(
         &mut self,
         map: &Map,
@@ -1380,8 +1769,60 @@ impl Player {
         fwd: i32,
         strafe: i32,
         jump: bool,
+        duck_jump: bool,
         yaw: u16,
     ) {
+        self.land_impact = 0;
+        let was_air = !self.on_ground;
+        // GoldSrc records the fall speed and runs PM_AddCorrectGravity /
+        // PM_Jump before choosing PM_WalkMove versus PM_AirMove. In
+        // particular, a successful jump clears onground before friction and
+        // acceleration, so its first horizontal command is capped to the
+        // 30-u/s air wish speed. Doing horizontal movement first launched the
+        // c1a1d crate jump at ground speed; the combined sweep hit the platform
+        // edge and discarded part of the otherwise-correct vertical rise.
+        let fall_speed_q6 = if was_air {
+            (-self.vertical_velocity_q6()).max(0)
+        } else {
+            0
+        };
+        let gravity_q6 = gravity_step_q6();
+        let gravity_pre_q6 = gravity_q6 / 2;
+        let gravity_post_q6 = gravity_q6 - gravity_pre_q6;
+        let mut vertical_q6 = self.vertical_velocity_q6();
+        if self.on_ground {
+            vertical_q6 = 0;
+            if jump {
+                let moving = self.vel[0].abs() + self.vel[2].abs() > 2;
+                // PM_Jump accepts bInDuck as well as FL_DUCKING. On the first
+                // frame of a ground duck+jump the standing collision hull is
+                // intentionally still active, but the long-jump module must
+                // already see the pending duck request.
+                let longjumping = unsafe { LONGJUMP } && (self.crouch || duck_jump) && moving;
+                if longjumping {
+                    // Ducked jump with the module: launch along the move
+                    // direction at 560 u/s, 299 u/s up (pm_shared.c:2580-93).
+                    // This precedes PM_AirMove in the original code, so apply
+                    // it before the horizontal acceleration block below.
+                    let (vx, vz) = (self.vel[0], self.vel[2]);
+                    let speed = vx.abs().max(vz.abs()) + vx.abs().min(vz.abs()) * 3 / 8;
+                    self.vel[0] = vx * LONGJUMP_FWD / speed.max(1);
+                    self.vel[2] = vz * LONGJUMP_FWD / speed.max(1);
+                    self.vel_frac_xz = [0, 0];
+                    vertical_q6 = LONGJUMP_UP_Q6;
+                } else {
+                    vertical_q6 = JUMP_Q6;
+                }
+                // PM_Jump calls PM_FixupGravityVelocity once before AirMove;
+                // PlayerMove calls it again after movement below.
+                vertical_q6 -= gravity_pre_q6;
+                self.on_ground = false;
+            }
+        } else {
+            vertical_q6 -= gravity_pre_q6;
+        }
+        self.set_vertical_velocity_q6(vertical_q6);
+
         // Forward = (sin yaw, 0, cos yaw); right = (cos yaw, 0, -sin yaw). sin/cos
         // are ×4096; dividing the ±127 input by 128 keeps a unit wish dir ≈ ×4096.
         let s = sincos::sin_q12(yaw);
@@ -1397,8 +1838,9 @@ impl Player {
         // friction loss and making an otherwise valid deterministic route
         // arrive fourteen ticks late.
         let wishmag_q12 = isqrt_i32(wx * wx + wz * wz);
-        let wishspeed = if wishmag_q12 > 0 {
-            ((wishmag_q12 * MOVE_SPEED + 2048) >> 12).clamp(1, MOVE_SPEED)
+        let wishspeed_q6 = if wishmag_q12 > 0 {
+            ((wishmag_q12 * MOVE_SPEED * PLANAR_FRAC_ONE + 2048) >> 12)
+                .clamp(1, MOVE_SPEED * PLANAR_FRAC_ONE)
         } else {
             0
         };
@@ -1419,7 +1861,7 @@ impl Player {
                 fine_z = mul_q12_round(fine_z, scale_q12);
             }
         }
-        if wishspeed > 0 {
+        if wishspeed_q6 > 0 {
             // PM_Accelerate (pm_shared.c:990) / PM_AirAccelerate (:1279):
             // current speed ALONG the wish direction; add at most
             // accel(10) * wishspeed * dt = wishspeed/2 per tick, never past
@@ -1427,75 +1869,100 @@ impl Player {
             // step still scales off the full wishspeed.
             let dirx = wx * 4096 / wishmag_q12;
             let dirz = wz * 4096 / wishmag_q12;
-            let current_dot = fine_x * dirx + fine_z * dirz;
-            const CURRENT_SHIFT: i32 = PLANAR_FRAC_BITS + 12;
-            const CURRENT_HALF: i32 = 1 << (CURRENT_SHIFT - 1);
-            let current = if current_dot >= 0 {
-                (current_dot + CURRENT_HALF) >> CURRENT_SHIFT
+            let current_dot_q18 = fine_x * dirx + fine_z * dirz;
+            let current_q6 = if current_dot_q18 >= 0 {
+                (current_dot_q18 + 2048) >> 12
             } else {
-                -((-current_dot + CURRENT_HALF) >> CURRENT_SHIFT)
+                -((-current_dot_q18 + 2048) >> 12)
             };
-            let target = if self.on_ground {
-                wishspeed
+            let target_q6 = if self.on_ground {
+                wishspeed_q6
             } else {
-                wishspeed.min(AIR_WISH_CAP)
+                wishspeed_q6.min(AIR_WISH_CAP_Q6)
             };
-            let addspeed = target - current;
-            if addspeed > 0 {
-                let take = (wishspeed / 2).max(1).min(addspeed);
-                fine_x += q12_to_planar_round(dirx * take);
-                fine_z += q12_to_planar_round(dirz * take);
+            let addspeed_q6 = target_q6 - current_q6;
+            if addspeed_q6 > 0 {
+                let take_q6 = (wishspeed_q6 / 2).max(1).min(addspeed_q6);
+                fine_x += mul_q12_round(take_q6, dirx);
+                fine_z += mul_q12_round(take_q6, dirz);
             }
         }
         (self.vel[0], self.vel_frac_xz[0]) = split_planar_round(fine_x);
         (self.vel[2], self.vel_frac_xz[1]) = split_planar_round(fine_z);
-
-        self.land_impact = 0;
-        let was_air = !self.on_ground;
-
-        if self.on_ground {
-            if self.vel[1] < 0 {
-                self.vel[1] = 0;
-            }
-            if jump {
-                let moving = self.vel[0].abs() + self.vel[2].abs() > 2;
-                let longjumping = unsafe { LONGJUMP } && self.crouch && moving;
-                if longjumping {
-                    // Ducked jump with the module: launch along the move
-                    // direction at 560 u/s, 299 u/s up (pm_shared.c:2580-93).
-                    let (vx, vz) = (self.vel[0], self.vel[2]);
-                    let speed = vx.abs().max(vz.abs()) + vx.abs().min(vz.abs()) * 3 / 8;
-                    self.vel[0] = vx * LONGJUMP_FWD / speed.max(1);
-                    self.vel[2] = vz * LONGJUMP_FWD / speed.max(1);
-                    self.vel_frac_xz = [0, 0];
-                    self.vel[1] = LONGJUMP_UP;
-                } else {
-                    self.vel[1] = JUMP;
-                }
-                self.on_ground = false;
-            }
-        } else {
-            self.vel[1] -= gravity_step();
-        }
 
         // Move with stair-stepping: a plain slide, then (when grounded and
         // moving) an up/forward/down "step" -- keep whichever advanced further
         // along the ground, so the player climbs stairs/thresholds <= STEP_UP.
         let head = self.head(map);
         let start = self.pos;
+        // GoldSrc integrates its float origin by the float velocity.  Dither
+        // the integer hull displacement with signed Q6 carries so 127/128
+        // input travels 127 units every eight ticks and the 12.416-unit GoldSrc
+        // jump launch does not become the same integer displacement forever.
+        let motion_fine_x = self.vel[0] * PLANAR_FRAC_ONE + self.vel_frac_xz[0] as i32;
+        let motion_fine_y = self.vertical_velocity_q6();
+        let motion_fine_z = self.vel[2] * PLANAR_FRAC_ONE + self.vel_frac_xz[1] as i32;
+        #[cfg(feature = "deep-reference-trace")]
+        let prior_move_frac_y = self.move_frac_y;
+        let (move_x, next_move_frac_x) =
+            crate::ground_logic::integrate_planar_q6(motion_fine_x, self.move_frac_xz[0]);
+        let (move_y, next_move_frac_y) =
+            crate::ground_logic::integrate_planar_q6(motion_fine_y, self.move_frac_y);
+        let (move_z, next_move_frac_z) =
+            crate::ground_logic::integrate_planar_q6(motion_fine_z, self.move_frac_xz[1]);
+        let physical_vel = self.vel;
+        #[cfg(feature = "deep-reference-trace")]
+        crate::reference_trace::player_motion(
+            unsafe { PLAYER_STEP_TICK },
+            start,
+            was_air,
+            jump,
+            self.ground_mover as i32,
+            [motion_fine_x, motion_fine_y, motion_fine_z],
+            prior_move_frac_y,
+            [move_x, move_y, move_z],
+            next_move_frac_y,
+        );
         // PM_WalkMove saves the velocity from before PM_FlyMove, restores it for
         // the raised alternative, and only then chooses the farther result.  In
         // particular, the flat pass is allowed to clip both horizontal axes to
         // zero at the face of a stair; using that clipped velocity for the step
         // pass makes the raised route motionless and wedges the player against
         // even an 8-unit threshold (the c0a0e tram-platform exit).
-        let move_vel = self.vel;
+        let move_vel = [move_x, move_y, move_z];
+        #[cfg(feature = "deep-reference-trace")]
+        let direct = trace_all(
+            map,
+            head,
+            movers,
+            start,
+            [start[0] + move_x, start[1], start[2] + move_z],
+        );
         let (flat_pos, flat_vel) = slide_move(map, head, movers, start, move_vel);
 
         if self.on_ground && (move_vel[0] != 0 || move_vel[2] != 0) {
-            let up_end = [start[0], start[1] + STEP_UP, start[2]];
+            // `pos` is the conservative integer ceiling of GoldSrc's float
+            // ground contact. Apply its retained negative Q6 remainder when
+            // selecting the integer raised endpoint; otherwise a contact at
+            // -132.89 becomes -114 rather than -114.89 and steps onto a ledge
+            // one tick early.
+            // The raised collision probe must stay on the solid/downward side
+            // of the fractional endpoint. If the real origin is -130.47,
+            // GoldSrc probes from -112.47; integer -112 can clear a lip that
+            // should clip the move, so use -113 (17 whole units from the
+            // conservative -130 origin). Exact contacts still raise all 18.
+            let step_up = STEP_UP - i32::from(self.move_frac_y < 0);
+            let up_end = [start[0], start[1] + step_up, start[2]];
             let tup = trace_all(map, head, movers, start, up_end);
-            let up_pos = [start[0], start[1] + ((STEP_UP * tup.frac) >> 12), start[2]];
+            let up_pos = [start[0], start[1] + ((step_up * tup.frac) >> 12), start[2]];
+            #[cfg(feature = "deep-reference-trace")]
+            let raised_direct = trace_all(
+                map,
+                head,
+                movers,
+                up_pos,
+                [up_pos[0] + move_vel[0], up_pos[1], up_pos[2] + move_vel[2]],
+            );
             let (sp, step_vel) =
                 slide_move(map, head, movers, up_pos, [move_vel[0], 0, move_vel[2]]);
             // PM_WalkMove traces down exactly one sv_stepsize from the raised
@@ -1506,6 +1973,29 @@ impl Player {
             let step_pos = [sp[0], sp[1] - ((STEP_UP * tdn.frac) >> 12), sp[2]];
             let landed = tdn.frac < 4096 && tdn.normal[1] > GROUND_NY;
             let chose_step = landed && dist_xz(start, step_pos) > dist_xz(start, flat_pos);
+            #[cfg(feature = "deep-reference-trace")]
+            crate::reference_trace::player_step(
+                unsafe { PLAYER_STEP_TICK },
+                PlayerStepProbe {
+                    head,
+                    move_delta: move_vel,
+                    direct_frac: direct.frac,
+                    direct_normal: direct.normal,
+                    flat_pos,
+                    up_frac: tup.frac,
+                    up_startsolid: tup.startsolid,
+                    up_pos,
+                    raised_direct_frac: raised_direct.frac,
+                    raised_direct_normal: raised_direct.normal,
+                    raised_pos: sp,
+                    down_frac: tdn.frac,
+                    down_startsolid: tdn.startsolid,
+                    down_normal: tdn.normal,
+                    step_pos,
+                    landed,
+                    chose_step,
+                },
+            );
             if chose_step {
                 self.pos = step_pos;
                 // GoldSrc keeps the raised pass's horizontal clipping but the
@@ -1519,32 +2009,72 @@ impl Player {
             self.pos = flat_pos;
             self.vel = flat_vel;
         }
-        // A collision clips GoldSrc's complete floating velocity. Our public
-        // integer clip result has no matching fractional component, so discard
-        // residue only on axes the collision actually changed.
-        if self.vel[0] != move_vel[0] {
+        // slide_move operates on this tick's integer displacement. Preserve
+        // the independently retained Q6 physical velocity when an axis was
+        // unobstructed; otherwise accept the clipped result and discard both
+        // velocity and position residue on that axis.
+        let moved_vel = self.vel;
+        if moved_vel[0] != move_vel[0] {
             self.vel_frac_xz[0] = 0;
+            self.move_frac_xz[0] = 0;
+        } else {
+            self.vel[0] = physical_vel[0];
+            self.move_frac_xz[0] = next_move_frac_x;
         }
-        if self.vel[2] != move_vel[2] {
+        if moved_vel[2] != move_vel[2] {
             self.vel_frac_xz[1] = 0;
+            self.move_frac_xz[1] = 0;
+        } else {
+            self.vel[2] = physical_vel[2];
+            self.move_frac_xz[1] = next_move_frac_z;
         }
+        let mut next_vertical_q6 = if moved_vel[1] != move_vel[1] {
+            self.vel_frac_y = 0;
+            self.move_frac_y = 0;
+            moved_vel[1] * PLANAR_FRAC_ONE
+        } else {
+            self.move_frac_y = next_move_frac_y;
+            motion_fine_y
+        };
 
         // Ground check: probe straight down a little.
-        let down = [self.pos[0], self.pos[1] - STEP_DOWN, self.pos[2]];
+        let down = [
+            self.pos[0],
+            self.pos[1] - GROUND_PROBE_DOWN,
+            self.pos[2],
+        ];
         let g = trace_all(map, head, movers, self.pos, down);
         self.on_ground = g.frac < 4096 && g.normal[1] > GROUND_NY;
-        self.ground_mover = if self.on_ground { g.mover } else { -1 };
+        self.ground_mover = if self.on_ground { g.mover as i16 } else { -1 };
         if self.on_ground {
-            // Snap onto the floor and kill downward speed. Capture the impact
-            // speed on the touchdown tick (was airborne) for fall damage + a
-            // landing view dip before it's zeroed.
-            self.pos[1] += ((down[1] - self.pos[1]) * g.frac) >> 12;
-            if self.vel[1] < 0 {
-                if was_air {
-                    self.land_impact = -self.vel[1];
-                }
-                self.vel[1] = 0;
+            // Snap onto the floor and consume the complete vertical component.
+            // PM_WalkMove must not carry an upward component clipped from a
+            // stair/ramp plane into the next frame: doing so made a grounded
+            // c1a0e step launch the player for nine air-acceleration ticks.
+            // A real downward touchdown still records fall damage/view dip.
+            let ground_start_y = self.pos[1];
+            (self.pos[1], self.move_frac_y) =
+                crate::ground_logic::ground_contact_q6(ground_start_y, down[1], g.frac);
+            self.set_vertical_velocity_q6(0);
+            #[cfg(feature = "deep-reference-trace")]
+            crate::reference_trace::player_ground(
+                unsafe { PLAYER_STEP_TICK },
+                ground_start_y,
+                down[1],
+                g.frac,
+                g.normal,
+                self.pos[1],
+                self.move_frac_y,
+            );
+            if was_air && fall_speed_q6 > 0 {
+                let impact = (fall_speed_q6 + PLANAR_FRAC_HALF) >> PLANAR_FRAC_BITS;
+                self.land_impact = impact.min(u8::MAX as i32) as u8;
             }
+        } else {
+            // PM_FixupGravityVelocity: the second half-step is visible in the
+            // velocity reported after the frame but not in this frame's origin.
+            next_vertical_q6 -= gravity_post_q6;
+            self.set_vertical_velocity_q6(next_vertical_q6);
         }
     }
 }

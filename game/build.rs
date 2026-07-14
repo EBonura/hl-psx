@@ -26,6 +26,95 @@ const MODEL_INDEX_VERTEX_LIMIT: usize = 1024;
 // Re-run the audit after `make models`/`make rooms` before trimming further.
 const MODEL_POOL_WORDS: usize = 90_624;
 
+/// Parse one optional three-component diagnostic vector from the build
+/// environment.  These values are intentionally build-time only: semantic
+/// replay discs can start from the same declared GoldSrc checkpoint without
+/// adding a parser, strings, or state to the shipping executable.
+fn diagnostic_vec3(name: &str) -> Option<[f64; 3]> {
+    println!("cargo:rerun-if-env-changed={name}");
+    let raw = std::env::var(name).ok()?;
+    let values = raw
+        .split_whitespace()
+        .map(|value| {
+            value
+                .parse::<f64>()
+                .unwrap_or_else(|_| panic!("{name} contains non-numeric value {value:?}"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        values.len(),
+        3,
+        "{name} must contain exactly three whitespace-separated numbers"
+    );
+    assert!(
+        values
+            .iter()
+            .all(|value| value.is_finite() && value.abs() <= 1_000_000.0),
+        "{name} values must be finite and within +/-1,000,000"
+    );
+    Some([values[0], values[1], values[2]])
+}
+
+fn diagnostic_i32(value: f64, name: &str) -> i32 {
+    let rounded = value.round();
+    assert!(
+        rounded >= i32::MIN as f64 && rounded <= i32::MAX as f64,
+        "{name} is outside i32 range"
+    );
+    rounded as i32
+}
+
+/// Emit the optional semantic-replay checkpoint in PSX world/view units.
+/// Input is deliberately the same canonical convention as the GoldSrc runner:
+/// origin is HL `(x,y,z)` and angles are degrees `(pitch,yaw,roll)`.
+fn write_reference_checkpoint(out_dir: &std::path::Path) {
+    let origin_hl = diagnostic_vec3("HLPSX_INITIAL_ORIGIN");
+    let angles_hl = diagnostic_vec3("HLPSX_INITIAL_ANGLES");
+
+    let origin_psx = origin_hl.map(|value| {
+        // Cook/runtime world convention is [HL x, HL z, HL y].
+        [
+            diagnostic_i32(value[0], "HLPSX_INITIAL_ORIGIN x"),
+            diagnostic_i32(value[2], "HLPSX_INITIAL_ORIGIN z"),
+            diagnostic_i32(value[1], "HLPSX_INITIAL_ORIGIN y"),
+        ]
+    });
+    let (yaw_psx, pitch_psx) = if let Some(value) = angles_hl {
+        assert!(
+            value[2].abs() < 1.0e-9,
+            "HLPSX_INITIAL_ANGLES roll is unsupported; expected zero"
+        );
+        // HL yaw 0 points +X and yaw 90 points +Y. After [x,z,y], runtime
+        // yaw 0 points +world Z, hence 90-yaw. Semantic pitch has the opposite
+        // sign on the two sides (positive input subtracts Gold pitch but adds
+        // runtime pitch).
+        let yaw = diagnostic_i32((90.0 - value[1]) * 4096.0 / 360.0, "initial yaw").rem_euclid(4096)
+            as u16;
+        let pitch = diagnostic_i32(-value[0] * 4096.0 / 360.0, "initial pitch");
+        assert!(
+            pitch >= i16::MIN as i32 && pitch <= i16::MAX as i32,
+            "initial pitch is outside i16 range"
+        );
+        (Some(yaw), Some(pitch as i16))
+    } else {
+        (None, None)
+    };
+
+    if origin_psx.is_some() || angles_hl.is_some() {
+        assert!(
+            std::env::var_os("CARGO_FEATURE_SEMANTIC_INPUT").is_some(),
+            "HLPSX_INITIAL_ORIGIN/ANGLES are diagnostic-only and require --features semantic-input"
+        );
+    }
+    let generated = format!(
+        "pub const INITIAL_ORIGIN: Option<[i32; 3]> = {origin_psx:?};\n\
+         pub const INITIAL_YAW: Option<u16> = {yaw_psx:?};\n\
+         pub const INITIAL_PITCH: Option<i16> = {pitch_psx:?};\n"
+    );
+    fs::write(out_dir.join("reference_checkpoint.rs"), generated)
+        .expect("write generated reference checkpoint");
+}
+
 fn rd_u32(d: &[u8], o: usize) -> Option<u32> {
     Some(u32::from_le_bytes([
         *d.get(o)?,
@@ -126,7 +215,10 @@ fn scan_room_budget(
             continue;
         }
         if data.len() < 52
-            || (&data[0..4] != b"HLMA" && &data[0..4] != b"HLMB" && &data[0..4] != b"HLMC")
+            || (&data[0..4] != b"HLMA"
+                && &data[0..4] != b"HLMB"
+                && &data[0..4] != b"HLMC"
+                && &data[0..4] != b"HLMD")
         {
             continue;
         }
@@ -142,10 +234,10 @@ fn scan_room_budget(
         if bsp_off + 24 <= data.len() {
             let n_face_groups = rd_u32(&data, bsp_off + 4).unwrap_or(0) as usize;
             let leaf_counts = rd_u32(&data, bsp_off + 12).unwrap_or(0);
-            // VIS_BITS only holds world PVS clusters. HLMC separates those
+            // VIS_BITS only holds world PVS clusters. HLMC/D separate those
             // from submodel-only leaf records; legacy formats assumed every
             // non-solid leaf was a PVS bit.
-            let n_visleaves = if &data[0..4] == b"HLMC" {
+            let n_visleaves = if &data[0..4] == b"HLMC" || &data[0..4] == b"HLMD" {
                 (leaf_counts >> 16) as usize
             } else {
                 (leaf_counts as usize).saturating_sub(1)
@@ -351,6 +443,7 @@ fn main() {
     assert_eq!(max_face_groups % 32, 0);
     assert!(MODEL_INDEX_VERTEX_LIMIT <= 1 << 10);
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    write_reference_checkpoint(&out_dir);
     let budget = format!(
         "pub const MAP_WORDS: usize = {map_words};\n\
          pub const MODEL_WORDS: usize = {model_words};\n\

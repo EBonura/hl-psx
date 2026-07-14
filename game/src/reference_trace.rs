@@ -27,6 +27,7 @@ pub struct TickState {
     pub on_ground: bool,
     pub ground_mover: i32,
     pub train_pos: [i32; 3],
+    pub train_yaw: u16,
     pub train_seg: u16,
     pub train_dist: i32,
     pub train_speed: i32,
@@ -45,6 +46,11 @@ pub struct PropState<'a> {
     pub yaw: u16,
     pub state: u8,
     pub health: u8,
+    pub ai_target: u8,
+    pub player_leaf: i32,
+    pub cached_pvs_leaf: i32,
+    pub pvs_current: bool,
+    pub in_player_pvs: bool,
     pub script_mode: u8,
     pub script_goal: [i16; 3],
     pub nav_src: u8,
@@ -299,6 +305,7 @@ pub fn tick(state: TickState) {
     line.field_i32("train_x", state.train_pos[0]);
     line.field_i32("train_y", state.train_pos[1]);
     line.field_i32("train_z", state.train_pos[2]);
+    line.field_u32("train_yaw", state.train_yaw as u32);
     line.field_u32("train_seg", state.train_seg as u32);
     line.field_i32("train_dist", state.train_dist);
     line.field_i32("train_speed", state.train_speed);
@@ -324,6 +331,11 @@ pub fn prop(state: PropState<'_>) {
     line.field_u32("yaw", state.yaw as u32);
     line.field_u32("state", state.state as u32);
     line.field_u32("health", state.health as u32);
+    line.field_u32("ai_target", state.ai_target as u32);
+    line.field_i32("player_leaf", state.player_leaf);
+    line.field_i32("cached_pvs_leaf", state.cached_pvs_leaf);
+    line.field_u32("pvs_current", state.pvs_current as u32);
+    line.field_u32("in_player_pvs", state.in_player_pvs as u32);
     line.field_u32("script", state.script_mode as u32);
     line.field_i32("goal_x", state.script_goal[0] as i32);
     line.field_i32("goal_y", state.script_goal[1] as i32);
@@ -341,6 +353,7 @@ pub fn prop(state: PropState<'_>) {
 /// Movement-probe result for a scripted actor. `result` uses bit 7 for a
 /// successful direction index; failures OR bit0=line, bit1=monsterclip,
 /// bit2=no floor. Reference builds only, so this adds no shipping state/cost.
+#[cfg(feature = "deep-reference-trace")]
 pub fn nav_step(map_tick: u32, index: u16, dx: i32, dz: i32, result: u8) {
     let mut line = Line::new("nav");
     common(&mut line, map_tick);
@@ -348,6 +361,241 @@ pub fn nav_step(map_tick: u32, index: u16, dx: i32, dz: i32, result: u8) {
     line.field_i32("dx", dx);
     line.field_i32("dz", dz);
     line.field_u32("result", result as u32);
+    line.finish();
+}
+
+#[cfg(not(feature = "deep-reference-trace"))]
+#[inline(always)]
+pub fn nav_step(_map_tick: u32, _index: u16, _dx: i32, _dz: i32, _result: u8) {}
+
+/// Player active-hull diagnostic. `kind`: 0=stationary, 1=jump up,
+/// 2=combined jump/forward. Deep traces only; production and ordinary
+/// reference builds contain neither the call nor these rows.
+#[cfg(feature = "deep-reference-trace")]
+pub fn player_hull(map_tick: u32, kind: u8, probe: crate::phys::PlayerHullProbe) {
+    let mut line = Line::new("hull");
+    common(&mut line, map_tick);
+    line.field_u32("kind", kind as u32);
+    line.field_i32("frac", probe.frac);
+    line.field_u32("startsolid", probe.startsolid as u32);
+    line.field_i32("mover", probe.mover);
+    line.field_i32("nx", probe.normal[0]);
+    line.field_i32("ny", probe.normal[1]);
+    line.field_i32("nz", probe.normal[2]);
+    line.finish();
+}
+
+/// Flat/up/down alternatives used by PM_WalkMove. Deep traces only: this is
+/// intentionally verbose enough to identify the first integer hull decision
+/// that differs from GoldSrc without perturbing production RAM or timing.
+#[cfg(feature = "deep-reference-trace")]
+pub fn player_step(map_tick: u32, probe: crate::phys::PlayerStepProbe) {
+    let mut line = Line::new("step");
+    common(&mut line, map_tick);
+    line.field_i32("head", probe.head);
+    line.field_i32("dx", probe.move_delta[0]);
+    line.field_i32("dy", probe.move_delta[1]);
+    line.field_i32("dz", probe.move_delta[2]);
+    line.field_i32("direct_frac", probe.direct_frac);
+    line.field_i32("direct_ny", probe.direct_normal[1]);
+    line.field_i32("flat_x", probe.flat_pos[0]);
+    line.field_i32("flat_y", probe.flat_pos[1]);
+    line.field_i32("flat_z", probe.flat_pos[2]);
+    line.field_i32("up_frac", probe.up_frac);
+    line.field_u32("up_solid", probe.up_startsolid as u32);
+    line.field_i32("up_y", probe.up_pos[1]);
+    line.field_i32("raised_direct_frac", probe.raised_direct_frac);
+    line.field_i32("raised_direct_nx", probe.raised_direct_normal[0]);
+    line.field_i32("raised_direct_ny", probe.raised_direct_normal[1]);
+    line.field_i32("raised_direct_nz", probe.raised_direct_normal[2]);
+    line.field_i32("raised_x", probe.raised_pos[0]);
+    line.field_i32("raised_y", probe.raised_pos[1]);
+    line.field_i32("raised_z", probe.raised_pos[2]);
+    line.field_i32("down_frac", probe.down_frac);
+    line.field_u32("down_solid", probe.down_startsolid as u32);
+    line.field_i32("down_nx", probe.down_normal[0]);
+    line.field_i32("down_ny", probe.down_normal[1]);
+    line.field_i32("down_nz", probe.down_normal[2]);
+    line.field_i32("step_x", probe.step_pos[0]);
+    line.field_i32("step_y", probe.step_pos[1]);
+    line.field_i32("step_z", probe.step_pos[2]);
+    line.field_u32("landed", probe.landed as u32);
+    line.field_u32("chosen", probe.chose_step as u32);
+    line.finish();
+}
+
+/// Post-walk downward floor probe and retained Q6 origin residue. This is the
+/// bridge between the integer PS1 hull and GoldSrc's float slope origin.
+#[cfg(feature = "deep-reference-trace")]
+pub fn player_ground(
+    map_tick: u32,
+    start_y: i32,
+    end_y: i32,
+    frac: i32,
+    normal: [i32; 3],
+    final_y: i32,
+    residue_q6: i8,
+) {
+    let mut line = Line::new("ground");
+    common(&mut line, map_tick);
+    line.field_i32("start_y", start_y);
+    line.field_i32("end_y", end_y);
+    line.field_i32("frac", frac);
+    line.field_i32("nx", normal[0]);
+    line.field_i32("ny", normal[1]);
+    line.field_i32("nz", normal[2]);
+    line.field_i32("final_y", final_y);
+    line.field_i32("residue_q6", residue_q6 as i32);
+    line.finish();
+}
+
+/// Pre-sweep fixed-point player motion. This exposes the exact Q6 velocity,
+/// retained origin residue, and integer hull delta chosen for one frame so a
+/// GoldSrc/PSX divergence can be assigned to integration rather than collision.
+/// Deep traces only; shipping/reference builds contain no call or strings.
+#[cfg(feature = "deep-reference-trace")]
+pub fn player_motion(
+    map_tick: u32,
+    start: [i32; 3],
+    was_airborne: bool,
+    jump: bool,
+    ground_mover: i32,
+    fine: [i32; 3],
+    prior_carry_y: i8,
+    delta: [i32; 3],
+    next_carry_y: i8,
+) {
+    let mut line = Line::new("motion");
+    common(&mut line, map_tick);
+    line.field_i32("start_x", start[0]);
+    line.field_i32("start_y", start[1]);
+    line.field_i32("start_z", start[2]);
+    line.field_u32("was_air", was_airborne as u32);
+    line.field_u32("jump", jump as u32);
+    line.field_i32("ground_mover", ground_mover);
+    line.field_i32("fine_x", fine[0]);
+    line.field_i32("fine_y", fine[1]);
+    line.field_i32("fine_z", fine[2]);
+    line.field_i32("carry_y", prior_carry_y as i32);
+    line.field_i32("dx", delta[0]);
+    line.field_i32("dy", delta[1]);
+    line.field_i32("dz", delta[2]);
+    line.field_i32("next_carry_y", next_carry_y as i32);
+    line.finish();
+}
+
+/// Every bump considered by the integer equivalent of `PM_FlyMove`. `call`
+/// distinguishes the flat and raised alternatives of `PM_WalkMove`; `bump`
+/// is the collision-plane iteration inside that call. Deep traces only.
+#[cfg(feature = "deep-reference-trace")]
+#[allow(clippy::too_many_arguments)]
+pub fn player_slide(
+    map_tick: u32,
+    call: u8,
+    bump: u8,
+    start: [i32; 3],
+    velocity: [i32; 3],
+    delta: [i32; 3],
+    end: [i32; 3],
+    time_left: i32,
+    frac: i32,
+    normal: [i32; 3],
+    startsolid: bool,
+    mover: i32,
+) {
+    let mut line = Line::new("slide");
+    common(&mut line, map_tick);
+    line.field_u32("call", call as u32);
+    line.field_u32("bump", bump as u32);
+    line.field_i32("time_left", time_left);
+    line.field_i32("sx", start[0]);
+    line.field_i32("sy", start[1]);
+    line.field_i32("sz", start[2]);
+    line.field_i32("vx", velocity[0]);
+    line.field_i32("vy", velocity[1]);
+    line.field_i32("vz", velocity[2]);
+    line.field_i32("dx", delta[0]);
+    line.field_i32("dy", delta[1]);
+    line.field_i32("dz", delta[2]);
+    line.field_i32("ex", end[0]);
+    line.field_i32("ey", end[1]);
+    line.field_i32("ez", end[2]);
+    line.field_i32("frac", frac);
+    line.field_i32("nx", normal[0]);
+    line.field_i32("ny", normal[1]);
+    line.field_i32("nz", normal[2]);
+    line.field_u32("startsolid", startsolid as u32);
+    line.field_i32("mover", mover);
+    line.finish();
+}
+
+/// Exact ladder request and first collision result. GoldSrc exposes the same
+/// stages through the opt-in `HLREF|pmladder` probe, so a differential can
+/// distinguish view-basis/decomposition error from integer hull clipping.
+pub fn player_ladder(
+    map_tick: u32,
+    start: [i32; 3],
+    fine_q6: [i32; 3],
+    move_delta: [i32; 3],
+    first_frac: i32,
+    first_normal: [i32; 3],
+    first_startsolid: bool,
+    first_mover: i32,
+    final_pos: [i32; 3],
+    final_vel: [i32; 3],
+) {
+    let mut line = Line::new("ladder");
+    common(&mut line, map_tick);
+    line.field_i32("sx", start[0]);
+    line.field_i32("sy", start[1]);
+    line.field_i32("sz", start[2]);
+    line.field_i32("fine_x", fine_q6[0]);
+    line.field_i32("fine_y", fine_q6[1]);
+    line.field_i32("fine_z", fine_q6[2]);
+    line.field_i32("dx", move_delta[0]);
+    line.field_i32("dy", move_delta[1]);
+    line.field_i32("dz", move_delta[2]);
+    line.field_i32("first_frac", first_frac);
+    line.field_i32("first_nx", first_normal[0]);
+    line.field_i32("first_ny", first_normal[1]);
+    line.field_i32("first_nz", first_normal[2]);
+    line.field_u32("first_startsolid", first_startsolid as u32);
+    line.field_i32("first_mover", first_mover);
+    line.field_i32("fx", final_pos[0]);
+    line.field_i32("fy", final_pos[1]);
+    line.field_i32("fz", final_pos[2]);
+    line.field_i32("vx", final_vel[0]);
+    line.field_i32("vy", final_vel[1]);
+    line.field_i32("vz", final_vel[2]);
+    line.finish();
+}
+
+/// First world/brush collision for a player weapon ray. Deep traces only: this
+/// makes a missed scripted shot distinguishable from a ray intercepted by the
+/// wrong BSP hull without adding code or data to ordinary reference builds.
+#[cfg(feature = "deep-reference-trace")]
+pub fn hitscan(map_tick: u32, eye: [i32; 3], end: [i32; 3], hit: Option<crate::phys::RayHit>) {
+    let mut line = Line::new("hitscan");
+    common(&mut line, map_tick);
+    line.field_i32("eye_x", eye[0]);
+    line.field_i32("eye_y", eye[1]);
+    line.field_i32("eye_z", eye[2]);
+    line.field_i32("end_x", end[0]);
+    line.field_i32("end_y", end[1]);
+    line.field_i32("end_z", end[2]);
+    if let Some(hit) = hit {
+        line.field_i32("frac", hit.frac);
+        line.field_i32("mover", hit.mover);
+        line.field_i32("hit_x", hit.pos[0]);
+        line.field_i32("hit_y", hit.pos[1]);
+        line.field_i32("hit_z", hit.pos[2]);
+        line.field_i32("nx", hit.normal[0]);
+        line.field_i32("ny", hit.normal[1]);
+        line.field_i32("nz", hit.normal[2]);
+    } else {
+        line.field_i32("frac", 4096);
+        line.field_i32("mover", -2);
+    }
     line.finish();
 }
 

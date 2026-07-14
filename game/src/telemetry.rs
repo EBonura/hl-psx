@@ -51,11 +51,23 @@ pub fn task_end(task_id: u16) {
     emit_event(EVENT_KIND_TASK_END, task_id);
 }
 
-#[inline(always)]
+// Keep the byte loop out of the already-large gameplay routine.  With
+// telemetry enabled, forcing this helper inline lets constant strings expand
+// into hundreds of volatile stores inside `play`, which can push a MIPS-I
+// conditional branch beyond its signed PC16 range.  Logging is a cold
+// diagnostic path, so one shared call is also smaller without affecting the
+// profiled render/simulation stages.
+#[cfg(all(target_arch = "mips", feature = "emulator-telemetry"))]
+#[inline(never)]
 pub fn debug_log(message: &str) {
     debug_bytes(message.as_bytes());
     debug_byte(b'\n');
 }
+
+// In shipping and host builds every call still compiles away completely.
+#[cfg(not(all(target_arch = "mips", feature = "emulator-telemetry")))]
+#[inline(always)]
+pub fn debug_log(_message: &str) {}
 
 /// Write a line to the emulator's guest debug-log port (0xBF80_2F0C),
 /// UNCONDITIONALLY -- unlike `debug_log`, this is not gated behind the

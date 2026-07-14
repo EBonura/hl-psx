@@ -1,6 +1,6 @@
 //! Allocation-free parser and map-local player for deterministic `HLINPUT1` routes.
 //!
-//! The wire format is shared with `tools/reference/hlinput.py`.  This module has
+//! The wire format is shared with the local reference harness. This module has
 //! no PSX or `std` dependencies so malformed-tape handling and cursor semantics
 //! can be tested directly on the host.  Route bytes are borrowed in place; a
 //! caller chooses whether a reference build embeds them or loads them elsewhere.
@@ -23,6 +23,20 @@ pub const ACTION_PREV_WEAPON: u16 = 1 << 7;
 pub const ACTION_FLASHLIGHT: u16 = 1 << 8;
 pub const KNOWN_ACTIONS: u16 = (1 << 9) - 1;
 
+/// Convert one opposing digital pair to the signed semantic axis used by the
+/// movement adapter.  Opposing buttons cancel, matching a centred stick.
+///
+/// Keep this independent of `psx_pad`: deterministic host tests can then
+/// cover the digital-pad fallback used by normal PSoXide sessions.
+#[inline(always)]
+pub const fn digital_axis(negative: bool, positive: bool) -> i8 {
+    match (negative, positive) {
+        (true, false) => -127,
+        (false, true) => 127,
+        _ => 0,
+    }
+}
+
 /// Convert one signed semantic look axis to the nearest integer Q0.12 angle
 /// step.  The Xash reference adapter keeps the `axis * rate / 128` result in a
 /// float.  Truncating it on the PS1 loses almost one whole angle unit for a
@@ -35,6 +49,23 @@ pub fn angle_step_nearest(axis: i32, rate: i32) -> i32 {
         (product + 64) / 128
     } else {
         -((-product + 64) / 128)
+    }
+}
+
+#[cfg(test)]
+mod input_adapter_tests {
+    use super::digital_axis;
+
+    #[test]
+    fn digital_axis_reaches_full_semantic_movement() {
+        assert_eq!(digital_axis(false, true), 127);
+        assert_eq!(digital_axis(true, false), -127);
+    }
+
+    #[test]
+    fn opposing_or_idle_directions_cancel() {
+        assert_eq!(digital_axis(false, false), 0);
+        assert_eq!(digital_axis(true, true), 0);
     }
 }
 
@@ -355,6 +386,12 @@ impl<'a> Player<'a> {
     }
 
     /// Select the next ordered segment and anchor its first sample at local tick 0.
+    ///
+    /// Keep the parser out of `play`: that function is already near the MIPS-I
+    /// PC-relative branch span, and replay-only inlining can make LLVM emit an
+    /// out-of-range PC16 fixup. This runs once per map, so the call is free in
+    /// practice and also keeps the hot instruction footprint smaller.
+    #[inline(never)]
     pub fn begin_map(&mut self, map_name: &str) -> Result<(), Error> {
         if !runtime_name_valid(map_name) {
             return Err(Error::InvalidMapName);
@@ -384,6 +421,9 @@ impl<'a> Player<'a> {
     }
 
     /// Consume exactly one sample for the active map's next local gameplay tick.
+    /// One call at 20 Hz is cheaper than duplicating this RLE/error machinery in
+    /// the already very large fixed-update loop, especially on the PS1 I-cache.
+    #[inline(never)]
     pub fn consume(&mut self, map_name: &str, local_tick: u32) -> Result<Sample, Error> {
         if !self.active {
             return Err(Error::RouteNotStarted);

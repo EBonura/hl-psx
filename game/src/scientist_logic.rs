@@ -305,6 +305,61 @@ pub fn brush_use_score(vx: i32, vy: i32, vz: i32, reach: i32) -> Option<i32> {
     angular_score(vx, vy, vz)
 }
 
+/// GoldSrc `FIND_ENTITY_IN_SPHERE` measures from the search point to the
+/// nearest point of each entity AABB, not to its origin/centre. The comparison
+/// is strict (`distance^2 < radius^2`). Rejecting an axis outside the small
+/// search cube first keeps all remaining squares safely inside i32.
+#[inline]
+pub fn aabb_in_search_radius(point: [i32; 3], mins: [i32; 3], maxs: [i32; 3], radius: i32) -> bool {
+    if radius <= 0 {
+        return false;
+    }
+    let mut distance_sq = 0i32;
+    let mut axis = 0usize;
+    while axis < 3 {
+        let delta = if point[axis] < mins[axis] {
+            mins[axis] - point[axis]
+        } else if point[axis] > maxs[axis] {
+            point[axis] - maxs[axis]
+        } else {
+            0
+        };
+        if delta >= radius {
+            return false;
+        }
+        distance_sq += delta * delta;
+        axis += 1;
+    }
+    distance_sq < radius * radius
+}
+
+/// Vector from `point` to the nearest point of an AABB. This is the exact
+/// geometric result of GoldSrc's `VecBModelOrigin - eye` followed by
+/// `UTIL_ClampVectorToBox(..., size * 0.5)` before normalization.
+#[inline]
+pub fn nearest_aabb_delta(point: [i32; 3], mins: [i32; 3], maxs: [i32; 3]) -> [i32; 3] {
+    let mut out = [0i32; 3];
+    let mut axis = 0usize;
+    while axis < 3 {
+        out[axis] = if point[axis] < mins[axis] {
+            mins[axis] - point[axis]
+        } else if point[axis] > maxs[axis] {
+            maxs[axis] - point[axis]
+        } else {
+            0
+        };
+        axis += 1;
+    }
+    out
+}
+
+/// GoldSrc PlayerUse's normalized forward-dot gate (`VIEW_FIELD_NARROW =
+/// 0.7`), scored so a smaller integer is a better-centred candidate.
+#[inline]
+pub fn player_use_score(vx: i32, vy: i32, vz: i32) -> Option<i32> {
+    scientist_use_score(vx, vy, vz)
+}
+
 /// GoldSrc scientist PlayerUse view gate: normalized forward dot strictly >0.7.
 #[inline]
 pub fn scientist_use_score(vx: i32, vy: i32, vz: i32) -> Option<i32> {
@@ -509,6 +564,25 @@ mod tests {
     fn scientist_use_clamps_to_nearest_bbox_point() {
         assert_eq!(scientist_bbox_delta([0, 28, 0], [40, 0, 0]), [24, 0, 0]);
         assert_eq!(scientist_bbox_delta([0, 28, 0], [0, 0, 40]), [0, 0, 24]);
+    }
+
+    #[test]
+    fn player_use_searches_nearest_brush_bounds_with_strict_radius() {
+        let mins = [100, -20, -10];
+        let maxs = [108, 20, 10];
+        assert!(aabb_in_search_radius([44, 0, 0], mins, maxs, 64));
+        assert!(!aabb_in_search_radius([36, 0, 0], mins, maxs, 64));
+        assert!(aabb_in_search_radius([104, 0, 0], mins, maxs, 64));
+        assert_eq!(nearest_aabb_delta([150, 5, -30], mins, maxs), [-42, 0, 20]);
+    }
+
+    #[test]
+    fn player_use_matches_goldsrc_point_seven_forward_dot() {
+        assert!(player_use_score(7, 0, 8).is_some());
+        assert!(player_use_score(8, 0, 7).is_none());
+        let centred = player_use_score(1, 0, 20).unwrap();
+        let off_axis = player_use_score(7, 0, 20).unwrap();
+        assert!(centred < off_axis);
     }
 
     #[test]

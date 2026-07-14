@@ -1,4 +1,4 @@
-//! hl-psx -- render a real Half-Life BSP map (cooked to `.hlm` by `tools/hl-bsp`)
+//! hl-psx -- render a real Half-Life BSP map (cooked to `.hlm` by `host/hl-bsp`)
 //! with a GTE-projected, ordering-table-sorted player walking Black Mesa.
 //!
 //! Pipeline: M1 geometry, M2 textures (4-bit CLUT), M3/M7 per-vertex lightmap
@@ -16,8 +16,10 @@
 extern crate psx_rt;
 
 mod cdstream;
+mod ground_logic;
 mod hltext;
 mod hud;
+mod ladder_logic;
 mod logic_state;
 mod map;
 mod menu;
@@ -38,6 +40,11 @@ mod vram;
 
 mod room_budget {
     include!(concat!(env!("OUT_DIR"), "/room_budget.rs"));
+}
+
+#[cfg(feature = "semantic-input")]
+mod reference_checkpoint {
+    include!(concat!(env!("OUT_DIR"), "/reference_checkpoint.rs"));
 }
 
 // HLINPUT1 is embedded only in an explicitly diagnostic build. Keeping this
@@ -73,7 +80,7 @@ use vram::{TexSlot, EMPTY_SLOT};
 // Maps stream from the disc's WORLD.PAK at runtime (no longer baked into the
 // EXE). MAP_BUF holds either one temporary texture chunk or one resident map
 // chunk; build.rs sizes it from data/rooms. `make rooms` cooks menu room N as
-// room_<2N>.psxc (resident HLMA/HLMB/HLMC) and room_<2N+1>.psxc (temporary HLTX textures).
+// room_<2N>.psxc (resident HLMA/HLMB/HLMC/HLMD) and room_<2N+1>.psxc (temporary HLTX textures).
 const MAP_WORDS: usize = room_budget::MAP_WORDS;
 const MODEL_WORDS: usize = room_budget::MODEL_WORDS;
 static mut MAP_BUF: [u32; MAP_WORDS] = [0; MAP_WORDS];
@@ -105,7 +112,16 @@ const BATTERY_ITEM_FACE_CAP: usize = 160;
 // 2048 mixed packets plus 128 persistent tram packets use less RAM than the old
 // 2176-slot all-frame arena. Emitted prims peak ~1800-2000; near->far banding
 // drops only the farthest faces on the rare overflow.
+//
+// The deep reference build carries extra named-entity and mover-parity code and
+// is used only for deterministic comparison captures. Eighty fewer packet
+// slots recover 4,480 bytes for that instrumentation while leaving the shipping
+// renderer and its measured capacity unchanged. Diagnostic captures compare
+// simulation state, so ordinary overflow banding may discard far draw packets.
+#[cfg(not(feature = "deep-reference-trace"))]
 const MAX_RENDER_PACKETS: usize = 2048;
+#[cfg(feature = "deep-reference-trace")]
+const MAX_RENDER_PACKETS: usize = 1968;
 const MAX_TRAM_CACHE_TRIS: usize = 128;
 const TRAM_PACKET_CACHE: bool = true;
 // Largest authored-frame packet stream is the .357 at 552 post-cull tris.
@@ -132,10 +148,11 @@ const _: () = assert!(CARRY_CAPACITY <= logic_state::CARRY_COUNT_MASK as usize);
 const MAX_SPRITE_INSTANCES: usize = 160;
 const SPRITE_STATE_WORDS: usize = MAX_SPRITE_INSTANCES.div_ceil(32);
 const MAX_NAV_NODES: usize = 255;
-// PROP_NEAR_ENTS keeps brush-entity ids in each u16's low byte and uses the
-// otherwise-dead high byte for the per-prop navigation memo below. Refuse a
-// future room budget that could silently truncate an entity id.
-const _: () = assert!(MAX_ENTS <= 256);
+// PROP_NEAR_ENTS keeps current MOVERS slots in each u16's low byte and uses
+// the otherwise-dead high byte for the per-prop navigation memo below. Mover
+// membership changes invalidate every shortlist before tick_props, so the
+// packed slot always selects the current pose without storing another id.
+const _: () = assert!(MAX_ENTS + 1 <= 256);
 const MAX_LOGIC: usize = 384;
 const MAX_LOGIC_EVENTS: usize = 64;
 // Script logic indices need nine bits (MAX_LOGIC=384). While an actor owns a
@@ -172,6 +189,7 @@ const DEADZONE: i32 = 28; // radial stick deadzone
 const VIEW_HEIGHT: i32 = 28;
 const CROUCH_VIEW_HEIGHT: i32 = 12; // VEC_DUCK_VIEW (pm_shared duck eye)
 const PLAYER_USE_REACH: i32 = 120;
+const PLAYER_SEARCH_RADIUS: i32 = 64; // player.cpp PlayerUse
 const PLAYER_TOUCH_HALF_XZ: i32 = 16;
 const PLAYER_TOUCH_HEIGHT: i32 = 56;
 // Distance cull on world face centers (sphere_visible). HL maps are enclosed, so
@@ -254,9 +272,14 @@ const PROP_TYPE_CONTROLLER: u8 = 11; // flies: exempt from walker floor checks
 const PROP_TYPE_SITTING_SCI: u8 = 25; // seated pose, keeps its authored chair height
 const PROP_TYPE_LOADER: u8 = 52; // c0a0d scripted monster_generic construction loader
 const PROP_TYPE_FORKLIFT: u8 = 53; // c0a0/c0a0a scripted monster_generic forklifts
+const PROP_TYPE_SCRIPTED_SITTING_SCI: u8 = 54; // c1a1b/c4a3 sitidle -> sitstand hybrid
+const PROP_TYPE_VENT_ZOMBIE: u8 = 55; // c1a1b compact eatbody + vent-climb roster
 const PROP_DEAD_BIT: u16 = 0x8000; // cook flag: spawn as a corpse (death pose, 0 hp)
 const PROP_DORMANT_BIT: u16 = 0x4000; // cook flag: monstermaker stock, inactive until fired
 const PROP_PREDISASTER_BIT: u16 = 0x2000; // cook flag: SF_MONSTER_PREDISASTER
+                                          // Cook flag: hostile SF_MONSTER_PRISONER or passive monster_generic puppet.
+                                          // Scripted work runs before the shared no-autonomous-AI runtime guard.
+const PROP_PRISONER_BIT: u16 = 0x1000;
 const PROP_TYPE_MASK: u16 = 0x0FFF;
 const PROP_TYPE_WEAPON_FIRST: u8 = 26; // weapon pickups 26..=39 (index - 26 = weapon id)
 const PROP_TYPE_WEAPON_LAST: u8 = 39;
@@ -285,23 +308,30 @@ const PROP_STATE_DEAD: u8 = 3;
 // Cooked actor/item types. Each streams from WORLD.PAK:
 // geometry chunk `1300+id`, texture chunk `1100+id`. The runtime keeps only the
 // types a map places resident (TYPE_TO_SLOT -> LOADED_MODELS).
-const N_MODEL_TYPES: usize = 54;
+const N_MODEL_TYPES: usize = 56;
 const MAX_LOADED_MODELS: usize = 22; // distinct model types resident per map (enemies + pickups)
                                      // Full 96-map + 222-transition roster audit peaks at 152 resident actor
                                      // textures (c4a1b).  Eight spare slots cover roster churn; the old 240-slot
                                      // pool reserved 2.5 KiB that no authored map could use.
-const POOL_TEX_SLOTS: usize = 160;
+                                     // Carry-first c1a1f -> c1a1b peaks at 166 after its G-Man stream is retained.
+                                     // 168 is the smallest naturally aligned capacity with a two-slot guard; each
+                                     // TexSlot is 32 bytes, so this costs 256 bytes over the old static-map peak.
+const POOL_TEX_SLOTS: usize = 168;
 // Shared RenderFace pool. Campaign peak is c4a3 at 7,922 faces when its
 // Gargantua is retained; 7,936 leaves a small aligned guard. Whole-type drops
-// are forbidden by tools/roster_audit.py.
+// are forbidden by the campaign model-pool audit.
 const POOL_FACE_CAP: usize = 7936;
-// Consecutive texture runs across every resident map roster peak at 153 on
-// c4a1b. Keeping texture ids here (rather than in every face payload) saves
-// 15,232 bytes at fixed capacity and lets draws build material once per run.
-const POOL_FACE_RUN_CAP: usize = 160;
+// Carry-first c1a1f -> c1a1b peaks at 169 consecutive texture runs once G-Man
+// fits the model scratch. Keep one audited guard. Texture ids live here rather
+// than in every face payload, saving over 15 KiB at fixed face capacity.
+const POOL_FACE_RUN_CAP: usize = 170;
 const MODEL_SLOT_NONE: u8 = 0xFF;
 const MODEL_GEOM_CHUNK_BASE: u32 = 1300;
 const MODEL_TEX_CHUNK_BASE: u32 = 1100;
+// G-Man is a late decorative load in c1a1b after four carried actor streams.
+// Its geometry and texture fit the remaining model scratch independently but
+// not as one HMRG payload, so this one type retains the cook's split chunks.
+const SPLIT_MODEL_TYPE_GMAN: usize = 15;
 const AI_ITEM: u8 = 0; // static pickup
 const AI_FLEE: u8 = 1; // scientist
 const AI_ALLY: u8 = 2; // barney
@@ -362,62 +392,81 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(HEADCRAB_HEALTH, 12, HEADCRAB_RENDER_RADIUS, AI_MELEE),  // 2 headcrab
     mdef(0, 16, 70, AI_ITEM),                                     // 3 item_suit
     mdef(0, 16, ITEM_RENDER_RADIUS, AI_ITEM),                     // 4 item_battery
-    mdef_atk(50, 40, 90, AI_MELEE, 2, 0, 0, 0),                   // 5 zombie (slow shambler)
+    // zombie.mdl walk: 194.3717 units over 59 frame intervals at 22 fps =
+    // 72.48 units/s (Half-Life's GetSequenceInfo/MoveExecute path).  The
+    // integer 20 Hz mover rounds that to 4 units/tick, not the old 2: the old
+    // value left c1a1's monstermaker zombie in Gordon's path instead of
+    // reaching the scripted Barney fight.
+    mdef_atk(50, 40, 94, AI_MELEE, 4, 0, 0, 0), // 5 zombie (slow shambler)
     mdef_atk(20, 20, 70, AI_RANGED, 7, 300, 15, 45), // 6 houndeye (skitter in, sonic blast)
     mdef_atk(40, 32, 91, AI_RANGED, 6, 600, 15, 55), // 7 bullsquid (acid spit at range)
     mdef_atk(50, 40, 90, AI_RANGED, 16, 1000, 5, 8), // 8 hgrunt (mp5 bursts)
     mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24), // 9 alien_slave (zap)
     mdef_atk(60, 48, 100, AI_RANGED, 16, 1000, 8, 16), // 10 alien_grunt (hornets)
     mdef_atk(60, 40, 100, AI_RANGED, 16, 1024, 3, 14), // 11 alien_controller (energy)
-    mdef(40, 32, 170, AI_IDLE),                      // 12 barnacle (ceiling: render only)
-    mdef(16, 8, 40, AI_IDLE),                        // 13 leech (flyer: render only)
-    mdef(6, 4, 30, AI_IDLE),                         // 14 cockroach (passive)
-    mdef(30, 48, 90, AI_IDLE),                       // 15 gman (passive)
-    mdef(200, 90, 360, AI_IDLE),                     // 16 gargantua (boss: render only)
-    mdef(200, 90, 1748, AI_IDLE),                    // 17 nihilanth (boss: render only)
-    mdef(150, 70, 200, AI_IDLE),                     // 18 bigmomma (boss: render only)
-    mdef_atk(40, 20, 223, AI_MELEE, 6, 0, 0, 0),     // 19 ichthyosaur
-    mdef_atk(40, 40, 80, AI_TURRET, 0, 1000, 7, 8),  // 20 sentry
-    mdef_atk(50, 40, 80, AI_TURRET, 0, 1200, 8, 7),  // 21 turret
-    mdef_atk(30, 30, 60, AI_TURRET, 0, 1000, 5, 3),  // 22 miniturret
-    mdef(80, 60, 408, AI_IDLE),                      // 23 apache (flyer: render only)
-    mdef(10, 20, 60, AI_IDLE),                       // 24 flyer_flock (passive)
+    mdef(40, 32, 170, AI_IDLE),                 // 12 barnacle (ceiling: render only)
+    mdef(16, 8, 40, AI_IDLE),                   // 13 leech (flyer: render only)
+    mdef(6, 4, 30, AI_IDLE),                    // 14 cockroach (passive)
+    mdef(30, 48, 90, AI_IDLE),                  // 15 gman (passive)
+    mdef(200, 90, 360, AI_IDLE),                // 16 gargantua (boss: render only)
+    mdef(200, 90, 1748, AI_IDLE),               // 17 nihilanth (boss: render only)
+    mdef(150, 70, 200, AI_IDLE),                // 18 bigmomma (boss: render only)
+    mdef_atk(40, 20, 223, AI_MELEE, 6, 0, 0, 0), // 19 ichthyosaur
+    mdef_atk(40, 40, 80, AI_TURRET, 0, 1000, 7, 8), // 20 sentry
+    mdef_atk(50, 40, 80, AI_TURRET, 0, 1200, 8, 7), // 21 turret
+    mdef_atk(30, 30, 60, AI_TURRET, 0, 1000, 5, 3), // 22 miniturret
+    mdef(80, 60, 410, AI_IDLE),                 // 23 apache (flyer: render only)
+    mdef(10, 20, 60, AI_IDLE),                  // 24 flyer_flock (passive)
     mdef(SCIENTIST_HEALTH, 25, SCIENTIST_RENDER_RADIUS, AI_IDLE), // 25 sitting scientist
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 26 weapon_crowbar
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 27 weapon_9mmhandgun
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 28 weapon_357
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 29 weapon_9mmAR
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 30 weapon_shotgun
-    mdef(0, 12, 56, AI_ITEM),                        // 31 weapon_crossbow
-    mdef(0, 12, 45, AI_ITEM),                        // 32 weapon_rpg
-    mdef(0, 12, 51, AI_ITEM),                        // 33 weapon_gauss
-    mdef(0, 12, 40, AI_ITEM),                        // 34 weapon_egon
-    mdef(0, 12, 45, AI_ITEM),                        // 35 weapon_hornetgun
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 36 weapon_handgrenade
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 37 weapon_snark
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 38 weapon_tripmine
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 39 weapon_satchel
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 40 ammo_9mmclip
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 41 ammo_9mmAR
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 42 ammo_buckshot
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 43 ammo_357
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 44 ammo_crossbow
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 45 ammo_rpgclip
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 46 ammo_gaussclip
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 47 ammo_ARgrenades
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),        // 48 item_healthkit
-    mdef(0, 12, 38, AI_ITEM),                        // 49 item_longjump
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 26 weapon_crowbar
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 27 weapon_9mmhandgun
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 28 weapon_357
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 29 weapon_9mmAR
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 30 weapon_shotgun
+    mdef(0, 12, 56, AI_ITEM),                   // 31 weapon_crossbow
+    mdef(0, 12, 45, AI_ITEM),                   // 32 weapon_rpg
+    mdef(0, 12, 51, AI_ITEM),                   // 33 weapon_gauss
+    mdef(0, 12, 40, AI_ITEM),                   // 34 weapon_egon
+    mdef(0, 12, 45, AI_ITEM),                   // 35 weapon_hornetgun
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 36 weapon_handgrenade
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 37 weapon_snark
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 38 weapon_tripmine
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 39 weapon_satchel
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 40 ammo_9mmclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 41 ammo_9mmAR
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 42 ammo_buckshot
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 43 ammo_357
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 44 ammo_crossbow
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 45 ammo_rpgclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 46 ammo_gaussclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 47 ammo_ARgrenades
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 48 item_healthkit
+    mdef(0, 12, 38, AI_ITEM),                   // 49 item_longjump
     mdef(200, 90, 912, AI_IDLE), // 50 tentacle (Blast Pit; killtargeted by the rocket)
     mdef_atk(30, 40, 90, AI_RANGED, 16, 900, 6, 10), // 51 human assassin (silenced 9mm)
     // Script-only monster_generic. Health must stay nonzero so its exact
     // targetname can be possessed by c0a0d's goingdown sequence.
     mdef(8, 48, 1242, AI_IDLE), // 52 construction loader (rampwalk translates ~1,241 units)
     mdef(8, 48, 1930, AI_IDLE), // 53 forklift (path clips translate ~1,929 units)
+    // Standing scientist behavior with sitidle/sitstand added in a dedicated
+    // stream. Keeping those long poses out of type 0 preserves c4a3's peak RAM.
+    mdef(SCIENTIST_HEALTH, 40, SCIENTIST_RENDER_RADIUS, AI_FLEE), // 54 scripted sitter
+    mdef_atk(50, 40, 94, AI_MELEE, 4, 0, 0, 0),                   // 55 c1a1b vent-script zombies
 ];
 
 #[inline]
 fn model_def(ty: u8) -> ModelDef {
     MODEL_DEFS[(ty as usize).min(N_MODEL_TYPES - 1)]
+}
+
+/// Actors that GoldSrc's player-allies treat as enemies and that this runtime
+/// currently simulates as combatants.  Keep this tied to the behavior class,
+/// rather than a single model id: c1a1's Barney must shoot the monstermaker
+/// zombie just as he shoots a headcrab, and later maps reuse the same search
+/// for ranged aliens, soldiers, assassins, and turrets.
+#[inline(always)]
+fn prop_is_combat_hostile(ty: u8) -> bool {
+    matches!(model_def(ty).ai, AI_MELEE | AI_RANGED | AI_TURRET)
 }
 
 #[derive(Clone, Copy)]
@@ -481,6 +530,7 @@ const HEADCRAB_ATTACK_DAMAGE: u16 = 6;
 const HEADCRAB_ATTACK_COOLDOWN: u8 = 40;
 const HEADCRAB_ATTACK_TICKS: u8 = 12;
 const HEADCRAB_ATTACK_IMPACT_TICK: u8 = 5;
+const ZOMBIE_ATTACK_DAMAGE: u8 = 10; // skill.cfg sk_zombie_dmg_one_slash1
 const HEADCRAB_LEAP_SPEED: i32 = 18;
 const HEADCRAB_BITE_RANGE2: i32 = 48 * 48;
 const HEADCRAB_TARGET_HEIGHT: i32 = 12;
@@ -915,20 +965,45 @@ struct PvsFaceRec {
     count: u16,
     center: [i16; 3],
     radius: u16,
-    tex: u8,           // per-face texture (loop faces store tex on the FaceRec)
-    is_loop: bool,     // fan a vertex loop vs iterate raw tris
-    translucent: bool, // liquid surface: blend + UV sway at emit
-    band: u8,          // per-frame depth band (pre-pass; padding byte, no cost)
+    tex: u8,  // per-face texture (loop faces store tex on the FaceRec)
+    meta: u8, // band[2:0] | loop<<3 | translucent<<4
 }
+const PVS_FACE_BAND_MASK: u8 = 0x07;
+const PVS_FACE_LOOP: u8 = 0x08;
+const PVS_FACE_TRANSLUCENT: u8 = 0x10;
+
+impl PvsFaceRec {
+    #[inline(always)]
+    fn band(self) -> u8 {
+        self.meta & PVS_FACE_BAND_MASK
+    }
+
+    #[inline(always)]
+    fn set_band(&mut self, band: u8) {
+        self.meta = (self.meta & !PVS_FACE_BAND_MASK) | (band & PVS_FACE_BAND_MASK);
+    }
+
+    #[inline(always)]
+    fn is_loop(self) -> bool {
+        self.meta & PVS_FACE_LOOP != 0
+    }
+
+    #[inline(always)]
+    fn translucent(self) -> bool {
+        self.meta & PVS_FACE_TRANSLUCENT != 0
+    }
+}
+
+// Packing three one-byte fields into `meta` saves 4 KiB across the 2,048-face
+// cache without reducing either visibility or GPU packet capacity.
+const _: () = assert!(core::mem::size_of::<PvsFaceRec>() == 14);
 const EMPTY_PVS_FACE_REC: PvsFaceRec = PvsFaceRec {
     first: 0,
     count: 0,
     center: [0; 3],
     radius: 0,
     tex: 0,
-    is_loop: false,
-    translucent: false,
-    band: 0,
+    meta: 0,
 };
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut PVS_LEAF_COUNT: usize = 0;
@@ -942,8 +1017,8 @@ static mut PVS_FACE_INDEX: AlignedPvsFaceLinks = AlignedPvsFaceLinks([0; MAX_FAC
 static mut PVS_FACE_NEXT: AlignedPvsFaceLinks = AlignedPvsFaceLinks([PVS_LINK_END; MAX_FACES]);
 static mut PVS_FACE_REC: [PvsFaceRec; MAX_PVS_FACE_RECS] = [EMPTY_PVS_FACE_REC; MAX_PVS_FACE_RECS];
 static mut PVS_FACE_COUNT: usize = 0;
-static mut PVS_FACE_MARK: [u8; MAX_FACES] = [0; MAX_FACES];
-static mut PVS_FACE_MARK_TOKEN: u8 = 1;
+const PVS_FACE_MARK_WORDS: usize = MAX_FACES.div_ceil(32);
+static mut PVS_FACE_MARK: [u32; PVS_FACE_MARK_WORDS] = [0; PVS_FACE_MARK_WORDS];
 static mut PVS_GROUP_FIRST: [u16; MAX_FACE_GROUPS] = [PVS_LINK_END; MAX_FACE_GROUPS];
 static mut PVS_GROUP_FACE: [u16; MAX_FACE_GROUPS] = [PVS_LINK_END; MAX_FACE_GROUPS];
 static mut PVS_GROUP_ACTIVE: [u16; MAX_FACE_GROUPS] = [0; MAX_FACE_GROUPS];
@@ -973,7 +1048,10 @@ const EMPTY_ENT: map::Ent = map::Ent {
 static mut ENT_CACHE: [map::Ent; MAX_ENTS] = [EMPTY_ENT; MAX_ENTS];
 static mut ENT_RADIUS: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
-static mut ENT_PREV_OFF: [[i32; 3]; MAX_ENTS] = [[0; 3]; MAX_ENTS]; // ride-carry deltas
+// Previous brush offsets only need the same signed world-coordinate range as
+// TRAIN_OFF and scripted actor goals. Keeping them i16 releases 1,080 bytes of
+// BSS without reducing the 180-entity pool; expand only at the two carry reads.
+static mut ENT_PREV_OFF: [[i16; 3]; MAX_ENTS] = [[0; 3]; MAX_ENTS];
 
 // One player can stand on one func_platrot. Retaining its mover-local seat
 // avoids losing a sub-unit angular step every tick at small platform radii.
@@ -983,8 +1061,22 @@ static mut PLATROT_RIDER_ENT: i16 = -1;
 static mut PLATROT_RIDER_LOCAL: [i16; 3] = [0; 3];
 static mut PLATROT_RIDER_YAW: u16 = 0;
 static mut ENT_SOLID_COUNT: usize = 0; // nents for prop point-solid checks
-                                       // Brush -> stateful logic record. Breakables and targeted func_rotating share
-                                       // this existing slot; LOGIC_KIND disambiguates damage from fan state.
+
+#[inline(always)]
+unsafe fn ent_prev_off(ei: usize) -> [i32; 3] {
+    let p = ENT_PREV_OFF[ei];
+    [p[0] as i32, p[1] as i32, p[2] as i32]
+}
+
+#[inline(always)]
+unsafe fn ent_prev_off_store(ei: usize, p: [i32; 3]) {
+    debug_assert!(p[0] >= i16::MIN as i32 && p[0] <= i16::MAX as i32);
+    debug_assert!(p[1] >= i16::MIN as i32 && p[1] <= i16::MAX as i32);
+    debug_assert!(p[2] >= i16::MIN as i32 && p[2] <= i16::MAX as i32);
+    ENT_PREV_OFF[ei] = [p[0] as i16, p[1] as i16, p[2] as i16];
+}
+// Brush -> stateful logic record. Breakables and targeted func_rotating share
+// this existing slot; LOGIC_KIND disambiguates damage from fan state.
 static mut ENT_BRUSH_LOGIC: [u16; MAX_ENTS] = [u16::MAX; MAX_ENTS];
 // In the live 0..n_logic prefix this caches targetname ids, except breakables:
 // their slot is remaining HP and LOGIC_COUNTER carries the targetname bits.
@@ -1445,7 +1537,11 @@ unsafe fn prop_scientist_set_flag(pi: usize, flag: u8, enabled: bool) {
 static mut OCC_EYE_ANCHOR: [i32; 3] = [i32::MIN / 2; 3];
 static mut OCC_EYE_LEAF: i32 = -1;
 const OCC_EYE_MOVE_THRESHOLD: u32 = 32;
-static mut PROP_DORMANT: [u8; MAX_PROPS] = [0; MAX_PROPS]; // monstermaker stock awaiting a fire
+// Packed runtime flags: dormant stock, the short-lived maker-fall states, and
+// authored prisoner/passive behavior all share this byte.
+static mut PROP_DORMANT: [u8; MAX_PROPS] = [0; MAX_PROPS];
+const PROP_RUNTIME_DORMANT_STOCK: u8 = 1;
+const PROP_RUNTIME_PRISONER: u8 = 0x80;
 static mut PROP_LOGIC_LINK: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS];
 static mut SPRITE_COUNT: usize = 0;
 static mut SPRITE_VISIBLE: [u32; SPRITE_STATE_WORDS] = [0; SPRITE_STATE_WORDS];
@@ -1556,6 +1652,29 @@ fn live_semantic_sample(pad: psx_pad::PadState) -> semantic_input::Sample {
             look = aim_curve(-(ry as i32));
         }
     }
+    // PSoXide can expose port 1 as a digital pad, and keyboard play commonly
+    // drives its D-pad.  The old adapter gated all movement on `is_analog()`
+    // and ignored these buttons, leaving a normal player completely rooted
+    // while deterministic semantic-input tests still moved correctly.  Let a
+    // pressed D-pad axis override the corresponding stick axis; opposing
+    // directions cancel through `digital_axis`.
+    let digital_fwd = semantic_input::digital_axis(
+        pad.buttons.is_held(button::DOWN),
+        pad.buttons.is_held(button::UP),
+    );
+    let digital_strafe = semantic_input::digital_axis(
+        pad.buttons.is_held(button::LEFT),
+        pad.buttons.is_held(button::RIGHT),
+    );
+    if digital_fwd != 0 || pad.buttons.is_held(button::UP) || pad.buttons.is_held(button::DOWN) {
+        fwd = digital_fwd as i32;
+    }
+    if digital_strafe != 0
+        || pad.buttons.is_held(button::LEFT)
+        || pad.buttons.is_held(button::RIGHT)
+    {
+        strafe = digital_strafe as i32;
+    }
     let mut actions = 0u16;
     actions |= (pad.buttons.is_held(button::R2) as u16) * semantic_input::ACTION_ATTACK;
     actions |= (pad.buttons.is_held(button::CROSS) as u16) * semantic_input::ACTION_JUMP;
@@ -1649,9 +1768,47 @@ fn view_rotation_roll(yaw: u16, pitch: i16, roll: i16) -> Mat3I16 {
     r
 }
 
+#[cfg(feature = "deep-reference-trace")]
+#[inline(never)]
+fn trace_player_hull_probes(
+    map_tick: u32,
+    m: &Map,
+    movers: &[phys::Mover],
+    player: &phys::Player,
+    fwd: i32,
+    yaw: u16,
+    jump: bool,
+) {
+    if !jump {
+        // Airborne fall probe: record the active hull's next ballistic segment.
+        // This makes post-ledge divergences attributable to an exact plane and
+        // stays entirely out of ordinary/reference builds.
+        if !player.on_ground && player.vel[1] < 0 {
+            reference_trace::player_hull(
+                map_tick,
+                3,
+                player.hull_probe(m, movers, player.next_fall_delta()),
+            );
+        }
+        return;
+    }
+    let s = sincos::sin_q12(yaw);
+    let c = sincos::sin_q12((yaw + 1024) & 0x0fff);
+    let vx = (s * fwd / 128 * 16) >> 12;
+    let vz = (c * fwd / 128 * 16) >> 12;
+    reference_trace::player_hull(map_tick, 0, player.hull_probe(m, movers, [0, 0, 0]));
+    reference_trace::player_hull(map_tick, 1, player.hull_probe(m, movers, [0, 13, 0]));
+    reference_trace::player_hull(map_tick, 2, player.hull_probe(m, movers, [vx, 13, vz]));
+}
+
 #[inline(always)]
 fn dot12(row: [i16; 3], e: [i32; 3]) -> i32 {
     ((row[0] as i32 * e[0]) + (row[1] as i32 * e[1]) + (row[2] as i32 * e[2])) >> 12
+}
+
+#[inline(always)]
+fn dot12_q5(row: [i16; 3], e: [i32; 3]) -> i32 {
+    ((row[0] as i32 * e[0]) + (row[1] as i32 * e[1]) + (row[2] as i32 * e[2])) >> 7
 }
 
 #[inline(always)]
@@ -1867,7 +2024,6 @@ unsafe fn stream_map_models(weapon_len: usize, carry_count: u8) {
     let mut run_off = 0usize;
     let mut tex_off = 0usize;
     let mut slot_idx = 0usize;
-    let (mut sc, mut sb, mut ss) = (0u32, 0u32, 0u32);
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     let ncarry = logic_state::carry_record_count(carry_count).min(CARRY_CAPACITY);
     // Three passes by importance: combat monsters, then pickups/items, then
@@ -1916,23 +2072,70 @@ unsafe fn stream_map_models(weapon_len: usize, carry_count: u8) {
         if slot_idx >= MAX_LOADED_MODELS || geom_word >= MODEL_WORDS {
             break;
         }
-        // ONE merged chunk per type: "HMRG" | u32 geom_len | geom | tex.
-        // Halves the CD per-chunk handshake count (PAUSE + READN respin
-        // dominated small chunks). Geometry starts 2 words in (4-aligned).
+        // Every ordinary type is one merged chunk:
+        // "HMRG" | u32 geom_len | geom | tex. G-Man is the sole split-stream
+        // exception: on c1a1f -> c1a1b the remaining tail can stage either of
+        // its payloads but not their sum. Upload its texture first, then reuse
+        // exactly the same scratch for geometry. The cooked/audited pack makes
+        // both payloads transactional in practice; a malformed half is simply
+        // rejected like a malformed HMRG type.
+        let split_model = ty == SPLIT_MODEL_TYPE_GMAN;
+        let mut split_ntex = None;
+        if split_model {
+            let dst =
+                core::slice::from_raw_parts_mut(buf_ptr.add(geom_word), MODEL_WORDS - geom_word);
+            let tlen = cdstream::load_chunk(MODEL_TEX_CHUNK_BASE + ty as u32, dst).unwrap_or(0);
+            if tlen < 8
+                || geom_word + tlen.div_ceil(4) > MODEL_WORDS
+                || *buf_ptr.add(geom_word) != u32::from_le_bytes(*b"HLTX")
+            {
+                continue;
+            }
+            telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, tlen as u32);
+            telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
+            let uploaded = vram::upload_tex_chunk_append_raw(
+                streamed_model_bytes_at(geom_word * 4, tlen),
+                core::ptr::addr_of_mut!(POOL_TEX)
+                    .cast::<TexSlot>()
+                    .add(tex_off),
+                POOL_TEX_SLOTS - tex_off,
+            );
+            telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
+            let Some((ntex, _tex_fail)) = uploaded else {
+                continue;
+            };
+            if ntex > POOL_TEX_SLOTS - tex_off {
+                continue;
+            }
+            split_ntex = Some(ntex);
+        }
+
         let dst = core::slice::from_raw_parts_mut(buf_ptr.add(geom_word), MODEL_WORDS - geom_word);
         let clen = cdstream::load_chunk(MODEL_GEOM_CHUNK_BASE + ty as u32, dst).unwrap_or(0);
         if clen < 8 || geom_word + clen.div_ceil(4) > MODEL_WORDS {
             continue; // missing chunk or would overflow MODEL_BUF -> skip type
         }
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, clen as u32);
-        if *buf_ptr.add(geom_word) != u32::from_le_bytes(*b"HMRG") {
-            continue; // unknown chunk format
-        }
-        let glen = (*buf_ptr.add(geom_word + 1)) as usize;
-        if glen + 8 > clen {
-            continue;
-        }
-        let gw = geom_word + 2; // geometry blob start (words)
+        let (gw, glen) = if split_model {
+            let magic = *buf_ptr.add(geom_word);
+            if clen < 28
+                || (magic != u32::from_le_bytes(*b"HMD4")
+                    && magic != u32::from_le_bytes(*b"HMD5")
+                    && magic != u32::from_le_bytes(*b"HMD6"))
+            {
+                continue;
+            }
+            (geom_word, clen)
+        } else {
+            if *buf_ptr.add(geom_word) != u32::from_le_bytes(*b"HMRG") {
+                continue; // unknown chunk format
+            }
+            let glen = (*buf_ptr.add(geom_word + 1)) as usize;
+            if glen + 8 > clen {
+                continue;
+            }
+            (geom_word + 2, glen) // geometry blob start (words)
+        };
         let md = Model::load(streamed_model_bytes_at(gw * 4, glen));
         let model_runs = md.render_face_run_count();
         if face_off + md.n_tris > POOL_FACE_CAP || run_off + model_runs > POOL_FACE_RUN_CAP {
@@ -1957,17 +2160,22 @@ unsafe fn stream_map_models(weapon_len: usize, carry_count: u8) {
         // dropped tail + the in-chunk texture once it's uploaded.
         let kept = md.frame_section_len().min(glen);
         *buf_ptr.add(gw + 2) = 0; // header u32 n_tris at byte offset 8
-        let tex_bytes = streamed_model_bytes_at(gw * 4 + glen, clen - 8 - glen);
-        telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
-        let (ntex, _tex_fail) = vram::upload_tex_chunk_append_raw(
-            tex_bytes,
-            core::ptr::addr_of_mut!(POOL_TEX)
-                .cast::<TexSlot>()
-                .add(tex_off),
-            POOL_TEX_SLOTS - tex_off,
-        )
-        .unwrap_or((0, 0));
-        telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
+        let ntex = if let Some(ntex) = split_ntex {
+            ntex
+        } else {
+            let tex_bytes = streamed_model_bytes_at(gw * 4 + glen, clen - 8 - glen);
+            telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
+            let (ntex, _tex_fail) = vram::upload_tex_chunk_append_raw(
+                tex_bytes,
+                core::ptr::addr_of_mut!(POOL_TEX)
+                    .cast::<TexSlot>()
+                    .add(tex_off),
+                POOL_TEX_SLOTS - tex_off,
+            )
+            .unwrap_or((0, 0));
+            telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
+            ntex
+        };
         LOADED_MODELS[slot_idx] = LoadedModel {
             valid: true,
             type_id: ty as u8,
@@ -2533,6 +2741,11 @@ static mut CHANGE_REQUEST: RoomLaunch = RoomLaunch {
     ride_seat: [0; 3],
 };
 static mut CHANGE_REQUEST_ACTIVE: u8 = 0;
+// GoldSrc accepts the trigger touch, then lets three final player movement
+// frames run while the server reconnect/changelevel is committed. Snapshot at
+// the end of that window so landmark offset and momentum match the transferred
+// entity instead of the earlier trigger-contact pose.
+const CHANGELEVEL_TRANSFER_TICKS: u8 = 3;
 static mut LOGIC_TRAM_RIDING: u8 = 0;
 static mut LOGIC_TRAM_SEAT: [i32; 3] = [0; 3]; // rider offset from the car pivot
 #[derive(Clone, Copy)]
@@ -2741,18 +2954,28 @@ const SF_TRIGGER_NOCLIENTS: u16 = 2; // player may NOT fire this trigger (monste
 const SF_TRIGGER_PUSHABLES: u16 = 4; // func_pushable may fire independently of NOCLIENTS
 const SF_TRIGGER_PUSH_START_OFF: u16 = 2; // trigger_push spawns disabled
 const SF_RELAY_FIREONCE: u16 = 1; // trigger_relay removes itself after firing once
+const SF_MULTIMAN_THREAD: u16 = 1; // multi_manager clones concurrent runs in GoldSrc
 const SF_BREAK_TRIGGER_ONLY: u16 = 1; // func_breakable: immune to gunfire
+const SF_BREAK_CROWBAR: u16 = 256; // func_breakable: one crowbar strike destroys it
 const SF_TRACKTRAIN_NOCONTROL: u16 = 2; // scripted train: +use must not drive/toggle it
 const SF_CHANGELEVEL_USE_ONLY: u16 = 2; // named/target-fired, never Touch()
 const SF_ROTATING_INSTANT: u16 = 1;
 const SF_ROTATING_ACCDCC: u16 = 16;
 const SF_ROTATING_NOT_SOLID: u16 = 64;
+// Ent.mv[2] high-half profile bits for allocation-free cosmetic fans. The
+// authored friction is only 1..100, leaving room for two cook-time GoldSrc
+// pusher quirks without adding a resident per-entity byte.
+const FAN_FRICTION_MASK: u16 = 0x007f;
+const FAN_RAMP_EXTRA_THINK: u16 = 0x4000;
+const FAN_BLOCKED_AFTER_FIRST_SAMPLE: u16 = 0x8000;
+const SF_PENDULUM_INSTANT: u16 = 1;
 const LOGIC_TRAIN_EXTENDED: u8 = 2;
 const LOGIC_TRAIN_CYCLE_SHIFT: u8 = 2;
 const TRAIN_CORNER_TELEPORT: u16 = 0x8000;
 const TRAIN_CORNER_WAIT_TRIGGER_TELEPORT: u16 = 0xfffe;
 const ENT_KIND_PLATROT: u16 = 8;
 const ENT_KIND_PUSHABLE: u16 = 9;
+const ENT_KIND_PENDULUM: u16 = 10;
 const TRIGGER_HURT_REPEAT_TICKS: u16 = 10;
 const TRAM_CARRY_RADIUS2: i32 = 384 * 384;
 // Tracktrain pivots are not consistently near the passenger floor. c0a0b's
@@ -2776,8 +2999,8 @@ fn logic_valid_brush(brush: u16, nents: usize) -> Option<usize> {
     }
 }
 
-/// True when the player overlaps any func_ladder volume (kind 4). Ladders are
-/// invisible AABBs; expand them by the player hull so grabbing feels natural.
+/// The func_ladder volume touched by the player, if any. Ladders are invisible
+/// AABBs; expand them by the player hull so grabbing feels natural.
 /// Player-center-in-water test (kind 6 volumes; half-extents in mv).
 unsafe fn water_touch(nents: usize, pos: [i32; 3]) -> bool {
     let mut ei = 0usize;
@@ -2797,22 +3020,38 @@ unsafe fn water_touch(nents: usize, pos: [i32; 3]) -> bool {
     false
 }
 
-unsafe fn ladder_touch(m: &Map, nents: usize, pos: [i32; 3]) -> bool {
+unsafe fn ladder_touch(
+    m: &Map,
+    nents: usize,
+    pos: [i32; 3],
+    continuing_contact: bool,
+    intentional_mount: bool,
+    descending_mount: bool,
+) -> Option<([i32; 3], [i32; 3], bool)> {
     let _ = m;
     let mut ei = 0usize;
     while ei < nents {
         let e = ENT_CACHE[ei];
         if e.kind == 4 && ENT_ACTIVE[ei] != 0 {
-            let dx = (pos[0] - e.center[0]).abs();
-            let dy = (pos[1] - e.center[1]).abs();
-            let dz = (pos[2] - e.center[2]).abs();
-            if dx <= e.mv[0] + 18 && dy <= e.mv[1] + 34 && dz <= e.mv[2] + 18 {
-                return true;
+            let stable_normal = continuing_contact
+                || ladder_logic::new_mount_has_stable_normal_overlap(pos, e.center, e.mv);
+            let direct = ladder_logic::touches(pos, e.center, e.mv);
+            let assisted = intentional_mount
+                && ladder_logic::touches_mount_assist(
+                    pos,
+                    e.center,
+                    e.mv,
+                    descending_mount,
+                );
+            if stable_normal && (direct || assisted) {
+                // Only a tangentially assisted corner needs repositioning.
+                // GoldSrc never snaps an ordinary hull/ladder intersection.
+                return Some((e.center, e.mv, assisted && !direct));
             }
         }
         ei += 1;
     }
-    false
+    None
 }
 
 /// Finish a breakable's Die() path. +Use reaches this directly even for
@@ -2858,7 +3097,15 @@ unsafe fn shatter_breakable(
 }
 
 /// Damage a brush entity; breakables shatter at 0 HP (vanish, fire targets).
-unsafe fn damage_brush_ent(m: &Map, nlogic: usize, nents: usize, ei: usize, dmg: u8, now: u16) {
+unsafe fn damage_brush_ent(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    ei: usize,
+    dmg: u8,
+    club: bool,
+    now: u16,
+) {
     if ei >= nents || ENT_ACTIVE[ei] == 0 {
         return;
     }
@@ -2878,7 +3125,12 @@ unsafe fn damage_brush_ent(m: &Map, nlogic: usize, nents: usize, ei: usize, dmg:
     if hp == 0 {
         return;
     }
-    let hp = hp.saturating_sub(dmg as u16);
+    let hp = logic_state::breakable_hp_after_damage(
+        hp,
+        dmg,
+        club,
+        (rec.spawnflags & SF_BREAK_CROWBAR) != 0,
+    );
     LOGIC_BREAK_HP[li] = hp;
     if hp == 0 {
         shatter_breakable(m, nlogic, nents, li, rec, now, 0);
@@ -2895,7 +3147,16 @@ unsafe fn ent_draw_offset(ei: usize) -> [i32; 3] {
     if e.kind == ENT_KIND_PLATROT {
         platrot_offset(e, ENT_PHASE[ei])
     } else if e.kind == 1 || e.kind == 3 {
-        scale12_vec(e.mv, ENT_PHASE[ei])
+        // Most sliding BSP models are authored in world coordinates and have
+        // origin zero. An explicit origin brush (c1a1c's collapsing catwalk)
+        // stores local vertices, so its pivot must be included in both render
+        // and collision translation before adding the live door displacement.
+        let movement = scale12_vec(e.mv, ENT_PHASE[ei]);
+        [
+            e.origin[0] + movement[0],
+            e.origin[1] + movement[1],
+            e.origin[2] + movement[2],
+        ]
     } else if e.kind == 5 || e.kind == 7 {
         // Origin-brush vertices/hulls are entity-local in the BSP. The pivot
         // is therefore their world translation (rotation is applied separately).
@@ -2928,12 +3189,15 @@ unsafe fn fan_angle_q12(ei: usize, map_tick: u32) -> u16 {
         ENT_PHASE[ei]
     } else {
         let flags = e.mv[2] as u16;
+        let profile = (e.mv[2] as u32 >> 16) as u16;
         logic_state::rotating_cosmetic_phase_q16(
             map_tick,
             e.mv[0] as i16,
             (flags & SF_ROTATING_INSTANT) != 0,
             (flags & SF_ROTATING_ACCDCC) != 0,
-            (e.mv[2] as u32 >> 16) as u16,
+            profile & FAN_FRICTION_MASK,
+            profile & FAN_RAMP_EXTRA_THINK != 0,
+            profile & FAN_BLOCKED_AFTER_FIRST_SAMPLE != 0,
         )
     };
     ((phase_q16 >> 4) as u16) & 0x0fff
@@ -2949,6 +3213,52 @@ fn fan_rotation(e: map::Ent, angle_q12: u16) -> Mat3I16 {
     }
 }
 
+#[inline(always)]
+fn pendulum_axis(e: map::Ent) -> u16 {
+    e.mv[1] as u16
+}
+
+#[inline(always)]
+fn pendulum_max_velocity_q19(e: map::Ent) -> i16 {
+    (e.mv[1] >> 16) as i16
+}
+
+#[inline(always)]
+fn pendulum_accel_q19(e: map::Ent) -> i16 {
+    (e.mv[2] >> 16) as i16
+}
+
+#[inline(always)]
+unsafe fn pendulum_phase_q19(ei: usize) -> i32 {
+    logic_state::pendulum_phase_q19(ENT_PHASE[ei])
+}
+
+/// Visible world-space axial angle. `to_world` swaps HL Y/Z and changes
+/// handedness, so the render/collision matrix uses the negative SDK angle.
+#[inline(always)]
+unsafe fn pendulum_angle_q12(ei: usize) -> u16 {
+    ((-pendulum_phase_q19(ei) >> 7) as u16) & 0x0fff
+}
+
+#[inline(always)]
+fn pendulum_rotation(e: map::Ent, angle_q12: u16) -> Mat3I16 {
+    let a = angle_q12 >> 4;
+    match pendulum_axis(e) {
+        1 => Mat3I16::rotate_x(a),
+        2 => Mat3I16::rotate_z(a),
+        _ => Mat3I16::rotate_y(a),
+    }
+}
+
+#[inline(always)]
+fn rotating_local_center(e: map::Ent, r: Mat3I16) -> [i32; 3] {
+    [
+        e.origin[0] + dot12(r.m[0], e.center),
+        e.origin[1] + dot12(r.m[1], e.center),
+        e.origin[2] + dot12(r.m[2], e.center),
+    ]
+}
+
 /// GoldSrc's SF_ROTATING_NOT_SOLID brushes never enter collision. Solid fans,
 /// including a stopped c1a2 fan, keep their live pivot-aware yaw hull so the
 /// authored gap between the blades remains the traversable route.
@@ -2959,8 +3269,14 @@ unsafe fn fan_collision_disabled(ei: usize, e: map::Ent) -> bool {
 }
 
 #[inline(always)]
+fn pendulum_collision_disabled(e: map::Ent) -> bool {
+    // CPendulum::Spawn checks the shared SF_DOOR_PASSABLE bit (8).
+    e.kind == ENT_KIND_PENDULUM && (e.mv[2] as u16 & 8) != 0
+}
+
+#[inline(always)]
 fn pushable_max_speed(e: map::Ent) -> i32 {
-    (e.mv[0] as u32 & 0xffff) as i32
+    pushable::max_speed(e.mv[0])
 }
 
 #[inline(always)]
@@ -2975,6 +3291,24 @@ fn pushable_world_center(e: map::Ent, off: [i32; 3]) -> [i32; 3] {
         e.center[1] + off[1],
         e.center[2] + off[2],
     ]
+}
+
+/// GoldSrc links/triggers/renders a pushable with the visual model bounds but
+/// sweeps it through BSP geometry using a canonical hull anchored at model
+/// mins. Reconstruct that transient proxy from cooked spare bits.
+#[inline(always)]
+fn pushable_collision_proxy_world(
+    proxy: pushable::CollisionProxy,
+    off: [i32; 3],
+) -> ([i32; 3], [i32; 3]) {
+    (
+        [
+            proxy.center[0] + off[0],
+            proxy.center[1] + off[1],
+            proxy.center[2] + off[2],
+        ],
+        proxy.half,
+    )
 }
 
 /// `func_platrot` is stored in bottom->top phase order. Its BSP vertices and
@@ -3083,19 +3417,47 @@ unsafe fn pushable_publish_offset(m: &Map, movers: &mut [phys::Mover], ei: usize
 /// Self collision is disabled only for this cold query; mover/world support is
 /// encoded back into ENT_PHASE without another array.
 #[inline(never)]
-unsafe fn pushable_detect_support(m: &Map, movers: &mut [phys::Mover], ei: usize) -> u16 {
+unsafe fn pushable_detect_support(
+    m: &Map,
+    movers: &mut [phys::Mover],
+    ei: usize,
+    proxy: pushable::CollisionProxy,
+) -> (u16, i32) {
     let e = ENT_CACHE[ei];
     let off = e.origin;
-    let c = pushable_world_center(e, off);
-    let h = pushable_half_extents(e);
+    let (c, h) = pushable_collision_proxy_world(proxy, off);
     let p1 = [c[0], c[1] - h[1] + 2, c[2]];
     let p2 = [p1[0], p1[1] - 14, p1[2]];
     let hit = phys::trace_down_support(m, movers, p1, p2, ei as i32);
     match hit {
-        Some(hit) if hit.normal[1] > 2048 && hit.mover >= 0 => hit.mover as u16,
-        Some(hit) if hit.normal[1] > 2048 => pushable::SUPPORT_WORLD,
-        _ => pushable::SUPPORT_NONE,
+        Some(hit) if hit.normal[1] > 2048 && hit.mover >= 0 => (
+            hit.mover as u16,
+            pushable::support_settle(p1[1], hit.pos[1]),
+        ),
+        Some(hit) if hit.normal[1] > 2048 => (
+            pushable::SUPPORT_WORLD,
+            pushable::support_settle(p1[1], hit.pos[1]),
+        ),
+        _ => (pushable::SUPPORT_NONE, 0),
     }
+}
+
+/// Apply the authored support-gap correction without duplicating the mover/PVS
+/// publication path at every support probe site. Pushables are a cold path, so
+/// one small outlined call also saves more resident code than it costs.
+#[inline(never)]
+unsafe fn pushable_apply_settle(
+    m: &Map,
+    movers: &mut [phys::Mover],
+    ei: usize,
+    settle_y: i32,
+) -> bool {
+    if settle_y >= 0 {
+        return false;
+    }
+    let old = ENT_CACHE[ei].origin;
+    pushable_publish_offset(m, movers, ei, [old[0], old[1] + settle_y, old[2]]);
+    true
 }
 
 /// Swept 3x3 samples on every leading AABB face. One Q12 minimum fraction
@@ -3106,14 +3468,14 @@ unsafe fn pushable_sweep_fraction(
     m: &Map,
     movers: &mut [phys::Mover],
     ei: usize,
+    proxy: pushable::CollisionProxy,
     delta: [i32; 3],
-) -> i32 {
+) -> (i32, i32) {
     if delta == [0, 0, 0] {
-        return 4096;
+        return (4096, -1);
     }
     let e = ENT_CACHE[ei];
-    let c = pushable_world_center(e, e.origin);
-    let h = pushable_half_extents(e);
+    let (c, h) = pushable_collision_proxy_world(proxy, e.origin);
     let mut self_slot = usize::MAX;
     let mut mi = 0usize;
     while mi < movers.len() {
@@ -3132,6 +3494,7 @@ unsafe fn pushable_sweep_fraction(
         None
     };
     let mut best = 4096;
+    let mut best_mover = -1;
     let mut axis = 0usize;
     while axis < 3 {
         if delta[axis] != 0 {
@@ -3150,7 +3513,11 @@ unsafe fn pushable_sweep_fraction(
                     let p1 = [c[0] + local[0], c[1] + local[1], c[2] + local[2]];
                     let p2 = [p1[0] + delta[0], p1[1] + delta[1], p1[2] + delta[2]];
                     if let Some(hit) = phys::trace_line(m, movers, p1, p2) {
-                        best = best.min(pushable::safe_hit_fraction(hit.frac));
+                        let safe = pushable::safe_hit_fraction(hit.frac);
+                        if safe < best {
+                            best = safe;
+                            best_mover = hit.mover;
+                        }
                     }
                     ib += 1;
                 }
@@ -3162,7 +3529,7 @@ unsafe fn pushable_sweep_fraction(
     if let Some(saved) = saved {
         movers[self_slot] = saved;
     }
-    best
+    (best, best_mover)
 }
 
 #[inline(always)]
@@ -3259,7 +3626,7 @@ unsafe fn carry_pushables_on_support(m: &Map, movers: &mut [phys::Mover], nents:
                     state.support = pushable::SUPPORT_NONE;
                 } else {
                     let now = ent_draw_offset(support);
-                    let prev = ENT_PREV_OFF[support];
+                    let prev = ent_prev_off(support);
                     let d = [now[0] - prev[0], now[1] - prev[1], now[2] - prev[2]];
                     if d != [0, 0, 0] {
                         let old = ENT_CACHE[ei].origin;
@@ -3307,9 +3674,14 @@ unsafe fn tick_pushables(
         let e = ENT_CACHE[ei];
         let max_speed = pushable_max_speed(e);
         let mut state = pushable::unpack(ENT_PHASE[ei]);
+        // Gold's canonical BSP hull is invariant while the cart moves. Decode
+        // its packed shape once per cart tick and reuse it for every sweep and
+        // support probe below.
+        let collision_proxy =
+            pushable::collision_proxy(e.center, pushable_half_extents(e), e.mv[0]);
         let mut contacted = false;
         if player.on_ground
-            && player.ground_mover != ei as i32
+            && player.ground_mover != ei as i16
             && pushable_player_overlap(e, player)
         {
             let (wish_x, wish_z) = pushable_wish(fwd, strafe, yaw, max_speed);
@@ -3318,7 +3690,7 @@ unsafe fn tick_pushables(
                 wish_x * (center[0] - player.pos[0]) + wish_z * (center[2] - player.pos[2]);
             let contact = pushable::contact_mode(
                 player.on_ground,
-                player.ground_mover == ei as i32,
+                player.ground_mover == ei as i16,
                 true,
                 use_held,
                 wish_x != 0 || wish_z != 0,
@@ -3348,7 +3720,25 @@ unsafe fn tick_pushables(
 
         let planar = [state.vx as i32, 0, state.vz as i32];
         if planar != [0, 0, 0] {
-            let frac = pushable_sweep_fraction(m, movers, ei, planar);
+            let (frac, _hit_mover) =
+                pushable_sweep_fraction(m, movers, ei, collision_proxy, planar);
+            #[cfg(feature = "reference-trace")]
+            if frac < 4096 {
+                debug_line(
+                    "pushable block",
+                    &[
+                        ("ent=", ei as i32),
+                        ("hit=", _hit_mover),
+                        ("frac=", frac),
+                        ("x=", e.origin[0]),
+                        ("y=", e.origin[1]),
+                        ("z=", e.origin[2]),
+                        ("dx=", planar[0]),
+                        ("dy=", planar[1]),
+                        ("dz=", planar[2]),
+                    ],
+                );
+            }
             let step = [
                 pushable::swept_component(planar[0], frac),
                 0,
@@ -3368,16 +3758,26 @@ unsafe fn tick_pushables(
                 state.vx = 0;
                 state.vz = 0;
             }
-            state.support = pushable_detect_support(m, movers, ei);
+            let (support, settle_y) = pushable_detect_support(m, movers, ei, collision_proxy);
+            state.support = support;
+            if pushable_apply_settle(m, movers, ei, settle_y) {
+                state.dirty = true;
+            }
         } else if state.dirty && state.support == pushable::SUPPORT_NONE {
             // Initial map tick and a just-carried cart establish support once.
-            state.support = pushable_detect_support(m, movers, ei);
+            // A support hit below the cart also settles the authored gap;
+            // merely recording support left c1a0e's cart five units airborne.
+            let (support, settle_y) = pushable_detect_support(m, movers, ei, collision_proxy);
+            state.support = support;
+            if pushable_apply_settle(m, movers, ei, settle_y) {
+                state.dirty = true;
+            }
         }
 
         state = pushable::fall_step(state, 2);
         if state.support == pushable::SUPPORT_NONE && state.vy != 0 {
             let vertical = [0, state.vy as i32, 0];
-            let frac = pushable_sweep_fraction(m, movers, ei, vertical);
+            let (frac, _) = pushable_sweep_fraction(m, movers, ei, collision_proxy, vertical);
             let dy = pushable::swept_component(vertical[1], frac);
             if dy != 0 {
                 let old = ENT_CACHE[ei].origin;
@@ -3387,8 +3787,11 @@ unsafe fn tick_pushables(
             if frac < 4096 {
                 state.vy = 0;
             }
-            let support = pushable_detect_support(m, movers, ei);
+            let (support, settle_y) = pushable_detect_support(m, movers, ei, collision_proxy);
             if support != pushable::SUPPORT_NONE {
+                if pushable_apply_settle(m, movers, ei, settle_y) {
+                    state.dirty = true;
+                }
                 state.support = support;
                 state.vy = 0;
             }
@@ -3415,22 +3818,24 @@ unsafe fn carry_player_on_brush_mover(player: &mut phys::Player, yaw: &mut u16, 
         let ei = player.ground_mover as usize;
         let e = ENT_CACHE[ei];
         let now_off = ent_draw_offset(ei);
-        let prev = ENT_PREV_OFF[ei];
+        let prev = ent_prev_off(ei);
         if e.kind == ENT_KIND_PLATROT {
             riding_platrot = true;
             let prev_phase = platrot_phase_from_offset(e, prev);
             let prev_yaw = platrot_world_yaw(e, prev_phase);
             let now_yaw = platrot_world_yaw(e, ENT_PHASE[ei]);
-            if PLATROT_RIDER_ENT != ei as i16 {
+            let newly_mounted = PLATROT_RIDER_ENT != ei as i16;
+            if newly_mounted {
+                // The rider was not on this pusher during its previous pose.
+                // Anchor at the current transform and apply no historical
+                // translation/rotation: stepping onto c1a0c's already-rotated
+                // elevator must not turn the view by its authored 90 degrees.
                 PLATROT_RIDER_ENT = ei as i16;
-                PLATROT_RIDER_YAW = prev_yaw;
-                PLATROT_RIDER_LOCAL = platrot_local_i16(platrot_world_to_local(
-                    player.pos,
-                    prev,
-                    prev_yaw,
-                ));
+                PLATROT_RIDER_YAW = now_yaw;
+                PLATROT_RIDER_LOCAL =
+                    platrot_local_i16(platrot_world_to_local(player.pos, now_off, now_yaw));
             }
-            if prev != now_off || prev_yaw != now_yaw {
+            if !newly_mounted && (prev != now_off || prev_yaw != now_yaw) {
                 player.pos = platrot_local_to_world(
                     platrot_local_i32(PLATROT_RIDER_LOCAL),
                     now_off,
@@ -3463,7 +3868,7 @@ unsafe fn carry_player_on_brush_mover(player: &mut phys::Player, yaw: &mut u16, 
     }
     let mut ei = 0usize;
     while ei < nents {
-        ENT_PREV_OFF[ei] = ent_draw_offset(ei);
+        ent_prev_off_store(ei, ent_draw_offset(ei));
         ei += 1;
     }
 }
@@ -3487,11 +3892,10 @@ unsafe fn update_platrot_rider_local(player: &phys::Player, nents: usize, moved:
         return;
     }
     PLATROT_RIDER_ENT = ei as i16;
-    PLATROT_RIDER_LOCAL = platrot_local_i16(platrot_world_to_local(
-        player.pos,
-        ent_draw_offset(ei),
-        platrot_world_yaw(e, ENT_PHASE[ei]),
-    ));
+    let yaw = platrot_world_yaw(e, ENT_PHASE[ei]);
+    PLATROT_RIDER_YAW = yaw;
+    PLATROT_RIDER_LOCAL =
+        platrot_local_i16(platrot_world_to_local(player.pos, ent_draw_offset(ei), yaw));
 }
 
 #[inline]
@@ -3652,14 +4056,21 @@ fn logic_pre_tick_candidate(kind: u8) -> bool {
             | map::LOGIC_FUNC_BUTTON
             | map::LOGIC_TRIGGER_MULTIPLE
             | map::LOGIC_FUNC_ROTATING
+            | map::LOGIC_FUNC_PENDULUM
             | map::LOGIC_SCRIPTED
     )
 }
 
 #[inline]
-unsafe fn logic_enqueue_event(at: u16, target: u16, killtarget: u16, use_type: u8, caller_li: u16) {
+unsafe fn logic_enqueue_event(
+    at: u16,
+    target: u16,
+    killtarget: u16,
+    use_type: u8,
+    caller_li: u16,
+) -> bool {
     if target == 0 && killtarget == 0 {
-        return;
+        return false;
     }
     let mut i = 0usize;
     while i < MAX_LOGIC_EVENTS {
@@ -3670,10 +4081,24 @@ unsafe fn logic_enqueue_event(at: u16, target: u16, killtarget: u16, use_type: u
                 killtarget,
                 meta: logic_state::event_meta(true, use_type, caller_li),
             };
-            return;
+            return true;
         }
         i += 1;
     }
+    false
+}
+
+#[inline]
+unsafe fn logic_manager_has_pending_events(caller_li: u16) -> bool {
+    let mut i = 0usize;
+    while i < MAX_LOGIC_EVENTS {
+        let meta = LOGIC_EVENTS[i].meta;
+        if logic_state::event_active(meta) && logic_state::event_caller(meta) == caller_li {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 unsafe fn logic_kill_targets(m: &Map, nlogic: usize, nents: usize, target: u16) {
@@ -3788,8 +4213,8 @@ fn carry_actor_capable(kind: u8) -> bool {
 /// GoldSrc collision bounds mapped from HL (x,y,z-up) to runtime (x,y-up,z).
 /// This is deliberately independent of render radii: BigMomma and sentries
 /// have transition-visible boxes that their origins do not represent.
-#[inline]
-fn carry_actor_bounds(kind: u8, pos: [i32; 3]) -> ([i32; 3], [i32; 3]) {
+#[inline(never)]
+fn actor_collision_bounds(kind: u8, pos: [i32; 3]) -> ([i32; 3], [i32; 3]) {
     let (mins, maxs) = match kind {
         2 => ([-12, 0, -12], [12, 24, 12]), // headcrab
         6 => ([-16, 0, -16], [16, 36, 16]), // houndeye
@@ -3809,6 +4234,55 @@ fn carry_actor_bounds(kind: u8, pos: [i32; 3]) -> ([i32; 3], [i32; 3]) {
         [pos[0] + mins[0], pos[1] + mins[1], pos[2] + mins[2]],
         [pos[0] + maxs[0], pos[1] + maxs[1], pos[2] + maxs[2]],
     )
+}
+
+/// Resolve a completed BSP move against the nearest live actor in one roster
+/// pass. This exact swept-AABB broadphase avoids both repeated BSP-trace work
+/// and a temporary collider list; tangential motion remains untouched.
+#[inline(never)]
+unsafe fn resolve_player_actor_collision(player: &mut phys::Player, start: [i32; 3]) {
+    let end = player.pos;
+    if start == end {
+        return;
+    }
+    let half_height = if player.crouch { 18 } else { 36 };
+    let sweep_mins = [
+        start[0].min(end[0]) - 16,
+        start[1].min(end[1]) - half_height,
+        start[2].min(end[2]) - 16,
+    ];
+    let sweep_maxs = [
+        start[0].max(end[0]) + 16,
+        start[1].max(end[1]) + half_height,
+        start[2].max(end[2]) + 16,
+    ];
+    let mut best_frac = 4096;
+    let mut best_axis = 3u8;
+    let mut pi = 0usize;
+    while pi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
+        // Active living actors are the port's solid slideboxes. Pickups and
+        // completed/dead scripted models have health zero and stay non-solid.
+        if PROP_ACTIVE[pi] != 0 && PROP_HEALTH[pi] > 0 {
+            let (mins, maxs) = actor_collision_bounds(PROP_KIND[pi], PROP_POS[pi]);
+            if aabb_overlaps(mins, maxs, sweep_mins, sweep_maxs) {
+                if let Some(hit) =
+                    ground_logic::sweep_player_actor(start, end, mins, maxs, half_height)
+                {
+                    if hit.frac < best_frac {
+                        best_frac = hit.frac;
+                        best_axis = hit.axis;
+                    }
+                }
+            }
+        }
+        pi += 1;
+    }
+    if best_frac >= 4096 {
+        return;
+    }
+    let axis = best_axis as usize;
+    player.pos[axis] = start[axis] + (((end[axis] - start[axis]) * best_frac) >> 12);
+    player.block_actor_axis(axis);
 }
 
 #[inline]
@@ -3850,8 +4324,8 @@ fn carry_box_touches_pvs_node(
         }
         axis += 1;
     }
-    let min_side = dot12(nd.n, near) - nd.dist;
-    let max_side = dot12(nd.n, far) - nd.dist;
+    let min_side = dot12_q5(nd.n, near) - nd.dist_q5;
+    let max_side = dot12_q5(nd.n, far) - nd.dist_q5;
     if min_side >= 0 {
         carry_box_touches_pvs_node(m, nd.c0, mins, maxs, depth + 1)
     } else if max_side < 0 {
@@ -3933,11 +4407,12 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
     let mut pi = 0usize;
     while pi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) && carried < CARRY_CAPACITY {
         let kind = PROP_KIND[pi];
-        let mut carry_id = PROP_LOGIC_LINK[pi];
-        if carry_id == CARRY_ID_NONE && PROP_NAME[pi] != 0 {
-            // Compatibility with rooms cooked before PropRec gained carry_id.
-            carry_id = actor_carry_hash(m.logic_name(PROP_NAME[pi]), false);
-        }
+        // The cooker is the authority for FCAP_ACROSS_TRANSITION identity.
+        // Do not reconstruct an id from PROP_NAME: monstermaker stock uses the
+        // maker name only to find its dormant slot, and GoldSrc does not copy
+        // that targetname onto the spawned monster. The old fallback therefore
+        // leaked generated monsters (and named corpses) into the next map.
+        let carry_id = PROP_LOGIC_LINK[pi];
         if PROP_ACTIVE[pi] == 0
             || PROP_DORMANT[pi] != 0
             || carry_id == 0
@@ -3948,7 +4423,7 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
             continue;
         }
 
-        let (mins, maxs) = carry_actor_bounds(kind, PROP_POS[pi]);
+        let (mins, maxs) = actor_collision_bounds(kind, PROP_POS[pi]);
         if use_pvs && !carry_box_touches_pvs_node(m, 0, mins, maxs, 0) {
             pi += 1;
             continue;
@@ -4307,7 +4782,7 @@ unsafe fn restore_transition_trains(
                 TRAIN_LI[t] = li as u16;
                 train_set_offset(rec, t, center);
                 ENT_ACTIVE[ei] = 1;
-                ENT_PREV_OFF[ei] = ent_draw_offset(ei);
+                ent_prev_off_store(ei, ent_draw_offset(ei));
                 #[cfg(feature = "reference-trace")]
                 reference_trace::carry(
                     SIM_NOW,
@@ -4327,6 +4802,9 @@ unsafe fn restore_transition_trains(
 }
 
 unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) {
+    if CHANGE_REQUEST_ACTIVE != 0 {
+        return;
+    }
     let map_name = m.logic_name(rec.arg0);
     let landmark_name = m.logic_name(rec.arg1);
     let Some(room_id) = menu::room_for_map_name(map_name) else {
@@ -4419,7 +4897,101 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
             ("riding=", (LOGIC_TRAM_RIDING != 0) as i32),
         ],
     );
-    CHANGE_REQUEST_ACTIVE = 1;
+    CHANGE_REQUEST_ACTIVE = CHANGELEVEL_TRANSFER_TICKS + 1;
+}
+
+/// Cold end-of-map snapshot kept out of `play` so telemetry instrumentation
+/// cannot push that already-large MIPS function beyond a PC16 branch span.
+#[inline(never)]
+unsafe fn finalize_changelevel_player(
+    m: &Map,
+    nlogic: usize,
+    player_pos: [i32; 3],
+    player_vel: [i32; 3],
+    yaw: u16,
+    pitch: i16,
+    health: u16,
+    suit_equipped: bool,
+    armor: u16,
+    clip_ammo: u16,
+    reserve_ammo: u16,
+    riding: bool,
+    ride_seat: [i32; 3],
+) {
+    let source_landmark = launch_landmark_origin(m, nlogic, CHANGE_REQUEST.landmark);
+    let mut axis = 0usize;
+    while axis < 3 {
+        let offset = if let Some(origin) = source_landmark {
+            player_pos[axis] - origin[axis]
+        } else {
+            0
+        };
+        CHANGE_REQUEST.landmark_offset[axis] =
+            logic_state::pack_landmark_axis(offset, player_vel[axis]);
+        axis += 1;
+    }
+    CHANGE_REQUEST.yaw = yaw;
+    CHANGE_REQUEST.pitch = pitch;
+    CHANGE_REQUEST.health = health;
+    CHANGE_REQUEST.suit_equipped = suit_equipped;
+    CHANGE_REQUEST.armor = armor;
+    CHANGE_REQUEST.clip_ammo = clip_ammo;
+    CHANGE_REQUEST.reserve_ammo = reserve_ammo;
+    CHANGE_REQUEST.riding = riding;
+    let (post_target_hash, post_delay) =
+        logic_state::unpack_changelevel_payload(CHANGE_REQUEST.ride_seat);
+    CHANGE_REQUEST.ride_seat =
+        logic_state::pack_changelevel_payload(ride_seat, post_target_hash, post_delay);
+}
+
+#[inline(never)]
+unsafe fn tick_pending_changelevel(
+    m: &Map,
+    nlogic: usize,
+    player: &phys::Player,
+    yaw: u16,
+    pitch: i16,
+    health: u16,
+    suit_equipped: bool,
+    armor: u16,
+    weapon: &Arsenal,
+    tram_player_attached: bool,
+    tram_active: bool,
+) -> Option<RoomLaunch> {
+    if CHANGE_REQUEST_ACTIVE == 0 {
+        return None;
+    }
+    if CHANGE_REQUEST_ACTIVE > 1 {
+        CHANGE_REQUEST_ACTIVE -= 1;
+        return None;
+    }
+    CHANGE_REQUEST_ACTIVE = 0;
+    finalize_changelevel_player(
+        m,
+        nlogic,
+        player.pos,
+        player.vel,
+        yaw,
+        pitch,
+        health,
+        suit_equipped,
+        armor,
+        weapon.clip_display(),
+        weapon.reserve_display(),
+        tram_player_attached,
+        LOGIC_TRAM_SEAT,
+    );
+    // Snapshot after the final actor tick. The cold pass may repurpose VIS_BITS
+    // and mailbox rows without exposing either mutation to live simulation.
+    let landmark = CHANGE_REQUEST.landmark;
+    let carry_count = snapshot_transition_actors(m, nlogic, landmark);
+    CHANGE_REQUEST.carry_count = logic_state::encode_carry_state(carry_count, tram_active);
+    CARRY_VALID = true;
+    CARRY_OWNED = weapon.owned;
+    CARRY_CLIPS = weapon.clip;
+    CARRY_AMMO = weapon.ammo;
+    CARRY_CURRENT = weapon.current as u8;
+    Some(CHANGE_REQUEST)
 }
 
 /// Restore trigger_changelevel's engine-owned `changetarget` after the
@@ -5046,7 +5618,12 @@ unsafe fn script_finish_face_phase(pi: usize, primed: bool) {
 /// hot function's MIPS branches in range, this call is paid only by actors that
 /// actually carry script state; ordinary combat props stay on the direct path.
 #[inline(never)]
-unsafe fn tick_scripted_actor(m: &Map, pi: usize, primed_hold: bool) -> bool {
+unsafe fn tick_scripted_actor(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    primed_hold: bool,
+) -> bool {
     let scripted_mode = scientist_logic::script_base_mode(PROP_SCRIPT_MODE[pi]);
     if primed_hold {
         // Possessed by a targeted idle script, either waiting for CineThink or
@@ -5141,7 +5718,7 @@ unsafe fn tick_scripted_actor(m: &Map, pi: usize, primed_hold: bool) -> bool {
                     MOVE_TICK,
                     PROP_KIND[pi] == PROP_TYPE_BARNEY,
                 ) as i32;
-                prop_move_towards_point(m, &[], pi, goal, speed);
+                prop_move_towards_point(m, movers, pi, goal, speed);
                 PROP_STATE[pi] = PROP_STATE_MOVE;
                 false
             }
@@ -5201,10 +5778,17 @@ unsafe fn tick_scripted_actor(m: &Map, pi: usize, primed_hold: bool) -> bool {
         return true;
     }
 
-    if PROP_SCRIPT_LI[pi] != u16::MAX
-        && !time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi])
-    {
+    if PROP_SCRIPT_LI[pi] != u16::MAX && !time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]) {
         script_tick_studio_events(m, pi, false);
+        // The scripted sequence still owns this actor for the entire play
+        // clip.  Falling through here lets ordinary scientist/Barney AI run
+        // in the same tick, so a play-only sequence can walk away from its
+        // authored mark before its completion target fires.  c1a0c's
+        // console_guy then ends up outside both the player's use radius and
+        // control_retinal1's acquisition radius, permanently closing the
+        // retinal-scanner route.
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        return true;
     }
 
     // Scripted move finished: release the actor before firing outputs so the
@@ -5296,11 +5880,23 @@ unsafe fn logic_use_entity(
             logic_remove_entity(li, rec, nents);
         }
         map::LOGIC_MULTI_MANAGER => {
+            let threaded = (rec.spawnflags & SF_MULTIMAN_THREAD) != 0;
+            if !logic_state::multi_manager_accepts_use(LOGIC_STATE[li] == LOGIC_STATE_TOP, threaded)
+            {
+                return;
+            }
+            // CMultiManager::ManagerUse does SetUse(NULL) until its last
+            // ManagerThink output. Reuse the existing state byte as that busy
+            // bit; threaded managers conceptually run in disposable clones.
+            if !threaded {
+                LOGIC_STATE[li] = LOGIC_STATE_TOP;
+            }
             logic_kill_targets(m, nlogic, nents, rec.killtarget);
             let mut ai = 0usize;
+            let mut queued = false;
             while ai < rec.aux_count {
                 let aux = m.logic_aux(rec.first_aux + ai);
-                logic_enqueue_event(
+                queued |= logic_enqueue_event(
                     now.wrapping_add(aux.delay_ticks),
                     aux.target,
                     0,
@@ -5308,6 +5904,11 @@ unsafe fn logic_use_entity(
                     li as u16,
                 );
                 ai += 1;
+            }
+            // Empty managers, or a saturated event queue, complete instead of
+            // remaining permanently disabled.
+            if !threaded && !queued {
+                LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
             }
         }
         map::LOGIC_TRIGGER_COUNTER => {
@@ -5361,6 +5962,9 @@ unsafe fn logic_use_entity(
         // angular velocity. This makes c1a2's relay-authored USE_OFF stop the
         // already-running fan while preserving ordinary toggle behavior.
         map::LOGIC_FUNC_ROTATING => logic_use_rotating(nents, li, rec, now),
+        // CPendulum likewise keys off its current angular speed rather than
+        // USE_ON/OFF: any fire toggles between Swing and a retained dead stop.
+        map::LOGIC_FUNC_PENDULUM => logic_use_pendulum(nents, li, rec, now),
         map::LOGIC_SCRIPTED => {
             // arg0 remains the exact monster targetname. flags optionally
             // carries classname type+1 and wait_ticks carries m_flRadius.
@@ -5506,11 +6110,16 @@ unsafe fn logic_use_entity(
                         PROP_POS[pi][1] - rec.origin[1],
                         PROP_POS[pi][2] - rec.origin[2],
                     ];
-                    if d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 64 * 64 {
+                    let named_stock = rec.targetname != 0 && PROP_NAME[pi] == rec.targetname;
+                    if named_stock || d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 64 * 64 {
                         prop_nav_cache_invalidate(pi);
                         PROP_DORMANT[pi] = 0;
                         PROP_ACTIVE[pi] = 1;
-                        prop_set_pos(m, &[], pi, PROP_POS[pi]); // ground snap on wake
+                        // The maker targetname is only an allocation-free link
+                        // to its dormant stock. GoldSrc copies `netname`, not
+                        // the maker's own targetname, onto a spawned child.
+                        PROP_NAME[pi] = 0;
+                        prop_set_pos(m, &[], pi, PROP_POS[pi]);
                         break;
                     }
                 }
@@ -5685,28 +6294,49 @@ unsafe fn draw_screen_fx(m: &Map) {
 }
 
 unsafe fn logic_process_events(m: &Map, nlogic: usize, nents: usize, now: u16) {
-    let mut i = 0usize;
-    while i < MAX_LOGIC_EVENTS {
-        let ev = LOGIC_EVENTS[i];
-        if logic_state::event_active(ev.meta) && time_reached(now, ev.at) {
-            LOGIC_EVENTS[i].meta = logic_state::event_meta(
-                false,
-                logic_state::event_use_type(ev.meta),
-                logic_state::event_caller(ev.meta),
-            );
-            logic_kill_targets(m, nlogic, nents, ev.killtarget);
-            logic_fire_targets(
-                m,
-                nlogic,
-                nents,
-                ev.target,
-                logic_state::event_use_type(ev.meta),
-                now,
-                0,
-                logic_state::event_caller(ev.meta),
-            );
+    // GoldSrc runs a zero-delay multi_manager output from ManagerThink in the
+    // same server frame. Rescan freed slots so an event enqueued by a due event
+    // can run at this same 20 Hz tick. The fixed budget retains the old upper
+    // bound on event work even for malicious threaded self-target loops.
+    let mut fired = 0usize;
+    loop {
+        let mut progressed = false;
+        let mut i = 0usize;
+        while i < MAX_LOGIC_EVENTS && fired < MAX_LOGIC_EVENTS {
+            let ev = LOGIC_EVENTS[i];
+            if logic_state::event_active(ev.meta) && time_reached(now, ev.at) {
+                let caller = logic_state::event_caller(ev.meta);
+                LOGIC_EVENTS[i].meta =
+                    logic_state::event_meta(false, logic_state::event_use_type(ev.meta), caller);
+                logic_kill_targets(m, nlogic, nents, ev.killtarget);
+                logic_fire_targets(
+                    m,
+                    nlogic,
+                    nents,
+                    ev.target,
+                    logic_state::event_use_type(ev.meta),
+                    now,
+                    0,
+                    caller,
+                );
+                // The original manager restores ManagerUse only after its
+                // final scheduled target. Keep it busy through target dispatch
+                // so a self-target is observed but ignored.
+                if (caller as usize) < nlogic
+                    && LOGIC_KIND[caller as usize] == map::LOGIC_MULTI_MANAGER
+                    && (m.logic(caller as usize).spawnflags & SF_MULTIMAN_THREAD) == 0
+                    && !logic_manager_has_pending_events(caller)
+                {
+                    LOGIC_STATE[caller as usize] = LOGIC_STATE_BOTTOM;
+                }
+                progressed = true;
+                fired += 1;
+            }
+            i += 1;
         }
-        i += 1;
+        if !progressed || fired >= MAX_LOGIC_EVENTS {
+            break;
+        }
     }
 }
 
@@ -5782,6 +6412,49 @@ unsafe fn logic_tick_rotating(nents: usize, li: usize, rec: map::LogicEnt, now: 
     store_rotating_state(li, ei, next);
 }
 
+#[inline(always)]
+unsafe fn pendulum_state(li: usize, ei: usize) -> logic_state::PendulumState {
+    logic_state::PendulumState {
+        packed_phase: ENT_PHASE[ei],
+        velocity_q19: LOGIC_COUNTER[li],
+        state: LOGIC_STATE[li],
+        next_tick: LOGIC_NEXT[li],
+    }
+}
+
+#[inline(always)]
+unsafe fn store_pendulum_state(li: usize, ei: usize, state: logic_state::PendulumState) {
+    ENT_PHASE[ei] = state.packed_phase;
+    LOGIC_COUNTER[li] = state.velocity_q19;
+    LOGIC_STATE[li] = state.state;
+    LOGIC_NEXT[li] = state.next_tick;
+}
+
+#[inline]
+unsafe fn logic_use_pendulum(nents: usize, li: usize, rec: map::LogicEnt, now: u16) {
+    let Some(ei) = logic_valid_brush(rec.brush, nents) else {
+        return;
+    };
+    let next = logic_state::pendulum_use(pendulum_state(li, ei), now);
+    store_pendulum_state(li, ei, next);
+}
+
+#[inline]
+unsafe fn logic_tick_pendulum(nents: usize, li: usize, rec: map::LogicEnt, now: u16) {
+    let Some(ei) = logic_valid_brush(rec.brush, nents) else {
+        return;
+    };
+    let e = ENT_CACHE[ei];
+    let next = logic_state::pendulum_tick(
+        pendulum_state(li, ei),
+        e.mv[0],
+        pendulum_max_velocity_q19(e),
+        pendulum_accel_q19(e),
+        now,
+    );
+    store_pendulum_state(li, ei, next);
+}
+
 unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
     logic_process_events(m, nlogic, nents, now);
     let indexed = LOGIC_PRE_COUNT != LOGIC_HOT_FALLBACK;
@@ -5799,6 +6472,11 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
         };
         if LOGIC_KIND[li] == map::LOGIC_FUNC_ROTATING {
             logic_tick_rotating(nents, li, m.logic(li), now);
+            scan += 1;
+            continue;
+        }
+        if LOGIC_KIND[li] == map::LOGIC_FUNC_PENDULUM {
+            logic_tick_pendulum(nents, li, m.logic(li), now);
             scan += 1;
             continue;
         }
@@ -6008,68 +6686,37 @@ unsafe fn logic_try_use(
     eye: [i32; 3],
     yaw: u16,
     pitch: i16,
-    movers: &[phys::Mover],
     now: u16,
     health: &mut u16,
     armor: &mut u16,
 ) {
     let rot = view_rotation(yaw, pitch);
-    let base_t = [
-        -dot12(rot.m[0], eye),
-        -dot12(rot.m[1], eye),
-        -dot12(rot.m[2], eye),
-    ];
     let mut best = usize::MAX;
     let mut best_prop = usize::MAX;
     let mut best_score = i32::MAX;
 
-    // PRIMARY: a forward ray from the crosshair. Whatever use-target brush the
-    // player is actually looking at (within reach) wins -- this is what a player
-    // does ("point at the button, press use") and is immune to the cone/center
-    // subtleties that made low console buttons unclickable. Row 2 of the view
-    // matrix is the un-negated world forward (rows 0/1 are screen-negated).
-    let fwd_end = [
-        eye[0] + (rot.m[2][0] as i32 * PLAYER_USE_REACH) / 4096,
-        eye[1] + (rot.m[2][1] as i32 * PLAYER_USE_REACH) / 4096,
-        eye[2] + (rot.m[2][2] as i32 * PLAYER_USE_REACH) / 4096,
-    ];
-    if let Some(hit) = phys::trace_line(m, movers, eye, fwd_end) {
-        if hit.mover >= 0 {
-            let mut li = 0usize;
-            while li < nlogic {
-                if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
-                    let rec = m.logic(li);
-                    if rec.brush as i32 == hit.mover && logic_is_use_target(rec) {
-                        best = li;
-                        best_score = 0; // exact crosshair hit outranks cone candidates
-                        break;
-                    }
-                }
-                li += 1;
-            }
-        }
-    }
-
-    // Cone/radius search for brushes and talk allies. Both use the same
-    // screen-space score, so whichever is more centred wins; an exact brush
-    // ray above has score zero and cannot be stolen by a nearby ally.
+    // Original PlayerUse: FIND_ENTITY_IN_SPHERE(player origin, 64), then aim
+    // from the eye to the nearest point of each usable bbox and keep the best
+    // normalized forward dot above 0.7. GoldSrc deliberately has no trace here
+    // (`// UNDONE: traceline ...`), so nearby debris must not hide a button.
     let mut li = 0usize;
     while li < nlogic {
         if LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
             let rec = m.logic(li);
-            if logic_is_use_target(rec) {
-                let c = logic_center(rec);
-                let vz = dot12(rot.m[2], c) + base_t[2];
-                let vx = dot12(rot.m[0], c) + base_t[0];
-                let vy = dot12(rot.m[1], c) + base_t[1];
-                if let Some(score) = scientist_logic::brush_use_score(vx, vy, vz, PLAYER_USE_REACH)
-                {
-                    // LOS to the target ignores the target's OWN brush hull
-                    // (the trace ends inside it); other movers still block.
-                    if score < best_score
-                        && phys::line_clear_world(m, eye, c)
-                        && phys::line_clear_movers_except(m, movers, eye, c, rec.brush as i32)
-                    {
+            if logic_is_use_target(rec)
+                && scientist_logic::aabb_in_search_radius(
+                    player_pos,
+                    rec.mins,
+                    rec.maxs,
+                    PLAYER_SEARCH_RADIUS,
+                )
+            {
+                let delta = scientist_logic::nearest_aabb_delta(eye, rec.mins, rec.maxs);
+                let vz = dot12(rot.m[2], delta);
+                let vx = dot12(rot.m[0], delta);
+                let vy = dot12(rot.m[1], delta);
+                if let Some(score) = scientist_logic::player_use_score(vx, vy, vz) {
+                    if score < best_score {
                         best = li;
                         best_prop = usize::MAX;
                         best_score = score;
@@ -6083,9 +6730,7 @@ unsafe fn logic_try_use(
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     let mut pi = 0usize;
     while pi < nprops {
-        if (PROP_KIND[pi] == PROP_TYPE_SCIENTIST || PROP_KIND[pi] == PROP_TYPE_BARNEY)
-            && PROP_ACTIVE[pi] != 0
-        {
+        if prop_is_human(PROP_KIND[pi]) && PROP_ACTIVE[pi] != 0 {
             let following = prop_scientist_flag(pi, PROP_SCI_FOLLOWING);
             let action = scientist_logic::follow_use(
                 PROP_HEALTH[pi] > 0,
@@ -6436,11 +7081,14 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         } else {
             0
         };
-        ENT_PREV_OFF[ei] = if ei < nents {
-            ent_draw_offset(ei)
-        } else {
-            [0; 3]
-        };
+        ent_prev_off_store(
+            ei,
+            if ei < nents {
+                ent_draw_offset(ei)
+            } else {
+                [0; 3]
+            },
+        );
         ENT_BRUSH_LOGIC[ei] = u16::MAX;
         ei += 1;
     }
@@ -6585,6 +7233,18 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                         // Client/server startup puts the first SUB_CallUseToggle
                         // on local fixed tick 31 in the deterministic reference.
                         LOGIC_NEXT[li] = now.wrapping_add(logic_state::ROTATING_AUTO_START_TICKS);
+                    }
+                }
+            }
+            map::LOGIC_FUNC_PENDULUM => {
+                if let Some(ei) = logic_valid_brush(rec.brush, nents) {
+                    ENT_BRUSH_LOGIC[ei] = li as u16;
+                    ENT_PHASE[ei] = 0;
+                    LOGIC_COUNTER[li] = 0;
+                    if (rec.spawnflags & SF_PENDULUM_INSTANT) != 0 {
+                        LOGIC_STATE[li] = logic_state::PENDULUM_START_WAIT;
+                        LOGIC_NEXT[li] =
+                            now.wrapping_add(logic_state::PENDULUM_AUTO_START_TICKS);
                     }
                 }
             }
@@ -6930,6 +7590,21 @@ fn prop_clip(state: u8, hit_flash: bool) -> usize {
     }
 }
 
+/// The c1a1b jumpwindow studio sequence carries the houndeye roughly 200 units
+/// away from its actor origin. Expanding every houndeye's sphere would undo
+/// useful culling campaign-wide, so pay for the larger bound only on the actor
+/// whose scripted play clip is present. Slot 5 is fixed by the type-6 roster.
+#[inline]
+unsafe fn prop_render_radius(pi: usize, ty: u8) -> i32 {
+    const HOUNDEYE_JUMPWINDOW_CLIP: u8 = 5;
+    const HOUNDEYE_JUMPWINDOW_RADIUS: i32 = 208;
+    if ty == PROP_TYPE_HOUNDEYE && PROP_SCRIPT_PLAY_CLIP[pi] == HOUNDEYE_JUMPWINDOW_CLIP {
+        HOUNDEYE_JUMPWINDOW_RADIUS
+    } else {
+        model_def(ty).radius
+    }
+}
+
 /// (baked frame, next baked frame, 0..15 sixteenths between them). The draw
 /// lerps vertices between the two frames, recovering the smoothness of the
 /// frames the cook cut for RAM (interpolation costs CPU, not pool bytes).
@@ -7069,8 +7744,18 @@ fn turn_toward(cur: u16, target: u16, rate: u16) -> u16 {
 const PROP_TURN_RATE: u16 = 250;
 
 #[inline]
+fn prop_is_scientist(ty: u8) -> bool {
+    ty == PROP_TYPE_SCIENTIST || ty == PROP_TYPE_SCRIPTED_SITTING_SCI
+}
+
+#[inline]
+fn prop_is_zombie(ty: u8) -> bool {
+    ty == 5 || ty == PROP_TYPE_VENT_ZOMBIE
+}
+
+#[inline]
 fn prop_is_human(ty: u8) -> bool {
-    ty == PROP_TYPE_SCIENTIST || ty == PROP_TYPE_BARNEY
+    prop_is_scientist(ty) || ty == PROP_TYPE_BARNEY
 }
 
 #[inline]
@@ -7110,7 +7795,7 @@ fn submodel_point_solid(m: &Map, head0: i32, p: [i32; 3]) -> bool {
         }
         guard += 1;
         let nd = m.node(idx as usize);
-        idx = if dot12(nd.n, p) - nd.dist >= 0 {
+        idx = if dot12_q5(nd.n, p) - nd.dist_q5 >= 0 {
             nd.c0
         } else {
             nd.c1
@@ -7132,6 +7817,7 @@ unsafe fn point_in_ent_solid(m: &Map, p: [i32; 3]) -> bool {
             && e.kind != 4
             && !(e.kind == 7 && ENT_PHASE[ei] >= 2048)
             && !fan_collision_disabled(ei, e)
+            && !pendulum_collision_disabled(e)
         {
             let off = ent_draw_offset(ei);
             let dx = p[0] - (e.center[0] + off[0]);
@@ -7163,7 +7849,7 @@ unsafe fn point_in_one_ent(m: &Map, ei: usize, p: [i32; 3]) -> bool {
     submodel_point_solid(m, e.head0, q)
 }
 
-const PROP_NEAR_ENT_ID_MASK: u16 = 0x00FF;
+const PROP_NEAR_MOVER_SLOT_MASK: u16 = 0x00FF;
 const PROP_NAV_SRC_SLOT: usize = 0;
 const PROP_NAV_DST_SLOT: usize = 1;
 const PROP_NAV_NEXT_SLOT: usize = 2;
@@ -7175,8 +7861,8 @@ unsafe fn prop_nav_cache_get(pi: usize, slot: usize) -> u8 {
 
 #[inline]
 unsafe fn prop_nav_cache_put(pi: usize, slot: usize, value: u8) {
-    let ent_id = PROP_NEAR_ENTS[pi][slot] & PROP_NEAR_ENT_ID_MASK;
-    PROP_NEAR_ENTS[pi][slot] = ent_id | ((value as u16) << 8);
+    let mover_slot = PROP_NEAR_ENTS[pi][slot] & PROP_NEAR_MOVER_SLOT_MASK;
+    PROP_NEAR_ENTS[pi][slot] = mover_slot | ((value as u16) << 8);
 }
 
 /// Change the cached source without ever letting a next-hop computed for the
@@ -7216,6 +7902,8 @@ unsafe fn prop_nav_cache_invalidate(pi: usize) {
 unsafe fn refresh_prop_near_ents(movers: &[phys::Mover], pi: usize) {
     let p = PROP_POS[pi];
     let mut n = 0usize;
+    let mut slots = [0u8; 8];
+    let mut scores = [i64::MAX; 8];
     let mut mi = 0usize;
     while mi < movers.len() {
         let mv = movers[mi];
@@ -7228,16 +7916,42 @@ unsafe fn refresh_prop_near_ents(movers: &[phys::Mover], pi: usize) {
                 && (mv.center[2] + mv.off[2] - p[2]).abs() <= r
                 && (mv.center[1] + mv.off[1] - p[1]).abs() <= r + PROP_GROUND_PROBE_DOWN
             {
+                let dx = (mv.center[0] + mv.off[0] - p[0]) as i64;
+                let dy = (mv.center[1] + mv.off[1] - p[1]) as i64;
+                let dz = (mv.center[2] + mv.off[2] - p[2]) as i64;
+                let score = dx * dx + dy * dy + dz * dz;
                 if n < 8 {
-                    let nav_cache = PROP_NEAR_ENTS[pi][n] & !PROP_NEAR_ENT_ID_MASK;
-                    PROP_NEAR_ENTS[pi][n] = nav_cache | (mv.id as u16 & PROP_NEAR_ENT_ID_MASK);
+                    slots[n] = mi as u8;
+                    scores[n] = score;
                     n += 1;
+                } else {
+                    // Dense rooms can have dozens of conservative mover
+                    // spheres touching one actor. Keep the nearest eight, not
+                    // the first eight in entity order: otherwise a remote
+                    // early func_wall evicts the glass/door beside the actor
+                    // and the local collision trace becomes porous.
+                    let mut worst = 0usize;
+                    let mut k = 1usize;
+                    while k < scores.len() {
+                        if scores[k] > scores[worst] {
+                            worst = k;
+                        }
+                        k += 1;
+                    }
+                    if score < scores[worst] {
+                        slots[worst] = mi as u8;
+                        scores[worst] = score;
+                    }
                 }
-                // Over 8: keep the first 8 -- a probe missing a 9th distant
-                // brush is invisible next to the exhaustive-scan cost.
             }
         }
         mi += 1;
+    }
+    let mut k = 0usize;
+    while k < n {
+        let nav_cache = PROP_NEAR_ENTS[pi][k] & !PROP_NEAR_MOVER_SLOT_MASK;
+        PROP_NEAR_ENTS[pi][k] = nav_cache | slots[k] as u16;
+        k += 1;
     }
     PROP_NEAR_COUNT[pi] = n as u8;
 }
@@ -7272,6 +7986,7 @@ fn prop_floor_y_down(m: &Map, pi: usize, pos: [i32; 3], down: i32) -> Option<i32
                     && e.kind != 4
                     && !(e.kind == 7 && ENT_PHASE[ei] >= 2048)
                     && !fan_collision_disabled(ei, e)
+                    && !pendulum_collision_disabled(e)
                 {
                     let off = ent_draw_offset(ei);
                     let r = ENT_RADIUS[ei];
@@ -7293,7 +8008,17 @@ fn prop_floor_y_down(m: &Map, pi: usize, pos: [i32; 3], down: i32) -> Option<i32
         } else {
             let mut k = 0usize;
             while k < (nc as usize).min(8) {
-                let ei = (PROP_NEAR_ENTS[pi][k] & PROP_NEAR_ENT_ID_MASK) as usize;
+                let mover_slot = (PROP_NEAR_ENTS[pi][k] & PROP_NEAR_MOVER_SLOT_MASK) as usize;
+                if mover_slot >= MOVER_COUNT {
+                    k += 1;
+                    continue;
+                }
+                let mover_id = MOVERS[mover_slot].id;
+                if mover_id < 0 || mover_id as usize >= ENT_SOLID_COUNT {
+                    k += 1;
+                    continue;
+                }
+                let ei = mover_id as usize;
                 let e = ENT_CACHE[ei];
                 if ENT_ACTIVE[ei] != 0 {
                     let off = ent_draw_offset(ei);
@@ -7339,59 +8064,25 @@ fn prop_floor_y_down(m: &Map, pi: usize, pos: [i32; 3], down: i32) -> Option<i32
     if ncol == 0 {
         return world_y;
     }
-    // Ent in the column (door panel, crate, chair): scan for the highest ent
-    // surface, testing ONLY the column ents per point (the world part is
-    // already answered by the trace). Floor = the higher of the two.
-    // Per-ent anchored bisection instead of a 30-point linear scan: probe a
-    // few anchor heights inside the ent's own vertical extent; if any is
-    // solid, bisect the empty->solid boundary above it. ~6 point tests per
-    // column ent instead of ~30 x ncol (this was ~2000 subtree walks per
-    // frame on the office complex).
-    let scan_floor = world_y.unwrap_or(bottom);
+    // Ent in the column (door panel, crate, thin func_wall floor): trace each
+    // shortlisted hull-0 subtree exactly. Sparse point samples across a
+    // bounding sphere are invalid here: c1a1a's four-unit-thick corridor floor
+    // has a ~100-unit radius and all three old sample heights skipped its slab,
+    // dropping a zombie 128 units through it. A segment walk also replaces the
+    // old six-or-more subtree point walks per candidate brush with one trace.
     let mut ent_y: Option<i32> = None;
     let mut k = 0usize;
     while k < ncol {
         let ei = col[k] as usize;
         k += 1;
-        let (seg_top, seg_bot) = unsafe {
+        let (head0, off) = unsafe {
             let e = ENT_CACHE[ei];
-            let off = ent_draw_offset(ei);
-            let cy = e.center[1] + off[1];
-            let r = ENT_RADIUS[ei];
-            ((cy + r).min(top - 1), (cy - r).max(scan_floor))
+            (e.head0, ent_draw_offset(ei))
         };
-        if seg_top <= seg_bot {
-            continue;
-        }
-        // Anchors top-down so the FIRST solid found is under the highest
-        // empty span (matching the old top-down scan's choice of surface).
-        let mut solid_y: Option<i32> = None;
-        let mut empty_above = top;
-        let anchors = [seg_top, (seg_top + seg_bot) / 2, seg_bot];
-        let mut a = 0usize;
-        while a < anchors.len() {
-            let ay = anchors[a];
-            a += 1;
-            if unsafe { point_in_one_ent(m, ei, [x, ay, z]) } {
-                solid_y = Some(ay);
-                break;
+        if let Some(hit) = phys::trace_submodel_line(m, head0, off, [x, top, z], [x, bottom, z]) {
+            if hit.normal[1] > 0 && ent_y.is_none_or(|cur| hit.pos[1] > cur) {
+                ent_y = Some(hit.pos[1]);
             }
-            empty_above = ay;
-        }
-        let Some(mut solid) = solid_y else { continue };
-        let mut empty = empty_above;
-        let mut it = 0;
-        while it < 5 && empty - solid > 1 {
-            let mid = (solid + empty) / 2;
-            if unsafe { point_in_one_ent(m, ei, [x, mid, z]) } {
-                solid = mid;
-            } else {
-                empty = mid;
-            }
-            it += 1;
-        }
-        if ent_y.is_none_or(|cur| empty > cur) {
-            ent_y = Some(empty);
         }
     }
     match (ent_y, world_y) {
@@ -7505,7 +8196,9 @@ unsafe fn prop_try_step(
             // frame killer. Walkers still refuse steps with no floor under
             // them (HL CheckLocalMove); the flying controller keeps altitude.
             let to_flat = prop_target(ty, cand);
-            if !actor_line_clear(m, movers, from, to_flat) {
+            if !phys::line_clear_world(m, from, to_flat)
+                || !phys::actor_line_clear_movers(m, movers, from, to_flat)
+            {
                 #[cfg(feature = "reference-trace")]
                 {
                     probe_result |= 1;
@@ -7521,8 +8214,43 @@ unsafe fn prop_try_step(
                 i += 1;
                 continue;
             }
+            // Player and actor movement are separate phases. The player's
+            // sweep already rejects live actor hulls; mirror that gate here so
+            // an approaching monster cannot advance through the stationary
+            // player after the player phase has completed. Standing height is
+            // conservative while crouched and costs no persistent hull state.
+            if PROP_SCRIPT_MODE[pi] == 0 && PROP_AI_TARGET[pi] == PROP_TARGET_PLAYER {
+                let (actor_mins, actor_maxs) = actor_collision_bounds(ty, cand);
+                if ground_logic::actor_candidate_overlaps_player(
+                    actor_mins,
+                    actor_maxs,
+                    LOGIC_PLAYER_POS,
+                    36,
+                ) {
+                    i += 1;
+                    continue;
+                }
+            }
             let np = match prop_floor_y(m, pi, cand) {
-                Some(y) => [cand[0], y, cand[2]],
+                Some(y)
+                    if ty == PROP_TYPE_CONTROLLER
+                        || ground_logic::actor_floor_step_reachable(pos[1], y) =>
+                {
+                    [cand[0], y, cand[2]]
+                }
+                // GoldSrc walking monsters reach this floor through
+                // WALK_MOVE, capped by sv_stepsize=18. The broader 24-unit
+                // upward probe is useful for finding support but must not let
+                // actors climb otherwise unreachable ledges one unit at a
+                // time (c1a0c's console scientist escaped onto the lab ramp).
+                Some(_) => {
+                    #[cfg(feature = "reference-trace")]
+                    {
+                        probe_result |= 8;
+                    }
+                    i += 1;
+                    continue;
+                }
                 None if ty == PROP_TYPE_CONTROLLER => cand,
                 // Scripted actors are allowed to retain their current height
                 // across authored brush floors. Some set-piece walkways have
@@ -7920,8 +8648,11 @@ unsafe fn prop_move_towards_point(
     }
     let speed = speed * 2;
     let pos = PROP_POS[pi];
-    // Flanking spread (cheap separation): fan ordinary AI sideways so a group
-    // closes on the player in a rough arc instead of stacking on one point.
+    // Flanking spread (cheap separation): fan hostile combat AI sideways so a
+    // group closes on the player in a rough arc instead of stacking on one
+    // point. Followers and fleeing talk actors need the exact goal: c1a0c's
+    // console_guy otherwise loops beside the player and never enters the
+    // retinal scripted_sequence's 150-unit acquisition radius.
     // Scripted sequences must approach their exact authored mark: applying the
     // index spread to c0a0e's Barney leaves him ~100 units beside `barnwalk`, so
     // the sequence never completes and the station door never opens.
@@ -7929,7 +8660,8 @@ unsafe fn prop_move_towards_point(
         let dx = goal[0] - pos[0];
         let dz = goal[2] - pos[2];
         let d = isqrt_i32(dx * dx + dz * dz);
-        if PROP_SCRIPT_MODE[pi] == 0 && d > 64 {
+        let combat_spread = matches!(model_def(PROP_KIND[pi]).ai, AI_MELEE | AI_RANGED);
+        if PROP_SCRIPT_MODE[pi] == 0 && combat_spread && d > 64 {
             let spread = ((pi as i32 & 7) - 4) * 20; // -80..+60 units off the approach
             [
                 goal[0] + (-dz * spread) / d,
@@ -7996,7 +8728,7 @@ unsafe fn target_org(target: u8, player_pos: [i32; 3], nprops: usize) -> Option<
         return Some(player_pos);
     }
     let ti = target as usize;
-    if ti < nprops && PROP_HEALTH[ti] > 0 {
+    if ti < nprops && PROP_ACTIVE[ti] != 0 && PROP_HEALTH[ti] > 0 {
         Some(PROP_POS[ti])
     } else {
         None
@@ -8008,11 +8740,41 @@ unsafe fn target_aim_point(target: u8, player_pos: [i32; 3], nprops: usize) -> O
         return Some([player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]]);
     }
     let ti = target as usize;
-    if ti < nprops && PROP_HEALTH[ti] > 0 {
+    if ti < nprops && PROP_ACTIVE[ti] != 0 && PROP_HEALTH[ti] > 0 {
         Some(prop_target(PROP_KIND[ti], PROP_POS[ti]))
     } else {
         None
     }
+}
+
+/// GoldSrc melee damage is delivered by a physical touch/hull trace. Keep the
+/// cheap planar range gate used by the PS1 AI, but reject targets on another
+/// vertical level before applying damage. This is evaluated only on an attack
+/// impact tick and adds no persistent RAM.
+unsafe fn melee_target_vertical_reachable(
+    attacker_kind: u8,
+    attacker_pos: [i32; 3],
+    target: u8,
+    player_pos: [i32; 3],
+    nprops: usize,
+) -> bool {
+    let (attacker_min, attacker_max) = actor_collision_bounds(attacker_kind, attacker_pos);
+    let (target_min_y, target_max_y) = if target == PROP_TARGET_PLAYER {
+        (player_pos[1] - 36, player_pos[1] + 36)
+    } else {
+        let ti = target as usize;
+        if ti >= nprops || PROP_ACTIVE[ti] == 0 || PROP_HEALTH[ti] == 0 {
+            return false;
+        }
+        let (mins, maxs) = actor_collision_bounds(PROP_KIND[ti], PROP_POS[ti]);
+        (mins[1], maxs[1])
+    };
+    ground_logic::melee_vertical_hulls_overlap(
+        attacker_min[1],
+        attacker_max[1],
+        target_min_y,
+        target_max_y,
+    )
 }
 
 unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
@@ -8021,9 +8783,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     }
     PROP_HEALTH[pi] = PROP_HEALTH[pi].saturating_sub(dmg);
     PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
-    if player_inflicted
-        && (PROP_KIND[pi] == PROP_TYPE_SCIENTIST || PROP_KIND[pi] == PROP_TYPE_BARNEY)
-    {
+    if player_inflicted && prop_is_human(PROP_KIND[pi]) {
         // Talk allies remember player provocation permanently and immediately
         // stop following.
         prop_scientist_set_flag(pi, PROP_SCI_PROVOKED, true);
@@ -8065,11 +8825,13 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
             MON_PAIN_COOLDOWN = 10;
         }
     }
-    // Getting shot aggros the victim AND wakes same-species squadmates nearby
+    // Player damage aggros the victim AND wakes same-species squadmates nearby
     // (HL squad alert): back-shot grunts return fire, packs turn together.
+    // Monster-vs-monster damage must preserve its established enemy; Barney's
+    // c1a1 shots used to retarget the zombie from Barney to Gordon here.
     let kind = PROP_KIND[pi];
     let ai = model_def(kind).ai;
-    if PROP_HEALTH[pi] > 0 && matches!(ai, AI_MELEE | AI_RANGED | AI_TURRET) {
+    if player_inflicted && PROP_HEALTH[pi] > 0 && matches!(ai, AI_MELEE | AI_RANGED | AI_TURRET) {
         PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
         let pos = PROP_POS[pi];
         let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
@@ -8477,7 +9239,7 @@ unsafe fn init_trains(m: &Map, nlogic: usize, nents: usize) {
             };
             train_set_offset(rec, t, c0);
             ENT_TRAIN_SLOT[rec.brush as usize] = t as u8;
-            ENT_PREV_OFF[rec.brush as usize] = ent_draw_offset(rec.brush as usize);
+            ent_prev_off_store(rec.brush as usize, ent_draw_offset(rec.brush as usize));
             TRAIN_COUNT += 1;
         }
         li += 1;
@@ -8636,7 +9398,7 @@ fn prop_voice(kind: u8, dying: bool) -> u8 {
                 sfx::HC_PAIN
             }
         }
-        5 => sfx::ZO_PAIN, // zombies have no die vocal; pain growl covers both
+        5 | PROP_TYPE_VENT_ZOMBIE => sfx::ZO_PAIN, // no die vocal; pain growl covers both
         6 => {
             if dying {
                 sfx::HE_DIE
@@ -8730,6 +9492,26 @@ unsafe fn damage_target(target: u8, dmg: u8, health: &mut u16, armor: &mut u16) 
     }
 }
 
+/// Preserve GoldSrc's established `m_hEnemy` while it remains alive. Its
+/// `GetEnemy` only installs a newly visible candidate when the current
+/// schedule accepts `bits_COND_NEW_ENEMY`; c1a1's chase/melee sequence
+/// therefore stays locked on Barney even when Gordon passes closer.
+unsafe fn retained_actor_target(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    nprops: usize,
+) -> Option<(u8, bool)> {
+    let target = PROP_AI_TARGET[pi];
+    if target == PROP_TARGET_NONE {
+        return None;
+    }
+    let aim = target_aim_point(target, player_pos, nprops)?;
+    let from = prop_target(PROP_KIND[pi], PROP_POS[pi]);
+    Some((target, actor_line_clear(m, movers, from, aim)))
+}
+
 unsafe fn find_headcrab_target(
     m: &Map,
     movers: &[phys::Mover],
@@ -8738,17 +9520,15 @@ unsafe fn find_headcrab_target(
     nprops: usize,
 ) -> (u8, bool) {
     let pos = PROP_POS[pi];
-    let from = prop_target(PROP_TYPE_HEADCRAB, pos);
+    // This routine serves every melee alien, not only headcrabs. Tracing a
+    // full-height zombie from the headcrab's low target point can see under
+    // cover and establish the wrong initial enemy (c1a1 selected Gordon
+    // instead of the scripted Barney fight).
+    let from = prop_target(PROP_KIND[pi], pos);
     let mut best_visible = PROP_TARGET_NONE;
     let mut best_visible_d2 = HEADCRAB_WAKE_RANGE2;
-    let mut best_any = PROP_TARGET_NONE;
-    let mut best_any_d2 = HEADCRAB_WAKE_RANGE2;
 
     let player_d2 = dist2_xz(pos, player_pos);
-    if player_d2 < best_any_d2 {
-        best_any = PROP_TARGET_PLAYER;
-        best_any_d2 = player_d2;
-    }
     if player_d2 < best_visible_d2 {
         let to = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
         if actor_line_clear(m, movers, from, to) {
@@ -8767,12 +9547,13 @@ unsafe fn find_headcrab_target(
         } else {
             scan
         };
-        if ti < nprops && ti != pi && PROP_HEALTH[ti] > 0 && prop_is_human(PROP_KIND[ti]) {
+        if ti < nprops
+            && ti != pi
+            && PROP_ACTIVE[ti] != 0
+            && PROP_HEALTH[ti] > 0
+            && prop_is_human(PROP_KIND[ti])
+        {
             let d2 = dist2_xz(pos, PROP_POS[ti]);
-            if d2 < best_any_d2 {
-                best_any = ti as u8;
-                best_any_d2 = d2;
-            }
             if d2 < best_visible_d2 {
                 let to = prop_target(PROP_KIND[ti], PROP_POS[ti]);
                 if actor_line_clear(m, movers, from, to) {
@@ -8783,11 +9564,7 @@ unsafe fn find_headcrab_target(
         }
         scan += 1;
     }
-    if best_visible != PROP_TARGET_NONE {
-        (best_visible, true)
-    } else {
-        (best_any, false)
-    }
+    (best_visible, best_visible != PROP_TARGET_NONE)
 }
 
 unsafe fn find_barney_target(m: &Map, movers: &[phys::Mover], pi: usize, nprops: usize) -> u8 {
@@ -8805,10 +9582,15 @@ unsafe fn find_barney_target(m: &Map, movers: &[phys::Mover], pi: usize, nprops:
         } else {
             scan
         };
-        if ti < nprops && ti != pi && PROP_HEALTH[ti] > 0 && PROP_KIND[ti] == PROP_TYPE_HEADCRAB {
+        if ti < nprops
+            && ti != pi
+            && PROP_ACTIVE[ti] != 0
+            && PROP_HEALTH[ti] > 0
+            && prop_is_combat_hostile(PROP_KIND[ti])
+        {
             let d2 = dist2_xz(pos, PROP_POS[ti]);
             if d2 < best_d2 {
-                let to = prop_target(PROP_TYPE_HEADCRAB, PROP_POS[ti]);
+                let to = prop_target(PROP_KIND[ti], PROP_POS[ti]);
                 if actor_line_clear(m, movers, from, to) {
                     best = ti as u8;
                     best_d2 = d2;
@@ -8835,10 +9617,15 @@ unsafe fn find_scientist_threat(m: &Map, movers: &[phys::Mover], pi: usize, npro
         } else {
             scan
         };
-        if ti < nprops && ti != pi && PROP_HEALTH[ti] > 0 && PROP_KIND[ti] == PROP_TYPE_HEADCRAB {
+        if ti < nprops
+            && ti != pi
+            && PROP_ACTIVE[ti] != 0
+            && PROP_HEALTH[ti] > 0
+            && prop_is_combat_hostile(PROP_KIND[ti])
+        {
             let d2 = dist2_xz(pos, PROP_POS[ti]);
             if d2 < best_d2 {
-                let to = prop_target(PROP_TYPE_HEADCRAB, PROP_POS[ti]);
+                let to = prop_target(PROP_KIND[ti], PROP_POS[ti]);
                 if actor_line_clear(m, movers, from, to) {
                     best = ti as u8;
                     best_d2 = d2;
@@ -8850,9 +9637,10 @@ unsafe fn find_scientist_threat(m: &Map, movers: &[phys::Mover], pi: usize, npro
     best
 }
 
-/// Target acquisition for hostile actors: nearest player-or-human within `wake2`,
-/// preferring one with line of sight. Generalizes find_headcrab_target by wake
-/// range and uses the actor's own eye height.
+/// Target acquisition for hostile actors: nearest visible player-or-human
+/// within `wake2`. Generalizes find_headcrab_target by wake range and uses the
+/// actor's own eye height. A caller may separately retain an enemy it has
+/// already seen, but first awareness must never pass through an occluding wall.
 unsafe fn find_actor_target(
     m: &Map,
     movers: &[phys::Mover],
@@ -8866,14 +9654,8 @@ unsafe fn find_actor_target(
     let from = prop_target(ty, pos);
     let mut best_visible = PROP_TARGET_NONE;
     let mut best_visible_d2 = wake2;
-    let mut best_any = PROP_TARGET_NONE;
-    let mut best_any_d2 = wake2;
 
     let player_d2 = dist2_xz(pos, player_pos);
-    if player_d2 < best_any_d2 {
-        best_any = PROP_TARGET_PLAYER;
-        best_any_d2 = player_d2;
-    }
     if player_d2 < best_visible_d2 {
         let to = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
         if actor_line_clear(m, movers, from, to) {
@@ -8892,12 +9674,13 @@ unsafe fn find_actor_target(
         } else {
             scan
         };
-        if ti < nprops && ti != pi && PROP_HEALTH[ti] > 0 && prop_is_human(PROP_KIND[ti]) {
+        if ti < nprops
+            && ti != pi
+            && PROP_ACTIVE[ti] != 0
+            && PROP_HEALTH[ti] > 0
+            && prop_is_human(PROP_KIND[ti])
+        {
             let d2 = dist2_xz(pos, PROP_POS[ti]);
-            if d2 < best_any_d2 {
-                best_any = ti as u8;
-                best_any_d2 = d2;
-            }
             if d2 < best_visible_d2 {
                 let to = prop_target(PROP_KIND[ti], PROP_POS[ti]);
                 if actor_line_clear(m, movers, from, to) {
@@ -8908,11 +9691,7 @@ unsafe fn find_actor_target(
         }
         scan += 1;
     }
-    if best_visible != PROP_TARGET_NONE {
-        (best_visible, true)
-    } else {
-        (best_any, false)
-    }
+    (best_visible, best_visible != PROP_TARGET_NONE)
 }
 
 /// Ranged + turret AI. Acquire a target, face it, and fire a hitscan shot every
@@ -8921,6 +9700,7 @@ unsafe fn find_actor_target(
 unsafe fn tick_shooter(
     m: &Map,
     movers: &[phys::Mover],
+    sight_movers: &[phys::Mover],
     pi: usize,
     player_pos: [i32; 3],
     health: &mut u16,
@@ -8939,9 +9719,10 @@ unsafe fn tick_shooter(
 
     let reacquire = ai_reacquire(pi);
     let (target, visible) = if reacquire {
-        let found = find_actor_target(m, movers, pi, player_pos, nprops, wake2);
-        prop_ai_set_target_visible(pi, found.1);
-        found
+        let selected = retained_actor_target(m, sight_movers, pi, player_pos, nprops)
+            .unwrap_or_else(|| find_actor_target(m, sight_movers, pi, player_pos, nprops, wake2));
+        prop_ai_set_target_visible(pi, selected.1);
+        selected
     } else {
         (PROP_AI_TARGET[pi], prop_ai_target_visible(pi))
     };
@@ -9012,6 +9793,7 @@ unsafe fn tick_shooter(
 unsafe fn tick_headcrab(
     m: &Map,
     movers: &[phys::Mover],
+    sight_movers: &[phys::Mover],
     pi: usize,
     player_pos: [i32; 3],
     health: &mut u16,
@@ -9043,9 +9825,23 @@ unsafe fn tick_headcrab(
                 );
             } else if PROP_AI_TIMER[pi] == HEADCRAB_ATTACK_IMPACT_TICK {
                 let pos = PROP_POS[pi];
-                let from = prop_target(PROP_TYPE_HEADCRAB, pos);
-                if dist2_xz(pos, aim) <= reach2 && actor_line_clear(m, movers, from, aim) {
-                    damage_target(target, HEADCRAB_ATTACK_DAMAGE as u8, health, armor);
+                let kind = PROP_KIND[pi];
+                let from = prop_target(kind, pos);
+                if dist2_xz(pos, aim) <= reach2
+                    && melee_target_vertical_reachable(kind, pos, target, player_pos, nprops)
+                    && actor_line_clear(m, sight_movers, from, aim)
+                {
+                    // The shared low-frequency melee schedule uses an
+                    // effective 6-point player hit; that matches cumulative
+                    // GoldSrc damage along c1a1a. Preserve the authored
+                    // 10-point easy-skill slash for monster-vs-monster set
+                    // pieces such as c1a1's Barney fight.
+                    let damage = if prop_is_zombie(kind) && target != PROP_TARGET_PLAYER {
+                        ZOMBIE_ATTACK_DAMAGE
+                    } else {
+                        HEADCRAB_ATTACK_DAMAGE as u8
+                    };
+                    damage_target(target, damage, health, armor);
                 }
             }
         }
@@ -9058,9 +9854,10 @@ unsafe fn tick_headcrab(
 
     let reacquire = ai_reacquire(pi);
     let (target, visible) = if reacquire {
-        let found = find_headcrab_target(m, movers, pi, player_pos, nprops);
-        prop_ai_set_target_visible(pi, found.1);
-        found
+        let selected = retained_actor_target(m, sight_movers, pi, player_pos, nprops)
+            .unwrap_or_else(|| find_headcrab_target(m, sight_movers, pi, player_pos, nprops));
+        prop_ai_set_target_visible(pi, selected.1);
+        selected
     } else {
         (PROP_AI_TARGET[pi], prop_ai_target_visible(pi))
     };
@@ -9112,6 +9909,7 @@ unsafe fn tick_headcrab(
 unsafe fn tick_barney(
     m: &Map,
     movers: &[phys::Mover],
+    sight_movers: &[phys::Mover],
     pi: usize,
     player_pos: [i32; 3],
     health: &mut u16,
@@ -9124,7 +9922,7 @@ unsafe fn tick_barney(
 
     let reacquire = ai_reacquire(pi);
     let target = if reacquire {
-        let found = find_barney_target(m, movers, pi, nprops);
+        let found = find_barney_target(m, sight_movers, pi, nprops);
         // Barney's target search only returns candidates with clear LOS.
         prop_ai_set_target_visible(pi, found != PROP_TARGET_NONE);
         found
@@ -9139,7 +9937,17 @@ unsafe fn tick_barney(
                 PROP_STATE[pi] = PROP_STATE_ATTACK;
                 PROP_AI_TIMER[pi] = BARNEY_ATTACK_TICKS;
                 PROP_ATTACK_COOLDOWN[pi] = BARNEY_ATTACK_COOLDOWN;
-                damage_target(target, BARNEY_DAMAGE, health, armor);
+                // CZombie::TakeDamage retains only 30% of DMG_BULLET. Barney's
+                // pistol is the first campaign-visible case (c1a1); without
+                // this the ally deletes its scripted opponent before Gordon
+                // reaches the room.
+                let damage =
+                    if (target as usize) < nprops && prop_is_zombie(PROP_KIND[target as usize]) {
+                        ((BARNEY_DAMAGE as u16 * 3) / 10).max(1) as u8
+                    } else {
+                        BARNEY_DAMAGE
+                    };
+                damage_target(target, damage, health, armor);
                 sfx::play_world(sfx::GLOCK, PROP_POS[pi]);
             } else if PROP_AI_TIMER[pi] > 0 {
                 PROP_STATE[pi] = PROP_STATE_ATTACK;
@@ -9160,7 +9968,12 @@ unsafe fn tick_barney(
     if prop_scientist_flag(pi, PROP_SCI_FOLLOWING) {
         let player_eye = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
         let sees_player = if reacquire {
-            let clear = actor_line_clear(m, movers, prop_target(PROP_TYPE_BARNEY, pos), player_eye);
+            let clear = actor_line_clear(
+                m,
+                sight_movers,
+                prop_target(PROP_TYPE_BARNEY, pos),
+                player_eye,
+            );
             prop_ai_set_target_visible(pi, clear);
             clear
         } else {
@@ -9194,6 +10007,7 @@ unsafe fn tick_barney(
 unsafe fn tick_scientist(
     m: &Map,
     movers: &[phys::Mover],
+    sight_movers: &[phys::Mover],
     pi: usize,
     player_pos: [i32; 3],
     nprops: usize,
@@ -9204,7 +10018,7 @@ unsafe fn tick_scientist(
     // against every headcrab on every sim tick (at most 150 ms extra latency).
     let reacquire = ai_reacquire(pi);
     if reacquire {
-        let threat = find_scientist_threat(m, movers, pi, nprops);
+        let threat = find_scientist_threat(m, sight_movers, pi, nprops);
         prop_ai_set_target_visible(pi, threat != PROP_TARGET_NONE);
         if threat != PROP_TARGET_NONE {
             PROP_AI_TARGET[pi] = threat;
@@ -9268,8 +10082,12 @@ unsafe fn tick_scientist(
     if dist2_xz(pos, player_pos) < SCIENTIST_FACE_RANGE2 {
         let player_eye = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
         let sees_player = if reacquire {
-            let clear =
-                actor_line_clear(m, movers, prop_target(PROP_TYPE_SCIENTIST, pos), player_eye);
+            let clear = actor_line_clear(
+                m,
+                sight_movers,
+                prop_target(PROP_TYPE_SCIENTIST, pos),
+                player_eye,
+            );
             prop_ai_set_target_visible(pi, clear);
             clear
         } else {
@@ -9338,6 +10156,7 @@ unsafe fn init_prop_state(m: &Map) {
         let dead = ty & PROP_DEAD_BIT != 0; // authored corpse: death pose, no AI
         let dormant = ty & PROP_DORMANT_BIT != 0; // monstermaker stock
         let predisaster = ty & PROP_PREDISASTER_BIT != 0;
+        let prisoner = ty & PROP_PRISONER_BIT != 0;
         let kind = (ty & PROP_TYPE_MASK) as u8;
         // Sitting scientists are authored at seat height on chair brushes the
         // world tree can't see; snapping would drop them through the chair.
@@ -9359,7 +10178,13 @@ unsafe fn init_prop_state(m: &Map) {
             prop_grounded_pos(m, pi, org)
         };
         PROP_ACTIVE[pi] = if dormant { 0 } else { 1 };
-        PROP_DORMANT[pi] = dormant as u8;
+        PROP_DORMANT[pi] = if dormant {
+            PROP_RUNTIME_DORMANT_STOCK
+        } else if prisoner {
+            PROP_RUNTIME_PRISONER
+        } else {
+            0
+        };
         PROP_NAME[pi] = m.prop_name(pi);
         let carry_id = m.prop_carry_id(pi);
         PROP_LOGIC_LINK[pi] = if carry_id == 0 {
@@ -9381,9 +10206,17 @@ unsafe fn init_prop_state(m: &Map) {
         } else {
             leaf
         };
-        PROP_HEALTH[pi] = if dead { 0 } else { prop_start_health(kind) };
+        PROP_HEALTH[pi] = if dead {
+            0
+        } else if prisoner && prop_is_human(kind) {
+            // CGenericMonster defaults to 8 health; ordinary hostile prisoners
+            // retain their model-defined health through the other branch.
+            8
+        } else {
+            prop_start_health(kind)
+        };
         PROP_OCC_VIS[pi] = PROP_OCC_VISIBLE
-            | if predisaster && (kind == PROP_TYPE_SCIENTIST || kind == PROP_TYPE_BARNEY) {
+            | if predisaster && prop_is_human(kind) {
                 PROP_SCI_PREDISASTER
             } else {
                 0
@@ -9414,13 +10247,13 @@ unsafe fn rebuild_prop_hotlists() {
     // tails keep each hot loop to one direct list.
     if nprops < MAX_PROPS {
         let mut human_count = 0usize;
-        let mut headcrab_count = 0usize;
+        let mut hostile_count = 0usize;
         let mut pickup_count = 0usize;
         pi = 0;
         while pi < nprops {
             let kind = PROP_KIND[pi];
             human_count += prop_is_human_hot_candidate(kind) as usize;
-            headcrab_count += (kind == PROP_TYPE_HEADCRAB) as usize;
+            hostile_count += prop_is_combat_hostile(kind) as usize;
             pickup_count += prop_is_pickup(kind) as usize;
             pi += 1;
         }
@@ -9440,12 +10273,15 @@ unsafe fn rebuild_prop_hotlists() {
             PROP_AI_TARGET[nprops] = PROP_HOT_FALLBACK;
         }
 
-        if nprops + 1 + headcrab_count <= MAX_PROPS {
-            PROP_KIND[nprops] = headcrab_count as u8;
+        // PROP_KIND's unused tail is the exact ally/fear hostile hotlist.  The
+        // old headcrab-only list made Barney and scientists ignore every other
+        // enemy type, including c1a1's route-critical spawned zombie.
+        if nprops + 1 + hostile_count <= MAX_PROPS {
+            PROP_KIND[nprops] = hostile_count as u8;
             let mut out = nprops + 1;
             pi = 0;
             while pi < nprops {
-                if PROP_KIND[pi] == PROP_TYPE_HEADCRAB {
+                if prop_is_combat_hostile(PROP_KIND[pi]) {
                     PROP_KIND[out] = pi as u8;
                     out += 1;
                 }
@@ -9560,9 +10396,14 @@ unsafe fn tick_props(
         let moving_ai = ai == AI_MELEE || ai == AI_RANGED || ai == AI_ALLY || ai == AI_FLEE;
         // GoldSrc only gathers new monster sensory conditions in the client's
         // PVS (combat schedules continue outside it). VIS_BITS is the same
-        // cached player-view PVS used by rendering; an unknown leaf/cache stays
-        // awake so a cook or recovery failure can never freeze an actor.
-        let in_player_pvs = if player_pvs_current && PROP_LEAF[pi] > 0 {
+        // cached player-view PVS used by rendering. A stale cache must not grant
+        // one tick of omniscience while the player crosses a portal: that was
+        // enough for c1a1's Barney to acquire the monstermaker zombie roughly
+        // six seconds before Gordon entered the room. Existing targets and
+        // active schedules remain awake through behavior_awake below.
+        let in_player_pvs = if !player_pvs_current {
+            false
+        } else if PROP_LEAF[pi] > 0 {
             pvs_leaf_visible(m, PROP_LEAF[pi] as usize)
         } else {
             true
@@ -9584,24 +10425,40 @@ unsafe fn tick_props(
             refresh_prop_near_ents(movers, pi);
         }
 
-        // Props use WORLD-ONLY collision (no brush-entity mover hulls). trace_all
-        // is O(movers) per trace, so per-prop slide-move (x4 iters) + step + ground
-        // x the mover count is O(props x movers). On dense maps this explodes:
-        // c1a2 (Office Complex) has 70 props x 169 brush entities = ~100k hull-bbox
-        // checks/frame, dropping it to ~0.3 fps ("freezes as soon as you enter").
-        // World geometry still blocks enemies; them clipping a door/func_wall is
-        // non-essential. The PLAYER keeps full mover collision (its physics runs
-        // outside this loop). Restore per-prop mover collision via a spatial
-        // broadphase if it's ever needed.
-        let _ = movers;
-        let pm: &[phys::Mover] = &[];
+        // Never hand every brush entity to every actor trace: c1a2 has 70 props
+        // and 169 movers, and the former O(props x movers x step probes) path
+        // reduced the game to ~0.3 fps. The same staggered broadphase used by
+        // floor probes retains at most eight nearby mover slots. Materialize
+        // their current poses on the stack (320 bytes, zero persistent RAM), so
+        // doors/enclosures remain solid without restoring the frame killer.
+        let mut pm_storage = [phys::NO_MOVER; 8];
+        let near_count = PROP_NEAR_COUNT[pi];
+        let mut pm_count = 0usize;
+        if near_count != 0xFF {
+            let mut near_i = 0usize;
+            while near_i < (near_count as usize).min(pm_storage.len()) {
+                let mover_slot = (PROP_NEAR_ENTS[pi][near_i] & PROP_NEAR_MOVER_SLOT_MASK) as usize;
+                if mover_slot < movers.len() {
+                    pm_storage[pm_count] = movers[mover_slot];
+                    pm_count += 1;
+                }
+                near_i += 1;
+            }
+        }
+        let pm = &pm_storage[..pm_count];
         // Scripted actor work lives out of line to keep this MIPS function's
         // conditional branches in PC16 range. Ordinary props avoid the call.
         if (PROP_SCRIPT_MODE[pi] != 0
             || PROP_SCRIPT_LI[pi] != u16::MAX
             || PROP_SCRIPT_IDLE_CLIP[pi] != 0xFF)
-            && tick_scripted_actor(m, pi, primed_hold)
+            && tick_scripted_actor(m, pm, pi, primed_hold)
         {
+            pi += 1;
+            continue;
+        }
+        if (PROP_DORMANT[pi] & PROP_RUNTIME_PRISONER) != 0 {
+            PROP_STATE[pi] = PROP_STATE_IDLE;
+            PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
             pi += 1;
             continue;
         }
@@ -9631,11 +10488,17 @@ unsafe fn tick_props(
         match ai {
             // Melee aliens (zombie/houndeye/bullsquid/ichy) reuse the headcrab
             // approach+bite AI; ranged/boss/flyer types render but don't move yet.
-            AI_MELEE => tick_headcrab(m, pm, pi, player_pos, health, armor, nprops),
-            AI_RANGED => tick_shooter(m, pm, pi, player_pos, health, armor, nprops, true),
-            AI_TURRET => tick_shooter(m, pm, pi, player_pos, health, armor, nprops, false),
-            AI_ALLY => tick_barney(m, pm, pi, player_pos, health, armor, nprops),
-            AI_FLEE => tick_scientist(m, pm, pi, player_pos, nprops),
+            // Movement retains the eight-entry nearby-brush shortlist. Sight
+            // traces must use every mover: a door/glass brush can occlude a
+            // long segment while being nowhere near either endpoint. The full
+            // scan is paid only by staggered sensory checks and has its own
+            // cheap segment-vs-sphere broadphase, so it does not restore the
+            // old O(props x movers x step probes) frame killer.
+            AI_MELEE => tick_headcrab(m, pm, movers, pi, player_pos, health, armor, nprops),
+            AI_RANGED => tick_shooter(m, pm, movers, pi, player_pos, health, armor, nprops, true),
+            AI_TURRET => tick_shooter(m, pm, movers, pi, player_pos, health, armor, nprops, false),
+            AI_ALLY => tick_barney(m, pm, movers, pi, player_pos, health, armor, nprops),
+            AI_FLEE => tick_scientist(m, pm, movers, pi, player_pos, nprops),
             _ => {}
         }
         pi += 1;
@@ -10179,6 +11042,9 @@ static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
 // snark 5, satchel 1, tripmine 1, hivehand 8, gauss/egon 20).
 const WEAPON_DEFAULT_GIVE: [u16; N_WEAPONS] = [0, 17, 6, 25, 12, 5, 1, 20, 20, 8, 5, 5, 1, 1];
 const HORNET_REGEN_TICKS: u8 = 10; // 1 hornet / 0.5 s (hornetgun.cpp:33)
+const CROWBAR_HIT_COOLDOWN_TICKS: u8 = 5; // CCrowbar::Swing hit: 0.25 s
+const CROWBAR_MISS_COOLDOWN_TICKS: u8 = 10; // CCrowbar::Swing miss: 0.5 s
+const CROWBAR_FULL_DAMAGE_IDLE_TICKS: u8 = 20; // full damage again after one idle second
 
 #[inline]
 fn wdef_of(id: usize) -> &'static WeaponDef {
@@ -10636,6 +11502,7 @@ unsafe fn fire_hitscan(
     rot: &Mat3I16,
     base_t: [i32; 3],
     damage: u8,
+    club_damage: bool,
     range: i32,
     aim_x: i32,
     aim_y: i32,
@@ -10648,6 +11515,8 @@ unsafe fn fire_hitscan(
         eye[2] + (((rot.m[2][2] as i32) * range) >> 12),
     ];
     let world_hit = phys::trace_line(m, movers, eye, end);
+    #[cfg(feature = "deep-reference-trace")]
+    reference_trace::hitscan(SIM_NOW as u32, eye, end, world_hit);
     let world_limit_z = world_hit
         .map(|hit| (range * hit.frac) >> 12)
         .unwrap_or(range + 1);
@@ -10658,7 +11527,7 @@ unsafe fn fire_hitscan(
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     while pi < nprops {
         let ty = PROP_KIND[pi];
-        if prop_start_health(ty) == 0 || PROP_HEALTH[pi] == 0 {
+        if PROP_ACTIVE[pi] == 0 || prop_start_health(ty) == 0 || PROP_HEALTH[pi] == 0 {
             pi += 1;
             continue;
         }
@@ -10715,7 +11584,15 @@ unsafe fn fire_hitscan(
             spawn_impact_fx(decal_pos, IMPACT_KIND_WORLD, rot, base_t);
             sfx::play_world(sfx::RIC, decal_pos);
             if hit.mover >= 0 {
-                damage_brush_ent(m, m.n_logic, m.n_ents, hit.mover as usize, damage, SIM_NOW);
+                damage_brush_ent(
+                    m,
+                    m.n_logic,
+                    m.n_ents,
+                    hit.mover as usize,
+                    damage,
+                    club_damage,
+                    SIM_NOW,
+                );
             }
             hit.pos
         } else {
@@ -10734,7 +11611,7 @@ unsafe fn fire_hitscan(
             push_tracer(muzzle, target);
         }
         PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
-        if ty == PROP_TYPE_SCIENTIST {
+        if prop_is_scientist(ty) {
             PROP_AI_TIMER[best] = SCIENTIST_FEAR_TICKS;
         }
         Some(best)
@@ -10755,6 +11632,7 @@ fn pellet_offset(i: u8, spread: i32) -> (i32, i32) {
 /// hit-vs-miss sound).
 unsafe fn fire_weapon(
     d: &WeaponDef,
+    damage: u8,
     m: &Map,
     movers: &[phys::Mover],
     eye: [i32; 3],
@@ -10779,7 +11657,8 @@ unsafe fn fire_weapon(
             eye,
             rot,
             base_t,
-            d.damage,
+            damage,
+            true,
             d.range,
             MELEE_AIM_PIX,
             MELEE_AIM_PIX,
@@ -10800,7 +11679,8 @@ unsafe fn fire_weapon(
                     eye,
                     rot,
                     base_t,
-                    d.damage,
+                    damage,
+                    false,
                     d.range,
                     GLOCK_AIM_PIX_X,
                     GLOCK_AIM_PIX_Y,
@@ -10824,7 +11704,8 @@ unsafe fn fire_weapon(
                 eye,
                 rot,
                 base_t,
-                d.damage,
+                damage,
+                false,
                 d.range,
                 GLOCK_AIM_PIX_X,
                 GLOCK_AIM_PIX_Y,
@@ -10873,8 +11754,8 @@ unsafe fn fire_secondary(
             w.clip[W_SHOTGUN] -= 2;
             w.cooldown = 18;
             let d = w.def();
-            fire_weapon(d, m, movers, eye, rot, base_t, 4);
-            fire_weapon(d, m, movers, eye, rot, base_t, 6);
+            fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 4);
+            fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 6);
             sfx::play(sfx::SHOTGUN);
             true
         }
@@ -10894,6 +11775,7 @@ unsafe fn fire_secondary(
                 rot,
                 base_t,
                 (d.damage as u16 * 3).min(255) as u8,
+                false,
                 d.range,
                 GLOCK_AIM_PIX_X,
                 GLOCK_AIM_PIX_Y,
@@ -11085,7 +11967,7 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_inflic
             };
             let (dx, dy, dz) = (c[0] - pos[0], c[1] - pos[1], c[2] - pos[2]);
             if dx.abs() < radius && dy.abs() < radius && dz.abs() < radius {
-                damage_brush_ent(m, m.n_logic, nents, ei, damage, SIM_NOW);
+                damage_brush_ent(m, m.n_logic, nents, ei, damage, false, SIM_NOW);
             }
         }
         ei += 1;
@@ -11094,13 +11976,15 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_inflic
     let mut pi = 0;
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     while pi < nprops {
-        if prop_start_health(PROP_KIND[pi]) != 0 && PROP_HEALTH[pi] != 0 {
+        if PROP_ACTIVE[pi] != 0 && prop_start_health(PROP_KIND[pi]) != 0 && PROP_HEALTH[pi] != 0 {
             let t = prop_target(PROP_KIND[pi], PROP_POS[pi]);
             let d2 = dist2_3(t, pos);
             if d2 < r2 {
                 let dmg = (damage as i32 * (radius - isqrt_i32(d2)) / radius).clamp(0, 255) as u8;
                 damage_prop(pi, dmg, player_inflicted);
-                PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
+                if player_inflicted {
+                    PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
+                }
             }
         }
         pi += 1;
@@ -11180,7 +12064,10 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             let mut pi = 0;
             let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
             while pi < nprops {
-                if prop_start_health(PROP_KIND[pi]) != 0 && PROP_HEALTH[pi] != 0 {
+                if PROP_ACTIVE[pi] != 0
+                    && prop_start_health(PROP_KIND[pi]) != 0
+                    && PROP_HEALTH[pi] != 0
+                {
                     let d2 = dist2_3(prop_target(PROP_KIND[pi], PROP_POS[pi]), new);
                     if d2 < best_d2 {
                         best_d2 = d2;
@@ -11569,7 +12456,7 @@ fn camera_leaf(m: &Map, eye: [i32; 3]) -> i32 {
         }
         guard += 1;
         let nd = m.node(idx as usize);
-        let side = dot12(nd.n, eye) - nd.dist;
+        let side = dot12_q5(nd.n, eye) - nd.dist_q5;
         let next = if side >= 0 { nd.c0 } else { nd.c1 };
         if next < 0 {
             return -next - 1;
@@ -11686,19 +12573,6 @@ fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
     }
 }
 
-unsafe fn next_pvs_face_mark_token() -> u8 {
-    let next = PVS_FACE_MARK_TOKEN.wrapping_add(1);
-    if next == 0 {
-        for mark in PVS_FACE_MARK.iter_mut() {
-            *mark = 0;
-        }
-        PVS_FACE_MARK_TOKEN = 1;
-    } else {
-        PVS_FACE_MARK_TOKEN = next;
-    }
-    PVS_FACE_MARK_TOKEN
-}
-
 unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
     // The packet payload borrows the old PVS arrays' unused suffix. Invalidate
     // before the new live prefix can overwrite any part of it.
@@ -11715,7 +12589,10 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
     PVS_GROUP_COUNT = 0;
     PVS_TRI_REF_COUNT = 0;
     PVS_ENT_COUNT = 0;
-    let mark_token = next_pvs_face_mark_token();
+    // A 1-bit duplicate marker recovers 7.4 KiB over the old byte-per-face
+    // token array. PVS rebuilds already walk the visible marks; clearing 272
+    // words here is cold compared with retaining that RAM every frame.
+    PVS_FACE_MARK.fill(0);
 
     for i in 0..m.n_visleaves.min(MAX_LEAVES) {
         if VIS_BITS[i >> 3] & (1u8 << (i & 7)) == 0 {
@@ -11730,10 +12607,15 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
                 break;
             }
             let face = m.mark(mj);
-            if face >= MAX_FACES || PVS_FACE_MARK[face] == mark_token {
+            if face >= MAX_FACES {
                 continue;
             }
-            PVS_FACE_MARK[face] = mark_token;
+            let mark_word = face >> 5;
+            let mark_bit = 1u32 << (face & 31);
+            if PVS_FACE_MARK[mark_word] & mark_bit != 0 {
+                continue;
+            }
+            PVS_FACE_MARK[mark_word] |= mark_bit;
             let (first, cnt) = m.face_tris(face);
             if cnt == 0
                 || first > u16::MAX as usize
@@ -11768,9 +12650,12 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize) {
                     center: [bc[0] as i16, bc[1] as i16, bc[2] as i16],
                     radius,
                     tex: m.face_tex(face) as u8,
-                    is_loop: m.face_is_loop(face),
-                    translucent: m.face_translucent(face),
-                    band: 0,
+                    meta: (if m.face_is_loop(face) { PVS_FACE_LOOP } else { 0 })
+                        | (if m.face_translucent(face) {
+                            PVS_FACE_TRANSLUCENT
+                        } else {
+                            0
+                        }),
                 };
             }
             PVS_TRI_REF_COUNT += cnt;
@@ -13559,8 +14444,8 @@ unsafe fn draw_viewmodel(md: &Model, slots: &[TexSlot], frame: usize, np: &mut u
 
 /// Stack high-water probe (telemetry builds only): paint the free region
 /// between the statics and the live stack at boot, then report the lowest
-/// canary the stack ever clobbered. This measures the real stack need that
-/// the memory-report headroom gate (MIN_HEADROOM_KB) is protecting.
+/// canary the stack ever clobbered. This measures the real stack need behind
+/// the linker's fixed safety reserve.
 #[cfg(feature = "emulator-telemetry")]
 mod stackprobe {
     use psx_math::fmt::{i32_dec, I32_DEC_MAX};
@@ -13690,6 +14575,11 @@ fn main() {
             }
             player
         };
+        // Build-time reference checkpoints are consumed by the first loaded
+        // map only. Natural changelevels must preserve the state produced by
+        // gameplay instead of reapplying the direct-boot checkpoint.
+        #[cfg(feature = "semantic-input")]
+        let mut semantic_checkpoint_pending = true;
         // First load comes from the menu (fresh -> full loading card). A
         // changelevel re-enters play() with the previous frame still on screen,
         // so keep it frozen and overlay only a tiny "Loading" strip.
@@ -13701,6 +14591,8 @@ fn main() {
                 keep_frame,
                 #[cfg(feature = "semantic-input")]
                 &mut semantic_player,
+                #[cfg(feature = "semantic-input")]
+                &mut semantic_checkpoint_pending,
             ) {
                 PlayExit::BackToMenu => break,
                 PlayExit::Ending => {
@@ -13797,10 +14689,16 @@ unsafe fn trace_brush_entities(m: &Map, map_tick: u32) {
         let base_class = match e.kind {
             0 => Some("func_wall"),
             1 => Some("func_door"),
+            // Rotating buttons share kind 3 but deliberately keep a zero
+            // translation vector in the compact format. They remain usable;
+            // omit them here because GoldSrc identifies them as
+            // `func_rot_button`, outside the movable-brush parity set.
+            3 if e.mv != [0; 3] => Some("func_button"),
             5 => Some("func_rotating"),
             7 => Some("func_door_rotating"),
             ENT_KIND_PLATROT => Some("func_platrot"),
             ENT_KIND_PUSHABLE => Some("func_pushable"),
+            ENT_KIND_PENDULUM => Some("func_pendulum"),
             _ => None,
         };
         let class = match logic_match.map(|(_, rec)| rec.kind) {
@@ -13812,6 +14710,9 @@ unsafe fn trace_brush_entities(m: &Map, map_tick: u32) {
             Some(map::LOGIC_FUNC_DOOR) if e.kind == 7 => Some("func_door_rotating"),
             Some(map::LOGIC_FUNC_DOOR) if e.kind == ENT_KIND_PLATROT => Some("func_platrot"),
             Some(map::LOGIC_FUNC_DOOR) => Some("func_door"),
+            Some(map::LOGIC_HEALTH_CHARGER) => Some("func_healthcharger"),
+            Some(map::LOGIC_HEV_CHARGER) => Some("func_recharge"),
+            Some(map::LOGIC_FUNC_PENDULUM) => Some("func_pendulum"),
             _ => base_class,
         };
         let Some(class) = class else {
@@ -13842,6 +14743,8 @@ unsafe fn trace_brush_entities(m: &Map, map_tick: u32) {
             fan_angle_q12(ei, map_tick) as i32
         } else if e.kind == 7 {
             (ENT_PHASE[ei].wrapping_mul(e.mv[0]) >> 12) & 0x0fff
+        } else if e.kind == ENT_KIND_PENDULUM {
+            pendulum_angle_q12(ei) as i32
         } else {
             0
         };
@@ -13849,11 +14752,9 @@ unsafe fn trace_brush_entities(m: &Map, map_tick: u32) {
             platrot_local_to_world(e.center, off, platrot_world_yaw(e, ENT_PHASE[ei]))
         } else if e.kind == 5 {
             let r = fan_rotation(e, yaw_q12 as u16);
-            [
-                e.origin[0] + dot12(r.m[0], e.center),
-                e.origin[1] + dot12(r.m[1], e.center),
-                e.origin[2] + dot12(r.m[2], e.center),
-            ]
+            rotating_local_center(e, r)
+        } else if e.kind == ENT_KIND_PENDULUM {
+            rotating_local_center(e, pendulum_rotation(e, yaw_q12 as u16))
         } else if e.kind == 7 {
             let r = Mat3I16::rotate_y((yaw_q12 as u16) >> 4);
             [
@@ -13874,7 +14775,7 @@ unsafe fn trace_brush_entities(m: &Map, map_tick: u32) {
             class,
             targetname,
             brush: e.submodel as i32,
-            pos: if e.kind == 5 || e.kind == 7 {
+            pos: if e.kind == 5 || e.kind == 7 || e.kind == ENT_KIND_PENDULUM {
                 e.origin
             } else {
                 off
@@ -13887,6 +14788,8 @@ unsafe fn trace_brush_entities(m: &Map, map_tick: u32) {
             state,
             phase: if e.kind == 5 {
                 fan_angle_q12(ei, map_tick) as i32
+            } else if e.kind == ENT_KIND_PENDULUM {
+                pendulum_phase_q19(ei)
             } else {
                 ENT_PHASE[ei]
             },
@@ -13898,15 +14801,78 @@ unsafe fn trace_brush_entities(m: &Map, map_tick: u32) {
 
 #[cfg(feature = "reference-trace")]
 #[inline(never)]
-unsafe fn trace_human_entities(m: &Map, map_tick: u32) {
+unsafe fn trace_point_actors(m: &Map, map_tick: u32) {
+    // A monstermaker is a live point entity, while its preallocated PropRec is
+    // only dormant stock and does not exist in GoldSrc until MakeMonster. Emit
+    // the former and suppress the latter so the trace describes game state,
+    // not this port's allocation strategy.
+    let nlogic = m.n_logic.min(MAX_LOGIC);
+    let mut li = 0usize;
+    while li < nlogic {
+        let rec = m.logic(li);
+        if rec.kind == map::LOGIC_MONSTERMAKER && LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
+            reference_trace::entity(reference_trace::EntityState {
+                map_tick,
+                slot: 0x4000 | li as u16,
+                class: "monstermaker",
+                targetname: m.logic_name(rec.targetname),
+                brush: -1,
+                pos: rec.origin,
+                center: rec.origin,
+                vel: [0; 3],
+                yaw_q12: 0,
+                health: 0,
+                active: true,
+                state: LOGIC_STATE[li],
+                phase: LOGIC_COUNTER[li] as i32,
+                spawnflags: rec.spawnflags,
+            });
+        }
+        li += 1;
+    }
+
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     let mut pi = 0usize;
     while pi < nprops {
+        if PROP_DORMANT[pi] & PROP_RUNTIME_DORMANT_STOCK != 0 {
+            pi += 1;
+            continue;
+        }
+        let passive_generic = PROP_DORMANT[pi] & PROP_RUNTIME_PRISONER != 0
+            && matches!(PROP_KIND[pi], PROP_TYPE_SCIENTIST | PROP_TYPE_BARNEY);
         let class = match PROP_KIND[pi] {
+            PROP_TYPE_SCIENTIST if passive_generic => Some("monster_generic"),
+            PROP_TYPE_BARNEY if passive_generic => Some("monster_generic"),
             PROP_TYPE_SCIENTIST => Some("monster_scientist"),
             PROP_TYPE_BARNEY => Some("monster_barney"),
+            PROP_TYPE_HEADCRAB => Some("monster_headcrab"),
+            5 => Some("monster_zombie"),
+            PROP_TYPE_HOUNDEYE => Some("monster_houndeye"),
+            PROP_TYPE_BULLSQUID => Some("monster_bullchicken"),
+            8 => Some("monster_human_grunt"),
+            9 => Some("monster_alien_slave"),
+            10 => Some("monster_alien_grunt"),
+            PROP_TYPE_CONTROLLER => Some("monster_alien_controller"),
+            12 => Some("monster_barnacle"),
+            13 => Some("monster_leech"),
+            14 => Some("monster_cockroach"),
+            15 => Some("monster_gman"),
+            16 => Some("monster_gargantua"),
+            17 => Some("monster_nihilanth"),
+            18 => Some("monster_bigmomma"),
+            19 => Some("monster_ichthyosaur"),
+            20 => Some("monster_sentry"),
+            21 => Some("monster_turret"),
+            22 => Some("monster_miniturret"),
+            23 => Some("monster_apache"),
+            24 => Some("monster_flyer_flock"),
+            PROP_TYPE_SITTING_SCI => Some("monster_sitting_scientist"),
+            50 => Some("monster_tentacle"),
+            51 => Some("monster_human_assassin"),
             PROP_TYPE_LOADER => Some("monster_generic"),
             PROP_TYPE_FORKLIFT => Some("monster_generic"),
+            PROP_TYPE_SCRIPTED_SITTING_SCI => Some("monster_scientist"),
+            PROP_TYPE_VENT_ZOMBIE => Some("monster_zombie"),
             _ => None,
         };
         if let Some(class) = class {
@@ -13918,7 +14884,11 @@ unsafe fn trace_human_entities(m: &Map, map_tick: u32) {
                 targetname: m.logic_name(PROP_NAME[pi]),
                 brush: -1,
                 pos,
-                center: [pos[0], pos[1] + 36, pos[2]],
+                center: [
+                    pos[0],
+                    pos[1] + model_def(PROP_KIND[pi]).target_h / 2,
+                    pos[2],
+                ],
                 vel: [0; 3],
                 yaw_q12: PROP_YAW[pi] as i32,
                 health: PROP_HEALTH[pi] as u16,
@@ -13941,7 +14911,17 @@ unsafe fn trace_sim_tick(m: &Map, state: reference_trace::TickState) {
     // largest function beyond a PC16 branch span.
     if map_tick % 20 == 0 {
         trace_brush_entities(m, map_tick);
-        trace_human_entities(m, map_tick);
+        trace_point_actors(m, map_tick);
+        let player_leaf = camera_leaf(
+            m,
+            [
+                state.player_pos[0],
+                state.player_pos[1] + VIEW_HEIGHT,
+                state.player_pos[2],
+            ],
+        );
+        let cached_pvs_leaf = pvs_cam_leaf_load();
+        let pvs_current = valid_pvs_leaf(m, cached_pvs_leaf) && player_leaf == cached_pvs_leaf;
         let mut pi = 0usize;
         while pi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
             let prop_pos = PROP_POS[pi];
@@ -13961,6 +14941,17 @@ unsafe fn trace_sim_tick(m: &Map, state: reference_trace::TickState) {
                 yaw: PROP_YAW[pi],
                 state: PROP_STATE[pi],
                 health: PROP_HEALTH[pi],
+                ai_target: PROP_AI_TARGET[pi],
+                player_leaf,
+                cached_pvs_leaf,
+                pvs_current,
+                in_player_pvs: if !pvs_current {
+                    false
+                } else if PROP_LEAF[pi] > 0 {
+                    pvs_leaf_visible(m, PROP_LEAF[pi] as usize)
+                } else {
+                    true
+                },
                 script_mode: PROP_SCRIPT_MODE[pi],
                 script_goal: PROP_SCRIPT_GOAL[pi],
                 nav_src: prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT),
@@ -14039,6 +15030,7 @@ fn play(
     launch: RoomLaunch,
     keep_frame: bool,
     #[cfg(feature = "semantic-input")] semantic_player: &mut semantic_input::Player<'static>,
+    #[cfg(feature = "semantic-input")] semantic_checkpoint_pending: &mut bool,
 ) -> PlayExit {
     let _ = enable_analog_port1();
     settings::apply_all(); // honour the options menu's screen offset + volumes
@@ -14227,11 +15219,12 @@ fn play(
     // Map's field readers are intentionally unchecked on the PS1 hot path.
     // Reject a truncated or unknown payload once, before any offset/count can
     // turn into an out-of-bounds read. HLMA/B remain supported for previously
-    // cooked rooms; HLMC separates world PVS clusters from submodel leaves.
+    // cooked rooms; HLMC/D separate world PVS clusters from submodel leaves.
     if map_bytes.len() < 52
         || (&map_bytes[0..4] != b"HLMA"
             && &map_bytes[0..4] != b"HLMB"
-            && &map_bytes[0..4] != b"HLMC")
+            && &map_bytes[0..4] != b"HLMC"
+            && &map_bytes[0..4] != b"HLMD")
     {
         tty::println("hl-psx: unsupported world map format");
         telemetry::debug_log("hl-psx: unsupported world map format");
@@ -14323,12 +15316,21 @@ fn play(
         MAX_VERTS
     };
 
+    let mut carried_velocity = [0i32; 3];
+    let mut landmark_offset = [0i32; 3];
+    let mut axis = 0usize;
+    while axis < 3 {
+        let (offset, velocity) = logic_state::unpack_landmark_axis(launch.landmark_offset[axis]);
+        landmark_offset[axis] = offset;
+        carried_velocity[axis] = velocity;
+        axis += 1;
+    }
     let spawn_pos = if let Some(origin) = landmark_found {
         telemetry::debug_log("hl-psx: spawning at landmark");
         [
-            origin[0] + launch.landmark_offset[0],
-            origin[1] + launch.landmark_offset[1],
-            origin[2] + launch.landmark_offset[2],
+            origin[0] + landmark_offset[0],
+            origin[1] + landmark_offset[1],
+            origin[2] + landmark_offset[2],
         ]
     } else {
         if launch.landmark.len > 0 {
@@ -14349,6 +15351,9 @@ fn play(
             spawn_pos
         };
     let mut player = phys::Player::new(spawn_pos);
+    if launch.preserve_view {
+        player.vel = carried_velocity;
+    }
     let mut yaw: u16 = if launch.preserve_view {
         launch.yaw
     } else {
@@ -14359,6 +15364,22 @@ fn play(
     } else {
         0
     };
+    #[cfg(feature = "semantic-input")]
+    if *semantic_checkpoint_pending {
+        if let Some(origin) = reference_checkpoint::INITIAL_ORIGIN {
+            player.pos = origin;
+            player.clear_velocity();
+            player.on_ground = false;
+            player.ground_mover = -1;
+        }
+        if let Some(initial_yaw) = reference_checkpoint::INITIAL_YAW {
+            yaw = initial_yaw;
+        }
+        if let Some(initial_pitch) = reference_checkpoint::INITIAL_PITCH {
+            pitch = initial_pitch.clamp(-PITCH_MAX, PITCH_MAX);
+        }
+        *semantic_checkpoint_pending = false;
+    }
     let mut frame_no: u16 = 0;
     // Render-owned PVS key. The shared static is only an invalidation channel
     // for logic/simulation; keeping the hot key local prevents code layout
@@ -14392,9 +15413,12 @@ fn play(
             }
         }
     }
-    let mut fire_was_held = false; // rising-edge latch for non-auto weapons
     let mut sec_was_held = false; // rising-edge latch for L2 secondary fire
     let mut jump_was_held = false; // HL requires a release between jumps
+                                   // PM_Duck's 0.4 s standing-hull transition. Keeping this map-local rather
+                                   // than in Player preserves the latter's strict 36-byte resident footprint.
+    let mut duck_transition_ticks = 0u8;
+    let mut ladder_was_touching = false; // mount correction is entry-only
     let mut view_h_cur: i32 = VIEW_HEIGHT; // eased duck eye (HL's 0.4 s spline, linearized)
     let mut switch_prev = false; // rising-edge latch for L1/R1 weapon cycling
     let mut weapon_icon_ticks = 0u8; // select-icon flash countdown after a switch
@@ -14705,6 +15729,8 @@ fn play(
                         ("dist=", tram_seg_dist),
                         ("act=", tram_active as i32),
                         ("att=", tram_player_attached as i32),
+                        ("tyaw=", prev_tram_yaw as i32),
+                        ("vyaw=", yaw as i32),
                         ("spd=", tram_speed),
                         ("px=", player.pos[0]),
                         ("py=", player.pos[1]),
@@ -14779,10 +15805,13 @@ fn play(
                 }
             }
             let dead = death_ticks > 0;
-            // Auto weapons fire while held; everything else fires once per press.
+            // GoldSrc's ItemPostFrame calls PrimaryAttack every frame while
+            // IN_ATTACK is held; each weapon's next-attack timer rate-limits
+            // the actual shots/swings. Edge-triggering non-auto weapons made a
+            // held crowbar swing only once, so c1a1a's route missed while out
+            // of range and then remained pinned against the zombie forever.
             let fire_held = !dead && input_sample.held(semantic_input::ACTION_ATTACK);
-            let want_fire = fire_held && (weapon.def().fire == FIRE_AUTO || !fire_was_held);
-            fire_was_held = fire_held;
+            let want_fire = fire_held;
             // L2 = secondary fire (edge-triggered). On the crossbow it is a held
             // zoom (steady aim) rather than an attack.
             let sec_held = !dead && input_sample.held(semantic_input::ACTION_ATTACK2);
@@ -14792,9 +15821,10 @@ fn play(
             // Crouch (TRIANGLE held): lower stance + slower move; the world
             // trace runs on the cooked GoldSrc crouch hull (M48), so ducking
             // fits under low vents.
-            crouching = !dead
+            let duck_requested = !dead
                 && unsafe { MOUNTED_TANK } < 0
                 && input_sample.held(semantic_input::ACTION_DUCK);
+            crouching = duck_requested;
             // Flashlight (L3 toggles the HEV lamp; needs the suit).
             let flash_now = input_sample.held(semantic_input::ACTION_FLASHLIGHT);
             if flash_now && !flash_prev && suit_equipped && !dead {
@@ -14855,7 +15885,10 @@ fn play(
                 fwd = 0;
                 strafe = 0;
             }
-            if crouching {
+            // GoldSrc scales the command only when FL_DUCKING was already set
+            // at the start of PM_Duck. The initial 0.4-second transition (and
+            // the first airborne frame of a duck-jump) still use full input.
+            if player.crouch {
                 fwd /= 3; // duck factor 0.333 (pm_shared.c:1998)
                 strafe /= 3;
             }
@@ -15078,7 +16111,7 @@ fn play(
                         // registers as a lethal fall (land_impact) -- the
                         // faithful fall damage was killing tram passengers.
                         if player.vel[1] < 0 {
-                            player.vel[1] = 0;
+                            player.set_vertical_velocity(0);
                         }
                         player.on_ground = true;
                         player.ground_mover = -2; // compact synthetic tram support
@@ -15124,6 +16157,7 @@ fn play(
             let movers = unsafe { &mut *core::ptr::addr_of_mut!(MOVERS) };
             let previous_mover_count = unsafe { MOVER_COUNT };
             let mut mover_visibility_changed = false;
+            let mut mover_membership_changed = false;
             let mut nmov = 0;
             unsafe {
                 for ei in 0..nents {
@@ -15137,6 +16171,7 @@ fn play(
                         && e.kind != 4
                         && !(e.kind == 7 && ENT_PHASE[ei] >= 2048)
                         && !fan_collision_disabled(ei, e)
+                        && !pendulum_collision_disabled(e)
                         && nmov < movers.len()
                     {
                         // A continuously rotating fan, or a swinging door while
@@ -15145,12 +16180,17 @@ fn play(
                         // need pivot-aware rotation. Tag it out of actor LOS so
                         // stale/unrotated geometry can never hide a model. A
                         // fully closed swinging door remains a valid occluder.
-                        let visual_rotating = e.kind == 5 || (e.kind == 7 && ENT_PHASE[ei] != 0);
-                        let head0 = if visual_rotating {
+                        let visual_rotating = e.kind == 5
+                            || (e.kind == 7 && ENT_PHASE[ei] != 0)
+                            || (e.kind == ENT_KIND_PENDULUM && pendulum_phase_q19(ei) != 0);
+                        let mut head0 = if visual_rotating {
                             e.head0 | phys::MOVER_VISUAL_DISABLED
                         } else {
                             e.head0
                         };
+                        if e.kind == ENT_KIND_PENDULUM {
+                            head0 |= phys::mover_rotation_axis_tag(pendulum_axis(e));
+                        }
                         let (rc, rs) = if e.kind == ENT_KIND_PLATROT {
                             let rm = Mat3I16::rotate_y(platrot_world_yaw(e, ENT_PHASE[ei]) >> 4);
                             (rm.m[0][0] as i32, rm.m[0][2] as i32)
@@ -15160,12 +16200,22 @@ fn play(
                             // the same retained blade angle as the renderer.
                             let rm = fan_rotation(e, fan_angle_q12(ei, sim_frame_no));
                             (rm.m[0][0] as i32, rm.m[0][2] as i32)
+                        } else if e.kind == ENT_KIND_PENDULUM {
+                            let rm = pendulum_rotation(e, pendulum_angle_q12(ei));
+                            match pendulum_axis(e) {
+                                1 => (rm.m[1][1] as i32, rm.m[2][1] as i32),
+                                2 => (rm.m[0][0] as i32, rm.m[1][0] as i32),
+                                _ => (rm.m[0][0] as i32, rm.m[0][2] as i32),
+                            }
                         } else {
                             (4096, 0)
                         };
                         let old = movers[nmov];
                         let visual_pose_changed = (head0 & phys::MOVER_VISUAL_DISABLED) == 0
                             && (old.rc != rc || old.rs != rs);
+                        if nmov >= previous_mover_count || old.id != ei as i32 {
+                            mover_membership_changed = true;
+                        }
                         if nmov >= previous_mover_count
                             || old.id != ei as i32
                             || old.off != off
@@ -15198,6 +16248,9 @@ fn play(
                     // the car's collision turns with its walls through bends.
                     let rm = tram_world_rotation(tram_yaw_now);
                     let old = movers[nmov];
+                    if nmov >= previous_mover_count || old.id != -2 {
+                        mover_membership_changed = true;
+                    }
                     if nmov >= previous_mover_count
                         || old.id != -2
                         || old.off != toff
@@ -15223,8 +16276,21 @@ fn play(
             }
             if nmov != previous_mover_count {
                 mover_visibility_changed = true;
+                mover_membership_changed = true;
             }
             unsafe {
+                if mover_membership_changed {
+                    // Nearby broadphase records pack mover *slots*. If an
+                    // opening door or destroyed brush shifts the compact mover
+                    // list, force moving actors to rebuild before this tick's
+                    // collision rather than interpreting an old slot as its
+                    // new neighbour. Pose-only movement keeps slots valid.
+                    let mut pi = 0usize;
+                    while pi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
+                        PROP_NEAR_COUNT[pi] = 0xFF;
+                        pi += 1;
+                    }
+                }
                 if mover_visibility_changed {
                     // Fail open immediately while a door/plat/tram moves, then
                     // let the staggered probes converge. Opening geometry can
@@ -15248,6 +16314,7 @@ fn play(
                 }
                 carry_player_on_brush_mover(&mut player, &mut yaw, nents);
             }
+            let player_actor_start = player.pos;
 
             // Full player physics always runs; moving trains carry the player by
             // delta before the update, then block them through their shifted hull.
@@ -15270,22 +16337,91 @@ fn play(
                 }
                 want
             };
-            let on_ladder = unsafe { ladder_touch(&m, nents, player.pos) };
+            let ladder = unsafe {
+                ladder_touch(
+                    &m,
+                    nents,
+                    player.pos,
+                    ladder_was_touching,
+                    fwd > 0,
+                    ladder_logic::wants_descend(pitch),
+                )
+            };
+            let on_ladder = ladder.is_some();
+            // Whole-unit motion can first overlap a thin ladder just beyond a
+            // frame corner. Gold's float hull leaves the origin flush with the
+            // face; make that same correction once on an intentional mount.
+            if !ladder_was_touching && fwd != 0 {
+                if let Some((center, half, true)) = ladder {
+                    let target = ladder_logic::mount_target(player.pos, center, half);
+                    let _ = player.try_set_planar_position(&m, movers, target[0], target[2]);
+                }
+            }
+            ladder_was_touching = on_ladder;
             let in_water = !on_ladder
                 && unsafe {
                     water_touch(nents, [player.pos[0], player.pos[1] + 12, player.pos[2]])
                 };
-            // Duck -> the shorter hull-3, with HL's airborne origin shift
-            // (crouch-jump pulls the feet up 18 u) and the can't-stand-here
-            // guard, all inside set_crouch. It may refuse the un-duck.
-            player.set_crouch(&m, movers, crouching);
-            crouching = player.crouch;
-            if on_ladder {
-                player.update_climb(&m, movers, fwd, strafe, jump_held, yaw, pitch);
+            // PM_Duck changes to hull 3 after 0.4 seconds on the ground, or at
+            // once while airborne. It executes before PM_Jump, so pressing
+            // duck+jump from standing deliberately performs this frame's move
+            // with hull 1; the next tick activates hull 3 without shifting the
+            // airborne origin. This timing is required by c1a1f's slanted
+            // computer-bank crawlspace.
+            let (next_duck_timer, activate_duck_hull) = ground_logic::advance_duck_activation(
+                player.crouch,
+                duck_requested,
+                player.on_ground,
+                duck_transition_ticks,
+            );
+            duck_transition_ticks = next_duck_timer;
+            if activate_duck_hull {
+                player.set_crouch(&m, movers, true);
+            } else if !duck_requested {
+                player.set_crouch(&m, movers, false);
+            }
+            // View interpolation begins with the request; a blocked un-duck
+            // remains visually crouched because the short hull is still live.
+            crouching = duck_requested || player.crouch;
+            #[cfg(feature = "deep-reference-trace")]
+            {
+                phys::set_player_step_tick(sim_frame_no);
+                trace_player_hull_probes(sim_frame_no, &m, movers, &player, fwd, yaw, jump_want);
+            }
+            if let Some((center, half, _)) = ladder {
+                player.update_climb(
+                    &m,
+                    movers,
+                    fwd,
+                    strafe,
+                    jump_held,
+                    yaw,
+                    pitch,
+                    center,
+                    half,
+                );
             } else if in_water {
                 player.update_swim(&m, movers, fwd, strafe, jump_held, yaw, pitch);
             } else {
-                player.update(&m, movers, fwd, strafe, jump_want, yaw);
+                player.update(&m, movers, fwd, strafe, jump_want, duck_requested, yaw);
+            }
+            unsafe { resolve_player_actor_collision(&mut player, player_actor_start) };
+            // The moving-car carry path intentionally keeps one stable
+            // car-local seat so neutral input cannot accumulate Q12
+            // round-trip drift. Deliberate player motion must publish a new
+            // seat, though; otherwise the next tram tick restores the old
+            // coordinate and makes walking inside the opening tram appear
+            // completely frozen.
+            if tram_player_attached && (fwd != 0 || strafe != 0) {
+                let car_now = tram_pos_ext(
+                    &m,
+                    tram_seg,
+                    tram_seg_dist,
+                    tram_pre_from,
+                    tram_pre_total,
+                    tram_pre_left,
+                );
+                tram_rider_local = tram_seat_to_local(player.pos, car_now, tram_yaw_render);
             }
             // GoldSrc pushables react only to a grounded side touch. Resolve
             // their sweep after player movement, then publish the translated
@@ -15316,7 +16452,7 @@ fn play(
             // armor (DMG_FALL is not in the suit's absorb set) and is uncapped
             // -- long drops are lethal, as authored.
             {
-                let li = player.land_impact;
+                let li = player.land_impact as i32;
                 if li > 17 {
                     unsafe { add_view_punch(-(li.min(60) / 2), 0) };
                 }
@@ -15461,7 +16597,7 @@ fn play(
                     if tram_logic::rider_over_tram_footprint(local_xz[0], local_xz[1]) {
                         let seat_y = (player.pos[1] - car_now[1]).clamp(30, 100);
                         player.pos[1] = car_now[1] + seat_y;
-                        player.vel[1] = 0;
+                        player.set_vertical_velocity(0);
                         player.land_impact = 0;
                         player.on_ground = true;
                     } else {
@@ -15546,7 +16682,6 @@ fn play(
                             eye,
                             yaw,
                             pitch,
-                            movers,
                             sim_frame_no as u16,
                             &mut health,
                             &mut armor,
@@ -15581,9 +16716,9 @@ fn play(
                     // integrate -- integration would scale with gravity and
                     // overshoot wildly now that gravity is the faithful 2 u/t^2.
                     if PUSH_IMPULSE[1] > 0 {
-                        player.vel[1] = player.vel[1].max(PUSH_IMPULSE[1]);
+                        player.set_vertical_velocity(player.vel[1].max(PUSH_IMPULSE[1]));
                     } else if PUSH_IMPULSE[1] < 0 {
-                        player.vel[1] = player.vel[1].min(PUSH_IMPULSE[1]);
+                        player.set_vertical_velocity(player.vel[1].min(PUSH_IMPULSE[1]));
                     }
                     // Lateral push nudges the position directly (vel xz is
                     // recomputed from the stick every tick).
@@ -15628,6 +16763,7 @@ fn play(
                             &fire_rot,
                             base_t,
                             trec.arg0 as u8,
+                            false,
                             8192,
                             2,
                             2,
@@ -15659,8 +16795,34 @@ fn play(
                     let hs =
                         isqrt_i32(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
                     let inacc = (hs / 12).min(6) + if player.on_ground { 0 } else { 5 };
-                    let hit =
-                        fire_weapon(weapon.def(), &m, movers, eye, &fire_rot, fire_base_t, inacc);
+                    // GoldSrc's first crowbar swing after a one-second idle gap
+                    // does full damage; a held combo does half. `dry_ticks` was
+                    // otherwise write-only and is zeroed on weapon switches, so
+                    // it can retain this timer without growing Arsenal.
+                    let crowbar_combo = weapon.current == W_CROWBAR && weapon.dry_ticks != 0;
+                    let damage = if crowbar_combo {
+                        weapon.def().damage / 2
+                    } else {
+                        weapon.def().damage
+                    };
+                    let hit = fire_weapon(
+                        weapon.def(),
+                        damage,
+                        &m,
+                        movers,
+                        eye,
+                        &fire_rot,
+                        fire_base_t,
+                        inacc,
+                    );
+                    if weapon.current == W_CROWBAR {
+                        weapon.cooldown = if hit {
+                            CROWBAR_HIT_COOLDOWN_TICKS
+                        } else {
+                            CROWBAR_MISS_COOLDOWN_TICKS
+                        };
+                        weapon.dry_ticks = CROWBAR_FULL_DAMAGE_IDLE_TICKS;
+                    }
                     sfx::play(weapon_fire_sfx(weapon.current, hit));
                     // Eject a brass casing (bullet weapons only).
                     if matches!(
@@ -15737,8 +16899,9 @@ fn play(
                             clip: weapon.clip_display(),
                             reserve: weapon.reserve_display(),
                             on_ground: player.on_ground,
-                            ground_mover: player.ground_mover,
+                            ground_mover: player.ground_mover as i32,
                             train_pos: trace_train,
+                            train_yaw: tram_yaw_render,
                             train_seg: tram_seg.min(u16::MAX as usize) as u16,
                             train_dist: tram_seg_dist,
                             train_speed: tram_speed,
@@ -15773,21 +16936,23 @@ fn play(
 
             unsafe {
                 if CHANGE_REQUEST_ACTIVE != 0 {
-                    CHANGE_REQUEST_ACTIVE = 0;
-                    // Snapshot after the final actor tick. The cold pass may
-                    // repurpose VIS_BITS and mailbox rows without exposing
-                    // either mutation to live simulation.
-                    let landmark = CHANGE_REQUEST.landmark;
-                    let carry_count = snapshot_transition_actors(&m, nlogic, landmark);
-                    CHANGE_REQUEST.carry_count =
-                        logic_state::encode_carry_state(carry_count, tram_active);
-                    // Carry the whole arsenal into the next map.
-                    CARRY_VALID = true;
-                    CARRY_OWNED = weapon.owned;
-                    CARRY_CLIPS = weapon.clip;
-                    CARRY_AMMO = weapon.ammo;
-                    CARRY_CURRENT = weapon.current as u8;
-                    return PlayExit::ChangeLevel(CHANGE_REQUEST);
+                    // The transfer owns state after GoldSrc's three-frame
+                    // commit window, not the earlier trigger-contact pose.
+                    if let Some(next) = tick_pending_changelevel(
+                        &m,
+                        nlogic,
+                        &player,
+                        yaw,
+                        pitch,
+                        health,
+                        suit_equipped,
+                        armor,
+                        &weapon,
+                        tram_player_attached,
+                        tram_active,
+                    ) {
+                        return PlayExit::ChangeLevel(next);
+                    }
                 }
             }
             telemetry_frame = telemetry_frame.wrapping_add(1);
@@ -16014,7 +17179,9 @@ fn play(
                                     rec.center[2] as i32,
                                 ];
                                 let depth = (dot12(rot.m[2], c) + base_t[2]).max(0);
-                                rec.band = ((depth >> DEPTH_BAND_SHIFT).min(nbands - 1)) as u8;
+                                rec.set_band(
+                                    ((depth >> DEPTH_BAND_SHIFT).min(nbands - 1)) as u8,
+                                );
                                 continue;
                             }
                             if !bucketed {
@@ -16029,7 +17196,7 @@ fn play(
                                 ];
                                 let depth = (dot12(rot.m[2], c) + base_t[2]).max(0);
                                 let band = ((depth >> DEPTH_BAND_SHIFT).min(nbands - 1)) as u8;
-                                rec.band = band;
+                                rec.set_band(band);
                                 band
                             } else {
                                 let face = PVS_FACE_INDEX.0[e] as usize;
@@ -16061,7 +17228,7 @@ fn play(
                             let e = entry as usize;
                             entry = PVS_FACE_NEXT.0[e];
                             let band = if e < MAX_PVS_FACE_RECS {
-                                PVS_FACE_REC[e].band as usize
+                                PVS_FACE_REC[e].band() as usize
                             } else {
                                 let face = PVS_FACE_INDEX.0[e] as usize;
                                 let (bc, _) = m.face_bounds(face);
@@ -16092,13 +17259,13 @@ fn play(
                             entry = PVS_FACE_NEXT.0[e];
                             if e < MAX_PVS_FACE_RECS {
                                 let rec = PVS_FACE_REC[e];
-                                if nbands > 1 && rec.band as i32 != band {
+                                if nbands > 1 && rec.band() as i32 != band {
                                     continue;
                                 }
                                 if !WORLD_BOUNDS_CULL || cached_face_visible(rec, &rot, base_t) {
-                                    EMIT_BLEND = rec.translucent as u8;
-                                    EMIT_WAVE = rec.translucent;
-                                    if rec.is_loop {
+                                    EMIT_BLEND = rec.translucent() as u8;
+                                    EMIT_WAVE = rec.translucent();
+                                    if rec.is_loop() {
                                         emit_world_face_loop(
                                             &mut packets,
                                             &m,
@@ -16175,9 +17342,9 @@ fn play(
                             if e < MAX_PVS_FACE_RECS {
                                 let rec = PVS_FACE_REC[e];
                                 if !WORLD_BOUNDS_CULL || cached_face_visible(rec, &rot, base_t) {
-                                    EMIT_BLEND = rec.translucent as u8;
-                                    EMIT_WAVE = rec.translucent;
-                                    if rec.is_loop {
+                                    EMIT_BLEND = rec.translucent() as u8;
+                                    EMIT_WAVE = rec.translucent();
+                                    if rec.is_loop() {
                                         emit_world_face_loop(
                                             &mut packets,
                                             &m,
@@ -16341,11 +17508,12 @@ fn play(
                         platrot_local_to_world(e.center, off, platrot_world_yaw(e, ENT_PHASE[ei]))
                     } else if e.kind == 5 {
                         let rm = fan_rotation(e, fan_angle_q12(ei, sim_frame_no));
-                        [
-                            e.origin[0] + dot12(rm.m[0], e.center),
-                            e.origin[1] + dot12(rm.m[1], e.center),
-                            e.origin[2] + dot12(rm.m[2], e.center),
-                        ]
+                        rotating_local_center(e, rm)
+                    } else if e.kind == ENT_KIND_PENDULUM {
+                        rotating_local_center(
+                            e,
+                            pendulum_rotation(e, pendulum_angle_q12(ei)),
+                        )
                     } else if e.kind == 7 {
                         let ang = (((ENT_PHASE[ei] * e.mv[0]) >> 12) as u16) & 0x0fff;
                         let rm = Mat3I16::rotate_y(ang >> 4);
@@ -16382,18 +17550,25 @@ fn play(
                     );
                     continue;
                 }
-                // Rotating brushes (fans kind 5, swinging doors kind 7) have
-                // entity-local vertices and draw at pivot + rotation*vertex.
+                // Rotating brushes (fans kind 5, swinging doors kind 7 and
+                // pendulums kind 10) have entity-local vertices and draw at
+                // pivot + rotation*vertex.
                 // Targeted fans retain their integrated phase; cosmetic fans
                 // derive it from the map tick. Doors use their state phase.
-                if (e.kind == 5 || e.kind == 7) && e.mv[0] != 0 {
+                if (e.kind == 5 || e.kind == 7 || e.kind == ENT_KIND_PENDULUM)
+                    && e.mv[0] != 0
+                {
                     let ang = if e.kind == 5 {
                         fan_angle_q12(ei, sim_frame_no)
+                    } else if e.kind == ENT_KIND_PENDULUM {
+                        pendulum_angle_q12(ei)
                     } else {
                         (((ENT_PHASE[ei] * e.mv[0]) >> 12) as u16) & 0xFFF
                     };
                     let local_rotation = if e.kind == 5 {
                         fan_rotation(e, ang)
+                    } else if e.kind == ENT_KIND_PENDULUM {
+                        pendulum_rotation(e, ang)
                     } else {
                         Mat3I16::rotate_y(ang >> 4)
                     };
@@ -16674,7 +17849,7 @@ fn play(
                 if !lm.valid {
                     continue;
                 }
-                let radius = model_def(ty).radius;
+                let radius = prop_render_radius(pi, ty);
                 model_bounds_tests = model_bounds_tests.saturating_add(1);
                 // Far cull (bounded by world FAR_VIEW): skip distant detailed
                 // models before the costlier PVS/frustum/occlusion tests + draw.

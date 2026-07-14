@@ -1,7 +1,7 @@
 //! First-person HUD overlay, queued as OT primitives after the weapon pass. The
 //! numbers and status icons are generated from the real Half-Life HUD sprites at
 //! 75% source size by
-//! tools/extract_menu.py into git-ignored data/menu/hud.tex (4bpp, amber baked
+//! `host/hl-content` into git-ignored data/menu/hud.tex (4bpp, amber baked
 //! in, index 0 = transparent). Uploaded once to a free gameplay tpage.
 
 use psx_gpu::material::TextureMaterial;
