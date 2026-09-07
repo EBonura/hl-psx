@@ -1,0 +1,10 @@
+# Build this crate for the PlayStation 1 by default, so a plain
+# `cargo build --release` produces a PSX-EXE.
+[build]
+target = "mipsel-sony-psx"
+
+[unstable]
+# No prebuilt std for the PSX target: compile core ourselves, with the
+# memcpy/memset shims compiler-builtins needs on bare metal.
+build-std = ["core"]
+build-std-features = ["compiler-builtins-mem"]

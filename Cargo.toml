@@ -1,0 +1,30 @@
+[package]
+name = "hl-psx-build"
+version = "0.2.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Rust-only end-to-end builder for hl-psx"
+
+[[bin]]
+name = "hl-psx-build"
+path = "host/hl-build/main.rs"
+
+[dependencies]
+hl-format = { path = "shared/hl-format" }
+# Which PSoXide this builds against. Cargo owns the pin: both of these resolve
+# to one checkout in its git cache, and the build driver hydrates the SDK, the
+# linker script and mkisopsx out of it without needing `git` itself.
+#
+# The two revs have to match. They did not: psx-pack sat on af7cc544 while the
+# hydrate had moved on, so Cargo carried two checkouts of the same repository
+# and the pack format the game linked was not the one it was built beside.
+psoxide-link = { git = "https://github.com/EBonura/PSoXide.git", rev = "8df242b353b8a3664c1d2ed20622d692d1349306" }
+psx-pack = { git = "https://github.com/EBonura/PSoXide.git", rev = "8df242b353b8a3664c1d2ed20622d692d1349306" }
+lz4_flex = { version = "0.11", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

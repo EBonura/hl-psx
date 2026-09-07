@@ -1,0 +1,85 @@
+name: Source CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Source, tests, and licences
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: rustup show
+
+      - name: Enforce the source-only repository contract
+        run: |
+          test "$(tr -d '\n' < VERSION)" = "$(sed -nE 's/^version = "([0-9.]+)"/\1/p' game/Cargo.toml)"
+          bash scripts/check-source-only.sh
+
+      - name: Hydrate the pinned PSoXide SDK
+        run: cargo run --release --locked -- sdk
+
+      - name: Verify the PSoXide pin is on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pin=$(sed -nE 's/.*psoxide-link.*rev = "([0-9a-f]{40})".*/\1/p' Cargo.toml)
+          test ${#pin} -eq 40
+          status=$(curl --fail --silent --show-error \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/EBonura/PSoXide/compare/${pin}...main" \
+            | jq -r .status)
+          case "$status" in
+            identical|ahead) ;;
+            *) echo "PSoXide pin is not on main: $status" >&2; exit 1 ;;
+          esac
+
+      - name: Check formatting
+        run: |
+          cargo fmt --all -- --check
+          cargo fmt --manifest-path game/Cargo.toml --package hl-psx -- --check
+          cargo fmt --manifest-path host/hl-bsp/Cargo.toml --package hl-bsp -- --check
+          cargo fmt --manifest-path host/hl-content/Cargo.toml --package hl-content -- --check
+          cargo fmt --manifest-path host/hl-logic-tests/Cargo.toml --package hl-logic-tests -- --check
+          cargo fmt --manifest-path shared/hl-format/Cargo.toml --package hl-format -- --check
+
+      - name: Run host tests
+        run: |
+          cargo test --locked
+          cargo test --manifest-path host/hl-bsp/Cargo.toml --locked
+          cargo test --manifest-path host/hl-content/Cargo.toml --locked
+          cargo test --manifest-path host/hl-logic-tests/Cargo.toml --locked
+          cargo test --manifest-path shared/hl-format/Cargo.toml
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2
+        with:
+          tool: cargo-deny@0.19.4
+
+      - name: Audit dependency advisories, licences, and sources
+        run: |
+          cargo deny --manifest-path Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
+          cargo deny --manifest-path game/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
+          cargo deny --manifest-path host/hl-bsp/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
+          cargo deny --manifest-path host/hl-content/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
+          cargo deny --manifest-path host/hl-logic-tests/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
+          cargo deny --manifest-path shared/hl-format/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources

@@ -1,0 +1,136 @@
+# `trim-paths` is still a nightly cargo feature; this crate is nightly-pinned
+# anyway (bare-metal MIPS needs build-std), so the gate costs nothing.
+cargo-features = ["trim-paths"]
+
+[package]
+name    = "hl-psx"
+version = "0.2.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+
+# Standalone workspace, deliberately NOT at the repo root: keeping the crate
+# (and its device `.cargo/config.toml`) under game/ stops the PSX target config
+# from leaking onto the host tools built from PSoXide (mkisopsx), and
+# stops cargo adopting the SDK path-deps as implicit workspace members. Same
+# layout as the proven oot-psx / pico8-psx games.
+[workspace]
+
+[[bin]]
+name = "hl-psx"
+path = "src/main.rs"
+
+[profile.release]
+# no_std has no unwinder; abort keeps the binary small.
+panic         = "abort"
+codegen-units = 1
+lto           = true
+# Strip absolute host paths out of the binary. rustc bakes the source path of
+# every panic/assert site into .rodata (core::panic::Location), the linker
+# script folds .rodata into .data, and .data ends on ALIGN(2048) -- so where
+# the checkout happens to sit changes how much PS1 RAM the program uses, in
+# 2 KiB steps. Building from the demo disc submodule (a path 20 chars longer
+# than the sibling checkout) crossed exactly one of those steps and the link
+# failed with ".bss will not fit in region RAM". Trimming makes the output
+# location-independent, and saves ~640 bytes of the paths themselves.
+trim-paths    = "all"
+
+[features]
+# Presentation is decoupled from the 20 Hz simulation by default: the
+# renderer is identical and the simulation is bit-identical, only the
+# presented-frame count and the camera sampling change, and it measures
+# +5.6% on the tram-ride benchmark (13.79 -> 14.55). It carries the same
+# packet arena as a coupled build, so it cannot cost geometry on the vista
+# maps. Build with --no-default-features for the historical one-render-per-
+# tick loop.
+default = ["decoupled-present"]
+# A/B baseline for the CPU scratchpad optimization. Normal PS1 builds place
+# render working sets in the 1 KiB hardware scratchpad; enabling this feature
+# backs the identical layout with main RAM so regression profiles can isolate
+# the memory-location effect without changing renderer behavior.
+main-ram-render-scratch = []
+# Isolates the projection-stack experiment while leaving the visibility bits
+# and viewmodel bucket heads in hardware scratchpad. Regression builds use this
+# to run the same projection entry on the ordinary main-RAM CPU stack.
+main-ram-projection-stack = []
+# Emits PSoXide-only MMIO telemetry so `frontend launch` can stop on guest
+# frames and write profile/counter CSVs. Keep it off for burn/shipping builds.
+emulator-telemetry = []
+# Records the affine error histogram for every frame so tessellation changes
+# can be measured in texels. Binning every visible edge is slower than the
+# correction it measures, so this is deliberately separate from
+# `performance-telemetry`: builds with it measure quality and will not meet the
+# 20 fps scenario gates.
+affine-heatmap = ["performance-telemetry"]
+# Diagnostic build: tint every world primitive by the emit mechanism that
+# produced it (patch quad / refined child / triangle record / loop face /
+# raw tri). Tints replace the lightmap colour only, so packets, ordering,
+# and rasterized coverage are identical to a normal build and an uncovered
+# seam pixel can be attributed to the mechanisms bordering it.
+seam-census = []
+# Decouple presentation from the fixed 20 Hz simulation: render every
+# available VBlank slot with a camera interpolated between the last two
+# simulation ticks, the way the retail reference free-runs its frame loop
+# against interrupt-driven presentation. Simulation math, input polling and
+# tick cadence are untouched; only presented-frame count and camera sampling
+# change. Off = the exact historical one-render-per-tick loop.
+decoupled-present = []
+# Event/counter-only profile build. This leaves the large guest debug-log
+# diagnostics out so the profiler fits beside the shipping campaign pools.
+performance-telemetry = []
+# Headless-only test hook: hold L1 plus a low-byte map index at boot to skip the
+# menu and load that map directly. Off for normal discs.
+debug-map-boot = []
+# Headless-only camera placement for the regression matrix. Selector 15 frames
+# a map's fan, beam, liquid surface, or boss from cooked runtime data.
+debug-regression-viewpoints = []
+# Gives every weapon/ammo at spawn for deterministic viewmodel gallery captures.
+# Diagnostic only; normal campaign ownership and pickups remain unchanged.
+debug-weapon-gallery = []
+# Deterministic state/event stream consumed by the local reference harness. This is an
+# emulator-only diagnostic build: it includes telemetry and direct map boot,
+# while shipping builds retain zero trace code/data.
+reference-trace = ["emulator-telemetry", "debug-map-boot"]
+# Extra per-attempt NPC navigation diagnostics. Keep these out of ordinary
+# semantic replays so the trace build itself still fits PS1 RAM.
+deep-reference-trace = ["reference-trace"]
+# Replay a build-time HLINPUT1 route instead of reading the controller. This is
+# diagnostic-only and implies the trace stream; route bytes must never enter a
+# shipping build or its RAM budget.
+semantic-input = ["reference-trace"]
+# Closed-loop replay of a demo-derived waypoint route (HLWPTS1): the follower
+# steers the live player toward recorded positions with normal physics. Same
+# diagnostic-only rules as semantic-input; do not combine the two.
+route-follow = ["reference-trace"]
+# SDK crates from the PSoXide source tree hydrated by the root Rust build
+# driver. Keeping one pinned source snapshot makes the linker, runtime decoder,
+# audio encoder, and disc writer a reproducible set. `--psoxide` can seed this
+# local cache from a development checkout without changing the manifest.
+[dependencies]
+hl-format = { path = "../shared/hl-format" }
+psx-rt   = { path = "../.psoxide/sdk/crates/psx-rt" }
+psx-gpu  = { path = "../.psoxide/sdk/crates/psx-gpu" }
+psx-gte  = { path = "../.psoxide/sdk/crates/psx-gte" }
+psx-pad  = { path = "../.psoxide/sdk/crates/psx-pad" }
+psx-math = { path = "../.psoxide/sdk/crates/psx-math" }
+psx-vram = { path = "../.psoxide/sdk/crates/psx-vram" }
+psx-io   = { path = "../.psoxide/sdk/crates/psx-io" }
+psx-pack = { path = "../.psoxide/sdk/crates/psx-pack" }
+psx-spu  = { path = "../.psoxide/sdk/crates/psx-spu" }
+psx-asset = { path = "../.psoxide/sdk/crates/psx-asset" }
+psx-mc   = { path = "../.psoxide/sdk/crates/psx-mc" }
+psx-font = { path = "../.psoxide/sdk/crates/psx-font" }
+psx-fx   = { path = "../.psoxide/sdk/crates/psx-fx" }
+psx-telemetry = { path = "../.psoxide/sdk/crates/psx-telemetry" }
+psx-engine = { path = "../.psoxide/engine/crates/psx-engine" }
+psx-render-contract = { path = "../.psoxide/engine/crates/psx-render-contract" }
+
+[build-dependencies]
+# Use the exact disc compressor and guest decoder pair when sizing MAP_BUF for
+# tail-staged in-place HLZC streams. This replaces a fixed 4 KiB RAM guess with
+# a content-derived capacity that is rechecked after every asset recook.
+lz4_flex = { version = "0.11", default-features = false }
+psx-pack = { path = "../.psoxide/sdk/crates/psx-pack" }
+
+# The card driver is one-shot code behind a menu action; size beats speed.
+[profile.release.package.psx-mc]
+opt-level = "s"

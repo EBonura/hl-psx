@@ -1,0 +1,18 @@
+[package]
+name    = "hl-bsp"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+
+# Host tool (runs on the dev machine, not the PS1). Standalone workspace so it
+# never inherits game/.cargo/config.toml's mipsel-sony-psx target. The shared
+# engine dependency supplies only the pinned draw-surface wire contract here.
+[workspace]
+
+[[bin]]
+name = "hl-bsp"
+path = "src/main.rs"
+
+[dependencies]
+hl-format = { path = "../../shared/hl-format" }
+psx-render-contract = { path = "../../.psoxide/engine/crates/psx-render-contract" }
