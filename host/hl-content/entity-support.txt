@@ -1,0 +1,171 @@
+# GoldSrc classname | status | concise contract
+# Status is one of: runtime, approximated, cook_only, intentional,
+# missing_gameplay, missing_visual.
+aiscripted_sequence|runtime|cooked scripted actor control
+ambient_generic|runtime|speech and map sounds use compact audio records
+ammo_357|runtime|pickup prop
+ammo_9mmAR|runtime|pickup prop
+ammo_9mmARclip|missing_gameplay|legacy ammo alias is not mapped
+ammo_9mmclip|runtime|pickup prop
+ammo_ARgrenades|runtime|pickup prop
+ammo_buckshot|runtime|pickup prop
+ammo_crossbow|runtime|pickup prop
+ammo_gaussclip|runtime|pickup prop
+ammo_glockclip|runtime|pickup prop
+ammo_mp5clip|runtime|pickup prop
+ammo_mp5grenades|runtime|pickup prop
+ammo_rpgclip|runtime|pickup prop
+cycler|approximated|studio prop renders; no display/animation cycling
+cycler_sprite|runtime|compact sprite prop
+env_beam|runtime|compact beam logic
+env_beverage|runtime|owner stock, delayed soda pickup, six skins and can sound
+env_blood|missing_visual|blood emitter is absent
+env_bubbles|missing_visual|bubble volume is deliberately not rendered
+env_explosion|approximated|compact explosion effect and damage
+env_fade|runtime|screen fade logic
+env_funnel|missing_visual|funnel particles are absent
+env_global|runtime|persistent global state logic
+env_glow|runtime|compact sprite prop
+env_laser|runtime|compact beam logic
+env_message|runtime|titles overlay logic
+env_render|runtime|actor render-state controller
+env_shake|approximated|compact camera shake
+env_shooter|missing_visual|authored debris shooter is absent
+env_sound|missing_visual|room DSP/acoustic controller is absent
+env_spark|approximated|compact spark emitter
+env_sprite|runtime|compact sprite prop
+func_breakable|runtime|breakable brush and compact debris
+func_button|runtime|button logic and moving brush
+func_conveyor|approximated|implemented through trigger-push semantics
+func_door|runtime|linear door logic and collision
+func_door_rotating|runtime|rotating door logic and collision
+func_friction|missing_gameplay|friction trigger volume is absent
+func_guntarget|runtime|moving damageable target
+func_healthcharger|runtime|health charger logic
+func_illusionary|runtime|rendered brush and optional frame control
+func_ladder|runtime|ladder volume participates in player movement
+func_monsterclip|runtime|NPC-only collision volume
+func_mortar_field|missing_gameplay|mortar controller is absent
+func_pendulum|runtime|pendulum pose and collision
+func_platrot|runtime|rotating platform pose and collision
+func_pushable|runtime|pushable brush and collision
+func_recharge|runtime|HEV charger logic
+func_rot_button|runtime|rotating button logic
+func_rotating|runtime|fan pose and collision
+func_tank|approximated|mountable direct-use hitscan tank
+func_tankcontrols|approximated|separate controls are folded into direct tank use
+func_tanklaser|approximated|degrades to the compact tank weapon
+func_tankmortar|approximated|degrades to the compact tank weapon
+func_tankrocket|approximated|degrades to the compact tank weapon
+func_trackautochange|approximated|minimal junction button routing
+func_trackchange|approximated|minimal junction button routing
+func_tracktrain|runtime|path-track moving brush
+func_train|runtime|path-corner moving brush
+func_traincontrols|approximated|controls are folded into direct train use
+func_wall|runtime|rendered brush and optional frame control
+func_wall_toggle|runtime|toggleable render and collision brush
+func_water|runtime|liquid brush volume and surface
+gibshooter|missing_visual|authored gib shooter is absent
+info_bigmomma|missing_gameplay|boss node behavior is absent
+info_landmark|cook_only|transition transform marker
+info_node|cook_only|navigation graph input
+info_node_air|missing_gameplay|air navigation graph is absent
+info_player_start|cook_only|spawn selection input
+info_target|cook_only|target and teleport resolution input
+info_teleport_destination|cook_only|teleport destination input
+infodecal|missing_visual|authored decals are absent
+item_battery|runtime|pickup prop and logic
+item_healthkit|runtime|pickup prop
+item_longjump|runtime|pickup prop
+item_suit|runtime|pickup prop and logic
+light|cook_only|baked light input; named styles become runtime logic
+light_environment|cook_only|baked world-light input
+light_spot|cook_only|baked light input; named styles become runtime logic
+momentary_door|runtime|door logic
+momentary_rot_button|runtime|continuous-use rotating control
+monster_alien_controller|approximated|shared ranged actor behavior
+monster_alien_grunt|approximated|shared melee actor behavior
+monster_alien_slave|approximated|shared ranged actor behavior
+monster_apache|approximated|rendered actor without complete vehicle AI
+monster_barnacle|approximated|rendered actor without complete barnacle AI
+monster_barney|approximated|compact ally behavior
+monster_barney_dead|runtime|static authored corpse
+monster_bigmomma|approximated|rendered boss without complete boss AI
+monster_bullchicken|approximated|shared melee actor behavior
+monster_cockroach|approximated|compact ambient actor behavior
+monster_flyer_flock|approximated|passive rendered flock
+monster_furniture|runtime|static studio prop
+monster_gargantua|approximated|rendered boss without complete boss AI
+monster_generic|approximated|allowlisted scripted model puppet
+monster_gman|approximated|scripted passive actor
+monster_headcrab|approximated|compact melee actor behavior
+monster_hevsuit_dead|runtime|static authored corpse
+monster_hgrunt_dead|runtime|static authored corpse
+monster_houndeye|approximated|compact blast actor behavior
+monster_human_assassin|approximated|shared ranged actor behavior
+monster_human_grunt|approximated|shared ranged actor behavior
+monster_ichthyosaur|approximated|rendered actor without complete swim AI
+monster_leech|approximated|rendered actor without complete swim AI
+monster_miniturret|approximated|shared turret behavior
+monster_nihilanth|approximated|rendered boss without complete boss AI
+monster_osprey|missing_gameplay|renders as a static prop; no flight path
+monster_rat|missing_gameplay|renders; no scurry AI
+monster_scientist|approximated|compact ally and scripted behavior
+monster_scientist_dead|runtime|static authored corpse
+monster_sentry|approximated|shared turret behavior
+monster_sitting_scientist|approximated|compact seated ally behavior
+monster_tentacle|approximated|scripted rendered actor without complete AI
+monster_tripmine|missing_gameplay|renders; no laser beam or detonation
+monster_turret|approximated|shared turret behavior
+monster_zombie|approximated|shared melee actor behavior
+monstermaker|approximated|bounded dormant actor pool
+multi_manager|runtime|timed target fan-out logic
+multisource|runtime|multi-input gate logic
+path_corner|cook_only|func_train route input
+path_track|cook_only|func_tracktrain route input
+player_loadsaved|missing_gameplay|scripted reload/death controller is absent
+player_weaponstrip|runtime|inventory logic
+scripted_sentence|runtime|compact authored dialogue
+scripted_sequence|runtime|compact actor sequence control
+speaker|approximated|sentence group is folded into compact ambience
+target_cdaudio|runtime|music trigger logic
+trigger_auto|runtime|map-start target logic
+trigger_autosave|missing_gameplay|authored checkpoint system is absent
+trigger_camera|missing_gameplay|scripted camera system is absent
+trigger_cdaudio|runtime|music trigger logic
+trigger_changelevel|runtime|transition logic and carry snapshot
+trigger_endsection|runtime|Hazard Course completion logic
+trigger_gravity|runtime|player gravity volume
+trigger_hurt|runtime|damage volume
+trigger_monsterjump|missing_gameplay|monster jump volume is absent
+trigger_multiple|runtime|repeatable touch trigger
+trigger_once|runtime|single-use touch trigger
+trigger_push|runtime|push volume
+trigger_relay|runtime|target relay logic
+trigger_teleport|runtime|teleport volume and destination
+trigger_transition|cook_only|transition carry filter volume
+weapon_357|runtime|weapon pickup prop
+weapon_9mmAR|runtime|weapon pickup prop
+weapon_9mmhandgun|runtime|weapon pickup prop
+weapon_crossbow|runtime|weapon pickup prop
+weapon_crowbar|runtime|weapon pickup prop
+weapon_egon|runtime|weapon pickup prop
+weapon_gauss|runtime|weapon pickup prop
+weapon_glock|runtime|weapon pickup prop
+weapon_handgrenade|runtime|weapon pickup prop
+weapon_hornetgun|runtime|weapon pickup prop
+weapon_mp5|runtime|weapon pickup prop
+weapon_rpg|runtime|weapon pickup prop
+weapon_satchel|runtime|weapon pickup prop
+weapon_shotgun|runtime|weapon pickup prop
+weapon_snark|runtime|weapon pickup prop
+weapon_tripmine|runtime|weapon pickup prop
+weaponbox|missing_gameplay|dropped inventory container is absent
+world_items|runtime|legacy suit and battery pickup aliases
+worldspawn|runtime|map flags and world data
+xen_hair|runtime|Xen ambient prop
+xen_plantlight|approximated|renders; no light pulse
+xen_spore_large|runtime|Xen ambient prop
+xen_spore_medium|runtime|Xen ambient prop
+xen_spore_small|runtime|Xen ambient prop
+xen_tree|approximated|renders; no tentacle strike

@@ -1,0 +1,14 @@
+[package]
+name = "hl-logic-tests"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Host runner for the PS1 crate's pure-logic unit tests"
+
+[workspace]
+
+[dependencies]
+psx-engine = { path = "../../.psoxide/engine/crates/psx-engine" }
+
+[lib]
+path = "src/lib.rs"
