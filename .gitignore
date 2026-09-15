@@ -37,7 +37,8 @@ config.mk
 # ---- Local-only material (kept on disk, never committed) ----
 docs/
 reference/
-tools/
+/tools/*
+!/tools/bootstrap-components.py
 
 # ---- OS / editor cruft ----
 .DS_Store

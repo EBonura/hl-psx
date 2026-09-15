@@ -145,8 +145,9 @@ cargo run --release -- --help                 # show every option
 ```
 
 `HL_DIR`, `PSOXIDE`, and `GAMES_DIR` are accepted as environment defaults.
-Normal builds hydrate the pinned historical PSoXide revision, which includes
-the SDK, engine and audio cooker. Their current source owners are
+Normal builds hydrate the exact SDK, emulator support crates, and editor/engine
+revisions in `components.lock.json`, verifying imported file hashes before reuse.
+The SDK helper dependencies resolve the same SDK revision as that lock. Source owners are
 [the SDK](https://github.com/EBonura/PSoXide) and
 [the editor/engine](https://github.com/EBonura/PSoXide-editor). Contributors
 can test a bootstrapped editor checkout with
