@@ -1138,7 +1138,27 @@ fn prepare_psoxide(explicit: Option<&Path>) -> Result<PathBuf> {
             let path = path.canonicalize()?;
             psoxide_link::hydrate(&path, &destination, None, false)?;
         }
-        None => psoxide_link::hydrate_pinned(&destination, psoxide_rev(), true)?,
+        None => {
+            let lock = root().join("components.lock.json");
+            let bytes = fs::read(&lock)?;
+            let components: serde_json::Value = serde_json::from_slice(&bytes)?;
+            if components["components"]["sdk"]["revision"].as_str() != Some(psoxide_rev()) {
+                return Err("SDK component and Cargo dependency pins disagree".into());
+            }
+            run(
+                Command::new("python3")
+                    .arg(root().join("tools/bootstrap-components.py"))
+                    .arg("--root")
+                    .arg(&destination)
+                    .arg("--lock")
+                    .arg(&lock),
+                "bootstrap PSoXide components",
+            )?;
+            fs::write(
+                destination.join(".psoxide-source"),
+                format!("components:{:x}", Sha256::digest(&bytes)),
+            )?;
+        }
     }
     Ok(destination)
 }

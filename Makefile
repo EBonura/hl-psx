@@ -3,7 +3,9 @@
 
 ROOT := $(CURDIR)
 HL_DIR ?=
-PSOXIDE ?= $(abspath $(ROOT)/../PSoXide)
+PSOXIDE ?= $(ROOT)/.psoxide
+FRONTEND ?= frontend
+EDITOR ?= $(abspath $(ROOT)/../PSoXide-editor)
 GAMES_DIR ?=
 FEATURES ?=
 MAP ?= c1a0
@@ -16,8 +18,8 @@ FEATURE_ARG := $(if $(strip $(FEATURES)),--features "$(FEATURES)",)
 DIST := $(ROOT)/dist
 HLBSP := $(ROOT)/host/hl-bsp
 HLBSP_BIN := $(HLBSP)/target/release/hl-bsp
-PSOXIDE_LAUNCH := cd "$(PSOXIDE)/emu" && cargo run -p frontend --release -- launch
-PSOXIDE_DEV := cargo run --manifest-path "$(PSOXIDE)/tools/psoxide-dev/Cargo.toml" --release --
+PSOXIDE_LAUNCH := "$(FRONTEND)" launch
+PSOXIDE_DEV := cargo run --manifest-path "$(EDITOR)/tools/psoxide-dev/Cargo.toml" --release --
 
 PSOXIDE_SMOKE_STEPS ?= 50000000
 PSOXIDE_GAMEPLAY_STEPS ?= 320000000
