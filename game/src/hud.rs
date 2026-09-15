@@ -5,6 +5,12 @@
 //! client DLL (`health.cpp`, `battery.cpp`, and `ammo.cpp`) so the 12x16 number
 //! face, fixed three-digit fields, separators, ammo icons, and crosshairs land
 //! on the same pixels as the PC game at 320x240.
+//!
+//! Layout follows the original SDK client: every bottom element, numbers
+//! included, sits at y = ScreenHeight - 1.5 * FontHeight (216) and the suit
+//! at ScreenWidth / 5. The 25th-anniversary SDK later lowered the numbers by
+//! FontHeight / 5 and moved the suit to 3 * width; that is not what the
+//! shipped game did, and the shared Counter-Strike client never had it.
 
 use psx_gpu::material::{BlendMode, TextureMaterial};
 use psx_gpu::ot::OrderingTable;
@@ -62,6 +68,7 @@ const SUIT_EMPTY_U: u8 = 100;
 const SUIT_V: u8 = 16;
 const SUIT_W: u8 = 20;
 const SUIT_H: u8 = 20;
+const SUIT_X: i16 = 320 / 5; // battery.cpp: x = ScreenWidth / 5, number after the icon width
 const HEALTH_U: u8 = 120;
 const HEALTH_V: u8 = 16;
 const HEALTH_W: u8 = 16;
@@ -504,7 +511,7 @@ pub fn draw<const N: usize>(
         let armor_mat = alpha_mat(mats.amber, armor_alpha);
         let ammo_mat = alpha_mat(mats.amber, ammo_alpha);
         let base_y = 240 - DH as i16 - DH as i16 / 2; // 216
-        let number_y = base_y + (DH as i16 * 2 / 10); // 219
+        let number_y = base_y; // numbers share the icon baseline
 
         // CHudHealth::Draw: cross at x=CrossWidth/2, then a fixed 3-digit field.
         sprite(
@@ -545,7 +552,7 @@ pub fn draw<const N: usize>(
             SUIT_V,
             SUIT_W,
             SUIT_H,
-            3 * SUIT_W as i16,
+            SUIT_X,
             suit_y,
         );
         if armor > 0 {
@@ -559,11 +566,11 @@ pub fn draw<const N: usize>(
                 SUIT_V + cut,
                 SUIT_W,
                 SUIT_H - cut,
-                3 * SUIT_W as i16,
+                SUIT_X,
                 suit_y + cut as i16,
             );
         }
-        number_3(armor_mat, ot, prims, &mut count, armor, 80, number_y);
+        number_3(armor_mat, ot, prims, &mut count, armor, SUIT_X + SUIT_W as i16, number_y);
 
         if ammo_mode != 0 {
             if let Some(w) = weapon {
