@@ -570,7 +570,15 @@ pub fn draw<const N: usize>(
                 suit_y + cut as i16,
             );
         }
-        number_3(armor_mat, ot, prims, &mut count, armor, SUIT_X + SUIT_W as i16, number_y);
+        number_3(
+            armor_mat,
+            ot,
+            prims,
+            &mut count,
+            armor,
+            SUIT_X + SUIT_W as i16,
+            number_y,
+        );
 
         if ammo_mode != 0 {
             if let Some(w) = weapon {
