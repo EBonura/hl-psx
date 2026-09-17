@@ -968,7 +968,13 @@ fn main() {
     // `-T` selects the linker script; `--oformat=binary` dumps a flat PSX-EXE
     // image (the script lays out the executable header) instead of an ELF.
     println!("cargo:rustc-link-arg=-T{}", hlpsx_ld.display());
-    println!("cargo:rustc-link-arg=--oformat=binary");
+    // `HLPSX_LINK_ELF=1` keeps the ELF instead, for tools that need DWARF to
+    // symbolize emulator PC profiles. Same code at the same addresses; it
+    // does not boot.
+    println!("cargo:rerun-if-env-changed=HLPSX_LINK_ELF");
+    if env::var_os("HLPSX_LINK_ELF").is_none() {
+        println!("cargo:rustc-link-arg=--oformat=binary");
+    }
     println!("cargo:rerun-if-changed={}", ld.display());
     // Optional linker map for PC-sample attribution. A link-only argument
     // leaves the emitted bytes untouched, unlike RUSTFLAGS, which enters

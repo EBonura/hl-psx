@@ -107,7 +107,9 @@ route-follow = ["reference-trace"]
 # local cache from a development checkout without changing the manifest.
 [dependencies]
 hl-format = { path = "../shared/hl-format" }
-psx-rt   = { path = "../.psoxide/sdk/crates/psx-rt" }
+# hazard-trampolines-256: the successor-block delay-slot search and profiled
+# layout leave 18 to 25 loads in delay slots, past the default 96 words.
+psx-rt   = { path = "../.psoxide/sdk/crates/psx-rt", features = ["hazard-trampolines-256"] }
 psx-gpu  = { path = "../.psoxide/sdk/crates/psx-gpu" }
 psx-gte  = { path = "../.psoxide/sdk/crates/psx-gte" }
 psx-pad  = { path = "../.psoxide/sdk/crates/psx-pad" }
