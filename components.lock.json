@@ -18,7 +18,7 @@
     },
     "emulator": {
       "repository": "EBonura/PSoXide-emulator",
-      "revision": "f251cb69b7e4a1fe3c075e632f7a9ba83fd10564",
+      "revision": "d371eba7db370c2b3f81bd144033387fbc3ad748",
       "paths": [
         "emu/crates/emulator-core",
         "emu/crates/psoxide-settings",
@@ -28,7 +28,7 @@
     },
     "editor": {
       "repository": "EBonura/PSoXide-editor",
-      "revision": "35725f597a248c298124baf82cc8e07964812e39",
+      "revision": "46a37f1f2bd6972ee553c6c3236259b024a79f3e",
       "paths": [
         "Cargo.toml",
         "Cargo.lock",
