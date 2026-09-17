@@ -621,7 +621,7 @@ pub fn cook_map_variants(
         let mut command = Command::new(&bins.bsp);
         command
             .arg(key.mode)
-            .arg(valve.join("models").join(format!("{}.mdl", key.model)))
+            .arg(crate::model_path(&valve, &key.model))
             .arg(&geometry)
             .arg(key.fields.join(","))
             .arg(&texture);

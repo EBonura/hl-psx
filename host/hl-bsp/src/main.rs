@@ -13825,6 +13825,18 @@ fn chrome_uv(n: [f32; 3], fw: f32, fh: f32) -> (u8, u8) {
     )
 }
 
+/// Resolve the `<base>T.mdl` texture model. Linux retail lowercases all but
+/// `scientistuT.mdl`, so try that spelling first; lowercase the file name only.
+fn external_texture_path(path: &str) -> String {
+    let base = path.strip_suffix(".mdl").unwrap_or(path);
+    let literal = format!("{base}T.mdl");
+    if std::path::Path::new(&literal).exists() {
+        return literal;
+    }
+    let cut = base.rfind(['/', '\\']).map_or(0, |at| at + 1);
+    format!("{}{}t.mdl", &base[..cut], base[cut..].to_ascii_lowercase())
+}
+
 fn cook_mdl(
     path: &str,
     out: &str,
@@ -13933,10 +13945,7 @@ fn cook_mdl(
     // Textures: human models keep them in an external <base>T.mdl (numtextures==0).
     let ext = i(180) == 0;
     let tbuf: Vec<u8> = if ext {
-        let tp = path
-            .strip_suffix(".mdl")
-            .map(|s| format!("{}T.mdl", s))
-            .unwrap_or_else(|| format!("{}T.mdl", path));
+        let tp = external_texture_path(path);
         std::fs::read(&tp).map_err(|e| format!("texture file {}: {}", tp, e))?
     } else {
         Vec::new()
