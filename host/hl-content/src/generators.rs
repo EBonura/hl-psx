@@ -3,6 +3,17 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 
+/// Read `<models>/<model>.mdl`. The roster spells names like the GoldSrc
+/// entities (`w_9mmAR`); Linux retail ships the files lowercased.
+fn read_model(models: &Path, model: &str) -> Result<Vec<u8>> {
+    let literal = models.join(format!("{model}.mdl"));
+    if literal.exists() {
+        return Ok(fs::read(literal)?);
+    }
+    let lowercased = models.join(format!("{}.mdl", model.to_ascii_lowercase()));
+    fs::read(&lowercased).map_err(|error| format!("{}: {error}", lowercased.display()).into())
+}
+
 fn i32le(data: &[u8], offset: usize) -> Result<i32> {
     let bytes: [u8; 4] = data
         .get(offset..offset + 4)
@@ -64,7 +75,7 @@ pub fn clips(models: &Path, roster: &Path, output: &Path) -> Result<()> {
         let ty = fields.next().ok_or("roster type missing")?;
         let model = fields.next().ok_or("roster model missing")?;
         let specs = fields.next().ok_or("roster specs missing")?;
-        let data = fs::read(models.join(format!("{model}.mdl")))?;
+        let data = read_model(models, model)?;
         let (sequence_labels, sequence_count, _) = sequences(&data)?;
         let mut slot = 0usize;
         let mut slot_hold_quanta = Vec::<u16>::new();
@@ -216,7 +227,7 @@ pub fn studio_events(models: &Path, roster: &Path, output: &Path) -> Result<()> 
         let actor_type: u8 = fields.next().ok_or("roster type missing")?.parse()?;
         let model = fields.next().ok_or("roster model missing")?;
         let specs = fields.next().ok_or("roster specs missing")?;
-        let data = fs::read(models.join(format!("{model}.mdl")))?;
+        let data = read_model(models, model)?;
         let (labels, sequence_count, _) = sequences(&data)?;
         for raw_token in specs.split(',') {
             let token = raw_token.trim();
