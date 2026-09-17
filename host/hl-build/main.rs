@@ -662,6 +662,7 @@ enum Action {
     Pack,
     Disc,
     Install,
+    Pgo,
     Check,
 }
 
@@ -673,13 +674,14 @@ struct Options {
     features: Option<String>,
     regression_scenario: Option<String>,
     games_dir: Option<PathBuf>,
+    tapes: Vec<PathBuf>,
 }
 
 const CANONICAL_GAME_NAME: &str = "Half-Life (hl-psx)";
 
 const HELP: &str = "hl-psx Rust build\n\n\
          USAGE:\n\
-           cargo run --release -- [sdk|build|assets|models|audit|regress|compile|pack|disc|install|check] [OPTIONS]\n\n\
+           cargo run --release -- [sdk|build|assets|models|audit|regress|compile|pack|disc|install|pgo|check] [OPTIONS]\n\n\
          ACTIONS:\n\
            sdk        hydrate the exact pinned PSoXide SDK only\n\
            build      extract/cook and create dist/hl-psx.bin/.cue (default)\n\
@@ -691,13 +693,16 @@ const HELP: &str = "hl-psx Rust build\n\n\
            pack       compile and pack dist/hl-psx.bin/.cue\n\
            disc       compile, pack, and copy the disc to --games-dir\n\
            install    full build and copy the disc to --games-dir\n\
+           pgo        profile-guided pack: replay --tape in PSoXide, feed its\n\
+                      instruction counts back into the compiler, pack again\n\
            check      locate and validate the Half-Life installation\n\n\
          OPTIONS:\n\
            --half-life PATH   Half-Life directory, or its valve directory\n\
            --psoxide PATH     optional local PSoXide source override\n\
            --features LIST    comma-separated hl-psx Cargo features\n\
            --scenario NAME    regress only one named deterministic scenario\n\
-           --games-dir PATH   destination required by disc/install; optional after regress\n\n\
+           --games-dir PATH   destination required by disc/install; optional after regress/pgo\n\
+           --tape PATH        input tape for pgo to profile; repeat for more routes\n\n\
          HL_DIR, PSOXIDE, and GAMES_DIR provide environment defaults.\n\
          Nothing is copied outside this repository unless --games-dir is supplied.";
 
@@ -754,6 +759,10 @@ fn parse_args() -> Options {
             args.next();
             Action::Install
         }
+        Some("pgo") => {
+            args.next();
+            Action::Pgo
+        }
         Some("check") => {
             args.next();
             Action::Check
@@ -770,6 +779,7 @@ fn parse_args() -> Options {
         features: None,
         regression_scenario: None,
         games_dir: env::var_os("GAMES_DIR").map(PathBuf::from),
+        tapes: Vec::new(),
     };
     while let Some(arg) = args.next() {
         let Some(flag) = arg.to_str() else { usage() };
@@ -786,6 +796,7 @@ fn parse_args() -> Options {
                 options.regression_scenario = Some(value(&mut args).to_string_lossy().into_owned())
             }
             "--games-dir" => options.games_dir = Some(PathBuf::from(value(&mut args))),
+            "--tape" => options.tapes.push(PathBuf::from(value(&mut args))),
             "-h" | "--help" => help(),
             _ => usage(),
         }
@@ -1682,18 +1693,65 @@ fn cook_assets(repository: &Path, valve: &Path, psoxide: &Path) -> Result<()> {
     Ok(())
 }
 
-fn compile_game(repository: &Path, psoxide: &Path, features: Option<&str>) -> Result<PathBuf> {
+/// How the profile-guided build varies the guest compile.
+#[derive(Clone, Copy, Default)]
+enum GuestProfile<'a> {
+    /// The ordinary build.
+    #[default]
+    None,
+    /// Line tables and discriminators for sample profiling. The flat image
+    /// drops them at link time, so it runs and measures like any other.
+    Collect,
+    /// The same code as `Collect`, linked as an ELF that keeps its DWARF.
+    CollectElf,
+    /// Optimise with this LLVM sample profile.
+    Use(&'a Path),
+}
+
+fn compile_game(
+    repository: &Path,
+    psoxide: &Path,
+    features: Option<&str>,
+    profile: GuestProfile<'_>,
+) -> Result<PathBuf> {
     let game = repository.join("game");
     let mut command = Command::new(cargo());
     command.current_dir(&game).args(["build", "--release"]);
     if let Some(features) = features.filter(|value| !value.trim().is_empty()) {
         command.args(["--features", features]);
     }
+    if !matches!(profile, GuestProfile::None) {
+        // `--config` appends to the rustflags in game/.cargo/config.toml; an
+        // exported RUSTFLAGS would replace them. The profiled build keeps the
+        // debug info because LLVM matches samples to code through it.
+        let mut flags = vec![
+            "-Cdebuginfo=1".to_string(),
+            "-Zdebug-info-for-profiling".to_string(),
+            "-Cstrip=none".to_string(),
+        ];
+        if let GuestProfile::Use(samples) = profile {
+            flags.push(format!("-Zprofile-sample-use={}", samples.display()));
+        }
+        command
+            .arg("--config")
+            .arg(format!("target.mipsel-sony-psx.rustflags={flags:?}"));
+    }
+    if matches!(profile, GuestProfile::CollectElf) {
+        command.env("HLPSX_LINK_ELF", "1");
+    }
+    // A link-only argument: the map does not change the emitted bytes.
+    let link_map = repository.join(".hlpsx/hl-psx.map");
+    fs::create_dir_all(repository.join(".hlpsx"))?;
+    command.env("HLPSX_LINK_MAP", &link_map);
     command.env("PSOXIDE", psoxide);
     run(&mut command, "compile hl-psx for PlayStation")?;
     let exe = game.join("target/mipsel-sony-psx/release/hl-psx.exe");
     if !exe.is_file() {
         return Err(format!("game build did not produce {}", exe.display()).into());
+    }
+    if matches!(profile, GuestProfile::CollectElf) {
+        // An ELF for the symbolizer, not an executable: nothing to patch.
+        return Ok(exe);
     }
     // Reroute the R3000 load-delay hazards LLVM's delay-slot filler leaves
     // behind (loads in delay slots consumed one instruction later) through the
@@ -1704,17 +1762,30 @@ fn compile_game(repository: &Path, psoxide: &Path, features: Option<&str>) -> Re
         Command::new("python3").arg(&patcher).arg(&exe),
         "patch load-delay hazards in hl-psx.exe",
     )?;
+    // The model projection chain runs on the 1 KiB scratchpad; an inlining
+    // change that outgrows it would otherwise only show up as lost speed.
+    run(
+        Command::new("python3")
+            .arg(repository.join("host/stack_budget.py"))
+            .arg(&exe)
+            .arg(&link_map)
+            .arg(game.join("src/scratchpad.rs")),
+        "check the scratchpad projection stack budget",
+    )?;
     println!("EXE -> {}", exe.display());
     Ok(exe)
 }
 
 fn pack_disc(repository: &Path, psoxide: &Path, exe: &Path) -> Result<PathBuf> {
+    pack_disc_into(repository, psoxide, exe, &repository.join("dist"))
+}
+
+fn pack_disc_into(repository: &Path, psoxide: &Path, exe: &Path, dist: &Path) -> Result<PathBuf> {
     // Compile can update generated output, so repeat the gate immediately
     // before layout. Packing is the last point at which stale ignored assets
     // can be prevented from entering a distributable image.
     verify_cook_manifest(repository, psoxide)?;
-    let dist = repository.join("dist");
-    fs::create_dir_all(&dist)?;
+    fs::create_dir_all(dist)?;
     let image = dist.join("hl-psx.bin");
     let staged_pack = stage_world_pack(repository)?;
     let mut command = Command::new(cargo());
@@ -1740,6 +1811,91 @@ fn pack_disc(repository: &Path, psoxide: &Path, exe: &Path) -> Result<PathBuf> {
     let cue = image.with_extension("cue");
     println!("DISC -> {}", cue.display());
     Ok(cue)
+}
+
+/// Pack a disc optimised with the emulator's own instruction counts.
+///
+/// PSoXide counts every guest instruction exactly, so no instrumented build
+/// is needed: a build with profiling debug info replays each tape, psoxide-pgo
+/// turns the PC histogram into an LLVM sample profile through the matching
+/// ELF's DWARF, and the final build is compiled with it. On the chapter-two
+/// recording this measured 11.90 to 13.00 rendered FPS, and 17.65 to 18.69 on
+/// a route the profile never saw. Profile names carry crate hashes that depend
+/// on the checkout path, so the profile is rebuilt here rather than shipped.
+fn profile_guided_pack(
+    repository: &Path,
+    psoxide: &Path,
+    features: Option<&str>,
+    tapes: &[PathBuf],
+) -> Result<PathBuf> {
+    let work = repository.join(".hlpsx/pgo");
+    if work.exists() {
+        fs::remove_dir_all(&work)?;
+    }
+    fs::create_dir_all(&work)?;
+
+    let collect_exe = compile_game(repository, psoxide, features, GuestProfile::Collect)?;
+    let collect_cue = pack_disc_into(repository, psoxide, &collect_exe, &work.join("collect"))?;
+    let elf = work.join("hl-psx.elf");
+    fs::copy(
+        compile_game(repository, psoxide, features, GuestProfile::CollectElf)?,
+        &elf,
+    )?;
+
+    let frontend = regression::frontend(psoxide)?;
+    let mut samples: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    for (index, tape) in tapes.iter().enumerate() {
+        let log = work.join(format!("pc-{index}.csv"));
+        run(
+            Command::new(&frontend)
+                .arg("launch")
+                .arg("--path")
+                .arg(&collect_cue)
+                .args([
+                    "--embedded-playtest",
+                    "--steps",
+                    "40000000000",
+                    "--input-tape",
+                ])
+                .arg(tape)
+                .arg("--pc-sample-log")
+                .arg(&log)
+                // Prime, so the sampler cannot fall into step with a loop.
+                .args(["--pc-sample-instructions", "61"]),
+            "replay a profiling tape in PSoXide",
+        )?;
+        for line in fs::read_to_string(&log)?.lines().skip(1) {
+            let mut fields = line.split(',');
+            if let (Some(pc), Some(Ok(count))) =
+                (fields.next(), fields.next().map(str::parse::<u64>))
+            {
+                *samples.entry(pc.to_string()).or_default() += count;
+            }
+        }
+    }
+    if samples.is_empty() {
+        return Err("the profiling replays recorded no samples".into());
+    }
+    let merged = work.join("pc.csv");
+    let mut text = String::from("pc,samples\n");
+    for (pc, count) in &samples {
+        text.push_str(&format!("{pc},{count}\n"));
+    }
+    fs::write(&merged, text)?;
+
+    let profile = work.join("hl-psx.prof");
+    run(
+        Command::new(cargo())
+            .current_dir(psoxide)
+            .args(["run", "--release", "-p", "psoxide-pgo", "--"])
+            .arg(&elf)
+            .arg(&merged)
+            .arg(&profile),
+        "convert the PC histogram into a sample profile",
+    )?;
+
+    let exe = compile_game(repository, psoxide, features, GuestProfile::Use(&profile))?;
+    pack_disc(repository, psoxide, &exe)
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -1777,6 +1933,9 @@ fn install_disc(cue: &Path, games_dir: &Path) -> Result<()> {
 
 fn main() -> Result<()> {
     let options = parse_args();
+    if options.action == Action::Pgo && options.tapes.is_empty() {
+        return Err("pgo needs at least one --tape PATH to profile".into());
+    }
     let repository = root();
     let needs_half_life = matches!(
         options.action,
@@ -1844,7 +2003,7 @@ fn main() -> Result<()> {
 
     if matches!(
         options.action,
-        Action::Compile | Action::Pack | Action::Disc | Action::Regress
+        Action::Compile | Action::Pack | Action::Disc | Action::Regress | Action::Pgo
     ) {
         verify_cook_manifest(
             &repository,
@@ -1873,7 +2032,14 @@ fn main() -> Result<()> {
     } else {
         options.features.as_deref()
     };
-    let exe = compile_game(&repository, &psoxide, features)?;
+    if options.action == Action::Pgo {
+        let cue = profile_guided_pack(&repository, &psoxide, features, &options.tapes)?;
+        if let Some(games_dir) = options.games_dir.as_deref() {
+            install_disc(&cue, games_dir)?;
+        }
+        return Ok(());
+    }
+    let exe = compile_game(&repository, &psoxide, features, GuestProfile::None)?;
     if options.action == Action::Compile {
         return Ok(());
     }
@@ -1894,7 +2060,7 @@ fn main() -> Result<()> {
             options.regression_scenario.as_deref(),
         );
         // Leave dist/ as the shipping artifact, not the instrumented test disc.
-        let shipping_exe = compile_game(&repository, &psoxide, None)?;
+        let shipping_exe = compile_game(&repository, &psoxide, None, GuestProfile::None)?;
         pack_disc(&repository, &psoxide, &shipping_exe)?;
         regression_result?;
         if let Some(games_dir) = options.games_dir.as_deref() {

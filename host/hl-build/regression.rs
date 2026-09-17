@@ -595,7 +595,7 @@ const fn satchel_fire_scenario(name: &'static str, extra_pulses: &'static str) -
     }
 }
 
-fn frontend(psoxide: &Path) -> Result<PathBuf> {
+pub(crate) fn frontend(psoxide: &Path) -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("HLPSX_FRONTEND") {
         let binary = PathBuf::from(path);
         if !binary.is_file() {

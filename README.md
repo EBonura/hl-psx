@@ -141,8 +141,15 @@ cargo run --release -- compile                # rebuild the PS1 executable
 cargo run --release -- pack                   # rebuild the executable and disc
 cargo run --release -- install --games-dir "DESTINATION_FOLDER" # build and copy
 cargo run --release -- regress --psoxide "PATH_TO_PSOXIDE"      # test matrix
+cargo run --release -- pgo --tape "RECORDING.pxtape"           # profile-guided disc
 cargo run --release -- --help                 # show every option
 ```
+
+`pgo` builds the disc twice. The first build replays a PSoXide input recording
+in the hydrated emulator, which counts every instruction the game executes;
+the second is compiled around those counts. On the chapter-two recording it
+is 6% faster than `pack`, and 5% faster on a route the recording never
+visits. It takes about four minutes and needs `mipsel-none-elf-objdump`.
 
 `HL_DIR`, `PSOXIDE`, and `GAMES_DIR` are accepted as environment defaults.
 Normal builds hydrate the exact SDK, emulator support crates, and editor/engine

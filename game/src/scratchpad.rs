@@ -56,7 +56,11 @@ unsafe extern "C" {
 
 const PROJECTION_SAVE_OFFSET: usize = 128;
 const PROJECTION_GUARD_OFFSET: usize = PROJECTION_SAVE_OFFSET + 3 * core::mem::size_of::<u32>();
-const PROJECTION_GUARD_END: usize = 256;
+// A profile-guided build inlines more into the bone chain and needs 824 bytes
+// of it; the canary gave up 84 of its 116 to leave 852. host/stack_budget.py
+// proves the linked chain fits after every build, so the canary only has to
+// catch what static analysis cannot see.
+const PROJECTION_GUARD_END: usize = 172;
 const PROJECTION_GUARD_WORDS: usize =
     (PROJECTION_GUARD_END - PROJECTION_GUARD_OFFSET) / core::mem::size_of::<u32>();
 const PROJECTION_GUARD: u32 = 0x5a17_c0de;
@@ -85,9 +89,9 @@ unsafe fn base() -> *mut u8 {
 /// Execute one context entry on the recyclable projection stack.
 ///
 /// Bytes 0..128 remain owned by persistent viewmodel bucket heads. The save
-/// record occupies 128..140 and a 116-byte canary extends through byte 255;
+/// record occupies 128..140 and a 32-byte canary extends through byte 171;
 /// the stack grows down from byte 1024. Returning `false` means the stack used
-/// more than its audited 768-byte guarded budget, but did not reach the bucket
+/// more than its audited 852-byte guarded budget, but did not reach the bucket
 /// heads or the trampoline's save record.
 ///
 /// # Safety
