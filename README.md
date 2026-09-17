@@ -148,7 +148,7 @@ cargo run --release -- --help                 # show every option
 `pgo` builds the disc twice. The first build replays a PSoXide input recording
 in the hydrated emulator, which counts every instruction the game executes;
 the second is compiled around those counts. On the chapter-two recording it
-is 6% faster than `pack`, and 5% faster on a route the recording never
+is 6% faster than `pack`, and 4% faster on a route the recording never
 visits. It takes about four minutes and needs `mipsel-none-elf-objdump`.
 
 `HL_DIR`, `PSOXIDE`, and `GAMES_DIR` are accepted as environment defaults.
