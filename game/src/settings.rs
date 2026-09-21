@@ -68,22 +68,8 @@ static mut BRIGHT_DIRTY: bool = false;
 /// Integer square root of `n` (`n < 2^16`), used only when the palette is
 /// rebuilt or a model shade is lifted.
 #[inline(always)]
-fn isqrt16(mut n: u32) -> i32 {
-    let mut root = 0u32;
-    let mut bit = 1u32 << 14;
-    while bit > n {
-        bit >>= 2;
-    }
-    while bit != 0 {
-        if n >= root + bit {
-            n -= root + bit;
-            root = (root >> 1) + bit;
-        } else {
-            root >>= 1;
-        }
-        bit >>= 2;
-    }
-    root as i32
+fn isqrt16(n: u32) -> i32 {
+    psx_math::int32::isqrt_i32(n as i32)
 }
 
 /// Apply the current brightness curve to one 8-bit light or shade channel. At

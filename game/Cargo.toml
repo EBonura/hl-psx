@@ -106,6 +106,7 @@ route-follow = ["reference-trace"]
 # audio encoder, and disc writer a reproducible set. `--psoxide` can seed this
 # local cache from a development checkout without changing the manifest.
 [dependencies]
+psx-sfx = { path = "../.psoxide/sdk/crates/psx-sfx" }
 hl-format = { path = "../shared/hl-format" }
 # hazard-trampolines-256: the successor-block delay-slot search and profiled
 # layout leave 18 to 25 loads in delay slots, past the default 96 words.

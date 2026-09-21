@@ -4134,10 +4134,7 @@ static mut XHAIR_DUMP_LAST: u32 = u32::MAX; // last auto-dumped key (tt, or sent
 /// (fine aim) and full tilt gives the full rate. `v` is a raw axis in ~-128..127.
 #[inline]
 fn aim_curve(v: i32) -> i32 {
-    let s = v.signum();
-    let a = v.abs().min(128);
-    let cubic = a * a / 128 * a / 128; // a^3 / 128^2, back in 0..128
-    s * ((a * 45 + cubic * 55) / 100)
+    psx_pad::aim_curve_symmetric(v as i16) as i32
 }
 
 /// Convert one clean DualShock sample to the cross-engine HLINPUT1 command.
@@ -4538,7 +4535,7 @@ unsafe fn vm_publish_streamed(wm: usize, word: usize, slot: usize, clen: usize) 
     if slot + ntex > VM_SLOTS_TOTAL {
         return false;
     }
-    let model = Model::load(viewmodel_bytes_at(gw * 4, glen));
+    let model = model::load(viewmodel_bytes_at(gw * 4, glen));
     #[cfg(feature = "debug-weapon-gallery")]
     if model.n_verts != room_budget::VIEWMODEL_VERTS[wm] as usize
         || model.n_tris != room_budget::VIEWMODEL_TRIS[wm] as usize
@@ -4972,7 +4969,7 @@ unsafe fn stream_map_models(
             }
             (geom_word + 2, glen) // geometry blob start (words)
         };
-        let md = Model::load(streamed_model_bytes_at(gw * 4, glen));
+        let md = model::load(streamed_model_bytes_at(gw * 4, glen));
         let visible_bodies =
             model_visible_bodies(ty, nprops, ncarry, carry_variant, md.has_body_masks());
         let model_faces = md.render_face_count(visible_bodies);
@@ -5137,7 +5134,7 @@ unsafe fn stream_map_models(
         };
         TYPE_TO_SLOT[ty] = slot_idx as u8;
         // Parse once (post-repack header) -- draws read the cached copy.
-        LOADED_MODEL_CACHE[slot_idx] = Model::load(streamed_model_bytes_at(gw * 4, kept));
+        LOADED_MODEL_CACHE[slot_idx] = model::load(streamed_model_bytes_at(gw * 4, kept));
         geom_word = gw + kept.div_ceil(4);
         face_off += nf;
         run_off += nr;
@@ -14631,16 +14628,7 @@ unsafe fn train_direction_code(m: &Map, li: usize, seg: usize) -> u8 {
 
 #[inline(never)]
 fn train_isqrt_u64(n: u64) -> u64 {
-    if n < 2 {
-        return n;
-    }
-    let mut x = n;
-    let mut y = (x + 1) >> 1;
-    while y < x {
-        x = y;
-        y = (x + n / x) >> 1;
-    }
-    x
+    psx_math::int32::isqrt_u64(n) as u64
 }
 
 /// Project a carried global train's authoritative center onto the destination
@@ -19806,45 +19794,10 @@ fn recover_camera_leaf(m: &Map, eye: [i32; 3], player_pos: [i32; 3], train_hint:
 }
 
 fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
-    // GoldSrc rows are model[0].visleafs bits wide. The BSP leaf lump also
-    // contains submodel-only leaves; decoding to that larger count consumes
-    // bytes from the next compressed row and produces unstable visibility.
-    let row = (m.n_visleaves + 7) / 8;
-    let row = row.min(out.len());
-    for b in out[..row].iter_mut() {
-        *b = 0;
-    }
-    if visofs < 0 {
-        for b in out[..row].iter_mut() {
-            *b = 0xFF;
-        }
-        return;
-    }
-    let vis = m.vis();
-    let mut v = visofs as usize;
-    let mut c = 0usize;
-    while c < row {
-        if v >= vis.len() {
-            break;
-        }
-        if vis[v] != 0 {
-            out[c] = vis[v];
-            v += 1;
-            c += 1;
-        } else {
-            v += 1;
-            if v >= vis.len() {
-                break;
-            }
-            let mut cnt = vis[v];
-            v += 1;
-            while cnt > 0 && c < row {
-                out[c] = 0;
-                c += 1;
-                cnt -= 1;
-            }
-        }
-    }
+    // GoldSrc's model[0] visibility width excludes submodel-only leaves.
+    let row = ((m.n_visleaves + 7) / 8).min(out.len());
+    if visofs < 0 { out[..row].fill(0xff); }
+    else { psx_pack::visibility::decode_clamped(m.vis(), visofs as usize, &mut out[..row]); }
 }
 
 /// Merge one GoldSrc PVS row into an already decoded row without allocating a
@@ -19854,27 +19807,8 @@ fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
 /// black.
 fn merge_vis(m: &Map, visofs: i32, out: &mut [u8]) {
     let row = ((m.n_visleaves + 7) / 8).min(out.len());
-    if visofs < 0 {
-        out[..row].fill(0xff);
-        return;
-    }
-    let vis = m.vis();
-    let mut v = visofs as usize;
-    let mut c = 0usize;
-    while c < row && v < vis.len() {
-        let byte = vis[v];
-        v += 1;
-        if byte != 0 {
-            out[c] |= byte;
-            c += 1;
-        } else {
-            if v >= vis.len() {
-                break;
-            }
-            c = c.saturating_add(vis[v] as usize).min(row);
-            v += 1;
-        }
-    }
+    if visofs < 0 { out[..row].fill(0xff); }
+    else { psx_pack::visibility::merge_clamped(m.vis(), visofs as usize, &mut out[..row]); }
 }
 
 fn dry_leaf_above(m: &Map, eye: [i32; 3]) -> Option<usize> {

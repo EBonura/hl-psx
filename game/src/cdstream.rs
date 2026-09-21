@@ -447,97 +447,10 @@ static mut CHUNK_STREAM: ChunkStream = ChunkStream {
     stall_ticks: 0,
 };
 
-// Raw nonblocking readiness probe. Once DataReady is latched, the SDK reader
-// performs the actual DMA/ack sequence immediately; keeping DMA ownership in
-// that opaque `&mut` call prevents LTO from treating the bounce buffer as
-// unchanged external memory.
+// Readiness must leave INT1 pending: SectorReader owns the subsequent DMA
+// and acknowledgement, including the compiler-visible mutable bounce buffer.
 #[cfg(target_arch = "mips")]
-const CD_BASE: u32 = 0x1F80_1800;
-#[cfg(target_arch = "mips")]
-const CD_STATUS: u32 = CD_BASE;
-#[cfg(target_arch = "mips")]
-const CD_RESPONSE: u32 = CD_BASE + 1;
-#[cfg(target_arch = "mips")]
-const CD_IRQ: u32 = CD_BASE + 3;
-#[cfg(target_arch = "mips")]
-const STATUS_RESPONSE_FIFO_NOT_EMPTY: u8 = 1 << 5;
-#[cfg(target_arch = "mips")]
-const STATUS_DATA_FIFO_NOT_EMPTY: u8 = 1 << 6;
-#[cfg(target_arch = "mips")]
-const IRQ_DATA_READY: u8 = 1;
-#[cfg(target_arch = "mips")]
-const IRQ_COMPLETE: u8 = 2;
-#[cfg(target_arch = "mips")]
-const IRQ_ACK: u8 = 3;
-#[cfg(target_arch = "mips")]
-const IRQ_DATA_END: u8 = 4;
-#[cfg(target_arch = "mips")]
-const IRQ_ERROR: u8 = 5;
-
-#[cfg(target_arch = "mips")]
-#[inline(always)]
-unsafe fn cd_wr_index(i: u8) {
-    psx_io::write8(CD_STATUS, i & 0x03);
-}
-
-#[cfg(target_arch = "mips")]
-unsafe fn cd_irq_flag() -> u8 {
-    cd_wr_index(1);
-    let flag = psx_io::read8(CD_IRQ) & 0x1f;
-    cd_wr_index(0);
-    flag
-}
-
-#[cfg(target_arch = "mips")]
-unsafe fn cd_ack(irq: u8) {
-    cd_wr_index(1);
-    psx_io::write8(CD_IRQ, irq & 0x1f);
-    psx_io::irq::ack(1 << psx_io::irq::source::CDROM);
-    cd_wr_index(0);
-}
-
-#[cfg(target_arch = "mips")]
-unsafe fn cd_ack_all() {
-    cd_wr_index(1);
-    psx_io::write8(CD_IRQ, 0x5f);
-    psx_io::irq::ack(1 << psx_io::irq::source::CDROM);
-    cd_wr_index(0);
-}
-
-#[cfg(target_arch = "mips")]
-unsafe fn cd_drain_responses() {
-    cd_wr_index(0);
-    let mut guard = 0;
-    while psx_io::read8(CD_STATUS) & STATUS_RESPONSE_FIFO_NOT_EMPTY != 0 && guard < 256 {
-        let _ = psx_io::read8(CD_RESPONSE);
-        guard += 1;
-    }
-}
-
-#[cfg(target_arch = "mips")]
-unsafe fn cd_data_fifo_ready() -> bool {
-    cd_wr_index(0);
-    psx_io::read8(CD_STATUS) & STATUS_DATA_FIFO_NOT_EMPTY != 0
-}
-
-#[cfg(target_arch = "mips")]
-unsafe fn try_sector_ready() -> Result<bool, ()> {
-    match cd_irq_flag() {
-        IRQ_DATA_READY => Ok(true),
-        IRQ_ERROR => {
-            cd_drain_responses();
-            cd_ack_all();
-            Err(())
-        }
-        flag @ (IRQ_COMPLETE | IRQ_ACK | IRQ_DATA_END) => {
-            cd_drain_responses();
-            cd_ack(flag);
-            Ok(false)
-        }
-        _ if cd_data_fifo_ready() => Ok(true),
-        _ => Ok(false),
-    }
-}
+use psx_io::cdrom::poll_data_sector as try_sector_ready;
 
 /// Open an incremental stream for `chunk_id`: resolve its pack entry (the
 /// persistent mini-cache first, so no header re-scan), seek, start the READN

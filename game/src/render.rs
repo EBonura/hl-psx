@@ -352,22 +352,36 @@ pub fn projected_midpoint_cv(mut a: CVert, mut b: CVert) -> CVert {
 
 /// Clip a triangle against `z >= NEAR_Z` in view space. Writes up to 4 verts.
 pub fn near_clip(cv: &[CVert; 3], out: &mut [CVert; 4]) -> usize {
-    let mut m = 0;
-    for i in 0..3 {
-        let cur = cv[i];
-        let prev = cv[(i + 2) % 3];
-        let cur_in = cur.v[2] >= NEAR_Z;
-        let prev_in = prev.v[2] >= NEAR_Z;
-        if cur_in != prev_in && m < 4 {
-            out[m] = lerp_cv_near(&prev, &cur);
-            m += 1;
-        }
-        if cur_in && m < 4 {
-            out[m] = cur;
-            m += 1;
-        }
+    // Keep GoldSrc's canonical endpoint interpolation and fan order.
+    unsafe {
+        clip_convex_plane::<_, _, true>(cv, out, &NearPlane, ClipTraversal::PreviousToCurrent)
     }
-    m
+}
+
+struct NearPlane;
+
+impl AttributedClipPlane<CVert> for NearPlane {
+    type Distance = bool;
+    #[inline(always)]
+    fn distance(&self, _: usize, vertex: &CVert) -> bool {
+        vertex.v[2] >= NEAR_Z
+    }
+    #[inline(always)]
+    fn inside(&self, inside: bool) -> bool {
+        inside
+    }
+    #[inline(always)]
+    fn intersection(
+        &self,
+        _: usize,
+        first: &CVert,
+        _: bool,
+        _: usize,
+        second: &CVert,
+        _: bool,
+    ) -> CVert {
+        lerp_cv_near(first, second)
+    }
 }
 
 /// Project a clipped view-space vertex to true screen coords (one reciprocal
@@ -492,28 +506,53 @@ fn clip_edge(
     bound: i32,
     keep_ge: bool,
 ) -> usize {
-    let coord = |s: &SVert| if axis == Axis::X { s.x } else { s.y };
-    let inside = |s: &SVert| {
-        if keep_ge {
-            coord(s) >= bound
-        } else {
-            coord(s) <= bound
-        }
+    let plane = ScreenPlane {
+        axis,
+        bound,
+        keep_ge,
     };
-    let mut m = 0;
-    for i in 0..n {
-        let cur = inp[i];
-        let prev = inp[(i + n - 1) % n];
-        if inside(&cur) != inside(&prev) && m < 8 {
-            out[m] = lerp_sv(&prev, &cur, axis, bound);
-            m += 1;
-        }
-        if inside(&cur) && m < 8 {
-            out[m] = cur;
-            m += 1;
+    unsafe {
+        clip_convex_plane::<_, _, true>(&inp[..n], out, &plane, ClipTraversal::PreviousToCurrent)
+    }
+}
+
+struct ScreenPlane {
+    axis: Axis,
+    bound: i32,
+    keep_ge: bool,
+}
+
+impl AttributedClipPlane<SVert> for ScreenPlane {
+    type Distance = bool;
+    #[inline(always)]
+    fn distance(&self, _: usize, vertex: &SVert) -> bool {
+        let coordinate = if self.axis == Axis::X {
+            vertex.x
+        } else {
+            vertex.y
+        };
+        if self.keep_ge {
+            coordinate >= self.bound
+        } else {
+            coordinate <= self.bound
         }
     }
-    m
+    #[inline(always)]
+    fn inside(&self, inside: bool) -> bool {
+        inside
+    }
+    #[inline(always)]
+    fn intersection(
+        &self,
+        _: usize,
+        first: &SVert,
+        _: bool,
+        _: usize,
+        second: &SVert,
+        _: bool,
+    ) -> SVert {
+        lerp_sv(first, second, self.axis, self.bound)
+    }
 }
 
 /// Clip a convex screen polygon to the guard band. Returns vertices in `out`.
