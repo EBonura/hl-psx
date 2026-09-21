@@ -19796,8 +19796,11 @@ fn recover_camera_leaf(m: &Map, eye: [i32; 3], player_pos: [i32; 3], train_hint:
 fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
     // GoldSrc's model[0] visibility width excludes submodel-only leaves.
     let row = ((m.n_visleaves + 7) / 8).min(out.len());
-    if visofs < 0 { out[..row].fill(0xff); }
-    else { psx_pack::visibility::decode_clamped(m.vis(), visofs as usize, &mut out[..row]); }
+    if visofs < 0 {
+        out[..row].fill(0xff);
+    } else {
+        psx_pack::visibility::decode_clamped(m.vis(), visofs as usize, &mut out[..row]);
+    }
 }
 
 /// Merge one GoldSrc PVS row into an already decoded row without allocating a
@@ -19807,8 +19810,11 @@ fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
 /// black.
 fn merge_vis(m: &Map, visofs: i32, out: &mut [u8]) {
     let row = ((m.n_visleaves + 7) / 8).min(out.len());
-    if visofs < 0 { out[..row].fill(0xff); }
-    else { psx_pack::visibility::merge_clamped(m.vis(), visofs as usize, &mut out[..row]); }
+    if visofs < 0 {
+        out[..row].fill(0xff);
+    } else {
+        psx_pack::visibility::merge_clamped(m.vis(), visofs as usize, &mut out[..row]);
+    }
 }
 
 fn dry_leaf_above(m: &Map, eye: [i32; 3]) -> Option<usize> {
