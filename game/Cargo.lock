@@ -19,7 +19,6 @@ dependencies = [
  "hl-format",
  "lz4_flex",
  "psx-asset",
- "psx-bsp",
  "psx-engine",
  "psx-font",
  "psx-fx",
@@ -50,16 +49,6 @@ version = "0.1.0"
 dependencies = [
  "psx-gte",
  "psxed-format",
-]
-
-[[package]]
-name = "psx-bsp"
-version = "0.1.0"
-dependencies = [
- "psx-engine",
- "psx-gpu",
- "psx-gte",
- "psx-math",
 ]
 
 [[package]]
