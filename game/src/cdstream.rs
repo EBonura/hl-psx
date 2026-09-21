@@ -553,7 +553,7 @@ pub unsafe fn stream_pump() -> StreamPump {
                     break;
                 }
             }
-            Err(()) => {
+            Err(_) => {
                 rd.stop();
                 st.active = false;
                 return StreamPump::Failed;
