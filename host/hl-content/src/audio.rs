@@ -150,7 +150,9 @@ pub fn build_music(valve: &Path, output: &Path) -> Result<()> {
         fs::write(&out, &bytes)?;
         let sectors = bytes.len() / SECTOR;
         total_sectors += sectors;
-        listing.push(fs::canonicalize(&out)?.to_string_lossy().into_owned());
+        // mkisopsx resolves entries relative to tracks.txt, so cooked music
+        // remains packable after moving the asset directory.
+        listing.push(format!("track_{:02}.cdda", index + 1));
         println!(
             "  track {:2} (disc) = {name} ({sectors} sectors)",
             index + 2
