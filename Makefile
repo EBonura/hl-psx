@@ -4,8 +4,7 @@
 ROOT := $(CURDIR)
 HL_DIR ?=
 PSOXIDE ?= $(ROOT)/.psoxide
-FRONTEND ?= frontend
-EDITOR ?= $(abspath $(ROOT)/../PSoXide-editor)
+FRONTEND ?=
 GAMES_DIR ?=
 FEATURES ?=
 MAP ?= c1a0
@@ -18,8 +17,8 @@ FEATURE_ARG := $(if $(strip $(FEATURES)),--features "$(FEATURES)",)
 DIST := $(ROOT)/dist
 HLBSP := $(ROOT)/host/hl-bsp
 HLBSP_BIN := $(HLBSP)/target/release/hl-bsp
-PSOXIDE_LAUNCH := "$(FRONTEND)" launch
-PSOXIDE_DEV := cargo run --manifest-path "$(EDITOR)/tools/psoxide-dev/Cargo.toml" --release --
+PSOXIDE_LAUNCH := $(if $(strip $(FRONTEND)),"$(FRONTEND)" launch,cargo run --locked --manifest-path "$(PSOXIDE)/Cargo.toml" -p frontend --release -- launch)
+PSOXIDE_DEV := cargo run --locked --manifest-path "$(PSOXIDE)/tools/psoxide-dev/Cargo.toml" --release --
 
 PSOXIDE_SMOKE_STEPS ?= 50000000
 PSOXIDE_GAMEPLAY_STEPS ?= 320000000
@@ -70,6 +69,7 @@ check-assets:
 	$(DRIVER) check $(HL_ARG)
 
 psoxide-check:
+	$(DRIVER) sdk
 	@test -f "$(PSOXIDE)/sdk/psoxide.ld" || (echo "PSoXide checkout not found: $(PSOXIDE)"; exit 1)
 	@echo "PSoXide -> $(PSOXIDE)"
 
