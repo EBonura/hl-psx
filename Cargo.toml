@@ -18,8 +18,8 @@ hl-format = { path = "shared/hl-format" }
 # The two revs have to match. They did not: psx-pack sat on 43873bd1 while the
 # hydrate had moved on, so Cargo carried two checkouts of the same repository
 # and the pack format the game linked was not the one it was built beside.
-psoxide-link = { git = "https://github.com/EBonura/PSoXide.git", rev = "ad274de1ba5c8ceaf77c5d11bb56b83948adc47c" }
-psx-pack = { git = "https://github.com/EBonura/PSoXide.git", rev = "ad274de1ba5c8ceaf77c5d11bb56b83948adc47c" }
+psoxide-link = { git = "https://github.com/EBonura/PSoXide.git", rev = "477d3ad6a5af71ae24fcede639e6c3873ba9fff5" }
+psx-pack = { git = "https://github.com/EBonura/PSoXide.git", rev = "477d3ad6a5af71ae24fcede639e6c3873ba9fff5" }
 lz4_flex = { version = "0.11", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

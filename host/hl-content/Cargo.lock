@@ -280,7 +280,6 @@ dependencies = [
 [[package]]
 name = "psxed-audio"
 version = "0.1.0"
-source = "git+https://github.com/EBonura/PSoXide.git?rev=4e2bead85de1de0a5d43835c54a81efbb432504f#4e2bead85de1de0a5d43835c54a81efbb432504f"
 dependencies = [
  "psxed-format",
  "serde",
@@ -292,7 +291,6 @@ dependencies = [
 [[package]]
 name = "psxed-format"
 version = "0.1.0"
-source = "git+https://github.com/EBonura/PSoXide.git?rev=4e2bead85de1de0a5d43835c54a81efbb432504f#4e2bead85de1de0a5d43835c54a81efbb432504f"
 
 [[package]]
 name = "pxfm"

@@ -9,7 +9,7 @@ description = "Rust-only Half-Life to hl-psx content compiler"
 
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["tga"] }
-psxed-audio = { git = "https://github.com/EBonura/PSoXide.git", rev = "4e2bead85de1de0a5d43835c54a81efbb432504f" }
+psxed-audio = { path = "../../.psoxide/editor/crates/psxed-audio" }
 serde_json = "1"
 sha2 = "0.10"
 symphonia = { version = "0.5", default-features = false, features = ["mp3"] }
