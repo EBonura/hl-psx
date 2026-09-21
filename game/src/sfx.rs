@@ -8,6 +8,7 @@
 //! (den 1 = full). `play_at` derives the fraction from world distance.
 
 use psx_asset::Audio;
+use psx_sfx::{OneShot, Sample, PARKING_TAIL as SAMPLE_TAIL};
 use psx_spu::{self as spu, Adsr, SpuAddr, Voice, Volume};
 
 pub const CHUNK_ID: u32 = 3000;
@@ -182,7 +183,6 @@ fn rd_u32(d: &[u8], o: usize) -> u32 {
 /// so it does not depend on a register written before key-on. Pointing the
 /// repeat register at a shared silence block was tried in psx-spu and the
 /// launcher capture showed voices running straight past it.
-const SAMPLE_TAIL: [u8; 16] = [0x00, 0x07, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 pub unsafe fn init_from_pack(pack: &[u8]) -> usize {
     spu::init();
@@ -289,13 +289,11 @@ pub unsafe fn play_voice(local_id: u8, den: u16) -> u16 {
     // default_tone plays the line out fully, then ~100 ms release.
     // Deliberate loops (map loops, chargers) keep sample(): a looped
     // sample never hits the mute path and needs its held sustain.
-    v.configure_sample(
-        SpuAddr::new(VOICE_ADDRS[i]),
-        packed_rate & 0xffff,
+    OneShot::new(
+        Sample::resident(SpuAddr::new(VOICE_ADDRS[i]), packed_rate & 0xffff, 0),
         Volume::linear(1, den.max(1)),
-        Adsr::default_tone(),
-    );
-    Voice::key_on(v.mask());
+    )
+    .play(v);
     (packed_rate >> 16) as u16
 }
 
@@ -378,13 +376,11 @@ pub unsafe fn play_voice_authored(
         return 0;
     }
     let v = Voice::new(DIALOGUE_VOICE);
-    v.configure_sample(
-        SpuAddr::new(VOICE_ADDRS[i]),
-        packed_rate & 0xffff,
+    OneShot::new(
+        Sample::resident(SpuAddr::new(VOICE_ADDRS[i]), packed_rate & 0xffff, 0),
         gain,
-        Adsr::default_tone(),
-    );
-    Voice::key_on(v.mask());
+    )
+    .play(v);
     (packed_rate >> 16) as u16
 }
 
@@ -426,13 +422,11 @@ pub unsafe fn play_map_vol(local_id: u8, den: u16) {
     };
     let voice = Voice::new(NEXT_VOICE);
     NEXT_VOICE = (NEXT_VOICE + 1) % VOICE_POOL;
-    voice.configure_sample(
-        SpuAddr::new(addr),
-        rate,
+    OneShot::new(
+        Sample::resident(SpuAddr::new(addr), rate, 0),
         Volume::linear(1, den.max(1)),
-        Adsr::default_tone(),
-    );
-    Voice::key_on(voice.mask());
+    )
+    .play(voice);
 }
 
 pub unsafe fn play_map_authored(
@@ -450,8 +444,7 @@ pub unsafe fn play_map_authored(
     }
     let voice = Voice::new(NEXT_VOICE);
     NEXT_VOICE = (NEXT_VOICE + 1) % VOICE_POOL;
-    voice.configure_sample(SpuAddr::new(addr), rate, gain, Adsr::default_tone());
-    Voice::key_on(voice.mask());
+    OneShot::new(Sample::resident(SpuAddr::new(addr), rate, 0), gain).play(voice);
 }
 
 #[inline]
@@ -514,8 +507,7 @@ unsafe fn play_map_loop_with_volume(local_id: u8, owner: u16, gain: Volume) {
     // though. On real SPU hardware Adsr::sample() makes such a sound loop from
     // the repeat address indefinitely after END; default_tone releases it in
     // ~100 ms while leaving genuine ADPCM loops unchanged until key-off.
-    voice.configure_sample(SpuAddr::new(addr), rate, gain, Adsr::default_tone());
-    Voice::key_on(voice.mask());
+    OneShot::new(Sample::resident(SpuAddr::new(addr), rate, 0), gain).play(voice);
 }
 
 pub unsafe fn stop_map_loop(owner: u16) {
@@ -607,13 +599,11 @@ unsafe fn play_at_distance(id: u8, distance: i32) {
         NEXT_VOICE = (NEXT_VOICE + 1) % VOICE_POOL;
         next
     });
-    voice.configure_sample(
-        SpuAddr::new(ADDRS[i]),
-        RATES[i],
+    OneShot::new(
+        Sample::resident(SpuAddr::new(ADDRS[i]), RATES[i], 0),
         Volume::linear(1, (1 + distance / 200) as u16),
-        Adsr::default_tone(),
-    );
-    Voice::key_on(voice.mask());
+    )
+    .play(voice);
 }
 
 #[cfg(test)]

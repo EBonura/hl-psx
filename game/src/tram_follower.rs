@@ -254,22 +254,8 @@ const fn ordered_abs_diff(a: i32, b: i32) -> u32 {
 }
 
 /// Integer square root, rounded down. Shift/subtract only; no division.
-const fn isqrt_u64(mut operand: u64) -> u64 {
-    let mut result = 0u64;
-    let mut bit = 1u64 << 62;
-    while bit > operand {
-        bit >>= 2;
-    }
-    while bit != 0 {
-        if operand >= result + bit {
-            operand -= result + bit;
-            result = (result >> 1) + bit;
-        } else {
-            result >>= 1;
-        }
-        bit >>= 2;
-    }
-    result
+const fn isqrt_u64(n: u64) -> u64 {
+    psx_math::int32::isqrt_u64(n) as u64
 }
 
 /// Three-dimensional Q8 distance, rounded down and saturated to i32.

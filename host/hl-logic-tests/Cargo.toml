@@ -8,6 +8,10 @@ description = "Host runner for the PS1 crate's pure-logic unit tests"
 [workspace]
 
 [dependencies]
+psx-asset = { path = "../../.psoxide/sdk/crates/psx-asset" }
+psx-spu = { path = "../../.psoxide/sdk/crates/psx-spu" }
+psx-sfx = { path = "../../.psoxide/sdk/crates/psx-sfx" }
+psx-math = { path = "../../.psoxide/sdk/crates/psx-math" }
 psx-engine = { path = "../../.psoxide/engine/crates/psx-engine" }
 
 [lib]

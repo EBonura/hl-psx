@@ -17,6 +17,9 @@
 pub const N_WEAPONS: usize = 14;
 pub const N_AMMO: usize = 13;
 
+#[path = "../../../game/src/sfx.rs"]
+pub mod sfx;
+
 #[path = "../../../game/src/save.rs"]
 pub mod save;
 

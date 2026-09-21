@@ -150,25 +150,7 @@ pub const fn unpack(word: i32) -> State {
 
 #[inline]
 fn isqrt(n: i32) -> i32 {
-    if n <= 0 {
-        return 0;
-    }
-    let mut x = n as u32;
-    let mut result = 0u32;
-    let mut bit = 1u32 << 30;
-    while bit > x {
-        bit >>= 2;
-    }
-    while bit != 0 {
-        if x >= result + bit {
-            x -= result + bit;
-            result = (result >> 1) + bit;
-        } else {
-            result >>= 1;
-        }
-        bit >>= 2;
-    }
-    result as i32
+    psx_math::int32::isqrt_i32(n)
 }
 
 /// Euclidean-clamp a planar velocity to the cooked GoldSrc maximum.
