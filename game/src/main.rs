@@ -1274,9 +1274,9 @@ impl FxPacket {
     };
 }
 
-// The chain borrows the tail of the world packet arena. That storage is
-// provably dead here -- channel 2 has finished walking the world, viewmodel
-// and HUD lists -- and it is rebuilt from slot zero next frame, so capturing
+// The chain borrows the tail of the world packet arena: slots past every packet
+// this frame claimed, so no ordering table links them while channel 2 walks
+// the world list, and the arena is rebuilt from slot zero next frame. Capturing
 // the overlay pass costs no static RAM at all.
 static mut FX_ARENA: *mut PrimitivePacketArena<'static> = core::ptr::null_mut();
 static mut FX_CHAIN_HEAD: u32 = FX_CHAIN_TERMINATOR;
@@ -1293,8 +1293,88 @@ unsafe fn fx_chain_submit() {
     if FX_CHAIN_TAIL.is_null() {
         return;
     }
-    gpu::submit_linked_list(core::ptr::addr_of!(FX_CHAIN_HEAD));
+    submit_list(core::ptr::addr_of!(FX_CHAIN_HEAD));
     fx_chain_reset();
+}
+
+/// One out-of-line copy of the blocking kick-and-wait for the overlay lists;
+/// inlined into each of their submits it cost 1.8 KB of .text.
+#[inline(never)]
+fn submit_list(head: *const u32) {
+    gpu::submit_linked_list(head);
+}
+
+// --- Late overlay submission -------------------------------------------------
+//
+// The world list is kicked as soon as it is built, and the first blocking
+// overlay submit (FX_OT) cannot start until the GPU has rasterised most of it,
+// which left the CPU spinning for a fifth of gameplay on the chapter-two route
+// while the GPU sat mostly idle. So a finished frame stops short of its
+// overlay submits. Every overlay packet is already built (FX_OT, HUD_OT, the
+// captured FX chain) and the held model is projected; only the GPU-side tail
+// below is left, and it runs after the next frame's simulation ticks, which
+// overlap the raster.
+//
+// The tail issues the same packets in the same order as before, and the flip
+// is still queued only after it (the VBlank handler applies it at a true edge
+// once the GPU is idle). Anything that needs the GPU, the packet arena or the
+// viewmodel pool before then calls `finish_deferred_overlays` first: weapon
+// switch streaming, the pause menu, every exit from `play`, and a capture that
+// runs out of arena.
+#[derive(Clone, Copy)]
+struct DeferredViewmodel {
+    model: Model,
+    slot: usize,
+    n_slots: usize,
+    frame: usize,
+    frame2: usize,
+    frac16: u32,
+}
+
+#[derive(Clone, Copy)]
+struct DeferredOverlays {
+    viewmodel: Option<DeferredViewmodel>,
+    screen_off: [i16; 2],
+    draw_y: i16,
+}
+
+static mut DEFERRED_OVERLAYS: Option<DeferredOverlays> = None;
+
+/// Submit the last built frame's overlay passes. Safe with nothing pending.
+unsafe fn finish_deferred_overlays() {
+    let Some(d) = DEFERRED_OVERLAYS.take() else {
+        return;
+    };
+    telemetry::stage_begin(telemetry::stage::WORLD_FLUSH);
+    gpu::submit_linked_list_wait();
+    submit_list(FX_OT.submit_head());
+    telemetry::stage_end(telemetry::stage::WORLD_FLUSH);
+    telemetry::stage_begin(telemetry::stage::OT_SUBMIT);
+    if d.screen_off != [0; 2] {
+        gpu::set_draw_offset(d.screen_off[0], d.draw_y.saturating_add(d.screen_off[1]));
+    }
+    if let Some(vm) = d.viewmodel {
+        telemetry::stage_begin(telemetry::stage::EQUIPMENT);
+        let submitted = draw_viewmodel(
+            &vm.model,
+            &VM_SLOTS[vm.slot..vm.slot + vm.n_slots],
+            vm.frame,
+            vm.frame2,
+            vm.frac16,
+            true,
+        );
+        telemetry::stage_end(telemetry::stage::EQUIPMENT);
+        telemetry::counter(
+            telemetry::counter::EQUIPMENT_SUBMITTED_TRIS,
+            submitted as u32,
+        );
+    }
+    if d.screen_off != [0; 2] {
+        gpu::set_draw_offset(0, d.draw_y);
+    }
+    submit_list(HUD_OT.submit_head());
+    telemetry::stage_end(telemetry::stage::OT_SUBMIT);
+    fx_chain_submit();
 }
 
 /// Append one GP0 command packet, preserving issue order. Returns false when
@@ -1307,6 +1387,9 @@ unsafe fn fx_chain_push(words: &[u32]) -> bool {
     }
     let arena = &mut *FX_ARENA;
     let Some(slot) = arena.push(FxPacket::ZERO) else {
+        // This frame's deferred overlay lists draw before the chain, so they
+        // go first and the immediate fallback keeps the pass order.
+        finish_deferred_overlays();
         fx_chain_submit();
         return false;
     };
@@ -4193,6 +4276,9 @@ fn poll_live_semantic_input(
     if pause_button && !*prev_pause_button {
         telemetry::stage_end(telemetry::stage::UPDATE);
         telemetry::task_end(telemetry::task::FIXED_UPDATE);
+        // The pause screen draws over the finished frame, so that frame's
+        // deferred overlay lists go out first.
+        unsafe { finish_deferred_overlays() };
         return match run_pause_menu(fb) {
             PauseExit::MainMenu => LiveInputPoll::MainMenu,
             PauseExit::Chapter(room) => LiveInputPoll::Chapter(room),
@@ -4551,6 +4637,9 @@ unsafe fn vm_switch_retry_blocking(wm: usize) -> bool {
 /// A newer request supersedes an in-flight stream -- never queued.
 #[optimize(size)]
 unsafe fn vm_switch_begin(wm: usize) -> VmSwitchBegin {
+    // A deferred viewmodel emission still reads the live geometry and its
+    // projection cache, and the stream borrows the packet arena.
+    finish_deferred_overlays();
     if wm >= N_VIEWMODELS {
         return VmSwitchBegin::Failed;
     }
@@ -4581,8 +4670,8 @@ unsafe fn vm_switch_begin(wm: usize) -> VmSwitchBegin {
     if word >= VM_POOL_WORDS || slot >= VM_SLOTS_TOTAL {
         return VmSwitchBegin::Failed;
     }
-    // GPU submission is synchronous before input/update can switch weapons, so
-    // no draw can still reference the old geometry or projection scratch.
+    // The deferred overlay tail was flushed on entry, so no draw can still
+    // reference the old geometry or projection scratch.
     invalidate_weapon_tri_cache();
     let buf_ptr = model_ptr();
     if !cdstream::stream_begin(
@@ -4604,6 +4693,9 @@ unsafe fn vm_switch_pump() -> VmSwitchPump {
     if VM_STREAM_WM == VM_NONE {
         return VmSwitchPump::Idle;
     }
+    // Sectors land in the viewmodel pool and the stream cache in the packet
+    // arena; completion uploads to VRAM. Nothing deferred may still read them.
+    finish_deferred_overlays();
     let wm = VM_STREAM_WM as usize;
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
     let pumped = cdstream::stream_pump();
@@ -30500,6 +30592,11 @@ fn play(
             telemetry::task_end(telemetry::task::FIXED_UPDATE);
 
             unsafe {
+                // Every exit (and the level-change autosave badge) leaves the
+                // GPU the way the blocking submits used to: all lists drawn.
+                if restart_requested || TRAINING_COMPLETE_REQUEST || CHANGE_REQUEST_ACTIVE != 0 {
+                    finish_deferred_overlays();
+                }
                 if restart_requested {
                     sfx::charger_stop();
                     return PlayExit::Restart(launch);
@@ -30565,6 +30662,11 @@ fn play(
                 ticks_this_visual.saturating_sub(1) as u32,
             );
         }
+        // The previous frame's overlay lists go out now that the ticks above
+        // have run underneath its world raster. This stays ahead of the camera
+        // setup: a changed projection plane would re-key the held model's
+        // projection cache and the deferred emission would re-project it.
+        unsafe { finish_deferred_overlays() };
 
         if DBG_CAM {
             player.pos = DBG_CAM_POS;
@@ -32457,43 +32559,30 @@ fn play(
                 );
                 telemetry::stage_end(telemetry::stage::EQUIPMENT);
             }
-            gpu::submit_linked_list_wait();
-            FX_OT.submit();
-            telemetry::stage_end(telemetry::stage::WORLD_FLUSH);
-            telemetry::stage_begin(telemetry::stage::OT_SUBMIT);
-            let draw_y = fb.buffer_y(fb.drawing) as i16;
-            if viewmodel_screen_off != [0; 2] {
-                gpu::set_draw_offset(
-                    viewmodel_screen_off[0],
-                    draw_y.saturating_add(viewmodel_screen_off[1]),
-                );
-            }
-            if let Some((vm_model, vm_slot, vm_n, vm_frame, vm_frame2, vm_frac16)) = viewmodel_draw
-            {
-                telemetry::stage_begin(telemetry::stage::EQUIPMENT);
-                let submitted = draw_viewmodel(
-                    &vm_model,
-                    &VM_SLOTS[vm_slot..vm_slot + vm_n],
-                    vm_frame,
-                    vm_frame2,
-                    vm_frac16,
-                    true,
-                );
-                telemetry::stage_end(telemetry::stage::EQUIPMENT);
-                telemetry::counter(
-                    telemetry::counter::EQUIPMENT_SUBMITTED_TRIS,
-                    submitted as u32,
-                );
-            }
-            if viewmodel_screen_off != [0; 2] {
-                gpu::set_draw_offset(0, draw_y);
-            }
             hud::prepare(hud_mat, &mut HUD_OT, &mut HUD_ENV);
-            HUD_OT.submit();
-            telemetry::stage_end(telemetry::stage::OT_SUBMIT);
+            telemetry::stage_end(telemetry::stage::WORLD_FLUSH);
+            // Every overlay packet is built; only the GPU-side tail is left.
+            // Decoupled frames run it after the next simulation ticks (see
+            // `finish_deferred_overlays`), so the CPU simulates while the GPU
+            // rasterises the world instead of spinning on the FX_OT submit.
+            DEFERRED_OVERLAYS = Some(DeferredOverlays {
+                viewmodel: viewmodel_draw.map(|(model, slot, n_slots, frame, frame2, frac16)| {
+                    DeferredViewmodel {
+                        model,
+                        slot,
+                        n_slots,
+                        frame,
+                        frame2,
+                        frac16,
+                    }
+                }),
+                screen_off: viewmodel_screen_off,
+                draw_y: fb.buffer_y(fb.drawing) as i16,
+            });
             // Capture the overlay pass into a DMA chain instead of writing it
             // to GP0 a word at a time. Identical words in identical order; the
-            // gain is that the CPU stops fencing on the frame's raster.
+            // gain is that the CPU stops fencing on the frame's raster. The
+            // chain is submitted last, after the deferred lists above.
             fx_chain_reset();
             FX_ARENA = (&mut packets as *mut PrimitivePacketArena<'_>).cast();
             FX_CAPTURE = true;
@@ -32513,8 +32602,11 @@ fn play(
                 );
             }
             FX_CAPTURE = false;
-            fx_chain_submit();
             FX_ARENA = core::ptr::null_mut();
+            // A coupled frame presents at the end of this iteration, so its
+            // overlays go out now, in the same order.
+            #[cfg(not(feature = "decoupled-present"))]
+            finish_deferred_overlays();
 
             // DEBUG: dump the crosshair tri + camera state to PSoXide's Play debug
             // terminal. Auto-fires whenever the aimed triangle (or valid state)
