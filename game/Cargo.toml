@@ -54,7 +54,7 @@ main-ram-render-scratch = []
 main-ram-projection-stack = []
 # Emits PSoXide-only MMIO telemetry so `frontend launch` can stop on guest
 # frames and write profile/counter CSVs. Keep it off for burn/shipping builds.
-emulator-telemetry = []
+emulator-telemetry = ["psx-goldsrc/emulator-telemetry"]
 # Records the affine error histogram for every frame so tessellation changes
 # can be measured in texels. Binning every visible edge is slower than the
 # correction it measures, so this is deliberately separate from
@@ -76,7 +76,7 @@ seam-census = []
 decoupled-present = []
 # Event/counter-only profile build. This leaves the large guest debug-log
 # diagnostics out so the profiler fits beside the shipping campaign pools.
-performance-telemetry = []
+performance-telemetry = ["psx-goldsrc/performance-telemetry"]
 # Headless-only test hook: hold L1 plus a low-byte map index at boot to skip the
 # menu and load that map directly. Off for normal discs.
 debug-map-boot = []

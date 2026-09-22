@@ -11,6 +11,10 @@
 //! module itself, as `save` gates its card transport on `target_arch = "mips"`.
 //!
 //! Run with `cargo test --manifest-path host/hl-logic-tests/Cargo.toml`.
+//!
+//! Modules shared with the other GoldSrc port (pickup, ladder, pushable,
+//! visibility, hitbox, ordering, semantic input and the core ground rules)
+//! live in `psx-goldsrc` and are tested there.
 
 /// Mirrors of the arsenal dimensions the included modules expect from the game
 /// crate root. `constants_match_the_game_crate` fails if these ever drift.
@@ -23,9 +27,6 @@ pub mod sfx;
 #[path = "../../../game/src/save.rs"]
 pub mod save;
 
-#[path = "../../../game/src/pickup_logic.rs"]
-pub mod pickup_logic;
-
 #[path = "../../../game/src/ground_logic.rs"]
 pub mod ground_logic;
 
@@ -35,32 +36,11 @@ pub mod logic_state;
 #[path = "../../../game/src/scientist_logic.rs"]
 pub mod scientist_logic;
 
-#[path = "../../../game/src/semantic_input.rs"]
-pub mod semantic_input;
-
-#[path = "../../../game/src/route_follow.rs"]
-pub mod route_follow;
-
 #[path = "../../../game/src/tram_logic.rs"]
 pub mod tram_logic;
 
 #[path = "../../../game/src/tram_follower.rs"]
 pub mod tram_follower;
-
-#[path = "../../../game/src/pushable.rs"]
-pub mod pushable;
-
-#[path = "../../../game/src/visibility_logic.rs"]
-pub mod visibility_logic;
-
-#[path = "../../../game/src/hitbox_logic.rs"]
-pub mod hitbox_logic;
-
-#[path = "../../../game/src/ladder_logic.rs"]
-pub mod ladder_logic;
-
-#[path = "../../../game/src/ordering.rs"]
-pub mod ordering;
 
 #[path = "../../../game/src/render.rs"]
 pub mod render;

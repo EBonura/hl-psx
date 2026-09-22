@@ -25,33 +25,33 @@ extern crate psx_rt;
 mod beverage;
 mod cdstream;
 mod ground_logic;
-mod hitbox_logic;
+use psx_goldsrc::hitbox_logic;
 mod hltext;
 mod hud;
-mod ladder_logic;
+use psx_goldsrc::ladder_logic;
 mod logic_state;
 mod map;
 mod menu;
 mod model;
-mod ordering;
+use psx_goldsrc::ordering;
 mod phys;
-mod pickup_logic;
-mod pushable;
+use psx_goldsrc::pickup_logic;
+use psx_goldsrc::pushable;
 #[cfg(feature = "reference-trace")]
 mod reference_trace;
 mod render;
 #[cfg(feature = "route-follow")]
-mod route_follow;
+use psx_goldsrc::route_follow;
 mod save;
 mod scientist_logic;
 mod scratchpad;
-mod semantic_input;
+use psx_goldsrc::semantic_input;
 mod settings;
 mod sfx;
 mod sprite;
-mod telemetry;
+use psx_goldsrc::telemetry;
 mod tram_logic;
-mod visibility_logic;
+use psx_goldsrc::visibility_logic;
 mod vram;
 
 mod room_budget {
@@ -166,7 +166,7 @@ static mut ACTIVE_SFX_CHUNK: u32 = 0;
 // against nearby BSP geometry. The GPU submit DMA walks the whole chain every
 // frame, so keep only the slots the chosen far plane actually needs. 320
 // covers 1200>>2 plus the backdrop bias without reducing depth precision.
-const OT_LEN: usize = ordering::OT_LEN;
+const OT_LEN: usize = 320;
 const OT_SHIFT: u32 = ordering::OT_SHIFT;
 const HUD_OT_LEN: usize = 1;
 const FX_OT_LEN: usize = 1;
@@ -19543,7 +19543,7 @@ unsafe fn tick_beams(m: &Map, nlogic: usize) {
 #[inline(always)]
 unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: bool) -> usize {
     let policy = EMIT_POLICY;
-    ordering::world_order_key(
+    ordering::world_order_key::<OT_LEN>(
         depths,
         ordering::SurfaceOrder {
             local_depth: policy.local_depth(),
@@ -25739,7 +25739,7 @@ unsafe fn draw_model(
             // PS1 choice for compact triangles and matches the viewmodel path.
             // Retain quarter-unit precision until the shared model pass sorts
             // ties inside each existing four-unit world bucket.
-            let depth_key = ordering::model_depth_key(pa_z, pb_z, pc_z, scale_shift);
+            let depth_key = ordering::model_depth_key::<OT_LEN>(pa_z, pb_z, pc_z, scale_shift);
             let payload = *face_payloads.add(t);
             // XY is already in the GPU packet's packed word layout. Preserve
             // it directly instead of unpacking to i16 pairs only to repack it.
