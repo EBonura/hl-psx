@@ -415,16 +415,8 @@ pub fn tex_anim_display(tex: usize) -> usize {
     }
 }
 
-/// GoldSrc brush textures use `ANIM_CYCLE = 2`: `R_TextureAnimation` samples
-/// a 10 Hz clock, but each numbered/lettered miptex owns two tenths.
-#[inline(always)]
-pub const fn tex_anim_frame_index(tenth: u16, frame_count: usize) -> usize {
-    if frame_count == 0 {
-        0
-    } else {
-        (tenth as usize / 2) % frame_count
-    }
-}
+#[cfg(test)]
+pub use psx_goldsrc::texture_animation::frame_index as tex_anim_frame_index;
 
 pub const SPRITE_ID_MASK: u16 = 0x000F;
 pub const SPRITE_INITIAL_ON: u16 = 0x0010;

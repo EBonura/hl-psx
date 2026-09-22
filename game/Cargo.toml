@@ -128,6 +128,7 @@ psx-telemetry = { path = "../.psoxide/sdk/crates/psx-telemetry" }
 psx-engine = { path = "../.psoxide/engine/crates/psx-engine" }
 psx-render-contract = { path = "../.psoxide/engine/crates/psx-render-contract" }
 
+
 [build-dependencies]
 # Use the exact disc compressor and guest decoder pair when sizing MAP_BUF for
 # tail-staged in-place HLZC streams. This replaces a fixed 4 KiB RAM guess with
