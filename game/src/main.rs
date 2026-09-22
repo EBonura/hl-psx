@@ -2580,96 +2580,7 @@ static mut WORLD_PROJECTION_KEY: WorldProjectionKey = WorldProjectionKey {
     base_t: [0; 3],
 };
 static mut WORLD_PROJECTION_TOKEN: u16 = 0;
-const PVS_LINK_END: u16 = u16::MAX;
-const PVS_GROUP_LIQUID: u16 = 0x8000;
-const PVS_GROUP_FACE_MASK: u16 = 0x7fff;
-#[derive(Clone, Copy)]
-struct PvsFaceRec {
-    first: u16,
-    // Low 14 bits are the loop/triangle/patch record count. Bit 14 marks a
-    // face whose material/light state needs the generic setup path; bit 15 is
-    // the backed-cutout ordering flag. Cooked face counts are far below 16K,
-    // so the cold PVS builder can preclassify the hot stream without growing
-    // this record or the resident room arena.
-    count: u16,
-    center: [i16; 3],
-    radius: u16,
-    tex: u8,  // per-face texture (loop faces store tex on the FaceRec)
-    meta: u8, // band[2:0] | loop<<3 | liquid<<4 | refined<<5 | backdrop<<6 | patch<<7
-}
-const PVS_FACE_BAND_MASK: u8 = 0x07;
-const PVS_FACE_LOOP: u8 = 0x08;
-const PVS_FACE_TRANSLUCENT: u8 = 0x10;
-const PVS_FACE_REFINED_TOPOLOGY: u8 = 0x20;
-const PVS_FACE_COPLANAR_BACKDROP: u8 = 0x40;
-const PVS_FACE_PATCH: u8 = 0x80;
-const PVS_FACE_COUNT_MASK: u16 = 0x3fff;
-const PVS_FACE_SPECIAL: u16 = 0x4000;
-const PVS_FACE_CUTOUT: u16 = 0x8000;
-
-impl PvsFaceRec {
-    #[inline(always)]
-    fn band(self) -> u8 {
-        self.meta & PVS_FACE_BAND_MASK
-    }
-
-    #[inline(always)]
-    fn count(self) -> usize {
-        (self.count & PVS_FACE_COUNT_MASK) as usize
-    }
-
-    #[inline(always)]
-    fn cutout(self) -> bool {
-        self.count & PVS_FACE_CUTOUT != 0
-    }
-
-    #[inline(always)]
-    fn special(self) -> bool {
-        self.count & PVS_FACE_SPECIAL != 0
-    }
-
-    #[inline(always)]
-    fn set_band(&mut self, band: u8) {
-        self.meta = (self.meta & !PVS_FACE_BAND_MASK) | (band & PVS_FACE_BAND_MASK);
-    }
-
-    #[inline(always)]
-    fn is_loop(self) -> bool {
-        self.meta & PVS_FACE_LOOP != 0
-    }
-
-    #[inline(always)]
-    fn is_patch(self) -> bool {
-        self.meta & PVS_FACE_PATCH != 0
-    }
-
-    #[inline(always)]
-    fn liquid(self) -> bool {
-        self.meta & PVS_FACE_TRANSLUCENT != 0
-    }
-
-    #[inline(always)]
-    fn refined_topology(self) -> bool {
-        self.meta & PVS_FACE_REFINED_TOPOLOGY != 0
-    }
-
-    #[inline(always)]
-    fn coplanar_backdrop(self) -> bool {
-        self.meta & PVS_FACE_COPLANAR_BACKDROP != 0
-    }
-}
-
-// Packing three one-byte fields into `meta` saves 4 KiB across the 2,048-face
-// cache without reducing either visibility or GPU packet capacity.
-const _: () = assert!(core::mem::size_of::<PvsFaceRec>() == 14);
-const EMPTY_PVS_FACE_REC: PvsFaceRec = PvsFaceRec {
-    first: 0,
-    count: 0,
-    center: [0; 3],
-    radius: 0,
-    tex: 0,
-    meta: 0,
-};
+use psx_goldsrc::pvs_faces::{PvsFaceRec, EMPTY_PVS_FACE_REC, PVS_GROUP_LIQUID, PVS_LINK_END};
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
 static mut PVS_LEAF_COUNT: usize = 0;
 // The live PVS uses u16 links. Four-byte alignment lets the unused suffix hold
@@ -19777,44 +19688,66 @@ fn dry_leaf_above(m: &Map, eye: [i32; 3]) -> Option<usize> {
     None
 }
 
-#[inline(always)]
-fn build_pvs_face_rec(m: &Map, face: usize) -> PvsFaceRec {
-    let (first, cnt) = m.face_tris(face);
-    let liquid = m.face_liquid(face);
-    let cutout = m.face_cutout_backed(face);
-    let coplanar_backdrop = m.face_coplanar_backdrop(face);
-    let (bc, radius) = m.face_bounds(face);
-    PvsFaceRec {
-        first: first as u16,
-        count: cnt as u16
-            | if face_needs_generic_emit(m, face) {
-                PVS_FACE_SPECIAL
-            } else {
-                0
-            }
-            | if cutout { PVS_FACE_CUTOUT } else { 0 },
-        center: [bc[0] as i16, bc[1] as i16, bc[2] as i16],
-        radius: radius as u16,
-        tex: m.face_tex(face) as u8,
-        meta: (if m.face_is_loop(face) {
-            PVS_FACE_LOOP
-        } else {
-            0
-        }) | (if m.face_is_patch(face) {
-            PVS_FACE_PATCH
-        } else {
-            0
-        }) | (if liquid { PVS_FACE_TRANSLUCENT } else { 0 })
-            | (if m.face_refined_topology(face) {
-                PVS_FACE_REFINED_TOPOLOGY
-            } else {
-                0
-            })
-            | (if coplanar_backdrop {
-                PVS_FACE_COPLANAR_BACKDROP
-            } else {
-                0
-            }),
+impl psx_goldsrc::pvs_faces::FaceSource for Map {
+    #[inline(always)]
+    fn visible_leaf_count(&self) -> usize {
+        self.n_visleaves
+    }
+    #[inline(always)]
+    fn mark_count(&self) -> usize {
+        self.n_marks
+    }
+    #[inline(always)]
+    fn leaf(&self, leaf: usize) -> (i32, usize, usize) {
+        Map::leaf(self, leaf)
+    }
+    #[inline(always)]
+    fn mark(&self, mark: usize) -> usize {
+        Map::mark(self, mark)
+    }
+    #[inline(always)]
+    fn face_needs_generic_emit(&self, face: usize) -> bool {
+        face_needs_generic_emit(self, face)
+    }
+    #[inline(always)]
+    fn face_tris(&self, face: usize) -> (usize, usize) {
+        Map::face_tris(self, face)
+    }
+    #[inline(always)]
+    fn face_group(&self, face: usize) -> usize {
+        Map::face_group(self, face)
+    }
+    #[inline(always)]
+    fn face_liquid(&self, face: usize) -> bool {
+        Map::face_liquid(self, face)
+    }
+    #[inline(always)]
+    fn face_cutout_backed(&self, face: usize) -> bool {
+        Map::face_cutout_backed(self, face)
+    }
+    #[inline(always)]
+    fn face_coplanar_backdrop(&self, face: usize) -> bool {
+        Map::face_coplanar_backdrop(self, face)
+    }
+    #[inline(always)]
+    fn face_bounds(&self, face: usize) -> ([i32; 3], i32) {
+        Map::face_bounds(self, face)
+    }
+    #[inline(always)]
+    fn face_tex(&self, face: usize) -> usize {
+        Map::face_tex(self, face)
+    }
+    #[inline(always)]
+    fn face_is_loop(&self, face: usize) -> bool {
+        Map::face_is_loop(self, face)
+    }
+    #[inline(always)]
+    fn face_is_patch(&self, face: usize) -> bool {
+        Map::face_is_patch(self, face)
+    }
+    #[inline(always)]
+    fn face_refined_topology(&self, face: usize) -> bool {
+        Map::face_refined_topology(self, face)
     }
 }
 
@@ -19834,94 +19767,30 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize, eye: [i32; 3],
             merge_vis(m, dry_visofs, &mut VIS_BITS);
         }
     }
-    let mut old_group = 0usize;
-    while old_group < PVS_GROUP_COUNT {
-        PVS_GROUP_FACE[PVS_GROUP_ACTIVE[old_group] as usize] = PVS_LINK_END;
-        old_group += 1;
-    }
-    PVS_LEAF_COUNT = 0;
-    PVS_FACE_COUNT = 0;
-
-    PVS_GROUP_COUNT = 0;
-    PVS_HAS_TRANSLUCENT = false;
-    PVS_HAS_TEXANIM = false;
-    PVS_TEX_ANIM_MASK = [0; map::TEX_ANIM_MAX / 32];
     PVS_TEX_ANIM_GEN = 0;
-    PVS_TRI_REF_COUNT = 0;
     PVS_ENT_COUNT = 0;
-    // A 1-bit duplicate marker recovers 7.4 KiB over the old byte-per-face
-    // token array. PVS rebuilds already walk the visible marks; clearing 272
-    // words here is cold compared with retaining that RAM every frame.
-    PVS_FACE_MARK.fill(0);
-
-    for i in 0..m.n_visleaves.min(MAX_LEAVES) {
-        if VIS_BITS[i >> 3] & (1u8 << (i & 7)) == 0 {
-            continue;
-        }
-        let leaf = i + 1;
-        PVS_LEAF_COUNT += 1;
-
-        let (_, m0, mc) = m.leaf(leaf);
-        for mj in m0..m0 + mc {
-            if mj >= m.n_marks {
-                break;
-            }
-            let face = m.mark(mj);
-            if face >= MAX_FACES {
-                continue;
-            }
-            let mark_word = face >> 5;
-            let mark_bit = 1u32 << (face & 31);
-            if PVS_FACE_MARK[mark_word] & mark_bit != 0 {
-                continue;
-            }
-            PVS_FACE_MARK[mark_word] |= mark_bit;
-            let (first, cnt) = m.face_tris(face);
-            if cnt == 0 || first > u16::MAX as usize || cnt > PVS_FACE_COUNT_MASK as usize {
-                continue;
-            }
-
-            if PVS_FACE_COUNT >= MAX_FACES {
-                continue;
-            }
-
-            let group = m.face_group(face);
-            if group >= MAX_FACE_GROUPS {
-                continue;
-            }
-            if PVS_GROUP_FACE[group] == PVS_LINK_END {
-                if PVS_GROUP_COUNT >= MAX_FACE_GROUPS {
-                    break;
-                }
-                PVS_GROUP_FIRST[group] = PVS_LINK_END;
-                PVS_GROUP_FACE[group] = face as u16 & PVS_GROUP_FACE_MASK;
-                PVS_GROUP_ACTIVE[PVS_GROUP_COUNT] = group as u16;
-                PVS_GROUP_COUNT += 1;
-            }
-            if m.face_liquid(face) {
-                PVS_GROUP_FACE[group] |= PVS_GROUP_LIQUID;
-            }
-
-            let entry = PVS_FACE_COUNT;
-            PVS_FACE_INDEX.0[entry] = face as u16;
-            let liquid = m.face_liquid(face);
-            let face_tex = m.face_tex(face);
-            let animated = tex_is_animated(face_tex);
-            PVS_HAS_TRANSLUCENT |= liquid;
-            PVS_HAS_TEXANIM |= animated;
-            if animated {
-                let tex = face_tex & (map::TEX_ANIM_MAX - 1);
-                PVS_TEX_ANIM_MASK[tex >> 5] |= 1u32 << (tex & 31);
-            }
-            if entry < MAX_PVS_FACE_RECS {
-                PVS_FACE_REC.0[entry] = build_pvs_face_rec(m, face);
-            }
-            PVS_TRI_REF_COUNT += cnt;
-            PVS_FACE_NEXT.0[entry] = PVS_GROUP_FIRST[group];
-            PVS_GROUP_FIRST[group] = entry as u16;
-            PVS_FACE_COUNT += 1;
-        }
-    }
+    let compiled = psx_goldsrc::pvs_faces::compile_faces(
+        m,
+        &VIS_BITS,
+        &TEX_ANIM_MASK,
+        PVS_GROUP_COUNT,
+        psx_goldsrc::pvs_faces::FaceBuffers {
+            indices: &mut PVS_FACE_INDEX.0,
+            next: &mut PVS_FACE_NEXT.0,
+            records: &mut PVS_FACE_REC.0,
+            marks: &mut PVS_FACE_MARK,
+            group_first: &mut PVS_GROUP_FIRST,
+            group_face: &mut PVS_GROUP_FACE,
+            active_groups: &mut PVS_GROUP_ACTIVE,
+            animated_textures: &mut PVS_TEX_ANIM_MASK,
+        },
+    );
+    PVS_LEAF_COUNT = compiled.leaf_count;
+    PVS_FACE_COUNT = compiled.face_count;
+    PVS_GROUP_COUNT = compiled.group_count;
+    PVS_TRI_REF_COUNT = compiled.triangle_references;
+    PVS_HAS_TRANSLUCENT = compiled.has_translucent;
+    PVS_HAS_TEXANIM = compiled.has_texture_animation;
 
     let mut ei = 0usize;
     while ei < nents {
