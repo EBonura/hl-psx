@@ -14,7 +14,7 @@ build-std-features = ["compiler-builtins-mem"]
 # a nop behind 56% of the branches the chapter-two replay executed. Searching
 # the successor block fills most of them (+2.3% rendered FPS, simulation state
 # bit-identical at tape end); searching forward fills the slot after calls and
-# takes 10.9 KB out of .text. host/hazard_patch.py still proves every link free
+# takes 10.9 KB out of .text. The SDK's hazard_patch.py proves every link free
 # of load-delay hazards. An exported RUSTFLAGS replaces this list, so a caller
 # that sets one has to carry both flags itself.
 rustflags = [
