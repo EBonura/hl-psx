@@ -947,28 +947,13 @@ const fn split_model_stream(ty: usize) -> bool {
 /// already baked into that room's scripted-sequence tokens.
 #[inline]
 fn map_model_variant_chunk(map_index: usize, ty: usize) -> Option<u32> {
-    let offsets = &room_budget::MODEL_VARIANT_OFFSETS;
-    if map_index + 1 >= offsets.len() || ty >= N_MODEL_TYPES {
-        return None;
-    }
-    let mut entry = offsets[map_index] as usize;
-    let end = offsets[map_index + 1] as usize;
-    while entry < end {
-        let offset = entry * 3;
-        let bytes = &room_budget::MODEL_VARIANT_BYTES;
-        if offset + 2 >= bytes.len() {
-            return None;
-        }
-        let entry_ty = bytes[offset] as usize;
-        if entry_ty == ty {
-            return Some(u16::from_le_bytes([bytes[offset + 1], bytes[offset + 2]]) as u32);
-        }
-        if entry_ty > ty {
-            return None;
-        }
-        entry += 1;
-    }
-    None
+    psx_goldsrc::model_variant::lookup(
+        &room_budget::MODEL_VARIANT_OFFSETS,
+        &room_budget::MODEL_VARIANT_BYTES,
+        map_index,
+        ty,
+        N_MODEL_TYPES,
+    )
 }
 const AI_ITEM: u8 = 0; // static pickup
 const AI_FLEE: u8 = 1; // scientist
@@ -2777,12 +2762,6 @@ unsafe fn tex_is_animated(tex: usize) -> bool {
 }
 
 #[inline(always)]
-unsafe fn pvs_has_texanim(tex: usize) -> bool {
-    let i = tex & (map::TEX_ANIM_MAX - 1);
-    PVS_TEX_ANIM_MASK[i >> 5] & (1u32 << (i & 31)) != 0
-}
-
-#[inline(always)]
 unsafe fn ent_has_texanim(ei: usize) -> bool {
     ei < MAX_ENTS && ENT_TEXANIM[ei >> 5] & (1u32 << (ei & 31)) != 0
 }
@@ -2807,12 +2786,10 @@ unsafe fn tex_anim_init(m: &Map, nents: usize) {
     if m.n_tex_anim == 0 {
         return;
     }
-    for c in 0..m.n_tex_anim {
-        let (primary, alt) = m.tex_anim_chain(c);
-        for &id in primary.iter().chain(alt.iter()) {
-            TEX_ANIM_MASK[(id >> 5) as usize] |= 1u32 << (id & 31);
-        }
-    }
+    psx_goldsrc::texture_animation::mark_members(
+        (0..m.n_tex_anim).map(|c| m.tex_anim_chain(c)),
+        &mut TEX_ANIM_MASK,
+    );
     for ei in 0..nents.min(MAX_ENTS) {
         let (ff, nf) = m.submodel(ENT_CACHE[ei].submodel);
         for f in ff..(ff + nf).min(m.n_faces) {
@@ -2829,48 +2806,15 @@ unsafe fn tex_anim_init(m: &Map, nents: usize) {
 /// visible +0/+1 chain advances at 5 fps. Rebuilds the two display rows:
 /// frame-state 0 shows a face's own chain, frame-state 1 the other chain.
 unsafe fn tex_anim_tick(m: &Map) {
-    if m.n_tex_anim == 0 {
-        return;
-    }
-    let tenth = SIM_NOW >> 1;
-    if tenth == TEX_ANIM_TENTH {
-        return;
-    }
-    TEX_ANIM_TENTH = tenth;
-    let mut changed = false;
-    let mut pvs_changed = false;
-    for c in 0..m.n_tex_anim {
-        let (primary, alt) = m.tex_anim_chain(c);
-        let pcur = primary
-            .get(map::tex_anim_frame_index(tenth, primary.len()))
-            .copied()
-            .unwrap_or(0);
-        let acur = alt
-            .get(map::tex_anim_frame_index(tenth, alt.len()))
-            .copied()
-            .unwrap_or(0);
-        for &id in primary {
-            let id_changed =
-                map::tex_anim_set(id as usize, pcur, if alt.is_empty() { pcur } else { acur });
-            changed |= id_changed;
-            pvs_changed |= id_changed && pvs_has_texanim(id as usize);
-        }
-        for &id in alt {
-            let id_changed = map::tex_anim_set(
-                id as usize,
-                acur,
-                if primary.is_empty() { acur } else { pcur },
-            );
-            changed |= id_changed;
-            pvs_changed |= id_changed && pvs_has_texanim(id as usize);
-        }
-    }
-    if changed {
-        TEX_ANIM_GEN = TEX_ANIM_GEN.wrapping_add(1);
-    }
-    if pvs_changed {
-        PVS_TEX_ANIM_GEN = PVS_TEX_ANIM_GEN.wrapping_add(1);
-    }
+    psx_goldsrc::texture_animation::tick(
+        (0..m.n_tex_anim).map(|c| m.tex_anim_chain(c)),
+        SIM_NOW,
+        &mut TEX_ANIM_TENTH,
+        &mut TEX_ANIM_GEN,
+        &mut PVS_TEX_ANIM_GEN,
+        &PVS_TEX_ANIM_MASK,
+        map::tex_anim_set,
+    );
 }
 // Per-frame group backface verdicts (bit per ACTIVE-list index): the banded
 // walk used to redo every group's plane dot and every face's depth dot per
