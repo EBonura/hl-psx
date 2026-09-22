@@ -6241,6 +6241,9 @@ unsafe fn water_state(
     }
 }
 
+// One call site in `play`. The ladder predicates now come from psx-goldsrc,
+// and without the hint LLVM stops inlining this into the tick.
+#[inline(always)]
 unsafe fn ladder_touch(
     nents: usize,
     pos: [i32; 3],
