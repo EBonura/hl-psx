@@ -2681,6 +2681,12 @@ static mut WORLD_CACHE_RETARGET: psx_goldsrc::texture_animation::PacketRetarget<
 // Animation clock the cached packets were built or last retargeted at.
 static mut WORLD_CACHE_TEX_TENTH: u16 = u16::MAX;
 
+#[inline(always)]
+unsafe fn world_cache_retarget(
+) -> &'static mut psx_goldsrc::texture_animation::PacketRetarget<TEX_ANIM_RETARGET_SIDES> {
+    &mut *core::ptr::addr_of_mut!(WORLD_CACHE_RETARGET)
+}
+
 /// One outlined copy of the chain decoder for the cold retarget drivers.
 #[inline(never)]
 fn tex_anim_chain_at(m: &Map, c: usize) -> (&'static [u8], &'static [u8]) {
@@ -3494,13 +3500,9 @@ unsafe fn world_cache_capture_packet<T>(_packet: *const T, otz: usize, quad: boo
 }
 
 #[inline]
-unsafe fn prepare_world_packet_cache(
-    m: &Map,
-    key: WorldPacketCacheKey,
-    band_prefix: usize,
-) -> u8 {
+unsafe fn prepare_world_packet_cache(m: &Map, key: WorldPacketCacheKey, band_prefix: usize) -> u8 {
     WORLD_CACHE_BUILDING = false;
-    WORLD_CACHE_RETARGET.clear();
+    world_cache_retarget().clear();
     // Debug picking observes the fresh triangle walk, including loop faces.
     if !WORLD_PACKET_CACHE || DEBUG_XHAIR || affine_heatmap_active() {
         return WORLD_CACHE_NONE;
@@ -3516,7 +3518,7 @@ unsafe fn prepare_world_packet_cache(
     // rewrite of their texture words, applied by the replay below if the
     // cache is reused this frame. The key carries no animation state here.
     if WORLD_CACHE_VALID && TEX_ANIM_RETARGET && WORLD_CACHE_TEX_TENTH != TEX_ANIM_TENTH {
-        if WORLD_CACHE_RETARGET.stage(
+        if world_cache_retarget().stage(
             (0..m.n_tex_anim).map(|c| tex_anim_chain_at(m, c)),
             WORLD_CACHE_TEX_TENTH,
             TEX_ANIM_TENTH,
@@ -21855,7 +21857,7 @@ unsafe fn replay_world_packet_cache(
         return false;
     }
     // A texture-animation step staged by prepare_world_packet_cache.
-    let retarget = !WORLD_CACHE_RETARGET.is_empty();
+    let retarget = !world_cache_retarget().is_empty();
     let mut i = 0usize;
     while i < count {
         let meta = PVS_BAND_ORDER[PVS_BAND_CAP - 1 - i];
@@ -21875,7 +21877,7 @@ unsafe fn replay_world_packet_cache(
                 return false;
             };
             if retarget {
-                WORLD_CACHE_RETARGET.apply((packet as *mut QuadTexturedGouraud).cast::<u32>());
+                world_cache_retarget().apply((packet as *mut QuadTexturedGouraud).cast::<u32>());
             }
             OT.add(otz, packet, QuadTexturedGouraud::WORDS);
         } else {
@@ -21886,7 +21888,7 @@ unsafe fn replay_world_packet_cache(
                 return false;
             };
             if retarget {
-                WORLD_CACHE_RETARGET.apply((packet as *mut TriTexturedGouraud).cast::<u32>());
+                world_cache_retarget().apply((packet as *mut TriTexturedGouraud).cast::<u32>());
             }
             OT.add(otz, packet, TriTexturedGouraud::WORDS);
         }
