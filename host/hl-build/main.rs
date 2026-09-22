@@ -1731,6 +1731,13 @@ fn compile_game(
         ];
         if let GuestProfile::Use(samples) = profile {
             flags.push(format!("-Zprofile-sample-use={}", samples.display()));
+            // LLVM's default hot call-site threshold (3000) inlined enough to
+            // grow .text by 17 KB on hl-psx and 25 KB on cs-psx, leaving
+            // hl-psx 6.7 KB of free RAM, and it was the slowest of the
+            // thresholds measured. 1000 was faster on every trained and
+            // unseen route of both games while using no more RAM than the
+            // unprofiled build.
+            flags.push("-Cllvm-args=-hot-callsite-threshold=1000".to_string());
         }
         command
             .arg("--config")
@@ -1818,10 +1825,11 @@ fn pack_disc_into(repository: &Path, psoxide: &Path, exe: &Path, dist: &Path) ->
 /// PSoXide counts every guest instruction exactly, so no instrumented build
 /// is needed: a build with profiling debug info replays each tape, psoxide-pgo
 /// turns the PC histogram into an LLVM sample profile through the matching
-/// ELF's DWARF, and the final build is compiled with it. On the chapter-two
-/// recording this measured 11.90 to 13.00 rendered FPS, and 17.65 to 18.69 on
-/// a route the profile never saw. Profile names carry crate hashes that depend
-/// on the checkout path, so the profile is rebuilt here rather than shipped.
+/// ELF's DWARF, and the final build is compiled with it. Over gameplay frames
+/// only (loads excluded) this measured 9.02 to 9.32 fps on the chapter-two
+/// recording, and 13.59 to 13.98 on the tram ride, which the profile never
+/// saw. Profile names carry crate hashes that depend on the checkout path, so
+/// the profile is rebuilt here rather than shipped.
 fn profile_guided_pack(
     repository: &Path,
     psoxide: &Path,
