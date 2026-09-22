@@ -89,7 +89,7 @@ use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
 use psx_io;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
-use psx_math::int32::isqrt_i32;
+use psx_math::int32::{isqrt_i32, mul_div_i32};
 use psx_math::{atan2_q12, sincos};
 use psx_pad::{
     button, enable_analog_port1, poll_port1, poll_port1_diag, PadMode, PadTracker,
@@ -18256,7 +18256,7 @@ unsafe fn fire_hitscan(
                 let lim_x = (hit_r * H_PROJ as i32).max(vz * aim_x);
                 let lim_y = (hit_hh * H_PROJ as i32).max(vz * aim_y);
                 (dx.abs() <= lim_x && dy.abs() <= lim_y)
-                    .then_some(((vz as i64 * 4096) / range.max(1) as i64) as i32)
+                    .then(|| mul_div_i32(vz, 4096, range.max(1)))
             }
         };
         let Some(hit_frac) = hit_frac else {
