@@ -1569,7 +1569,7 @@ const ZERO_QUAD_PACKET: QuadTexturedGouraud = QuadTexturedGouraud {
     uv3: 0,
 };
 // Post-link home for the load-delay hazard trampolines that
-// The load-delay hazard trampolines (`host/hazard_patch.py` writes them after
+// The load-delay hazard trampolines (the SDK's `hazard_patch.py` writes them after
 // every link) live in psx-rt's `HAZARD_TRAMPOLINES` since PSoXide 15d286c5;
 // this crate no longer defines its own, which the demo disc's runtime pin
 // linked twice.

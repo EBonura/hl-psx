@@ -1761,10 +1761,12 @@ fn compile_game(
         return Ok(exe);
     }
     // Reroute the R3000 load-delay hazards LLVM's delay-slot filler leaves
-    // behind (loads in delay slots consumed one instruction later) through the
-    // guest's HAZARD_TRAMPOLINES array, then prove the image clean. Zero RAM
-    // beyond that array; the alternative flag costs 31 KB of nops.
-    let patcher = repository.join("host/hazard_patch.py");
+    // behind (loads in delay slots consumed one instruction later, including
+    // the ones a `jr ra` or `jalr` slot hands to code the image cannot see)
+    // through the guest's HAZARD_TRAMPOLINES array, then prove the image
+    // clean. Zero RAM beyond that array; the alternative flag costs 31 KB of
+    // nops. The patcher is the pinned SDK's, so its fixes arrive with a pin.
+    let patcher = psoxide.join("tools/hazard_patch.py");
     run(
         Command::new("python3").arg(&patcher).arg(&exe),
         "patch load-delay hazards in hl-psx.exe",
