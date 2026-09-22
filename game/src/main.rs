@@ -2665,6 +2665,52 @@ static mut TEX_ANIM_GEN: u8 = 0;
 // animation tick only when a changed display row is referenced by this PVS.
 static mut PVS_TEX_ANIM_GEN: u8 = 0;
 static mut TEX_ANIM_TENTH: u16 = u16::MAX;
+// Set per map when a chain step can be applied to the cached world packets by
+// rewriting their texture words (psx_goldsrc::texture_animation). The cache key
+// then leaves the animation out, and a stationary view keeps its cache across
+// steps instead of rebuilding every packet at 10 Hz. Otherwise the generations
+// stay in the key as before.
+static mut TEX_ANIM_RETARGET: bool = false;
+// Chain sides (primary or alternate) with two or more frames; a map with more
+// keeps the rebuild. Each such side has at least two frames, and the most any
+// cooked Half-Life or Counter-Strike map has is 71 frames (25 chains).
+const TEX_ANIM_RETARGET_SIDES: usize = 36;
+static mut WORLD_CACHE_RETARGET: psx_goldsrc::texture_animation::PacketRetarget<
+    TEX_ANIM_RETARGET_SIDES,
+> = psx_goldsrc::texture_animation::PacketRetarget::new();
+// Animation clock the cached packets were built or last retargeted at.
+static mut WORLD_CACHE_TEX_TENTH: u16 = u16::MAX;
+
+/// One outlined copy of the chain decoder for the cold retarget drivers.
+#[inline(never)]
+fn tex_anim_chain_at(m: &Map, c: usize) -> (&'static [u8], &'static [u8]) {
+    m.tex_anim_chain(c)
+}
+
+/// The words a world packet carries for texture `tex`, plus everything else
+/// the world emitters read from its slot (command word, backdrop ordering and
+/// fog); `None` when they never draw it.
+#[inline(never)]
+unsafe fn tex_anim_packet_texture(
+    m: &Map,
+    tex: usize,
+) -> Option<(psx_goldsrc::texture_animation::PacketTexture, u32)> {
+    if tex >= m.n_texs || tex >= MAX_TEX_SLOTS {
+        return None;
+    }
+    let slot = &*tex_slot_ptr(tex);
+    if !slot.valid {
+        return None;
+    }
+    Some((
+        psx_goldsrc::texture_animation::PacketTexture {
+            window: slot.packet.tex_window_word,
+            clut: slot.packet.clut_high_word,
+            tpage: slot.packet.tpage_high_word,
+        },
+        slot.packet.color0_command_word | slot.backdrop as u32,
+    ))
+}
 
 #[inline(always)]
 unsafe fn tex_is_animated(tex: usize) -> bool {
@@ -2694,12 +2740,19 @@ unsafe fn tex_anim_init(m: &Map, nents: usize) {
     TEX_ANIM_GEN = 0;
     PVS_TEX_ANIM_GEN = 0;
     TEX_ANIM_TENTH = u16::MAX;
+    TEX_ANIM_RETARGET = false;
     if m.n_tex_anim == 0 {
         return;
     }
     psx_goldsrc::texture_animation::mark_members(
         (0..m.n_tex_anim).map(|c| m.tex_anim_chain(c)),
         &mut TEX_ANIM_MASK,
+    );
+    TEX_ANIM_RETARGET = psx_goldsrc::texture_animation::packets_retargetable(
+        (0..m.n_tex_anim).map(|c| tex_anim_chain_at(m, c)),
+        m.n_texs.min(MAX_TEX_SLOTS),
+        TEX_ANIM_RETARGET_SIDES,
+        |tex| tex_anim_packet_texture(m, tex),
     );
     for ei in 0..nents.min(MAX_ENTS) {
         let (ff, nf) = m.submodel(ENT_CACHE[ei].submodel);
@@ -3114,9 +3167,11 @@ const WORLD_CACHE_HIT: u8 = 2;
 const WORLD_CACHE_BRUSH_REBUILD: u8 = 3;
 const WORLD_CACHE_CANDIDATE_ARMED: u8 = 1;
 const WORLD_CACHE_CANDIDATE_REJECTED: u8 = 2;
-// OT_LEN needs nine bits. Bit 9 stores packet kind. Cached packet payloads are
-// immutable: animated textures and liquid UV phases participate in the cache
-// key instead of rewriting packets that the GPU may still be consuming.
+// OT_LEN needs nine bits. Bit 9 stores packet kind. Liquid UV phases participate
+// in the cache key. Animated textures do too on maps TEX_ANIM_RETARGET rejects;
+// elsewhere a step rewrites the texture words of the cached packets during
+// replay, after the frame's submit_linked_list_wait fence, when the GPU has
+// finished reading them (replay already writes each packet's link word there).
 const WORLD_CACHE_OTZ_MASK: u16 = 0x01ff;
 const WORLD_CACHE_QUAD_META: u16 = 0x0200;
 // A resident command reserves an arena slot even when it culls or falls back
@@ -3251,9 +3306,10 @@ unsafe fn static_brush_state(have_pvs: bool, nents: usize) -> u32 {
             hash ^= ENT_PHASE[ei] as u32;
             hash = hash.wrapping_mul(0x0100_0193);
             // A brush with chain-member textures repaints at 10 Hz even while
-            // it never moves (blinking screens); fold the animation generation
-            // in so the cached prefix rebuilds on each frame step.
-            if ent_has_texanim(ei) {
+            // it never moves (blinking screens). Unless the step retargets the
+            // cached packets, fold the animation generation in so the cached
+            // prefix rebuilds on each frame step.
+            if !TEX_ANIM_RETARGET && ent_has_texanim(ei) {
                 hash ^= (TEX_ANIM_GEN as u32) << 8;
                 hash = hash.wrapping_mul(0x0100_0193);
             }
@@ -3438,8 +3494,13 @@ unsafe fn world_cache_capture_packet<T>(_packet: *const T, otz: usize, quad: boo
 }
 
 #[inline]
-unsafe fn prepare_world_packet_cache(key: WorldPacketCacheKey, band_prefix: usize) -> u8 {
+unsafe fn prepare_world_packet_cache(
+    m: &Map,
+    key: WorldPacketCacheKey,
+    band_prefix: usize,
+) -> u8 {
     WORLD_CACHE_BUILDING = false;
+    WORLD_CACHE_RETARGET.clear();
     // Debug picking observes the fresh triangle walk, including loop faces.
     if !WORLD_PACKET_CACHE || DEBUG_XHAIR || affine_heatmap_active() {
         return WORLD_CACHE_NONE;
@@ -3450,6 +3511,28 @@ unsafe fn prepare_world_packet_cache(key: WorldPacketCacheKey, band_prefix: usiz
     // stationary view at its unsplit bootstrap topology.
     if WORLD_NATIVE_PATCH_SUBDIVISION && !WORLD_AFFINE_POLICY_READY {
         return WORLD_CACHE_NONE;
+    }
+    // A texture-animation step since the cached packets were built: stage the
+    // rewrite of their texture words, applied by the replay below if the
+    // cache is reused this frame. The key carries no animation state here.
+    if WORLD_CACHE_VALID && TEX_ANIM_RETARGET && WORLD_CACHE_TEX_TENTH != TEX_ANIM_TENTH {
+        if WORLD_CACHE_RETARGET.stage(
+            (0..m.n_tex_anim).map(|c| tex_anim_chain_at(m, c)),
+            WORLD_CACHE_TEX_TENTH,
+            TEX_ANIM_TENTH,
+            |tex| match tex_anim_packet_texture(m, tex) {
+                Some((words, _)) => words,
+                None => psx_goldsrc::texture_animation::PacketTexture {
+                    window: 0,
+                    clut: 0,
+                    tpage: 0,
+                },
+            },
+        ) {
+            WORLD_CACHE_TEX_TENTH = TEX_ANIM_TENTH;
+        } else {
+            invalidate_world_packet_cache();
+        }
     }
     if WORLD_CACHE_VALID {
         if WORLD_CACHE_KEY == key {
@@ -3557,6 +3640,8 @@ unsafe fn finish_world_packet_cache(
     }
 
     WORLD_CACHE_BUILDING = false;
+    // Whatever is published below was emitted, or retargeted, at this clock.
+    WORLD_CACHE_TEX_TENTH = TEX_ANIM_TENTH;
     // Candidate and shared-edge policy is finalized after the room traversal.
     // If that handoff changed while this packet stream was being captured, its
     // key describes the old topology. Never publish such a cache: let the next
@@ -21769,6 +21854,8 @@ unsafe fn replay_world_packet_cache(
         invalidate_world_packet_cache();
         return false;
     }
+    // A texture-animation step staged by prepare_world_packet_cache.
+    let retarget = !WORLD_CACHE_RETARGET.is_empty();
     let mut i = 0usize;
     while i < count {
         let meta = PVS_BAND_ORDER[PVS_BAND_CAP - 1 - i];
@@ -21787,6 +21874,9 @@ unsafe fn replay_world_packet_cache(
                 WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
                 return false;
             };
+            if retarget {
+                WORLD_CACHE_RETARGET.apply((packet as *mut QuadTexturedGouraud).cast::<u32>());
+            }
             OT.add(otz, packet, QuadTexturedGouraud::WORDS);
         } else {
             let Some(packet) = packets.reuse_packet::<TriTexturedGouraud>() else {
@@ -21795,6 +21885,9 @@ unsafe fn replay_world_packet_cache(
                 WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
                 return false;
             };
+            if retarget {
+                WORLD_CACHE_RETARGET.apply((packet as *mut TriTexturedGouraud).cast::<u32>());
+            }
             OT.add(otz, packet, TriTexturedGouraud::WORDS);
         }
         i += 1;
@@ -30804,7 +30897,11 @@ fn play(
                     // while either framebuffer may still be consuming them.
                     wave_du: if PVS_HAS_TRANSLUCENT { WAVE_DU } else { 0 },
                     wave_dv: if PVS_HAS_TRANSLUCENT { WAVE_DV } else { 0 },
-                    tex_anim: if PVS_HAS_TEXANIM { PVS_TEX_ANIM_GEN } else { 0 },
+                    tex_anim: if PVS_HAS_TEXANIM && !TEX_ANIM_RETARGET {
+                        PVS_TEX_ANIM_GEN
+                    } else {
+                        0
+                    },
                     // Affine dense-view policy deliberately stays out of this
                     // key. Camera movement already changes the transform and
                     // receives the current bounded policy; invalidating an
@@ -30832,6 +30929,7 @@ fn play(
                 ROOM_PROJECTED_COUNT = 0;
                 telemetry::stage_begin(telemetry::stage::ROOM_DEPTH_PREP);
                 world_cache_action = prepare_world_packet_cache(
+                    &m,
                     world_cache_key,
                     if bucketed { PVS_FACE_COUNT } else { 0 },
                 );
