@@ -4773,6 +4773,7 @@ fn tram_bit(bits: &[u32; 8], i: usize) -> bool {
 /// any other node is enabled or disabled. USE_ON selects the primary path or
 /// enables, USE_OFF the alternate path or disables, TOGGLE flips.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn tram_path_track_use(m: &Map, target: u16, use_type: u8) {
     let mut i = 0usize;
     while i < m.n_way.min(256) {
@@ -11368,6 +11369,8 @@ unsafe fn logic_try_use(
 }
 
 /// CBaseTrigger::TeleportTouch for the player.
+#[inline(never)]
+#[optimize(size)]
 unsafe fn logic_teleport_touch(m: &Map, nlogic: usize, rec: map::LogicEnt) {
     if rec.aux_count >= 2
         && (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0
@@ -12469,6 +12472,7 @@ impl CameraVisibility<'_> {
 }
 
 #[inline(never)]
+#[optimize(size)]
 fn prop_start_health(ty: u8) -> u8 {
     let skill = skill_table::SKILL_HEALTH[settings::skill()][(ty as usize).min(N_MODEL_TYPES - 1)];
     if skill != 0 {
@@ -12480,6 +12484,7 @@ fn prop_start_health(ty: u8) -> u8 {
 
 /// The type's damage per attack at the current difficulty, from skill.cfg.
 #[inline(never)]
+#[optimize(size)]
 fn skill_damage(ty: u8) -> Option<u8> {
     let damage = skill_table::SKILL_DAMAGE[settings::skill()][(ty as usize).min(N_MODEL_TYPES - 1)];
     (damage != 0).then_some(damage)
@@ -12488,6 +12493,7 @@ fn skill_damage(ty: u8) -> Option<u8> {
 /// A damage the port calibrated at Easy (the shared melee schedule's hit,
 /// Barney's pistol), scaled by the type's skill.cfg ratio to Easy.
 #[inline(never)]
+#[optimize(size)]
 fn skill_scaled_damage(ty: u8, easy: u8) -> u8 {
     let ty = (ty as usize).min(N_MODEL_TYPES - 1);
     let base = skill_table::SKILL_DAMAGE[0][ty] as u16;
@@ -14104,6 +14110,8 @@ unsafe fn init_monster_trigger(li: usize, rec: map::LogicEnt) {
 
 /// FCheckAITrigger's FireTargets(m_iszTriggerTarget, USE_TOGGLE), after which
 /// the condition is AITRIGGER_NONE: every trigger fires at most once.
+#[inline(never)]
+#[optimize(size)]
 unsafe fn monster_fire_ai_trigger(li: usize, use_type: u8) {
     LOGIC_STATE[li] = LOGIC_STATE_TOP;
     logic_enqueue_event(
@@ -14119,6 +14127,7 @@ unsafe fn monster_fire_ai_trigger(li: usize, use_type: u8) {
 /// TakeDamage/Killed do: TAKEDAMAGE on any hit, HALFHEALTH while alive at or
 /// under half the spawn health, DEATH once the actor is dead.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn monster_damage_ai_triggers(pi: usize) {
     let health = PROP_HEALTH[pi] as u16;
     let max_health = prop_start_health(PROP_KIND[pi]) as u16;
@@ -14152,6 +14161,7 @@ unsafe fn monster_damage_ai_triggers(pi: usize) {
 /// while the player's PVS holds the actor, within Look's 2048-unit box,
 /// inside the class's view cone and with a clear eye-to-eye line.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn monster_sight_ai_triggers(
     m: &Map,
     movers: &[phys::Mover],
@@ -14225,6 +14235,8 @@ const BIGMOMMA_PROGRESS: i32 = 8;
 
 /// CBigMomma::TakeDamage while its path lasts: the boss cannot die, and
 /// depleting a node's health (NodeReach set it) advances to the next node.
+#[inline(never)]
+#[optimize(size)]
 unsafe fn boss_walker_damage(dmg: u8) {
     let w = BOSS_WALKER as usize;
     if LOGIC_STATE[w] == LOGIC_STATE_TOP {
@@ -14245,6 +14257,7 @@ unsafe fn boss_walker_damage(dmg: u8) {
 /// a node with health, stay until that much damage is taken. With no next
 /// node the path is finished and the boss becomes mortal.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn tick_boss_walker(m: &Map, movers: &[phys::Mover]) {
     let w = BOSS_WALKER as usize;
     let pi = LOGIC_PROP_LINK[w] as usize;
@@ -14338,6 +14351,7 @@ unsafe fn tick_boss_walker(m: &Map, movers: &[phys::Mover]) {
 /// CNihilanth::CommandUse(USE_OFF): the ending sequence touches the
 /// m_szDeadTouch trigger (c4a3's n_ending teleport) with the player.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn monster_command_touch(m: &Map, nlogic: usize, target: u16) {
     let mut li = 0usize;
     while li < nlogic {
@@ -18376,6 +18390,8 @@ unsafe fn prop_studio_hit_fraction(
 }
 
 /// Entry fraction (Q12 of p1->p2) of a segment into an axis-aligned box.
+#[inline(never)]
+#[optimize(size)]
 fn segment_box_frac(p1: [i32; 3], p2: [i32; 3], mins: [i32; 3], maxs: [i32; 3]) -> Option<i32> {
     let (mut lo, mut hi) = (0i32, 4096i32);
     let mut axis = 0usize;
@@ -18403,6 +18419,7 @@ fn segment_box_frac(p1: [i32; 3], p2: [i32; 3], mins: [i32; 3], maxs: [i32; 3]) 
 /// CBaseButton::TakeDamage answers as a touch does. The shot is tested
 /// against the button's bounds, nearer than the world or any other brush.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn shoot_buttons(m: &Map, eye: [i32; 3], end: [i32; 3], limit_frac: i32) {
     let nlogic = m.n_logic.min(MAX_LOGIC);
     let mut li = 0usize;
