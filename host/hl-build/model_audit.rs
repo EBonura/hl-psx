@@ -1883,7 +1883,7 @@ fn audit_animation_parity(
     let model_pack = repository.join("data/modelpack");
     for (index, weapon) in super::WEAPON_MODELS.iter().enumerate() {
         let sequences =
-            source_sequences(&valve.join("models").join(format!("{}.mdl", weapon.name)))?;
+            source_sequences(&crate::model_path(&valve, weapon.name))?;
         let selected = selected_sequences(weapon.sequences, &sequences)?;
         let chunk =
             load_merged_model_chunk(&model_pack.join(format!("chunk_{}.psxm", 1000 + index)))?;
@@ -1935,7 +1935,7 @@ fn audit_animation_parity(
             .parse::<usize>()?;
         let model = fields.next().ok_or("roster model missing")?;
         let specs = fields.next().ok_or("roster sequences missing")?;
-        let sequences = source_sequences(&valve.join("models").join(format!("{model}.mdl")))?;
+        let sequences = source_sequences(&crate::model_path(&valve, model))?;
         let selected = selected_sequences(specs, &sequences)?;
         let chunk = chunks
             .get(ty)

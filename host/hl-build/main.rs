@@ -31,6 +31,17 @@ struct CookManifest {
     cooked_tree_sha256: String,
 }
 
+/// Path to `<valve>/models/<name>.mdl`. The roster spells names like the
+/// GoldSrc entities (`w_9mmAR`); Linux retail ships the files lowercased.
+pub fn model_path(valve: &Path, name: &str) -> PathBuf {
+    let models = valve.join("models");
+    let literal = models.join(format!("{name}.mdl"));
+    if literal.exists() {
+        return literal;
+    }
+    models.join(format!("{}.mdl", name.to_ascii_lowercase()))
+}
+
 fn hex_sha256(digest: impl AsRef<[u8]>) -> String {
     digest
         .as_ref()
@@ -1239,7 +1250,7 @@ fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
         run(
             Command::new(&bins.bsp)
                 .arg("--mdl7-vm")
-                .arg(valve.join("models").join(format!("{}.mdl", model.name)))
+                .arg(model_path(&valve, model.name))
                 .arg(&geometry)
                 .arg(model.sequences)
                 .arg(&texture)
@@ -1274,7 +1285,7 @@ fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
         run(
             Command::new(&bins.bsp)
                 .arg("--mdl7")
-                .arg(valve.join("models").join(format!("{model}.mdl")))
+                .arg(model_path(&valve, model))
                 .arg(&geometry)
                 .arg(sequences)
                 .arg(&texture)
@@ -1309,7 +1320,7 @@ fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
             run(
                 Command::new(&bins.bsp)
                     .arg("--mdl7")
-                    .arg(valve.join("models").join(format!("{model}.mdl")))
+                    .arg(model_path(&valve, model))
                     .arg(&carry_geometry)
                     .arg(&carry_sequences)
                     .arg(&carry_texture),
@@ -1331,7 +1342,7 @@ fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
             run(
                 Command::new(&bins.bsp)
                     .arg("--mdl7")
-                    .arg(valve.join("models").join(format!("{model}.mdl")))
+                    .arg(model_path(&valve, model))
                     .arg(&c4a1b_geometry)
                     .arg(C4A1B_GARG_SEQUENCES)
                     .arg(&c4a1b_texture),
@@ -1342,7 +1353,7 @@ fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
             run(
                 Command::new(&bins.bsp)
                     .arg("--mdl7-lean")
-                    .arg(valve.join("models").join(format!("{model}.mdl")))
+                    .arg(model_path(&valve, model))
                     .arg(&geometry)
                     .arg(C4A3_GARG_SEQUENCES)
                     .arg(&texture),
@@ -1355,7 +1366,7 @@ fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
             run(
                 Command::new(&bins.bsp)
                     .arg("--mdl7")
-                    .arg(valve.join("models").join(format!("{model}.mdl")))
+                    .arg(model_path(&valve, model))
                     .arg(&geometry)
                     .arg(C4A3_ICKY_SEQUENCES)
                     .arg(&texture),
@@ -1368,7 +1379,7 @@ fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
             run(
                 Command::new(&bins.bsp)
                     .arg("--mdl7")
-                    .arg(valve.join("models").join(format!("{model}.mdl")))
+                    .arg(model_path(&valve, model))
                     .arg(&geometry)
                     .arg(C1A2B_ZOMBIE_SEQUENCES)
                     .arg(&texture),
@@ -1381,7 +1392,7 @@ fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
             run(
                 Command::new(&bins.bsp)
                     .arg("--mdl7")
-                    .arg(valve.join("models").join(format!("{model}.mdl")))
+                    .arg(model_path(&valve, model))
                     .arg(&geometry)
                     .arg(PRESSURE_ISLAVE_SEQUENCES)
                     .arg(&texture),
