@@ -5963,6 +5963,31 @@ fn iter_ent_pairs(block: &str, mut f: impl FnMut(&str, &str)) {
     }
 }
 
+/// Keys the engine's EntvarsKeyvalue consumes before the game DLL sees them
+/// (the SDK's gEntvarsDescription), plus the underscore comment keys the
+/// entity parser discards.
+fn goldsrc_entvars_key(key: &str) -> bool {
+    key.starts_with('_')
+        || matches!(
+            key,
+            "classname" | "globalname" | "origin" | "oldorigin" | "velocity" | "basevelocity"
+                | "movedir" | "angles" | "avelocity" | "punchangle" | "v_angle" | "fixangle"
+                | "idealpitch" | "pitch_speed" | "ideal_yaw" | "yaw_speed" | "modelindex"
+                | "model" | "viewmodel" | "weaponmodel" | "absmin" | "absmax" | "mins"
+                | "maxs" | "size" | "ltime" | "nextthink" | "solid" | "movetype" | "skin"
+                | "body" | "effects" | "gravity" | "friction" | "light_level" | "frame"
+                | "scale" | "sequence" | "animtime" | "framerate" | "controller" | "blending"
+                | "rendermode" | "renderamt" | "rendercolor" | "renderfx" | "health" | "frags"
+                | "weapons" | "takedamage" | "deadflag" | "view_ofs" | "button" | "impulse"
+                | "chain" | "dmg_inflictor" | "enemy" | "aiment" | "owner" | "groundentity"
+                | "spawnflags" | "flags" | "colormap" | "team" | "max_health"
+                | "teleport_time" | "armortype" | "armorvalue" | "waterlevel" | "watertype"
+                | "target" | "targetname" | "netname" | "message" | "dmg_take" | "dmg_save"
+                | "dmg" | "dmgtime" | "noise" | "noise1" | "noise2" | "noise3" | "speed"
+                | "air_finished" | "pain_finished" | "radsuit_finished"
+        )
+}
+
 #[inline]
 fn multi_manager_target_key(key: &str) -> &str {
     key.split_once('#').map_or(key, |(base, _)| base)
@@ -8248,14 +8273,20 @@ fn collect_logic_entities_with_lightstyles(
         }
         if kind == LOGIC_MULTI_MANAGER {
             let mut targets: Vec<(u16, u16)> = Vec::new();
-            // The old cap of 16 (the SDK's MAX_MULTI_TARGETS) truncated c1a0d's
-            // retinal-scanner rig, which authors 33 timed outputs (12 scanner
-            // frame toggles + 19 audio blips + the door + a duplicate). Losing
-            // even one toggle flips the blink's parity and strands the scanner
-            // animating, so keep the whole authored list (64 is ample; aux
-            // records cost 4 bytes each on disc and stream, not resident RAM).
+            // CMultiManager::KeyValue turns every key the engine's entvars
+            // table does not claim (and that is not "wait") into a target, in
+            // lump order, and keeps only the first MAX_MULTI_TARGETS (16).
+            // The retinal-scanner rigs author 33 outputs; retail GoldSrc runs
+            // the first 16 (ten scanner toggles, the door and four blips).
+            // Non-entvars logic keys such as "delay" or "killtarget" take a
+            // slot as targets of that literal name, which nothing carries.
+            let mut slots = 0usize;
             iter_ent_pairs(block, |key, value| {
-                if logic_common_key(key) || targets.len() >= 64 {
+                if slots >= 16 || key == "wait" || key == "angle" || goldsrc_entvars_key(key) {
+                    return;
+                }
+                slots += 1;
+                if logic_common_key(key) {
                     return;
                 }
                 // GoldSrc's CMultiManager passes every authored key through
@@ -16804,6 +16835,34 @@ mod tests {
         assert_eq!(logic.names[first.target as usize - 1], "train");
         assert_eq!(first.delay_ticks, 0);
         assert_eq!(second.delay_ticks, 100);
+    }
+
+    #[test]
+    fn multi_manager_keeps_only_the_first_sixteen_goldsrc_targets() {
+        // "origin" and "targetname" are entvars; "delay" is not, so it takes
+        // a slot as a target of that literal name (CMultiManager::KeyValue).
+        let mut ents = String::from(
+            "{\n\"classname\" \"multi_manager\"\n\"targetname\" \"mm\"\n\"origin\" \"0 0 0\"\n\"delay\" \"0\"\n",
+        );
+        for i in 0..20 {
+            ents.push_str(&format!("\"t{i}\" \"{i}\"\n"));
+        }
+        ents.push_str("}\n");
+        let logic = collect_logic_entities(
+            ents.as_bytes(),
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
+        let manager = &logic.ents[0];
+        assert_eq!(manager.kind, LOGIC_MULTI_MANAGER);
+        // 16 slots: "delay" plus t0..t14.
+        assert_eq!(manager.aux_count, 15);
+        let last = &logic.aux[manager.first_aux as usize + 14];
+        assert_eq!(logic.names[last.target as usize - 1], "t14");
     }
 
     #[test]
