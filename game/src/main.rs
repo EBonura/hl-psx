@@ -8596,7 +8596,12 @@ unsafe fn logic_fire_targets(
     reference_trace::target_fire(now, m.logic_name(target), use_type, depth);
     let mut li = 0usize;
     while li < nlogic {
-        if LOGIC_STATE[li] != LOGIC_STATE_REMOVED && logic_cached_targetname(li) == target {
+        // trigger_once/multiple have no Use in CBaseTrigger: firing one by
+        // name does nothing (c2a3a's cage path fires cagebubbles).
+        if LOGIC_STATE[li] != LOGIC_STATE_REMOVED
+            && logic_cached_targetname(li) == target
+            && !matches!(LOGIC_KIND[li], map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE)
+        {
             logic_use_entity(m, nlogic, nents, li, use_type, now, depth + 1, caller_li);
         }
         li += 1;
