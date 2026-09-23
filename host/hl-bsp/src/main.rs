@@ -4310,6 +4310,7 @@ const TRAIN_CORNER_TELEPORT: u16 = 0x8000;
 const TRAIN_CORNER_WAIT_TRIGGER_TELEPORT: u16 = 0xfffe;
 const TRAIN_CORNER_WAIT_TRIGGER: u16 = 0xffff;
 const MAX_RUNTIME_LIVE_PROPS: usize = 113; // 128 minus 15 zero-BSS carry mailbox rows
+const MAX_RUNTIME_LOGIC: usize = 384; // game/src/main.rs MAX_LOGIC
 
 const DYNAMIC_LIGHTSTYLE_MAX: usize = 31;
 
@@ -9054,6 +9055,61 @@ fn append_monster_loot_slots(
 /// (targetname hash, or globalname hash with bit 15 set); it occupies PropRec's
 /// existing padding and therefore does not grow map data.
 /// type 0 = scientist, 1 = barney, 2 = headcrab, 3 = item_suit, 4 = item_battery.
+/// A monster's `TriggerTarget`/`TriggerCondition` pair, bound to its cooked
+/// actor index. The cooker turns each into one LOGIC_MONSTER_TRIGGER record.
+struct MonsterTriggerLink {
+    prop: usize,
+    condition: u16,
+    target: u16,
+    view_cone: u16,
+    origin: [i32; 3],
+}
+
+/// Half-angle of a monster class's forward view cone in 4096ths of a turn:
+/// acos(m_flFieldOfView) from each class's Spawn() in the SDK. FInViewCone
+/// compares the 2D dot product, so the cone is a yaw window.
+fn monster_view_cone_units(cls: &str) -> u16 {
+    const VIEW_FIELD_WIDE: f32 = -0.7;
+    const VIEW_FIELD_FULL: f32 = -1.0;
+    let fov = match cls {
+        "monster_scientist" | "monster_barney" | "monster_alien_slave"
+        | "monster_human_assassin" | "monster_ichthyosaur" => VIEW_FIELD_WIDE,
+        "monster_human_grunt" | "monster_alien_grunt" | "monster_bullchicken"
+        | "monster_flyer_flock" => 0.2,
+        "monster_gargantua" => -0.2,
+        "monster_bigmomma" => 0.3,
+        "monster_leech" => -0.5,
+        "monster_apache" => -0.707,
+        "monster_osprey" => 0.0,
+        "monster_alien_controller" | "monster_nihilanth" | "monster_turret"
+        | "monster_miniturret" | "monster_sentry" => VIEW_FIELD_FULL,
+        // headcrab, zombie, houndeye, gman, barnacle, generic, rat, roach
+        _ => 0.5,
+    };
+    (fov.clamp(-1.0, 1.0).acos() * 4096.0 / std::f32::consts::TAU).round() as u16
+}
+
+/// CBaseMonster::KeyValue reads `TriggerTarget` and `TriggerCondition`
+/// verbatim. Conditions the runtime cannot evaluate (hearing, and the two
+/// squad conditions the SDK itself leaves UNDONE) are not cooked.
+fn monster_trigger_condition(block: &str) -> Option<(u16, &str)> {
+    let condition = ent_value(block, "TriggerCondition")?.trim().parse::<u16>().ok()?;
+    let target = ent_value(block, "TriggerTarget")?.trim();
+    if target.is_empty() {
+        return None;
+    }
+    matches!(
+        condition,
+        AITRIGGER_SEEPLAYER_ANGRY_AT_PLAYER
+            | AITRIGGER_TAKEDAMAGE
+            | AITRIGGER_HALFHEALTH
+            | AITRIGGER_DEATH
+            | AITRIGGER_SEEPLAYER_UNCONDITIONAL
+            | AITRIGGER_SEEPLAYER_NOT_IN_COMBAT
+    )
+    .then_some((condition, target))
+}
+
 fn collect_props(
     ents: &[u8],
     nodes: &[u8],
@@ -9061,6 +9117,7 @@ fn collect_props(
     models: &[u8],
     scale: f32,
     logic_names: &mut Vec<String>,
+    trigger_links: &mut Vec<MonsterTriggerLink>,
 ) -> Vec<(u16, [i32; 3], i32, i16, u16, u16)> {
     let s = entity_text(ents);
     let mut out = Vec::new();
@@ -9404,6 +9461,17 @@ fn collect_props(
         let owner_index = out.len();
         let leaf = point_leaf(origin_hl, nodes, planes);
         out.push((ty, origin, orientation, leaf, name_id, carry_id));
+        if ty & DEAD == 0 && cls.starts_with("monster_") {
+            if let Some((condition, target)) = monster_trigger_condition(block) {
+                trigger_links.push(MonsterTriggerLink {
+                    prop: owner_index,
+                    condition,
+                    target: intern_logic_name(logic_names, target).unwrap_or(0),
+                    view_cone: monster_view_cone_units(cls),
+                    origin,
+                });
+            }
+        }
         if ty & DEAD == 0 {
             append_monster_loot_slots(
                 &mut out,
@@ -12303,6 +12371,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // u32 split counts | ActorRec[24B] | SpriteRec[12B].
     let prop_off = o.len() as u32;
     o[prop_off_pos..prop_off_pos + 4].copy_from_slice(&prop_off.to_le_bytes());
+    let mut trigger_links = Vec::new();
     let mut props = collect_props(
         bsp.lump(LUMP_ENTITIES),
         nodes,
@@ -12310,7 +12379,44 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         models,
         scale,
         &mut logic.names,
+        &mut trigger_links,
     );
+    // Appended after every other record, so no existing logic index moves.
+    for link in &trigger_links {
+        if link.target == 0 || link.prop >= MAX_RUNTIME_LIVE_PROPS {
+            continue;
+        }
+        logic.ents.push(LogicRec {
+            kind: LOGIC_MONSTER_TRIGGER,
+            use_type: USE_TOGGLE,
+            spawnflags: 0,
+            targetname: 0,
+            target: link.target,
+            killtarget: 0,
+            brush: LOGIC_BRUSH_NONE,
+            first_aux: 0,
+            aux_count: 0,
+            flags: 0,
+            wait_ticks: 0,
+            delay_ticks: 0,
+            speed: link.view_cone,
+            arg0: link.prop as u16,
+            arg1: link.condition,
+            sound0: u8::MAX,
+            sound1: u8::MAX,
+            origin: link.origin,
+            mins: link.origin,
+            maxs: link.origin,
+        });
+    }
+    if logic.ents.len() > MAX_RUNTIME_LOGIC {
+        return Err(format!(
+            "{}: {} logic records exceed the runtime cap {}",
+            path,
+            logic.ents.len(),
+            MAX_RUNTIME_LOGIC
+        ));
+    }
     let corpse_clips = load_clips_manifest();
     for prop in &mut props {
         if prop.0 & 0x8fff == 0x8000 && prop.5 & cooked::PROP_CORPSE_CLIP != 0 {
@@ -16147,7 +16253,7 @@ mod tests {
             assert_eq!(logic.ents[0].sound1, 2);
             assert_eq!(logic.ents[0].origin, [10, 30, 20]);
             let mut names = logic.names;
-            let props = collect_props(text.as_bytes(), &[], &[], &[], 1.0, &mut names);
+            let props = collect_props(text.as_bytes(), &[], &[], &[], 1.0, &mut names, &mut Vec::new());
             assert_eq!(props.len(), 1);
             assert_eq!(props[0].0, 75 | 0x4000);
         }
@@ -16733,7 +16839,7 @@ mod tests {
     #[test]
     fn authored_prop_pass_leaves_transition_fallbacks_to_manifest_pass() {
         let mut names = vec!["barney1".to_string()];
-        let props = collect_props(b"", &[], &[], &[], 1.0, &mut names);
+        let props = collect_props(b"", &[], &[], &[], 1.0, &mut names, &mut Vec::new());
         assert!(props.is_empty());
     }
 
@@ -16763,7 +16869,7 @@ mod tests {
         { "classname" "item_suit" "targetname" "suit1" }
         "#;
         let mut names = vec!["barney1".to_string()];
-        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names);
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names, &mut Vec::new());
 
         assert_eq!(props.len(), 6); // five authored props + Barney's dormant Glock
         assert_eq!(props[0].5, actor_carry_id("barney1", false));
@@ -16785,7 +16891,7 @@ mod tests {
         { "classname" "monster_scientist" "body" "-1" "origin" "7 11 13" }
         "#;
         let mut names = Vec::new();
-        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names);
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names, &mut Vec::new());
 
         assert_eq!(props.len(), 4);
         assert_eq!((props[0].2 as u16) >> 12, 2);
@@ -16804,6 +16910,30 @@ mod tests {
             (props[3].2 as u16) >> 12 < 4,
             "body -1 selects a deterministic head"
         );
+    }
+
+    #[test]
+    fn monster_trigger_targets_bind_to_their_actor_index() {
+        let ents = br#"
+{ "classname" "monster_headcrab" "origin" "0 0 0" }
+{ "classname" "monster_alien_grunt" "origin" "8 0 0" "targetname" "opener" "TriggerTarget" "grunt3_mm" "TriggerCondition" "4" }
+{ "classname" "monster_scientist" "origin" "16 0 0" "TriggerTarget" "hear" "TriggerCondition" "9" }
+{ "classname" "monster_barney" "origin" "24 0 0" "TriggerTarget" "hello" "TriggerCondition" "10" }
+{ "classname" "monster_zombie_dead" "origin" "32 0 0" "TriggerTarget" "x" "TriggerCondition" "4" }
+"#;
+        let mut names = Vec::new();
+        let mut links = Vec::new();
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names, &mut links);
+        // Hearing (9) is not evaluated at runtime, so it is not cooked.
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].prop, 1);
+        assert_eq!(props[1].0 & 0x0fff, 10);
+        assert_eq!(links[0].condition, AITRIGGER_DEATH);
+        assert_eq!(names[links[0].target as usize - 1], "grunt3_mm");
+        assert_eq!(links[1].condition, AITRIGGER_SEEPLAYER_UNCONDITIONAL);
+        // VIEW_FIELD_WIDE (-0.7) is a 134.4 degree half-angle.
+        assert_eq!(links[1].view_cone, 1529);
+        assert_eq!(links[0].view_cone, 893, "agrunt 0.2 -> 78.5 degrees");
     }
 
     #[test]
@@ -16911,7 +17041,7 @@ mod tests {
         { "classname" "scripted_sequence" "m_iszEntity" "teleporter" "m_fMoveTo" "4" "origin" "40 50 60" }
         "#;
         let mut names = vec!["walker".to_string(), "teleporter".to_string()];
-        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names);
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names, &mut Vec::new());
 
         assert_eq!(props.len(), 4);
         assert_eq!(props[0].1, [1, 3, 2], "walk script keeps source spawn");
@@ -17088,7 +17218,7 @@ mod tests {
         );
 
         let mut names = vec!["sitting_scientist".to_string()];
-        let props = collect_props(all.as_bytes(), &[], &[], &[], 1.0, &mut names);
+        let props = collect_props(all.as_bytes(), &[], &[], &[], 1.0, &mut names, &mut Vec::new());
         assert_eq!(props.len(), 1);
         assert_eq!(props[0].0, SCRIPTED_SITTING_SCIENTIST_TYPE);
     }
@@ -17112,7 +17242,7 @@ mod tests {
         );
 
         let mut names = vec!["hungry".to_string(), "vent_zombie".to_string()];
-        let props = collect_props(all.as_bytes(), &[], &[], &[], 1.0, &mut names);
+        let props = collect_props(all.as_bytes(), &[], &[], &[], 1.0, &mut names, &mut Vec::new());
         assert_eq!(props.len(), 2);
         assert!(props.iter().all(|prop| prop.0 == VENT_SCRIPT_ZOMBIE_TYPE));
     }
@@ -17126,7 +17256,7 @@ mod tests {
         { "classname" "monster_hevsuit_dead" }
         "#;
         let mut names = vec!["sitting_scientist".to_string()];
-        let props = collect_props(all, &[], &[], &[], 1.0, &mut names);
+        let props = collect_props(all, &[], &[], &[], 1.0, &mut names, &mut Vec::new());
         assert_eq!(props.len(), 2);
         assert_eq!(props[0].0, SCRIPTED_SITTING_SCIENTIST_TYPE);
         assert_eq!(props[1].0, 0x8000 | SCRIPTED_SITTING_SCIENTIST_TYPE);
@@ -17177,7 +17307,7 @@ mod tests {
             (2, 1)
         );
         let mut names = vec!["lo".to_string()];
-        let props = collect_props(all.as_bytes(), &[], &[], &[], 1.0, &mut names);
+        let props = collect_props(all.as_bytes(), &[], &[], &[], 1.0, &mut names, &mut Vec::new());
         assert_eq!(props.len(), 1);
         assert_eq!(props[0].0, 0x1000 | 52, "generic puppets stay passive");
         assert_eq!(props[0].4, 1);
@@ -17206,7 +17336,7 @@ mod tests {
           "origin" "1168 1968 728" }
         "#;
         let mut names = Vec::new();
-        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names);
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names, &mut Vec::new());
 
         assert_eq!(props.len(), 3); // live Barney also owns a dormant Glock slot
         assert_eq!(props[0].0, 0x1000 | 1, "monster_generic has no Barney AI");
@@ -17231,7 +17361,7 @@ mod tests {
             "prisoner".to_string(),
             "leaningbarney".to_string(),
         ];
-        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names);
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names, &mut Vec::new());
         assert_eq!(props.len(), 5); // live Barney also owns a dormant Glock slot
         assert_eq!(props[0].0 & 0x2000, 0x2000);
         assert_eq!(props[0].0 & 0x0fff, 0);
@@ -17261,7 +17391,7 @@ mod tests {
         { "classname" "monster_miniturret" "targetname" "turret" "spawnflags" "96" }
         "#;
         let mut names = Vec::new();
-        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names);
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names, &mut Vec::new());
         assert_eq!(props.len(), 2);
         assert_eq!(props[0].0 & 0x0fff, 56);
         assert_ne!(props[0].0 & 0x1000, 0, "hologram remains a passive puppet");
@@ -17277,7 +17407,7 @@ mod tests {
         { "classname" "monster_alien_slave" "spawnflags" "0" }
         "#;
         let mut names = Vec::new();
-        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names);
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names, &mut Vec::new());
         assert_eq!(props.len(), 2);
         assert_eq!(props[0].0 & 0x1000, 0x1000);
         assert_eq!(props[0].0 & 0x0fff, 7);
@@ -17306,7 +17436,7 @@ mod tests {
             models[at..at + 4].copy_from_slice(&value.to_le_bytes());
         }
         let mut names = vec!["maker".to_string()];
-        let props = collect_props(ents, &[], &[], &models, 1.0, &mut names);
+        let props = collect_props(ents, &[], &[], &models, 1.0, &mut names, &mut Vec::new());
         assert_eq!(props.len(), 1);
         assert_eq!(props[0].0, 0x4000 | 9);
         assert_eq!(props[0].1, [100, 300, 200]);
