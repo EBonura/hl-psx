@@ -319,6 +319,8 @@ pub struct Map {
     pub tram_head: i32,
     pub tram_base: [i32; 3], // authored-start waypoint: places the brush on the track
     pub n_way: usize,
+    /// Branch tables follow the waypoints (altpath, loops, disabled nodes).
+    pub tram_graph: bool,
     way_off: usize,
     // Props/items (point-entity model placements)
     pub n_props: usize,
@@ -761,7 +763,9 @@ impl Map {
         let ent_leafs_off = n_ent_leafs_off + 4;
 
         let tram_submodel = rd_u16(data, tram_off) as usize;
-        let n_way = rd_u16(data, tram_off + 2) as usize;
+        let raw_n_way = rd_u16(data, tram_off + 2);
+        let tram_graph = raw_n_way & cooked::TRAM_GRAPH_BIT != 0;
+        let n_way = (raw_n_way & !cooked::TRAM_GRAPH_BIT) as usize;
         let (tram_speed, tram_start, _tram_wheels) =
             crate::tram_logic::decode_motion_word(rd_u32(data, tram_off + 4), n_way);
         let tram_head = rd_i32(data, tram_off + 8);
@@ -857,6 +861,7 @@ impl Map {
             tram_head,
             tram_base,
             n_way,
+            tram_graph,
             way_off,
             n_props,
             props_off,
@@ -1009,6 +1014,43 @@ impl Map {
     #[inline]
     pub fn way_pass(&self, i: usize) -> u16 {
         rd_u16(self.data, self.way_off + self.n_way * 14 + i * 2)
+    }
+
+    #[inline]
+    fn way_table(&self, table: usize, i: usize) -> u16 {
+        rd_u16(self.data, self.way_off + self.n_way * (16 + table * 2) + i * 2)
+    }
+
+    /// CPathTrack m_pnext of waypoint `i` as a waypoint index, or None.
+    #[inline]
+    pub fn way_next(&self, i: usize) -> Option<usize> {
+        if !self.tram_graph {
+            return (i + 1 < self.n_way).then_some(i + 1);
+        }
+        let next = self.way_table(0, i) as usize;
+        (next < self.n_way).then_some(next)
+    }
+
+    /// CPathTrack m_paltpath of waypoint `i`, or None.
+    #[inline]
+    pub fn way_alt(&self, i: usize) -> Option<usize> {
+        if !self.tram_graph {
+            return None;
+        }
+        let alt = self.way_table(1, i) as usize;
+        (alt < self.n_way).then_some(alt)
+    }
+
+    /// Authored path_track DISABLED/ALTREVERSE spawnflags of waypoint `i`.
+    #[inline]
+    pub fn way_flags(&self, i: usize) -> u16 {
+        if self.tram_graph { self.way_table(2, i) } else { 0 }
+    }
+
+    /// path_track targetname id of waypoint `i` (0 = synthetic or linear map).
+    #[inline]
+    pub fn way_name(&self, i: usize) -> u16 {
+        if self.tram_graph { self.way_table(3, i) } else { 0 }
     }
 
     /// `(first_face, num_faces)` for BSP submodel `m` (0 = world).

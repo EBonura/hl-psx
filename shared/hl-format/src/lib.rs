@@ -106,6 +106,12 @@ pub mod map {
     pub const NAV_NODE_RECORD_SIZE: usize = 18;
     pub const LOGIC_RECORD_SIZE: usize = 64;
 
+    /// Tram waypoint-count flag: next/alt/flags/name tables follow the
+    /// per-waypoint fire-on-pass ids (hl-bsp collect_tram_graph).
+    pub const TRAM_GRAPH_BIT: u16 = 0x8000;
+    pub const TRAM_NODE_NONE: u16 = u16::MAX;
+    pub const PATH_TRACK_DISABLED: u16 = 1;
+    pub const PATH_TRACK_ALTREVERSE: u16 = 4;
     pub const PROP_SPLIT_FORMAT: u32 = 0x8000_0000;
     pub const CLIP_PLANE_TAG_MASK: u16 = 0xc000;
     pub const FACE_GROUP_BITS: u16 = 12;
@@ -274,6 +280,10 @@ pub mod logic {
     pub const BIGMOMMA_NODE: u8 = 54;
     pub const INFOBM_RUN: u16 = 1;
     pub const INFOBM_WAIT: u16 = 2;
+
+    /// Cooked-only func_button/func_rot_button bit (unused by GoldSrc):
+    /// the button has health and responds to damage.
+    pub const SF_BUTTON_SHOOTABLE: u16 = 0x8000;
 
     pub const USE_OFF: u8 = 0;
     pub const USE_ON: u8 = 1;

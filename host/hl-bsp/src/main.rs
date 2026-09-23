@@ -7523,6 +7523,10 @@ fn collect_logic_entities_with_lightstyles(
             // Plat bit 0 is TOGGLE, while the shared door state machine uses
             // bit 5. A named plat starts at its authored TOP/end angle.
             (if targetname != 0 { 1 } else { 0 }) | (if raw_spawnflags & 1 != 0 { 32 } else { 0 })
+        } else if kind == LOGIC_FUNC_BUTTON && parse_f32_key(block, "health", 0.0) > 0.0 {
+            // CBaseButton::Spawn: health makes the button take damage, and a
+            // hit responds as a touch does (c2a2f's timetrack1switch).
+            raw_spawnflags | SF_BUTTON_SHOOTABLE
         } else {
             raw_spawnflags
         };
@@ -8640,7 +8644,50 @@ fn collect_tram_ranked(
     models: &[u8],
     scale: f32,
 ) -> (u16, i32, u16, i32, Vec<([i32; 3], u16, String)>, [i32; 3]) {
+    let (model, speed, start, wheels, way, origin, _) = collect_tram_graph(ents, models, scale);
+    (model, speed, start, wheels, way, origin)
+}
+
+/// Branch tables for a tram path that is not a straight line: per cooked
+/// waypoint the next node (CPathTrack m_pnext), the altpath node, the
+/// path_track spawnflags that matter to a train (DISABLED 1, ALTREVERSE 4)
+/// and its targetname, so path_track Use can switch or disable it.
+#[derive(Default)]
+struct TramGraph {
+    next: Vec<u16>,
+    alt: Vec<u16>,
+    flags: Vec<u16>,
+    names: Vec<String>,
+}
+
+const TRAM_NODE_NONE: u16 = u16::MAX;
+
+fn collect_tram_graph(
+    ents: &[u8],
+    models: &[u8],
+    scale: f32,
+) -> (
+    u16,
+    i32,
+    u16,
+    i32,
+    Vec<([i32; 3], u16, String)>,
+    [i32; 3],
+    Option<TramGraph>,
+) {
     let s = entity_text(ents);
+    let mut track_flags: HashMap<String, (u16, String)> = HashMap::new();
+    for block in s.split('{') {
+        if ent_value(block, "classname") == Some("path_track") {
+            if let Some(name) = ent_value(block, "targetname") {
+                track_flags.entry(name.to_string()).or_insert((
+                    parse_spawnflags(block) & 0x0005,
+                    ent_value(block, "altpath").unwrap_or("").to_string(),
+                ));
+            }
+        }
+    }
+    let mut way_names: Vec<String> = Vec::new();
     // (targetname, origin, target, speed, message): a nonzero path_track
     // "speed" key changes the train's speed as it passes (CPathTrack), and
     // "message" is HL's fire-on-pass -- c0a0b's ride fires the multi_manager
@@ -8756,11 +8803,11 @@ fn collect_tram_ranked(
             }
         });
     let Some(selected) = selected else {
-        return (0, 0, 0, 100, Vec::new(), [0; 3]);
+        return (0, 0, 0, 100, Vec::new(), [0; 3], None);
     };
     let (model, speed, first, wheels, height, origin, _, _) = trains.swap_remove(selected);
     if model == 0 || first.is_empty() {
-        return (0, 0, 0, 100, Vec::new(), [0; 3]);
+        return (0, 0, 0, 100, Vec::new(), [0; 3], None);
     }
 
     // Walk backward only while the predecessor is unique. Ambiguous forks are
@@ -8890,6 +8937,7 @@ fn collect_tram_ranked(
                         tram_start = Some(way.len());
                     }
                     way.push((point, node_speed, pass));
+                    way_names.push(t.0.clone());
                     last_found = name.clone();
                     name = t.2.clone();
                 }
@@ -8973,6 +9021,7 @@ fn collect_tram_ranked(
                                 pending_speed.insert(n.clone(), resume_speed);
                             } else if way.len() + 1 < 256 {
                                 way.push((synthetic, resume_speed, String::new()));
+                                way_names.push(String::new());
                             } else {
                                 break 'segments;
                             }
@@ -8987,7 +9036,64 @@ fn collect_tram_ranked(
         }
     }
     let tram_start = tram_start.unwrap_or(0).min(u16::MAX as usize) as u16;
-    (model, speed, tram_start, wheels, way, origin)
+
+    // Append the nodes only reachable through an altpath (c2a2f's exit
+    // timetrainb1..b4), following each target chain until it rejoins the
+    // cooked path or ends.
+    let main_len = way.len();
+    let mut pending: Vec<String> = way_names
+        .iter()
+        .filter_map(|n| track_flags.get(n).map(|(_, alt)| alt.clone()))
+        .filter(|alt| !alt.is_empty())
+        .collect();
+    while let Some(start) = pending.pop() {
+        let mut name = start;
+        while !name.is_empty() && way.len() < 255 && !way_names.contains(&name) {
+            let Some(t) = tracks.iter().find(|t| t.0 == name) else {
+                break;
+            };
+            let pass = if t.2.is_empty() && !t.5.is_empty() { t.5.clone() } else { t.4.clone() };
+            let mut point = to_world(t.1, scale);
+            point[1] = point[1].saturating_add(height);
+            way.push((point, t.3, pass));
+            way_names.push(t.0.clone());
+            if let Some((_, alt)) = track_flags.get(&t.0) {
+                if !alt.is_empty() {
+                    pending.push(alt.clone());
+                }
+            }
+            name = t.2.clone();
+        }
+    }
+    let index_of = |name: &str| -> u16 {
+        if name.is_empty() {
+            return TRAM_NODE_NONE;
+        }
+        way_names
+            .iter()
+            .position(|n| n == name)
+            .map(|i| i as u16)
+            .unwrap_or(TRAM_NODE_NONE)
+    };
+    let mut graph = TramGraph::default();
+    let mut branching = way.len() != main_len;
+    for (i, name) in way_names.iter().enumerate() {
+        let linear = if i + 1 < main_len { (i + 1) as u16 } else { TRAM_NODE_NONE };
+        let (flags, alt) = track_flags.get(name).cloned().unwrap_or_default();
+        let target = tracks.iter().find(|t| &t.0 == name).map(|t| t.2.as_str()).unwrap_or("");
+        let mut next = index_of(target);
+        if next == TRAM_NODE_NONE && i < main_len {
+            // Synthetic trackchange points and stitched junctions.
+            next = linear;
+        }
+        let alt = index_of(&alt);
+        branching |= next != linear || alt != TRAM_NODE_NONE || flags != 0;
+        graph.next.push(next);
+        graph.alt.push(alt);
+        graph.flags.push(flags);
+        graph.names.push(name.clone());
+    }
+    (model, speed, tram_start, wheels, way, origin, branching.then_some(graph))
 }
 
 const LOOT_SLOT_FLAGS: u16 = 0x4000 | 0x1000; // DORMANT | PRISONER, decoded specially by runtime
@@ -11732,8 +11838,8 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // hull (c1a1b prop floors ended up 37 units too high).
     let hull1_head_raw = model_headnode(models, 0, 1).unwrap_or(0); // standing player hull
     let hull3_head_raw = model_headnode(models, 0, 3).unwrap_or(0); // crouch hull, 32x32x36
-    let (tram_model, tram_speed, tram_start, tram_wheels, way, _) =
-        collect_tram_ranked(bsp.lump(LUMP_ENTITIES), models, scale);
+    let (tram_model, tram_speed, tram_start, tram_wheels, way, _, tram_graph) =
+        collect_tram_graph(bsp.lump(LUMP_ENTITIES), models, scale);
     let mut ents = collect_entities(
         bsp.lump(LUMP_ENTITIES),
         models,
@@ -12409,7 +12515,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let tram_base = way.get(tram_start).map(|w| w.0).unwrap_or([0, 0, 0]);
     let tram_motion = pack_tram_motion(tram_speed, tram_start, tram_wheels);
     o.extend_from_slice(&tram_model.to_le_bytes());
-    o.extend_from_slice(&(way.len() as u16).to_le_bytes());
+    // Bit 15 of the count: branch tables follow the fire-on-pass ids.
+    let graph_bit = if tram_graph.is_some() { cooked::TRAM_GRAPH_BIT } else { 0 };
+    o.extend_from_slice(&(way.len() as u16 | graph_bit).to_le_bytes());
     o.extend_from_slice(&tram_motion.to_le_bytes());
     o.extend_from_slice(&tram_head.to_le_bytes());
     for c in &tram_base {
@@ -12441,6 +12549,21 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         };
         o.extend_from_slice(&id.to_le_bytes());
     }
+    // Branch tables: u16 next[n] | u16 alt[n] | u16 flags[n] | u16 name[n].
+    if let Some(graph) = &tram_graph {
+        for &v in graph.next.iter().chain(&graph.alt).chain(&graph.flags) {
+            o.extend_from_slice(&v.to_le_bytes());
+        }
+        for name in &graph.names {
+            let id = if name.is_empty() {
+                0
+            } else {
+                intern_logic_name(&mut logic.names, name)?
+            };
+            o.extend_from_slice(&id.to_le_bytes());
+        }
+    }
+
     // ---- Actors/items + independent sprite placements ----
     // u32 split counts | ActorRec[24B] | SpriteRec[12B].
     let prop_off = o.len() as u32;
@@ -17039,6 +17162,36 @@ mod tests {
             (props[3].2 as u16) >> 12 < 4,
             "body -1 selects a deterministic head"
         );
+    }
+
+    #[test]
+    fn tram_graph_keeps_loops_altpaths_and_disabled_nodes() {
+        // c2a2f's shape: a loop back to a middle node, an exit reachable only
+        // through one node's altpath, and a disabled node on the way in.
+        let ents = br#"
+{ "classname" "path_track" "targetname" "a" "target" "b" "origin" "0 0 0" }
+{ "classname" "path_track" "targetname" "b" "target" "c" "origin" "100 0 0" "spawnflags" "1" }
+{ "classname" "path_track" "targetname" "c" "target" "d" "origin" "200 0 0" "altpath" "x1" }
+{ "classname" "path_track" "targetname" "d" "target" "b" "origin" "200 100 0" }
+{ "classname" "path_track" "targetname" "x1" "target" "x2" "origin" "300 0 0" }
+{ "classname" "path_track" "targetname" "x2" "origin" "400 0 0" }
+{ "classname" "func_tracktrain" "model" "*1" "target" "a" "speed" "60" }
+"#;
+        let (_, _, start, _, way, _, graph) = collect_tram_graph(ents, &[], 1.0);
+        let graph = graph.expect("branching path emits tables");
+        assert_eq!(start, 0);
+        assert_eq!(graph.names, ["a", "b", "c", "d", "x1", "x2"]);
+        assert_eq!(way.len(), 6);
+        assert_eq!(graph.next, [1, 2, 3, 1, 5, TRAM_NODE_NONE]);
+        assert_eq!(graph.alt[2], 4);
+        assert_eq!(graph.flags[1], 1);
+
+        let linear = br#"
+{ "classname" "path_track" "targetname" "a" "target" "b" "origin" "0 0 0" }
+{ "classname" "path_track" "targetname" "b" "origin" "100 0 0" }
+{ "classname" "func_tracktrain" "model" "*1" "target" "a" "speed" "60" }
+"#;
+        assert!(collect_tram_graph(linear, &[], 1.0).6.is_none(), "straight paths keep the old format");
     }
 
     #[test]
