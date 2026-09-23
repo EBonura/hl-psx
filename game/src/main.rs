@@ -3425,6 +3425,8 @@ static mut LOGIC_PROP_LINK: [u8; MAX_LOGIC] = [LOGIC_PROP_NONE; MAX_LOGIC];
 // The cooker appends LOGIC_MONSTER_TRIGGER records after every other record;
 // this is the map's range of them, so damage and sight checks scan only it.
 static mut MONSTER_TRIGGER_FIRST: u16 = 0;
+// The map authors a trigger_once/multiple with SF_TRIGGER_ALLOWMONSTERS.
+static mut MONSTER_TOUCH: bool = false;
 static mut MONSTER_TRIGGER_END: u16 = 0;
 // The map's Gonarch node walker (a LOGIC_MONSTER_TRIGGER record), or MAX.
 // Its LOGIC_STATE is the walk phase, LOGIC_TARGET the node it heads for next,
@@ -6203,6 +6205,7 @@ const SF_AMBIENT_START_SILENT: u16 = 16;
 const SF_AMBIENT_NOT_LOOPING: u16 = 32;
 const SF_TRIGGER_HURT_TARGET_ONCE: u16 = 1;
 const SF_TRIGGER_HURT_START_OFF: u16 = 2;
+const SF_TRIGGER_ALLOWMONSTERS: u16 = 1; // monsters fire it too
 const SF_TRIGGER_NOCLIENTS: u16 = 2; // player may NOT fire this trigger (monster-only)
 const SF_TRIGGER_PUSHABLES: u16 = 4; // func_pushable may fire independently of NOCLIENTS
 const SF_TRIGGER_PUSH_START_OFF: u16 = 2; // trigger_push spawns disabled
@@ -7051,6 +7054,39 @@ unsafe fn pushable_touch_triggers(m: &Map, nlogic: usize, nents: usize, ei: usiz
     let h = pushable_half_extents(e);
     let mins = [c[0] - h[0], c[1] - h[1], c[2] - h[2]];
     let maxs = [c[0] + h[0], c[1] + h[1], c[2] + h[2]];
+    touch_triggers_box(m, nlogic, nents, mins, maxs, SF_TRIGGER_PUSHABLES, now);
+}
+
+/// CBaseTrigger::MultiTouch for a monster (SF_TRIGGER_ALLOWMONSTERS): GoldSrc
+/// touches triggers whenever a monster's move relinks it. Only maps that
+/// author such a trigger pay for the scan (c1a2's rampage glass).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_touch_triggers(m: &Map, pi: usize) {
+    let p = PROP_POS[pi];
+    touch_triggers_box(
+        m,
+        m.n_logic.min(MAX_LOGIC),
+        m.n_ents.min(MAX_ENTS),
+        [p[0] - 16, p[1], p[2] - 16],
+        [p[0] + 16, p[1] + 72, p[2] + 16],
+        SF_TRIGGER_ALLOWMONSTERS,
+        SIM_NOW,
+    );
+}
+
+/// trigger_once/multiple volumes that accept a non-player toucher by `flag`.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn touch_triggers_box(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    mins: [i32; 3],
+    maxs: [i32; 3],
+    flag: u16,
+    now: u16,
+) {
     let mut li = 0usize;
     while li < nlogic {
         if LOGIC_STATE[li] != LOGIC_STATE_REMOVED
@@ -7061,7 +7097,7 @@ unsafe fn pushable_touch_triggers(m: &Map, nlogic: usize, nents: usize, ei: usiz
             )
         {
             let rec = m.logic(li);
-            if rec.spawnflags & SF_TRIGGER_PUSHABLES != 0
+            if rec.spawnflags & flag != 0
                 && master_ok(m, nlogic, rec.arg1)
                 && mins[0] <= rec.maxs[0]
                 && maxs[0] >= rec.mins[0]
@@ -12256,6 +12292,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     let mut hot_overflow = false;
     MONSTER_TRIGGER_FIRST = nlogic as u16;
     MONSTER_TRIGGER_END = 0;
+    MONSTER_TOUCH = false;
     BOSS_WALKER = u16::MAX;
     li = 0;
     while li < nlogic {
@@ -12276,6 +12313,11 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         // Cache the name in already-allocated per-record storage so a fire does
         // not decode every 64-byte LogicEnt merely to reject almost all of it.
         LOGIC_BREAK_HP[li] = rec.targetname;
+        if matches!(rec.kind, map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE)
+            && rec.spawnflags & SF_TRIGGER_ALLOWMONSTERS != 0
+        {
+            MONSTER_TOUCH = true;
+        }
         if logic_player_touch_candidate(rec) {
             let touch = LOGIC_TOUCH_COUNT as usize;
             let spark_floor = LOGIC_STORAGE_WORDS - LOGIC_SPARK_COUNT as usize;
@@ -13774,8 +13816,12 @@ unsafe fn prop_set_pos(m: &Map, movers: &[phys::Mover], pi: usize, pos: [i32; 3]
 /// Set an authored/probed origin verbatim, without an implicit floor trace.
 /// Script marks use this for GoldSrc TASK_PLANT_ON_SCRIPT; movement callers
 /// use it after they have already selected a grounded step candidate.
+#[inline(never)]
 unsafe fn prop_set_pos_exact(m: &Map, pi: usize, pos: [i32; 3]) {
     PROP_POS[pi] = pos;
+    if MONSTER_TOUCH {
+        prop_touch_triggers(m, pi);
+    }
     PROP_OCC_VIS[pi] |= PROP_OCC_DIRTY;
     let leaf = camera_leaf(m, pos);
     PROP_LEAF[pi] = if leaf > 0 && leaf <= i16::MAX as i32 {
