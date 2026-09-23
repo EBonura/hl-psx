@@ -10967,11 +10967,6 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
                                 }
                             }
                             LOGIC_STATE[li] = LOGIC_STATE_TOP;
-                            if rec.kind == map::LOGIC_FUNC_DOOR
-                                && rec.spawnflags & SF_DOOR_START_OPEN != 0
-                            {
-                                logic_fire_door_close_target(m, nlogic, nents, li, rec, now);
-                            }
                             logic_sub_use_targets(
                                 m,
                                 nlogic,
@@ -11019,9 +11014,11 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
                                     map::USE_TOGGLE,
                                     0,
                                 );
-                                if rec.spawnflags & SF_DOOR_START_OPEN == 0 {
-                                    logic_fire_door_close_target(m, nlogic, nents, li, rec, now);
-                                }
+                                // BOTTOM is the closed end here even for a
+                                // START_OPEN door (it starts at TOP), where
+                                // CBaseDoor, which swaps its positions,
+                                // fires netname from DoorHitTop.
+                                logic_fire_door_close_target(m, nlogic, nents, li, rec, now);
                             }
                         }
                     }
