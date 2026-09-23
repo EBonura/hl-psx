@@ -8710,6 +8710,7 @@ unsafe fn logic_activate_door(nents: usize, li: usize, rec: map::LogicEnt, use_t
 /// turning about the vertical axis swings away from its activator, chosen by
 /// which side of the pivot the activator stands relative to where it faces.
 /// The authored direction is kept for a chain nobody started (sign +1).
+#[optimize(size)]
 unsafe fn rotating_door_swing_away(ei: usize, spawnflags: u16) {
     const SF_DOOR_ONEWAY: u16 = 16;
     const SF_DOOR_ROTATE_Z: u16 = 64;
@@ -20079,6 +20080,7 @@ unsafe fn tick_beams(m: &Map, nlogic: usize, nents: usize, movers: &[phys::Mover
 /// brush entity's origin (cooked origin + its live displacement), `0x8000 |
 /// name` a named actor's origin; otherwise the cooked static point.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn beam_live_point(nents: usize, r: u16, cooked: [i32; 3]) -> [i32; 3] {
     match r >> 14 {
         1 => {
@@ -20120,6 +20122,7 @@ unsafe fn beam_live_point(nents: usize, r: u16, cooked: [i32; 3]) -> [i32; 3] {
 /// solid, actor or player it meets, damaging that one hit at `damage` per
 /// second (per strike for striking env_beams); the visible end is the hit.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn tick_beam_extended(
     m: &Map,
     nlogic: usize,
@@ -20270,6 +20273,7 @@ unsafe fn beam_sparks(at: [i32; 3]) {
 
 /// `count` spark particles thrown up from `at` (env_spark, beam ends).
 #[inline(never)]
+#[optimize(size)]
 unsafe fn spark_burst(at: [i32; 3], count: u8, vy_base: i32, vy_range: u32, ttl: u8) {
     let mut s = 0;
     while s < count {
@@ -26719,6 +26723,7 @@ const BEAM_DEPTH_BIAS: i32 = 24;
 /// range in camera space and to a guard band around the screen, so a beam
 /// whose end lies behind the camera or off-screen (a laser crossing the view,
 /// a long lightning bolt) still draws the visible part instead of vanishing.
+#[optimize(size)]
 fn project_beam_segment(
     start: [i32; 3],
     end: [i32; 3],
