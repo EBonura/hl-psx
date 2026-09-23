@@ -41,6 +41,11 @@ pub fn set_gravity_scale(scale_q12: i32) {
     unsafe { GRAVITY_SCALE = scale_q12.clamp(0, 4096 * 4) };
 }
 
+/// The player's gravity multiplier (pev->gravity), Q12.
+pub fn gravity_scale() -> i32 {
+    unsafe { GRAVITY_SCALE }
+}
+
 // Long jump module: jumping while moving adds a strong horizontal boost
 // (the Xen crossings need it). Persists for the session once picked up.
 static mut LONGJUMP: bool = false;

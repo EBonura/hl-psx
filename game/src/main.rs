@@ -5589,6 +5589,8 @@ unsafe fn music_stop_for_menu() {
 // Restoring sets PENDING_RESTORE: play() computes its normal spawn first and
 // this overrides it, which keeps the save out of RoomLaunch's fixed 76 bytes.
 static mut LIVE_CHECKPOINT: save::Checkpoint = save::Checkpoint::EMPTY;
+// The player's gravity when the current level was entered (Q12).
+static mut LEVEL_ENTRY_GRAVITY: i32 = 4096;
 static mut PENDING_RESTORE: save::Checkpoint = save::Checkpoint::EMPTY;
 static mut PENDING_RESTORE_ACTIVE: bool = false;
 
@@ -28116,7 +28118,14 @@ fn play(
         tty::println("hl-psx: texture/world count mismatch");
         telemetry::debug_log("hl-psx: texture/world count mismatch");
     }
-    phys::set_gravity_scale(4096); // fresh map: normal gravity until a zone says otherwise
+    // GoldSrc carries the player's pev->gravity through a level change, so
+    // Xen maps after c4a1's trigger_gravity keep its 0.6. A fresh start
+    // (menu, chapter) is normal gravity; a death restart returns to the
+    // gravity the level was entered with.
+    if !launch.preserve_view {
+        unsafe { LEVEL_ENTRY_GRAVITY = 4096 };
+    }
+    phys::set_gravity_scale(unsafe { LEVEL_ENTRY_GRAVITY });
     let nents = m.n_ents.min(MAX_ENTS);
     let nlogic = m.n_logic.min(MAX_LOGIC);
     // Stack-local map capability bit: maps without func_pushable pay no
@@ -28462,6 +28471,8 @@ fn play(
                 weapon.current = cp.current as usize;
             }
             phys::set_longjump(cp.longjump);
+            phys::set_gravity_scale(cp.gravity as i32);
+            LEVEL_ENTRY_GRAVITY = cp.gravity as i32;
             GLOBAL_HASH = cp.global_hash;
             GLOBAL_ON = cp.global_on;
             GLOBAL_COUNT = (cp.global_count as usize).min(GLOBAL_HASH.len());
@@ -30275,6 +30286,7 @@ fn play(
                     global_on: GLOBAL_ON,
                     global_count: GLOBAL_COUNT as u16,
                     has_pos: true,
+                    gravity: phys::gravity_scale().clamp(0, u16::MAX as i32) as u16,
                     sequence: 0, // stamped by save::write
                 };
                 let mut charger_pulse = 0u8;
@@ -30900,6 +30912,7 @@ fn play(
                                 &cp,
                             );
                         }
+                        LEVEL_ENTRY_GRAVITY = phys::gravity_scale();
                         return PlayExit::ChangeLevel(next);
                     }
                 }
