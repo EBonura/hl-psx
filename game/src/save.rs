@@ -100,7 +100,9 @@ impl Slot {
 /// Bumped whenever the field layout changes. A card written by an older build
 /// is reported as absent rather than misread: every field here is raw state fed
 /// straight back into the simulation, so a stale layout is not recoverable.
-const SAVE_VERSION: u16 = 2;
+const SAVE_VERSION: u16 = 3;
+/// Version 2 lacks the gravity field; it decodes with normal gravity.
+const SAVE_VERSION_NO_GRAVITY: u16 = 2;
 const SAVE_MAGIC: u32 = u32::from_le_bytes(*b"HLSV");
 
 /// Serialised checkpoint. Plain little-endian scalars written by hand rather
@@ -129,6 +131,9 @@ pub struct Checkpoint {
     /// own spawn is the correct arrival, so it clears this rather than
     /// recording a position that belongs to the map being left.
     pub has_pos: bool,
+    /// The player's gravity (pev->gravity) in Q12, 4096 = normal. Xen sets
+    /// 0.6 with a trigger_gravity and later maps inherit it.
+    pub gravity: u16,
     /// Monotonic write counter. With two slots and no clock on the console,
     /// this is what "most recent" means: each write takes the highest sequence
     /// on the card and adds one.
@@ -154,6 +159,7 @@ impl Checkpoint {
         global_on: [false; 32],
         global_count: 0,
         has_pos: false,
+        gravity: 4096,
         sequence: 0,
     };
 }
@@ -243,6 +249,7 @@ pub fn encode(cp: &Checkpoint, buf: &mut [u8]) -> usize {
     w.u16(cp.global_count);
     w.u8(cp.has_pos as u8);
     w.u32(cp.sequence);
+    w.u16(cp.gravity);
     let end = w.at;
     let sum = checksum(&w.buf[..end]);
     w.u32(sum);
@@ -252,7 +259,11 @@ pub fn encode(cp: &Checkpoint, buf: &mut [u8]) -> usize {
 /// Parse `buf`, rejecting a wrong magic, a wrong version, or a bad checksum.
 pub fn decode(buf: &[u8]) -> Option<Checkpoint> {
     let mut r = Reader { buf, at: 0 };
-    if r.u32() != SAVE_MAGIC || r.u16() != SAVE_VERSION {
+    if r.u32() != SAVE_MAGIC {
+        return None;
+    }
+    let version = r.u16();
+    if version != SAVE_VERSION && version != SAVE_VERSION_NO_GRAVITY {
         return None;
     }
     let mut cp = Checkpoint::EMPTY;
@@ -284,6 +295,9 @@ pub fn decode(buf: &[u8]) -> Option<Checkpoint> {
     cp.global_count = r.u16();
     cp.has_pos = r.u8() != 0;
     cp.sequence = r.u32();
+    if version >= SAVE_VERSION {
+        cp.gravity = r.u16();
+    }
     let end = r.at;
     let stored = r.u32();
     if r.at > buf.len() || stored != checksum(&buf[..end]) {
@@ -431,6 +445,7 @@ mod tests {
         cp.global_count = 3;
         cp.has_pos = true;
         cp.sequence = 7;
+        cp.gravity = 2458;
         cp
     }
 
@@ -455,7 +470,22 @@ mod tests {
         assert_eq!(back.global_on[2], true);
         assert_eq!(back.global_count, cp.global_count);
         assert_eq!(back.sequence, cp.sequence);
+        assert_eq!(back.gravity, cp.gravity);
         assert!(back.has_pos);
+    }
+
+    #[test]
+    fn version_two_saves_load_with_normal_gravity() {
+        // A version 2 payload is the version 3 one without the trailing
+        // gravity field, under the old version number and its own checksum.
+        let mut buf = [0u8; 512];
+        let len = encode(&sample(), &mut buf) - 4 - 2;
+        buf[4..6].copy_from_slice(&SAVE_VERSION_NO_GRAVITY.to_le_bytes());
+        let sum = checksum(&buf[..len]);
+        buf[len..len + 4].copy_from_slice(&sum.to_le_bytes());
+        let back = decode(&buf[..len + 4]).expect("version 2 decodes");
+        assert_eq!(back.gravity, 4096);
+        assert_eq!(back.sequence, 7);
     }
 
     #[test]
