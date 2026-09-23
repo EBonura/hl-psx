@@ -30078,6 +30078,10 @@ fn play(
                     let d = ((li - 29) * 9 / 2).max(1) as u16;
                     fall_damage_player(&mut health, d);
                 }
+                // One landing, one impact. PlayerMove::update clears this at
+                // the start of its tick, but a tick spent swimming or on a
+                // ladder skips update and would otherwise re-apply the fall.
+                player.land_impact = 0;
             }
             // HEV suit voice: announce each worsening health threshold once.
             unsafe {
