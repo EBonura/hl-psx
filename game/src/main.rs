@@ -10546,6 +10546,10 @@ unsafe fn logic_use_entity(
                 logic_fire_targets(m, nlogic, nents, rec.target, output_use, now, 0, li as u16);
             }
         }
+        map::LOGIC_INFODECAL => {
+            logic_infodecal(m, rec);
+            LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+        }
         map::LOGIC_ENV_EXPLOSION => {
             // Scripted explosion: FX + sound only (real damage is trigger_hurt).
             queue_explosion_fx(rec.origin, rec.arg0.min(255) as u8);
@@ -18535,7 +18539,27 @@ unsafe fn spawn_impact_mark(m: &Map, hit: &phys::RayHit, kind: u8) {
         IMPACT_KIND_YBLOOD => sprite::DECAL_YBLOOD,
         _ => sprite::DECAL_SHOT,
     };
-    let Some(decal) = sprite::decal_pick(family, IMPACT_RNG.next_mixed()) else {
+    put_impact_mark(m, hit, kind, family, IMPACT_RNG.next_mixed());
+}
+
+/// CDecal::TriggerDecal: trace the diagonal through the infodecal and stamp
+/// its decal on the surface hit (either way, as the origin may sit inside).
+#[inline(never)]
+#[cold]
+#[optimize(size)]
+unsafe fn logic_infodecal(m: &Map, rec: map::LogicEnt) {
+    let o = rec.origin;
+    let a = [o[0] - 5, o[1] - 5, o[2] - 5];
+    let b = [o[0] + 5, o[1] + 5, o[2] + 5];
+    if let Some(hit) = phys::trace_line(m, &[], a, b).or_else(|| phys::trace_line(m, &[], b, a)) {
+        put_impact_mark(m, &hit, rec.arg1 as u8, (rec.arg0 >> 8) as usize, rec.arg0 as u8 as u32);
+    }
+}
+
+#[inline(never)]
+#[optimize(size)]
+unsafe fn put_impact_mark(m: &Map, hit: &phys::RayHit, kind: u8, family: usize, pick: u32) {
+    let Some(decal) = sprite::decal_pick(family, pick) else {
         return;
     };
     let pos = [

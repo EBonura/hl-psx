@@ -660,7 +660,25 @@ fn build_texture_chunk(texs: &[CookedTex]) -> Vec<u8> {
 
 fn entity_text(ents: &[u8]) -> Cow<'_, str> {
     let end = ents.iter().position(|&b| b == 0).unwrap_or(ents.len());
-    String::from_utf8_lossy(&ents[..end])
+    let text = String::from_utf8_lossy(&ents[..end]);
+    // Blocks are split on '{', so a brace inside a quoted value (an
+    // infodecal's "{BLOOD4" texture) would cut its entity in two. Drop them.
+    let mut quoted = false;
+    if !text.chars().any(|c| {
+        quoted ^= c == '"';
+        quoted && (c == '{' || c == '}')
+    }) {
+        return text;
+    }
+    let mut quoted = false;
+    Cow::Owned(
+        text.chars()
+            .filter(|&c| {
+                quoted ^= c == '"';
+                !(quoted && (c == '{' || c == '}'))
+            })
+            .collect(),
+    )
 }
 
 fn worldspawn_skyname(ents: &[u8]) -> Option<String> {
@@ -7314,6 +7332,23 @@ fn script_clip_slots(
     (lookup("m_iszPlay"), lookup("m_iszIdle"), root)
 }
 
+/// An infodecal texture as (family << 8 | index, tint) in the resident decal
+/// atlas (shot, blood, yblood families; the runtime's IMPACT_KIND tints).
+/// Textures outside the atlas ({scorch}, {bigblood}) take a blood splat's
+/// shape, a scorch drawn dark.
+fn infodecal_pick(texture: &str) -> (u16, u16) {
+    let name = texture.trim_start_matches('{').to_ascii_lowercase();
+    let stem = name.trim_end_matches(|c: char| c.is_ascii_digit());
+    let n = name[stem.len()..].parse::<u16>().unwrap_or(1).max(1) - 1;
+    let (family, tint) = match stem {
+        "shot" => (0, 0),
+        "blood" | "bigblood" => (1, 1),
+        "yblood" => (2, 2),
+        _ => (1, 0),
+    };
+    (family << 8 | n, tint)
+}
+
 /// Extended env_beam/env_laser aux flags (aux[first + 5].delay_ticks).
 const BEAM_EXT_LASER: u16 = 1;
 const BEAM_EXT_SPARK_END: u16 = 2;
@@ -7498,6 +7533,11 @@ fn collect_logic_entities_with_lightstyles(
             "func_guntarget" => LOGIC_FUNC_GUNTARGET,
             "trigger_endsection" => LOGIC_TRIGGER_ENDSECTION,
             "env_render" => LOGIC_ENV_RENDER,
+            // Static infodecals are applied at level load and are not drawn;
+            // a named one waits for its Use.
+            "infodecal" if !ent_value(block, "targetname").unwrap_or("").is_empty() => {
+                LOGIC_INFODECAL
+            }
             "env_beverage" => LOGIC_ENV_BEVERAGE,
             "player_weaponstrip" => LOGIC_WEAPONSTRIP,
             // CBasePlayerItem::DefaultTouch always calls SUB_UseTargets after
@@ -7864,6 +7904,7 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_ENV_EXPLOSION => parse_f32_key(block, "iMagnitude", 100.0)
                 .round()
                 .clamp(1.0, 255.0) as u16,
+            LOGIC_INFODECAL => infodecal_pick(ent_value(block, "texture").unwrap_or("")).0,
             LOGIC_MAP_FLAGS => {
                 let key = ent_value(block, "chaptertitle")
                     .unwrap_or("")
@@ -7876,6 +7917,7 @@ fn collect_logic_entities_with_lightstyles(
             _ => names.id(ent_value(block, "changetarget")),
         };
         let arg1 = match kind {
+            LOGIC_INFODECAL => infodecal_pick(ent_value(block, "texture").unwrap_or("")).1,
             LOGIC_ENV_BEVERAGE => parse_f32_key(block, "skin", 0.0).clamp(0.0, 6.0) as u16,
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
             LOGIC_FUNC_TRACKTRAIN => submodel.unwrap_or(0).min(u16::MAX as usize) as u16,
@@ -16920,6 +16962,19 @@ mod tests {
         assert!(logic.names.iter().any(|name| name == "OPENTITLE3"));
         assert_ne!(literal.arg0, 0, "unknown literal messages still render");
         assert_eq!(logic.names[literal.arg0 as usize - 1], "DIRECT MESSAGE");
+    }
+
+    #[test]
+    fn targeted_infodecal_cooks_its_atlas_pick() {
+        let text = br#"{ "classname" "infodecal" "targetname" "splat" "texture" "{BLOOD4" "origin" "1 2 3" }
+        { "classname" "infodecal" "texture" "{BLOOD4" "origin" "1 2 3" }
+        { "classname" "infodecal" "targetname" "burn" "texture" "{SCORCH2" "origin" "1 2 3" }"#;
+        let logic = collect_logic_entities(text, &[], &[], 1.0, &Default::default(), &Default::default())
+            .unwrap();
+        assert_eq!(logic.ents.len(), 2, "static infodecals stay uncooked");
+        assert_eq!(logic.ents[0].kind, LOGIC_INFODECAL);
+        assert_eq!((logic.ents[0].arg0, logic.ents[0].arg1), (1 << 8 | 3, 1));
+        assert_eq!((logic.ents[1].arg0, logic.ents[1].arg1), (1 << 8 | 1, 0));
     }
 
     #[test]
