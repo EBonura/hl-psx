@@ -20410,6 +20410,9 @@ unsafe fn render_explosions(
                 d.crush_h,
                 rot,
                 base_t,
+                // TE_EXPLOSION adds the sprite at full brightness once;
+                // 255 doubles it on the GPU and stacked blasts clip to white.
+                128,
             );
         }
         i += 1;
@@ -27116,6 +27119,7 @@ unsafe fn draw_billboard(
         d.crush_h,
         rot,
         base_t,
+        255,
     );
 }
 
@@ -27134,6 +27138,7 @@ unsafe fn emit_billboard(
     crush_h: u16,
     rot: &Mat3I16,
     base_t: [i32; 3],
+    tint: u8,
 ) {
     if !sl.valid {
         return;
@@ -27170,7 +27175,7 @@ unsafe fn emit_billboard(
         np,
         [(l, t), (r, t), (l, b)],
         [uv_tl, uv_tr, uv_bl],
-        [(255, 255, 255); 3],
+        [(tint, tint, tint); 3],
         packet,
         otz,
     );
@@ -27179,7 +27184,7 @@ unsafe fn emit_billboard(
         np,
         [(r, t), (r, b), (l, b)],
         [uv_tr, uv_br, uv_bl],
-        [(255, 255, 255); 3],
+        [(tint, tint, tint); 3],
         packet,
         otz,
     );
