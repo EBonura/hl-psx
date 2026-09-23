@@ -7190,7 +7190,12 @@ unsafe fn logic_apply_brush_train_command(li: usize, rec: map::LogicEnt, use_typ
         return;
     }
     let active = TRAIN_STATE[t] & TRAIN_ACTIVE_BIT != 0;
+    // CFuncTrain::Use ignores the use type: every use starts a waiting train
+    // or stops a moving one. Relays and autos with no triggerstate send OFF,
+    // and c5a1's hoop_1/warp_train and c1a4f's lightele are started that way.
+    // Tracktrains and guntargets honour ON/OFF through ShouldToggle.
     let enable = match use_type {
+        _ if rec.kind == map::LOGIC_FUNC_TRAIN => !active,
         map::USE_ON => true,
         map::USE_OFF => false,
         _ => !active,
