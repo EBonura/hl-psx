@@ -30,7 +30,7 @@ env_laser|runtime|compact beam logic
 env_message|runtime|titles overlay logic
 env_render|runtime|actor render-state controller
 env_shake|approximated|compact camera shake
-env_shooter|missing_visual|authored debris shooter is absent
+env_shooter|approximated|shoots material-coloured debris, not its model
 env_sound|missing_visual|room DSP/acoustic controller is absent
 env_spark|approximated|compact spark emitter
 env_sprite|runtime|compact sprite prop
@@ -65,7 +65,7 @@ func_traincontrols|approximated|controls are folded into direct train use
 func_wall|runtime|rendered brush and optional frame control
 func_wall_toggle|runtime|toggleable render and collision brush
 func_water|runtime|liquid brush volume and surface
-gibshooter|missing_visual|authored gib shooter is absent
+gibshooter|approximated|shoots flesh-coloured debris, not hgibs
 info_bigmomma|approximated|Gonarch node walk: reachdelay, radius, health gates and reachtargets; no node sequences
 info_landmark|cook_only|transition transform marker
 info_node|cook_only|navigation graph input

@@ -284,6 +284,10 @@ pub mod logic {
     /// A targeted infodecal (CDecal::TriggerDecal): `arg0` = decal family
     /// << 8 | index in the resident atlas, `arg1` = impact tint kind.
     pub const INFODECAL: u8 = 55;
+    /// gibshooter / env_shooter (CGibShooter): `arg0` = gib count, `arg1` =
+    /// debris kind, `wait_ticks` = interval, `mins` = world gib velocity per
+    /// tick, `flags` = its per-axis jitter (variance x velocity).
+    pub const SHOOTER: u8 = 56;
     pub const INFOBM_RUN: u16 = 1;
     pub const INFOBM_WAIT: u16 = 2;
 
@@ -358,8 +362,9 @@ pub mod logic {
     pub const LOGIC_MONSTER_TRIGGER: u8 = MONSTER_TRIGGER;
     pub const LOGIC_BIGMOMMA_NODE: u8 = BIGMOMMA_NODE;
     pub const LOGIC_INFODECAL: u8 = INFODECAL;
+    pub const LOGIC_SHOOTER: u8 = SHOOTER;
 
-    pub const KINDS: [u8; 55] = [
+    pub const KINDS: [u8; 56] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -415,6 +420,7 @@ pub mod logic {
         MONSTER_TRIGGER,
         BIGMOMMA_NODE,
         INFODECAL,
+        SHOOTER,
     ];
 }
 
