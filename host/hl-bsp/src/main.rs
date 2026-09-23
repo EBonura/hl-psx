@@ -7643,10 +7643,12 @@ fn collect_logic_entities_with_lightstyles(
             // CTriggerHurt::HurtTouch applies `pev->dmg * 0.5` once per
             // half-second semaphore interval. Store the effective pulse so the
             // fixed 20 Hz runtime does not deal twice GoldSrc's authored damage.
+            // A negative dmg heals by its magnitude (LOGIC_TRIGGER_HURT_HEALS).
             LOGIC_TRIGGER_HURT => (ent_value(block, "damage")
                 .or_else(|| ent_value(block, "dmg"))
                 .and_then(|v| v.parse::<f32>().ok())
                 .unwrap_or(10.0)
+                .abs()
                 * 0.5)
                 .round()
                 .clamp(1.0, u16::MAX as f32) as u16,
@@ -7938,6 +7940,13 @@ fn collect_logic_entities_with_lightstyles(
                 .unwrap_or(0);
             if damage_type & DMG_RADIATION != 0 {
                 record_flags |= LOGIC_TRIGGER_HURT_RADIATION;
+            }
+            let dmg = ent_value(block, "damage")
+                .or_else(|| ent_value(block, "dmg"))
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(10.0);
+            if dmg < 0.0 {
+                record_flags |= LOGIC_TRIGGER_HURT_HEALS;
             }
         }
         // Door/button lock feedback has one extra local id. Record flags are
