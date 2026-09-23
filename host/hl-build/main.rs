@@ -467,12 +467,10 @@ const WEAPON_MODELS: [WeaponModel; 16] = [
 ];
 
 // Keep these synchronized with game/src/main.rs. The audit below derives the
-// projected-vertex scratch from the cooked roster, just like game/build.rs, so
-// growth in either a weapon or an enemy cannot silently squeeze live weapon
-// geometry out of the shared 81 KiB reserve.
-const VIEWMODEL_POOL_WORDS: usize = 20_224;
+// projected-vertex scratch and the viewmodel reserve itself from the cooked
+// roster, just like game/build.rs, so growth in either a weapon or an enemy
+// cannot silently squeeze live weapon geometry out of the shared reserve.
 const VIEWMODEL_SORT_TRIS: usize = 1_152;
-const VIEWMODEL_SORT_BUCKETS: usize = 64;
 const VIEWMODEL_SLOT_CAP: usize = 40;
 const MODEL_INDEX_VERTEX_LIMIT: usize = 1_024;
 const HMD_FLAG_PACKED_NORMALS: u16 = 1 << 2;
@@ -560,17 +558,18 @@ fn audit_viewmodels(model_pack: &Path) -> Result<()> {
     }
     let projected_verts = round_up(max_model_verts + 16, 16).min(MODEL_INDEX_VERTEX_LIMIT);
     let projected_words = (projected_verts * 6).div_ceil(4);
-    let sort_link_words = (VIEWMODEL_SORT_TRIS * 2).div_ceil(4);
-    let sort_head_words = (VIEWMODEL_SORT_BUCKETS * 2).div_ceil(4);
-    let scratch_words = projected_words + sort_link_words + sort_head_words;
-    let geometry_limit_words = VIEWMODEL_POOL_WORDS
+    // The runtime's VM_CACHE_WORDS: projected vertices, then one sort record
+    // and one packed-index word per authored triangle, at the pool's top.
+    let scratch_words = projected_words + 2 * VIEWMODEL_SORT_TRIS;
+    let pool_words = model_audit::viewmodel_pool_words(model_pack)?;
+    let geometry_limit_words = pool_words
         .checked_sub(scratch_words)
-        .ok_or("viewmodel scratch exceeds the fixed pool")?;
+        .ok_or("viewmodel scratch exceeds the viewmodel pool")?;
 
     let mut glock_textures = 0usize;
     println!(
         "viewmodel RAM audit: pool={} B, geometry_end<={} B, projected_verts={}",
-        VIEWMODEL_POOL_WORDS * 4,
+        pool_words * 4,
         geometry_limit_words * 4,
         projected_verts
     );
@@ -597,12 +596,12 @@ fn audit_viewmodels(model_pack: &Path) -> Result<()> {
             return Err(format!("{}: merged geometry exceeds chunk", model.name).into());
         }
         let geometry_end_words = 2 + geometry_bytes.div_ceil(4);
-        if data.len().div_ceil(4) > VIEWMODEL_POOL_WORDS {
+        if data.len().div_ceil(4) > pool_words {
             return Err(format!(
                 "{}: merged {} B exceeds {} B viewmodel staging pool",
                 model.name,
                 data.len(),
-                VIEWMODEL_POOL_WORDS * 4
+                pool_words * 4
             )
             .into());
         }
@@ -930,16 +929,21 @@ fn stage_pack_family(
         .collect::<Vec<_>>();
     paths.sort();
     let mut stats = PackFamilyStats::default();
+    let viewmodel_pool_bytes = if model_chunks {
+        model_audit::viewmodel_pool_words(source)? * 4
+    } else {
+        0
+    };
     for path in paths {
         let Some(chunk_id) = pack_chunk_id(&path, rooms)? else {
             continue;
         };
         let raw = fs::read(&path)?;
-        // Selected viewmodels always stage at word zero in their fixed private
+        // Selected viewmodels always stage at word zero in their private
         // pool. Other model payloads must decode in exactly their raw length;
         // that conservative rule is safe at every possible shared-pool offset.
         let target_capacity = model_chunks.then_some(if (1000..1016).contains(&chunk_id) {
-            VIEWMODEL_POOL_WORDS * 4
+            viewmodel_pool_bytes
         } else {
             raw.len()
         });

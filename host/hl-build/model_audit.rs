@@ -9,15 +9,74 @@ use super::Result;
 // commit, otherwise the Rust build fails before it can emit a disc.
 // Kept in lock-step with game/build.rs. The pool retains audit-enforced
 // worst-map slack while funding actor interpolation and world-cache replay.
-const MODEL_POOL_WORDS: usize = 55_936;
+// The model pool is the live viewmodel's reserve (`viewmodel_pool_words`)
+// followed by this NPC share.
+const NPC_MODEL_POOL_WORDS: usize = 35_712;
+const FALLBACK_VM_POOL_WORDS: usize = 20_224;
+const FALLBACK_VM_GEOM_WORDS: usize = 15_800;
+const VIEWMODEL_BACKUP_BUDGET_WORDS: usize = 1_536;
+const MODEL_INDEX_VERTEX_LIMIT: usize = 1_024;
+
+/// game/build.rs `viewmodel_pool_words` over the same cooked chunks: the
+/// largest merged viewmodel stages whole at word zero, and the largest
+/// geometry (after the two-word HMRG header) ends below the projected-vertex
+/// and sort scratch at the top of the reserve. The projected-vertex count is
+/// build.rs MAX_MODEL_VERTS, the largest vertex count of any cooked model.
+pub fn viewmodel_pool_words(model_pack: &Path) -> Result<usize> {
+    let mut max_verts = 0usize;
+    let mut max_chunk_words = 0usize;
+    let mut max_geom_words = 0usize;
+    let viewmodels = VIEWMODEL_CHUNK_BASE..VIEWMODEL_CHUNK_BASE + VIEWMODEL_COUNT;
+    for entry in fs::read_dir(model_pack)? {
+        let path = entry?.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(id) = name
+            .strip_prefix("chunk_")
+            .and_then(|rest| rest.strip_suffix(".psxm"))
+        else {
+            continue;
+        };
+        let data = fs::read(&path)?;
+        let hmrg = data.get(0..4) == Some(b"HMRG") && data.len() >= 16;
+        if hmrg {
+            max_verts = max_verts.max(u32le(&data, 12, name)? as usize);
+        }
+        if id.parse::<usize>().is_ok_and(|id| viewmodels.contains(&id)) {
+            max_chunk_words = max_chunk_words.max(data.len().div_ceil(4));
+            if data.get(0..4) == Some(b"HMRG") && data.len() >= 8 {
+                max_geom_words = max_geom_words.max((u32le(&data, 4, name)? as usize).div_ceil(4));
+            }
+        }
+    }
+    if max_chunk_words == 0 {
+        (max_chunk_words, max_geom_words) = (FALLBACK_VM_POOL_WORDS, FALLBACK_VM_GEOM_WORDS);
+    }
+    let model_verts = if max_verts == 0 {
+        MODEL_INDEX_VERTEX_LIMIT
+    } else {
+        (max_verts + 16).div_ceil(16) * 16
+    }
+    .min(MODEL_INDEX_VERTEX_LIMIT);
+    let scratch = model_verts + model_verts.div_ceil(2) + 2 * VIEWMODEL_SORT_TRIS;
+    let geometry_bound = 2 + max_geom_words + scratch;
+    let chunk_bound = (max_chunk_words + scratch).saturating_sub(VIEWMODEL_BACKUP_BUDGET_WORDS);
+    Ok(geometry_bound
+        .max(chunk_bound)
+        .max(max_chunk_words)
+        .div_ceil(64)
+        * 64)
+}
+
 /// Per-map model budget. The runtime keeps ONE arena (map staging capacity plus
-/// MODEL_POOL_WORDS) and starts the model pool where the *loaded* map ends, so a
+/// the model pool) and starts the model pool where the *loaded* map ends, so a
 /// map's real budget is the arena minus its own cooked size. That is never below
-/// MODEL_POOL_WORDS and is far above it wherever the BSP is smaller than the
+/// the model pool and is far above it wherever the BSP is smaller than the
 /// fleet's largest. The staging capacity is taken as the largest cooked chunk,
 /// which understates game/build.rs's MAP_WORDS (it adds a decode margin), so
 /// every budget here is conservative.
-fn map_pool_budgets(repository: &Path, maps: usize) -> Result<Vec<usize>> {
+fn map_pool_budgets(repository: &Path, maps: usize, model_pool_words: usize) -> Result<Vec<usize>> {
     let rooms = repository.join("data/rooms");
     let staging_words = fs::read_dir(&rooms)?
         .flatten()
@@ -35,11 +94,10 @@ fn map_pool_budgets(repository: &Path, maps: usize) -> Result<Vec<usize>> {
         .map(|index| {
             let world =
                 fs::metadata(rooms.join(format!("room_{}.psxc", index * 2)))?.len() as usize;
-            Ok(staging_words + MODEL_POOL_WORDS - world.div_ceil(4).min(staging_words))
+            Ok(staging_words + model_pool_words - world.div_ceil(4).min(staging_words))
         })
         .collect()
 }
-const VM_POOL_WORDS: usize = 20_224;
 const MAX_LOADED_MODELS: usize = 23;
 const POOL_FACE_CAP: usize = 7_936;
 const POOL_FACE_RUN_CAP: usize = 192;
@@ -50,7 +108,6 @@ const MODEL_TEX_CHUNK_BASE: usize = 1100;
 const MODEL_CARRY_CHUNK_BASE: usize = 1500;
 const VIEWMODEL_CHUNK_BASE: usize = 1000;
 const VIEWMODEL_COUNT: usize = 16;
-const VIEWMODEL_POOL_WORDS: usize = 20_224;
 const VIEWMODEL_SORT_TRIS: usize = 1_152;
 const VIEWMODEL_SORT_BUCKETS: usize = 64;
 const VIEWMODEL_CACHE_GUARD_WORDS: usize = 2_030;
@@ -727,6 +784,7 @@ fn model_name(ty: u8) -> &'static str {
 fn simulate(
     label: &str,
     pool_words: usize,
+    vm_pool_words: usize,
     chunks: &[Option<ModelChunk>],
     carry_chunks: &[Option<ModelChunk>],
     garg_variant: Option<&ModelChunk>,
@@ -740,7 +798,7 @@ fn simulate(
     let verbose = std::env::var("HLPSX_AUDIT_VERBOSE")
         .ok()
         .is_some_and(|needle| label.contains(&needle));
-    let mut geom_word = VM_POOL_WORDS;
+    let mut geom_word = vm_pool_words;
     let mut peak_words = geom_word;
     let mut faces = 0usize;
     let mut runs = 0usize;
@@ -1340,6 +1398,7 @@ fn transition_rows(
     pressure_islave: &ModelChunk,
     map_variants: &[HashMap<usize, ModelChunk>],
     budgets: &[usize],
+    vm_pool_words: usize,
 ) -> Result<Vec<AuditRow>> {
     let mut bsps = HashMap::new();
     let mut map_index = HashMap::new();
@@ -1424,6 +1483,7 @@ fn transition_rows(
             rows.push(simulate(
                 &label,
                 budgets[destination_index],
+                vm_pool_words,
                 chunks,
                 carry_chunks,
                 match destination {
@@ -1472,7 +1532,9 @@ fn audit_weapon_cache_tail(
     maps: &[&str],
     rows: &[AuditRow],
     model_chunks: &[Option<ModelChunk>],
+    vm_pool_words: usize,
 ) -> Result<PathBuf> {
+    let model_pool_words = NPC_MODEL_POOL_WORDS + vm_pool_words;
     let rooms = repository.join("data/rooms");
     let map_pool_words = fs::read_dir(&rooms)?
         .flatten()
@@ -1520,7 +1582,7 @@ fn audit_weapon_cache_tail(
     // checkpoint must remain independently safe without that optimization.
     let bucket_head_words = (VIEWMODEL_SORT_BUCKETS * core::mem::size_of::<u16>()).div_ceil(4);
     let scratch_words = projected_words + VIEWMODEL_SORT_TRIS * 2 + bucket_head_words;
-    let scratch_start = VIEWMODEL_POOL_WORDS
+    let scratch_start = vm_pool_words
         .checked_sub(scratch_words)
         .ok_or("viewmodel scratch exceeds its fixed pool")?;
     let backup_words = max_chunk_words.saturating_sub(scratch_start);
@@ -1548,7 +1610,7 @@ fn audit_weapon_cache_tail(
         let world = fs::metadata(rooms.join(format!("room_{}.psxc", index * 2)))?.len() as usize;
         let world_words = world.div_ceil(4);
         let combined_words = map_pool_words.saturating_sub(world_words)
-            + MODEL_POOL_WORDS.saturating_sub(row.resident_words);
+            + model_pool_words.saturating_sub(row.resident_words);
         if combined_words < required_words {
             return Err(format!(
                 "{}: weapon cache needs {} B but combined resident tails provide {} B",
@@ -2132,7 +2194,9 @@ pub fn audit_model_residency(
     if model_pack.join("map-model-variants.txt").is_file() {
         audit_map_clip_manifests(repository, maps, &chunks, &map_variants)?;
     }
-    let budgets = map_pool_budgets(repository, maps.len())?;
+    let vm_pool_words = viewmodel_pool_words(&model_pack)?;
+    let model_pool_words = NPC_MODEL_POOL_WORDS + vm_pool_words;
+    let budgets = map_pool_budgets(repository, maps.len(), model_pool_words)?;
     let mut static_actors = Vec::with_capacity(maps.len());
     let mut rows = Vec::with_capacity(maps.len() + 256);
     for (index, &name) in maps.iter().enumerate() {
@@ -2144,6 +2208,7 @@ pub fn audit_model_residency(
         rows.push(simulate(
             name,
             budgets[index],
+            vm_pool_words,
             &chunks,
             &carry_chunks,
             match name {
@@ -2174,6 +2239,7 @@ pub fn audit_model_residency(
             &pressure_islave,
             &map_variants,
             &budgets,
+            vm_pool_words,
         )?;
         let count = transition_rows.len();
         rows.extend(transition_rows);
@@ -2185,7 +2251,7 @@ pub fn audit_model_residency(
         .iter()
         .min_by_key(|row| row.pool_words.saturating_sub(row.peak_words))
         .ok_or("model residency audit had no maps")?;
-    audit_weapon_cache_tail(repository, maps, &rows, &chunks)?;
+    audit_weapon_cache_tail(repository, maps, &rows, &chunks, vm_pool_words)?;
     let report = repository.join(".hlpsx/reports/model-residency.csv");
     write_report(&report, &rows)?;
     let summary = AuditSummary {
@@ -2223,13 +2289,31 @@ mod tests {
             "const POOL_TEX_SLOTS: usize = 176;",
             "const POOL_FACE_CAP: usize = 7936;",
             "const POOL_FACE_RUN_CAP: usize = 192;",
-            "const VM_POOL_WORDS: usize = 20_224;",
+            "const VM_POOL_WORDS: usize = room_budget::VM_POOL_WORDS;",
+            "const MAX_WEAPON_TRIS: usize = 1152;",
             "const VM_TAIL_GUARD_WORDS: usize = 2_030;",
             "const VM_SORT_RECORD_WORDS: usize = MAX_WEAPON_TRIS;",
         ] {
             assert!(main.contains(declaration), "runtime drift: {declaration}");
         }
-        assert!(build.contains("const MODEL_POOL_WORDS: usize = 55_936;"));
+        for declaration in [
+            "const NPC_MODEL_POOL_WORDS: usize = 35_712;",
+            "const FALLBACK_VM_POOL_WORDS: usize = 20_224;",
+            "const FALLBACK_VM_GEOM_WORDS: usize = 15_800;",
+            "const VIEWMODEL_SORT_TRIS: usize = 1152;",
+            "let scratch = model_verts + model_verts.div_ceil(2) + 2 * VIEWMODEL_SORT_TRIS;",
+            "const VIEWMODEL_BACKUP_BUDGET_WORDS: usize = 1536;",
+            "let geometry_bound = 2 + max_geom_words + scratch;",
+            "let chunk_bound = (max_chunk_words + scratch).saturating_sub(VIEWMODEL_BACKUP_BUDGET_WORDS);",
+            "round_up(geometry_bound.max(chunk_bound).max(max_chunk_words), 64)",
+            "(1000..1016).contains(&id)",
+        ] {
+            assert!(build.contains(declaration), "build drift: {declaration}");
+        }
+        assert_eq!(
+            VIEWMODEL_CHUNK_BASE..VIEWMODEL_CHUNK_BASE + VIEWMODEL_COUNT,
+            1000..1016
+        );
     }
 
     #[test]

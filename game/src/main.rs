@@ -1676,9 +1676,11 @@ unsafe fn tex_slot_ptr(index: usize) -> *const TexSlot {
 // On-demand viewmodel pool: one complete animated weapon geometry occupies the
 // head of MODEL_BUF. Switching restores the post-map VRAM checkpoint and
 // replaces it; the glock's small texture set remains the fallback texture base.
-// Enemies start after the whole fixed reserve, so this does not increase the
-// campaign model/RAM budgets.
-const VM_POOL_WORDS: usize = 20_224; // ~81 KB, unchanged from the static-pose path
+// Enemies start after the whole reserve, so this does not increase the
+// campaign model/RAM budgets. build.rs sizes the reserve from the cooked
+// viewmodels: the largest merged chunk stages whole, and the largest geometry
+// ends below the projection/sort scratch at the top (it was a fixed 81 KB).
+const VM_POOL_WORDS: usize = room_budget::VM_POOL_WORDS;
 const VM_PROJECTED_WORDS: usize = MODEL_PROJECTED_WORDS;
 // One word per authored triangle: next-link[10:0], texture[18:11], shade[26:19].
 // A second word caches its three 10-bit vertex indices. Both live in MODEL_BUF's
@@ -1739,14 +1741,15 @@ static mut VM_FILL_BASE_SLOT: usize = 0; // slot cursor an eviction rewinds to
                                          // Audited animated peaks: .357 merged load 76,620 B / geometry 62,972 B;
                                          // RPG has the largest texture table at 24 slots.
 const VM_MAX_WORDS: usize = room_budget::MAX_VIEWMODEL_WORDS;
-const VM_MAX_GEOM_WORDS: usize = 15_800;
+const VM_MAX_GEOM_WORDS: usize = room_budget::MAX_VIEWMODEL_GEOM_WORDS;
 const VM_MAX_SLOTS: usize = 24;
 // One previous merged weapon chunk plus the suffix overlapped by the live
 // projection/sort overlay. Both live in the unused tails after the resident
 // map and NPC model set; no fixed PS1 BSS is added. Keep an 8 KB guard so an
 // unexpectedly tight cooked map disables the cache instead of touching data.
 const VM_TAIL_CACHE_WORDS: usize = VM_MAX_WORDS;
-const VM_TAIL_BACKUP_WORDS: usize = VM_MAX_WORDS - VM_CACHE_START_WORD;
+// Zero when the largest chunk already ends below the scratch (HMA1 viewmodels).
+const VM_TAIL_BACKUP_WORDS: usize = VM_MAX_WORDS.saturating_sub(VM_CACHE_START_WORD);
 const VM_TAIL_GUARD_WORDS: usize = 2_030;
 const _: () = assert!(VM_MAX_WORDS <= VM_POOL_WORDS);
 const _: () = assert!(VM_MAX_GEOM_WORDS + 2 <= VM_CACHE_START_WORD);
