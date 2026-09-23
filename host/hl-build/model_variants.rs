@@ -644,6 +644,7 @@ pub fn cook_map_variants(
     }
     fs::create_dir_all(&clip_dir)?;
     let mut index = String::from("# map_index|map|type|chunk_id|incoming_only\n");
+    let mut event_roster = String::new();
     let mut report =
         String::from("map_index,map,type,chunk_id,incoming_only,cooked_clips,script_clips\n");
     for (map_index, (&map, variants)) in maps.iter().zip(&planned).enumerate() {
@@ -670,7 +671,8 @@ pub fn cook_map_variants(
                 variant.script_names.join("+")
             ));
         }
-        fs::write(&roster_file, roster_text)?;
+        fs::write(&roster_file, &roster_text)?;
+        event_roster.push_str(&roster_text);
         let clips_file = clip_dir.join(format!("clips_{map_index}.txt"));
         let mut command = Command::new(&bins.content);
         command
@@ -682,6 +684,7 @@ pub fn cook_map_variants(
         fs::remove_file(roster_file)?;
     }
     fs::write(model_pack.join("map-model-variants.txt"), index)?;
+    merge_map_studio_events(valve, bins, &model_pack, &clip_dir, &event_roster)?;
     let report_path = repository.join(".hlpsx/reports/model-clip-residency.csv");
     if let Some(parent) = report_path.parent() {
         fs::create_dir_all(parent)?;
@@ -702,6 +705,44 @@ pub fn cook_map_variants(
             unresolved_path.display()
         );
     }
+    Ok(())
+}
+
+/// The studio event manifest is generated from the shared roster, but most
+/// scripted clips are cooked per map. Extract the SCRIPT_EVENT_FIRE_TARGET
+/// events of those clips too (Barney's unlatch in c1a2d, the Ichthyosaur's
+/// catwalk jump in c2a3a), keeping the shared records first.
+fn merge_map_studio_events(
+    valve: &Path,
+    bins: &HostBins,
+    model_pack: &Path,
+    clip_dir: &Path,
+    roster: &str,
+) -> Result<()> {
+    let roster_file = clip_dir.join("roster_events.txt");
+    let events_file = clip_dir.join("studio_events_maps.txt");
+    fs::write(&roster_file, roster)?;
+    let mut command = Command::new(&bins.content);
+    command
+        .arg("studio-events")
+        .arg(valve.join("models"))
+        .arg(&roster_file)
+        .arg(&events_file);
+    run(&mut command, "generate map studio event manifest")?;
+    let shared_path = model_pack.join("studio_events.txt");
+    let shared = fs::read_to_string(&shared_path)?;
+    let mut seen: BTreeSet<&str> = shared.lines().collect();
+    let extra = fs::read_to_string(&events_file)?;
+    let mut merged = shared.clone();
+    for line in extra.lines() {
+        if seen.insert(line) {
+            merged.push_str(line);
+            merged.push('\n');
+        }
+    }
+    fs::write(&shared_path, merged)?;
+    fs::remove_file(roster_file)?;
+    fs::remove_file(events_file)?;
     Ok(())
 }
 
