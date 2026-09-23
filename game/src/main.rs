@@ -10070,6 +10070,7 @@ unsafe fn tick_scripted_actor(
         prop_script_clear(pi);
         if li < m.n_logic.min(MAX_LOGIC) {
             let rec = m.logic(li);
+            script_root_motion(m, pi, rec);
             logic_sub_use_targets(
                 m,
                 m.n_logic.min(MAX_LOGIC),
@@ -10090,6 +10091,30 @@ unsafe fn tick_scripted_actor(
         return true;
     }
     false
+}
+
+/// CBaseMonster::CineCleanup: a play sequence that carries its actor away
+/// (c1a2b's zombie through the window, c1a1b's houndeye leap) leaves it where
+/// the root bone ended, dropped to the floor. The cooker appends that offset
+/// (forward, left) as a trailing aux record, marked by an even aux count.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn script_root_motion(m: &Map, pi: usize, rec: map::LogicEnt) {
+    if rec.aux_count < 2 || rec.aux_count & 1 != 0 || PROP_HEALTH[pi] == 0 {
+        return;
+    }
+    let a = m.logic_aux(rec.first_aux + rec.aux_count - 1);
+    let (f, l) = (a.target as i16 as i32, a.delay_ticks as i16 as i32);
+    let yaw = prop_yaw_value(PROP_YAW[pi]);
+    let s = sincos::sin_q12(yaw);
+    let c = sincos::sin_q12((yaw + 1024) & 0x0fff);
+    let p = PROP_POS[pi];
+    let mut pos = [p[0] + ((s * f - c * l) >> 12), p[1], p[2] + ((c * f + s * l) >> 12)];
+    if let Some(y) = prop_floor_y_down(m, pi, [pos[0], p[1] + 1, pos[2]], 256) {
+        pos[1] = y;
+    }
+    prop_nav_cache_invalidate(pi);
+    prop_set_pos_exact(m, pi, pos);
 }
 
 enum ScriptOwnedActor {
