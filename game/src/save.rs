@@ -100,8 +100,11 @@ impl Slot {
 /// Bumped whenever the field layout changes. A card written by an older build
 /// is reported as absent rather than misread: every field here is raw state fed
 /// straight back into the simulation, so a stale layout is not recoverable.
-const SAVE_VERSION: u16 = 3;
-/// Version 2 lacks the gravity field; it decodes with normal gravity.
+const SAVE_VERSION: u16 = 4;
+/// Version 3 lacks the difficulty field; those saves were played on the
+/// values the port then hardcoded, which were Easy's.
+const SAVE_VERSION_NO_SKILL: u16 = 3;
+/// Version 2 also lacks the gravity field; it decodes with normal gravity.
 const SAVE_VERSION_NO_GRAVITY: u16 = 2;
 const SAVE_MAGIC: u32 = u32::from_le_bytes(*b"HLSV");
 
@@ -134,6 +137,8 @@ pub struct Checkpoint {
     /// The player's gravity (pev->gravity) in Q12, 4096 = normal. Xen sets
     /// 0.6 with a trigger_gravity and later maps inherit it.
     pub gravity: u16,
+    /// Difficulty, skill.cfg level minus one (0 Easy, 1 Medium, 2 Hard).
+    pub skill: u8,
     /// Monotonic write counter. With two slots and no clock on the console,
     /// this is what "most recent" means: each write takes the highest sequence
     /// on the card and adds one.
@@ -160,6 +165,7 @@ impl Checkpoint {
         global_count: 0,
         has_pos: false,
         gravity: 4096,
+        skill: 0,
         sequence: 0,
     };
 }
@@ -250,6 +256,7 @@ pub fn encode(cp: &Checkpoint, buf: &mut [u8]) -> usize {
     w.u8(cp.has_pos as u8);
     w.u32(cp.sequence);
     w.u16(cp.gravity);
+    w.u8(cp.skill);
     let end = w.at;
     let sum = checksum(&w.buf[..end]);
     w.u32(sum);
@@ -263,7 +270,10 @@ pub fn decode(buf: &[u8]) -> Option<Checkpoint> {
         return None;
     }
     let version = r.u16();
-    if version != SAVE_VERSION && version != SAVE_VERSION_NO_GRAVITY {
+    if version != SAVE_VERSION
+        && version != SAVE_VERSION_NO_SKILL
+        && version != SAVE_VERSION_NO_GRAVITY
+    {
         return None;
     }
     let mut cp = Checkpoint::EMPTY;
@@ -295,8 +305,11 @@ pub fn decode(buf: &[u8]) -> Option<Checkpoint> {
     cp.global_count = r.u16();
     cp.has_pos = r.u8() != 0;
     cp.sequence = r.u32();
-    if version >= SAVE_VERSION {
+    if version >= SAVE_VERSION_NO_SKILL {
         cp.gravity = r.u16();
+    }
+    if version >= SAVE_VERSION {
+        cp.skill = r.u8().min(2);
     }
     let end = r.at;
     let stored = r.u32();
@@ -446,6 +459,7 @@ mod tests {
         cp.has_pos = true;
         cp.sequence = 7;
         cp.gravity = 2458;
+        cp.skill = 2;
         cp
     }
 
@@ -471,6 +485,7 @@ mod tests {
         assert_eq!(back.global_count, cp.global_count);
         assert_eq!(back.sequence, cp.sequence);
         assert_eq!(back.gravity, cp.gravity);
+        assert_eq!(back.skill, cp.skill);
         assert!(back.has_pos);
     }
 
@@ -479,13 +494,26 @@ mod tests {
         // A version 2 payload is the version 3 one without the trailing
         // gravity field, under the old version number and its own checksum.
         let mut buf = [0u8; 512];
-        let len = encode(&sample(), &mut buf) - 4 - 2;
+        let len = encode(&sample(), &mut buf) - 4 - 1 - 2;
         buf[4..6].copy_from_slice(&SAVE_VERSION_NO_GRAVITY.to_le_bytes());
         let sum = checksum(&buf[..len]);
         buf[len..len + 4].copy_from_slice(&sum.to_le_bytes());
         let back = decode(&buf[..len + 4]).expect("version 2 decodes");
         assert_eq!(back.gravity, 4096);
+        assert_eq!(back.skill, 0);
         assert_eq!(back.sequence, 7);
+    }
+
+    #[test]
+    fn version_three_saves_load_on_easy() {
+        let mut buf = [0u8; 512];
+        let len = encode(&sample(), &mut buf) - 4 - 1;
+        buf[4..6].copy_from_slice(&SAVE_VERSION_NO_SKILL.to_le_bytes());
+        let sum = checksum(&buf[..len]);
+        buf[len..len + 4].copy_from_slice(&sum.to_le_bytes());
+        let back = decode(&buf[..len + 4]).expect("version 3 decodes");
+        assert_eq!(back.gravity, 2458);
+        assert_eq!(back.skill, 0);
     }
 
     #[test]
