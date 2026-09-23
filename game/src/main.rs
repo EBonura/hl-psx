@@ -7271,6 +7271,23 @@ unsafe fn logic_remove_entity(li: usize, rec: map::LogicEnt, nents: usize) {
     if rec.kind == map::LOGIC_MAP_SOUND || rec.kind == map::LOGIC_FUNC_ROTATING {
         sfx::stop_map_loop(li as u16);
     }
+    if rec.kind == map::LOGIC_MULTI_MANAGER {
+        // UTIL_Remove takes the manager's pending ManagerThink with it: its
+        // outputs still scheduled never fire (a looping manager killed by a
+        // relay stops, as c1a1b's crusher does).
+        let mut i = 0usize;
+        while i < MAX_LOGIC_EVENTS {
+            let meta = LOGIC_EVENTS[i].meta;
+            if logic_state::event_active(meta) && logic_state::event_caller(meta) == li as u16 {
+                LOGIC_EVENTS[i].meta = logic_state::event_meta(
+                    false,
+                    logic_state::event_use_type(meta),
+                    li as u16,
+                );
+            }
+            i += 1;
+        }
+    }
     LOGIC_TARGET[li] = 0;
     LOGIC_COUNTER[li] = 0;
     if let Some(ei) = logic_valid_brush(rec.brush, nents) {
@@ -10637,6 +10654,7 @@ unsafe fn logic_process_events(m: &Map, nlogic: usize, nents: usize, now: u16) {
                 // so a self-target is observed but ignored.
                 if (caller as usize) < nlogic
                     && LOGIC_KIND[caller as usize] == map::LOGIC_MULTI_MANAGER
+                    && LOGIC_STATE[caller as usize] != LOGIC_STATE_REMOVED
                     && (m.logic(caller as usize).spawnflags & SF_MULTIMAN_THREAD) == 0
                     && !logic_manager_has_pending_events(caller)
                 {
