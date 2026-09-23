@@ -19937,7 +19937,14 @@ impl psx_goldsrc::pvs_faces::FaceSource for Map {
 // active-scene compiler compact so it cannot evict RAM or shift the
 // frame-rate-critical renderer merely because its two-pass plan is verbose.
 #[optimize(size)]
-unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize, eye: [i32; 3], eye_under: bool) {
+unsafe fn rebuild_pvs_cache(
+    m: &Map,
+    cam_leaf: i32,
+    nents: usize,
+    eye: [i32; 3],
+    eye_under: bool,
+    seal_state: u32,
+) {
     // The packet payload borrows the old PVS arrays' unused suffix. Invalidate
     // before the new live prefix can overwrite any part of it.
     invalidate_world_packet_cache();
@@ -19948,6 +19955,14 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize, eye: [i32; 3],
             let (dry_visofs, _, _) = m.leaf(dry_leaf);
             merge_vis(m, dry_visofs, &mut VIS_BITS);
         }
+    }
+    // Closed doors hide whole leaves from the world faces only. Everything
+    // else that reads VIS_BITS (entity lists, AI wake-ups) keeps the exact
+    // PVS row, so a masked compile decodes the row again afterwards. The
+    // caller never seals an underwater eye, so there is no merged row here.
+    let sealed = seal_state != 0 && !eye_under;
+    if sealed {
+        door_seals(m, cam_leaf, nents, seal_state);
     }
     PVS_TEX_ANIM_GEN = 0;
     PVS_ENT_COUNT = 0;
@@ -19973,6 +19988,9 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize, eye: [i32; 3],
     PVS_TRI_REF_COUNT = compiled.triangle_references;
     PVS_HAS_TRANSLUCENT = compiled.has_translucent;
     PVS_HAS_TEXANIM = compiled.has_texture_animation;
+    if sealed {
+        decompress_vis(m, visofs, &mut VIS_BITS);
+    }
 
     let mut ei = 0usize;
     while ei < nents {
@@ -19996,6 +20014,109 @@ unsafe fn rebuild_pvs_cache(m: &Map, cam_leaf: i32, nents: usize, eye: [i32; 3],
         ei += 1;
     }
     pvs_cam_leaf_store(cam_leaf);
+}
+
+/// Render-side switch for cooked door occluders (see `door_seals`).
+const DOOR_OCCLUSION: bool = true;
+/// Door-occluder records considered per map; two state bits each in a u32.
+const DOOR_SEAL_MAX: usize = 16;
+
+/// Cooked door occluders (cooker `append_door_seals`). With `apply == 0`,
+/// returns which records currently seal and on which side the camera is: two
+/// bits per record (0 = not sealing, 1 = camera on side 0, 2 = camera on side
+/// 1). A record seals only while every member brush is drawn opaque at
+/// exactly its authored transform, the geometry the cook flooded against, so
+/// the verdict drops on the same frame a door starts to move. A camera leaf
+/// the cook could not place on one side (it straddles the door) leaves its
+/// record unsealed. With `apply` set to such a state, clears from VIS_BITS the
+/// leaves each sealing record hides from the camera's side instead.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn door_seals(m: &Map, cam_leaf: i32, nents: usize, apply: u32) -> u32 {
+    let mut state = 0u32;
+    if !DOOR_OCCLUSION || cam_leaf <= 0 {
+        return 0;
+    }
+    let leaf = cam_leaf as usize;
+    let (n, mut o) = m.door_seal_section();
+    let n = n.min(DOOR_SEAL_MAX);
+    let mut r = 0usize;
+    while r < n {
+        // u8 n_members | u8 0 | u8 n_runs_a | u8 n_runs_b
+        let head = m.door_seal_word(o);
+        let members = (head & 0xff) as usize;
+        let runs_a = ((head >> 16) & 0xff) as usize;
+        let runs = runs_a + (head >> 24) as usize;
+        let runs_o = o + 4 + ((members + 1) >> 1) * 4;
+        o = runs_o + runs * 4;
+        let shift = 2 * r as u32;
+        r += 1;
+        if apply != 0 {
+            // Camera on side 0 hides the side-1 runs and vice versa.
+            let (lo, hi) = match (apply >> shift) & 3 {
+                1 => (runs_a, runs),
+                2 => (0, runs_a),
+                _ => continue,
+            };
+            let mut i = lo;
+            while i < hi {
+                let run = m.door_seal_word(runs_o + i * 4);
+                let mut l = (run & 0xffff) as usize;
+                let end = l + (run >> 16) as usize;
+                while l < end {
+                    let bit = l.wrapping_sub(1);
+                    if bit < m.n_visleaves && bit < MAX_LEAVES {
+                        VIS_BITS[bit >> 3] &= !(1u8 << (bit & 7));
+                    }
+                    l += 1;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        // Kinds 0/1/7 (the only ones cooked) draw at `origin` with no
+        // rotation at phase zero; blend 0 is opaque and not hidden; trains
+        // move through TRAIN_OFF instead of the phase.
+        let mut i = 0usize;
+        let mut closed = true;
+        while i < members {
+            let ei = ((m.door_seal_word(o_members(runs_o, members, i)) >> ((i & 1) * 16)) & 0xffff)
+                as usize;
+            if ei >= nents
+                || ei >= MAX_ENTS
+                || ENT_ACTIVE[ei] == 0
+                || ENT_PHASE[ei] != 0
+                || ENT_TRAIN_SLOT[ei] != 0xFF
+                || ENT_CACHE[ei].blend != 0
+            {
+                closed = false;
+                break;
+            }
+            i += 1;
+        }
+        if !closed {
+            continue;
+        }
+        let mut side = 0u32;
+        let mut i = 0usize;
+        while i < runs {
+            let run = m.door_seal_word(runs_o + i * 4);
+            let first = (run & 0xffff) as usize;
+            if leaf >= first && leaf < first + (run >> 16) as usize {
+                side = if i < runs_a { 1 } else { 2 };
+                break;
+            }
+            i += 1;
+        }
+        state |= side << shift;
+    }
+    state
+}
+
+/// Byte offset of the word holding member `i` (members precede the runs).
+#[inline(always)]
+fn o_members(runs_o: usize, members: usize, i: usize) -> usize {
+    runs_o - ((members + 1) >> 1) * 4 + (i >> 1) * 4
 }
 
 #[inline]
@@ -28092,6 +28213,8 @@ fn play(
     // changes that land on the same deduplicated row skip the whole rebuild.
     let mut render_pvs_visofs = -1i32;
     let mut render_pvs_underwater = false;
+    // Door-occluder state the built PVS face list was masked with.
+    let mut render_seal_state = 0u32;
     let mut telemetry_frame: u32 = 1;
     let mut sim_frame_no: u32 = 0;
     let mut weapon = Arsenal::new();
@@ -28466,7 +28589,7 @@ fn play(
         let initial_leaf = recover_camera_leaf(&m, initial_eye, player.pos, initial_train_hint);
         if valid_pvs_leaf(&m, initial_leaf) {
             let initial_eye_under = m.leaf_liquid(initial_leaf as usize) != 0;
-            rebuild_pvs_cache(&m, initial_leaf, nents, initial_eye, initial_eye_under);
+            rebuild_pvs_cache(&m, initial_leaf, nents, initial_eye, initial_eye_under, 0);
             telemetry::counter(telemetry::counter::ROOM_SURFACE_CACHE_BUILDS, 1);
             telemetry::counter(
                 telemetry::counter::ROOM_SURFACE_CACHE_BUILD_SURFACES,
@@ -30892,8 +31015,15 @@ fn play(
             };
             if have_pvs {
                 let mut pvs_rebuilt = false;
-                if !reused_last_pvs
-                    && (cached_pvs_leaf != cam_leaf || render_pvs_underwater != render_eye_under)
+                // A reused leaf means the eye is outside the world; stay unsealed.
+                let seal_state = if reused_last_pvs || render_eye_under {
+                    0
+                } else {
+                    door_seals(&m, cam_leaf, nents, 0)
+                };
+                if (!reused_last_pvs
+                    && (cached_pvs_leaf != cam_leaf || render_pvs_underwater != render_eye_under))
+                    || seal_state != render_seal_state
                 {
                     // Compilers deduplicate identical vis rows, so adjacent
                     // leaves frequently share one. A leaf change whose row
@@ -30902,6 +31032,7 @@ fn play(
                     // exact same visible set, marks, and plan: skip the whole
                     // rebuild and just move the bookkeeping to the new leaf.
                     let same_row = cached_pvs_leaf >= 0
+                        && seal_state == render_seal_state
                         && !render_pvs_underwater
                         && !render_eye_under
                         && render_pvs_visofs >= 0
@@ -30910,7 +31041,8 @@ fn play(
                         render_pvs_leaf = cam_leaf;
                     } else {
                         telemetry::stage_begin(telemetry::stage::ROOM_VISIBLE_LIST);
-                        rebuild_pvs_cache(&m, cam_leaf, nents, eye, render_eye_under);
+                        rebuild_pvs_cache(&m, cam_leaf, nents, eye, render_eye_under, seal_state);
+                        render_seal_state = seal_state;
                         pvs_rebuilt = true;
                         telemetry::stage_end(telemetry::stage::ROOM_VISIBLE_LIST);
                         render_pvs_leaf = cam_leaf;

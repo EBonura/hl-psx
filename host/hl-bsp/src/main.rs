@@ -9,6 +9,7 @@
 //! Usage:  hl-bsp <path/to/map.bsp>
 //!     cargo run --release --manifest-path host/hl-bsp/Cargo.toml -- valve/maps/c1a0.bsp
 
+mod door_seal;
 mod entity_support;
 mod quad_grid;
 mod seated_placement;
@@ -9839,6 +9840,214 @@ fn weld_tjunctions(
     added
 }
 
+fn door_seal_lumps<'a>(bsp: &'a Bsp<'a>) -> door_seal::Lumps<'a> {
+    door_seal::Lumps {
+        planes: bsp.lump(LUMP_PLANES),
+        nodes: bsp.lump(LUMP_NODES),
+        leaves: bsp.lump(LUMP_LEAVES),
+        models: bsp.lump(LUMP_MODELS),
+        faces: bsp.lump(LUMP_FACES),
+        texinfo: bsp.lump(LUMP_TEXINFO),
+        textures: bsp.lump(LUMP_TEXTURES),
+    }
+}
+
+/// Brush entities that can hide world leaves when drawn at their authored
+/// transform: opaque doors (sliding and rotating) and static brushes. Doors
+/// built from several models (split blast doors) only seal together, so
+/// touching candidates are analysed as one group, then reduced to the members
+/// the seal actually needs.
+fn door_seals(
+    bsp: &Bsp,
+    ents: &[EntRec],
+    scale: f32,
+    n_visleaves: usize,
+) -> Vec<door_seal::DoorSeal> {
+    let lumps = door_seal_lumps(bsp);
+    let world = door_seal::world_portals(&lumps, n_visleaves);
+    let s = scale as f64;
+    let members: Vec<door_seal::Member> = ents
+        .iter()
+        .enumerate()
+        .filter(|(ei, e)| {
+            *ei <= u16::MAX as usize && e.kind >> 8 == 0 && matches!(e.kind & 0xff, 0 | 1 | 7)
+        })
+        // Runtime draws the model at `origin` (world units) at phase zero.
+        .map(|(ei, e)| door_seal::Member {
+            entity: ei as u16,
+            model: e.submodel as usize,
+            offset: [
+                e.origin[0] as f64 * s,
+                e.origin[2] as f64 * s,
+                e.origin[1] as f64 * s,
+            ],
+        })
+        .filter(|m| door_seal::member_opaque(&lumps, m))
+        .collect();
+    // Group members whose bounds touch (2 unit slack).
+    let bounds: Vec<_> = members
+        .iter()
+        .map(|m| door_seal::member_bounds(&lumps, m))
+        .collect();
+    let mut group: Vec<usize> = (0..members.len()).collect();
+    fn root(g: &mut [usize], mut i: usize) -> usize {
+        while g[i] != i {
+            g[i] = g[g[i]];
+            i = g[i];
+        }
+        i
+    }
+    for i in 0..members.len() {
+        for j in i + 1..members.len() {
+            let (a, b) = (&bounds[i], &bounds[j]);
+            if (0..3).all(|k| a.0[k] <= b.1[k] + 2.0 && b.0[k] <= a.1[k] + 2.0) {
+                let (ri, rj) = (root(&mut group, i), root(&mut group, j));
+                group[ri.max(rj)] = ri.min(rj);
+            }
+        }
+    }
+    let mut clusters: Vec<Vec<door_seal::Member>> = Vec::new();
+    let mut cluster_of = std::collections::HashMap::new();
+    for i in 0..members.len() {
+        let r = root(&mut group, i);
+        let c = *cluster_of.entry(r).or_insert_with(|| {
+            clusters.push(Vec::new());
+            clusters.len() - 1
+        });
+        clusters[c].push(members[i]);
+    }
+    let mut out = Vec::new();
+    for mut cluster in clusters {
+        if cluster.len() > DOOR_SEAL_MAX_GROUP {
+            continue;
+        }
+        let Some(mut seal) = door_seal::analyse(&lumps, &world, &cluster) else {
+            continue;
+        };
+        // Drop members the seal does not need: fewer conditions keep it
+        // active while unrelated parts (bars, trim) move.
+        let mut i = 0;
+        while cluster.len() > 1 && i < cluster.len() {
+            let mut fewer = cluster.clone();
+            fewer.remove(i);
+            match door_seal::analyse(&lumps, &world, &fewer) {
+                Some(s) if s.only_a == seal.only_a && s.only_b == seal.only_b => {
+                    cluster = fewer;
+                    seal = s;
+                }
+                _ => i += 1,
+            }
+        }
+        out.push(seal);
+    }
+    out
+}
+
+const DOOR_SEAL_MAX_GROUP: usize = 12;
+const DOOR_SEAL_MAX_RECORDS: usize = 16;
+
+/// Append the door-occluder section and its trailer. Older runtimes ignore
+/// trailing bytes; newer ones find the section from the last eight bytes:
+/// `u32 section_offset | "DSL1"`.
+///
+///   u16 n_records | u16 reserved | per record (4-aligned):
+///     u8 n_members | u8 0 | u8 n_runs_a | u8 n_runs_b |
+///     u16 entity[n_members] (padded to a word with 0xffff) |
+///     u32 run_a[n_runs_a] | u32 run_b[n_runs_b]   (first | count << 16)
+///
+/// Side 0 is the largest flood component. A camera on side 0 hides the run_b
+/// leaves, a camera on side 1 hides run_a. Leaves where both sides meet are in
+/// neither list: never hidden, and a camera there does not seal.
+fn append_door_seals(o: &mut Vec<u8>, seals: &[door_seal::DoorSeal]) -> usize {
+    if seals.is_empty() {
+        return 0;
+    }
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+    let start = o.len();
+    let usable: Vec<_> = seals
+        .iter()
+        .map(|s| (s, door_seal::runs(&s.only_a), door_seal::runs(&s.only_b)))
+        .filter(|(s, a, b)| s.entities.len() <= 255 && a.len() <= 255 && b.len() <= 255)
+        .take(DOOR_SEAL_MAX_RECORDS)
+        .collect();
+    o.extend_from_slice(&(usable.len() as u16).to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    for (seal, a, b) in &usable {
+        o.push(seal.entities.len() as u8);
+        o.push(0);
+        o.push(a.len() as u8);
+        o.push(b.len() as u8);
+        for e in &seal.entities {
+            o.extend_from_slice(&e.to_le_bytes());
+        }
+        if seal.entities.len() % 2 != 0 {
+            o.extend_from_slice(&u16::MAX.to_le_bytes());
+        }
+        for &(first, count) in a.iter().chain(b.iter()) {
+            o.extend_from_slice(&first.to_le_bytes());
+            o.extend_from_slice(&count.to_le_bytes());
+        }
+    }
+    o.extend_from_slice(&(start as u32).to_le_bytes());
+    o.extend_from_slice(b"DSL1");
+    o.len() - start
+}
+
+fn door_seal_report(path: &str) -> Result<(), String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("read {}: {}", path, e))?;
+    let bsp = Bsp::parse(&bytes)?;
+    let models = bsp.lump(LUMP_MODELS);
+    let nodes = bsp.lump(LUMP_NODES);
+    let planes = bsp.lump(LUMP_PLANES);
+    let n_leaves = bsp.lump(LUMP_LEAVES).len() / SZ_LEAF;
+    let n_visleaves = world_visleaf_count(models, n_leaves)?;
+    let (tram_model, ..) = collect_tram_ranked(bsp.lump(LUMP_ENTITIES), models, 1.0);
+    let ents = collect_entities(
+        bsp.lump(LUMP_ENTITIES),
+        models,
+        nodes,
+        planes,
+        1.0,
+        tram_model as usize,
+    );
+    let t0 = std::time::Instant::now();
+    let seals = door_seals(&bsp, &ents, 1.0, n_visleaves);
+    println!(
+        "{}: {} leaves ({} vis), {} entities, {} sealing, {:?}",
+        path,
+        n_leaves,
+        n_visleaves,
+        ents.len(),
+        seals.len(),
+        t0.elapsed()
+    );
+    for s in &seals {
+        let desc: Vec<String> = s
+            .entities
+            .iter()
+            .map(|&ei| {
+                let e = &ents[ei as usize];
+                format!("{}(*{} k{})", ei, e.submodel, e.kind & 0xff)
+            })
+            .collect();
+        println!(
+            "  ents {}: only_a {} ({} runs) only_b {} ({} runs) straddling {}",
+            desc.join(" "),
+            s.only_a.len(),
+            door_seal::runs(&s.only_a).len(),
+            s.only_b.len(),
+            door_seal::runs(&s.only_b).len(),
+            s.straddling
+        );
+        if s.only_b.len() <= 40 {
+            println!("    only_b {:?}", s.only_b);
+        }
+    }
+    Ok(())
+}
+
 fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {}", path, e))?;
     let bsp = Bsp::parse(&bytes)?;
@@ -11390,6 +11599,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         scale,
         tram_model as usize,
     );
+    let seals = door_seals(&bsp, &ents, scale, n_visleaves);
     let n_models = models.len() / SZ_MODEL;
     let mut brush_by_submodel = vec![LOGIC_BRUSH_NONE; n_models];
     for (ei, e) in ents.iter().enumerate() {
@@ -12578,6 +12788,15 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
                 .iter()
                 .map(|c| c.primary.len() + c.alt.len())
                 .sum::<usize>()
+        );
+    }
+
+    let seal_bytes = append_door_seals(&mut o, &seals);
+    if !seals.is_empty() {
+        eprintln!(
+            "  door occluders: {} records, {} bytes",
+            seals.len(),
+            seal_bytes
         );
     }
 
@@ -15024,6 +15243,17 @@ fn main() {
                 exit(2);
             }
         }
+    }
+    if args.get(1).map(|s| s.as_str()) == Some("--door-seal") {
+        let Some(inp) = args.get(2) else {
+            eprintln!("usage: hl-bsp --door-seal <in.bsp>");
+            exit(2);
+        };
+        if let Err(e) = door_seal_report(inp) {
+            eprintln!("{}", e);
+            exit(1);
+        }
+        return;
     }
     let path = match args.get(1) {
         Some(p) => p.clone(),

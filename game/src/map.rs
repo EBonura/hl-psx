@@ -71,6 +71,9 @@
 //!   texanim (HLME/HLMF, at align4(logic names end)):
 //!     u16 n_chains | u16 reserved | per chain: u8 n_primary | u8 n_alt |
 //!     u8 primary_tex_ids[] | u8 alt_tex_ids[]
+//!   door occluders (optional, any magic): records located from the file's
+//!     last eight bytes `u32 section_offset | "DSL1"`; layout in the cooker's
+//!     `append_door_seals`. Readers that predate it ignore the trailing bytes.
 //!
 //! Fields are read via `from_le_bytes` (include_bytes! is only byte-aligned).
 
@@ -873,6 +876,27 @@ impl Map {
             n_tex_anim,
             tex_anim_off,
         }
+    }
+
+    /// Door-occluder section `(record count, first record offset)`, found
+    /// from the trailing `u32 offset | "DSL1"` the cook appends 4-aligned;
+    /// `(0, 0)` when absent. Older runtimes ignore the trailing bytes.
+    #[inline(always)]
+    pub fn door_seal_section(&self) -> (usize, usize) {
+        let len = self.data.len() & !3;
+        if len < 12 || self.door_seal_word(len - 4) != u32::from_le_bytes(*b"DSL1") {
+            return (0, 0);
+        }
+        let off = self.door_seal_word(len - 8) as usize & !3;
+        (self.door_seal_word(off) as usize & 0xffff, off + 4)
+    }
+
+    /// Aligned word at byte offset `o` of the door-occluder section. Records
+    /// are laid out in words from a 4-aligned base (see the cooker's
+    /// `append_door_seals`); members are halfword pairs.
+    #[inline(always)]
+    pub fn door_seal_word(&self, o: usize) -> u32 {
+        u32::from_le(unsafe { self.data.as_ptr().add(o).cast::<u32>().read() })
     }
 
     /// `(primary_frames, alternate_frames)` of texture-animation chain `i` as
