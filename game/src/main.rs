@@ -26653,6 +26653,95 @@ impl BeamTri {
 /// to the beam's average depth. Both halves enter the world ordering table, so
 /// nearer BSP/model packets cover a laser instead of every laser being an
 /// unconditional overlay. Culled if either endpoint is off-screen/behind.
+/// Project a world-space beam segment for drawing: clip it to the view depth
+/// range in camera space and to a guard band around the screen, so a beam
+/// whose end lies behind the camera or off-screen (a laser crossing the view,
+/// a long lightning bolt) still draws the visible part instead of vanishing.
+fn project_beam_segment(
+    start: [i32; 3],
+    end: [i32; 3],
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) -> Option<((i32, i32, i32), (i32, i32, i32))> {
+    let cam = |p: [i32; 3]| {
+        [
+            dot12(rot.m[0], p) + base_t[0],
+            dot12(rot.m[1], p) + base_t[1],
+            dot12(rot.m[2], p) + base_t[2],
+        ]
+    };
+    let mut a = cam(start);
+    let mut b = cam(end);
+    let near = render::NEAR_Z;
+    if (a[2] < near && b[2] < near) || (a[2] > FAR_VIEW && b[2] > FAR_VIEW) {
+        return None;
+    }
+    // Move an endpoint along the segment onto a depth plane.
+    let cut = |p: [i32; 3], q: [i32; 3], z: i32| -> [i32; 3] {
+        let den = (q[2] - p[2]) as i64;
+        if den == 0 {
+            return p;
+        }
+        let t = (((z - p[2]) as i64) << 12) / den;
+        [
+            p[0] + (((q[0] - p[0]) as i64 * t) >> 12) as i32,
+            p[1] + (((q[1] - p[1]) as i64 * t) >> 12) as i32,
+            z,
+        ]
+    };
+    if a[2] < near {
+        a = cut(a, b, near);
+    } else if b[2] < near {
+        b = cut(b, a, near);
+    }
+    if a[2] > FAR_VIEW {
+        a = cut(a, b, FAR_VIEW);
+    } else if b[2] > FAR_VIEW {
+        b = cut(b, a, FAR_VIEW);
+    }
+    let h = render::projection_h();
+    let (mut x0, mut y0) = (160 + (a[0] * h) / a[2], 120 + (a[1] * h) / a[2]);
+    let (mut x1, mut y1) = (160 + (b[0] * h) / b[2], 120 + (b[1] * h) / b[2]);
+    // Liang-Barsky against the guard band; depth follows the same parameter.
+    const X0: i32 = -32;
+    const X1: i32 = 352;
+    const Y0: i32 = -32;
+    const Y1: i32 = 272;
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let (mut t0, mut t1) = (0i32, 4096i32);
+    let tests = [(-dx, x0 - X0), (dx, X1 - x0), (-dy, y0 - Y0), (dy, Y1 - y0)];
+    for (pq, qq) in tests {
+        if pq == 0 {
+            if qq < 0 {
+                return None;
+            }
+            continue;
+        }
+        let r = ((qq as i64) << 12) / pq as i64;
+        let r = r.clamp(-(1 << 20), 1 << 20) as i32;
+        if pq < 0 {
+            if r > t1 {
+                return None;
+            }
+            t0 = t0.max(r);
+        } else {
+            if r < t0 {
+                return None;
+            }
+            t1 = t1.min(r);
+        }
+    }
+    let (z0, z1) = (a[2], b[2]);
+    let lerp = |p: i32, q: i32, t: i32| p + (((q - p) as i64 * t as i64) >> 12) as i32;
+    let (nx0, ny0, nz0) = (lerp(x0, x1, t0), lerp(y0, y1, t0), lerp(z0, z1, t0));
+    x1 = lerp(x0, x1, t1);
+    y1 = lerp(y0, y1, t1);
+    let nz1 = lerp(z0, z1, t1);
+    x0 = nx0;
+    y0 = ny0;
+    Some(((x0, y0, nz0), (x1, y1, nz1)))
+}
+
 fn draw_beam(
     packets: &mut PrimitivePacketArena<'_>,
     ot: &mut OrderingTable<OT_LEN>,
@@ -26663,10 +26752,8 @@ fn draw_beam(
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) {
-    let (Some((sx0, sy0, sz0)), Some((sx1, sy1, sz1))) = (
-        project_world_point(start, rot, base_t),
-        project_world_point(end, rot, base_t),
-    ) else {
+    let Some(((sx0, sy0, sz0), (sx1, sy1, sz1))) = project_beam_segment(start, end, rot, base_t)
+    else {
         return;
     };
     let (x0, y0, x1, y1) = (sx0 as i32, sy0 as i32, sx1 as i32, sy1 as i32);
@@ -26729,10 +26816,8 @@ unsafe fn draw_beam_textured(
         draw_beam(packets, ot, start, end, half_world, color, rot, base_t);
         return;
     }
-    let (Some((sx0, sy0, sz0)), Some((sx1, sy1, sz1))) = (
-        project_world_point(start, rot, base_t),
-        project_world_point(end, rot, base_t),
-    ) else {
+    let Some(((sx0, sy0, sz0), (sx1, sy1, sz1))) = project_beam_segment(start, end, rot, base_t)
+    else {
         return;
     };
     let (x0, y0, x1, y1) = (sx0 as i32, sy0 as i32, sx1 as i32, sy1 as i32);
