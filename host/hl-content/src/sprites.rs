@@ -12,6 +12,17 @@ const MAX_FRAMES_PER_MAP: usize = 49;
 // gap so adding training maps cannot collide with per-map sprite chunks.
 const CHUNK_BASE: usize = 3300;
 const EXPLOSION_CHUNK: usize = 3002;
+/// Resident decal splats (decals.wad), loaded every map like the explosion.
+const DECAL_CHUNK: usize = 3004;
+/// The SDK's random choices, in the order the runtime indexes them: bullet and
+/// crowbar hits take DECAL_GUNSHOT1 + RANDOM_LONG(0,4) (CBaseEntity::DamageDecal),
+/// red blood DECAL_BLOOD1 + RANDOM_LONG(0,5) and yellow blood DECAL_YBLOOD1 +
+/// RANDOM_LONG(0,5) (UTIL_BloodDecalTrace).
+const DECAL_FAMILIES: [(&str, usize); 3] = [("{shot", 5), ("{blood", 6), ("{yblood", 6)];
+/// Every decal shares one 128x128 4bpp texture (one atlas window, one CLUT):
+/// blood splats resampled into 32x32 cells, gunshot holes at their native
+/// 16x16 along the bottom row.
+const DECAL_ATLAS: usize = 128;
 
 #[derive(Clone)]
 struct Frame {
@@ -390,6 +401,142 @@ fn build_explosion(valve: &Path, output: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Mip level 0 of every `{` decal in a WAD3, by lower-case name.
+fn wad_decals(path: &Path) -> Result<HashMap<String, (usize, usize, Vec<u8>)>> {
+    let data = fs::read(path)?;
+    if data.len() < 12 || &data[..4] != b"WAD3" {
+        return Err(format!("{}: not a WAD3", path.display()).into());
+    }
+    let count = i32le(&data, 4)?.max(0) as usize;
+    let directory = i32le(&data, 8)?.max(0) as usize;
+    let mut out = HashMap::new();
+    for i in 0..count {
+        let entry = directory + i * 32;
+        let at = i32le(&data, entry)?.max(0) as usize;
+        let raw = data.get(entry + 16..entry + 32).ok_or("short WAD entry")?;
+        let name = raw
+            .split(|&b| b == 0)
+            .next()
+            .map(|v| String::from_utf8_lossy(v).to_ascii_lowercase())
+            .unwrap_or_default();
+        if !name.starts_with('{') {
+            continue;
+        }
+        let width = i32le(&data, at + 16)?.max(0) as usize;
+        let height = i32le(&data, at + 20)?.max(0) as usize;
+        let mip0 = at + i32le(&data, at + 24)?.max(0) as usize;
+        let pixels = data
+            .get(mip0..mip0 + width * height)
+            .ok_or("decal exceeds WAD")?
+            .to_vec();
+        out.insert(name, (width, height, pixels));
+    }
+    Ok(out)
+}
+
+/// One `size`x`size` cell of GoldSrc decal coverage. A `{` decal's texel index
+/// is its alpha (the colour is the palette's last entry), so each cell texel is
+/// the mean alpha of the source block it covers, reduced to three PS1 classes:
+/// clear (index 0, CLUT 0x0000), half (semi-transparent), full (opaque).
+fn decal_cell(width: usize, height: usize, alpha: &[u8], size: usize) -> Vec<u8> {
+    let mut cell = vec![0u8; size * size];
+    for y in 0..size {
+        for x in 0..size {
+            let x0 = x * width / size;
+            let x1 = ((x + 1) * width / size).max(x0 + 1);
+            let y0 = y * height / size;
+            let y1 = ((y + 1) * height / size).max(y0 + 1);
+            let mut sum = 0usize;
+            for sy in y0..y1 {
+                for sx in x0..x1 {
+                    sum += alpha[sy * width + sx] as usize;
+                }
+            }
+            let mean = sum / ((x1 - x0) * (y1 - y0));
+            cell[y * size + x] = if mean >= 150 {
+                8
+            } else if mean >= 50 {
+                1
+            } else {
+                0
+            };
+        }
+    }
+    cell
+}
+
+/// Pack "HDCL": magic | u8 decals | u8 per family (shot, blood, yblood) |
+/// per decal u8 u, v, cell size, half-size in world units (a decal is drawn
+/// one unit per source texel) | pad to 4 | one texture blob
+/// (u16 w,h | u16 clut[16] | u8 pix4). The runtime tints each decal with its
+/// vertex colour, so the CLUT is white.
+fn build_decals(valve: &Path, output: &Path) -> Result<()> {
+    let wad = valve.join("decals.wad");
+    let decals = wad_decals(&wad)?;
+    let mut atlas = vec![0u8; DECAL_ATLAS * DECAL_ATLAS];
+    let mut records = Vec::new();
+    let mut family_counts = Vec::new();
+    let (mut splats, mut holes) = (0usize, 0usize);
+    for (prefix, count) in DECAL_FAMILIES {
+        for n in 1..=count {
+            let name = format!("{prefix}{n}");
+            let (w, h, alpha) = decals
+                .get(&name)
+                .ok_or_else(|| format!("{}: {name} missing", wad.display()))?;
+            let (size, cx, cy) = if prefix == "{shot" {
+                holes += 1;
+                (16, (holes - 1) * 16, DECAL_ATLAS - 32)
+            } else {
+                splats += 1;
+                (32, ((splats - 1) % 4) * 32, ((splats - 1) / 4) * 32)
+            };
+            if cx + size > DECAL_ATLAS || (prefix != "{shot" && cy + size > DECAL_ATLAS - 32) {
+                return Err("decal atlas overflow".into());
+            }
+            let cell = decal_cell(*w, *h, alpha, size);
+            for y in 0..size {
+                for x in 0..size {
+                    atlas[(cy + y) * DECAL_ATLAS + cx + x] = cell[y * size + x];
+                }
+            }
+            records.extend_from_slice(&[
+                cx as u8,
+                cy as u8,
+                size as u8,
+                ((*w.max(h)) / 2).clamp(1, 255) as u8,
+            ]);
+        }
+        family_counts.push(count as u8);
+    }
+    let mut clut = [0u16; 16];
+    for (index, entry) in clut.iter_mut().enumerate().skip(1) {
+        *entry = if index < 8 { 0xffff } else { 0x7fff };
+    }
+    let mut blob = Vec::new();
+    blob.extend_from_slice(b"HDCL");
+    blob.push((records.len() / 4) as u8);
+    blob.extend_from_slice(&family_counts);
+    blob.extend_from_slice(&records);
+    while blob.len() % 4 != 0 {
+        blob.push(0);
+    }
+    push_u16(&mut blob, DECAL_ATLAS as u16);
+    push_u16(&mut blob, DECAL_ATLAS as u16);
+    for entry in clut {
+        push_u16(&mut blob, entry);
+    }
+    for pair in atlas.chunks(2) {
+        blob.push(pair[0] | (pair[1] << 4));
+    }
+    fs::write(output.join(format!("chunk_{DECAL_CHUNK}.psxa")), &blob)?;
+    println!(
+        "resident decals -> chunk_{DECAL_CHUNK} ({} decals, {} bytes)",
+        records.len() / 4,
+        blob.len()
+    );
+    Ok(())
+}
+
 pub fn build(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
     fs::create_dir_all(output)?;
     let sprite_dir = valve.join("sprites");
@@ -460,7 +607,8 @@ pub fn build(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
         output.display(),
         manifest.len()
     );
-    build_explosion(valve, output)
+    build_explosion(valve, output)?;
+    build_decals(valve, output)
 }
 
 #[cfg(test)]

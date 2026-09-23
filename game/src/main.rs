@@ -1227,9 +1227,6 @@ const NAV_FLEE_RANGE2: i32 = 1200 * 1200;
 const MAX_IMPACT_MARKS: usize = 24;
 const MAX_IMPACT_PARTICLES: usize = 64;
 const IMPACT_MARK_TICKS: u8 = 180;
-/// World radius of a decal, in the same units as the geometry. HL's bullet
-/// decals are a hand's width; this projects to ~6 px at arm's length.
-const DECAL_WORLD_HALF: i32 = 5;
 const IMPACT_KIND_WORLD: u8 = 0;
 /// BLOOD_COLOR_RED: humans, and the barnacle.
 const IMPACT_KIND_BLOOD: u8 = 1;
@@ -1238,11 +1235,6 @@ const IMPACT_KIND_BLOOD: u8 = 1;
 const IMPACT_KIND_YBLOOD: u8 = 2;
 /// DONT_BLEED: turrets, machines and scenery.
 const IMPACT_KIND_NONE: u8 = 3;
-/// Half-size of a blood decal on a surface, in world units. decals.wad's
-/// {blood1..6 cover the area of a 15-unit square once their alpha is summed
-/// ({yblood1..6: 11), so a flat quad of that area stands in for the splat.
-const BLOOD_DECAL_HALF: i32 = 8;
-const YBLOOD_DECAL_HALF: i32 = 6;
 /// CBaseEntity::TraceBleed traces 172 units on past the wound.
 const BLEED_TRACE_DIST: i32 = 172;
 
@@ -1634,6 +1626,8 @@ unsafe fn queue_explosion_fx(pos: [i32; 3], mag: u8) {
     // EXPL_SIZE_NUM the live knob if the fireball reads too big/small in-game.
     spawn_explosion_fx(pos, (mag as i32 * 3 / 2).clamp(24, 160) as i16);
 }
+/// Any decal recorded since the last clear: lets a frame skip the decal pass.
+static mut IMPACT_MARKS_LIVE: bool = false;
 static mut IMPACT_RNG: LcgRng = LcgRng::new(0x484c_5058);
 static mut CROWBAR_HIT_VOLUME_DEN: u16 = 1;
 static mut IMPACT_PARTICLE_RECTS: [RectFlat; MAX_IMPACT_PARTICLES] =
@@ -1760,6 +1754,7 @@ const _: () = assert!(
         + VM_SLOTS_TOTAL
         + sprite::MAX_SPRITE_FRAMES
         + sprite::MAX_EXPL_FRAMES
+        + 1 // the resident decal texture
         <= vram::CLUT_CAPACITY
 );
 static mut MODEL_RESIDENT_WORDS: usize = MODEL_WORDS;
@@ -3370,6 +3365,8 @@ struct ImpactMark {
     kind: u8,
     /// Surface normal, Q12 >> 5: the decal lies in this plane.
     normal: [i8; 3],
+    /// Resident decal (sprite::decal_rec) this mark draws.
+    decal: u8,
     /// BSP leaf of `pos` (0 = unknown): hidden when outside the view's PVS.
     leaf: u16,
 }
@@ -3379,6 +3376,7 @@ const EMPTY_IMPACT_MARK: ImpactMark = ImpactMark {
     ttl: 0,
     kind: IMPACT_KIND_WORLD,
     normal: [0; 3],
+    decal: 0,
     leaf: 0,
 };
 
@@ -17454,6 +17452,7 @@ unsafe fn clear_combat_fx() {
         i += 1;
     }
     IMPACT_MARK_CURSOR = 0;
+    IMPACT_MARKS_LIVE = false;
     let mut t = 0usize;
     while t < MAX_TRACERS {
         TRACERS[t].2 = 0;
@@ -17486,6 +17485,15 @@ unsafe fn decay_combat_fx() {
 #[cold]
 #[optimize(size)]
 unsafe fn spawn_impact_mark(m: &Map, hit: &phys::RayHit, kind: u8) {
+    // The SDK's random pick within the decal family for this hit.
+    let family = match kind {
+        IMPACT_KIND_BLOOD => sprite::DECAL_BLOOD,
+        IMPACT_KIND_YBLOOD => sprite::DECAL_YBLOOD,
+        _ => sprite::DECAL_SHOT,
+    };
+    let Some(decal) = sprite::decal_pick(family, IMPACT_RNG.next_mixed()) else {
+        return;
+    };
     let pos = [
         hit.pos[0] + ((hit.normal[0] * 2) >> 12),
         hit.pos[1] + ((hit.normal[1] * 2) >> 12),
@@ -17502,6 +17510,7 @@ unsafe fn spawn_impact_mark(m: &Map, hit: &phys::RayHit, kind: u8) {
             (hit.normal[1] >> 5).clamp(-127, 127) as i8,
             (hit.normal[2] >> 5).clamp(-127, 127) as i8,
         ],
+        decal,
         leaf: if valid_pvs_leaf(m, leaf) {
             leaf as u16
         } else {
@@ -17509,6 +17518,7 @@ unsafe fn spawn_impact_mark(m: &Map, hit: &phys::RayHit, kind: u8) {
         },
     };
     IMPACT_MARK_CURSOR = (IMPACT_MARK_CURSOR + 1) % MAX_IMPACT_MARKS;
+    IMPACT_MARKS_LIVE = true;
 }
 
 /// Queue a bullet tracer (muzzle -> impact) for a couple of sim ticks. Ring
@@ -17619,40 +17629,6 @@ unsafe fn spawn_blood(
     }
 }
 
-/// Self-contained blended flat quad, same GP0(E1)-prefix trick as `BeamTri`:
-/// the draw-mode word makes the blend deterministic wherever the packet lands
-/// in an ordering table. `RectFlat` (GP0 0x60) carries no draw-mode word, so a
-/// decal built from one can only ever be opaque.
-#[repr(C, align(4))]
-struct DecalQuad {
-    tag: u32,
-    draw_mode: u32,
-    color_cmd: u32,
-    v0: u32,
-    v1: u32,
-    v2: u32,
-    v3: u32,
-}
-
-impl DecalQuad {
-    const WORDS: u8 = 6;
-
-    /// `corners` in Z order (-u-v, +u-v, -u+v, +u+v): perimeter order
-    /// would draw a bowtie.
-    fn new(corners: [(i16, i16); 4], color: (u8, u8, u8), blend: BlendMode) -> Self {
-        Self {
-            tag: 0,
-            draw_mode: TextureMaterial::blended(0, 0, color, blend).draw_mode_word(),
-            // GP0(2Ah): flat, four-point, untextured, semi-transparent.
-            color_cmd: 0x2A00_0000 | gp0_color(color.0, color.1, color.2),
-            v0: gp0_vertex(corners[0].0, corners[0].1),
-            v1: gp0_vertex(corners[1].0, corners[1].1),
-            v2: gp0_vertex(corners[2].0, corners[2].1),
-            v3: gp0_vertex(corners[3].0, corners[3].1),
-        }
-    }
-}
-
 /// In-plane half-axes of a decal of half-size `half` on a surface with Q12
 /// normal `n`. The seed axis (world X for floors and ceilings, world up for
 /// walls) is projected into the plane, so a wall decal stays upright.
@@ -17685,10 +17661,32 @@ fn decal_axes(n: [i32; 3], half: i32) -> ([i32; 3], [i32; 3]) {
     )
 }
 
+/// View-space projection of a decal corner. Unlike `project_world_point` it
+/// keeps corners that fall off screen, so a decal the screen edge cuts through
+/// still draws; only the near plane rejects.
+#[inline]
+fn project_decal_corner(p: [i32; 3], rot: &Mat3I16, base_t: [i32; 3]) -> Option<(i16, i16, i32)> {
+    let vz = dot12(rot.m[2], p) + base_t[2];
+    if !(render::NEAR_Z..=FAR_VIEW).contains(&vz) {
+        return None;
+    }
+    let h = render::projection_h();
+    let sx = 160 + (dot12(rot.m[0], p) + base_t[0]) * h / vz;
+    let sy = 120 + (dot12(rot.m[1], p) + base_t[1]) * h / vz;
+    ((-1000..=1320).contains(&sx) && (-1000..=1240).contains(&sy))
+        .then_some((sx as i16, sy as i16, vz))
+}
+
 /// Emit the surface decals into the world OT, like the RPG laser dot, so a
 /// nearer wall or actor hides them as it hides the surface they lie on. Each
-/// sorts at its nearest corner, one bucket in front of that, which keeps it
-/// ahead of the patch of wall or floor it was traced onto.
+/// is its decals.wad splat or gunshot hole from the shared resident texture,
+/// drawn one world unit per source texel in the plane of the surface it hit,
+/// and sorts a little in front of its centre so it stays ahead of that patch.
+///
+/// A `{` decal's alpha became three texel classes in the cook: clear, half
+/// (average blend: half the lit wall shows through) and full. The CLUT is
+/// white and the vertex colour carries the tint, the decal's palette colour
+/// as GoldSrc tints it: dark red, yellow, or black for bullet holes.
 #[cold]
 #[optimize(size)]
 unsafe fn queue_impact_marks(
@@ -17699,6 +17697,13 @@ unsafe fn queue_impact_marks(
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) {
+    let slot = sprite::decal_slot();
+    if !slot.valid {
+        return;
+    }
+    let packet = TexturedGouraudPacketMaterial::from_texture(
+        slot.material.with_blend_mode(BlendMode::Average),
+    );
     let mut i = 0usize;
     while i < MAX_IMPACT_MARKS {
         let mark = IMPACT_MARKS[i];
@@ -17707,58 +17712,68 @@ unsafe fn queue_impact_marks(
         {
             continue;
         }
-        // Average blend (B/2 + F/2): the mark mixes HALF the lit wall
-        // underneath it with a soot or blood tone, so it keeps the
-        // surface's texture and lighting instead of replacing them.
-        // Subtract was the other candidate and is wrong here -- N marks
-        // in one spot subtract N times and go pure black, whereas
-        // averaging converges on the decal colour however many land,
-        // which is how GoldSrc's overlapping decals behave. The blood tones
-        // are the tints decals.wad gives {blood1..6 and {yblood1..6.
-        let (color, half) = match mark.kind {
-            IMPACT_KIND_BLOOD => ((36, 0, 0), BLOOD_DECAL_HALF),
-            IMPACT_KIND_YBLOOD => ((236, 214, 120), YBLOOD_DECAL_HALF),
-            _ => ((46, 44, 40), DECAL_WORLD_HALF),
+        let tint = match mark.kind {
+            IMPACT_KIND_BLOOD => (40u32, 3u32, 3u32),
+            IMPACT_KIND_YBLOOD => (88, 78, 36),
+            _ => (0, 0, 0),
         };
-        // The quad lies in the struck surface (GoldSrc decals are part of
-        // the surface), each corner through the same projection as the
-        // geometry, so it foreshortens with the floor or wall it is on.
+        let rgb = tint.0 | (tint.1 << 8) | (tint.2 << 16);
+        let [cu, cv, size, half] = sprite::decal_rec(mark.decal);
         let n = [
             (mark.normal[0] as i32) << 5,
             (mark.normal[1] as i32) << 5,
             (mark.normal[2] as i32) << 5,
         ];
-        let (u, v) = decal_axes(n, half);
-        let mut corners = [(0i16, 0i16); 4];
-        let mut near = i32::MAX;
+        // `up` is world up projected into a wall (world X on a floor); the
+        // texture's rows run down it, so a splat's drips hang downward.
+        let (up, across) = decal_axes(n, half as i32);
+        let mut screen = [(0i16, 0i16); 4];
+        let mut uvs = [0u16; 4];
+        let mut depth = 0i32;
         let mut k = 0usize;
         while k < 4 {
-            let su = if k & 1 == 0 { -1 } else { 1 };
-            let sv = if k & 2 == 0 { -1 } else { 1 };
+            let right = k & 1 != 0;
+            let down = k & 2 != 0;
+            let (a, b) = (if right { 1 } else { -1 }, if down { -1 } else { 1 });
             let p = [
-                mark.pos[0] + su * u[0] + sv * v[0],
-                mark.pos[1] + su * u[1] + sv * v[1],
-                mark.pos[2] + su * u[2] + sv * v[2],
+                mark.pos[0] + a * across[0] + b * up[0],
+                mark.pos[1] + a * across[1] + b * up[1],
+                mark.pos[2] + a * across[2] + b * up[2],
             ];
-            let Some((sx, sy, vz)) = project_world_point(p, rot, base_t) else {
+            let Some((sx, sy, vz)) = project_decal_corner(p, rot, base_t) else {
                 break;
             };
-            corners[k] = (sx, sy);
-            near = near.min(vz);
+            screen[k] = (sx, sy);
+            uvs[k] = uv_word((
+                cu + if right { size - 1 } else { 0 },
+                cv + if down { size - 1 } else { 0 },
+            ));
+            depth += vz;
             k += 1;
         }
         if k < 4 {
             continue;
         }
-        if let Some(packet) = packets.push(DecalQuad::new(corners, color, BlendMode::Average)) {
-            ot.add(
-                clamp_otz((near.saturating_sub(4) as usize) >> OT_SHIFT),
-                packet,
-                DecalQuad::WORDS,
-            );
-        } else {
-            note_render_packet_drop(false);
-            return;
+        let otz = clamp_otz(((depth >> 2).saturating_sub(8) as usize) >> OT_SHIFT);
+        for (x, y, z) in [(0, 1, 2), (1, 3, 2)] {
+            let prim = TriTexturedGouraud {
+                tag: 0,
+                tex_window: packet.tex_window_word,
+                color0_cmd: packet.color0_command_word | rgb,
+                v0: pack_vertex_word(screen[x].0, screen[x].1),
+                uv0_clut: uvs[x] as u32 | packet.clut_high_word,
+                color1: rgb,
+                v1: pack_vertex_word(screen[y].0, screen[y].1),
+                uv1_tpage: uvs[y] as u32 | packet.tpage_high_word,
+                color2: rgb,
+                v2: pack_vertex_word(screen[z].0, screen[z].1),
+                uv2: uvs[z] as u32,
+            };
+            let Some(tri) = packets.push(prim) else {
+                note_render_packet_drop(false);
+                return;
+            };
+            ot.add(otz, tri, TriTexturedGouraud::WORDS);
         }
     }
 }
@@ -27498,6 +27513,24 @@ fn play(
         }
     }
 
+    // Resident decals (decals.wad): shots and blood land on any map.
+    {
+        let dn = unsafe {
+            load_accounted_map_chunk(
+                sprite::DECAL_CHUNK_ID,
+                &mut stream_chunks,
+                &mut stream_bytes,
+                &mut stream_sectors,
+            )
+        }
+        .map(|load| load.raw_len)
+        .unwrap_or(0);
+        if dn >= 8 {
+            let blob = unsafe { streamed_map_bytes(dn) };
+            unsafe { sprite::load_decals(blob) };
+        }
+    }
+
     draw_next_loading_screen(fb);
     let map_len = unsafe {
         load_accounted_map_chunk(
@@ -31968,7 +32001,9 @@ fn play(
             // additive-billboard path as the placed sprites above.
             render_explosions(&mut packets, &mut np, &rot, base_t);
             queue_rpg_spot(&mut packets, &mut OT, &rot, base_t);
-            queue_impact_marks(&m, have_pvs, &mut packets, &mut OT, &rot, base_t);
+            if IMPACT_MARKS_LIVE {
+                queue_impact_marks(&m, have_pvs, &mut packets, &mut OT, &rot, base_t);
+            }
             telemetry::stage_end(telemetry::stage::MODEL_INSTANCES);
             telemetry::counter(telemetry::counter::MODEL_INSTANCE_DRAWS, model_draws);
             telemetry::counter(
