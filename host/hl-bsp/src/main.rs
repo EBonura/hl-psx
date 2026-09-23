@@ -6031,6 +6031,15 @@ fn named_door_has_activation(all_entities: &str, name: &str, spawnflags: u32) ->
 /// using only the raw entity origin makes terminal lifts disappear as soon as
 /// they leave that leaf (c1a1c's main elevator). The union costs only the leaf
 /// ids actually touched by the authored stops and no runtime state.
+/// CFuncTrain finds its next stop by targetname alone, so a func_train
+/// (path_class "path_corner") also rides path_track nodes, reading their
+/// spawnflags with path_corner's meaning (c2a2e's floathumanlift, c2a2f's
+/// flood lasers). func_tracktrain paths stay path_track only.
+fn path_node_class(block: &str, path_class: &str) -> bool {
+    let cls = ent_value(block, "classname");
+    cls == Some(path_class) || (path_class == "path_corner" && cls == Some("path_track"))
+}
+
 fn moving_brush_leafs(
     all_entities: &str,
     train_block: &str,
@@ -6054,7 +6063,7 @@ fn moving_brush_leafs(
     while !corner.is_empty() && hops < 80 {
         let mut found = false;
         for block in all_entities.split('{') {
-            if ent_value(block, "classname") != Some(path_class)
+            if !path_node_class(block, path_class)
                 || ent_value(block, "targetname") != Some(corner.as_str())
             {
                 continue;
@@ -8141,7 +8150,7 @@ fn collect_logic_entities_with_lightstyles(
                     scan_seen.push(scan_corner.clone());
                     let mut found = false;
                     for cb in s.split('{') {
-                        if ent_value(cb, "classname") != Some(path_class)
+                        if !path_node_class(cb, path_class)
                             || ent_value(cb, "targetname") != Some(scan_corner.as_str())
                         {
                             continue;
@@ -8192,7 +8201,7 @@ fn collect_logic_entities_with_lightstyles(
                 seen_corners.push(corner.clone());
                 let mut found = false;
                 for cb in s.split('{') {
-                    if ent_value(cb, "classname") != Some(path_class) {
+                    if !path_node_class(cb, path_class) {
                         continue;
                     }
                     if ent_value(cb, "targetname") != Some(corner.as_str()) {
