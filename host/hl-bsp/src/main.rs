@@ -7045,6 +7045,9 @@ struct ScriptClip {
     /// Retail sequence duration in 100 ms monster-think quanta. Zero keeps
     /// backward compatibility with old three-field manifests.
     hold_quanta: u16,
+    /// CineCleanup's root-bone offset at the sequence end, model space
+    /// (forward, left); zero when GoldSrc leaves the actor in place.
+    root: (i16, i16),
 }
 
 /// (type, lowercase clip name) -> visual slot + retail duration, from the
@@ -7066,10 +7069,16 @@ fn load_clips_manifest() -> std::collections::HashMap<(u16, String), ScriptClip>
             continue;
         };
         let hold_quanta = it.next().and_then(|v| v.parse::<u16>().ok()).unwrap_or(0);
+        let mut root = || it.next().and_then(|v| v.parse::<i16>().ok()).unwrap_or(0);
+        let root = (root(), root());
         if let (Ok(ty), Ok(slot)) = (ty.parse::<u16>(), slot.parse::<u8>()) {
             out.insert(
                 (ty, name.to_ascii_lowercase()),
-                ScriptClip { slot, hold_quanta },
+                ScriptClip {
+                    slot,
+                    hold_quanta,
+                    root,
+                },
             );
         }
     }
@@ -7271,7 +7280,7 @@ fn script_clip_slots(
     block: &str,
     transition_types: &std::collections::HashMap<String, u16>,
     clips: &std::collections::HashMap<(u16, String), ScriptClip>,
-) -> (u16, u16) {
+) -> (u16, u16, (i16, i16)) {
     // Model rosters use fewer than 63 clips. Keep slot+1 in the low six bits
     // and fold up to 102.3 seconds of source duration into the otherwise free
     // high ten bits of the existing LogicAux word. This fixes sequence-chain
@@ -7294,7 +7303,15 @@ fn script_clip_slots(
             })
             .unwrap_or(0)
     };
-    (lookup("m_iszPlay"), lookup("m_iszIdle"))
+    // CineCleanup moves the actor to the play sequence's final root bone
+    // unless SF_SCRIPT_NOSCRIPTMOVEMENT (128) is set.
+    const SF_SCRIPT_NOSCRIPTMOVEMENT: u32 = 128;
+    let root = ty
+        .filter(|_| parse_spawnflags_u32(block) & SF_SCRIPT_NOSCRIPTMOVEMENT == 0)
+        .zip(ent_value(block, "m_iszPlay"))
+        .and_then(|(ty, name)| clips.get(&(ty, name.to_ascii_lowercase())))
+        .map_or((0, 0), |clip| clip.root);
+    (lookup("m_iszPlay"), lookup("m_iszIdle"), root)
 }
 
 /// Extended env_beam/env_laser aux flags (aux[first + 5].delay_ticks).
@@ -8363,7 +8380,7 @@ fn collect_logic_entities_with_lightstyles(
             // zero means none. Remaining aux
             // records are pairs for source MDL event 1003: (target name id,
             // event tick), then (source period, 0 idle / 1 play).
-            let (play, idle) = script_clip_slots(&s, block, transition_types, &clips);
+            let (play, idle, root) = script_clip_slots(&s, block, transition_types, &clips);
             let entity_name = ent_value(block, "m_iszEntity").unwrap_or("");
             let ty = script_target_monster_type(&s, entity_name, transition_types);
             let mut events: Vec<(bool, StudioTargetEvent)> = Vec::new();
@@ -8382,7 +8399,7 @@ fn collect_logic_entities_with_lightstyles(
                     );
                 }
             }
-            if play != 0 || idle != 0 || !events.is_empty() {
+            if play != 0 || idle != 0 || !events.is_empty() || root != (0, 0) {
                 aux.push(LogicAuxRec {
                     target: play,
                     delay_ticks: idle,
@@ -8405,6 +8422,15 @@ fn collect_logic_entities_with_lightstyles(
                         delay_ticks: play_event as u16,
                     });
                     aux_count += 2;
+                }
+                // An even count marks a trailing CineCleanup root offset
+                // (forward, left) after the odd header + event pairs.
+                if root != (0, 0) {
+                    aux.push(LogicAuxRec {
+                        target: root.0 as u16,
+                        delay_ticks: root.1 as u16,
+                    });
+                    aux_count += 1;
                 }
             }
         }
@@ -17885,6 +17911,7 @@ mod tests {
             ScriptClip {
                 slot: 7,
                 hold_quanta: 42,
+                root: (0, 0),
             },
         );
         let slots = script_clip_slots(all, block, &Default::default(), &clips);
@@ -17895,7 +17922,7 @@ mod tests {
         );
         assert_eq!(
             slots,
-            ((42 << 6) | 8, 0),
+            ((42 << 6) | 8, 0, (0, 0)),
             "clip slot+1 and source duration share the existing LogicAux word"
         );
     }
@@ -17915,6 +17942,7 @@ mod tests {
             ScriptClip {
                 slot: 5,
                 hold_quanta: 0,
+                root: (0, 0),
             },
         );
         clips.insert(
@@ -17922,6 +17950,7 @@ mod tests {
             ScriptClip {
                 slot: 6,
                 hold_quanta: 0,
+                root: (0, 0),
             },
         );
 
@@ -17932,7 +17961,7 @@ mod tests {
         );
         assert_eq!(
             script_clip_slots(all, script, &Default::default(), &clips),
-            (7, 6)
+            (7, 6, (0, 0))
         );
 
         let mut names = vec!["sitting_scientist".to_string()];
@@ -18009,6 +18038,7 @@ mod tests {
             ScriptClip {
                 slot: 0,
                 hold_quanta: 0,
+                root: (0, 0),
             },
         );
         clips.insert(
@@ -18016,13 +18046,15 @@ mod tests {
             ScriptClip {
                 slot: 1,
                 hold_quanta: 0,
+                root: (-94, 398),
             },
         );
 
         assert_eq!(script_monster_type(all, "lo"), Some(52));
         assert_eq!(
             script_clip_slots(all, block, &Default::default(), &clips),
-            (2, 1)
+            (2, 1, (-94, 398)),
+            "the play clip's CineCleanup root offset rides along"
         );
         let mut names = vec!["lo".to_string()];
         let props = collect_props(all.as_bytes(), &[], &[], &[], 1.0, &mut names, &mut Vec::new());

@@ -53,6 +53,79 @@ fn sequence_hold_quanta(data: &[u8], sequence: usize) -> Result<u16> {
     Ok((((frame_count - 1) as f32 * 10.0 / fps).ceil() as i32).clamp(1, 1023) as u16)
 }
 
+/// One studio RLE animation value (`mstudioanimvalue_t` run at `base`).
+fn anim_value(data: &[u8], base: usize, frame: usize) -> i16 {
+    let (mut p, mut k) = (base, frame);
+    while p + 1 < data.len() {
+        let (valid, total) = (data[p] as usize, data[p + 1] as usize);
+        if total > k {
+            let o = p + 2 * if valid > k { k + 1 } else { valid };
+            return data.get(o..o + 2).map_or(0, |b| i16::from_le_bytes([b[0], b[1]]));
+        }
+        k -= total;
+        p += (valid + 1) * 2;
+    }
+    0
+}
+
+/// Where CBaseMonster::CineCleanup puts a monster after a scripted play
+/// sequence: GetBonePosition(0) on its last think (pev->frame 255), as a model
+/// space offset (x forward, y left). Zero when GoldSrc leaves it in place
+/// (under 8 units of travel).
+fn sequence_root_end(models: &Path, model: &str, data: &[u8], sequence: usize) -> Result<(i32, i32)> {
+    let (_, count, table) = sequences(data)?;
+    if sequence >= count {
+        return Ok((0, 0));
+    }
+    let desc = table + sequence * SEQDESC_BYTES;
+    let frames = i32le(data, desc + 56)?.max(1) as usize;
+    let motion_type = i32le(data, desc + 68)?;
+    let motion_bone = i32le(data, desc + 72)?;
+    let anim_index = i32le(data, desc + 124)? as usize;
+    let group = i32le(data, desc + 156)?;
+    let group_data;
+    let anim: &[u8] = if group == 0 {
+        data
+    } else {
+        group_data = fs::read(models.join(format!("{model}{group:02}.mdl")))?;
+        &group_data
+    };
+    let bone = i32le(data, 144)? as usize;
+    // Xash StudioEstimateFrame: frame * (numframes - 1) / 256, lerped.
+    let f = 255.0 * (frames - 1) as f32 / 256.0;
+    let (i, s) = (f as usize, f.fract());
+    let mut pos = [0.0f32; 3];
+    for (d, p) in pos.iter_mut().enumerate() {
+        *p = f32le(data, bone + 64 + d * 4)?;
+        let off = anim
+            .get(anim_index + d * 2..anim_index + d * 2 + 2)
+            .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]) as usize);
+        if off != 0 {
+            let base = anim_index + off;
+            let a = anim_value(anim, base, i) as f32;
+            let b = anim_value(anim, base, (i + 1).min(frames - 1)) as f32;
+            *p += (a + (b - a) * s) * f32le(data, bone + 88 + d * 4)?;
+        }
+        // Mod_StudioCalcRotations drops the motion bone's STUDIO_X/Y/Z axes.
+        if motion_bone == 0 && motion_type & (1 << d) != 0 {
+            *p = 0.0;
+        }
+    }
+    if pos[0].hypot(pos[1]) < 8.0 {
+        return Ok((0, 0));
+    }
+    Ok((pos[0].round() as i32, pos[1].round() as i32))
+}
+
+/// Manifest suffix for a scripted clip that relocates its actor.
+fn root_suffix(end: (i32, i32)) -> String {
+    if end == (0, 0) {
+        String::new()
+    } else {
+        format!("|{}|{}", end.0, end.1)
+    }
+}
+
 pub fn clips(models: &Path, roster: &Path, output: &Path) -> Result<()> {
     let mut lines = Vec::new();
     for raw in fs::read_to_string(roster)?.lines() {
@@ -68,6 +141,7 @@ pub fn clips(models: &Path, roster: &Path, output: &Path) -> Result<()> {
         let (sequence_labels, sequence_count, _) = sequences(&data)?;
         let mut slot = 0usize;
         let mut slot_hold_quanta = Vec::<u16>::new();
+        let mut slot_sequence = Vec::<usize>::new();
         let mut named = HashMap::<String, usize>::new();
         let mut named_order = Vec::<String>::new();
         let mut aliases = Vec::<(String, String)>::new();
@@ -108,11 +182,17 @@ pub fn clips(models: &Path, roster: &Path, output: &Path) -> Result<()> {
                     .ok_or_else(|| format!("type {ty} {model}: sequence {label:?} is missing"))?
             };
             slot_hold_quanta.push(sequence_hold_quanta(&data, sequence)?);
+            slot_sequence.push(sequence);
             slot += 1;
         }
         for name in named_order {
             let slot = named[&name];
-            lines.push(format!("{ty}|{name}|{slot}|{}", slot_hold_quanta[slot]));
+            let root = sequence_root_end(models, model, &data, slot_sequence[slot])?;
+            lines.push(format!(
+                "{ty}|{name}|{slot}|{}{}",
+                slot_hold_quanta[slot],
+                root_suffix(root)
+            ));
         }
         for (alias, target) in aliases {
             let resolved = target
@@ -123,16 +203,19 @@ pub fn clips(models: &Path, roster: &Path, output: &Path) -> Result<()> {
                 let fallback = slot_hold_quanta.get(slot).copied().ok_or_else(|| {
                     format!("type {ty} {model}: alias {alias} target slot {slot} is missing")
                 })?;
-                let hold = if let Some(&sequence) = sequence_labels.get(&alias) {
-                    sequence_hold_quanta(&data, sequence)?
+                let (hold, root) = if let Some(&sequence) = sequence_labels.get(&alias) {
+                    (
+                        sequence_hold_quanta(&data, sequence)?,
+                        sequence_root_end(models, model, &data, sequence)?,
+                    )
                 } else {
                     // Some retail maps ask a model for a label it does not
                     // actually own (Barney sit2/sit3). Their visual alias is
                     // intentional; inherit the target clip's real duration
                     // instead of emitting a zero-duration manifest entry.
-                    fallback
+                    (fallback, (0, 0))
                 };
-                lines.push(format!("{ty}|{alias}|{slot}|{hold}"));
+                lines.push(format!("{ty}|{alias}|{slot}|{hold}{}", root_suffix(root)));
             } else {
                 return Err(
                     format!("type {ty} {model}: alias {alias}={target} target is unknown").into(),
