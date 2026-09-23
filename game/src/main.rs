@@ -3433,6 +3433,16 @@ static mut TRACKTRAIN_USE_SPEED: u16 = 60; // +use drive speed (On A Rail)
 static mut LOGIC_PLAYER_POS: [i32; 3] = [0; 3];
 static mut SIM_NOW: u16 = 0; // current sim tick, for fire-path logic hooks
 static mut LOGIC_PLAYER_YAW: u16 = 0;
+// Who started the logic chain now running, for CBaseDoor::DoorGoUp's
+// swing-away rule: 0 none, 1 the player, 2 the tracktrain. Queued events keep
+// it in their metadata; the door reads the activator's live position.
+static mut LOGIC_ACTIVATOR: u8 = 0;
+// Rotating doors currently swinging opposite to their authored direction.
+static mut ROT_DOOR_REVERSED: [u8; MAX_ENTS.div_ceil(8)] = [0; MAX_ENTS.div_ceil(8)];
+static mut LOGIC_TRAM_POS: [i32; 3] = [0; 3];
+// GoldSrc faces a func_tracktrain backwards (yaw = travel + 180), so this is
+// the reverse of its last motion, as (x, z) in runtime axes.
+static mut LOGIC_TRAM_FWD: [i32; 2] = [0; 2];
 static mut LOGIC_PLAYER_HALF_HEIGHT: i32 = PLAYER_HULL_HALF_HEIGHT;
 static mut LOGIC_PLAYER_PITCH: i16 = 0;
 static mut LOGIC_PLAYER_HEALTH: u16 = PLAYER_START_HEALTH;
@@ -7365,7 +7375,8 @@ unsafe fn logic_enqueue_event(
                 at,
                 target,
                 killtarget,
-                meta: logic_state::event_meta(true, use_type, caller_li),
+                meta: logic_state::event_meta(true, use_type, caller_li)
+                    | ((LOGIC_ACTIVATOR as u16 & 3) << 11),
             };
             return true;
         }
@@ -8687,8 +8698,53 @@ unsafe fn logic_activate_door(nents: usize, li: usize, rec: map::LogicEnt, use_t
     };
     if state == start {
         LOGIC_STATE[li] = leave_start;
+        if ENT_CACHE[ei].kind == 7 {
+            rotating_door_swing_away(ei, rec.spawnflags);
+        }
     } else if state == far && (rec.spawnflags & SF_DOOR_TOGGLE) != 0 {
         LOGIC_STATE[li] = leave_far;
+    }
+}
+
+/// CBaseDoor::DoorGoUp for a func_door_rotating: a two-way (not ONEWAY) door
+/// turning about the vertical axis swings away from its activator, chosen by
+/// which side of the pivot the activator stands relative to where it faces.
+/// The authored direction is kept for a chain nobody started (sign +1).
+unsafe fn rotating_door_swing_away(ei: usize, spawnflags: u16) {
+    const SF_DOOR_ONEWAY: u16 = 16;
+    const SF_DOOR_ROTATE_Z: u16 = 64;
+    const SF_DOOR_ROTATE_X: u16 = 128;
+    if ei >= MAX_ENTS || spawnflags & (SF_DOOR_ONEWAY | SF_DOOR_ROTATE_Z | SF_DOOR_ROTATE_X) != 0 {
+        return;
+    }
+    // HL forward (cos, sin) of a yaw is (sin r, cos r) in runtime (x, z).
+    let (pos, fwd) = match LOGIC_ACTIVATOR {
+        1 => (
+            LOGIC_PLAYER_POS,
+            [
+                sincos::sin_q12(LOGIC_PLAYER_YAW),
+                sincos::sin_q12((LOGIC_PLAYER_YAW + 1024) & 0x0fff),
+            ],
+        ),
+        2 => (
+            LOGIC_TRAM_POS,
+            [
+                LOGIC_TRAM_FWD[0].clamp(-4096, 4096),
+                LOGIC_TRAM_FWD[1].clamp(-4096, 4096),
+            ],
+        ),
+        _ => return,
+    };
+    let o = ENT_CACHE[ei].origin;
+    let dx = (pos[0] - o[0]).clamp(-32767, 32767);
+    let dz = (pos[2] - o[2]).clamp(-32767, 32767);
+    let cross = dx * fwd[1] - dz * fwd[0];
+    let want_reversed = cross < 0;
+    let bit = 1u8 << (ei & 7);
+    let is_reversed = ROT_DOOR_REVERSED[ei >> 3] & bit != 0;
+    if want_reversed != is_reversed {
+        ENT_CACHE[ei].mv[0] = -ENT_CACHE[ei].mv[0];
+        ROT_DOOR_REVERSED[ei >> 3] ^= bit;
     }
 }
 
@@ -10636,6 +10692,7 @@ unsafe fn logic_process_events(m: &Map, nlogic: usize, nents: usize, now: u16) {
             let ev = LOGIC_EVENTS[i];
             if logic_state::event_active(ev.meta) && time_reached(now, ev.at) {
                 let caller = logic_state::event_caller(ev.meta);
+                LOGIC_ACTIVATOR = ((ev.meta >> 11) & 3) as u8;
                 LOGIC_EVENTS[i].meta =
                     logic_state::event_meta(false, logic_state::event_use_type(ev.meta), caller);
                 logic_kill_targets(m, nlogic, nents, ev.killtarget);
@@ -10669,6 +10726,7 @@ unsafe fn logic_process_events(m: &Map, nlogic: usize, nents: usize, now: u16) {
             break;
         }
     }
+    LOGIC_ACTIVATOR = 0;
 }
 
 #[inline]
@@ -26680,16 +26738,17 @@ fn project_beam_segment(
     if (a[2] < near && b[2] < near) || (a[2] > FAR_VIEW && b[2] > FAR_VIEW) {
         return None;
     }
-    // Move an endpoint along the segment onto a depth plane.
+    // Move an endpoint along the segment onto a depth plane. Camera-space
+    // coordinates stay within +/-32K world units, so Q12 products fit i32.
     let cut = |p: [i32; 3], q: [i32; 3], z: i32| -> [i32; 3] {
-        let den = (q[2] - p[2]) as i64;
+        let den = q[2] - p[2];
         if den == 0 {
             return p;
         }
-        let t = (((z - p[2]) as i64) << 12) / den;
+        let t = ((z - p[2]) << 12) / den;
         [
-            p[0] + (((q[0] - p[0]) as i64 * t) >> 12) as i32,
-            p[1] + (((q[1] - p[1]) as i64 * t) >> 12) as i32,
+            p[0] + (((q[0] - p[0]) * t) >> 12),
+            p[1] + (((q[1] - p[1]) * t) >> 12),
             z,
         ]
     };
@@ -26704,8 +26763,9 @@ fn project_beam_segment(
         b = cut(b, a, FAR_VIEW);
     }
     let h = render::projection_h();
-    let (mut x0, mut y0) = (160 + (a[0] * h) / a[2], 120 + (a[1] * h) / a[2]);
-    let (mut x1, mut y1) = (160 + (b[0] * h) / b[2], 120 + (b[1] * h) / b[2]);
+    let sc = |v: i32, z: i32, c: i32| (c + (v * h) / z).clamp(-16384, 16384);
+    let (mut x0, mut y0) = (sc(a[0], a[2], 160), sc(a[1], a[2], 120));
+    let (mut x1, mut y1) = (sc(b[0], b[2], 160), sc(b[1], b[2], 120));
     // Liang-Barsky against the guard band; depth follows the same parameter.
     const X0: i32 = -32;
     const X1: i32 = 352;
@@ -26721,8 +26781,7 @@ fn project_beam_segment(
             }
             continue;
         }
-        let r = ((qq as i64) << 12) / pq as i64;
-        let r = r.clamp(-(1 << 20), 1 << 20) as i32;
+        let r = ((qq << 12) / pq).clamp(-(1 << 20), 1 << 20);
         if pq < 0 {
             if r > t1 {
                 return None;
@@ -26736,7 +26795,7 @@ fn project_beam_segment(
         }
     }
     let (z0, z1) = (a[2], b[2]);
-    let lerp = |p: i32, q: i32, t: i32| p + (((q - p) as i64 * t as i64) >> 12) as i32;
+    let lerp = |p: i32, q: i32, t: i32| p + (((q - p) * t) >> 12);
     let (nx0, ny0, nz0) = (lerp(x0, x1, t0), lerp(y0, y1, t0), lerp(z0, z1, t0));
     x1 = lerp(x0, x1, t1);
     y1 = lerp(y0, y1, t1);
@@ -26779,8 +26838,8 @@ fn draw_beam(
     // Up to four pieces, each sorted at its own (slightly camera-biased)
     // depth, so a long beam grazing a wall is not buried behind it.
     let segs = ((len / 48).max(1)).min(4);
-    let iz0 = (1i32 << 24) / sz0.max(render::NEAR_Z);
-    let iz1 = (1i32 << 24) / sz1.max(render::NEAR_Z);
+    let iz0 = (1i32 << 20) / sz0.max(render::NEAR_Z);
+    let iz1 = (1i32 << 20) / sz1.max(render::NEAR_Z);
     let mut i = 0i32;
     while i < segs {
         let (ta, tb) = ((i * 4096) / segs, ((i + 1) * 4096) / segs);
@@ -26791,8 +26850,8 @@ fn draw_beam(
         let d = ((xb + px) as i16, (yb + py) as i16);
         let e = ((xb - px) as i16, (yb - py) as i16);
         let tm = (ta + tb) / 2;
-        let iz = (iz0 + (((iz1 - iz0) as i64 * tm as i64) >> 12) as i32).max(1);
-        let z = ((1i32 << 24) / iz - BEAM_DEPTH_BIAS).max(render::NEAR_Z);
+        let iz = (iz0 + (((iz1 - iz0) * tm) >> 12)).max(1);
+        let z = ((1i32 << 20) / iz - BEAM_DEPTH_BIAS).max(render::NEAR_Z);
         let otz = clamp_otz((z as usize) >> OT_SHIFT);
         if let Some(packet) = packets.push(BeamTri::new([a, b, d], color)) {
             ot.add(otz, packet, BeamTri::WORDS);
@@ -26857,12 +26916,12 @@ unsafe fn draw_beam_textured(
     // Sort each segment at its own depth (1/z interpolates linearly on
     // screen), so a long beam crossing a room is occluded where it passes
     // behind geometry instead of taking one depth for its whole length.
-    let iz0 = (1i32 << 24) / sz0.max(render::NEAR_Z);
-    let iz1 = (1i32 << 24) / sz1.max(render::NEAR_Z);
+    let iz0 = (1i32 << 20) / sz0.max(render::NEAR_Z);
+    let iz1 = (1i32 << 20) / sz1.max(render::NEAR_Z);
     let seg_otz = |i: usize| {
         let t = ((2 * i as i32 + 1) * 2048) / segs as i32;
-        let iz = (iz0 + (((iz1 - iz0) as i64 * t as i64) >> 12) as i32).max(1);
-        let z = ((1i32 << 24) / iz - BEAM_DEPTH_BIAS).max(render::NEAR_Z);
+        let iz = (iz0 + (((iz1 - iz0) * t) >> 12)).max(1);
+        let z = ((1i32 << 20) / iz - BEAM_DEPTH_BIAS).max(render::NEAR_Z);
         clamp_otz((z as usize) >> OT_SHIFT)
     };
     let mut otz = clamp_otz((avg as usize) >> OT_SHIFT);
@@ -28597,6 +28656,7 @@ fn play(
         // Brush entities load BEFORE props so the spawn ground snap can treat
         // grates/doors/crates as solid (point_in_ent_solid reads ENT_CACHE).
         let nents_early = m.n_ents.min(MAX_ENTS);
+        ROT_DOOR_REVERSED = [0; MAX_ENTS.div_ceil(8)];
         for ei in 0..nents_early {
             let e = m.entity(ei);
             ENT_CACHE[ei] = e;
@@ -29709,6 +29769,13 @@ fn play(
                     player.pos[1] - car_now[1],
                     player.pos[2] - car_now[2],
                 ];
+                if car_now[0] != LOGIC_TRAM_POS[0] || car_now[2] != LOGIC_TRAM_POS[2] {
+                    LOGIC_TRAM_FWD = [
+                        LOGIC_TRAM_POS[0] - car_now[0],
+                        LOGIC_TRAM_POS[2] - car_now[2],
+                    ];
+                    LOGIC_TRAM_POS = car_now;
+                }
                 LOGIC_PLAYER_HEALTH = health;
                 LOGIC_PLAYER_SUIT = if suit_equipped { 1 } else { 0 };
                 LOGIC_PLAYER_ARMOR = armor;
@@ -29823,6 +29890,7 @@ fn play(
                     let pid = m.way_pass(unsafe { TRAM_PASSED[pass] } as usize);
                     if pid != 0 {
                         unsafe {
+                            LOGIC_ACTIVATOR = 2;
                             logic_fire_targets(
                                 &m,
                                 nlogic,
@@ -29833,6 +29901,7 @@ fn play(
                                 0,
                                 logic_state::CALLER_NONE,
                             );
+                            LOGIC_ACTIVATOR = 0;
                         }
                     }
                 }
@@ -30767,6 +30836,7 @@ fn play(
                         tram_drive_axis_prev = 0;
                         sfx::play(sfx::BUTTON);
                     } else {
+                        LOGIC_ACTIVATOR = 1;
                         charger_pulse = logic_try_use(
                             &m,
                             nlogic,
@@ -30817,6 +30887,7 @@ fn play(
                 if use_held_raw && MOUNTED_TANK < 0 {
                     tick_momentary(&m, nlogic, nents, player.pos, eye, yaw, pitch);
                 }
+                LOGIC_ACTIVATOR = 1;
                 logic_touch_triggers(
                     &m,
                     nlogic,
@@ -30831,6 +30902,7 @@ fn play(
                     &mut armor,
                     sim_frame_no as u16,
                 );
+                LOGIC_ACTIVATOR = 0;
                 // Teleport lands before this frame renders (the render eye is
                 // recomputed below); push adds velocity while inside the volume.
                 if let Some((dest, dyaw)) = TELEPORT_REQUEST.take() {
