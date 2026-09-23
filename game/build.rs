@@ -33,7 +33,44 @@ const MODEL_INDEX_VERTEX_LIMIT: usize = 1024;
 // bytes to the executable/linker budget for the debug menus. `cargo run --
 // audit` re-measures the peak and fails before a growing model can hide an
 // actor on hardware, so this floor is only ever as safe as that run.
-const MODEL_POOL_WORDS: usize = 55_936;
+//
+// The pool is the live viewmodel's reserve at its head plus this NPC share.
+// The NPC share is the historical 55,936-word floor minus the 20,224-word
+// viewmodel reserve it used to include; the viewmodel reserve itself is now
+// sized from the cooked viewmodels (see `viewmodel_pool_words`), so the NPC
+// budget of every map is unchanged by it.
+const NPC_MODEL_POOL_WORDS: usize = 35_712;
+// Viewmodel reserve when no cooked viewmodels exist yet (a fresh checkout).
+const FALLBACK_VM_POOL_WORDS: usize = 20_224;
+const FALLBACK_VM_GEOM_WORDS: usize = 15_800;
+// game/src/main.rs MAX_WEAPON_TRIS: one sort record and one index word per
+// authored viewmodel triangle live at the top of the viewmodel reserve.
+const VIEWMODEL_SORT_TRIS: usize = 1152;
+// Most of a merged chunk that may lie under that scratch. The weapon tail
+// cache copies this suffix out before steady rendering overwrites it
+// (main.rs VM_TAIL_BACKUP_WORDS), so every word of it is paid again in the
+// arena tail of every map. 6 KB keeps the campaign's tightest weapon-cache
+// map (c2a4e) inside its audited margin.
+const VIEWMODEL_BACKUP_BUDGET_WORDS: usize = 1536;
+
+/// Words of MODEL_BUF's head reserved for the one live viewmodel (main.rs
+/// VM_POOL_WORDS). A selected weapon's merged chunk stages at word zero, and
+/// its geometry (after the two-word HMRG header) must end below the
+/// projected-vertex and sort scratch that occupies the top of the reserve;
+/// only the chunk's texture tail may run under the scratch, by at most the
+/// backup budget. Every bound comes from the cooked chunks, so the reserve
+/// follows the viewmodel cook instead of the fixed 81 KB the static-pose path
+/// needed. host/hl-build/model_audit.rs `viewmodel_pool_words` mirrors this.
+fn viewmodel_pool_words(
+    max_chunk_words: usize,
+    max_geom_words: usize,
+    model_verts: usize,
+) -> usize {
+    let scratch = model_verts + model_verts.div_ceil(2) + 2 * VIEWMODEL_SORT_TRIS;
+    let geometry_bound = 2 + max_geom_words + scratch;
+    let chunk_bound = (max_chunk_words + scratch).saturating_sub(VIEWMODEL_BACKUP_BUDGET_WORDS);
+    round_up(geometry_bound.max(chunk_bound).max(max_chunk_words), 64)
+}
 
 /// Parse one optional three-component diagnostic vector from the build
 /// environment.  These values are intentionally build-time only: semantic
@@ -646,22 +683,34 @@ fn scan_room_budget(
 /// Model type count, mirrored by game/src/main.rs N_MODEL_TYPES.
 const MODEL_TYPES: usize = 76;
 
-fn scan_model_budget(repo_root: &std::path::Path) -> (usize, usize, usize, [u8; MODEL_TYPES]) {
+struct ModelBudget {
+    model_words: usize,
+    model_verts: usize,
+    max_viewmodel_words: usize,
+    max_viewmodel_geom_words: usize,
+    vm_pool_words: usize,
+    stream_order: [u8; MODEL_TYPES],
+}
+
+fn scan_model_budget(repo_root: &std::path::Path) -> ModelBudget {
     let modelpack = repo_root.join("data/modelpack");
     println!("cargo:rerun-if-changed={}", modelpack.display());
 
     let Ok(entries) = fs::read_dir(&modelpack) else {
-        return (
-            FALLBACK_MODEL_WORDS,
-            MODEL_INDEX_VERTEX_LIMIT,
-            20_224,
-            core::array::from_fn(|index| index as u8),
-        );
+        return ModelBudget {
+            model_words: FALLBACK_MODEL_WORDS.max(NPC_MODEL_POOL_WORDS + FALLBACK_VM_POOL_WORDS),
+            model_verts: MODEL_INDEX_VERTEX_LIMIT,
+            max_viewmodel_words: FALLBACK_VM_POOL_WORDS,
+            max_viewmodel_geom_words: FALLBACK_VM_GEOM_WORDS,
+            vm_pool_words: FALLBACK_VM_POOL_WORDS,
+            stream_order: core::array::from_fn(|index| index as u8),
+        };
     };
 
     let mut max_bytes = 0usize;
     let mut max_verts = 0usize;
     let mut max_viewmodel_words = 0usize;
+    let mut max_viewmodel_geom_words = 0usize;
     let mut stream_sizes = [0usize; MODEL_TYPES];
     for entry in entries.flatten() {
         let path = entry.path();
@@ -681,6 +730,10 @@ fn scan_model_budget(repo_root: &std::path::Path) -> (usize, usize, usize, [u8; 
                 .is_some_and(|id| (1000..1016).contains(&id))
             {
                 max_viewmodel_words = max_viewmodel_words.max(data.len().div_ceil(4));
+                if data.get(0..4) == Some(b"HMRG") {
+                    let geom_bytes = rd_u32(&data, 4).unwrap_or(0) as usize;
+                    max_viewmodel_geom_words = max_viewmodel_geom_words.max(geom_bytes.div_ceil(4));
+                }
             }
             if let Some(type_id) = name
                 .strip_prefix("chunk_13")
@@ -725,11 +778,6 @@ fn scan_model_budget(repo_root: &std::path::Path) -> (usize, usize, usize, [u8; 
         }
     }
 
-    let model_words = if max_bytes == 0 {
-        FALLBACK_MODEL_WORDS.max(MODEL_POOL_WORDS)
-    } else {
-        round_up(max_bytes.div_ceil(4) + 256, 256).max(MODEL_POOL_WORDS)
-    };
     let model_verts = if max_verts == 0 {
         MODEL_INDEX_VERTEX_LIMIT
     } else {
@@ -747,12 +795,27 @@ fn scan_model_budget(repo_root: &std::path::Path) -> (usize, usize, usize, [u8; 
     let mut stream_order = core::array::from_fn(|index| index as u8);
     stream_order
         .sort_by_key(|&type_id| (core::cmp::Reverse(stream_sizes[type_id as usize]), type_id));
-    let max_viewmodel_words = if max_viewmodel_words == 0 {
-        20_224
+    let (max_viewmodel_words, max_viewmodel_geom_words) = if max_viewmodel_words == 0 {
+        (FALLBACK_VM_POOL_WORDS, FALLBACK_VM_GEOM_WORDS)
     } else {
-        max_viewmodel_words
+        (max_viewmodel_words, max_viewmodel_geom_words)
     };
-    (model_words, model_verts, max_viewmodel_words, stream_order)
+    let vm_pool_words =
+        viewmodel_pool_words(max_viewmodel_words, max_viewmodel_geom_words, model_verts);
+    let model_pool_words = NPC_MODEL_POOL_WORDS + vm_pool_words;
+    let model_words = if max_bytes == 0 {
+        FALLBACK_MODEL_WORDS.max(model_pool_words)
+    } else {
+        round_up(max_bytes.div_ceil(4) + 256, 256).max(model_pool_words)
+    };
+    ModelBudget {
+        model_words,
+        model_verts,
+        max_viewmodel_words,
+        max_viewmodel_geom_words,
+        vm_pool_words,
+        stream_order,
+    }
 }
 
 /// Exact cooked mesh signatures for the 16 first-person models. The debug
@@ -1123,8 +1186,14 @@ fn main() {
 
     let (map_words, max_verts, max_faces, max_face_groups, max_leaves, max_ents, max_tex_slots) =
         scan_room_budget(repo_root);
-    let (model_words, max_model_verts, max_viewmodel_words, model_stream_order) =
-        scan_model_budget(repo_root);
+    let ModelBudget {
+        model_words,
+        model_verts: max_model_verts,
+        max_viewmodel_words,
+        max_viewmodel_geom_words,
+        vm_pool_words,
+        stream_order: model_stream_order,
+    } = scan_model_budget(repo_root);
     let (viewmodel_verts, viewmodel_tris) = scan_viewmodel_signatures(repo_root);
     let (model_variant_offsets, model_variant_bytes) = scan_model_variant_index(repo_root);
     let pack_cache_entries = scan_pack_cache_budget(repo_root);
@@ -1141,6 +1210,8 @@ fn main() {
          pub const MAX_VERTS: usize = {max_verts};\n\
          pub const MAX_MODEL_VERTS: usize = {max_model_verts};\n\
          pub const MAX_VIEWMODEL_WORDS: usize = {max_viewmodel_words};\n\
+         pub const MAX_VIEWMODEL_GEOM_WORDS: usize = {max_viewmodel_geom_words};\n\
+         pub const VM_POOL_WORDS: usize = {vm_pool_words};\n\
          pub const VIEWMODEL_VERTS: [u16; 16] = {viewmodel_verts:?};\n\
          pub const VIEWMODEL_TRIS: [u16; 16] = {viewmodel_tris:?};\n\
          pub const MODEL_STREAM_ORDER: [u8; {MODEL_TYPES}] = {model_stream_order:?};\n\
