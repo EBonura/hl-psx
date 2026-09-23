@@ -7407,10 +7407,15 @@ fn collect_logic_entities_with_lightstyles(
     }
 
     // Teleport destinations, resolved at cook time (name -> world origin+yaw).
+    // CBaseTrigger::TeleportTouch finds its target by name alone, so any
+    // point entity works; c4a1's arrival teleport targets an info_landmark.
     let mut tp_dests: Vec<(String, [i32; 3], u16)> = Vec::new();
     for block in s.split('{') {
         let cls = ent_value(block, "classname").unwrap_or("");
-        if cls == "info_teleport_destination" || cls == "info_target" {
+        if matches!(
+            cls,
+            "info_teleport_destination" | "info_target" | "info_landmark"
+        ) {
             if let (Some(name), Some(o)) = (
                 ent_value(block, "targetname"),
                 ent_value(block, "origin").and_then(parse_vec3),
