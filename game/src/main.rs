@@ -4769,7 +4769,6 @@ fn seg_len(a: [i32; 3], b: [i32; 3]) -> i32 {
     isqrt_i32(dist2_3(a, b)).max(1)
 }
 
-#[inline]
 #[inline(always)]
 fn tram_bit(bits: &[u32; 8], i: usize) -> bool {
     i < 256 && bits[i >> 5] & (1 << (i & 31)) != 0
