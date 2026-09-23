@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Start every chapter where normal play arrives in it. Chapter select used
+  the first map's `info_player_start`, which in most retail maps is a
+  developer spawn elsewhere in the level; each chapter now replays the
+  landmark carry of the previous map's changelevel, with its view, its
+  `changetarget` (Office Complex's elevator, Lambda Core's doors), and the
+  suit, long jump and weapons a playthrough has collected by then.
+  Unforeseen Consequences begins in c1a0c's black room after the resonance
+  cascade instead of c1a1's corridors, Lambda Core in c3a2e instead of c3a2,
+  and Gonarch's Lair is listed before Interloper, as in retail. Each
+  chapter's map list follows play order.
+
 - The builder is now `cargo hl-build ...` (an alias for
   `cargo run --release --manifest-path host/hl-build/Cargo.toml --`), run from
   the repository root. `cargo run --release -- ...` no longer works. The
