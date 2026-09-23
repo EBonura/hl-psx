@@ -62,6 +62,10 @@ pub const MAPS: [&str; 103] = [
     "c4a1f", "c4a2", "c4a2a", "c4a2b", "c4a3", "c5a1", "t0a0", "t0a0a", "t0a0b", "t0a0b1",
     "t0a0b2", "t0a0c", "t0a0d",
 ];
+// Retail's New Game chapter list, in play order. GoldSrc itself has no chapter
+// select; each row starts where normal play arrives in that chapter, which is
+// the map whose worldspawn carries the chapter title (C1A1TITLE is in c1a0c,
+// C3A2TITLE in c3a2e) and not always the map the name suggests.
 pub const CHAPTERS: [&str; 19] = [
     "Black Mesa Inbound",
     "Anomalous Materials",
@@ -78,31 +82,110 @@ pub const CHAPTERS: [&str; 19] = [
     "Forget About Freeman!",
     "Lambda Core",
     "Xen",
-    "Interloper",
     "Gonarch's Lair",
+    "Interloper",
     "Nihilanth",
     "Endgame",
 ];
-pub const CHAPTER_ROOM: [i16; 19] = [
-    0, 6, 12, 18, 23, 28, 37, 40, 50, 56, 60, 64, 74, 77, 84, 85, 91, 94, 95,
+/// Every room in play order: the campaign as its changelevels chain it, then
+/// the Hazard Course. `MAPS` stays in file order because room ids are chunk
+/// ids; this is the order a player meets the maps in. Hub chapters (Blast
+/// Pit, the c1a1 and c3a2 side maps) list a side map after the map it
+/// branches from.
+pub const PLAY_ORDER: [u8; 103] = [
+    0, 1, 2, 3, 4, 5, // Black Mesa Inbound: c0a0..c0a0e
+    6, 10, 7, 8, 11, // Anomalous Materials: c1a0 c1a0d c1a0a c1a0b c1a0e
+    9, 12, 13, 17, 14, 15,
+    16, // Unforeseen Consequences: c1a0c c1a1 c1a1a c1a1f c1a1b c1a1c c1a1d
+    18, 19, 20, 21, 22, // Office Complex: c1a2..c1a2d
+    23, 24, 25, 26, 27, // We've Got Hostiles: c1a3..c1a3d
+    28, 36, 29, 32, 30, 31, 34, 33,
+    35, // Blast Pit: c1a4 c1a4k c1a4b c1a4f c1a4d c1a4e c1a4i c1a4g c1a4j
+    37, 38, 39, // Power Up: c2a1..c2a1b
+    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, // On A Rail: c2a2..c2a2h
+    50, 51, 52, 53, 54, 55, // Apprehension: c2a3..c2a3e
+    56, 57, 58, 59, // Residue Processing: c2a4..c2a4c
+    60, 61, 62, 63, // Questionable Ethics: c2a4d..c2a4g
+    64, 72, 73, 65, 66, 67, 68, 69, 70, 71, // Surface Tension: c2a5 c2a5w c2a5x c2a5a..c2a5g
+    74, 75, 76, // Forget About Freeman!: c3a1..c3a1b
+    82, 77, 78, 79, 80, 83, 81, // Lambda Core: c3a2e c3a2 c3a2a c3a2b c3a2c c3a2f c3a2d
+    84, // Xen: c4a1
+    91, 92, 93, // Gonarch's Lair: c4a2..c4a2b
+    85, 86, 87, 88, 89, 90, // Interloper: c4a1a..c4a1f
+    94, // Nihilanth: c4a3
+    95, // Endgame: c5a1
+    96, 97, 98, 99, 100, 101, 102, // Hazard Course: t0a0..t0a0d
 ];
+/// Index into `PLAY_ORDER` of each chapter's first map.
+const CHAPTER_START: [u8; 19] = [
+    0, 6, 11, 18, 23, 28, 37, 40, 50, 56, 60, 64, 74, 77, 84, 85, 88, 94, 95,
+];
+/// Room each chapter starts in.
+pub const CHAPTER_ROOM: [i16; 19] = {
+    let mut rooms = [0i16; 19];
+    let mut i = 0;
+    while i < rooms.len() {
+        rooms[i] = PLAY_ORDER[CHAPTER_START[i] as usize] as i16;
+        i += 1;
+    }
+    rooms
+};
 /// Row index of the Hazard Course in the chapter list: its maps sit after the
 /// campaign, so it behaves as one more chapter for sub-map selection.
 pub const HAZARD_CHAPTER: usize = CHAPTERS.len();
 
-/// The `MAPS` range a chapter row covers, `[start, end)`. Chapters are ordered
-/// and contiguous, so a chapter owns every map up to the next chapter's start.
+/// The `PLAY_ORDER` range a chapter row covers, `[start, end)`; use
+/// [`chapter_map`] to turn a row inside it into a room id.
 pub fn chapter_rooms(chapter: usize) -> (usize, usize) {
     if chapter >= HAZARD_CHAPTER {
-        return (TRAINING_START_ROOM, MAPS.len());
+        return (CAMPAIGN_MAP_COUNT, PLAY_ORDER.len());
     }
-    let start = (CHAPTER_ROOM[chapter].max(0) as usize).min(CAMPAIGN_MAP_COUNT - 1);
-    let end = match CHAPTER_ROOM.get(chapter + 1) {
-        Some(&next) if next > 0 => (next as usize).min(CAMPAIGN_MAP_COUNT),
-        _ => CAMPAIGN_MAP_COUNT,
+    let start = CHAPTER_START[chapter] as usize;
+    let end = match CHAPTER_START.get(chapter + 1) {
+        Some(&next) => next as usize,
+        None => CAMPAIGN_MAP_COUNT,
     };
-    (start, end.max(start + 1))
+    (start, end)
 }
+
+/// Room id of row `row` in a chapter's sub-map list.
+pub fn chapter_map(chapter: usize, row: usize) -> usize {
+    let (start, end) = chapter_rooms(chapter);
+    PLAY_ORDER[(start + row).min(end - 1)] as usize
+}
+
+/// Position of a room in `PLAY_ORDER`: how far into the game a player is when
+/// they first reach it.
+pub const fn play_rank(room: usize) -> usize {
+    let mut i = 0;
+    while i < PLAY_ORDER.len() {
+        if PLAY_ORDER[i] as usize == room {
+            return i;
+        }
+        i += 1;
+    }
+    PLAY_ORDER.len()
+}
+
+/// The chapter whose first map is `room`, if any.
+pub fn chapter_starting_in(room: usize) -> Option<usize> {
+    CHAPTER_ROOM.iter().position(|&r| r as usize == room)
+}
+
+const _: () = {
+    // PLAY_ORDER is a permutation of every room, and each chapter start and
+    // the Hazard Course begin where CHAPTER_START and TRAINING_START_ROOM say.
+    let mut seen = [false; 103];
+    let mut i = 0;
+    while i < PLAY_ORDER.len() {
+        assert!(!seen[PLAY_ORDER[i] as usize]);
+        seen[PLAY_ORDER[i] as usize] = true;
+        i += 1;
+    }
+    assert!(PLAY_ORDER[CAMPAIGN_MAP_COUNT] as usize == TRAINING_START_ROOM);
+    assert!(CHAPTER_ROOM[2] == 9); // Unforeseen Consequences: c1a0c
+    assert!(CHAPTER_ROOM[13] == 82); // Lambda Core: c3a2e
+};
 
 // The title film owns y=35..85, so every sub-screen starts below it. It used to
 // start at 84 with the screen title at 58, which put the title across the
@@ -1035,7 +1118,7 @@ fn draw_map_menu(font: &FontAtlas, help: &FontAtlas, chapter: usize, sel: i32) {
     let last = (first + VISIBLE_ROWS).min(n);
     let mut y = LIST_Y;
     for i in first..last {
-        let name = MAPS[start + i as usize];
+        let name = MAPS[PLAY_ORDER[start + i as usize] as usize];
         let armed = i == sel;
         draw_list_row(
             font,
@@ -1382,7 +1465,7 @@ pub fn run(fb: &mut FrameBuffer, assets: &[u8]) -> usize {
                         MenuScreen::Chapters
                     };
                 } else if input.ok {
-                    let room = start + map_sel as usize;
+                    let room = PLAY_ORDER[start + map_sel as usize] as usize;
                     if room < MAPS.len() {
                         play_menu_accept();
                         return room;

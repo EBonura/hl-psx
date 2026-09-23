@@ -2487,7 +2487,7 @@ fn run_pause_menu(fb: &mut FrameBuffer) -> PauseExit {
                     page = PausePage::Maps;
                 }
                 PausePage::Maps => {
-                    let room = chapter_start + map_sel;
+                    let room = menu::chapter_map(chapter_sel, map_sel);
                     if room < menu::MAPS.len() {
                         return PauseExit::Chapter(room);
                     }
@@ -2540,7 +2540,7 @@ fn run_pause_menu(fb: &mut FrameBuffer) -> PauseExit {
                 map_rows,
                 map_sel,
                 &|i| {
-                    let r = Row::new(menu::MAPS[(chapter_start + i).min(menu::MAPS.len() - 1)]);
+                    let r = Row::new(menu::MAPS[menu::chapter_map(chapter_sel, i)]);
                     if i == 0 {
                         r.with_detail("(default)")
                     } else {
@@ -5747,6 +5747,234 @@ fn menu_launch(room_id: usize) -> RoomLaunch {
         riding: false,
         ride_seat: [0; 3],
     }
+}
+
+/// Where normal play puts the player on reaching a chapter: the previous map's
+/// trigger_changelevel carries the player's origin relative to `landmark`, and
+/// the destination adds it back to its own copy of that landmark. A chapter
+/// start replays that carry instead of using info_player_start, which in many
+/// retail maps is a developer spawn somewhere else in the level.
+struct ChapterArrival {
+    landmark: &'static str,
+    /// Player origin minus the destination landmark, world units.
+    offset: [i32; 3],
+    /// Arrival view yaw (Q0.12, world convention).
+    yaw: u16,
+    /// The changelevel's `changetarget`, fired `delay_ticks` after arrival.
+    changetarget: &'static str,
+    delay_ticks: u16,
+}
+
+// Derived from the retail entity lumps: the transition normal play takes into
+// each chapter's first map (menu::CHAPTER_ROOM), with the player at the point
+// that fires it. Touch triggers use the side the player walks in from, one
+// hull half-width outside the brush; scripted teleports use their
+// destination; volume-only transitions use the volume. Heights rest on the
+// floor there.
+const CHAPTER_ARRIVALS: [Option<ChapterArrival>; 19] = [
+    // Black Mesa Inbound: New Game start (info_player_start on the tram).
+    None,
+    // Anomalous Materials (c1a0): c0a0e trigger_once *4 -> changetoc1a0mm fires changetoc1a0
+    // 4 s after the player walks off the tram; lands on c1a0's info_player_start.
+    Some(ChapterArrival {
+        landmark: "c0a0toc1a0",
+        offset: [57, -59, -43],
+        yaw: 3072,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Unforeseen Consequences (c1a0c): c1a0e teleports the player to exiting_w (angle 90, black
+    // room) and fires change_level 10 s later.
+    Some(ChapterArrival {
+        landmark: "c1a0etoc",
+        offset: [-3768, -2114, -226],
+        yaw: 0,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Office Complex (c1a2): c1a1c elevator: button closes startele1, its netname fires
+    // changetoc1a2 (changetarget elestartmm, changedelay 1).
+    Some(ChapterArrival {
+        landmark: "a1a2",
+        offset: [-4, -28, -96],
+        yaw: 0,
+        changetarget: "elestartmm",
+        delay_ticks: 20,
+    }),
+    // We've Got Hostiles (c1a3): c1a2b trigger_multiple *101 (x -168..-160) fires
+    // transition_to_c1a3, touched moving +x.
+    Some(ChapterArrival {
+        landmark: "c1a2_to_c1a3",
+        offset: [136, -60, -72],
+        yaw: 1024,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Blast Pit (c1a4): c1a3 trigger_changelevel *63 (y 986..1008), touched moving -y.
+    Some(ChapterArrival {
+        landmark: "c1a3toc1a4",
+        offset: [8, -54, -48],
+        yaw: 2048,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Power Up (c2a1): c1a4j trigger_changelevel *16 (x 368..384), touched moving +x.
+    Some(ChapterArrival {
+        landmark: "c1a4-c2a1",
+        offset: [240, -28, 160],
+        yaw: 1024,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // On A Rail (c2a2): c2a1 trigger_changelevel *25 (x 2112..2128), touched moving +x at the
+    // SDA 5548 lane (the trigger centre is over c2a2's shock rail).
+    Some(ChapterArrival {
+        landmark: "c2a1-c2a2",
+        offset: [80, -76, 112],
+        yaw: 1024,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Apprehension (c2a3): c2a2g trigger_changelevel *12 (y -1922..-1912), touched moving -y
+    // beside the track (the trigger centre is over c2a3's 150-damage shock rail).
+    Some(ChapterArrival {
+        landmark: "c2a2/3",
+        offset: [36, -68, -176],
+        yaw: 2048,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Residue Processing (c2a4): c2a3e trigger_changelevel *14 (x -2662..-2648), both SDA demos
+    // cross it moving +x.
+    Some(ChapterArrival {
+        landmark: "c2a3d4",
+        offset: [-426, -20, 0],
+        yaw: 1024,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Questionable Ethics (c2a4d): c2a4c trigger_changelevel *54 (y -2784..-2768), touched
+    // moving -y.
+    Some(ChapterArrival {
+        landmark: "lm2",
+        offset: [0, -12, -112],
+        yaw: 2048,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Surface Tension (c2a5): c2a4g trigger_changelevel *26 (y -2144..-2128), touched moving
+    // -y.
+    Some(ChapterArrival {
+        landmark: "c2a4gc2a5",
+        offset: [0, -180, 184],
+        yaw: 2048,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Forget About Freeman! (c3a1): c2a5g trigger_changelevel *19 (y 2352..2368), touched
+    // moving -y.
+    Some(ChapterArrival {
+        landmark: "c2a5g/c3a1",
+        offset: [-50, 29, -117],
+        yaw: 2048,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Lambda Core (c3a2e): c3a1b transition room: c3a1transdoor's netname fires c3a1toc3a2
+    // (changetarget c3a2startdoors) with the player inside.
+    Some(ChapterArrival {
+        landmark: "c3a1c3a2",
+        offset: [0, -60, 0],
+        yaw: 0,
+        changetarget: "c3a2startdoors",
+        delay_ticks: 0,
+    }),
+    // Xen (c4a1): c3a2d teleports the player to d00a (no angle) and multi_manager go fires
+    // change 4 s later.
+    Some(ChapterArrival {
+        landmark: "c3a2_c4a1",
+        offset: [0, 28, 0],
+        yaw: 1024,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Gonarch's Lair (c4a2): c4a1 portal: trigger_once fires change with the player inside the
+    // c4a2 transition volume (both SDA demos at -389/-385, 170/176, z -52).
+    Some(ChapterArrival {
+        landmark: "c4a2",
+        offset: [3, -52, -14],
+        yaw: 0,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Interloper (c4a1a): c4a2b portal: change fires with the player inside the c4a1a
+    // transition volume (centre used; lands on func_breakable rocker_1 where the SDA 5548 run
+    // starts).
+    Some(ChapterArrival {
+        landmark: "c4a1a",
+        offset: [-14, -62, -10],
+        yaw: 0,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Nihilanth (c4a3): c4a1f portal: change fires with the player inside the c4a3 transition
+    // volume (centre used, SDA demos yaw 315/317).
+    Some(ChapterArrival {
+        landmark: "c4a3",
+        offset: [0, -44, 0],
+        yaw: 1536,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+    // Endgame (c5a1): c4a3 teleports the player to tele_petal_teleport (angle 90) and fires
+    // change_to_c5a1 4 s later.
+    Some(ChapterArrival {
+        landmark: "c4a3toc5a1",
+        offset: [-24, 23, 1],
+        yaw: 0,
+        changetarget: "",
+        delay_ticks: 0,
+    }),
+];
+
+// MAPLIST index of c3a2d, the map with the one item_longjump.
+const LONGJUMP_ROOM: usize = 81;
+
+/// A menu start into `room_id`. A chapter's first map arrives the way normal
+/// play does (see [`ChapterArrival`]), with the suit, long jump and weapons a
+/// playthrough has collected by then; any other map is a direct spawn.
+fn menu_start(room_id: usize) -> RoomLaunch {
+    let mut launch = menu_launch(room_id);
+    // A loaded save restores its own pose, arsenal and globals.
+    if unsafe { PENDING_RESTORE_ACTIVE && PENDING_RESTORE.room_id as usize == room_id } {
+        return launch;
+    }
+    let Some(arrival) =
+        menu::chapter_starting_in(room_id).and_then(|c| CHAPTER_ARRIVALS[c].as_ref())
+    else {
+        return launch;
+    };
+    launch.landmark = landmark_from_str(arrival.landmark);
+    let mut axis = 0usize;
+    while axis < 3 {
+        launch.landmark_offset[axis] = logic_state::pack_landmark_axis(arrival.offset[axis], 0);
+        axis += 1;
+    }
+    launch.yaw = arrival.yaw;
+    launch.suit_equipped = menu::play_rank(room_id) > menu::play_rank(HEV_SUIT_ROOM);
+    launch.ride_seat = logic_state::pack_changelevel_payload(
+        [0; 3],
+        logic_state::logic_name_hash32(arrival.changetarget),
+        arrival.delay_ticks,
+    );
+    launch
+}
+
+/// A fresh start that names its arrival landmark came from [`menu_start`];
+/// a changelevel names one too but carries the player's own state.
+#[inline(always)]
+fn is_chapter_arrival(launch: &RoomLaunch) -> bool {
+    !launch.preserve_view && launch.landmark.len > 0
 }
 
 #[cfg(feature = "debug-regression-viewpoints")]
@@ -17670,8 +17898,22 @@ impl Arsenal {
     /// a full clip and ~3 magazines of reserve so the loadout is immediately
     /// usable (and testable). A late chapter thus hands you every weapon.
     fn give_chapter_loadout(&mut self, room_id: usize) {
+        self.give_loadout(|first_map| first_map <= room_id);
+    }
+
+    /// The arsenal normal play has collected on arriving in `room_id`: every
+    /// weapon first found in a map played before it. Pickups in the arrival
+    /// map itself are still lying there.
+    fn give_arrival_loadout(&mut self, room_id: usize) {
+        let rank = menu::play_rank(room_id);
+        self.give_loadout(|first_map| menu::play_rank(first_map) < rank);
+    }
+
+    /// Grant each weapon whose first-appearance map passes `earned`, loaded
+    /// as described on [`Arsenal::give_chapter_loadout`].
+    fn give_loadout(&mut self, earned: impl Fn(usize) -> bool) {
         for w in 0..N_WEAPONS {
-            if WEAPON_FIRST_MAP[w] > room_id {
+            if !earned(WEAPON_FIRST_MAP[w]) {
                 continue;
             }
             self.give_weapon(w);
@@ -27759,7 +28001,13 @@ fn main() {
         } else {
             menu::run(&mut fb, unsafe { stream_menu_assets() })
         };
-        let mut launch = menu_launch(sel);
+        // Debug direct-map boots keep the map's own spawn; menu choices arrive
+        // the way normal play would.
+        let mut launch = if dbg_sel.is_some() {
+            menu_launch(sel)
+        } else {
+            menu_start(sel)
+        };
         if DEBUG_REGRESSION_VIEWPOINTS && dbg_sel.is_some() {
             let selector = ((poll_port1().buttons.bits() >> 12) & 0x0F) as usize;
             if selector == DEBUG_REGRESSION_SELECTOR {
@@ -28793,12 +29041,13 @@ fn play(
         // grounded origin shift in the destination map.
         player.crouch = logic_state::carry_player_crouched(launch.carry_count);
     }
-    let mut yaw: u16 = if launch.preserve_view {
+    let chapter_arrival = is_chapter_arrival(&launch);
+    let mut yaw: u16 = if launch.preserve_view || chapter_arrival {
         launch.yaw
     } else {
         (m.spawn_yaw as u16) & 0xFFF
     };
-    let mut pitch: i16 = if launch.preserve_view {
+    let mut pitch: i16 = if launch.preserve_view || chapter_arrival {
         launch.pitch
     } else {
         0
@@ -28913,13 +29162,21 @@ fn play(
         } else {
             CARRY_VALID = false;
             GLOBAL_COUNT = 0; // fresh menu launch: clear cross-map global state
-            phys::set_longjump(false); // fresh start: no module yet
+                              // Fresh start: no module yet, unless a chapter start is past the
+                              // map that hands it out.
+            phys::set_longjump(
+                chapter_arrival
+                    && menu::play_rank(launch.room_id as usize) > menu::play_rank(LONGJUMP_ROOM),
+            );
             if DEBUG_ALL_WEAPONS
                 && launch.pitch != DEBUG_SAVED_VIEW_PITCH_SENTINEL
                 && launch.pitch != DEBUG_ENTRY_VIEW_PITCH_SENTINEL
             {
                 weapon.give_all_debug();
                 weapon.current = DEBUG_GALLERY_WEAPON as usize;
+            } else if chapter_arrival {
+                // Chapter start: what a playthrough has collected on arrival.
+                weapon.give_arrival_loadout(launch.room_id as usize);
             } else if launch.suit_equipped {
                 // Mid-campaign chapter select: the arsenal earned by this chapter.
                 weapon.give_chapter_loadout(launch.room_id as usize);
@@ -29423,7 +29680,7 @@ fn play(
                 LiveInputPoll::Sample(sample) => sample,
                 LiveInputPoll::Resumed => continue 'gameplay,
                 LiveInputPoll::MainMenu => return PlayExit::BackToMenu,
-                LiveInputPoll::Chapter(room) => return PlayExit::Chapter(menu_launch(room)),
+                LiveInputPoll::Chapter(room) => return PlayExit::Chapter(menu_start(room)),
             };
             #[cfg(feature = "performance-telemetry")]
             let input_sample = if unsafe { DEBUG_PERF_WALK_ROUTE } {
