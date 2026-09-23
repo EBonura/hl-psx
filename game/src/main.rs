@@ -12944,6 +12944,19 @@ fn prop_target(ty: u8, org: [i32; 3]) -> [i32; 3] {
     [org[0], org[1] + model_def(ty).target_h, org[2]]
 }
 
+/// Where an actor looks from. A ceiling turret (cooked pitch 180) sees from
+/// GoldSrc's negated view_ofs (12.75 below its origin), not from inside the
+/// ceiling, where every trace starts in solid and reads as clear.
+#[inline(never)]
+unsafe fn prop_eye(m: &Map, pi: usize) -> [i32; 3] {
+    let p = PROP_POS[pi];
+    if prop_authored_tilt(m, pi) & 0xff == 0x80 {
+        [p[0], p[1] - 13, p[2]]
+    } else {
+        prop_target(PROP_KIND[pi], p)
+    }
+}
+
 #[inline]
 fn prop_visual_ray_clear(
     m: &Map,
@@ -15656,7 +15669,7 @@ unsafe fn retained_actor_target(
         return None;
     }
     let aim = target_aim_point(target, player_pos, nprops)?;
-    let from = prop_target(PROP_KIND[pi], PROP_POS[pi]);
+    let from = prop_eye(m, pi);
     Some((target, actor_line_clear(m, movers, from, aim)))
 }
 
@@ -15799,7 +15812,7 @@ unsafe fn find_actor_target(
 ) -> (u8, bool) {
     let ty = PROP_KIND[pi];
     let pos = PROP_POS[pi];
-    let from = prop_target(ty, pos);
+    let from = prop_eye(m, pi);
     let mut best_visible = PROP_TARGET_NONE;
     let mut best_visible_d2 = wake2;
 
@@ -15891,7 +15904,7 @@ unsafe fn tick_shooter(
 
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, aim);
-    let from = prop_target(ty, pos);
+    let from = prop_eye(m, pi);
 
     if d2 <= range2 && visible {
         // In range + line of sight: hold and fire on the cooldown. The attack
