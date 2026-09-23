@@ -9001,6 +9001,7 @@ unsafe fn logic_phase_step(rec: map::LogicEnt, ei: usize) -> i32 {
     ((speed * 4096) / (20 * len)).max(1).min(4096)
 }
 
+#[inline(never)]
 unsafe fn logic_activate_door(nents: usize, li: usize, rec: map::LogicEnt, use_type: u8) {
     let Some(ei) = logic_valid_brush(rec.brush, nents) else {
         return;
@@ -9032,24 +9033,33 @@ unsafe fn logic_activate_door(nents: usize, li: usize, rec: map::LogicEnt, use_t
         }
         return;
     }
-    match use_type {
-        map::USE_OFF => {
-            if state == LOGIC_STATE_TOP || state == LOGIC_STATE_GOING_UP {
-                LOGIC_STATE[li] = LOGIC_STATE_GOING_DOWN;
-            }
-        }
-        map::USE_ON => {
-            if state == LOGIC_STATE_BOTTOM || state == LOGIC_STATE_GOING_DOWN {
-                LOGIC_STATE[li] = LOGIC_STATE_GOING_UP;
-            }
-        }
-        _ => {
-            if state == LOGIC_STATE_BOTTOM || state == LOGIC_STATE_GOING_DOWN {
-                LOGIC_STATE[li] = LOGIC_STATE_GOING_UP;
-            } else if (rec.spawnflags & SF_DOOR_TOGGLE) != 0 {
-                LOGIC_STATE[li] = LOGIC_STATE_GOING_DOWN;
-            }
-        }
+    // CBaseDoor::Use (doors.cpp) ignores the use type and every use while the
+    // door moves: at its start position it opens, and a toggle
+    // (NO_AUTO_RETURN) door at its far end closes. Relays with no
+    // triggerstate send OFF, so honouring the type left doors they target
+    // shut (c1a1c's squid_catwalk_2); reversing mid-travel stopped c1a1b's
+    // airlock doors, fired twice every half second, from ever cycling.
+    // A START_OPEN door starts at TOP here, the far end of its travel.
+    let _ = use_type;
+    let (start, far, leave_start, leave_far) = if (rec.spawnflags & SF_DOOR_START_OPEN) != 0 {
+        (
+            LOGIC_STATE_TOP,
+            LOGIC_STATE_BOTTOM,
+            LOGIC_STATE_GOING_DOWN,
+            LOGIC_STATE_GOING_UP,
+        )
+    } else {
+        (
+            LOGIC_STATE_BOTTOM,
+            LOGIC_STATE_TOP,
+            LOGIC_STATE_GOING_UP,
+            LOGIC_STATE_GOING_DOWN,
+        )
+    };
+    if state == start {
+        LOGIC_STATE[li] = leave_start;
+    } else if state == far && (rec.spawnflags & SF_DOOR_TOGGLE) != 0 {
+        LOGIC_STATE[li] = leave_far;
     }
 }
 
@@ -11780,6 +11790,8 @@ unsafe fn logic_touch_triggers(
         player_pos[1] + PLAYER_TOUCH_HEIGHT,
         player_pos[2] + PLAYER_TOUCH_HALF_XZ,
     ];
+    let pmins_contact = [pmins[0] - 1, pmins[1] - 1, pmins[2] - 1];
+    let pmaxs_contact = [pmaxs[0] + 1, pmaxs[1] + 1, pmaxs[2] + 1];
     let indexed = LOGIC_TOUCH_COUNT != LOGIC_HOT_FALLBACK;
     let scan_count = if indexed {
         LOGIC_TOUCH_COUNT as usize
@@ -11813,7 +11825,21 @@ unsafe fn logic_touch_triggers(
                     continue;
                 }
             }
-            if !m.logic_touches_bounds(li, pmins, pmaxs) {
+            // A door or button is touched by colliding with it, and GoldSrc
+            // clips movement an epsilon short of the brush: SV_LinkEdict
+            // widens every absbox by one unit so contact still counts. Without
+            // that slack a player walking up a positive axis stops one unit
+            // short after rounding and never opens c1a1c's door to c1a1d.
+            let contact = matches!(
+                LOGIC_KIND[li],
+                map::LOGIC_FUNC_DOOR | map::LOGIC_FUNC_BUTTON
+            );
+            let (tmins, tmaxs) = if contact {
+                (pmins_contact, pmaxs_contact)
+            } else {
+                (pmins, pmaxs)
+            };
+            if !m.logic_touches_bounds(li, tmins, tmaxs) {
                 scan += 1;
                 continue;
             }
