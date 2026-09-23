@@ -7872,6 +7872,9 @@ fn collect_logic_entities_with_lightstyles(
             }
             LOGIC_ENV_RENDER => brush_render_class(block),
             LOGIC_MULTISOURCE => global_hash(ent_value(block, "globalstate").unwrap_or("")),
+            // CAutoTrigger fires only if its globalstate is on (c1a4i's
+            // test-fire autos wait for c1a4fpower/c1a4doxy/c1a4dfuel).
+            LOGIC_TRIGGER_AUTO => global_hash(ent_value(block, "globalstate").unwrap_or("")),
             // Master-gated entities carry their `master` (a multisource
             // targetname) here; the runtime keeps them locked until that
             // multisource is satisfied (SDK UTIL_IsMasterTriggered). These are

@@ -5677,6 +5677,30 @@ unsafe fn set_global(hash: u16, on: bool) {
     }
 }
 
+/// CAutoTrigger::Think runs once, 0.1 s after spawn, and fires only while
+/// its globalstate is GLOBAL_ON. Called after the level's globals (carried
+/// or restored from a save) are final.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn logic_fire_global_autos(m: &Map, nlogic: usize) {
+    let mut li = 0usize;
+    while li < nlogic {
+        if LOGIC_KIND[li] == map::LOGIC_TRIGGER_AUTO {
+            let rec = m.logic(li);
+            if rec.arg1 != 0 && global_is_on(rec.arg1) {
+                logic_enqueue_event(
+                    rec.delay_ticks.max(1),
+                    rec.target,
+                    rec.killtarget,
+                    rec.use_type,
+                    li as u16,
+                );
+            }
+        }
+        li += 1;
+    }
+}
+
 unsafe fn global_is_on(hash: u16) -> bool {
     if hash == 0 {
         return false;
@@ -12030,7 +12054,9 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                     CD_TRACK_WANT = track;
                 }
             }
-            map::LOGIC_TRIGGER_AUTO => {
+            // An auto with a globalstate is decided by logic_fire_global_autos
+            // once a loaded save's globals are in place.
+            map::LOGIC_TRIGGER_AUTO if rec.arg1 == 0 => {
                 let at = now.wrapping_add(rec.delay_ticks.max(1));
                 logic_enqueue_event(at, rec.target, rec.killtarget, rec.use_type, li as u16);
             }
@@ -28984,6 +29010,7 @@ fn play(
         } else {
             PENDING_RESTORE_ACTIVE = false;
         }
+        logic_fire_global_autos(&m, nlogic);
     }
     let mut pickup_kind: u8 = hud::PICKUP_NONE;
     let mut pickup_ticks: u8 = 0;
