@@ -1736,7 +1736,11 @@ fn compile_game(
             // hl-psx 6.7 KB of free RAM, and it was the slowest of the
             // thresholds measured. 1000 was faster on every trained and
             // unseen route of both games while using no more RAM than the
-            // unprofiled build.
+            // unprofiled build. With SDK 6da88d92d's converter (function-entry
+            // samples now counted) the same threshold overflowed RAM by 4.3 KB;
+            // -profile-sample-accurate keeps the gain (+1.0% to poll 1500,
+            // +2.8% to the tape end) at the unprofiled build's RAM.
+            flags.push("-Cllvm-args=-profile-sample-accurate".to_string());
             flags.push("-Cllvm-args=-hot-callsite-threshold=1000".to_string());
         }
         command
