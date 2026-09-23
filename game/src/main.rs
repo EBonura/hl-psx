@@ -3399,6 +3399,15 @@ static mut MONSTER_TRIGGER_END: u16 = 0;
 static mut BOSS_WALKER: u16 = u16::MAX;
 static mut LOGIC_EVENTS: [LogicEvent; MAX_LOGIC_EVENTS] = [EMPTY_LOGIC_EVENT; MAX_LOGIC_EVENTS];
 static mut TRACKTRAIN_SUBMODEL: u16 = 0;
+// Live path_track switches for a branching tram path, one bit per cooked
+// waypoint (<= 256): SF_PATH_ALTERNATE and SF_PATH_DISABLED.
+static mut TRAM_NODE_ALT: [u32; 8] = [0; 8];
+static mut TRAM_NODE_OFF: [u32; 8] = [0; 8];
+// Waypoints the last tram_advance crossed, in order, for fire-on-pass.
+static mut TRAM_PASSED: [u16; 16] = [0; 16];
+static mut TRAM_PASSED_N: usize = 0;
+// Buttons with health on this map (hitscan tests only when nonzero).
+static mut SHOOTABLE_BUTTONS: u8 = 0;
 static mut TRACKTRAIN_CMD_ACTIVE: u8 = 0;
 static mut TRACKTRAIN_CMD_USE_TYPE: u8 = map::USE_TOGGLE;
 static mut TRACKTRAIN_CMD_SPEED: u16 = 0;
@@ -4751,6 +4760,59 @@ fn seg_len(a: [i32; 3], b: [i32; 3]) -> i32 {
 }
 
 #[inline]
+#[inline(always)]
+fn tram_bit(bits: &[u32; 8], i: usize) -> bool {
+    i < 256 && bits[i >> 5] & (1 << (i & 31)) != 0
+}
+
+/// CPathTrack::Use: a node with an altpath switches between its two paths,
+/// any other node is enabled or disabled. USE_ON selects the primary path or
+/// enables, USE_OFF the alternate path or disables, TOGGLE flips.
+#[inline(never)]
+unsafe fn tram_path_track_use(m: &Map, target: u16, use_type: u8) {
+    let mut i = 0usize;
+    while i < m.n_way.min(256) {
+        if target != 0 && m.way_name(i) == target {
+            let bits = if m.way_alt(i).is_some() {
+                &mut TRAM_NODE_ALT
+            } else {
+                &mut TRAM_NODE_OFF
+            };
+            let mask = 1u32 << (i & 31);
+            match use_type {
+                map::USE_ON => bits[i >> 5] &= !mask,
+                map::USE_OFF => bits[i >> 5] |= mask,
+                _ => bits[i >> 5] ^= mask,
+            }
+        }
+        i += 1;
+    }
+}
+
+/// CPathTrack::GetNext: the altpath while switched to it (unless the switch
+/// only applies in reverse), else the target.
+#[inline(never)]
+fn tram_next(m: &Map, seg: usize) -> Option<usize> {
+    if !m.tram_graph {
+        return (seg + 1 < m.n_way).then_some(seg + 1);
+    }
+    if let Some(alt) = m.way_alt(seg) {
+        if unsafe { tram_bit(&*core::ptr::addr_of!(TRAM_NODE_ALT), seg) }
+            && m.way_flags(seg) & cooked::PATH_TRACK_ALTREVERSE == 0
+        {
+            return Some(alt);
+        }
+    }
+    m.way_next(seg)
+}
+
+/// The next node a moving train may enter (CPathTrack::ValidPath with move
+/// set): a disabled node stops it at the current one.
+#[inline(never)]
+fn tram_next_open(m: &Map, seg: usize) -> Option<usize> {
+    tram_next(m, seg).filter(|&n| !unsafe { tram_bit(&*core::ptr::addr_of!(TRAM_NODE_OFF), n) })
+}
+
 fn tram_step_for_speed(speed: i32, remainder: &mut i32) -> i32 {
     if speed <= 0 {
         *remainder = 0;
@@ -4767,11 +4829,11 @@ fn tram_path_pos(m: &Map, seg: usize, seg_dist: i32) -> [i32; 3] {
     if m.n_way == 0 {
         return [0, 0, 0];
     }
-    if seg + 1 >= m.n_way {
-        return m.waypoint(m.n_way - 1);
-    }
+    let Some(next) = tram_next(m, seg) else {
+        return m.waypoint(seg.min(m.n_way - 1));
+    };
     let a = m.waypoint(seg);
-    let b = m.waypoint(seg + 1);
+    let b = m.waypoint(next);
     let len = seg_len(a, b);
     let f = (seg_dist * 4096 / len).clamp(0, 4096);
     [
@@ -4804,19 +4866,25 @@ fn tram_path_lookahead_q8(m: &Map, mut seg: usize, mut seg_dist: i32, mut ahead:
         let p = m.waypoint(0);
         return [p[0] << 8, p[1] << 8, p[2] << 8];
     }
-    seg = seg.min(m.n_way - 2);
+    if !m.tram_graph {
+        seg = seg.min(m.n_way - 2);
+    }
     ahead = ahead.max(0);
     loop {
         let a = m.waypoint(seg);
-        let b = m.waypoint(seg + 1);
+        let Some(next) = tram_next(m, seg) else {
+            // A graph dead end: no final segment to project along.
+            return [a[0] << 8, a[1] << 8, a[2] << 8];
+        };
+        let b = m.waypoint(next);
         let len = seg_len(a, b).max(1);
         let left = (len - seg_dist).max(0);
         if ahead <= left {
             return tram_lerp_q8(a, b, seg_dist + ahead, len);
         }
         ahead -= left;
-        if seg + 2 < m.n_way {
-            seg += 1;
+        if tram_next(m, next).is_some() {
+            seg = next;
             seg_dist = 0;
             continue;
         }
@@ -5050,9 +5118,12 @@ fn tram_seek_nearest(m: &Map, pos: [i32; 3]) -> (usize, i32) {
     if m.n_way < 2 {
         return (0, 0);
     }
-    for s in 0..m.n_way - 1 {
+    for s in 0..m.n_way {
+        let Some(next) = m.way_next(s) else {
+            continue;
+        };
         let a = m.waypoint(s);
-        let b = m.waypoint(s + 1);
+        let b = m.waypoint(next);
         let len = seg_len(a, b);
         for k in 0..=16 {
             let t = len * k / 16;
@@ -5090,13 +5161,22 @@ fn tram_advance(
     }
     let mut rem = step;
     let mut phase_boundary = false;
-    while rem > 0 && *seg + 1 < m.n_way {
-        let len = seg_len(m.waypoint(*seg), m.waypoint(*seg + 1));
+    while rem > 0 {
+        let Some(next) = tram_next_open(m, *seg) else {
+            break;
+        };
+        let len = seg_len(m.waypoint(*seg), m.waypoint(next));
         if *seg_dist + rem >= len {
             rem -= len - *seg_dist;
             let leaving_trackchange = tram_is_trackchange_segment(m, *seg);
-            *seg += 1;
+            *seg = next;
             *seg_dist = 0;
+            unsafe {
+                if TRAM_PASSED_N < TRAM_PASSED.len() {
+                    TRAM_PASSED[TRAM_PASSED_N] = next as u16;
+                    TRAM_PASSED_N += 1;
+                }
+            }
             // Passing a path_track with a "speed" key changes the train's
             // speed (CPathTrack, plats.cpp); 0 keeps the current one. c0a0
             // is authored 200..400 u/s in sections.
@@ -5138,7 +5218,7 @@ fn tram_advance(
             }
         }
     }
-    (*seg + 1 < m.n_way, phase_boundary)
+    (tram_next_open(m, *seg).is_some(), phase_boundary)
 }
 
 fn tram_apply_command(
@@ -8441,6 +8521,9 @@ unsafe fn logic_fire_targets(
         }
         li += 1;
     }
+    if m.tram_graph {
+        tram_path_track_use(m, target, use_type);
+    }
     // GoldSrc CSprite::Use honors explicit ON/OFF and TOGGLE, and restarts a
     // one-shot animation whenever it turns on.
     let nsp = m.n_sprites.min(MAX_SPRITE_INSTANCES);
@@ -11652,6 +11735,16 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     DAMAGE_TICKS = 0;
     GEIGER_COOLDOWN = 0;
     TRACKTRAIN_SUBMODEL = m.tram_submodel.min(u16::MAX as usize) as u16;
+    TRAM_NODE_ALT = [0; 8];
+    TRAM_NODE_OFF = [0; 8];
+    SHOOTABLE_BUTTONS = 0;
+    let mut wi = 0usize;
+    while wi < m.n_way.min(256) {
+        if m.way_flags(wi) & cooked::PATH_TRACK_DISABLED != 0 {
+            TRAM_NODE_OFF[wi >> 5] |= 1 << (wi & 31);
+        }
+        wi += 1;
+    }
     TRACKTRAIN_CMD_ACTIVE = 0;
     TRACKTRAIN_CMD_USE_TYPE = map::USE_TOGGLE;
     TRACKTRAIN_CMD_SPEED = 0;
@@ -11761,6 +11854,9 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
             MONSTERCLIP_N += 1;
         }
         LOGIC_TARGET[li] = rec.target;
+        if rec.kind == map::LOGIC_FUNC_BUTTON && rec.spawnflags & map::SF_BUTTON_SHOOTABLE != 0 {
+            SHOOTABLE_BUTTONS = SHOOTABLE_BUTTONS.saturating_add(1);
+        }
         LOGIC_COUNTER[li] = match rec.kind {
             map::LOGIC_TRIGGER_COUNTER => (rec.arg0 as i16).max(1),
             // Chargers store their remaining juice here (never counters).
@@ -18230,6 +18326,50 @@ unsafe fn prop_studio_hit_fraction(
     best
 }
 
+/// Entry fraction (Q12 of p1->p2) of a segment into an axis-aligned box.
+fn segment_box_frac(p1: [i32; 3], p2: [i32; 3], mins: [i32; 3], maxs: [i32; 3]) -> Option<i32> {
+    let (mut lo, mut hi) = (0i32, 4096i32);
+    let mut axis = 0usize;
+    while axis < 3 {
+        let d = p2[axis] - p1[axis];
+        if d == 0 {
+            if p1[axis] < mins[axis] || p1[axis] > maxs[axis] {
+                return None;
+            }
+        } else {
+            let a = mul_div_i32(mins[axis] - p1[axis], 4096, d);
+            let b = mul_div_i32(maxs[axis] - p1[axis], 4096, d);
+            lo = lo.max(a.min(b));
+            hi = hi.min(a.max(b));
+            if lo > hi {
+                return None;
+            }
+        }
+        axis += 1;
+    }
+    Some(lo)
+}
+
+/// A bullet into a button with health (func_button, func_rot_button):
+/// CBaseButton::TakeDamage answers as a touch does. The shot is tested
+/// against the button's bounds, nearer than the world or any other brush.
+#[inline(never)]
+unsafe fn shoot_buttons(m: &Map, eye: [i32; 3], end: [i32; 3], limit_frac: i32) {
+    let nlogic = m.n_logic.min(MAX_LOGIC);
+    let mut li = 0usize;
+    while li < nlogic {
+        if LOGIC_KIND[li] == map::LOGIC_FUNC_BUTTON && LOGIC_STATE[li] != LOGIC_STATE_REMOVED {
+            let rec = m.logic(li);
+            if rec.spawnflags & map::SF_BUTTON_SHOOTABLE != 0
+                && segment_box_frac(eye, end, rec.mins, rec.maxs).is_some_and(|f| f <= limit_frac)
+            {
+                logic_activate_button(m, nlogic, m.n_ents.min(MAX_ENTS), li, rec, SIM_NOW, 0, true);
+            }
+        }
+        li += 1;
+    }
+}
+
 /// One hitscan trace. `damage`/`range` from the weapon; (`aim_x`,`aim_y`) is the
 /// half-cone in screen px; (`cx_px`,`cy_px`) offsets the cone centre (shotgun
 /// pellets). Returns `Some` for either an actor or world hit, applying damage
@@ -18267,6 +18407,9 @@ unsafe fn fire_hitscan(
     #[cfg(feature = "deep-reference-trace")]
     reference_trace::hitscan(SIM_NOW as u32, eye, end, world_hit);
     let world_limit_frac = world_hit.map_or(4097, |hit| hit.frac);
+    if SHOOTABLE_BUTTONS != 0 {
+        shoot_buttons(m, eye, end, world_limit_frac);
+    }
     let mut best = usize::MAX;
     let mut best_frac = 4097i32;
     let mut pi = 0usize;
@@ -29205,6 +29348,7 @@ fn play(
                     tram_pre_left -= used;
                     step -= used;
                 }
+                unsafe { TRAM_PASSED_N = 0 };
                 let (still_moving, crossed_tram_phase) = if step > 0 {
                     tram_advance(&m, &mut tram_seg, &mut tram_seg_dist, step, &mut tram_speed)
                 } else {
@@ -29216,8 +29360,8 @@ fn play(
                 // path_track fire-on-pass ("message"): the TRAIN's passage
                 // fires these in HL -- the intro ride's changelevels and
                 // station scripts hang off them.
-                for w in (seg_before_move + 1)..=tram_seg {
-                    let pid = m.way_pass(w);
+                for pass in 0..unsafe { TRAM_PASSED_N } {
+                    let pid = m.way_pass(unsafe { TRAM_PASSED[pass] } as usize);
                     if pid != 0 {
                         unsafe {
                             logic_fire_targets(
