@@ -26653,6 +26653,10 @@ impl BeamTri {
 /// to the beam's average depth. Both halves enter the world ordering table, so
 /// nearer BSP/model packets cover a laser instead of every laser being an
 /// unconditional overlay. Culled if either endpoint is off-screen/behind.
+/// Beams sort this many units nearer than their true depth: an additive line
+/// touching or grazing a surface must not lose the ordering-table tie to it.
+const BEAM_DEPTH_BIAS: i32 = 24;
+
 /// Project a world-space beam segment for drawing: clip it to the view depth
 /// range in camera space and to a guard band around the screen, so a beam
 /// whose end lies behind the camera or off-screen (a laser crossing the view,
@@ -26771,20 +26775,36 @@ fn draw_beam(
         .min((len / 4).max(1));
     // Screen-space perpendicular (-dy, dx), normalized to the half-width.
     let (px, py) = ((-dy * hw) / len, (dx * hw) / len);
-    let a = ((x0 + px) as i16, (y0 + py) as i16);
-    let b = ((x0 - px) as i16, (y0 - py) as i16);
-    let d = ((x1 + px) as i16, (y1 + py) as i16);
-    let e = ((x1 - px) as i16, (y1 - py) as i16);
-    let otz = clamp_otz((avg as usize) >> OT_SHIFT);
-    if let Some(packet) = packets.push(BeamTri::new([a, b, d], color)) {
-        ot.add(otz, packet, BeamTri::WORDS);
-    } else {
-        unsafe { note_render_packet_drop(false) };
-    }
-    if let Some(packet) = packets.push(BeamTri::new([b, e, d], color)) {
-        ot.add(otz, packet, BeamTri::WORDS);
-    } else {
-        unsafe { note_render_packet_drop(false) };
+    let _ = avg;
+    // Up to four pieces, each sorted at its own (slightly camera-biased)
+    // depth, so a long beam grazing a wall is not buried behind it.
+    let segs = ((len / 48).max(1)).min(4);
+    let iz0 = (1i32 << 24) / sz0.max(render::NEAR_Z);
+    let iz1 = (1i32 << 24) / sz1.max(render::NEAR_Z);
+    let mut i = 0i32;
+    while i < segs {
+        let (ta, tb) = ((i * 4096) / segs, ((i + 1) * 4096) / segs);
+        let (xa, ya) = (x0 + ((dx * ta) >> 12), y0 + ((dy * ta) >> 12));
+        let (xb, yb) = (x0 + ((dx * tb) >> 12), y0 + ((dy * tb) >> 12));
+        let a = ((xa + px) as i16, (ya + py) as i16);
+        let b = ((xa - px) as i16, (ya - py) as i16);
+        let d = ((xb + px) as i16, (yb + py) as i16);
+        let e = ((xb - px) as i16, (yb - py) as i16);
+        let tm = (ta + tb) / 2;
+        let iz = (iz0 + (((iz1 - iz0) as i64 * tm as i64) >> 12) as i32).max(1);
+        let z = ((1i32 << 24) / iz - BEAM_DEPTH_BIAS).max(render::NEAR_Z);
+        let otz = clamp_otz((z as usize) >> OT_SHIFT);
+        if let Some(packet) = packets.push(BeamTri::new([a, b, d], color)) {
+            ot.add(otz, packet, BeamTri::WORDS);
+        } else {
+            unsafe { note_render_packet_drop(false) };
+        }
+        if let Some(packet) = packets.push(BeamTri::new([b, e, d], color)) {
+            ot.add(otz, packet, BeamTri::WORDS);
+        } else {
+            unsafe { note_render_packet_drop(false) };
+        }
+        i += 1;
     }
 }
 
@@ -26834,10 +26854,29 @@ unsafe fn draw_beam_textured(
     let (px, py) = ((-dy * hw) / len, (dx * hw) / len);
     let na = ((noise_world * h) / avg).clamp(0, 60);
     let segs = ((len / 28).max(1) as usize).min(7);
-    let otz = clamp_otz((avg as usize) >> OT_SHIFT);
+    // Sort each segment at its own depth (1/z interpolates linearly on
+    // screen), so a long beam crossing a room is occluded where it passes
+    // behind geometry instead of taking one depth for its whole length.
+    let iz0 = (1i32 << 24) / sz0.max(render::NEAR_Z);
+    let iz1 = (1i32 << 24) / sz1.max(render::NEAR_Z);
+    let seg_otz = |i: usize| {
+        let t = ((2 * i as i32 + 1) * 2048) / segs as i32;
+        let iz = (iz0 + (((iz1 - iz0) as i64 * t as i64) >> 12) as i32).max(1);
+        let z = ((1i32 << 24) / iz - BEAM_DEPTH_BIAS).max(render::NEAR_Z);
+        clamp_otz((z as usize) >> OT_SHIFT)
+    };
+    let mut otz = clamp_otz((avg as usize) >> OT_SHIFT);
     let mat = sl.material.with_blend_mode(BlendMode::Add);
     let packet = TexturedGouraudPacketMaterial::from_texture(mat);
+    if hw <= 1 {
+        // A one-pixel textured strip samples only the sprite's dark falloff
+        // columns and vanishes; draw it as the flat additive line a distant
+        // thin GoldSrc laser reads as.
+        draw_beam(packets, ot, start, end, half_world, color, rot, base_t);
+        return;
+    }
     let uw = d.crush_w.saturating_sub(1).min(255) as u8;
+    let u_lo = 0u8;
     let vspan = d.crush_h.clamp(1, 64) as i32;
     let v0 = ((BEAM_ANIM as i32 * scroll as i32) >> 3).rem_euclid(vspan) as u8;
     let v1 = v0 + (vspan - 1) as u8; // wraps inside the pow2 texture window
@@ -26866,8 +26905,8 @@ unsafe fn draw_beam_textured(
     // through push_tri_uv_words (its world/tram cache capture would fold beam
     // packets into the cached world plan). Bit 25 forces semi-transparency so
     // the STP-set texels blend additively, exactly like BeamTri does.
-    let mut emit =
-        |packets: &mut PrimitivePacketArena<'_>, screen: [(i16, i16); 3], uv: [u16; 3]| {
+    let emit =
+        |packets: &mut PrimitivePacketArena<'_>, otz: usize, screen: [(i16, i16); 3], uv: [u16; 3]| {
             let prim = TriTexturedGouraud {
                 tag: 0,
                 tex_window: packet.tex_window_word,
@@ -26893,15 +26932,18 @@ unsafe fn draw_beam_textured(
         let b = (cl(jx[i] - px), cl(jy[i] - py));
         let c = (cl(jx[i + 1] + px), cl(jy[i + 1] + py));
         let e = (cl(jx[i + 1] - px), cl(jy[i + 1] - py));
+        otz = seg_otz(i);
         emit(
             packets,
+            otz,
             [a, b, c],
-            [uv_word((0, v0)), uv_word((uw, v0)), uv_word((0, v1))],
+            [uv_word((u_lo, v0)), uv_word((uw, v0)), uv_word((u_lo, v1))],
         );
         emit(
             packets,
+            otz,
             [b, e, c],
-            [uv_word((uw, v0)), uv_word((uw, v1)), uv_word((0, v1))],
+            [uv_word((uw, v0)), uv_word((uw, v1)), uv_word((u_lo, v1))],
         );
         i += 1;
     }

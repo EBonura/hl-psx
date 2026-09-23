@@ -8594,11 +8594,12 @@ fn collect_logic_entities_with_lightstyles(
                 None if radius_hl > 0.0 => (start, true),
                 None => continue,
             };
-            // CLaser takes its width from "width" in the network's tenths of
-            // a unit (a 20-wide laser is a two-unit line); env_beam keeps the
-            // established BoltWidth convention.
+            // CLaser takes its width from "width"; GoldSrc draws it as a thin
+            // line, far narrower than a lightning bolt of the same number.
+            // 0.6 keeps c1a1's width-20 lasers two to three pixels wide at
+            // room distance, readable over the port's brighter lighting.
             let width_hl = if is_laser {
-                (parse_f32_key(block, "width", 10.0) * 0.1).max(1.0)
+                (parse_f32_key(block, "width", 10.0) * 0.6).max(2.0)
             } else {
                 parse_f32_key(block, "BoltWidth", 16.0).max(1.0)
             };
