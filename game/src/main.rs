@@ -7689,6 +7689,7 @@ fn logic_pre_tick_candidate(kind: u8) -> bool {
             | map::LOGIC_MOMENTARY
             | map::LOGIC_SCRIPTED
             | map::LOGIC_SENTENCE
+            | map::LOGIC_SHOOTER
     )
 }
 
@@ -10550,6 +10551,12 @@ unsafe fn logic_use_entity(
             logic_infodecal(m, rec);
             LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
         }
+        map::LOGIC_SHOOTER => {
+            // CGibShooter::ShooterUse: shoot now, then one per interval.
+            LOGIC_COUNTER[li] = rec.arg0 as i16;
+            LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+            LOGIC_NEXT[li] = now;
+        }
         map::LOGIC_ENV_EXPLOSION => {
             // Scripted explosion: FX + sound only (real damage is trigger_hurt).
             queue_explosion_fx(rec.origin, rec.arg0.min(255) as u8);
@@ -11302,7 +11309,9 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
         if state == LOGIC_STATE_WAITING {
             if time_reached(now, LOGIC_NEXT[li]) {
                 LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
-                if LOGIC_KIND[li] == map::LOGIC_SCRIPTED {
+                if LOGIC_KIND[li] == map::LOGIC_SHOOTER {
+                    logic_shoot(m, li, now);
+                } else if LOGIC_KIND[li] == map::LOGIC_SCRIPTED {
                     logic_use_entity(
                         m,
                         nlogic,
@@ -20177,6 +20186,7 @@ static mut DEBRIS_CURSOR: usize = 0;
 static mut DEBRIS_RECTS: [RectFlat; MAX_DEBRIS] =
     [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_DEBRIS];
 
+#[inline(never)]
 unsafe fn spawn_debris(pos: [i32; 3], vel: [i32; 3], kind: u8, ttl: u8) {
     let i = DEBRIS_CURSOR % MAX_DEBRIS;
     DEBRIS[i] = Debris {
@@ -20223,6 +20233,29 @@ unsafe fn spawn_breakable_shards(rec: map::LogicEnt, live_center: [i32; 3]) {
         ];
         spawn_debris(p, vel, DEBRIS_BREAK_BASE + material, 50);
         shard += 1;
+    }
+}
+
+/// CGibShooter::ShootThink: one gib along the shoot direction jittered by
+/// the variance, as material-coloured world debris; the shooter is removed
+/// once empty unless SF_GIBSHOOTER_REPEATABLE.
+#[inline(never)]
+#[cold]
+#[optimize(size)]
+unsafe fn logic_shoot(m: &Map, li: usize, now: u16) {
+    let rec = m.logic(li);
+    let var = rec.flags as i32;
+    let mut vel = rec.mins;
+    for v in &mut vel {
+        *v += IMPACT_RNG.below(2 * var as u32 + 1) as i32 - var;
+    }
+    spawn_debris(rec.origin, vel, rec.arg1 as u8, 50);
+    LOGIC_COUNTER[li] -= 1;
+    if LOGIC_COUNTER[li] > 0 {
+        LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+        LOGIC_NEXT[li] = now.wrapping_add(rec.wait_ticks as u16);
+    } else if rec.spawnflags & 1 == 0 {
+        LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
     }
 }
 

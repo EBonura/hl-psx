@@ -7538,6 +7538,7 @@ fn collect_logic_entities_with_lightstyles(
             "infodecal" if !ent_value(block, "targetname").unwrap_or("").is_empty() => {
                 LOGIC_INFODECAL
             }
+            "gibshooter" | "env_shooter" => LOGIC_SHOOTER,
             "env_beverage" => LOGIC_ENV_BEVERAGE,
             "player_weaponstrip" => LOGIC_WEAPONSTRIP,
             // CBasePlayerItem::DefaultTouch always calls SUB_UseTargets after
@@ -7658,7 +7659,12 @@ fn collect_logic_entities_with_lightstyles(
             continue;
         }
 
-        let (origin, mins, maxs) = entity_bounds_world(block, models, scale);
+        let (origin, mut mins, maxs) = entity_bounds_world(block, models, scale);
+        if kind == LOGIC_SHOOTER {
+            let d = ent_move_dir(block);
+            let v = parse_f32_key(block, "m_flVelocity", 0.0) / scale / 20.0;
+            mins = [d[0], d[2], d[1]].map(|c| (c * v).round() as i32);
+        }
         let targetname = names.id(ent_value(block, "targetname"));
         let raw_spawnflags = parse_spawnflags(block);
         let spawnflags = if cls == "func_platrot" {
@@ -7682,7 +7688,10 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_TRIGGER_MULTIPLE => 0.2,
             _ => 0.0,
         };
-        let wait_ticks = if kind == LOGIC_SCRIPTED {
+        let wait_ticks = if kind == LOGIC_SHOOTER {
+            // CGibShooter::Spawn: a zero delay means one gib every 0.1 s.
+            seconds_to_ticks_i16(parse_f32_key(block, "delay", 0.0)).max(2)
+        } else if kind == LOGIC_SCRIPTED {
             // Scripts do not use CBaseToggle::wait. Reuse this signed word for
             // the classname search radius in cooked world units.
             (parse_f32_key(block, "m_flRadius", 0.0) / scale)
@@ -7905,6 +7914,7 @@ fn collect_logic_entities_with_lightstyles(
                 .round()
                 .clamp(1.0, 255.0) as u16,
             LOGIC_INFODECAL => infodecal_pick(ent_value(block, "texture").unwrap_or("")).0,
+            LOGIC_SHOOTER => parse_f32_key(block, "m_iGibs", 0.0).clamp(0.0, 255.0) as u16,
             LOGIC_MAP_FLAGS => {
                 let key = ent_value(block, "chaptertitle")
                     .unwrap_or("")
@@ -7918,6 +7928,17 @@ fn collect_logic_entities_with_lightstyles(
         };
         let arg1 = match kind {
             LOGIC_INFODECAL => infodecal_pick(ent_value(block, "texture").unwrap_or("")).1,
+            // Debris kind: 3 + GoldSrc material. gibshooter throws flesh;
+            // env_shooter's shootsounds picks glass, wood, metal, flesh or
+            // rocks (drawn as cinder block), none as metal.
+            LOGIC_SHOOTER => match (cls, ent_value(block, "shootsounds")) {
+                ("gibshooter", _) => 6,
+                (_, Some("0")) => 3,
+                (_, Some("1")) => 4,
+                (_, Some("3")) => 6,
+                (_, Some("4")) => 7,
+                _ => 5,
+            },
             LOGIC_ENV_BEVERAGE => parse_f32_key(block, "skin", 0.0).clamp(0.0, 6.0) as u16,
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
             LOGIC_FUNC_TRACKTRAIN => submodel.unwrap_or(0).min(u16::MAX as usize) as u16,
@@ -8077,6 +8098,12 @@ fn collect_logic_entities_with_lightstyles(
 
         let mut record_flags = if kind == LOGIC_SCRIPTED {
             script_class_selector(ent_value(block, "m_iszEntity").unwrap_or(""))
+        } else if kind == LOGIC_SHOOTER {
+            (parse_f32_key(block, "m_flVariance", 0.0) * parse_f32_key(block, "m_flVelocity", 0.0)
+                / scale
+                / 20.0)
+                .round()
+                .clamp(0.0, 255.0) as u8
         } else {
             0
         };
