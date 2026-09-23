@@ -66,7 +66,7 @@ func_wall|runtime|rendered brush and optional frame control
 func_wall_toggle|runtime|toggleable render and collision brush
 func_water|runtime|liquid brush volume and surface
 gibshooter|missing_visual|authored gib shooter is absent
-info_bigmomma|missing_gameplay|boss node behavior is absent
+info_bigmomma|approximated|Gonarch node walk: reachdelay, radius, health gates and reachtargets; no node sequences
 info_landmark|cook_only|transition transform marker
 info_node|cook_only|navigation graph input
 info_node_air|missing_gameplay|air navigation graph is absent
@@ -90,7 +90,7 @@ monster_apache|approximated|rendered actor without complete vehicle AI
 monster_barnacle|approximated|rendered actor without complete barnacle AI
 monster_barney|approximated|compact ally behavior
 monster_barney_dead|runtime|static authored corpse
-monster_bigmomma|approximated|rendered boss without complete boss AI
+monster_bigmomma|approximated|walks its info_bigmomma path and fires its node targets; no attacks or crab laying
 monster_bullchicken|approximated|shared melee actor behavior
 monster_cockroach|approximated|compact ambient actor behavior
 monster_flyer_flock|approximated|passive rendered flock
@@ -107,7 +107,7 @@ monster_human_grunt|approximated|shared ranged actor behavior
 monster_ichthyosaur|approximated|rendered actor without complete swim AI
 monster_leech|approximated|rendered actor without complete swim AI
 monster_miniturret|approximated|shared turret behavior
-monster_nihilanth|approximated|rendered boss without complete boss AI
+monster_nihilanth|approximated|fires n_dead on death and n_ending on its ending Use; no flight, crystals or attacks
 monster_osprey|missing_gameplay|renders as a static prop; no flight path
 monster_rat|missing_gameplay|renders; no scurry AI
 monster_scientist|approximated|compact ally and scripted behavior
