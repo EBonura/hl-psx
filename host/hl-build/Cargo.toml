@@ -1,0 +1,32 @@
+[package]
+name = "hl-psx-build"
+version = "0.2.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Rust-only end-to-end builder for hl-psx"
+
+# Standalone host workspace. The repository root is the PS1 game's workspace,
+# and that one names the hydrated .psoxide crates, so it cannot even be loaded
+# on a clean clone. The builder is what hydrates .psoxide, so it has to build
+# without it. From the repository root: `cargo hl-build ...` (an alias in
+# .cargo/config.toml).
+[workspace]
+
+[[bin]]
+name = "hl-psx-build"
+path = "main.rs"
+
+[dependencies]
+hl-format = { path = "../../shared/hl-format" }
+# Host SDK crates and the SDK component lock must resolve the same revision.
+# The build driver hydrates SDK, emulator and editor paths from components.lock.json.
+psoxide-link = { git = "https://github.com/EBonura/PSoXide.git", rev = "6da88d92de183cb5fd092be181bdbc5b81868480" }
+psx-pack = { git = "https://github.com/EBonura/PSoXide.git", rev = "6da88d92de183cb5fd092be181bdbc5b81868480" }
+lz4_flex = { version = "0.11", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

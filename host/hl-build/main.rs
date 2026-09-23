@@ -14,7 +14,7 @@ mod regression;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const ROOT_MANIFEST: &str = include_str!("../../Cargo.toml");
+const BUILDER_MANIFEST: &str = include_str!("Cargo.toml");
 const MAP_LIST: &str = include_str!("../hl-content/map-list.txt");
 const COOK_MANIFEST_SCHEMA: u32 = 1;
 const COOK_MANIFEST_PATH: &str = "data/.hlpsx-cook.json";
@@ -285,7 +285,7 @@ fn verify_cook_manifest(repository: &Path, psoxide: &Path) -> Result<CookManifes
     let path = cook_manifest_path(repository);
     let manifest: CookManifest = serde_json::from_slice(&fs::read(&path).map_err(|error| {
         format!(
-            "cooked-asset provenance is missing at {} ({error}); run `cargo run --release -- assets --half-life PATH --psoxide PATH` before packing",
+            "cooked-asset provenance is missing at {} ({error}); run `cargo hl-build assets --half-life PATH --psoxide PATH` before packing",
             path.display()
         )
     })?)?;
@@ -340,7 +340,7 @@ fn verify_cook_manifest(repository: &Path, psoxide: &Path) -> Result<CookManifes
         .find(|(_, expected, actual)| expected != actual)
     {
         return Err(format!(
-            "stale cooked assets: {label} does not match the full cook (manifest {expected}, current {actual}); run `cargo run --release -- assets --half-life PATH --psoxide PATH`",
+            "stale cooked assets: {label} does not match the full cook (manifest {expected}, current {actual}); run `cargo hl-build assets --half-life PATH --psoxide PATH`",
         )
         .into());
     }
@@ -364,16 +364,16 @@ fn manifest_dependency_rev<'a>(manifest: &'a str, dependency: &str) -> Option<&'
     })
 }
 
-/// The root manifest is the single authoritative PSoXide pin.
+/// The builder manifest is the single authoritative PSoXide pin.
 ///
 /// Both git dependencies must resolve to the same checkout. Deriving the
 /// hydration marker from that manifest prevents the build driver from silently
 /// copying a stale SDK after a dependency bump.
 fn psoxide_rev() -> &'static str {
-    let link = manifest_dependency_rev(ROOT_MANIFEST, "psoxide-link")
-        .expect("root Cargo.toml must pin psoxide-link by rev");
-    let pack = manifest_dependency_rev(ROOT_MANIFEST, "psx-pack")
-        .expect("root Cargo.toml must pin psx-pack by rev");
+    let link = manifest_dependency_rev(BUILDER_MANIFEST, "psoxide-link")
+        .expect("host/hl-build/Cargo.toml must pin psoxide-link by rev");
+    let pack = manifest_dependency_rev(BUILDER_MANIFEST, "psx-pack")
+        .expect("host/hl-build/Cargo.toml must pin psx-pack by rev");
     assert_eq!(link, pack, "psoxide-link and psx-pack revs must match");
     link
 }
@@ -681,7 +681,9 @@ const CANONICAL_GAME_NAME: &str = "Half-Life (hl-psx)";
 
 const HELP: &str = "hl-psx Rust build\n\n\
          USAGE:\n\
-           cargo run --release -- [sdk|build|assets|models|audit|regress|compile|pack|disc|install|pgo|check] [OPTIONS]\n\n\
+           cargo hl-build [sdk|build|assets|models|audit|regress|compile|pack|disc|install|pgo|check] [OPTIONS]\n\
+         from the repository root; `cargo hl-build` is an alias for\n\
+           cargo run --release --manifest-path host/hl-build/Cargo.toml --\n\n\
          ACTIONS:\n\
            sdk        hydrate the exact pinned PSoXide SDK only\n\
            build      extract/cook and create dist/hl-psx.bin/.cue (default)\n\
@@ -817,8 +819,13 @@ fn run(command: &mut Command, label: &str) -> Result<()> {
     Ok(())
 }
 
+/// The repository root: the builder's own manifest sits at host/hl-build.
 fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("the builder lives at <repo>/host/hl-build")
+        .to_path_buf()
 }
 
 const WORLD_PACK_SECTOR_BYTES: usize = 2048;
@@ -1834,8 +1841,9 @@ fn pack_disc_into(repository: &Path, psoxide: &Path, exe: &Path, dist: &Path) ->
 /// ELF's DWARF, and the final build is compiled with it. Over gameplay frames
 /// only (loads excluded) this measured 9.02 to 9.32 fps on the chapter-two
 /// recording, and 13.59 to 13.98 on the tram ride, which the profile never
-/// saw. Profile names carry crate hashes that depend on the checkout path, so
-/// the profile is rebuilt here rather than shipped.
+/// saw. Profile names carry crate hashes that change with the code, the
+/// features and the toolchain, so the profile is rebuilt here rather than
+/// shipped.
 fn profile_guided_pack(
     repository: &Path,
     psoxide: &Path,

@@ -1,0 +1,6 @@
+# The builder is its own workspace (host/hl-build), so the game's workspace at
+# this root never has to load for it. From the repository root:
+#   cargo hl-build build
+#   cargo hl-build --help
+[alias]
+hl-build = "run --release --manifest-path host/hl-build/Cargo.toml --"

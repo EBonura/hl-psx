@@ -1,5 +1,6 @@
-# Optional developer shortcuts. The supported end-user workflow is the root
-# Cargo build driver documented in README.md; Make is never required.
+# Optional developer shortcuts. The supported end-user workflow is the Cargo
+# build driver (`cargo hl-build`, host/hl-build) documented in README.md; Make
+# is never required.
 
 ROOT := $(CURDIR)
 HL_DIR ?=
@@ -11,7 +12,7 @@ MAP ?= c1a0
 MAP_INDEX ?= 0
 CAPTURE_DIR ?= $(ROOT)/captures
 
-DRIVER := cargo run --release --
+DRIVER := cargo run --release --manifest-path "$(ROOT)/host/hl-build/Cargo.toml" --
 HL_ARG := $(if $(strip $(HL_DIR)),--half-life "$(HL_DIR)",)
 FEATURE_ARG := $(if $(strip $(FEATURES)),--features "$(FEATURES)",)
 DIST := $(ROOT)/dist
@@ -36,7 +37,7 @@ PSOXIDE_MENU_PLAY_PULSES ?= 0x4000@500+20
 
 help:
 	@echo "Cargo is the supported build interface:"
-	@echo "  cargo run --release -- build"
+	@echo "  cargo hl-build build"
 	@echo ""
 	@echo "Optional Make aliases:"
 	@echo "  make build       - full extraction/cook + installed BIN/CUE"
@@ -136,8 +137,9 @@ cook:
 	"$(HLBSP_BIN)" --cook "$(HL_DIR)/valve/maps/$(MAP).bsp" \
 		"$(ROOT)/data/maps/$(MAP).hlm" "$(ROOT)/data/maps/$(MAP).hltx"
 
+# The game is cleaned from game/ so its .cargo/config.toml target-dir applies.
 clean:
-	cargo clean
-	cargo clean --manifest-path game/Cargo.toml
+	cargo clean --manifest-path host/hl-build/Cargo.toml
+	cd game && cargo clean
 	cargo clean --manifest-path host/hl-bsp/Cargo.toml
 	cargo clean --manifest-path host/hl-content/Cargo.toml

@@ -2,7 +2,15 @@
 
 ## Unreleased
 
-- Add `cargo run --release -- pgo --tape PATH`, a profile-guided pack. PSoXide
+- The builder is now `cargo hl-build ...` (an alias for
+  `cargo run --release --manifest-path host/hl-build/Cargo.toml --`), run from
+  the repository root. `cargo run --release -- ...` no longer works. The
+  builder moved to its own workspace under `host/hl-build/`, and the
+  repository root became the PS1 game's workspace, so every path dependency
+  sits inside it and Cargo hashes it by relative path. The game image no
+  longer depends on where the repository is checked out.
+
+- Add `cargo hl-build pgo --tape PATH`, a profile-guided pack. PSoXide
   counts every guest instruction while it replays the tape, and the compiler
   lays the game out around those counts. The chapter-two recording improves
   from 12.22 to 12.94 rendered FPS and its laboratory from 6.75 to 7.49; a

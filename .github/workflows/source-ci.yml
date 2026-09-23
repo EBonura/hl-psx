@@ -34,13 +34,13 @@ jobs:
           bash scripts/check-source-only.sh
 
       - name: Hydrate the pinned PSoXide SDK
-        run: cargo run --release --locked -- sdk
+        run: cargo run --release --locked --manifest-path host/hl-build/Cargo.toml -- sdk
 
       - name: Verify the PSoXide pin is on main
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          pin=$(sed -nE 's/.*psoxide-link.*rev = "([0-9a-f]{40})".*/\1/p' Cargo.toml)
+          pin=$(sed -nE 's/.*psoxide-link.*rev = "([0-9a-f]{40})".*/\1/p' host/hl-build/Cargo.toml)
           test ${#pin} -eq 40
           status=$(curl --fail --silent --show-error \
             --header "Accept: application/vnd.github+json" \
@@ -55,7 +55,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          cargo fmt --all -- --check
+          cargo fmt --manifest-path host/hl-build/Cargo.toml --package hl-psx-build -- --check
           cargo fmt --manifest-path game/Cargo.toml --package hl-psx -- --check
           cargo fmt --manifest-path host/hl-bsp/Cargo.toml --package hl-bsp -- --check
           cargo fmt --manifest-path host/hl-content/Cargo.toml --package hl-content -- --check
@@ -64,7 +64,7 @@ jobs:
 
       - name: Run host tests
         run: |
-          cargo test --locked
+          cargo test --manifest-path host/hl-build/Cargo.toml --locked
           cargo test --manifest-path host/hl-bsp/Cargo.toml --locked
           cargo test --manifest-path host/hl-content/Cargo.toml --locked
           cargo test --manifest-path host/hl-logic-tests/Cargo.toml --locked
@@ -77,7 +77,7 @@ jobs:
 
       - name: Audit dependency advisories, licences, and sources
         run: |
-          cargo deny --manifest-path Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
+          cargo deny --manifest-path host/hl-build/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
           cargo deny --manifest-path game/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
           cargo deny --manifest-path host/hl-bsp/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
           cargo deny --manifest-path host/hl-content/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources

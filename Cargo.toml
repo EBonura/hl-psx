@@ -1,25 +1,41 @@
-[package]
-name = "hl-psx-build"
-version = "0.2.0"
-edition = "2021"
-license = "GPL-2.0-or-later"
-description = "Rust-only end-to-end builder for hl-psx"
+# `trim-paths` is still a nightly cargo feature; the game is nightly-pinned
+# anyway (bare-metal MIPS needs build-std), so the gate costs nothing.
+cargo-features = ["trim-paths"]
 
-[[bin]]
-name = "hl-psx-build"
-path = "host/hl-build/main.rs"
-
-[dependencies]
-hl-format = { path = "shared/hl-format" }
-# Host SDK crates and the SDK component lock must resolve the same revision.
-# The build driver hydrates SDK, emulator and editor paths from components.lock.json.
-psoxide-link = { git = "https://github.com/EBonura/PSoXide.git", rev = "6da88d92de183cb5fd092be181bdbc5b81868480" }
-psx-pack = { git = "https://github.com/EBonura/PSoXide.git", rev = "6da88d92de183cb5fd092be181bdbc5b81868480" }
-lz4_flex = { version = "0.11", default-features = false }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.10"
+# The PS1 game's workspace. Its root is the repository root, not game/, so
+# every path dependency (the hydrated .psoxide crates, shared/hl-format) sits
+# inside it. Cargo hashes a path package by its path relative to the workspace
+# root when it can and by its absolute path otherwise, and that hash seeds
+# every crate disambiguator, so with the root at game/ the image's symbols and
+# layout changed with where the repository was checked out.
+#
+# The host tools are separate workspaces under host/ and shared/; the builder
+# is run with `cargo hl-build ...` (.cargo/config.toml). The PS1 target config
+# stays in game/.cargo/config.toml, so it only applies to builds run from
+# game/, as the builder's are.
+[workspace]
+resolver = "2"
+members  = ["game"]
+# .psoxide is a generated tree with its own host workspace, and shared/ and
+# host/ hold crates with their own [workspace]. Excluded crates are still
+# hashed by their path relative to this root.
+exclude  = [".psoxide", "shared", "host"]
 
 [profile.release]
+# no_std has no unwinder; abort keeps the binary small.
+panic         = "abort"
 codegen-units = 1
-lto = "thin"
+lto           = true
+# Strip absolute host paths out of the binary. rustc bakes the source path of
+# every panic/assert site into .rodata (core::panic::Location), the linker
+# script folds .rodata into .data, and .data ends on ALIGN(2048) -- so where
+# the checkout happens to sit changes how much PS1 RAM the program uses, in
+# 2 KiB steps. Building from the demo disc submodule (a path 20 chars longer
+# than the sibling checkout) crossed exactly one of those steps and the link
+# failed with ".bss will not fit in region RAM". Trimming makes the output
+# location-independent, and saves ~640 bytes of the paths themselves.
+trim-paths    = "all"
+
+# The card driver is one-shot code behind a menu action; size beats speed.
+[profile.release.package.psx-mc]
+opt-level = "s"

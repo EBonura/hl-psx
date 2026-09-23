@@ -71,15 +71,19 @@ folder instead.
 Run this one command from the repository root:
 
 ```sh
-cargo run --release -- build
+cargo hl-build build
 ```
+
+`cargo hl-build` is a Cargo alias defined in this repository's
+`.cargo/config.toml`, so it only works from the repository root. It is short
+for `cargo run --release --manifest-path host/hl-build/Cargo.toml --`.
 
 The builder finds Half-Life automatically in the standard Steam location on
 macOS, Linux, and Windows. If it says that Half-Life was not found, provide
 either the Half-Life installation folder or its `valve` folder:
 
 ```sh
-cargo run --release -- build --half-life "PATH_TO_HALF_LIFE"
+cargo hl-build build --half-life "PATH_TO_HALF_LIFE"
 ```
 
 Keep the quotation marks when the path contains spaces.
@@ -94,7 +98,7 @@ dist/hl-psx.cue
 
 The adjacent `dist/hl-psx.bin` file is part of the same disc and must remain
 beside the CUE file. To rebuild after updating the source, run the same
-`cargo run --release -- build` command again.
+`cargo hl-build build` command again.
 
 All converted content stays inside this checkout under `data/`, build state
 and reports stay under `.hlpsx/`, and the final image stays under `dist/`.
@@ -132,17 +136,17 @@ Select to go back.
 ## Other commands
 
 ```sh
-cargo run --release -- check                  # locate and validate Half-Life
-cargo run --release -- sdk                    # hydrate the pinned PSoXide SDK
-cargo run --release -- assets                 # recook all derived assets
-cargo run --release -- models                 # recook and audit models
-cargo run --release -- audit                  # audit map and transition residency
-cargo run --release -- compile                # rebuild the PS1 executable
-cargo run --release -- pack                   # rebuild the executable and disc
-cargo run --release -- install --games-dir "DESTINATION_FOLDER" # build and copy
-cargo run --release -- regress --psoxide "PATH_TO_PSOXIDE"      # test matrix
-cargo run --release -- pgo --tape "RECORDING.pxtape"           # profile-guided disc
-cargo run --release -- --help                 # show every option
+cargo hl-build check                  # locate and validate Half-Life
+cargo hl-build sdk                    # hydrate the pinned PSoXide SDK
+cargo hl-build assets                 # recook all derived assets
+cargo hl-build models                 # recook and audit models
+cargo hl-build audit                  # audit map and transition residency
+cargo hl-build compile                # rebuild the PS1 executable
+cargo hl-build pack                   # rebuild the executable and disc
+cargo hl-build install --games-dir "DESTINATION_FOLDER" # build and copy
+cargo hl-build regress --psoxide "PATH_TO_PSOXIDE"      # test matrix
+cargo hl-build pgo --tape "RECORDING.pxtape"           # profile-guided disc
+cargo hl-build --help                 # show every option
 ```
 
 `pgo` builds the disc twice. The first build replays a PSoXide input recording
@@ -190,7 +194,7 @@ the final authority for timing, audio, controller, and CD-loading behaviour.
 | Path | Contents |
 | --- | --- |
 | `game/` | The `no_std` PlayStation game crate |
-| `host/hl-build/` | End-to-end build orchestration |
+| `host/hl-build/` | End-to-end build orchestration (`cargo hl-build`), its own workspace |
 | `host/hl-content/` | Menu, audio, sprite, and manifest compiler |
 | `host/hl-bsp/` | GoldSrc BSP and studio-model cooker |
 | `host/hl-logic-tests/` | Host-side gameplay and entity tests |
@@ -203,8 +207,8 @@ Useful source checks for contributors:
 
 ```sh
 bash scripts/check-source-only.sh
-cargo fmt --all -- --check
-cargo test --locked
+cargo fmt --manifest-path host/hl-build/Cargo.toml --package hl-psx-build -- --check
+cargo test --manifest-path host/hl-build/Cargo.toml --locked
 cargo test --manifest-path host/hl-bsp/Cargo.toml --locked
 cargo test --manifest-path host/hl-content/Cargo.toml --locked
 cargo test --manifest-path host/hl-logic-tests/Cargo.toml --locked
