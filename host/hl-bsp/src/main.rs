@@ -8747,10 +8747,13 @@ fn collect_logic_entities_with_lightstyles(
             // line, far narrower than a lightning bolt of the same number.
             // 0.6 keeps c1a1's width-20 lasers two to three pixels wide at
             // room distance, readable over the port's brighter lighting.
+            // Both widths are in the network's tenths of a unit; draw them at
+            // the laser's readable 0.6 (a BoltWidth-30 bolt is not a 30-unit
+            // band: GoldSrc's lightning is thin).
             let width_hl = if is_laser {
                 (parse_f32_key(block, "width", 10.0) * 0.6).max(2.0)
             } else {
-                parse_f32_key(block, "BoltWidth", 16.0).max(1.0)
+                (parse_f32_key(block, "BoltWidth", 16.0) * 0.6).max(2.0)
             };
             let half = ((width_hl * 0.5 * scale).round() as i32).clamp(1, 4000) as u16;
             let col = ent_value(block, "rendercolor")
