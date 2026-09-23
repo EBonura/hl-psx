@@ -7,9 +7,9 @@ mod target {
     use psx_goldsrc::chunk_stream::{CachedStreamer, PacketArena, CACHE_ENTRY_BYTES};
     struct Arena;
     // The game serializes loading and rendering on the main thread. Rendering
-    // invalidates this overlay before reclaiming it; cache construction retires
-    // retained packet metadata before its first write. The progress hook draws
-    // the loading strip and never reenters the chunk streamer.
+    // invalidates this overlay before reclaiming it; the arena keeps no packets
+    // across frames. The progress hook draws the loading strip and never
+    // reenters the chunk streamer.
     unsafe impl PacketArena for Arena {
         const CAPACITY: usize = crate::room_budget::PACK_CACHE_ENTRIES;
         #[inline(always)]
@@ -17,9 +17,7 @@ mod target {
             core::ptr::addr_of_mut!(crate::PRIMITIVE_PACKETS).cast()
         }
         #[inline(always)]
-        unsafe fn invalidate_render_cache() {
-            crate::invalidate_world_packet_cache();
-        }
+        unsafe fn invalidate_render_cache() {}
     }
     const _: () = assert!(
         core::mem::size_of::<crate::RenderPacketScratch>() >= Arena::CAPACITY * CACHE_ENTRY_BYTES

@@ -2733,100 +2733,20 @@ unsafe fn init_pvs_link_sentinels() {
 }
 static mut PVS_GROUP_ACTIVE: [u16; MAX_FACE_GROUPS] = [0; MAX_FACE_GROUPS];
 static mut PVS_GROUP_COUNT: usize = 0;
-// Set during the cold PVS rebuild. Static world packets only depend on the
-// eight-frame liquid phase when this view can actually emit a liquid face;
-// otherwise including WAVE_DU/WAVE_DV in the cache key causes a needless full
-// room rebuild every eighth visual frame.
-static mut PVS_HAS_TRANSLUCENT: bool = false;
-// Same gating for GoldSrc animated textures (+0../+9, +a../+j chains): only a
-// view that can actually emit a chain-member world face keys the room cache on
-// the 10 Hz animation generation.
-static mut PVS_HAS_TEXANIM: bool = false;
 // Bit i = compact texture i belongs to an animation chain (per-map, built at
 // load from the HLMF chain section).
 static mut TEX_ANIM_MASK: [u32; map::TEX_ANIM_MAX / 32] = [0; map::TEX_ANIM_MAX / 32];
-// Subset of TEX_ANIM_MASK referenced by faces in the current PVS. A chain
-// elsewhere in the map must not evict an otherwise reusable room packet cache.
+// Subset of TEX_ANIM_MASK referenced by faces in the current PVS (filled by the
+// shared PVS compile).
 static mut PVS_TEX_ANIM_MASK: [u32; map::TEX_ANIM_MAX / 32] = [0; map::TEX_ANIM_MAX / 32];
-// Bit ei = the brush submodel contains an animated face, so its cached packets
-// must rebuild when the animation generation advances (frame-0 chains cycle
-// even while the entity itself never moves -- blinking computer banks).
-static mut ENT_TEXANIM: [u32; MAX_ENTS.div_ceil(32)] = [0; MAX_ENTS.div_ceil(32)];
-// Bumped whenever a 10 Hz step actually changes a display frame; folded into
-// the world/brush cache keys so stationary views pick up the new frame.
+// Generation counters the shared tick advances. Nothing here reads them since
+// the world packet cache went: every frame emits the current display rows.
 static mut TEX_ANIM_GEN: u8 = 0;
-// PVS-local counterpart used by static room packets. This advances once per
-// animation tick only when a changed display row is referenced by this PVS.
 static mut PVS_TEX_ANIM_GEN: u8 = 0;
 static mut TEX_ANIM_TENTH: u16 = u16::MAX;
-// Set per map when a chain step can be applied to the cached world packets by
-// rewriting their texture words (psx_goldsrc::texture_animation). The cache key
-// then leaves the animation out, and a stationary view keeps its cache across
-// steps instead of rebuilding every packet at 10 Hz. Otherwise the generations
-// stay in the key as before.
-static mut TEX_ANIM_RETARGET: bool = false;
-// Chain sides (primary or alternate) with two or more frames; a map with more
-// keeps the rebuild. Each such side has at least two frames, and the most any
-// cooked Half-Life or Counter-Strike map has is 71 frames (25 chains).
-const TEX_ANIM_RETARGET_SIDES: usize = 36;
-static mut WORLD_CACHE_RETARGET: psx_goldsrc::texture_animation::PacketRetarget<
-    TEX_ANIM_RETARGET_SIDES,
-> = psx_goldsrc::texture_animation::PacketRetarget::new();
-// Animation clock the cached packets were built or last retargeted at.
-static mut WORLD_CACHE_TEX_TENTH: u16 = u16::MAX;
-
-#[inline(always)]
-unsafe fn world_cache_retarget(
-) -> &'static mut psx_goldsrc::texture_animation::PacketRetarget<TEX_ANIM_RETARGET_SIDES> {
-    &mut *core::ptr::addr_of_mut!(WORLD_CACHE_RETARGET)
-}
-
-/// One outlined copy of the chain decoder for the cold retarget drivers.
-#[inline(never)]
-fn tex_anim_chain_at(m: &Map, c: usize) -> (&'static [u8], &'static [u8]) {
-    m.tex_anim_chain(c)
-}
-
-/// The words a world packet carries for texture `tex`, plus everything else
-/// the world emitters read from its slot (command word, backdrop ordering and
-/// fog); `None` when they never draw it.
-#[inline(never)]
-unsafe fn tex_anim_packet_texture(
-    m: &Map,
-    tex: usize,
-) -> Option<(psx_goldsrc::texture_animation::PacketTexture, u32)> {
-    if tex >= m.n_texs || tex >= MAX_TEX_SLOTS {
-        return None;
-    }
-    let slot = &*tex_slot_ptr(tex);
-    if !slot.valid {
-        return None;
-    }
-    Some((
-        psx_goldsrc::texture_animation::PacketTexture {
-            window: slot.packet.tex_window_word,
-            clut: slot.packet.clut_high_word,
-            tpage: slot.packet.tpage_high_word,
-        },
-        slot.packet.color0_command_word | slot.backdrop as u32,
-    ))
-}
-
-#[inline(always)]
-unsafe fn tex_is_animated(tex: usize) -> bool {
-    let i = tex & (map::TEX_ANIM_MAX - 1);
-    TEX_ANIM_MASK[i >> 5] & (1u32 << (i & 31)) != 0
-}
-
-#[inline(always)]
-unsafe fn ent_has_texanim(ei: usize) -> bool {
-    ei < MAX_ENTS && ENT_TEXANIM[ei >> 5] & (1u32 << (ei & 31)) != 0
-}
-
-/// Per-map animated-texture setup: identity display tables, the chain-member
-/// mask, and per-entity animated flags (walked once from the cooked chain
-/// section + submodel face lists).
-unsafe fn tex_anim_init(m: &Map, nents: usize) {
+/// Per-map animated-texture setup: identity display tables and the
+/// chain-member mask (walked once from the cooked chain section).
+unsafe fn tex_anim_init(m: &Map) {
     #[cfg(feature = "emulator-telemetry")]
     telemetry::debug_log(if m.n_tex_anim == 0 {
         "hl-psx: tex_anim NONE"
@@ -2836,11 +2756,9 @@ unsafe fn tex_anim_init(m: &Map, nents: usize) {
     map::tex_anim_reset();
     TEX_ANIM_MASK = [0; map::TEX_ANIM_MAX / 32];
     PVS_TEX_ANIM_MASK = [0; map::TEX_ANIM_MAX / 32];
-    ENT_TEXANIM = [0; MAX_ENTS.div_ceil(32)];
     TEX_ANIM_GEN = 0;
     PVS_TEX_ANIM_GEN = 0;
     TEX_ANIM_TENTH = u16::MAX;
-    TEX_ANIM_RETARGET = false;
     if m.n_tex_anim == 0 {
         return;
     }
@@ -2848,20 +2766,6 @@ unsafe fn tex_anim_init(m: &Map, nents: usize) {
         (0..m.n_tex_anim).map(|c| m.tex_anim_chain(c)),
         &mut TEX_ANIM_MASK,
     );
-    TEX_ANIM_RETARGET = psx_goldsrc::texture_animation::packets_retargetable(
-        (0..m.n_tex_anim).map(|c| tex_anim_chain_at(m, c)),
-        m.n_texs.min(MAX_TEX_SLOTS),
-        TEX_ANIM_RETARGET_SIDES,
-        |tex| tex_anim_packet_texture(m, tex),
-    );
-    for ei in 0..nents.min(MAX_ENTS) {
-        let (ff, nf) = m.submodel(ENT_CACHE[ei].submodel);
-        for f in ff..(ff + nf).min(m.n_faces) {
-            if tex_is_animated(m.face_tex(f)) {
-                ENT_TEXANIM[ei >> 5] |= 1u32 << (ei & 31);
-            }
-        }
-    }
     tex_anim_tick(m); // seat the frame-0 display tables before the first draw
 }
 
@@ -3254,39 +3158,6 @@ static mut WORLD_BAND_STATE: u8 = 0;
 // texture window wraps coordinates, so the byte add is always safe).
 const WAVE_TAB: [i8; 16] = [0, 2, 3, 4, 4, 4, 3, 2, 0, -2, -3, -4, -4, -4, -3, -2];
 
-// Exact one-view world packet cache. Static room packets occupy the arena's
-// prefix and survive its zero-cost per-frame cursor reset. A hit relinks that
-// unchanged prefix into the cleared OT and resumes allocation after it, keeping
-// addresses, arena pressure, and same-OTZ tie ordering identical to a fresh
-// render. Only packet-kind/OTZ metadata uses the otherwise-idle band-order tail;
-// no duplicate packet payload or second arena is reserved in RAM.
-const WORLD_PACKET_CACHE: bool = true;
-const WORLD_CACHE_NONE: u8 = 0;
-const WORLD_CACHE_BUILD: u8 = 1;
-const WORLD_CACHE_HIT: u8 = 2;
-const WORLD_CACHE_BRUSH_REBUILD: u8 = 3;
-const WORLD_CACHE_CANDIDATE_ARMED: u8 = 1;
-const WORLD_CACHE_CANDIDATE_REJECTED: u8 = 2;
-// OT_LEN needs nine bits. Bit 9 stores packet kind. Liquid UV phases participate
-// in the cache key. Animated textures do too on maps TEX_ANIM_RETARGET rejects;
-// elsewhere a step rewrites the texture words of the cached packets during
-// replay, after the frame's submit_linked_list_wait fence, when the GPU has
-// finished reading them (replay already writes each packet's link word there).
-const WORLD_CACHE_OTZ_MASK: u16 = 0x01ff;
-const WORLD_CACHE_QUAD_META: u16 = 0x0200;
-// A resident command reserves an arena slot even when it culls or falls back
-// to appended legacy packets. Replay advances over that unchanged hole without
-// linking it into the OT.
-const WORLD_CACHE_SKIP_META: u16 = 0x0400;
-// A closed door's far side: captured, but linked only once the door opens.
-const WORLD_CACHE_SEALED_META: u16 = 0x0800;
-const WORLD_CACHE_SLOT_BYTES: usize =
-    core::mem::size_of::<RenderPacketScratch>() / MAX_RENDER_PACKETS;
-const _: () = assert!(core::mem::size_of::<TriTexturedGouraud>() <= WORLD_CACHE_SLOT_BYTES);
-const _: () = assert!(core::mem::size_of::<QuadTexturedGouraud>() <= WORLD_CACHE_SLOT_BYTES);
-const _: () = assert!(OT_LEN <= (WORLD_CACHE_OTZ_MASK as usize + 1));
-const _: () = assert!(OT_LEN <= (u16::MAX as usize + 1));
-
 #[cfg(any(feature = "emulator-telemetry", feature = "performance-telemetry"))]
 static mut RENDER_PACKET_DROPS: u32 = 0;
 #[cfg(any(feature = "emulator-telemetry", feature = "performance-telemetry"))]
@@ -3305,56 +3176,10 @@ unsafe fn note_render_packet_drop(model: bool) {
     let _ = model;
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct WorldPacketCacheKey {
-    leaf: i32,
-    projection_h: u16,
-    // Lit packets depend on the traced beam reach. This occupies the existing
-    // alignment hole, so torch-correct invalidation costs no cache RAM.
-    flashlight_state: u16,
-    static_brush_state: u32,
-    rot: [[i16; 3]; 3],
-    base_t: [i32; 3],
-    eye: [i32; 3],
-    wave_du: u8,
-    wave_dv: u8,
-    // 10 Hz animated-texture generation, keyed only when the view can emit a
-    // chain-member world face (mirrors the wave gating above).
-    tex_anim: u8,
-    band_mode: u8,
-    affine_generation: u16,
-}
-const _: () = assert!(core::mem::size_of::<WorldPacketCacheKey>() == 60);
-
-impl WorldPacketCacheKey {
-    const EMPTY: Self = Self {
-        leaf: -1,
-        projection_h: 0,
-        flashlight_state: 0,
-        static_brush_state: 0,
-        rot: [[0; 3]; 3],
-        base_t: [0; 3],
-        eye: [0; 3],
-        wave_du: 0,
-        wave_dv: 0,
-        tex_anim: 0,
-        band_mode: 0,
-        affine_generation: 0,
-    };
-
-    #[inline(never)]
-    fn same_view(&self, other: &Self) -> bool {
-        self.leaf == other.leaf
-            && self.projection_h == other.projection_h
-            && self.flashlight_state == other.flashlight_state
-            && self.rot == other.rot
-            && self.base_t == other.base_t
-            && self.eye == other.eye
-            && self.band_mode == other.band_mode
-            && self.affine_generation == other.affine_generation
-    }
-}
-
+/// Static brushes draw in a first pass and moving ones in a second, and only
+/// the second pass samples actor overlap. This split came from the removed
+/// world packet cache; it is kept so the packets and their order stay exactly
+/// what the uncached renderer produced.
 #[inline(always)]
 unsafe fn static_brush_cacheable(ei: usize, e: map::Ent) -> bool {
     // An axial door may stop across a moving actor. Keep its local depth
@@ -3370,90 +3195,16 @@ unsafe fn static_brush_cacheable(ei: usize, e: map::Ent) -> bool {
     let running_train = train_slot < TRAIN_COUNT
         && TRAIN_STATE[train_slot] & TRAIN_ACTIVE_BIT != 0
         && TRAIN_STATE[train_slot] & TRAIN_WAITING_BIT == 0;
-    // Continuous fans/pendulums and running brush trains must rebuild every
-    // visual. A train's transform advances through TRAIN_OFF rather than
-    // ENT_PHASE; admitting it to the reusable prefix can leave its collision
-    // and rider at the live stop while the cached mesh stays at the old one.
-    // Waiting/stopped trains, doors, plats, pushables and rotating doors are
-    // safe because their exact phase + draw offset participate in the key.
+    // Continuous fans/pendulums, running brush trains (whose transform moves
+    // through TRAIN_OFF, not ENT_PHASE) and brushes whose phase changed since
+    // the last render go in the moving pass.
     !running_train
         && !((e.kind == 5 || e.kind == ENT_KIND_PENDULUM) && e.mv[0] != 0)
         && ENT_PHASE[ei] == ENT_RENDER_PHASE[ei]
 }
 
-/// Compact invalidation key for the repeatable brush prefix. Geometry and
-/// materials live in the current map blob; active/phase/offset are the complete
-/// mutable render state for every entity admitted by static_brush_cacheable.
-#[inline(never)]
-unsafe fn static_brush_state(have_pvs: bool, nents: usize) -> u32 {
-    let count = if have_pvs { PVS_ENT_COUNT } else { nents };
-    let mut hash = 0x811c_9dc5u32;
-    let mut bi = 0usize;
-    while bi < count {
-        let ei = if have_pvs { PVS_ENTS[bi] as usize } else { bi };
-        let e = ENT_CACHE[ei];
-        if have_pvs
-            && !visibility_logic::pvs_visible_now(
-                entity_uses_live_pvs(ei, e),
-                true,
-                live_entity_pvs_visible(ei),
-            )
-        {
-            bi += 1;
-            continue;
-        }
-        if static_brush_cacheable(ei, e) {
-            hash ^= ((ei as u32) << 1) | ((e.blend as u32) << 16) | (ENT_ACTIVE[ei] != 0) as u32;
-            hash = hash.wrapping_mul(0x0100_0193);
-            hash ^= ENT_PHASE[ei] as u32;
-            hash = hash.wrapping_mul(0x0100_0193);
-            // A brush with chain-member textures repaints at 10 Hz even while
-            // it never moves (blinking screens). Unless the step retargets the
-            // cached packets, fold the animation generation in so the cached
-            // prefix rebuilds on each frame step.
-            if !TEX_ANIM_RETARGET && ent_has_texanim(ei) {
-                hash ^= (TEX_ANIM_GEN as u32) << 8;
-                hash = hash.wrapping_mul(0x0100_0193);
-            }
-            let off = ent_draw_offset(ei);
-            hash ^= off[0] as u32;
-            hash = hash.wrapping_mul(0x0100_0193);
-            hash ^= off[1] as u32;
-            hash = hash.wrapping_mul(0x0100_0193);
-            hash ^= off[2] as u32;
-            hash = hash.wrapping_mul(0x0100_0193);
-        }
-        bi += 1;
-    }
-    hash
-}
-
-static mut WORLD_CACHE_KEY: WorldPacketCacheKey = WorldPacketCacheKey::EMPTY;
-static mut WORLD_CACHE_CANDIDATE_KEY: WorldPacketCacheKey = WorldPacketCacheKey::EMPTY;
-static mut WORLD_CACHE_VALID: bool = false;
-// The static room prefix can fit even when the later brush suffix exhausts the
-// metadata tail. Such a cache is still valuable: replay the exact room packets
-// and rebuild only the brushes instead of discarding the whole prefix.
-static mut WORLD_CACHE_ROOM_ONLY: bool = false;
-static mut WORLD_CACHE_BUILDING: bool = false;
 /// PVS_FACE_MARK holds the faces a closed door seals off (rebuild_pvs_cache).
 static mut PVS_SEAL_HIDE: bool = false;
-static mut WORLD_CACHE_OVERFLOW: bool = false;
-static mut WORLD_CACHE_CANDIDATE_STATE: u8 = 0;
-static mut WORLD_CACHE_COUNT: usize = 0;
-static mut WORLD_CACHE_PREFIX_HOLES: usize = 0;
-static mut WORLD_CACHE_BAND_PREFIX: usize = 0;
-static mut WORLD_CACHE_NP: u16 = 0;
-static mut WORLD_CACHE_NQ: u16 = 0;
-static mut WORLD_CACHE_ROOM_COUNT: u16 = 0;
-static mut WORLD_CACHE_ROOM_PREFIX_HOLES: u16 = 0;
-static mut WORLD_CACHE_ROOM_NP: u16 = 0;
-static mut WORLD_CACHE_ROOM_NQ: u16 = 0;
-static mut WORLD_CACHE_EMIT_CALLS: u32 = 0;
-static mut WORLD_CACHE_AFFINE_SPLIT_TRIS: u32 = 0;
-static mut WORLD_CACHE_AFFINE_NATIVE_GT4: u32 = 0;
-static mut WORLD_CACHE_AFFINE_SPLIT_PATCHES: u32 = 0;
-static mut WORLD_CACHE_AFFINE_ADDED_GTE: u32 = 0;
 static mut WORLD_AFFINE_SPLIT_TRIS: u32 = 0;
 static mut WORLD_AFFINE_SELECTED_COUNT: u8 = 0;
 static mut WORLD_AFFINE_NEXT_COUNT: u8 = 0;
@@ -3538,19 +3289,6 @@ static mut WORLD_AFFINE_PREVIOUS_COUNT: u8 = 0;
 static mut WORLD_AFFINE_PREVIOUS_FACES: [u16; AFFINE_SELECTED_CAP] =
     [u16::MAX; AFFINE_SELECTED_CAP];
 static mut WORLD_AFFINE_PREVIOUS_LEVELS: [u8; AFFINE_SELECTED_CAP] = [0; AFFINE_SELECTED_CAP];
-static mut WORLD_CACHE_AFFINE_ERROR_MAX_Q8: u32 = 0;
-static mut WORLD_CACHE_AFFINE_ERROR_P50_Q8: u32 = 0;
-static mut WORLD_CACHE_AFFINE_ERROR_P95_Q8: u32 = 0;
-static mut WORLD_CACHE_AFFINE_ERROR_P99_Q8: u32 = 0;
-static mut WORLD_CACHE_AFFINE_SPLIT_CANDIDATES: u32 = 0;
-static mut WORLD_CACHE_AFFINE_EXTRA_REQUESTED: u32 = 0;
-static mut WORLD_CACHE_AFFINE_EXTRA_EMITTED: u32 = 0;
-static mut WORLD_CACHE_AFFINE_REMAINING_MAX_Q8: u32 = 0;
-static mut WORLD_CACHE_AFFINE_REMAINING_P50_Q8: u32 = 0;
-static mut WORLD_CACHE_AFFINE_REMAINING_P95_Q8: u32 = 0;
-static mut WORLD_CACHE_AFFINE_REMAINING_P99_Q8: u32 = 0;
-static mut WORLD_CACHE_BAND_STATE: u8 = 0;
-
 #[inline(always)]
 fn affine_heatmap_active() -> bool {
     #[cfg(feature = "performance-telemetry")]
@@ -3561,272 +3299,6 @@ fn affine_heatmap_active() -> bool {
     {
         false
     }
-}
-
-#[inline]
-unsafe fn invalidate_world_packet_cache() {
-    WORLD_CACHE_VALID = false;
-    WORLD_CACHE_ROOM_ONLY = false;
-    WORLD_CACHE_BUILDING = false;
-    WORLD_CACHE_OVERFLOW = false;
-    WORLD_CACHE_CANDIDATE_STATE = 0;
-    WORLD_CACHE_COUNT = 0;
-    WORLD_CACHE_PREFIX_HOLES = 0;
-    WORLD_CACHE_ROOM_COUNT = 0;
-    WORLD_CACHE_ROOM_PREFIX_HOLES = 0;
-}
-
-/// Record a just-built arena-prefix packet before OT.add writes its DMA link.
-#[inline(always)]
-unsafe fn world_cache_capture_packet<T>(_packet: *const T, otz: usize, quad: bool) {
-    if !WORLD_CACHE_BUILDING || WORLD_CACHE_OVERFLOW {
-        return;
-    }
-    let i = WORLD_CACHE_COUNT;
-    if i >= PVS_BAND_CAP || i >= MAX_RENDER_PACKETS {
-        WORLD_CACHE_OVERFLOW = true;
-        return;
-    }
-    let meta = PVS_BAND_CAP - 1 - i;
-    if meta < WORLD_CACHE_BAND_PREFIX {
-        WORLD_CACHE_OVERFLOW = true;
-        return;
-    }
-    PVS_BAND_ORDER[meta] =
-        (otz.min(OT_LEN - 1) as u16) | if quad { WORLD_CACHE_QUAD_META } else { 0 };
-    WORLD_CACHE_COUNT = i + 1;
-}
-
-/// Take a sealed-side face's just-captured packets back out of the OT and tag
-/// them, so the cache keeps them for the frame the door opens. OT.add
-/// prepends, so each is its slot's head when popped newest-first; any that is
-/// not (never expected) simply stays drawn this frame.
-#[inline(never)]
-#[optimize(size)]
-unsafe fn world_cache_hold_sealed(from: usize) {
-    let base = core::ptr::addr_of!(PRIMITIVE_PACKETS) as usize;
-    let entries = (OT.submit_head() as usize - (OT_LEN - 1) * 4) as *mut u32;
-    let mut i = WORLD_CACHE_COUNT;
-    while i > from {
-        i -= 1;
-        let meta = &mut PVS_BAND_ORDER[PVS_BAND_CAP - 1 - i];
-        *meta |= WORLD_CACHE_SEALED_META;
-        let slot = entries.add((*meta & WORLD_CACHE_OTZ_MASK) as usize);
-        let packet = (base + i * WORLD_CACHE_SLOT_BYTES) as *const u32;
-        let head = slot.read_volatile();
-        if (head ^ packet as u32) & 0x00ff_ffff == 0 {
-            slot.write_volatile((head & 0xff00_0000) | (packet.read_volatile() & 0x00ff_ffff));
-        }
-    }
-}
-
-#[inline]
-unsafe fn prepare_world_packet_cache(m: &Map, key: WorldPacketCacheKey, band_prefix: usize) -> u8 {
-    WORLD_CACHE_BUILDING = false;
-    world_cache_retarget().clear();
-    // Debug picking observes the fresh triangle walk, including loop faces.
-    if !WORLD_PACKET_CACHE || DEBUG_XHAIR || affine_heatmap_active() {
-        return WORLD_CACHE_NONE;
-    }
-    // The first uncached traversal discovers the face shortlist; the next one
-    // evaluates exact patch errors and establishes the shared-edge mask. A
-    // cache built before that two-step handoff would permanently freeze the
-    // stationary view at its unsplit bootstrap topology.
-    if WORLD_NATIVE_PATCH_SUBDIVISION && !WORLD_AFFINE_POLICY_READY {
-        return WORLD_CACHE_NONE;
-    }
-    // A texture-animation step since the cached packets were built: stage the
-    // rewrite of their texture words, applied by the replay below if the
-    // cache is reused this frame. The key carries no animation state here.
-    if WORLD_CACHE_VALID && TEX_ANIM_RETARGET && WORLD_CACHE_TEX_TENTH != TEX_ANIM_TENTH {
-        if world_cache_retarget().stage(
-            (0..m.n_tex_anim).map(|c| tex_anim_chain_at(m, c)),
-            WORLD_CACHE_TEX_TENTH,
-            TEX_ANIM_TENTH,
-            |tex| match tex_anim_packet_texture(m, tex) {
-                Some((words, _)) => words,
-                None => psx_goldsrc::texture_animation::PacketTexture {
-                    window: 0,
-                    clut: 0,
-                    tpage: 0,
-                },
-            },
-        ) {
-            WORLD_CACHE_TEX_TENTH = TEX_ANIM_TENTH;
-        } else {
-            invalidate_world_packet_cache();
-        }
-    }
-    if WORLD_CACHE_VALID {
-        if WORLD_CACHE_KEY == key {
-            if !WORLD_CACHE_ROOM_ONLY {
-                return WORLD_CACHE_HIT;
-            }
-            WORLD_CACHE_VALID = false;
-            WORLD_CACHE_COUNT = WORLD_CACHE_ROOM_COUNT as usize;
-            WORLD_CACHE_PREFIX_HOLES = WORLD_CACHE_ROOM_PREFIX_HOLES as usize;
-            WORLD_CACHE_OVERFLOW = false;
-            WORLD_CACHE_BAND_PREFIX = band_prefix;
-            WORLD_CACHE_CANDIDATE_KEY = key;
-            WORLD_CACHE_CANDIDATE_STATE = WORLD_CACHE_CANDIDATE_ARMED;
-            WORLD_CACHE_BUILDING = true;
-            return WORLD_CACHE_BRUSH_REBUILD;
-        }
-        // The liquid phase changes every eight visual frames even while the
-        // camera is perfectly stationary (the 10 Hz texture-animation
-        // generation likewise). The unchanged view itself is the candidate
-        // proof in that case: rebuild this exact phase now, then hit until the
-        // next phase step. Camera movement still takes the normal arm-first
-        // path and never pays payload-copy work.
-        if WORLD_CACHE_KEY.same_view(&key)
-            && (WORLD_CACHE_KEY.wave_du != key.wave_du
-                || WORLD_CACHE_KEY.wave_dv != key.wave_dv
-                || WORLD_CACHE_KEY.tex_anim != key.tex_anim)
-        {
-            WORLD_CACHE_VALID = false;
-            WORLD_CACHE_ROOM_ONLY = false;
-            WORLD_CACHE_COUNT = 0;
-            WORLD_CACHE_PREFIX_HOLES = 0;
-            WORLD_CACHE_OVERFLOW = false;
-            WORLD_CACHE_BAND_PREFIX = band_prefix;
-            WORLD_CACHE_CANDIDATE_KEY = key;
-            WORLD_CACHE_CANDIDATE_STATE = WORLD_CACHE_CANDIDATE_ARMED;
-            WORLD_CACHE_BUILDING = true;
-            return WORLD_CACHE_BUILD;
-        }
-        // A door/platform starting or stopping changes only the brush suffix.
-        // Preserve and relink the already-built room prefix, then overwrite the
-        // suffix in place. This avoids a multi-million-cycle world rebuild at
-        // each authored door transition while retaining exact moving geometry.
-        if WORLD_CACHE_KEY.same_view(&key)
-            && WORLD_CACHE_KEY.static_brush_state != key.static_brush_state
-            && WORLD_CACHE_ROOM_COUNT != 0
-        {
-            WORLD_CACHE_VALID = false;
-            WORLD_CACHE_COUNT = WORLD_CACHE_ROOM_COUNT as usize;
-            WORLD_CACHE_PREFIX_HOLES = WORLD_CACHE_ROOM_PREFIX_HOLES as usize;
-            WORLD_CACHE_OVERFLOW = false;
-            WORLD_CACHE_BAND_PREFIX = band_prefix;
-            WORLD_CACHE_CANDIDATE_KEY = key;
-            WORLD_CACHE_CANDIDATE_STATE = WORLD_CACHE_CANDIDATE_ARMED;
-            WORLD_CACHE_BUILDING = true;
-            return WORLD_CACHE_BRUSH_REBUILD;
-        }
-    }
-    // A different band pass may overwrite PVS_BAND_ORDER metadata before this
-    // view ever returns, so the single stored stream is valid only while its
-    // exact key remains current.
-    WORLD_CACHE_VALID = false;
-    if WORLD_CACHE_CANDIDATE_STATE != 0 && WORLD_CACHE_CANDIDATE_KEY == key {
-        if WORLD_CACHE_CANDIDATE_STATE == WORLD_CACHE_CANDIDATE_ARMED {
-            // A build overwrites the sole payload store, so an older key can no
-            // longer remain valid even if this attempt later proves too large.
-            WORLD_CACHE_VALID = false;
-            WORLD_CACHE_COUNT = 0;
-            WORLD_CACHE_PREFIX_HOLES = 0;
-            WORLD_CACHE_OVERFLOW = false;
-            WORLD_CACHE_BAND_PREFIX = band_prefix;
-            WORLD_CACHE_BUILDING = true;
-            return WORLD_CACHE_BUILD;
-        }
-        return WORLD_CACHE_NONE;
-    }
-    WORLD_CACHE_CANDIDATE_KEY = key;
-    WORLD_CACHE_CANDIDATE_STATE = WORLD_CACHE_CANDIDATE_ARMED;
-    WORLD_CACHE_NONE
-}
-
-#[inline]
-unsafe fn finish_world_packet_cache(
-    key: WorldPacketCacheKey,
-    np: usize,
-    nq: usize,
-    emit_calls: u32,
-    affine_split_tris: u32,
-) {
-    #[inline(always)]
-    unsafe fn capture_affine_metrics() {
-        WORLD_CACHE_AFFINE_ERROR_MAX_Q8 = WORLD_AFFINE_ERROR_MAX_Q8;
-        WORLD_CACHE_AFFINE_ERROR_P50_Q8 = WORLD_AFFINE_ERROR_P50_Q8;
-        WORLD_CACHE_AFFINE_ERROR_P95_Q8 = WORLD_AFFINE_ERROR_P95_Q8;
-        WORLD_CACHE_AFFINE_ERROR_P99_Q8 = WORLD_AFFINE_ERROR_P99_Q8;
-        WORLD_CACHE_AFFINE_SPLIT_CANDIDATES = WORLD_AFFINE_SPLIT_CANDIDATES;
-        WORLD_CACHE_AFFINE_EXTRA_REQUESTED = WORLD_AFFINE_EXTRA_REQUESTED;
-        WORLD_CACHE_AFFINE_EXTRA_EMITTED = WORLD_AFFINE_EXTRA_EMITTED;
-        WORLD_CACHE_AFFINE_NATIVE_GT4 = WORLD_AFFINE_NATIVE_GT4;
-        WORLD_CACHE_AFFINE_SPLIT_PATCHES = WORLD_AFFINE_SPLIT_PATCHES;
-        WORLD_CACHE_AFFINE_ADDED_GTE = WORLD_AFFINE_ADDED_GTE_TRANSFORMS;
-        WORLD_CACHE_AFFINE_REMAINING_MAX_Q8 = WORLD_AFFINE_REMAINING_MAX_Q8;
-        WORLD_CACHE_AFFINE_REMAINING_P50_Q8 = WORLD_AFFINE_REMAINING_P50_Q8;
-        WORLD_CACHE_AFFINE_REMAINING_P95_Q8 = WORLD_AFFINE_REMAINING_P95_Q8;
-        WORLD_CACHE_AFFINE_REMAINING_P99_Q8 = WORLD_AFFINE_REMAINING_P99_Q8;
-    }
-
-    WORLD_CACHE_BUILDING = false;
-    // Whatever is published below was emitted, or retargeted, at this clock.
-    WORLD_CACHE_TEX_TENTH = TEX_ANIM_TENTH;
-    // Candidate and shared-edge policy is finalized after the room traversal.
-    // If that handoff changed while this packet stream was being captured, its
-    // key describes the old topology. Never publish such a cache: let the next
-    // frame render the new edge mask, then arm/build a stable stream from it.
-    if key.affine_generation != WORLD_AFFINE_EDGE_GENERATION {
-        WORLD_CACHE_VALID = false;
-        WORLD_CACHE_ROOM_ONLY = false;
-        WORLD_CACHE_OVERFLOW = false;
-        WORLD_CACHE_CANDIDATE_STATE = 0;
-        WORLD_CACHE_COUNT = 0;
-        WORLD_CACHE_PREFIX_HOLES = 0;
-        WORLD_CACHE_ROOM_COUNT = 0;
-        WORLD_CACHE_ROOM_PREFIX_HOLES = 0;
-        return;
-    }
-    if WORLD_CACHE_OVERFLOW
-        || WORLD_CACHE_COUNT != np + nq + WORLD_CACHE_PREFIX_HOLES
-        || np > u16::MAX as usize
-        || nq > u16::MAX as usize
-    {
-        let room_count = WORLD_CACHE_ROOM_COUNT as usize;
-        let room_holes = WORLD_CACHE_ROOM_PREFIX_HOLES as usize;
-        let room_np = WORLD_CACHE_ROOM_NP as usize;
-        let room_nq = WORLD_CACHE_ROOM_NQ as usize;
-        if room_count != 0
-            && room_count == room_np + room_nq + room_holes
-            && room_count <= PVS_BAND_CAP
-            && room_count <= MAX_RENDER_PACKETS
-        {
-            // WORLD_CACHE_OVERFLOW happened strictly after the room snapshot.
-            // Its prefix packets and reverse-tail OT metadata are untouched.
-            WORLD_CACHE_KEY = key;
-            WORLD_CACHE_COUNT = room_count;
-            WORLD_CACHE_PREFIX_HOLES = room_holes;
-            WORLD_CACHE_NP = WORLD_CACHE_ROOM_NP;
-            WORLD_CACHE_NQ = WORLD_CACHE_ROOM_NQ;
-            WORLD_CACHE_EMIT_CALLS = emit_calls;
-            WORLD_CACHE_AFFINE_SPLIT_TRIS = affine_split_tris;
-            capture_affine_metrics();
-            WORLD_CACHE_BAND_STATE = WORLD_BAND_STATE;
-            WORLD_CACHE_VALID = true;
-            WORLD_CACHE_ROOM_ONLY = true;
-            WORLD_CACHE_OVERFLOW = false;
-            WORLD_CACHE_CANDIDATE_STATE = 0;
-        } else {
-            WORLD_CACHE_VALID = false;
-            WORLD_CACHE_ROOM_ONLY = false;
-            WORLD_CACHE_ROOM_COUNT = 0;
-            WORLD_CACHE_ROOM_PREFIX_HOLES = 0;
-            WORLD_CACHE_CANDIDATE_STATE = WORLD_CACHE_CANDIDATE_REJECTED;
-        }
-        return;
-    }
-    WORLD_CACHE_KEY = key;
-    WORLD_CACHE_NP = np as u16;
-    WORLD_CACHE_NQ = nq as u16;
-    WORLD_CACHE_EMIT_CALLS = emit_calls;
-    WORLD_CACHE_AFFINE_SPLIT_TRIS = affine_split_tris;
-    capture_affine_metrics();
-    WORLD_CACHE_BAND_STATE = WORLD_BAND_STATE;
-    WORLD_CACHE_VALID = true;
-    WORLD_CACHE_ROOM_ONLY = false;
 }
 
 // One-entry cache for the current translucent face's blended packet: water
@@ -10415,8 +9887,7 @@ unsafe fn logic_use_entity(
             // CFuncWall::Use: toggle pev->frame 0<->1, swapping the brush's
             // chain textures between their own and the alternate chain (the
             // retinal scanner's idle<->animating blink). ENT_PHASE doubles as
-            // the frame bit for kind-0/2 statics (no mover machinery reads it),
-            // which also keys the brush packet cache for free.
+            // the frame bit for kind-0/2 statics (no mover machinery reads it).
             if let Some(ei) = logic_valid_brush(rec.brush, nents) {
                 let on = ENT_PHASE[ei] != 0;
                 let should_toggle = match use_type {
@@ -10451,7 +9922,6 @@ unsafe fn logic_use_entity(
                     LIGHTSTYLE_ACTIVE_MASK &= !bit;
                     LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
                 }
-                invalidate_world_packet_cache();
             }
         }
         map::LOGIC_BEAM => {
@@ -20171,9 +19641,6 @@ unsafe fn rebuild_pvs_cache(
     eye_under: bool,
     seal_state: u32,
 ) {
-    // The packet payload borrows the old PVS arrays' unused suffix. Invalidate
-    // before the new live prefix can overwrite any part of it.
-    invalidate_world_packet_cache();
     let (visofs, _, _) = m.leaf(cam_leaf as usize);
     decompress_vis(m, visofs, &mut VIS_BITS);
     if eye_under {
@@ -20204,10 +19671,8 @@ unsafe fn rebuild_pvs_cache(
     PVS_FACE_COUNT = compiled.face_count;
     PVS_GROUP_COUNT = compiled.group_count;
     PVS_TRI_REF_COUNT = compiled.triangle_references;
-    PVS_HAS_TRANSLUCENT = compiled.has_translucent;
-    PVS_HAS_TEXANIM = compiled.has_texture_animation;
     // Closed doors: the face list stays the full PVS, so a door opening only
-    // relinks cached packets. PVS_FACE_MARK, which the compile leaves holding
+    // stops the hiding. PVS_FACE_MARK, which the compile leaves holding
     // every listed face, is cut down to the faces no leaf on the camera's
     // side marks. The caller never seals an underwater eye (no merged row),
     // and the row is decoded again so everything else still reads the PVS.
@@ -20790,7 +20255,6 @@ unsafe fn push_tri_uv_words_packed(
         }
         return;
     };
-    world_cache_capture_packet(packet as *const TriTexturedGouraud, otz, false);
     tram_cache_capture_tri(packet as *const TriTexturedGouraud, otz);
     OT.add(otz, packet, TriTexturedGouraud::WORDS);
     *np += 1;
@@ -22262,7 +21726,6 @@ unsafe fn try_emit_quad_corners(
             slot.backdrop,
         )
     });
-    world_cache_capture_packet(packet as *const QuadTexturedGouraud, otz, true);
     OT.add(otz, packet, QuadTexturedGouraud::WORDS);
     *nq += 1;
     if native_patch {
@@ -22290,94 +21753,6 @@ impl WorldCounters {
             emit_calls: 0,
         }
     }
-}
-
-/// Recreate cached packets in the same arena slots and call OT.add in the same
-/// emission order as the fresh renderer. Unlike direct links to persistent
-/// storage, later brush/actor packets therefore retain their baseline addresses.
-#[inline]
-unsafe fn replay_world_packet_cache(
-    packets: &mut PrimitivePacketArena<'_>,
-    np: &mut usize,
-    nq: &mut usize,
-    counts: &mut WorldCounters,
-    count: usize,
-    cached_np: usize,
-    cached_nq: usize,
-) -> bool {
-    if count > packets.remaining() || count > PVS_BAND_CAP || count > MAX_RENDER_PACKETS {
-        invalidate_world_packet_cache();
-        return false;
-    }
-    // A texture-animation step staged by prepare_world_packet_cache.
-    let retarget = !world_cache_retarget().is_empty();
-    // Packets tagged with this bit stay unlinked (a closed door's far side).
-    let hidden = if PVS_SEAL_HIDE {
-        WORLD_CACHE_SEALED_META
-    } else {
-        0
-    };
-    let mut i = 0usize;
-    while i < count {
-        let meta = PVS_BAND_ORDER[PVS_BAND_CAP - 1 - i];
-        let otz = (meta & WORLD_CACHE_OTZ_MASK) as usize;
-        if meta & WORLD_CACHE_SKIP_META != 0 {
-            if packets.reuse_packet::<QuadTexturedGouraud>().is_none() {
-                note_render_packet_drop(false);
-                invalidate_world_packet_cache();
-                WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
-                return false;
-            }
-        } else if meta & WORLD_CACHE_QUAD_META != 0 {
-            let Some(packet) = packets.reuse_packet::<QuadTexturedGouraud>() else {
-                note_render_packet_drop(false);
-                invalidate_world_packet_cache();
-                WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
-                return false;
-            };
-            if retarget {
-                world_cache_retarget().apply((packet as *mut QuadTexturedGouraud).cast::<u32>());
-            }
-            if meta & hidden == 0 {
-                OT.add(otz, packet, QuadTexturedGouraud::WORDS);
-            }
-        } else {
-            let Some(packet) = packets.reuse_packet::<TriTexturedGouraud>() else {
-                note_render_packet_drop(false);
-                invalidate_world_packet_cache();
-                WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
-                return false;
-            };
-            if retarget {
-                world_cache_retarget().apply((packet as *mut TriTexturedGouraud).cast::<u32>());
-            }
-            if meta & hidden == 0 {
-                OT.add(otz, packet, TriTexturedGouraud::WORDS);
-            }
-        }
-        i += 1;
-    }
-    *np += cached_np;
-    *nq += cached_nq;
-    counts.emit_calls = WORLD_CACHE_EMIT_CALLS;
-    WORLD_AFFINE_SPLIT_TRIS = WORLD_CACHE_AFFINE_SPLIT_TRIS;
-    WORLD_AFFINE_ERROR_MAX_Q8 = WORLD_CACHE_AFFINE_ERROR_MAX_Q8;
-    WORLD_AFFINE_ERROR_P50_Q8 = WORLD_CACHE_AFFINE_ERROR_P50_Q8;
-    WORLD_AFFINE_ERROR_P95_Q8 = WORLD_CACHE_AFFINE_ERROR_P95_Q8;
-    WORLD_AFFINE_ERROR_P99_Q8 = WORLD_CACHE_AFFINE_ERROR_P99_Q8;
-    WORLD_AFFINE_SPLIT_CANDIDATES = WORLD_CACHE_AFFINE_SPLIT_CANDIDATES;
-    WORLD_AFFINE_EXTRA_REQUESTED = WORLD_CACHE_AFFINE_EXTRA_REQUESTED;
-    WORLD_AFFINE_EXTRA_EMITTED = WORLD_CACHE_AFFINE_EXTRA_EMITTED;
-    WORLD_AFFINE_NATIVE_GT4 = WORLD_CACHE_AFFINE_NATIVE_GT4;
-    WORLD_AFFINE_SPLIT_PATCHES = WORLD_CACHE_AFFINE_SPLIT_PATCHES;
-    WORLD_AFFINE_ADDED_GTE_TRANSFORMS = WORLD_CACHE_AFFINE_ADDED_GTE;
-    WORLD_AFFINE_REMAINING_MAX_Q8 = WORLD_CACHE_AFFINE_REMAINING_MAX_Q8;
-    WORLD_AFFINE_REMAINING_P50_Q8 = WORLD_CACHE_AFFINE_REMAINING_P50_Q8;
-    WORLD_AFFINE_REMAINING_P95_Q8 = WORLD_CACHE_AFFINE_REMAINING_P95_Q8;
-    WORLD_AFFINE_REMAINING_P99_Q8 = WORLD_CACHE_AFFINE_REMAINING_P99_Q8;
-    WORLD_BAND_STATE = WORLD_CACHE_BAND_STATE;
-    reset_emit_policy();
-    true
 }
 
 /// Decode-after-cull fast path shared by the world and submodel triangle loops.
@@ -23687,7 +23062,6 @@ unsafe fn push_affine_quad_gt4(
     // Every caller enters through try_emit_native_affine_quad, which reserves
     // the complete build-selected child count before subdivision begins.
     let packet = packets.push_unchecked(prim);
-    world_cache_capture_packet(packet as *const QuadTexturedGouraud, otz, true);
     tram_cache_capture_quad(packet as *const QuadTexturedGouraud, otz);
     *nq += 1;
     packet
@@ -24067,7 +23441,6 @@ unsafe fn push_patch_underlay(
         ordering::PrimitiveDepths::quad(p0.sz as i32, p1.sz as i32, p2.sz as i32, p3.sz as i32),
         texture_backdrop,
     );
-    world_cache_capture_packet(packet as *const QuadTexturedGouraud, otz, true);
     OT.add(otz, packet, QuadTexturedGouraud::WORDS);
     *nq += 1;
 }
@@ -24409,14 +23782,6 @@ unsafe fn push_tri_gpu_split(
         || (screen[0].1 >= 240 && screen[1].1 >= 240 && screen[2].1 >= 240)
     {
         return;
-    }
-    // A frame that needed GPU-size splitting must not be served from the
-    // world packet cache: the standstill replay measurably loses the split
-    // children. Strong invalidation: the overflow flag alone still let the
-    // ROOM_ONLY salvage replay a prefix missing these children.
-    if depth == 0 {
-        WORLD_CACHE_OVERFLOW = true;
-        invalidate_world_packet_cache();
     }
     // Edge-local split rule (crack-free): identical verdicts on both sides
     // of a shared edge, geometry-only. Midpoint XY stays the plain screen
@@ -28244,7 +27609,6 @@ fn play(
     // same destination landmark used for the player spawn.
     let landmark_found = launch_landmark_origin(&m, nlogic, launch.landmark);
     unsafe {
-        invalidate_world_packet_cache();
         WORLD_AFFINE_PREVIOUS_COUNT = 0;
         WORLD_AFFINE_SELECTED_COUNT = 0;
         WORLD_AFFINE_NEXT_COUNT = 0;
@@ -28280,7 +27644,7 @@ fn play(
         ENT_SOLID_COUNT = nents_early;
         // Animated-texture chains (+0../+9, +a../+j): per-map masks + the
         // frame-0 display tables. Needs ENT_CACHE for the per-brush flags.
-        tex_anim_init(&m, nents_early);
+        tex_anim_init(&m);
         init_prop_state(&m, launch.room_id as usize, !launch.preserve_view);
         let restored = restore_transition_actors(&m, landmark_found, launch.carry_count);
         stream_map_models(
@@ -31220,10 +30584,6 @@ fn play(
             let mut packets = PrimitivePacketArena::new(&mut PRIMITIVE_PACKETS);
             let mut np = 0usize;
             let mut nq = 0usize;
-            let mut world_cache_action = WORLD_CACHE_NONE;
-            let mut world_cache_key = WorldPacketCacheKey::EMPTY;
-            let mut brush_cache_hit = false;
-            let mut world_cache_emit_calls = 0u32;
             let room_affine_split_tris: u32;
             reset_world_affine_frame();
 
@@ -31271,9 +30631,9 @@ fn play(
                 } else {
                     door_seals(&m, cam_leaf, nents, 0)
                 };
-                // The face list is always the full PVS and the packet cache
-                // holds the far side unlinked, so a door opening only stops
-                // the hiding; a door closing (or a side flip) rebuilds.
+                // The face list is always the full PVS and the far side is
+                // skipped while sealed, so a door opening only stops the
+                // hiding; a door closing (or a side flip) rebuilds.
                 let seal_rebuild = seal_state & !render_seal_state != 0;
                 if !seal_rebuild {
                     PVS_SEAL_HIDE = seal_state == render_seal_state && seal_state != 0;
@@ -31370,118 +30730,20 @@ fn play(
                 // In multi-band (overflow) mode, faces of visible groups are
                 // counting-sorted into near-to-far order here.
                 let bucketed = nbands > 1 && PVS_FACE_COUNT <= PVS_BAND_CAP;
-                world_cache_key = WorldPacketCacheKey {
-                    leaf: cam_leaf,
-                    projection_h: projection_h as u16,
-                    flashlight_state: if FLASHLIGHT_ON {
-                        FLASHLIGHT_REACH.max(1)
-                    } else {
-                        0
-                    },
-                    // Filled below only after this exact camera view repeats.
-                    // A moving view cannot hit or build the packet cache, so
-                    // hashing every visible brush here was pure per-frame work.
-                    static_brush_state: 0,
-                    rot: rot.m,
-                    base_t,
-                    eye,
-                    // Phase-dependent payloads rebuild only when their coarse
-                    // animation step changes. Cached packets remain immutable
-                    // while either framebuffer may still be consuming them.
-                    wave_du: if PVS_HAS_TRANSLUCENT { WAVE_DU } else { 0 },
-                    wave_dv: if PVS_HAS_TRANSLUCENT { WAVE_DV } else { 0 },
-                    tex_anim: if PVS_HAS_TEXANIM && !TEX_ANIM_RETARGET {
-                        PVS_TEX_ANIM_GEN
-                    } else {
-                        0
-                    },
-                    // Affine dense-view policy deliberately stays out of this
-                    // key. Camera movement already changes the transform and
-                    // receives the current bounded policy; invalidating an
-                    // exact stationary cache when cooldown changes creates a
-                    // rebuild/missed-deadline feedback loop.
-                    band_mode: nbands as u8
-                        | ((bucketed as u8) << 4)
-                        | ((use_bands as u8) << 5)
-                        | ((render_eye_under as u8) << 6),
-                    affine_generation: WORLD_AFFINE_EDGE_GENERATION,
-                };
-                // Hash mutable brush state only when an existing cache or an
-                // armed candidate has the same exact camera. A newly seen view
-                // is recorded with the zero sentinel; if it repeats, the real
-                // state becomes the candidate key, and a third stable frame
-                // builds it. This trades one extra uncached stationary frame
-                // for removing the full entity/hash walk during normal motion.
-                let brush_state_needed = (WORLD_CACHE_VALID
-                    && WORLD_CACHE_KEY.same_view(&world_cache_key))
-                    || (WORLD_CACHE_CANDIDATE_STATE == WORLD_CACHE_CANDIDATE_ARMED
-                        && WORLD_CACHE_CANDIDATE_KEY.same_view(&world_cache_key));
-                if brush_state_needed {
-                    world_cache_key.static_brush_state = static_brush_state(have_pvs, nents);
-                }
                 ROOM_PROJECTED_COUNT = 0;
-                telemetry::stage_begin(telemetry::stage::ROOM_DEPTH_PREP);
-                world_cache_action = prepare_world_packet_cache(
-                    &m,
-                    world_cache_key,
-                    if bucketed { PVS_FACE_COUNT } else { 0 },
-                );
-                telemetry::stage_end(telemetry::stage::ROOM_DEPTH_PREP);
-                let mut room_cache_hit = if world_cache_action == WORLD_CACHE_HIT
-                    || world_cache_action == WORLD_CACHE_BRUSH_REBUILD
-                {
-                    telemetry::stage_begin(telemetry::stage::ROOM_PROJECT);
-                    let room_only = world_cache_action == WORLD_CACHE_BRUSH_REBUILD;
-                    let hit = replay_world_packet_cache(
-                        &mut packets,
-                        &mut np,
-                        &mut nq,
-                        &mut room_counts,
-                        if room_only {
-                            WORLD_CACHE_ROOM_COUNT as usize
-                        } else {
-                            WORLD_CACHE_COUNT
-                        },
-                        if room_only {
-                            WORLD_CACHE_ROOM_NP as usize
-                        } else {
-                            WORLD_CACHE_NP as usize
-                        },
-                        if room_only {
-                            WORLD_CACHE_ROOM_NQ as usize
-                        } else {
-                            WORLD_CACHE_NQ as usize
-                        },
-                    );
-                    telemetry::stage_end(telemetry::stage::ROOM_PROJECT);
-                    hit
-                } else {
-                    false
-                };
-                if !room_cache_hit
-                    && (world_cache_action == WORLD_CACHE_HIT
-                        || world_cache_action == WORLD_CACHE_BRUSH_REBUILD)
-                {
-                    world_cache_action = WORLD_CACHE_NONE;
-                }
-                brush_cache_hit = room_cache_hit && world_cache_action == WORLD_CACHE_HIT;
-
-                if !room_cache_hit {
-                    prepare_world_affine_candidates(&visibility, frame_no as u16);
-                    if use_bands && WORLD_CLASSIC_AFFINE_SELECTION {
-                        WORLD_AFFINE_EXTRA_BUDGET_LEFT =
-                            WORLD_AFFINE_EXTRA_BUDGET_LEFT.min(WORLD_CLASSIC_BANDED_EXTRA_PACKETS);
-                    }
+                prepare_world_affine_candidates(&visibility, frame_no as u16);
+                if use_bands && WORLD_CLASSIC_AFFINE_SELECTION {
+                    WORLD_AFFINE_EXTRA_BUDGET_LEFT =
+                        WORLD_AFFINE_EXTRA_BUDGET_LEFT.min(WORLD_CLASSIC_BANDED_EXTRA_PACKETS);
                 }
                 telemetry::stage_begin(telemetry::stage::ROOM_CELL_SELECT);
-                if !room_cache_hit && bucketed {
+                if bucketed {
                     for c in PVS_BAND_START.iter_mut() {
                         *c = 0;
                     }
                 }
-                let group_passes = if room_cache_hit { 0 } else { PVS_GROUP_COUNT };
                 let group_vis = group_vis_bits();
-                for gi in 0..group_passes {
+                for gi in 0..PVS_GROUP_COUNT {
                     let group = PVS_GROUP_ACTIVE[gi] as usize;
                     let (plane_n, plane_d) = m.cooked_group_plane(group);
                     let vis = dot_plane(plane_n, eye) > plane_d
@@ -31536,7 +30798,7 @@ fn play(
                         }
                     }
                 }
-                if !room_cache_hit && bucketed {
+                if bucketed {
                     // Prefix-sum the counts, then scatter (second link walk).
                     let mut acc = 0u16;
                     let slots = nbands as usize * PVS_BAND_KINDS + 1;
@@ -31576,7 +30838,7 @@ fn play(
                 telemetry::stage_begin(telemetry::stage::ROOM_PROJECT);
 
                 let seal_hide = PVS_SEAL_HIDE;
-                let mut band = if room_cache_hit { nbands } else { 0 };
+                let mut band = 0;
                 while band < nbands {
                     for gi in 0..PVS_GROUP_COUNT {
                         if bucketed {
@@ -31596,14 +30858,9 @@ fn play(
                                     continue;
                                 }
                                 let face = PVS_FACE_INDEX.0[e] as usize;
-                                // A closed door's far side is built only into
-                                // a cache (unlinked), never drawn.
-                                let mut sealed_from = usize::MAX;
+                                // A closed door's far side is never drawn.
                                 if seal_hide && PVS_FACE_MARK[face >> 5] & (1 << (face & 31)) != 0 {
-                                    if !WORLD_CACHE_BUILDING {
-                                        continue;
-                                    }
-                                    sealed_from = WORLD_CACHE_COUNT;
+                                    continue;
                                 }
 
                                 if !WORLD_BOUNDS_CULL
@@ -31657,9 +30914,6 @@ fn play(
                                             &mut room_counts,
                                         );
                                     }
-                                }
-                                if sealed_from != usize::MAX {
-                                    world_cache_hold_sealed(sealed_from);
                                 }
                             } else {
                                 let face = PVS_FACE_INDEX.0[e] as usize;
@@ -31855,11 +31109,8 @@ fn play(
                 }
                 telemetry::stage_end(telemetry::stage::ROOM_PROJECT);
                 reset_emit_policy();
-                world_cache_emit_calls = room_counts.emit_calls;
                 room_affine_split_tris = WORLD_AFFINE_SPLIT_TRIS;
-                if !room_cache_hit {
-                    finish_world_affine_candidates();
-                }
+                finish_world_affine_candidates();
                 affine_finalize_percentiles();
                 affine_finalize_remaining_percentiles();
                 telemetry::stage_end(telemetry::stage::ROOM_SURFACE_DRAW);
@@ -31888,11 +31139,8 @@ fn play(
                     telemetry::counter::ROOM_PROJECTED_VERTICES,
                     ROOM_PROJECTED_COUNT,
                 );
-                telemetry::counter(telemetry::counter::ROOM_CACHED_DRAWS, room_cache_hit as u32);
-                telemetry::counter(
-                    telemetry::counter::ROOM_UNCACHED_DRAWS,
-                    (!room_cache_hit) as u32,
-                );
+                telemetry::counter(telemetry::counter::ROOM_CACHED_DRAWS, 0);
+                telemetry::counter(telemetry::counter::ROOM_UNCACHED_DRAWS, 1);
                 telemetry::counter(
                     telemetry::counter::ROOM_VISIBILITY_FALLBACK_DRAWS,
                     if reused_last_pvs { 1 } else { 0 },
@@ -31947,13 +31195,6 @@ fn play(
                 telemetry::counter(telemetry::counter::ROOM_UNCACHED_DRAWS, 1);
                 telemetry::counter(telemetry::counter::ROOM_VISIBILITY_FALLBACK_DRAWS, 1);
             }
-            if world_cache_action == WORLD_CACHE_BUILD {
-                WORLD_CACHE_ROOM_COUNT = WORLD_CACHE_COUNT.min(u16::MAX as usize) as u16;
-                WORLD_CACHE_ROOM_PREFIX_HOLES =
-                    WORLD_CACHE_PREFIX_HOLES.min(u16::MAX as usize) as u16;
-                WORLD_CACHE_ROOM_NP = np.min(u16::MAX as usize) as u16;
-                WORLD_CACHE_ROOM_NQ = nq.min(u16::MAX as usize) as u16;
-            }
             // Preserve near-first sorting only where it is demonstrably needed.
             // A small reserve prevents a view hovering at the arena limit from
             // alternating modes; ordinary PVS views avoid two full face walks.
@@ -31987,9 +31228,8 @@ fn play(
             let group_seen = group_seen_bits();
             clear_group_bits(group_seen);
             let brush_iter_count = if have_pvs { PVS_ENT_COUNT } else { nents };
-            // Cacheable world-aligned brushes must directly follow the room
-            // arena prefix. Moving/rotating brushes form the second pass and
-            // remain freshly projected, so doors and rotors never freeze.
+            // Static world-aligned brushes draw first, moving/rotating ones in
+            // a second pass (see static_brush_cacheable).
             SUBMODEL_OCCLUSION_EXTRAS = 160;
             let mut brush_pass = 0u8;
             while brush_pass < 2 {
@@ -32007,11 +31247,6 @@ fn play(
                     }
                     let cacheable = static_brush_cacheable(ei, e);
                     if cacheable != (brush_pass == 0) {
-                        continue;
-                    }
-                    if cacheable && brush_cache_hit {
-                        // This packet range was relinked with the room prefix.
-                        model_draws = model_draws.saturating_add(1);
                         continue;
                     }
                     if ENT_ACTIVE[ei] == 0 || e.blend & 0x80 != 0 {
@@ -32273,23 +31508,11 @@ fn play(
                     reset_emit_policy();
                     map::tex_anim_select(false);
                 }
-                if brush_pass == 0
-                    && (world_cache_action == WORLD_CACHE_BUILD
-                        || world_cache_action == WORLD_CACHE_BRUSH_REBUILD)
-                {
-                    finish_world_packet_cache(
-                        world_cache_key,
-                        np,
-                        nq,
-                        world_cache_emit_calls,
-                        room_affine_split_tris,
-                    );
-                }
                 brush_pass += 1;
             }
             SUBMODEL_ACTOR_OVERLAP = false;
             // Delay this snapshot until both passes have used the prior visual
-            // state for the same cacheability decision and key.
+            // state for the same static/moving decision.
             for ei in 0..nents {
                 ENT_RENDER_PHASE[ei] = ENT_PHASE[ei];
             }
