@@ -41,7 +41,7 @@ fn map_pool_budgets(repository: &Path, maps: usize) -> Result<Vec<usize>> {
 }
 const VM_POOL_WORDS: usize = 20_224;
 const MAX_LOADED_MODELS: usize = 23;
-const POOL_FACE_CAP: usize = 8_640;
+const POOL_FACE_CAP: usize = 7_936;
 const POOL_FACE_RUN_CAP: usize = 192;
 const POOL_TEX_SLOTS: usize = 176;
 const N_MODEL_TYPES: usize = 76;
@@ -2221,7 +2221,7 @@ mod tests {
             "const N_MODEL_TYPES: usize = 76;",
             "const MAX_LOADED_MODELS: usize = 23;",
             "const POOL_TEX_SLOTS: usize = 176;",
-            "const POOL_FACE_CAP: usize = 8640;",
+            "const POOL_FACE_CAP: usize = 7936;",
             "const POOL_FACE_RUN_CAP: usize = 192;",
             "const VM_POOL_WORDS: usize = 20_224;",
             "const VM_TAIL_GUARD_WORDS: usize = 2_030;",
