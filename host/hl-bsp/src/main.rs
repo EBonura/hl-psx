@@ -6007,6 +6007,7 @@ fn named_door_has_activation(all_entities: &str, name: &str, spawnflags: u32) ->
             || ent_value(block, "killtarget") == Some(name)
             || ent_value(block, "m_iszNewTarget") == Some(name)
             || ent_value(block, "changetarget") == Some(name)
+            || ent_value(block, "TriggerTarget") == Some(name)
         {
             return true;
         }
@@ -7553,7 +7554,11 @@ fn collect_logic_entities_with_lightstyles(
         // BSP vertices are pivot-local; only the live door state is absent.
         if cls == "func_door_rotating" {
             let targetname = ent_value(block, "targetname").unwrap_or("");
-            if !named_door_has_activation(&s, targetname, parse_spawnflags_u32(block)) {
+            // A scripted clip's fire event also opens doors (c1a2d's latch
+            // barney_door_lock turns when Barney plays "unlatch").
+            if !named_door_has_activation(&s, targetname, parse_spawnflags_u32(block))
+                && !studio_events.values().flatten().any(|e| e.target == targetname)
+            {
                 continue;
             }
         }
