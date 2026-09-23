@@ -576,6 +576,11 @@ const CROUCH_VIEW_HEIGHT: i32 = 12; // VEC_DUCK_VIEW (pm_shared duck eye)
 const PLAYER_SEARCH_RADIUS: i32 = 64; // player.cpp PlayerUse
 const PLAYER_TOUCH_HALF_XZ: i32 = 16;
 const PLAYER_TOUCH_HEIGHT: i32 = 56;
+// The player's origin is the centre of its clip hull (VEC_HULL_MIN/MAX
+// -36..36 standing, VEC_DUCK_HULL -18..18 crouched), so the absbox trigger
+// touches test spans that far below and above it.
+const PLAYER_HULL_HALF_HEIGHT: i32 = 36;
+const PLAYER_DUCK_HALF_HEIGHT: i32 = 18;
 // Distance cull on world face centers (sphere_visible). HL maps are enclosed, so
 // every spawn sightline terminates (corner/door/dark) well within 2000 units; the
 // conservative PVS still flags far geometry as potentially visible and the renderer
@@ -3419,6 +3424,7 @@ static mut TRACKTRAIN_USE_SPEED: u16 = 60; // +use drive speed (On A Rail)
 static mut LOGIC_PLAYER_POS: [i32; 3] = [0; 3];
 static mut SIM_NOW: u16 = 0; // current sim tick, for fire-path logic hooks
 static mut LOGIC_PLAYER_YAW: u16 = 0;
+static mut LOGIC_PLAYER_HALF_HEIGHT: i32 = PLAYER_HULL_HALF_HEIGHT;
 static mut LOGIC_PLAYER_PITCH: i16 = 0;
 static mut LOGIC_PLAYER_HEALTH: u16 = PLAYER_START_HEALTH;
 static mut LOGIC_PLAYER_SUIT: u8 = 0;
@@ -8165,12 +8171,12 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
     // when one exists, in addition to touching trigger_changelevel.
     let pmins = [
         LOGIC_PLAYER_POS[0] - PLAYER_TOUCH_HALF_XZ,
-        LOGIC_PLAYER_POS[1],
+        LOGIC_PLAYER_POS[1] - LOGIC_PLAYER_HALF_HEIGHT,
         LOGIC_PLAYER_POS[2] - PLAYER_TOUCH_HALF_XZ,
     ];
     let pmaxs = [
         LOGIC_PLAYER_POS[0] + PLAYER_TOUCH_HALF_XZ,
-        LOGIC_PLAYER_POS[1] + PLAYER_TOUCH_HEIGHT,
+        LOGIC_PLAYER_POS[1] + LOGIC_PLAYER_HALF_HEIGHT,
         LOGIC_PLAYER_POS[2] + PLAYER_TOUCH_HALF_XZ,
     ];
     let mut has_transition_volume = false;
@@ -11399,6 +11405,7 @@ unsafe fn logic_touch_triggers(
     nlogic: usize,
     nents: usize,
     player_pos: [i32; 3],
+    half_height: i32,
     health: &mut u16,
     armor: &mut u16,
     now: u16,
@@ -11409,12 +11416,12 @@ unsafe fn logic_touch_triggers(
     let geiger_due = geiger_count != 0 && GEIGER_COOLDOWN & 0x0f == 0;
     let pmins = [
         player_pos[0] - PLAYER_TOUCH_HALF_XZ,
-        player_pos[1],
+        player_pos[1] - half_height,
         player_pos[2] - PLAYER_TOUCH_HALF_XZ,
     ];
     let pmaxs = [
         player_pos[0] + PLAYER_TOUCH_HALF_XZ,
-        player_pos[1] + PLAYER_TOUCH_HEIGHT,
+        player_pos[1] + half_height,
         player_pos[2] + PLAYER_TOUCH_HALF_XZ,
     ];
     let pmins_contact = [pmins[0] - 1, pmins[1] - 1, pmins[2] - 1];
@@ -29306,6 +29313,11 @@ fn play(
                 .clamp(-PITCH_MAX, PITCH_MAX);
             unsafe {
                 LOGIC_PLAYER_POS = player.pos;
+                LOGIC_PLAYER_HALF_HEIGHT = if player.crouch {
+                    PLAYER_DUCK_HALF_HEIGHT
+                } else {
+                    PLAYER_HULL_HALF_HEIGHT
+                };
                 LOGIC_PLAYER_YAW = yaw;
                 LOGIC_PLAYER_PITCH = pitch;
                 // A stopped tracktrain still carries its standing passenger
@@ -30310,6 +30322,11 @@ fn play(
                     weapon_icon_ticks = WEAPON_ICON_TICKS;
                 }
                 LOGIC_PLAYER_POS = player.pos;
+                LOGIC_PLAYER_HALF_HEIGHT = if player.crouch {
+                    PLAYER_DUCK_HALF_HEIGHT
+                } else {
+                    PLAYER_HULL_HALF_HEIGHT
+                };
                 LOGIC_PLAYER_YAW = yaw;
                 LOGIC_PLAYER_PITCH = pitch;
                 LOGIC_TRAM_RIDING = tram_player_attached as u8;
@@ -30433,6 +30450,11 @@ fn play(
                     nlogic,
                     nents,
                     player.pos,
+                    if player.crouch {
+                        PLAYER_DUCK_HALF_HEIGHT
+                    } else {
+                        PLAYER_HULL_HALF_HEIGHT
+                    },
                     &mut health,
                     &mut armor,
                     sim_frame_no as u16,
