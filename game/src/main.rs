@@ -10241,6 +10241,10 @@ unsafe fn logic_use_entity(
                         // the maker's own targetname, onto a spawned child.
                         PROP_NAME[pi] = 0;
                         prop_set_pos(m, &[], pi, PROP_POS[pi]);
+                        // CMonsterMaker::MakeMonster fires its target for
+                        // each child (c1a3's teleport flashes). Its "delay"
+                        // is the spawn interval, so fire now, not queued.
+                        logic_fire_targets(m, nlogic, nents, rec.target, map::USE_TOGGLE, now, depth + 1, li as u16);
                         break;
                     }
                 }
