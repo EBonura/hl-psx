@@ -931,6 +931,138 @@ fn talk_voice_layout(repo: &std::path::Path) -> Vec<[u8; 7]> {
     rows
 }
 
+/// Parse `sk_<name><1..3> "value"` lines of Half-Life's skill.cfg.
+fn parse_skill_cfg(text: &str) -> std::collections::HashMap<String, [f64; 3]> {
+    let mut out: std::collections::HashMap<String, [f64; 3]> = std::collections::HashMap::new();
+    for line in text.lines() {
+        let line = line.split("//").next().unwrap_or("").trim();
+        let mut fields = line.split_whitespace();
+        let (Some(key), Some(value)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        let Some(level) = key.chars().last().and_then(|c| c.to_digit(10)) else {
+            continue;
+        };
+        if !(1..=3).contains(&level) || !key.starts_with("sk_") {
+            continue;
+        }
+        let Ok(value) = value.trim_matches('"').parse::<f64>() else {
+            continue;
+        };
+        out.entry(key[..key.len() - 1].to_string()).or_insert([f64::NAN; 3])[level as usize - 1] =
+            value;
+    }
+    out
+}
+
+/// Skill tables for the three difficulty levels, from the cooked copy of
+/// the user's skill.cfg (hl-build `assets` copies it into data/). Each row is
+/// a monster model type and the cvar CBaseMonster reads for it in Spawn or
+/// its attack; a scale applies the SDK's own derivations (baby headcrab, the
+/// Gonarch's 150 * health factor).
+fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
+    let path = repo_root.join("data/skill.cfg");
+    println!("cargo:rerun-if-changed={}", path.display());
+    let text = fs::read_to_string(&path)
+        .unwrap_or_else(|_| panic!("{} is missing; run `cargo hl-build assets`", path.display()));
+    let cfg = parse_skill_cfg(&text);
+    let get = |name: &str, scale: f64| -> [f64; 3] {
+        let v = cfg
+            .get(name)
+            .unwrap_or_else(|| panic!("skill.cfg has no {name}1..3"));
+        assert!(v.iter().all(|x| x.is_finite()), "skill.cfg lacks a level of {name}");
+        [v[0] * scale, v[1] * scale, v[2] * scale]
+    };
+    const HEALTH: [(u8, &str, f64); 25] = [
+        (0, "sk_scientist_health", 1.0),
+        (1, "sk_barney_health", 1.0),
+        (2, "sk_headcrab_health", 1.0),
+        (5, "sk_zombie_health", 1.0),
+        (6, "sk_houndeye_health", 1.0),
+        (7, "sk_bullsquid_health", 1.0),
+        (8, "sk_hgrunt_health", 1.0),
+        (9, "sk_islave_health", 1.0),
+        (10, "sk_agrunt_health", 1.0),
+        (11, "sk_controller_health", 1.0),
+        (13, "sk_leech_health", 1.0),
+        (16, "sk_gargantua_health", 1.0),
+        (17, "sk_nihilanth_health", 1.0),
+        (18, "sk_bigmomma_health_factor", 150.0),
+        (19, "sk_ichthyosaur_health", 1.0),
+        (20, "sk_sentry_health", 1.0),
+        (21, "sk_turret_health", 1.0),
+        (22, "sk_miniturret_health", 1.0),
+        (23, "sk_apache_health", 1.0),
+        (25, "sk_scientist_health", 1.0),
+        (51, "sk_hassassin_health", 1.0),
+        (54, "sk_scientist_health", 1.0),
+        (55, "sk_zombie_health", 1.0),
+        (58, "sk_snark_health", 1.0),
+        (59, "sk_headcrab_health", 0.25),
+    ];
+    // Damage per attack: bites/slashes for the melee types, the bullet,
+    // hornet, zap, spit or blast each ranged type fires (FireBullets'
+    // BULLET_MONSTER_9MM/MP5/12MM map to sk_9mm/9mmAR/12mm_bullet).
+    const DAMAGE: [(u8, &str, f64); 17] = [
+        (1, "sk_9mm_bullet", 1.0),
+        (2, "sk_headcrab_dmg_bite", 1.0),
+        (5, "sk_zombie_dmg_one_slash", 1.0),
+        (6, "sk_houndeye_dmg_blast", 1.0),
+        (7, "sk_bullsquid_dmg_spit", 1.0),
+        (8, "sk_9mmAR_bullet", 1.0),
+        (9, "sk_islave_dmg_zap", 1.0),
+        (10, "sk_hornet_dmg", 1.0),
+        (11, "sk_controller_dmgball", 1.0),
+        (19, "sk_ichthyosaur_shake", 1.0),
+        (20, "sk_9mmAR_bullet", 1.0),
+        (21, "sk_12mm_bullet", 1.0),
+        (22, "sk_9mm_bullet", 1.0),
+        (51, "sk_9mm_bullet", 1.0),
+        (55, "sk_zombie_dmg_one_slash", 1.0),
+        (58, "sk_snark_dmg_bite", 1.0),
+        (59, "sk_headcrab_dmg_bite", 0.3),
+    ];
+    let level_u8 = |v: f64| (v.floor().clamp(1.0, 255.0)) as u8;
+    let level_u16 = |v: f64| (v.floor().clamp(0.0, u16::MAX as f64)) as u16;
+    let mut health = [[0u8; 76]; 3];
+    for (ty, name, scale) in HEALTH {
+        let v = get(name, scale);
+        for level in 0..3 {
+            // Actor health is a u8 at runtime: the bosses clamp to 255.
+            health[level][ty as usize] = level_u8(v[level]);
+        }
+    }
+    let mut damage = [[0u8; 76]; 3];
+    for (ty, name, scale) in DAMAGE {
+        let v = get(name, scale);
+        for level in 0..3 {
+            damage[level][ty as usize] = level_u8(v[level]);
+        }
+    }
+    let row = |name: &str, scale: f64| {
+        let v = get(name, scale);
+        format!("[{}, {}, {}]", level_u16(v[0]), level_u16(v[1]), level_u16(v[2]))
+    };
+    let generated = format!(
+        "/// Spawn health per model type and difficulty; 0 keeps the model default.\n\
+         pub const SKILL_HEALTH: [[u8; 76]; 3] = {health:?};\n\
+         /// Damage per attack per model type and difficulty; 0 = no skill value.\n\
+         pub const SKILL_DAMAGE: [[u8; 76]; 3] = {damage:?};\n\
+         pub const SKILL_HEALTHKIT: [u16; 3] = {};\n\
+         pub const SKILL_BATTERY: [u16; 3] = {};\n\
+         pub const SKILL_HEALTHCHARGER: [u16; 3] = {};\n\
+         pub const SKILL_SUITCHARGER: [u16; 3] = {};\n\
+         /// sk_bigmomma_health_factor in Q8, for info_bigmomma node health.\n\
+         pub const SKILL_BIGMOMMA_FACTOR_Q8: [u16; 3] = {};\n",
+        row("sk_healthkit", 1.0),
+        row("sk_battery", 1.0),
+        row("sk_healthcharger", 1.0),
+        row("sk_suitcharger", 1.0),
+        row("sk_bigmomma_health_factor", 256.0),
+    );
+    fs::write(out_dir.join("skill_table.rs"), generated).expect("write generated skill tables");
+}
+
 fn main() {
     // This crate lives at <repo>/game, so the repo root is one level up.
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -941,6 +1073,7 @@ fn main() {
     let ld = psoxide.join("sdk/psoxide.ld");
     let ld = ld.canonicalize().unwrap_or(ld);
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    write_skill_tables(repo_root, &out_dir);
 
     // hl-psx measures its real stack high-water mark in emulator-telemetry
     // builds. Keep the SDK's full 32 KiB link-time reservation: menu/intro

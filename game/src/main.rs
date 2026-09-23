@@ -61,6 +61,10 @@ mod room_budget {
 // Generated build-time diagnostic constants. INITIAL_* serve semantic-input
 // replays; DBG_CAM_OVERRIDE pins the camera in any build. All are `None`
 // (fully compiled out) unless their environment variables were set.
+/// Per-difficulty values generated from the cooked skill.cfg (build.rs).
+mod skill_table {
+    include!(concat!(env!("OUT_DIR"), "/skill_table.rs"));
+}
 #[allow(dead_code)]
 mod reference_checkpoint {
     include!(concat!(env!("OUT_DIR"), "/reference_checkpoint.rs"));
@@ -880,7 +884,6 @@ const AMMO_PICKUPS: [(usize, u16); 8] = [
     (AMMO_URANIUM, 20),
     (AMMO_ARGREN, 2),
 ];
-const MEDKIT_HEAL: u16 = 15;
 const PROP_STATE_IDLE: u8 = 0;
 const PROP_STATE_MOVE: u8 = 1;
 const PROP_STATE_ATTACK: u8 = 2;
@@ -1178,7 +1181,6 @@ const DEATH_TICKS: u8 = 60; // frozen "you died" window before respawn (3s at 20
 const PLAYER_START_ARMOR: u16 = 0;
 const HEV_MAX_ARMOR: u16 = 100;
 const CHARGER_RATE: u16 = 4; // health/armor points per use pulse (8-tick cadence)
-const HEV_BATTERY_ARMOR: u16 = 15;
 const HEV_PICKUP_TICKS: u8 = 36;
 const HUD_HISTORY_TICKS: u8 = 100; // GoldSrc hud_drawhistory_time default: 5 s
 const PROP_LINK_MATCH_XZ_EPS: i32 = 24;
@@ -2497,6 +2499,8 @@ fn run_pause_menu(fb: &mut FrameBuffer) -> PauseExit {
                             Ok(cp) if (cp.room_id as usize) < menu::MAPS.len() => {
                                 PENDING_RESTORE = cp;
                                 PENDING_RESTORE_ACTIVE = true;
+                                // Actors spawn with the save's difficulty, before the restore.
+                                settings::set_skill(cp.skill);
                                 return PauseExit::LoadedSave(cp.room_id as usize);
                             }
                             Err(save::CardResult::NoCard) => status = "No card in that port",
@@ -5608,6 +5612,8 @@ pub fn load_saved_room() -> Option<usize> {
         }
         PENDING_RESTORE = cp;
         PENDING_RESTORE_ACTIVE = true;
+        // Actors spawn with the save's difficulty, before the restore.
+        settings::set_skill(cp.skill);
         Some(room)
     }
 }
@@ -11867,7 +11873,10 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         LOGIC_COUNTER[li] = match rec.kind {
             map::LOGIC_TRIGGER_COUNTER => (rec.arg0 as i16).max(1),
             // Chargers store their remaining juice here (never counters).
-            map::LOGIC_HEALTH_CHARGER | map::LOGIC_HEV_CHARGER => rec.arg0 as i16,
+            map::LOGIC_HEALTH_CHARGER => {
+                skill_table::SKILL_HEALTHCHARGER[settings::skill()] as i16
+            }
+            map::LOGIC_HEV_CHARGER => skill_table::SKILL_SUITCHARGER[settings::skill()] as i16,
             // Breakables need LOGIC_BREAK_HP for live HP, so preserve their
             // targetname's raw u16 bits in this otherwise-unused counter slot.
             map::LOGIC_FUNC_BREAKABLE | map::LOGIC_FUNC_GUNTARGET => rec.targetname as i16,
@@ -12459,9 +12468,34 @@ impl CameraVisibility<'_> {
     }
 }
 
-#[inline]
+#[inline(never)]
 fn prop_start_health(ty: u8) -> u8 {
-    model_def(ty).health
+    let skill = skill_table::SKILL_HEALTH[settings::skill()][(ty as usize).min(N_MODEL_TYPES - 1)];
+    if skill != 0 {
+        skill
+    } else {
+        model_def(ty).health
+    }
+}
+
+/// The type's damage per attack at the current difficulty, from skill.cfg.
+#[inline(never)]
+fn skill_damage(ty: u8) -> Option<u8> {
+    let damage = skill_table::SKILL_DAMAGE[settings::skill()][(ty as usize).min(N_MODEL_TYPES - 1)];
+    (damage != 0).then_some(damage)
+}
+
+/// A damage the port calibrated at Easy (the shared melee schedule's hit,
+/// Barney's pistol), scaled by the type's skill.cfg ratio to Easy.
+#[inline(never)]
+fn skill_scaled_damage(ty: u8, easy: u8) -> u8 {
+    let ty = (ty as usize).min(N_MODEL_TYPES - 1);
+    let base = skill_table::SKILL_DAMAGE[0][ty] as u16;
+    if base == 0 {
+        return easy;
+    }
+    let now = skill_table::SKILL_DAMAGE[settings::skill()][ty] as u16;
+    (easy as u16 * now / base).clamp(1, u8::MAX as u16) as u8
 }
 
 #[inline]
@@ -14289,7 +14323,9 @@ unsafe fn tick_boss_walker(m: &Map, movers: &[phys::Mover]) {
             }
             LOGIC_TARGET[w] = rec.arg0;
             if rec.arg1 != 0 {
-                LOGIC_COUNTER[w] = rec.arg1.min(i16::MAX as u16) as i16;
+                // pTarget->pev->health * gSkillData.bigmommaHealthFactor
+                let factor = skill_table::SKILL_BIGMOMMA_FACTOR_Q8[settings::skill()] as u32;
+                LOGIC_COUNTER[w] = ((rec.arg1 as u32 * factor) >> 8).min(i16::MAX as u32) as i16;
                 LOGIC_STATE[w] = LOGIC_STATE_GOING_DOWN;
             } else {
                 LOGIC_STATE[w] = LOGIC_STATE_BOTTOM;
@@ -15383,17 +15419,19 @@ unsafe fn tick_shooter(
             match ty {
                 PROP_TYPE_HOUNDEYE => {
                     // Sonic shockwave centred on the animal, not a hitscan.
-                    houndeye_blast(pos, range / 2, def.atk_damage);
+                    houndeye_blast(pos, range / 2, skill_damage(ty).unwrap_or(def.atk_damage));
                     sfx::play_world(sfx::HE_BLAST, pos);
                 }
                 PROP_TYPE_BULLSQUID => {
                     // Acid spit: a lobbed projectile toward the player.
                     let dir = dir_q12(from, aim);
-                    spawn_projectile_dir(PROJ_SPIT, def.atk_damage, from, dir, true);
+                    let damage = skill_damage(ty).unwrap_or(def.atk_damage);
+                    spawn_projectile_dir(PROJ_SPIT, damage, from, dir, true);
                     sfx::play_world(sfx::HC_ATTACK, pos); // no dedicated spit sample
                 }
                 _ => {
-                    damage_target(target, def.atk_damage, pos, health, armor);
+                    let damage = skill_damage(ty).unwrap_or(def.atk_damage);
+                    damage_target(target, damage, pos, health, armor);
                     // Human weapons crack like an MP5; alien ranged attacks zap.
                     let snd = if ty == 8 || ty >= 20 {
                         sfx::MP5
@@ -15460,9 +15498,9 @@ unsafe fn tick_headcrab(
                     // 10-point easy-skill slash for monster-vs-monster set
                     // pieces such as c1a1's Barney fight.
                     let damage = if prop_is_zombie(kind) && target != PROP_TARGET_PLAYER {
-                        ZOMBIE_ATTACK_DAMAGE
+                        skill_scaled_damage(kind, ZOMBIE_ATTACK_DAMAGE)
                     } else {
-                        HEADCRAB_ATTACK_DAMAGE as u8
+                        skill_scaled_damage(kind, HEADCRAB_ATTACK_DAMAGE as u8)
                     };
                     damage_target(target, damage, pos, health, armor);
                 }
@@ -16029,9 +16067,10 @@ unsafe fn tick_barney(
                 // reaches the room.
                 let damage =
                     if (target as usize) < nprops && prop_is_zombie(PROP_KIND[target as usize]) {
-                        ((BARNEY_DAMAGE as u16 * 3) / 10).max(1) as u8
+                        ((skill_scaled_damage(PROP_TYPE_BARNEY, BARNEY_DAMAGE) as u16 * 3) / 10).max(1)
+                            as u8
                     } else {
-                        BARNEY_DAMAGE
+                        skill_scaled_damage(PROP_TYPE_BARNEY, BARNEY_DAMAGE)
                     };
                 damage_target(target, damage, PROP_POS[pi], health, armor);
                 sfx::play_world(sfx::BARNEY_ATTACK, PROP_POS[pi]);
@@ -16915,7 +16954,8 @@ unsafe fn collect_pickups(
             }
             PROP_TYPE_MEDKIT => {
                 if *health < PLAYER_START_HEALTH {
-                    *health = (*health + MEDKIT_HEAL).min(PLAYER_START_HEALTH);
+                    *health = (*health + skill_table::SKILL_HEALTHKIT[settings::skill()])
+                        .min(PLAYER_START_HEALTH);
                     PROP_ACTIVE[pi] = 0;
                     *pickup_kind = hud::PICKUP_HEALTHKIT;
                     *pickup_ticks = HUD_HISTORY_TICKS;
@@ -16935,7 +16975,9 @@ unsafe fn collect_pickups(
             }
             PROP_TYPE_ITEM_BATTERY => {
                 if *suit_equipped && *armor < HEV_MAX_ARMOR {
-                    *armor = armor.saturating_add(HEV_BATTERY_ARMOR).min(HEV_MAX_ARMOR);
+                    *armor = armor
+                        .saturating_add(skill_table::SKILL_BATTERY[settings::skill()])
+                        .min(HEV_MAX_ARMOR);
                     let li = PROP_LOGIC_LINK[pi];
                     if li != u16::MAX && (li as usize) < nlogic {
                         let l = li as usize;
@@ -30287,6 +30329,7 @@ fn play(
                     global_count: GLOBAL_COUNT as u16,
                     has_pos: true,
                     gravity: phys::gravity_scale().clamp(0, u16::MAX as i32) as u16,
+                    skill: settings::skill() as u8,
                     sequence: 0, // stamped by save::write
                 };
                 let mut charger_pulse = 0u8;

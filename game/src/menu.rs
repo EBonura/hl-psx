@@ -957,8 +957,20 @@ fn poll_menu_edges(pad: &mut PadTracker) -> MenuEdges {
     }
 }
 
+/// The New game row's hint doubles as its difficulty selector, the way the
+/// Configuration rows show `< value >`: Left/Right on the row changes it and
+/// Cross starts the game on it. It adds no screen, so starting a game is still
+/// a single press.
+const NEW_GAME_HINTS: [&str; 3] = [
+    "Difficulty:  < Easy >",
+    "Difficulty:  < Medium >",
+    "Difficulty:  < Hard >",
+];
+
 fn draw_main_menu(font: &FontAtlas, help: &FontAtlas, sel: usize) {
-    draw_simple_list(font, help, &MAIN_ITEMS, &MAIN_HINTS, sel);
+    let mut hints = MAIN_HINTS;
+    hints[0] = NEW_GAME_HINTS[crate::settings::skill()];
+    draw_simple_list(font, help, &MAIN_ITEMS, &hints, sel);
 }
 
 #[inline(never)]
@@ -1311,6 +1323,10 @@ pub fn run(fb: &mut FrameBuffer, assets: &[u8]) -> usize {
         match screen {
             MenuScreen::Main => {
                 wrap_move(&mut main_sel, MAIN_ITEMS.len() as i32, input);
+                if main_sel == 0 && (input.left || input.right) {
+                    crate::settings::step_skill(if input.right { 1 } else { -1 });
+                    play_menu_move();
+                }
                 if input.ok {
                     play_menu_accept();
                     match main_sel {

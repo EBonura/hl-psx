@@ -237,6 +237,24 @@ pub fn toggle_autosave() {
     unsafe { AUTOSAVE = !AUTOSAVE };
 }
 
+// ---- Difficulty ------------------------------------------------------------
+// skill.cfg level minus one: 0 Easy, 1 Medium, 2 Hard. Chosen on the main
+// menu's New Game row, restored from a save, and kept for the session.
+pub const SKILL_NAMES: [&str; 3] = ["Easy", "Medium", "Hard"];
+static mut SKILL: u8 = 1;
+
+pub fn skill() -> usize {
+    unsafe { (SKILL as usize).min(2) }
+}
+
+pub fn set_skill(level: u8) {
+    unsafe { SKILL = level.min(2) };
+}
+
+pub fn step_skill(delta: i32) {
+    unsafe { SKILL = (SKILL as i32 + delta).clamp(0, 2) as u8 };
+}
+
 // ---- Debug toggles ---------------------------------------------------------
 // Session-only cheats, reachable from the main-menu Options screen and the
 // in-game pause menu. Held here beside the other RAM-only options so both
