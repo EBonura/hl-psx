@@ -3386,6 +3386,10 @@ static mut LOGIC_NEXT: [u16; MAX_LOGIC] = [0; MAX_LOGIC];
 static mut LOGIC_TARGET: [u16; MAX_LOGIC] = [0; MAX_LOGIC];
 static mut LOGIC_COUNTER: [i16; MAX_LOGIC] = [0; MAX_LOGIC];
 static mut LOGIC_PROP_LINK: [u8; MAX_LOGIC] = [LOGIC_PROP_NONE; MAX_LOGIC];
+// The cooker appends LOGIC_MONSTER_TRIGGER records after every other record;
+// this is the map's range of them, so damage and sight checks scan only it.
+static mut MONSTER_TRIGGER_FIRST: u16 = 0;
+static mut MONSTER_TRIGGER_END: u16 = 0;
 static mut LOGIC_EVENTS: [LogicEvent; MAX_LOGIC_EVENTS] = [EMPTY_LOGIC_EVENT; MAX_LOGIC_EVENTS];
 static mut TRACKTRAIN_SUBMODEL: u16 = 0;
 static mut TRACKTRAIN_CMD_ACTIVE: u8 = 0;
@@ -3589,6 +3593,9 @@ const PROP_RUNTIME_RENDER_HIDDEN: u8 = 16;
 // natural transitions unless the carry mailbox overlays the real actor state.
 const PROP_RUNTIME_TRANSITION_FALLBACK: u8 = 32;
 const PROP_RUNTIME_PRISONER: u8 = 0x80;
+// The actor still has an unfired sight TriggerCondition, so tick_props runs
+// its staggered look check (monster_sight_ai_triggers).
+const PROP_RUNTIME_SEE_TRIGGER: u8 = 0x40;
 static mut PROP_LOGIC_LINK: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS];
 static mut SPRITE_COUNT: usize = 0;
 static mut SPRITE_VISIBLE: [u32; SPRITE_STATE_WORDS] = [0; SPRITE_STATE_WORDS];
@@ -11692,6 +11699,8 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         bi += 1;
     }
     let mut hot_overflow = false;
+    MONSTER_TRIGGER_FIRST = nlogic as u16;
+    MONSTER_TRIGGER_END = 0;
     li = 0;
     while li < nlogic {
         let rec = m.logic(li);
@@ -11807,6 +11816,9 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                 if pi != LOGIC_PROP_NONE {
                     PROP_LOGIC_LINK[pi as usize] = li as u16;
                 }
+            }
+            map::LOGIC_MONSTER_TRIGGER => {
+                init_monster_trigger(li, rec);
             }
             map::LOGIC_TRIGGER_HURT => {
                 if (rec.spawnflags & SF_TRIGGER_HURT_START_OFF) != 0 {
@@ -13888,12 +13900,149 @@ unsafe fn release_monster_loot(owner: usize) {
     }
 }
 
+/// Bind one cooked TriggerTarget to its live actor. A record whose actor did
+/// not spawn (dormant stock, a transition fallback) stays inert.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn init_monster_trigger(li: usize, rec: map::LogicEnt) {
+    if (MONSTER_TRIGGER_FIRST as usize) > li {
+        MONSTER_TRIGGER_FIRST = li as u16;
+    }
+    MONSTER_TRIGGER_END = li as u16 + 1;
+    LOGIC_COUNTER[li] = rec.arg1 as i16;
+    let nprops = core::ptr::read_volatile(core::ptr::addr_of!(PROP_COUNT)).min(CARRY_MAILBOX_FIRST);
+    let pi = rec.arg0 as usize;
+    if pi >= nprops || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
+        LOGIC_STATE[li] = LOGIC_STATE_TOP;
+        return;
+    }
+    LOGIC_PROP_LINK[li] = pi as u8;
+    if matches!(
+        rec.arg1,
+        map::AITRIGGER_SEEPLAYER_ANGRY_AT_PLAYER
+            | map::AITRIGGER_SEEPLAYER_UNCONDITIONAL
+            | map::AITRIGGER_SEEPLAYER_NOT_IN_COMBAT
+    ) {
+        PROP_DORMANT[pi] |= PROP_RUNTIME_SEE_TRIGGER;
+    }
+}
+
+/// FCheckAITrigger's FireTargets(m_iszTriggerTarget, USE_TOGGLE), after which
+/// the condition is AITRIGGER_NONE: every trigger fires at most once.
+unsafe fn monster_fire_ai_trigger(li: usize) {
+    LOGIC_STATE[li] = LOGIC_STATE_TOP;
+    logic_enqueue_event(
+        SIM_NOW,
+        LOGIC_TARGET[li],
+        0,
+        map::USE_TOGGLE,
+        logic_state::CALLER_NONE,
+    );
+}
+
+/// The damage-decided AI trigger conditions, checked after every hit as
+/// TakeDamage/Killed do: TAKEDAMAGE on any hit, HALFHEALTH while alive at or
+/// under half the spawn health, DEATH once the actor is dead.
+#[inline(never)]
+unsafe fn monster_damage_ai_triggers(pi: usize) {
+    let health = PROP_HEALTH[pi] as u16;
+    let max_health = prop_start_health(PROP_KIND[pi]) as u16;
+    let mut li = MONSTER_TRIGGER_FIRST as usize;
+    let end = (MONSTER_TRIGGER_END as usize).min(MAX_LOGIC);
+    while li < end {
+        if LOGIC_KIND[li] == map::LOGIC_MONSTER_TRIGGER
+            && LOGIC_PROP_LINK[li] as usize == pi
+            && LOGIC_STATE[li] == LOGIC_STATE_BOTTOM
+        {
+            let fire = match LOGIC_COUNTER[li] as u16 {
+                map::AITRIGGER_TAKEDAMAGE => true,
+                map::AITRIGGER_HALFHEALTH => health > 0 && health * 2 <= max_health,
+                map::AITRIGGER_DEATH => health == 0,
+                _ => false,
+            };
+            if fire {
+                monster_fire_ai_trigger(li);
+            }
+        }
+        li += 1;
+    }
+}
+
+/// The sight AI trigger conditions (bits_COND_SEE_CLIENT from Look): only
+/// while the player's PVS holds the actor, within Look's 2048-unit box,
+/// inside the class's view cone and with a clear eye-to-eye line.
+#[inline(never)]
+unsafe fn monster_sight_ai_triggers(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    player_pvs_current: bool,
+) {
+    let in_pvs = player_pvs_current
+        && (PROP_LEAF[pi] <= 0 || pvs_leaf_visible(m, PROP_LEAF[pi] as usize));
+    let pos = PROP_POS[pi];
+    let dx = player_pos[0] - pos[0];
+    let dy = player_pos[1] - pos[1];
+    let dz = player_pos[2] - pos[2];
+    if !in_pvs || dx.abs() > 2048 || dy.abs() > 2048 || dz.abs() > 2048 {
+        return;
+    }
+    let yaw_off = (yaw_from_vec(dx, dz).wrapping_sub(prop_yaw_value(PROP_YAW[pi])) & 0xfff) as i32;
+    let yaw_off = if yaw_off > 2048 { 4096 - yaw_off } else { yaw_off };
+    let in_combat = PROP_AI_TARGET[pi] != PROP_TARGET_NONE;
+    let scripted = PROP_SCRIPT_MODE[pi] != 0 || PROP_SCRIPT_LI[pi] != u16::MAX;
+    let mut line_clear: Option<bool> = None;
+    let mut pending = false;
+    let mut li = MONSTER_TRIGGER_FIRST as usize;
+    let end = (MONSTER_TRIGGER_END as usize).min(MAX_LOGIC);
+    while li < end {
+        if LOGIC_KIND[li] == map::LOGIC_MONSTER_TRIGGER
+            && LOGIC_PROP_LINK[li] as usize == pi
+            && LOGIC_STATE[li] == LOGIC_STATE_BOTTOM
+        {
+            let state_ok = match LOGIC_COUNTER[li] as u16 {
+                map::AITRIGGER_SEEPLAYER_ANGRY_AT_PLAYER => {
+                    PROP_AI_TARGET[pi] == PROP_TARGET_PLAYER
+                }
+                map::AITRIGGER_SEEPLAYER_UNCONDITIONAL => true,
+                map::AITRIGGER_SEEPLAYER_NOT_IN_COMBAT => !in_combat && !scripted,
+                _ => {
+                    li += 1;
+                    continue;
+                }
+            };
+            pending = true;
+            if state_ok && yaw_off < m.logic(li).speed as i32 {
+                let clear = *line_clear.get_or_insert_with(|| {
+                    actor_line_clear(
+                        m,
+                        movers,
+                        prop_target(PROP_KIND[pi], pos),
+                        [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
+                    )
+                });
+                if clear {
+                    monster_fire_ai_trigger(li);
+                }
+            }
+        }
+        li += 1;
+    }
+    if !pending {
+        PROP_DORMANT[pi] &= !PROP_RUNTIME_SEE_TRIGGER;
+    }
+}
+
 unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
         return;
     }
     PROP_HEALTH[pi] = PROP_HEALTH[pi].saturating_sub(dmg);
     PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
+    if MONSTER_TRIGGER_END != 0 {
+        monster_damage_ai_triggers(pi);
+    }
     if player_inflicted && prop_is_human(PROP_KIND[pi]) {
         // Talk allies remember player provocation permanently and immediately
         // stop following.
@@ -16113,6 +16262,9 @@ unsafe fn tick_props(
             PROP_AI_TIMER[pi] = 0;
             pi += 1;
             continue;
+        }
+        if PROP_DORMANT[pi] & PROP_RUNTIME_SEE_TRIGGER != 0 && ai_reacquire(pi) {
+            monster_sight_ai_triggers(m, movers, pi, player_pos, player_pvs_current);
         }
 
         let ai = model_def(ty).ai;

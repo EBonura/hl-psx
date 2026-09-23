@@ -244,6 +244,20 @@ pub mod logic {
     pub const ENV_RENDER: u8 = 50;
     pub const LIGHTSTYLE: u8 = 51;
     pub const ENV_BEVERAGE: u8 = 52;
+    /// A monster's `TriggerTarget`, fired once when its `TriggerCondition`
+    /// holds (CBaseMonster::FCheckAITrigger). `arg0` is the cooked actor
+    /// index, `arg1` the condition, `speed` the monster's view-cone
+    /// half-angle in 4096ths of a turn (sight conditions only).
+    pub const MONSTER_TRIGGER: u8 = 53;
+
+    // CBaseMonster TriggerCondition values (monsters.h AITRIGGER_*). The
+    // cooker emits only the ones the runtime evaluates.
+    pub const AITRIGGER_SEEPLAYER_ANGRY_AT_PLAYER: u16 = 1;
+    pub const AITRIGGER_TAKEDAMAGE: u16 = 2;
+    pub const AITRIGGER_HALFHEALTH: u16 = 3;
+    pub const AITRIGGER_DEATH: u16 = 4;
+    pub const AITRIGGER_SEEPLAYER_UNCONDITIONAL: u16 = 10;
+    pub const AITRIGGER_SEEPLAYER_NOT_IN_COMBAT: u16 = 11;
 
     pub const USE_OFF: u8 = 0;
     pub const USE_ON: u8 = 1;
@@ -308,8 +322,9 @@ pub mod logic {
     pub const LOGIC_ENV_RENDER: u8 = ENV_RENDER;
     pub const LOGIC_LIGHTSTYLE: u8 = LIGHTSTYLE;
     pub const LOGIC_ENV_BEVERAGE: u8 = ENV_BEVERAGE;
+    pub const LOGIC_MONSTER_TRIGGER: u8 = MONSTER_TRIGGER;
 
-    pub const KINDS: [u8; 52] = [
+    pub const KINDS: [u8; 53] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -362,6 +377,7 @@ pub mod logic {
         ENV_RENDER,
         LIGHTSTYLE,
         ENV_BEVERAGE,
+        MONSTER_TRIGGER,
     ];
 }
 
