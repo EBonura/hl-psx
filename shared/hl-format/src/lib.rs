@@ -281,6 +281,9 @@ pub mod logic {
     /// `arg0` = next node name, `arg1` = health, `speed` = radius,
     /// `delay_ticks` = reachdelay, `spawnflags` = RUN(1) | WAIT(2).
     pub const BIGMOMMA_NODE: u8 = 54;
+    /// A targeted infodecal (CDecal::TriggerDecal): `arg0` = decal family
+    /// << 8 | index in the resident atlas, `arg1` = impact tint kind.
+    pub const INFODECAL: u8 = 55;
     pub const INFOBM_RUN: u16 = 1;
     pub const INFOBM_WAIT: u16 = 2;
 
@@ -354,8 +357,9 @@ pub mod logic {
     pub const LOGIC_ENV_BEVERAGE: u8 = ENV_BEVERAGE;
     pub const LOGIC_MONSTER_TRIGGER: u8 = MONSTER_TRIGGER;
     pub const LOGIC_BIGMOMMA_NODE: u8 = BIGMOMMA_NODE;
+    pub const LOGIC_INFODECAL: u8 = INFODECAL;
 
-    pub const KINDS: [u8; 54] = [
+    pub const KINDS: [u8; 55] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -410,6 +414,7 @@ pub mod logic {
         ENV_BEVERAGE,
         MONSTER_TRIGGER,
         BIGMOMMA_NODE,
+        INFODECAL,
     ];
 }
 

@@ -73,7 +73,7 @@ info_node_air|missing_gameplay|air navigation graph is absent
 info_player_start|cook_only|spawn selection input
 info_target|cook_only|target and teleport resolution input
 info_teleport_destination|cook_only|teleport destination input
-infodecal|missing_visual|authored decals are absent
+infodecal|approximated|targeted decals stamp a resident atlas splat; static decals are absent
 item_battery|runtime|pickup prop and logic
 item_healthkit|runtime|pickup prop
 item_longjump|runtime|pickup prop
