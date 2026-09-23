@@ -179,16 +179,19 @@ struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
+    #[inline(never)]
     fn u8(&mut self, v: u8) {
         if self.at < self.buf.len() {
             self.buf[self.at] = v;
             self.at += 1;
         }
     }
+    #[inline(never)]
     fn u16(&mut self, v: u16) {
         self.u8(v as u8);
         self.u8((v >> 8) as u8);
     }
+    #[inline(never)]
     fn u32(&mut self, v: u32) {
         self.u16(v as u16);
         self.u16((v >> 16) as u16);
@@ -204,14 +207,17 @@ struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
+    #[inline(never)]
     fn u8(&mut self) -> u8 {
         let v = self.buf.get(self.at).copied().unwrap_or(0);
         self.at += 1;
         v
     }
+    #[inline(never)]
     fn u16(&mut self) -> u16 {
         u16::from(self.u8()) | (u16::from(self.u8()) << 8)
     }
+    #[inline(never)]
     fn u32(&mut self) -> u32 {
         u32::from(self.u16()) | (u32::from(self.u16()) << 16)
     }
@@ -223,6 +229,8 @@ impl<'a> Reader<'a> {
 /// Serialise into `buf`, returning the byte count. Ends with a sum check over
 /// the payload: the card's own per-frame XOR catches media damage, this catches
 /// a short or interleaved write.
+#[inline(never)]
+#[cfg_attr(target_arch = "mips", optimize(size))]
 pub fn encode(cp: &Checkpoint, buf: &mut [u8]) -> usize {
     let mut w = Writer { buf, at: 0 };
     w.u32(SAVE_MAGIC);
@@ -264,6 +272,8 @@ pub fn encode(cp: &Checkpoint, buf: &mut [u8]) -> usize {
 }
 
 /// Parse `buf`, rejecting a wrong magic, a wrong version, or a bad checksum.
+#[inline(never)]
+#[cfg_attr(target_arch = "mips", optimize(size))]
 pub fn decode(buf: &[u8]) -> Option<Checkpoint> {
     let mut r = Reader { buf, at: 0 };
     if r.u32() != SAVE_MAGIC {
@@ -340,6 +350,8 @@ pub enum CardResult {
 }
 
 #[cfg(target_arch = "mips")]
+#[inline(never)]
+#[optimize(size)]
 fn with_card<T>(port: Port, f: impl FnOnce(&mut psx_mc::Card<psx_mc::HardwareCard>) -> T) -> T {
     let hw = match port {
         Port::One => psx_mc::Slot::One,
@@ -374,6 +386,8 @@ pub fn write(target: Target, cp: &Checkpoint, staging: &mut [u8]) -> CardResult 
 
 /// Highest sequence already on the card, 0 when neither slot is readable.
 #[cfg(target_arch = "mips")]
+#[inline(never)]
+#[optimize(size)]
 fn latest_sequence(staging: &mut [u8]) -> u32 {
     let mut best = 0;
     for target in Target::ALL {
@@ -387,6 +401,8 @@ fn latest_sequence(staging: &mut [u8]) -> u32 {
 /// The most recently written slot. This is what a bare "Load" resumes: with no
 /// clock on the console the write counter is the only ordering available.
 #[cfg(target_arch = "mips")]
+#[inline(never)]
+#[optimize(size)]
 pub fn read_latest(staging: &mut [u8]) -> Result<Checkpoint, CardResult> {
     let mut best: Option<Checkpoint> = None;
     let mut err = CardResult::Failed;
