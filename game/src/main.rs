@@ -11530,8 +11530,15 @@ unsafe fn logic_touch_triggers(
                 map::LOGIC_TRIGGER_HURT => {
                     if LOGIC_STATE[li] == LOGIC_STATE_BOTTOM {
                         if time_reached(now, LOGIC_NEXT[li]) {
-                            note_damage_direction(logic_center(rec));
-                            damage_player(health, armor, rec.arg0.max(1));
+                            if rec.flags & map::LOGIC_TRIGGER_HURT_HEALS != 0 {
+                                // CBaseMonster::TakeHealth, capped at max health.
+                                if *health > 0 {
+                                    *health = (*health + rec.arg0).min(PLAYER_START_HEALTH);
+                                }
+                            } else {
+                                note_damage_direction(logic_center(rec));
+                                damage_player(health, armor, rec.arg0.max(1));
+                            }
                             logic_sub_use_targets(
                                 m,
                                 nlogic,
