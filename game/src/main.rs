@@ -3267,6 +3267,8 @@ const WORLD_CACHE_QUAD_META: u16 = 0x0200;
 // to appended legacy packets. Replay advances over that unchanged hole without
 // linking it into the OT.
 const WORLD_CACHE_SKIP_META: u16 = 0x0400;
+// A closed door's far side: captured, but linked only once the door opens.
+const WORLD_CACHE_SEALED_META: u16 = 0x0800;
 const WORLD_CACHE_SLOT_BYTES: usize =
     core::mem::size_of::<RenderPacketScratch>() / MAX_RENDER_PACKETS;
 const _: () = assert!(core::mem::size_of::<TriTexturedGouraud>() <= WORLD_CACHE_SLOT_BYTES);
@@ -3423,6 +3425,8 @@ static mut WORLD_CACHE_VALID: bool = false;
 // and rebuild only the brushes instead of discarding the whole prefix.
 static mut WORLD_CACHE_ROOM_ONLY: bool = false;
 static mut WORLD_CACHE_BUILDING: bool = false;
+/// PVS_FACE_MARK holds the faces a closed door seals off (rebuild_pvs_cache).
+static mut PVS_SEAL_HIDE: bool = false;
 static mut WORLD_CACHE_OVERFLOW: bool = false;
 static mut WORLD_CACHE_CANDIDATE_STATE: u8 = 0;
 static mut WORLD_CACHE_COUNT: usize = 0;
@@ -3580,6 +3584,29 @@ unsafe fn world_cache_capture_packet<T>(_packet: *const T, otz: usize, quad: boo
     PVS_BAND_ORDER[meta] =
         (otz.min(OT_LEN - 1) as u16) | if quad { WORLD_CACHE_QUAD_META } else { 0 };
     WORLD_CACHE_COUNT = i + 1;
+}
+
+/// Take a sealed-side face's just-captured packets back out of the OT and tag
+/// them, so the cache keeps them for the frame the door opens. OT.add
+/// prepends, so each is its slot's head when popped newest-first; any that is
+/// not (never expected) simply stays drawn this frame.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn world_cache_hold_sealed(from: usize) {
+    let base = core::ptr::addr_of!(PRIMITIVE_PACKETS) as usize;
+    let entries = (OT.submit_head() as usize - (OT_LEN - 1) * 4) as *mut u32;
+    let mut i = WORLD_CACHE_COUNT;
+    while i > from {
+        i -= 1;
+        let meta = &mut PVS_BAND_ORDER[PVS_BAND_CAP - 1 - i];
+        *meta |= WORLD_CACHE_SEALED_META;
+        let slot = entries.add((*meta & WORLD_CACHE_OTZ_MASK) as usize);
+        let packet = (base + i * WORLD_CACHE_SLOT_BYTES) as *const u32;
+        let head = slot.read_volatile();
+        if (head ^ packet as u32) & 0x00ff_ffff == 0 {
+            slot.write_volatile((head & 0xff00_0000) | (packet.read_volatile() & 0x00ff_ffff));
+        }
+    }
 }
 
 #[inline]
@@ -19956,14 +19983,6 @@ unsafe fn rebuild_pvs_cache(
             merge_vis(m, dry_visofs, &mut VIS_BITS);
         }
     }
-    // Closed doors hide whole leaves from the world faces only. Everything
-    // else that reads VIS_BITS (entity lists, AI wake-ups) keeps the exact
-    // PVS row, so a masked compile decodes the row again afterwards. The
-    // caller never seals an underwater eye, so there is no merged row here.
-    let sealed = seal_state != 0 && !eye_under;
-    if sealed {
-        door_seals(m, cam_leaf, nents, seal_state);
-    }
     PVS_TEX_ANIM_GEN = 0;
     PVS_ENT_COUNT = 0;
     let compiled = psx_goldsrc::pvs_faces::compile_faces(
@@ -19988,7 +20007,29 @@ unsafe fn rebuild_pvs_cache(
     PVS_TRI_REF_COUNT = compiled.triangle_references;
     PVS_HAS_TRANSLUCENT = compiled.has_translucent;
     PVS_HAS_TEXANIM = compiled.has_texture_animation;
-    if sealed {
+    // Closed doors: the face list stays the full PVS, so a door opening only
+    // relinks cached packets. PVS_FACE_MARK, which the compile leaves holding
+    // every listed face, is cut down to the faces no leaf on the camera's
+    // side marks. The caller never seals an underwater eye (no merged row),
+    // and the row is decoded again so everything else still reads the PVS.
+    PVS_SEAL_HIDE = seal_state != 0 && !eye_under;
+    if PVS_SEAL_HIDE {
+        door_seals(m, cam_leaf, nents, seal_state);
+        let mut i = 0usize;
+        while i < m.n_visleaves.min(MAX_LEAVES) {
+            if VIS_BITS[i >> 3] & (1 << (i & 7)) != 0 {
+                let (_, first, count) = m.leaf(i + 1);
+                let mut j = first;
+                while j < (first + count).min(m.n_marks) {
+                    let f = m.mark(j);
+                    if f < MAX_FACES {
+                        PVS_FACE_MARK[f >> 5] &= !(1 << (f & 31));
+                    }
+                    j += 1;
+                }
+            }
+            i += 1;
+        }
         decompress_vis(m, visofs, &mut VIS_BITS);
     }
 
@@ -22071,6 +22112,12 @@ unsafe fn replay_world_packet_cache(
     }
     // A texture-animation step staged by prepare_world_packet_cache.
     let retarget = !world_cache_retarget().is_empty();
+    // Packets tagged with this bit stay unlinked (a closed door's far side).
+    let hidden = if PVS_SEAL_HIDE {
+        WORLD_CACHE_SEALED_META
+    } else {
+        0
+    };
     let mut i = 0usize;
     while i < count {
         let meta = PVS_BAND_ORDER[PVS_BAND_CAP - 1 - i];
@@ -22092,7 +22139,9 @@ unsafe fn replay_world_packet_cache(
             if retarget {
                 world_cache_retarget().apply((packet as *mut QuadTexturedGouraud).cast::<u32>());
             }
-            OT.add(otz, packet, QuadTexturedGouraud::WORDS);
+            if meta & hidden == 0 {
+                OT.add(otz, packet, QuadTexturedGouraud::WORDS);
+            }
         } else {
             let Some(packet) = packets.reuse_packet::<TriTexturedGouraud>() else {
                 note_render_packet_drop(false);
@@ -22103,7 +22152,9 @@ unsafe fn replay_world_packet_cache(
             if retarget {
                 world_cache_retarget().apply((packet as *mut TriTexturedGouraud).cast::<u32>());
             }
-            OT.add(otz, packet, TriTexturedGouraud::WORDS);
+            if meta & hidden == 0 {
+                OT.add(otz, packet, TriTexturedGouraud::WORDS);
+            }
         }
         i += 1;
     }
@@ -31021,9 +31072,16 @@ fn play(
                 } else {
                     door_seals(&m, cam_leaf, nents, 0)
                 };
+                // The face list is always the full PVS and the packet cache
+                // holds the far side unlinked, so a door opening only stops
+                // the hiding; a door closing (or a side flip) rebuilds.
+                let seal_rebuild = seal_state & !render_seal_state != 0;
+                if !seal_rebuild {
+                    PVS_SEAL_HIDE = seal_state == render_seal_state && seal_state != 0;
+                }
                 if (!reused_last_pvs
                     && (cached_pvs_leaf != cam_leaf || render_pvs_underwater != render_eye_under))
-                    || seal_state != render_seal_state
+                    || seal_rebuild
                 {
                     // Compilers deduplicate identical vis rows, so adjacent
                     // leaves frequently share one. A leaf change whose row
@@ -31318,6 +31376,7 @@ fn play(
                 telemetry::stage_end(telemetry::stage::ROOM_CELL_SELECT);
                 telemetry::stage_begin(telemetry::stage::ROOM_PROJECT);
 
+                let seal_hide = PVS_SEAL_HIDE;
                 let mut band = if room_cache_hit { nbands } else { 0 };
                 while band < nbands {
                     for gi in 0..PVS_GROUP_COUNT {
@@ -31338,6 +31397,15 @@ fn play(
                                     continue;
                                 }
                                 let face = PVS_FACE_INDEX.0[e] as usize;
+                                // A closed door's far side is built only into
+                                // a cache (unlinked), never drawn.
+                                let mut sealed_from = usize::MAX;
+                                if seal_hide && PVS_FACE_MARK[face >> 5] & (1 << (face & 31)) != 0 {
+                                    if !WORLD_CACHE_BUILDING {
+                                        continue;
+                                    }
+                                    sealed_from = WORLD_CACHE_COUNT;
+                                }
 
                                 if !WORLD_BOUNDS_CULL
                                     || visibility.world_sphere_gte(rec.center, rec.radius as i32)
@@ -31390,6 +31458,9 @@ fn play(
                                             &mut room_counts,
                                         );
                                     }
+                                }
+                                if sealed_from != usize::MAX {
+                                    world_cache_hold_sealed(sealed_from);
                                 }
                             } else {
                                 let face = PVS_FACE_INDEX.0[e] as usize;
