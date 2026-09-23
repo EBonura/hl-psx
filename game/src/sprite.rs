@@ -147,6 +147,79 @@ pub unsafe fn load_explosion(data: &[u8]) {
     upload_tex_blob_raw(&data[20..], n_frames, slots, MAX_EXPL_FRAMES);
 }
 
+// Resident decals (decals.wad splats and gunshot holes): one 4bpp texture and
+// one CLUT holding every decal, loaded each map after the explosion. Each
+// decal is a (u, v, cell size, world half-size) record; the families follow
+// the SDK's random ranges (see `host/hl-content` build_decals).
+pub const DECAL_CHUNK_ID: u32 = 3004;
+pub const MAX_DECALS: usize = 32;
+pub const DECAL_SHOT: usize = 0;
+pub const DECAL_BLOOD: usize = 1;
+pub const DECAL_YBLOOD: usize = 2;
+static mut DECAL_SLOT: TexSlot = EMPTY_SLOT;
+static mut DECAL_RECS: [[u8; 4]; MAX_DECALS] = [[0; 4]; MAX_DECALS];
+/// First decal and count per family.
+static mut DECAL_FAMILY: [(u8, u8); 3] = [(0, 0); 3];
+
+#[inline(never)]
+#[optimize(size)]
+pub unsafe fn load_decals(data: &[u8]) {
+    DECAL_SLOT = EMPTY_SLOT;
+    DECAL_FAMILY = [(0, 0); 3];
+    if data.len() < 8 || &data[0..4] != b"HDCL" {
+        return;
+    }
+    let n = data[4] as usize;
+    let recs = 8 + n * 4;
+    let blob = (recs + 3) & !3;
+    if n > MAX_DECALS || blob > data.len() {
+        return;
+    }
+    let mut first = 0u8;
+    let mut f = 0;
+    while f < 3 {
+        let count = data[5 + f];
+        DECAL_FAMILY[f] = (first, count);
+        first = first.saturating_add(count);
+        f += 1;
+    }
+    if first as usize > n {
+        DECAL_FAMILY = [(0, 0); 3];
+        return;
+    }
+    let mut i = 0;
+    while i < n {
+        let o = 8 + i * 4;
+        DECAL_RECS[i] = [data[o], data[o + 1], data[o + 2], data[o + 3]];
+        i += 1;
+    }
+    upload_tex_blob_raw(&data[blob..], 1, core::ptr::addr_of_mut!(DECAL_SLOT), 1);
+}
+
+/// The shared decal texture; `valid` is false when none is resident.
+#[inline]
+pub fn decal_slot() -> TexSlot {
+    unsafe { DECAL_SLOT }
+}
+
+/// Decal `pick` (reduced modulo the family size) of `family`, or None.
+#[inline]
+pub fn decal_pick(family: usize, pick: u32) -> Option<u8> {
+    unsafe {
+        let (first, count) = *DECAL_FAMILY.get(family)?;
+        if count == 0 {
+            return None;
+        }
+        Some(first + (pick % count as u32) as u8)
+    }
+}
+
+/// (u, v, cell size, world half-size) of decal `index`.
+#[inline]
+pub fn decal_rec(index: u8) -> [u8; 4] {
+    unsafe { *DECAL_RECS.get(index as usize).unwrap_or(&[0; 4]) }
+}
+
 #[inline]
 pub fn expl_def() -> SpriteDef {
     unsafe { EXPL_DEF }
