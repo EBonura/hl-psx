@@ -2934,6 +2934,15 @@ const MAX_BEAM_STATES: usize = 64;
 static mut BEAM_LIFE: [u8; MAX_BEAM_STATES] = [0; MAX_BEAM_STATES];
 static mut BEAM_STRIKE: [u16; MAX_BEAM_STATES] = [0; MAX_BEAM_STATES];
 static mut BEAM_RAND_END: [[i16; 3]; MAX_BEAM_STATES] = [[0; 3]; MAX_BEAM_STATES];
+// Extended beams (6 aux entries: env_laser, live endpoints, damage) carry
+// their per-tick start here and their end in BEAM_RAND_END. BEAM_LIVE marks
+// the beams whose pair is current, so a beam switched on after this tick's
+// update is not drawn from stale coordinates.
+static mut BEAM_LIVE_START: [[i16; 3]; MAX_BEAM_STATES] = [[0; 3]; MAX_BEAM_STATES];
+static mut BEAM_LIVE: u64 = 0;
+const BEAM_EXT_LASER: u16 = 1;
+const BEAM_EXT_SPARK_END: u16 = 2;
+const BEAM_EXT_SPARK_START: u16 = 4;
 // Dedicated stream so beam strikes never perturb IMPACT_RNG's sim sequence.
 static mut BEAM_RNG: LcgRng = LcgRng::new(0x4245_414d);
 // Render-side animation phase (frames / scroll / noise sway); advances per
@@ -11827,6 +11836,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     LOGIC_SPARK_COUNT = 0;
     LOGIC_BEAM_COUNT = 0;
     BEAM_RNG = LcgRng::new(0x4245_414d);
+    BEAM_LIVE = 0;
     let mut bi = 0usize;
     while bi < MAX_BEAM_STATES {
         BEAM_LIFE[bi] = 0;
@@ -19880,14 +19890,7 @@ unsafe fn tick_env_sparks(m: &Map, nlogic: usize) {
             && (IMPACT_RNG.next_mixed() & 0x3F) == 0
         {
             let o = rec.origin;
-            let mut s = 0;
-            while s < 4 {
-                let vx = (IMPACT_RNG.below(11) as i32) - 5;
-                let vy = 3 + (IMPACT_RNG.below(8) as i32);
-                let vz = (IMPACT_RNG.below(11) as i32) - 5;
-                spawn_debris(o, [vx, vy, vz], DEBRIS_SPARK, 10);
-                s += 1;
-            }
+            spark_burst(o, 4, 3, 8, 10);
             if rec.sound0 != u8::MAX {
                 sfx::play_map_world(rec.sound0, o);
             } else {
@@ -19903,7 +19906,7 @@ unsafe fn tick_env_sparks(m: &Map, nlogic: usize) {
 /// beams (no authored endpoint -- wacky_beams, the c1a0c arcs) re-strike a
 /// freshly traced endpoint around their origin every period while toggled on.
 #[inline(never)]
-unsafe fn tick_beams(m: &Map, nlogic: usize) {
+unsafe fn tick_beams(m: &Map, nlogic: usize, nents: usize, movers: &[phys::Mover]) {
     let indexed = LOGIC_BEAM_COUNT != LOGIC_HOT_FALLBACK;
     let scan_count = if indexed {
         LOGIC_BEAM_COUNT as usize
@@ -19923,9 +19926,11 @@ unsafe fn tick_beams(m: &Map, nlogic: usize) {
             if bk >= MAX_BEAM_STATES {
                 return;
             }
+            let life_before = BEAM_LIFE[bk];
             if LOGIC_STATE[li] != LOGIC_STATE_TOP {
                 BEAM_LIFE[bk] = 0;
                 BEAM_STRIKE[bk] = 0;
+                BEAM_LIVE &= !(1u64 << bk);
             } else {
                 let fa = rec.first_aux as usize;
                 let life = (m.logic_aux(fa + 1).delay_ticks & 0xFF) as u8;
@@ -19984,10 +19989,219 @@ unsafe fn tick_beams(m: &Map, nlogic: usize) {
                         BEAM_STRIKE[bk] = 0;
                     }
                 }
+                if rec.aux_count >= 6 {
+                    tick_beam_extended(m, nlogic, nents, movers, rec, bk, life_before);
+                }
             }
             bk += 1;
         }
         scan += 1;
+    }
+}
+
+/// Live point of an extended-beam endpoint: `0x4000 | brush` follows that
+/// brush entity's origin (cooked origin + its live displacement), `0x8000 |
+/// name` a named actor's origin; otherwise the cooked static point.
+#[inline(never)]
+unsafe fn beam_live_point(nents: usize, r: u16, cooked: [i32; 3]) -> [i32; 3] {
+    match r >> 14 {
+        1 => {
+            // pev->origin of a brush entity: its live placement (trains and
+            // translated brushes), or the pivot of a rotating one.
+            let ei = (r & 0x3fff) as usize;
+            if ei < nents {
+                let e = ENT_CACHE[ei];
+                if ENT_TRAIN_SLOT[ei] == 0xFF
+                    && (e.kind == 5
+                        || e.kind == 7
+                        || e.kind == ENT_KIND_ROT_BUTTON
+                        || e.kind == ENT_KIND_PENDULUM)
+                {
+                    return e.origin;
+                }
+                return ent_draw_offset(ei);
+            }
+            cooked
+        }
+        2 => {
+            let id = r & 0x3fff;
+            let mut pi = 0usize;
+            let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+            while pi < n {
+                if PROP_NAME[pi] == id && PROP_ACTIVE[pi] != 0 {
+                    return PROP_POS[pi];
+                }
+                pi += 1;
+            }
+            cooked
+        }
+        _ => cooked,
+    }
+}
+
+/// CBeam::BeamDamage / CLaser::FireAtPoint for one extended beam. A laser
+/// traces from its origin toward the live target and stops at the first
+/// solid, actor or player it meets, damaging that one hit at `damage` per
+/// second (per strike for striking env_beams); the visible end is the hit.
+#[inline(never)]
+unsafe fn tick_beam_extended(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    movers: &[phys::Mover],
+    rec: map::LogicEnt,
+    bk: usize,
+    life_before: u8,
+) {
+    let fa = rec.first_aux as usize;
+    let (a0, a1, a2, a3) = (
+        m.logic_aux(fa),
+        m.logic_aux(fa + 1),
+        m.logic_aux(fa + 2),
+        m.logic_aux(fa + 3),
+    );
+    let (a4, a5) = (m.logic_aux(fa + 4), m.logic_aux(fa + 5));
+    let random = rec.arg0 & 0x10 != 0;
+    let life = (a1.delay_ticks & 0xFF) as u8;
+    let strike_mode = random || life != 0;
+    let start = beam_live_point(
+        nents,
+        a4.target,
+        [
+            a0.target as i16 as i32,
+            a0.delay_ticks as i16 as i32,
+            a1.target as i16 as i32,
+        ],
+    );
+    let mut end = if random {
+        let e = BEAM_RAND_END[bk];
+        [e[0] as i32, e[1] as i32, e[2] as i32]
+    } else {
+        beam_live_point(
+            nents,
+            a4.delay_ticks,
+            [
+                a2.target as i16 as i32,
+                a2.delay_ticks as i16 as i32,
+                a3.target as i16 as i32,
+            ],
+        )
+    };
+    let flags = a5.delay_ticks;
+    let laser = flags & BEAM_EXT_LASER != 0;
+    let damage = a5.target;
+    // Striking beams hurt once per strike (BeamDamageInstant); steady beams
+    // and lasers accumulate dmg * dt every think.
+    let strike_now = strike_mode && life_before == 0 && BEAM_LIFE[bk] > 0;
+    let lit = !strike_mode || BEAM_LIFE[bk] > 0;
+    if lit && (laser || (damage > 0 && (!strike_mode || strike_now))) {
+        let world = phys::trace_line(m, movers, start, end);
+        let mut frac = world.map_or(4096, |h| h.frac);
+        let mut hit_player = false;
+        let mut hit_prop = usize::MAX;
+        let p = LOGIC_PLAYER_POS;
+        if let Some(f) = hitbox_logic::ray_aabb_fraction_q12(
+            start,
+            end,
+            [p[0] - 16, p[1] - 36, p[2] - 16],
+            [p[0] + 16, p[1] + 36, p[2] + 16],
+        ) {
+            if f < frac {
+                frac = f;
+                hit_player = true;
+            }
+        }
+        let lo = [start[0].min(end[0]) - 64, start[1].min(end[1]) - 96, start[2].min(end[2]) - 64];
+        let hi = [start[0].max(end[0]) + 64, start[1].max(end[1]) + 96, start[2].max(end[2]) + 64];
+        let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+        let mut pi = 0usize;
+        while pi < n {
+            let q = PROP_POS[pi];
+            if PROP_ACTIVE[pi] != 0
+                && PROP_HEALTH[pi] != 0
+                && prop_start_health(PROP_KIND[pi]) != 0
+                && (lo[0]..=hi[0]).contains(&q[0])
+                && (lo[1]..=hi[1]).contains(&q[1])
+                && (lo[2]..=hi[2]).contains(&q[2])
+            {
+                if let Some(f) = prop_studio_hit_fraction(m, pi, start, end) {
+                    if f < frac {
+                        frac = f;
+                        hit_prop = pi;
+                        hit_player = false;
+                    }
+                }
+            }
+            pi += 1;
+        }
+        let hit_pos = [
+            start[0] + (((end[0] - start[0]) * frac) >> 12),
+            start[1] + (((end[1] - start[1]) * frac) >> 12),
+            start[2] + (((end[2] - start[2]) * frac) >> 12),
+        ];
+        if damage > 0 && (!strike_mode || strike_now) {
+            let amount = if strike_mode {
+                damage
+            } else {
+                ((damage as u32 + 10) / 20).max(1) as u16
+            };
+            if hit_prop != usize::MAX {
+                damage_prop(hit_prop, amount.min(255) as u8, false);
+            } else if hit_player {
+                note_damage_direction(start);
+                PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(amount);
+            } else if let Some(h) = world {
+                if h.mover >= 0 && frac == h.frac {
+                    damage_brush_ent(
+                        m,
+                        nlogic,
+                        nents,
+                        h.mover as usize,
+                        amount.min(255) as u8,
+                        false,
+                        SIM_NOW,
+                    );
+                }
+            }
+        }
+        if laser {
+            end = hit_pos;
+        }
+    }
+    if lit && SIM_NOW & 1 == 0 {
+        // CBeam::DoSparks runs every think (0.1 s = two ticks).
+        if flags & BEAM_EXT_SPARK_END != 0 {
+            beam_sparks(end);
+        }
+        if flags & BEAM_EXT_SPARK_START != 0 {
+            beam_sparks(start);
+        }
+    }
+    let mut c = 0usize;
+    while c < 3 {
+        BEAM_LIVE_START[bk][c] = start[c].clamp(-32768, 32767) as i16;
+        BEAM_RAND_END[bk][c] = end[c].clamp(-32768, 32767) as i16;
+        c += 1;
+    }
+    BEAM_LIVE |= 1u64 << bk;
+}
+
+unsafe fn beam_sparks(at: [i32; 3]) {
+    if dist2_3(at, LOGIC_PLAYER_POS) < 1500 * 1500 {
+        spark_burst(at, 2, 2, 6, 8);
+    }
+}
+
+/// `count` spark particles thrown up from `at` (env_spark, beam ends).
+#[inline(never)]
+unsafe fn spark_burst(at: [i32; 3], count: u8, vy_base: i32, vy_range: u32, ttl: u8) {
+    let mut s = 0;
+    while s < count {
+        let vx = (IMPACT_RNG.below(11) as i32) - 5;
+        let vy = vy_base + (IMPACT_RNG.below(vy_range) as i32);
+        let vz = (IMPACT_RNG.below(11) as i32) - 5;
+        spawn_debris(at, [vx, vy, vz], DEBRIS_SPARK, ttl);
+        s += 1;
     }
 }
 
@@ -26652,15 +26866,22 @@ unsafe fn queue_world_beams(
             // Striking beams (random-area or life > 0) only draw during the
             // strike window tick_beams runs; steady beams draw whenever on.
             let strike_mode = random || (a1.delay_ticks & 0xFF) != 0;
+            let extended = rec.aux_count >= 6;
             let visible = LOGIC_STATE[li] == LOGIC_STATE_TOP
-                && (!strike_mode || (bk < MAX_BEAM_STATES && BEAM_LIFE[bk] > 0));
+                && (!strike_mode || (bk < MAX_BEAM_STATES && BEAM_LIFE[bk] > 0))
+                && (!extended || (bk < MAX_BEAM_STATES && BEAM_LIVE & (1u64 << bk) != 0));
             if visible {
-                let start = [
-                    a0.target as i16 as i32,
-                    a0.delay_ticks as i16 as i32,
-                    a1.target as i16 as i32,
-                ];
-                let end = if random {
+                let start = if extended {
+                    let e = BEAM_LIVE_START[bk];
+                    [e[0] as i32, e[1] as i32, e[2] as i32]
+                } else {
+                    [
+                        a0.target as i16 as i32,
+                        a0.delay_ticks as i16 as i32,
+                        a1.target as i16 as i32,
+                    ]
+                };
+                let end = if random || extended {
                     let e = BEAM_RAND_END[bk];
                     [e[0] as i32, e[1] as i32, e[2] as i32]
                 } else {
@@ -30854,7 +31075,7 @@ fn play(
                 }
                 tick_projectiles(&m, movers);
                 tick_env_sparks(&m, nlogic);
-                tick_beams(&m, nlogic);
+                tick_beams(&m, nlogic, nents, movers);
                 if PENDING_PLAYER_DAMAGE > 0 {
                     let d = PENDING_PLAYER_DAMAGE;
                     PENDING_PLAYER_DAMAGE = 0;

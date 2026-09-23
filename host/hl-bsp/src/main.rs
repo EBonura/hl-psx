@@ -7261,6 +7261,46 @@ fn script_clip_slots(
     (lookup("m_iszPlay"), lookup("m_iszIdle"))
 }
 
+/// Extended env_beam/env_laser aux flags (aux[first + 5].delay_ticks).
+const BEAM_EXT_LASER: u16 = 1;
+const BEAM_EXT_SPARK_END: u16 = 2;
+const BEAM_EXT_SPARK_START: u16 = 4;
+
+/// A beam endpoint that names a live entity: `0x4000 | runtime brush index`
+/// for a brush entity (the beam follows its origin, GoldSrc pev->origin) or
+/// `0x8000 | name id` for a monster. `None` = a static point.
+fn beam_endpoint_ref(
+    s: &str,
+    name: &str,
+    brush_by_submodel: &[u16],
+    names: &mut LogicNames,
+) -> Option<u16> {
+    if name.is_empty() {
+        return None;
+    }
+    for b in s.split('{') {
+        if ent_value(b, "targetname") != Some(name) {
+            continue;
+        }
+        let cls = ent_value(b, "classname").unwrap_or("");
+        if let Some(sm) = block_model(b) {
+            let brush = brush_by_submodel.get(sm).copied().unwrap_or(LOGIC_BRUSH_NONE);
+            if brush != LOGIC_BRUSH_NONE && brush < 0x4000 {
+                return Some(0x4000 | brush);
+            }
+            return None;
+        }
+        if cls.starts_with("monster_") {
+            let id = names.id(Some(name));
+            if id != 0 && id < 0x4000 {
+                return Some(0x8000 | id);
+            }
+        }
+        return None;
+    }
+    None
+}
+
 #[cfg(test)]
 fn collect_logic_entities(
     ents: &[u8],
@@ -8518,9 +8558,30 @@ fn collect_logic_entities_with_lightstyles(
             let own = ent_value(block, "origin")
                 .and_then(parse_vec3)
                 .map(|o| to_world(o, scale));
-            let start = tn_origin(ent_value(block, "LightningStart").unwrap_or("")).or(own);
-            let end = tn_origin(ent_value(block, "LightningEnd").unwrap_or(""))
-                .or_else(|| tn_origin(ent_value(block, "target").unwrap_or("")));
+            // CLaser aims at its LaserTarget (stored in pev->message);
+            // CLightning spans LightningStart..LightningEnd. Either endpoint
+            // may name a moving entity, whose live origin the beam follows.
+            let is_laser = cls == "env_laser";
+            let start_name = if is_laser {
+                ""
+            } else {
+                ent_value(block, "LightningStart").unwrap_or("")
+            };
+            let end_name = if is_laser {
+                ent_value(block, "LaserTarget").unwrap_or("")
+            } else {
+                ent_value(block, "LightningEnd")
+                    .filter(|n| !n.is_empty())
+                    .or_else(|| ent_value(block, "target"))
+                    .unwrap_or("")
+            };
+            let start_ref = beam_endpoint_ref(&s, start_name, brush_by_submodel, &mut names);
+            let end_ref = beam_endpoint_ref(&s, end_name, brush_by_submodel, &mut names);
+            // A brush endpoint's live origin is entirely its runtime placement,
+            // so its cooked point is zero; actors fall back to their spawn.
+            let brush_ref = |r: Option<u16>| r.filter(|r| r >> 14 == 1).map(|_| [0; 3]);
+            let start = brush_ref(start_ref).or(tn_origin(start_name)).or(own);
+            let end = brush_ref(end_ref).or(tn_origin(end_name));
             let Some(start) = start else {
                 continue;
             };
@@ -8533,7 +8594,14 @@ fn collect_logic_entities_with_lightstyles(
                 None if radius_hl > 0.0 => (start, true),
                 None => continue,
             };
-            let width_hl = parse_f32_key(block, "BoltWidth", 16.0).max(1.0);
+            // CLaser takes its width from "width" in the network's tenths of
+            // a unit (a 20-wide laser is a two-unit line); env_beam keeps the
+            // established BoltWidth convention.
+            let width_hl = if is_laser {
+                (parse_f32_key(block, "width", 10.0) * 0.1).max(1.0)
+            } else {
+                parse_f32_key(block, "BoltWidth", 16.0).max(1.0)
+            };
             let half = ((width_hl * 0.5 * scale).round() as i32).clamp(1, 4000) as u16;
             let col = ent_value(block, "rendercolor")
                 .and_then(parse_vec3)
@@ -8594,6 +8662,26 @@ fn collect_logic_entities_with_lightstyles(
                     delay_ticks: spare,
                 });
             }
+            // Extended beam: live endpoints, CBeam::BeamDamage and the laser's
+            // trace-clipped end. Plain static beams keep their 4-entry record.
+            let damage = parse_f32_key(block, "damage", 0.0).max(0.0).min(65535.0) as u16;
+            let sf = parse_spawnflags(block);
+            let dyn_start = start_ref.map_or(0, |r| r);
+            let dyn_end = end_ref.map_or(0, |r| r);
+            let extended = is_laser || dyn_start != 0 || dyn_end != 0 || damage > 0;
+            if extended {
+                let flags = (is_laser as u16) * BEAM_EXT_LASER
+                    | ((sf & 0x20 != 0) as u16) * BEAM_EXT_SPARK_END
+                    | ((sf & 0x10 != 0) as u16) * BEAM_EXT_SPARK_START;
+                aux.push(LogicAuxRec {
+                    target: dyn_start,
+                    delay_ticks: dyn_end,
+                });
+                aux.push(LogicAuxRec {
+                    target: damage,
+                    delay_ticks: flags,
+                });
+            }
             out.push(LogicRec {
                 kind: LOGIC_BEAM,
                 use_type: 0,
@@ -8603,7 +8691,7 @@ fn collect_logic_entities_with_lightstyles(
                 killtarget: 0,
                 brush: LOGIC_BRUSH_NONE,
                 first_aux: first,
-                aux_count: 4,
+                aux_count: if extended { 6 } else { 4 },
                 flags: 0,
                 wait_ticks: 0,
                 delay_ticks: 0,
