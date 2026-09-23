@@ -9494,25 +9494,28 @@ unsafe fn script_primed_actor_holds(m: &Map, pi: usize, now: u16) -> bool {
     }
 }
 
-/// Leave the internal face-mark phase and either hold a startup-primed idle
-/// or begin the authored play gesture. The ordinary completion path remains
-/// one tick later, matching SequenceDone's schedule transition.
+/// Leave the internal face-mark phase and begin the authored play gesture.
+/// The ordinary completion path remains one tick later, matching
+/// SequenceDone's schedule transition.
 #[inline]
 unsafe fn script_finish_face_phase(m: &Map, pi: usize, primed: bool) {
-    PROP_SCRIPT_MODE[pi] = if primed {
-        scientist_logic::script_primed_mode(0)
-    } else {
-        0
-    };
     if primed {
-        PROP_SCRIPT_PLAY_UNTIL[pi] = SIM_NOW;
-    } else {
-        PROP_SCRIPT_PLAY_UNTIL[pi] = if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF {
-            SIM_NOW.wrapping_add(script_play_hold_ticks(m, pi))
-        } else {
-            SIM_NOW
-        };
+        // Only walk/run scripts face their mark. Their possession raised
+        // m_iDelay (DelayStart(1)), and TASK_ENABLE_SCRIPT's DelayStart(0)
+        // on arrival sets m_startTime to now: a staged idle script with a
+        // walk/run move starts by itself once its actor is planted, as the
+        // Use it would otherwise wait for does (c1a4's fleeing houndeyes).
+        let li = prop_script_li(pi);
+        LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
+        script_assign_actor(m, li, m.logic(li), pi, SIM_NOW);
+        return;
     }
+    PROP_SCRIPT_MODE[pi] = 0;
+    PROP_SCRIPT_PLAY_UNTIL[pi] = if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF {
+        SIM_NOW.wrapping_add(script_play_hold_ticks(m, pi))
+    } else {
+        SIM_NOW
+    };
 }
 
 /// Advance one actor's cinematic state outside tick_props. Besides keeping the
