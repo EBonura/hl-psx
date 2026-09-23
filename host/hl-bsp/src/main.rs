@@ -9058,11 +9058,61 @@ fn append_monster_loot_slots(
 /// A monster's `TriggerTarget`/`TriggerCondition` pair, bound to its cooked
 /// actor index. The cooker turns each into one LOGIC_MONSTER_TRIGGER record.
 struct MonsterTriggerLink {
+    /// Cooked actor index, or usize::MAX for a Gonarch that arrives by
+    /// transition (bound at runtime to the incoming actor).
     prop: usize,
     condition: u16,
     target: u16,
+    targetname: u16,
     view_cone: u16,
     origin: [i32; 3],
+}
+
+/// The info_bigmomma node an incoming Gonarch resumes at. CBigMomma keeps
+/// the node it is walking to in pev->netname across a level change, and it
+/// only stops walking at an SF_INFOBM_WAIT node, so it arrives heading for
+/// the node of that name. Without such a neighbour node, the first node no
+/// other node targets.
+fn bigmomma_entry_node(map_path: &str, s: &str) -> Option<String> {
+    let nodes: Vec<(&str, &str)> = s
+        .split('{')
+        .filter(|b| ent_value(b, "classname") == Some("info_bigmomma"))
+        .filter_map(|b| Some((ent_value(b, "targetname")?, ent_value(b, "target").unwrap_or(""))))
+        .collect();
+    if nodes.is_empty() {
+        return None;
+    }
+    let dir = Path::new(map_path).parent()?;
+    for block in s.split('{') {
+        if ent_value(block, "classname") != Some("trigger_changelevel") {
+            continue;
+        }
+        let Some(next) = ent_value(block, "map") else {
+            continue;
+        };
+        let Ok(bytes) = std::fs::read(dir.join(format!("{next}.bsp"))) else {
+            continue;
+        };
+        let Ok(bsp) = Bsp::parse(&bytes) else {
+            continue;
+        };
+        let other = entity_text(bsp.lump(LUMP_ENTITIES));
+        for b in other.split('{') {
+            if ent_value(b, "classname") == Some("info_bigmomma")
+                && parse_spawnflags(b) & INFOBM_WAIT != 0
+            {
+                if let Some(name) = ent_value(b, "targetname") {
+                    if nodes.iter().any(|(n, _)| *n == name) {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    nodes
+        .iter()
+        .find(|(name, _)| !nodes.iter().any(|(_, t)| t == name))
+        .map(|(name, _)| name.to_string())
 }
 
 /// Half-angle of a monster class's forward view cone in 4096ths of a turn:
@@ -9467,9 +9517,34 @@ fn collect_props(
                     prop: owner_index,
                     condition,
                     target: intern_logic_name(logic_names, target).unwrap_or(0),
+                    targetname: 0,
                     view_cone: monster_view_cone_units(cls),
                     origin,
                 });
+            }
+            // Boss progression the SDK hardwires in code rather than keys.
+            let mut boss = |condition: u16, target: &str, targetname: u16| {
+                trigger_links.push(MonsterTriggerLink {
+                    prop: owner_index,
+                    condition,
+                    target: intern_logic_name(logic_names, target).unwrap_or(0),
+                    targetname,
+                    view_cone: 0,
+                    origin,
+                });
+            };
+            match cls {
+                // CNihilanth::Spawn defaults; the class reads no keys for them.
+                "monster_nihilanth" => {
+                    boss(AITRIGGER_DEATH_USE_ON, "n_dead", 0);
+                    boss(AITRIGGER_COMMAND_TOUCH, "n_ending", name_id);
+                }
+                "monster_bigmomma" => {
+                    if let Some(first) = ent_value(block, "netname") {
+                        boss(AITRIGGER_NODE_WALK, first, 0);
+                    }
+                }
+                _ => {}
             }
         }
         if ty & DEAD == 0 {
@@ -12366,7 +12441,6 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         };
         o.extend_from_slice(&id.to_le_bytes());
     }
-
     // ---- Actors/items + independent sprite placements ----
     // u32 split counts | ActorRec[24B] | SpriteRec[12B].
     let prop_off = o.len() as u32;
@@ -12381,16 +12455,71 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         &mut logic.names,
         &mut trigger_links,
     );
+    // A map with Gonarch nodes but no Gonarch of its own gets a walker for
+    // the one that follows the player in (c4a2a, c4a2b).
+    let ent_text = entity_text(bsp.lump(LUMP_ENTITIES));
+    if !trigger_links.iter().any(|l| l.condition == AITRIGGER_NODE_WALK) {
+        if let Some(entry) = bigmomma_entry_node(path, &ent_text) {
+            trigger_links.push(MonsterTriggerLink {
+                prop: usize::MAX,
+                condition: AITRIGGER_NODE_WALK,
+                target: intern_logic_name(&mut logic.names, &entry)?,
+                targetname: 0,
+                view_cone: 0,
+                origin: [0; 3],
+            });
+        }
+    }
+    // info_bigmomma nodes (CInfoBM::KeyValue: radius -> scale, reachdelay ->
+    // speed, reachtarget -> message; health and target as usual).
+    for block in ent_text.split('{') {
+        if ent_value(block, "classname") != Some("info_bigmomma") {
+            continue;
+        }
+        let origin = to_world(
+            ent_value(block, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]),
+            scale,
+        );
+        logic.ents.push(LogicRec {
+            kind: LOGIC_BIGMOMMA_NODE,
+            use_type: USE_TOGGLE,
+            spawnflags: parse_spawnflags(block),
+            targetname: intern_logic_name(&mut logic.names, ent_value(block, "targetname").unwrap_or(""))?,
+            target: intern_logic_name(&mut logic.names, ent_value(block, "reachtarget").unwrap_or(""))?,
+            killtarget: 0,
+            brush: LOGIC_BRUSH_NONE,
+            first_aux: 0,
+            aux_count: 0,
+            flags: 0,
+            wait_ticks: 0,
+            delay_ticks: seconds_to_ticks_u16(parse_f32_key(block, "reachdelay", 0.0)),
+            speed: (parse_f32_key(block, "radius", 0.0) / scale).round().clamp(0.0, u16::MAX as f32) as u16,
+            arg0: intern_logic_name(&mut logic.names, ent_value(block, "target").unwrap_or(""))?,
+            arg1: parse_f32_key(block, "health", 0.0).round().clamp(0.0, u16::MAX as f32) as u16,
+            sound0: u8::MAX,
+            sound1: u8::MAX,
+            origin,
+            mins: origin,
+            maxs: origin,
+        });
+    }
     // Appended after every other record, so no existing logic index moves.
     for link in &trigger_links {
-        if link.target == 0 || link.prop >= MAX_RUNTIME_LIVE_PROPS {
+        let prop = if link.prop == usize::MAX {
+            NODE_WALK_INCOMING
+        } else if link.prop < MAX_RUNTIME_LIVE_PROPS {
+            link.prop as u16
+        } else {
+            continue;
+        };
+        if link.target == 0 {
             continue;
         }
         logic.ents.push(LogicRec {
             kind: LOGIC_MONSTER_TRIGGER,
-            use_type: USE_TOGGLE,
+            use_type: if link.condition == AITRIGGER_DEATH_USE_ON { USE_ON } else { USE_TOGGLE },
             spawnflags: 0,
-            targetname: 0,
+            targetname: link.targetname,
             target: link.target,
             killtarget: 0,
             brush: LOGIC_BRUSH_NONE,
@@ -12400,7 +12529,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             wait_ticks: 0,
             delay_ticks: 0,
             speed: link.view_cone,
-            arg0: link.prop as u16,
+            arg0: prop,
             arg1: link.condition,
             sound0: u8::MAX,
             sound1: u8::MAX,

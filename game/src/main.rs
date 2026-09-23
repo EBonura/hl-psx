@@ -817,6 +817,7 @@ const PROP_TYPE_FORKLIFT: u8 = 53; // c0a0/c0a0a scripted monster_generic forkli
 const PROP_TYPE_SCRIPTED_SITTING_SCI: u8 = 54; // c1a1b/c4a3 sitidle -> sitstand hybrid
 const PROP_TYPE_VENT_ZOMBIE: u8 = 55; // c1a1b compact eatbody + vent-climb roster
 const PROP_TYPE_HOLO: u8 = 56; // Hazard Course holographic instructor
+const PROP_TYPE_BIGMOMMA: u8 = 18; // Gonarch: walks its info_bigmomma nodes
 const PROP_DEAD_BIT: u16 = 0x8000; // cook flag: spawn as a corpse (death pose, 0 hp)
 const PROP_DORMANT_BIT: u16 = 0x4000; // cook flag: monstermaker stock, inactive until fired
 const PROP_PREDISASTER_BIT: u16 = 0x2000; // cook flag: SF_MONSTER_PREDISASTER
@@ -3390,6 +3391,12 @@ static mut LOGIC_PROP_LINK: [u8; MAX_LOGIC] = [LOGIC_PROP_NONE; MAX_LOGIC];
 // this is the map's range of them, so damage and sight checks scan only it.
 static mut MONSTER_TRIGGER_FIRST: u16 = 0;
 static mut MONSTER_TRIGGER_END: u16 = 0;
+// The map's Gonarch node walker (a LOGIC_MONSTER_TRIGGER record), or MAX.
+// Its LOGIC_STATE is the walk phase, LOGIC_TARGET the node it heads for next,
+// LOGIC_NEXT the current node record and LOGIC_COUNTER the boss's health
+// while the path lasts. A node record's LOGIC_NEXT holds its wait deadline
+// and its LOGIC_COUNTER the ticks spent without closing in.
+static mut BOSS_WALKER: u16 = u16::MAX;
 static mut LOGIC_EVENTS: [LogicEvent; MAX_LOGIC_EVENTS] = [EMPTY_LOGIC_EVENT; MAX_LOGIC_EVENTS];
 static mut TRACKTRAIN_SUBMODEL: u16 = 0;
 static mut TRACKTRAIN_CMD_ACTIVE: u8 = 0;
@@ -10059,6 +10066,11 @@ unsafe fn logic_use_entity(
             logic_sub_use_targets(m, nlogic, nents, li, rec, now, use_type, depth + 1);
             logic_request_changelevel(m, nlogic, rec);
         }
+        map::LOGIC_MONSTER_TRIGGER => {
+            if rec.arg1 == map::AITRIGGER_COMMAND_TOUCH && use_type == map::USE_OFF {
+                monster_command_touch(m, nlogic, rec.target);
+            }
+        }
         map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE => {
             logic_sub_use_targets(m, nlogic, nents, li, rec, now, use_type, depth + 1)
         }
@@ -11259,6 +11271,30 @@ unsafe fn logic_try_use(
     0
 }
 
+/// CBaseTrigger::TeleportTouch for the player.
+unsafe fn logic_teleport_touch(m: &Map, nlogic: usize, rec: map::LogicEnt) {
+    if rec.aux_count >= 2
+        && (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0
+        && master_ok(m, nlogic, rec.arg1)
+    {
+        let a = m.logic_aux(rec.first_aux);
+        let b = m.logic_aux(rec.first_aux + 1);
+        TELEPORT_REQUEST = Some((
+            [
+                a.target as i16 as i32,
+                // CBaseTrigger::TeleportTouch treats the destination as the
+                // teleportee's FEET: it raises a player by -mins.z and then
+                // one more unit. Four units left the c1a0c wake-up arrival
+                // buried in the chamber floor, which is startsolid, so the
+                // player could turn but never move again.
+                a.delay_ticks as i16 as i32 + 37,
+                b.target as i16 as i32,
+            ],
+            b.delay_ticks, // destination yaw (q12)
+        ));
+    }
+}
+
 unsafe fn logic_touch_triggers(
     m: &Map,
     nlogic: usize,
@@ -11407,30 +11443,7 @@ unsafe fn logic_touch_triggers(
                         }
                     }
                 }
-                map::LOGIC_TRIGGER_TELEPORT => {
-                    if rec.aux_count >= 2
-                        && (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0
-                        && master_ok(m, nlogic, rec.arg1)
-                    {
-                        let a = m.logic_aux(rec.first_aux);
-                        let b = m.logic_aux(rec.first_aux + 1);
-                        TELEPORT_REQUEST = Some((
-                            [
-                                a.target as i16 as i32,
-                                // CBaseTrigger::TeleportTouch treats the
-                                // destination as the teleportee's FEET: it
-                                // raises a player by -mins.z and then one more
-                                // unit. Four units left the c1a0c wake-up
-                                // arrival buried in the chamber floor, which is
-                                // startsolid, so the player could turn but
-                                // never move again.
-                                a.delay_ticks as i16 as i32 + 37,
-                                b.target as i16 as i32,
-                            ],
-                            b.delay_ticks, // destination yaw (q12)
-                        ));
-                    }
-                }
+                map::LOGIC_TRIGGER_TELEPORT => logic_teleport_touch(m, nlogic, rec),
                 map::LOGIC_TRIGGER_PUSH => {
                     // START_OFF pushes spawn disabled (LOGIC_STATE_TOP); a fire on
                     // their targetname flips them on (logic_use_entity toggle). NB
@@ -11701,6 +11714,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     let mut hot_overflow = false;
     MONSTER_TRIGGER_FIRST = nlogic as u16;
     MONSTER_TRIGGER_END = 0;
+    BOSS_WALKER = u16::MAX;
     li = 0;
     while li < nlogic {
         let rec = m.logic(li);
@@ -13911,6 +13925,30 @@ unsafe fn init_monster_trigger(li: usize, rec: map::LogicEnt) {
     MONSTER_TRIGGER_END = li as u16 + 1;
     LOGIC_COUNTER[li] = rec.arg1 as i16;
     let nprops = core::ptr::read_volatile(core::ptr::addr_of!(PROP_COUNT)).min(CARRY_MAILBOX_FIRST);
+    if rec.arg1 == map::AITRIGGER_NODE_WALK {
+        let mut pi = rec.arg0 as usize;
+        if rec.arg0 == map::NODE_WALK_INCOMING {
+            // The Gonarch that followed the player in, wherever the carry
+            // mailbox or a transition fallback placed it.
+            pi = 0;
+            while pi < nprops
+                && !(PROP_KIND[pi] == PROP_TYPE_BIGMOMMA
+                    && PROP_ACTIVE[pi] != 0
+                    && PROP_HEALTH[pi] != 0)
+            {
+                pi += 1;
+            }
+        }
+        if pi >= nprops || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
+            LOGIC_STATE[li] = LOGIC_STATE_TOP;
+            return;
+        }
+        LOGIC_PROP_LINK[li] = pi as u8;
+        LOGIC_NEXT[li] = u16::MAX;
+        LOGIC_COUNTER[li] = PROP_HEALTH[pi] as i16;
+        BOSS_WALKER = li as u16;
+        return;
+    }
     let pi = rec.arg0 as usize;
     if pi >= nprops || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
         LOGIC_STATE[li] = LOGIC_STATE_TOP;
@@ -13929,13 +13967,13 @@ unsafe fn init_monster_trigger(li: usize, rec: map::LogicEnt) {
 
 /// FCheckAITrigger's FireTargets(m_iszTriggerTarget, USE_TOGGLE), after which
 /// the condition is AITRIGGER_NONE: every trigger fires at most once.
-unsafe fn monster_fire_ai_trigger(li: usize) {
+unsafe fn monster_fire_ai_trigger(li: usize, use_type: u8) {
     LOGIC_STATE[li] = LOGIC_STATE_TOP;
     logic_enqueue_event(
         SIM_NOW,
         LOGIC_TARGET[li],
         0,
-        map::USE_TOGGLE,
+        use_type,
         logic_state::CALLER_NONE,
     );
 }
@@ -13955,13 +13993,18 @@ unsafe fn monster_damage_ai_triggers(pi: usize) {
             && LOGIC_STATE[li] == LOGIC_STATE_BOTTOM
         {
             let fire = match LOGIC_COUNTER[li] as u16 {
-                map::AITRIGGER_TAKEDAMAGE => true,
-                map::AITRIGGER_HALFHEALTH => health > 0 && health * 2 <= max_health,
-                map::AITRIGGER_DEATH => health == 0,
-                _ => false,
+                map::AITRIGGER_TAKEDAMAGE => Some(map::USE_TOGGLE),
+                map::AITRIGGER_HALFHEALTH if health > 0 && health * 2 <= max_health => {
+                    Some(map::USE_TOGGLE)
+                }
+                map::AITRIGGER_DEATH if health == 0 => Some(map::USE_TOGGLE),
+                map::AITRIGGER_DEATH_USE_ON if health == 0 => Some(map::USE_ON),
+                _ => None,
             };
-            if fire {
-                monster_fire_ai_trigger(li);
+            if let Some(use_type) = fire {
+                if li as u16 != BOSS_WALKER {
+                    monster_fire_ai_trigger(li, use_type);
+                }
             }
         }
         li += 1;
@@ -14023,7 +14066,7 @@ unsafe fn monster_sight_ai_triggers(
                     )
                 });
                 if clear {
-                    monster_fire_ai_trigger(li);
+                    monster_fire_ai_trigger(li, map::USE_TOGGLE);
                 }
             }
         }
@@ -14034,8 +14077,149 @@ unsafe fn monster_sight_ai_triggers(
     }
 }
 
+// Walk speeds are approximations of big_mom.mdl's walk and run sequences.
+const BIGMOMMA_WALK_SPEED: i32 = 4;
+const BIGMOMMA_RUN_SPEED: i32 = 8;
+const BIGMOMMA_MIN_RANGE: i32 = 24;
+// A walker that has not closed in on its node for this many ticks is placed
+// on it, so a navigation dead end cannot hold back the node's progression.
+const BIGMOMMA_STUCK_TICKS: i16 = 100;
+const BIGMOMMA_PROGRESS: i32 = 8;
+
+/// CBigMomma::TakeDamage while its path lasts: the boss cannot die, and
+/// depleting a node's health (NodeReach set it) advances to the next node.
+unsafe fn boss_walker_damage(dmg: u8) {
+    let w = BOSS_WALKER as usize;
+    if LOGIC_STATE[w] == LOGIC_STATE_TOP {
+        return;
+    }
+    LOGIC_COUNTER[w] = LOGIC_COUNTER[w].saturating_sub(dmg as i16);
+    if LOGIC_COUNTER[w] <= 0 {
+        LOGIC_COUNTER[w] = 1;
+        if LOGIC_STATE[w] == LOGIC_STATE_GOING_DOWN {
+            LOGIC_STATE[w] = LOGIC_STATE_BOTTOM;
+        }
+    }
+}
+
+/// CBigMomma's node schedule (tlBigNode): find the node named by the last
+/// node's target, walk or run into its radius, wait its reachdelay (forever
+/// at an SF_INFOBM_WAIT node), then NodeReach: fire its reachtarget and, for
+/// a node with health, stay until that much damage is taken. With no next
+/// node the path is finished and the boss becomes mortal.
+#[inline(never)]
+unsafe fn tick_boss_walker(m: &Map, movers: &[phys::Mover]) {
+    let w = BOSS_WALKER as usize;
+    let pi = LOGIC_PROP_LINK[w] as usize;
+    if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
+        LOGIC_STATE[w] = LOGIC_STATE_TOP;
+        BOSS_WALKER = u16::MAX;
+        return;
+    }
+    let nlogic = m.n_logic.min(MAX_LOGIC);
+    match LOGIC_STATE[w] {
+        LOGIC_STATE_BOTTOM => {
+            let name = LOGIC_TARGET[w];
+            let mut li = 0usize;
+            while li < nlogic
+                && !(LOGIC_KIND[li] == map::LOGIC_BIGMOMMA_NODE
+                    && name != 0
+                    && logic_cached_targetname(li) == name)
+            {
+                li += 1;
+            }
+            if li >= nlogic {
+                LOGIC_STATE[w] = LOGIC_STATE_TOP;
+                PROP_STATE[pi] = PROP_STATE_IDLE;
+                return;
+            }
+            LOGIC_NEXT[w] = li as u16;
+            LOGIC_COUNTER[li] = 0;
+            LOGIC_NEXT[li] = u16::MAX;
+            LOGIC_STATE[w] = LOGIC_STATE_GOING_UP;
+        }
+        LOGIC_STATE_GOING_UP => {
+            let node = LOGIC_NEXT[w] as usize;
+            let rec = m.logic(node);
+            let pos = PROP_POS[pi];
+            let dist = isqrt_i32(dist2_xz(pos, rec.origin));
+            if dist <= (rec.speed as i32).max(BIGMOMMA_MIN_RANGE) {
+                PROP_STATE[pi] = PROP_STATE_IDLE;
+                LOGIC_NEXT[node] = SIM_NOW.wrapping_add(rec.delay_ticks);
+                LOGIC_STATE[w] = LOGIC_STATE_WAITING;
+                return;
+            }
+            let speed = if rec.spawnflags & map::INFOBM_RUN != 0 {
+                BIGMOMMA_RUN_SPEED
+            } else {
+                BIGMOMMA_WALK_SPEED
+            };
+            PROP_STATE[pi] = PROP_STATE_MOVE;
+            prop_move_towards_point(m, movers, pi, rec.origin, speed);
+            // The node's LOGIC_NEXT holds the closest approach so far while
+            // walking; only real progress resets the stuck count.
+            let now_dist = isqrt_i32(dist2_xz(PROP_POS[pi], rec.origin));
+            if now_dist + BIGMOMMA_PROGRESS < LOGIC_NEXT[node] as i32 {
+                LOGIC_NEXT[node] = now_dist.min(u16::MAX as i32 - 1) as u16;
+                LOGIC_COUNTER[node] = 0;
+            } else {
+                LOGIC_COUNTER[node] += 1;
+                if LOGIC_COUNTER[node] > BIGMOMMA_STUCK_TICKS {
+                    prop_set_pos_grounded(m, pi, prop_grounded_pos(m, pi, rec.origin));
+                }
+            }
+        }
+        LOGIC_STATE_WAITING => {
+            let node = LOGIC_NEXT[w] as usize;
+            let rec = m.logic(node);
+            if rec.spawnflags & map::INFOBM_WAIT != 0 || !time_reached(SIM_NOW, LOGIC_NEXT[node]) {
+                return;
+            }
+            if rec.target != 0 {
+                logic_enqueue_event(
+                    SIM_NOW,
+                    rec.target,
+                    0,
+                    map::USE_TOGGLE,
+                    logic_state::CALLER_NONE,
+                );
+            }
+            LOGIC_TARGET[w] = rec.arg0;
+            if rec.arg1 != 0 {
+                LOGIC_COUNTER[w] = rec.arg1.min(i16::MAX as u16) as i16;
+                LOGIC_STATE[w] = LOGIC_STATE_GOING_DOWN;
+            } else {
+                LOGIC_STATE[w] = LOGIC_STATE_BOTTOM;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// CNihilanth::CommandUse(USE_OFF): the ending sequence touches the
+/// m_szDeadTouch trigger (c4a3's n_ending teleport) with the player.
+#[inline(never)]
+unsafe fn monster_command_touch(m: &Map, nlogic: usize, target: u16) {
+    let mut li = 0usize;
+    while li < nlogic {
+        if LOGIC_KIND[li] == map::LOGIC_TRIGGER_TELEPORT
+            && LOGIC_STATE[li] != LOGIC_STATE_REMOVED
+            && target != 0
+            && logic_cached_targetname(li) == target
+        {
+            logic_teleport_touch(m, nlogic, m.logic(li));
+        }
+        li += 1;
+    }
+}
+
 unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
+        return;
+    }
+    if BOSS_WALKER != u16::MAX && LOGIC_PROP_LINK[BOSS_WALKER as usize] as usize == pi {
+        PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
+        boss_walker_damage(dmg);
         return;
     }
     PROP_HEALTH[pi] = PROP_HEALTH[pi].saturating_sub(dmg);
@@ -30438,6 +30622,9 @@ fn play(
                     &mut armor,
                     launch.room_id,
                 );
+                if BOSS_WALKER != u16::MAX {
+                    tick_boss_walker(&m, movers);
+                }
                 telemetry::stage_end(telemetry::stage::UPDATE_ACTOR);
                 apply_debug_toggles(
                     &mut health,

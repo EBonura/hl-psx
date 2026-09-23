@@ -258,6 +258,22 @@ pub mod logic {
     pub const AITRIGGER_DEATH: u16 = 4;
     pub const AITRIGGER_SEEPLAYER_UNCONDITIONAL: u16 = 10;
     pub const AITRIGGER_SEEPLAYER_NOT_IN_COMBAT: u16 = 11;
+    // Boss hooks sharing the record, above the SDK's condition range.
+    /// CNihilanth::DyingThink: FireTargets(m_szDeadUse, USE_ON) once dead.
+    pub const AITRIGGER_DEATH_USE_ON: u16 = 0x100;
+    /// CNihilanth::CommandUse: USE_OFF touches `target` (m_szDeadTouch) with
+    /// the player. The record carries the monster's targetname.
+    pub const AITRIGGER_COMMAND_TOUCH: u16 = 0x101;
+    /// CBigMomma's info_bigmomma walk starting at node `target`. `arg0` is
+    /// the actor, or NODE_WALK_INCOMING for a Gonarch arriving by transition.
+    pub const AITRIGGER_NODE_WALK: u16 = 0x102;
+    pub const NODE_WALK_INCOMING: u16 = u16::MAX;
+    /// An info_bigmomma node: `targetname`, `target` = reachtarget,
+    /// `arg0` = next node name, `arg1` = health, `speed` = radius,
+    /// `delay_ticks` = reachdelay, `spawnflags` = RUN(1) | WAIT(2).
+    pub const BIGMOMMA_NODE: u8 = 54;
+    pub const INFOBM_RUN: u16 = 1;
+    pub const INFOBM_WAIT: u16 = 2;
 
     pub const USE_OFF: u8 = 0;
     pub const USE_ON: u8 = 1;
@@ -323,8 +339,9 @@ pub mod logic {
     pub const LOGIC_LIGHTSTYLE: u8 = LIGHTSTYLE;
     pub const LOGIC_ENV_BEVERAGE: u8 = ENV_BEVERAGE;
     pub const LOGIC_MONSTER_TRIGGER: u8 = MONSTER_TRIGGER;
+    pub const LOGIC_BIGMOMMA_NODE: u8 = BIGMOMMA_NODE;
 
-    pub const KINDS: [u8; 53] = [
+    pub const KINDS: [u8; 54] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -378,6 +395,7 @@ pub mod logic {
         LIGHTSTYLE,
         ENV_BEVERAGE,
         MONSTER_TRIGGER,
+        BIGMOMMA_NODE,
     ];
 }
 
