@@ -1,38 +1,16 @@
-# `trim-paths` is still a nightly cargo feature; this crate is nightly-pinned
-# anyway (bare-metal MIPS needs build-std), so the gate costs nothing.
-cargo-features = ["trim-paths"]
-
 [package]
 name    = "hl-psx"
 version = "0.2.0"
 edition = "2021"
 license = "GPL-2.0-or-later"
 
-# Standalone workspace, deliberately NOT at the repo root: keeping the crate
-# (and its device `.cargo/config.toml`) under game/ stops the PSX target config
-# from leaking onto the host tools built from PSoXide (mkisopsx), and
-# stops cargo adopting the SDK path-deps as implicit workspace members. Same
-# layout as the proven oot-psx / pico8-psx games.
-[workspace]
+# A member of the repository-root workspace (see ../Cargo.toml, which also
+# holds the release profile). The device `.cargo/config.toml` stays under
+# game/, so the PSX target config never reaches the host tools.
 
 [[bin]]
 name = "hl-psx"
 path = "src/main.rs"
-
-[profile.release]
-# no_std has no unwinder; abort keeps the binary small.
-panic         = "abort"
-codegen-units = 1
-lto           = true
-# Strip absolute host paths out of the binary. rustc bakes the source path of
-# every panic/assert site into .rodata (core::panic::Location), the linker
-# script folds .rodata into .data, and .data ends on ALIGN(2048) -- so where
-# the checkout happens to sit changes how much PS1 RAM the program uses, in
-# 2 KiB steps. Building from the demo disc submodule (a path 20 chars longer
-# than the sibling checkout) crossed exactly one of those steps and the link
-# failed with ".bss will not fit in region RAM". Trimming makes the output
-# location-independent, and saves ~640 bytes of the paths themselves.
-trim-paths    = "all"
 
 [features]
 # Presentation is decoupled from the 20 Hz simulation by default: the
@@ -135,7 +113,3 @@ psx-render-contract = { path = "../.psoxide/engine/crates/psx-render-contract" }
 # a content-derived capacity that is rechecked after every asset recook.
 lz4_flex = { version = "0.11", default-features = false }
 psx-pack = { path = "../.psoxide/sdk/crates/psx-pack" }
-
-# The card driver is one-shot code behind a menu action; size beats speed.
-[profile.release.package.psx-mc]
-opt-level = "s"
