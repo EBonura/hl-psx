@@ -9669,7 +9669,10 @@ fn collect_props(
             || (cls == "monster_generic"
                 && ty & 0x0fff == 56
                 && parse_f32_key(block, "renderamt", 255.0) <= 0.0)
-            || (matches!(ty & 0x0fff, 20 | 21 | 22) && spawnflags & 64 != 0)
+            // CBaseTurret::Spawn autostarts only with AUTOACTIVATE (32) and
+            // without START_INACTIVE (64); any other turret waits for a Use
+            // (c1a3's sentries arm from their trigger_relays).
+            || (matches!(ty & 0x0fff, 20 | 21 | 22) && spawnflags & 96 != 32)
         {
             ty | PREDISASTER
         } else {
@@ -17837,6 +17840,21 @@ mod tests {
         assert_ne!(props[0].0 & 0x2000, 0, "renderamt zero starts hidden");
         assert_eq!(props[1].0 & 0x0fff, 22);
         assert_ne!(props[1].0 & 0x2000, 0, "START_INACTIVE is retained");
+    }
+
+    #[test]
+    fn turrets_without_autoactivate_start_inactive() {
+        let ents = br#"
+        { "classname" "monster_sentry" "targetname" "t" }
+        { "classname" "monster_sentry" "spawnflags" "32" }
+        { "classname" "monster_miniturret" "targetname" "m" "spawnflags" "32" }
+        "#;
+        let mut names = Vec::new();
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names, &mut Vec::new());
+        assert_eq!(props.len(), 3);
+        assert_ne!(props[0].0 & 0x2000, 0, "no AUTOACTIVATE waits for a Use");
+        assert_eq!(props[1].0 & 0x2000, 0, "AUTOACTIVATE searches from spawn");
+        assert_eq!(props[2].0 & 0x2000, 0, "AUTOACTIVATE searches from spawn");
     }
 
     #[test]
