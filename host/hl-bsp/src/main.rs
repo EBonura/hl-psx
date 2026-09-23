@@ -9753,6 +9753,12 @@ fn collect_props(
                 }
             }
         }
+        // CBaseTurret::Spawn hangs an "orientation" 1 turret from the ceiling:
+        // pitch 180, yaw + 180, view_ofs below the origin (runtime prop_eye).
+        if matches!(ty & 0x0fff, 20..=22) && ent_value(block, "orientation") == Some("1") {
+            angles[0] = 180.0;
+            angles[1] += 180.0;
+        }
         let origin = to_world(origin_hl, scale);
         let model_type = ty & 0x0fff;
         let body = if matches!(model_type, 0 | 25 | SCRIPTED_SITTING_SCIENTIST_TYPE) {
