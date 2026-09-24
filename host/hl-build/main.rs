@@ -1705,6 +1705,24 @@ fn cook_assets(repository: &Path, valve: &Path, psoxide: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Features a shipping build may carry. Any other feature (telemetry, trace
+/// streams, debug boot and gallery hooks, diagnostic tints) makes a
+/// diagnostic build, which keeps core's panic messages.
+const SHIPPING_FEATURES: [&str; 3] = [
+    "decoupled-present",
+    "main-ram-render-scratch",
+    "main-ram-projection-stack",
+];
+
+fn is_shipping_build(features: Option<&str>) -> bool {
+    features.map_or(true, |list| {
+        list.split(',')
+            .map(str::trim)
+            .filter(|feature| !feature.is_empty())
+            .all(|feature| SHIPPING_FEATURES.contains(&feature))
+    })
+}
+
 /// How the profile-guided build varies the guest compile.
 #[derive(Clone, Copy, Default)]
 enum GuestProfile<'a> {
@@ -1732,15 +1750,30 @@ fn compile_game(
     if let Some(features) = features.filter(|value| !value.trim().is_empty()) {
         command.args(["--features", features]);
     }
+    // `--config` appends to the rustflags in game/.cargo/config.toml; an
+    // exported RUSTFLAGS would replace them.
+    let mut flags = Vec::new();
+    if is_shipping_build(features) {
+        // Every panic, bounds check and overflow check becomes a bare
+        // `break`, so core's formatting machinery, the panic messages and
+        // their source locations never reach the image. The PS1 has nowhere
+        // to show a message in a shipping build and halts either way; an
+        // emulator run still reports the break exception and its PC, which
+        // the link map resolves to the failing function. Worth 26.6 KB of RAM
+        // (.text -16.3 KB, .data -10.3 KB) on the 2026-09-23 stack.
+        // Diagnostic builds keep the messages, and a plain `cargo build` in
+        // game/ does too.
+        flags.push("-Zunstable-options".to_string());
+        flags.push("-Cpanic=immediate-abort".to_string());
+    }
     if !matches!(profile, GuestProfile::None) {
-        // `--config` appends to the rustflags in game/.cargo/config.toml; an
-        // exported RUSTFLAGS would replace them. The profiled build keeps the
-        // debug info because LLVM matches samples to code through it.
-        let mut flags = vec![
+        // The profiled build keeps the debug info because LLVM matches
+        // samples to code through it.
+        flags.extend([
             "-Cdebuginfo=1".to_string(),
             "-Zdebug-info-for-profiling".to_string(),
             "-Cstrip=none".to_string(),
-        ];
+        ]);
         if let GuestProfile::Use(samples) = profile {
             flags.push(format!("-Zprofile-sample-use={}", samples.display()));
             // LLVM's default hot call-site threshold (3000) inlined enough to
@@ -1755,6 +1788,8 @@ fn compile_game(
             flags.push("-Cllvm-args=-profile-sample-accurate".to_string());
             flags.push("-Cllvm-args=-hot-callsite-threshold=1000".to_string());
         }
+    }
+    if !flags.is_empty() {
         command
             .arg("--config")
             .arg(format!("target.mipsel-sony-psx.rustflags={flags:?}"));
@@ -2114,6 +2149,18 @@ mod tests {
         let rev = psoxide_rev();
         assert_eq!(rev.len(), 40);
         assert!(rev.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn only_shipping_builds_abort_without_panic_messages() {
+        assert!(is_shipping_build(None));
+        assert!(is_shipping_build(Some("")));
+        assert!(is_shipping_build(Some("decoupled-present")));
+        assert!(!is_shipping_build(Some("reference-trace")));
+        assert!(!is_shipping_build(Some(
+            "performance-telemetry, debug-map-boot"
+        )));
+        assert!(!is_shipping_build(Some("decoupled-present,seam-census")));
     }
 
     #[test]
