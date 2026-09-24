@@ -5525,6 +5525,12 @@ static mut FADE_WHITE: bool = false;
 static mut FADE_T: u16 = 0;
 static mut FADE_DUR: u16 = 40;
 static mut FADE_HOLD: u16 = 0;
+// player_loadsaved (CRevertSaved): ticks+1 until its message shows and until
+// the reload; zero is idle. The reload reuses the death restart.
+static mut REVERT_MSG_AT: u16 = 0;
+static mut REVERT_LOAD_AT: u16 = 0;
+static mut REVERT_MSG: [i32; 3] = [0; 3];
+static mut REVERT_REQUEST: bool = false;
 // worldspawn startdark: ticks left of the engine's start-dark fade-in (Xash
 // CL_StartDark with retail titles.txt GAMETITLE: black for holdtime 3.0 +
 // fadeout 1.5 s, then a 1.5 s fade). A real env_fade replaces it.
@@ -10597,6 +10603,9 @@ unsafe fn logic_use_entity(
             }
         }
         map::LOGIC_ENV_FADE => {
+            if rec.arg1 & map::LOGIC_ENV_FADE_REVERT != 0 {
+                revert_saved_use(rec);
+            }
             FADE_ACTIVE = true;
             FADE_IN = rec.arg1 & 1 != 0;
             FADE_WHITE = rec.arg1 & 2 != 0;
@@ -10680,6 +10689,43 @@ unsafe fn logic_use_entity(
     }
 }
 
+/// CRevertSaved::Use: fade out now, show the message at messagetime and
+/// reload at loadtime (MessageThink/LoadThink). The cooker keeps the message
+/// in the point record's unused bounds words.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn revert_saved_use(rec: map::LogicEnt) {
+    REVERT_LOAD_AT = (rec.wait_ticks.max(0) as u16).saturating_add(1);
+    REVERT_MSG = rec.mins;
+    REVERT_MSG_AT = if rec.mins[0] != 0 {
+        (rec.maxs[0].clamp(0, u16::MAX as i32 - 1) as u16) + 1
+    } else {
+        0
+    };
+}
+
+#[inline(never)]
+#[optimize(size)]
+unsafe fn revert_saved_tick() {
+    if REVERT_MSG_AT != 0 {
+        REVERT_MSG_AT -= 1;
+        if REVERT_MSG_AT == 0 {
+            let flags = REVERT_MSG[1] as u16;
+            TITLE_TEXT_ID = REVERT_MSG[0] as u16;
+            TITLE_T = 0;
+            TITLE_HOLD = (REVERT_MSG[2] as u16).max(20);
+            TITLE_FADE = ((flags >> 8) & 0xFF).max(1);
+            TITLE_EFFECT = (flags & 3) as u8;
+            TITLE_LEFT_ALIGNED = flags & 4 != 0;
+            TITLE_Y_Q5 = ((flags >> 3) & 31) as u8;
+        }
+    }
+    REVERT_LOAD_AT -= 1;
+    if REVERT_LOAD_AT == 0 {
+        REVERT_REQUEST = true;
+    }
+}
+
 /// Advance the screen-title + fade timers once per sim tick; auto-fire the
 /// worldspawn chapter title shortly after load (like HL's chapter cards).
 unsafe fn tick_screen_fx(sim_frame_no: u32) {
@@ -10704,6 +10750,9 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
         GAMETITLE_TICKS -= 1;
     }
     FADE_STARTDARK = FADE_STARTDARK.saturating_sub(1);
+    if REVERT_LOAD_AT != 0 {
+        revert_saved_tick();
+    }
     if TITLE_TEXT_ID != 0 {
         TITLE_T = TITLE_T.saturating_add(1);
         let total = TITLE_FADE + TITLE_HOLD + TITLE_FADE;
@@ -12290,6 +12339,9 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     GAMETITLE_TICKS = 0;
     FADE_ACTIVE = false;
     FADE_STARTDARK = 0;
+    REVERT_MSG_AT = 0;
+    REVERT_LOAD_AT = 0;
+    REVERT_REQUEST = false;
     DAMAGE_DIRECTION = 0;
     DAMAGE_TICKS = 0;
     GEIGER_COOLDOWN = 0;
@@ -30102,6 +30154,11 @@ fn play(
                 }
             }
             unsafe { tick_screen_fx(sim_frame_no) };
+            if unsafe { REVERT_REQUEST } {
+                // player_loadsaved's LoadThink: "reload", the death restart.
+                unsafe { REVERT_REQUEST = false };
+                restart_requested = true;
+            }
             // Player death: freeze for DEATH_TICKS (a red death screen renders),
             // then reload the immutable entry handoff. That handoff is either
             // the latest successful changelevel (full carried player state) or
