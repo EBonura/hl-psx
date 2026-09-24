@@ -192,6 +192,9 @@ pub mod map {
 
 pub mod logic {
     pub const BRUSH_NONE: u16 = u16::MAX;
+    /// A brush trigger's `brush` word with this bit set (and not NONE) holds
+    /// the compact hull-1 clip head of a trigger that is not its box.
+    pub const BRUSH_SHAPE: u16 = 0x8000;
 
     pub const FUNC_DOOR: u8 = 1;
     pub const FUNC_BUTTON: u8 = 2;
@@ -303,6 +306,7 @@ pub mod logic {
     // names above make the dense-ID invariant readable in this one canonical
     // definition; consumers import only these explicit semantic aliases.
     pub const LOGIC_BRUSH_NONE: u16 = BRUSH_NONE;
+    pub const LOGIC_BRUSH_SHAPE: u16 = BRUSH_SHAPE;
     pub const LOGIC_FUNC_DOOR: u8 = FUNC_DOOR;
     pub const LOGIC_FUNC_BUTTON: u8 = FUNC_BUTTON;
     pub const LOGIC_TRIGGER_ONCE: u8 = TRIGGER_ONCE;

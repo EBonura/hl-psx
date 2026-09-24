@@ -11951,6 +11951,19 @@ unsafe fn logic_touch_triggers(
                 continue;
             }
             let rec = m.logic(li);
+            // A brush trigger that is not its box carries its hull-1 clip
+            // head: GoldSrc touches it only with the origin inside that hull.
+            if rec.brush != map::LOGIC_BRUSH_NONE
+                && rec.brush & map::LOGIC_BRUSH_SHAPE != 0
+                && !phys::inside_clip_hull(
+                    m,
+                    (rec.brush & !map::LOGIC_BRUSH_SHAPE) as i16,
+                    player_pos,
+                )
+            {
+                scan += 1;
+                continue;
+            }
             match rec.kind {
                 map::LOGIC_TRIGGER_ONCE
                 | map::LOGIC_TRIGGER_MULTIPLE
