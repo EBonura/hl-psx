@@ -30667,9 +30667,12 @@ fn play(
                     }
                     let e = ENT_CACHE[ei];
                     let off = ent_draw_offset(ei);
-                    // kind 2 = nonsolid visual, kind 4 = ladder volume (no hull).
+                    // kind 2 = nonsolid visual, kind 4 = ladder volume (no hull),
+                    // kind 6 = water: SOLID_NOT, so a moving water train neither
+                    // holds nor carries anything (c1a1b's flood slid its crates).
                     if e.kind != 2
                         && e.kind != 4
+                        && e.kind != 6
                         && !fan_collision_disabled(ei, e)
                         && !pendulum_collision_disabled(e)
                         && nmov < movers.len()
