@@ -3485,7 +3485,8 @@ const PROP_ANIM_CLIP_FRESH: u8 = 0xfe;
 // Ordinary locomotion previously derived phase from the global clock. A state
 // change could therefore enter a new clip on an arbitrary pose. Remember its
 // start per actor (384 bytes) so every transition begins at the authored first
-// pose while uninterrupted loops retain phase.
+// pose while uninterrupted loops retain phase. The simulation owns both
+// (record_prop_anim_clips); drawing and hit traces only read them.
 static mut PROP_ANIM_CLIP: [u8; MAX_PROPS] = [PROP_ANIM_CLIP_FRESH; MAX_PROPS];
 static mut PROP_ANIM_START: [u16; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_LEAF: [i16; MAX_PROPS] = [0; MAX_PROPS];
@@ -13005,6 +13006,10 @@ unsafe fn prop_render_radius(pi: usize, ty: u8) -> i32 {
     }
 }
 
+/// The pose an actor shows at `sim_frame_no`. Only the simulation passes
+/// `record` (record_prop_anim_clips), so the clip bookkeeping never depends on
+/// which frames were drawn or when a hit trace ran; a reader that meets a clip
+/// the simulation has not recorded yet plays it from its start.
 #[inline(never)]
 fn prop_anim_frame(
     m: &Map,
@@ -13013,7 +13018,13 @@ fn prop_anim_frame(
     hit_flash: u8,
     sim_frame_no: u32,
     pi: usize,
+    record: bool,
 ) -> (usize, usize, u32) {
+    let forget_clip = || {
+        if record {
+            unsafe { PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_NONE };
+        }
+    };
     // CSittingScientist owns five consecutive non-looping source sequences
     // (sitlookleft/right, sitscared, sitting2/3) and chooses another whenever
     // one finishes. Retain their exact authored durations; a stable actor
@@ -13022,7 +13033,7 @@ fn prop_anim_frame(
         && state != PROP_STATE_DEAD
         && hit_flash == 0
     {
-        unsafe { PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_NONE };
+        forget_clip();
         const SLOTS: [usize; 5] = [0, 1, 2, 5, 6];
         const DURATIONS: [usize; 5] = [60, 40, 128, 100, 160];
         const CYCLE: usize = 60 + 40 + 128 + 100 + 160;
@@ -13069,14 +13080,14 @@ fn prop_anim_frame(
                 }
             }
         }
-        unsafe { PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_NONE };
+        forget_clip();
         // Traverse the retained death poses once over the original sequence's
         // authored duration, then hold the final pose.
         let elapsed = (sim_frame_no as u16).wrapping_sub(unsafe { PROP_DEATH_START[pi] }) as usize;
         return md.one_shot_clip_phase(clip, md.clip_hold_ticks(clip) as usize, elapsed);
     }
     if hit_flash > 0 {
-        unsafe { PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_NONE };
+        forget_clip();
         // Traverse the entire retained flinch, not merely frames 0 and 1.  A
         // few high-value models now retain 3-5 pain poses, and ignoring the
         // tail made those RAM bytes useless while still producing a snap.
@@ -13090,7 +13101,7 @@ fn prop_anim_frame(
         );
     }
     if scripted_play {
-        unsafe { PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_NONE };
+        forget_clip();
         // Script clips are aggressively RAM-sampled (often just first/last
         // pose). Traverse those poses once over the source MDL's packed
         // duration instead of looping them every few ticks while the script
@@ -13102,7 +13113,7 @@ fn prop_anim_frame(
         return md.one_shot_clip_phase(clip, duration, elapsed);
     }
     if scripted_idle {
-        unsafe { PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_NONE };
+        forget_clip();
         // Scripted idles loop at the retail sequence duration. The ordinary
         // two/three-frame idle cadence was visually frantic and could not
         // share a deterministic phase with source studio target events.
@@ -13127,7 +13138,7 @@ fn prop_anim_frame(
             0
         };
         if action_ticks != 0 {
-            unsafe { PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_NONE };
+            forget_clip();
             let remaining = unsafe { PROP_AI_TIMER[pi] }.min(action_ticks);
             let elapsed = action_ticks.saturating_sub(remaining) as usize;
             return md.one_shot_clip_phase(clip, action_ticks as usize, elapsed);
@@ -13138,9 +13149,9 @@ fn prop_anim_frame(
     // then preserve that actor-local phase for the life of the loop.
     let elapsed = unsafe {
         let clip_id = clip.min(u8::MAX as usize) as u8;
+        let mut start = PROP_ANIM_START[pi];
         if PROP_ANIM_CLIP[pi] != clip_id {
             let first_clip = PROP_ANIM_CLIP[pi] == PROP_ANIM_CLIP_FRESH;
-            PROP_ANIM_CLIP[pi] = clip_id;
             // Keep the old deterministic staggering only for an actor's very
             // first visible clip; subsequent state changes begin at pose zero.
             let seed = if first_clip {
@@ -13148,9 +13159,13 @@ fn prop_anim_frame(
             } else {
                 0
             };
-            PROP_ANIM_START[pi] = (sim_frame_no as u16).wrapping_sub(seed);
+            start = (sim_frame_no as u16).wrapping_sub(seed);
+            if record {
+                PROP_ANIM_CLIP[pi] = clip_id;
+                PROP_ANIM_START[pi] = start;
+            }
         }
-        (sim_frame_no as u16).wrapping_sub(PROP_ANIM_START[pi]) as usize
+        (sim_frame_no as u16).wrapping_sub(start) as usize
     };
     md.looped_clip_phase(clip, md.clip_hold_ticks(clip) as usize, elapsed)
 }
@@ -13175,6 +13190,32 @@ fn turn_toward(cur: u16, target: u16, rate: u16) -> u16 {
     let signed = if diff > 2048 { diff - 4096 } else { diff };
     let step = signed.clamp(-(rate as i32), rate as i32);
     ((cur as i32 + step) & 0xFFF) as u16
+}
+
+/// Advance every actor's clip bookkeeping (PROP_ANIM_CLIP / PROP_ANIM_START)
+/// at the end of a simulation tick, with the tick number the next frames draw
+/// at. Drawing used to record a clip change the first time it drew the actor,
+/// so under decoupled present a clip's start, and with it the pose the
+/// studio hitbox trace tests, depended on which ticks happened to be drawn.
+#[inline(never)]
+unsafe fn record_prop_anim_clips(m: &Map, sim_frame_no: u32) {
+    let count = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    for pi in 0..count {
+        let slot = TYPE_TO_SLOT[(PROP_KIND[pi] as usize).min(N_MODEL_TYPES - 1)];
+        if slot == MODEL_SLOT_NONE || !LOADED_MODELS[slot as usize].valid {
+            continue;
+        }
+        let md = loaded_model(slot as usize);
+        prop_anim_frame(
+            m,
+            &md,
+            PROP_STATE[pi],
+            PROP_HIT_FLASH[pi],
+            sim_frame_no,
+            pi,
+            true,
+        );
+    }
 }
 
 /// Capture the simulation transform immediately before actor thinking. The
@@ -18782,6 +18823,7 @@ unsafe fn prop_studio_hit_fraction(
         PROP_HIT_FLASH[pi],
         SIM_NOW as u32,
         pi,
+        false,
     );
     let pose = md.pose(frame, frame2, frac16, 0, pose_scratch());
     let yaw = prop_yaw_value(PROP_YAW[pi]);
@@ -31792,6 +31834,7 @@ fn play(
             }
             telemetry_frame = telemetry_frame.wrapping_add(1);
             sim_frame_no = sim_frame_no.wrapping_add(1);
+            unsafe { record_prop_anim_clips(&m, sim_frame_no) };
             ticks_this_visual = ticks_this_visual.saturating_add(1);
             next_sim_vblank = next_sim_vblank.wrapping_add(SIM_VBLANKS);
             #[cfg(feature = "decoupled-present")]
@@ -33206,7 +33249,15 @@ fn play(
                 {
                     (0, 0, 0)
                 } else {
-                    prop_anim_frame(&m, md, PROP_STATE[pi], PROP_HIT_FLASH[pi], sim_frame_no, pi)
+                    prop_anim_frame(
+                        &m,
+                        md,
+                        PROP_STATE[pi],
+                        PROP_HIT_FLASH[pi],
+                        sim_frame_no,
+                        pi,
+                        false,
+                    )
                 };
                 let base_shade = if ty == PROP_TYPE_ITEM_SUIT || ty == PROP_TYPE_ITEM_BATTERY {
                     128
