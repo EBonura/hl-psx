@@ -6734,7 +6734,52 @@ fn pushable_max_speed(e: map::Ent) -> i32 {
 
 #[inline(always)]
 fn pushable_half_extents(e: map::Ent) -> [i32; 3] {
-    [(e.mv[0] as u32 >> 16) as i32, e.mv[1].abs(), e.mv[2].abs()]
+    [(e.mv[0] as u32 >> 16) as i32, e.mv[1] & 0xffff, e.mv[2].abs()]
+}
+
+/// CPushable's cooked buoyancy (pev->skin), above the half height in mv[1].
+#[inline(always)]
+fn pushable_buoyancy(e: map::Ent) -> i32 {
+    e.mv[1] >> 16
+}
+
+/// SV_Physics_Step for an FL_FLOAT pushable: gravity against skin x submerged
+/// depth (SV_Submerged, the water column above the box bottom by the same
+/// five-step bisection as SV_RecursiveWaterLevel); the new vertical speed in
+/// units per tick. None when the bottom sample is dry (an ordinary fall).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn pushable_float_step(m: &Map, nents: usize, e: map::Ent, vy: i32) -> Option<i32> {
+    let c = pushable_world_center(e, e.origin);
+    let h = pushable_half_extents(e)[1];
+    let bottom = c[1] - h;
+    if !water_touch(m, nents, [c[0], bottom + 1, c[2]]) {
+        return None;
+    }
+    let depth = if water_touch(m, nents, [c[0], c[1] + h, c[2]]) {
+        2 * h
+    } else {
+        let (mut wet, mut dry) = (1, 2 * h);
+        let mut i = 0;
+        while i < 5 {
+            let mid = (wet + dry) / 2;
+            if water_touch(m, nents, [c[0], bottom + mid, c[2]]) {
+                wet = mid;
+            } else {
+                dry = mid;
+            }
+            i += 1;
+        }
+        (wet + dry) / 2
+    };
+    // Gravity (800 u/s^2) balances the lift at depth 800 / skin. GoldSrc
+    // integrates the two undamped at 60-100 fps and the carts it spawns near
+    // that depth bob by a unit or two (c2a4a's crates in the Xash capture);
+    // this velocity word is whole units per 20 Hz tick, so undamped Euler
+    // here swung them tens of units. Ease toward the balance depth instead.
+    let balance = 800 / pushable_buoyancy(e).max(1);
+    let toward = ((depth - balance) / 4).clamp(-8, 8);
+    Some((vy + toward) / 2)
 }
 
 #[inline(always)]
@@ -7330,7 +7375,24 @@ unsafe fn tick_pushables(
             }
         }
 
+        let resting_vy = if state.support == pushable::SUPPORT_NONE {
+            state.vy as i32
+        } else {
+            0
+        };
         state = pushable::fall_step(state, 2);
+        if pushable_buoyancy(e) != 0 {
+            if let Some(vy) = pushable_float_step(m, nents, e, resting_vy) {
+                // FL_FLOAT adds gravity and lift every frame, grounded or not:
+                // a lift that beats gravity raises the cart off its floor.
+                state.vy = vy as i8;
+                if vy > 0 {
+                    state.support = pushable::SUPPORT_NONE;
+                } else if state.support != pushable::SUPPORT_NONE {
+                    state.vy = 0;
+                }
+            }
+        }
         if state.support == pushable::SUPPORT_NONE && state.vy != 0 {
             let vertical = [0, state.vy as i32, 0];
             let (frac, _) = pushable_sweep_fraction(m, movers, ei, collision_proxy, vertical);
@@ -7344,7 +7406,7 @@ unsafe fn tick_pushables(
                 state.vy = 0;
             }
             let (support, settle_y) = pushable_detect_support(m, movers, ei, collision_proxy);
-            if support != pushable::SUPPORT_NONE {
+            if support != pushable::SUPPORT_NONE && state.vy <= 0 {
                 if pushable_apply_settle(m, movers, ei, settle_y) {
                     state.dirty = true;
                 }
