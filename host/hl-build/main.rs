@@ -1821,10 +1821,33 @@ fn compile_game(
     // through the guest's HAZARD_TRAMPOLINES array, then prove the image
     // clean. Zero RAM beyond that array; the alternative flag costs 31 KB of
     // nops. The patcher is the pinned SDK's, so its fixes arrive with a pin.
+    // With the link's map every jump table is proven from it instead of
+    // guessed from the dispatch's block, and each tool refuses a map that
+    // does not match the image. The stack guard proves every psx-rt
+    // scratchpad stack call tree fits its region.
     let patcher = psoxide.join("tools/hazard_patch.py");
     run(
-        Command::new("python3").arg(&patcher).arg(&exe),
+        Command::new("python3")
+            .arg(&patcher)
+            .arg(&exe)
+            .arg("--map")
+            .arg(&link_map),
         "patch load-delay hazards in hl-psx.exe",
+    )?;
+    run(
+        Command::new("python3")
+            .arg(psoxide.join("tools/hazard_scan.py"))
+            .arg(&exe)
+            .arg("--map")
+            .arg(&link_map),
+        "prove hl-psx.exe free of load-delay hazards",
+    )?;
+    run(
+        Command::new("python3")
+            .arg(psoxide.join("tools/stack_guard.py"))
+            .arg(&exe)
+            .arg(&link_map),
+        "prove psx-rt scratchpad stacks fit",
     )?;
     // The model projection chain runs on the 1 KiB scratchpad; an inlining
     // change that outgrows it would otherwise only show up as lost speed.
