@@ -12353,7 +12353,14 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let hull3_head = remap_clip_head(hull3_head_raw, &clip_remap);
     let tram_head = remap_clip_head(tram_head_raw, &clip_remap);
     for e in &mut ents {
-        e.head = remap_clip_head(e.head, &clip_remap);
+        // Head 0 marks a non-solid brush (func_water, passable fans and
+        // rotators, NOT_SOLID pendulums). Raw clipnode 0 is the world's
+        // hull-1 root, so remapping it gave those brushes a copy of the whole
+        // world hull at their offset: phantom collision, and actor sight
+        // tested against the player-sized world hull.
+        if e.head != 0 {
+            e.head = remap_clip_head(e.head, &clip_remap);
+        }
     }
 
     let mut plane_remap = vec![u16::MAX; n_planes];
