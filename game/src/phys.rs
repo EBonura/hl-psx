@@ -1982,6 +1982,13 @@ impl Player {
         self.move_frac_y = 0;
     }
 
+    /// PM_AddCorrectGravity: a push field's vertical basevelocity is an
+    /// acceleration, `basevelocity.z * frametime` added to the velocity.
+    pub fn add_vertical_push(&mut self, per_tick: i32) {
+        let fine = self.vertical_velocity_q6() + per_tick * PLANAR_FRAC_ONE / 20;
+        self.set_vertical_velocity_q6(fine);
+    }
+
     #[inline(always)]
     fn vertical_velocity_q6(&self) -> i32 {
         self.vel[1] * PLANAR_FRAC_ONE + self.vel_frac_y as i32

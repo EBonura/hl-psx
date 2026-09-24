@@ -31828,16 +31828,21 @@ fn play(
                     player.on_ground = false;
                     yaw = dyaw & 0xFFF;
                 }
-                if PUSH_IMPULSE != [0, 0, 0] {
-                    // HL applies push as basevelocity: the stream SETS your
-                    // vertical speed while inside (triggers.cpp), it does not
-                    // integrate -- integration would scale with gravity and
-                    // overshoot wildly now that gravity is the faithful 2 u/t^2.
+                if PUSH_IMPULSE[1] != 0 && in_water {
+                    // PM_WaterMove adds the whole basevelocity to the move.
                     if PUSH_IMPULSE[1] > 0 {
                         player.set_vertical_velocity(player.vel[1].max(PUSH_IMPULSE[1]));
-                    } else if PUSH_IMPULSE[1] < 0 {
+                    } else {
                         player.set_vertical_velocity(player.vel[1].min(PUSH_IMPULSE[1]));
                     }
+                } else if PUSH_IMPULSE[1] != 0 && !player.on_ground {
+                    // Out of water CTriggerPush's basevelocity.z is integrated
+                    // by PM_AddCorrectGravity: velocity.z += speed x frametime
+                    // while inside. Grounded, PM zeroes velocity.z before the
+                    // move, so a standing player is not lifted. Setting the
+                    // full speed at once threw c4a3's 3500 u/s pad 1950 units
+                    // up where GoldSrc reaches 750.
+                    player.add_vertical_push(PUSH_IMPULSE[1]);
                 }
                 // The lateral push is next tick's basevelocity: the player
                 // move carries it, so it collides instead of nudging the
