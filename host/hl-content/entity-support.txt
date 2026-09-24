@@ -131,7 +131,7 @@ speaker|approximated|sentence group is folded into compact ambience
 target_cdaudio|runtime|music trigger logic
 trigger_auto|runtime|map-start target logic
 trigger_autosave|missing_gameplay|authored checkpoint system is absent
-trigger_camera|missing_gameplay|scripted camera system is absent
+trigger_camera|approximated|static camera: holds the view on its target for its wait, takes control; no path moves
 trigger_cdaudio|runtime|music trigger logic
 trigger_changelevel|runtime|transition logic and carry snapshot
 trigger_endsection|runtime|Hazard Course completion logic

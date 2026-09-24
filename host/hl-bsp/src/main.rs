@@ -7638,6 +7638,7 @@ fn collect_logic_entities_with_lightstyles(
             "env_fade" => LOGIC_ENV_FADE,
             // CRevertSaved fades out like env_fade, then reloads (flagged in arg1).
             "player_loadsaved" => LOGIC_ENV_FADE,
+            "trigger_camera" => LOGIC_TRIGGER_CAMERA,
             "worldspawn" => LOGIC_MAP_FLAGS,
             "trigger_cdaudio" | "target_cdaudio" => LOGIC_CDTRACK,
             "scripted_sentence" => LOGIC_SENTENCE,
@@ -7760,6 +7761,23 @@ fn collect_logic_entities_with_lightstyles(
                 0,
             ];
         }
+        if kind == LOGIC_TRIGGER_CAMERA {
+            // The look target's authored spot: the runtime follows a live
+            // actor or brush of that name and falls back to this.
+            let target = ent_value(block, "target").unwrap_or("");
+            mins = s
+                .split('{')
+                .find(|b| !target.is_empty() && ent_value(b, "targetname") == Some(target))
+                .map(|b| {
+                    let (o, lo, hi) = entity_bounds_world(b, models, scale);
+                    if lo == hi {
+                        o
+                    } else {
+                        [0, 1, 2].map(|i| (lo[i] + hi[i]) / 2)
+                    }
+                })
+                .unwrap_or(origin);
+        }
         if kind == LOGIC_SHOOTER {
             let d = ent_move_dir(block);
             let v = parse_f32_key(block, "m_flVelocity", 0.0) / scale / 20.0;
@@ -7825,8 +7843,9 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_MOMENTARY => 100.0,
             _ => 0.0,
         };
-        let speed = if kind == LOGIC_SCRIPTED {
+        let speed = if kind == LOGIC_SCRIPTED || kind == LOGIC_TRIGGER_CAMERA {
             // Scripts carry their facing yaw here (q12); they have no speed key.
+            // A camera starts at its authored yaw and turns to its target.
             hl_yaw_to_world_q12(ent_yaw_degrees(block).unwrap_or(0.0)) as u16
         } else if kind == LOGIC_SENTENCE {
             seconds_to_ticks_u16(
@@ -18184,6 +18203,34 @@ mod tests {
             0
         );
         assert_eq!(rec.aux_count, 0, "missing clip must not suppress priming");
+    }
+
+    #[test]
+    fn trigger_camera_cooks_its_view_hold_and_target_spot() {
+        let ents = br#"
+        {
+        "classname" "trigger_camera"
+        "targetname" "win_cam"
+        "target" "end_gman"
+        "wait" "9999"
+        "speed" "0"
+        "spawnflags" "4"
+        "origin" "-916 387 -2902"
+        }
+        {
+        "classname" "monster_gman"
+        "targetname" "end_gman"
+        "origin" "-917 414 -2981"
+        }
+        "#;
+        let logic = collect_logic_entities(ents, &[], &[], 1.0, &Default::default(), &Default::default())
+            .expect("camera cook");
+        let rec = logic.ents.iter().find(|r| r.kind == LOGIC_TRIGGER_CAMERA).expect("camera record");
+        assert_eq!(logic.names[rec.target as usize - 1], "end_gman");
+        assert_eq!(rec.wait_ticks, i16::MAX, "9999 s clamps to the longest hold");
+        assert_eq!(rec.spawnflags, 4);
+        assert_eq!(rec.mins, to_world([-917.0, 414.0, -2981.0], 1.0));
+        assert_eq!(rec.origin, to_world([-916.0, 387.0, -2902.0], 1.0));
     }
 
     #[test]

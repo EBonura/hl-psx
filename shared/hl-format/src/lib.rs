@@ -298,6 +298,10 @@ pub mod logic {
     /// debris kind, `wait_ticks` = interval, `mins` = world gib velocity per
     /// tick, `flags` = its per-axis jitter (variance x velocity).
     pub const SHOOTER: u8 = 56;
+    /// trigger_camera (CTriggerCamera, static: no path): `origin` = the view,
+    /// `target` = what it looks at, `mins` = that target's cooked position,
+    /// `wait_ticks` = hold, `speed` = initial yaw (q12).
+    pub const TRIGGER_CAMERA: u8 = 57;
     pub const INFOBM_RUN: u16 = 1;
     pub const INFOBM_WAIT: u16 = 2;
 
@@ -376,8 +380,9 @@ pub mod logic {
     pub const LOGIC_BIGMOMMA_NODE: u8 = BIGMOMMA_NODE;
     pub const LOGIC_INFODECAL: u8 = INFODECAL;
     pub const LOGIC_SHOOTER: u8 = SHOOTER;
+    pub const LOGIC_TRIGGER_CAMERA: u8 = TRIGGER_CAMERA;
 
-    pub const KINDS: [u8; 56] = [
+    pub const KINDS: [u8; 57] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -434,6 +439,7 @@ pub mod logic {
         BIGMOMMA_NODE,
         INFODECAL,
         SHOOTER,
+        TRIGGER_CAMERA,
     ];
 }
 

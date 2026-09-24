@@ -5534,6 +5534,14 @@ static mut REVERT_REQUEST: bool = false;
 // Ticks+1 until the port's end card starts (after END3 has shown), and the
 // sim frame it started on; both zero while the campaign runs.
 static mut ENDING_IN: u16 = 0;
+// trigger_camera: the live camera's logic index (MAX = the player's view),
+// its return deadline, pose, and whether it holds the player's controls.
+static mut CAMERA_LI: u16 = u16::MAX;
+static mut CAMERA_UNTIL: u16 = 0;
+static mut CAMERA_EYE: [i32; 3] = [0; 3];
+static mut CAMERA_YAW: u16 = 0;
+static mut CAMERA_PITCH: i16 = 0;
+static mut CAMERA_LOCK: bool = false;
 static mut ENDING_FROM: u32 = 0;
 // worldspawn startdark: ticks left of the engine's start-dark fade-in (Xash
 // CL_StartDark with retail titles.txt GAMETITLE: black for holdtime 3.0 +
@@ -10704,8 +10712,95 @@ unsafe fn logic_use_entity(
         map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE => {
             logic_sub_use_targets(m, nlogic, nents, li, rec, now, use_type, depth + 1)
         }
+        map::LOGIC_TRIGGER_CAMERA => camera_use(li, rec, use_type, now),
         _ => {}
     }
+}
+
+/// CTriggerCamera::Use: toggle; turning on takes the view (and, with
+/// PLAYER_TAKECONTROL, the controls) for `wait`; off returns it next tick.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn camera_use(li: usize, rec: map::LogicEnt, use_type: u8, now: u16) {
+    let on = CAMERA_LI == li as u16;
+    let want = match use_type {
+        map::USE_ON => true,
+        map::USE_OFF => false,
+        _ => !on,
+    };
+    if want == on {
+        return;
+    }
+    if !want {
+        CAMERA_UNTIL = now;
+        return;
+    }
+    if rec.target == 0 {
+        return; // nothing to look at
+    }
+    CAMERA_LI = li as u16;
+    CAMERA_UNTIL = now.wrapping_add(rec.wait_ticks.max(0) as u16);
+    CAMERA_EYE = rec.origin;
+    CAMERA_YAW = rec.speed & 0xFFF;
+    CAMERA_PITCH = 0;
+    CAMERA_LOCK = rec.spawnflags & 4 != 0;
+}
+
+/// CTriggerCamera::FollowTarget, once per tick: turn toward the target (a
+/// live actor or brush of that name, else its cooked spot) at GoldSrc's
+/// 40 x frametime rate as seen at 60 fps (1/30 of the error per 20 Hz tick),
+/// and at the deadline hand the view back and use the target.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn camera_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
+    let li = CAMERA_LI as usize;
+    let rec = m.logic(li);
+    if time_reached(now, CAMERA_UNTIL) {
+        CAMERA_LI = u16::MAX;
+        CAMERA_LOCK = false;
+        logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, 0);
+        return;
+    }
+    let mut goal = rec.mins;
+    let mut pi = 0usize;
+    let np = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    while pi < np {
+        if PROP_ACTIVE[pi] != 0 && PROP_NAME[pi] == rec.target {
+            goal = PROP_POS[pi];
+            break;
+        }
+        pi += 1;
+    }
+    if pi == np {
+        let mut ti = 0usize;
+        while ti < nlogic {
+            if logic_cached_targetname(ti) == rec.target {
+                if let Some(ei) = logic_valid_brush(m.logic(ti).brush, nents) {
+                    let off = ent_draw_offset(ei);
+                    let c = ENT_CACHE[ei].center;
+                    goal = [c[0] + off[0], c[1] + off[1], c[2] + off[2]];
+                    break;
+                }
+            }
+            ti += 1;
+        }
+    }
+    let d = [
+        goal[0] - CAMERA_EYE[0],
+        goal[1] - CAMERA_EYE[1],
+        goal[2] - CAMERA_EYE[2],
+    ];
+    let yaw_goal = yaw_from_vec(d[0], d[2]);
+    let horiz = isqrt_i32(d[0] * d[0] + d[2] * d[2]);
+    let mut pitch_goal = atan2_q12(d[1], horiz) as i32;
+    if pitch_goal > 2048 {
+        pitch_goal -= 4096;
+    }
+    let dy = ((yaw_goal.wrapping_sub(CAMERA_YAW) & 0xFFF) as i32 + 2048) % 4096 - 2048;
+    CAMERA_YAW = ((CAMERA_YAW as i32 + dy / 30 + dy.signum()) & 0xFFF) as u16;
+    let dp = pitch_goal - CAMERA_PITCH as i32;
+    CAMERA_PITCH = (CAMERA_PITCH as i32 + dp / 30 + dp.signum())
+        .clamp(-(PITCH_MAX as i32), PITCH_MAX as i32) as i16;
 }
 
 /// CRevertSaved::Use: fade out now, show the message at messagetime and
@@ -11377,6 +11472,9 @@ unsafe fn logic_tick_pendulum(nents: usize, li: usize, rec: map::LogicEnt, now: 
 
 unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
     logic_process_events(m, nlogic, nents, now);
+    if CAMERA_LI != u16::MAX {
+        camera_tick(m, nlogic, nents, now);
+    }
     let indexed = LOGIC_PRE_COUNT != LOGIC_HOT_FALLBACK;
     let scan_count = if indexed {
         LOGIC_PRE_COUNT as usize
@@ -12378,6 +12476,8 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     REVERT_REQUEST = false;
     ENDING_IN = 0;
     ENDING_FROM = 0;
+    CAMERA_LI = u16::MAX;
+    CAMERA_LOCK = false;
     DAMAGE_DIRECTION = 0;
     DAMAGE_TICKS = 0;
     GEIGER_COOLDOWN = 0;
@@ -30122,6 +30222,18 @@ fn play(
             // sample so menu/pause handling above stays intact.
             #[cfg(feature = "route-follow")]
             let input_sample = follower.steer(follow_route, player.pos, yaw, pitch, sim_frame_no);
+            // trigger_camera PLAYER_TAKECONTROL: EnableControl(FALSE).
+            let input_sample = if unsafe { CAMERA_LOCK } {
+                semantic_input::Sample {
+                    forward: 0,
+                    strafe: 0,
+                    turn: 0,
+                    look: 0,
+                    actions: 0,
+                }
+            } else {
+                input_sample
+            };
             #[cfg(feature = "reference-trace")]
             reference_trace::input(
                 sim_frame_no,
@@ -32262,6 +32374,14 @@ fn play(
             cam_yaw,
             cam_pitch,
         );
+        // trigger_camera: SET_VIEW to the camera entity.
+        if unsafe { CAMERA_LI } != u16::MAX {
+            unsafe {
+                eye = CAMERA_EYE;
+                view_yaw = CAMERA_YAW;
+                view_pitch = CAMERA_PITCH;
+            }
+        }
         // Head-bob: a vertical bob (doubled frequency, like HL) scaled by ground
         // speed, plus a subtle strafe roll -- both derived from BOB_PHASE + the
         // current horizontal velocity so a walking camera breathes instead of
@@ -33830,7 +33950,8 @@ fn play(
             let world_prims = np;
             let world_quads = nq;
             let mut viewmodel_screen_off = [0i16; 2];
-            let draw_viewmodel_now = SHOW_VIEWMODEL && weapon.any_weapon();
+            let draw_viewmodel_now =
+                SHOW_VIEWMODEL && weapon.any_weapon() && CAMERA_LI == u16::MAX;
             WEAPON_MUZZLE_SLOT = weapon.current;
             let viewmodel_draw = if draw_viewmodel_now {
                 let vm_off = viewmodel_offset(recoil, sim_frame_no);
