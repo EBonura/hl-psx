@@ -8275,6 +8275,12 @@ fn collect_logic_entities_with_lightstyles(
         if matches!(kind, LOGIC_SENTENCE | LOGIC_AMBIENT | LOGIC_MAP_SOUND) {
             record_flags = acoustic_volume(cls, block);
         }
+        if kind == LOGIC_ENV_MESSAGE
+            && ent_value(block, "message").is_some_and(|m| m.eq_ignore_ascii_case("END3"))
+        {
+            // c5a1's end_stuff_mm shows END3 last on both endings.
+            record_flags |= LOGIC_ENV_MESSAGE_ENDS_GAME;
+        }
 
         let first_aux = aux.len().min(u16::MAX as usize) as u16;
         let mut aux_count = 0u8;
