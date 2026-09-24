@@ -1978,11 +1978,15 @@ const NEUTRAL: u8 = 128;
 /// Sample the base-style lightmap at one vertex's luxel (luxels are 16 texels
 /// apart in original texture space). Boosted ~1.5x so lit surfaces aren't dim
 /// under 128=1.0x modulation. Returns neutral where there is no lightmap.
+/// `lit_layers` are the face's other qrad planes that are lit when the map
+/// starts, with their lightstyle value (256 = style 0's "m"); R_BuildLightMap
+/// sums every plane before the gamma ramp.
 #[allow(clippy::too_many_arguments)]
 fn vertex_shade(
     lighting: &[u8],
     lightofs: i32,
     style0: u8,
+    lit_layers: &[(usize, u32)],
     lmw: usize,
     lmh: usize,
     ou: f32,
@@ -1996,10 +2000,78 @@ fn vertex_shade(
     let ls = (((ou / 16.0).floor() as i32) - mins_s).clamp(0, lmw as i32 - 1) as usize;
     let lt = (((ov / 16.0).floor() as i32) - mins_t).clamp(0, lmh as i32 - 1) as usize;
     let o = lightofs as usize + (lt * lmw + ls) * 3;
-    match (lighting.get(o), lighting.get(o + 1), lighting.get(o + 2)) {
-        (Some(&r), Some(&g), Some(&b)) => (light_curve(r), light_curve(g), light_curve(b)),
-        _ => (NEUTRAL, NEUTRAL, NEUTRAL),
+    let Some(base) = lighting.get(o..o + 3) else {
+        return (NEUTRAL, NEUTRAL, NEUTRAL);
+    };
+    let mut sum = [base[0] as u32 * 256, base[1] as u32 * 256, base[2] as u32 * 256];
+    for &(layer, value) in lit_layers {
+        let lo = o + layer * lmw * lmh * 3;
+        if let Some(plane) = lighting.get(lo..lo + 3) {
+            for c in 0..3 {
+                sum[c] += plane[c] as u32 * value;
+            }
+        }
     }
+    let lit = |c: u32| light_curve((c / 256).min(255) as u8);
+    (lit(sum[0]), lit(sum[1]), lit(sum[2]))
+}
+
+/// Lightstyle values at map start, 256 = "m" (the value of style 0). HLSDK
+/// CWorld::Precache sets styles 0-12 and 63; CLight::Spawn sets a named
+/// light's style (32-62) to "a" with START_OFF, else its pattern or "m". A
+/// style nobody sets is an empty string, which the engine treats as 256.
+/// Animated patterns are baked at their average, since the port bakes light.
+fn start_lightstyle_values(ents: &[u8]) -> [u32; 64] {
+    const PRESETS: [(usize, &str); 14] = [
+        (0, "m"),
+        (1, "mmnmmommommnonmmonqnmmo"),
+        (2, "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba"),
+        (3, "mmmmmaaaaammmmmaaaaaabcdefgabcdefg"),
+        (4, "mamamamamama"),
+        (5, "jklmnopqrstuvwxyzyxwvutsrqponmlkj"),
+        (6, "nmonqnmomnmomomno"),
+        (7, "mmmaaaabcdefgmmmmaaaammmaamm"),
+        (8, "mmmaaammmaaammmabcdefaaaammmmabcdefmmmaaaa"),
+        (9, "aaaaaaaazzzzzzzz"),
+        (10, "mmamammmmammamamaaamammma"),
+        (11, "abcdefghijklmnopqrrqponmlkjihgfedcba"),
+        (12, "mmnnmmnnnmmnn"),
+        (63, "a"),
+    ];
+    let average = |pattern: &str| -> u32 {
+        let n = pattern.len().max(1) as u32;
+        let sum: u32 = pattern.bytes().map(|c| c.saturating_sub(b'a') as u32 * 22).sum();
+        sum * 256 / (n * 264)
+    };
+    let mut values = [256u32; 64];
+    for (style, pattern) in PRESETS {
+        values[style] = average(pattern);
+    }
+    let mut set = [false; 64];
+    for block in entity_text(ents).split('{') {
+        if !matches!(
+            ent_value(block, "classname"),
+            Some("light" | "light_spot" | "light_environment")
+        ) {
+            continue;
+        }
+        let Some(style) = ent_value(block, "style").and_then(|v| v.parse::<usize>().ok()) else {
+            continue;
+        };
+        if !(32..63).contains(&style) || set[style] {
+            continue;
+        }
+        set[style] = true;
+        values[style] = if parse_spawnflags(block) & 1 != 0 {
+            0
+        } else {
+            ent_value(block, "pattern")
+                .filter(|p| !p.is_empty())
+                .map(average)
+                .unwrap_or(256)
+        };
+    }
+    values
 }
 
 /// Sample one qrad lightstyle plane without the base plane. GoldSrc combines
@@ -10729,6 +10801,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let n_faces = faces.len() / SZ_FACE;
     let dynamic_lightstyles =
         collect_dynamic_lightstyles(bsp.lump(LUMP_ENTITIES), faces, texinfo, &tex_names)?;
+    let start_styles = start_lightstyle_values(bsp.lump(LUMP_ENTITIES));
     let n_edges = edges.len() / SZ_EDGE;
     let world_first_face = u32le(models, 56).unwrap_or(0) as usize;
     let world_end_face = world_first_face
@@ -11177,10 +11250,34 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let mins_t = (lv0 / 16.0).floor() as i32;
         face_lm_dims[f] = [lmw as u8, lmh as u8];
         face_lm_mins[f] = [mins_s as i16, mins_t as i16];
+        // Planes the runtime switches (face_dynamic_layers) stay out of the
+        // bake; every other plane lit at map start is summed in.
+        let lit_layers: Vec<(usize, u32)> = (1..4)
+            .filter_map(|layer| {
+                let style = *faces.get(fo + 12 + layer)? as usize;
+                let dynamic = face_dynamic_lightstyles[f]
+                    .iter()
+                    .zip(face_dynamic_layers[f])
+                    .any(|(&slot, l)| slot != 0 && l as usize == layer);
+                (style < 64 && !dynamic && start_styles[style] > 0)
+                    .then(|| (layer, start_styles[style]))
+            })
+            .collect();
         let shade: Vec<(u8, u8, u8)> = ouv
             .iter()
             .map(|&(ou, ov)| {
-                vertex_shade(lighting, lightofs, style0, lmw, lmh, ou, ov, mins_s, mins_t)
+                vertex_shade(
+                    lighting,
+                    lightofs,
+                    style0,
+                    &lit_layers,
+                    lmw,
+                    lmh,
+                    ou,
+                    ov,
+                    mins_s,
+                    mins_t,
+                )
             })
             .collect();
         // Face brightness (spawn choice): mean corner luminance. Unlit faces
