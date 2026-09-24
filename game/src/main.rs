@@ -14293,9 +14293,15 @@ unsafe fn nav_waypoint_towards(
     if cached_next < n && nav_land_node(m, cached_next) {
         let next_pos = m.nav_node(cached_next).pos;
         let next_d2 = dist2_xz(pos, next_pos);
-        if (pos[1] - next_pos[1]).abs() <= NAV_VERTICAL_MAX
-            && next_d2 > reached_range2
-            && next_d2 < NAV_NEAREST_RANGE2
+        // A scripted route's cached hop is a graph link RouteSimplify chose,
+        // however long or steep (c0a0's room2 runners cut 1,340 units to
+        // node 1, then climb 256 up the ramp to node 2). Only unscripted
+        // lookups keep the nearest-node range and floor band.
+        let scripted = scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]);
+        if next_d2 > reached_range2
+            && (scripted
+                || ((pos[1] - next_pos[1]).abs() <= NAV_VERTICAL_MAX
+                    && next_d2 < NAV_NEAREST_RANGE2))
         {
             return Some(next_pos);
         }
