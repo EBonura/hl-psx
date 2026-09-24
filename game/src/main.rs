@@ -4779,6 +4779,35 @@ fn wait_vblank_edge() -> u32 {
     }
 }
 
+/// Display periods a queued flip gets before it is forced (psx-engine's
+/// `FLIP_WAIT_VBLANKS`).
+#[cfg(feature = "decoupled-present")]
+const FLIP_WAIT_VBLANKS: u32 = 8;
+
+/// Block until the VBlank handler has applied the queued display flip.
+///
+/// The handler applies it at the first blank edge after the frame's closing
+/// GP0(1Fh) has run (GPUSTAT bit 24). If that never comes, on a wedged GPU or
+/// a frame that lost its closing node, the word is written here just after an
+/// edge, so it still lands in the blanking interval. Leaving it queued would
+/// hang the loop, and dropping it would leave the display on the buffer the
+/// next frame clears. Returns false on that path.
+#[cfg(feature = "decoupled-present")]
+fn wait_queued_flip() -> bool {
+    let entry = interrupts::vblank_count();
+    while interrupts::gp1_queue_pending() {
+        if interrupts::vblank_count().wrapping_sub(entry) > FLIP_WAIT_VBLANKS {
+            wait_vblank_edge();
+            let word = interrupts::take_pending_gp1();
+            if word != 0 {
+                psx_io::gpu::write_gp1(word);
+            }
+            return false;
+        }
+    }
+    true
+}
+
 #[inline]
 fn dist2_3(a: [i32; 3], b: [i32; 3]) -> i32 {
     let dx = a[0] - b[0];
@@ -31919,11 +31948,18 @@ fn play(
         // No CPU-side draw_sync here: syncing at build start measured 14.8%
         // of moving frames (it serialises against the previous frame's
         // charged fill/walk time that the old late placement overlapped).
-        // The VBlank handler applies the flip only when GPUSTAT reports the
-        // GPU idle, so a busy raster just retries at the next edge.
+        // The VBlank handler applies the flip only once GPUSTAT bit 24 is
+        // set, by the GP0(1Fh) that closes the previous frame, so a busy
+        // raster just retries at the next edge. That frame's last list went
+        // out in finish_deferred_overlays and the walk fence above has
+        // drained it, so the closing node is the next thing channel 2
+        // walks: GP0(1Fh) then follows every command of that frame. It
+        // never goes through the port, where it could land inside a list
+        // channel 2 is still walking.
         #[cfg(feature = "decoupled-present")]
         if present_pending {
             telemetry::stage_begin(telemetry::stage::PRESENT);
+            gpu::submit_linked_list_async(gpu::DRAW_DONE_NODE.as_ptr());
             interrupts::queue_gp1_at_vblank(fb.begin_deferred_swap());
             telemetry::stage_end(telemetry::stage::PRESENT);
             present_pending = false;
@@ -33449,15 +33485,22 @@ fn play(
             #[cfg(feature = "decoupled-present")]
             if flip_queued {
                 telemetry::stage_begin(telemetry::stage::PRESENT);
-                while interrupts::gp1_queue_pending() {}
+                wait_queued_flip();
                 telemetry::stage_end(telemetry::stage::PRESENT);
-                // The VBlank handler consumes the queued flip only while the
-                // GPU is idle. Program the new draw side here, after that
+                // The VBlank handler consumes the queued flip only once the
+                // previous frame's GP0(1Fh) has run, i.e. that frame is fully
+                // drawn. Program the new draw side here, after that
                 // proof, so these GP0 writes can never collect the previous
                 // frame's raster backlog at build start.
                 fb.apply_draw_target();
                 flip_queued = false;
             }
+            // The previous flip has landed (or none was queued), so this
+            // frame takes over GPUSTAT bit 24: acknowledge it before the
+            // frame's first drawing, the clear below. The frame's own
+            // GP0(1Fh) sets it again once all of it is drawn.
+            #[cfg(feature = "decoupled-present")]
+            gpu::arm_draw_done();
             telemetry::stage_begin(telemetry::stage::FRAME_CLEAR);
             fb.clear(0, 0, 0);
             draw_sky(&m, yaw, pitch);
