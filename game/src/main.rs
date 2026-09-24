@@ -31542,12 +31542,19 @@ fn play(
                     } else if PUSH_IMPULSE[1] < 0 {
                         player.set_vertical_velocity(player.vel[1].min(PUSH_IMPULSE[1]));
                     }
-                    // Lateral push nudges the position directly (vel xz is
-                    // recomputed from the stick every tick).
-                    player.pos[0] += PUSH_IMPULSE[0];
-                    player.pos[2] += PUSH_IMPULSE[2];
-                    PUSH_IMPULSE = [0; 3];
                 }
+                // The lateral push is next tick's basevelocity: the player
+                // move carries it, so it collides instead of nudging the
+                // origin into walls or a conveyor's ramp. Leaving the push
+                // hands its momentum to the player (SV_CheckMovingGround).
+                let base = [PUSH_IMPULSE[0], PUSH_IMPULSE[2]];
+                let previous = phys::base_xz();
+                if base == [0, 0] {
+                    player.vel[0] += previous[0];
+                    player.vel[2] += previous[1];
+                }
+                phys::set_base_xz(base);
+                PUSH_IMPULSE = [0; 3];
             }
             unsafe {
                 if WEAPONSTRIP_REQUEST {
