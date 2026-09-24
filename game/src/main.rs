@@ -10905,8 +10905,8 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
 const CHAPTER_TITLE_AT: u32 = 30; // ~1.5 s after load
 const FADE_OUT_CLEAR_TICKS: u16 = 10;
 
-/// Draw the active title text + screen fade as immediate prims (on top of the
-/// whole frame; the fade also covers the HUD, like HL).
+/// Draw the screen fade and then the active title text as immediate prims (on
+/// top of the whole frame; the fade covers the HUD, the titles sit above it).
 #[inline(never)]
 unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
     if PLAYER_EYE_UNDER {
@@ -10977,6 +10977,58 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
         }
     }
 
+    // Death wash. GoldSrc keeps the room on screen and reddens it, which is
+    // most of why an HL death reads as a scene rather than a crash. Two blended
+    // full-screen passes get there without a texture: subtract drains green and
+    // blue so the scene survives in its red channel, then a weaker additive
+    // pass lifts it so it reads as a wash rather than as darkness.
+    if DEATH_WASH != 0 {
+        // Held short of a full drain: bright surfaces keep some green and blue,
+        // so the room reads as lit geometry under red rather than as a silhouette.
+        let d = (DEATH_WASH as u16 * 4 / 5) as u8;
+        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], 0, d, d, BlendMode::Subtract);
+        fx_tri_flat_blended(
+            [(320, 0), (320, 240), (0, 240)],
+            0,
+            d,
+            d,
+            BlendMode::Subtract,
+        );
+        let lift = (d as u16 / 2) as u8;
+        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], lift, 0, 0, BlendMode::Add);
+        fx_tri_flat_blended([(320, 0), (320, 240), (0, 240)], lift, 0, 0, BlendMode::Add);
+    }
+    // Screen fade: level 0..255. Subtractive gray = fade to black; additive =
+    // fade to white. It covers world + HUD, but GoldSrc draws its HUD messages
+    // after the fade (CL_DrawHUD: CL_DrawScreenFade, then the client Redraw),
+    // so titles stay readable on black: c5a1's LOSER card, GAMEOVER.
+    let mut level: i32 = 0;
+    let mut white = false;
+    if FADE_ACTIVE {
+        white = FADE_WHITE;
+        let t = FADE_T as i32;
+        let dur = FADE_DUR.max(1) as i32;
+        level = if FADE_IN {
+            255 - (t * 255 / dur).min(255)
+        } else if FADE_T <= FADE_DUR + FADE_HOLD {
+            (t * 255 / dur).min(255)
+        } else {
+            let d = (FADE_T - FADE_DUR - FADE_HOLD) as i32;
+            255 - (d * 255 / FADE_OUT_CLEAR_TICKS as i32).min(255)
+        };
+    } else if FADE_STARTDARK > 0 {
+        level = FADE_STARTDARK as i32 * 255 / STARTDARK_FADE_TICKS;
+    }
+    if level > 0 {
+        let g = level.clamp(0, 255) as u8;
+        let mode = if white {
+            BlendMode::Add
+        } else {
+            BlendMode::Subtract
+        };
+        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], g, g, g, mode);
+        fx_tri_flat_blended([(320, 0), (320, 240), (0, 240)], g, g, g, mode);
+    }
     // gametitle: the big HALF-LIFE card at level start (c0a0). ponytail: rendered
     // as large text, not the logo.tga bitmap (its VRAM band is reused in gameplay).
     if GAMETITLE_TICKS > 0 {
@@ -11075,56 +11127,6 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
                 y += lh;
             }
         }
-    }
-    // Death wash. GoldSrc keeps the room on screen and reddens it, which is
-    // most of why an HL death reads as a scene rather than a crash. Two blended
-    // full-screen passes get there without a texture: subtract drains green and
-    // blue so the scene survives in its red channel, then a weaker additive
-    // pass lifts it so it reads as a wash rather than as darkness.
-    if DEATH_WASH != 0 {
-        // Held short of a full drain: bright surfaces keep some green and blue,
-        // so the room reads as lit geometry under red rather than as a silhouette.
-        let d = (DEATH_WASH as u16 * 4 / 5) as u8;
-        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], 0, d, d, BlendMode::Subtract);
-        fx_tri_flat_blended(
-            [(320, 0), (320, 240), (0, 240)],
-            0,
-            d,
-            d,
-            BlendMode::Subtract,
-        );
-        let lift = (d as u16 / 2) as u8;
-        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], lift, 0, 0, BlendMode::Add);
-        fx_tri_flat_blended([(320, 0), (320, 240), (0, 240)], lift, 0, 0, BlendMode::Add);
-    }
-    // Screen fade: level 0..255. Subtractive gray = fade to black; additive =
-    // fade to white. Drawn last so it covers world + HUD.
-    let mut level: i32 = 0;
-    let mut white = false;
-    if FADE_ACTIVE {
-        white = FADE_WHITE;
-        let t = FADE_T as i32;
-        let dur = FADE_DUR.max(1) as i32;
-        level = if FADE_IN {
-            255 - (t * 255 / dur).min(255)
-        } else if FADE_T <= FADE_DUR + FADE_HOLD {
-            (t * 255 / dur).min(255)
-        } else {
-            let d = (FADE_T - FADE_DUR - FADE_HOLD) as i32;
-            255 - (d * 255 / FADE_OUT_CLEAR_TICKS as i32).min(255)
-        };
-    } else if FADE_STARTDARK > 0 {
-        level = FADE_STARTDARK as i32 * 255 / STARTDARK_FADE_TICKS;
-    }
-    if level > 0 {
-        let g = level.clamp(0, 255) as u8;
-        let mode = if white {
-            BlendMode::Add
-        } else {
-            BlendMode::Subtract
-        };
-        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], g, g, g, mode);
-        fx_tri_flat_blended([(320, 0), (320, 240), (0, 240)], g, g, g, mode);
     }
 }
 
