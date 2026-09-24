@@ -6605,13 +6605,18 @@ fn collect_entities(
             }
             let collision_hull = pushable_collision_hull(mins, maxs);
             let leaves = entity_leafs(mins, maxs, lifted_hl, None, nodes, planes);
+            // CPushable::Spawn: pev->skin = buoyancy x width x depth x 0.0005,
+            // the per-unit-submerged lift SV_Physics_Step adds (FL_FLOAT).
+            // It rides above the half height in mv[1].
+            let buoyancy = (parse_f32_key(block, "buoyancy", 0.0) * sz[0] * sz[1] * 0.0005)
+                .clamp(0.0, 0x7fff as f32) as i32;
             out.push(EntRec {
                 submodel: submodel as u16,
                 kind: ENT_KIND_PUSHABLE | (blend << 8),
                 origin: lifted,
                 mv: [
                     pack_pushable_speed_half_x(max_speed, hx, collision_hull, min_correction_mask),
-                    hy,
+                    hy | (buoyancy << 16),
                     hz,
                 ],
                 center,
