@@ -238,7 +238,23 @@ pub mod logic {
     pub const MULTISOURCE: u8 = 35;
     pub const ENV_GLOBAL: u8 = 36;
     pub const ENV_EXPLOSION: u8 = 37;
+    /// func_tank family. `speed` = player fire cooldown ticks, `arg0` = the
+    /// laser tank's env_laser name, `arg1` = master. Seven aux words carry
+    /// CFuncTank's keys, angles in q12 turns, rates in q12 per 20 Hz tick:
+    /// 0 (yawrate | pitchrate << 8, yawrange), 1 (pitchrange, yawtolerance |
+    /// pitchtolerance << 8), 2 (firerate q8, persistence ticks | flags << 8),
+    /// 3 (barrel x, barrel y), 4 (barrel z, damage or mortar magnitude),
+    /// 5 (minRange, maxRange), 6 (yaw centre, pitch centre). Each
+    /// func_tankcontrols volume that uses the tank (at most two) follows as
+    /// three words: (min x, min y), (min z, max x), (max y, max z).
     pub const TANK: u8 = 38;
+    /// Tank flags byte: bullet type (bits 0-1), spread index (2-4), class (5-6).
+    pub const TANK_CLASS_SHIFT: u16 = 5;
+    pub const TANK_CLASS_GUN: u16 = 0;
+    pub const TANK_CLASS_LASER: u16 = 1;
+    pub const TANK_CLASS_ROCKET: u16 = 2;
+    pub const TANK_CLASS_MORTAR: u16 = 3;
+    pub const TANK_AUX_COUNT: u8 = 7;
     pub const BEAM: u8 = 39;
     pub const ENV_SPARK: u8 = 40;
     pub const MONSTERCLIP: u8 = 41;
