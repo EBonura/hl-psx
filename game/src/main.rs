@@ -47,6 +47,8 @@ mod garg;
 mod scientist_logic;
 mod scratchpad;
 mod setpiece_logic;
+mod tank;
+use tank::{tank_player_fire, tank_still_controlled, tank_try_control, tank_use, tanks_init, tick_tanks, TANK_COUNT};
 use psx_goldsrc::semantic_input;
 mod settings;
 mod sfx;
@@ -5526,6 +5528,8 @@ unsafe fn aim_rotation(yaw: u16, pitch: i16) -> Mat3I16 {
 // ---- func_tank: the mountable gun the player is currently operating ----
 static mut MOUNTED_TANK: i32 = -1; // logic index of the mounted tank, or -1
 static mut TANK_FIRE_CD: u16 = 0; // ticks until the tank can fire again
+
+
                                   // ---- Screen titles (env_message / chapter cards) + screen fades (env_fade) ----
 static mut TITLE_TEXT_ID: u16 = 0; // logic-names id of the text; 0 = none
 static mut TITLE_T: u16 = 0;
@@ -10255,6 +10259,7 @@ unsafe fn logic_use_entity(
             }
         }
         map::LOGIC_FUNC_DOOR => logic_activate_door_linked(m, nlogic, nents, li, rec, use_type),
+        map::LOGIC_TANK => tank_use(li, use_type, now),
         map::LOGIC_FUNC_BUTTON => {
             logic_activate_button(m, nlogic, nents, li, rec, now, depth + 1, false)
         }
@@ -11613,8 +11618,8 @@ fn logic_is_use_target(rec: map::LogicEnt) -> bool {
     match rec.kind {
         map::LOGIC_FUNC_BUTTON
         | map::LOGIC_HEALTH_CHARGER
-        | map::LOGIC_HEV_CHARGER
-        | map::LOGIC_TANK => true,
+        | map::LOGIC_HEV_CHARGER => true,
+        // A func_tank has no use caps: func_tankcontrols hands it over.
         map::LOGIC_FUNC_DOOR => (rec.spawnflags & SF_DOOR_USE_ONLY) != 0,
         _ => false,
     }
@@ -11833,17 +11838,6 @@ unsafe fn logic_try_use(
                         LOGIC_COUNTER[best] -= give as i16;
                     }
                     return sfx::CHARGER_HEV_LOOP;
-                }
-            }
-            // Mount the tank the player is looking at. Firing + dismount are
-            // handled in the main loop (dismount = any use press while mounted).
-            // SDK CFuncTank::StartControl is master-gated.
-            map::LOGIC_TANK => {
-                if master_ok(m, nlogic, rec.arg1) {
-                    MOUNTED_TANK = best as i32;
-                    sfx::play(sfx::BUTTON);
-                } else {
-                    sfx::play(sfx::DRY); // locked
                 }
             }
             _ => logic_use_entity(
@@ -29587,6 +29581,7 @@ fn play(
     unsafe {
         MOUNTED_TANK = -1; // never carry a mount across maps
         TANK_FIRE_CD = 0;
+        tanks_init(&m, sim_frame_no as u16);
     }
     let mut suit_equipped = launch.suit_equipped
         // Standalone/menu convenience only: a changelevel arrival (preserve_view)
@@ -31493,6 +31488,7 @@ fn play(
                         sfx::play(sfx::BUTTON);
                     } else {
                         LOGIC_ACTIVATOR = 1;
+                        if !tank_try_control(&m, nlogic, player.pos) {
                         charger_pulse = logic_try_use(
                             &m,
                             nlogic,
@@ -31505,7 +31501,11 @@ fn play(
                             &mut health,
                             &mut armor,
                         );
+                        }
                     }
+                }
+                if MOUNTED_TANK >= 0 && !tank_still_controlled(player.pos) {
+                    MOUNTED_TANK = -1;
                 }
                 if charger_pulse != 0 {
                     if charger_sound != charger_pulse {
@@ -31735,38 +31735,11 @@ fn play(
                 }
             }
             if unsafe { MOUNTED_TANK } >= 0 {
-                // Operating a func_tank: auto-fire hitscan from the gun barrel
-                // along the view, rate-limited by the tank's cooldown. ponytail:
-                // the barrel does not visually track the aim (brush stays static).
+                // CFuncTank::ControllerPostFrame: while attack is held, fire
+                // one round of the tank's class along its own angles every
+                // 1 / firerate seconds.
                 unsafe {
-                    if TANK_FIRE_CD > 0 {
-                        TANK_FIRE_CD -= 1;
-                    }
-                    if fire_held && TANK_FIRE_CD == 0 {
-                        let trec = m.logic(MOUNTED_TANK as usize);
-                        let barrel = logic_center(trec);
-                        let fire_rot = view_rotation(yaw, pitch);
-                        let base_t = [
-                            -dot12(fire_rot.m[0], barrel),
-                            -dot12(fire_rot.m[1], barrel),
-                            -dot12(fire_rot.m[2], barrel),
-                        ];
-                        fire_hitscan(
-                            &m,
-                            movers,
-                            barrel,
-                            &fire_rot,
-                            base_t,
-                            trec.arg0 as u8,
-                            false,
-                            8192,
-                            2,
-                            2,
-                            0,
-                            0,
-                        );
-                        sfx::play(sfx::MP5); // a mounted machine gun
-                        TANK_FIRE_CD = trec.speed.max(2);
+                    if fire_held && tank_player_fire(&m, movers) {
                         recoil = 8;
                     }
                 }
@@ -31949,6 +31922,11 @@ fn play(
                 MOVE_TICK = MOVE_TICK.wrapping_add(1);
                 if MON_PAIN_COOLDOWN > 0 {
                     MON_PAIN_COOLDOWN -= 1;
+                }
+                if TANK_COUNT != 0 {
+                    let f = aim_rotation(yaw, pitch).m[2];
+                    let view = [f[0] as i32, f[1] as i32, f[2] as i32];
+                    tick_tanks(&m, nlogic, nents, movers, view, sim_frame_no as u16);
                 }
                 tick_projectiles(&m, movers);
                 tick_env_sparks(&m, nlogic);
@@ -33743,7 +33721,9 @@ fn play(
             let world_prims = np;
             let world_quads = nq;
             let mut viewmodel_screen_off = [0i16; 2];
-            let draw_viewmodel_now = SHOW_VIEWMODEL && weapon.any_weapon();
+            // CFuncTank::StartControl holsters the weapon (viewmodel 0).
+            let draw_viewmodel_now =
+                SHOW_VIEWMODEL && weapon.any_weapon() && unsafe { MOUNTED_TANK } < 0;
             WEAPON_MUZZLE_SLOT = weapon.current;
             let viewmodel_draw = if draw_viewmodel_now {
                 let vm_off = viewmodel_offset(recoil, sim_frame_no);
@@ -33961,7 +33941,7 @@ fn play(
             fx_chain_reset();
             FX_ARENA = (&mut packets as *mut PrimitivePacketArena<'_>).cast();
             FX_CAPTURE = true;
-            if SHOW_VIEWMODEL && recoil >= 13 && MUZZLE_FLASH_WEAPONS[weapon.current] {
+            if draw_viewmodel_now && recoil >= 13 && MUZZLE_FLASH_WEAPONS[weapon.current] {
                 draw_muzzle_flash(sim_frame_no);
             }
             draw_damage_compass(health);

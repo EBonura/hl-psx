@@ -7837,9 +7837,8 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_HEALTH_CHARGER => 50, // HL default juice
             LOGIC_HEV_CHARGER => 75,
             LOGIC_WEAPON_PICKUP => weapon_pickup_prop_kind(cls).unwrap_or(0),
-            // Per-shot damage. HL varies by the "bullet" enum; the common
-            // player tanks are 12mm (~20). Fixed default is close enough.
-            LOGIC_TANK => 20,
+            // A laser tank's env_laser (CFuncTankLaser::GetLaser).
+            LOGIC_TANK => names.id(ent_value(block, "laserentity")),
             // CMomentaryRotButton::Return uses the separately authored
             // `returnspeed`; the regular `speed` field remains the held turn
             // rate. Keeping both lets runtime send one faithful normalized
@@ -8210,6 +8209,81 @@ fn collect_logic_entities_with_lightstyles(
                     delay_ticks: 0,
                 });
                 aux_count = 1;
+            }
+        }
+        if kind == LOGIC_TANK {
+            // CFuncTank::KeyValue, in the aux layout documented with
+            // hl_format::logic::TANK. SDK defaults: every key 0, firerate 1.
+            let key = |k: &str| parse_f32_key(block, k, 0.0);
+            let q12 = |deg: f32| (deg * 4096.0 / 360.0).round();
+            let rate = |k: &str| (q12(key(k)) / 20.0).round().clamp(0.0, 255.0) as u16;
+            let turn = |k: &str| q12(key(k)).clamp(0.0, 4096.0) as u16;
+            let tol = |k: &str| q12(key(k)).clamp(0.0, 255.0) as u16;
+            let word = |v: f32| v.round().clamp(i16::MIN as f32, i16::MAX as f32) as i16 as u16;
+            let class = match cls {
+                "func_tanklaser" => TANK_CLASS_LASER,
+                "func_tankrocket" => TANK_CLASS_ROCKET,
+                "func_tankmortar" => TANK_CLASS_MORTAR,
+                _ => TANK_CLASS_GUN,
+            };
+            let firerate = parse_f32_key(block, "firerate", 1.0);
+            let firerate = if firerate > 0.0 { firerate } else { 1.0 };
+            let spread = key("firespread").max(0.0) as u16;
+            let flags = (key("bullet").clamp(0.0, 3.0) as u16)
+                | ((if spread > 4 { 0 } else { spread }) << 2)
+                | (class << TANK_CLASS_SHIFT);
+            // Bullet damage (0 = the bullet type's skill.cfg value), a
+            // mortar's iMagnitude, or a laser tank's env_laser damage.
+            let damage = match class {
+                TANK_CLASS_MORTAR => key("iMagnitude"),
+                TANK_CLASS_LASER => {
+                    let laser = ent_value(block, "laserentity").unwrap_or("");
+                    s.split('{')
+                        .find(|c| {
+                            ent_value(c, "classname") == Some("env_laser")
+                                && ent_value(c, "targetname") == Some(laser)
+                        })
+                        .map_or(0.0, |c| parse_f32_key(c, "damage", 0.0))
+                }
+                _ => key("bullet_damage"),
+            };
+            let angles = ent_angles_degrees(block).unwrap_or([0.0; 3]);
+            let centre = |deg: f32| ((q12(deg) as i32) & 0xfff) as u16;
+            for (target, delay_ticks) in [
+                (rate("yawrate") | (rate("pitchrate") << 8), turn("yawrange")),
+                (turn("pitchrange"), tol("yawtolerance") | (tol("pitchtolerance") << 8)),
+                (
+                    (firerate * 256.0).round().clamp(1.0, 65535.0) as u16,
+                    seconds_to_ticks_u16(key("persistence")).min(255) | (flags << 8),
+                ),
+                (word(key("barrel")), word(key("barrely"))),
+                (word(key("barrelz")), damage.round().clamp(0.0, 65535.0) as u16),
+                (word(key("minRange")), word(key("maxRange"))),
+                (centre(angles[1]), centre(angles[0])),
+            ] {
+                aux.push(LogicAuxRec { target, delay_ticks });
+            }
+            aux_count = TANK_AUX_COUNT;
+            // Up to two func_tankcontrols volumes that Use this tank, as
+            // runtime-axis boxes: (min x, min y), (min z, max x), (max y, max z).
+            let name = ent_value(block, "targetname").unwrap_or("");
+            for c in s.split('{').filter(|c| {
+                !name.is_empty()
+                    && ent_value(c, "classname") == Some("func_tankcontrols")
+                    && ent_value(c, "target") == Some(name)
+            }) {
+                let Some((mn, mx)) = block_model(c).and_then(|sm| model_bounds_hl(models, sm)) else {
+                    continue;
+                };
+                if aux_count >= TANK_AUX_COUNT + 6 {
+                    break;
+                }
+                let (a, b) = (to_world(mn, scale), to_world(mx, scale));
+                let w = |v: i32| v.clamp(i16::MIN as i32, i16::MAX as i32) as i16 as u16;
+                for (target, delay_ticks) in [(w(a[0]), w(a[1])), (w(a[2]), w(b[0])), (w(b[1]), w(b[2]))] {
+                    aux.push(LogicAuxRec { target, delay_ticks });
+                }
+                aux_count += 3;
             }
         }
         if kind == LOGIC_FUNC_TRAIN || kind == LOGIC_FUNC_TRACKTRAIN || kind == LOGIC_FUNC_GUNTARGET
