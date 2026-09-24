@@ -9073,6 +9073,18 @@ unsafe fn logic_activate_door(nents: usize, li: usize, rec: map::LogicEnt, use_t
     }
 }
 
+/// CBaseDoor::DoorHitTop: a door with a `wait` that is not a toggle returns
+/// after it. The port keeps a START_OPEN door at TOP (its rest), so its
+/// GoldSrc top, where the return is scheduled, is the port's BOTTOM; it must
+/// never return from TOP (c2a5f's incoming_bradley closed at load and fired
+/// the Bradley's arrival chain at once).
+#[inline(always)]
+fn door_auto_returns(rec: map::LogicEnt, at_bottom: bool) -> bool {
+    rec.wait_ticks >= 0
+        && (rec.spawnflags & SF_DOOR_TOGGLE) == 0
+        && ((rec.spawnflags & SF_DOOR_START_OPEN) != 0) == at_bottom
+}
+
 /// CBaseDoor::DoorGoUp for a func_door_rotating: a two-way (not ONEWAY) door
 /// turning about the vertical axis swings away from its activator, chosen by
 /// which side of the pivot the activator stands relative to where it faces.
@@ -11393,7 +11405,11 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
         if state == LOGIC_STATE_WAITING {
             if time_reached(now, LOGIC_NEXT[li]) {
                 LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
-                if LOGIC_KIND[li] == map::LOGIC_SHOOTER {
+                if LOGIC_KIND[li] == map::LOGIC_FUNC_DOOR {
+                    // Only a START_OPEN door waits here: DoorGoDown back
+                    // to its open end once `wait` has passed.
+                    LOGIC_STATE[li] = LOGIC_STATE_GOING_UP;
+                } else if LOGIC_KIND[li] == map::LOGIC_SHOOTER {
                     logic_shoot(m, li, now);
                 } else if LOGIC_KIND[li] == map::LOGIC_SCRIPTED {
                     logic_use_entity(
@@ -11443,7 +11459,7 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
                                 0,
                             );
                             if rec.kind == map::LOGIC_FUNC_DOOR {
-                                if rec.wait_ticks >= 0 && (rec.spawnflags & SF_DOOR_TOGGLE) == 0 {
+                                if door_auto_returns(rec, false) {
                                     LOGIC_NEXT[li] = now.wrapping_add(rec.wait_ticks as u16);
                                 }
                             } else if rec.kind == map::LOGIC_FUNC_BUTTON {
@@ -11484,6 +11500,12 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
                                 // CBaseDoor, which swaps its positions,
                                 // fires netname from DoorHitTop.
                                 logic_fire_door_close_target(m, nlogic, nents, li, rec, now);
+                                // ...and whose DoorHitTop then schedules the
+                                // return to its open end after `wait`.
+                                if door_auto_returns(rec, true) {
+                                    LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+                                    LOGIC_NEXT[li] = now.wrapping_add(rec.wait_ticks as u16);
+                                }
                             }
                         }
                     }
@@ -11491,8 +11513,7 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
             }
             LOGIC_STATE_TOP => {
                 if rec.kind == map::LOGIC_FUNC_DOOR
-                    && rec.wait_ticks >= 0
-                    && (rec.spawnflags & SF_DOOR_TOGGLE) == 0
+                    && door_auto_returns(rec, false)
                     && time_reached(now, LOGIC_NEXT[li])
                 {
                     LOGIC_STATE[li] = LOGIC_STATE_GOING_DOWN;
