@@ -1184,6 +1184,7 @@ fn prepare_psoxide(explicit: Option<&Path>) -> Result<PathBuf> {
 struct HostBins {
     bsp: PathBuf,
     content: PathBuf,
+    vmcook: PathBuf,
 }
 
 fn build_host_tools(repository: &Path) -> Result<HostBins> {
@@ -1203,9 +1204,26 @@ fn build_host_tools(repository: &Path) -> Result<HostBins> {
             .arg(&content_manifest),
         "build Rust content compiler",
     )?;
+    // Viewmodel post-pass (editor tools/psoxide-vmcook): exact-replay
+    // visibility pruning and texture sizing, shared with the other GoldSrc port.
+    let psoxide_manifest = repository.join(".psoxide/Cargo.toml");
+    run(
+        Command::new(cargo())
+            .current_dir(repository)
+            .args([
+                "build",
+                "--release",
+                "-p",
+                "psoxide-vmcook",
+                "--manifest-path",
+            ])
+            .arg(&psoxide_manifest),
+        "build viewmodel post-pass",
+    )?;
     Ok(HostBins {
         bsp: executable(repository.join("host/hl-bsp/target/release/hl-bsp")),
         content: executable(repository.join("host/hl-content/target/release/hl-content")),
+        vmcook: executable(repository.join(".psoxide/target/release/psoxide-vmcook")),
     })
 }
 
@@ -1233,6 +1251,64 @@ fn run_content(binary: &Path, args: &[&OsStr], label: &str) -> Result<()> {
     run(&mut command, label)
 }
 
+/// Projection heights (and view sizes) the held weapon is drawn at.
+const VIEWMODEL_VIEWS: &str = "160x320x240";
+/// Run psoxide-vmcook on a freshly cooked viewmodel, in place: drop every
+/// triangle no reachable pose shows (checked pixel-identical), refit the
+/// textures to their on-screen density inside today's texel budget, and
+/// optionally subdivide the worst warped triangles (never past `max_tris`).
+fn viewmodel_post_pass(
+    bins: &HostBins,
+    geometry: &Path,
+    texture: &Path,
+    mdl: &Path,
+    views: &str,
+    max_tris: usize,
+) -> Result<()> {
+    let (pruned_geometry, pruned_texture) = (
+        geometry.with_extension("vm.psxm"),
+        texture.with_extension("vm.psxm"),
+    );
+    run(
+        Command::new(&bins.vmcook)
+            .arg("prune")
+            .arg(geometry)
+            .arg(texture)
+            .arg(&pruned_geometry)
+            .arg(&pruned_texture)
+            .args(["--check", "--views", views, "--fit-textures"])
+            .arg(mdl)
+            .args(if VIEWMODEL_SUBDIVIDE_EXTRA == 0 {
+                Vec::new()
+            } else {
+                vec![
+                    "--subdivide".to_string(),
+                    max_tris.to_string(),
+                    "--subdivide-extra".to_string(),
+                    VIEWMODEL_SUBDIVIDE_EXTRA.to_string(),
+                ]
+            }),
+        "viewmodel post-pass",
+    )?;
+    fs::rename(&pruned_geometry, geometry)?;
+    fs::rename(&pruned_texture, texture)?;
+    Ok(())
+}
+
+/// Extra triangles psoxide-vmcook may add to a pruned weapon to split its
+/// worst affine-warped faces (never past today's count). Counter-Strike
+/// measured +32 at 0.3-0.9% moving fps and +64 at 1.3-1.5%; measure HL's
+/// moving-frame routes before raising it from zero.
+const VIEWMODEL_SUBDIVIDE_EXTRA: usize = 0;
+
+fn hmd8_triangles(geometry: &Path) -> Result<usize> {
+    let data = fs::read(geometry)?;
+    if data.get(0..4) != Some(b"HMD8") {
+        return Err(format!("{}: not HMD8", geometry.display()).into());
+    }
+    read_u32_le(&data, 8, "HMD8 triangle count")
+}
+
 fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
     let model_pack = repository.join("data/modelpack");
     fs::create_dir_all(repository.join("data/models"))?;
@@ -1243,16 +1319,20 @@ fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
     for (index, model) in WEAPON_MODELS.iter().enumerate() {
         let geometry = model_pack.join(format!("chunk_{}.psxm", 1000 + index));
         let texture = model_pack.join(format!("chunk_{}.psxm", 2000 + index));
+        let mdl = valve.join("models").join(format!("{}.mdl", model.name));
         run(
             Command::new(&bins.bsp)
                 .arg("--mdl7-vm")
-                .arg(valve.join("models").join(format!("{}.mdl", model.name)))
+                .arg(&mdl)
                 .arg(&geometry)
                 .arg(model.sequences)
                 .arg(&texture)
                 .arg(model_pack.join(format!("anim_weapon_{index}.csv"))),
             &format!("cook viewmodel {}", model.name),
         )?;
+        // Subdivision may spend up to the triangles the weapon draws today.
+        let today_tris = hmd8_triangles(&geometry)?;
+        viewmodel_post_pass(bins, &geometry, &texture, &mdl, VIEWMODEL_VIEWS, today_tris)?;
         run_content(
             &bins.content,
             &[

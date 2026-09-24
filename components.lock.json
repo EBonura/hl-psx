@@ -41,6 +41,7 @@
         "editor/projects/default",
         "emu/crates/frontend",
         "tools/psoxide-dev",
+        "tools/psoxide-vmcook",
         "assets"
       ]
     }
