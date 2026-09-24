@@ -6287,6 +6287,20 @@ unsafe fn water_touch(m: &Map, nents: usize, pos: [i32; 3]) -> bool {
     false
 }
 
+/// PM_CheckWater's lowest sample (one unit above the hull bottom) is water,
+/// not slime or lava: GoldSrc's watertype for a landing.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn feet_in_water(m: &Map, nents: usize, pos: [i32; 3], half_height: i32) -> bool {
+    let feet = [pos[0], pos[1] - half_height + 1, pos[2]];
+    let leaf = camera_leaf(m, feet);
+    let liquid = if leaf >= 0 { m.leaf_liquid(leaf as usize) } else { 0 };
+    if liquid != 0 {
+        return liquid == 1;
+    }
+    water_touch(m, nents, feet)
+}
+
 #[derive(Clone, Copy)]
 struct WaterState {
     level: u8,
@@ -31129,7 +31143,12 @@ fn play(
                 if li > 17 {
                     unsafe { add_view_punch(-(li.min(60) / 2), 0) };
                 }
-                if li > 29 {
+                // CBasePlayer::PostThink skips the damage when the landing
+                // leaves the feet in water (watertype CONTENTS_WATER): the
+                // Nihilanth arena drop lands in a puddle.
+                if li > 29
+                    && !unsafe { feet_in_water(&m, nents, player.pos, player.half_height()) }
+                {
                     let d = ((li - 29) * 9 / 2).max(1) as u16;
                     fall_damage_player(&mut health, d);
                 }
