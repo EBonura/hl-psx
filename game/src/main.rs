@@ -13963,7 +13963,8 @@ unsafe fn prop_try_step(
             let np = match prop_floor_y(m, pi, cand) {
                 Some(y)
                     if ty == PROP_TYPE_CONTROLLER
-                        || ground_logic::actor_floor_step_reachable(pos[1], y) =>
+                        || ground_logic::actor_floor_step_reachable(pos[1], y)
+                        || prop_ramp_step(m, pi, pos, cand, y) =>
                 {
                     [cand[0], y, cand[2]]
                 }
@@ -14014,6 +14015,21 @@ unsafe fn prop_try_step(
         reference_trace::nav_step(SIM_NOW as u32, pi as u16, dx, dz, probe_result);
     }
     false
+}
+
+/// WALK_MOVE climbs a ramp in sv_stepsize (18) steps as it goes; a 10 Hz
+/// actor stride can rise more than 18 on one. Accept it when each half of
+/// the stride rises at most 18 (c0a0's runners up the room2 ramp), which
+/// still refuses a ledge taller than a step.
+#[inline(never)]
+#[optimize(size)]
+fn prop_ramp_step(m: &Map, pi: usize, pos: [i32; 3], cand: [i32; 3], y: i32) -> bool {
+    let mid = [(pos[0] + cand[0]) >> 1, pos[1], (pos[2] + cand[2]) >> 1];
+    y - pos[1] <= 36
+        && prop_floor_y(m, pi, mid).is_some_and(|h| {
+            ground_logic::actor_floor_step_reachable(pos[1], h)
+                && ground_logic::actor_floor_step_reachable(h, y)
+        })
 }
 
 #[inline]
