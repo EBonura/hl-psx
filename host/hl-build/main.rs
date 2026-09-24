@@ -384,7 +384,7 @@ struct WeaponModel {
     sequences: &'static str,
 }
 
-const WEAPON_MODELS: [WeaponModel; 16] = [
+const WEAPON_MODELS: [WeaponModel; 15] = [
     WeaponModel {
         name: "v_9mmhandgun",
         // Nine samples land on the sharp recoil/recovery quality knee while
@@ -407,10 +407,6 @@ const WEAPON_MODELS: [WeaponModel; 16] = [
         name: "v_crowbar",
         // This small mesh fits every authored source pose losslessly.
         sequences: "idle1:36,attack1miss:11,attack1:11,draw:13",
-    },
-    WeaponModel {
-        name: "v_chub",
-        sequences: "idle1:3,Throw:18,up:16",
     },
     WeaponModel {
         name: "v_egon",
@@ -942,7 +938,7 @@ fn stage_pack_family(
         // Selected viewmodels always stage at word zero in their private
         // pool. Other model payloads must decode in exactly their raw length;
         // that conservative rule is safe at every possible shared-pool offset.
-        let target_capacity = model_chunks.then_some(if (1000..1016).contains(&chunk_id) {
+        let target_capacity = model_chunks.then_some(if (1000..1015).contains(&chunk_id) {
             viewmodel_pool_bytes
         } else {
             raw.len()

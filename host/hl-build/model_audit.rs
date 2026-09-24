@@ -107,7 +107,7 @@ const MODEL_GEOM_CHUNK_BASE: usize = 1300;
 const MODEL_TEX_CHUNK_BASE: usize = 1100;
 const MODEL_CARRY_CHUNK_BASE: usize = 1500;
 const VIEWMODEL_CHUNK_BASE: usize = 1000;
-const VIEWMODEL_COUNT: usize = 16;
+const VIEWMODEL_COUNT: usize = 15;
 const VIEWMODEL_SORT_TRIS: usize = 1_152;
 const VIEWMODEL_SORT_BUCKETS: usize = 64;
 const VIEWMODEL_CACHE_GUARD_WORDS: usize = 2_030;
@@ -2336,13 +2336,13 @@ mod tests {
             "let geometry_bound = 2 + max_geom_words + scratch;",
             "let chunk_bound = (max_chunk_words + scratch).saturating_sub(VIEWMODEL_BACKUP_BUDGET_WORDS);",
             "round_up(geometry_bound.max(chunk_bound).max(max_chunk_words), 64)",
-            "(1000..1016).contains(&id)",
+            "(1000..1015).contains(&id)",
         ] {
             assert!(build.contains(declaration), "build drift: {declaration}");
         }
         assert_eq!(
             VIEWMODEL_CHUNK_BASE..VIEWMODEL_CHUNK_BASE + VIEWMODEL_COUNT,
-            1000..1016
+            1000..1015
         );
     }
 
