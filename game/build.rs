@@ -727,7 +727,7 @@ fn scan_model_budget(repo_root: &std::path::Path) -> ModelBudget {
                 .strip_prefix("chunk_")
                 .and_then(|suffix| suffix.strip_suffix(".psxm"))
                 .and_then(|suffix| suffix.parse::<usize>().ok())
-                .is_some_and(|id| (1000..1016).contains(&id))
+                .is_some_and(|id| (1000..1015).contains(&id))
             {
                 max_viewmodel_words = max_viewmodel_words.max(data.len().div_ceil(4));
                 if data.get(0..4) == Some(b"HMRG") {
@@ -818,14 +818,14 @@ fn scan_model_budget(repo_root: &std::path::Path) -> ModelBudget {
     }
 }
 
-/// Exact cooked mesh signatures for the 16 first-person models. The debug
+/// Exact cooked mesh signatures for the 15 first-person models. The debug
 /// weapon gallery uses these to prove that an on-demand stream/cache hit did
 /// not merely publish the requested id over stale geometry.
-fn scan_viewmodel_signatures(repo_root: &std::path::Path) -> ([u16; 16], [u16; 16]) {
+fn scan_viewmodel_signatures(repo_root: &std::path::Path) -> ([u16; 15], [u16; 15]) {
     let modelpack = repo_root.join("data/modelpack");
-    let mut verts = [0u16; 16];
-    let mut tris = [0u16; 16];
-    for index in 0..16 {
+    let mut verts = [0u16; 15];
+    let mut tris = [0u16; 15];
+    for index in 0..15 {
         let path = modelpack.join(format!("chunk_{}.psxm", 1000 + index));
         println!("cargo:rerun-if-changed={}", path.display());
         let Ok(data) = fs::read(&path) else {
@@ -1212,8 +1212,8 @@ fn main() {
          pub const MAX_VIEWMODEL_WORDS: usize = {max_viewmodel_words};\n\
          pub const MAX_VIEWMODEL_GEOM_WORDS: usize = {max_viewmodel_geom_words};\n\
          pub const VM_POOL_WORDS: usize = {vm_pool_words};\n\
-         pub const VIEWMODEL_VERTS: [u16; 16] = {viewmodel_verts:?};\n\
-         pub const VIEWMODEL_TRIS: [u16; 16] = {viewmodel_tris:?};\n\
+         pub const VIEWMODEL_VERTS: [u16; 15] = {viewmodel_verts:?};\n\
+         pub const VIEWMODEL_TRIS: [u16; 15] = {viewmodel_tris:?};\n\
          pub const MODEL_STREAM_ORDER: [u8; {MODEL_TYPES}] = {model_stream_order:?};\n\
          pub const MODEL_VARIANT_OFFSETS: [u16; {}] = {model_variant_offsets:?};\n\
          pub const MODEL_VARIANT_BYTES: [u8; {}] = {model_variant_bytes:?};\n\

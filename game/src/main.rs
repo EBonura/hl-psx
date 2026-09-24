@@ -1713,7 +1713,7 @@ impl VmEntry {
         n_slots: 0,
     };
 }
-const N_VIEWMODELS: usize = 16;
+const N_VIEWMODELS: usize = 15;
 const VM_NONE: u8 = u8::MAX;
 // Only one geometry stream can be live. Keeping a Model/VmEntry per weapon was
 // stale metadata after every eviction and cost over a kilobyte of scarce BSS.
@@ -17751,7 +17751,7 @@ static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         24,
         FIRE_SPREAD,
         0,
-        13,
+        12,
     ),
     wdef(
         "CROSSBOW",
@@ -17781,7 +17781,7 @@ static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         40,
         FIRE_PROJ,
         PROJ_ROCKET,
-        10,
+        9,
     ),
     wdef(
         "GAUSS",
@@ -17796,7 +17796,7 @@ static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         0,
         FIRE_SEMI,
         0,
-        7,
+        6,
     ),
     wdef(
         "EGON",
@@ -17811,7 +17811,7 @@ static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         0,
         FIRE_AUTO,
         0,
-        6,
+        5,
     ),
     wdef(
         "HORNET",
@@ -17826,7 +17826,7 @@ static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         0,
         FIRE_PROJ,
         PROJ_HORNET,
-        9,
+        8,
     ),
     wdef(
         "GRENADE",
@@ -17841,10 +17841,10 @@ static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         0,
         FIRE_PROJ,
         PROJ_GRENADE,
-        8,
+        7,
     ),
     wdef(
-        "SNARK", AMMO_SNARK, 0, 15, 10, 0, 1, 0, 6, 0, FIRE_PROJ, PROJ_SNARK, 14,
+        "SNARK", AMMO_SNARK, 0, 15, 10, 0, 1, 0, 6, 0, FIRE_PROJ, PROJ_SNARK, 13,
     ),
     wdef(
         "TRIPMINE",
@@ -17859,7 +17859,7 @@ static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         0,
         FIRE_PROJ,
         PROJ_TRIPMINE,
-        15,
+        14,
     ),
     wdef(
         "SATCHEL",
@@ -17874,7 +17874,7 @@ static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         0,
         FIRE_PROJ,
         PROJ_SATCHEL,
-        11,
+        10,
     ),
 ];
 
@@ -17896,7 +17896,7 @@ fn wdef_of(id: usize) -> &'static WeaponDef {
 #[inline(always)]
 fn weapon_viewmodel(id: usize, satchel_mode: u8) -> usize {
     if id == W_SATCHEL && satchel_mode >= SATCHEL_RADIO {
-        12 // v_satchel_radio
+        11 // v_satchel_radio
     } else {
         wdef_of(id).wm as usize
     }
@@ -27500,15 +27500,14 @@ const VM_ANIM_CHARGED_FIRE: u8 = 8;
 const VM_ANIM_LAST: u8 = VM_ANIM_CHARGED_FIRE;
 // Clip indices for [idle, primary, secondary/hit, reload, draw, pump,
 // start-reload, charge-loop, charged-fire], keyed by the
-// 16-entry WEAPON_MODELS order in host/hl-build. Duplicate states point at one
+// 15-entry WEAPON_MODELS order in host/hl-build. Duplicate states point at one
 // source clip instead of retaining duplicate vertex streams.
-const VM_ANIM_CLIPS: [[u8; 9]; 16] = [
+const VM_ANIM_CLIPS: [[u8; 9]; 15] = [
     [0, 1, 1, 2, 3, 2, 2, 1, 1], // v_9mmhandgun
     [0, 1, 1, 2, 3, 2, 2, 1, 1], // v_357
     [0, 1, 2, 3, 4, 3, 3, 2, 2], // v_9mmar
     [0, 1, 1, 2, 3, 2, 2, 1, 1], // v_crossbow
     [0, 1, 2, 0, 3, 0, 0, 2, 1], // v_crowbar (miss / hit)
-    [0, 1, 1, 0, 2, 0, 0, 1, 1], // v_chub
     [0, 1, 2, 0, 3, 0, 0, 2, 1], // v_egon
     [0, 3, 1, 0, 5, 0, 0, 2, 4], // v_gauss (spinup/spin/fire/fire2)
     [0, 1, 2, 0, 3, 0, 0, 2, 1], // v_grenade
