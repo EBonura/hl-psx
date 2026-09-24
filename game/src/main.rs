@@ -15732,6 +15732,17 @@ unsafe fn retained_actor_target(
     Some((target, actor_line_clear(m, movers, from, aim)))
 }
 
+/// CBaseMonster::StartMonster puts a named monster that no script owns into
+/// SCHED_WAIT_TRIGGER: five seconds of idle stand (after the 0.1 s init and
+/// 0.1..0.4 s think spread) that only damage interrupts, so it ignores what
+/// it sees until then (c1a2's crab_to_zap crabs stay on their marks).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_waits_for_trigger(pi: usize) -> bool {
+    const WAIT_TRIGGER_TICKS: u16 = 107;
+    SIM_NOW < WAIT_TRIGGER_TICKS && PROP_NAME[pi] != 0 && PROP_SCRIPT_LI[pi] == u16::MAX
+}
+
 unsafe fn find_headcrab_target(
     m: &Map,
     movers: &[phys::Mover],
@@ -15940,7 +15951,13 @@ unsafe fn tick_shooter(
     let reacquire = ai_reacquire(pi);
     let (target, visible) = if reacquire {
         let selected = retained_actor_target(m, sight_movers, pi, player_pos, nprops)
-            .unwrap_or_else(|| find_actor_target(m, sight_movers, pi, player_pos, nprops, wake2));
+            .unwrap_or_else(|| {
+                if prop_waits_for_trigger(pi) {
+                    (PROP_TARGET_NONE, false)
+                } else {
+                    find_actor_target(m, sight_movers, pi, player_pos, nprops, wake2)
+                }
+            });
         prop_ai_set_target_visible(pi, selected.1);
         selected
     } else {
@@ -16077,7 +16094,13 @@ unsafe fn tick_headcrab(
     let reacquire = ai_reacquire(pi);
     let (target, visible) = if reacquire {
         let selected = retained_actor_target(m, sight_movers, pi, player_pos, nprops)
-            .unwrap_or_else(|| find_headcrab_target(m, sight_movers, pi, player_pos, nprops));
+            .unwrap_or_else(|| {
+                if prop_waits_for_trigger(pi) {
+                    (PROP_TARGET_NONE, false)
+                } else {
+                    find_headcrab_target(m, sight_movers, pi, player_pos, nprops)
+                }
+            });
         prop_ai_set_target_visible(pi, selected.1);
         selected
     } else {
