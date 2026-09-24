@@ -232,6 +232,10 @@ pub mod logic {
     pub const WEAPONSTRIP: u8 = 26;
     pub const ENV_MESSAGE: u8 = 27;
     pub const ENV_FADE: u8 = 28;
+    /// `env_fade` arg1 bit: the record is a `player_loadsaved`. It fades out
+    /// (never in), shows its message at `maxs[0]` ticks and reloads after its
+    /// wait word (CRevertSaved's messagetime and loadtime).
+    pub const ENV_FADE_REVERT: u16 = 0x04;
     pub const MAP_FLAGS: u8 = 29;
     pub const CDTRACK: u8 = 30;
     pub const SENTENCE: u8 = 31;
@@ -339,6 +343,7 @@ pub mod logic {
     pub const LOGIC_WEAPONSTRIP: u8 = WEAPONSTRIP;
     pub const LOGIC_ENV_MESSAGE: u8 = ENV_MESSAGE;
     pub const LOGIC_ENV_FADE: u8 = ENV_FADE;
+    pub const LOGIC_ENV_FADE_REVERT: u16 = ENV_FADE_REVERT;
     pub const LOGIC_MAP_FLAGS: u8 = MAP_FLAGS;
     pub const LOGIC_CDTRACK: u8 = CDTRACK;
     pub const LOGIC_SENTENCE: u8 = SENTENCE;
