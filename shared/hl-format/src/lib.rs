@@ -231,7 +231,14 @@ pub mod logic {
     pub const FUNC_TRAIN: u8 = 25;
     pub const WEAPONSTRIP: u8 = 26;
     pub const ENV_MESSAGE: u8 = 27;
+    /// `env_message` record flag: the campaign's last credits card (END3).
+    /// Once it has shown, the port's end card follows (GoldSrc just stops).
+    pub const ENV_MESSAGE_ENDS_GAME: u8 = 0x01;
     pub const ENV_FADE: u8 = 28;
+    /// `env_fade` arg1 bit: the record is a `player_loadsaved`. It fades out
+    /// (never in), shows its message at `maxs[0]` ticks and reloads after its
+    /// wait word (CRevertSaved's messagetime and loadtime).
+    pub const ENV_FADE_REVERT: u16 = 0x04;
     pub const MAP_FLAGS: u8 = 29;
     pub const CDTRACK: u8 = 30;
     pub const SENTENCE: u8 = 31;
@@ -291,6 +298,10 @@ pub mod logic {
     /// debris kind, `wait_ticks` = interval, `mins` = world gib velocity per
     /// tick, `flags` = its per-axis jitter (variance x velocity).
     pub const SHOOTER: u8 = 56;
+    /// trigger_camera (CTriggerCamera, static: no path): `origin` = the view,
+    /// `target` = what it looks at, `mins` = that target's cooked position,
+    /// `wait_ticks` = hold, `speed` = initial yaw (q12).
+    pub const TRIGGER_CAMERA: u8 = 57;
     pub const INFOBM_RUN: u16 = 1;
     pub const INFOBM_WAIT: u16 = 2;
 
@@ -338,7 +349,9 @@ pub mod logic {
     pub const LOGIC_FUNC_TRAIN: u8 = FUNC_TRAIN;
     pub const LOGIC_WEAPONSTRIP: u8 = WEAPONSTRIP;
     pub const LOGIC_ENV_MESSAGE: u8 = ENV_MESSAGE;
+    pub const LOGIC_ENV_MESSAGE_ENDS_GAME: u8 = ENV_MESSAGE_ENDS_GAME;
     pub const LOGIC_ENV_FADE: u8 = ENV_FADE;
+    pub const LOGIC_ENV_FADE_REVERT: u16 = ENV_FADE_REVERT;
     pub const LOGIC_MAP_FLAGS: u8 = MAP_FLAGS;
     pub const LOGIC_CDTRACK: u8 = CDTRACK;
     pub const LOGIC_SENTENCE: u8 = SENTENCE;
@@ -367,8 +380,9 @@ pub mod logic {
     pub const LOGIC_BIGMOMMA_NODE: u8 = BIGMOMMA_NODE;
     pub const LOGIC_INFODECAL: u8 = INFODECAL;
     pub const LOGIC_SHOOTER: u8 = SHOOTER;
+    pub const LOGIC_TRIGGER_CAMERA: u8 = TRIGGER_CAMERA;
 
-    pub const KINDS: [u8; 56] = [
+    pub const KINDS: [u8; 57] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -425,6 +439,7 @@ pub mod logic {
         BIGMOMMA_NODE,
         INFODECAL,
         SHOOTER,
+        TRIGGER_CAMERA,
     ];
 }
 

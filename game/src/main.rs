@@ -5525,6 +5525,24 @@ static mut FADE_WHITE: bool = false;
 static mut FADE_T: u16 = 0;
 static mut FADE_DUR: u16 = 40;
 static mut FADE_HOLD: u16 = 0;
+// player_loadsaved (CRevertSaved): ticks+1 until its message shows and until
+// the reload; zero is idle. The reload reuses the death restart.
+static mut REVERT_MSG_AT: u16 = 0;
+static mut REVERT_LOAD_AT: u16 = 0;
+static mut REVERT_MSG: [i32; 3] = [0; 3];
+static mut REVERT_REQUEST: bool = false;
+// Ticks+1 until the port's end card starts (after END3 has shown), and the
+// sim frame it started on; both zero while the campaign runs.
+static mut ENDING_IN: u16 = 0;
+// trigger_camera: the live camera's logic index (MAX = the player's view),
+// its return deadline, pose, and whether it holds the player's controls.
+static mut CAMERA_LI: u16 = u16::MAX;
+static mut CAMERA_UNTIL: u16 = 0;
+static mut CAMERA_EYE: [i32; 3] = [0; 3];
+static mut CAMERA_YAW: u16 = 0;
+static mut CAMERA_PITCH: i16 = 0;
+static mut CAMERA_LOCK: bool = false;
+static mut ENDING_FROM: u32 = 0;
 // worldspawn startdark: ticks left of the engine's start-dark fade-in (Xash
 // CL_StartDark with retail titles.txt GAMETITLE: black for holdtime 3.0 +
 // fadeout 1.5 s, then a 1.5 s fade). A real env_fade replaces it.
@@ -6716,7 +6734,52 @@ fn pushable_max_speed(e: map::Ent) -> i32 {
 
 #[inline(always)]
 fn pushable_half_extents(e: map::Ent) -> [i32; 3] {
-    [(e.mv[0] as u32 >> 16) as i32, e.mv[1].abs(), e.mv[2].abs()]
+    [(e.mv[0] as u32 >> 16) as i32, e.mv[1] & 0xffff, e.mv[2].abs()]
+}
+
+/// CPushable's cooked buoyancy (pev->skin), above the half height in mv[1].
+#[inline(always)]
+fn pushable_buoyancy(e: map::Ent) -> i32 {
+    e.mv[1] >> 16
+}
+
+/// SV_Physics_Step for an FL_FLOAT pushable: gravity against skin x submerged
+/// depth (SV_Submerged, the water column above the box bottom by the same
+/// five-step bisection as SV_RecursiveWaterLevel); the new vertical speed in
+/// units per tick. None when the bottom sample is dry (an ordinary fall).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn pushable_float_step(m: &Map, nents: usize, e: map::Ent, vy: i32) -> Option<i32> {
+    let c = pushable_world_center(e, e.origin);
+    let h = pushable_half_extents(e)[1];
+    let bottom = c[1] - h;
+    if !water_touch(m, nents, [c[0], bottom + 1, c[2]]) {
+        return None;
+    }
+    let depth = if water_touch(m, nents, [c[0], c[1] + h, c[2]]) {
+        2 * h
+    } else {
+        let (mut wet, mut dry) = (1, 2 * h);
+        let mut i = 0;
+        while i < 5 {
+            let mid = (wet + dry) / 2;
+            if water_touch(m, nents, [c[0], bottom + mid, c[2]]) {
+                wet = mid;
+            } else {
+                dry = mid;
+            }
+            i += 1;
+        }
+        (wet + dry) / 2
+    };
+    // Gravity (800 u/s^2) balances the lift at depth 800 / skin. GoldSrc
+    // integrates the two undamped at 60-100 fps and the carts it spawns near
+    // that depth bob by a unit or two (c2a4a's crates in the Xash capture);
+    // this velocity word is whole units per 20 Hz tick, so undamped Euler
+    // here swung them tens of units. Ease toward the balance depth instead.
+    let balance = 800 / pushable_buoyancy(e).max(1);
+    let toward = ((depth - balance) / 4).clamp(-8, 8);
+    Some((vy + toward) / 2)
 }
 
 #[inline(always)]
@@ -7312,7 +7375,24 @@ unsafe fn tick_pushables(
             }
         }
 
+        let resting_vy = if state.support == pushable::SUPPORT_NONE {
+            state.vy as i32
+        } else {
+            0
+        };
         state = pushable::fall_step(state, 2);
+        if pushable_buoyancy(e) != 0 {
+            if let Some(vy) = pushable_float_step(m, nents, e, resting_vy) {
+                // FL_FLOAT adds gravity and lift every frame, grounded or not:
+                // a lift that beats gravity raises the cart off its floor.
+                state.vy = vy as i8;
+                if vy > 0 {
+                    state.support = pushable::SUPPORT_NONE;
+                } else if state.support != pushable::SUPPORT_NONE {
+                    state.vy = 0;
+                }
+            }
+        }
         if state.support == pushable::SUPPORT_NONE && state.vy != 0 {
             let vertical = [0, state.vy as i32, 0];
             let (frac, _) = pushable_sweep_fraction(m, movers, ei, collision_proxy, vertical);
@@ -7326,7 +7406,7 @@ unsafe fn tick_pushables(
                 state.vy = 0;
             }
             let (support, settle_y) = pushable_detect_support(m, movers, ei, collision_proxy);
-            if support != pushable::SUPPORT_NONE {
+            if support != pushable::SUPPORT_NONE && state.vy <= 0 {
                 if pushable_apply_settle(m, movers, ei, settle_y) {
                     state.dirty = true;
                 }
@@ -9067,6 +9147,18 @@ unsafe fn logic_activate_door(nents: usize, li: usize, rec: map::LogicEnt, use_t
     }
 }
 
+/// CBaseDoor::DoorHitTop: a door with a `wait` that is not a toggle returns
+/// after it. The port keeps a START_OPEN door at TOP (its rest), so its
+/// GoldSrc top, where the return is scheduled, is the port's BOTTOM; it must
+/// never return from TOP (c2a5f's incoming_bradley closed at load and fired
+/// the Bradley's arrival chain at once).
+#[inline(always)]
+fn door_auto_returns(rec: map::LogicEnt, at_bottom: bool) -> bool {
+    rec.wait_ticks >= 0
+        && (rec.spawnflags & SF_DOOR_TOGGLE) == 0
+        && ((rec.spawnflags & SF_DOOR_START_OPEN) != 0) == at_bottom
+}
+
 /// CBaseDoor::DoorGoUp for a func_door_rotating: a two-way (not ONEWAY) door
 /// turning about the vertical axis swings away from its activator, chosen by
 /// which side of the pivot the activator stands relative to where it faces.
@@ -10415,6 +10507,9 @@ unsafe fn logic_use_entity(
             TITLE_T = 0;
             TITLE_HOLD = rec.speed.max(20);
             TITLE_FADE = ((rec.arg1 >> 8) & 0xFF).max(1);
+            if rec.flags & map::LOGIC_ENV_MESSAGE_ENDS_GAME != 0 {
+                ENDING_IN = TITLE_FADE + TITLE_HOLD + TITLE_FADE + 1;
+            }
             TITLE_EFFECT = (rec.arg1 & 3) as u8;
             TITLE_LEFT_ALIGNED = rec.arg1 & 4 != 0;
             TITLE_Y_Q5 = ((rec.arg1 >> 3) & 31) as u8;
@@ -10597,6 +10692,9 @@ unsafe fn logic_use_entity(
             }
         }
         map::LOGIC_ENV_FADE => {
+            if rec.arg1 & map::LOGIC_ENV_FADE_REVERT != 0 {
+                revert_saved_use(rec);
+            }
             FADE_ACTIVE = true;
             FADE_IN = rec.arg1 & 1 != 0;
             FADE_WHITE = rec.arg1 & 2 != 0;
@@ -10676,7 +10774,131 @@ unsafe fn logic_use_entity(
         map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE => {
             logic_sub_use_targets(m, nlogic, nents, li, rec, now, use_type, depth + 1)
         }
+        map::LOGIC_TRIGGER_CAMERA => camera_use(li, rec, use_type, now),
         _ => {}
+    }
+}
+
+/// CTriggerCamera::Use: toggle; turning on takes the view (and, with
+/// PLAYER_TAKECONTROL, the controls) for `wait`; off returns it next tick.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn camera_use(li: usize, rec: map::LogicEnt, use_type: u8, now: u16) {
+    let on = CAMERA_LI == li as u16;
+    let want = match use_type {
+        map::USE_ON => true,
+        map::USE_OFF => false,
+        _ => !on,
+    };
+    if want == on {
+        return;
+    }
+    if !want {
+        CAMERA_UNTIL = now;
+        return;
+    }
+    if rec.target == 0 {
+        return; // nothing to look at
+    }
+    CAMERA_LI = li as u16;
+    CAMERA_UNTIL = now.wrapping_add(rec.wait_ticks.max(0) as u16);
+    CAMERA_EYE = rec.origin;
+    CAMERA_YAW = rec.speed & 0xFFF;
+    CAMERA_PITCH = 0;
+    CAMERA_LOCK = rec.spawnflags & 4 != 0;
+}
+
+/// CTriggerCamera::FollowTarget, once per tick: turn toward the target (a
+/// live actor or brush of that name, else its cooked spot) at GoldSrc's
+/// 40 x frametime rate as seen at 60 fps (1/30 of the error per 20 Hz tick),
+/// and at the deadline hand the view back and use the target.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn camera_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
+    let li = CAMERA_LI as usize;
+    let rec = m.logic(li);
+    if time_reached(now, CAMERA_UNTIL) {
+        CAMERA_LI = u16::MAX;
+        CAMERA_LOCK = false;
+        logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, 0);
+        return;
+    }
+    let mut goal = rec.mins;
+    let mut pi = 0usize;
+    let np = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    while pi < np {
+        if PROP_ACTIVE[pi] != 0 && PROP_NAME[pi] == rec.target {
+            goal = PROP_POS[pi];
+            break;
+        }
+        pi += 1;
+    }
+    if pi == np {
+        let mut ti = 0usize;
+        while ti < nlogic {
+            if logic_cached_targetname(ti) == rec.target {
+                if let Some(ei) = logic_valid_brush(m.logic(ti).brush, nents) {
+                    let off = ent_draw_offset(ei);
+                    let c = ENT_CACHE[ei].center;
+                    goal = [c[0] + off[0], c[1] + off[1], c[2] + off[2]];
+                    break;
+                }
+            }
+            ti += 1;
+        }
+    }
+    let d = [
+        goal[0] - CAMERA_EYE[0],
+        goal[1] - CAMERA_EYE[1],
+        goal[2] - CAMERA_EYE[2],
+    ];
+    let yaw_goal = yaw_from_vec(d[0], d[2]);
+    let horiz = isqrt_i32(d[0] * d[0] + d[2] * d[2]);
+    let mut pitch_goal = atan2_q12(d[1], horiz) as i32;
+    if pitch_goal > 2048 {
+        pitch_goal -= 4096;
+    }
+    let dy = ((yaw_goal.wrapping_sub(CAMERA_YAW) & 0xFFF) as i32 + 2048) % 4096 - 2048;
+    CAMERA_YAW = ((CAMERA_YAW as i32 + dy / 30 + dy.signum()) & 0xFFF) as u16;
+    let dp = pitch_goal - CAMERA_PITCH as i32;
+    CAMERA_PITCH = (CAMERA_PITCH as i32 + dp / 30 + dp.signum())
+        .clamp(-(PITCH_MAX as i32), PITCH_MAX as i32) as i16;
+}
+
+/// CRevertSaved::Use: fade out now, show the message at messagetime and
+/// reload at loadtime (MessageThink/LoadThink). The cooker keeps the message
+/// in the point record's unused bounds words.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn revert_saved_use(rec: map::LogicEnt) {
+    REVERT_LOAD_AT = (rec.wait_ticks.max(0) as u16).saturating_add(1);
+    REVERT_MSG = rec.mins;
+    REVERT_MSG_AT = if rec.mins[0] != 0 {
+        (rec.maxs[0].clamp(0, u16::MAX as i32 - 1) as u16) + 1
+    } else {
+        0
+    };
+}
+
+#[inline(never)]
+#[optimize(size)]
+unsafe fn revert_saved_tick() {
+    if REVERT_MSG_AT != 0 {
+        REVERT_MSG_AT -= 1;
+        if REVERT_MSG_AT == 0 {
+            let flags = REVERT_MSG[1] as u16;
+            TITLE_TEXT_ID = REVERT_MSG[0] as u16;
+            TITLE_T = 0;
+            TITLE_HOLD = (REVERT_MSG[2] as u16).max(20);
+            TITLE_FADE = ((flags >> 8) & 0xFF).max(1);
+            TITLE_EFFECT = (flags & 3) as u8;
+            TITLE_LEFT_ALIGNED = flags & 4 != 0;
+            TITLE_Y_Q5 = ((flags >> 3) & 31) as u8;
+        }
+    }
+    REVERT_LOAD_AT -= 1;
+    if REVERT_LOAD_AT == 0 {
+        REVERT_REQUEST = true;
     }
 }
 
@@ -10704,6 +10926,15 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
         GAMETITLE_TICKS -= 1;
     }
     FADE_STARTDARK = FADE_STARTDARK.saturating_sub(1);
+    if REVERT_LOAD_AT != 0 {
+        revert_saved_tick();
+    }
+    if ENDING_IN != 0 {
+        ENDING_IN -= 1;
+        if ENDING_IN == 0 {
+            ENDING_FROM = sim_frame_no.max(1);
+        }
+    }
     if TITLE_TEXT_ID != 0 {
         TITLE_T = TITLE_T.saturating_add(1);
         let total = TITLE_FADE + TITLE_HOLD + TITLE_FADE;
@@ -10736,8 +10967,8 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
 const CHAPTER_TITLE_AT: u32 = 30; // ~1.5 s after load
 const FADE_OUT_CLEAR_TICKS: u16 = 10;
 
-/// Draw the active title text + screen fade as immediate prims (on top of the
-/// whole frame; the fade also covers the HUD, like HL).
+/// Draw the screen fade and then the active title text as immediate prims (on
+/// top of the whole frame; the fade covers the HUD, the titles sit above it).
 #[inline(never)]
 unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
     if PLAYER_EYE_UNDER {
@@ -10808,6 +11039,58 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
         }
     }
 
+    // Death wash. GoldSrc keeps the room on screen and reddens it, which is
+    // most of why an HL death reads as a scene rather than a crash. Two blended
+    // full-screen passes get there without a texture: subtract drains green and
+    // blue so the scene survives in its red channel, then a weaker additive
+    // pass lifts it so it reads as a wash rather than as darkness.
+    if DEATH_WASH != 0 {
+        // Held short of a full drain: bright surfaces keep some green and blue,
+        // so the room reads as lit geometry under red rather than as a silhouette.
+        let d = (DEATH_WASH as u16 * 4 / 5) as u8;
+        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], 0, d, d, BlendMode::Subtract);
+        fx_tri_flat_blended(
+            [(320, 0), (320, 240), (0, 240)],
+            0,
+            d,
+            d,
+            BlendMode::Subtract,
+        );
+        let lift = (d as u16 / 2) as u8;
+        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], lift, 0, 0, BlendMode::Add);
+        fx_tri_flat_blended([(320, 0), (320, 240), (0, 240)], lift, 0, 0, BlendMode::Add);
+    }
+    // Screen fade: level 0..255. Subtractive gray = fade to black; additive =
+    // fade to white. It covers world + HUD, but GoldSrc draws its HUD messages
+    // after the fade (CL_DrawHUD: CL_DrawScreenFade, then the client Redraw),
+    // so titles stay readable on black: c5a1's LOSER card, GAMEOVER.
+    let mut level: i32 = 0;
+    let mut white = false;
+    if FADE_ACTIVE {
+        white = FADE_WHITE;
+        let t = FADE_T as i32;
+        let dur = FADE_DUR.max(1) as i32;
+        level = if FADE_IN {
+            255 - (t * 255 / dur).min(255)
+        } else if FADE_T <= FADE_DUR + FADE_HOLD {
+            (t * 255 / dur).min(255)
+        } else {
+            let d = (FADE_T - FADE_DUR - FADE_HOLD) as i32;
+            255 - (d * 255 / FADE_OUT_CLEAR_TICKS as i32).min(255)
+        };
+    } else if FADE_STARTDARK > 0 {
+        level = FADE_STARTDARK as i32 * 255 / STARTDARK_FADE_TICKS;
+    }
+    if level > 0 {
+        let g = level.clamp(0, 255) as u8;
+        let mode = if white {
+            BlendMode::Add
+        } else {
+            BlendMode::Subtract
+        };
+        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], g, g, g, mode);
+        fx_tri_flat_blended([(320, 0), (320, 240), (0, 240)], g, g, g, mode);
+    }
     // gametitle: the big HALF-LIFE card at level start (c0a0). ponytail: rendered
     // as large text, not the logo.tga bitmap (its VRAM band is reused in gameplay).
     if GAMETITLE_TICKS > 0 {
@@ -10906,56 +11189,6 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
                 y += lh;
             }
         }
-    }
-    // Death wash. GoldSrc keeps the room on screen and reddens it, which is
-    // most of why an HL death reads as a scene rather than a crash. Two blended
-    // full-screen passes get there without a texture: subtract drains green and
-    // blue so the scene survives in its red channel, then a weaker additive
-    // pass lifts it so it reads as a wash rather than as darkness.
-    if DEATH_WASH != 0 {
-        // Held short of a full drain: bright surfaces keep some green and blue,
-        // so the room reads as lit geometry under red rather than as a silhouette.
-        let d = (DEATH_WASH as u16 * 4 / 5) as u8;
-        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], 0, d, d, BlendMode::Subtract);
-        fx_tri_flat_blended(
-            [(320, 0), (320, 240), (0, 240)],
-            0,
-            d,
-            d,
-            BlendMode::Subtract,
-        );
-        let lift = (d as u16 / 2) as u8;
-        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], lift, 0, 0, BlendMode::Add);
-        fx_tri_flat_blended([(320, 0), (320, 240), (0, 240)], lift, 0, 0, BlendMode::Add);
-    }
-    // Screen fade: level 0..255. Subtractive gray = fade to black; additive =
-    // fade to white. Drawn last so it covers world + HUD.
-    let mut level: i32 = 0;
-    let mut white = false;
-    if FADE_ACTIVE {
-        white = FADE_WHITE;
-        let t = FADE_T as i32;
-        let dur = FADE_DUR.max(1) as i32;
-        level = if FADE_IN {
-            255 - (t * 255 / dur).min(255)
-        } else if FADE_T <= FADE_DUR + FADE_HOLD {
-            (t * 255 / dur).min(255)
-        } else {
-            let d = (FADE_T - FADE_DUR - FADE_HOLD) as i32;
-            255 - (d * 255 / FADE_OUT_CLEAR_TICKS as i32).min(255)
-        };
-    } else if FADE_STARTDARK > 0 {
-        level = FADE_STARTDARK as i32 * 255 / STARTDARK_FADE_TICKS;
-    }
-    if level > 0 {
-        let g = level.clamp(0, 255) as u8;
-        let mode = if white {
-            BlendMode::Add
-        } else {
-            BlendMode::Subtract
-        };
-        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], g, g, g, mode);
-        fx_tri_flat_blended([(320, 0), (320, 240), (0, 240)], g, g, g, mode);
     }
 }
 
@@ -11303,6 +11536,9 @@ unsafe fn logic_tick_pendulum(nents: usize, li: usize, rec: map::LogicEnt, now: 
 
 unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
     logic_process_events(m, nlogic, nents, now);
+    if CAMERA_LI != u16::MAX {
+        camera_tick(m, nlogic, nents, now);
+    }
     let indexed = LOGIC_PRE_COUNT != LOGIC_HOT_FALLBACK;
     let scan_count = if indexed {
         LOGIC_PRE_COUNT as usize
@@ -11344,7 +11580,11 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
         if state == LOGIC_STATE_WAITING {
             if time_reached(now, LOGIC_NEXT[li]) {
                 LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
-                if LOGIC_KIND[li] == map::LOGIC_SHOOTER {
+                if LOGIC_KIND[li] == map::LOGIC_FUNC_DOOR {
+                    // Only a START_OPEN door waits here: DoorGoDown back
+                    // to its open end once `wait` has passed.
+                    LOGIC_STATE[li] = LOGIC_STATE_GOING_UP;
+                } else if LOGIC_KIND[li] == map::LOGIC_SHOOTER {
                     logic_shoot(m, li, now);
                 } else if LOGIC_KIND[li] == map::LOGIC_SCRIPTED {
                     logic_use_entity(
@@ -11394,7 +11634,7 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
                                 0,
                             );
                             if rec.kind == map::LOGIC_FUNC_DOOR {
-                                if rec.wait_ticks >= 0 && (rec.spawnflags & SF_DOOR_TOGGLE) == 0 {
+                                if door_auto_returns(rec, false) {
                                     LOGIC_NEXT[li] = now.wrapping_add(rec.wait_ticks as u16);
                                 }
                             } else if rec.kind == map::LOGIC_FUNC_BUTTON {
@@ -11435,6 +11675,12 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
                                 // CBaseDoor, which swaps its positions,
                                 // fires netname from DoorHitTop.
                                 logic_fire_door_close_target(m, nlogic, nents, li, rec, now);
+                                // ...and whose DoorHitTop then schedules the
+                                // return to its open end after `wait`.
+                                if door_auto_returns(rec, true) {
+                                    LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+                                    LOGIC_NEXT[li] = now.wrapping_add(rec.wait_ticks as u16);
+                                }
                             }
                         }
                     }
@@ -11442,8 +11688,7 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
             }
             LOGIC_STATE_TOP => {
                 if rec.kind == map::LOGIC_FUNC_DOOR
-                    && rec.wait_ticks >= 0
-                    && (rec.spawnflags & SF_DOOR_TOGGLE) == 0
+                    && door_auto_returns(rec, false)
                     && time_reached(now, LOGIC_NEXT[li])
                 {
                     LOGIC_STATE[li] = LOGIC_STATE_GOING_DOWN;
@@ -12290,6 +12535,13 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     GAMETITLE_TICKS = 0;
     FADE_ACTIVE = false;
     FADE_STARTDARK = 0;
+    REVERT_MSG_AT = 0;
+    REVERT_LOAD_AT = 0;
+    REVERT_REQUEST = false;
+    ENDING_IN = 0;
+    ENDING_FROM = 0;
+    CAMERA_LI = u16::MAX;
+    CAMERA_LOCK = false;
     DAMAGE_DIRECTION = 0;
     DAMAGE_TICKS = 0;
     GEIGER_COOLDOWN = 0;
@@ -17727,11 +17979,8 @@ struct WeaponDef {
 }
 
 // Weapon ids = index into WEAPON_DEFS. Switch order follows the HL1 slots.
-/// The campaign's final room (c5a1, the G-Man tram) -- index in menu::MAPS /
-/// the Makefile MAPLIST. Reaching it and letting the scene play out ends the
-/// game: fade to white, end card, back to the menu.
-const FINAL_ROOM_ID: u16 = 95;
-const ENDING_SCENE_TICKS: u32 = 1400; // ~70 s of G-Man tram before the fade
+/// The campaign ends once c5a1's last credits card (END3, on either the
+/// winner or the loser path) has shown: fade to white, end card, menu.
 const ENDING_FADE_TICKS: u32 = 60;
 const WEAPON_ICON_TICKS: u8 = 30; // ~1.5 s select-icon flash after L1/R1
 
@@ -30037,6 +30286,18 @@ fn play(
             // sample so menu/pause handling above stays intact.
             #[cfg(feature = "route-follow")]
             let input_sample = follower.steer(follow_route, player.pos, yaw, pitch, sim_frame_no);
+            // trigger_camera PLAYER_TAKECONTROL: EnableControl(FALSE).
+            let input_sample = if unsafe { CAMERA_LOCK } {
+                semantic_input::Sample {
+                    forward: 0,
+                    strafe: 0,
+                    turn: 0,
+                    look: 0,
+                    actions: 0,
+                }
+            } else {
+                input_sample
+            };
             #[cfg(feature = "reference-trace")]
             reference_trace::input(
                 sim_frame_no,
@@ -30102,6 +30363,11 @@ fn play(
                 }
             }
             unsafe { tick_screen_fx(sim_frame_no) };
+            if unsafe { REVERT_REQUEST } {
+                // player_loadsaved's LoadThink: "reload", the death restart.
+                unsafe { REVERT_REQUEST = false };
+                restart_requested = true;
+            }
             // Player death: freeze for DEATH_TICKS (a red death screen renders),
             // then reload the immutable entry handoff. That handoff is either
             // the latest successful changelevel (full carried player state) or
@@ -32172,6 +32438,14 @@ fn play(
             cam_yaw,
             cam_pitch,
         );
+        // trigger_camera: SET_VIEW to the camera entity.
+        if unsafe { CAMERA_LI } != u16::MAX {
+            unsafe {
+                eye = CAMERA_EYE;
+                view_yaw = CAMERA_YAW;
+                view_pitch = CAMERA_PITCH;
+            }
+        }
         // Head-bob: a vertical bob (doubled frequency, like HL) scaled by ground
         // speed, plus a subtle strafe roll -- both derived from BOB_PHASE + the
         // current horizontal velocity so a walking camera breathes instead of
@@ -33740,7 +34014,8 @@ fn play(
             let world_prims = np;
             let world_quads = nq;
             let mut viewmodel_screen_off = [0i16; 2];
-            let draw_viewmodel_now = SHOW_VIEWMODEL && weapon.any_weapon();
+            let draw_viewmodel_now =
+                SHOW_VIEWMODEL && weapon.any_weapon() && CAMERA_LI == u16::MAX;
             WEAPON_MUZZLE_SLOT = weapon.current;
             let viewmodel_draw = if draw_viewmodel_now {
                 let vm_off = viewmodel_offset(recoil, sim_frame_no);
@@ -33768,9 +34043,9 @@ fn play(
                 None
             };
             let draw_regular_hud =
-                if launch.room_id == FINAL_ROOM_ID && sim_frame_no > ENDING_SCENE_TICKS {
+                if unsafe { ENDING_FROM } != 0 && sim_frame_no > unsafe { ENDING_FROM } {
                     // Outro: the G-Man scene has played out -- fade to white.
-                    let t = (sim_frame_no - ENDING_SCENE_TICKS).min(ENDING_FADE_TICKS);
+                    let t = (sim_frame_no - unsafe { ENDING_FROM }).min(ENDING_FADE_TICKS);
                     let w = (t * 255 / ENDING_FADE_TICKS) as u8;
                     unsafe {
                         DEATH_WASH = 0;

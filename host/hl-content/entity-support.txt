@@ -123,7 +123,7 @@ multi_manager|runtime|timed target fan-out logic
 multisource|runtime|multi-input gate logic
 path_corner|cook_only|func_train route input
 path_track|runtime|func_tracktrain route with altpath switching, DISABLED stops and Use
-player_loadsaved|missing_gameplay|scripted reload/death controller is absent
+player_loadsaved|approximated|fade, message and reload through the death restart (map entry, not the last save)
 player_weaponstrip|runtime|inventory logic
 scripted_sentence|runtime|compact authored dialogue
 scripted_sequence|runtime|compact actor sequence control
@@ -131,7 +131,7 @@ speaker|approximated|sentence group is folded into compact ambience
 target_cdaudio|runtime|music trigger logic
 trigger_auto|runtime|map-start target logic
 trigger_autosave|missing_gameplay|authored checkpoint system is absent
-trigger_camera|missing_gameplay|scripted camera system is absent
+trigger_camera|approximated|static camera: holds the view on its target for its wait, takes control; no path moves
 trigger_cdaudio|runtime|music trigger logic
 trigger_changelevel|runtime|transition logic and carry snapshot
 trigger_endsection|runtime|Hazard Course completion logic
