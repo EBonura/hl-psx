@@ -10586,9 +10586,15 @@ unsafe fn logic_use_entity(
             LOGIC_NEXT[li] = now;
         }
         map::LOGIC_ENV_EXPLOSION => {
-            // Scripted explosion: FX + sound only (real damage is trigger_hurt).
-            queue_explosion_fx(rec.origin, rec.arg0.min(255) as u8);
-            sfx::play_world(sfx::EXPLODE, rec.origin);
+            // CEnvExplosion::Use calls RadiusDamage with the magnitude over
+            // 2.5x its radius unless SF_ENVEXPLOSION_NODAMAGE: scripted blasts
+            // kill c2a5's bridge runner and break what they are placed at.
+            if rec.spawnflags & 1 == 0 && rec.arg0 != 0 {
+                explode(m, rec.origin, rec.arg0.min(255) as u8, rec.arg0 as i32 * 5 / 2, false);
+            } else {
+                queue_explosion_fx(rec.origin, rec.arg0.min(255) as u8);
+                sfx::play_world(sfx::EXPLODE, rec.origin);
+            }
         }
         map::LOGIC_ENV_FADE => {
             FADE_ACTIVE = true;
