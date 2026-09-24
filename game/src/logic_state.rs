@@ -311,6 +311,17 @@ pub const fn multisource_toggle(
     global_on: bool,
 ) -> MultisourceToggle {
     let was_complete = multisource_complete(bits, member_count, global_required, global_on);
+    // A source nothing targets (only monster TriggerTargets or clip events
+    // fire it, c2a4a's barn_run_ms) has m_iTotal 0: CMultiSource::Use finds
+    // no member, IsTriggered is vacuously true and every Use fires.
+    if member_count == 0 {
+        return MultisourceToggle {
+            bits,
+            accepted: true,
+            complete: was_complete,
+            became_complete: was_complete,
+        };
+    }
     if member_index >= member_count || member_index >= 32 {
         return MultisourceToggle {
             bits,
@@ -933,6 +944,8 @@ mod tests {
     fn zero_member_source_is_vacuously_complete() {
         assert!(multisource_complete(0, 0, false, false));
         assert!(!multisource_complete(0, 0, true, false));
+        assert!(multisource_toggle(0, 0, u8::MAX, false, false).became_complete);
+        assert!(!multisource_toggle(0, 0, u8::MAX, true, false).became_complete);
         assert!(multisource_complete(0, 0, true, true));
     }
 
