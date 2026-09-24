@@ -16,3 +16,4 @@ path = "src/main.rs"
 [dependencies]
 hl-format = { path = "../../shared/hl-format" }
 psx-render-contract = { path = "../../.psoxide/engine/crates/psx-render-contract" }
+psx-anim-cook = { path = "../../.psoxide/crates/psx-anim-cook" }

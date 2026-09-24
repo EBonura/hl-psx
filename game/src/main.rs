@@ -2631,10 +2631,21 @@ unsafe fn model_projected_ptrs() -> (*mut u32, *mut u16) {
     let xy = core::ptr::addr_of_mut!(MODEL_SCRATCH).cast::<u32>();
     (xy, xy.add(MAX_MODEL_VERTS).cast::<u16>())
 }
-// Packed authored pose cache key: frame A (10 bits), frame B (10 bits), and
-// interpolation fraction (4 bits). This replaces the old single-frame key at
-// the same BSS cost while allowing smooth viewmodel playback.
+// Packed authored pose cache key: frame A (10 bits), frame B (10 bits) and
+// the projection flag; the sample's position (a palette's frac16, or an HMA1
+// clip's source position) is compared alongside it.
 static mut WEAPON_CACHE_POSE: u32 = u32::MAX;
+static mut WEAPON_CACHE_POS: u32 = u32::MAX;
+/// Bones of the HMA1 pose being projected or traced (`Model::pose`). The
+/// cooker refuses a model whose tracks need more (hl-bsp HMA1_MAX_BONES).
+const POSE_SCRATCH_BONES: usize = 80;
+static mut POSE_SCRATCH: [psx_asset::hma1::Aff; POSE_SCRATCH_BONES] =
+    [psx_asset::hma1::Aff::ZERO; POSE_SCRATCH_BONES];
+
+#[inline(always)]
+unsafe fn pose_scratch() -> &'static mut [psx_asset::hma1::Aff] {
+    unsafe { &mut *core::ptr::addr_of_mut!(POSE_SCRATCH) }
+}
 static mut WEAPON_CACHE_VERTS: usize = 0;
 static mut WEAPON_CACHE_SCALE: u16 = 0;
 
@@ -2665,6 +2676,7 @@ unsafe fn weapon_tri_heads_ptr() -> *mut u16 {
 #[inline(always)]
 unsafe fn invalidate_weapon_tri_cache() {
     WEAPON_CACHE_POSE = u32::MAX;
+    WEAPON_CACHE_POS = u32::MAX;
     WEAPON_CACHE_VERTS = 0;
     WEAPON_CACHE_SCALE = 0;
 }
@@ -17496,21 +17508,22 @@ static mut DEBUG_GALLERY_WEAPON: u8 = W_GLOCK as u8;
 /// weapon: the attachments sit on different bones at very different offsets,
 /// so the flash landed away from the barrel on everything but the glock.
 /// A zero entry means "no data", and the flash falls back to the crosshair.
+// Viewmodel cook units (host/hl-bsp VIEWMODEL_VERTEX_LOCAL_SCALE = 16).
 const VM_MUZZLE_MODEL: [[i16; 3]; 14] = [
-    [0, 0, 0],       // crowbar (no flash)
-    [184, -40, -28], // glock       v_9mmhandgun bone 29
-    [203, -48, -49], // 357         v_357        bone 11
-    [202, -33, -20], // mp5         v_9mmar      bone 7
-    [268, -60, -43], // shotgun     v_shotgun    bone 29
-    [0, 0, 0],       // crossbow
-    [0, 0, 0],       // rpg
-    [257, -62, -21], // gauss       v_gauss      bone 11
-    [161, -70, -42], // egon        v_egon       bone 11
-    [0, 0, 0],       // hornet
-    [0, 0, 0],       // grenade
-    [0, 0, 0],       // snark
-    [0, 0, 0],       // tripmine
-    [0, 0, 0],       // satchel
+    [0, 0, 0],        // crowbar (no flash)
+    [368, -80, -56],  // glock       v_9mmhandgun bone 29
+    [406, -96, -98],  // 357         v_357        bone 11
+    [404, -66, -40],  // mp5         v_9mmar      bone 7
+    [536, -120, -86], // shotgun     v_shotgun    bone 29
+    [0, 0, 0],        // crossbow
+    [0, 0, 0],        // rpg
+    [514, -124, -42], // gauss       v_gauss      bone 11
+    [322, -140, -84], // egon        v_egon       bone 11
+    [0, 0, 0],        // hornet
+    [0, 0, 0],        // grenade
+    [0, 0, 0],        // snark
+    [0, 0, 0],        // tripmine
+    [0, 0, 0],        // satchel
 ];
 
 /// Screen position of the drawn viewmodel's muzzle, refreshed by
@@ -18770,7 +18783,7 @@ unsafe fn prop_studio_hit_fraction(
         SIM_NOW as u32,
         pi,
     );
-    let pose = md.frame(frame).interpolate(md.frame(frame2), frac16);
+    let pose = md.pose(frame, frame2, frac16, 0, pose_scratch());
     let yaw = prop_yaw_value(PROP_YAW[pi]);
     let model_rotation = prop_model_rotation(yaw, prop_authored_tilt(m, pi));
     let scale = model_local_scale(md.local_to_world_q12());
@@ -26505,7 +26518,7 @@ unsafe fn project_hmd7_model_inner(
     projected_xy: *mut u32,
     projected_z: *mut u16,
 ) {
-    let pose = md.frame(frame).interpolate(md.frame(frame2), frac16);
+    let pose = md.pose(frame, frame2, frac16, mouth, unsafe { pose_scratch() });
     let body_bit = 1u8 << body.min(7);
     let mut loaded_bone = usize::MAX;
     let mut loaded_mouth = false;
@@ -27520,14 +27533,12 @@ fn viewmodel_anim_frame(
     let clips = VM_ANIM_CLIPS[wm.min(VM_ANIM_CLIPS.len() - 1)];
     let kind = kind.min(VM_ANIM_LAST) as usize;
     let clip = clips[kind] as usize;
-    let len = md.clip_len(clip).max(1);
     let duration = md.clip_hold_ticks(clip).max(1) as u32;
     let age = now.wrapping_sub(started);
     if kind == VM_ANIM_CHARGE_LOOP as usize {
         md.looped_clip_phase(clip, duration as usize, age as usize)
     } else if kind != VM_ANIM_IDLE as usize && age >= duration && hold_last {
-        let frame = md.clip_frame(clip, len - 1);
-        (frame, frame, 0)
+        md.clip_end_pose(clip)
     } else if kind == VM_ANIM_IDLE as usize || age >= duration {
         let idle = clips[VM_ANIM_IDLE as usize] as usize;
         let idle_duration = md.clip_hold_ticks(idle).max(1) as u32;
@@ -27682,9 +27693,9 @@ unsafe fn draw_viewmodel(
     let near_s = (NEAR as i32 * s) as u16;
     let pose_key = (frame as u32 & 0x3ff)
         | ((frame2 as u32 & 0x3ff) << 10)
-        | ((frac16.min(15) & 0x0f) << 20)
-        | (u32::from(render::projection_h() != H_PROJ as i32) << 24);
+        | (u32::from(render::projection_h() != H_PROJ as i32) << 20);
     let rebuild_cache = WEAPON_CACHE_POSE != pose_key
+        || WEAPON_CACHE_POS != frac16
         || WEAPON_CACHE_VERTS != nv
         || WEAPON_CACHE_SCALE != local_to_world;
     if rebuild_cache {
@@ -27722,6 +27733,7 @@ unsafe fn draw_viewmodel(
             projected_z,
         );
         WEAPON_CACHE_POSE = pose_key;
+        WEAPON_CACHE_POS = frac16;
         WEAPON_CACHE_VERTS = nv;
         WEAPON_CACHE_SCALE = local_to_world;
         // The held model is camera-locked. Its procedural bob/recoil is a GPU
