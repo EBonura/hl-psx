@@ -3374,6 +3374,7 @@ unsafe fn sway_uv3(uv: [u16; 3]) -> [u16; 3] {
     [sway_uv(uv[0]), sway_uv(uv[1]), sway_uv(uv[2])]
 }
 static mut PUSH_IMPULSE: [i32; 3] = [0; 3]; // per-tick trigger_push velocity add
+static mut PLAYER_GROUND_ENT: i16 = -1; // brush entity the player stands on (conveyors)
 static mut ENT_ACTIVE: [u8; MAX_ENTS] = [0; MAX_ENTS];
 
 #[derive(Clone, Copy)]
@@ -10322,6 +10323,14 @@ unsafe fn logic_use_entity(
                 LOGIC_TARGET[target_li] = rec.arg0;
             }
         }
+        // CFuncConveyor::Use reverses the belt whatever the use type.
+        map::LOGIC_TRIGGER_PUSH if logic_valid_brush(rec.brush, nents).is_some() => {
+            LOGIC_STATE[li] = if LOGIC_STATE[li] == LOGIC_STATE_TOP {
+                LOGIC_STATE_BOTTOM
+            } else {
+                LOGIC_STATE_TOP
+            };
+        }
         // trigger_hurt and trigger_push share the START_OFF on/off toggle
         // (TOP = off, BOTTOM = on): a fire on their targetname enables/disables.
         map::LOGIC_TRIGGER_HURT | map::LOGIC_TRIGGER_PUSH => match use_type {
@@ -12063,13 +12072,27 @@ unsafe fn logic_touch_triggers(
                     // bit 2 here is PUSH_START_OFF, not NOCLIENTS (push uses its
                     // own touch, not CBaseTrigger::MultiTouch) -- so no NOCLIENTS
                     // check; the state gate below covers START_OFF.
-                    if rec.aux_count >= 2 && LOGIC_STATE[li] != LOGIC_STATE_TOP {
+                    // A func_conveyor (a push with a brush) always runs; its
+                    // state records CFuncConveyor::Use's reversal instead.
+                    // The engine gives only the player standing on a belt its
+                    // basevelocity.
+                    let conveyor = logic_valid_brush(rec.brush, nents);
+                    let pushes = match conveyor {
+                        Some(ei) => ei as i16 == PLAYER_GROUND_ENT,
+                        None => LOGIC_STATE[li] != LOGIC_STATE_TOP,
+                    };
+                    if rec.aux_count >= 2 && pushes {
                         let a = m.logic_aux(rec.first_aux);
                         let b = m.logic_aux(rec.first_aux + 1);
+                        let sign = if conveyor.is_some() && LOGIC_STATE[li] == LOGIC_STATE_TOP {
+                            -1
+                        } else {
+                            1
+                        };
                         PUSH_IMPULSE = [
-                            a.target as i16 as i32,
-                            a.delay_ticks as i16 as i32,
-                            b.target as i16 as i32,
+                            a.target as i16 as i32 * sign,
+                            a.delay_ticks as i16 as i32 * sign,
+                            b.target as i16 as i32 * sign,
                         ];
                     }
                 }
@@ -31509,6 +31532,7 @@ fn play(
                     tick_momentary(&m, nlogic, nents, player.pos, eye, yaw, pitch);
                 }
                 LOGIC_ACTIVATOR = 1;
+                PLAYER_GROUND_ENT = if player.on_ground { player.ground_mover } else { -1 };
                 logic_touch_triggers(
                     &m,
                     nlogic,

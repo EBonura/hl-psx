@@ -6986,7 +6986,11 @@ fn collect_entities(
                     // Reuse the zero-motion axial-brush representation. mv[0]
                     // remains zero while mv[2] carries the complete fixed Euler.
                     7
-                } else if cls == "func_illusionary" {
+                } else if cls == "func_illusionary"
+                    || (cls == "func_conveyor" && parse_spawnflags(block) & 2 != 0)
+                {
+                    // SF_CONVEYOR_NOTSOLID belts are SOLID_NOT (Xen's light
+                    // columns).
                     2
                 } else {
                     0
@@ -7750,6 +7754,10 @@ fn collect_logic_entities_with_lightstyles(
             // CBaseButton::Spawn: health makes the button take damage, and a
             // hit responds as a touch does (c2a2f's timetrack1switch).
             raw_spawnflags | SF_BUTTON_SHOOTABLE
+        } else if cls == "func_conveyor" {
+            // Conveyor bits are VISUAL (1) and NOTSOLID (2), not trigger_push's
+            // ONCE and START_OFF: a belt always runs.
+            0
         } else {
             raw_spawnflags
         };
@@ -8580,11 +8588,16 @@ fn collect_logic_entities_with_lightstyles(
         }
         if kind == LOGIC_TRIGGER_PUSH {
             // Per-tick world push vector from HL angles + speed (u/s at 20 Hz).
-            // func_conveyor: the belt itself pushes standers -- same math, but
-            // the belt moves slower relative to its speed key in HL feel.
-            let is_conveyor = cls == "func_conveyor";
-            let spd_key = parse_f32_key(block, "speed", if is_conveyor { 100.0 } else { 100.0 });
-            let spd = (if is_conveyor { spd_key * 0.5 } else { spd_key }) / scale / 20.0;
+            // func_conveyor: the engine gives whoever stands on the belt its
+            // full speed as basevelocity (140 u/s on c2a4b's ramp belt); a
+            // SF_CONVEYOR_VISUAL belt only scrolls its texture.
+            let visual_conveyor = cls == "func_conveyor" && raw_spawnflags & 1 != 0;
+            let spd_key = if visual_conveyor {
+                0.0
+            } else {
+                parse_f32_key(block, "speed", 100.0)
+            };
+            let spd = spd_key / scale / 20.0;
             let hl_dir = ent_move_dir(block);
             let w = to_world(
                 [
