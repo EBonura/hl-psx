@@ -1978,11 +1978,15 @@ const NEUTRAL: u8 = 128;
 /// Sample the base-style lightmap at one vertex's luxel (luxels are 16 texels
 /// apart in original texture space). Boosted ~1.5x so lit surfaces aren't dim
 /// under 128=1.0x modulation. Returns neutral where there is no lightmap.
+/// `lit_layers` are the face's other qrad planes that are lit when the map
+/// starts, with their lightstyle value (256 = style 0's "m"); R_BuildLightMap
+/// sums every plane before the gamma ramp.
 #[allow(clippy::too_many_arguments)]
 fn vertex_shade(
     lighting: &[u8],
     lightofs: i32,
     style0: u8,
+    lit_layers: &[(usize, u32)],
     lmw: usize,
     lmh: usize,
     ou: f32,
@@ -1996,10 +2000,78 @@ fn vertex_shade(
     let ls = (((ou / 16.0).floor() as i32) - mins_s).clamp(0, lmw as i32 - 1) as usize;
     let lt = (((ov / 16.0).floor() as i32) - mins_t).clamp(0, lmh as i32 - 1) as usize;
     let o = lightofs as usize + (lt * lmw + ls) * 3;
-    match (lighting.get(o), lighting.get(o + 1), lighting.get(o + 2)) {
-        (Some(&r), Some(&g), Some(&b)) => (light_curve(r), light_curve(g), light_curve(b)),
-        _ => (NEUTRAL, NEUTRAL, NEUTRAL),
+    let Some(base) = lighting.get(o..o + 3) else {
+        return (NEUTRAL, NEUTRAL, NEUTRAL);
+    };
+    let mut sum = [base[0] as u32 * 256, base[1] as u32 * 256, base[2] as u32 * 256];
+    for &(layer, value) in lit_layers {
+        let lo = o + layer * lmw * lmh * 3;
+        if let Some(plane) = lighting.get(lo..lo + 3) {
+            for c in 0..3 {
+                sum[c] += plane[c] as u32 * value;
+            }
+        }
     }
+    let lit = |c: u32| light_curve((c / 256).min(255) as u8);
+    (lit(sum[0]), lit(sum[1]), lit(sum[2]))
+}
+
+/// Lightstyle values at map start, 256 = "m" (the value of style 0). HLSDK
+/// CWorld::Precache sets styles 0-12 and 63; CLight::Spawn sets a named
+/// light's style (32-62) to "a" with START_OFF, else its pattern or "m". A
+/// style nobody sets is an empty string, which the engine treats as 256.
+/// Animated patterns are baked at their average, since the port bakes light.
+fn start_lightstyle_values(ents: &[u8]) -> [u32; 64] {
+    const PRESETS: [(usize, &str); 14] = [
+        (0, "m"),
+        (1, "mmnmmommommnonmmonqnmmo"),
+        (2, "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba"),
+        (3, "mmmmmaaaaammmmmaaaaaabcdefgabcdefg"),
+        (4, "mamamamamama"),
+        (5, "jklmnopqrstuvwxyzyxwvutsrqponmlkj"),
+        (6, "nmonqnmomnmomomno"),
+        (7, "mmmaaaabcdefgmmmmaaaammmaamm"),
+        (8, "mmmaaammmaaammmabcdefaaaammmmabcdefmmmaaaa"),
+        (9, "aaaaaaaazzzzzzzz"),
+        (10, "mmamammmmammamamaaamammma"),
+        (11, "abcdefghijklmnopqrrqponmlkjihgfedcba"),
+        (12, "mmnnmmnnnmmnn"),
+        (63, "a"),
+    ];
+    let average = |pattern: &str| -> u32 {
+        let n = pattern.len().max(1) as u32;
+        let sum: u32 = pattern.bytes().map(|c| c.saturating_sub(b'a') as u32 * 22).sum();
+        sum * 256 / (n * 264)
+    };
+    let mut values = [256u32; 64];
+    for (style, pattern) in PRESETS {
+        values[style] = average(pattern);
+    }
+    let mut set = [false; 64];
+    for block in entity_text(ents).split('{') {
+        if !matches!(
+            ent_value(block, "classname"),
+            Some("light" | "light_spot" | "light_environment")
+        ) {
+            continue;
+        }
+        let Some(style) = ent_value(block, "style").and_then(|v| v.parse::<usize>().ok()) else {
+            continue;
+        };
+        if !(32..63).contains(&style) || set[style] {
+            continue;
+        }
+        set[style] = true;
+        values[style] = if parse_spawnflags(block) & 1 != 0 {
+            0
+        } else {
+            ent_value(block, "pattern")
+                .filter(|p| !p.is_empty())
+                .map(average)
+                .unwrap_or(256)
+        };
+    }
+    values
 }
 
 /// Sample one qrad lightstyle plane without the base plane. GoldSrc combines
@@ -4971,6 +5043,8 @@ struct LogicCook {
     ents: Vec<LogicRec>,
     aux: Vec<LogicAuxRec>,
     names: Vec<String>,
+    /// (record, submodel) of every brush trigger, for `shape_brush_triggers`.
+    trigger_models: Vec<(usize, usize)>,
 }
 
 const NAV_NODE_HEIGHT: f32 = 8.0;
@@ -6912,7 +6986,11 @@ fn collect_entities(
                     // Reuse the zero-motion axial-brush representation. mv[0]
                     // remains zero while mv[2] carries the complete fixed Euler.
                     7
-                } else if cls == "func_illusionary" {
+                } else if cls == "func_illusionary"
+                    || (cls == "func_conveyor" && parse_spawnflags(block) & 2 != 0)
+                {
+                    // SF_CONVEYOR_NOTSOLID belts are SOLID_NOT (Xen's light
+                    // columns).
                     2
                 } else {
                     0
@@ -7426,6 +7504,7 @@ fn collect_logic_entities_with_lightstyles(
     // of multisource inputs happens only after every source has its final logic
     // index, so the runtime can compare an exact caller without name scans.
     let mut source_raw_index: Vec<usize> = Vec::new();
+    let mut trigger_models: Vec<(usize, usize)> = Vec::new();
     let mut emitted_lightstyles = std::collections::HashSet::<u8>::new();
     let clips = load_clips_manifest();
     let studio_events = load_studio_events_manifest();
@@ -7675,6 +7754,10 @@ fn collect_logic_entities_with_lightstyles(
             // CBaseButton::Spawn: health makes the button take damage, and a
             // hit responds as a touch does (c2a2f's timetrack1switch).
             raw_spawnflags | SF_BUTTON_SHOOTABLE
+        } else if cls == "func_conveyor" {
+            // Conveyor bits are VISUAL (1) and NOTSOLID (2), not trigger_push's
+            // ONCE and START_OFF: a belt always runs.
+            0
         } else {
             raw_spawnflags
         };
@@ -8505,11 +8588,16 @@ fn collect_logic_entities_with_lightstyles(
         }
         if kind == LOGIC_TRIGGER_PUSH {
             // Per-tick world push vector from HL angles + speed (u/s at 20 Hz).
-            // func_conveyor: the belt itself pushes standers -- same math, but
-            // the belt moves slower relative to its speed key in HL feel.
-            let is_conveyor = cls == "func_conveyor";
-            let spd_key = parse_f32_key(block, "speed", if is_conveyor { 100.0 } else { 100.0 });
-            let spd = (if is_conveyor { spd_key * 0.5 } else { spd_key }) / scale / 20.0;
+            // func_conveyor: the engine gives whoever stands on the belt its
+            // full speed as basevelocity (140 u/s on c2a4b's ramp belt); a
+            // SF_CONVEYOR_VISUAL belt only scrolls its texture.
+            let visual_conveyor = cls == "func_conveyor" && raw_spawnflags & 1 != 0;
+            let spd_key = if visual_conveyor {
+                0.0
+            } else {
+                parse_f32_key(block, "speed", 100.0)
+            };
+            let spd = spd_key / scale / 20.0;
             let hl_dir = ent_move_dir(block);
             let w = to_world(
                 [
@@ -8530,6 +8618,24 @@ fn collect_logic_entities_with_lightstyles(
             aux_count = 2;
         }
 
+        if let (Some(sm), true) = (
+            submodel,
+            brush == LOGIC_BRUSH_NONE
+                && matches!(
+                    kind,
+                    LOGIC_TRIGGER_ONCE
+                        | LOGIC_TRIGGER_MULTIPLE
+                        | LOGIC_TRIGGER_CHANGELEVEL
+                        | LOGIC_TRIGGER_ENDSECTION
+                        | LOGIC_TRIGGER_HURT
+                        | LOGIC_TRIGGER_TELEPORT
+                        | LOGIC_TRIGGER_PUSH
+                        | LOGIC_TRIGGER_GRAVITY
+                        | LOGIC_CDTRACK
+                ),
+        ) {
+            trigger_models.push((out.len(), sm));
+        }
         out.push(LogicRec {
             kind,
             use_type,
@@ -8864,7 +8970,56 @@ fn collect_logic_entities_with_lightstyles(
         ents: out,
         aux,
         names: names.names,
+        trigger_models,
     })
+}
+
+/// Brush triggers whose volume is not their bounding box: a ring of thin
+/// brushes (c4a3's intro_platform edge), slanted or several brushes. GoldSrc
+/// SV_TouchLinks touches a brush trigger only when the entity origin is
+/// inside the model's player hull, so a box test fires these from places the
+/// player never enters. Returns (record, raw hull-1 head) for every trigger
+/// whose hull-1 tree is not solid throughout its expanded bounds.
+fn shaped_brush_triggers(
+    trigger_models: &[(usize, usize)],
+    models: &[u8],
+    clipnodes: &[u8],
+    planes: &[u8],
+) -> Vec<(usize, i32)> {
+    const HULL1_HALF: [f32; 3] = [16.0, 16.0, 36.0];
+    const STEPS: usize = 6;
+    let mut out = Vec::new();
+    for &(ri, sm) in trigger_models {
+        let (Some(head), Some((mins, maxs))) =
+            (model_headnode(models, sm, 1), model_bounds_hl(models, sm))
+        else {
+            continue;
+        };
+        if head < 0 || head > i16::MAX as i32 {
+            continue;
+        }
+        let mut hollow = false;
+        'grid: for i in 0..STEPS {
+            for j in 0..STEPS {
+                for k in 0..STEPS {
+                    let t = [i, j, k];
+                    let p: [f32; 3] = core::array::from_fn(|a| {
+                        let lo = mins[a] - HULL1_HALF[a] + 1.0;
+                        let hi = maxs[a] + HULL1_HALF[a] - 1.0;
+                        lo + (hi - lo) * t[a] as f32 / (STEPS - 1) as f32
+                    });
+                    if point_contents_raw(clipnodes, planes, head as i16, p) != CONTENTS_SOLID {
+                        hollow = true;
+                        break 'grid;
+                    }
+                }
+            }
+        }
+        if hollow {
+            out.push((ri, head));
+        }
+    }
+    out
 }
 
 #[inline]
@@ -10659,6 +10814,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let n_faces = faces.len() / SZ_FACE;
     let dynamic_lightstyles =
         collect_dynamic_lightstyles(bsp.lump(LUMP_ENTITIES), faces, texinfo, &tex_names)?;
+    let start_styles = start_lightstyle_values(bsp.lump(LUMP_ENTITIES));
     let n_edges = edges.len() / SZ_EDGE;
     let world_first_face = u32le(models, 56).unwrap_or(0) as usize;
     let world_end_face = world_first_face
@@ -11107,10 +11263,34 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let mins_t = (lv0 / 16.0).floor() as i32;
         face_lm_dims[f] = [lmw as u8, lmh as u8];
         face_lm_mins[f] = [mins_s as i16, mins_t as i16];
+        // Planes the runtime switches (face_dynamic_layers) stay out of the
+        // bake; every other plane lit at map start is summed in.
+        let lit_layers: Vec<(usize, u32)> = (1..4)
+            .filter_map(|layer| {
+                let style = *faces.get(fo + 12 + layer)? as usize;
+                let dynamic = face_dynamic_lightstyles[f]
+                    .iter()
+                    .zip(face_dynamic_layers[f])
+                    .any(|(&slot, l)| slot != 0 && l as usize == layer);
+                (style < 64 && !dynamic && start_styles[style] > 0)
+                    .then(|| (layer, start_styles[style]))
+            })
+            .collect();
         let shade: Vec<(u8, u8, u8)> = ouv
             .iter()
             .map(|&(ou, ov)| {
-                vertex_shade(lighting, lightofs, style0, lmw, lmh, ou, ov, mins_s, mins_t)
+                vertex_shade(
+                    lighting,
+                    lightofs,
+                    style0,
+                    &lit_layers,
+                    lmw,
+                    lmh,
+                    ou,
+                    ov,
+                    mins_s,
+                    mins_t,
+                )
             })
             .collect();
         // Face brightness (spawn choice): mean corner luminance. Unlit faces
@@ -12152,7 +12332,18 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     for e in &ents {
         clip_roots.push(e.head);
     }
+    let shaped = shaped_brush_triggers(&logic.trigger_models, models, clipnodes, planes);
+    if !shaped.is_empty() {
+        eprintln!("  shaped brush triggers: {} (hull-1 touch)", shaped.len());
+    }
+    clip_roots.extend(shaped.iter().map(|&(_, head)| head));
     let (clip_remap, clip_out) = compact_clipnode_remap(clipnodes, &clip_roots);
+    for &(ri, head) in &shaped {
+        let head = remap_clip_head(head, &clip_remap);
+        if (0..LOGIC_BRUSH_SHAPE as i32 - 1).contains(&head) {
+            logic.ents[ri].brush = LOGIC_BRUSH_SHAPE | head as u16;
+        }
+    }
     let n_clip = clip_out.len();
     let stripped_clip_count = raw_n_clip.saturating_sub(n_clip);
     // Preserve the on-disc field for format compatibility, but make accidental
@@ -12162,7 +12353,14 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let hull3_head = remap_clip_head(hull3_head_raw, &clip_remap);
     let tram_head = remap_clip_head(tram_head_raw, &clip_remap);
     for e in &mut ents {
-        e.head = remap_clip_head(e.head, &clip_remap);
+        // Head 0 marks a non-solid brush (func_water, passable fans and
+        // rotators, NOT_SOLID pendulums). Raw clipnode 0 is the world's
+        // hull-1 root, so remapping it gave those brushes a copy of the whole
+        // world hull at their offset: phantom collision, and actor sight
+        // tested against the player-sized world hull.
+        if e.head != 0 {
+            e.head = remap_clip_head(e.head, &clip_remap);
+        }
     }
 
     let mut plane_remap = vec![u16::MAX; n_planes];
