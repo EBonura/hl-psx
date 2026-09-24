@@ -6605,13 +6605,18 @@ fn collect_entities(
             }
             let collision_hull = pushable_collision_hull(mins, maxs);
             let leaves = entity_leafs(mins, maxs, lifted_hl, None, nodes, planes);
+            // CPushable::Spawn: pev->skin = buoyancy x width x depth x 0.0005,
+            // the per-unit-submerged lift SV_Physics_Step adds (FL_FLOAT).
+            // It rides above the half height in mv[1].
+            let buoyancy = (parse_f32_key(block, "buoyancy", 0.0) * sz[0] * sz[1] * 0.0005)
+                .clamp(0.0, 0x7fff as f32) as i32;
             out.push(EntRec {
                 submodel: submodel as u16,
                 kind: ENT_KIND_PUSHABLE | (blend << 8),
                 origin: lifted,
                 mv: [
                     pack_pushable_speed_half_x(max_speed, hx, collision_hull, min_correction_mask),
-                    hy,
+                    hy | (buoyancy << 16),
                     hz,
                 ],
                 center,
@@ -7636,6 +7641,9 @@ fn collect_logic_entities_with_lightstyles(
             "trigger_auto" => LOGIC_TRIGGER_AUTO,
             "env_message" => LOGIC_ENV_MESSAGE,
             "env_fade" => LOGIC_ENV_FADE,
+            // CRevertSaved fades out like env_fade, then reloads (flagged in arg1).
+            "player_loadsaved" => LOGIC_ENV_FADE,
+            "trigger_camera" => LOGIC_TRIGGER_CAMERA,
             "worldspawn" => LOGIC_MAP_FLAGS,
             "trigger_cdaudio" | "target_cdaudio" => LOGIC_CDTRACK,
             "scripted_sentence" => LOGIC_SENTENCE,
@@ -7738,7 +7746,43 @@ fn collect_logic_entities_with_lightstyles(
             continue;
         }
 
-        let (origin, mut mins, maxs) = entity_bounds_world(block, models, scale);
+        let (origin, mut mins, mut maxs) = entity_bounds_world(block, models, scale);
+        if cls == "player_loadsaved" {
+            // A point record has no volume: the bounds words carry the revert's
+            // message (text id, title layout, hold) and its message time.
+            let key = ent_value(block, "message").unwrap_or("").to_uppercase();
+            if let Some(t) = titles.get(&key).filter(|t| !t.text.is_empty()) {
+                mins = [
+                    names.id(Some(&t.text)) as i32,
+                    pack_title_flags(t) as i32,
+                    t.hold_ticks as i32,
+                ];
+            } else {
+                mins = [0; 3];
+            }
+            maxs = [
+                seconds_to_ticks_u16(parse_f32_key(block, "messagetime", 0.0)) as i32,
+                0,
+                0,
+            ];
+        }
+        if kind == LOGIC_TRIGGER_CAMERA {
+            // The look target's authored spot: the runtime follows a live
+            // actor or brush of that name and falls back to this.
+            let target = ent_value(block, "target").unwrap_or("");
+            mins = s
+                .split('{')
+                .find(|b| !target.is_empty() && ent_value(b, "targetname") == Some(target))
+                .map(|b| {
+                    let (o, lo, hi) = entity_bounds_world(b, models, scale);
+                    if lo == hi {
+                        o
+                    } else {
+                        [0, 1, 2].map(|i| (lo[i] + hi[i]) / 2)
+                    }
+                })
+                .unwrap_or(origin);
+        }
         if kind == LOGIC_SHOOTER {
             let d = ent_move_dir(block);
             let v = parse_f32_key(block, "m_flVelocity", 0.0) / scale / 20.0;
@@ -7780,6 +7824,9 @@ fn collect_logic_entities_with_lightstyles(
             (parse_f32_key(block, "m_flRadius", 0.0) / scale)
                 .round()
                 .clamp(0.0, i16::MAX as f32) as i16
+        } else if cls == "player_loadsaved" {
+            // CRevertSaved::LoadThink reloads `loadtime` seconds after Use.
+            seconds_to_ticks_i16(parse_f32_key(block, "loadtime", 0.0))
         } else if kind == LOGIC_SENTENCE {
             // Reuse the signed wait word for scripted_sentence's speaker
             // search radius; its duration/refire cooldown lives in speed.
@@ -7801,8 +7848,9 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_MOMENTARY => 100.0,
             _ => 0.0,
         };
-        let speed = if kind == LOGIC_SCRIPTED {
+        let speed = if kind == LOGIC_SCRIPTED || kind == LOGIC_TRIGGER_CAMERA {
             // Scripts carry their facing yaw here (q12); they have no speed key.
+            // A camera starts at its authored yaw and turns to its target.
             hl_yaw_to_world_q12(ent_yaw_degrees(block).unwrap_or(0.0)) as u16
         } else if kind == LOGIC_SENTENCE {
             seconds_to_ticks_u16(
@@ -7956,7 +8004,12 @@ fn collect_logic_entities_with_lightstyles(
                     _ => continue,
                 }
             }
-            LOGIC_ENV_FADE => seconds_to_ticks_u16(parse_f32_key(block, "duration", 2.0)),
+            // CRevertSaved has no duration default (pev->dmg_take starts at 0).
+            LOGIC_ENV_FADE => seconds_to_ticks_u16(parse_f32_key(
+                block,
+                "duration",
+                if cls == "player_loadsaved" { 0.0 } else { 2.0 },
+            )),
             LOGIC_CDTRACK => (parse_f32_key(block, "health", 0.0) as i16) as u16,
             LOGIC_ITEM_SUIT => {
                 let sentence = if raw_spawnflags & 1 != 0 {
@@ -8045,13 +8098,18 @@ fn collect_logic_entities_with_lightstyles(
                 let t = titles.get(&key).cloned().unwrap_or_default();
                 pack_title_flags(&t)
             }
-            // bit0 = fade-in (HL SF_FADE_IN), bit1 = fade to white-ish
+            // bit0 = fade-in (HL SF_FADE_IN), bit1 = fade to white-ish,
+            // bit2 = player_loadsaved (always fades out, then reloads)
             LOGIC_ENV_FADE => {
                 let white = ent_value(block, "rendercolor")
                     .and_then(parse_vec3)
                     .map(|c| c[0] + c[1] + c[2] > 384.0)
                     .unwrap_or(false);
-                (spawnflags as u16 & 1) | ((white as u16) << 1)
+                if cls == "player_loadsaved" {
+                    LOGIC_ENV_FADE_REVERT | ((white as u16) << 1)
+                } else {
+                    (spawnflags as u16 & 1) | ((white as u16) << 1)
+                }
             }
             LOGIC_ENV_RENDER => brush_render_class(block),
             LOGIC_MULTISOURCE => global_hash(ent_value(block, "globalstate").unwrap_or("")),
@@ -8240,6 +8298,12 @@ fn collect_logic_entities_with_lightstyles(
         }
         if matches!(kind, LOGIC_SENTENCE | LOGIC_AMBIENT | LOGIC_MAP_SOUND) {
             record_flags = acoustic_volume(cls, block);
+        }
+        if kind == LOGIC_ENV_MESSAGE
+            && ent_value(block, "message").is_some_and(|m| m.eq_ignore_ascii_case("END3"))
+        {
+            // c5a1's end_stuff_mm shows END3 last on both endings.
+            record_flags |= LOGIC_ENV_MESSAGE_ENDS_GAME;
         }
 
         let first_aux = aux.len().min(u16::MAX as usize) as u16;
@@ -18144,6 +18208,71 @@ mod tests {
             0
         );
         assert_eq!(rec.aux_count, 0, "missing clip must not suppress priming");
+    }
+
+    #[test]
+    fn trigger_camera_cooks_its_view_hold_and_target_spot() {
+        let ents = br#"
+        {
+        "classname" "trigger_camera"
+        "targetname" "win_cam"
+        "target" "end_gman"
+        "wait" "9999"
+        "speed" "0"
+        "spawnflags" "4"
+        "origin" "-916 387 -2902"
+        }
+        {
+        "classname" "monster_gman"
+        "targetname" "end_gman"
+        "origin" "-917 414 -2981"
+        }
+        "#;
+        let logic = collect_logic_entities(ents, &[], &[], 1.0, &Default::default(), &Default::default())
+            .expect("camera cook");
+        let rec = logic.ents.iter().find(|r| r.kind == LOGIC_TRIGGER_CAMERA).expect("camera record");
+        assert_eq!(logic.names[rec.target as usize - 1], "end_gman");
+        assert_eq!(rec.wait_ticks, i16::MAX, "9999 s clamps to the longest hold");
+        assert_eq!(rec.spawnflags, 4);
+        assert_eq!(rec.mins, to_world([-917.0, 414.0, -2981.0], 1.0));
+        assert_eq!(rec.origin, to_world([-916.0, 387.0, -2902.0], 1.0));
+    }
+
+    #[test]
+    fn player_loadsaved_cooks_as_a_reverting_fade_with_its_message() {
+        let ents = br#"
+        {
+        "classname" "player_loadsaved"
+        "targetname" "c3a2_restart"
+        "message" "GAMEOVER"
+        "duration" "2"
+        "holdtime" "15"
+        "messagetime" "4"
+        "loadtime" "5"
+        "rendercolor" "0 0 0"
+        "origin" "0 0 0"
+        }
+        "#;
+        let mut titles = std::collections::HashMap::new();
+        titles.insert(
+            "GAMEOVER".to_string(),
+            TitleDef {
+                text: "SUBJECT: FREEMAN".to_string(),
+                hold_ticks: 120,
+                ..Default::default()
+            },
+        );
+        let logic = collect_logic_entities(ents, &[], &[], 1.0, &titles, &Default::default())
+            .expect("revert cook");
+        let rec = &logic.ents[0];
+        assert_eq!(rec.kind, LOGIC_ENV_FADE);
+        assert_eq!(rec.arg1, LOGIC_ENV_FADE_REVERT, "always a black fade out");
+        assert_eq!(rec.arg0, 40, "duration");
+        assert_eq!(rec.speed, 300, "holdtime");
+        assert_eq!(rec.wait_ticks, 100, "loadtime");
+        assert_eq!(rec.maxs[0], 80, "messagetime");
+        assert_eq!(logic.names[rec.mins[0] as usize - 1], "SUBJECT: FREEMAN");
+        assert_eq!(rec.mins[2], 120, "the title's hold");
     }
 
     #[test]
