@@ -11,6 +11,7 @@
 
 mod door_seal;
 mod entity_support;
+mod hma1_cook;
 mod quad_grid;
 mod seated_placement;
 mod testmap;
@@ -13427,6 +13428,10 @@ type Mat34 = ([[f32; 3]; 3], [f32; 3]); // rotation, translation
 #[derive(Clone)]
 struct BakedMdlPose {
     vertices: Vec<[i16; 3]>,
+    /// The same pose at MDL_VERTEX_LOCAL_SCALE. Pose selection is a
+    /// quantised-error search, so a finer viewmodel scale must not change
+    /// which source frames are retained (animation is HMA1's business).
+    select_vertices: Vec<[i16; 3]>,
     bones: Vec<Mat34>,
     mouth_xform: Option<Mat34>,
 }
@@ -13435,6 +13440,12 @@ struct BakedMdlPose {
 // (see ENEMY_VERTEX_LOCAL_SCALE) since they are viewed at distance: lower scale
 // shrinks i8 deltas + the base, halving model RAM with no visible loss.
 const MDL_VERTEX_LOCAL_SCALE: i32 = 8;
+/// Held weapons: a sixteenth of a unit. The viewmodel is magnified five times
+/// and sits a few units from the eye, so at scale 8 vertex and bone-translation
+/// rounding moved on-screen vertices by up to ~2.1-3.0 px (p99 ~1.5-2.2 px)
+/// against the exact source pose; 16 halves that for the same i16 storage.
+/// game/src/main.rs VM_MUZZLE_MODEL is in these units.
+const VIEWMODEL_VERTEX_LOCAL_SCALE: i32 = 16;
 const ENEMY_VERTEX_LOCAL_SCALE: i32 = 4; // quarter-unit grid: same i16 RAM, half the near-GTE distortion zone (was 2)
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -13454,7 +13465,7 @@ fn mdl_cook_mode(flag: &str) -> Option<MdlCookMode> {
         "--mdl7-vm" => Some(MdlCookMode {
             full_normals: false,
             packed_normals: true,
-            vertex_scale: MDL_VERTEX_LOCAL_SCALE,
+            vertex_scale: VIEWMODEL_VERTEX_LOCAL_SCALE,
             simplify_target: 0,
             camera_locked: true,
         }),
@@ -13506,6 +13517,10 @@ const HMD_FLAG_HITBOXES: u16 = 1 << 4;
 const HMD_FLAG_FRAME_TIMES: u16 = 1 << 5;
 const HMD_FLAG_ALIGNED_MODEL_DATA: u16 = 1 << 6;
 const HMD_FLAG_VERTEX_SOA: u16 = 1 << 7;
+/// Local-space HMA1 tracks replace the pose palette (psx_asset::hmd8).
+const HMD_FLAG_HMA1: u16 = 1 << 8;
+/// Bones one HMA1 pose may decode: game/src/main.rs POSE_SCRATCH_BONES.
+const HMA1_MAX_BONES: usize = 80;
 const HMD7_RANGE_MOUTH: u8 = 1 << 0;
 const HMD7_RANGE_BYTES: usize = 8;
 const HMD8_AFFINE_BYTES: usize = 20;
@@ -14097,6 +14112,8 @@ fn viewmodel_never_front_facing(
 ) -> Vec<bool> {
     let n_tris = tri_idx.len() / 3;
     let shift = VM_VIEW_SHIFT_WORLD.map(|axis| axis * vertex_scale.max(1) as i64);
+    // The margin is authored in scale-8 units; keep its world size.
+    let margin = VM_CULL_EYE_MARGIN * vertex_scale.max(1) as i64 / MDL_VERTEX_LOCAL_SCALE as i64;
     let mut never = vec![true; n_tris];
     for frame in frames {
         for tri in 0..n_tris {
@@ -14112,9 +14129,9 @@ fn viewmodel_never_front_facing(
                 never[tri] = false;
                 continue;
             };
-            for dx in [-VM_CULL_EYE_MARGIN, 0, VM_CULL_EYE_MARGIN] {
-                for dy in [-VM_CULL_EYE_MARGIN, 0, VM_CULL_EYE_MARGIN] {
-                    for dz in [-VM_CULL_EYE_MARGIN, 0, VM_CULL_EYE_MARGIN] {
+            for dx in [-margin, 0, margin] {
+                for dy in [-margin, 0, margin] {
+                    for dz in [-margin, 0, margin] {
                         let eye = [shift[0] + dx, shift[1] + dy, shift[2] + dz];
                         let view = |p: [i64; 3]| {
                             [
@@ -14818,6 +14835,15 @@ fn cook_mdl(
     let mut pose_bones: Vec<Vec<Mat34>> = Vec::new();
     let mut mouth_xforms: Vec<Mat34> = Vec::new();
     let mut frame_times: Vec<u8> = Vec::new();
+    // HMA1 cooks local-space per-bone tracks from every source frame instead
+    // of the shared-pose palette (psx-anim-cook), each model fitted to the
+    // palette bytes it replaces. HMA1=0 cooks the old palettes (A/B only).
+    let hma_on = std::env::var("HMA1").map_or(true, |v| v != "0");
+    let mut hma_clips: Vec<hma1_cook::CapturedClip> = Vec::new();
+    // Tracks play every source frame, so a viewmodel triangle may only be
+    // dropped as never front-facing if it faces away in all of them, not
+    // just in the retained palette poses.
+    let mut hma_cull_frames: Vec<Vec<[i16; 3]>> = Vec::new();
     let mut clips: Vec<(u16, u16)> = Vec::with_capacity(specs.len());
     let mut clip_hold_quanta: Vec<u16> = Vec::with_capacity(specs.len());
     let mut cooked_clip_cache = HashMap::<(i32, Vec<usize>), (u16, u16)>::new();
@@ -14936,12 +14962,19 @@ fn cook_mdl(
                 mdl_mouth_relative_xform(&bones[mouth.bone], &open_bones[mouth.bone], vertex_scale)
             });
             let mut fv: Vec<[i16; 3]> = Vec::with_capacity(vp.len());
+            let mut select: Vec<[i16; 3]> = Vec::with_capacity(vp.len());
+            let select_scale = vertex_scale.min(MDL_VERTEX_LOCAL_SCALE);
             for v in 0..vp.len() {
                 let p = apply(bones.get(vbone[v]).unwrap_or(&ident), vp[v]);
                 fv.push([
                     quantize_mdl_coord(p[0], vertex_scale),
                     quantize_mdl_coord(p[2], vertex_scale),
                     quantize_mdl_coord(p[1], vertex_scale),
+                ]);
+                select.push([
+                    quantize_mdl_coord(p[0], select_scale),
+                    quantize_mdl_coord(p[2], select_scale),
+                    quantize_mdl_coord(p[1], select_scale),
                 ]);
             }
             // Viewmodels only: this is the table the runtime muzzle flash is
@@ -14964,6 +14997,7 @@ fn cook_mdl(
             }
             BakedMdlPose {
                 vertices: fv,
+                select_vertices: select,
                 bones,
                 mouth_xform,
             }
@@ -14978,7 +15012,62 @@ fn cook_mdl(
             .iter()
             .map(|pose| pose.vertices.clone())
             .collect::<Vec<_>>();
-        let sample_frames = mdl_motion_sample_frames(&full_frames, nbake, looping);
+        if hma_on && camera_locked {
+            hma_cull_frames.extend(full_frames.iter().cloned());
+        }
+        if hma_on {
+            // Same DOF evaluation as bake_pose (mouth closed), kept local.
+            let local_frames = (0..numframes)
+                .map(|sframe| {
+                    (0..numbones)
+                        .map(|bi| {
+                            let bm = &bmeta[bi];
+                            let mut dof = bm.value;
+                            if animindex != 0 {
+                                let at = animindex + bi * 12;
+                                for d in 0..6 {
+                                    let off = u16::from_le_bytes([
+                                        anim_b[at + d * 2],
+                                        anim_b[at + d * 2 + 1],
+                                    ]) as usize;
+                                    if off != 0 {
+                                        dof[d] = bm.value[d]
+                                            + anim_value(anim_b, at + off, sframe) as f32
+                                                * bm.scale[d];
+                                    }
+                                }
+                            }
+                            if let Some(mouth) = mouth_controller {
+                                if bi == mouth.bone {
+                                    studio_controller_add(&mut dof, mouth.kind, mouth.start);
+                                }
+                            }
+                            (
+                                angle_quat([dof[3], dof[4], dof[5]]),
+                                [dof[0], dof[1], dof[2]],
+                            )
+                        })
+                        .collect()
+                })
+                .collect();
+            // Lowest cooked Y per source frame: the floor anchor, resolved below.
+            let min_y = full_frames
+                .iter()
+                .map(|f| f.iter().map(|v| v[1] as f32).fold(f32::INFINITY, f32::min))
+                .map(|m| if m.is_finite() { m } else { 0.0 })
+                .collect();
+            hma_clips.push(hma1_cook::CapturedClip {
+                key: spec.seq as usize,
+                looping,
+                frames: local_frames,
+                floor_shift: min_y,
+            });
+        }
+        let select_frames = full
+            .iter()
+            .map(|pose| pose.select_vertices.clone())
+            .collect::<Vec<_>>();
+        let sample_frames = mdl_motion_sample_frames(&select_frames, nbake, looping);
         let cache_key = (spec.seq, sample_frames.clone());
         let cached_clip = cooked_clip_cache.get(&cache_key).copied();
         if cached_clip.is_none() {
@@ -15055,6 +15144,7 @@ fn cook_mdl(
         clip_hold_quanta.push(mdl_sequence_hold_quanta(numframes, fps));
     }
     let mut floor_shifts = vec![0i16; frames.len()];
+    let mut hma_seated = false;
     if floor_anchor_frames {
         // Seated models (sitting scientist) bake ONLY seated poses. GoldSrc
         // renders them at the authored entity origin (the chair SEAT) with the
@@ -15083,8 +15173,30 @@ fn cook_mdl(
                 .map(|n| n.to_ascii_lowercase().starts_with("sit"))
                 .unwrap_or(false)
         };
+        hma_seated = seated;
         if !seated {
             floor_shifts = floor_anchor_mdl_frames(&mut frames, &clips, 5);
+        }
+    }
+    if hma_on {
+        // Mirror floor_anchor_mdl_frames: the five canonical clips anchor
+        // per frame, script clips by clip 0's first pose, seated models and
+        // viewmodels not at all.
+        let seated = hma_seated;
+        let base = hma_clips
+            .first()
+            .and_then(|c| c.floor_shift.first().copied())
+            .unwrap_or(0.0);
+        for (ci, clip) in hma_clips.iter_mut().enumerate() {
+            for shift in &mut clip.floor_shift {
+                *shift = if !floor_anchor_frames || seated {
+                    0.0
+                } else if ci < 5 {
+                    *shift
+                } else {
+                    base
+                };
+            }
         }
     }
     for (xform, shift) in mouth_xforms.iter_mut().zip(floor_shifts.iter().copied()) {
@@ -15256,6 +15368,25 @@ fn cook_mdl(
                 ]
             })
             .collect();
+        if !hma_cull_frames.is_empty() {
+            hma_cull_frames = hma_cull_frames
+                .iter()
+                .map(|frame| {
+                    let mut sums = vec![[0i32; 3]; simplified_n_verts];
+                    let mut counts = vec![0i32; simplified_n_verts];
+                    for (old, &cluster) in simplified.remap.iter().enumerate() {
+                        for axis in 0..3 {
+                            sums[cluster][axis] += frame[old][axis] as i32;
+                        }
+                        counts[cluster] += 1;
+                    }
+                    sums.iter()
+                        .zip(&counts)
+                        .map(|(sum, &n)| sum.map(|v| (v / n.max(1)) as i16))
+                        .collect()
+                })
+                .collect();
+        }
         vbone = simplified.bones;
         frames = simplified.frames;
         tri_idx = simplified.tri_idx;
@@ -15271,7 +15402,12 @@ fn cook_mdl(
     }
 
     if camera_locked && !frames.is_empty() {
-        let never = viewmodel_never_front_facing(&frames, &tri_idx, &tri_tex, vertex_scale);
+        let cull_frames = if hma_cull_frames.is_empty() {
+            &frames
+        } else {
+            &hma_cull_frames
+        };
+        let never = viewmodel_never_front_facing(cull_frames, &tri_idx, &tri_tex, vertex_scale);
         let dropped = never.iter().filter(|&&drop| drop).count();
         if dropped > 0 {
             let mut idx = Vec::with_capacity((never.len() - dropped) * 3);
@@ -15290,11 +15426,11 @@ fn cook_mdl(
                 body.push(tri_body_mask[tri]);
             }
             eprintln!(
-                "viewmodel cull: {} -> {} tris ({} face away in all {} baked poses)",
+                "viewmodel cull: {} -> {} tris ({} face away in all {} poses)",
                 never.len(),
                 never.len() - dropped,
                 dropped,
-                frames.len(),
+                cull_frames.len(),
             );
             // ponytail: the orphaned vertices stay. They cost six bytes each and
             // removing them would have to renumber the contiguous per-bone
@@ -15339,6 +15475,97 @@ fn cook_mdl(
     );
     assert_eq!(vp.len(), n_verts, "HMD8 bone-local vertex stream drift");
     assert_eq!(vbone.len(), n_verts, "HMD8 vertex-bone stream drift");
+
+    // HMA1: encode local tracks inside the byte budget of the palettes they
+    // replace, then keep a single bind palette for code that has not moved
+    // to HMA1 yet.
+    let hma = if hma_on && !hma_clips.is_empty() {
+        let parents: Vec<i32> = bmeta.iter().map(|b| b.parent).collect();
+        let mut verts = vec![Vec::new(); numbones];
+        let mut carries = vec![false; numbones];
+        for (v, &b) in vp.iter().zip(vbone.iter()) {
+            let q = mdl_bone_local_vertex(*v, vertex_scale);
+            verts[b].push([q[0] as f64, q[1] as f64, q[2] as f64]);
+            carries[b] = true;
+        }
+        for hitbox in &source_hitboxes {
+            carries[hitbox.bone] = true;
+        }
+        let s = vertex_scale as f64;
+        let sk = psx_anim_cook::Skeleton {
+            parents: parents.clone(),
+            bind_t: bmeta
+                .iter()
+                .map(|b| {
+                    [
+                        b.value[0] as f64 * s,
+                        b.value[2] as f64 * s,
+                        b.value[1] as f64 * s,
+                    ]
+                })
+                .collect(),
+            verts,
+            scale: s,
+        };
+        let bones = psx_anim_cook::needed_bones(&parents, &carries);
+        if bones.len() > HMA1_MAX_BONES {
+            return Err(format!(
+                "{path}: HMA1 tracks need {} bones; the game decodes at most {HMA1_MAX_BONES} (POSE_SCRATCH_BONES)",
+                bones.len()
+            ));
+        }
+        let cooked: Vec<hma1_cook::CookedClip> = hma_clips
+            .iter()
+            .map(|clip| hma1_cook::CookedClip {
+                clip,
+                parents: &parents,
+                scale: vertex_scale as f32,
+            })
+            .collect();
+        let refs: Vec<&dyn psx_anim_cook::ClipSource> = cooked
+            .iter()
+            .map(|c| c as &dyn psx_anim_cook::ClipSource)
+            .collect();
+        let used = {
+            let mut u: Vec<usize> = vbone.clone();
+            u.extend(source_hitboxes.iter().map(|h| h.bone));
+            u.sort_unstable();
+            u.dedup();
+            u.len()
+        };
+        let palette_bytes = frames.len() * used * HMD8_AFFINE_BYTES + frame_times.len();
+        let (enc, tol) = match std::env::var("HMA1_TOL")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+        {
+            Some(tol) => (
+                psx_anim_cook::encode(&sk, &refs, &bones, psx_anim_cook::production_opts(tol)),
+                tol,
+            ),
+            None => psx_anim_cook::encode_within(&sk, &refs, &bones, palette_bytes),
+        };
+        eprintln!(
+            "[hma1] {}: {} B tracks (tolerance {tol}) replacing {palette_bytes} B of palettes",
+            path,
+            enc.bytes.len()
+        );
+        let jaw =
+            mouth_controller.and_then(|mouth| hma1_cook::jaw_record(&mouth, &enc.bones, path));
+        frames.truncate(1);
+        pose_bones.truncate(1);
+        // The mouth opens as a local jaw rotation inside the tracks, so the
+        // per-frame model-space mouth transforms are not needed.
+        mouth_xforms.clear();
+        mouth_bones = None;
+        floor_shifts.truncate(1);
+        frame_times.clear();
+        for clip in &mut clips {
+            *clip = (0, 1);
+        }
+        Some((enc.bytes, enc.bones, jaw))
+    } else {
+        None
+    };
 
     // Reorder vertices into stable bone/body ranges. Triangles are remapped
     // once at cook time; runtime can then change the GTE matrix once per range
@@ -15443,7 +15670,8 @@ fn cook_mdl(
             0
         })
         | HMD_FLAG_ALIGNED_MODEL_DATA
-        | HMD_FLAG_VERTEX_SOA;
+        | HMD_FLAG_VERTEX_SOA
+        | if hma.is_some() { HMD_FLAG_HMA1 } else { 0 };
 
     let mut model_data = Vec::new();
     for range in &ranges {
@@ -15567,8 +15795,24 @@ fn cook_mdl(
             model_data.extend_from_slice(&component.to_le_bytes());
         }
     }
+    let hma_section_start = model_data.len();
+    if let Some((blob, bones, jaw)) = &hma {
+        let map: Vec<u8> = used_bones
+            .iter()
+            .map(|b| {
+                bones
+                    .iter()
+                    .position(|x| x == b)
+                    .expect("HMA1 carries every used bone") as u8
+            })
+            .collect();
+        let model_data_base = (36 + clips.len() * 4 + frame_times.len() + 3) & !3;
+        let abs_start = model_data_base + model_data.len();
+        model_data.extend_from_slice(&psx_anim_cook::hmd8_section(abs_start, &map, *jaw, blob));
+    }
+    let hma_section_len = model_data.len() - hma_section_start;
     debug_assert_eq!(
-        source_hitboxes.len() * HMD7_HITBOX_BYTES,
+        source_hitboxes.len() * HMD7_HITBOX_BYTES + hma_section_len,
         model_data.len()
             - ranges.len() * HMD7_RANGE_BYTES
             - n_verts * 6
@@ -15620,7 +15864,17 @@ fn cook_mdl(
             o.extend_from_slice(&[n[0] as u8, n[1] as u8, n[2] as u8, tri_body_mask[t]]);
             o.extend_from_slice(&0u16.to_le_bytes());
         } else if packed_normals {
-            let n = tri_norm.get(t).copied().unwrap_or([0; 3]);
+            // mdl_face_normal_i8 sees the corners in the cook's reversed
+            // (c, b, a) order in the Y/Z-swapped cooked space, which yields
+            // the inward normal: measured against the MDL's own vertex
+            // normals, 94-100% of viewmodel faces pointed away from them, so
+            // vm_normal_shade lit every weapon from behind. Store the outward
+            // normal. Zero (FLATSHADE) stays zero.
+            let n = tri_norm
+                .get(t)
+                .copied()
+                .unwrap_or([0; 3])
+                .map(|c| c.saturating_neg());
             o.extend_from_slice(&mdl_pack_normal_555(n).to_le_bytes());
         } else {
             o.extend_from_slice(&[tri_body_mask[t], 0]);
@@ -16006,7 +16260,7 @@ mod tests {
             Some(MdlCookMode {
                 full_normals: false,
                 packed_normals: true,
-                vertex_scale: 8,
+                vertex_scale: VIEWMODEL_VERTEX_LOCAL_SCALE,
                 simplify_target: 0,
                 camera_locked: true,
             })

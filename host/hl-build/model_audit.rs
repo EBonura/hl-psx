@@ -134,6 +134,10 @@ const HMD_FLAG_HITBOXES: u16 = 1 << 4;
 const HMD_FLAG_FRAME_TIMES: u16 = 1 << 5;
 const HMD_FLAG_ALIGNED_MODEL_DATA: u16 = 1 << 6;
 const HMD_FLAG_VERTEX_SOA: u16 = 1 << 7;
+/// HMA1 animation tracks after the hitboxes (psx_asset::hmd8): `u32 len`
+/// then `len` bytes, moved intact by the body compaction.
+const HMD_FLAG_HMA1: u16 = 1 << 8;
+const HMA1_SECTION_HEADER: usize = 16;
 const MOUTH_XFORM_BYTES: usize = 24;
 const HMD7_HEADER_BYTES: usize = 36;
 const HMD7_RANGE_BYTES: usize = 8;
@@ -173,6 +177,7 @@ struct ModelChunk {
     n_bones: usize,
     has_mouth: bool,
     has_frame_times: bool,
+    hma_bytes: usize,
 }
 
 impl ModelChunk {
@@ -237,6 +242,7 @@ impl ModelChunk {
                 + visible_verts * 6
                 + self.n_frames * self.n_bones * HMD8_AFFINE_BYTES
                 + mouth_bytes
+                + self.hma_bytes
         };
         (faces, runs, textures, kept)
     }
@@ -364,11 +370,15 @@ fn parse_geometry(geometry: &[u8], texture: &[u8], merged: bool, what: &str) -> 
         0
     };
     let hitbox_len = n_hitboxes.saturating_mul(HMD7_HITBOX_BYTES);
-    if mouth_off
+    let hma_off = mouth_off
         .saturating_add(mouth_len)
-        .saturating_add(hitbox_len)
-        != tri_off
-    {
+        .saturating_add(hitbox_len);
+    let hma_bytes = if flags & HMD_FLAG_HMA1 != 0 {
+        4 + u32le(geometry, hma_off, what)? as usize
+    } else {
+        0
+    };
+    if hma_off.saturating_add(hma_bytes) != tri_off {
         return Err(
             format!("{what}: HMD8 model-data layout does not reach triangle stream").into(),
         );
@@ -400,12 +410,31 @@ fn parse_geometry(geometry: &[u8], texture: &[u8], merged: bool, what: &str) -> 
     } else {
         Vec::new()
     };
-    let clip_frames = (0..n_clips)
-        .map(|clip| {
-            u16le(geometry, clips_off + clip * 4 + 2, what)
-                .map(|packed| ((packed & 0x00ff) as usize).max(1))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let clip_frames = if hma_bytes != 0 {
+        // Tracks play every source frame: numframes = intervals + 1.
+        let n_used = u16le(geometry, hma_off + 4, what)? as usize;
+        let blob = (hma_off + HMA1_SECTION_HEADER + n_used + 1) & !1;
+        let hma_bones = u16le(geometry, blob, what)? as usize;
+        let hma_clips = u16le(geometry, blob + 2, what)? as usize;
+        if hma_clips < n_clips {
+            return Err(format!("{what}: HMA1 tracks hold {hma_clips} of {n_clips} clips").into());
+        }
+        let bind = (4 + hma_bones + 1) & !1;
+        let clip_table = blob + ((bind + hma_bones * 6 + 3) & !3);
+        (0..n_clips)
+            .map(|clip| {
+                let off = u32le(geometry, clip_table + clip * 4, what)? as usize;
+                Ok(u16le(geometry, blob + off, what)? as usize + 1)
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        (0..n_clips)
+            .map(|clip| {
+                u16le(geometry, clips_off + clip * 4 + 2, what)
+                    .map(|packed| ((packed & 0x00ff) as usize).max(1))
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
     let clip_hold_ticks = (0..n_clips)
         .map(|clip| {
             let packed_first = u16le(geometry, clips_off + clip * 4, what)?;
@@ -459,6 +488,7 @@ fn parse_geometry(geometry: &[u8], texture: &[u8], merged: bool, what: &str) -> 
         n_bones,
         has_mouth,
         has_frame_times,
+        hma_bytes,
     })
 }
 
