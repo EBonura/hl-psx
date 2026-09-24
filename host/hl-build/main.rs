@@ -1801,16 +1801,35 @@ fn compile_game(
     if matches!(profile, GuestProfile::CollectElf) {
         command.env("HLPSX_LINK_ELF", "1");
     }
-    // A link-only argument: the map does not change the emitted bytes.
+    // A link-only argument: the map does not change the emitted bytes. Each
+    // build configuration links its own map: a build cargo finds fresh does
+    // not link again, so one shared path could hold another configuration's
+    // map, which the patcher and scanner refuse. The map of the build just
+    // made is copied to .hlpsx/hl-psx.map for everything that reads it.
+    let configuration = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .chain([matches!(profile, GuestProfile::CollectElf).to_string()])
+        .collect::<Vec<_>>()
+        .join("\n");
+    let maps = repository.join(".hlpsx/maps");
+    fs::create_dir_all(&maps)?;
+    let digest = format!("{:x}", Sha256::digest(configuration.as_bytes()));
+    let build_map = maps.join(format!("{}.map", &digest[..16]));
     let link_map = repository.join(".hlpsx/hl-psx.map");
-    fs::create_dir_all(repository.join(".hlpsx"))?;
-    command.env("HLPSX_LINK_MAP", &link_map);
+    command.env("HLPSX_LINK_MAP", &build_map);
     command.env("PSOXIDE", psoxide);
     run(&mut command, "compile hl-psx for PlayStation")?;
     let exe = game.join("target/mipsel-sony-psx/release/hl-psx.exe");
     if !exe.is_file() {
         return Err(format!("game build did not produce {}", exe.display()).into());
     }
+    fs::copy(&build_map, &link_map).map_err(|error| {
+        format!(
+            "no link map at {} ({error}); remove game/target to relink",
+            build_map.display()
+        )
+    })?;
     if matches!(profile, GuestProfile::CollectElf) {
         // An ELF for the symbolizer, not an executable: nothing to patch.
         return Ok(exe);
