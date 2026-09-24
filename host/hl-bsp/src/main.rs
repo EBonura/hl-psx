@@ -4971,6 +4971,8 @@ struct LogicCook {
     ents: Vec<LogicRec>,
     aux: Vec<LogicAuxRec>,
     names: Vec<String>,
+    /// (record, submodel) of every brush trigger, for `shape_brush_triggers`.
+    trigger_models: Vec<(usize, usize)>,
 }
 
 const NAV_NODE_HEIGHT: f32 = 8.0;
@@ -7426,6 +7428,7 @@ fn collect_logic_entities_with_lightstyles(
     // of multisource inputs happens only after every source has its final logic
     // index, so the runtime can compare an exact caller without name scans.
     let mut source_raw_index: Vec<usize> = Vec::new();
+    let mut trigger_models: Vec<(usize, usize)> = Vec::new();
     let mut emitted_lightstyles = std::collections::HashSet::<u8>::new();
     let clips = load_clips_manifest();
     let studio_events = load_studio_events_manifest();
@@ -8530,6 +8533,24 @@ fn collect_logic_entities_with_lightstyles(
             aux_count = 2;
         }
 
+        if let (Some(sm), true) = (
+            submodel,
+            brush == LOGIC_BRUSH_NONE
+                && matches!(
+                    kind,
+                    LOGIC_TRIGGER_ONCE
+                        | LOGIC_TRIGGER_MULTIPLE
+                        | LOGIC_TRIGGER_CHANGELEVEL
+                        | LOGIC_TRIGGER_ENDSECTION
+                        | LOGIC_TRIGGER_HURT
+                        | LOGIC_TRIGGER_TELEPORT
+                        | LOGIC_TRIGGER_PUSH
+                        | LOGIC_TRIGGER_GRAVITY
+                        | LOGIC_CDTRACK
+                ),
+        ) {
+            trigger_models.push((out.len(), sm));
+        }
         out.push(LogicRec {
             kind,
             use_type,
@@ -8864,7 +8885,56 @@ fn collect_logic_entities_with_lightstyles(
         ents: out,
         aux,
         names: names.names,
+        trigger_models,
     })
+}
+
+/// Brush triggers whose volume is not their bounding box: a ring of thin
+/// brushes (c4a3's intro_platform edge), slanted or several brushes. GoldSrc
+/// SV_TouchLinks touches a brush trigger only when the entity origin is
+/// inside the model's player hull, so a box test fires these from places the
+/// player never enters. Returns (record, raw hull-1 head) for every trigger
+/// whose hull-1 tree is not solid throughout its expanded bounds.
+fn shaped_brush_triggers(
+    trigger_models: &[(usize, usize)],
+    models: &[u8],
+    clipnodes: &[u8],
+    planes: &[u8],
+) -> Vec<(usize, i32)> {
+    const HULL1_HALF: [f32; 3] = [16.0, 16.0, 36.0];
+    const STEPS: usize = 6;
+    let mut out = Vec::new();
+    for &(ri, sm) in trigger_models {
+        let (Some(head), Some((mins, maxs))) =
+            (model_headnode(models, sm, 1), model_bounds_hl(models, sm))
+        else {
+            continue;
+        };
+        if head < 0 || head > i16::MAX as i32 {
+            continue;
+        }
+        let mut hollow = false;
+        'grid: for i in 0..STEPS {
+            for j in 0..STEPS {
+                for k in 0..STEPS {
+                    let t = [i, j, k];
+                    let p: [f32; 3] = core::array::from_fn(|a| {
+                        let lo = mins[a] - HULL1_HALF[a] + 1.0;
+                        let hi = maxs[a] + HULL1_HALF[a] - 1.0;
+                        lo + (hi - lo) * t[a] as f32 / (STEPS - 1) as f32
+                    });
+                    if point_contents_raw(clipnodes, planes, head as i16, p) != CONTENTS_SOLID {
+                        hollow = true;
+                        break 'grid;
+                    }
+                }
+            }
+        }
+        if hollow {
+            out.push((ri, head));
+        }
+    }
+    out
 }
 
 #[inline]
@@ -12152,7 +12222,18 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     for e in &ents {
         clip_roots.push(e.head);
     }
+    let shaped = shaped_brush_triggers(&logic.trigger_models, models, clipnodes, planes);
+    if !shaped.is_empty() {
+        eprintln!("  shaped brush triggers: {} (hull-1 touch)", shaped.len());
+    }
+    clip_roots.extend(shaped.iter().map(|&(_, head)| head));
     let (clip_remap, clip_out) = compact_clipnode_remap(clipnodes, &clip_roots);
+    for &(ri, head) in &shaped {
+        let head = remap_clip_head(head, &clip_remap);
+        if (0..LOGIC_BRUSH_SHAPE as i32 - 1).contains(&head) {
+            logic.ents[ri].brush = LOGIC_BRUSH_SHAPE | head as u16;
+        }
+    }
     let n_clip = clip_out.len();
     let stripped_clip_count = raw_n_clip.saturating_sub(n_clip);
     // Preserve the on-disc field for format compatibility, but make accidental

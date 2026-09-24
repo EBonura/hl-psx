@@ -221,6 +221,12 @@ pub struct RayHit {
     pub mover: i32,
 }
 
+/// True when `p` is inside the clip tree rooted at `head` (a shaped brush
+/// trigger's hull-1 volume, GoldSrc SV_TouchLinks' brush-trigger test).
+pub fn inside_clip_hull(map: &Map, head: i16, p: [i32; 3]) -> bool {
+    point_contents(map, head, p) == SOLID
+}
+
 fn point_contents(map: &Map, mut num: i16, p: [i32; 3]) -> i16 {
     let mut guard = 0;
     while num >= 0 {
