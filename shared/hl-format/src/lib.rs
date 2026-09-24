@@ -231,6 +231,9 @@ pub mod logic {
     pub const FUNC_TRAIN: u8 = 25;
     pub const WEAPONSTRIP: u8 = 26;
     pub const ENV_MESSAGE: u8 = 27;
+    /// `env_message` record flag: the campaign's last credits card (END3).
+    /// Once it has shown, the port's end card follows (GoldSrc just stops).
+    pub const ENV_MESSAGE_ENDS_GAME: u8 = 0x01;
     pub const ENV_FADE: u8 = 28;
     /// `env_fade` arg1 bit: the record is a `player_loadsaved`. It fades out
     /// (never in), shows its message at `maxs[0]` ticks and reloads after its
@@ -342,6 +345,7 @@ pub mod logic {
     pub const LOGIC_FUNC_TRAIN: u8 = FUNC_TRAIN;
     pub const LOGIC_WEAPONSTRIP: u8 = WEAPONSTRIP;
     pub const LOGIC_ENV_MESSAGE: u8 = ENV_MESSAGE;
+    pub const LOGIC_ENV_MESSAGE_ENDS_GAME: u8 = ENV_MESSAGE_ENDS_GAME;
     pub const LOGIC_ENV_FADE: u8 = ENV_FADE;
     pub const LOGIC_ENV_FADE_REVERT: u16 = ENV_FADE_REVERT;
     pub const LOGIC_MAP_FLAGS: u8 = MAP_FLAGS;

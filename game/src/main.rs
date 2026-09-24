@@ -5531,6 +5531,10 @@ static mut REVERT_MSG_AT: u16 = 0;
 static mut REVERT_LOAD_AT: u16 = 0;
 static mut REVERT_MSG: [i32; 3] = [0; 3];
 static mut REVERT_REQUEST: bool = false;
+// Ticks+1 until the port's end card starts (after END3 has shown), and the
+// sim frame it started on; both zero while the campaign runs.
+static mut ENDING_IN: u16 = 0;
+static mut ENDING_FROM: u32 = 0;
 // worldspawn startdark: ticks left of the engine's start-dark fade-in (Xash
 // CL_StartDark with retail titles.txt GAMETITLE: black for holdtime 3.0 +
 // fadeout 1.5 s, then a 1.5 s fade). A real env_fade replaces it.
@@ -10433,6 +10437,9 @@ unsafe fn logic_use_entity(
             TITLE_T = 0;
             TITLE_HOLD = rec.speed.max(20);
             TITLE_FADE = ((rec.arg1 >> 8) & 0xFF).max(1);
+            if rec.flags & map::LOGIC_ENV_MESSAGE_ENDS_GAME != 0 {
+                ENDING_IN = TITLE_FADE + TITLE_HOLD + TITLE_FADE + 1;
+            }
             TITLE_EFFECT = (rec.arg1 & 3) as u8;
             TITLE_LEFT_ALIGNED = rec.arg1 & 4 != 0;
             TITLE_Y_Q5 = ((rec.arg1 >> 3) & 31) as u8;
@@ -10764,6 +10771,12 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
     FADE_STARTDARK = FADE_STARTDARK.saturating_sub(1);
     if REVERT_LOAD_AT != 0 {
         revert_saved_tick();
+    }
+    if ENDING_IN != 0 {
+        ENDING_IN -= 1;
+        if ENDING_IN == 0 {
+            ENDING_FROM = sim_frame_no.max(1);
+        }
     }
     if TITLE_TEXT_ID != 0 {
         TITLE_T = TITLE_T.saturating_add(1);
@@ -12363,6 +12376,8 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     REVERT_MSG_AT = 0;
     REVERT_LOAD_AT = 0;
     REVERT_REQUEST = false;
+    ENDING_IN = 0;
+    ENDING_FROM = 0;
     DAMAGE_DIRECTION = 0;
     DAMAGE_TICKS = 0;
     GEIGER_COOLDOWN = 0;
@@ -17800,11 +17815,8 @@ struct WeaponDef {
 }
 
 // Weapon ids = index into WEAPON_DEFS. Switch order follows the HL1 slots.
-/// The campaign's final room (c5a1, the G-Man tram) -- index in menu::MAPS /
-/// the Makefile MAPLIST. Reaching it and letting the scene play out ends the
-/// game: fade to white, end card, back to the menu.
-const FINAL_ROOM_ID: u16 = 95;
-const ENDING_SCENE_TICKS: u32 = 1400; // ~70 s of G-Man tram before the fade
+/// The campaign ends once c5a1's last credits card (END3, on either the
+/// winner or the loser path) has shown: fade to white, end card, menu.
 const ENDING_FADE_TICKS: u32 = 60;
 const WEAPON_ICON_TICKS: u8 = 30; // ~1.5 s select-icon flash after L1/R1
 
@@ -33846,9 +33858,9 @@ fn play(
                 None
             };
             let draw_regular_hud =
-                if launch.room_id == FINAL_ROOM_ID && sim_frame_no > ENDING_SCENE_TICKS {
+                if unsafe { ENDING_FROM } != 0 && sim_frame_no > unsafe { ENDING_FROM } {
                     // Outro: the G-Man scene has played out -- fade to white.
-                    let t = (sim_frame_no - ENDING_SCENE_TICKS).min(ENDING_FADE_TICKS);
+                    let t = (sim_frame_no - unsafe { ENDING_FROM }).min(ENDING_FADE_TICKS);
                     let w = (t * 255 / ENDING_FADE_TICKS) as u8;
                     unsafe {
                         DEATH_WASH = 0;
