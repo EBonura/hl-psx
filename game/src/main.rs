@@ -5524,7 +5524,12 @@ static mut FADE_WHITE: bool = false;
 static mut FADE_T: u16 = 0;
 static mut FADE_DUR: u16 = 40;
 static mut FADE_HOLD: u16 = 0;
-static mut FADE_STARTDARK: bool = false; // worldspawn startdark: black until a fade fires
+// worldspawn startdark: ticks left of the engine's start-dark fade-in (Xash
+// CL_StartDark with retail titles.txt GAMETITLE: black for holdtime 3.0 +
+// fadeout 1.5 s, then a 1.5 s fade). A real env_fade replaces it.
+static mut FADE_STARTDARK: u8 = 0;
+const STARTDARK_TICKS: u8 = 120;
+const STARTDARK_FADE_TICKS: i32 = 30;
                                          // ---- CD music (CDDA tracks appended to the disc; HL track numbers pass through) ----
 static mut CD_TRACK_WANT: i16 = 0; // >0 play, -1 stop, 0 none
 static mut CD_TRACK_CUR: i16 = 0;
@@ -10569,7 +10574,7 @@ unsafe fn logic_use_entity(
             FADE_T = 0;
             FADE_DUR = rec.arg0.max(1);
             FADE_HOLD = rec.speed;
-            FADE_STARTDARK = false; // a real fade takes over the boot black
+            FADE_STARTDARK = 0; // a real fade takes over the boot black
         }
         map::LOGIC_ENV_RENDER => {
             // The dish in c1a0d is made from BSP brushes, not point props.
@@ -10669,6 +10674,7 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
     if GAMETITLE_TICKS > 0 {
         GAMETITLE_TICKS -= 1;
     }
+    FADE_STARTDARK = FADE_STARTDARK.saturating_sub(1);
     if TITLE_TEXT_ID != 0 {
         TITLE_T = TITLE_T.saturating_add(1);
         let total = TITLE_FADE + TITLE_HOLD + TITLE_FADE;
@@ -10909,8 +10915,8 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
             let d = (FADE_T - FADE_DUR - FADE_HOLD) as i32;
             255 - (d * 255 / FADE_OUT_CLEAR_TICKS as i32).min(255)
         };
-    } else if FADE_STARTDARK {
-        level = 255; // worldspawn startdark: hold black until a fade fires
+    } else if FADE_STARTDARK > 0 {
+        level = FADE_STARTDARK as i32 * 255 / STARTDARK_FADE_TICKS;
     }
     if level > 0 {
         let g = level.clamp(0, 255) as u8;
@@ -12227,7 +12233,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     CHAPTER_TITLE_ID = 0;
     GAMETITLE_TICKS = 0;
     FADE_ACTIVE = false;
-    FADE_STARTDARK = false;
+    FADE_STARTDARK = 0;
     DAMAGE_DIRECTION = 0;
     DAMAGE_TICKS = 0;
     GEIGER_COOLDOWN = 0;
@@ -12405,7 +12411,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                 }
             }
             map::LOGIC_MAP_FLAGS => {
-                FADE_STARTDARK = rec.arg1 & 1 != 0;
+                FADE_STARTDARK = if rec.arg1 & 1 != 0 { STARTDARK_TICKS } else { 0 };
                 CHAPTER_TITLE_ID = rec.arg0;
                 CHAPTER_TITLE_HOLD = rec.speed;
                 // gametitle bit: flash the big HALF-LIFE card at level start (c0a0).
@@ -29402,7 +29408,7 @@ fn play(
             // A deterministic subject camera must not be hidden by an
             // authored start-dark/title card. Gameplay builds retain both.
             FADE_ACTIVE = false;
-            FADE_STARTDARK = false;
+            FADE_STARTDARK = 0;
             GAMETITLE_TICKS = 0;
         }
         // Build tail-indexed actor candidate lists only after every map-load
