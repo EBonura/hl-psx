@@ -267,6 +267,8 @@ fn uses_map_variant(ty: u8) -> bool {
 fn base_clip_count(ty: u8) -> usize {
     match ty {
         14 => 2,
+        // The gargantua's swipe and stomp sequences follow its five AI clips.
+        16 => 7,
         25 => 7,
         56 => 1,
         _ => 5,
@@ -283,8 +285,8 @@ fn carry_field(field: &str) -> String {
 
 fn special_fields(map: &str, ty: u8) -> Option<(&'static str, Vec<String>)> {
     let (mode, fields): (&str, &[&str]) = match (map, ty) {
-        ("c4a1b", 16) => ("--mdl7", &["2:2", "4:2", "6:2", "12:3", "14:4"]),
-        ("c4a3", 16) => ("--mdl7-lean", &["2:1", "4:1", "6:1", "12:1", "14:1"]),
+        ("c4a1b", 16) => ("--mdl7", &["2:2", "5:2", "7:2", "12:3", "14:4", "attack:2", "stomp:2"]),
+        ("c4a3", 16) => ("--mdl7-lean", &["2:1", "5:1", "7:1", "12:1", "14:1", "attack:1", "stomp:1"]),
         ("c4a3", 19) => ("--mdl7", &["0:1", "1:1", "8:1", "5:1", "3:1"]),
         ("c1a2b", 5) => (
             "--mdl7",

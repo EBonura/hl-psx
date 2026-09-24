@@ -43,8 +43,10 @@ mod render;
 #[cfg(feature = "route-follow")]
 use psx_goldsrc::route_follow;
 mod save;
+mod garg;
 mod scientist_logic;
 mod scratchpad;
+mod setpiece_logic;
 use psx_goldsrc::semantic_input;
 mod settings;
 mod sfx;
@@ -827,6 +829,7 @@ const PROP_TYPE_SCRIPTED_SITTING_SCI: u8 = 54; // c1a1b/c4a3 sitidle -> sitstand
 const PROP_TYPE_VENT_ZOMBIE: u8 = 55; // c1a1b compact eatbody + vent-climb roster
 const PROP_TYPE_HOLO: u8 = 56; // Hazard Course holographic instructor
 const PROP_TYPE_BIGMOMMA: u8 = 18; // Gonarch: walks its info_bigmomma nodes
+const PROP_TYPE_GARG: u8 = 16;
 const PROP_DEAD_BIT: u16 = 0x8000; // cook flag: spawn as a corpse (death pose, 0 hp)
 const PROP_DORMANT_BIT: u16 = 0x4000; // cook flag: monstermaker stock, inactive until fired
 const PROP_PREDISASTER_BIT: u16 = 0x2000; // cook flag: SF_MONSTER_PREDISASTER
@@ -1042,7 +1045,8 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(16, 8, 40, AI_IDLE),                   // 13 leech (flyer: render only)
     mdef(6, 4, 30, AI_IDLE),                    // 14 cockroach (passive)
     mdef(30, 48, 90, AI_IDLE),                  // 15 gman (passive)
-    mdef(200, 90, 360, AI_IDLE),                // 16 gargantua (boss: render only)
+    // CGargantua: the melee roster wakes it; garg::tick runs its schedules.
+    mdef_atk(200, 90, 360, AI_MELEE, 10, 0, 0, 0), // 16 gargantua
     mdef(200, 90, 1748, AI_IDLE),               // 17 nihilanth (boss: render only)
     mdef(150, 70, 200, AI_IDLE),                // 18 bigmomma (boss: render only)
     mdef_atk(40, 20, 223, AI_MELEE, 6, 0, 0, 0), // 19 ichthyosaur
@@ -1647,7 +1651,23 @@ static mut IMPACT_PARTICLE_RECTS: [RectFlat; MAX_IMPACT_PARTICLES] =
 // lives. A small ring -- old tracers just get overwritten.
 const MAX_TRACERS: usize = 8;
 static mut TRACERS: [([i32; 3], [i32; 3], u8); MAX_TRACERS] = [([0; 3], [0; 3], 0); MAX_TRACERS];
+static mut TRACER_STYLE: [u8; MAX_TRACERS] = [0; MAX_TRACERS];
 static mut TRACER_CURSOR: usize = 0;
+/// Tracer looks: (half width in world units, colour). A bullet tracer, the
+/// gargantua's flame beams (GARG_BEAM_SPRITE_NAME at 255,130,90 and its
+/// 0,120,255 core), and a mortar strike's column (CMortar's 255,160,100).
+const TRACER_BULLET: u8 = 0;
+const TRACER_FLAME: u8 = 1;
+const TRACER_FLAME_CORE: u8 = 2;
+const TRACER_MORTAR: u8 = 3;
+const TRACER_ROPE: u8 = 4;
+const TRACER_LOOKS: [(i32, (u8, u8, u8)); 5] = [
+    (3, (250, 220, 120)),
+    (24, (255, 130, 90)),
+    (14, (0, 120, 255)),
+    (20, (255, 160, 100)),
+    (1, (70, 70, 70)),
+];
 // Jump input buffer: a Cross press up to JUMP_BUFFER_TICKS before landing still
 // jumps (forgives an early press on a fall -- HL-ish landing feel).
 static mut JUMP_BUFFER: u8 = 0;
@@ -2984,16 +3004,16 @@ static mut MONSTERCLIP: [([i32; 3], [i32; 3]); MAX_MONSTERCLIP] =
 static mut MONSTERCLIP_N: usize = 0;
 
 /// True when `p` is inside any func_monsterclip volume (NPC-only blocker).
-unsafe fn in_monsterclip(p: [i32; 3]) -> bool {
+unsafe fn in_monsterclip(p: [i32; 3], r: i32) -> bool {
     let mut i = 0usize;
     while i < MONSTERCLIP_N {
         let (mn, mx) = MONSTERCLIP[i];
-        if p[0] >= mn[0]
-            && p[0] <= mx[0]
+        if p[0] >= mn[0] - r
+            && p[0] <= mx[0] + r
             && p[1] >= mn[1]
             && p[1] <= mx[1]
-            && p[2] >= mn[2]
-            && p[2] <= mx[2]
+            && p[2] >= mn[2] - r
+            && p[2] <= mx[2] + r
         {
             return true;
         }
@@ -7852,7 +7872,7 @@ fn actor_collision_bounds(kind: u8, pos: [i32; 3]) -> ([i32; 3], [i32; 3]) {
     let (mins, maxs) = match kind {
         2 => ([-12, 0, -12], [12, 24, 12]), // headcrab
         6 => ([-16, 0, -16], [16, 36, 16]), // houndeye
-        7 | 10 | 11 | 17 | 18 => ([-32, 0, -32], [32, 64, 32]), // broad aliens/bosses
+        7 | 10 | 11 | 16 | 17 | 18 => ([-32, 0, -32], [32, 64, 32]), // broad aliens/bosses
         12 => ([-16, -32, -16], [16, 0, 16]), // barnacle
         13 | 14 => ([-1, 0, -1], [1, 2, 1]), // leech/cockroach
         19 => ([-32, -32, -32], [32, 32, 32]), // ichthyosaur
@@ -12307,6 +12327,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     MONSTER_TRIGGER_END = 0;
     MONSTER_TOUCH = false;
     BOSS_WALKER = u16::MAX;
+    garg::reset();
     li = 0;
     while li < nlogic {
         let rec = m.logic(li);
@@ -13216,6 +13237,15 @@ fn prop_anim_frame(
         let elapsed = unsafe { SIM_NOW }.wrapping_sub(start) as usize;
         return md.looped_clip_phase(clip, duration, elapsed);
     }
+    if unsafe { PROP_KIND[pi] } == PROP_TYPE_GARG {
+        // The gargantua's swipe and stomp play their own sequences once.
+        if let Some((gesture, ticks, elapsed)) = unsafe { garg::gesture_clip(pi) } {
+            if gesture < md.n_clips {
+                forget_clip();
+                return md.one_shot_clip_phase(gesture, ticks, elapsed);
+            }
+        }
+    }
     if state == PROP_STATE_ATTACK {
         // Melee and Barney attacks have a bounded AI action window.  Starting
         // their visual clip from the global simulation clock meant an attack
@@ -13225,7 +13255,7 @@ fn prop_anim_frame(
         let ty = unsafe { PROP_KIND[pi] };
         let action_ticks = if ty == PROP_TYPE_BARNEY {
             BARNEY_ATTACK_TICKS
-        } else if model_def(ty).ai == AI_MELEE {
+        } else if model_def(ty).ai == AI_MELEE && ty != PROP_TYPE_GARG {
             HEADCRAB_ATTACK_TICKS
         } else {
             0
@@ -13935,7 +13965,12 @@ unsafe fn prop_try_step(
                 i += 1;
                 continue;
             }
-            if in_monsterclip(to_flat) {
+            // The gargantua's 64-unit box against its (knee-high) clips.
+            if in_monsterclip(to_flat, 0)
+                || (ty == PROP_TYPE_GARG
+                    && (in_monsterclip([cand[0], cand[1] + 16, cand[2]], 32)
+                        || phys::point_in_movers(m, movers, to_flat)))
+            {
                 #[cfg(feature = "reference-trace")]
                 {
                     probe_result |= 2;
@@ -14939,6 +14974,17 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
         return;
     }
+    // CGargantua::TraceAttack/TakeDamage: only GARG_DAMAGE (blast, energy
+    // beam, crush, mortar) hurts, scaled from its 800 HP onto the u8 health;
+    // bullets and clubs ricochet.
+    let dmg = if PROP_KIND[pi] == PROP_TYPE_GARG {
+        match garg::scale_damage(dmg, DMG_HEAVY) {
+            0 => return,
+            scaled => scaled,
+        }
+    } else {
+        dmg
+    };
     if BOSS_WALKER != u16::MAX && LOGIC_PROP_LINK[BOSS_WALKER as usize] as usize == pi {
         PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
         boss_walker_damage(dmg);
@@ -16061,6 +16107,10 @@ unsafe fn tick_headcrab(
     armor: &mut u16,
     nprops: usize,
 ) {
+    if PROP_KIND[pi] == PROP_TYPE_GARG {
+        garg::tick(m, movers, sight_movers, pi, player_pos, nprops);
+        return;
+    }
     // Only headcrabs LEAP; big melee aliens (zombie/bullsquid/ichthyosaur) shamble
     // in and swipe in place -- leaping made them look like giant headcrabs.
     let leaper = PROP_KIND[pi] == PROP_TYPE_HEADCRAB;
@@ -17249,8 +17299,12 @@ unsafe fn tick_props(
         // pickups, cockroaches, passive models, and turrets too. Refresh a
         // newly moving/scripted actor immediately, then retain the existing
         // eight-tick stagger while it moves.
+        // The running gargantua covers 144 units in eight ticks, further
+        // than the shortlist's slack: refresh it every tick.
         if ((moving_ai && ai_awake) || scripted_move || seated_wake)
-            && (PROP_NEAR_COUNT[pi] == 0xFF || (pi as u32).wrapping_add(AI_TICK) & 7 == 0)
+            && (PROP_NEAR_COUNT[pi] == 0xFF
+                || ty == PROP_TYPE_GARG
+                || (pi as u32).wrapping_add(AI_TICK) & 7 == 0)
         {
             refresh_prop_near_ents(movers, pi);
         }
@@ -18646,8 +18700,15 @@ unsafe fn put_impact_mark(m: &Map, hit: &phys::RayHit, kind: u8, family: usize, 
 /// Queue a bullet tracer (muzzle -> impact) for a couple of sim ticks. Ring
 /// buffer: an eighth in flight at once just overwrites the oldest.
 unsafe fn push_tracer(start: [i32; 3], end: [i32; 3]) {
+    push_tracer_styled(start, end, TRACER_BULLET);
+}
+
+/// A tracer-ring beam with one of the TRACER_LOOKS.
+#[inline(never)]
+unsafe fn push_tracer_styled(start: [i32; 3], end: [i32; 3], style: u8) {
     let i = TRACER_CURSOR % MAX_TRACERS;
     TRACERS[i] = (start, end, 2);
+    TRACER_STYLE[i] = style;
     TRACER_CURSOR = (TRACER_CURSOR + 1) % MAX_TRACERS;
 }
 
@@ -19846,6 +19907,15 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_inflic
     if radius <= 0 {
         return;
     }
+    DMG_HEAVY = true;
+    explode_inner(m, pos, damage, radius, player_inflicted);
+    DMG_HEAVY = false;
+}
+
+/// Set while blast or energy-beam damage is applied (GARG_DAMAGE classes).
+static mut DMG_HEAVY: bool = false;
+
+unsafe fn explode_inner(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_inflicted: bool) {
     sfx::play_world(sfx::EXPLODE, pos);
     queue_explosion_fx(pos, (radius / 3).clamp(20, 255) as u8);
     // Flying sparks + debris chunks thrown outward, over the particle flash.
@@ -20780,7 +20850,9 @@ unsafe fn tick_beam_extended(
                 ((damage as u32 + 10) / 20).max(1) as u16
             };
             if hit_prop != usize::MAX {
+                DMG_HEAVY = true; // CBeam::BeamDamage is DMG_ENERGYBEAM
                 damage_prop(hit_prop, amount.min(255) as u8, false);
+                DMG_HEAVY = false;
             } else if hit_player {
                 note_damage_direction(start);
                 PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(amount);
@@ -27698,7 +27770,8 @@ unsafe fn queue_world_beams(
     while ti < MAX_TRACERS {
         let (start, end, ttl) = TRACERS[ti];
         if ttl > 0 {
-            draw_beam(packets, ot, start, end, 3, (250, 220, 120), rot, base_t);
+            let (half, color) = TRACER_LOOKS[(TRACER_STYLE[ti] as usize).min(TRACER_LOOKS.len() - 1)];
+            draw_beam(packets, ot, start, end, half, color, rot, base_t);
         }
         ti += 1;
     }
@@ -31774,7 +31847,9 @@ fn play(
                         if weapon.current == W_CROWBAR {
                             CROWBAR_HIT_VOLUME_DEN = 1;
                         }
-                        fire_weapon(
+                        // CEgon hits with DMG_ENERGYBEAM, one of GARG_DAMAGE.
+                        DMG_HEAVY = weapon.current == W_EGON;
+                        let hit = fire_weapon(
                             weapon.def(),
                             damage,
                             &m,
@@ -31783,7 +31858,9 @@ fn play(
                             &fire_rot,
                             fire_base_t,
                             inacc,
-                        )
+                        );
+                        DMG_HEAVY = false;
+                        hit
                     };
                     if weapon.current == W_CROWBAR {
                         if hit {
@@ -31899,6 +31976,7 @@ fn play(
                 if BOSS_WALKER != u16::MAX {
                     tick_boss_walker(&m, movers);
                 }
+                garg::tick_world(&m);
                 telemetry::stage_end(telemetry::stage::UPDATE_ACTOR);
                 apply_debug_toggles(
                     &mut health,

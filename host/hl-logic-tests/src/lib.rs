@@ -79,3 +79,6 @@ mod guard {
 
 #[path = "../../../game/src/beverage.rs"]
 pub mod beverage;
+
+#[path = "../../../game/src/setpiece_logic.rs"]
+pub mod setpiece_logic;

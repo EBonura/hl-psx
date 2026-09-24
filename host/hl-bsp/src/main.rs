@@ -9940,6 +9940,7 @@ fn monster_type_id(cls: &str) -> Option<u16> {
         "monster_alien_grunt" => 10,
         "monster_alien_controller" => 11,
         "monster_gman" => 15,
+        "monster_gargantua" => 16,
         "monster_cockroach" => 14,
         "monster_ichthyosaur" => 19,
         "monster_sentry" => 20,

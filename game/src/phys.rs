@@ -877,6 +877,20 @@ pub fn actor_line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i
     true
 }
 
+/// Is `p` inside any mover's clip hull? `actor_line_clear_movers` lets a
+/// step that starts inside a hull through (so an actor can leave an overlap);
+/// a fast actor can reach a door's expanded plane in one step and then pass
+/// straight through on the next, so it also checks where the step ends.
+#[inline(never)]
+pub fn point_in_movers(map: &Map, movers: &[Mover], p: [i32; 3]) -> bool {
+    movers.iter().any(|mv| {
+        mv.head > 0 && mover_may_touch_segment(mv, p, p) && {
+            let (q1, q2) = mover_local_segment(mv, p, p);
+            trace(map, mv.head, q1, q2).startsolid
+        }
+    })
+}
+
 /// Like [`line_clear_movers`] but ignores the mover whose id is `exclude_id`.
 /// Aim-use traces end INSIDE the target button/charger/door brush, so that
 /// brush's own hull would always report "blocked" -- exclude it so line of
