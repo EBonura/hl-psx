@@ -21615,7 +21615,11 @@ const SEAM_CENSUS_LOOP_FACE: u32 = pack_rgb_word((0, 64, 255));
 #[cfg(feature = "seam-census")]
 const SEAM_CENSUS_RAW_TRI: u32 = pack_rgb_word((255, 0, 255));
 
-#[inline]
+// Forced inline: after the SDK 454214065 / editor 29f1c652 repin LLVM stopped
+// inlining this three-caller wrapper, and the outlined call plus its argument
+// spills cost about 61k cycles per tram frame. Inlining it measured +2.6%
+// (chapter two to poll 1500) and +1.3% (tram) moving fps for 2 KB of .text.
+#[inline(always)]
 unsafe fn push_tri_uv_words(
     packets: &mut PrimitivePacketArena<'_>,
     np: &mut usize,
