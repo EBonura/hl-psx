@@ -3374,6 +3374,7 @@ unsafe fn sway_uv3(uv: [u16; 3]) -> [u16; 3] {
     [sway_uv(uv[0]), sway_uv(uv[1]), sway_uv(uv[2])]
 }
 static mut PUSH_IMPULSE: [i32; 3] = [0; 3]; // per-tick trigger_push velocity add
+static mut PLAYER_GROUND_ENT: i16 = -1; // brush entity the player stands on (conveyors)
 static mut ENT_ACTIVE: [u8; MAX_ENTS] = [0; MAX_ENTS];
 
 #[derive(Clone, Copy)]
@@ -5524,7 +5525,12 @@ static mut FADE_WHITE: bool = false;
 static mut FADE_T: u16 = 0;
 static mut FADE_DUR: u16 = 40;
 static mut FADE_HOLD: u16 = 0;
-static mut FADE_STARTDARK: bool = false; // worldspawn startdark: black until a fade fires
+// worldspawn startdark: ticks left of the engine's start-dark fade-in (Xash
+// CL_StartDark with retail titles.txt GAMETITLE: black for holdtime 3.0 +
+// fadeout 1.5 s, then a 1.5 s fade). A real env_fade replaces it.
+static mut FADE_STARTDARK: u8 = 0;
+const STARTDARK_TICKS: u8 = 120;
+const STARTDARK_FADE_TICKS: i32 = 30;
                                          // ---- CD music (CDDA tracks appended to the disc; HL track numbers pass through) ----
 static mut CD_TRACK_WANT: i16 = 0; // >0 play, -1 stop, 0 none
 static mut CD_TRACK_CUR: i16 = 0;
@@ -6280,6 +6286,20 @@ unsafe fn water_touch(m: &Map, nents: usize, pos: [i32; 3]) -> bool {
         ei += 1;
     }
     false
+}
+
+/// PM_CheckWater's lowest sample (one unit above the hull bottom) is water,
+/// not slime or lava: GoldSrc's watertype for a landing.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn feet_in_water(m: &Map, nents: usize, pos: [i32; 3], half_height: i32) -> bool {
+    let feet = [pos[0], pos[1] - half_height + 1, pos[2]];
+    let leaf = camera_leaf(m, feet);
+    let liquid = if leaf >= 0 { m.leaf_liquid(leaf as usize) } else { 0 };
+    if liquid != 0 {
+        return liquid == 1;
+    }
+    water_touch(m, nents, feet)
 }
 
 #[derive(Clone, Copy)]
@@ -10303,6 +10323,14 @@ unsafe fn logic_use_entity(
                 LOGIC_TARGET[target_li] = rec.arg0;
             }
         }
+        // CFuncConveyor::Use reverses the belt whatever the use type.
+        map::LOGIC_TRIGGER_PUSH if logic_valid_brush(rec.brush, nents).is_some() => {
+            LOGIC_STATE[li] = if LOGIC_STATE[li] == LOGIC_STATE_TOP {
+                LOGIC_STATE_BOTTOM
+            } else {
+                LOGIC_STATE_TOP
+            };
+        }
         // trigger_hurt and trigger_push share the START_OFF on/off toggle
         // (TOP = off, BOTTOM = on): a fire on their targetname enables/disables.
         map::LOGIC_TRIGGER_HURT | map::LOGIC_TRIGGER_PUSH => match use_type {
@@ -10558,9 +10586,15 @@ unsafe fn logic_use_entity(
             LOGIC_NEXT[li] = now;
         }
         map::LOGIC_ENV_EXPLOSION => {
-            // Scripted explosion: FX + sound only (real damage is trigger_hurt).
-            queue_explosion_fx(rec.origin, rec.arg0.min(255) as u8);
-            sfx::play_world(sfx::EXPLODE, rec.origin);
+            // CEnvExplosion::Use calls RadiusDamage with the magnitude over
+            // 2.5x its radius unless SF_ENVEXPLOSION_NODAMAGE: scripted blasts
+            // kill c2a5's bridge runner and break what they are placed at.
+            if rec.spawnflags & 1 == 0 && rec.arg0 != 0 {
+                explode(m, rec.origin, rec.arg0.min(255) as u8, rec.arg0 as i32 * 5 / 2, false);
+            } else {
+                queue_explosion_fx(rec.origin, rec.arg0.min(255) as u8);
+                sfx::play_world(sfx::EXPLODE, rec.origin);
+            }
         }
         map::LOGIC_ENV_FADE => {
             FADE_ACTIVE = true;
@@ -10569,7 +10603,7 @@ unsafe fn logic_use_entity(
             FADE_T = 0;
             FADE_DUR = rec.arg0.max(1);
             FADE_HOLD = rec.speed;
-            FADE_STARTDARK = false; // a real fade takes over the boot black
+            FADE_STARTDARK = 0; // a real fade takes over the boot black
         }
         map::LOGIC_ENV_RENDER => {
             // The dish in c1a0d is made from BSP brushes, not point props.
@@ -10669,6 +10703,7 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
     if GAMETITLE_TICKS > 0 {
         GAMETITLE_TICKS -= 1;
     }
+    FADE_STARTDARK = FADE_STARTDARK.saturating_sub(1);
     if TITLE_TEXT_ID != 0 {
         TITLE_T = TITLE_T.saturating_add(1);
         let total = TITLE_FADE + TITLE_HOLD + TITLE_FADE;
@@ -10909,8 +10944,8 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
             let d = (FADE_T - FADE_DUR - FADE_HOLD) as i32;
             255 - (d * 255 / FADE_OUT_CLEAR_TICKS as i32).min(255)
         };
-    } else if FADE_STARTDARK {
-        level = 255; // worldspawn startdark: hold black until a fade fires
+    } else if FADE_STARTDARK > 0 {
+        level = FADE_STARTDARK as i32 * 255 / STARTDARK_FADE_TICKS;
     }
     if level > 0 {
         let g = level.clamp(0, 255) as u8;
@@ -11945,6 +11980,19 @@ unsafe fn logic_touch_triggers(
                 continue;
             }
             let rec = m.logic(li);
+            // A brush trigger that is not its box carries its hull-1 clip
+            // head: GoldSrc touches it only with the origin inside that hull.
+            if rec.brush != map::LOGIC_BRUSH_NONE
+                && rec.brush & map::LOGIC_BRUSH_SHAPE != 0
+                && !phys::inside_clip_hull(
+                    m,
+                    (rec.brush & !map::LOGIC_BRUSH_SHAPE) as i16,
+                    player_pos,
+                )
+            {
+                scan += 1;
+                continue;
+            }
             match rec.kind {
                 map::LOGIC_TRIGGER_ONCE
                 | map::LOGIC_TRIGGER_MULTIPLE
@@ -12030,13 +12078,27 @@ unsafe fn logic_touch_triggers(
                     // bit 2 here is PUSH_START_OFF, not NOCLIENTS (push uses its
                     // own touch, not CBaseTrigger::MultiTouch) -- so no NOCLIENTS
                     // check; the state gate below covers START_OFF.
-                    if rec.aux_count >= 2 && LOGIC_STATE[li] != LOGIC_STATE_TOP {
+                    // A func_conveyor (a push with a brush) always runs; its
+                    // state records CFuncConveyor::Use's reversal instead.
+                    // The engine gives only the player standing on a belt its
+                    // basevelocity.
+                    let conveyor = logic_valid_brush(rec.brush, nents);
+                    let pushes = match conveyor {
+                        Some(ei) => ei as i16 == PLAYER_GROUND_ENT,
+                        None => LOGIC_STATE[li] != LOGIC_STATE_TOP,
+                    };
+                    if rec.aux_count >= 2 && pushes {
                         let a = m.logic_aux(rec.first_aux);
                         let b = m.logic_aux(rec.first_aux + 1);
+                        let sign = if conveyor.is_some() && LOGIC_STATE[li] == LOGIC_STATE_TOP {
+                            -1
+                        } else {
+                            1
+                        };
                         PUSH_IMPULSE = [
-                            a.target as i16 as i32,
-                            a.delay_ticks as i16 as i32,
-                            b.target as i16 as i32,
+                            a.target as i16 as i32 * sign,
+                            a.delay_ticks as i16 as i32 * sign,
+                            b.target as i16 as i32 * sign,
                         ];
                     }
                 }
@@ -12227,7 +12289,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     CHAPTER_TITLE_ID = 0;
     GAMETITLE_TICKS = 0;
     FADE_ACTIVE = false;
-    FADE_STARTDARK = false;
+    FADE_STARTDARK = 0;
     DAMAGE_DIRECTION = 0;
     DAMAGE_TICKS = 0;
     GEIGER_COOLDOWN = 0;
@@ -12405,7 +12467,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                 }
             }
             map::LOGIC_MAP_FLAGS => {
-                FADE_STARTDARK = rec.arg1 & 1 != 0;
+                FADE_STARTDARK = if rec.arg1 & 1 != 0 { STARTDARK_TICKS } else { 0 };
                 CHAPTER_TITLE_ID = rec.arg0;
                 CHAPTER_TITLE_HOLD = rec.speed;
                 // gametitle bit: flash the big HALF-LIFE card at level start (c0a0).
@@ -29402,7 +29464,7 @@ fn play(
             // A deterministic subject camera must not be hidden by an
             // authored start-dark/title card. Gameplay builds retain both.
             FADE_ACTIVE = false;
-            FADE_STARTDARK = false;
+            FADE_STARTDARK = 0;
             GAMETITLE_TICKS = 0;
         }
         // Build tail-indexed actor candidate lists only after every map-load
@@ -31110,7 +31172,12 @@ fn play(
                 if li > 17 {
                     unsafe { add_view_punch(-(li.min(60) / 2), 0) };
                 }
-                if li > 29 {
+                // CBasePlayer::PostThink skips the damage when the landing
+                // leaves the feet in water (watertype CONTENTS_WATER): the
+                // Nihilanth arena drop lands in a puddle.
+                if li > 29
+                    && !unsafe { feet_in_water(&m, nents, player.pos, player.half_height()) }
+                {
                     let d = ((li - 29) * 9 / 2).max(1) as u16;
                     fall_damage_player(&mut health, d);
                 }
@@ -31471,6 +31538,7 @@ fn play(
                     tick_momentary(&m, nlogic, nents, player.pos, eye, yaw, pitch);
                 }
                 LOGIC_ACTIVATOR = 1;
+                PLAYER_GROUND_ENT = if player.on_ground { player.ground_mover } else { -1 };
                 logic_touch_triggers(
                     &m,
                     nlogic,
@@ -31504,12 +31572,19 @@ fn play(
                     } else if PUSH_IMPULSE[1] < 0 {
                         player.set_vertical_velocity(player.vel[1].min(PUSH_IMPULSE[1]));
                     }
-                    // Lateral push nudges the position directly (vel xz is
-                    // recomputed from the stick every tick).
-                    player.pos[0] += PUSH_IMPULSE[0];
-                    player.pos[2] += PUSH_IMPULSE[2];
-                    PUSH_IMPULSE = [0; 3];
                 }
+                // The lateral push is next tick's basevelocity: the player
+                // move carries it, so it collides instead of nudging the
+                // origin into walls or a conveyor's ramp. Leaving the push
+                // hands its momentum to the player (SV_CheckMovingGround).
+                let base = [PUSH_IMPULSE[0], PUSH_IMPULSE[2]];
+                let previous = phys::base_xz();
+                if base == [0, 0] {
+                    player.vel[0] += previous[0];
+                    player.vel[2] += previous[1];
+                }
+                phys::set_base_xz(base);
+                PUSH_IMPULSE = [0; 3];
             }
             unsafe {
                 if WEAPONSTRIP_REQUEST {

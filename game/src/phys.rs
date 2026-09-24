@@ -46,6 +46,19 @@ pub fn gravity_scale() -> i32 {
     unsafe { GRAVITY_SCALE }
 }
 
+// GoldSrc basevelocity (trigger_push field, conveyor under the feet), whole
+// units per tick on the horizontal axes. PM adds it to the move so the push
+// collides, slides and climbs slopes like the player's own velocity.
+static mut BASE_XZ: [i32; 2] = [0; 2];
+
+pub fn base_xz() -> [i32; 2] {
+    unsafe { BASE_XZ }
+}
+
+pub fn set_base_xz(base: [i32; 2]) {
+    unsafe { BASE_XZ = base };
+}
+
 // Long jump module: jumping while moving adds a strong horizontal boost
 // (the Xen crossings need it). Persists for the session once picked up.
 static mut LONGJUMP: bool = false;
@@ -219,6 +232,12 @@ pub struct RayHit {
     pub normal: [i32; 3],
     /// Ent id of the brush entity hit, or -1 for static world.
     pub mover: i32,
+}
+
+/// True when `p` is inside the clip tree rooted at `head` (a shaped brush
+/// trigger's hull-1 volume, GoldSrc SV_TouchLinks' brush-trigger test).
+pub fn inside_clip_hull(map: &Map, head: i16, p: [i32; 3]) -> bool {
+    point_contents(map, head, p) == SOLID
 }
 
 fn point_contents(map: &Map, mut num: i16, p: [i32; 3]) -> i16 {
@@ -2635,7 +2654,8 @@ impl Player {
         // zero at the face of a stair; using that clipped velocity for the step
         // pass makes the raised route motionless and wedges the player against
         // even an 8-unit threshold (the c0a0e tram-platform exit).
-        let move_vel = [move_x, move_y, move_z];
+        let base = unsafe { BASE_XZ };
+        let move_vel = [move_x + base[0], move_y, move_z + base[1]];
         #[cfg(feature = "deep-reference-trace")]
         let direct = trace_all(
             map,
@@ -2734,7 +2754,10 @@ impl Player {
         // the independently retained Q6 physical velocity when an axis was
         // unobstructed; otherwise accept the clipped result and discard both
         // velocity and position residue on that axis.
+        // PM_PlayerMove subtracts the basevelocity again after the move.
         let moved_vel = self.vel;
+        self.vel[0] -= base[0];
+        self.vel[2] -= base[1];
         if moved_vel[0] != move_vel[0] {
             self.vel_frac_xz[0] = 0;
             self.move_frac_xz[0] = 0;
