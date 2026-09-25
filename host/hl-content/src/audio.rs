@@ -1581,6 +1581,39 @@ fn predicted_map_pack_size(size_ladders: &[Vec<usize>], rate_steps: &[usize]) ->
     bytes
 }
 
+/// Set-piece sounds (hl_format::setpiece_audio) whose class this map places
+/// directly or through a monstermaker, as (slot, bank key).
+fn setpiece_candidates(map: &Path) -> Result<Vec<(usize, MapAudioKey)>> {
+    let mut classes = HashSet::new();
+    for entity in bsp_entities(map)? {
+        if let Some(class) = entity.get("classname") {
+            classes.insert(class.to_ascii_lowercase());
+        }
+        if entity.get("classname").map(String::as_str) == Some("monstermaker") {
+            if let Some(kind) = entity.get("monstertype") {
+                classes.insert(kind.to_ascii_lowercase());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (slot, sound) in hl_format::setpiece_audio::SOUNDS.iter().enumerate() {
+        if !classes.contains(sound.class) {
+            continue;
+        }
+        let class = if sound.looping { MapAudioClass::Loop } else { MapAudioClass::OneShot };
+        let mode = if sound.looping { "loop" } else { "shot" };
+        out.push((
+            slot,
+            MapAudioKey {
+                key: format!("sfx:{mode}:{}", sound.path),
+                wavs: vec![sound.path.to_string()],
+                class,
+            },
+        ));
+    }
+    Ok(out)
+}
+
 pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
     const RUNTIME_MAX_MAP_AUDIO: usize = 96;
     fs::create_dir_all(output)?;
@@ -1676,6 +1709,39 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             );
         }
 
+        // Set-piece monster sounds. Tier 1 carries gameplay information and
+        // joins the bank before its rates are chosen, so it may lower the
+        // quality of the map's other effects (never below their minimum rate)
+        // but is itself dropped if the bank cannot hold it at all. Tiers 2
+        // and 3 are fitted afterwards into whatever SPU RAM is still spare.
+        let setpiece = setpiece_candidates(&bsp)?;
+        let mut setpiece_kept: Vec<String> = Vec::new();
+        let mut setpiece_dropped: Vec<String> = Vec::new();
+        let mut late: Vec<&MapAudioKey> = Vec::new();
+        for (slot, entry) in setpiece.iter() {
+            let tier = hl_format::setpiece_audio::SOUNDS[*slot].tier;
+            let path = &entry.wavs[0];
+            if valid.iter().any(|v| v.key == entry.key) {
+                setpiece_kept.push(format!("{path} (shared)"));
+                continue;
+            }
+            if !valve.join("sound").join(normalized_sound_path(path)).is_file() {
+                setpiece_dropped.push(format!("{path} (missing)"));
+                continue;
+            }
+            if tier == 1 {
+                valid.push(entry);
+                if minimum_pack_size(&valid)? > budget || valid.len() > RUNTIME_MAX_MAP_AUDIO {
+                    valid.pop();
+                    setpiece_dropped.push(path.clone());
+                } else {
+                    setpiece_kept.push(path.clone());
+                }
+            } else {
+                late.push(entry);
+            }
+        }
+
         // Start every sample at its class's preferred rate. When the bank is
         // too large, consume quality from loops, short effects, and autonomous
         // chatter—in that order—before touching authored dialogue. Within a
@@ -1729,6 +1795,38 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             };
             rate_steps[index] += 1;
             predicted = predicted_map_pack_size(&size_ladders, &rate_steps);
+        }
+
+        // Tiers 2 and 3: spare SPU RAM only, every earlier sample keeping the
+        // rate it was just given. Each takes its best rate that still fits.
+        let mut size_ladders = size_ladders;
+        for entry in late {
+            let path = &entry.wavs[0];
+            let ladder = predicted_size_ladders(valve, &[entry])?.remove(0);
+            let fit = (0..ladder.len()).find(|&step| {
+                let mut ladders = size_ladders.clone();
+                ladders.push(ladder.clone());
+                let mut steps = rate_steps.clone();
+                steps.push(step);
+                predicted_map_pack_size(&ladders, &steps) <= budget
+            });
+            match fit {
+                Some(step) if valid.len() < RUNTIME_MAX_MAP_AUDIO => {
+                    valid.push(entry);
+                    size_ladders.push(ladder);
+                    rate_steps.push(step);
+                    predicted = predicted_map_pack_size(&size_ladders, &rate_steps);
+                    setpiece_kept.push(path.clone());
+                }
+                _ => setpiece_dropped.push(path.clone()),
+            }
+        }
+        if !setpiece_kept.is_empty() || !setpiece_dropped.is_empty() {
+            println!(
+                "  {map_name}: set-piece audio kept [{}] dropped [{}]",
+                setpiece_kept.join(", "),
+                setpiece_dropped.join(", ")
+            );
         }
 
         let scratch = Scratch::new("hlvox")?;

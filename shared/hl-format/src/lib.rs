@@ -474,6 +474,67 @@ pub mod logic {
     ];
 }
 
+/// Set-piece monster sounds cooked into each map's audio bank. A map carries a
+/// slot's sample only when it places (or a monstermaker makes) that class; the
+/// cooker records slot -> bank id as aux words of the map's MAP_FLAGS record.
+pub mod setpiece_audio {
+    pub struct Sound {
+        /// Entity class whose presence brings the sample into a map's bank.
+        pub class: &'static str,
+        /// Path below `valve/sound/`, lower case as the bank manifest keys it.
+        pub path: &'static str,
+        /// Kept on an owner-addressed loop voice rather than as a one-shot.
+        pub looping: bool,
+        /// 1 carries gameplay information and may lower the quality of the
+        /// map's other effects to fit; 2 and 3 only use spare SPU RAM.
+        pub tier: u8,
+    }
+
+    const fn s(class: &'static str, path: &'static str, looping: bool, tier: u8) -> Sound {
+        Sound { class, path, looping, tier }
+    }
+
+    pub const GARG_STOMP: u8 = 0;
+    pub const GARG_FLAME: u8 = 1;
+    pub const APACHE_GUN: u8 = 2;
+    pub const NIH_BALL: u8 = 3;
+    pub const NIH_TELE: u8 = 4;
+    pub const APACHE_ROTOR: u8 = 5;
+    pub const OSPREY_ROTOR: u8 = 6;
+    pub const APACHE_ROCKET: u8 = 7;
+    pub const GARG_STEP: u8 = 8;
+    pub const GARG_FLAME_ON: u8 = 9;
+    pub const GARG_PAIN: u8 = 10;
+    pub const NIH_PAIN: u8 = 11;
+    pub const NIH_LAUGH: u8 = 12;
+    pub const NIH_RECHARGE: u8 = 13;
+    pub const NIH_ATTACK: u8 = 14;
+    pub const GARG_FLAME_OFF: u8 = 15;
+    pub const NIH_DIE: u8 = 16;
+    pub const COUNT: usize = 17;
+
+    /// Indexed by slot; within a tier, earlier slots are kept first.
+    pub const SOUNDS: [Sound; COUNT] = [
+        s("monster_gargantua", "garg/gar_stomp1.wav", false, 1),
+        s("monster_gargantua", "garg/gar_flamerun1.wav", true, 1),
+        s("monster_apache", "turret/tu_fire1.wav", false, 1),
+        s("monster_nihilanth", "x/x_ballattack1.wav", false, 1),
+        s("monster_nihilanth", "x/x_teleattack1.wav", false, 1),
+        s("monster_apache", "apache/ap_rotor2.wav", true, 2),
+        s("monster_osprey", "apache/ap_rotor4.wav", true, 2),
+        s("monster_apache", "weapons/rocket1.wav", false, 2),
+        s("monster_gargantua", "garg/gar_step1.wav", false, 2),
+        s("monster_gargantua", "garg/gar_flameon1.wav", false, 2),
+        s("monster_gargantua", "garg/gar_pain1.wav", false, 3),
+        s("monster_nihilanth", "x/x_pain1.wav", false, 3),
+        s("monster_nihilanth", "x/x_laugh1.wav", false, 3),
+        s("monster_nihilanth", "x/x_recharge1.wav", false, 3),
+        s("monster_nihilanth", "x/x_attack1.wav", false, 3),
+        s("monster_gargantua", "garg/gar_flameoff1.wav", false, 3),
+        s("monster_nihilanth", "x/x_die1.wav", false, 3),
+    ];
+}
+
 #[cfg(test)]
 mod tests {
     use super::{logic, map};
@@ -517,5 +578,17 @@ mod tests {
         for (index, kind) in logic::KINDS.iter().copied().enumerate() {
             assert_eq!(kind as usize, index + 1);
         }
+    }
+
+    #[test]
+    fn setpiece_audio_paths_are_lower_case_wavs_in_tier_order() {
+        use super::setpiece_audio::{COUNT, SOUNDS};
+        assert!(COUNT < u8::MAX as usize);
+        for sound in SOUNDS.iter() {
+            assert!(sound.path.ends_with(".wav"));
+            assert_eq!(sound.path, sound.path.to_ascii_lowercase());
+            assert!((1..=3).contains(&sound.tier));
+        }
+        assert!(SOUNDS.windows(2).all(|w| w[0].tier <= w[1].tier));
     }
 }
