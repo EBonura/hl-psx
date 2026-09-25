@@ -3138,6 +3138,7 @@ impl EmitPolicy {
     const LOCAL_DEPTH: u8 = 0x10;
     const COPLANAR_BACKDROP: u8 = 0x20;
     const TRAM_GRID: u8 = 0x40;
+    const FAR_KEY: u8 = 0x80;
     const OPAQUE: Self = Self(0);
 
     #[inline(always)]
@@ -3223,6 +3224,18 @@ impl EmitPolicy {
         } else {
             Self(self.0 & !Self::LOCAL_DEPTH)
         }
+    }
+
+    /// A parent or backstop drawn behind its own children keeps the
+    /// farthest-vertex key; every other world primitive keys at its mean.
+    #[inline(always)]
+    const fn with_far_key(self) -> Self {
+        Self(self.0 | Self::FAR_KEY)
+    }
+
+    #[inline(always)]
+    const fn far_key(self) -> bool {
+        self.0 & Self::FAR_KEY != 0
     }
 
     #[inline(always)]
@@ -21717,7 +21730,11 @@ unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: b
     ordering::world_order_key::<OT_LEN>(
         depths,
         ordering::SurfaceOrder {
-            local_depth: policy.local_depth(),
+            // Mean-depth keys for every world primitive (the far-vertex key
+            // painted overlapping faces in the wrong order: HL tram major
+            // sort errors 1.29 -> 0.14 percent of pixels); parents drawn
+            // behind their own children keep the far key.
+            local_depth: !policy.far_key(),
             cutout_backed: policy.cutout(),
             coplanar_backdrop: policy.coplanar_backdrop(),
             texture_backdrop,
@@ -23144,8 +23161,11 @@ unsafe fn emit_soft_quad_split(
     // Re-emit the whole quad behind its own refinement -- its conservative
     // far-depth key orders it earlier than every nearer child, and within an
     // equal bucket the LAST insert draws FIRST (OT insertion prepends).
+    let saved_policy = EMIT_POLICY;
+    EMIT_POLICY = saved_policy.with_local_depth(false).with_far_key();
     emit_cv_flat(packets, [&q[0], &q[1], &q[2]], mat, np);
     emit_cv_flat(packets, [&q[1], &q[3], &q[2]], mat, np);
+    EMIT_POLICY = saved_policy;
     true
 }
 
@@ -25764,8 +25784,9 @@ unsafe fn push_patch_underlay(
         note_render_packet_drop(false);
         return;
     };
+    let far = (p0.sz as i32).max(p1.sz as i32).max(p2.sz as i32).max(p3.sz as i32);
     let otz = world_order_key(
-        ordering::PrimitiveDepths::quad(p0.sz as i32, p1.sz as i32, p2.sz as i32, p3.sz as i32),
+        ordering::PrimitiveDepths::quad(far, far, far, far),
         texture_backdrop,
     );
     // The skirt's corners are nudged off their projections: announce them.
@@ -27361,7 +27382,7 @@ unsafe fn emit_residue_children(
     // A far-depth parent must draw before every child, including when the
     // cooked face uses local centroid ordering. Restore policy immediately.
     let saved_policy = EMIT_POLICY;
-    EMIT_POLICY = saved_policy.with_local_depth(false);
+    EMIT_POLICY = saved_policy.with_local_depth(false).with_far_key();
     emit_screen_triangle(packets, [a, b, c], mat, false, np);
     EMIT_POLICY = saved_policy;
     if levels & RESIDUE_OWN_BUDGET == 0 {
