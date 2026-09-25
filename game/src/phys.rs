@@ -1572,6 +1572,23 @@ pub fn mover_clear_at(map: &Map, movers: &[Mover], mover_id: i32, pos: [i32; 3])
     true
 }
 
+/// A standing hull at `pos` overlaps no mover (the pusher included), the
+/// SV_TestEntityPosition that ends SV_PushEntity.
+#[inline(never)]
+#[optimize(size)]
+pub fn movers_clear_at(map: &Map, movers: &[Mover], pos: [i32; 3]) -> bool {
+    for mv in movers {
+        if mv.head <= 0 {
+            continue;
+        }
+        let local = mover_local(mv, pos);
+        if trace(map, mv.head, local, local).startsolid {
+            return false;
+        }
+    }
+    true
+}
+
 #[inline]
 fn impact_contact_clear_at(
     map: &Map,
@@ -1996,6 +2013,30 @@ impl Player {
         self.vel[1] = y;
         self.vel_frac_y = 0;
         self.move_frac_y = 0;
+    }
+
+    /// SV_PushMove for the player: mover `mover_id` moved by `delta` this
+    /// tick. If it now overlaps the player, shove them the same way
+    /// (SV_PushEntity). False when the world stops the shove or it cannot
+    /// clear the pusher: it is blocked, and the player stays put.
+    #[inline(never)]
+    #[optimize(size)]
+    pub fn push_by_mover(
+        &mut self,
+        map: &Map,
+        movers: &[Mover],
+        mover_id: i32,
+        delta: [i32; 3],
+    ) -> bool {
+        if mover_clear_at(map, movers, mover_id, self.pos) {
+            return true;
+        }
+        let moved = add(self.pos, delta);
+        if !clear_at(map, self.head(map), movers, moved) || !movers_clear_at(map, movers, moved) {
+            return false;
+        }
+        self.pos = moved;
+        true
     }
 
     /// PM_AddCorrectGravity: a push field's vertical basevelocity is an
