@@ -284,6 +284,10 @@ pub mod logic {
     /// index, `arg1` the condition, `speed` the monster's view-cone
     /// half-angle in 4096ths of a turn (sight conditions only).
     pub const MONSTER_TRIGGER: u8 = 53;
+    /// func_mortar_field: `arg0`/`arg1` the x/y momentary controllers'
+    /// names, `speed` m_iCount | m_fControl << 8, one aux word (m_flSpread,
+    /// 0); the record's bounds are the field.
+    pub const MORTAR_FIELD: u8 = 58;
 
     // CBaseMonster TriggerCondition values (monsters.h AITRIGGER_*). The
     // cooker emits only the ones the runtime evaluates.
@@ -303,6 +307,12 @@ pub mod logic {
     /// the actor, or NODE_WALK_INCOMING for a Gonarch arriving by transition.
     pub const AITRIGGER_NODE_WALK: u16 = 0x102;
     pub const NODE_WALK_INCOMING: u16 = u16::MAX;
+    /// COsprey's path_corner flight (FlyThink/Flight/DeployThink). `target`
+    /// is the first corner, `targetname` the osprey (CommandUse starts a
+    /// SF_WAITFORTRIGGER one), `speed` its spawnflags, `flags` the corner the
+    /// chain loops back to; three aux words per corner: (x, y), (z, speed),
+    /// (yaw q12, pitch q8 | roll q8 << 8), angles reflected like props.
+    pub const AITRIGGER_FLY_PATH: u16 = 0x103;
     /// An info_bigmomma node: `targetname`, `target` = reachtarget,
     /// `arg0` = next node name, `arg1` = health, `speed` = radius,
     /// `delay_ticks` = reachdelay, `spawnflags` = RUN(1) | WAIT(2).
@@ -393,6 +403,7 @@ pub mod logic {
     pub const LOGIC_LIGHTSTYLE: u8 = LIGHTSTYLE;
     pub const LOGIC_ENV_BEVERAGE: u8 = ENV_BEVERAGE;
     pub const LOGIC_MONSTER_TRIGGER: u8 = MONSTER_TRIGGER;
+    pub const LOGIC_MORTAR_FIELD: u8 = MORTAR_FIELD;
     pub const LOGIC_BIGMOMMA_NODE: u8 = BIGMOMMA_NODE;
     pub const LOGIC_INFODECAL: u8 = INFODECAL;
     pub const LOGIC_SHOOTER: u8 = SHOOTER;
@@ -456,6 +467,7 @@ pub mod logic {
         INFODECAL,
         SHOOTER,
         TRIGGER_CAMERA,
+        MORTAR_FIELD,
     ];
 }
 

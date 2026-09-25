@@ -1439,15 +1439,6 @@ pub fn standing_fits(map: &Map, pos: [i32; 3]) -> bool {
     !trace(map, map.hull1_head, pos, pos).startsolid
 }
 
-/// Whole-path human-hull probe used when a scripted monster chooses its route.
-/// GoldSrc tests the complete local move before falling back to its node graph;
-/// a short point step cannot make that decision because it walks straight up
-/// to a distant obstruction first. Callers pass hull-centre coordinates.
-#[inline]
-pub fn human_hull_line_clear(map: &Map, from: [i32; 3], to: [i32; 3]) -> bool {
-    trace_clear(map, map.hull1_head, from, to)
-}
-
 /// An impact this close to the chord end is the exact-endpoint contact rule in
 /// `recurse` (`frac = p2f - 1`) rather than real obstruction: an authored goal
 /// that sits flush against a brush lands exactly on that brush's expanded hull
@@ -1463,17 +1454,22 @@ pub fn human_hull_line_clear(map: &Map, from: [i32; 3], to: [i32; 3]) -> bool {
 /// the route had walked the player past the still-closed scanner door.
 const NAV_CHORD_REACHED: i32 = 4095;
 
-/// Fraction of the first world/brush impact on a scripted human-hull chord,
+/// Whole-path hull probe used when a scripted monster chooses its route.
+/// GoldSrc tests the complete local move before falling back to its node graph;
+/// a short point step cannot make that decision because it walks straight up
+/// to a distant obstruction first. Callers pass hull-centre coordinates.
+/// Fraction of the first world/brush impact on a scripted actor-hull chord,
 /// or `None` when it reaches the end. This is the allocation-free, cold-path
 /// input to FTriangulate and avoids dozens of 16-unit floor probes on PS1.
 #[inline(never)]
-pub fn human_hull_blocked_fraction_movers(
+pub fn hull_blocked_fraction_movers(
     map: &Map,
+    head: i32,
     movers: &[Mover],
     from: [i32; 3],
     to: [i32; 3],
 ) -> Option<i32> {
-    let tr = trace_all(map, map.hull1_head, movers, from, to);
+    let tr = trace_all(map, head, movers, from, to);
     if tr.startsolid {
         Some(0)
     } else if tr.frac >= NAV_CHORD_REACHED {

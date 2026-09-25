@@ -44,10 +44,13 @@ mod render;
 use psx_goldsrc::route_follow;
 mod save;
 mod garg;
+mod mortar;
+mod osprey;
 mod scientist_logic;
 mod scratchpad;
 mod setpiece_logic;
 mod tank;
+use osprey::{osprey_init, tick_osprey, OSPREY, OSPREY_TILT, PROP_TYPE_OSPREY};
 use tank::{tank_player_fire, tank_still_controlled, tank_try_control, tank_use, tanks_init, tick_tanks, TANK_COUNT};
 use psx_goldsrc::semantic_input;
 mod settings;
@@ -870,6 +873,10 @@ fn prop_model_rotation(yaw: u16, tilt: u16) -> Mat3I16 {
 
 #[inline(always)]
 fn prop_authored_tilt(m: &Map, pi: usize) -> u16 {
+    // A flying osprey banks through its path_corner angles.
+    if unsafe { OSPREY.li != u16::MAX && pi == OSPREY.pi as usize && OSPREY_TILT != u16::MAX } {
+        return unsafe { OSPREY_TILT };
+    }
     if pi < m.n_props {
         ((m.prop_orientation(pi) as u32) >> 16) as u16
     } else {
@@ -9382,16 +9389,52 @@ unsafe fn script_find_actor(rec: map::LogicEnt) -> Option<usize> {
     None
 }
 
+/// SV_HullForBsp: a monster no wider or taller than 36 units moves in the
+/// 32x32x36 crouch hull (houndeyes, headcrabs), anything else in hull 1.
+/// Returns the clip head and the hull's half height above the feet.
 #[inline(never)]
-fn script_human_chord_clear(
+unsafe fn actor_nav_hull(m: &Map, pi: usize) -> (i32, i32) {
+    if matches!(PROP_KIND[pi], PROP_TYPE_HEADCRAB | PROP_TYPE_HOUNDEYE | 59) && m.hull3_head >= 0 {
+        (m.hull3_head, 18)
+    } else {
+        (m.hull1_head, 36)
+    }
+}
+
+/// CheckLocalMove's WALK_MOVE steps climb anything up to sv_stepsize (18):
+/// a chord blocked at floor height also passes if the same chord raised by a
+/// step is clear (a floor lip in c1a4's hound tunnel). Returns the first
+/// impact fraction of the better of the two, or None when either is clear.
+#[inline(never)]
+unsafe fn actor_chord_blocked(
     m: &Map,
     movers: &[phys::Mover],
+    pi: usize,
+    start: [i32; 3],
+    goal: [i32; 3],
+) -> Option<i32> {
+    let (head, half) = actor_nav_hull(m, pi);
+    let mut best = 0;
+    for rise in [half, half + 18] {
+        let from = [start[0], start[1] + rise, start[2]];
+        let to = [goal[0], goal[1] + rise, goal[2]];
+        match phys::hull_blocked_fraction_movers(m, head, movers, from, to) {
+            None => return None,
+            Some(f) => best = best.max(f),
+        }
+    }
+    Some(best)
+}
+
+#[inline(never)]
+unsafe fn script_human_chord_clear(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
     start: [i32; 3],
     goal: [i32; 3],
 ) -> bool {
-    let from = [start[0], start[1] + 36, start[2]];
-    let to = [goal[0], goal[1] + 36, goal[2]];
-    phys::human_hull_line_clear(m, from, to) && phys::actor_line_clear_movers(m, movers, from, to)
+    actor_chord_blocked(m, movers, pi, start, goal).is_none()
 }
 
 /// Earliest `SOLID_SLIDEBOX` impact for a standing human hull moving between
@@ -9412,8 +9455,13 @@ unsafe fn script_human_actor_blocked_fraction(
     if PROP_KIND[pi] == PROP_TYPE_HOLO {
         return None;
     }
-    let from = [start[0], start[1] + 36, start[2]];
-    let to = [goal[0], goal[1] + 36, goal[2]];
+    let half = if matches!(PROP_KIND[pi], PROP_TYPE_HEADCRAB | PROP_TYPE_HOUNDEYE | 59) {
+        18
+    } else {
+        36
+    };
+    let from = [start[0], start[1] + half, start[2]];
+    let to = [goal[0], goal[1] + half, goal[2]];
     let mut best = 4096;
 
     if let Some((player_pos, player_half_height)) = player {
@@ -9427,7 +9475,7 @@ unsafe fn script_human_actor_blocked_fraction(
             player_pos[1] + player_half_height,
             player_pos[2] + 16,
         ];
-        if let Some(hit) = ground_logic::sweep_player_actor(from, to, player_mins, player_maxs, 36)
+        if let Some(hit) = ground_logic::sweep_player_actor(from, to, player_mins, player_maxs, half)
         {
             best = best.min(hit.frac);
         }
@@ -9441,7 +9489,7 @@ unsafe fn script_human_actor_blocked_fraction(
             && PROP_KIND[other] != PROP_TYPE_HOLO
         {
             let (mins, maxs) = actor_collision_bounds(PROP_KIND[other], PROP_POS[other]);
-            if let Some(hit) = ground_logic::sweep_player_actor(from, to, mins, maxs, 36) {
+            if let Some(hit) = ground_logic::sweep_player_actor(from, to, mins, maxs, half) {
                 best = best.min(hit.frac);
             }
         }
@@ -9464,7 +9512,7 @@ unsafe fn script_human_chord_clear_actors(
     goal: [i32; 3],
     player: Option<([i32; 3], i32)>,
 ) -> bool {
-    script_human_chord_clear(m, movers, start, goal)
+    script_human_chord_clear(m, movers, pi, start, goal)
         && script_human_actor_blocked_fraction(pi, start, goal, player).is_none()
 }
 
@@ -9616,9 +9664,7 @@ unsafe fn script_dynamic_local_replan(
         start[1] + delta[1] * check_dist / direction_len,
         start[2] + delta[2] * check_dist / direction_len,
     ];
-    let from = [start[0], start[1] + 36, start[2]];
-    let to = [check_end[0], check_end[1] + 36, check_end[2]];
-    let world_frac = phys::human_hull_blocked_fraction_movers(m, movers, from, to);
+    let world_frac = actor_chord_blocked(m, movers, pi, start, check_end);
     let actor_frac = script_human_actor_blocked_fraction(
         pi,
         start,
@@ -9729,9 +9775,7 @@ unsafe fn script_assign_actor(m: &Map, li: usize, rec: map::LogicEnt, pi: usize,
             core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),
             MOVER_COUNT.min(MAX_ENTS + 1),
         );
-        let from = [pos[0], pos[1] + 36, pos[2]];
-        let to = [authored_goal[0], authored_goal[1] + 36, authored_goal[2]];
-        let world_blocked = phys::human_hull_blocked_fraction_movers(m, movers, from, to);
+        let world_blocked = actor_chord_blocked(m, movers, pi, pos, authored_goal);
         let actor_blocked = script_human_actor_blocked_fraction(pi, pos, authored_goal, None);
         let blocked = match (world_blocked, actor_blocked) {
             (Some(world), Some(actor)) => Some(world.min(actor)),
@@ -10153,11 +10197,17 @@ unsafe fn tick_scripted_actor(
             if scientist_logic::script_at_mark(dist2_xz(PROP_POS[pi], goal), start_pending) {
                 true
             } else {
-                let speed = scientist_logic::script_move_speed(
-                    mode,
-                    MOVE_TICK,
-                    PROP_KIND[pi] == PROP_TYPE_BARNEY,
-                ) as i32;
+                // houndeye.mdl's run: 245.8 units over 18 frames at 30 fps
+                // (410 u/s, c1a4's tunnel runs), not the scientist's 280.
+                let speed = if mode == 2 && PROP_KIND[pi] == PROP_TYPE_HOUNDEYE {
+                    20
+                } else {
+                    scientist_logic::script_move_speed(
+                        mode,
+                        MOVE_TICK,
+                        PROP_KIND[pi] == PROP_TYPE_BARNEY,
+                    ) as i32
+                };
                 prop_move_towards_point(m, movers, pi, goal, speed);
                 PROP_STATE[pi] = PROP_STATE_MOVE;
                 false
@@ -10380,6 +10430,7 @@ unsafe fn logic_use_entity(
         }
         map::LOGIC_FUNC_DOOR => logic_activate_door_linked(m, nlogic, nents, li, rec, use_type),
         map::LOGIC_TANK => tank_use(li, use_type, now),
+        map::LOGIC_MORTAR_FIELD => mortar::field_use(m, nlogic, rec, now),
         map::LOGIC_FUNC_BUTTON => {
             logic_activate_button(m, nlogic, nents, li, rec, now, depth + 1, false)
         }
@@ -10796,6 +10847,8 @@ unsafe fn logic_use_entity(
         map::LOGIC_MONSTER_TRIGGER => {
             if rec.arg1 == map::AITRIGGER_COMMAND_TOUCH && use_type == map::USE_OFF {
                 monster_command_touch(m, nlogic, rec.target);
+            } else if rec.arg1 == map::AITRIGGER_FLY_PATH && OSPREY.li as usize == li {
+                OSPREY.next = now.wrapping_add(2); // COsprey::CommandUse
             }
         }
         map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE => {
@@ -12763,7 +12816,9 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     MONSTER_TRIGGER_END = 0;
     MONSTER_TOUCH = false;
     BOSS_WALKER = u16::MAX;
+    OSPREY.li = u16::MAX;
     garg::reset();
+    mortar::reset();
     li = 0;
     while li < nlogic {
         let rec = m.logic(li);
@@ -14725,7 +14780,7 @@ unsafe fn nav_route_simplified_entry(
     // If the next raw node is directly walkable, dropping the source node is
     // exactly RouteSimplify's first branch. Leave `next` cached so the runtime
     // heads there immediately.
-    if script_human_chord_clear(m, movers, start, next_pos) {
+    if script_human_chord_clear(m, movers, pi, start, next_pos) {
         return None;
     }
     let src_pos = m.nav_node(src as usize).pos;
@@ -14734,7 +14789,7 @@ unsafe fn nav_route_simplified_entry(
         (src_pos[1] + next_pos[1]) / 2,
         (src_pos[2] + next_pos[2]) / 2,
     ];
-    if script_human_chord_clear(m, movers, start, midpoint) {
+    if script_human_chord_clear(m, movers, pi, start, midpoint) {
         return Some(midpoint);
     }
     // No safe cut: restore the source-anchor convention used by the ordinary
@@ -14808,7 +14863,13 @@ unsafe fn nav_waypoint_towards(
             if dst as usize >= n || !nav_land_node(m, dst as usize) {
                 return nav_route_fail_open(pi, goal);
             }
-            if cached_next as u8 == dst {
+            // RouteSimplify: once the mark itself is a clear local move,
+            // the remaining graph hops are dropped (c1a4's houndeye cuts
+            // from node 8 to its mark instead of overrunning to node 9).
+            if cached_next as u8 == dst
+                || (scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi])
+                    && script_human_chord_clear(m, movers, pi, pos, goal))
+            {
                 // The graph route ends at its destination node, not at the
                 // scripted mark. Hand the final local chord back to the
                 // straight script mover; retaining route steering here made
@@ -15116,6 +15177,14 @@ unsafe fn init_monster_trigger(li: usize, rec: map::LogicEnt) {
     MONSTER_TRIGGER_END = li as u16 + 1;
     LOGIC_COUNTER[li] = rec.arg1 as i16;
     let nprops = core::ptr::read_volatile(core::ptr::addr_of!(PROP_COUNT)).min(CARRY_MAILBOX_FIRST);
+    if rec.arg1 == map::AITRIGGER_FLY_PATH {
+        let pi = rec.arg0 as usize;
+        if pi < nprops && PROP_ACTIVE[pi] != 0 && PROP_KIND[pi] == PROP_TYPE_OSPREY {
+            osprey_init(li, rec, pi);
+        }
+        LOGIC_STATE[li] = LOGIC_STATE_TOP; // no TriggerCondition to evaluate
+        return;
+    }
     if rec.arg1 == map::AITRIGGER_NODE_WALK {
         let mut pi = rec.arg0 as usize;
         if rec.arg0 == map::NODE_WALK_INCOMING {
@@ -15426,6 +15495,13 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
             0 => return,
             scaled => scaled,
         }
+    } else if PROP_KIND[pi] == PROP_TYPE_OSPREY {
+        // COsprey::TraceAttack: light hits only spark off the hull; its
+        // 400 health scales onto the u8 actor health.
+        if dmg <= 50 {
+            return;
+        }
+        (dmg as u32 * 255 / 400) as u8
     } else {
         dmg
     };
@@ -32440,7 +32516,11 @@ fn play(
                 if BOSS_WALKER != u16::MAX {
                     tick_boss_walker(&m, movers);
                 }
+                if OSPREY.li != u16::MAX {
+                    tick_osprey(&m, movers);
+                }
                 garg::tick_world(&m);
+                mortar::tick(&m, sim_frame_no as u16);
                 telemetry::stage_end(telemetry::stage::UPDATE_ACTOR);
                 apply_debug_toggles(
                     &mut health,
