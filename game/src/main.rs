@@ -9285,6 +9285,7 @@ unsafe fn script_find_actor(rec: map::LogicEnt) -> Option<usize> {
 /// 32x32x36 crouch hull (houndeyes, headcrabs), anything else in hull 1.
 /// Returns the clip head and the hull's half height above the feet.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn actor_nav_hull(m: &Map, pi: usize) -> (i32, i32) {
     if matches!(PROP_KIND[pi], PROP_TYPE_HEADCRAB | PROP_TYPE_HOUNDEYE | 59) && m.hull3_head >= 0 {
         (m.hull3_head, 18)
@@ -9294,10 +9295,13 @@ unsafe fn actor_nav_hull(m: &Map, pi: usize) -> (i32, i32) {
 }
 
 /// CheckLocalMove's WALK_MOVE steps climb anything up to sv_stepsize (18):
-/// a chord blocked at floor height also passes if the same chord raised by a
-/// step is clear (a floor lip in c1a4's hound tunnel). Returns the first
-/// impact fraction of the better of the two, or None when either is clear.
+/// a small-hull chord blocked at floor height also passes if the same chord
+/// raised by a step is clear (a floor lip in c1a4's hound tunnel). Returns
+/// the first impact fraction of the better of the two, or None when either
+/// is clear. Hull-1 actors keep the single trace (a second long human-hull
+/// trace per blocked chord adds to c1a0's lobby hitch as walkers start).
 #[inline(never)]
+#[optimize(size)]
 unsafe fn actor_chord_blocked(
     m: &Map,
     movers: &[phys::Mover],
@@ -9307,7 +9311,8 @@ unsafe fn actor_chord_blocked(
 ) -> Option<i32> {
     let (head, half) = actor_nav_hull(m, pi);
     let mut best = 0;
-    for rise in [half, half + 18] {
+    for step in 0..if half == 18 { 2 } else { 1 } {
+        let rise = half + 18 * step;
         let from = [start[0], start[1] + rise, start[2]];
         let to = [goal[0], goal[1] + rise, goal[2]];
         match phys::hull_blocked_fraction_movers(m, head, movers, from, to) {
@@ -9326,7 +9331,14 @@ unsafe fn script_human_chord_clear(
     start: [i32; 3],
     goal: [i32; 3],
 ) -> bool {
-    actor_chord_blocked(m, movers, pi, start, goal).is_none()
+    if actor_nav_hull(m, pi).1 == 18 {
+        return actor_chord_blocked(m, movers, pi, start, goal).is_none();
+    }
+    // Hull 1: the early-out boolean test; the full-fraction trace here put a
+    // 3-vblank hitch on c1a0's lobby walkers as their routes start.
+    let from = [start[0], start[1] + 36, start[2]];
+    let to = [goal[0], goal[1] + 36, goal[2]];
+    phys::human_hull_line_clear(m, from, to) && phys::actor_line_clear_movers(m, movers, from, to)
 }
 
 /// Earliest `SOLID_SLIDEBOX` impact for a standing human hull moving between

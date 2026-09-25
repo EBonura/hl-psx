@@ -861,6 +861,7 @@ pub fn line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]
 /// mover which already contains the start point is deliberately ignored so a
 /// spawned actor can escape an overlapping brush; every other mover continues
 /// to block entry. This matches the start-solid convention used by `trace_all`.
+#[inline(never)]
 pub fn actor_line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> bool {
     for mv in movers {
         if mv.head <= 0 || !mover_may_touch_segment(mv, p1, p2) {
@@ -1418,6 +1419,14 @@ fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i3
 /// switches to the startsolid hull-1 and wedges the player.
 pub fn standing_fits(map: &Map, pos: [i32; 3]) -> bool {
     !trace(map, map.hull1_head, pos, pos).startsolid
+}
+
+/// Whole-path human-hull probe used when a scripted monster chooses its route.
+/// A boolean trace stops at the first solid, so it is much cheaper than the
+/// fraction a triangulation needs. Callers pass hull-centre coordinates.
+#[inline]
+pub fn human_hull_line_clear(map: &Map, from: [i32; 3], to: [i32; 3]) -> bool {
+    trace_clear(map, map.hull1_head, from, to)
 }
 
 /// An impact this close to the chord end is the exact-endpoint contact rule in
