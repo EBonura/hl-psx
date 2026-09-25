@@ -367,6 +367,7 @@ fn upload_tex8(blob: &[u8], vx: u16) -> (TextureMaterial, u16, u16) {
     )
 }
 
+#[optimize(size)]
 fn upload_tex(blob: &[u8], vx: u16) -> (TextureMaterial, u16, u16) {
     if blob.len() < 36 {
         return (TextureMaterial::new(0, 0), 0, 0);
@@ -407,6 +408,7 @@ const LOGO_ANIM_HEADER: usize = 8 + 32;
 /// The custom blob is `u16 w | u16 h | u16 frames | u16 cycle_vblanks |
 /// u16 clut[16] | packed 4bpp frames...`. Invalid streamed data leaves the
 /// materials inert so the caller can draw the static wordmark instead.
+#[optimize(size)]
 fn update_logo_anim(
     blob: &[u8],
     phase: i32,

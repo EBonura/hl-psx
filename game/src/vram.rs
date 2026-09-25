@@ -210,6 +210,7 @@ pub unsafe fn upload_tex_chunk_raw(
 /// Upload a streamed texture chunk without resetting the atlas. Use this for
 /// model textures after the room's material chunk has established the frame's
 /// VRAM allocation state.
+#[optimize(size)]
 pub unsafe fn upload_tex_chunk_append_raw(
     data: &[u8],
     slots: *mut TexSlot,
@@ -301,6 +302,7 @@ pub fn upload_tex_blob(data: &[u8], n_texs: usize, slots: &mut [TexSlot]) -> usi
 
 /// Raw-pointer variant for filling `static mut` slot tables without creating
 /// references to those statics.
+#[optimize(size)]
 pub unsafe fn upload_tex_blob_raw(
     data: &[u8],
     n_texs: usize,
@@ -342,6 +344,7 @@ pub unsafe fn upload_tex_blob_raw(
     failed
 }
 
+#[optimize(size)]
 fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8]) -> Option<TexSlot> {
     unsafe {
         let pl = ATLAS.allocate(w, h)?;

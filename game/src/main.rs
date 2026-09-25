@@ -2079,6 +2079,7 @@ fn loading_amber(tick: u32) -> (u8, u8, u8) {
     )
 }
 
+#[optimize(size)]
 fn draw_loading_strip(fb: &mut FrameBuffer, tick: u32) {
     let front_y = fb.buffer_y(fb.drawing ^ 1);
     gpu::set_draw_area(0, front_y, fb.width - 1, front_y + fb.height - 1);
@@ -2803,6 +2804,7 @@ static mut PVS_TEX_ANIM_GEN: u8 = 0;
 static mut TEX_ANIM_TENTH: u16 = u16::MAX;
 /// Per-map animated-texture setup: identity display tables and the
 /// chain-member mask (walked once from the cooked chain section).
+#[optimize(size)]
 unsafe fn tex_anim_init(m: &Map) {
     #[cfg(feature = "emulator-telemetry")]
     telemetry::debug_log(if m.n_tex_anim == 0 {
@@ -4103,6 +4105,7 @@ unsafe fn viewmodel_bytes_at(byte_off: usize, len: usize) -> &'static [u8] {
 /// -> VM_SLOTS). Idempotent for the selected weapon; otherwise replaces the
 /// one live geometry stream. The merged chunk stages through the whole reserve,
 /// including invalid projected/sort scratch, before its texture tail uploads.
+#[optimize(size)]
 unsafe fn stream_one_viewmodel(
     wm: usize,
     stream_chunks: &mut u32,
@@ -4150,6 +4153,7 @@ unsafe fn stream_one_viewmodel(
 /// `word`, upload its texture tail, and publish the live entry/model/fill
 /// cursors. `clen` is the chunk's raw byte length; `word`/`slot` are the
 /// post-evict fill cursors the chunk landed at.
+#[optimize(size)]
 unsafe fn vm_publish_streamed(wm: usize, word: usize, slot: usize, clen: usize) -> bool {
     let buf_ptr = model_ptr();
     if clen < 8
@@ -5705,6 +5709,7 @@ unsafe fn music_suspend_for_stream() {
 /// state. Only send Pause while the cache says the drive is actively playing:
 /// issuing it after a timed-out data stream can consume/mask the stream's late
 /// CD IRQ and deadlock the menu's next asset read.
+#[optimize(size)]
 #[inline(never)]
 unsafe fn music_stop_for_menu() {
     // A dialogue voice whose SPU-RAM sample was replaced can loop forever;
@@ -6055,6 +6060,7 @@ const LONGJUMP_ROOM: usize = 81;
 /// A menu start into `room_id`. A chapter's first map arrives the way normal
 /// play does (see [`ChapterArrival`]), with the suit, long jump and weapons a
 /// playthrough has collected by then; any other map is a direct spawn.
+#[optimize(size)]
 fn menu_start(room_id: usize) -> RoomLaunch {
     let mut launch = menu_launch(room_id);
     // A loaded save restores its own pose, arsenal and globals.
@@ -8775,6 +8781,7 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
 
 /// Cold end-of-map snapshot kept out of `play` so telemetry instrumentation
 /// cannot push that already-large MIPS function beyond a PC16 branch span.
+#[optimize(size)]
 #[inline(never)]
 unsafe fn finalize_changelevel_player(
     m: &Map,
@@ -14324,6 +14331,7 @@ fn prop_floor_y_down(m: &Map, pi: usize, pos: [i32; 3], down: i32) -> Option<i32
 /// SV_Move with the full mins/maxs, not a centre ray. Sampling the centre,
 /// edges and corners preserves support under narrow/off-centre chairs and
 /// cabinet shelves without burdening the per-tick walking probe.
+#[optimize(size)]
 fn prop_spawn_floor_y_down(
     m: &Map,
     pi: usize,
@@ -18728,6 +18736,7 @@ impl Arsenal {
     /// weapon whose first-appearance map index is <= the selected room, each with
     /// a full clip and ~3 magazines of reserve so the loadout is immediately
     /// usable (and testable). A late chapter thus hands you every weapon.
+    #[optimize(size)]
     fn give_chapter_loadout(&mut self, room_id: usize) {
         self.give_loadout(|first_map| first_map <= room_id);
     }
@@ -18735,6 +18744,7 @@ impl Arsenal {
     /// The arsenal normal play has collected on arriving in `room_id`: every
     /// weapon first found in a map played before it. Pickups in the arrival
     /// map itself are still lying there.
+    #[optimize(size)]
     fn give_arrival_loadout(&mut self, room_id: usize) {
         let rank = menu::play_rank(room_id);
         self.give_loadout(|first_map| menu::play_rank(first_map) < rank);
