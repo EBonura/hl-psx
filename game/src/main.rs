@@ -7149,12 +7149,15 @@ unsafe fn pushable_touch_triggers(m: &Map, nlogic: usize, nents: usize, ei: usiz
 #[optimize(size)]
 unsafe fn prop_touch_triggers(m: &Map, pi: usize) {
     let p = PROP_POS[pi];
+    // The monster's own UTIL_SetSize hull: a flat 32x72 human box let
+    // c3a1a's headcrabs, 24 units tall, fire the sentry trigger above them.
+    let (r, h) = prop_hit_extent(PROP_KIND[pi]);
     touch_triggers_box(
         m,
         m.n_logic.min(MAX_LOGIC),
         m.n_ents.min(MAX_ENTS),
-        [p[0] - 16, p[1], p[2] - 16],
-        [p[0] + 16, p[1] + 72, p[2] + 16],
+        [p[0] - r, p[1], p[2] - r],
+        [p[0] + r, p[1] + 2 * h, p[2] + r],
         SF_TRIGGER_ALLOWMONSTERS,
         SIM_NOW,
     );
