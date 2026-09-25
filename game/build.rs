@@ -39,7 +39,13 @@ const MODEL_INDEX_VERTEX_LIMIT: usize = 1024;
 // viewmodel reserve it used to include; the viewmodel reserve itself is now
 // sized from the cooked viewmodels (see `viewmodel_pool_words`), so the NPC
 // budget of every map is unchanged by it.
-const NPC_MODEL_POOL_WORDS: usize = 35_712;
+//
+// HMA1 animation tracks shrank the resident actors: on c857f9b the audit's
+// model peak is 33,969 of 54,022 pool words (80,212 B slack) and the binding
+// limit is the weapon cache, whose arena tail keeps 28,428 B spare at c2a4e.
+// 4,096 words (16 KiB) go back to the executable, leaving about 12 KB of
+// weapon-cache margin; both audits re-check this on every cook.
+const NPC_MODEL_POOL_WORDS: usize = 31_616;
 // Viewmodel reserve when no cooked viewmodels exist yet (a fresh checkout).
 const FALLBACK_VM_POOL_WORDS: usize = 20_224;
 const FALLBACK_VM_GEOM_WORDS: usize = 15_800;
