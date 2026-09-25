@@ -3665,6 +3665,8 @@ const OCC_EYE_MOVE_THRESHOLD: u32 = 32;
 // Packed runtime flags: dormant stock, the short-lived maker-fall states, and
 // authored prisoner/passive behavior all share this byte.
 static mut PROP_DORMANT: [u8; MAX_PROPS] = [0; MAX_PROPS];
+// The monstermaker that made this actor (maker_tag), zero for any other.
+static mut PROP_MAKER: [u8; MAX_PROPS] = [0; MAX_PROPS];
 const PROP_RUNTIME_DORMANT_STOCK: u8 = 1;
 // A question marks its nearest scientist friend for IdleRespond. The due tick
 // reuses PROP_DEATH_START while that actor is alive; death overwrites it with
@@ -7173,12 +7175,15 @@ unsafe fn pushable_touch_triggers(m: &Map, nlogic: usize, nents: usize, ei: usiz
 #[optimize(size)]
 unsafe fn prop_touch_triggers(m: &Map, pi: usize) {
     let p = PROP_POS[pi];
+    // The monster's own UTIL_SetSize hull: a flat 32x72 human box let
+    // c3a1a's headcrabs, 24 units tall, fire the sentry trigger above them.
+    let (r, h) = prop_hit_extent(PROP_KIND[pi]);
     touch_triggers_box(
         m,
         m.n_logic.min(MAX_LOGIC),
         m.n_ents.min(MAX_ENTS),
-        [p[0] - 16, p[1], p[2] - 16],
-        [p[0] + 16, p[1] + 72, p[2] + 16],
+        [p[0] - r, p[1], p[2] - r],
+        [p[0] + r, p[1] + 2 * h, p[2] + r],
         SF_TRIGGER_ALLOWMONSTERS,
         SIM_NOW,
     );
@@ -7816,6 +7821,7 @@ fn logic_pre_tick_candidate(kind: u8) -> bool {
             | map::LOGIC_SCRIPTED
             | map::LOGIC_SENTENCE
             | map::LOGIC_SHOOTER
+            | map::LOGIC_MONSTERMAKER
     )
 }
 
@@ -10759,34 +10765,28 @@ unsafe fn logic_use_entity(
         }
         map::LOGIC_FUNC_TRAIN => logic_apply_brush_train_command(li, rec, use_type),
         map::LOGIC_MONSTERMAKER => {
-            // Wake one dormant spawn parked at this maker's origin.
-            let mut pi = 0usize;
-            let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-            while pi < n {
-                if PROP_DORMANT[pi] & PROP_RUNTIME_DORMANT_STOCK != 0 && PROP_ACTIVE[pi] == 0 {
-                    let d = [
-                        PROP_POS[pi][0] - rec.origin[0],
-                        PROP_POS[pi][1] - rec.origin[1],
-                        PROP_POS[pi][2] - rec.origin[2],
-                    ];
-                    let named_stock = rec.targetname != 0 && PROP_NAME[pi] == rec.targetname;
-                    if named_stock || d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 64 * 64 {
-                        prop_nav_cache_invalidate(pi);
-                        PROP_DORMANT[pi] = 0;
-                        PROP_ACTIVE[pi] = 1;
-                        // The maker targetname is only an allocation-free link
-                        // to its dormant stock. GoldSrc copies `netname`, not
-                        // the maker's own targetname, onto a spawned child.
-                        PROP_NAME[pi] = 0;
-                        prop_set_pos(m, &[], pi, PROP_POS[pi]);
-                        // CMonsterMaker::MakeMonster fires its target for
-                        // each child (c1a3's teleport flashes). Its "delay"
-                        // is the spawn interval, so fire now, not queued.
-                        logic_fire_targets(m, nlogic, nents, rec.target, map::USE_TOGGLE, now, depth + 1, li as u16);
-                        break;
+            if LOGIC_STATE[li] == LOGIC_STATE_REMOVED {
+                return; // out of monsters: SetUse(NULL)
+            }
+            if rec.spawnflags & SF_MONSTERMAKER_CYCLIC != 0 {
+                // CyclicUse: one monster per fire.
+                maker_make(m, nlogic, nents, li, rec, now, depth);
+            } else {
+                // ToggleUse: on starts MakerThink this frame, off stops it.
+                let on = LOGIC_STATE[li] == LOGIC_STATE_WAITING;
+                let want = match use_type {
+                    map::USE_ON => true,
+                    map::USE_OFF => false,
+                    _ => !on,
+                };
+                if want != on {
+                    if want {
+                        LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+                        LOGIC_NEXT[li] = now;
+                    } else {
+                        LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
                     }
                 }
-                pi += 1;
             }
         }
         map::LOGIC_TRIGGER_CHANGELEVEL => {
@@ -10804,6 +10804,125 @@ unsafe fn logic_use_entity(
         map::LOGIC_TRIGGER_CAMERA => camera_use(li, rec, use_type, now),
         _ => {}
     }
+}
+
+const SF_MONSTERMAKER_CYCLIC: u16 = 4;
+
+/// CMonsterMaker's m_flDelay between MakerThinks, kept inside the half range
+/// time_reached can see (10000 s makers in c4a1 mean "once").
+#[inline(always)]
+fn maker_delay(rec: map::LogicEnt) -> u16 {
+    rec.delay_ticks.min(0x7fff)
+}
+
+/// This maker's child tag: 1 + its ordinal among the map's makers.
+#[optimize(size)]
+unsafe fn maker_tag(li: usize) -> u8 {
+    let mut n = 1usize;
+    let mut k = 0usize;
+    while k < li {
+        if LOGIC_KIND[k] == map::LOGIC_MONSTERMAKER {
+            n += 1;
+        }
+        k += 1;
+    }
+    n.min(u8::MAX as usize) as u8
+}
+
+/// CMonsterMaker::MakeMonster: respect m_iMaxLiveChildren (living children,
+/// DeathNotice), wake one dormant stock copy, count it down and fire the
+/// target. The cooker stocks at most four copies, so a maker makes at most
+/// four monsters.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn maker_make(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    li: usize,
+    rec: map::LogicEnt,
+    now: u16,
+    depth: u8,
+) {
+    let tag = maker_tag(li);
+    let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    if rec.arg1 != 0 {
+        let mut live = 0u16;
+        let mut pi = 0usize;
+        while pi < n {
+            if PROP_MAKER[pi] == tag && PROP_ACTIVE[pi] != 0 && PROP_HEALTH[pi] != 0 {
+                live += 1;
+            }
+            pi += 1;
+        }
+        if live >= rec.arg1 {
+            return;
+        }
+    }
+    // The copy parked at this maker first; a copy stocked under the same
+    // name elsewhere (several makers sharing a targetname) after that.
+    let mut found = usize::MAX;
+    let mut pass = 0;
+    while pass < 2 && found == usize::MAX {
+        let mut pi = 0usize;
+        while pi < n {
+            if PROP_DORMANT[pi] & PROP_RUNTIME_DORMANT_STOCK != 0 && PROP_ACTIVE[pi] == 0 {
+                let d = [
+                    PROP_POS[pi][0] - rec.origin[0],
+                    PROP_POS[pi][1] - rec.origin[1],
+                    PROP_POS[pi][2] - rec.origin[2],
+                ];
+                let hit = if pass == 0 {
+                    d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 64 * 64
+                } else {
+                    rec.targetname != 0 && PROP_NAME[pi] == rec.targetname
+                };
+                if hit {
+                    found = pi;
+                    break;
+                }
+            }
+            pi += 1;
+        }
+        pass += 1;
+    }
+    if found == usize::MAX {
+        return;
+    }
+    let pi = found;
+    // "monster is blocking spawn": a living actor or the player inside the
+    // spawn box defers this one to a later think.
+    let at = PROP_POS[pi];
+    let near = |p: [i32; 3]| (p[0] - at[0]).abs() < 32 && (p[2] - at[2]).abs() < 32 && (p[1] - at[1]).abs() < 72;
+    if near(LOGIC_PLAYER_POS) {
+        return;
+    }
+    let mut qi = 0usize;
+    while qi < n {
+        if qi != pi && PROP_ACTIVE[qi] != 0 && PROP_HEALTH[qi] != 0 && near(PROP_POS[qi]) {
+            return;
+        }
+        qi += 1;
+    }
+    prop_nav_cache_invalidate(pi);
+    PROP_DORMANT[pi] = 0;
+    PROP_ACTIVE[pi] = 1;
+    PROP_MAKER[pi] = tag;
+    // The maker targetname is only an allocation-free link to its dormant
+    // stock. GoldSrc copies `netname`, not the maker's own targetname, onto
+    // a spawned child.
+    PROP_NAME[pi] = 0;
+    prop_set_pos(m, &[], pi, PROP_POS[pi]);
+    let left = LOGIC_COUNTER[li];
+    if left > 0 {
+        LOGIC_COUNTER[li] = left - 1;
+        if left == 1 {
+            LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+        }
+    }
+    // Each child fires the target (c1a3's teleport flashes). The maker's
+    // "delay" is its spawn interval, so fire now, not queued.
+    logic_fire_targets(m, nlogic, nents, rec.target, map::USE_TOGGLE, now, depth + 1, li as u16);
 }
 
 /// CTriggerCamera::Use: toggle; turning on takes the view (and, with
@@ -11613,6 +11732,13 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
                     LOGIC_STATE[li] = LOGIC_STATE_GOING_UP;
                 } else if LOGIC_KIND[li] == map::LOGIC_SHOOTER {
                     logic_shoot(m, li, now);
+                } else if LOGIC_KIND[li] == map::LOGIC_MONSTERMAKER {
+                    // MakerThink: next think one delay on, then MakeMonster
+                    // (which retires the maker when its count runs out).
+                    let rec = m.logic(li);
+                    LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+                    LOGIC_NEXT[li] = now.wrapping_add(maker_delay(rec));
+                    maker_make(m, nlogic, nents, li, rec, now, 0);
                 } else if LOGIC_KIND[li] == map::LOGIC_SCRIPTED {
                     logic_use_entity(
                         m,
@@ -12702,8 +12828,16 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
             // Breakables need LOGIC_BREAK_HP for live HP, so preserve their
             // targetname's raw u16 bits in this otherwise-unused counter slot.
             map::LOGIC_FUNC_BREAKABLE | map::LOGIC_FUNC_GUNTARGET => rec.targetname as i16,
+            // Monsters left to make; zero or less never runs out.
+            map::LOGIC_MONSTERMAKER => rec.arg0 as i16,
             _ => 0,
         };
+        // CMonsterMaker::Spawn: an unnamed maker starts making at once, its
+        // first monster one delay after spawn; a named one waits for a Use.
+        if rec.kind == map::LOGIC_MONSTERMAKER && rec.targetname == 0 {
+            LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+            LOGIC_NEXT[li] = now.wrapping_add(maker_delay(rec));
+        }
         match rec.kind {
             map::LOGIC_LIGHTSTYLE => {
                 let slot = rec.arg0 as u8;
@@ -17274,6 +17408,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         PROP_DEATH_START[i] = 0;
         PROP_OCC_VIS[i] = PROP_OCC_VISIBLE | PROP_OCC_DIRTY;
         PROP_DORMANT[i] = 0;
+        PROP_MAKER[i] = 0;
         PROP_LOGIC_LINK[i] = u16::MAX;
         PROP_SCRIPT_GOAL[i] = [0; 3];
         PROP_SCRIPT_YAW[i] = 0;
@@ -31906,16 +32041,21 @@ fn play(
                     player.on_ground = false;
                     yaw = dyaw & 0xFFF;
                 }
-                if PUSH_IMPULSE != [0, 0, 0] {
-                    // HL applies push as basevelocity: the stream SETS your
-                    // vertical speed while inside (triggers.cpp), it does not
-                    // integrate -- integration would scale with gravity and
-                    // overshoot wildly now that gravity is the faithful 2 u/t^2.
+                if PUSH_IMPULSE[1] != 0 && in_water {
+                    // PM_WaterMove adds the whole basevelocity to the move.
                     if PUSH_IMPULSE[1] > 0 {
                         player.set_vertical_velocity(player.vel[1].max(PUSH_IMPULSE[1]));
-                    } else if PUSH_IMPULSE[1] < 0 {
+                    } else {
                         player.set_vertical_velocity(player.vel[1].min(PUSH_IMPULSE[1]));
                     }
+                } else if PUSH_IMPULSE[1] != 0 && !player.on_ground {
+                    // Out of water CTriggerPush's basevelocity.z is integrated
+                    // by PM_AddCorrectGravity: velocity.z += speed x frametime
+                    // while inside. Grounded, PM zeroes velocity.z before the
+                    // move, so a standing player is not lifted. Setting the
+                    // full speed at once threw c4a3's 3500 u/s pad 1950 units
+                    // up where GoldSrc reaches 750.
+                    player.add_vertical_push(PUSH_IMPULSE[1]);
                 }
                 // The lateral push is next tick's basevelocity: the player
                 // move carries it, so it collides instead of nudging the
