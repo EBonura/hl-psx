@@ -1066,8 +1066,9 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
     // Damage per attack: bites/slashes for the melee types, the bullet,
     // hornet, zap, spit or blast each ranged type fires (FireBullets'
     // BULLET_MONSTER_9MM/MP5/12MM map to sk_9mm/9mmAR/12mm_bullet).
-    const DAMAGE: [(u8, &str, f64); 17] = [
+    const DAMAGE: [(u8, &str, f64); 18] = [
         (1, "sk_9mm_bullet", 1.0),
+        (16, "sk_gargantua_dmg_fire", 1.0),
         (2, "sk_headcrab_dmg_bite", 1.0),
         (5, "sk_zombie_dmg_one_slash", 1.0),
         (6, "sk_houndeye_dmg_blast", 1.0),
@@ -1116,12 +1117,20 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
          pub const SKILL_HEALTHCHARGER: [u16; 3] = {};\n\
          pub const SKILL_SUITCHARGER: [u16; 3] = {};\n\
          /// sk_bigmomma_health_factor in Q8, for info_bigmomma node health.\n\
-         pub const SKILL_BIGMOMMA_FACTOR_Q8: [u16; 3] = {};\n",
+         pub const SKILL_BIGMOMMA_FACTOR_Q8: [u16; 3] = {};\n\
+         /// The gargantua's full health (its u8 actor health stands for it),\n\
+         /// swipe and stomp damage.\n\
+         pub const SKILL_GARG_HEALTH: [u16; 3] = {};\n\
+         pub const SKILL_GARG_SLASH: [u16; 3] = {};\n\
+         pub const SKILL_GARG_STOMP: [u16; 3] = {};\n",
         row("sk_healthkit", 1.0),
         row("sk_battery", 1.0),
         row("sk_healthcharger", 1.0),
         row("sk_suitcharger", 1.0),
         row("sk_bigmomma_health_factor", 256.0),
+        row("sk_gargantua_health", 1.0),
+        row("sk_gargantua_dmg_slash", 1.0),
+        row("sk_gargantua_dmg_stomp", 1.0),
     );
     fs::write(out_dir.join("skill_table.rs"), generated).expect("write generated skill tables");
 }
