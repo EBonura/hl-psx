@@ -32707,6 +32707,7 @@ fn play(
             }
             unsafe {
                 sfx::set_ear(player.pos);
+                sfx::update_map_loops();
                 if PAIN_SFX_COOLDOWN > 0 {
                     PAIN_SFX_COOLDOWN -= 1;
                 }

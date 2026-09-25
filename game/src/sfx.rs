@@ -183,6 +183,13 @@ pub unsafe fn stop_map_loop(owner: u16) {
     STATE.stop_map_loop(owner)
 }
 
+/// Re-level the map's authored loops (ambient_generic) against the listener,
+/// keying those that came into range: once per simulation tick, after set_ear.
+#[inline]
+pub unsafe fn update_map_loops() {
+    STATE.update_map_loops()
+}
+
 /// Set the level of the voice `owner`'s map loop holds, in place (GoldSrc's
 /// SND_CHANGE_VOL). False when it holds none.
 #[inline]
