@@ -7906,6 +7906,15 @@ fn collect_logic_entities_with_lightstyles(
             _ => USE_TOGGLE,
         };
         let arg0 = match kind {
+            // The Blocked callback's damage: CBaseDoor's dmg (no default),
+            // CFuncPlat's fixed 1.
+            LOGIC_FUNC_DOOR => {
+                if matches!(cls, "func_plat" | "func_platrot") {
+                    1
+                } else {
+                    parse_f32_key(block, "dmg", 0.0).clamp(0.0, u16::MAX as f32) as u16
+                }
+            }
             // CMonsterMaker m_cNumMonsters: MakeMonster stops the maker when
             // it counts down to zero, so zero or absent (and -1) never stop.
             LOGIC_MONSTERMAKER => {
@@ -8069,6 +8078,8 @@ fn collect_logic_entities_with_lightstyles(
             _ => names.id(ent_value(block, "changetarget")),
         };
         let arg1 = match kind {
+            // CFuncTrain's Blocked damage (Spawn makes 0 into 2).
+            LOGIC_FUNC_TRAIN => parse_f32_key(block, "dmg", 0.0).clamp(0.0, u16::MAX as f32) as u16,
             // m_iMaxLiveChildren (0 = no limit).
             LOGIC_MONSTERMAKER => parse_f32_key(block, "m_imaxlivechildren", 0.0)
                 .clamp(0.0, u16::MAX as f32) as u16,
