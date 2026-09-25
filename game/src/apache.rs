@@ -82,6 +82,7 @@ pub(crate) unsafe fn reset() {
 
 /// Sine and cosine (q12) of an angle in 1/16 degree.
 #[inline(never)]
+#[optimize(size)]
 fn sc(a: i32) -> (i32, i32) {
     let t = ((a * 32 / 45) & 0xfff) as u16; // 1/16 degree -> 4096ths
     (sincos::sin_q12(t), sincos::sin_q12(t.wrapping_add(1024) & 0xfff))
@@ -90,6 +91,7 @@ fn sc(a: i32) -> (i32, i32) {
 /// UTIL_MakeAimVectors: AngleVectors with the pitch negated. q12
 /// [forward, right, up] in GoldSrc axes.
 #[inline(never)]
+#[optimize(size)]
 fn aim_vectors(a: [i32; 3]) -> [[i32; 3]; 3] {
     let (sp, cp) = sc(-a[0]);
     let (sy, cy) = sc(a[1]);
@@ -104,12 +106,14 @@ fn aim_vectors(a: [i32; 3]) -> [[i32; 3]; 3] {
 
 /// `a . b >> 12`; one side is a q12 unit vector, the other under 2^17.
 #[inline(never)]
+#[optimize(size)]
 fn dot(a: [i32; 3], b: [i32; 3]) -> i32 {
     (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) >> 12
 }
 
 /// `a + b * s >> 12`.
 #[inline(never)]
+#[optimize(size)]
 fn mad(a: [i32; 3], b: [i32; 3], s: i32) -> [i32; 3] {
     let mut r = a;
     for k in 0..3 {
@@ -120,12 +124,14 @@ fn mad(a: [i32; 3], b: [i32; 3], s: i32) -> [i32; 3] {
 
 /// `a - b`.
 #[inline(never)]
+#[optimize(size)]
 fn sub(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
 /// Unit (q12) direction of a vector (components under 2^14).
 #[inline(never)]
+#[optimize(size)]
 fn norm(v: [i32; 3]) -> [i32; 3] {
     let l = isqrt_i32(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).max(1);
     [v[0] * 4096 / l, v[1] * 4096 / l, v[2] * 4096 / l]
@@ -133,12 +139,21 @@ fn norm(v: [i32; 3]) -> [i32; 3] {
 
 /// A x16 vector in whole units.
 #[inline(never)]
+#[optimize(size)]
 fn whole(v: [i32; 3]) -> [i32; 3] {
     [v[0] / D, v[1] / D, v[2] / D]
 }
 
+/// The apache's runtime-axes position in whole units.
+#[inline(never)]
+#[optimize(size)]
+fn at(a: &Apache) -> [i32; 3] {
+    hl(whole(a.pos))
+}
+
 /// Runtime axes <-> GoldSrc axes.
 #[inline(always)]
+#[optimize(size)]
 fn hl(p: [i32; 3]) -> [i32; 3] {
     [p[0], p[2], p[1]]
 }
@@ -189,6 +204,7 @@ pub(crate) unsafe fn init(li: usize, rec: map::LogicEnt, pi: usize) {
 }
 
 /// CApache::StartupUse.
+#[optimize(size)]
 pub(crate) unsafe fn startup(li: usize) {
     if AP.li as usize == li && AP.phase == 0 {
         AP.phase = 1;
@@ -197,6 +213,7 @@ pub(crate) unsafe fn startup(li: usize) {
 
 /// CApache::TakeDamage / TraceAttack: blast doubles; a hit of 50 or less
 /// ricochets; the skill.cfg health scales onto the u8 actor health.
+#[optimize(size)]
 pub(crate) fn scale_damage(dmg: u8, blast: bool) -> u8 {
     let d = dmg as u32 * if blast { 2 } else { 1 };
     if d <= 50 {
@@ -246,12 +263,12 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
         }
     }
     // Move, and FlyTouch / CrashTouch against the world.
-    let from = hl(whole(a.pos));
+    let from = at(a);
     for k in 0..3 {
         a.pos[k] += a.vel[k] / 20;
         a.ang[k] += a.avel[k] / 20;
     }
-    let to = hl(whole(a.pos));
+    let to = at(a);
     if let Some(h) = phys::trace_line(m, movers, from, to) {
         if a.phase == 2 {
             a.next_rocket = now;
@@ -262,9 +279,9 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
             a.vel = mad(a.vel, n, s * D);
         }
         let p = hl(h.pos);
-        a.pos = [p[0] * D, p[1] * D, p[2] * D];
+        a.pos = p.map(|x| x * D);
     }
-    prop_set_pos_exact(m, pi, hl(whole(a.pos)));
+    prop_set_pos_exact(m, pi, at(a));
     PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], ((1024 - a.ang[1] * 4096 / (360 * D)) & 0xfff) as u16);
     let q8 = |d: i32| ((-d * 256 / (360 * D)) & 0xff) as u16;
     APACHE_TILT = (a.pi, q8(a.ang[0]) | (q8(a.ang[2]) << 8));
@@ -303,12 +320,13 @@ unsafe fn dying(m: &Map, pi: usize, now: u16) {
 unsafe fn hunt(m: &Map, movers: &[phys::Mover], now: u16) {
     let a = ap();
     let origin = whole(a.pos);
+    let here = at(a);
     let p = LOGIC_PLAYER_POS;
     let enemy = hl(p);
     // Look(4092) + BestVisibleEnemy + FVisible: the player in sight.
     let seen = LOGIC_PLAYER_HEALTH > 0
-        && dist2_3(hl(origin), p) < 4092 * 4092
-        && phys::trace_line(m, movers, hl(origin), [p[0], p[1] + VIEW_HEIGHT, p[2]]).is_none();
+        && dist2_3(here, p) < 4092 * 4092
+        && phys::trace_line(m, movers, here, [p[0], p[1] + VIEW_HEIGHT, p[2]]).is_none();
     if a.goal_speed < 800 {
         a.goal_speed += 5;
     }
@@ -365,7 +383,7 @@ unsafe fn hunt(m: &Map, movers: &[phys::Mover], now: u16) {
         && dot(to_target, est) > 3953
     {
         let far = mad(origin, est, 4096);
-        let end = phys::trace_line(m, movers, hl(origin), hl(far)).map_or(hl(far), |h| h.pos);
+        let end = phys::trace_line(m, movers, here, hl(far)).map_or(hl(far), |h| h.pos);
         dist2_3(end, hl(a.target)) < 512 * 512
     } else {
         false
@@ -467,10 +485,7 @@ unsafe fn fire_gun(m: &Map, movers: &[phys::Mover], a: &mut Apache) -> bool {
     let gun = mad(mad(whole(a.pos), v[0], 97), v[2], -145);
     let t = norm(sub(a.target, gun));
     let local = [dot(v[0], t), -dot(v[1], t), dot(v[2], t)];
-    let ang = |y: i32, x: i32| {
-        let q = atan2_q12(y, x) as i32;
-        (if q > 2048 { q - 4096 } else { q }) * 360 * D / 4096
-    };
+    let ang = |y: i32, x: i32| crate::tank::atan_s(y, x) * 360 * D / 4096;
     let want_yaw = ang(local[1], local[0]);
     let want_pitch = -ang(local[2], isqrt_i32(local[0] * local[0] + local[1] * local[1]));
     let step = |cur: i32, want: i32| cur + (want - cur).clamp(-12 * D, 12 * D);
