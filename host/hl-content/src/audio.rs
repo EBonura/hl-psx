@@ -1916,10 +1916,11 @@ fn playback_quality(source: &Source, rate: u32, legacy: bool) -> f64 {
     )
 }
 
-/// Lowest step of `p`'s ladder whose measured playback quality is at least
+/// Lowest rate on `p`'s ladder whose measured playback quality is at least
 /// the previous pipeline's at `previous` Hz (the previous rate itself when
-/// none is).
-fn no_regression_step(p: &Planned<'_>, previous: u32) -> usize {
+/// none is). A rate, not a step: one sound can sit on different ladders in
+/// different maps (a loop in one, a one-shot in another).
+fn no_regression_rate(p: &Planned<'_>, previous: u32) -> u32 {
     let target = playback_quality(&p.source, previous, true);
     let mut floor = p
         .ladder
@@ -1931,7 +1932,7 @@ fn no_regression_step(p: &Planned<'_>, previous: u32) -> usize {
     {
         floor += 1;
     }
-    floor
+    p.ladder[floor]
 }
 
 pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
@@ -1955,7 +1956,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
     // loop); many maps share both.
     let mut loss_cache: HashMap<String, Vec<(u32, f64)>> = HashMap::new();
     let mut blob_cache: HashMap<(String, u32, bool), Vec<u8>> = HashMap::new();
-    let mut floor_cache: HashMap<(String, u32), usize> = HashMap::new();
+    let mut floor_cache: HashMap<(String, u32), u32> = HashMap::new();
     for (map_index, map_name) in map_list.split_whitespace().enumerate() {
         let bsp = valve.join("maps").join(format!("{map_name}.bsp"));
         if !bsp.exists() {
@@ -2176,10 +2177,15 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                     if let (None, Some(prev)) = (floors[i], previous[i]) {
                         if planned[i].ladder[current[i]] < prev {
                             let key = (planned[i].entry.wavs.join("|"), prev);
-                            let step = *floor_cache
+                            let rate = *floor_cache
                                 .entry(key)
-                                .or_insert_with(|| no_regression_step(&planned[i], prev));
-                            floors[i] = Some(step.min(planned[i].ladder.len() - 1));
+                                .or_insert_with(|| no_regression_rate(&planned[i], prev));
+                            let step = planned[i]
+                                .ladder
+                                .iter()
+                                .position(|&r| r <= rate)
+                                .unwrap_or(planned[i].ladder.len() - 1);
+                            floors[i] = Some(step);
                             added = true;
                         }
                     }
