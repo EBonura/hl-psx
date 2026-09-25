@@ -1834,6 +1834,9 @@ const PGO_RAM_FLOOR: u32 = 16 * 1024;
 /// 500 and 28,028 B at 250.
 const PGO_HOT_CALLSITE_LADDER: [u32; 3] = [1000, 500, 250];
 
+/// Stack reserve for the PGO collect link (see `compile_game`).
+const PGO_COLLECT_STACK_RESERVE: &str = "0x7000";
+
 fn compile_game(
     repository: &Path,
     psoxide: &Path,
@@ -1894,6 +1897,16 @@ fn compile_game(
     }
     if matches!(profile, GuestProfile::CollectElf) {
         command.env("HLPSX_LINK_ELF", "1");
+    }
+    // Line tables and discriminators change inlining: the collect build
+    // links about 4 KB larger than the build its profile optimises (final-8
+    // overflowed RAM by 660 B). It is only run on the profiling tapes, so it
+    // links with a smaller stack reserve; the code is the same. The deepest
+    // stack write on the chapter-two and tram tapes (final-8 plain, first
+    // non-zero word above .bss in a final RAM dump) was 17,760 B below the
+    // initial SP, well inside 28 KB.
+    if matches!(profile, GuestProfile::Collect | GuestProfile::CollectElf) {
+        command.env("HLPSX_STACK_RESERVE", PGO_COLLECT_STACK_RESERVE);
     }
     // A link-only argument: the map does not change the emitted bytes. Each
     // build configuration links its own map: a build cargo finds fresh does
