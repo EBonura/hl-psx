@@ -2,6 +2,12 @@
 pub const CHUNK_ID: u32 = 3000;
 pub const CHUNK_ID_LIGHT: u32 = 3050;
 pub const CHUNK_ID_TRAINING_WEAPONS: u32 = 3051;
+/// Per-map core profile table: "HCPT", u16 count, u16 pad, then one u16
+/// chunk id per map index (the cooker's census of which core sounds a map's
+/// entities can emit; 0 = no entry). Profiles live at 3053..=3099.
+pub const CORE_TABLE_CHUNK: u32 = 3052;
+/// Maps the core profile table can describe.
+pub const CORE_TABLE_MAPS: usize = 128;
 
 // ---- sample ids (host/hl-content `SOUNDS` order) ----
 pub const GLOCK: u8 = 0;

@@ -1,12 +1,12 @@
 use crate::generators::bsp_entities;
 use crate::Result;
-use serde_json::json;
-use sha2::{Digest, Sha256};
+use psx_audio_cook::resample::Sinc;
+use psx_audio_cook::{CookOptions, Looping, Wav};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::errors::Error as SymphoniaError;
@@ -14,8 +14,6 @@ use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
-use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipWriter};
 
 const SECTOR: usize = 2352;
 const HL_CD_PLAYLIST: [&str; 27] = [
@@ -168,27 +166,18 @@ pub fn build_music(valve: &Path, output: &Path) -> Result<()> {
     Ok(())
 }
 
+/// A sound to cook: mono samples at the authored rate, plus whether the WAV
+/// itself declares a loop (GoldSrc's rule for hardware repeats).
 #[derive(Clone)]
-struct Pcm {
-    rate: u32,
-    samples: Vec<i16>,
+struct Source {
+    wav: Wav,
     has_loop_metadata: bool,
 }
 
-fn u16le(data: &[u8], offset: usize) -> Result<u16> {
-    Ok(u16::from_le_bytes(
-        data.get(offset..offset + 2)
-            .ok_or("short u16")?
-            .try_into()?,
-    ))
-}
-
-fn u32le(data: &[u8], offset: usize) -> Result<u32> {
-    Ok(u32::from_le_bytes(
-        data.get(offset..offset + 4)
-            .ok_or("short u32")?
-            .try_into()?,
-    ))
+impl Source {
+    fn seconds(&self) -> f64 {
+        self.wav.samples.len() as f64 / self.wav.rate.max(1) as f64
+    }
 }
 
 /// GoldSrc leaves physical sample wrapping to the WAV. An ambient entity can
@@ -214,164 +203,85 @@ fn wav_chunk_declares_loop(id: &[u8], payload: &[u8]) -> bool {
     false
 }
 
-fn read_wav(path: &Path) -> Result<Pcm> {
-    let data = fs::read(path)?;
-    if data.len() < 12 || &data[..4] != b"RIFF" || &data[8..12] != b"WAVE" {
-        return Err(format!("{}: unsupported WAV", path.display()).into());
-    }
+fn wav_declares_loop(data: &[u8]) -> bool {
     let mut cursor = 12usize;
-    let mut format = None;
-    let mut pcm_data = None;
-    let mut has_loop_metadata = false;
+    let mut found = false;
     while cursor + 8 <= data.len() {
         let id = &data[cursor..cursor + 4];
-        let len = u32le(&data, cursor + 4)? as usize;
+        let len = u32::from_le_bytes([
+            data[cursor + 4],
+            data[cursor + 5],
+            data[cursor + 6],
+            data[cursor + 7],
+        ]) as usize;
         cursor += 8;
         let end = cursor.saturating_add(len).min(data.len());
-        if id == b"fmt " && end >= cursor + 16 {
-            format = Some((
-                u16le(&data, cursor)?,
-                u16le(&data, cursor + 2)? as usize,
-                u32le(&data, cursor + 4)?,
-                u16le(&data, cursor + 14)?,
-            ));
-        } else if id == b"data" {
-            pcm_data = Some(&data[cursor..end]);
-        }
-        has_loop_metadata |= wav_chunk_declares_loop(id, &data[cursor..end]);
+        found |= wav_chunk_declares_loop(id, &data[cursor..end]);
         cursor = end + (len & 1);
     }
-    let (encoding, channels, rate, bits) = format.ok_or("WAV fmt chunk missing")?;
-    let raw = pcm_data.ok_or("WAV data chunk missing")?;
-    if encoding != 1 || !(channels == 1 || channels == 2) || !(bits == 8 || bits == 16) {
-        return Err(format!(
-            "{}: only PCM 8/16-bit mono/stereo WAV is supported",
-            path.display()
-        )
-        .into());
-    }
-    let mut interleaved = Vec::new();
-    if bits == 8 {
-        interleaved.extend(raw.iter().map(|&v| ((v as i16) - 128) << 8));
-    } else {
-        for pair in raw.chunks_exact(2) {
-            interleaved.push(i16::from_le_bytes([pair[0], pair[1]]));
-        }
-    }
-    let mut mono = Vec::with_capacity(interleaved.len() / channels);
-    for frame in interleaved.chunks_exact(channels) {
-        mono.push(if channels == 2 {
-            ((frame[0] as i32 + frame[1] as i32) / 2) as i16
-        } else {
-            frame[0]
-        });
-    }
-    Ok(Pcm {
-        rate,
-        samples: mono,
-        has_loop_metadata,
+    found
+}
+
+fn read_source(path: &Path) -> Result<Source> {
+    let data = fs::read(path)?;
+    let wav = psx_audio_cook::wav::read(&data).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(Source {
+        has_loop_metadata: wav_declares_loop(&data),
+        wav,
     })
 }
 
-fn resample(input: &Pcm, rate: u32) -> Pcm {
-    if input.rate == rate {
-        return input.clone();
+fn looping_mode(looping: bool) -> Looping {
+    if looping {
+        Looping::Whole
+    } else {
+        Looping::None
     }
-    let count =
-        ((input.samples.len() as u64 * rate as u64) / input.rate.max(1) as u64).max(1) as usize;
-    let mut samples = Vec::with_capacity(count);
-    for index in 0..count {
-        let source = ((index as u64 * input.rate as u64) / rate as u64)
-            .min(input.samples.len().saturating_sub(1) as u64) as usize;
-        samples.push(input.samples[source]);
-    }
-    Pcm {
+}
+
+/// Cook one sound with the shared SDK encoder (psx-audio-cook): windowed-sinc
+/// resampling, pre-emphasis for the SPU's Gaussian interpolation, trellis
+/// ADPCM, peak 0.9 as before. A loop repeats the whole sample, rounded to
+/// whole ADPCM blocks so no padding plays at the seam.
+fn cook_psau(source: &Source, rate: u32, looping: bool) -> Vec<u8> {
+    let mut options = CookOptions::one_shot(rate);
+    options.looping = looping_mode(looping);
+    let cooked = psx_audio_cook::cook(&source.wav, &options);
+    psx_audio_cook::psau(rate, cooked.pcm.len(), &cooked.adpcm)
+}
+
+/// Exact size of [`cook_psau`]'s output: 32 header bytes plus the blocks.
+fn psau_size(source: &Source, rate: u32, looping: bool) -> usize {
+    32 + psx_audio_cook::adpcm_bytes(psx_audio_cook::cooked_len(
+        &source.wav,
         rate,
-        samples,
-        has_loop_metadata: input.has_loop_metadata,
-    }
+        looping_mode(looping),
+    ))
 }
 
-fn write_wav(path: &Path, pcm: &Pcm) -> Result<()> {
-    let data_len = pcm.samples.len() * 2;
-    let mut output = Vec::with_capacity(44 + data_len);
-    output.extend_from_slice(b"RIFF");
-    output.extend_from_slice(&(36u32 + data_len as u32).to_le_bytes());
-    output.extend_from_slice(b"WAVEfmt ");
-    output.extend_from_slice(&16u32.to_le_bytes());
-    output.extend_from_slice(&1u16.to_le_bytes());
-    output.extend_from_slice(&1u16.to_le_bytes());
-    output.extend_from_slice(&pcm.rate.to_le_bytes());
-    output.extend_from_slice(&(pcm.rate * 2).to_le_bytes());
-    output.extend_from_slice(&2u16.to_le_bytes());
-    output.extend_from_slice(&16u16.to_le_bytes());
-    output.extend_from_slice(b"data");
-    output.extend_from_slice(&(data_len as u32).to_le_bytes());
-    for sample in &pcm.samples {
-        output.extend_from_slice(&sample.to_le_bytes());
-    }
-    fs::write(path, output)?;
-    Ok(())
-}
-
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(prefix: &str) -> Result<Self> {
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        let path = std::env::temp_dir().join(format!("{prefix}-{}-{nonce}", std::process::id()));
-        fs::create_dir_all(&path)?;
-        Ok(Self(path))
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
-fn zip_wavs(path: &Path, directory: &Path, ids: &[String]) -> Result<()> {
-    let file = File::create(path)?;
-    let mut zip = ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-    for id in ids {
-        zip.start_file(format!("{id}.wav"), options)?;
-        zip.write_all(&fs::read(directory.join(format!("{id}.wav")))?)?;
-    }
-    zip.finish()?;
-    Ok(())
-}
-
-fn cook_psau(directory: &Path, ids: &[String], rate: u32, label: &str) -> Result<Vec<Vec<u8>>> {
-    let zip_path = directory.join(format!("{label}.zip"));
-    zip_wavs(&zip_path, directory, ids)?;
-    let archive = fs::read(&zip_path)?;
-    let hash = format!("{:x}", Sha256::digest(&archive));
-    let manifest = json!({
-        "source": {
-            "name": "player Half-Life install",
-            "url": "",
-            "license": "user-supplied",
-            "archive_sha256": hash
-        },
-        "target_sample_rate_hz": rate,
-        "normalize_peak": 0.9,
-        "sounds": ids.iter().map(|id| json!({"id": id, "path": format!("{id}.wav")})).collect::<Vec<_>>()
+/// Cook `jobs` (source, rate, looping) on every core; output order matches.
+fn cook_parallel(jobs: &[(&Source, u32, bool)]) -> Vec<Vec<u8>> {
+    let next = AtomicUsize::new(0);
+    let results: Vec<Mutex<Vec<u8>>> = jobs.iter().map(|_| Mutex::new(Vec::new())).collect();
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(jobs.len().max(1));
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(&(source, rate, looping)) = jobs.get(index) else {
+                    break;
+                };
+                let blob = cook_psau(source, rate, looping);
+                *results[index].lock().expect("cook worker") = blob;
+            });
+        }
     });
-    let manifest_path = directory.join(format!("{label}.json"));
-    fs::write(&manifest_path, serde_json::to_vec(&manifest)?)?;
-    let out = directory.join("out");
-    psxed_audio::import_pack(
-        &manifest_path,
-        &zip_path,
-        &out,
-        &psxed_audio::PackOptions {
-            write_preview_wav: false,
-        },
-    )?;
-    ids.iter()
-        .map(|id| fs::read(out.join("psau").join(format!("{id}.psau"))).map_err(Into::into))
+    results
+        .into_iter()
+        .map(|slot| slot.into_inner().expect("cook worker"))
         .collect()
 }
 
@@ -389,36 +299,6 @@ fn hsfx(blobs: &[Vec<u8>]) -> Vec<u8> {
         output.extend_from_slice(blob);
     }
     output
-}
-
-/// Convert the cooker's one-shot PSAU block flags into a hardware loop while
-/// retaining its version-1 wrapper. The runtime parser still validates the
-/// ordinary PSAU layout; only the raw SPU ADPCM control bytes differ.
-fn mark_psau_loop(blob: &mut [u8]) -> Result<()> {
-    const ADPCM_START: usize = 32; // 12-byte AssetHeader + 20-byte AudioHeader
-    if blob.len() < ADPCM_START + 16 || &blob[..4] != b"PSAU" {
-        return Err("charger PSAU is truncated or invalid".into());
-    }
-    let first_flag = ADPCM_START + 1;
-    let last_flag = blob.len() - 15;
-    if first_flag == last_flag {
-        blob[first_flag] = (blob[first_flag] & !0x07) | 0x07;
-    } else {
-        blob[first_flag] = (blob[first_flag] & !0x07) | 0x04;
-        blob[last_flag] = (blob[last_flag] & !0x07) | 0x03;
-    }
-    Ok(())
-}
-
-fn apply_map_audio_loop_flags(
-    blob: &mut [u8],
-    class: MapAudioClass,
-    source_has_loop_metadata: bool,
-) -> Result<()> {
-    if class == MapAudioClass::Loop && source_has_loop_metadata {
-        mark_psau_loop(blob)?;
-    }
-    Ok(())
 }
 
 const SOUNDS: [(&str, &str); 70] = [
@@ -515,84 +395,76 @@ const SOUNDS: [(&str, &str); 70] = [
     ("cbar_hitbod", "weapons/cbar_hitbod1.wav"),
 ];
 
-pub fn build_sfx(sound: &Path, output: &Path) -> Result<()> {
-    let scratch = Scratch::new("hlsfx")?;
-    let mut rates = HashMap::new();
-    for (id, relative) in SOUNDS {
-        let source = read_wav(&sound.join(relative))?;
+/// Resident rate per core id. These are the rates the core has always used;
+/// the encoder change keeps every core size the same and only changes how
+/// the bytes are spent.
+fn resident_rate(id: &str, source_rate: u32) -> u32 {
+    if matches!(
+        id,
+        "wood_impact" | "wood_break" | "cbar_hitbod" | "cbar_hit"
+    ) {
+        // Short noisy transients (wood splinter, both crowbar impacts)
+        // remain clear at 4 kHz. Keeping them there is the smallest
+        // quality-neutral saving that leaves c3a2d's full mandatory
+        // dialogue bank inside physical SPU RAM -- adding cbar_hitbod at
+        // any higher tier pushes that map over its budget. Buttons and the
+        // two continuous chargers retain 5 kHz.
+        4_000
+    } else if id.starts_with("charger_") || id == "button" {
         // The two continuous charger beds are long enough that the ordinary
         // SFX rate would crowd the largest per-map dialogue bank out of SPU
-        // RAM. Their mechanical/noise character survives 5 kHz cleanly and
-        // leaves the full campaign dialogue roster resident.
-        let rate = if matches!(
-            id,
-            "wood_impact" | "wood_break" | "cbar_hitbod" | "cbar_hit"
-        ) {
-            // Short noisy transients (wood splinter, both crowbar impacts)
-            // remain clear at 4 kHz. Keeping them there is the smallest
-            // quality-neutral saving that leaves c3a2d's full mandatory
-            // dialogue bank inside physical SPU RAM -- adding cbar_hitbod at
-            // any higher tier pushes that map over its budget. Buttons and the
-            // two continuous chargers retain 5 kHz.
-            4_000
-        } else if id.starts_with("charger_") || id == "button" {
-            5_000
-        } else if matches!(
-            id,
-            "ammo_pickup"
-                | "healthkit"
-                | "health_deny"
-                | "suit_deny"
-                | "reload_357"
-                | "reload_xbow"
-                | "mp5_clip_release"
-                | "mp5_clip_insert"
-                | "reload_glock"
-                | "reload_shotgun_alt"
-                | "shotgun_pump"
-                | "barney_attack"
-                | "menu_move"
-                | "bullet_hit1"
-                | "bullet_hit2"
-                | "dry"
-                | "flashlight"
-        ) {
-            // These short, noisy/mechanical cues tolerate the same compact
-            // rate as the charger beds. This saves enough resident SPU RAM for
-            // c3a2d's unusually large dialogue roster without dropping a line.
-            5_000
-        } else if source.rate >= 22_050 {
-            11_025
-        } else {
-            8_000
-        };
-        write_wav(
-            &scratch.0.join(format!("{id}.wav")),
-            &resample(&source, rate),
-        )?;
-        rates.insert(id, rate);
+        // RAM. Their mechanical/noise character survives 5 kHz cleanly.
+        5_000
+    } else if matches!(
+        id,
+        "ammo_pickup"
+            | "healthkit"
+            | "health_deny"
+            | "suit_deny"
+            | "reload_357"
+            | "reload_xbow"
+            | "mp5_clip_release"
+            | "mp5_clip_insert"
+            | "reload_glock"
+            | "reload_shotgun_alt"
+            | "shotgun_pump"
+            | "barney_attack"
+            | "menu_move"
+            | "bullet_hit1"
+            | "bullet_hit2"
+            | "dry"
+            | "flashlight"
+    ) {
+        // These short, noisy/mechanical cues tolerate the same compact
+        // rate as the charger beds. This saves enough resident SPU RAM for
+        // c3a2d's unusually large dialogue roster without dropping a line.
+        5_000
+    } else if source_rate >= 22_050 {
+        11_025
+    } else {
+        8_000
     }
-    let mut encoded = HashMap::<String, Vec<u8>>::new();
-    for rate in [4_000, 5_000, 8_000, 11_025] {
-        let ids: Vec<String> = SOUNDS
-            .iter()
-            .filter(|(id, _)| rates.get(id) == Some(&rate))
-            .map(|(id, _)| (*id).to_string())
-            .collect();
-        for (id, mut blob) in
-            ids.iter()
-                .zip(cook_psau(&scratch.0, &ids, rate, &format!("sfx{rate}"))?)
-        {
-            if id.starts_with("charger_") {
-                mark_psau_loop(&mut blob)?;
-            }
-            encoded.insert(id.clone(), blob);
-        }
-    }
-    let blobs: Vec<Vec<u8>> = SOUNDS
+}
+
+pub fn build_sfx(sound: &Path, output: &Path) -> Result<()> {
+    let sources: Vec<Source> = SOUNDS
         .iter()
-        .map(|(id, _)| encoded.remove(*id).unwrap())
+        .map(|(_, relative)| read_source(&sound.join(relative)))
+        .collect::<Result<_>>()?;
+    let jobs: Vec<(&Source, u32, bool)> = SOUNDS
+        .iter()
+        .zip(&sources)
+        .map(|((id, _), source)| {
+            (
+                source,
+                resident_rate(id, source.wav.rate),
+                // The runtime owns the charger beds through a reserved voice
+                // and needs them as hardware loops.
+                id.starts_with("charger_"),
+            )
+        })
         .collect();
+    let blobs = cook_parallel(&jobs);
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -609,17 +481,17 @@ pub fn build_sfx(sound: &Path, output: &Path) -> Result<()> {
     // Hazard Course cannot emit most of it, so loading all 284 KB there merely
     // forces narration into telephone-rate ADPCM. Keep the 68 stable runtime
     // ids, replacing unreachable entries with a one-block silent PSAU.
-    write_wav(
-        &scratch.0.join("unused.wav"),
-        &Pcm {
+    let silent = Source {
+        wav: Wav {
             rate: 5_000,
-            samples: vec![0; 28],
-            has_loop_metadata: false,
+            samples: vec![0.0; 28],
+            loop_start: None,
+            loop_end: None,
+            bits: 16,
         },
-    )?;
-    let silence = cook_psau(&scratch.0, &["unused".to_string()], 5_000, "unused")?
-        .pop()
-        .ok_or("failed to cook silent SFX placeholder")?;
+        has_loop_metadata: false,
+    };
+    let silence = cook_psau(&silent, 5_000, false);
     let anomalous: Vec<Vec<u8>> = blobs
         .iter()
         .enumerate()
@@ -1501,84 +1373,100 @@ fn prepend_scientist_dialogue_keys(
     }
 }
 
-fn concat_wavs(valve: &Path, wavs: &[String], rate: u32) -> Result<Option<Pcm>> {
-    let mut samples = Vec::new();
-    let mut has_loop_metadata = false;
+/// A sentence's WAVs joined at the highest of their authored rates.
+fn concat_sources(valve: &Path, wavs: &[String]) -> Result<Option<Source>> {
+    let mut parts = Vec::with_capacity(wavs.len());
     for relative in wavs {
         let path = valve.join("sound").join(normalized_sound_path(relative));
         if !path.exists() {
             return Ok(None);
         }
-        let source = resample(&read_wav(&path)?, rate);
-        has_loop_metadata |= source.has_loop_metadata;
-        samples.extend(source.samples);
+        parts.push(read_source(&path)?);
     }
-    Ok(Some(Pcm {
-        rate,
-        samples,
+    if parts.len() == 1 {
+        return Ok(parts.pop());
+    }
+    let rate = parts.iter().map(|p| p.wav.rate).max().unwrap_or(11_025);
+    let sinc = Sinc::new();
+    let mut samples = Vec::new();
+    let mut has_loop_metadata = false;
+    for part in &parts {
+        has_loop_metadata |= part.has_loop_metadata;
+        if part.wav.rate == rate {
+            samples.extend_from_slice(&part.wav.samples);
+        } else {
+            samples.extend(sinc.resample(&part.wav.samples, part.wav.rate, rate));
+        }
+    }
+    Ok(Some(Source {
+        wav: Wav {
+            rate,
+            samples,
+            loop_start: None,
+            loop_end: None,
+            bits: 16,
+        },
         has_loop_metadata,
     }))
 }
 
-const DIALOGUE_RATES: &[u32] = &[11_025, 8_000, 6_000, 5_000, 4_000, 3_200, 2_800, 2_400];
-const CHATTER_RATES: &[u32] = &[8_000, 6_000, 5_000, 4_000, 3_200, 2_800, 2_400];
-const SHOT_RATES: &[u32] = &[8_000, 6_000, 5_000, 4_000, 3_200, 2_800, 2_400];
-const LOOP_RATES: &[u32] = &[
-    5_000, 4_000, 3_500, 3_000, 2_500, 2_000, 1_800, 1_600, 1_400,
+/// Candidate rates, high to low. The allocator picks one per sample.
+const RATE_LADDER: [u32; 18] = [
+    11_025, 10_000, 9_000, 8_000, 7_000, 6_000, 5_500, 5_000, 4_500, 4_000, 3_600, 3_200, 2_800,
+    2_400, 2_000, 1_800, 1_600, 1_400,
 ];
 
-fn class_rates(class: MapAudioClass) -> &'static [u32] {
+/// Highest and lowest rate a class may take.
+fn class_range(class: MapAudioClass) -> (u32, u32) {
     match class {
-        MapAudioClass::Dialogue => DIALOGUE_RATES,
-        MapAudioClass::Chatter => CHATTER_RATES,
-        MapAudioClass::OneShot => SHOT_RATES,
-        MapAudioClass::Loop => LOOP_RATES,
+        MapAudioClass::Dialogue => (11_025, 2_400),
+        MapAudioClass::Chatter => (8_000, 2_400),
+        MapAudioClass::OneShot => (11_025, 2_400),
+        MapAudioClass::Loop => (8_000, 1_400),
     }
 }
 
-fn resampled_sample_count(valve: &Path, wavs: &[String], rate: u32) -> Result<Option<usize>> {
-    let mut count = 0usize;
-    for relative in wavs {
-        let path = valve.join("sound").join(normalized_sound_path(relative));
-        if !path.exists() {
-            return Ok(None);
-        }
-        let source = read_wav(&path)?;
-        count = count.saturating_add(
-            ((source.samples.len() as u64 * rate as u64) / source.rate.max(1) as u64).max(1)
-                as usize,
-        );
-    }
-    Ok(Some(count))
+/// The rates `entry` may take: the class range, never above the source rate.
+fn entry_ladder(class: MapAudioClass, source_rate: u32) -> Vec<u32> {
+    let (top, floor) = class_range(class);
+    let top = top.min(source_rate);
+    let mut ladder: Vec<u32> = RATE_LADDER
+        .iter()
+        .copied()
+        .filter(|&rate| rate < top && rate >= floor)
+        .collect();
+    ladder.insert(0, top);
+    ladder
 }
 
-#[inline]
-fn predicted_psau_size(sample_count: usize) -> usize {
-    // Sony ADPCM stores 28 PCM samples per 16-byte block. psxed_audio adds a
-    // fixed 32-byte PSAU header and pads only the final ADPCM block.
-    32 + sample_count.div_ceil(28) * 16
+/// Monster vocalisations that are not under a speech directory but are the
+/// Nihilanth's voice, weighted like speech.
+fn is_monster_voice(path: &str) -> bool {
+    let path = normalized_sound_path(path);
+    [
+        "nihilanth/",
+        "x/x_pain",
+        "x/x_laugh",
+        "x/x_recharge",
+        "x/x_attack",
+        "x/x_die",
+        "x/nih_die",
+    ]
+    .iter()
+    .any(|prefix| path.starts_with(prefix))
 }
 
-fn predicted_size_ladders(valve: &Path, entries: &[&MapAudioKey]) -> Result<Vec<Vec<usize>>> {
-    let mut ladders = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let mut sizes = Vec::with_capacity(class_rates(entry.class).len());
-        for &rate in class_rates(entry.class) {
-            let count = resampled_sample_count(valve, &entry.wavs, rate)?
-                .ok_or_else(|| format!("missing map-audio source for {}", entry.key))?;
-            sizes.push(predicted_psau_size(count));
-        }
-        ladders.push(sizes);
+/// How much a second of lost quality in `entry` matters to the allocator.
+/// Speech carries the story, a monster's voice or attack cue carries gameplay,
+/// ambient beds matter least.
+fn class_weight(entry: &MapAudioKey) -> f64 {
+    match entry.class {
+        MapAudioClass::Dialogue => 4.0,
+        MapAudioClass::Chatter => 2.0,
+        MapAudioClass::OneShot if entry.wavs.iter().any(|w| is_monster_voice(w)) => 4.0,
+        MapAudioClass::OneShot => 1.5,
+        MapAudioClass::Loop => 1.0,
     }
-    Ok(ladders)
-}
-
-fn predicted_map_pack_size(size_ladders: &[Vec<usize>], rate_steps: &[usize]) -> usize {
-    let mut bytes = 8 + size_ladders.len() * 8; // HSFX header + sample table
-    for (sizes, &step) in size_ladders.iter().zip(rate_steps) {
-        bytes = bytes.saturating_add(sizes[step]);
-    }
-    bytes
 }
 
 /// Set-piece sounds (hl_format::setpiece_audio) whose class this map places
@@ -1600,7 +1488,11 @@ fn setpiece_candidates(map: &Path) -> Result<Vec<(usize, MapAudioKey)>> {
         if !classes.contains(sound.class) {
             continue;
         }
-        let class = if sound.looping { MapAudioClass::Loop } else { MapAudioClass::OneShot };
+        let class = if sound.looping {
+            MapAudioClass::Loop
+        } else {
+            MapAudioClass::OneShot
+        };
         let mode = if sound.looping { "loop" } else { "shot" };
         out.push((
             slot,
@@ -1614,19 +1506,422 @@ fn setpiece_candidates(map: &Path) -> Result<Vec<(usize, MapAudioKey)>> {
     Ok(out)
 }
 
+/// One bank entry ready for allocation.
+struct Planned<'a> {
+    entry: &'a MapAudioKey,
+    source: Source,
+    looping: bool,
+    ladder: Vec<u32>,
+    bytes: Vec<usize>,
+}
+
+fn plan_entry<'a>(valve: &Path, entry: &'a MapAudioKey) -> Result<Planned<'a>> {
+    let source = concat_sources(valve, &entry.wavs)?
+        .ok_or_else(|| format!("missing map-audio source for {}", entry.key))?;
+    let looping = entry.class == MapAudioClass::Loop && source.has_loop_metadata;
+    let ladder = entry_ladder(entry.class, source.wav.rate);
+    let bytes = ladder
+        .iter()
+        .map(|&rate| psau_size(&source, rate, looping))
+        .collect();
+    Ok(Planned {
+        entry,
+        source,
+        looping,
+        ladder,
+        bytes,
+    })
+}
+
+fn pack_overhead(entries: usize) -> usize {
+    8 + entries * 8 // HSFX header + sample table
+}
+
+fn minimum_pack_size(planned: &[Planned<'_>]) -> usize {
+    pack_overhead(planned.len())
+        + planned
+            .iter()
+            .map(|p| *p.bytes.last().expect("non-empty ladder"))
+            .sum::<usize>()
+}
+
+/// Core ids only particular entities can emit, from the runtime's call sites
+/// (game/src/main.rs: `prop_voice` per prop kind, the houndeye blast and the
+/// wall chargers). Everything else in the core (weapons, player, items, HEV,
+/// impacts, the headcrab-family attack bark some leapers share) is always
+/// reachable.
+const CORE_EMITTERS: [(&[usize], &[&str]); 9] = [
+    (&[34, 35, 64], &["monster_barney"]),
+    (&[30, 31], &["monster_headcrab"]),
+    (&[20, 29], &["monster_zombie"]),
+    (&[21, 36, 37], &["monster_houndeye"]),
+    (&[40, 41], &["monster_bullchicken", "monster_ichthyosaur"]),
+    (&[32, 33], &["monster_human_grunt"]),
+    (
+        &[38, 39],
+        &[
+            "monster_alien_slave",
+            "monster_alien_grunt",
+            "monster_alien_controller",
+        ],
+    ),
+    (&[24, 47, 55], &["func_healthcharger"]),
+    (&[48, 56], &["func_recharge"]),
+];
+/// Size of the map's chapter core (3000/3050/3051) before census profiles:
+/// the budget the previous cooker had.
+fn resident_core_bytes(sfx_dir: &Path, map_index: usize) -> usize {
+    fs::metadata(sfx_dir.join(format!("chunk_{}.psxa", resident_core_chunk(map_index))))
+        .map(|m| m.len() as usize)
+        .unwrap_or(414 * 1024)
+}
+
+/// Chunk of the per-map core table the runtime reads at boot.
+const CORE_TABLE_CHUNK: usize = 3052;
+/// Chunk ids available to deduplicated core profiles.
+const CORE_PROFILE_CHUNKS: std::ops::RangeInclusive<usize> = 3053..=3099;
+
+/// Entity classes a map places, directly or through a monstermaker.
+fn map_classes(map: &Path) -> Result<HashSet<String>> {
+    let mut classes = HashSet::new();
+    for entity in bsp_entities(map)? {
+        if let Some(class) = entity.get("classname") {
+            classes.insert(class.to_ascii_lowercase());
+        }
+        if entity.get("classname").map(String::as_str) == Some("monstermaker") {
+            if let Some(kind) = entity.get("monstertype") {
+                classes.insert(kind.to_ascii_lowercase());
+            }
+        }
+    }
+    Ok(classes)
+}
+
+/// Core ids none of the map's entities can emit.
+fn unreachable_core_ids(classes: &HashSet<String>) -> Vec<usize> {
+    let mut ids: Vec<usize> = CORE_EMITTERS
+        .iter()
+        .filter(|(_, emitters)| !emitters.iter().any(|class| classes.contains(*class)))
+        .flat_map(|(ids, _)| ids.iter().copied())
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+fn hsfx_entries(pack: &[u8]) -> Result<Vec<Vec<u8>>> {
+    if pack.len() < 8 || &pack[..4] != b"HSFX" {
+        return Err("core SFX pack is not HSFX".into());
+    }
+    let word = |at: usize| -> Result<usize> {
+        Ok(u32::from_le_bytes(pack.get(at..at + 4).ok_or("short HSFX")?.try_into()?) as usize)
+    };
+    (0..word(4)?)
+        .map(|i| {
+            let (offset, len) = (word(8 + i * 8)?, word(12 + i * 8)?);
+            Ok(pack
+                .get(offset..offset + len)
+                .ok_or("HSFX entry out of range")?
+                .to_vec())
+        })
+        .collect()
+}
+
+/// The core bank each map loads: its chapter profile (3000/3050/3051) with
+/// the sounds its entities cannot emit replaced by one silent block, so ids
+/// stay stable and the SPU RAM goes to the map's own bank. Identical
+/// profiles share a chunk, so walking between maps with the same census does
+/// not reload the core. Writes the profiles and the table into `sfx_dir` and
+/// returns (chunk id, bytes) per map index.
+fn build_core_profiles(
+    valve: &Path,
+    map_list: &str,
+    sfx_dir: &Path,
+) -> Result<Vec<(usize, usize)>> {
+    for entry in fs::read_dir(sfx_dir)? {
+        let path = entry?.path();
+        let chunk = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.strip_prefix("chunk_"))
+            .and_then(|s| s.strip_suffix(".psxa"))
+            .and_then(|s| s.parse::<usize>().ok());
+        if chunk.is_some_and(|c| c == CORE_TABLE_CHUNK || CORE_PROFILE_CHUNKS.contains(&c)) {
+            fs::remove_file(path)?;
+        }
+    }
+    let silent = Source {
+        wav: Wav {
+            rate: 5_000,
+            samples: vec![0.0; 28],
+            loop_start: None,
+            loop_end: None,
+            bits: 16,
+        },
+        has_loop_metadata: false,
+    };
+    let silence = cook_psau(&silent, 5_000, false);
+    let mut bases: HashMap<usize, Vec<Vec<u8>>> = HashMap::new();
+    let maps: Vec<&str> = map_list.split_whitespace().collect();
+    // Per map: its chapter base and the core ids it could silence.
+    let mut wants: Vec<(usize, Vec<usize>)> = Vec::with_capacity(maps.len());
+    for (map_index, map_name) in maps.iter().enumerate() {
+        let base = resident_core_chunk(map_index) as usize;
+        let base_path = sfx_dir.join(format!("chunk_{base}.psxa"));
+        let bsp = valve.join("maps").join(format!("{map_name}.bsp"));
+        if !bsp.exists() || !base_path.exists() {
+            wants.push((base, Vec::new()));
+            continue;
+        }
+        if let std::collections::hash_map::Entry::Vacant(slot) = bases.entry(base) {
+            slot.insert(hsfx_entries(&fs::read(&base_path)?)?);
+        }
+        let entries = &bases[&base];
+        let silenced = unreachable_core_ids(&map_classes(&bsp)?)
+            .into_iter()
+            .filter(|&id| {
+                entries
+                    .get(id)
+                    .is_some_and(|blob| blob.len() > silence.len())
+            })
+            .collect();
+        wants.push((base, silenced));
+    }
+    let saved = |base: usize, ids: &[usize]| -> usize {
+        ids.iter()
+            .map(|&id| bases[&base][id].len() - silence.len())
+            .sum()
+    };
+    // Candidate profiles are the distinct masks. A map may use any profile of
+    // its base that silences a subset of what it can silence; keep the
+    // profiles that save the most bytes summed over the maps that could use
+    // them, as many as there are chunk ids.
+    let mut candidates: Vec<(usize, Vec<usize>)> = Vec::new();
+    for want in &wants {
+        if !want.1.is_empty() && !candidates.contains(want) {
+            candidates.push(want.clone());
+        }
+    }
+    let usable = |profile: &(usize, Vec<usize>), want: &(usize, Vec<usize>)| {
+        profile.0 == want.0 && profile.1.iter().all(|id| want.1.contains(id))
+    };
+    let mut value: Vec<(usize, usize)> = candidates
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let maps_using = wants.iter().filter(|w| usable(c, w)).count();
+            (saved(c.0, &c.1) * maps_using, i)
+        })
+        .collect();
+    value.sort_by(|a, b| b.cmp(a));
+    let chosen: Vec<(usize, Vec<usize>)> = value
+        .iter()
+        .take(CORE_PROFILE_CHUNKS.clone().count())
+        .map(|&(_, i)| candidates[i].clone())
+        .collect();
+    let mut written: Vec<Option<(usize, usize)>> = vec![None; chosen.len()];
+    let mut table = Vec::with_capacity(maps.len());
+    for (map_index, want) in wants.iter().enumerate() {
+        let base = want.0;
+        let base_bytes = fs::metadata(sfx_dir.join(format!("chunk_{base}.psxa")))
+            .map(|m| m.len() as usize)
+            .unwrap_or(414 * 1024);
+        let best = chosen
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| usable(c, want))
+            .max_by_key(|(i, c)| (saved(c.0, &c.1), std::cmp::Reverse(*i)));
+        let Some((slot, profile)) = best else {
+            table.push((base, base_bytes));
+            continue;
+        };
+        if written[slot].is_none() {
+            let chunk = CORE_PROFILE_CHUNKS
+                .clone()
+                .nth(slot)
+                .expect("chosen fits the id range");
+            let blobs: Vec<Vec<u8>> = bases[&base]
+                .iter()
+                .enumerate()
+                .map(|(id, blob)| {
+                    if profile.1.contains(&id) {
+                        silence.clone()
+                    } else {
+                        blob.clone()
+                    }
+                })
+                .collect();
+            let pack = hsfx(&blobs);
+            fs::write(sfx_dir.join(format!("chunk_{chunk}.psxa")), &pack)?;
+            println!(
+                "  core profile {chunk} (from {base}, first {}): {} B, silences ids {:?}",
+                maps[map_index],
+                pack.len(),
+                profile.1
+            );
+            written[slot] = Some((chunk, pack.len()));
+        }
+        table.push(written[slot].expect("written above"));
+    }
+    let mut bytes = Vec::with_capacity(8 + table.len() * 2);
+    bytes.extend_from_slice(b"HCPT");
+    bytes.extend_from_slice(&(table.len() as u16).to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    for (chunk, _) in &table {
+        bytes.extend_from_slice(&(*chunk as u16).to_le_bytes());
+    }
+    fs::write(
+        sfx_dir.join(format!("chunk_{CORE_TABLE_CHUNK}.psxa")),
+        bytes,
+    )?;
+    Ok(table)
+}
+
+/// The previous cooker's per-class ladders, kept only to compute the
+/// no-regression reference below.
+fn previous_class_rates(class: MapAudioClass) -> &'static [u32] {
+    match class {
+        MapAudioClass::Dialogue => &[11_025, 8_000, 6_000, 5_000, 4_000, 3_200, 2_800, 2_400],
+        MapAudioClass::Chatter | MapAudioClass::OneShot => {
+            &[8_000, 6_000, 5_000, 4_000, 3_200, 2_800, 2_400]
+        }
+        MapAudioClass::Loop => &[
+            5_000, 4_000, 3_500, 3_000, 2_500, 2_000, 1_800, 1_600, 1_400,
+        ],
+    }
+}
+
+/// The rate each entry would have had under the previous cooker (hl-psx
+/// final-5/final-6): same budget rule, per-class ladders, and "largest
+/// saving first, loops then shots then chatter then dialogue". Sizes only,
+/// nothing is encoded. `None` when that cooker could not fit the entries.
+fn previous_rates(planned: &[&Planned<'_>], budget: usize) -> Option<Vec<u32>> {
+    let size = |p: &Planned<'_>, rate: u32| {
+        let count = (p.source.wav.samples.len() as u64 * rate as u64
+            / p.source.wav.rate.max(1) as u64)
+            .max(1) as usize;
+        32 + count.div_ceil(28) * 16
+    };
+    let ladders: Vec<&[u32]> = planned
+        .iter()
+        .map(|p| previous_class_rates(p.entry.class))
+        .collect();
+    let mut steps = vec![0usize; planned.len()];
+    let total = |steps: &[usize]| -> usize {
+        pack_overhead(planned.len())
+            + planned
+                .iter()
+                .zip(steps)
+                .zip(&ladders)
+                .map(|((p, &s), l)| size(p, l[s]))
+                .sum::<usize>()
+    };
+    while total(&steps) > budget {
+        let mut selected = None;
+        for class in [
+            MapAudioClass::Loop,
+            MapAudioClass::OneShot,
+            MapAudioClass::Chatter,
+            MapAudioClass::Dialogue,
+        ] {
+            let mut best_saving = 0usize;
+            for (i, p) in planned.iter().enumerate() {
+                if p.entry.class != class || steps[i] + 1 >= ladders[i].len() {
+                    continue;
+                }
+                let saving =
+                    size(p, ladders[i][steps[i]]).saturating_sub(size(p, ladders[i][steps[i] + 1]));
+                if saving > best_saving {
+                    best_saving = saving;
+                    selected = Some(i);
+                }
+            }
+            if selected.is_some() {
+                break;
+            }
+        }
+        steps[selected?] += 1;
+    }
+    Some(
+        planned
+            .iter()
+            .enumerate()
+            .map(|(i, _)| ladders[i][steps[i]])
+            .collect(),
+    )
+}
+
+/// fwSNRseg (psx_audio_cook::metrics) of `source` played back after cooking
+/// at `rate`, by the previous pipeline (`legacy`) or the current one. Loops
+/// are measured as one-shots (a whole loop is stretched by under half a
+/// block, which only misaligns it against the reference).
+fn playback_quality(source: &Source, rate: u32, legacy: bool) -> f64 {
+    let wav = &source.wav;
+    let cooked = if legacy {
+        let pcm: Vec<i16> = wav
+            .samples
+            .iter()
+            .map(|&v| v.round().clamp(-32_768.0, 32_767.0) as i16)
+            .collect();
+        let (pcm, adpcm) = psx_audio_cook::legacy::hl_cook(&pcm, wav.rate, rate, 0.9);
+        psx_audio_cook::Cooked {
+            rate,
+            pcm,
+            adpcm,
+            loop_block: None,
+        }
+    } else {
+        psx_audio_cook::cook(wav, &CookOptions::one_shot(rate))
+    };
+    let reference = psx_audio_cook::reference_44k(wav);
+    let played = psx_audio_cook::playback(&cooked);
+    let n = reference.len().min(played.len());
+    psx_audio_cook::metrics::fw_snr_seg_db(
+        &reference[..n],
+        &played[..n],
+        (wav.rate as f64 / 2.0).min(11_025.0),
+    )
+}
+
+/// Lowest step of `p`'s ladder whose measured playback quality is at least
+/// the previous pipeline's at `previous` Hz (the previous rate itself when
+/// none is).
+fn no_regression_step(p: &Planned<'_>, previous: u32) -> usize {
+    let target = playback_quality(&p.source, previous, true);
+    let mut floor = p
+        .ladder
+        .iter()
+        .position(|&rate| rate <= previous)
+        .unwrap_or(p.ladder.len() - 1);
+    while floor + 1 < p.ladder.len()
+        && playback_quality(&p.source, p.ladder[floor + 1], false) >= target
+    {
+        floor += 1;
+    }
+    floor
+}
+
 pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
     const RUNTIME_MAX_MAP_AUDIO: usize = 96;
     fs::create_dir_all(output)?;
     for entry in fs::read_dir(output)? {
         let path = entry?.path();
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if name.starts_with("chunk_") || name == "manifest.txt" {
+        if name.starts_with("chunk_") || name == "manifest.txt" || name == "rates.txt" {
             fs::remove_file(path)?;
         }
     }
     let sfx_dir = output.parent().unwrap_or(output).join("sfx");
+    let core_profiles = build_core_profiles(valve, map_list, &sfx_dir)?;
     let sentences = load_sentences(valve)?;
     let mut manifest = Vec::new();
+    let mut rates_report = vec![String::from(
+        "map|id|key|class|rate_hz|bytes|seconds|predicted_loss_db|wavs",
+    )];
+    // Band loss depends only on the source, and blobs only on (source, rate,
+    // loop); many maps share both.
+    let mut loss_cache: HashMap<String, Vec<(u32, f64)>> = HashMap::new();
+    let mut blob_cache: HashMap<(String, u32, bool), Vec<u8>> = HashMap::new();
+    let mut floor_cache: HashMap<(String, u32), usize> = HashMap::new();
     for (map_index, map_name) in map_list.split_whitespace().enumerate() {
         let bsp = valve.join("maps").join(format!("{map_name}.bsp"));
         if !bsp.exists() {
@@ -1643,32 +1938,30 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             )
             .into());
         }
-        let core_chunk = resident_core_chunk(map_index);
-        let core_bytes = fs::metadata(sfx_dir.join(format!("chunk_{core_chunk}.psxa")))
-            .map(|v| v.len() as usize)
-            .unwrap_or(414 * 1024);
+        let (core_chunk, core_bytes) = core_profiles[map_index];
         let budget = 512 * 1024 - 0x1010 - core_bytes - 4096;
-        let mut valid: Vec<&MapAudioKey> = keys
-            .iter()
-            .filter(|entry| {
-                entry.wavs.iter().all(|relative| {
-                    valve
-                        .join("sound")
-                        .join(normalized_sound_path(relative))
-                        .is_file()
-                })
-            })
-            .collect();
-        if valid.is_empty() {
+        let mut planned: Vec<Planned<'_>> = Vec::new();
+        for entry in &keys {
+            let present = entry.wavs.iter().all(|relative| {
+                valve
+                    .join("sound")
+                    .join(normalized_sound_path(relative))
+                    .is_file()
+            });
+            if present {
+                planned.push(plan_entry(valve, entry)?);
+            }
+        }
+        if planned.is_empty() {
             return Err(format!("{map_name}: no map-audio samples could be encoded").into());
         }
         if keys
             .iter()
             .filter(|entry| entry.key.starts_with("use:"))
             .count()
-            != valid
+            != planned
                 .iter()
-                .filter(|entry| entry.key.starts_with("use:"))
+                .filter(|p| p.entry.key.starts_with("use:"))
                 .count()
         {
             return Err(format!("{map_name}: missing audio for an NPC use reply").into());
@@ -1679,148 +1972,252 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
         // authored dialogue than the SPU can hold. Only omit the logon when
         // the pack would exceed the budget even with every sample at its
         // minimum rate; the runtime then uses its resident activation line.
-        let minimum_pack_size = |entries: &[&MapAudioKey]| -> Result<usize> {
-            let ladders = predicted_size_ladders(valve, entries)?;
-            let minimum_steps: Vec<usize> = ladders
+        if minimum_pack_size(&planned) > budget {
+            if let Some(index) = planned
                 .iter()
-                .map(|sizes| sizes.len().saturating_sub(1))
-                .collect();
-            Ok(predicted_map_pack_size(&ladders, &minimum_steps))
-        };
-        if minimum_pack_size(&valid)? > budget {
-            if let Some(index) = valid
-                .iter()
-                .position(|entry| matches!(entry.key.as_str(), "HEV_AAX" | "HEV_A0"))
+                .position(|p| matches!(p.entry.key.as_str(), "HEV_AAX" | "HEV_A0"))
             {
                 println!(
                     "  {map_name}: full HEV logon cannot fit beside mandatory map audio; using resident pickup line"
                 );
-                valid.remove(index);
+                planned.remove(index);
             }
         }
 
         // Direct-use replies must remain available. On the few maps whose
         // mandatory speech already fills SPU RAM, omit autonomous small talk
         // before sacrificing a scripted line or an interaction response.
-        if minimum_pack_size(&valid)? > budget {
-            valid.retain(|entry| entry.class != MapAudioClass::Chatter);
+        if minimum_pack_size(&planned) > budget {
+            planned.retain(|p| p.entry.class != MapAudioClass::Chatter);
             println!(
                 "  {map_name}: reserving speech bank for authored and player-triggered dialogue"
             );
         }
 
-        // Set-piece monster sounds. Tier 1 carries gameplay information and
-        // joins the bank before its rates are chosen, so it may lower the
-        // quality of the map's other effects (never below their minimum rate)
-        // but is itself dropped if the bank cannot hold it at all. Tiers 2
-        // and 3 are fitted afterwards into whatever SPU RAM is still spare.
+        // Set-piece monster sounds all join the bank and compete for rate
+        // like everything else. One is dropped only when the bank cannot hold
+        // it even with every sample at its lowest rate, the highest tier (the
+        // least gameplay information) first.
         let setpiece = setpiece_candidates(&bsp)?;
         let mut setpiece_kept: Vec<String> = Vec::new();
         let mut setpiece_dropped: Vec<String> = Vec::new();
-        let mut late: Vec<&MapAudioKey> = Vec::new();
+        let mut joined: Vec<(u8, String)> = Vec::new();
         for (slot, entry) in setpiece.iter() {
-            let tier = hl_format::setpiece_audio::SOUNDS[*slot].tier;
             let path = &entry.wavs[0];
-            if valid.iter().any(|v| v.key == entry.key) {
+            if planned.iter().any(|p| p.entry.key == entry.key) {
                 setpiece_kept.push(format!("{path} (shared)"));
                 continue;
             }
-            if !valve.join("sound").join(normalized_sound_path(path)).is_file() {
+            if !valve
+                .join("sound")
+                .join(normalized_sound_path(path))
+                .is_file()
+            {
                 setpiece_dropped.push(format!("{path} (missing)"));
                 continue;
             }
-            if tier == 1 {
-                valid.push(entry);
-                if minimum_pack_size(&valid)? > budget || valid.len() > RUNTIME_MAX_MAP_AUDIO {
-                    valid.pop();
-                    setpiece_dropped.push(path.clone());
-                } else {
-                    setpiece_kept.push(path.clone());
-                }
-            } else {
-                late.push(entry);
+            planned.push(plan_entry(valve, entry)?);
+            joined.push((
+                hl_format::setpiece_audio::SOUNDS[*slot].tier,
+                entry.key.clone(),
+            ));
+        }
+        while minimum_pack_size(&planned) > budget || planned.len() > RUNTIME_MAX_MAP_AUDIO {
+            let Some(victim) = joined
+                .iter()
+                .enumerate()
+                .max_by_key(|(order, (tier, _))| (*tier, *order))
+                .map(|(order, _)| order)
+            else {
+                break;
+            };
+            let (_, key) = joined.remove(victim);
+            if let Some(index) = planned.iter().position(|p| p.entry.key == key) {
+                setpiece_dropped.push(planned[index].entry.wavs[0].clone());
+                planned.remove(index);
+            }
+        }
+        for (_, key) in &joined {
+            if let Some(p) = planned.iter().find(|p| &p.entry.key == key) {
+                setpiece_kept.push(p.entry.wavs[0].clone());
             }
         }
 
-        // Start every sample at its class's preferred rate. When the bank is
-        // too large, consume quality from loops, short effects, and autonomous
-        // chatter—in that order—before touching authored dialogue. Within a
-        // class the largest byte saving wins, so a long machine bed cannot
-        // force every spoken line through one map-wide emergency profile.
-        let size_ladders = predicted_size_ladders(valve, &valid)?;
-        let mut rate_steps = vec![0usize; valid.len()];
-        let mut predicted = predicted_map_pack_size(&size_ladders, &rate_steps);
-        while predicted > budget {
-            let mut selected = None;
-            for class in [
-                MapAudioClass::Loop,
-                MapAudioClass::OneShot,
-                MapAudioClass::Chatter,
-                MapAudioClass::Dialogue,
-            ] {
-                let mut best_saving = 0usize;
-                for (index, entry) in valid.iter().enumerate() {
-                    if entry.class != class || rate_steps[index] + 1 >= class_rates(class).len() {
-                        continue;
-                    }
-                    let current = size_ladders[index][rate_steps[index]];
-                    let next = size_ladders[index][rate_steps[index] + 1];
-                    let saving = current.saturating_sub(next);
-                    if saving > best_saving {
-                        best_saving = saving;
-                        selected = Some(index);
+        // Rates: minimise the time-weighted quality loss for the SPU bytes
+        // available (psx_audio_cook::rate::allocate). Each sample's loss per
+        // rate comes from its own spectrum, so a deep voice or a rumble goes
+        // low before a sibilant line or a hiss does, and long lines are not
+        // starved to save the most bytes per step.
+        // The previous cooker left the full HEV logon out of maps whose other
+        // speech filled the bank. Keep that choice when including it would
+        // push the map's other sounds below their previous quality.
+        let (candidates, steps, relaxed) = loop {
+            let mut candidates = Vec::with_capacity(planned.len());
+            for p in &planned {
+                let cache_key = p.entry.wavs.join("|");
+                let losses = loss_cache.entry(cache_key).or_insert_with(|| {
+                    let rates: Vec<u32> = RATE_LADDER
+                        .iter()
+                        .copied()
+                        .chain(std::iter::once(p.source.wav.rate.min(11_025)))
+                        .collect();
+                    let loss = psx_audio_cook::rate::band_loss(
+                        &p.source.wav.samples,
+                        p.source.wav.rate,
+                        &rates,
+                    );
+                    rates.into_iter().zip(loss).collect()
+                });
+                let loss: Vec<f64> = p
+                    .ladder
+                    .iter()
+                    .map(|rate| {
+                        losses
+                            .iter()
+                            .find(|(r, _)| r == rate)
+                            .map(|(_, l)| *l)
+                            .unwrap_or(0.0)
+                    })
+                    .collect();
+                candidates.push(psx_audio_cook::rate::Candidate {
+                    bytes: p.bytes.clone(),
+                    loss,
+                    weight: class_weight(p.entry) * p.source.seconds(),
+                    max_step: p.ladder.len() - 1,
+                });
+            }
+            // No regressions: an entry the previous cooker also placed keeps at
+            // least the playback quality it had there (measured, both pipelines,
+            // only for entries the allocation would put below their previous
+            // rate). The reference is the previous policy without set pieces
+            // (final-5) for the map's own sounds, and with its tier-1 set pieces
+            // (final-6) for those. Floors that cannot all fit are relaxed loops
+            // first, then chatter, then effects; speech keeps its floor longest.
+            let is_setpiece = |p: &Planned<'_>| joined.iter().any(|(_, key)| key == &p.entry.key);
+            let own: Vec<&Planned<'_>> = planned.iter().filter(|p| !is_setpiece(p)).collect();
+            let tier1: Vec<&Planned<'_>> = planned
+                .iter()
+                .filter(|p| {
+                    !is_setpiece(p)
+                        || joined
+                            .iter()
+                            .any(|(tier, key)| *tier == 1 && key == &p.entry.key)
+                })
+                .collect();
+            let base_budget = 512 * 1024 - 0x1010 - resident_core_bytes(&sfx_dir, map_index) - 4096;
+            let mut previous: Vec<Option<u32>> = vec![None; planned.len()];
+            for (subset, only_setpieces) in [(&own, false), (&tier1, true)] {
+                // The previous cooker dropped the HEV logon, then chatter, from
+                // maps it could not otherwise fit; so does its reference.
+                let mut subset: Vec<&Planned<'_>> = subset.to_vec();
+                let mut rates = previous_rates(&subset, base_budget);
+                if rates.is_none() {
+                    subset.retain(|p| !matches!(p.entry.key.as_str(), "HEV_AAX" | "HEV_A0"));
+                    rates = previous_rates(&subset, base_budget);
+                }
+                if rates.is_none() {
+                    subset.retain(|p| p.entry.class != MapAudioClass::Chatter);
+                    rates = previous_rates(&subset, base_budget);
+                }
+                let subset = &subset;
+                if let Some(rates) = rates {
+                    for (p, rate) in subset.iter().zip(rates) {
+                        if is_setpiece(p) == only_setpieces {
+                            let i = planned
+                                .iter()
+                                .position(|q| std::ptr::eq(q, *p))
+                                .expect("member");
+                            previous[i] = Some(rate);
+                        }
                     }
                 }
-                if selected.is_some() {
+            }
+            let overhead = pack_overhead(planned.len());
+            let mut floors: Vec<Option<usize>> = vec![None; planned.len()];
+            let mut steps = psx_audio_cook::rate::allocate(&candidates, overhead, budget);
+            let mut relaxed = Vec::new();
+            while let Some(current) = steps.clone() {
+                let mut added = false;
+                for i in 0..planned.len() {
+                    if let (None, Some(prev)) = (floors[i], previous[i]) {
+                        if planned[i].ladder[current[i]] < prev {
+                            let key = (planned[i].entry.wavs.join("|"), prev);
+                            let step = *floor_cache
+                                .entry(key)
+                                .or_insert_with(|| no_regression_step(&planned[i], prev));
+                            floors[i] = Some(step.min(planned[i].ladder.len() - 1));
+                            added = true;
+                        }
+                    }
+                }
+                if !added {
                     break;
                 }
-            }
-            let Some(index) = selected else {
-                let class_bytes = |class| {
-                    valid
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, entry)| entry.class == class)
-                        .map(|(index, _)| size_ladders[index][rate_steps[index]])
-                        .sum::<usize>()
-                };
-                return Err(format!(
-                    "{map_name}: map-audio pack is {predicted} bytes at minimum per-sample rates; SPU budget is {budget} (dialogue {}, chatter {}, shots {}, loops {})",
-                    class_bytes(MapAudioClass::Dialogue),
-                    class_bytes(MapAudioClass::Chatter),
-                    class_bytes(MapAudioClass::OneShot),
-                    class_bytes(MapAudioClass::Loop),
-                )
-                .into());
-            };
-            rate_steps[index] += 1;
-            predicted = predicted_map_pack_size(&size_ladders, &rate_steps);
-        }
-
-        // Tiers 2 and 3: spare SPU RAM only, every earlier sample keeping the
-        // rate it was just given. Each takes its best rate that still fits.
-        let mut size_ladders = size_ladders;
-        for entry in late {
-            let path = &entry.wavs[0];
-            let ladder = predicted_size_ladders(valve, &[entry])?.remove(0);
-            let fit = (0..ladder.len()).find(|&step| {
-                let mut ladders = size_ladders.clone();
-                ladders.push(ladder.clone());
-                let mut steps = rate_steps.clone();
-                steps.push(step);
-                predicted_map_pack_size(&ladders, &steps) <= budget
-            });
-            match fit {
-                Some(step) if valid.len() < RUNTIME_MAX_MAP_AUDIO => {
-                    valid.push(entry);
-                    size_ladders.push(ladder);
-                    rate_steps.push(step);
-                    predicted = predicted_map_pack_size(&size_ladders, &rate_steps);
-                    setpiece_kept.push(path.clone());
+                let mut attempt = candidates.clone();
+                for (c, floor) in attempt.iter_mut().zip(&floors) {
+                    if let Some(f) = floor {
+                        c.max_step = *f;
+                    }
                 }
-                _ => setpiece_dropped.push(path.clone()),
+                let mut result = psx_audio_cook::rate::allocate(&attempt, overhead, budget);
+                for class in [
+                    MapAudioClass::Loop,
+                    MapAudioClass::Chatter,
+                    MapAudioClass::OneShot,
+                    MapAudioClass::Dialogue,
+                ] {
+                    if result.is_some() {
+                        break;
+                    }
+                    for (i, c) in attempt.iter_mut().enumerate() {
+                        if planned[i].entry.class == class {
+                            c.max_step = planned[i].ladder.len() - 1;
+                            floors[i] = Some(c.max_step);
+                        }
+                    }
+                    relaxed.push(class);
+                    result = psx_audio_cook::rate::allocate(&attempt, overhead, budget);
+                }
+                steps = result;
             }
+            let logon = planned
+                .iter()
+                .position(|p| matches!(p.entry.key.as_str(), "HEV_AAX" | "HEV_A0"));
+            if let (false, Some(i)) = (relaxed.is_empty(), logon) {
+                if previous[i].is_none() {
+                    println!(
+                        "  {map_name}: full HEV logon would cost other lines their quality; using resident pickup line"
+                    );
+                    planned.remove(i);
+                    continue;
+                }
+            }
+            break (candidates, steps, relaxed);
+        };
+        if !relaxed.is_empty() {
+            println!(
+                "  {map_name}: no-regression floors relaxed for {} class(es)",
+                relaxed.len()
+            );
         }
+        let Some(steps) = steps else {
+            let class_bytes = |class| {
+                planned
+                    .iter()
+                    .filter(|p| p.entry.class == class)
+                    .map(|p| *p.bytes.last().unwrap())
+                    .sum::<usize>()
+            };
+            return Err(format!(
+                "{map_name}: map-audio pack is {} bytes at minimum per-sample rates; SPU budget is {budget} (dialogue {}, chatter {}, shots {}, loops {})",
+                minimum_pack_size(&planned),
+                class_bytes(MapAudioClass::Dialogue),
+                class_bytes(MapAudioClass::Chatter),
+                class_bytes(MapAudioClass::OneShot),
+                class_bytes(MapAudioClass::Loop),
+            )
+            .into());
+        };
         if !setpiece_kept.is_empty() || !setpiece_dropped.is_empty() {
             println!(
                 "  {map_name}: set-piece audio kept [{}] dropped [{}]",
@@ -1829,43 +2226,41 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             );
         }
 
-        let scratch = Scratch::new("hlvox")?;
-        let mut cooked = Vec::<(&MapAudioKey, u32, String, bool)>::new();
-        for (index, entry) in valid.iter().enumerate() {
-            let rate = class_rates(entry.class)[rate_steps[index]];
-            let id = format!("a{index:02}");
-            let pcm = concat_wavs(valve, &entry.wavs, rate)?
-                .ok_or_else(|| format!("missing map-audio source for {}", entry.key))?;
-            write_wav(&scratch.0.join(format!("{id}.wav")), &pcm)?;
-            cooked.push((entry, rate, id, pcm.has_loop_metadata));
+        let rates: Vec<u32> = planned
+            .iter()
+            .zip(&steps)
+            .map(|(p, &step)| p.ladder[step])
+            .collect();
+        let blob_key = |p: &Planned<'_>, rate: u32| (p.entry.wavs.join("|"), rate, p.looping);
+        let jobs: Vec<(&Source, u32, bool)> = planned
+            .iter()
+            .zip(&rates)
+            .filter(|(p, &rate)| !blob_cache.contains_key(&blob_key(p, rate)))
+            .map(|(p, &rate)| (&p.source, rate, p.looping))
+            .collect();
+        let fresh = cook_parallel(&jobs);
+        let mut fresh = fresh.into_iter();
+        for (p, &rate) in planned.iter().zip(&rates) {
+            let key = blob_key(p, rate);
+            blob_cache
+                .entry(key)
+                .or_insert_with(|| fresh.next().expect("one blob per job"));
         }
-        let mut blobs: Vec<Option<Vec<u8>>> = vec![None; cooked.len()];
-        let mut rate_groups = BTreeMap::<u32, Vec<usize>>::new();
-        for (index, (_, rate, _, _)) in cooked.iter().enumerate() {
-            rate_groups.entry(*rate).or_default().push(index);
-        }
-        for (rate, indices) in rate_groups {
-            let ids: Vec<String> = indices
-                .iter()
-                .map(|&index| cooked[index].2.clone())
-                .collect();
-            for (&index, mut blob) in
-                indices
-                    .iter()
-                    .zip(cook_psau(&scratch.0, &ids, rate, "map-audio")?)
-            {
-                apply_map_audio_loop_flags(&mut blob, cooked[index].0.class, cooked[index].3)?;
-                blobs[index] = Some(blob);
-            }
-        }
-        let blobs: Vec<Vec<u8>> = blobs
-            .into_iter()
-            .map(|blob| blob.expect("every map-audio rate group was encoded"))
+        let blobs: Vec<Vec<u8>> = planned
+            .iter()
+            .zip(&rates)
+            .map(|(p, &rate)| blob_cache[&blob_key(p, rate)].clone())
             .collect();
         let pack = hsfx(&blobs);
-        if pack.len() > budget {
+        let predicted = pack_overhead(planned.len())
+            + planned
+                .iter()
+                .zip(&steps)
+                .map(|(p, &s)| p.bytes[s])
+                .sum::<usize>();
+        if pack.len() != predicted || pack.len() > budget {
             return Err(format!(
-                "{map_name}: predicted {predicted} byte pack encoded to {} bytes, over {budget} byte SPU budget",
+                "{map_name}: predicted {predicted} byte pack encoded to {} bytes (SPU budget {budget})",
                 pack.len()
             )
             .into());
@@ -1873,22 +2268,44 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
         let chunk = 3100 + map_index;
         fs::write(output.join(format!("chunk_{chunk}.psxa")), &pack)?;
         manifest.extend(
-            cooked
+            planned
                 .iter()
                 .enumerate()
-                .map(|(id, (entry, _, _, _))| format!("{map_index}|{id}|{}", entry.key)),
+                .map(|(id, p)| format!("{map_index}|{id}|{}", p.entry.key)),
         );
-        let count = |class| cooked.iter().filter(|entry| entry.0.class == class).count();
+        for (id, ((p, &rate), (c, &step))) in planned
+            .iter()
+            .zip(&rates)
+            .zip(candidates.iter().zip(&steps))
+            .enumerate()
+        {
+            let class = match p.entry.class {
+                MapAudioClass::Dialogue => "dialogue",
+                MapAudioClass::Chatter => "chatter",
+                MapAudioClass::OneShot => "shot",
+                MapAudioClass::Loop => "loop",
+            };
+            rates_report.push(format!(
+                "{map_name}|{id}|{}|{class}|{rate}|{}|{:.2}|{:.2}|{}",
+                p.entry.key,
+                c.bytes[step],
+                p.source.seconds(),
+                c.loss[step],
+                p.entry.wavs.join("+")
+            ));
+        }
+        let count = |class| planned.iter().filter(|p| p.entry.class == class).count();
         let range = |class| {
-            let mut rates = cooked
+            let mut class_rates = planned
                 .iter()
-                .filter(|entry| entry.0.class == class)
-                .map(|entry| entry.1);
-            let Some(first) = rates.next() else {
+                .zip(&rates)
+                .filter(|(p, _)| p.entry.class == class)
+                .map(|(_, &rate)| rate);
+            let Some(first) = class_rates.next() else {
                 return String::from("-");
             };
             let (mut lo, mut hi) = (first, first);
-            for rate in rates {
+            for rate in class_rates {
                 lo = lo.min(rate);
                 hi = hi.max(rate);
             }
@@ -1899,7 +2316,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             }
         };
         println!(
-            "  {map_name} (idx {map_index}, chunk {chunk}): {} dialogue @{} + {} chatter @{} + {} shot @{} + {} loop @{} Hz, {} KB",
+            "  {map_name} (idx {map_index}, chunk {chunk}, core {core_chunk}): {} dialogue @{} + {} chatter @{} + {} shot @{} + {} loop @{} Hz, {} KB",
             count(MapAudioClass::Dialogue),
             range(MapAudioClass::Dialogue),
             count(MapAudioClass::Chatter),
@@ -1912,6 +2329,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
         );
     }
     fs::write(output.join("manifest.txt"), manifest.join("\n") + "\n")?;
+    fs::write(output.join("rates.txt"), rates_report.join("\n") + "\n")?;
     println!(
         "map audio -> {} ({} samples across maps)",
         output.display(),
@@ -1956,21 +2374,6 @@ mod tests {
     }
 
     #[test]
-    fn psau_loop_marks_first_and_last_adpcm_blocks() {
-        let mut blob = vec![0u8; 32 + 3 * 16];
-        blob[..4].copy_from_slice(b"PSAU");
-        blob[33] = 0x01;
-        blob[49] = 0x02;
-        blob[65] = 0x01;
-
-        mark_psau_loop(&mut blob).unwrap();
-
-        assert_eq!(blob[33] & 0x07, 0x04);
-        assert_eq!(blob[49] & 0x07, 0x02);
-        assert_eq!(blob[65] & 0x07, 0x03);
-    }
-
-    #[test]
     fn wav_loop_metadata_requires_an_authored_loop_record() {
         let mut cue = vec![0u8; 28];
         cue[..4].copy_from_slice(&1u32.to_le_bytes());
@@ -1986,41 +2389,87 @@ mod tests {
     }
 
     #[test]
-    fn map_audio_needs_both_loop_semantics_and_wav_metadata() {
-        let blob = || {
-            let mut blob = vec![0u8; 32 + 2 * 16];
-            blob[..4].copy_from_slice(b"PSAU");
-            blob[33] = 0x01;
-            blob[49] = 0x01;
-            blob
-        };
-
-        let mut missing_metadata = blob();
-        apply_map_audio_loop_flags(&mut missing_metadata, MapAudioClass::Loop, false).unwrap();
-        assert_eq!(missing_metadata[33] & 0x07, 0x01);
-        assert_eq!(missing_metadata[49] & 0x07, 0x01);
-
-        let mut explicit_one_shot = blob();
-        apply_map_audio_loop_flags(&mut explicit_one_shot, MapAudioClass::OneShot, true).unwrap();
-        assert_eq!(explicit_one_shot[33] & 0x07, 0x01);
-        assert_eq!(explicit_one_shot[49] & 0x07, 0x01);
-
-        let mut authored_loop = blob();
-        apply_map_audio_loop_flags(&mut authored_loop, MapAudioClass::Loop, true).unwrap();
-        assert_eq!(authored_loop[33] & 0x07, 0x04);
-        assert_eq!(authored_loop[49] & 0x07, 0x03);
+    fn predicted_psau_size_matches_the_cooked_blob() {
+        for (rate, looping) in [
+            (11_025, false),
+            (6_000, false),
+            (1_400, true),
+            (5_000, true),
+        ] {
+            let source = Source {
+                wav: Wav {
+                    rate: 22_050,
+                    samples: (0..9_001)
+                        .map(|i| ((i * 37) % 2_000) as f64 - 1_000.0)
+                        .collect(),
+                    loop_start: None,
+                    loop_end: None,
+                    bits: 8,
+                },
+                has_loop_metadata: looping,
+            };
+            assert_eq!(
+                cook_psau(&source, rate, looping).len(),
+                psau_size(&source, rate, looping)
+            );
+        }
     }
 
     #[test]
-    fn nearest_resampler_preserves_duration() {
-        let input = Pcm {
-            rate: 22_050,
-            samples: (0..2205).collect(),
+    fn map_loops_become_whole_block_hardware_loops() {
+        let source = Source {
+            wav: Wav {
+                rate: 11_025,
+                samples: (0..5_000)
+                    .map(|i| ((i % 50) as f64 - 25.0) * 400.0)
+                    .collect(),
+                loop_start: None,
+                loop_end: None,
+                bits: 16,
+            },
             has_loop_metadata: true,
         };
-        let output = resample(&input, 11_025);
-        assert_eq!(output.samples.len(), 1102);
-        assert!(output.has_loop_metadata);
+        let blob = cook_psau(&source, 1_400, true);
+        let adpcm = &blob[32..];
+        let blocks = adpcm.len() / 16;
+        assert_eq!(adpcm[1] & 0x07, 0x04, "loop starts on the first block");
+        assert_eq!(adpcm[0] >> 4, 0, "the re-entry block ignores history");
+        assert_eq!(adpcm[(blocks - 1) * 16 + 1] & 0x07, 0x03);
+        let count = u32::from_le_bytes(blob[20..24].try_into().unwrap()) as usize;
+        assert_eq!(count, blocks * 28, "no zero padding plays at the seam");
+    }
+
+    #[test]
+    fn entry_ladders_respect_class_range_and_source_rate() {
+        assert_eq!(entry_ladder(MapAudioClass::Dialogue, 22_050)[0], 11_025);
+        assert_eq!(
+            *entry_ladder(MapAudioClass::Dialogue, 22_050)
+                .last()
+                .unwrap(),
+            2_400
+        );
+        assert_eq!(entry_ladder(MapAudioClass::Loop, 11_025)[0], 8_000);
+        assert_eq!(
+            *entry_ladder(MapAudioClass::Loop, 11_025).last().unwrap(),
+            1_400
+        );
+        let low = entry_ladder(MapAudioClass::OneShot, 5_512);
+        assert_eq!(low[0], 5_512);
+        assert!(low.windows(2).all(|w| w[0] > w[1]));
+    }
+
+    #[test]
+    fn nihilanth_vocalisations_weigh_like_speech() {
+        let key = |path: &str| MapAudioKey {
+            key: format!("sfx:shot:{path}"),
+            wavs: vec![path.to_string()],
+            class: MapAudioClass::OneShot,
+        };
+        assert!(class_weight(&key("x/x_die1.wav")) > class_weight(&key("x/x_ballattack1.wav")));
+        assert!(
+            class_weight(&key("nihilanth/nil_thetruth.wav"))
+                > class_weight(&key("debris/bustglass1.wav"))
+        );
     }
 
     #[test]
