@@ -14754,18 +14754,14 @@ unsafe fn init_monster_trigger(li: usize, rec: map::LogicEnt) {
     MONSTER_TRIGGER_END = li as u16 + 1;
     LOGIC_COUNTER[li] = rec.arg1 as i16;
     let nprops = core::ptr::read_volatile(core::ptr::addr_of!(PROP_COUNT)).min(CARRY_MAILBOX_FIRST);
-    if rec.arg1 == map::AITRIGGER_APACHE_PATH {
+    if rec.arg1 == map::AITRIGGER_APACHE_PATH || rec.arg1 == map::AITRIGGER_FLY_PATH {
         let pi = rec.arg0 as usize;
-        if pi < nprops && PROP_ACTIVE[pi] != 0 && PROP_KIND[pi] == 23 {
-            apache::init(li, rec, pi);
-        }
-        LOGIC_STATE[li] = LOGIC_STATE_TOP;
-        return;
-    }
-    if rec.arg1 == map::AITRIGGER_FLY_PATH {
-        let pi = rec.arg0 as usize;
-        if pi < nprops && PROP_ACTIVE[pi] != 0 && PROP_KIND[pi] == PROP_TYPE_OSPREY {
-            osprey_init(li, rec, pi);
+        if pi < nprops && PROP_ACTIVE[pi] != 0 {
+            match (PROP_KIND[pi], rec.arg1) {
+                (23, map::AITRIGGER_APACHE_PATH) => apache::init(li, rec, pi),
+                (PROP_TYPE_OSPREY, map::AITRIGGER_FLY_PATH) => osprey_init(li, rec, pi),
+                _ => {}
+            }
         }
         LOGIC_STATE[li] = LOGIC_STATE_TOP; // no TriggerCondition to evaluate
         return;
@@ -27889,8 +27885,7 @@ unsafe fn queue_world_beams(
     while ti < MAX_TRACERS {
         let (start, end, ttl) = TRACERS[ti];
         if ttl > 0 {
-            let (half, color) = TRACER_LOOKS[(TRACER_STYLE[ti] as usize).min(TRACER_LOOKS.len() - 1)];
-            draw_beam(packets, ot, start, end, half, color, rot, base_t);
+            draw_look(packets, ot, start, end, TRACER_STYLE[ti], rot, base_t);
         }
         ti += 1;
     }
@@ -27898,13 +27893,27 @@ unsafe fn queue_world_beams(
     // The nihilanth's circling spheres: CircleTarget holds them 24 * N_SCALE
     // around his head.
     if let Some((count, c)) = nihilanth::spheres() {
-        let (half, color) = TRACER_LOOKS[7];
         for i in 0..count as u32 {
             let a = ((SIM_NOW as u32 * 40 + i * 4096 / 20) & 0xfff) as u16;
             let p = [c[0] + (sincos::sin_q12(a) * 360 >> 12), c[1], c[2] + (sincos::sin_q12(a.wrapping_add(1024) & 0xfff) * 360 >> 12)];
-            draw_beam(packets, ot, p, [p[0], p[1] + 24, p[2]], half, color, rot, base_t);
+            draw_look(packets, ot, p, [p[0], p[1] + 24, p[2]], 7, rot, base_t);
         }
     }
+}
+
+/// A beam in one of the TRACER_LOOKS.
+#[inline(never)]
+fn draw_look(
+    packets: &mut PrimitivePacketArena<'_>,
+    ot: &mut OrderingTable<OT_LEN>,
+    start: [i32; 3],
+    end: [i32; 3],
+    style: u8,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
+    let (half, color) = TRACER_LOOKS[(style as usize).min(TRACER_LOOKS.len() - 1)];
+    draw_beam(packets, ot, start, end, half, color, rot, base_t);
 }
 
 // First-person viewmodel transform. GoldSrc attaches the model to the camera:
@@ -32061,7 +32070,7 @@ fn play(
                 if TANK_COUNT != 0 {
                     let f = aim_rotation(yaw, pitch).m[2];
                     let view = [f[0] as i32, f[1] as i32, f[2] as i32];
-                    tick_tanks(&m, nlogic, nents, movers, view, sim_frame_no as u16);
+                    tick_tanks(&m, movers, view, sim_frame_no as u16);
                 }
                 tick_projectiles(&m, movers);
                 tick_env_sparks(&m, nlogic);

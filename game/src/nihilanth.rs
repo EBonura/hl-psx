@@ -167,6 +167,7 @@ pub(crate) unsafe fn bind(m: &Map, pi: usize) {
 }
 
 /// CNihilanth::CommandUse(USE_ON): the fight starts.
+#[optimize(size)]
 pub(crate) unsafe fn command_on() {
     if N.pi != 0xff && N.irritation == 0 {
         N.irritation = 1;
@@ -226,6 +227,7 @@ pub(crate) unsafe fn damage(pi: usize, dmg: u8) -> u8 {
 /// The nihilanth's current sequence as (roster slot, ticks, elapsed, loops).
 /// Roster: 0 float, 2 attack1, 5 attack2, 6 recharge, 7 float_open, 8
 /// attack1_open.
+#[optimize(size)]
 pub(crate) unsafe fn clip(pi: usize) -> Option<(usize, usize, usize)> {
     let g = n();
     if g.pi as usize != pi || g.dead {
@@ -272,7 +274,7 @@ unsafe fn next_activity(m: &Map, nlogic: usize, now: u16, player_seen: bool, dis
     let len = |ticks: u16| ((ticks as i32 * 4096) / rate) as u16;
     if g.recharger != u16::MAX {
         let r = m.logic(g.recharger as usize).origin;
-        if (g.z / 16 - r[1]).abs() < 128 {
+        if ((g.z >> 4) - r[1]).abs() < 128 {
             if g.seq != SEQ_RECHARGE {
                 logic_fire_targets(m, nlogic, m.n_ents, name_id(m, "n_draw", g.level), map::USE_ON, now, 0, logic_state::CALLER_NONE);
             }
@@ -321,7 +323,7 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
     tick_balls(m, movers, nlogic, now);
     let pos = PROP_POS[pi];
     let p = LOGIC_PLAYER_POS;
-    let head = [pos[0], g.z / 16 + 300, pos[2]];
+    let head = [pos[0], (g.z >> 4) + 300, pos[2]];
     let seen = LOGIC_PLAYER_HEALTH > 0 && phys::trace_line(m, movers, head, p).is_none();
     // Flight (every tick): yaw toward the desired heading, vertical force
     // toward m_posDesired.z two seconds out, 0.995 drag.
@@ -343,7 +345,7 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
             g.avel += 6 * DEG;
         }
         g.avel = g.avel * 98 / 100;
-        let est = g.z / 16 + g.vz * 2 / 16 + g.force * 20 / 16;
+        let est = (g.z >> 4) + (g.vz >> 3) + (g.force * 5 >> 2);
         g.vz += g.force;
         g.vz = g.vz * 995 / 1000;
         if g.force < 100 * 16 && est < g.desired_z {
@@ -352,7 +354,7 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
             g.force -= 10 * 16;
         }
     }
-    prop_set_pos_exact(m, pi, [pos[0], g.z / 16, pos[2]]);
+    prop_set_pos_exact(m, pi, [pos[0], (g.z >> 4), pos[2]]);
     PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], ((g.yaw >> 4) & 0xfff) as u16);
     if now & 1 != 0 {
         return;
@@ -360,7 +362,7 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
     if g.dead {
         // DyingThink: rise to n_max, then n_dead (the u8 health's zero
         // fires the cooked AITRIGGER_DEATH_USE_ON record).
-        if (g.z / 16 - g.max_z).abs() < 16 && PROP_HEALTH[pi] != 0 {
+        if ((g.z >> 4) - g.max_z).abs() < 16 && PROP_HEALTH[pi] != 0 {
             PROP_HEALTH[pi] = 0;
             PROP_STATE[pi] = PROP_STATE_DEAD;
             PROP_DEATH_START[pi] = now;
@@ -425,7 +427,7 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
         // m_vecDesired with his facing.
         let yaw = ((g.yaw >> 4) & 0xfff) as u16;
         let facing = g.desired[0] * sincos::sin_q12(yaw) + g.desired[1] * sincos::sin_q12(yaw.wrapping_add(1024) & 0xfff) > 0;
-        next_activity(m, nlogic, now, !time_reached(now, g.last_seen.wrapping_add(100)), (g.z / 16 - g.desired_z).abs(), facing);
+        next_activity(m, nlogic, now, !time_reached(now, g.last_seen.wrapping_add(100)), ((g.z >> 4) - g.desired_z).abs(), facing);
     }
 }
 
@@ -461,7 +463,7 @@ unsafe fn tick_balls(m: &Map, movers: &[phys::Mover], nlogic: usize, now: u16) {
             // player's centre, a sk_nihilanth_zap shock.
             let v = g.ball_vel[b];
             if isqrt_i32(dist2_3(v, [0; 3])) < 100 {
-                g.ball_vel[b] = [v[0] * 6 / 5, v[1] * 6 / 5, v[2] * 6 / 5];
+                g.ball_vel[b] = v.map(|x| x * 6 / 5);
             }
             if d < 256 {
                 g.ball_kind[b] = 0;
@@ -513,5 +515,5 @@ pub(crate) unsafe fn spheres() -> Option<(u8, [i32; 3])> {
         return None;
     }
     let p = PROP_POS[g.pi as usize];
-    Some((g.spheres, [p[0], g.z / 16 + 240, p[2]]))
+    Some((g.spheres, [p[0], (g.z >> 4) + 240, p[2]]))
 }
