@@ -1170,8 +1170,15 @@ fn main() {
     // loudly rather than being patched blindly.
     let sdk_linker = fs::read_to_string(&ld).expect("read PSoXide linker script");
     const SDK_STACK: &str = "STACK_RESERVE = 0x8000;";
-    const HLPSX_STACK: &str = SDK_STACK;
     assert_eq!(sdk_linker.matches(SDK_STACK).count(), 1);
+    // `HLPSX_STACK_RESERVE` overrides the reservation for a build that is
+    // only profiled, never shipped (hl-build's PGO collect link). A link-only
+    // input: the code and its addresses do not change.
+    println!("cargo:rerun-if-env-changed=HLPSX_STACK_RESERVE");
+    let hlpsx_stack = match env::var("HLPSX_STACK_RESERVE") {
+        Ok(reserve) if !reserve.is_empty() => format!("STACK_RESERVE = {reserve};"),
+        _ => SDK_STACK.to_string(),
+    };
     // Rare renderer extensions live outside `.text.*` so enabling one does
     // not shift the PS1's cache-sensitive world loop. Keep the custom bucket
     // inside the executable text output, but deliberately after ordinary code.
@@ -1179,7 +1186,7 @@ fn main() {
     const HLPSX_TEXT: &str = "        *(.text .text.*);\n        *(.hlpsx_cold .hlpsx_cold.*);";
     assert_eq!(sdk_linker.matches(SDK_TEXT).count(), 1);
     let linker = sdk_linker
-        .replace(SDK_STACK, HLPSX_STACK)
+        .replace(SDK_STACK, &hlpsx_stack)
         .replace(SDK_TEXT, HLPSX_TEXT);
     let hlpsx_ld = out_dir.join("hl-psx.ld");
     fs::write(&hlpsx_ld, linker).expect("write hl-psx linker script");
