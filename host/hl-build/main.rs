@@ -1818,9 +1818,21 @@ enum GuestProfile<'a> {
     Collect,
     /// The same code as `Collect`, linked as an ELF that keeps its DWARF.
     CollectElf,
-    /// Optimise with this LLVM sample profile.
-    Use(&'a Path),
+    /// Optimise with this LLVM sample profile, at this hot call-site
+    /// inlining threshold (see `PGO_HOT_CALLSITE_LADDER`).
+    Use(&'a Path, u32),
 }
+
+/// Free RAM a profile-guided disc must keep between `.bss` and the stack
+/// reserve. The model pool, weapon cache and stacks have their own audited
+/// margins; this is the headroom above all of them.
+const PGO_RAM_FLOOR: u32 = 16 * 1024;
+
+/// Hot call-site thresholds a profile-guided build tries in turn until its
+/// link keeps `PGO_RAM_FLOOR`. Inlining moves `.text` by kilobytes on tiny
+/// profile changes: final-7's source left 5,500 B free at 1000, 17,788 B at
+/// 500 and 28,028 B at 250.
+const PGO_HOT_CALLSITE_LADDER: [u32; 3] = [1000, 500, 250];
 
 fn compile_game(
     repository: &Path,
@@ -1858,7 +1870,7 @@ fn compile_game(
             "-Zdebug-info-for-profiling".to_string(),
             "-Cstrip=none".to_string(),
         ]);
-        if let GuestProfile::Use(samples) = profile {
+        if let GuestProfile::Use(samples, hot_callsite_threshold) = profile {
             flags.push(format!("-Zprofile-sample-use={}", samples.display()));
             // LLVM's default hot call-site threshold (3000) inlined enough to
             // grow .text by 17 KB on hl-psx and 25 KB on cs-psx, leaving
@@ -1870,7 +1882,9 @@ fn compile_game(
             // -profile-sample-accurate keeps the gain (+1.0% to poll 1500,
             // +2.8% to the tape end) at the unprofiled build's RAM.
             flags.push("-Cllvm-args=-profile-sample-accurate".to_string());
-            flags.push("-Cllvm-args=-hot-callsite-threshold=1000".to_string());
+            flags.push(format!(
+                "-Cllvm-args=-hot-callsite-threshold={hot_callsite_threshold}"
+            ));
         }
     }
     if !flags.is_empty() {
@@ -2082,8 +2096,42 @@ fn profile_guided_pack(
         "convert the PC histogram into a sample profile",
     )?;
 
-    let exe = compile_game(repository, psoxide, features, GuestProfile::Use(&profile))?;
-    pack_disc(repository, psoxide, &exe)
+    // Step inlining down until the link keeps the RAM floor, with the SDK's
+    // check (`psoxide-pgo ram`), and record which threshold shipped.
+    let link_map = repository.join(".hlpsx/hl-psx.map");
+    let mut tried = Vec::new();
+    for threshold in PGO_HOT_CALLSITE_LADDER {
+        let exe = compile_game(
+            repository,
+            psoxide,
+            features,
+            GuestProfile::Use(&profile, threshold),
+        )?;
+        let fits = Command::new(cargo())
+            .current_dir(psoxide)
+            .args(["run", "-q", "--release", "-p", "psoxide-pgo", "--", "ram"])
+            .arg(&link_map)
+            .args(["--floor", &PGO_RAM_FLOOR.to_string()])
+            .status()?
+            .success();
+        tried.push(threshold.to_string());
+        if fits {
+            let record = format!(
+                "hot-callsite-threshold {threshold}\nfloor {PGO_RAM_FLOOR}\ntried {}\n",
+                tried.join(", ")
+            );
+            fs::write(work.join("shipped-variant.txt"), &record)?;
+            println!(
+                "PGO variant: hot-callsite-threshold={threshold} (tried {})",
+                tried.join(", ")
+            );
+            return pack_disc(repository, psoxide, &exe);
+        }
+    }
+    Err(format!(
+        "no hot-callsite threshold in {PGO_HOT_CALLSITE_LADDER:?} keeps {PGO_RAM_FLOOR} B of RAM free"
+    )
+    .into())
 }
 
 fn home_dir() -> Option<PathBuf> {
