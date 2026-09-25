@@ -1340,16 +1340,19 @@ pub fn ending(fb: &mut FrameBuffer, assets: &[u8]) {
     loop {
         fb.clear(0, 0, 0);
         draw_logo(logo, lw, lh);
-        draw_centered(&font, 88, "THE END", ITEM_SEL);
-        let mut y = 110i16;
+        // Title, eight credit lines one pixel apart and the prompt all fit
+        // under the logo inside the 240-line frame: the credits end at 215
+        // and the prompt sits below them at 221..237.
+        draw_centered(&font, 60, "THE END", ITEM_SEL);
+        let mut y = 80i16;
         let mut i = 0usize;
         while i < CREDIT_LINES.len() {
             hltext::draw_centered_scaled(y, CREDIT_LINES[i].0, hltext::SMALL_Q8, CREDIT_LINES[i].1);
-            y += hltext::line_height_scaled(hltext::SMALL_Q8);
+            y += hltext::line_height_scaled(hltext::SMALL_Q8) - 1;
             i += 1;
         }
         if frame > 40 && (frame / 16) & 1 == 0 {
-            draw_centered(&font, 214, "Press any button", DIM);
+            draw_centered(&font, 221, "Press any button", DIM);
         }
         gpu::draw_sync();
         interrupts::wait_vblank();
