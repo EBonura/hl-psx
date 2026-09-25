@@ -50,32 +50,15 @@ pub unsafe fn play(slot: u8, pos: [i32; 3]) {
 }
 
 /// Keep a set-piece loop running at `pos`: keyed once, then its level
-/// follows the source's distance on the voice it holds (the map loop's own
-/// 300-unit steps, set every call), re-keyed only if another loop took the
-/// voice.
+/// follows the source's distance in place on the voice it holds (the map
+/// loop's own falloff), re-keyed only if it lost the voice.
 #[inline(never)]
 #[optimize(size)]
 pub unsafe fn keep_loop(slot: u8, pos: [i32; 3], owner: u16) {
     let id = SETPIECE[slot as usize];
-    if id == u8::MAX {
-        return;
+    if id != u8::MAX && !sfx::set_map_loop_world(owner, pos) {
+        sfx::play_map_loop_world(id, pos, owner);
     }
-    if sfx::loop_voice(owner).is_none() {
-        // Keyed at full level (authored attenuation 3: none), then set below.
-        sfx::play_map_loop_authored(id, pos, owner, 100, 3);
-    }
-    let Some(v) = sfx::loop_voice(owner) else {
-        return;
-    };
-    let d = [
-        (pos[0] - sfx::EAR[0]).clamp(-16384, 16384),
-        (pos[1] - sfx::EAR[1]).clamp(-16384, 16384),
-        (pos[2] - sfx::EAR[2]).clamp(-16384, 16384),
-    ];
-    let dist = psx_math::int32::isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-    let den = if dist >= 2400 { 16 } else { 1 + dist / 300 } as u16;
-    let vol = psx_spu::Volume::linear(1, den);
-    psx_spu::Voice::new(v).set_volume(vol, vol);
 }
 
 #[inline]
@@ -85,11 +68,9 @@ pub unsafe fn stop_loop(owner: u16) {
 
 /// Silence a loop between bursts but keep its voice, so a source that starts
 /// and stops all fight long (the gargantua's flame) is keyed once per map
-/// rather than rotating through the map-loop voices and evicting others.
-#[inline(never)]
-#[optimize(size)]
+/// rather than re-keyed on every burst. A muted loop is the first a new map
+/// loop evicts when every loop voice is held.
+#[inline]
 pub unsafe fn mute_loop(owner: u16) {
-    if let Some(v) = sfx::loop_voice(owner) {
-        psx_spu::Voice::new(v).set_volume(psx_spu::Volume::SILENCE, psx_spu::Volume::SILENCE);
-    }
+    sfx::set_map_loop_volume(owner, psx_spu::Volume::SILENCE);
 }

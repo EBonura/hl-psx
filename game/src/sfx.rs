@@ -86,19 +86,16 @@ pub const VOICE_CHUNK_BASE: u32 = 3100;
 
 #[inline]
 pub unsafe fn stop_dialogue() {
-    MAP_SAMPLES = 0; // Hsfx::stop_dialogue empties the map bank's count too
     STATE.stop_dialogue()
 }
 
 #[inline]
 pub unsafe fn stop_map_loops() {
-    loops_reset();
     STATE.stop_map_loops()
 }
 
 #[inline]
 pub unsafe fn stop_all() {
-    loops_reset();
     STATE.stop_all()
 }
 
@@ -109,10 +106,7 @@ pub unsafe fn init_from_pack(pack: &[u8]) -> usize {
 
 #[inline]
 pub unsafe fn load_dialogue_pack(pack: &[u8]) -> usize {
-    loops_reset();
-    let n = STATE.load_dialogue_pack(pack);
-    MAP_SAMPLES = n.min(u8::MAX as usize) as u8;
-    n
+    STATE.load_dialogue_pack(pack)
 }
 
 #[inline]
@@ -170,7 +164,6 @@ pub unsafe fn play_map_world(local_id: u8, pos: [i32; 3]) {
 #[inline(never)]
 #[cfg_attr(target_arch = "mips", optimize(size))]
 pub unsafe fn play_map_loop_world(local_id: u8, pos: [i32; 3], owner: u16) {
-    loop_keyed(local_id, owner);
     STATE.play_map_loop_world(local_id, pos, owner)
 }
 
@@ -182,63 +175,26 @@ pub unsafe fn play_map_loop_authored(
     volume_percent: u8,
     packed_attenuation: u8,
 ) {
-    loop_keyed(local_id, owner);
     STATE.play_map_loop_authored(local_id, pos, owner, volume_percent, packed_attenuation)
 }
 
 #[inline]
 pub unsafe fn stop_map_loop(owner: u16) {
-    loop_stopped(owner);
     STATE.stop_map_loop(owner)
 }
 
-/// The listener position of the last `set_ear`, for set-piece loop levels.
-pub static mut EAR: [i32; 3] = [0; 3];
-
-// Mirror of Hsfx's map-loop voice allocation (psx-goldsrc hsfx.rs: voices
-// MAP_LOOP_VOICE_FIRST 17 .. +MAP_LOOP_VOICE_COUNT 7, taken round-robin, reset
-// by stop_map_loops / stop_all / load_dialogue_pack, and a loop is keyed only
-// when its local id is in the map bank and its owner holds no voice yet). It
-// lets a moving set-piece loop change its level in place, as the SDK's
-// SND_CHANGE_VOL does, instead of re-keying onto the next voice and evicting
-// whatever map loop held it.
-const LOOP_VOICE_FIRST: u8 = 17;
-const LOOP_VOICES: usize = 7;
-static mut LOOP_OWNER: [u16; LOOP_VOICES] = [u16::MAX; LOOP_VOICES];
-static mut LOOP_NEXT: u8 = 0;
-static mut MAP_SAMPLES: u8 = 0;
-
-#[cfg_attr(target_arch = "mips", optimize(size))]
-unsafe fn loops_reset() {
-    LOOP_OWNER = [u16::MAX; LOOP_VOICES];
-    LOOP_NEXT = 0;
+/// Set the level of the voice `owner`'s map loop holds, in place (GoldSrc's
+/// SND_CHANGE_VOL). False when it holds none.
+#[inline]
+pub unsafe fn set_map_loop_volume(owner: u16, gain: psx_spu::Volume) -> bool {
+    STATE.set_map_loop_volume(owner, gain)
 }
 
-#[inline(never)]
-#[cfg_attr(target_arch = "mips", optimize(size))]
-unsafe fn loop_keyed(local_id: u8, owner: u16) {
-    if local_id >= MAP_SAMPLES || loop_voice(owner).is_some() {
-        return;
-    }
-    LOOP_OWNER[LOOP_NEXT as usize] = owner;
-    LOOP_NEXT = ((LOOP_NEXT as usize + 1) % LOOP_VOICES) as u8;
-}
-
-#[inline(never)]
-#[cfg_attr(target_arch = "mips", optimize(size))]
-unsafe fn loop_stopped(owner: u16) {
-    for o in LOOP_OWNER.iter_mut() {
-        if *o == owner {
-            *o = u16::MAX;
-        }
-    }
-}
-
-/// The SPU voice a map loop owner holds, if any.
-#[inline(never)]
-#[cfg_attr(target_arch = "mips", optimize(size))]
-pub unsafe fn loop_voice(owner: u16) -> Option<u8> {
-    LOOP_OWNER.iter().position(|&o| o == owner).map(|i| LOOP_VOICE_FIRST + i as u8)
+/// Move `owner`'s map loop to `play_map_loop_world`'s level for `pos`, in
+/// place. False when it holds no voice.
+#[inline]
+pub unsafe fn set_map_loop_world(owner: u16, pos: [i32; 3]) -> bool {
+    STATE.set_map_loop_world(owner, pos)
 }
 
 #[inline]
@@ -258,7 +214,6 @@ pub unsafe fn charger_stop() {
 
 #[inline]
 pub unsafe fn set_ear(pos: [i32; 3]) {
-    EAR = pos;
     STATE.set_ear(pos)
 }
 
