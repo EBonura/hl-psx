@@ -92,13 +92,16 @@ pub mod map {
     pub const WORLD_TEMPLATE_SOURCE_CORNER_OFFSET: usize = 16;
 
     /// Sky volumes (optional, any magic): the world model's CONTENTS_SKY
-    /// leaf bounds, merged, as `i16 min[3] | i16 max[3]` in world axes
-    /// (x, z, y). The records are 4-aligned and followed by `u32 count |
-    /// "SKB1"`, which ends where the door-occluder section begins (or at the
-    /// end of the room when it has none). GoldSrc draws the sky only through
-    /// sky brush faces; the runtime draws it through these volumes.
-    pub const SKY_BOX_TAG: [u8; 4] = *b"SKB1";
-    pub const SKY_BOX_RECORD_SIZE: usize = 12;
+    /// leaf bounds, merged, as `i16 min[3] | i16 max[3] | u16 first_leaf |
+    /// u16 leaf_count` in world axes (x, z, y), then the u16 visleaf indices
+    /// (leaf - 1, the PVS bit) of the leaves whose sky faces lie on each box,
+    /// padded to 4. Then `u32 box_count | u32 leaf_count | "SKB2"`, which
+    /// ends where the door-occluder section begins (or at the end of the
+    /// room). GoldSrc draws the sky only through sky brush faces in visible
+    /// leaves; the runtime draws it through these volumes when one of their
+    /// leaves is in the camera's PVS.
+    pub const SKY_BOX_TAG: [u8; 4] = *b"SKB2";
+    pub const SKY_BOX_RECORD_SIZE: usize = 16;
 
     pub const DYNAMIC_FACE_RECORD_SIZE: usize = 12;
     pub const PLANE_RECORD_SIZE: usize = 10;
