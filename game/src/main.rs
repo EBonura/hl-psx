@@ -29912,6 +29912,9 @@ fn play(
         if PENDING_RESTORE_ACTIVE && PENDING_RESTORE.room_id == launch.room_id {
             let cp = PENDING_RESTORE;
             PENDING_RESTORE_ACTIVE = false;
+            // The chaptertitle env_message fires once per map (SF_MESSAGE_ONCE)
+            // and is not restored with a save, so a loaded game shows no title.
+            CHAPTER_TITLE_ID = 0;
             if cp.has_pos {
                 player.pos = cp.pos;
                 player.vel = [0; 3];
