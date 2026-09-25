@@ -75,12 +75,14 @@ pub(crate) unsafe fn reset() {
 
 /// Unit vector of a prop yaw (0 = +Z, 1024 = +X), q12.
 #[inline(never)]
+#[optimize(size)]
 fn forward(yaw: u16) -> [i32; 3] {
     [sincos::sin_q12(yaw & 0xfff), 0, sincos::sin_q12(yaw.wrapping_add(1024) & 0xfff)]
 }
 
 /// `o + dir * len` for a q12 direction.
 #[inline(never)]
+#[optimize(size)]
 fn along(o: [i32; 3], dir: [i32; 3], len: i32) -> [i32; 3] {
     [o[0] + ((dir[0] * len) >> 12), o[1] + ((dir[1] * len) >> 12), o[2] + ((dir[2] * len) >> 12)]
 }
@@ -88,6 +90,7 @@ fn along(o: [i32; 3], dir: [i32; 3], len: i32) -> [i32; 3] {
 /// Where `from -> to` first meets the player's box padded by `pad`
 /// (x/z, and y), as a q12 fraction; None when it misses or they are dead.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn player_frac(from: [i32; 3], to: [i32; 3], pad: i32) -> Option<i32> {
     let p = LOGIC_PLAYER_POS;
     let (w, h) = (16 + pad, LOGIC_PLAYER_HALF_HEIGHT + pad);
@@ -98,6 +101,7 @@ unsafe fn player_frac(from: [i32; 3], to: [i32; 3], pad: i32) -> Option<i32> {
 }
 
 #[inline(never)]
+#[optimize(size)]
 unsafe fn hurt_player(dmg: u16, from: [i32; 3]) {
     PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(dmg);
     note_damage_direction(from);
@@ -105,6 +109,7 @@ unsafe fn hurt_player(dmg: u16, from: [i32; 3]) {
 
 /// The garg's attack sequence: (roster slot, one-shot length, elapsed).
 /// Slots 5 and 6 are the type-16 roster's `attack` and `stomp`.
+#[optimize(size)]
 pub(crate) unsafe fn gesture_clip(pi: usize) -> Option<(usize, usize, usize)> {
     let g = g();
     if g.pi as usize != pi || g.gesture == 0 {
@@ -306,8 +311,8 @@ unsafe fn flame_task(m: &Map, movers: &[phys::Mover], pi: usize, aim: [i32; 3], 
     let d = [aim[0] - pos[0], aim[1] - pos[1] - 64, aim[2] - pos[2]];
     let horiz = isqrt_i32(d[0] * d[0] + d[2] * d[2]);
     let want = [
-        sl::angle_dist_q12(atan2_q12(d[1], horiz) as i32, 0),
-        sl::angle_dist_q12(atan2_q12(d[0], d[2]) as i32, yaw),
+        crate::tank::atan_s(d[1], horiz),
+        sl::angle_dist_q12(crate::tank::atan_s(d[0], d[2]), yaw),
     ];
     if horiz.max(d[1].abs()) > 400 || want[1].abs() > 683 {
         // Beyond 400 units or 60 degrees aside, the sweep winds down 6x.
@@ -357,7 +362,7 @@ unsafe fn flame_task(m: &Map, movers: &[phys::Mover], pi: usize, aim: [i32; 3], 
 }
 
 /// Per-tick work that outlives the actor loop's view of the gargantua: the
-/// travelling stomp wave, trigger_hurt touches and the timed DeathEffect.
+/// travelling stomp wave and the timed DeathEffect.
 #[inline(never)]
 #[optimize(size)]
 pub(crate) unsafe fn tick_world(m: &Map) {
@@ -390,8 +395,6 @@ pub(crate) unsafe fn tick_world(m: &Map) {
             g.died = now;
             g.flame_end = 0;
             g.gesture = 0;
-        } else if PROP_ACTIVE[pi] != 0 && now % TRIGGER_HURT_REPEAT_TICKS == 0 {
-            hurt_touch(m, pi, now);
         }
         return;
     }
@@ -413,39 +416,10 @@ pub(crate) unsafe fn tick_world(m: &Map) {
     }
 }
 
-/// CTriggerHurt::HurtTouch on the gargantua: an enabled trigger_hurt it
-/// stands in hurts it at 1% (TakeDamage scales non-GARG_DAMAGE by 0.01)
-/// and fires its target on the trigger's shared half-second clock (c2a1's
-/// electro_hurt shakes and crackles under it).
-#[inline(never)]
-#[optimize(size)]
-unsafe fn hurt_touch(m: &Map, pi: usize, now: u16) {
-    let pos = PROP_POS[pi];
-    let nlogic = m.n_logic.min(MAX_LOGIC);
-    for li in 0..nlogic {
-        if LOGIC_KIND[li] == map::LOGIC_TRIGGER_HURT
-            && LOGIC_STATE[li] == LOGIC_STATE_BOTTOM
-            && time_reached(now, LOGIC_NEXT[li])
-            && m.logic_touches_bounds(li, [pos[0] - 32, pos[1], pos[2] - 32], [pos[0] + 32, pos[1] + 64, pos[2] + 32])
-        {
-            let rec = m.logic(li);
-            if rec.flags & map::LOGIC_TRIGGER_HURT_HEALS == 0 && rec.arg0 >= 100 {
-                DMG_HEAVY = true;
-                damage_prop(pi, (rec.arg0 / 100).min(255) as u8, false);
-                DMG_HEAVY = false;
-            }
-            logic_sub_use_targets(m, nlogic, m.n_ents, li, rec, now, map::USE_TOGGLE, 0);
-            LOGIC_NEXT[li] = now.wrapping_add(TRIGGER_HURT_REPEAT_TICKS);
-            if rec.spawnflags & SF_TRIGGER_HURT_TARGET_ONCE != 0 {
-                LOGIC_TARGET[li] = 0;
-            }
-        }
-    }
-}
-
 /// CGargantua::TraceAttack / TakeDamage: only GARG_DAMAGE (blast, energy
 /// beam, crush, mortar) hurts; bullets and clubs ricochet. The u8 actor
 /// health stands for the skill.cfg health, so damage scales onto it.
+#[optimize(size)]
 pub(crate) fn scale_damage(dmg: u8, heavy: bool) -> u8 {
     if !heavy {
         return 0;
