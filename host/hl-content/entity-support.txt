@@ -45,18 +45,18 @@ func_healthcharger|runtime|health charger logic
 func_illusionary|runtime|rendered brush and optional frame control
 func_ladder|runtime|ladder volume participates in player movement
 func_monsterclip|runtime|NPC-only collision volume
-func_mortar_field|missing_gameplay|mortar controller is absent
+func_mortar_field|runtime|random, activator and momentary-table targeting; delayed shells, blast column and shake
 func_pendulum|runtime|pendulum pose and collision
 func_platrot|runtime|rotating platform pose and collision
 func_pushable|runtime|pushable brush and collision
 func_recharge|runtime|HEV charger logic
 func_rot_button|runtime|rotating button logic
 func_rotating|runtime|fan pose and collision
-func_tank|approximated|mountable direct-use hitscan tank
-func_tankcontrols|approximated|separate controls are folded into direct tank use
-func_tanklaser|approximated|degrades to the compact tank weapon
-func_tankmortar|approximated|degrades to the compact tank weapon
-func_tankrocket|approximated|degrades to the compact tank weapon
+func_tank|runtime|AI aim/fire (sight, cone, rate, persistence) and player control via Use or tankcontrols
+func_tankcontrols|runtime|cooked controls box mounts its tank; dismount beyond 30 units
+func_tanklaser|approximated|tank AI and control; fires the compact hitscan instead of env_laser
+func_tankmortar|runtime|tank AI and control; one iMagnitude explosion per shot
+func_tankrocket|runtime|tank AI and control; fires rockets
 func_trackautochange|approximated|minimal junction button routing
 func_trackchange|approximated|minimal junction button routing
 func_tracktrain|runtime|path-track moving brush
@@ -86,7 +86,7 @@ momentary_rot_button|runtime|continuous-use rotating control
 monster_alien_controller|approximated|shared ranged actor behavior
 monster_alien_grunt|approximated|shared melee actor behavior
 monster_alien_slave|approximated|shared ranged actor behavior
-monster_apache|approximated|rendered actor without complete vehicle AI
+monster_apache|approximated|CApache flight, path, gun, HVR rockets and crash; no rotor sound or hitgroups
 monster_barnacle|approximated|rendered actor without complete barnacle AI
 monster_barney|approximated|compact ally behavior
 monster_barney_dead|runtime|static authored corpse
@@ -95,7 +95,7 @@ monster_bullchicken|approximated|shared melee actor behavior
 monster_cockroach|approximated|compact ambient actor behavior
 monster_flyer_flock|approximated|passive rendered flock
 monster_furniture|runtime|static studio prop
-monster_gargantua|approximated|rendered boss without complete boss AI
+monster_gargantua|approximated|chase, swipe, stomp, flame, heavy-damage-only and death; no sounds, flame hurts only the player
 monster_generic|approximated|allowlisted scripted model puppet
 monster_gman|approximated|scripted passive actor
 monster_headcrab|approximated|compact melee actor behavior
@@ -107,8 +107,8 @@ monster_human_grunt|approximated|shared ranged actor behavior
 monster_ichthyosaur|approximated|rendered actor without complete swim AI
 monster_leech|approximated|rendered actor without complete swim AI
 monster_miniturret|approximated|shared turret behavior
-monster_nihilanth|approximated|fires n_dead on death and n_ending on its ending Use; no flight, crystals or attacks
-monster_osprey|missing_gameplay|renders as a static prop; no flight path
+monster_nihilanth|approximated|spheres, n_recharger crystals, zap and teleport balls, head-open phase, flight and n_dead; brain hit is a sphere test, no summons
+monster_osprey|approximated|path_corner flight, grunt resupply by rope and crash; no sounds, no hitgroups
 monster_rat|missing_gameplay|renders; no scurry AI
 monster_scientist|approximated|compact ally and scripted behavior
 monster_scientist_dead|runtime|static authored corpse
