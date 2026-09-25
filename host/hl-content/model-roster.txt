@@ -16,7 +16,7 @@
 14|roach|1:4,0:4
 15|gman|0:2,6:2,0:2,0:2,0:2,listen:3,bigno:3,bigyes:3,idle01=@0,idlebrush=@0
 16|garg|2:2,5:4,7:3,12:3,14:5,attack:4,stomp:4
-17|nihilanth|0:2,19:2,1:5,9:3,12:5
+17|nihilanth|0:2,19:2,1:5,9:3,12:5,attack2:3,recharge:4,float_open:2,attack1_open:3
 18|big_mom|0:4,2:6,9:6,10:4,4:8
 19|icky|0:4,1:6,8:6,5:4,3:8
 20|sentry|2:2,2:2,1:2,2:2,5:3

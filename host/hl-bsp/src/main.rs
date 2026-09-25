@@ -7608,6 +7608,11 @@ fn collect_logic_entities_with_lightstyles(
             "trigger_changelevel" => LOGIC_TRIGGER_CHANGELEVEL,
             "trigger_transition" => LOGIC_TRIGGER_TRANSITION,
             "info_landmark" => LOGIC_INFO_LANDMARK,
+            // CNihilanth finds n_min, n_max and n_recharger<level> by name;
+            // a destroyed crystal killtargets its recharger.
+            "info_target" if ent_value(block, "targetname").is_some_and(|n| n.starts_with("n_")) => {
+                LOGIC_INFO_LANDMARK
+            }
             "trigger_counter" => LOGIC_TRIGGER_COUNTER,
             "trigger_changetarget" => LOGIC_TRIGGER_CHANGETARGET,
             "trigger_hurt" => LOGIC_TRIGGER_HURT,

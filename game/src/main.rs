@@ -45,6 +45,7 @@ use psx_goldsrc::route_follow;
 mod save;
 mod apache;
 mod garg;
+mod nihilanth;
 mod mortar;
 mod osprey;
 mod scientist_logic;
@@ -1674,12 +1675,19 @@ const TRACER_FLAME: u8 = 1;
 const TRACER_FLAME_CORE: u8 = 2;
 const TRACER_MORTAR: u8 = 3;
 const TRACER_ROPE: u8 = 4;
-const TRACER_LOOKS: [(i32, (u8, u8, u8)); 5] = [
+/// Nihilanth energy balls: zap (nhth1) and teleport (exit1), and his
+/// circling spheres (muzzleflash3 at 255,224,192).
+const TRACER_ZAP: u8 = 5;
+const TRACER_TELE: u8 = 6;
+const TRACER_LOOKS: [(i32, (u8, u8, u8)); 8] = [
     (3, (250, 220, 120)),
     (24, (255, 130, 90)),
     (14, (0, 120, 255)),
     (20, (255, 160, 100)),
     (1, (70, 70, 70)),
+    (16, (200, 200, 255)),
+    (24, (120, 255, 120)),
+    (12, (255, 224, 192)),
 ];
 // Jump input buffer: a Cross press up to JUMP_BUFFER_TICKS before landing still
 // jumps (forgives an early press on a fall -- HL-ish landing feel).
@@ -10721,6 +10729,8 @@ unsafe fn logic_use_entity(
                 OSPREY.next = now.wrapping_add(2); // COsprey::CommandUse
             } else if rec.arg1 == map::AITRIGGER_APACHE_PATH {
                 apache::startup(li);
+            } else if rec.arg1 == map::AITRIGGER_COMMAND_TOUCH && use_type == map::USE_ON {
+                nihilanth::command_on();
             }
         }
         map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE => {
@@ -12383,6 +12393,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     OSPREY.li = u16::MAX;
     garg::reset();
     apache::reset();
+    nihilanth::reset();
     mortar::reset();
     li = 0;
     while li < nlogic {
@@ -13292,6 +13303,15 @@ fn prop_anim_frame(
         let start = unsafe { PROP_SCRIPT_PLAY_UNTIL[pi] };
         let elapsed = unsafe { SIM_NOW }.wrapping_sub(start) as usize;
         return md.looped_clip_phase(clip, duration, elapsed);
+    }
+    if unsafe { PROP_KIND[pi] } == 17 && state != PROP_STATE_DEAD && hit_flash == 0 {
+        // The nihilanth's schedule picks its own sequences.
+        if let Some((slot, ticks, elapsed)) = unsafe { nihilanth::clip(pi) } {
+            if slot < md.n_clips {
+                forget_clip();
+                return md.looped_clip_phase(slot, ticks, elapsed);
+            }
+        }
     }
     if unsafe { PROP_KIND[pi] } == PROP_TYPE_GARG {
         // The gargantua's swipe and stomp play their own sequences once.
@@ -15060,6 +15080,10 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
             0 => return,
             scaled => scaled,
         }
+    } else if PROP_KIND[pi] == 17 {
+        PROP_HEALTH[pi] = nihilanth::damage(pi, dmg);
+        PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
+        return;
     } else if PROP_KIND[pi] == 23 {
         match apache::scale_damage(dmg, DMG_BLAST) {
             0 => return,
@@ -19142,6 +19166,7 @@ unsafe fn prop_studio_hit_fraction(
     let yaw = prop_yaw_value(PROP_YAW[pi]);
     let model_rotation = prop_model_rotation(yaw, prop_authored_tilt(m, pi));
     let scale = model_local_scale(md.local_to_world_q12());
+    nihilanth::note_shot(pi, start, end);
     let model_start = inverse_rotate_scaled(start, PROP_POS[pi], &model_rotation, scale);
     let model_end = inverse_rotate_scaled(end, PROP_POS[pi], &model_rotation, scale);
     let mut best = None;
@@ -27870,6 +27895,16 @@ unsafe fn queue_world_beams(
         ti += 1;
     }
     draw_tripmine_beams(packets, ot, rot, base_t);
+    // The nihilanth's circling spheres: CircleTarget holds them 24 * N_SCALE
+    // around his head.
+    if let Some((count, c)) = nihilanth::spheres() {
+        let (half, color) = TRACER_LOOKS[7];
+        for i in 0..count as u32 {
+            let a = ((SIM_NOW as u32 * 40 + i * 4096 / 20) & 0xfff) as u16;
+            let p = [c[0] + (sincos::sin_q12(a) * 360 >> 12), c[1], c[2] + (sincos::sin_q12(a.wrapping_add(1024) & 0xfff) * 360 >> 12)];
+            draw_beam(packets, ot, p, [p[0], p[1] + 24, p[2]], half, color, rot, base_t);
+        }
+    }
 }
 
 // First-person viewmodel transform. GoldSrc attaches the model to the camera:
@@ -32059,6 +32094,7 @@ fn play(
                 }
                 garg::tick_world(&m);
                 apache::tick(&m, movers);
+                nihilanth::tick(&m, movers);
                 mortar::tick(&m, sim_frame_no as u16);
                 telemetry::stage_end(telemetry::stage::UPDATE_ACTOR);
                 apply_debug_toggles(
