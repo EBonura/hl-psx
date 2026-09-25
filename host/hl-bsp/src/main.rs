@@ -9973,6 +9973,19 @@ fn collect_props(
                 });
             };
             match cls {
+                "monster_osprey" => {
+                    let first = ent_value(block, "target").unwrap_or("");
+                    if !first.is_empty() {
+                        trigger_links.push(MonsterTriggerLink {
+                            prop: owner_index,
+                            condition: AITRIGGER_FLY_PATH,
+                            target: intern_logic_name(logic_names, first).unwrap_or(0),
+                            targetname: name_id,
+                            view_cone: spawnflags,
+                            origin,
+                        });
+                    }
+                }
                 // CNihilanth::Spawn defaults; the class reads no keys for them.
                 "monster_nihilanth" => {
                     boss(AITRIGGER_DEATH_USE_ON, "n_dead", 0);
@@ -12972,6 +12985,38 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         if link.target == 0 {
             continue;
         }
+        // An osprey's corner chain, in flight order up to where it loops.
+        let first_aux = logic.aux.len() as u16;
+        let mut loop_start = 0u8;
+        if link.condition == AITRIGGER_FLY_PATH {
+            let mut names: Vec<&str> = Vec::new();
+            let mut next = logic.names[link.target as usize - 1].clone();
+            while names.len() < 32 {
+                if let Some(i) = names.iter().position(|n| *n == next) {
+                    loop_start = i as u8;
+                    break;
+                }
+                let Some(corner) = ent_text.split('{').find(|b| {
+                    ent_value(b, "targetname") == Some(next.as_str())
+                        && ent_value(b, "classname") == Some("path_corner")
+                }) else {
+                    break;
+                };
+                names.push(ent_value(corner, "targetname").unwrap_or(""));
+                let p = to_world(ent_value(corner, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]), scale);
+                let a = ent_angles_degrees(corner).unwrap_or([0.0; 3]);
+                let q8 = |deg: f32| ((-deg * 256.0 / 360.0).round() as i32 & 0xff) as u16;
+                for (target, delay_ticks) in [
+                    (p[0] as i16 as u16, p[1] as i16 as u16),
+                    (p[2] as i16 as u16, parse_f32_key(corner, "speed", 0.0).round().clamp(0.0, 4000.0) as u16),
+                    (hl_yaw_to_world_q12(a[1]) as u16, q8(a[0]) | (q8(a[2]) << 8)),
+                ] {
+                    logic.aux.push(LogicAuxRec { target, delay_ticks });
+                }
+                next = ent_value(corner, "target").unwrap_or("").to_string();
+            }
+        }
+        let aux_count = (logic.aux.len() - first_aux as usize) as u8;
         logic.ents.push(LogicRec {
             kind: LOGIC_MONSTER_TRIGGER,
             use_type: if link.condition == AITRIGGER_DEATH_USE_ON { USE_ON } else { USE_TOGGLE },
@@ -12980,9 +13025,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             target: link.target,
             killtarget: 0,
             brush: LOGIC_BRUSH_NONE,
-            first_aux: 0,
-            aux_count: 0,
-            flags: 0,
+            first_aux,
+            aux_count,
+            flags: loop_start,
             wait_ticks: 0,
             delay_ticks: 0,
             speed: link.view_cone,

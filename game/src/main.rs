@@ -44,10 +44,12 @@ mod render;
 use psx_goldsrc::route_follow;
 mod save;
 mod garg;
+mod osprey;
 mod scientist_logic;
 mod scratchpad;
 mod setpiece_logic;
 mod tank;
+use osprey::{osprey_init, tick_osprey, OSPREY, OSPREY_TILT, PROP_TYPE_OSPREY};
 use tank::{tank_player_fire, tank_still_controlled, tank_try_control, tank_use, tanks_init, tick_tanks, TANK_COUNT};
 use psx_goldsrc::semantic_input;
 mod settings;
@@ -870,6 +872,10 @@ fn prop_model_rotation(yaw: u16, tilt: u16) -> Mat3I16 {
 
 #[inline(always)]
 fn prop_authored_tilt(m: &Map, pi: usize) -> u16 {
+    // A flying osprey banks through its path_corner angles.
+    if unsafe { OSPREY.li != u16::MAX && pi == OSPREY.pi as usize && OSPREY_TILT != u16::MAX } {
+        return unsafe { OSPREY_TILT };
+    }
     if pi < m.n_props {
         ((m.prop_orientation(pi) as u32) >> 16) as u16
     } else {
@@ -10662,6 +10668,8 @@ unsafe fn logic_use_entity(
         map::LOGIC_MONSTER_TRIGGER => {
             if rec.arg1 == map::AITRIGGER_COMMAND_TOUCH && use_type == map::USE_OFF {
                 monster_command_touch(m, nlogic, rec.target);
+            } else if rec.arg1 == map::AITRIGGER_FLY_PATH && OSPREY.li as usize == li {
+                OSPREY.next = now.wrapping_add(2); // COsprey::CommandUse
             }
         }
         map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE => {
@@ -12321,6 +12329,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     MONSTER_TRIGGER_END = 0;
     MONSTER_TOUCH = false;
     BOSS_WALKER = u16::MAX;
+    OSPREY.li = u16::MAX;
     garg::reset();
     li = 0;
     while li < nlogic {
@@ -14666,6 +14675,14 @@ unsafe fn init_monster_trigger(li: usize, rec: map::LogicEnt) {
     MONSTER_TRIGGER_END = li as u16 + 1;
     LOGIC_COUNTER[li] = rec.arg1 as i16;
     let nprops = core::ptr::read_volatile(core::ptr::addr_of!(PROP_COUNT)).min(CARRY_MAILBOX_FIRST);
+    if rec.arg1 == map::AITRIGGER_FLY_PATH {
+        let pi = rec.arg0 as usize;
+        if pi < nprops && PROP_ACTIVE[pi] != 0 && PROP_KIND[pi] == PROP_TYPE_OSPREY {
+            osprey_init(li, rec, pi);
+        }
+        LOGIC_STATE[li] = LOGIC_STATE_TOP; // no TriggerCondition to evaluate
+        return;
+    }
     if rec.arg1 == map::AITRIGGER_NODE_WALK {
         let mut pi = rec.arg0 as usize;
         if rec.arg0 == map::NODE_WALK_INCOMING {
@@ -14976,6 +14993,13 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
             0 => return,
             scaled => scaled,
         }
+    } else if PROP_KIND[pi] == PROP_TYPE_OSPREY {
+        // COsprey::TraceAttack: light hits only spark off the hull; its
+        // 400 health scales onto the u8 actor health.
+        if dmg <= 50 {
+            return;
+        }
+        (dmg as u32 * 255 / 400) as u8
     } else {
         dmg
     };
@@ -31953,6 +31977,9 @@ fn play(
                 );
                 if BOSS_WALKER != u16::MAX {
                     tick_boss_walker(&m, movers);
+                }
+                if OSPREY.li != u16::MAX {
+                    tick_osprey(&m, movers);
                 }
                 garg::tick_world(&m);
                 telemetry::stage_end(telemetry::stage::UPDATE_ACTOR);
