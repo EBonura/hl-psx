@@ -18,6 +18,7 @@
 //!   n_min / n_max and yaws toward the player.
 
 use crate::*;
+use hl_format::setpiece_audio as SP;
 
 const N_SPHERES: u8 = 20;
 /// Sequence timing in ticks at framerate 1: frames / 8 fps.
@@ -98,6 +99,19 @@ static mut N: Nih = Nih {
     ball_vel: [[0; 3]; MAX_BALLS],
     ball_kind: [0; MAX_BALLS],
 };
+
+/// m_flNextPainSound.
+static mut PAIN_NEXT: u16 = 0;
+
+/// Event 2 (zen): the ball launch, with an attack cry one time in five.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn zen_sound(head: [i32; 3]) {
+    if IMPACT_RNG.below(5) == 0 {
+        setpiece_sfx::play(SP::NIH_ATTACK, head);
+    }
+    setpiece_sfx::play(SP::NIH_BALL, head);
+}
 
 #[inline(always)]
 unsafe fn n() -> &'static mut Nih {
@@ -219,7 +233,18 @@ pub(crate) unsafe fn damage(pi: usize, dmg: u8) -> u8 {
     if g.health <= 0 {
         g.dead = true;
         g.desired_z = g.max_z;
+        setpiece_sfx::play(SP::NIH_DIE, PROP_POS[pi]); // DeathSound
         return 1; // DyingThink rises to n_max before n_dead fires
+    }
+    // PainSound: a laugh while above half health, a cry once the head is
+    // open; at most one every 2 to 5 s.
+    if time_reached(SIM_NOW, PAIN_NEXT) {
+        PAIN_NEXT = SIM_NOW.wrapping_add(40 + IMPACT_RNG.below(61) as u16);
+        if g.health > g.full / 2 {
+            setpiece_sfx::play(SP::NIH_LAUGH, PROP_POS[pi]);
+        } else if g.irritation >= 2 {
+            setpiece_sfx::play(SP::NIH_PAIN, PROP_POS[pi]);
+        }
     }
     (g.health * 255 / g.full.max(1)).clamp(1, 255) as u8
 }
@@ -276,6 +301,8 @@ unsafe fn next_activity(m: &Map, nlogic: usize, now: u16, player_seen: bool, dis
         let r = m.logic(g.recharger as usize).origin;
         if ((g.z >> 4) - r[1]).abs() < 128 {
             if g.seq != SEQ_RECHARGE {
+                // Event 5 (start up sphere machine): a recharge cry.
+                setpiece_sfx::play(SP::NIH_RECHARGE, PROP_POS[g.pi as usize]);
                 logic_fire_targets(m, nlogic, m.n_ents, name_id(m, "n_draw", g.level), map::USE_ON, now, 0, logic_state::CALLER_NONE);
             }
             g.seq = SEQ_RECHARGE;
@@ -390,14 +417,24 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
     let t = now.wrapping_sub(g.seq_start) as i32;
     let at = |frame_ticks: u16| (frame_ticks as i32 * g.seq_len as i32 / SEQ_ATTACK as i32) as i32;
     match g.seq {
-        SEQ_ATTACK1 if t == at(EV_ZAP) => g.shoot_end = now.wrapping_add(20),
-        SEQ_OPEN_ATTACK if t == at(EV_ZAP) => launch(head, p, 1),
+        SEQ_ATTACK1 if t == at(EV_ZAP) => {
+            g.shoot_end = now.wrapping_add(20);
+            zen_sound(head);
+        }
+        SEQ_OPEN_ATTACK if t == at(EV_ZAP) => {
+            launch(head, p, 1);
+            zen_sound(head);
+        }
         SEQ_ATTACK2 if t == at(EV_TELE) => {
             if name_id(m, "n_teleport", g.teleport) != 0 || name_id(m, "n_leaving", g.teleport) != 0 {
+                // Event 6: an attack cry, then TeleportInit's x_teleattack1.
+                setpiece_sfx::play(SP::NIH_ATTACK, head);
+                setpiece_sfx::play(SP::NIH_TELE, head);
                 launch(head, p, 2);
             } else {
                 g.teleport += 1;
                 g.shoot_end = now.wrapping_add(20);
+                setpiece_sfx::play(SP::NIH_BALL, head);
             }
         }
         SEQ_RECHARGE => {

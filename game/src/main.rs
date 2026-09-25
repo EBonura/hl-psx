@@ -51,6 +51,7 @@ mod osprey;
 mod scientist_logic;
 mod scratchpad;
 mod setpiece_logic;
+mod setpiece_sfx;
 mod tank;
 use osprey::{osprey_init, tick_osprey, OSPREY, OSPREY_TILT, PROP_TYPE_OSPREY};
 use tank::{tank_player_fire, tank_still_controlled, tank_try_control, tank_use, tanks_init, tick_tanks, TANK_COUNT};
@@ -12896,6 +12897,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     TITLE_T = 0;
     CHAPTER_TITLE_ID = 0;
     GAMETITLE_TICKS = 0;
+    setpiece_sfx::clear();
     FADE_ACTIVE = false;
     FADE_STARTDARK = 0;
     REVERT_MSG_AT = 0;
@@ -13106,6 +13108,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                 if track > 0 {
                     CD_TRACK_WANT = track;
                 }
+                setpiece_sfx::bind(m, rec);
             }
             // An auto with a globalstate is decided by logic_fire_global_autos
             // once a loaded save's globals are in place.
@@ -15677,7 +15680,10 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     let dmg = if PROP_KIND[pi] == PROP_TYPE_GARG {
         match garg::scale_damage(dmg, DMG_HEAVY) {
             0 => return,
-            scaled => scaled,
+            scaled => {
+                garg::pain(pi);
+                scaled
+            }
         }
     } else if PROP_KIND[pi] == 17 {
         PROP_HEALTH[pi] = nihilanth::damage(pi, dmg);

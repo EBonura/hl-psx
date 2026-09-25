@@ -4,9 +4,23 @@
 
 use crate::setpiece_logic::{self as sl, GargChoice, Stomp};
 use crate::*;
+use hl_format::setpiece_audio as SP;
 
 /// garg.mdl `run`: 395.5 units over 20 frames at 18 fps (356 u/s), per tick.
 const RUN_PER_TICK: i32 = 18;
+
+/// m_painSoundTime: the next tick a hurt gargantua may cry out.
+static mut PAIN_NEXT: u16 = 0;
+
+/// CGargantua::TraceAttack: a pain cry at most every 2.5 to 4 s.
+#[optimize(size)]
+pub(crate) unsafe fn pain(pi: usize) {
+    if time_reached(SIM_NOW, PAIN_NEXT) {
+        PAIN_NEXT = SIM_NOW.wrapping_add(50 + IMPACT_RNG.below(31) as u16);
+        setpiece_sfx::play(SP::GARG_PAIN, PROP_POS[pi]);
+    }
+}
+
 const FLAME_LENGTH: i32 = 330;
 /// Forearm flame attachments 2 and 3 in shootflames2 (forward, left, up).
 const FLAME_ATTACH: [[i32; 3]; 2] = [[111, -66, 86], [110, 64, 88]];
@@ -226,6 +240,8 @@ pub(crate) unsafe fn tick(
             g.flame_end = now.wrapping_add(90).max(1);
             g.flame_next = now.wrapping_add(120);
             g.flame_ang = [0; 2];
+            // FlameCreate: pBeamAttackSounds[1] on the body, [2] on the weapon.
+            setpiece_sfx::play(SP::GARG_FLAME_ON, pos);
         }
         GargChoice::Chase => {
             PROP_STATE[pi] = PROP_STATE_MOVE;
@@ -236,6 +252,7 @@ pub(crate) unsafe fn tick(
             g.feet = g.feet.wrapping_add(1);
             if g.feet % 11 == 0 {
                 shake(pos, 4, 20, 750);
+                setpiece_sfx::play(SP::GARG_STEP, pos);
             }
         }
     }
@@ -289,7 +306,11 @@ unsafe fn stomp_attack(m: &Map, movers: &[phys::Mover], pi: usize, aim: [i32; 3]
     g.stomp_pos = [start[0] << 4, start[1] << 4, start[2] << 4];
     g.stomp_dir = dir;
     shake(pos, 12, 40, 1000); // UTIL_ScreenShake(12, 2 s, 1000)
-    sfx::play_world(sfx::EXPLODE, pos);
+    if setpiece_sfx::has(SP::GARG_STOMP) {
+        setpiece_sfx::play(SP::GARG_STOMP, pos);
+    } else {
+        sfx::play_world(sfx::EXPLODE, pos);
+    }
 }
 
 /// TASK_FLAME_SWEEP: FlameControls and FlameUpdate on every 10 Hz think.
@@ -300,8 +321,11 @@ unsafe fn flame_task(m: &Map, movers: &[phys::Mover], pi: usize, aim: [i32; 3], 
     if time_reached(now, g.flame_end) {
         g.flame_end = 0; // FlameDestroy; ACT_IDLE
         PROP_STATE[pi] = PROP_STATE_IDLE;
+        setpiece_sfx::stop_loop(setpiece_sfx::OWNER_GARG_FLAME);
+        setpiece_sfx::play(SP::GARG_FLAME_OFF, PROP_POS[pi]);
         return;
     }
+    setpiece_sfx::keep_loop(SP::GARG_FLAME, PROP_POS[pi], setpiece_sfx::OWNER_GARG_FLAME);
     if now.wrapping_sub(g.flame_end) & 1 != 0 {
         return;
     }
@@ -395,6 +419,7 @@ pub(crate) unsafe fn tick_world(m: &Map) {
             g.died = now;
             g.flame_end = 0;
             g.gesture = 0;
+            setpiece_sfx::stop_loop(setpiece_sfx::OWNER_GARG_FLAME);
         }
         return;
     }

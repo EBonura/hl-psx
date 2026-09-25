@@ -1,6 +1,7 @@
 //! COsprey (osprey.cpp): path_corner flight, grunt resupply and crash.
 
 use crate::*;
+use hl_format::setpiece_audio as SP;
 
 // ---- COsprey (osprey.cpp): path_corner flight, grunt resupply, crash ----
 // One osprey per map. Positions are world units, velocities units/s,
@@ -252,9 +253,11 @@ pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
                 explode(m, np, 255, 750, false);
                 PROP_ACTIVE[pi] = 0;
                 o.li = u16::MAX;
+                setpiece_sfx::stop_loop(setpiece_sfx::OWNER_OSPREY_ROTOR);
                 return;
             }
             prop_set_pos_exact(m, pi, np);
+            setpiece_sfx::keep_loop(SP::OSPREY_ROTOR, np, setpiece_sfx::OWNER_OSPREY_ROTOR);
             return;
         }
         _ => {
@@ -293,6 +296,8 @@ pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
         }
         r += 1;
     }
+    // CBaseHelicopter flight: ap_rotor4 on CHAN_STATIC once it is moving.
+    setpiece_sfx::keep_loop(SP::OSPREY_ROTOR, PROP_POS[pi], setpiece_sfx::OWNER_OSPREY_ROTOR);
     if o.phase != OSPREY_FLY {
         return;
     }
