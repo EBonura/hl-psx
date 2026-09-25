@@ -25551,42 +25551,25 @@ unsafe fn emit_affine_quad_children(
         return;
     }
 
-    // The four children are one persistent source patch. Give the complete
-    // patch one coarse depth key and prelink its resident packet run, avoiding
-    // three redundant depth calculations and OT read/modify/write operations.
-    let otz = world_order_key(
-        ordering::PrimitiveDepths::quad(
-            vertices[0].projected.sz as i32,
-            vertices[1].projected.sz as i32,
-            vertices[2].projected.sz as i32,
-            vertices[3].projected.sz as i32,
-        ),
-        false,
-    );
-    let mut run = [core::ptr::null_mut::<QuadTexturedGouraud>(); 4];
+    // Each child takes its own key. One key at the patch's far corner drew
+    // a near child before geometry lying between it and that corner, which
+    // then painted over it (on the c0a0 lift shaft, 14 percent of the frame).
     let mut child = 0usize;
     while child < children.len() {
-        run[child] = push_affine_quad_gt4(packets, children[child], mat, otz, nq);
+        let c = children[child];
+        let otz = world_order_key(
+            ordering::PrimitiveDepths::quad(
+                c[0].projected.sz as i32,
+                c[1].projected.sz as i32,
+                c[2].projected.sz as i32,
+                c[3].projected.sz as i32,
+            ),
+            false,
+        );
+        let packet = push_affine_quad_gt4(packets, c, mat, otz, nq);
+        OT.add(otz, &mut *packet, QuadTexturedGouraud::WORDS);
         child += 1;
     }
-
-    // Match four sequential OT.add calls with one table-head update. Each
-    // packet points at the previous packet in the run, preserving the original
-    // child order when the GPU traverses the list.
-    const OT_ADDR_MASK: u32 = 0x00ff_ffff;
-    let slot = otz.min(OT_LEN - 1);
-    let entries = core::ptr::addr_of_mut!(OT).cast::<u32>();
-    let mut next = core::ptr::read_volatile(entries.add(slot)) & OT_ADDR_MASK;
-    let mut packet = 0usize;
-    while packet < run.len() {
-        core::ptr::write_volatile(
-            run[packet].cast::<u32>(),
-            ((QuadTexturedGouraud::WORDS as u32) << 24) | next,
-        );
-        next = run[packet] as u32 & OT_ADDR_MASK;
-        packet += 1;
-    }
-    core::ptr::write_volatile(entries.add(slot), next);
 }
 
 /// Classic stateless native decision, hoisted out of `rank_affine_patch` so
