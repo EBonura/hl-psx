@@ -10910,8 +10910,8 @@ unsafe fn maker_tag(li: usize) -> u8 {
 
 /// CMonsterMaker::MakeMonster: respect m_iMaxLiveChildren (living children,
 /// DeathNotice), wake one dormant stock copy, count it down and fire the
-/// target. The cooker stocks at most four copies, so a maker makes at most
-/// four monsters.
+/// target. The cooker stocks at most four copies; a maker making more
+/// remakes its faded dead children.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn maker_make(
@@ -10964,6 +10964,33 @@ unsafe fn maker_make(
             pi += 1;
         }
         pass += 1;
+    }
+    if found == usize::MAX && rec.arg0 != 1 {
+        // The stock is at most four copies. A maker making more fades its
+        // dead children (m_fFadeChildren); once a corpse has lain five
+        // seconds, remake that copy at the maker for the next monster.
+        let mut pi = 0usize;
+        while pi < n {
+            if PROP_MAKER[pi] == tag
+                && PROP_ACTIVE[pi] != 0
+                && PROP_HEALTH[pi] == 0
+                && SIM_NOW.wrapping_sub(PROP_DEATH_START[pi]) > 100
+            {
+                PROP_HEALTH[pi] = prop_start_health(PROP_KIND[pi]);
+                PROP_STATE[pi] = PROP_STATE_IDLE;
+                PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+                PROP_AI_TIMER[pi] = 0;
+                PROP_SCRIPT_MODE[pi] = 0;
+                PROP_SCRIPT_LI[pi] = u16::MAX;
+                PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_FRESH;
+                PROP_POS[pi] = rec.origin;
+                PROP_ACTIVE[pi] = 0;
+                PROP_DORMANT[pi] = PROP_RUNTIME_DORMANT_STOCK;
+                found = pi;
+                break;
+            }
+            pi += 1;
+        }
     }
     if found == usize::MAX {
         return;
