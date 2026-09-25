@@ -82,3 +82,14 @@ pub unsafe fn keep_loop(slot: u8, pos: [i32; 3], owner: u16) {
 pub unsafe fn stop_loop(owner: u16) {
     sfx::stop_map_loop(owner);
 }
+
+/// Silence a loop between bursts but keep its voice, so a source that starts
+/// and stops all fight long (the gargantua's flame) is keyed once per map
+/// rather than rotating through the map-loop voices and evicting others.
+#[inline(never)]
+#[optimize(size)]
+pub unsafe fn mute_loop(owner: u16) {
+    if let Some(v) = sfx::loop_voice(owner) {
+        psx_spu::Voice::new(v).set_volume(psx_spu::Volume::SILENCE, psx_spu::Volume::SILENCE);
+    }
+}

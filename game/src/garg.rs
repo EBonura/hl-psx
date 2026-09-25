@@ -321,7 +321,7 @@ unsafe fn flame_task(m: &Map, movers: &[phys::Mover], pi: usize, aim: [i32; 3], 
     if time_reached(now, g.flame_end) {
         g.flame_end = 0; // FlameDestroy; ACT_IDLE
         PROP_STATE[pi] = PROP_STATE_IDLE;
-        setpiece_sfx::stop_loop(setpiece_sfx::OWNER_GARG_FLAME);
+        setpiece_sfx::mute_loop(setpiece_sfx::OWNER_GARG_FLAME);
         setpiece_sfx::play(SP::GARG_FLAME_OFF, PROP_POS[pi]);
         return;
     }
