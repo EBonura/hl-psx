@@ -8,6 +8,10 @@
 //! integrating MOVETYPE_FLY every 20 Hz tick.
 
 use crate::*;
+use hl_format::setpiece_audio as SP;
+
+/// The next tick FireGun may start another tu_fire1 burst.
+static mut GUN_SOUND_NEXT: u16 = 0;
 
 const SF_WAITFORTRIGGER: u16 = 0x04 | 0x40;
 const SF_NOWRECKAGE: u16 = 0x08;
@@ -235,6 +239,7 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
     let pi = a.pi as usize;
     if PROP_ACTIVE[pi] == 0 || PROP_KIND[pi] != 23 {
         a.li = u16::MAX;
+        setpiece_sfx::stop_loop(setpiece_sfx::OWNER_APACHE_ROTOR);
         return;
     }
     let now = SIM_NOW;
@@ -282,6 +287,8 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
         a.pos = p.map(|x| x * D);
     }
     prop_set_pos_exact(m, pi, at(a));
+    // CApache::ShowDamage/Flight: ap_rotor2 on CHAN_STATIC while it flies.
+    setpiece_sfx::keep_loop(SP::APACHE_ROTOR, PROP_POS[pi], setpiece_sfx::OWNER_APACHE_ROTOR);
     PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], ((1024 - a.ang[1] * 4096 / (360 * D)) & 0xfff) as u16);
     let q8 = |d: i32| ((-d * 256 / (360 * D)) & 0xff) as u16;
     APACHE_TILT = (a.pi, q8(a.ang[0]) | (q8(a.ang[2]) << 8));
@@ -310,6 +317,7 @@ unsafe fn dying(m: &Map, pi: usize, now: u16) {
     // RadiusDamage(300, DMG_BLAST) (u8-capped), the fireball and gibs.
     explode(m, o, 255, 750, false);
     spawn_gibs(o, 12);
+    setpiece_sfx::stop_loop(setpiece_sfx::OWNER_APACHE_ROTOR);
     PROP_ACTIVE[pi] = 0;
     AP.li = u16::MAX;
 }
@@ -393,6 +401,7 @@ unsafe fn hunt(m: &Map, movers: &[phys::Mover], now: u16) {
         let s = a.side as i32;
         let src = mad(mad(mad(origin, v[0], 32), v[1], 105 * s), v[2], -119);
         spawn_projectile_dir(PROJ_ROCKET, 150, hl(src), hl(v[0]), true);
+        setpiece_sfx::play(SP::APACHE_ROCKET, hl(src));
         a.rockets -= 1;
         a.side = -a.side;
         a.next_rocket = now.wrapping_add(10);
@@ -512,5 +521,11 @@ unsafe fn fire_gun(m: &Map, movers: &[phys::Mover], a: &mut Apache) -> bool {
         note_damage_direction(from);
     }
     push_tracer(from, end);
+    // FireGun emits tu_fire1 on CHAN_WEAPON every shot, each cutting off the
+    // last; one 1.35 s burst per second keeps the pool from flooding.
+    if time_reached(SIM_NOW, GUN_SOUND_NEXT) {
+        GUN_SOUND_NEXT = SIM_NOW.wrapping_add(20);
+        setpiece_sfx::play(SP::APACHE_GUN, from);
+    }
     true
 }
