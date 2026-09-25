@@ -167,6 +167,7 @@ pub fn music_cd_volume() -> CdVolume {
 /// Adjust a setting by index (0 screen X, 1 screen Y, 2 music, 3 SFX,
 /// 4 analog deadzone, 6 brightness) by `delta` and apply it live. Returns the
 /// new value.
+#[optimize(size)]
 pub fn adjust(index: usize, delta: i32) -> i32 {
     unsafe {
         match index {

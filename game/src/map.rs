@@ -665,6 +665,7 @@ mod tri_pair_tests {
 }
 
 impl Map {
+    #[optimize(size)]
     pub fn load(data: &'static [u8]) -> Map {
         let magic = rd_u32(data, cooked::HEADER_MAGIC_OFFSET);
         let clip_plane_tag_mask = if cooked::supports_tagged_clip_planes(magic) {

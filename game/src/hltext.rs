@@ -81,6 +81,7 @@ fn set_4bpp_pixel(dst: &mut [u8], stride_px: usize, x: usize, y: usize) {
 
 /// Upload the native 8x16 gameplay font atlas into the HUD tpage's unused
 /// strip. The temporary row is stack-only; resident main-RAM cost is zero.
+#[optimize(size)]
 pub fn upload_gameplay_atlas() {
     let gw = glyph_w();
     let gh = glyph_h();
