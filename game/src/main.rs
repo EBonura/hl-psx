@@ -26109,6 +26109,14 @@ fn tri_fits_gpu(pa: &Projected, pb: &Projected, pc: &Projected) -> bool {
     max_x - min_x <= 1023 && max_y - min_y <= 511
 }
 
+/// `tri_fits_gpu` for packed screen coordinates.
+#[inline(always)]
+fn screen_tri_fits_gpu(s: [(i16, i16); 3]) -> bool {
+    let (x0, x1) = (s[0].0.min(s[1].0).min(s[2].0), s[0].0.max(s[1].0).max(s[2].0));
+    let (y0, y1) = (s[0].1.min(s[1].1).min(s[2].1), s[0].1.max(s[1].1).max(s[2].1));
+    (x1 as i32 - x0 as i32) <= 1023 && (y1 as i32 - y0 as i32) <= 511
+}
+
 /// Screen-space bisection for GPU-oversized triangles. Affine interpolation
 /// is linear in screen space, so splitting the longest edge at its screen
 /// midpoint with lerped UV/RGB rasterizes the same surface. Children remain
@@ -26187,12 +26195,14 @@ unsafe fn push_tri_gpu_split(
         push_tri_uv_words_packed(packets, np, screen, uv, rgb, mat, otz);
         return;
     }
-    if WARP_PX_Q3 != 0 && depth == 0 {
+    if WARP_PX_Q3 != 0 && depth == 0 && screen_tri_fits_gpu(screen) {
         // Warp splits reach triangles whose neighbours stay whole. A child
         // edge through a rounded screen midpoint leaves hairline pinholes
         // along the neighbour's chord (dotted crack lines on dust2 floors),
         // so the parent goes behind its children, keyed at its farthest
-        // corner: only the pinholes show it.
+        // corner: only the pinholes show it. This path also splits
+        // triangles too big for the GPU, and the GPU skips a parent that
+        // big, so it would cost a packet and draw nothing.
         let far = sz[0].max(sz[1]).max(sz[2]);
         let otz = world_order_key(
             ordering::PrimitiveDepths::tri(far, far, far),
