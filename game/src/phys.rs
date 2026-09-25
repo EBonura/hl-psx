@@ -896,6 +896,20 @@ pub fn actor_line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i
     true
 }
 
+/// Is `p` inside any mover's clip hull? `actor_line_clear_movers` lets a
+/// step that starts inside a hull through (so an actor can leave an overlap);
+/// a fast actor can reach a door's expanded plane in one step and then pass
+/// straight through on the next, so it also checks where the step ends.
+#[inline(never)]
+pub fn point_in_movers(map: &Map, movers: &[Mover], p: [i32; 3]) -> bool {
+    movers.iter().any(|mv| {
+        mv.head > 0 && mover_may_touch_segment(mv, p, p) && {
+            let (q1, q2) = mover_local_segment(mv, p, p);
+            trace(map, mv.head, q1, q2).startsolid
+        }
+    })
+}
+
 /// Like [`line_clear_movers`] but ignores the mover whose id is `exclude_id`.
 /// Aim-use traces end INSIDE the target button/charger/door brush, so that
 /// brush's own hull would always report "blocked" -- exclude it so line of
@@ -1145,10 +1159,10 @@ pub fn line_clear_movers_visual(
 /// Trace the static world render-node tree plus every brush entity's render
 /// hull-0 subtree. Brush records without a point subtree fall back to their
 /// clip hull, but render-node indices are never interpreted as clipnode ids.
-fn trace_point_all(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Trace {
+fn trace_point_all(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3], skip: i32) -> Trace {
     let mut best = trace_nodes(map, 0, p1, p2);
     for mv in movers {
-        if !mover_may_touch_segment(mv, p1, p2) {
+        if mv.id == skip || !mover_may_touch_segment(mv, p1, p2) {
             continue;
         }
         let point_head = mv.point_head();
@@ -1175,7 +1189,13 @@ fn trace_point_all(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> T
 
 /// Trace a point ray through static world and active mover hulls.
 pub fn trace_line(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Option<RayHit> {
-    let t = trace_point_all(map, movers, p1, p2);
+    trace_line_skip(map, movers, p1, p2, -1)
+}
+
+/// `trace_line` ignoring the brush entity `skip` (UTIL_TraceLine's ignore
+/// edict: a func_tank never blocks its own shots).
+pub fn trace_line_skip(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3], skip: i32) -> Option<RayHit> {
+    let t = trace_point_all(map, movers, p1, p2, skip);
     if t.startsolid || t.frac >= 4096 {
         return None;
     }
@@ -1367,7 +1387,7 @@ pub fn snap_to_ground(
 ) -> Option<[i32; 3]> {
     let p1 = [pos[0], pos[1] + probe_up.max(0), pos[2]];
     let p2 = [pos[0], pos[1] - probe_down.max(0), pos[2]];
-    let t = trace_point_all(map, movers, p1, p2);
+    let t = trace_point_all(map, movers, p1, p2, -1);
     if t.startsolid || t.frac >= 4096 || t.normal[1] <= GROUND_NY {
         return None;
     }
@@ -2339,7 +2359,7 @@ impl Player {
                     low_start[1],
                     low_start[2] + ((c * WATERJUMP_PROBE) >> 12),
                 ];
-                let wall = trace_point_all(map, movers, low_start, low_end);
+                let wall = trace_point_all(map, movers, low_start, low_end, -1);
                 if wall.frac < 4096 && (wall.normal[1] as i32).abs() < WATERJUMP_MAX_WALL_NY {
                     let high_start = [self.pos[0], self.pos[1] + self.half_height(), self.pos[2]];
                     let high_end = [
@@ -2347,7 +2367,7 @@ impl Player {
                         high_start[1],
                         high_start[2] + ((c * WATERJUMP_PROBE) >> 12),
                     ];
-                    let clearance = trace_point_all(map, movers, high_start, high_end);
+                    let clearance = trace_point_all(map, movers, high_start, high_end, -1);
                     if !clearance.startsolid && !clearance.allsolid && clearance.frac == 4096 {
                         water_jump.ticks = WATERJUMP_TICKS;
                         water_jump.dir_x_q6 =

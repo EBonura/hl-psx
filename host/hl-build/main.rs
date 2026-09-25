@@ -477,10 +477,10 @@ const CARRY_MODEL_TEXTURE_CHUNK_BASE: usize = 1700;
 // c4a3 contains a distant Garg alongside Nihilanth and uses one pose per state.
 const C4A1B_GARG_MODEL_CHUNK: usize = 1817;
 const C4A1B_GARG_TEXTURE_CHUNK: usize = 1917;
-const C4A1B_GARG_SEQUENCES: &str = "2:2,4:2,6:2,12:3,14:4";
+const C4A1B_GARG_SEQUENCES: &str = "2:2,5:2,7:2,12:3,14:4,attack:2,stomp:2";
 const C4A3_GARG_MODEL_CHUNK: usize = 1816;
 const C4A3_GARG_TEXTURE_CHUNK: usize = 1916;
-const C4A3_GARG_SEQUENCES: &str = "2:1,4:1,6:1,12:1,14:1";
+const C4A3_GARG_SEQUENCES: &str = "2:1,5:1,7:1,12:1,14:1,attack:1,stomp:1";
 const C4A3_ICKY_MODEL_CHUNK: usize = 1819;
 const C4A3_ICKY_TEXTURE_CHUNK: usize = 1919;
 // This incidental c4a3 actor yields its animation RAM to the actual boss.
