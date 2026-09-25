@@ -43,6 +43,7 @@ mod render;
 #[cfg(feature = "route-follow")]
 use psx_goldsrc::route_follow;
 mod save;
+mod apache;
 mod garg;
 mod mortar;
 mod osprey;
@@ -873,6 +874,9 @@ fn prop_model_rotation(yaw: u16, tilt: u16) -> Mat3I16 {
 
 #[inline(always)]
 fn prop_authored_tilt(m: &Map, pi: usize) -> u16 {
+    if unsafe { apache::APACHE_TILT.0 as usize == pi } {
+        return unsafe { apache::APACHE_TILT.1 };
+    }
     // A flying osprey banks through its path_corner angles.
     if unsafe { OSPREY.li != u16::MAX && pi == OSPREY.pi as usize && OSPREY_TILT != u16::MAX } {
         return unsafe { OSPREY_TILT };
@@ -10715,6 +10719,8 @@ unsafe fn logic_use_entity(
                 monster_command_touch(m, nlogic, rec.target);
             } else if rec.arg1 == map::AITRIGGER_FLY_PATH && OSPREY.li as usize == li {
                 OSPREY.next = now.wrapping_add(2); // COsprey::CommandUse
+            } else if rec.arg1 == map::AITRIGGER_APACHE_PATH {
+                apache::startup(li);
             }
         }
         map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE => {
@@ -12376,6 +12382,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     BOSS_WALKER = u16::MAX;
     OSPREY.li = u16::MAX;
     garg::reset();
+    apache::reset();
     mortar::reset();
     li = 0;
     while li < nlogic {
@@ -14727,6 +14734,14 @@ unsafe fn init_monster_trigger(li: usize, rec: map::LogicEnt) {
     MONSTER_TRIGGER_END = li as u16 + 1;
     LOGIC_COUNTER[li] = rec.arg1 as i16;
     let nprops = core::ptr::read_volatile(core::ptr::addr_of!(PROP_COUNT)).min(CARRY_MAILBOX_FIRST);
+    if rec.arg1 == map::AITRIGGER_APACHE_PATH {
+        let pi = rec.arg0 as usize;
+        if pi < nprops && PROP_ACTIVE[pi] != 0 && PROP_KIND[pi] == 23 {
+            apache::init(li, rec, pi);
+        }
+        LOGIC_STATE[li] = LOGIC_STATE_TOP;
+        return;
+    }
     if rec.arg1 == map::AITRIGGER_FLY_PATH {
         let pi = rec.arg0 as usize;
         if pi < nprops && PROP_ACTIVE[pi] != 0 && PROP_KIND[pi] == PROP_TYPE_OSPREY {
@@ -15042,6 +15057,11 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     // bullets and clubs ricochet.
     let dmg = if PROP_KIND[pi] == PROP_TYPE_GARG {
         match garg::scale_damage(dmg, DMG_HEAVY) {
+            0 => return,
+            scaled => scaled,
+        }
+    } else if PROP_KIND[pi] == 23 {
+        match apache::scale_damage(dmg, DMG_BLAST) {
             0 => return,
             scaled => scaled,
         }
@@ -19978,12 +19998,16 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_inflic
         return;
     }
     DMG_HEAVY = true;
+    DMG_BLAST = true;
     explode_inner(m, pos, damage, radius, player_inflicted);
     DMG_HEAVY = false;
+    DMG_BLAST = false;
 }
 
 /// Set while blast or energy-beam damage is applied (GARG_DAMAGE classes).
 static mut DMG_HEAVY: bool = false;
+/// Set while blast damage is applied (DMG_BLAST: the apache takes it double).
+static mut DMG_BLAST: bool = false;
 
 unsafe fn explode_inner(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_inflicted: bool) {
     sfx::play_world(sfx::EXPLODE, pos);
@@ -32034,6 +32058,7 @@ fn play(
                     tick_osprey(&m, movers);
                 }
                 garg::tick_world(&m);
+                apache::tick(&m, movers);
                 mortar::tick(&m, sim_frame_no as u16);
                 telemetry::stage_end(telemetry::stage::UPDATE_ACTOR);
                 apply_debug_toggles(

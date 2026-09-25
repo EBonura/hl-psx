@@ -1122,7 +1122,9 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
          /// swipe and stomp damage.\n\
          pub const SKILL_GARG_HEALTH: [u16; 3] = {};\n\
          pub const SKILL_GARG_SLASH: [u16; 3] = {};\n\
-         pub const SKILL_GARG_STOMP: [u16; 3] = {};\n",
+         pub const SKILL_GARG_STOMP: [u16; 3] = {};\n\
+         /// The apache's full health.\n\
+         pub const SKILL_APACHE_HEALTH: [u16; 3] = {};\n",
         row("sk_healthkit", 1.0),
         row("sk_battery", 1.0),
         row("sk_healthcharger", 1.0),
@@ -1131,6 +1133,7 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
         row("sk_gargantua_health", 1.0),
         row("sk_gargantua_dmg_slash", 1.0),
         row("sk_gargantua_dmg_stomp", 1.0),
+        row("sk_apache_health", 1.0),
     );
     fs::write(out_dir.join("skill_table.rs"), generated).expect("write generated skill tables");
 }

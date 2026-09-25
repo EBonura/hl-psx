@@ -303,6 +303,9 @@ pub mod logic {
     /// chain loops back to; three aux words per corner: (x, y), (z, speed),
     /// (yaw q12, pitch q8 | roll q8 << 8), angles reflected like props.
     pub const AITRIGGER_FLY_PATH: u16 = 0x103;
+    /// CApache's path_corner chain, laid out like AITRIGGER_FLY_PATH;
+    /// `speed` its spawnflags (SF_WAITFORTRIGGER waits for a Use).
+    pub const AITRIGGER_APACHE_PATH: u16 = 0x104;
     /// An info_bigmomma node: `targetname`, `target` = reachtarget,
     /// `arg0` = next node name, `arg1` = health, `speed` = radius,
     /// `delay_ticks` = reachdelay, `spawnflags` = RUN(1) | WAIT(2).
