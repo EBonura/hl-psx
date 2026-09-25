@@ -20,8 +20,8 @@ path = "main.rs"
 hl-format = { path = "../../shared/hl-format" }
 # Host SDK crates and the SDK component lock must resolve the same revision.
 # The build driver hydrates SDK, emulator and editor paths from components.lock.json.
-psoxide-link = { git = "https://github.com/EBonura/PSoXide.git", rev = "720e35498f7c3d91bd5b8b5b7ede3c2ac34350a5" }
-psx-pack = { git = "https://github.com/EBonura/PSoXide.git", rev = "720e35498f7c3d91bd5b8b5b7ede3c2ac34350a5" }
+psoxide-link = { git = "https://github.com/EBonura/PSoXide.git", rev = "a6861e45d374ae33ddf1f315f6ebf2851ca50d7d" }
+psx-pack = { git = "https://github.com/EBonura/PSoXide.git", rev = "a6861e45d374ae33ddf1f315f6ebf2851ca50d7d" }
 lz4_flex = { version = "0.11", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
