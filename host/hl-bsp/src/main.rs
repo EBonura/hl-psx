@@ -10224,12 +10224,16 @@ fn collect_props(
                 });
             };
             match cls {
-                "monster_osprey" => {
+                "monster_osprey" | "monster_apache" => {
                     let first = ent_value(block, "target").unwrap_or("");
                     if !first.is_empty() {
                         trigger_links.push(MonsterTriggerLink {
                             prop: owner_index,
-                            condition: AITRIGGER_FLY_PATH,
+                            condition: if cls == "monster_osprey" {
+                                AITRIGGER_FLY_PATH
+                            } else {
+                                AITRIGGER_APACHE_PATH
+                            },
                             target: intern_logic_name(logic_names, first).unwrap_or(0),
                             targetname: name_id,
                             view_cone: spawnflags,
@@ -13282,7 +13286,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         // An osprey's corner chain, in flight order up to where it loops.
         let first_aux = logic.aux.len() as u16;
         let mut loop_start = 0u8;
-        if link.condition == AITRIGGER_FLY_PATH {
+        if link.condition == AITRIGGER_FLY_PATH || link.condition == AITRIGGER_APACHE_PATH {
             let mut names: Vec<&str> = Vec::new();
             let mut next = logic.names[link.target as usize - 1].clone();
             while names.len() < 32 {
