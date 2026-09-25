@@ -4139,6 +4139,7 @@ fn choose_standalone_spawn(
 ) -> Option<([f32; 3], i32)> {
     const GOOD_STANDALONE_SCORE: i32 = 900;
     const MIN_AUTHORED_STANDALONE_SCORE: i32 = 300;
+    const MIN_AIMED_FIRST_PLAYER_SCORE: i32 = 150;
     let candidates = standalone_spawn_candidates(ents);
     let mut first_player: Option<([f32; 3], i32, i32)> = None;
     let mut best_authored_player: Option<([f32; 3], i32, i32)> = None;
@@ -4306,6 +4307,15 @@ fn choose_standalone_spawn(
     }
     if let Some((origin, yaw, score)) = best_authored_player {
         if score >= MIN_AUTHORED_STANDALONE_SCORE {
+            return Some((origin, yaw));
+        }
+    }
+    // GoldSrc starts a map at its first info_player_start. When that start is
+    // aimed and not a black pocket, keep it rather than an unaimed leftover
+    // start that merely sees more: c1a1's stray second start stands in the
+    // attacking_zombie scene, its first is the pocket c1a0c arrives in.
+    if let (Some((origin, yaw, score)), Some((_, _, authored))) = (first_player, best_authored_player) {
+        if score >= MIN_AIMED_FIRST_PLAYER_SCORE && score == authored {
             return Some((origin, yaw));
         }
     }
