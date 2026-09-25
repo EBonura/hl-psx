@@ -446,18 +446,168 @@ fn resident_rate(id: &str, source_rate: u32) -> u32 {
     }
 }
 
+/// Level (dB) a core sound may lose to its resident rate's low-pass before
+/// the rate counts as erasing it.
+const CORE_LEVEL_LIMIT_DB: f64 = -6.0;
+/// Level a raised core sound is brought back to.
+const CORE_LEVEL_TARGET_DB: f64 = -3.0;
+/// Highest rate a core sound is raised to (the core's own top rate).
+const CORE_RAISE_CAP: u32 = 11_025;
+
+/// Energy (dB) of `source` that survives the resampler's low-pass at each
+/// of `rates`: the power spectrum weighted by the filter's passband, rolloff
+/// and stop, over the whole sound.
+fn levels_kept_db(source: &Source, rates: &[u32]) -> Vec<f64> {
+    let wav = &source.wav;
+    let frame = ((wav.rate as f64 * 0.023).max(64.0).round() as usize).next_power_of_two();
+    let mut power = vec![0.0f64; frame / 2 + 1];
+    for spectrum in psx_audio_cook::metrics::stft_power(&wav.samples, frame) {
+        for (sum, p) in power.iter_mut().zip(&spectrum) {
+            *sum += p;
+        }
+    }
+    let total: f64 = power.iter().sum();
+    rates
+        .iter()
+        .map(|&rate| {
+            if rate >= wav.rate || total <= 0.0 {
+                return 0.0;
+            }
+            let nyq = rate as f64 / 2.0;
+            let pass = nyq * psx_audio_cook::resample::ROLLOFF;
+            let kept: f64 = power
+                .iter()
+                .enumerate()
+                .map(|(k, p)| {
+                    let f = k as f64 * wav.rate as f64 / frame as f64;
+                    let h = if f <= pass {
+                        1.0
+                    } else if f >= nyq {
+                        0.0
+                    } else {
+                        (nyq - f) / (nyq - pass)
+                    };
+                    p * h * h
+                })
+                .sum();
+            10.0 * (kept.max(1e-12) / total).log10()
+        })
+        .collect()
+}
+
+/// Level (dB) of `source` cooked at `rate` and played through the SPU model,
+/// against the same cook at the source's own rate (RMS over one pass; the
+/// encoder's gain follows the source's peak, so it cancels).
+fn played_level_db(source: &Source, rate: u32, looping: bool) -> f64 {
+    let rms_at = |rate: u32| {
+        let mut options = CookOptions::one_shot(rate);
+        options.looping = looping_mode(looping);
+        let played = psx_audio_cook::playback(&psx_audio_cook::cook(&source.wav, &options));
+        (played.iter().map(|v| v * v).sum::<f64>() / played.len().max(1) as f64).sqrt()
+    };
+    let (a, b) = (rms_at(rate), rms_at(source.wav.rate));
+    if a <= 0.0 || b <= 0.0 {
+        return 0.0;
+    }
+    20.0 * (a / b).log10()
+}
+
+fn level_kept_db(source: &Source, rate: u32) -> f64 {
+    levels_kept_db(source, &[rate])[0]
+}
+
+/// The rate a core sound is cooked at: its resident rate, unless that rate's
+/// low-pass removes most of the sound. The resident rates were chosen for
+/// the old nearest-sample cook, which folded a sound's highs back into the
+/// band, so a click stayed as loud (at the wrong pitch); band-limited, the
+/// same rate can leave little of it. A sound whose resident rate keeps less
+/// than `CORE_LEVEL_LIMIT_DB` of its energy moves to the lowest rate that
+/// keeps `CORE_LEVEL_TARGET_DB`, at most `CORE_RAISE_CAP` (the SPU RAM comes
+/// out of the per-map banks, whose allocator absorbs it).
+fn core_rate(source: &Source, resident: u32) -> u32 {
+    if level_kept_db(source, resident) >= CORE_LEVEL_LIMIT_DB {
+        return resident;
+    }
+    let cap = CORE_RAISE_CAP.min(source.wav.rate);
+    psx_audio_cook::rate::LADDER
+        .iter()
+        .rev()
+        .copied()
+        .filter(|&rate| rate > resident && rate <= cap)
+        .find(|&rate| level_kept_db(source, rate) >= CORE_LEVEL_TARGET_DB)
+        .unwrap_or(cap.max(resident))
+}
+
+/// Size of a core chunk (3000, 3050 or 3051) as the previous cooker built
+/// it: every kept sound at its resident rate, the rest one silent block.
+/// That is the budget the previous cooker left the per-map banks, and so the
+/// budget of the no-regression reference, not the current core, which grows
+/// where `core_rate` raises a sound.
+fn previous_core_bytes(sound: &Path, chunk: u32) -> Result<usize> {
+    let mut bytes = 8 + SOUNDS.len() * 8;
+    for (index, (id, relative)) in SOUNDS.iter().enumerate() {
+        let kept = match chunk {
+            3050 => light_profile_keeps(index),
+            3051 => training_weapon_profile_keeps(index),
+            _ => true,
+        };
+        bytes += if kept {
+            let source = read_source(&sound.join(relative))?;
+            psau_size(
+                &source,
+                resident_rate(id, source.wav.rate),
+                id.starts_with("charger_"),
+            )
+        } else {
+            psau_size(&silent_source(), 5_000, false)
+        };
+    }
+    Ok(bytes)
+}
+
+/// One silent block: what a profile keeps for a core sound it cannot emit.
+fn silent_source() -> Source {
+    Source {
+        wav: Wav {
+            rate: 5_000,
+            samples: vec![0.0; 28],
+            loop_start: None,
+            loop_end: None,
+            bits: 16,
+        },
+        has_loop_metadata: false,
+    }
+}
+
 pub fn build_sfx(sound: &Path, output: &Path) -> Result<()> {
     let sources: Vec<Source> = SOUNDS
         .iter()
         .map(|(_, relative)| read_source(&sound.join(relative)))
         .collect::<Result<_>>()?;
-    let jobs: Vec<(&Source, u32, bool)> = SOUNDS
+    let rates: Vec<u32> = SOUNDS
         .iter()
         .zip(&sources)
         .map(|((id, _), source)| {
+            let resident = resident_rate(id, source.wav.rate);
+            let rate = core_rate(source, resident);
+            if rate != resident {
+                println!(
+                    "sfx core: {id} raised {resident} -> {rate} Hz (keeps {:.1} dB of its energy at {resident}, {:.1} at {rate})",
+                    level_kept_db(source, resident),
+                    level_kept_db(source, rate)
+                );
+            }
+            rate
+        })
+        .collect();
+    let jobs: Vec<(&Source, u32, bool)> = SOUNDS
+        .iter()
+        .zip(&sources)
+        .zip(&rates)
+        .map(|(((id, _), source), &rate)| {
             (
                 source,
-                resident_rate(id, source.wav.rate),
+                rate,
                 // The runtime owns the charger beds through a reserved voice
                 // and needs them as hardware loops.
                 id.starts_with("charger_"),
@@ -481,17 +631,7 @@ pub fn build_sfx(sound: &Path, output: &Path) -> Result<()> {
     // Hazard Course cannot emit most of it, so loading all 284 KB there merely
     // forces narration into telephone-rate ADPCM. Keep the 68 stable runtime
     // ids, replacing unreachable entries with a one-block silent PSAU.
-    let silent = Source {
-        wav: Wav {
-            rate: 5_000,
-            samples: vec![0.0; 28],
-            loop_start: None,
-            loop_end: None,
-            bits: 16,
-        },
-        has_loop_metadata: false,
-    };
-    let silence = cook_psau(&silent, 5_000, false);
+    let silence = cook_psau(&silent_source(), 5_000, false);
     let anomalous: Vec<Vec<u8>> = blobs
         .iter()
         .enumerate()
@@ -1513,13 +1653,37 @@ struct Planned<'a> {
     looping: bool,
     ladder: Vec<u32>,
     bytes: Vec<usize>,
+    /// Set when the class range erases the sound and the ladder climbed
+    /// above it: the step (0, the rate that keeps its level) it must not
+    /// fall below.
+    climbed: bool,
 }
 
 fn plan_entry<'a>(valve: &Path, entry: &'a MapAudioKey) -> Result<Planned<'a>> {
     let source = concat_sources(valve, &entry.wavs)?
         .ok_or_else(|| format!("missing map-audio source for {}", entry.key))?;
     let looping = entry.class == MapAudioClass::Loop && source.has_loop_metadata;
-    let ladder = entry_ladder(entry.class, source.wav.rate);
+    let mut ladder = entry_ladder(entry.class, source.wav.rate);
+    let mut climbed = false;
+    // A sound whose class top rate already erases it (a tripmine's beep, a
+    // cricket's chirp: tones high in the band) may climb above the class
+    // range, up to its source rate, until it keeps CORE_LEVEL_TARGET_DB. Near
+    // the top of the band the SPU's Gaussian interpolation takes more than
+    // the low-pass does, so the level there is measured on a real cook.
+    if level_kept_db(&source, ladder[0]) < -1.0
+        && played_level_db(&source, ladder[0], looping) < CORE_LEVEL_LIMIT_DB
+    {
+        for &rate in psx_audio_cook::rate::LADDER.iter().rev() {
+            if rate <= ladder[0] || rate > source.wav.rate {
+                continue;
+            }
+            ladder.insert(0, rate);
+            climbed = true;
+            if played_level_db(&source, rate, looping) >= CORE_LEVEL_TARGET_DB {
+                break;
+            }
+        }
+    }
     let bytes = ladder
         .iter()
         .map(|&rate| psau_size(&source, rate, looping))
@@ -1530,6 +1694,7 @@ fn plan_entry<'a>(valve: &Path, entry: &'a MapAudioKey) -> Result<Planned<'a>> {
         looping,
         ladder,
         bytes,
+        climbed,
     })
 }
 
@@ -1568,13 +1733,6 @@ const CORE_EMITTERS: [(&[usize], &[&str]); 8] = [
     (&[24, 47, 55], &["func_healthcharger"]),
     (&[48, 56], &["func_recharge"]),
 ];
-/// Size of the map's chapter core (3000/3050/3051) before census profiles:
-/// the budget the previous cooker had.
-fn resident_core_bytes(sfx_dir: &Path, map_index: usize) -> usize {
-    fs::metadata(sfx_dir.join(format!("chunk_{}.psxa", resident_core_chunk(map_index))))
-        .map(|m| m.len() as usize)
-        .unwrap_or(414 * 1024)
-}
 
 /// Chunk of the per-map core table the runtime reads at boot.
 const CORE_TABLE_CHUNK: usize = 3052;
@@ -1649,17 +1807,7 @@ fn build_core_profiles(
             fs::remove_file(path)?;
         }
     }
-    let silent = Source {
-        wav: Wav {
-            rate: 5_000,
-            samples: vec![0.0; 28],
-            loop_start: None,
-            loop_end: None,
-            bits: 16,
-        },
-        has_loop_metadata: false,
-    };
-    let silence = cook_psau(&silent, 5_000, false);
+    let silence = cook_psau(&silent_source(), 5_000, false);
     let mut bases: HashMap<usize, Vec<Vec<u8>>> = HashMap::new();
     let maps: Vec<&str> = map_list.split_whitespace().collect();
     // Per map: the classes it can hold, its own plus those of every map one
@@ -1922,11 +2070,17 @@ fn playback_quality(source: &Source, rate: u32, legacy: bool) -> f64 {
 /// different maps (a loop in one, a one-shot in another).
 fn no_regression_rate(p: &Planned<'_>, previous: u32) -> u32 {
     let target = playback_quality(&p.source, previous, true);
+    // Start at the lowest ladder rate at or above the previous one: a
+    // previous rate the ladder lacks (3,500 and 2,500 Hz loops) must not
+    // start the search below it unmeasured. Climb if even that falls short.
     let mut floor = p
         .ladder
         .iter()
-        .position(|&rate| rate <= previous)
-        .unwrap_or(p.ladder.len() - 1);
+        .rposition(|&rate| rate >= previous)
+        .unwrap_or(0);
+    while floor > 0 && playback_quality(&p.source, p.ladder[floor], false) < target {
+        floor -= 1;
+    }
     while floor + 1 < p.ladder.len()
         && playback_quality(&p.source, p.ladder[floor + 1], false) >= target
     {
@@ -1947,6 +2101,12 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
     }
     let sfx_dir = output.parent().unwrap_or(output).join("sfx");
     let core_profiles = build_core_profiles(valve, map_list, &sfx_dir)?;
+    let mut previous_core: HashMap<u32, usize> = HashMap::new();
+    for chunk in [3000, 3050, 3051] {
+        let bytes = previous_core_bytes(&valve.join("sound"), chunk)?;
+        println!("  previous cooker's core {chunk}: {bytes} B");
+        previous_core.insert(chunk, bytes);
+    }
     let sentences = load_sentences(valve)?;
     let mut manifest = Vec::new();
     let mut rates_report = vec![String::from(
@@ -1957,6 +2117,10 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
     let mut loss_cache: HashMap<String, Vec<(u32, f64)>> = HashMap::new();
     let mut blob_cache: HashMap<(String, u32, bool), Vec<u8>> = HashMap::new();
     let mut floor_cache: HashMap<(String, u32), u32> = HashMap::new();
+    // Energy each source keeps at each rate of its ladder (levels_kept_db),
+    // per (source, ladder): one sound can be a loop in one map and a shot in
+    // another.
+    let mut kept_cache: HashMap<String, Vec<(u32, f64)>> = HashMap::new();
     for (map_index, map_name) in map_list.split_whitespace().enumerate() {
         let bsp = valve.join("maps").join(format!("{map_name}.bsp"));
         if !bsp.exists() {
@@ -2121,6 +2285,57 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                     max_step: p.ladder.len() - 1,
                 });
             }
+            // Nothing erased: band-limiting a tone or a hiss above a rate's
+            // Nyquist removes it (the old nearest-sample cook folded it back
+            // in, so it stayed as loud at the wrong pitch). Each entry's
+            // lowest rate is the lowest that keeps CORE_LEVEL_LIMIT_DB of its
+            // energy, as for the core. If those floors cannot all fit, they
+            // are dropped loops first, then chatter, effects, speech.
+            let mut erase_relaxed = Vec::new();
+            {
+                for (p, c) in planned.iter().zip(candidates.iter_mut()) {
+                    let key = format!("{}|{:?}", p.entry.wavs.join("|"), p.ladder);
+                    let kept = kept_cache.entry(key).or_insert_with(|| {
+                        let rates = p.ladder.clone();
+                        let kept = levels_kept_db(&p.source, &rates);
+                        rates.into_iter().zip(kept).collect()
+                    });
+                    let keeps = |rate: u32| {
+                        kept.iter()
+                            .find(|(r, _)| *r == rate)
+                            .map_or(0.0, |(_, l)| *l)
+                            >= CORE_LEVEL_LIMIT_DB
+                    };
+                    c.max_step = if p.climbed {
+                        0
+                    } else {
+                        p.ladder.iter().rposition(|&r| keeps(r)).unwrap_or(0)
+                    };
+                }
+                let overhead = pack_overhead(planned.len());
+                for class in [
+                    MapAudioClass::Loop,
+                    MapAudioClass::Chatter,
+                    MapAudioClass::OneShot,
+                    MapAudioClass::Dialogue,
+                ] {
+                    if psx_audio_cook::rate::allocate(&candidates, overhead, budget).is_some() {
+                        break;
+                    }
+                    for (p, c) in planned.iter().zip(candidates.iter_mut()) {
+                        if p.entry.class == class {
+                            c.max_step = p.ladder.len() - 1;
+                        }
+                    }
+                    erase_relaxed.push(class);
+                }
+            }
+            if !erase_relaxed.is_empty() {
+                println!(
+                    "  {map_name}: erase floors dropped for {} class(es)",
+                    erase_relaxed.len()
+                );
+            }
             // No regressions: an entry the previous cooker also placed keeps at
             // least the playback quality it had there (measured, both pipelines,
             // only for entries the allocation would put below their previous
@@ -2139,7 +2354,8 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                             .any(|(tier, key)| *tier == 1 && key == &p.entry.key)
                 })
                 .collect();
-            let base_budget = 512 * 1024 - 0x1010 - resident_core_bytes(&sfx_dir, map_index) - 4096;
+            let previous_core = previous_core[&resident_core_chunk(map_index)];
+            let base_budget = 512 * 1024 - 0x1010 - previous_core - 4096;
             let mut previous: Vec<Option<u32>> = vec![None; planned.len()];
             for (subset, only_setpieces) in [(&own, false), (&tier1, true)] {
                 // The previous cooker dropped the HEV logon, then chatter, from
@@ -2196,7 +2412,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                 let mut attempt = candidates.clone();
                 for (c, floor) in attempt.iter_mut().zip(&floors) {
                     if let Some(f) = floor {
-                        c.max_step = *f;
+                        c.max_step = c.max_step.min(*f);
                     }
                 }
                 let mut result = psx_audio_cook::rate::allocate(&attempt, overhead, budget);
@@ -2485,6 +2701,33 @@ mod tests {
         assert_eq!(adpcm[(blocks - 1) * 16 + 1] & 0x07, 0x03);
         let count = u32::from_le_bytes(blob[20..24].try_into().unwrap()) as usize;
         assert_eq!(count, blocks * 28, "no zero padding plays at the seam");
+    }
+
+    #[test]
+    fn core_rate_raises_only_sounds_their_resident_rate_would_erase() {
+        let tone = |hz: f64| Source {
+            wav: Wav {
+                rate: 22_050,
+                samples: (0..11_025)
+                    .map(|i| (i as f64 * hz * std::f64::consts::TAU / 22_050.0).sin() * 9_000.0)
+                    .collect(),
+                loop_start: None,
+                loop_end: None,
+                bits: 16,
+            },
+            has_loop_metadata: false,
+        };
+        // A 4 kHz beep cannot survive a 5 kHz resident rate; it is raised,
+        // never past the core's top rate.
+        let raised = core_rate(&tone(4_000.0), 5_000);
+        assert!(
+            (9_000..=11_025).contains(&raised),
+            "beep cooked at {raised} Hz"
+        );
+        // A 9 kHz beep keeps no level below the cap; it gets the cap.
+        assert_eq!(core_rate(&tone(9_000.0), 11_025), 11_025);
+        // A 400 Hz thud loses nothing at 5 kHz and keeps its resident rate.
+        assert_eq!(core_rate(&tone(400.0), 5_000), 5_000);
     }
 
     #[test]
