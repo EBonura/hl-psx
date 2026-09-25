@@ -29059,6 +29059,7 @@ fn viewmodel_otz(avgz: u32) -> usize {
 #[optimize(size)]
 unsafe fn draw_sky_windows(
     m: &Map,
+    have_pvs: bool,
     yaw: u16,
     pitch: i16,
     rot: &Mat3I16,
@@ -29068,7 +29069,7 @@ unsafe fn draw_sky_windows(
     if m.sky_tex_base == SKY_TEX_NONE || m.sky_tex_base + SKY_FACE_COUNT > MAX_TEX_SLOTS {
         return;
     }
-    let (n_boxes, first) = m.sky_box_section();
+    let (n_boxes, first, table) = m.sky_box_section();
     if n_boxes == 0 {
         return;
     }
@@ -29097,16 +29098,36 @@ unsafe fn draw_sky_windows(
     let h = render::projection_h();
     let mut i = 0usize;
     while i < n_boxes {
-        let b = m.sky_box(first, i);
+        let (b, leaf0, leaves) = m.sky_box(first, i);
         i += 1;
+        // Only boxes whose sky faces border a leaf in the camera's PVS, as
+        // GoldSrc draws sky only through faces in visible leaves.
+        if have_pvs
+            && !(leaf0..leaf0 + leaves).any(|j| pvs_leaf_visible(m, m.sky_leaf(table, j) + 1))
+        {
+            continue;
+        }
         let lo = [b[0] as i32, b[1] as i32, b[2] as i32];
         let hi = [b[3] as i32, b[4] as i32, b[5] as i32];
-        // A box wholly behind the eye has nothing to show (the half
-        // extents' sum bounds its radius).
-        let centre = [(lo[0] + hi[0]) >> 1, (lo[1] + hi[1]) >> 1, (lo[2] + hi[2]) >> 1];
+        // The sphere around the box (the half extents' sum bounds its
+        // radius) against the near plane and, at the normal focal length,
+        // the sides of the view (x = +-z, y = +-3z/4).
+        let centre = [
+            (lo[0] + hi[0]) >> 1,
+            (lo[1] + hi[1]) >> 1,
+            (lo[2] + hi[2]) >> 1,
+        ];
         let r = ((hi[0] - lo[0]) + (hi[1] - lo[1]) + (hi[2] - lo[2])) >> 1;
-        if dot12(rot.m[2], centre) + t[2] + r < render::NEAR_Z {
+        let cz = dot12(rot.m[2], centre) + t[2];
+        if cz + r < render::NEAR_Z {
             continue;
+        }
+        if h == render::SOFT_H {
+            let cx = (dot12(rot.m[0], centre) + t[0]).abs();
+            let cy = (dot12(rot.m[1], centre) + t[1]).abs();
+            if (cx - cz) * 181 > r * 256 || 4 * cy - 3 * cz > 5 * r {
+                continue;
+            }
         }
         // Each face the eye stands outside of faces it.
         let mut f = 0usize;
@@ -35169,7 +35190,7 @@ fn play(
             gpu::arm_draw_done();
             telemetry::stage_begin(telemetry::stage::FRAME_CLEAR);
             fb.clear(0, 0, 0);
-            draw_sky_windows(&m, yaw, pitch, &rot, base_t, eye);
+            draw_sky_windows(&m, have_pvs, yaw, pitch, &rot, base_t, eye);
             telemetry::stage_end(telemetry::stage::FRAME_CLEAR);
 
             // DEBUG: if the draw picked nothing under the crosshair (a quad or a
