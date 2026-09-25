@@ -29046,36 +29046,137 @@ fn viewmodel_otz(avgz: u32) -> usize {
     1 + (rel as usize).min(VM_SORT_BUCKETS - 2)
 }
 
-fn draw_sky(m: &Map, yaw: u16, pitch: i16) {
+/// GoldSrc draws the sky only through sky brush faces. The cook drops those
+/// as tool faces and keeps the map's sky volumes instead (merged
+/// CONTENTS_SKY leaf bounds), and this draws the skybox through every box
+/// face that faces the eye, clipped to the view, before the world. Anything
+/// else the world does not cover stays the clear colour: the distance cull
+/// empties space past FAR_VIEW, the fog has already taken geometry to black
+/// there, and a tunnel now continues into darkness instead of opening onto
+/// sky (the c0a0b tram ride). Texels are screen-mapped exactly as the old
+/// full-screen backdrop mapped them, so the sky itself looks the same.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn draw_sky_windows(
+    m: &Map,
+    yaw: u16,
+    pitch: i16,
+    rot: &Mat3I16,
+    t: [i32; 3],
+    eye: [i32; 3],
+) {
     if m.sky_tex_base == SKY_TEX_NONE || m.sky_tex_base + SKY_FACE_COUNT > MAX_TEX_SLOTS {
+        return;
+    }
+    let (n_boxes, first) = m.sky_box_section();
+    if n_boxes == 0 {
         return;
     }
     // Cooker face order: ft, rt, bk, lf, up, dn.
     let sky_yaw = ((yaw as usize) + 512) & 0xFFF;
-    let side = (sky_yaw >> 10) & 3;
     let face = if pitch > 760 {
         4
     } else if pitch < -760 {
         5
     } else {
-        side
+        (sky_yaw >> 10) & 3
     };
-    let slot = unsafe { TEX_SLOTS[m.sky_tex_base + face] };
+    let slot = TEX_SLOTS[m.sky_tex_base + face];
     if !slot.valid {
         return;
     }
     let u0 = if face < 4 {
-        (((sky_yaw & 1023) * SKY_TEX_SIZE) >> 10) as u8
+        (((sky_yaw & 1023) * SKY_TEX_SIZE) >> 10) as i32
     } else {
         0
     };
-    let u1 = u0.wrapping_add((SKY_TEX_SIZE - 1) as u8);
-    let v1 = (SKY_TEX_SIZE - 1) as u8;
-    gpu::draw_quad_textured_material(
-        [(0, 0), (319, 0), (0, 239), (319, 239)],
-        [(u0, 0), (u1, 0), (u0, v1), (u1, v1)],
-        slot.material,
-    );
+    // Texel = pixel * 127 / 319 across, * 127 / 239 down (the old
+    // full-screen quad's mapping), as Q16 multiplies instead of divides.
+    const SKY_U_Q16: i32 = (((SKY_TEX_SIZE as i32 - 1) << 16) + 159) / 319;
+    const SKY_V_Q16: i32 = (((SKY_TEX_SIZE as i32 - 1) << 16) + 119) / 239;
+    let h = render::projection_h();
+    let mut i = 0usize;
+    while i < n_boxes {
+        let b = m.sky_box(first, i);
+        i += 1;
+        let lo = [b[0] as i32, b[1] as i32, b[2] as i32];
+        let hi = [b[3] as i32, b[4] as i32, b[5] as i32];
+        // A box wholly behind the eye has nothing to show (the half
+        // extents' sum bounds its radius).
+        let centre = [(lo[0] + hi[0]) >> 1, (lo[1] + hi[1]) >> 1, (lo[2] + hi[2]) >> 1];
+        let r = ((hi[0] - lo[0]) + (hi[1] - lo[1]) + (hi[2] - lo[2])) >> 1;
+        if dot12(rot.m[2], centre) + t[2] + r < render::NEAR_Z {
+            continue;
+        }
+        // Each face the eye stands outside of faces it.
+        let mut f = 0usize;
+        while f < 6 {
+            let axis = f >> 1;
+            let plane = if f & 1 == 0 { lo[axis] } else { hi[axis] };
+            let outside = if f & 1 == 0 {
+                eye[axis] < plane
+            } else {
+                eye[axis] > plane
+            };
+            f += 1;
+            if !outside {
+                continue;
+            }
+            let (a, c) = ((axis + 1) % 3, (axis + 2) % 3);
+            let corner = |ua: i32, uc: i32| {
+                let mut p = [plane; 3];
+                p[a] = ua;
+                p[c] = uc;
+                render::CVert {
+                    v: [
+                        dot12(rot.m[0], p) + t[0],
+                        dot12(rot.m[1], p) + t[1],
+                        dot12(rot.m[2], p) + t[2],
+                    ],
+                    rgb: (128, 128, 128),
+                    uv: (0, 0),
+                }
+            };
+            let q = [
+                corner(lo[a], lo[c]),
+                corner(hi[a], lo[c]),
+                corner(hi[a], hi[c]),
+                corner(lo[a], hi[c]),
+            ];
+            for tri in [[&q[0], &q[1], &q[2]], [&q[0], &q[2], &q[3]]] {
+                let (clipped, n) = render::visible_clip(tri);
+                let mut xy = [(0i16, 0i16); 8];
+                let mut uv = [(0u8, 0u8); 8];
+                let mut k = 0usize;
+                while k < n {
+                    let v = &*clipped.add(k);
+                    // Clipped to the view in front of the near plane, so the
+                    // plain quotient stays on screen.
+                    let z = v.z.max(render::NEAR_Z);
+                    let x = (render::OFX + v.x * h / z).clamp(0, 319);
+                    let y = (render::OFY + v.y * h / z).clamp(0, 239);
+                    xy[k] = (x as i16, y as i16);
+                    uv[k] = (
+                        (u0 + ((x * SKY_U_Q16 + 0x8000) >> 16)) as u8,
+                        ((y * SKY_V_Q16 + 0x8000) >> 16) as u8,
+                    );
+                    k += 1;
+                }
+                // Straight to the GPU, before the world's ordering table:
+                // the previous frame has finished drawing by now, so these
+                // do not wait, and they take no packets from the world.
+                let mut j = 2usize;
+                while j < n {
+                    gpu::draw_tri_textured_material(
+                        [xy[0], xy[j - 1], xy[j]],
+                        [uv[0], uv[j - 1], uv[j]],
+                        slot.material,
+                    );
+                    j += 1;
+                }
+            }
+        }
+    }
 }
 
 /// Small camera-space motion layered over the source animation. Reload/draw/fire
@@ -35068,7 +35169,7 @@ fn play(
             gpu::arm_draw_done();
             telemetry::stage_begin(telemetry::stage::FRAME_CLEAR);
             fb.clear(0, 0, 0);
-            draw_sky(&m, yaw, pitch);
+            draw_sky_windows(&m, yaw, pitch, &rot, base_t, eye);
             telemetry::stage_end(telemetry::stage::FRAME_CLEAR);
 
             // DEBUG: if the draw picked nothing under the crosshair (a quad or a

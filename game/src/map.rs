@@ -71,6 +71,9 @@
 //!   texanim (HLME/HLMF, at align4(logic names end)):
 //!     u16 n_chains | u16 reserved | per chain: u8 n_primary | u8 n_alt |
 //!     u8 primary_tex_ids[] | u8 alt_tex_ids[]
+//!   sky volumes (optional, any magic): `i16 min[3],max[3]` × n, then
+//!     `u32 n | "SKB1"` ending where the door-occluder section begins (or at
+//!     the end of the room); see `hl_format::map::SKY_BOX_TAG`.
 //!   door occluders (optional, any magic): records located from the file's
 //!     last eight bytes `u32 section_offset | "DSL1"`; layout in the cooker's
 //!     `append_door_seals`. Readers that predate it ignore the trailing bytes.
@@ -895,6 +898,42 @@ impl Map {
         }
         let off = self.door_seal_word(len - 8) as usize & !3;
         (self.door_seal_word(off) as usize & 0xffff, off + 4)
+    }
+
+    /// Sky volumes `(count, first record offset)` from the `u32 count |
+    /// "SKB1"` trailer that ends where the door-occluder section starts (or
+    /// at the end of the room); `(0, 0)` when the room has none.
+    #[inline(always)]
+    pub fn sky_box_section(&self) -> (usize, usize) {
+        let (_, seal_first) = self.door_seal_section();
+        let end = if seal_first != 0 {
+            seal_first - 4
+        } else {
+            self.data.len() & !3
+        };
+        if end < 8 || self.door_seal_word(end - 4) != u32::from_le_bytes(cooked::SKY_BOX_TAG) {
+            return (0, 0);
+        }
+        let n = self.door_seal_word(end - 8) as usize;
+        if n * cooked::SKY_BOX_RECORD_SIZE + 8 > end {
+            return (0, 0);
+        }
+        (n, end - 8 - n * cooked::SKY_BOX_RECORD_SIZE)
+    }
+
+    /// Sky volume `i` of the section at `first`: `[min x, min y, min z, max
+    /// x, max y, max z]` in world axes.
+    #[inline(always)]
+    pub fn sky_box(&self, first: usize, i: usize) -> [i16; 6] {
+        let o = first + i * cooked::SKY_BOX_RECORD_SIZE;
+        [
+            rd_i16(self.data, o),
+            rd_i16(self.data, o + 2),
+            rd_i16(self.data, o + 4),
+            rd_i16(self.data, o + 6),
+            rd_i16(self.data, o + 8),
+            rd_i16(self.data, o + 10),
+        ]
     }
 
     /// Aligned word at byte offset `o` of the door-occluder section. Records
