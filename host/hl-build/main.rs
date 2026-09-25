@@ -2113,13 +2113,25 @@ fn profile_guided_pack(
     // check (`psoxide-pgo ram`), and record which threshold shipped.
     let link_map = repository.join(".hlpsx/hl-psx.map");
     let mut tried = Vec::new();
+    let mut link_error = None;
     for threshold in PGO_HOT_CALLSITE_LADDER {
-        let exe = compile_game(
+        // A threshold that inlines past the RAM region fails to link
+        // rather than linking under the floor; step down from that too. A
+        // real compile error fails every threshold and is returned below.
+        let exe = match compile_game(
             repository,
             psoxide,
             features,
             GuestProfile::Use(&profile, threshold),
-        )?;
+        ) {
+            Ok(exe) => exe,
+            Err(error) => {
+                println!("PGO threshold {threshold} did not build ({error}); stepping down");
+                tried.push(format!("{threshold} (did not link)"));
+                link_error = Some(error);
+                continue;
+            }
+        };
         let fits = Command::new(cargo())
             .current_dir(psoxide)
             .args(["run", "-q", "--release", "-p", "psoxide-pgo", "--", "ram"])
@@ -2141,10 +2153,12 @@ fn profile_guided_pack(
             return pack_disc(repository, psoxide, &exe);
         }
     }
-    Err(format!(
-        "no hot-callsite threshold in {PGO_HOT_CALLSITE_LADDER:?} keeps {PGO_RAM_FLOOR} B of RAM free"
-    )
-    .into())
+    Err(link_error.unwrap_or_else(|| {
+        format!(
+            "no hot-callsite threshold in {PGO_HOT_CALLSITE_LADDER:?} keeps {PGO_RAM_FLOOR} B of RAM free"
+        )
+        .into()
+    }))
 }
 
 fn home_dir() -> Option<PathBuf> {
