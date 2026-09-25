@@ -7906,6 +7906,12 @@ fn collect_logic_entities_with_lightstyles(
             _ => USE_TOGGLE,
         };
         let arg0 = match kind {
+            // CMonsterMaker m_cNumMonsters: MakeMonster stops the maker when
+            // it counts down to zero, so zero or absent (and -1) never stop.
+            LOGIC_MONSTERMAKER => {
+                (parse_f32_key(block, "monstercount", 0.0).clamp(-1.0, i16::MAX as f32) as i16)
+                    as u16
+            }
             LOGIC_ENV_BEVERAGE => {
                 // Spawn replaces exactly zero with ten; a positive fractional
                 // stock still permits its final can before Use decrements it.
@@ -8062,6 +8068,9 @@ fn collect_logic_entities_with_lightstyles(
             _ => names.id(ent_value(block, "changetarget")),
         };
         let arg1 = match kind {
+            // m_iMaxLiveChildren (0 = no limit).
+            LOGIC_MONSTERMAKER => parse_f32_key(block, "m_imaxlivechildren", 0.0)
+                .clamp(0.0, u16::MAX as f32) as u16,
             LOGIC_INFODECAL => infodecal_pick(ent_value(block, "texture").unwrap_or("")).1,
             // Debris kind: 3 + GoldSrc material. gibshooter throws flesh;
             // env_shooter's shootsounds picks glass, wood, metal, flesh or
