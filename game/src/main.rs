@@ -2168,14 +2168,16 @@ fn draw_pause_menu(fb: &mut FrameBuffer, sel: usize, status: &str) {
     fb.clear(0, 0, 0);
     // Six rows plus a status line: the panel is taller and the rows tighter
     // than the original four-item menu, which ran out of frame at "Debug".
-    gpu::draw_quad_flat([(40, 26), (280, 26), (40, 214), (280, 214)], 10, 10, 10);
-    gpu::draw_quad_flat([(44, 30), (276, 30), (44, 210), (276, 210)], 20, 18, 14);
-    hltext::draw_centered_scaled(40, "HALF-LIFE", hltext::SMALL_Q8, PAUSE_WHITE);
-    hltext::draw_centered_scaled(58, "Paused", hltext::SMALL_Q8, PAUSE_DIM);
+    // Seven rows 18 apart end at 201, so the status line at 206 sits below
+    // "Main Menu" instead of on top of it, inside a panel that reaches 226.
+    gpu::draw_quad_flat([(40, 22), (280, 22), (40, 230), (280, 230)], 10, 10, 10);
+    gpu::draw_quad_flat([(44, 26), (276, 26), (44, 226), (276, 226)], 20, 18, 14);
+    hltext::draw_centered_scaled(34, "HALF-LIFE", hltext::SMALL_Q8, PAUSE_WHITE);
+    hltext::draw_centered_scaled(52, "Paused", hltext::SMALL_Q8, PAUSE_DIM);
 
     let mut i = 0usize;
     while i < PAUSE_ITEMS.len() {
-        let y = 80 + i as i16 * 20;
+        let y = 76 + i as i16 * 18;
         if i == sel {
             gpu::draw_quad_flat(
                 [(88, y - 3), (232, y - 3), (88, y + 17), (232, y + 17)],
@@ -2191,7 +2193,7 @@ fn draw_pause_menu(fb: &mut FrameBuffer, sel: usize, status: &str) {
     }
 
     if !status.is_empty() {
-        hltext::draw_centered_scaled(204, status, hltext::SMALL_Q8, PAUSE_WHITE);
+        hltext::draw_centered_scaled(206, status, hltext::SMALL_Q8, PAUSE_WHITE);
     }
 }
 
