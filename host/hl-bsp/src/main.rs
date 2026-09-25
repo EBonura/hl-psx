@@ -7540,6 +7540,7 @@ fn collect_logic_entities_with_lightstyles(
             }
             "gibshooter" | "env_shooter" => LOGIC_SHOOTER,
             "env_beverage" => LOGIC_ENV_BEVERAGE,
+            "func_mortar_field" => LOGIC_MORTAR_FIELD,
             "player_weaponstrip" => LOGIC_WEAPONSTRIP,
             // CBasePlayerItem::DefaultTouch always calls SUB_UseTargets after
             // an accepted touch. Keep a logic identity only for weapons that
@@ -7727,6 +7728,9 @@ fn collect_logic_entities_with_lightstyles(
             )
         } else if kind == LOGIC_ENV_SHAKE {
             seconds_to_ticks_u16(parse_f32_key(block, "duration", 1.0))
+        } else if kind == LOGIC_MORTAR_FIELD {
+            parse_f32_key(block, "m_iCount", 0.0).clamp(0.0, 255.0) as u16
+                | ((parse_f32_key(block, "m_fControl", 0.0).clamp(0.0, 2.0) as u16) << 8)
         } else if kind == LOGIC_TANK {
             // firerate = shots/sec -> cooldown ticks at the 20Hz sim (min 2).
             let rate = parse_f32_key(block, "firerate", 1.0).max(0.1);
@@ -7839,6 +7843,7 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_WEAPON_PICKUP => weapon_pickup_prop_kind(cls).unwrap_or(0),
             // A laser tank's env_laser (CFuncTankLaser::GetLaser).
             LOGIC_TANK => names.id(ent_value(block, "laserentity")),
+            LOGIC_MORTAR_FIELD => names.id(ent_value(block, "m_iszXController")),
             // CMomentaryRotButton::Return uses the separately authored
             // `returnspeed`; the regular `speed` field remains the held turn
             // rate. Keeping both lets runtime send one faithful normalized
@@ -7986,6 +7991,7 @@ fn collect_logic_entities_with_lightstyles(
             | LOGIC_TRIGGER_COUNTER
             | LOGIC_TRIGGER_TELEPORT
             | LOGIC_TANK => names.id(ent_value(block, "master")),
+            LOGIC_MORTAR_FIELD => names.id(ent_value(block, "m_iszYController")),
             LOGIC_ENV_GLOBAL => parse_f32_key(block, "triggermode", 2.0)
                 .round()
                 .clamp(0.0, 3.0) as u16,
@@ -8210,6 +8216,13 @@ fn collect_logic_entities_with_lightstyles(
                 });
                 aux_count = 1;
             }
+        }
+        if kind == LOGIC_MORTAR_FIELD {
+            aux.push(LogicAuxRec {
+                target: (parse_f32_key(block, "m_flSpread", 0.0) / scale).round().clamp(0.0, 4096.0) as u16,
+                delay_ticks: 0,
+            });
+            aux_count = 1;
         }
         if kind == LOGIC_TANK {
             // CFuncTank::KeyValue, in the aux layout documented with

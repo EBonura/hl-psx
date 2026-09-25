@@ -44,6 +44,7 @@ mod render;
 use psx_goldsrc::route_follow;
 mod save;
 mod garg;
+mod mortar;
 mod osprey;
 mod scientist_logic;
 mod scratchpad;
@@ -10309,6 +10310,7 @@ unsafe fn logic_use_entity(
         }
         map::LOGIC_FUNC_DOOR => logic_activate_door_linked(m, nlogic, nents, li, rec, use_type),
         map::LOGIC_TANK => tank_use(li, use_type, now),
+        map::LOGIC_MORTAR_FIELD => mortar::field_use(m, nlogic, rec, now),
         map::LOGIC_FUNC_BUTTON => {
             logic_activate_button(m, nlogic, nents, li, rec, now, depth + 1, false)
         }
@@ -12374,6 +12376,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     BOSS_WALKER = u16::MAX;
     OSPREY.li = u16::MAX;
     garg::reset();
+    mortar::reset();
     li = 0;
     while li < nlogic {
         let rec = m.logic(li);
@@ -32031,6 +32034,7 @@ fn play(
                     tick_osprey(&m, movers);
                 }
                 garg::tick_world(&m);
+                mortar::tick(&m, sim_frame_no as u16);
                 telemetry::stage_end(telemetry::stage::UPDATE_ACTOR);
                 apply_debug_toggles(
                     &mut health,
