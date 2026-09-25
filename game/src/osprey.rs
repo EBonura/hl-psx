@@ -239,7 +239,10 @@ pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
         OSPREY_DYING => {
             let p = PROP_POS[pi];
             o.vel[1] -= 12; // 0.3 * sv_gravity per 20 Hz tick
-            let np = [p[0] + o.vel[0] as i32 / 20, p[1] + o.vel[1] as i32 / 20, p[2] + o.vel[2] as i32 / 20];
+            let mut np = p;
+            for k in 0..3 {
+                np[k] += o.vel[k] as i32 / 20;
+            }
             let hit = phys::trace_line(m, movers, p, np);
             if think && now & 3 == 0 {
                 queue_explosion_fx([np[0] + (IMPACT_RNG.below(301) as i32 - 150), np[1] - 100, np[2] + (IMPACT_RNG.below(301) as i32 - 150)], 60);
@@ -300,8 +303,10 @@ pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
     let x2 = (x * x) >> 12;
     let f = 3 * x2 - 2 * ((x2 * x) >> 12);
     let mut pos = [0i32; 3];
+    let mut ang = [0i32; 3];
     let mut k = 0;
     while k < 3 {
+        ang[k] = (o.a[0][k] as i32 * (4096 - f) + o.a[1][k] as i32 * f) >> 12;
         let a = o.p[0][k] as i32 + o.v[0][k] as i32 * t / 20;
         let b = o.p[1][k] as i32 - o.v[1][k] as i32 * (dt - t) / 20;
         pos[k] = (a * (4096 - f) + b * f) >> 12;
@@ -309,8 +314,7 @@ pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
         k += 1;
     }
     prop_set_pos_exact(m, pi, pos);
-    let ang = |k: usize| (o.a[0][k] as i32 * (4096 - f) + o.a[1][k] as i32 * f) >> 12;
-    PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], ang(1) as u16 & 0xfff);
-    OSPREY_TILT = ((ang(0) >> 4) as u16 & 0xff) | (((ang(2) >> 4) as u16 & 0xff) << 8);
+    PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], ang[1] as u16 & 0xfff);
+    OSPREY_TILT = ((ang[0] >> 4) as u16 & 0xff) | (((ang[2] >> 4) as u16 & 0xff) << 8);
 }
 pub(crate) static mut OSPREY_TILT: u16 = 0;

@@ -45,6 +45,7 @@ use psx_goldsrc::route_follow;
 mod save;
 mod apache;
 mod garg;
+mod nihilanth;
 mod mortar;
 mod osprey;
 mod scientist_logic;
@@ -1674,12 +1675,19 @@ const TRACER_FLAME: u8 = 1;
 const TRACER_FLAME_CORE: u8 = 2;
 const TRACER_MORTAR: u8 = 3;
 const TRACER_ROPE: u8 = 4;
-const TRACER_LOOKS: [(i32, (u8, u8, u8)); 5] = [
+/// Nihilanth energy balls: zap (nhth1) and teleport (exit1), and his
+/// circling spheres (muzzleflash3 at 255,224,192).
+const TRACER_ZAP: u8 = 5;
+const TRACER_TELE: u8 = 6;
+const TRACER_LOOKS: [(i32, (u8, u8, u8)); 8] = [
     (3, (250, 220, 120)),
     (24, (255, 130, 90)),
     (14, (0, 120, 255)),
     (20, (255, 160, 100)),
     (1, (70, 70, 70)),
+    (16, (200, 200, 255)),
+    (24, (120, 255, 120)),
+    (12, (255, 224, 192)),
 ];
 // Jump input buffer: a Cross press up to JUMP_BUFFER_TICKS before landing still
 // jumps (forgives an early press on a fall -- HL-ish landing feel).
@@ -9501,6 +9509,7 @@ unsafe fn script_find_actor(rec: map::LogicEnt) -> Option<usize> {
 /// 32x32x36 crouch hull (houndeyes, headcrabs), anything else in hull 1.
 /// Returns the clip head and the hull's half height above the feet.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn actor_nav_hull(m: &Map, pi: usize) -> (i32, i32) {
     if matches!(PROP_KIND[pi], PROP_TYPE_HEADCRAB | PROP_TYPE_HOUNDEYE | 59) && m.hull3_head >= 0 {
         (m.hull3_head, 18)
@@ -9510,10 +9519,13 @@ unsafe fn actor_nav_hull(m: &Map, pi: usize) -> (i32, i32) {
 }
 
 /// CheckLocalMove's WALK_MOVE steps climb anything up to sv_stepsize (18):
-/// a chord blocked at floor height also passes if the same chord raised by a
-/// step is clear (a floor lip in c1a4's hound tunnel). Returns the first
-/// impact fraction of the better of the two, or None when either is clear.
+/// a small-hull chord blocked at floor height also passes if the same chord
+/// raised by a step is clear (a floor lip in c1a4's hound tunnel). Returns
+/// the first impact fraction of the better of the two, or None when either
+/// is clear. Hull-1 actors keep the single trace (a second long human-hull
+/// trace per blocked chord adds to c1a0's lobby hitch as walkers start).
 #[inline(never)]
+#[optimize(size)]
 unsafe fn actor_chord_blocked(
     m: &Map,
     movers: &[phys::Mover],
@@ -9523,7 +9535,8 @@ unsafe fn actor_chord_blocked(
 ) -> Option<i32> {
     let (head, half) = actor_nav_hull(m, pi);
     let mut best = 0;
-    for rise in [half, half + 18] {
+    for step in 0..if half == 18 { 2 } else { 1 } {
+        let rise = half + 18 * step;
         let from = [start[0], start[1] + rise, start[2]];
         let to = [goal[0], goal[1] + rise, goal[2]];
         match phys::hull_blocked_fraction_movers(m, head, movers, from, to) {
@@ -9542,7 +9555,14 @@ unsafe fn script_human_chord_clear(
     start: [i32; 3],
     goal: [i32; 3],
 ) -> bool {
-    actor_chord_blocked(m, movers, pi, start, goal).is_none()
+    if actor_nav_hull(m, pi).1 == 18 {
+        return actor_chord_blocked(m, movers, pi, start, goal).is_none();
+    }
+    // Hull 1: the early-out boolean test; the full-fraction trace here put a
+    // 3-vblank hitch on c1a0's lobby walkers as their routes start.
+    let from = [start[0], start[1] + 36, start[2]];
+    let to = [goal[0], goal[1] + 36, goal[2]];
+    phys::human_hull_line_clear(m, from, to) && phys::actor_line_clear_movers(m, movers, from, to)
 }
 
 /// Earliest `SOLID_SLIDEBOX` impact for a standing human hull moving between
@@ -10968,6 +10988,8 @@ unsafe fn logic_use_entity(
                 OSPREY.next = now.wrapping_add(2); // COsprey::CommandUse
             } else if rec.arg1 == map::AITRIGGER_APACHE_PATH {
                 apache::startup(li);
+            } else if rec.arg1 == map::AITRIGGER_COMMAND_TOUCH && use_type == map::USE_ON {
+                nihilanth::command_on();
             }
         }
         map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE => {
@@ -12965,6 +12987,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     OSPREY.li = u16::MAX;
     garg::reset();
     apache::reset();
+    nihilanth::reset();
     mortar::reset();
     li = 0;
     while li < nlogic {
@@ -13882,6 +13905,15 @@ fn prop_anim_frame(
         let start = unsafe { PROP_SCRIPT_PLAY_UNTIL[pi] };
         let elapsed = unsafe { SIM_NOW }.wrapping_sub(start) as usize;
         return md.looped_clip_phase(clip, duration, elapsed);
+    }
+    if unsafe { PROP_KIND[pi] } == 17 && state != PROP_STATE_DEAD && hit_flash == 0 {
+        // The nihilanth's schedule picks its own sequences.
+        if let Some((slot, ticks, elapsed)) = unsafe { nihilanth::clip(pi) } {
+            if slot < md.n_clips {
+                forget_clip();
+                return md.looped_clip_phase(slot, ticks, elapsed);
+            }
+        }
     }
     if unsafe { PROP_KIND[pi] } == PROP_TYPE_GARG {
         // The gargantua's swipe and stomp play their own sequences once.
@@ -15325,18 +15357,14 @@ unsafe fn init_monster_trigger(li: usize, rec: map::LogicEnt) {
     MONSTER_TRIGGER_END = li as u16 + 1;
     LOGIC_COUNTER[li] = rec.arg1 as i16;
     let nprops = core::ptr::read_volatile(core::ptr::addr_of!(PROP_COUNT)).min(CARRY_MAILBOX_FIRST);
-    if rec.arg1 == map::AITRIGGER_APACHE_PATH {
+    if rec.arg1 == map::AITRIGGER_APACHE_PATH || rec.arg1 == map::AITRIGGER_FLY_PATH {
         let pi = rec.arg0 as usize;
-        if pi < nprops && PROP_ACTIVE[pi] != 0 && PROP_KIND[pi] == 23 {
-            apache::init(li, rec, pi);
-        }
-        LOGIC_STATE[li] = LOGIC_STATE_TOP;
-        return;
-    }
-    if rec.arg1 == map::AITRIGGER_FLY_PATH {
-        let pi = rec.arg0 as usize;
-        if pi < nprops && PROP_ACTIVE[pi] != 0 && PROP_KIND[pi] == PROP_TYPE_OSPREY {
-            osprey_init(li, rec, pi);
+        if pi < nprops && PROP_ACTIVE[pi] != 0 {
+            match (PROP_KIND[pi], rec.arg1) {
+                (23, map::AITRIGGER_APACHE_PATH) => apache::init(li, rec, pi),
+                (PROP_TYPE_OSPREY, map::AITRIGGER_FLY_PATH) => osprey_init(li, rec, pi),
+                _ => {}
+            }
         }
         LOGIC_STATE[li] = LOGIC_STATE_TOP; // no TriggerCondition to evaluate
         return;
@@ -15651,6 +15679,10 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
             0 => return,
             scaled => scaled,
         }
+    } else if PROP_KIND[pi] == 17 {
+        PROP_HEALTH[pi] = nihilanth::damage(pi, dmg);
+        PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
+        return;
     } else if PROP_KIND[pi] == 23 {
         match apache::scale_damage(dmg, DMG_BLAST) {
             0 => return,
@@ -19733,6 +19765,7 @@ unsafe fn prop_studio_hit_fraction(
     let yaw = prop_yaw_value(PROP_YAW[pi]);
     let model_rotation = prop_model_rotation(yaw, prop_authored_tilt(m, pi));
     let scale = model_local_scale(md.local_to_world_q12());
+    nihilanth::note_shot(pi, start, end);
     let model_start = inverse_rotate_scaled(start, PROP_POS[pi], &model_rotation, scale);
     let model_end = inverse_rotate_scaled(end, PROP_POS[pi], &model_rotation, scale);
     let mut best = None;
@@ -28455,12 +28488,35 @@ unsafe fn queue_world_beams(
     while ti < MAX_TRACERS {
         let (start, end, ttl) = TRACERS[ti];
         if ttl > 0 {
-            let (half, color) = TRACER_LOOKS[(TRACER_STYLE[ti] as usize).min(TRACER_LOOKS.len() - 1)];
-            draw_beam(packets, ot, start, end, half, color, rot, base_t);
+            draw_look(packets, ot, start, end, TRACER_STYLE[ti], rot, base_t);
         }
         ti += 1;
     }
     draw_tripmine_beams(packets, ot, rot, base_t);
+    // The nihilanth's circling spheres: CircleTarget holds them 24 * N_SCALE
+    // around his head.
+    if let Some((count, c)) = nihilanth::spheres() {
+        for i in 0..count as u32 {
+            let a = ((SIM_NOW as u32 * 40 + i * 4096 / 20) & 0xfff) as u16;
+            let p = [c[0] + (sincos::sin_q12(a) * 360 >> 12), c[1], c[2] + (sincos::sin_q12(a.wrapping_add(1024) & 0xfff) * 360 >> 12)];
+            draw_look(packets, ot, p, [p[0], p[1] + 24, p[2]], 7, rot, base_t);
+        }
+    }
+}
+
+/// A beam in one of the TRACER_LOOKS.
+#[inline(never)]
+fn draw_look(
+    packets: &mut PrimitivePacketArena<'_>,
+    ot: &mut OrderingTable<OT_LEN>,
+    start: [i32; 3],
+    end: [i32; 3],
+    style: u8,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
+    let (half, color) = TRACER_LOOKS[(style as usize).min(TRACER_LOOKS.len() - 1)];
+    draw_beam(packets, ot, start, end, half, color, rot, base_t);
 }
 
 // First-person viewmodel transform. GoldSrc attaches the model to the camera:
@@ -32655,7 +32711,7 @@ fn play(
                 if TANK_COUNT != 0 {
                     let f = aim_rotation(yaw, pitch).m[2];
                     let view = [f[0] as i32, f[1] as i32, f[2] as i32];
-                    tick_tanks(&m, nlogic, nents, movers, view, sim_frame_no as u16);
+                    tick_tanks(&m, movers, view, sim_frame_no as u16);
                 }
                 tick_projectiles(&m, movers);
                 tick_env_sparks(&m, nlogic);
@@ -32688,6 +32744,7 @@ fn play(
                 }
                 garg::tick_world(&m);
                 apache::tick(&m, movers);
+                nihilanth::tick(&m, movers);
                 mortar::tick(&m, sim_frame_no as u16);
                 telemetry::stage_end(telemetry::stage::UPDATE_ACTOR);
                 apply_debug_toggles(
