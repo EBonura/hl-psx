@@ -7624,6 +7624,7 @@ fn collect_logic_entities_with_lightstyles(
             }
             "gibshooter" | "env_shooter" => LOGIC_SHOOTER,
             "env_beverage" => LOGIC_ENV_BEVERAGE,
+            "func_mortar_field" => LOGIC_MORTAR_FIELD,
             "player_weaponstrip" => LOGIC_WEAPONSTRIP,
             // CBasePlayerItem::DefaultTouch always calls SUB_UseTargets after
             // an accepted touch. Keep a logic identity only for weapons that
@@ -7858,6 +7859,9 @@ fn collect_logic_entities_with_lightstyles(
             )
         } else if kind == LOGIC_ENV_SHAKE {
             seconds_to_ticks_u16(parse_f32_key(block, "duration", 1.0))
+        } else if kind == LOGIC_MORTAR_FIELD {
+            parse_f32_key(block, "m_iCount", 0.0).clamp(0.0, 255.0) as u16
+                | ((parse_f32_key(block, "m_fControl", 0.0).clamp(0.0, 2.0) as u16) << 8)
         } else if kind == LOGIC_TANK {
             // firerate = shots/sec -> cooldown ticks at the 20Hz sim (min 2).
             let rate = parse_f32_key(block, "firerate", 1.0).max(0.1);
@@ -7976,6 +7980,7 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_WEAPON_PICKUP => weapon_pickup_prop_kind(cls).unwrap_or(0),
             // A laser tank's env_laser (CFuncTankLaser::GetLaser).
             LOGIC_TANK => names.id(ent_value(block, "laserentity")),
+            LOGIC_MORTAR_FIELD => names.id(ent_value(block, "m_iszXController")),
             // CMomentaryRotButton::Return uses the separately authored
             // `returnspeed`; the regular `speed` field remains the held turn
             // rate. Keeping both lets runtime send one faithful normalized
@@ -8136,6 +8141,7 @@ fn collect_logic_entities_with_lightstyles(
             | LOGIC_TRIGGER_COUNTER
             | LOGIC_TRIGGER_TELEPORT
             | LOGIC_TANK => names.id(ent_value(block, "master")),
+            LOGIC_MORTAR_FIELD => names.id(ent_value(block, "m_iszYController")),
             LOGIC_ENV_GLOBAL => parse_f32_key(block, "triggermode", 2.0)
                 .round()
                 .clamp(0.0, 3.0) as u16,
@@ -8366,6 +8372,13 @@ fn collect_logic_entities_with_lightstyles(
                 });
                 aux_count = 1;
             }
+        }
+        if kind == LOGIC_MORTAR_FIELD {
+            aux.push(LogicAuxRec {
+                target: (parse_f32_key(block, "m_flSpread", 0.0) / scale).round().clamp(0.0, 4096.0) as u16,
+                delay_ticks: 0,
+            });
+            aux_count = 1;
         }
         if kind == LOGIC_TANK {
             // CFuncTank::KeyValue, in the aux layout documented with
@@ -10201,6 +10214,19 @@ fn collect_props(
                 });
             };
             match cls {
+                "monster_osprey" => {
+                    let first = ent_value(block, "target").unwrap_or("");
+                    if !first.is_empty() {
+                        trigger_links.push(MonsterTriggerLink {
+                            prop: owner_index,
+                            condition: AITRIGGER_FLY_PATH,
+                            target: intern_logic_name(logic_names, first).unwrap_or(0),
+                            targetname: name_id,
+                            view_cone: spawnflags,
+                            origin,
+                        });
+                    }
+                }
                 // CNihilanth::Spawn defaults; the class reads no keys for them.
                 "monster_nihilanth" => {
                     boss(AITRIGGER_DEATH_USE_ON, "n_dead", 0);
@@ -13243,6 +13269,38 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         if link.target == 0 {
             continue;
         }
+        // An osprey's corner chain, in flight order up to where it loops.
+        let first_aux = logic.aux.len() as u16;
+        let mut loop_start = 0u8;
+        if link.condition == AITRIGGER_FLY_PATH {
+            let mut names: Vec<&str> = Vec::new();
+            let mut next = logic.names[link.target as usize - 1].clone();
+            while names.len() < 32 {
+                if let Some(i) = names.iter().position(|n| *n == next) {
+                    loop_start = i as u8;
+                    break;
+                }
+                let Some(corner) = ent_text.split('{').find(|b| {
+                    ent_value(b, "targetname") == Some(next.as_str())
+                        && ent_value(b, "classname") == Some("path_corner")
+                }) else {
+                    break;
+                };
+                names.push(ent_value(corner, "targetname").unwrap_or(""));
+                let p = to_world(ent_value(corner, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]), scale);
+                let a = ent_angles_degrees(corner).unwrap_or([0.0; 3]);
+                let q8 = |deg: f32| ((-deg * 256.0 / 360.0).round() as i32 & 0xff) as u16;
+                for (target, delay_ticks) in [
+                    (p[0] as i16 as u16, p[1] as i16 as u16),
+                    (p[2] as i16 as u16, parse_f32_key(corner, "speed", 0.0).round().clamp(0.0, 4000.0) as u16),
+                    (hl_yaw_to_world_q12(a[1]) as u16, q8(a[0]) | (q8(a[2]) << 8)),
+                ] {
+                    logic.aux.push(LogicAuxRec { target, delay_ticks });
+                }
+                next = ent_value(corner, "target").unwrap_or("").to_string();
+            }
+        }
+        let aux_count = (logic.aux.len() - first_aux as usize) as u8;
         logic.ents.push(LogicRec {
             kind: LOGIC_MONSTER_TRIGGER,
             use_type: if link.condition == AITRIGGER_DEATH_USE_ON { USE_ON } else { USE_TOGGLE },
@@ -13251,9 +13309,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             target: link.target,
             killtarget: 0,
             brush: LOGIC_BRUSH_NONE,
-            first_aux: 0,
-            aux_count: 0,
-            flags: 0,
+            first_aux,
+            aux_count,
+            flags: loop_start,
             wait_ticks: 0,
             delay_ticks: 0,
             speed: link.view_cone,
