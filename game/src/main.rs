@@ -7545,8 +7545,105 @@ unsafe fn carry_player_on_brush_mover(
     }
     let mut ei = 0usize;
     while ei < nents {
+        let now_off = ent_draw_offset(ei);
+        let prev = ent_prev_off(ei);
+        // SV_PushMove: a sliding brush (door, plat, train) that moved into a
+        // player not riding it shoves them; one the world pins is blocked.
+        // Rotation is not pushed; the player's own tram carries them.
+        if now_off != prev
+            && ei as i16 != player.ground_mover
+            && ENT_CACHE[ei].kind != ENT_KIND_PUSHABLE
+            && ENT_CACHE[ei].submodel as u16 != TRACKTRAIN_SUBMODEL
+        {
+            let d = [
+                now_off[0] - prev[0],
+                now_off[1] - prev[1],
+                now_off[2] - prev[2],
+            ];
+            if !player.push_by_mover(m, movers, ei as i32, d) {
+                mover_blocked(m, ei, usize::MAX);
+            }
+            push_actors_from_mover(m, movers, ei, d);
+        }
         ent_prev_off_store(ei, ent_draw_offset(ei));
         ei += 1;
+    }
+}
+
+/// SV_PushMove for monsters: an actor the moved brush now overlaps (its
+/// hull-1 at the actor's centre) is shoved along, or blocks the brush.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn push_actors_from_mover(m: &Map, movers: &[phys::Mover], ei: usize, d: [i32; 3]) {
+    let mut pi = 0usize;
+    while pi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
+        let p = PROP_POS[pi];
+        let c = [p[0], p[1] + 36, p[2]];
+        if PROP_ACTIVE[pi] != 0
+            && PROP_HEALTH[pi] != 0
+            && !phys::mover_clear_at(m, movers, ei as i32, c)
+        {
+            let moved = [c[0] + d[0], c[1] + d[1], c[2] + d[2]];
+            if phys::standing_fits(m, moved) && phys::movers_clear_at(m, movers, moved) {
+                prop_set_pos_exact(m, pi, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
+            } else {
+                mover_blocked(m, ei, pi);
+            }
+        }
+        pi += 1;
+    }
+}
+
+/// The pusher's Blocked callback for the player (or actor `victim`). CBaseDoor hurts the
+/// blocker by its dmg and, unless its wait is -1, reverses; a wait -1 door
+/// holds and keeps squashing.
+/// CFuncPlat hurts by 1 and reverses. CFuncTrain hurts by its dmg (default
+/// 2) every half second. Damage lands once per 20 Hz tick, where GoldSrc
+/// repeats it every server frame.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn mover_blocked(m: &Map, ei: usize, victim: usize) {
+    let li = ENT_BRUSH_LOGIC[ei] as usize;
+    if li >= m.n_logic.min(MAX_LOGIC) {
+        return;
+    }
+    let rec = m.logic(li);
+    let dmg = if rec.kind == map::LOGIC_FUNC_TRAIN {
+        if SIM_NOW % 10 == 0 {
+            rec.arg1.max(2)
+        } else {
+            0
+        }
+    } else {
+        rec.arg0
+    };
+    if victim < MAX_PROPS {
+        if dmg != 0 {
+            damage_prop(victim, dmg.min(255) as u8, false);
+        }
+    } else {
+        PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(dmg);
+    }
+    if rec.kind != map::LOGIC_FUNC_DOOR {
+        return;
+    }
+    // SV_PushMove moves a blocked pusher back: undo this tick's travel.
+    let step = logic_phase_step(rec, ei);
+    let state = LOGIC_STATE[li];
+    if state == LOGIC_STATE_GOING_UP {
+        ENT_PHASE[ei] = (ENT_PHASE[ei] - step).max(0);
+    } else if state == LOGIC_STATE_GOING_DOWN {
+        ENT_PHASE[ei] = (ENT_PHASE[ei] + step).min(4096);
+    }
+    // A wait -1 door then holds on the player (squashing it); any other
+    // reverses. Linked doors (same targetname) that hit the player block on
+    // their own pass; flipping them here as well would undo that reversal.
+    if rec.wait_ticks >= 0 {
+        if state == LOGIC_STATE_GOING_UP {
+            LOGIC_STATE[li] = LOGIC_STATE_GOING_DOWN;
+        } else if state == LOGIC_STATE_GOING_DOWN {
+            LOGIC_STATE[li] = LOGIC_STATE_GOING_UP;
+        }
     }
 }
 
@@ -10906,8 +11003,8 @@ unsafe fn maker_tag(li: usize) -> u8 {
 
 /// CMonsterMaker::MakeMonster: respect m_iMaxLiveChildren (living children,
 /// DeathNotice), wake one dormant stock copy, count it down and fire the
-/// target. The cooker stocks at most four copies, so a maker makes at most
-/// four monsters.
+/// target. The cooker stocks at most four copies; a maker making more
+/// remakes its faded dead children.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn maker_make(
@@ -10960,6 +11057,33 @@ unsafe fn maker_make(
             pi += 1;
         }
         pass += 1;
+    }
+    if found == usize::MAX && rec.arg0 != 1 {
+        // The stock is at most four copies. A maker making more fades its
+        // dead children (m_fFadeChildren); once a corpse has lain five
+        // seconds, remake that copy at the maker for the next monster.
+        let mut pi = 0usize;
+        while pi < n {
+            if PROP_MAKER[pi] == tag
+                && PROP_ACTIVE[pi] != 0
+                && PROP_HEALTH[pi] == 0
+                && SIM_NOW.wrapping_sub(PROP_DEATH_START[pi]) > 100
+            {
+                PROP_HEALTH[pi] = prop_start_health(PROP_KIND[pi]);
+                PROP_STATE[pi] = PROP_STATE_IDLE;
+                PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+                PROP_AI_TIMER[pi] = 0;
+                PROP_SCRIPT_MODE[pi] = 0;
+                PROP_SCRIPT_LI[pi] = u16::MAX;
+                PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_FRESH;
+                PROP_POS[pi] = rec.origin;
+                PROP_ACTIVE[pi] = 0;
+                PROP_DORMANT[pi] = PROP_RUNTIME_DORMANT_STOCK;
+                found = pi;
+                break;
+            }
+            pi += 1;
+        }
     }
     if found == usize::MAX {
         return;
