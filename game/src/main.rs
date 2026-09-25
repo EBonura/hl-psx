@@ -9268,16 +9268,52 @@ unsafe fn script_find_actor(rec: map::LogicEnt) -> Option<usize> {
     None
 }
 
+/// SV_HullForBsp: a monster no wider or taller than 36 units moves in the
+/// 32x32x36 crouch hull (houndeyes, headcrabs), anything else in hull 1.
+/// Returns the clip head and the hull's half height above the feet.
 #[inline(never)]
-fn script_human_chord_clear(
+unsafe fn actor_nav_hull(m: &Map, pi: usize) -> (i32, i32) {
+    if matches!(PROP_KIND[pi], PROP_TYPE_HEADCRAB | PROP_TYPE_HOUNDEYE | 59) && m.hull3_head >= 0 {
+        (m.hull3_head, 18)
+    } else {
+        (m.hull1_head, 36)
+    }
+}
+
+/// CheckLocalMove's WALK_MOVE steps climb anything up to sv_stepsize (18):
+/// a chord blocked at floor height also passes if the same chord raised by a
+/// step is clear (a floor lip in c1a4's hound tunnel). Returns the first
+/// impact fraction of the better of the two, or None when either is clear.
+#[inline(never)]
+unsafe fn actor_chord_blocked(
     m: &Map,
     movers: &[phys::Mover],
+    pi: usize,
+    start: [i32; 3],
+    goal: [i32; 3],
+) -> Option<i32> {
+    let (head, half) = actor_nav_hull(m, pi);
+    let mut best = 0;
+    for rise in [half, half + 18] {
+        let from = [start[0], start[1] + rise, start[2]];
+        let to = [goal[0], goal[1] + rise, goal[2]];
+        match phys::hull_blocked_fraction_movers(m, head, movers, from, to) {
+            None => return None,
+            Some(f) => best = best.max(f),
+        }
+    }
+    Some(best)
+}
+
+#[inline(never)]
+unsafe fn script_human_chord_clear(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
     start: [i32; 3],
     goal: [i32; 3],
 ) -> bool {
-    let from = [start[0], start[1] + 36, start[2]];
-    let to = [goal[0], goal[1] + 36, goal[2]];
-    phys::human_hull_line_clear(m, from, to) && phys::actor_line_clear_movers(m, movers, from, to)
+    actor_chord_blocked(m, movers, pi, start, goal).is_none()
 }
 
 /// Earliest `SOLID_SLIDEBOX` impact for a standing human hull moving between
@@ -9298,8 +9334,13 @@ unsafe fn script_human_actor_blocked_fraction(
     if PROP_KIND[pi] == PROP_TYPE_HOLO {
         return None;
     }
-    let from = [start[0], start[1] + 36, start[2]];
-    let to = [goal[0], goal[1] + 36, goal[2]];
+    let half = if matches!(PROP_KIND[pi], PROP_TYPE_HEADCRAB | PROP_TYPE_HOUNDEYE | 59) {
+        18
+    } else {
+        36
+    };
+    let from = [start[0], start[1] + half, start[2]];
+    let to = [goal[0], goal[1] + half, goal[2]];
     let mut best = 4096;
 
     if let Some((player_pos, player_half_height)) = player {
@@ -9313,7 +9354,7 @@ unsafe fn script_human_actor_blocked_fraction(
             player_pos[1] + player_half_height,
             player_pos[2] + 16,
         ];
-        if let Some(hit) = ground_logic::sweep_player_actor(from, to, player_mins, player_maxs, 36)
+        if let Some(hit) = ground_logic::sweep_player_actor(from, to, player_mins, player_maxs, half)
         {
             best = best.min(hit.frac);
         }
@@ -9327,7 +9368,7 @@ unsafe fn script_human_actor_blocked_fraction(
             && PROP_KIND[other] != PROP_TYPE_HOLO
         {
             let (mins, maxs) = actor_collision_bounds(PROP_KIND[other], PROP_POS[other]);
-            if let Some(hit) = ground_logic::sweep_player_actor(from, to, mins, maxs, 36) {
+            if let Some(hit) = ground_logic::sweep_player_actor(from, to, mins, maxs, half) {
                 best = best.min(hit.frac);
             }
         }
@@ -9350,7 +9391,7 @@ unsafe fn script_human_chord_clear_actors(
     goal: [i32; 3],
     player: Option<([i32; 3], i32)>,
 ) -> bool {
-    script_human_chord_clear(m, movers, start, goal)
+    script_human_chord_clear(m, movers, pi, start, goal)
         && script_human_actor_blocked_fraction(pi, start, goal, player).is_none()
 }
 
@@ -9502,9 +9543,7 @@ unsafe fn script_dynamic_local_replan(
         start[1] + delta[1] * check_dist / direction_len,
         start[2] + delta[2] * check_dist / direction_len,
     ];
-    let from = [start[0], start[1] + 36, start[2]];
-    let to = [check_end[0], check_end[1] + 36, check_end[2]];
-    let world_frac = phys::human_hull_blocked_fraction_movers(m, movers, from, to);
+    let world_frac = actor_chord_blocked(m, movers, pi, start, check_end);
     let actor_frac = script_human_actor_blocked_fraction(
         pi,
         start,
@@ -9615,9 +9654,7 @@ unsafe fn script_assign_actor(m: &Map, li: usize, rec: map::LogicEnt, pi: usize,
             core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),
             MOVER_COUNT.min(MAX_ENTS + 1),
         );
-        let from = [pos[0], pos[1] + 36, pos[2]];
-        let to = [authored_goal[0], authored_goal[1] + 36, authored_goal[2]];
-        let world_blocked = phys::human_hull_blocked_fraction_movers(m, movers, from, to);
+        let world_blocked = actor_chord_blocked(m, movers, pi, pos, authored_goal);
         let actor_blocked = script_human_actor_blocked_fraction(pi, pos, authored_goal, None);
         let blocked = match (world_blocked, actor_blocked) {
             (Some(world), Some(actor)) => Some(world.min(actor)),
@@ -10039,11 +10076,17 @@ unsafe fn tick_scripted_actor(
             if scientist_logic::script_at_mark(dist2_xz(PROP_POS[pi], goal), start_pending) {
                 true
             } else {
-                let speed = scientist_logic::script_move_speed(
-                    mode,
-                    MOVE_TICK,
-                    PROP_KIND[pi] == PROP_TYPE_BARNEY,
-                ) as i32;
+                // houndeye.mdl's run: 245.8 units over 18 frames at 30 fps
+                // (410 u/s, c1a4's tunnel runs), not the scientist's 280.
+                let speed = if mode == 2 && PROP_KIND[pi] == PROP_TYPE_HOUNDEYE {
+                    20
+                } else {
+                    scientist_logic::script_move_speed(
+                        mode,
+                        MOVE_TICK,
+                        PROP_KIND[pi] == PROP_TYPE_BARNEY,
+                    ) as i32
+                };
                 prop_move_towards_point(m, movers, pi, goal, speed);
                 PROP_STATE[pi] = PROP_STATE_MOVE;
                 false
@@ -14284,7 +14327,7 @@ unsafe fn nav_route_simplified_entry(
     // If the next raw node is directly walkable, dropping the source node is
     // exactly RouteSimplify's first branch. Leave `next` cached so the runtime
     // heads there immediately.
-    if script_human_chord_clear(m, movers, start, next_pos) {
+    if script_human_chord_clear(m, movers, pi, start, next_pos) {
         return None;
     }
     let src_pos = m.nav_node(src as usize).pos;
@@ -14293,7 +14336,7 @@ unsafe fn nav_route_simplified_entry(
         (src_pos[1] + next_pos[1]) / 2,
         (src_pos[2] + next_pos[2]) / 2,
     ];
-    if script_human_chord_clear(m, movers, start, midpoint) {
+    if script_human_chord_clear(m, movers, pi, start, midpoint) {
         return Some(midpoint);
     }
     // No safe cut: restore the source-anchor convention used by the ordinary
@@ -14367,7 +14410,13 @@ unsafe fn nav_waypoint_towards(
             if dst as usize >= n || !nav_land_node(m, dst as usize) {
                 return nav_route_fail_open(pi, goal);
             }
-            if cached_next as u8 == dst {
+            // RouteSimplify: once the mark itself is a clear local move,
+            // the remaining graph hops are dropped (c1a4's houndeye cuts
+            // from node 8 to its mark instead of overrunning to node 9).
+            if cached_next as u8 == dst
+                || (scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi])
+                    && script_human_chord_clear(m, movers, pi, pos, goal))
+            {
                 // The graph route ends at its destination node, not at the
                 // scripted mark. Hand the final local chord back to the
                 // straight script mover; retaining route steering here made
