@@ -409,7 +409,7 @@ pub mod logic {
     pub const LOGIC_SHOOTER: u8 = SHOOTER;
     pub const LOGIC_TRIGGER_CAMERA: u8 = TRIGGER_CAMERA;
 
-    pub const KINDS: [u8; 57] = [
+    pub const KINDS: [u8; 58] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
