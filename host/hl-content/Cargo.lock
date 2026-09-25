@@ -179,6 +179,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 name = "hl-content"
 version = "0.1.0"
 dependencies = [
+ "hl-format",
  "image",
  "psxed-audio",
  "serde_json",
@@ -186,6 +187,10 @@ dependencies = [
  "symphonia",
  "zip",
 ]
+
+[[package]]
+name = "hl-format"
+version = "0.1.0"
 
 [[package]]
 name = "image"

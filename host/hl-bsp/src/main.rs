@@ -8399,6 +8399,20 @@ fn collect_logic_entities_with_lightstyles(
                 aux_count = 1;
             }
         }
+        if kind == LOGIC_MAP_FLAGS {
+            // Set-piece monster sounds this map's audio bank carries, as
+            // (slot, bank id) pairs (hl_format::setpiece_audio).
+            for (slot, sound) in hl_format::setpiece_audio::SOUNDS.iter().enumerate() {
+                let id = map_audio_id(&voices, map_index, sound.path, sound.looping);
+                if id != u8::MAX {
+                    aux.push(LogicAuxRec {
+                        target: slot as u16,
+                        delay_ticks: id as u16,
+                    });
+                    aux_count += 1;
+                }
+            }
+        }
         if kind == LOGIC_MORTAR_FIELD {
             aux.push(LogicAuxRec {
                 target: (parse_f32_key(block, "m_flSpread", 0.0) / scale).round().clamp(0.0, 4096.0) as u16,
