@@ -169,6 +169,9 @@ unsafe fn model_capacity() -> usize {
     ARENA_WORDS - MODEL_BASE_WORDS
 }
 static mut ACTIVE_SFX_CHUNK: u32 = 0;
+/// Core SFX chunk per map index from the cooker's table (0 = use the built-in
+/// chapter profiles below).
+static mut CORE_SFX_PROFILE: [u16; sfx::CORE_TABLE_MAPS] = [0; sfx::CORE_TABLE_MAPS];
 // NPC/item geometry is no longer baked into the EXE: every model type streams
 // from WORLD.PAK per-map into MODEL_BUF via the model pool (see stream_map_models).
 
@@ -29017,6 +29020,25 @@ fn main() {
     if sfx_ready == 0 {
         tty::println("hl-psx: SFX pack missing/failed (silent boot)");
     }
+    // Per-map core profiles: which core bank each map loads. MAP_BUF is still
+    // free here; a missing or malformed table keeps the chapter defaults.
+    {
+        let len = cdstream::load_chunk_decompressed(sfx::CORE_TABLE_CHUNK, unsafe { map_buf() })
+            .map(|load| load.raw_len)
+            .unwrap_or(0);
+        let bytes = unsafe { streamed_map_bytes(len) };
+        if len >= 8 && &bytes[..4] == b"HCPT" {
+            let count = (u16::from_le_bytes([bytes[4], bytes[5]]) as usize)
+                .min(sfx::CORE_TABLE_MAPS)
+                .min((len - 8) / 2);
+            for i in 0..count {
+                unsafe {
+                    CORE_SFX_PROFILE[i] =
+                        u16::from_le_bytes([bytes[8 + i * 2], bytes[9 + i * 2]]);
+                }
+            }
+        }
+    }
 
     // Keep the branded presentation out of deterministic direct-map builds so
     // their route timing and performance counters begin at exactly the same
@@ -29790,7 +29812,14 @@ fn play(
     // combat bank. Fixed-id profiles reclaim that SPU RAM without changing any
     // SFX call sites. Hazard Course upgrades to its weapon profile exactly
     // when the weapon section begins; other chapters restore the full bank.
-    let wanted_sfx = if (6..=11).contains(&launch.room_id)
+    let profile = if (launch.room_id as usize) < sfx::CORE_TABLE_MAPS {
+        unsafe { CORE_SFX_PROFILE[launch.room_id as usize] }
+    } else {
+        0
+    };
+    let wanted_sfx = if profile != 0 {
+        profile as u32
+    } else if (6..=11).contains(&launch.room_id)
         || (menu::TRAINING_START_ROOM as u16..=menu::TRAINING_START_ROOM as u16 + 1)
             .contains(&launch.room_id)
     {
