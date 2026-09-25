@@ -1549,9 +1549,9 @@ fn minimum_pack_size(planned: &[Planned<'_>]) -> usize {
 /// (game/src/main.rs: `prop_voice` per prop kind, the houndeye blast and the
 /// wall chargers). Everything else in the core (weapons, player, items, HEV,
 /// impacts, the headcrab-family attack bark some leapers share) is always
-/// reachable.
-const CORE_EMITTERS: [(&[usize], &[&str]); 9] = [
-    (&[34, 35, 64], &["monster_barney"]),
+/// reachable, and so are Barney's sounds: a following guard can be carried
+/// through any number of changelevels.
+const CORE_EMITTERS: [(&[usize], &[&str]); 8] = [
     (&[30, 31], &["monster_headcrab"]),
     (&[20, 29], &["monster_zombie"]),
     (&[21, 36, 37], &["monster_houndeye"]),
@@ -1662,6 +1662,40 @@ fn build_core_profiles(
     let silence = cook_psau(&silent, 5_000, false);
     let mut bases: HashMap<usize, Vec<Vec<u8>>> = HashMap::new();
     let maps: Vec<&str> = map_list.split_whitespace().collect();
+    // Per map: the classes it can hold, its own plus those of every map one
+    // changelevel away in either direction (monsters standing in a
+    // transition volume are carried across it).
+    let mut own: Vec<HashSet<String>> = Vec::with_capacity(maps.len());
+    let mut links: Vec<HashSet<String>> = Vec::with_capacity(maps.len());
+    for map_name in &maps {
+        let bsp = valve.join("maps").join(format!("{map_name}.bsp"));
+        if !bsp.exists() {
+            own.push(HashSet::new());
+            links.push(HashSet::new());
+            continue;
+        }
+        own.push(map_classes(&bsp)?);
+        links.push(
+            bsp_entities(&bsp)?
+                .iter()
+                .filter(|e| e.get("classname").map(String::as_str) == Some("trigger_changelevel"))
+                .filter_map(|e| e.get("map").map(|m| m.to_ascii_lowercase()))
+                .collect(),
+        );
+    }
+    let census: Vec<HashSet<String>> = (0..maps.len())
+        .map(|i| {
+            let mut classes = own[i].clone();
+            for (j, name) in maps.iter().enumerate() {
+                if links[i].contains(&name.to_ascii_lowercase())
+                    || links[j].contains(&maps[i].to_ascii_lowercase())
+                {
+                    classes.extend(own[j].iter().cloned());
+                }
+            }
+            classes
+        })
+        .collect();
     // Per map: its chapter base and the core ids it could silence.
     let mut wants: Vec<(usize, Vec<usize>)> = Vec::with_capacity(maps.len());
     for (map_index, map_name) in maps.iter().enumerate() {
@@ -1676,7 +1710,7 @@ fn build_core_profiles(
             slot.insert(hsfx_entries(&fs::read(&base_path)?)?);
         }
         let entries = &bases[&base];
-        let silenced = unreachable_core_ids(&map_classes(&bsp)?)
+        let silenced = unreachable_core_ids(&census[map_index])
             .into_iter()
             .filter(|&id| {
                 entries
@@ -2232,25 +2266,33 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             .map(|(p, &step)| p.ladder[step])
             .collect();
         let blob_key = |p: &Planned<'_>, rate: u32| (p.entry.wavs.join("|"), rate, p.looping);
-        let jobs: Vec<(&Source, u32, bool)> = planned
-            .iter()
-            .zip(&rates)
-            .filter(|(p, &rate)| !blob_cache.contains_key(&blob_key(p, rate)))
-            .map(|(p, &rate)| (&p.source, rate, p.looping))
-            .collect();
-        let fresh = cook_parallel(&jobs);
-        let mut fresh = fresh.into_iter();
+        // One job per distinct (sound, rate, loop): a map can list the same
+        // sound under two keys (an NPC use reply and its sentence).
+        let mut wanted: Vec<((String, u32, bool), &Planned<'_>)> = Vec::new();
         for (p, &rate) in planned.iter().zip(&rates) {
             let key = blob_key(p, rate);
-            blob_cache
-                .entry(key)
-                .or_insert_with(|| fresh.next().expect("one blob per job"));
+            if !blob_cache.contains_key(&key) && !wanted.iter().any(|(k, _)| *k == key) {
+                wanted.push((key, p));
+            }
+        }
+        let jobs: Vec<(&Source, u32, bool)> = wanted
+            .iter()
+            .map(|((_, rate, looping), p)| (&p.source, *rate, *looping))
+            .collect();
+        for ((key, _), blob) in wanted.iter().zip(cook_parallel(&jobs)) {
+            blob_cache.insert(key.clone(), blob);
         }
         let blobs: Vec<Vec<u8>> = planned
             .iter()
             .zip(&rates)
             .map(|(p, &rate)| blob_cache[&blob_key(p, rate)].clone())
             .collect();
+        for ((p, &rate), blob) in planned.iter().zip(&rates).zip(&blobs) {
+            let cooked_rate = u32::from_le_bytes(blob[16..20].try_into()?);
+            if cooked_rate != rate || blob.len() != psau_size(&p.source, rate, p.looping) {
+                return Err(format!("{map_name}: {} cooked out of order", p.entry.key).into());
+            }
+        }
         let pack = hsfx(&blobs);
         let predicted = pack_overhead(planned.len())
             + planned
@@ -2470,6 +2512,21 @@ mod tests {
             class_weight(&key("nihilanth/nil_thetruth.wav"))
                 > class_weight(&key("debris/bustglass1.wav"))
         );
+    }
+
+    #[test]
+    fn core_census_keeps_what_a_map_can_emit() {
+        let classes: HashSet<String> = ["monster_alien_slave", "func_healthcharger"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let silenced = unreachable_core_ids(&classes);
+        for kept in [24, 38, 39, 47, 55, 34, 35, 64, 0, 12, 19] {
+            assert!(!silenced.contains(&kept), "id {kept} must stay");
+        }
+        for gone in [20, 21, 29, 30, 31, 32, 33, 36, 37, 40, 41, 48, 56] {
+            assert!(silenced.contains(&gone), "id {gone} is unreachable");
+        }
     }
 
     #[test]
