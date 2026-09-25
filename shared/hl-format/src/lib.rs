@@ -293,6 +293,12 @@ pub mod logic {
     /// the actor, or NODE_WALK_INCOMING for a Gonarch arriving by transition.
     pub const AITRIGGER_NODE_WALK: u16 = 0x102;
     pub const NODE_WALK_INCOMING: u16 = u16::MAX;
+    /// COsprey's path_corner flight (FlyThink/Flight/DeployThink). `target`
+    /// is the first corner, `targetname` the osprey (CommandUse starts a
+    /// SF_WAITFORTRIGGER one), `speed` its spawnflags, `flags` the corner the
+    /// chain loops back to; three aux words per corner: (x, y), (z, speed),
+    /// (yaw q12, pitch q8 | roll q8 << 8), angles reflected like props.
+    pub const AITRIGGER_FLY_PATH: u16 = 0x103;
     /// An info_bigmomma node: `targetname`, `target` = reachtarget,
     /// `arg0` = next node name, `arg1` = health, `speed` = radius,
     /// `delay_ticks` = reachdelay, `spawnflags` = RUN(1) | WAIT(2).
