@@ -10724,7 +10724,16 @@ unsafe fn logic_use_entity(
             let mut pi = 0usize;
             while pi < nprops {
                 if PROP_NAME[pi] == rec.target {
-                    if rec.arg0 == 0 {
+                    // Hazard-course holograms keep their tuned renderamt
+                    // rule; any other actor hides when the new mode is not
+                    // normal and its amount is zero (c2a5f's grunts waiting
+                    // unseen in the Bradley, c1a2b's G-Man).
+                    let hide = if PROP_KIND[pi] == PROP_TYPE_HOLO {
+                        rec.arg0 == 0
+                    } else {
+                        rec.arg1 & 0x80 != 0
+                    };
+                    if hide {
                         PROP_DORMANT[pi] |= PROP_RUNTIME_RENDER_HIDDEN;
                     } else {
                         PROP_DORMANT[pi] &= !PROP_RUNTIME_RENDER_HIDDEN;
@@ -33854,7 +33863,7 @@ fn play(
                     continue;
                 }
                 let ty = PROP_KIND[pi];
-                if ty == PROP_TYPE_HOLO && PROP_DORMANT[pi] & PROP_RUNTIME_RENDER_HIDDEN != 0 {
+                if PROP_DORMANT[pi] & PROP_RUNTIME_RENDER_HIDDEN != 0 {
                     continue;
                 }
                 let sim_org = PROP_POS[pi];
