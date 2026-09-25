@@ -33,6 +33,8 @@ main-ram-projection-stack = []
 # Emits PSoXide-only MMIO telemetry so `frontend launch` can stop on guest
 # frames and write profile/counter CSVs. Keep it off for burn/shipping builds.
 emulator-telemetry = ["psx-goldsrc/emulator-telemetry"]
+# Measurement builds: report CPU-projected vertices to PSoXide's warp probe.
+warp-probe = ["psx-goldsrc/warp-probe"]
 # Records the affine error histogram for every frame so tessellation changes
 # can be measured in texels. Binning every visible edge is slower than the
 # correction it measures, so this is deliberately separate from

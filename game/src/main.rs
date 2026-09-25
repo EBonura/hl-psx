@@ -447,6 +447,54 @@ const SOFT_SPLIT_MAX_DEPTH: usize = 6;
 /// directly with proximity, and bound total work by screen area
 /// (~(320/32)x(240/32) cells) instead of world geometry.
 const SOFT_SPLIT_TARGET_SPAN_PX: i32 = 96;
+/// Error-bounded tessellation of world patches, soft quadtree cells and
+/// screen splits: the screen-space affine displacement budget in 1/8 pixel
+/// (`psx_engine::tess`). Zero keeps the historical rules (2 and 4 texel edge
+/// errors, near-presence splits, 96 px quadtree cells, `zmax > 2 zmin`
+/// screen splits).
+const WARP_PX_Q3: u32 = 64;
+/// Route in-band screen triangles through the edge-local perspective split
+/// (`push_tri_gpu_split`) under the warp policy. Most of the policy's gain
+/// on dust2 comes from here (textured pixels over one texel 44% -> 18%);
+/// the split parent is drawn behind its children to paper the rounding
+/// pinholes where they meet unsplit neighbours.
+const WARP_SCREEN_SPLIT: bool = true;
+
+/// Whether a projected edge's affine displacement exceeds `WARP_PX_Q3`
+/// after `level` bisections.
+#[inline(always)]
+fn warp_edge_over(a: &Projected, b: &Projected, level: u32) -> bool {
+    use psx_engine::tess::{edge_exceeds, ScreenDepth};
+    let s = |p: &Projected| ScreenDepth {
+        x: p.sx as i32,
+        y: p.sy as i32,
+        z: p.sz as i32,
+    };
+    edge_exceeds(s(a), s(b), WARP_PX_Q3, level)
+}
+
+/// View-space edge of a soft cell over budget: its screen length estimated
+/// at the nearer end (an over-estimate, so the cell splits no later). All
+/// 32-bit: the extent is clamped so `ext * SOFT_H` fits, one hardware divide.
+#[inline(always)]
+fn warp_cell_edge_over(a: &render::CVert, b: &render::CVert) -> bool {
+    let (za, zb) = (a.v[2].max(NEAR as i32), b.v[2].max(NEAR as i32));
+    let ext = (a.v[0] - b.v[0])
+        .unsigned_abs()
+        .max((a.v[1] - b.v[1]).unsigned_abs())
+        .min(0xffff);
+    let len = (ext * render::SOFT_H as u32 / za.min(zb) as u32).min(8191);
+    psx_engine::tess::error_level(len, za, zb, WARP_PX_Q3) != 0
+}
+/// Error-bounded tessellation budget for world quads that fall off the GT4
+/// fast path because their two halves cannot share one OT key (refined and
+/// cutout faces spanning a large depth range): the largest affine
+/// displacement an edge may keep, in eighths of a pixel (see
+/// `psx_engine::tess`). Such a quad used to be drawn as its two whole
+/// triangles, the largest warp on the tram ride; it now splits per axis as
+/// far as this budget asks, each cell keyed at its own depth. Zero restores
+/// the two-triangle fallback.
+const WORLD_DEPTH_SPLIT_PX_Q3: u32 = 64;
 /// The ranked shortlist also admits big CLOSE patches whose affine error is
 /// low (head-on walls): within this depth and above this screen span, a patch
 /// competes for the fixed refinement budget so near geometry reads uniformly
@@ -3295,6 +3343,9 @@ static mut WORLD_AFFINE_ACTIVE_CAP: u8 = AFFINE_CANDIDATE_CAP as u8;
 /// the native-patch walker, which then splits the quad rather than dropping to
 /// two independent triangles.
 static mut WORLD_QUAD_NEEDS_SOFT_SPLIT: bool = false;
+/// Set by `try_emit_quad_corners` when a quad was refused only because its
+/// halves' OT keys disagree (see `WORLD_DEPTH_SPLIT_PX_Q3`).
+static mut WORLD_QUAD_DEPTH_SPLIT: bool = false;
 /// Set by the native affine emitter when a split-worthy patch measures SEVERE
 /// error (second classic band): the caller runs the recursive quadtree on the
 /// original corners instead of the flat 2x2. Cleared by the consumer.
@@ -22660,6 +22711,37 @@ unsafe fn emit_screen_triangle(
     np: &mut usize,
 ) {
     let (pa, pb, pc) = (p[0], p[1], p[2]);
+    // warp policy: screen triangles inside the guard band take the same
+    // edge-local perspective split as near-clipped fans.
+    if WARP_SCREEN_SPLIT
+        && WARP_PX_Q3 != 0
+        && render::in_band(&pa)
+        && render::in_band(&pb)
+        && render::in_band(&pc)
+    {
+        let rgb = |v: &render::SVert| {
+            (v.rgb.0 as u32 & 0xff)
+                | ((v.rgb.1 as u32 & 0xff) << 8)
+                | ((v.rgb.2 as u32 & 0xff) << 16)
+        };
+        let uv = |v: &render::SVert| (v.uv.0 as u16 & 0xff) | ((v.uv.1 as u16 & 0xff) << 8);
+        push_tri_gpu_split(
+            packets,
+            np,
+            [
+                (pa.x as i16, pa.y as i16),
+                (pb.x as i16, pb.y as i16),
+                (pc.x as i16, pc.y as i16),
+            ],
+            [uv(&pa), uv(&pb), uv(&pc)],
+            [rgb(&pa), rgb(&pb), rgb(&pc)],
+            [pa.z, pb.z, pc.z],
+            texture_backdrop,
+            mat,
+            0,
+        );
+        return;
+    }
     // The clipped parent fan triangle is culled once before subdivision. Do
     // not repeat that test on integer-rounded children: a very thin child can
     // quantize across zero area and disappear even though its parent is front.
@@ -23127,8 +23209,15 @@ unsafe fn emit_soft_cell(
     let over = |extent: i32| -> bool {
         extent.saturating_mul(render::SOFT_H) > near_z.saturating_mul(target_span)
     };
-    let split_u = over(du);
-    let split_v = over(dv);
+    let (split_u, split_v) = if WARP_PX_Q3 != 0 {
+        let big = |extent: i32| extent.saturating_mul(render::SOFT_H) > near_z.saturating_mul(250);
+        (
+            big(du) || warp_cell_edge_over(c[0], c[1]) || warp_cell_edge_over(c[2], c[3]),
+            big(dv) || warp_cell_edge_over(c[0], c[2]) || warp_cell_edge_over(c[1], c[3]),
+        )
+    } else {
+        (over(du), over(dv))
+    };
 
     if (split_u || split_v) && packets.remaining() >= WORLD_AFFINE_PACKET_RESERVE + 16 {
         // Anisotropic: when one axis is oversize (or twice the other), halve
@@ -23762,6 +23851,7 @@ unsafe fn try_emit_quad_corners(
             slot.backdrop,
         );
         if !render::refined_pair_depth_compatible(first, second) {
+            WORLD_QUAD_DEPTH_SPLIT = true;
             return false;
         }
         Some((first + second) / 2)
@@ -25502,6 +25592,14 @@ unsafe fn classic_native_patch_mask(
     ) {
         return 0;
     }
+    if WARP_PX_Q3 != 0 {
+        let over = |a: usize, b: usize| warp_edge_over(&projected[a], &projected[b], 0);
+        return if over(0, 1) || over(1, 3) || over(3, 2) || over(2, 0) {
+            0x0f
+        } else {
+            0
+        };
+    }
     let near_depth = projected
         .iter()
         .map(|p| p.sz as i32)
@@ -25735,6 +25833,9 @@ unsafe fn try_emit_native_affine_quad(
         && WORLD_AFFINE_EXTRA_BUDGET_LEFT >= WORLD_CLASSIC_SOFT_ROUTE_COST
     {
         let severe = |a: usize, b: usize| {
+            if WARP_PX_Q3 != 0 {
+                return warp_edge_over(&projected[a], &projected[b], 1);
+            }
             let (n, d) = affine_edge_error(&projected[a], &projected[b], uv[a], uv[b]);
             n as u64 >= WORLD_CLASSIC_SEVERE_ERROR_TEXELS as u64 * d.max(1) as u64
         };
@@ -26028,6 +26129,12 @@ unsafe fn push_tri_gpu_split(
         if sp > 250 {
             return true;
         }
+        if WARP_PX_Q3 != 0 {
+            // Chebyshev span as the length (up to 29 percent short of the
+            // Euclidean one); edge-local, so both sides agree at any depth.
+            let (za, zb) = (za.max(1) as u32, zb.max(1) as u32);
+            return sp >= 8 && (sp as u32) * za.abs_diff(zb) * 4 > WARP_PX_Q3 * (za + zb);
+        }
         if !warp_ok || sp <= 96 {
             return false;
         }
@@ -26046,6 +26153,19 @@ unsafe fn push_tri_gpu_split(
         );
         push_tri_uv_words_packed(packets, np, screen, uv, rgb, mat, otz);
         return;
+    }
+    if WARP_PX_Q3 != 0 && depth == 0 {
+        // Warp splits reach triangles whose neighbours stay whole. A child
+        // edge through a rounded screen midpoint leaves hairline pinholes
+        // along the neighbour's chord (dotted crack lines on dust2 floors),
+        // so the parent goes behind its children, keyed at its farthest
+        // corner: only the pinholes show it.
+        let far = sz[0].max(sz[1]).max(sz[2]);
+        let otz = world_order_key(
+            ordering::PrimitiveDepths::tri(far, far, far),
+            texture_backdrop,
+        );
+        push_tri_uv_words_packed(packets, np, screen, uv, rgb, mat, otz);
     }
     // Perimeter polygon (corners + split-edge midpoints, winding order),
     // fanned from the first midpoint. Wrap indices by subtract, never `%`.
@@ -26081,6 +26201,7 @@ unsafe fn push_tri_gpu_split(
                 | (((((ra >> 8) & 0xff) + ((rb >> 8) & 0xff) + 1) >> 1) << 8)
                 | (((((ra >> 16) & 0xff) + ((rb >> 16) & 0xff) + 1) >> 1) << 16);
             pz[pn] = z;
+            render::warp_probe_announce(pxy[pn].0 as i32, pxy[pn].1 as i32, z);
             if anchor == usize::MAX {
                 anchor = pn;
             }
@@ -27241,6 +27362,237 @@ unsafe fn emit_residue_children(
     WORLD_AFFINE_SPLIT_PATCHES += 1;
 }
 
+/// Affine displacement level (0..=2) of a projected edge against
+/// `WORLD_DEPTH_SPLIT_PX_Q3` (`psx_engine::tess::error_level`).
+#[inline(always)]
+fn depth_split_edge_level(a: &Projected, b: &Projected) -> u8 {
+    psx_engine::tess::error_level(
+        psx_engine::tess::screen_span([a.sx, a.sy], [b.sx, b.sy]),
+        a.sz as i32,
+        b.sz as i32,
+        WORLD_DEPTH_SPLIT_PX_Q3,
+    )
+}
+
+/// Project one generated split point on the GTE (kept out of line: the
+/// split path is rare and HL's I-cache is not).
+#[inline(never)]
+unsafe fn depth_split_project(v: &mut AffineVertex) {
+    v.projected = fix_projected_vertex(v.position, project_vertex_scheduled(v.position));
+    ROOM_PROJECTED_COUNT = ROOM_PROJECTED_COUNT.saturating_add(1);
+    WORLD_AFFINE_ADDED_GTE_TRANSFORMS = WORLD_AFFINE_ADDED_GTE_TRANSFORMS.saturating_add(1);
+}
+
+/// Point `j / n` of the way from `a` to `b` (`n` is 2 or 4, `0 < j < n`) by
+/// recursive sum-then-halve midpoints, the same points
+/// `emit_affine_quad_children` makes on a shared edge. Unprojected.
+#[inline(never)]
+fn depth_split_point(a: AffineVertex, b: AffineVertex, j: usize, n: usize) -> AffineVertex {
+    let half = affine_midpoint_unprojected(a, b);
+    if n == 2 || j == 2 {
+        half
+    } else if j == 1 {
+        affine_midpoint_unprojected(a, half)
+    } else {
+        affine_midpoint_unprojected(half, b)
+    }
+}
+
+/// Fill `row[0..=n]` with the points from `a` to `b` and project the new
+/// ones (`a`/`b` keep their projections when `ends_projected`).
+#[inline(never)]
+unsafe fn depth_split_row(
+    row: &mut [AffineVertex; 5],
+    a: AffineVertex,
+    b: AffineVertex,
+    n: usize,
+    ends_projected: bool,
+) {
+    row[0] = a;
+    row[n] = b;
+    let mut k = 1usize;
+    while k < n {
+        row[k] = depth_split_point(a, b, k, n);
+        depth_split_project(&mut row[k]);
+        k += 1;
+    }
+    if !ends_projected {
+        depth_split_project(&mut row[0]);
+        depth_split_project(&mut row[n]);
+    }
+}
+
+/// The parent quad behind its split cells, keyed at its farthest corner so
+/// it draws before every cell: only T-junction pinholes against unsplit
+/// neighbours show it.
+#[inline(never)]
+unsafe fn depth_split_underlay(
+    packets: &mut PrimitivePacketArena<'_>,
+    q: &[AffineVertex; 4],
+    mat: TexturedGouraudPacketMaterial,
+    nq: &mut usize,
+) {
+    let far = q.iter().map(|v| v.projected.sz as i32).max().unwrap_or(0);
+    let otz = world_order_key(ordering::PrimitiveDepths::quad(far, far, far, far), false);
+    let packet = push_affine_quad_gt4(packets, [&q[0], &q[1], &q[2], &q[3]], mat, otz, nq);
+    OT.add(otz, &mut *packet, QuadTexturedGouraud::WORDS);
+}
+
+/// Error-bounded split of a cooked quad refused by the GT4 fast path only
+/// because its two halves cannot share one OT key. Each axis splits as far as
+/// its own two edges need (`WORLD_DEPTH_SPLIT_PX_Q3`, up to 4 cells), so a
+/// wall receding sideways becomes a strip, not a grid; every cell is a GT4
+/// keyed at its own depth (finer ordering than the two halves it replaces),
+/// and the parent quad papers T-junction pinholes behind them. Returns false
+/// (caller keeps the two triangles) when the quad needs no split, is a
+/// bow-tie, or the arena lacks headroom.
+#[inline(never)]
+unsafe fn emit_depth_split_quad(
+    packets: &mut PrimitivePacketArena<'_>,
+    m: &Map,
+    tex: usize,
+    corners: [map::PackedLoopVert; 4],
+    frame: u16,
+    nq: &mut usize,
+) -> bool {
+    let slot = &*tex_slot_ptr(tex);
+    if !slot.valid || slot.backdrop || EMIT_POLICY.blend() != 0 || EMIT_POLICY.wave() {
+        return false;
+    }
+    // (b, a, c, d) is (q00, q10, q01, q11), the GT4 Z order the fast path
+    // and `emit_affine_quad_children` use.
+    let order = [1usize, 0, 2, 3];
+    let idx = [
+        corners[1].idx as usize,
+        corners[0].idx as usize,
+        corners[2].idx as usize,
+        corners[3].idx as usize,
+    ];
+    proj_quad_verts(m, idx, frame);
+    let p = [
+        scratch_get(idx[0]),
+        scratch_get(idx[1]),
+        scratch_get(idx[2]),
+        scratch_get(idx[3]),
+    ];
+    // Whole-quad bound first (one multiply): most refused quads are small
+    // near cells whose worst edge is already inside the budget.
+    {
+        let (mut x0, mut x1) = (p[0].sx as i32, p[0].sx as i32);
+        let (mut y0, mut y1) = (p[0].sy as i32, p[0].sy as i32);
+        let (mut z0, mut z1) = (p[0].sz as i32, p[0].sz as i32);
+        let mut k = 1usize;
+        while k < 4 {
+            x0 = x0.min(p[k].sx as i32);
+            x1 = x1.max(p[k].sx as i32);
+            y0 = y0.min(p[k].sy as i32);
+            y1 = y1.max(p[k].sy as i32);
+            z0 = z0.min(p[k].sz as i32);
+            z1 = z1.max(p[k].sz as i32);
+            k += 1;
+        }
+        let (dx, dy) = ((x1 - x0) as u32, (y1 - y0) as u32);
+        let span = if dx > dy {
+            dx + ((dy * 3) >> 3)
+        } else {
+            dy + ((dx * 3) >> 3)
+        };
+        if psx_engine::tess::error_level(span, z0, z1, WORLD_DEPTH_SPLIT_PX_Q3) == 0 {
+            return false;
+        }
+    }
+    let mut la = depth_split_edge_level(&p[0], &p[1]).max(depth_split_edge_level(&p[2], &p[3]));
+    let mut lb = depth_split_edge_level(&p[0], &p[2]).max(depth_split_edge_level(&p[1], &p[3]));
+    // The GPU splits a GT4 on its q10-q01 diagonal; halving the axis with
+    // the larger depth change halves that edge too.
+    let diagonal = depth_split_edge_level(&p[1], &p[2]);
+    if diagonal > la.max(lb) {
+        let dz = |a: &Projected, b: &Projected| (a.sz as i32 - b.sz as i32).unsigned_abs();
+        if dz(&p[0], &p[1]) + dz(&p[2], &p[3]) >= dz(&p[0], &p[2]) + dz(&p[1], &p[3]) {
+            la = diagonal;
+        } else {
+            lb = diagonal;
+        }
+    }
+    if la == 0 && lb == 0 {
+        return false;
+    }
+    let (na, nb) = (1usize << la, 1usize << lb);
+    if packets.remaining() < WORLD_AFFINE_PACKET_RESERVE + na * nb + 1 {
+        return false;
+    }
+    let area = |a: &Projected, b: &Projected, c: &Projected| -> i32 {
+        (b.sx as i32 - a.sx as i32) * (c.sy as i32 - a.sy as i32)
+            - (b.sy as i32 - a.sy as i32) * (c.sx as i32 - a.sx as i32)
+    };
+    let w0 = area(&p[0], &p[1], &p[2]);
+    let w1 = area(&p[1], &p[3], &p[2]);
+    if w0 == 0 || w1 == 0 || (w0 > 0) != (w1 > 0) {
+        return false;
+    }
+    if CULL && w0 >= 0 {
+        return true;
+    }
+    let mut words = [0u32; 4];
+    let mut k = 0usize;
+    while k < 4 {
+        words[k] = fog_rgb_word_no_flash(corners[order[k]].rgb, p[k].sz as i32);
+        k += 1;
+    }
+    if FLASHLIGHT_ON {
+        shade_world_rgb(&mut words, &p);
+    }
+    let mut q = [AffineVertex {
+        position: m.vert(idx[0]),
+        projected: p[0],
+        uv: corners[1].uv,
+        rgb: words[0],
+    }; 4];
+    let mut k = 1usize;
+    while k < 4 {
+        q[k] = AffineVertex {
+            position: m.vert(idx[k]),
+            projected: p[k],
+            uv: corners[order[k]].uv,
+            rgb: words[k],
+        };
+        k += 1;
+    }
+    let mat = emit_packet_of(slot, tex);
+    let mut rows = [[q[0]; 5]; 2];
+    depth_split_row(&mut rows[0], q[0], q[1], na, true);
+    let mut j = 1usize;
+    while j <= nb {
+        let (lo, hi) = rows.split_at_mut(1);
+        let (prev, cur) = if j & 1 == 1 {
+            (&lo[0], &mut hi[0])
+        } else {
+            (&hi[0], &mut lo[0])
+        };
+        if j == nb {
+            depth_split_row(cur, q[2], q[3], na, true);
+        } else {
+            let left = depth_split_point(q[0], q[2], j, nb);
+            let right = depth_split_point(q[1], q[3], j, nb);
+            depth_split_row(cur, left, right, na, false);
+        }
+        let mut i = 0usize;
+        while i < na {
+            emit_affine_quad_child(
+                packets,
+                [&prev[i], &prev[i + 1], &cur[i], &cur[i + 1]],
+                mat,
+                nq,
+            );
+            i += 1;
+        }
+        j += 1;
+    }
+    depth_split_underlay(packets, &q, mat, nq);
+    WORLD_AFFINE_SPLIT_PATCHES = WORLD_AFFINE_SPLIT_PATCHES.saturating_add(1);
+    true
+}
+
 /// Draw fixed four-corner records cooked from logical GoldSrc quads. A record
 /// normally maps to one GT4 and may become a bounded 2x2 GT4 grid; the marked
 /// three-corner fallback keeps irregular seam fragments on the proven path.
@@ -27288,6 +27640,7 @@ unsafe fn emit_world_face_patches(
             continue;
         }
         WORLD_QUAD_NEEDS_SOFT_SPLIT = false;
+        WORLD_QUAD_DEPTH_SPLIT = false;
         if try_emit_quad_corners(
             packets,
             m,
@@ -27322,6 +27675,14 @@ unsafe fn emit_world_face_patches(
                 false,
                 SOFT_SPLIT_TARGET_SPAN_PX,
             )
+        {
+            counts.emit_calls += 2;
+            patch += 1;
+            continue;
+        }
+        if WORLD_DEPTH_SPLIT_PX_Q3 != 0
+            && WORLD_QUAD_DEPTH_SPLIT
+            && emit_depth_split_quad(packets, m, tex, corners, frame, nq)
         {
             counts.emit_calls += 2;
             patch += 1;
