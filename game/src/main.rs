@@ -1423,6 +1423,28 @@ struct DeferredOverlays {
 static mut DEFERRED_OVERLAYS: Option<DeferredOverlays> = None;
 
 /// Submit the last built frame's overlay passes. Safe with nothing pending.
+// Primitive classes for PSoXide's depth-sort probe (`--sort-log`).
+const SORT_CLASS_WORLD: u32 = 1;
+const SORT_CLASS_MODEL: u32 = 2;
+const SORT_CLASS_VIEW: u32 = 3;
+const SORT_CLASS_SPRITE: u32 = 4;
+
+/// Tag the projections that follow with a primitive class for PSoXide's
+/// depth-sort probe; bits 8..10 carry log2 of a model's view-space scale so
+/// its depths compare with the world's (`warp-probe` measurement builds
+/// only; nothing otherwise).
+#[inline(always)]
+fn sort_probe_class(class: u32) {
+    #[cfg(feature = "warp-probe")]
+    // SAFETY: emulator-only port in Expansion Region 2 (PSoXide telemetry
+    // slice + 0x28); retail hardware ignores the write.
+    unsafe {
+        core::ptr::write_volatile(0x1F80_2F28 as *mut u32, class);
+    }
+    #[cfg(not(feature = "warp-probe"))]
+    let _ = class;
+}
+
 unsafe fn finish_deferred_overlays() {
     let Some(d) = DEFERRED_OVERLAYS.take() else {
         return;
@@ -1437,6 +1459,7 @@ unsafe fn finish_deferred_overlays() {
     }
     if let Some(vm) = d.viewmodel {
         telemetry::stage_begin(telemetry::stage::EQUIPMENT);
+        sort_probe_class(SORT_CLASS_VIEW);
         let submitted = draw_viewmodel(
             &vm.model,
             &VM_SLOTS[vm.slot..vm.slot + vm.n_slots],
@@ -1445,6 +1468,7 @@ unsafe fn finish_deferred_overlays() {
             vm.frac16,
             true,
         );
+        sort_probe_class(0);
         telemetry::stage_end(telemetry::stage::EQUIPMENT);
         telemetry::counter(
             telemetry::counter::EQUIPMENT_SUBMITTED_TRIS,
@@ -25761,6 +25785,11 @@ unsafe fn push_patch_underlay(
         ordering::PrimitiveDepths::quad(p0.sz as i32, p1.sz as i32, p2.sz as i32, p3.sz as i32),
         texture_backdrop,
     );
+    // The skirt's corners are nudged off their projections: announce them.
+    #[cfg(feature = "warp-probe")]
+    for p in [p0, p1, p2, p3] {
+        render::warp_probe_announce(p.sx as i32, p.sy as i32, p.sz as i32);
+    }
     OT.add(otz, packet, QuadTexturedGouraud::WORDS);
     *nq += 1;
 }
@@ -28125,6 +28154,7 @@ unsafe fn draw_model(
     // ponytail: ceiling ~16x -- inflated view-Z fills SZ3's u16 (clips past
     // ~16383 world units) and IR1/IR3's i16; fine for s=4 at model range.
     let (s, scale_shift) = model_local_scale_and_shift(md.local_to_world_q12());
+    sort_probe_class(SORT_CLASS_MODEL | (scale_shift as u32) << 8);
     // Model bakes keep HL's +X local forward; rotate_y maps that to world
     // yaw - 1024, so add a quarter turn to line actors up with their authored
     // (and AI-updated) world yaw.
@@ -29106,6 +29136,7 @@ unsafe fn draw_viewmodel(
     let nv = md.n_verts.min(MAX_MODEL_VERTS);
     let local_to_world = md.local_to_world_q12();
     let (s, scale_shift) = model_local_scale_and_shift(local_to_world);
+    sort_probe_class(SORT_CLASS_VIEW | (scale_shift as u32) << 8);
     let (projected_xy, projected_z) = weapon_projected_ptrs();
     let near_s = (NEAR as i32 * s) as u16;
     let pose_key = (frame as u32 & 0x3ff)
@@ -33468,6 +33499,7 @@ fn play(
             // one backface test per cooked plane group, cheap face-bounds
             // rejection, then emits triangle fans with PS1 quad pairing.
             telemetry::stage_begin(telemetry::stage::ROOM);
+            sort_probe_class(SORT_CLASS_WORLD);
             let train_hint = tram_pos_ext(
                 &m,
                 tram_seg,
@@ -34542,6 +34574,7 @@ fn play(
             // enemies. Models are baked to posed frames by the host cooker; the
             // PS1 path only chooses the current actor frame.
             telemetry::stage_begin(telemetry::stage::TEXTURED_MODEL_JOINTS);
+            sort_probe_class(SORT_CLASS_MODEL);
             invalidate_actor_occlusion(have_pvs, cam_leaf, eye);
             // Brush/tram passes leave entity-local matrices behind. Restore the
             // camera once, then use one GTE MVMVA per actor sphere instead of
@@ -34801,6 +34834,7 @@ fn play(
                 model_stream_start.add(model_packet_words),
             );
             telemetry::stage_end(telemetry::stage::TEXTURED_MODEL_JOINTS);
+            sort_probe_class(SORT_CLASS_SPRITE);
             // ---- Sprite billboards (env_sprite / env_glow) ----
             // Independent compact records keep dense effects from consuming actor
             // slots. Drawn as camera-facing additive quads and PVS-culled by leaf.
