@@ -1835,7 +1835,7 @@ const PGO_RAM_FLOOR: u32 = 16 * 1024;
 const PGO_HOT_CALLSITE_LADDER: [u32; 3] = [1000, 500, 250];
 
 /// Stack reserve for the PGO collect link (see `compile_game`).
-const PGO_COLLECT_STACK_RESERVE: &str = "0x7000";
+const PGO_COLLECT_STACK_RESERVE: &str = "0x6000";
 
 fn compile_game(
     repository: &Path,
@@ -1904,7 +1904,9 @@ fn compile_game(
     // links with a smaller stack reserve; the code is the same. The deepest
     // stack write on the chapter-two and tram tapes (final-8 plain, first
     // non-zero word above .bss in a final RAM dump) was 17,760 B below the
-    // initial SP, well inside 28 KB.
+    // initial SP, inside 24 KB with 6.8 KB to spare. The tram canyon's
+    // 640-slot ordering table took the collect link 676 B past a 28 KB
+    // reserve.
     if matches!(profile, GuestProfile::Collect | GuestProfile::CollectElf) {
         command.env("HLPSX_STACK_RESERVE", PGO_COLLECT_STACK_RESERVE);
     }
