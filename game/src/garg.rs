@@ -85,6 +85,9 @@ pub(crate) unsafe fn reset() {
     g.removed = false;
     g.gesture = 0;
     g.flame_end = 0;
+    // A deadline on the previous attempt's clock would mute his pain cries
+    // until the restarted clock caught up.
+    PAIN_NEXT = 0;
 }
 
 /// Unit vector of a prop yaw (0 = +Z, 1024 = +X), q12.
