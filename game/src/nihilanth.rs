@@ -174,6 +174,12 @@ pub(crate) unsafe fn bind(m: &Map, pi: usize) {
     g.seq_start = SIM_NOW;
     g.seq_len = SEQ_FLOAT;
     g.last_seen = SIM_NOW.wrapping_sub(2000);
+    // The simulation clock restarts with the room, so a volley or pain
+    // deadline left from the previous attempt would lie ahead of it: after a
+    // death in the fight he fired from the first tick of the retry and
+    // killed the player on arrival, every time.
+    g.shoot_end = SIM_NOW;
+    PAIN_NEXT = SIM_NOW;
     g.desired_z = 512;
     let z = |name| marker(m, name_id(m, name, 0)).map(|li| m.logic(li).origin[1]);
     g.min_z = z("n_min").unwrap_or(-4096);

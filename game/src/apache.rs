@@ -82,6 +82,8 @@ unsafe fn ap() -> &'static mut Apache {
 pub(crate) unsafe fn reset() {
     AP.li = u16::MAX;
     APACHE_TILT.0 = 0xff;
+    // See garg::reset: deadlines do not survive the room's clock.
+    GUN_SOUND_NEXT = 0;
 }
 
 /// Sine and cosine (q12) of an angle in 1/16 degree.
