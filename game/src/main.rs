@@ -181,9 +181,10 @@ static mut CORE_SFX_PROFILE: [u16; sfx::CORE_TABLE_MAPS] = [0; sfx::CORE_TABLE_M
 // the OT's prepend semantics can reverse their intended near/far relationship.
 // Keep the same shift for world and models so an actor also sorts correctly
 // against nearby BSP geometry. The GPU submit DMA walks the whole chain every
-// frame, so keep only the slots the chosen far plane actually needs. 320
-// covers 1200>>2 plus the backdrop bias without reducing depth precision.
-const OT_LEN: usize = 320;
+// frame, so keep only the slots the chosen far plane actually needs. 640
+// covers FAR_VIEW_WIDE (2400)>>2 plus the backdrop bias without reducing depth
+// precision; on every other map the far half of the chain stays empty.
+const OT_LEN: usize = 640;
 const OT_SHIFT: u32 = ordering::OT_SHIFT;
 const HUD_OT_LEN: usize = 1;
 const FX_OT_LEN: usize = 1;
@@ -663,7 +664,41 @@ const FAR_VIEW: i32 = 1200;
 // visible cull), lower it for more fps. Kept at two thirds of FAR_VIEW.
 const FOG_START: i32 = 800;
 const FOG_INV: i32 = (256i32 << 12) / (FAR_VIEW - FOG_START); // compile-time
-const _: () = assert!(OT_LEN > (FAR_VIEW as usize >> OT_SHIFT));
+const _: () = assert!(OT_LEN > (FAR_VIEW_WIDE as usize >> OT_SHIFT));
+// The tram ride's canyon (c0a0b) is seen through tunnel openings well past
+// FAR_VIEW, and with FAR_VIEW the openings showed only sky over black. That
+// map alone draws and fogs to FAR_VIEW_WIDE, and only while the sky windows
+// are drawing, since the canyon is only visible where the sky is: -6.5% on
+// c0a0b and -4.1% over the tram ride, measured, against -11% for the wide
+// view on every c0a0b frame and -14.5% for the whole ride.
+const FAR_VIEW_WIDE: i32 = 2400;
+const FOG_START_WIDE: i32 = 1600;
+const FOG_INV_WIDE: i32 = (256i32 << 12) / (FAR_VIEW_WIDE - FOG_START_WIDE);
+static mut FAR_NOW: i32 = FAR_VIEW;
+static mut FOG_START_NOW: i32 = FOG_START;
+static mut FOG_INV_NOW: i32 = FOG_INV;
+/// The loaded map may widen its view (see FAR_VIEW_WIDE).
+static mut FAR_WIDE_MAP: bool = false;
+/// The current far plane: FAR_VIEW, or FAR_VIEW_WIDE on c0a0b while the sky
+/// shows.
+#[inline(always)]
+fn far_view() -> i32 {
+    unsafe { FAR_NOW }
+}
+#[inline(always)]
+fn set_far(wide: bool) {
+    unsafe {
+        if wide {
+            FAR_NOW = FAR_VIEW_WIDE;
+            FOG_START_NOW = FOG_START_WIDE;
+            FOG_INV_NOW = FOG_INV_WIDE;
+        } else {
+            FAR_NOW = FAR_VIEW;
+            FOG_START_NOW = FOG_START;
+            FOG_INV_NOW = FOG_INV;
+        }
+    }
+}
 // Studio models (enemies/NPCs/items) cull no farther than the world: each is
 // hundreds of textured-gouraud tris (project + emit), and an actor beyond the
 // world cull would float against culled void. Capped at FAR_VIEW (was a stale
@@ -13663,7 +13698,7 @@ impl CameraVisibility<'_> {
 
     #[inline]
     fn view_sphere(&self, center: [i32; 3], radius: i32) -> bool {
-        visibility_logic::sphere_in_camera_frustum(center, radius, render::NEAR_Z, FAR_VIEW)
+        visibility_logic::sphere_in_camera_frustum(center, radius, render::NEAR_Z, far_view())
     }
 
     #[inline]
@@ -13710,7 +13745,7 @@ impl CameraVisibility<'_> {
             extent(self.rot.m[1]),
             extent(self.rot.m[2]),
         );
-        if cz + rz < render::NEAR_Z || cz - rz > FAR_VIEW {
+        if cz + rz < render::NEAR_Z || cz - rz > far_view() {
             return false;
         }
         let far_z = (cz + rz).max(render::NEAR_Z);
@@ -19392,7 +19427,7 @@ fn max_reserve_for(ammo: usize) -> u16 {
 #[inline]
 fn project_world_point(p: [i32; 3], rot: &Mat3I16, base_t: [i32; 3]) -> Option<(i16, i16, i32)> {
     let vz = dot12(rot.m[2], p) + base_t[2];
-    if !(render::NEAR_Z..=FAR_VIEW).contains(&vz) {
+    if !(render::NEAR_Z..=far_view()).contains(&vz) {
         return None;
     }
     let vx = dot12(rot.m[0], p) + base_t[0];
@@ -19660,7 +19695,7 @@ fn decal_axes(n: [i32; 3], half: i32) -> ([i32; 3], [i32; 3]) {
 #[inline]
 fn project_decal_corner(p: [i32; 3], rot: &Mat3I16, base_t: [i32; 3]) -> Option<(i16, i16, i32)> {
     let vz = dot12(rot.m[2], p) + base_t[2];
-    if !(render::NEAR_Z..=FAR_VIEW).contains(&vz) {
+    if !(render::NEAR_Z..=far_view()).contains(&vz) {
         return None;
     }
     let h = render::projection_h();
@@ -24124,15 +24159,16 @@ impl WorldCounters {
 /// false means it straddles the near plane and the caller must run the full
 /// decode + view-space clip path.
 /// Distance-fog factor for a view depth, 256 = unfogged, 0 = full (black) at
-/// FAR_VIEW. Compile-time reciprocal, so no runtime divide.
+/// the current far plane. Reciprocals are compile-time, so no runtime divide.
 #[inline]
 fn fog_factor(sz: i32) -> i32 {
-    if sz <= FOG_START {
+    let (start, far, inv) = unsafe { (FOG_START_NOW, FAR_NOW, FOG_INV_NOW) };
+    if sz <= start {
         256
-    } else if sz >= FAR_VIEW {
+    } else if sz >= far {
         0
     } else {
-        ((FAR_VIEW - sz) * FOG_INV) >> 12
+        ((far - sz) * inv) >> 12
     }
 }
 
@@ -24277,13 +24313,14 @@ unsafe fn push_affine_heatmap_tri(
 /// entirely inline and avoids touching the color when no fade is required.
 #[inline(always)]
 fn fog_rgb_word_no_flash(rgb: u32, sz: i32) -> u32 {
-    if sz <= FOG_START {
+    let (start, far, inv) = unsafe { (FOG_START_NOW, FAR_NOW, FOG_INV_NOW) };
+    if sz <= start {
         return rgb;
     }
-    if sz >= FAR_VIEW {
+    if sz >= far {
         return 0;
     }
-    let f = (((FAR_VIEW - sz) * FOG_INV) >> 12) as u32;
+    let f = (((far - sz) * inv) >> 12) as u32;
     // R and B occupy independent 16-bit multiplication lanes: each 8-bit
     // component times f<=255 still fits below the neighbouring component.
     // This SWAR form is bit-exact to the three scalar products but removes one
@@ -24633,7 +24670,7 @@ unsafe fn affine_coarse_face_candidate(m: &Map, face: usize) -> Option<AffineFac
     }
     let (center, radius) = m.face_bounds(face);
     let depth = dot12(WORLD_AFFINE_VIEW_FORWARD, center) + WORLD_AFFINE_VIEW_Z_OFFSET;
-    if depth + radius < NEAR as i32 || depth - radius > FAR_VIEW {
+    if depth + radius < NEAR as i32 || depth - radius > far_view() {
         return None;
     }
     let safe_depth = depth.max(NEAR as i32);
@@ -28505,7 +28542,7 @@ fn project_beam_segment(
     let mut a = cam(start);
     let mut b = cam(end);
     let near = render::NEAR_Z;
-    if (a[2] < near && b[2] < near) || (a[2] > FAR_VIEW && b[2] > FAR_VIEW) {
+    if (a[2] < near && b[2] < near) || (a[2] > far_view() && b[2] > far_view()) {
         return None;
     }
     // Move an endpoint along the segment onto a depth plane. Camera-space
@@ -28527,10 +28564,10 @@ fn project_beam_segment(
     } else if b[2] < near {
         b = cut(b, a, near);
     }
-    if a[2] > FAR_VIEW {
-        a = cut(a, b, FAR_VIEW);
-    } else if b[2] > FAR_VIEW {
-        b = cut(b, a, FAR_VIEW);
+    if a[2] > far_view() {
+        a = cut(a, b, far_view());
+    } else if b[2] > far_view() {
+        b = cut(b, a, far_view());
     }
     let h = render::projection_h();
     let sc = |v: i32, z: i32, c: i32| (c + (v * h) / z).clamp(-16384, 16384);
@@ -29065,13 +29102,13 @@ unsafe fn draw_sky_windows(
     rot: &Mat3I16,
     t: [i32; 3],
     eye: [i32; 3],
-) {
+) -> bool {
     if m.sky_tex_base == SKY_TEX_NONE || m.sky_tex_base + SKY_FACE_COUNT > MAX_TEX_SLOTS {
-        return;
+        return false;
     }
     let (n_boxes, first, table) = m.sky_box_section();
     if n_boxes == 0 {
-        return;
+        return false;
     }
     // Cooker face order: ft, rt, bk, lf, up, dn.
     let sky_yaw = ((yaw as usize) + 512) & 0xFFF;
@@ -29084,7 +29121,7 @@ unsafe fn draw_sky_windows(
     };
     let slot = TEX_SLOTS[m.sky_tex_base + face];
     if !slot.valid {
-        return;
+        return false;
     }
     let u0 = if face < 4 {
         (((sky_yaw & 1023) * SKY_TEX_SIZE) >> 10) as i32
@@ -29096,6 +29133,7 @@ unsafe fn draw_sky_windows(
     const SKY_U_Q16: i32 = (((SKY_TEX_SIZE as i32 - 1) << 16) + 159) / 319;
     const SKY_V_Q16: i32 = (((SKY_TEX_SIZE as i32 - 1) << 16) + 119) / 239;
     let h = render::projection_h();
+    let mut drew = false;
     let mut i = 0usize;
     while i < n_boxes {
         let (b, leaf0, leaves) = m.sky_box(first, i);
@@ -29193,11 +29231,13 @@ unsafe fn draw_sky_windows(
                         [uv[0], uv[j - 1], uv[j]],
                         slot.material,
                     );
+                    drew = true;
                     j += 1;
                 }
             }
         }
     }
+    drew
 }
 
 /// Small camera-space motion layered over the source animation. Reload/draw/fire
@@ -30261,6 +30301,8 @@ fn play(
         .unwrap_or("unknown");
     telemetry::debug_log("hl-psx: loading room");
     telemetry::debug_log(map_name);
+    unsafe { FAR_WIDE_MAP = map_name == "c0a0b" };
+    set_far(false);
     begin_loading(fb);
     draw_next_loading_screen(fb);
 
@@ -33797,7 +33839,7 @@ fn play(
                 let use_bands = WORLD_BAND_STATE & WORLD_BAND_NEEDS != 0;
                 WORLD_BAND_STATE &= WORLD_BAND_NEEDS; // clear prior overflow bit
                 let nbands = if use_bands {
-                    ((FAR_VIEW >> DEPTH_BAND_SHIFT) + 1).min(N_DEPTH_BANDS)
+                    ((far_view() >> DEPTH_BAND_SHIFT) + 1).min(N_DEPTH_BANDS)
                 } else {
                     1
                 };
@@ -35190,7 +35232,10 @@ fn play(
             gpu::arm_draw_done();
             telemetry::stage_begin(telemetry::stage::FRAME_CLEAR);
             fb.clear(0, 0, 0);
-            draw_sky_windows(&m, have_pvs, yaw, pitch, &rot, base_t, eye);
+            // Culls and fog after this point reach FAR_VIEW_WIDE only while
+            // the sky shows.
+            let sky_drawn = draw_sky_windows(&m, have_pvs, yaw, pitch, &rot, base_t, eye);
+            set_far(FAR_WIDE_MAP && sky_drawn);
             telemetry::stage_end(telemetry::stage::FRAME_CLEAR);
 
             // DEBUG: if the draw picked nothing under the crosshair (a quad or a
