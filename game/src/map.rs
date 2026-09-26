@@ -71,6 +71,10 @@
 //!   texanim (HLME/HLMF, at align4(logic names end)):
 //!     u16 n_chains | u16 reserved | per chain: u8 n_primary | u8 n_alt |
 //!     u8 primary_tex_ids[] | u8 alt_tex_ids[]
+//!   sky volumes (optional, any magic): `i16 min[3],max[3] | u16 first,count`
+//!     × n, u16 visleaf × m (padded to 4), then `u32 n | u32 m | "SKB2"`
+//!     ending where the door-occluder section begins (or at the end of the
+//!     room); see `hl_format::map::SKY_BOX_TAG`.
 //!   door occluders (optional, any magic): records located from the file's
 //!     last eight bytes `u32 section_offset | "DSL1"`; layout in the cooker's
 //!     `append_door_seals`. Readers that predate it ignore the trailing bytes.
@@ -895,6 +899,57 @@ impl Map {
         }
         let off = self.door_seal_word(len - 8) as usize & !3;
         (self.door_seal_word(off) as usize & 0xffff, off + 4)
+    }
+
+    /// Sky volumes `(count, first record offset, leaf table offset)` from
+    /// the `u32 boxes | u32 leaves | "SKB2"` trailer that ends where the
+    /// door-occluder section starts (or at the end of the room); `(0, 0, 0)`
+    /// when the room has none.
+    #[inline(always)]
+    pub fn sky_box_section(&self) -> (usize, usize, usize) {
+        let (_, seal_first) = self.door_seal_section();
+        let end = if seal_first != 0 {
+            seal_first - 4
+        } else {
+            self.data.len() & !3
+        };
+        if end < 12 || self.door_seal_word(end - 4) != u32::from_le_bytes(cooked::SKY_BOX_TAG) {
+            return (0, 0, 0);
+        }
+        let n = self.door_seal_word(end - 12) as usize;
+        let leaves = self.door_seal_word(end - 8) as usize;
+        let table = n * cooked::SKY_BOX_RECORD_SIZE + (leaves * 2).next_multiple_of(4);
+        if table + 12 > end {
+            return (0, 0, 0);
+        }
+        let first = end - 12 - table;
+        (n, first, first + n * cooked::SKY_BOX_RECORD_SIZE)
+    }
+
+    /// Sky volume `i` of the section at `first`: `[min x, min y, min z, max
+    /// x, max y, max z]` in world axes, and its `(first leaf, leaf count)` in
+    /// the leaf table.
+    #[inline(always)]
+    pub fn sky_box(&self, first: usize, i: usize) -> ([i16; 6], usize, usize) {
+        let o = first + i * cooked::SKY_BOX_RECORD_SIZE;
+        (
+            [
+                rd_i16(self.data, o),
+                rd_i16(self.data, o + 2),
+                rd_i16(self.data, o + 4),
+                rd_i16(self.data, o + 6),
+                rd_i16(self.data, o + 8),
+                rd_i16(self.data, o + 10),
+            ],
+            rd_u16(self.data, o + 12) as usize,
+            rd_u16(self.data, o + 14) as usize,
+        )
+    }
+
+    /// Visleaf (PVS bit) `j` of the sky leaf table at `table`.
+    #[inline(always)]
+    pub fn sky_leaf(&self, table: usize, j: usize) -> usize {
+        rd_u16(self.data, table + j * 2) as usize
     }
 
     /// Aligned word at byte offset `o` of the door-occluder section. Records
