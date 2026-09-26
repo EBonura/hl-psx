@@ -10876,6 +10876,173 @@ fn append_door_seals(o: &mut Vec<u8>, seals: &[door_seal::DoorSeal]) -> usize {
     o.len() - start
 }
 
+/// BSP leaf contents of a sky brush's volume.
+const CONTENTS_SKY: i32 = -6;
+
+/// The world model's CONTENTS_SKY leaf bounds in world axes (x, z, y),
+/// merged while two boxes union to a box or one holds the other. GoldSrc
+/// draws the sky only through sky brush faces, which the cook drops as tool
+/// faces; the runtime draws the skybox through these volumes instead, so the
+/// space the distance cull leaves empty reads as dark rather than as sky.
+fn sky_boxes(leaves: &[u8], n_visleaves: usize) -> Vec<[i16; 6]> {
+    let n = n_visleaves.min((leaves.len() / SZ_LEAF).saturating_sub(1));
+    let mut boxes = Vec::new();
+    for leaf in 1..=n {
+        let o = leaf * SZ_LEAF;
+        if i32::from_le_bytes(leaves[o..o + 4].try_into().unwrap()) != CONTENTS_SKY {
+            continue;
+        }
+        let r = |i: usize| i16::from_le_bytes([leaves[o + 8 + 2 * i], leaves[o + 9 + 2 * i]]);
+        boxes.push([r(0), r(2), r(1), r(3), r(5), r(4)]);
+    }
+    merge_boxes(boxes)
+}
+
+/// Merge axis-aligned boxes `[min x, min y, min z, max x, max y, max z]`
+/// until no pair unions to a box: one inside the other, or equal extents on
+/// two axes and touching or overlapping on the third.
+fn merge_boxes(mut boxes: Vec<[i16; 6]>) -> Vec<[i16; 6]> {
+    let contains =
+        |a: &[i16; 6], b: &[i16; 6]| (0..3).all(|k| a[k] <= b[k] && a[k + 3] >= b[k + 3]);
+    'again: loop {
+        for i in 0..boxes.len() {
+            for j in i + 1..boxes.len() {
+                let (a, b) = (boxes[i], boxes[j]);
+                let same: Vec<usize> = (0..3)
+                    .filter(|&k| a[k] == b[k] && a[k + 3] == b[k + 3])
+                    .collect();
+                let joins = same.len() == 2 && {
+                    let k = 3 - same[0] - same[1];
+                    a[k] <= b[k + 3] && b[k] <= a[k + 3]
+                };
+                if contains(&a, &b) || contains(&b, &a) || joins {
+                    boxes[i] = [
+                        a[0].min(b[0]),
+                        a[1].min(b[1]),
+                        a[2].min(b[2]),
+                        a[3].max(b[3]),
+                        a[4].max(b[4]),
+                        a[5].max(b[5]),
+                    ];
+                    boxes.remove(j);
+                    continue 'again;
+                }
+            }
+        }
+        return boxes;
+    }
+}
+
+/// For each sky box, the visleafs (as PVS bit indices, leaf - 1) that list
+/// a sky face lying on it: the leaves from which GoldSrc would draw sky
+/// through that box. A face lies on a box when its centre is within two
+/// units of the box.
+fn sky_box_leaves(bsp: &Bsp, boxes: &[[i16; 6]], n_visleaves: usize) -> Vec<Vec<u16>> {
+    let tl = bsp.lump(LUMP_TEXTURES);
+    let texinfo = bsp.lump(LUMP_TEXINFO);
+    let faces = bsp.lump(LUMP_FACES);
+    let surf = bsp.lump(LUMP_SURFEDGES);
+    let edges = bsp.lump(LUMP_EDGES);
+    let vertexes = bsp.lump(LUMP_VERTEXES);
+    let leaves = bsp.lump(LUMP_LEAVES);
+    let marks = bsp.lump(LUMP_MARKSURFACES);
+    let n_texs = i32le(tl, 0).filter(|&n| n >= 0).unwrap_or(0) as usize;
+    let is_sky = |face: usize| -> bool {
+        let ti = u16le(faces, face * SZ_FACE + 10).unwrap_or(0) as usize;
+        let mtx = i32le(texinfo, ti * SZ_TEXINFO + 32).unwrap_or(-1);
+        mtx >= 0
+            && (mtx as usize) < n_texs
+            && i32le(tl, 4 + mtx as usize * 4)
+                .filter(|&d| d >= 0)
+                .is_some_and(|d| miptex_name(tl, d as usize).eq_ignore_ascii_case("sky"))
+    };
+    // World-axes (x, z, y) centre of a face.
+    let centre = |face: usize| -> Option<[f32; 3]> {
+        let fo = face * SZ_FACE;
+        let first = i32le(faces, fo + 4)? as usize;
+        let count = u16le(faces, fo + 8)? as usize;
+        let mut sum = [0f32; 3];
+        for j in 0..count {
+            let se = i32le(surf, (first + j) * SZ_SURFEDGE)?;
+            let e = se.unsigned_abs() as usize * SZ_EDGE;
+            let v = u16le(edges, if se >= 0 { e } else { e + 2 })? as usize * SZ_VERTEX;
+            sum[0] += f32le(vertexes, v)?;
+            sum[1] += f32le(vertexes, v + 8)?;
+            sum[2] += f32le(vertexes, v + 4)?;
+        }
+        let n = count.max(1) as f32;
+        Some([sum[0] / n, sum[1] / n, sum[2] / n])
+    };
+    let mut out = vec![Vec::new(); boxes.len()];
+    let n = n_visleaves.min((leaves.len() / SZ_LEAF).saturating_sub(1));
+    for leaf in 1..=n {
+        let lo = leaf * SZ_LEAF;
+        let contents = i32le(leaves, lo).unwrap_or(0);
+        if contents == CONTENTS_SKY || contents == -2 {
+            continue;
+        }
+        let first = u16le(leaves, lo + SZ_LEAF_MARK0).unwrap_or(0) as usize;
+        let count = u16le(leaves, lo + SZ_LEAF_MARK0 + 2).unwrap_or(0) as usize;
+        for m in first..first + count {
+            let Some(face) = u16le(marks, m * SZ_MARKSURFACE) else {
+                continue;
+            };
+            let face = face as usize;
+            if !is_sky(face) {
+                continue;
+            }
+            let Some(c) = centre(face) else {
+                continue;
+            };
+            for (b, list) in boxes.iter().zip(out.iter_mut()) {
+                let inside =
+                    (0..3).all(|k| c[k] >= b[k] as f32 - 2.0 && c[k] <= b[k + 3] as f32 + 2.0);
+                if inside && !list.contains(&((leaf - 1) as u16)) {
+                    list.push((leaf - 1) as u16);
+                }
+            }
+        }
+    }
+    for list in &mut out {
+        list.sort_unstable();
+    }
+    out
+}
+
+/// Append the sky volumes and their leaves (layout in
+/// `hl_format::map::SKY_BOX_TAG`). Must run before `append_door_seals`: the
+/// runtime finds this trailer where the door-occluder section starts.
+fn append_sky_boxes(o: &mut Vec<u8>, boxes: &[[i16; 6]], leaves: &[Vec<u16>]) -> usize {
+    if boxes.is_empty() {
+        return 0;
+    }
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+    let start = o.len();
+    let mut first = 0usize;
+    for (b, list) in boxes.iter().zip(leaves) {
+        for c in b {
+            o.extend_from_slice(&c.to_le_bytes());
+        }
+        o.extend_from_slice(&(first as u16).to_le_bytes());
+        o.extend_from_slice(&(list.len() as u16).to_le_bytes());
+        first += list.len();
+    }
+    for list in leaves {
+        for leaf in list {
+            o.extend_from_slice(&leaf.to_le_bytes());
+        }
+    }
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+    o.extend_from_slice(&(boxes.len() as u32).to_le_bytes());
+    o.extend_from_slice(&(first as u32).to_le_bytes());
+    o.extend_from_slice(&cooked::SKY_BOX_TAG);
+    o.len() - start
+}
+
 fn door_seal_report(path: &str) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {}", path, e))?;
     let bsp = Bsp::parse(&bytes)?;
@@ -13856,6 +14023,24 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         );
     }
 
+    // Sky volumes only matter where there is a skybox to show through them.
+    let n_visleaves = world_visleaf_count(models, leaves.len() / SZ_LEAF)?;
+    let skies = if sky_tex_base.is_some() {
+        sky_boxes(leaves, n_visleaves)
+    } else {
+        Vec::new()
+    };
+    let sky_leaves = sky_box_leaves(&bsp, &skies, n_visleaves);
+    let sky_bytes = append_sky_boxes(&mut o, &skies, &sky_leaves);
+    if !skies.is_empty() {
+        eprintln!(
+            "  sky volumes: {} boxes ({} without a leaf), {} leaf refs, {} bytes",
+            skies.len(),
+            sky_leaves.iter().filter(|l| l.is_empty()).count(),
+            sky_leaves.iter().map(Vec::len).sum::<usize>(),
+            sky_bytes
+        );
+    }
     let seal_bytes = append_door_seals(&mut o, &seals);
     if !seals.is_empty() {
         eprintln!(
@@ -19907,6 +20092,56 @@ mod tests {
         assert_eq!(sprites[0].3 >> 6, 10);
         assert_eq!(names, vec!["lamp".to_string(), "flash".to_string()]);
         assert_eq!(sprites[1].2, sprites[2].2, "same targetname shares id");
+    }
+
+    #[test]
+    fn sky_boxes_merge_split_leaves_and_swap_to_world_axes() {
+        // Three world leaves after leaf 0: two halves of one sky brush split
+        // along x, and an empty leaf.
+        let mut leaves = vec![0u8; SZ_LEAF * 4];
+        let mut leaf = |i: usize, contents: i32, mins: [i16; 3], maxs: [i16; 3]| {
+            let o = i * SZ_LEAF;
+            leaves[o..o + 4].copy_from_slice(&contents.to_le_bytes());
+            for (k, v) in mins.iter().chain(maxs.iter()).enumerate() {
+                leaves[o + 8 + 2 * k..o + 10 + 2 * k].copy_from_slice(&v.to_le_bytes());
+            }
+        };
+        leaf(1, CONTENTS_SKY, [0, 10, 200], [64, 20, 264]);
+        leaf(2, CONTENTS_SKY, [64, 10, 200], [128, 20, 264]);
+        leaf(3, -1, [0, 0, 0], [128, 128, 128]);
+        // HL (x, y, z) -> world (x, z, y).
+        assert_eq!(sky_boxes(&leaves, 3), vec![[0, 200, 10, 128, 264, 20]]);
+        // Leaves past the world model's visleafs belong to brush models.
+        assert_eq!(sky_boxes(&leaves, 1), vec![[0, 200, 10, 64, 264, 20]]);
+    }
+
+    #[test]
+    fn merge_boxes_keeps_boxes_that_do_not_union_to_a_box() {
+        let l_shape = vec![[0, 0, 0, 10, 10, 10], [10, 0, 0, 20, 5, 10]];
+        assert_eq!(merge_boxes(l_shape.clone()), l_shape);
+        let inside = vec![[0, 0, 0, 10, 10, 10], [2, 2, 2, 5, 5, 5]];
+        assert_eq!(merge_boxes(inside), vec![[0, 0, 0, 10, 10, 10]]);
+    }
+
+    #[test]
+    fn sky_box_trailer_is_found_from_its_tag() {
+        let mut o = vec![1u8, 2, 3];
+        assert_eq!(append_sky_boxes(&mut o, &[], &[]), 0);
+        assert_eq!(o.len(), 3);
+        let boxes = [[1, 2, 3, 4, 5, 6], [-7, 8, 9, 10, 11, 12]];
+        let n = append_sky_boxes(&mut o, &boxes, &[vec![4, 9], vec![7]]);
+        // Two records, three leaves padded to 8 bytes, two counts and the tag.
+        assert_eq!(n, 2 * cooked::SKY_BOX_RECORD_SIZE + 8 + 12);
+        assert_eq!(&o[o.len() - 4..], &cooked::SKY_BOX_TAG);
+        let word = |at: usize| u32::from_le_bytes(o[at..at + 4].try_into().unwrap());
+        assert_eq!((word(o.len() - 12), word(o.len() - 8)), (2, 3));
+        assert_eq!(o.len() % 4, 0);
+        let first = o.len() - 12 - 8 - 2 * cooked::SKY_BOX_RECORD_SIZE;
+        let half = |at: usize| u16::from_le_bytes([o[at], o[at + 1]]);
+        assert_eq!(half(first + 16) as i16, -7);
+        // Second box: leaves from 2, one of them, which is leaf index 7.
+        assert_eq!((half(first + 28), half(first + 30)), (2, 1));
+        assert_eq!(half(first + 2 * cooked::SKY_BOX_RECORD_SIZE + 4), 7);
     }
 
     #[test]
