@@ -18168,7 +18168,9 @@ unsafe fn tick_props(
         // floor probes retains at most eight nearby mover slots. Materialize
         // their current poses on the stack (320 bytes, zero persistent RAM), so
         // doors/enclosures remain solid without restoring the frame killer.
-        let mut pm_storage = [phys::NO_MOVER; 8];
+        // Only the gathered prefix is ever read, so the slots start
+        // uninitialised: `[NO_MOVER; 8]` cost eight 48-byte copies per prop.
+        let mut pm_storage = [const { core::mem::MaybeUninit::<phys::Mover>::uninit() }; 8];
         let near_count = PROP_NEAR_COUNT[pi];
         let mut pm_count = 0usize;
         if near_count != 0xFF {
@@ -18176,13 +18178,14 @@ unsafe fn tick_props(
             while near_i < (near_count as usize).min(pm_storage.len()) {
                 let mover_slot = (PROP_NEAR_ENTS[pi][near_i] & PROP_NEAR_MOVER_SLOT_MASK) as usize;
                 if mover_slot < movers.len() {
-                    pm_storage[pm_count] = movers[mover_slot];
+                    pm_storage[pm_count].write(movers[mover_slot]);
                     pm_count += 1;
                 }
                 near_i += 1;
             }
         }
-        let pm = &pm_storage[..pm_count];
+        // SAFETY: slots 0..pm_count were written above.
+        let pm = core::slice::from_raw_parts(pm_storage.as_ptr().cast::<phys::Mover>(), pm_count);
         // Scripted actor work lives out of line to keep this MIPS function's
         // conditional branches in PC16 range. Ordinary props avoid the call.
         if (PROP_SCRIPT_MODE[pi] != 0
@@ -22788,12 +22791,16 @@ unsafe fn emit_projected(
 #[inline(never)]
 unsafe fn emit_screen_triangle(
     packets: &mut PrimitivePacketArena<'_>,
-    p: [render::SVert; 3],
+    pa: &render::SVert,
+    pb: &render::SVert,
+    pc: &render::SVert,
     mat: TexturedGouraudPacketMaterial,
     texture_backdrop: bool,
     np: &mut usize,
 ) {
-    let (pa, pb, pc) = (p[0], p[1], p[2]);
+    // Corners by reference: a `[SVert; 3]` argument cost the caller a 96-byte
+    // copy per triangle, and the residue splitter below is size-optimised.
+    let (pa, pb, pc) = (*pa, *pb, *pc);
     // warp policy: screen triangles inside the guard band take the same
     // edge-local perspective split as near-clipped fans.
     if WARP_SCREEN_SPLIT
@@ -23061,7 +23068,7 @@ unsafe fn emit_cv_subdivided(
         );
         return;
     }
-    emit_screen_triangle(packets, projected, mat, texture_backdrop, np);
+    emit_screen_triangle(packets, &projected[0], &projected[1], &projected[2], mat, texture_backdrop, np);
 }
 
 unsafe fn emit_cv(
@@ -23085,7 +23092,7 @@ unsafe fn emit_cv(
     {
         return;
     }
-    emit_screen_triangle(packets, projected, mat, texture_backdrop, np);
+    emit_screen_triangle(packets, &projected[0], &projected[1], &projected[2], mat, texture_backdrop, np);
 }
 
 /// A cooked quad whose projection crosses the near plane or leaves the GPU
@@ -23418,7 +23425,7 @@ unsafe fn emit_soft_leaf(
                 let cr = (b.x - a.x) as i64 * (c.y - a.y) as i64
                     - (c.x - a.x) as i64 * (b.y - a.y) as i64;
                 if !CULL || cr < 0 {
-                    emit_screen_triangle(packets, [a, b, c], mat, false, np);
+                    emit_screen_triangle(packets, &a, &b, &c, mat, false, np);
                 }
             }
             WORLD_AFFINE_SPLIT_TRIS =
@@ -23650,7 +23657,7 @@ unsafe fn emit_cv_flat(
                 }
             }
             let before = *np;
-            emit_screen_triangle(packets, p, mat, false, np);
+            emit_screen_triangle(packets, &p[0], &p[1], &p[2], mat, false, np);
             WORLD_AFFINE_SPLIT_TRIS =
                 WORLD_AFFINE_SPLIT_TRIS.saturating_add(np.saturating_sub(before) as u32);
             return;
@@ -23788,7 +23795,7 @@ unsafe fn emit_cv_clipped(
         {
             continue;
         }
-        emit_screen_triangle(packets, projected, mat, texture_backdrop, np);
+        emit_screen_triangle(packets, &projected[0], &projected[1], &projected[2], mat, texture_backdrop, np);
     }
     let emitted = np.saturating_sub(before) as u32;
     WORLD_AFFINE_ACTUAL_EXTRA_EMITTED = WORLD_AFFINE_ACTUAL_EXTRA_EMITTED
@@ -26579,7 +26586,9 @@ unsafe fn emit_actor_occluding_face(
     EMIT_POLICY = saved.with_local_depth(true);
     emit_residue_children(
         packets,
-        vertices,
+        &vertices[0],
+        &vertices[1],
+        &vertices[2],
         emit_packet_of(slot, tri.tex),
         np,
         RESIDUE_OWN_BUDGET | 2,
@@ -27360,9 +27369,12 @@ unsafe fn try_emit_native_residue(
         }
     };
     let before = *np;
+    let corners = [vertex(0), vertex(1), vertex(2)];
     emit_residue_children(
         packets,
-        [vertex(0), vertex(1), vertex(2)],
+        &corners[0],
+        &corners[1],
+        &corners[2],
         emit_packet_of(slot, tri.tex),
         np,
         1,
@@ -27412,7 +27424,7 @@ unsafe fn try_emit_clipped_residue(
     if !(over(0, 1) || over(1, 2) || over(2, 0)) {
         return false;
     }
-    emit_residue_children(packets, p, mat, np, 1);
+    emit_residue_children(packets, &p[0], &p[1], &p[2], mat, np, 1);
     true
 }
 
@@ -27420,27 +27432,31 @@ unsafe fn try_emit_clipped_residue(
 #[optimize(size)]
 unsafe fn emit_residue_children(
     packets: &mut PrimitivePacketArena<'_>,
-    vertices: [render::SVert; 3],
+    a: &render::SVert,
+    b: &render::SVert,
+    c: &render::SVert,
     mat: TexturedGouraudPacketMaterial,
     np: &mut usize,
     levels: u8,
 ) {
-    let [a, b, c] = vertices;
-    let ab = render::perspective_screen_midpoint(a, b);
-    let bc = render::perspective_screen_midpoint(b, c);
-    let ca = render::perspective_screen_midpoint(c, a);
-    for child in [[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]] {
+    // Children are triples of references into a, b, c and the three
+    // midpoints: building them as `[SVert; 3]` values cost ~20 memcpy calls
+    // per split under optimize(size).
+    let ab = render::perspective_screen_midpoint(*a, *b);
+    let bc = render::perspective_screen_midpoint(*b, *c);
+    let ca = render::perspective_screen_midpoint(*c, *a);
+    for [x, y, z] in [[a, &ab, &ca], [&ab, b, &bc], [&ca, &bc, c], [&ab, &bc, &ca]] {
         if levels & !RESIDUE_OWN_BUDGET > 1 {
-            emit_residue_children(packets, child, mat, np, levels - 1);
+            emit_residue_children(packets, x, y, z, mat, np, levels - 1);
         } else {
-            emit_screen_triangle(packets, child, mat, false, np);
+            emit_screen_triangle(packets, x, y, z, mat, false, np);
         }
     }
     // A far-depth parent must draw before every child, including when the
     // cooked face uses local centroid ordering. Restore policy immediately.
     let saved_policy = EMIT_POLICY;
     EMIT_POLICY = saved_policy.with_local_depth(false).with_far_key();
-    emit_screen_triangle(packets, [a, b, c], mat, false, np);
+    emit_screen_triangle(packets, a, b, c, mat, false, np);
     EMIT_POLICY = saved_policy;
     if levels & RESIDUE_OWN_BUDGET == 0 {
         WORLD_AFFINE_EXTRA_BUDGET_LEFT -= 4;
