@@ -4024,7 +4024,7 @@ fn poll_live_semantic_input(
     fb: &mut FrameBuffer,
     last_pad: &mut psx_pad::PadState,
     prev_pause_button: &mut bool,
-    next_sim_vblank: &mut u32,
+    sim_clock: &mut psx_tick::FixedClock,
 ) -> LiveInputPoll {
     let sampled_pad = poll_port1_diag(DEFAULT_SETUP_SPINS, 0).to_state();
     let pad = if sampled_pad.mode == PadMode::Unknown {
@@ -4057,7 +4057,7 @@ fn poll_live_semantic_input(
                 let _ = enable_analog_port1();
                 *last_pad = poll_port1();
                 *prev_pause_button = true;
-                *next_sim_vblank = interrupts::vblank_count().wrapping_add(SIM_VBLANKS);
+                sim_clock.realign(interrupts::vblank_count().wrapping_add(SIM_VBLANKS));
                 LiveInputPoll::Resumed
             }
         };
@@ -31263,7 +31263,12 @@ fn play(
 
     gpu::configure_vsync_timer();
     interrupts::install_vblank_counter();
-    let mut next_sim_vblank = interrupts::vblank_count().wrapping_add(SIM_VBLANKS);
+    // Gameplay ticks at SIM_VBLANKS on the shared psx-tick clock, with every
+    // owed tick caught up before the next render.
+    let mut sim_clock = psx_tick::FixedClock::new(
+        psx_tick::TickConfig::new(psx_tick::TickRate::every_vblanks(SIM_VBLANKS as u16)),
+        interrupts::vblank_count().wrapping_add(SIM_VBLANKS),
+    );
     #[cfg(feature = "decoupled-present")]
     unsafe {
         // Seed both interpolation poses with the spawn camera so the first
@@ -31297,9 +31302,9 @@ fn play(
         // a VBlank edge, so removing this wait caps rendering at 60 Hz while
         // simulation ticks keep firing on their unchanged 20 Hz schedule below.
         #[cfg(not(feature = "decoupled-present"))]
-        wait_until_vblank(next_sim_vblank);
+        wait_until_vblank(sim_clock.next_due());
         let mut ticks_this_visual = 0u16;
-        while vblank_reached(interrupts::vblank_count(), next_sim_vblank) {
+        while sim_clock.due(interrupts::vblank_count()) {
             telemetry::frame_begin(telemetry_frame);
             // Reuse PSoXide's standard current-room column for this linear
             // campaign. It makes direct-boot regression tapes self-verifying.
@@ -31380,7 +31385,7 @@ fn play(
                 fb,
                 &mut last_pad,
                 &mut prev_pause_button,
-                &mut next_sim_vblank,
+                &mut sim_clock,
             ) {
                 LiveInputPoll::Sample(sample) => sample,
                 LiveInputPoll::Resumed => continue 'gameplay,
@@ -33487,13 +33492,13 @@ fn play(
             sim_frame_no = sim_frame_no.wrapping_add(1);
             unsafe { record_prop_anim_clips(&m, sim_frame_no) };
             ticks_this_visual = ticks_this_visual.saturating_add(1);
-            next_sim_vblank = next_sim_vblank.wrapping_add(SIM_VBLANKS);
             #[cfg(feature = "decoupled-present")]
             unsafe {
                 tick_camera_snapshot(player.pos, view_h_cur, yaw, pitch);
                 tick_tram_snapshot(ride_off, tram_yaw_render);
             }
         }
+        sim_clock.end_frame();
         if ticks_this_visual > 1 {
             telemetry::counter(
                 telemetry::counter::VISUAL_SKIPPED_VBLANKS,
@@ -33525,14 +33530,7 @@ fn play(
         // pose as the next tick's deadline approaches. Simulation state is
         // untouched; only what the camera looks like this frame changes.
         #[cfg(feature = "decoupled-present")]
-        let render_phase_q12: i32 = {
-            let ahead = next_sim_vblank.wrapping_sub(interrupts::vblank_count()) as i32;
-            if ahead <= 0 {
-                4096
-            } else {
-                ((SIM_VBLANKS as i32 - ahead.min(SIM_VBLANKS as i32)) << 12) / SIM_VBLANKS as i32
-            }
-        };
+        let render_phase_q12: i32 = sim_clock.phase_q12(interrupts::vblank_count()) as i32;
         #[cfg(feature = "decoupled-present")]
         let (cam_pos, cam_h, cam_yaw, cam_pitch) =
             if DBG_CAM || reference_checkpoint::DBG_CAM_OVERRIDE.is_some() {
@@ -35518,7 +35516,7 @@ fn play(
             present_pending = true;
         }
         #[cfg(not(feature = "decoupled-present"))]
-        if vblank_reached(interrupts::vblank_count(), next_sim_vblank) {
+        if vblank_reached(interrupts::vblank_count(), sim_clock.next_due()) {
             present_pending = true;
         } else {
             telemetry::stage_begin(telemetry::stage::PRESENT);
