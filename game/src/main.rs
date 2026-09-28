@@ -6745,9 +6745,9 @@ unsafe fn ent_draw_offset(ei: usize) -> [i32; 3] {
         let o = TRAIN_OFF[ENT_TRAIN_SLOT[ei] as usize];
         return [o[0] as i32, o[1] as i32, o[2] as i32];
     }
-    let e = ENT_CACHE[ei];
+    let e = &ENT_CACHE[ei];
     if e.kind == ENT_KIND_PLATROT {
-        platrot_offset(e, ENT_PHASE[ei])
+        platrot_offset(*e, ENT_PHASE[ei])
     } else if e.kind == 1 || e.kind == 3 {
         // Most sliding BSP models are authored in world coordinates and have
         // origin zero. An explicit origin brush (c1a1c's collapsing catwalk)
@@ -7682,11 +7682,15 @@ unsafe fn carry_player_on_brush_mover(
     while ei < nents {
         let now_off = ent_draw_offset(ei);
         let prev = ent_prev_off(ei);
+        // An unmoved brush stores back what it already holds: skip it.
+        if now_off[0] == prev[0] && now_off[1] == prev[1] && now_off[2] == prev[2] {
+            ei += 1;
+            continue;
+        }
         // SV_PushMove: a sliding brush (door, plat, train) that moved into a
         // player not riding it shoves them; one the world pins is blocked.
         // Rotation is not pushed; the player's own tram carries them.
-        if now_off != prev
-            && ei as i16 != player.ground_mover
+        if ei as i16 != player.ground_mover
             && ENT_CACHE[ei].kind != ENT_KIND_PUSHABLE
             && ENT_CACHE[ei].submodel as u16 != TRACKTRAIN_SUBMODEL
         {
@@ -7699,8 +7703,11 @@ unsafe fn carry_player_on_brush_mover(
                 mover_blocked(m, ei, usize::MAX);
             }
             push_actors_from_mover(m, movers, ei, d);
+            // A blocked door reverses, so store where it ends up.
+            ent_prev_off_store(ei, ent_draw_offset(ei));
+        } else {
+            ent_prev_off_store(ei, now_off);
         }
-        ent_prev_off_store(ei, ent_draw_offset(ei));
         ei += 1;
     }
 }
@@ -32114,7 +32121,7 @@ fn play(
                     if ENT_ACTIVE[ei] == 0 {
                         continue;
                     }
-                    let e = ENT_CACHE[ei];
+                    let e = &ENT_CACHE[ei];
                     let off = ent_draw_offset(ei);
                     // kind 2 = nonsolid visual, kind 4 = ladder volume (no hull),
                     // kind 6 = water: SOLID_NOT, so a moving water train neither
@@ -32122,8 +32129,8 @@ fn play(
                     if e.kind != 2
                         && e.kind != 4
                         && e.kind != 6
-                        && !fan_collision_disabled(ei, e)
-                        && !pendulum_collision_disabled(e)
+                        && !fan_collision_disabled(ei, *e)
+                        && !pendulum_collision_disabled(*e)
                         && nmov < movers.len()
                     {
                         // A continuously rotating fan, or a swinging door while
@@ -32150,36 +32157,36 @@ fn play(
                             || e.kind == 7
                             || e.kind == ENT_KIND_ROT_BUTTON
                         {
-                            head0 |= phys::mover_rotation_axis_tag(pendulum_axis(e));
+                            head0 |= phys::mover_rotation_axis_tag(pendulum_axis(*e));
                         }
                         let (rc, rs) = if e.kind == ENT_KIND_PLATROT {
-                            let packed = platrot_angles_q8(e, ENT_PHASE[ei]);
-                            if e.mv[2] as u32 & 0x00ff_ffff != 0 || platrot_axis(e) != 0 {
+                            let packed = platrot_angles_q8(*e, ENT_PHASE[ei]);
+                            if e.mv[2] as u32 & 0x00ff_ffff != 0 || platrot_axis(*e) != 0 {
                                 (phys::MOVER_FULL_ROTATION, packed as i32)
                             } else {
-                                let rm = platrot_rotation(e, ENT_PHASE[ei]);
+                                let rm = platrot_rotation(*e, ENT_PHASE[ei]);
                                 (rm.m[0][0] as i32, rm.m[0][2] as i32)
                             }
                         } else if e.kind == 5 && e.mv[1] == 0 {
                             // phys::Mover rotates around world Y. This is the
                             // c1a2 fan's mapped Z_AXIS, so its collision stops at
                             // the same retained blade angle as the renderer.
-                            let rm = fan_rotation(e, fan_angle_q12(ei, sim_frame_no));
+                            let rm = fan_rotation(*e, fan_angle_q12(ei, sim_frame_no));
                             (rm.m[0][0] as i32, rm.m[0][2] as i32)
                         } else if e.kind == ENT_KIND_PENDULUM {
-                            let rm = pendulum_rotation(e, pendulum_angle_q12(ei));
-                            match pendulum_axis(e) {
+                            let rm = pendulum_rotation(*e, pendulum_angle_q12(ei));
+                            match pendulum_axis(*e) {
                                 1 => (rm.m[1][1] as i32, rm.m[2][1] as i32),
                                 2 => (rm.m[0][0] as i32, rm.m[1][0] as i32),
                                 _ => (rm.m[0][0] as i32, rm.m[0][2] as i32),
                             }
                         } else if e.kind == 7 || e.kind == ENT_KIND_ROT_BUTTON {
                             let ang = (((ENT_PHASE[ei] * e.mv[0]) >> 12) as u16) & 0x0fff;
-                            let packed = axial_brush_angles_q8(e, ang);
+                            let packed = axial_brush_angles_q8(*e, ang);
                             if e.mv[2] as u32 & 0x00ff_ffff != 0 {
                                 (phys::MOVER_FULL_ROTATION, packed as i32)
                             } else {
-                                let rm = axial_brush_rotation(e, ang);
+                                let rm = axial_brush_rotation(*e, ang);
                                 match e.mv[1] {
                                     1 => (rm.m[1][1] as i32, rm.m[2][1] as i32),
                                     2 => (rm.m[0][0] as i32, rm.m[1][0] as i32),
@@ -32195,13 +32202,23 @@ fn play(
                         if nmov >= previous_mover_count || old.id != ei as i32 {
                             mover_membership_changed = true;
                         }
-                        if nmov >= previous_mover_count
-                            || old.id != ei as i32
-                            || old.off != off
-                            || old.head0 != head0
-                            || visual_pose_changed
-                        {
+                        let same_pose = nmov < previous_mover_count
+                            && old.id == ei as i32
+                            && old.off[0] == off[0]
+                            && old.off[1] == off[1]
+                            && old.off[2] == off[2]
+                            && old.head0 == head0;
+                        if !same_pose || visual_pose_changed {
                             mover_visibility_changed = true;
+                        }
+                        // A mover whose pose is unchanged since last tick keeps
+                        // its record: every input of its centre is the same.
+                        // Pushables are rebuilt anyway, because
+                        // pushable_publish_offset moves their `off` without
+                        // their centre and this rebuild is what re-centres them.
+                        if same_pose && old.rc == rc && old.rs == rs && e.kind != ENT_KIND_PUSHABLE {
+                            nmov += 1;
+                            continue;
                         }
                         let mover_center = phys::mover_bounds_center(e.center, off, rc, rs, head0);
                         movers[nmov] = phys::Mover {
