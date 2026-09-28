@@ -32184,7 +32184,7 @@ fn play(
                         } else {
                             (4096, 0)
                         };
-                        let old = movers[nmov];
+                        let old = &movers[nmov];
                         let visual_pose_changed = (head0 & phys::MOVER_VISUAL_DISABLED) == 0
                             && (old.rc != rc || old.rs != rs);
                         if nmov >= previous_mover_count || old.id != ei as i32 {
@@ -34352,17 +34352,20 @@ fn play(
             while brush_pass < 2 {
                 for bi in 0..brush_iter_count {
                     let ei = if have_pvs { PVS_ENTS[bi] as usize } else { bi };
-                    let e = ENT_CACHE[ei];
+                    // Borrowed, not copied: nothing in the brush pass writes
+                    // ENT_CACHE (only physics and logic do), and a 64-byte
+                    // copy per entity per pass was a hot memcpy.
+                    let e = &*core::ptr::addr_of!(ENT_CACHE[ei]);
                     if have_pvs
                         && !visibility_logic::pvs_visible_now(
-                            entity_uses_live_pvs(ei, e),
+                            entity_uses_live_pvs(ei, *e),
                             true,
                             live_entity_pvs_visible(ei),
                         )
                     {
                         continue;
                     }
-                    let cacheable = static_brush_cacheable(ei, e);
+                    let cacheable = static_brush_cacheable(ei, *e);
                     if cacheable != (brush_pass == 0) {
                         continue;
                     }
@@ -34378,16 +34381,16 @@ fn play(
                             platrot_local_to_world(
                                 e.center,
                                 off,
-                                &platrot_rotation(e, ENT_PHASE[ei]),
+                                &platrot_rotation(*e, ENT_PHASE[ei]),
                             )
                         } else if e.kind == 5 {
-                            let rm = fan_rotation(e, fan_angle_q12(ei, sim_frame_no));
-                            rotating_local_center(e, rm)
+                            let rm = fan_rotation(*e, fan_angle_q12(ei, sim_frame_no));
+                            rotating_local_center(*e, rm)
                         } else if e.kind == ENT_KIND_PENDULUM {
-                            rotating_local_center(e, pendulum_rotation(e, pendulum_angle_q12(ei)))
+                            rotating_local_center(*e, pendulum_rotation(*e, pendulum_angle_q12(ei)))
                         } else if e.kind == 7 || e.kind == ENT_KIND_ROT_BUTTON {
                             let ang = (((ENT_PHASE[ei] * e.mv[0]) >> 12) as u16) & 0x0fff;
-                            let rm = axial_brush_rotation(e, ang);
+                            let rm = axial_brush_rotation(*e, ang);
                             [
                                 off[0] + dot12(rm.m[0], e.center),
                                 off[1] + dot12(rm.m[1], e.center),
@@ -34422,7 +34425,7 @@ fn play(
                             &mut packets,
                             &m,
                             &visibility,
-                            e,
+                            *e,
                             ENT_PHASE[ei],
                             eye,
                             off,
@@ -34453,11 +34456,11 @@ fn play(
                             0
                         };
                         let local_rotation = if e.kind == 5 {
-                            fan_rotation(e, ang)
+                            fan_rotation(*e, ang)
                         } else if e.kind == ENT_KIND_PENDULUM {
-                            pendulum_rotation(e, ang)
+                            pendulum_rotation(*e, ang)
                         } else {
-                            axial_brush_rotation(e, ang)
+                            axial_brush_rotation(*e, ang)
                         };
                         let mr = rot.mul(&local_rotation);
                         scene::load_rotation(&mr);
