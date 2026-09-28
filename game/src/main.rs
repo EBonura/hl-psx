@@ -2964,16 +2964,20 @@ unsafe fn tex_anim_tick(m: &Map) {
 }
 // Per-frame group backface verdicts (bit per ACTIVE-list index): the banded
 // walk used to redo every group's plane dot and every face's depth dot per
-// band; the pre-pass computes both once per frame. Both this verdict set and
-// its companion "seen" set live in the CPU-local scratchpad.
+// band; the pre-pass computes both once per frame. They used to live on the
+// scratchpad, where they were worth 0.5%; the GPU splitter's working set now
+// holds those bytes, worth far more (see SplitWork).
+static mut GROUP_VIS_BITS: [u32; RENDER_GROUP_WORDS] = [0; RENDER_GROUP_WORDS];
+static mut GROUP_SEEN_BITS: [u32; RENDER_GROUP_WORDS] = [0; RENDER_GROUP_WORDS];
+
 #[inline(always)]
 unsafe fn group_vis_bits() -> *mut u32 {
-    unsafe { scratchpad::ptr_at::<u32>(GROUP_VIS_SCRATCH_OFFSET) }
+    core::ptr::addr_of_mut!(GROUP_VIS_BITS).cast::<u32>()
 }
 
 #[inline(always)]
 unsafe fn group_seen_bits() -> *mut u32 {
-    unsafe { scratchpad::ptr_at::<u32>(GROUP_SEEN_SCRATCH_OFFSET) }
+    core::ptr::addr_of_mut!(GROUP_SEEN_BITS).cast::<u32>()
 }
 
 #[inline(always)]
@@ -26175,42 +26179,134 @@ fn screen_tri_fits_gpu(s: [(i16, i16); 3]) -> bool {
 /// emission pattern, so the tram/world packet caches never notice (rerouting
 /// these to the soft path is what corrupted the tram ride in the reverted
 /// 0036c99). Each level halves the longest span: depth 4 covers +-1023.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-unsafe fn push_tri_gpu_split(
-    packets: &mut PrimitivePacketArena<'_>,
-    np: &mut usize,
-    screen: [(i16, i16); 3],
+///
+/// Edge-local split rule (crack-free): identical verdicts on both sides of a
+/// shared edge, geometry-only. Midpoint XY stays the plain screen midpoint
+/// (children tile the straight chord); depth is the harmonic mean and UV/RGB
+/// the depth-swapped weighting, perspective-correct at that screen point. No
+/// `%` indexing (modulo is a hardware divide on MIPS). Triangles wholly off
+/// the 320x240 draw area are pruned with their whole subtree. Warp splits put
+/// the unsplit parent behind its children at depth 0 (keyed at its farthest
+/// corner) so the rounded-midpoint pinholes along a neighbour's chord show
+/// it instead of the background.
+/// One open triangle of the iterative GPU split: its perimeter (corners plus
+/// split-edge midpoints, winding order) and the fan cursor over it.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SplitLevel {
+    xy: [(i16, i16); 6],
+    uv: [u16; 6],
+    rgb: [u32; 6],
+    z: [i32; 6],
+    anchor: u8,
+    pn: u8,
+    i1: u8,
+    k: u8,
+}
+
+/// Levels held on the scratchpad; the rare deeper ones live in main RAM.
+const SPLIT_FAST_LEVELS: usize = 4;
+
+/// The splitter's working set, on the scratchpad: the triangle being examined
+/// and one level per open ancestor. As a recursion this lived in up to six
+/// 700-byte stack frames whose spills were the hottest RAM loads of a frame
+/// (1.5 KB of stack worth ~10% of HL's cycles).
+#[repr(C)]
+struct SplitWork {
+    xy: [(i16, i16); 3],
     uv: [u16; 3],
     rgb: [u32; 3],
-    sz: [i32; 3],
+    z: [i32; 3],
+    levels: [SplitLevel; SPLIT_FAST_LEVELS],
+}
+
+static mut SPLIT_DEEP_LEVELS: [SplitLevel; 6 - SPLIT_FAST_LEVELS] = [SplitLevel {
+    xy: [(0, 0); 6],
+    uv: [0; 6],
+    rgb: [0; 6],
+    z: [0; 6],
+    anchor: 0,
+    pn: 0,
+    i1: 0,
+    k: 0,
+}; 6 - SPLIT_FAST_LEVELS];
+
+// Scratchpad bytes 128..840 during world emission: the working set, a guard,
+// the trampoline's save record, and a stack for the walk itself (its frame and
+// push_packet's; memcpy is a leaf) growing down from 840. The affine workspace
+// above 840 stays live across splits and is not touched.
+const SPLIT_WORK_SCRATCH_OFFSET: usize = GROUP_VIS_SCRATCH_OFFSET;
+const SPLIT_GUARD_OFFSET: usize = SPLIT_WORK_SCRATCH_OFFSET + core::mem::size_of::<SplitWork>();
+const SPLIT_GUARD_WORDS: usize = 3;
+const SPLIT_SAVE_OFFSET: usize = SPLIT_GUARD_OFFSET + SPLIT_GUARD_WORDS * 4;
+const SPLIT_STACK_TOP: usize = AFFINE_WORKSPACE_SCRATCH_OFFSET;
+const SPLIT_STACK_BYTES: usize = SPLIT_STACK_TOP - (SPLIT_SAVE_OFFSET + 12);
+const _: () = assert!(SPLIT_STACK_BYTES >= 256 && SPLIT_STACK_TOP % 8 == 0);
+const SPLIT_GUARD: u32 = 0x5a17_5b17;
+/// Splits whose stack reached the guard (telemetry; should stay 0).
+#[no_mangle]
+static mut HLPSX_SPLIT_STACK_OVERFLOWS: u32 = 0;
+
+#[inline(always)]
+unsafe fn split_level(w: *mut SplitWork, depth: usize) -> *mut SplitLevel {
+    if depth < SPLIT_FAST_LEVELS {
+        unsafe { core::ptr::addr_of_mut!((*w).levels[depth]) }
+    } else {
+        unsafe {
+            core::ptr::addr_of_mut!(SPLIT_DEEP_LEVELS)
+                .cast::<SplitLevel>()
+                .add(depth - SPLIT_FAST_LEVELS)
+        }
+    }
+}
+
+/// What the scratchpad-stack entry needs from its caller.
+#[repr(C)]
+struct SplitCall {
+    packets: *mut PrimitivePacketArena<'static>,
+    np: *mut usize,
+    mat: TexturedGouraudPacketMaterial,
+    texture_backdrop: bool,
+}
+
+/// Whether the CPU is already running on a scratchpad stack (the model
+/// projection stack shares these bytes).
+#[inline(always)]
+fn on_scratchpad_stack() -> bool {
+    #[cfg(target_arch = "mips")]
+    {
+        let sp: u32;
+        unsafe { core::arch::asm!("move {0}, $sp", out(reg) sp, options(nomem, nostack)) };
+        (sp & 0x1fff_fc00) == 0x1f80_0000
+    }
+    #[cfg(not(target_arch = "mips"))]
+    {
+        false
+    }
+}
+
+/// Examine `w`'s current triangle at `depth`: emit it, drop it, or open
+/// level `depth` with its perimeter. Returns whether the level was opened.
+/// Every emitted packet and its order are those of the recursive splitter
+/// this replaced.
+#[inline(always)]
+unsafe fn split_examine(
+    packets: &mut PrimitivePacketArena<'_>,
+    np: &mut usize,
+    w: &mut SplitWork,
+    depth: usize,
     texture_backdrop: bool,
     mat: TexturedGouraudPacketMaterial,
-    depth: u8,
-) {
-    // Wholly outside the 320x240 draw area: neither this triangle nor any
-    // child can rasterize a pixel. The near-clip reroute keeps each source
-    // triangle's full footprint (the old path screen-clipped first), so
-    // grazing walls otherwise spawn large off-screen subtrees that cost
-    // packets, OT links and DMA for nothing. Pruning here is pixel-identical
-    // and prunes the entire subtree in one test.
+) -> bool {
+    let screen = w.xy;
     if (screen[0].0 < 0 && screen[1].0 < 0 && screen[2].0 < 0)
         || (screen[0].0 >= 320 && screen[1].0 >= 320 && screen[2].0 >= 320)
         || (screen[0].1 < 0 && screen[1].1 < 0 && screen[2].1 < 0)
         || (screen[0].1 >= 240 && screen[1].1 >= 240 && screen[2].1 >= 240)
     {
-        return;
+        return false;
     }
-    // Edge-local split rule (crack-free): identical verdicts on both sides
-    // of a shared edge, geometry-only. Midpoint XY stays the plain screen
-    // midpoint (children tile the straight chord); depth is the harmonic
-    // mean and UV/RGB the depth-swapped weighting -- perspective-correct at
-    // that screen point.
-    //
-    // PERF: hottest render symbol on the tram ride as first written (21.7%
-    // of CPU). No `%` indexing (modulo is a hardware divide on MIPS) and a
-    // single 24-bit reciprocal replaces the three divides per midpoint;
-    // outputs are bit-identical to the divide form for view-range depths.
+    let sz = w.z;
     let span = |a: usize, b: usize| -> i32 {
         let dx = (screen[a].0 as i32 - screen[b].0 as i32).abs();
         let dy = (screen[a].1 as i32 - screen[b].1 as i32).abs();
@@ -26222,8 +26318,6 @@ unsafe fn push_tri_gpu_split(
             return true;
         }
         if WARP_PX_Q3 != 0 {
-            // Chebyshev span as the length (up to 29 percent short of the
-            // Euclidean one); edge-local, so both sides agree at any depth.
             let (za, zb) = (za.max(1) as u32, zb.max(1) as u32);
             return sp >= 8 && (sp as u32) * za.abs_diff(zb) * 4 > WARP_PX_Q3 * (za + zb);
         }
@@ -26243,38 +26337,27 @@ unsafe fn push_tri_gpu_split(
             ordering::PrimitiveDepths::tri(sz[0], sz[1], sz[2]),
             texture_backdrop,
         );
-        push_tri_uv_words_packed(packets, np, screen, uv, rgb, mat, otz);
-        return;
+        push_tri_uv_words_packed(packets, np, screen, w.uv, w.rgb, mat, otz);
+        return false;
     }
     if WARP_PX_Q3 != 0 && depth == 0 && screen_tri_fits_gpu(screen) {
-        // Warp splits reach triangles whose neighbours stay whole. A child
-        // edge through a rounded screen midpoint leaves hairline pinholes
-        // along the neighbour's chord (dotted crack lines on dust2 floors),
-        // so the parent goes behind its children, keyed at its farthest
-        // corner: only the pinholes show it. This path also splits
-        // triangles too big for the GPU, and the GPU skips a parent that
-        // big, so it would cost a packet and draw nothing.
         let far = sz[0].max(sz[1]).max(sz[2]);
         let otz = world_order_key(
             ordering::PrimitiveDepths::tri(far, far, far),
             texture_backdrop,
         );
-        push_tri_uv_words_packed(packets, np, screen, uv, rgb, mat, otz);
+        push_tri_uv_words_packed(packets, np, screen, w.uv, w.rgb, mat, otz);
     }
-    // Perimeter polygon (corners + split-edge midpoints, winding order),
-    // fanned from the first midpoint. Wrap indices by subtract, never `%`.
-    let mut pxy: [(i16, i16); 6] = [(0, 0); 6];
-    let mut puv: [u16; 6] = [0; 6];
-    let mut prgb: [u32; 6] = [0; 6];
-    let mut pz: [i32; 6] = [0; 6];
+    let (uv, rgb) = (w.uv, w.rgb);
+    let lv = &mut *split_level(w, depth);
     let mut anchor = usize::MAX;
     let mut pn = 0usize;
     let mut k = 0usize;
     while k < 3 {
-        pxy[pn] = screen[k];
-        puv[pn] = uv[k];
-        prgb[pn] = rgb[k];
-        pz[pn] = sz[k];
+        lv.xy[pn] = screen[k];
+        lv.uv[pn] = uv[k];
+        lv.rgb[pn] = rgb[k];
+        lv.z[pn] = sz[k];
         pn += 1;
         if split[k] {
             let b = if k == 2 { 0 } else { k + 1 };
@@ -26286,16 +26369,17 @@ unsafe fn push_tri_gpu_split(
             let mu = ((ua * zb + ub * za + (d >> 1)) / d).clamp(0, 255) as u16;
             let mv = ((va * zb + vb * za + (d >> 1)) / d).clamp(0, 255) as u16;
             let (ra, rb) = (rgb[k], rgb[b]);
-            pxy[pn] = (
+            let mid = (
                 (((screen[k].0 as i32) + (screen[b].0 as i32)) >> 1) as i16,
                 (((screen[k].1 as i32) + (screen[b].1 as i32)) >> 1) as i16,
             );
-            puv[pn] = mu | (mv << 8);
-            prgb[pn] = (((ra & 0xff) + (rb & 0xff) + 1) >> 1)
+            lv.xy[pn] = mid;
+            lv.uv[pn] = mu | (mv << 8);
+            lv.rgb[pn] = (((ra & 0xff) + (rb & 0xff) + 1) >> 1)
                 | (((((ra >> 8) & 0xff) + ((rb >> 8) & 0xff) + 1) >> 1) << 8)
                 | (((((ra >> 16) & 0xff) + ((rb >> 16) & 0xff) + 1) >> 1) << 16);
-            pz[pn] = z;
-            render::warp_probe_announce(pxy[pn].0 as i32, pxy[pn].1 as i32, z);
+            lv.z[pn] = z;
+            render::warp_probe_announce(mid.0 as i32, mid.1 as i32, z);
             if anchor == usize::MAX {
                 anchor = pn;
             }
@@ -26307,25 +26391,104 @@ unsafe fn push_tri_gpu_split(
     if i1 >= pn {
         i1 -= pn;
     }
-    let mut k = 1usize;
-    while k + 1 < pn {
-        let mut i2 = i1 + 1;
-        if i2 >= pn {
-            i2 -= pn;
+    lv.anchor = anchor as u8;
+    lv.pn = pn as u8;
+    lv.i1 = i1 as u8;
+    lv.k = 1;
+    true
+}
+
+/// The depth-first walk over `SplitWork`, run on the scratchpad stack.
+unsafe extern "C" fn split_walk_entry(context: *mut u8) {
+    let call = unsafe { &mut *context.cast::<SplitCall>() };
+    let packets = unsafe { &mut *call.packets };
+    let np = unsafe { &mut *call.np };
+    let (mat, texture_backdrop) = (call.mat, call.texture_backdrop);
+    let w = unsafe { &mut *scratchpad::ptr_at::<SplitWork>(SPLIT_WORK_SCRATCH_OFFSET) };
+    let mut d = 0usize;
+    loop {
+        let opened = unsafe { split_examine(packets, np, w, d, texture_backdrop, mat) };
+        // The next triangle is the next fan child of the deepest open level.
+        let mut top = if opened { d + 1 } else { d };
+        loop {
+            if top == 0 {
+                return;
+            }
+            let lv = unsafe { &mut *split_level(w, top - 1) };
+            if (lv.k as usize) + 1 < lv.pn as usize {
+                let mut i2 = lv.i1 + 1;
+                if i2 >= lv.pn {
+                    i2 -= lv.pn;
+                }
+                let (a, b, c) = (lv.anchor as usize, lv.i1 as usize, i2 as usize);
+                w.xy = [lv.xy[a], lv.xy[b], lv.xy[c]];
+                w.uv = [lv.uv[a], lv.uv[b], lv.uv[c]];
+                w.rgb = [lv.rgb[a], lv.rgb[b], lv.rgb[c]];
+                w.z = [lv.z[a], lv.z[b], lv.z[c]];
+                lv.i1 = i2;
+                lv.k += 1;
+                d = top;
+                break;
+            }
+            top -= 1;
         }
-        push_tri_gpu_split(
-            packets,
-            np,
-            [pxy[anchor], pxy[i1], pxy[i2]],
-            [puv[anchor], puv[i1], puv[i2]],
-            [prgb[anchor], prgb[i1], prgb[i2]],
-            [pz[anchor], pz[i1], pz[i2]],
-            texture_backdrop,
-            mat,
-            depth + 1,
+    }
+}
+
+/// Screen-space bisection for GPU-oversized triangles (rules above
+/// `SplitLevel`): a depth-first walk with its working set and its own stack
+/// on the scratchpad.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+unsafe fn push_tri_gpu_split(
+    packets: &mut PrimitivePacketArena<'_>,
+    np: &mut usize,
+    screen: [(i16, i16); 3],
+    uv: [u16; 3],
+    rgb: [u32; 3],
+    sz: [i32; 3],
+    texture_backdrop: bool,
+    mat: TexturedGouraudPacketMaterial,
+    depth: u8,
+) {
+    // Every caller starts a walk at depth 0; the parameter keeps their shape.
+    let _ = depth;
+    let w = &mut *scratchpad::ptr_at::<SplitWork>(SPLIT_WORK_SCRATCH_OFFSET);
+    w.xy = screen;
+    w.uv = uv;
+    w.rgb = rgb;
+    w.z = sz;
+    let guard = scratchpad::ptr_at::<u32>(SPLIT_GUARD_OFFSET);
+    let mut i = 0usize;
+    while i < SPLIT_GUARD_WORDS {
+        guard.add(i).write(SPLIT_GUARD ^ i as u32);
+        i += 1;
+    }
+    let mut call = SplitCall {
+        packets: (packets as *mut PrimitivePacketArena<'_>).cast(),
+        np,
+        mat,
+        texture_backdrop,
+    };
+    if on_scratchpad_stack() {
+        // Already on a scratchpad stack (none of today's callers are): walk on
+        // it rather than nesting a second one over the same bytes.
+        split_walk_entry(core::ptr::addr_of_mut!(call).cast::<u8>());
+    } else {
+        scratchpad::call_on_stack(
+            core::ptr::addr_of_mut!(call).cast::<u8>(),
+            split_walk_entry,
+            SPLIT_STACK_TOP,
+            SPLIT_SAVE_OFFSET,
         );
-        i1 = i2;
-        k += 1;
+    }
+    i = 0;
+    while i < SPLIT_GUARD_WORDS {
+        if guard.add(i).read() != SPLIT_GUARD ^ i as u32 {
+            HLPSX_SPLIT_STACK_OVERFLOWS = HLPSX_SPLIT_STACK_OVERFLOWS.saturating_add(1);
+            break;
+        }
+        i += 1;
     }
 }
 
