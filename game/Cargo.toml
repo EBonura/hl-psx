@@ -95,6 +95,7 @@ psx-rt   = { path = "../.psoxide/sdk/crates/psx-rt", features = ["hazard-trampol
 psx-gpu  = { path = "../.psoxide/sdk/crates/psx-gpu" }
 psx-gte  = { path = "../.psoxide/sdk/crates/psx-gte" }
 psx-pad  = { path = "../.psoxide/sdk/crates/psx-pad" }
+psx-tick = { path = "../.psoxide/sdk/crates/psx-tick" }
 psx-math = { path = "../.psoxide/sdk/crates/psx-math" }
 psx-vram = { path = "../.psoxide/sdk/crates/psx-vram" }
 psx-io   = { path = "../.psoxide/sdk/crates/psx-io" }
