@@ -452,8 +452,10 @@ const SOFT_SPLIT_TARGET_SPAN_PX: i32 = 96;
 /// screen splits: the screen-space affine displacement budget in 1/8 pixel
 /// (`psx_engine::tess`). Zero keeps the historical rules (2 and 4 texel edge
 /// errors, near-presence splits, 96 px quadtree cells, `zmax > 2 zmin`
-/// screen splits).
-const WARP_PX_Q3: u32 = 64;
+/// screen splits). 64 px (512) was chosen over 8 px from side-by-side frames
+/// (8, 16, 32 and 64 px compared): no visible loss in play, +31.5% fps on the
+/// chapter-two tape; it also closes some cracks the 8 px split left on seams.
+const WARP_PX_Q3: u32 = 512;
 /// Route in-band screen triangles through the edge-local perspective split
 /// (`push_tri_gpu_split`) under the warp policy. Most of the policy's gain
 /// on dust2 comes from here (textured pixels over one texel 44% -> 18%);
@@ -495,7 +497,7 @@ fn warp_cell_edge_over(a: &render::CVert, b: &render::CVert) -> bool {
 /// triangles, the largest warp on the tram ride; it now splits per axis as
 /// far as this budget asks, each cell keyed at its own depth. Zero restores
 /// the two-triangle fallback.
-const WORLD_DEPTH_SPLIT_PX_Q3: u32 = 64;
+const WORLD_DEPTH_SPLIT_PX_Q3: u32 = 512;
 /// The ranked shortlist also admits big CLOSE patches whose affine error is
 /// low (head-on walls): within this depth and above this screen span, a patch
 /// competes for the fixed refinement budget so near geometry reads uniformly
