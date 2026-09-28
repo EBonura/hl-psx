@@ -143,6 +143,37 @@ pub unsafe fn call_on_projection_stack(
     true
 }
 
+/// Run `entry(context)` with the stack pointer at scratchpad byte
+/// `stack_top`, the trampoline's 12-byte save record at `save`.
+///
+/// # Safety
+/// `entry` follows the C ABI and its deepest call chain fits below
+/// `stack_top` without reaching `save + 12`; nothing else lives in that range
+/// until it returns; the CPU is not already on a scratchpad stack.
+#[inline(always)]
+pub unsafe fn call_on_stack(
+    context: *mut u8,
+    entry: unsafe extern "C" fn(*mut u8),
+    stack_top: usize,
+    save: usize,
+) {
+    #[cfg(target_arch = "mips")]
+    unsafe {
+        let arena = base();
+        __hlpsx_call_on_projection_stack(
+            context,
+            entry,
+            arena.add(stack_top),
+            arena.add(save).cast::<u32>(),
+        );
+    }
+    #[cfg(not(target_arch = "mips"))]
+    unsafe {
+        let _ = (stack_top, save);
+        entry(context);
+    }
+}
+
 /// Return a typed pointer at `byte_offset` within the scratchpad arena.
 ///
 /// # Safety
