@@ -33581,13 +33581,15 @@ fn play(
                             let e = entry as usize;
                             entry = PVS_FACE_NEXT.0[e];
                             if e < MAX_PVS_FACE_RECS {
-                                let rec = PVS_FACE_REC.0[e];
-                                if nbands > 1 && rec.band() as i32 != band {
+                                let face = PVS_FACE_INDEX.0[e] as usize;
+                                // A closed door's far side is never drawn. Test
+                                // it before loading the 14-byte record: behind a
+                                // closed door most listed faces stop here.
+                                if seal_hide && PVS_FACE_MARK[face >> 5] & (1 << (face & 31)) != 0 {
                                     continue;
                                 }
-                                let face = PVS_FACE_INDEX.0[e] as usize;
-                                // A closed door's far side is never drawn.
-                                if seal_hide && PVS_FACE_MARK[face >> 5] & (1 << (face & 31)) != 0 {
+                                let rec = PVS_FACE_REC.0[e];
+                                if nbands > 1 && rec.band() as i32 != band {
                                     continue;
                                 }
 
