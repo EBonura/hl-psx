@@ -30398,6 +30398,23 @@ fn play(
             spawn_pos
         };
     let mut player = phys::Player::new(spawn_pos);
+    // Direct debug boots start at the map's info_player_start, and some retail
+    // spots sit inside the floor (c1a1b's is 7 units low in hull 1). Normal
+    // play never spawns there: it arrives through a landmark. Lift such a
+    // spawn until the standing hull fits, so a debug pan measures the map and
+    // not a player re-running the failing unstick search every tick.
+    #[cfg(feature = "debug-map-boot")]
+    if landmark_found.is_none() && !launch.preserve_view && !launch.riding {
+        let mut lift = 0;
+        while lift < 64
+            && !phys::standing_fits(&m, [spawn_pos[0], spawn_pos[1] + lift, spawn_pos[2]])
+        {
+            lift += 1;
+        }
+        if lift < 64 {
+            player.pos[1] += lift;
+        }
+    }
     if launch.preserve_view {
         player.vel = carried_velocity;
         // The landmark offset already carries the centred crouch origin, so
