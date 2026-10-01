@@ -110,6 +110,12 @@ jobs:
       - name: Hydrate the pinned PSoXide SDK
         run: cargo run --release --locked --manifest-path host/hl-build/Cargo.toml -- sdk
 
+      # game/build.rs reads data/skill.cfg and the voice manifest, which only
+      # exist after a cook from a Half-Life install. Placeholders are enough
+      # to type-check; nothing here is packed or run.
+      - name: Stub the cooked data the game's build script reads
+        run: bash scripts/stub-cooked-data.sh
+
       # Every feature set hl-build, the regression runner, PGO and the
       # diagnostic builds compile, since dead code and unused imports differ
       # per cfg. `--config` appends to game/.cargo/config.toml's target flags
