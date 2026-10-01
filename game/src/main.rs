@@ -1409,6 +1409,21 @@ static mut HUD_OT: OrderingTable<HUD_OT_LEN> = OrderingTable::new();
 static mut HUD_ENV: hud::GpuEnv = hud::GpuEnv::new();
 static mut FX_OT: OrderingTable<FX_OT_LEN> = OrderingTable::new();
 
+#[inline(always)]
+unsafe fn world_ot() -> &'static mut OrderingTable<OT_LEN> {
+    &mut *core::ptr::addr_of_mut!(OT)
+}
+
+#[inline(always)]
+unsafe fn hud_ot() -> &'static mut OrderingTable<HUD_OT_LEN> {
+    &mut *core::ptr::addr_of_mut!(HUD_OT)
+}
+
+#[inline(always)]
+unsafe fn fx_ot() -> &'static mut OrderingTable<FX_OT_LEN> {
+    &mut *core::ptr::addr_of_mut!(FX_OT)
+}
+
 // --- Deferred overlay chain -------------------------------------------------
 //
 // The HUD/message/fade pass draws with immediate `write_gp0`, and every one of
@@ -1533,12 +1548,12 @@ fn sort_probe_class(class: u32) {
 }
 
 unsafe fn finish_deferred_overlays() {
-    let Some(d) = DEFERRED_OVERLAYS.take() else {
+    let Some(d) = (*core::ptr::addr_of_mut!(DEFERRED_OVERLAYS)).take() else {
         return;
     };
     telemetry::stage_begin(telemetry::stage::WORLD_FLUSH);
     gpu::submit_linked_list_wait();
-    submit_list(FX_OT.submit_head());
+    submit_list(fx_ot().submit_head());
     telemetry::stage_end(telemetry::stage::WORLD_FLUSH);
     telemetry::stage_begin(telemetry::stage::OT_SUBMIT);
     if d.screen_off != [0; 2] {
@@ -1565,7 +1580,7 @@ unsafe fn finish_deferred_overlays() {
     if d.screen_off != [0; 2] {
         gpu::set_draw_offset(0, d.draw_y);
     }
-    submit_list(HUD_OT.submit_head());
+    submit_list(hud_ot().submit_head());
     telemetry::stage_end(telemetry::stage::OT_SUBMIT);
     fx_chain_submit();
 }
@@ -1817,6 +1832,12 @@ unsafe fn queue_explosion_fx(pos: [i32; 3], mag: u8) {
 /// Any decal recorded since the last clear: lets a frame skip the decal pass.
 static mut IMPACT_MARKS_LIVE: bool = false;
 static mut IMPACT_RNG: LcgRng = LcgRng::new(0x484c_5058);
+
+#[inline(always)]
+unsafe fn impact_rng() -> &'static mut LcgRng {
+    &mut *core::ptr::addr_of_mut!(IMPACT_RNG)
+}
+
 static mut CROWBAR_HIT_VOLUME_DEN: u16 = 1;
 static mut IMPACT_PARTICLE_RECTS: [RectFlat; MAX_IMPACT_PARTICLES] =
     [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_IMPACT_PARTICLES];
@@ -2929,31 +2950,31 @@ static mut PVS_GROUP_FACE: [u16; MAX_FACE_GROUPS] = [0; MAX_FACE_GROUPS];
 /// Install the `PVS_LINK_END` sentinel that the link tables above would
 /// otherwise carry as a static initializer. Call once, before any PVS use.
 unsafe fn init_data_defaults() {
-    for ent in ENT_CACHE.iter_mut() {
+    for ent in (*core::ptr::addr_of_mut!(ENT_CACHE)).iter_mut() {
         *ent = EMPTY_ENT;
     }
-    for phase in ENT_RENDER_PHASE.iter_mut() {
+    for phase in (*core::ptr::addr_of_mut!(ENT_RENDER_PHASE)).iter_mut() {
         *phase = i32::MIN;
     }
-    for mover in MOVERS.iter_mut() {
+    for mover in (*core::ptr::addr_of_mut!(MOVERS)).iter_mut() {
         *mover = phys::NO_MOVER;
     }
-    for slot in TEX_SLOTS.iter_mut() {
+    for slot in (*core::ptr::addr_of_mut!(TEX_SLOTS)).iter_mut() {
         *slot = EMPTY_SLOT;
     }
-    for slot in VM_SLOTS.iter_mut() {
+    for slot in (*core::ptr::addr_of_mut!(VM_SLOTS)).iter_mut() {
         *slot = EMPTY_SLOT;
     }
 }
 
 unsafe fn init_pvs_link_sentinels() {
-    for link in PVS_FACE_NEXT.0.iter_mut() {
+    for link in (*core::ptr::addr_of_mut!(PVS_FACE_NEXT)).0.iter_mut() {
         *link = PVS_LINK_END;
     }
-    for first in PVS_GROUP_FIRST.iter_mut() {
+    for first in (*core::ptr::addr_of_mut!(PVS_GROUP_FIRST)).iter_mut() {
         *first = PVS_LINK_END;
     }
-    for face in PVS_GROUP_FACE.iter_mut() {
+    for face in (*core::ptr::addr_of_mut!(PVS_GROUP_FACE)).iter_mut() {
         *face = PVS_LINK_END;
     }
 }
@@ -2991,7 +3012,7 @@ unsafe fn tex_anim_init(m: &Map) {
     }
     psx_goldsrc::texture_animation::mark_members(
         (0..m.n_tex_anim).map(|c| m.tex_anim_chain(c)),
-        &mut TEX_ANIM_MASK,
+        &mut *core::ptr::addr_of_mut!(TEX_ANIM_MASK),
     );
     tex_anim_tick(m); // seat the frame-0 display tables before the first draw
 }
@@ -3004,10 +3025,10 @@ unsafe fn tex_anim_tick(m: &Map) {
     psx_goldsrc::texture_animation::tick(
         (0..m.n_tex_anim).map(|c| m.tex_anim_chain(c)),
         SIM_NOW,
-        &mut TEX_ANIM_TENTH,
-        &mut TEX_ANIM_GEN,
-        &mut PVS_TEX_ANIM_GEN,
-        &PVS_TEX_ANIM_MASK,
+        &mut *core::ptr::addr_of_mut!(TEX_ANIM_TENTH),
+        &mut *core::ptr::addr_of_mut!(TEX_ANIM_GEN),
+        &mut *core::ptr::addr_of_mut!(PVS_TEX_ANIM_GEN),
+        &*core::ptr::addr_of!(PVS_TEX_ANIM_MASK),
         map::tex_anim_set,
     );
 }
@@ -4659,10 +4680,10 @@ unsafe fn stream_map_models(
     stream_bytes: &mut u32,
     stream_sectors: &mut u32,
 ) {
-    for t in TYPE_TO_SLOT.iter_mut() {
+    for t in (*core::ptr::addr_of_mut!(TYPE_TO_SLOT)).iter_mut() {
         *t = MODEL_SLOT_NONE;
     }
-    for lm in LOADED_MODELS.iter_mut() {
+    for lm in (*core::ptr::addr_of_mut!(LOADED_MODELS)).iter_mut() {
         *lm = LoadedModel::ZERO;
     }
     let buf_ptr = model_ptr();
@@ -5082,9 +5103,9 @@ unsafe fn tram_path_track_use(m: &Map, target: u16, use_type: u8) {
     while i < m.n_way.min(256) {
         if target != 0 && m.way_name(i) == target {
             let bits = if m.way_alt(i).is_some() {
-                &mut TRAM_NODE_ALT
+                &mut *core::ptr::addr_of_mut!(TRAM_NODE_ALT)
             } else {
-                &mut TRAM_NODE_OFF
+                &mut *core::ptr::addr_of_mut!(TRAM_NODE_OFF)
             };
             let mask = 1u32 << (i & 31);
             match use_type {
@@ -5480,7 +5501,7 @@ fn tram_advance(
             *seg = next;
             *seg_dist = 0;
             unsafe {
-                if TRAM_PASSED_N < TRAM_PASSED.len() {
+                if TRAM_PASSED_N < (*core::ptr::addr_of!(TRAM_PASSED)).len() {
                     TRAM_PASSED[TRAM_PASSED_N] = next as u16;
                     TRAM_PASSED_N += 1;
                 }
@@ -5820,7 +5841,8 @@ unsafe fn music_apply() {
         // parameterless Play); anything else starts its track from the top.
         let play_ok = mode_ok
             && if CD_TRACK_WANT == CD_RESUME_TRACK && CD_RESUME_MSF != [0; 3] {
-                psx_io::cdrom::try_command(0x02, &CD_RESUME_MSF, 2_000_000).is_some()
+                psx_io::cdrom::try_command(0x02, &*core::ptr::addr_of!(CD_RESUME_MSF), 2_000_000)
+                    .is_some()
                     && psx_io::cdrom::try_command(0x03, &[], 2_000_000).is_some()
             } else {
                 psx_io::cdrom::try_play_track(CD_TRACK_WANT as u8, 2_000_000).is_some()
@@ -5974,7 +5996,7 @@ unsafe fn set_global(hash: u16, on: bool) {
             return;
         }
     }
-    if GLOBAL_COUNT < GLOBAL_HASH.len() {
+    if GLOBAL_COUNT < (*core::ptr::addr_of!(GLOBAL_HASH)).len() {
         GLOBAL_HASH[GLOBAL_COUNT] = hash;
         GLOBAL_ON[GLOBAL_COUNT] = on;
         GLOBAL_COUNT += 1;
@@ -8547,7 +8569,7 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
     let use_pvs = valid_pvs_leaf(m, landmark_leaf);
     if use_pvs {
         let (visofs, _, _) = m.leaf(landmark_leaf as usize);
-        decompress_vis(m, visofs, &mut VIS_BITS);
+        decompress_vis(m, visofs, &mut *core::ptr::addr_of_mut!(VIS_BITS));
     }
 
     let mut carried = 0usize;
@@ -10736,7 +10758,7 @@ unsafe fn logic_use_entity(
                 PROP_SCRIPT_GOAL[pi] = [0; 3]; // vertical toss velocity, no script owner
                 PROP_AI_TIMER[pi] = 0; // CanThink has not enabled touch yet
                 let skin = if rec.arg1 == 6 {
-                    (IMPACT_RNG.next_mixed() % 6) as u16
+                    (impact_rng().next_mixed() % 6) as u16
                 } else {
                     rec.arg1.min(5)
                 };
@@ -12988,7 +13010,8 @@ unsafe fn logic_touch_triggers(
             0..=50 => 95,
             _ => 0,
         };
-        if (IMPACT_RNG.next_mixed() & 127) < chance || (IMPACT_RNG.next_mixed() & 127) < chance {
+        if (impact_rng().next_mixed() & 127) < chance || (impact_rng().next_mixed() & 127) < chance
+        {
             sfx::play_vol(
                 sfx::GEIGER,
                 if range > 400 {
@@ -13141,8 +13164,8 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     PLATROT_RIDER_LOCAL = [0; 3];
     PLATROT_RIDER_YAW = 0;
     LIGHTSTYLE_ACTIVE_MASK = 0;
-    PVS_LIVE_ENT_BITS.fill(0);
-    PVS_LIVE_DIRTY_BITS.fill(u32::MAX);
+    (*core::ptr::addr_of_mut!(PVS_LIVE_ENT_BITS)).fill(0);
+    (*core::ptr::addr_of_mut!(PVS_LIVE_DIRTY_BITS)).fill(u32::MAX);
     let mut ei = 0usize;
     while ei < MAX_ENTS {
         ENT_ACTIVE[ei] = if ei < nents { 1 } else { 0 };
@@ -14584,7 +14607,10 @@ fn prop_floor_y_down(m: &Map, pi: usize, pos: [i32; 3], down: i32) -> Option<i32
     let mut col = [0u16; 8];
     let mut ncol = 0usize;
     unsafe {
-        let nc = PROP_NEAR_COUNT.get(pi).copied().unwrap_or(0xFF);
+        let nc = (*core::ptr::addr_of!(PROP_NEAR_COUNT))
+            .get(pi)
+            .copied()
+            .unwrap_or(0xFF);
         if nc == 0xFF {
             // No shortlist: filter the full ent set for this column.
             let nents = ENT_SOLID_COUNT;
@@ -16381,7 +16407,7 @@ unsafe fn train_set_offset(rec: map::LogicEnt, t: usize, pos: [i32; 3]) {
 #[optimize(size)]
 unsafe fn init_trains(m: &Map, nlogic: usize, nents: usize) {
     TRAIN_COUNT = 0;
-    for e in ENT_TRAIN_SLOT.iter_mut() {
+    for e in (*core::ptr::addr_of_mut!(ENT_TRAIN_SLOT)).iter_mut() {
         *e = 0xFF;
     }
     let mut li = 0usize;
@@ -16689,7 +16715,7 @@ fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
         }
         // GoldSrc uses the directional pain compass plus view punch, not a
         // full-screen red damage wash.
-        let r = IMPACT_RNG.next() as i32;
+        let r = impact_rng().next() as i32;
         add_view_punch(dmg.min(24) as i32 + (r % 16) - 8, (r % 24) - 12);
     }
     if *armor > 0 {
@@ -17876,7 +17902,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
     TALKING_UNTIL = 0;
     TALKING_VOICE = 0;
     let voices = room_budget::TALK_VOICES[map_index];
-    MAP_TALK_IDS.copy_from_slice(&voices[..6]);
+    (*core::ptr::addr_of_mut!(MAP_TALK_IDS)).copy_from_slice(&voices[..6]);
     MAP_VOICE_PREFIX = voices[6];
     let mut i = 0usize;
     while i < MAX_PROPS {
@@ -19544,7 +19570,7 @@ unsafe fn clear_combat_fx() {
     clear_projectiles();
     PENDING_PLAYER_DAMAGE = 0;
     PENDING_GAUSS_SHOVE = [0; 3];
-    IMPACT_PARTICLES.clear();
+    (*core::ptr::addr_of_mut!(IMPACT_PARTICLES)).clear();
     let mut i = 0usize;
     while i < MAX_IMPACT_MARKS {
         IMPACT_MARKS[i] = EMPTY_IMPACT_MARK;
@@ -19566,7 +19592,7 @@ unsafe fn decay_combat_fx() {
     // Particle bursts are transient; bullet/blood MARKS now persist (like HL
     // decals) -- they stay at full colour until the fixed-size ring buffer
     // recycles the oldest, so a wall you shot keeps its holes.
-    IMPACT_PARTICLES.update(1);
+    (*core::ptr::addr_of_mut!(IMPACT_PARTICLES)).update(1);
     let mut i = 0usize;
     while i < MAX_TRACERS {
         if TRACERS[i].2 > 0 {
@@ -19590,7 +19616,7 @@ unsafe fn spawn_impact_mark(m: &Map, hit: &phys::RayHit, kind: u8) {
         IMPACT_KIND_YBLOOD => sprite::DECAL_YBLOOD,
         _ => sprite::DECAL_SHOT,
     };
-    put_impact_mark(m, hit, kind, family, IMPACT_RNG.next_mixed());
+    put_impact_mark(m, hit, kind, family, impact_rng().next_mixed());
 }
 
 /// CDecal::TriggerDecal: trace the diagonal through the infodecal and stamp
@@ -19669,7 +19695,14 @@ unsafe fn spawn_impact_particles(screen: (i16, i16), kind: u8) {
         IMPACT_KIND_YBLOOD => ((203, 183, 15), 5, 28, 12),
         _ => ((232, 186, 82), 7, 44, 10),
     };
-    IMPACT_PARTICLES.spawn_burst(&mut IMPACT_RNG, screen, color, count, spread, ttl);
+    (*core::ptr::addr_of_mut!(IMPACT_PARTICLES)).spawn_burst(
+        impact_rng(),
+        screen,
+        color,
+        count,
+        spread,
+        ttl,
+    );
 }
 
 /// A bullet or crowbar strike on the world: a decal on the surface plus sparks.
@@ -19750,7 +19783,7 @@ unsafe fn spawn_blood(
         let mut a = 0;
         while a < 3 {
             let dir = (shot_end[a] - shot_start[a]) * 4096 / len;
-            let d = dir + IMPACT_RNG.below(2 * noise as u32 + 1) as i32 - noise;
+            let d = dir + impact_rng().below(2 * noise as u32 + 1) as i32 - noise;
             end[a] += (d * BLEED_TRACE_DIST) >> 12;
             a += 1;
         }
@@ -20209,7 +20242,7 @@ unsafe fn fire_hitscan(
                     map::MATERIAL_CONCRETE => {
                         // next_mixed, not next: bit 0 of the LCG strictly alternates, so this
                         // was ticking STEP1, STEP2, STEP1 rather than choosing.
-                        let sample = if IMPACT_RNG.next_mixed() & 1 == 0 {
+                        let sample = if impact_rng().next_mixed() & 1 == 0 {
                             sfx::STEP1
                         } else {
                             sfx::STEP2
@@ -20279,7 +20312,7 @@ unsafe fn fire_hitscan(
             sfx::play_world(sfx::CBAR_HITBOD, target);
             CROWBAR_HIT_VOLUME_DEN = 0;
         } else {
-            let thud = if IMPACT_RNG.next_mixed() & 1 == 0 {
+            let thud = if impact_rng().next_mixed() & 1 == 0 {
                 sfx::BULLET_HIT1
             } else {
                 sfx::BULLET_HIT2
@@ -20327,7 +20360,7 @@ unsafe fn fire_weapon(
         if mag <= 0 {
             0
         } else {
-            (IMPACT_RNG.below((2 * mag + 1) as u32) as i32) - mag
+            (impact_rng().below((2 * mag + 1) as u32) as i32) - mag
         }
     };
     match d.fire {
@@ -20875,9 +20908,9 @@ unsafe fn explode_inner(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_
     // Flying sparks + debris chunks thrown outward, over the particle flash.
     let mut s = 0;
     while s < 7 {
-        let vx = (IMPACT_RNG.below(25) as i32) - 12;
-        let vy = 5 + (IMPACT_RNG.below(14) as i32);
-        let vz = (IMPACT_RNG.below(25) as i32) - 12;
+        let vx = (impact_rng().below(25) as i32) - 12;
+        let vy = 5 + (impact_rng().below(14) as i32);
+        let vz = (impact_rng().below(25) as i32) - 12;
         spawn_debris(pos, [vx, vy, vz], DEBRIS_SPARK, 14);
         s += 1;
     }
@@ -21286,7 +21319,7 @@ unsafe fn spawn_breakable_shards(rec: map::LogicEnt, live_center: [i32; 3]) {
     while shard < 6 {
         let sample_axis = |lo: i32, hi: i32| -> i32 {
             let span = (hi - lo + 1).max(1);
-            lo + (IMPACT_RNG.next() as i32).rem_euclid(span)
+            lo + (impact_rng().next() as i32).rem_euclid(span)
         };
         let p = [
             sample_axis(rec.mins[0], rec.maxs[0]) + live_offset[0],
@@ -21296,9 +21329,9 @@ unsafe fn spawn_breakable_shards(rec: map::LogicEnt, live_center: [i32; 3]) {
         // TE_BREAKMODEL randomization=10 around a zero base velocity. Bias Y
         // upward just enough for the six fragments to read as a burst.
         let vel = [
-            (IMPACT_RNG.below(21) as i32) - 10,
-            6 + (IMPACT_RNG.below(9) as i32),
-            (IMPACT_RNG.below(21) as i32) - 10,
+            (impact_rng().below(21) as i32) - 10,
+            6 + (impact_rng().below(9) as i32),
+            (impact_rng().below(21) as i32) - 10,
         ];
         spawn_debris(p, vel, DEBRIS_BREAK_BASE + material, 50);
         shard += 1;
@@ -21316,7 +21349,7 @@ unsafe fn logic_shoot(m: &Map, li: usize, now: u16) {
     let var = rec.flags as i32;
     let mut vel = rec.mins;
     for v in &mut vel {
-        *v += IMPACT_RNG.below(2 * var as u32 + 1) as i32 - var;
+        *v += impact_rng().below(2 * var as u32 + 1) as i32 - var;
     }
     spawn_debris(rec.origin, vel, rec.arg1 as u8, 50);
     LOGIC_COUNTER[li] -= 1;
@@ -21490,7 +21523,7 @@ unsafe fn render_explosions(
 
 /// Eject a brass casing near the muzzle: up + to the right, tumbling away.
 unsafe fn eject_casing(eye: [i32; 3], rot: &Mat3I16) {
-    let jitter = (IMPACT_RNG.below(5) as i32) - 2;
+    let jitter = (impact_rng().below(5) as i32) - 2;
     // Right + up + a little forward from the eye (view axes in world coords).
     let pos = [
         eye[0] + ((rot.m[0][0] as i32 * 6 + rot.m[2][0] as i32 * 12) >> 12),
@@ -21509,9 +21542,9 @@ unsafe fn eject_casing(eye: [i32; 3], rot: &Mat3I16) {
 unsafe fn spawn_gibs(pos: [i32; 3], n: u8) {
     let mut k = 0;
     while k < n {
-        let vx = (IMPACT_RNG.below(15) as i32) - 7;
-        let vz = (IMPACT_RNG.below(15) as i32) - 7;
-        let vy = 8 + (IMPACT_RNG.below(8) as i32);
+        let vx = (impact_rng().below(15) as i32) - 7;
+        let vz = (impact_rng().below(15) as i32) - 7;
+        let vy = 8 + (impact_rng().below(8) as i32);
         spawn_debris([pos[0], pos[1] + 20, pos[2]], [vx, vy, vz], DEBRIS_GIB, 70);
         k += 1;
     }
@@ -21543,7 +21576,7 @@ unsafe fn tick_env_sparks(m: &Map, nlogic: usize) {
         }
         let rec = m.logic(li);
         if dist2_3(rec.origin, LOGIC_PLAYER_POS) < 1200 * 1200
-            && (IMPACT_RNG.next_mixed() & 0x3F) == 0
+            && (impact_rng().next_mixed() & 0x3F) == 0
         {
             let o = rec.origin;
             spark_burst(o, 4, 3, 8, 10);
@@ -21607,9 +21640,15 @@ unsafe fn tick_beams(m: &Map, nlogic: usize, nents: usize, movers: &[phys::Mover
                             a1.target as i16 as i32,
                         ];
                         let d = [
-                            (BEAM_RNG.below((2 * radius + 1) as u32) as i32) - radius,
-                            (BEAM_RNG.below((radius + 1) as u32) as i32) - radius / 2,
-                            (BEAM_RNG.below((2 * radius + 1) as u32) as i32) - radius,
+                            ((*core::ptr::addr_of_mut!(BEAM_RNG)).below((2 * radius + 1) as u32)
+                                as i32)
+                                - radius,
+                            ((*core::ptr::addr_of_mut!(BEAM_RNG)).below((radius + 1) as u32)
+                                as i32)
+                                - radius / 2,
+                            ((*core::ptr::addr_of_mut!(BEAM_RNG)).below((2 * radius + 1) as u32)
+                                as i32)
+                                - radius,
                         ];
                         let goal = [start[0] + d[0], start[1] + d[1], start[2] + d[2]];
                         let hit = phys::trace_line(m, &[], start, goal)
@@ -21866,9 +21905,9 @@ unsafe fn beam_sparks(at: [i32; 3]) {
 unsafe fn spark_burst(at: [i32; 3], count: u8, vy_base: i32, vy_range: u32, ttl: u8) {
     let mut s = 0;
     while s < count {
-        let vx = (IMPACT_RNG.below(11) as i32) - 5;
-        let vy = vy_base + (IMPACT_RNG.below(vy_range) as i32);
-        let vz = (IMPACT_RNG.below(11) as i32) - 5;
+        let vx = (impact_rng().below(11) as i32) - 5;
+        let vy = vy_base + (impact_rng().below(vy_range) as i32);
+        let vz = (impact_rng().below(11) as i32) - 5;
         spawn_debris(at, [vx, vy, vz], DEBRIS_SPARK, ttl);
         s += 1;
     }
@@ -22102,29 +22141,29 @@ unsafe fn rebuild_pvs_cache(
     seal_state: u32,
 ) {
     let (visofs, _, _) = m.leaf(cam_leaf as usize);
-    decompress_vis(m, visofs, &mut VIS_BITS);
+    decompress_vis(m, visofs, &mut *core::ptr::addr_of_mut!(VIS_BITS));
     if eye_under {
         if let Some(dry_leaf) = dry_leaf_above(m, eye) {
             let (dry_visofs, _, _) = m.leaf(dry_leaf);
-            merge_vis(m, dry_visofs, &mut VIS_BITS);
+            merge_vis(m, dry_visofs, &mut *core::ptr::addr_of_mut!(VIS_BITS));
         }
     }
     PVS_TEX_ANIM_GEN = 0;
     PVS_ENT_COUNT = 0;
     let compiled = psx_goldsrc::pvs_faces::compile_faces(
         m,
-        &VIS_BITS,
-        &TEX_ANIM_MASK,
+        &*core::ptr::addr_of!(VIS_BITS),
+        &*core::ptr::addr_of!(TEX_ANIM_MASK),
         PVS_GROUP_COUNT,
         psx_goldsrc::pvs_faces::FaceBuffers {
-            indices: &mut PVS_FACE_INDEX.0,
-            next: &mut PVS_FACE_NEXT.0,
-            records: &mut PVS_FACE_REC.0,
-            marks: &mut PVS_FACE_MARK,
-            group_first: &mut PVS_GROUP_FIRST,
-            group_face: &mut PVS_GROUP_FACE,
-            active_groups: &mut PVS_GROUP_ACTIVE,
-            animated_textures: &mut PVS_TEX_ANIM_MASK,
+            indices: &mut *core::ptr::addr_of_mut!(PVS_FACE_INDEX.0),
+            next: &mut *core::ptr::addr_of_mut!(PVS_FACE_NEXT.0),
+            records: &mut *core::ptr::addr_of_mut!(PVS_FACE_REC.0),
+            marks: &mut *core::ptr::addr_of_mut!(PVS_FACE_MARK),
+            group_first: &mut *core::ptr::addr_of_mut!(PVS_GROUP_FIRST),
+            group_face: &mut *core::ptr::addr_of_mut!(PVS_GROUP_FACE),
+            active_groups: &mut *core::ptr::addr_of_mut!(PVS_GROUP_ACTIVE),
+            animated_textures: &mut *core::ptr::addr_of_mut!(PVS_TEX_ANIM_MASK),
         },
     );
     PVS_LEAF_COUNT = compiled.leaf_count;
@@ -22154,7 +22193,7 @@ unsafe fn rebuild_pvs_cache(
             }
             i += 1;
         }
-        decompress_vis(m, visofs, &mut VIS_BITS);
+        decompress_vis(m, visofs, &mut *core::ptr::addr_of_mut!(VIS_BITS));
     }
 
     let mut ei = 0usize;
@@ -22392,7 +22431,7 @@ unsafe fn live_entity_pvs_mark_dirty(ei: usize) {
 #[inline(never)]
 unsafe fn refresh_live_entity_pvs(m: &Map, pvs_changed: bool) {
     if pvs_changed {
-        PVS_LIVE_ENT_BITS.fill(0);
+        (*core::ptr::addr_of_mut!(PVS_LIVE_ENT_BITS)).fill(0);
     }
     let mut bi = 0usize;
     while bi < PVS_ENT_COUNT {
@@ -22421,7 +22460,7 @@ unsafe fn refresh_live_entity_pvs(m: &Map, pvs_changed: bool) {
         }
         bi += 1;
     }
-    PVS_LIVE_DIRTY_BITS.fill(0);
+    (*core::ptr::addr_of_mut!(PVS_LIVE_DIRTY_BITS)).fill(0);
 }
 
 /// The GTE's perspective quotient H/SZ3 saturates at ~2.0 (UNR result caps at
@@ -22557,7 +22596,7 @@ unsafe fn next_proj_token() -> u16 {
     // Marks are one byte wide, so the token space is 1..=255.
     let next = PROJ_TOKEN.wrapping_add(1);
     if next == 0 || next > u8::MAX as u16 {
-        for mark in VERT_FRAME.iter_mut() {
+        for mark in (*core::ptr::addr_of_mut!(VERT_FRAME)).iter_mut() {
             *mark = 0;
         }
         PROJ_TOKEN = 1;
@@ -22720,7 +22759,7 @@ unsafe fn push_tri_uv_words_packed(
         return;
     };
     tram_cache_capture_tri(packet as *const TriTexturedGouraud, otz);
-    OT.add(otz, packet, TriTexturedGouraud::WORDS);
+    world_ot().add(otz, packet, TriTexturedGouraud::WORDS);
     *np += 1;
 }
 
@@ -22875,7 +22914,7 @@ unsafe fn emit_projected(
         return;
     }
 
-    let n = render::near_clip(&cv, &mut CLIP_CV);
+    let n = render::near_clip(&cv, &mut *core::ptr::addr_of_mut!(CLIP_CV));
     if n < 3 {
         return;
     }
@@ -23528,7 +23567,10 @@ unsafe fn emit_soft_leaf(
     mat: TexturedGouraudPacketMaterial,
     np: &mut usize,
 ) {
-    if SOFT_CACHED_SCREEN.iter().all(Option::is_none) && c.iter().all(|v| v.v[2] >= render::NEAR_Z)
+    if (*core::ptr::addr_of!(SOFT_CACHED_SCREEN))
+        .iter()
+        .all(Option::is_none)
+        && c.iter().all(|v| v.v[2] >= render::NEAR_Z)
     {
         let p = [
             render::project_soft(c[0]),
@@ -23580,7 +23622,10 @@ unsafe fn emit_cv_split_route(
     let cached_scr = SOFT_CACHED_SCREEN;
     let cached_cv = SOFT_CACHED_CV;
     SOFT_CACHED_SCREEN = [None; 3];
-    let nc = render::near_clip(&[*cv[0], *cv[1], *cv[2]], &mut CLIP_CV);
+    let nc = render::near_clip(
+        &[*cv[0], *cv[1], *cv[2]],
+        &mut *core::ptr::addr_of_mut!(CLIP_CV),
+    );
     if nc < 3 {
         return;
     }
@@ -23756,7 +23801,9 @@ unsafe fn emit_cv_flat(
     // clip only ever existed to stop SUBDIVISION wasting children off-screen;
     // a leaf that stays in front of the near plane and inside the guard band
     // pushes the identical projected triangle the clipped path would fan.
-    if SOFT_CACHED_SCREEN.iter().all(Option::is_none)
+    if (*core::ptr::addr_of!(SOFT_CACHED_SCREEN))
+        .iter()
+        .all(Option::is_none)
         && cv[0].v[2] >= render::NEAR_Z
         && cv[1].v[2] >= render::NEAR_Z
         && cv[2].v[2] >= render::NEAR_Z
@@ -24260,7 +24307,7 @@ unsafe fn try_emit_quad_corners(
             slot.backdrop,
         )
     });
-    OT.add(otz, packet, QuadTexturedGouraud::WORDS);
+    world_ot().add(otz, packet, QuadTexturedGouraud::WORDS);
     *nq += 1;
     if native_patch {
         WORLD_AFFINE_NATIVE_GT4 = WORLD_AFFINE_NATIVE_GT4.saturating_add(1);
@@ -24444,7 +24491,7 @@ unsafe fn push_affine_heatmap_tri(
         WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
         return false;
     };
-    OT.add(otz, packet, TriFlat::WORDS);
+    world_ot().add(otz, packet, TriFlat::WORDS);
     *count += 1;
     true
 }
@@ -25691,7 +25738,7 @@ unsafe fn emit_affine_quad_child(
         false,
     );
     let packet = push_affine_quad_gt4(packets, q, mat, otz, nq);
-    OT.add(otz, &mut *packet, QuadTexturedGouraud::WORDS);
+    world_ot().add(otz, &mut *packet, QuadTexturedGouraud::WORDS);
     true
 }
 
@@ -25785,7 +25832,7 @@ unsafe fn emit_affine_quad_children(
             false,
         );
         let packet = push_affine_quad_gt4(packets, c, mat, otz, nq);
-        OT.add(otz, &mut *packet, QuadTexturedGouraud::WORDS);
+        world_ot().add(otz, &mut *packet, QuadTexturedGouraud::WORDS);
         child += 1;
     }
 }
@@ -25997,7 +26044,7 @@ unsafe fn push_patch_underlay(
     for p in [p0, p1, p2, p3] {
         render::warp_probe_announce(p.sx as i32, p.sy as i32, p.sz as i32);
     }
-    OT.add(otz, packet, QuadTexturedGouraud::WORDS);
+    world_ot().add(otz, packet, QuadTexturedGouraud::WORDS);
     *nq += 1;
 }
 
@@ -27858,7 +27905,7 @@ unsafe fn depth_split_underlay(
     let far = q.iter().map(|v| v.projected.sz as i32).max().unwrap_or(0);
     let otz = world_order_key(ordering::PrimitiveDepths::quad(far, far, far, far), false);
     let packet = push_affine_quad_gt4(packets, [&q[0], &q[1], &q[2], &q[3]], mat, otz, nq);
-    OT.add(otz, &mut *packet, QuadTexturedGouraud::WORDS);
+    world_ot().add(otz, &mut *packet, QuadTexturedGouraud::WORDS);
 }
 
 /// Error-bounded split of a cooked quad refused by the GT4 fast path only
@@ -28718,7 +28765,7 @@ unsafe fn insert_model_depth_stream(first: *mut u32, end: *mut u32) {
             let next = (*packet).tag;
             let key = (*packet).uv2 >> 16;
             (*packet).uv2 &= 0xffff;
-            OT.add((key >> 4) as usize, &mut *packet, TriTextured::WORDS);
+            world_ot().add((key >> 4) as usize, &mut *packet, TriTextured::WORDS);
             offset = next;
         }
     }
@@ -29132,7 +29179,7 @@ unsafe fn draw_beam_textured(
             uv2: uv[2] as u32,
         };
         if let Some(pk) = packets.push(prim) {
-            OT.add(otz, pk, TriTexturedGouraud::WORDS);
+            world_ot().add(otz, pk, TriTexturedGouraud::WORDS);
         } else {
             note_render_packet_drop(false);
         }
@@ -31323,7 +31370,8 @@ fn play(
             LEVEL_ENTRY_GRAVITY = cp.gravity as i32;
             GLOBAL_HASH = cp.global_hash;
             GLOBAL_ON = cp.global_on;
-            GLOBAL_COUNT = (cp.global_count as usize).min(GLOBAL_HASH.len());
+            GLOBAL_COUNT =
+                (cp.global_count as usize).min((*core::ptr::addr_of!(GLOBAL_HASH)).len());
             pending_vm_switch = true;
         } else {
             PENDING_RESTORE_ACTIVE = false;
@@ -33306,7 +33354,7 @@ fn play(
                 LOGIC_ACTIVATOR = 0;
                 // Teleport lands before this frame renders (the render eye is
                 // recomputed below); push adds velocity while inside the volume.
-                if let Some((dest, dyaw)) = TELEPORT_REQUEST.take() {
+                if let Some((dest, dyaw)) = (*core::ptr::addr_of_mut!(TELEPORT_REQUEST)).take() {
                     player.pos = dest;
                     player.clear_velocity();
                     player.on_ground = false;
@@ -33541,7 +33589,7 @@ fn play(
                     // Camera kick: up per the weapon's class + a small random
                     // horizontal jolt so bursts wander like the real guns.
                     let k = WEAPON_KICK[weapon.current];
-                    let yj = (IMPACT_RNG.below(5) as i32) - 2;
+                    let yj = (impact_rng().below(5) as i32) - 2;
                     add_view_punch(k, yj * k / 24);
                 }
                 let fire_base_t = [
@@ -33951,9 +33999,10 @@ fn play(
                 // Presented-frame randomness must not advance the simulation's
                 // RNG once render count decouples from tick count.
                 #[cfg(feature = "decoupled-present")]
-                let j = |m: i32| (VIEW_RNG.next() as i32 % (2 * m + 1)) - m;
+                let j =
+                    |m: i32| ((*core::ptr::addr_of_mut!(VIEW_RNG)).next() as i32 % (2 * m + 1)) - m;
                 #[cfg(not(feature = "decoupled-present"))]
-                let j = |m: i32| (IMPACT_RNG.below((2 * m + 1) as u32) as i32) - m;
+                let j = |m: i32| (impact_rng().below((2 * m + 1) as u32) as i32) - m;
                 view_yaw = ((view_yaw as i32 + j(amp * 6)) & 0xFFF) as u16;
                 view_pitch = (view_pitch as i32 + j(amp * 6))
                     .clamp(-PITCH_MAX as i32, PITCH_MAX as i32) as i16;
@@ -33984,7 +34033,14 @@ fn play(
                     let rng = core::ptr::addr_of_mut!(VIEW_RNG);
                     #[cfg(not(feature = "decoupled-present"))]
                     let rng = core::ptr::addr_of_mut!(IMPACT_RNG);
-                    IMPACT_PARTICLES.spawn_burst(&mut *rng, (sx, sy), (250, 170, 40), cnt, 96, 20);
+                    (*core::ptr::addr_of_mut!(IMPACT_PARTICLES)).spawn_burst(
+                        &mut *rng,
+                        (sx, sy),
+                        (250, 170, 40),
+                        cnt,
+                        96,
+                        20,
+                    );
                 }
             }
             PENDING_EXPLO_N = 0;
@@ -34039,9 +34095,9 @@ fn play(
             flip_queued = true;
         }
         unsafe {
-            OT.clear();
-            HUD_OT.clear();
-            FX_OT.clear();
+            world_ot().clear();
+            hud_ot().clear();
+            fx_ot().clear();
             update_flashlight_reach(&m, eye, &rot);
             XHAIR = EMPTY_XHAIR; // DEBUG: reset crosshair-tri pick for this frame
                                  // Disc streaming borrows this arena for its WORLD.PAK table while
@@ -34057,7 +34113,8 @@ fn play(
                 RENDER_PACKET_DROPS = 0;
                 MODEL_PACKET_DROPS = 0;
             }
-            let mut packets = PrimitivePacketArena::new(&mut PRIMITIVE_PACKETS);
+            let mut packets =
+                PrimitivePacketArena::new(&mut *core::ptr::addr_of_mut!(PRIMITIVE_PACKETS));
             let mut np = 0usize;
             let mut nq = 0usize;
             let room_affine_split_tris: u32;
@@ -34215,7 +34272,7 @@ fn play(
                 }
                 telemetry::stage_begin(telemetry::stage::ROOM_CELL_SELECT);
                 if bucketed {
-                    for c in PVS_BAND_START.iter_mut() {
+                    for c in (*core::ptr::addr_of_mut!(PVS_BAND_START)).iter_mut() {
                         *c = 0;
                     }
                 }
@@ -35070,14 +35127,14 @@ fn play(
                     let mut qi = 0usize;
                     while ti < TRAM_TRI_COUNT || qi < TRAM_QUAD_COUNT {
                         if qi < TRAM_QUAD_COUNT && TRAM_QUAD_AFTER_TRIS[qi] as usize <= ti {
-                            OT.add(
+                            world_ot().add(
                                 TRAM_QUAD_OTZ[qi] as usize,
                                 &mut TRAM_QUAD_CACHE[qi],
                                 QuadTexturedGouraud::WORDS,
                             );
                             qi += 1;
                         } else if ti < TRAM_TRI_COUNT {
-                            OT.add(
+                            world_ot().add(
                                 TRAM_TRI_OTZ[ti] as usize,
                                 &mut TRAM_TRI_CACHE[ti],
                                 TriTexturedGouraud::WORDS,
@@ -35457,9 +35514,9 @@ fn play(
             // Animated explosion fireballs (weapon blasts + env_explosion), same
             // additive-billboard path as the placed sprites above.
             render_explosions(&mut packets, &mut np, &rot, base_t);
-            queue_rpg_spot(&mut packets, &mut OT, &rot, base_t);
+            queue_rpg_spot(&mut packets, world_ot(), &rot, base_t);
             if IMPACT_MARKS_LIVE {
-                queue_impact_marks(&m, have_pvs, &mut packets, &mut OT, &rot, base_t);
+                queue_impact_marks(&m, have_pvs, &mut packets, world_ot(), &rot, base_t);
             }
             telemetry::stage_end(telemetry::stage::MODEL_INSTANCES);
             telemetry::counter(telemetry::counter::MODEL_INSTANCE_DRAWS, model_draws);
@@ -35528,7 +35585,11 @@ fn play(
                 let w = (t * 255 / ENDING_FADE_TICKS) as u8;
                 DEATH_WASH = 0;
                 DEATH_OVERLAY = RectFlat::new(0, 0, 320, 240, w, w, w);
-                HUD_OT.add(0, &mut DEATH_OVERLAY, RectFlat::WORDS);
+                hud_ot().add(
+                    0,
+                    &mut *core::ptr::addr_of_mut!(DEATH_OVERLAY),
+                    RectFlat::WORDS,
+                );
                 if t >= ENDING_FADE_TICKS {
                     return PlayExit::Ending;
                 }
@@ -35543,7 +35604,7 @@ fn play(
                 DEATH_WASH = 0;
                 true
             };
-            queue_world_beams(&mut packets, &mut OT, &m, nlogic, &rot, base_t);
+            queue_world_beams(&mut packets, world_ot(), &m, nlogic, &rot, base_t);
 
             // Present the previous frame at the last possible moment. Camera,
             // visibility, world emit, entities and models touch neither the
@@ -35627,14 +35688,14 @@ fn play(
                 let v = XHAIR.sv;
                 let fill = psx_gpu::prim::TriFlat::new([v[0], v[1], v[2]], 255, 0, 255);
                 if let Some(pk) = packets.push(fill) {
-                    OT.add(1, pk, psx_gpu::prim::TriFlat::WORDS);
+                    world_ot().add(1, pk, psx_gpu::prim::TriFlat::WORDS);
                 } else {
                     note_render_packet_drop(false);
                 }
             }
 
             telemetry::stage_begin(telemetry::stage::WORLD_FLUSH);
-            OT.submit_async();
+            world_ot().submit_async();
             // HUD and effect projection only touch their own packet storage.
             // Build them while channel 2 walks the world list, hiding this CPU
             // work without changing either ordering table or draw order.
@@ -35661,14 +35722,18 @@ fn play(
                     },
                     weapon_icon_ticks,
                     train_hud_position(tram_controlling, tram_speed, TRACKTRAIN_USE_SPEED as i32),
-                    &mut HUD_OT,
-                    &mut HUD_PRIMS,
+                    hud_ot(),
+                    &mut *core::ptr::addr_of_mut!(HUD_PRIMS),
                 );
             }
-            let _ =
-                IMPACT_PARTICLES.render_into_ot(&mut FX_OT, &mut IMPACT_PARTICLE_RECTS, 0, (0, 0));
-            render_projectiles(&mut FX_OT, &rot, base_t);
-            render_debris(&mut FX_OT, &rot, base_t);
+            let _ = (*core::ptr::addr_of!(IMPACT_PARTICLES)).render_into_ot(
+                fx_ot(),
+                &mut *core::ptr::addr_of_mut!(IMPACT_PARTICLE_RECTS),
+                0,
+                (0, 0),
+            );
+            render_projectiles(fx_ot(), &rot, base_t);
+            render_debris(fx_ot(), &rot, base_t);
             // Hide CPU-only HMD8 projection/cull/sort behind the world's DMA.
             // Packet/cache storage is disjoint and remains live until the wait.
             if let Some((vm_model, vm_slot, vm_n, vm_frame, vm_frame2, vm_frac16)) = viewmodel_draw
@@ -35684,7 +35749,7 @@ fn play(
                 );
                 telemetry::stage_end(telemetry::stage::EQUIPMENT);
             }
-            hud::prepare(hud_mat, &mut HUD_OT, &mut HUD_ENV);
+            hud::prepare(hud_mat, hud_ot(), &mut *core::ptr::addr_of_mut!(HUD_ENV));
             telemetry::stage_end(telemetry::stage::WORLD_FLUSH);
             // Every overlay packet is built; only the GPU-side tail is left.
             // Decoupled frames run it after the next simulation ticks (see

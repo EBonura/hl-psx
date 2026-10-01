@@ -16,7 +16,7 @@ static mut PAIN_NEXT: u16 = 0;
 #[optimize(size)]
 pub(crate) unsafe fn pain(pi: usize) {
     if time_reached(SIM_NOW, PAIN_NEXT) {
-        PAIN_NEXT = SIM_NOW.wrapping_add(50 + IMPACT_RNG.below(31) as u16);
+        PAIN_NEXT = SIM_NOW.wrapping_add(50 + impact_rng().below(31) as u16);
         setpiece_sfx::play(SP::GARG_PAIN, PROP_POS[pi]);
     }
 }
@@ -341,7 +341,7 @@ unsafe fn stomp_attack(m: &Map, movers: &[phys::Mover], pi: usize, aim: [i32; 3]
         let p = LOGIC_PLAYER_POS;
         [
             p[0],
-            p[1] + IMPACT_RNG.below(VIEW_HEIGHT as u32 + 1) as i32,
+            p[1] + impact_rng().below(VIEW_HEIGHT as u32 + 1) as i32,
             p[2],
         ]
     } else {
@@ -492,7 +492,7 @@ pub(crate) unsafe fn tick_world(m: &Map) {
     if t % 12 == 0 && t <= 36 {
         let i = (t / 12) as i32;
         let o = PROP_POS[pi];
-        let r = |v: i32| v + IMPACT_RNG.below(141) as i32 - 70;
+        let r = |v: i32| v + impact_rng().below(141) as i32 - 70;
         queue_explosion_fx([r(o[0]), o[1] + 32 + 15 * i, r(o[2])], (60 + 40 * i) as u8);
         sfx::play_world(sfx::EXPLODE, o);
     }

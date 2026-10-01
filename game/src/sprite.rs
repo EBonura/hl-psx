@@ -124,7 +124,7 @@ pub unsafe fn load_pack(data: &[u8]) {
 #[optimize(size)]
 pub unsafe fn load_explosion(data: &[u8]) {
     EXPL_DEF = EMPTY_DEF;
-    for s in EXPL_SLOTS.iter_mut() {
+    for s in (*core::ptr::addr_of_mut!(EXPL_SLOTS)).iter_mut() {
         *s = EMPTY_SLOT;
     }
     if data.len() < 20 || &data[0..4] != b"HSPR" {
@@ -206,7 +206,7 @@ pub fn decal_slot() -> TexSlot {
 #[inline]
 pub fn decal_pick(family: usize, pick: u32) -> Option<u8> {
     unsafe {
-        let (first, count) = *DECAL_FAMILY.get(family)?;
+        let (first, count) = *(*core::ptr::addr_of!(DECAL_FAMILY)).get(family)?;
         if count == 0 {
             return None;
         }
@@ -217,7 +217,11 @@ pub fn decal_pick(family: usize, pick: u32) -> Option<u8> {
 /// (u, v, cell size, world half-size) of decal `index`.
 #[inline]
 pub fn decal_rec(index: u8) -> [u8; 4] {
-    unsafe { *DECAL_RECS.get(index as usize).unwrap_or(&[0; 4]) }
+    unsafe {
+        *(*core::ptr::addr_of!(DECAL_RECS))
+            .get(index as usize)
+            .unwrap_or(&[0; 4])
+    }
 }
 
 #[inline]
@@ -233,7 +237,9 @@ pub fn expl_slot(frame: usize) -> TexSlot {
             return EMPTY_SLOT;
         }
         let fi = frame.min(EXPL_DEF.n_frames as usize - 1);
-        *EXPL_SLOTS.get(fi).unwrap_or(&EMPTY_SLOT)
+        *(*core::ptr::addr_of!(EXPL_SLOTS))
+            .get(fi)
+            .unwrap_or(&EMPTY_SLOT)
     }
 }
 
@@ -244,7 +250,11 @@ pub fn n_sprites() -> usize {
 
 #[inline]
 pub fn def(id: usize) -> SpriteDef {
-    unsafe { *SPRITE_DEFS.get(id).unwrap_or(&EMPTY_DEF) }
+    unsafe {
+        *(*core::ptr::addr_of!(SPRITE_DEFS))
+            .get(id)
+            .unwrap_or(&EMPTY_DEF)
+    }
 }
 
 /// The texture slot for sprite `id`'s frame `frame` (clamped to its range).
@@ -256,6 +266,8 @@ pub fn slot_for(id: usize, frame: usize) -> TexSlot {
             return EMPTY_SLOT;
         }
         let fi = d.first_frame as usize + frame.min(d.n_frames as usize - 1);
-        *SPRITE_SLOTS.get(fi).unwrap_or(&EMPTY_SLOT)
+        *(*core::ptr::addr_of!(SPRITE_SLOTS))
+            .get(fi)
+            .unwrap_or(&EMPTY_SLOT)
     }
 }

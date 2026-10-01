@@ -107,7 +107,7 @@ static mut PAIN_NEXT: u16 = 0;
 #[inline(never)]
 #[optimize(size)]
 unsafe fn zen_sound(head: [i32; 3]) {
-    if IMPACT_RNG.below(5) == 0 {
+    if impact_rng().below(5) == 0 {
         setpiece_sfx::play(SP::NIH_ATTACK, head);
     }
     setpiece_sfx::play(SP::NIH_BALL, head);
@@ -259,7 +259,7 @@ pub(crate) unsafe fn damage(pi: usize, dmg: u8) -> u8 {
     // PainSound: a laugh while above half health, a cry once the head is
     // open; at most one every 2 to 5 s.
     if time_reached(SIM_NOW, PAIN_NEXT) {
-        PAIN_NEXT = SIM_NOW.wrapping_add(40 + IMPACT_RNG.below(61) as u16);
+        PAIN_NEXT = SIM_NOW.wrapping_add(40 + impact_rng().below(61) as u16);
         if g.health > g.full / 2 {
             setpiece_sfx::play(SP::NIH_LAUGH, PROP_POS[pi]);
         } else if g.irritation >= 2 {
@@ -355,7 +355,7 @@ unsafe fn next_activity(
     } else if player_seen && g.irritation != 0 && dist < 256 && facing {
         g.seq = if g.irritation >= 2 && g.health < g.full / 2 {
             SEQ_OPEN_ATTACK
-        } else if IMPACT_RNG.below(2) == 0 {
+        } else if impact_rng().below(2) == 0 {
             SEQ_ATTACK1
         } else {
             SEQ_ATTACK2

@@ -41,7 +41,7 @@ unsafe fn controller(m: &Map, nlogic: usize, name: u16) -> Option<i32> {
 #[optimize(size)]
 pub(crate) unsafe fn field_use(m: &Map, nlogic: usize, rec: map::LogicEnt, now: u16) {
     let (mn, mx) = (rec.mins, rec.maxs);
-    let span = |a: i32, b: i32| a + (IMPACT_RNG.below((b - a).max(0) as u32 + 1) as i32);
+    let span = |a: i32, b: i32| a + (impact_rng().below((b - a).max(0) as u32 + 1) as i32);
     // Random spot in the field, at its top (HL x/y are runtime x/z).
     let mut start = [span(mn[0], mx[0]), mx[1], span(mn[2], mx[2])];
     let player = LOGIC_ACTIVATOR == 1;
@@ -85,7 +85,7 @@ pub(crate) unsafe fn field_use(m: &Map, nlogic: usize, rec: map::LogicEnt, now: 
             SHELL_AT[s] = now.wrapping_add(t).max(1);
             SHELL_PLAYER = (SHELL_PLAYER & !(1 << s)) | ((player as u16) << s);
         }
-        t += 4 + IMPACT_RNG.below(7) as u16; // RANDOM_FLOAT(0.2, 0.5)
+        t += 4 + impact_rng().below(7) as u16; // RANDOM_FLOAT(0.2, 0.5)
     }
 }
 
