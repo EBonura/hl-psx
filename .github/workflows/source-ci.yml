@@ -62,6 +62,16 @@ jobs:
           cargo fmt --manifest-path host/hl-logic-tests/Cargo.toml --package hl-logic-tests -- --check
           cargo fmt --manifest-path shared/hl-format/Cargo.toml --package hl-format -- --check
 
+      - name: Deny warnings in the host crates
+        env:
+          RUSTFLAGS: -Dwarnings
+        run: |
+          cargo check --manifest-path host/hl-build/Cargo.toml --all-targets --locked
+          cargo check --manifest-path host/hl-bsp/Cargo.toml --all-targets --locked
+          cargo check --manifest-path host/hl-content/Cargo.toml --all-targets --locked
+          cargo check --manifest-path host/hl-logic-tests/Cargo.toml --all-targets --locked
+          cargo check --manifest-path shared/hl-format/Cargo.toml --all-targets
+
       - name: Run host tests
         run: |
           cargo test --manifest-path host/hl-build/Cargo.toml --locked
@@ -83,3 +93,51 @@ jobs:
           cargo deny --manifest-path host/hl-content/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
           cargo deny --manifest-path host/hl-logic-tests/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
           cargo deny --manifest-path shared/hl-format/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
+
+  game-warnings:
+    name: Game warnings under every feature set
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: rustup show
+
+      - name: Hydrate the pinned PSoXide SDK
+        run: cargo run --release --locked --manifest-path host/hl-build/Cargo.toml -- sdk
+
+      # Every feature set hl-build, the regression runner, PGO and the
+      # diagnostic builds compile, since dead code and unused imports differ
+      # per cfg. `--config` appends to game/.cargo/config.toml's target flags
+      # (an exported RUSTFLAGS would replace them). The replay features embed
+      # a route file at compile time; an empty one is enough to type-check.
+      - name: Deny warnings in the game under every feature set
+        working-directory: game
+        run: |
+          : > "$RUNNER_TEMP/empty-route"
+          export HLPSX_SEMANTIC_INPUT="$RUNNER_TEMP/empty-route"
+          export HLPSX_ROUTE_WAYPOINTS="$RUNNER_TEMP/empty-route"
+          deny='target.mipsel-sony-psx.rustflags=["-Dwarnings"]'
+          sets=(
+            ""
+            "--no-default-features"
+            "--features main-ram-render-scratch,main-ram-projection-stack"
+            "--features performance-telemetry,debug-map-boot,debug-regression-viewpoints,debug-weapon-gallery"
+            "--features emulator-telemetry"
+            "--features affine-heatmap"
+            "--features seam-census"
+            "--features warp-probe"
+            "--features deep-reference-trace"
+            "--features semantic-input"
+            "--features route-follow"
+          )
+          for features in "${sets[@]}"; do
+            echo "::group::cargo check ${features:-(default features)}"
+            # shellcheck disable=SC2086 # the feature arguments are word-split on purpose
+            cargo check --release --locked --config "$deny" $features
+            echo "::endgroup::"
+          done
