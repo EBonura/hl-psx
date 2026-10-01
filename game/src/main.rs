@@ -29147,6 +29147,10 @@ unsafe fn draw_viewmodel(
     // are emitted consecutively, so repeat it only when the authored material
     // window changes; the first triangle always establishes a known value.
     let mut texture_window = u32::MAX;
+    // Consecutive triangles mostly share a texture: reload the 16-byte packet
+    // material only when it changes.
+    let mut packet_tex = usize::MAX;
+    let mut packet = slots[0].packet;
     for bucket in (0..VM_SORT_BUCKETS).rev() {
         let mut link = *heads.add(bucket);
         while link != VM_SORT_NONE {
@@ -29155,7 +29159,10 @@ unsafe fn draw_viewmodel(
             let packed_indices = indices.add(t).read();
             let tex = ((record >> VM_SORT_TEX_SHIFT) & 0xff) as usize;
             let shade = ((record >> VM_SORT_SHADE_SHIFT) & 0xff) as u8;
-            let slot = slots[tex.min(slots.len() - 1)];
+            if tex != packet_tex {
+                packet = slots[tex.min(slots.len() - 1)].packet;
+                packet_tex = tex;
+            }
             let a = (packed_indices & model::RENDER_FACE_INDEX_MASK) as usize;
             let b = ((packed_indices >> 10) & model::RENDER_FACE_INDEX_MASK) as usize;
             let c = ((packed_indices >> 20) & model::RENDER_FACE_INDEX_MASK) as usize;
@@ -29165,7 +29172,7 @@ unsafe fn draw_viewmodel(
                 projected_xy.add(c).read(),
             ];
             let uv_words = md.tri_uv_words(t);
-            draw_vm_tri(packed_xy, uv_words, slot.packet, shade, &mut texture_window);
+            draw_vm_tri(packed_xy, uv_words, packet, shade, &mut texture_window);
             submitted += 1;
             link = (record & VM_SORT_LINK_MASK) as u16;
         }
