@@ -24032,20 +24032,27 @@ unsafe fn try_emit_quad_corners(
     // (patch_state is MAX for them, so no persistent bit is touched).
     if native_patch || WORLD_CLASSIC_AFFINE_SELECTION || affine_previous_level != 0 {
         let emitted = if native_patch || WORLD_CLASSIC_AFFINE_SELECTION {
-            try_emit_native_affine_quad(
-                packets,
+            let indices = [b as u16, a as u16, c as u16, d as u16];
+            native_affine_patch_mask(
                 m,
-                [b as u16, a as u16, c as u16, d as u16],
+                indices,
                 [pb, pa, pc, pd],
                 uv,
-                qrgb,
-                mat,
                 slot.backdrop,
-                affine_previous_level,
                 blocked_edges,
                 patch_state,
-                nq,
-            )
+            ) != 0
+                && try_emit_native_affine_quad(
+                    packets,
+                    m,
+                    indices,
+                    [pb, pa, pc, pd],
+                    uv,
+                    qrgb,
+                    mat,
+                    slot.backdrop,
+                    nq,
+                )
         } else {
             false
         };
@@ -25590,22 +25597,20 @@ unsafe fn push_patch_underlay(
 /// the 4 KiB direct-mapped I-cache (a relinked layout alone measured -8 flips
 /// of pure alignment noise on the frozen tape).
 
-#[inline(never)]
-unsafe fn try_emit_native_affine_quad(
-    packets: &mut PrimitivePacketArena<'_>,
+/// The native patch's refinement mask: the recorded verdict on a non-ranking
+/// frame, else a fresh rank (recorded for the next frame). Inlined into the
+/// quad core so the common zero verdict costs no call into the emitter below.
+#[inline(always)]
+unsafe fn native_affine_patch_mask(
     m: &Map,
     indices: [u16; 4],
     projected: [Projected; 4],
     uv: [u16; 4],
-    rgb: [u32; 4],
-    mat: TexturedGouraudPacketMaterial,
     texture_backdrop: bool,
-    _previous_level: u8,
     blocked_edges: u8,
     patch_state: usize,
-    nq: &mut usize,
-) -> bool {
-    let current_mask = if !WORLD_AFFINE_RANK_FRAME && patch_state != usize::MAX {
+) -> u8 {
+    if !WORLD_AFFINE_RANK_FRAME && patch_state != usize::MAX {
         if m.patch_subdiv_active(patch_state) {
             1
         } else {
@@ -25624,15 +25629,27 @@ unsafe fn try_emit_native_affine_quad(
             m.set_patch_subdiv_active(patch_state, mask != 0);
         }
         mask
-    };
-    // A runtime patch has exactly two valid topologies: the original logical
-    // quad, or the build-selected regular grid. A complete mask is a selected
-    // root; a partial mask is an edge-sharing neighbour that must use the same
-    // grid. The old partial path ear-clipped those neighbours into long,
-    // camera-dependent triangles.
-    if current_mask == 0 {
-        return false;
     }
+}
+
+/// Emit a native patch whose `native_affine_patch_mask` is nonzero. A runtime
+/// patch has exactly two valid topologies: the original logical quad, or the
+/// build-selected regular grid. A complete mask is a selected root; a partial
+/// mask is an edge-sharing neighbour that must use the same grid. The old
+/// partial path ear-clipped those neighbours into long, camera-dependent
+/// triangles.
+#[inline(never)]
+unsafe fn try_emit_native_affine_quad(
+    packets: &mut PrimitivePacketArena<'_>,
+    m: &Map,
+    indices: [u16; 4],
+    projected: [Projected; 4],
+    uv: [u16; 4],
+    rgb: [u32; 4],
+    mat: TexturedGouraudPacketMaterial,
+    texture_backdrop: bool,
+    nq: &mut usize,
+) -> bool {
     // Second classic band: a split-worthy patch still measuring severe error
     // after one 2x2 level would leave its children visibly warped; hand it to
     // the recursive screen-bounded quadtree via the caller's soft fallback.
