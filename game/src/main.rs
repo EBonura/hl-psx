@@ -3122,6 +3122,8 @@ static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
 // packet prefix. Moving doors/plats remain fresh without allocating a full
 // transform key per entity (384 B at the current cap).
 static mut ENT_RENDER_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
+/// Brush-pass candidates (by PVS_ENTS slot) that draw in the moving pass.
+static mut BRUSH_MOVING_BITS: [u32; MAX_ENTS.div_ceil(32)] = [0; MAX_ENTS.div_ceil(32)];
 // Previous brush offsets only need the same signed world-coordinate range as
 // TRAIN_OFF and scripted actor goals. Keeping them i16 releases 1,080 bytes of
 // BSS without reducing the 180-entity pool; expand only at the two carry reads.
@@ -33957,26 +33959,41 @@ fn play(
             // Static world-aligned brushes draw first, moving/rotating ones in
             // a second pass (see static_brush_cacheable).
             SUBMODEL_OCCLUSION_EXTRAS = 160;
+            // Pass 0 classifies every candidate once and marks the visible
+            // moving ones; pass 1 visits only those marks. Neither verdict
+            // can change between the passes (ENT_RENDER_PHASE is snapshotted
+            // after both).
+            let moving_words = brush_iter_count.div_ceil(32).min(MAX_ENTS.div_ceil(32));
+            let mut w = 0;
+            while w < moving_words {
+                BRUSH_MOVING_BITS[w] = 0;
+                w += 1;
+            }
             let mut brush_pass = 0u8;
             while brush_pass < 2 {
                 for bi in 0..brush_iter_count {
+                    if brush_pass == 1 && BRUSH_MOVING_BITS[bi >> 5] & (1 << (bi & 31)) == 0 {
+                        continue;
+                    }
                     let ei = if have_pvs { PVS_ENTS[bi] as usize } else { bi };
                     // Borrowed, not copied: nothing in the brush pass writes
                     // ENT_CACHE (only physics and logic do), and a 64-byte
                     // copy per entity per pass was a hot memcpy.
                     let e = &*core::ptr::addr_of!(ENT_CACHE[ei]);
-                    if have_pvs
-                        && !visibility_logic::pvs_visible_now(
-                            entity_uses_live_pvs(ei, *e),
-                            true,
-                            live_entity_pvs_visible(ei),
-                        )
-                    {
-                        continue;
-                    }
-                    let cacheable = static_brush_cacheable(ei, *e);
-                    if cacheable != (brush_pass == 0) {
-                        continue;
+                    if brush_pass == 0 {
+                        if have_pvs
+                            && !visibility_logic::pvs_visible_now(
+                                entity_uses_live_pvs(ei, *e),
+                                true,
+                                live_entity_pvs_visible(ei),
+                            )
+                        {
+                            continue;
+                        }
+                        if !static_brush_cacheable(ei, *e) {
+                            BRUSH_MOVING_BITS[bi >> 5] |= 1 << (bi & 31);
+                            continue;
+                        }
                     }
                     if ENT_ACTIVE[ei] == 0 || e.blend & 0x80 != 0 {
                         continue;
@@ -34024,7 +34041,8 @@ fn play(
                             model_bounds_culled = model_bounds_culled.saturating_add(1);
                             continue;
                         }
-                        if !cacheable && e.blend == 0 {
+                        // Pass 1 draws exactly the non-cacheable (moving) brushes.
+                        if brush_pass == 1 && e.blend == 0 {
                             SUBMODEL_ACTOR_OVERLAP = brush_touches_actor(center, radius, eye);
                         }
                     }
