@@ -851,7 +851,10 @@ fn mover_may_touch_segment(mv: &Mover, p1: [i32; 3], p2: [i32; 3]) -> bool {
     overlaps(0) && overlaps(1) && overlaps(2)
 }
 
-#[inline(never)]
+// Inlined into the mover loops: called once per mover per trace, the
+// out-of-line version reloaded the six bounds from the caller's stack on every
+// call (2.5% of c1a1b's cycles in stalls on those loads and the call).
+#[inline(always)]
 fn mover_may_touch_bounds(mv: &Mover, low: &[i32; 3], high: &[i32; 3]) -> bool {
     if mv.radius <= 0 {
         return true;
