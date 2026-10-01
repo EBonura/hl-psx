@@ -352,7 +352,6 @@ pub struct Map {
 const LEAF_SZ: usize = cooked::LEAF_RECORD_SIZE;
 const FACE_SZ: usize = cooked::FACE_RECORD_SIZE;
 const TRI_SZ: usize = cooked::TRI_RECORD_SIZE;
-const LOOPVERT_SZ: usize = cooked::LOOP_VERTEX_RECORD_SIZE;
 const CLIPNODE_SZ: usize = cooked::CLIPNODE_RECORD_SIZE;
 const ENT_SZ: usize = cooked::ENTITY_RECORD_SIZE;
 const PROP_SZ: usize = cooked::PROP_RECORD_SIZE;
@@ -1171,15 +1170,6 @@ impl Map {
     }
 
     #[inline]
-    pub fn nav_link(&self, i: usize) -> usize {
-        let count = (self.nav_meta & !NAV_EXACT_ROUTES) as usize;
-        if self.nav_meta & NAV_EXACT_ROUTES != 0 || i >= count {
-            return 0;
-        }
-        rd_u16(self.data, self.nav_links_off + i * 2) as usize
-    }
-
-    #[inline]
     pub fn nav_has_exact_routes(&self) -> bool {
         self.nav_meta & NAV_EXACT_ROUTES != 0
     }
@@ -1413,12 +1403,6 @@ impl Map {
         unsafe { *(*core::ptr::addr_of!(LIGHT_PAL_RGB)).get_unchecked(idx as usize) }
     }
 
-    #[inline]
-    fn light_color(&self, idx: u8) -> (u8, u8, u8) {
-        let c = self.light_word(idx);
-        (c as u8, (c >> 8) as u8, (c >> 16) as u8)
-    }
-
     /// Select the sparse qrad style planes for one face. The records are sorted
     /// by compact face id, so a tiny binary search is paid only by the handful
     /// of faces carrying switchable lighting; all ordinary faces reset the
@@ -1556,16 +1540,6 @@ impl Map {
             DYNAMIC_PAL_SRC_OFF = self.dynamic_off;
         }
         expand_light_palettes();
-    }
-
-    #[inline]
-    pub fn tri_rgb(&self, t: usize) -> [(u8, u8, u8); 3] {
-        let w3 = self.tri_word(t, 3);
-        [
-            self.light_color((w3 >> 8) as u8),
-            self.light_color((w3 >> 16) as u8),
-            self.light_color((w3 >> 24) as u8),
-        ]
     }
 
     #[inline]
@@ -1917,21 +1891,6 @@ impl Map {
         }
     }
 
-    /// True when this native-patch face contains at least one positional quad
-    /// stored as two GT3 records because its diagonal carries an authored UV
-    /// or light seam. The cook flag avoids probing every ordinary GT3 record.
-    #[inline]
-    pub fn face_has_seamed_pair(&self, f: usize) -> bool {
-        unsafe {
-            self.data
-                .as_ptr()
-                .add(self.faces_off + f * FACE_SZ + 15)
-                .read()
-                & 0x20
-                != 0
-        }
-    }
-
     /// True for a masked-cutout face the cook found solid brushwork close
     /// behind (grate over slabs). Only these take the cutout OT pull-forward;
     /// a freestanding cutout (gate, trim) pulled forward would paint over
@@ -2024,16 +1983,6 @@ impl Map {
         rd_u16(self.data, self.loopvert_o(v))
     }
 
-    #[inline]
-    pub fn loop_vert_uv_word(&self, v: usize) -> u16 {
-        rd_u16(self.data, self.loopvert_o(v) + 2)
-    }
-
-    #[inline]
-    pub fn loop_vert_light(&self, v: usize) -> (u8, u8, u8) {
-        self.light_color(self.data[self.lv_light_off + v])
-    }
-
     /// Fused single-pass decode of one static loop vertex in PS1-ready packed
     /// form. One offset computation + one unaligned word read + one palette
     /// hit. Patch batches select this after one face-context test.
@@ -2082,34 +2031,6 @@ impl Map {
         vertex
     }
 
-    #[inline]
-    pub fn patch_is_triangle(&self, base: usize, patch: usize) -> bool {
-        self.loop_vert_idx(base + patch * 4 + 3) & 0x8000 != 0
-    }
-
-    /// The current GT3 and the following GT3 share a valid positional quad,
-    /// but could not become one GT4 because their UV or light values differ on
-    /// the diagonal. Runtime may correct them together without erasing that
-    /// authored seam.
-    #[inline]
-    pub fn patch_is_seamed_pair_start(&self, base: usize, patch: usize) -> bool {
-        self.loop_vert_idx(base + patch * 4 + 3) & 0xC000 == 0xC000
-    }
-
-    /// Boundary edges on which runtime midpoint insertion is forbidden. The
-    /// source BSP loop contained an authored collinear point on these spans,
-    /// so treating the collapsed span as one edge would reopen a T-junction.
-    /// Edge order matches the runtime quad: q0-q1, q1-q3, q3-q2, q2-q0.
-    #[inline]
-    pub fn patch_blocked_edges(&self, base: usize, patch: usize) -> u8 {
-        let first = base + patch * 4;
-        let c0 = (self.loop_vert_idx(first) >> 14) as u8 & 1;
-        let c1 = (self.loop_vert_idx(first + 1) >> 14) as u8 & 1;
-        let c2 = (self.loop_vert_idx(first + 2) >> 14) as u8 & 1;
-        let c3 = (self.loop_vert_idx(first + 3) >> 14) as u8 & 1;
-        c0 | (c1 << 1) | (c3 << 2) | (c2 << 3)
-    }
-
     /// Persistent runtime subdivision bit for a native quad. The cooker leaves
     /// bit 15 of corner zero unused; triangle/seamed markers live on corner
     /// three and blocked-edge flags use bit 14. Keeping ownership beside the
@@ -2150,11 +2071,6 @@ impl Map {
                 self.loop_vert_static(first + 3),
             ]
         }
-    }
-
-    #[inline]
-    pub fn patch_corners(&self, base: usize, patch: usize) -> [PackedLoopVert; 4] {
-        self.patch_corners_meta(base, patch).0
     }
 
     /// Decode one patch and retain the topology bits already present in the

@@ -196,11 +196,6 @@ const MAX_MODEL_VERTS: usize = room_budget::MAX_MODEL_VERTS;
 // One aligned u32 XY word plus one u16 depth per model vertex, rounded to the
 // u32 storage used by both BSS scratch and the MODEL_BUF viewmodel overlay.
 const MODEL_PROJECTED_WORDS: usize = MAX_MODEL_VERTS + MAX_MODEL_VERTS.div_ceil(2);
-const SCI_FACE_CAP: usize = 768;
-const BARNEY_FACE_CAP: usize = 800;
-const HEADCRAB_FACE_CAP: usize = 512;
-const SUIT_ITEM_FACE_CAP: usize = 448;
-const BATTERY_ITEM_FACE_CAP: usize = 160;
 // World/brush packets retain their existing fixed arena. Studio actors borrow
 // the unused map/model arena tail when it is larger, so dense BSP views cannot
 // consume their entire packet budget before the actor pass begins.
@@ -296,15 +291,6 @@ const RENDER_SCRATCH_BYTES: usize =
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct AffineFaceCandidate {
-    face: u16,
-    previous_level: u8,
-    selected_level: u8,
-    score_q8: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
 struct AffinePatchCandidate {
     indices: [u16; 4],
     uv: [u16; 4],
@@ -327,14 +313,7 @@ const EMPTY_AFFINE_PATCH_CANDIDATE: AffinePatchCandidate = AffinePatchCandidate 
 
 const AFFINE_PATCH_KIND_NATIVE: u8 = 0;
 const AFFINE_PATCH_KIND_SEAMED_PAIR: u8 = 1;
-const EMPTY_AFFINE_FACE_CANDIDATE: AffineFaceCandidate = AffineFaceCandidate {
-    face: u16::MAX,
-    previous_level: 0,
-    selected_level: 0,
-    score_q8: 0,
-};
 const AFFINE_CANDIDATE_CAP: usize = 32;
-const AFFINE_SELECTED_CAP: usize = AFFINE_CANDIDATE_CAP;
 const AFFINE_EDGE_CAP: usize = AFFINE_CANDIDATE_CAP * 4;
 const AFFINE_EDGE_BLOOM_WORDS: usize = 8;
 const AFFINE_EDGE_BLOOM_MASK: usize = AFFINE_EDGE_BLOOM_WORDS * 32 - 1;
@@ -433,11 +412,6 @@ const WORLD_NATIVE_PATCH_SUBDIVISION: bool = true;
 // remain finite so actors/effects cannot corrupt the primitive arena.
 const WORLD_AFFINE_ENTER_ERROR_TEXELS: i32 = 2;
 const WORLD_AFFINE_LEAVE_ERROR_TEXELS: i32 = 1;
-// The soft fallback is traversed in BSP order and cannot retain a frame-wide
-// candidate list in PS1 RAM. Admit only severe root fans before recursively
-// chasing the normal one-texel target; otherwise several mildly warped early
-// surfaces consume the dense-view budget before the foreground floor/wall.
-const WORLD_AFFINE_NEAR_ENTER_ERROR_TEXELS: u32 = 2;
 /// A quad with any corner closer than this enters the near refinement
 /// quadtree (both the near-plane crossers and the fully-in-front warp band).
 const SOFT_NEAR_BAND_Z: i32 = 8;
@@ -504,14 +478,8 @@ fn outward_point(a: (i32, i32), b: (i32, i32), c: (i32, i32), mut p: (i32, i32))
     p
 }
 
-/// Whether a projected edge's affine displacement exceeds `WARP_PX_Q3`
-/// after `level` bisections.
-#[inline(always)]
-fn warp_edge_over(a: &Projected, b: &Projected, level: u32) -> bool {
-    warp_edge_over_budget(a, b, level, WARP_PX_Q3)
-}
-
-/// `warp_edge_over` against an explicit budget (per-emitter budgets).
+/// Whether a projected edge's affine displacement exceeds `budget_q3` after
+/// `level` bisections (per-emitter budgets).
 #[inline(always)]
 fn warp_edge_over_budget(a: &Projected, b: &Projected, level: u32, budget_q3: u32) -> bool {
     use psx_engine::tess::{edge_exceeds, ScreenDepth};
@@ -628,11 +596,6 @@ const WORLD_CLASSIC_BANDED_EXTRA_PACKETS: u16 = WORLD_CLASSIC_EXTRA_PACKETS - 64
 /// the tree itself and bounded by its span rule; this keeps the aggregate
 /// accountable without threading counters through the recursion).
 const WORLD_CLASSIC_SOFT_ROUTE_COST: u16 = 16;
-/// Conservative pre-culls only: reject faces that cannot contain a qualifying
-/// quad before paying to project their corners. These bound the search, they
-/// do not decide refinement -- the measured error above does that.
-const WORLD_AFFINE_CULL_MAX_DEPTH: i32 = 640;
-const WORLD_AFFINE_CULL_MIN_SPAN_PIXELS: i32 = 40;
 // Runtime correction is deliberately local: only a quad that is both large on
 // screen and close to the current camera may enter the 2x2 path. Separate
 // leave thresholds keep a corrected patch stable while the player moves near
@@ -643,12 +606,6 @@ const WORLD_AFFINE_CULL_MIN_SPAN_PIXELS: i32 = 40;
 // not ranking (projected_priority_inversion is 0 everywhere) and not the
 // blocked-edge gate (relaxing that made coverage worse, see findings).
 const WORLD_AFFINE_MAX_EXTRA_PACKETS: u16 = 176;
-// Ordinary cooked-patch refinement is encountered in BSP traversal order.
-// Preserve eight four-way splits for the later soft path so a floor/wall that
-// crosses the camera frustum cannot lose all correction merely because less
-// objectionable distant patches happened to draw first. This is carved out of
-// the existing 96-packet ceiling: it changes priority, never worst-case load.
-const WORLD_AFFINE_NEAR_PACKET_RESERVE: u16 = 24;
 // Each eligible GT4 is refined into a 2x2 grid.
 const WORLD_AFFINE_NATIVE_GRID_PACKETS: usize = 4;
 
@@ -666,15 +623,6 @@ const WORLD_AFFINE_NATIVE_EMIT_PACKETS: usize = WORLD_AFFINE_NATIVE_GRID_PACKETS
 #[cfg(feature = "affine-heatmap")]
 const WORLD_AFFINE_NATIVE_EMIT_PACKETS: usize = WORLD_AFFINE_NATIVE_GRID_PACKETS * 2;
 const _: () = assert!(WORLD_AFFINE_NATIVE_EDGE_RESERVATION <= WORLD_AFFINE_MAX_EXTRA_PACKETS);
-// Deeper adaptive levels are cheap in already-cooked corridor cells and remove
-// the last large affine wedges on long floor/ceiling runs. Every child remains
-// gated by measured error and the dynamically available packet budget.
-const WORLD_AFFINE_MAX_DEPTH: u8 = 2;
-// Soft fallback polygons are first clipped geometrically to the visible
-// frustum. Two screen-balanced levels then cap a full-screen edge near 80 px,
-// while the measured UV/depth error gate avoids splitting harmless geometry.
-const WORLD_AFFINE_NEAR_MAX_DEPTH: u8 = 3;
-const WORLD_AFFINE_SEAMED_MIN_SPAN_PIXELS: i32 = 256;
 #[cfg(not(feature = "reference-trace"))]
 const WORLD_AFFINE_PACKET_RESERVE: usize = 128;
 #[cfg(feature = "reference-trace")]
@@ -914,12 +862,6 @@ const LANDMARK_NAME_MAX: usize = 31;
 const SKY_FACE_COUNT: usize = 6;
 const SKY_TEX_SIZE: usize = 128;
 const MODEL_CHUNK_V_9MMHANDGUN: u32 = 1000;
-const MODEL_CHUNK_SCIENTIST_TEX: u32 = 1100;
-const MODEL_CHUNK_BARNEY_TEX: u32 = 1101;
-const MODEL_CHUNK_HEADCRAB_TEX: u32 = 1102;
-const MODEL_CHUNK_SUIT_ITEM_TEX: u32 = 1200;
-const MODEL_CHUNK_BATTERY_ITEM_TEX: u32 = 1201;
-const MODEL_CHUNK_V_9MMHANDGUN_TEX: u32 = 2000;
 const GLOCK_MAX_CLIP: u16 = 17; // glock magazine; also the initial-launch clip cap
 const GLOCK_START_RESERVE: u16 = 35; // 9mm reserve at game start
 const GLOCK_RANGE: i32 = 8192; // shared hitscan reach for the ballistic weapons
@@ -1349,7 +1291,6 @@ const PROP_LINK_MATCH_Y_EPS: i32 = 96;
 const PROP_GROUND_PROBE_UP: i32 = 24;
 const PROP_GROUND_PROBE_DOWN: i32 = 160;
 const PROP_SPAWN_DROP_DOWN: i32 = 256; // engine pfnDropToFloor endpoint
-const GROUND_SCAN_STEP: i32 = 8;
 const SCIENTIST_HEALTH: u8 = 20;
 const BARNEY_HEALTH: u8 = 35;
 const HEADCRAB_HEALTH: u8 = 16;
@@ -1364,7 +1305,6 @@ const HEADCRAB_ATTACK_IMPACT_TICK: u8 = 5;
 const ZOMBIE_ATTACK_DAMAGE: u8 = 10; // skill.cfg sk_zombie_dmg_one_slash1
 const HEADCRAB_LEAP_SPEED: i32 = 18;
 const HEADCRAB_BITE_RANGE2: i32 = 48 * 48;
-const HEADCRAB_TARGET_HEIGHT: i32 = 12;
 const BARNEY_ATTACK_RANGE2: i32 = 1024 * 1024;
 const BARNEY_ATTACK_COOLDOWN: u8 = 9;
 const BARNEY_ATTACK_TICKS: u8 = 5;
@@ -3500,16 +3440,12 @@ static mut WORLD_CLASSIC_WANTS_SOFT: bool = false;
 static mut WORLD_CLASSIC_SOFT_ROUTES_LEFT: u16 = 0;
 static mut WORLD_AFFINE_VIEW_FORWARD: [i16; 3] = [0; 3];
 static mut WORLD_AFFINE_VIEW_Z_OFFSET: i32 = 0;
-static mut WORLD_AFFINE_CANDIDATES: [AffineFaceCandidate; AFFINE_CANDIDATE_CAP] =
-    [EMPTY_AFFINE_FACE_CANDIDATE; AFFINE_CANDIDATE_CAP];
 static mut WORLD_AFFINE_PATCH_CANDIDATES: [AffinePatchCandidate; AFFINE_PATCH_CANDIDATE_CAP] =
     [EMPTY_AFFINE_PATCH_CANDIDATE; AFFINE_PATCH_CANDIDATE_CAP];
 static mut WORLD_AFFINE_PATCH_CANDIDATE_COUNT: u8 = 0;
 static mut WORLD_AFFINE_HIGHEST_REJECTED_PRIORITY: u16 = 0;
 static mut WORLD_AFFINE_HIGHEST_DROPPED_PRIORITY: u16 = 0;
 static mut WORLD_AFFINE_LOWEST_SELECTED_PRIORITY: u16 = 0;
-static mut WORLD_AFFINE_COLLECT_FACE: u16 = u16::MAX;
-static mut WORLD_AFFINE_COLLECT_SCORE_Q8: u32 = 0;
 #[cfg(feature = "performance-telemetry")]
 static mut WORLD_AFFINE_ERROR_HISTOGRAM: [u16; AFFINE_ERROR_BUCKETS] = [0; AFFINE_ERROR_BUCKETS];
 #[cfg(feature = "performance-telemetry")]
@@ -3563,9 +3499,6 @@ static mut WORLD_AFFINE_ACTUAL_EXTRA_EMITTED: u16 = 0;
 static mut WORLD_AFFINE_LAST_ACTUAL_EXTRA_EMITTED: u16 = 0;
 static mut WORLD_AFFINE_LAST_FRAME_FREE: u16 = 0;
 static mut WORLD_AFFINE_PREVIOUS_COUNT: u8 = 0;
-static mut WORLD_AFFINE_PREVIOUS_FACES: [u16; AFFINE_SELECTED_CAP] =
-    [u16::MAX; AFFINE_SELECTED_CAP];
-static mut WORLD_AFFINE_PREVIOUS_LEVELS: [u8; AFFINE_SELECTED_CAP] = [0; AFFINE_SELECTED_CAP];
 #[inline(always)]
 fn affine_heatmap_active() -> bool {
     #[cfg(feature = "performance-telemetry")]
@@ -4218,15 +4151,6 @@ fn dot12_q5(row: [i16; 3], e: [i32; 3]) -> i32 {
 #[inline(always)]
 fn dot_plane(row: [i16; 3], e: [i32; 3]) -> i32 {
     ((row[0] as i32 * e[0]) + (row[1] as i32 * e[1]) + (row[2] as i32 * e[2]))
-        >> map::PLANE_NORMAL_FRAC_BITS
-}
-
-/// Dot a Q12 direction with a Q14 map plane, returning Q12.
-#[inline(always)]
-fn dot12_plane(q12: [i16; 3], plane: [i16; 3]) -> i32 {
-    ((q12[0] as i32 * plane[0] as i32)
-        + (q12[1] as i32 * plane[1] as i32)
-        + (q12[2] as i32 * plane[2] as i32))
         >> map::PLANE_NORMAL_FRAC_BITS
 }
 
@@ -14469,11 +14393,6 @@ unsafe fn point_in_ent_solid(m: &Map, p: [i32; 3]) -> bool {
     false
 }
 
-#[inline]
-unsafe fn prop_point_solid(m: &Map, p: [i32; 3]) -> bool {
-    camera_leaf(m, p) == 0 || point_in_ent_solid(m, p)
-}
-
 /// One brush entity's point-solid test at `p` (offset-adjusted subtree walk).
 #[inline]
 unsafe fn point_in_one_ent(m: &Map, ei: usize, p: [i32; 3]) -> bool {
@@ -19509,26 +19428,6 @@ impl Arsenal {
         self.switch_ticks = 10; // DefaultDeploy: m_flNextAttack = time + 0.5
         self.gauss_charge = 0;
     }
-
-    /// Grant the full arsenal + ammo. NB this is a demake simplification: HL1
-    /// starts with crowbar+glock and you pick the rest up. Faithful weapon_* /
-    /// ammo_* pickups (with w_* world models) are the next step; for now the whole
-    /// system is given at spawn so every weapon is reachable.
-    fn give_full_arsenal(&mut self) {
-        self.owned = (1u16 << N_WEAPONS) - 1;
-        let mut i = 0;
-        while i < N_WEAPONS {
-            if WEAPON_DEFS[i].clip > 0 {
-                self.clip[i] = WEAPON_DEFS[i].clip;
-            }
-            i += 1;
-        }
-        let mut a = 0;
-        while a < N_AMMO {
-            self.ammo[a] = max_reserve_for(a);
-            a += 1;
-        }
-    }
 }
 
 #[inline]
@@ -23049,177 +22948,6 @@ unsafe fn emit_screen_triangle(
     }
 }
 
-#[inline(always)]
-fn affine_cv_midpoint(a: render::CVert, b: render::CVert) -> render::CVert {
-    render::projected_midpoint_cv(a, b)
-}
-
-#[inline(always)]
-fn affine_cv_edge_error(
-    a: &render::CVert,
-    pa: &render::SVert,
-    b: &render::CVert,
-    pb: &render::SVert,
-) -> (u32, u32) {
-    let screen_span = (pa.x - pb.x).abs().max((pa.y - pb.y).abs());
-    if screen_span < WORLD_AFFINE_MIN_EDGE_PIXELS {
-        return (0, 1);
-    }
-    let uv_span = (a.uv.0 - b.uv.0).abs().max((a.uv.1 - b.uv.1).abs()) as u32;
-    (
-        uv_span.saturating_mul((a.v[2] - b.v[2]).unsigned_abs()),
-        2u32.saturating_mul((a.v[2] + b.v[2]).max(1) as u32),
-    )
-}
-
-#[cold]
-#[inline(never)]
-#[link_section = ".hlpsx_cold.affine"]
-unsafe fn emit_cv_subdivided(
-    packets: &mut PrimitivePacketArena<'_>,
-    cv: [render::CVert; 3],
-    projected: [render::SVert; 3],
-    mat: TexturedGouraudPacketMaterial,
-    texture_backdrop: bool,
-    depth: u8,
-    np: &mut usize,
-) {
-    let edges = [(0usize, 1usize), (1, 2), (2, 0)];
-    let mut still_warped = false;
-    let mut i = 0usize;
-    while i < edges.len() {
-        let (a, b) = edges[i];
-        let (num, den) = affine_cv_edge_error(&cv[a], &projected[a], &cv[b], &projected[b]);
-        #[cfg(feature = "performance-telemetry")]
-        if depth == 0 && affine_heatmap_active() {
-            affine_record_error(num, den);
-        }
-        let threshold = if depth == 0 {
-            WORLD_AFFINE_NEAR_ENTER_ERROR_TEXELS
-        } else {
-            WORLD_AFFINE_LEAVE_ERROR_TEXELS as u32
-        };
-        if num > den.saturating_mul(threshold) {
-            still_warped = true;
-        }
-        i += 1;
-    }
-    if WORLD_AFFINE_NEAR_SUBDIVISION
-        && !texture_backdrop
-        && EMIT_POLICY.blend() == 0
-        && !EMIT_POLICY.wave()
-        && still_warped
-        && depth < WORLD_AFFINE_NEAR_MAX_DEPTH
-    {
-        let cost = 3u16;
-        WORLD_AFFINE_SPLIT_CANDIDATES = WORLD_AFFINE_SPLIT_CANDIDATES.saturating_add(1);
-        WORLD_AFFINE_EXTRA_REQUESTED = WORLD_AFFINE_EXTRA_REQUESTED.saturating_add(cost as u32);
-        if WORLD_AFFINE_EXTRA_BUDGET_LEFT >= cost
-            && packets.remaining() >= WORLD_AFFINE_PACKET_RESERVE + cost as usize + 1
-        {
-            WORLD_AFFINE_EXTRA_BUDGET_LEFT -= cost;
-            WORLD_AFFINE_LEVEL2_SPLITS = WORLD_AFFINE_LEVEL2_SPLITS.saturating_add(1);
-            let ab = affine_cv_midpoint(cv[0], cv[1]);
-            let bc = affine_cv_midpoint(cv[1], cv[2]);
-            let ca = affine_cv_midpoint(cv[2], cv[0]);
-            let pab = render::project_soft(&ab);
-            let pbc = render::project_soft(&bc);
-            let pca = render::project_soft(&ca);
-            emit_cv_subdivided(
-                packets,
-                [cv[0], ab, ca],
-                [projected[0], pab, pca],
-                mat,
-                false,
-                depth + 1,
-                np,
-            );
-            emit_cv_subdivided(
-                packets,
-                [ab, cv[1], bc],
-                [pab, projected[1], pbc],
-                mat,
-                false,
-                depth + 1,
-                np,
-            );
-            emit_cv_subdivided(
-                packets,
-                [ca, bc, cv[2]],
-                [pca, pbc, projected[2]],
-                mat,
-                false,
-                depth + 1,
-                np,
-            );
-            emit_cv_subdivided(
-                packets,
-                [ab, bc, ca],
-                [pab, pbc, pca],
-                mat,
-                false,
-                depth + 1,
-                np,
-            );
-            return;
-        }
-    }
-    #[cfg(feature = "performance-telemetry")]
-    if affine_heatmap_active() || EMIT_POLICY.tram_grid() {
-        i = 0;
-        while i < edges.len() {
-            let (a, b) = edges[i];
-            let (num, den) = affine_cv_edge_error(&cv[a], &projected[a], &cv[b], &projected[b]);
-            affine_record_remaining_error(num, den);
-            i += 1;
-        }
-    }
-    #[cfg(feature = "performance-telemetry")]
-    if affine_heatmap_active() {
-        let p = [
-            Projected {
-                sx: projected[0].x as i16,
-                sy: projected[0].y as i16,
-                sz: projected[0].z.clamp(0, u16::MAX as i32) as u16,
-            },
-            Projected {
-                sx: projected[1].x as i16,
-                sy: projected[1].y as i16,
-                sz: projected[1].z.clamp(0, u16::MAX as i32) as u16,
-            },
-            Projected {
-                sx: projected[2].x as i16,
-                sy: projected[2].y as i16,
-                sz: projected[2].z.clamp(0, u16::MAX as i32) as u16,
-            },
-        ];
-        push_affine_heatmap_tri(
-            packets,
-            [&p[0], &p[1], &p[2]],
-            [
-                uv_word((cv[0].uv.0 as u8, cv[0].uv.1 as u8)),
-                uv_word((cv[1].uv.0 as u8, cv[1].uv.1 as u8)),
-                uv_word((cv[2].uv.0 as u8, cv[2].uv.1 as u8)),
-            ],
-            world_order_key(
-                ordering::PrimitiveDepths::tri(projected[0].z, projected[1].z, projected[2].z),
-                texture_backdrop,
-            ),
-            np,
-        );
-        return;
-    }
-    emit_screen_triangle(
-        packets,
-        &projected[0],
-        &projected[1],
-        &projected[2],
-        mat,
-        texture_backdrop,
-        np,
-    );
-}
-
 unsafe fn emit_cv(
     packets: &mut PrimitivePacketArena<'_>,
     cv: &[render::CVert; 3],
@@ -23767,28 +23495,8 @@ unsafe fn emit_cv_split_route(
     }
 }
 
-#[cold]
-#[inline(never)]
-#[link_section = ".hlpsx_cold.affine"]
-unsafe fn emit_cv_near(
-    packets: &mut PrimitivePacketArena<'_>,
-    cv: &[render::CVert; 3],
-    mat: TexturedGouraudPacketMaterial,
-    texture_backdrop: bool,
-    np: &mut usize,
-) {
-    emit_cv_clipped(
-        packets,
-        [&cv[0], &cv[1], &cv[2]],
-        mat,
-        texture_backdrop,
-        np,
-        ClipRefinement::Adaptive,
-    )
-}
-
-/// As `emit_cv_near`, but the caller has already fixed the topology, so a
-/// clipped child must not decide to become four more children.
+/// Emit a near-plane triangle whose topology the caller has already fixed, so
+/// a clipped child must not decide to become four more children.
 unsafe fn emit_cv_flat(
     packets: &mut PrimitivePacketArena<'_>,
     cv: [&render::CVert; 3],
@@ -23976,18 +23684,6 @@ unsafe fn emit_cv_clipped(
     WORLD_AFFINE_SPLIT_TRIS = WORLD_AFFINE_SPLIT_TRIS.saturating_add(emitted);
     WORLD_AFFINE_EXTRA_EMITTED =
         WORLD_AFFINE_EXTRA_EMITTED.saturating_add(emitted.saturating_sub(1));
-}
-
-#[cold]
-#[inline(never)]
-unsafe fn emit_near_clipped_fan(
-    packets: &mut PrimitivePacketArena<'_>,
-    cv: &[render::CVert; 3],
-    mat: TexturedGouraudPacketMaterial,
-    texture_backdrop: bool,
-    np: &mut usize,
-) {
-    emit_cv_near(packets, cv, mat, texture_backdrop, np);
 }
 
 unsafe fn try_emit_tri_pair_quad_values(
@@ -24336,29 +24032,6 @@ impl WorldCounters {
     }
 }
 
-/// Decode-after-cull fast path shared by the world and submodel triangle loops.
-///
-/// The caller has already projected the three verts (`pa`/`pb`/`pc`). Read only
-/// the indices to get here; the heavier per-triangle data (tex, uv, per-vertex
-/// rgb -- ~9 unaligned u16 reads + 3 rgb555 unpacks) is decoded only for
-/// survivors, so the triangles that back-face/off-screen cull pay almost
-/// nothing. Returns true when the triangle is fully handled (emitted or culled);
-/// false means it straddles the near plane and the caller must run the full
-/// decode + view-space clip path.
-/// Distance-fog factor for a view depth, 256 = unfogged, 0 = full (black) at
-/// the current far plane. Reciprocals are compile-time, so no runtime divide.
-#[inline]
-fn fog_factor(sz: i32) -> i32 {
-    let (start, far, inv) = unsafe { (FOG_START_NOW, FAR_NOW, FOG_INV_NOW) };
-    if sz <= start {
-        256
-    } else if sz >= far {
-        0
-    } else {
-        ((far - sz) * inv) >> 12
-    }
-}
-
 // GoldSrc traces the local player's lamp forward, then places an 80-unit white
 // dynamic light at the hit. The PS1 renderer retains the 2000-unit occlusion
 // trace and applies its cheaper analogue directly to world/model lighting.
@@ -24603,11 +24276,6 @@ fn affine_edge_error(a: &Projected, b: &Projected, uv_a: u16, uv_b: u16) -> (u32
 }
 
 #[inline(always)]
-unsafe fn affine_candidates_ptr() -> *mut AffineFaceCandidate {
-    core::ptr::addr_of_mut!(WORLD_AFFINE_CANDIDATES).cast::<AffineFaceCandidate>()
-}
-
-#[inline(always)]
 unsafe fn affine_patch_candidates_ptr() -> *mut AffinePatchCandidate {
     core::ptr::addr_of_mut!(WORLD_AFFINE_PATCH_CANDIDATES).cast::<AffinePatchCandidate>()
 }
@@ -24622,43 +24290,6 @@ unsafe fn affine_histogram_ptr() -> *mut u16 {
 #[inline(always)]
 unsafe fn affine_remaining_histogram_ptr() -> *mut u16 {
     core::ptr::addr_of_mut!(WORLD_AFFINE_REMAINING_HISTOGRAM).cast::<u16>()
-}
-
-#[inline(always)]
-unsafe fn affine_previous_level(face: usize) -> u8 {
-    let mut lo = 0usize;
-    let mut hi = WORLD_AFFINE_PREVIOUS_COUNT as usize;
-    while lo < hi {
-        let mid = (lo + hi) >> 1;
-        let current = WORLD_AFFINE_PREVIOUS_FACES[mid] as usize;
-        if current < face {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    if lo < WORLD_AFFINE_PREVIOUS_COUNT as usize && WORLD_AFFINE_PREVIOUS_FACES[lo] as usize == face
-    {
-        WORLD_AFFINE_PREVIOUS_LEVELS[lo]
-    } else {
-        0
-    }
-}
-
-#[inline(always)]
-unsafe fn affine_previous_face_contains(face: usize) -> bool {
-    let mut lo = 0usize;
-    let mut hi = WORLD_AFFINE_PREVIOUS_COUNT as usize;
-    while lo < hi {
-        let mid = (lo + hi) >> 1;
-        let current = WORLD_AFFINE_PREVIOUS_FACES[mid] as usize;
-        if current < face {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    lo < WORLD_AFFINE_PREVIOUS_COUNT as usize && WORLD_AFFINE_PREVIOUS_FACES[lo] as usize == face
 }
 
 #[cfg(feature = "performance-telemetry")]
@@ -24706,10 +24337,6 @@ unsafe fn affine_record_error(num: u32, den: u32) {
     WORLD_AFFINE_ERROR_P50_Q8 = WORLD_AFFINE_ERROR_EDGE_COUNT;
 }
 
-#[cfg(not(feature = "performance-telemetry"))]
-#[inline(always)]
-unsafe fn affine_record_error(_num: u32, _den: u32) {}
-
 #[cfg(feature = "performance-telemetry")]
 #[inline(never)]
 unsafe fn affine_record_remaining_error(num: u32, den: u32) {
@@ -24744,10 +24371,6 @@ unsafe fn affine_record_remaining_error(num: u32, den: u32) {
     let slot = histogram.add(lo as usize);
     slot.write(slot.read().saturating_add(1));
 }
-
-#[cfg(not(feature = "performance-telemetry"))]
-#[inline(always)]
-unsafe fn affine_record_remaining_error(_num: u32, _den: u32) {}
 
 #[cfg(feature = "performance-telemetry")]
 #[inline(always)]
@@ -24807,110 +24430,6 @@ fn affine_triangle_threshold(previous_level: u8) -> i32 {
     } else {
         WORLD_AFFINE_ENTER_ERROR_TEXELS
     }
-}
-
-#[inline(never)]
-unsafe fn affine_insert_face_candidate(candidate: AffineFaceCandidate, count: &mut usize) {
-    let candidates = affine_candidates_ptr();
-    let active_cap = WORLD_AFFINE_ACTIVE_CAP as usize;
-    let mut at = 0usize;
-    while at < *count {
-        let current = candidates.add(at).read();
-        // Coarse candidates carry a common denominator. A plain u32 compare
-        // avoids thousands of software u64 multiplies while walking a dense
-        // PVS; exact rational ordering happens only after the 32-face cap.
-        let order = candidate.score_q8.cmp(&current.score_q8);
-        if order.is_gt() || (order.is_eq() && candidate.face < current.face) {
-            break;
-        }
-        at += 1;
-    }
-    if at >= active_cap {
-        return;
-    }
-    let new_count = (*count + 1).min(active_cap);
-    let mut i = new_count - 1;
-    while i > at {
-        candidates.add(i).write(candidates.add(i - 1).read());
-        i -= 1;
-    }
-    candidates.add(at).write(candidate);
-    *count = new_count;
-}
-
-/// Cheap conservative shortlist score. A face sphere bounds both projected
-/// size and possible depth variation; the cook's grid caps refined primitive
-/// UV spans at roughly one cell. This pass touches no vertices; exact edge
-/// error is evaluated only when a shortlisted primitive reaches emission.
-#[inline(never)]
-unsafe fn affine_coarse_face_candidate(m: &Map, face: usize) -> Option<AffineFaceCandidate> {
-    if face >= m.n_faces || !m.face_is_patch(face) || m.face_liquid(face) {
-        return None;
-    }
-    let tex = m.face_tex(face);
-    if tex >= m.n_texs || tex >= MAX_TEX_SLOTS {
-        return None;
-    }
-    let slot = &*tex_slot_ptr(tex);
-    if !slot.valid || slot.backdrop {
-        return None;
-    }
-    let (center, radius) = m.face_bounds(face);
-    let depth = dot12(WORLD_AFFINE_VIEW_FORWARD, center) + WORLD_AFFINE_VIEW_Z_OFFSET;
-    if depth + radius < NEAR as i32 || depth - radius > far_view() {
-        return None;
-    }
-    let safe_depth = depth.max(NEAR as i32);
-    // A sphere wholly beyond the leave range cannot contain a close patch.
-    // Use the relaxed leave boundary here so the exact per-quad gate below
-    // owns the visible enter/leave decision.
-    if depth - radius > WORLD_AFFINE_CULL_MAX_DEPTH {
-        return None;
-    }
-    // A projected sphere diameter below the enter threshold cannot contain a
-    // qualifying quad. This remains conservative; exact screen bounds are
-    // measured only after the four patch corners have been projected.
-    if radius.saturating_mul(render::projection_h())
-        < (WORLD_AFFINE_CULL_MIN_SPAN_PIXELS / 2).saturating_mul(safe_depth)
-    {
-        return None;
-    }
-    let uv_bound = 255u32;
-    let (normal, _) = m.face_plane(face);
-    // A front-on plane has little intra-polygon depth change even when its
-    // authored bounds are enormous; a grazing plane has the opposite risk.
-    // Weight the sphere bound by that tangent component so the shortlist does
-    // not get monopolised by large, visually safe floors and walls.
-    let alignment = dot12_plane(WORLD_AFFINE_VIEW_FORWARD, normal)
-        .unsigned_abs()
-        .min(4096);
-    let slope_q8 = ((4096 - alignment) >> 4) + 16;
-    let numerator = uv_bound
-        .saturating_mul(radius.max(1) as u32)
-        .saturating_mul(slope_q8);
-    // This is a rank, not a measurement. Quantising depth to 64-unit
-    // power-of-two bands replaces a software R3000 divide with one shift while
-    // retaining the intended near-before-far ordering.
-    let depth_shift = if safe_depth >= 2048 {
-        5
-    } else if safe_depth >= 1024 {
-        4
-    } else if safe_depth >= 512 {
-        3
-    } else if safe_depth >= 256 {
-        2
-    } else if safe_depth >= 128 {
-        1
-    } else {
-        0
-    };
-    let score = numerator >> depth_shift;
-    Some(AffineFaceCandidate {
-        face: face.min(u16::MAX as usize) as u16,
-        previous_level: affine_previous_level(face),
-        selected_level: 0,
-        score_q8: score,
-    })
 }
 
 #[cfg(feature = "performance-telemetry")]
@@ -25421,38 +24940,6 @@ unsafe fn finish_world_affine_candidates() {
     WORLD_AFFINE_POLICY_READY = true;
 }
 
-unsafe fn affine_selected_face_slow(face: usize) -> u8 {
-    let mut lo = 0usize;
-    let mut hi = WORLD_AFFINE_SELECTED_COUNT as usize;
-    while lo < hi {
-        let mid = (lo + hi) >> 1;
-        let current = WORLD_AFFINE_PREVIOUS_FACES[mid] as usize;
-        if current < face {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    if lo < WORLD_AFFINE_SELECTED_COUNT as usize && WORLD_AFFINE_PREVIOUS_FACES[lo] as usize == face
-    {
-        let previous_level = WORLD_AFFINE_PREVIOUS_LEVELS[lo].min(2);
-        WORLD_AFFINE_PREVIOUS_LEVELS[lo] = 0;
-        return ((lo as u8) << 2) | (previous_level + 1);
-    }
-    0
-}
-
-#[inline(never)]
-unsafe fn affine_note_split_level(selected: u8, level: u8) {
-    if selected & 0x80 != 0 {
-        return;
-    }
-    let slot = (selected >> 2) as usize;
-    if slot < WORLD_AFFINE_SELECTED_COUNT as usize {
-        WORLD_AFFINE_PREVIOUS_LEVELS[slot] = WORLD_AFFINE_PREVIOUS_LEVELS[slot].max(level);
-    }
-}
-
 #[inline(never)]
 fn affine_triangle_error_level(projected: [&Projected; 3], uv: [u16; 3], previous_level: u8) -> u8 {
     let split_threshold = affine_triangle_threshold(previous_level) as u32;
@@ -25478,50 +24965,6 @@ unsafe fn affine_triangle_eligible(projected: [&Projected; 3], texture_backdrop:
         && projected[0].sz >= NEAR
         && projected[1].sz >= NEAR
         && projected[2].sz >= NEAR
-}
-
-#[inline(always)]
-unsafe fn affine_quad_split_level(
-    packets: &PrimitivePacketArena<'_>,
-    projected: [&Projected; 4],
-    uv: [u16; 4],
-    texture_backdrop: bool,
-    previous_level: u8,
-) -> u8 {
-    if !affine_triangle_eligible([projected[0], projected[1], projected[2]], texture_backdrop)
-        || !affine_triangle_eligible([projected[1], projected[3], projected[2]], texture_backdrop)
-    {
-        return 0;
-    }
-    if WORLD_AFFINE_EXTRA_BUDGET_LEFT < WORLD_AFFINE_NEAR_PACKET_RESERVE + 3
-        || packets.remaining() < WORLD_AFFINE_PACKET_RESERVE + 4
-    {
-        return 0;
-    }
-    let first = affine_triangle_error_level(
-        [projected[0], projected[1], projected[2]],
-        [uv[0], uv[1], uv[2]],
-        previous_level,
-    );
-    let second = affine_triangle_error_level(
-        [projected[1], projected[3], projected[2]],
-        [uv[1], uv[3], uv[2]],
-        previous_level,
-    );
-    let level = first.max(second);
-    if level == 0 {
-        return 0;
-    }
-    let cost = 3u16;
-    WORLD_AFFINE_SPLIT_CANDIDATES = WORLD_AFFINE_SPLIT_CANDIDATES.saturating_add(1);
-    WORLD_AFFINE_EXTRA_REQUESTED = WORLD_AFFINE_EXTRA_REQUESTED.saturating_add(cost as u32);
-    if WORLD_AFFINE_EXTRA_BUDGET_LEFT < WORLD_AFFINE_NEAR_PACKET_RESERVE + cost
-        || packets.remaining() < WORLD_AFFINE_PACKET_RESERVE + cost as usize + 1
-    {
-        return 0;
-    }
-    WORLD_AFFINE_EXTRA_BUDGET_LEFT -= cost;
-    level
 }
 
 #[derive(Clone, Copy)]
@@ -25557,34 +25000,6 @@ fn affine_midpoint_unprojected(va: AffineVertex, vb: AffineVertex) -> AffineVert
         uv: average_packed_bytes(va.uv as u32, vb.uv as u32, 0x0000_fefe) as u16,
         rgb: average_packed_bytes(va.rgb, vb.rgb, 0x00fe_fefe),
     }
-}
-
-#[inline(never)]
-unsafe fn affine_midpoint(va: AffineVertex, vb: AffineVertex) -> AffineVertex {
-    let mut vertex = affine_midpoint_unprojected(va, vb);
-    ROOM_PROJECTED_COUNT = ROOM_PROJECTED_COUNT.saturating_add(1);
-    WORLD_AFFINE_ADDED_GTE_TRANSFORMS = WORLD_AFFINE_ADDED_GTE_TRANSFORMS.saturating_add(1);
-    vertex.projected =
-        fix_projected_vertex(vertex.position, project_vertex_scheduled(vertex.position));
-    vertex
-}
-
-#[cold]
-#[inline(never)]
-unsafe fn affine_tri_children(vertices: [AffineVertex; 3]) -> [[AffineVertex; 3]; 4] {
-    let work = scratchpad::ptr_at::<AffineVertex>(AFFINE_WORKSPACE_SCRATCH_OFFSET);
-    // The three source vertices already live in the by-value argument. Keep
-    // only generated midpoints in scratch; duplicating the originals used six
-    // unnecessary slots and made a valid 2848-plane-group recook overflow the
-    // 1 KB CPU scratchpad.
-    work.add(0).write(affine_midpoint(vertices[0], vertices[1]));
-    work.add(1).write(affine_midpoint(vertices[1], vertices[2]));
-    work.add(2).write(affine_midpoint(vertices[2], vertices[0]));
-    let [a, b, c] = vertices;
-    let ab = work.add(0).read();
-    let bc = work.add(1).read();
-    let ca = work.add(2).read();
-    [[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]]
 }
 
 #[inline(never)]
@@ -27401,260 +26816,6 @@ unsafe fn emit_world_face_loop(
         vk = vk1;
         k += 1;
     }
-}
-
-/// Score two GT3 records that retain a positional quad but disagree on their
-/// diagonal attributes. The returned marker lets the cold seam path perform
-/// one bounded 1-to-4 split without adding work to ordinary triangle draws.
-#[inline(never)]
-#[link_section = ".hlpsx_cold.seamed"]
-unsafe fn collect_world_seamed_pair(
-    m: &Map,
-    first: map::RenderTri,
-    second: map::RenderTri,
-    frame: u16,
-) -> u8 {
-    // Cooker order is `(b,a,c) + (a,d,c)`, retaining the independent shared
-    // UV/light values while exposing the four geometric boundary vertices.
-    let indices = [first.idx[0], first.idx[1], first.idx[2], second.idx[1]];
-    for &index in &indices {
-        proj_vert(m, index as usize, frame);
-    }
-    let projected = [
-        scratch_get(indices[0] as usize),
-        scratch_get(indices[1] as usize),
-        scratch_get(indices[2] as usize),
-        scratch_get(indices[3] as usize),
-    ];
-    let min_x = projected[0]
-        .sx
-        .min(projected[1].sx)
-        .min(projected[2].sx)
-        .min(projected[3].sx) as i32;
-    let max_x = projected[0]
-        .sx
-        .max(projected[1].sx)
-        .max(projected[2].sx)
-        .max(projected[3].sx) as i32;
-    let min_y = projected[0]
-        .sy
-        .min(projected[1].sy)
-        .min(projected[2].sy)
-        .min(projected[3].sy) as i32;
-    let max_y = projected[0]
-        .sy
-        .max(projected[1].sy)
-        .max(projected[2].sy)
-        .max(projected[3].sy) as i32;
-    if max_x - min_x < WORLD_AFFINE_SEAMED_MIN_SPAN_PIXELS
-        && max_y - min_y < WORLD_AFFINE_SEAMED_MIN_SPAN_PIXELS
-    {
-        return 0;
-    }
-    let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
-    if projected.iter().any(|p| p.sz < NEAR || clamped(p))
-        || first.tex >= m.n_texs
-        || first.tex >= MAX_TEX_SLOTS
-    {
-        return 0;
-    }
-    let slot = &*tex_slot_ptr(first.tex);
-    if !slot.valid {
-        return 0;
-    }
-    let current = rank_affine_patch(
-        indices,
-        projected,
-        [0; 4],
-        slot.backdrop,
-        0,
-        AFFINE_PATCH_KIND_SEAMED_PAIR,
-    );
-    if current == 0x0f {
-        1
-    } else {
-        0
-    }
-}
-
-#[cold]
-#[inline(never)]
-#[link_section = ".hlpsx_cold.seamed"]
-fn affine_triangle_may_need_split(a: &Projected, b: &Projected, c: &Projected) -> bool {
-    let min_x = a.sx.min(b.sx).min(c.sx) as i32;
-    let max_x = a.sx.max(b.sx).max(c.sx) as i32;
-    let min_y = a.sy.min(b.sy).min(c.sy) as i32;
-    let max_y = a.sy.max(b.sy).max(c.sy) as i32;
-    if (max_x - min_x).max(max_y - min_y) < WORLD_AFFINE_MIN_EDGE_PIXELS {
-        return false;
-    }
-    let min_z = a.sz.min(b.sz).min(c.sz) as i32;
-    let max_z = a.sz.max(b.sz).max(c.sz) as i32;
-    // A UV edge cannot span more than 255 texels. If even that theoretical
-    // maximum stays below the error threshold, avoid the detailed UV test.
-    255 * (max_z - min_z) > 4 * WORLD_AFFINE_LEAVE_ERROR_TEXELS * min_z
-}
-
-unsafe fn try_emit_world_seamed_tri(
-    packets: &mut PrimitivePacketArena<'_>,
-    m: &Map,
-    tri: map::RenderTri,
-    frame: u16,
-    np: &mut usize,
-    counts: &mut WorldCounters,
-) -> bool {
-    let indices = [
-        tri.idx[0] as usize,
-        tri.idx[1] as usize,
-        tri.idx[2] as usize,
-    ];
-    proj_vert(m, indices[0], frame);
-    proj_vert(m, indices[1], frame);
-    proj_vert(m, indices[2], frame);
-    let pa = scratch_get(indices[0]);
-    let pb = scratch_get(indices[1]);
-    let pc = scratch_get(indices[2]);
-    let projected = [&pa, &pb, &pc];
-    if !affine_triangle_may_need_split(&pa, &pb, &pc)
-        || tri.tex >= m.n_texs
-        || tri.tex >= MAX_TEX_SLOTS
-    {
-        return false;
-    }
-    let slot = &*tex_slot_ptr(tri.tex);
-    if !slot.valid
-        || !affine_triangle_eligible(projected, slot.backdrop)
-        || packets.remaining() < WORLD_AFFINE_PACKET_RESERVE + 4
-    {
-        return false;
-    }
-    let uv = sway_uv3(tri.uv_words);
-    let mut rgb = fog_world_rgb(
-        tri.rgb,
-        [pa.sz as i32, pb.sz as i32, pc.sz as i32],
-        slot.backdrop,
-    );
-    if FLASHLIGHT_ON && !slot.backdrop {
-        let p = [pa, pb, pc];
-        shade_world_rgb(&mut rgb, &p);
-    }
-    counts.emit_calls += 1;
-    macro_rules! make_cv {
-        ($idx:expr, $corner:expr) => {{
-            let v = scene::transform_vertex_scheduled(m.vert($idx));
-            let c = unpack_rgb_word(rgb[$corner]);
-            render::CVert {
-                v: [v.x, v.y, v.z],
-                rgb: (c.0 as i32, c.1 as i32, c.2 as i32),
-                uv: uv_word_pair_i32(uv[$corner]),
-            }
-        }};
-    }
-    let cv = [
-        make_cv!(indices[0], 0),
-        make_cv!(indices[1], 1),
-        make_cv!(indices[2], 2),
-    ];
-    let soft = [
-        render::project_soft(&cv[0]),
-        render::project_soft(&cv[1]),
-        render::project_soft(&cv[2]),
-    ];
-    if CULL
-        && culled_soft(
-            (soft[0].x, soft[0].y),
-            (soft[1].x, soft[1].y),
-            (soft[2].x, soft[2].y),
-        )
-    {
-        return true;
-    }
-    emit_cv_subdivided(
-        packets,
-        cv,
-        soft,
-        emit_packet_of(slot, tri.tex),
-        slot.backdrop,
-        0,
-        np,
-    );
-    true
-}
-
-#[cold]
-#[inline(never)]
-#[link_section = ".hlpsx_cold.seamed"]
-unsafe fn try_emit_world_seamed_pair(
-    packets: &mut PrimitivePacketArena<'_>,
-    m: &Map,
-    tex: usize,
-    base: usize,
-    count: usize,
-    patch: usize,
-    first: map::RenderTri,
-    frame: u16,
-    np: &mut usize,
-    counts: &mut WorldCounters,
-) -> bool {
-    if patch + 1 >= count || !m.patch_is_triangle(base, patch + 1) {
-        return false;
-    }
-    let next = m.patch_corners(base, patch + 1);
-    let second = map::RenderTri {
-        idx: [next[0].idx, next[1].idx, next[2].idx],
-        tex,
-        uv_words: [next[0].uv, next[1].uv, next[2].uv],
-        rgb: [next[0].rgb, next[1].rgb, next[2].rgb],
-    };
-    let selected =
-        WORLD_AFFINE_SEAMED_SPLITS == 0 && collect_world_seamed_pair(m, first, second, frame) != 0;
-    let before = *np;
-    if !selected || !try_emit_world_seamed_tri(packets, m, first, frame, np, counts) {
-        emit_world_loop_tri(packets, m, &first, frame, np, counts, 0);
-    }
-    if !selected || !try_emit_world_seamed_tri(packets, m, second, frame, np, counts) {
-        emit_world_loop_tri(packets, m, &second, frame, np, counts, 0);
-    }
-    if selected && *np > before {
-        WORLD_AFFINE_SPLIT_PATCHES = WORLD_AFFINE_SPLIT_PATCHES.saturating_add(1);
-        WORLD_AFFINE_SEAMED_SPLITS = 1;
-    }
-    true
-}
-
-#[cold]
-#[inline(never)]
-#[link_section = ".hlpsx_cold.seamed"]
-unsafe fn emit_world_seamed_prefix(
-    packets: &mut PrimitivePacketArena<'_>,
-    m: &Map,
-    tex: usize,
-    base: usize,
-    count: usize,
-    frame: u16,
-    np: &mut usize,
-    counts: &mut WorldCounters,
-) -> usize {
-    let mut patch = 0usize;
-    while patch + 1 < count
-        && m.patch_is_seamed_pair_start(base, patch)
-        && m.patch_is_triangle(base, patch + 1)
-    {
-        let corners = m.patch_corners(base, patch);
-        let first = map::RenderTri {
-            idx: [corners[0].idx, corners[1].idx, corners[2].idx],
-            tex,
-            uv_words: [corners[0].uv, corners[1].uv, corners[2].uv],
-            rgb: [corners[0].rgb, corners[1].rgb, corners[2].rgb],
-        };
-        if !try_emit_world_seamed_pair(
-            packets, m, tex, base, count, patch, first, frame, np, counts,
-        ) {
-            break;
-        }
-        patch += 2;
-    }
-    patch
 }
 
 /// Correct a severe triangular residue without changing its boundary ownership.
@@ -30249,43 +29410,6 @@ unsafe fn load_accounted_map_chunk(
     let load = load_streamed_chunk(chunk_id, map_buf())?;
     account_streamed_chunk(load, stream_chunks, stream_bytes, stream_sectors);
     Some(load)
-}
-
-fn stream_model_texture_chunk(
-    chunk_id: u32,
-    dst_word: usize,
-    stage_end: usize,
-    slots: *mut TexSlot,
-    slot_len: usize,
-    stream_chunks: &mut u32,
-    stream_bytes: &mut u32,
-    stream_sectors: &mut u32,
-) -> Option<(usize, usize)> {
-    // Stage the texture in the free tail above the geometry loaded so far, NOT
-    // at offset 0 (offset 0 holds live geometry draw_model reads; a texture
-    // there would clobber it and crash -- this was c1a2a). `stage_end` bounds
-    // the scratch so it cannot spill into the NEXT region: a viewmodel streamed
-    // mid-switch stages inside the pool (stage_end = VM_POOL_WORDS) and never
-    // touches the resident enemies above it. load_chunk refuses a chunk larger
-    // than its destination, so a tex that won't fit is skipped (untextured).
-    let load = {
-        let buf = unsafe { core::slice::from_raw_parts_mut(model_ptr(), model_capacity()) };
-        let end = stage_end.min(buf.len());
-        if dst_word >= end {
-            return None;
-        }
-        load_streamed_chunk(chunk_id, &mut buf[dst_word..end])
-    };
-    let Some(load) = load else {
-        return None;
-    };
-    let len = load.raw_len;
-    account_streamed_chunk(load, stream_chunks, stream_bytes, stream_sectors);
-    let bytes = unsafe { streamed_model_bytes_at(dst_word * 4, len) };
-    telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
-    let uploaded = unsafe { vram::upload_tex_chunk_append_raw(bytes, slots, slot_len) };
-    telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
-    uploaded
 }
 
 /// Stream a room from WORLD.PAK, upload its textures, and run the renderer +

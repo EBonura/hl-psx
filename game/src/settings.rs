@@ -241,7 +241,6 @@ pub fn toggle_autosave() {
 // ---- Difficulty ------------------------------------------------------------
 // skill.cfg level minus one: 0 Easy, 1 Medium, 2 Hard. Chosen on the main
 // menu's New Game row, restored from a save, and kept for the session.
-pub const SKILL_NAMES: [&str; 3] = ["Easy", "Medium", "Hard"];
 static mut SKILL: u8 = 1;
 
 pub fn skill() -> usize {
@@ -270,20 +269,6 @@ pub const DEBUG_STATS: u8 = 1 << 3; // position / leaf / room / fps overlay
 
 /// Menu order; the index is the bit position, so row `i` toggles `1 << i`.
 pub const DEBUG_LABELS: [&str; 4] = ["Fly Mode", "All Weapons", "God Mode", "Show Stats"];
-// The pause menu draws one centred string per row, so its labels carry the
-// state inline instead of a separate value column.
-pub const DEBUG_LABELS_ON: [&str; 4] = [
-    "Fly Mode: ON",
-    "All Weapons: ON",
-    "God Mode: ON",
-    "Show Stats: ON",
-];
-pub const DEBUG_LABELS_OFF: [&str; 4] = [
-    "Fly Mode: OFF",
-    "All Weapons: OFF",
-    "God Mode: OFF",
-    "Show Stats: OFF",
-];
 
 static mut DEBUG_FLAGS: u8 = 0;
 

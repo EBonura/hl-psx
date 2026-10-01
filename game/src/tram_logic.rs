@@ -234,21 +234,6 @@ pub const fn should_apply_spawn_startspeed(riding_transfer: bool) -> bool {
     !riding_transfer
 }
 
-/// View-yaw delta for a rider carried through a train bend.
-///
-/// The path yaw is measured in GoldSrc's XY convention. Mapping that world to
-/// PSX `(x,z)` reverses the sign, so the camera must apply the negative of the
-/// shortest Q12 travel delta. Keep this at full Q12 precision; the render
-/// matrix's Q8 quantization would make the view staircase by up to 1.3 degrees.
-#[inline(always)]
-pub const fn camera_carry_delta_q12(previous: u16, current: u16) -> i32 {
-    let mut delta = (current.wrapping_sub(previous) & 0x0fff) as i32;
-    if delta > 2048 {
-        delta -= 4096;
-    }
-    -delta
-}
-
 /// Whether a carried train lies just before the first point of its new path.
 ///
 /// Nearest-point projection clamps such a position to waypoint zero. Preserve
@@ -487,15 +472,6 @@ mod tests {
     fn transferred_tram_state_overrides_destination_startspeed_only_at_spawn() {
         assert!(should_apply_spawn_startspeed(false));
         assert!(!should_apply_spawn_startspeed(true));
-    }
-
-    #[test]
-    fn camera_carry_uses_negative_shortest_travel_delta() {
-        assert_eq!(camera_carry_delta_q12(0, 0), 0);
-        assert_eq!(camera_carry_delta_q12(0, 1024), -1024);
-        assert_eq!(camera_carry_delta_q12(1024, 0), 1024);
-        assert_eq!(camera_carry_delta_q12(4090, 10), -16);
-        assert_eq!(camera_carry_delta_q12(10, 4090), 16);
     }
 
     #[test]

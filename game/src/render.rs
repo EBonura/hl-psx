@@ -25,10 +25,6 @@ pub fn project_soft(v: &CVert) -> SVert {
 pub fn quad_outside_vertical(c: &[&CVert; 4]) -> bool {
     unsafe { shared::quad_outside_vertical(&*core::ptr::addr_of!(VIEW), c) }
 }
-#[inline(always)]
-pub fn on_visible_boundary(p: &SVert) -> bool {
-    unsafe { shared::on_visible_boundary(&*core::ptr::addr_of!(VIEW), p) }
-}
 /// Consume the result before the next clipping call; rendering is serialized.
 #[inline]
 pub unsafe fn visible_clip(poly: [&CVert; 3]) -> (*const SVert, usize) {

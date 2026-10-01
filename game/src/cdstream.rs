@@ -41,10 +41,6 @@ mod target {
         unsafe { owner().set_sector_hook(hook) }
     }
     #[inline]
-    pub fn load_chunk(id: u32, dst: &mut [u32]) -> Option<usize> {
-        unsafe { owner().load_chunk(id, dst) }
-    }
-    #[inline]
     pub fn load_chunk_decompressed(id: u32, dst: &mut [u32]) -> Option<super::ChunkLoad> {
         unsafe { owner().load_chunk_decompressed(id, dst) }
     }

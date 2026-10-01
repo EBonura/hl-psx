@@ -90,11 +90,6 @@ const LONGJUMP_UP_Q6: i32 = 958;
 const GROUND_PROBE_DOWN: i32 = 2;
 const MAX_CLIP_PLANES: usize = 5;
 
-#[inline]
-fn dot(n: [i16; 3], p: [i32; 3]) -> i32 {
-    ((n[0] as i32 * p[0]) + (n[1] as i32 * p[1]) + (n[2] as i32 * p[2])) >> 12
-}
-
 /// Q14 plane projection in Q27.5. Keeping five fractional bits here lets the
 /// existing `i32` cooked distance preserve GoldSrc's 1/32-unit trace epsilon.
 #[inline(always)]
@@ -1382,27 +1377,6 @@ pub fn trace_down_support(
         normal: best_normal,
         mover: best_mover,
     })
-}
-
-/// Snap a point origin onto floor geometry near it.
-pub fn snap_to_ground(
-    map: &Map,
-    movers: &[Mover],
-    pos: [i32; 3],
-    probe_up: i32,
-    probe_down: i32,
-) -> Option<[i32; 3]> {
-    let p1 = [pos[0], pos[1] + probe_up.max(0), pos[2]];
-    let p2 = [pos[0], pos[1] - probe_down.max(0), pos[2]];
-    let t = trace_point_all(map, movers, p1, p2, -1);
-    if t.startsolid || t.frac >= 4096 || t.normal[1] <= GROUND_NY {
-        return None;
-    }
-    Some([
-        p1[0] + (((p2[0] - p1[0]) * t.frac) >> 12),
-        p1[1] + (((p2[1] - p1[1]) * t.frac) >> 12),
-        p1[2] + (((p2[2] - p1[2]) * t.frac) >> 12),
-    ])
 }
 
 /// Trace the world hull plus every mover hull (each shifted by its offset);
