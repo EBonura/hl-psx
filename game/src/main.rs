@@ -23566,7 +23566,6 @@ unsafe fn emit_cv_flat(
 #[derive(Clone, Copy)]
 enum ClipRefinement {
     Flat,
-    Adaptive,
     Guard,
 }
 
@@ -23579,10 +23578,6 @@ unsafe fn emit_cv_clipped(
     np: &mut usize,
     refinement: ClipRefinement,
 ) {
-    if matches!(refinement, ClipRefinement::Adaptive) {
-        emit_cv_split_route(packets, cv, mat, texture_backdrop, np);
-        return;
-    }
     let (clipped, n) = render::visible_clip(cv);
     let cached_scr = SOFT_CACHED_SCREEN;
     let cached_cv = SOFT_CACHED_CV;
