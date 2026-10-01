@@ -24,7 +24,9 @@ pub const RIC: u8 = 10;
 pub const ELECTRO: u8 = 11;
 pub const PAIN: u8 = 12;
 pub const BODYDROP: u8 = 13;
+#[allow(dead_code)] // completes the sound bank id table; no code names it
 pub const DOOR_MOVE: u8 = 14;
+#[allow(dead_code)] // completes the sound bank id table; no code names it
 pub const DOOR_STOP: u8 = 15;
 pub const BUTTON: u8 = 16;
 pub const PICKUP: u8 = 17;
@@ -52,6 +54,7 @@ pub const SLV_PAIN: u8 = 38;
 pub const SLV_DIE: u8 = 39;
 pub const BC_PAIN: u8 = 40;
 pub const BC_DIE: u8 = 41;
+#[allow(dead_code)] // completes the sound bank id table; no code names it
 pub const HEV_BELL: u8 = 42;
 pub const GEIGER: u8 = 43; // radiation/toxic-zone click
 pub const HEV_ACTIVATE: u8 = 44; // suit power-on voice (pickup)
