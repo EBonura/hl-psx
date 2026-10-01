@@ -1,6 +1,6 @@
 //! GoldSrc chunk streaming uses the shared owner; this facade supplies the
 //! game's render-arena lease and persistent viewmodel-entry capacity.
-pub use psx_goldsrc::chunk_stream::{decompress_in_place, ChunkLoad, StreamPump, PACK_LBA};
+pub use psx_goldsrc::chunk_stream::{ChunkLoad, StreamPump};
 
 #[cfg(target_arch = "mips")]
 mod target {
