@@ -9808,6 +9808,7 @@ unsafe fn script_local_detour(
     m: &Map,
     movers: &[phys::Mover],
     pi: usize,
+    #[cfg_attr(not(feature = "reference-trace"), allow(unused_variables))] // trace-only
     map_tick: u16,
     start: [i32; 3],
     goal: [i32; 3],
@@ -16847,7 +16848,6 @@ unsafe fn find_actor_target(
     nprops: usize,
     wake2: i32,
 ) -> (u8, bool) {
-    let ty = PROP_KIND[pi];
     let pos = PROP_POS[pi];
     let from = prop_eye(m, pi);
     let mut best_visible = PROP_TARGET_NONE;
@@ -25681,7 +25681,6 @@ unsafe fn emit_proj_fast(
     pb: Projected,
     pc: Projected,
     np: &mut usize,
-    affine_previous_level: u8,
 ) -> bool {
     let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
     if pa.sz >= NEAR
@@ -26139,7 +26138,6 @@ unsafe fn emit_proj_fast_tri(
     pb: Projected,
     pc: Projected,
     np: &mut usize,
-    affine_previous_level: u8,
 ) -> bool {
     let clamped = |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
     if pa.sz >= NEAR
@@ -26247,7 +26245,7 @@ unsafe fn emit_world_tri(
     counts.emit_calls += 1;
     let (pa, pb, pc) = (scratch_get(a), scratch_get(b), scratch_get(c));
     xhair_consider(m, tt, pa, pb, pc); // pick covers fast + soft-clip paths
-    if emit_proj_fast(packets, m, tt, pa, pb, pc, np, affine_previous_level) {
+    if emit_proj_fast(packets, m, tt, pa, pb, pc, np) {
         return;
     }
     // Straddlers use the software near-clipping path.
@@ -26280,7 +26278,7 @@ unsafe fn emit_submodel_tri(
             return;
         }
     }
-    if emit_proj_fast(packets, m, tt, pa, pb, pc, np, 0) {
+    if emit_proj_fast(packets, m, tt, pa, pb, pc, np) {
         return;
     }
     let tri = m.render_tri(tt, cached_world_uv_words(m, tt));
@@ -26320,7 +26318,7 @@ unsafe fn emit_submodel_loop_tri_projected(
     if SUBMODEL_ACTOR_OVERLAP && emit_actor_occluding_face(packets, m, tri, [pa, pb, pc], np) {
         return;
     }
-    if emit_proj_fast_tri(packets, m, tri, pa, pb, pc, np, 0) {
+    if emit_proj_fast_tri(packets, m, tri, pa, pb, pc, np) {
         return;
     }
     emit_projected(packets, m, *tri, [pa, pb, pc], 0, np);
@@ -26729,7 +26727,7 @@ unsafe fn emit_world_loop_tri(
     proj_vert(m, c, frame);
     counts.emit_calls += 1;
     let (pa, pb, pc) = (scratch_get(a), scratch_get(b), scratch_get(c));
-    if emit_proj_fast_tri(packets, m, tri, pa, pb, pc, np, affine_previous_level) {
+    if emit_proj_fast_tri(packets, m, tri, pa, pb, pc, np) {
         return;
     }
     emit_projected(packets, m, *tri, [pa, pb, pc], affine_previous_level, np);
@@ -28298,7 +28296,6 @@ unsafe fn draw_beam_textured(
         let z = ((1i32 << 20) / iz - BEAM_DEPTH_BIAS).max(render::NEAR_Z);
         clamp_otz((z as usize) >> OT_SHIFT)
     };
-    let mut otz = clamp_otz((avg as usize) >> OT_SHIFT);
     let mat = sl.material.with_blend_mode(BlendMode::Add);
     let packet = TexturedGouraudPacketMaterial::from_texture(mat);
     if hw <= 1 {
@@ -28367,7 +28364,7 @@ unsafe fn draw_beam_textured(
         let b = (cl(jx[i] - px), cl(jy[i] - py));
         let c = (cl(jx[i + 1] + px), cl(jy[i + 1] + py));
         let e = (cl(jx[i + 1] - px), cl(jy[i + 1] - py));
-        otz = seg_otz(i);
+        let otz = seg_otz(i);
         emit(
             packets,
             otz,
@@ -30531,7 +30528,7 @@ fn play(
     let mut zoom_aim = false; // crossbow L2 toggled 20-degree sight state
     let mut rpg_laser = true; // CRpg::Spawn enables the LTD by default
     let mut egon_firing = false; // prevents restarting the beam sound every pulse
-    let mut crouching = player.crouch; // TRIANGLE held: lower eye + slower, persists into render
+    let mut crouching; // TRIANGLE held: lower eye + slower, persists into render
     let mut flashlight = launch.preserve_view && suit_equipped && unsafe { FLASHLIGHT_ON };
     let mut flashlight_battery = if launch.preserve_view {
         unsafe { FLASHLIGHT_BATTERY }
@@ -31084,7 +31081,6 @@ fn play(
             let duck_requested = !dead
                 && unsafe { MOUNTED_TANK } < 0
                 && input_sample.held(semantic_input::ACTION_DUCK);
-            crouching = duck_requested;
             // GoldSrc drains one battery unit every 1.2 s while on and restores
             // one every 0.2 s while off. Tick before input so a fresh toggle gets
             // the complete authored interval rather than losing this tick.
@@ -31542,7 +31538,6 @@ fn play(
                     && tram_should_carry_player(player.pos, prev_train_pos)
                 {
                     tram_player_attached = true;
-                    prev_tram_yaw = tram_yaw_now; // no yaw jump on attach
                     tram_rider_local = tram_seat_to_local(player.pos, prev_train_pos, tram_yaw_now);
                 }
                 if tram_player_attached {
@@ -33110,7 +33105,7 @@ fn play(
         // speed, plus a subtle strafe roll -- both derived from BOB_PHASE + the
         // current horizontal velocity so a walking camera breathes instead of
         // gliding on rails.
-        let mut view_roll = 0i16;
+        let view_roll;
         unsafe {
             let hspeed = isqrt_i32(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
             // No bob on a ladder: BOB_PHASE freezes off the ground, but the
@@ -33231,7 +33226,11 @@ fn play(
             gpu::submit_linked_list_async(gpu::DRAW_DONE_NODE.as_ptr());
             interrupts::queue_gp1_at_vblank(fb.begin_deferred_swap());
             telemetry::stage_end(telemetry::stage::PRESENT);
-            present_pending = false;
+            // Consumed; every build path re-arms it before the next read.
+            #[allow(unused_assignments)]
+            {
+                present_pending = false;
+            }
             flip_queued = true;
         }
         unsafe {
@@ -33387,7 +33386,6 @@ fn play(
                 WAVE_DV = WAVE_TAB[(wi + 4) & 15] as u8;
                 reset_emit_policy();
 
-                let cell_path_active = false;
                 // The cold PVS builder preclassifies ordinary static opaque
                 // faces. Keep their shared zero policy/light context resident
                 // across the stream instead of resetting and re-probing sparse
