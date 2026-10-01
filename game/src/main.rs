@@ -461,6 +461,15 @@ const PATCH_PX_Q3: u32 = 512;
 /// drawn behind its children (patch and screen-split underlays off).
 const WATERTIGHT_SPLITS: bool = true;
 
+/// Patch-split edge midpoint moved outward (see `outward_point`); out of line
+/// so the four call sites in `emit_affine_quad_children` share one copy.
+#[inline(never)]
+fn nudge_outward(p: &mut Projected, a: (i32, i32), b: (i32, i32), c: (i32, i32)) {
+    let o = outward_point(a, b, c, (p.sx as i32, p.sy as i32));
+    p.sx = o.0 as i16;
+    p.sy = o.1 as i16;
+}
+
 /// `p` moved, if needed, to the side of line a-b away from `c` (or onto it):
 /// at most a pixel or two per axis, integer only.
 #[inline(always)]
@@ -15889,6 +15898,7 @@ unsafe fn monster_command_touch(m: &Map, nlogic: usize, target: u16) {
     }
 }
 
+#[optimize(size)]
 unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
         return;
@@ -19955,6 +19965,7 @@ fn inverse_bone_point(point: [i32; 3], bone: model::BoneTransform) -> [i32; 3] {
 /// GoldSrc's TraceLine reaches the studio collision path, which inverse-
 /// transforms the ray by each animated hitbox bone before testing its local
 /// AABB. HMD8 retains the same boxes and compact bone palettes.
+#[optimize(size)]
 #[inline(never)]
 unsafe fn prop_studio_hit_fraction(
     m: &Map,
@@ -20839,6 +20850,7 @@ unsafe fn detonate_satchels(m: &Map) -> bool {
     detonated
 }
 
+#[optimize(size)]
 unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_inflicted: bool) {
     if radius <= 0 {
         return;
@@ -25240,9 +25252,7 @@ unsafe fn emit_affine_quad_children(
             q(&vertices[3]),
         );
         let nudge = |m: &mut AffineVertex, a: (i32, i32), b: (i32, i32), c: (i32, i32)| {
-            let o = outward_point(a, b, c, (m.projected.sx as i32, m.projected.sy as i32));
-            m.projected.sx = o.0 as i16;
-            m.projected.sy = o.1 as i16;
+            nudge_outward(&mut m.projected, a, b, c)
         };
         nudge(&mut top, c0, c1, c2);
         nudge(&mut left, c0, c2, c1);
@@ -27129,6 +27139,7 @@ unsafe fn depth_split_underlay(
 /// (caller keeps the two triangles) when the quad needs no split, is a
 /// bow-tie, or the arena lacks headroom.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn emit_depth_split_quad(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
