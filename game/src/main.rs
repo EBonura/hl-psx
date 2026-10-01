@@ -4580,9 +4580,12 @@ unsafe fn viewmodel_for(_wm: usize) -> (Model, usize, usize, usize) {
     )
 }
 
+/// Borrow a resident model header. Returning it by value copied the whole
+/// 92-byte `Model` (a memcpy) at every per-prop, per-tick lookup, often to read
+/// one field. The cache is only written while a map loads.
 #[inline]
-unsafe fn loaded_model(slot: usize) -> Model {
-    LOADED_MODEL_CACHE[slot]
+unsafe fn loaded_model(slot: usize) -> &'static Model {
+    &*core::ptr::addr_of!(LOADED_MODEL_CACHE[slot])
 }
 
 /// Union of studio body values that can be visible for this model stream.
@@ -34485,8 +34488,7 @@ fn play(
                     0
                 };
                 // Passed every cull: only now parse the blob header for drawing.
-                let md_owned = loaded_model(slot as usize);
-                let md = &md_owned;
+                let md = loaded_model(slot as usize);
                 let slots = &POOL_TEX[lm.tex_start..lm.tex_start + lm.n_tex];
                 let face_indices = core::ptr::addr_of!(POOL_FACE_INDICES)
                     .cast::<u32>()
