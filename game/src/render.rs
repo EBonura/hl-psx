@@ -1,5 +1,5 @@
 //! Shared GoldSrc projection/clipping; local state selects the current view.
-use psx_goldsrc::render::{self as shared, View};
+use psx_goldsrc::render as shared;
 pub use shared::*;
 static mut VIEW: FullView = FullView::new();
 static mut SCRATCH: ClipScratch = ClipScratch::new();
