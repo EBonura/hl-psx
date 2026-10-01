@@ -1195,7 +1195,13 @@ pub fn trace_line(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Op
 
 /// `trace_line` ignoring the brush entity `skip` (UTIL_TraceLine's ignore
 /// edict: a func_tank never blocks its own shots).
-pub fn trace_line_skip(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3], skip: i32) -> Option<RayHit> {
+pub fn trace_line_skip(
+    map: &Map,
+    movers: &[Mover],
+    p1: [i32; 3],
+    p2: [i32; 3],
+    skip: i32,
+) -> Option<RayHit> {
     let t = trace_point_all(map, movers, p1, p2, skip);
     if t.startsolid || t.frac >= 4096 {
         return None;

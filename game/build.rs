@@ -1018,8 +1018,8 @@ fn parse_skill_cfg(text: &str) -> std::collections::HashMap<String, [f64; 3]> {
         let Ok(value) = value.trim_matches('"').parse::<f64>() else {
             continue;
         };
-        out.entry(key[..key.len() - 1].to_string()).or_insert([f64::NAN; 3])[level as usize - 1] =
-            value;
+        out.entry(key[..key.len() - 1].to_string())
+            .or_insert([f64::NAN; 3])[level as usize - 1] = value;
     }
     out
 }
@@ -1039,7 +1039,10 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
         let v = cfg
             .get(name)
             .unwrap_or_else(|| panic!("skill.cfg has no {name}1..3"));
-        assert!(v.iter().all(|x| x.is_finite()), "skill.cfg lacks a level of {name}");
+        assert!(
+            v.iter().all(|x| x.is_finite()),
+            "skill.cfg lacks a level of {name}"
+        );
         [v[0] * scale, v[1] * scale, v[2] * scale]
     };
     const HEALTH: [(u8, &str, f64); 25] = [
@@ -1111,7 +1114,12 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
     }
     let row = |name: &str, scale: f64| {
         let v = get(name, scale);
-        format!("[{}, {}, {}]", level_u16(v[0]), level_u16(v[1]), level_u16(v[2]))
+        format!(
+            "[{}, {}, {}]",
+            level_u16(v[0]),
+            level_u16(v[1]),
+            level_u16(v[2])
+        )
     };
     let generated = format!(
         "/// Spawn health per model type and difficulty; 0 keeps the model default.\n\

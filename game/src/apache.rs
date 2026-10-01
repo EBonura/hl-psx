@@ -91,7 +91,10 @@ pub(crate) unsafe fn reset() {
 #[optimize(size)]
 fn sc(a: i32) -> (i32, i32) {
     let t = ((a * 32 / 45) & 0xfff) as u16; // 1/16 degree -> 4096ths
-    (sincos::sin_q12(t), sincos::sin_q12(t.wrapping_add(1024) & 0xfff))
+    (
+        sincos::sin_q12(t),
+        sincos::sin_q12(t.wrapping_add(1024) & 0xfff),
+    )
 }
 
 /// UTIL_MakeAimVectors: AngleVectors with the pitch negated. q12
@@ -105,8 +108,16 @@ fn aim_vectors(a: [i32; 3]) -> [[i32; 3]; 3] {
     let m = |x: i32, y: i32| (x * y) >> 12;
     [
         [m(cp, cy), m(cp, sy), -sp],
-        [m(-m(sr, sp), cy) + m(cr, sy), m(-m(sr, sp), sy) - m(cr, cy), -m(sr, cp)],
-        [m(m(cr, sp), cy) + m(sr, sy), m(m(cr, sp), sy) - m(sr, cy), m(cr, cp)],
+        [
+            m(-m(sr, sp), cy) + m(cr, sy),
+            m(-m(sr, sp), sy) - m(cr, cy),
+            -m(sr, cp),
+        ],
+        [
+            m(m(cr, sp), cy) + m(sr, sy),
+            m(m(cr, sp), sy) - m(sr, cy),
+            m(cr, cp),
+        ],
     ]
 }
 
@@ -170,7 +181,11 @@ fn hl(p: [i32; 3]) -> [i32; 3] {
 unsafe fn corner(m: &Map, k: usize) -> ([i32; 3], [i32; 3]) {
     let fa = AP.aux as usize + k * 3;
     let (a, b, c) = (m.logic_aux(fa), m.logic_aux(fa + 1), m.logic_aux(fa + 2));
-    let pos = hl([a.target as i16 as i32, a.delay_ticks as i16 as i32, b.target as i16 as i32]);
+    let pos = hl([
+        a.target as i16 as i32,
+        a.delay_ticks as i16 as i32,
+        b.target as i16 as i32,
+    ]);
     // The corner's yaw is cooked in the runtime convention (0 = +Z); its
     // pitch as a reflected q8.
     let yaw_deg = (1024 - (c.target & 0xfff) as i32) * 360 * D / 4096;
@@ -190,14 +205,22 @@ pub(crate) unsafe fn init(li: usize, rec: map::LogicEnt, pi: usize) {
     a.loop_start = rec.flags;
     a.corner = 0;
     a.flags = rec.speed;
-    a.phase = if rec.speed & SF_WAITFORTRIGGER != 0 { 0 } else { 1 };
+    a.phase = if rec.speed & SF_WAITFORTRIGGER != 0 {
+        0
+    } else {
+        1
+    };
     a.rockets = 10;
     a.side = 1;
     let p = hl(PROP_POS[pi]);
     a.pos = [p[0] * D, p[1] * D, p[2] * D];
     a.vel = [0; 3];
     a.avel = [0; 3];
-    a.ang = [0, (1024 - prop_yaw_value(PROP_YAW[pi]) as i32) * 360 * D / 4096, 0];
+    a.ang = [
+        0,
+        (1024 - prop_yaw_value(PROP_YAW[pi]) as i32) * 360 * D / 4096,
+        0,
+    ];
     a.force = 0;
     a.goal_speed = 0;
     a.gun = [0; 2];
@@ -258,7 +281,11 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
         // Killed: MOVETYPE_TOSS at 0.3 gravity, crash after 15 s (4 s with
         // SF_NOWRECKAGE) or on the first solid touch.
         a.phase = 2;
-        a.next_rocket = now.wrapping_add(if a.flags & SF_NOWRECKAGE != 0 { 80 } else { 300 });
+        a.next_rocket = now.wrapping_add(if a.flags & SF_NOWRECKAGE != 0 {
+            80
+        } else {
+            300
+        });
     }
     let think = now & 1 == 0;
     if a.phase == 2 {
@@ -290,8 +317,15 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
     }
     prop_set_pos_exact(m, pi, at(a));
     // CApache::ShowDamage/Flight: ap_rotor2 on CHAN_STATIC while it flies.
-    setpiece_sfx::keep_loop(SP::APACHE_ROTOR, PROP_POS[pi], setpiece_sfx::OWNER_APACHE_ROTOR);
-    PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], ((1024 - a.ang[1] * 4096 / (360 * D)) & 0xfff) as u16);
+    setpiece_sfx::keep_loop(
+        SP::APACHE_ROTOR,
+        PROP_POS[pi],
+        setpiece_sfx::OWNER_APACHE_ROTOR,
+    );
+    PROP_YAW[pi] = prop_with_yaw(
+        PROP_YAW[pi],
+        ((1024 - a.ang[1] * 4096 / (360 * D)) & 0xfff) as u16,
+    );
     let q8 = |d: i32| ((-d * 256 / (360 * D)) & 0xff) as u16;
     APACHE_TILT = (a.pi, q8(a.ang[0]) | (q8(a.ang[2]) << 8));
     if !think {
@@ -312,7 +346,10 @@ unsafe fn dying(m: &Map, pi: usize, now: u16) {
     if !time_reached(now, AP.next_rocket) {
         if now & 3 == 0 {
             let r = |v: i32| v + IMPACT_RNG.below(301) as i32 - 150;
-            queue_explosion_fx([r(o[0]), o[1] - 50 - IMPACT_RNG.below(101) as i32, r(o[2])], 50);
+            queue_explosion_fx(
+                [r(o[0]), o[1] - 50 - IMPACT_RNG.below(101) as i32, r(o[2])],
+                50,
+            );
         }
         return;
     }
@@ -356,7 +393,11 @@ unsafe fn hunt(m: &Map, movers: &[phys::Mover], now: u16) {
     if a.corners != 0 && length < 128 {
         // The next path_corner; the cooked chain ends where it loops back.
         let next = a.corner + 1;
-        a.corner = if next >= a.corners { a.loop_start } else { next };
+        a.corner = if next >= a.corners {
+            a.loop_start
+        } else {
+            next
+        };
         (a.desired, a.goal_dir) = corner(m, a.corner as usize);
         length = isqrt_i32(dist2_3(origin, a.desired));
     }
@@ -372,7 +413,9 @@ unsafe fn hunt(m: &Map, movers: &[phys::Mover], now: u16) {
     };
     flight(a, want);
     // FireGun while seen within the last second, after two seconds in view.
-    if !time_reached(now, a.last_seen.wrapping_add(20)) && time_reached(now, a.prev_seen.wrapping_add(40)) {
+    if !time_reached(now, a.last_seen.wrapping_add(20))
+        && time_reached(now, a.prev_seen.wrapping_add(40))
+    {
         if fire_gun(m, movers, a) && a.goal_speed > 400 {
             a.goal_speed = 400;
         }
@@ -420,7 +463,11 @@ unsafe fn hunt(m: &Map, movers: &[phys::Mover], now: u16) {
 unsafe fn flight(a: &mut Apache, want: [i32; 3]) {
     // Aim ahead by `s` seconds of angular velocity, tilted 5 degrees down.
     fn add(a: &Apache, s: i32) -> [i32; 3] {
-        [a.ang[0] + a.avel[0] * s + 5 * D, a.ang[1] + a.avel[1] * s, a.ang[2] + a.avel[2] * s]
+        [
+            a.ang[0] + a.avel[0] * s + 5 * D,
+            a.ang[1] + a.avel[1] * s,
+            a.ang[2] + a.avel[2] * s,
+        ]
     }
     // Yaw toward where we want to go, as we will face in two seconds.
     let v = aim_vectors(add(a, 2));
@@ -498,7 +545,10 @@ unsafe fn fire_gun(m: &Map, movers: &[phys::Mover], a: &mut Apache) -> bool {
     let local = [dot(v[0], t), -dot(v[1], t), dot(v[2], t)];
     let ang = |y: i32, x: i32| crate::tank::atan_s(y, x) * 360 * D / 4096;
     let want_yaw = ang(local[1], local[0]);
-    let want_pitch = -ang(local[2], isqrt_i32(local[0] * local[0] + local[1] * local[1]));
+    let want_pitch = -ang(
+        local[2],
+        isqrt_i32(local[0] * local[0] + local[1] * local[1]),
+    );
     let step = |cur: i32, want: i32| cur + (want - cur).clamp(-12 * D, 12 * D);
     a.gun[0] = step(a.gun[0], want_yaw).clamp(-90 * D, 90 * D);
     a.gun[1] = step(a.gun[1], want_pitch).clamp(-10 * D, 45 * D);
@@ -517,9 +567,16 @@ unsafe fn fire_gun(m: &Map, movers: &[phys::Mover], a: &mut Apache) -> bool {
     let p = LOGIC_PLAYER_POS;
     let h = LOGIC_PLAYER_HALF_HEIGHT;
     if LOGIC_PLAYER_HEALTH > 0
-        && segment_box_frac(from, end, [p[0] - 16, p[1] - h, p[2] - 16], [p[0] + 16, p[1] + h, p[2] + 16]).is_some()
+        && segment_box_frac(
+            from,
+            end,
+            [p[0] - 16, p[1] - h, p[2] - 16],
+            [p[0] + 16, p[1] + h, p[2] + 16],
+        )
+        .is_some()
     {
-        PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(skill_damage(21).unwrap_or(8) as u16);
+        PENDING_PLAYER_DAMAGE =
+            PENDING_PLAYER_DAMAGE.saturating_add(skill_damage(21).unwrap_or(8) as u16);
         note_damage_direction(from);
     }
     push_tracer(from, end);

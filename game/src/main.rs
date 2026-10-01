@@ -42,20 +42,23 @@ mod reference_trace;
 mod render;
 #[cfg(feature = "route-follow")]
 use psx_goldsrc::route_follow;
-mod save;
 mod apache;
 mod garg;
-mod nihilanth;
 mod mortar;
+mod nihilanth;
 mod osprey;
+mod save;
 mod scientist_logic;
 mod scratchpad;
 mod setpiece_logic;
 mod setpiece_sfx;
 mod tank;
 use osprey::{osprey_init, tick_osprey, OSPREY, OSPREY_TILT, PROP_TYPE_OSPREY};
-use tank::{tank_player_fire, tank_still_controlled, tank_try_control, tank_use, tanks_init, tick_tanks, TANK_COUNT};
 use psx_goldsrc::semantic_input;
+use tank::{
+    tank_player_fire, tank_still_controlled, tank_try_control, tank_use, tanks_init, tick_tanks,
+    TANK_COUNT,
+};
 mod settings;
 mod sfx;
 mod sprite;
@@ -1194,39 +1197,39 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(30, 48, 90, AI_IDLE),                  // 15 gman (passive)
     // CGargantua: the melee roster wakes it; garg::tick runs its schedules.
     mdef_atk(200, 90, 360, AI_MELEE, 10, 0, 0, 0), // 16 gargantua
-    mdef(200, 90, 1748, AI_IDLE),               // 17 nihilanth (boss: render only)
-    mdef(150, 70, 200, AI_IDLE),                // 18 bigmomma (boss: render only)
-    mdef_atk(40, 20, 223, AI_MELEE, 6, 0, 0, 0), // 19 ichthyosaur
+    mdef(200, 90, 1748, AI_IDLE),                  // 17 nihilanth (boss: render only)
+    mdef(150, 70, 200, AI_IDLE),                   // 18 bigmomma (boss: render only)
+    mdef_atk(40, 20, 223, AI_MELEE, 6, 0, 0, 0),   // 19 ichthyosaur
     mdef_atk(40, 40, 80, AI_TURRET, 0, 1000, 7, 8), // 20 sentry
     mdef_atk(50, 40, 80, AI_TURRET, 0, 1200, 8, 7), // 21 turret
     mdef_atk(30, 30, 60, AI_TURRET, 0, 1000, 5, 3), // 22 miniturret
-    mdef(80, 60, 410, AI_IDLE),                 // 23 apache (flyer: render only)
-    mdef(10, 20, 60, AI_IDLE),                  // 24 flyer_flock (passive)
+    mdef(80, 60, 410, AI_IDLE),                    // 23 apache (flyer: render only)
+    mdef(10, 20, 60, AI_IDLE),                     // 24 flyer_flock (passive)
     mdef(SCIENTIST_HEALTH, 25, SCIENTIST_RENDER_RADIUS, AI_IDLE), // 25 sitting scientist
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 26 weapon_crowbar
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 27 weapon_9mmhandgun
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 28 weapon_357
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 29 weapon_9mmAR
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 30 weapon_shotgun
-    mdef(0, 12, 56, AI_ITEM),                   // 31 weapon_crossbow
-    mdef(0, 12, 45, AI_ITEM),                   // 32 weapon_rpg
-    mdef(0, 12, 51, AI_ITEM),                   // 33 weapon_gauss
-    mdef(0, 12, 40, AI_ITEM),                   // 34 weapon_egon
-    mdef(0, 12, 45, AI_ITEM),                   // 35 weapon_hornetgun
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 36 weapon_handgrenade
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 37 weapon_snark
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 38 weapon_tripmine
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 39 weapon_satchel
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 40 ammo_9mmclip
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 41 ammo_9mmAR
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 42 ammo_buckshot
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 43 ammo_357
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 44 ammo_crossbow
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 45 ammo_rpgclip
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 46 ammo_gaussclip
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 47 ammo_ARgrenades
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),   // 48 item_healthkit
-    mdef(0, 12, 38, AI_ITEM),                   // 49 item_longjump
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 26 weapon_crowbar
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 27 weapon_9mmhandgun
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 28 weapon_357
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 29 weapon_9mmAR
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 30 weapon_shotgun
+    mdef(0, 12, 56, AI_ITEM),                      // 31 weapon_crossbow
+    mdef(0, 12, 45, AI_ITEM),                      // 32 weapon_rpg
+    mdef(0, 12, 51, AI_ITEM),                      // 33 weapon_gauss
+    mdef(0, 12, 40, AI_ITEM),                      // 34 weapon_egon
+    mdef(0, 12, 45, AI_ITEM),                      // 35 weapon_hornetgun
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 36 weapon_handgrenade
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 37 weapon_snark
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 38 weapon_tripmine
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 39 weapon_satchel
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 40 ammo_9mmclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 41 ammo_9mmAR
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 42 ammo_buckshot
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 43 ammo_357
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 44 ammo_crossbow
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 45 ammo_rpgclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 46 ammo_gaussclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 47 ammo_ARgrenades
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 48 item_healthkit
+    mdef(0, 12, 38, AI_ITEM),                      // 49 item_longjump
     mdef(200, 90, 912, AI_IDLE), // 50 tentacle (Blast Pit; killtargeted by the rocket)
     mdef_atk(30, 40, 90, AI_RANGED, 16, 900, 6, 10), // 51 human assassin (silenced 9mm)
     // Script-only monster_generic. Health must stay nonzero so its exact
@@ -5734,8 +5737,7 @@ unsafe fn aim_rotation(yaw: u16, pitch: i16) -> Mat3I16 {
 static mut MOUNTED_TANK: i32 = -1; // logic index of the mounted tank, or -1
 static mut TANK_FIRE_CD: u16 = 0; // ticks until the tank can fire again
 
-
-                                  // ---- Screen titles (env_message / chapter cards) + screen fades (env_fade) ----
+// ---- Screen titles (env_message / chapter cards) + screen fades (env_fade) ----
 static mut TITLE_TEXT_ID: u16 = 0; // logic-names id of the text; 0 = none
 static mut TITLE_T: u16 = 0;
 static mut TITLE_HOLD: u16 = 0;
@@ -5777,7 +5779,7 @@ static mut ENDING_FROM: u32 = 0;
 static mut FADE_STARTDARK: u8 = 0;
 const STARTDARK_TICKS: u8 = 120;
 const STARTDARK_FADE_TICKS: i32 = 30;
-                                         // ---- CD music (CDDA tracks appended to the disc; HL track numbers pass through) ----
+// ---- CD music (CDDA tracks appended to the disc; HL track numbers pass through) ----
 static mut CD_TRACK_WANT: i16 = 0; // >0 play, -1 stop, 0 none
 static mut CD_TRACK_CUR: i16 = 0;
 // Absolute BCD MSF captured by GetLocP when a stream suspends a live cue, so
@@ -6543,7 +6545,11 @@ unsafe fn water_touch(m: &Map, nents: usize, pos: [i32; 3]) -> bool {
 unsafe fn feet_in_water(m: &Map, nents: usize, pos: [i32; 3], half_height: i32) -> bool {
     let feet = [pos[0], pos[1] - half_height + 1, pos[2]];
     let leaf = camera_leaf(m, feet);
-    let liquid = if leaf >= 0 { m.leaf_liquid(leaf as usize) } else { 0 };
+    let liquid = if leaf >= 0 {
+        m.leaf_liquid(leaf as usize)
+    } else {
+        0
+    };
     if liquid != 0 {
         return liquid == 1;
     }
@@ -6964,7 +6970,11 @@ fn pushable_max_speed(e: map::Ent) -> i32 {
 
 #[inline(always)]
 fn pushable_half_extents(e: map::Ent) -> [i32; 3] {
-    [(e.mv[0] as u32 >> 16) as i32, e.mv[1] & 0xffff, e.mv[2].abs()]
+    [
+        (e.mv[0] as u32 >> 16) as i32,
+        e.mv[1] & 0xffff,
+        e.mv[2].abs(),
+    ]
 }
 
 /// CPushable's cooked buoyancy (pev->skin), above the half height in mv[1].
@@ -8061,11 +8071,8 @@ unsafe fn logic_remove_entity(li: usize, rec: map::LogicEnt, nents: usize) {
         while i < MAX_LOGIC_EVENTS {
             let meta = LOGIC_EVENTS[i].meta;
             if logic_state::event_active(meta) && logic_state::event_caller(meta) == li as u16 {
-                LOGIC_EVENTS[i].meta = logic_state::event_meta(
-                    false,
-                    logic_state::event_use_type(meta),
-                    li as u16,
-                );
+                LOGIC_EVENTS[i].meta =
+                    logic_state::event_meta(false, logic_state::event_use_type(meta), li as u16);
             }
             i += 1;
         }
@@ -9351,7 +9358,10 @@ unsafe fn logic_fire_targets(
         // name does nothing (c2a3a's cage path fires cagebubbles).
         if LOGIC_STATE[li] != LOGIC_STATE_REMOVED
             && logic_cached_targetname(li) == target
-            && !matches!(LOGIC_KIND[li], map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE)
+            && !matches!(
+                LOGIC_KIND[li],
+                map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE
+            )
         {
             logic_use_entity(m, nlogic, nents, li, use_type, now, depth + 1, caller_li);
         }
@@ -9787,7 +9797,8 @@ unsafe fn script_human_actor_blocked_fraction(
             player_pos[1] + player_half_height,
             player_pos[2] + 16,
         ];
-        if let Some(hit) = ground_logic::sweep_player_actor(from, to, player_mins, player_maxs, half)
+        if let Some(hit) =
+            ground_logic::sweep_player_actor(from, to, player_mins, player_maxs, half)
         {
             best = best.min(hit.frac);
         }
@@ -10652,7 +10663,11 @@ unsafe fn script_root_motion(m: &Map, pi: usize, rec: map::LogicEnt) {
     let s = sincos::sin_q12(yaw);
     let c = sincos::sin_q12((yaw + 1024) & 0x0fff);
     let p = PROP_POS[pi];
-    let mut pos = [p[0] + ((s * f - c * l) >> 12), p[1], p[2] + ((c * f + s * l) >> 12)];
+    let mut pos = [
+        p[0] + ((s * f - c * l) >> 12),
+        p[1],
+        p[2] + ((c * f + s * l) >> 12),
+    ];
     if let Some(y) = prop_floor_y_down(m, pi, [pos[0], p[1] + 1, pos[2]], 256) {
         pos[1] = y;
     }
@@ -11081,7 +11096,13 @@ unsafe fn logic_use_entity(
             // 2.5x its radius unless SF_ENVEXPLOSION_NODAMAGE: scripted blasts
             // kill c2a5's bridge runner and break what they are placed at.
             if rec.spawnflags & 1 == 0 && rec.arg0 != 0 {
-                explode(m, rec.origin, rec.arg0.min(255) as u8, rec.arg0 as i32 * 5 / 2, false);
+                explode(
+                    m,
+                    rec.origin,
+                    rec.arg0.min(255) as u8,
+                    rec.arg0 as i32 * 5 / 2,
+                    false,
+                );
             } else {
                 queue_explosion_fx(rec.origin, rec.arg0.min(255) as u8);
                 sfx::play_world(sfx::EXPLODE, rec.origin);
@@ -11298,7 +11319,9 @@ unsafe fn maker_make(
     // "monster is blocking spawn": a living actor or the player inside the
     // spawn box defers this one to a later think.
     let at = PROP_POS[pi];
-    let near = |p: [i32; 3]| (p[0] - at[0]).abs() < 32 && (p[2] - at[2]).abs() < 32 && (p[1] - at[1]).abs() < 72;
+    let near = |p: [i32; 3]| {
+        (p[0] - at[0]).abs() < 32 && (p[2] - at[2]).abs() < 32 && (p[1] - at[1]).abs() < 72
+    };
     if near(LOGIC_PLAYER_POS) {
         return;
     }
@@ -11327,7 +11350,16 @@ unsafe fn maker_make(
     }
     // Each child fires the target (c1a3's teleport flashes). The maker's
     // "delay" is its spawn interval, so fire now, not queued.
-    logic_fire_targets(m, nlogic, nents, rec.target, map::USE_TOGGLE, now, depth + 1, li as u16);
+    logic_fire_targets(
+        m,
+        nlogic,
+        nents,
+        rec.target,
+        map::USE_TOGGLE,
+        now,
+        depth + 1,
+        li as u16,
+    );
 }
 
 /// CTriggerCamera::Use: toggle; turning on takes the view (and, with
@@ -12429,9 +12461,7 @@ unsafe fn tick_momentary(
 /// button-operated door by walking up and pressing use.
 fn logic_is_use_target(rec: map::LogicEnt) -> bool {
     match rec.kind {
-        map::LOGIC_FUNC_BUTTON
-        | map::LOGIC_HEALTH_CHARGER
-        | map::LOGIC_HEV_CHARGER => true,
+        map::LOGIC_FUNC_BUTTON | map::LOGIC_HEALTH_CHARGER | map::LOGIC_HEV_CHARGER => true,
         // A func_tank has no use caps: func_tankcontrols hands it over.
         map::LOGIC_FUNC_DOOR => (rec.spawnflags & SF_DOOR_USE_ONLY) != 0,
         _ => false,
@@ -13193,8 +13223,10 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         // Cache the name in already-allocated per-record storage so a fire does
         // not decode every 64-byte LogicEnt merely to reject almost all of it.
         LOGIC_BREAK_HP[li] = rec.targetname;
-        if matches!(rec.kind, map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE)
-            && rec.spawnflags & SF_TRIGGER_ALLOWMONSTERS != 0
+        if matches!(
+            rec.kind,
+            map::LOGIC_TRIGGER_ONCE | map::LOGIC_TRIGGER_MULTIPLE
+        ) && rec.spawnflags & SF_TRIGGER_ALLOWMONSTERS != 0
         {
             MONSTER_TOUCH = true;
         }
@@ -13231,9 +13263,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         LOGIC_COUNTER[li] = match rec.kind {
             map::LOGIC_TRIGGER_COUNTER => (rec.arg0 as i16).max(1),
             // Chargers store their remaining juice here (never counters).
-            map::LOGIC_HEALTH_CHARGER => {
-                skill_table::SKILL_HEALTHCHARGER[settings::skill()] as i16
-            }
+            map::LOGIC_HEALTH_CHARGER => skill_table::SKILL_HEALTHCHARGER[settings::skill()] as i16,
             map::LOGIC_HEV_CHARGER => skill_table::SKILL_SUITCHARGER[settings::skill()] as i16,
             // Breakables need LOGIC_BREAK_HP for live HP, so preserve their
             // targetname's raw u16 bits in this otherwise-unused counter slot.
@@ -13280,7 +13310,11 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                 }
             }
             map::LOGIC_MAP_FLAGS => {
-                FADE_STARTDARK = if rec.arg1 & 1 != 0 { STARTDARK_TICKS } else { 0 };
+                FADE_STARTDARK = if rec.arg1 & 1 != 0 {
+                    STARTDARK_TICKS
+                } else {
+                    0
+                };
                 CHAPTER_TITLE_ID = rec.arg0;
                 CHAPTER_TITLE_HOLD = rec.speed;
                 // gametitle bit: flash the big HALF-LIFE card at level start (c0a0).
@@ -15656,8 +15690,8 @@ unsafe fn monster_sight_ai_triggers(
     player_pos: [i32; 3],
     player_pvs_current: bool,
 ) {
-    let in_pvs = player_pvs_current
-        && (PROP_LEAF[pi] <= 0 || pvs_leaf_visible(m, PROP_LEAF[pi] as usize));
+    let in_pvs =
+        player_pvs_current && (PROP_LEAF[pi] <= 0 || pvs_leaf_visible(m, PROP_LEAF[pi] as usize));
     let pos = PROP_POS[pi];
     let dx = player_pos[0] - pos[0];
     let dy = player_pos[1] - pos[1];
@@ -15666,7 +15700,11 @@ unsafe fn monster_sight_ai_triggers(
         return;
     }
     let yaw_off = (yaw_from_vec(dx, dz).wrapping_sub(prop_yaw_value(PROP_YAW[pi])) & 0xfff) as i32;
-    let yaw_off = if yaw_off > 2048 { 4096 - yaw_off } else { yaw_off };
+    let yaw_off = if yaw_off > 2048 {
+        4096 - yaw_off
+    } else {
+        yaw_off
+    };
     let in_combat = PROP_AI_TARGET[pi] != PROP_TARGET_NONE;
     let scripted = PROP_SCRIPT_MODE[pi] != 0 || PROP_SCRIPT_LI[pi] != u16::MAX;
     let mut line_clear: Option<bool> = None;
@@ -17625,8 +17663,8 @@ unsafe fn tick_barney(
                 // reaches the room.
                 let damage =
                     if (target as usize) < nprops && prop_is_zombie(PROP_KIND[target as usize]) {
-                        ((skill_scaled_damage(PROP_TYPE_BARNEY, BARNEY_DAMAGE) as u16 * 3) / 10).max(1)
-                            as u8
+                        ((skill_scaled_damage(PROP_TYPE_BARNEY, BARNEY_DAMAGE) as u16 * 3) / 10)
+                            .max(1) as u8
                     } else {
                         skill_scaled_damage(PROP_TYPE_BARNEY, BARNEY_DAMAGE)
                     };
@@ -19565,7 +19603,13 @@ unsafe fn logic_infodecal(m: &Map, rec: map::LogicEnt) {
     let a = [o[0] - 5, o[1] - 5, o[2] - 5];
     let b = [o[0] + 5, o[1] + 5, o[2] + 5];
     if let Some(hit) = phys::trace_line(m, &[], a, b).or_else(|| phys::trace_line(m, &[], b, a)) {
-        put_impact_mark(m, &hit, rec.arg1 as u8, (rec.arg0 >> 8) as usize, rec.arg0 as u8 as u32);
+        put_impact_mark(
+            m,
+            &hit,
+            rec.arg1 as u8,
+            (rec.arg0 >> 8) as usize,
+            rec.arg0 as u8 as u32,
+        );
     }
 }
 
@@ -21725,8 +21769,16 @@ unsafe fn tick_beam_extended(
                 hit_player = true;
             }
         }
-        let lo = [start[0].min(end[0]) - 64, start[1].min(end[1]) - 96, start[2].min(end[2]) - 64];
-        let hi = [start[0].max(end[0]) + 64, start[1].max(end[1]) + 96, start[2].max(end[2]) + 64];
+        let lo = [
+            start[0].min(end[0]) - 64,
+            start[1].min(end[1]) - 96,
+            start[2].min(end[2]) - 64,
+        ];
+        let hi = [
+            start[0].max(end[0]) + 64,
+            start[1].max(end[1]) + 96,
+            start[2].max(end[2]) + 64,
+        ];
         let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
         let mut pi = 0usize;
         while pi < n {
@@ -23118,7 +23170,15 @@ unsafe fn emit_cv_subdivided(
         );
         return;
     }
-    emit_screen_triangle(packets, &projected[0], &projected[1], &projected[2], mat, texture_backdrop, np);
+    emit_screen_triangle(
+        packets,
+        &projected[0],
+        &projected[1],
+        &projected[2],
+        mat,
+        texture_backdrop,
+        np,
+    );
 }
 
 unsafe fn emit_cv(
@@ -23142,7 +23202,15 @@ unsafe fn emit_cv(
     {
         return;
     }
-    emit_screen_triangle(packets, &projected[0], &projected[1], &projected[2], mat, texture_backdrop, np);
+    emit_screen_triangle(
+        packets,
+        &projected[0],
+        &projected[1],
+        &projected[2],
+        mat,
+        texture_backdrop,
+        np,
+    );
 }
 
 /// A cooked quad whose projection crosses the near plane or leaves the GPU
@@ -23845,7 +23913,15 @@ unsafe fn emit_cv_clipped(
         {
             continue;
         }
-        emit_screen_triangle(packets, &projected[0], &projected[1], &projected[2], mat, texture_backdrop, np);
+        emit_screen_triangle(
+            packets,
+            &projected[0],
+            &projected[1],
+            &projected[2],
+            mat,
+            texture_backdrop,
+            np,
+        );
     }
     let emitted = np.saturating_sub(before) as u32;
     WORLD_AFFINE_ACTUAL_EXTRA_EMITTED = WORLD_AFFINE_ACTUAL_EXTRA_EMITTED
@@ -25646,7 +25722,12 @@ unsafe fn emit_affine_quad_children(
     center.projected = fix_projected_vertex(center.position, p[1]);
     if WATERTIGHT_SPLITS {
         let q = |v: &AffineVertex| (v.projected.sx as i32, v.projected.sy as i32);
-        let (c0, c1, c2, c3) = (q(&vertices[0]), q(&vertices[1]), q(&vertices[2]), q(&vertices[3]));
+        let (c0, c1, c2, c3) = (
+            q(&vertices[0]),
+            q(&vertices[1]),
+            q(&vertices[2]),
+            q(&vertices[3]),
+        );
         let nudge = |m: &mut AffineVertex, a: (i32, i32), b: (i32, i32), c: (i32, i32)| {
             let o = outward_point(a, b, c, (m.projected.sx as i32, m.projected.sy as i32));
             m.projected.sx = o.0 as i16;
@@ -25734,7 +25815,9 @@ unsafe fn classic_native_patch_mask(
         return 0;
     }
     if WARP_PX_Q3 != 0 {
-        let over = |a: usize, b: usize| warp_edge_over_budget(&projected[a], &projected[b], 0, PATCH_PX_Q3);
+        let over = |a: usize, b: usize| {
+            warp_edge_over_budget(&projected[a], &projected[b], 0, PATCH_PX_Q3)
+        };
         return if over(0, 1) || over(1, 3) || over(3, 2) || over(2, 0) {
             0x0f
         } else {
@@ -25901,7 +25984,10 @@ unsafe fn push_patch_underlay(
         note_render_packet_drop(false);
         return;
     };
-    let far = (p0.sz as i32).max(p1.sz as i32).max(p2.sz as i32).max(p3.sz as i32);
+    let far = (p0.sz as i32)
+        .max(p1.sz as i32)
+        .max(p2.sz as i32)
+        .max(p3.sz as i32);
     let otz = world_order_key(
         ordering::PrimitiveDepths::quad(far, far, far, far),
         texture_backdrop,
@@ -26226,8 +26312,14 @@ fn tri_fits_gpu(pa: &Projected, pb: &Projected, pc: &Projected) -> bool {
 /// `tri_fits_gpu` for packed screen coordinates.
 #[inline(always)]
 fn screen_tri_fits_gpu(s: [(i16, i16); 3]) -> bool {
-    let (x0, x1) = (s[0].0.min(s[1].0).min(s[2].0), s[0].0.max(s[1].0).max(s[2].0));
-    let (y0, y1) = (s[0].1.min(s[1].1).min(s[2].1), s[0].1.max(s[1].1).max(s[2].1));
+    let (x0, x1) = (
+        s[0].0.min(s[1].0).min(s[2].0),
+        s[0].0.max(s[1].0).max(s[2].0),
+    );
+    let (y0, y1) = (
+        s[0].1.min(s[1].1).min(s[2].1),
+        s[0].1.max(s[1].1).max(s[2].1),
+    );
     (x1 as i32 - x0 as i32) <= 1023 && (y1 as i32 - y0 as i32) <= 511
 }
 
@@ -29022,27 +29114,29 @@ unsafe fn draw_beam_textured(
     // through push_tri_uv_words (its world/tram cache capture would fold beam
     // packets into the cached world plan). Bit 25 forces semi-transparency so
     // the STP-set texels blend additively, exactly like BeamTri does.
-    let emit =
-        |packets: &mut PrimitivePacketArena<'_>, otz: usize, screen: [(i16, i16); 3], uv: [u16; 3]| {
-            let prim = TriTexturedGouraud {
-                tag: 0,
-                tex_window: packet.tex_window_word,
-                color0_cmd: (packet.color0_command_word | 0x0200_0000) | pack_rgb_word(rgb[0]),
-                v0: pack_vertex_word(screen[0].0, screen[0].1),
-                uv0_clut: uv[0] as u32 | packet.clut_high_word,
-                color1: pack_rgb_word(rgb[1]),
-                v1: pack_vertex_word(screen[1].0, screen[1].1),
-                uv1_tpage: uv[1] as u32 | packet.tpage_high_word,
-                color2: pack_rgb_word(rgb[2]),
-                v2: pack_vertex_word(screen[2].0, screen[2].1),
-                uv2: uv[2] as u32,
-            };
-            if let Some(pk) = packets.push(prim) {
-                OT.add(otz, pk, TriTexturedGouraud::WORDS);
-            } else {
-                note_render_packet_drop(false);
-            }
+    let emit = |packets: &mut PrimitivePacketArena<'_>,
+                otz: usize,
+                screen: [(i16, i16); 3],
+                uv: [u16; 3]| {
+        let prim = TriTexturedGouraud {
+            tag: 0,
+            tex_window: packet.tex_window_word,
+            color0_cmd: (packet.color0_command_word | 0x0200_0000) | pack_rgb_word(rgb[0]),
+            v0: pack_vertex_word(screen[0].0, screen[0].1),
+            uv0_clut: uv[0] as u32 | packet.clut_high_word,
+            color1: pack_rgb_word(rgb[1]),
+            v1: pack_vertex_word(screen[1].0, screen[1].1),
+            uv1_tpage: uv[1] as u32 | packet.tpage_high_word,
+            color2: pack_rgb_word(rgb[2]),
+            v2: pack_vertex_word(screen[2].0, screen[2].1),
+            uv2: uv[2] as u32,
         };
+        if let Some(pk) = packets.push(prim) {
+            OT.add(otz, pk, TriTexturedGouraud::WORDS);
+        } else {
+            note_render_packet_drop(false);
+        }
+    };
     i = 0;
     while i < segs {
         let a = (cl(jx[i] + px), cl(jy[i] + py));
@@ -29200,7 +29294,11 @@ unsafe fn queue_world_beams(
     if let Some((count, c)) = nihilanth::spheres() {
         for i in 0..count as u32 {
             let a = ((SIM_NOW as u32 * 40 + i * 4096 / 20) & 0xfff) as u16;
-            let p = [c[0] + (sincos::sin_q12(a) * 360 >> 12), c[1], c[2] + (sincos::sin_q12(a.wrapping_add(1024) & 0xfff) * 360 >> 12)];
+            let p = [
+                c[0] + (sincos::sin_q12(a) * 360 >> 12),
+                c[1],
+                c[2] + (sincos::sin_q12(a.wrapping_add(1024) & 0xfff) * 360 >> 12),
+            ];
             draw_look(packets, ot, p, [p[0], p[1] + 24, p[2]], 7, rot, base_t);
         }
     }
@@ -29852,8 +29950,7 @@ fn main() {
                 .min((len - 8) / 2);
             for i in 0..count {
                 unsafe {
-                    CORE_SFX_PROFILE[i] =
-                        u16::from_le_bytes([bytes[8 + i * 2], bytes[9 + i * 2]]);
+                    CORE_SFX_PROFILE[i] = u16::from_le_bytes([bytes[8 + i * 2], bytes[9 + i * 2]]);
                 }
             }
         }
@@ -32460,7 +32557,8 @@ fn play(
                         // Pushables are rebuilt anyway, because
                         // pushable_publish_offset moves their `off` without
                         // their centre and this rebuild is what re-centres them.
-                        if same_pose && old.rc == rc && old.rs == rs && e.kind != ENT_KIND_PUSHABLE {
+                        if same_pose && old.rc == rc && old.rs == rs && e.kind != ENT_KIND_PUSHABLE
+                        {
                             nmov += 1;
                             continue;
                         }
@@ -32819,8 +32917,7 @@ fn play(
                 // CBasePlayer::PostThink skips the damage when the landing
                 // leaves the feet in water (watertype CONTENTS_WATER): the
                 // Nihilanth arena drop lands in a puddle.
-                if li > 29
-                    && !unsafe { feet_in_water(&m, nents, player.pos, player.half_height()) }
+                if li > 29 && !unsafe { feet_in_water(&m, nents, player.pos, player.half_height()) }
                 {
                     let d = ((li - 29) * 9 / 2).max(1) as u16;
                     fall_damage_player(&mut health, d);
@@ -33132,18 +33229,18 @@ fn play(
                     } else {
                         LOGIC_ACTIVATOR = 1;
                         if !tank_try_control(&m, nlogic, player.pos) {
-                        charger_pulse = logic_try_use(
-                            &m,
-                            nlogic,
-                            nents,
-                            player.pos,
-                            eye,
-                            yaw,
-                            pitch,
-                            sim_frame_no as u16,
-                            &mut health,
-                            &mut armor,
-                        );
+                            charger_pulse = logic_try_use(
+                                &m,
+                                nlogic,
+                                nents,
+                                player.pos,
+                                eye,
+                                yaw,
+                                pitch,
+                                sim_frame_no as u16,
+                                &mut health,
+                                &mut armor,
+                            );
                         }
                     }
                 }
@@ -33187,7 +33284,11 @@ fn play(
                     tick_momentary(&m, nlogic, nents, player.pos, eye, yaw, pitch);
                 }
                 LOGIC_ACTIVATOR = 1;
-                PLAYER_GROUND_ENT = if player.on_ground { player.ground_mover } else { -1 };
+                PLAYER_GROUND_ENT = if player.on_ground {
+                    player.ground_mover
+                } else {
+                    -1
+                };
                 logic_touch_triggers(
                     &m,
                     nlogic,

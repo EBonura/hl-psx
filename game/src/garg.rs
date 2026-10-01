@@ -94,14 +94,22 @@ pub(crate) unsafe fn reset() {
 #[inline(never)]
 #[optimize(size)]
 fn forward(yaw: u16) -> [i32; 3] {
-    [sincos::sin_q12(yaw & 0xfff), 0, sincos::sin_q12(yaw.wrapping_add(1024) & 0xfff)]
+    [
+        sincos::sin_q12(yaw & 0xfff),
+        0,
+        sincos::sin_q12(yaw.wrapping_add(1024) & 0xfff),
+    ]
 }
 
 /// `o + dir * len` for a q12 direction.
 #[inline(never)]
 #[optimize(size)]
 fn along(o: [i32; 3], dir: [i32; 3], len: i32) -> [i32; 3] {
-    [o[0] + ((dir[0] * len) >> 12), o[1] + ((dir[1] * len) >> 12), o[2] + ((dir[2] * len) >> 12)]
+    [
+        o[0] + ((dir[0] * len) >> 12),
+        o[1] + ((dir[1] * len) >> 12),
+        o[2] + ((dir[2] * len) >> 12),
+    ]
 }
 
 /// Where `from -> to` first meets the player's box padded by `pad`
@@ -114,7 +122,12 @@ unsafe fn player_frac(from: [i32; 3], to: [i32; 3], pad: i32) -> Option<i32> {
     if LOGIC_PLAYER_HEALTH == 0 {
         return None;
     }
-    segment_box_frac(from, to, [p[0] - w, p[1] - h, p[2] - w], [p[0] + w, p[1] + h, p[2] + w])
+    segment_box_frac(
+        from,
+        to,
+        [p[0] - w, p[1] - h, p[2] - w],
+        [p[0] + w, p[1] + h, p[2] + w],
+    )
 }
 
 #[inline(never)]
@@ -132,15 +145,27 @@ pub(crate) unsafe fn gesture_clip(pi: usize) -> Option<(usize, usize, usize)> {
     if g.pi as usize != pi || g.gesture == 0 {
         return None;
     }
-    let len = if g.gesture == 1 { sl::GARG_SWIPE_TICKS } else { sl::GARG_STOMP_TICKS };
-    Some((4 + g.gesture as usize, len as usize, SIM_NOW.wrapping_sub(g.gesture_start) as usize))
+    let len = if g.gesture == 1 {
+        sl::GARG_SWIPE_TICKS
+    } else {
+        sl::GARG_STOMP_TICKS
+    };
+    Some((
+        4 + g.gesture as usize,
+        len as usize,
+        SIM_NOW.wrapping_sub(g.gesture_start) as usize,
+    ))
 }
 
 /// UTIL_ScreenShake as the player feels it, keeping a stronger shake.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn shake(from: [i32; 3], amplitude: i32, ticks: u16, radius: i32) {
-    let amp = sl::shake_amplitude(amplitude, isqrt_i32(dist2_3(from, LOGIC_PLAYER_POS)), radius);
+    let amp = sl::shake_amplitude(
+        amplitude,
+        isqrt_i32(dist2_3(from, LOGIC_PLAYER_POS)),
+        radius,
+    );
     if amp > 0 && amp * SHAKE_DUR.max(1) as i32 >= SHAKE_AMP as i32 * SHAKE_TICKS as i32 {
         SHAKE_AMP = amp as u16;
         SHAKE_DUR = ticks;
@@ -170,7 +195,9 @@ pub(crate) unsafe fn tick(
     }
     let (target, visible) = if ai_reacquire(pi) {
         let selected = retained_actor_target(m, sight_movers, pi, player_pos, nprops)
-            .unwrap_or_else(|| find_actor_target(m, sight_movers, pi, player_pos, nprops, 2048 * 2048));
+            .unwrap_or_else(|| {
+                find_actor_target(m, sight_movers, pi, player_pos, nprops, 2048 * 2048)
+            });
         prop_ai_set_target_visible(pi, selected.1);
         selected
     } else {
@@ -219,12 +246,21 @@ pub(crate) unsafe fn tick(
         return;
     }
     // CheckAttacks: 2D facing cosine, origin-to-origin distance.
-    let enemy = if target == PROP_TARGET_PLAYER { player_pos } else { PROP_POS[target as usize] };
+    let enemy = if target == PROP_TARGET_PLAYER {
+        player_pos
+    } else {
+        PROP_POS[target as usize]
+    };
     let (dx, dz) = (enemy[0] - pos[0], enemy[2] - pos[2]);
     let dot = (f[0] * dx + f[2] * dz) / isqrt_i32(dx * dx + dz * dz).max(1);
     let dist = isqrt_i32(dist2_3(enemy, pos));
     let choice = if visible {
-        sl::garg_choice(dot, dist, time_reached(now, g.see), time_reached(now, g.flame_next))
+        sl::garg_choice(
+            dot,
+            dist,
+            time_reached(now, g.see),
+            time_reached(now, g.flame_next),
+        )
     } else {
         GargChoice::Chase
     };
@@ -275,8 +311,16 @@ unsafe fn swipe(pi: usize, target: u8, f: [i32; 3]) {
         hurt_player(dmg, pos);
         add_view_punch(-341, -341); // punchangle (-30, -30, 30)
     } else if target != PROP_TARGET_PLAYER {
-        let (mn, mx) = actor_collision_bounds(PROP_KIND[target as usize], PROP_POS[target as usize]);
-        if segment_box_frac(from, to, [mn[0] - 16, mn[1] - 18, mn[2] - 16], [mx[0] + 16, mx[1] + 18, mx[2] + 16]).is_some() {
+        let (mn, mx) =
+            actor_collision_bounds(PROP_KIND[target as usize], PROP_POS[target as usize]);
+        if segment_box_frac(
+            from,
+            to,
+            [mn[0] - 16, mn[1] - 18, mn[2] - 16],
+            [mx[0] + 16, mx[1] + 18, mx[2] + 16],
+        )
+        .is_some()
+        {
             damage_prop(target as usize, dmg.min(255) as u8, false);
         }
     }
@@ -295,7 +339,11 @@ unsafe fn stomp_attack(m: &Map, movers: &[phys::Mover], pi: usize, aim: [i32; 3]
     // the player's centre up to their eyes.
     let aim = if PROP_AI_TARGET[pi] == PROP_TARGET_PLAYER {
         let p = LOGIC_PLAYER_POS;
-        [p[0], p[1] + IMPACT_RNG.below(VIEW_HEIGHT as u32 + 1) as i32, p[2]]
+        [
+            p[0],
+            p[1] + IMPACT_RNG.below(VIEW_HEIGHT as u32 + 1) as i32,
+            p[2],
+        ]
     } else {
         aim
     };
@@ -351,7 +399,10 @@ unsafe fn flame_task(m: &Map, movers: &[phys::Mover], pi: usize, aim: [i32; 3], 
     g.flame_ang[0] = sl::approach_angle_q12(want[0], g.flame_ang[0], 46);
     g.flame_ang[1] = sl::approach_angle_q12(want[1].clamp(-512, 512), g.flame_ang[1], 91);
     let p = (g.flame_ang[0] & 0xfff) as u16;
-    let (sp, cp) = (sincos::sin_q12(p), sincos::sin_q12(p.wrapping_add(1024) & 0xfff));
+    let (sp, cp) = (
+        sincos::sin_q12(p),
+        sincos::sin_q12(p.wrapping_add(1024) & 0xfff),
+    );
     let fa = forward(((yaw + g.flame_ang[1]) & 0xfff) as u16);
     let dir = [(fa[0] * cp) >> 12, sp, (fa[2] * cp) >> 12];
     let f = forward(yaw as u16);
@@ -376,7 +427,11 @@ unsafe fn flame_task(m: &Map, movers: &[phys::Mover], pi: usize, aim: [i32; 3], 
         push_tracer_styled(start, along(start, dir, len * 2 / 5), TRACER_FLAME_CORE);
         // FlameDamage: full damage within 64 units of the flame's nearest
         // point to the player's body, 0.4 less per unit beyond.
-        let t = (((spot[0] - start[0]) * dir[0] + (spot[1] - start[1]) * dir[1] + (spot[2] - start[2]) * dir[2]) >> 12).clamp(0, len);
+        let t = (((spot[0] - start[0]) * dir[0]
+            + (spot[1] - start[1]) * dir[1]
+            + (spot[2] - start[2]) * dir[2])
+            >> 12)
+            .clamp(0, len);
         let src = along(start, dir, t);
         if LOGIC_PLAYER_HEALTH > 0 && phys::trace_line(m, movers, src, spot).is_none() {
             if let Some(tenths) = sl::flame_damage_tenths(fire, isqrt_i32(dist2_3(src, spot))) {
@@ -400,7 +455,11 @@ pub(crate) unsafe fn tick_world(m: &Map) {
     let now = SIM_NOW;
     if g.stomp_on && now.wrapping_sub(g.stomp_tick) & 1 == 0 {
         // CStomp::Think: this think's head-hull sweep, then advance.
-        let from = [g.stomp_pos[0] >> 4, (g.stomp_pos[1] >> 4) + 30, g.stomp_pos[2] >> 4];
+        let from = [
+            g.stomp_pos[0] >> 4,
+            (g.stomp_pos[1] >> 4) + 30,
+            g.stomp_pos[2] >> 4,
+        ];
         if player_frac(from, along(from, g.stomp_dir, g.stomp.sweep_q4() >> 4), 16).is_some() {
             hurt_player(skill_table::SKILL_GARG_STOMP[settings::skill()], from);
         }

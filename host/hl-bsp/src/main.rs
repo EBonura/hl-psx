@@ -2003,7 +2003,11 @@ fn vertex_shade(
     let Some(base) = lighting.get(o..o + 3) else {
         return (NEUTRAL, NEUTRAL, NEUTRAL);
     };
-    let mut sum = [base[0] as u32 * 256, base[1] as u32 * 256, base[2] as u32 * 256];
+    let mut sum = [
+        base[0] as u32 * 256,
+        base[1] as u32 * 256,
+        base[2] as u32 * 256,
+    ];
     for &(layer, value) in lit_layers {
         let lo = o + layer * lmw * lmh * 3;
         if let Some(plane) = lighting.get(lo..lo + 3) {
@@ -2040,7 +2044,10 @@ fn start_lightstyle_values(ents: &[u8]) -> [u32; 64] {
     ];
     let average = |pattern: &str| -> u32 {
         let n = pattern.len().max(1) as u32;
-        let sum: u32 = pattern.bytes().map(|c| c.saturating_sub(b'a') as u32 * 22).sum();
+        let sum: u32 = pattern
+            .bytes()
+            .map(|c| c.saturating_sub(b'a') as u32 * 22)
+            .sum();
         sum * 256 / (n * 264)
     };
     let mut values = [256u32; 64];
@@ -4314,7 +4321,9 @@ fn choose_standalone_spawn(
     // aimed and not a black pocket, keep it rather than an unaimed leftover
     // start that merely sees more: c1a1's stray second start stands in the
     // attacking_zombie scene, its first is the pocket c1a0c arrives in.
-    if let (Some((origin, yaw, score)), Some((_, _, authored))) = (first_player, best_authored_player) {
+    if let (Some((origin, yaw, score)), Some((_, _, authored))) =
+        (first_player, best_authored_player)
+    {
         if score >= MIN_AIMED_FIRST_PLAYER_SCORE && score == authored {
             return Some((origin, yaw));
         }
@@ -6073,21 +6082,92 @@ fn goldsrc_entvars_key(key: &str) -> bool {
     key.starts_with('_')
         || matches!(
             key,
-            "classname" | "globalname" | "origin" | "oldorigin" | "velocity" | "basevelocity"
-                | "movedir" | "angles" | "avelocity" | "punchangle" | "v_angle" | "fixangle"
-                | "idealpitch" | "pitch_speed" | "ideal_yaw" | "yaw_speed" | "modelindex"
-                | "model" | "viewmodel" | "weaponmodel" | "absmin" | "absmax" | "mins"
-                | "maxs" | "size" | "ltime" | "nextthink" | "solid" | "movetype" | "skin"
-                | "body" | "effects" | "gravity" | "friction" | "light_level" | "frame"
-                | "scale" | "sequence" | "animtime" | "framerate" | "controller" | "blending"
-                | "rendermode" | "renderamt" | "rendercolor" | "renderfx" | "health" | "frags"
-                | "weapons" | "takedamage" | "deadflag" | "view_ofs" | "button" | "impulse"
-                | "chain" | "dmg_inflictor" | "enemy" | "aiment" | "owner" | "groundentity"
-                | "spawnflags" | "flags" | "colormap" | "team" | "max_health"
-                | "teleport_time" | "armortype" | "armorvalue" | "waterlevel" | "watertype"
-                | "target" | "targetname" | "netname" | "message" | "dmg_take" | "dmg_save"
-                | "dmg" | "dmgtime" | "noise" | "noise1" | "noise2" | "noise3" | "speed"
-                | "air_finished" | "pain_finished" | "radsuit_finished"
+            "classname"
+                | "globalname"
+                | "origin"
+                | "oldorigin"
+                | "velocity"
+                | "basevelocity"
+                | "movedir"
+                | "angles"
+                | "avelocity"
+                | "punchangle"
+                | "v_angle"
+                | "fixangle"
+                | "idealpitch"
+                | "pitch_speed"
+                | "ideal_yaw"
+                | "yaw_speed"
+                | "modelindex"
+                | "model"
+                | "viewmodel"
+                | "weaponmodel"
+                | "absmin"
+                | "absmax"
+                | "mins"
+                | "maxs"
+                | "size"
+                | "ltime"
+                | "nextthink"
+                | "solid"
+                | "movetype"
+                | "skin"
+                | "body"
+                | "effects"
+                | "gravity"
+                | "friction"
+                | "light_level"
+                | "frame"
+                | "scale"
+                | "sequence"
+                | "animtime"
+                | "framerate"
+                | "controller"
+                | "blending"
+                | "rendermode"
+                | "renderamt"
+                | "rendercolor"
+                | "renderfx"
+                | "health"
+                | "frags"
+                | "weapons"
+                | "takedamage"
+                | "deadflag"
+                | "view_ofs"
+                | "button"
+                | "impulse"
+                | "chain"
+                | "dmg_inflictor"
+                | "enemy"
+                | "aiment"
+                | "owner"
+                | "groundentity"
+                | "spawnflags"
+                | "flags"
+                | "colormap"
+                | "team"
+                | "max_health"
+                | "teleport_time"
+                | "armortype"
+                | "armorvalue"
+                | "waterlevel"
+                | "watertype"
+                | "target"
+                | "targetname"
+                | "netname"
+                | "message"
+                | "dmg_take"
+                | "dmg_save"
+                | "dmg"
+                | "dmgtime"
+                | "noise"
+                | "noise1"
+                | "noise2"
+                | "noise3"
+                | "speed"
+                | "air_finished"
+                | "pain_finished"
+                | "radsuit_finished"
         )
 }
 
@@ -7465,7 +7545,10 @@ fn beam_endpoint_ref(
         }
         let cls = ent_value(b, "classname").unwrap_or("");
         if let Some(sm) = block_model(b) {
-            let brush = brush_by_submodel.get(sm).copied().unwrap_or(LOGIC_BRUSH_NONE);
+            let brush = brush_by_submodel
+                .get(sm)
+                .copied()
+                .unwrap_or(LOGIC_BRUSH_NONE);
             if brush != LOGIC_BRUSH_NONE && brush < 0x4000 {
                 return Some(0x4000 | brush);
             }
@@ -7707,7 +7790,9 @@ fn collect_logic_entities_with_lightstyles(
             "info_landmark" => LOGIC_INFO_LANDMARK,
             // CNihilanth finds n_min, n_max and n_recharger<level> by name;
             // a destroyed crystal killtargets its recharger.
-            "info_target" if ent_value(block, "targetname").is_some_and(|n| n.starts_with("n_")) => {
+            "info_target"
+                if ent_value(block, "targetname").is_some_and(|n| n.starts_with("n_")) =>
+            {
                 LOGIC_INFO_LANDMARK
             }
             "trigger_counter" => LOGIC_TRIGGER_COUNTER,
@@ -7733,7 +7818,10 @@ fn collect_logic_entities_with_lightstyles(
             // A scripted clip's fire event also opens doors (c1a2d's latch
             // barney_door_lock turns when Barney plays "unlatch").
             if !named_door_has_activation(&s, targetname, parse_spawnflags_u32(block))
-                && !studio_events.values().flatten().any(|e| e.target == targetname)
+                && !studio_events
+                    .values()
+                    .flatten()
+                    .any(|e| e.target == targetname)
             {
                 continue;
             }
@@ -8100,8 +8188,9 @@ fn collect_logic_entities_with_lightstyles(
             // CFuncTrain's Blocked damage (Spawn makes 0 into 2).
             LOGIC_FUNC_TRAIN => parse_f32_key(block, "dmg", 0.0).clamp(0.0, u16::MAX as f32) as u16,
             // m_iMaxLiveChildren (0 = no limit).
-            LOGIC_MONSTERMAKER => parse_f32_key(block, "m_imaxlivechildren", 0.0)
-                .clamp(0.0, u16::MAX as f32) as u16,
+            LOGIC_MONSTERMAKER => {
+                parse_f32_key(block, "m_imaxlivechildren", 0.0).clamp(0.0, u16::MAX as f32) as u16
+            }
             LOGIC_INFODECAL => infodecal_pick(ent_value(block, "texture").unwrap_or("")).1,
             // Debris kind: 3 + GoldSrc material. gibshooter throws flesh;
             // env_shooter's shootsounds picks glass, wood, metal, flesh or
@@ -8415,7 +8504,9 @@ fn collect_logic_entities_with_lightstyles(
         }
         if kind == LOGIC_MORTAR_FIELD {
             aux.push(LogicAuxRec {
-                target: (parse_f32_key(block, "m_flSpread", 0.0) / scale).round().clamp(0.0, 4096.0) as u16,
+                target: (parse_f32_key(block, "m_flSpread", 0.0) / scale)
+                    .round()
+                    .clamp(0.0, 4096.0) as u16,
                 delay_ticks: 0,
             });
             aux_count = 1;
@@ -8460,17 +8551,26 @@ fn collect_logic_entities_with_lightstyles(
             let centre = |deg: f32| ((q12(deg) as i32) & 0xfff) as u16;
             for (target, delay_ticks) in [
                 (rate("yawrate") | (rate("pitchrate") << 8), turn("yawrange")),
-                (turn("pitchrange"), tol("yawtolerance") | (tol("pitchtolerance") << 8)),
+                (
+                    turn("pitchrange"),
+                    tol("yawtolerance") | (tol("pitchtolerance") << 8),
+                ),
                 (
                     (firerate * 256.0).round().clamp(1.0, 65535.0) as u16,
                     seconds_to_ticks_u16(key("persistence")).min(255) | (flags << 8),
                 ),
                 (word(key("barrel")), word(key("barrely"))),
-                (word(key("barrelz")), damage.round().clamp(0.0, 65535.0) as u16),
+                (
+                    word(key("barrelz")),
+                    damage.round().clamp(0.0, 65535.0) as u16,
+                ),
                 (word(key("minRange")), word(key("maxRange"))),
                 (centre(angles[1]), centre(angles[0])),
             ] {
-                aux.push(LogicAuxRec { target, delay_ticks });
+                aux.push(LogicAuxRec {
+                    target,
+                    delay_ticks,
+                });
             }
             aux_count = TANK_AUX_COUNT;
             // Up to two func_tankcontrols volumes that Use this tank, as
@@ -8481,7 +8581,8 @@ fn collect_logic_entities_with_lightstyles(
                     && ent_value(c, "classname") == Some("func_tankcontrols")
                     && ent_value(c, "target") == Some(name)
             }) {
-                let Some((mn, mx)) = block_model(c).and_then(|sm| model_bounds_hl(models, sm)) else {
+                let Some((mn, mx)) = block_model(c).and_then(|sm| model_bounds_hl(models, sm))
+                else {
                     continue;
                 };
                 if aux_count >= TANK_AUX_COUNT + 6 {
@@ -8489,8 +8590,13 @@ fn collect_logic_entities_with_lightstyles(
                 }
                 let (a, b) = (to_world(mn, scale), to_world(mx, scale));
                 let w = |v: i32| v.clamp(i16::MIN as i32, i16::MAX as i32) as i16 as u16;
-                for (target, delay_ticks) in [(w(a[0]), w(a[1])), (w(a[2]), w(b[0])), (w(b[1]), w(b[2]))] {
-                    aux.push(LogicAuxRec { target, delay_ticks });
+                for (target, delay_ticks) in
+                    [(w(a[0]), w(a[1])), (w(a[2]), w(b[0])), (w(b[1]), w(b[2]))]
+                {
+                    aux.push(LogicAuxRec {
+                        target,
+                        delay_ticks,
+                    });
                 }
                 aux_count += 3;
             }
@@ -9657,7 +9763,11 @@ fn collect_tram_graph(
             let Some(t) = tracks.iter().find(|t| t.0 == name) else {
                 break;
             };
-            let pass = if t.2.is_empty() && !t.5.is_empty() { t.5.clone() } else { t.4.clone() };
+            let pass = if t.2.is_empty() && !t.5.is_empty() {
+                t.5.clone()
+            } else {
+                t.4.clone()
+            };
             let mut point = to_world(t.1, scale);
             point[1] = point[1].saturating_add(height);
             way.push((point, t.3, pass));
@@ -9683,9 +9793,17 @@ fn collect_tram_graph(
     let mut graph = TramGraph::default();
     let mut branching = way.len() != main_len;
     for (i, name) in way_names.iter().enumerate() {
-        let linear = if i + 1 < main_len { (i + 1) as u16 } else { TRAM_NODE_NONE };
+        let linear = if i + 1 < main_len {
+            (i + 1) as u16
+        } else {
+            TRAM_NODE_NONE
+        };
         let (flags, alt) = track_flags.get(name).cloned().unwrap_or_default();
-        let target = tracks.iter().find(|t| &t.0 == name).map(|t| t.2.as_str()).unwrap_or("");
+        let target = tracks
+            .iter()
+            .find(|t| &t.0 == name)
+            .map(|t| t.2.as_str())
+            .unwrap_or("");
         let mut next = index_of(target);
         if next == TRAM_NODE_NONE && i < main_len {
             // Synthetic trackchange points and stitched junctions.
@@ -9698,7 +9816,15 @@ fn collect_tram_graph(
         graph.flags.push(flags);
         graph.names.push(name.clone());
     }
-    (model, speed, tram_start, wheels, way, origin, branching.then_some(graph))
+    (
+        model,
+        speed,
+        tram_start,
+        wheels,
+        way,
+        origin,
+        branching.then_some(graph),
+    )
 }
 
 const LOOT_SLOT_FLAGS: u16 = 0x4000 | 0x1000; // DORMANT | PRISONER, decoded specially by runtime
@@ -9788,7 +9914,12 @@ fn bigmomma_entry_node(map_path: &str, s: &str) -> Option<String> {
     let nodes: Vec<(&str, &str)> = s
         .split('{')
         .filter(|b| ent_value(b, "classname") == Some("info_bigmomma"))
-        .filter_map(|b| Some((ent_value(b, "targetname")?, ent_value(b, "target").unwrap_or(""))))
+        .filter_map(|b| {
+            Some((
+                ent_value(b, "targetname")?,
+                ent_value(b, "target").unwrap_or(""),
+            ))
+        })
         .collect();
     if nodes.is_empty() {
         return None;
@@ -9833,17 +9964,25 @@ fn monster_view_cone_units(cls: &str) -> u16 {
     const VIEW_FIELD_WIDE: f32 = -0.7;
     const VIEW_FIELD_FULL: f32 = -1.0;
     let fov = match cls {
-        "monster_scientist" | "monster_barney" | "monster_alien_slave"
-        | "monster_human_assassin" | "monster_ichthyosaur" => VIEW_FIELD_WIDE,
-        "monster_human_grunt" | "monster_alien_grunt" | "monster_bullchicken"
+        "monster_scientist"
+        | "monster_barney"
+        | "monster_alien_slave"
+        | "monster_human_assassin"
+        | "monster_ichthyosaur" => VIEW_FIELD_WIDE,
+        "monster_human_grunt"
+        | "monster_alien_grunt"
+        | "monster_bullchicken"
         | "monster_flyer_flock" => 0.2,
         "monster_gargantua" => -0.2,
         "monster_bigmomma" => 0.3,
         "monster_leech" => -0.5,
         "monster_apache" => -0.707,
         "monster_osprey" => 0.0,
-        "monster_alien_controller" | "monster_nihilanth" | "monster_turret"
-        | "monster_miniturret" | "monster_sentry" => VIEW_FIELD_FULL,
+        "monster_alien_controller"
+        | "monster_nihilanth"
+        | "monster_turret"
+        | "monster_miniturret"
+        | "monster_sentry" => VIEW_FIELD_FULL,
         // headcrab, zombie, houndeye, gman, barnacle, generic, rat, roach
         _ => 0.5,
     };
@@ -9854,7 +9993,10 @@ fn monster_view_cone_units(cls: &str) -> u16 {
 /// verbatim. Conditions the runtime cannot evaluate (hearing, and the two
 /// squad conditions the SDK itself leaves UNDONE) are not cooked.
 fn monster_trigger_condition(block: &str) -> Option<(u16, &str)> {
-    let condition = ent_value(block, "TriggerCondition")?.trim().parse::<u16>().ok()?;
+    let condition = ent_value(block, "TriggerCondition")?
+        .trim()
+        .parse::<u16>()
+        .ok()?;
     let target = ent_value(block, "TriggerTarget")?.trim();
     if target.is_empty() {
         return None;
@@ -13358,7 +13500,11 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let tram_motion = pack_tram_motion(tram_speed, tram_start, tram_wheels);
     o.extend_from_slice(&tram_model.to_le_bytes());
     // Bit 15 of the count: branch tables follow the fire-on-pass ids.
-    let graph_bit = if tram_graph.is_some() { cooked::TRAM_GRAPH_BIT } else { 0 };
+    let graph_bit = if tram_graph.is_some() {
+        cooked::TRAM_GRAPH_BIT
+    } else {
+        0
+    };
     o.extend_from_slice(&(way.len() as u16 | graph_bit).to_le_bytes());
     o.extend_from_slice(&tram_motion.to_le_bytes());
     o.extend_from_slice(&tram_head.to_le_bytes());
@@ -13423,7 +13569,10 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // A map with Gonarch nodes but no Gonarch of its own gets a walker for
     // the one that follows the player in (c4a2a, c4a2b).
     let ent_text = entity_text(bsp.lump(LUMP_ENTITIES));
-    if !trigger_links.iter().any(|l| l.condition == AITRIGGER_NODE_WALK) {
+    if !trigger_links
+        .iter()
+        .any(|l| l.condition == AITRIGGER_NODE_WALK)
+    {
         if let Some(entry) = bigmomma_entry_node(path, &ent_text) {
             trigger_links.push(MonsterTriggerLink {
                 prop: usize::MAX,
@@ -13442,15 +13591,23 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             continue;
         }
         let origin = to_world(
-            ent_value(block, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]),
+            ent_value(block, "origin")
+                .and_then(parse_vec3)
+                .unwrap_or([0.0; 3]),
             scale,
         );
         logic.ents.push(LogicRec {
             kind: LOGIC_BIGMOMMA_NODE,
             use_type: USE_TOGGLE,
             spawnflags: parse_spawnflags(block),
-            targetname: intern_logic_name(&mut logic.names, ent_value(block, "targetname").unwrap_or(""))?,
-            target: intern_logic_name(&mut logic.names, ent_value(block, "reachtarget").unwrap_or(""))?,
+            targetname: intern_logic_name(
+                &mut logic.names,
+                ent_value(block, "targetname").unwrap_or(""),
+            )?,
+            target: intern_logic_name(
+                &mut logic.names,
+                ent_value(block, "reachtarget").unwrap_or(""),
+            )?,
             killtarget: 0,
             brush: LOGIC_BRUSH_NONE,
             first_aux: 0,
@@ -13458,9 +13615,13 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             flags: 0,
             wait_ticks: 0,
             delay_ticks: seconds_to_ticks_u16(parse_f32_key(block, "reachdelay", 0.0)),
-            speed: (parse_f32_key(block, "radius", 0.0) / scale).round().clamp(0.0, u16::MAX as f32) as u16,
+            speed: (parse_f32_key(block, "radius", 0.0) / scale)
+                .round()
+                .clamp(0.0, u16::MAX as f32) as u16,
             arg0: intern_logic_name(&mut logic.names, ent_value(block, "target").unwrap_or(""))?,
-            arg1: parse_f32_key(block, "health", 0.0).round().clamp(0.0, u16::MAX as f32) as u16,
+            arg1: parse_f32_key(block, "health", 0.0)
+                .round()
+                .clamp(0.0, u16::MAX as f32) as u16,
             sound0: u8::MAX,
             sound1: u8::MAX,
             origin,
@@ -13498,15 +13659,28 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
                     break;
                 };
                 names.push(ent_value(corner, "targetname").unwrap_or(""));
-                let p = to_world(ent_value(corner, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]), scale);
+                let p = to_world(
+                    ent_value(corner, "origin")
+                        .and_then(parse_vec3)
+                        .unwrap_or([0.0; 3]),
+                    scale,
+                );
                 let a = ent_angles_degrees(corner).unwrap_or([0.0; 3]);
                 let q8 = |deg: f32| ((-deg * 256.0 / 360.0).round() as i32 & 0xff) as u16;
                 for (target, delay_ticks) in [
                     (p[0] as i16 as u16, p[1] as i16 as u16),
-                    (p[2] as i16 as u16, parse_f32_key(corner, "speed", 0.0).round().clamp(0.0, 4000.0) as u16),
+                    (
+                        p[2] as i16 as u16,
+                        parse_f32_key(corner, "speed", 0.0)
+                            .round()
+                            .clamp(0.0, 4000.0) as u16,
+                    ),
                     (hl_yaw_to_world_q12(a[1]) as u16, q8(a[0]) | (q8(a[2]) << 8)),
                 ] {
-                    logic.aux.push(LogicAuxRec { target, delay_ticks });
+                    logic.aux.push(LogicAuxRec {
+                        target,
+                        delay_ticks,
+                    });
                 }
                 next = ent_value(corner, "target").unwrap_or("").to_string();
             }
@@ -13514,7 +13688,11 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let aux_count = (logic.aux.len() - first_aux as usize) as u8;
         logic.ents.push(LogicRec {
             kind: LOGIC_MONSTER_TRIGGER,
-            use_type: if link.condition == AITRIGGER_DEATH_USE_ON { USE_ON } else { USE_TOGGLE },
+            use_type: if link.condition == AITRIGGER_DEATH_USE_ON {
+                USE_ON
+            } else {
+                USE_TOGGLE
+            },
             spawnflags: 0,
             targetname: link.targetname,
             target: link.target,
@@ -17632,8 +17810,15 @@ mod tests {
         let text = br#"{ "classname" "infodecal" "targetname" "splat" "texture" "{BLOOD4" "origin" "1 2 3" }
         { "classname" "infodecal" "texture" "{BLOOD4" "origin" "1 2 3" }
         { "classname" "infodecal" "targetname" "burn" "texture" "{SCORCH2" "origin" "1 2 3" }"#;
-        let logic = collect_logic_entities(text, &[], &[], 1.0, &Default::default(), &Default::default())
-            .unwrap();
+        let logic = collect_logic_entities(
+            text,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
         assert_eq!(logic.ents.len(), 2, "static infodecals stay uncooked");
         assert_eq!(logic.ents[0].kind, LOGIC_INFODECAL);
         assert_eq!((logic.ents[0].arg0, logic.ents[0].arg1), (1 << 8 | 3, 1));
@@ -17663,7 +17848,15 @@ mod tests {
             assert_eq!(logic.ents[0].sound1, 2);
             assert_eq!(logic.ents[0].origin, [10, 30, 20]);
             let mut names = logic.names;
-            let props = collect_props(text.as_bytes(), &[], &[], &[], 1.0, &mut names, &mut Vec::new());
+            let props = collect_props(
+                text.as_bytes(),
+                &[],
+                &[],
+                &[],
+                1.0,
+                &mut names,
+                &mut Vec::new(),
+            );
             assert_eq!(props.len(), 1);
             assert_eq!(props[0].0, 75 | 0x4000);
         }
@@ -18377,7 +18570,10 @@ mod tests {
 { "classname" "path_track" "targetname" "b" "origin" "100 0 0" }
 { "classname" "func_tracktrain" "model" "*1" "target" "a" "speed" "60" }
 "#;
-        assert!(collect_tram_graph(linear, &[], 1.0).6.is_none(), "straight paths keep the old format");
+        assert!(
+            collect_tram_graph(linear, &[], 1.0).6.is_none(),
+            "straight paths keep the old format"
+        );
     }
 
     #[test]
@@ -18599,11 +18795,26 @@ mod tests {
         "origin" "-917 414 -2981"
         }
         "#;
-        let logic = collect_logic_entities(ents, &[], &[], 1.0, &Default::default(), &Default::default())
-            .expect("camera cook");
-        let rec = logic.ents.iter().find(|r| r.kind == LOGIC_TRIGGER_CAMERA).expect("camera record");
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("camera cook");
+        let rec = logic
+            .ents
+            .iter()
+            .find(|r| r.kind == LOGIC_TRIGGER_CAMERA)
+            .expect("camera record");
         assert_eq!(logic.names[rec.target as usize - 1], "end_gman");
-        assert_eq!(rec.wait_ticks, i16::MAX, "9999 s clamps to the longest hold");
+        assert_eq!(
+            rec.wait_ticks,
+            i16::MAX,
+            "9999 s clamps to the longest hold"
+        );
         assert_eq!(rec.spawnflags, 4);
         assert_eq!(rec.mins, to_world([-917.0, 414.0, -2981.0], 1.0));
         assert_eq!(rec.origin, to_world([-916.0, 387.0, -2902.0], 1.0));
@@ -18754,7 +18965,15 @@ mod tests {
         );
 
         let mut names = vec!["sitting_scientist".to_string()];
-        let props = collect_props(all.as_bytes(), &[], &[], &[], 1.0, &mut names, &mut Vec::new());
+        let props = collect_props(
+            all.as_bytes(),
+            &[],
+            &[],
+            &[],
+            1.0,
+            &mut names,
+            &mut Vec::new(),
+        );
         assert_eq!(props.len(), 1);
         assert_eq!(props[0].0, SCRIPTED_SITTING_SCIENTIST_TYPE);
     }
@@ -18778,7 +18997,15 @@ mod tests {
         );
 
         let mut names = vec!["hungry".to_string(), "vent_zombie".to_string()];
-        let props = collect_props(all.as_bytes(), &[], &[], &[], 1.0, &mut names, &mut Vec::new());
+        let props = collect_props(
+            all.as_bytes(),
+            &[],
+            &[],
+            &[],
+            1.0,
+            &mut names,
+            &mut Vec::new(),
+        );
         assert_eq!(props.len(), 2);
         assert!(props.iter().all(|prop| prop.0 == VENT_SCRIPT_ZOMBIE_TYPE));
     }
@@ -18846,7 +19073,15 @@ mod tests {
             "the play clip's CineCleanup root offset rides along"
         );
         let mut names = vec!["lo".to_string()];
-        let props = collect_props(all.as_bytes(), &[], &[], &[], 1.0, &mut names, &mut Vec::new());
+        let props = collect_props(
+            all.as_bytes(),
+            &[],
+            &[],
+            &[],
+            1.0,
+            &mut names,
+            &mut Vec::new(),
+        );
         assert_eq!(props.len(), 1);
         assert_eq!(props[0].0, 0x1000 | 52, "generic puppets stay passive");
         assert_eq!(props[0].4, 1);

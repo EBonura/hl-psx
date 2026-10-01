@@ -1774,9 +1774,8 @@ fn cook_assets(repository: &Path, valve: &Path, psoxide: &Path) -> Result<()> {
     )?;
     // The three difficulty levels' monster, pickup and charger values. The
     // game build turns this copy into its skill tables (game/build.rs).
-    fs::copy(valve.join("skill.cfg"), repository.join("data/skill.cfg")).map_err(|error| {
-        format!("copy {}: {error}", valve.join("skill.cfg").display())
-    })?;
+    fs::copy(valve.join("skill.cfg"), repository.join("data/skill.cfg"))
+        .map_err(|error| format!("copy {}: {error}", valve.join("skill.cfg").display()))?;
     cook_models(repository, valve, &bins)?;
     cook_rooms(repository, valve, &bins)?;
     model_audit::audit_model_residency(repository, Some(valve), &maps())?;
