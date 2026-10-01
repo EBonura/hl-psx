@@ -3094,6 +3094,31 @@ static mut ENT_CACHE: [map::Ent; MAX_ENTS] = [ZERO_ENT; MAX_ENTS];
 static mut WATER_ENT_LIST: [u16; 16] = [0; 16];
 static mut WATER_ENT_N: u8 = 0;
 
+// water_touch's static-world half, memoised by exact point. Buoyant crates
+// sample the same points every tick while they rest, and the BSP leaf of a
+// point is a pure function of the loaded map, so a hit returns exactly what
+// the walk would. 0 = empty slot, 1 = dry, 2 = liquid; cleared at map load.
+const STATIC_LIQUID_MEMO: usize = 16;
+static mut STATIC_LIQUID_POS: [[i32; 3]; STATIC_LIQUID_MEMO] = [[0; 3]; STATIC_LIQUID_MEMO];
+static mut STATIC_LIQUID_STATE: [u8; STATIC_LIQUID_MEMO] = [0; STATIC_LIQUID_MEMO];
+
+/// Whether the world BSP leaf containing `pos` is water, slime or lava.
+#[inline(always)]
+unsafe fn static_liquid_at(m: &Map, pos: [i32; 3]) -> bool {
+    let slot =
+        (pos[0] ^ pos[1].rotate_left(5) ^ pos[2].rotate_left(10)) as usize % STATIC_LIQUID_MEMO;
+    let held = STATIC_LIQUID_POS[slot];
+    if STATIC_LIQUID_STATE[slot] != 0 && held[0] == pos[0] && held[1] == pos[1] && held[2] == pos[2]
+    {
+        return STATIC_LIQUID_STATE[slot] == 2;
+    }
+    let leaf = camera_leaf(m, pos);
+    let liquid = leaf >= 0 && m.leaf_liquid(leaf as usize) != 0;
+    STATIC_LIQUID_POS[slot] = pos;
+    STATIC_LIQUID_STATE[slot] = if liquid { 2 } else { 1 };
+    liquid
+}
+
 /// Entity index of the `k`th func_water candidate, or None to skip it. The
 /// list covers maps with up to 16 func_water brushes; past that every entity
 /// is a candidate (the old full walk) and non-water kinds are skipped here.
@@ -6525,8 +6550,7 @@ fn logic_valid_brush(brush: u16, nents: usize) -> Option<usize> {
 /// from the authoritative BSP leaf contents; authored func_water and moving
 /// water trains retain their live AABB path.
 unsafe fn water_touch(m: &Map, nents: usize, pos: [i32; 3]) -> bool {
-    let leaf = camera_leaf(m, pos);
-    if leaf >= 0 && m.leaf_liquid(leaf as usize) != 0 {
+    if static_liquid_at(m, pos) {
         return true;
     }
     let mut k = 0usize;
@@ -30237,6 +30261,7 @@ fn play(
         }
         ENT_SOLID_COUNT = nents_early;
         WATER_ENT_N = 0;
+        STATIC_LIQUID_STATE = [0; STATIC_LIQUID_MEMO];
         for ei in 0..nents_early {
             if ENT_CACHE[ei].kind == 6 {
                 if (WATER_ENT_N as usize) < (*core::ptr::addr_of!(WATER_ENT_LIST)).len() {
