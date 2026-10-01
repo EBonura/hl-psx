@@ -447,7 +447,7 @@ unsafe fn flame_task(m: &Map, movers: &[phys::Mover], pi: usize, aim: [i32; 3], 
 /// travelling stomp wave and the timed DeathEffect.
 #[inline(never)]
 #[optimize(size)]
-pub(crate) unsafe fn tick_world(m: &Map) {
+pub(crate) unsafe fn tick_world() {
     let g = g();
     if g.pi == 0xff {
         return;
