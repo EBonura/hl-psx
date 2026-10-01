@@ -382,6 +382,11 @@ struct WeaponModel {
     // Runtime clip order is model-specific; game/src/main.rs maps the common
     // idle/fire/alt/reload/draw states onto these compact source clips.
     sequences: &'static str,
+    // Share of the pruned triangles psoxide-vmcook keeps (`--decimate`);
+    // 1.0 keeps the mesh. Each is the lowest of 0.9..0.3 whose worst
+    // reachable pose changes at most 200 px of the weapon's 320x240
+    // coverage and whose average pose changes at most 60 px.
+    decimate: f32,
 }
 
 const WEAPON_MODELS: [WeaponModel; 15] = [
@@ -390,33 +395,40 @@ const WEAPON_MODELS: [WeaponModel; 15] = [
         // Nine samples land on the sharp recoil/recovery quality knee while
         // leaving the slower idle/reload clips at their existing budgets.
         sequences: "idle1:5,shoot:9,reload:12,draw:5",
+        decimate: 0.8,
     },
     WeaponModel {
         name: "v_357",
         sequences: "idle1:1,fire1:5,reload:9,draw:2",
+        decimate: 0.7,
     },
     WeaponModel {
         name: "v_9mmar",
         sequences: "longidle:2,shoot:7,grenade:6,reload:15,deploy:6",
+        decimate: 0.7,
     },
     WeaponModel {
         name: "v_crossbow",
         sequences: "idle1:1,fire1:8,reload:10,draw1:4",
+        decimate: 0.8,
     },
     WeaponModel {
         name: "v_crowbar",
         // This small mesh fits every authored source pose losslessly.
         sequences: "idle1:36,attack1miss:11,attack1:11,draw:13",
+        decimate: 0.4,
     },
     WeaponModel {
         name: "v_egon",
         sequences: "idle1:4,fire3:8,altfirecycle:8,draw:6",
+        decimate: 0.8,
     },
     WeaponModel {
         name: "v_gauss",
         // Secondary fire is a real hold/release charge: retain the authored
         // coil spin-up and looping spin instead of jumping straight to fire2.
         sequences: "idle:4,spinup:6,spin:6,fire:6,fire2:10,draw:4",
+        decimate: 0.6,
     },
     WeaponModel {
         name: "v_grenade",
@@ -425,24 +437,29 @@ const WEAPON_MODELS: [WeaponModel; 15] = [
         // a static idle tolerates two. Two extra pin-pull samples halve that
         // clip's peak reconstruction error without affecting render cost.
         sequences: "idle:2,throw1:14,pinpull:7,draw:5",
+        decimate: 0.7,
     },
     WeaponModel {
         name: "v_hgun",
         // All three clips fit at their complete source-pose counts.
         sequences: "idle1:31,Shoot:11,up:31",
+        decimate: 0.7,
     },
     WeaponModel {
         name: "v_rpg",
         sequences: "idle:3,fire:6,reload:16,draw1:5",
+        decimate: 0.6,
     },
     WeaponModel {
         name: "v_satchel",
         sequences: "idle1:4,drop:16,draw:25",
+        decimate: 0.8,
     },
     WeaponModel {
         name: "v_satchel_radio",
         // Fire and draw retain every authored source pose.
         sequences: "idle1:4,fire:31,draw:19",
+        decimate: 0.4,
     },
     WeaponModel {
         name: "v_shotgun",
@@ -451,14 +468,17 @@ const WEAPON_MODELS: [WeaponModel; 15] = [
         // as a magazine swap both looked wrong and filled the tube at once.
         // The double-shot recoil has a second quality knee at 15 poses.
         sequences: "sm_idle:3,shoot:9,shoot_big:15,reload:10,pump:9,start_reload:6,draw:5",
+        decimate: 0.7,
     },
     WeaponModel {
         name: "v_squeak",
         sequences: "idle1:3,throw:14,up:20",
+        decimate: 0.6,
     },
     WeaponModel {
         name: "v_tripmine",
         sequences: "idle1:4,place:11,arm1:30,draw:8",
+        decimate: 0.8,
     },
 ];
 
@@ -1264,6 +1284,7 @@ fn viewmodel_post_pass(
     mdl: &Path,
     views: &str,
     max_tris: usize,
+    decimate: f32,
 ) -> Result<()> {
     let (pruned_geometry, pruned_texture) = (
         geometry.with_extension("vm.psxm"),
@@ -1287,6 +1308,11 @@ fn viewmodel_post_pass(
                     "--subdivide-extra".to_string(),
                     VIEWMODEL_SUBDIVIDE_EXTRA.to_string(),
                 ]
+            })
+            .args(if decimate < 1.0 {
+                vec!["--decimate".to_string(), decimate.to_string()]
+            } else {
+                Vec::new()
             }),
         "viewmodel post-pass",
     )?;
@@ -1332,7 +1358,15 @@ fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
         )?;
         // Subdivision may spend up to the triangles the weapon draws today.
         let today_tris = hmd8_triangles(&geometry)?;
-        viewmodel_post_pass(bins, &geometry, &texture, &mdl, VIEWMODEL_VIEWS, today_tris)?;
+        viewmodel_post_pass(
+            bins,
+            &geometry,
+            &texture,
+            &mdl,
+            VIEWMODEL_VIEWS,
+            today_tris,
+            model.decimate,
+        )?;
         run_content(
             &bins.content,
             &[

@@ -70,6 +70,7 @@ dependencies = [
  "psx-sfx",
  "psx-spu",
  "psx-telemetry",
+ "psx-tick",
  "psx-vram",
 ]
 

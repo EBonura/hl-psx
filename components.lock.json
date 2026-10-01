@@ -31,7 +31,7 @@
     },
     "editor": {
       "repository": "EBonura/PSoXide-editor",
-      "revision": "6188e908e4c665ac94f4afd968ba68334d61b2df",
+      "revision": "c01251ff591c92d91d0a13ec87a46360c5796c12",
       "paths": [
         "Cargo.toml",
         "Cargo.lock",
