@@ -19100,7 +19100,7 @@ struct Arsenal {
 
 impl Arsenal {
     fn new() -> Self {
-        let mut a = Arsenal {
+        let a = Arsenal {
             owned: 0,
             current: W_GLOCK,
             clip: [0; N_WEAPONS],
@@ -29826,7 +29826,7 @@ mod stackprobe {
     }
 
     fn region() -> (usize, usize) {
-        let lo = (unsafe { core::ptr::addr_of!(__bss_end) } as usize + 3) & !3;
+        let lo = (core::ptr::addr_of!(__bss_end) as usize + 3) & !3;
         // A local's address stands in for SP (inline asm is unstable on MIPS);
         // the guard below keeps us clear of the live frame either way.
         let marker = 0u32;
@@ -35494,10 +35494,8 @@ fn play(
             let mut viewmodel_screen_off = [0i16; 2];
             // CFuncTank::StartControl holsters the weapon (viewmodel 0), and a
             // trigger_camera view hides it too.
-            let draw_viewmodel_now = SHOW_VIEWMODEL
-                && weapon.any_weapon()
-                && CAMERA_LI == u16::MAX
-                && unsafe { MOUNTED_TANK } < 0;
+            let draw_viewmodel_now =
+                SHOW_VIEWMODEL && weapon.any_weapon() && CAMERA_LI == u16::MAX && MOUNTED_TANK < 0;
             WEAPON_MUZZLE_SLOT = weapon.current;
             let viewmodel_draw = if draw_viewmodel_now {
                 let vm_off = viewmodel_offset(recoil, sim_frame_no);
@@ -35524,30 +35522,27 @@ fn play(
             } else {
                 None
             };
-            let draw_regular_hud =
-                if unsafe { ENDING_FROM } != 0 && sim_frame_no > unsafe { ENDING_FROM } {
-                    // Outro: the G-Man scene has played out -- fade to white.
-                    let t = (sim_frame_no - unsafe { ENDING_FROM }).min(ENDING_FADE_TICKS);
-                    let w = (t * 255 / ENDING_FADE_TICKS) as u8;
-                    unsafe {
-                        DEATH_WASH = 0;
-                        DEATH_OVERLAY = RectFlat::new(0, 0, 320, 240, w, w, w);
-                        HUD_OT.add(0, &mut DEATH_OVERLAY, RectFlat::WORDS);
-                    }
-                    if t >= ENDING_FADE_TICKS {
-                        return PlayExit::Ending;
-                    }
-                    false
-                } else if death_ticks > 0 {
-                    // Death: HL washes the view red and you keep watching the
-                    // room. The blended pass lives in `draw_screen_fx`; here we
-                    // only ramp its level over the death window.
-                    DEATH_WASH = (((DEATH_TICKS - death_ticks) as u32) * 5).min(190) as u8;
-                    false
-                } else {
-                    DEATH_WASH = 0;
-                    true
-                };
+            let draw_regular_hud = if ENDING_FROM != 0 && sim_frame_no > ENDING_FROM {
+                // Outro: the G-Man scene has played out -- fade to white.
+                let t = (sim_frame_no - ENDING_FROM).min(ENDING_FADE_TICKS);
+                let w = (t * 255 / ENDING_FADE_TICKS) as u8;
+                DEATH_WASH = 0;
+                DEATH_OVERLAY = RectFlat::new(0, 0, 320, 240, w, w, w);
+                HUD_OT.add(0, &mut DEATH_OVERLAY, RectFlat::WORDS);
+                if t >= ENDING_FADE_TICKS {
+                    return PlayExit::Ending;
+                }
+                false
+            } else if death_ticks > 0 {
+                // Death: HL washes the view red and you keep watching the
+                // room. The blended pass lives in `draw_screen_fx`; here we
+                // only ramp its level over the death window.
+                DEATH_WASH = (((DEATH_TICKS - death_ticks) as u32) * 5).min(190) as u8;
+                false
+            } else {
+                DEATH_WASH = 0;
+                true
+            };
             queue_world_beams(&mut packets, &mut OT, &m, nlogic, &rot, base_t);
 
             // Present the previous frame at the last possible moment. Camera,
@@ -35665,9 +35660,7 @@ fn play(
                         -1
                     },
                     weapon_icon_ticks,
-                    train_hud_position(tram_controlling, tram_speed, unsafe {
-                        TRACKTRAIN_USE_SPEED as i32
-                    }),
+                    train_hud_position(tram_controlling, tram_speed, TRACKTRAIN_USE_SPEED as i32),
                     &mut HUD_OT,
                     &mut HUD_PRIMS,
                 );

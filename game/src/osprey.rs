@@ -77,7 +77,7 @@ pub(crate) unsafe fn osprey_corner(m: &Map, k: usize) -> ([i16; 3], u16, [i16; 3
 #[optimize(size)]
 pub(crate) unsafe fn osprey_update_goal(m: &Map) {
     let o = &mut OSPREY;
-    let (pos, speed, mut ang) = osprey_corner(m, o.goal as usize);
+    let (pos, speed, ang) = osprey_corner(m, o.goal as usize);
     o.p[0] = o.p[1];
     o.a[0] = o.a[1];
     o.v[0] = o.v[1];
