@@ -3105,8 +3105,12 @@ static mut STATIC_LIQUID_STATE: [u8; STATIC_LIQUID_MEMO] = [0; STATIC_LIQUID_MEM
 /// Whether the world BSP leaf containing `pos` is water, slime or lava.
 #[inline(always)]
 unsafe fn static_liquid_at(m: &Map, pos: [i32; 3]) -> bool {
-    let slot =
-        (pos[0] ^ pos[1].rotate_left(5) ^ pos[2].rotate_left(10)) as usize % STATIC_LIQUID_MEMO;
+    // Multiplicative mix into the top bits: crate sample points sit on coarse
+    // grids, so any slot taken from low coordinate bits collides.
+    let mix = (pos[0] as u32).wrapping_mul(0x9e37_79b1)
+        ^ (pos[1] as u32).wrapping_mul(0x85eb_ca77)
+        ^ (pos[2] as u32).wrapping_mul(0xc2b2_ae3d);
+    let slot = (mix >> 28) as usize % STATIC_LIQUID_MEMO;
     let held = STATIC_LIQUID_POS[slot];
     if STATIC_LIQUID_STATE[slot] != 0 && held[0] == pos[0] && held[1] == pos[1] && held[2] == pos[2]
     {
