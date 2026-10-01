@@ -25904,7 +25904,11 @@ fn on_scratchpad_stack() -> bool {
     #[cfg(target_arch = "mips")]
     {
         let sp: u32;
-        unsafe { core::arch::asm!("move {0}, $sp", out(reg) sp, options(nomem, nostack)) };
+        // The allocator may pick $at; `.set noat` keeps the assembler quiet
+        // (psx-rt's stack_pointer does the same).
+        unsafe {
+            core::arch::asm!(".set noat", "move {0}, $sp", ".set at", out(reg) sp, options(nomem, nostack))
+        };
         (sp & 0x1fff_fc00) == 0x1f80_0000
     }
     #[cfg(not(target_arch = "mips"))]
