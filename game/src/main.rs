@@ -3085,27 +3085,26 @@ static mut ENT_CACHE: [map::Ent; MAX_ENTS] = [ZERO_ENT; MAX_ENTS];
 static mut WATER_ENT_LIST: [u16; 16] = [0; 16];
 static mut WATER_ENT_N: u8 = 0;
 
-/// Visit the func_water brushes among the first `nents` entities.
+/// Entity index of the `k`th func_water candidate, or None to skip it. The
+/// list covers maps with up to 16 func_water brushes; past that every entity
+/// is a candidate (the old full walk) and non-water kinds are skipped here.
 #[inline(always)]
-unsafe fn for_each_water_ent(nents: usize, mut f: impl FnMut(usize) -> bool) {
-    let n = WATER_ENT_N as usize;
-    if n <= (*core::ptr::addr_of!(WATER_ENT_LIST)).len() {
-        let mut i = 0usize;
-        while i < n {
-            let ei = WATER_ENT_LIST[i] as usize;
-            if ei < nents && f(ei) {
-                return;
-            }
-            i += 1;
-        }
+unsafe fn water_ent(k: usize, nents: usize) -> Option<usize> {
+    let ei = if WATER_ENT_N as usize <= (*core::ptr::addr_of!(WATER_ENT_LIST)).len() {
+        WATER_ENT_LIST[k] as usize
     } else {
-        let mut ei = 0usize;
-        while ei < nents {
-            if ENT_CACHE[ei].kind == 6 && f(ei) {
-                return;
-            }
-            ei += 1;
-        }
+        k
+    };
+    (ei < nents && ENT_CACHE[ei].kind == 6 && ENT_ACTIVE[ei] != 0).then_some(ei)
+}
+
+/// Number of `water_ent` candidates to visit.
+#[inline(always)]
+unsafe fn water_ent_count(nents: usize) -> usize {
+    if WATER_ENT_N as usize <= (*core::ptr::addr_of!(WATER_ENT_LIST)).len() {
+        WATER_ENT_N as usize
+    } else {
+        nents
     }
 }
 static mut ENT_RADIUS: [i32; MAX_ENTS] = [0; MAX_ENTS];
@@ -6519,20 +6518,21 @@ unsafe fn water_touch(m: &Map, nents: usize, pos: [i32; 3]) -> bool {
     if leaf >= 0 && m.leaf_liquid(leaf as usize) != 0 {
         return true;
     }
-    let mut wet = false;
-    for_each_water_ent(nents, |ei| {
-        if ENT_ACTIVE[ei] == 0 {
-            return false;
+    let mut k = 0usize;
+    while k < water_ent_count(nents) {
+        if let Some(ei) = water_ent(k, nents) {
+            let e = &ENT_CACHE[ei];
+            let off = ent_draw_offset(ei);
+            let dx = (pos[0] - (e.center[0] + off[0])).abs();
+            let dy = (pos[1] - (e.center[1] + off[1])).abs();
+            let dz = (pos[2] - (e.center[2] + off[2])).abs();
+            if dx <= e.mv[0] && dy <= e.mv[1] && dz <= e.mv[2] {
+                return true;
+            }
         }
-        let e = &ENT_CACHE[ei];
-        let off = ent_draw_offset(ei);
-        let dx = (pos[0] - (e.center[0] + off[0])).abs();
-        let dy = (pos[1] - (e.center[1] + off[1])).abs();
-        let dz = (pos[2] - (e.center[2] + off[2])).abs();
-        wet = dx <= e.mv[0] && dy <= e.mv[1] && dz <= e.mv[2];
-        wet
-    });
-    wet
+        k += 1;
+    }
+    false
 }
 
 /// PM_CheckWater's lowest sample (one unit above the hull bottom) is water,
@@ -6590,30 +6590,33 @@ unsafe fn water_state(
     }
 
     if !wet[0] || !wet[1] || !wet[2] {
-        for_each_water_ent(nents, |ei| {
-            if ENT_ACTIVE[ei] == 0 {
-                return false;
-            }
-            let e = &ENT_CACHE[ei];
-            let off = ent_draw_offset(ei);
-            let center = [
-                e.center[0] + off[0],
-                e.center[1] + off[1],
-                e.center[2] + off[2],
-            ];
-            let mut sample = 0usize;
-            while sample < wet.len() {
-                if !wet[sample]
-                    && (samples[sample][0] - center[0]).abs() <= e.mv[0]
-                    && (samples[sample][1] - center[1]).abs() <= e.mv[1]
-                    && (samples[sample][2] - center[2]).abs() <= e.mv[2]
-                {
-                    wet[sample] = true;
+        let mut k = 0usize;
+        while k < water_ent_count(nents) {
+            if let Some(ei) = water_ent(k, nents) {
+                let e = &ENT_CACHE[ei];
+                let off = ent_draw_offset(ei);
+                let center = [
+                    e.center[0] + off[0],
+                    e.center[1] + off[1],
+                    e.center[2] + off[2],
+                ];
+                sample = 0;
+                while sample < wet.len() {
+                    if !wet[sample]
+                        && (samples[sample][0] - center[0]).abs() <= e.mv[0]
+                        && (samples[sample][1] - center[1]).abs() <= e.mv[1]
+                        && (samples[sample][2] - center[2]).abs() <= e.mv[2]
+                    {
+                        wet[sample] = true;
+                    }
+                    sample += 1;
                 }
-                sample += 1;
+                if wet[0] && wet[1] && wet[2] {
+                    break;
+                }
             }
-            wet[0] && wet[1] && wet[2]
-        });
+            k += 1;
+        }
     }
 
     let level = if !wet[0] {
