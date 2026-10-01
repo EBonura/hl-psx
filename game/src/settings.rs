@@ -126,6 +126,7 @@ pub fn set_brightness_level(level: u8) {
 }
 
 /// Consume the "light palette needs re-expanding" flag.
+#[cfg(not(feature = "semantic-input"))]
 pub fn take_brightness_dirty() -> bool {
     unsafe {
         let dirty = BRIGHT_DIRTY;
@@ -225,6 +226,7 @@ pub fn value(index: usize) -> i32 {
 
 /// The configured stick dead region.
 #[inline(always)]
+#[cfg(not(feature = "semantic-input"))]
 pub fn analog_deadzone() -> Deadzone {
     unsafe { ANALOG_DEADZONE_ZONE }
 }

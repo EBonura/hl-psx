@@ -17,3 +17,8 @@ psx-engine = { path = "../../.psoxide/engine/crates/psx-engine" }
 
 [lib]
 path = "src/lib.rs"
+
+# The included game modules gate UI-only helpers on the game's own Cargo
+# features; tell check-cfg about the ones they name.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("semantic-input"))'] }

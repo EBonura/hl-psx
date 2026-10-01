@@ -108,10 +108,9 @@ use psx_io;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_math::int32::{isqrt_i32, mul_div_i32};
 use psx_math::{atan2_q12, sincos};
-use psx_pad::{
-    button, enable_analog_port1, poll_port1, poll_port1_diag, PadMode, PadTracker,
-    DEFAULT_SETUP_SPINS,
-};
+use psx_pad::{button, enable_analog_port1, poll_port1};
+#[cfg(not(feature = "semantic-input"))]
+use psx_pad::{poll_port1_diag, PadMode, PadTracker, DEFAULT_SETUP_SPINS};
 use psx_rt::{interrupts, tty};
 use psx_spu;
 
@@ -2116,6 +2115,7 @@ static mut LOADED_MODELS: [LoadedModel; MAX_LOADED_MODELS] = [LoadedModel::ZERO;
 static mut TYPE_TO_SLOT: [u8; N_MODEL_TYPES] = [MODEL_SLOT_NONE; N_MODEL_TYPES];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg(not(feature = "semantic-input"))]
 enum PauseExit {
     Resume,
     MainMenu,
@@ -2125,6 +2125,7 @@ enum PauseExit {
     LoadedSave(usize),
 }
 
+#[cfg(not(feature = "semantic-input"))]
 const PAUSE_ITEMS: [&str; 7] = [
     "Resume",
     "Save Game",
@@ -2142,10 +2143,14 @@ const PAUSE_ITEMS: [&str; 7] = [
 /// menus cannot disagree about what a setting is called or what it currently
 /// reads. Reaching the stick deadzone without quitting to the main menu is the
 /// reason this exists.
+#[cfg(not(feature = "semantic-input"))]
 const PAUSE_OPTION_ROWS: usize = menu::OPT_LABELS.len();
+#[cfg(not(feature = "semantic-input"))]
 const PAUSE_WHITE: (u8, u8, u8) = (238, 238, 230);
 const PAUSE_AMBER: (u8, u8, u8) = (255, 170, 0);
+#[cfg(not(feature = "semantic-input"))]
 const PAUSE_DIM: (u8, u8, u8) = (96, 96, 92);
+#[cfg(not(feature = "semantic-input"))]
 const PAUSE_ARMED: (u8, u8, u8) = (75, 53, 10);
 // cli-spinners "dots" (the classic braille terminal spinner ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏),
 // drawn as its 2x3 dot grid since the bitmap font has no braille glyphs. Each
@@ -2316,6 +2321,7 @@ fn draw_next_loading_screen(fb: &mut FrameBuffer) {
 // the game loop and optimize its command setup for the console code budget.
 #[inline(never)]
 #[optimize(size)]
+#[cfg(not(feature = "semantic-input"))]
 fn draw_pause_menu(fb: &mut FrameBuffer, sel: usize, status: &str) {
     fb.clear(0, 0, 0);
     // Six rows plus a status line: the panel is taller and the rows tighter
@@ -2351,9 +2357,11 @@ fn draw_pause_menu(fb: &mut FrameBuffer, sel: usize, status: &str) {
 
 /// What each save target currently holds, refreshed when the browser opens so
 /// the page can show contents without a card read per drawn frame.
+#[cfg(not(feature = "semantic-input"))]
 static mut SLOT_MAP: [u16; 4] = [u16::MAX; 4];
 
 /// Read every target once and cache the map each holds (u16::MAX = nothing).
+#[cfg(not(feature = "semantic-input"))]
 unsafe fn scan_save_targets() {
     for (i, target) in save::Target::ALL.iter().enumerate() {
         SLOT_MAP[i] = match save::read(*target, save_staging()) {
@@ -2370,6 +2378,7 @@ unsafe fn scan_save_targets() {
 ///
 /// One slot per row because the whole page is drawn from one dispatch and every
 /// visible row needs its own buffer alive at once.
+#[cfg(not(feature = "semantic-input"))]
 static mut OPTION_VALUE_TEXT: [[u8; 8]; PAUSE_OPTION_ROWS] = [[0; 8]; PAUSE_OPTION_ROWS];
 
 /// One settings row, label and current value, for the paused Configuration
@@ -2379,6 +2388,7 @@ static mut OPTION_VALUE_TEXT: [[u8; 8]; PAUSE_OPTION_ROWS] = [[0; 8]; PAUSE_OPTI
 /// the value from `settings::value`, which is what the main menu reads too. The
 /// two screens therefore cannot disagree about what a setting is called or what
 /// it currently says.
+#[cfg(not(feature = "semantic-input"))]
 unsafe fn pause_option_row(i: usize) -> Row {
     let label = menu::OPT_LABELS[i];
     if i == 5 {
@@ -2419,6 +2429,7 @@ unsafe fn pause_option_row(i: usize) -> Row {
     Row::new(label).with_detail(core::str::from_utf8_unchecked(bytes))
 }
 
+#[cfg(not(feature = "semantic-input"))]
 unsafe fn save_slot_row(i: usize, loading: bool) -> Row {
     let target = save::Target::ALL[i];
     let held = SLOT_MAP[i];
@@ -2473,12 +2484,14 @@ unsafe fn save_with_badge(
 /// contains* -- "(default)" for a chapter's entry map, or the map a save slot
 /// holds -- which a single-string row could not express.
 #[derive(Clone, Copy)]
+#[cfg(not(feature = "semantic-input"))]
 struct Row {
     label: &'static str,
     detail: &'static str,
     enabled: bool,
 }
 
+#[cfg(not(feature = "semantic-input"))]
 impl Row {
     const fn new(label: &'static str) -> Self {
         Self {
@@ -2502,6 +2515,7 @@ impl Row {
 /// in-game one instead of existing twice.
 #[inline(never)]
 #[optimize(size)]
+#[cfg(not(feature = "semantic-input"))]
 fn draw_pause_list(
     fb: &mut FrameBuffer,
     title: &str,
@@ -2560,6 +2574,7 @@ fn draw_pause_list(
 
 /// Which full-screen page the pause menu is showing.
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg(not(feature = "semantic-input"))]
 enum PausePage {
     Root,
     Options,
@@ -2575,6 +2590,7 @@ enum PausePage {
 
 #[inline(never)]
 #[optimize(size)]
+#[cfg(not(feature = "semantic-input"))]
 fn run_pause_menu(fb: &mut FrameBuffer) -> PauseExit {
     let mut sel = 0usize;
     let mut page = PausePage::Root;
@@ -3937,6 +3953,7 @@ static mut XHAIR_DUMP_LAST: u32 = u32::MAX; // last auto-dumped key (tt, or sent
 /// Aim-stick response curve: ~45% linear + ~55% cubic, so small tilts turn slowly
 /// (fine aim) and full tilt gives the full rate. `v` is a raw axis in ~-128..127.
 #[inline]
+#[cfg(not(feature = "semantic-input"))]
 fn aim_curve(v: i32) -> i32 {
     psx_pad::aim_curve_symmetric(v as i16) as i32
 }
@@ -5611,6 +5628,7 @@ enum PlayExit {
     BackToMenu,
     ChangeLevel(RoomLaunch),
     Restart(RoomLaunch),
+    #[cfg(not(feature = "semantic-input"))]
     Chapter(RoomLaunch),
     Ending, // c5a1 outro finished: show the end card, then the menu
 }
@@ -29372,6 +29390,7 @@ fn main() {
                     launch = checkpoint;
                     keep_frame = true;
                 }
+                #[cfg(not(feature = "semantic-input"))]
                 PlayExit::Chapter(next) => {
                     // A pause-menu chapter jump is a fresh campaign start, not
                     // a landmark transition. Reset through menu_launch and use
@@ -30826,6 +30845,8 @@ fn play(
     #[cfg(feature = "decoupled-present")]
     let mut flip_queued = false;
 
+    // Only the live pad's resume path continues the loop by label.
+    #[cfg_attr(feature = "semantic-input", allow(unused_labels))]
     'gameplay: loop {
         // Decoupled presentation free-runs: the present path already fences on
         // a VBlank edge, so removing this wait caps rendering at 60 Hz while
@@ -30931,7 +30952,11 @@ fn play(
             // next waypoint with normal physics. Overrides the (neutral) pad
             // sample so menu/pause handling above stays intact.
             #[cfg(feature = "route-follow")]
-            let input_sample = follower.steer(follow_route, player.pos, yaw, pitch, sim_frame_no);
+            let input_sample = {
+                // The pad sample above only drove pause and menu handling.
+                let _ = input_sample;
+                follower.steer(follow_route, player.pos, yaw, pitch, sim_frame_no)
+            };
             // trigger_camera PLAYER_TAKECONTROL: EnableControl(FALSE).
             let input_sample = if unsafe { CAMERA_LOCK } {
                 semantic_input::Sample {

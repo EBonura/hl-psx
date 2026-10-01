@@ -70,6 +70,7 @@ impl Target {
             slot: Slot::Auto,
         },
     ];
+    #[cfg(not(feature = "semantic-input"))]
     pub const fn label(self) -> &'static str {
         match (self.port, self.slot) {
             (Port::One, Slot::Manual) => "Card 1  Manual",
