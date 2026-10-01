@@ -1250,11 +1250,14 @@ fn main() {
          pub const MAX_VIEWMODEL_WORDS: usize = {max_viewmodel_words};\n\
          pub const MAX_VIEWMODEL_GEOM_WORDS: usize = {max_viewmodel_geom_words};\n\
          pub const VM_POOL_WORDS: usize = {vm_pool_words};\n\
+         #[cfg(feature = \"debug-weapon-gallery\")]\n\
          pub const VIEWMODEL_VERTS: [u16; 15] = {viewmodel_verts:?};\n\
+         #[cfg(feature = \"debug-weapon-gallery\")]\n\
          pub const VIEWMODEL_TRIS: [u16; 15] = {viewmodel_tris:?};\n\
          pub const MODEL_STREAM_ORDER: [u8; {MODEL_TYPES}] = {model_stream_order:?};\n\
          pub const MODEL_VARIANT_OFFSETS: [u16; {}] = {model_variant_offsets:?};\n\
          pub const MODEL_VARIANT_BYTES: [u8; {}] = {model_variant_bytes:?};\n\
+         #[cfg(feature = \"debug-regression-viewpoints\")]\n\
          pub const REGRESSION_VIEWPOINTS: [([i32; 3], u16, i16); 8] = {regression_viewpoints:?};\n\
          pub const MAX_FACES: usize = {max_faces};\n\
          pub const MAX_FACE_GROUPS: usize = {max_face_groups};\n\

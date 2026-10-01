@@ -8,6 +8,7 @@
 /// Total hardware scratchpad capacity.
 pub use psx_engine::scratchpad::SIZE;
 
+#[cfg(feature = "main-ram-render-scratch")]
 #[repr(C, align(16))]
 struct AlignedScratchpad([u8; SIZE]);
 

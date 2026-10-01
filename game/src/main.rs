@@ -223,9 +223,17 @@ const MODEL_STREAM_CODE_TRIM: usize = 37;
 const MAX_RENDER_PACKETS: usize = 1472 - BEAM_FX_TRIM - MODEL_STREAM_CODE_TRIM;
 // Telemetry and its interpolation state displace packet storage. Packet-drop
 // counters expose that diagnostic trade; release discs keep the full budget.
-#[cfg(feature = "decoupled-present")]
+#[cfg(all(
+    feature = "decoupled-present",
+    not(feature = "reference-trace"),
+    any(feature = "performance-telemetry", feature = "emulator-telemetry")
+))]
 const DECOUPLED_PACKET_TRIM: usize = 135;
-#[cfg(not(feature = "decoupled-present"))]
+#[cfg(all(
+    not(feature = "decoupled-present"),
+    not(feature = "reference-trace"),
+    any(feature = "performance-telemetry", feature = "emulator-telemetry")
+))]
 const DECOUPLED_PACKET_TRIM: usize = 0;
 #[cfg(all(
     not(feature = "reference-trace"),
@@ -330,6 +338,7 @@ const AFFINE_PATCH_CANDIDATE_CAP: usize = 16;
 // reaches 91, so every reported P95/P99 saturated at 15.75 and was blind to
 // the entire population the correction exists to fix. Thresholds tuned against
 // that signal were tuned against a clipped number.
+#[cfg(feature = "performance-telemetry")]
 const AFFINE_ERROR_BUCKETS: usize = 128;
 // The visibility bitsets remain live through world emission. Their 184-byte
 // scratchpad tail is reserved for generated 3D midpoint/projection vertices;
@@ -908,7 +917,9 @@ const PROP_TYPE_ITEM_SUIT: u8 = 3;
 const PROP_TYPE_ITEM_BATTERY: u8 = 4;
 const PROP_TYPE_CONTROLLER: u8 = 11; // flies: exempt from walker floor checks
 const PROP_TYPE_SITTING_SCI: u8 = 25; // seated pose, keeps its authored chair height
+#[cfg(feature = "reference-trace")]
 const PROP_TYPE_LOADER: u8 = 52; // c0a0d scripted monster_generic construction loader
+#[cfg(feature = "reference-trace")]
 const PROP_TYPE_FORKLIFT: u8 = 53; // c0a0/c0a0a scripted monster_generic forklifts
 const PROP_TYPE_SCRIPTED_SITTING_SCI: u8 = 54; // c1a1b/c4a3 sitidle -> sitstand hybrid
 const PROP_TYPE_VENT_ZOMBIE: u8 = 55; // c1a1b compact eatbody + vent-climb roster
@@ -4949,11 +4960,13 @@ fn scale12_vec(v: [i32; 3], s: i32) -> [i32; 3] {
     [scale12(v[0], s), scale12(v[1], s), scale12(v[2], s)]
 }
 
+#[cfg(not(feature = "decoupled-present"))]
 #[inline]
 fn vblank_reached(now: u32, target: u32) -> bool {
     now.wrapping_sub(target) < 0x8000_0000
 }
 
+#[cfg(not(feature = "decoupled-present"))]
 #[inline]
 fn wait_until_vblank(target: u32) {
     while !vblank_reached(interrupts::vblank_count(), target) {}
@@ -14334,6 +14347,7 @@ fn submodel_point_solid(m: &Map, head0: i32, p: [i32; 3]) -> bool {
 /// True when `p` sits inside any active solid brush entity at its current
 /// offset (grates, closed doors, plats, crates). Sphere-rejected per ent, so
 /// the common case costs one distance check per nearby entity.
+#[cfg(feature = "reference-trace")]
 unsafe fn point_in_ent_solid(m: &Map, p: [i32; 3]) -> bool {
     let nents = ENT_SOLID_COUNT;
     let mut ei = 0usize;
@@ -18717,7 +18731,9 @@ const W_GAUSS: usize = 7;
 const W_EGON: usize = 8;
 const W_HORNET: usize = 9;
 const W_GRENADE: usize = 10;
+#[allow(dead_code)] // completes the slot table; no code names this slot
 const W_SNARK: usize = 11;
+#[allow(dead_code)] // completes the slot table; no code names this slot
 const W_TRIPMINE: usize = 12;
 const W_SATCHEL: usize = 13;
 const N_WEAPONS: usize = 14;

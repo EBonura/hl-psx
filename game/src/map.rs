@@ -250,14 +250,18 @@ const NAV_EXACT_ROUTES: u16 = 0x8000;
 pub const SKY_TEX_NONE: usize = usize::MAX;
 
 pub const MATERIAL_CONCRETE: u8 = 0;
+#[allow(dead_code)] // completes the cooked material id table; no code names it
 pub const MATERIAL_METAL: u8 = 1;
 pub const MATERIAL_DIRT: u8 = 2;
+#[allow(dead_code)] // completes the cooked material id table; no code names it
 pub const MATERIAL_VENT: u8 = 3;
 pub const MATERIAL_GRATE: u8 = 4;
 pub const MATERIAL_TILE: u8 = 5;
 pub const MATERIAL_SLOSH: u8 = 6;
 pub const MATERIAL_WOOD: u8 = 7;
+#[allow(dead_code)] // completes the cooked material id table; no code names it
 pub const MATERIAL_COMPUTER: u8 = 8;
+#[allow(dead_code)] // completes the cooked material id table; no code names it
 pub const MATERIAL_GLASS: u8 = 9;
 
 pub struct Node {
