@@ -294,12 +294,6 @@ pub unsafe fn upload_tex_chunk_append_masked_raw(
     Some((out, failed))
 }
 
-/// Upload a `.hlm`/`.hlmdl` texture blob (u16 w,h | u16 clut[16] | u8 pix4 each)
-/// into `slots`. Returns the count that did not fit VRAM.
-pub fn upload_tex_blob(data: &[u8], n_texs: usize, slots: &mut [TexSlot]) -> usize {
-    unsafe { upload_tex_blob_raw(data, n_texs, slots.as_mut_ptr(), slots.len()) }
-}
-
 /// Raw-pointer variant for filling `static mut` slot tables without creating
 /// references to those statics.
 #[optimize(size)]

@@ -97,16 +97,6 @@ unsafe fn state(
 pub const VOICE_CHUNK_BASE: u32 = 3100;
 
 #[inline]
-pub unsafe fn stop_dialogue() {
-    state().stop_dialogue()
-}
-
-#[inline]
-pub unsafe fn stop_map_loops() {
-    state().stop_map_loops()
-}
-
-#[inline]
 pub unsafe fn stop_all() {
     state().stop_all()
 }
@@ -147,11 +137,6 @@ pub unsafe fn play_voice_world(local_id: u8, pos: [i32; 3]) -> u16 {
 }
 
 #[inline]
-pub unsafe fn play_map_vol(local_id: u8, den: u16) {
-    state().play_map_vol(local_id, den)
-}
-
-#[inline]
 pub unsafe fn play_map_authored(
     local_id: u8,
     pos: [i32; 3],
@@ -159,11 +144,6 @@ pub unsafe fn play_map_authored(
     packed_attenuation: u8,
 ) {
     state().play_map_authored(local_id, pos, volume_percent, packed_attenuation)
-}
-
-#[inline]
-pub unsafe fn play_map(local_id: u8) {
-    state().play_map(local_id)
 }
 
 #[inline]
@@ -239,9 +219,4 @@ pub unsafe fn set_ear(pos: [i32; 3]) {
 #[inline]
 pub unsafe fn play_world(id: u8, pos: [i32; 3]) {
     state().play_world(id, pos)
-}
-
-#[inline]
-pub unsafe fn play_at(id: u8, dist2: i32) {
-    state().play_at(id, dist2)
 }

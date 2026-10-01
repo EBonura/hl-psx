@@ -485,21 +485,6 @@ fn angular_score(vx: i32, vy: i32, vz: i32) -> Option<i32> {
     Some(((side2 << 16) / forward2).min(i32::MAX as i64) as i32)
 }
 
-/// Existing generous brush cone, scored by normalized view angle.
-#[inline]
-pub fn brush_use_score(vx: i32, vy: i32, vz: i32, reach: i32) -> Option<i32> {
-    if vz <= 0 || vz > reach {
-        return None;
-    }
-    let ax = vx.saturating_abs();
-    let ay = vy.saturating_abs();
-    if ax.saturating_mul(2) >= vz.saturating_mul(3) || ay.saturating_mul(2) >= vz.saturating_mul(3)
-    {
-        return None;
-    }
-    angular_score(vx, vy, vz)
-}
-
 /// GoldSrc `FIND_ENTITY_IN_SPHERE` measures from the search point to the
 /// nearest point of each entity AABB, not to its origin/centre. The comparison
 /// is strict (`distance^2 < radius^2`). Rejecting an axis outside the small
@@ -741,11 +726,8 @@ mod tests {
     }
 
     #[test]
-    fn centred_brush_and_scientist_share_one_deterministic_score() {
-        let centred_brush = brush_use_score(2, 1, 80, 120).unwrap();
-        let off_axis_scientist = scientist_use_score(22, 8, 70).unwrap();
-        assert!(centred_brush < off_axis_scientist);
-        assert_eq!(brush_use_score(0, 0, 121, 120), None);
+    fn scientist_use_score_stops_at_the_cone_edge() {
+        assert!(scientist_use_score(22, 8, 70).is_some());
         assert_eq!(scientist_use_score(52, 0, 50), None);
         assert!(scientist_use_score(51, 0, 50).is_some());
     }
