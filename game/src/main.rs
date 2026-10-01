@@ -33759,7 +33759,10 @@ fn play(
                                 }
                             } else {
                                 let face = PVS_FACE_INDEX.0[e] as usize;
-
+                                // Past the record cache: same closed-door test as above.
+                                if seal_hide && PVS_FACE_MARK[face >> 5] & (1 << (face & 31)) != 0 {
+                                    continue;
+                                }
                                 let (bc, be) = m.face_bounds(face);
                                 let depth = (dot12(rot.m[2], bc) + base_t[2]).max(0);
                                 if (depth >> DEPTH_BAND_SHIFT).min(nbands - 1) != band {
