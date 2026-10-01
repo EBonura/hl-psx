@@ -418,7 +418,7 @@ pub fn tex_anim_set(id: usize, frame0: u8, frame1: u8) -> bool {
 #[inline(always)]
 pub fn tex_anim_display(tex: usize) -> usize {
     unsafe {
-        *TEX_ANIM_REMAP
+        *(*core::ptr::addr_of!(TEX_ANIM_REMAP))
             .get_unchecked(TEX_ANIM_SELECT as usize)
             .get_unchecked(tex & (TEX_ANIM_MAX - 1)) as usize
     }
@@ -1410,7 +1410,7 @@ impl Map {
     /// per-triangle path in the game.
     #[inline]
     pub(crate) fn light_word(&self, idx: u8) -> u32 {
-        unsafe { *LIGHT_PAL_RGB.get_unchecked(idx as usize) }
+        unsafe { *(*core::ptr::addr_of!(LIGHT_PAL_RGB)).get_unchecked(idx as usize) }
     }
 
     #[inline]
@@ -1485,7 +1485,8 @@ impl Map {
         // Pre-expanded with the brightness curve applied, exactly like the base
         // palette; the cooked indices never exceed the 64-colour table.
         let packed = unsafe {
-            *DYNAMIC_PAL_555.get_unchecked((idx as usize) & (DYNAMIC_PALETTE_COLORS - 1))
+            *(*core::ptr::addr_of!(DYNAMIC_PAL_555))
+                .get_unchecked((idx as usize) & (DYNAMIC_PALETTE_COLORS - 1))
         };
         let (r, g, b) = unpack_rgb555(packed);
         (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)

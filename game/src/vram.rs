@@ -347,7 +347,7 @@ pub unsafe fn upload_tex_blob_raw(
 #[optimize(size)]
 fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8]) -> Option<TexSlot> {
     unsafe {
-        let pl = ATLAS.allocate(w, h)?;
+        let pl = (*core::ptr::addr_of_mut!(ATLAS)).allocate(w, h)?;
         let page = pl.page_index();
         let tpage_x = TEX_X0 + (page % COLS) * 64;
         let tpage_y = if page / COLS == 0 { 0 } else { 256 };
@@ -361,7 +361,7 @@ fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8]) -> Option<TexSlot> 
         upload_bytes(VramRect::new(vram_x, vram_y, w / 4, h), pix);
 
         let clut = loop {
-            let candidate = CLUTS.alloc(16)?;
+            let candidate = (*core::ptr::addr_of_mut!(CLUTS)).alloc(16)?;
             if candidate.x() < CLUT_MAX_X {
                 break candidate;
             }

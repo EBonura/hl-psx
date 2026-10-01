@@ -260,7 +260,8 @@ unsafe fn fire(m: &Map, movers: &[phys::Mover], t: &Tank, count: i32, player: bo
         // TankTrace: gTankSpread cone, 4096 units.
         let mut end = barrel;
         for x in 0..2 {
-            let r = (IMPACT_RNG.below(4097) as i32 + IMPACT_RNG.below(4097) as i32 - 4096) * spread
+            let r = (impact_rng().below(4097) as i32 + impact_rng().below(4097) as i32 - 4096)
+                * spread
                 >> 12;
             for c in 0..3 {
                 end[c] += if x == 0 { v[0][c] } else { 0 } + ((r * v[x + 1][c]) >> 12);

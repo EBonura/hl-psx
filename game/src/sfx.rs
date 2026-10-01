@@ -88,36 +88,42 @@ const MAX_SFX: usize = 70;
 
 static mut STATE: psx_goldsrc::hsfx::Hsfx<MAX_SFX, CHARGER_HEALTH_LOOP, CHARGER_HEV_LOOP> =
     psx_goldsrc::hsfx::Hsfx::new();
+
+#[inline(always)]
+unsafe fn state(
+) -> &'static mut psx_goldsrc::hsfx::Hsfx<MAX_SFX, CHARGER_HEALTH_LOOP, CHARGER_HEV_LOOP> {
+    &mut *core::ptr::addr_of_mut!(STATE)
+}
 pub const VOICE_CHUNK_BASE: u32 = 3100;
 
 #[inline]
 pub unsafe fn stop_dialogue() {
-    STATE.stop_dialogue()
+    state().stop_dialogue()
 }
 
 #[inline]
 pub unsafe fn stop_map_loops() {
-    STATE.stop_map_loops()
+    state().stop_map_loops()
 }
 
 #[inline]
 pub unsafe fn stop_all() {
-    STATE.stop_all()
+    state().stop_all()
 }
 
 #[inline]
 pub unsafe fn init_from_pack(pack: &[u8]) -> usize {
-    STATE.init_from_pack(pack)
+    state().init_from_pack(pack)
 }
 
 #[inline]
 pub unsafe fn load_dialogue_pack(pack: &[u8]) -> usize {
-    STATE.load_dialogue_pack(pack)
+    state().load_dialogue_pack(pack)
 }
 
 #[inline]
 pub unsafe fn play_voice(local_id: u8, den: u16) -> u16 {
-    STATE.play_voice(local_id, den)
+    state().play_voice(local_id, den)
 }
 
 #[inline]
@@ -127,22 +133,22 @@ pub unsafe fn play_voice_authored(
     volume_percent: u8,
     packed_attenuation: u8,
 ) -> u16 {
-    STATE.play_voice_authored(local_id, pos, volume_percent, packed_attenuation)
+    state().play_voice_authored(local_id, pos, volume_percent, packed_attenuation)
 }
 
 #[inline]
 pub unsafe fn voice_ticks(local_id: u8) -> u16 {
-    STATE.voice_ticks(local_id)
+    state().voice_ticks(local_id)
 }
 
 #[inline]
 pub unsafe fn play_voice_world(local_id: u8, pos: [i32; 3]) -> u16 {
-    STATE.play_voice_world(local_id, pos)
+    state().play_voice_world(local_id, pos)
 }
 
 #[inline]
 pub unsafe fn play_map_vol(local_id: u8, den: u16) {
-    STATE.play_map_vol(local_id, den)
+    state().play_map_vol(local_id, den)
 }
 
 #[inline]
@@ -152,17 +158,17 @@ pub unsafe fn play_map_authored(
     volume_percent: u8,
     packed_attenuation: u8,
 ) {
-    STATE.play_map_authored(local_id, pos, volume_percent, packed_attenuation)
+    state().play_map_authored(local_id, pos, volume_percent, packed_attenuation)
 }
 
 #[inline]
 pub unsafe fn play_map(local_id: u8) {
-    STATE.play_map(local_id)
+    state().play_map(local_id)
 }
 
 #[inline]
 pub unsafe fn play_map_world(local_id: u8, pos: [i32; 3]) {
-    STATE.play_map_world(local_id, pos)
+    state().play_map_world(local_id, pos)
 }
 
 /// Out of line: Hsfx's distance falloff would otherwise be inlined at every
@@ -170,7 +176,7 @@ pub unsafe fn play_map_world(local_id: u8, pos: [i32; 3]) {
 #[inline(never)]
 #[cfg_attr(target_arch = "mips", optimize(size))]
 pub unsafe fn play_map_loop_world(local_id: u8, pos: [i32; 3], owner: u16) {
-    STATE.play_map_loop_world(local_id, pos, owner)
+    state().play_map_loop_world(local_id, pos, owner)
 }
 
 #[inline]
@@ -181,61 +187,61 @@ pub unsafe fn play_map_loop_authored(
     volume_percent: u8,
     packed_attenuation: u8,
 ) {
-    STATE.play_map_loop_authored(local_id, pos, owner, volume_percent, packed_attenuation)
+    state().play_map_loop_authored(local_id, pos, owner, volume_percent, packed_attenuation)
 }
 
 #[inline]
 pub unsafe fn stop_map_loop(owner: u16) {
-    STATE.stop_map_loop(owner)
+    state().stop_map_loop(owner)
 }
 
 /// Re-level the map's authored loops (ambient_generic) against the listener,
 /// keying those that came into range: once per simulation tick, after set_ear.
 #[inline]
 pub unsafe fn update_map_loops() {
-    STATE.update_map_loops()
+    state().update_map_loops()
 }
 
 /// Set the level of the voice `owner`'s map loop holds, in place (GoldSrc's
 /// SND_CHANGE_VOL). False when it holds none.
 #[inline]
 pub unsafe fn set_map_loop_volume(owner: u16, gain: psx_spu::Volume) -> bool {
-    STATE.set_map_loop_volume(owner, gain)
+    state().set_map_loop_volume(owner, gain)
 }
 
 /// Move `owner`'s map loop to `play_map_loop_world`'s level for `pos`, in
 /// place. False when it holds no voice.
 #[inline]
 pub unsafe fn set_map_loop_world(owner: u16, pos: [i32; 3]) -> bool {
-    STATE.set_map_loop_world(owner, pos)
+    state().set_map_loop_world(owner, pos)
 }
 
 #[inline]
 pub unsafe fn play_vol(id: u8, den: u16) {
-    STATE.play_vol(id, den)
+    state().play_vol(id, den)
 }
 
 #[inline]
 pub unsafe fn play(id: u8) {
-    STATE.play(id)
+    state().play(id)
 }
 
 #[inline]
 pub unsafe fn charger_stop() {
-    STATE.charger_stop()
+    state().charger_stop()
 }
 
 #[inline]
 pub unsafe fn set_ear(pos: [i32; 3]) {
-    STATE.set_ear(pos)
+    state().set_ear(pos)
 }
 
 #[inline]
 pub unsafe fn play_world(id: u8, pos: [i32; 3]) {
-    STATE.play_world(id, pos)
+    state().play_world(id, pos)
 }
 
 #[inline]
 pub unsafe fn play_at(id: u8, dist2: i32) {
-    STATE.play_at(id, dist2)
+    state().play_at(id, dist2)
 }

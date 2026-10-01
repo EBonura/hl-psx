@@ -345,9 +345,9 @@ unsafe fn dying(m: &Map, pi: usize, now: u16) {
     let o = PROP_POS[pi];
     if !time_reached(now, AP.next_rocket) {
         if now & 3 == 0 {
-            let r = |v: i32| v + IMPACT_RNG.below(301) as i32 - 150;
+            let r = |v: i32| v + impact_rng().below(301) as i32 - 150;
             queue_explosion_fx(
-                [r(o[0]), o[1] - 50 - IMPACT_RNG.below(101) as i32, r(o[2])],
+                [r(o[0]), o[1] - 50 - impact_rng().below(101) as i32, r(o[2])],
                 50,
             );
         }
@@ -557,7 +557,7 @@ unsafe fn fire_gun(m: &Map, movers: &[phys::Mover], a: &mut Apache) -> bool {
     if off > 11 * D {
         return false;
     }
-    let spread = |_: ()| IMPACT_RNG.below(287) as i32 - 143; // VECTOR_CONE_4DEGREES, q12
+    let spread = |_: ()| impact_rng().below(287) as i32 - 143; // VECTOR_CONE_4DEGREES, q12
     let (r, u) = (spread(()), spread(()));
     let dir = mad(mad(t, v[1], r), v[2], u);
     let far = hl(mad(gun, dir, 8192));

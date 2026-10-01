@@ -76,7 +76,7 @@ pub(crate) unsafe fn osprey_corner(m: &Map, k: usize) -> ([i16; 3], u16, [i16; 3
 #[inline(never)]
 #[optimize(size)]
 pub(crate) unsafe fn osprey_update_goal(m: &Map) {
-    let o = &mut OSPREY;
+    let o = &mut *core::ptr::addr_of_mut!(OSPREY);
     let (pos, speed, ang) = osprey_corner(m, o.goal as usize);
     o.p[0] = o.p[1];
     o.a[0] = o.a[1];
@@ -130,7 +130,7 @@ pub(crate) unsafe fn osprey_has_dead() -> bool {
 #[inline(never)]
 #[optimize(size)]
 pub(crate) unsafe fn osprey_deploy(m: &Map) {
-    let o = &mut OSPREY;
+    let o = &mut *core::ptr::addr_of_mut!(OSPREY);
     let op = PROP_POS[o.pi as usize];
     let yaw = (o.a[1][1] as u16) & 0xfff;
     let (s, c) = (sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0xfff));
@@ -174,7 +174,7 @@ pub(crate) unsafe fn osprey_deploy(m: &Map) {
 #[inline(never)]
 #[optimize(size)]
 pub(crate) unsafe fn osprey_init(li: usize, rec: map::LogicEnt, pi: usize) {
-    let o = &mut OSPREY;
+    let o = &mut *core::ptr::addr_of_mut!(OSPREY);
     o.li = li as u16;
     o.aux = rec.first_aux as u16;
     o.corners = (rec.aux_count / 3).max(1) as u8;
@@ -199,7 +199,7 @@ pub(crate) unsafe fn osprey_init(li: usize, rec: map::LogicEnt, pi: usize) {
 #[inline(never)]
 #[optimize(size)]
 pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
-    let o = &mut OSPREY;
+    let o = &mut *core::ptr::addr_of_mut!(OSPREY);
     let pi = o.pi as usize;
     let now = SIM_NOW;
     let think = o.next != 0xffff && time_reached(now, o.next);
@@ -274,9 +274,9 @@ pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
             if think && now & 3 == 0 {
                 queue_explosion_fx(
                     [
-                        np[0] + (IMPACT_RNG.below(301) as i32 - 150),
+                        np[0] + (impact_rng().below(301) as i32 - 150),
                         np[1] - 100,
-                        np[2] + (IMPACT_RNG.below(301) as i32 - 150),
+                        np[2] + (impact_rng().below(301) as i32 - 150),
                     ],
                     60,
                 );
