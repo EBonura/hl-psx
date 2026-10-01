@@ -14047,8 +14047,12 @@ unsafe fn prop_render_radius(pi: usize, ty: u8) -> i32 {
 /// `record` (record_prop_anim_clips), so the clip bookkeeping never depends on
 /// which frames were drawn or when a hit trace ran; a reader that meets a clip
 /// the simulation has not recorded yet plays it from its start.
+///
+/// With `POSE` false only the bookkeeping runs and the result is (0, 0, 0):
+/// the per-tick recorder discards the pose, and the clip-phase arithmetic
+/// (header decode, duration lookups) is pure.
 #[inline(never)]
-fn prop_anim_frame(
+fn prop_anim_frame<const POSE: bool>(
     m: &Map,
     md: &Model,
     state: u8,
@@ -14079,6 +14083,9 @@ fn prop_anim_frame(
         while sequence + 1 < DURATIONS.len() && phase >= DURATIONS[sequence] {
             phase -= DURATIONS[sequence];
             sequence += 1;
+        }
+        if !POSE {
+            return (0, 0, 0);
         }
         let clip = SLOTS[sequence].min(md.n_clips.saturating_sub(1));
         return md.one_shot_clip_phase(clip, DURATIONS[sequence], phase);
@@ -14113,11 +14120,18 @@ fn prop_anim_frame(
             if authored & hl_format::map::PROP_CORPSE_CLIP != 0 {
                 let clip = (authored & !hl_format::map::PROP_CORPSE_CLIP) as usize;
                 if clip < md.n_clips {
-                    return md.one_shot_clip_phase(clip, 1, 0);
+                    return if POSE {
+                        md.one_shot_clip_phase(clip, 1, 0)
+                    } else {
+                        (0, 0, 0)
+                    };
                 }
             }
         }
         forget_clip();
+        if !POSE {
+            return (0, 0, 0);
+        }
         // Traverse the retained death poses once over the original sequence's
         // authored duration, then hold the final pose.
         let elapsed = (sim_frame_no as u16).wrapping_sub(unsafe { PROP_DEATH_START[pi] }) as usize;
@@ -14125,6 +14139,9 @@ fn prop_anim_frame(
     }
     if hit_flash > 0 {
         forget_clip();
+        if !POSE {
+            return (0, 0, 0);
+        }
         // Traverse the entire retained flinch, not merely frames 0 and 1.  A
         // few high-value models now retain 3-5 pain poses, and ignoring the
         // tail made those RAM bytes useless while still producing a snap.
@@ -14139,6 +14156,9 @@ fn prop_anim_frame(
     }
     if scripted_play {
         forget_clip();
+        if !POSE {
+            return (0, 0, 0);
+        }
         // Script clips are aggressively RAM-sampled (often just first/last
         // pose). Traverse those poses once over the source MDL's packed
         // duration instead of looping them every few ticks while the script
@@ -14151,6 +14171,9 @@ fn prop_anim_frame(
     }
     if scripted_idle {
         forget_clip();
+        if !POSE {
+            return (0, 0, 0);
+        }
         // Scripted idles loop at the retail sequence duration. The ordinary
         // two/three-frame idle cadence was visually frantic and could not
         // share a deterministic phase with source studio target events.
@@ -14165,7 +14188,11 @@ fn prop_anim_frame(
         if let Some((slot, ticks, elapsed)) = unsafe { nihilanth::clip(pi) } {
             if slot < md.n_clips {
                 forget_clip();
-                return md.looped_clip_phase(slot, ticks, elapsed);
+                return if POSE {
+                    md.looped_clip_phase(slot, ticks, elapsed)
+                } else {
+                    (0, 0, 0)
+                };
             }
         }
     }
@@ -14174,7 +14201,11 @@ fn prop_anim_frame(
         if let Some((gesture, ticks, elapsed)) = unsafe { garg::gesture_clip(pi) } {
             if gesture < md.n_clips {
                 forget_clip();
-                return md.one_shot_clip_phase(gesture, ticks, elapsed);
+                return if POSE {
+                    md.one_shot_clip_phase(gesture, ticks, elapsed)
+                } else {
+                    (0, 0, 0)
+                };
             }
         }
     }
@@ -14194,6 +14225,9 @@ fn prop_anim_frame(
         };
         if action_ticks != 0 {
             forget_clip();
+            if !POSE {
+                return (0, 0, 0);
+            }
             let remaining = unsafe { PROP_AI_TIMER[pi] }.min(action_ticks);
             let elapsed = action_ticks.saturating_sub(remaining) as usize;
             return md.one_shot_clip_phase(clip, action_ticks as usize, elapsed);
@@ -14222,6 +14256,9 @@ fn prop_anim_frame(
         }
         (sim_frame_no as u16).wrapping_sub(start) as usize
     };
+    if !POSE {
+        return (0, 0, 0);
+    }
     md.looped_clip_phase(clip, md.clip_hold_ticks(clip) as usize, elapsed)
 }
 
@@ -14261,7 +14298,7 @@ unsafe fn record_prop_anim_clips(m: &Map, sim_frame_no: u32) {
             continue;
         }
         let md = loaded_model(slot as usize);
-        prop_anim_frame(
+        prop_anim_frame::<false>(
             m,
             &md,
             PROP_STATE[pi],
@@ -20011,7 +20048,7 @@ unsafe fn prop_studio_hit_fraction(
     if md.n_hitboxes == 0 {
         return None;
     }
-    let (frame, frame2, frac16) = prop_anim_frame(
+    let (frame, frame2, frac16) = prop_anim_frame::<true>(
         m,
         &md,
         PROP_STATE[pi],
@@ -34564,7 +34601,7 @@ fn play(
                 {
                     (0, 0, 0)
                 } else {
-                    prop_anim_frame(
+                    prop_anim_frame::<true>(
                         &m,
                         md,
                         PROP_STATE[pi],
