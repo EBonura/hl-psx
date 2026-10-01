@@ -274,7 +274,6 @@ pub struct Node {
 
 pub struct Map {
     data: &'static [u8],
-    pub n_verts: usize,
     pub n_tris: usize,
     pub n_texs: usize,
     pub n_faces: usize,
@@ -456,7 +455,6 @@ pub struct NavNode {
     #[allow(dead_code)]
     pub leaf: i16,
     pub first_link: usize,
-    pub link_count: usize,
 }
 
 #[allow(dead_code)]
@@ -824,7 +822,6 @@ impl Map {
 
         Map {
             data,
-            n_verts,
             n_tris,
             n_texs,
             n_faces,
@@ -1170,7 +1167,6 @@ impl Map {
             pos: [rd_i32(d, o), rd_i32(d, o + 4), rd_i32(d, o + 8)],
             leaf: rd_i16(d, o + 12),
             first_link: rd_u16(d, o + 14) as usize,
-            link_count: d[o + 16] as usize,
         }
     }
 

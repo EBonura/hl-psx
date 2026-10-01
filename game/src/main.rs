@@ -1263,8 +1263,6 @@ struct LoadedModel {
     type_id: u8,
     run_start: u8, // index into POOL_FACE_RUNS
     n_runs: u8,
-    geom_off: usize, // byte offset into MODEL_BUF
-    geom_len: usize,
     face_start: usize, // index into the split POOL_FACE_* streams
     n_faces: usize,
     tex_start: usize, // index into POOL_TEX
@@ -1276,8 +1274,6 @@ impl LoadedModel {
         type_id: 0,
         run_start: 0,
         n_runs: 0,
-        geom_off: 0,
-        geom_len: 0,
         face_start: 0,
         n_faces: 0,
         tex_start: 0,
@@ -1871,16 +1867,12 @@ static mut VM_SLOTS: [TexSlot; VM_SLOTS_TOTAL] = [ZERO_SLOT; VM_SLOTS_TOTAL];
 #[derive(Clone, Copy)]
 struct VmEntry {
     valid: bool,
-    geom_off: usize,
-    geom_len: usize,
     slot_start: usize,
     n_slots: usize,
 }
 impl VmEntry {
     const NONE: VmEntry = VmEntry {
         valid: false,
-        geom_off: 0,
-        geom_len: 0,
         slot_start: 0,
         n_slots: 0,
     };
@@ -4361,8 +4353,6 @@ unsafe fn vm_publish_streamed(wm: usize, word: usize, slot: usize, clen: usize) 
     }
     VM_ENTRY = VmEntry {
         valid: true,
-        geom_off: gw * 4,
-        geom_len: glen,
         slot_start: slot,
         n_slots: ntex,
     };
@@ -4948,8 +4938,6 @@ unsafe fn stream_map_models(
             type_id: ty as u8,
             run_start: run_off as u8,
             n_runs: nr as u8,
-            geom_off: gw * 4,
-            geom_len: kept,
             face_start: face_off,
             n_faces: nf,
             tex_start: tex_off,
