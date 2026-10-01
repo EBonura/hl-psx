@@ -60,7 +60,9 @@ fn anim_value(data: &[u8], base: usize, frame: usize) -> i16 {
         let (valid, total) = (data[p] as usize, data[p + 1] as usize);
         if total > k {
             let o = p + 2 * if valid > k { k + 1 } else { valid };
-            return data.get(o..o + 2).map_or(0, |b| i16::from_le_bytes([b[0], b[1]]));
+            return data
+                .get(o..o + 2)
+                .map_or(0, |b| i16::from_le_bytes([b[0], b[1]]));
         }
         k -= total;
         p += (valid + 1) * 2;
@@ -72,7 +74,12 @@ fn anim_value(data: &[u8], base: usize, frame: usize) -> i16 {
 /// sequence: GetBonePosition(0) on its last think (pev->frame 255), as a model
 /// space offset (x forward, y left). Zero when GoldSrc leaves it in place
 /// (under 8 units of travel).
-fn sequence_root_end(models: &Path, model: &str, data: &[u8], sequence: usize) -> Result<(i32, i32)> {
+fn sequence_root_end(
+    models: &Path,
+    model: &str,
+    data: &[u8],
+    sequence: usize,
+) -> Result<(i32, i32)> {
     let (_, count, table) = sequences(data)?;
     if sequence >= count {
         return Ok((0, 0));

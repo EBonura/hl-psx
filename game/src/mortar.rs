@@ -28,7 +28,8 @@ unsafe fn controller(m: &Map, nlogic: usize, name: u16) -> Option<i32> {
         if LOGIC_KIND[li] == map::LOGIC_MOMENTARY {
             let rec = m.logic(li);
             if rec.targetname == name {
-                return logic_valid_brush(rec.brush, m.n_ents).map(|ei| ENT_PHASE[ei].clamp(0, 4096));
+                return logic_valid_brush(rec.brush, m.n_ents)
+                    .map(|ei| ENT_PHASE[ei].clamp(0, 4096));
             }
         }
     }
@@ -61,11 +62,22 @@ pub(crate) unsafe fn field_use(m: &Map, nlogic: usize, rec: map::LogicEnt, now: 
         }
         _ => {}
     }
-    let spread = if rec.aux_count != 0 { m.logic_aux(rec.first_aux).target as i32 } else { 0 };
-    let movers = &*core::ptr::slice_from_raw_parts(core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(), MOVER_COUNT.min(MAX_ENTS + 1));
+    let spread = if rec.aux_count != 0 {
+        m.logic_aux(rec.first_aux).target as i32
+    } else {
+        0
+    };
+    let movers = &*core::ptr::slice_from_raw_parts(
+        core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),
+        MOVER_COUNT.min(MAX_ENTS + 1),
+    );
     let mut t = 50u16; // 2.5 s
     for _ in 0..(rec.speed & 0xff) {
-        let spot = [start[0] + span(-spread, spread), start[1], start[2] + span(-spread, spread)];
+        let spot = [
+            start[0] + span(-spread, spread),
+            start[1],
+            start[2] + span(-spread, spread),
+        ];
         let down = [spot[0], spot[1] - 4096, spot[2]];
         let ground = phys::trace_line(m, movers, spot, down).map_or(down, |h| h.pos);
         if let Some(s) = (0..MAX_SHELLS).find(|&s| SHELL_AT[s] == 0) {

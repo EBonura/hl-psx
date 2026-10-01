@@ -132,7 +132,10 @@ fn name_id(m: &Map, prefix: &str, num: u8) -> u16 {
     while id <= m.n_logic_names {
         let s = m.logic_name(id as u16).as_bytes();
         let p = prefix.as_bytes();
-        if s.len() == p.len() + (num != 0) as usize && s.starts_with(p) && (num == 0 || s[p.len()] == b'0' + num) {
+        if s.len() == p.len() + (num != 0) as usize
+            && s.starts_with(p)
+            && (num == 0 || s[p.len()] == b'0' + num)
+        {
             return id as u16;
         }
         id += 1;
@@ -146,7 +149,10 @@ fn name_id(m: &Map, prefix: &str, num: u8) -> u16 {
 unsafe fn marker(m: &Map, id: u16) -> Option<usize> {
     let nlogic = m.n_logic.min(MAX_LOGIC);
     (0..nlogic).find(|&li| {
-        id != 0 && LOGIC_KIND[li] != 0 && LOGIC_STATE[li] != LOGIC_STATE_REMOVED && m.logic(li).targetname == id
+        id != 0
+            && LOGIC_KIND[li] != 0
+            && LOGIC_STATE[li] != LOGIC_STATE_REMOVED
+            && m.logic(li).targetname == id
     })
 }
 
@@ -206,10 +212,18 @@ pub(crate) unsafe fn note_shot(pi: usize, start: [i32; 3], end: [i32; 3]) {
     }
     let o = PROP_POS[pi];
     let yaw = ((N.yaw >> 4) & 0xfff) as u16;
-    let c = [o[0] + (sincos::sin_q12(yaw) * 100 >> 12), o[1] + 277, o[2] + (sincos::sin_q12(yaw.wrapping_add(1024) & 0xfff) * 100 >> 12)];
+    let c = [
+        o[0] + (sincos::sin_q12(yaw) * 100 >> 12),
+        o[1] + 277,
+        o[2] + (sincos::sin_q12(yaw.wrapping_add(1024) & 0xfff) * 100 >> 12),
+    ];
     let d = dir_q12(start, end);
     let t = ((c[0] - start[0]) * d[0] + (c[1] - start[1]) * d[1] + (c[2] - start[2]) * d[2]) >> 12;
-    let q = [start[0] + (d[0] * t >> 12), start[1] + (d[1] * t >> 12), start[2] + (d[2] * t >> 12)];
+    let q = [
+        start[0] + (d[0] * t >> 12),
+        start[1] + (d[1] * t >> 12),
+        start[2] + (d[2] * t >> 12),
+    ];
     N.head_hit = t > 0 && dist2_3(q, c) < 100 * 100;
 }
 
@@ -272,15 +286,29 @@ pub(crate) unsafe fn clip(pi: usize) -> Option<(usize, usize, usize)> {
         _ if g.irritation >= 2 => 7,
         _ => 0,
     };
-    Some((slot, g.seq_len as usize, SIM_NOW.wrapping_sub(g.seq_start) as usize))
+    Some((
+        slot,
+        g.seq_len as usize,
+        SIM_NOW.wrapping_sub(g.seq_start) as usize,
+    ))
 }
 
 /// Pick the next sequence (CNihilanth::NextActivity).
 #[inline(never)]
 #[optimize(size)]
-unsafe fn next_activity(m: &Map, nlogic: usize, now: u16, player_seen: bool, dist: i32, facing: bool) {
+unsafe fn next_activity(
+    m: &Map,
+    nlogic: usize,
+    now: u16,
+    player_seen: bool,
+    dist: i32,
+    facing: bool,
+) {
     let g = n();
-    if (g.health < g.full / 2 || g.spheres < N_SPHERES / 2) && g.recharger == u16::MAX && g.level <= 9 {
+    if (g.health < g.full / 2 || g.spheres < N_SPHERES / 2)
+        && g.recharger == u16::MAX
+        && g.level <= 9
+    {
         match marker(m, name_id(m, "n_recharger", g.level)) {
             Some(li) => {
                 g.recharger = li as u16;
@@ -309,7 +337,16 @@ unsafe fn next_activity(m: &Map, nlogic: usize, now: u16, player_seen: bool, dis
             if g.seq != SEQ_RECHARGE {
                 // Event 5 (start up sphere machine): a recharge cry.
                 setpiece_sfx::play(SP::NIH_RECHARGE, PROP_POS[g.pi as usize]);
-                logic_fire_targets(m, nlogic, m.n_ents, name_id(m, "n_draw", g.level), map::USE_ON, now, 0, logic_state::CALLER_NONE);
+                logic_fire_targets(
+                    m,
+                    nlogic,
+                    m.n_ents,
+                    name_id(m, "n_draw", g.level),
+                    map::USE_ON,
+                    now,
+                    0,
+                    logic_state::CALLER_NONE,
+                );
             }
             g.seq = SEQ_RECHARGE;
             g.seq_len = len(SEQ_ATTACK);
@@ -364,7 +401,10 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
     g.yaw += g.avel / 20;
     if now & 1 == 0 {
         let yaw = ((g.yaw >> 4) & 0xfff) as u16;
-        let right = [sincos::sin_q12(yaw.wrapping_add(1024) & 0xfff), sincos::sin_q12(yaw.wrapping_add(2048) & 0xfff)];
+        let right = [
+            sincos::sin_q12(yaw.wrapping_add(1024) & 0xfff),
+            sincos::sin_q12(yaw.wrapping_add(2048) & 0xfff),
+        ];
         let side = (g.desired[0] * right[0] + g.desired[1] * right[1]) >> 12;
         // A degree is 4096 / 360 q12 turns; x16 fixed point.
         const DEG: i32 = 182;
@@ -432,7 +472,8 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
             zen_sound(head);
         }
         SEQ_ATTACK2 if t == at(EV_TELE) => {
-            if name_id(m, "n_teleport", g.teleport) != 0 || name_id(m, "n_leaving", g.teleport) != 0 {
+            if name_id(m, "n_teleport", g.teleport) != 0 || name_id(m, "n_leaving", g.teleport) != 0
+            {
                 // Event 6: an attack cry, then TeleportInit's x_teleattack1.
                 setpiece_sfx::play(SP::NIH_ATTACK, head);
                 setpiece_sfx::play(SP::NIH_TELE, head);
@@ -469,8 +510,17 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
         // flDist to m_posDesired (straight below or above him) and flDot of
         // m_vecDesired with his facing.
         let yaw = ((g.yaw >> 4) & 0xfff) as u16;
-        let facing = g.desired[0] * sincos::sin_q12(yaw) + g.desired[1] * sincos::sin_q12(yaw.wrapping_add(1024) & 0xfff) > 0;
-        next_activity(m, nlogic, now, !time_reached(now, g.last_seen.wrapping_add(100)), ((g.z >> 4) - g.desired_z).abs(), facing);
+        let facing = g.desired[0] * sincos::sin_q12(yaw)
+            + g.desired[1] * sincos::sin_q12(yaw.wrapping_add(1024) & 0xfff)
+            > 0;
+        next_activity(
+            m,
+            nlogic,
+            now,
+            !time_reached(now, g.last_seen.wrapping_add(100)),
+            ((g.z >> 4) - g.desired_z).abs(),
+            facing,
+        );
     }
 }
 
@@ -484,7 +534,11 @@ unsafe fn launch(from: [i32; 3], to: [i32; 3], kind: u8) {
         g.ball_pos[b] = from;
         let d = dir_q12(from, to);
         // ZapInit: 200 u/s; the teleport ball keeps a fifth of its climb.
-        g.ball_vel[b] = [d[0] * 10 >> 12, d[1] * if kind == 2 { 2 } else { 10 } >> 12, d[2] * 10 >> 12];
+        g.ball_vel[b] = [
+            d[0] * 10 >> 12,
+            d[1] * if kind == 2 { 2 } else { 10 } >> 12,
+            d[2] * 10 >> 12,
+        ];
     }
 }
 
@@ -511,7 +565,8 @@ unsafe fn tick_balls(m: &Map, movers: &[phys::Mover], nlogic: usize, now: u16) {
             if d < 256 {
                 g.ball_kind[b] = 0;
                 if phys::trace_line(m, movers, pos, p).is_none() && LOGIC_PLAYER_HEALTH > 0 {
-                    PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(skill_table::SKILL_NIHILANTH_ZAP[settings::skill()]);
+                    PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE
+                        .saturating_add(skill_table::SKILL_NIHILANTH_ZAP[settings::skill()]);
                     note_damage_direction(pos);
                 }
                 continue;
@@ -527,7 +582,16 @@ unsafe fn tick_balls(m: &Map, movers: &[phys::Mover], nlogic: usize, now: u16) {
             if d < 128 {
                 g.ball_kind[b] = 0;
                 let n = g.teleport;
-                logic_fire_targets(m, nlogic, m.n_ents, name_id(m, "n_leaving", n), map::USE_ON, now, 0, logic_state::CALLER_NONE);
+                logic_fire_targets(
+                    m,
+                    nlogic,
+                    m.n_ents,
+                    name_id(m, "n_leaving", n),
+                    map::USE_ON,
+                    now,
+                    0,
+                    logic_state::CALLER_NONE,
+                );
                 if let Some(li) = marker(m, name_id(m, "n_teleport", n)) {
                     if LOGIC_KIND[li] == map::LOGIC_TRIGGER_TELEPORT {
                         logic_teleport_touch(m, nlogic, m.logic(li));
@@ -541,7 +605,8 @@ unsafe fn tick_balls(m: &Map, movers: &[phys::Mover], nlogic: usize, now: u16) {
         if phys::trace_line(m, movers, pos, next).is_some() {
             // ZapTouch: RadiusDamage(50, DMG_SHOCK).
             if kind == 1 && d < 125 {
-                PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add((50 * (125 - d) / 125) as u16);
+                PENDING_PLAYER_DAMAGE =
+                    PENDING_PLAYER_DAMAGE.saturating_add((50 * (125 - d) / 125) as u16);
             }
             g.ball_kind[b] = 0;
             continue;

@@ -100,8 +100,14 @@ fn angle_dist(a: i32, b: i32) -> i32 {
 fn vectors(ang: [i16; 2]) -> [[i32; 3]; 3] {
     let y = ang[0] as u16;
     let p = (-(ang[1] as i32)) as u16; // pitch up
-    let (sy, cy) = (sincos::sin_q12(y & 0xfff), sincos::sin_q12(y.wrapping_add(1024) & 0xfff));
-    let (sp, cp) = (sincos::sin_q12(p & 0xfff), sincos::sin_q12(p.wrapping_add(1024) & 0xfff));
+    let (sy, cy) = (
+        sincos::sin_q12(y & 0xfff),
+        sincos::sin_q12(y.wrapping_add(1024) & 0xfff),
+    );
+    let (sp, cp) = (
+        sincos::sin_q12(p & 0xfff),
+        sincos::sin_q12(p.wrapping_add(1024) & 0xfff),
+    );
     [
         [(cp * cy) >> 12, sp, (cp * sy) >> 12],
         [sy, 0, -cy],
@@ -226,8 +232,13 @@ unsafe fn ray_hits_player(m: &Map, movers: &[phys::Mover], from: [i32; 3], end: 
     let h = PLAYER_HULL_HALF_HEIGHT;
     let wall = phys::trace_line_skip(m, movers, from, end, TANK_SKIP).map_or(4096, |hit| hit.frac);
     LOGIC_PLAYER_HEALTH > 0
-        && segment_box_frac(from, end, [p[0] - 16, p[1] - h, p[2] - 16], [p[0] + 16, p[1] + h, p[2] + 16])
-            .is_some_and(|f| f <= wall)
+        && segment_box_frac(
+            from,
+            end,
+            [p[0] - 16, p[1] - h, p[2] - 16],
+            [p[0] + 16, p[1] + h, p[2] + 16],
+        )
+        .is_some_and(|f| f <= wall)
 }
 
 /// CFuncTank*::Fire: `count` rounds of the tank's class along its barrel,
@@ -249,12 +260,14 @@ unsafe fn fire(m: &Map, movers: &[phys::Mover], t: &Tank, count: i32, player: bo
         // TankTrace: gTankSpread cone, 4096 units.
         let mut end = barrel;
         for x in 0..2 {
-            let r = (IMPACT_RNG.below(4097) as i32 + IMPACT_RNG.below(4097) as i32 - 4096) * spread >> 12;
+            let r = (IMPACT_RNG.below(4097) as i32 + IMPACT_RNG.below(4097) as i32 - 4096) * spread
+                >> 12;
             for c in 0..3 {
                 end[c] += if x == 0 { v[0][c] } else { 0 } + ((r * v[x + 1][c]) >> 12);
             }
         }
-        let impact = phys::trace_line_skip(m, movers, barrel, end, TANK_SKIP).map_or(end, |h| h.pos);
+        let impact =
+            phys::trace_line_skip(m, movers, barrel, end, TANK_SKIP).map_or(end, |h| h.pos);
         push_tracer(barrel, impact);
         if class == map::TANK_CLASS_MORTAR {
             // One explosion of iMagnitude, out to 2.5x.
@@ -268,15 +281,41 @@ unsafe fn fire(m: &Map, movers: &[phys::Mover], t: &Tank, count: i32, player: bo
             let d = [end[0] - barrel[0], end[1] - barrel[1], end[2] - barrel[2]];
             let pitch = atan_s(d[1], isqrt_i32(d[0] * d[0] + d[2] * d[2]));
             let rot = view_rotation(((1024 - a[0]) & 0xfff) as u16, pitch as i16);
-            let base_t = [-dot12(rot.m[0], barrel), -dot12(rot.m[1], barrel), -dot12(rot.m[2], barrel)];
-            fire_hitscan(m, movers, barrel, &rot, base_t, round_damage(t), false, 8192, 2, 2, 0, 0);
+            let base_t = [
+                -dot12(rot.m[0], barrel),
+                -dot12(rot.m[1], barrel),
+                -dot12(rot.m[2], barrel),
+            ];
+            fire_hitscan(
+                m,
+                movers,
+                barrel,
+                &rot,
+                base_t,
+                round_damage(t),
+                false,
+                8192,
+                2,
+                2,
+                0,
+                0,
+            );
         } else if ray_hits_player(m, movers, barrel, end) {
             PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(round_damage(t) as u16);
             note_damage_direction(barrel);
         }
     }
     TANK_SKIP = -1;
-    logic_fire_targets(m, m.n_logic.min(MAX_LOGIC), m.n_ents, t.target, map::USE_TOGGLE, SIM_NOW, 0, t.li);
+    logic_fire_targets(
+        m,
+        m.n_logic.min(MAX_LOGIC),
+        m.n_ents,
+        t.target,
+        map::USE_TOGGLE,
+        SIM_NOW,
+        0,
+        t.li,
+    );
 }
 
 /// Write a tank's angles into its brush pose (render + collision) the way
@@ -302,7 +341,13 @@ unsafe fn pose(t: &Tank) {
 pub(crate) unsafe fn tick_tanks(m: &Map, movers: &[phys::Mover], view: [i32; 3], now: u16) {
     TANK_FIRE_CD = TANK_FIRE_CD.saturating_sub(256);
     for i in 0..TANK_COUNT {
-        think(m, movers, view, now, &mut *core::ptr::addr_of_mut!(TANKS[i]));
+        think(
+            m,
+            movers,
+            view,
+            now,
+            &mut *core::ptr::addr_of_mut!(TANKS[i]),
+        );
     }
 }
 
@@ -340,12 +385,18 @@ unsafe fn think(m: &Map, movers: &[phys::Mover], view: [i32; 3], now: u16, t: &m
         if range < t.min_range as i32 || (t.max_range > 0 && range > t.max_range as i32) {
             return;
         }
-        if LOGIC_PLAYER_HEALTH > 0 && phys::trace_line_skip(m, movers, barrel, eye, TANK_SKIP).is_none() {
+        if LOGIC_PLAYER_HEALTH > 0
+            && phys::trace_line_skip(m, movers, barrel, eye, TANK_SKIP).is_none()
+        {
             update = true;
             // BodyTarget: half way between the centre and the eyes.
             t.sight = [p[0] as i16, (p[1] + VIEW_HEIGHT / 2) as i16, p[2] as i16];
         }
-        [t.sight[0] as i32 - o[0], t.sight[1] as i32 - o[1], t.sight[2] as i32 - o[2]]
+        [
+            t.sight[0] as i32 - o[0],
+            t.sight[1] as i32 - o[1],
+            t.sight[2] as i32 - o[2],
+        ]
     };
     let dist = isqrt_i32(dist2_3(dir, [0; 3]));
     let mut yaw = atan_s(dir[2], dir[0]);
@@ -384,14 +435,19 @@ unsafe fn think(m: &Map, movers: &[phys::Mover], view: [i32; 3], now: u16, t: &m
     if now.wrapping_sub(t.sight_time) < t.persist as u16 && (aimed || los) {
         // SF_TANK_LINEOFSIGHT: only when the barrel's own line reaches the player.
         let f = vectors(t.ang)[0];
-        let end = [barrel[0] + ((f[0] * dist) >> 12), barrel[1] + ((f[1] * dist) >> 12), barrel[2] + ((f[2] * dist) >> 12)];
+        let end = [
+            barrel[0] + ((f[0] * dist) >> 12),
+            barrel[1] + ((f[1] * dist) >> 12),
+            barrel[2] + ((f[2] * dist) >> 12),
+        ];
         if !los || ray_hits_player(m, movers, barrel, end) {
             // The round count is the elapsed time times the fire rate; the
             // first think in the cone only starts the clock.
             let last = t.fire_last;
             t.fire_last = now.max(1);
             if last != 0 {
-                let count = (now.wrapping_sub(last) as u32 * t.fire_rate as u32 / (20 * 256)) as i32;
+                let count =
+                    (now.wrapping_sub(last) as u32 * t.fire_rate as u32 / (20 * 256)) as i32;
                 if count > 0 {
                     fire(m, movers, t, count, false);
                 } else {

@@ -122,7 +122,12 @@ pub enum GargChoice {
     Chase,
 }
 
-pub const fn garg_choice(dot_q12: i32, dist: i32, see_passed: bool, flame_passed: bool) -> GargChoice {
+pub const fn garg_choice(
+    dot_q12: i32,
+    dist: i32,
+    see_passed: bool,
+    flame_passed: bool,
+) -> GargChoice {
     const ATTACKDIST: i32 = 80;
     const FLAME_LENGTH: i32 = 330;
     let range1 = see_passed && dot_q12 >= 2867 && dist > ATTACKDIST;

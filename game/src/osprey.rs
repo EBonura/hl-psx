@@ -64,7 +64,11 @@ pub(crate) unsafe fn osprey_corner(m: &Map, k: usize) -> ([i16; 3], u16, [i16; 3
     (
         [a.target as i16, a.delay_ticks as i16, b.target as i16],
         b.delay_ticks,
-        [q(c.delay_ticks), (c.target & 0xfff) as i16, q(c.delay_ticks >> 8)],
+        [
+            q(c.delay_ticks),
+            (c.target & 0xfff) as i16,
+            q(c.delay_ticks >> 8),
+        ],
     )
 }
 
@@ -88,8 +92,13 @@ pub(crate) unsafe fn osprey_update_goal(m: &Map) {
     o.p[1] = pos;
     o.spd[1] = speed;
     o.start = o.start.wrapping_add(o.dt);
-    let d = [pos[0] as i32 - o.p[0][0] as i32, pos[1] as i32 - o.p[0][1] as i32, pos[2] as i32 - o.p[0][2] as i32];
-    o.dt = (isqrt_i32(dist2_3(d, [0; 3])) * 40 / (o.spd[0] as i32 + speed as i32).max(1)).clamp(1, 4000) as u16;
+    let d = [
+        pos[0] as i32 - o.p[0][0] as i32,
+        pos[1] as i32 - o.p[0][1] as i32,
+        pos[2] as i32 - o.p[0][2] as i32,
+    ];
+    o.dt = (isqrt_i32(dist2_3(d, [0; 3])) * 40 / (o.spd[0] as i32 + speed as i32).max(1))
+        .clamp(1, 4000) as u16;
     // m_ang1.y is unwrapped to the short arc toward the new goal.
     let dy = o.a[0][1] as i32 - ang[1] as i32;
     if dy < -2048 {
@@ -106,7 +115,9 @@ pub(crate) unsafe fn osprey_update_goal(m: &Map) {
 pub(crate) unsafe fn osprey_has_dead() -> bool {
     let mut pi = 0;
     while pi < MAX_PROPS {
-        if OSPREY.grunts[pi >> 5] & (1 << (pi & 31)) != 0 && (PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0) {
+        if OSPREY.grunts[pi >> 5] & (1 << (pi & 31)) != 0
+            && (PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0)
+        {
             return true;
         }
         pi += 1;
@@ -129,10 +140,16 @@ pub(crate) unsafe fn osprey_deploy(m: &Map) {
         // forward (+32 / -64), right (+-100), up -96 (UTIL_MakeAimVectors)
         let f = if r & 1 == 0 { 32 } else { -64 };
         let side = if r < 2 { 100 } else { -100 };
-        let src = [op[0] + ((s * f + c * side) >> 12), op[1] - 96, op[2] + ((c * f - s * side) >> 12)];
+        let src = [
+            op[0] + ((s * f + c * side) >> 12),
+            op[1] - 96,
+            op[2] + ((c * f - s * side) >> 12),
+        ];
         o.repel[r] = 0xff;
         while pi < MAX_PROPS {
-            if o.grunts[pi >> 5] & (1 << (pi & 31)) != 0 && (PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0) {
+            if o.grunts[pi >> 5] & (1 << (pi & 31)) != 0
+                && (PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0)
+            {
                 PROP_ACTIVE[pi] = 1;
                 PROP_HEALTH[pi] = prop_start_health(8);
                 PROP_STATE[pi] = PROP_STATE_IDLE;
@@ -170,8 +187,12 @@ pub(crate) unsafe fn osprey_init(li: usize, rec: map::LogicEnt, pi: usize) {
     o.v[1] = [0; 3];
     o.spd[1] = 0;
     OSPREY_TILT = u16::MAX; // authored until the first think
-    // SF_WAITFORTRIGGER holds until CommandUse; else FindAllThink at +1 s.
-    o.next = if rec.speed & 0x40 != 0 { 0xffff } else { SIM_NOW.wrapping_add(20) };
+                            // SF_WAITFORTRIGGER holds until CommandUse; else FindAllThink at +1 s.
+    o.next = if rec.speed & 0x40 != 0 {
+        0xffff
+    } else {
+        SIM_NOW.wrapping_add(20)
+    };
 }
 
 /// COsprey::FindAllThink .. FlyThink / Flight / HoverThink / DyingThink.
@@ -202,7 +223,8 @@ pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
                 o.grunts = [0; 4];
                 let mut qi = 0;
                 while qi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
-                    if PROP_KIND[qi] == 8 && PROP_ACTIVE[qi] != 0 && PROP_HEALTH[qi] != 0 && n < 24 {
+                    if PROP_KIND[qi] == 8 && PROP_ACTIVE[qi] != 0 && PROP_HEALTH[qi] != 0 && n < 24
+                    {
                         o.grunts[qi >> 5] |= 1 << (qi & 31);
                         n += 1;
                     }
@@ -229,10 +251,14 @@ pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
             }
         }
         OSPREY_HOVER => {
-            if think && (0..4).all(|r| {
-                let g = o.repel[r] as usize;
-                g >= MAX_PROPS || PROP_HEALTH[g] == 0 || (PROP_DORMANT[g] & PROP_RUNTIME_PRISONER) == 0
-            }) {
+            if think
+                && (0..4).all(|r| {
+                    let g = o.repel[r] as usize;
+                    g >= MAX_PROPS
+                        || PROP_HEALTH[g] == 0
+                        || (PROP_DORMANT[g] & PROP_RUNTIME_PRISONER) == 0
+                })
+            {
                 o.start = now;
                 o.phase = OSPREY_FLY;
             }
@@ -246,7 +272,14 @@ pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
             }
             let hit = phys::trace_line(m, movers, p, np);
             if think && now & 3 == 0 {
-                queue_explosion_fx([np[0] + (IMPACT_RNG.below(301) as i32 - 150), np[1] - 100, np[2] + (IMPACT_RNG.below(301) as i32 - 150)], 60);
+                queue_explosion_fx(
+                    [
+                        np[0] + (IMPACT_RNG.below(301) as i32 - 150),
+                        np[1] - 100,
+                        np[2] + (IMPACT_RNG.below(301) as i32 - 150),
+                    ],
+                    60,
+                );
             }
             if hit.is_some() || time_reached(now, o.start) {
                 // RadiusDamage(300, DMG_BLAST) and the gib shower.
@@ -289,7 +322,11 @@ pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
             let p = PROP_POS[g];
             let y = (p[1] - 8).max(o.repel_y[r] as i32);
             prop_set_pos_exact(m, g, [p[0], y, p[2]]);
-            push_tracer_styled([p[0], PROP_POS[pi][1] + 16, p[2]], [p[0], y + 72, p[2]], TRACER_ROPE);
+            push_tracer_styled(
+                [p[0], PROP_POS[pi][1] + 16, p[2]],
+                [p[0], y + 72, p[2]],
+                TRACER_ROPE,
+            );
             if y == o.repel_y[r] as i32 {
                 PROP_DORMANT[g] &= !PROP_RUNTIME_PRISONER;
             }
@@ -297,7 +334,11 @@ pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
         r += 1;
     }
     // CBaseHelicopter flight: ap_rotor4 on CHAN_STATIC once it is moving.
-    setpiece_sfx::keep_loop(SP::OSPREY_ROTOR, PROP_POS[pi], setpiece_sfx::OWNER_OSPREY_ROTOR);
+    setpiece_sfx::keep_loop(
+        SP::OSPREY_ROTOR,
+        PROP_POS[pi],
+        setpiece_sfx::OWNER_OSPREY_ROTOR,
+    );
     if o.phase != OSPREY_FLY {
         return;
     }

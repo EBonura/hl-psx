@@ -503,7 +503,12 @@ pub mod setpiece_audio {
     }
 
     const fn s(class: &'static str, path: &'static str, looping: bool, tier: u8) -> Sound {
-        Sound { class, path, looping, tier }
+        Sound {
+            class,
+            path,
+            looping,
+            tier,
+        }
     }
 
     pub const GARG_STOMP: u8 = 0;

@@ -1074,7 +1074,10 @@ impl Map {
 
     #[inline]
     fn way_table(&self, table: usize, i: usize) -> u16 {
-        rd_u16(self.data, self.way_off + self.n_way * (16 + table * 2) + i * 2)
+        rd_u16(
+            self.data,
+            self.way_off + self.n_way * (16 + table * 2) + i * 2,
+        )
     }
 
     /// CPathTrack m_pnext of waypoint `i` as a waypoint index, or None.
@@ -1100,13 +1103,21 @@ impl Map {
     /// Authored path_track DISABLED/ALTREVERSE spawnflags of waypoint `i`.
     #[inline]
     pub fn way_flags(&self, i: usize) -> u16 {
-        if self.tram_graph { self.way_table(2, i) } else { 0 }
+        if self.tram_graph {
+            self.way_table(2, i)
+        } else {
+            0
+        }
     }
 
     /// path_track targetname id of waypoint `i` (0 = synthetic or linear map).
     #[inline]
     pub fn way_name(&self, i: usize) -> u16 {
-        if self.tram_graph { self.way_table(3, i) } else { 0 }
+        if self.tram_graph {
+            self.way_table(3, i)
+        } else {
+            0
+        }
     }
 
     /// `(first_face, num_faces)` for BSP submodel `m` (0 = world).
