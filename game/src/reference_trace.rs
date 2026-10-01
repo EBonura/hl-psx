@@ -584,6 +584,7 @@ pub fn player_slide(
 /// Exact ladder request and first collision result. GoldSrc exposes the same
 /// stages through the opt-in `HLREF|pmladder` probe, so a differential can
 /// distinguish view-basis/decomposition error from integer hull clipping.
+#[cfg(feature = "deep-reference-trace")]
 pub fn player_ladder(
     map_tick: u32,
     start: [i32; 3],

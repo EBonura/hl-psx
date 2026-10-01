@@ -149,6 +149,7 @@ pub fn chapter_rooms(chapter: usize) -> (usize, usize) {
 }
 
 /// Room id of row `row` in a chapter's sub-map list.
+#[cfg(not(feature = "semantic-input"))]
 pub fn chapter_map(chapter: usize, row: usize) -> usize {
     let (start, end) = chapter_rooms(chapter);
     PLAY_ORDER[(start + row).min(end - 1)] as usize

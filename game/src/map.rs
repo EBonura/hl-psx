@@ -220,6 +220,7 @@ fn expand_light_palettes() {
 
 /// Re-run the brightness curve over the resident map's palettes. No-op before
 /// the first map load.
+#[cfg(not(feature = "semantic-input"))]
 pub fn reapply_brightness() {
     expand_light_palettes();
 }
