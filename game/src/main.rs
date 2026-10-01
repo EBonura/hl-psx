@@ -13556,7 +13556,7 @@ unsafe fn xhair_consider(m: &Map, tt: usize, pa: Projected, pb: Projected, pc: P
 /// -- which includes culled faces -- for the nearest tri under the crosshair, so
 /// even an undrawn triangle gets highlighted and dumped. The caller must reload
 /// the world GTE transform first (the entity passes leave their own loaded).
-unsafe fn xhair_pick_pvs(m: &Map, nv: usize, frame: u16) {
+unsafe fn xhair_pick_pvs(m: &Map, frame: u16) {
     let mut e = 0usize;
     while e < PVS_FACE_COUNT && e < MAX_FACES {
         let face = PVS_FACE_INDEX.0[e] as usize;
@@ -27248,7 +27248,6 @@ unsafe fn emit_world_face_patches(
     base: usize,
     count: usize,
     refined_topology: bool,
-    face: usize,
     frame: u16,
     np: &mut usize,
     nq: &mut usize,
@@ -27393,7 +27392,6 @@ unsafe fn emit_world_face(
             first,
             cnt,
             m.face_refined_topology(face),
-            face,
             frame,
             np,
             nq,
@@ -30226,12 +30224,6 @@ fn play(
     telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
     telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 1);
     telemetry::task_end(telemetry::task::FIXED_UPDATE);
-    let nv = if m.n_verts < MAX_VERTS {
-        m.n_verts
-    } else {
-        MAX_VERTS
-    };
-
     let mut carried_velocity = [0i32; 3];
     let mut landmark_offset = [0i32; 3];
     let mut axis = 0usize;
@@ -32898,7 +32890,7 @@ fn play(
                 if OSPREY.li != u16::MAX {
                     tick_osprey(&m, movers);
                 }
-                garg::tick_world(&m);
+                garg::tick_world();
                 apache::tick(&m, movers);
                 nihilanth::tick(&m, movers);
                 mortar::tick(&m, sim_frame_no as u16);
@@ -33553,7 +33545,6 @@ fn play(
                                             rec.first as usize,
                                             rec.count(),
                                             rec.refined_topology(),
-                                            face,
                                             proj_token,
                                             &mut np,
                                             &mut nq,
@@ -33614,7 +33605,6 @@ fn play(
                                             first,
                                             cnt,
                                             m.face_refined_topology(face),
-                                            face,
                                             proj_token,
                                             &mut np,
                                             &mut nq,
@@ -33683,7 +33673,6 @@ fn play(
                                             rec.first as usize,
                                             rec.count(),
                                             rec.refined_topology(),
-                                            face,
                                             proj_token,
                                             &mut np,
                                             &mut nq,
@@ -33740,7 +33729,6 @@ fn play(
                                             first,
                                             cnt,
                                             m.face_refined_topology(face),
-                                            face,
                                             proj_token,
                                             &mut np,
                                             &mut nq,
@@ -34803,7 +34791,7 @@ fn play(
                 scene::load_rotation(&rot);
                 scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
                 set_view_fix(&rot, base_t);
-                xhair_pick_pvs(&m, nv, proj_token);
+                xhair_pick_pvs(&m, proj_token);
             }
 
             // DEBUG: fill the crosshair tri bright magenta (a POLYGON -- the HW
