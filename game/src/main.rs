@@ -3078,6 +3078,36 @@ const ZERO_ENT: map::Ent = map::Ent {
     leaf_count: 0,
 };
 static mut ENT_CACHE: [map::Ent; MAX_ENTS] = [ZERO_ENT; MAX_ENTS];
+/// Indices of the map's func_water brushes (ENT_CACHE kind 6), filled when the
+/// brush entities load. The liquid tests walked and copied every entity record
+/// per sample to find these (usually none). More than the list holds falls
+/// back to the full walk.
+static mut WATER_ENT_LIST: [u16; 16] = [0; 16];
+static mut WATER_ENT_N: u8 = 0;
+
+/// Visit the func_water brushes among the first `nents` entities.
+#[inline(always)]
+unsafe fn for_each_water_ent(nents: usize, mut f: impl FnMut(usize) -> bool) {
+    let n = WATER_ENT_N as usize;
+    if n <= (*core::ptr::addr_of!(WATER_ENT_LIST)).len() {
+        let mut i = 0usize;
+        while i < n {
+            let ei = WATER_ENT_LIST[i] as usize;
+            if ei < nents && f(ei) {
+                return;
+            }
+            i += 1;
+        }
+    } else {
+        let mut ei = 0usize;
+        while ei < nents {
+            if ENT_CACHE[ei].kind == 6 && f(ei) {
+                return;
+            }
+            ei += 1;
+        }
+    }
+}
 static mut ENT_RADIUS: [i32; MAX_ENTS] = [0; MAX_ENTS];
 static mut ENT_PHASE: [i32; MAX_ENTS] = [0; MAX_ENTS];
 // Previous visual's phase, used only to admit stopped brush entities into the
@@ -6486,21 +6516,20 @@ unsafe fn water_touch(m: &Map, nents: usize, pos: [i32; 3]) -> bool {
     if leaf >= 0 && m.leaf_liquid(leaf as usize) != 0 {
         return true;
     }
-    let mut ei = 0usize;
-    while ei < nents {
-        let e = ENT_CACHE[ei];
-        if e.kind == 6 && ENT_ACTIVE[ei] != 0 {
-            let off = ent_draw_offset(ei);
-            let dx = (pos[0] - (e.center[0] + off[0])).abs();
-            let dy = (pos[1] - (e.center[1] + off[1])).abs();
-            let dz = (pos[2] - (e.center[2] + off[2])).abs();
-            if dx <= e.mv[0] && dy <= e.mv[1] && dz <= e.mv[2] {
-                return true;
-            }
+    let mut wet = false;
+    for_each_water_ent(nents, |ei| {
+        if ENT_ACTIVE[ei] == 0 {
+            return false;
         }
-        ei += 1;
-    }
-    false
+        let e = &ENT_CACHE[ei];
+        let off = ent_draw_offset(ei);
+        let dx = (pos[0] - (e.center[0] + off[0])).abs();
+        let dy = (pos[1] - (e.center[1] + off[1])).abs();
+        let dz = (pos[2] - (e.center[2] + off[2])).abs();
+        wet = dx <= e.mv[0] && dy <= e.mv[1] && dz <= e.mv[2];
+        wet
+    });
+    wet
 }
 
 /// PM_CheckWater's lowest sample (one unit above the hull bottom) is water,
@@ -6558,33 +6587,30 @@ unsafe fn water_state(
     }
 
     if !wet[0] || !wet[1] || !wet[2] {
-        let mut ei = 0usize;
-        while ei < nents {
-            let e = ENT_CACHE[ei];
-            if e.kind == 6 && ENT_ACTIVE[ei] != 0 {
-                let off = ent_draw_offset(ei);
-                let center = [
-                    e.center[0] + off[0],
-                    e.center[1] + off[1],
-                    e.center[2] + off[2],
-                ];
-                sample = 0;
-                while sample < wet.len() {
-                    if !wet[sample]
-                        && (samples[sample][0] - center[0]).abs() <= e.mv[0]
-                        && (samples[sample][1] - center[1]).abs() <= e.mv[1]
-                        && (samples[sample][2] - center[2]).abs() <= e.mv[2]
-                    {
-                        wet[sample] = true;
-                    }
-                    sample += 1;
-                }
-                if wet[0] && wet[1] && wet[2] {
-                    break;
-                }
+        for_each_water_ent(nents, |ei| {
+            if ENT_ACTIVE[ei] == 0 {
+                return false;
             }
-            ei += 1;
-        }
+            let e = &ENT_CACHE[ei];
+            let off = ent_draw_offset(ei);
+            let center = [
+                e.center[0] + off[0],
+                e.center[1] + off[1],
+                e.center[2] + off[2],
+            ];
+            let mut sample = 0usize;
+            while sample < wet.len() {
+                if !wet[sample]
+                    && (samples[sample][0] - center[0]).abs() <= e.mv[0]
+                    && (samples[sample][1] - center[1]).abs() <= e.mv[1]
+                    && (samples[sample][2] - center[2]).abs() <= e.mv[2]
+                {
+                    wet[sample] = true;
+                }
+                sample += 1;
+            }
+            wet[0] && wet[1] && wet[2]
+        });
     }
 
     let level = if !wet[0] {
@@ -30191,6 +30217,15 @@ fn play(
             has_pushables |= e.kind == ENT_KIND_PUSHABLE;
         }
         ENT_SOLID_COUNT = nents_early;
+        WATER_ENT_N = 0;
+        for ei in 0..nents_early {
+            if ENT_CACHE[ei].kind == 6 {
+                if (WATER_ENT_N as usize) < (*core::ptr::addr_of!(WATER_ENT_LIST)).len() {
+                    WATER_ENT_LIST[WATER_ENT_N as usize] = ei as u16;
+                }
+                WATER_ENT_N = WATER_ENT_N.saturating_add(1);
+            }
+        }
         // Animated-texture chains (+0../+9, +a../+j): per-map masks + the
         // frame-0 display tables. Needs ENT_CACHE for the per-brush flags.
         tex_anim_init(&m);
