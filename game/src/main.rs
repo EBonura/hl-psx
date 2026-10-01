@@ -452,10 +452,12 @@ const SOFT_SPLIT_TARGET_SPAN_PX: i32 = 96;
 /// screen splits: the screen-space affine displacement budget in 1/8 pixel
 /// (`psx_engine::tess`). Zero keeps the historical rules (2 and 4 texel edge
 /// errors, near-presence splits, 96 px quadtree cells, `zmax > 2 zmin`
-/// screen splits). 64 px (512) was chosen over 8 px from side-by-side frames
-/// (8, 16, 32 and 64 px compared): no visible loss in play, +31.5% fps on the
-/// chapter-two tape; it also closes some cracks the 8 px split left on seams.
-const WARP_PX_Q3: u32 = 128;
+/// screen splits). Screen splits and soft cells use 12 px (96); native
+/// patches have their own budget, PATCH_PX_Q3. Chosen from the Xash3D
+/// ground-truth scoreboard: with watertight splits, 12 px screen / 64 px
+/// patch kept 8.8% of scored pixels above 4 texels of warp (18.3% at a flat
+/// 64 px) for 4% of chapter-two fps.
+const WARP_PX_Q3: u32 = 96;
 /// Route in-band screen triangles through the edge-local perspective split
 /// (`push_tri_gpu_split`) under the warp policy. Most of the policy's gain
 /// on dust2 comes from here (textured pixels over one texel 44% -> 18%);
