@@ -23,7 +23,6 @@ pub const MAX_SPRITE_FRAMES: usize = 49; // total frame textures per map
 #[derive(Copy, Clone)]
 pub struct SpriteDef {
     pub n_frames: u8,
-    pub blend: u8, // 0 = normal (index 0 transparent), 1 = additive
     pub first_frame: u16,
     pub base_w: u16, // native sprite pixel size, for world-scale
     pub base_h: u16,
@@ -33,7 +32,6 @@ pub struct SpriteDef {
 
 pub const EMPTY_DEF: SpriteDef = SpriteDef {
     n_frames: 0,
-    blend: 0,
     first_frame: 0,
     base_w: 0,
     base_h: 0,
@@ -102,7 +100,6 @@ pub unsafe fn load_pack(data: &[u8]) {
         }
         SPRITE_DEFS[i] = SpriteDef {
             n_frames: data[off],
-            blend: data[off + 1],
             first_frame: u16::from_le_bytes([data[off + 2], data[off + 3]]),
             base_w: u16::from_le_bytes([data[off + 4], data[off + 5]]),
             base_h: u16::from_le_bytes([data[off + 6], data[off + 7]]),
@@ -136,7 +133,6 @@ pub unsafe fn load_explosion(data: &[u8]) {
     }
     EXPL_DEF = SpriteDef {
         n_frames: data[8],
-        blend: data[9],
         first_frame: 0,
         base_w: u16::from_le_bytes([data[12], data[13]]),
         base_h: u16::from_le_bytes([data[14], data[15]]),
