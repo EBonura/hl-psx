@@ -455,25 +455,67 @@ const SOFT_SPLIT_TARGET_SPAN_PX: i32 = 96;
 /// screen splits). 64 px (512) was chosen over 8 px from side-by-side frames
 /// (8, 16, 32 and 64 px compared): no visible loss in play, +31.5% fps on the
 /// chapter-two tape; it also closes some cracks the 8 px split left on seams.
-const WARP_PX_Q3: u32 = 512;
+const WARP_PX_Q3: u32 = 128;
 /// Route in-band screen triangles through the edge-local perspective split
 /// (`push_tri_gpu_split`) under the warp policy. Most of the policy's gain
 /// on dust2 comes from here (textured pixels over one texel 44% -> 18%);
 /// the split parent is drawn behind its children to paper the rounding
 /// pinholes where they meet unsplit neighbours.
 const WARP_SCREEN_SPLIT: bool = true;
+/// Budget for native patch splits (2x2 and the severe quadtree route), in
+/// eighths of a pixel; WARP_PX_Q3 keeps the screen splits and soft cells.
+/// Measured against Xash3D, screen splits and soft cells buy most of the warp
+/// reduction per cycle; patch 2x2 splits buy little.
+const PATCH_PX_Q3: u32 = 512;
+/// Watertight splits: every split point that a GPU edge passes through is
+/// rounded to the outer side of its parent edge (never inside), so a split
+/// face covers at least its parent's area and a neighbour that keeps the edge
+/// whole cannot show a pinhole. With that guarantee the parent is no longer
+/// drawn behind its children (patch and screen-split underlays off).
+const WATERTIGHT_SPLITS: bool = true;
+
+/// `p` moved, if needed, to the side of line a-b away from `c` (or onto it):
+/// at most a pixel or two per axis, integer only.
+#[inline(always)]
+fn outward_point(a: (i32, i32), b: (i32, i32), c: (i32, i32), mut p: (i32, i32)) -> (i32, i32) {
+    let e = |q: (i32, i32)| (b.0 - a.0) * (q.1 - a.1) - (b.1 - a.1) * (q.0 - a.0);
+    let ec = e(c);
+    if ec == 0 {
+        return p;
+    }
+    // Step along the axis where E changes fastest, in the direction that
+    // takes E away from c's sign.
+    let (gx, gy) = (-(b.1 - a.1), b.0 - a.0);
+    let away = if ec > 0 { -1 } else { 1 };
+    let mut n = 0;
+    while n < 3 && e(p) != 0 && (e(p) > 0) == (ec > 0) {
+        if gx.abs() >= gy.abs() {
+            p.0 += if gx > 0 { away } else { -away };
+        } else {
+            p.1 += if gy > 0 { away } else { -away };
+        }
+        n += 1;
+    }
+    p
+}
 
 /// Whether a projected edge's affine displacement exceeds `WARP_PX_Q3`
 /// after `level` bisections.
 #[inline(always)]
 fn warp_edge_over(a: &Projected, b: &Projected, level: u32) -> bool {
+    warp_edge_over_budget(a, b, level, WARP_PX_Q3)
+}
+
+/// `warp_edge_over` against an explicit budget (per-emitter budgets).
+#[inline(always)]
+fn warp_edge_over_budget(a: &Projected, b: &Projected, level: u32, budget_q3: u32) -> bool {
     use psx_engine::tess::{edge_exceeds, ScreenDepth};
     let s = |p: &Projected| ScreenDepth {
         x: p.sx as i32,
         y: p.sy as i32,
         z: p.sz as i32,
     };
-    edge_exceeds(s(a), s(b), WARP_PX_Q3, level)
+    edge_exceeds(s(a), s(b), budget_q3, level)
 }
 
 /// View-space edge of a soft cell over budget: its screen length estimated
@@ -25600,6 +25642,19 @@ unsafe fn emit_affine_quad_children(
     let p = project_triangle_scheduled(bottom.position, center.position, center.position);
     bottom.projected = fix_projected_vertex(bottom.position, p[0]);
     center.projected = fix_projected_vertex(center.position, p[1]);
+    if WATERTIGHT_SPLITS {
+        let q = |v: &AffineVertex| (v.projected.sx as i32, v.projected.sy as i32);
+        let (c0, c1, c2, c3) = (q(&vertices[0]), q(&vertices[1]), q(&vertices[2]), q(&vertices[3]));
+        let nudge = |m: &mut AffineVertex, a: (i32, i32), b: (i32, i32), c: (i32, i32)| {
+            let o = outward_point(a, b, c, (m.projected.sx as i32, m.projected.sy as i32));
+            m.projected.sx = o.0 as i16;
+            m.projected.sy = o.1 as i16;
+        };
+        nudge(&mut top, c0, c1, c2);
+        nudge(&mut left, c0, c2, c1);
+        nudge(&mut right, c1, c3, c0);
+        nudge(&mut bottom, c2, c3, c0);
+    }
     ROOM_PROJECTED_COUNT = ROOM_PROJECTED_COUNT.saturating_add(5);
     WORLD_AFFINE_ADDED_GTE_TRANSFORMS = WORLD_AFFINE_ADDED_GTE_TRANSFORMS.saturating_add(5);
     work.add(0).write(top);
@@ -25677,7 +25732,7 @@ unsafe fn classic_native_patch_mask(
         return 0;
     }
     if WARP_PX_Q3 != 0 {
-        let over = |a: usize, b: usize| warp_edge_over(&projected[a], &projected[b], 0);
+        let over = |a: usize, b: usize| warp_edge_over_budget(&projected[a], &projected[b], 0, PATCH_PX_Q3);
         return if over(0, 1) || over(1, 3) || over(3, 2) || over(2, 0) {
             0x0f
         } else {
@@ -25924,7 +25979,7 @@ unsafe fn try_emit_native_affine_quad(
     {
         let severe = |a: usize, b: usize| {
             if WARP_PX_Q3 != 0 {
-                return warp_edge_over(&projected[a], &projected[b], 1);
+                return warp_edge_over_budget(&projected[a], &projected[b], 1, PATCH_PX_Q3);
             }
             let (n, d) = affine_edge_error(&projected[a], &projected[b], uv[a], uv[b]);
             n as u64 >= WORLD_CLASSIC_SEVERE_ERROR_TEXELS as u64 * d.max(1) as u64
@@ -25995,7 +26050,7 @@ unsafe fn try_emit_native_affine_quad(
                 && collinear(&projected[1], &projected[3], 2)
                 && collinear(&projected[2], &projected[3], 3)
         };
-        if !skip_underlay {
+        if !WATERTIGHT_SPLITS && !skip_underlay {
             push_patch_underlay(packets, projected, uv, rgb, mat, texture_backdrop, nq);
         }
     }
@@ -26342,7 +26397,7 @@ unsafe fn split_examine(
         push_tri_uv_words_packed(packets, np, screen, w.uv, w.rgb, mat, otz);
         return false;
     }
-    if WARP_PX_Q3 != 0 && depth == 0 && screen_tri_fits_gpu(screen) {
+    if !WATERTIGHT_SPLITS && WARP_PX_Q3 != 0 && depth == 0 && screen_tri_fits_gpu(screen) {
         let far = sz[0].max(sz[1]).max(sz[2]);
         let otz = world_order_key(
             ordering::PrimitiveDepths::tri(far, far, far),
@@ -26371,10 +26426,16 @@ unsafe fn split_examine(
             let mu = ((ua * zb + ub * za + (d >> 1)) / d).clamp(0, 255) as u16;
             let mv = ((va * zb + vb * za + (d >> 1)) / d).clamp(0, 255) as u16;
             let (ra, rb) = (rgb[k], rgb[b]);
-            let mid = (
+            let mut mid = (
                 (((screen[k].0 as i32) + (screen[b].0 as i32)) >> 1) as i16,
                 (((screen[k].1 as i32) + (screen[b].1 as i32)) >> 1) as i16,
             );
+            if WATERTIGHT_SPLITS {
+                let c = 3 - k - b;
+                let q = |v: (i16, i16)| (v.0 as i32, v.1 as i32);
+                let m = outward_point(q(screen[k]), q(screen[b]), q(screen[c]), q(mid));
+                mid = (m.0 as i16, m.1 as i16);
+            }
             lv.xy[pn] = mid;
             lv.uv[pn] = mu | (mv << 8);
             lv.rgb[pn] = (((ra & 0xff) + (rb & 0xff) + 1) >> 1)
