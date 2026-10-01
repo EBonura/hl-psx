@@ -3503,6 +3503,16 @@ unsafe fn static_brush_cacheable(ei: usize, e: map::Ent) -> bool {
 
 /// PVS_FACE_MARK holds the faces a closed door seals off (rebuild_pvs_cache).
 static mut PVS_SEAL_HIDE: bool = false;
+
+/// Whether a closed door seals off PVS entry `e`'s face this frame.
+#[inline(always)]
+unsafe fn pvs_entry_sealed(seal_hide: bool, e: usize) -> bool {
+    if !seal_hide {
+        return false;
+    }
+    let face = PVS_FACE_INDEX.0[e] as usize;
+    PVS_FACE_MARK[face >> 5] & (1 << (face & 31)) != 0
+}
 static mut WORLD_AFFINE_SPLIT_TRIS: u32 = 0;
 static mut WORLD_AFFINE_SELECTED_COUNT: u8 = 0;
 static mut WORLD_AFFINE_NEXT_COUNT: u8 = 0;
@@ -33569,6 +33579,7 @@ fn play(
                     }
                 }
                 let group_vis = group_vis_bits();
+                let seal_hide = PVS_SEAL_HIDE;
                 for gi in 0..PVS_GROUP_COUNT {
                     let group = PVS_GROUP_ACTIVE[gi] as usize;
                     let (plane_n, plane_d) = m.cooked_group_plane(group);
@@ -33593,7 +33604,9 @@ fn play(
                                 rec.set_band(((depth >> DEPTH_BAND_SHIFT).min(nbands - 1)) as u8);
                                 continue;
                             }
-                            if !bucketed {
+                            // A closed door's far side never enters the near-to-far
+                            // order (the link walk below skips it the same way).
+                            if !bucketed || pvs_entry_sealed(seal_hide, e) {
                                 continue;
                             }
                             let band = if e < MAX_PVS_FACE_RECS {
@@ -33643,6 +33656,9 @@ fn play(
                         while entry != PVS_LINK_END {
                             let e = entry as usize;
                             entry = PVS_FACE_NEXT.0[e];
+                            if pvs_entry_sealed(seal_hide, e) {
+                                continue;
+                            }
                             let band = if e < MAX_PVS_FACE_RECS {
                                 PVS_FACE_REC.0[e].band() as usize
                             } else {
@@ -33663,7 +33679,6 @@ fn play(
                 telemetry::stage_end(telemetry::stage::ROOM_CELL_SELECT);
                 telemetry::stage_begin(telemetry::stage::ROOM_PROJECT);
 
-                let seal_hide = PVS_SEAL_HIDE;
                 let mut band = 0;
                 while band < nbands {
                     for gi in 0..PVS_GROUP_COUNT {
