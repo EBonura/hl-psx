@@ -192,3 +192,178 @@ pub fn blood_trail(
         i += 1;
     }
 }
+
+/// A tram's waypoint graph as authored. Node ids are 0..node_count.
+pub trait TrackGraph {
+    fn node_count(&self) -> usize;
+    fn position(&self, node: usize) -> [i32; 3];
+    /// False for a plain path: the nodes in order, no branches or switches.
+    fn is_branching(&self) -> bool;
+    /// The authored next node.
+    fn successor(&self, node: usize) -> Option<usize>;
+    /// The authored alternate next node, if any.
+    fn alternate(&self, node: usize) -> Option<usize>;
+    /// The alternate applies only when travelling in reverse.
+    fn alternate_reverse_only(&self, node: usize) -> bool;
+}
+
+/// How a track node is fired.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrackUse {
+    On,
+    Off,
+    Toggle,
+}
+
+/// Live switch state of up to 256 track nodes: which nodes with an alternate
+/// are switched to it, and which nodes are disabled.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TrackSwitches {
+    alt: [u32; 8],
+    off: [u32; 8],
+}
+
+impl TrackSwitches {
+    pub const fn new() -> Self {
+        Self {
+            alt: [0; 8],
+            off: [0; 8],
+        }
+    }
+
+    /// Mark a node disabled (used for nodes authored disabled at map start).
+    pub fn disable(&mut self, node: usize) {
+        if node < 256 {
+            self.off[node >> 5] |= 1 << (node & 31);
+        }
+    }
+
+    pub fn is_disabled(&self, node: usize) -> bool {
+        bit(&self.off, node)
+    }
+
+    pub fn is_switched(&self, node: usize) -> bool {
+        bit(&self.alt, node)
+    }
+
+    /// Fire a node: one with an alternate switches between its paths (On =
+    /// primary, Off = alternate), any other is enabled (On) or disabled
+    /// (Off); Toggle flips either.
+    pub fn use_node(&mut self, node: usize, has_alternate: bool, how: TrackUse) {
+        if node >= 256 {
+            return;
+        }
+        let bits = if has_alternate {
+            &mut self.alt
+        } else {
+            &mut self.off
+        };
+        let mask = 1u32 << (node & 31);
+        match how {
+            TrackUse::On => bits[node >> 5] &= !mask,
+            TrackUse::Off => bits[node >> 5] |= mask,
+            TrackUse::Toggle => bits[node >> 5] ^= mask,
+        }
+    }
+
+    /// The node after `node` given the switches (disabled nodes included).
+    pub fn next<G: TrackGraph + ?Sized>(&self, g: &G, node: usize) -> Option<usize> {
+        if !g.is_branching() {
+            return (node + 1 < g.node_count()).then_some(node + 1);
+        }
+        if let Some(alt) = g.alternate(node) {
+            if self.is_switched(node) && !g.alternate_reverse_only(node) {
+                return Some(alt);
+            }
+        }
+        g.successor(node)
+    }
+
+    /// The next node a moving train may enter: a disabled node stops it.
+    pub fn next_open<G: TrackGraph + ?Sized>(&self, g: &G, node: usize) -> Option<usize> {
+        self.next(g, node).filter(|&n| !self.is_disabled(n))
+    }
+}
+
+#[inline(always)]
+fn bit(bits: &[u32; 8], i: usize) -> bool {
+    i < 256 && bits[i >> 5] & (1 << (i & 31)) != 0
+}
+
+/// Length of a world-space segment, at least 1.
+#[inline]
+fn track_segment_len(a: [i32; 3], b: [i32; 3]) -> i32 {
+    let dx = a[0] - b[0];
+    let dy = a[1] - b[1];
+    let dz = a[2] - b[2];
+    psx_math::int32::isqrt_i32(dx * dx + dy * dy + dz * dz).max(1)
+}
+
+/// Point `ahead` units further along the track from `seg_dist` units past
+/// node `seg`, in 1/256 world units. Disabled nodes do not stop it; past the
+/// last node it continues straight along the final segment; at a branching
+/// dead end with no segment it stays on the node.
+pub fn track_lookahead_q8<G: TrackGraph + ?Sized>(
+    g: &G,
+    sw: &TrackSwitches,
+    mut seg: usize,
+    mut seg_dist: i32,
+    mut ahead: i32,
+) -> [i32; 3] {
+    let n = g.node_count();
+    if n == 0 {
+        return [0; 3];
+    }
+    if n == 1 {
+        let p = g.position(0);
+        return [p[0] << 8, p[1] << 8, p[2] << 8];
+    }
+    if !g.is_branching() {
+        seg = seg.min(n - 2);
+    }
+    ahead = ahead.max(0);
+    loop {
+        let a = g.position(seg);
+        let Some(next) = sw.next(g, seg) else {
+            return [a[0] << 8, a[1] << 8, a[2] << 8];
+        };
+        let b = g.position(next);
+        let len = track_segment_len(a, b).max(1);
+        let left = (len - seg_dist).max(0);
+        if ahead <= left {
+            return lerp_q8(a, b, seg_dist + ahead, len);
+        }
+        ahead -= left;
+        if sw.next(g, next).is_some() {
+            seg = next;
+            seg_dist = 0;
+            continue;
+        }
+        let f = (ahead << 12) / len;
+        return [
+            (b[0] << 8) + ((b[0] - a[0]) * f >> 4),
+            (b[1] << 8) + ((b[1] - a[1]) * f >> 4),
+            (b[2] << 8) + ((b[2] - a[2]) * f >> 4),
+        ];
+    }
+}
+
+#[inline(always)]
+fn lerp_q8(a: [i32; 3], b: [i32; 3], dist: i32, len: i32) -> [i32; 3] {
+    let f = (dist.max(0) << 12) / len.max(1);
+    [
+        (a[0] << 8) + ((b[0] - a[0]) * f >> 4),
+        (a[1] << 8) + ((b[1] - a[1]) * f >> 4),
+        (a[2] << 8) + ((b[2] - a[2]) * f >> 4),
+    ]
+}
+
+/// The train's speed after it reaches a node with speed key `node_speed`:
+/// a positive key replaces the speed, zero keeps it.
+pub const fn track_speed_at_node(current: i32, node_speed: i32) -> i32 {
+    if node_speed > 0 {
+        node_speed
+    } else {
+        current
+    }
+}

@@ -3718,10 +3718,9 @@ static mut MONSTER_TRIGGER_END: u16 = 0;
 static mut BOSS_WALKER: u16 = u16::MAX;
 static mut LOGIC_EVENTS: [LogicEvent; MAX_LOGIC_EVENTS] = [EMPTY_LOGIC_EVENT; MAX_LOGIC_EVENTS];
 static mut TRACKTRAIN_SUBMODEL: u16 = 0;
-// Live path_track switches for a branching tram path, one bit per cooked
-// waypoint (<= 256): SF_PATH_ALTERNATE and SF_PATH_DISABLED.
-static mut TRAM_NODE_ALT: [u32; 8] = [0; 8];
-static mut TRAM_NODE_OFF: [u32; 8] = [0; 8];
+// Live switches of a branching tram path's waypoints (<= 256): which are
+// switched to their alternate path and which are disabled.
+static mut TRAM_SWITCHES: world_rules::TrackSwitches = world_rules::TrackSwitches::new();
 // Waypoints the last tram_advance crossed, in order, for fire-on-pass.
 static mut TRAM_PASSED: [u16; 16] = [0; 16];
 static mut TRAM_PASSED_N: usize = 0;
@@ -5116,58 +5115,67 @@ fn seg_len(a: [i32; 3], b: [i32; 3]) -> i32 {
     isqrt_i32(dist2_3(a, b)).max(1)
 }
 
-#[inline(always)]
-fn tram_bit(bits: &[u32; 8], i: usize) -> bool {
-    i < 256 && bits[i >> 5] & (1 << (i & 31)) != 0
+impl world_rules::TrackGraph for Map {
+    #[inline(always)]
+    fn node_count(&self) -> usize {
+        self.n_way
+    }
+    #[inline(always)]
+    fn position(&self, node: usize) -> [i32; 3] {
+        self.waypoint(node)
+    }
+    #[inline(always)]
+    fn is_branching(&self) -> bool {
+        self.tram_graph
+    }
+    #[inline(always)]
+    fn successor(&self, node: usize) -> Option<usize> {
+        self.way_next(node)
+    }
+    #[inline(always)]
+    fn alternate(&self, node: usize) -> Option<usize> {
+        self.way_alt(node)
+    }
+    #[inline(always)]
+    fn alternate_reverse_only(&self, node: usize) -> bool {
+        self.way_flags(node) & cooked::PATH_TRACK_ALTREVERSE != 0
+    }
 }
 
-/// CPathTrack::Use: a node with an altpath switches between its two paths,
-/// any other node is enabled or disabled. USE_ON selects the primary path or
-/// enables, USE_OFF the alternate path or disables, TOGGLE flips.
+#[inline(always)]
+fn tram_switches() -> &'static world_rules::TrackSwitches {
+    unsafe { &*core::ptr::addr_of!(TRAM_SWITCHES) }
+}
+
+/// Fire every tram waypoint named `target`; see `TrackSwitches::use_node`.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn tram_path_track_use(m: &Map, target: u16, use_type: u8) {
+    let how = match use_type {
+        map::USE_ON => world_rules::TrackUse::On,
+        map::USE_OFF => world_rules::TrackUse::Off,
+        _ => world_rules::TrackUse::Toggle,
+    };
+    let switches = &mut *core::ptr::addr_of_mut!(TRAM_SWITCHES);
     let mut i = 0usize;
     while i < m.n_way.min(256) {
         if target != 0 && m.way_name(i) == target {
-            let bits = if m.way_alt(i).is_some() {
-                &mut *core::ptr::addr_of_mut!(TRAM_NODE_ALT)
-            } else {
-                &mut *core::ptr::addr_of_mut!(TRAM_NODE_OFF)
-            };
-            let mask = 1u32 << (i & 31);
-            match use_type {
-                map::USE_ON => bits[i >> 5] &= !mask,
-                map::USE_OFF => bits[i >> 5] |= mask,
-                _ => bits[i >> 5] ^= mask,
-            }
+            switches.use_node(i, m.way_alt(i).is_some(), how);
         }
         i += 1;
     }
 }
 
-/// CPathTrack::GetNext: the altpath while switched to it (unless the switch
-/// only applies in reverse), else the target.
+/// The node after `seg` given the live switches.
 #[inline(never)]
 fn tram_next(m: &Map, seg: usize) -> Option<usize> {
-    if !m.tram_graph {
-        return (seg + 1 < m.n_way).then_some(seg + 1);
-    }
-    if let Some(alt) = m.way_alt(seg) {
-        if unsafe { tram_bit(&*core::ptr::addr_of!(TRAM_NODE_ALT), seg) }
-            && m.way_flags(seg) & cooked::PATH_TRACK_ALTREVERSE == 0
-        {
-            return Some(alt);
-        }
-    }
-    m.way_next(seg)
+    tram_switches().next(m, seg)
 }
 
-/// The next node a moving train may enter (CPathTrack::ValidPath with move
-/// set): a disabled node stops it at the current one.
+/// The next node a moving train may enter: a disabled node stops it.
 #[inline(never)]
 fn tram_next_open(m: &Map, seg: usize) -> Option<usize> {
-    tram_next(m, seg).filter(|&n| !unsafe { tram_bit(&*core::ptr::addr_of!(TRAM_NODE_OFF), n) })
+    tram_switches().next_open(m, seg)
 }
 
 fn tram_step_for_speed(speed: i32, remainder: &mut i32) -> i32 {
@@ -5210,49 +5218,11 @@ fn tram_lerp_q8(a: [i32; 3], b: [i32; 3], dist: i32, len: i32) -> [i32; 3] {
     ]
 }
 
-/// Point `ahead` 3-D path units beyond `(seg,seg_dist)`, in Q8 world space.
-/// CPathTrack::LookAhead crosses as many nodes as necessary and projects past
-/// a terminal node along the final segment; clamping at the last point makes a
-/// train turn too sharply immediately before a changelevel.
+/// Point `ahead` path units beyond `(seg, seg_dist)` in Q8 world space; see
+/// `world_rules::track_lookahead_q8`.
 #[inline(never)]
-fn tram_path_lookahead_q8(m: &Map, mut seg: usize, mut seg_dist: i32, mut ahead: i32) -> [i32; 3] {
-    if m.n_way == 0 {
-        return [0; 3];
-    }
-    if m.n_way == 1 {
-        let p = m.waypoint(0);
-        return [p[0] << 8, p[1] << 8, p[2] << 8];
-    }
-    if !m.tram_graph {
-        seg = seg.min(m.n_way - 2);
-    }
-    ahead = ahead.max(0);
-    loop {
-        let a = m.waypoint(seg);
-        let Some(next) = tram_next(m, seg) else {
-            // A graph dead end: no final segment to project along.
-            return [a[0] << 8, a[1] << 8, a[2] << 8];
-        };
-        let b = m.waypoint(next);
-        let len = seg_len(a, b).max(1);
-        let left = (len - seg_dist).max(0);
-        if ahead <= left {
-            return tram_lerp_q8(a, b, seg_dist + ahead, len);
-        }
-        ahead -= left;
-        if tram_next(m, next).is_some() {
-            seg = next;
-            seg_dist = 0;
-            continue;
-        }
-        // Project along the terminal segment, matching CPathTrack::Project.
-        let f = (ahead << 12) / len;
-        return [
-            (b[0] << 8) + ((b[0] - a[0]) * f >> 4),
-            (b[1] << 8) + ((b[1] - a[1]) * f >> 4),
-            (b[2] << 8) + ((b[2] - a[2]) * f >> 4),
-        ];
-    }
+fn tram_path_lookahead_q8(m: &Map, seg: usize, seg_dist: i32, ahead: i32) -> [i32; 3] {
+    world_rules::track_lookahead_q8(m, tram_switches(), seg, seg_dist, ahead)
 }
 
 /// CPathTrack look-ahead including the synthetic cross-BSP approach leg.
@@ -5534,13 +5504,9 @@ fn tram_advance(
                     TRAM_PASSED_N += 1;
                 }
             }
-            // Passing a path_track with a "speed" key changes the train's
-            // speed (CPathTrack, plats.cpp); 0 keeps the current one. c0a0
-            // is authored 200..400 u/s in sections.
-            let ws = m.way_speed(*seg);
-            if ws > 0 {
-                *speed = ws;
-            }
+            // Reaching a waypoint with a speed key changes the train's speed.
+            // c0a0 is authored 200..400 u/s in sections.
+            *speed = world_rules::track_speed_at_node(*speed, m.way_speed(*seg));
             let entering_trackchange = tram_is_trackchange_segment(m, *seg);
             if leaving_trackchange != entering_trackchange {
                 // A trackchange is a separate pusher phase. Gold fires the
@@ -5569,10 +5535,7 @@ fn tram_advance(
     if m.n_way == 55 && *seg + 1 < m.n_way {
         let len = seg_len(m.waypoint(*seg), m.waypoint(*seg + 1));
         if len - *seg_dist <= (*speed).max(0) / 10 {
-            let ws = m.way_speed(*seg + 1);
-            if ws > 0 {
-                *speed = ws;
-            }
+            *speed = world_rules::track_speed_at_node(*speed, m.way_speed(*seg + 1));
         }
     }
     (tram_next_open(m, *seg).is_some(), phase_boundary)
@@ -13106,13 +13069,12 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     DAMAGE_COMPASS = player_rules::DamageCompass::new();
     GEIGER_COOLDOWN = 0;
     TRACKTRAIN_SUBMODEL = m.tram_submodel.min(u16::MAX as usize) as u16;
-    TRAM_NODE_ALT = [0; 8];
-    TRAM_NODE_OFF = [0; 8];
+    TRAM_SWITCHES = world_rules::TrackSwitches::new();
     SHOOTABLE_BUTTONS = 0;
     let mut wi = 0usize;
     while wi < m.n_way.min(256) {
         if m.way_flags(wi) & cooked::PATH_TRACK_DISABLED != 0 {
-            TRAM_NODE_OFF[wi >> 5] |= 1 << (wi & 31);
+            (*core::ptr::addr_of_mut!(TRAM_SWITCHES)).disable(wi);
         }
         wi += 1;
     }
