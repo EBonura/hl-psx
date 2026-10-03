@@ -48,6 +48,7 @@ mod mortar;
 mod mortar_logic;
 mod nihilanth;
 mod osprey;
+mod osprey_logic;
 mod save;
 mod scientist_logic;
 mod scratchpad;
@@ -11243,7 +11244,7 @@ unsafe fn logic_use_entity(
             if rec.arg1 == map::AITRIGGER_COMMAND_TOUCH && use_type == map::USE_OFF {
                 monster_command_touch(m, nlogic, rec.target);
             } else if rec.arg1 == map::AITRIGGER_FLY_PATH && OSPREY.li as usize == li {
-                OSPREY.next = now.wrapping_add(2); // COsprey::CommandUse
+                osprey::command_use(now);
             } else if rec.arg1 == map::AITRIGGER_APACHE_PATH {
                 apache::startup(li);
             } else if rec.arg1 == map::AITRIGGER_COMMAND_TOUCH && use_type == map::USE_ON {
