@@ -45,6 +45,7 @@ use psx_goldsrc::route_follow;
 mod apache;
 mod apache_logic;
 mod garg;
+mod garg_logic;
 mod mortar;
 mod mortar_logic;
 mod nihilanth;
