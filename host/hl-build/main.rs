@@ -2374,7 +2374,18 @@ fn main() -> Result<()> {
     if options.action == Action::Compile {
         return Ok(());
     }
-    let cue = pack_disc(&repository, &psoxide, &exe)?;
+    // The instrumented regression disc gets its own directory so the shipping
+    // repack below leaves it in place for manual reruns of a scenario.
+    let cue = if options.action == Action::Regress {
+        pack_disc_into(
+            &repository,
+            &psoxide,
+            &exe,
+            &repository.join(".hlpsx/regression-disc"),
+        )?
+    } else {
+        pack_disc(&repository, &psoxide, &exe)?
+    };
     if options.action == Action::Regress {
         // The game links against the hydrated SDK copy above, while the
         // frontend runs directly from an explicit development checkout so its
