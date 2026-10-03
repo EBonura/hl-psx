@@ -12749,8 +12749,8 @@ unsafe fn logic_touch_triggers(
     armor: &mut u16,
     now: u16,
 ) {
-    // CTriggerHurt::RadiationThink samples the nearest radioactive volume
-    // every 0.25 seconds whether or not the player is touching it.
+    // The Geiger counter samples the nearest radioactive volume every 0.25
+    // seconds whether or not the player is touching it.
     let geiger_count = GEIGER_COOLDOWN >> 4;
     let geiger_due = geiger_count != 0 && GEIGER_COOLDOWN & 0x0f == 0;
     let pmins = [
@@ -12970,7 +12970,7 @@ unsafe fn logic_touch_triggers(
             geiger_count as usize
         };
         let geiger_base = nlogic + LOGIC_TOUCH_COUNT as usize + LOGIC_PRE_COUNT as usize;
-        let mut geiger_nearest2 = 801 * 801;
+        let mut geiger = player_rules::GeigerScan::new();
         let mut geiger_scan = 0usize;
         while geiger_scan < geiger_scan_count {
             let li = if geiger_fallback {
@@ -12981,42 +12981,15 @@ unsafe fn logic_touch_triggers(
             if LOGIC_KIND[li] == map::LOGIC_TRIGGER_HURT && LOGIC_STATE[li] == LOGIC_STATE_BOTTOM {
                 let rec = m.logic(li);
                 if rec.flags & map::LOGIC_TRIGGER_HURT_RADIATION != 0 {
-                    let center = logic_center(rec);
-                    let dx = (center[0] - player_pos[0]).clamp(-801, 801);
-                    let dy = (center[1] - player_pos[1]).clamp(-801, 801);
-                    let dz = (center[2] - player_pos[2]).clamp(-801, 801);
-                    geiger_nearest2 = geiger_nearest2.min(dx * dx + dy * dy + dz * dz);
+                    geiger.add_source(player_pos, logic_center(rec));
                 }
             }
             geiger_scan += 1;
         }
-        let range = isqrt_i32(geiger_nearest2);
-        let chance: u32 = match range {
-            601..=800 => 2,
-            501..=600 => 4,
-            301..=500 => 8,
-            201..=300 => 28,
-            151..=200 => 40,
-            101..=150 => 60,
-            76..=100 => 80,
-            51..=75 => 90,
-            0..=50 => 95,
-            _ => 0,
-        };
-        if (impact_rng().next_mixed() & 127) < chance || (impact_rng().next_mixed() & 127) < chance
-        {
-            sfx::play_vol(
-                sfx::GEIGER,
-                if range > 400 {
-                    3
-                } else if range > 150 {
-                    2
-                } else {
-                    1
-                },
-            );
+        if let Some(click) = geiger.sample(&mut || impact_rng().next_mixed()) {
+            sfx::play_vol(sfx::GEIGER, click.volume_den);
         }
-        GEIGER_COOLDOWN = (geiger_count << 4) | 5;
+        GEIGER_COOLDOWN = (geiger_count << 4) | player_rules::GEIGER_SAMPLE_TICKS;
     }
 }
 
