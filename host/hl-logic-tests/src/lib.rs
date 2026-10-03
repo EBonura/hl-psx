@@ -85,3 +85,6 @@ pub mod setpiece_logic;
 
 #[path = "../../../game/src/hud.rs"]
 pub mod hud;
+
+#[path = "../../../game/src/hud_layout.rs"]
+pub mod hud_layout;
