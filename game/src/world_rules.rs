@@ -82,3 +82,36 @@ pub fn pushable_float_tick(
         })
     }
 }
+
+/// Rotating-door spawnflags that keep the authored swing direction.
+pub const DOOR_ONE_WAY: u16 = 16;
+pub const DOOR_ROTATE_Z: u16 = 64;
+pub const DOOR_ROTATE_X: u16 = 128;
+
+/// Whoever started the chain that opens a door: their position and the
+/// horizontal direction they face as world (x, z), 1.0 = 4096.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DoorActivator {
+    pub pos: [i32; 3],
+    pub forward_xz: [i32; 2],
+}
+
+/// Which way a rotating door swings as it starts to open. Some(true) means
+/// against its authored direction, Some(false) along it, and None leaves the
+/// current direction alone (one-way and X/Z-axis doors, or nobody started
+/// the chain).
+pub fn rotating_door_opens_reversed(
+    spawnflags: u16,
+    hinge: [i32; 3],
+    activator: Option<DoorActivator>,
+) -> Option<bool> {
+    if spawnflags & (DOOR_ONE_WAY | DOOR_ROTATE_Z | DOOR_ROTATE_X) != 0 {
+        return None;
+    }
+    let a = activator?;
+    let fwd = a.forward_xz;
+    let dx = (a.pos[0] - hinge[0]).clamp(-32767, 32767);
+    let dz = (a.pos[2] - hinge[2]).clamp(-32767, 32767);
+    let cross = dx * fwd[1] - dz * fwd[0];
+    Some(cross < 0)
+}

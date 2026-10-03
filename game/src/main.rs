@@ -3737,7 +3737,7 @@ static mut TRACKTRAIN_USE_SPEED: u16 = 60; // +use drive speed (On A Rail)
 static mut LOGIC_PLAYER_POS: [i32; 3] = [0; 3];
 static mut SIM_NOW: u16 = 0; // current sim tick, for fire-path logic hooks
 static mut LOGIC_PLAYER_YAW: u16 = 0;
-// Who started the logic chain now running, for CBaseDoor::DoorGoUp's
+// Who started the logic chain now running, for the rotating doors'
 // swing-away rule: 0 none, 1 the player, 2 the tracktrain. Queued events keep
 // it in their metadata; the door reads the activator's live position.
 static mut LOGIC_ACTIVATOR: u8 = 0;
@@ -9529,41 +9529,38 @@ fn door_auto_returns(rec: map::LogicEnt, at_bottom: bool) -> bool {
         && ((rec.spawnflags & SF_DOOR_START_OPEN) != 0) == at_bottom
 }
 
-/// CBaseDoor::DoorGoUp for a func_door_rotating: a two-way (not ONEWAY) door
-/// turning about the vertical axis swings away from its activator, chosen by
-/// which side of the pivot the activator stands relative to where it faces.
-/// The authored direction is kept for a chain nobody started (sign +1).
+/// A two-way rotating door swings away from whoever started its chain; the
+/// rule is `world_rules::rotating_door_opens_reversed`. The door's current
+/// swing sign lives in its first motion word and in ROT_DOOR_REVERSED.
 #[optimize(size)]
 unsafe fn rotating_door_swing_away(ei: usize, spawnflags: u16) {
-    const SF_DOOR_ONEWAY: u16 = 16;
-    const SF_DOOR_ROTATE_Z: u16 = 64;
-    const SF_DOOR_ROTATE_X: u16 = 128;
-    if ei >= MAX_ENTS || spawnflags & (SF_DOOR_ONEWAY | SF_DOOR_ROTATE_Z | SF_DOOR_ROTATE_X) != 0 {
+    if ei >= MAX_ENTS {
         return;
     }
-    // HL forward (cos, sin) of a yaw is (sin r, cos r) in runtime (x, z).
-    let (pos, fwd) = match LOGIC_ACTIVATOR {
-        1 => (
-            LOGIC_PLAYER_POS,
-            [
+    // A yaw's forward is (sin, cos) in runtime (x, z).
+    let activator = match LOGIC_ACTIVATOR {
+        1 => Some(world_rules::DoorActivator {
+            pos: LOGIC_PLAYER_POS,
+            forward_xz: [
                 sincos::sin_q12(LOGIC_PLAYER_YAW),
                 sincos::sin_q12((LOGIC_PLAYER_YAW + 1024) & 0x0fff),
             ],
-        ),
-        2 => (
-            LOGIC_TRAM_POS,
-            [
+        }),
+        2 => Some(world_rules::DoorActivator {
+            pos: LOGIC_TRAM_POS,
+            forward_xz: [
                 LOGIC_TRAM_FWD[0].clamp(-4096, 4096),
                 LOGIC_TRAM_FWD[1].clamp(-4096, 4096),
             ],
-        ),
-        _ => return,
+        }),
+        _ => None,
     };
-    let o = ENT_CACHE[ei].origin;
-    let dx = (pos[0] - o[0]).clamp(-32767, 32767);
-    let dz = (pos[2] - o[2]).clamp(-32767, 32767);
-    let cross = dx * fwd[1] - dz * fwd[0];
-    let want_reversed = cross < 0;
+    let hinge = ENT_CACHE[ei].origin;
+    let Some(want_reversed) =
+        world_rules::rotating_door_opens_reversed(spawnflags, hinge, activator)
+    else {
+        return;
+    };
     let bit = 1u8 << (ei & 7);
     let is_reversed = ROT_DOOR_REVERSED[ei >> 3] & bit != 0;
     if want_reversed != is_reversed {
