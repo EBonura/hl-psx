@@ -83,6 +83,8 @@ impl MortarState {
     }
 
     /// A field was used at tick `now`: schedule its shells.
+    #[inline(never)]
+    #[cfg_attr(target_arch = "mips", optimize(size))]
     pub fn field_use(&mut self, u: &FieldUse, now: u16, w: &mut impl MortarWorld) {
         let (mn, mx) = (u.mins, u.maxs);
         let mut start = [span(w, mn[0], mx[0]), mx[1], span(w, mn[2], mx[2])];
@@ -122,6 +124,8 @@ impl MortarState {
     }
 
     /// Land every shell whose time has come at tick `now`.
+    #[inline(never)]
+    #[cfg_attr(target_arch = "mips", optimize(size))]
     pub fn tick(&mut self, now: u16, player_pos: [i32; 3], w: &mut impl MortarWorld) {
         for s in 0..MAX_SHELLS {
             if self.shell_at[s] != 0 && time_reached(now, self.shell_at[s]) {

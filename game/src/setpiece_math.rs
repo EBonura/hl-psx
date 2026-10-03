@@ -28,3 +28,20 @@ pub const fn dist2_3(a: [i32; 3], b: [i32; 3]) -> i32 {
     let dz = a[2] - b[2];
     dx * dx + dy * dy + dz * dz
 }
+
+/// Squared horizontal (x/z) distance between two points.
+#[inline]
+pub const fn dist2_xz(a: [i32; 3], b: [i32; 3]) -> i32 {
+    let dx = b[0] - a[0];
+    let dz = b[2] - a[2];
+    dx * dx + dz * dz
+}
+
+/// Signed atan2 in q12 turns from +x toward +y, within about 0.25 degrees
+/// (scientist_logic's 0.273-bend fit); the SDK's octant-linear atan2_q12 is
+/// up to 4 degrees off, which walks rounds off a distant target.
+#[inline(never)]
+#[cfg_attr(target_arch = "mips", optimize(size))]
+pub fn atan_s(y: i32, x: i32) -> i32 {
+    ((crate::scientist_logic::precise_yaw_from_vec(y, x) as i32 + 2048) & 0xfff) - 2048
+}

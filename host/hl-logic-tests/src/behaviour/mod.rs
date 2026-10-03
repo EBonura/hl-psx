@@ -3,7 +3,9 @@
 //! replay a fixed scenario and compare every output against a table
 //! recorded from the current behaviour.
 
-pub mod setpiece_rng;
+pub mod setpiece_kit;
 
 #[cfg(test)]
 mod mortar;
+#[cfg(test)]
+mod tank;
