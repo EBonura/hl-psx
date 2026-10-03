@@ -95,3 +95,6 @@ pub mod scripted_sequence;
 
 #[path = "../../../game/src/nav_graph.rs"]
 pub mod nav_graph;
+
+#[path = "../../../game/src/local_nav.rs"]
+pub mod local_nav;

@@ -44,6 +44,7 @@ mod render;
 use psx_goldsrc::route_follow;
 mod apache;
 mod garg;
+mod local_nav;
 mod mortar;
 mod nav_graph;
 mod nihilanth;
@@ -9675,15 +9676,6 @@ unsafe fn prop_script_move_residue_put(pi: usize, x: i32, z: i32) {
     }
 }
 
-#[inline(always)]
-unsafe fn prop_script_move_residue_clear(pi: usize) {
-    PROP_SCRIPT_YAW[pi] &= PROP_SCRIPT_YAW_MASK;
-    let li = PROP_SCRIPT_LI[pi];
-    if li != u16::MAX {
-        PROP_SCRIPT_LI[pi] = li & !(PROP_SCRIPT_RESIDUE_MASK << PROP_SCRIPT_LI_RESIDUE_SHIFT);
-    }
-}
-
 // ---- scripted_sequence adaptor: packs/unpacks scripted_sequence state ----
 
 #[inline(never)]
@@ -10012,48 +10004,104 @@ unsafe fn script_find_actor(m: &Map, li: usize) -> Option<usize> {
     scripted_sequence::find_actor(&script_record(m, li), &ScriptRosterView)
 }
 
-/// SV_HullForBsp: a monster no wider or taller than 36 units moves in the
-/// 32x32x36 crouch hull (houndeyes, headcrabs), anything else in hull 1.
-/// Returns the clip head and the hull's half height above the feet.
-#[inline(never)]
-#[optimize(size)]
-unsafe fn actor_nav_hull(m: &Map, pi: usize) -> (i32, i32) {
-    if matches!(PROP_KIND[pi], PROP_TYPE_HEADCRAB | PROP_TYPE_HOUNDEYE | 59) && m.hull3_head >= 0 {
-        (m.hull3_head, 18)
-    } else {
-        (m.hull1_head, 36)
-    }
+// ---- local navigation adaptor: traces, bodies and the graph for one actor ----
+
+/// The world as one actor's local navigation sees it.
+struct LocalNavView<'a> {
+    m: &'a Map,
+    movers: &'a [phys::Mover],
+    pi: usize,
+    /// Map tick, for diagnostic traces only.
+    #[cfg_attr(not(feature = "reference-trace"), allow(dead_code))]
+    now: u16,
 }
 
-/// CheckLocalMove's WALK_MOVE steps climb anything up to sv_stepsize (18):
-/// a small-hull chord blocked at floor height also passes if the same chord
-/// raised by a step is clear (a floor lip in c1a4's hound tunnel). Returns
-/// the first impact fraction of the better of the two, or None when either
-/// is clear. Hull-1 actors keep the single trace (a second long human-hull
-/// trace per blocked chord adds to c1a0's lobby hitch as walkers start).
-#[inline(never)]
-#[optimize(size)]
-unsafe fn actor_chord_blocked(
-    m: &Map,
-    movers: &[phys::Mover],
-    pi: usize,
-    start: [i32; 3],
-    goal: [i32; 3],
-) -> Option<i32> {
-    let (head, half) = actor_nav_hull(m, pi);
-    let mut best = 0;
-    for step in 0..if half == 18 { 2 } else { 1 } {
-        let rise = half + 18 * step;
-        let from = [start[0], start[1] + rise, start[2]];
-        let to = [goal[0], goal[1] + rise, goal[2]];
-        match phys::hull_blocked_fraction_movers(m, head, movers, from, to) {
-            None => return None,
-            Some(f) => best = best.max(f),
+impl LocalNavView<'_> {
+    /// Monsters no wider or taller than 36 units move in the crouch hull
+    /// (houndeyes, headcrabs) when the map has one; anything else in hull 1.
+    fn small_kind(&self) -> bool {
+        unsafe {
+            matches!(
+                PROP_KIND[self.pi],
+                PROP_TYPE_HEADCRAB | PROP_TYPE_HOUNDEYE | 59
+            )
         }
     }
-    Some(best)
 }
 
+impl local_nav::LocalNavWorld for LocalNavView<'_> {
+    fn small_hull(&self) -> bool {
+        self.small_kind() && self.m.hull3_head >= 0
+    }
+
+    fn body_half_height(&self) -> i32 {
+        if self.small_kind() {
+            local_nav::SMALL_HULL_HALF
+        } else {
+            local_nav::HUMAN_HULL_HALF
+        }
+    }
+
+    fn ignores_bodies(&self) -> bool {
+        unsafe { PROP_KIND[self.pi] == PROP_TYPE_HOLO }
+    }
+
+    fn hull_blocked(&mut self, from: [i32; 3], to: [i32; 3]) -> Option<i32> {
+        let head = if self.small_hull() {
+            self.m.hull3_head
+        } else {
+            self.m.hull1_head
+        };
+        phys::hull_blocked_fraction_movers(self.m, head, self.movers, from, to)
+    }
+
+    fn hull_clear(&mut self, from: [i32; 3], to: [i32; 3]) -> bool {
+        phys::human_hull_line_clear(self.m, from, to)
+            && phys::actor_line_clear_movers(self.m, self.movers, from, to)
+    }
+
+    fn body_count(&self) -> usize {
+        unsafe { PROP_COUNT.min(CARRY_MAILBOX_FIRST) }
+    }
+
+    fn body(&self, other: usize) -> Option<([i32; 3], [i32; 3])> {
+        unsafe {
+            if other != self.pi
+                && PROP_ACTIVE[other] != 0
+                && PROP_HEALTH[other] > 0
+                && PROP_KIND[other] != PROP_TYPE_HOLO
+            {
+                Some(actor_collision_bounds(PROP_KIND[other], PROP_POS[other]))
+            } else {
+                None
+            }
+        }
+    }
+
+    fn graph_route(&mut self, goal: [i32; 3]) -> bool {
+        unsafe { nav_route_available(self.m, self.movers, self.pi, goal) }
+    }
+
+    fn graph_entry(&mut self, start: [i32; 3]) -> Option<[i32; 3]> {
+        unsafe { nav_route_simplified_entry(self.m, self.movers, self.pi, start) }
+    }
+
+    #[cfg_attr(not(feature = "reference-trace"), allow(unused_variables))]
+    fn trace_detour(&mut self, blocked_dist: i32, ring: u8, left: bool, point: [i32; 3], legs: u8) {
+        #[cfg(feature = "reference-trace")]
+        reference_trace::script_detour(
+            self.now as u32,
+            self.pi as u16,
+            blocked_dist,
+            ring,
+            left as u8,
+            point,
+            legs,
+        );
+    }
+}
+
+/// Actor `pi`'s hull can walk straight from `start` to `goal` (world only).
 #[inline(never)]
 unsafe fn script_human_chord_clear(
     m: &Map,
@@ -10062,203 +10110,16 @@ unsafe fn script_human_chord_clear(
     start: [i32; 3],
     goal: [i32; 3],
 ) -> bool {
-    if actor_nav_hull(m, pi).1 == 18 {
-        return actor_chord_blocked(m, movers, pi, start, goal).is_none();
-    }
-    // Hull 1: the early-out boolean test; the full-fraction trace here put a
-    // 3-vblank hitch on c1a0's lobby walkers as their routes start.
-    let from = [start[0], start[1] + 36, start[2]];
-    let to = [goal[0], goal[1] + 36, goal[2]];
-    phys::human_hull_line_clear(m, from, to) && phys::actor_line_clear_movers(m, movers, from, to)
-}
-
-/// Earliest `SOLID_SLIDEBOX` impact for a standing human hull moving between
-/// two foot origins. GoldSrc's `WALK_MOVE` includes the player and live actors
-/// in the same world trace; BSP/mover-only probes therefore miss precisely the
-/// kind of temporary obstruction that `CBaseMonster::Move` is designed to
-/// triangulate around.
-#[inline(never)]
-unsafe fn script_human_actor_blocked_fraction(
-    pi: usize,
-    start: [i32; 3],
-    goal: [i32; 3],
-    player: Option<([i32; 3], i32)>,
-) -> Option<i32> {
-    // Every training hologram carries SF_GENERICMONSTER_NOTSOLID. It still
-    // follows scripted world paths, but neither the player nor another actor
-    // may block its scripted move.
-    if PROP_KIND[pi] == PROP_TYPE_HOLO {
-        return None;
-    }
-    let half = if matches!(PROP_KIND[pi], PROP_TYPE_HEADCRAB | PROP_TYPE_HOUNDEYE | 59) {
-        18
-    } else {
-        36
+    let mut w = LocalNavView {
+        m,
+        movers,
+        pi,
+        now: 0,
     };
-    let from = [start[0], start[1] + half, start[2]];
-    let to = [goal[0], goal[1] + half, goal[2]];
-    let mut best = 4096;
-
-    if let Some((player_pos, player_half_height)) = player {
-        let player_mins = [
-            player_pos[0] - 16,
-            player_pos[1] - player_half_height,
-            player_pos[2] - 16,
-        ];
-        let player_maxs = [
-            player_pos[0] + 16,
-            player_pos[1] + player_half_height,
-            player_pos[2] + 16,
-        ];
-        if let Some(hit) =
-            ground_logic::sweep_player_actor(from, to, player_mins, player_maxs, half)
-        {
-            best = best.min(hit.frac);
-        }
-    }
-
-    let mut other = 0usize;
-    while other < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
-        if other != pi
-            && PROP_ACTIVE[other] != 0
-            && PROP_HEALTH[other] > 0
-            && PROP_KIND[other] != PROP_TYPE_HOLO
-        {
-            let (mins, maxs) = actor_collision_bounds(PROP_KIND[other], PROP_POS[other]);
-            if let Some(hit) = ground_logic::sweep_player_actor(from, to, mins, maxs, half) {
-                best = best.min(hit.frac);
-            }
-        }
-        other += 1;
-    }
-
-    if best < 4096 {
-        Some(best)
-    } else {
-        None
-    }
+    local_nav::world_clear(&mut w, start, goal)
 }
 
-#[inline(never)]
-unsafe fn script_human_chord_clear_actors(
-    m: &Map,
-    movers: &[phys::Mover],
-    pi: usize,
-    start: [i32; 3],
-    goal: [i32; 3],
-    player: Option<([i32; 3], i32)>,
-) -> bool {
-    script_human_chord_clear(m, movers, pi, start, goal)
-        && script_human_actor_blocked_fraction(pi, start, goal, player).is_none()
-}
-
-/// GoldSrc BuildRoute tries FTriangulate before consulting the node graph.
-/// Human actors use a 32-unit-wide hull, clamped inside the source's 24..48
-/// range.  Candidate points are tested right-first in eight 64-unit lateral
-/// rings, exactly matching monsters.cpp.  This cold path runs only once when a
-/// blocked walk/run script possesses an actor.
-#[inline(never)]
-unsafe fn script_local_detour(
-    m: &Map,
-    movers: &[phys::Mover],
-    pi: usize,
-    #[cfg_attr(not(feature = "reference-trace"), allow(unused_variables))] // trace-only
-    map_tick: u16,
-    start: [i32; 3],
-    goal: [i32; 3],
-    blocked_dist: i32,
-    player: Option<([i32; 3], i32)>,
-) -> Option<[i32; 3]> {
-    const HULL_WIDTH: i32 = 32;
-    const SIDE_START: i32 = HULL_WIDTH * 3;
-    const SIDE_STEP: i32 = HULL_WIDTH * 2;
-
-    let delta = [goal[0] - start[0], goal[1] - start[1], goal[2] - start[2]];
-    let length = isqrt_i32(
-        delta[0]
-            .saturating_mul(delta[0])
-            .saturating_add(delta[1].saturating_mul(delta[1]))
-            .saturating_add(delta[2].saturating_mul(delta[2])),
-    )
-    .max(1);
-    let horizontal_length = isqrt_i32(
-        delta[0]
-            .saturating_mul(delta[0])
-            .saturating_add(delta[2].saturating_mul(delta[2])),
-    )
-    .max(1);
-    let forward = [
-        delta[0] * 4096 / length,
-        delta[1] * 4096 / length,
-        delta[2] * 4096 / length,
-    ];
-    // Source coordinates use Z-up. In runtime X/Y/Z (Y-up),
-    // CrossProduct(forward, up) becomes [forward.z, 0, -forward.x].
-    let side = [
-        delta[2] * 4096 / horizontal_length,
-        0,
-        -delta[0] * 4096 / horizontal_length,
-    ];
-    let ahead = blocked_dist.max(0) + HULL_WIDTH;
-    let base = [
-        start[0] + ((forward[0] * ahead) >> 12),
-        start[1] + ((forward[1] * ahead) >> 12),
-        start[2] + ((forward[2] * ahead) >> 12),
-    ];
-    let mut ring = 0i32;
-    while ring < 8 {
-        let lateral = SIDE_START + ring * SIDE_STEP;
-        let offset = [(side[0] * lateral) >> 12, 0, (side[2] * lateral) >> 12];
-        let right = [base[0] + offset[0], base[1], base[2] + offset[2]];
-        let right_first = script_human_chord_clear_actors(m, movers, pi, start, right, player);
-        let right_second =
-            right_first && script_human_chord_clear_actors(m, movers, pi, right, goal, player);
-        #[cfg(feature = "reference-trace")]
-        reference_trace::script_detour(
-            map_tick as u32,
-            pi as u16,
-            blocked_dist,
-            ring as u8,
-            0,
-            right,
-            right_first as u8 | ((right_second as u8) << 1),
-        );
-        if right_second {
-            return Some(right);
-        }
-        let left = [base[0] - offset[0], base[1], base[2] - offset[2]];
-        let left_first = script_human_chord_clear_actors(m, movers, pi, start, left, player);
-        let left_second =
-            left_first && script_human_chord_clear_actors(m, movers, pi, left, goal, player);
-        #[cfg(feature = "reference-trace")]
-        reference_trace::script_detour(
-            map_tick as u32,
-            pi as u16,
-            blocked_dist,
-            ring as u8,
-            1,
-            left,
-            left_first as u8 | ((left_second as u8) << 1),
-        );
-        if left_second {
-            return Some(left);
-        }
-        ring += 1;
-    }
-    None
-}
-
-/// GoldSrc does not trust the route selected by `BuildRoute` for the whole
-/// trip. `CBaseMonster::Move` repeats a 200-unit `CheckLocalMove` before every
-/// 10 Hz movement step and inserts an `FTriangulate` apex when that lookahead
-/// becomes blocked. This matters even in a static room: floor-following can
-/// move a human hull onto a chord that was clear at the original script mark.
-///
-/// The port's compact cinematic route has room for one local apex followed by
-/// the authored mark. Recheck only that direct leg; the two chords created by
-/// `script_local_detour` have already passed the same full human-hull test.
-/// Everything here is stack-only, so the source behavior costs no persistent
-/// actor or map RAM.
+/// The lookahead a walking scripted actor runs on its active think.
 #[inline(never)]
 unsafe fn script_dynamic_local_replan(
     m: &Map,
@@ -10269,98 +10130,31 @@ unsafe fn script_dynamic_local_replan(
     player_pos: [i32; 3],
     player_half_height: i32,
 ) {
-    const DIST_TO_CHECK: i32 = 200;
-
-    let start = PROP_POS[pi];
-    let delta = [
-        waypoint[0] - start[0],
-        waypoint[1] - start[1],
-        waypoint[2] - start[2],
-    ];
-    let waypoint_dist = isqrt_i32(
-        delta[0]
-            .saturating_mul(delta[0])
-            .saturating_add(delta[2].saturating_mul(delta[2])),
-    )
-    .max(0);
-    if waypoint_dist == 0 {
-        return;
-    }
-    // Move() normalizes the full 3-D waypoint vector but clamps its probe by
-    // the 2-D waypoint distance. Keep that slightly odd SDK behavior exactly.
-    let direction_len = isqrt_i32(
-        delta[0]
-            .saturating_mul(delta[0])
-            .saturating_add(delta[1].saturating_mul(delta[1]))
-            .saturating_add(delta[2].saturating_mul(delta[2])),
-    )
-    .max(1);
-    let check_dist = waypoint_dist.min(DIST_TO_CHECK);
-    let check_end = [
-        start[0] + delta[0] * check_dist / direction_len,
-        start[1] + delta[1] * check_dist / direction_len,
-        start[2] + delta[2] * check_dist / direction_len,
-    ];
-    let world_frac = actor_chord_blocked(m, movers, pi, start, check_end);
-    let actor_frac = script_human_actor_blocked_fraction(
-        pi,
-        start,
-        check_end,
-        Some((player_pos, player_half_height)),
-    );
-    let blocked_frac = match (world_frac, actor_frac) {
-        (Some(world), Some(actor)) => world.min(actor),
-        (Some(world), None) => world,
-        (None, Some(actor)) => actor,
-        (None, None) => return,
-    };
-
-    if blocked_frac >= 4096 {
-        return;
-    }
-
-    // CheckLocalMove advances in 16-unit WALK_MOVE probes and reports the
-    // start of the failed step. Quantize the continuous BSP impact down to the
-    // same distance before feeding FTriangulate.
-    let blocked_dist = ((check_dist * blocked_frac.clamp(0, 4096)) >> 12) & !15;
-    let mut encoded_mode = PROP_SCRIPT_MODE[pi];
-    if let Some(apex) = script_local_detour(
+    let mut actor = script_actor_load(pi);
+    let mut w = LocalNavView {
         m,
         movers,
         pi,
-        map_tick,
-        start,
+        now: map_tick,
+    };
+    let replan = local_nav::lookahead(
+        &mut w,
+        &mut actor,
         waypoint,
-        blocked_dist,
-        Some((player_pos, player_half_height)),
-    ) {
-        PROP_SCRIPT_GOAL[pi] = [apex[0] as i16, apex[1] as i16, apex[2] as i16];
-        encoded_mode = scientist_logic::script_detour_mode(encoded_mode, true);
-        PROP_SCRIPT_MODE[pi] = encoded_mode;
-        prop_script_move_residue_clear(pi);
-        prop_nav_cache_invalidate(pi);
-        PROP_MOVE_COOLDOWN[pi] = 0;
-        return;
-    }
-
-    // Move() refreshes the node route when triangulation cannot get around the
-    // blocker. Reuse the existing packed route cache and mode bits rather than
-    // allocating GoldSrc's ROUTE_SIZE array per actor.
-    if m.n_nav != 0 && nav_route_available(m, movers, pi, waypoint) {
-        encoded_mode = scientist_logic::script_route_mode(encoded_mode, true);
-        if let Some(entry) = nav_route_simplified_entry(m, movers, pi, start) {
-            PROP_SCRIPT_GOAL[pi] = [entry[0] as i16, entry[1] as i16, entry[2] as i16];
-            encoded_mode = scientist_logic::script_detour_mode(encoded_mode, true);
+        (player_pos, player_half_height),
+        m.n_nav != 0,
+    );
+    match replan {
+        local_nav::Replan::Clear | local_nav::Replan::Unchanged => {}
+        local_nav::Replan::Detour => {
+            script_actor_store(pi, &actor);
+            prop_nav_cache_invalidate(pi);
         }
-        PROP_SCRIPT_MODE[pi] = encoded_mode;
-        prop_script_move_residue_clear(pi);
-        PROP_MOVE_COOLDOWN[pi] = 0;
+        local_nav::Replan::Graph => script_actor_store(pi, &actor),
     }
 }
 
-/// BuildRoute for a walk or run script: a clear chord heads straight for the
-/// mark (unless the mark is on another floor), a blocked one tries a local
-/// detour first and the node graph last. It chooses once, at assignment.
+/// How a walk or run script reaches its mark, chosen once at assignment.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn script_plan_route(
@@ -10370,7 +10164,6 @@ unsafe fn script_plan_route(
     authored_goal: [i32; 3],
     now: u16,
 ) -> scripted_sequence::RoutePlan {
-    let mut plan = scripted_sequence::RoutePlan::DIRECT;
     // logic_pre_tick runs before this frame rebuilds the compact mover
     // list, but the prior tick's stable list already carries the exact
     // current brush poses. Map initialization resets MOVER_COUNT to zero.
@@ -10378,46 +10171,8 @@ unsafe fn script_plan_route(
         core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),
         MOVER_COUNT.min(MAX_ENTS + 1),
     );
-    let world_blocked = actor_chord_blocked(m, movers, pi, pos, authored_goal);
-    let actor_blocked = script_human_actor_blocked_fraction(pi, pos, authored_goal, None);
-    let blocked = match (world_blocked, actor_blocked) {
-        (Some(world), Some(actor)) => Some(world.min(actor)),
-        (Some(world), None) => Some(world),
-        (None, Some(actor)) => Some(actor),
-        (None, None) => None,
-    };
-    if let Some(blocked_frac) = blocked {
-        let dx = authored_goal[0] - pos[0];
-        let dz = authored_goal[2] - pos[2];
-        let distance =
-            isqrt_i32(dx.saturating_mul(dx).saturating_add(dz.saturating_mul(dz))).max(0);
-        let blocked_dist = ((distance * blocked_frac.clamp(0, 4096)) >> 12) & !15;
-        if let Some(apex) =
-            script_local_detour(m, movers, pi, now, pos, authored_goal, blocked_dist, None)
-        {
-            plan.waypoint = Some(apex);
-            plan.detour = true;
-        } else if m.n_nav != 0 && nav_route_available(m, movers, pi, authored_goal) {
-            // FGetNodeRoute is the last resort after triangulation fails.
-            plan.routed = true;
-            if let Some(entry) = nav_route_simplified_entry(m, movers, pi, pos) {
-                plan.waypoint = Some(entry);
-                plan.detour = true;
-            }
-        }
-    } else if (authored_goal[1] - pos[1]).abs() > 64
-        && m.n_nav != 0
-        && nav_route_available(m, movers, pi, authored_goal)
-    {
-        // The horizontal chord is clear but the final floor differs by more
-        // than 64 units: do not triangulate, use the graph.
-        plan.routed = true;
-        if let Some(entry) = nav_route_simplified_entry(m, movers, pi, pos) {
-            plan.waypoint = Some(entry);
-            plan.detour = true;
-        }
-    }
-    plan
+    let mut w = LocalNavView { m, movers, pi, now };
+    local_nav::plan_route(&mut w, pos, authored_goal, m.n_nav != 0)
 }
 
 /// Give actor `pi` to scripted_sequence `li` and start it.
