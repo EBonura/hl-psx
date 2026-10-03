@@ -11,3 +11,4 @@ mod pushable_float;
 mod rotating_door;
 mod tau_cannon;
 mod track_path;
+mod tram_follower_ride;
