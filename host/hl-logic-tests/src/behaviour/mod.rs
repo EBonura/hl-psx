@@ -6,6 +6,8 @@
 pub mod setpiece_kit;
 
 #[cfg(test)]
+mod apache;
+#[cfg(test)]
 mod mortar;
 #[cfg(test)]
 mod osprey;

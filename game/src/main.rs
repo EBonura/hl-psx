@@ -43,6 +43,7 @@ mod render;
 #[cfg(feature = "route-follow")]
 use psx_goldsrc::route_follow;
 mod apache;
+mod apache_logic;
 mod garg;
 mod mortar;
 mod mortar_logic;
