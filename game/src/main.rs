@@ -6399,6 +6399,11 @@ fn regression_viewpoint(
         // wedges that a standalone t0a0 spawn cannot reproduce.
         return Some(([-1380, -28, -1682], 0, 0));
     }
+    if pushable_view && room_id == 18 {
+        // c1a2: stand on the battery beside the second start so the first
+        // simulation tick picks it up and the HUD shows its pickup icon.
+        return Some(([2243, -518, -669], 0, 0));
+    }
     if pushable_view && room_id == 6 {
         // c1a0 model *64: begin touching a real 44x44 office crate's near
         // face, looking directly at it. This remains a live player view so
@@ -6472,6 +6477,39 @@ fn regression_viewpoint(
         _ => return None,
     };
     Some(room_budget::REGRESSION_VIEWPOINTS[index])
+}
+
+/// Targets the regression build fires twenty ticks into a set-piece route,
+/// so a scenario can watch a mortar barrage or the apache without walking to
+/// the trigger that starts it. Keyed by room and viewpoint selector so no
+/// older scenario on the same room changes.
+#[cfg(feature = "debug-regression-viewpoints")]
+fn regression_setpiece_targets(room_id: usize, pitch: i16) -> &'static [&'static str] {
+    match (room_id, pitch) {
+        // c1a3c: a player-guided field drops its shells over the player.
+        (26, i16::MIN) => &["c1a3_mortarx"],
+        // c2a5g: the table-guided field and the random field.
+        (71, i16::MIN) => &["mortars", "random_mortar"],
+        // c2a5: the apache waits for this trigger.
+        (64, DEBUG_SAVED_VIEW_PITCH_SENTINEL) => &["apache"],
+        _ => &[],
+    }
+}
+
+/// Fire every logic target named `name` as the player would through a
+/// trigger (USE_TOGGLE, player as activator).
+#[cfg(feature = "debug-regression-viewpoints")]
+unsafe fn regression_fire_named(m: &Map, nlogic: usize, nents: usize, name: &str, now: u16) {
+    let mut id = 1u16;
+    while id as usize <= m.n_logic_names {
+        if m.logic_name(id) == name {
+            LOGIC_ACTIVATOR = 1;
+            logic_fire_targets(m, nlogic, nents, id, map::USE_TOGGLE, now, 0, u16::MAX);
+            LOGIC_ACTIVATOR = 0;
+            return;
+        }
+        id += 1;
+    }
 }
 
 fn landmark_from_str(name: &str) -> LandmarkName {
@@ -31865,6 +31903,14 @@ fn play(
                             break;
                         }
                         li += 1;
+                    }
+                }
+            }
+            #[cfg(feature = "debug-regression-viewpoints")]
+            if sim_frame_no == 20 {
+                for name in regression_setpiece_targets(launch.room_id as usize, launch.pitch) {
+                    unsafe {
+                        regression_fire_named(&m, nlogic, nents, name, sim_frame_no as u16);
                     }
                 }
             }
