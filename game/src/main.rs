@@ -52,6 +52,7 @@ mod scientist_logic;
 mod scratchpad;
 mod setpiece_logic;
 mod setpiece_sfx;
+mod talk_monster;
 mod tank;
 use osprey::{osprey_init, tick_osprey, OSPREY, OSPREY_TILT, PROP_TYPE_OSPREY};
 use psx_goldsrc::semantic_input;
@@ -1014,9 +1015,6 @@ const PROP_STATE_MOVE_AWAY: u8 = 4;
 const PROP_STATE_MOVE_AWAY_FACE: u8 = 5;
 const PROP_CLIENT_PUSH_BIT: u8 = 0x80;
 const PROP_ATTACK_COOLDOWN_MASK: u8 = 0x7f;
-const MOVE_AWAY_START_ACTIVE_TICKS: u8 = 1;
-const MOVE_AWAY_FACE_TICKS: u8 = 15;
-const MOVE_AWAY_TIMEOUT_TICKS: u8 = 80;
 
 // ---- per-map model pool registry ----
 // Cooked actor/item types. Each streams from WORLD.PAK:
@@ -3779,15 +3777,15 @@ static mut PROP_STATE: [u8; MAX_PROPS] = [PROP_STATE_IDLE; MAX_PROPS];
 static mut PROP_ATTACK_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_AI_TIMER: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_AI_TARGET: [u8; MAX_PROPS] = [PROP_TARGET_NONE; MAX_PROPS];
-const TALKING_PROP_NONE: u8 = 0xff;
+const TALKING_PROP_NONE: u8 = talk_monster::NO_SPEAKER;
 static mut TALKING_PROP: u8 = TALKING_PROP_NONE;
 static mut TALKING_UNTIL: u16 = 0;
 static mut TALKING_VOICE: u8 = 0;
 static mut MAP_VOICE_PREFIX: u8 = 0;
 static mut MAP_TALK_IDS: [u8; 6] = [u8::MAX; 6];
 const _: () = assert!(room_budget::TALK_VOICES.len() == menu::MAPS.len());
-const TALKING_VOICE_ID_MASK: u8 = 0x3f;
-const TALKING_VOICE_AUTONOMOUS: u8 = 0x80;
+const TALKING_VOICE_ID_MASK: u8 = talk_monster::VOICE_ID_MASK;
+const TALKING_VOICE_AUTONOMOUS: u8 = talk_monster::VOICE_AUTONOMOUS;
 // A 20 Hz speech envelope for the one streamed dialogue channel. Geometry and
 // controller range are source-exact; this small deterministic envelope avoids
 // retaining decoded PCM in main RAM after the sample is uploaded to SPU RAM.
@@ -8410,64 +8408,61 @@ unsafe fn resolve_player_actor_collision(player: &mut phys::Player, start: [i32;
     if best_frac >= 4096 {
         return;
     }
-    let pushes = scientist_logic::client_push_speed(player.vel[0], player.vel[2]);
+    let player_vel_xz = [player.vel[0], player.vel[2]];
     let axis = best_axis as usize;
     player.pos[axis] = start[axis] + (((end[axis] - start[axis]) * best_frac) >> 12);
     player.block_actor_axis(axis);
-    if !pushes || best_prop >= PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
+    if best_prop >= PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
         return;
     }
     let kind = PROP_KIND[best_prop];
     if !prop_is_human(kind) || PROP_HEALTH[best_prop] == 0 {
         return;
     }
-    if prop_scientist_flag(best_prop, PROP_SCI_PROVOKED) {
-        #[cfg(feature = "reference-trace")]
-        reference_trace::talk(
-            SIM_NOW,
-            "client_push_blocked_provoked",
-            best_prop,
-            0xff,
-            0,
-            PROP_POS[best_prop],
-            PROP_POS[best_prop],
-        );
-        return;
-    }
-    if prop_is_talking(best_prop, SIM_NOW) {
-        #[cfg(feature = "reference-trace")]
-        reference_trace::talk(
-            SIM_NOW,
-            "client_push_blocked_talking",
-            best_prop,
-            TALKING_VOICE & TALKING_VOICE_ID_MASK,
-            TALKING_UNTIL.wrapping_sub(SIM_NOW),
-            PROP_POS[best_prop],
-            PROP_POS[best_prop],
-        );
-        return;
-    }
-    prop_client_push_set(best_prop, true);
-    // Touch sets the condition even during a cinematic, but MakeIdealYaw is
-    // suppressed in MONSTERSTATE_SCRIPT.
-    if !prop_script_busy(best_prop) {
-        let pos = PROP_POS[best_prop];
-        // Source uses this ideal yaw to construct a 100-unit path endpoint.
-        // The shared octant-linear atan is intentionally cheaper but can miss
-        // that endpoint by >10 units, so use the rare-contact precision path.
-        PROP_SCRIPT_YAW[best_prop] =
-            scientist_logic::precise_yaw_from_vec(player.pos[0] - pos[0], player.pos[2] - pos[2]);
-    }
-    #[cfg(feature = "reference-trace")]
-    reference_trace::talk(
+    let mut actor = talk_actor_load(best_prop);
+    let clock = talk_clock();
+    let bump = talk_monster::player_bump(
+        &mut actor,
+        &clock,
         SIM_NOW,
-        "client_push_set",
-        best_prop,
-        0xff,
-        0,
+        player_vel_xz,
+        player.pos,
         PROP_POS[best_prop],
-        PROP_POS[best_prop],
+        prop_script_busy(best_prop),
     );
+    let trace_event = match bump {
+        talk_monster::Bump::Ignored => return,
+        talk_monster::Bump::BlockedProvoked => "client_push_blocked_provoked",
+        talk_monster::Bump::BlockedTalking => "client_push_blocked_talking",
+        talk_monster::Bump::Pushed { ideal_yaw } => {
+            talk_actor_store(&actor);
+            if let Some(yaw) = ideal_yaw {
+                PROP_SCRIPT_YAW[best_prop] = yaw;
+            }
+            "client_push_set"
+        }
+    };
+    #[cfg(feature = "reference-trace")]
+    {
+        let (voice, ticks) = if bump == talk_monster::Bump::BlockedTalking {
+            (
+                clock.voice & talk_monster::VOICE_ID_MASK,
+                clock.until.wrapping_sub(SIM_NOW),
+            )
+        } else {
+            (0xff, 0)
+        };
+        reference_trace::talk(
+            SIM_NOW,
+            trace_event,
+            best_prop,
+            voice,
+            ticks,
+            PROP_POS[best_prop],
+            PROP_POS[best_prop],
+        );
+    }
+    let _ = trace_event;
 }
 
 #[inline]
@@ -10113,13 +10108,11 @@ unsafe fn script_remaining_path_distance(m: &Map, pi: usize) -> u32 {
 #[inline(never)]
 #[optimize(size)]
 unsafe fn script_assign_actor(m: &Map, li: usize, rec: map::LogicEnt, pi: usize, now: u16) {
-    // ChangeSchedule clears transient sensory conditions. A cinematic also
-    // owns movement immediately, so abandon an ordinary move-away tail.
-    prop_client_push_set(pi, false);
-    if PROP_STATE[pi] == PROP_STATE_MOVE_AWAY || PROP_STATE[pi] == PROP_STATE_MOVE_AWAY_FACE {
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        PROP_AI_TIMER[pi] = 0;
-    }
+    // A cinematic owns the actor from now on: the talk state forgets a
+    // pending push and abandons any step-aside.
+    let mut talker = talk_actor_load(pi);
+    talk_monster::script_takes_over(&mut talker);
+    talk_actor_store(&talker);
     let mode = match rec.arg1 {
         0 | 5 => 3, // SCRIPT_WAIT: play in place, do not move/turn
         1 => 1,
@@ -10430,29 +10423,15 @@ unsafe fn tick_scripted_actor(
             && prop_is_scientist(PROP_KIND[pi])
             && PROP_MOVE_COOLDOWN[pi] == 0
         {
-            let responded = scientist_try_response(pi, map_index, in_player_pvs, m.n_props);
-            if !responded {
-                let greeted = scientist_try_hello(
-                    m,
-                    sight_movers,
-                    pi,
-                    player_pos,
-                    map_index,
-                    in_player_pvs,
-                    true,
-                );
-                if !greeted {
-                    let _ = scientist_try_idle_speak(
-                        m,
-                        sight_movers,
-                        pi,
-                        player_pos,
-                        map_index,
-                        in_player_pvs,
-                        true,
-                    );
-                }
-            }
+            let _ = scientist_take_turn(
+                m,
+                sight_movers,
+                pi,
+                player_pos,
+                map_index,
+                in_player_pvs,
+                true,
+            );
         }
         // CBaseMonster::Move performs this lookahead on the same active 10 Hz
         // movement think as MoveExecute. Startup/failure cooldowns do not call
@@ -11000,22 +10979,21 @@ unsafe fn logic_use_entity(
             } else {
                 rec.origin
             };
-            if speaker != TALKING_PROP_NONE {
-                // PlayScriptedSentence explicitly forgets CLIENT_PUSH.
-                prop_client_push_set(speaker as usize, false);
-            }
             let ticks = sfx::play_voice_authored(rec.arg0 as u8, sound_pos, rec.flags, rec.sound1);
-            if ticks != 0 && speaker != TALKING_PROP_NONE {
-                TALKING_PROP = speaker;
-                TALKING_VOICE = rec.arg0 as u8;
-                TALKING_UNTIL = now.wrapping_add(ticks);
-                // CTalkMonster::PlaySentence marks bit_saidHelloPlayer for
-                // every spoken line, including PlayScriptedSentence. A named
-                // lobby actor that already delivered authored dialogue must
-                // not later add an autonomous greeting.
-                if prop_is_human(PROP_KIND[speaker as usize]) {
-                    prop_scientist_set_flag(speaker as usize, PROP_SCI_HELLO_SAID, true);
-                }
+            if speaker != TALKING_PROP_NONE {
+                let pi = speaker as usize;
+                let mut actor = talk_actor_load(pi);
+                let mut clock = talk_clock();
+                talk_monster::authored_line(
+                    &mut actor,
+                    &mut clock,
+                    rec.arg0 as u8,
+                    now,
+                    ticks,
+                    prop_is_human(PROP_KIND[pi]),
+                );
+                talk_actor_store(&actor);
+                talk_clock_store(clock);
             }
             logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, depth + 1);
         }
@@ -12526,10 +12504,11 @@ unsafe fn prop_use_reply(pi: usize, action: u8, now: u16) {
         return;
     }
     let duration = sfx::play_voice_world(voice, PROP_POS[pi]);
-    TALKING_PROP = pi as u8;
-    TALKING_VOICE = voice;
-    TALKING_UNTIL = now.wrapping_add(duration.max(1));
-    prop_client_push_set(pi, false);
+    let mut actor = talk_actor_load(pi);
+    let mut clock = talk_clock();
+    talk_monster::reply_line(&mut actor, &mut clock, voice, now, duration);
+    talk_actor_store(&actor);
+    talk_clock_store(clock);
     #[cfg(feature = "reference-trace")]
     reference_trace::talk(
         now,
@@ -12609,16 +12588,10 @@ unsafe fn logic_try_use(
     while pi < nprops {
         if prop_is_human(PROP_KIND[pi])
             && PROP_ACTIVE[pi] != 0
-            && !(TALKING_PROP == pi as u8
-                && TALKING_VOICE & TALKING_VOICE_AUTONOMOUS == 0
-                && !time_reached(now, TALKING_UNTIL))
+            && talk_monster::use_eligible(&talk_actor_load(pi), &talk_clock(), now)
         {
-            let following = prop_scientist_flag(pi, PROP_SCI_FOLLOWING);
-            let action = scientist_logic::follow_use(
-                PROP_HEALTH[pi] > 0,
-                following,
-                prop_scientist_flag(pi, PROP_SCI_PREDISASTER),
-                prop_scientist_flag(pi, PROP_SCI_PROVOKED),
+            let action = talk_monster::use_reaction(
+                &talk_actor_load(pi),
                 prop_script_busy(pi),
                 prop_scientist_flag(pi, PROP_SCRIPT_NOINTERRUPT),
             );
@@ -12648,56 +12621,38 @@ unsafe fn logic_try_use(
     }
 
     if best_prop != usize::MAX {
-        let following = prop_scientist_flag(best_prop, PROP_SCI_FOLLOWING);
-        match scientist_logic::follow_use(
-            PROP_HEALTH[best_prop] > 0,
-            following,
-            prop_scientist_flag(best_prop, PROP_SCI_PREDISASTER),
-            prop_scientist_flag(best_prop, PROP_SCI_PROVOKED),
-            prop_script_busy(best_prop),
+        let script_busy = prop_script_busy(best_prop);
+        let mut actor = talk_actor_load(best_prop);
+        let reaction = talk_monster::use_reaction(
+            &actor,
+            script_busy,
             prop_scientist_flag(best_prop, PROP_SCRIPT_NOINTERRUPT),
-        ) {
-            scientist_logic::FollowUse::Start => {
-                // StartFollowing cancels an interruptible cinematic and never
-                // fires that script's target/killtarget.
-                if prop_script_busy(best_prop) {
-                    prop_script_clear(best_prop);
-                }
-                // SDK LimitFollowers(player, 1) prunes older talk followers
-                // beyond the first before adding this scientist. With the new
-                // actor that permits at most two total followers.
-                let mut kept = false;
-                let mut qi = 0usize;
-                while qi < nprops {
-                    if qi != best_prop && prop_scientist_flag(qi, PROP_SCI_FOLLOWING) {
-                        if kept {
-                            prop_scientist_set_flag(qi, PROP_SCI_FOLLOWING, false);
-                            prop_nav_cache_invalidate(qi);
-                        } else {
-                            kept = true;
-                        }
+        );
+        let effects = talk_monster::apply_use(&mut actor, reaction, script_busy);
+        talk_actor_store(&actor);
+        if effects.cancel_script {
+            prop_script_clear(best_prop);
+        }
+        if effects.limit_followers {
+            let mut kept = 0usize;
+            let mut qi = 0usize;
+            while qi < nprops {
+                if qi != best_prop && prop_scientist_flag(qi, PROP_SCI_FOLLOWING) {
+                    if talk_monster::followers_to_keep(kept) {
+                        kept += 1;
+                    } else {
+                        prop_scientist_set_flag(qi, PROP_SCI_FOLLOWING, false);
+                        prop_nav_cache_invalidate(qi);
                     }
-                    qi += 1;
                 }
-                prop_scientist_set_flag(best_prop, PROP_SCI_FOLLOWING, true);
-                prop_scientist_set_flag(best_prop, PROP_SCI_HELLO_SAID, true);
-                prop_client_push_set(best_prop, false);
-                prop_use_reply(best_prop, 0, now);
-                if PROP_STATE[best_prop] == PROP_STATE_MOVE_AWAY
-                    || PROP_STATE[best_prop] == PROP_STATE_MOVE_AWAY_FACE
-                {
-                    PROP_STATE[best_prop] = PROP_STATE_IDLE;
-                    PROP_AI_TIMER[best_prop] = 0;
-                    PROP_MOVE_COOLDOWN[best_prop] = 0;
-                }
+                qi += 1;
             }
-            scientist_logic::FollowUse::Stop => {
-                prop_scientist_set_flag(best_prop, PROP_SCI_FOLLOWING, false);
-                prop_nav_cache_invalidate(best_prop);
-                prop_use_reply(best_prop, 1, now);
-            }
-            scientist_logic::FollowUse::Decline => prop_use_reply(best_prop, 2, now),
-            scientist_logic::FollowUse::Ignore => {}
+        }
+        if effects.refresh_path {
+            prop_nav_cache_invalidate(best_prop);
+        }
+        if let Some(reply) = effects.reply {
+            prop_use_reply(best_prop, reply as u8, now);
         }
     } else if best != usize::MAX {
         let rec = m.logic(best);
@@ -17251,11 +17206,6 @@ unsafe fn tick_headcrab(
 }
 
 #[inline(always)]
-unsafe fn talk_wait_ready(now: u16) -> bool {
-    TALKING_PROP == TALKING_PROP_NONE || time_reached(now, TALKING_UNTIL.wrapping_add(40))
-}
-
-#[inline(always)]
 unsafe fn scientist_ordinal(pi: usize) -> usize {
     let mut ordinal = 0usize;
     let mut qi = 0usize;
@@ -17383,170 +17333,148 @@ unsafe fn scientist_dialogue_local_id(
     0
 }
 
-/// Source FIdleHello for standing scientists. PVS gating is supplied by the
-/// caller because tick_props already paid for that exact leaf test.
-#[inline(never)]
-unsafe fn scientist_try_hello(
-    m: &Map,
-    sight_movers: &[phys::Mover],
-    pi: usize,
-    player_pos: [i32; 3],
-    map_index: u16,
-    in_player_pvs: bool,
-    scripted_moving: bool,
-) -> bool {
-    if MAP_VOICE_PREFIX & 0x80 != 0 {
-        return false;
+// ---- talk-monster adaptor: packs/unpacks talk_monster state in the prop arrays ----
+
+#[inline(always)]
+unsafe fn talk_clock() -> talk_monster::TalkClock {
+    talk_monster::TalkClock {
+        speaker: TALKING_PROP,
+        voice: TALKING_VOICE,
+        until: TALKING_UNTIL,
     }
-    if if scripted_moving {
-        SIM_NOW & 1 != 0
-    } else {
-        !scientist_logic::idle_hello_attempt(SIM_NOW)
-    } {
-        return false;
-    }
-    if !in_player_pvs
-        || LOGIC_PLAYER_HEALTH == 0
-        || (!scripted_moving && PROP_STATE[pi] != PROP_STATE_IDLE)
-        || prop_scientist_flag(pi, PROP_SCI_HELLO_SAID)
-        || prop_scientist_flag(pi, PROP_SCI_PROVOKED)
-        || prop_scientist_flag(pi, PROP_SCI_FOLLOWING)
-        || (!scripted_moving && prop_script_busy(pi))
-        || !talk_wait_ready(SIM_NOW)
-    {
-        return false;
-    }
-    let pos = PROP_POS[pi];
-    // `FindNearestFriend(TRUE)` measures between each entity's `absmax.z`.
-    // Scientists use the 72-unit human hull while a standing player origin is
-    // centred in the 72-unit player hull. This source-exact 500-unit gate also
-    // prevents PVS-connected actors on another floor from greeting the player.
-    if !scientist_logic::friend_in_talk_range(
-        [pos[0], pos[1] + 72, pos[2]],
-        [player_pos[0], player_pos[1] + 36, player_pos[2]],
-    ) {
-        return false;
-    }
-    let dx = player_pos[0] - pos[0];
-    let dz = player_pos[2] - pos[2];
-    let yaw = prop_yaw_value(PROP_YAW[pi]);
-    let forward_x = sincos::sin_q12(yaw);
-    let forward_z = sincos::sin_q12((yaw + 1024) & 0x0fff);
-    if !scientist_logic::wide_view_cone(dx, dz, forward_x, forward_z) {
-        return false;
-    }
-    let player_eye = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
-    if !actor_line_clear(
-        m,
-        sight_movers,
-        prop_target(PROP_TYPE_SCIENTIST, pos),
-        player_eye,
-    ) {
-        return false;
-    }
-    let ordinal = scientist_ordinal(pi);
-    let voice = scientist_hello_local_id(pi, map_index);
-    let duration = scientist_logic::hello_duration_ticks(map_index, ordinal);
-    let _ = sfx::play_voice_world(voice, pos);
-    TALKING_PROP = pi as u8;
-    TALKING_VOICE = voice | TALKING_VOICE_AUTONOMOUS;
-    TALKING_UNTIL = SIM_NOW.wrapping_add(duration);
-    prop_scientist_set_flag(pi, PROP_SCI_HELLO_SAID, true);
-    prop_client_push_set(pi, false);
-    #[cfg(feature = "reference-trace")]
-    reference_trace::talk(SIM_NOW, "hello_started", pi, voice, duration, pos, pos);
-    true
+}
+
+#[inline(always)]
+unsafe fn talk_clock_store(clock: talk_monster::TalkClock) {
+    TALKING_PROP = clock.speaker;
+    TALKING_VOICE = clock.voice;
+    TALKING_UNTIL = clock.until;
 }
 
 #[inline(never)]
-unsafe fn scientist_talk_friend(m: &Map, sight_movers: &[phys::Mover], pi: usize) -> Option<usize> {
-    let from = [PROP_POS[pi][0], PROP_POS[pi][1] + 72, PROP_POS[pi][2]];
-    let mut nearest = None;
-    let mut nearest_d2 = scientist_logic::TALK_RANGE_MIN * scientist_logic::TALK_RANGE_MIN;
-    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-    let mut qi = 0usize;
-    while qi < nprops {
-        if qi != pi
-            && PROP_ACTIVE[qi] != 0
-            && PROP_HEALTH[qi] != 0
-            && prop_is_scientist(PROP_KIND[qi])
-            && prop_scientist_flag(qi, PROP_SCI_PREDISASTER)
-            && PROP_STATE[qi] == PROP_STATE_IDLE
-        {
-            let to = [PROP_POS[qi][0], PROP_POS[qi][1] + 72, PROP_POS[qi][2]];
-            if scientist_logic::friend_in_talk_range(from, to) {
-                let dx = to[0] - from[0];
-                let dy = to[1] - from[1];
-                let dz = to[2] - from[2];
-                let d2 = dx * dx + dy * dy + dz * dz;
-                if d2 < nearest_d2 && actor_line_clear(m, sight_movers, from, to) {
-                    nearest = Some(qi);
-                    nearest_d2 = d2;
-                }
+unsafe fn talk_actor_load(pi: usize) -> talk_monster::TalkActor {
+    talk_monster::TalkActor {
+        index: pi,
+        alive: PROP_HEALTH[pi] != 0,
+        state: match PROP_STATE[pi] {
+            PROP_STATE_IDLE => talk_monster::TalkState::Idle,
+            PROP_STATE_MOVE_AWAY => talk_monster::TalkState::MoveAway,
+            PROP_STATE_MOVE_AWAY_FACE => talk_monster::TalkState::FaceBack,
+            _ => talk_monster::TalkState::Busy,
+        },
+        following: prop_scientist_flag(pi, PROP_SCI_FOLLOWING),
+        provoked: prop_scientist_flag(pi, PROP_SCI_PROVOKED),
+        predisaster: prop_scientist_flag(pi, PROP_SCI_PREDISASTER),
+        hello_said: prop_scientist_flag(pi, PROP_SCI_HELLO_SAID),
+        client_push: prop_client_push(pi),
+        answer_pending: PROP_DORMANT[pi] & PROP_RUNTIME_TALK_RESPONSE != 0,
+        speech_due: PROP_DEATH_START[pi],
+        schedule_timer: PROP_AI_TIMER[pi],
+        hold_ticks: PROP_MOVE_COOLDOWN[pi],
+        move_goal: PROP_SCRIPT_GOAL[pi],
+    }
+}
+
+#[inline(never)]
+unsafe fn talk_actor_store(a: &talk_monster::TalkActor) {
+    let pi = a.index;
+    match a.state {
+        talk_monster::TalkState::Idle => PROP_STATE[pi] = PROP_STATE_IDLE,
+        talk_monster::TalkState::MoveAway => PROP_STATE[pi] = PROP_STATE_MOVE_AWAY,
+        talk_monster::TalkState::FaceBack => PROP_STATE[pi] = PROP_STATE_MOVE_AWAY_FACE,
+        talk_monster::TalkState::Busy => {}
+    }
+    prop_scientist_set_flag(pi, PROP_SCI_FOLLOWING, a.following);
+    prop_scientist_set_flag(pi, PROP_SCI_PROVOKED, a.provoked);
+    prop_scientist_set_flag(pi, PROP_SCI_PREDISASTER, a.predisaster);
+    prop_scientist_set_flag(pi, PROP_SCI_HELLO_SAID, a.hello_said);
+    prop_client_push_set(pi, a.client_push);
+    if a.answer_pending {
+        PROP_DORMANT[pi] |= PROP_RUNTIME_TALK_RESPONSE;
+    } else {
+        PROP_DORMANT[pi] &= !PROP_RUNTIME_TALK_RESPONSE;
+    }
+    PROP_DEATH_START[pi] = a.speech_due;
+    PROP_AI_TIMER[pi] = a.schedule_timer;
+    PROP_MOVE_COOLDOWN[pi] = a.hold_ticks;
+    PROP_SCRIPT_GOAL[pi] = a.move_goal;
+}
+
+/// The world as one speaking scientist queries it.
+struct TalkWorldView<'a> {
+    m: &'a Map,
+    sight_movers: &'a [phys::Mover],
+    pi: usize,
+    map_index: u16,
+}
+
+impl talk_monster::TalkWorld for TalkWorldView<'_> {
+    fn line_clear(&mut self, from: [i32; 3], to: [i32; 3]) -> bool {
+        actor_line_clear(self.m, self.sight_movers, from, to)
+    }
+
+    fn speaker_eye(&self) -> [i32; 3] {
+        unsafe { prop_target(PROP_TYPE_SCIENTIST, PROP_POS[self.pi]) }
+    }
+
+    fn roster_len(&self) -> usize {
+        unsafe { PROP_COUNT.min(CARRY_MAILBOX_FIRST) }
+    }
+
+    fn idle_listener_top(&self, qi: usize) -> Option<[i32; 3]> {
+        unsafe {
+            if PROP_ACTIVE[qi] != 0
+                && PROP_HEALTH[qi] != 0
+                && prop_is_scientist(PROP_KIND[qi])
+                && prop_scientist_flag(qi, PROP_SCI_PREDISASTER)
+                && PROP_STATE[qi] == PROP_STATE_IDLE
+            {
+                Some([
+                    PROP_POS[qi][0],
+                    PROP_POS[qi][1] + talk_monster::ACTOR_HULL_TOP,
+                    PROP_POS[qi][2],
+                ])
+            } else {
+                None
             }
         }
-        qi += 1;
     }
-    nearest
+
+    fn scientist_ordinal(&mut self) -> usize {
+        unsafe { scientist_ordinal(self.pi) }
+    }
+
+    fn voice_id(&mut self, kind: talk_monster::LineKind) -> u8 {
+        let base_nprops = self.m.n_props;
+        unsafe {
+            match kind {
+                talk_monster::LineKind::Hello => scientist_hello_local_id(self.pi, self.map_index),
+                talk_monster::LineKind::Answer => scientist_dialogue_local_id(
+                    self.pi,
+                    self.map_index,
+                    SCI_DIALOG_ANSWER,
+                    base_nprops,
+                ),
+                talk_monster::LineKind::Question => scientist_dialogue_local_id(
+                    self.pi,
+                    self.map_index,
+                    SCI_DIALOG_QUESTION,
+                    base_nprops,
+                ),
+                talk_monster::LineKind::Idle => scientist_dialogue_local_id(
+                    self.pi,
+                    self.map_index,
+                    SCI_DIALOG_IDLE,
+                    base_nprops,
+                ),
+            }
+        }
+    }
 }
 
-/// Forced IdleRespond ignores the global two-second conversation gap and
-/// starts as soon as the question's actual sentence finishes. A long authored
-/// scripted sentence can pre-empt the one PS1 voice channel; stale responses
-/// are discarded instead of interrupting it later.
+/// One speech think for a scientist. Returns true when it started a line.
 #[inline(never)]
-unsafe fn scientist_try_response(
-    pi: usize,
-    map_index: u16,
-    in_player_pvs: bool,
-    base_nprops: usize,
-) -> bool {
-    if MAP_VOICE_PREFIX & 0x80 != 0
-        || SIM_NOW & 1 != 0
-        || PROP_DORMANT[pi] & PROP_RUNTIME_TALK_RESPONSE == 0
-        || !in_player_pvs
-        || LOGIC_PLAYER_HEALTH == 0
-        || PROP_HEALTH[pi] == 0
-        || !prop_scientist_flag(pi, PROP_SCI_PREDISASTER)
-    {
-        return false;
-    }
-    let due = PROP_DEATH_START[pi];
-    if !time_reached(SIM_NOW, due) {
-        return false;
-    }
-    let late = SIM_NOW.wrapping_sub(due);
-    if late > 40 && late < 0x8000 {
-        PROP_DORMANT[pi] &= !PROP_RUNTIME_TALK_RESPONSE;
-        return false;
-    }
-    if !time_reached(SIM_NOW, TALKING_UNTIL) {
-        return false;
-    }
-    let ordinal = scientist_ordinal(pi);
-    let voice = scientist_dialogue_local_id(pi, map_index, SCI_DIALOG_ANSWER, base_nprops);
-    let duration = scientist_logic::scientist_answer_duration_ticks(map_index, ordinal);
-    let pos = PROP_POS[pi];
-    let _ = sfx::play_voice_world(voice, pos);
-    TALKING_PROP = pi as u8;
-    TALKING_VOICE = voice | TALKING_VOICE_AUTONOMOUS;
-    TALKING_UNTIL = SIM_NOW.wrapping_add(duration);
-    PROP_DORMANT[pi] &= !PROP_RUNTIME_TALK_RESPONSE;
-    // The respondent gets the next conversational turn just after its own
-    // sentence and the source global talk gap finish.
-    PROP_DEATH_START[pi] = TALKING_UNTIL.wrapping_add(48);
-    prop_scientist_set_flag(pi, PROP_SCI_HELLO_SAID, true);
-    prop_client_push_set(pi, false);
-    #[cfg(feature = "reference-trace")]
-    reference_trace::talk(SIM_NOW, "answer_started", pi, voice, duration, pos, pos);
-    true
-}
-
-/// Source FIdleSpeak as used by TASK_WAIT_FOR_MOVEMENT and predisaster idle
-/// schedules. Questions mark a nearby stationary scientist for IdleRespond;
-/// otherwise a visible nearby player receives an idle statement.
-#[inline(never)]
-unsafe fn scientist_try_idle_speak(
+unsafe fn scientist_take_turn(
     m: &Map,
     sight_movers: &[phys::Mover],
     pi: usize,
@@ -17555,84 +17483,64 @@ unsafe fn scientist_try_idle_speak(
     in_player_pvs: bool,
     scripted_moving: bool,
 ) -> bool {
-    if MAP_VOICE_PREFIX & 0x80 != 0
-        || SIM_NOW & 1 != 0
-        || !in_player_pvs
-        || LOGIC_PLAYER_HEALTH == 0
-        || PROP_HEALTH[pi] == 0
-        || !prop_scientist_flag(pi, PROP_SCI_PREDISASTER)
-        || prop_scientist_flag(pi, PROP_SCI_PROVOKED)
-        || PROP_DORMANT[pi] & PROP_RUNTIME_TALK_RESPONSE != 0
-        || (!scripted_moving
-            && (!prop_scientist_flag(pi, PROP_SCI_HELLO_SAID)
-                || PROP_STATE[pi] != PROP_STATE_IDLE
-                || prop_script_busy(pi)))
-        || !time_reached(SIM_NOW, PROP_DEATH_START[pi])
-        || !talk_wait_ready(SIM_NOW)
-    {
+    let cx = talk_monster::SpeechContext {
+        now: SIM_NOW,
+        map_index,
+        voices_enabled: MAP_VOICE_PREFIX & 0x80 == 0,
+        player_in_pvs: in_player_pvs,
+        player_alive: LOGIC_PLAYER_HEALTH != 0,
+        player_pos,
+        player_eye: [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
+        actor_pos: PROP_POS[pi],
+        actor_yaw: prop_yaw_value(PROP_YAW[pi]),
+        script_busy: prop_script_busy(pi),
+        scripted_moving,
+    };
+    let mut actor = talk_actor_load(pi);
+    let mut clock = talk_clock();
+    let mut world = TalkWorldView {
+        m,
+        sight_movers,
+        pi,
+        map_index,
+    };
+    let line = talk_monster::take_turn(&mut actor, &mut clock, &cx, &mut world);
+    talk_actor_store(&actor);
+    talk_clock_store(clock);
+    let Some(line) = line else {
         return false;
-    }
-
+    };
     let pos = PROP_POS[pi];
-    let friend = scientist_talk_friend(m, sight_movers, pi);
-    if friend.is_none() {
-        // Ordinary idle schedules must greet the player first. Scripted
-        // movement can still initiate a scientist-to-scientist question before
-        // either actor has seen Gordon (c1a0's observation-room pair).
-        if !prop_scientist_flag(pi, PROP_SCI_HELLO_SAID) {
-            return false;
-        }
-        let player_top = [player_pos[0], player_pos[1] + 36, player_pos[2]];
-        let actor_top = [pos[0], pos[1] + 72, pos[2]];
-        if !scientist_logic::friend_in_talk_range(actor_top, player_top)
-            || !actor_line_clear(m, sight_movers, actor_top, player_top)
-        {
-            return false;
-        }
-    }
-
-    let ordinal = scientist_ordinal(pi);
-    let group = if friend.is_some() {
-        SCI_DIALOG_QUESTION
-    } else {
-        SCI_DIALOG_IDLE
-    };
-    let voice = scientist_dialogue_local_id(pi, map_index, group, m.n_props);
-    let duration = if group == SCI_DIALOG_QUESTION {
-        scientist_logic::predisaster_question_duration_ticks(map_index, ordinal)
-    } else {
-        scientist_logic::predisaster_idle_duration_ticks(map_index, ordinal)
-    };
-    let _ = sfx::play_voice_world(voice, pos);
-    TALKING_PROP = pi as u8;
-    TALKING_VOICE = voice | TALKING_VOICE_AUTONOMOUS;
-    TALKING_UNTIL = SIM_NOW.wrapping_add(duration);
-    PROP_DEATH_START[pi] = SIM_NOW.wrapping_add(1_200);
-    prop_scientist_set_flag(pi, PROP_SCI_HELLO_SAID, true);
-    prop_client_push_set(pi, false);
-    if let Some(friend) = friend {
-        PROP_DORMANT[friend] |= PROP_RUNTIME_TALK_RESPONSE;
-        PROP_DEATH_START[friend] = TALKING_UNTIL;
+    let _ = sfx::play_voice_world(line.voice, pos);
+    if let Some(friend) = line.listener {
+        let mut listener = talk_actor_load(friend);
+        talk_monster::hear_question(&mut listener, clock.until);
+        talk_actor_store(&listener);
     }
     #[cfg(feature = "reference-trace")]
     reference_trace::talk(
         SIM_NOW,
-        if group == SCI_DIALOG_QUESTION {
-            "question_started"
-        } else {
-            "idle_started"
+        match line.kind {
+            talk_monster::LineKind::Hello => "hello_started",
+            talk_monster::LineKind::Answer => "answer_started",
+            talk_monster::LineKind::Question => "question_started",
+            talk_monster::LineKind::Idle => "idle_started",
         },
         pi,
-        voice,
-        duration,
+        line.voice,
+        line.ticks,
         pos,
-        friend.map(|friend| PROP_POS[friend]).unwrap_or(player_pos),
+        match line.kind {
+            talk_monster::LineKind::Question => line.listener.map(|f| PROP_POS[f]).unwrap_or(pos),
+            talk_monster::LineKind::Idle => player_pos,
+            _ => pos,
+        },
     );
     true
 }
 
-/// Advance a source MoveAway schedule already owned by this talk monster.
-/// Return true while the schedule still suppresses ordinary ally/flee AI.
+/// Advance a step-aside already owned by this talk monster. Return true while
+/// it still suppresses ordinary ally/flee AI.
 #[inline(never)]
 unsafe fn tick_talk_move_away(
     m: &Map,
@@ -17640,16 +17548,23 @@ unsafe fn tick_talk_move_away(
     pi: usize,
     player_pos: [i32; 3],
 ) -> bool {
-    if PROP_STATE[pi] == PROP_STATE_MOVE_AWAY {
-        if PROP_AI_TIMER[pi] != 0 {
-            PROP_AI_TIMER[pi] -= 1;
+    let mut actor = talk_actor_load(pi);
+    let step = talk_monster::continue_move_away(
+        &mut actor,
+        PROP_POS[pi],
+        [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
+    );
+    if step == talk_monster::MoveAwayStep::Inactive {
+        return false;
+    }
+    talk_actor_store(&actor);
+    match step {
+        talk_monster::MoveAwayStep::Inactive => false,
+        talk_monster::MoveAwayStep::Walk { goal, speed } => {
+            let _ = prop_move_towards_point(m, movers, pi, goal, speed);
+            true
         }
-        let packed = PROP_SCRIPT_GOAL[pi];
-        let goal = [packed[0] as i32, packed[1] as i32, packed[2] as i32];
-        if PROP_AI_TIMER[pi] == 0 || dist2_xz(PROP_POS[pi], goal) <= 9 {
-            PROP_STATE[pi] = PROP_STATE_MOVE_AWAY_FACE;
-            PROP_MOVE_COOLDOWN[pi] = MOVE_AWAY_FACE_TICKS;
-            PROP_AI_TIMER[pi] = 0;
+        talk_monster::MoveAwayStep::Arrived { goal } => {
             prop_nav_cache_invalidate(pi);
             #[cfg(feature = "reference-trace")]
             reference_trace::talk(
@@ -17661,52 +17576,33 @@ unsafe fn tick_talk_move_away(
                 PROP_POS[pi],
                 goal,
             );
-            return true;
+            let _ = goal;
+            true
         }
-        let _ = prop_move_towards_point(m, movers, pi, goal, 3);
-        return true;
+        talk_monster::MoveAwayStep::FaceBack { look_at, done } => {
+            prop_face_point(pi, look_at);
+            !done
+        }
     }
-    if PROP_STATE[pi] == PROP_STATE_MOVE_AWAY_FACE {
-        prop_face_point(
-            pi,
-            [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
-        );
-        if PROP_MOVE_COOLDOWN[pi] != 0 {
-            PROP_MOVE_COOLDOWN[pi] -= 1;
-        }
-        if PROP_MOVE_COOLDOWN[pi] != 0 {
-            return true;
-        }
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-    }
-    false
 }
 
-/// Consume CLIENT_PUSH on the next 10 Hz monster think and build the exact
-/// 100-unit endpoint behind the latest MakeIdealYaw direction.
+/// Turn a recorded player push into a step-aside on the next 10 Hz think.
 #[inline(never)]
 unsafe fn try_start_talk_move_away(pi: usize) -> bool {
-    if !prop_client_push(pi) || MOVE_TICK & 1 != 0 {
-        return false;
-    }
-    prop_client_push_set(pi, false); // ChangeSchedule clears conditions.
-    let away_yaw = (PROP_SCRIPT_YAW[pi] & PROP_SCRIPT_YAW_MASK).wrapping_add(2048) & 0x0fff;
-    let goal = scientist_logic::move_away_goal(
+    let mut actor = talk_actor_load(pi);
+    let Some(goal) = talk_monster::try_begin_move_away(
+        &mut actor,
+        MOVE_TICK,
         PROP_POS[pi],
-        sincos::sin_q12(away_yaw),
-        sincos::sin_q12((away_yaw + 1024) & 0x0fff),
-    );
-    PROP_SCRIPT_GOAL[pi] = [
-        goal[0].clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-        goal[1].clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-        goal[2].clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-    ];
-    PROP_STATE[pi] = PROP_STATE_MOVE_AWAY;
-    PROP_MOVE_COOLDOWN[pi] = MOVE_AWAY_START_ACTIVE_TICKS;
-    PROP_AI_TIMER[pi] = MOVE_AWAY_TIMEOUT_TICKS;
+        PROP_SCRIPT_YAW[pi] & PROP_SCRIPT_YAW_MASK,
+    ) else {
+        return false;
+    };
+    talk_actor_store(&actor);
     prop_nav_cache_invalidate(pi);
     #[cfg(feature = "reference-trace")]
     reference_trace::talk(SIM_NOW, "move_away_path", pi, 0xff, 0, PROP_POS[pi], goal);
+    let _ = goal;
     true
 }
 
@@ -17889,23 +17785,7 @@ unsafe fn tick_scientist(
     if try_start_talk_move_away(pi) {
         return;
     }
-    if scientist_try_response(pi, map_index, in_player_pvs, m.n_props) {
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        return;
-    }
-    if scientist_try_hello(
-        m,
-        sight_movers,
-        pi,
-        player_pos,
-        map_index,
-        in_player_pvs,
-        false,
-    ) {
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        return;
-    }
-    if scientist_try_idle_speak(
+    if scientist_take_turn(
         m,
         sight_movers,
         pi,
@@ -17959,9 +17839,7 @@ unsafe fn tick_scientist(
 #[inline(never)]
 #[optimize(size)]
 unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
-    TALKING_PROP = TALKING_PROP_NONE;
-    TALKING_UNTIL = 0;
-    TALKING_VOICE = 0;
+    talk_clock_store(talk_monster::TalkClock::SILENT);
     let voices = room_budget::TALK_VOICES[map_index];
     (*core::ptr::addr_of_mut!(MAP_TALK_IDS)).copy_from_slice(&voices[..6]);
     MAP_VOICE_PREFIX = voices[6];

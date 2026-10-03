@@ -82,3 +82,10 @@ pub mod beverage;
 
 #[path = "../../../game/src/setpiece_logic.rs"]
 pub mod setpiece_logic;
+
+#[path = "../../../game/src/talk_monster.rs"]
+pub mod talk_monster;
+
+/// Behaviour-level tests that pin the game's observable rules from the
+/// outside of each module (golden scenarios plus spec properties).
+pub mod behaviour;
