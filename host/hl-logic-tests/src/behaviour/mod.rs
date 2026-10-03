@@ -8,4 +8,6 @@ pub mod setpiece_kit;
 #[cfg(test)]
 mod mortar;
 #[cfg(test)]
+mod osprey;
+#[cfg(test)]
 mod tank;
