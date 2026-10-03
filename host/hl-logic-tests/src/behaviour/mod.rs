@@ -2,5 +2,6 @@
 //! the current implementation, so a reimplementation can be checked against
 //! observable behaviour.
 
+mod damage_compass;
 mod player_damage;
 mod pushable_float;
