@@ -50,6 +50,7 @@ mod osprey;
 mod save;
 mod scientist_logic;
 mod scratchpad;
+mod scripted_sequence;
 mod setpiece_logic;
 mod setpiece_sfx;
 mod talk_monster;
@@ -6500,8 +6501,8 @@ const LOGIC_PROP_NONE: u8 = 255;
 const SF_DOOR_START_OPEN: u16 = 1;
 const SF_DOOR_TOGGLE: u16 = 32;
 const SF_DOOR_USE_ONLY: u16 = 256;
-const SF_SCRIPT_REPEATABLE: u16 = 4;
-const SF_SCRIPT_NOINTERRUPT: u16 = 32;
+const SF_SCRIPT_REPEATABLE: u16 = scripted_sequence::SF_REPEATABLE;
+const SF_SCRIPT_NOINTERRUPT: u16 = scripted_sequence::SF_NO_INTERRUPT;
 const SF_BUTTON_DONTMOVE: u16 = 1;
 const SF_BUTTON_TOGGLE: u16 = 32;
 const SF_BUTTON_TOUCH_ONLY: u16 = 256;
@@ -9684,63 +9685,332 @@ unsafe fn prop_script_move_residue_clear(pi: usize) {
     }
 }
 
+// ---- scripted_sequence adaptor: packs/unpacks scripted_sequence state ----
+
+#[inline(never)]
+unsafe fn script_actor_load(pi: usize) -> scripted_sequence::ScriptActor {
+    let li = PROP_SCRIPT_LI[pi];
+    let yaw = PROP_SCRIPT_YAW[pi];
+    scripted_sequence::ScriptActor {
+        pos: PROP_POS[pi],
+        alive: PROP_HEALTH[pi] > 0,
+        activity: match PROP_STATE[pi] {
+            PROP_STATE_IDLE => scripted_sequence::Activity::Idle,
+            PROP_STATE_MOVE => scripted_sequence::Activity::Moving,
+            _ => scripted_sequence::Activity::Other,
+        },
+        yaw: prop_yaw_value(PROP_YAW[pi]),
+        mode: scripted_sequence::decode_mode(PROP_SCRIPT_MODE[pi]),
+        script: if li == u16::MAX {
+            None
+        } else {
+            Some((li & PROP_SCRIPT_LI_MASK) as usize)
+        },
+        goal: PROP_SCRIPT_GOAL[pi],
+        target_yaw: yaw & PROP_SCRIPT_YAW_MASK,
+        residue: [
+            scientist_logic::script_q4_decode(yaw >> PROP_SCRIPT_YAW_RESIDUE_SHIFT),
+            scientist_logic::script_q4_decode(li >> PROP_SCRIPT_LI_RESIDUE_SHIFT),
+        ],
+        deadline: PROP_SCRIPT_PLAY_UNTIL[pi],
+        play_clip: PROP_SCRIPT_PLAY_CLIP[pi],
+        idle_clip: PROP_SCRIPT_IDLE_CLIP[pi],
+        hold: PROP_MOVE_COOLDOWN[pi],
+        no_interrupt: prop_scientist_flag(pi, PROP_SCRIPT_NOINTERRUPT),
+    }
+}
+
+#[inline(never)]
+unsafe fn script_actor_store(pi: usize, a: &scripted_sequence::ScriptActor) {
+    match a.activity {
+        scripted_sequence::Activity::Idle => PROP_STATE[pi] = PROP_STATE_IDLE,
+        scripted_sequence::Activity::Moving => PROP_STATE[pi] = PROP_STATE_MOVE,
+        scripted_sequence::Activity::Other => {}
+    }
+    PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], a.yaw);
+    PROP_SCRIPT_MODE[pi] = scripted_sequence::encode_mode(a.mode);
+    PROP_SCRIPT_LI[pi] = match a.script {
+        None => u16::MAX,
+        Some(li) => {
+            (li as u16 & PROP_SCRIPT_LI_MASK)
+                | (scientist_logic::script_q4_encode(a.residue[1]) << PROP_SCRIPT_LI_RESIDUE_SHIFT)
+        }
+    };
+    PROP_SCRIPT_GOAL[pi] = a.goal;
+    PROP_SCRIPT_YAW[pi] = (a.target_yaw & PROP_SCRIPT_YAW_MASK)
+        | (scientist_logic::script_q4_encode(a.residue[0]) << PROP_SCRIPT_YAW_RESIDUE_SHIFT);
+    PROP_SCRIPT_PLAY_UNTIL[pi] = a.deadline;
+    PROP_SCRIPT_PLAY_CLIP[pi] = a.play_clip;
+    PROP_SCRIPT_IDLE_CLIP[pi] = a.idle_clip;
+    PROP_MOVE_COOLDOWN[pi] = a.hold;
+    prop_scientist_set_flag(pi, PROP_SCRIPT_NOINTERRUPT, a.no_interrupt);
+}
+
+#[inline]
+unsafe fn script_actor_kind(pi: usize) -> scripted_sequence::ActorKind {
+    let kind = PROP_KIND[pi];
+    scripted_sequence::ActorKind {
+        scientist: prop_is_scientist(kind),
+        barney: kind == PROP_TYPE_BARNEY,
+        houndeye: kind == PROP_TYPE_HOUNDEYE,
+    }
+}
+
+/// Decode one cooked scripted_sequence record.
+#[inline(never)]
+fn script_record(m: &Map, li: usize) -> scripted_sequence::ScriptRecord {
+    let rec = m.logic(li);
+    let (play_clip, idle_clip) = if rec.aux_count >= 1 {
+        let a = m.logic_aux(rec.first_aux);
+        (
+            script_clip_token_slot(a.target),
+            script_clip_token_slot(a.delay_ticks),
+        )
+    } else {
+        (0xFF, 0xFF)
+    };
+    // The cooker appends a play animation's root offset (forward, left) as a
+    // trailing aux record, marked by an even aux count.
+    let root_offset = if rec.aux_count >= 2 && rec.aux_count & 1 == 0 {
+        let a = m.logic_aux(rec.first_aux + rec.aux_count - 1);
+        Some([a.target as i16 as i32, a.delay_ticks as i16 as i32])
+    } else {
+        None
+    };
+    scripted_sequence::ScriptRecord {
+        actor_name: rec.arg0,
+        class_kind: scientist_logic::selector_kind(rec.flags),
+        radius: (rec.wait_ticks as i32).max(0),
+        move_mode: rec.arg1,
+        origin: rec.origin,
+        yaw: rec.speed & 0xFFF,
+        repeatable: rec.spawnflags & SF_SCRIPT_REPEATABLE != 0,
+        no_interrupt: rec.spawnflags & SF_SCRIPT_NOINTERRUPT != 0,
+        has_idle: rec.flags & map::LOGIC_SCRIPTED_HAS_IDLE != 0,
+        has_play: rec.flags & map::LOGIC_SCRIPTED_HAS_PLAY != 0,
+        targeted: rec.targetname != 0,
+        play_clip,
+        idle_clip,
+        root_offset,
+    }
+}
+
+/// The live actor roster as the claim search sees it.
+struct ScriptRosterView;
+
+impl scripted_sequence::Roster for ScriptRosterView {
+    fn len(&self) -> usize {
+        unsafe { PROP_COUNT.min(CARRY_MAILBOX_FIRST) }
+    }
+
+    fn candidate(&self, pi: usize) -> scripted_sequence::Candidate {
+        unsafe {
+            scripted_sequence::Candidate {
+                active: PROP_ACTIVE[pi] != 0,
+                alive: PROP_HEALTH[pi] > 0,
+                item: model_def(PROP_KIND[pi]).ai == AI_ITEM,
+                name: PROP_NAME[pi],
+                kind: PROP_KIND[pi],
+                pos: PROP_POS[pi],
+                busy: prop_script_busy(pi),
+                script: if PROP_SCRIPT_LI[pi] != u16::MAX {
+                    Some(prop_script_li(pi))
+                } else {
+                    None
+                },
+                primed: scientist_logic::script_is_primed(PROP_SCRIPT_MODE[pi]),
+            }
+        }
+    }
+}
+
+/// The world as one scripted actor touches it. Actions that can move the
+/// actor or fire logic write the actor out first and read it back after.
+struct ScriptWorldView<'a> {
+    m: &'a Map,
+    movers: &'a [phys::Mover],
+    sight_movers: &'a [phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    map_index: u16,
+    in_player_pvs: bool,
+}
+
+impl<'a> ScriptWorldView<'a> {
+    /// A view for work outside an actor's tick (assignment, priming).
+    fn cold(m: &'a Map, pi: usize) -> Self {
+        Self {
+            m,
+            movers: &[],
+            sight_movers: &[],
+            pi,
+            player_pos: [0; 3],
+            map_index: 0,
+            in_player_pvs: false,
+        }
+    }
+
+    unsafe fn sync<F: FnOnce(&Self)>(&self, a: &mut scripted_sequence::ScriptActor, f: F) {
+        script_actor_store(self.pi, a);
+        f(self);
+        *a = script_actor_load(self.pi);
+    }
+}
+
+impl scripted_sequence::ScriptWorld for ScriptWorldView<'_> {
+    fn record(&self, li: usize) -> Option<scripted_sequence::ScriptRecord> {
+        if li < self.m.n_logic.min(MAX_LOGIC) {
+            Some(script_record(self.m, li))
+        } else {
+            None
+        }
+    }
+
+    fn play_hold_ticks(&mut self, a: &scripted_sequence::ScriptActor) -> u16 {
+        unsafe {
+            script_actor_store(self.pi, a);
+            script_play_hold_ticks(self.m, self.pi)
+        }
+    }
+
+    fn talk_turn(&mut self, a: &mut scripted_sequence::ScriptActor) {
+        unsafe {
+            self.sync(a, |w| {
+                let _ = scientist_take_turn(
+                    w.m,
+                    w.sight_movers,
+                    w.pi,
+                    w.player_pos,
+                    w.map_index,
+                    w.in_player_pvs,
+                    true,
+                );
+            })
+        }
+    }
+
+    fn local_replan(
+        &mut self,
+        a: &mut scripted_sequence::ScriptActor,
+        waypoint: [i32; 3],
+        now: u16,
+    ) {
+        unsafe {
+            self.sync(a, |w| {
+                script_dynamic_local_replan(
+                    w.m,
+                    w.sight_movers,
+                    w.pi,
+                    now,
+                    waypoint,
+                    [
+                        w.player_pos[0],
+                        w.player_pos[1] + PLAYER_TOUCH_HEIGHT / 2,
+                        w.player_pos[2],
+                    ],
+                    PLAYER_TOUCH_HEIGHT / 2,
+                );
+            })
+        }
+    }
+
+    fn plan_route(
+        &mut self,
+        a: &scripted_sequence::ScriptActor,
+        goal: [i32; 3],
+        now: u16,
+    ) -> scripted_sequence::RoutePlan {
+        unsafe { script_plan_route(self.m, self.pi, a.pos, goal, now) }
+    }
+
+    fn move_toward(&mut self, a: &mut scripted_sequence::ScriptActor, goal: [i32; 3], speed: i32) {
+        unsafe {
+            self.sync(a, |w| {
+                let _ = prop_move_towards_point(w.m, w.movers, w.pi, goal, speed);
+            })
+        }
+    }
+
+    fn place(&mut self, a: &mut scripted_sequence::ScriptActor, pos: [i32; 3]) {
+        unsafe { self.sync(a, |w| prop_set_pos_exact(w.m, w.pi, pos)) }
+    }
+
+    fn forget_route(&mut self) {
+        unsafe { prop_nav_cache_invalidate(self.pi) }
+    }
+
+    fn floor_below(
+        &mut self,
+        _a: &scripted_sequence::ScriptActor,
+        probe: [i32; 3],
+        depth: i32,
+    ) -> Option<i32> {
+        prop_floor_y_down(self.m, self.pi, probe, depth)
+    }
+
+    fn studio_events(&mut self, a: &mut scripted_sequence::ScriptActor, idle: bool) {
+        unsafe { self.sync(a, |w| script_tick_studio_events(w.m, w.pi, idle)) }
+    }
+
+    fn take_over_talker(&mut self, a: &mut scripted_sequence::ScriptActor) {
+        unsafe {
+            self.sync(a, |w| {
+                let mut talker = talk_actor_load(w.pi);
+                talk_monster::script_takes_over(&mut talker);
+                talk_actor_store(&talker);
+            })
+        }
+    }
+
+    fn script_started(&mut self, li: usize) {
+        unsafe { LOGIC_STATE[li] = LOGIC_STATE_BOTTOM }
+    }
+
+    fn fire_targets(&mut self, a: &mut scripted_sequence::ScriptActor, li: usize) {
+        unsafe {
+            self.sync(a, |w| {
+                logic_sub_use_targets(
+                    w.m,
+                    w.m.n_logic.min(MAX_LOGIC),
+                    w.m.n_ents.min(MAX_ENTS),
+                    li,
+                    w.m.logic(li),
+                    SIM_NOW,
+                    map::USE_TOGGLE,
+                    0,
+                );
+            })
+        }
+    }
+
+    fn remove_script(&mut self, a: &mut scripted_sequence::ScriptActor, li: usize) {
+        unsafe {
+            self.sync(a, |w| {
+                logic_remove_entity(li, w.m.logic(li), w.m.n_ents.min(MAX_ENTS))
+            })
+        }
+    }
+
+    #[cfg_attr(not(feature = "reference-trace"), allow(unused_variables))]
+    fn trace(&mut self, a: i32, b: i32, code: u8) {
+        #[cfg(feature = "reference-trace")]
+        reference_trace::nav_step(unsafe { SIM_NOW } as u32, self.pi as u16, a, b, code);
+    }
+}
+
 /// Release every piece of actor-side cinematic state before another script or
-/// normal AI is allowed to run.  In particular LI must be cleared on cancel so
-/// an interrupted sequence can never fire its completion outputs later.
+/// normal AI is allowed to run, without firing anything.
 #[inline]
 unsafe fn prop_script_clear(pi: usize) {
-    PROP_SCRIPT_MODE[pi] = 0;
-    PROP_SCRIPT_LI[pi] = u16::MAX;
-    PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
-    PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
-    PROP_SCRIPT_PLAY_UNTIL[pi] = 0;
-    prop_scientist_set_flag(pi, PROP_SCRIPT_NOINTERRUPT, false);
+    let mut actor = script_actor_load(pi);
+    scripted_sequence::release(&mut actor);
+    script_actor_store(pi, &actor);
     prop_nav_cache_invalidate(pi);
 }
 
-/// Exact targetname selection is always attempted first.  A cooked classname
-/// selector is only the fallback, matching `CCineMonster::FindEntity`; it picks
-/// the first eligible living actor in cooked engine order inside m_flRadius.
-unsafe fn script_find_actor(rec: map::LogicEnt) -> Option<usize> {
-    let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-    let mut pi = 0usize;
-    while pi < n {
-        if PROP_ACTIVE[pi] != 0
-            && PROP_HEALTH[pi] > 0
-            && model_def(PROP_KIND[pi]).ai != AI_ITEM
-            && PROP_NAME[pi] != 0
-            && PROP_NAME[pi] == rec.arg0
-            && !prop_script_busy(pi)
-        {
-            return Some(pi);
-        }
-        pi += 1;
-    }
-
-    let wanted = scientist_logic::selector_kind(rec.flags)?;
-    let radius = (rec.wait_ticks as i32).max(0);
-    pi = 0;
-    while pi < n {
-        let p = PROP_POS[pi];
-        let delta = [
-            p[0] - rec.origin[0],
-            p[1] - rec.origin[1],
-            p[2] - rec.origin[2],
-        ];
-        if scientist_logic::script_candidate_eligible(
-            PROP_KIND[pi],
-            wanted,
-            PROP_ACTIVE[pi] != 0,
-            PROP_HEALTH[pi],
-            prop_script_busy(pi),
-            delta,
-            radius,
-        ) {
-            return Some(pi);
-        }
-        pi += 1;
-    }
-    None
+/// A free actor for `rec`: by name first, else by class within its radius.
+unsafe fn script_find_actor(m: &Map, li: usize) -> Option<usize> {
+    scripted_sequence::find_actor(&script_record(m, li), &ScriptRosterView)
 }
 
 /// SV_HullForBsp: a monster no wider or taller than 36 units moves in the
@@ -10089,126 +10359,83 @@ unsafe fn script_dynamic_local_replan(
     }
 }
 
-#[inline(never)]
-unsafe fn script_remaining_path_distance(m: &Map, pi: usize) -> u32 {
-    let pos = PROP_POS[pi];
-    let g = PROP_SCRIPT_GOAL[pi];
-    let waypoint = [g[0] as i32, g[1] as i32, g[2] as i32];
-    let mut distance = isqrt_i32(dist2_xz(pos, waypoint)).max(0) as u32;
-    if scientist_logic::script_uses_detour(PROP_SCRIPT_MODE[pi])
-        && PROP_SCRIPT_LI[pi] != u16::MAX
-        && prop_script_li(pi) < m.n_logic.min(MAX_LOGIC)
-    {
-        let authored = m.logic(prop_script_li(pi)).origin;
-        distance = distance.saturating_add(isqrt_i32(dist2_xz(waypoint, authored)).max(0) as u32);
-    }
-    distance
-}
-
+/// BuildRoute for a walk or run script: a clear chord heads straight for the
+/// mark (unless the mark is on another floor), a blocked one tries a local
+/// detour first and the node graph last. It chooses once, at assignment.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn script_assign_actor(m: &Map, li: usize, rec: map::LogicEnt, pi: usize, now: u16) {
-    // A cinematic owns the actor from now on: the talk state forgets a
-    // pending push and abandons any step-aside.
-    let mut talker = talk_actor_load(pi);
-    talk_monster::script_takes_over(&mut talker);
-    talk_actor_store(&talker);
-    let mode = match rec.arg1 {
-        0 | 5 => 3, // SCRIPT_WAIT: play in place, do not move/turn
-        1 => 1,
-        2 => 2,
-        4 => 4,
-        _ => 3,
+unsafe fn script_plan_route(
+    m: &Map,
+    pi: usize,
+    pos: [i32; 3],
+    authored_goal: [i32; 3],
+    now: u16,
+) -> scripted_sequence::RoutePlan {
+    let mut plan = scripted_sequence::RoutePlan::DIRECT;
+    // logic_pre_tick runs before this frame rebuilds the compact mover
+    // list, but the prior tick's stable list already carries the exact
+    // current brush poses. Map initialization resets MOVER_COUNT to zero.
+    let movers = core::slice::from_raw_parts(
+        core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),
+        MOVER_COUNT.min(MAX_ENTS + 1),
+    );
+    let world_blocked = actor_chord_blocked(m, movers, pi, pos, authored_goal);
+    let actor_blocked = script_human_actor_blocked_fraction(pi, pos, authored_goal, None);
+    let blocked = match (world_blocked, actor_blocked) {
+        (Some(world), Some(actor)) => Some(world.min(actor)),
+        (Some(world), None) => Some(world),
+        (None, Some(actor)) => Some(actor),
+        (None, None) => None,
     };
-    let authored_goal = rec.origin;
-    PROP_SCRIPT_GOAL[pi] = [
-        authored_goal[0] as i16,
-        authored_goal[1] as i16,
-        authored_goal[2] as i16,
-    ];
-    PROP_SCRIPT_YAW[pi] = rec.speed & 0xFFF;
-    prop_nav_cache_invalidate(pi);
-    let pos = PROP_POS[pi];
-    // BuildRoute chooses once: direct local chord, FTriangulate, then the node
-    // graph. A succession of tiny point-clear steps walks straight toward a
-    // distant wall and selects the graph far too late.
-    let mut encoded_mode = mode;
-    if mode == 1 || mode == 2 {
-        // logic_pre_tick runs before this frame rebuilds the compact mover
-        // list, but the prior tick's stable list already carries the exact
-        // current brush poses. Map initialization resets MOVER_COUNT to zero.
-        let movers = core::slice::from_raw_parts(
-            core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),
-            MOVER_COUNT.min(MAX_ENTS + 1),
-        );
-        let world_blocked = actor_chord_blocked(m, movers, pi, pos, authored_goal);
-        let actor_blocked = script_human_actor_blocked_fraction(pi, pos, authored_goal, None);
-        let blocked = match (world_blocked, actor_blocked) {
-            (Some(world), Some(actor)) => Some(world.min(actor)),
-            (Some(world), None) => Some(world),
-            (None, Some(actor)) => Some(actor),
-            (None, None) => None,
-        };
-        if let Some(blocked_frac) = blocked {
-            let dx = authored_goal[0] - pos[0];
-            let dz = authored_goal[2] - pos[2];
-            let distance =
-                isqrt_i32(dx.saturating_mul(dx).saturating_add(dz.saturating_mul(dz))).max(0);
-            let blocked_dist = ((distance * blocked_frac.clamp(0, 4096)) >> 12) & !15;
-            if let Some(apex) =
-                script_local_detour(m, movers, pi, now, pos, authored_goal, blocked_dist, None)
-            {
-                PROP_SCRIPT_GOAL[pi] = [apex[0] as i16, apex[1] as i16, apex[2] as i16];
-                encoded_mode = scientist_logic::script_detour_mode(encoded_mode, true);
-            } else if m.n_nav != 0 && nav_route_available(m, movers, pi, authored_goal) {
-                // FGetNodeRoute is the last resort after triangulation fails.
-                encoded_mode = scientist_logic::script_route_mode(encoded_mode, true);
-                if let Some(entry) = nav_route_simplified_entry(m, movers, pi, pos) {
-                    PROP_SCRIPT_GOAL[pi] = [entry[0] as i16, entry[1] as i16, entry[2] as i16];
-                    encoded_mode = scientist_logic::script_detour_mode(encoded_mode, true);
-                }
-            }
-        } else if (authored_goal[1] - pos[1]).abs() > 64
-            && m.n_nav != 0
-            && nav_route_available(m, movers, pi, authored_goal)
+    if let Some(blocked_frac) = blocked {
+        let dx = authored_goal[0] - pos[0];
+        let dz = authored_goal[2] - pos[2];
+        let distance =
+            isqrt_i32(dx.saturating_mul(dx).saturating_add(dz.saturating_mul(dz))).max(0);
+        let blocked_dist = ((distance * blocked_frac.clamp(0, 4096)) >> 12) & !15;
+        if let Some(apex) =
+            script_local_detour(m, movers, pi, now, pos, authored_goal, blocked_dist, None)
         {
-            // GoldSrc's LOCALMOVE_INVALID_DONT_TRIANGULATE: the horizontal
-            // chord is clear but the final floor differs by more than 64.
-            encoded_mode = scientist_logic::script_route_mode(encoded_mode, true);
+            plan.waypoint = Some(apex);
+            plan.detour = true;
+        } else if m.n_nav != 0 && nav_route_available(m, movers, pi, authored_goal) {
+            // FGetNodeRoute is the last resort after triangulation fails.
+            plan.routed = true;
             if let Some(entry) = nav_route_simplified_entry(m, movers, pi, pos) {
-                PROP_SCRIPT_GOAL[pi] = [entry[0] as i16, entry[1] as i16, entry[2] as i16];
-                encoded_mode = scientist_logic::script_detour_mode(encoded_mode, true);
+                plan.waypoint = Some(entry);
+                plan.detour = true;
             }
         }
+    } else if (authored_goal[1] - pos[1]).abs() > 64
+        && m.n_nav != 0
+        && nav_route_available(m, movers, pi, authored_goal)
+    {
+        // The horizontal chord is clear but the final floor differs by more
+        // than 64 units: do not triangulate, use the graph.
+        plan.routed = true;
+        if let Some(entry) = nav_route_simplified_entry(m, movers, pi, pos) {
+            plan.waypoint = Some(entry);
+            plan.detour = true;
+        }
     }
-    PROP_SCRIPT_MODE[pi] = encoded_mode;
-    PROP_SCRIPT_LI[pi] = li as u16;
-    if mode == 1 || mode == 2 {
-        PROP_MOVE_COOLDOWN[pi] = scientist_logic::SCRIPT_MOVE_START_ACTIVE_TICKS;
-        let distance = script_remaining_path_distance(m, pi);
-        let speed = scientist_logic::script_timeout_speed(mode, PROP_KIND[pi] == PROP_TYPE_BARNEY);
-        PROP_SCRIPT_PLAY_UNTIL[pi] =
-            now.wrapping_add(scientist_logic::script_move_timeout_ticks(distance, speed));
-    } else {
-        PROP_MOVE_COOLDOWN[pi] = 0;
-        PROP_SCRIPT_PLAY_UNTIL[pi] = now;
-    }
-    prop_scientist_set_flag(
-        pi,
-        PROP_SCRIPT_NOINTERRUPT,
-        rec.spawnflags & SF_SCRIPT_NOINTERRUPT != 0,
+    plan
+}
+
+/// Give actor `pi` to scripted_sequence `li` and start it.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn script_assign_actor(m: &Map, li: usize, pi: usize, now: u16) {
+    let mut world = ScriptWorldView::cold(m, pi);
+    let mut actor = script_actor_load(pi);
+    scripted_sequence::assign(
+        &mut actor,
+        li,
+        &script_record(m, li),
+        script_actor_kind(pi),
+        now,
+        &mut world,
     );
-    // aux[0] low six bits = slot+1; high ten bits = the original
-    // GoldSrc sequence duration in 100 ms quanta. Several retail sequences
-    // alias one baked pose clip for RAM, but their schedule timing stays exact.
-    if rec.aux_count >= 1 {
-        let a = m.logic_aux(rec.first_aux);
-        PROP_SCRIPT_PLAY_CLIP[pi] = script_clip_token_slot(a.target);
-        PROP_SCRIPT_IDLE_CLIP[pi] = script_clip_token_slot(a.delay_ticks);
-    } else {
-        PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
-        PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
-    }
+    script_actor_store(pi, &actor);
 }
 
 const SCRIPT_CLIP_SLOT_MASK: u16 = 0x003f;
@@ -10322,71 +10549,30 @@ unsafe fn script_tick_studio_events(m: &Map, pi: usize, idle: bool) {
     }
 }
 
-/// GoldSrc starts CineThink for a targeted scripted_sequence when m_iszIdle is
-/// present. It possesses the actor and moves it to the mark, but holds the idle
-/// clip until Use advances m_startTime. Encode that ownership in the existing
-/// script-mode high bit; no new actor array is required.
-unsafe fn script_prime_idle_actor(m: &Map, li: usize, rec: map::LogicEnt, pi: usize) {
-    script_assign_actor(m, li, rec, pi, 0);
-    PROP_SCRIPT_MODE[pi] = scientist_logic::script_primed_mode(PROP_SCRIPT_MODE[pi]);
-    // The play gesture begins only when this same script is later fired. The
-    // idle clip remains loaded and suspends ordinary AI while primed.
-    PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
-    PROP_STATE[pi] = PROP_STATE_IDLE;
-    // The gameplay clock is map-local, but SIM_NOW still contains the previous
-    // room's last tick while a changelevel initializes this room.
-    PROP_SCRIPT_PLAY_UNTIL[pi] = scientist_logic::SCRIPT_PRIME_DELAY_TICKS;
+/// Possess an actor at map start for a sequence that waits to be fired.
+unsafe fn script_prime_idle_actor(m: &Map, li: usize, pi: usize) {
+    let mut world = ScriptWorldView::cold(m, pi);
+    let mut actor = script_actor_load(pi);
+    scripted_sequence::prime(
+        &mut actor,
+        li,
+        &script_record(m, li),
+        script_actor_kind(pi),
+        &mut world,
+    );
+    script_actor_store(pi, &actor);
 }
 
-/// Gate the staged half of a targeted scripted_sequence outside tick_props so
-/// semantic/reference builds do not push that already-large MIPS function past
-/// a PC16 branch span. Returns true while the actor must remain held.
+/// Gate a primed actor outside tick_props so semantic/reference builds do not
+/// push that already-large MIPS function past a PC16 branch span. Returns true
+/// while the actor must remain held.
 #[inline(never)]
 unsafe fn script_primed_actor_holds(m: &Map, pi: usize, now: u16) -> bool {
-    let encoded_mode = PROP_SCRIPT_MODE[pi];
-    match scientist_logic::script_prime_gate(
-        encoded_mode,
-        PROP_STATE[pi] == PROP_STATE_MOVE,
-        time_reached(now, PROP_SCRIPT_PLAY_UNTIL[pi]),
-    ) {
-        scientist_logic::ScriptPrimeGate::Hold => true,
-        scientist_logic::ScriptPrimeGate::Execute => false,
-        scientist_logic::ScriptPrimeGate::StartMove => {
-            let distance = script_remaining_path_distance(m, pi);
-            let speed = scientist_logic::script_timeout_speed(
-                scientist_logic::script_base_mode(encoded_mode),
-                PROP_KIND[pi] == PROP_TYPE_BARNEY,
-            );
-            PROP_SCRIPT_PLAY_UNTIL[pi] =
-                now.wrapping_add(scientist_logic::script_move_timeout_ticks(distance, speed));
-            PROP_STATE[pi] = PROP_STATE_MOVE;
-            false
-        }
-    }
-}
-
-/// Leave the internal face-mark phase and begin the authored play gesture.
-/// The ordinary completion path remains one tick later, matching
-/// SequenceDone's schedule transition.
-#[inline]
-unsafe fn script_finish_face_phase(m: &Map, pi: usize, primed: bool) {
-    if primed {
-        // Only walk/run scripts face their mark. Their possession raised
-        // m_iDelay (DelayStart(1)), and TASK_ENABLE_SCRIPT's DelayStart(0)
-        // on arrival sets m_startTime to now: a staged idle script with a
-        // walk/run move starts by itself once its actor is planted, as the
-        // Use it would otherwise wait for does (c1a4's fleeing houndeyes).
-        let li = prop_script_li(pi);
-        LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
-        script_assign_actor(m, li, m.logic(li), pi, SIM_NOW);
-        return;
-    }
-    PROP_SCRIPT_MODE[pi] = 0;
-    PROP_SCRIPT_PLAY_UNTIL[pi] = if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF {
-        SIM_NOW.wrapping_add(script_play_hold_ticks(m, pi))
-    } else {
-        SIM_NOW
-    };
+    let world = ScriptWorldView::cold(m, pi);
+    let mut actor = script_actor_load(pi);
+    let holds = scripted_sequence::primed_holds(&mut actor, script_actor_kind(pi), now, &world);
+    script_actor_store(pi, &actor);
+    holds
 }
 
 /// Advance one actor's cinematic state outside tick_props. Besides keeping the
@@ -10403,335 +10589,26 @@ unsafe fn tick_scripted_actor(
     map_index: u16,
     in_player_pvs: bool,
 ) -> bool {
-    let scripted_mode = scientist_logic::script_base_mode(PROP_SCRIPT_MODE[pi]);
-    if primed_hold {
-        // Possessed by a targeted idle script, either waiting for CineThink or
-        // planted at the mark and waiting for this same script's Use.
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        if scientist_logic::script_base_mode(PROP_SCRIPT_MODE[pi]) == 0 {
-            script_tick_studio_events(m, pi, true);
-        }
-        return true;
-    }
-    if scripted_mode != 0 {
-        // CTalkMonster::RunTask(TASK_WAIT_FOR_MOVEMENT) continues calling
-        // FIdleHello while a scientist walks/runs to a scripted_sequence. The
-        // ordinary AI path below is skipped for script-owned actors, so retain
-        // this progression-visible lobby dialogue here. Startup cooldown keeps
-        // the attempts in the source's actual WAIT_FOR_MOVEMENT phase.
-        if (scripted_mode == 1 || scripted_mode == 2)
-            && prop_is_scientist(PROP_KIND[pi])
-            && PROP_MOVE_COOLDOWN[pi] == 0
-        {
-            let _ = scientist_take_turn(
-                m,
-                sight_movers,
-                pi,
-                player_pos,
-                map_index,
-                in_player_pvs,
-                true,
-            );
-        }
-        // CBaseMonster::Move performs this lookahead on the same active 10 Hz
-        // movement think as MoveExecute. Startup/failure cooldowns do not call
-        // Move in the source, and an expired port deadline must still plant at
-        // the authored mark rather than create a last-moment route.
-        let current_encoded_mode = PROP_SCRIPT_MODE[pi];
-        if (scripted_mode == 1 || scripted_mode == 2)
-            && (pi as u16 ^ MOVE_TICK) & 1 == 0
-            && PROP_MOVE_COOLDOWN[pi] == 0
-            && !time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi])
-            && !scientist_logic::script_uses_route(current_encoded_mode)
-            && !scientist_logic::script_uses_detour(current_encoded_mode)
-        {
-            let direct = PROP_SCRIPT_GOAL[pi];
-            script_dynamic_local_replan(
-                m,
-                sight_movers,
-                pi,
-                SIM_NOW,
-                [direct[0] as i32, direct[1] as i32, direct[2] as i32],
-                [
-                    player_pos[0],
-                    player_pos[1] + PLAYER_TOUCH_HEIGHT / 2,
-                    player_pos[2],
-                ],
-                PLAYER_TOUCH_HEIGHT / 2,
-            );
-        }
-        let g = PROP_SCRIPT_GOAL[pi];
-        let waypoint_goal = [g[0] as i32, g[1] as i32, g[2] as i32];
-        let encoded_mode = PROP_SCRIPT_MODE[pi];
-        let primed = scientist_logic::script_is_primed(encoded_mode);
-        let detouring = scientist_logic::script_uses_detour(encoded_mode);
-        let mode = scripted_mode;
-        if mode == scientist_logic::SCRIPT_FACE_MODE {
-            PROP_STATE[pi] = PROP_STATE_IDLE;
-            let phase = PROP_MOVE_COOLDOWN[pi];
-            if phase != 0 && phase <= scientist_logic::SCRIPT_FACE_SETTLE_TICKS {
-                PROP_MOVE_COOLDOWN[pi] = phase - 1;
-                if phase == 1 {
-                    script_finish_face_phase(m, pi, primed);
-                }
-                return true;
-            }
-            // Monsters update scripted facing at 10 Hz, on the same parity as
-            // their preceding walk/run. The first Xash ChangeYaw update gets
-            // the 0.25 s delta clamp; later updates use the regular 0.1 s.
-            if (pi as u16 ^ MOVE_TICK) & 1 != 0 {
-                return true;
-            }
-            let target = PROP_SCRIPT_YAW[pi] & PROP_SCRIPT_YAW_MASK;
-            #[cfg(feature = "reference-trace")]
-            reference_trace::nav_step(
-                SIM_NOW as u32,
-                pi as u16,
-                prop_yaw_value(PROP_YAW[pi]) as i32,
-                target as i32,
-                if phase == scientist_logic::SCRIPT_FACE_FIRST_PENDING {
-                    0x61
-                } else {
-                    0x60
-                },
-            );
-            let next_yaw = scientist_logic::script_face_yaw_step(
-                prop_yaw_value(PROP_YAW[pi]),
-                target,
-                phase == scientist_logic::SCRIPT_FACE_FIRST_PENDING,
-            );
-            PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], next_yaw);
-            PROP_MOVE_COOLDOWN[pi] = 0;
-            if prop_yaw_value(PROP_YAW[pi]) == target {
-                PROP_MOVE_COOLDOWN[pi] = scientist_logic::SCRIPT_FACE_SETTLE_TICKS;
-            }
-            return true;
-        }
-        let move_timed_out =
-            (mode == 1 || mode == 2) && time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]);
-        // A detour temporarily owns PROP_SCRIPT_GOAL. At the overall movement
-        // deadline GoldSrc's plant task still targets the authored sequence
-        // mark, not the intermediate apex.
-        let goal = if move_timed_out && detouring && PROP_SCRIPT_LI[pi] != u16::MAX {
-            m.logic(prop_script_li(pi)).origin
-        } else {
-            waypoint_goal
-        };
-        let arrived = if move_timed_out {
-            // Route/floor approximation may fail on an exotic set-piece.
-            // Planting at a deterministic deadline is preferable to suppressing
-            // this script's completion outputs forever.
-            #[cfg(feature = "reference-trace")]
-            reference_trace::nav_step(
-                SIM_NOW as u32,
-                pi as u16,
-                goal[0] - PROP_POS[pi][0],
-                goal[2] - PROP_POS[pi][2],
-                0x40,
-            );
-            prop_nav_cache_invalidate(pi);
-            // GoldSrc's TASK_PLANT_ON_SCRIPT copies the authored script
-            // origin verbatim.  It must not DROP_TO_FLOOR: hanging/crawling
-            // marks such as c1a1b's ceiling_dangle intentionally sit in 3D.
-            prop_set_pos_exact(m, pi, goal);
-            true
-        } else if mode == 3 {
-            true
-        } else if mode == 4 {
-            prop_nav_cache_invalidate(pi);
-            prop_set_pos_exact(m, pi, goal);
-            true
-        } else {
-            let start_pending = PROP_MOVE_COOLDOWN[pi] != 0;
-            // GoldSrc tests the 8-unit waypoint boundary before moving, then
-            // TASK_PLANT_ON_SCRIPT copies the exact mark. A post-step test
-            // silently widens the gate by one whole movement quantum.
-            if scientist_logic::script_at_mark(dist2_xz(PROP_POS[pi], goal), start_pending) {
-                true
-            } else {
-                // houndeye.mdl's run: 245.8 units over 18 frames at 30 fps
-                // (410 u/s, c1a4's tunnel runs), not the scientist's 280.
-                let speed = if mode == 2 && PROP_KIND[pi] == PROP_TYPE_HOUNDEYE {
-                    20
-                } else {
-                    scientist_logic::script_move_speed(
-                        mode,
-                        MOVE_TICK,
-                        PROP_KIND[pi] == PROP_TYPE_BARNEY,
-                    ) as i32
-                };
-                prop_move_towards_point(m, movers, pi, goal, speed);
-                PROP_STATE[pi] = PROP_STATE_MOVE;
-                false
-            }
-        };
-        if arrived && detouring && !move_timed_out {
-            // Advance the two-point local route without allocating GoldSrc's
-            // Route array: restore the scripted_sequence origin as the final
-            // waypoint and release the detour flag in the existing mode byte.
-            let authored = m.logic(prop_script_li(pi)).origin;
-            PROP_SCRIPT_GOAL[pi] = [authored[0] as i16, authored[1] as i16, authored[2] as i16];
-            PROP_SCRIPT_MODE[pi] = scientist_logic::script_detour_mode(encoded_mode, false);
-            prop_script_move_residue_clear(pi);
-            PROP_MOVE_COOLDOWN[pi] = 0;
-            PROP_STATE[pi] = PROP_STATE_MOVE;
-            return true;
-        }
-        if arrived {
-            if mode != 3 {
-                // TASK_PLANT_ON_SCRIPT snaps the actor exactly to the mark
-                // before the play sequence starts.
-                prop_set_pos_exact(m, pi, goal);
-                prop_script_move_residue_clear(pi);
-            }
-            PROP_STATE[pi] = PROP_STATE_IDLE;
-            let explicit_idle_face = (mode == 1 || mode == 2)
-                && PROP_SCRIPT_LI[pi] != u16::MAX
-                && prop_script_li(pi) < m.n_logic.min(MAX_LOGIC)
-                && m.logic(prop_script_li(pi)).flags & map::LOGIC_SCRIPTED_HAS_IDLE != 0;
-            if explicit_idle_face {
-                // GoldSrc plants first, then turns through
-                // TASK_FACE_SCRIPT/TASK_FACE_IDEAL. The explicit phase is
-                // needed for authored idle sequences: their wait animation
-                // otherwise hides this schedule time entirely. Play-only
-                // scripts already account for their post-plant schedule in
-                // the cooked clip hold; adding both misses one-second actor
-                // retry windows (c0a0e's barnwalk3 progression gate).
-                PROP_SCRIPT_MODE[pi] = if primed {
-                    scientist_logic::script_primed_mode(scientist_logic::SCRIPT_FACE_MODE)
-                } else {
-                    scientist_logic::SCRIPT_FACE_MODE
-                };
-                PROP_MOVE_COOLDOWN[pi] = scientist_logic::SCRIPT_FACE_FIRST_PENDING;
-                return true;
-            }
-            if mode != 3 {
-                PROP_YAW[pi] =
-                    prop_with_yaw(PROP_YAW[pi], PROP_SCRIPT_YAW[pi] & PROP_SCRIPT_YAW_MASK);
-            }
-            PROP_SCRIPT_MODE[pi] = if primed {
-                scientist_logic::script_primed_mode(0)
-            } else {
-                0
-            };
-            if primed {
-                // A staged idle script has reached its mark; do not complete it
-                // or fire outputs until the script is explicitly used.
-                // Once base mode is zero the prime gate no longer consults the
-                // timer, so it becomes the idle animation/event phase origin.
-                PROP_SCRIPT_PLAY_UNTIL[pi] = SIM_NOW;
-                return true;
-            }
-            // Hold the gesture at the mark before firing the script chain. A
-            // move-only script with no gesture completes on the next tick.
-            PROP_SCRIPT_PLAY_UNTIL[pi] = if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF {
-                SIM_NOW.wrapping_add(script_play_hold_ticks(m, pi))
-            } else {
-                SIM_NOW
-            };
-        }
-        return true;
-    }
-
-    if PROP_SCRIPT_LI[pi] != u16::MAX && !time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]) {
-        script_tick_studio_events(m, pi, false);
-        // The scripted sequence still owns this actor for the entire play
-        // clip.  Falling through here lets ordinary scientist/Barney AI run
-        // in the same tick, so a play-only sequence can walk away from its
-        // authored mark before its completion target fires.  c1a0c's
-        // console_guy then ends up outside both the player's use radius and
-        // control_retinal1's acquisition radius, permanently closing the
-        // retinal-scanner route.
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        return true;
-    }
-
-    // Scripted move finished: release the actor before firing outputs so the
-    // next script in a chain can immediately acquire the same actor.
-    if PROP_SCRIPT_LI[pi] != u16::MAX && time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]) {
-        let li = prop_script_li(pi);
-        prop_script_clear(pi);
-        if li < m.n_logic.min(MAX_LOGIC) {
-            let rec = m.logic(li);
-            script_root_motion(m, pi, rec);
-            logic_sub_use_targets(
-                m,
-                m.n_logic.min(MAX_LOGIC),
-                m.n_ents.min(MAX_ENTS),
-                li,
-                rec,
-                SIM_NOW,
-                map::USE_TOGGLE,
-                0,
-            );
-            if rec.spawnflags & SF_SCRIPT_REPEATABLE == 0 {
-                logic_remove_entity(li, rec, m.n_ents.min(MAX_ENTS));
-            }
-        }
-    }
-    if PROP_SCRIPT_IDLE_CLIP[pi] != 0xFF && PROP_HEALTH[pi] > 0 {
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        return true;
-    }
-    false
-}
-
-/// CBaseMonster::CineCleanup: a play sequence that carries its actor away
-/// (c1a2b's zombie through the window, c1a1b's houndeye leap) leaves it where
-/// the root bone ended, dropped to the floor. The cooker appends that offset
-/// (forward, left) as a trailing aux record, marked by an even aux count.
-#[inline(never)]
-#[optimize(size)]
-unsafe fn script_root_motion(m: &Map, pi: usize, rec: map::LogicEnt) {
-    if rec.aux_count < 2 || rec.aux_count & 1 != 0 || PROP_HEALTH[pi] == 0 {
-        return;
-    }
-    let a = m.logic_aux(rec.first_aux + rec.aux_count - 1);
-    let (f, l) = (a.target as i16 as i32, a.delay_ticks as i16 as i32);
-    let yaw = prop_yaw_value(PROP_YAW[pi]);
-    let s = sincos::sin_q12(yaw);
-    let c = sincos::sin_q12((yaw + 1024) & 0x0fff);
-    let p = PROP_POS[pi];
-    let mut pos = [
-        p[0] + ((s * f - c * l) >> 12),
-        p[1],
-        p[2] + ((c * f + s * l) >> 12),
-    ];
-    if let Some(y) = prop_floor_y_down(m, pi, [pos[0], p[1] + 1, pos[2]], 256) {
-        pos[1] = y;
-    }
-    prop_nav_cache_invalidate(pi);
-    prop_set_pos_exact(m, pi, pos);
-}
-
-enum ScriptOwnedActor {
-    None,
-    Primed(usize),
-    Playing,
-}
-
-#[inline]
-unsafe fn script_find_owned_actor(li: usize) -> ScriptOwnedActor {
-    let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-    let mut pi = 0usize;
-    while pi < n {
-        if PROP_ACTIVE[pi] != 0
-            && PROP_HEALTH[pi] > 0
-            && PROP_SCRIPT_LI[pi] != u16::MAX
-            && prop_script_li(pi) == li
-        {
-            return match scientist_logic::script_owned_use(
-                true,
-                scientist_logic::script_is_primed(PROP_SCRIPT_MODE[pi]),
-            ) {
-                scientist_logic::ScriptOwnedUse::AssignPrimed => ScriptOwnedActor::Primed(pi),
-                scientist_logic::ScriptOwnedUse::IgnorePlaying => ScriptOwnedActor::Playing,
-                scientist_logic::ScriptOwnedUse::Search => ScriptOwnedActor::None,
-            };
-        }
-        pi += 1;
-    }
-    ScriptOwnedActor::None
+    let cx = scripted_sequence::TickContext {
+        now: SIM_NOW,
+        move_tick: MOVE_TICK,
+        slot: pi as u16,
+        kind: script_actor_kind(pi),
+        primed_hold,
+    };
+    let mut world = ScriptWorldView {
+        m,
+        movers,
+        sight_movers,
+        pi,
+        player_pos,
+        map_index,
+        in_player_pvs,
+    };
+    let mut actor = script_actor_load(pi);
+    let owned = scripted_sequence::tick(&mut actor, &cx, &mut world);
+    script_actor_store(pi, &actor);
+    owned
 }
 
 #[optimize(size)]
@@ -10918,25 +10795,16 @@ unsafe fn logic_use_entity(
         // USE_ON/OFF: any fire toggles between Swing and a retained dead stop.
         map::LOGIC_FUNC_PENDULUM => logic_use_pendulum(nents, li, rec, now),
         map::LOGIC_SCRIPTED => {
-            // arg0 remains the exact monster targetname. flags optionally
-            // carries classname type+1 and wait_ticks carries m_flRadius.
-            let actor = match script_find_owned_actor(li) {
-                ScriptOwnedActor::Primed(pi) => Some(pi),
-                // `CCineMonster::Use` deliberately ignores a duplicate Use
-                // while this same sequence is already playing.
-                ScriptOwnedActor::Playing => return,
-                ScriptOwnedActor::None => script_find_actor(rec),
-            };
-            if let Some(pi) = actor {
-                LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
-                script_assign_actor(m, li, rec, pi, now);
-            } else {
-                // The selected actor may belong to another cinematic. GoldSrc
-                // leaves this scripted_sequence alive and retries CineThink in
-                // one second; dropping the one-shot Use breaks c0a0e's
-                // barnwalk3 -> entrymm chain.
-                LOGIC_STATE[li] = LOGIC_STATE_WAITING;
-                LOGIC_NEXT[li] = now.wrapping_add(scientist_logic::SCRIPT_RETRY_TICKS);
+            match scripted_sequence::claim(li, &script_record(m, li), &ScriptRosterView) {
+                scripted_sequence::Claim::Assign(pi) => {
+                    LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
+                    script_assign_actor(m, li, pi, now);
+                }
+                scripted_sequence::Claim::Ignore => return,
+                scripted_sequence::Claim::Retry => {
+                    LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+                    LOGIC_NEXT[li] = now.wrapping_add(scripted_sequence::RETRY_TICKS);
+                }
             }
         }
         map::LOGIC_WEAPONSTRIP => {
@@ -15986,7 +15854,10 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     }
     // Damage cancels an interruptible cine without firing completion outputs.
     // NOINTERRUPT suppresses that break condition, but death always releases it.
-    if PROP_HEALTH[pi] == 0 || !prop_scientist_flag(pi, PROP_SCRIPT_NOINTERRUPT) {
+    if scripted_sequence::damage_cancels(
+        PROP_HEALTH[pi] != 0,
+        prop_scientist_flag(pi, PROP_SCRIPT_NOINTERRUPT),
+    ) {
         prop_script_clear(pi);
     }
     if PROP_HEALTH[pi] == 0 {
@@ -29884,16 +29755,13 @@ unsafe fn init_room_logic(
     while li < nlogic {
         let rec = m.logic(li);
         if rec.kind == map::LOGIC_SCRIPTED {
-            if rec.targetname == 0 {
-                let idle_only = scientist_logic::script_untargeted_idle_holds(
-                    rec.flags & map::LOGIC_SCRIPTED_HAS_IDLE != 0,
-                    rec.flags & map::LOGIC_SCRIPTED_HAS_PLAY != 0,
-                );
-                if idle_only {
-                    if let Some(pi) = script_find_actor(rec) {
-                        script_prime_idle_actor(m, li, rec, pi);
+            match scripted_sequence::spawn_action(&script_record(m, li)) {
+                scripted_sequence::SpawnAction::Prime => {
+                    if let Some(pi) = script_find_actor(m, li) {
+                        script_prime_idle_actor(m, li, pi);
                     }
-                } else {
+                }
+                scripted_sequence::SpawnAction::Fire => {
                     logic_use_entity(
                         m,
                         nlogic,
@@ -29905,10 +29773,7 @@ unsafe fn init_room_logic(
                         logic_state::CALLER_NONE,
                     );
                 }
-            } else if rec.flags & map::LOGIC_SCRIPTED_HAS_IDLE != 0 {
-                if let Some(pi) = script_find_actor(rec) {
-                    script_prime_idle_actor(m, li, rec, pi);
-                }
+                scripted_sequence::SpawnAction::Nothing => {}
             }
         }
         li += 1;
