@@ -92,3 +92,6 @@ pub mod behaviour;
 
 #[path = "../../../game/src/scripted_sequence.rs"]
 pub mod scripted_sequence;
+
+#[path = "../../../game/src/nav_graph.rs"]
+pub mod nav_graph;

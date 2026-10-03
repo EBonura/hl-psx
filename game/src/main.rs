@@ -45,6 +45,7 @@ use psx_goldsrc::route_follow;
 mod apache;
 mod garg;
 mod mortar;
+mod nav_graph;
 mod nihilanth;
 mod osprey;
 mod save;
@@ -1337,10 +1338,8 @@ const PROP_HIT_FLASH_TICKS: u8 = 4;
 const ATTACK_WINDUP: u8 = 5; // telegraph ticks before a ranged enemy's first shot
 const PROP_TARGET_NONE: u8 = 254;
 const PROP_TARGET_PLAYER: u8 = 255;
-const NAV_NODE_NONE: u8 = 255;
-const NAV_NEAREST_RANGE2: i32 = 1024 * 1024;
-const NAV_NODE_REACHED_RANGE2: i32 = 48 * 48;
-const NAV_VERTICAL_MAX: i32 = 160;
+const NAV_NODE_NONE: u8 = nav_graph::NODE_NONE;
+const NAV_VERTICAL_MAX: i32 = nav_graph::VERTICAL_MAX;
 const NAV_FLEE_RANGE2: i32 = 1200 * 1200;
 const MAX_IMPACT_MARKS: usize = 24;
 const MAX_IMPACT_PARTICLES: usize = 64;
@@ -14383,24 +14382,6 @@ unsafe fn prop_nav_cache_put(pi: usize, slot: usize, value: u8) {
     PROP_NEAR_ENTS[pi][slot] = mover_slot | ((value as u16) << 8);
 }
 
-/// Change the cached source without ever letting a next-hop computed for the
-/// old source masquerade as a hit for the new one.
-#[inline]
-unsafe fn prop_nav_cache_set_src(pi: usize, src: u8) {
-    if prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) != src {
-        prop_nav_cache_put(pi, PROP_NAV_DST_SLOT, NAV_NODE_NONE);
-        prop_nav_cache_put(pi, PROP_NAV_NEXT_SLOT, NAV_NODE_NONE);
-    }
-    prop_nav_cache_put(pi, PROP_NAV_SRC_SLOT, src);
-}
-
-#[inline]
-unsafe fn prop_nav_cache_set_route(pi: usize, src: u8, dst: u8, next: u8) {
-    prop_nav_cache_put(pi, PROP_NAV_SRC_SLOT, src);
-    prop_nav_cache_put(pi, PROP_NAV_DST_SLOT, dst);
-    prop_nav_cache_put(pi, PROP_NAV_NEXT_SLOT, next);
-}
-
 // Lifecycle-only cold path. Keeping this out of line avoids cloning three
 // packed-byte stores into every wake/script/damage call site.
 #[inline(never)]
@@ -14886,188 +14867,73 @@ fn nav_land_node(m: &Map, i: usize) -> bool {
     m.nav_node_type(i) & 1 != 0
 }
 
-unsafe fn nav_nearest(m: &Map, movers: &[phys::Mover], pos: [i32; 3], max_d2: i32) -> u8 {
-    let n = nav_node_count(m);
-    let mut best = NAV_NODE_NONE;
-    let mut best_d2 = max_d2;
-    let mut i = 0usize;
-    while i < n {
-        let node = m.nav_node(i);
-        if nav_land_node(m, i) {
-            // Retail LAND-node m_vecOriginPeek is exactly eight units above
-            // m_vecOrigin. FindNearestNode ranks that 3D point, not the
-            // ground-plane origin used by movement steering.
-            let peek = [node.pos[0], node.pos[1] + 8, node.pos[2]];
-            let dy = peek[1] - pos[1];
-            let d2 = dist2_xz(pos, peek) + dy * dy;
-            // GoldSrc CheckNode accepts the nearest candidate only when a
-            // point trace reaches its exact peek origin. Without the trace a
-            // geometrically close node behind a wall can strand the last
-            // authored chord.
-            if d2 < best_d2 && actor_line_clear(m, movers, pos, peek) {
-                best = i as u8;
-                best_d2 = d2;
-            }
-        }
-        i += 1;
+// ---- node-graph adaptor: the packed route cache and the map's graph ----
+
+#[inline]
+unsafe fn nav_cache_load(pi: usize) -> nav_graph::RouteCache {
+    nav_graph::RouteCache {
+        src: prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT),
+        dst: prop_nav_cache_get(pi, PROP_NAV_DST_SLOT),
+        next: prop_nav_cache_get(pi, PROP_NAV_NEXT_SLOT),
     }
-    best
 }
 
-unsafe fn nav_nearest_reachable(
-    m: &Map,
-    movers: &[phys::Mover],
+#[inline]
+unsafe fn nav_cache_store(pi: usize, cache: nav_graph::RouteCache) {
+    prop_nav_cache_put(pi, PROP_NAV_SRC_SLOT, cache.src);
+    prop_nav_cache_put(pi, PROP_NAV_DST_SLOT, cache.dst);
+    prop_nav_cache_put(pi, PROP_NAV_NEXT_SLOT, cache.next);
+}
+
+/// The map's node graph as one actor sees it.
+struct NavGraphView<'a> {
+    m: &'a Map,
+    movers: &'a [phys::Mover],
     pi: usize,
-    from: [i32; 3],
-    pos: [i32; 3],
-    max_d2: i32,
-) -> u8 {
-    let n = nav_node_count(m);
-
-    // The previous winner is only an incumbent, never an unverified answer:
-    // trace it again from the actor's exact current position.  If it is still
-    // reachable, only a geometrically closer reachable node can change the
-    // result.  Equal-distance nodes with a lower index are also tested because
-    // the original ascending scan's strict `<` comparison makes the first tie
-    // win.  This therefore returns exactly the same node as the full scan while
-    // avoiding its chain of progressively-closer BSP traces.
-    let cached = prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) as usize;
-    if cached < n && nav_land_node(m, cached) {
-        let node = m.nav_node(cached);
-        let dy = (node.pos[1] - pos[1]).abs();
-        let d2 = dist2_xz(pos, node.pos);
-        if dy <= NAV_VERTICAL_MAX && d2 < max_d2 {
-            let to = [node.pos[0], from[1], node.pos[2]];
-            if actor_line_clear(m, movers, from, to) {
-                let mut best = cached as u8;
-                let mut best_d2 = d2;
-                let mut i = 0usize;
-                while i < n {
-                    if i != cached && nav_land_node(m, i) {
-                        let candidate = m.nav_node(i);
-                        let candidate_dy = (candidate.pos[1] - pos[1]).abs();
-                        if candidate_dy <= NAV_VERTICAL_MAX {
-                            let candidate_d2 = dist2_xz(pos, candidate.pos);
-                            let can_beat = candidate_d2 < best_d2
-                                || (candidate_d2 == best_d2 && i < best as usize);
-                            if can_beat {
-                                let candidate_to = [candidate.pos[0], from[1], candidate.pos[2]];
-                                if actor_line_clear(m, movers, from, candidate_to) {
-                                    best = i as u8;
-                                    best_d2 = candidate_d2;
-                                }
-                            }
-                        }
-                    }
-                    i += 1;
-                }
-                prop_nav_cache_set_src(pi, best);
-                return best;
-            }
-        }
-    }
-
-    // No valid incumbent (map reset, blocked source, out of range): retain the
-    // old scan byte-for-byte as the conservative fallback.
-    let mut best = NAV_NODE_NONE;
-    let mut best_d2 = max_d2;
-    let mut i = 0usize;
-    while i < n {
-        let node = m.nav_node(i);
-        let dy = (node.pos[1] - pos[1]).abs();
-        if nav_land_node(m, i) && dy <= NAV_VERTICAL_MAX {
-            let d2 = dist2_xz(pos, node.pos);
-            let to = [node.pos[0], from[1], node.pos[2]];
-            if d2 < best_d2 && actor_line_clear(m, movers, from, to) {
-                best = i as u8;
-                best_d2 = d2;
-            }
-        }
-        i += 1;
-    }
-    prop_nav_cache_set_src(pi, best);
-    best
 }
 
-unsafe fn nav_next_node(m: &Map, pi: usize, src: u8, dst: u8) -> u8 {
-    let n = nav_node_count(m);
-    let src_i = src as usize;
-    let dst_i = dst as usize;
-    if src_i >= n || dst_i >= n {
-        prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
-        return NAV_NODE_NONE;
-    }
-    if prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) == src
-        && prop_nav_cache_get(pi, PROP_NAV_DST_SLOT) == dst
-    {
-        let cached = prop_nav_cache_get(pi, PROP_NAV_NEXT_SLOT);
-        // NONE also represents a route validated at assignment but not yet
-        // advanced from its source node. Compute that first real hop only once
-        // the actor has physically reached the source anchor.
-        if cached != NAV_NODE_NONE {
-            return cached;
-        }
-    }
-    if src == dst {
-        prop_nav_cache_set_route(pi, src, dst, src);
-        return src;
+impl nav_graph::NavGraph for NavGraphView<'_> {
+    fn node_count(&self) -> usize {
+        nav_node_count(self.m)
     }
 
-    let next = if m.nav_has_exact_routes() {
-        let exact = m.nav_route_next(src_i, dst_i);
-        if exact == src_i || exact >= n {
-            NAV_NODE_NONE
+    fn node_pos(&self, node: usize) -> [i32; 3] {
+        self.m.nav_node(node).pos
+    }
+
+    fn is_land(&self, node: usize) -> bool {
+        nav_land_node(self.m, node)
+    }
+
+    fn cooked_next(&self, src: usize, dst: usize) -> Option<usize> {
+        if self.m.nav_has_exact_routes() {
+            Some(self.m.nav_route_next(src, dst))
         } else {
-            exact as u8
+            None
         }
-    } else {
-        // Official campaign maps with nodes always ship a retail `.nod`; the
-        // cooker warns for custom maps that fall back to synthesized links.
-        // Keep the runtime static-RAM win rather than reserving a 510-byte BFS
-        // workspace for an unaudited compatibility path.
-        NAV_NODE_NONE
-    };
-    prop_nav_cache_set_route(pi, src, dst, next);
-    next
+    }
+
+    fn line_clear(&mut self, from: [i32; 3], to: [i32; 3]) -> bool {
+        actor_line_clear(self.m, self.movers, from, to)
+    }
+
+    fn walkable(&mut self, from: [i32; 3], to: [i32; 3]) -> bool {
+        unsafe { script_human_chord_clear(self.m, self.movers, self.pi, from, to) }
+    }
 }
 
-/// Cold BuildRoute/FGetNodeRoute gate for a newly possessed scripted actor.
-/// Cache the validated endpoints but deliberately defer the first table hop:
-/// Gold's route begins at the source node, which can be the obstacle's corner.
+/// Whether the graph connects actor `pi` to `goal`; leaves the route waiting
+/// at its source node.
 #[inline(never)]
 unsafe fn nav_route_available(m: &Map, movers: &[phys::Mover], pi: usize, goal: [i32; 3]) -> bool {
-    let pos = PROP_POS[pi];
-    // GoldSrc FGetNodeRoute calls CGraph::FindNearestNode(pev->origin), whose
-    // CheckNode performs a point trace from the actor origin to the node's
-    // eight-unit-high peek point.  A full human-hull sweep is stricter and can
-    // reject the real nearest node even though Gold's graph accepts it; c1a0's
-    // introwalkerguy1 then takes a different first corridor and blocks Gordon.
-    let src = nav_nearest(m, movers, pos, NAV_NEAREST_RANGE2);
-    if src == NAV_NODE_NONE {
-        prop_nav_cache_invalidate(pi);
-        return false;
-    }
-    let dst = nav_nearest(m, movers, goal, NAV_NEAREST_RANGE2);
-    if dst == NAV_NODE_NONE {
-        prop_nav_cache_invalidate(pi);
-        return false;
-    }
-    if nav_next_node(m, pi, src, dst) == NAV_NODE_NONE {
-        prop_nav_cache_invalidate(pi);
-        return false;
-    }
-    // FGetNodeRoute starts with the source node. The actor must reach that
-    // corner anchor before following the first table hop; caching the hop here
-    // skipped the anchor and recreated the obstructed straight chord.
-    prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
-    true
+    let mut cache = nav_cache_load(pi);
+    let mut g = NavGraphView { m, movers, pi };
+    let ok = nav_graph::route_available(&mut g, &mut cache, PROP_POS[pi], goal);
+    nav_cache_store(pi, cache);
+    ok
 }
 
-/// Reproduce RouteSimplify's first useful cut without retaining GoldSrc's
-/// eight-waypoint Route array. The existing script goal temporarily stores a
-/// midpoint, while the packed nav cache keeps the raw next node to resume from
-/// after that midpoint. This covers the progression-critical graph entry and
-/// costs no resident RAM.
+/// The first shortcut into actor `pi`'s cached route from `start`.
 #[inline(never)]
 unsafe fn nav_route_simplified_entry(
     m: &Map,
@@ -15075,181 +14941,34 @@ unsafe fn nav_route_simplified_entry(
     pi: usize,
     start: [i32; 3],
 ) -> Option<[i32; 3]> {
-    let src = prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT);
-    let dst = prop_nav_cache_get(pi, PROP_NAV_DST_SLOT);
-    let n = nav_node_count(m);
-    if src as usize >= n || dst as usize >= n {
-        return None;
-    }
-    let next = nav_next_node(m, pi, src, dst);
-    if next == NAV_NODE_NONE || next as usize >= n {
-        prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
-        return None;
-    }
-    let next_pos = m.nav_node(next as usize).pos;
-    // If the next raw node is directly walkable, dropping the source node is
-    // exactly RouteSimplify's first branch. Leave `next` cached so the runtime
-    // heads there immediately.
-    if script_human_chord_clear(m, movers, pi, start, next_pos) {
-        return None;
-    }
-    let src_pos = m.nav_node(src as usize).pos;
-    let midpoint = [
-        (src_pos[0] + next_pos[0]) / 2,
-        (src_pos[1] + next_pos[1]) / 2,
-        (src_pos[2] + next_pos[2]) / 2,
-    ];
-    if script_human_chord_clear(m, movers, pi, start, midpoint) {
-        return Some(midpoint);
-    }
-    // No safe cut: restore the source-anchor convention used by the ordinary
-    // packed route follower.
-    prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
-    None
+    let mut cache = nav_cache_load(pi);
+    let mut g = NavGraphView { m, movers, pi };
+    let entry = nav_graph::simplified_entry(&mut g, &mut cache, start);
+    nav_cache_store(pi, cache);
+    entry
 }
 
-/// A cached graph route can become unusable only through malformed/cook-drift
-/// data. Scripted actors must immediately return to their authored local chord
-/// instead of retaining the route bit and idling until a forced teleport.
-#[inline(never)]
-unsafe fn nav_route_fail_open(pi: usize, goal: [i32; 3]) -> Option<[i32; 3]> {
-    if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi])
-        && !scientist_logic::script_uses_detour(PROP_SCRIPT_MODE[pi])
-    {
-        PROP_SCRIPT_MODE[pi] = scientist_logic::script_route_mode(PROP_SCRIPT_MODE[pi], false);
-        prop_nav_cache_invalidate(pi);
-        Some(goal)
-    } else {
-        None
-    }
-}
-
+/// The point actor `pi` should steer for on its way to `goal`.
 unsafe fn nav_waypoint_towards(
     m: &Map,
     movers: &[phys::Mover],
     pi: usize,
     goal: [i32; 3],
 ) -> Option<[i32; 3]> {
-    if m.n_nav == 0 {
-        return None;
-    }
-    let n = nav_node_count(m);
-    let ty = PROP_KIND[pi];
+    let mode = PROP_SCRIPT_MODE[pi];
     let pos = PROP_POS[pi];
-    let from = prop_target(ty, pos);
-    let reached_range2 = if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]) {
-        scientist_logic::SCRIPT_PLANT_RADIUS * scientist_logic::SCRIPT_PLANT_RADIUS
-    } else {
-        NAV_NODE_REACHED_RANGE2
+    let mut follower = nav_graph::Follower {
+        pos,
+        eye: prop_target(PROP_KIND[pi], pos),
+        routed: scientist_logic::script_uses_route(mode),
+        detour: scientist_logic::script_uses_detour(mode),
     };
-
-    // Keep following the already-proven route waypoint until it is reached.
-    // Re-running a 128-node nearest-reachable scan every time local movement
-    // failed consumed ~73K cycles per c2a4e frame; the world is static and prop
-    // movement deliberately ignores movers, so a previously reachable waypoint
-    // cannot become invalid en route. This is also standard waypoint behavior:
-    // choose a route, advance it at node boundaries, do not re-seed it per step.
-    let cached_next = prop_nav_cache_get(pi, PROP_NAV_NEXT_SLOT) as usize;
-    if cached_next < n && nav_land_node(m, cached_next) {
-        let next_pos = m.nav_node(cached_next).pos;
-        let next_d2 = dist2_xz(pos, next_pos);
-        // A scripted route's cached hop is a graph link RouteSimplify chose,
-        // however long or steep (c0a0's room2 runners cut 1,340 units to
-        // node 1, then climb 256 up the ramp to node 2). Only unscripted
-        // lookups keep the nearest-node range and floor band.
-        let scripted = scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]);
-        if next_d2 > reached_range2
-            && (scripted
-                || ((pos[1] - next_pos[1]).abs() <= NAV_VERTICAL_MAX
-                    && next_d2 < NAV_NEAREST_RANGE2))
-        {
-            return Some(next_pos);
-        }
-        if next_d2 <= reached_range2 && (pos[1] - next_pos[1]).abs() <= NAV_VERTICAL_MAX {
-            // FGetNodeRoute selects its destination once. Keep that exact
-            // endpoint instead of repeating FindNearestNode (and its BSP
-            // traces) at every hop.
-            let dst = prop_nav_cache_get(pi, PROP_NAV_DST_SLOT);
-            if dst as usize >= n || !nav_land_node(m, dst as usize) {
-                return nav_route_fail_open(pi, goal);
-            }
-            // RouteSimplify: once the mark itself is a clear local move,
-            // the remaining graph hops are dropped (c1a4's houndeye cuts
-            // from node 8 to its mark instead of overrunning to node 9).
-            if cached_next as u8 == dst
-                || (scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi])
-                    && script_human_chord_clear(m, movers, pi, pos, goal))
-            {
-                // The graph route ends at its destination node, not at the
-                // scripted mark. Hand the final local chord back to the
-                // straight script mover; retaining route steering here made
-                // c0a0e Barney orbit node 5 until his timeout.
-                PROP_SCRIPT_MODE[pi] =
-                    scientist_logic::script_route_mode(PROP_SCRIPT_MODE[pi], false);
-                prop_nav_cache_invalidate(pi);
-                return Some(goal);
-            }
-            let following = nav_next_node(m, pi, cached_next as u8, dst);
-            return if following == NAV_NODE_NONE {
-                nav_route_fail_open(pi, goal)
-            } else {
-                Some(m.nav_node(following as usize).pos)
-            };
-        }
-    }
-
-    // Before a route has a `next` node, retain its verified source waypoint
-    // while the actor approaches it. Once reached, accepting the cached source
-    // avoids a second exact nearest scan before the route BFS below.
-    let cached_src = prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) as usize;
-    let mut src = NAV_NODE_NONE;
-    if cached_src < n && nav_land_node(m, cached_src) {
-        let src_pos = m.nav_node(cached_src).pos;
-        let src_d2 = dist2_xz(pos, src_pos);
-        if (pos[1] - src_pos[1]).abs() <= NAV_VERTICAL_MAX && src_d2 < NAV_NEAREST_RANGE2 {
-            if src_d2 > reached_range2 {
-                return Some(src_pos);
-            }
-            src = cached_src as u8;
-        }
-    }
-    if src == NAV_NODE_NONE {
-        src = nav_nearest_reachable(m, movers, pi, from, pos, NAV_NEAREST_RANGE2);
-    }
-    if src == NAV_NODE_NONE {
-        return nav_route_fail_open(pi, goal);
-    }
-    let cached_dst = prop_nav_cache_get(pi, PROP_NAV_DST_SLOT);
-    let dst = if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi])
-        && (cached_dst as usize) < n
-        && nav_land_node(m, cached_dst as usize)
-    {
-        cached_dst
-    } else {
-        nav_nearest(m, movers, goal, NAV_NEAREST_RANGE2)
-    };
-    if dst == NAV_NODE_NONE {
-        return nav_route_fail_open(pi, goal);
-    }
-
-    let src_pos = m.nav_node(src as usize).pos;
-    if dist2_xz(pos, src_pos) > reached_range2 || (pos[1] - src_pos[1]).abs() > NAV_VERTICAL_MAX {
-        return Some(src_pos);
-    }
-    if src == dst {
-        if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]) {
-            PROP_SCRIPT_MODE[pi] = scientist_logic::script_route_mode(PROP_SCRIPT_MODE[pi], false);
-            prop_nav_cache_invalidate(pi);
-        }
-        return Some(goal);
-    }
-
-    let next = nav_next_node(m, pi, src, dst);
-    if next == NAV_NODE_NONE {
-        nav_route_fail_open(pi, goal)
-    } else {
-        Some(m.nav_node(next as usize).pos)
-    }
+    let mut cache = nav_cache_load(pi);
+    let mut g = NavGraphView { m, movers, pi };
+    let wp = nav_graph::waypoint_towards(&mut g, &mut cache, &mut follower, goal);
+    nav_cache_store(pi, cache);
+    PROP_SCRIPT_MODE[pi] = scientist_logic::script_route_mode(mode, follower.routed);
+    wp
 }
 
 unsafe fn nav_flee_goal(m: &Map, threat: [i32; 3], pos: [i32; 3]) -> Option<[i32; 3]> {
