@@ -1349,15 +1349,12 @@ const MAX_IMPACT_MARKS: usize = 24;
 const MAX_IMPACT_PARTICLES: usize = 64;
 const IMPACT_MARK_TICKS: u8 = 180;
 const IMPACT_KIND_WORLD: u8 = 0;
-/// BLOOD_COLOR_RED: humans, and the barnacle.
+/// Red blood: humans, and the barnacle.
 const IMPACT_KIND_BLOOD: u8 = 1;
-/// BLOOD_COLOR_YELLOW (the SDK's GREEN is the same palette index): headcrabs,
-/// zombies and the Xen fauna.
+/// Yellow blood: headcrabs, zombies and the Xen fauna.
 const IMPACT_KIND_YBLOOD: u8 = 2;
-/// DONT_BLEED: turrets, machines and scenery.
+/// No blood: turrets, machines and scenery.
 const IMPACT_KIND_NONE: u8 = 3;
-/// CBaseEntity::TraceBleed traces 172 units on past the wound.
-const BLEED_TRACE_DIST: i32 = 172;
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
 static mut HUD_OT: OrderingTable<HUD_OT_LEN> = OrderingTable::new();
@@ -19673,29 +19670,39 @@ unsafe fn spawn_impact_fx(m: &Map, hit: &phys::RayHit, rot: &Mat3I16, base_t: [i
     }
 }
 
-/// GoldSrc `BloodColor()` per actor type, from each monster's SDK Spawn().
+/// Blood colour per actor type as an impact kind; see
+/// `world_rules::species_blood`.
 fn prop_blood_kind(ty: u8) -> u8 {
-    match ty {
-        // headcrab, zombie, houndeye, bullsquid, vortigaunt, alien grunt,
-        // controller, cockroach, gargantua, nihilanth, big momma, ichthyosaur,
-        // flock, tentacle, vent zombie, snark, baby headcrab
-        2 | 5 | 6 | 7 | 9 | 10 | 11 | 14 | 16 | 17 | 18 | 19 | 24 | 50 | 55 | 58 | 59 => {
-            IMPACT_KIND_YBLOOD
-        }
-        // leech, G-Man, turrets, apache, Hazard Course hologram, tripmine,
-        // osprey, gibs and scenery props
-        13 | 15 | 20..=23 | 56 | 57 | 61..=75 => IMPACT_KIND_NONE,
-        _ => IMPACT_KIND_BLOOD,
+    match world_rules::species_blood(ty) {
+        world_rules::BloodColour::Red => IMPACT_KIND_BLOOD,
+        world_rules::BloodColour::Yellow => IMPACT_KIND_YBLOOD,
+        world_rules::BloodColour::NoBlood => IMPACT_KIND_NONE,
     }
 }
 
-/// CBaseMonster::TraceAttack's blood for one hit. SpawnBlood is the spray at
-/// the wound, which lasts a moment; CBaseEntity::TraceBleed continues the shot
-/// past the wound in 1, 2 or 4 traces (damage under 10, under 25, above),
-/// each jittered by 0.1, 0.2 or 0.3 per axis, and leaves a blood decal on the
-/// surface each one reaches. Nothing is left at the wound itself, so blood can
-/// only ever sit on a wall, floor or brush.
-/// An actor that does not bleed (a turret) throws the world's sparks instead.
+/// The game side of a blood trail: the shared impact RNG and the world trace
+/// that stamps a decal of `kind` where each ray lands.
+struct BloodTrailAdaptor<'a> {
+    m: &'a Map,
+    movers: &'a [phys::Mover],
+    kind: u8,
+}
+
+impl world_rules::BloodTrailWorld for BloodTrailAdaptor<'_> {
+    fn random_below(&mut self, n: u32) -> u32 {
+        unsafe { impact_rng().below(n) }
+    }
+
+    fn trace_and_stamp(&mut self, from: [i32; 3], to: [i32; 3]) {
+        if let Some(hit) = phys::trace_line(self.m, self.movers, from, to) {
+            unsafe { spawn_impact_mark(self.m, &hit, self.kind) };
+        }
+    }
+}
+
+/// Blood for one hit on an actor: a spray at the wound (sparks for an actor
+/// that does not bleed), then the decal trail behind it from
+/// `world_rules::blood_trail`.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 #[cold]
@@ -19712,6 +19719,7 @@ unsafe fn spawn_blood(
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) {
+    let colour = world_rules::species_blood(ty);
     let kind = prop_blood_kind(ty);
     if let Some((sx, sy, _)) = project_world_point(wound, rot, base_t) {
         spawn_impact_particles(
@@ -19723,32 +19731,10 @@ unsafe fn spawn_blood(
             },
         );
     }
-    if kind == IMPACT_KIND_NONE || damage == 0 {
-        return;
-    }
-    let len = shot_len.max(1);
-    let (noise, count) = if damage < 10 {
-        (410, 1)
-    } else if damage < 25 {
-        (819, 2)
-    } else {
-        (1229, 4)
-    };
-    let mut i = 0;
-    while i < count {
-        let mut end = wound;
-        let mut a = 0;
-        while a < 3 {
-            let dir = (shot_end[a] - shot_start[a]) * 4096 / len;
-            let d = dir + impact_rng().below(2 * noise as u32 + 1) as i32 - noise;
-            end[a] += (d * BLEED_TRACE_DIST) >> 12;
-            a += 1;
-        }
-        if let Some(hit) = phys::trace_line(m, movers, wound, end) {
-            spawn_impact_mark(m, &hit, kind);
-        }
-        i += 1;
-    }
+    let mut world = BloodTrailAdaptor { m, movers, kind };
+    world_rules::blood_trail(
+        wound, shot_start, shot_end, shot_len, damage, colour, &mut world,
+    );
 }
 
 /// In-plane half-axes of a decal of half-size `half` on a surface with Q12
