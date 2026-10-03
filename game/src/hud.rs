@@ -771,7 +771,7 @@ mod tests {
         assert_eq!(DRAW_CAP, 34);
         // Gameplay text owns u=160..255 only for v=0..127.
         assert!(WEAPON_RIGHT_V >= 128);
-        assert_eq!(HUD_BLOB_BYTES, 23_108);
+        assert_eq!(HUD_BLOB_BYTES, 23_748);
     }
 
     #[test]

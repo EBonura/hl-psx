@@ -14,6 +14,8 @@ psx-spu = { path = "../../.psoxide/sdk/crates/psx-spu" }
 psx-sfx = { path = "../../.psoxide/sdk/crates/psx-sfx" }
 psx-math = { path = "../../.psoxide/sdk/crates/psx-math" }
 psx-engine = { path = "../../.psoxide/engine/crates/psx-engine" }
+psx-gpu = { path = "../../.psoxide/sdk/crates/psx-gpu" }
+psx-vram = { path = "../../.psoxide/sdk/crates/psx-vram" }
 
 [lib]
 path = "src/lib.rs"
