@@ -15,7 +15,7 @@
 use psx_gpu::material::{BlendMode, TextureMaterial};
 use psx_gpu::ot::OrderingTable;
 use psx_gpu::prim::Sprite;
-use psx_vram::{upload_bytes, Clut, TexDepth, Tpage, VramRect};
+use psx_vram::{upload_bytes, Clut, TextureDepth, TexturePage, VramRect};
 
 const HUD_VRAM_X: u16 = 960; // fixed final band-1 page, excluded from room allocation
 const HUD_AMBER_CLUT_X: u16 = 960;
@@ -168,17 +168,17 @@ pub fn upload(blob: &[u8]) -> Materials {
             &blob[36..68],
         );
     }
-    let tp = Tpage::new(HUD_VRAM_X, 256, TexDepth::Bit4);
-    let tpage = tp.uv_tpage_word(BlendMode::Add.tpage_bits());
+    let tp = TexturePage::new(HUD_VRAM_X, 256, TextureDepth::Bit4);
+    let tpage = tp.uv_word(BlendMode::Add.texture_page_bits());
     Materials {
         amber: TextureMaterial::blended(
-            Clut::new(HUD_AMBER_CLUT_X, HUD_CLUT_Y).uv_clut_word(),
+            Clut::new(HUD_AMBER_CLUT_X, HUD_CLUT_Y).uv_word(),
             tpage,
             (128, 128, 128),
             BlendMode::Add,
         ),
         white: TextureMaterial::blended(
-            Clut::new(HUD_WHITE_CLUT_X, HUD_CLUT_Y).uv_clut_word(),
+            Clut::new(HUD_WHITE_CLUT_X, HUD_CLUT_Y).uv_word(),
             tpage,
             (128, 128, 128),
             BlendMode::Add,

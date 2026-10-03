@@ -4,7 +4,7 @@
 
 use psx_font::fonts::BASIC_8X16;
 use psx_gpu::material::TextureMaterial;
-use psx_vram::{upload_16bpp, upload_bytes, Clut, TexDepth, Tpage, VramRect};
+use psx_vram::{upload_16bpp, upload_bytes, Clut, TextureDepth, TexturePage, VramRect};
 
 pub const SMALL_Q8: u16 = 256; // keep thin strokes intact at the native 8x16 size
 
@@ -148,9 +148,9 @@ pub fn upload_gameplay_atlas() {
 /// rectangle command as the menu font. Narrower emergency scales use quads
 /// only for authored lines which exceed the safe display width.
 pub fn draw_text_gameplay_scaled(x: i16, y: i16, text: &str, scale_q8: u16, color: (u8, u8, u8)) {
-    let tp = Tpage::new(GAME_TPAGE_X, GAME_TPAGE_Y, TexDepth::Bit4);
+    let tp = TexturePage::new(GAME_TPAGE_X, GAME_TPAGE_Y, TextureDepth::Bit4);
     let cl = Clut::new(GAME_CLUT_X, GAME_CLUT_Y);
-    let mat = TextureMaterial::opaque(cl.uv_clut_word(), tp.uv_tpage_word(0), color);
+    let mat = TextureMaterial::opaque(cl.uv_word(), tp.uv_word(0), color);
     let mut cx = x;
     for ch in text.chars() {
         if let Some(index) = glyph_index(ch) {

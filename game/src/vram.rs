@@ -16,7 +16,9 @@
 //! below now proves the separation at compile time.
 
 use psx_gpu::material::{TextureMaterial, TextureWindow, TexturedGouraudPacketMaterial};
-use psx_vram::{upload_bytes, ClutRowAllocator, TexDepth, TextureWindowAtlas, Tpage, VramRect};
+use psx_vram::{
+    upload_bytes, ClutRowAllocator, TextureDepth, TexturePage, TextureWindowAtlas, VramRect,
+};
 
 use core::ptr;
 
@@ -345,7 +347,7 @@ fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8]) -> Option<TexSlot> 
         let page = pl.page_index();
         let tpage_x = TEX_X0 + (page % COLS) * 64;
         let tpage_y = if page / COLS == 0 { 0 } else { 256 };
-        let tpage = Tpage::new(tpage_x, tpage_y, TexDepth::Bit4);
+        let tpage = TexturePage::new(tpage_x, tpage_y, TextureDepth::Bit4);
         // 4-bit pixels pack 4 texels per VRAM halfword -> w/4 halfwords wide.
         let vram_x = tpage_x + (pl.origin_u() as u16) / 4;
         let vram_y = tpage_y + pl.origin_v() as u16;
@@ -369,9 +371,8 @@ fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8]) -> Option<TexSlot> 
         upload_bytes(VramRect::new(clut.x(), clut.y(), 16, 1), clut_bytes);
 
         let win = TextureWindow::power_of_two_tile(pl.origin_u(), pl.origin_v(), w as u8, h as u8);
-        let material =
-            TextureMaterial::opaque(clut.uv_clut_word(), tpage.uv_tpage_word(0), (128, 128, 128))
-                .with_texture_window(win);
+        let material = TextureMaterial::opaque(clut.uv_word(), tpage.uv_word(0), (128, 128, 128))
+            .with_texture_window(win);
         let packet = TexturedGouraudPacketMaterial::from_texture(material);
         // Every texel index 0 -> a solid single-colour fill (the `black`
         // backdrop, now grey-lifted by the cook). Flag it for OT back-biasing.
