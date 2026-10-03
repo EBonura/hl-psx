@@ -55,6 +55,7 @@ mod setpiece_logic;
 mod setpiece_math;
 mod setpiece_sfx;
 mod tank;
+mod tank_logic;
 use osprey::{osprey_init, tick_osprey, OSPREY, OSPREY_TILT, PROP_TYPE_OSPREY};
 use psx_goldsrc::semantic_input;
 use tank::{

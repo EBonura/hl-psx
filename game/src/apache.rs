@@ -543,7 +543,7 @@ unsafe fn fire_gun(m: &Map, movers: &[phys::Mover], a: &mut Apache) -> bool {
     let gun = mad(mad(whole(a.pos), v[0], 97), v[2], -145);
     let t = norm(sub(a.target, gun));
     let local = [dot(v[0], t), -dot(v[1], t), dot(v[2], t)];
-    let ang = |y: i32, x: i32| crate::tank::atan_s(y, x) * 360 * D / 4096;
+    let ang = |y: i32, x: i32| crate::setpiece_math::atan_s(y, x) * 360 * D / 4096;
     let want_yaw = ang(local[1], local[0]);
     let want_pitch = -ang(
         local[2],

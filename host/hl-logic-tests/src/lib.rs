@@ -89,4 +89,7 @@ pub mod setpiece_math;
 #[path = "../../../game/src/mortar_logic.rs"]
 pub mod mortar_logic;
 
+#[path = "../../../game/src/tank_logic.rs"]
+pub mod tank_logic;
+
 pub mod behaviour;

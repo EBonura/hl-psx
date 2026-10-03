@@ -386,8 +386,8 @@ unsafe fn flame_task(m: &Map, movers: &[phys::Mover], pi: usize, aim: [i32; 3], 
     let d = [aim[0] - pos[0], aim[1] - pos[1] - 64, aim[2] - pos[2]];
     let horiz = isqrt_i32(d[0] * d[0] + d[2] * d[2]);
     let want = [
-        crate::tank::atan_s(d[1], horiz),
-        sl::angle_dist_q12(crate::tank::atan_s(d[0], d[2]), yaw),
+        crate::setpiece_math::atan_s(d[1], horiz),
+        sl::angle_dist_q12(crate::setpiece_math::atan_s(d[0], d[2]), yaw),
     ];
     if horiz.max(d[1].abs()) > 400 || want[1].abs() > 683 {
         // Beyond 400 units or 60 degrees aside, the sweep winds down 6x.

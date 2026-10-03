@@ -1,7 +1,7 @@
 //! Mortar field (HV-07): drop point per mode, shell count and spread,
 //! landing times and what each landing does.
 
-use crate::behaviour::setpiece_rng::Lcg;
+use crate::behaviour::setpiece_kit::{Lcg, Pick};
 use crate::mortar_logic::{FieldUse, MortarState, MortarWorld, MAX_SHELLS};
 use crate::setpiece_math::TraceHit;
 
@@ -10,13 +10,6 @@ enum Ev {
     Beam([i32; 3], [i32; 3]),
     Explode([i32; 3], u8, i32, bool),
     Shake(u16, u16),
-}
-
-#[derive(Clone, Copy)]
-enum Pick {
-    Low,
-    High,
-    Game(Lcg),
 }
 
 struct World {
@@ -45,11 +38,7 @@ impl World {
 
 impl MortarWorld for World {
     fn random_below(&mut self, n: u32) -> u32 {
-        let v = match &mut self.pick {
-            Pick::Low => 0,
-            Pick::High => n.saturating_sub(1),
-            Pick::Game(r) => r.below(n),
-        };
+        let v = self.pick.below(n);
         self.draws.push((n, v));
         v
     }
