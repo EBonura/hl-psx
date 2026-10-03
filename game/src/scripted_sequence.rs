@@ -136,7 +136,7 @@ pub struct ActorKind {
     pub houndeye: bool,
 }
 
-/// What BuildRoute chose for a walk or run.
+/// How a walk or run reaches its mark, chosen once at assignment.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RoutePlan {
     /// First waypoint when it is not the mark itself.

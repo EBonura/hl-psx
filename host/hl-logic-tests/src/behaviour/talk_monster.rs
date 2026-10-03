@@ -23,7 +23,7 @@ fn actor(index: usize) -> TalkActor {
         provoked: false,
         predisaster: true,
         hello_said: false,
-        client_push: false,
+        push_pending: false,
         answer_pending: false,
         speech_due: 0,
         schedule_timer: 0,
@@ -500,7 +500,7 @@ fn a_bump_counts_only_above_fifty_units_per_second() {
             false,
         );
         assert_eq!(matches!(bump, Bump::Pushed { .. }), pushes, "{vel:?}");
-        assert_eq!(a.client_push, pushes);
+        assert_eq!(a.push_pending, pushes);
     }
 }
 
@@ -520,7 +520,7 @@ fn provoked_or_talking_actors_do_not_yield_and_scripts_keep_their_facing() {
         ),
         Bump::BlockedProvoked
     );
-    assert!(!a.client_push);
+    assert!(!a.push_pending);
     let mut a = actor(0);
     let talking = TalkClock {
         speaker: 0,
@@ -564,7 +564,7 @@ fn provoked_or_talking_actors_do_not_yield_and_scripts_keep_their_facing() {
         ),
         Bump::Pushed { ideal_yaw: None }
     );
-    assert!(a.client_push);
+    assert!(a.push_pending);
 }
 
 #[test]
@@ -586,9 +586,9 @@ fn the_step_aside_goal_is_one_hundred_units_directly_away_from_the_player() {
     };
     // Odd think: nothing yet; the push waits.
     assert_eq!(try_begin_move_away(&mut a, 1, [10, 0, 30], yaw), None);
-    assert!(a.client_push);
+    assert!(a.push_pending);
     let goal = try_begin_move_away(&mut a, 2, [10, 0, 30], yaw).unwrap();
-    assert!(!a.client_push);
+    assert!(!a.push_pending);
     assert_eq!(a.state, TalkState::MoveAway);
     assert_eq!(a.schedule_timer, MOVE_AWAY_TIMEOUT_TICKS);
     assert_eq!(goal, [10, 0, 130], "player straight behind at -Z");
@@ -615,7 +615,7 @@ fn the_step_aside_goal_is_one_hundred_units_directly_away_from_the_player() {
 fn the_step_aside_ends_on_arrival_within_three_units_or_after_four_seconds() {
     // Arrival.
     let mut a = actor(0);
-    a.client_push = true;
+    a.push_pending = true;
     try_begin_move_away(&mut a, 0, [0, 0, 0], 2048).unwrap();
     let goal = [a.move_goal[0] as i32, 0, a.move_goal[2] as i32];
     assert_eq!(
@@ -628,7 +628,7 @@ fn the_step_aside_ends_on_arrival_within_three_units_or_after_four_seconds() {
     );
     // Timeout: never moving, it gives up on the 80th tick.
     let mut a = actor(0);
-    a.client_push = true;
+    a.push_pending = true;
     try_begin_move_away(&mut a, 0, [0, 0, 0], 2048).unwrap();
     let mut gave_up = None;
     for tick in 1..=100 {
@@ -678,11 +678,11 @@ fn after_stepping_aside_the_actor_faces_the_player_for_three_quarters_of_a_secon
 #[test]
 fn a_script_taking_the_actor_forgets_the_push_and_any_step_aside() {
     let mut a = actor(0);
-    a.client_push = true;
+    a.push_pending = true;
     a.state = TalkState::MoveAway;
     a.schedule_timer = 30;
     script_takes_over(&mut a);
-    assert!(!a.client_push);
+    assert!(!a.push_pending);
     assert_eq!(a.state, TalkState::Idle);
     assert_eq!(a.schedule_timer, 0);
     let mut b = actor(0);
@@ -748,10 +748,10 @@ fn starting_to_follow_cancels_a_step_aside() {
     a.state = TalkState::FaceBack;
     a.hold_ticks = 9;
     a.schedule_timer = 4;
-    a.client_push = true;
+    a.push_pending = true;
     apply_use(&mut a, FollowUse::Start, false);
     assert_eq!(
-        (a.state, a.hold_ticks, a.schedule_timer, a.client_push),
+        (a.state, a.hold_ticks, a.schedule_timer, a.push_pending),
         (TalkState::Idle, 0, 0, false)
     );
 }
@@ -803,11 +803,11 @@ fn a_directed_line_blocks_use_until_it_ends_but_autonomous_lines_do_not() {
 #[test]
 fn authored_and_reply_lines_clear_the_push_and_hold_the_channel() {
     let mut a = actor(1);
-    a.client_push = true;
+    a.push_pending = true;
     let mut clock = TalkClock::SILENT;
     authored_line(&mut a, &mut clock, 7, 50, 0, true);
     assert!(
-        !a.client_push,
+        !a.push_pending,
         "the push is forgotten even when nothing plays"
     );
     assert_eq!(clock, TalkClock::SILENT);
@@ -821,11 +821,11 @@ fn authored_and_reply_lines_clear_the_push_and_hold_the_channel() {
     assert_eq!((clock.speaker, clock.voice, clock.until), (1, 7, 70));
 
     let mut r = actor(4);
-    r.client_push = true;
+    r.push_pending = true;
     let mut clock = TalkClock::SILENT;
     reply_line(&mut r, &mut clock, 3, 200, 0);
     assert_eq!((clock.speaker, clock.voice, clock.until), (4, 3, 201));
-    assert!(!r.client_push);
+    assert!(!r.push_pending);
 }
 
 // ---------------------------------------------------------------------------

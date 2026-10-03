@@ -16711,7 +16711,7 @@ unsafe fn talk_actor_load(pi: usize) -> talk_monster::TalkActor {
         provoked: prop_scientist_flag(pi, PROP_SCI_PROVOKED),
         predisaster: prop_scientist_flag(pi, PROP_SCI_PREDISASTER),
         hello_said: prop_scientist_flag(pi, PROP_SCI_HELLO_SAID),
-        client_push: prop_client_push(pi),
+        push_pending: prop_client_push(pi),
         answer_pending: PROP_DORMANT[pi] & PROP_RUNTIME_TALK_RESPONSE != 0,
         speech_due: PROP_DEATH_START[pi],
         schedule_timer: PROP_AI_TIMER[pi],
@@ -16733,7 +16733,7 @@ unsafe fn talk_actor_store(a: &talk_monster::TalkActor) {
     prop_scientist_set_flag(pi, PROP_SCI_PROVOKED, a.provoked);
     prop_scientist_set_flag(pi, PROP_SCI_PREDISASTER, a.predisaster);
     prop_scientist_set_flag(pi, PROP_SCI_HELLO_SAID, a.hello_said);
-    prop_client_push_set(pi, a.client_push);
+    prop_client_push_set(pi, a.push_pending);
     if a.answer_pending {
         PROP_DORMANT[pi] |= PROP_RUNTIME_TALK_RESPONSE;
     } else {
