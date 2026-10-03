@@ -49,6 +49,7 @@ mod garg_logic;
 mod mortar;
 mod mortar_logic;
 mod nihilanth;
+mod nihilanth_logic;
 mod osprey;
 mod osprey_logic;
 mod save;

@@ -12,6 +12,8 @@ mod garg;
 #[cfg(test)]
 mod mortar;
 #[cfg(test)]
+mod nihilanth;
+#[cfg(test)]
 mod osprey;
 #[cfg(test)]
 mod tank;
