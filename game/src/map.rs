@@ -189,7 +189,7 @@ unsafe fn pal_rgb555_at(base: *const u8, off: usize) -> (u8, u8, u8) {
 /// brightness curve. Costs 320 curve evaluations and runs only on map load and
 /// on a brightness change, so it is kept out of the hot text bucket.
 #[inline(never)]
-#[link_section = ".hlpsx_cold.brightness"]
+#[cfg_attr(target_arch = "mips", link_section = ".hlpsx_cold.brightness")]
 fn expand_light_palettes() {
     let base = unsafe { LIGHT_PAL_SRC };
     if base.is_null() {
