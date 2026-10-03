@@ -15,9 +15,11 @@ dependencies = [
  "psx-asset",
  "psx-engine",
  "psx-goldsrc",
+ "psx-gpu",
  "psx-math",
  "psx-sfx",
  "psx-spu",
+ "psx-vram",
 ]
 
 [[package]]

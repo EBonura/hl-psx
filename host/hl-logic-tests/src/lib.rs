@@ -82,3 +82,6 @@ pub mod beverage;
 
 #[path = "../../../game/src/setpiece_logic.rs"]
 pub mod setpiece_logic;
+
+#[path = "../../../game/src/hud.rs"]
+pub mod hud;
