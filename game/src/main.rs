@@ -5760,8 +5760,7 @@ static mut BOB_PHASE: u32 = 0;
 // GoldSrc pain-compass edges packed as front/right/rear/left bits. This
 // replaces the port-specific full-screen red wash with the original
 // directional feedback without adding a resident array.
-static mut DAMAGE_DIRECTION: u8 = 0;
-static mut DAMAGE_TICKS: u8 = 0;
+static mut DAMAGE_COMPASS: player_rules::DamageCompass = player_rules::DamageCompass::new();
 // HEV suit voice: 0 = fine, 1 = health critical, 2 = near death (fire once per
 // worsening threshold crossing). Geiger cooldown throttles the radiation click.
 static mut HEV_HEALTH_STATE: u8 = 0;
@@ -11519,12 +11518,7 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
     // per sim tick so a kick recovers over ~5-6 ticks. Snap tiny residuals to 0.
     PUNCH_PITCH -= (PUNCH_PITCH * 5) / 16 + PUNCH_PITCH.signum();
     PUNCH_YAW -= (PUNCH_YAW * 5) / 16 + PUNCH_YAW.signum();
-    if DAMAGE_TICKS > 0 {
-        DAMAGE_TICKS -= 1;
-        if DAMAGE_TICKS == 0 {
-            DAMAGE_DIRECTION = 0;
-        }
-    }
+    (*core::ptr::addr_of_mut!(DAMAGE_COMPASS)).tick();
     if GEIGER_COOLDOWN & 0x0f != 0 {
         GEIGER_COOLDOWN -= 1;
     }
@@ -11802,13 +11796,11 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
 /// the same screen positions and fade law without spending another atlas page
 /// or resident texture packet pool.
 fn draw_damage_compass(health: u16) {
-    let edges = unsafe { DAMAGE_DIRECTION };
+    let edges = unsafe { DAMAGE_COMPASS }.edges();
     if edges == 0 {
         return;
     }
-    // GoldSrc uses amber above 25 health and red below it. Keep this much
-    // softer than the removed full-screen red wash.
-    let green = if health > 25 { 40 } else { 0 };
+    let [red, green, blue] = player_rules::compass_colour(health);
     let mut edge = 0usize;
     let arrows = [
         [(152, 24), (168, 24), (160, 38)],    // front / top
@@ -11820,9 +11812,9 @@ fn draw_damage_compass(health: u16) {
         if edges & (1 << edge) != 0 {
             fx_tri_flat_blended(
                 arrows[edge],
-                128,
+                red,
                 green,
-                0,
+                blue,
                 psx_gpu::material::BlendMode::Add,
             );
         }
@@ -13144,8 +13136,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     ENDING_FROM = 0;
     CAMERA_LI = u16::MAX;
     CAMERA_LOCK = false;
-    DAMAGE_DIRECTION = 0;
-    DAMAGE_TICKS = 0;
+    DAMAGE_COMPASS = player_rules::DamageCompass::new();
     GEIGER_COOLDOWN = 0;
     TRACKTRAIN_SUBMODEL = m.tram_submodel.min(u16::MAX as usize) as u16;
     TRAM_NODE_ALT = [0; 8];
@@ -16693,34 +16684,13 @@ fn prop_voice(kind: u8, dying: bool) -> u8 {
 
 static mut PAIN_SFX_COOLDOWN: u8 = 0;
 
-/// Source `CalcDamageDirection`: compare the world-space inflictor with the
-/// current view and light every matching screen edge. Close damage lights all
-/// four, matching GoldSrc's special case for a source within 50 units.
+/// Light the damage-compass arrows facing a world-space damage source, seen
+/// from the player's current view.
 #[inline(never)]
 unsafe fn note_damage_direction(source: [i32; 3]) {
-    let dx = (source[0] - LOGIC_PLAYER_POS[0]).clamp(-4096, 4096);
-    let dy = (source[1] - LOGIC_PLAYER_POS[1]).clamp(-4096, 4096);
-    let dz = (source[2] - LOGIC_PLAYER_POS[2]).clamp(-4096, 4096);
-    let delta = [dx, dy, dz];
-    let d2 = dx * dx + dy * dy + dz * dz;
-    let mut edges = 0u8;
-    if d2 <= 50 * 50 {
-        edges = 0x0f;
-    } else {
-        let distance = isqrt_i32(d2);
-        let rot = view_rotation(LOGIC_PLAYER_YAW, 0);
-        let forward = dot12(rot.m[2], delta);
-        let right = dot12(rot.m[0], delta);
-        let threshold = distance * 3;
-        if forward.abs() * 10 > threshold {
-            edges |= if forward > 0 { 1 << 0 } else { 1 << 2 };
-        }
-        if right.abs() * 10 > threshold {
-            edges |= if right > 0 { 1 << 1 } else { 1 << 3 };
-        }
-    }
-    DAMAGE_DIRECTION |= edges;
-    DAMAGE_TICKS = 10;
+    let rot = view_rotation(LOGIC_PLAYER_YAW, 0);
+    let compass = &mut *core::ptr::addr_of_mut!(DAMAGE_COMPASS);
+    compass.note_hit(LOGIC_PLAYER_POS, rot.m[2], rot.m[0], source);
 }
 
 /// Fall damage: same feedback as `damage_player`, but straight to health;
