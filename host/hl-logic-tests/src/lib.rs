@@ -16,6 +16,14 @@
 //! visibility, hitbox, ordering, semantic input and the core ground rules)
 //! live in `psx-goldsrc` and are tested there.
 
+// The game crate tags cold paths `#[optimize(size)]`; the included modules
+// carry that attribute, so the host runner opts into the same feature.
+#![feature(optimize_attribute)]
+
+// Some included test blocks name `alloc::` collections, as the `no_std`
+// game crate would.
+extern crate alloc;
+
 /// Mirrors of the arsenal dimensions the included modules expect from the game
 /// crate root. `constants_match_the_game_crate` fails if these ever drift.
 pub const N_WEAPONS: usize = 14;
@@ -82,3 +90,29 @@ pub mod beverage;
 
 #[path = "../../../game/src/setpiece_logic.rs"]
 pub mod setpiece_logic;
+
+// The cooked-map reader. Its pure decoders (geometry records, route tables,
+// path data) are exercised by the tests inside the module.
+#[path = "../../../game/src/map.rs"]
+pub mod map;
+
+#[path = "../../../game/src/settings.rs"]
+pub mod settings;
+
+// Player movement and the collision traces it runs against a cooked map.
+#[path = "../../../game/src/phys.rs"]
+pub mod phys;
+
+// Shared GoldSrc helpers that the game crate re-exports at its root.
+pub use psx_goldsrc::{ladder_logic, pushable};
+
+/// Synthetic cooked rooms for movement and navigation tests.
+#[cfg(test)]
+pub mod map_fixture;
+/// Player movement behaviour (properties plus recorded trajectories).
+#[cfg(test)]
+mod movement_behaviour;
+
+/// Node-graph next-hop decoding against synthetic route tables.
+#[cfg(test)]
+mod route_behaviour;
