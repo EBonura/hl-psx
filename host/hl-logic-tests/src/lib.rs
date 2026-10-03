@@ -89,3 +89,6 @@ pub mod talk_monster;
 /// Behaviour-level tests that pin the game's observable rules from the
 /// outside of each module (golden scenarios plus spec properties).
 pub mod behaviour;
+
+#[path = "../../../game/src/scripted_sequence.rs"]
+pub mod scripted_sequence;
