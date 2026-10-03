@@ -27738,6 +27738,9 @@ unsafe fn project_hmd7_model_inner(
     projected_z: *mut u16,
 ) {
     let pose = md.pose(frame, frame2, frac16, mouth, unsafe { pose_scratch() });
+    // Every cook is struct-of-arrays, so each range below is one checked
+    // slice of this view and its vertices stream with no per-index check.
+    let words = md.vertex_words();
     let body_bit = 1u8 << body.min(7);
     let mut loaded_bone = usize::MAX;
     let mut loaded_mouth = false;
@@ -27762,6 +27765,27 @@ unsafe fn project_hmd7_model_inner(
             .min(md.vertex_count())
             .min(MAX_MODEL_VERTS);
         let mut vertex = range.first.min(end);
+        if let Some(run) = words.slice(vertex..end) {
+            let (groups, rest) = run.triples();
+            for [v0, v1, v2] in groups {
+                let tri = project_hmd7_triangle_words(v0, v1, v2);
+                projected_soa_set(projected_xy, projected_z, vertex, tri[0]);
+                projected_soa_set(projected_xy, projected_z, vertex + 1, tri[1]);
+                projected_soa_set(projected_xy, projected_z, vertex + 2, tri[2]);
+                vertex += 3;
+            }
+            for v in rest.iter() {
+                projected_soa_set(
+                    projected_xy,
+                    projected_z,
+                    vertex,
+                    project_vertex_scheduled(v.position()),
+                );
+                vertex += 1;
+            }
+            continue;
+        }
+        // An interleaved (pre-SoA) cook has no word view: read per index.
         while vertex + 2 < end {
             let tri = project_hmd7_triangle_words(
                 md.vertex_gte_words(vertex),
