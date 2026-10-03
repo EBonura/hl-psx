@@ -131,3 +131,76 @@ pub const fn compass_colour(health: u16) -> [u8; 3] {
 fn dot_q12(row: [i16; 3], e: [i32; 3]) -> i32 {
     ((row[0] as i32 * e[0]) + (row[1] as i32 * e[1]) + (row[2] as i32 * e[2])) >> 12
 }
+
+/// Radiation volumes further than this (world units) from the player never
+/// make the Geiger counter click.
+pub const GEIGER_RANGE: i32 = 800;
+
+/// The Geiger counter samples once every this many 20 Hz ticks (0.25 s).
+pub const GEIGER_SAMPLE_TICKS: u8 = 5;
+
+/// A Geiger click to play, at 1/`volume_den` of full volume.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GeigerClick {
+    pub volume_den: u16,
+}
+
+/// One Geiger sample: feed it the centre of every active radiation volume,
+/// then roll for a click against the nearest one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GeigerScan {
+    nearest2: i32,
+}
+
+impl Default for GeigerScan {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GeigerScan {
+    pub const fn new() -> Self {
+        Self {
+            nearest2: (GEIGER_RANGE + 1) * (GEIGER_RANGE + 1),
+        }
+    }
+
+    pub fn add_source(&mut self, player: [i32; 3], centre: [i32; 3]) {
+        let lim = GEIGER_RANGE + 1;
+        let dx = (centre[0] - player[0]).clamp(-lim, lim);
+        let dy = (centre[1] - player[1]).clamp(-lim, lim);
+        let dz = (centre[2] - player[2]).clamp(-lim, lim);
+        self.nearest2 = self.nearest2.min(dx * dx + dy * dy + dz * dz);
+    }
+
+    /// Roll for a click. `rng` is drawn once, and a second time only when the
+    /// first draw does not click (also when nothing is in range).
+    pub fn sample(self, rng: &mut dyn FnMut() -> u32) -> Option<GeigerClick> {
+        let range = psx_math::int32::isqrt_i32(self.nearest2);
+        let chance: u32 = match range {
+            601..=800 => 2,
+            501..=600 => 4,
+            301..=500 => 8,
+            201..=300 => 28,
+            151..=200 => 40,
+            101..=150 => 60,
+            76..=100 => 80,
+            51..=75 => 90,
+            0..=50 => 95,
+            _ => 0,
+        };
+        if (rng() & 127) < chance || (rng() & 127) < chance {
+            Some(GeigerClick {
+                volume_den: if range > 400 {
+                    3
+                } else if range > 150 {
+                    2
+                } else {
+                    1
+                },
+            })
+        } else {
+            None
+        }
+    }
+}
