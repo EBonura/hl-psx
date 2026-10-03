@@ -82,3 +82,10 @@ pub mod beverage;
 
 #[path = "../../../game/src/setpiece_logic.rs"]
 pub mod setpiece_logic;
+
+#[path = "../../../game/src/world_rules.rs"]
+pub mod world_rules;
+
+/// Behaviour-level golden tests for rules extracted from the game crate.
+#[cfg(test)]
+pub mod behaviour;
