@@ -45,3 +45,10 @@ pub const fn dist2_xz(a: [i32; 3], b: [i32; 3]) -> i32 {
 pub fn atan_s(y: i32, x: i32) -> i32 {
     ((crate::scientist_logic::precise_yaw_from_vec(y, x) as i32 + 2048) & 0xfff) - 2048
 }
+
+/// Unit-ish (q12) direction from a to b. Zero length gives (0, 0, 0).
+pub fn dir_q12(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
+    let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let len = psx_math::int32::isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
+    [(d[0] << 12) / len, (d[1] << 12) / len, (d[2] << 12) / len]
+}

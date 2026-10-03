@@ -98,4 +98,7 @@ pub mod osprey_logic;
 #[path = "../../../game/src/apache_logic.rs"]
 pub mod apache_logic;
 
+#[path = "../../../game/src/garg_logic.rs"]
+pub mod garg_logic;
+
 pub mod behaviour;
