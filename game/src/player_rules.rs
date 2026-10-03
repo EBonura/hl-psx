@@ -306,3 +306,130 @@ fn battery_step(on: bool, mut battery: u8, mut timer: u8) -> (bool, u8, u8, bool
     }
     (on, battery, timer, false)
 }
+
+/// Tau Cannon secondary fire timings in 20 Hz ticks.
+pub const TAU_FULL_CHARGE_TICKS: u8 = 80; // 4 s
+pub const TAU_SPIN_TICKS: u8 = 10; // 0.5 s: the spin-up gives way to the spin loop
+pub const TAU_CELL_TICKS: u8 = 6; // 0.3 s per uranium cell while charging
+pub const TAU_OVERCHARGE_TICKS: u8 = 200; // 10 s, then it discharges into the player
+/// Damage the player takes from an overcharge.
+pub const TAU_OVERCHARGE_DAMAGE: u16 = 50;
+/// Cooldown after a dry click with no cells.
+pub const TAU_DRY_COOLDOWN_TICKS: u8 = 4;
+
+/// The Tau Cannon's charge state plus the weapon fields it touches.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TauState {
+    /// 0 when idle, otherwise ticks since the charge began.
+    pub age: u8,
+    /// Weapon cooldown in ticks.
+    pub cooldown: u8,
+    /// Uranium cells in reserve.
+    pub cells: u16,
+}
+
+/// What the Tau Cannon sees this tick.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TauInput {
+    /// The Tau Cannon is the current weapon.
+    pub selected: bool,
+    /// Secondary fire is held.
+    pub held: bool,
+    /// The player's eye is under water.
+    pub underwater: bool,
+    /// A weapon switch or reload is still in progress.
+    pub busy: bool,
+}
+
+/// What happened this tick.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TauEvent {
+    Idle,
+    /// Tried to start with no cells: dry click.
+    Dry,
+    /// The charge began (one cell spent).
+    Start,
+    /// The spin-up became the spin loop.
+    Spin,
+    /// The charge was released or forced out: fire a shot of `damage`.
+    Fire {
+        damage: u8,
+    },
+    /// Charging under water discharges harmlessly with a zap.
+    Discharge,
+    /// Held too long: the charge hurts the player for
+    /// `TAU_OVERCHARGE_DAMAGE`.
+    Overcharge,
+}
+
+/// One 20 Hz tick of the Tau Cannon's hold-to-charge secondary fire.
+pub fn tau_secondary_tick(s: &mut TauState, input: TauInput) -> TauEvent {
+    if !input.selected {
+        s.age = 0;
+        return TauEvent::Idle;
+    }
+    if input.underwater && (input.held || s.age != 0) {
+        s.age = 0;
+        s.cooldown = 10;
+        return TauEvent::Discharge;
+    }
+    if input.held {
+        if s.age == 0 {
+            if s.cooldown != 0 || input.busy {
+                return TauEvent::Idle;
+            }
+            if s.cells == 0 {
+                s.cooldown = TAU_DRY_COOLDOWN_TICKS;
+                return TauEvent::Dry;
+            }
+            s.cells -= 1;
+            s.age = 1;
+            return TauEvent::Start;
+        }
+        s.age = s.age.saturating_add(1);
+        let age = s.age;
+        if age < TAU_FULL_CHARGE_TICKS && age % TAU_CELL_TICKS == 0 {
+            if s.cells == 0 {
+                return tau_release(s, age);
+            }
+            s.cells -= 1;
+            if s.cells == 0 {
+                return tau_release(s, age);
+            }
+        }
+        if age >= TAU_OVERCHARGE_TICKS {
+            s.age = 0;
+            s.cooldown = 20;
+            return TauEvent::Overcharge;
+        }
+        return if age == TAU_SPIN_TICKS {
+            TauEvent::Spin
+        } else {
+            TauEvent::Idle
+        };
+    }
+    if s.age != 0 {
+        let age = s.age;
+        return tau_release(s, age);
+    }
+    TauEvent::Idle
+}
+
+fn tau_release(s: &mut TauState, age: u8) -> TauEvent {
+    let damage = (200u16 * age.min(TAU_FULL_CHARGE_TICKS) as u16 / TAU_FULL_CHARGE_TICKS as u16)
+        .max(1) as u8;
+    s.age = 0;
+    s.cooldown = 20;
+    TauEvent::Fire { damage }
+}
+
+/// Horizontal shove (world units per tick) a charged shot of `damage` gives
+/// the player, backwards along the view `forward` axis (1.0 = 4096).
+pub fn tau_shove(damage: u8, forward: [i16; 3]) -> [i32; 3] {
+    let shove = -(damage as i32) * 5 / 20;
+    [
+        (forward[0] as i32 * shove) >> 12,
+        0,
+        (forward[2] as i32 * shove) >> 12,
+    ]
+}

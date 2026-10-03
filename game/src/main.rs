@@ -20482,58 +20482,16 @@ unsafe fn fire_secondary(
     }
 }
 
-const GAUSS_FULL_CHARGE_TICKS: u8 = 80; // GetFullChargeTime(): 4.0 s in SP
-const GAUSS_SPINUP_TICKS: u8 = 10; // gauss.cpp switches SPINUP -> SPIN at 0.5 s
-const GAUSS_AMMO_BURN_TICKS: u8 = 6; // one uranium cell every 0.3 s in SP
-const GAUSS_OVERCHARGE_TICKS: u8 = 200; // ten seconds, then self-zap
 const GAUSS_EVENT_NONE: u8 = 0;
 const GAUSS_EVENT_START: u8 = 1;
 const GAUSS_EVENT_SPIN: u8 = 2;
 const GAUSS_EVENT_FIRE: u8 = 3;
 const GAUSS_EVENT_OVERCHARGE: u8 = 4;
 
-#[inline(never)]
-unsafe fn fire_gauss_charge(
-    w: &mut Arsenal,
-    age: u8,
-    m: &Map,
-    movers: &[phys::Mover],
-    eye: [i32; 3],
-    rot: &Mat3I16,
-    base_t: [i32; 3],
-) -> u8 {
-    let damage = (200u16 * age.min(GAUSS_FULL_CHARGE_TICKS) as u16 / GAUSS_FULL_CHARGE_TICKS as u16)
-        .max(1) as u8;
-    fire_hitscan(
-        m,
-        movers,
-        eye,
-        rot,
-        base_t,
-        damage,
-        false,
-        w.def().range,
-        GLOCK_AIM_PIX_X,
-        GLOCK_AIM_PIX_Y,
-        0,
-        0,
-    );
-    // v_forward * damage * 5 units/second, at 20 Hz, with Z dropped (single
-    // player never gets the deathmatch pop-up).
-    let shove = -(damage as i32) * 5 / 20;
-    PENDING_GAUSS_SHOVE = [
-        (rot.m[2][0] as i32 * shove) >> 12,
-        0,
-        (rot.m[2][2] as i32 * shove) >> 12,
-    ];
-    w.gauss_charge = 0;
-    w.cooldown = 20;
-    sfx::play(sfx::GAUSS);
-    GAUSS_EVENT_FIRE
-}
-
-/// Advance the Tau Cannon's hold-to-charge secondary attack. Damage and ammo
-/// cadence follow gauss.cpp; the one-byte age is the complete persistent state.
+/// Advance the Tau Cannon's hold-to-charge secondary attack: the rule is
+/// `player_rules::tau_secondary_tick`; this applies its sounds, the shot,
+/// the shove and the overcharge damage, and returns the viewmodel event.
+#[allow(clippy::too_many_arguments)]
 #[inline(never)]
 unsafe fn tick_gauss_secondary(
     w: &mut Arsenal,
@@ -20545,65 +20503,65 @@ unsafe fn tick_gauss_secondary(
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) -> u8 {
-    if w.current != W_GAUSS {
-        w.gauss_charge = 0;
-        return GAUSS_EVENT_NONE;
-    }
-    if eye_under && (held || w.gauss_charge != 0) {
-        w.gauss_charge = 0;
-        w.cooldown = 10;
-        sfx::play(sfx::ELECTRO);
-        return GAUSS_EVENT_OVERCHARGE;
-    }
-    if held {
-        if w.gauss_charge == 0 {
-            if w.cooldown != 0 || w.switch_ticks != 0 || w.reload_ticks != 0 {
-                return GAUSS_EVENT_NONE;
-            }
-            if w.ammo[AMMO_URANIUM] == 0 {
-                w.cooldown = GLOCK_EMPTY_COOLDOWN_TICKS;
-                sfx::play(sfx::DRY);
-                return GAUSS_EVENT_NONE;
-            }
-            // The SDK spends one cell as soon as the coils begin spinning.
-            w.ammo[AMMO_URANIUM] -= 1;
-            w.gauss_charge = 1;
+    let mut tau = player_rules::TauState {
+        age: w.gauss_charge,
+        cooldown: w.cooldown,
+        cells: w.ammo[AMMO_URANIUM],
+    };
+    let event = player_rules::tau_secondary_tick(
+        &mut tau,
+        player_rules::TauInput {
+            selected: w.current == W_GAUSS,
+            held,
+            underwater: eye_under,
+            busy: w.switch_ticks != 0 || w.reload_ticks != 0,
+        },
+    );
+    w.gauss_charge = tau.age;
+    w.cooldown = tau.cooldown;
+    w.ammo[AMMO_URANIUM] = tau.cells;
+    match event {
+        player_rules::TauEvent::Idle => GAUSS_EVENT_NONE,
+        player_rules::TauEvent::Dry => {
+            sfx::play(sfx::DRY);
+            GAUSS_EVENT_NONE
+        }
+        player_rules::TauEvent::Start => {
             sfx::play(sfx::GAUSS_CHARGE);
-            return GAUSS_EVENT_START;
+            GAUSS_EVENT_START
         }
-
-        w.gauss_charge = w.gauss_charge.saturating_add(1);
-        let age = w.gauss_charge;
-        if age < GAUSS_FULL_CHARGE_TICKS && age % GAUSS_AMMO_BURN_TICKS == 0 {
-            if w.ammo[AMMO_URANIUM] == 0 {
-                // Falling out of ammo fires the charge immediately, just like
-                // SecondaryAttack's forced StartFire path.
-                return fire_gauss_charge(w, age, m, movers, eye, rot, base_t);
-            }
-            w.ammo[AMMO_URANIUM] -= 1;
-            if w.ammo[AMMO_URANIUM] == 0 {
-                return fire_gauss_charge(w, age, m, movers, eye, rot, base_t);
-            }
+        player_rules::TauEvent::Spin => GAUSS_EVENT_SPIN,
+        player_rules::TauEvent::Discharge => {
+            sfx::play(sfx::ELECTRO);
+            GAUSS_EVENT_OVERCHARGE
         }
-        if age >= GAUSS_OVERCHARGE_TICKS {
-            w.gauss_charge = 0;
-            w.cooldown = 20;
-            PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(50);
+        player_rules::TauEvent::Overcharge => {
+            PENDING_PLAYER_DAMAGE =
+                PENDING_PLAYER_DAMAGE.saturating_add(player_rules::TAU_OVERCHARGE_DAMAGE);
             note_damage_direction(LOGIC_PLAYER_POS);
             sfx::play(sfx::ELECTRO);
-            return GAUSS_EVENT_OVERCHARGE;
+            GAUSS_EVENT_OVERCHARGE
         }
-        return if age == GAUSS_SPINUP_TICKS {
-            GAUSS_EVENT_SPIN
-        } else {
-            GAUSS_EVENT_NONE
-        };
+        player_rules::TauEvent::Fire { damage } => {
+            fire_hitscan(
+                m,
+                movers,
+                eye,
+                rot,
+                base_t,
+                damage,
+                false,
+                w.def().range,
+                GLOCK_AIM_PIX_X,
+                GLOCK_AIM_PIX_Y,
+                0,
+                0,
+            );
+            PENDING_GAUSS_SHOVE = player_rules::tau_shove(damage, rot.m[2]);
+            sfx::play(sfx::GAUSS);
+            GAUSS_EVENT_FIRE
+        }
     }
-
-    if w.gauss_charge != 0 {
-        return fire_gauss_charge(w, w.gauss_charge, m, movers, eye, rot, base_t);
-    }
-    GAUSS_EVENT_NONE
 }
 
 /// The fire sound for a weapon id; melee picks hit vs miss.
@@ -20672,10 +20630,7 @@ static mut RPG_SPOT_POS: [i32; 3] = [0; 3];
 // health/armor once per tick (keeps explode() off the &mut health thread).
 static mut PENDING_PLAYER_DAMAGE: u16 = 0;
 /// Horizontal shove owed to the player from a charged Tau shot, in world units
-/// per tick. CGauss::StartFire subtracts `v_forward * flDamage * 5` from the
-/// player's velocity on a secondary shot and then restores the Z component in
-/// single player, so the kick is a pure horizontal shove -- the recoil that
-/// makes a full-charge shot feel like a cannon instead of a rifle.
+/// per tick (see `player_rules::tau_shove`), applied on the next player move.
 static mut PENDING_GAUSS_SHOVE: [i32; 3] = [0; 3];
 
 // (speed, life ticks, gravity?, AoE radius (0 = direct hit only), colour, size px)

@@ -9,3 +9,4 @@ mod geiger;
 mod player_damage;
 mod pushable_float;
 mod rotating_door;
+mod tau_cannon;
