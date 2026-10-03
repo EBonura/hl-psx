@@ -101,4 +101,7 @@ pub mod apache_logic;
 #[path = "../../../game/src/garg_logic.rs"]
 pub mod garg_logic;
 
+#[path = "../../../game/src/nihilanth_logic.rs"]
+pub mod nihilanth_logic;
+
 pub mod behaviour;
