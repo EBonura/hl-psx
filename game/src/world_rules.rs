@@ -115,3 +115,80 @@ pub fn rotating_door_opens_reversed(
     let cross = dx * fwd[1] - dz * fwd[0];
     Some(cross < 0)
 }
+
+/// How far past the wound, in world units, a hit's blood can land.
+pub const BLEED_REACH: i32 = 172;
+
+/// Blood a creature sheds when hit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BloodColour {
+    Red,
+    Yellow,
+    /// Turrets, machines and scenery do not bleed.
+    NoBlood,
+}
+
+/// Blood colour for each actor type id.
+pub const fn species_blood(actor_type: u8) -> BloodColour {
+    match actor_type {
+        // headcrab, zombie, houndeye, bullsquid, vortigaunt, alien grunt,
+        // controller, cockroach, gargantua, nihilanth, big momma, ichthyosaur,
+        // flock, tentacle, vent zombie, snark, baby headcrab
+        2 | 5 | 6 | 7 | 9 | 10 | 11 | 14 | 16 | 17 | 18 | 19 | 24 | 50 | 55 | 58 | 59 => {
+            BloodColour::Yellow
+        }
+        // leech, G-Man, turrets, apache, Hazard Course hologram, tripmine,
+        // osprey, gibs and scenery props
+        13 | 15 | 20..=23 | 56 | 57 | 61..=75 => BloodColour::NoBlood,
+        _ => BloodColour::Red,
+    }
+}
+
+/// What a blood trail needs from the game, called in this order per decal:
+/// three random draws (one per axis), then one trace-and-stamp.
+pub trait BloodTrailWorld {
+    /// Uniform value in 0..n.
+    fn random_below(&mut self, n: u32) -> u32;
+    /// Trace from `from` to `to` and leave a blood decal where it hits.
+    fn trace_and_stamp(&mut self, from: [i32; 3], to: [i32; 3]);
+}
+
+/// Blood decals behind a wound: 1, 2 or 4 traces continuing the shot from the
+/// wound (damage under 10, under 25, above), each direction jittered per axis
+/// by up to 0.1, 0.2 or 0.3. `shot_start`/`shot_end` give the shot direction
+/// and `shot_len` its length. Nothing happens for zero damage or a creature
+/// that does not bleed.
+pub fn blood_trail(
+    wound: [i32; 3],
+    shot_start: [i32; 3],
+    shot_end: [i32; 3],
+    shot_len: i32,
+    damage: u8,
+    colour: BloodColour,
+    world: &mut dyn BloodTrailWorld,
+) {
+    if colour == BloodColour::NoBlood || damage == 0 {
+        return;
+    }
+    let len = shot_len.max(1);
+    let (noise, count) = if damage < 10 {
+        (410, 1)
+    } else if damage < 25 {
+        (819, 2)
+    } else {
+        (1229, 4)
+    };
+    let mut i = 0;
+    while i < count {
+        let mut end = wound;
+        let mut a = 0;
+        while a < 3 {
+            let dir = (shot_end[a] - shot_start[a]) * 4096 / len;
+            let d = dir + world.random_below(2 * noise as u32 + 1) as i32 - noise;
+            end[a] += (d * BLEED_REACH) >> 12;
+            a += 1;
+        }
+        world.trace_and_stamp(wound, end);
+        i += 1;
+    }
+}

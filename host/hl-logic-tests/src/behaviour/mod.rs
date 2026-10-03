@@ -2,6 +2,7 @@
 //! the current implementation, so a reimplementation can be checked against
 //! observable behaviour.
 
+mod blood_trail;
 mod damage_compass;
 mod geiger;
 mod player_damage;
