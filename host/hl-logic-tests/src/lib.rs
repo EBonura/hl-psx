@@ -88,3 +88,5 @@ pub mod hud;
 
 #[path = "../../../game/src/hud_layout.rs"]
 pub mod hud_layout;
+
+pub mod behaviour;
