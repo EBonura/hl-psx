@@ -24117,39 +24117,10 @@ const FLASH_MIN_REACH: i32 = 512;
 // Screen-space cone radii (px from centre) for the world-vertex lamp.
 const FLASH_CONE_INNER: i32 = 64;
 const FLASH_CONE_OUTER: i32 = 112;
-const FLASH_DRAIN_TICKS: u8 = 24; // SDK FLASH_DRAIN_TIME: 1.2 s at 20 Hz
-const FLASH_CHARGE_TICKS: u8 = 4; // SDK FLASH_CHARGE_TIME: 0.2 s at 20 Hz
 static mut FLASHLIGHT_ON: bool = false;
-static mut FLASHLIGHT_BATTERY: u8 = 99; // CBasePlayer::Spawn starts at 99
-static mut FLASHLIGHT_TIMER: u8 = 1; // force the initial 99 -> 100 HUD update
+static mut FLASHLIGHT_BATTERY: u8 = player_rules::Flashlight::NEW_GAME.battery;
+static mut FLASHLIGHT_TIMER: u8 = player_rules::Flashlight::NEW_GAME.timer;
 static mut FLASHLIGHT_REACH: u16 = FLASH_RANGE as u16;
-
-/// Advance GoldSrc's integer flashlight battery clock by one 20 Hz simulation
-/// tick. The state is passed and returned by value: keeping the three byte-wide
-/// fields out of adjacent mutable references avoids a bad MIPS-I codegen alias
-/// on the experimental target. The final bool reports automatic shutoff.
-#[inline(never)]
-fn tick_flashlight_battery(on: bool, mut battery: u8, mut timer: u8) -> (bool, u8, u8, bool) {
-    if timer > 0 {
-        timer -= 1;
-        if timer > 0 {
-            return (on, battery, timer, false);
-        }
-    }
-    if on {
-        if battery > 0 {
-            battery -= 1;
-        }
-        if battery == 0 {
-            return (false, 0, FLASH_CHARGE_TICKS, true);
-        }
-        timer = FLASH_DRAIN_TICKS;
-    } else if battery < 100 {
-        battery += 1;
-        timer = if battery < 100 { FLASH_CHARGE_TICKS } else { 0 };
-    }
-    (on, battery, timer, false)
-}
 
 /// Trace the beam centre once per visual frame. Static BSP and active brush
 /// movers both stop it, so a closed door cannot light the room behind it.
@@ -30688,12 +30659,12 @@ fn play(
     let mut flashlight_battery = if launch.preserve_view {
         unsafe { FLASHLIGHT_BATTERY }
     } else {
-        99
+        player_rules::Flashlight::NEW_GAME.battery
     };
     let mut flashlight_timer = if launch.preserve_view {
         unsafe { FLASHLIGHT_TIMER }
     } else {
-        1
+        player_rules::Flashlight::NEW_GAME.timer
     };
     unsafe {
         FLASHLIGHT_ON = flashlight;
@@ -31242,37 +31213,29 @@ fn play(
             let duck_requested = !dead
                 && unsafe { MOUNTED_TANK } < 0
                 && input_sample.held(semantic_input::ACTION_DUCK);
-            // GoldSrc drains one battery unit every 1.2 s while on and restores
-            // one every 0.2 s while off. Tick before input so a fresh toggle gets
-            // the complete authored interval rather than losing this tick.
-            if dead && flashlight {
-                flashlight = false;
-                flashlight_timer = FLASH_CHARGE_TICKS;
-            }
-            let (next_flashlight, next_battery, next_timer, auto_off) =
-                tick_flashlight_battery(flashlight, flashlight_battery, flashlight_timer);
-            flashlight = next_flashlight;
-            flashlight_battery = next_battery;
-            flashlight_timer = next_timer;
-            if auto_off {
-                unsafe { sfx::play(sfx::FLASHLIGHT) };
-            }
-            // Flashlight (L3 toggles the HEV lamp; needs the suit and charge).
+            // Suit lamp: battery clock, then the L3 toggle.
             let flash_now = input_sample.held(semantic_input::ACTION_FLASHLIGHT);
-            if flash_now && !flash_prev && suit_equipped && !dead {
-                if flashlight {
-                    flashlight = false;
-                    flashlight_timer = FLASH_CHARGE_TICKS;
-                    unsafe { sfx::play(sfx::FLASHLIGHT) };
-                } else if flashlight_battery > 0 {
-                    flashlight = true;
-                    flashlight_timer = FLASH_DRAIN_TICKS;
-                    unsafe { sfx::play(sfx::FLASHLIGHT) };
-                }
+            let (lamp, lamp_tick) = player_rules::flashlight_tick(
+                player_rules::Flashlight {
+                    on: flashlight,
+                    battery: flashlight_battery,
+                    timer: flashlight_timer,
+                },
+                player_rules::FlashlightInput {
+                    toggle_pressed: flash_now && !flash_prev,
+                    has_suit: suit_equipped,
+                    dead,
+                },
+            );
+            flashlight = lamp.on;
+            flashlight_battery = lamp.battery;
+            flashlight_timer = lamp.timer;
+            if lamp_tick.click {
+                unsafe { sfx::play(sfx::FLASHLIGHT) };
             }
             flash_prev = flash_now;
             unsafe {
-                FLASHLIGHT_ON = flashlight && suit_equipped && !dead;
+                FLASHLIGHT_ON = lamp_tick.lit;
                 FLASHLIGHT_BATTERY = flashlight_battery;
                 FLASHLIGHT_TIMER = flashlight_timer;
             }

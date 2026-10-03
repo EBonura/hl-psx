@@ -4,6 +4,7 @@
 
 mod blood_trail;
 mod damage_compass;
+mod flashlight;
 mod geiger;
 mod player_damage;
 mod pushable_float;
