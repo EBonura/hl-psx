@@ -1886,6 +1886,24 @@ fn compile_game(
     features: Option<&str>,
     profile: GuestProfile<'_>,
 ) -> Result<PathBuf> {
+    compile_game_with(
+        repository,
+        psoxide,
+        features,
+        profile,
+        is_shipping_build(features),
+    )
+}
+
+/// `compile_game` with an explicit panic policy. `bare_panics` turns every
+/// panic into a bare break with no message or location (see below).
+fn compile_game_with(
+    repository: &Path,
+    psoxide: &Path,
+    features: Option<&str>,
+    profile: GuestProfile<'_>,
+    bare_panics: bool,
+) -> Result<PathBuf> {
     let game = repository.join("game");
     let mut command = Command::new(cargo());
     command.current_dir(&game).args(["build", "--release"]);
@@ -1895,7 +1913,7 @@ fn compile_game(
     // `--config` appends to the rustflags in game/.cargo/config.toml; an
     // exported RUSTFLAGS would replace them.
     let mut flags = Vec::new();
-    if is_shipping_build(features) {
+    if bare_panics {
         // Every panic, bounds check and overflow check becomes a bare
         // `break`, so core's formatting machinery, the panic messages and
         // their source locations never reach the image. The PS1 has nowhere
@@ -2341,7 +2359,18 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
-    let exe = compile_game(&repository, &psoxide, features, GuestProfile::None)?;
+    // Regression scenarios compare pixels, positions and timings, never panic
+    // text, and with the messages the instrumented image no longer fits RAM
+    // (17-20 KB over at ac83da7). They link with bare panics like a shipping
+    // disc; a panic still stops the emulator at the faulting PC.
+    let bare_panics = options.action == Action::Regress || is_shipping_build(features);
+    let exe = compile_game_with(
+        &repository,
+        &psoxide,
+        features,
+        GuestProfile::None,
+        bare_panics,
+    )?;
     if options.action == Action::Compile {
         return Ok(());
     }
