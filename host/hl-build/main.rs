@@ -8,6 +8,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod goldens;
 mod model_audit;
 mod model_variants;
 mod regression;
@@ -679,6 +680,7 @@ enum Action {
     Install,
     Pgo,
     Check,
+    Goldens,
 }
 
 #[derive(Debug)]
@@ -690,6 +692,8 @@ struct Options {
     regression_scenario: Option<String>,
     games_dir: Option<PathBuf>,
     tapes: Vec<PathBuf>,
+    golden_dir: Option<PathBuf>,
+    record_golden: bool,
 }
 
 const CANONICAL_GAME_NAME: &str = "Half-Life (hl-psx)";
@@ -712,6 +716,9 @@ const HELP: &str = "hl-psx Rust build\n\n\
            install    full build and copy the disc to --games-dir\n\
            pgo        profile-guided pack: replay --tape in PSoXide, feed its\n\
                       instruction counts back into the compiler, pack again\n\
+           goldens    play the behaviour golden routes on poll-bound tapes and\n\
+                      compare (or with --record, write) frames and state at\n\
+                      fixed simulation ticks; needs --golden-dir\n\
            check      locate and validate the Half-Life installation\n\n\
          OPTIONS:\n\
            --half-life PATH   Half-Life directory, or its valve directory\n\
@@ -719,7 +726,9 @@ const HELP: &str = "hl-psx Rust build\n\n\
            --features LIST    comma-separated hl-psx Cargo features\n\
            --scenario NAME    regress only one named deterministic scenario\n\
            --games-dir PATH   destination required by disc/install; optional after regress/pgo\n\
-           --tape PATH        input tape for pgo to profile; repeat for more routes\n\n\
+           --tape PATH        input tape for pgo to profile; repeat for more routes\n\
+           --golden-dir PATH  where goldens keeps its reference frames and state\n\
+           --record           goldens: write the references instead of comparing\n\n\
          HL_DIR, PSOXIDE, and GAMES_DIR provide environment defaults.\n\
          Nothing is copied outside this repository unless --games-dir is supplied.";
 
@@ -784,6 +793,10 @@ fn parse_args() -> Options {
             args.next();
             Action::Check
         }
+        Some("goldens") => {
+            args.next();
+            Action::Goldens
+        }
         Some("help" | "-h" | "--help") => help(),
         Some(value) if !value.starts_with('-') => usage(),
         _ => Action::Build,
@@ -797,6 +810,8 @@ fn parse_args() -> Options {
         regression_scenario: None,
         games_dir: env::var_os("GAMES_DIR").map(PathBuf::from),
         tapes: Vec::new(),
+        golden_dir: None,
+        record_golden: false,
     };
     while let Some(arg) = args.next() {
         let Some(flag) = arg.to_str() else { usage() };
@@ -814,6 +829,8 @@ fn parse_args() -> Options {
             }
             "--games-dir" => options.games_dir = Some(PathBuf::from(value(&mut args))),
             "--tape" => options.tapes.push(PathBuf::from(value(&mut args))),
+            "--golden-dir" => options.golden_dir = Some(PathBuf::from(value(&mut args))),
+            "--record" => options.record_golden = true,
             "-h" | "--help" => help(),
             _ => usage(),
         }
@@ -2323,7 +2340,12 @@ fn main() -> Result<()> {
 
     if matches!(
         options.action,
-        Action::Compile | Action::Pack | Action::Disc | Action::Regress | Action::Pgo
+        Action::Compile
+            | Action::Pack
+            | Action::Disc
+            | Action::Regress
+            | Action::Pgo
+            | Action::Goldens
     ) {
         verify_cook_manifest(
             &repository,
@@ -2335,6 +2357,47 @@ fn main() -> Result<()> {
     }
 
     let psoxide = psoxide.expect("all build actions hydrate PSoXide");
+    if options.action == Action::Goldens {
+        let golden_dir = options
+            .golden_dir
+            .as_deref()
+            .ok_or("goldens requires --golden-dir PATH")?;
+        let link_map = repository.join(".hlpsx/hl-psx.map");
+        let regression_dir = goldens::disc_dir(&repository, false);
+        let exe = compile_game_with(
+            &repository,
+            &psoxide,
+            Some("performance-telemetry,debug-map-boot,debug-regression-viewpoints,debug-weapon-gallery"),
+            GuestProfile::None,
+            true,
+        )?;
+        let regression_cue = pack_disc_into(&repository, &psoxide, &exe, &regression_dir)?;
+        fs::copy(&link_map, regression_dir.join("hl-psx.map"))?;
+        let shipping_dir = goldens::disc_dir(&repository, true);
+        let exe = compile_game(&repository, &psoxide, None, GuestProfile::None)?;
+        let shipping_cue = pack_disc_into(&repository, &psoxide, &exe, &shipping_dir)?;
+        fs::copy(&link_map, shipping_dir.join("hl-psx.map"))?;
+        let frontend = regression::frontend(
+            options
+                .psoxide_source
+                .as_deref()
+                .unwrap_or(psoxide.as_path()),
+        )?;
+        goldens::run(
+            &repository,
+            &frontend,
+            &goldens::Discs {
+                regression_cue: &regression_cue,
+                regression_map: &regression_dir.join("hl-psx.map"),
+                shipping_cue: &shipping_cue,
+                shipping_map: &shipping_dir.join("hl-psx.map"),
+            },
+            options.regression_scenario.as_deref(),
+            golden_dir,
+            options.record_golden,
+        )?;
+        return Ok(());
+    }
     let regression_features;
     let features = if options.action == Action::Regress {
         let mut required =
