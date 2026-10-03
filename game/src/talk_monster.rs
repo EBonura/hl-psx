@@ -120,7 +120,7 @@ pub struct TalkActor {
     pub predisaster: bool,
     pub hello_said: bool,
     /// A qualifying player bump is waiting for the next think.
-    pub client_push: bool,
+    pub push_pending: bool,
     /// Another scientist asked this one a question.
     pub answer_pending: bool,
     /// Answer due tick while `answer_pending`, otherwise the earliest tick of
@@ -243,7 +243,7 @@ fn try_answer(
     actor.answer_pending = false;
     actor.speech_due = clock.until.wrapping_add(ANSWER_NEXT_TURN_TICKS);
     actor.hello_said = true;
-    actor.client_push = false;
+    actor.push_pending = false;
     Some(Line {
         kind: LineKind::Answer,
         voice,
@@ -305,7 +305,7 @@ fn try_hello(
     let ticks = scientist_logic::hello_duration_ticks(cx.map_index, ordinal);
     clock.begin(actor.index, voice | VOICE_AUTONOMOUS, now, ticks);
     actor.hello_said = true;
-    actor.client_push = false;
+    actor.push_pending = false;
     Some(Line {
         kind: LineKind::Hello,
         voice,
@@ -394,7 +394,7 @@ fn try_small_talk(
     clock.begin(actor.index, voice | VOICE_AUTONOMOUS, now, ticks);
     actor.speech_due = now.wrapping_add(IDLE_LINE_REPEAT_TICKS);
     actor.hello_said = true;
-    actor.client_push = false;
+    actor.push_pending = false;
     Some(Line {
         kind,
         voice,
@@ -444,7 +444,7 @@ pub fn player_bump(
     if clock.is_talking(actor.index, now) {
         return Bump::BlockedTalking;
     }
-    actor.client_push = true;
+    actor.push_pending = true;
     let ideal_yaw = if script_busy {
         None
     } else {
@@ -465,10 +465,10 @@ pub fn try_begin_move_away(
     actor_pos: [i32; 3],
     ideal_yaw: u16,
 ) -> Option<[i32; 3]> {
-    if !actor.client_push || move_tick & 1 != 0 {
+    if !actor.push_pending || move_tick & 1 != 0 {
         return None;
     }
-    actor.client_push = false;
+    actor.push_pending = false;
     let away_yaw = ideal_yaw.wrapping_add(2048) & 0x0fff;
     let goal = scientist_logic::move_away_goal(
         actor_pos,
@@ -544,7 +544,7 @@ pub fn continue_move_away(
 
 /// A script takes the actor over: forget the push and abandon a step-aside.
 pub fn script_takes_over(actor: &mut TalkActor) {
-    actor.client_push = false;
+    actor.push_pending = false;
     if matches!(actor.state, TalkState::MoveAway | TalkState::FaceBack) {
         actor.state = TalkState::Idle;
         actor.schedule_timer = 0;
@@ -609,7 +609,7 @@ pub fn apply_use(
         FollowUse::Start => {
             actor.following = true;
             actor.hello_said = true;
-            actor.client_push = false;
+            actor.push_pending = false;
             if matches!(actor.state, TalkState::MoveAway | TalkState::FaceBack) {
                 actor.state = TalkState::Idle;
                 actor.schedule_timer = 0;
@@ -668,7 +668,7 @@ pub fn authored_line(
     ticks: u16,
     human: bool,
 ) {
-    actor.client_push = false;
+    actor.push_pending = false;
     if ticks != 0 {
         clock.begin(actor.index, voice, now, ticks);
         if human {
@@ -680,5 +680,5 @@ pub fn authored_line(
 /// A +use reply started from `actor`; it holds the channel for at least a tick.
 pub fn reply_line(actor: &mut TalkActor, clock: &mut TalkClock, voice: u8, now: u16, ticks: u16) {
     clock.begin(actor.index, voice, now, ticks.max(1));
-    actor.client_push = false;
+    actor.push_pending = false;
 }
