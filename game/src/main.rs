@@ -35,6 +35,7 @@ mod menu;
 mod model;
 use psx_goldsrc::ordering;
 mod phys;
+mod player_rules;
 use psx_goldsrc::pickup_logic;
 use psx_goldsrc::pushable;
 #[cfg(feature = "reference-trace")]
@@ -16722,8 +16723,8 @@ unsafe fn note_damage_direction(source: [i32; 3]) {
     DAMAGE_TICKS = 10;
 }
 
-/// Fall damage: same feedback as `damage_player`, but straight to health --
-/// the HEV suit does not absorb DMG_FALL (player.cpp TakeDamage bit set).
+/// Fall damage: same feedback as `damage_player`, but straight to health;
+/// the suit does not absorb falls.
 fn fall_damage_player(health: &mut u16, dmg: u16) {
     if dmg == 0 {
         return;
@@ -16734,7 +16735,15 @@ fn fall_damage_player(health: &mut u16, dmg: u16) {
             PAIN_SFX_COOLDOWN = 12;
         }
     }
-    *health = health.saturating_sub(dmg);
+    let v = player_rules::apply_player_damage(
+        player_rules::Vitals {
+            health: *health,
+            armor: 0,
+        },
+        dmg,
+        player_rules::PlayerDamageKind::Fall,
+    );
+    *health = v.health;
 }
 
 fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
@@ -16752,23 +16761,16 @@ fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
         let r = impact_rng().next() as i32;
         add_view_punch(dmg.min(24) as i32 + (r % 16) - 8, (r % 24) - 12);
     }
-    if *armor > 0 {
-        // GoldSrc's HEV suit keeps only 20% of generic damage on health and
-        // spends half of the remaining damage as suit power.
-        let health_dmg = dmg / 5;
-        let armor_cost = (dmg.saturating_sub(health_dmg).saturating_add(1)) / 2;
-        if armor_cost <= *armor {
-            *armor -= armor_cost;
-            *health = health.saturating_sub(health_dmg);
-            return;
-        }
-
-        let absorbed = (*armor).saturating_mul(2);
-        *armor = 0;
-        *health = health.saturating_sub(dmg.saturating_sub(absorbed));
-    } else {
-        *health = health.saturating_sub(dmg);
-    }
+    let v = player_rules::apply_player_damage(
+        player_rules::Vitals {
+            health: *health,
+            armor: *armor,
+        },
+        dmg,
+        player_rules::PlayerDamageKind::Generic,
+    );
+    *health = v.health;
+    *armor = v.armor;
 }
 
 unsafe fn damage_target(target: u8, dmg: u8, source: [i32; 3], health: &mut u16, armor: &mut u16) {
