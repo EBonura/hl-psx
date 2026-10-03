@@ -82,3 +82,11 @@ pub mod beverage;
 
 #[path = "../../../game/src/setpiece_logic.rs"]
 pub mod setpiece_logic;
+
+#[path = "../../../game/src/setpiece_math.rs"]
+pub mod setpiece_math;
+
+#[path = "../../../game/src/mortar_logic.rs"]
+pub mod mortar_logic;
+
+pub mod behaviour;

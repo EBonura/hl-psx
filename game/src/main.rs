@@ -45,12 +45,14 @@ use psx_goldsrc::route_follow;
 mod apache;
 mod garg;
 mod mortar;
+mod mortar_logic;
 mod nihilanth;
 mod osprey;
 mod save;
 mod scientist_logic;
 mod scratchpad;
 mod setpiece_logic;
+mod setpiece_math;
 mod setpiece_sfx;
 mod tank;
 use osprey::{osprey_init, tick_osprey, OSPREY, OSPREY_TILT, PROP_TYPE_OSPREY};
@@ -20796,6 +20798,15 @@ fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
         // source blast radius defaults to damage * 2.5 (100 * 2.5 = 250).
         PROJ_M203 => (40, u8::MAX, true, 250, (120, 150, 90), 5),
         _ => (40, 100, true, 200, (170, 70, 50), 5), // PROJ_TRIPMINE
+    }
+}
+
+/// A world trace hit in the form the set-piece brains take.
+fn trace_hit(h: phys::RayHit) -> setpiece_math::TraceHit {
+    setpiece_math::TraceHit {
+        frac: h.frac,
+        pos: h.pos,
+        normal: h.normal,
     }
 }
 
