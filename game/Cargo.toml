@@ -99,6 +99,7 @@ psx-tick = { path = "../.psoxide/sdk/crates/psx-tick" }
 psx-math = { path = "../.psoxide/sdk/crates/psx-math" }
 psx-vram = { path = "../.psoxide/sdk/crates/psx-vram" }
 psx-io   = { path = "../.psoxide/sdk/crates/psx-io" }
+psx-hw   = { path = "../.psoxide/crates/psx-hw" }
 psx-pack = { path = "../.psoxide/sdk/crates/psx-pack" }
 psx-spu  = { path = "../.psoxide/sdk/crates/psx-spu" }
 psx-asset = { path = "../.psoxide/sdk/crates/psx-asset" }

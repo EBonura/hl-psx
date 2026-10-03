@@ -22,9 +22,9 @@ use psx_gpu::{self as gpu, framebuf::FrameBuffer};
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_pad::{button, poll_port1, PadTracker};
 use psx_rt::interrupts;
-use psx_vram::{upload_bytes, Clut, TexDepth, Tpage, VramRect};
+use psx_vram::{upload_bytes, Clut, TextureDepth, TexturePage, VramRect};
 
-const FONT_TPAGE: Tpage = Tpage::new(320, 0, TexDepth::Bit4);
+const FONT_TPAGE: TexturePage = TexturePage::new(320, 0, TextureDepth::Bit4);
 const FONT_CLUT: Clut = Clut::new(320, 256);
 
 // Exact colors from valve/640_textscheme.txt "Primary Button Text".
@@ -359,13 +359,9 @@ fn upload_tex8(blob: &[u8], vx: u16) -> (TextureMaterial, u16, u16) {
         VramRect::new(BG_CLUT_X, BG_CLUT_Y, 256, 1),
         &blob[4..HEADER],
     );
-    let tp = Tpage::new(vx, 0, TexDepth::Bit8);
+    let tp = TexturePage::new(vx, 0, TextureDepth::Bit8);
     let cl = Clut::new(BG_CLUT_X, BG_CLUT_Y);
-    (
-        TextureMaterial::new(cl.uv_clut_word(), tp.uv_tpage_word(0)),
-        w,
-        h,
-    )
+    (TextureMaterial::new(cl.uv_word(), tp.uv_word(0)), w, h)
 }
 
 #[optimize(size)]
@@ -380,13 +376,9 @@ fn upload_tex(blob: &[u8], vx: u16) -> (TextureMaterial, u16, u16) {
     }
     upload_bytes(VramRect::new(vx, 0, w / 4, h), &blob[36..]); // 4bpp pixels
     upload_bytes(VramRect::new(vx, 256, 16, 1), &blob[4..36]); // CLUT
-    let tp = Tpage::new(vx, 0, TexDepth::Bit4);
+    let tp = TexturePage::new(vx, 0, TextureDepth::Bit4);
     let cl = Clut::new(vx, 256);
-    (
-        TextureMaterial::new(cl.uv_clut_word(), tp.uv_tpage_word(0)),
-        w,
-        h,
-    )
+    (TextureMaterial::new(cl.uv_word(), tp.uv_word(0)), w, h)
 }
 
 /// The conback texture stretched to fill the 320x240 screen.
@@ -452,18 +444,18 @@ fn update_logo_anim(
     // palette (see build_logo_animation).
     let clut = Clut::new(LOGO_ANIM_VRAM_X, 256);
     let blend = gpu::material::BlendMode::Add;
-    let left = Tpage::new(LOGO_ANIM_VRAM_X, 0, TexDepth::Bit4);
-    let right = Tpage::new(LOGO_ANIM_RIGHT_VRAM_X, 0, TexDepth::Bit4);
+    let left = TexturePage::new(LOGO_ANIM_VRAM_X, 0, TextureDepth::Bit4);
+    let right = TexturePage::new(LOGO_ANIM_RIGHT_VRAM_X, 0, TextureDepth::Bit4);
     let tint = (128, 128, 128);
     current.0 = TextureMaterial::blended(
-        clut.uv_clut_word(),
-        left.uv_tpage_word(blend.tpage_bits()),
+        clut.uv_word(),
+        left.uv_word(blend.texture_page_bits()),
         tint,
         blend,
     );
     current.1 = TextureMaterial::blended(
-        clut.uv_clut_word(),
-        right.uv_tpage_word(blend.tpage_bits()),
+        clut.uv_word(),
+        right.uv_word(blend.texture_page_bits()),
         tint,
         blend,
     );
@@ -569,7 +561,7 @@ pub fn intro(fb: &mut FrameBuffer, menu_blob: &[u8]) {
             level,
         );
 
-        gpu::draw_sync();
+        gpu::wait_idle();
         psx_rt::interrupts::wait_vblank();
         fb.swap();
         frame += 1;
@@ -662,9 +654,9 @@ const GLOW_TINT_ARMED: u8 = 255;
 
 fn glow_material(level: u8) -> TextureMaterial {
     TextureMaterial::blended(
-        Clut::new(GLOW_VRAM_X, 256).uv_clut_word(),
-        Tpage::new(GLOW_VRAM_X, 0, TexDepth::Bit4)
-            .uv_tpage_word(gpu::material::BlendMode::Add.tpage_bits()),
+        Clut::new(GLOW_VRAM_X, 256).uv_word(),
+        TexturePage::new(GLOW_VRAM_X, 0, TextureDepth::Bit4)
+            .uv_word(gpu::material::BlendMode::Add.texture_page_bits()),
         (level, level, level),
         gpu::material::BlendMode::Add,
     )
@@ -790,7 +782,7 @@ fn draw_text_glow(x: i16, y: i16, text: &str, level: u8, tracking: i8) {
 // column gets a 5x8 face instead and the two-column proportions come out close
 // to the original's.
 const HELP_VRAM_X: u16 = 896;
-const HELP_TPAGE: Tpage = Tpage::new(HELP_VRAM_X, 0, TexDepth::Bit4);
+const HELP_TPAGE: TexturePage = TexturePage::new(HELP_VRAM_X, 0, TextureDepth::Bit4);
 const HELP_CLUT: Clut = Clut::new(HELP_VRAM_X, 256);
 
 fn draw_centered(font: &FontAtlas, y: i16, text: &str, color: (u8, u8, u8)) {
@@ -1357,7 +1349,7 @@ pub fn ending(fb: &mut FrameBuffer, assets: &[u8]) {
         if frame > 40 && (frame / 16) & 1 == 0 {
             draw_centered(&font, 221, "Press any button", DIM);
         }
-        gpu::draw_sync();
+        gpu::wait_idle();
         interrupts::wait_vblank();
         fb.swap();
         let pad = poll_port1();
@@ -1585,7 +1577,7 @@ pub fn run(fb: &mut FrameBuffer, assets: &[u8]) -> usize {
         }
         title_phase = title_phase.wrapping_add(1);
 
-        gpu::draw_sync();
+        gpu::wait_idle();
         interrupts::wait_vblank();
         fb.swap();
     }

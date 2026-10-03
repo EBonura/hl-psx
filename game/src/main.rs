@@ -110,7 +110,7 @@ use psx_math::int32::{isqrt_i32, mul_div_i32};
 use psx_math::{atan2_q12, sincos};
 use psx_pad::{button, enable_analog_port1, poll_port1};
 #[cfg(not(feature = "semantic-input"))]
-use psx_pad::{poll_port1_diag, PadMode, PadTracker, DEFAULT_SETUP_SPINS};
+use psx_pad::{poll_port1_diagnostics, PadMode, PadTracker, DEFAULT_SETUP_SPINS};
 use psx_rt::{interrupts, tty};
 use psx_spu;
 
@@ -1664,7 +1664,7 @@ pub fn fx_quad_textured_material(
             gp0_vertex(verts[0].0, verts[0].1),
             gp0_texcoord(uvs[0].0, uvs[0].1, material.clut_word()),
             gp0_vertex(verts[1].0, verts[1].1),
-            gp0_texcoord(uvs[1].0, uvs[1].1, material.tpage_word()),
+            gp0_texcoord(uvs[1].0, uvs[1].1, material.texture_page_word()),
             gp0_vertex(verts[2].0, verts[2].1),
             gp0_texcoord(uvs[2].0, uvs[2].1, 0),
             gp0_vertex(verts[3].0, verts[3].1),
@@ -2262,7 +2262,7 @@ fn draw_loading_strip(fb: &mut FrameBuffer, tick: u32) {
         y0 + (LOADING_STRIP_H - SPINNER_H) / 2,
         (tick / 2) as u8,
     );
-    gpu::draw_sync();
+    gpu::wait_idle();
 
     let back_y = fb.buffer_y(fb.drawing);
     gpu::set_draw_area(0, back_y, fb.width - 1, back_y + fb.height - 1);
@@ -2473,7 +2473,7 @@ unsafe fn save_with_badge(
     // Amber on a dark plate, clear of the HUD's own top-right weapon icon.
     gpu::draw_quad_flat([(228, 6), (314, 6), (228, 26), (314, 26)], 12, 10, 6);
     text.draw(234, 9, "SAVING", PAUSE_AMBER);
-    gpu::draw_sync();
+    gpu::wait_idle();
     interrupts::wait_vblank();
     fb.swap();
 
@@ -2773,7 +2773,7 @@ fn run_pause_menu(fb: &mut FrameBuffer) -> PauseExit {
                 })
             }),
         }
-        gpu::draw_sync();
+        gpu::wait_idle();
         interrupts::wait_vblank();
         fb.swap();
     }
@@ -2837,11 +2837,11 @@ static mut WEAPON_CACHE_POS: u32 = u32::MAX;
 /// Bones of the HMA1 pose being projected or traced (`Model::pose`). The
 /// cooker refuses a model whose tracks need more (hl-bsp HMA1_MAX_BONES).
 const POSE_SCRATCH_BONES: usize = 80;
-static mut POSE_SCRATCH: [psx_asset::hma1::Aff; POSE_SCRATCH_BONES] =
-    [psx_asset::hma1::Aff::ZERO; POSE_SCRATCH_BONES];
+static mut POSE_SCRATCH: [psx_asset::hma1::Affine; POSE_SCRATCH_BONES] =
+    [psx_asset::hma1::Affine::ZERO; POSE_SCRATCH_BONES];
 
 #[inline(always)]
-unsafe fn pose_scratch() -> &'static mut [psx_asset::hma1::Aff] {
+unsafe fn pose_scratch() -> &'static mut [psx_asset::hma1::Affine] {
     unsafe { &mut *core::ptr::addr_of_mut!(POSE_SCRATCH) }
 }
 static mut WEAPON_CACHE_VERTS: usize = 0;
@@ -4045,11 +4045,11 @@ fn live_semantic_sample(pad: psx_pad::PadState) -> semantic_input::Sample {
         let (lx, ly) = pad.sticks.left_centered();
         let (rx, ry) = pad.sticks.right_centered();
         let deadzone = settings::analog_deadzone();
-        if deadzone.outside(lx, ly) {
+        if deadzone.is_outside(lx, ly) {
             fwd = -(ly as i32);
             strafe = lx as i32;
         }
-        if deadzone.outside(rx, ry) {
+        if deadzone.is_outside(rx, ry) {
             turn = aim_curve(rx as i32);
             look = aim_curve(-(ry as i32));
         }
@@ -4137,7 +4137,7 @@ fn poll_live_semantic_input(
     prev_pause_button: &mut bool,
     sim_clock: &mut psx_tick::FixedClock,
 ) -> LiveInputPoll {
-    let sampled_pad = poll_port1_diag(DEFAULT_SETUP_SPINS, 0).to_state();
+    let sampled_pad = poll_port1_diagnostics(DEFAULT_SETUP_SPINS, 0).to_state();
     let pad = if sampled_pad.mode == PadMode::Unknown {
         *last_pad
     } else {
@@ -4430,8 +4430,8 @@ unsafe fn vm_publish_streamed(wm: usize, word: usize, slot: usize, clen: usize) 
     }
     let model = model::load(viewmodel_bytes_at(gw * 4, glen));
     #[cfg(feature = "debug-weapon-gallery")]
-    if model.n_verts != room_budget::VIEWMODEL_VERTS[wm] as usize
-        || model.n_tris != room_budget::VIEWMODEL_TRIS[wm] as usize
+    if model.vertex_count() != room_budget::VIEWMODEL_VERTS[wm] as usize
+        || model.triangle_count() != room_budget::VIEWMODEL_TRIS[wm] as usize
     {
         return false;
     }
@@ -5090,12 +5090,12 @@ const FLIP_WAIT_VBLANKS: u32 = 8;
 #[cfg(feature = "decoupled-present")]
 fn wait_queued_flip() -> bool {
     let entry = interrupts::vblank_count();
-    while interrupts::gp1_queue_pending() {
+    while interrupts::is_display_control_queued() {
         if interrupts::vblank_count().wrapping_sub(entry) > FLIP_WAIT_VBLANKS {
             wait_vblank_edge();
-            let word = interrupts::take_pending_gp1();
+            let word = interrupts::take_queued_display_control();
             if word != 0 {
-                psx_io::gpu::write_gp1(word);
+                psx_io::gpu::write_display_control(word);
             }
             return false;
         }
@@ -5860,10 +5860,8 @@ unsafe fn music_apply() {
         psx_spu::set_cd_volume(psx_spu::CdVolume::SILENCE, psx_spu::CdVolume::SILENCE);
         // AUTO_PAUSE: a Half-Life cue plays once and ends; without it the
         // drive rolls straight into the next CDDA track on the disc.
-        let mode_ok = psx_io::cdrom::try_set_mode(
-            psx_io::cdrom::MODE_DOUBLE_SPEED
-                | psx_io::cdrom::MODE_CDDA
-                | psx_io::cdrom::MODE_AUTO_PAUSE,
+        let mode_ok = psx_io::cd::try_set_mode(
+            psx_hw::cd::MODE_DOUBLE_SPEED | psx_hw::cd::MODE_CDDA | psx_hw::cd::MODE_AUTO_PAUSE,
             2_000_000,
         )
         .is_some();
@@ -5871,13 +5869,13 @@ unsafe fn music_apply() {
         // parameterless Play); anything else starts its track from the top.
         let play_ok = mode_ok
             && if CD_TRACK_WANT == CD_RESUME_TRACK && CD_RESUME_MSF != [0; 3] {
-                psx_io::cdrom::try_command(0x02, &*core::ptr::addr_of!(CD_RESUME_MSF), 2_000_000)
+                psx_io::cd::try_command(0x02, &*core::ptr::addr_of!(CD_RESUME_MSF), 2_000_000)
                     .is_some()
-                    && psx_io::cdrom::try_command(0x03, &[], 2_000_000).is_some()
+                    && psx_io::cd::try_command(0x03, &[], 2_000_000).is_some()
             } else {
-                psx_io::cdrom::try_play_track(CD_TRACK_WANT as u8, 2_000_000).is_some()
+                psx_io::cd::try_play_track(CD_TRACK_WANT as u8, 2_000_000).is_some()
             };
-        let ready = play_ok && psx_io::cdrom::try_demute(2_000_000).is_some();
+        let ready = play_ok && psx_io::cd::try_unmute(2_000_000).is_some();
         CD_RESUME_TRACK = 0;
         CD_RESUME_MSF = [0; 3];
         if ready {
@@ -5896,8 +5894,8 @@ unsafe fn music_apply() {
         // seconds of the previous CD sector audible during the transition.
         psx_spu::enable_cd_audio(false);
         psx_spu::set_cd_volume(psx_spu::CdVolume::SILENCE, psx_spu::CdVolume::SILENCE);
-        let _ = psx_io::cdrom::try_mute(2_000_000);
-        let _ = psx_io::cdrom::try_pause(2_000_000);
+        let _ = psx_io::cd::try_mute(2_000_000);
+        let _ = psx_io::cd::try_pause(2_000_000);
         CD_TRACK_CUR = CD_TRACK_WANT;
     }
 }
@@ -5917,7 +5915,7 @@ unsafe fn music_suspend_for_stream() {
         // Play was accepted moments ago reports neither. Reading that as
         // "finished" abandons a song that had not started yet.
         const PLAYING_OR_SEEKING: u8 = 0x80 | 0x40;
-        let still_playing = psx_io::cdrom::try_get_stat(2_000_000)
+        let still_playing = psx_io::cd::try_status(2_000_000)
             .map(|r| {
                 r.bytes()
                     .first()
@@ -5928,7 +5926,7 @@ unsafe fn music_suspend_for_stream() {
         if still_playing {
             // GetLocP: track,index,mm,ss,ff,amm,ass,aff (BCD). Bytes 5..8 are
             // the absolute position the resume path feeds back to SetLoc.
-            if let Some(r) = psx_io::cdrom::try_get_loc_p(2_000_000) {
+            if let Some(r) = psx_io::cd::try_play_position(2_000_000) {
                 let b = r.bytes();
                 if b.len() >= 8 {
                     CD_RESUME_TRACK = CD_TRACK_CUR;
@@ -5939,7 +5937,7 @@ unsafe fn music_suspend_for_stream() {
         // Controller-level mute is deliberately issued only for a known-live
         // CDDA stream. Cold boot/menu data reads need no extra command, while
         // a playing drive must stop feeding samples before Setmode/ReadN.
-        let _ = psx_io::cdrom::try_mute(2_000_000);
+        let _ = psx_io::cd::try_mute(2_000_000);
         CD_TRACK_CUR = 0;
     }
 }
@@ -5959,8 +5957,8 @@ unsafe fn music_stop_for_menu() {
     psx_spu::enable_cd_audio(false);
     psx_spu::set_cd_volume(psx_spu::CdVolume::SILENCE, psx_spu::CdVolume::SILENCE);
     if CD_TRACK_CUR > 0 {
-        let _ = psx_io::cdrom::try_mute(2_000_000);
-        let _ = psx_io::cdrom::try_pause(2_000_000);
+        let _ = psx_io::cd::try_mute(2_000_000);
+        let _ = psx_io::cd::try_pause(2_000_000);
     }
     CD_TRACK_WANT = 0;
     CD_TRACK_CUR = 0;
@@ -13574,7 +13572,7 @@ fn culled(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
 /// stale-MAC0 wall-drop failure while replacing two serialized CPU multiplies.
 #[inline(always)]
 fn culled_gte(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
-    scene::screen_area_mac0_scheduled([
+    scene::screen_area_scheduled([
         (a.0 as i16, a.1 as i16),
         (b.0 as i16, b.1 as i16),
         (c.0 as i16, c.1 as i16),
@@ -14106,7 +14104,7 @@ fn prop_anim_frame<const POSE: bool>(
         if !POSE {
             return (0, 0, 0);
         }
-        let clip = SLOTS[sequence].min(md.n_clips.saturating_sub(1));
+        let clip = SLOTS[sequence].min(md.clip_count().saturating_sub(1));
         return md.one_shot_clip_phase(clip, DURATIONS[sequence], phase);
     }
     let clip = prop_clip(state, hit_flash > 0);
@@ -14132,13 +14130,13 @@ fn prop_anim_frame<const POSE: bool>(
             (clip, false, false)
         }
     };
-    let clip = clip.min(md.n_clips.saturating_sub(1));
+    let clip = clip.min(md.clip_count().saturating_sub(1));
     if state == PROP_STATE_DEAD {
         if pi < m.n_props && m.prop(pi).0 & PROP_DEAD_BIT != 0 {
             let authored = m.prop_carry_id(pi);
             if authored & hl_format::map::PROP_CORPSE_CLIP != 0 {
                 let clip = (authored & !hl_format::map::PROP_CORPSE_CLIP) as usize;
-                if clip < md.n_clips {
+                if clip < md.clip_count() {
                     return if POSE {
                         md.one_shot_clip_phase(clip, 1, 0)
                     } else {
@@ -14205,7 +14203,7 @@ fn prop_anim_frame<const POSE: bool>(
     if unsafe { PROP_KIND[pi] } == 17 && state != PROP_STATE_DEAD && hit_flash == 0 {
         // The nihilanth's schedule picks its own sequences.
         if let Some((slot, ticks, elapsed)) = unsafe { nihilanth::clip(pi) } {
-            if slot < md.n_clips {
+            if slot < md.clip_count() {
                 forget_clip();
                 return if POSE {
                     md.looped_clip_phase(slot, ticks, elapsed)
@@ -14218,7 +14216,7 @@ fn prop_anim_frame<const POSE: bool>(
     if unsafe { PROP_KIND[pi] } == PROP_TYPE_GARG {
         // The gargantua's swipe and stomp play their own sequences once.
         if let Some((gesture, ticks, elapsed)) = unsafe { garg::gesture_clip(pi) } {
-            if gesture < md.n_clips {
+            if gesture < md.clip_count() {
                 forget_clip();
                 return if POSE {
                     md.one_shot_clip_phase(gesture, ticks, elapsed)
@@ -20068,7 +20066,7 @@ unsafe fn prop_studio_hit_fraction(
         return None;
     }
     let md = loaded_model(slot as usize);
-    if md.n_hitboxes == 0 {
+    if md.hitbox_count() == 0 {
         return None;
     }
     let (frame, frame2, frac16) = prop_anim_frame::<true>(
@@ -20088,7 +20086,7 @@ unsafe fn prop_studio_hit_fraction(
     let model_start = inverse_rotate_scaled(start, PROP_POS[pi], &model_rotation, scale);
     let model_end = inverse_rotate_scaled(end, PROP_POS[pi], &model_rotation, scale);
     let mut best = None;
-    for hi in 0..md.n_hitboxes {
+    for hi in 0..md.hitbox_count() {
         let hitbox = md.hitbox(hi);
         let bone = pose.bone(hitbox.bone, false, 0);
         let local_start = inverse_bone_point(model_start, bone);
@@ -20215,7 +20213,7 @@ unsafe fn fire_hitscan(
 
         let slot = TYPE_TO_SLOT[(ty as usize).min(N_MODEL_TYPES - 1)];
         let has_studio_boxes =
-            slot != MODEL_SLOT_NONE && loaded_model(slot as usize).n_hitboxes != 0;
+            slot != MODEL_SLOT_NONE && loaded_model(slot as usize).hitbox_count() != 0;
         let hit_frac = if has_studio_boxes && !club_damage {
             prop_studio_hit_fraction(m, pi, eye, end)
         } else {
@@ -27744,8 +27742,8 @@ unsafe fn project_hmd7_model_inner(
     let mut loaded_bone = usize::MAX;
     let mut loaded_mouth = false;
     let mut range_index = 0usize;
-    while range_index < md.n_ranges {
-        let range = md.range(range_index);
+    while range_index < md.bone_range_count() {
+        let range = md.bone_range(range_index);
         range_index += 1;
         if md.has_body_masks() && range.body_mask & body_bit == 0 {
             continue;
@@ -27761,14 +27759,14 @@ unsafe fn project_hmd7_model_inner(
         let end = range
             .first
             .saturating_add(range.count)
-            .min(md.n_verts)
+            .min(md.vertex_count())
             .min(MAX_MODEL_VERTS);
         let mut vertex = range.first.min(end);
         while vertex + 2 < end {
             let tri = project_hmd7_triangle_words(
-                md.vert_gte_words(vertex),
-                md.vert_gte_words(vertex + 1),
-                md.vert_gte_words(vertex + 2),
+                md.vertex_gte_words(vertex),
+                md.vertex_gte_words(vertex + 1),
+                md.vertex_gte_words(vertex + 2),
             );
             projected_soa_set(projected_xy, projected_z, vertex, tri[0]);
             projected_soa_set(projected_xy, projected_z, vertex + 1, tri[1]);
@@ -27780,7 +27778,7 @@ unsafe fn project_hmd7_model_inner(
                 projected_xy,
                 projected_z,
                 vertex,
-                project_vertex_scheduled(md.vert(vertex)),
+                project_vertex_scheduled(md.vertex(vertex)),
             );
             vertex += 1;
         }
@@ -27968,7 +27966,7 @@ unsafe fn draw_model(
         -dot12(rot.m[2], es) * s,
     ];
     let near_s = (NEAR as i32 * s) as u16;
-    let nv = md.n_verts.min(MAX_MODEL_VERTS);
+    let nv = md.vertex_count().min(MAX_MODEL_VERTS);
     telemetry::stage_begin(telemetry::stage::TEXTURED_MODEL_PROJECT);
     let (model_projected_xy, model_projected_z) = model_projected_ptrs();
     project_hmd7_model(
@@ -29044,19 +29042,19 @@ fn draw_vm_tri(
     texture_window: &mut u32,
 ) {
     let rgb = shade as u32 | ((shade as u32) << 8) | ((shade as u32) << 16);
-    psx_io::gpu::wait_cmd_ready();
+    psx_io::gpu::wait_command_ready();
     let next_window = material.tex_window_word;
     if next_window != *texture_window {
-        psx_io::gpu::write_gp0(next_window);
+        psx_io::gpu::write_command(next_window);
         *texture_window = next_window;
     }
-    psx_io::gpu::write_gp0((material.color0_command_word & !0x1000_0000) | rgb);
-    psx_io::gpu::write_gp0(packed_xy[0]);
-    psx_io::gpu::write_gp0(uv_words[0] as u32 | material.clut_high_word);
-    psx_io::gpu::write_gp0(packed_xy[1]);
-    psx_io::gpu::write_gp0(uv_words[1] as u32 | material.tpage_high_word);
-    psx_io::gpu::write_gp0(packed_xy[2]);
-    psx_io::gpu::write_gp0(uv_words[2] as u32);
+    psx_io::gpu::write_command((material.color0_command_word & !0x1000_0000) | rgb);
+    psx_io::gpu::write_command(packed_xy[0]);
+    psx_io::gpu::write_command(uv_words[0] as u32 | material.clut_high_word);
+    psx_io::gpu::write_command(packed_xy[1]);
+    psx_io::gpu::write_command(uv_words[1] as u32 | material.tpage_high_word);
+    psx_io::gpu::write_command(packed_xy[2]);
+    psx_io::gpu::write_command(uv_words[2] as u32);
 }
 
 /// Draw the complete held weapon after the world OT. Projected vertices cache
@@ -29074,12 +29072,12 @@ unsafe fn draw_viewmodel(
     if slots.is_empty() {
         return 0; // viewmodel texture failed to upload: skip rather than index empty
     }
-    if md.n_tris > MAX_WEAPON_TRIS {
+    if md.triangle_count() > MAX_WEAPON_TRIS {
         // Never draw a partial weapon. The host asset audit keeps retail models
         // below this bound; a future asset must raise the compact u16 scratch.
         return 0;
     }
-    let nv = md.n_verts.min(MAX_MODEL_VERTS);
+    let nv = md.vertex_count().min(MAX_MODEL_VERTS);
     let local_to_world = md.local_to_world_q12();
     let (s, scale_shift) = model_local_scale_and_shift(local_to_world);
     sort_probe_class(SORT_CLASS_VIEW | (scale_shift as u32) << 8);
@@ -29140,8 +29138,8 @@ unsafe fn draw_viewmodel(
         for bucket in 0..VM_SORT_BUCKETS {
             heads.add(bucket).write(VM_SORT_NONE);
         }
-        for t in 0..md.n_tris {
-            let tri = md.tri(t);
+        for t in 0..md.triangle_count() {
+            let tri = md.triangle(t);
             let tex_id = tri.tex;
             let slot = slots[tex_id.min(slots.len() - 1)];
             if !slot.valid {
@@ -29228,7 +29226,7 @@ unsafe fn draw_viewmodel(
                 projected_xy.add(b).read(),
                 projected_xy.add(c).read(),
             ];
-            let uv_words = md.tri_uv_words(t);
+            let uv_words = md.triangle_uv_words(t);
             draw_vm_tri(packed_xy, uv_words, packet, shade, &mut texture_window);
             submitted += 1;
             link = (record & VM_SORT_LINK_MASK) as u16;
@@ -31020,14 +31018,14 @@ fn play(
     // new level swaps over it, so there is no black flash between levels.
     if !keep_frame {
         fb.clear(0, 0, 0);
-        gpu::draw_sync();
+        gpu::wait_idle();
         fb.swap();
         fb.clear(0, 0, 0);
-        gpu::draw_sync();
+        gpu::wait_idle();
         fb.swap();
     }
 
-    gpu::configure_vsync_timer();
+    gpu::configure_scanline_timer();
     interrupts::install_vblank_counter();
     // Gameplay ticks at SIM_VBLANKS on the shared psx-tick clock, with every
     // owed tick caught up before the next render.
@@ -31404,8 +31402,8 @@ fn play(
                                 &[
                                     ("id=", weapon.current as i32),
                                     ("actual=", actual as i32),
-                                    ("verts=", vm.n_verts as i32),
-                                    ("tris=", vm.n_tris as i32),
+                                    ("verts=", vm.vertex_count() as i32),
+                                    ("tris=", vm.triangle_count() as i32),
                                     ("slots=", slots as i32),
                                 ],
                             );
@@ -33463,7 +33461,7 @@ fn play(
         if present_pending {
             telemetry::stage_begin(telemetry::stage::PRESENT);
             gpu::submit_static(gpu_dma, &gpu::DRAW_DONE_NODE);
-            interrupts::queue_gp1_at_vblank(fb.begin_deferred_swap());
+            interrupts::queue_display_control_at_vblank(fb.begin_deferred_swap());
             telemetry::stage_end(telemetry::stage::PRESENT);
             // Consumed; every build path re-arms it before the next read.
             #[allow(unused_assignments)]
@@ -34833,7 +34831,7 @@ fn play(
                             let phase = sim_frame_no as usize;
                             #[cfg(not(feature = "decoupled-present"))]
                             let phase = frame_no as usize;
-                            (phase / 8) % md.n_frames.max(1)
+                            (phase / 8) % md.frame_count().max(1)
                         },
                         0,
                         0,
@@ -35017,7 +35015,7 @@ fn play(
             #[cfg(not(feature = "decoupled-present"))]
             if present_pending {
                 telemetry::stage_begin(telemetry::stage::PRESENT);
-                gpu::draw_sync();
+                gpu::wait_idle();
                 wait_vblank_edge();
                 fb.swap();
                 telemetry::stage_end(telemetry::stage::PRESENT);
@@ -35102,7 +35100,7 @@ fn play(
             // SAFETY: the world table and its packets stay untouched until
             // finish_deferred_overlays waits this walk out before the overlay
             // lists go; only the HUD and effect storage is written meanwhile.
-            gpu::submit_linked_list_raw_async(world_ot().submit_head());
+            gpu::submit_linked_list_async_raw(world_ot().submit_head());
             // HUD and effect projection only touch their own packet storage.
             // Build them while channel 2 walks the world list, hiding this CPU
             // work without changing either ordering table or draw order.
@@ -35354,7 +35352,7 @@ fn play(
             present_pending = true;
         } else {
             telemetry::stage_begin(telemetry::stage::PRESENT);
-            gpu::draw_sync();
+            gpu::wait_idle();
             wait_vblank_edge();
             fb.swap();
             telemetry::stage_end(telemetry::stage::PRESENT);

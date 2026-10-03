@@ -25,6 +25,7 @@ dependencies = [
  "psx-goldsrc",
  "psx-gpu",
  "psx-gte",
+ "psx-hw",
  "psx-io",
  "psx-math",
  "psx-mc",
