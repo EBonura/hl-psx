@@ -227,17 +227,32 @@ impl Default for GpuEnv {
 ///
 /// Call after every HUD packet has been queued: ordering-table insertion
 /// prepends, so the last packet added to a slot is the first one drawn.
+///
+/// # Safety
+///
+/// `env` stays linked into `ot`: it must stay live and unmodified until
+/// that table's walk has finished.
 #[inline]
-pub fn prepare<const N: usize>(mats: Materials, ot: &mut OrderingTable<N>, env: &mut GpuEnv) {
+pub unsafe fn prepare<const N: usize>(
+    mats: Materials,
+    ot: &mut OrderingTable<N>,
+    env: &mut GpuEnv,
+) {
     // `TextureWindow::NONE.apply()` used to precede this; the material's own
     // E2 immediately overwrote it, so the pair reduces to these two words.
     env.draw_mode = mats.amber.draw_mode_word();
     env.tex_window = mats.amber.texture_window_word();
-    ot.add(0, env, GpuEnv::WORDS);
+    ot.insert(0, core::ptr::from_mut(env).cast(), GpuEnv::WORDS);
 }
 
+/// Link one sprite from `prims` into `ot`.
+///
+/// # Safety
+///
+/// `prims` stays linked into `ot`: it must stay live and unmodified until
+/// that table's walk has finished.
 #[allow(clippy::too_many_arguments)]
-fn sprite<const N: usize>(
+unsafe fn sprite<const N: usize>(
     mat: TextureMaterial,
     ot: &mut OrderingTable<N>,
     prims: &mut [Sprite; DRAW_CAP],
@@ -253,7 +268,11 @@ fn sprite<const N: usize>(
         return;
     }
     prims[*count] = Sprite::with_material(x, y, w as u16, h as u16, (u, v), mat);
-    ot.add(0, &mut prims[*count], Sprite::WORDS);
+    ot.insert(
+        0,
+        core::ptr::from_mut(&mut prims[*count]).cast(),
+        Sprite::WORDS,
+    );
     *count += 1;
 }
 
@@ -265,7 +284,7 @@ fn alpha_mat(mat: TextureMaterial, alpha: u8) -> TextureMaterial {
     mat.with_tint((tint, tint, tint))
 }
 
-fn digit<const N: usize>(
+unsafe fn digit<const N: usize>(
     mat: TextureMaterial,
     ot: &mut OrderingTable<N>,
     prims: &mut [Sprite; DRAW_CAP],
@@ -279,7 +298,7 @@ fn digit<const N: usize>(
 
 /// GoldSrc DrawHudNumber(DHN_3DIGITS | DHN_DRAWZERO): reserve all three slots,
 /// omit leading zero sprites, and render a single zero in the ones slot.
-fn number_3<const N: usize>(
+unsafe fn number_3<const N: usize>(
     mat: TextureMaterial,
     ot: &mut OrderingTable<N>,
     prims: &mut [Sprite; DRAW_CAP],
@@ -330,7 +349,7 @@ fn weapon_icon_uv(weapon: usize) -> (u8, u8) {
     }
 }
 
-fn draw_weapon_selection<const N: usize>(
+unsafe fn draw_weapon_selection<const N: usize>(
     mat: TextureMaterial,
     weapon: usize,
     ot: &mut OrderingTable<N>,
@@ -380,8 +399,12 @@ fn draw_weapon_selection<const N: usize>(
     );
 }
 
+/// # Safety
+///
+/// The sprites in `prims` stay linked into `ot`: they must stay live and
+/// unmodified until that table's walk has finished.
 #[allow(clippy::too_many_arguments)]
-pub fn draw<const N: usize>(
+pub unsafe fn draw<const N: usize>(
     mats: Materials,
     suit_equipped: bool,
     flashlight_on: bool,

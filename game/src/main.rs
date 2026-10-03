@@ -1438,9 +1438,14 @@ unsafe fn fx_chain_submit() {
 
 /// One out-of-line copy of the blocking kick-and-wait for the overlay lists;
 /// inlined into each of their submits it cost 1.8 KB of .text.
+///
+/// # Safety
+///
+/// `head` must start a well-formed GPU linked list whose every node stays
+/// live and unmodified until this returns, which it does once the walk ends.
 #[inline(never)]
-fn submit_list(head: *const u32) {
-    gpu::submit_linked_list(head);
+unsafe fn submit_list(head: *const u32) {
+    gpu::submit_linked_list_raw(head);
 }
 
 // --- Late overlay submission -------------------------------------------------
@@ -1732,7 +1737,7 @@ const ZERO_QUAD_PACKET: QuadTexturedGouraud = QuadTexturedGouraud {
     uv3: 0,
 };
 // Post-link home for the load-delay hazard trampolines that
-// The load-delay hazard trampolines (the SDK's `hazard_patch.py` writes them after
+// The load-delay hazard trampolines (the SDK's `hazard-patch` writes them after
 // every link) live in psx-rt's `HAZARD_TRAMPOLINES` since PSoXide 15d286c5;
 // this crate no longer defines its own, which the demo disc's runtime pin
 // linked twice.
@@ -19978,7 +19983,11 @@ unsafe fn queue_impact_marks(
                 note_render_packet_drop(false);
                 return;
             };
-            ot.add(otz, tri, TriTexturedGouraud::WORDS);
+            ot.insert(
+                otz,
+                core::ptr::from_mut(tri).cast(),
+                TriTexturedGouraud::WORDS,
+            );
         }
     }
 }
@@ -21265,7 +21274,11 @@ unsafe fn render_projectiles<const N: usize>(
             if let Some((sx, sy, _)) = project_world_point(PROJECTILES[i].pos, rot, base_t) {
                 let half = (size / 2) as i16;
                 PROJ_RECTS[i] = RectFlat::new(sx - half, sy - half, size, size, r, g, b);
-                ot.add(0, &mut PROJ_RECTS[i], RectFlat::WORDS);
+                ot.insert(
+                    0,
+                    core::ptr::from_mut(&mut PROJ_RECTS[i]).cast(),
+                    RectFlat::WORDS,
+                );
             }
         }
         i += 1;
@@ -21289,9 +21302,9 @@ unsafe fn queue_rpg_spot(
         if let Some(packet) =
             packets.push(RectFlat::new(sx - half, sy - half, size, size, 255, 24, 16))
         {
-            ot.add(
+            ot.insert(
                 clamp_otz((vz.saturating_sub(4) as usize) >> OT_SHIFT),
-                packet,
+                core::ptr::from_mut(packet).cast(),
                 RectFlat::WORDS,
             );
         } else {
@@ -21464,7 +21477,11 @@ unsafe fn render_debris<const N: usize>(
                     g,
                     b,
                 );
-                ot.add(0, &mut DEBRIS_RECTS[i], RectFlat::WORDS);
+                ot.insert(
+                    0,
+                    core::ptr::from_mut(&mut DEBRIS_RECTS[i]).cast(),
+                    RectFlat::WORDS,
+                );
             }
         }
         i += 1;
@@ -22801,7 +22818,11 @@ unsafe fn push_tri_uv_words_packed(
         return;
     };
     tram_cache_capture_tri(packet as *const TriTexturedGouraud, otz);
-    world_ot().add(otz, packet, TriTexturedGouraud::WORDS);
+    world_ot().insert(
+        otz,
+        core::ptr::from_mut(packet).cast(),
+        TriTexturedGouraud::WORDS,
+    );
     *np += 1;
 }
 
@@ -24148,7 +24169,11 @@ unsafe fn try_emit_quad_corners(
             slot.backdrop,
         )
     });
-    world_ot().add(otz, packet, QuadTexturedGouraud::WORDS);
+    world_ot().insert(
+        otz,
+        core::ptr::from_mut(packet).cast(),
+        QuadTexturedGouraud::WORDS,
+    );
     *nq += 1;
     if native_patch {
         WORLD_AFFINE_NATIVE_GT4 = WORLD_AFFINE_NATIVE_GT4.saturating_add(1);
@@ -24309,7 +24334,7 @@ unsafe fn push_affine_heatmap_tri(
         WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
         return false;
     };
-    world_ot().add(otz, packet, TriFlat::WORDS);
+    world_ot().insert(otz, core::ptr::from_mut(packet).cast(), TriFlat::WORDS);
     *count += 1;
     true
 }
@@ -25298,7 +25323,11 @@ unsafe fn emit_affine_quad_child(
         false,
     );
     let packet = push_affine_quad_gt4(packets, q, mat, otz, nq);
-    world_ot().add(otz, &mut *packet, QuadTexturedGouraud::WORDS);
+    world_ot().insert(
+        otz,
+        core::ptr::from_mut(&mut *packet).cast(),
+        QuadTexturedGouraud::WORDS,
+    );
     true
 }
 
@@ -25390,7 +25419,11 @@ unsafe fn emit_affine_quad_children(
             false,
         );
         let packet = push_affine_quad_gt4(packets, c, mat, otz, nq);
-        world_ot().add(otz, &mut *packet, QuadTexturedGouraud::WORDS);
+        world_ot().insert(
+            otz,
+            core::ptr::from_mut(&mut *packet).cast(),
+            QuadTexturedGouraud::WORDS,
+        );
         child += 1;
     }
 }
@@ -25602,7 +25635,11 @@ unsafe fn push_patch_underlay(
     for p in [p0, p1, p2, p3] {
         render::warp_probe_announce(p.sx as i32, p.sy as i32, p.sz as i32);
     }
-    world_ot().add(otz, packet, QuadTexturedGouraud::WORDS);
+    world_ot().insert(
+        otz,
+        core::ptr::from_mut(packet).cast(),
+        QuadTexturedGouraud::WORDS,
+    );
     *nq += 1;
 }
 
@@ -27221,7 +27258,11 @@ unsafe fn depth_split_underlay(
     let far = q.iter().map(|v| v.projected.sz as i32).max().unwrap_or(0);
     let otz = world_order_key(ordering::PrimitiveDepths::quad(far, far, far, far), false);
     let packet = push_affine_quad_gt4(packets, [&q[0], &q[1], &q[2], &q[3]], mat, otz, nq);
-    world_ot().add(otz, &mut *packet, QuadTexturedGouraud::WORDS);
+    world_ot().insert(
+        otz,
+        core::ptr::from_mut(&mut *packet).cast(),
+        QuadTexturedGouraud::WORDS,
+    );
 }
 
 /// Error-bounded split of a cooked quad refused by the GT4 fast path only
@@ -28080,7 +28121,11 @@ unsafe fn insert_model_depth_stream(first: *mut u32, end: *mut u32) {
             let next = (*packet).tag;
             let key = (*packet).uv2 >> 16;
             (*packet).uv2 &= 0xffff;
-            world_ot().add((key >> 4) as usize, &mut *packet, TriTextured::WORDS);
+            world_ot().insert(
+                (key >> 4) as usize,
+                core::ptr::from_mut(&mut *packet).cast(),
+                TriTextured::WORDS,
+            );
             offset = next;
         }
     }
@@ -28317,7 +28362,11 @@ fn project_beam_segment(
     Some(((x0, y0, nz0), (x1, y1, nz1)))
 }
 
-fn draw_beam(
+/// # Safety
+///
+/// The beam packets stay linked into `ot`: `packets` must stay live and
+/// unmodified until that table's walk has finished.
+unsafe fn draw_beam(
     packets: &mut PrimitivePacketArena<'_>,
     ot: &mut OrderingTable<OT_LEN>,
     start: [i32; 3],
@@ -28366,12 +28415,12 @@ fn draw_beam(
         let z = ((1i32 << 20) / iz - BEAM_DEPTH_BIAS).max(render::NEAR_Z);
         let otz = clamp_otz((z as usize) >> OT_SHIFT);
         if let Some(packet) = packets.push(BeamTri::new([a, b, d], color)) {
-            ot.add(otz, packet, BeamTri::WORDS);
+            ot.insert(otz, core::ptr::from_mut(packet).cast(), BeamTri::WORDS);
         } else {
             unsafe { note_render_packet_drop(false) };
         }
         if let Some(packet) = packets.push(BeamTri::new([b, e, d], color)) {
-            ot.add(otz, packet, BeamTri::WORDS);
+            ot.insert(otz, core::ptr::from_mut(packet).cast(), BeamTri::WORDS);
         } else {
             unsafe { note_render_packet_drop(false) };
         }
@@ -28493,7 +28542,11 @@ unsafe fn draw_beam_textured(
             uv2: uv[2] as u32,
         };
         if let Some(pk) = packets.push(prim) {
-            world_ot().add(otz, pk, TriTexturedGouraud::WORDS);
+            world_ot().insert(
+                otz,
+                core::ptr::from_mut(pk).cast(),
+                TriTexturedGouraud::WORDS,
+            );
         } else {
             note_render_packet_drop(false);
         }
@@ -28666,8 +28719,12 @@ unsafe fn queue_world_beams(
 }
 
 /// A beam in one of the TRACER_LOOKS.
+///
+/// # Safety
+///
+/// As [`draw_beam`].
 #[inline(never)]
-fn draw_look(
+unsafe fn draw_look(
     packets: &mut PrimitivePacketArena<'_>,
     ot: &mut OrderingTable<OT_LEN>,
     start: [i32; 3],
@@ -29277,6 +29334,10 @@ fn main() {
 
     gpu::init(VideoMode::Ntsc, Resolution::R320X240);
     let mut fb = FrameBuffer::new(320, 240);
+    // The one GPU DMA token: play() kicks the frame-closing GP0(1Fh) with it.
+    let mut gpu_dma = psx_rt::Peripherals::take()
+        .expect("hl-psx takes the peripheral tokens once, at boot")
+        .gpu_dma;
     gpu::set_draw_area(0, 0, 319, 239);
     gpu::set_draw_offset(0, 0);
     scene::set_screen_offset(160 << 16, 120 << 16);
@@ -29479,6 +29540,7 @@ fn main() {
         loop {
             match play(
                 &mut fb,
+                &mut gpu_dma,
                 launch,
                 keep_frame,
                 #[cfg(feature = "semantic-input")]
@@ -29955,6 +30017,8 @@ unsafe fn init_room_logic(
 
 fn play(
     fb: &mut FrameBuffer,
+    #[cfg_attr(not(feature = "decoupled-present"), allow(unused_variables))]
+    gpu_dma: &mut psx_io::periph::GpuDma,
     launch: RoomLaunch,
     keep_frame: bool,
     #[cfg(feature = "semantic-input")] semantic_player: &mut semantic_input::Player<'static>,
@@ -33398,7 +33462,7 @@ fn play(
         #[cfg(feature = "decoupled-present")]
         if present_pending {
             telemetry::stage_begin(telemetry::stage::PRESENT);
-            gpu::submit_linked_list_async(gpu::DRAW_DONE_NODE.as_ptr());
+            gpu::submit_static(gpu_dma, &gpu::DRAW_DONE_NODE);
             interrupts::queue_gp1_at_vblank(fb.begin_deferred_swap());
             telemetry::stage_end(telemetry::stage::PRESENT);
             // Consumed; every build path re-arms it before the next read.
@@ -34462,16 +34526,16 @@ fn play(
                     let mut qi = 0usize;
                     while ti < TRAM_TRI_COUNT || qi < TRAM_QUAD_COUNT {
                         if qi < TRAM_QUAD_COUNT && TRAM_QUAD_AFTER_TRIS[qi] as usize <= ti {
-                            world_ot().add(
+                            world_ot().insert(
                                 TRAM_QUAD_OTZ[qi] as usize,
-                                &mut TRAM_QUAD_CACHE[qi],
+                                core::ptr::from_mut(&mut TRAM_QUAD_CACHE[qi]).cast(),
                                 QuadTexturedGouraud::WORDS,
                             );
                             qi += 1;
                         } else if ti < TRAM_TRI_COUNT {
-                            world_ot().add(
+                            world_ot().insert(
                                 TRAM_TRI_OTZ[ti] as usize,
-                                &mut TRAM_TRI_CACHE[ti],
+                                core::ptr::from_mut(&mut TRAM_TRI_CACHE[ti]).cast(),
                                 TriTexturedGouraud::WORDS,
                             );
                             ti += 1;
@@ -34919,9 +34983,9 @@ fn play(
                 let w = (t * 255 / ENDING_FADE_TICKS) as u8;
                 DEATH_WASH = 0;
                 DEATH_OVERLAY = RectFlat::new(0, 0, 320, 240, w, w, w);
-                hud_ot().add(
+                hud_ot().insert(
                     0,
-                    &mut *core::ptr::addr_of_mut!(DEATH_OVERLAY),
+                    core::ptr::from_mut(&mut *core::ptr::addr_of_mut!(DEATH_OVERLAY)).cast(),
                     RectFlat::WORDS,
                 );
                 if t >= ENDING_FADE_TICKS {
@@ -35022,14 +35086,23 @@ fn play(
                 let v = XHAIR.sv;
                 let fill = psx_gpu::prim::TriFlat::new([v[0], v[1], v[2]], 255, 0, 255);
                 if let Some(pk) = packets.push(fill) {
-                    world_ot().add(1, pk, psx_gpu::prim::TriFlat::WORDS);
+                    // SAFETY: `pk` lives in this frame's packet storage, which
+                    // stays untouched until the world walk below is waited out.
+                    world_ot().insert(
+                        1,
+                        (pk as *mut psx_gpu::prim::TriFlat).cast(),
+                        psx_gpu::prim::TriFlat::WORDS,
+                    );
                 } else {
                     note_render_packet_drop(false);
                 }
             }
 
             telemetry::stage_begin(telemetry::stage::WORLD_FLUSH);
-            world_ot().submit_async();
+            // SAFETY: the world table and its packets stay untouched until
+            // finish_deferred_overlays waits this walk out before the overlay
+            // lists go; only the HUD and effect storage is written meanwhile.
+            gpu::submit_linked_list_raw_async(world_ot().submit_head());
             // HUD and effect projection only touch their own packet storage.
             // Build them while channel 2 walks the world list, hiding this CPU
             // work without changing either ordering table or draw order.
@@ -35060,9 +35133,16 @@ fn play(
                     &mut *core::ptr::addr_of_mut!(HUD_PRIMS),
                 );
             }
-            let _ = (*core::ptr::addr_of!(IMPACT_PARTICLES)).render_into_ot(
-                fx_ot(),
-                &mut *core::ptr::addr_of_mut!(IMPACT_PARTICLE_RECTS),
+            // SAFETY: FX_OT is still being built, not walked, and every packet it
+            // links so far lives in static storage until finish_deferred_overlays
+            // has waited its walk out; the impact rects join them.
+            let mut fx = fx_ot().resume_frame();
+            let mut rects = psx_gpu::frame::PrimitiveArena::new(&mut *core::ptr::addr_of_mut!(
+                IMPACT_PARTICLE_RECTS
+            ));
+            let _ = (*core::ptr::addr_of!(IMPACT_PARTICLES)).render_into_frame(
+                &mut fx,
+                &mut rects,
                 0,
                 (0, 0),
             );
