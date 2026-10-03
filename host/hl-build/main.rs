@@ -834,6 +834,18 @@ fn run(command: &mut Command, label: &str) -> Result<()> {
     Ok(())
 }
 
+/// One of the SDK's post-link checks (`tools/psoxide-hazard`: `hazard-patch`,
+/// `hazard-scan`, `stack-guard`), built from the hydrated tree against its
+/// imported lockfile; append the tool's own arguments.
+fn hazard_tool(psoxide: &Path, bin: &str) -> Command {
+    let mut command = Command::new("cargo");
+    command
+        .args(["run", "--quiet", "--release", "--locked", "--manifest-path"])
+        .arg(psoxide.join("tools/psoxide-hazard/Cargo.toml"))
+        .args(["--bin", bin, "--"]);
+    command
+}
+
 /// The repository root: the builder's own manifest sits at host/hl-build.
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1183,14 +1195,12 @@ fn prepare_psoxide(explicit: Option<&Path>) -> Result<PathBuf> {
             if components["components"]["sdk"]["revision"].as_str() != Some(psoxide_rev()) {
                 return Err("SDK component and Cargo dependency pins disagree".into());
             }
-            run(
-                Command::new("python3")
-                    .arg(root().join("tools/bootstrap-components.py"))
-                    .arg("--root")
-                    .arg(&destination)
-                    .arg("--lock")
-                    .arg(&lock),
-                "bootstrap PSoXide components",
+            println!("\n==> bootstrap PSoXide components");
+            psoxide_link::components::materialize(
+                &destination,
+                &std::collections::BTreeMap::new(),
+                false,
+                Some(&lock),
             )?;
             fs::write(
                 destination.join(".psoxide-source"),
@@ -1986,28 +1996,22 @@ fn compile_game(
     // guessed from the dispatch's block, and each tool refuses a map that
     // does not match the image. The stack guard proves every psx-rt
     // scratchpad stack call tree fits its region.
-    let patcher = psoxide.join("tools/hazard_patch.py");
     run(
-        Command::new("python3")
-            .arg(&patcher)
+        hazard_tool(psoxide, "hazard-patch")
             .arg(&exe)
             .arg("--map")
             .arg(&link_map),
         "patch load-delay hazards in hl-psx.exe",
     )?;
     run(
-        Command::new("python3")
-            .arg(psoxide.join("tools/hazard_scan.py"))
+        hazard_tool(psoxide, "hazard-scan")
             .arg(&exe)
             .arg("--map")
             .arg(&link_map),
         "prove hl-psx.exe free of load-delay hazards",
     )?;
     run(
-        Command::new("python3")
-            .arg(psoxide.join("tools/stack_guard.py"))
-            .arg(&exe)
-            .arg(&link_map),
+        hazard_tool(psoxide, "stack-guard").arg(&exe).arg(&link_map),
         "prove psx-rt scratchpad stacks fit",
     )?;
     // The model projection chain runs on the 1 KiB scratchpad; an inlining

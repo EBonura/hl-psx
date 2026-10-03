@@ -43,8 +43,9 @@ You need:
 2. Rust installed through [rustup](https://rustup.rs/). Use rustup rather than
    an operating-system Rust package so the repository can select its pinned
    nightly toolchain automatically.
-3. Python 3 and `mipsel-none-elf-objdump` on `PATH`. The build uses them to
-   patch and verify R3000 load-delay hazards in the final executable.
+3. Python 3 and `mipsel-none-elf-objdump` on `PATH`. The build runs
+   `host/stack_budget.py`, which uses both, to check the scratchpad
+   projection stack budget of the final executable.
 4. Host build tools/linker for Rust executables (Xcode Command Line Tools on
    macOS, a C/C++ toolchain on Linux, or Visual Studio Build Tools on Windows).
 5. Internet access for the first build so Cargo can download that toolchain,
@@ -153,7 +154,7 @@ cargo hl-build --help                 # show every option
 in the hydrated emulator, which counts every instruction the game executes;
 the second is compiled around those counts. On the chapter-two recording it
 is 6% faster than `pack`, and 4% faster on a route the recording never
-visits. It takes about four minutes and needs `mipsel-none-elf-objdump`.
+visits. It takes about four minutes.
 
 `HL_DIR`, `PSOXIDE`, and `GAMES_DIR` are accepted as environment defaults.
 Normal builds hydrate the exact SDK, emulator support crates, and editor/engine
