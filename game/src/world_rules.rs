@@ -189,29 +189,25 @@ pub fn blood_trail(
     colour: BloodColour,
     world: &mut dyn BloodTrailWorld,
 ) {
-    if colour == BloodColour::NoBlood || damage == 0 {
+    if damage == 0 || colour == BloodColour::NoBlood {
         return;
     }
-    let len = shot_len.max(1);
-    let (noise, count) = if damage < 10 {
-        (410, 1)
-    } else if damage < 25 {
-        (819, 2)
-    } else {
-        (1229, 4)
+    // Bigger wounds leave more decals, scattered more widely (fractions of
+    // the unit shot direction, in 1/4096).
+    let (decals, scatter) = match damage {
+        0..=9 => (1, 410),
+        10..=24 => (2, 819),
+        _ => (4, 1229),
     };
-    let mut i = 0;
-    while i < count {
-        let mut end = wound;
-        let mut a = 0;
-        while a < 3 {
-            let dir = (shot_end[a] - shot_start[a]) * 4096 / len;
-            let d = dir + world.random_below(2 * noise as u32 + 1) as i32 - noise;
-            end[a] += (d * BLEED_REACH) >> 12;
-            a += 1;
+    let heading: [i32; 3] =
+        core::array::from_fn(|axis| (shot_end[axis] - shot_start[axis]) * 4096 / shot_len.max(1));
+    for _ in 0..decals {
+        let mut to = wound;
+        for axis in 0..3 {
+            let wobble = world.random_below(2 * scatter as u32 + 1) as i32 - scatter;
+            to[axis] += ((heading[axis] + wobble) * BLEED_REACH) >> 12;
         }
-        world.trace_and_stamp(wound, end);
-        i += 1;
+        world.trace_and_stamp(wound, to);
     }
 }
 
