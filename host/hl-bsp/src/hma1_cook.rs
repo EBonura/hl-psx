@@ -3,7 +3,7 @@
 //! `cook_mdl` captures every requested sequence's local bone transforms at
 //! every source frame; this module turns them into `psx_anim_cook` clip
 //! sources in cooked space (HL axes permuted to [x, z, y], scaled by the
-//! model's vertex scale), with GoldSrc's own quaternion slerp between source
+//! model's vertex scale), with a quaternion slerp between source
 //! frames and the cooker's floor anchoring applied to root translation.
 
 use psx_anim_cook::{ClipSource, Mat34};
@@ -24,40 +24,28 @@ pub struct CookedClip<'a> {
     pub scale: f32,
 }
 
-fn slerp(p: [f32; 4], q0: [f32; 4], t: f32) -> [f32; 4] {
-    // GoldSrc QuaternionSlerp (mathlib.c), as StudioCalcRotations uses it.
-    let mut q = q0;
-    let a: f32 = (0..4).map(|i| (p[i] - q[i]) * (p[i] - q[i])).sum();
-    let b: f32 = (0..4).map(|i| (p[i] + q[i]) * (p[i] + q[i])).sum();
-    if a > b {
-        q = [-q[0], -q[1], -q[2], -q[3]];
-    }
-    let cosom: f32 = (0..4).map(|i| p[i] * q[i]).sum();
-    let (sp, sq) = if 1.0 + cosom > 1e-6 {
-        if 1.0 - cosom > 1e-6 {
-            let omega = cosom.acos();
-            let sinom = omega.sin();
-            (((1.0 - t) * omega).sin() / sinom, (t * omega).sin() / sinom)
-        } else {
-            (1.0 - t, t)
-        }
+/// Blend two unit quaternions at constant angular speed along the shorter
+/// arc: `t` = 0 gives `p`, `t` = 1 gives `q`. Nearly parallel inputs blend
+/// linearly (then renormalise), where the arc weights lose precision.
+fn slerp(p: [f32; 4], q: [f32; 4], t: f32) -> [f32; 4] {
+    let mut cos: f32 = (0..4).map(|i| p[i] * q[i]).sum();
+    // `q` and `-q` are the same orientation; use the one on `p`'s side.
+    let side = if cos < 0.0 { -1.0 } else { 1.0 };
+    cos *= side;
+    let nearly_parallel = cos > 0.9995;
+    let (from_p, from_q) = if nearly_parallel {
+        (1.0 - t, t)
     } else {
-        let qq = [-q[1], q[0], -q[3], q[2]];
-        let sp = ((1.0 - t) * 0.5 * core::f32::consts::PI).sin();
-        let sq = (t * 0.5 * core::f32::consts::PI).sin();
-        return [
-            sp * p[0] + sq * qq[0],
-            sp * p[1] + sq * qq[1],
-            sp * p[2] + sq * qq[2],
-            qq[3],
-        ];
+        let angle = cos.acos();
+        let sin = angle.sin();
+        (((1.0 - t) * angle).sin() / sin, (t * angle).sin() / sin)
     };
-    [
-        sp * p[0] + sq * q[0],
-        sp * p[1] + sq * q[1],
-        sp * p[2] + sq * q[2],
-        sp * p[3] + sq * q[3],
-    ]
+    let mut out: [f32; 4] = std::array::from_fn(|i| from_p * p[i] + from_q * side * q[i]);
+    if nearly_parallel {
+        let len = out.iter().map(|c| c * c).sum::<f32>().sqrt();
+        out = out.map(|c| c / len);
+    }
+    out
 }
 
 fn quat_mat(q: [f32; 4]) -> [[f64; 3]; 3] {
@@ -163,4 +151,69 @@ pub fn jaw_record(
         post,
         open: psx_anim_cook::quat_q12(&rc),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slerp;
+
+    const IDENTITY: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+
+    /// Turn of `degrees` about Z.
+    fn about_z(degrees: f32) -> [f32; 4] {
+        let half = degrees.to_radians() * 0.5;
+        [0.0, 0.0, half.sin(), half.cos()]
+    }
+
+    fn close(a: [f32; 4], b: [f32; 4]) -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5)
+    }
+
+    fn length(q: [f32; 4]) -> f32 {
+        q.iter().map(|c| c * c).sum::<f32>().sqrt()
+    }
+
+    #[test]
+    fn slerp_hits_both_endpoints() {
+        let q = about_z(70.0);
+        assert!(close(slerp(IDENTITY, q, 0.0), IDENTITY));
+        assert!(close(slerp(IDENTITY, q, 1.0), q));
+    }
+
+    #[test]
+    fn slerp_halfway_through_a_quarter_turn_is_an_eighth_turn() {
+        assert!(close(slerp(IDENTITY, about_z(90.0), 0.5), about_z(45.0)));
+        // A third of the way.
+        assert!(close(
+            slerp(IDENTITY, about_z(90.0), 1.0 / 3.0),
+            about_z(30.0)
+        ));
+    }
+
+    #[test]
+    fn slerp_takes_the_shorter_arc_whichever_sign_the_target_has() {
+        let q = about_z(90.0);
+        let flipped = q.map(|c| -c);
+        let a = slerp(IDENTITY, q, 0.5);
+        let b = slerp(IDENTITY, flipped, 0.5);
+        assert!(close(a, b));
+    }
+
+    #[test]
+    fn slerp_of_opposite_signs_stays_put_and_unit_length() {
+        let opposite = IDENTITY.map(|c| -c);
+        for t in [0.0, 0.25, 0.5, 1.0] {
+            let r = slerp(IDENTITY, opposite, t);
+            assert!((length(r) - 1.0).abs() < 1e-5, "t {t}");
+            assert!(close(r, IDENTITY), "t {t}");
+        }
+    }
+
+    #[test]
+    fn slerp_of_nearly_identical_inputs_stays_unit_length() {
+        let q = about_z(0.01);
+        let r = slerp(IDENTITY, q, 0.5);
+        assert!((length(r) - 1.0).abs() < 1e-6);
+        assert!(close(r, about_z(0.005)));
+    }
 }
