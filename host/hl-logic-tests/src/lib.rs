@@ -116,3 +116,13 @@ mod movement_behaviour;
 /// Node-graph next-hop decoding against synthetic route tables.
 #[cfg(test)]
 mod route_behaviour;
+
+#[path = "../../../game/src/world_rules.rs"]
+pub mod world_rules;
+
+/// Behaviour-level golden tests for rules extracted from the game crate.
+#[cfg(test)]
+pub mod behaviour;
+
+#[path = "../../../game/src/player_rules.rs"]
+pub mod player_rules;
