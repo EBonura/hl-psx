@@ -6367,6 +6367,12 @@ fn regression_viewpoint(
         // wedges that a standalone t0a0 spawn cannot reproduce.
         return Some(([-1380, -28, -1682], 0, 0));
     }
+    if room_id == 71 {
+        // c2a5g: from the mortar table, look out over the field's corner
+        // where the table-guided barrage lands with both controllers at
+        // zero, so the impacts are on screen.
+        return Some(([1053, -1321, 1482], 2690, -140));
+    }
     if pushable_view && room_id == 18 {
         // c1a2: stand on the battery beside the second start so the first
         // simulation tick picks it up and the HUD shows its pickup icon.

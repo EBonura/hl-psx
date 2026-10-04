@@ -126,7 +126,7 @@ const GOLDENS: &[Golden] = &[
         &[60, 150, 300],
     ),
     // The c1a0 security door's opening motion from a fixed camera.
-    golden("golden-door", 6, 15, &[], &[10, 20, 40, 80]),
+    golden("golden-door", 6, 15, &[], &[5, 10, 15, 20, 25, 30, 40, 80]),
     // c1a0 and c1a0a scientists: scripted walks, greetings and small talk.
     golden("golden-c1a0-scripts", 6, 0, &[], &[100, 250, 400, 600]),
     golden("golden-c1a0a-talk", 7, 0, &[], &[100, 300, 500, 700]),
@@ -167,12 +167,21 @@ const GOLDENS: &[Golden] = &[
     ),
     // c2a2d: the silo guard gun tracks and shoots the player at the start.
     golden("golden-tank", 45, 0, &[], &[20, 40, 60, 80, 120, 200]),
-    // c1a3b: the osprey circles over the start.
-    golden("golden-osprey", 25, 15, &[], &[40, 200, 400, 600]),
-    // c2a5g: the table-guided and random mortar fields, fired at tick 20.
-    golden("golden-mortar", 71, 15, &[], &[60, 75, 90, 110]),
+    // c1a3b: the osprey takes off and circles over the start. The grunts
+    // there kill the player before poll 200, so the checkpoints stay early.
+    golden("golden-osprey", 25, 15, &[], &[40, 70, 100, 130]),
+    // c2a5g: the table-guided and random mortar fields, fired at tick 20,
+    // seen from the table looking at where the guided shells land. The first
+    // shell lands 2.5 s after the use.
+    golden("golden-mortar", 71, 15, &[], &[60, 72, 74, 76, 80, 90, 110]),
     // c1a3c: a player-guided mortar field, fired at tick 20.
-    golden("golden-mortar-player", 26, 15, &[], &[60, 80, 100]),
+    golden(
+        "golden-mortar-player",
+        26,
+        15,
+        &[],
+        &[60, 70, 72, 74, 76, 80, 100],
+    ),
     // c2a5: the apache, triggered at tick 20, hunting the player.
     golden("golden-apache", 64, 14, &[], &[60, 200, 400, 600]),
     // c4a3: the nihilanth.
