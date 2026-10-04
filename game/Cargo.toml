@@ -103,6 +103,7 @@ psx-hw   = { path = "../.psoxide/crates/psx-hw" }
 psx-pack = { path = "../.psoxide/sdk/crates/psx-pack" }
 psx-spu  = { path = "../.psoxide/sdk/crates/psx-spu" }
 psx-asset = { path = "../.psoxide/sdk/crates/psx-asset" }
+psx-fmv  = { path = "../.psoxide/sdk/crates/psx-fmv" }
 psx-mc   = { path = "../.psoxide/sdk/crates/psx-mc" }
 psx-font = { path = "../.psoxide/sdk/crates/psx-font" }
 psx-fx   = { path = "../.psoxide/sdk/crates/psx-fx" }

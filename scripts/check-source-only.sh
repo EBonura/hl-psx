@@ -27,7 +27,7 @@ while IFS= read -r -d '' path; do
         *.pak|*.vpk|*.gcf|*.wad|*.bsp|*.mdl|*.spr|*.lmp|*.nod|\
         *.hlm|*.hlmdl|*.hltx|*.tex|*.psxm|*.psxc|*.psxw|*.psxa|*.psau|\
         *.bin|*.cue|*.iso|*.img|*.ccd|*.sub|*.chd|*.exe|*.elf|*.map|\
-        *.wav|*.mp3|*.ogg|*.flac|*.cdda|*.aiff|*.aif|\
+        *.wav|*.mp3|*.ogg|*.flac|*.cdda|*.xa|*.aiff|*.aif|\
         *.tga|*.png|*.jpg|*.jpeg|*.webp|*.gif|*.bmp|\
         *.zip|*.7z|*.rar|*.tar|*.tgz|*.gz|*.bz2|*.xz|\
         *.mp4|*.mov|*.avi|*.mkv)

@@ -1,6 +1,8 @@
 use crate::generators::bsp_entities;
 use crate::Result;
+use hl_format::music;
 use psx_audio_cook::resample::Sinc;
+use psx_audio_cook::xa;
 use psx_audio_cook::{CookOptions, Looping, Wav};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File};
@@ -15,7 +17,6 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-const SECTOR: usize = 2352;
 const HL_CD_PLAYLIST: [&str; 27] = [
     "Half-Life01.mp3",
     "Prospero01.mp3",
@@ -103,29 +104,38 @@ fn decode_mp3(path: &Path) -> Result<(u32, usize, Vec<i16>)> {
     Ok((rate, channels, samples))
 }
 
-fn stereo_44100(rate: u32, channels: usize, input: &[i16]) -> Vec<i16> {
-    let frames = input.len() / channels;
-    let out_frames = ((frames as u64 * 44_100) / rate.max(1) as u64).max(1) as usize;
-    let mut output = Vec::with_capacity(out_frames * 2);
-    for index in 0..out_frames {
-        let source =
-            ((index as u64 * rate as u64) / 44_100).min(frames.saturating_sub(1) as u64) as usize;
-        let at = source * channels;
-        let left = input[at];
-        let right = if channels > 1 { input[at + 1] } else { left };
-        output.push(left);
-        output.push(right);
-    }
-    output
+/// The XA format every music file uses: 37.8 kHz stereo, read at single speed,
+/// four songs interleaved (`hl_format::music::SONGS_PER_FILE`).
+const MUSIC_FORMAT: xa::Format = xa::Format {
+    stereo: true,
+    rate: xa::SampleRate::Hz37800,
+};
+
+/// One song as the planes the XA encoder takes, resampled to the file's rate.
+fn music_planes(media: &Path, name: &str) -> Result<Vec<Vec<f64>>> {
+    let (rate, channels, decoded) = decode_mp3(&media.join(name))?;
+    let planes: Vec<Vec<f64>> = (0..channels.min(2))
+        .map(|c| {
+            decoded
+                .iter()
+                .skip(c)
+                .step_by(channels)
+                .map(|&v| v as f64)
+                .collect()
+        })
+        .collect();
+    Ok(xa::prepare_pcm(MUSIC_FORMAT, rate, &planes, None))
 }
 
+/// Cook the CD music as XA-ADPCM files, one per `hl_format::music::FILES` row,
+/// named as `FILE_NAMES` says. Every channel of a file is as long as its
+/// longest song (shorter songs end in silence).
 pub fn build_music(valve: &Path, output: &Path) -> Result<()> {
     let media = valve.join("media");
     if !media.is_dir() {
         eprintln!("no media dir at {}; skipping music", media.display());
         return Ok(());
     }
-    fs::create_dir_all(output)?;
     let missing: Vec<&str> = HL_CD_PLAYLIST
         .iter()
         .copied()
@@ -134,34 +144,70 @@ pub fn build_music(valve: &Path, output: &Path) -> Result<()> {
     if !missing.is_empty() {
         return Err(format!("missing Half-Life CD tracks: {}", missing.join(", ")).into());
     }
-    let mut listing = Vec::new();
-    let mut total_sectors = 0usize;
-    for (index, name) in HL_CD_PLAYLIST.iter().enumerate() {
-        let (rate, channels, decoded) = decode_mp3(&media.join(name))?;
-        let pcm = stereo_44100(rate, channels, &decoded);
-        let out = output.join(format!("track_{:02}.cdda", index + 1));
-        let mut bytes = Vec::with_capacity(pcm.len() * 2 + SECTOR);
-        for sample in pcm {
-            bytes.extend_from_slice(&sample.to_le_bytes());
+    fs::create_dir_all(output)?;
+    // Earlier cooks wrote CD-DA tracks here; a stale one must not reach the disc.
+    for entry in fs::read_dir(output)? {
+        let path = entry?.path();
+        let stale = path.extension().is_some_and(|e| e == "cdda")
+            || path.file_name().is_some_and(|n| n == "tracks.txt");
+        if stale {
+            fs::remove_file(path)?;
         }
-        bytes.resize(bytes.len().div_ceil(SECTOR) * SECTOR, 0);
-        fs::write(&out, &bytes)?;
-        let sectors = bytes.len() / SECTOR;
-        total_sectors += sectors;
-        // mkisopsx resolves entries relative to tracks.txt, so cooked music
-        // remains packable after moving the asset directory.
-        listing.push(format!("track_{:02}.cdda", index + 1));
-        println!(
-            "  track {:2} (disc) = {name} ({sectors} sectors)",
-            index + 2
-        );
     }
-    fs::write(output.join("tracks.txt"), listing.join("\n") + "\n")?;
+    let mut total_sectors = 0usize;
+    for (file, tracks) in music::FILES.iter().enumerate() {
+        let mut planes = Vec::new();
+        let mut names = Vec::new();
+        for &track in tracks.iter().filter(|&&t| t != 0) {
+            let name = HL_CD_PLAYLIST[(track - music::FIRST_TRACK) as usize];
+            planes.push(music_planes(&media, name)?);
+            names.push((track, name));
+        }
+        let sectors = planes
+            .iter()
+            .map(|p| xa::sector_count(MUSIC_FORMAT, p.iter().map(Vec::len).max().unwrap_or(0)))
+            .max()
+            .unwrap_or(1);
+        let encoded: Vec<_> = std::thread::scope(|scope| {
+            let jobs: Vec<_> = planes
+                .iter()
+                .map(|p| scope.spawn(move || xa::encode(MUSIC_FORMAT, p, sectors)))
+                .collect();
+            jobs.into_iter()
+                .map(|j| j.join().expect("XA encode panicked"))
+                .collect()
+        });
+        let packed = xa::interleave(
+            MUSIC_FORMAT,
+            xa::DriveSpeed::Single,
+            music::file_number(file),
+            &encoded,
+        )?;
+        fs::write(output.join(music::FILE_NAMES[file]), &packed.bytes)?;
+        total_sectors += packed.sector_count as usize;
+        for (channel, ((track, name), song)) in names.iter().zip(&encoded).enumerate() {
+            let decoded = xa::decode(MUSIC_FORMAT, song);
+            let snr: Vec<String> = planes[channel]
+                .iter()
+                .zip(&decoded)
+                .map(|(want, got)| {
+                    let n = want.len().min(got.len());
+                    let want = psx_audio_cook::resample::to_i16(&want[..n]);
+                    format!("{:.1}", psx_audio_cook::metrics::snr_db(&want, &got[..n]))
+                })
+                .collect();
+            println!(
+                "  track {track:2} = {name} -> {} channel {channel}, SNR {} dB",
+                music::FILE_NAMES[file],
+                snr.join("/")
+            );
+        }
+    }
     println!(
-        "music -> {} ({} tracks, {} MB)",
+        "music -> {} ({} XA files, {} MB)",
         output.display(),
-        HL_CD_PLAYLIST.len(),
-        total_sectors * SECTOR / (1 << 20)
+        music::FILE_COUNT,
+        total_sectors * 2352 / (1 << 20)
     );
     Ok(())
 }

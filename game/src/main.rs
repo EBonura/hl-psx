@@ -33,6 +33,7 @@ mod logic_state;
 mod map;
 mod menu;
 mod model;
+mod music;
 use psx_goldsrc::ordering;
 mod phys;
 use psx_goldsrc::pickup_logic;
@@ -5830,17 +5831,17 @@ static mut ENDING_FROM: u32 = 0;
 static mut FADE_STARTDARK: u8 = 0;
 const STARTDARK_TICKS: u8 = 120;
 const STARTDARK_FADE_TICKS: i32 = 30;
-// ---- CD music (CDDA tracks appended to the disc; HL track numbers pass through) ----
+// ---- CD music (XA-ADPCM songs on the data track; HL track numbers pass through) ----
 static mut CD_TRACK_WANT: i16 = 0; // >0 play, -1 stop, 0 none
 static mut CD_TRACK_CUR: i16 = 0;
-// Absolute BCD MSF captured by GetLocP when a stream suspends a live cue, so
-// the cue RESUMES at its position (GoldSrc keeps the CD playing through weapon
-// switches and changelevels) instead of restarting from the top.
+// The sector of its XA file a stream suspended a live cue at, so the cue
+// RESUMES where it was (GoldSrc keeps the CD playing through weapon switches
+// and changelevels) instead of restarting from the top.
 static mut CD_RESUME_TRACK: i16 = 0;
-static mut CD_RESUME_MSF: [u8; 3] = [0; 3];
+static mut CD_RESUME_SECTOR: u32 = 0;
 
-/// Start/stop CDDA to match the wanted track. Only call when the drive is idle
-/// (post-stream / mid-gameplay): any WORLD.PAK read preempts playback.
+/// Start/stop the music to match the wanted track. Only call when the drive is
+/// idle (post-stream / mid-gameplay): any WORLD.PAK read preempts playback.
 unsafe fn music_apply() {
     if CD_TRACK_WANT == CD_TRACK_CUR {
         return;
@@ -5852,50 +5853,41 @@ unsafe fn music_apply() {
         return;
     }
     if CD_TRACK_WANT > 0 {
-        // Keep the physical CD input closed until the controller is back in
-        // CDDA mode and Play has acknowledged. Opening the SPU route while a
-        // WORLD.PAK ReadN/data sector is still latched produces an audible
-        // buzz on real hardware even though idealized emulators emit silence.
+        // Keep the physical CD input closed until the drive is following the
+        // song. Opening the SPU route while a WORLD.PAK ReadN/data sector is
+        // still latched produces an audible buzz on real hardware even though
+        // idealized emulators emit silence.
         psx_spu::enable_cd_audio(false);
         psx_spu::set_cd_volume(psx_spu::CdVolume::SILENCE, psx_spu::CdVolume::SILENCE);
-        // AUTO_PAUSE: a Half-Life cue plays once and ends; without it the
-        // drive rolls straight into the next CDDA track on the disc.
-        let mode_ok = psx_io::cd::try_set_mode(
-            psx_hw::cd::MODE_DOUBLE_SPEED | psx_hw::cd::MODE_CDDA | psx_hw::cd::MODE_AUTO_PAUSE,
-            2_000_000,
-        )
-        .is_some();
-        // Resume a suspended cue at the position GetLocP captured (SetLoc +
-        // parameterless Play); anything else starts its track from the top.
-        let play_ok = mode_ok
-            && if CD_TRACK_WANT == CD_RESUME_TRACK && CD_RESUME_MSF != [0; 3] {
-                psx_io::cd::try_command(0x02, &*core::ptr::addr_of!(CD_RESUME_MSF), 2_000_000)
-                    .is_some()
-                    && psx_io::cd::try_command(0x03, &[], 2_000_000).is_some()
-            } else {
-                psx_io::cd::try_play_track(CD_TRACK_WANT as u8, 2_000_000).is_some()
-            };
-        let ready = play_ok && psx_io::cd::try_unmute(2_000_000).is_some();
+        // Resume a suspended cue at the sector it had reached; anything else
+        // starts its song from the top.
+        let from = if CD_TRACK_WANT == CD_RESUME_TRACK {
+            CD_RESUME_SECTOR
+        } else {
+            0
+        };
+        let started = music::start(CD_TRACK_WANT as u8, from);
         CD_RESUME_TRACK = 0;
-        CD_RESUME_MSF = [0; 3];
-        if ready {
+        CD_RESUME_SECTOR = 0;
+        if started == music::Start::Playing {
             let v = settings::music_cd_volume();
             psx_spu::set_cd_volume(v, v);
             psx_spu::enable_cd_audio(true);
-            CD_TRACK_CUR = CD_TRACK_WANT;
-        } else {
-            // Leave WANT intact so the next gameplay tick retries, but never
-            // claim the route is live after a timed-out hardware command.
-            CD_TRACK_CUR = 0;
         }
+        // A song the disc lacks is dropped; after a refused drive command the
+        // next gameplay tick retries, but never claims the route is live.
+        CD_TRACK_CUR = if started == music::Start::Refused {
+            0
+        } else {
+            CD_TRACK_WANT
+        };
     } else {
         // Silence the SPU route before waiting for the asynchronous Pause
         // response. A slow or failed drive command must never leave several
         // seconds of the previous CD sector audible during the transition.
         psx_spu::enable_cd_audio(false);
         psx_spu::set_cd_volume(psx_spu::CdVolume::SILENCE, psx_spu::CdVolume::SILENCE);
-        let _ = psx_io::cd::try_mute(2_000_000);
-        let _ = psx_io::cd::try_pause(2_000_000);
+        music::stop();
         CD_TRACK_CUR = CD_TRACK_WANT;
     }
 }
@@ -5907,37 +5899,17 @@ unsafe fn music_suspend_for_stream() {
     psx_spu::set_cd_volume(psx_spu::CdVolume::SILENCE, psx_spu::CdVolume::SILENCE);
     if CD_TRACK_CUR > 0 {
         // Only resurrect a cue the drive was still actually playing. A
-        // Half-Life track plays once; after AUTO_PAUSE ends it, a later data
-        // stream must not re-Play the finished song from the top.
-        //
-        // Seeking (0x40) counts as playing. Play is a seek followed by
-        // playback and the two bits are mutually exclusive, so a track whose
-        // Play was accepted moments ago reports neither. Reading that as
-        // "finished" abandons a song that had not started yet.
-        const PLAYING_OR_SEEKING: u8 = 0x80 | 0x40;
-        let still_playing = psx_io::cd::try_status(2_000_000)
-            .map(|r| {
-                r.bytes()
-                    .first()
-                    .is_some_and(|s| s & PLAYING_OR_SEEKING != 0)
-            })
-            .unwrap_or(false);
-        CD_TRACK_WANT = if still_playing { CD_TRACK_CUR } else { 0 };
-        if still_playing {
-            // GetLocP: track,index,mm,ss,ff,amm,ass,aff (BCD). Bytes 5..8 are
-            // the absolute position the resume path feeds back to SetLoc.
-            if let Some(r) = psx_io::cd::try_play_position(2_000_000) {
-                let b = r.bytes();
-                if b.len() >= 8 {
-                    CD_RESUME_TRACK = CD_TRACK_CUR;
-                    CD_RESUME_MSF = [b[5], b[6], b[7]];
-                }
-            }
+        // Half-Life track plays once; after it ends, a later data stream must
+        // not play the finished song again from the top. `position` asks the
+        // drive where the head is and answers `None` for a finished song. A
+        // song whose start is still seeking counts as playing, at its start.
+        let position = music::position();
+        CD_TRACK_WANT = if position.is_some() { CD_TRACK_CUR } else { 0 };
+        if let Some(sector) = position {
+            CD_RESUME_TRACK = CD_TRACK_CUR;
+            CD_RESUME_SECTOR = sector;
         }
-        // Controller-level mute is deliberately issued only for a known-live
-        // CDDA stream. Cold boot/menu data reads need no extra command, while
-        // a playing drive must stop feeding samples before Setmode/ReadN.
-        let _ = psx_io::cd::try_mute(2_000_000);
+        music::stop();
         CD_TRACK_CUR = 0;
     }
 }
@@ -5952,18 +5924,17 @@ unsafe fn music_stop_for_menu() {
     // A dialogue voice whose SPU-RAM sample was replaced can loop forever;
     // the frontend boundary must silence every game-owned voice, not CDDA only.
     sfx::stop_all();
-    // Mute first: `try_pause` can wait for a delayed hardware response, while
-    // the menu should become silent immediately and unconditionally.
+    // Mute first: stopping the drive can wait for a delayed hardware response,
+    // while the menu should become silent immediately and unconditionally.
     psx_spu::enable_cd_audio(false);
     psx_spu::set_cd_volume(psx_spu::CdVolume::SILENCE, psx_spu::CdVolume::SILENCE);
     if CD_TRACK_CUR > 0 {
-        let _ = psx_io::cd::try_mute(2_000_000);
-        let _ = psx_io::cd::try_pause(2_000_000);
+        music::stop();
     }
     CD_TRACK_WANT = 0;
     CD_TRACK_CUR = 0;
     CD_RESUME_TRACK = 0;
-    CD_RESUME_MSF = [0; 3];
+    CD_RESUME_SECTOR = 0;
 }
 // Arsenal carried across changelevel (menu launches reset it): owned mask,
 // per-weapon clips, ammo pools, selected weapon.
@@ -11539,6 +11510,9 @@ unsafe fn revert_saved_tick() {
 /// worldspawn chapter title shortly after load (like HL's chapter cards).
 unsafe fn tick_screen_fx(sim_frame_no: u32) {
     music_apply(); // no-op when the wanted track already plays
+    if CD_TRACK_CUR > 0 && sim_frame_no & 1 == 0 && !cdstream::stream_active() {
+        music::poll(); // notices the end of the song and pauses the drive
+    }
     if SHAKE_TICKS > 0 {
         SHAKE_TICKS -= 1;
     }
@@ -29357,9 +29331,10 @@ fn main() {
     gpu::init(VideoMode::Ntsc, Resolution::R320X240);
     let mut fb = FrameBuffer::new(320, 240);
     // The one GPU DMA token: play() kicks the frame-closing GP0(1Fh) with it.
-    let mut gpu_dma = psx_rt::Peripherals::take()
-        .expect("hl-psx takes the peripheral tokens once, at boot")
-        .gpu_dma;
+    let peripherals =
+        psx_rt::Peripherals::take().expect("hl-psx takes the peripheral tokens once, at boot");
+    let mut gpu_dma = peripherals.gpu_dma;
+    music::install(peripherals.cd);
     gpu::set_draw_area(0, 0, 319, 239);
     gpu::set_draw_offset(0, 0);
     scene::set_screen_offset(160 << 16, 120 << 16);
@@ -29370,6 +29345,11 @@ fn main() {
     // SFX: stream the cooked SPU-ADPCM pack once and park it in SPU RAM (its
     // own 512 KB; no main-RAM cost). MAP_BUF is free until the first map loads,
     // so stage through it.
+    // Music: find the XA files by name before any other CD use. MAP_BUF is
+    // free until the first map loads.
+    if let Some(sector) = unsafe { map_buf() }.first_chunk_mut() {
+        unsafe { music::locate_files(sector) };
+    }
     let sfx_ready = {
         let len = cdstream::load_chunk_decompressed(sfx::CHUNK_ID, unsafe { map_buf() })
             .map(|load| load.raw_len)

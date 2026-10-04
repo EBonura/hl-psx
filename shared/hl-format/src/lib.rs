@@ -552,6 +552,67 @@ pub mod setpiece_audio {
     ];
 }
 
+/// Where each CD track's music lives on the disc.
+///
+/// A map names a CD track (2..=28; track 1 was the data track of the
+/// original disc). The music is XA-ADPCM: four songs share one 37.8 kHz stereo
+/// file as interleaved channels, so a song costs a quarter of a CD-DA track.
+/// Songs of similar length share a file because every song in a file takes
+/// the longest one's space.
+pub mod music {
+    pub const FIRST_TRACK: u8 = 2;
+    pub const LAST_TRACK: u8 = 28;
+    /// Songs per file: the interleave stride of 37.8 kHz stereo at single speed.
+    pub const SONGS_PER_FILE: usize = 4;
+    pub const FILE_COUNT: usize = 7;
+    /// Root-directory names, in file order. Each file's XA file number in the
+    /// sector subheaders is its index plus one.
+    pub const FILE_NAMES: [&str; FILE_COUNT] = [
+        "MUSIC1.XA",
+        "MUSIC2.XA",
+        "MUSIC3.XA",
+        "MUSIC4.XA",
+        "MUSIC5.XA",
+        "MUSIC6.XA",
+        "MUSIC7.XA",
+    ];
+    /// `FILES[file][channel]` is the CD track whose song that channel holds
+    /// (0 marks an unused slot). Tracks are grouped by length, longest first.
+    pub const FILES: [[u8; SONGS_PER_FILE]; FILE_COUNT] = [
+        [3, 2, 12, 17],
+        [15, 19, 23, 10],
+        [18, 6, 25, 5],
+        [9, 20, 21, 11],
+        [22, 24, 14, 4],
+        [26, 13, 7, 27],
+        [16, 8, 28, 0],
+    ];
+
+    /// The XA file number of file index `file`.
+    pub const fn file_number(file: usize) -> u8 {
+        file as u8 + 1
+    }
+
+    /// File index and channel of `track`, if the disc has its song.
+    pub const fn locate(track: u8) -> Option<(usize, u8)> {
+        if track == 0 {
+            return None;
+        }
+        let mut file = 0;
+        while file < FILE_COUNT {
+            let mut channel = 0;
+            while channel < SONGS_PER_FILE {
+                if FILES[file][channel] == track {
+                    return Some((file, channel as u8));
+                }
+                channel += 1;
+            }
+            file += 1;
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{logic, map};
@@ -607,5 +668,22 @@ mod tests {
             assert!((1..=3).contains(&sound.tier));
         }
         assert!(SOUNDS.windows(2).all(|w| w[0].tier <= w[1].tier));
+    }
+
+    #[test]
+    fn every_cd_track_has_exactly_one_song_slot() {
+        use super::music::{locate, FILES, FIRST_TRACK, LAST_TRACK};
+        for track in FIRST_TRACK..=LAST_TRACK {
+            let (file, channel) = locate(track).expect("every track has a song");
+            assert_eq!(FILES[file][channel as usize], track);
+        }
+        // The cooker numbers channels by position among the used slots.
+        for row in FILES.iter() {
+            let used = row.iter().take_while(|&&t| t != 0).count();
+            assert!(row[used..].iter().all(|&t| t == 0));
+        }
+        let used = FILES.iter().flatten().filter(|&&t| t != 0).count();
+        assert_eq!(used, (LAST_TRACK - FIRST_TRACK + 1) as usize);
+        assert!(locate(0).is_none() && locate(1).is_none() && locate(LAST_TRACK + 1).is_none());
     }
 }

@@ -361,7 +361,7 @@ const SCENARIOS: [Scenario; 32] = [
     },
     // Switch Glock -> .357 (cold CD stream) -> Glock (tail-cache hit). This
     // proves the previous merged weapon survives the projection/sort overlay
-    // and can republish without a second disc read or CDDA interruption.
+    // and can republish without a second disc read or music interruption.
     Scenario {
         name: "weapon-cache-toggle",
         // c1a2b is also the model-roster RAM stress scene, but renders fast

@@ -127,7 +127,10 @@ jobs:
           : > "$RUNNER_TEMP/empty-route"
           export HLPSX_SEMANTIC_INPUT="$RUNNER_TEMP/empty-route"
           export HLPSX_ROUTE_WAYPOINTS="$RUNNER_TEMP/empty-route"
-          deny='target.mipsel-sony-psx.rustflags=["-Dwarnings"]'
+          # The SDK deprecated its raw GPU entry points in favour of the `Gpu`
+          # driver. They still work, and the pinned engine crates use them
+          # too, so deprecation is allowed until the game and engine migrate.
+          deny='target.mipsel-sony-psx.rustflags=["-Dwarnings","-Adeprecated"]'
           sets=(
             ""
             "--no-default-features"
