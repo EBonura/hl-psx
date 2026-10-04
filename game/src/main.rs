@@ -24,6 +24,7 @@ extern crate psx_rt;
 
 mod beverage;
 mod cdstream;
+mod driver;
 mod ground_logic;
 use psx_goldsrc::hitbox_logic;
 mod hltext;
@@ -95,6 +96,7 @@ static SEMANTIC_INPUT_BYTES: &[u8] = include_bytes!(env!("HLPSX_SEMANTIC_INPUT")
 static ROUTE_WAYPOINT_BYTES: &[u8] = include_bytes!(env!("HLPSX_ROUTE_WAYPOINTS"));
 
 use psx_fx::{LcgRng, ParticlePool};
+use psx_gpu::display::{DoubleBuffer, Resolution};
 use psx_gpu::material::{
     BlendMode, TextureMaterial, TexturedGouraudPacketMaterial, TexturedPacketMaterial,
 };
@@ -102,7 +104,7 @@ use psx_gpu::ot::OrderingTable;
 use psx_gpu::prim::{
     QuadTexturedGouraud, RectFlat, Sprite, TriFlat, TriTextured, TriTexturedGouraud,
 };
-use psx_gpu::{self as gpu, framebuf::FrameBuffer, Resolution, VideoMode};
+use psx_gpu::Gpu;
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
 use psx_io;
@@ -1446,7 +1448,7 @@ unsafe fn fx_chain_submit() {
 /// live and unmodified until this returns, which it does once the walk ends.
 #[inline(never)]
 unsafe fn submit_list(head: *const u32) {
-    gpu::submit_linked_list_raw(head);
+    driver::with(|gpu| psx_gpu::chain::submit_raw(gpu.dma_mut(), head));
 }
 
 // --- Late overlay submission -------------------------------------------------
@@ -1513,12 +1515,14 @@ unsafe fn finish_deferred_overlays() {
         return;
     };
     telemetry::stage_begin(telemetry::stage::WORLD_FLUSH);
-    gpu::submit_linked_list_wait();
+    driver::with(|gpu| psx_gpu::chain::wait(gpu.dma_mut()));
     submit_list(fx_ot().submit_head());
     telemetry::stage_end(telemetry::stage::WORLD_FLUSH);
     telemetry::stage_begin(telemetry::stage::OT_SUBMIT);
     if d.screen_off != [0; 2] {
-        gpu::set_draw_offset(d.screen_off[0], d.draw_y.saturating_add(d.screen_off[1]));
+        driver::with(|gpu| {
+            gpu.set_draw_offset((d.screen_off[0], d.draw_y.saturating_add(d.screen_off[1])))
+        });
     }
     if let Some(vm) = d.viewmodel {
         telemetry::stage_begin(telemetry::stage::EQUIPMENT);
@@ -1539,7 +1543,7 @@ unsafe fn finish_deferred_overlays() {
         );
     }
     if d.screen_off != [0; 2] {
-        gpu::set_draw_offset(0, d.draw_y);
+        driver::with(|gpu| gpu.set_draw_offset((0, d.draw_y)));
     }
     submit_list(hud_ot().submit_head());
     telemetry::stage_end(telemetry::stage::OT_SUBMIT);
@@ -1608,7 +1612,7 @@ pub fn fx_tri_flat_blended(
 ) {
     unsafe {
         if !FX_CAPTURE || !blend_mode.is_translucent() {
-            psx_gpu::draw_tri_flat_blended(verts, r, g, b, blend_mode);
+            driver::tri_flat_blended(verts, r, g, b, blend_mode);
             return;
         }
         let material = psx_gpu::material::TextureMaterial::blended(0, 0, (r, g, b), blend_mode);
@@ -1622,7 +1626,7 @@ pub fn fx_tri_flat_blended(
             gp0_vertex(verts[2].0, verts[2].1),
         ]);
         if !captured {
-            psx_gpu::draw_tri_flat_blended(verts, r, g, b, blend_mode);
+            driver::tri_flat_blended(verts, r, g, b, blend_mode);
         }
     }
 }
@@ -1631,7 +1635,7 @@ pub fn fx_tri_flat_blended(
 pub fn fx_quad_flat(verts: [(i16, i16); 4], r: u8, g: u8, b: u8) {
     unsafe {
         if !FX_CAPTURE {
-            gpu::draw_quad_flat(verts, r, g, b);
+            driver::quad_flat(verts, r, g, b);
             return;
         }
         let captured = fx_chain_push(&[
@@ -1643,7 +1647,7 @@ pub fn fx_quad_flat(verts: [(i16, i16); 4], r: u8, g: u8, b: u8) {
             gp0_vertex(verts[3].0, verts[3].1),
         ]);
         if !captured {
-            gpu::draw_quad_flat(verts, r, g, b);
+            driver::quad_flat(verts, r, g, b);
         }
     }
 }
@@ -1656,7 +1660,7 @@ pub fn fx_quad_textured_material(
 ) {
     unsafe {
         if !FX_CAPTURE {
-            gpu::draw_quad_textured_material(verts, uvs, material);
+            driver::quad_textured_material(verts, uvs, material);
             return;
         }
         let captured = fx_chain_push(&[
@@ -1672,7 +1676,7 @@ pub fn fx_quad_textured_material(
             gp0_texcoord(uvs[3].0, uvs[3].1, 0),
         ]);
         if !captured {
-            gpu::draw_quad_textured_material(verts, uvs, material);
+            driver::quad_textured_material(verts, uvs, material);
         }
     }
 }
@@ -1689,7 +1693,7 @@ pub fn fx_sprite_textured_material(
 ) {
     unsafe {
         if !FX_CAPTURE {
-            gpu::draw_sprite_material(x, y, w, h, uv, material);
+            driver::sprite_material(x, y, w, h, uv, material);
             return;
         }
         let captured = fx_chain_push(&[
@@ -1701,7 +1705,7 @@ pub fn fx_sprite_textured_material(
             gp0_xy(w, h),
         ]);
         if !captured {
-            gpu::draw_sprite_material(x, y, w, h, uv, material);
+            driver::sprite_material(x, y, w, h, uv, material);
         }
     }
 }
@@ -2181,7 +2185,7 @@ fn draw_spinner_dots(x: i16, y: i16, frame: u8) {
         } else {
             (40, 34, 20) // unlit: dim, so the grid reads as a spinner
         };
-        gpu::draw_quad_flat(
+        driver::quad_flat(
             [(dx, dy), (dx + D, dy), (dx, dy + D), (dx + D, dy + D)],
             r,
             g,
@@ -2232,10 +2236,13 @@ fn loading_amber(tick: u32) -> (u8, u8, u8) {
 }
 
 #[optimize(size)]
-fn draw_loading_strip(fb: &mut FrameBuffer, tick: u32) {
-    let front_y = fb.buffer_y(fb.drawing ^ 1);
-    gpu::set_draw_area(0, front_y, fb.width - 1, front_y + fb.height - 1);
-    gpu::set_draw_offset(0, front_y as i16);
+fn draw_loading_strip(fb: &mut DoubleBuffer, tick: u32) {
+    let (width, height) = fb.size();
+    let front_y = fb.display_origin().1;
+    driver::with(|gpu| {
+        gpu.set_draw_area((0, front_y), (width - 1, front_y + height - 1));
+        gpu.set_draw_offset((0, front_y as i16));
+    });
 
     let loading = "Loading";
     let lw = hltext::text_width_scaled(loading, hltext::SMALL_Q8);
@@ -2245,8 +2252,8 @@ fn draw_loading_strip(fb: &mut FrameBuffer, tick: u32) {
         160 + content / 2 + LOADING_PAD,
     );
     let (y0, y1) = (LOADING_STRIP_Y, LOADING_STRIP_Y + LOADING_STRIP_H);
-    gpu::draw_quad_flat([(x0, y0), (x1, y0), (x0, y1), (x1, y1)], 5, 5, 7);
-    gpu::draw_quad_flat([(x0, y0), (x1, y0), (x0, y0 + 1), (x1, y0 + 1)], 24, 21, 16);
+    driver::quad_flat([(x0, y0), (x1, y0), (x0, y1), (x1, y1)], 5, 5, 7);
+    driver::quad_flat([(x0, y0), (x1, y0), (x0, y0 + 1), (x1, y0 + 1)], 24, 21, 16);
 
     // Text and spinner are different heights, so each is centred on the plate
     // rather than sharing one baseline.
@@ -2263,11 +2270,13 @@ fn draw_loading_strip(fb: &mut FrameBuffer, tick: u32) {
         y0 + (LOADING_STRIP_H - SPINNER_H) / 2,
         (tick / 2) as u8,
     );
-    gpu::wait_idle();
+    driver::with(|gpu| gpu.wait_idle());
 
-    let back_y = fb.buffer_y(fb.drawing);
-    gpu::set_draw_area(0, back_y, fb.width - 1, back_y + fb.height - 1);
-    gpu::set_draw_offset(0, back_y as i16);
+    let back_y = fb.draw_origin().1;
+    driver::with(|gpu| {
+        gpu.set_draw_area((0, back_y), (width - 1, back_y + height - 1));
+        gpu.set_draw_offset((0, back_y as i16));
+    });
 }
 
 // The CD payload loop calls back here every few sectors while it blocks. Without
@@ -2275,7 +2284,7 @@ fn draw_loading_strip(fb: &mut FrameBuffer, tick: u32) {
 // stage boundaries, so the spinner does not visibly spin and a pulse would be a
 // slideshow. The frame buffer cannot travel through a plain `fn` pointer, so the
 // loader parks it before it starts reading.
-static mut LOADING_FB: *mut FrameBuffer = core::ptr::null_mut();
+static mut LOADING_FB: *mut DoubleBuffer = core::ptr::null_mut();
 static mut LOADING_TICK: u32 = 0;
 static mut LOADING_VBLANK: u32 = 0;
 
@@ -2302,9 +2311,9 @@ fn loading_sector_hook(_done: usize, _needed: usize) {
 }
 
 /// Park the strip's context and take over the CD progress hook for this load.
-fn begin_loading(fb: &mut FrameBuffer) {
+fn begin_loading(fb: &mut DoubleBuffer) {
     unsafe {
-        LOADING_FB = fb as *mut FrameBuffer;
+        LOADING_FB = fb as *mut DoubleBuffer;
         LOADING_TICK = 0;
         LOADING_VBLANK = interrupts::vblank_count();
     }
@@ -2319,7 +2328,7 @@ fn end_loading() {
 /// Stage-boundary redraw. Between chunks the CD hook is idle, so this keeps the
 /// spinner moving across the gaps.
 #[optimize(size)]
-fn draw_next_loading_screen(fb: &mut FrameBuffer) {
+fn draw_next_loading_screen(fb: &mut DoubleBuffer) {
     unsafe { LOADING_TICK = LOADING_TICK.wrapping_add(1) };
     draw_loading_strip(fb, unsafe { LOADING_TICK });
 }
@@ -2329,14 +2338,14 @@ fn draw_next_loading_screen(fb: &mut FrameBuffer) {
 #[inline(never)]
 #[optimize(size)]
 #[cfg(not(feature = "semantic-input"))]
-fn draw_pause_menu(fb: &mut FrameBuffer, sel: usize, status: &str) {
-    fb.clear(0, 0, 0);
+fn draw_pause_menu(fb: &mut DoubleBuffer, sel: usize, status: &str) {
+    driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
     // Six rows plus a status line: the panel is taller and the rows tighter
     // than the original four-item menu, which ran out of frame at "Debug".
     // Seven rows 18 apart end at 201, so the status line at 206 sits below
     // "Main Menu" instead of on top of it, inside a panel that reaches 226.
-    gpu::draw_quad_flat([(40, 22), (280, 22), (40, 230), (280, 230)], 10, 10, 10);
-    gpu::draw_quad_flat([(44, 26), (276, 26), (44, 226), (276, 226)], 20, 18, 14);
+    driver::quad_flat([(40, 22), (280, 22), (40, 230), (280, 230)], 10, 10, 10);
+    driver::quad_flat([(44, 26), (276, 26), (44, 226), (276, 226)], 20, 18, 14);
     hltext::draw_centered_scaled(34, "HALF-LIFE", hltext::SMALL_Q8, PAUSE_WHITE);
     hltext::draw_centered_scaled(52, "Paused", hltext::SMALL_Q8, PAUSE_DIM);
 
@@ -2344,7 +2353,7 @@ fn draw_pause_menu(fb: &mut FrameBuffer, sel: usize, status: &str) {
     while i < PAUSE_ITEMS.len() {
         let y = 76 + i as i16 * 18;
         if i == sel {
-            gpu::draw_quad_flat(
+            driver::quad_flat(
                 [(88, y - 3), (232, y - 3), (88, y + 17), (232, y + 17)],
                 PAUSE_ARMED.0,
                 PAUSE_ARMED.1,
@@ -2465,18 +2474,18 @@ static mut LAST_SAVE_VBLANKS: u32 = 0;
 #[inline(never)]
 #[optimize(size)]
 unsafe fn save_with_badge(
-    fb: &mut FrameBuffer,
+    fb: &mut DoubleBuffer,
     target: save::Target,
     cp: &save::Checkpoint,
 ) -> save::CardResult {
     use psx_font::TextSink;
     let text = hltext::Sink::SMALL;
     // Amber on a dark plate, clear of the HUD's own top-right weapon icon.
-    gpu::draw_quad_flat([(228, 6), (314, 6), (228, 26), (314, 26)], 12, 10, 6);
+    driver::quad_flat([(228, 6), (314, 6), (228, 26), (314, 26)], 12, 10, 6);
     text.draw(234, 9, "SAVING", PAUSE_AMBER);
-    gpu::wait_idle();
+    driver::with(|gpu| gpu.wait_idle());
     interrupts::wait_vblank();
-    fb.swap();
+    driver::with(|gpu| fb.swap(gpu));
 
     let start = interrupts::vblank_count();
     let result = save::write(target, cp, save_staging());
@@ -2524,7 +2533,7 @@ impl Row {
 #[optimize(size)]
 #[cfg(not(feature = "semantic-input"))]
 fn draw_pause_list(
-    fb: &mut FrameBuffer,
+    fb: &mut DoubleBuffer,
     title: &str,
     rows: usize,
     sel: usize,
@@ -2533,9 +2542,9 @@ fn draw_pause_list(
     use psx_font::TextSink;
     const VISIBLE: usize = 7;
     let text = hltext::Sink::SMALL;
-    fb.clear(0, 0, 0);
-    gpu::draw_quad_flat([(10, 18), (310, 18), (10, 226), (310, 226)], 10, 10, 10);
-    gpu::draw_quad_flat([(14, 22), (306, 22), (14, 222), (306, 222)], 20, 18, 14);
+    driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
+    driver::quad_flat([(10, 18), (310, 18), (10, 226), (310, 226)], 10, 10, 10);
+    driver::quad_flat([(14, 22), (306, 22), (14, 222), (306, 222)], 20, 18, 14);
     text.draw_centered(160, 38, title, PAUSE_DIM);
 
     let max_first = rows.saturating_sub(VISIBLE);
@@ -2546,7 +2555,7 @@ fn draw_pause_list(
         let y = 62 + (i - first) as i16 * 20;
         let r = row(i);
         if i == sel {
-            gpu::draw_quad_flat(
+            driver::quad_flat(
                 [(20, y - 3), (300, y - 3), (20, y + 17), (300, y + 17)],
                 PAUSE_ARMED.0,
                 PAUSE_ARMED.1,
@@ -2598,7 +2607,7 @@ enum PausePage {
 #[inline(never)]
 #[optimize(size)]
 #[cfg(not(feature = "semantic-input"))]
-fn run_pause_menu(fb: &mut FrameBuffer) -> PauseExit {
+fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
     let mut sel = 0usize;
     let mut page = PausePage::Root;
     let mut chapter_sel = 0usize;
@@ -2774,9 +2783,9 @@ fn run_pause_menu(fb: &mut FrameBuffer) -> PauseExit {
                 })
             }),
         }
-        gpu::wait_idle();
+        driver::with(|gpu| gpu.wait_idle());
         interrupts::wait_vblank();
-        fb.swap();
+        driver::with(|gpu| fb.swap(gpu));
     }
 }
 
@@ -4133,7 +4142,7 @@ enum LiveInputPoll {
 #[cfg(not(feature = "semantic-input"))]
 #[inline(never)]
 fn poll_live_semantic_input(
-    fb: &mut FrameBuffer,
+    fb: &mut DoubleBuffer,
     reader: &mut PadReader,
     prev_pause_button: &mut bool,
     sim_clock: &mut psx_tick::FixedClock,
@@ -4909,12 +4918,11 @@ unsafe fn stream_map_models(
             // heads here shrinks retained animation bytes and the hot draw's
             // projection count; the already-baked face stream is remapped once.
             let remap = core::ptr::addr_of_mut!(MODEL_SCRATCH).cast::<u16>();
-            if let Some(compact_kept) = md.compact_visible_body_frames_raw(
-                buf_ptr.add(gw).cast::<u8>(),
-                glen,
+            // `md` is not read again: it parsed these bytes, which change here.
+            if let Some(compact_kept) = model::Model::compact_visible_bodies(
+                core::slice::from_raw_parts_mut(buf_ptr.add(gw).cast::<u8>(), glen),
                 visible_bodies,
-                remap,
-                MAX_MODEL_VERTS,
+                core::slice::from_raw_parts_mut(remap, MAX_MODEL_VERTS),
             ) {
                 kept = compact_kept;
                 let indices = core::ptr::addr_of_mut!(POOL_FACE_INDICES)
@@ -19952,7 +19960,7 @@ unsafe fn queue_impact_marks(
                 note_render_packet_drop(false);
                 return;
             };
-            ot.insert(
+            ot.resume_frame().add_raw(
                 otz,
                 core::ptr::from_mut(tri).cast(),
                 TriTexturedGouraud::WORDS,
@@ -21243,7 +21251,7 @@ unsafe fn render_projectiles<const N: usize>(
             if let Some((sx, sy, _)) = project_world_point(PROJECTILES[i].pos, rot, base_t) {
                 let half = (size / 2) as i16;
                 PROJ_RECTS[i] = RectFlat::new(sx - half, sy - half, size, size, r, g, b);
-                ot.insert(
+                ot.resume_frame().add_raw(
                     0,
                     core::ptr::from_mut(&mut PROJ_RECTS[i]).cast(),
                     RectFlat::WORDS,
@@ -21271,7 +21279,7 @@ unsafe fn queue_rpg_spot(
         if let Some(packet) =
             packets.push(RectFlat::new(sx - half, sy - half, size, size, 255, 24, 16))
         {
-            ot.insert(
+            ot.resume_frame().add_raw(
                 clamp_otz((vz.saturating_sub(4) as usize) >> OT_SHIFT),
                 core::ptr::from_mut(packet).cast(),
                 RectFlat::WORDS,
@@ -21446,7 +21454,7 @@ unsafe fn render_debris<const N: usize>(
                     g,
                     b,
                 );
-                ot.insert(
+                ot.resume_frame().add_raw(
                     0,
                     core::ptr::from_mut(&mut DEBRIS_RECTS[i]).cast(),
                     RectFlat::WORDS,
@@ -22787,7 +22795,7 @@ unsafe fn push_tri_uv_words_packed(
         return;
     };
     tram_cache_capture_tri(packet as *const TriTexturedGouraud, otz);
-    world_ot().insert(
+    world_ot().resume_frame().add_raw(
         otz,
         core::ptr::from_mut(packet).cast(),
         TriTexturedGouraud::WORDS,
@@ -24138,7 +24146,7 @@ unsafe fn try_emit_quad_corners(
             slot.backdrop,
         )
     });
-    world_ot().insert(
+    world_ot().resume_frame().add_raw(
         otz,
         core::ptr::from_mut(packet).cast(),
         QuadTexturedGouraud::WORDS,
@@ -24303,7 +24311,9 @@ unsafe fn push_affine_heatmap_tri(
         WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
         return false;
     };
-    world_ot().insert(otz, core::ptr::from_mut(packet).cast(), TriFlat::WORDS);
+    world_ot()
+        .resume_frame()
+        .add_raw(otz, core::ptr::from_mut(packet).cast(), TriFlat::WORDS);
     *count += 1;
     true
 }
@@ -25292,7 +25302,7 @@ unsafe fn emit_affine_quad_child(
         false,
     );
     let packet = push_affine_quad_gt4(packets, q, mat, otz, nq);
-    world_ot().insert(
+    world_ot().resume_frame().add_raw(
         otz,
         core::ptr::from_mut(&mut *packet).cast(),
         QuadTexturedGouraud::WORDS,
@@ -25388,7 +25398,7 @@ unsafe fn emit_affine_quad_children(
             false,
         );
         let packet = push_affine_quad_gt4(packets, c, mat, otz, nq);
-        world_ot().insert(
+        world_ot().resume_frame().add_raw(
             otz,
             core::ptr::from_mut(&mut *packet).cast(),
             QuadTexturedGouraud::WORDS,
@@ -25604,7 +25614,7 @@ unsafe fn push_patch_underlay(
     for p in [p0, p1, p2, p3] {
         render::warp_probe_announce(p.sx as i32, p.sy as i32, p.sz as i32);
     }
-    world_ot().insert(
+    world_ot().resume_frame().add_raw(
         otz,
         core::ptr::from_mut(packet).cast(),
         QuadTexturedGouraud::WORDS,
@@ -27227,7 +27237,7 @@ unsafe fn depth_split_underlay(
     let far = q.iter().map(|v| v.projected.sz as i32).max().unwrap_or(0);
     let otz = world_order_key(ordering::PrimitiveDepths::quad(far, far, far, far), false);
     let packet = push_affine_quad_gt4(packets, [&q[0], &q[1], &q[2], &q[3]], mat, otz, nq);
-    world_ot().insert(
+    world_ot().resume_frame().add_raw(
         otz,
         core::ptr::from_mut(&mut *packet).cast(),
         QuadTexturedGouraud::WORDS,
@@ -28114,7 +28124,7 @@ unsafe fn insert_model_depth_stream(first: *mut u32, end: *mut u32) {
             let next = (*packet).tag;
             let key = (*packet).uv2 >> 16;
             (*packet).uv2 &= 0xffff;
-            world_ot().insert(
+            world_ot().resume_frame().add_raw(
                 (key >> 4) as usize,
                 core::ptr::from_mut(&mut *packet).cast(),
                 TriTextured::WORDS,
@@ -28408,12 +28418,14 @@ unsafe fn draw_beam(
         let z = ((1i32 << 20) / iz - BEAM_DEPTH_BIAS).max(render::NEAR_Z);
         let otz = clamp_otz((z as usize) >> OT_SHIFT);
         if let Some(packet) = packets.push(BeamTri::new([a, b, d], color)) {
-            ot.insert(otz, core::ptr::from_mut(packet).cast(), BeamTri::WORDS);
+            ot.resume_frame()
+                .add_raw(otz, core::ptr::from_mut(packet).cast(), BeamTri::WORDS);
         } else {
             unsafe { note_render_packet_drop(false) };
         }
         if let Some(packet) = packets.push(BeamTri::new([b, e, d], color)) {
-            ot.insert(otz, core::ptr::from_mut(packet).cast(), BeamTri::WORDS);
+            ot.resume_frame()
+                .add_raw(otz, core::ptr::from_mut(packet).cast(), BeamTri::WORDS);
         } else {
             unsafe { note_render_packet_drop(false) };
         }
@@ -28535,7 +28547,7 @@ unsafe fn draw_beam_textured(
             uv2: uv[2] as u32,
         };
         if let Some(pk) = packets.push(prim) {
-            world_ot().insert(
+            world_ot().resume_frame().add_raw(
                 otz,
                 core::ptr::from_mut(pk).cast(),
                 TriTexturedGouraud::WORDS,
@@ -28986,7 +28998,7 @@ unsafe fn draw_sky_windows(
                 // do not wait, and they take no packets from the world.
                 let mut j = 2usize;
                 while j < n {
-                    gpu::draw_tri_textured_material(
+                    driver::tri_textured_material(
                         [xy[0], xy[j - 1], xy[j]],
                         [uv[0], uv[j - 1], uv[j]],
                         slot.material,
@@ -29325,12 +29337,12 @@ fn main() {
     #[cfg(feature = "emulator-telemetry")]
     stackprobe::paint();
 
-    gpu::init(VideoMode::Ntsc, Resolution::R320X240);
-    let mut fb = FrameBuffer::new(320, 240);
-    // The one GPU DMA token: play() kicks the frame-closing GP0(1Fh) with it.
     let peripherals =
         psx_rt::Peripherals::take().expect("hl-psx takes the peripheral tokens once, at boot");
-    let mut gpu_dma = peripherals.gpu_dma;
+    // The one GPU driver: it owns the DMA token play() kicks the frame-closing
+    // GP0(1Fh) with, and every draw and flip below goes through it.
+    driver::install(Gpu::new(peripherals.gpu_dma, settings::DISPLAY));
+    let mut fb = DoubleBuffer::new(Resolution::R320X240);
     music::install(peripherals.cd);
     // A program started by a launcher inherits whatever mode the last one left,
     // so ask for analog and lock it here, before anything reads the pad. The
@@ -29344,8 +29356,10 @@ fn main() {
     if !pad_notice[0].is_empty() {
         tty::println(pad_notice[0]);
     }
-    gpu::set_draw_area(0, 0, 319, 239);
-    gpu::set_draw_offset(0, 0);
+    driver::with(|gpu| {
+        gpu.set_draw_area((0, 0), (319, 239));
+        gpu.set_draw_offset((0, 0));
+    });
     scene::set_screen_offset(160 << 16, 120 << 16);
     scene::set_projection_plane(H_PROJ);
     // Models are no longer loaded here: play() streams each map's model set into
@@ -29424,7 +29438,7 @@ fn main() {
             let mut i = 0;
             while i < 150 {
                 interrupts::wait_vblank();
-                fb.swap();
+                driver::with(|gpu| fb.swap(gpu));
                 let b = poll_port1().buttons;
                 if b.is_held(button::L1) {
                     dbg_sel = Some((b.bits() & 0xFF) as usize);
@@ -29551,7 +29565,6 @@ fn main() {
         loop {
             match play(
                 &mut fb,
-                &mut gpu_dma,
                 launch,
                 keep_frame,
                 #[cfg(feature = "semantic-input")]
@@ -30027,9 +30040,7 @@ unsafe fn init_room_logic(
 }
 
 fn play(
-    fb: &mut FrameBuffer,
-    #[cfg_attr(not(feature = "decoupled-present"), allow(unused_variables))]
-    gpu_dma: &mut psx_io::periph::GpuDma,
+    fb: &mut DoubleBuffer,
     launch: RoomLaunch,
     keep_frame: bool,
     #[cfg(feature = "semantic-input")] semantic_player: &mut semantic_input::Player<'static>,
@@ -31030,15 +31041,16 @@ fn play(
     // stays frozen (with the tiny overlay) until the first rendered frame of the
     // new level swaps over it, so there is no black flash between levels.
     if !keep_frame {
-        fb.clear(0, 0, 0);
-        gpu::wait_idle();
-        fb.swap();
-        fb.clear(0, 0, 0);
-        gpu::wait_idle();
-        fb.swap();
+        driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
+        driver::with(|gpu| gpu.wait_idle());
+        driver::with(|gpu| fb.swap(gpu));
+        driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
+        driver::with(|gpu| gpu.wait_idle());
+        driver::with(|gpu| fb.swap(gpu));
     }
 
-    gpu::configure_scanline_timer();
+    // Timer 1 counts HBlanks and resets at VBlank, as the SDK's old helper set it.
+    psx_io::timers::set_mode(psx_io::timers::Timer::Timer1, 0x0103);
     interrupts::install_vblank_counter();
     // Gameplay ticks at SIM_VBLANKS on the shared psx-tick clock, with every
     // owed tick caught up before the next render.
@@ -33449,7 +33461,7 @@ fn play(
         // overlapping the whole build, while the chain storage becomes safely
         // ours again. When the walk already drained this is one register
         // read.
-        gpu::submit_linked_list_wait();
+        driver::with(|gpu| psx_gpu::chain::wait(gpu.dma_mut()));
         // Queue the previous frame's display flip NOW and let the VBlank
         // handler apply it exactly at the next blank edge, so the whole CPU
         // build below overlaps what used to be a blocking edge spin (the
@@ -33473,7 +33485,7 @@ fn play(
         #[cfg(feature = "decoupled-present")]
         if present_pending {
             telemetry::stage_begin(telemetry::stage::PRESENT);
-            gpu::submit_static(gpu_dma, &gpu::DRAW_DONE_NODE);
+            driver::with(|gpu| gpu.submit_static(&psx_gpu::chain::DRAW_DONE_NODE));
             interrupts::queue_display_control_at_vblank(fb.begin_deferred_swap());
             telemetry::stage_end(telemetry::stage::PRESENT);
             // Consumed; every build path re-arms it before the next read.
@@ -34537,14 +34549,14 @@ fn play(
                     let mut qi = 0usize;
                     while ti < TRAM_TRI_COUNT || qi < TRAM_QUAD_COUNT {
                         if qi < TRAM_QUAD_COUNT && TRAM_QUAD_AFTER_TRIS[qi] as usize <= ti {
-                            world_ot().insert(
+                            world_ot().resume_frame().add_raw(
                                 TRAM_QUAD_OTZ[qi] as usize,
                                 core::ptr::from_mut(&mut TRAM_QUAD_CACHE[qi]).cast(),
                                 QuadTexturedGouraud::WORDS,
                             );
                             qi += 1;
                         } else if ti < TRAM_TRI_COUNT {
-                            world_ot().insert(
+                            world_ot().resume_frame().add_raw(
                                 TRAM_TRI_OTZ[ti] as usize,
                                 core::ptr::from_mut(&mut TRAM_TRI_CACHE[ti]).cast(),
                                 TriTexturedGouraud::WORDS,
@@ -34994,7 +35006,7 @@ fn play(
                 let w = (t * 255 / ENDING_FADE_TICKS) as u8;
                 DEATH_WASH = 0;
                 DEATH_OVERLAY = RectFlat::new(0, 0, 320, 240, w, w, w);
-                hud_ot().insert(
+                hud_ot().resume_frame().add_raw(
                     0,
                     core::ptr::from_mut(&mut *core::ptr::addr_of_mut!(DEATH_OVERLAY)).cast(),
                     RectFlat::WORDS,
@@ -35028,9 +35040,9 @@ fn play(
             #[cfg(not(feature = "decoupled-present"))]
             if present_pending {
                 telemetry::stage_begin(telemetry::stage::PRESENT);
-                gpu::wait_idle();
+                driver::with(|gpu| gpu.wait_idle());
                 wait_vblank_edge();
-                fb.swap();
+                driver::with(|gpu| fb.swap(gpu));
                 telemetry::stage_end(telemetry::stage::PRESENT);
                 present_pending = false;
             }
@@ -35049,7 +35061,7 @@ fn play(
                 // drawn. Program the new draw side here, after that
                 // proof, so these GP0 writes can never collect the previous
                 // frame's raster backlog at build start.
-                fb.apply_draw_target();
+                driver::with(|gpu| fb.apply_draw_target(gpu));
                 flip_queued = false;
             }
             // The previous flip has landed (or none was queued), so this
@@ -35057,9 +35069,9 @@ fn play(
             // frame's first drawing, the clear below. The frame's own
             // GP0(1Fh) sets it again once all of it is drawn.
             #[cfg(feature = "decoupled-present")]
-            gpu::arm_draw_done();
+            driver::with(|gpu| gpu.arm_draw_done());
             telemetry::stage_begin(telemetry::stage::FRAME_CLEAR);
-            fb.clear(0, 0, 0);
+            driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
             // Culls and fog after this point reach FAR_VIEW_WIDE only while
             // the sky shows.
             let sky_drawn = draw_sky_windows(&m, have_pvs, yaw, pitch, &rot, base_t, eye);
@@ -35099,7 +35111,7 @@ fn play(
                 if let Some(pk) = packets.push(fill) {
                     // SAFETY: `pk` lives in this frame's packet storage, which
                     // stays untouched until the world walk below is waited out.
-                    world_ot().insert(
+                    world_ot().resume_frame().add_raw(
                         1,
                         (pk as *mut psx_gpu::prim::TriFlat).cast(),
                         psx_gpu::prim::TriFlat::WORDS,
@@ -35113,7 +35125,9 @@ fn play(
             // SAFETY: the world table and its packets stay untouched until
             // finish_deferred_overlays waits this walk out before the overlay
             // lists go; only the HUD and effect storage is written meanwhile.
-            gpu::submit_linked_list_async_raw(world_ot().submit_head());
+            driver::with(|gpu| {
+                psx_gpu::chain::submit_async_raw(gpu.dma_mut(), world_ot().submit_head())
+            });
             // HUD and effect projection only touch their own packet storage.
             // Build them while channel 2 walks the world list, hiding this CPU
             // work without changing either ordering table or draw order.
@@ -35192,7 +35206,7 @@ fn play(
                     }
                 }),
                 screen_off: viewmodel_screen_off,
-                draw_y: fb.buffer_y(fb.drawing) as i16,
+                draw_y: fb.draw_origin().1 as i16,
             });
             // Capture the overlay pass into a DMA chain instead of writing it
             // to GP0 a word at a time. Identical words in identical order; the
@@ -35365,9 +35379,9 @@ fn play(
             present_pending = true;
         } else {
             telemetry::stage_begin(telemetry::stage::PRESENT);
-            gpu::wait_idle();
+            driver::with(|gpu| gpu.wait_idle());
             wait_vblank_edge();
-            fb.swap();
+            driver::with(|gpu| fb.swap(gpu));
             telemetry::stage_end(telemetry::stage::PRESENT);
         }
         // Match psx-engine's deadline semantics: a miss is a visual interval
