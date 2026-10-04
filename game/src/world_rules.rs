@@ -124,12 +124,18 @@ pub fn rotating_door_opens_reversed(
     if spawnflags & (DOOR_ONE_WAY | DOOR_ROTATE_Z | DOOR_ROTATE_X) != 0 {
         return None;
     }
-    let a = activator?;
-    let fwd = a.forward_xz;
-    let dx = (a.pos[0] - hinge[0]).clamp(-32767, 32767);
-    let dz = (a.pos[2] - hinge[2]).clamp(-32767, 32767);
-    let cross = dx * fwd[1] - dz * fwd[0];
-    Some(cross < 0)
+    let who = activator?;
+    // Where the activator stands relative to the hinge on the floor plane
+    // (kept small enough that the products below cannot overflow).
+    let from_hinge = [
+        (who.pos[0] - hinge[0]).clamp(-1 << 15, 1 << 15),
+        (who.pos[2] - hinge[2]).clamp(-1 << 15, 1 << 15),
+    ];
+    // Which side of the activator's line of sight they stand on, from the
+    // 2D cross product of their facing with their offset from the hinge. One
+    // sign sends the door against its authored turn so it opens away from them.
+    let turn = who.forward_xz[0] * from_hinge[1] - who.forward_xz[1] * from_hinge[0];
+    Some(turn > 0)
 }
 
 /// How far past the wound, in world units, a hit's blood can land.
