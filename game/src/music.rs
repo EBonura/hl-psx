@@ -47,6 +47,8 @@ pub fn install(cd: Cd) {
 }
 
 /// Read one data sector into `sector` and return its bytes.
+#[optimize(size)]
+#[inline(never)]
 unsafe fn read_sector<'a>(
     reader: &mut SectorReader,
     lba: u32,
