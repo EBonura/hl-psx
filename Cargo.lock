@@ -20,6 +20,7 @@ dependencies = [
  "lz4_flex",
  "psx-asset",
  "psx-engine",
+ "psx-fmv",
  "psx-font",
  "psx-fx",
  "psx-goldsrc",
@@ -77,6 +78,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "psx-fmv"
+version = "0.1.0"
+dependencies = [
+ "psx-hw",
+ "psx-io",
+]
+
+[[package]]
 name = "psx-font"
 version = "0.1.0"
 dependencies = [
@@ -113,6 +122,7 @@ dependencies = [
 name = "psx-gpu"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "psx-hw",
  "psx-io",
 ]

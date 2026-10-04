@@ -2055,9 +2055,12 @@ fn pack_disc_into(repository: &Path, psoxide: &Path, exe: &Path, dist: &Path) ->
             .arg("--world-pack-extra-dir")
             .arg(staged_pack.join(directory));
     }
-    let tracks = repository.join("data/music/tracks.txt");
-    if tracks.is_file() {
-        command.arg("--cdda-track-list").arg(tracks);
+    // The music is XA-ADPCM files inside the data track, not CD-DA tracks.
+    for name in hl_format::music::FILE_NAMES {
+        let song_file = repository.join("data/music").join(name);
+        if song_file.is_file() {
+            command.arg("--xa-file").arg(song_file);
+        }
     }
     run(&mut command, "pack PlayStation BIN/CUE disc")?;
     let cue = image.with_extension("cue");
