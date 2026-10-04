@@ -109,9 +109,9 @@ use psx_io;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_math::int32::{isqrt_i32, mul_div_i32};
 use psx_math::{atan2_q12, sincos};
-use psx_pad::{button, enable_analog_port1, poll_port1};
+use psx_pad::{button, poll_port1, require_analog_port1, AnalogRequirement};
 #[cfg(not(feature = "semantic-input"))]
-use psx_pad::{poll_port1_diagnostics, PadMode, PadTracker, DEFAULT_SETUP_SPINS};
+use psx_pad::{enable_analog_port1, PadMode, PadReader, PadTracker};
 use psx_rt::{interrupts, tty};
 use psx_spu;
 
@@ -4134,17 +4134,14 @@ enum LiveInputPoll {
 #[inline(never)]
 fn poll_live_semantic_input(
     fb: &mut FrameBuffer,
-    last_pad: &mut psx_pad::PadState,
+    reader: &mut PadReader,
     prev_pause_button: &mut bool,
     sim_clock: &mut psx_tick::FixedClock,
 ) -> LiveInputPoll {
-    let sampled_pad = poll_port1_diagnostics(DEFAULT_SETUP_SPINS, 0).to_state();
-    let pad = if sampled_pad.mode == PadMode::Unknown {
-        *last_pad
-    } else {
-        *last_pad = sampled_pad;
-        sampled_pad
-    };
+    // The reader paces every byte on the pad's /ACK and hands back the last
+    // clean state across a poll it had to reject, so a held button cannot read
+    // as released for one tick and pressed again on the next.
+    let pad = reader.poll();
     let pause_button = pad.buttons.is_held(button::START) || pad.buttons.is_held(button::SELECT);
     if pause_button && !*prev_pause_button {
         telemetry::stage_end(telemetry::stage::UPDATE);
@@ -4167,7 +4164,7 @@ fn poll_live_semantic_input(
                     map::reapply_brightness();
                 }
                 let _ = enable_analog_port1();
-                *last_pad = poll_port1();
+                reader.accept(poll_port1());
                 *prev_pause_button = true;
                 sim_clock.realign(interrupts::vblank_count().wrapping_add(SIM_VBLANKS));
                 LiveInputPoll::Resumed
@@ -4175,7 +4172,7 @@ fn poll_live_semantic_input(
         };
     }
     *prev_pause_button = pause_button;
-    if matches!(sampled_pad.mode, PadMode::Digital | PadMode::Config) {
+    if matches!(pad.mode, PadMode::Digital | PadMode::Config) {
         let _ = enable_analog_port1();
     }
     LiveInputPoll::Sample(live_semantic_sample(pad))
@@ -29335,6 +29332,18 @@ fn main() {
         psx_rt::Peripherals::take().expect("hl-psx takes the peripheral tokens once, at boot");
     let mut gpu_dma = peripherals.gpu_dma;
     music::install(peripherals.cd);
+    // A program started by a launcher inherits whatever mode the last one left,
+    // so ask for analog and lock it here, before anything reads the pad. The
+    // call blocks for a few frames. Anything but analog gets a notice on the
+    // splash; play() asks again, so a DualShock plugged in later is picked up.
+    let pad_notice = match require_analog_port1() {
+        AnalogRequirement::Analog => ["", ""],
+        AnalogRequirement::DigitalOnly => ["Digital pad detected", "Half-Life needs a DualShock"],
+        AnalogRequirement::Absent => ["No controller found", "Plug a DualShock into port 1"],
+    };
+    if !pad_notice[0].is_empty() {
+        tty::println(pad_notice[0]);
+    }
     gpu::set_draw_area(0, 0, 319, 239);
     gpu::set_draw_offset(0, 0);
     scene::set_screen_offset(160 << 16, 120 << 16);
@@ -29392,7 +29401,7 @@ fn main() {
     // guest state. Shipping boots mirror the Celeste collection's PSoXide
     // splash before entering the original-style Half-Life menu.
     if !DBG_PAD_BOOT {
-        menu::intro(&mut fb, unsafe { stream_menu_assets() });
+        menu::intro(&mut fb, unsafe { stream_menu_assets() }, pad_notice);
     }
 
     // Boot flow: pick a map in the menu, stream + play it, return on Select.
@@ -30028,7 +30037,7 @@ fn play(
     #[cfg(feature = "route-follow")] follow_route: route_follow::Route,
     #[cfg(feature = "route-follow")] follower: &mut route_follow::Follower,
 ) -> PlayExit {
-    let _ = enable_analog_port1();
+    let _ = require_analog_port1();
     settings::apply_all(); // honour the options menu's screen offset + volumes
     unsafe {
         // A charger voice is map-local. End it before any WORLD.PAK streaming
@@ -31049,14 +31058,14 @@ fn play(
     #[cfg(not(feature = "semantic-input"))]
     let mut prev_pause_button = true;
     // A malformed ID handshake is not proof that the DualShock left analog
-    // mode. Keep the last clean sample so a one-frame wire glitch cannot look
-    // like a release/re-press, and only run the expensive config transaction
-    // after a confirmed Digital/Config response.
-    // Seed with the robust retrying path outside the deadline-critical loop.
-    // Gameplay then performs one hardware-tested transaction per tick and
-    // holds this sample across the occasional malformed response.
+    // mode. The reader keeps the last clean sample so a one-frame wire glitch
+    // cannot look like a release/re-press, and the config transaction only runs
+    // after a confirmed Digital/Config response. Seed it with a poll outside
+    // the deadline-critical loop.
     #[cfg(not(feature = "semantic-input"))]
-    let mut last_pad = poll_port1();
+    let mut pad_reader = PadReader::port1();
+    #[cfg(not(feature = "semantic-input"))]
+    pad_reader.poll();
 
     // A frame has been built and submitted but not yet swapped in.
     let mut present_pending = false;
@@ -31153,7 +31162,7 @@ fn play(
             #[cfg(not(feature = "semantic-input"))]
             let input_sample = match poll_live_semantic_input(
                 fb,
-                &mut last_pad,
+                &mut pad_reader,
                 &mut prev_pause_button,
                 &mut sim_clock,
             ) {

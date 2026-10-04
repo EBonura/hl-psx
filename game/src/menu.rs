@@ -513,7 +513,7 @@ fn draw_logo_tinted(mat: TextureMaterial, w: u16, h: u16, y0: i16, tint: (u8, u8
 /// fade out. A fresh face-button/Start press skips after the opening frames.
 #[inline(never)]
 #[optimize(size)]
-pub fn intro(fb: &mut FrameBuffer, menu_blob: &[u8]) {
+pub fn intro(fb: &mut FrameBuffer, menu_blob: &[u8], pad_notice: [&str; 2]) {
     let sections = split_menu(menu_blob);
     let (bonnie, bw, bh) = upload_tex(sections[SECTION_BONNIE], BONNIE_VRAM_X);
     let font = FontAtlas::upload(&BASIC_8X16, FONT_TPAGE, FONT_CLUT);
@@ -560,6 +560,14 @@ pub fn intro(fb: &mut FrameBuffer, menu_blob: &[u8]) {
             frame,
             level,
         );
+        // Only set when the pad did not settle in analog mode.
+        let mut y = 190;
+        for line in pad_notice {
+            let x = 160 - font.text_width(line) as i16 / 2;
+            let tint = level as u8 / 2;
+            font.draw_text(x, y, line, (tint + tint / 2, tint, tint / 2));
+            y += 18;
+        }
 
         gpu::wait_idle();
         psx_rt::interrupts::wait_vblank();
