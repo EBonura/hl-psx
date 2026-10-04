@@ -33,6 +33,8 @@ const R2: u16 = 0x0200;
 const L3: u16 = 0x0002;
 const CROSS: u16 = 0x4000;
 const SQUARE: u16 = 0x8000;
+/// Pad reads the debug boot makes before the first simulation tick.
+const BOOT_POLLS: u32 = 2;
 
 /// Which disc a golden boots.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -203,7 +205,10 @@ const STATE_SYMBOLS: &[&str] = &[
     "ENT_PHASE",
 ];
 
-/// One poll-bound `PXITAPE2` tape: sample 0 carries the boot selection.
+/// One poll-bound `PXITAPE2` tape. The debug boot reads the pad twice before
+/// gameplay (the map, then the viewpoint selector), so samples 0 and 1 carry
+/// the boot selection; gameplay input starts at poll 2. A tape holding it for
+/// those two polls reproduces a 400-vblank boot pulse frame for frame.
 fn tape(g: &Golden) -> Vec<u8> {
     let total = g.checkpoints.iter().copied().max().unwrap_or(0) + 16;
     let boot = if g.disc == Disc::Regression {
@@ -216,7 +221,7 @@ fn tape(g: &Golden) -> Vec<u8> {
     bytes.extend_from_slice(&total.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
     for poll in 0..total {
-        let mut buttons = if poll == 0 { boot } else { 0 };
+        let mut buttons = if poll < BOOT_POLLS { boot } else { 0 };
         for p in g.presses {
             if poll >= p.from && poll < p.from + p.polls {
                 buttons |= p.buttons;
