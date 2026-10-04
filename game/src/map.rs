@@ -1175,45 +1175,42 @@ impl Map {
         self.nav_meta & NAV_EXACT_ROUTES != 0
     }
 
-    /// GoldSrc `CGraph::NextNodeInRoute`, operating directly on the cooker-
-    /// repacked human-hull/door-capable table from the retail `.nod` file.
-    /// Returning `current` means the source graph considers the destination
-    /// unreachable (the SDK uses the same sentinel behavior).
+    /// The node to step to on the way from node `current` to node `dest`,
+    /// read from `current`'s run-length coded route (see the cooked format
+    /// notes above). The stream lists destinations in index order. A negative
+    /// byte `-n` covers the next `n` destinations, each reached directly. A
+    /// byte `n >= 0` followed by a signed byte `d` covers the next `n + 1`
+    /// destinations, all reached through node `current + d` (wrapping around
+    /// the node count). Returns `current` when the destination is not covered,
+    /// meaning it cannot be reached.
     #[inline(never)]
     pub fn nav_route_next(&self, current: usize, dest: usize) -> usize {
         if !self.nav_has_exact_routes() || current >= self.n_nav || dest >= self.n_nav {
             return current;
         }
-        let route_len = (self.nav_meta & !NAV_EXACT_ROUTES) as usize;
-        let mut p = self.nav_links_off + self.nav_node(current).first_link;
-        let end = self.nav_links_off + route_len;
-        let mut left = dest + 1;
-        while left > 0 && p < end {
-            let phrase = self.data[p] as i8;
-            p += 1;
-            if phrase < 0 {
-                let count = -(phrase as i16) as usize;
-                if left <= count {
+        let table = self.nav_links_off;
+        let table_len = (self.nav_meta & !NAV_EXACT_ROUTES) as usize;
+        let mut cursor = self.nav_node(current).first_link;
+        // Destinations before this index are covered by the entries read so far.
+        let mut covered = 0usize;
+        while cursor < table_len {
+            let head = self.data[table + cursor] as i8;
+            if head < 0 {
+                covered += head.unsigned_abs() as usize;
+                if dest < covered {
                     return dest;
                 }
-                left -= count;
+                cursor += 1;
             } else {
-                if p >= end {
-                    return current;
+                if cursor + 1 >= table_len {
+                    break;
                 }
-                let delta = self.data[p] as i8 as i32;
-                p += 1;
-                let count = phrase as usize + 1;
-                if left <= count {
-                    let mut next = current as i32 + delta;
-                    if next >= self.n_nav as i32 {
-                        next -= self.n_nav as i32;
-                    } else if next < 0 {
-                        next += self.n_nav as i32;
-                    }
-                    return next as usize;
+                covered += head as usize + 1;
+                if dest < covered {
+                    let via = self.data[table + cursor + 1] as i8;
+                    return (current as i32 + via as i32).rem_euclid(self.n_nav as i32) as usize;
                 }
-                left -= count;
+                cursor += 2;
             }
         }
         current
