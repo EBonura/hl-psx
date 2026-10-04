@@ -1,19 +1,20 @@
 //! Integer-only rules of the scripted set pieces (gargantua, func_tank,
 //! osprey, apache, func_mortar_field), kept free of PS1 state so the host
-//! runner can test them against the HLSDK arithmetic they reproduce.
+//! runner can test them.
 //!
-//! Time: the port simulates at 20 Hz and GoldSrc monsters think every 0.1 s,
-//! so a "think" here is two simulation ticks. Where HLSDK scales by
-//! `gpGlobals->frametime` the port uses the 20 Hz reference frame (0.05 s),
-//! the same frame the deterministic Xash reference captures run at.
+//! Time: the port simulates at 20 Hz and monsters think every 0.1 s, so a
+//! "think" here is two simulation ticks. Where a rule scales by the frame time
+//! the port uses the 20 Hz reference frame (0.05 s), the same frame the
+//! deterministic reference captures run at.
 
-/// `UTIL_AngleDistance` in q12 turns: `a - b` wrapped into -2048..2047.
+/// Signed angle from `b` to `a` in q12 turns, wrapped into -2048..2047.
 #[inline(always)]
 pub const fn angle_dist_q12(a: i32, b: i32) -> i32 {
     ((a - b + 2048) & 0xfff) - 2048
 }
 
-/// `UTIL_ApproachAngle(target, value, speed)` in q12 turns.
+/// Turn `value` toward `target` along the short way by at most `speed`, in
+/// q12 turns.
 #[inline]
 pub const fn approach_angle_q12(target: i32, value: i32, speed: i32) -> i32 {
     let d = angle_dist_q12(target, value);
@@ -26,64 +27,68 @@ pub const fn approach_angle_q12(target: i32, value: i32, speed: i32) -> i32 {
     }
 }
 
-/// CStomp (gargantua.cpp): the shock wave a gargantua's stomp sends along
-/// the ground. Fixed point: world units x16.
+/// The shock wave a gargantua's stomp sends along the ground. Fixed point:
+/// world units x16.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Stomp {
-    /// `pev->speed`, units/s x16.
+    /// Current speed, units per second x16.
     pub speed_q4: i32,
-    /// `pev->framerate`, which the effect uses as its acceleration, x16.
-    pub rate_q4: i32,
-    /// `pev->scale`: the distance still to travel, units x16.
-    pub life_q4: i32,
-    /// STOMP_INTERVAL (0.025 s) steps owed: `gpGlobals->time - pev->dmgtime`.
-    pub owed: u8,
+    /// Acceleration, units per second squared x16. It grows as the wave runs.
+    pub accel_q4: i32,
+    /// Distance still to travel, units x16.
+    pub remaining_q4: i32,
+    /// Position steps the clock is ahead of the wave.
+    pub steps_owed: u8,
 }
 
+/// A wave starts at 30 units per second squared, and that acceleration itself
+/// grows by 1500 units per second squared every second.
+const STOMP_START_ACCEL_Q4: i32 = 30 * 16;
+const STOMP_JERK_Q4: i32 = 1500 * 16;
+/// Speed and acceleration integrate over the 20 Hz reference frame (0.05 s).
+const STOMP_FRAME_HZ: i32 = 20;
+/// The wave's position advances in steps of 0.025 s, four per think (a think
+/// is two 20 Hz ticks).
+const STOMP_STEPS_PER_SECOND: i32 = 40;
+const STOMP_STEPS_PER_THINK: u8 = 4;
+
 impl Stomp {
-    /// `CStomp::StompCreate(origin, end, 0)`: framerate 30, speed 0, the
-    /// whole start-to-end distance as its life.
+    /// A wave at rest that will travel `dist` units.
     pub const fn new(dist: i32) -> Self {
         Self {
             speed_q4: 0,
-            rate_q4: 30 * 16,
-            life_q4: dist * 16,
-            owed: 0,
+            accel_q4: STOMP_START_ACCEL_Q4,
+            remaining_q4: dist * 16,
+            steps_owed: 0,
         }
     }
 
-    /// Length (x16) of this think's damage hull trace: `speed * frametime`.
+    /// How far (x16) its leading edge reaches in one frame: the length of the
+    /// damage sweep before a think.
     pub const fn sweep_q4(&self) -> i32 {
-        self.speed_q4 / 20
+        self.speed_q4 / STOMP_FRAME_HZ
     }
 
-    /// One `CStomp::Think` after its damage trace: accelerate, then advance
-    /// in 0.025 s steps. The first think runs at spawn with nothing owed;
-    /// each later one owes four steps, and the loop only takes a step while
-    /// more than one is owed (`time - dmgtime > STOMP_INTERVAL`), so the
-    /// wave moves three steps on its second think and four after that.
-    /// Returns the distance moved (x16) and whether the stomp is spent.
+    /// One think, after the damage sweep: speed up, then move. The first think
+    /// (at spawn) only speeds up. Position runs one step behind the clock, so
+    /// the second think moves three steps and every later one four.
+    /// Returns the distance moved (x16) and whether the wave is spent.
     pub fn think(&mut self, first: bool) -> (i32, bool) {
-        self.speed_q4 += self.rate_q4 / 20;
-        self.rate_q4 += 1500 * 16 / 20;
+        self.speed_q4 += self.accel_q4 / STOMP_FRAME_HZ;
+        self.accel_q4 += STOMP_JERK_Q4 / STOMP_FRAME_HZ;
         if !first {
-            self.owed += 4;
+            self.steps_owed += STOMP_STEPS_PER_THINK;
         }
-        let mut moved = 0;
-        while self.owed > 1 {
-            let step = self.speed_q4 / 40;
-            moved += step;
-            self.owed -= 1;
-            self.life_q4 -= step;
-            if self.life_q4 <= 0 {
-                return (moved, true);
-            }
-        }
-        (moved, false)
+        let steps = self.steps_owed.saturating_sub(1);
+        self.steps_owed -= steps;
+        let stride = self.speed_q4 / STOMP_STEPS_PER_SECOND;
+        let moved = (i32::from(steps) * stride).min(self.remaining_q4.max(0));
+        self.remaining_q4 -= moved;
+        (moved, self.remaining_q4 <= 0)
     }
 }
 
-/// CGargantua::FlameDamage falloff, in tenths of a hit point: full damage
+/// Flame damage falloff, in tenths of a hit point: full damage
 /// within 64 units of the flame line, then 0.4 less per unit. `None` when
 /// the target is out of reach.
 pub const fn flame_damage_tenths(damage: i32, dist: i32) -> Option<i32> {
@@ -108,12 +113,7 @@ pub const GARG_SWIPE_TICKS: u8 = 30;
 pub const GARG_STOMP_EVENT_TICKS: u8 = 27;
 pub const GARG_STOMP_TICKS: u8 = 29;
 
-/// `CheckAttacks` for the gargantua. `dot_q12` is the 2D cosine between its
-/// facing and the enemy, `dist` the origin-to-origin distance, and the two
-/// flags whether `m_seeTime` and `m_flameTime` have passed. Returns the
-/// schedule GoldSrc's combat state picks: range attack 1 (stomp) before
-/// melee 1 (swipe) before melee 2 (flame), else chase. (GoldSrc's face
-/// schedule needs range 1 or melee 1, which already won.)
+/// What a gargantua does about its enemy.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GargChoice {
     Stomp,
@@ -122,29 +122,39 @@ pub enum GargChoice {
     Chase,
 }
 
+/// The attack a gargantua picks, or `Chase` to close in. `facing_q12` is the
+/// 2D cosine between its facing and the enemy (4096 = 1.0), `dist` the
+/// distance between them, and the flags say whether the stomp and flame
+/// cooldowns have run out.
+///
+/// Facing roughly ahead (cosine of at least 0.7): within 80 units it swipes,
+/// further out it stomps if its stomp is ready. Otherwise, between 80 and 330
+/// units and facing tightly ahead (0.8) it flames if its flame is ready.
 pub const fn garg_choice(
-    dot_q12: i32,
+    facing_q12: i32,
     dist: i32,
-    see_passed: bool,
-    flame_passed: bool,
+    stomp_ready: bool,
+    flame_ready: bool,
 ) -> GargChoice {
-    const ATTACKDIST: i32 = 80;
-    const FLAME_LENGTH: i32 = 330;
-    let range1 = see_passed && dot_q12 >= 2867 && dist > ATTACKDIST;
-    let melee1 = dot_q12 >= 2867 && dist <= ATTACKDIST;
-    let melee2 = flame_passed && dot_q12 >= 3277 && dist > ATTACKDIST && dist <= FLAME_LENGTH;
-    if range1 {
-        GargChoice::Stomp
-    } else if melee1 {
-        GargChoice::Swipe
-    } else if melee2 {
-        GargChoice::Flame
-    } else {
-        GargChoice::Chase
+    const SWIPE_REACH: i32 = 80;
+    const FLAME_REACH: i32 = 330;
+    const AHEAD_Q12: i32 = 2867;
+    const TIGHTLY_AHEAD_Q12: i32 = 3277;
+    if facing_q12 >= AHEAD_Q12 {
+        if dist <= SWIPE_REACH {
+            return GargChoice::Swipe;
+        }
+        if stomp_ready {
+            return GargChoice::Stomp;
+        }
     }
+    if flame_ready && facing_q12 >= TIGHTLY_AHEAD_Q12 && dist > SWIPE_REACH && dist <= FLAME_REACH {
+        return GargChoice::Flame;
+    }
+    GargChoice::Chase
 }
 
-/// `UTIL_ScreenShake` amplitude a player `dist` units away feels, or 0
+/// Screen shake amplitude a player `dist` units away feels, or 0
 /// outside the radius (players off the ground feel nothing either).
 pub const fn shake_amplitude(amplitude: i32, dist: i32, radius: i32) -> i32 {
     if dist >= radius {
@@ -159,7 +169,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stomp_follows_the_reference_frame_acceleration() {
+    fn stomp_accelerates_on_the_reference_frame() {
         // Speeds after each think at frametime 0.05: 1.5, 6.75, 15.75, ...
         let mut s = Stomp::new(1024);
         assert_eq!(s.sweep_q4(), 0);
@@ -175,7 +185,7 @@ mod tests {
 
     #[test]
     fn stomp_crosses_a_flame_length_in_under_two_seconds() {
-        // GARG_FLAME_LENGTH (330) away: the wave covers it in 16..18 thinks.
+        // A flame length (330 units) away: the wave covers it in 16..18 thinks.
         let mut s = Stomp::new(1024);
         let mut travelled = 0;
         let mut thinks = 0;
@@ -203,11 +213,11 @@ mod tests {
             }
             assert!(n < 100);
         }
-        assert!(s.life_q4 <= 0);
+        assert!(s.remaining_q4 <= 0);
     }
 
     #[test]
-    fn flame_falloff_matches_flamedamage() {
+    fn flame_falloff_is_full_within_64_units_then_fades() {
         assert_eq!(flame_damage_tenths(3, 10), Some(30));
         assert_eq!(flame_damage_tenths(3, 64), Some(30));
         assert_eq!(flame_damage_tenths(3, 69), Some(10));
