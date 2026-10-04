@@ -94,57 +94,49 @@ fn clicks_get_louder_below_400_and_150_units() {
     assert_eq!(always_click_volume(0), Some(1));
 }
 
-/// Reference only, recorded from ac83da7 behaviour: today's exact click
-/// count per 16384 equally likely draw pairs at band edges. The rewrite
-/// replaces this curve with its own, so this is not a requirement.
+/// A sample uses one random draw when something is in range and none when
+/// nothing is.
 #[test]
-#[ignore = "reference: today's exact click rate, replaced by the rewrite's curve"]
-fn reference_click_rate_per_distance() {
-    let expect: [(i32, u32); 21] = [
-        (0, 15295),
-        (50, 15295),
-        (51, 14940),
-        (75, 14940),
-        (76, 14080),
-        (100, 14080),
-        (101, 11760),
-        (150, 11760),
-        (151, 8640),
-        (200, 8640),
-        (201, 6384),
-        (300, 6384),
-        (301, 1984),
-        (400, 1984),
-        (401, 1984),
-        (500, 1984),
-        (501, 1008),
-        (600, 1008),
-        (601, 508),
-        (800, 508),
-        (801, 0),
-    ];
-    for (range, n) in expect {
-        assert_eq!(clicks_per_16384(range), n, "range {range}");
-    }
-}
-
-/// Reference only, recorded from ac83da7 behaviour: a sample draws the
-/// random source once when the first draw clicks and twice otherwise,
-/// including when nothing is in range.
-#[test]
-#[ignore = "reference: today's random draw count, replaced by the rewrite's curve"]
-fn reference_random_draw_count() {
-    let draws = |range: i32, value: u32| {
+fn a_sample_uses_at_most_one_random_draw() {
+    let draws = |range: i32| {
         let mut n = 0;
         let mut s = GeigerScan::new();
         s.add_source([0, 0, 0], [range, 0, 0]);
         let _ = s.sample(&mut || {
             n += 1;
-            value
+            0
         });
         n
     };
-    assert_eq!(draws(10, 0), 1);
-    assert_eq!(draws(10, 127), 2);
-    assert_eq!(draws(900, 0), 2);
+    assert_eq!(draws(10), 1);
+    assert_eq!(draws(800), 1);
+    assert_eq!(draws(900), 0);
+    assert_eq!(GeigerScan::new().sample(&mut || unreachable!()), None);
+}
+
+#[test]
+fn far_away_volumes_cannot_overflow_the_distance() {
+    let mut s = GeigerScan::new();
+    s.add_source([-2_000_000, 0, 0], [2_000_000, 0, 0]);
+    assert_eq!(s.sample(&mut || 0), None);
+}
+
+/// Recorded from the rewritten curve: clicks per 16384 equally likely draw
+/// pairs at a spread of ranges.
+#[test]
+fn click_rate_per_distance() {
+    let expect: [(i32, u32); 9] = [
+        (0, 16256),
+        (50, 15872),
+        (100, 15488),
+        (200, 13312),
+        (400, 6912),
+        (600, 1536),
+        (700, 384),
+        (800, 256),
+        (801, 0),
+    ];
+    for (range, n) in expect {
+        assert_eq!(clicks_per_16384(range), n, "range {range}");
+    }
 }
