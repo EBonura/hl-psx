@@ -17,14 +17,16 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const BUILDER_MANIFEST: &str = include_str!("Cargo.toml");
 const MAP_LIST: &str = include_str!("../hl-content/map-list.txt");
-const COOK_MANIFEST_SCHEMA: u32 = 1;
+const COOK_MANIFEST_SCHEMA: u32 = 2;
 const COOK_MANIFEST_PATH: &str = "data/.hlpsx-cook.json";
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
 struct CookManifest {
     schema: u32,
+    /// The commit the cook was made at. Informational: a cook stays valid
+    /// across commits that leave `cook_inputs_sha256` unchanged.
     hl_psx_revision: String,
-    hl_psx_tree_sha256: String,
+    cook_inputs_sha256: String,
     psoxide_source: String,
     psoxide_revision: String,
     psoxide_tree_sha256: String,
@@ -184,6 +186,39 @@ fn source_tree_digest(repository: &Path) -> Result<String> {
     digest_files(repository, files)
 }
 
+/// Tracked files that can change what `assets` writes into data/: the two
+/// cookers, the shared format crate, the build driver that runs them, and
+/// the toolchain pin. Game sources are not cook inputs, so a commit that
+/// touches only `game/` keeps the cook. The driver's runtime-only test
+/// harnesses are left out for the same reason.
+const COOK_INPUT_DIRECTORIES: [&str; 4] = [
+    "host/hl-bsp",
+    "host/hl-content",
+    "host/hl-build",
+    "shared/hl-format",
+];
+const COOK_INPUT_FILES: [&str; 1] = ["rust-toolchain.toml"];
+const COOK_RUNTIME_ONLY: [&str; 2] = ["host/hl-build/goldens.rs", "host/hl-build/regression.rs"];
+
+fn cook_inputs_digest(repository: &Path) -> Result<String> {
+    let mut files = Vec::new();
+    for directory in COOK_INPUT_DIRECTORIES {
+        collect_files_skipping(
+            repository,
+            &repository.join(directory),
+            &mut files,
+            &["target", ".DS_Store"],
+        )?;
+    }
+    files.extend(COOK_INPUT_FILES.iter().map(PathBuf::from));
+    files.retain(|path| {
+        let text = path.to_string_lossy().replace('\\', "/");
+        !COOK_RUNTIME_ONLY.contains(&text.as_str())
+            && path.file_name().and_then(OsStr::to_str) != Some(".DS_Store")
+    });
+    digest_files(repository, files)
+}
+
 fn psoxide_tree_digest(psoxide: &Path) -> Result<String> {
     let mut files = Vec::new();
     collect_files_skipping(
@@ -247,7 +282,7 @@ fn current_cook_manifest(repository: &Path, valve: &Path, psoxide: &Path) -> Res
     Ok(CookManifest {
         schema: COOK_MANIFEST_SCHEMA,
         hl_psx_revision: git_revision(repository)?,
-        hl_psx_tree_sha256: source_tree_digest(repository)?,
+        cook_inputs_sha256: cook_inputs_digest(repository)?,
         psoxide_source: psoxide_source(psoxide)?,
         psoxide_revision: psoxide_revision(psoxide)?,
         psoxide_tree_sha256: psoxide_tree_digest(psoxide)?,
@@ -298,22 +333,16 @@ fn verify_cook_manifest(repository: &Path, psoxide: &Path) -> Result<CookManifes
         )
         .into());
     }
-    let revision = git_revision(repository)?;
-    let source_tree = source_tree_digest(repository)?;
+    let cook_inputs = cook_inputs_digest(repository)?;
     let psoxide_source = psoxide_source(psoxide)?;
     let psoxide_revision = psoxide_revision(psoxide)?;
     let psoxide_tree = psoxide_tree_digest(psoxide)?;
     let cooked_tree = cooked_tree_digest(repository)?;
     let checks = [
         (
-            "HL-PSX revision",
-            manifest.hl_psx_revision.as_str(),
-            revision.as_str(),
-        ),
-        (
-            "HL-PSX source tree",
-            manifest.hl_psx_tree_sha256.as_str(),
-            source_tree.as_str(),
+            "HL-PSX cook inputs",
+            manifest.cook_inputs_sha256.as_str(),
+            cook_inputs.as_str(),
         ),
         (
             "PSoXide source",
@@ -346,7 +375,10 @@ fn verify_cook_manifest(repository: &Path, psoxide: &Path) -> Result<CookManifes
         .into());
     }
     println!("Cook provenance verified: {}", path.display());
-    println!("  HL-PSX  : {revision}");
+    println!(
+        "  HL-PSX  : cooked at {}, inputs {cook_inputs}",
+        manifest.hl_psx_revision
+    );
     println!("  PSoXide : {psoxide_revision} ({psoxide_source})");
     println!("  cooked  : {cooked_tree}");
     Ok(manifest)
@@ -2504,6 +2536,28 @@ mod tests {
             "performance-telemetry, debug-map-boot"
         )));
         assert!(!is_shipping_build(Some("decoupled-present,seam-census")));
+    }
+
+    #[test]
+    fn cook_inputs_ignore_game_sources_and_runtime_harnesses() {
+        let root = std::env::temp_dir().join(format!("hl-psx-cook-inputs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        for dir in COOK_INPUT_DIRECTORIES.iter().chain(["game/src"].iter()) {
+            fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        fs::write(root.join("rust-toolchain.toml"), b"toolchain").unwrap();
+        fs::write(root.join("host/hl-bsp/main.rs"), b"cooker").unwrap();
+        fs::write(root.join("host/hl-build/goldens.rs"), b"harness").unwrap();
+        fs::write(root.join("game/src/main.rs"), b"game").unwrap();
+        let before = cook_inputs_digest(&root).unwrap();
+        fs::write(root.join("game/src/main.rs"), b"game changed").unwrap();
+        fs::write(root.join("host/hl-build/goldens.rs"), b"harness changed").unwrap();
+        fs::create_dir_all(root.join("host/hl-bsp/target")).unwrap();
+        fs::write(root.join("host/hl-bsp/target/build.o"), b"object").unwrap();
+        assert_eq!(before, cook_inputs_digest(&root).unwrap());
+        fs::write(root.join("host/hl-bsp/main.rs"), b"cooker changed").unwrap();
+        assert_ne!(before, cook_inputs_digest(&root).unwrap());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
