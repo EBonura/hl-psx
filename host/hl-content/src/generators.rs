@@ -53,27 +53,84 @@ fn sequence_hold_quanta(data: &[u8], sequence: usize) -> Result<u16> {
     Ok((((frame_count - 1) as f32 * 10.0 / fps).ceil() as i32).clamp(1, 1023) as u16)
 }
 
-/// One studio RLE animation value (`mstudioanimvalue_t` run at `base`).
-fn anim_value(data: &[u8], base: usize, frame: usize) -> i16 {
-    let (mut p, mut k) = (base, frame);
-    while p + 1 < data.len() {
-        let (valid, total) = (data[p] as usize, data[p + 1] as usize);
-        if total > k {
-            let o = p + 2 * if valid > k { k + 1 } else { valid };
-            return data
-                .get(o..o + 2)
-                .map_or(0, |b| i16::from_le_bytes([b[0], b[1]]));
-        }
-        k -= total;
-        p += (valid + 1) * 2;
-    }
-    0
+/// Studio bone record: parent at 32, default value[6] at 64, scale[6] at 88.
+const STUDIO_BONE_BYTES: usize = 112;
+/// Per-bone animation record: six u16 channel offsets (x, y, z, rx, ry, rz).
+const STUDIO_ANIM_BYTES: usize = 12;
+/// Sequence motion flags for root translation that the game extracts.
+const MOTION_X: i32 = 0x1;
+const MOTION_Y: i32 = 0x2;
+/// Scripted actors only move when the end pose carries them this far.
+const ROOT_MOVE_MIN: f64 = 8.0;
+
+fn u16le(data: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(
+        data.get(offset..offset + 2)?.try_into().ok()?,
+    ))
 }
 
-/// Where CBaseMonster::CineCleanup puts a monster after a scripted play
-/// sequence: GetBonePosition(0) on its last think (pev->frame 255), as a model
-/// space offset (x forward, y left). Zero when GoldSrc leaves it in place
-/// (under 8 units of travel).
+/// Stored value of one animation channel at `frame`. The channel is a list
+/// of runs, each a (stored, frames) byte pair followed by `stored` i16
+/// values; frames past the stored values repeat the last one, frames past
+/// the run continue into the next run.
+fn channel_value(data: &[u8], start: usize, frame: usize) -> i16 {
+    let mut remaining = frame;
+    let mut run = start;
+    loop {
+        let (Some(&stored), Some(&frames)) = (data.get(run), data.get(run + 1)) else {
+            return 0;
+        };
+        if frames == 0 || stored == 0 {
+            return 0;
+        }
+        if remaining < frames as usize {
+            let index = remaining.min(stored as usize - 1);
+            return u16le(data, run + 2 + index * 2).map_or(0, |v| v as i16);
+        }
+        remaining -= frames as usize;
+        run += 2 + stored as usize * 2;
+    }
+}
+
+/// Root bone position (model x, y) at fractional `frame` of a sequence whose
+/// per-bone animation records start at `anim` in `buf`: the bone's default
+/// plus the stored channel value times its scale, blended linearly between
+/// the two whole frames around `frame`.
+fn root_xy(
+    data: &[u8],
+    bone: usize,
+    buf: &[u8],
+    anim: usize,
+    frame: f64,
+    last: usize,
+) -> Result<[f64; 2]> {
+    let first = (frame.floor() as usize).min(last);
+    let next = (first + 1).min(last);
+    let blend = frame - first as f64;
+    let mut out = [0.0; 2];
+    for (axis, slot) in out.iter_mut().enumerate() {
+        let default = f32le(data, bone + 64 + axis * 4)? as f64;
+        let scale = f32le(data, bone + 88 + axis * 4)? as f64;
+        let channel = u16le(buf, anim + axis * 2).unwrap_or(0) as usize;
+        let sample = |f: usize| {
+            if channel == 0 {
+                0.0
+            } else {
+                channel_value(buf, anim + channel, f) as f64
+            }
+        };
+        let stored = sample(first) * (1.0 - blend) + sample(next) * blend;
+        *slot = default + stored * scale;
+    }
+    Ok(out)
+}
+
+/// Where a scripted sequence leaves its actor: the root bone's offset from
+/// the model origin at the end pose, in model space (x forward, y left),
+/// rounded to whole units. The end pose is
+/// taken 255/256 of the way through the sequence; translation the sequence
+/// already moves the entity by (its motion flags) does not count; and less
+/// than eight units of travel leaves the actor where it is.
 fn sequence_root_end(
     models: &Path,
     model: &str,
@@ -85,43 +142,41 @@ fn sequence_root_end(
         return Ok((0, 0));
     }
     let desc = table + sequence * SEQDESC_BYTES;
-    let frames = i32le(data, desc + 56)?.max(1) as usize;
-    let motion_type = i32le(data, desc + 68)?;
-    let motion_bone = i32le(data, desc + 72)?;
-    let anim_index = i32le(data, desc + 124)? as usize;
-    let group = i32le(data, desc + 156)?;
-    let group_data;
-    let anim: &[u8] = if group == 0 {
-        data
-    } else {
-        group_data = fs::read(models.join(format!("{model}{group:02}.mdl")))?;
-        &group_data
-    };
-    let bone = i32le(data, 144)? as usize;
-    // Xash StudioEstimateFrame: frame * (numframes - 1) / 256, lerped.
-    let f = 255.0 * (frames - 1) as f32 / 256.0;
-    let (i, s) = (f as usize, f.fract());
-    let mut pos = [0.0f32; 3];
-    for (d, p) in pos.iter_mut().enumerate() {
-        *p = f32le(data, bone + 64 + d * 4)?;
-        let off = anim
-            .get(anim_index + d * 2..anim_index + d * 2 + 2)
-            .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]) as usize);
-        if off != 0 {
-            let base = anim_index + off;
-            let a = anim_value(anim, base, i) as f32;
-            let b = anim_value(anim, base, (i + 1).min(frames - 1)) as f32;
-            *p += (a + (b - a) * s) * f32le(data, bone + 88 + d * 4)?;
-        }
-        // Mod_StudioCalcRotations drops the motion bone's STUDIO_X/Y/Z axes.
-        if motion_bone == 0 && motion_type & (1 << d) != 0 {
-            *p = 0.0;
-        }
-    }
-    if pos[0].hypot(pos[1]) < 8.0 {
+    let frames = i32le(data, desc + 56)?;
+    if frames < 2 {
         return Ok((0, 0));
     }
-    Ok((pos[0].round() as i32, pos[1].round() as i32))
+    let bone_count = i32le(data, 140)?.max(0) as usize;
+    let bone_table = i32le(data, 144)?.max(0) as usize;
+    let Some(root) = (0..bone_count).find(|&b| {
+        i32le(data, bone_table + b * STUDIO_BONE_BYTES + 32).is_ok_and(|parent| parent < 0)
+    }) else {
+        return Ok((0, 0));
+    };
+    let group = i32le(data, desc + 156)?;
+    let external;
+    let buf: &[u8] = if group > 0 {
+        external = fs::read(models.join(format!("{model}{group:02}.mdl")))?;
+        &external
+    } else {
+        data
+    };
+    let anim = i32le(data, desc + 124)?.max(0) as usize + root * STUDIO_ANIM_BYTES;
+    let bone = bone_table + root * STUDIO_BONE_BYTES;
+    let last = frames as usize - 1;
+    let end = root_xy(data, bone, buf, anim, last as f64 * 255.0 / 256.0, last)?;
+    let motion = i32le(data, desc + 68)?;
+    let mut travel = end;
+    if motion & MOTION_X != 0 {
+        travel[0] = 0.0;
+    }
+    if motion & MOTION_Y != 0 {
+        travel[1] = 0.0;
+    }
+    if travel[0].hypot(travel[1]) < ROOT_MOVE_MIN {
+        return Ok((0, 0));
+    }
+    Ok((travel[0].round() as i32, travel[1].round() as i32))
 }
 
 /// Manifest suffix for a scripted clip that relocates its actor.
@@ -769,6 +824,32 @@ pub fn transition_props(maps_dir: &Path, output: &Path, maps: &[String]) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two runs: three stored values covering five frames, then one stored
+    /// value covering two more.
+    fn two_runs() -> Vec<u8> {
+        let mut bytes = vec![3, 5];
+        for v in [10i16, -20, 30] {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        bytes.extend_from_slice(&[1, 2]);
+        bytes.extend_from_slice(&7i16.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn animation_runs_repeat_their_last_value_and_chain() {
+        let data = two_runs();
+        let values: Vec<i16> = (0..7).map(|f| channel_value(&data, 0, f)).collect();
+        assert_eq!(values, [10, -20, 30, 30, 30, 7, 7]);
+    }
+
+    #[test]
+    fn an_exhausted_or_empty_channel_reads_zero() {
+        let data = two_runs();
+        assert_eq!(channel_value(&data, 0, 7), 0);
+        assert_eq!(channel_value(&[0, 0], 0, 0), 0);
+    }
 
     #[test]
     fn entity_parser_preserves_goldsrc_keys() {
