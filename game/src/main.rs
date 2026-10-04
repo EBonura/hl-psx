@@ -28,6 +28,7 @@ mod ground_logic;
 use psx_goldsrc::hitbox_logic;
 mod hltext;
 mod hud;
+mod hud_layout;
 use psx_goldsrc::ladder_logic;
 mod logic_state;
 mod map;
@@ -35,6 +36,7 @@ mod menu;
 mod model;
 use psx_goldsrc::ordering;
 mod phys;
+mod player_rules;
 use psx_goldsrc::pickup_logic;
 use psx_goldsrc::pushable;
 #[cfg(feature = "reference-trace")]
@@ -43,16 +45,27 @@ mod render;
 #[cfg(feature = "route-follow")]
 use psx_goldsrc::route_follow;
 mod apache;
+mod apache_logic;
 mod garg;
+mod garg_logic;
+mod local_nav;
 mod mortar;
+mod mortar_logic;
+mod nav_graph;
 mod nihilanth;
+mod nihilanth_logic;
 mod osprey;
+mod osprey_logic;
 mod save;
 mod scientist_logic;
 mod scratchpad;
+mod scripted_sequence;
 mod setpiece_logic;
+mod setpiece_math;
 mod setpiece_sfx;
+mod talk_monster;
 mod tank;
+mod tank_logic;
 use osprey::{osprey_init, tick_osprey, OSPREY, OSPREY_TILT, PROP_TYPE_OSPREY};
 use psx_goldsrc::semantic_input;
 use tank::{
@@ -66,6 +79,7 @@ use psx_goldsrc::telemetry;
 mod tram_logic;
 use psx_goldsrc::visibility_logic;
 mod vram;
+mod world_rules;
 
 mod room_budget {
     include!(concat!(env!("OUT_DIR"), "/room_budget.rs"));
@@ -1014,9 +1028,6 @@ const PROP_STATE_MOVE_AWAY: u8 = 4;
 const PROP_STATE_MOVE_AWAY_FACE: u8 = 5;
 const PROP_CLIENT_PUSH_BIT: u8 = 0x80;
 const PROP_ATTACK_COOLDOWN_MASK: u8 = 0x7f;
-const MOVE_AWAY_START_ACTIVE_TICKS: u8 = 1;
-const MOVE_AWAY_FACE_TICKS: u8 = 15;
-const MOVE_AWAY_TIMEOUT_TICKS: u8 = 80;
 
 // ---- per-map model pool registry ----
 // Cooked actor/item types. Each streams from WORLD.PAK:
@@ -1338,24 +1349,19 @@ const PROP_HIT_FLASH_TICKS: u8 = 4;
 const ATTACK_WINDUP: u8 = 5; // telegraph ticks before a ranged enemy's first shot
 const PROP_TARGET_NONE: u8 = 254;
 const PROP_TARGET_PLAYER: u8 = 255;
-const NAV_NODE_NONE: u8 = 255;
-const NAV_NEAREST_RANGE2: i32 = 1024 * 1024;
-const NAV_NODE_REACHED_RANGE2: i32 = 48 * 48;
-const NAV_VERTICAL_MAX: i32 = 160;
+const NAV_NODE_NONE: u8 = nav_graph::NODE_NONE;
+const NAV_VERTICAL_MAX: i32 = nav_graph::VERTICAL_MAX;
 const NAV_FLEE_RANGE2: i32 = 1200 * 1200;
 const MAX_IMPACT_MARKS: usize = 24;
 const MAX_IMPACT_PARTICLES: usize = 64;
 const IMPACT_MARK_TICKS: u8 = 180;
 const IMPACT_KIND_WORLD: u8 = 0;
-/// BLOOD_COLOR_RED: humans, and the barnacle.
+/// Red blood: humans, and the barnacle.
 const IMPACT_KIND_BLOOD: u8 = 1;
-/// BLOOD_COLOR_YELLOW (the SDK's GREEN is the same palette index): headcrabs,
-/// zombies and the Xen fauna.
+/// Yellow blood: headcrabs, zombies and the Xen fauna.
 const IMPACT_KIND_YBLOOD: u8 = 2;
-/// DONT_BLEED: turrets, machines and scenery.
+/// No blood: turrets, machines and scenery.
 const IMPACT_KIND_NONE: u8 = 3;
-/// CBaseEntity::TraceBleed traces 172 units on past the wound.
-const BLEED_TRACE_DIST: i32 = 172;
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
 static mut HUD_OT: OrderingTable<HUD_OT_LEN> = OrderingTable::new();
@@ -3719,10 +3725,9 @@ static mut MONSTER_TRIGGER_END: u16 = 0;
 static mut BOSS_WALKER: u16 = u16::MAX;
 static mut LOGIC_EVENTS: [LogicEvent; MAX_LOGIC_EVENTS] = [EMPTY_LOGIC_EVENT; MAX_LOGIC_EVENTS];
 static mut TRACKTRAIN_SUBMODEL: u16 = 0;
-// Live path_track switches for a branching tram path, one bit per cooked
-// waypoint (<= 256): SF_PATH_ALTERNATE and SF_PATH_DISABLED.
-static mut TRAM_NODE_ALT: [u32; 8] = [0; 8];
-static mut TRAM_NODE_OFF: [u32; 8] = [0; 8];
+// Live switches of a branching tram path's waypoints (<= 256): which are
+// switched to their alternate path and which are disabled.
+static mut TRAM_SWITCHES: world_rules::TrackSwitches = world_rules::TrackSwitches::new();
 // Waypoints the last tram_advance crossed, in order, for fire-on-pass.
 static mut TRAM_PASSED: [u16; 16] = [0; 16];
 static mut TRAM_PASSED_N: usize = 0;
@@ -3735,7 +3740,7 @@ static mut TRACKTRAIN_USE_SPEED: u16 = 60; // +use drive speed (On A Rail)
 static mut LOGIC_PLAYER_POS: [i32; 3] = [0; 3];
 static mut SIM_NOW: u16 = 0; // current sim tick, for fire-path logic hooks
 static mut LOGIC_PLAYER_YAW: u16 = 0;
-// Who started the logic chain now running, for CBaseDoor::DoorGoUp's
+// Who started the logic chain now running, for the rotating doors'
 // swing-away rule: 0 none, 1 the player, 2 the tracktrain. Queued events keep
 // it in their metadata; the door reads the activator's live position.
 static mut LOGIC_ACTIVATOR: u8 = 0;
@@ -3779,15 +3784,15 @@ static mut PROP_STATE: [u8; MAX_PROPS] = [PROP_STATE_IDLE; MAX_PROPS];
 static mut PROP_ATTACK_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_AI_TIMER: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_AI_TARGET: [u8; MAX_PROPS] = [PROP_TARGET_NONE; MAX_PROPS];
-const TALKING_PROP_NONE: u8 = 0xff;
+const TALKING_PROP_NONE: u8 = talk_monster::NO_SPEAKER;
 static mut TALKING_PROP: u8 = TALKING_PROP_NONE;
 static mut TALKING_UNTIL: u16 = 0;
 static mut TALKING_VOICE: u8 = 0;
 static mut MAP_VOICE_PREFIX: u8 = 0;
 static mut MAP_TALK_IDS: [u8; 6] = [u8::MAX; 6];
 const _: () = assert!(room_budget::TALK_VOICES.len() == menu::MAPS.len());
-const TALKING_VOICE_ID_MASK: u8 = 0x3f;
-const TALKING_VOICE_AUTONOMOUS: u8 = 0x80;
+const TALKING_VOICE_ID_MASK: u8 = talk_monster::VOICE_ID_MASK;
+const TALKING_VOICE_AUTONOMOUS: u8 = talk_monster::VOICE_AUTONOMOUS;
 // A 20 Hz speech envelope for the one streamed dialogue channel. Geometry and
 // controller range are source-exact; this small deterministic envelope avoids
 // retaining decoded PCM in main RAM after the sample is uploaded to SPU RAM.
@@ -5117,58 +5122,67 @@ fn seg_len(a: [i32; 3], b: [i32; 3]) -> i32 {
     isqrt_i32(dist2_3(a, b)).max(1)
 }
 
-#[inline(always)]
-fn tram_bit(bits: &[u32; 8], i: usize) -> bool {
-    i < 256 && bits[i >> 5] & (1 << (i & 31)) != 0
+impl world_rules::TrackGraph for Map {
+    #[inline(always)]
+    fn node_count(&self) -> usize {
+        self.n_way
+    }
+    #[inline(always)]
+    fn position(&self, node: usize) -> [i32; 3] {
+        self.waypoint(node)
+    }
+    #[inline(always)]
+    fn is_branching(&self) -> bool {
+        self.tram_graph
+    }
+    #[inline(always)]
+    fn successor(&self, node: usize) -> Option<usize> {
+        self.way_next(node)
+    }
+    #[inline(always)]
+    fn alternate(&self, node: usize) -> Option<usize> {
+        self.way_alt(node)
+    }
+    #[inline(always)]
+    fn alternate_reverse_only(&self, node: usize) -> bool {
+        self.way_flags(node) & cooked::PATH_TRACK_ALTREVERSE != 0
+    }
 }
 
-/// CPathTrack::Use: a node with an altpath switches between its two paths,
-/// any other node is enabled or disabled. USE_ON selects the primary path or
-/// enables, USE_OFF the alternate path or disables, TOGGLE flips.
+#[inline(always)]
+fn tram_switches() -> &'static world_rules::TrackSwitches {
+    unsafe { &*core::ptr::addr_of!(TRAM_SWITCHES) }
+}
+
+/// Fire every tram waypoint named `target`; see `TrackSwitches::use_node`.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn tram_path_track_use(m: &Map, target: u16, use_type: u8) {
+    let how = match use_type {
+        map::USE_ON => world_rules::TrackUse::On,
+        map::USE_OFF => world_rules::TrackUse::Off,
+        _ => world_rules::TrackUse::Toggle,
+    };
+    let switches = &mut *core::ptr::addr_of_mut!(TRAM_SWITCHES);
     let mut i = 0usize;
     while i < m.n_way.min(256) {
         if target != 0 && m.way_name(i) == target {
-            let bits = if m.way_alt(i).is_some() {
-                &mut *core::ptr::addr_of_mut!(TRAM_NODE_ALT)
-            } else {
-                &mut *core::ptr::addr_of_mut!(TRAM_NODE_OFF)
-            };
-            let mask = 1u32 << (i & 31);
-            match use_type {
-                map::USE_ON => bits[i >> 5] &= !mask,
-                map::USE_OFF => bits[i >> 5] |= mask,
-                _ => bits[i >> 5] ^= mask,
-            }
+            switches.use_node(i, m.way_alt(i).is_some(), how);
         }
         i += 1;
     }
 }
 
-/// CPathTrack::GetNext: the altpath while switched to it (unless the switch
-/// only applies in reverse), else the target.
+/// The node after `seg` given the live switches.
 #[inline(never)]
 fn tram_next(m: &Map, seg: usize) -> Option<usize> {
-    if !m.tram_graph {
-        return (seg + 1 < m.n_way).then_some(seg + 1);
-    }
-    if let Some(alt) = m.way_alt(seg) {
-        if unsafe { tram_bit(&*core::ptr::addr_of!(TRAM_NODE_ALT), seg) }
-            && m.way_flags(seg) & cooked::PATH_TRACK_ALTREVERSE == 0
-        {
-            return Some(alt);
-        }
-    }
-    m.way_next(seg)
+    tram_switches().next(m, seg)
 }
 
-/// The next node a moving train may enter (CPathTrack::ValidPath with move
-/// set): a disabled node stops it at the current one.
+/// The next node a moving train may enter: a disabled node stops it.
 #[inline(never)]
 fn tram_next_open(m: &Map, seg: usize) -> Option<usize> {
-    tram_next(m, seg).filter(|&n| !unsafe { tram_bit(&*core::ptr::addr_of!(TRAM_NODE_OFF), n) })
+    tram_switches().next_open(m, seg)
 }
 
 fn tram_step_for_speed(speed: i32, remainder: &mut i32) -> i32 {
@@ -5211,49 +5225,11 @@ fn tram_lerp_q8(a: [i32; 3], b: [i32; 3], dist: i32, len: i32) -> [i32; 3] {
     ]
 }
 
-/// Point `ahead` 3-D path units beyond `(seg,seg_dist)`, in Q8 world space.
-/// CPathTrack::LookAhead crosses as many nodes as necessary and projects past
-/// a terminal node along the final segment; clamping at the last point makes a
-/// train turn too sharply immediately before a changelevel.
+/// Point `ahead` path units beyond `(seg, seg_dist)` in Q8 world space; see
+/// `world_rules::track_lookahead_q8`.
 #[inline(never)]
-fn tram_path_lookahead_q8(m: &Map, mut seg: usize, mut seg_dist: i32, mut ahead: i32) -> [i32; 3] {
-    if m.n_way == 0 {
-        return [0; 3];
-    }
-    if m.n_way == 1 {
-        let p = m.waypoint(0);
-        return [p[0] << 8, p[1] << 8, p[2] << 8];
-    }
-    if !m.tram_graph {
-        seg = seg.min(m.n_way - 2);
-    }
-    ahead = ahead.max(0);
-    loop {
-        let a = m.waypoint(seg);
-        let Some(next) = tram_next(m, seg) else {
-            // A graph dead end: no final segment to project along.
-            return [a[0] << 8, a[1] << 8, a[2] << 8];
-        };
-        let b = m.waypoint(next);
-        let len = seg_len(a, b).max(1);
-        let left = (len - seg_dist).max(0);
-        if ahead <= left {
-            return tram_lerp_q8(a, b, seg_dist + ahead, len);
-        }
-        ahead -= left;
-        if tram_next(m, next).is_some() {
-            seg = next;
-            seg_dist = 0;
-            continue;
-        }
-        // Project along the terminal segment, matching CPathTrack::Project.
-        let f = (ahead << 12) / len;
-        return [
-            (b[0] << 8) + ((b[0] - a[0]) * f >> 4),
-            (b[1] << 8) + ((b[1] - a[1]) * f >> 4),
-            (b[2] << 8) + ((b[2] - a[2]) * f >> 4),
-        ];
-    }
+fn tram_path_lookahead_q8(m: &Map, seg: usize, seg_dist: i32, ahead: i32) -> [i32; 3] {
+    world_rules::track_lookahead_q8(m, tram_switches(), seg, seg_dist, ahead)
 }
 
 /// CPathTrack look-ahead including the synthetic cross-BSP approach leg.
@@ -5535,13 +5511,9 @@ fn tram_advance(
                     TRAM_PASSED_N += 1;
                 }
             }
-            // Passing a path_track with a "speed" key changes the train's
-            // speed (CPathTrack, plats.cpp); 0 keeps the current one. c0a0
-            // is authored 200..400 u/s in sections.
-            let ws = m.way_speed(*seg);
-            if ws > 0 {
-                *speed = ws;
-            }
+            // Reaching a waypoint with a speed key changes the train's speed.
+            // c0a0 is authored 200..400 u/s in sections.
+            *speed = world_rules::track_speed_at_node(*speed, m.way_speed(*seg));
             let entering_trackchange = tram_is_trackchange_segment(m, *seg);
             if leaving_trackchange != entering_trackchange {
                 // A trackchange is a separate pusher phase. Gold fires the
@@ -5570,10 +5542,7 @@ fn tram_advance(
     if m.n_way == 55 && *seg + 1 < m.n_way {
         let len = seg_len(m.waypoint(*seg), m.waypoint(*seg + 1));
         if len - *seg_dist <= (*speed).max(0) / 10 {
-            let ws = m.way_speed(*seg + 1);
-            if ws > 0 {
-                *speed = ws;
-            }
+            *speed = world_rules::track_speed_at_node(*speed, m.way_speed(*seg + 1));
         }
     }
     (tram_next_open(m, *seg).is_some(), phase_boundary)
@@ -5758,8 +5727,7 @@ static mut BOB_PHASE: u32 = 0;
 // GoldSrc pain-compass edges packed as front/right/rear/left bits. This
 // replaces the port-specific full-screen red wash with the original
 // directional feedback without adding a resident array.
-static mut DAMAGE_DIRECTION: u8 = 0;
-static mut DAMAGE_TICKS: u8 = 0;
+static mut DAMAGE_COMPASS: player_rules::DamageCompass = player_rules::DamageCompass::new();
 // HEV suit voice: 0 = fine, 1 = health critical, 2 = near death (fire once per
 // worsening threshold crossing). Geiger cooldown throttles the radiation click.
 static mut HEV_HEALTH_STATE: u8 = 0;
@@ -6540,8 +6508,8 @@ const LOGIC_PROP_NONE: u8 = 255;
 const SF_DOOR_START_OPEN: u16 = 1;
 const SF_DOOR_TOGGLE: u16 = 32;
 const SF_DOOR_USE_ONLY: u16 = 256;
-const SF_SCRIPT_REPEATABLE: u16 = 4;
-const SF_SCRIPT_NOINTERRUPT: u16 = 32;
+const SF_SCRIPT_REPEATABLE: u16 = scripted_sequence::SF_REPEATABLE;
+const SF_SCRIPT_NOINTERRUPT: u16 = scripted_sequence::SF_NO_INTERRUPT;
 const SF_BUTTON_DONTMOVE: u16 = 1;
 const SF_BUTTON_TOGGLE: u16 = 32;
 const SF_BUTTON_TOUCH_ONLY: u16 = 256;
@@ -7070,43 +7038,23 @@ fn pushable_buoyancy(e: map::Ent) -> i32 {
     e.mv[1] >> 16
 }
 
-/// SV_Physics_Step for an FL_FLOAT pushable: gravity against skin x submerged
-/// depth (SV_Submerged, the water column above the box bottom by the same
-/// five-step bisection as SV_RecursiveWaterLevel); the new vertical speed in
-/// units per tick. None when the bottom sample is dry (an ordinary fall).
+/// Buoyancy tick for a floating pushable: observes the cart's box and the
+/// water volumes, and leaves the rule itself to `world_rules`.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn pushable_float_step(m: &Map, nents: usize, e: map::Ent, vy: i32) -> Option<i32> {
-    let c = pushable_world_center(e, e.origin);
-    let h = pushable_half_extents(e)[1];
-    let bottom = c[1] - h;
-    if !water_touch(m, nents, [c[0], bottom + 1, c[2]]) {
-        return None;
-    }
-    let depth = if water_touch(m, nents, [c[0], c[1] + h, c[2]]) {
-        2 * h
-    } else {
-        let (mut wet, mut dry) = (1, 2 * h);
-        let mut i = 0;
-        while i < 5 {
-            let mid = (wet + dry) / 2;
-            if water_touch(m, nents, [c[0], bottom + mid, c[2]]) {
-                wet = mid;
-            } else {
-                dry = mid;
-            }
-            i += 1;
-        }
-        (wet + dry) / 2
+unsafe fn pushable_float_step(
+    m: &Map,
+    nents: usize,
+    e: map::Ent,
+    vy: i32,
+    grounded: bool,
+) -> Option<world_rules::FloatTick> {
+    let body = world_rules::FloatBody {
+        center: pushable_world_center(e, e.origin),
+        half_height: pushable_half_extents(e)[1],
+        buoyancy: pushable_buoyancy(e),
     };
-    // Gravity (800 u/s^2) balances the lift at depth 800 / skin. GoldSrc
-    // integrates the two undamped at 60-100 fps and the carts it spawns near
-    // that depth bob by a unit or two (c2a4a's crates in the Xash capture);
-    // this velocity word is whole units per 20 Hz tick, so undamped Euler
-    // here swung them tens of units. Ease toward the balance depth instead.
-    let balance = 800 / pushable_buoyancy(e).max(1);
-    let toward = ((depth - balance) / 4).clamp(-8, 8);
-    Some((vy + toward) / 2)
+    world_rules::pushable_float_tick(body, vy, grounded, &mut |p| water_touch(m, nents, p))
 }
 
 #[inline(always)]
@@ -7705,22 +7653,13 @@ unsafe fn tick_pushables(
             }
         }
 
-        let resting_vy = if state.support == pushable::SUPPORT_NONE {
-            state.vy as i32
-        } else {
-            0
-        };
+        let float_vy = state.vy as i32;
+        let grounded = state.support != pushable::SUPPORT_NONE;
         state = pushable::fall_step(state, 2);
-        if pushable_buoyancy(e) != 0 {
-            if let Some(vy) = pushable_float_step(m, nents, e, resting_vy) {
-                // FL_FLOAT adds gravity and lift every frame, grounded or not:
-                // a lift that beats gravity raises the cart off its floor.
-                state.vy = vy as i8;
-                if vy > 0 {
-                    state.support = pushable::SUPPORT_NONE;
-                } else if state.support != pushable::SUPPORT_NONE {
-                    state.vy = 0;
-                }
+        if let Some(t) = pushable_float_step(m, nents, e, float_vy, grounded) {
+            state.vy = t.vy as i8;
+            if !t.grounded {
+                state.support = pushable::SUPPORT_NONE;
             }
         }
         if state.support == pushable::SUPPORT_NONE && state.vy != 0 {
@@ -8448,64 +8387,61 @@ unsafe fn resolve_player_actor_collision(player: &mut phys::Player, start: [i32;
     if best_frac >= 4096 {
         return;
     }
-    let pushes = scientist_logic::client_push_speed(player.vel[0], player.vel[2]);
+    let player_vel_xz = [player.vel[0], player.vel[2]];
     let axis = best_axis as usize;
     player.pos[axis] = start[axis] + (((end[axis] - start[axis]) * best_frac) >> 12);
     player.block_actor_axis(axis);
-    if !pushes || best_prop >= PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
+    if best_prop >= PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
         return;
     }
     let kind = PROP_KIND[best_prop];
     if !prop_is_human(kind) || PROP_HEALTH[best_prop] == 0 {
         return;
     }
-    if prop_scientist_flag(best_prop, PROP_SCI_PROVOKED) {
-        #[cfg(feature = "reference-trace")]
-        reference_trace::talk(
-            SIM_NOW,
-            "client_push_blocked_provoked",
-            best_prop,
-            0xff,
-            0,
-            PROP_POS[best_prop],
-            PROP_POS[best_prop],
-        );
-        return;
-    }
-    if prop_is_talking(best_prop, SIM_NOW) {
-        #[cfg(feature = "reference-trace")]
-        reference_trace::talk(
-            SIM_NOW,
-            "client_push_blocked_talking",
-            best_prop,
-            TALKING_VOICE & TALKING_VOICE_ID_MASK,
-            TALKING_UNTIL.wrapping_sub(SIM_NOW),
-            PROP_POS[best_prop],
-            PROP_POS[best_prop],
-        );
-        return;
-    }
-    prop_client_push_set(best_prop, true);
-    // Touch sets the condition even during a cinematic, but MakeIdealYaw is
-    // suppressed in MONSTERSTATE_SCRIPT.
-    if !prop_script_busy(best_prop) {
-        let pos = PROP_POS[best_prop];
-        // Source uses this ideal yaw to construct a 100-unit path endpoint.
-        // The shared octant-linear atan is intentionally cheaper but can miss
-        // that endpoint by >10 units, so use the rare-contact precision path.
-        PROP_SCRIPT_YAW[best_prop] =
-            scientist_logic::precise_yaw_from_vec(player.pos[0] - pos[0], player.pos[2] - pos[2]);
-    }
-    #[cfg(feature = "reference-trace")]
-    reference_trace::talk(
+    let mut actor = talk_actor_load(best_prop);
+    let clock = talk_clock();
+    let bump = talk_monster::player_bump(
+        &mut actor,
+        &clock,
         SIM_NOW,
-        "client_push_set",
-        best_prop,
-        0xff,
-        0,
+        player_vel_xz,
+        player.pos,
         PROP_POS[best_prop],
-        PROP_POS[best_prop],
+        prop_script_busy(best_prop),
     );
+    let trace_event = match bump {
+        talk_monster::Bump::Ignored => return,
+        talk_monster::Bump::BlockedProvoked => "client_push_blocked_provoked",
+        talk_monster::Bump::BlockedTalking => "client_push_blocked_talking",
+        talk_monster::Bump::Pushed { ideal_yaw } => {
+            talk_actor_store(&actor);
+            if let Some(yaw) = ideal_yaw {
+                PROP_SCRIPT_YAW[best_prop] = yaw;
+            }
+            "client_push_set"
+        }
+    };
+    #[cfg(feature = "reference-trace")]
+    {
+        let (voice, ticks) = if bump == talk_monster::Bump::BlockedTalking {
+            (
+                clock.voice & talk_monster::VOICE_ID_MASK,
+                clock.until.wrapping_sub(SIM_NOW),
+            )
+        } else {
+            (0xff, 0)
+        };
+        reference_trace::talk(
+            SIM_NOW,
+            trace_event,
+            best_prop,
+            voice,
+            ticks,
+            PROP_POS[best_prop],
+            PROP_POS[best_prop],
+        );
+    }
+    let _ = trace_event;
 }
 
 #[inline]
@@ -9595,41 +9531,38 @@ fn door_auto_returns(rec: map::LogicEnt, at_bottom: bool) -> bool {
         && ((rec.spawnflags & SF_DOOR_START_OPEN) != 0) == at_bottom
 }
 
-/// CBaseDoor::DoorGoUp for a func_door_rotating: a two-way (not ONEWAY) door
-/// turning about the vertical axis swings away from its activator, chosen by
-/// which side of the pivot the activator stands relative to where it faces.
-/// The authored direction is kept for a chain nobody started (sign +1).
+/// A two-way rotating door swings away from whoever started its chain; the
+/// rule is `world_rules::rotating_door_opens_reversed`. The door's current
+/// swing sign lives in its first motion word and in ROT_DOOR_REVERSED.
 #[optimize(size)]
 unsafe fn rotating_door_swing_away(ei: usize, spawnflags: u16) {
-    const SF_DOOR_ONEWAY: u16 = 16;
-    const SF_DOOR_ROTATE_Z: u16 = 64;
-    const SF_DOOR_ROTATE_X: u16 = 128;
-    if ei >= MAX_ENTS || spawnflags & (SF_DOOR_ONEWAY | SF_DOOR_ROTATE_Z | SF_DOOR_ROTATE_X) != 0 {
+    if ei >= MAX_ENTS {
         return;
     }
-    // HL forward (cos, sin) of a yaw is (sin r, cos r) in runtime (x, z).
-    let (pos, fwd) = match LOGIC_ACTIVATOR {
-        1 => (
-            LOGIC_PLAYER_POS,
-            [
+    // A yaw's forward is (sin, cos) in runtime (x, z).
+    let activator = match LOGIC_ACTIVATOR {
+        1 => Some(world_rules::DoorActivator {
+            pos: LOGIC_PLAYER_POS,
+            forward_xz: [
                 sincos::sin_q12(LOGIC_PLAYER_YAW),
                 sincos::sin_q12((LOGIC_PLAYER_YAW + 1024) & 0x0fff),
             ],
-        ),
-        2 => (
-            LOGIC_TRAM_POS,
-            [
+        }),
+        2 => Some(world_rules::DoorActivator {
+            pos: LOGIC_TRAM_POS,
+            forward_xz: [
                 LOGIC_TRAM_FWD[0].clamp(-4096, 4096),
                 LOGIC_TRAM_FWD[1].clamp(-4096, 4096),
             ],
-        ),
-        _ => return,
+        }),
+        _ => None,
     };
-    let o = ENT_CACHE[ei].origin;
-    let dx = (pos[0] - o[0]).clamp(-32767, 32767);
-    let dz = (pos[2] - o[2]).clamp(-32767, 32767);
-    let cross = dx * fwd[1] - dz * fwd[0];
-    let want_reversed = cross < 0;
+    let hinge = ENT_CACHE[ei].origin;
+    let Some(want_reversed) =
+        world_rules::rotating_door_opens_reversed(spawnflags, hinge, activator)
+    else {
+        return;
+    };
     let bit = 1u8 << (ei & 7);
     let is_reversed = ROT_DOOR_REVERSED[ei >> 3] & bit != 0;
     if want_reversed != is_reversed {
@@ -9718,116 +9651,432 @@ unsafe fn prop_script_move_residue_put(pi: usize, x: i32, z: i32) {
     }
 }
 
-#[inline(always)]
-unsafe fn prop_script_move_residue_clear(pi: usize) {
-    PROP_SCRIPT_YAW[pi] &= PROP_SCRIPT_YAW_MASK;
+// ---- scripted_sequence adaptor: packs/unpacks scripted_sequence state ----
+
+#[inline(never)]
+unsafe fn script_actor_load(pi: usize) -> scripted_sequence::ScriptActor {
     let li = PROP_SCRIPT_LI[pi];
-    if li != u16::MAX {
-        PROP_SCRIPT_LI[pi] = li & !(PROP_SCRIPT_RESIDUE_MASK << PROP_SCRIPT_LI_RESIDUE_SHIFT);
+    let yaw = PROP_SCRIPT_YAW[pi];
+    scripted_sequence::ScriptActor {
+        pos: PROP_POS[pi],
+        alive: PROP_HEALTH[pi] > 0,
+        activity: match PROP_STATE[pi] {
+            PROP_STATE_IDLE => scripted_sequence::Activity::Idle,
+            PROP_STATE_MOVE => scripted_sequence::Activity::Moving,
+            _ => scripted_sequence::Activity::Other,
+        },
+        yaw: prop_yaw_value(PROP_YAW[pi]),
+        mode: scripted_sequence::decode_mode(PROP_SCRIPT_MODE[pi]),
+        script: if li == u16::MAX {
+            None
+        } else {
+            Some((li & PROP_SCRIPT_LI_MASK) as usize)
+        },
+        goal: PROP_SCRIPT_GOAL[pi],
+        target_yaw: yaw & PROP_SCRIPT_YAW_MASK,
+        residue: [
+            scientist_logic::script_q4_decode(yaw >> PROP_SCRIPT_YAW_RESIDUE_SHIFT),
+            scientist_logic::script_q4_decode(li >> PROP_SCRIPT_LI_RESIDUE_SHIFT),
+        ],
+        deadline: PROP_SCRIPT_PLAY_UNTIL[pi],
+        play_clip: PROP_SCRIPT_PLAY_CLIP[pi],
+        idle_clip: PROP_SCRIPT_IDLE_CLIP[pi],
+        hold: PROP_MOVE_COOLDOWN[pi],
+        no_interrupt: prop_scientist_flag(pi, PROP_SCRIPT_NOINTERRUPT),
+    }
+}
+
+#[inline(never)]
+unsafe fn script_actor_store(pi: usize, a: &scripted_sequence::ScriptActor) {
+    match a.activity {
+        scripted_sequence::Activity::Idle => PROP_STATE[pi] = PROP_STATE_IDLE,
+        scripted_sequence::Activity::Moving => PROP_STATE[pi] = PROP_STATE_MOVE,
+        scripted_sequence::Activity::Other => {}
+    }
+    PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], a.yaw);
+    PROP_SCRIPT_MODE[pi] = scripted_sequence::encode_mode(a.mode);
+    PROP_SCRIPT_LI[pi] = match a.script {
+        None => u16::MAX,
+        Some(li) => {
+            (li as u16 & PROP_SCRIPT_LI_MASK)
+                | (scientist_logic::script_q4_encode(a.residue[1]) << PROP_SCRIPT_LI_RESIDUE_SHIFT)
+        }
+    };
+    PROP_SCRIPT_GOAL[pi] = a.goal;
+    PROP_SCRIPT_YAW[pi] = (a.target_yaw & PROP_SCRIPT_YAW_MASK)
+        | (scientist_logic::script_q4_encode(a.residue[0]) << PROP_SCRIPT_YAW_RESIDUE_SHIFT);
+    PROP_SCRIPT_PLAY_UNTIL[pi] = a.deadline;
+    PROP_SCRIPT_PLAY_CLIP[pi] = a.play_clip;
+    PROP_SCRIPT_IDLE_CLIP[pi] = a.idle_clip;
+    PROP_MOVE_COOLDOWN[pi] = a.hold;
+    prop_scientist_set_flag(pi, PROP_SCRIPT_NOINTERRUPT, a.no_interrupt);
+}
+
+#[inline]
+unsafe fn script_actor_kind(pi: usize) -> scripted_sequence::ActorKind {
+    let kind = PROP_KIND[pi];
+    scripted_sequence::ActorKind {
+        scientist: prop_is_scientist(kind),
+        barney: kind == PROP_TYPE_BARNEY,
+        houndeye: kind == PROP_TYPE_HOUNDEYE,
+    }
+}
+
+/// Decode one cooked scripted_sequence record.
+#[inline(never)]
+fn script_record(m: &Map, li: usize) -> scripted_sequence::ScriptRecord {
+    let rec = m.logic(li);
+    let (play_clip, idle_clip) = if rec.aux_count >= 1 {
+        let a = m.logic_aux(rec.first_aux);
+        (
+            script_clip_token_slot(a.target),
+            script_clip_token_slot(a.delay_ticks),
+        )
+    } else {
+        (0xFF, 0xFF)
+    };
+    // The cooker appends a play animation's root offset (forward, left) as a
+    // trailing aux record, marked by an even aux count.
+    let root_offset = if rec.aux_count >= 2 && rec.aux_count & 1 == 0 {
+        let a = m.logic_aux(rec.first_aux + rec.aux_count - 1);
+        Some([a.target as i16 as i32, a.delay_ticks as i16 as i32])
+    } else {
+        None
+    };
+    scripted_sequence::ScriptRecord {
+        actor_name: rec.arg0,
+        class_kind: scientist_logic::selector_kind(rec.flags),
+        radius: (rec.wait_ticks as i32).max(0),
+        move_mode: rec.arg1,
+        origin: rec.origin,
+        yaw: rec.speed & 0xFFF,
+        repeatable: rec.spawnflags & SF_SCRIPT_REPEATABLE != 0,
+        no_interrupt: rec.spawnflags & SF_SCRIPT_NOINTERRUPT != 0,
+        has_idle: rec.flags & map::LOGIC_SCRIPTED_HAS_IDLE != 0,
+        has_play: rec.flags & map::LOGIC_SCRIPTED_HAS_PLAY != 0,
+        targeted: rec.targetname != 0,
+        play_clip,
+        idle_clip,
+        root_offset,
+    }
+}
+
+/// The live actor roster as the claim search sees it.
+struct ScriptRosterView;
+
+impl scripted_sequence::Roster for ScriptRosterView {
+    fn len(&self) -> usize {
+        unsafe { PROP_COUNT.min(CARRY_MAILBOX_FIRST) }
+    }
+
+    fn candidate(&self, pi: usize) -> scripted_sequence::Candidate {
+        unsafe {
+            scripted_sequence::Candidate {
+                active: PROP_ACTIVE[pi] != 0,
+                alive: PROP_HEALTH[pi] > 0,
+                item: model_def(PROP_KIND[pi]).ai == AI_ITEM,
+                name: PROP_NAME[pi],
+                kind: PROP_KIND[pi],
+                pos: PROP_POS[pi],
+                busy: prop_script_busy(pi),
+                script: if PROP_SCRIPT_LI[pi] != u16::MAX {
+                    Some(prop_script_li(pi))
+                } else {
+                    None
+                },
+                primed: scientist_logic::script_is_primed(PROP_SCRIPT_MODE[pi]),
+            }
+        }
+    }
+}
+
+/// The world as one scripted actor touches it. Actions that can move the
+/// actor or fire logic write the actor out first and read it back after.
+struct ScriptWorldView<'a> {
+    m: &'a Map,
+    movers: &'a [phys::Mover],
+    sight_movers: &'a [phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    map_index: u16,
+    in_player_pvs: bool,
+}
+
+impl<'a> ScriptWorldView<'a> {
+    /// A view for work outside an actor's tick (assignment, priming).
+    fn cold(m: &'a Map, pi: usize) -> Self {
+        Self {
+            m,
+            movers: &[],
+            sight_movers: &[],
+            pi,
+            player_pos: [0; 3],
+            map_index: 0,
+            in_player_pvs: false,
+        }
+    }
+
+    unsafe fn sync<F: FnOnce(&Self)>(&self, a: &mut scripted_sequence::ScriptActor, f: F) {
+        script_actor_store(self.pi, a);
+        f(self);
+        *a = script_actor_load(self.pi);
+    }
+}
+
+impl scripted_sequence::ScriptWorld for ScriptWorldView<'_> {
+    fn record(&self, li: usize) -> Option<scripted_sequence::ScriptRecord> {
+        if li < self.m.n_logic.min(MAX_LOGIC) {
+            Some(script_record(self.m, li))
+        } else {
+            None
+        }
+    }
+
+    fn play_hold_ticks(&mut self, a: &scripted_sequence::ScriptActor) -> u16 {
+        unsafe {
+            script_actor_store(self.pi, a);
+            script_play_hold_ticks(self.m, self.pi)
+        }
+    }
+
+    fn talk_turn(&mut self, a: &mut scripted_sequence::ScriptActor) {
+        unsafe {
+            self.sync(a, |w| {
+                let _ = scientist_take_turn(
+                    w.m,
+                    w.sight_movers,
+                    w.pi,
+                    w.player_pos,
+                    w.map_index,
+                    w.in_player_pvs,
+                    true,
+                );
+            })
+        }
+    }
+
+    fn local_replan(
+        &mut self,
+        a: &mut scripted_sequence::ScriptActor,
+        waypoint: [i32; 3],
+        now: u16,
+    ) {
+        unsafe {
+            self.sync(a, |w| {
+                script_dynamic_local_replan(
+                    w.m,
+                    w.sight_movers,
+                    w.pi,
+                    now,
+                    waypoint,
+                    [
+                        w.player_pos[0],
+                        w.player_pos[1] + PLAYER_TOUCH_HEIGHT / 2,
+                        w.player_pos[2],
+                    ],
+                    PLAYER_TOUCH_HEIGHT / 2,
+                );
+            })
+        }
+    }
+
+    fn plan_route(
+        &mut self,
+        a: &scripted_sequence::ScriptActor,
+        goal: [i32; 3],
+        now: u16,
+    ) -> scripted_sequence::RoutePlan {
+        unsafe { script_plan_route(self.m, self.pi, a.pos, goal, now) }
+    }
+
+    fn move_toward(&mut self, a: &mut scripted_sequence::ScriptActor, goal: [i32; 3], speed: i32) {
+        unsafe {
+            self.sync(a, |w| {
+                let _ = prop_move_towards_point(w.m, w.movers, w.pi, goal, speed);
+            })
+        }
+    }
+
+    fn place(&mut self, a: &mut scripted_sequence::ScriptActor, pos: [i32; 3]) {
+        unsafe { self.sync(a, |w| prop_set_pos_exact(w.m, w.pi, pos)) }
+    }
+
+    fn forget_route(&mut self) {
+        unsafe { prop_nav_cache_invalidate(self.pi) }
+    }
+
+    fn floor_below(
+        &mut self,
+        _a: &scripted_sequence::ScriptActor,
+        probe: [i32; 3],
+        depth: i32,
+    ) -> Option<i32> {
+        prop_floor_y_down(self.m, self.pi, probe, depth)
+    }
+
+    fn studio_events(&mut self, a: &mut scripted_sequence::ScriptActor, idle: bool) {
+        unsafe { self.sync(a, |w| script_tick_studio_events(w.m, w.pi, idle)) }
+    }
+
+    fn take_over_talker(&mut self, a: &mut scripted_sequence::ScriptActor) {
+        unsafe {
+            self.sync(a, |w| {
+                let mut talker = talk_actor_load(w.pi);
+                talk_monster::script_takes_over(&mut talker);
+                talk_actor_store(&talker);
+            })
+        }
+    }
+
+    fn script_started(&mut self, li: usize) {
+        unsafe { LOGIC_STATE[li] = LOGIC_STATE_BOTTOM }
+    }
+
+    fn fire_targets(&mut self, a: &mut scripted_sequence::ScriptActor, li: usize) {
+        unsafe {
+            self.sync(a, |w| {
+                logic_sub_use_targets(
+                    w.m,
+                    w.m.n_logic.min(MAX_LOGIC),
+                    w.m.n_ents.min(MAX_ENTS),
+                    li,
+                    w.m.logic(li),
+                    SIM_NOW,
+                    map::USE_TOGGLE,
+                    0,
+                );
+            })
+        }
+    }
+
+    fn remove_script(&mut self, a: &mut scripted_sequence::ScriptActor, li: usize) {
+        unsafe {
+            self.sync(a, |w| {
+                logic_remove_entity(li, w.m.logic(li), w.m.n_ents.min(MAX_ENTS))
+            })
+        }
+    }
+
+    #[cfg_attr(not(feature = "reference-trace"), allow(unused_variables))]
+    fn trace(&mut self, a: i32, b: i32, code: u8) {
+        #[cfg(feature = "reference-trace")]
+        reference_trace::nav_step(unsafe { SIM_NOW } as u32, self.pi as u16, a, b, code);
     }
 }
 
 /// Release every piece of actor-side cinematic state before another script or
-/// normal AI is allowed to run.  In particular LI must be cleared on cancel so
-/// an interrupted sequence can never fire its completion outputs later.
+/// normal AI is allowed to run, without firing anything.
 #[inline]
 unsafe fn prop_script_clear(pi: usize) {
-    PROP_SCRIPT_MODE[pi] = 0;
-    PROP_SCRIPT_LI[pi] = u16::MAX;
-    PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
-    PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
-    PROP_SCRIPT_PLAY_UNTIL[pi] = 0;
-    prop_scientist_set_flag(pi, PROP_SCRIPT_NOINTERRUPT, false);
+    let mut actor = script_actor_load(pi);
+    scripted_sequence::release(&mut actor);
+    script_actor_store(pi, &actor);
     prop_nav_cache_invalidate(pi);
 }
 
-/// Exact targetname selection is always attempted first.  A cooked classname
-/// selector is only the fallback, matching `CCineMonster::FindEntity`; it picks
-/// the first eligible living actor in cooked engine order inside m_flRadius.
-unsafe fn script_find_actor(rec: map::LogicEnt) -> Option<usize> {
-    let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-    let mut pi = 0usize;
-    while pi < n {
-        if PROP_ACTIVE[pi] != 0
-            && PROP_HEALTH[pi] > 0
-            && model_def(PROP_KIND[pi]).ai != AI_ITEM
-            && PROP_NAME[pi] != 0
-            && PROP_NAME[pi] == rec.arg0
-            && !prop_script_busy(pi)
-        {
-            return Some(pi);
-        }
-        pi += 1;
-    }
-
-    let wanted = scientist_logic::selector_kind(rec.flags)?;
-    let radius = (rec.wait_ticks as i32).max(0);
-    pi = 0;
-    while pi < n {
-        let p = PROP_POS[pi];
-        let delta = [
-            p[0] - rec.origin[0],
-            p[1] - rec.origin[1],
-            p[2] - rec.origin[2],
-        ];
-        if scientist_logic::script_candidate_eligible(
-            PROP_KIND[pi],
-            wanted,
-            PROP_ACTIVE[pi] != 0,
-            PROP_HEALTH[pi],
-            prop_script_busy(pi),
-            delta,
-            radius,
-        ) {
-            return Some(pi);
-        }
-        pi += 1;
-    }
-    None
+/// A free actor for `rec`: by name first, else by class within its radius.
+unsafe fn script_find_actor(m: &Map, li: usize) -> Option<usize> {
+    scripted_sequence::find_actor(&script_record(m, li), &ScriptRosterView)
 }
 
-/// SV_HullForBsp: a monster no wider or taller than 36 units moves in the
-/// 32x32x36 crouch hull (houndeyes, headcrabs), anything else in hull 1.
-/// Returns the clip head and the hull's half height above the feet.
-#[inline(never)]
-#[optimize(size)]
-unsafe fn actor_nav_hull(m: &Map, pi: usize) -> (i32, i32) {
-    if matches!(PROP_KIND[pi], PROP_TYPE_HEADCRAB | PROP_TYPE_HOUNDEYE | 59) && m.hull3_head >= 0 {
-        (m.hull3_head, 18)
-    } else {
-        (m.hull1_head, 36)
-    }
-}
+// ---- local navigation adaptor: traces, bodies and the graph for one actor ----
 
-/// CheckLocalMove's WALK_MOVE steps climb anything up to sv_stepsize (18):
-/// a small-hull chord blocked at floor height also passes if the same chord
-/// raised by a step is clear (a floor lip in c1a4's hound tunnel). Returns
-/// the first impact fraction of the better of the two, or None when either
-/// is clear. Hull-1 actors keep the single trace (a second long human-hull
-/// trace per blocked chord adds to c1a0's lobby hitch as walkers start).
-#[inline(never)]
-#[optimize(size)]
-unsafe fn actor_chord_blocked(
-    m: &Map,
-    movers: &[phys::Mover],
+/// The world as one actor's local navigation sees it.
+struct LocalNavView<'a> {
+    m: &'a Map,
+    movers: &'a [phys::Mover],
     pi: usize,
-    start: [i32; 3],
-    goal: [i32; 3],
-) -> Option<i32> {
-    let (head, half) = actor_nav_hull(m, pi);
-    let mut best = 0;
-    for step in 0..if half == 18 { 2 } else { 1 } {
-        let rise = half + 18 * step;
-        let from = [start[0], start[1] + rise, start[2]];
-        let to = [goal[0], goal[1] + rise, goal[2]];
-        match phys::hull_blocked_fraction_movers(m, head, movers, from, to) {
-            None => return None,
-            Some(f) => best = best.max(f),
-        }
-    }
-    Some(best)
+    /// Map tick, for diagnostic traces only.
+    #[cfg_attr(not(feature = "reference-trace"), allow(dead_code))]
+    now: u16,
 }
 
+impl LocalNavView<'_> {
+    /// Monsters no wider or taller than 36 units move in the crouch hull
+    /// (houndeyes, headcrabs) when the map has one; anything else in hull 1.
+    fn small_kind(&self) -> bool {
+        unsafe {
+            matches!(
+                PROP_KIND[self.pi],
+                PROP_TYPE_HEADCRAB | PROP_TYPE_HOUNDEYE | 59
+            )
+        }
+    }
+}
+
+impl local_nav::LocalNavWorld for LocalNavView<'_> {
+    fn small_hull(&self) -> bool {
+        self.small_kind() && self.m.hull3_head >= 0
+    }
+
+    fn body_half_height(&self) -> i32 {
+        if self.small_kind() {
+            local_nav::SMALL_HULL_HALF
+        } else {
+            local_nav::HUMAN_HULL_HALF
+        }
+    }
+
+    fn ignores_bodies(&self) -> bool {
+        unsafe { PROP_KIND[self.pi] == PROP_TYPE_HOLO }
+    }
+
+    fn hull_blocked(&mut self, from: [i32; 3], to: [i32; 3]) -> Option<i32> {
+        let head = if self.small_hull() {
+            self.m.hull3_head
+        } else {
+            self.m.hull1_head
+        };
+        phys::hull_blocked_fraction_movers(self.m, head, self.movers, from, to)
+    }
+
+    fn hull_clear(&mut self, from: [i32; 3], to: [i32; 3]) -> bool {
+        phys::human_hull_line_clear(self.m, from, to)
+            && phys::actor_line_clear_movers(self.m, self.movers, from, to)
+    }
+
+    fn body_count(&self) -> usize {
+        unsafe { PROP_COUNT.min(CARRY_MAILBOX_FIRST) }
+    }
+
+    fn body(&self, other: usize) -> Option<([i32; 3], [i32; 3])> {
+        unsafe {
+            if other != self.pi
+                && PROP_ACTIVE[other] != 0
+                && PROP_HEALTH[other] > 0
+                && PROP_KIND[other] != PROP_TYPE_HOLO
+            {
+                Some(actor_collision_bounds(PROP_KIND[other], PROP_POS[other]))
+            } else {
+                None
+            }
+        }
+    }
+
+    fn graph_route(&mut self, goal: [i32; 3]) -> bool {
+        unsafe { nav_route_available(self.m, self.movers, self.pi, goal) }
+    }
+
+    fn graph_entry(&mut self, start: [i32; 3]) -> Option<[i32; 3]> {
+        unsafe { nav_route_simplified_entry(self.m, self.movers, self.pi, start) }
+    }
+
+    #[cfg_attr(not(feature = "reference-trace"), allow(unused_variables))]
+    fn trace_detour(&mut self, blocked_dist: i32, ring: u8, left: bool, point: [i32; 3], legs: u8) {
+        #[cfg(feature = "reference-trace")]
+        reference_trace::script_detour(
+            self.now as u32,
+            self.pi as u16,
+            blocked_dist,
+            ring,
+            left as u8,
+            point,
+            legs,
+        );
+    }
+}
+
+/// Actor `pi`'s hull can walk straight from `start` to `goal` (world only).
 #[inline(never)]
 unsafe fn script_human_chord_clear(
     m: &Map,
@@ -9836,203 +10085,16 @@ unsafe fn script_human_chord_clear(
     start: [i32; 3],
     goal: [i32; 3],
 ) -> bool {
-    if actor_nav_hull(m, pi).1 == 18 {
-        return actor_chord_blocked(m, movers, pi, start, goal).is_none();
-    }
-    // Hull 1: the early-out boolean test; the full-fraction trace here put a
-    // 3-vblank hitch on c1a0's lobby walkers as their routes start.
-    let from = [start[0], start[1] + 36, start[2]];
-    let to = [goal[0], goal[1] + 36, goal[2]];
-    phys::human_hull_line_clear(m, from, to) && phys::actor_line_clear_movers(m, movers, from, to)
-}
-
-/// Earliest `SOLID_SLIDEBOX` impact for a standing human hull moving between
-/// two foot origins. GoldSrc's `WALK_MOVE` includes the player and live actors
-/// in the same world trace; BSP/mover-only probes therefore miss precisely the
-/// kind of temporary obstruction that `CBaseMonster::Move` is designed to
-/// triangulate around.
-#[inline(never)]
-unsafe fn script_human_actor_blocked_fraction(
-    pi: usize,
-    start: [i32; 3],
-    goal: [i32; 3],
-    player: Option<([i32; 3], i32)>,
-) -> Option<i32> {
-    // Every training hologram carries SF_GENERICMONSTER_NOTSOLID. It still
-    // follows scripted world paths, but neither the player nor another actor
-    // may block its scripted move.
-    if PROP_KIND[pi] == PROP_TYPE_HOLO {
-        return None;
-    }
-    let half = if matches!(PROP_KIND[pi], PROP_TYPE_HEADCRAB | PROP_TYPE_HOUNDEYE | 59) {
-        18
-    } else {
-        36
+    let mut w = LocalNavView {
+        m,
+        movers,
+        pi,
+        now: 0,
     };
-    let from = [start[0], start[1] + half, start[2]];
-    let to = [goal[0], goal[1] + half, goal[2]];
-    let mut best = 4096;
-
-    if let Some((player_pos, player_half_height)) = player {
-        let player_mins = [
-            player_pos[0] - 16,
-            player_pos[1] - player_half_height,
-            player_pos[2] - 16,
-        ];
-        let player_maxs = [
-            player_pos[0] + 16,
-            player_pos[1] + player_half_height,
-            player_pos[2] + 16,
-        ];
-        if let Some(hit) =
-            ground_logic::sweep_player_actor(from, to, player_mins, player_maxs, half)
-        {
-            best = best.min(hit.frac);
-        }
-    }
-
-    let mut other = 0usize;
-    while other < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
-        if other != pi
-            && PROP_ACTIVE[other] != 0
-            && PROP_HEALTH[other] > 0
-            && PROP_KIND[other] != PROP_TYPE_HOLO
-        {
-            let (mins, maxs) = actor_collision_bounds(PROP_KIND[other], PROP_POS[other]);
-            if let Some(hit) = ground_logic::sweep_player_actor(from, to, mins, maxs, half) {
-                best = best.min(hit.frac);
-            }
-        }
-        other += 1;
-    }
-
-    if best < 4096 {
-        Some(best)
-    } else {
-        None
-    }
+    local_nav::world_clear(&mut w, start, goal)
 }
 
-#[inline(never)]
-unsafe fn script_human_chord_clear_actors(
-    m: &Map,
-    movers: &[phys::Mover],
-    pi: usize,
-    start: [i32; 3],
-    goal: [i32; 3],
-    player: Option<([i32; 3], i32)>,
-) -> bool {
-    script_human_chord_clear(m, movers, pi, start, goal)
-        && script_human_actor_blocked_fraction(pi, start, goal, player).is_none()
-}
-
-/// GoldSrc BuildRoute tries FTriangulate before consulting the node graph.
-/// Human actors use a 32-unit-wide hull, clamped inside the source's 24..48
-/// range.  Candidate points are tested right-first in eight 64-unit lateral
-/// rings, exactly matching monsters.cpp.  This cold path runs only once when a
-/// blocked walk/run script possesses an actor.
-#[inline(never)]
-unsafe fn script_local_detour(
-    m: &Map,
-    movers: &[phys::Mover],
-    pi: usize,
-    #[cfg_attr(not(feature = "reference-trace"), allow(unused_variables))] // trace-only
-    map_tick: u16,
-    start: [i32; 3],
-    goal: [i32; 3],
-    blocked_dist: i32,
-    player: Option<([i32; 3], i32)>,
-) -> Option<[i32; 3]> {
-    const HULL_WIDTH: i32 = 32;
-    const SIDE_START: i32 = HULL_WIDTH * 3;
-    const SIDE_STEP: i32 = HULL_WIDTH * 2;
-
-    let delta = [goal[0] - start[0], goal[1] - start[1], goal[2] - start[2]];
-    let length = isqrt_i32(
-        delta[0]
-            .saturating_mul(delta[0])
-            .saturating_add(delta[1].saturating_mul(delta[1]))
-            .saturating_add(delta[2].saturating_mul(delta[2])),
-    )
-    .max(1);
-    let horizontal_length = isqrt_i32(
-        delta[0]
-            .saturating_mul(delta[0])
-            .saturating_add(delta[2].saturating_mul(delta[2])),
-    )
-    .max(1);
-    let forward = [
-        delta[0] * 4096 / length,
-        delta[1] * 4096 / length,
-        delta[2] * 4096 / length,
-    ];
-    // Source coordinates use Z-up. In runtime X/Y/Z (Y-up),
-    // CrossProduct(forward, up) becomes [forward.z, 0, -forward.x].
-    let side = [
-        delta[2] * 4096 / horizontal_length,
-        0,
-        -delta[0] * 4096 / horizontal_length,
-    ];
-    let ahead = blocked_dist.max(0) + HULL_WIDTH;
-    let base = [
-        start[0] + ((forward[0] * ahead) >> 12),
-        start[1] + ((forward[1] * ahead) >> 12),
-        start[2] + ((forward[2] * ahead) >> 12),
-    ];
-    let mut ring = 0i32;
-    while ring < 8 {
-        let lateral = SIDE_START + ring * SIDE_STEP;
-        let offset = [(side[0] * lateral) >> 12, 0, (side[2] * lateral) >> 12];
-        let right = [base[0] + offset[0], base[1], base[2] + offset[2]];
-        let right_first = script_human_chord_clear_actors(m, movers, pi, start, right, player);
-        let right_second =
-            right_first && script_human_chord_clear_actors(m, movers, pi, right, goal, player);
-        #[cfg(feature = "reference-trace")]
-        reference_trace::script_detour(
-            map_tick as u32,
-            pi as u16,
-            blocked_dist,
-            ring as u8,
-            0,
-            right,
-            right_first as u8 | ((right_second as u8) << 1),
-        );
-        if right_second {
-            return Some(right);
-        }
-        let left = [base[0] - offset[0], base[1], base[2] - offset[2]];
-        let left_first = script_human_chord_clear_actors(m, movers, pi, start, left, player);
-        let left_second =
-            left_first && script_human_chord_clear_actors(m, movers, pi, left, goal, player);
-        #[cfg(feature = "reference-trace")]
-        reference_trace::script_detour(
-            map_tick as u32,
-            pi as u16,
-            blocked_dist,
-            ring as u8,
-            1,
-            left,
-            left_first as u8 | ((left_second as u8) << 1),
-        );
-        if left_second {
-            return Some(left);
-        }
-        ring += 1;
-    }
-    None
-}
-
-/// GoldSrc does not trust the route selected by `BuildRoute` for the whole
-/// trip. `CBaseMonster::Move` repeats a 200-unit `CheckLocalMove` before every
-/// 10 Hz movement step and inserts an `FTriangulate` apex when that lookahead
-/// becomes blocked. This matters even in a static room: floor-following can
-/// move a human hull onto a chord that was clear at the original script mark.
-///
-/// The port's compact cinematic route has room for one local apex followed by
-/// the authored mark. Recheck only that direct leg; the two chords created by
-/// `script_local_detour` have already passed the same full human-hull test.
-/// Everything here is stack-only, so the source behavior costs no persistent
-/// actor or map RAM.
+/// The lookahead a walking scripted actor runs on its active think.
 #[inline(never)]
 unsafe fn script_dynamic_local_replan(
     m: &Map,
@@ -10043,217 +10105,66 @@ unsafe fn script_dynamic_local_replan(
     player_pos: [i32; 3],
     player_half_height: i32,
 ) {
-    const DIST_TO_CHECK: i32 = 200;
-
-    let start = PROP_POS[pi];
-    let delta = [
-        waypoint[0] - start[0],
-        waypoint[1] - start[1],
-        waypoint[2] - start[2],
-    ];
-    let waypoint_dist = isqrt_i32(
-        delta[0]
-            .saturating_mul(delta[0])
-            .saturating_add(delta[2].saturating_mul(delta[2])),
-    )
-    .max(0);
-    if waypoint_dist == 0 {
-        return;
-    }
-    // Move() normalizes the full 3-D waypoint vector but clamps its probe by
-    // the 2-D waypoint distance. Keep that slightly odd SDK behavior exactly.
-    let direction_len = isqrt_i32(
-        delta[0]
-            .saturating_mul(delta[0])
-            .saturating_add(delta[1].saturating_mul(delta[1]))
-            .saturating_add(delta[2].saturating_mul(delta[2])),
-    )
-    .max(1);
-    let check_dist = waypoint_dist.min(DIST_TO_CHECK);
-    let check_end = [
-        start[0] + delta[0] * check_dist / direction_len,
-        start[1] + delta[1] * check_dist / direction_len,
-        start[2] + delta[2] * check_dist / direction_len,
-    ];
-    let world_frac = actor_chord_blocked(m, movers, pi, start, check_end);
-    let actor_frac = script_human_actor_blocked_fraction(
-        pi,
-        start,
-        check_end,
-        Some((player_pos, player_half_height)),
-    );
-    let blocked_frac = match (world_frac, actor_frac) {
-        (Some(world), Some(actor)) => world.min(actor),
-        (Some(world), None) => world,
-        (None, Some(actor)) => actor,
-        (None, None) => return,
-    };
-
-    if blocked_frac >= 4096 {
-        return;
-    }
-
-    // CheckLocalMove advances in 16-unit WALK_MOVE probes and reports the
-    // start of the failed step. Quantize the continuous BSP impact down to the
-    // same distance before feeding FTriangulate.
-    let blocked_dist = ((check_dist * blocked_frac.clamp(0, 4096)) >> 12) & !15;
-    let mut encoded_mode = PROP_SCRIPT_MODE[pi];
-    if let Some(apex) = script_local_detour(
+    let mut actor = script_actor_load(pi);
+    let mut w = LocalNavView {
         m,
         movers,
         pi,
-        map_tick,
-        start,
+        now: map_tick,
+    };
+    let replan = local_nav::lookahead(
+        &mut w,
+        &mut actor,
         waypoint,
-        blocked_dist,
-        Some((player_pos, player_half_height)),
-    ) {
-        PROP_SCRIPT_GOAL[pi] = [apex[0] as i16, apex[1] as i16, apex[2] as i16];
-        encoded_mode = scientist_logic::script_detour_mode(encoded_mode, true);
-        PROP_SCRIPT_MODE[pi] = encoded_mode;
-        prop_script_move_residue_clear(pi);
-        prop_nav_cache_invalidate(pi);
-        PROP_MOVE_COOLDOWN[pi] = 0;
-        return;
-    }
-
-    // Move() refreshes the node route when triangulation cannot get around the
-    // blocker. Reuse the existing packed route cache and mode bits rather than
-    // allocating GoldSrc's ROUTE_SIZE array per actor.
-    if m.n_nav != 0 && nav_route_available(m, movers, pi, waypoint) {
-        encoded_mode = scientist_logic::script_route_mode(encoded_mode, true);
-        if let Some(entry) = nav_route_simplified_entry(m, movers, pi, start) {
-            PROP_SCRIPT_GOAL[pi] = [entry[0] as i16, entry[1] as i16, entry[2] as i16];
-            encoded_mode = scientist_logic::script_detour_mode(encoded_mode, true);
+        (player_pos, player_half_height),
+        m.n_nav != 0,
+    );
+    match replan {
+        local_nav::Replan::Clear | local_nav::Replan::Unchanged => {}
+        local_nav::Replan::Detour => {
+            script_actor_store(pi, &actor);
+            prop_nav_cache_invalidate(pi);
         }
-        PROP_SCRIPT_MODE[pi] = encoded_mode;
-        prop_script_move_residue_clear(pi);
-        PROP_MOVE_COOLDOWN[pi] = 0;
+        local_nav::Replan::Graph => script_actor_store(pi, &actor),
     }
 }
 
-#[inline(never)]
-unsafe fn script_remaining_path_distance(m: &Map, pi: usize) -> u32 {
-    let pos = PROP_POS[pi];
-    let g = PROP_SCRIPT_GOAL[pi];
-    let waypoint = [g[0] as i32, g[1] as i32, g[2] as i32];
-    let mut distance = isqrt_i32(dist2_xz(pos, waypoint)).max(0) as u32;
-    if scientist_logic::script_uses_detour(PROP_SCRIPT_MODE[pi])
-        && PROP_SCRIPT_LI[pi] != u16::MAX
-        && prop_script_li(pi) < m.n_logic.min(MAX_LOGIC)
-    {
-        let authored = m.logic(prop_script_li(pi)).origin;
-        distance = distance.saturating_add(isqrt_i32(dist2_xz(waypoint, authored)).max(0) as u32);
-    }
-    distance
-}
-
+/// How a walk or run script reaches its mark, chosen once at assignment.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn script_assign_actor(m: &Map, li: usize, rec: map::LogicEnt, pi: usize, now: u16) {
-    // ChangeSchedule clears transient sensory conditions. A cinematic also
-    // owns movement immediately, so abandon an ordinary move-away tail.
-    prop_client_push_set(pi, false);
-    if PROP_STATE[pi] == PROP_STATE_MOVE_AWAY || PROP_STATE[pi] == PROP_STATE_MOVE_AWAY_FACE {
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        PROP_AI_TIMER[pi] = 0;
-    }
-    let mode = match rec.arg1 {
-        0 | 5 => 3, // SCRIPT_WAIT: play in place, do not move/turn
-        1 => 1,
-        2 => 2,
-        4 => 4,
-        _ => 3,
-    };
-    let authored_goal = rec.origin;
-    PROP_SCRIPT_GOAL[pi] = [
-        authored_goal[0] as i16,
-        authored_goal[1] as i16,
-        authored_goal[2] as i16,
-    ];
-    PROP_SCRIPT_YAW[pi] = rec.speed & 0xFFF;
-    prop_nav_cache_invalidate(pi);
-    let pos = PROP_POS[pi];
-    // BuildRoute chooses once: direct local chord, FTriangulate, then the node
-    // graph. A succession of tiny point-clear steps walks straight toward a
-    // distant wall and selects the graph far too late.
-    let mut encoded_mode = mode;
-    if mode == 1 || mode == 2 {
-        // logic_pre_tick runs before this frame rebuilds the compact mover
-        // list, but the prior tick's stable list already carries the exact
-        // current brush poses. Map initialization resets MOVER_COUNT to zero.
-        let movers = core::slice::from_raw_parts(
-            core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),
-            MOVER_COUNT.min(MAX_ENTS + 1),
-        );
-        let world_blocked = actor_chord_blocked(m, movers, pi, pos, authored_goal);
-        let actor_blocked = script_human_actor_blocked_fraction(pi, pos, authored_goal, None);
-        let blocked = match (world_blocked, actor_blocked) {
-            (Some(world), Some(actor)) => Some(world.min(actor)),
-            (Some(world), None) => Some(world),
-            (None, Some(actor)) => Some(actor),
-            (None, None) => None,
-        };
-        if let Some(blocked_frac) = blocked {
-            let dx = authored_goal[0] - pos[0];
-            let dz = authored_goal[2] - pos[2];
-            let distance =
-                isqrt_i32(dx.saturating_mul(dx).saturating_add(dz.saturating_mul(dz))).max(0);
-            let blocked_dist = ((distance * blocked_frac.clamp(0, 4096)) >> 12) & !15;
-            if let Some(apex) =
-                script_local_detour(m, movers, pi, now, pos, authored_goal, blocked_dist, None)
-            {
-                PROP_SCRIPT_GOAL[pi] = [apex[0] as i16, apex[1] as i16, apex[2] as i16];
-                encoded_mode = scientist_logic::script_detour_mode(encoded_mode, true);
-            } else if m.n_nav != 0 && nav_route_available(m, movers, pi, authored_goal) {
-                // FGetNodeRoute is the last resort after triangulation fails.
-                encoded_mode = scientist_logic::script_route_mode(encoded_mode, true);
-                if let Some(entry) = nav_route_simplified_entry(m, movers, pi, pos) {
-                    PROP_SCRIPT_GOAL[pi] = [entry[0] as i16, entry[1] as i16, entry[2] as i16];
-                    encoded_mode = scientist_logic::script_detour_mode(encoded_mode, true);
-                }
-            }
-        } else if (authored_goal[1] - pos[1]).abs() > 64
-            && m.n_nav != 0
-            && nav_route_available(m, movers, pi, authored_goal)
-        {
-            // GoldSrc's LOCALMOVE_INVALID_DONT_TRIANGULATE: the horizontal
-            // chord is clear but the final floor differs by more than 64.
-            encoded_mode = scientist_logic::script_route_mode(encoded_mode, true);
-            if let Some(entry) = nav_route_simplified_entry(m, movers, pi, pos) {
-                PROP_SCRIPT_GOAL[pi] = [entry[0] as i16, entry[1] as i16, entry[2] as i16];
-                encoded_mode = scientist_logic::script_detour_mode(encoded_mode, true);
-            }
-        }
-    }
-    PROP_SCRIPT_MODE[pi] = encoded_mode;
-    PROP_SCRIPT_LI[pi] = li as u16;
-    if mode == 1 || mode == 2 {
-        PROP_MOVE_COOLDOWN[pi] = scientist_logic::SCRIPT_MOVE_START_ACTIVE_TICKS;
-        let distance = script_remaining_path_distance(m, pi);
-        let speed = scientist_logic::script_timeout_speed(mode, PROP_KIND[pi] == PROP_TYPE_BARNEY);
-        PROP_SCRIPT_PLAY_UNTIL[pi] =
-            now.wrapping_add(scientist_logic::script_move_timeout_ticks(distance, speed));
-    } else {
-        PROP_MOVE_COOLDOWN[pi] = 0;
-        PROP_SCRIPT_PLAY_UNTIL[pi] = now;
-    }
-    prop_scientist_set_flag(
-        pi,
-        PROP_SCRIPT_NOINTERRUPT,
-        rec.spawnflags & SF_SCRIPT_NOINTERRUPT != 0,
+unsafe fn script_plan_route(
+    m: &Map,
+    pi: usize,
+    pos: [i32; 3],
+    authored_goal: [i32; 3],
+    now: u16,
+) -> scripted_sequence::RoutePlan {
+    // logic_pre_tick runs before this frame rebuilds the compact mover
+    // list, but the prior tick's stable list already carries the exact
+    // current brush poses. Map initialization resets MOVER_COUNT to zero.
+    let movers = core::slice::from_raw_parts(
+        core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),
+        MOVER_COUNT.min(MAX_ENTS + 1),
     );
-    // aux[0] low six bits = slot+1; high ten bits = the original
-    // GoldSrc sequence duration in 100 ms quanta. Several retail sequences
-    // alias one baked pose clip for RAM, but their schedule timing stays exact.
-    if rec.aux_count >= 1 {
-        let a = m.logic_aux(rec.first_aux);
-        PROP_SCRIPT_PLAY_CLIP[pi] = script_clip_token_slot(a.target);
-        PROP_SCRIPT_IDLE_CLIP[pi] = script_clip_token_slot(a.delay_ticks);
-    } else {
-        PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
-        PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
-    }
+    let mut w = LocalNavView { m, movers, pi, now };
+    local_nav::plan_route(&mut w, pos, authored_goal, m.n_nav != 0)
+}
+
+/// Give actor `pi` to scripted_sequence `li` and start it.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn script_assign_actor(m: &Map, li: usize, pi: usize, now: u16) {
+    let mut world = ScriptWorldView::cold(m, pi);
+    let mut actor = script_actor_load(pi);
+    scripted_sequence::assign(
+        &mut actor,
+        li,
+        &script_record(m, li),
+        script_actor_kind(pi),
+        now,
+        &mut world,
+    );
+    script_actor_store(pi, &actor);
 }
 
 const SCRIPT_CLIP_SLOT_MASK: u16 = 0x003f;
@@ -10367,71 +10278,30 @@ unsafe fn script_tick_studio_events(m: &Map, pi: usize, idle: bool) {
     }
 }
 
-/// GoldSrc starts CineThink for a targeted scripted_sequence when m_iszIdle is
-/// present. It possesses the actor and moves it to the mark, but holds the idle
-/// clip until Use advances m_startTime. Encode that ownership in the existing
-/// script-mode high bit; no new actor array is required.
-unsafe fn script_prime_idle_actor(m: &Map, li: usize, rec: map::LogicEnt, pi: usize) {
-    script_assign_actor(m, li, rec, pi, 0);
-    PROP_SCRIPT_MODE[pi] = scientist_logic::script_primed_mode(PROP_SCRIPT_MODE[pi]);
-    // The play gesture begins only when this same script is later fired. The
-    // idle clip remains loaded and suspends ordinary AI while primed.
-    PROP_SCRIPT_PLAY_CLIP[pi] = 0xFF;
-    PROP_STATE[pi] = PROP_STATE_IDLE;
-    // The gameplay clock is map-local, but SIM_NOW still contains the previous
-    // room's last tick while a changelevel initializes this room.
-    PROP_SCRIPT_PLAY_UNTIL[pi] = scientist_logic::SCRIPT_PRIME_DELAY_TICKS;
+/// Possess an actor at map start for a sequence that waits to be fired.
+unsafe fn script_prime_idle_actor(m: &Map, li: usize, pi: usize) {
+    let mut world = ScriptWorldView::cold(m, pi);
+    let mut actor = script_actor_load(pi);
+    scripted_sequence::prime(
+        &mut actor,
+        li,
+        &script_record(m, li),
+        script_actor_kind(pi),
+        &mut world,
+    );
+    script_actor_store(pi, &actor);
 }
 
-/// Gate the staged half of a targeted scripted_sequence outside tick_props so
-/// semantic/reference builds do not push that already-large MIPS function past
-/// a PC16 branch span. Returns true while the actor must remain held.
+/// Gate a primed actor outside tick_props so semantic/reference builds do not
+/// push that already-large MIPS function past a PC16 branch span. Returns true
+/// while the actor must remain held.
 #[inline(never)]
 unsafe fn script_primed_actor_holds(m: &Map, pi: usize, now: u16) -> bool {
-    let encoded_mode = PROP_SCRIPT_MODE[pi];
-    match scientist_logic::script_prime_gate(
-        encoded_mode,
-        PROP_STATE[pi] == PROP_STATE_MOVE,
-        time_reached(now, PROP_SCRIPT_PLAY_UNTIL[pi]),
-    ) {
-        scientist_logic::ScriptPrimeGate::Hold => true,
-        scientist_logic::ScriptPrimeGate::Execute => false,
-        scientist_logic::ScriptPrimeGate::StartMove => {
-            let distance = script_remaining_path_distance(m, pi);
-            let speed = scientist_logic::script_timeout_speed(
-                scientist_logic::script_base_mode(encoded_mode),
-                PROP_KIND[pi] == PROP_TYPE_BARNEY,
-            );
-            PROP_SCRIPT_PLAY_UNTIL[pi] =
-                now.wrapping_add(scientist_logic::script_move_timeout_ticks(distance, speed));
-            PROP_STATE[pi] = PROP_STATE_MOVE;
-            false
-        }
-    }
-}
-
-/// Leave the internal face-mark phase and begin the authored play gesture.
-/// The ordinary completion path remains one tick later, matching
-/// SequenceDone's schedule transition.
-#[inline]
-unsafe fn script_finish_face_phase(m: &Map, pi: usize, primed: bool) {
-    if primed {
-        // Only walk/run scripts face their mark. Their possession raised
-        // m_iDelay (DelayStart(1)), and TASK_ENABLE_SCRIPT's DelayStart(0)
-        // on arrival sets m_startTime to now: a staged idle script with a
-        // walk/run move starts by itself once its actor is planted, as the
-        // Use it would otherwise wait for does (c1a4's fleeing houndeyes).
-        let li = prop_script_li(pi);
-        LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
-        script_assign_actor(m, li, m.logic(li), pi, SIM_NOW);
-        return;
-    }
-    PROP_SCRIPT_MODE[pi] = 0;
-    PROP_SCRIPT_PLAY_UNTIL[pi] = if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF {
-        SIM_NOW.wrapping_add(script_play_hold_ticks(m, pi))
-    } else {
-        SIM_NOW
-    };
+    let world = ScriptWorldView::cold(m, pi);
+    let mut actor = script_actor_load(pi);
+    let holds = scripted_sequence::primed_holds(&mut actor, script_actor_kind(pi), now, &world);
+    script_actor_store(pi, &actor);
+    holds
 }
 
 /// Advance one actor's cinematic state outside tick_props. Besides keeping the
@@ -10448,349 +10318,26 @@ unsafe fn tick_scripted_actor(
     map_index: u16,
     in_player_pvs: bool,
 ) -> bool {
-    let scripted_mode = scientist_logic::script_base_mode(PROP_SCRIPT_MODE[pi]);
-    if primed_hold {
-        // Possessed by a targeted idle script, either waiting for CineThink or
-        // planted at the mark and waiting for this same script's Use.
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        if scientist_logic::script_base_mode(PROP_SCRIPT_MODE[pi]) == 0 {
-            script_tick_studio_events(m, pi, true);
-        }
-        return true;
-    }
-    if scripted_mode != 0 {
-        // CTalkMonster::RunTask(TASK_WAIT_FOR_MOVEMENT) continues calling
-        // FIdleHello while a scientist walks/runs to a scripted_sequence. The
-        // ordinary AI path below is skipped for script-owned actors, so retain
-        // this progression-visible lobby dialogue here. Startup cooldown keeps
-        // the attempts in the source's actual WAIT_FOR_MOVEMENT phase.
-        if (scripted_mode == 1 || scripted_mode == 2)
-            && prop_is_scientist(PROP_KIND[pi])
-            && PROP_MOVE_COOLDOWN[pi] == 0
-        {
-            let responded = scientist_try_response(pi, map_index, in_player_pvs, m.n_props);
-            if !responded {
-                let greeted = scientist_try_hello(
-                    m,
-                    sight_movers,
-                    pi,
-                    player_pos,
-                    map_index,
-                    in_player_pvs,
-                    true,
-                );
-                if !greeted {
-                    let _ = scientist_try_idle_speak(
-                        m,
-                        sight_movers,
-                        pi,
-                        player_pos,
-                        map_index,
-                        in_player_pvs,
-                        true,
-                    );
-                }
-            }
-        }
-        // CBaseMonster::Move performs this lookahead on the same active 10 Hz
-        // movement think as MoveExecute. Startup/failure cooldowns do not call
-        // Move in the source, and an expired port deadline must still plant at
-        // the authored mark rather than create a last-moment route.
-        let current_encoded_mode = PROP_SCRIPT_MODE[pi];
-        if (scripted_mode == 1 || scripted_mode == 2)
-            && (pi as u16 ^ MOVE_TICK) & 1 == 0
-            && PROP_MOVE_COOLDOWN[pi] == 0
-            && !time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi])
-            && !scientist_logic::script_uses_route(current_encoded_mode)
-            && !scientist_logic::script_uses_detour(current_encoded_mode)
-        {
-            let direct = PROP_SCRIPT_GOAL[pi];
-            script_dynamic_local_replan(
-                m,
-                sight_movers,
-                pi,
-                SIM_NOW,
-                [direct[0] as i32, direct[1] as i32, direct[2] as i32],
-                [
-                    player_pos[0],
-                    player_pos[1] + PLAYER_TOUCH_HEIGHT / 2,
-                    player_pos[2],
-                ],
-                PLAYER_TOUCH_HEIGHT / 2,
-            );
-        }
-        let g = PROP_SCRIPT_GOAL[pi];
-        let waypoint_goal = [g[0] as i32, g[1] as i32, g[2] as i32];
-        let encoded_mode = PROP_SCRIPT_MODE[pi];
-        let primed = scientist_logic::script_is_primed(encoded_mode);
-        let detouring = scientist_logic::script_uses_detour(encoded_mode);
-        let mode = scripted_mode;
-        if mode == scientist_logic::SCRIPT_FACE_MODE {
-            PROP_STATE[pi] = PROP_STATE_IDLE;
-            let phase = PROP_MOVE_COOLDOWN[pi];
-            if phase != 0 && phase <= scientist_logic::SCRIPT_FACE_SETTLE_TICKS {
-                PROP_MOVE_COOLDOWN[pi] = phase - 1;
-                if phase == 1 {
-                    script_finish_face_phase(m, pi, primed);
-                }
-                return true;
-            }
-            // Monsters update scripted facing at 10 Hz, on the same parity as
-            // their preceding walk/run. The first Xash ChangeYaw update gets
-            // the 0.25 s delta clamp; later updates use the regular 0.1 s.
-            if (pi as u16 ^ MOVE_TICK) & 1 != 0 {
-                return true;
-            }
-            let target = PROP_SCRIPT_YAW[pi] & PROP_SCRIPT_YAW_MASK;
-            #[cfg(feature = "reference-trace")]
-            reference_trace::nav_step(
-                SIM_NOW as u32,
-                pi as u16,
-                prop_yaw_value(PROP_YAW[pi]) as i32,
-                target as i32,
-                if phase == scientist_logic::SCRIPT_FACE_FIRST_PENDING {
-                    0x61
-                } else {
-                    0x60
-                },
-            );
-            let next_yaw = scientist_logic::script_face_yaw_step(
-                prop_yaw_value(PROP_YAW[pi]),
-                target,
-                phase == scientist_logic::SCRIPT_FACE_FIRST_PENDING,
-            );
-            PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], next_yaw);
-            PROP_MOVE_COOLDOWN[pi] = 0;
-            if prop_yaw_value(PROP_YAW[pi]) == target {
-                PROP_MOVE_COOLDOWN[pi] = scientist_logic::SCRIPT_FACE_SETTLE_TICKS;
-            }
-            return true;
-        }
-        let move_timed_out =
-            (mode == 1 || mode == 2) && time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]);
-        // A detour temporarily owns PROP_SCRIPT_GOAL. At the overall movement
-        // deadline GoldSrc's plant task still targets the authored sequence
-        // mark, not the intermediate apex.
-        let goal = if move_timed_out && detouring && PROP_SCRIPT_LI[pi] != u16::MAX {
-            m.logic(prop_script_li(pi)).origin
-        } else {
-            waypoint_goal
-        };
-        let arrived = if move_timed_out {
-            // Route/floor approximation may fail on an exotic set-piece.
-            // Planting at a deterministic deadline is preferable to suppressing
-            // this script's completion outputs forever.
-            #[cfg(feature = "reference-trace")]
-            reference_trace::nav_step(
-                SIM_NOW as u32,
-                pi as u16,
-                goal[0] - PROP_POS[pi][0],
-                goal[2] - PROP_POS[pi][2],
-                0x40,
-            );
-            prop_nav_cache_invalidate(pi);
-            // GoldSrc's TASK_PLANT_ON_SCRIPT copies the authored script
-            // origin verbatim.  It must not DROP_TO_FLOOR: hanging/crawling
-            // marks such as c1a1b's ceiling_dangle intentionally sit in 3D.
-            prop_set_pos_exact(m, pi, goal);
-            true
-        } else if mode == 3 {
-            true
-        } else if mode == 4 {
-            prop_nav_cache_invalidate(pi);
-            prop_set_pos_exact(m, pi, goal);
-            true
-        } else {
-            let start_pending = PROP_MOVE_COOLDOWN[pi] != 0;
-            // GoldSrc tests the 8-unit waypoint boundary before moving, then
-            // TASK_PLANT_ON_SCRIPT copies the exact mark. A post-step test
-            // silently widens the gate by one whole movement quantum.
-            if scientist_logic::script_at_mark(dist2_xz(PROP_POS[pi], goal), start_pending) {
-                true
-            } else {
-                // houndeye.mdl's run: 245.8 units over 18 frames at 30 fps
-                // (410 u/s, c1a4's tunnel runs), not the scientist's 280.
-                let speed = if mode == 2 && PROP_KIND[pi] == PROP_TYPE_HOUNDEYE {
-                    20
-                } else {
-                    scientist_logic::script_move_speed(
-                        mode,
-                        MOVE_TICK,
-                        PROP_KIND[pi] == PROP_TYPE_BARNEY,
-                    ) as i32
-                };
-                prop_move_towards_point(m, movers, pi, goal, speed);
-                PROP_STATE[pi] = PROP_STATE_MOVE;
-                false
-            }
-        };
-        if arrived && detouring && !move_timed_out {
-            // Advance the two-point local route without allocating GoldSrc's
-            // Route array: restore the scripted_sequence origin as the final
-            // waypoint and release the detour flag in the existing mode byte.
-            let authored = m.logic(prop_script_li(pi)).origin;
-            PROP_SCRIPT_GOAL[pi] = [authored[0] as i16, authored[1] as i16, authored[2] as i16];
-            PROP_SCRIPT_MODE[pi] = scientist_logic::script_detour_mode(encoded_mode, false);
-            prop_script_move_residue_clear(pi);
-            PROP_MOVE_COOLDOWN[pi] = 0;
-            PROP_STATE[pi] = PROP_STATE_MOVE;
-            return true;
-        }
-        if arrived {
-            if mode != 3 {
-                // TASK_PLANT_ON_SCRIPT snaps the actor exactly to the mark
-                // before the play sequence starts.
-                prop_set_pos_exact(m, pi, goal);
-                prop_script_move_residue_clear(pi);
-            }
-            PROP_STATE[pi] = PROP_STATE_IDLE;
-            let explicit_idle_face = (mode == 1 || mode == 2)
-                && PROP_SCRIPT_LI[pi] != u16::MAX
-                && prop_script_li(pi) < m.n_logic.min(MAX_LOGIC)
-                && m.logic(prop_script_li(pi)).flags & map::LOGIC_SCRIPTED_HAS_IDLE != 0;
-            if explicit_idle_face {
-                // GoldSrc plants first, then turns through
-                // TASK_FACE_SCRIPT/TASK_FACE_IDEAL. The explicit phase is
-                // needed for authored idle sequences: their wait animation
-                // otherwise hides this schedule time entirely. Play-only
-                // scripts already account for their post-plant schedule in
-                // the cooked clip hold; adding both misses one-second actor
-                // retry windows (c0a0e's barnwalk3 progression gate).
-                PROP_SCRIPT_MODE[pi] = if primed {
-                    scientist_logic::script_primed_mode(scientist_logic::SCRIPT_FACE_MODE)
-                } else {
-                    scientist_logic::SCRIPT_FACE_MODE
-                };
-                PROP_MOVE_COOLDOWN[pi] = scientist_logic::SCRIPT_FACE_FIRST_PENDING;
-                return true;
-            }
-            if mode != 3 {
-                PROP_YAW[pi] =
-                    prop_with_yaw(PROP_YAW[pi], PROP_SCRIPT_YAW[pi] & PROP_SCRIPT_YAW_MASK);
-            }
-            PROP_SCRIPT_MODE[pi] = if primed {
-                scientist_logic::script_primed_mode(0)
-            } else {
-                0
-            };
-            if primed {
-                // A staged idle script has reached its mark; do not complete it
-                // or fire outputs until the script is explicitly used.
-                // Once base mode is zero the prime gate no longer consults the
-                // timer, so it becomes the idle animation/event phase origin.
-                PROP_SCRIPT_PLAY_UNTIL[pi] = SIM_NOW;
-                return true;
-            }
-            // Hold the gesture at the mark before firing the script chain. A
-            // move-only script with no gesture completes on the next tick.
-            PROP_SCRIPT_PLAY_UNTIL[pi] = if PROP_SCRIPT_PLAY_CLIP[pi] != 0xFF {
-                SIM_NOW.wrapping_add(script_play_hold_ticks(m, pi))
-            } else {
-                SIM_NOW
-            };
-        }
-        return true;
-    }
-
-    if PROP_SCRIPT_LI[pi] != u16::MAX && !time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]) {
-        script_tick_studio_events(m, pi, false);
-        // The scripted sequence still owns this actor for the entire play
-        // clip.  Falling through here lets ordinary scientist/Barney AI run
-        // in the same tick, so a play-only sequence can walk away from its
-        // authored mark before its completion target fires.  c1a0c's
-        // console_guy then ends up outside both the player's use radius and
-        // control_retinal1's acquisition radius, permanently closing the
-        // retinal-scanner route.
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        return true;
-    }
-
-    // Scripted move finished: release the actor before firing outputs so the
-    // next script in a chain can immediately acquire the same actor.
-    if PROP_SCRIPT_LI[pi] != u16::MAX && time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]) {
-        let li = prop_script_li(pi);
-        prop_script_clear(pi);
-        if li < m.n_logic.min(MAX_LOGIC) {
-            let rec = m.logic(li);
-            script_root_motion(m, pi, rec);
-            logic_sub_use_targets(
-                m,
-                m.n_logic.min(MAX_LOGIC),
-                m.n_ents.min(MAX_ENTS),
-                li,
-                rec,
-                SIM_NOW,
-                map::USE_TOGGLE,
-                0,
-            );
-            if rec.spawnflags & SF_SCRIPT_REPEATABLE == 0 {
-                logic_remove_entity(li, rec, m.n_ents.min(MAX_ENTS));
-            }
-        }
-    }
-    if PROP_SCRIPT_IDLE_CLIP[pi] != 0xFF && PROP_HEALTH[pi] > 0 {
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        return true;
-    }
-    false
-}
-
-/// CBaseMonster::CineCleanup: a play sequence that carries its actor away
-/// (c1a2b's zombie through the window, c1a1b's houndeye leap) leaves it where
-/// the root bone ended, dropped to the floor. The cooker appends that offset
-/// (forward, left) as a trailing aux record, marked by an even aux count.
-#[inline(never)]
-#[optimize(size)]
-unsafe fn script_root_motion(m: &Map, pi: usize, rec: map::LogicEnt) {
-    if rec.aux_count < 2 || rec.aux_count & 1 != 0 || PROP_HEALTH[pi] == 0 {
-        return;
-    }
-    let a = m.logic_aux(rec.first_aux + rec.aux_count - 1);
-    let (f, l) = (a.target as i16 as i32, a.delay_ticks as i16 as i32);
-    let yaw = prop_yaw_value(PROP_YAW[pi]);
-    let s = sincos::sin_q12(yaw);
-    let c = sincos::sin_q12((yaw + 1024) & 0x0fff);
-    let p = PROP_POS[pi];
-    let mut pos = [
-        p[0] + ((s * f - c * l) >> 12),
-        p[1],
-        p[2] + ((c * f + s * l) >> 12),
-    ];
-    if let Some(y) = prop_floor_y_down(m, pi, [pos[0], p[1] + 1, pos[2]], 256) {
-        pos[1] = y;
-    }
-    prop_nav_cache_invalidate(pi);
-    prop_set_pos_exact(m, pi, pos);
-}
-
-enum ScriptOwnedActor {
-    None,
-    Primed(usize),
-    Playing,
-}
-
-#[inline]
-unsafe fn script_find_owned_actor(li: usize) -> ScriptOwnedActor {
-    let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-    let mut pi = 0usize;
-    while pi < n {
-        if PROP_ACTIVE[pi] != 0
-            && PROP_HEALTH[pi] > 0
-            && PROP_SCRIPT_LI[pi] != u16::MAX
-            && prop_script_li(pi) == li
-        {
-            return match scientist_logic::script_owned_use(
-                true,
-                scientist_logic::script_is_primed(PROP_SCRIPT_MODE[pi]),
-            ) {
-                scientist_logic::ScriptOwnedUse::AssignPrimed => ScriptOwnedActor::Primed(pi),
-                scientist_logic::ScriptOwnedUse::IgnorePlaying => ScriptOwnedActor::Playing,
-                scientist_logic::ScriptOwnedUse::Search => ScriptOwnedActor::None,
-            };
-        }
-        pi += 1;
-    }
-    ScriptOwnedActor::None
+    let cx = scripted_sequence::TickContext {
+        now: SIM_NOW,
+        move_tick: MOVE_TICK,
+        slot: pi as u16,
+        kind: script_actor_kind(pi),
+        primed_hold,
+    };
+    let mut world = ScriptWorldView {
+        m,
+        movers,
+        sight_movers,
+        pi,
+        player_pos,
+        map_index,
+        in_player_pvs,
+    };
+    let mut actor = script_actor_load(pi);
+    let owned = scripted_sequence::tick(&mut actor, &cx, &mut world);
+    script_actor_store(pi, &actor);
+    owned
 }
 
 #[optimize(size)]
@@ -10977,25 +10524,16 @@ unsafe fn logic_use_entity(
         // USE_ON/OFF: any fire toggles between Swing and a retained dead stop.
         map::LOGIC_FUNC_PENDULUM => logic_use_pendulum(nents, li, rec, now),
         map::LOGIC_SCRIPTED => {
-            // arg0 remains the exact monster targetname. flags optionally
-            // carries classname type+1 and wait_ticks carries m_flRadius.
-            let actor = match script_find_owned_actor(li) {
-                ScriptOwnedActor::Primed(pi) => Some(pi),
-                // `CCineMonster::Use` deliberately ignores a duplicate Use
-                // while this same sequence is already playing.
-                ScriptOwnedActor::Playing => return,
-                ScriptOwnedActor::None => script_find_actor(rec),
-            };
-            if let Some(pi) = actor {
-                LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
-                script_assign_actor(m, li, rec, pi, now);
-            } else {
-                // The selected actor may belong to another cinematic. GoldSrc
-                // leaves this scripted_sequence alive and retries CineThink in
-                // one second; dropping the one-shot Use breaks c0a0e's
-                // barnwalk3 -> entrymm chain.
-                LOGIC_STATE[li] = LOGIC_STATE_WAITING;
-                LOGIC_NEXT[li] = now.wrapping_add(scientist_logic::SCRIPT_RETRY_TICKS);
+            match scripted_sequence::claim(li, &script_record(m, li), &ScriptRosterView) {
+                scripted_sequence::Claim::Assign(pi) => {
+                    LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
+                    script_assign_actor(m, li, pi, now);
+                }
+                scripted_sequence::Claim::Ignore => return,
+                scripted_sequence::Claim::Retry => {
+                    LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+                    LOGIC_NEXT[li] = now.wrapping_add(scripted_sequence::RETRY_TICKS);
+                }
             }
         }
         map::LOGIC_WEAPONSTRIP => {
@@ -11038,22 +10576,21 @@ unsafe fn logic_use_entity(
             } else {
                 rec.origin
             };
-            if speaker != TALKING_PROP_NONE {
-                // PlayScriptedSentence explicitly forgets CLIENT_PUSH.
-                prop_client_push_set(speaker as usize, false);
-            }
             let ticks = sfx::play_voice_authored(rec.arg0 as u8, sound_pos, rec.flags, rec.sound1);
-            if ticks != 0 && speaker != TALKING_PROP_NONE {
-                TALKING_PROP = speaker;
-                TALKING_VOICE = rec.arg0 as u8;
-                TALKING_UNTIL = now.wrapping_add(ticks);
-                // CTalkMonster::PlaySentence marks bit_saidHelloPlayer for
-                // every spoken line, including PlayScriptedSentence. A named
-                // lobby actor that already delivered authored dialogue must
-                // not later add an autonomous greeting.
-                if prop_is_human(PROP_KIND[speaker as usize]) {
-                    prop_scientist_set_flag(speaker as usize, PROP_SCI_HELLO_SAID, true);
-                }
+            if speaker != TALKING_PROP_NONE {
+                let pi = speaker as usize;
+                let mut actor = talk_actor_load(pi);
+                let mut clock = talk_clock();
+                talk_monster::authored_line(
+                    &mut actor,
+                    &mut clock,
+                    rec.arg0 as u8,
+                    now,
+                    ticks,
+                    prop_is_human(PROP_KIND[pi]),
+                );
+                talk_actor_store(&actor);
+                talk_clock_store(clock);
             }
             logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, depth + 1);
         }
@@ -11278,7 +10815,7 @@ unsafe fn logic_use_entity(
             if rec.arg1 == map::AITRIGGER_COMMAND_TOUCH && use_type == map::USE_OFF {
                 monster_command_touch(m, nlogic, rec.target);
             } else if rec.arg1 == map::AITRIGGER_FLY_PATH && OSPREY.li as usize == li {
-                OSPREY.next = now.wrapping_add(2); // COsprey::CommandUse
+                osprey::command_use(now);
             } else if rec.arg1 == map::AITRIGGER_APACHE_PATH {
                 apache::startup(li);
             } else if rec.arg1 == map::AITRIGGER_COMMAND_TOUCH && use_type == map::USE_ON {
@@ -11584,12 +11121,7 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
     // per sim tick so a kick recovers over ~5-6 ticks. Snap tiny residuals to 0.
     PUNCH_PITCH -= (PUNCH_PITCH * 5) / 16 + PUNCH_PITCH.signum();
     PUNCH_YAW -= (PUNCH_YAW * 5) / 16 + PUNCH_YAW.signum();
-    if DAMAGE_TICKS > 0 {
-        DAMAGE_TICKS -= 1;
-        if DAMAGE_TICKS == 0 {
-            DAMAGE_DIRECTION = 0;
-        }
-    }
+    (*core::ptr::addr_of_mut!(DAMAGE_COMPASS)).tick();
     if GEIGER_COOLDOWN & 0x0f != 0 {
         GEIGER_COOLDOWN -= 1;
     }
@@ -11867,13 +11399,11 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
 /// the same screen positions and fade law without spending another atlas page
 /// or resident texture packet pool.
 fn draw_damage_compass(health: u16) {
-    let edges = unsafe { DAMAGE_DIRECTION };
+    let edges = unsafe { DAMAGE_COMPASS }.edges();
     if edges == 0 {
         return;
     }
-    // GoldSrc uses amber above 25 health and red below it. Keep this much
-    // softer than the removed full-screen red wash.
-    let green = if health > 25 { 40 } else { 0 };
+    let [red, green, blue] = player_rules::compass_colour(health);
     let mut edge = 0usize;
     let arrows = [
         [(152, 24), (168, 24), (160, 38)],    // front / top
@@ -11885,9 +11415,9 @@ fn draw_damage_compass(health: u16) {
         if edges & (1 << edge) != 0 {
             fx_tri_flat_blended(
                 arrows[edge],
-                128,
+                red,
                 green,
-                0,
+                blue,
                 psx_gpu::material::BlendMode::Add,
             );
         }
@@ -12564,10 +12094,11 @@ unsafe fn prop_use_reply(pi: usize, action: u8, now: u16) {
         return;
     }
     let duration = sfx::play_voice_world(voice, PROP_POS[pi]);
-    TALKING_PROP = pi as u8;
-    TALKING_VOICE = voice;
-    TALKING_UNTIL = now.wrapping_add(duration.max(1));
-    prop_client_push_set(pi, false);
+    let mut actor = talk_actor_load(pi);
+    let mut clock = talk_clock();
+    talk_monster::reply_line(&mut actor, &mut clock, voice, now, duration);
+    talk_actor_store(&actor);
+    talk_clock_store(clock);
     #[cfg(feature = "reference-trace")]
     reference_trace::talk(
         now,
@@ -12647,16 +12178,10 @@ unsafe fn logic_try_use(
     while pi < nprops {
         if prop_is_human(PROP_KIND[pi])
             && PROP_ACTIVE[pi] != 0
-            && !(TALKING_PROP == pi as u8
-                && TALKING_VOICE & TALKING_VOICE_AUTONOMOUS == 0
-                && !time_reached(now, TALKING_UNTIL))
+            && talk_monster::use_eligible(&talk_actor_load(pi), &talk_clock(), now)
         {
-            let following = prop_scientist_flag(pi, PROP_SCI_FOLLOWING);
-            let action = scientist_logic::follow_use(
-                PROP_HEALTH[pi] > 0,
-                following,
-                prop_scientist_flag(pi, PROP_SCI_PREDISASTER),
-                prop_scientist_flag(pi, PROP_SCI_PROVOKED),
+            let action = talk_monster::use_reaction(
+                &talk_actor_load(pi),
                 prop_script_busy(pi),
                 prop_scientist_flag(pi, PROP_SCRIPT_NOINTERRUPT),
             );
@@ -12686,56 +12211,38 @@ unsafe fn logic_try_use(
     }
 
     if best_prop != usize::MAX {
-        let following = prop_scientist_flag(best_prop, PROP_SCI_FOLLOWING);
-        match scientist_logic::follow_use(
-            PROP_HEALTH[best_prop] > 0,
-            following,
-            prop_scientist_flag(best_prop, PROP_SCI_PREDISASTER),
-            prop_scientist_flag(best_prop, PROP_SCI_PROVOKED),
-            prop_script_busy(best_prop),
+        let script_busy = prop_script_busy(best_prop);
+        let mut actor = talk_actor_load(best_prop);
+        let reaction = talk_monster::use_reaction(
+            &actor,
+            script_busy,
             prop_scientist_flag(best_prop, PROP_SCRIPT_NOINTERRUPT),
-        ) {
-            scientist_logic::FollowUse::Start => {
-                // StartFollowing cancels an interruptible cinematic and never
-                // fires that script's target/killtarget.
-                if prop_script_busy(best_prop) {
-                    prop_script_clear(best_prop);
-                }
-                // SDK LimitFollowers(player, 1) prunes older talk followers
-                // beyond the first before adding this scientist. With the new
-                // actor that permits at most two total followers.
-                let mut kept = false;
-                let mut qi = 0usize;
-                while qi < nprops {
-                    if qi != best_prop && prop_scientist_flag(qi, PROP_SCI_FOLLOWING) {
-                        if kept {
-                            prop_scientist_set_flag(qi, PROP_SCI_FOLLOWING, false);
-                            prop_nav_cache_invalidate(qi);
-                        } else {
-                            kept = true;
-                        }
+        );
+        let effects = talk_monster::apply_use(&mut actor, reaction, script_busy);
+        talk_actor_store(&actor);
+        if effects.cancel_script {
+            prop_script_clear(best_prop);
+        }
+        if effects.limit_followers {
+            let mut kept = 0usize;
+            let mut qi = 0usize;
+            while qi < nprops {
+                if qi != best_prop && prop_scientist_flag(qi, PROP_SCI_FOLLOWING) {
+                    if talk_monster::followers_to_keep(kept) {
+                        kept += 1;
+                    } else {
+                        prop_scientist_set_flag(qi, PROP_SCI_FOLLOWING, false);
+                        prop_nav_cache_invalidate(qi);
                     }
-                    qi += 1;
                 }
-                prop_scientist_set_flag(best_prop, PROP_SCI_FOLLOWING, true);
-                prop_scientist_set_flag(best_prop, PROP_SCI_HELLO_SAID, true);
-                prop_client_push_set(best_prop, false);
-                prop_use_reply(best_prop, 0, now);
-                if PROP_STATE[best_prop] == PROP_STATE_MOVE_AWAY
-                    || PROP_STATE[best_prop] == PROP_STATE_MOVE_AWAY_FACE
-                {
-                    PROP_STATE[best_prop] = PROP_STATE_IDLE;
-                    PROP_AI_TIMER[best_prop] = 0;
-                    PROP_MOVE_COOLDOWN[best_prop] = 0;
-                }
+                qi += 1;
             }
-            scientist_logic::FollowUse::Stop => {
-                prop_scientist_set_flag(best_prop, PROP_SCI_FOLLOWING, false);
-                prop_nav_cache_invalidate(best_prop);
-                prop_use_reply(best_prop, 1, now);
-            }
-            scientist_logic::FollowUse::Decline => prop_use_reply(best_prop, 2, now),
-            scientist_logic::FollowUse::Ignore => {}
+        }
+        if effects.refresh_path {
+            prop_nav_cache_invalidate(best_prop);
+        }
+        if let Some(reply) = effects.reply {
+            prop_use_reply(best_prop, reply as u8, now);
         }
     } else if best != usize::MAX {
         let rec = m.logic(best);
@@ -12822,8 +12329,8 @@ unsafe fn logic_touch_triggers(
     armor: &mut u16,
     now: u16,
 ) {
-    // CTriggerHurt::RadiationThink samples the nearest radioactive volume
-    // every 0.25 seconds whether or not the player is touching it.
+    // The Geiger counter samples the nearest radioactive volume every 0.25
+    // seconds whether or not the player is touching it.
     let geiger_count = GEIGER_COOLDOWN >> 4;
     let geiger_due = geiger_count != 0 && GEIGER_COOLDOWN & 0x0f == 0;
     let pmins = [
@@ -13043,7 +12550,7 @@ unsafe fn logic_touch_triggers(
             geiger_count as usize
         };
         let geiger_base = nlogic + LOGIC_TOUCH_COUNT as usize + LOGIC_PRE_COUNT as usize;
-        let mut geiger_nearest2 = 801 * 801;
+        let mut geiger = player_rules::GeigerScan::new();
         let mut geiger_scan = 0usize;
         while geiger_scan < geiger_scan_count {
             let li = if geiger_fallback {
@@ -13054,42 +12561,15 @@ unsafe fn logic_touch_triggers(
             if LOGIC_KIND[li] == map::LOGIC_TRIGGER_HURT && LOGIC_STATE[li] == LOGIC_STATE_BOTTOM {
                 let rec = m.logic(li);
                 if rec.flags & map::LOGIC_TRIGGER_HURT_RADIATION != 0 {
-                    let center = logic_center(rec);
-                    let dx = (center[0] - player_pos[0]).clamp(-801, 801);
-                    let dy = (center[1] - player_pos[1]).clamp(-801, 801);
-                    let dz = (center[2] - player_pos[2]).clamp(-801, 801);
-                    geiger_nearest2 = geiger_nearest2.min(dx * dx + dy * dy + dz * dz);
+                    geiger.add_source(player_pos, logic_center(rec));
                 }
             }
             geiger_scan += 1;
         }
-        let range = isqrt_i32(geiger_nearest2);
-        let chance: u32 = match range {
-            601..=800 => 2,
-            501..=600 => 4,
-            301..=500 => 8,
-            201..=300 => 28,
-            151..=200 => 40,
-            101..=150 => 60,
-            76..=100 => 80,
-            51..=75 => 90,
-            0..=50 => 95,
-            _ => 0,
-        };
-        if (impact_rng().next_mixed() & 127) < chance || (impact_rng().next_mixed() & 127) < chance
-        {
-            sfx::play_vol(
-                sfx::GEIGER,
-                if range > 400 {
-                    3
-                } else if range > 150 {
-                    2
-                } else {
-                    1
-                },
-            );
+        if let Some(click) = geiger.sample(&mut || impact_rng().next_mixed()) {
+            sfx::play_vol(sfx::GEIGER, click.volume_den);
         }
-        GEIGER_COOLDOWN = (geiger_count << 4) | 5;
+        GEIGER_COOLDOWN = (geiger_count << 4) | player_rules::GEIGER_SAMPLE_TICKS;
     }
 }
 
@@ -13209,17 +12689,15 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     ENDING_FROM = 0;
     CAMERA_LI = u16::MAX;
     CAMERA_LOCK = false;
-    DAMAGE_DIRECTION = 0;
-    DAMAGE_TICKS = 0;
+    DAMAGE_COMPASS = player_rules::DamageCompass::new();
     GEIGER_COOLDOWN = 0;
     TRACKTRAIN_SUBMODEL = m.tram_submodel.min(u16::MAX as usize) as u16;
-    TRAM_NODE_ALT = [0; 8];
-    TRAM_NODE_OFF = [0; 8];
+    TRAM_SWITCHES = world_rules::TrackSwitches::new();
     SHOOTABLE_BUTTONS = 0;
     let mut wi = 0usize;
     while wi < m.n_way.min(256) {
         if m.way_flags(wi) & cooked::PATH_TRACK_DISABLED != 0 {
-            TRAM_NODE_OFF[wi >> 5] |= 1 << (wi & 31);
+            (*core::ptr::addr_of_mut!(TRAM_SWITCHES)).disable(wi);
         }
         wi += 1;
     }
@@ -14598,24 +14076,6 @@ unsafe fn prop_nav_cache_put(pi: usize, slot: usize, value: u8) {
     PROP_NEAR_ENTS[pi][slot] = mover_slot | ((value as u16) << 8);
 }
 
-/// Change the cached source without ever letting a next-hop computed for the
-/// old source masquerade as a hit for the new one.
-#[inline]
-unsafe fn prop_nav_cache_set_src(pi: usize, src: u8) {
-    if prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) != src {
-        prop_nav_cache_put(pi, PROP_NAV_DST_SLOT, NAV_NODE_NONE);
-        prop_nav_cache_put(pi, PROP_NAV_NEXT_SLOT, NAV_NODE_NONE);
-    }
-    prop_nav_cache_put(pi, PROP_NAV_SRC_SLOT, src);
-}
-
-#[inline]
-unsafe fn prop_nav_cache_set_route(pi: usize, src: u8, dst: u8, next: u8) {
-    prop_nav_cache_put(pi, PROP_NAV_SRC_SLOT, src);
-    prop_nav_cache_put(pi, PROP_NAV_DST_SLOT, dst);
-    prop_nav_cache_put(pi, PROP_NAV_NEXT_SLOT, next);
-}
-
 // Lifecycle-only cold path. Keeping this out of line avoids cloning three
 // packed-byte stores into every wake/script/damage call site.
 #[inline(never)]
@@ -15101,188 +14561,73 @@ fn nav_land_node(m: &Map, i: usize) -> bool {
     m.nav_node_type(i) & 1 != 0
 }
 
-unsafe fn nav_nearest(m: &Map, movers: &[phys::Mover], pos: [i32; 3], max_d2: i32) -> u8 {
-    let n = nav_node_count(m);
-    let mut best = NAV_NODE_NONE;
-    let mut best_d2 = max_d2;
-    let mut i = 0usize;
-    while i < n {
-        let node = m.nav_node(i);
-        if nav_land_node(m, i) {
-            // Retail LAND-node m_vecOriginPeek is exactly eight units above
-            // m_vecOrigin. FindNearestNode ranks that 3D point, not the
-            // ground-plane origin used by movement steering.
-            let peek = [node.pos[0], node.pos[1] + 8, node.pos[2]];
-            let dy = peek[1] - pos[1];
-            let d2 = dist2_xz(pos, peek) + dy * dy;
-            // GoldSrc CheckNode accepts the nearest candidate only when a
-            // point trace reaches its exact peek origin. Without the trace a
-            // geometrically close node behind a wall can strand the last
-            // authored chord.
-            if d2 < best_d2 && actor_line_clear(m, movers, pos, peek) {
-                best = i as u8;
-                best_d2 = d2;
-            }
-        }
-        i += 1;
+// ---- node-graph adaptor: the packed route cache and the map's graph ----
+
+#[inline]
+unsafe fn nav_cache_load(pi: usize) -> nav_graph::RouteCache {
+    nav_graph::RouteCache {
+        src: prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT),
+        dst: prop_nav_cache_get(pi, PROP_NAV_DST_SLOT),
+        next: prop_nav_cache_get(pi, PROP_NAV_NEXT_SLOT),
     }
-    best
 }
 
-unsafe fn nav_nearest_reachable(
-    m: &Map,
-    movers: &[phys::Mover],
+#[inline]
+unsafe fn nav_cache_store(pi: usize, cache: nav_graph::RouteCache) {
+    prop_nav_cache_put(pi, PROP_NAV_SRC_SLOT, cache.src);
+    prop_nav_cache_put(pi, PROP_NAV_DST_SLOT, cache.dst);
+    prop_nav_cache_put(pi, PROP_NAV_NEXT_SLOT, cache.next);
+}
+
+/// The map's node graph as one actor sees it.
+struct NavGraphView<'a> {
+    m: &'a Map,
+    movers: &'a [phys::Mover],
     pi: usize,
-    from: [i32; 3],
-    pos: [i32; 3],
-    max_d2: i32,
-) -> u8 {
-    let n = nav_node_count(m);
-
-    // The previous winner is only an incumbent, never an unverified answer:
-    // trace it again from the actor's exact current position.  If it is still
-    // reachable, only a geometrically closer reachable node can change the
-    // result.  Equal-distance nodes with a lower index are also tested because
-    // the original ascending scan's strict `<` comparison makes the first tie
-    // win.  This therefore returns exactly the same node as the full scan while
-    // avoiding its chain of progressively-closer BSP traces.
-    let cached = prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) as usize;
-    if cached < n && nav_land_node(m, cached) {
-        let node = m.nav_node(cached);
-        let dy = (node.pos[1] - pos[1]).abs();
-        let d2 = dist2_xz(pos, node.pos);
-        if dy <= NAV_VERTICAL_MAX && d2 < max_d2 {
-            let to = [node.pos[0], from[1], node.pos[2]];
-            if actor_line_clear(m, movers, from, to) {
-                let mut best = cached as u8;
-                let mut best_d2 = d2;
-                let mut i = 0usize;
-                while i < n {
-                    if i != cached && nav_land_node(m, i) {
-                        let candidate = m.nav_node(i);
-                        let candidate_dy = (candidate.pos[1] - pos[1]).abs();
-                        if candidate_dy <= NAV_VERTICAL_MAX {
-                            let candidate_d2 = dist2_xz(pos, candidate.pos);
-                            let can_beat = candidate_d2 < best_d2
-                                || (candidate_d2 == best_d2 && i < best as usize);
-                            if can_beat {
-                                let candidate_to = [candidate.pos[0], from[1], candidate.pos[2]];
-                                if actor_line_clear(m, movers, from, candidate_to) {
-                                    best = i as u8;
-                                    best_d2 = candidate_d2;
-                                }
-                            }
-                        }
-                    }
-                    i += 1;
-                }
-                prop_nav_cache_set_src(pi, best);
-                return best;
-            }
-        }
-    }
-
-    // No valid incumbent (map reset, blocked source, out of range): retain the
-    // old scan byte-for-byte as the conservative fallback.
-    let mut best = NAV_NODE_NONE;
-    let mut best_d2 = max_d2;
-    let mut i = 0usize;
-    while i < n {
-        let node = m.nav_node(i);
-        let dy = (node.pos[1] - pos[1]).abs();
-        if nav_land_node(m, i) && dy <= NAV_VERTICAL_MAX {
-            let d2 = dist2_xz(pos, node.pos);
-            let to = [node.pos[0], from[1], node.pos[2]];
-            if d2 < best_d2 && actor_line_clear(m, movers, from, to) {
-                best = i as u8;
-                best_d2 = d2;
-            }
-        }
-        i += 1;
-    }
-    prop_nav_cache_set_src(pi, best);
-    best
 }
 
-unsafe fn nav_next_node(m: &Map, pi: usize, src: u8, dst: u8) -> u8 {
-    let n = nav_node_count(m);
-    let src_i = src as usize;
-    let dst_i = dst as usize;
-    if src_i >= n || dst_i >= n {
-        prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
-        return NAV_NODE_NONE;
-    }
-    if prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) == src
-        && prop_nav_cache_get(pi, PROP_NAV_DST_SLOT) == dst
-    {
-        let cached = prop_nav_cache_get(pi, PROP_NAV_NEXT_SLOT);
-        // NONE also represents a route validated at assignment but not yet
-        // advanced from its source node. Compute that first real hop only once
-        // the actor has physically reached the source anchor.
-        if cached != NAV_NODE_NONE {
-            return cached;
-        }
-    }
-    if src == dst {
-        prop_nav_cache_set_route(pi, src, dst, src);
-        return src;
+impl nav_graph::NavGraph for NavGraphView<'_> {
+    fn node_count(&self) -> usize {
+        nav_node_count(self.m)
     }
 
-    let next = if m.nav_has_exact_routes() {
-        let exact = m.nav_route_next(src_i, dst_i);
-        if exact == src_i || exact >= n {
-            NAV_NODE_NONE
+    fn node_pos(&self, node: usize) -> [i32; 3] {
+        self.m.nav_node(node).pos
+    }
+
+    fn is_land(&self, node: usize) -> bool {
+        nav_land_node(self.m, node)
+    }
+
+    fn cooked_next(&self, src: usize, dst: usize) -> Option<usize> {
+        if self.m.nav_has_exact_routes() {
+            Some(self.m.nav_route_next(src, dst))
         } else {
-            exact as u8
+            None
         }
-    } else {
-        // Official campaign maps with nodes always ship a retail `.nod`; the
-        // cooker warns for custom maps that fall back to synthesized links.
-        // Keep the runtime static-RAM win rather than reserving a 510-byte BFS
-        // workspace for an unaudited compatibility path.
-        NAV_NODE_NONE
-    };
-    prop_nav_cache_set_route(pi, src, dst, next);
-    next
+    }
+
+    fn line_clear(&mut self, from: [i32; 3], to: [i32; 3]) -> bool {
+        actor_line_clear(self.m, self.movers, from, to)
+    }
+
+    fn walkable(&mut self, from: [i32; 3], to: [i32; 3]) -> bool {
+        unsafe { script_human_chord_clear(self.m, self.movers, self.pi, from, to) }
+    }
 }
 
-/// Cold BuildRoute/FGetNodeRoute gate for a newly possessed scripted actor.
-/// Cache the validated endpoints but deliberately defer the first table hop:
-/// Gold's route begins at the source node, which can be the obstacle's corner.
+/// Whether the graph connects actor `pi` to `goal`; leaves the route waiting
+/// at its source node.
 #[inline(never)]
 unsafe fn nav_route_available(m: &Map, movers: &[phys::Mover], pi: usize, goal: [i32; 3]) -> bool {
-    let pos = PROP_POS[pi];
-    // GoldSrc FGetNodeRoute calls CGraph::FindNearestNode(pev->origin), whose
-    // CheckNode performs a point trace from the actor origin to the node's
-    // eight-unit-high peek point.  A full human-hull sweep is stricter and can
-    // reject the real nearest node even though Gold's graph accepts it; c1a0's
-    // introwalkerguy1 then takes a different first corridor and blocks Gordon.
-    let src = nav_nearest(m, movers, pos, NAV_NEAREST_RANGE2);
-    if src == NAV_NODE_NONE {
-        prop_nav_cache_invalidate(pi);
-        return false;
-    }
-    let dst = nav_nearest(m, movers, goal, NAV_NEAREST_RANGE2);
-    if dst == NAV_NODE_NONE {
-        prop_nav_cache_invalidate(pi);
-        return false;
-    }
-    if nav_next_node(m, pi, src, dst) == NAV_NODE_NONE {
-        prop_nav_cache_invalidate(pi);
-        return false;
-    }
-    // FGetNodeRoute starts with the source node. The actor must reach that
-    // corner anchor before following the first table hop; caching the hop here
-    // skipped the anchor and recreated the obstructed straight chord.
-    prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
-    true
+    let mut cache = nav_cache_load(pi);
+    let mut g = NavGraphView { m, movers, pi };
+    let ok = nav_graph::route_available(&mut g, &mut cache, PROP_POS[pi], goal);
+    nav_cache_store(pi, cache);
+    ok
 }
 
-/// Reproduce RouteSimplify's first useful cut without retaining GoldSrc's
-/// eight-waypoint Route array. The existing script goal temporarily stores a
-/// midpoint, while the packed nav cache keeps the raw next node to resume from
-/// after that midpoint. This covers the progression-critical graph entry and
-/// costs no resident RAM.
+/// The first shortcut into actor `pi`'s cached route from `start`.
 #[inline(never)]
 unsafe fn nav_route_simplified_entry(
     m: &Map,
@@ -15290,181 +14635,34 @@ unsafe fn nav_route_simplified_entry(
     pi: usize,
     start: [i32; 3],
 ) -> Option<[i32; 3]> {
-    let src = prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT);
-    let dst = prop_nav_cache_get(pi, PROP_NAV_DST_SLOT);
-    let n = nav_node_count(m);
-    if src as usize >= n || dst as usize >= n {
-        return None;
-    }
-    let next = nav_next_node(m, pi, src, dst);
-    if next == NAV_NODE_NONE || next as usize >= n {
-        prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
-        return None;
-    }
-    let next_pos = m.nav_node(next as usize).pos;
-    // If the next raw node is directly walkable, dropping the source node is
-    // exactly RouteSimplify's first branch. Leave `next` cached so the runtime
-    // heads there immediately.
-    if script_human_chord_clear(m, movers, pi, start, next_pos) {
-        return None;
-    }
-    let src_pos = m.nav_node(src as usize).pos;
-    let midpoint = [
-        (src_pos[0] + next_pos[0]) / 2,
-        (src_pos[1] + next_pos[1]) / 2,
-        (src_pos[2] + next_pos[2]) / 2,
-    ];
-    if script_human_chord_clear(m, movers, pi, start, midpoint) {
-        return Some(midpoint);
-    }
-    // No safe cut: restore the source-anchor convention used by the ordinary
-    // packed route follower.
-    prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
-    None
+    let mut cache = nav_cache_load(pi);
+    let mut g = NavGraphView { m, movers, pi };
+    let entry = nav_graph::simplified_entry(&mut g, &mut cache, start);
+    nav_cache_store(pi, cache);
+    entry
 }
 
-/// A cached graph route can become unusable only through malformed/cook-drift
-/// data. Scripted actors must immediately return to their authored local chord
-/// instead of retaining the route bit and idling until a forced teleport.
-#[inline(never)]
-unsafe fn nav_route_fail_open(pi: usize, goal: [i32; 3]) -> Option<[i32; 3]> {
-    if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi])
-        && !scientist_logic::script_uses_detour(PROP_SCRIPT_MODE[pi])
-    {
-        PROP_SCRIPT_MODE[pi] = scientist_logic::script_route_mode(PROP_SCRIPT_MODE[pi], false);
-        prop_nav_cache_invalidate(pi);
-        Some(goal)
-    } else {
-        None
-    }
-}
-
+/// The point actor `pi` should steer for on its way to `goal`.
 unsafe fn nav_waypoint_towards(
     m: &Map,
     movers: &[phys::Mover],
     pi: usize,
     goal: [i32; 3],
 ) -> Option<[i32; 3]> {
-    if m.n_nav == 0 {
-        return None;
-    }
-    let n = nav_node_count(m);
-    let ty = PROP_KIND[pi];
+    let mode = PROP_SCRIPT_MODE[pi];
     let pos = PROP_POS[pi];
-    let from = prop_target(ty, pos);
-    let reached_range2 = if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]) {
-        scientist_logic::SCRIPT_PLANT_RADIUS * scientist_logic::SCRIPT_PLANT_RADIUS
-    } else {
-        NAV_NODE_REACHED_RANGE2
+    let mut follower = nav_graph::Follower {
+        pos,
+        eye: prop_target(PROP_KIND[pi], pos),
+        routed: scientist_logic::script_uses_route(mode),
+        detour: scientist_logic::script_uses_detour(mode),
     };
-
-    // Keep following the already-proven route waypoint until it is reached.
-    // Re-running a 128-node nearest-reachable scan every time local movement
-    // failed consumed ~73K cycles per c2a4e frame; the world is static and prop
-    // movement deliberately ignores movers, so a previously reachable waypoint
-    // cannot become invalid en route. This is also standard waypoint behavior:
-    // choose a route, advance it at node boundaries, do not re-seed it per step.
-    let cached_next = prop_nav_cache_get(pi, PROP_NAV_NEXT_SLOT) as usize;
-    if cached_next < n && nav_land_node(m, cached_next) {
-        let next_pos = m.nav_node(cached_next).pos;
-        let next_d2 = dist2_xz(pos, next_pos);
-        // A scripted route's cached hop is a graph link RouteSimplify chose,
-        // however long or steep (c0a0's room2 runners cut 1,340 units to
-        // node 1, then climb 256 up the ramp to node 2). Only unscripted
-        // lookups keep the nearest-node range and floor band.
-        let scripted = scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]);
-        if next_d2 > reached_range2
-            && (scripted
-                || ((pos[1] - next_pos[1]).abs() <= NAV_VERTICAL_MAX
-                    && next_d2 < NAV_NEAREST_RANGE2))
-        {
-            return Some(next_pos);
-        }
-        if next_d2 <= reached_range2 && (pos[1] - next_pos[1]).abs() <= NAV_VERTICAL_MAX {
-            // FGetNodeRoute selects its destination once. Keep that exact
-            // endpoint instead of repeating FindNearestNode (and its BSP
-            // traces) at every hop.
-            let dst = prop_nav_cache_get(pi, PROP_NAV_DST_SLOT);
-            if dst as usize >= n || !nav_land_node(m, dst as usize) {
-                return nav_route_fail_open(pi, goal);
-            }
-            // RouteSimplify: once the mark itself is a clear local move,
-            // the remaining graph hops are dropped (c1a4's houndeye cuts
-            // from node 8 to its mark instead of overrunning to node 9).
-            if cached_next as u8 == dst
-                || (scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi])
-                    && script_human_chord_clear(m, movers, pi, pos, goal))
-            {
-                // The graph route ends at its destination node, not at the
-                // scripted mark. Hand the final local chord back to the
-                // straight script mover; retaining route steering here made
-                // c0a0e Barney orbit node 5 until his timeout.
-                PROP_SCRIPT_MODE[pi] =
-                    scientist_logic::script_route_mode(PROP_SCRIPT_MODE[pi], false);
-                prop_nav_cache_invalidate(pi);
-                return Some(goal);
-            }
-            let following = nav_next_node(m, pi, cached_next as u8, dst);
-            return if following == NAV_NODE_NONE {
-                nav_route_fail_open(pi, goal)
-            } else {
-                Some(m.nav_node(following as usize).pos)
-            };
-        }
-    }
-
-    // Before a route has a `next` node, retain its verified source waypoint
-    // while the actor approaches it. Once reached, accepting the cached source
-    // avoids a second exact nearest scan before the route BFS below.
-    let cached_src = prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) as usize;
-    let mut src = NAV_NODE_NONE;
-    if cached_src < n && nav_land_node(m, cached_src) {
-        let src_pos = m.nav_node(cached_src).pos;
-        let src_d2 = dist2_xz(pos, src_pos);
-        if (pos[1] - src_pos[1]).abs() <= NAV_VERTICAL_MAX && src_d2 < NAV_NEAREST_RANGE2 {
-            if src_d2 > reached_range2 {
-                return Some(src_pos);
-            }
-            src = cached_src as u8;
-        }
-    }
-    if src == NAV_NODE_NONE {
-        src = nav_nearest_reachable(m, movers, pi, from, pos, NAV_NEAREST_RANGE2);
-    }
-    if src == NAV_NODE_NONE {
-        return nav_route_fail_open(pi, goal);
-    }
-    let cached_dst = prop_nav_cache_get(pi, PROP_NAV_DST_SLOT);
-    let dst = if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi])
-        && (cached_dst as usize) < n
-        && nav_land_node(m, cached_dst as usize)
-    {
-        cached_dst
-    } else {
-        nav_nearest(m, movers, goal, NAV_NEAREST_RANGE2)
-    };
-    if dst == NAV_NODE_NONE {
-        return nav_route_fail_open(pi, goal);
-    }
-
-    let src_pos = m.nav_node(src as usize).pos;
-    if dist2_xz(pos, src_pos) > reached_range2 || (pos[1] - src_pos[1]).abs() > NAV_VERTICAL_MAX {
-        return Some(src_pos);
-    }
-    if src == dst {
-        if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]) {
-            PROP_SCRIPT_MODE[pi] = scientist_logic::script_route_mode(PROP_SCRIPT_MODE[pi], false);
-            prop_nav_cache_invalidate(pi);
-        }
-        return Some(goal);
-    }
-
-    let next = nav_next_node(m, pi, src, dst);
-    if next == NAV_NODE_NONE {
-        nav_route_fail_open(pi, goal)
-    } else {
-        Some(m.nav_node(next as usize).pos)
-    }
+    let mut cache = nav_cache_load(pi);
+    let mut g = NavGraphView { m, movers, pi };
+    let wp = nav_graph::waypoint_towards(&mut g, &mut cache, &mut follower, goal);
+    nav_cache_store(pi, cache);
+    PROP_SCRIPT_MODE[pi] = scientist_logic::script_route_mode(mode, follower.routed);
+    wp
 }
 
 unsafe fn nav_flee_goal(m: &Map, threat: [i32; 3], pos: [i32; 3]) -> Option<[i32; 3]> {
@@ -16069,7 +15267,10 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     }
     // Damage cancels an interruptible cine without firing completion outputs.
     // NOINTERRUPT suppresses that break condition, but death always releases it.
-    if PROP_HEALTH[pi] == 0 || !prop_scientist_flag(pi, PROP_SCRIPT_NOINTERRUPT) {
+    if scripted_sequence::damage_cancels(
+        PROP_HEALTH[pi] != 0,
+        prop_scientist_flag(pi, PROP_SCRIPT_NOINTERRUPT),
+    ) {
         prop_script_clear(pi);
     }
     if PROP_HEALTH[pi] == 0 {
@@ -16758,38 +15959,17 @@ fn prop_voice(kind: u8, dying: bool) -> u8 {
 
 static mut PAIN_SFX_COOLDOWN: u8 = 0;
 
-/// Source `CalcDamageDirection`: compare the world-space inflictor with the
-/// current view and light every matching screen edge. Close damage lights all
-/// four, matching GoldSrc's special case for a source within 50 units.
+/// Light the damage-compass arrows facing a world-space damage source, seen
+/// from the player's current view.
 #[inline(never)]
 unsafe fn note_damage_direction(source: [i32; 3]) {
-    let dx = (source[0] - LOGIC_PLAYER_POS[0]).clamp(-4096, 4096);
-    let dy = (source[1] - LOGIC_PLAYER_POS[1]).clamp(-4096, 4096);
-    let dz = (source[2] - LOGIC_PLAYER_POS[2]).clamp(-4096, 4096);
-    let delta = [dx, dy, dz];
-    let d2 = dx * dx + dy * dy + dz * dz;
-    let mut edges = 0u8;
-    if d2 <= 50 * 50 {
-        edges = 0x0f;
-    } else {
-        let distance = isqrt_i32(d2);
-        let rot = view_rotation(LOGIC_PLAYER_YAW, 0);
-        let forward = dot12(rot.m[2], delta);
-        let right = dot12(rot.m[0], delta);
-        let threshold = distance * 3;
-        if forward.abs() * 10 > threshold {
-            edges |= if forward > 0 { 1 << 0 } else { 1 << 2 };
-        }
-        if right.abs() * 10 > threshold {
-            edges |= if right > 0 { 1 << 1 } else { 1 << 3 };
-        }
-    }
-    DAMAGE_DIRECTION |= edges;
-    DAMAGE_TICKS = 10;
+    let rot = view_rotation(LOGIC_PLAYER_YAW, 0);
+    let compass = &mut *core::ptr::addr_of_mut!(DAMAGE_COMPASS);
+    compass.note_hit(LOGIC_PLAYER_POS, rot.m[2], rot.m[0], source);
 }
 
-/// Fall damage: same feedback as `damage_player`, but straight to health --
-/// the HEV suit does not absorb DMG_FALL (player.cpp TakeDamage bit set).
+/// Fall damage: same feedback as `damage_player`, but straight to health;
+/// the suit does not absorb falls.
 fn fall_damage_player(health: &mut u16, dmg: u16) {
     if dmg == 0 {
         return;
@@ -16800,7 +15980,15 @@ fn fall_damage_player(health: &mut u16, dmg: u16) {
             PAIN_SFX_COOLDOWN = 12;
         }
     }
-    *health = health.saturating_sub(dmg);
+    let v = player_rules::apply_player_damage(
+        player_rules::Vitals {
+            health: *health,
+            armor: 0,
+        },
+        dmg,
+        player_rules::PlayerDamageKind::Fall,
+    );
+    *health = v.health;
 }
 
 fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
@@ -16818,23 +16006,16 @@ fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
         let r = impact_rng().next() as i32;
         add_view_punch(dmg.min(24) as i32 + (r % 16) - 8, (r % 24) - 12);
     }
-    if *armor > 0 {
-        // GoldSrc's HEV suit keeps only 20% of generic damage on health and
-        // spends half of the remaining damage as suit power.
-        let health_dmg = dmg / 5;
-        let armor_cost = (dmg.saturating_sub(health_dmg).saturating_add(1)) / 2;
-        if armor_cost <= *armor {
-            *armor -= armor_cost;
-            *health = health.saturating_sub(health_dmg);
-            return;
-        }
-
-        let absorbed = (*armor).saturating_mul(2);
-        *armor = 0;
-        *health = health.saturating_sub(dmg.saturating_sub(absorbed));
-    } else {
-        *health = health.saturating_sub(dmg);
-    }
+    let v = player_rules::apply_player_damage(
+        player_rules::Vitals {
+            health: *health,
+            armor: *armor,
+        },
+        dmg,
+        player_rules::PlayerDamageKind::Generic,
+    );
+    *health = v.health;
+    *armor = v.armor;
 }
 
 unsafe fn damage_target(target: u8, dmg: u8, source: [i32; 3], health: &mut u16, armor: &mut u16) {
@@ -17289,11 +16470,6 @@ unsafe fn tick_headcrab(
 }
 
 #[inline(always)]
-unsafe fn talk_wait_ready(now: u16) -> bool {
-    TALKING_PROP == TALKING_PROP_NONE || time_reached(now, TALKING_UNTIL.wrapping_add(40))
-}
-
-#[inline(always)]
 unsafe fn scientist_ordinal(pi: usize) -> usize {
     let mut ordinal = 0usize;
     let mut qi = 0usize;
@@ -17421,170 +16597,148 @@ unsafe fn scientist_dialogue_local_id(
     0
 }
 
-/// Source FIdleHello for standing scientists. PVS gating is supplied by the
-/// caller because tick_props already paid for that exact leaf test.
-#[inline(never)]
-unsafe fn scientist_try_hello(
-    m: &Map,
-    sight_movers: &[phys::Mover],
-    pi: usize,
-    player_pos: [i32; 3],
-    map_index: u16,
-    in_player_pvs: bool,
-    scripted_moving: bool,
-) -> bool {
-    if MAP_VOICE_PREFIX & 0x80 != 0 {
-        return false;
+// ---- talk-monster adaptor: packs/unpacks talk_monster state in the prop arrays ----
+
+#[inline(always)]
+unsafe fn talk_clock() -> talk_monster::TalkClock {
+    talk_monster::TalkClock {
+        speaker: TALKING_PROP,
+        voice: TALKING_VOICE,
+        until: TALKING_UNTIL,
     }
-    if if scripted_moving {
-        SIM_NOW & 1 != 0
-    } else {
-        !scientist_logic::idle_hello_attempt(SIM_NOW)
-    } {
-        return false;
-    }
-    if !in_player_pvs
-        || LOGIC_PLAYER_HEALTH == 0
-        || (!scripted_moving && PROP_STATE[pi] != PROP_STATE_IDLE)
-        || prop_scientist_flag(pi, PROP_SCI_HELLO_SAID)
-        || prop_scientist_flag(pi, PROP_SCI_PROVOKED)
-        || prop_scientist_flag(pi, PROP_SCI_FOLLOWING)
-        || (!scripted_moving && prop_script_busy(pi))
-        || !talk_wait_ready(SIM_NOW)
-    {
-        return false;
-    }
-    let pos = PROP_POS[pi];
-    // `FindNearestFriend(TRUE)` measures between each entity's `absmax.z`.
-    // Scientists use the 72-unit human hull while a standing player origin is
-    // centred in the 72-unit player hull. This source-exact 500-unit gate also
-    // prevents PVS-connected actors on another floor from greeting the player.
-    if !scientist_logic::friend_in_talk_range(
-        [pos[0], pos[1] + 72, pos[2]],
-        [player_pos[0], player_pos[1] + 36, player_pos[2]],
-    ) {
-        return false;
-    }
-    let dx = player_pos[0] - pos[0];
-    let dz = player_pos[2] - pos[2];
-    let yaw = prop_yaw_value(PROP_YAW[pi]);
-    let forward_x = sincos::sin_q12(yaw);
-    let forward_z = sincos::sin_q12((yaw + 1024) & 0x0fff);
-    if !scientist_logic::wide_view_cone(dx, dz, forward_x, forward_z) {
-        return false;
-    }
-    let player_eye = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
-    if !actor_line_clear(
-        m,
-        sight_movers,
-        prop_target(PROP_TYPE_SCIENTIST, pos),
-        player_eye,
-    ) {
-        return false;
-    }
-    let ordinal = scientist_ordinal(pi);
-    let voice = scientist_hello_local_id(pi, map_index);
-    let duration = scientist_logic::hello_duration_ticks(map_index, ordinal);
-    let _ = sfx::play_voice_world(voice, pos);
-    TALKING_PROP = pi as u8;
-    TALKING_VOICE = voice | TALKING_VOICE_AUTONOMOUS;
-    TALKING_UNTIL = SIM_NOW.wrapping_add(duration);
-    prop_scientist_set_flag(pi, PROP_SCI_HELLO_SAID, true);
-    prop_client_push_set(pi, false);
-    #[cfg(feature = "reference-trace")]
-    reference_trace::talk(SIM_NOW, "hello_started", pi, voice, duration, pos, pos);
-    true
+}
+
+#[inline(always)]
+unsafe fn talk_clock_store(clock: talk_monster::TalkClock) {
+    TALKING_PROP = clock.speaker;
+    TALKING_VOICE = clock.voice;
+    TALKING_UNTIL = clock.until;
 }
 
 #[inline(never)]
-unsafe fn scientist_talk_friend(m: &Map, sight_movers: &[phys::Mover], pi: usize) -> Option<usize> {
-    let from = [PROP_POS[pi][0], PROP_POS[pi][1] + 72, PROP_POS[pi][2]];
-    let mut nearest = None;
-    let mut nearest_d2 = scientist_logic::TALK_RANGE_MIN * scientist_logic::TALK_RANGE_MIN;
-    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-    let mut qi = 0usize;
-    while qi < nprops {
-        if qi != pi
-            && PROP_ACTIVE[qi] != 0
-            && PROP_HEALTH[qi] != 0
-            && prop_is_scientist(PROP_KIND[qi])
-            && prop_scientist_flag(qi, PROP_SCI_PREDISASTER)
-            && PROP_STATE[qi] == PROP_STATE_IDLE
-        {
-            let to = [PROP_POS[qi][0], PROP_POS[qi][1] + 72, PROP_POS[qi][2]];
-            if scientist_logic::friend_in_talk_range(from, to) {
-                let dx = to[0] - from[0];
-                let dy = to[1] - from[1];
-                let dz = to[2] - from[2];
-                let d2 = dx * dx + dy * dy + dz * dz;
-                if d2 < nearest_d2 && actor_line_clear(m, sight_movers, from, to) {
-                    nearest = Some(qi);
-                    nearest_d2 = d2;
-                }
+unsafe fn talk_actor_load(pi: usize) -> talk_monster::TalkActor {
+    talk_monster::TalkActor {
+        index: pi,
+        alive: PROP_HEALTH[pi] != 0,
+        state: match PROP_STATE[pi] {
+            PROP_STATE_IDLE => talk_monster::TalkState::Idle,
+            PROP_STATE_MOVE_AWAY => talk_monster::TalkState::MoveAway,
+            PROP_STATE_MOVE_AWAY_FACE => talk_monster::TalkState::FaceBack,
+            _ => talk_monster::TalkState::Busy,
+        },
+        following: prop_scientist_flag(pi, PROP_SCI_FOLLOWING),
+        provoked: prop_scientist_flag(pi, PROP_SCI_PROVOKED),
+        predisaster: prop_scientist_flag(pi, PROP_SCI_PREDISASTER),
+        hello_said: prop_scientist_flag(pi, PROP_SCI_HELLO_SAID),
+        push_pending: prop_client_push(pi),
+        answer_pending: PROP_DORMANT[pi] & PROP_RUNTIME_TALK_RESPONSE != 0,
+        speech_due: PROP_DEATH_START[pi],
+        schedule_timer: PROP_AI_TIMER[pi],
+        hold_ticks: PROP_MOVE_COOLDOWN[pi],
+        move_goal: PROP_SCRIPT_GOAL[pi],
+    }
+}
+
+#[inline(never)]
+unsafe fn talk_actor_store(a: &talk_monster::TalkActor) {
+    let pi = a.index;
+    match a.state {
+        talk_monster::TalkState::Idle => PROP_STATE[pi] = PROP_STATE_IDLE,
+        talk_monster::TalkState::MoveAway => PROP_STATE[pi] = PROP_STATE_MOVE_AWAY,
+        talk_monster::TalkState::FaceBack => PROP_STATE[pi] = PROP_STATE_MOVE_AWAY_FACE,
+        talk_monster::TalkState::Busy => {}
+    }
+    prop_scientist_set_flag(pi, PROP_SCI_FOLLOWING, a.following);
+    prop_scientist_set_flag(pi, PROP_SCI_PROVOKED, a.provoked);
+    prop_scientist_set_flag(pi, PROP_SCI_PREDISASTER, a.predisaster);
+    prop_scientist_set_flag(pi, PROP_SCI_HELLO_SAID, a.hello_said);
+    prop_client_push_set(pi, a.push_pending);
+    if a.answer_pending {
+        PROP_DORMANT[pi] |= PROP_RUNTIME_TALK_RESPONSE;
+    } else {
+        PROP_DORMANT[pi] &= !PROP_RUNTIME_TALK_RESPONSE;
+    }
+    PROP_DEATH_START[pi] = a.speech_due;
+    PROP_AI_TIMER[pi] = a.schedule_timer;
+    PROP_MOVE_COOLDOWN[pi] = a.hold_ticks;
+    PROP_SCRIPT_GOAL[pi] = a.move_goal;
+}
+
+/// The world as one speaking scientist queries it.
+struct TalkWorldView<'a> {
+    m: &'a Map,
+    sight_movers: &'a [phys::Mover],
+    pi: usize,
+    map_index: u16,
+}
+
+impl talk_monster::TalkWorld for TalkWorldView<'_> {
+    fn line_clear(&mut self, from: [i32; 3], to: [i32; 3]) -> bool {
+        actor_line_clear(self.m, self.sight_movers, from, to)
+    }
+
+    fn speaker_eye(&self) -> [i32; 3] {
+        unsafe { prop_target(PROP_TYPE_SCIENTIST, PROP_POS[self.pi]) }
+    }
+
+    fn roster_len(&self) -> usize {
+        unsafe { PROP_COUNT.min(CARRY_MAILBOX_FIRST) }
+    }
+
+    fn idle_listener_top(&self, qi: usize) -> Option<[i32; 3]> {
+        unsafe {
+            if PROP_ACTIVE[qi] != 0
+                && PROP_HEALTH[qi] != 0
+                && prop_is_scientist(PROP_KIND[qi])
+                && prop_scientist_flag(qi, PROP_SCI_PREDISASTER)
+                && PROP_STATE[qi] == PROP_STATE_IDLE
+            {
+                Some([
+                    PROP_POS[qi][0],
+                    PROP_POS[qi][1] + talk_monster::ACTOR_HULL_TOP,
+                    PROP_POS[qi][2],
+                ])
+            } else {
+                None
             }
         }
-        qi += 1;
     }
-    nearest
+
+    fn scientist_ordinal(&mut self) -> usize {
+        unsafe { scientist_ordinal(self.pi) }
+    }
+
+    fn voice_id(&mut self, kind: talk_monster::LineKind) -> u8 {
+        let base_nprops = self.m.n_props;
+        unsafe {
+            match kind {
+                talk_monster::LineKind::Hello => scientist_hello_local_id(self.pi, self.map_index),
+                talk_monster::LineKind::Answer => scientist_dialogue_local_id(
+                    self.pi,
+                    self.map_index,
+                    SCI_DIALOG_ANSWER,
+                    base_nprops,
+                ),
+                talk_monster::LineKind::Question => scientist_dialogue_local_id(
+                    self.pi,
+                    self.map_index,
+                    SCI_DIALOG_QUESTION,
+                    base_nprops,
+                ),
+                talk_monster::LineKind::Idle => scientist_dialogue_local_id(
+                    self.pi,
+                    self.map_index,
+                    SCI_DIALOG_IDLE,
+                    base_nprops,
+                ),
+            }
+        }
+    }
 }
 
-/// Forced IdleRespond ignores the global two-second conversation gap and
-/// starts as soon as the question's actual sentence finishes. A long authored
-/// scripted sentence can pre-empt the one PS1 voice channel; stale responses
-/// are discarded instead of interrupting it later.
+/// One speech think for a scientist. Returns true when it started a line.
 #[inline(never)]
-unsafe fn scientist_try_response(
-    pi: usize,
-    map_index: u16,
-    in_player_pvs: bool,
-    base_nprops: usize,
-) -> bool {
-    if MAP_VOICE_PREFIX & 0x80 != 0
-        || SIM_NOW & 1 != 0
-        || PROP_DORMANT[pi] & PROP_RUNTIME_TALK_RESPONSE == 0
-        || !in_player_pvs
-        || LOGIC_PLAYER_HEALTH == 0
-        || PROP_HEALTH[pi] == 0
-        || !prop_scientist_flag(pi, PROP_SCI_PREDISASTER)
-    {
-        return false;
-    }
-    let due = PROP_DEATH_START[pi];
-    if !time_reached(SIM_NOW, due) {
-        return false;
-    }
-    let late = SIM_NOW.wrapping_sub(due);
-    if late > 40 && late < 0x8000 {
-        PROP_DORMANT[pi] &= !PROP_RUNTIME_TALK_RESPONSE;
-        return false;
-    }
-    if !time_reached(SIM_NOW, TALKING_UNTIL) {
-        return false;
-    }
-    let ordinal = scientist_ordinal(pi);
-    let voice = scientist_dialogue_local_id(pi, map_index, SCI_DIALOG_ANSWER, base_nprops);
-    let duration = scientist_logic::scientist_answer_duration_ticks(map_index, ordinal);
-    let pos = PROP_POS[pi];
-    let _ = sfx::play_voice_world(voice, pos);
-    TALKING_PROP = pi as u8;
-    TALKING_VOICE = voice | TALKING_VOICE_AUTONOMOUS;
-    TALKING_UNTIL = SIM_NOW.wrapping_add(duration);
-    PROP_DORMANT[pi] &= !PROP_RUNTIME_TALK_RESPONSE;
-    // The respondent gets the next conversational turn just after its own
-    // sentence and the source global talk gap finish.
-    PROP_DEATH_START[pi] = TALKING_UNTIL.wrapping_add(48);
-    prop_scientist_set_flag(pi, PROP_SCI_HELLO_SAID, true);
-    prop_client_push_set(pi, false);
-    #[cfg(feature = "reference-trace")]
-    reference_trace::talk(SIM_NOW, "answer_started", pi, voice, duration, pos, pos);
-    true
-}
-
-/// Source FIdleSpeak as used by TASK_WAIT_FOR_MOVEMENT and predisaster idle
-/// schedules. Questions mark a nearby stationary scientist for IdleRespond;
-/// otherwise a visible nearby player receives an idle statement.
-#[inline(never)]
-unsafe fn scientist_try_idle_speak(
+unsafe fn scientist_take_turn(
     m: &Map,
     sight_movers: &[phys::Mover],
     pi: usize,
@@ -17593,84 +16747,64 @@ unsafe fn scientist_try_idle_speak(
     in_player_pvs: bool,
     scripted_moving: bool,
 ) -> bool {
-    if MAP_VOICE_PREFIX & 0x80 != 0
-        || SIM_NOW & 1 != 0
-        || !in_player_pvs
-        || LOGIC_PLAYER_HEALTH == 0
-        || PROP_HEALTH[pi] == 0
-        || !prop_scientist_flag(pi, PROP_SCI_PREDISASTER)
-        || prop_scientist_flag(pi, PROP_SCI_PROVOKED)
-        || PROP_DORMANT[pi] & PROP_RUNTIME_TALK_RESPONSE != 0
-        || (!scripted_moving
-            && (!prop_scientist_flag(pi, PROP_SCI_HELLO_SAID)
-                || PROP_STATE[pi] != PROP_STATE_IDLE
-                || prop_script_busy(pi)))
-        || !time_reached(SIM_NOW, PROP_DEATH_START[pi])
-        || !talk_wait_ready(SIM_NOW)
-    {
+    let cx = talk_monster::SpeechContext {
+        now: SIM_NOW,
+        map_index,
+        voices_enabled: MAP_VOICE_PREFIX & 0x80 == 0,
+        player_in_pvs: in_player_pvs,
+        player_alive: LOGIC_PLAYER_HEALTH != 0,
+        player_pos,
+        player_eye: [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
+        actor_pos: PROP_POS[pi],
+        actor_yaw: prop_yaw_value(PROP_YAW[pi]),
+        script_busy: prop_script_busy(pi),
+        scripted_moving,
+    };
+    let mut actor = talk_actor_load(pi);
+    let mut clock = talk_clock();
+    let mut world = TalkWorldView {
+        m,
+        sight_movers,
+        pi,
+        map_index,
+    };
+    let line = talk_monster::take_turn(&mut actor, &mut clock, &cx, &mut world);
+    talk_actor_store(&actor);
+    talk_clock_store(clock);
+    let Some(line) = line else {
         return false;
-    }
-
+    };
     let pos = PROP_POS[pi];
-    let friend = scientist_talk_friend(m, sight_movers, pi);
-    if friend.is_none() {
-        // Ordinary idle schedules must greet the player first. Scripted
-        // movement can still initiate a scientist-to-scientist question before
-        // either actor has seen Gordon (c1a0's observation-room pair).
-        if !prop_scientist_flag(pi, PROP_SCI_HELLO_SAID) {
-            return false;
-        }
-        let player_top = [player_pos[0], player_pos[1] + 36, player_pos[2]];
-        let actor_top = [pos[0], pos[1] + 72, pos[2]];
-        if !scientist_logic::friend_in_talk_range(actor_top, player_top)
-            || !actor_line_clear(m, sight_movers, actor_top, player_top)
-        {
-            return false;
-        }
-    }
-
-    let ordinal = scientist_ordinal(pi);
-    let group = if friend.is_some() {
-        SCI_DIALOG_QUESTION
-    } else {
-        SCI_DIALOG_IDLE
-    };
-    let voice = scientist_dialogue_local_id(pi, map_index, group, m.n_props);
-    let duration = if group == SCI_DIALOG_QUESTION {
-        scientist_logic::predisaster_question_duration_ticks(map_index, ordinal)
-    } else {
-        scientist_logic::predisaster_idle_duration_ticks(map_index, ordinal)
-    };
-    let _ = sfx::play_voice_world(voice, pos);
-    TALKING_PROP = pi as u8;
-    TALKING_VOICE = voice | TALKING_VOICE_AUTONOMOUS;
-    TALKING_UNTIL = SIM_NOW.wrapping_add(duration);
-    PROP_DEATH_START[pi] = SIM_NOW.wrapping_add(1_200);
-    prop_scientist_set_flag(pi, PROP_SCI_HELLO_SAID, true);
-    prop_client_push_set(pi, false);
-    if let Some(friend) = friend {
-        PROP_DORMANT[friend] |= PROP_RUNTIME_TALK_RESPONSE;
-        PROP_DEATH_START[friend] = TALKING_UNTIL;
+    let _ = sfx::play_voice_world(line.voice, pos);
+    if let Some(friend) = line.listener {
+        let mut listener = talk_actor_load(friend);
+        talk_monster::hear_question(&mut listener, clock.until);
+        talk_actor_store(&listener);
     }
     #[cfg(feature = "reference-trace")]
     reference_trace::talk(
         SIM_NOW,
-        if group == SCI_DIALOG_QUESTION {
-            "question_started"
-        } else {
-            "idle_started"
+        match line.kind {
+            talk_monster::LineKind::Hello => "hello_started",
+            talk_monster::LineKind::Answer => "answer_started",
+            talk_monster::LineKind::Question => "question_started",
+            talk_monster::LineKind::Idle => "idle_started",
         },
         pi,
-        voice,
-        duration,
+        line.voice,
+        line.ticks,
         pos,
-        friend.map(|friend| PROP_POS[friend]).unwrap_or(player_pos),
+        match line.kind {
+            talk_monster::LineKind::Question => line.listener.map(|f| PROP_POS[f]).unwrap_or(pos),
+            talk_monster::LineKind::Idle => player_pos,
+            _ => pos,
+        },
     );
     true
 }
 
-/// Advance a source MoveAway schedule already owned by this talk monster.
-/// Return true while the schedule still suppresses ordinary ally/flee AI.
+/// Advance a step-aside already owned by this talk monster. Return true while
+/// it still suppresses ordinary ally/flee AI.
 #[inline(never)]
 unsafe fn tick_talk_move_away(
     m: &Map,
@@ -17678,16 +16812,23 @@ unsafe fn tick_talk_move_away(
     pi: usize,
     player_pos: [i32; 3],
 ) -> bool {
-    if PROP_STATE[pi] == PROP_STATE_MOVE_AWAY {
-        if PROP_AI_TIMER[pi] != 0 {
-            PROP_AI_TIMER[pi] -= 1;
+    let mut actor = talk_actor_load(pi);
+    let step = talk_monster::continue_move_away(
+        &mut actor,
+        PROP_POS[pi],
+        [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
+    );
+    if step == talk_monster::MoveAwayStep::Inactive {
+        return false;
+    }
+    talk_actor_store(&actor);
+    match step {
+        talk_monster::MoveAwayStep::Inactive => false,
+        talk_monster::MoveAwayStep::Walk { goal, speed } => {
+            let _ = prop_move_towards_point(m, movers, pi, goal, speed);
+            true
         }
-        let packed = PROP_SCRIPT_GOAL[pi];
-        let goal = [packed[0] as i32, packed[1] as i32, packed[2] as i32];
-        if PROP_AI_TIMER[pi] == 0 || dist2_xz(PROP_POS[pi], goal) <= 9 {
-            PROP_STATE[pi] = PROP_STATE_MOVE_AWAY_FACE;
-            PROP_MOVE_COOLDOWN[pi] = MOVE_AWAY_FACE_TICKS;
-            PROP_AI_TIMER[pi] = 0;
+        talk_monster::MoveAwayStep::Arrived { goal } => {
             prop_nav_cache_invalidate(pi);
             #[cfg(feature = "reference-trace")]
             reference_trace::talk(
@@ -17699,52 +16840,33 @@ unsafe fn tick_talk_move_away(
                 PROP_POS[pi],
                 goal,
             );
-            return true;
+            let _ = goal;
+            true
         }
-        let _ = prop_move_towards_point(m, movers, pi, goal, 3);
-        return true;
+        talk_monster::MoveAwayStep::FaceBack { look_at, done } => {
+            prop_face_point(pi, look_at);
+            !done
+        }
     }
-    if PROP_STATE[pi] == PROP_STATE_MOVE_AWAY_FACE {
-        prop_face_point(
-            pi,
-            [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
-        );
-        if PROP_MOVE_COOLDOWN[pi] != 0 {
-            PROP_MOVE_COOLDOWN[pi] -= 1;
-        }
-        if PROP_MOVE_COOLDOWN[pi] != 0 {
-            return true;
-        }
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-    }
-    false
 }
 
-/// Consume CLIENT_PUSH on the next 10 Hz monster think and build the exact
-/// 100-unit endpoint behind the latest MakeIdealYaw direction.
+/// Turn a recorded player push into a step-aside on the next 10 Hz think.
 #[inline(never)]
 unsafe fn try_start_talk_move_away(pi: usize) -> bool {
-    if !prop_client_push(pi) || MOVE_TICK & 1 != 0 {
-        return false;
-    }
-    prop_client_push_set(pi, false); // ChangeSchedule clears conditions.
-    let away_yaw = (PROP_SCRIPT_YAW[pi] & PROP_SCRIPT_YAW_MASK).wrapping_add(2048) & 0x0fff;
-    let goal = scientist_logic::move_away_goal(
+    let mut actor = talk_actor_load(pi);
+    let Some(goal) = talk_monster::try_begin_move_away(
+        &mut actor,
+        MOVE_TICK,
         PROP_POS[pi],
-        sincos::sin_q12(away_yaw),
-        sincos::sin_q12((away_yaw + 1024) & 0x0fff),
-    );
-    PROP_SCRIPT_GOAL[pi] = [
-        goal[0].clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-        goal[1].clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-        goal[2].clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-    ];
-    PROP_STATE[pi] = PROP_STATE_MOVE_AWAY;
-    PROP_MOVE_COOLDOWN[pi] = MOVE_AWAY_START_ACTIVE_TICKS;
-    PROP_AI_TIMER[pi] = MOVE_AWAY_TIMEOUT_TICKS;
+        PROP_SCRIPT_YAW[pi] & PROP_SCRIPT_YAW_MASK,
+    ) else {
+        return false;
+    };
+    talk_actor_store(&actor);
     prop_nav_cache_invalidate(pi);
     #[cfg(feature = "reference-trace")]
     reference_trace::talk(SIM_NOW, "move_away_path", pi, 0xff, 0, PROP_POS[pi], goal);
+    let _ = goal;
     true
 }
 
@@ -17927,23 +17049,7 @@ unsafe fn tick_scientist(
     if try_start_talk_move_away(pi) {
         return;
     }
-    if scientist_try_response(pi, map_index, in_player_pvs, m.n_props) {
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        return;
-    }
-    if scientist_try_hello(
-        m,
-        sight_movers,
-        pi,
-        player_pos,
-        map_index,
-        in_player_pvs,
-        false,
-    ) {
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        return;
-    }
-    if scientist_try_idle_speak(
+    if scientist_take_turn(
         m,
         sight_movers,
         pi,
@@ -17997,9 +17103,7 @@ unsafe fn tick_scientist(
 #[inline(never)]
 #[optimize(size)]
 unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
-    TALKING_PROP = TALKING_PROP_NONE;
-    TALKING_UNTIL = 0;
-    TALKING_VOICE = 0;
+    talk_clock_store(talk_monster::TalkClock::SILENT);
     let voices = room_budget::TALK_VOICES[map_index];
     (*core::ptr::addr_of_mut!(MAP_TALK_IDS)).copy_from_slice(&voices[..6]);
     MAP_VOICE_PREFIX = voices[6];
@@ -19797,29 +18901,39 @@ unsafe fn spawn_impact_fx(m: &Map, hit: &phys::RayHit, rot: &Mat3I16, base_t: [i
     }
 }
 
-/// GoldSrc `BloodColor()` per actor type, from each monster's SDK Spawn().
+/// Blood colour per actor type as an impact kind; see
+/// `world_rules::species_blood`.
 fn prop_blood_kind(ty: u8) -> u8 {
-    match ty {
-        // headcrab, zombie, houndeye, bullsquid, vortigaunt, alien grunt,
-        // controller, cockroach, gargantua, nihilanth, big momma, ichthyosaur,
-        // flock, tentacle, vent zombie, snark, baby headcrab
-        2 | 5 | 6 | 7 | 9 | 10 | 11 | 14 | 16 | 17 | 18 | 19 | 24 | 50 | 55 | 58 | 59 => {
-            IMPACT_KIND_YBLOOD
-        }
-        // leech, G-Man, turrets, apache, Hazard Course hologram, tripmine,
-        // osprey, gibs and scenery props
-        13 | 15 | 20..=23 | 56 | 57 | 61..=75 => IMPACT_KIND_NONE,
-        _ => IMPACT_KIND_BLOOD,
+    match world_rules::species_blood(ty) {
+        world_rules::BloodColour::Red => IMPACT_KIND_BLOOD,
+        world_rules::BloodColour::Yellow => IMPACT_KIND_YBLOOD,
+        world_rules::BloodColour::NoBlood => IMPACT_KIND_NONE,
     }
 }
 
-/// CBaseMonster::TraceAttack's blood for one hit. SpawnBlood is the spray at
-/// the wound, which lasts a moment; CBaseEntity::TraceBleed continues the shot
-/// past the wound in 1, 2 or 4 traces (damage under 10, under 25, above),
-/// each jittered by 0.1, 0.2 or 0.3 per axis, and leaves a blood decal on the
-/// surface each one reaches. Nothing is left at the wound itself, so blood can
-/// only ever sit on a wall, floor or brush.
-/// An actor that does not bleed (a turret) throws the world's sparks instead.
+/// The game side of a blood trail: the shared impact RNG and the world trace
+/// that stamps a decal of `kind` where each ray lands.
+struct BloodTrailAdaptor<'a> {
+    m: &'a Map,
+    movers: &'a [phys::Mover],
+    kind: u8,
+}
+
+impl world_rules::BloodTrailWorld for BloodTrailAdaptor<'_> {
+    fn random_below(&mut self, n: u32) -> u32 {
+        unsafe { impact_rng().below(n) }
+    }
+
+    fn trace_and_stamp(&mut self, from: [i32; 3], to: [i32; 3]) {
+        if let Some(hit) = phys::trace_line(self.m, self.movers, from, to) {
+            unsafe { spawn_impact_mark(self.m, &hit, self.kind) };
+        }
+    }
+}
+
+/// Blood for one hit on an actor: a spray at the wound (sparks for an actor
+/// that does not bleed), then the decal trail behind it from
+/// `world_rules::blood_trail`.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 #[cold]
@@ -19836,6 +18950,7 @@ unsafe fn spawn_blood(
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) {
+    let colour = world_rules::species_blood(ty);
     let kind = prop_blood_kind(ty);
     if let Some((sx, sy, _)) = project_world_point(wound, rot, base_t) {
         spawn_impact_particles(
@@ -19847,32 +18962,10 @@ unsafe fn spawn_blood(
             },
         );
     }
-    if kind == IMPACT_KIND_NONE || damage == 0 {
-        return;
-    }
-    let len = shot_len.max(1);
-    let (noise, count) = if damage < 10 {
-        (410, 1)
-    } else if damage < 25 {
-        (819, 2)
-    } else {
-        (1229, 4)
-    };
-    let mut i = 0;
-    while i < count {
-        let mut end = wound;
-        let mut a = 0;
-        while a < 3 {
-            let dir = (shot_end[a] - shot_start[a]) * 4096 / len;
-            let d = dir + impact_rng().below(2 * noise as u32 + 1) as i32 - noise;
-            end[a] += (d * BLEED_TRACE_DIST) >> 12;
-            a += 1;
-        }
-        if let Some(hit) = phys::trace_line(m, movers, wound, end) {
-            spawn_impact_mark(m, &hit, kind);
-        }
-        i += 1;
-    }
+    let mut world = BloodTrailAdaptor { m, movers, kind };
+    world_rules::blood_trail(
+        wound, shot_start, shot_end, shot_len, damage, colour, &mut world,
+    );
 }
 
 /// In-plane half-axes of a decal of half-size `half` on a surface with Q12
@@ -20620,58 +19713,16 @@ unsafe fn fire_secondary(
     }
 }
 
-const GAUSS_FULL_CHARGE_TICKS: u8 = 80; // GetFullChargeTime(): 4.0 s in SP
-const GAUSS_SPINUP_TICKS: u8 = 10; // gauss.cpp switches SPINUP -> SPIN at 0.5 s
-const GAUSS_AMMO_BURN_TICKS: u8 = 6; // one uranium cell every 0.3 s in SP
-const GAUSS_OVERCHARGE_TICKS: u8 = 200; // ten seconds, then self-zap
 const GAUSS_EVENT_NONE: u8 = 0;
 const GAUSS_EVENT_START: u8 = 1;
 const GAUSS_EVENT_SPIN: u8 = 2;
 const GAUSS_EVENT_FIRE: u8 = 3;
 const GAUSS_EVENT_OVERCHARGE: u8 = 4;
 
-#[inline(never)]
-unsafe fn fire_gauss_charge(
-    w: &mut Arsenal,
-    age: u8,
-    m: &Map,
-    movers: &[phys::Mover],
-    eye: [i32; 3],
-    rot: &Mat3I16,
-    base_t: [i32; 3],
-) -> u8 {
-    let damage = (200u16 * age.min(GAUSS_FULL_CHARGE_TICKS) as u16 / GAUSS_FULL_CHARGE_TICKS as u16)
-        .max(1) as u8;
-    fire_hitscan(
-        m,
-        movers,
-        eye,
-        rot,
-        base_t,
-        damage,
-        false,
-        w.def().range,
-        GLOCK_AIM_PIX_X,
-        GLOCK_AIM_PIX_Y,
-        0,
-        0,
-    );
-    // v_forward * damage * 5 units/second, at 20 Hz, with Z dropped (single
-    // player never gets the deathmatch pop-up).
-    let shove = -(damage as i32) * 5 / 20;
-    PENDING_GAUSS_SHOVE = [
-        (rot.m[2][0] as i32 * shove) >> 12,
-        0,
-        (rot.m[2][2] as i32 * shove) >> 12,
-    ];
-    w.gauss_charge = 0;
-    w.cooldown = 20;
-    sfx::play(sfx::GAUSS);
-    GAUSS_EVENT_FIRE
-}
-
-/// Advance the Tau Cannon's hold-to-charge secondary attack. Damage and ammo
-/// cadence follow gauss.cpp; the one-byte age is the complete persistent state.
+/// Advance the Tau Cannon's hold-to-charge secondary attack: the rule is
+/// `player_rules::tau_secondary_tick`; this applies its sounds, the shot,
+/// the shove and the overcharge damage, and returns the viewmodel event.
+#[allow(clippy::too_many_arguments)]
 #[inline(never)]
 unsafe fn tick_gauss_secondary(
     w: &mut Arsenal,
@@ -20683,65 +19734,65 @@ unsafe fn tick_gauss_secondary(
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) -> u8 {
-    if w.current != W_GAUSS {
-        w.gauss_charge = 0;
-        return GAUSS_EVENT_NONE;
-    }
-    if eye_under && (held || w.gauss_charge != 0) {
-        w.gauss_charge = 0;
-        w.cooldown = 10;
-        sfx::play(sfx::ELECTRO);
-        return GAUSS_EVENT_OVERCHARGE;
-    }
-    if held {
-        if w.gauss_charge == 0 {
-            if w.cooldown != 0 || w.switch_ticks != 0 || w.reload_ticks != 0 {
-                return GAUSS_EVENT_NONE;
-            }
-            if w.ammo[AMMO_URANIUM] == 0 {
-                w.cooldown = GLOCK_EMPTY_COOLDOWN_TICKS;
-                sfx::play(sfx::DRY);
-                return GAUSS_EVENT_NONE;
-            }
-            // The SDK spends one cell as soon as the coils begin spinning.
-            w.ammo[AMMO_URANIUM] -= 1;
-            w.gauss_charge = 1;
+    let mut tau = player_rules::TauState {
+        age: w.gauss_charge,
+        cooldown: w.cooldown,
+        cells: w.ammo[AMMO_URANIUM],
+    };
+    let event = player_rules::tau_secondary_tick(
+        &mut tau,
+        player_rules::TauInput {
+            selected: w.current == W_GAUSS,
+            held,
+            underwater: eye_under,
+            busy: w.switch_ticks != 0 || w.reload_ticks != 0,
+        },
+    );
+    w.gauss_charge = tau.age;
+    w.cooldown = tau.cooldown;
+    w.ammo[AMMO_URANIUM] = tau.cells;
+    match event {
+        player_rules::TauEvent::Idle => GAUSS_EVENT_NONE,
+        player_rules::TauEvent::Dry => {
+            sfx::play(sfx::DRY);
+            GAUSS_EVENT_NONE
+        }
+        player_rules::TauEvent::Start => {
             sfx::play(sfx::GAUSS_CHARGE);
-            return GAUSS_EVENT_START;
+            GAUSS_EVENT_START
         }
-
-        w.gauss_charge = w.gauss_charge.saturating_add(1);
-        let age = w.gauss_charge;
-        if age < GAUSS_FULL_CHARGE_TICKS && age % GAUSS_AMMO_BURN_TICKS == 0 {
-            if w.ammo[AMMO_URANIUM] == 0 {
-                // Falling out of ammo fires the charge immediately, just like
-                // SecondaryAttack's forced StartFire path.
-                return fire_gauss_charge(w, age, m, movers, eye, rot, base_t);
-            }
-            w.ammo[AMMO_URANIUM] -= 1;
-            if w.ammo[AMMO_URANIUM] == 0 {
-                return fire_gauss_charge(w, age, m, movers, eye, rot, base_t);
-            }
+        player_rules::TauEvent::Spin => GAUSS_EVENT_SPIN,
+        player_rules::TauEvent::Discharge => {
+            sfx::play(sfx::ELECTRO);
+            GAUSS_EVENT_OVERCHARGE
         }
-        if age >= GAUSS_OVERCHARGE_TICKS {
-            w.gauss_charge = 0;
-            w.cooldown = 20;
-            PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(50);
+        player_rules::TauEvent::Overcharge => {
+            PENDING_PLAYER_DAMAGE =
+                PENDING_PLAYER_DAMAGE.saturating_add(player_rules::TAU_OVERCHARGE_DAMAGE);
             note_damage_direction(LOGIC_PLAYER_POS);
             sfx::play(sfx::ELECTRO);
-            return GAUSS_EVENT_OVERCHARGE;
+            GAUSS_EVENT_OVERCHARGE
         }
-        return if age == GAUSS_SPINUP_TICKS {
-            GAUSS_EVENT_SPIN
-        } else {
-            GAUSS_EVENT_NONE
-        };
+        player_rules::TauEvent::Fire { damage } => {
+            fire_hitscan(
+                m,
+                movers,
+                eye,
+                rot,
+                base_t,
+                damage,
+                false,
+                w.def().range,
+                GLOCK_AIM_PIX_X,
+                GLOCK_AIM_PIX_Y,
+                0,
+                0,
+            );
+            PENDING_GAUSS_SHOVE = player_rules::tau_shove(damage, rot.m[2]);
+            sfx::play(sfx::GAUSS);
+            GAUSS_EVENT_FIRE
+        }
     }
-
-    if w.gauss_charge != 0 {
-        return fire_gauss_charge(w, w.gauss_charge, m, movers, eye, rot, base_t);
-    }
-    GAUSS_EVENT_NONE
 }
 
 /// The fire sound for a weapon id; melee picks hit vs miss.
@@ -20810,10 +19861,7 @@ static mut RPG_SPOT_POS: [i32; 3] = [0; 3];
 // health/armor once per tick (keeps explode() off the &mut health thread).
 static mut PENDING_PLAYER_DAMAGE: u16 = 0;
 /// Horizontal shove owed to the player from a charged Tau shot, in world units
-/// per tick. CGauss::StartFire subtracts `v_forward * flDamage * 5` from the
-/// player's velocity on a secondary shot and then restores the Z component in
-/// single player, so the kick is a pure horizontal shove -- the recoil that
-/// makes a full-charge shot feel like a cannon instead of a rifle.
+/// per tick (see `player_rules::tau_shove`), applied on the next player move.
 static mut PENDING_GAUSS_SHOVE: [i32; 3] = [0; 3];
 
 // (speed, life ticks, gravity?, AoE radius (0 = direct hit only), colour, size px)
@@ -20834,6 +19882,15 @@ fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
         // source blast radius defaults to damage * 2.5 (100 * 2.5 = 250).
         PROJ_M203 => (40, u8::MAX, true, 250, (120, 150, 90), 5),
         _ => (40, 100, true, 200, (170, 70, 50), 5), // PROJ_TRIPMINE
+    }
+}
+
+/// A world trace hit in the form the set-piece brains take.
+fn trace_hit(h: phys::RayHit) -> setpiece_math::TraceHit {
+    setpiece_math::TraceHit {
+        frac: h.frac,
+        pos: h.pos,
+        normal: h.normal,
     }
 }
 
@@ -24255,39 +23312,10 @@ const FLASH_MIN_REACH: i32 = 512;
 // Screen-space cone radii (px from centre) for the world-vertex lamp.
 const FLASH_CONE_INNER: i32 = 64;
 const FLASH_CONE_OUTER: i32 = 112;
-const FLASH_DRAIN_TICKS: u8 = 24; // SDK FLASH_DRAIN_TIME: 1.2 s at 20 Hz
-const FLASH_CHARGE_TICKS: u8 = 4; // SDK FLASH_CHARGE_TIME: 0.2 s at 20 Hz
 static mut FLASHLIGHT_ON: bool = false;
-static mut FLASHLIGHT_BATTERY: u8 = 99; // CBasePlayer::Spawn starts at 99
-static mut FLASHLIGHT_TIMER: u8 = 1; // force the initial 99 -> 100 HUD update
+static mut FLASHLIGHT_BATTERY: u8 = player_rules::Flashlight::NEW_GAME.battery;
+static mut FLASHLIGHT_TIMER: u8 = player_rules::Flashlight::NEW_GAME.timer;
 static mut FLASHLIGHT_REACH: u16 = FLASH_RANGE as u16;
-
-/// Advance GoldSrc's integer flashlight battery clock by one 20 Hz simulation
-/// tick. The state is passed and returned by value: keeping the three byte-wide
-/// fields out of adjacent mutable references avoids a bad MIPS-I codegen alias
-/// on the experimental target. The final bool reports automatic shutoff.
-#[inline(never)]
-fn tick_flashlight_battery(on: bool, mut battery: u8, mut timer: u8) -> (bool, u8, u8, bool) {
-    if timer > 0 {
-        timer -= 1;
-        if timer > 0 {
-            return (on, battery, timer, false);
-        }
-    }
-    if on {
-        if battery > 0 {
-            battery -= 1;
-        }
-        if battery == 0 {
-            return (false, 0, FLASH_CHARGE_TICKS, true);
-        }
-        timer = FLASH_DRAIN_TICKS;
-    } else if battery < 100 {
-        battery += 1;
-        timer = if battery < 100 { FLASH_CHARGE_TICKS } else { 0 };
-    }
-    (on, battery, timer, false)
-}
 
 /// Trace the beam centre once per visual frame. Static BSP and active brush
 /// movers both stop it, so a closed door cannot light the room behind it.
@@ -30044,16 +29072,13 @@ unsafe fn init_room_logic(
     while li < nlogic {
         let rec = m.logic(li);
         if rec.kind == map::LOGIC_SCRIPTED {
-            if rec.targetname == 0 {
-                let idle_only = scientist_logic::script_untargeted_idle_holds(
-                    rec.flags & map::LOGIC_SCRIPTED_HAS_IDLE != 0,
-                    rec.flags & map::LOGIC_SCRIPTED_HAS_PLAY != 0,
-                );
-                if idle_only {
-                    if let Some(pi) = script_find_actor(rec) {
-                        script_prime_idle_actor(m, li, rec, pi);
+            match scripted_sequence::spawn_action(&script_record(m, li)) {
+                scripted_sequence::SpawnAction::Prime => {
+                    if let Some(pi) = script_find_actor(m, li) {
+                        script_prime_idle_actor(m, li, pi);
                     }
-                } else {
+                }
+                scripted_sequence::SpawnAction::Fire => {
                     logic_use_entity(
                         m,
                         nlogic,
@@ -30065,10 +29090,7 @@ unsafe fn init_room_logic(
                         logic_state::CALLER_NONE,
                     );
                 }
-            } else if rec.flags & map::LOGIC_SCRIPTED_HAS_IDLE != 0 {
-                if let Some(pi) = script_find_actor(rec) {
-                    script_prime_idle_actor(m, li, rec, pi);
-                }
+                scripted_sequence::SpawnAction::Nothing => {}
             }
         }
         li += 1;
@@ -30826,12 +29848,12 @@ fn play(
     let mut flashlight_battery = if launch.preserve_view {
         unsafe { FLASHLIGHT_BATTERY }
     } else {
-        99
+        player_rules::Flashlight::NEW_GAME.battery
     };
     let mut flashlight_timer = if launch.preserve_view {
         unsafe { FLASHLIGHT_TIMER }
     } else {
-        1
+        player_rules::Flashlight::NEW_GAME.timer
     };
     unsafe {
         FLASHLIGHT_ON = flashlight;
@@ -31380,37 +30402,29 @@ fn play(
             let duck_requested = !dead
                 && unsafe { MOUNTED_TANK } < 0
                 && input_sample.held(semantic_input::ACTION_DUCK);
-            // GoldSrc drains one battery unit every 1.2 s while on and restores
-            // one every 0.2 s while off. Tick before input so a fresh toggle gets
-            // the complete authored interval rather than losing this tick.
-            if dead && flashlight {
-                flashlight = false;
-                flashlight_timer = FLASH_CHARGE_TICKS;
-            }
-            let (next_flashlight, next_battery, next_timer, auto_off) =
-                tick_flashlight_battery(flashlight, flashlight_battery, flashlight_timer);
-            flashlight = next_flashlight;
-            flashlight_battery = next_battery;
-            flashlight_timer = next_timer;
-            if auto_off {
-                unsafe { sfx::play(sfx::FLASHLIGHT) };
-            }
-            // Flashlight (L3 toggles the HEV lamp; needs the suit and charge).
+            // Suit lamp: battery clock, then the L3 toggle.
             let flash_now = input_sample.held(semantic_input::ACTION_FLASHLIGHT);
-            if flash_now && !flash_prev && suit_equipped && !dead {
-                if flashlight {
-                    flashlight = false;
-                    flashlight_timer = FLASH_CHARGE_TICKS;
-                    unsafe { sfx::play(sfx::FLASHLIGHT) };
-                } else if flashlight_battery > 0 {
-                    flashlight = true;
-                    flashlight_timer = FLASH_DRAIN_TICKS;
-                    unsafe { sfx::play(sfx::FLASHLIGHT) };
-                }
+            let (lamp, lamp_tick) = player_rules::flashlight_tick(
+                player_rules::Flashlight {
+                    on: flashlight,
+                    battery: flashlight_battery,
+                    timer: flashlight_timer,
+                },
+                player_rules::FlashlightInput {
+                    toggle_pressed: flash_now && !flash_prev,
+                    has_suit: suit_equipped,
+                    dead,
+                },
+            );
+            flashlight = lamp.on;
+            flashlight_battery = lamp.battery;
+            flashlight_timer = lamp.timer;
+            if lamp_tick.click {
+                unsafe { sfx::play(sfx::FLASHLIGHT) };
             }
             flash_prev = flash_now;
             unsafe {
-                FLASHLIGHT_ON = flashlight && suit_equipped && !dead;
+                FLASHLIGHT_ON = lamp_tick.lit;
                 FLASHLIGHT_BATTERY = flashlight_battery;
                 FLASHLIGHT_TIMER = flashlight_timer;
             }
@@ -35175,28 +34189,34 @@ fn play(
             // Build them while channel 2 walks the world list, hiding this CPU
             // work without changing either ordering table or draw order.
             if draw_regular_hud {
-                let _ = hud::draw(
-                    hud_mat,
-                    suit_equipped,
-                    flashlight,
-                    flashlight_battery,
-                    weapon.any_weapon(),
-                    zoom_aim,
+                let hud_inputs = hud_layout::HudInputs {
+                    suit: suit_equipped,
                     health,
-                    armor,
-                    weapon.clip_display(),
-                    weapon.reserve_display(),
-                    weapon.ammo[AMMO_ARGREN],
-                    weapon.ammo_mode(),
+                    armour: armor,
+                    weapon: weapon.any_weapon().then_some(weapon.current as u8),
+                    ammo: match weapon.ammo_mode() {
+                        0 => hud_layout::AmmoDisplay::None,
+                        1 => hud_layout::AmmoDisplay::ReserveOnly,
+                        _ => hud_layout::AmmoDisplay::ClipAndReserve,
+                    },
+                    clip: weapon.clip_display(),
+                    reserve: weapon.reserve_display(),
+                    secondary: weapon.ammo[AMMO_ARGREN],
+                    zoomed: zoom_aim,
+                    selection_ticks: weapon_icon_ticks,
+                    flashlight_on: flashlight,
+                    flashlight_charge: flashlight_battery,
+                    train_setting: train_hud_position(
+                        tram_controlling,
+                        tram_speed,
+                        TRACKTRAIN_USE_SPEED as i32,
+                    ),
                     pickup_kind,
                     pickup_ticks,
-                    if weapon.any_weapon() {
-                        weapon.current as i32
-                    } else {
-                        -1
-                    },
-                    weapon_icon_ticks,
-                    train_hud_position(tram_controlling, tram_speed, TRACKTRAIN_USE_SPEED as i32),
+                };
+                let _ = hud::draw(
+                    hud_mat,
+                    &hud_inputs,
                     hud_ot(),
                     &mut *core::ptr::addr_of_mut!(HUD_PRIMS),
                 );
