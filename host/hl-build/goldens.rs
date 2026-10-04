@@ -375,11 +375,12 @@ pub fn run(
         }
     }
 
-    // The frontend is single-threaded; run a few checkpoints at once.
+    // The frontend is single-threaded; run two checkpoints at once so a
+    // shared machine keeps headroom for other builds.
     let queue = Mutex::new(work.into_iter());
     let errors = Mutex::new(Vec::<String>::new());
     let threads = std::thread::available_parallelism()
-        .map(|n| n.get().saturating_sub(2).clamp(1, 6))
+        .map(|n| n.get().saturating_sub(2).clamp(1, 2))
         .unwrap_or(2);
     std::thread::scope(|scope| {
         for _ in 0..threads {
