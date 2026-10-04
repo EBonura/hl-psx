@@ -145,6 +145,9 @@ pub struct GeigerClick {
     pub volume_den: u16,
 }
 
+/// Squared distance of the quiet range, past which the counter stays silent.
+const GEIGER_RANGE_SQ: i32 = GEIGER_RANGE * GEIGER_RANGE;
+
 /// One Geiger sample: feed it the centre of every active radiation volume,
 /// then roll for a click against the nearest one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -160,49 +163,48 @@ impl Default for GeigerScan {
 
 impl GeigerScan {
     pub const fn new() -> Self {
-        Self {
-            nearest2: (GEIGER_RANGE + 1) * (GEIGER_RANGE + 1),
-        }
+        Self { nearest2: i32::MAX }
     }
 
+    /// Note one radiation volume; only the closest one counts.
     pub fn add_source(&mut self, player: [i32; 3], centre: [i32; 3]) {
-        let lim = GEIGER_RANGE + 1;
-        let dx = (centre[0] - player[0]).clamp(-lim, lim);
-        let dy = (centre[1] - player[1]).clamp(-lim, lim);
-        let dz = (centre[2] - player[2]).clamp(-lim, lim);
-        self.nearest2 = self.nearest2.min(dx * dx + dy * dy + dz * dz);
+        // Anything past the range is silent, so clamp each axis to keep the
+        // squared sum from overflowing.
+        let mut sq = 0;
+        for axis in 0..3 {
+            let gap = (centre[axis] - player[axis]).clamp(-1000, 1000);
+            sq += gap * gap;
+        }
+        self.nearest2 = self.nearest2.min(sq);
     }
 
-    /// Roll for a click. `rng` is drawn once, and a second time only when the
-    /// first draw does not click (also when nothing is in range).
+    /// Roll for a click against the closest source. Consumes one random draw
+    /// when something is in range and none otherwise.
     pub fn sample(self, rng: &mut dyn FnMut() -> u32) -> Option<GeigerClick> {
-        let range = psx_math::int32::isqrt_i32(self.nearest2);
-        let chance: u32 = match range {
-            601..=800 => 2,
-            501..=600 => 4,
-            301..=500 => 8,
-            201..=300 => 28,
-            151..=200 => 40,
-            101..=150 => 60,
-            76..=100 => 80,
-            51..=75 => 90,
-            0..=50 => 95,
-            _ => 0,
-        };
-        if (rng() & 127) < chance || (rng() & 127) < chance {
-            Some(GeigerClick {
-                volume_den: if range > 400 {
-                    3
-                } else if range > 150 {
-                    2
-                } else {
-                    1
-                },
-            })
-        } else {
-            None
+        if self.nearest2 > GEIGER_RANGE_SQ {
+            return None;
         }
+        if (rng() & 127) as i32 >= click_chance(self.nearest2) {
+            return None;
+        }
+        let volume_den = if self.nearest2 <= 150 * 150 {
+            1
+        } else if self.nearest2 <= 400 * 400 {
+            2
+        } else {
+            3
+        };
+        Some(GeigerClick { volume_den })
     }
+}
+
+/// Chance, out of 128, that a sample clicks when the nearest source is
+/// `dist2` (squared units) away: about 1 in 64 at the edge of the range,
+/// climbing along a cubic ease to nearly every sample at point blank.
+fn click_chance(dist2: i32) -> i32 {
+    // 0 at the edge of the range, 128 on top of the source.
+    let closeness = (GEIGER_RANGE_SQ - dist2) / 5000;
+    2 + ((125 * closeness * closeness * closeness) >> 21)
 }
 
 /// While the lamp is on the battery loses one unit every this many 20 Hz
