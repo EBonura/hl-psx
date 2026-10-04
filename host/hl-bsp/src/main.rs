@@ -15283,16 +15283,26 @@ fn floor_anchor_mdl_frames(
     shifts
 }
 
+/// Orientation of an MDL bone from its three stored angles (radians about
+/// X, Y and Z): the turn about X is applied first, then Y, then Z. Returned as
+/// a unit quaternion `[x, y, z, w]`.
 fn angle_quat(a: [f32; 3]) -> [f32; 4] {
-    let (sr, cr) = ((a[0] * 0.5).sin(), (a[0] * 0.5).cos());
-    let (sp, cp) = ((a[1] * 0.5).sin(), (a[1] * 0.5).cos());
-    let (sy, cy) = ((a[2] * 0.5).sin(), (a[2] * 0.5).cos());
-    [
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-        cr * cp * cy + sr * sp * sy,
-    ]
+    // The turn of `angle` about one coordinate axis.
+    let about = |axis: usize, angle: f32| {
+        let mut q = [0.0, 0.0, 0.0, (angle * 0.5).cos()];
+        q[axis] = (angle * 0.5).sin();
+        q
+    };
+    // Hamilton product `p * q`: the turn q first, then p.
+    let then = |p: [f32; 4], q: [f32; 4]| {
+        [
+            p[3] * q[0] + q[3] * p[0] + (p[1] * q[2] - p[2] * q[1]),
+            p[3] * q[1] + q[3] * p[1] + (p[2] * q[0] - p[0] * q[2]),
+            p[3] * q[2] + q[3] * p[2] + (p[0] * q[1] - p[1] * q[0]),
+            p[3] * q[3] - p[0] * q[0] - p[1] * q[1] - p[2] * q[2],
+        ]
+    };
+    then(about(2, a[2]), then(about(1, a[1]), about(0, a[0])))
 }
 
 fn quat_mat(q: [f32; 4]) -> [[f32; 3]; 3] {
@@ -21411,5 +21421,43 @@ mod tests {
             [29, 47]
         );
         assert_eq!(monster_loot_types("monster_scientist", ""), [0, 0]);
+    }
+
+    /// Bone angles are radians about X, Y, Z and compose as a turn about X,
+    /// then Y, then Z.
+    #[test]
+    fn bone_angles_turn_about_x_then_y_then_z() {
+        let (sx, cx) = (0.4f32.sin(), 0.4f32.cos());
+        let (sy, cy) = (-1.1f32.sin(), 1.1f32.cos());
+        let (sz, cz) = (2.3f32.sin(), 2.3f32.cos());
+        let rx = [[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]];
+        let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
+        let rz = [[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]];
+        let times = |a: [[f32; 3]; 3], b: [[f32; 3]; 3]| {
+            let mut m = [[0.0f32; 3]; 3];
+            for (i, row) in m.iter_mut().enumerate() {
+                for (j, cell) in row.iter_mut().enumerate() {
+                    *cell = (0..3).map(|k| a[i][k] * b[k][j]).sum();
+                }
+            }
+            m
+        };
+        let want = times(rz, times(ry, rx));
+        let got = quat_mat(angle_quat([0.4, -1.1, 2.3]));
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!(
+                    (got[i][j] - want[i][j]).abs() < 1e-5,
+                    "cell {i},{j}: {} vs {}",
+                    got[i][j],
+                    want[i][j]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn zero_bone_angles_are_the_identity_orientation() {
+        assert_eq!(angle_quat([0.0, 0.0, 0.0]), [0.0, 0.0, 0.0, 1.0]);
     }
 }
