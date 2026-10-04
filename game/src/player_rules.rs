@@ -259,63 +259,60 @@ pub struct FlashlightTick {
     pub lit: bool,
 }
 
-/// One 20 Hz tick of the suit lamp: death switches it off, the battery steps,
-/// an empty battery switches it off with a click, then the button toggles it
-/// (needs the suit; switching on needs charge).
+/// One 20 Hz tick of the suit lamp: dying switches it off, the battery clock
+/// runs, an empty battery switches it off with a click, then the button
+/// toggles it (needs the suit; switching on needs charge).
 #[inline(never)]
 pub fn flashlight_tick(s: Flashlight, input: FlashlightInput) -> (Flashlight, FlashlightTick) {
     let mut on = s.on;
     let mut timer = s.timer;
+    let mut click = false;
     if input.dead && on {
         on = false;
         timer = FLASH_CHARGE_TICKS;
     }
-    let (mut on, battery, mut timer, auto_off) = battery_step(on, s.battery, timer);
-    let mut click = auto_off;
+    let (battery, timer_after_clock) = battery_clock(on, s.battery, timer);
+    timer = timer_after_clock;
+    if on && battery == 0 {
+        on = false;
+        click = true;
+        timer = FLASH_CHARGE_TICKS;
+    }
     if input.toggle_pressed && input.has_suit && !input.dead {
         if on {
             on = false;
-            timer = FLASH_CHARGE_TICKS;
             click = true;
+            timer = FLASH_CHARGE_TICKS;
         } else if battery > 0 {
             on = true;
-            timer = FLASH_DRAIN_TICKS;
             click = true;
+            timer = FLASH_DRAIN_TICKS;
         }
     }
     (
         Flashlight { on, battery, timer },
         FlashlightTick {
             click,
-            lit: on && input.has_suit && !input.dead,
+            lit: on && input.has_suit,
         },
     )
 }
 
-/// The battery clock, by value: keeping the three byte-wide fields out of
-/// adjacent mutable references avoids a bad MIPS-I codegen alias on the
-/// experimental target. The final bool reports automatic shutoff.
-#[inline(never)]
-fn battery_step(on: bool, mut battery: u8, mut timer: u8) -> (bool, u8, u8, bool) {
+/// The battery clock: one tick off the timer; when it runs out the battery
+/// loses a unit (lamp on) or gains one up to 100 (lamp off) and the timer
+/// restarts. Takes and returns plain values, not references into the lamp
+/// state: byte-wide fields behind adjacent mutable references trip a bad
+/// MIPS-I codegen alias on the experimental target.
+fn battery_clock(on: bool, battery: u8, timer: u8) -> (u8, u8) {
+    let timer = timer.saturating_sub(1);
     if timer > 0 {
-        timer -= 1;
-        if timer > 0 {
-            return (on, battery, timer, false);
-        }
+        return (battery, timer);
     }
     if on {
-        if battery > 0 {
-            battery -= 1;
-        }
-        if battery == 0 {
-            return (false, 0, FLASH_CHARGE_TICKS, true);
-        }
-        timer = FLASH_DRAIN_TICKS;
-    } else if battery < 100 {
-        battery += 1;
-        timer = if battery < 100 { FLASH_CHARGE_TICKS } else { 0 };
+        (battery.saturating_sub(1), FLASH_DRAIN_TICKS)
+    } else {
+        (battery.saturating_add(1).min(100), FLASH_CHARGE_TICKS)
     }
-    (on, battery, timer, false)
 }
 
 /// Tau Cannon secondary fire timings in 20 Hz ticks.
