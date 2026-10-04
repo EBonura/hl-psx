@@ -202,13 +202,27 @@ const COOK_RUNTIME_ONLY: [&str; 2] = ["host/hl-build/goldens.rs", "host/hl-build
 
 fn cook_inputs_digest(repository: &Path) -> Result<String> {
     let mut files = Vec::new();
-    for directory in COOK_INPUT_DIRECTORIES {
-        collect_files_skipping(
-            repository,
-            &repository.join(directory),
-            &mut files,
-            &["target", ".DS_Store"],
-        )?;
+    // Tracked files only, so generated and ignored files (a host lockfile a
+    // local build wrote, editor droppings) cannot make two checkouts of
+    // the same commit disagree. Outside git, walk the directories instead.
+    let mut listing = vec!["ls-files", "-z", "--"];
+    listing.extend(COOK_INPUT_DIRECTORIES);
+    match git_output(repository, &listing) {
+        Ok(listed) => {
+            for path in listed.split(|byte| *byte == 0).filter(|p| !p.is_empty()) {
+                files.push(PathBuf::from(String::from_utf8(path.to_vec())?));
+            }
+        }
+        Err(_) => {
+            for directory in COOK_INPUT_DIRECTORIES {
+                collect_files_skipping(
+                    repository,
+                    &repository.join(directory),
+                    &mut files,
+                    &["target", ".DS_Store"],
+                )?;
+            }
+        }
     }
     files.extend(COOK_INPUT_FILES.iter().map(PathBuf::from));
     files.retain(|path| {
