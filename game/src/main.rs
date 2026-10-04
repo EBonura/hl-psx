@@ -111,9 +111,9 @@ use psx_io;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_math::int32::{isqrt_i32, mul_div_i32};
 use psx_math::{atan2_q12, sincos};
-use psx_pad::{button, poll_port1, require_analog_port1, AnalogRequirement};
+use psx_pad::{button, poll_port1, require_analog_port1, AnalogRequirement, PadMode};
 #[cfg(not(feature = "semantic-input"))]
-use psx_pad::{enable_analog_port1, PadMode, PadReader, PadTracker};
+use psx_pad::{enable_analog_port1, PadReader, PadTracker};
 use psx_rt::{interrupts, tty};
 use psx_spu;
 
@@ -30048,7 +30048,16 @@ fn play(
     #[cfg(feature = "route-follow")] follow_route: route_follow::Route,
     #[cfg(feature = "route-follow")] follower: &mut route_follow::Follower,
 ) -> PlayExit {
-    let _ = require_analog_port1();
+    // Boot locked the pad in analog mode and nothing unlocks it, so a room entry
+    // only repeats the config transaction (which blocks for a few frames) for a
+    // pad that reports something else: a digital pad, one parked in config mode,
+    // or none. A garbled poll is not evidence of any of those.
+    if matches!(
+        poll_port1().mode,
+        PadMode::Digital | PadMode::Config | PadMode::Disconnected
+    ) {
+        let _ = require_analog_port1();
+    }
     settings::apply_all(); // honour the options menu's screen offset + volumes
     unsafe {
         // A charger voice is map-local. End it before any WORLD.PAK streaming
