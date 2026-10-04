@@ -20,28 +20,26 @@ pub enum PlayerDamageKind {
 }
 
 /// Health and armour after the player takes `dmg` points of damage.
+///
+/// With the suit charged, a fifth of every hit goes straight to health and
+/// the other four fifths are soaked up by the armour at one armour point per
+/// two points of damage. Armour that runs dry soaks what it can and the rest
+/// lands on health. Falls skip the suit altogether.
 pub fn apply_player_damage(v: Vitals, dmg: u16, kind: PlayerDamageKind) -> Vitals {
-    let Vitals { health, armor } = v;
-    if kind == PlayerDamageKind::Fall || armor == 0 {
-        return Vitals {
-            health: health.saturating_sub(dmg),
-            armor,
-        };
-    }
-    // The suit leaves a fifth of the damage on health and pays for the rest
-    // at one armour point per two damage points.
-    let health_dmg = dmg / 5;
-    let armor_cost = (dmg.saturating_sub(health_dmg).saturating_add(1)) / 2;
-    if armor_cost <= armor {
-        return Vitals {
-            health: health.saturating_sub(health_dmg),
-            armor: armor - armor_cost,
-        };
-    }
-    let absorbed = armor.saturating_mul(2);
+    let dmg = u32::from(dmg);
+    let (health_loss, armor_loss) = match kind {
+        PlayerDamageKind::Fall => (dmg, 0),
+        PlayerDamageKind::Generic => {
+            let suit_share = dmg - dmg / 5;
+            let armor = u32::from(v.armor);
+            // What the armour could soak is capped by what it holds.
+            let soaked = suit_share.min(armor * 2);
+            (dmg - soaked, soaked.div_ceil(2))
+        }
+    };
     Vitals {
-        health: health.saturating_sub(dmg.saturating_sub(absorbed)),
-        armor: 0,
+        health: u32::from(v.health).saturating_sub(health_loss) as u16,
+        armor: (u32::from(v.armor) - armor_loss) as u16,
     }
 }
 
@@ -71,6 +69,11 @@ impl DamageCompass {
     /// Light the arrows facing a damage source. `forward` and `right` are the
     /// view's horizontal forward and screen-right axes in world space, as
     /// 1.0 = 4096 vectors.
+    ///
+    /// A source within 50 units lights every arrow. Otherwise an arrow lights
+    /// when the source lies on its side of the view and its share of the
+    /// full 3D distance on that axis is more than 0.3, so a source straight
+    /// above lights nothing and a diagonal one lights two.
     pub fn note_hit(
         &mut self,
         player: [i32; 3],
@@ -78,36 +81,42 @@ impl DamageCompass {
         right: [i16; 3],
         source: [i32; 3],
     ) {
-        let dx = (source[0] - player[0]).clamp(-4096, 4096);
-        let dy = (source[1] - player[1]).clamp(-4096, 4096);
-        let dz = (source[2] - player[2]).clamp(-4096, 4096);
-        let delta = [dx, dy, dz];
-        let d2 = dx * dx + dy * dy + dz * dz;
-        let mut edges = 0u8;
-        if d2 <= 50 * 50 {
-            edges = COMPASS_FRONT | COMPASS_RIGHT | COMPASS_REAR | COMPASS_LEFT;
-        } else {
-            let distance = psx_math::int32::isqrt_i32(d2);
-            let ahead = dot_q12(forward, delta);
-            let side = dot_q12(right, delta);
-            let threshold = distance * 3;
-            if ahead.abs() * 10 > threshold {
-                edges |= if ahead > 0 {
-                    COMPASS_FRONT
-                } else {
-                    COMPASS_REAR
-                };
-            }
-            if side.abs() * 10 > threshold {
-                edges |= if side > 0 {
-                    COMPASS_RIGHT
-                } else {
-                    COMPASS_LEFT
-                };
-            }
-        }
-        self.edges |= edges;
         self.ticks = 10;
+        let mut gap = [0i32; 3];
+        for axis in 0..3 {
+            gap[axis] = source[axis].saturating_sub(player[axis]);
+        }
+        // Only the direction matters at long range: halve the gap until the
+        // squared distances below fit comfortably.
+        let mut scaled = false;
+        while gap.iter().any(|g| g.abs() > 1023) {
+            gap = gap.map(|g| g / 2);
+            scaled = true;
+        }
+        let dist_sq = gap.iter().map(|g| g * g).sum::<i32>();
+        if !scaled && dist_sq <= 50 * 50 {
+            self.edges = COMPASS_FRONT | COMPASS_RIGHT | COMPASS_REAR | COMPASS_LEFT;
+            return;
+        }
+        // Squared "share of the distance is above 0.3" for a signed distance
+        // along an axis: (10 * along)^2 > 9 * dist^2.
+        let strong = |along: i32| (10 * along) * (10 * along) > 9 * dist_sq;
+        let ahead = dot_q12(forward, gap);
+        let beside = dot_q12(right, gap);
+        if strong(ahead) {
+            self.edges |= if ahead > 0 {
+                COMPASS_FRONT
+            } else {
+                COMPASS_REAR
+            };
+        }
+        if strong(beside) {
+            self.edges |= if beside > 0 {
+                COMPASS_RIGHT
+            } else {
+                COMPASS_LEFT
+            };
+        }
     }
 
     /// Advance one 20 Hz tick; the arrows go dark 10 ticks after the last hit.
