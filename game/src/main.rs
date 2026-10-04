@@ -15190,7 +15190,7 @@ unsafe fn tick_boss_walker(m: &Map, movers: &[phys::Mover]) {
             }
             LOGIC_TARGET[w] = rec.arg0;
             if rec.arg1 != 0 {
-                // pTarget->pev->health * gSkillData.bigmommaHealthFactor
+                // node health times the skill health factor
                 let factor = skill_table::SKILL_BIGMOMMA_FACTOR_Q8[settings::skill()] as u32;
                 LOGIC_COUNTER[w] = ((rec.arg1 as u32 * factor) >> 8).min(i16::MAX as u32) as i16;
                 LOGIC_STATE[w] = LOGIC_STATE_GOING_DOWN;
