@@ -159,3 +159,9 @@ pub mod garg_logic;
 
 #[path = "../../../game/src/nihilanth_logic.rs"]
 pub mod nihilanth_logic;
+
+#[path = "../../../game/src/hud.rs"]
+pub mod hud;
+
+#[path = "../../../game/src/hud_layout.rs"]
+pub mod hud_layout;
