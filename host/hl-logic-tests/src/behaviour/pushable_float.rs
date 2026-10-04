@@ -144,25 +144,28 @@ fn grounded_box_stays_down_unless_lift_beats_gravity() {
     assert!(!r.grounded && r.vy > 0);
 }
 
-/// Recorded from ac83da7 behaviour: final centre height after 300 ticks for
-/// a box of the given half height and buoyancy, released (a) with its bottom
-/// one unit under the surface, (b) from 64 units above that, (c) at rest
-/// deep underwater at Y = -200. Surface at Y = 0.
+/// Recorded from the clean rewrite (the first version of this table came from
+/// the translated code and differed by up to about six units, see the
+/// approval notes): final centre height after 300 ticks for a box of the
+/// given half height and buoyancy, released (a) with its bottom one unit
+/// under the surface, (b) from 64 units above that, (c) at rest deep
+/// underwater at Y = -200. Surface at Y = 0. The first row is a box too heavy
+/// for its height, which keeps sinking at 2 units per tick.
 #[test]
 fn golden_settle_heights() {
     let table: &[(i32, i32, [i32; 3])] = &[
-        (8, 40, [-300, -307, -200]),
-        (8, 80, [1, -12, -200]),
-        (8, 100, [3, -3, -3]),
-        (8, 200, [6, 1, 1]),
-        (16, 40, [-1, -8, -7]),
-        (16, 80, [9, 3, 3]),
-        (16, 100, [11, 5, 5]),
-        (16, 200, [14, 9, 9]),
-        (32, 40, [16, 8, 9]),
-        (32, 80, [26, 19, 20]),
-        (32, 100, [28, 21, 21]),
-        (32, 200, [30, 25, 25]),
+        (8, 40, [-600, -600, -799]),
+        (8, 80, [-2, -3, -3]),
+        (8, 100, [1, 0, -1]),
+        (8, 200, [5, 5, 5]),
+        (16, 40, [-5, -5, -5]),
+        (16, 80, [6, 5, 7]),
+        (16, 100, [9, 7, 9]),
+        (16, 200, [13, 13, 13]),
+        (32, 40, [11, 11, 11]),
+        (32, 80, [22, 21, 23]),
+        (32, 100, [25, 23, 25]),
+        (32, 200, [29, 29, 29]),
     ];
     for &(half, b, expect) in table {
         let starts = [half + 1, half + 64, -200];
@@ -176,67 +179,41 @@ fn golden_settle_heights() {
     }
 }
 
-/// Recorded from ac83da7 behaviour: centre height per tick for a 32-unit box
+/// Recorded from the clean rewrite: centre height per tick for a 32-unit box
 /// with buoyancy 80 dropped from 64 units above the floating position. It
 /// falls, dips under its rest height once, and eases back up.
 #[test]
 fn golden_drop_trajectory() {
     let expect = [
-        78, 74, 68, 60, 50, 38, 24, 8, 0, -3, -3, -2, -1, 0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-        3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+        78, 74, 68, 60, 50, 38, 24, 8, 0, -2, -1, 1, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
     ];
     assert_eq!(simulate(16 + 64, 16, 80, 40), expect);
 }
 
-/// Recorded from ac83da7 behaviour: single ticks with a 32-unit box in a pool
+/// Recorded from the clean rewrite: single ticks with a 32-unit box in a pool
 /// whose surface is Y = 0; (centre Y, buoyancy, stored speed, grounded).
 #[test]
 fn golden_single_ticks() {
+    let rests = Some(FloatTick {
+        vy: 0,
+        grounded: true,
+    });
+    let moving = |vy| {
+        Some(FloatTick {
+            vy,
+            grounded: false,
+        })
+    };
     let cases: &[((i32, i32, i32, bool), Option<FloatTick>)] = &[
-        (
-            (0, 80, 0, true),
-            Some(FloatTick {
-                vy: 0,
-                grounded: true,
-            }),
-        ),
+        ((0, 80, 0, true), rests),
         ((20, 80, 0, true), None),
-        (
-            (0, 40, 0, true),
-            Some(FloatTick {
-                vy: 0,
-                grounded: true,
-            }),
-        ),
-        (
-            (-10, 200, 0, true),
-            Some(FloatTick {
-                vy: 2,
-                grounded: false,
-            }),
-        ),
-        (
-            (0, 80, -6, false),
-            Some(FloatTick {
-                vy: -2,
-                grounded: false,
-            }),
-        ),
-        (
-            (0, 80, 6, false),
-            Some(FloatTick {
-                vy: 3,
-                grounded: false,
-            }),
-        ),
+        ((0, 40, 0, true), rests),
+        ((-10, 200, 0, true), moving(3)),
+        ((0, 80, -6, false), moving(-1)),
+        ((0, 80, 6, false), moving(4)),
         ((16, 80, 0, false), None),
-        (
-            (15, 80, 0, false),
-            Some(FloatTick {
-                vy: -1,
-                grounded: false,
-            }),
-        ),
+        ((15, 80, 0, false), moving(-2)),
     ];
     for &((y, b, vy, g), expect) in cases {
         assert_eq!(
