@@ -60,7 +60,7 @@
 //!   nav (18-byte packed nodes in both modes):
 //!     exact retail route: u16 n_nav,0x8000|route_bytes |
 //!       (i32 origin[3],i16 leaf,u16 route_off,u8 node_type,u8 pad) × n_nav |
-//!       GoldSrc compressed NextNodeInRoute bytes
+//!       run-length coded route bytes
 //!     legacy/custom fallback: u16 n_nav,n_nav_links |
 //!       (i32 origin[3],i16 leaf,u16 first_link,u8 link_count,u8 pad) × n_nav |
 //!       u16 link_dest × n_nav_links

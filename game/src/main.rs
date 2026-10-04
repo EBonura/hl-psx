@@ -7038,7 +7038,7 @@ fn pushable_half_extents(e: map::Ent) -> [i32; 3] {
     ]
 }
 
-/// CPushable's cooked buoyancy (pev->skin), above the half height in mv[1].
+/// A pushable's cooked buoyancy factor (its skin value), above the half height in mv[1].
 #[inline(always)]
 fn pushable_buoyancy(e: map::Ent) -> i32 {
     e.mv[1] >> 16
@@ -15284,8 +15284,8 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         PROP_DEATH_START[pi] = SIM_NOW; // play the death clip forward from now
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_AI_TIMER[pi] = 0;
-        // GoldSrc leaves no blood pool at a corpse: its decals come only from
-        // TraceBleed on each hit (fire_hitscan). Actors that do not bleed
+        // The original leaves no blood pool at a corpse: its decals come only from
+        // the blood trail of each hit (fire_hitscan). Actors that do not bleed
         // throw no gore either.
         if prop_blood_kind(PROP_KIND[pi]) != IMPACT_KIND_NONE {
             spawn_gibs(PROP_POS[pi], 3); // gore chunks arc out from the corpse
