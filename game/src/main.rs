@@ -35,6 +35,7 @@ mod menu;
 mod model;
 use psx_goldsrc::ordering;
 mod phys;
+mod player_rules;
 use psx_goldsrc::pickup_logic;
 use psx_goldsrc::pushable;
 #[cfg(feature = "reference-trace")]
@@ -66,6 +67,7 @@ use psx_goldsrc::telemetry;
 mod tram_logic;
 use psx_goldsrc::visibility_logic;
 mod vram;
+mod world_rules;
 
 mod room_budget {
     include!(concat!(env!("OUT_DIR"), "/room_budget.rs"));
@@ -1347,15 +1349,12 @@ const MAX_IMPACT_MARKS: usize = 24;
 const MAX_IMPACT_PARTICLES: usize = 64;
 const IMPACT_MARK_TICKS: u8 = 180;
 const IMPACT_KIND_WORLD: u8 = 0;
-/// BLOOD_COLOR_RED: humans, and the barnacle.
+/// Red blood: humans, and the barnacle.
 const IMPACT_KIND_BLOOD: u8 = 1;
-/// BLOOD_COLOR_YELLOW (the SDK's GREEN is the same palette index): headcrabs,
-/// zombies and the Xen fauna.
+/// Yellow blood: headcrabs, zombies and the Xen fauna.
 const IMPACT_KIND_YBLOOD: u8 = 2;
-/// DONT_BLEED: turrets, machines and scenery.
+/// No blood: turrets, machines and scenery.
 const IMPACT_KIND_NONE: u8 = 3;
-/// CBaseEntity::TraceBleed traces 172 units on past the wound.
-const BLEED_TRACE_DIST: i32 = 172;
 
 static mut OT: OrderingTable<OT_LEN> = OrderingTable::new();
 static mut HUD_OT: OrderingTable<HUD_OT_LEN> = OrderingTable::new();
@@ -3719,10 +3718,9 @@ static mut MONSTER_TRIGGER_END: u16 = 0;
 static mut BOSS_WALKER: u16 = u16::MAX;
 static mut LOGIC_EVENTS: [LogicEvent; MAX_LOGIC_EVENTS] = [EMPTY_LOGIC_EVENT; MAX_LOGIC_EVENTS];
 static mut TRACKTRAIN_SUBMODEL: u16 = 0;
-// Live path_track switches for a branching tram path, one bit per cooked
-// waypoint (<= 256): SF_PATH_ALTERNATE and SF_PATH_DISABLED.
-static mut TRAM_NODE_ALT: [u32; 8] = [0; 8];
-static mut TRAM_NODE_OFF: [u32; 8] = [0; 8];
+// Live switches of a branching tram path's waypoints (<= 256): which are
+// switched to their alternate path and which are disabled.
+static mut TRAM_SWITCHES: world_rules::TrackSwitches = world_rules::TrackSwitches::new();
 // Waypoints the last tram_advance crossed, in order, for fire-on-pass.
 static mut TRAM_PASSED: [u16; 16] = [0; 16];
 static mut TRAM_PASSED_N: usize = 0;
@@ -3735,7 +3733,7 @@ static mut TRACKTRAIN_USE_SPEED: u16 = 60; // +use drive speed (On A Rail)
 static mut LOGIC_PLAYER_POS: [i32; 3] = [0; 3];
 static mut SIM_NOW: u16 = 0; // current sim tick, for fire-path logic hooks
 static mut LOGIC_PLAYER_YAW: u16 = 0;
-// Who started the logic chain now running, for CBaseDoor::DoorGoUp's
+// Who started the logic chain now running, for the rotating doors'
 // swing-away rule: 0 none, 1 the player, 2 the tracktrain. Queued events keep
 // it in their metadata; the door reads the activator's live position.
 static mut LOGIC_ACTIVATOR: u8 = 0;
@@ -5117,58 +5115,67 @@ fn seg_len(a: [i32; 3], b: [i32; 3]) -> i32 {
     isqrt_i32(dist2_3(a, b)).max(1)
 }
 
-#[inline(always)]
-fn tram_bit(bits: &[u32; 8], i: usize) -> bool {
-    i < 256 && bits[i >> 5] & (1 << (i & 31)) != 0
+impl world_rules::TrackGraph for Map {
+    #[inline(always)]
+    fn node_count(&self) -> usize {
+        self.n_way
+    }
+    #[inline(always)]
+    fn position(&self, node: usize) -> [i32; 3] {
+        self.waypoint(node)
+    }
+    #[inline(always)]
+    fn is_branching(&self) -> bool {
+        self.tram_graph
+    }
+    #[inline(always)]
+    fn successor(&self, node: usize) -> Option<usize> {
+        self.way_next(node)
+    }
+    #[inline(always)]
+    fn alternate(&self, node: usize) -> Option<usize> {
+        self.way_alt(node)
+    }
+    #[inline(always)]
+    fn alternate_reverse_only(&self, node: usize) -> bool {
+        self.way_flags(node) & cooked::PATH_TRACK_ALTREVERSE != 0
+    }
 }
 
-/// CPathTrack::Use: a node with an altpath switches between its two paths,
-/// any other node is enabled or disabled. USE_ON selects the primary path or
-/// enables, USE_OFF the alternate path or disables, TOGGLE flips.
+#[inline(always)]
+fn tram_switches() -> &'static world_rules::TrackSwitches {
+    unsafe { &*core::ptr::addr_of!(TRAM_SWITCHES) }
+}
+
+/// Fire every tram waypoint named `target`; see `TrackSwitches::use_node`.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn tram_path_track_use(m: &Map, target: u16, use_type: u8) {
+    let how = match use_type {
+        map::USE_ON => world_rules::TrackUse::On,
+        map::USE_OFF => world_rules::TrackUse::Off,
+        _ => world_rules::TrackUse::Toggle,
+    };
+    let switches = &mut *core::ptr::addr_of_mut!(TRAM_SWITCHES);
     let mut i = 0usize;
     while i < m.n_way.min(256) {
         if target != 0 && m.way_name(i) == target {
-            let bits = if m.way_alt(i).is_some() {
-                &mut *core::ptr::addr_of_mut!(TRAM_NODE_ALT)
-            } else {
-                &mut *core::ptr::addr_of_mut!(TRAM_NODE_OFF)
-            };
-            let mask = 1u32 << (i & 31);
-            match use_type {
-                map::USE_ON => bits[i >> 5] &= !mask,
-                map::USE_OFF => bits[i >> 5] |= mask,
-                _ => bits[i >> 5] ^= mask,
-            }
+            switches.use_node(i, m.way_alt(i).is_some(), how);
         }
         i += 1;
     }
 }
 
-/// CPathTrack::GetNext: the altpath while switched to it (unless the switch
-/// only applies in reverse), else the target.
+/// The node after `seg` given the live switches.
 #[inline(never)]
 fn tram_next(m: &Map, seg: usize) -> Option<usize> {
-    if !m.tram_graph {
-        return (seg + 1 < m.n_way).then_some(seg + 1);
-    }
-    if let Some(alt) = m.way_alt(seg) {
-        if unsafe { tram_bit(&*core::ptr::addr_of!(TRAM_NODE_ALT), seg) }
-            && m.way_flags(seg) & cooked::PATH_TRACK_ALTREVERSE == 0
-        {
-            return Some(alt);
-        }
-    }
-    m.way_next(seg)
+    tram_switches().next(m, seg)
 }
 
-/// The next node a moving train may enter (CPathTrack::ValidPath with move
-/// set): a disabled node stops it at the current one.
+/// The next node a moving train may enter: a disabled node stops it.
 #[inline(never)]
 fn tram_next_open(m: &Map, seg: usize) -> Option<usize> {
-    tram_next(m, seg).filter(|&n| !unsafe { tram_bit(&*core::ptr::addr_of!(TRAM_NODE_OFF), n) })
+    tram_switches().next_open(m, seg)
 }
 
 fn tram_step_for_speed(speed: i32, remainder: &mut i32) -> i32 {
@@ -5211,49 +5218,11 @@ fn tram_lerp_q8(a: [i32; 3], b: [i32; 3], dist: i32, len: i32) -> [i32; 3] {
     ]
 }
 
-/// Point `ahead` 3-D path units beyond `(seg,seg_dist)`, in Q8 world space.
-/// CPathTrack::LookAhead crosses as many nodes as necessary and projects past
-/// a terminal node along the final segment; clamping at the last point makes a
-/// train turn too sharply immediately before a changelevel.
+/// Point `ahead` path units beyond `(seg, seg_dist)` in Q8 world space; see
+/// `world_rules::track_lookahead_q8`.
 #[inline(never)]
-fn tram_path_lookahead_q8(m: &Map, mut seg: usize, mut seg_dist: i32, mut ahead: i32) -> [i32; 3] {
-    if m.n_way == 0 {
-        return [0; 3];
-    }
-    if m.n_way == 1 {
-        let p = m.waypoint(0);
-        return [p[0] << 8, p[1] << 8, p[2] << 8];
-    }
-    if !m.tram_graph {
-        seg = seg.min(m.n_way - 2);
-    }
-    ahead = ahead.max(0);
-    loop {
-        let a = m.waypoint(seg);
-        let Some(next) = tram_next(m, seg) else {
-            // A graph dead end: no final segment to project along.
-            return [a[0] << 8, a[1] << 8, a[2] << 8];
-        };
-        let b = m.waypoint(next);
-        let len = seg_len(a, b).max(1);
-        let left = (len - seg_dist).max(0);
-        if ahead <= left {
-            return tram_lerp_q8(a, b, seg_dist + ahead, len);
-        }
-        ahead -= left;
-        if tram_next(m, next).is_some() {
-            seg = next;
-            seg_dist = 0;
-            continue;
-        }
-        // Project along the terminal segment, matching CPathTrack::Project.
-        let f = (ahead << 12) / len;
-        return [
-            (b[0] << 8) + ((b[0] - a[0]) * f >> 4),
-            (b[1] << 8) + ((b[1] - a[1]) * f >> 4),
-            (b[2] << 8) + ((b[2] - a[2]) * f >> 4),
-        ];
-    }
+fn tram_path_lookahead_q8(m: &Map, seg: usize, seg_dist: i32, ahead: i32) -> [i32; 3] {
+    world_rules::track_lookahead_q8(m, tram_switches(), seg, seg_dist, ahead)
 }
 
 /// CPathTrack look-ahead including the synthetic cross-BSP approach leg.
@@ -5535,13 +5504,9 @@ fn tram_advance(
                     TRAM_PASSED_N += 1;
                 }
             }
-            // Passing a path_track with a "speed" key changes the train's
-            // speed (CPathTrack, plats.cpp); 0 keeps the current one. c0a0
-            // is authored 200..400 u/s in sections.
-            let ws = m.way_speed(*seg);
-            if ws > 0 {
-                *speed = ws;
-            }
+            // Reaching a waypoint with a speed key changes the train's speed.
+            // c0a0 is authored 200..400 u/s in sections.
+            *speed = world_rules::track_speed_at_node(*speed, m.way_speed(*seg));
             let entering_trackchange = tram_is_trackchange_segment(m, *seg);
             if leaving_trackchange != entering_trackchange {
                 // A trackchange is a separate pusher phase. Gold fires the
@@ -5570,10 +5535,7 @@ fn tram_advance(
     if m.n_way == 55 && *seg + 1 < m.n_way {
         let len = seg_len(m.waypoint(*seg), m.waypoint(*seg + 1));
         if len - *seg_dist <= (*speed).max(0) / 10 {
-            let ws = m.way_speed(*seg + 1);
-            if ws > 0 {
-                *speed = ws;
-            }
+            *speed = world_rules::track_speed_at_node(*speed, m.way_speed(*seg + 1));
         }
     }
     (tram_next_open(m, *seg).is_some(), phase_boundary)
@@ -5758,8 +5720,7 @@ static mut BOB_PHASE: u32 = 0;
 // GoldSrc pain-compass edges packed as front/right/rear/left bits. This
 // replaces the port-specific full-screen red wash with the original
 // directional feedback without adding a resident array.
-static mut DAMAGE_DIRECTION: u8 = 0;
-static mut DAMAGE_TICKS: u8 = 0;
+static mut DAMAGE_COMPASS: player_rules::DamageCompass = player_rules::DamageCompass::new();
 // HEV suit voice: 0 = fine, 1 = health critical, 2 = near death (fire once per
 // worsening threshold crossing). Geiger cooldown throttles the radiation click.
 static mut HEV_HEALTH_STATE: u8 = 0;
@@ -7070,43 +7031,23 @@ fn pushable_buoyancy(e: map::Ent) -> i32 {
     e.mv[1] >> 16
 }
 
-/// SV_Physics_Step for an FL_FLOAT pushable: gravity against skin x submerged
-/// depth (SV_Submerged, the water column above the box bottom by the same
-/// five-step bisection as SV_RecursiveWaterLevel); the new vertical speed in
-/// units per tick. None when the bottom sample is dry (an ordinary fall).
+/// Buoyancy tick for a floating pushable: observes the cart's box and the
+/// water volumes, and leaves the rule itself to `world_rules`.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn pushable_float_step(m: &Map, nents: usize, e: map::Ent, vy: i32) -> Option<i32> {
-    let c = pushable_world_center(e, e.origin);
-    let h = pushable_half_extents(e)[1];
-    let bottom = c[1] - h;
-    if !water_touch(m, nents, [c[0], bottom + 1, c[2]]) {
-        return None;
-    }
-    let depth = if water_touch(m, nents, [c[0], c[1] + h, c[2]]) {
-        2 * h
-    } else {
-        let (mut wet, mut dry) = (1, 2 * h);
-        let mut i = 0;
-        while i < 5 {
-            let mid = (wet + dry) / 2;
-            if water_touch(m, nents, [c[0], bottom + mid, c[2]]) {
-                wet = mid;
-            } else {
-                dry = mid;
-            }
-            i += 1;
-        }
-        (wet + dry) / 2
+unsafe fn pushable_float_step(
+    m: &Map,
+    nents: usize,
+    e: map::Ent,
+    vy: i32,
+    grounded: bool,
+) -> Option<world_rules::FloatTick> {
+    let body = world_rules::FloatBody {
+        center: pushable_world_center(e, e.origin),
+        half_height: pushable_half_extents(e)[1],
+        buoyancy: pushable_buoyancy(e),
     };
-    // Gravity (800 u/s^2) balances the lift at depth 800 / skin. GoldSrc
-    // integrates the two undamped at 60-100 fps and the carts it spawns near
-    // that depth bob by a unit or two (c2a4a's crates in the Xash capture);
-    // this velocity word is whole units per 20 Hz tick, so undamped Euler
-    // here swung them tens of units. Ease toward the balance depth instead.
-    let balance = 800 / pushable_buoyancy(e).max(1);
-    let toward = ((depth - balance) / 4).clamp(-8, 8);
-    Some((vy + toward) / 2)
+    world_rules::pushable_float_tick(body, vy, grounded, &mut |p| water_touch(m, nents, p))
 }
 
 #[inline(always)]
@@ -7705,22 +7646,13 @@ unsafe fn tick_pushables(
             }
         }
 
-        let resting_vy = if state.support == pushable::SUPPORT_NONE {
-            state.vy as i32
-        } else {
-            0
-        };
+        let float_vy = state.vy as i32;
+        let grounded = state.support != pushable::SUPPORT_NONE;
         state = pushable::fall_step(state, 2);
-        if pushable_buoyancy(e) != 0 {
-            if let Some(vy) = pushable_float_step(m, nents, e, resting_vy) {
-                // FL_FLOAT adds gravity and lift every frame, grounded or not:
-                // a lift that beats gravity raises the cart off its floor.
-                state.vy = vy as i8;
-                if vy > 0 {
-                    state.support = pushable::SUPPORT_NONE;
-                } else if state.support != pushable::SUPPORT_NONE {
-                    state.vy = 0;
-                }
+        if let Some(t) = pushable_float_step(m, nents, e, float_vy, grounded) {
+            state.vy = t.vy as i8;
+            if !t.grounded {
+                state.support = pushable::SUPPORT_NONE;
             }
         }
         if state.support == pushable::SUPPORT_NONE && state.vy != 0 {
@@ -9595,41 +9527,38 @@ fn door_auto_returns(rec: map::LogicEnt, at_bottom: bool) -> bool {
         && ((rec.spawnflags & SF_DOOR_START_OPEN) != 0) == at_bottom
 }
 
-/// CBaseDoor::DoorGoUp for a func_door_rotating: a two-way (not ONEWAY) door
-/// turning about the vertical axis swings away from its activator, chosen by
-/// which side of the pivot the activator stands relative to where it faces.
-/// The authored direction is kept for a chain nobody started (sign +1).
+/// A two-way rotating door swings away from whoever started its chain; the
+/// rule is `world_rules::rotating_door_opens_reversed`. The door's current
+/// swing sign lives in its first motion word and in ROT_DOOR_REVERSED.
 #[optimize(size)]
 unsafe fn rotating_door_swing_away(ei: usize, spawnflags: u16) {
-    const SF_DOOR_ONEWAY: u16 = 16;
-    const SF_DOOR_ROTATE_Z: u16 = 64;
-    const SF_DOOR_ROTATE_X: u16 = 128;
-    if ei >= MAX_ENTS || spawnflags & (SF_DOOR_ONEWAY | SF_DOOR_ROTATE_Z | SF_DOOR_ROTATE_X) != 0 {
+    if ei >= MAX_ENTS {
         return;
     }
-    // HL forward (cos, sin) of a yaw is (sin r, cos r) in runtime (x, z).
-    let (pos, fwd) = match LOGIC_ACTIVATOR {
-        1 => (
-            LOGIC_PLAYER_POS,
-            [
+    // A yaw's forward is (sin, cos) in runtime (x, z).
+    let activator = match LOGIC_ACTIVATOR {
+        1 => Some(world_rules::DoorActivator {
+            pos: LOGIC_PLAYER_POS,
+            forward_xz: [
                 sincos::sin_q12(LOGIC_PLAYER_YAW),
                 sincos::sin_q12((LOGIC_PLAYER_YAW + 1024) & 0x0fff),
             ],
-        ),
-        2 => (
-            LOGIC_TRAM_POS,
-            [
+        }),
+        2 => Some(world_rules::DoorActivator {
+            pos: LOGIC_TRAM_POS,
+            forward_xz: [
                 LOGIC_TRAM_FWD[0].clamp(-4096, 4096),
                 LOGIC_TRAM_FWD[1].clamp(-4096, 4096),
             ],
-        ),
-        _ => return,
+        }),
+        _ => None,
     };
-    let o = ENT_CACHE[ei].origin;
-    let dx = (pos[0] - o[0]).clamp(-32767, 32767);
-    let dz = (pos[2] - o[2]).clamp(-32767, 32767);
-    let cross = dx * fwd[1] - dz * fwd[0];
-    let want_reversed = cross < 0;
+    let hinge = ENT_CACHE[ei].origin;
+    let Some(want_reversed) =
+        world_rules::rotating_door_opens_reversed(spawnflags, hinge, activator)
+    else {
+        return;
+    };
     let bit = 1u8 << (ei & 7);
     let is_reversed = ROT_DOOR_REVERSED[ei >> 3] & bit != 0;
     if want_reversed != is_reversed {
@@ -11584,12 +11513,7 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
     // per sim tick so a kick recovers over ~5-6 ticks. Snap tiny residuals to 0.
     PUNCH_PITCH -= (PUNCH_PITCH * 5) / 16 + PUNCH_PITCH.signum();
     PUNCH_YAW -= (PUNCH_YAW * 5) / 16 + PUNCH_YAW.signum();
-    if DAMAGE_TICKS > 0 {
-        DAMAGE_TICKS -= 1;
-        if DAMAGE_TICKS == 0 {
-            DAMAGE_DIRECTION = 0;
-        }
-    }
+    (*core::ptr::addr_of_mut!(DAMAGE_COMPASS)).tick();
     if GEIGER_COOLDOWN & 0x0f != 0 {
         GEIGER_COOLDOWN -= 1;
     }
@@ -11867,13 +11791,11 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
 /// the same screen positions and fade law without spending another atlas page
 /// or resident texture packet pool.
 fn draw_damage_compass(health: u16) {
-    let edges = unsafe { DAMAGE_DIRECTION };
+    let edges = unsafe { DAMAGE_COMPASS }.edges();
     if edges == 0 {
         return;
     }
-    // GoldSrc uses amber above 25 health and red below it. Keep this much
-    // softer than the removed full-screen red wash.
-    let green = if health > 25 { 40 } else { 0 };
+    let [red, green, blue] = player_rules::compass_colour(health);
     let mut edge = 0usize;
     let arrows = [
         [(152, 24), (168, 24), (160, 38)],    // front / top
@@ -11885,9 +11807,9 @@ fn draw_damage_compass(health: u16) {
         if edges & (1 << edge) != 0 {
             fx_tri_flat_blended(
                 arrows[edge],
-                128,
+                red,
                 green,
-                0,
+                blue,
                 psx_gpu::material::BlendMode::Add,
             );
         }
@@ -12822,8 +12744,8 @@ unsafe fn logic_touch_triggers(
     armor: &mut u16,
     now: u16,
 ) {
-    // CTriggerHurt::RadiationThink samples the nearest radioactive volume
-    // every 0.25 seconds whether or not the player is touching it.
+    // The Geiger counter samples the nearest radioactive volume every 0.25
+    // seconds whether or not the player is touching it.
     let geiger_count = GEIGER_COOLDOWN >> 4;
     let geiger_due = geiger_count != 0 && GEIGER_COOLDOWN & 0x0f == 0;
     let pmins = [
@@ -13043,7 +12965,7 @@ unsafe fn logic_touch_triggers(
             geiger_count as usize
         };
         let geiger_base = nlogic + LOGIC_TOUCH_COUNT as usize + LOGIC_PRE_COUNT as usize;
-        let mut geiger_nearest2 = 801 * 801;
+        let mut geiger = player_rules::GeigerScan::new();
         let mut geiger_scan = 0usize;
         while geiger_scan < geiger_scan_count {
             let li = if geiger_fallback {
@@ -13054,42 +12976,15 @@ unsafe fn logic_touch_triggers(
             if LOGIC_KIND[li] == map::LOGIC_TRIGGER_HURT && LOGIC_STATE[li] == LOGIC_STATE_BOTTOM {
                 let rec = m.logic(li);
                 if rec.flags & map::LOGIC_TRIGGER_HURT_RADIATION != 0 {
-                    let center = logic_center(rec);
-                    let dx = (center[0] - player_pos[0]).clamp(-801, 801);
-                    let dy = (center[1] - player_pos[1]).clamp(-801, 801);
-                    let dz = (center[2] - player_pos[2]).clamp(-801, 801);
-                    geiger_nearest2 = geiger_nearest2.min(dx * dx + dy * dy + dz * dz);
+                    geiger.add_source(player_pos, logic_center(rec));
                 }
             }
             geiger_scan += 1;
         }
-        let range = isqrt_i32(geiger_nearest2);
-        let chance: u32 = match range {
-            601..=800 => 2,
-            501..=600 => 4,
-            301..=500 => 8,
-            201..=300 => 28,
-            151..=200 => 40,
-            101..=150 => 60,
-            76..=100 => 80,
-            51..=75 => 90,
-            0..=50 => 95,
-            _ => 0,
-        };
-        if (impact_rng().next_mixed() & 127) < chance || (impact_rng().next_mixed() & 127) < chance
-        {
-            sfx::play_vol(
-                sfx::GEIGER,
-                if range > 400 {
-                    3
-                } else if range > 150 {
-                    2
-                } else {
-                    1
-                },
-            );
+        if let Some(click) = geiger.sample(&mut || impact_rng().next_mixed()) {
+            sfx::play_vol(sfx::GEIGER, click.volume_den);
         }
-        GEIGER_COOLDOWN = (geiger_count << 4) | 5;
+        GEIGER_COOLDOWN = (geiger_count << 4) | player_rules::GEIGER_SAMPLE_TICKS;
     }
 }
 
@@ -13209,17 +13104,15 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     ENDING_FROM = 0;
     CAMERA_LI = u16::MAX;
     CAMERA_LOCK = false;
-    DAMAGE_DIRECTION = 0;
-    DAMAGE_TICKS = 0;
+    DAMAGE_COMPASS = player_rules::DamageCompass::new();
     GEIGER_COOLDOWN = 0;
     TRACKTRAIN_SUBMODEL = m.tram_submodel.min(u16::MAX as usize) as u16;
-    TRAM_NODE_ALT = [0; 8];
-    TRAM_NODE_OFF = [0; 8];
+    TRAM_SWITCHES = world_rules::TrackSwitches::new();
     SHOOTABLE_BUTTONS = 0;
     let mut wi = 0usize;
     while wi < m.n_way.min(256) {
         if m.way_flags(wi) & cooked::PATH_TRACK_DISABLED != 0 {
-            TRAM_NODE_OFF[wi >> 5] |= 1 << (wi & 31);
+            (*core::ptr::addr_of_mut!(TRAM_SWITCHES)).disable(wi);
         }
         wi += 1;
     }
@@ -16758,38 +16651,17 @@ fn prop_voice(kind: u8, dying: bool) -> u8 {
 
 static mut PAIN_SFX_COOLDOWN: u8 = 0;
 
-/// Source `CalcDamageDirection`: compare the world-space inflictor with the
-/// current view and light every matching screen edge. Close damage lights all
-/// four, matching GoldSrc's special case for a source within 50 units.
+/// Light the damage-compass arrows facing a world-space damage source, seen
+/// from the player's current view.
 #[inline(never)]
 unsafe fn note_damage_direction(source: [i32; 3]) {
-    let dx = (source[0] - LOGIC_PLAYER_POS[0]).clamp(-4096, 4096);
-    let dy = (source[1] - LOGIC_PLAYER_POS[1]).clamp(-4096, 4096);
-    let dz = (source[2] - LOGIC_PLAYER_POS[2]).clamp(-4096, 4096);
-    let delta = [dx, dy, dz];
-    let d2 = dx * dx + dy * dy + dz * dz;
-    let mut edges = 0u8;
-    if d2 <= 50 * 50 {
-        edges = 0x0f;
-    } else {
-        let distance = isqrt_i32(d2);
-        let rot = view_rotation(LOGIC_PLAYER_YAW, 0);
-        let forward = dot12(rot.m[2], delta);
-        let right = dot12(rot.m[0], delta);
-        let threshold = distance * 3;
-        if forward.abs() * 10 > threshold {
-            edges |= if forward > 0 { 1 << 0 } else { 1 << 2 };
-        }
-        if right.abs() * 10 > threshold {
-            edges |= if right > 0 { 1 << 1 } else { 1 << 3 };
-        }
-    }
-    DAMAGE_DIRECTION |= edges;
-    DAMAGE_TICKS = 10;
+    let rot = view_rotation(LOGIC_PLAYER_YAW, 0);
+    let compass = &mut *core::ptr::addr_of_mut!(DAMAGE_COMPASS);
+    compass.note_hit(LOGIC_PLAYER_POS, rot.m[2], rot.m[0], source);
 }
 
-/// Fall damage: same feedback as `damage_player`, but straight to health --
-/// the HEV suit does not absorb DMG_FALL (player.cpp TakeDamage bit set).
+/// Fall damage: same feedback as `damage_player`, but straight to health;
+/// the suit does not absorb falls.
 fn fall_damage_player(health: &mut u16, dmg: u16) {
     if dmg == 0 {
         return;
@@ -16800,7 +16672,15 @@ fn fall_damage_player(health: &mut u16, dmg: u16) {
             PAIN_SFX_COOLDOWN = 12;
         }
     }
-    *health = health.saturating_sub(dmg);
+    let v = player_rules::apply_player_damage(
+        player_rules::Vitals {
+            health: *health,
+            armor: 0,
+        },
+        dmg,
+        player_rules::PlayerDamageKind::Fall,
+    );
+    *health = v.health;
 }
 
 fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
@@ -16818,23 +16698,16 @@ fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
         let r = impact_rng().next() as i32;
         add_view_punch(dmg.min(24) as i32 + (r % 16) - 8, (r % 24) - 12);
     }
-    if *armor > 0 {
-        // GoldSrc's HEV suit keeps only 20% of generic damage on health and
-        // spends half of the remaining damage as suit power.
-        let health_dmg = dmg / 5;
-        let armor_cost = (dmg.saturating_sub(health_dmg).saturating_add(1)) / 2;
-        if armor_cost <= *armor {
-            *armor -= armor_cost;
-            *health = health.saturating_sub(health_dmg);
-            return;
-        }
-
-        let absorbed = (*armor).saturating_mul(2);
-        *armor = 0;
-        *health = health.saturating_sub(dmg.saturating_sub(absorbed));
-    } else {
-        *health = health.saturating_sub(dmg);
-    }
+    let v = player_rules::apply_player_damage(
+        player_rules::Vitals {
+            health: *health,
+            armor: *armor,
+        },
+        dmg,
+        player_rules::PlayerDamageKind::Generic,
+    );
+    *health = v.health;
+    *armor = v.armor;
 }
 
 unsafe fn damage_target(target: u8, dmg: u8, source: [i32; 3], health: &mut u16, armor: &mut u16) {
@@ -19797,29 +19670,39 @@ unsafe fn spawn_impact_fx(m: &Map, hit: &phys::RayHit, rot: &Mat3I16, base_t: [i
     }
 }
 
-/// GoldSrc `BloodColor()` per actor type, from each monster's SDK Spawn().
+/// Blood colour per actor type as an impact kind; see
+/// `world_rules::species_blood`.
 fn prop_blood_kind(ty: u8) -> u8 {
-    match ty {
-        // headcrab, zombie, houndeye, bullsquid, vortigaunt, alien grunt,
-        // controller, cockroach, gargantua, nihilanth, big momma, ichthyosaur,
-        // flock, tentacle, vent zombie, snark, baby headcrab
-        2 | 5 | 6 | 7 | 9 | 10 | 11 | 14 | 16 | 17 | 18 | 19 | 24 | 50 | 55 | 58 | 59 => {
-            IMPACT_KIND_YBLOOD
-        }
-        // leech, G-Man, turrets, apache, Hazard Course hologram, tripmine,
-        // osprey, gibs and scenery props
-        13 | 15 | 20..=23 | 56 | 57 | 61..=75 => IMPACT_KIND_NONE,
-        _ => IMPACT_KIND_BLOOD,
+    match world_rules::species_blood(ty) {
+        world_rules::BloodColour::Red => IMPACT_KIND_BLOOD,
+        world_rules::BloodColour::Yellow => IMPACT_KIND_YBLOOD,
+        world_rules::BloodColour::NoBlood => IMPACT_KIND_NONE,
     }
 }
 
-/// CBaseMonster::TraceAttack's blood for one hit. SpawnBlood is the spray at
-/// the wound, which lasts a moment; CBaseEntity::TraceBleed continues the shot
-/// past the wound in 1, 2 or 4 traces (damage under 10, under 25, above),
-/// each jittered by 0.1, 0.2 or 0.3 per axis, and leaves a blood decal on the
-/// surface each one reaches. Nothing is left at the wound itself, so blood can
-/// only ever sit on a wall, floor or brush.
-/// An actor that does not bleed (a turret) throws the world's sparks instead.
+/// The game side of a blood trail: the shared impact RNG and the world trace
+/// that stamps a decal of `kind` where each ray lands.
+struct BloodTrailAdaptor<'a> {
+    m: &'a Map,
+    movers: &'a [phys::Mover],
+    kind: u8,
+}
+
+impl world_rules::BloodTrailWorld for BloodTrailAdaptor<'_> {
+    fn random_below(&mut self, n: u32) -> u32 {
+        unsafe { impact_rng().below(n) }
+    }
+
+    fn trace_and_stamp(&mut self, from: [i32; 3], to: [i32; 3]) {
+        if let Some(hit) = phys::trace_line(self.m, self.movers, from, to) {
+            unsafe { spawn_impact_mark(self.m, &hit, self.kind) };
+        }
+    }
+}
+
+/// Blood for one hit on an actor: a spray at the wound (sparks for an actor
+/// that does not bleed), then the decal trail behind it from
+/// `world_rules::blood_trail`.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 #[cold]
@@ -19836,6 +19719,7 @@ unsafe fn spawn_blood(
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) {
+    let colour = world_rules::species_blood(ty);
     let kind = prop_blood_kind(ty);
     if let Some((sx, sy, _)) = project_world_point(wound, rot, base_t) {
         spawn_impact_particles(
@@ -19847,32 +19731,10 @@ unsafe fn spawn_blood(
             },
         );
     }
-    if kind == IMPACT_KIND_NONE || damage == 0 {
-        return;
-    }
-    let len = shot_len.max(1);
-    let (noise, count) = if damage < 10 {
-        (410, 1)
-    } else if damage < 25 {
-        (819, 2)
-    } else {
-        (1229, 4)
-    };
-    let mut i = 0;
-    while i < count {
-        let mut end = wound;
-        let mut a = 0;
-        while a < 3 {
-            let dir = (shot_end[a] - shot_start[a]) * 4096 / len;
-            let d = dir + impact_rng().below(2 * noise as u32 + 1) as i32 - noise;
-            end[a] += (d * BLEED_TRACE_DIST) >> 12;
-            a += 1;
-        }
-        if let Some(hit) = phys::trace_line(m, movers, wound, end) {
-            spawn_impact_mark(m, &hit, kind);
-        }
-        i += 1;
-    }
+    let mut world = BloodTrailAdaptor { m, movers, kind };
+    world_rules::blood_trail(
+        wound, shot_start, shot_end, shot_len, damage, colour, &mut world,
+    );
 }
 
 /// In-plane half-axes of a decal of half-size `half` on a surface with Q12
@@ -20620,58 +20482,16 @@ unsafe fn fire_secondary(
     }
 }
 
-const GAUSS_FULL_CHARGE_TICKS: u8 = 80; // GetFullChargeTime(): 4.0 s in SP
-const GAUSS_SPINUP_TICKS: u8 = 10; // gauss.cpp switches SPINUP -> SPIN at 0.5 s
-const GAUSS_AMMO_BURN_TICKS: u8 = 6; // one uranium cell every 0.3 s in SP
-const GAUSS_OVERCHARGE_TICKS: u8 = 200; // ten seconds, then self-zap
 const GAUSS_EVENT_NONE: u8 = 0;
 const GAUSS_EVENT_START: u8 = 1;
 const GAUSS_EVENT_SPIN: u8 = 2;
 const GAUSS_EVENT_FIRE: u8 = 3;
 const GAUSS_EVENT_OVERCHARGE: u8 = 4;
 
-#[inline(never)]
-unsafe fn fire_gauss_charge(
-    w: &mut Arsenal,
-    age: u8,
-    m: &Map,
-    movers: &[phys::Mover],
-    eye: [i32; 3],
-    rot: &Mat3I16,
-    base_t: [i32; 3],
-) -> u8 {
-    let damage = (200u16 * age.min(GAUSS_FULL_CHARGE_TICKS) as u16 / GAUSS_FULL_CHARGE_TICKS as u16)
-        .max(1) as u8;
-    fire_hitscan(
-        m,
-        movers,
-        eye,
-        rot,
-        base_t,
-        damage,
-        false,
-        w.def().range,
-        GLOCK_AIM_PIX_X,
-        GLOCK_AIM_PIX_Y,
-        0,
-        0,
-    );
-    // v_forward * damage * 5 units/second, at 20 Hz, with Z dropped (single
-    // player never gets the deathmatch pop-up).
-    let shove = -(damage as i32) * 5 / 20;
-    PENDING_GAUSS_SHOVE = [
-        (rot.m[2][0] as i32 * shove) >> 12,
-        0,
-        (rot.m[2][2] as i32 * shove) >> 12,
-    ];
-    w.gauss_charge = 0;
-    w.cooldown = 20;
-    sfx::play(sfx::GAUSS);
-    GAUSS_EVENT_FIRE
-}
-
-/// Advance the Tau Cannon's hold-to-charge secondary attack. Damage and ammo
-/// cadence follow gauss.cpp; the one-byte age is the complete persistent state.
+/// Advance the Tau Cannon's hold-to-charge secondary attack: the rule is
+/// `player_rules::tau_secondary_tick`; this applies its sounds, the shot,
+/// the shove and the overcharge damage, and returns the viewmodel event.
+#[allow(clippy::too_many_arguments)]
 #[inline(never)]
 unsafe fn tick_gauss_secondary(
     w: &mut Arsenal,
@@ -20683,65 +20503,65 @@ unsafe fn tick_gauss_secondary(
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) -> u8 {
-    if w.current != W_GAUSS {
-        w.gauss_charge = 0;
-        return GAUSS_EVENT_NONE;
-    }
-    if eye_under && (held || w.gauss_charge != 0) {
-        w.gauss_charge = 0;
-        w.cooldown = 10;
-        sfx::play(sfx::ELECTRO);
-        return GAUSS_EVENT_OVERCHARGE;
-    }
-    if held {
-        if w.gauss_charge == 0 {
-            if w.cooldown != 0 || w.switch_ticks != 0 || w.reload_ticks != 0 {
-                return GAUSS_EVENT_NONE;
-            }
-            if w.ammo[AMMO_URANIUM] == 0 {
-                w.cooldown = GLOCK_EMPTY_COOLDOWN_TICKS;
-                sfx::play(sfx::DRY);
-                return GAUSS_EVENT_NONE;
-            }
-            // The SDK spends one cell as soon as the coils begin spinning.
-            w.ammo[AMMO_URANIUM] -= 1;
-            w.gauss_charge = 1;
+    let mut tau = player_rules::TauState {
+        age: w.gauss_charge,
+        cooldown: w.cooldown,
+        cells: w.ammo[AMMO_URANIUM],
+    };
+    let event = player_rules::tau_secondary_tick(
+        &mut tau,
+        player_rules::TauInput {
+            selected: w.current == W_GAUSS,
+            held,
+            underwater: eye_under,
+            busy: w.switch_ticks != 0 || w.reload_ticks != 0,
+        },
+    );
+    w.gauss_charge = tau.age;
+    w.cooldown = tau.cooldown;
+    w.ammo[AMMO_URANIUM] = tau.cells;
+    match event {
+        player_rules::TauEvent::Idle => GAUSS_EVENT_NONE,
+        player_rules::TauEvent::Dry => {
+            sfx::play(sfx::DRY);
+            GAUSS_EVENT_NONE
+        }
+        player_rules::TauEvent::Start => {
             sfx::play(sfx::GAUSS_CHARGE);
-            return GAUSS_EVENT_START;
+            GAUSS_EVENT_START
         }
-
-        w.gauss_charge = w.gauss_charge.saturating_add(1);
-        let age = w.gauss_charge;
-        if age < GAUSS_FULL_CHARGE_TICKS && age % GAUSS_AMMO_BURN_TICKS == 0 {
-            if w.ammo[AMMO_URANIUM] == 0 {
-                // Falling out of ammo fires the charge immediately, just like
-                // SecondaryAttack's forced StartFire path.
-                return fire_gauss_charge(w, age, m, movers, eye, rot, base_t);
-            }
-            w.ammo[AMMO_URANIUM] -= 1;
-            if w.ammo[AMMO_URANIUM] == 0 {
-                return fire_gauss_charge(w, age, m, movers, eye, rot, base_t);
-            }
+        player_rules::TauEvent::Spin => GAUSS_EVENT_SPIN,
+        player_rules::TauEvent::Discharge => {
+            sfx::play(sfx::ELECTRO);
+            GAUSS_EVENT_OVERCHARGE
         }
-        if age >= GAUSS_OVERCHARGE_TICKS {
-            w.gauss_charge = 0;
-            w.cooldown = 20;
-            PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(50);
+        player_rules::TauEvent::Overcharge => {
+            PENDING_PLAYER_DAMAGE =
+                PENDING_PLAYER_DAMAGE.saturating_add(player_rules::TAU_OVERCHARGE_DAMAGE);
             note_damage_direction(LOGIC_PLAYER_POS);
             sfx::play(sfx::ELECTRO);
-            return GAUSS_EVENT_OVERCHARGE;
+            GAUSS_EVENT_OVERCHARGE
         }
-        return if age == GAUSS_SPINUP_TICKS {
-            GAUSS_EVENT_SPIN
-        } else {
-            GAUSS_EVENT_NONE
-        };
+        player_rules::TauEvent::Fire { damage } => {
+            fire_hitscan(
+                m,
+                movers,
+                eye,
+                rot,
+                base_t,
+                damage,
+                false,
+                w.def().range,
+                GLOCK_AIM_PIX_X,
+                GLOCK_AIM_PIX_Y,
+                0,
+                0,
+            );
+            PENDING_GAUSS_SHOVE = player_rules::tau_shove(damage, rot.m[2]);
+            sfx::play(sfx::GAUSS);
+            GAUSS_EVENT_FIRE
+        }
     }
-
-    if w.gauss_charge != 0 {
-        return fire_gauss_charge(w, w.gauss_charge, m, movers, eye, rot, base_t);
-    }
-    GAUSS_EVENT_NONE
 }
 
 /// The fire sound for a weapon id; melee picks hit vs miss.
@@ -20810,10 +20630,7 @@ static mut RPG_SPOT_POS: [i32; 3] = [0; 3];
 // health/armor once per tick (keeps explode() off the &mut health thread).
 static mut PENDING_PLAYER_DAMAGE: u16 = 0;
 /// Horizontal shove owed to the player from a charged Tau shot, in world units
-/// per tick. CGauss::StartFire subtracts `v_forward * flDamage * 5` from the
-/// player's velocity on a secondary shot and then restores the Z component in
-/// single player, so the kick is a pure horizontal shove -- the recoil that
-/// makes a full-charge shot feel like a cannon instead of a rifle.
+/// per tick (see `player_rules::tau_shove`), applied on the next player move.
 static mut PENDING_GAUSS_SHOVE: [i32; 3] = [0; 3];
 
 // (speed, life ticks, gravity?, AoE radius (0 = direct hit only), colour, size px)
@@ -24255,39 +24072,10 @@ const FLASH_MIN_REACH: i32 = 512;
 // Screen-space cone radii (px from centre) for the world-vertex lamp.
 const FLASH_CONE_INNER: i32 = 64;
 const FLASH_CONE_OUTER: i32 = 112;
-const FLASH_DRAIN_TICKS: u8 = 24; // SDK FLASH_DRAIN_TIME: 1.2 s at 20 Hz
-const FLASH_CHARGE_TICKS: u8 = 4; // SDK FLASH_CHARGE_TIME: 0.2 s at 20 Hz
 static mut FLASHLIGHT_ON: bool = false;
-static mut FLASHLIGHT_BATTERY: u8 = 99; // CBasePlayer::Spawn starts at 99
-static mut FLASHLIGHT_TIMER: u8 = 1; // force the initial 99 -> 100 HUD update
+static mut FLASHLIGHT_BATTERY: u8 = player_rules::Flashlight::NEW_GAME.battery;
+static mut FLASHLIGHT_TIMER: u8 = player_rules::Flashlight::NEW_GAME.timer;
 static mut FLASHLIGHT_REACH: u16 = FLASH_RANGE as u16;
-
-/// Advance GoldSrc's integer flashlight battery clock by one 20 Hz simulation
-/// tick. The state is passed and returned by value: keeping the three byte-wide
-/// fields out of adjacent mutable references avoids a bad MIPS-I codegen alias
-/// on the experimental target. The final bool reports automatic shutoff.
-#[inline(never)]
-fn tick_flashlight_battery(on: bool, mut battery: u8, mut timer: u8) -> (bool, u8, u8, bool) {
-    if timer > 0 {
-        timer -= 1;
-        if timer > 0 {
-            return (on, battery, timer, false);
-        }
-    }
-    if on {
-        if battery > 0 {
-            battery -= 1;
-        }
-        if battery == 0 {
-            return (false, 0, FLASH_CHARGE_TICKS, true);
-        }
-        timer = FLASH_DRAIN_TICKS;
-    } else if battery < 100 {
-        battery += 1;
-        timer = if battery < 100 { FLASH_CHARGE_TICKS } else { 0 };
-    }
-    (on, battery, timer, false)
-}
 
 /// Trace the beam centre once per visual frame. Static BSP and active brush
 /// movers both stop it, so a closed door cannot light the room behind it.
@@ -30826,12 +30614,12 @@ fn play(
     let mut flashlight_battery = if launch.preserve_view {
         unsafe { FLASHLIGHT_BATTERY }
     } else {
-        99
+        player_rules::Flashlight::NEW_GAME.battery
     };
     let mut flashlight_timer = if launch.preserve_view {
         unsafe { FLASHLIGHT_TIMER }
     } else {
-        1
+        player_rules::Flashlight::NEW_GAME.timer
     };
     unsafe {
         FLASHLIGHT_ON = flashlight;
@@ -31380,37 +31168,29 @@ fn play(
             let duck_requested = !dead
                 && unsafe { MOUNTED_TANK } < 0
                 && input_sample.held(semantic_input::ACTION_DUCK);
-            // GoldSrc drains one battery unit every 1.2 s while on and restores
-            // one every 0.2 s while off. Tick before input so a fresh toggle gets
-            // the complete authored interval rather than losing this tick.
-            if dead && flashlight {
-                flashlight = false;
-                flashlight_timer = FLASH_CHARGE_TICKS;
-            }
-            let (next_flashlight, next_battery, next_timer, auto_off) =
-                tick_flashlight_battery(flashlight, flashlight_battery, flashlight_timer);
-            flashlight = next_flashlight;
-            flashlight_battery = next_battery;
-            flashlight_timer = next_timer;
-            if auto_off {
-                unsafe { sfx::play(sfx::FLASHLIGHT) };
-            }
-            // Flashlight (L3 toggles the HEV lamp; needs the suit and charge).
+            // Suit lamp: battery clock, then the L3 toggle.
             let flash_now = input_sample.held(semantic_input::ACTION_FLASHLIGHT);
-            if flash_now && !flash_prev && suit_equipped && !dead {
-                if flashlight {
-                    flashlight = false;
-                    flashlight_timer = FLASH_CHARGE_TICKS;
-                    unsafe { sfx::play(sfx::FLASHLIGHT) };
-                } else if flashlight_battery > 0 {
-                    flashlight = true;
-                    flashlight_timer = FLASH_DRAIN_TICKS;
-                    unsafe { sfx::play(sfx::FLASHLIGHT) };
-                }
+            let (lamp, lamp_tick) = player_rules::flashlight_tick(
+                player_rules::Flashlight {
+                    on: flashlight,
+                    battery: flashlight_battery,
+                    timer: flashlight_timer,
+                },
+                player_rules::FlashlightInput {
+                    toggle_pressed: flash_now && !flash_prev,
+                    has_suit: suit_equipped,
+                    dead,
+                },
+            );
+            flashlight = lamp.on;
+            flashlight_battery = lamp.battery;
+            flashlight_timer = lamp.timer;
+            if lamp_tick.click {
+                unsafe { sfx::play(sfx::FLASHLIGHT) };
             }
             flash_prev = flash_now;
             unsafe {
-                FLASHLIGHT_ON = flashlight && suit_equipped && !dead;
+                FLASHLIGHT_ON = lamp_tick.lit;
                 FLASHLIGHT_BATTERY = flashlight_battery;
                 FLASHLIGHT_TIMER = flashlight_timer;
             }

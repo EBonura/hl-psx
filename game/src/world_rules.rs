@@ -1,0 +1,369 @@
+//! Integer-only rules of world objects (floating pushables, rotating doors,
+//! track waypoints, blood decals), kept free of PS1 state so the host runner
+//! can pin their behaviour. The game side gathers observations from its
+//! globals, calls these steps and applies the results.
+
+/// A floating pushable as the buoyancy step sees it: the world centre of its
+/// box, half its height, and its buoyancy factor (the authored skin value).
+/// World Y is up.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FloatBody {
+    pub center: [i32; 3],
+    pub half_height: i32,
+    pub buoyancy: i32,
+}
+
+/// What one buoyancy tick decided: the new vertical speed in whole units per
+/// 20 Hz tick, and whether the pushable still rests on its support.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FloatTick {
+    pub vy: i32,
+    pub grounded: bool,
+}
+
+/// One 20 Hz buoyancy tick for a pushable. `vy` is the stored vertical speed
+/// before gravity; `grounded` says whether it rests on a support. `wet`
+/// answers whether a world point is inside water. Returns None when the
+/// pushable has no buoyancy or its bottom is dry, so the caller falls as usual.
+pub fn pushable_float_tick(
+    body: FloatBody,
+    vy: i32,
+    grounded: bool,
+    wet: &mut dyn FnMut([i32; 3]) -> bool,
+) -> Option<FloatTick> {
+    if body.buoyancy == 0 {
+        return None;
+    }
+    let resting_vy = if grounded { 0 } else { vy };
+    let c = body.center;
+    let h = body.half_height;
+    let bottom = c[1] - h;
+    if !wet([c[0], bottom + 1, c[2]]) {
+        return None;
+    }
+    let depth = if wet([c[0], c[1] + h, c[2]]) {
+        2 * h
+    } else {
+        let (mut lo, mut hi) = (1, 2 * h);
+        let mut i = 0;
+        while i < 5 {
+            let mid = (lo + hi) / 2;
+            if wet([c[0], bottom + mid, c[2]]) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+            i += 1;
+        }
+        (lo + hi) / 2
+    };
+    // Gravity (800 u/s^2) balances the lift at depth 800 / buoyancy. The
+    // speed is whole units per 20 Hz tick, so ease toward that depth rather
+    // than integrating both forces undamped, which would swing the box.
+    let balance = 800 / body.buoyancy.max(1);
+    let toward = ((depth - balance) / 4).clamp(-8, 8);
+    let next = (resting_vy + toward) / 2;
+    // Lift that beats gravity raises a grounded box off its floor; otherwise
+    // a grounded box stays put.
+    if next > 0 {
+        Some(FloatTick {
+            vy: next,
+            grounded: false,
+        })
+    } else if grounded {
+        Some(FloatTick {
+            vy: 0,
+            grounded: true,
+        })
+    } else {
+        Some(FloatTick {
+            vy: next,
+            grounded: false,
+        })
+    }
+}
+
+/// Rotating-door spawnflags that keep the authored swing direction.
+pub const DOOR_ONE_WAY: u16 = 16;
+pub const DOOR_ROTATE_Z: u16 = 64;
+pub const DOOR_ROTATE_X: u16 = 128;
+
+/// Whoever started the chain that opens a door: their position and the
+/// horizontal direction they face as world (x, z), 1.0 = 4096.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DoorActivator {
+    pub pos: [i32; 3],
+    pub forward_xz: [i32; 2],
+}
+
+/// Which way a rotating door swings as it starts to open. Some(true) means
+/// against its authored direction, Some(false) along it, and None leaves the
+/// current direction alone (one-way and X/Z-axis doors, or nobody started
+/// the chain).
+pub fn rotating_door_opens_reversed(
+    spawnflags: u16,
+    hinge: [i32; 3],
+    activator: Option<DoorActivator>,
+) -> Option<bool> {
+    if spawnflags & (DOOR_ONE_WAY | DOOR_ROTATE_Z | DOOR_ROTATE_X) != 0 {
+        return None;
+    }
+    let a = activator?;
+    let fwd = a.forward_xz;
+    let dx = (a.pos[0] - hinge[0]).clamp(-32767, 32767);
+    let dz = (a.pos[2] - hinge[2]).clamp(-32767, 32767);
+    let cross = dx * fwd[1] - dz * fwd[0];
+    Some(cross < 0)
+}
+
+/// How far past the wound, in world units, a hit's blood can land.
+pub const BLEED_REACH: i32 = 172;
+
+/// Blood a creature sheds when hit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BloodColour {
+    Red,
+    Yellow,
+    /// Turrets, machines and scenery do not bleed.
+    NoBlood,
+}
+
+/// Blood colour for each actor type id.
+pub const fn species_blood(actor_type: u8) -> BloodColour {
+    match actor_type {
+        // headcrab, zombie, houndeye, bullsquid, vortigaunt, alien grunt,
+        // controller, cockroach, gargantua, nihilanth, big momma, ichthyosaur,
+        // flock, tentacle, vent zombie, snark, baby headcrab
+        2 | 5 | 6 | 7 | 9 | 10 | 11 | 14 | 16 | 17 | 18 | 19 | 24 | 50 | 55 | 58 | 59 => {
+            BloodColour::Yellow
+        }
+        // leech, G-Man, turrets, apache, Hazard Course hologram, tripmine,
+        // osprey, gibs and scenery props
+        13 | 15 | 20..=23 | 56 | 57 | 61..=75 => BloodColour::NoBlood,
+        _ => BloodColour::Red,
+    }
+}
+
+/// What a blood trail needs from the game, called in this order per decal:
+/// three random draws (one per axis), then one trace-and-stamp.
+pub trait BloodTrailWorld {
+    /// Uniform value in 0..n.
+    fn random_below(&mut self, n: u32) -> u32;
+    /// Trace from `from` to `to` and leave a blood decal where it hits.
+    fn trace_and_stamp(&mut self, from: [i32; 3], to: [i32; 3]);
+}
+
+/// Blood decals behind a wound: 1, 2 or 4 traces continuing the shot from the
+/// wound (damage under 10, under 25, above), each direction jittered per axis
+/// by up to 0.1, 0.2 or 0.3. `shot_start`/`shot_end` give the shot direction
+/// and `shot_len` its length. Nothing happens for zero damage or a creature
+/// that does not bleed.
+pub fn blood_trail(
+    wound: [i32; 3],
+    shot_start: [i32; 3],
+    shot_end: [i32; 3],
+    shot_len: i32,
+    damage: u8,
+    colour: BloodColour,
+    world: &mut dyn BloodTrailWorld,
+) {
+    if colour == BloodColour::NoBlood || damage == 0 {
+        return;
+    }
+    let len = shot_len.max(1);
+    let (noise, count) = if damage < 10 {
+        (410, 1)
+    } else if damage < 25 {
+        (819, 2)
+    } else {
+        (1229, 4)
+    };
+    let mut i = 0;
+    while i < count {
+        let mut end = wound;
+        let mut a = 0;
+        while a < 3 {
+            let dir = (shot_end[a] - shot_start[a]) * 4096 / len;
+            let d = dir + world.random_below(2 * noise as u32 + 1) as i32 - noise;
+            end[a] += (d * BLEED_REACH) >> 12;
+            a += 1;
+        }
+        world.trace_and_stamp(wound, end);
+        i += 1;
+    }
+}
+
+/// A tram's waypoint graph as authored. Node ids are 0..node_count.
+pub trait TrackGraph {
+    fn node_count(&self) -> usize;
+    fn position(&self, node: usize) -> [i32; 3];
+    /// False for a plain path: the nodes in order, no branches or switches.
+    fn is_branching(&self) -> bool;
+    /// The authored next node.
+    fn successor(&self, node: usize) -> Option<usize>;
+    /// The authored alternate next node, if any.
+    fn alternate(&self, node: usize) -> Option<usize>;
+    /// The alternate applies only when travelling in reverse.
+    fn alternate_reverse_only(&self, node: usize) -> bool;
+}
+
+/// How a track node is fired.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrackUse {
+    On,
+    Off,
+    Toggle,
+}
+
+/// Live switch state of up to 256 track nodes: which nodes with an alternate
+/// are switched to it, and which nodes are disabled.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TrackSwitches {
+    alt: [u32; 8],
+    off: [u32; 8],
+}
+
+impl TrackSwitches {
+    pub const fn new() -> Self {
+        Self {
+            alt: [0; 8],
+            off: [0; 8],
+        }
+    }
+
+    /// Mark a node disabled (used for nodes authored disabled at map start).
+    pub fn disable(&mut self, node: usize) {
+        if node < 256 {
+            self.off[node >> 5] |= 1 << (node & 31);
+        }
+    }
+
+    pub fn is_disabled(&self, node: usize) -> bool {
+        bit(&self.off, node)
+    }
+
+    pub fn is_switched(&self, node: usize) -> bool {
+        bit(&self.alt, node)
+    }
+
+    /// Fire a node: one with an alternate switches between its paths (On =
+    /// primary, Off = alternate), any other is enabled (On) or disabled
+    /// (Off); Toggle flips either.
+    pub fn use_node(&mut self, node: usize, has_alternate: bool, how: TrackUse) {
+        if node >= 256 {
+            return;
+        }
+        let bits = if has_alternate {
+            &mut self.alt
+        } else {
+            &mut self.off
+        };
+        let mask = 1u32 << (node & 31);
+        match how {
+            TrackUse::On => bits[node >> 5] &= !mask,
+            TrackUse::Off => bits[node >> 5] |= mask,
+            TrackUse::Toggle => bits[node >> 5] ^= mask,
+        }
+    }
+
+    /// The node after `node` given the switches (disabled nodes included).
+    pub fn next<G: TrackGraph + ?Sized>(&self, g: &G, node: usize) -> Option<usize> {
+        if !g.is_branching() {
+            return (node + 1 < g.node_count()).then_some(node + 1);
+        }
+        if let Some(alt) = g.alternate(node) {
+            if self.is_switched(node) && !g.alternate_reverse_only(node) {
+                return Some(alt);
+            }
+        }
+        g.successor(node)
+    }
+
+    /// The next node a moving train may enter: a disabled node stops it.
+    pub fn next_open<G: TrackGraph + ?Sized>(&self, g: &G, node: usize) -> Option<usize> {
+        self.next(g, node).filter(|&n| !self.is_disabled(n))
+    }
+}
+
+#[inline(always)]
+fn bit(bits: &[u32; 8], i: usize) -> bool {
+    i < 256 && bits[i >> 5] & (1 << (i & 31)) != 0
+}
+
+/// Length of a world-space segment, at least 1.
+#[inline]
+fn track_segment_len(a: [i32; 3], b: [i32; 3]) -> i32 {
+    let dx = a[0] - b[0];
+    let dy = a[1] - b[1];
+    let dz = a[2] - b[2];
+    psx_math::int32::isqrt_i32(dx * dx + dy * dy + dz * dz).max(1)
+}
+
+/// Point `ahead` units further along the track from `seg_dist` units past
+/// node `seg`, in 1/256 world units. Disabled nodes do not stop it; past the
+/// last node it continues straight along the final segment; at a branching
+/// dead end with no segment it stays on the node.
+pub fn track_lookahead_q8<G: TrackGraph + ?Sized>(
+    g: &G,
+    sw: &TrackSwitches,
+    mut seg: usize,
+    mut seg_dist: i32,
+    mut ahead: i32,
+) -> [i32; 3] {
+    let n = g.node_count();
+    if n == 0 {
+        return [0; 3];
+    }
+    if n == 1 {
+        let p = g.position(0);
+        return [p[0] << 8, p[1] << 8, p[2] << 8];
+    }
+    if !g.is_branching() {
+        seg = seg.min(n - 2);
+    }
+    ahead = ahead.max(0);
+    loop {
+        let a = g.position(seg);
+        let Some(next) = sw.next(g, seg) else {
+            return [a[0] << 8, a[1] << 8, a[2] << 8];
+        };
+        let b = g.position(next);
+        let len = track_segment_len(a, b).max(1);
+        let left = (len - seg_dist).max(0);
+        if ahead <= left {
+            return lerp_q8(a, b, seg_dist + ahead, len);
+        }
+        ahead -= left;
+        if sw.next(g, next).is_some() {
+            seg = next;
+            seg_dist = 0;
+            continue;
+        }
+        let f = (ahead << 12) / len;
+        return [
+            (b[0] << 8) + ((b[0] - a[0]) * f >> 4),
+            (b[1] << 8) + ((b[1] - a[1]) * f >> 4),
+            (b[2] << 8) + ((b[2] - a[2]) * f >> 4),
+        ];
+    }
+}
+
+#[inline(always)]
+fn lerp_q8(a: [i32; 3], b: [i32; 3], dist: i32, len: i32) -> [i32; 3] {
+    let f = (dist.max(0) << 12) / len.max(1);
+    [
+        (a[0] << 8) + ((b[0] - a[0]) * f >> 4),
+        (a[1] << 8) + ((b[1] - a[1]) * f >> 4),
+        (a[2] << 8) + ((b[2] - a[2]) * f >> 4),
+    ]
+}
+
+/// The train's speed after it reaches a node with speed key `node_speed`:
+/// a positive key replaces the speed, zero keeps it.
+pub const fn track_speed_at_node(current: i32, node_speed: i32) -> i32 {
+    if node_speed > 0 {
+        node_speed
+    } else {
+        current
+    }
+}
