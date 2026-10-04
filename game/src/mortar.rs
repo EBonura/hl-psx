@@ -1,23 +1,24 @@
-//! func_mortar_field and monster_mortar (mortar.cpp): a Use drops
-//! `m_iCount` shells around a point of the field, each exploding 2.5 s
-//! later plus 0.2-0.5 s per shell.
+//! func_mortar_field and monster_mortar: the game side of
+//! [`mortar_logic`]. This file only gathers the field's keys, answers the
+//! brain's queries from the map and applies what it decides.
 
+use crate::mortar_logic::{FieldUse, MortarState, MortarWorld};
+use crate::setpiece_math::TraceHit;
 use crate::*;
 
-const MAX_SHELLS: usize = 12;
-/// A falling shell: world position and the tick it explodes on; tick 0
-/// frees the slot.
-static mut SHELL_POS: [[i32; 3]; MAX_SHELLS] = [[0; 3]; MAX_SHELLS];
-static mut SHELL_AT: [u16; MAX_SHELLS] = [0; MAX_SHELLS];
-/// Whether the player's Use sent each shell (the player as owner).
-static mut SHELL_PLAYER: u16 = 0;
+static mut FIELD: MortarState = MortarState::new();
 
-pub(crate) unsafe fn reset() {
-    SHELL_AT = [0; MAX_SHELLS];
+#[inline(always)]
+unsafe fn field() -> &'static mut MortarState {
+    &mut *core::ptr::addr_of_mut!(FIELD)
 }
 
-/// Position (0..4096) of the momentary_rot_button named `name`
-/// (CMomentaryRotButton's ideal_yaw), if the map has one.
+pub(crate) unsafe fn reset() {
+    field().reset();
+}
+
+/// Position (0..4096) of the momentary_rot_button named `name`, if the map
+/// has one.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn controller(m: &Map, nlogic: usize, name: u16) -> Option<i32> {
@@ -36,77 +37,77 @@ unsafe fn controller(m: &Map, nlogic: usize, name: u16) -> Option<i32> {
     None
 }
 
-/// CFuncMortarField::FieldUse.
+struct World<'a> {
+    m: &'a Map,
+    nlogic: usize,
+    controllers: [u16; 2],
+}
+
+impl MortarWorld for World<'_> {
+    fn random_below(&mut self, n: u32) -> u32 {
+        unsafe { impact_rng().below(n) }
+    }
+    fn controller(&mut self, axis: usize) -> Option<i32> {
+        unsafe { controller(self.m, self.nlogic, self.controllers[axis]) }
+    }
+    fn trace_line(&mut self, from: [i32; 3], to: [i32; 3]) -> Option<TraceHit> {
+        let movers = unsafe {
+            &*core::ptr::slice_from_raw_parts(
+                core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),
+                MOVER_COUNT.min(MAX_ENTS + 1),
+            )
+        };
+        phys::trace_line(self.m, movers, from, to).map(trace_hit)
+    }
+    fn beam(&mut self, from: [i32; 3], to: [i32; 3]) {
+        unsafe { push_tracer_styled(from, to, TRACER_MORTAR) }
+    }
+    fn explode(&mut self, at: [i32; 3], damage: u8, radius: i32, by_player: bool) {
+        unsafe { explode(self.m, at, damage, radius, by_player) }
+    }
+    fn set_shake(&mut self, amplitude: u16, ticks: u16) {
+        unsafe {
+            SHAKE_AMP = amplitude;
+            SHAKE_DUR = ticks;
+            SHAKE_TICKS = ticks;
+        }
+    }
+}
+
+/// A use of a mortar field.
 #[inline(never)]
 #[optimize(size)]
 pub(crate) unsafe fn field_use(m: &Map, nlogic: usize, rec: map::LogicEnt, now: u16) {
-    let (mn, mx) = (rec.mins, rec.maxs);
-    let span = |a: i32, b: i32| a + (impact_rng().below((b - a).max(0) as u32 + 1) as i32);
-    // Random spot in the field, at its top (HL x/y are runtime x/z).
-    let mut start = [span(mn[0], mx[0]), mx[1], span(mn[2], mx[2])];
-    let player = LOGIC_ACTIVATOR == 1;
-    match rec.speed >> 8 {
-        // Trigger activator: over whoever set it off.
-        1 if player => {
-            start[0] = LOGIC_PLAYER_POS[0];
-            start[2] = LOGIC_PLAYER_POS[2];
-        }
-        // Table: the x/y controllers place it across the field.
-        2 => {
-            if let Some(f) = controller(m, nlogic, rec.arg0) {
-                start[0] = mn[0] + (((mx[0] - mn[0]) * f) >> 12);
-            }
-            if let Some(f) = controller(m, nlogic, rec.arg1) {
-                start[2] = mn[2] + (((mx[2] - mn[2]) * f) >> 12);
-            }
-        }
-        _ => {}
-    }
     let spread = if rec.aux_count != 0 {
         m.logic_aux(rec.first_aux).target as i32
     } else {
         0
     };
-    let movers = &*core::ptr::slice_from_raw_parts(
-        core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),
-        MOVER_COUNT.min(MAX_ENTS + 1),
-    );
-    let mut t = 50u16; // 2.5 s
-    for _ in 0..(rec.speed & 0xff) {
-        let spot = [
-            start[0] + span(-spread, spread),
-            start[1],
-            start[2] + span(-spread, spread),
-        ];
-        let down = [spot[0], spot[1] - 4096, spot[2]];
-        let ground = phys::trace_line(m, movers, spot, down).map_or(down, |h| h.pos);
-        if let Some(s) = (0..MAX_SHELLS).find(|&s| SHELL_AT[s] == 0) {
-            SHELL_POS[s] = ground;
-            SHELL_AT[s] = now.wrapping_add(t).max(1);
-            SHELL_PLAYER = (SHELL_PLAYER & !(1 << s)) | ((player as u16) << s);
-        }
-        t += 4 + impact_rng().below(7) as u16; // RANDOM_FLOAT(0.2, 0.5)
-    }
+    let u = FieldUse {
+        mins: rec.mins,
+        maxs: rec.maxs,
+        mode: (rec.speed >> 8) as u8,
+        count: rec.speed as u8,
+        spread,
+        by_player: LOGIC_ACTIVATOR == 1,
+        player_pos: LOGIC_PLAYER_POS,
+    };
+    let mut w = World {
+        m,
+        nlogic,
+        controllers: [rec.arg0, rec.arg1],
+    };
+    field().field_use(&u, now, &mut w);
 }
 
-/// CMortar::MortarExplode for every shell whose time has come: the 1024-unit
-/// lgtning column, a 200-damage DMG_BLAST | DMG_MORTAR explosion (radius
-/// 2.5x) and UTIL_ScreenShake(25, 1 s, 750).
+/// Land the shells whose time has come.
 #[inline(never)]
 #[optimize(size)]
 pub(crate) unsafe fn tick(m: &Map, now: u16) {
-    for s in 0..MAX_SHELLS {
-        if SHELL_AT[s] != 0 && time_reached(now, SHELL_AT[s]) {
-            SHELL_AT[s] = 0;
-            let p = SHELL_POS[s];
-            push_tracer_styled(p, [p[0], p[1] + 1024, p[2]], TRACER_MORTAR);
-            explode(m, p, 200, 500, SHELL_PLAYER & (1 << s) != 0);
-            let d = isqrt_i32(dist2_3(p, LOGIC_PLAYER_POS));
-            if d < 750 {
-                SHAKE_AMP = (25 * (750 - d) / 750) as u16;
-                SHAKE_DUR = 20;
-                SHAKE_TICKS = 20;
-            }
-        }
-    }
+    let mut w = World {
+        m,
+        nlogic: 0,
+        controllers: [0; 2],
+    };
+    field().tick(now, LOGIC_PLAYER_POS, &mut w);
 }

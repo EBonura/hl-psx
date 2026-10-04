@@ -18,6 +18,7 @@ psx-gte = { path = "../../.psoxide/sdk/crates/psx-gte" }
 psx-gpu = { path = "../../.psoxide/sdk/crates/psx-gpu" }
 psx-pad = { path = "../../.psoxide/sdk/crates/psx-pad" }
 hl-format = { path = "../../shared/hl-format" }
+psx-vram = { path = "../../.psoxide/sdk/crates/psx-vram" }
 
 [lib]
 path = "src/lib.rs"

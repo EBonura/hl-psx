@@ -26,6 +26,7 @@ dependencies = [
  "psx-pad",
  "psx-sfx",
  "psx-spu",
+ "psx-vram",
 ]
 
 [[package]]
