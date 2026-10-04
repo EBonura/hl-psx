@@ -126,3 +126,15 @@ pub mod behaviour;
 
 #[path = "../../../game/src/player_rules.rs"]
 pub mod player_rules;
+
+#[path = "../../../game/src/talk_monster.rs"]
+pub mod talk_monster;
+
+#[path = "../../../game/src/scripted_sequence.rs"]
+pub mod scripted_sequence;
+
+#[path = "../../../game/src/nav_graph.rs"]
+pub mod nav_graph;
+
+#[path = "../../../game/src/local_nav.rs"]
+pub mod local_nav;
