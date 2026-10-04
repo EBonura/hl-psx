@@ -8,6 +8,22 @@ use psx_math::int32::isqrt_i32;
 /// Shells that can be falling at once; a use with no free slot drops fewer.
 pub const MAX_SHELLS: usize = 12;
 
+/// The first shell of a use lands after 2.5 s (20 Hz ticks).
+const SHELL_FIRST_DELAY_TICKS: u16 = 50;
+/// Shells start at the top of the field and are traced this far down to find
+/// the ground.
+const SHELL_DROP: i32 = 4096;
+/// Height of the beam each landing shows.
+const BEAM_HEIGHT: i32 = 1024;
+/// A landing blasts for 200 out to 500 units.
+const SHELL_DAMAGE: u8 = 200;
+const SHELL_RADIUS: i32 = 500;
+/// A landing shakes the screen of a player within 750 units, strongest (25)
+/// on top of it, for one second.
+const SHAKE_RANGE: i32 = 750;
+const SHAKE_AMPLITUDE: i32 = 25;
+const SHAKE_TICKS: u16 = 20;
+
 /// What the brain asks of, and tells, the game.
 pub trait MortarWorld {
     /// A uniform random integer in `0..n` from the shared impact generator.
@@ -82,61 +98,79 @@ impl MortarState {
             .map(|s| (self.shell_pos[s], self.shell_at[s]))
     }
 
-    /// A field was used at tick `now`: schedule its shells.
+    /// A field was used at tick `now`: pick the drop point, then schedule
+    /// `count` shells scattered around it. The first lands 2.5 s later and
+    /// each next one 0.2 to 0.5 s after the one before. Shells beyond the free
+    /// slots are still rolled (the random stream stays the same) but dropped.
     #[inline(never)]
     #[cfg_attr(target_arch = "mips", optimize(size))]
     pub fn field_use(&mut self, u: &FieldUse, now: u16, w: &mut impl MortarWorld) {
-        let (mn, mx) = (u.mins, u.maxs);
-        let mut start = [span(w, mn[0], mx[0]), mx[1], span(w, mn[2], mx[2])];
+        // The random spot over the footprint is always rolled; the player and
+        // controller modes then override the axes they know.
+        let mut spot = [
+            span(w, u.mins[0], u.maxs[0]),
+            u.maxs[1],
+            span(w, u.mins[2], u.maxs[2]),
+        ];
         match u.mode {
             1 if u.by_player => {
-                start[0] = u.player_pos[0];
-                start[2] = u.player_pos[2];
+                spot[0] = u.player_pos[0];
+                spot[2] = u.player_pos[2];
             }
             2 => {
-                if let Some(f) = w.controller(0) {
-                    start[0] = mn[0] + (((mx[0] - mn[0]) * f) >> 12);
-                }
-                if let Some(f) = w.controller(1) {
-                    start[2] = mn[2] + (((mx[2] - mn[2]) * f) >> 12);
+                for (axis, world_axis) in [(0, 0), (1, 2)] {
+                    if let Some(frac) = w.controller(axis) {
+                        let size = u.maxs[world_axis] - u.mins[world_axis];
+                        spot[world_axis] = u.mins[world_axis] + ((frac * size) >> 12);
+                    }
                 }
             }
             _ => {}
         }
-        let spread = u.spread;
-        let mut t = 50u16;
+        let mut lands = now.wrapping_add(SHELL_FIRST_DELAY_TICKS);
         for _ in 0..u.count {
-            let spot = [
-                start[0] + span(w, -spread, spread),
-                start[1],
-                start[2] + span(w, -spread, spread),
+            let from = [
+                spot[0] + span(w, -u.spread, u.spread),
+                spot[1],
+                spot[2] + span(w, -u.spread, u.spread),
             ];
-            let down = [spot[0], spot[1] - 4096, spot[2]];
-            let ground = w.trace_line(spot, down).map_or(down, |h| h.pos);
-            if let Some(s) = (0..MAX_SHELLS).find(|&s| self.shell_at[s] == 0) {
-                self.shell_pos[s] = ground;
-                self.shell_at[s] = now.wrapping_add(t).max(1);
-                self.shell_by_player =
-                    (self.shell_by_player & !(1 << s)) | ((u.by_player as u16) << s);
+            let down = [from[0], from[1] - SHELL_DROP, from[2]];
+            let ground = w.trace_line(from, down).map_or(down, |hit| hit.pos);
+            if let Some(slot) = self.shell_at.iter().position(|&at| at == 0) {
+                self.shell_pos[slot] = ground;
+                // Tick 0 marks a free slot, so a shell due then lands one later.
+                self.shell_at[slot] = lands.max(1);
+                let bit = 1 << slot;
+                self.shell_by_player = if u.by_player {
+                    self.shell_by_player | bit
+                } else {
+                    self.shell_by_player & !bit
+                };
             }
-            t += 4 + w.random_below(7) as u16;
+            lands = lands.wrapping_add(4 + w.random_below(7) as u16);
         }
     }
 
-    /// Land every shell whose time has come at tick `now`.
+    /// Land every shell whose time has come at tick `now`: a beam up from the
+    /// impact, the blast, and a screen shake that fades out with the player's
+    /// distance.
     #[inline(never)]
     #[cfg_attr(target_arch = "mips", optimize(size))]
     pub fn tick(&mut self, now: u16, player_pos: [i32; 3], w: &mut impl MortarWorld) {
-        for s in 0..MAX_SHELLS {
-            if self.shell_at[s] != 0 && time_reached(now, self.shell_at[s]) {
-                self.shell_at[s] = 0;
-                let p = self.shell_pos[s];
-                w.beam(p, [p[0], p[1] + 1024, p[2]]);
-                w.explode(p, 200, 500, self.shell_by_player & (1 << s) != 0);
-                let d = isqrt_i32(dist2_3(p, player_pos));
-                if d < 750 {
-                    w.set_shake((25 * (750 - d) / 750) as u16, 20);
-                }
+        for slot in 0..MAX_SHELLS {
+            let at = self.shell_at[slot];
+            if at == 0 || !time_reached(now, at) {
+                continue;
+            }
+            self.shell_at[slot] = 0;
+            let pos = self.shell_pos[slot];
+            w.beam(pos, [pos[0], pos[1] + BEAM_HEIGHT, pos[2]]);
+            let by_player = self.shell_by_player & (1 << slot) != 0;
+            w.explode(pos, SHELL_DAMAGE, SHELL_RADIUS, by_player);
+            let dist = isqrt_i32(dist2_3(pos, player_pos));
+            if dist < SHAKE_RANGE {
+                let amplitude = SHAKE_AMPLITUDE * (SHAKE_RANGE - dist) / SHAKE_RANGE;
+                w.set_shake(amplitude as u16, SHAKE_TICKS);
             }
         }
     }
