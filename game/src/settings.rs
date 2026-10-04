@@ -5,8 +5,11 @@
 
 use psx_pad::Deadzone;
 
-use psx_gpu::{set_display_offset, Resolution, VideoMode};
+use psx_gpu::display::{DisplayConfig, Resolution, VideoMode};
 use psx_spu::{CdVolume, Volume};
+
+/// The display mode `main` starts the GPU in; the screen offset moves its window.
+pub const DISPLAY: DisplayConfig = DisplayConfig::new(VideoMode::Ntsc, Resolution::R320X240);
 
 pub const VOL_MAX: u8 = 8; // slider steps 0..8
 pub const SCREEN_RANGE: i32 = 24; // +-24 px/lines of screen shift
@@ -137,11 +140,10 @@ pub fn take_brightness_dirty() -> bool {
 
 /// Re-issue the GP1 06h/07h display windows shifted by the screen offset. Moves
 /// the picture on the TV without touching the VRAM layout (so it also shifts the
-/// menu -- a live preview of the setting). Mode and resolution must match what
-/// main passes to gpu::init.
+/// menu -- a live preview of the setting).
 pub fn apply_display() {
     let (sx, sy) = unsafe { (SCREEN_X, SCREEN_Y) };
-    set_display_offset(VideoMode::Ntsc, Resolution::R320X240, sx as i16, sy as i16);
+    crate::driver::with(|gpu| gpu.set_display(DISPLAY.with_offset((sx as i16, sy as i16))));
 }
 
 /// Apply the audio volumes: music = CD input gain, SFX = SPU main (voice) volume.

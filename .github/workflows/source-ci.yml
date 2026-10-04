@@ -62,11 +62,9 @@ jobs:
           cargo fmt --manifest-path host/hl-logic-tests/Cargo.toml --package hl-logic-tests -- --check
           cargo fmt --manifest-path shared/hl-format/Cargo.toml --package hl-format -- --check
 
-      # The logic tests build the engine crates too, which still call the SDK's
-      # deprecated GPU entry points (see the game job below).
       - name: Deny warnings in the host crates
         env:
-          RUSTFLAGS: -Dwarnings -Adeprecated
+          RUSTFLAGS: -Dwarnings
         run: |
           cargo check --manifest-path host/hl-build/Cargo.toml --all-targets --locked
           cargo check --manifest-path host/hl-bsp/Cargo.toml --all-targets --locked
@@ -129,10 +127,7 @@ jobs:
           : > "$RUNNER_TEMP/empty-route"
           export HLPSX_SEMANTIC_INPUT="$RUNNER_TEMP/empty-route"
           export HLPSX_ROUTE_WAYPOINTS="$RUNNER_TEMP/empty-route"
-          # The SDK deprecated its raw GPU entry points in favour of the `Gpu`
-          # driver. They still work, and the pinned engine crates use them
-          # too, so deprecation is allowed until the game and engine migrate.
-          deny='target.mipsel-sony-psx.rustflags=["-Dwarnings","-Adeprecated"]'
+          deny='target.mipsel-sony-psx.rustflags=["-Dwarnings"]'
           sets=(
             ""
             "--no-default-features"

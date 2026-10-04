@@ -242,7 +242,8 @@ pub unsafe fn prepare<const N: usize>(
     // E2 immediately overwrote it, so the pair reduces to these two words.
     env.draw_mode = mats.amber.draw_mode_word();
     env.tex_window = mats.amber.texture_window_word();
-    ot.insert(0, core::ptr::from_mut(env).cast(), GpuEnv::WORDS);
+    ot.resume_frame()
+        .add_raw(0, core::ptr::from_mut(env).cast(), GpuEnv::WORDS);
 }
 
 /// Link one sprite from `prims` into `ot`.
@@ -268,7 +269,7 @@ unsafe fn sprite<const N: usize>(
         return;
     }
     prims[*count] = Sprite::with_material(x, y, w as u16, h as u16, (u, v), mat);
-    ot.insert(
+    ot.resume_frame().add_raw(
         0,
         core::ptr::from_mut(&mut prims[*count]).cast(),
         Sprite::WORDS,

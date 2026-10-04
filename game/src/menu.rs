@@ -12,13 +12,14 @@
 //! Colors are the scheme's: items orange 255 170 0, selected white with a faint
 //! orange armed bar. Returns the chosen streamed room id.
 
+use crate::driver;
 use crate::hltext;
 use psx_font::{
     fonts::{BASIC_8X16, SPLEEN_5X8},
     FontAtlas,
 };
+use psx_gpu::display::DoubleBuffer;
 use psx_gpu::material::TextureMaterial;
-use psx_gpu::{self as gpu, framebuf::FrameBuffer};
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_pad::{button, poll_port1, PadTracker};
 use psx_rt::interrupts;
@@ -383,7 +384,7 @@ fn upload_tex(blob: &[u8], vx: u16) -> (TextureMaterial, u16, u16) {
 
 /// The conback texture stretched to fill the 320x240 screen.
 fn draw_bg(mat: TextureMaterial) {
-    gpu::draw_quad_textured_material(
+    driver::quad_textured_material(
         [(0, 0), (320, 0), (0, 240), (320, 240)],
         [(0, 0), (255, 0), (0, 239), (255, 239)],
         mat,
@@ -443,7 +444,7 @@ fn update_logo_anim(
     // what they are. Needs the 0x8000 semi-transparency bit on the cooked
     // palette (see build_logo_animation).
     let clut = Clut::new(LOGO_ANIM_VRAM_X, 256);
-    let blend = gpu::material::BlendMode::Add;
+    let blend = psx_gpu::material::BlendMode::Add;
     let left = TexturePage::new(LOGO_ANIM_VRAM_X, 0, TextureDepth::Bit4);
     let right = TexturePage::new(LOGO_ANIM_RIGHT_VRAM_X, 0, TextureDepth::Bit4);
     let tint = (128, 128, 128);
@@ -474,12 +475,12 @@ fn draw_logo_anim(left: TextureMaterial, right: TextureMaterial, w: u16, h: u16)
     const Y: i16 = 35;
     let y1 = Y + h as i16;
     let v1 = (h - 1) as u8;
-    gpu::draw_quad_textured_material(
+    driver::quad_textured_material(
         [(0, Y), (256, Y), (0, y1), (256, y1)],
         [(0, 0), (255, 0), (0, v1), (255, v1)],
         left,
     );
-    gpu::draw_quad_textured_material(
+    driver::quad_textured_material(
         [(256, Y), (320, Y), (256, y1), (320, y1)],
         [(0, 0), (63, 0), (0, v1), (63, v1)],
         right,
@@ -501,7 +502,7 @@ fn draw_logo_tinted(mat: TextureMaterial, w: u16, h: u16, y0: i16, tint: (u8, u8
     let sh = h as i16 * sw / w as i16;
     let x0 = 160 - sw / 2;
     let (uw, uh) = ((w - 1) as u8, (h - 1) as u8);
-    gpu::draw_quad_textured_material(
+    driver::quad_textured_material(
         [(x0, y0), (x0 + sw, y0), (x0, y0 + sh), (x0 + sw, y0 + sh)],
         [(0, 0), (uw, 0), (0, uh), (uw, uh)],
         mat.with_tint(tint),
@@ -513,7 +514,7 @@ fn draw_logo_tinted(mat: TextureMaterial, w: u16, h: u16, y0: i16, tint: (u8, u8
 /// fade out. A fresh face-button/Start press skips after the opening frames.
 #[inline(never)]
 #[optimize(size)]
-pub fn intro(fb: &mut FrameBuffer, menu_blob: &[u8], pad_notice: [&str; 2]) {
+pub fn intro(fb: &mut DoubleBuffer, menu_blob: &[u8], pad_notice: [&str; 2]) {
     let sections = split_menu(menu_blob);
     let (bonnie, bw, bh) = upload_tex(sections[SECTION_BONNIE], BONNIE_VRAM_X);
     let font = FontAtlas::upload(&BASIC_8X16, FONT_TPAGE, FONT_CLUT);
@@ -542,7 +543,7 @@ pub fn intro(fb: &mut FrameBuffer, menu_blob: &[u8], pad_notice: [&str; 2]) {
         }
         .clamp(0, 128);
 
-        fb.clear(0, 0, 0);
+        driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
         let logo_level = level as u8;
         draw_bonnie_tinted(
             bonnie,
@@ -569,9 +570,9 @@ pub fn intro(fb: &mut FrameBuffer, menu_blob: &[u8], pad_notice: [&str; 2]) {
             y += 18;
         }
 
-        gpu::wait_idle();
+        driver::with(|gpu| gpu.wait_idle());
         psx_rt::interrupts::wait_vblank();
-        fb.swap();
+        driver::with(|gpu| fb.swap(gpu));
         frame += 1;
     }
 }
@@ -603,7 +604,7 @@ fn draw_bonnie_tinted(mat: TextureMaterial, w: u16, h: u16, x: i16, y: i16, tint
     }
     const SIZE: i16 = 96;
     let (uw, uh) = ((w - 1) as u8, (h - 1) as u8);
-    gpu::draw_quad_textured_material(
+    driver::quad_textured_material(
         [(x, y), (x + SIZE, y), (x, y + SIZE), (x + SIZE, y + SIZE)],
         [(0, 0), (uw, 0), (0, uh), (uw, uh)],
         mat.with_tint(tint),
@@ -664,9 +665,9 @@ fn glow_material(level: u8) -> TextureMaterial {
     TextureMaterial::blended(
         Clut::new(GLOW_VRAM_X, 256).uv_word(),
         TexturePage::new(GLOW_VRAM_X, 0, TextureDepth::Bit4)
-            .uv_word(gpu::material::BlendMode::Add.texture_page_bits()),
+            .uv_word(psx_gpu::material::BlendMode::Add.texture_page_bits()),
         (level, level, level),
-        gpu::material::BlendMode::Add,
+        psx_gpu::material::BlendMode::Add,
     )
 }
 
@@ -774,7 +775,7 @@ fn draw_text_glow(x: i16, y: i16, text: &str, level: u8, tracking: i8) {
             let (x0, y0) = (cursor - GLOW_PAD_X, y - GLOW_PAD_Y);
             let (x1, y1) = (x0 + GLOW_CELL_W as i16, y0 + GLOW_CELL_H as i16);
             let (uw, vh) = (u + GLOW_CELL_W as u8 - 1, v + GLOW_CELL_H as u8 - 1);
-            gpu::draw_quad_textured_material(
+            driver::quad_textured_material(
                 [(x0, y0), (x1, y0), (x0, y1), (x1, y1)],
                 [(u, v), (uw, v), (u, vh), (uw, vh)],
                 material,
@@ -808,7 +809,7 @@ fn draw_scroll_bar(first: i32, visible: i32, total: i32) {
     }
     let (y0, y1) = (LIST_Y - 2, LIST_BOTTOM - 2);
     let track = y1 - y0;
-    gpu::draw_quad_flat(
+    driver::quad_flat(
         [
             (SCROLL_X, y0),
             (SCROLL_X + 4, y0),
@@ -823,7 +824,7 @@ fn draw_scroll_bar(first: i32, visible: i32, total: i32) {
     let span = track - thumb;
     let travel = (span as i32 * first / (total - visible)) as i16;
     let top = y0 + travel.clamp(0, span);
-    gpu::draw_quad_flat(
+    driver::quad_flat(
         [
             (SCROLL_X, top),
             (SCROLL_X + 4, top),
@@ -880,7 +881,7 @@ fn draw_list_row(font: &FontAtlas, x: i16, y: i16, text: &str, state: RowState) 
 #[inline(never)]
 #[optimize(size)]
 fn draw_select_bar(x: i16, y: i16, w: i16) {
-    gpu::draw_quad_flat(
+    driver::quad_flat(
         [(x, y - 1), (x + w, y - 1), (x, y + 19), (x + w, y + 19)],
         ARMED.0,
         ARMED.1,
@@ -919,7 +920,7 @@ fn draw_menu_row(font: &FontAtlas, help: &FontAtlas, y: i16, item: &str, hint: &
     font.draw_text_with_spacing(MAIN_X, y, item, MAIN_TRACKING, color);
     // The mnemonic accent the button art carries, under the first glyph only.
     let width = font.text_width(&item[..1]) as i16 + MAIN_TRACKING as i16;
-    gpu::draw_quad_flat(
+    driver::quad_flat(
         [
             (MAIN_X, y + UNDERLINE_Y),
             (MAIN_X + width, y + UNDERLINE_Y),
@@ -967,13 +968,13 @@ struct Shell {
 #[inline(never)]
 #[optimize(size)]
 fn draw_shell(
-    fb: &mut FrameBuffer,
+    fb: &mut DoubleBuffer,
     font: &FontAtlas,
     shell: &Shell,
     anim: (TextureMaterial, TextureMaterial, u16, u16),
     title: &str,
 ) {
-    fb.clear(0, 0, 0);
+    driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
     draw_bg(shell.bg);
     if anim.2 == 0 {
         draw_logo(shell.logo, shell.lw, shell.lh);
@@ -1183,7 +1184,7 @@ fn draw_vol_bar(x: i16, y: i16, v: i32, bright: bool) {
     for i in 0..8i16 {
         let sx = x + i * 13;
         let (r, g, b) = if (i as i32) < v { lit } else { (56, 56, 56) };
-        gpu::draw_quad_flat(
+        driver::quad_flat(
             [
                 (sx, y + 2),
                 (sx + 10, y + 2),
@@ -1335,13 +1336,13 @@ fn draw_controls_menu(font: &FontAtlas, help: &FontAtlas) {
 /// and the credit lines. Waits for a button, then returns (to the main menu).
 #[inline(never)]
 #[optimize(size)]
-pub fn ending(fb: &mut FrameBuffer, assets: &[u8]) {
+pub fn ending(fb: &mut DoubleBuffer, assets: &[u8]) {
     let font = FontAtlas::upload(&BASIC_8X16, FONT_TPAGE, FONT_CLUT);
     let (logo, lw, lh) = upload_tex(split_menu(assets)[SECTION_LOGO], LOGO_VRAM_X);
     let mut prev_any = true; // swallow the button that ended the fade
     let mut frame = 0u32;
     loop {
-        fb.clear(0, 0, 0);
+        driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
         draw_logo(logo, lw, lh);
         // Title, eight credit lines one pixel apart and the prompt all fit
         // under the logo inside the 240-line frame: the credits end at 215
@@ -1357,9 +1358,9 @@ pub fn ending(fb: &mut FrameBuffer, assets: &[u8]) {
         if frame > 40 && (frame / 16) & 1 == 0 {
             draw_centered(&font, 221, "Press any button", DIM);
         }
-        gpu::wait_idle();
+        driver::with(|gpu| gpu.wait_idle());
         interrupts::wait_vblank();
-        fb.swap();
+        driver::with(|gpu| fb.swap(gpu));
         let pad = poll_port1();
         let any = pad.buttons.bits() != 0;
         if any && !prev_any && frame > 40 {
@@ -1374,7 +1375,7 @@ pub fn ending(fb: &mut FrameBuffer, assets: &[u8]) {
 /// Run the menu until the player confirms a launch; returns its room id.
 #[inline(never)]
 #[optimize(size)]
-pub fn run(fb: &mut FrameBuffer, assets: &[u8]) -> usize {
+pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
     let font = FontAtlas::upload(&BASIC_8X16, FONT_TPAGE, FONT_CLUT);
     let help_font = FontAtlas::upload(&SPLEEN_5X8, HELP_TPAGE, HELP_CLUT);
     upload_glow_atlas();
@@ -1585,9 +1586,9 @@ pub fn run(fb: &mut FrameBuffer, assets: &[u8]) -> usize {
         }
         title_phase = title_phase.wrapping_add(1);
 
-        gpu::wait_idle();
+        driver::with(|gpu| gpu.wait_idle());
         interrupts::wait_vblank();
-        fb.swap();
+        driver::with(|gpu| fb.swap(gpu));
     }
 }
 
