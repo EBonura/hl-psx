@@ -21,66 +21,82 @@ pub struct FloatTick {
     pub grounded: bool,
 }
 
+/// Water lift (buoyancy times submerged height) that exactly cancels the
+/// pushable's weight: the 800 units per second squared of gravity.
+const BALANCE_LIFT: i32 = 800;
+
+/// A pushable resting on a support only breaks free when the water wants to
+/// carry it up by at least this many units per tick.
+const FLOOR_GRIP: i32 = 4;
+
+/// Fastest a pushable sinks through water, in units per tick.
+const MAX_SINK: i32 = 6;
+
+/// How much of the box is under water, measured upward from its bottom. The
+/// bottom probe has already been found wet, so the water line lies between
+/// one unit above the bottom and the top face.
+fn submerged_height(body: FloatBody, wet: &mut dyn FnMut([i32; 3]) -> bool) -> i32 {
+    let [x, y, z] = body.center;
+    let bottom = y - body.half_height;
+    let top = y + body.half_height;
+    if wet([x, top, z]) {
+        return top - bottom;
+    }
+    let mut under = bottom + 1;
+    let mut over = top;
+    while over - under > 1 {
+        let mid = under + (over - under) / 2;
+        if wet([x, mid, z]) {
+            under = mid;
+        } else {
+            over = mid;
+        }
+    }
+    under - bottom
+}
+
 /// One 20 Hz buoyancy tick for a pushable. `vy` is the stored vertical speed
 /// before gravity; `grounded` says whether it rests on a support. `wet`
 /// answers whether a world point is inside water. Returns None when the
 /// pushable has no buoyancy or its bottom is dry, so the caller falls as usual.
+///
+/// The box is pushed toward the depth where its lift equals its weight, at a
+/// speed proportional to how far off that depth it is, so it eases in from
+/// either side. A box too heavy for its own height (its balance depth is
+/// deeper than the box is tall) never settles and keeps sinking.
 pub fn pushable_float_tick(
     body: FloatBody,
     vy: i32,
     grounded: bool,
     wet: &mut dyn FnMut([i32; 3]) -> bool,
 ) -> Option<FloatTick> {
-    if body.buoyancy == 0 {
+    if body.buoyancy <= 0 {
         return None;
     }
-    let resting_vy = if grounded { 0 } else { vy };
-    let c = body.center;
-    let h = body.half_height;
-    let bottom = c[1] - h;
-    if !wet([c[0], bottom + 1, c[2]]) {
+    let [x, y, z] = body.center;
+    if !wet([x, y - body.half_height + 1, z]) {
         return None;
     }
-    let depth = if wet([c[0], c[1] + h, c[2]]) {
-        2 * h
-    } else {
-        let (mut lo, mut hi) = (1, 2 * h);
-        let mut i = 0;
-        while i < 5 {
-            let mid = (lo + hi) / 2;
-            if wet([c[0], bottom + mid, c[2]]) {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-            i += 1;
-        }
-        (lo + hi) / 2
-    };
-    // Gravity (800 u/s^2) balances the lift at depth 800 / buoyancy. The
-    // speed is whole units per 20 Hz tick, so ease toward that depth rather
-    // than integrating both forces undamped, which would swing the box.
-    let balance = 800 / body.buoyancy.max(1);
-    let toward = ((depth - balance) / 4).clamp(-8, 8);
-    let next = (resting_vy + toward) / 2;
-    // Lift that beats gravity raises a grounded box off its floor; otherwise
-    // a grounded box stays put.
-    if next > 0 {
-        Some(FloatTick {
-            vy: next,
-            grounded: false,
-        })
-    } else if grounded {
-        Some(FloatTick {
+    let lift = submerged_height(body, wet) * body.buoyancy;
+    // More buoyant boxes may rise faster; any box may sink at up to 6.
+    let top_rise = (body.buoyancy / 16).clamp(1, 6);
+    let wanted = (lift - BALANCE_LIFT) / (2 * body.buoyancy);
+    let target = wanted.clamp(-MAX_SINK, top_rise);
+    let current = if grounded { 0 } else { vy };
+    if grounded && wanted < FLOOR_GRIP {
+        return Some(FloatTick {
             vy: 0,
             grounded: true,
-        })
-    } else {
-        Some(FloatTick {
-            vy: next,
-            grounded: false,
-        })
+        });
     }
+    // Close half of the gap to the wanted speed each tick, rounding up so the
+    // wanted speed is actually reached.
+    let gap = target - current;
+    let next = current + (gap + gap.signum()) / 2;
+    Some(FloatTick {
+        vy: next,
+        grounded: false,
+    })
 }
 
 /// Rotating-door spawnflags that keep the authored swing direction.
