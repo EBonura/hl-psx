@@ -1874,8 +1874,9 @@ const PGO_RAM_FLOOR: u32 = 16 * 1024;
 /// Hot call-site thresholds a profile-guided build tries in turn until its
 /// link keeps `PGO_RAM_FLOOR`. Inlining moves `.text` by kilobytes on tiny
 /// profile changes: final-7's source left 5,500 B free at 1000, 17,788 B at
-/// 500 and 28,028 B at 250.
-const PGO_HOT_CALLSITE_LADDER: [u32; 3] = [1000, 500, 250];
+/// 500 and 28,028 B at 250. With the ACK-paced pad driver and the analog request
+/// at boot, 250 left 14,428 B, so the ladder has one more rung.
+const PGO_HOT_CALLSITE_LADDER: [u32; 4] = [1000, 500, 250, 125];
 
 /// Stack reserve for the PGO collect link (see `compile_game`).
 const PGO_COLLECT_STACK_RESERVE: &str = "0x6000";
