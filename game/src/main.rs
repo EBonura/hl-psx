@@ -44,20 +44,27 @@ mod render;
 #[cfg(feature = "route-follow")]
 use psx_goldsrc::route_follow;
 mod apache;
+mod apache_logic;
 mod garg;
+mod garg_logic;
 mod local_nav;
 mod mortar;
+mod mortar_logic;
 mod nav_graph;
 mod nihilanth;
+mod nihilanth_logic;
 mod osprey;
+mod osprey_logic;
 mod save;
 mod scientist_logic;
 mod scratchpad;
 mod scripted_sequence;
 mod setpiece_logic;
+mod setpiece_math;
 mod setpiece_sfx;
 mod talk_monster;
 mod tank;
+mod tank_logic;
 use osprey::{osprey_init, tick_osprey, OSPREY, OSPREY_TILT, PROP_TYPE_OSPREY};
 use psx_goldsrc::semantic_input;
 use tank::{
@@ -10807,7 +10814,7 @@ unsafe fn logic_use_entity(
             if rec.arg1 == map::AITRIGGER_COMMAND_TOUCH && use_type == map::USE_OFF {
                 monster_command_touch(m, nlogic, rec.target);
             } else if rec.arg1 == map::AITRIGGER_FLY_PATH && OSPREY.li as usize == li {
-                OSPREY.next = now.wrapping_add(2); // COsprey::CommandUse
+                osprey::command_use(now);
             } else if rec.arg1 == map::AITRIGGER_APACHE_PATH {
                 apache::startup(li);
             } else if rec.arg1 == map::AITRIGGER_COMMAND_TOUCH && use_type == map::USE_ON {
@@ -19874,6 +19881,15 @@ fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
         // source blast radius defaults to damage * 2.5 (100 * 2.5 = 250).
         PROJ_M203 => (40, u8::MAX, true, 250, (120, 150, 90), 5),
         _ => (40, 100, true, 200, (170, 70, 50), 5), // PROJ_TRIPMINE
+    }
+}
+
+/// A world trace hit in the form the set-piece brains take.
+fn trace_hit(h: phys::RayHit) -> setpiece_math::TraceHit {
+    setpiece_math::TraceHit {
+        frac: h.frac,
+        pos: h.pos,
+        normal: h.normal,
     }
 }
 

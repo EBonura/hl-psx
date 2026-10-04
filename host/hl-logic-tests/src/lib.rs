@@ -138,3 +138,24 @@ pub mod nav_graph;
 
 #[path = "../../../game/src/local_nav.rs"]
 pub mod local_nav;
+
+#[path = "../../../game/src/setpiece_math.rs"]
+pub mod setpiece_math;
+
+#[path = "../../../game/src/mortar_logic.rs"]
+pub mod mortar_logic;
+
+#[path = "../../../game/src/tank_logic.rs"]
+pub mod tank_logic;
+
+#[path = "../../../game/src/osprey_logic.rs"]
+pub mod osprey_logic;
+
+#[path = "../../../game/src/apache_logic.rs"]
+pub mod apache_logic;
+
+#[path = "../../../game/src/garg_logic.rs"]
+pub mod garg_logic;
+
+#[path = "../../../game/src/nihilanth_logic.rs"]
+pub mod nihilanth_logic;
