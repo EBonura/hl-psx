@@ -24,6 +24,8 @@ mod apache;
 #[cfg(test)]
 mod garg;
 #[cfg(test)]
+mod hud;
+#[cfg(test)]
 mod mortar;
 #[cfg(test)]
 mod nihilanth;

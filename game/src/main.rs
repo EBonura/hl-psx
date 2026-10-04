@@ -28,6 +28,7 @@ mod ground_logic;
 use psx_goldsrc::hitbox_logic;
 mod hltext;
 mod hud;
+mod hud_layout;
 use psx_goldsrc::ladder_logic;
 mod logic_state;
 mod map;
@@ -34188,28 +34189,34 @@ fn play(
             // Build them while channel 2 walks the world list, hiding this CPU
             // work without changing either ordering table or draw order.
             if draw_regular_hud {
-                let _ = hud::draw(
-                    hud_mat,
-                    suit_equipped,
-                    flashlight,
-                    flashlight_battery,
-                    weapon.any_weapon(),
-                    zoom_aim,
+                let hud_inputs = hud_layout::HudInputs {
+                    suit: suit_equipped,
                     health,
-                    armor,
-                    weapon.clip_display(),
-                    weapon.reserve_display(),
-                    weapon.ammo[AMMO_ARGREN],
-                    weapon.ammo_mode(),
+                    armour: armor,
+                    weapon: weapon.any_weapon().then_some(weapon.current as u8),
+                    ammo: match weapon.ammo_mode() {
+                        0 => hud_layout::AmmoDisplay::None,
+                        1 => hud_layout::AmmoDisplay::ReserveOnly,
+                        _ => hud_layout::AmmoDisplay::ClipAndReserve,
+                    },
+                    clip: weapon.clip_display(),
+                    reserve: weapon.reserve_display(),
+                    secondary: weapon.ammo[AMMO_ARGREN],
+                    zoomed: zoom_aim,
+                    selection_ticks: weapon_icon_ticks,
+                    flashlight_on: flashlight,
+                    flashlight_charge: flashlight_battery,
+                    train_setting: train_hud_position(
+                        tram_controlling,
+                        tram_speed,
+                        TRACKTRAIN_USE_SPEED as i32,
+                    ),
                     pickup_kind,
                     pickup_ticks,
-                    if weapon.any_weapon() {
-                        weapon.current as i32
-                    } else {
-                        -1
-                    },
-                    weapon_icon_ticks,
-                    train_hud_position(tram_controlling, tram_speed, TRACKTRAIN_USE_SPEED as i32),
+                };
+                let _ = hud::draw(
+                    hud_mat,
+                    &hud_inputs,
                     hud_ot(),
                     &mut *core::ptr::addr_of_mut!(HUD_PRIMS),
                 );
