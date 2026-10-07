@@ -43,17 +43,13 @@ You need:
 2. Rust installed through [rustup](https://rustup.rs/). Use rustup rather than
    an operating-system Rust package so the repository can select its pinned
    nightly toolchain automatically.
-3. Python 3 and `mipsel-none-elf-objdump` on `PATH`. The build runs
-   `host/stack_budget.py`, which uses both, to check the scratchpad
-   projection stack budget of the final executable.
-4. Host build tools/linker for Rust executables (Xcode Command Line Tools on
+3. Host build tools/linker for Rust executables (Xcode Command Line Tools on
    macOS, a C/C++ toolchain on Linux, or Visual Studio Build Tools on Windows).
-5. Internet access for the first build so Cargo can download that toolchain,
+4. Internet access for the first build so Cargo can download that toolchain,
    the Rust dependencies, and the pinned PSoXide sources.
 
-You do not need a separate PSoXide checkout, Make, or FFmpeg. On Windows,
-ensure the Python executable is available as `python3`, as invoked by the
-builder.
+You do not need a separate PSoXide checkout, Make, FFmpeg, Python, or a MIPS
+binutils install.
 
 ### 1. Get the source
 
