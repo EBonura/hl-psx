@@ -150,7 +150,10 @@ cargo hl-build --help                 # show every option
 in the hydrated emulator, which counts every instruction the game executes;
 the second is compiled around those counts. On the chapter-two recording it
 is 6% faster than `pack`, and 4% faster on a route the recording never
-visits. It takes about four minutes.
+visits. It takes about four minutes. It also writes the profile and the
+inlining threshold it linked at to `game/pgo/`. Every other build links with
+that committed profile, because HL-PSX no longer fits in RAM without one, so
+commit `game/pgo/` after a `pgo` run to make it the default.
 
 `HL_DIR`, `PSOXIDE`, and `GAMES_DIR` are accepted as environment defaults.
 Normal builds hydrate the exact SDK, emulator support crates, and editor/engine

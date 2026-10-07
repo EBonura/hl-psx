@@ -181,6 +181,11 @@ fn source_tree_digest(repository: &Path) -> Result<String> {
             files
         }
     };
+    // The shipped profile shapes only the guest compile, never cooked data.
+    let files = files
+        .into_iter()
+        .filter(|path| !path.starts_with("game/pgo"))
+        .collect();
     digest_files(repository, files)
 }
 
@@ -1879,6 +1884,13 @@ const PGO_RAM_FLOOR: u32 = 16 * 1024;
 /// at boot, 250 left 14,428 B, so the ladder has one more rung.
 const PGO_HOT_CALLSITE_LADDER: [u32; 4] = [1000, 500, 250, 125];
 
+/// The sample profile the last `pgo` run shipped with, and the hot call-site
+/// threshold it linked at. Every other build links with them: without a
+/// profile the game no longer fits in RAM. They feed only the guest compile,
+/// so refreshing them leaves the cooked assets valid.
+const SHIPPED_PROFILE: &str = "game/pgo/hl-psx.prof";
+const SHIPPED_THRESHOLD: &str = "game/pgo/hot-callsite-threshold";
+
 /// Stack reserve for the PGO collect link (see `compile_game`).
 const PGO_COLLECT_STACK_RESERVE: &str = "0x6000";
 
@@ -2058,6 +2070,21 @@ fn projection_stack_budget(scratchpad_rs: &Path) -> Result<usize> {
     Ok(SCRATCHPAD_BYTES - guard_end)
 }
 
+/// The ordinary build: the committed profile at the threshold it shipped at,
+/// stepping down only if source changes since then outgrew the RAM floor.
+fn compile_shipped(repository: &Path, psoxide: &Path, features: Option<&str>) -> Result<PathBuf> {
+    let profile = repository.join(SHIPPED_PROFILE);
+    if !profile.is_file() {
+        return Err(format!("the shipped sample profile {SHIPPED_PROFILE} is missing").into());
+    }
+    let threshold = fs::read_to_string(repository.join(SHIPPED_THRESHOLD))
+        .map_err(|error| format!("read {SHIPPED_THRESHOLD}: {error}"))?
+        .trim()
+        .parse::<u32>()
+        .map_err(|error| format!("{SHIPPED_THRESHOLD}: {error}"))?;
+    Ok(link_with_profile(repository, psoxide, features, &profile, threshold)?.0)
+}
+
 fn pack_disc(repository: &Path, psoxide: &Path, exe: &Path) -> Result<PathBuf> {
     pack_disc_into(repository, psoxide, exe, &repository.join("dist"))
 }
@@ -2181,12 +2208,44 @@ fn profile_guided_pack(
         "convert the PC histogram into a sample profile",
     )?;
 
-    // Step inlining down until the link keeps the RAM floor, with the SDK's
-    // check (`psoxide-pgo ram`), and record which threshold shipped.
+    let (exe, threshold) = link_with_profile(
+        repository,
+        psoxide,
+        features,
+        &profile,
+        PGO_HOT_CALLSITE_LADDER[0],
+    )?;
+    fs::write(
+        work.join("shipped-variant.txt"),
+        format!("hot-callsite-threshold {threshold}\nfloor {PGO_RAM_FLOOR}\n"),
+    )?;
+    let cue = pack_disc(repository, psoxide, &exe)?;
+    fs::create_dir_all(repository.join("game/pgo"))?;
+    fs::copy(&profile, repository.join(SHIPPED_PROFILE))?;
+    fs::write(repository.join(SHIPPED_THRESHOLD), format!("{threshold}\n"))?;
+    println!(
+        "Shipped profile -> {SHIPPED_PROFILE} (commit game/pgo/ to make it the default build)"
+    );
+    Ok(cue)
+}
+
+/// Link with `profile`, stepping inlining down the ladder from `first` until
+/// the link keeps the RAM floor, by the SDK's check (`psoxide-pgo ram`).
+/// Returns the image and the threshold it linked at.
+fn link_with_profile(
+    repository: &Path,
+    psoxide: &Path,
+    features: Option<&str>,
+    profile: &Path,
+    first: u32,
+) -> Result<(PathBuf, u32)> {
     let link_map = repository.join(".hlpsx/hl-psx.map");
     let mut tried = Vec::new();
     let mut link_error = None;
-    for threshold in PGO_HOT_CALLSITE_LADDER {
+    for threshold in PGO_HOT_CALLSITE_LADDER
+        .into_iter()
+        .filter(|threshold| *threshold <= first)
+    {
         // A threshold that inlines past the RAM region fails to link
         // rather than linking under the floor; step down from that too. A
         // real compile error fails every threshold and is returned below.
@@ -2194,7 +2253,7 @@ fn profile_guided_pack(
             repository,
             psoxide,
             features,
-            GuestProfile::Use(&profile, threshold),
+            GuestProfile::Use(profile, threshold),
         ) {
             Ok(exe) => exe,
             Err(error) => {
@@ -2213,21 +2272,16 @@ fn profile_guided_pack(
             .success();
         tried.push(threshold.to_string());
         if fits {
-            let record = format!(
-                "hot-callsite-threshold {threshold}\nfloor {PGO_RAM_FLOOR}\ntried {}\n",
-                tried.join(", ")
-            );
-            fs::write(work.join("shipped-variant.txt"), &record)?;
             println!(
                 "PGO variant: hot-callsite-threshold={threshold} (tried {})",
                 tried.join(", ")
             );
-            return pack_disc(repository, psoxide, &exe);
+            return Ok((exe, threshold));
         }
     }
     Err(link_error.unwrap_or_else(|| {
         format!(
-            "no hot-callsite threshold in {PGO_HOT_CALLSITE_LADDER:?} keeps {PGO_RAM_FLOOR} B of RAM free"
+            "no hot-callsite threshold from {first} down {PGO_HOT_CALLSITE_LADDER:?} keeps {PGO_RAM_FLOOR} B of RAM free"
         )
         .into()
     }))
@@ -2374,7 +2428,13 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
-    let exe = compile_game(&repository, &psoxide, features, GuestProfile::None)?;
+    // Regression builds carry telemetry and debug hooks the shipped profile
+    // and RAM floor were never sized for.
+    let exe = if options.action == Action::Regress {
+        compile_game(&repository, &psoxide, features, GuestProfile::None)?
+    } else {
+        compile_shipped(&repository, &psoxide, features)?
+    };
     if options.action == Action::Compile {
         return Ok(());
     }
@@ -2395,7 +2455,7 @@ fn main() -> Result<()> {
             options.regression_scenario.as_deref(),
         );
         // Leave dist/ as the shipping artifact, not the instrumented test disc.
-        let shipping_exe = compile_game(&repository, &psoxide, None, GuestProfile::None)?;
+        let shipping_exe = compile_shipped(&repository, &psoxide, None)?;
         pack_disc(&repository, &psoxide, &shipping_exe)?;
         regression_result?;
         if let Some(games_dir) = options.games_dir.as_deref() {
