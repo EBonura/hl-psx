@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `cargo hl-build build` links again. Without a sample profile the game had
+  outgrown RAM (`.bss` over by about 4 KB), so only `pgo` with a recording
+  could make a disc. The profile and threshold `pgo` shipped with now live
+  in `game/pgo/`, every other build links with them, and a plain build
+  reproduces the profile-guided disc byte for byte.
+
 - Building no longer needs Python or `mipsel-none-elf-objdump`. The
   scratchpad projection stack check runs through the pinned SDK's
   `stack-guard`, which reports the same depth from the linked image without
