@@ -82,6 +82,8 @@ fn digest_files(root: &Path, mut files: Vec<PathBuf>) -> Result<String> {
     files.dedup();
     let mut digest = Sha256::new();
     digest.update(b"hl-psx-tree-v1\0");
+    // On the heap: Windows gives the main thread a 1 MiB stack.
+    let mut buffer = vec![0u8; 1024 * 1024];
     for relative in files {
         let path = root.join(&relative);
         if !path.is_file() {
@@ -92,7 +94,6 @@ fn digest_files(root: &Path, mut files: Vec<PathBuf>) -> Result<String> {
         digest.update(normalized.as_bytes());
         digest.update(path.metadata()?.len().to_le_bytes());
         let mut stream = fs::File::open(&path)?;
-        let mut buffer = [0u8; 1024 * 1024];
         loop {
             let count = stream.read(&mut buffer)?;
             if count == 0 {
