@@ -58,7 +58,7 @@ unsafe extern "C" {
 const PROJECTION_SAVE_OFFSET: usize = 128;
 const PROJECTION_GUARD_OFFSET: usize = PROJECTION_SAVE_OFFSET + 3 * core::mem::size_of::<u32>();
 // A profile-guided build inlines more into the bone chain and needs 824 bytes
-// of it; the canary gave up 84 of its 116 to leave 852. host/stack_budget.py
+// of it; the canary gave up 84 of its 116 to leave 852. The SDK's stack-guard
 // proves the linked chain fits after every build, so the canary only has to
 // catch what static analysis cannot see.
 const PROJECTION_GUARD_END: usize = 172;

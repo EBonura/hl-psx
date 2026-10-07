@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Building no longer needs Python or `mipsel-none-elf-objdump`. The
+  scratchpad projection stack check runs through the pinned SDK's
+  `stack-guard`, which reports the same depth from the linked image without
+  a separate disassembler, and on Windows the builder no longer dies with
+  `STATUS_STACK_OVERFLOW` after the asset cook.
+
 - Start every chapter where normal play arrives in it. Chapter select used
   the first map's `info_player_start`, which in most retail maps is a
   developer spawn elsewhere in the level; each chapter now replays the
