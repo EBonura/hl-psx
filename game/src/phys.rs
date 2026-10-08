@@ -1576,13 +1576,10 @@ fn clear_at(map: &Map, head: i32, movers: &[Mover], pos: [i32; 3]) -> bool {
 /// deliberate movement so a penetrated end wall is restored to the last safe
 /// car-local seat instead of being mistaken for an open-side walk-off.
 #[inline]
-pub fn mover_clear_at(map: &Map, movers: &[Mover], mover_id: i32, pos: [i32; 3]) -> bool {
-    mover_clear_at_hull(map, movers, mover_id, pos, map.hull1_head)
-}
-
-/// [`mover_clear_at`] for the hull a player trace used (`world_head` is the
-/// world hull root it was traced with: hull 1 standing or hull 3 crouched).
-#[inline]
+/// The same test for the hull a player trace used (`world_head` is the world
+/// hull root it was traced with: hull 1 standing or hull 3 crouched).
+#[inline(never)]
+#[optimize(size)]
 pub fn mover_clear_at_hull(
     map: &Map,
     movers: &[Mover],
@@ -1603,13 +1600,7 @@ pub fn mover_clear_at_hull(
 
 /// A standing hull at `pos` overlaps no mover (the pusher included), the
 /// SV_TestEntityPosition that ends SV_PushEntity.
-#[inline(never)]
-#[optimize(size)]
-pub fn movers_clear_at(map: &Map, movers: &[Mover], pos: [i32; 3]) -> bool {
-    movers_clear_at_hull(map, movers, pos, map.hull1_head)
-}
-
-/// [`movers_clear_at`] for the hull a player trace used.
+/// A hull at `pos` overlaps no mover, for the hull a player trace used.
 #[inline(never)]
 #[optimize(size)]
 pub fn movers_clear_at_hull(map: &Map, movers: &[Mover], pos: [i32; 3], world_head: i32) -> bool {
