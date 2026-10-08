@@ -7701,7 +7701,9 @@ fn collect_logic_entities_with_lightstyles(
             "func_pushable" => continue,
             "trigger_teleport" => LOGIC_TRIGGER_TELEPORT,
             "trigger_push" | "func_conveyor" => LOGIC_TRIGGER_PUSH,
-            "trigger_gravity" => LOGIC_TRIGGER_GRAVITY,
+            // func_friction is a SOLID_TRIGGER volume like trigger_gravity: the same
+            // record, flagged LOGIC_GRAVITY_FRICTION, carries the friction fraction.
+            "trigger_gravity" | "func_friction" => LOGIC_TRIGGER_GRAVITY,
             "func_healthcharger" => LOGIC_HEALTH_CHARGER,
             "func_recharge" => LOGIC_HEV_CHARGER,
             "monstermaker" => LOGIC_MONSTERMAKER,
@@ -8084,6 +8086,12 @@ fn collect_logic_entities_with_lightstyles(
                 .abs()
                 .round()
                 .clamp(1.0, u16::MAX as f32) as u16,
+            // CFrictionModifier::KeyValue: `modifier` is a percentage.
+            LOGIC_TRIGGER_GRAVITY if cls == "func_friction" => {
+                (parse_f32_key(block, "modifier", 100.0) / 100.0 * 4096.0)
+                    .round()
+                    .clamp(0.0, u16::MAX as f32) as u16
+            }
             LOGIC_TRIGGER_GRAVITY => (parse_f32_key(block, "gravity", 1.0) * 4096.0)
                 .round()
                 .clamp(0.0, u16::MAX as f32) as u16,
@@ -8377,6 +8385,9 @@ fn collect_logic_entities_with_lightstyles(
         } else {
             0
         };
+        if cls == "func_friction" {
+            record_flags |= LOGIC_GRAVITY_FRICTION;
+        }
         if kind == LOGIC_TRIGGER_HURT {
             const DMG_RADIATION: u32 = 1 << 18;
             let damage_type = ent_value(block, "damagetype")
@@ -18034,6 +18045,27 @@ mod tests {
         // the authored damage each pulse.
         assert_eq!(logic.ents[0].arg0, 6);
         assert_eq!(logic.names[logic.ents[0].target as usize - 1], "acid_alarm");
+    }
+
+    #[test]
+    fn func_friction_cooks_as_a_flagged_gravity_volume() {
+        let ents = br#"{ "classname" "func_friction" "modifier" "5" }"#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
+        assert_eq!(logic.ents.len(), 1);
+        assert_eq!(logic.ents[0].kind, LOGIC_TRIGGER_GRAVITY);
+        assert_eq!(
+            logic.ents[0].flags & LOGIC_GRAVITY_FRICTION,
+            LOGIC_GRAVITY_FRICTION
+        );
+        assert_eq!(logic.ents[0].arg0, 205, "5% of 4096");
     }
 
     #[test]
