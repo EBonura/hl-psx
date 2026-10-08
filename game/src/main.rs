@@ -12219,7 +12219,13 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
             continue;
         }
         if LOGIC_KIND[li] == map::LOGIC_MOMENTARY {
-            logic_tick_momentary(m, nlogic, nents, li, m.logic(li), now);
+            // Only a top-of-travel timeout and the return drive do anything
+            // (logic_tick_momentary), so a momentary record at rest skips the
+            // 64-byte decode every tick.
+            let state = LOGIC_STATE[li];
+            if state == LOGIC_STATE_TOP || state == LOGIC_STATE_GOING_DOWN {
+                logic_tick_momentary(m, nlogic, nents, li, m.logic(li), now);
+            }
             scan += 1;
             continue;
         }
@@ -12402,8 +12408,9 @@ unsafe fn momentary_apply_phase(m: &Map, nlogic: usize, nents: usize, target: u1
 unsafe fn momentary_owner(m: &Map, source_li: usize, target: u16) -> usize {
     let mut li = 0usize;
     while li < source_li {
-        let rec = m.logic(li);
-        if rec.kind == map::LOGIC_MOMENTARY && rec.target == target {
+        // The load-time kind cache rejects every non-momentary record without
+        // decoding its 64-byte blob record.
+        if LOGIC_KIND[li] == map::LOGIC_MOMENTARY && m.logic(li).target == target {
             return li;
         }
         li += 1;
@@ -12472,6 +12479,10 @@ unsafe fn tick_momentary(
     let mut sound_pos = eye;
     let mut li = 0usize;
     while li < nlogic {
+        if LOGIC_KIND[li] != map::LOGIC_MOMENTARY {
+            li += 1;
+            continue;
+        }
         let rec = m.logic(li);
         if rec.kind == map::LOGIC_MOMENTARY
             && LOGIC_STATE[li] != LOGIC_STATE_REMOVED
