@@ -1156,7 +1156,7 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef_atk(40, 32, 91, AI_RANGED, 6, 600, 15, 55), // 7 bullsquid (acid spit at range)
     mdef_atk(50, 40, 90, AI_RANGED, 16, 1000, 5, 8), // 8 hgrunt (mp5 bursts)
     mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24), // 9 alien_slave (zap)
-    mdef_atk(60, 48, 100, AI_RANGED, 16, 1000, 8, 16), // 10 alien_grunt (hornets)
+    mdef_atk(60, 48, 100, AI_RANGED, 16, 500, 8, 4), // 10 alien_grunt (hornets)
     mdef_atk(60, 40, 100, AI_RANGED, 16, 1024, 3, 14), // 11 alien_controller (energy)
     mdef(40, 32, 170, AI_IDLE),                 // 12 barnacle (ceiling: render only)
     mdef(16, 8, 40, AI_IDLE),                   // 13 leech (flyer: render only)
@@ -17193,7 +17193,7 @@ unsafe fn tick_headcrab(
                     } else if prop_is_zombie(kind) && target != PROP_TARGET_PLAYER {
                         skill_scaled_damage(kind, ZOMBIE_ATTACK_DAMAGE)
                     } else {
-                        skill_scaled_damage(kind, HEADCRAB_ATTACK_DAMAGE as u8)
+                        skill_damage(kind).unwrap_or(HEADCRAB_ATTACK_DAMAGE as u8)
                     };
                     damage_target(target, damage, pos, health, armor);
                 }
