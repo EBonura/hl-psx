@@ -263,7 +263,8 @@ const MAX_TRAM_CACHE_TRIS: usize = 128;
 // reclaimed RAM buys the decoupled build its full packet arena, which matters
 // on vista views. Overflow remains graceful: the cache simply goes invalid
 // and the car re-emits, exactly as it does when the camera key changes.
-const MAX_TRAM_CACHE_TRIS: usize = 128;
+// 128 -> 64: still 2.5 times that measured peak, and 2.9 KB of RAM back.
+const MAX_TRAM_CACHE_TRIS: usize = 64;
 const MAX_TRAM_CACHE_QUADS: usize = 8;
 const TRAM_PACKET_CACHE: bool = true;
 // Retail first-person peak is the .357 at 1,075 source triangles. Viewmodels
