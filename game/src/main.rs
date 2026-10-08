@@ -21704,10 +21704,12 @@ unsafe fn tick_env_sparks(m: &Map, nlogic: usize) {
             scan += 1;
             continue;
         }
-        let rec = m.logic(li);
-        if dist2_3(rec.origin, LOGIC_PLAYER_POS) < 1200 * 1200
+        // The distance test reads the origin alone; the rest of the record
+        // is decoded only for the rare spark that fires.
+        if dist2_3(m.logic_origin(li), LOGIC_PLAYER_POS) < 1200 * 1200
             && (impact_rng().next_mixed() & 0x3F) == 0
         {
+            let rec = m.logic(li);
             let o = rec.origin;
             spark_burst(o, 4, 3, 8, 10);
             if rec.sound0 != u8::MAX {
@@ -21741,7 +21743,6 @@ unsafe fn tick_beams(m: &Map, nlogic: usize, nents: usize, movers: &[phys::Mover
             scan
         };
         if indexed || LOGIC_KIND[li] == map::LOGIC_BEAM {
-            let rec = m.logic(li);
             if bk >= MAX_BEAM_STATES {
                 return;
             }
@@ -21751,6 +21752,8 @@ unsafe fn tick_beams(m: &Map, nlogic: usize, nents: usize, movers: &[phys::Mover
                 BEAM_STRIKE[bk] = 0;
                 BEAM_LIVE &= !(1u64 << bk);
             } else {
+                // Only a beam that is on needs its record.
+                let rec = m.logic(li);
                 let fa = rec.first_aux as usize;
                 let life = (m.logic_aux(fa + 1).delay_ticks & 0xFF) as u8;
                 if rec.arg0 & 0x10 != 0 {
@@ -27076,7 +27079,7 @@ unsafe fn emit_platrot_entity(
     let submodel_token = next_proj_token();
     let (ff, nf) = m.submodel(e.submodel);
     for f in ff..ff + nf {
-        let (fnrm, fd) = m.face_plane(f);
+        let (fnrm, fd) = m.face_plane_cooked(f);
         if dot_plane(fnrm, eye_local) <= fd {
             let (_, cnt) = m.face_tris(f);
             *model_culled_tris = model_culled_tris.saturating_add(cnt as u32);
@@ -28957,6 +28960,13 @@ unsafe fn queue_world_beams(
             scan
         };
         if indexed || LOGIC_KIND[li] == map::LOGIC_BEAM {
+            // A beam that is not toggled on draws nothing, so it skips the
+            // 64-byte record decode every frame.
+            if LOGIC_STATE[li] != LOGIC_STATE_TOP {
+                bk += 1;
+                scan += 1;
+                continue;
+            }
             let rec = m.logic(li);
             let random = rec.arg0 & 0x10 != 0;
             let fa = rec.first_aux as usize;
@@ -34694,7 +34704,7 @@ fn play(
                         let (ff, nf) = m.submodel(e.submodel);
                         for f in ff..ff + nf {
                             if e.kind == 6 {
-                                let (fnrm, _) = m.face_plane(f);
+                                let (fnrm, _) = m.face_plane_cooked(f);
                                 if fnrm[1] < (map::PLANE_NORMAL_ONE / 2) as i16 {
                                     // Pool side/bottom walls are embedded in opaque
                                     // world brushes. Only the upward surface is ever
@@ -34779,7 +34789,7 @@ fn play(
                     for f in ff..ff + nf {
                         set_emit_face(&m, f, visibility_logic::brush_packet_blend(e.blend));
                         let (first, cnt) = m.face_tris(f);
-                        let (fnrm, fd) = m.face_plane(f);
+                        let (fnrm, fd) = m.face_plane_cooked(f);
                         if dot_plane(fnrm, es) <= fd {
                             model_culled_tris = model_culled_tris.saturating_add(cnt as u32);
                             continue;
@@ -34921,7 +34931,7 @@ fn play(
                         let group = m.face_group(f);
                         if !scratch_bit(group_seen, group) {
                             scratch_bit_assign(group_seen, group, true);
-                            let (fnrm, fd) = m.face_plane(f);
+                            let (fnrm, fd) = m.face_plane_cooked(f);
                             scratch_bit_assign(group_vis, group, dot_plane(fnrm, tram_eye) > fd);
                         }
                         if !scratch_bit(group_vis, group) {

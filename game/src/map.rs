@@ -1255,6 +1255,14 @@ impl Map {
         }
     }
 
+    /// A logic record's origin alone (three words of its 64 bytes).
+    #[inline]
+    pub fn logic_origin(&self, i: usize) -> [i32; 3] {
+        let o = self.logic_off + i * LOGIC_SZ;
+        let d = self.data;
+        [rd_i32(d, o + 28), rd_i32(d, o + 32), rd_i32(d, o + 36)]
+    }
+
     /// AABB-only precheck for the per-tick touch hotlist. Logic records are
     /// 64 bytes; reject the overwhelmingly common non-overlap after reading
     /// only the six bounds words, before decoding the rest of the record.
@@ -1723,6 +1731,15 @@ impl Map {
         } else {
             (n, d)
         }
+    }
+
+    /// `face_plane` through the fused cooked decode, for the per-face entity
+    /// passes: the same plane, without the two bounds branches and the nested
+    /// out-of-line `group_plane` call per face. The cook validates every face's
+    /// group and every group's plane reference.
+    #[inline(always)]
+    pub fn face_plane_cooked(&self, f: usize) -> ([i16; 3], i32) {
+        self.cooked_group_plane(self.face_group(f))
     }
 
     #[inline]
