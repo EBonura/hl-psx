@@ -8,13 +8,13 @@ use hl_format::setpiece_audio as SP;
 
 /// Retained clip slots the species play by name (host/hl-content/model-roster.txt).
 const HOUND_ATTACK: u8 = 2;
-const HOUND_REST: u8 = 6;
-const HOUND_HOP: u8 = 7;
+const HOUND_REST: u8 = 5;
+const HOUND_HOP: u8 = 6;
 const SLAVE_ZAP: u8 = 2;
-const SLAVE_CLAW: u8 = 6;
-const SLAVE_RUN: u8 = 7;
+const SLAVE_CLAW: u8 = 5;
+const SLAVE_RUN: u8 = 6;
 const SQUID_SPIT: u8 = 2;
-const SQUID_WHIP: u8 = 6;
+const SQUID_WHIP: u8 = 5;
 
 /// A cue from the map's monster sound bank (silent when the bank lacks it).
 #[inline(always)]

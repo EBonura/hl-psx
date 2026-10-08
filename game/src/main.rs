@@ -1333,10 +1333,10 @@ const BARNEY_ATTACK_TICKS: u8 = 14;
 const BARNEY_DRAW_TICKS: u8 = 18;
 /// Retained clip slots beyond the five states (host/hl-content/model-roster.txt).
 const BARNEY_CLIP_SHOOT: u8 = 2;
-const BARNEY_CLIP_DRAW: u8 = 11;
-const BARNEY_CLIP_RUN: u8 = 12;
-const BARNEY_CLIP_SHOOT2: u8 = 13;
-const BARNEY_CLIP_DISARM: u8 = 14;
+const BARNEY_CLIP_DRAW: u8 = 5;
+const BARNEY_CLIP_RUN: u8 = 6;
+const BARNEY_CLIP_SHOOT2: u8 = 7;
+const BARNEY_CLIP_DISARM: u8 = 8;
 const BARNEY_DAMAGE: u8 = 8;
 const BARNEY_SPEED: i32 = 3;
 const BARNEY_RUN_SPEED: i32 = 18;
@@ -14302,10 +14302,10 @@ fn prop_clip(state: u8, hit_flash: bool) -> usize {
 /// The c1a1b jumpwindow studio sequence carries the houndeye roughly 200 units
 /// away from its actor origin. Expanding every houndeye's sphere would undo
 /// useful culling campaign-wide, so pay for the larger bound only on the actor
-/// whose scripted play clip is present. Slot 5 is fixed by the type-6 roster.
+/// whose scripted play clip is present. Slot 7 is fixed by the type-6 roster.
 #[inline]
 unsafe fn prop_render_radius(pi: usize, ty: u8) -> i32 {
-    const HOUNDEYE_JUMPWINDOW_CLIP: u8 = 5;
+    const HOUNDEYE_JUMPWINDOW_CLIP: u8 = 7;
     const HOUNDEYE_JUMPWINDOW_RADIUS: i32 = 208;
     if ty == PROP_TYPE_HOUNDEYE && PROP_SCRIPT_PLAY_CLIP[pi] == HOUNDEYE_JUMPWINDOW_CLIP {
         HOUNDEYE_JUMPWINDOW_RADIUS
