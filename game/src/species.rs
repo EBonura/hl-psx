@@ -537,7 +537,14 @@ unsafe fn tick_hound(
             prop_gesture(pi, HOUND_REST, rest, true);
         }
     } else if visible && d2 > 190 * 190 {
-        if PROP_STATE[pi] != PROP_STATE_MOVE {
+        // The hunting cry comes a few ticks into the run, not with the alert.
+        let run = if PROP_STATE[pi] == PROP_STATE_MOVE {
+            PROP_AI_TIMER[pi] + 1
+        } else {
+            1
+        };
+        PROP_AI_TIMER[pi] = run;
+        if run == 5 {
             cue(SP::HE_HUNT, pos);
         }
         PROP_STATE[pi] = PROP_STATE_MOVE;
@@ -549,6 +556,7 @@ unsafe fn tick_hound(
         prop_gesture(pi, HOUND_ATTACK, 49, false);
     } else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
+        PROP_AI_TIMER[pi] = 0;
     }
 }
 
