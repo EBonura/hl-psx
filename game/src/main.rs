@@ -22815,6 +22815,26 @@ unsafe fn push_tri_uv_words(
     );
 }
 
+/// Take the arena's next packet slot and build the packet straight into it.
+///
+/// `PrimitivePacketArena::push` receives a finished packet, so the caller
+/// builds all fourteen words in a stack temporary that is then copied into the
+/// slot: the R3000 has no data cache, so every word of that copy is a RAM read
+/// stall. `reuse_packet` claims the slot exactly as `push` does (same cursor,
+/// fence, slot and packet counters); every packet type here is plain `u32`
+/// words, and the arena storage is always initialised, so writing the whole
+/// packet through the returned pointer is sound. `make` runs only when a slot
+/// is free.
+#[inline(always)]
+unsafe fn emplace_packet<T>(
+    packets: &mut PrimitivePacketArena<'_>,
+    make: impl FnOnce() -> T,
+) -> Option<*mut T> {
+    let slot: *mut T = packets.reuse_packet::<T>()?;
+    slot.write(make());
+    Some(slot)
+}
+
 #[inline(always)]
 unsafe fn push_tri_uv_words_packed(
     packets: &mut PrimitivePacketArena<'_>,
@@ -22831,7 +22851,7 @@ unsafe fn push_tri_uv_words_packed(
     } else {
         rgb
     };
-    let prim = TriTexturedGouraud {
+    let Some(packet) = emplace_packet(packets, move || TriTexturedGouraud {
         tag: 0,
         tex_window: mat.tex_window_word,
         color0_cmd: mat.color0_command_word | rgb[0],
@@ -22843,8 +22863,7 @@ unsafe fn push_tri_uv_words_packed(
         color2: rgb[2],
         v2: pack_vertex_word(screen[2].0, screen[2].1),
         uv2: uv_words[2] as u32,
-    };
-    let Some(packet) = packets.push(prim) else {
+    }) else {
         note_render_packet_drop(false);
         WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
         if TRAM_CACHE_BUILDING {
@@ -22853,11 +22872,9 @@ unsafe fn push_tri_uv_words_packed(
         return;
     };
     tram_cache_capture_tri(packet as *const TriTexturedGouraud, otz);
-    world_ot().resume_frame().add_raw(
-        otz,
-        core::ptr::from_mut(packet).cast(),
-        TriTexturedGouraud::WORDS,
-    );
+    world_ot()
+        .resume_frame()
+        .add_raw(otz, packet.cast(), TriTexturedGouraud::WORDS);
     *np += 1;
 }
 
@@ -24290,7 +24307,13 @@ unsafe fn try_emit_quad_corners(
     } else {
         qrgb
     };
-    let prim = QuadTexturedGouraud {
+    let otz = local_pair_otz.unwrap_or_else(|| {
+        world_order_key(
+            ordering::PrimitiveDepths::quad(pa.sz as i32, pb.sz as i32, pc.sz as i32, pd.sz as i32),
+            slot.backdrop,
+        )
+    });
+    let Some(packet) = emplace_packet(packets, move || QuadTexturedGouraud {
         tag: 0,
         tex_window: mat.tex_window_word,
         color0_cmd: (mat.color0_command_word | 0x0800_0000) | qrgb[0],
@@ -24305,8 +24328,7 @@ unsafe fn try_emit_quad_corners(
         color3: qrgb[3],
         v3: pack_vertex_word(pd.sx, pd.sy),
         uv3: uv[3] as u32,
-    };
-    let Some(packet) = packets.push(prim) else {
+    }) else {
         note_render_packet_drop(false);
         WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
         if TRAM_CACHE_BUILDING {
@@ -24314,17 +24336,9 @@ unsafe fn try_emit_quad_corners(
         }
         return false;
     };
-    let otz = local_pair_otz.unwrap_or_else(|| {
-        world_order_key(
-            ordering::PrimitiveDepths::quad(pa.sz as i32, pb.sz as i32, pc.sz as i32, pd.sz as i32),
-            slot.backdrop,
-        )
-    });
-    world_ot().resume_frame().add_raw(
-        otz,
-        core::ptr::from_mut(packet).cast(),
-        QuadTexturedGouraud::WORDS,
-    );
+    world_ot()
+        .resume_frame()
+        .add_raw(otz, packet.cast(), QuadTexturedGouraud::WORDS);
     *nq += 1;
     if native_patch {
         WORLD_AFFINE_NATIVE_GT4 = WORLD_AFFINE_NATIVE_GT4.saturating_add(1);
@@ -25772,7 +25786,7 @@ unsafe fn push_patch_underlay(
     p2.sy = out[2].1;
     p3.sx = out[3].0;
     p3.sy = out[3].1;
-    let prim = QuadTexturedGouraud {
+    let Some(packet) = emplace_packet(packets, move || QuadTexturedGouraud {
         tag: 0,
         tex_window: mat.tex_window_word,
         color0_cmd: (mat.color0_command_word | 0x0800_0000) | rgb[0],
@@ -25787,8 +25801,7 @@ unsafe fn push_patch_underlay(
         color3: rgb[3],
         v3: pack_vertex_word(p3.sx, p3.sy),
         uv3: uv[3] as u32,
-    };
-    let Some(packet) = packets.push(prim) else {
+    }) else {
         note_render_packet_drop(false);
         return;
     };
@@ -25805,11 +25818,9 @@ unsafe fn push_patch_underlay(
     for p in [p0, p1, p2, p3] {
         render::warp_probe_announce(p.sx as i32, p.sy as i32, p.sz as i32);
     }
-    world_ot().resume_frame().add_raw(
-        otz,
-        core::ptr::from_mut(packet).cast(),
-        QuadTexturedGouraud::WORDS,
-    );
+    world_ot()
+        .resume_frame()
+        .add_raw(otz, packet.cast(), QuadTexturedGouraud::WORDS);
     *nq += 1;
 }
 
