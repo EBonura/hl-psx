@@ -454,7 +454,7 @@ unsafe fn tick_squid(
 ///
 /// Animation and cries follow the retail sequences: an alert cry at first
 /// sight, a hunting cry as it sets off, the `attack` sequence for the charge
-/// (warm-up cries at +2 and +4, the blast at +45), `jumpback` for the slide,
+/// (a warm-up cry at +2, the blast at +45), `jumpback` for the slide,
 /// and the looping `madidle2` for the rest, growling at its sound events.
 #[inline(never)]
 #[optimize(size)]
@@ -504,9 +504,9 @@ unsafe fn tick_hound(
         }
         PROP_AI_TIMER[pi] = left - 1;
         if left == 48 {
-            cue(SP::HE_WARM1, pos);
-        } else if left == 46 {
-            cue(SP::HE_WARM3, pos);
+            // One of its two warm-up cries, picked per animal and charge.
+            let pick = (pos[0] ^ pos[2] ^ SIM_NOW as i32) & 1;
+            cue(if pick == 0 { SP::HE_WARM1 } else { SP::HE_WARM3 }, pos);
         } else if left == 5 {
             let mut pack = 0u8;
             let mut qi = 0usize;
