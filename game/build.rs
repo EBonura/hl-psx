@@ -1075,7 +1075,7 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
     // Damage per attack: bites/slashes for the melee types, the bullet,
     // hornet, zap, spit or blast each ranged type fires (FireBullets'
     // BULLET_MONSTER_9MM/MP5/12MM map to sk_9mm/9mmAR/12mm_bullet).
-    const DAMAGE: [(u8, &str, f64); 18] = [
+    const DAMAGE: [(u8, &str, f64); 19] = [
         (1, "sk_9mm_bullet", 1.0),
         (16, "sk_gargantua_dmg_fire", 1.0),
         (2, "sk_headcrab_dmg_bite", 1.0),
@@ -1094,6 +1094,8 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
         (55, "sk_zombie_dmg_one_slash", 1.0),
         (58, "sk_snark_dmg_bite", 1.0),
         (59, "sk_headcrab_dmg_bite", 0.3),
+        // Slot 75 (the soda can) has no attack of its own; it carries the bullsquid whip.
+        (75, "sk_bullsquid_dmg_whip", 1.0),
     ];
     let level_u8 = |v: f64| (v.floor().clamp(1.0, 255.0)) as u8;
     let level_u16 = |v: f64| (v.floor().clamp(0.0, u16::MAX as f64)) as u16;

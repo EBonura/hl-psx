@@ -45,7 +45,10 @@ mod render;
 #[cfg(feature = "route-follow")]
 use psx_goldsrc::route_follow;
 mod apache;
+mod barnacle;
 mod garg;
+mod species;
+mod tripmine;
 mod mortar;
 mod nihilanth;
 mod osprey;
@@ -924,7 +927,6 @@ const PROP_TYPE_SCIENTIST: u8 = 0;
 const PROP_TYPE_BARNEY: u8 = 1;
 const PROP_TYPE_HEADCRAB: u8 = 2;
 const PROP_TYPE_HOUNDEYE: u8 = 6; // sonic-blast ranged AoE
-const PROP_TYPE_BULLSQUID: u8 = 7; // acid-spit ranged projectile
 const PROP_TYPE_ITEM_SUIT: u8 = 3;
 const PROP_TYPE_ITEM_BATTERY: u8 = 4;
 const PROP_TYPE_CONTROLLER: u8 = 11; // flies: exempt from walker floor checks
@@ -1165,7 +1167,7 @@ const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(200, 90, 1748, AI_IDLE),                  // 17 nihilanth (boss: render only)
     mdef(150, 70, 200, AI_IDLE),                   // 18 bigmomma (boss: render only)
     mdef_atk(40, 20, 223, AI_MELEE, 6, 0, 0, 0),   // 19 ichthyosaur
-    mdef_atk(40, 40, 80, AI_TURRET, 0, 1000, 7, 8), // 20 sentry
+    mdef_atk(40, 40, 80, AI_TURRET, 0, 1000, 7, 3), // 20 sentry
     mdef_atk(50, 40, 80, AI_TURRET, 0, 1200, 8, 7), // 21 turret
     mdef_atk(30, 30, 60, AI_TURRET, 0, 1000, 5, 3), // 22 miniturret
     mdef(80, 60, 410, AI_IDLE),                    // 23 apache (flyer: render only)
@@ -1313,16 +1315,15 @@ const PROP_SPAWN_DROP_DOWN: i32 = 256; // engine pfnDropToFloor endpoint
 const SCIENTIST_HEALTH: u8 = 20;
 const BARNEY_HEALTH: u8 = 35;
 const HEADCRAB_HEALTH: u8 = 16;
-const HEADCRAB_SPEED: i32 = 5;
-const HEADCRAB_WAKE_RANGE2: i32 = 1300 * 1300;
+const HEADCRAB_SPEED: i32 = 2;
+const HEADCRAB_WAKE_RANGE2: i32 = 700 * 700;
 const HEADCRAB_STOP_RANGE: i32 = 34;
 const HEADCRAB_LEAP_RANGE2: i32 = 256 * 256;
 const HEADCRAB_ATTACK_DAMAGE: u16 = 6;
-const HEADCRAB_ATTACK_COOLDOWN: u8 = 40;
-const HEADCRAB_ATTACK_TICKS: u8 = 12;
-const HEADCRAB_ATTACK_IMPACT_TICK: u8 = 5;
+const HEADCRAB_ATTACK_COOLDOWN: u8 = 35;
+const HEADCRAB_ATTACK_TICKS: u8 = 21;
+const HEADCRAB_ATTACK_IMPACT_TICK: u8 = 13;
 const ZOMBIE_ATTACK_DAMAGE: u8 = 10; // skill.cfg sk_zombie_dmg_one_slash1
-const HEADCRAB_LEAP_SPEED: i32 = 18;
 const HEADCRAB_BITE_RANGE2: i32 = 48 * 48;
 const BARNEY_ATTACK_RANGE2: i32 = 1024 * 1024;
 const BARNEY_ATTACK_COOLDOWN: u8 = 9;
@@ -8371,6 +8372,20 @@ fn actor_collision_bounds(kind: u8, pos: [i32; 3]) -> ([i32; 3], [i32; 3]) {
 /// and a temporary collider list; tangential motion remains untouched.
 #[inline(never)]
 unsafe fn resolve_player_actor_collision(player: &mut phys::Player, start: [i32; 3]) {
+    // A barnacle's tongue overrides the player's own motion.
+    if let Some(hooked) = barnacle::take_pull() {
+        player.pos = hooked;
+        player.clear_velocity();
+        player.on_ground = false;
+        return;
+    }
+    let knock = species::take_knock();
+    if knock != [0; 3] {
+        player.vel[0] += knock[0];
+        player.vel[1] += knock[1];
+        player.vel[2] += knock[2];
+        player.on_ground = false;
+    }
     let end = player.pos;
     if start == end {
         return;
@@ -15990,6 +16005,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
         return;
     }
+    if PROP_KIND[pi] == tripmine::PROP_TYPE_TRIPMINE { tripmine::shot(pi); return; }
     // CGargantua::TraceAttack/TakeDamage: only GARG_DAMAGE (blast, energy
     // beam, crush, mortar) hurts, scaled from its 800 HP onto the u8 health;
     // bullets and clubs ricochet.
@@ -17082,7 +17098,6 @@ unsafe fn tick_shooter(
 
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, aim);
-    let from = prop_eye(m, pi);
 
     if d2 <= range2 && visible {
         // In range + line of sight: hold and fire on the cooldown. The attack
@@ -17096,30 +17111,16 @@ unsafe fn tick_shooter(
             prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(ATTACK_WINDUP));
         }
         if prop_attack_cooldown(pi) == 0 {
-            match ty {
-                PROP_TYPE_HOUNDEYE => {
-                    // Sonic shockwave centred on the animal, not a hitscan.
-                    houndeye_blast(pos, range / 2, skill_damage(ty).unwrap_or(def.atk_damage));
-                    sfx::play_world(sfx::HE_BLAST, pos);
-                }
-                PROP_TYPE_BULLSQUID => {
-                    // Acid spit: a lobbed projectile toward the player.
-                    let dir = dir_q12(from, aim);
-                    let damage = skill_damage(ty).unwrap_or(def.atk_damage);
-                    spawn_projectile_dir(PROJ_SPIT, damage, from, dir, true);
-                    sfx::play_world(sfx::HC_ATTACK, pos); // no dedicated spit sample
-                }
-                _ => {
-                    let damage = skill_damage(ty).unwrap_or(def.atk_damage);
-                    damage_target(target, damage, pos, health, armor);
-                    // Human weapons crack like an MP5; alien ranged attacks zap.
-                    let snd = if ty == 8 || ty >= 20 {
-                        sfx::MP5
-                    } else {
-                        sfx::ELECTRO
-                    };
-                    sfx::play_world(snd, pos);
-                }
+            {
+                let damage = skill_damage(ty).unwrap_or(def.atk_damage);
+                damage_target(target, damage, pos, health, armor);
+                // Human weapons crack like an MP5; alien ranged attacks zap.
+                let snd = if ty == 8 || ty >= 20 {
+                    sfx::MP5
+                } else {
+                    sfx::ELECTRO
+                };
+                sfx::play_world(snd, pos);
             }
             prop_attack_cooldown_set(pi, def.atk_cooldown);
         }
@@ -17165,9 +17166,14 @@ unsafe fn tick_headcrab(
                     pi,
                     aim[0] - pos[0],
                     aim[2] - pos[2],
-                    HEADCRAB_LEAP_SPEED,
+                    // Reach the target when the flight ends (8 ticks, as retail).
+                    (isqrt_i32(dist2_xz(pos, aim)) / (PROP_AI_TIMER[pi] - HEADCRAB_ATTACK_IMPACT_TICK) as i32).max(1),
                     true,
                 );
+                if dist2_xz(PROP_POS[pi], aim) <= 40 * 40 {
+                    // Touching the target in mid-air: the bite lands next tick.
+                    PROP_AI_TIMER[pi] = HEADCRAB_ATTACK_IMPACT_TICK + 1;
+                }
             } else if PROP_AI_TIMER[pi] == HEADCRAB_ATTACK_IMPACT_TICK {
                 let pos = PROP_POS[pi];
                 let kind = PROP_KIND[pi];
@@ -17181,7 +17187,10 @@ unsafe fn tick_headcrab(
                     // GoldSrc damage along c1a1a. Preserve the authored
                     // 10-point easy-skill slash for monster-vs-monster set
                     // pieces such as c1a1's Barney fight.
-                    let damage = if prop_is_zombie(kind) && target != PROP_TARGET_PLAYER {
+                    let damage = if leaper {
+                        // Retail headcrab bite: sk_headcrab_dmg_bite, one hit per leap.
+                        skill_damage(kind).unwrap_or(HEADCRAB_ATTACK_DAMAGE as u8)
+                    } else if prop_is_zombie(kind) && target != PROP_TARGET_PLAYER {
                         skill_scaled_damage(kind, ZOMBIE_ATTACK_DAMAGE)
                     } else {
                         skill_scaled_damage(kind, HEADCRAB_ATTACK_DAMAGE as u8)
@@ -18291,7 +18300,7 @@ unsafe fn tick_props(
         // Keep scripted and seated records on the full path: either can acquire
         // work dynamically even though its initial model definition is idle.
         if ai == AI_IDLE
-            && ty != PROP_TYPE_SITTING_SCI
+            && ty != PROP_TYPE_SITTING_SCI && !species::idle_thinks(ty)
             && PROP_SCRIPT_MODE[pi] == 0
             && PROP_SCRIPT_LI[pi] == u16::MAX
             && PROP_SCRIPT_IDLE_CLIP[pi] == 0xFF
@@ -18431,8 +18440,8 @@ unsafe fn tick_props(
             // scan is paid only by staggered sensory checks and has its own
             // cheap segment-vs-sphere broadphase, so it does not restore the
             // old O(props x movers x step probes) frame killer.
-            AI_MELEE => tick_headcrab(m, pm, movers, pi, player_pos, health, armor, nprops),
-            AI_RANGED => tick_shooter(m, pm, movers, pi, player_pos, health, armor, nprops, true),
+            AI_MELEE => species::tick_melee(m, pm, movers, pi, ty, player_pos, health, armor, nprops),
+            AI_RANGED => species::tick_ranged(m, pm, movers, pi, ty, player_pos, health, armor, nprops),
             AI_TURRET => tick_shooter(m, pm, movers, pi, player_pos, health, armor, nprops, false),
             AI_ALLY => tick_barney(m, pm, movers, pi, player_pos, health, armor, nprops),
             AI_FLEE => tick_scientist(
@@ -18445,7 +18454,7 @@ unsafe fn tick_props(
                 map_index,
                 in_player_pvs,
             ),
-            _ => {}
+            _ => species::idle_think(m, pm, pi, ty, player_pos, health),
         }
         pi += 1;
     }
@@ -21092,8 +21101,7 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             continue;
         }
         // A placed tripmine stores its wall normal in `vel` (far larger than a
-        // thrown velocity). Its 2.5 s arming countdown reaches zero and the
-        // render path then exposes the laser beam.
+        // thrown velocity): it arms, then watches its beam.
         if kind == PROJ_TRIPMINE
             && PROJECTILES[i].vel[0]
                 .abs()
@@ -21101,7 +21109,7 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
                 .max(PROJECTILES[i].vel[2].abs())
                 > 512
         {
-            PROJECTILES[i].life = PROJECTILES[i].life.saturating_sub(1);
+            tripmine::tick_placed(m, movers, i);
             i += 1;
             continue;
         }
@@ -21246,7 +21254,7 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
                 hit_pos[2] + (hit_normal[2] >> 11),
             ];
             PROJECTILES[i].vel = hit_normal;
-            PROJECTILES[i].life = 50;
+            PROJECTILES[i].life = tripmine::ARM_TICKS;
             i += 1;
             continue;
         }
@@ -28727,19 +28735,37 @@ unsafe fn draw_beam_textured(
 unsafe fn draw_tripmine_beams(
     packets: &mut PrimitivePacketArena<'_>,
     ot: &mut OrderingTable<OT_LEN>,
+    m: &Map,
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) {
+    let movers = &MOVERS[..MOVER_COUNT.min(MAX_ENTS + 1)];
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut pi = 0usize;
+    while pi < nprops {
+        if PROP_KIND[pi] == tripmine::PROP_TYPE_TRIPMINE
+            && PROP_ACTIVE[pi] != 0
+            && PROP_STATE[pi] == PROP_STATE_IDLE
+            && tripmine::map_armed()
+        {
+            let yaw = prop_yaw_value(PROP_YAW[pi]);
+            let dir = [
+                sincos::sin_q12(yaw),
+                0,
+                sincos::sin_q12((yaw + 1024) & 0x0fff),
+            ];
+            let from = PROP_POS[pi];
+            let end = tripmine::beam_end(m, movers, from, dir);
+            draw_beam(packets, ot, from, end, 1, (255, 30, 20), rot, base_t);
+        }
+        pi += 1;
+    }
     let mut i = 0usize;
     while i < MAX_PROJECTILES {
         let p = PROJECTILES[i];
         let normal_sized = p.vel[0].abs().max(p.vel[1].abs()).max(p.vel[2].abs()) > 512;
         if p.active && p.kind == PROJ_TRIPMINE && p.life == 0 && normal_sized {
-            let end = [
-                p.pos[0] + ((p.vel[0] * 384) >> 12),
-                p.pos[1] + ((p.vel[1] * 384) >> 12),
-                p.pos[2] + ((p.vel[2] * 384) >> 12),
-            ];
+            let end = tripmine::beam_end(m, movers, p.pos, p.vel);
             draw_beam(packets, ot, p.pos, end, 1, (255, 30, 20), rot, base_t);
         }
         i += 1;
@@ -28850,7 +28876,7 @@ unsafe fn queue_world_beams(
         }
         ti += 1;
     }
-    draw_tripmine_beams(packets, ot, rot, base_t);
+    draw_tripmine_beams(packets, ot, m, rot, base_t);
     // The nihilanth's circling spheres: CircleTarget holds them 24 * N_SCALE
     // around his head.
     if let Some((count, c)) = nihilanth::spheres() {
