@@ -28355,6 +28355,20 @@ unsafe fn draw_model(
             let (pa_sx, pa_sy) = (pa_xy as u16 as i16, (pa_xy >> 16) as u16 as i16);
             let (pb_sx, pb_sy) = (pb_xy as u16 as i16, (pb_xy >> 16) as u16 as i16);
             let (pc_sx, pc_sy) = (pc_xy as u16 as i16, (pc_xy >> 16) as u16 as i16);
+            // Back faces first: about half the faces of an actor face away,
+            // and one NCLIP is far cheaper than the three screen outcodes of
+            // the viewport test below. Both only skip the face, so the order
+            // changes no surviving packet.
+            if MODEL_CULL
+                && culled_gte(
+                    (pa_sx as i32, pa_sy as i32),
+                    (pb_sx as i32, pb_sy as i32),
+                    (pc_sx as i32, pc_sy as i32),
+                )
+            {
+                t += 1;
+                continue;
+            }
             // The actor sphere is intentionally conservative, but studio face
             // submission previously sent every back-facing/offscreen child to
             // the packet arena. Reject only a common viewport half-space; the
@@ -28368,16 +28382,6 @@ unsafe fn draw_model(
                 ],
                 ScreenClipBounds::new(-1, 320, -1, 240),
             ) {
-                t += 1;
-                continue;
-            }
-            if MODEL_CULL
-                && culled_gte(
-                    (pa_sx as i32, pa_sy as i32),
-                    (pb_sx as i32, pb_sy as i32),
-                    (pc_sx as i32, pc_sy as i32),
-                )
-            {
                 t += 1;
                 continue;
             }
