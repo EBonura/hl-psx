@@ -26811,7 +26811,7 @@ unsafe fn emit_actor_occluding_face(
         || tri.tex >= m.n_texs
         || p.iter()
             .any(|v| v.sz < NEAR || !render::in_band_xy(v.sx as i32, v.sy as i32))
-        || !ordering::moving_face_needs_local_depth(p.map(|v| v.sz))
+        || !ordering::moving_face_needs_local_depth([p[0].sz, p[1].sz, p[2].sz])
         || !tri_fits_gpu(&p[0], &p[1], &p[2])
     {
         return false;
@@ -26829,7 +26829,11 @@ unsafe fn emit_actor_occluding_face(
     {
         return true;
     }
-    let mut rgb = fog_world_rgb(tri.rgb, p.map(|v| v.sz as i32), false);
+    let mut rgb = fog_world_rgb(
+        tri.rgb,
+        [p[0].sz as i32, p[1].sz as i32, p[2].sz as i32],
+        false,
+    );
     if FLASHLIGHT_ON {
         shade_world_rgb(&mut rgb, &p);
     }
@@ -27338,7 +27342,11 @@ unsafe fn try_emit_native_residue(
     {
         return false;
     }
-    if !render::residue_screen_coverage(p.map(|v| (v.sx as i32, v.sy as i32))) {
+    if !render::residue_screen_coverage([
+        (p[0].sx as i32, p[0].sy as i32),
+        (p[1].sx as i32, p[1].sy as i32),
+        (p[2].sx as i32, p[2].sy as i32),
+    ]) {
         return false;
     }
     let over = |a: usize, b: usize| {
@@ -27414,7 +27422,7 @@ unsafe fn try_emit_clipped_residue(
     {
         return false;
     }
-    if !render::residue_screen_coverage(p.map(|v| (v.x, v.y))) {
+    if !render::residue_screen_coverage([(p[0].x, p[0].y), (p[1].x, p[1].y), (p[2].x, p[2].y)]) {
         return false;
     }
     let over = |a: usize, b: usize| {
