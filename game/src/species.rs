@@ -9,10 +9,8 @@ use hl_format::setpiece_audio as SP;
 /// Retained clip slots the species play by name (host/hl-content/model-roster.txt).
 const HOUND_ATTACK: u8 = 2;
 const HOUND_REST: u8 = 5;
-const HOUND_HOP: u8 = 6;
 const SLAVE_ZAP: u8 = 2;
 const SLAVE_CLAW: u8 = 5;
-const SLAVE_RUN: u8 = 6;
 const SQUID_SPIT: u8 = 2;
 const SQUID_WHIP: u8 = 5;
 
@@ -29,22 +27,6 @@ pub(crate) unsafe fn cue_or(slot: u8, core: u8, pos: [i32; 3]) {
         setpiece_sfx::play(slot, pos);
     } else {
         sfx::play_world(core, pos);
-    }
-}
-
-/// Keep `clip` looping on `pi` for as long as the caller keeps asking, without
-/// restarting its phase (`hold` is the clip's length in ticks).
-#[inline(never)]
-#[optimize(size)]
-pub(crate) unsafe fn gait(pi: usize, clip: u8, hold: u8) {
-    match prop_gesture_age(pi) {
-        Some(age) if PROP_GESTURE_CLIP[pi] == clip => {
-            if age >= 100 {
-                let whole = age - age % hold;
-                PROP_GESTURE_AT[pi] = PROP_GESTURE_AT[pi].wrapping_add(whole as u16);
-            }
-        }
-        _ => prop_gesture(pi, clip, 127, true),
     }
 }
 
@@ -217,7 +199,6 @@ pub(crate) unsafe fn tick_slave(
     let Some((target, visible, aim)) =
         acquire(m, sight, pi, player_pos, nprops, RANGE + 300, false)
     else {
-        gait_end(pi, SLAVE_RUN);
         return;
     };
     let pos = PROP_POS[pi];
@@ -269,11 +250,9 @@ pub(crate) unsafe fn tick_slave(
     } else if d2 < 350 * 350 || !visible {
         PROP_STATE[pi] = PROP_STATE_MOVE;
         gait_end(pi, SLAVE_CLAW);
-        gait(pi, SLAVE_RUN, 20);
         prop_move_towards_point(m, movers, pi, aim, 9);
     } else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
-        gait_end(pi, SLAVE_RUN);
         gait_end(pi, SLAVE_CLAW);
     }
 }
@@ -456,8 +435,7 @@ unsafe fn tick_squid(
 ///
 /// Animation and cries follow the retail sequences: an alert cry at first
 /// sight, a hunting cry as it sets off, the `attack` sequence for the charge
-/// (a warm-up cry at +2, the blast at +45), `jumpback` for the slide,
-/// and the looping `madidle2` for the rest, growling at its sound events.
+/// (a warm-up cry at +2, the blast at +45), and the looping `madidle2` for the rest, growling at its sound events.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn tick_hound(
@@ -501,7 +479,6 @@ unsafe fn tick_hound(
         if PROP_HIT_FLASH[pi] > 0 {
             PROP_STATE[pi] = PROP_STATE_MOVE_AWAY;
             PROP_AI_TIMER[pi] = 30;
-            prop_gesture(pi, HOUND_HOP, 30, false);
             return;
         }
         PROP_AI_TIMER[pi] = left - 1;

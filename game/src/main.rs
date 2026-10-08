@@ -1334,14 +1334,8 @@ const BARNEY_DRAW_TICKS: u8 = 18;
 /// Retained clip slots beyond the five states (host/hl-content/model-roster.txt).
 const BARNEY_CLIP_SHOOT: u8 = 2;
 const BARNEY_CLIP_DRAW: u8 = 5;
-const BARNEY_CLIP_RUN: u8 = 6;
-const BARNEY_CLIP_SHOOT2: u8 = 7;
-const BARNEY_CLIP_DISARM: u8 = 8;
 const BARNEY_DAMAGE: u8 = 8;
-const BARNEY_SPEED: i32 = 3;
-const BARNEY_RUN_SPEED: i32 = 18;
-const BARNEY_RUN_RANGE2: i32 = 270 * 270;
-const BARNEY_WALK_RANGE2: i32 = 160 * 160;
+const BARNEY_SPEED: i32 = 7;
 const BARNEY_FOLLOW_RANGE2: i32 = 640 * 640;
 const BARNEY_STOP_RANGE2: i32 = 128 * 128;
 const SCIENTIST_FEAR_RANGE2: i32 = 896 * 896;
@@ -14302,10 +14296,10 @@ fn prop_clip(state: u8, hit_flash: bool) -> usize {
 /// The c1a1b jumpwindow studio sequence carries the houndeye roughly 200 units
 /// away from its actor origin. Expanding every houndeye's sphere would undo
 /// useful culling campaign-wide, so pay for the larger bound only on the actor
-/// whose scripted play clip is present. Slot 7 is fixed by the type-6 roster.
+/// whose scripted play clip is present. Slot 6 is fixed by the type-6 roster.
 #[inline]
 unsafe fn prop_render_radius(pi: usize, ty: u8) -> i32 {
-    const HOUNDEYE_JUMPWINDOW_CLIP: u8 = 7;
+    const HOUNDEYE_JUMPWINDOW_CLIP: u8 = 6;
     const HOUNDEYE_JUMPWINDOW_RADIUS: i32 = 208;
     if ty == PROP_TYPE_HOUNDEYE && PROP_SCRIPT_PLAY_CLIP[pi] == HOUNDEYE_JUMPWINDOW_CLIP {
         HOUNDEYE_JUMPWINDOW_RADIUS
@@ -18024,7 +18018,6 @@ unsafe fn tick_barney(
             PROP_AI_TARGET[pi] = target;
             if !had_target {
                 // Catching sight of an enemy: draw the gun before the first shot.
-                species::gait_end(pi, BARNEY_CLIP_RUN);
                 prop_gesture(pi, BARNEY_CLIP_DRAW, BARNEY_DRAW_TICKS, false);
                 prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(BARNEY_DRAW_TICKS));
             }
@@ -18032,16 +18025,7 @@ unsafe fn tick_barney(
                 PROP_STATE[pi] = PROP_STATE_ATTACK;
                 PROP_AI_TIMER[pi] = BARNEY_ATTACK_TICKS;
                 prop_attack_cooldown_set(pi, BARNEY_ATTACK_COOLDOWN);
-                prop_gesture(
-                    pi,
-                    if SIM_NOW & 8 == 0 {
-                        BARNEY_CLIP_SHOOT
-                    } else {
-                        BARNEY_CLIP_SHOOT2
-                    },
-                    BARNEY_ATTACK_TICKS,
-                    false,
-                );
+                prop_gesture(pi, BARNEY_CLIP_SHOOT, BARNEY_ATTACK_TICKS, false);
                 // Muzzle flash (event 5001) at the gun, a short bright streak.
                 let yaw = prop_yaw_value(PROP_YAW[pi]);
                 let fwd = [sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0x0fff)];
@@ -18085,15 +18069,7 @@ unsafe fn tick_barney(
     if PROP_AI_TIMER[pi] > 0 && PROP_STATE[pi] == PROP_STATE_ATTACK {
         return;
     }
-    if PROP_AI_TARGET[pi] != PROP_TARGET_NONE && PROP_STATE[pi] != PROP_STATE_DEAD {
-        // The fight is over: holster the gun.
-        prop_gesture(pi, BARNEY_CLIP_DISARM, 40, false);
-    }
     PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
-    if PROP_GESTURE_CLIP[pi] == BARNEY_CLIP_DISARM && prop_gesture_age(pi).is_some() {
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        return;
-    }
 
     if try_start_talk_move_away(pi) {
         return;
@@ -18120,21 +18096,11 @@ unsafe fn tick_barney(
         } else {
             prop_face_point(pi, player_pos);
         }
-        // Retail Barney walks at 3 units a tick and runs at 18 once the player
-        // is more than about 270 away, easing back to a walk at 160.
-        let running = PROP_GESTURE_CLIP[pi] == BARNEY_CLIP_RUN && prop_gesture_age(pi).is_some();
         if d2 > BARNEY_STOP_RANGE2 {
             PROP_STATE[pi] = PROP_STATE_MOVE;
-            if d2 > BARNEY_RUN_RANGE2 || (running && d2 > BARNEY_WALK_RANGE2) {
-                species::gait(pi, BARNEY_CLIP_RUN, 12);
-                prop_move_towards_point(m, movers, pi, player_pos, BARNEY_RUN_SPEED);
-            } else {
-                species::gait_end(pi, BARNEY_CLIP_RUN);
-                prop_move_towards_point(m, movers, pi, player_pos, BARNEY_SPEED);
-            }
+            prop_move_towards_point(m, movers, pi, player_pos, BARNEY_SPEED);
             return;
         }
-        species::gait_end(pi, BARNEY_CLIP_RUN);
         PROP_STATE[pi] = PROP_STATE_IDLE;
         return;
     }
@@ -35450,11 +35416,6 @@ fn play(
                     {
                         // The draw sequence's event 2 (frame 7) puts the gun in his hand.
                         (age >= 7) as u8
-                    } else if let (Some(age), BARNEY_CLIP_DISARM) =
-                        (prop_gesture_age(pi), PROP_GESTURE_CLIP[pi])
-                    {
-                        // Event 4 (frame 15 at 10 fps) holsters it.
-                        (age < 30) as u8
                     } else if PROP_AI_TARGET[pi] != PROP_TARGET_NONE
                         || PROP_STATE[pi] == PROP_STATE_ATTACK
                     {
