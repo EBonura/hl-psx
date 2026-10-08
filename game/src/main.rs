@@ -29888,6 +29888,16 @@ fn sky_texel(face_s: i32, face_t: i32, d: i32) -> (u8, u8) {
     (u.clamp(0, SKY_TEX_SIZE as i32 - 1) as u8, v.clamp(0, SKY_TEX_SIZE as i32 - 1) as u8)
 }
 
+/// Texel and face denominator of direction `q` on cube face `face`; the one
+/// copy of the divisions.
+#[inline(never)]
+#[optimize(size)]
+fn sky_texel_d(face: usize, q: [i32; 3]) -> (u8, u8, i32) {
+    let (s, t, d) = sky_face_terms(face, q);
+    let (u, v) = sky_texel(s, t, d);
+    (u, v, d)
+}
+
 /// Draw the window polygon in `SKY_BUFS[2][..n0]` (corner pixels set). A
 /// polygon whose corners all lie on one cube face is drawn as it is.
 /// Otherwise it is cut along the cube's face boundaries (straight lines in
@@ -29895,6 +29905,7 @@ fn sky_texel(face_s: i32, face_t: i32, d: i32) -> (u8, u8) {
 /// piece is drawn from its own face texture. Every corner gets its exact
 /// texel; see `sky_tri` for where a triangle is split.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn sky_draw_region(m: &Map, n0: usize) -> bool {
     let basis = &*core::ptr::addr_of!(SKY_BASIS);
     let poly = &mut (*core::ptr::addr_of_mut!(SKY_BUFS))[2];
@@ -29920,6 +29931,7 @@ unsafe fn sky_draw_region(m: &Map, n0: usize) -> bool {
 /// A polygon over several cube faces: each face's piece is the polygon cut by
 /// that face's four boundary planes, drawn from the face's texture.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn sky_cut_region(m: &Map, n0: usize, seen: u32) -> bool {
     let bufs = &mut *core::ptr::addr_of_mut!(SKY_BUFS);
     // Cooker face order is ft, rt, bk, lf, up, dn: major axis and sign of
@@ -29977,6 +29989,7 @@ unsafe fn sky_cut_region(m: &Map, n0: usize, seen: u32) -> bool {
 /// new corner count, 0 for a polygon wholly outside, and `usize::MAX` when
 /// the cut leaves it whole.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn sky_cut_pass(src: usize, n: usize, dst: usize, axis: usize, sign: i32, other: usize, osign: i32) -> usize {
     let bufs = &mut *core::ptr::addr_of_mut!(SKY_BUFS);
     let sp = bufs[src].as_ptr();
@@ -30027,6 +30040,7 @@ unsafe fn sky_cut_pass(src: usize, n: usize, dst: usize, axis: usize, sign: i32,
 
 /// Draw the polygon `SKY_BUFS[src][..n]`, which lies on cube face `face`.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn sky_piece(m: &Map, face: usize, src: usize, n: usize) -> bool {
     let slot = TEX_SLOTS[m.sky_tex_base + face];
     if !slot.valid {
@@ -30036,16 +30050,28 @@ unsafe fn sky_piece(m: &Map, face: usize, src: usize, n: usize) -> bool {
     let cur = &(*core::ptr::addr_of!(SKY_BUFS))[src];
     let tx = &mut *core::ptr::addr_of_mut!(SKY_TX);
     let dv = &mut *core::ptr::addr_of_mut!(SKY_DV);
+    let (mut lo, mut hi) = ([255i32; 3], [0i32; 3]);
     let mut k = 0usize;
     while k < n {
-        let (s, t, d) = sky_face_terms(face, cur[k].q);
-        tx[k] = sky_texel(s, t, d);
+        let (u, v, d) = sky_texel_d(face, cur[k].q);
+        tx[k] = (u, v);
         dv[k] = d;
+        let c = [u as i32, v as i32, d];
+        let mut j = 0usize;
+        while j < 3 {
+            lo[j] = if k == 0 || c[j] < lo[j] { c[j] } else { lo[j] };
+            hi[j] = if k == 0 || c[j] > hi[j] { c[j] } else { hi[j] };
+            j += 1;
+        }
         k += 1;
     }
+    // Every edge's texel and denominator deltas are within the polygon's
+    // ranges, so when the bound on `sky_tri`'s test holds for the ranges it
+    // holds for every edge and no triangle needs checking.
+    let calm = (((hi[0] - lo[0]).max(hi[1] - lo[1])) + 2) * (hi[2] - lo[2]) <= 16 * lo[2];
     let mut j = 2usize;
     while j < n {
-        sky_tri(face, slot.material, [&cur[0], &cur[j - 1], &cur[j]], [0, j - 1, j]);
+        sky_tri(face, slot.material, [&cur[0], &cur[j - 1], &cur[j]], [0, j - 1, j], calm);
         j += 1;
     }
     true
@@ -30059,21 +30085,22 @@ unsafe fn sky_piece(m: &Map, face: usize, src: usize, n: usize) -> bool {
 /// denominator) texels at most, cannot rule the split out; the bound stays
 /// under four, and the test's own rounding under another two.
 #[inline(never)]
-unsafe fn sky_tri(face: usize, material: TextureMaterial, v: [&SkyV; 3], ix: [usize; 3]) {
+#[optimize(size)]
+unsafe fn sky_tri(face: usize, material: TextureMaterial, v: [&SkyV; 3], ix: [usize; 3], calm: bool) {
     let tx = &*core::ptr::addr_of!(SKY_TX);
     let dv = &*core::ptr::addr_of!(SKY_DV);
     let t = [tx[ix[0]], tx[ix[1]], tx[ix[2]]];
     let (x0, x1, x2) = (v[0].p.0, v[1].p.0, v[2].p.0);
     let (y0, y1, y2) = (v[0].p.1, v[1].p.1, v[2].p.1);
     // No edge is over 32 pixels when the bounding box is not.
-    if x0.max(x1).max(x2) - x0.min(x1).min(x2) > 32 || y0.max(y1).max(y2) - y0.min(y1).min(y2) > 32 {
+    if !calm && (x0.max(x1).max(x2) - x0.min(x1).min(x2) > 32 || y0.max(y1).max(y2) - y0.min(y1).min(y2) > 32) {
         let off = |i: usize, j: usize| {
             sky_edge_off(face, v[i], v[j], t[i], t[j], dv[ix[i]], dv[ix[j]])
         };
         if off(0, 1) || off(1, 2) || off(2, 0) {
             let texel = |q: [i32; 3]| {
-                let (s, t, d) = sky_face_terms(face, q);
-                sky_texel(s, t, d)
+                let (u, v, _) = sky_texel_d(face, q);
+                (u, v)
             };
             let mid = |a: &SkyV, b: &SkyV| SkyV {
                 p: ((a.p.0 + b.p.0) >> 1, (a.p.1 + b.p.1) >> 1),
@@ -30103,8 +30130,8 @@ fn sky_edge_off(face: usize, a: &SkyV, b: &SkyV, ta: (u8, u8), tb: (u8, u8), da:
         return false;
     }
     let q = [(a.q[0] + b.q[0]) >> 1, (a.q[1] + b.q[1]) >> 1, (a.q[2] + b.q[2]) >> 1];
-    let (s, t, d) = sky_face_terms(face, q);
-    let tm = sky_texel(s, t, d);
+    let (tu, tv, _) = sky_texel_d(face, q);
+    let tm = (tu, tv);
     let du = (tm.0 as i32 * 2 - ta.0 as i32 - tb.0 as i32).abs();
     let dv = (tm.1 as i32 * 2 - ta.1 as i32 - tb.1 as i32).abs();
     du.max(dv) > 12
