@@ -521,14 +521,35 @@ pub mod setpiece_audio {
     pub const APACHE_ROCKET: u8 = 7;
     pub const GARG_STEP: u8 = 8;
     pub const GARG_FLAME_ON: u8 = 9;
-    pub const GARG_PAIN: u8 = 10;
-    pub const NIH_PAIN: u8 = 11;
-    pub const NIH_LAUGH: u8 = 12;
-    pub const NIH_RECHARGE: u8 = 13;
-    pub const NIH_ATTACK: u8 = 14;
-    pub const GARG_FLAME_OFF: u8 = 15;
-    pub const NIH_DIE: u8 = 16;
-    pub const COUNT: usize = 17;
+    // Attack cues of the common monsters (tier 2): the telegraph and strike
+    // sounds each species makes on its animation events.
+    pub const HE_WARM1: u8 = 10;
+    pub const HE_WARM3: u8 = 11;
+    pub const SLV_BEAM: u8 = 12;
+    pub const SLV_CLAW: u8 = 13;
+    pub const ZO_CLAW: u8 = 14;
+    pub const AG_FIRE: u8 = 15;
+    pub const CON_ATTACK: u8 = 16;
+    pub const BC_SPIT: u8 = 17;
+    pub const BC_BITE: u8 = 18;
+    pub const HG_MGUN: u8 = 19;
+    pub const GARG_PAIN: u8 = 20;
+    pub const NIH_PAIN: u8 = 21;
+    pub const NIH_LAUGH: u8 = 22;
+    pub const NIH_RECHARGE: u8 = 23;
+    pub const NIH_ATTACK: u8 = 24;
+    pub const GARG_FLAME_OFF: u8 = 25;
+    pub const NIH_DIE: u8 = 26;
+    // Alerts, growls and charge-ups (tier 3, spare SPU RAM only).
+    pub const HE_ALERT: u8 = 27;
+    pub const HE_HUNT: u8 = 28;
+    pub const HE_GROWL: u8 = 29;
+    pub const HE_GROWL2: u8 = 30;
+    pub const SLV_CHARGE: u8 = 31;
+    pub const AG_ALERT: u8 = 32;
+    pub const CON_ALERT: u8 = 33;
+    pub const BC_GROWL: u8 = 34;
+    pub const COUNT: usize = 35;
 
     /// Indexed by slot; within a tier, earlier slots are kept first.
     pub const SOUNDS: [Sound; COUNT] = [
@@ -542,6 +563,26 @@ pub mod setpiece_audio {
         s("monster_apache", "weapons/rocket1.wav", false, 2),
         s("monster_gargantua", "garg/gar_step1.wav", false, 2),
         s("monster_gargantua", "garg/gar_flameon1.wav", false, 2),
+        s("monster_houndeye", "houndeye/he_attack1.wav", false, 2),
+        s("monster_houndeye", "houndeye/he_attack3.wav", false, 2),
+        s("monster_alien_slave", "hassault/hw_shoot1.wav", false, 2),
+        s("monster_alien_slave", "zombie/claw_strike1.wav", false, 2),
+        s("monster_zombie", "zombie/claw_strike1.wav", false, 2),
+        s("monster_alien_grunt", "agrunt/ag_fire1.wav", false, 2),
+        s(
+            "monster_alien_controller",
+            "controller/con_attack2.wav",
+            false,
+            2,
+        ),
+        s(
+            "monster_bullchicken",
+            "bullchicken/bc_attack2.wav",
+            false,
+            2,
+        ),
+        s("monster_bullchicken", "bullchicken/bc_bite3.wav", false, 2),
+        s("monster_human_grunt", "hgrunt/gr_mgun1.wav", false, 2),
         s("monster_gargantua", "garg/gar_pain1.wav", false, 3),
         s("monster_nihilanth", "x/x_pain1.wav", false, 3),
         s("monster_nihilanth", "x/x_laugh1.wav", false, 3),
@@ -549,6 +590,24 @@ pub mod setpiece_audio {
         s("monster_nihilanth", "x/x_attack1.wav", false, 3),
         s("monster_gargantua", "garg/gar_flameoff1.wav", false, 3),
         s("monster_nihilanth", "x/x_die1.wav", false, 3),
+        s("monster_houndeye", "houndeye/he_alert2.wav", false, 3),
+        s("monster_houndeye", "houndeye/he_hunt1.wav", false, 3),
+        s("monster_houndeye", "houndeye/he_pain3.wav", false, 3),
+        s("monster_houndeye", "houndeye/he_pain1.wav", false, 3),
+        s("monster_alien_slave", "debris/zap4.wav", false, 3),
+        s("monster_alien_grunt", "agrunt/ag_alert3.wav", false, 3),
+        s(
+            "monster_alien_controller",
+            "controller/con_alert2.wav",
+            false,
+            3,
+        ),
+        s(
+            "monster_bullchicken",
+            "bullchicken/bc_attackgrowl.wav",
+            false,
+            3,
+        ),
     ];
 }
 
