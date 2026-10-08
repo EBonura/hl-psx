@@ -157,8 +157,8 @@ inlining threshold it linked at to `game/pgo/`. Every other build links with
 that committed profile, because HL-PSX no longer fits in RAM without one, so
 commit `game/pgo/` after a `pgo` run to make it the default.
 
-Add `--polls FROM..TO`, the gameplay window of the first recording in port-1
-polls (`1200..5900` for the chapter-two one), and `pgo` also collects an
+Add `--polls FROM..TO` after a `--tape`, the gameplay window of that recording
+in port-1 polls (`1200..5900` for the chapter-two one), and `pgo` also collects an
 instruction-cache layout: it counts every instruction word the window runs and
 saves that as `game/pgo/hl-psx.layout`. The R3000's 4 KB instruction cache is
 direct-mapped, so which functions share a cache set decides how often hot code

@@ -697,8 +697,9 @@ struct Options {
     regression_scenario: Option<String>,
     games_dir: Option<PathBuf>,
     tapes: Vec<PathBuf>,
-    /// The gameplay window of the first tape, in port-1 polls, for the layout.
-    polls: Option<(u64, u64)>,
+    /// The gameplay window, in port-1 polls, of each tape (same order), for
+    /// the layout; a tape without one adds only to the profile.
+    polls: Vec<Option<(u64, u64)>>,
 }
 
 const CANONICAL_GAME_NAME: &str = "Half-Life (hl-psx)";
@@ -729,7 +730,7 @@ const HELP: &str = "hl-psx Rust build\n\n\
            --scenario NAME    regress only one named deterministic scenario\n\
            --games-dir PATH   destination required by disc/install; optional after regress/pgo\n\
            --tape PATH        input tape for pgo to profile; repeat for more routes\n\
-           --polls FROM..TO   gameplay window (port-1 polls) of the first tape; with it pgo\n\
+           --polls FROM..TO   gameplay window (port-1 polls) of the preceding --tape; with one pgo\n\
                               also collects the I-cache layout (game/pgo/hl-psx.layout)\n\n\
          HL_DIR, PSOXIDE, and GAMES_DIR provide environment defaults.\n\
          Nothing is copied outside this repository unless --games-dir is supplied.";
@@ -808,7 +809,7 @@ fn parse_args() -> Options {
         regression_scenario: None,
         games_dir: env::var_os("GAMES_DIR").map(PathBuf::from),
         tapes: Vec::new(),
-        polls: None,
+        polls: Vec::new(),
     };
     while let Some(arg) = args.next() {
         let Some(flag) = arg.to_str() else { usage() };
@@ -825,15 +826,19 @@ fn parse_args() -> Options {
                 options.regression_scenario = Some(value(&mut args).to_string_lossy().into_owned())
             }
             "--games-dir" => options.games_dir = Some(PathBuf::from(value(&mut args))),
-            "--tape" => options.tapes.push(PathBuf::from(value(&mut args))),
+            "--tape" => {
+                options.tapes.push(PathBuf::from(value(&mut args)));
+                options.polls.push(None);
+            }
             "--polls" => {
                 let text = value(&mut args).to_string_lossy().into_owned();
-                options.polls = text
+                let window = text
                     .split_once("..")
                     .and_then(|(from, to)| Some((from.parse().ok()?, to.parse().ok()?)))
-                    .filter(|(from, to)| from < to);
-                if options.polls.is_none() {
-                    usage();
+                    .filter(|(from, to): &(u64, u64)| from < to);
+                match (window, options.polls.last_mut()) {
+                    (Some(window), Some(slot)) if slot.is_none() => *slot = Some(window),
+                    _ => usage(),
                 }
             }
             "-h" | "--help" => help(),
@@ -2231,7 +2236,7 @@ fn profile_guided_pack(
     psoxide: &Path,
     features: Option<&str>,
     tapes: &[PathBuf],
-    polls: Option<(u64, u64)>,
+    polls: &[Option<(u64, u64)>],
 ) -> Result<PathBuf> {
     let work = repository.join(".hlpsx/pgo");
     if work.exists() {
@@ -2301,7 +2306,12 @@ fn profile_guided_pack(
 
     // The layout binds to the code of a link in the linker's own order, so
     // collect it on that link, then link again with the layout applied.
-    LAYOUT_ENABLED.store(polls.is_none(), Ordering::Relaxed);
+    let windows: Vec<(&Path, (u64, u64))> = tapes
+        .iter()
+        .zip(polls)
+        .filter_map(|(tape, window)| Some((tape.as_path(), (*window)?)))
+        .collect();
+    LAYOUT_ENABLED.store(windows.is_empty(), Ordering::Relaxed);
     let (mut exe, threshold) = link_with_profile(
         repository,
         psoxide,
@@ -2309,9 +2319,9 @@ fn profile_guided_pack(
         &profile,
         PGO_HOT_CALLSITE_LADDER[0],
     )?;
-    if let (Some(polls), Some(tape)) = (polls, tapes.first()) {
+    if !windows.is_empty() {
         let layout_cue = pack_disc_into(repository, psoxide, &exe, &work.join("layout"))?;
-        collect_layout(repository, psoxide, &layout_cue, tape, polls, &work, &exe)?;
+        collect_layout(repository, psoxide, &layout_cue, &windows, &work, &exe)?;
         LAYOUT_ENABLED.store(true, Ordering::Relaxed);
         exe = link_with_profile(repository, psoxide, features, &profile, threshold)?.0;
     }
@@ -2332,73 +2342,77 @@ fn profile_guided_pack(
 /// Whether `compile_game` applies the shipped layout to a profiled link.
 static LAYOUT_ENABLED: AtomicBool = AtomicBool::new(true);
 
-/// Collect the I-cache layout of `exe`: replay `tape` on its disc, counting
-/// every instruction word over the gameplay polls only (the per-line logs can
-/// only start at a route tick, so a short replay first finds the tick in
-/// which poll `FROM` lands), and let `psoxide-pgo layout` bind the counts to
-/// the link map's functions.
+/// Collect the I-cache layout of `exe`: replay each tape on its disc,
+/// counting every instruction word over its gameplay polls only (the per-line
+/// logs can only start at a route tick, so a short replay first finds the tick
+/// in which poll `FROM` lands), and let `psoxide-pgo layout` bind the summed
+/// counts to the link map's functions.
 fn collect_layout(
     repository: &Path,
     psoxide: &Path,
     cue: &Path,
-    tape: &Path,
-    polls: (u64, u64),
+    windows: &[(&Path, (u64, u64))],
     work: &Path,
     exe: &Path,
 ) -> Result<()> {
     let frontend = regression::frontend(psoxide)?;
-    let launch = |stop: u64| {
-        let mut command = Command::new(&frontend);
-        command
-            .arg("launch")
-            .arg("--path")
-            .arg(cue)
-            .args([
-                "--embedded-playtest",
-                "--steps",
-                "40000000000",
-                "--input-tape",
-            ])
-            .arg(tape)
-            .args(["--stop-at-poll", &stop.to_string()]);
-        command
-    };
-    let locate_log = work.join("layout-locate.csv");
-    run(
-        launch(polls.0 + 30).arg("--route-log").arg(&locate_log),
-        "find the gameplay window in the layout replay",
-    )?;
-    let log = fs::read_to_string(&locate_log)?;
-    let mut lines = log.lines();
-    let header = lines
-        .next()
-        .unwrap_or_default()
-        .split(',')
-        .collect::<Vec<_>>();
-    let column = |name: &str| header.iter().position(|field| *field == name);
-    let (tick_column, polls_column) = column("route_tick")
-        .zip(column("port1_polls"))
-        .ok_or("the route log has no route_tick/port1_polls columns")?;
-    let start = lines
-        .filter_map(|line| {
-            let fields = line.split(',').collect::<Vec<_>>();
-            Some((
-                fields.get(tick_column)?.parse::<u64>().ok()?,
-                fields.get(polls_column)?.parse::<u64>().ok()?,
-            ))
-        })
-        .find(|(_, reached)| *reached >= polls.0)
-        .map(|(tick, _)| tick)
-        .ok_or_else(|| format!("the layout replay never reached poll {}", polls.0))?;
-    let words = work.join("layout-words.csv");
-    run(
-        launch(polls.1)
-            .arg("--pc-log-words")
-            .arg("--pc-line-log")
-            .arg(&words)
-            .args(["--pc-line-start-route-tick", &start.to_string()]),
-        "count every instruction word over the gameplay polls",
-    )?;
+    let mut counted = Vec::new();
+    for (index, (tape, polls)) in windows.iter().enumerate() {
+        let launch = |stop: u64| {
+            let mut command = Command::new(&frontend);
+            command
+                .arg("launch")
+                .arg("--path")
+                .arg(cue)
+                .args([
+                    "--embedded-playtest",
+                    "--steps",
+                    "40000000000",
+                    "--input-tape",
+                ])
+                .arg(tape)
+                .args(["--stop-at-poll", &stop.to_string()]);
+            command
+        };
+        let locate_log = work.join(format!("layout-locate-{index}.csv"));
+        run(
+            launch(polls.0 + 30).arg("--route-log").arg(&locate_log),
+            "find the gameplay window in the layout replay",
+        )?;
+        let log = fs::read_to_string(&locate_log)?;
+        let mut lines = log.lines();
+        let header = lines
+            .next()
+            .unwrap_or_default()
+            .split(',')
+            .collect::<Vec<_>>();
+        let column = |name: &str| header.iter().position(|field| *field == name);
+        let (tick_column, polls_column) = column("route_tick")
+            .zip(column("port1_polls"))
+            .ok_or("the route log has no route_tick/port1_polls columns")?;
+        let start = lines
+            .filter_map(|line| {
+                let fields = line.split(',').collect::<Vec<_>>();
+                Some((
+                    fields.get(tick_column)?.parse::<u64>().ok()?,
+                    fields.get(polls_column)?.parse::<u64>().ok()?,
+                ))
+            })
+            .find(|(_, reached)| *reached >= polls.0)
+            .map(|(tick, _)| tick)
+            .ok_or_else(|| format!("the layout replay never reached poll {}", polls.0))?;
+        let words = work.join(format!("layout-words-{index}.csv"));
+        run(
+            launch(polls.1)
+                .arg("--pc-log-words")
+                .arg("--pc-line-log")
+                .arg(&words)
+                .args(["--pc-line-start-route-tick", &start.to_string()]),
+            "count every instruction word over the gameplay polls",
+        )?;
+        let _ = fs::remove_file(&locate_log);
+        counted.push(words);
+    }
     let layout = repository.join(SHIPPED_LAYOUT);
     run(
         Command::new(cargo())
@@ -2406,11 +2420,11 @@ fn collect_layout(
             .args(["run", "--release", "-p", "psoxide-pgo", "--", "layout"])
             .arg(repository.join(".hlpsx/hl-psx.map"))
             .arg(exe)
-            .arg(&words)
+            .args(&counted)
             .arg(&layout),
         "bind the counts to the link map as an I-cache layout profile",
     )?;
-    for file in [&locate_log, &words] {
+    for file in &counted {
         let _ = fs::remove_file(file);
     }
     println!("Shipped layout -> {SHIPPED_LAYOUT} (commit game/pgo/ to make it the default build)");
@@ -2615,7 +2629,7 @@ fn main() -> Result<()> {
             &psoxide,
             features,
             &options.tapes,
-            options.polls,
+            &options.polls,
         )?;
         if let Some(games_dir) = options.games_dir.as_deref() {
             install_disc(&cue, games_dir)?;
