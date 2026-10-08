@@ -45,7 +45,7 @@ const MODEL_INDEX_VERTEX_LIMIT: usize = 1024;
 // limit is the weapon cache, whose arena tail keeps 28,428 B spare at c2a4e.
 // 4,096 words (16 KiB) go back to the executable, leaving about 12 KB of
 // weapon-cache margin; both audits re-check this on every cook.
-const NPC_MODEL_POOL_WORDS: usize = 31_616;
+const NPC_MODEL_POOL_WORDS: usize = 29_056;
 // Viewmodel reserve when no cooked viewmodels exist yet (a fresh checkout).
 const FALLBACK_VM_POOL_WORDS: usize = 20_224;
 const FALLBACK_VM_GEOM_WORDS: usize = 15_800;
