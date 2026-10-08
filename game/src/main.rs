@@ -24069,7 +24069,7 @@ unsafe fn try_emit_tri_pair_quad_values(
 /// Quad-pair core on pre-decoded corners (a=shared fan base, b/c = the shared
 /// diagonal pair's outer verts, d = the second tri's new vert). The world loop
 /// walker feeds this directly so each loop vertex is decoded exactly once.
-#[inline(never)]
+#[inline(always)]
 unsafe fn try_emit_quad_corners(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
@@ -24083,6 +24083,70 @@ unsafe fn try_emit_quad_corners(
     np: &mut usize,
     nq: &mut usize,
 ) -> bool {
+    let cx = QuadCtx {
+        packets: (packets as *mut PrimitivePacketArena<'_>).cast(),
+        m,
+        np,
+        nq,
+        tex,
+        frame,
+        affine_previous_level,
+        native_patch,
+    };
+    try_emit_quad_ctx(&cx, corners, blocked_edges, patch_state)
+}
+
+/// What every quad of one face shares. The patch walker emits a face's quads
+/// back to back, and eleven arguments per call meant eight of them were
+/// reloaded from its stack frame and stored to the outgoing argument area for
+/// every quad, each load a RAM stall on a CPU with no data cache. Built once
+/// per face on the scratchpad, they cost one word load each inside the quad
+/// core and keep the walker's loop down to its own counters.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct QuadCtx {
+    packets: *mut PrimitivePacketArena<'static>,
+    m: *const Map,
+    np: *mut usize,
+    nq: *mut usize,
+    tex: usize,
+    frame: u16,
+    affine_previous_level: u8,
+    native_patch: bool,
+}
+
+/// Scratchpad home of the patch walker's `QuadCtx`: above the affine
+/// workspace, which the quad core also uses (checked below), and clear of the
+/// splitter's stack, which ends at the workspace.
+const QUAD_CTX_SCRATCH_OFFSET: usize = 960;
+const _: () = assert!(
+    AFFINE_WORKSPACE_SCRATCH_OFFSET + 5 * core::mem::size_of::<AffineVertex>()
+        <= QUAD_CTX_SCRATCH_OFFSET
+        && QUAD_CTX_SCRATCH_OFFSET % 4 == 0
+        && QUAD_CTX_SCRATCH_OFFSET + core::mem::size_of::<QuadCtx>() <= scratchpad::SIZE
+);
+
+#[inline(never)]
+unsafe fn try_emit_quad_ctx(
+    cx: *const QuadCtx,
+    corners: [map::PackedLoopVert; 4],
+    blocked_edges: u8,
+    patch_state: usize,
+) -> bool {
+    let QuadCtx {
+        packets,
+        m,
+        np,
+        nq,
+        tex,
+        frame,
+        affine_previous_level,
+        native_patch,
+    } = cx.read();
+    let packets: &mut PrimitivePacketArena<'_> = &mut *packets;
+    let m: &Map = &*m;
+    let np: &mut usize = &mut *np;
+    let nq: &mut usize = &mut *nq;
     if tex >= m.n_texs || tex >= MAX_TEX_SLOTS {
         return false;
     }
@@ -27733,9 +27797,21 @@ unsafe fn emit_world_face_patches(
     counts: &mut WorldCounters,
 ) {
     let tex = map::tex_anim_display(tex);
-    let affine_face = 0u8;
     let saved_policy = EMIT_POLICY;
     EMIT_POLICY = saved_policy.with_local_depth(refined_topology);
+    // Everything the quads share goes to the scratchpad once; the loop below
+    // then carries only its own counters across the emitter calls.
+    let cx = scratchpad::ptr_at::<QuadCtx>(QUAD_CTX_SCRATCH_OFFSET);
+    cx.write(QuadCtx {
+        packets: (packets as *mut PrimitivePacketArena<'_>).cast(),
+        m,
+        np,
+        nq,
+        tex,
+        frame,
+        affine_previous_level: 0,
+        native_patch: true,
+    });
     let mut patch = 0;
     while patch < count {
         let (corners, is_triangle, blocked_edges) = m.patch_corners_meta(base, patch);
@@ -27748,35 +27824,13 @@ unsafe fn emit_world_face_patches(
             {
                 SEAM_CENSUS_TINT = SEAM_CENSUS_PATCH_TRI;
             }
-            let tri = map::RenderTri {
-                idx: [corners[0].idx, corners[1].idx, corners[2].idx],
-                tex,
-                uv_words: [corners[0].uv, corners[1].uv, corners[2].uv],
-                rgb: [corners[0].rgb, corners[1].rgb, corners[2].rgb],
-            };
-            if try_emit_native_residue(packets, m, &tri, frame, np) {
-                counts.note_emitted(1);
-            } else {
-                emit_world_loop_tri(packets, m, &tri, frame, np, counts, 0);
-            }
+            emit_patch_triangle(cx, corners, counts);
             patch += 1;
             continue;
         }
         WORLD_QUAD_NEEDS_SOFT_SPLIT = false;
         WORLD_QUAD_DEPTH_SPLIT = false;
-        if try_emit_quad_corners(
-            packets,
-            m,
-            tex,
-            corners,
-            frame,
-            affine_face,
-            true,
-            blocked_edges,
-            base + patch * 4,
-            np,
-            nq,
-        ) {
+        if try_emit_quad_ctx(cx, corners, blocked_edges, base + patch * 4) {
             counts.note_emitted(2);
             patch += 1;
             continue;
@@ -27785,51 +27839,101 @@ unsafe fn emit_world_face_patches(
         {
             SEAM_CENSUS_TINT = SEAM_CENSUS_PATCH_FALLBACK;
         }
-        // Near plane or guard band only: keep the quad and split it once.
-        if WORLD_QUAD_SOFT_SPLIT
-            && WORLD_QUAD_NEEDS_SOFT_SPLIT
-            && emit_soft_quad_split(
-                packets,
-                m,
-                tex,
-                corners,
-                frame,
-                np,
-                false,
-                SOFT_SPLIT_TARGET_SPAN_PX,
-            )
-        {
-            counts.note_emitted(2);
-            patch += 1;
-            continue;
-        }
-        if WORLD_DEPTH_SPLIT_PX_Q3 != 0
-            && WORLD_QUAD_DEPTH_SPLIT
-            && emit_depth_split_quad(packets, m, tex, corners, frame, nq)
-        {
-            counts.note_emitted(2);
-            patch += 1;
-            continue;
-        }
-        // Bow-tie or local-depth rejection: preserve the exact two hardware
-        // triangles represented by `[a,b,c,d]`.
-        let first = map::RenderTri {
-            idx: [corners[1].idx, corners[0].idx, corners[2].idx],
-            tex,
-            uv_words: [corners[1].uv, corners[0].uv, corners[2].uv],
-            rgb: [corners[1].rgb, corners[0].rgb, corners[2].rgb],
-        };
-        let second = map::RenderTri {
-            idx: [corners[0].idx, corners[3].idx, corners[2].idx],
-            tex,
-            uv_words: [corners[0].uv, corners[3].uv, corners[2].uv],
-            rgb: [corners[0].rgb, corners[3].rgb, corners[2].rgb],
-        };
-        emit_world_loop_tri(packets, m, &first, frame, np, counts, affine_face);
-        emit_world_loop_tri(packets, m, &second, frame, np, counts, affine_face);
+        emit_patch_fallback(cx, corners, counts);
         patch += 1;
     }
     EMIT_POLICY = saved_policy;
+}
+
+/// A patch record marked as a triangle (an irregular seam fragment).
+#[inline(never)]
+unsafe fn emit_patch_triangle(
+    cx: *const QuadCtx,
+    corners: [map::PackedLoopVert; 4],
+    counts: &mut WorldCounters,
+) {
+    let QuadCtx {
+        packets,
+        m,
+        np,
+        tex,
+        frame,
+        ..
+    } = cx.read();
+    let (packets, m, np) = (&mut *packets, &*m, &mut *np);
+    let tri = map::RenderTri {
+        idx: [corners[0].idx, corners[1].idx, corners[2].idx],
+        tex,
+        uv_words: [corners[0].uv, corners[1].uv, corners[2].uv],
+        rgb: [corners[0].rgb, corners[1].rgb, corners[2].rgb],
+    };
+    if try_emit_native_residue(packets, m, &tri, frame, np) {
+        counts.note_emitted(1);
+    } else {
+        emit_world_loop_tri(packets, m, &tri, frame, np, counts, 0);
+    }
+}
+
+/// A patch the quad core rejected: split it once if only the near plane or
+/// the guard band stopped it, split it by depth if its keys diverged, else
+/// keep its two hardware triangles.
+#[inline(never)]
+unsafe fn emit_patch_fallback(
+    cx: *const QuadCtx,
+    corners: [map::PackedLoopVert; 4],
+    counts: &mut WorldCounters,
+) {
+    let QuadCtx {
+        packets,
+        m,
+        np,
+        nq,
+        tex,
+        frame,
+        ..
+    } = cx.read();
+    let (packets, m, np, nq) = (&mut *packets, &*m, &mut *np, &mut *nq);
+    let affine_face = 0u8;
+    // Near plane or guard band only: keep the quad and split it once.
+    if WORLD_QUAD_SOFT_SPLIT
+        && WORLD_QUAD_NEEDS_SOFT_SPLIT
+        && emit_soft_quad_split(
+            packets,
+            m,
+            tex,
+            corners,
+            frame,
+            np,
+            false,
+            SOFT_SPLIT_TARGET_SPAN_PX,
+        )
+    {
+        counts.note_emitted(2);
+        return;
+    }
+    if WORLD_DEPTH_SPLIT_PX_Q3 != 0
+        && WORLD_QUAD_DEPTH_SPLIT
+        && emit_depth_split_quad(packets, m, tex, corners, frame, nq)
+    {
+        counts.note_emitted(2);
+        return;
+    }
+    // Bow-tie or local-depth rejection: preserve the exact two hardware
+    // triangles represented by `[a,b,c,d]`.
+    let first = map::RenderTri {
+        idx: [corners[1].idx, corners[0].idx, corners[2].idx],
+        tex,
+        uv_words: [corners[1].uv, corners[0].uv, corners[2].uv],
+        rgb: [corners[1].rgb, corners[0].rgb, corners[2].rgb],
+    };
+    let second = map::RenderTri {
+        idx: [corners[0].idx, corners[3].idx, corners[2].idx],
+        tex,
+        uv_words: [corners[0].uv, corners[3].uv, corners[2].uv],
+        rgb: [corners[0].rgb, corners[3].rgb, corners[2].rgb],
+    };
+    emit_world_loop_tri(packets, m, &first, frame, np, counts, affine_face);
+    emit_world_loop_tri(packets, m, &second, frame, np, counts, affine_face);
 }
 
 unsafe fn emit_world_face(
