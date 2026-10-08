@@ -1326,10 +1326,22 @@ const HEADCRAB_ATTACK_IMPACT_TICK: u8 = 13;
 const ZOMBIE_ATTACK_DAMAGE: u8 = 10; // skill.cfg sk_zombie_dmg_one_slash1
 const HEADCRAB_BITE_RANGE2: i32 = 48 * 48;
 const BARNEY_ATTACK_RANGE2: i32 = 1024 * 1024;
-const BARNEY_ATTACK_COOLDOWN: u8 = 9;
-const BARNEY_ATTACK_TICKS: u8 = 5;
+// Retail Barney fires every 14 ticks (17 shots in 242 ticks under Xash3D) and
+// plays shootgun for 12.8 of them; he draws the gun for 18 first.
+const BARNEY_ATTACK_COOLDOWN: u8 = 14;
+const BARNEY_ATTACK_TICKS: u8 = 14;
+const BARNEY_DRAW_TICKS: u8 = 18;
+/// Retained clip slots beyond the five states (host/hl-content/model-roster.txt).
+const BARNEY_CLIP_SHOOT: u8 = 2;
+const BARNEY_CLIP_DRAW: u8 = 11;
+const BARNEY_CLIP_RUN: u8 = 12;
+const BARNEY_CLIP_SHOOT2: u8 = 13;
+const BARNEY_CLIP_DISARM: u8 = 14;
 const BARNEY_DAMAGE: u8 = 8;
-const BARNEY_SPEED: i32 = 7;
+const BARNEY_SPEED: i32 = 3;
+const BARNEY_RUN_SPEED: i32 = 18;
+const BARNEY_RUN_RANGE2: i32 = 270 * 270;
+const BARNEY_WALK_RANGE2: i32 = 160 * 160;
 const BARNEY_FOLLOW_RANGE2: i32 = 640 * 640;
 const BARNEY_STOP_RANGE2: i32 = 128 * 128;
 const SCIENTIST_FEAR_RANGE2: i32 = 896 * 896;
@@ -1827,7 +1839,10 @@ const TRACER_ROPE: u8 = 4;
 /// circling spheres (muzzleflash3 at 255,224,192).
 const TRACER_ZAP: u8 = 5;
 const TRACER_TELE: u8 = 6;
-const TRACER_LOOKS: [(i32, (u8, u8, u8)); 8] = [
+/// A vortigaunt's arm lightning (ZAP_BEAM 180,255,96) and a gun's muzzle flash.
+const TRACER_BEAM: u8 = 8;
+const TRACER_FLASH: u8 = 9;
+const TRACER_LOOKS: [(i32, (u8, u8, u8)); 10] = [
     (3, (250, 220, 120)),
     (24, (255, 130, 90)),
     (14, (0, 120, 255)),
@@ -1836,6 +1851,8 @@ const TRACER_LOOKS: [(i32, (u8, u8, u8)); 8] = [
     (16, (200, 200, 255)),
     (24, (120, 255, 120)),
     (12, (255, 224, 192)),
+    (5, (180, 255, 96)),
+    (7, (255, 224, 160)),
 ];
 // Jump input buffer: a Cross press up to JUMP_BUFFER_TICKS before landing still
 // jumps (forgives an early press on a fall -- HL-ish landing feel).
@@ -3848,6 +3865,14 @@ const PROP_ANIM_CLIP_FRESH: u8 = 0xfe;
 // (record_prop_anim_clips); drawing and hit traces only read them.
 static mut PROP_ANIM_CLIP: [u8; MAX_PROPS] = [PROP_ANIM_CLIP_FRESH; MAX_PROPS];
 static mut PROP_ANIM_START: [u16; MAX_PROPS] = [0; MAX_PROPS];
+// A sequence the species AI asks for by name (GoldSrc plays the sequence a
+// schedule picks until it ends, whatever the monster's coarse state is):
+// retained clip slot (0xFF: none), first drawn tick and window in ticks, bit 7
+// of the window set for a loop. The clip plays from its first pose at the
+// source frame rate and holds its last pose to the end of the window.
+static mut PROP_GESTURE_CLIP: [u8; MAX_PROPS] = [0xFF; MAX_PROPS];
+static mut PROP_GESTURE_AT: [u16; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_GESTURE_LEN: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_LEAF: [i16; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_STATE: [u8; MAX_PROPS] = [PROP_STATE_IDLE; MAX_PROPS];
 static mut PROP_ATTACK_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS];
@@ -8926,6 +8951,7 @@ unsafe fn restore_transition_actors(
         seed_prop_render_transform(pi);
         PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_FRESH;
         PROP_ANIM_START[pi] = 0;
+        PROP_GESTURE_CLIP[pi] = 0xFF;
         let leaf = camera_leaf(m, pos);
         PROP_LEAF[pi] = if leaf >= i16::MIN as i32 && leaf <= i16::MAX as i32 {
             leaf as i16
@@ -11409,6 +11435,7 @@ unsafe fn maker_make(
                 PROP_SCRIPT_MODE[pi] = 0;
                 PROP_SCRIPT_LI[pi] = u16::MAX;
                 PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_FRESH;
+                PROP_GESTURE_CLIP[pi] = 0xFF;
                 PROP_POS[pi] = rec.origin;
                 PROP_ACTIVE[pi] = 0;
                 PROP_DORMANT[pi] = PROP_RUNTIME_DORMANT_STOCK;
@@ -14101,6 +14128,30 @@ unsafe fn invalidate_actor_occlusion(have_pvs: bool, cam_leaf: i32, eye: [i32; 3
     }
 }
 
+/// Play retained clip slot `clip` on actor `pi` for `ticks` (at most 127) from
+/// the next drawn tick. Cleared by `prop_gesture_end`, by death and by pain.
+#[inline]
+pub(crate) unsafe fn prop_gesture(pi: usize, clip: u8, ticks: u8, looping: bool) {
+    PROP_GESTURE_CLIP[pi] = clip;
+    PROP_GESTURE_AT[pi] = SIM_NOW.wrapping_add(1);
+    PROP_GESTURE_LEN[pi] = ticks.min(127) | if looping { 0x80 } else { 0 };
+}
+
+#[inline]
+pub(crate) unsafe fn prop_gesture_end(pi: usize) {
+    PROP_GESTURE_CLIP[pi] = 0xFF;
+}
+
+/// Ticks the gesture on `pi` has been playing, if its window is still open.
+#[inline]
+pub(crate) unsafe fn prop_gesture_age(pi: usize) -> Option<u8> {
+    if PROP_GESTURE_CLIP[pi] == 0xFF {
+        return None;
+    }
+    let age = SIM_NOW.wrapping_add(1).wrapping_sub(PROP_GESTURE_AT[pi]);
+    (age < (PROP_GESTURE_LEN[pi] & 0x7f) as u16).then_some(age as u8)
+}
+
 fn prop_clip(state: u8, hit_flash: bool) -> usize {
     if state == PROP_STATE_DEAD {
         return PROP_CLIP_DEAD;
@@ -14223,6 +14274,31 @@ fn prop_anim_frame<const POSE: bool>(
         // authored duration, then hold the final pose.
         let elapsed = (sim_frame_no as u16).wrapping_sub(unsafe { PROP_DEATH_START[pi] }) as usize;
         return md.one_shot_clip_phase(clip, md.clip_hold_ticks(clip) as usize, elapsed);
+    }
+    // A named sequence outranks the flinch: a houndeye's slide, a vortigaunt's
+    // zap and a gun being drawn all play through a hit.
+    if unsafe { PROP_GESTURE_CLIP[pi] } != 0xFF {
+        let (gesture, at, len) = unsafe {
+            (
+                PROP_GESTURE_CLIP[pi],
+                PROP_GESTURE_AT[pi],
+                PROP_GESTURE_LEN[pi],
+            )
+        };
+        let age = (sim_frame_no as u16).wrapping_sub(at);
+        if age < (len & 0x7f) as u16 {
+            forget_clip();
+            if !POSE {
+                return (0, 0, 0);
+            }
+            let gesture = (gesture as usize).min(md.clip_count().saturating_sub(1));
+            let hold = md.clip_hold_ticks(gesture) as usize;
+            return if len & 0x80 != 0 {
+                md.looped_clip_phase(gesture, hold, age as usize)
+            } else {
+                md.one_shot_clip_phase(gesture, hold, age as usize)
+            };
+        }
     }
     if hit_flash > 0 {
         forget_clip();
@@ -17165,13 +17241,16 @@ unsafe fn tick_shooter(
             {
                 let damage = skill_damage(ty).unwrap_or(def.atk_damage);
                 damage_target(target, damage, pos, health, armor);
-                // Human weapons crack like an MP5; alien ranged attacks zap.
-                let snd = if ty == 8 || ty >= 20 {
-                    sfx::MP5
-                } else {
-                    sfx::ELECTRO
-                };
-                sfx::play_world(snd, pos);
+                // Human weapons crack like an MP5 (the assassin's silenced pistol
+                // like a glock); the alien grunt and controller have their own
+                // report, the rest zap.
+                match ty {
+                    10 => species::cue_or(hl_format::setpiece_audio::AG_FIRE, sfx::ELECTRO, pos),
+                    11 => species::cue_or(hl_format::setpiece_audio::CON_ATTACK, sfx::ELECTRO, pos),
+                    51 => sfx::play_world(sfx::GLOCK, pos),
+                    8 | 20.. => sfx::play_world(sfx::MP5, pos),
+                    _ => sfx::play_world(sfx::ELECTRO, pos),
+                }
             }
             prop_attack_cooldown_set(pi, def.atk_cooldown);
         }
@@ -17795,6 +17874,7 @@ unsafe fn tick_barney(
     if PROP_AI_TIMER[pi] > 0 {
         PROP_AI_TIMER[pi] -= 1;
     }
+    let had_target = PROP_AI_TARGET[pi] != PROP_TARGET_NONE;
 
     let reacquire = ai_reacquire(pi);
     let target = if reacquire {
@@ -17809,10 +17889,44 @@ unsafe fn tick_barney(
         if let Some(aim) = target_aim_point(target, player_pos, nprops) {
             prop_face_point(pi, aim);
             PROP_AI_TARGET[pi] = target;
+            if !had_target {
+                // Catching sight of an enemy: draw the gun before the first shot.
+                species::gait_end(pi, BARNEY_CLIP_RUN);
+                prop_gesture(pi, BARNEY_CLIP_DRAW, BARNEY_DRAW_TICKS, false);
+                prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(BARNEY_DRAW_TICKS));
+            }
             if prop_attack_cooldown(pi) == 0 {
                 PROP_STATE[pi] = PROP_STATE_ATTACK;
                 PROP_AI_TIMER[pi] = BARNEY_ATTACK_TICKS;
                 prop_attack_cooldown_set(pi, BARNEY_ATTACK_COOLDOWN);
+                prop_gesture(
+                    pi,
+                    if SIM_NOW & 8 == 0 {
+                        BARNEY_CLIP_SHOOT
+                    } else {
+                        BARNEY_CLIP_SHOOT2
+                    },
+                    BARNEY_ATTACK_TICKS,
+                    false,
+                );
+                // Muzzle flash (event 5001) at the gun, a short bright streak.
+                let yaw = prop_yaw_value(PROP_YAW[pi]);
+                let fwd = [sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0x0fff)];
+                let gun = prop_eye(m, pi);
+                let gun = [
+                    gun[0] + ((fwd[0] * 14) >> 12),
+                    gun[1] - 10,
+                    gun[2] + ((fwd[1] * 14) >> 12),
+                ];
+                push_tracer_styled(
+                    gun,
+                    [
+                        gun[0] + ((fwd[0] * 10) >> 12),
+                        gun[1],
+                        gun[2] + ((fwd[1] * 10) >> 12),
+                    ],
+                    TRACER_FLASH,
+                );
                 // CZombie::TakeDamage retains only 30% of DMG_BULLET. Barney's
                 // pistol is the first campaign-visible case (c1a1); without
                 // this the ally deletes its scripted opponent before Gordon
@@ -17838,7 +17952,15 @@ unsafe fn tick_barney(
     if PROP_AI_TIMER[pi] > 0 && PROP_STATE[pi] == PROP_STATE_ATTACK {
         return;
     }
+    if PROP_AI_TARGET[pi] != PROP_TARGET_NONE && PROP_STATE[pi] != PROP_STATE_DEAD {
+        // The fight is over: holster the gun.
+        prop_gesture(pi, BARNEY_CLIP_DISARM, 40, false);
+    }
     PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
+    if PROP_GESTURE_CLIP[pi] == BARNEY_CLIP_DISARM && prop_gesture_age(pi).is_some() {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        return;
+    }
 
     if try_start_talk_move_away(pi) {
         return;
@@ -17865,11 +17987,21 @@ unsafe fn tick_barney(
         } else {
             prop_face_point(pi, player_pos);
         }
+        // Retail Barney walks at 3 units a tick and runs at 18 once the player
+        // is more than about 270 away, easing back to a walk at 160.
+        let running = PROP_GESTURE_CLIP[pi] == BARNEY_CLIP_RUN && prop_gesture_age(pi).is_some();
         if d2 > BARNEY_STOP_RANGE2 {
             PROP_STATE[pi] = PROP_STATE_MOVE;
-            prop_move_towards_point(m, movers, pi, player_pos, BARNEY_SPEED);
+            if d2 > BARNEY_RUN_RANGE2 || (running && d2 > BARNEY_WALK_RANGE2) {
+                species::gait(pi, BARNEY_CLIP_RUN, 12);
+                prop_move_towards_point(m, movers, pi, player_pos, BARNEY_RUN_SPEED);
+            } else {
+                species::gait_end(pi, BARNEY_CLIP_RUN);
+                prop_move_towards_point(m, movers, pi, player_pos, BARNEY_SPEED);
+            }
             return;
         }
+        species::gait_end(pi, BARNEY_CLIP_RUN);
         PROP_STATE[pi] = PROP_STATE_IDLE;
         return;
     }
@@ -18044,6 +18176,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         PROP_PREV_YAW[i] = 0;
         PROP_ANIM_CLIP[i] = PROP_ANIM_CLIP_FRESH;
         PROP_ANIM_START[i] = 0;
+        PROP_GESTURE_CLIP[i] = 0xFF;
         PROP_LEAF[i] = 0;
         // A shortlist belongs to one map and one prop position. Leaving it
         // resident across changelevels can probe brush entities from the prior
@@ -35175,6 +35308,16 @@ fn play(
                 let body = if ty == PROP_TYPE_BARNEY {
                     if PROP_STATE[pi] == PROP_STATE_DEAD || PROP_HEALTH[pi] == 0 {
                         2
+                    } else if let (Some(age), BARNEY_CLIP_DRAW) =
+                        (prop_gesture_age(pi), PROP_GESTURE_CLIP[pi])
+                    {
+                        // The draw sequence's event 2 (frame 7) puts the gun in his hand.
+                        (age >= 7) as u8
+                    } else if let (Some(age), BARNEY_CLIP_DISARM) =
+                        (prop_gesture_age(pi), PROP_GESTURE_CLIP[pi])
+                    {
+                        // Event 4 (frame 15 at 10 fps) holsters it.
+                        (age < 30) as u8
                     } else if PROP_AI_TARGET[pi] != PROP_TARGET_NONE
                         || PROP_STATE[pi] == PROP_STATE_ATTACK
                     {
