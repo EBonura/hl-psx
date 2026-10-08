@@ -1,15 +1,15 @@
 # type|GoldSrc model basename|cooked clip specification
 0|scientist|13:4,0:6,24:6,8:3,31:3,pondering:3,retina:3,beatdoor:3,ceiling_dangle:3,deskidle=pondering,pondering2=pondering,pondering3=pondering,pause=pondering,writeboard=pondering,converse1=pondering,converse2=pondering,push_button=beatdoor,wave=beatdoor,no=pondering,tieshoe=pondering,checktie=pondering,buysoda=pondering,idle1=@0
-1|barney|0:4,4:6,6:6,17:3,25:4,sit1:6,standing_idle:2,intropush:8,laseridle:2,laser_top:2,laser_bottom:2,flashlight=standing_idle,cprbarney=sit1,sit2=sit1,sit3=sit1,relaxstand=sit1,almostidle=standing_idle,almost=standing_idle,barn_wave=intropush,c3a2_draw=standing_idle,idle1=@0
+1|barney|0:4,4:6,6:6,17:3,25:4,sit1:6,standing_idle:2,intropush:8,laseridle:2,laser_top:2,laser_bottom:2,draw:4,run:6,shootgun2:4,disarm:3,flashlight=standing_idle,cprbarney=sit1,sit2=sit1,sit3=sit1,relaxstand=sit1,almostidle=standing_idle,almost=standing_idle,barn_wave=intropush,c3a2_draw=standing_idle,idle1=@0
 2|headcrab|0:4,4:4,10:4,6:2,7:3,idle1=@0
 3|w_suit|0
 4|w_battery|0
 5|zombie|0:4,10:8,8:10,3:2,17:3,eatbody:4,eatbodystand=eatbody,pause=@0,idle1=@0,attack1=@2
-6|houndeye|0:4,3:4,10:4,12:2,6:3,jumpwindow:5,idle1=@0
-7|bullsquid|7:4,1:5,10:4,3:2,16:5,eat:4,idle=@0
+6|houndeye|0:4,3:4,10:4,12:2,6:3,jumpwindow:5,madidle2:3,jumpback:3,idle1=@0
+7|bullsquid|7:4,1:5,10:4,3:2,16:5,eat:4,bite:3,idle=@0
 8|hgrunt|11:4,1:8,18:6,4:2,35:3,idle1=@0,combatidle=@0,walk1=@1,divecover=@2
-9|islave|0:4,4:4,12:4,13:2,19:3,grab:3,downup=grab,pushup=grab,updown=grab,jabber=grab,jibber=grab,idle1=@0
-10|agrunt|0:4,2:4,19:4,6:2,25:3,idle1=@0,threat=@2
+9|islave|0:4,4:4,12:4,13:2,19:3,grab:3,attack1:4,run1:4,downup=grab,pushup=grab,updown=grab,jabber=grab,jibber=grab,idle1=@0
+10|agrunt|0:4,2:4,19:4,6:2,25:3,quickshoot:3,longshoot:3,idle1=@0,threat=@2
 11|controller|15:4,16:4,0:4,6:2,18:3
 12|barnacle|0:6,0:6,4:3,3:5,6:7
 13|leech|3:4,0:4,2:4,3:2,6:3

@@ -4,6 +4,57 @@
 //! vortigaunt's long zap cycle and claws.
 
 use crate::*;
+use hl_format::setpiece_audio as SP;
+
+/// Retained clip slots the species play by name (host/hl-content/model-roster.txt).
+const HOUND_ATTACK: u8 = 2;
+const HOUND_REST: u8 = 6;
+const HOUND_HOP: u8 = 7;
+const SLAVE_ZAP: u8 = 2;
+const SLAVE_CLAW: u8 = 6;
+const SLAVE_RUN: u8 = 7;
+const SQUID_SPIT: u8 = 2;
+const SQUID_WHIP: u8 = 6;
+
+/// A cue from the map's monster sound bank (silent when the bank lacks it).
+#[inline(always)]
+unsafe fn cue(slot: u8, pos: [i32; 3]) {
+    setpiece_sfx::play(slot, pos);
+}
+
+/// A cue from the monster bank, else the resident core sample.
+#[inline]
+pub(crate) unsafe fn cue_or(slot: u8, core: u8, pos: [i32; 3]) {
+    if setpiece_sfx::has(slot) {
+        setpiece_sfx::play(slot, pos);
+    } else {
+        sfx::play_world(core, pos);
+    }
+}
+
+/// Keep `clip` looping on `pi` for as long as the caller keeps asking, without
+/// restarting its phase (`hold` is the clip's length in ticks).
+#[inline(never)]
+#[optimize(size)]
+pub(crate) unsafe fn gait(pi: usize, clip: u8, hold: u8) {
+    match prop_gesture_age(pi) {
+        Some(age) if PROP_GESTURE_CLIP[pi] == clip => {
+            if age >= 100 {
+                let whole = age - age % hold;
+                PROP_GESTURE_AT[pi] = PROP_GESTURE_AT[pi].wrapping_add(whole as u16);
+            }
+        }
+        _ => prop_gesture(pi, clip, 127, true),
+    }
+}
+
+/// Stop the gesture on `pi` when it is `clip`.
+#[inline]
+pub(crate) unsafe fn gait_end(pi: usize, clip: u8) {
+    if PROP_GESTURE_CLIP[pi] == clip {
+        prop_gesture_end(pi);
+    }
+}
 
 /// Keep or find the enemy and face it. Clears the actor's target and returns
 /// `None` when there is nothing to fight.
@@ -126,7 +177,7 @@ pub(crate) unsafe fn tick_grunt(
                 }
                 b += 1;
             }
-            sfx::play_world(sfx::MP5, pos);
+            cue_or(SP::HG_MGUN, sfx::MP5, pos);
         }
     } else if prop_attack_cooldown(pi) == 0 {
         let bursts = (state >> 4) + 1;
@@ -141,9 +192,13 @@ pub(crate) unsafe fn tick_grunt(
     }
 }
 
-/// monster_alien_slave: a 49-tick zap whose two beams land 31 ticks in (20 on
+/// monster_alien_slave: a 49-tick zap whose two beams land 34 ticks in (20 on
 /// Medium at any range up to about 550 units), repeated every 50 ticks; between
-/// zaps it runs in and claws every 10 ticks.
+/// zaps it runs in and claws three times a 30-tick loop, at +9, +13 and +21.
+///
+/// The zap plays `zapattack1` from its first pose (the charge cry at +2, the
+/// beams and their sounds from +33 for the 7 ticks the sequence keeps them
+/// out) and the claws loop `attack1`, striking on its events.
 #[inline(never)]
 #[optimize(size)]
 pub(crate) unsafe fn tick_slave(
@@ -158,9 +213,11 @@ pub(crate) unsafe fn tick_slave(
 ) {
     const RANGE: i32 = 650;
     const CLAW: i32 = 70;
+    const ZAP: u8 = 49;
     let Some((target, visible, aim)) =
         acquire(m, sight, pi, player_pos, nprops, RANGE + 300, false)
     else {
+        gait_end(pi, SLAVE_RUN);
         return;
     };
     let pos = PROP_POS[pi];
@@ -168,32 +225,54 @@ pub(crate) unsafe fn tick_slave(
     let beam = skill_damage(PROP_KIND[pi]).unwrap_or(10);
     let casting = PROP_AI_TIMER[pi];
     if casting > 0 {
-        // Mid-zap: stand and face the enemy; the beams land on the last tick.
+        // Mid-zap: stand and face the enemy; `ZAP - casting + 1` ticks have run.
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = casting - 1;
-        if casting == 1 && visible && d2 <= RANGE * RANGE {
-            damage_target(target, beam.saturating_mul(2), pos, health, armor);
+        let k = ZAP - casting + 1;
+        if k == 2 {
+            cue(SP::SLV_CHARGE, pos);
+        }
+        if k >= 33 && k <= 40 && visible {
+            let from = [pos[0], pos[1] + 30, pos[2]];
+            push_tracer_styled(from, aim, TRACER_BEAM);
+            push_tracer_styled([from[0], from[1] + 8, from[2]], aim, TRACER_BEAM);
+        }
+        if k == 33 {
             sfx::play_world(sfx::ELECTRO, pos);
+            cue(SP::SLV_BEAM, pos);
+        } else if k == 34 && visible && d2 <= RANGE * RANGE {
+            damage_target(target, beam.saturating_mul(2), pos, health, armor);
         }
         return;
     }
     let cooldown = prop_attack_cooldown(pi);
     if d2 <= CLAW * CLAW {
         PROP_STATE[pi] = PROP_STATE_ATTACK;
-        if cooldown == 0 {
+        let age = match prop_gesture_age(pi) {
+            Some(age) if PROP_GESTURE_CLIP[pi] == SLAVE_CLAW => age,
+            _ => {
+                prop_gesture(pi, SLAVE_CLAW, 120, true);
+                0
+            }
+        };
+        if matches!(age % 30, 9 | 13 | 21) {
             damage_target(target, beam, pos, health, armor);
-            prop_attack_cooldown_set(pi, 10);
+            cue(SP::SLV_CLAW, pos);
         }
     } else if visible && d2 <= RANGE * RANGE && d2 > 150 * 150 && cooldown == 0 {
         PROP_STATE[pi] = PROP_STATE_ATTACK;
-        PROP_AI_TIMER[pi] = 31;
+        PROP_AI_TIMER[pi] = ZAP;
         prop_attack_cooldown_set(pi, 50);
-        sfx::play_world(sfx::ELECTRO, pos);
+        prop_gesture(pi, SLAVE_ZAP, ZAP, false);
     } else if d2 < 350 * 350 || !visible {
         PROP_STATE[pi] = PROP_STATE_MOVE;
+        gait_end(pi, SLAVE_CLAW);
+        gait(pi, SLAVE_RUN, 20);
         prop_move_towards_point(m, movers, pi, aim, 9);
     } else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
+        gait_end(pi, SLAVE_RUN);
+        gait_end(pi, SLAVE_CLAW);
     }
 }
 
@@ -292,7 +371,16 @@ unsafe fn tick_zombie(
                 health,
                 armor,
             );
-            sfx::play_world(sfx::ZO_ATTACK, pos);
+            // The claws land with claw_strike; the second swipe of a bout (or
+            // the lone heavy one) adds the zombie's roar.
+            if setpiece_sfx::has(SP::ZO_CLAW) {
+                cue(SP::ZO_CLAW, pos);
+                if t & 64 != 0 || done == 24 {
+                    sfx::play_world(sfx::ZO_ATTACK, pos);
+                }
+            } else {
+                sfx::play_world(sfx::ZO_ATTACK, pos);
+            }
         }
     } else if d2 <= 64 * 64 && visible {
         let heavy = impact_rng().below(5) == 0;
@@ -334,8 +422,9 @@ unsafe fn tick_squid(
         if t & 32 == 0 && left == 25 {
             let dir = dir_q12(from, aim);
             spawn_projectile_dir(PROJ_SPIT, skill_damage(7).unwrap_or(10), from, dir, true);
-            sfx::play_world(sfx::HC_ATTACK, pos);
+            cue_or(SP::BC_SPIT, sfx::HC_ATTACK, pos);
         } else if t & 32 != 0 && left == 20 && d2 <= 85 * 85 {
+            cue(SP::BC_BITE, pos);
             damage_target(target, skill_damage(75).unwrap_or(25), pos, health, armor);
             let dir = dir_q12(pos, aim);
             KNOCK = [(dir[0] * 14) >> 12, 15, (dir[2] * 14) >> 12];
@@ -343,10 +432,13 @@ unsafe fn tick_squid(
     } else if visible && d2 <= 64 * 64 {
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = (t & 0xC0) | 32 | 24;
+        cue(SP::BC_GROWL, pos);
+        prop_gesture(pi, SQUID_WHIP, 24, false);
     } else if visible && d2 <= 780 * 780 && (t >> 6) < 2 && prop_attack_cooldown(pi) == 0 {
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = ((t >> 6) + 1) << 6 | 30;
         prop_attack_cooldown_set(pi, 4);
+        prop_gesture(pi, SQUID_SPIT, 30, false);
     } else if d2 > 500 * 500 || (t >> 6) >= 2 || !visible {
         PROP_STATE[pi] = PROP_STATE_MOVE;
         prop_move_towards_point(m, movers, pi, aim, 15);
@@ -359,6 +451,11 @@ unsafe fn tick_squid(
 /// +45 with 15 x (1 - distance / 384), multiplied by the pack (up to three
 /// alive within 150 units). A hit aborts the charge: it slides 140 units back
 /// over 30 ticks and rests 54. A blast every 80 ticks otherwise.
+///
+/// Animation and cries follow the retail sequences: an alert cry at first
+/// sight, a hunting cry as it sets off, the `attack` sequence for the charge
+/// (warm-up cries at +2 and +4, the blast at +45), `jumpback` for the slide,
+/// and the looping `madidle2` for the rest, growling at its sound events.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn tick_hound(
@@ -371,11 +468,23 @@ unsafe fn tick_hound(
     _armor: &mut u16,
     nprops: usize,
 ) {
+    let had_target = PROP_AI_TARGET[pi] != PROP_TARGET_NONE;
     let Some((_, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 900, false) else {
         PROP_AI_TIMER[pi] = 0;
         return;
     };
     let pos = PROP_POS[pi];
+    if !had_target {
+        cue(SP::HE_ALERT, pos);
+    }
+    if let (Some(age), HOUND_REST) = (prop_gesture_age(pi), PROP_GESTURE_CLIP[pi]) {
+        // madidle2's sound events: 7, 17 and 34 of 46 frames at 37 fps.
+        match age % 25 {
+            2 | 8 => cue(SP::HE_GROWL, pos),
+            18 => cue(SP::HE_GROWL2, pos),
+            _ => {}
+        }
+    }
     let d2 = dist2_xz(pos, aim);
     let left = PROP_AI_TIMER[pi];
     if PROP_STATE[pi] == PROP_STATE_MOVE_AWAY {
@@ -384,15 +493,21 @@ unsafe fn tick_hound(
         if left == 1 {
             PROP_STATE[pi] = PROP_STATE_IDLE;
             prop_attack_cooldown_set(pi, 54);
+            prop_gesture(pi, HOUND_REST, 54, true);
         }
     } else if PROP_STATE[pi] == PROP_STATE_ATTACK {
         if PROP_HIT_FLASH[pi] > 0 {
             PROP_STATE[pi] = PROP_STATE_MOVE_AWAY;
             PROP_AI_TIMER[pi] = 30;
+            prop_gesture(pi, HOUND_HOP, 30, false);
             return;
         }
         PROP_AI_TIMER[pi] = left - 1;
-        if left == 5 {
+        if left == 48 {
+            cue(SP::HE_WARM1, pos);
+        } else if left == 46 {
+            cue(SP::HE_WARM3, pos);
+        } else if left == 5 {
             let mut pack = 0u8;
             let mut qi = 0usize;
             while qi < nprops {
@@ -410,14 +525,21 @@ unsafe fn tick_hound(
             sfx::play_world(sfx::HE_BLAST, pos);
         } else if left == 1 {
             PROP_STATE[pi] = PROP_STATE_IDLE;
-            prop_attack_cooldown_set(pi, 24 + impact_rng().below(8) as u8);
+            let rest = 24 + impact_rng().below(8) as u8;
+            prop_attack_cooldown_set(pi, rest);
+            prop_gesture(pi, HOUND_REST, rest, true);
         }
     } else if visible && d2 > 190 * 190 {
+        if PROP_STATE[pi] != PROP_STATE_MOVE {
+            cue(SP::HE_HUNT, pos);
+        }
         PROP_STATE[pi] = PROP_STATE_MOVE;
+        gait_end(pi, HOUND_REST);
         prop_move_towards_point(m, movers, pi, aim, 17);
     } else if visible && prop_attack_cooldown(pi) == 0 {
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = 49;
+        prop_gesture(pi, HOUND_ATTACK, 49, false);
     } else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
     }
