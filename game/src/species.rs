@@ -262,7 +262,9 @@ pub(crate) unsafe fn tick_slave(
     } else if visible && d2 <= RANGE * RANGE && d2 > 150 * 150 && cooldown == 0 {
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = ZAP;
-        prop_attack_cooldown_set(pi, 50);
+        // A far target is zapped again as the sequence ends (53 ticks a cycle);
+        // a nearer one is closed on for 20 ticks first.
+        prop_attack_cooldown_set(pi, if d2 < 350 * 350 { ZAP + 20 } else { ZAP + 4 });
         prop_gesture(pi, SLAVE_ZAP, ZAP, false);
     } else if d2 < 350 * 350 || !visible {
         PROP_STATE[pi] = PROP_STATE_MOVE;
