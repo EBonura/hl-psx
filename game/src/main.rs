@@ -22580,6 +22580,24 @@ unsafe fn live_entity_pvs_bounds(m: &Map, ei: usize, e: map::Ent) -> Option<([i3
 
     let train = ENT_TRAIN_SLOT[ei] as usize;
     if train < TRAIN_COUNT {
+        if e.kind == 6 {
+            // Moving water is a model centred on its path corner: its draw
+            // offset is the absolute centre, not a displacement from the cooked
+            // logic box (c1a1b's flood). The old box was shifted by the whole
+            // offset, so the PVS never admitted the water that rises around
+            // the player and it was never drawn.
+            let off = ent_draw_offset(ei);
+            let c = [
+                e.center[0] + off[0],
+                e.center[1] + off[1],
+                e.center[2] + off[2],
+            ];
+            return Some(visibility_logic::translated_padded_bounds(
+                [-e.mv[0], -e.mv[1], -e.mv[2]],
+                e.mv,
+                c,
+            ));
+        }
         let li = train_logic_index(TRAIN_LI[train]);
         if li < m.n_logic {
             let rec = m.logic(li);
