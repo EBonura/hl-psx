@@ -6841,6 +6841,14 @@ unsafe fn shatter_breakable(
         sfx::play_world(snd, sound_pos);
     }
     spawn_breakable_shards(rec, sound_pos);
+    release_loot(
+        Some(m),
+        map::BREAKABLE_LOOT_KEY | e.submodel.min(0x3fff) as u16,
+        sound_pos,
+        0,
+        0,
+        0,
+    );
     logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, depth);
 }
 
@@ -15975,10 +15983,27 @@ unsafe fn melee_target_vertical_reachable(
 /// optionally an M203-ammo slot. Duplicate weapons naturally become ammo in
 /// `collect_pickups`, matching CBasePlayerWeapon::AddDuplicate.
 unsafe fn release_monster_loot(owner: usize) {
-    let owner_key = (owner + 1).min(u16::MAX as usize) as u16;
-    let origin = PROP_POS[owner];
-    let leaf = PROP_LEAF[owner];
-    let yaw = prop_yaw_value(PROP_YAW[owner]);
+    release_loot(
+        None,
+        (owner + 1).min(u16::MAX as usize) as u16,
+        PROP_POS[owner],
+        PROP_LEAF[owner],
+        prop_yaw_value(PROP_YAW[owner]),
+        PROP_SCRIPT_YAW[owner],
+    );
+}
+
+/// Release every dormant loot slot owned by `owner_key` at `origin`: a monster
+/// death (key = actor index + 1) or a shattered breakable (key = cooked
+/// BREAKABLE_LOOT_KEY | submodel, centre origin, dropped to the floor below).
+unsafe fn release_loot(
+    m: Option<&Map>,
+    owner_key: u16,
+    origin: [i32; 3],
+    leaf: i16,
+    yaw: u16,
+    script_yaw: u16,
+) {
     let mut released = 0i32;
     let mut pi = 0usize;
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
@@ -15993,7 +16018,7 @@ unsafe fn release_monster_loot(owner: usize) {
             PROP_POS[pi] = [origin[0] + side, origin[1], origin[2]];
             PROP_LEAF[pi] = leaf;
             PROP_YAW[pi] = yaw;
-            PROP_SCRIPT_YAW[pi] = PROP_SCRIPT_YAW[owner];
+            PROP_SCRIPT_YAW[pi] = script_yaw;
             seed_prop_render_transform(pi);
             PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_FRESH;
             PROP_ANIM_START[pi] = 0;
@@ -16009,6 +16034,10 @@ unsafe fn release_monster_loot(owner: usize) {
             PROP_AI_TIMER[pi] = 0;
             PROP_OCC_VIS[pi] = PROP_OCC_VISIBLE | PROP_OCC_DIRTY;
             PROP_NEAR_COUNT[pi] = 0xFF;
+            if let Some(m) = m {
+                // A breakable's centre is above the floor its item rests on.
+                prop_set_pos(m, &[], pi, PROP_POS[pi]);
+            }
             released += 1;
         }
         pi += 1;
