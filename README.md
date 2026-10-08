@@ -1,8 +1,6 @@
 # hl-psx
 
 > **Largely written with agentic coding.** I direct the agents and test their work in two places: PSoXide's emulator, which profiles every cycle, and a real PlayStation, which shows me where the emulator is wrong. Working between them is where the accuracy and the speed come from. [How PSoXide is built](https://ebonura.github.io/PSoXide/how-its-built/)
->
-> **AI-generated content:** code only. The build converts game data from your own copy, and the project distributes none of it. The Bonnie Studios logo is hand-drawn on paper by a friend, scanned and retouched.
 
 Half-Life for the original PlayStation, built in Rust on the
 [PSoXide](https://github.com/EBonura/PSoXide) SDK.
