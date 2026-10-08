@@ -8050,14 +8050,21 @@ fn collect_logic_entities_with_lightstyles(
             // half-second semaphore interval. Store the effective pulse so the
             // fixed 20 Hz runtime does not deal twice GoldSrc's authored damage.
             // A negative dmg heals by its magnitude (LOGIC_TRIGGER_HURT_HEALS).
-            LOGIC_TRIGGER_HURT => (ent_value(block, "damage")
-                .or_else(|| ent_value(block, "dmg"))
-                .and_then(|v| v.parse::<f32>().ok())
-                .unwrap_or(10.0)
-                .abs()
-                * 0.5)
-                .round()
-                .clamp(1.0, u16::MAX as f32) as u16,
+            // CBasePlayer::TakeDamage casts the damage to int, so a pulse of
+            // 12.5 hurts for 12; a heal keeps its fraction.
+            LOGIC_TRIGGER_HURT => {
+                let dmg = ent_value(block, "damage")
+                    .or_else(|| ent_value(block, "dmg"))
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(10.0);
+                let pulse = dmg.abs() * 0.5;
+                (if dmg < 0.0 {
+                    pulse.round()
+                } else {
+                    pulse.floor()
+                })
+                .clamp(0.0, u16::MAX as f32) as u16
+            }
             LOGIC_FUNC_TRACKTRAIN => (parse_f32_key(block, "startspeed", 0.0) / scale)
                 .round()
                 .clamp(0.0, u16::MAX as f32) as u16,
@@ -18045,6 +18052,28 @@ mod tests {
         // the authored damage each pulse.
         assert_eq!(logic.ents[0].arg0, 6);
         assert_eq!(logic.names[logic.ents[0].target as usize - 1], "acid_alarm");
+    }
+
+    #[test]
+    fn trigger_hurt_pulse_truncates_like_the_players_int_damage() {
+        let cook = |dmg: &str| {
+            let ents = format!(r#"{{ "classname" "trigger_hurt" "damage" "{dmg}" }}"#);
+            collect_logic_entities(
+                ents.as_bytes(),
+                &[],
+                &[],
+                1.0,
+                &Default::default(),
+                &Default::default(),
+            )
+            .expect("logic cook")
+            .ents[0]
+                .arg0
+        };
+        assert_eq!(cook("25"), 12, "12.5 per pulse hurts for 12");
+        assert_eq!(cook("3"), 1, "1.5 per pulse hurts for 1");
+        assert_eq!(cook("1"), 0, "0.5 per pulse hurts for nothing");
+        assert_eq!(cook("-25"), 13, "a heal keeps its rounded fraction");
     }
 
     #[test]
