@@ -308,7 +308,10 @@ fn special_fields(map: &str, ty: u8) -> Option<(&'static str, Vec<String>)> {
             "--mdl7",
             &["0:4", "10:4", "8:5", "3:2", "17:3", "eatbody:2"],
         ),
-        ("c1a2b" | "c4a3", 9) => ("--mdl7", &["0:4", "4:4", "12:4", "13:2", "19:3", "grab:2"]),
+        ("c1a2b" | "c4a3", 9) => (
+            "--mdl7",
+            &["0:4", "4:4", "12:4", "13:2", "19:3", "attack1:2", "grab:2"],
+        ),
         _ => return None,
     };
     Some((
