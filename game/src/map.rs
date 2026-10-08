@@ -2081,15 +2081,49 @@ impl Map {
     #[inline]
     pub fn patch_corners_meta(&self, base: usize, patch: usize) -> ([PackedLoopVert; 4], bool, u8) {
         let first = base + patch * 4;
-        // `loop_vert_static` masks the topology bits out of the decoded
-        // index, so read the flags from the raw index words.
-        let f0 = (self.loop_vert_idx(first) >> 14) as u8;
-        let f1 = (self.loop_vert_idx(first + 1) >> 14) as u8;
-        let f2 = (self.loop_vert_idx(first + 2) >> 14) as u8;
-        let f3 = (self.loop_vert_idx(first + 3) >> 14) as u8;
-        let triangle = f3 & 2 != 0;
-        let blocked_edges = (f0 & 1) | ((f1 & 1) << 1) | ((f3 & 1) << 2) | ((f2 & 1) << 3);
-        (self.loop_corners4(first), triangle, blocked_edges)
+        if Self::dynamic_loop_active() {
+            // `loop_vert_static` masks the topology bits out of the decoded
+            // index, so read the flags from the raw index words.
+            let f0 = (self.loop_vert_idx(first) >> 14) as u8;
+            let f1 = (self.loop_vert_idx(first + 1) >> 14) as u8;
+            let f2 = (self.loop_vert_idx(first + 2) >> 14) as u8;
+            let f3 = (self.loop_vert_idx(first + 3) >> 14) as u8;
+            let triangle = f3 & 2 != 0;
+            let blocked_edges = (f0 & 1) | ((f1 & 1) << 1) | ((f3 & 1) << 2) | ((f2 & 1) << 3);
+            return (self.loop_corners4(first), triangle, blocked_edges);
+        }
+        // Static geometry: the R3000 has no data cache, so every load is a RAM
+        // stall. Read each corner's index/uv word once and take the topology
+        // flags from it (they used to be four more byte loads), and fetch the
+        // four light-palette indices as one unaligned word instead of four
+        // byte loads. Same bits, fewer loads.
+        unsafe {
+            let words = self.data.as_ptr().add(self.loopvert_o(first)).cast::<u32>();
+            let lights = self
+                .data
+                .as_ptr()
+                .add(self.lv_light_off + first)
+                .cast::<u32>()
+                .read_unaligned();
+            let palette = core::ptr::addr_of!(LIGHT_PAL_RGB).cast::<u32>();
+            let corner = |i: usize| {
+                let idx_uv = words.add(i).read();
+                PackedLoopVert {
+                    idx: idx_uv as u16 & 0x3fff,
+                    uv: (idx_uv >> 16) as u16,
+                    rgb: *palette.add(((lights >> (8 * i)) & 0xff) as usize),
+                }
+            };
+            let flags = |i: usize| (words.add(i).read() as u16 >> 14) as u8;
+            let (f0, f1, f2, f3) = (flags(0), flags(1), flags(2), flags(3));
+            let triangle = f3 & 2 != 0;
+            let blocked_edges = (f0 & 1) | ((f1 & 1) << 1) | ((f3 & 1) << 2) | ((f2 & 1) << 3);
+            (
+                [corner(0), corner(1), corner(2), corner(3)],
+                triangle,
+                blocked_edges,
+            )
+        }
     }
 
     /// Build a RenderTri from three absolute loop-vertex indices (the runtime fan
