@@ -506,7 +506,14 @@ unsafe fn tick_hound(
         if left == 48 {
             // One of its two warm-up cries, picked per animal and charge.
             let pick = (pos[0] ^ pos[2] ^ SIM_NOW as i32) & 1;
-            cue(if pick == 0 { SP::HE_WARM1 } else { SP::HE_WARM3 }, pos);
+            cue(
+                if pick == 0 {
+                    SP::HE_WARM1
+                } else {
+                    SP::HE_WARM3
+                },
+                pos,
+            );
         } else if left == 5 {
             let mut pack = 0u8;
             let mut qi = 0usize;
