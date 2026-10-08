@@ -1217,6 +1217,19 @@ fn main() {
     // every crate's fingerprint and reshuffles the whole code layout (a
     // measured 133 KB of byte differences). Verified byte-identical with the
     // hook on and off before first use.
+    // Optional function order for the I-cache (psoxide-pgo order/place). Like
+    // the map it is a link-only argument: the code is the same, only its
+    // addresses move. The file's name holds a hash of its contents, so a new
+    // order reruns this script.
+    println!("cargo:rerun-if-env-changed=PSOXIDE_LINK_ORDER");
+    if let Some(order) = env::var_os("PSOXIDE_LINK_ORDER") {
+        if !order.is_empty() {
+            println!(
+                "cargo:rustc-link-arg=--symbol-ordering-file={}",
+                order.to_string_lossy()
+            );
+        }
+    }
     println!("cargo:rerun-if-env-changed=HLPSX_LINK_MAP");
     if let Ok(map_path) = env::var("HLPSX_LINK_MAP") {
         if !map_path.is_empty() {

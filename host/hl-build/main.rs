@@ -7,6 +7,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 mod model_audit;
 mod model_variants;
@@ -696,6 +697,8 @@ struct Options {
     regression_scenario: Option<String>,
     games_dir: Option<PathBuf>,
     tapes: Vec<PathBuf>,
+    /// The gameplay window of the first tape, in port-1 polls, for the layout.
+    polls: Option<(u64, u64)>,
 }
 
 const CANONICAL_GAME_NAME: &str = "Half-Life (hl-psx)";
@@ -725,7 +728,9 @@ const HELP: &str = "hl-psx Rust build\n\n\
            --features LIST    comma-separated hl-psx Cargo features\n\
            --scenario NAME    regress only one named deterministic scenario\n\
            --games-dir PATH   destination required by disc/install; optional after regress/pgo\n\
-           --tape PATH        input tape for pgo to profile; repeat for more routes\n\n\
+           --tape PATH        input tape for pgo to profile; repeat for more routes\n\
+           --polls FROM..TO   gameplay window (port-1 polls) of the first tape; with it pgo\n\
+                              also collects the I-cache layout (game/pgo/hl-psx.layout)\n\n\
          HL_DIR, PSOXIDE, and GAMES_DIR provide environment defaults.\n\
          Nothing is copied outside this repository unless --games-dir is supplied.";
 
@@ -803,6 +808,7 @@ fn parse_args() -> Options {
         regression_scenario: None,
         games_dir: env::var_os("GAMES_DIR").map(PathBuf::from),
         tapes: Vec::new(),
+        polls: None,
     };
     while let Some(arg) = args.next() {
         let Some(flag) = arg.to_str() else { usage() };
@@ -820,6 +826,16 @@ fn parse_args() -> Options {
             }
             "--games-dir" => options.games_dir = Some(PathBuf::from(value(&mut args))),
             "--tape" => options.tapes.push(PathBuf::from(value(&mut args))),
+            "--polls" => {
+                let text = value(&mut args).to_string_lossy().into_owned();
+                options.polls = text
+                    .split_once("..")
+                    .and_then(|(from, to)| Some((from.parse().ok()?, to.parse().ok()?)))
+                    .filter(|(from, to)| from < to);
+                if options.polls.is_none() {
+                    usage();
+                }
+            }
             "-h" | "--help" => help(),
             _ => usage(),
         }
@@ -1891,6 +1907,20 @@ const PGO_HOT_CALLSITE_LADDER: [u32; 4] = [1000, 500, 250, 125];
 const SHIPPED_PROFILE: &str = "game/pgo/hl-psx.prof";
 const SHIPPED_THRESHOLD: &str = "game/pgo/hot-callsite-threshold";
 
+/// The I-cache layout profile the last `pgo` run collected: how often every
+/// word of every function ran over the gameplay polls, and who called whom.
+/// The R3000's 4 KB instruction cache is direct-mapped, so which functions
+/// share a cache set decides how often the hot ones evict each other.
+/// `psoxide-pgo place` turns it into a function order for the one link at
+/// hand, and the link is repeated in that order. The code is identical, only
+/// its addresses move: the chapter-two replay spends 17.9% of its cycles
+/// refilling the I-cache without it and 15.5% with it.
+const SHIPPED_LAYOUT: &str = "game/pgo/hl-psx.layout";
+
+/// Set to link without the shipped layout (the layout is collected on such a
+/// link, since its code hashes are what the layout binds to).
+const NO_LAYOUT: &str = "HLPSX_NO_LAYOUT";
+
 /// Stack reserve for the PGO collect link (see `compile_game`).
 const PGO_COLLECT_STACK_RESERVE: &str = "0x6000";
 
@@ -1985,63 +2015,123 @@ fn compile_game(
     let link_map = repository.join(".hlpsx/hl-psx.map");
     command.env("HLPSX_LINK_MAP", &build_map);
     command.env("PSOXIDE", psoxide);
-    run(&mut command, "compile hl-psx for PlayStation")?;
-    let exe = game.join("target/mipsel-sony-psx/release/hl-psx.exe");
-    if !exe.is_file() {
-        return Err(format!("game build did not produce {}", exe.display()).into());
-    }
-    fs::copy(&build_map, &link_map).map_err(|error| {
-        format!(
-            "no link map at {} ({error}); remove game/target to relink",
-            build_map.display()
-        )
-    })?;
-    if matches!(profile, GuestProfile::CollectElf) {
-        // An ELF for the symbolizer, not an executable: nothing to patch.
+    // The first link is in the linker's own order; with a shipped layout the
+    // second repeats it in the order that layout gives this link's code.
+    let mut ordered = false;
+    loop {
+        run(&mut command, "compile hl-psx for PlayStation")?;
+        let exe = game.join("target/mipsel-sony-psx/release/hl-psx.exe");
+        if !exe.is_file() {
+            return Err(format!("game build did not produce {}", exe.display()).into());
+        }
+        fs::copy(&build_map, &link_map).map_err(|error| {
+            format!(
+                "no link map at {} ({error}); remove game/target to relink",
+                build_map.display()
+            )
+        })?;
+        if matches!(profile, GuestProfile::CollectElf) {
+            // An ELF for the symbolizer, not an executable: nothing to patch.
+            return Ok(exe);
+        }
+        // Reroute the R3000 load-delay hazards LLVM's delay-slot filler leaves
+        // behind (loads in delay slots consumed one instruction later, including
+        // the ones a `jr ra` or `jalr` slot hands to code the image cannot see)
+        // through the guest's HAZARD_TRAMPOLINES array, then prove the image
+        // clean. Zero RAM beyond that array; the alternative flag costs 31 KB of
+        // nops. The patcher is the pinned SDK's, so its fixes arrive with a pin.
+        // With the link's map every jump table is proven from it instead of
+        // guessed from the dispatch's block, and each tool refuses a map that
+        // does not match the image. The stack guard proves every psx-rt
+        // scratchpad stack call tree fits its region.
+        run(
+            hazard_tool(psoxide, "hazard-patch")
+                .arg(&exe)
+                .arg("--map")
+                .arg(&link_map),
+            "patch load-delay hazards in hl-psx.exe",
+        )?;
+        run(
+            hazard_tool(psoxide, "hazard-scan")
+                .arg(&exe)
+                .arg("--map")
+                .arg(&link_map),
+            "prove hl-psx.exe free of load-delay hazards",
+        )?;
+        run(
+            hazard_tool(psoxide, "stack-guard").arg(&exe).arg(&link_map),
+            "prove psx-rt scratchpad stacks fit",
+        )?;
+        // The model projection chain runs on the 1 KiB scratchpad through the
+        // game's own stack switch; an inlining change that outgrows it would
+        // otherwise only show up as lost speed.
+        let budget = projection_stack_budget(&game.join("src/scratchpad.rs"))?;
+        run(
+            hazard_tool(psoxide, "stack-guard")
+                .arg(&exe)
+                .arg(&link_map)
+                .args(["--root", PROJECTION_STACK_ENTRY, "--budget"])
+                .arg(budget.to_string()),
+            "check the scratchpad projection stack budget",
+        )?;
+        if !ordered && matches!(profile, GuestProfile::Use(..)) {
+            if let Some(order) = layout_order(repository, psoxide, features, &exe, &link_map)? {
+                command.env("PSOXIDE_LINK_ORDER", &order);
+                ordered = true;
+                continue;
+            }
+        }
+        println!("EXE -> {}", exe.display());
         return Ok(exe);
     }
-    // Reroute the R3000 load-delay hazards LLVM's delay-slot filler leaves
-    // behind (loads in delay slots consumed one instruction later, including
-    // the ones a `jr ra` or `jalr` slot hands to code the image cannot see)
-    // through the guest's HAZARD_TRAMPOLINES array, then prove the image
-    // clean. Zero RAM beyond that array; the alternative flag costs 31 KB of
-    // nops. The patcher is the pinned SDK's, so its fixes arrive with a pin.
-    // With the link's map every jump table is proven from it instead of
-    // guessed from the dispatch's block, and each tool refuses a map that
-    // does not match the image. The stack guard proves every psx-rt
-    // scratchpad stack call tree fits its region.
-    run(
-        hazard_tool(psoxide, "hazard-patch")
-            .arg(&exe)
-            .arg("--map")
-            .arg(&link_map),
-        "patch load-delay hazards in hl-psx.exe",
-    )?;
-    run(
-        hazard_tool(psoxide, "hazard-scan")
-            .arg(&exe)
-            .arg("--map")
-            .arg(&link_map),
-        "prove hl-psx.exe free of load-delay hazards",
-    )?;
-    run(
-        hazard_tool(psoxide, "stack-guard").arg(&exe).arg(&link_map),
-        "prove psx-rt scratchpad stacks fit",
-    )?;
-    // The model projection chain runs on the 1 KiB scratchpad through the
-    // game's own stack switch; an inlining change that outgrows it would
-    // otherwise only show up as lost speed.
-    let budget = projection_stack_budget(&game.join("src/scratchpad.rs"))?;
-    run(
-        hazard_tool(psoxide, "stack-guard")
-            .arg(&exe)
-            .arg(&link_map)
-            .args(["--root", PROJECTION_STACK_ENTRY, "--budget"])
-            .arg(budget.to_string()),
-        "check the scratchpad projection stack budget",
-    )?;
-    println!("EXE -> {}", exe.display());
-    Ok(exe)
+}
+
+/// The function order the shipped layout gives the link just made, written
+/// to `.hlpsx/order/` under a name that holds its hash (so a new order makes
+/// cargo rerun the build script). `None` when there is no layout to apply:
+/// a diagnostic build, a link without it, or no shipped layout. A layout that
+/// no longer binds to the code is reported and skipped, never fatal; collect
+/// a fresh one with `pgo`.
+fn layout_order(
+    repository: &Path,
+    psoxide: &Path,
+    features: Option<&str>,
+    exe: &Path,
+    link_map: &Path,
+) -> Result<Option<PathBuf>> {
+    let layout = repository.join(SHIPPED_LAYOUT);
+    if !layout.is_file()
+        || !LAYOUT_ENABLED.load(Ordering::Relaxed)
+        || env::var_os(NO_LAYOUT).is_some()
+        || !is_shipping_build(features)
+    {
+        return Ok(None);
+    }
+    let directory = repository.join(".hlpsx/order");
+    fs::create_dir_all(&directory)?;
+    let staging = directory.join("order.txt");
+    let placed = Command::new(cargo())
+        .current_dir(psoxide)
+        .args(["run", "-q", "--release", "-p", "psoxide-pgo", "--", "place"])
+        .arg(&layout)
+        .arg(link_map)
+        .arg(exe)
+        .arg(psoxide.join("sdk/psoxide.ld"))
+        .arg(&staging)
+        .status()?;
+    if !placed.success() {
+        println!(
+            "warning: {SHIPPED_LAYOUT} does not bind to this code; linking in the default \
+             function order (collect a fresh layout with `pgo`)"
+        );
+        return Ok(None);
+    }
+    let order = directory.join(format!(
+        "order-{:.16}.txt",
+        format!("{:x}", Sha256::digest(fs::read(&staging)?))
+    ));
+    fs::rename(&staging, &order)?;
+    Ok(Some(order))
 }
 
 /// The game's scratchpad stack switch entry, as `stack-guard --root` matches
@@ -2141,6 +2231,7 @@ fn profile_guided_pack(
     psoxide: &Path,
     features: Option<&str>,
     tapes: &[PathBuf],
+    polls: Option<(u64, u64)>,
 ) -> Result<PathBuf> {
     let work = repository.join(".hlpsx/pgo");
     if work.exists() {
@@ -2208,13 +2299,22 @@ fn profile_guided_pack(
         "convert the PC histogram into a sample profile",
     )?;
 
-    let (exe, threshold) = link_with_profile(
+    // The layout binds to the code of a link in the linker's own order, so
+    // collect it on that link, then link again with the layout applied.
+    LAYOUT_ENABLED.store(polls.is_none(), Ordering::Relaxed);
+    let (mut exe, threshold) = link_with_profile(
         repository,
         psoxide,
         features,
         &profile,
         PGO_HOT_CALLSITE_LADDER[0],
     )?;
+    if let (Some(polls), Some(tape)) = (polls, tapes.first()) {
+        let layout_cue = pack_disc_into(repository, psoxide, &exe, &work.join("layout"))?;
+        collect_layout(repository, psoxide, &layout_cue, tape, polls, &work, &exe)?;
+        LAYOUT_ENABLED.store(true, Ordering::Relaxed);
+        exe = link_with_profile(repository, psoxide, features, &profile, threshold)?.0;
+    }
     fs::write(
         work.join("shipped-variant.txt"),
         format!("hot-callsite-threshold {threshold}\nfloor {PGO_RAM_FLOOR}\n"),
@@ -2227,6 +2327,94 @@ fn profile_guided_pack(
         "Shipped profile -> {SHIPPED_PROFILE} (commit game/pgo/ to make it the default build)"
     );
     Ok(cue)
+}
+
+/// Whether `compile_game` applies the shipped layout to a profiled link.
+static LAYOUT_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Collect the I-cache layout of `exe`: replay `tape` on its disc, counting
+/// every instruction word over the gameplay polls only (the per-line logs can
+/// only start at a route tick, so a short replay first finds the tick in
+/// which poll `FROM` lands), and let `psoxide-pgo layout` bind the counts to
+/// the link map's functions.
+fn collect_layout(
+    repository: &Path,
+    psoxide: &Path,
+    cue: &Path,
+    tape: &Path,
+    polls: (u64, u64),
+    work: &Path,
+    exe: &Path,
+) -> Result<()> {
+    let frontend = regression::frontend(psoxide)?;
+    let launch = |stop: u64| {
+        let mut command = Command::new(&frontend);
+        command
+            .arg("launch")
+            .arg("--path")
+            .arg(cue)
+            .args([
+                "--embedded-playtest",
+                "--steps",
+                "40000000000",
+                "--input-tape",
+            ])
+            .arg(tape)
+            .args(["--stop-at-poll", &stop.to_string()]);
+        command
+    };
+    let locate_log = work.join("layout-locate.csv");
+    run(
+        launch(polls.0 + 30).arg("--route-log").arg(&locate_log),
+        "find the gameplay window in the layout replay",
+    )?;
+    let log = fs::read_to_string(&locate_log)?;
+    let mut lines = log.lines();
+    let header = lines
+        .next()
+        .unwrap_or_default()
+        .split(',')
+        .collect::<Vec<_>>();
+    let column = |name: &str| header.iter().position(|field| *field == name);
+    let (tick_column, polls_column) = column("route_tick")
+        .zip(column("port1_polls"))
+        .ok_or("the route log has no route_tick/port1_polls columns")?;
+    let start = lines
+        .filter_map(|line| {
+            let fields = line.split(',').collect::<Vec<_>>();
+            Some((
+                fields.get(tick_column)?.parse::<u64>().ok()?,
+                fields.get(polls_column)?.parse::<u64>().ok()?,
+            ))
+        })
+        .find(|(_, reached)| *reached >= polls.0)
+        .map(|(tick, _)| tick)
+        .ok_or_else(|| format!("the layout replay never reached poll {}", polls.0))?;
+    let words = work.join("layout-words.csv");
+    run(
+        launch(polls.1)
+            .arg("--pc-log-words")
+            .arg("--pc-line-log")
+            .arg(&words)
+            .args(["--pc-line-start-route-tick", &start.to_string()]),
+        "count every instruction word over the gameplay polls",
+    )?;
+    let layout = repository.join(SHIPPED_LAYOUT);
+    run(
+        Command::new(cargo())
+            .current_dir(psoxide)
+            .args(["run", "--release", "-p", "psoxide-pgo", "--", "layout"])
+            .arg(repository.join(".hlpsx/hl-psx.map"))
+            .arg(exe)
+            .arg(&words)
+            .arg(&layout),
+        "bind the counts to the link map as an I-cache layout profile",
+    )?;
+    for file in [&locate_log, &words] {
+        let _ = fs::remove_file(file);
+    }
+    println!("Shipped layout -> {SHIPPED_LAYOUT} (commit game/pgo/ to make it the default build)");
+    Ok(())
 }
 
 /// Link with `profile`, stepping inlining down the ladder from `first` until
@@ -2422,7 +2610,13 @@ fn main() -> Result<()> {
         options.features.as_deref()
     };
     if options.action == Action::Pgo {
-        let cue = profile_guided_pack(&repository, &psoxide, features, &options.tapes)?;
+        let cue = profile_guided_pack(
+            &repository,
+            &psoxide,
+            features,
+            &options.tapes,
+            options.polls,
+        )?;
         if let Some(games_dir) = options.games_dir.as_deref() {
             install_disc(&cue, games_dir)?;
         }
