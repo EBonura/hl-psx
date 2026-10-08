@@ -30054,7 +30054,7 @@ unsafe fn trace_point_actors(m: &Map, map_tick: u32) {
             PROP_TYPE_HEADCRAB => Some("monster_headcrab"),
             5 => Some("monster_zombie"),
             PROP_TYPE_HOUNDEYE => Some("monster_houndeye"),
-            PROP_TYPE_BULLSQUID => Some("monster_bullchicken"),
+            7 => Some("monster_bullchicken"),
             8 => Some("monster_human_grunt"),
             9 => Some("monster_alien_slave"),
             10 => Some("monster_alien_grunt"),
