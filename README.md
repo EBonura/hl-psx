@@ -1,5 +1,7 @@
 # hl-psx
 
+> **Built with agentic coding.** AI coding agents write most of the code in PSoXide and in this game. I direct them, review what they produce, and test the results in the emulator and on a real PlayStation.
+
 Half-Life for the original PlayStation, built in Rust on the
 [PSoXide](https://github.com/EBonura/PSoXide) SDK.
 
