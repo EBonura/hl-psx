@@ -3245,7 +3245,31 @@ static mut BEAM_ANIM: u16 = 0;
 // clipping, so a soft-path edge lands bit-identically on the coordinates its
 // fast-path neighbour pushed -- no cross-projector seam.
 static mut SOFT_CACHED_SCREEN: [Option<(i16, i16)>; 3] = [None; 3];
-static mut SOFT_CACHED_CV: [[i32; 3]; 3] = [[0; 3]; 3];
+static mut SOFT_CACHED_CV: [[i32; 3]; 3] = [[0; 3]; 3];// The four GTE-projected corners of the quad the soft quadtree is refining,
+// keyed by their view-space position. The software projector rounds
+// differently from the GTE (Q12 reciprocal and floor against its unr
+// divide), so an unsnapped corner lands up to a pixel from the coordinate its
+// fast-path neighbour pushed for the same vertex and opens a seam along the
+// shared edge. Leaves and the crack backstop take the GTE coordinate for any
+// vertex that is one of these corners.
+static mut SOFT_SNAP: [([i32; 3], i16, i16); 4] = [([0; 3], 0, 0); 4];
+static mut SOFT_SNAP_N: usize = 0;
+
+/// Replace a soft-projected vertex by the GTE coordinate of the same corner.
+#[inline(always)]
+unsafe fn soft_snap_corner(v: &[i32; 3], s: &mut render::SVert) {
+    let n = SOFT_SNAP_N;
+    let mut k = 0usize;
+    while k < n {
+        let e = &SOFT_SNAP[k];
+        if e.0[0] == v[0] && e.0[1] == v[1] && e.0[2] == v[2] {
+            s.x = e.1 as i32;
+            s.y = e.2 as i32;
+            return;
+        }
+        k += 1;
+    }
+}
 // Per-rec kind byte, cached at load: the per-tick scans skip records without
 // re-parsing the full 64 B LogicEnt from the uncached blob.
 static mut LOGIC_KIND: [u8; MAX_LOGIC] = [0; MAX_LOGIC];
@@ -23207,6 +23231,17 @@ unsafe fn emit_soft_quad_split(
         }
     };
     let q = [corner_cv(0), corner_cv(1), corner_cv(2), corner_cv(3)];
+    SOFT_SNAP_N = 0;
+    let mut k = 0usize;
+    while k < 4 {
+        let g = &p[k];
+        let clamped = g.sx <= -1023 || g.sx >= 1023 || g.sy <= -1023 || g.sy >= 1023;
+        if g.sz >= NEAR && !clamped {
+            SOFT_SNAP[SOFT_SNAP_N] = (q[k].v, g.sx, g.sy);
+            SOFT_SNAP_N += 1;
+        }
+        k += 1;
+    }
     // Sum-then-halve, so an edge shared with a neighbouring patch generates the
     // identical midpoint whichever side visits it first.
     let mid = |a: &render::CVert, b: &render::CVert| render::CVert {
@@ -23244,6 +23279,7 @@ unsafe fn emit_soft_quad_split(
     emit_cv_flat(packets, [&q[0], &q[1], &q[2]], mat, np);
     emit_cv_flat(packets, [&q[1], &q[3], &q[2]], mat, np);
     EMIT_POLICY = saved_policy;
+    SOFT_SNAP_N = 0;
     true
 }
 
@@ -23441,12 +23477,18 @@ unsafe fn emit_soft_leaf(
         .all(Option::is_none)
         && c.iter().all(|v| v.v[2] >= render::NEAR_Z)
     {
-        let p = [
+        let mut p = [
             render::project_soft(c[0]),
             render::project_soft(c[1]),
             render::project_soft(c[2]),
             render::project_soft(c[3]),
         ];
+        if SOFT_SNAP_N != 0 {
+            soft_snap_corner(&c[0].v, &mut p[0]);
+            soft_snap_corner(&c[1].v, &mut p[1]);
+            soft_snap_corner(&c[2].v, &mut p[2]);
+            soft_snap_corner(&c[3].v, &mut p[3]);
+        }
         if p.iter().all(render::in_band) {
             let before = *np;
             for t in [[0usize, 1, 2], [1, 3, 2]] {
@@ -23657,11 +23699,16 @@ unsafe fn emit_cv_flat(
         && cv[1].v[2] >= render::NEAR_Z
         && cv[2].v[2] >= render::NEAR_Z
     {
-        let p = [
+        let mut p = [
             render::project_soft(cv[0]),
             render::project_soft(cv[1]),
             render::project_soft(cv[2]),
         ];
+        if SOFT_SNAP_N != 0 {
+            soft_snap_corner(&cv[0].v, &mut p[0]);
+            soft_snap_corner(&cv[1].v, &mut p[1]);
+            soft_snap_corner(&cv[2].v, &mut p[2]);
+        }
         if render::in_band(&p[0]) && render::in_band(&p[1]) && render::in_band(&p[2]) {
             if CULL {
                 let cr = (p[1].x - p[0].x) as i64 * (p[2].y - p[0].y) as i64
