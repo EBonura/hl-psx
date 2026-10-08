@@ -267,6 +267,14 @@ fn uses_map_variant(ty: u8) -> bool {
 fn base_clip_count(ty: u8) -> usize {
     match ty {
         14 => 2,
+        // Barney's draw sequence follows his five.
+        1 => 6,
+        // The bullsquid's whip follows its five.
+        7 => 6,
+        // The houndeye's rest follows its five.
+        6 => 6,
+        // The vortigaunt's claw follows its five.
+        9 => 6,
         // The gargantua's swipe and stomp sequences follow its five AI clips.
         16 => 7,
         // The nihilanth's attack2, recharge, float_open and attack1_open.
@@ -300,7 +308,30 @@ fn special_fields(map: &str, ty: u8) -> Option<(&'static str, Vec<String>)> {
             "--mdl7",
             &["0:4", "10:4", "8:5", "3:2", "17:3", "eatbody:2"],
         ),
-        ("c1a2b" | "c4a3", 9) => ("--mdl7", &["0:4", "4:4", "12:4", "13:2", "19:3", "grab:2"]),
+        // The fleet's tightest weapon-cache margin (about 1.5 KB) cannot hold
+        // Barney's draw sequence here: its slot keeps a single idle pose, so
+        // he raises the gun without the motion on this one map.
+        ("c2a4e", 1) => (
+            "--mdl7",
+            &[
+                "0:4",
+                "4:6",
+                "6:6",
+                "17:3",
+                "25:4",
+                "0:1",
+                "sit1:6",
+                "standing_idle:2",
+                "intropush:8",
+                "laseridle:2",
+                "laser_top:2",
+                "laser_bottom:2",
+            ],
+        ),
+        ("c1a2b" | "c4a3", 9) => (
+            "--mdl7",
+            &["0:4", "4:4", "12:4", "13:2", "19:3", "attack1:2", "grab:2"],
+        ),
         _ => return None,
     };
     Some((

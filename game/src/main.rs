@@ -1326,8 +1326,16 @@ const HEADCRAB_ATTACK_IMPACT_TICK: u8 = 13;
 const ZOMBIE_ATTACK_DAMAGE: u8 = 10; // skill.cfg sk_zombie_dmg_one_slash1
 const HEADCRAB_BITE_RANGE2: i32 = 48 * 48;
 const BARNEY_ATTACK_RANGE2: i32 = 1024 * 1024;
-const BARNEY_ATTACK_COOLDOWN: u8 = 9;
-const BARNEY_ATTACK_TICKS: u8 = 5;
+// Retail Barney fires every 14 ticks (17 shots in 242 ticks under Xash3D) and
+// plays shootgun for 12.8 of them; he draws the gun for 18 first, a state-
+// timer window above the shot's own (see `prop_anim_frame`).
+const BARNEY_ATTACK_COOLDOWN: u8 = 14;
+const BARNEY_ATTACK_TICKS: u8 = 14;
+const BARNEY_DRAW_TICKS: u8 = 18;
+/// Retained clip slot after the five AI clips: the sequence a species plays
+/// beyond them (host/hl-content/model-roster.txt): Barney's draw, the
+/// houndeye's rest, the vortigaunt's claw and the bullsquid's whip.
+const PROP_CLIP_ALT: usize = 5;
 const BARNEY_DAMAGE: u8 = 8;
 const BARNEY_SPEED: i32 = 7;
 const BARNEY_FOLLOW_RANGE2: i32 = 640 * 640;
@@ -1827,7 +1835,10 @@ const TRACER_ROPE: u8 = 4;
 /// circling spheres (muzzleflash3 at 255,224,192).
 const TRACER_ZAP: u8 = 5;
 const TRACER_TELE: u8 = 6;
-const TRACER_LOOKS: [(i32, (u8, u8, u8)); 8] = [
+/// A vortigaunt's arm lightning (ZAP_BEAM 180,255,96) and a gun's muzzle flash.
+const TRACER_BEAM: u8 = 8;
+const TRACER_FLASH: u8 = 9;
+const TRACER_LOOKS: [(i32, (u8, u8, u8)); 10] = [
     (3, (250, 220, 120)),
     (24, (255, 130, 90)),
     (14, (0, 120, 255)),
@@ -1836,6 +1847,8 @@ const TRACER_LOOKS: [(i32, (u8, u8, u8)); 8] = [
     (16, (200, 200, 255)),
     (24, (120, 255, 120)),
     (12, (255, 224, 192)),
+    (5, (180, 255, 96)),
+    (7, (255, 224, 160)),
 ];
 // Jump input buffer: a Cross press up to JUMP_BUFFER_TICKS before landing still
 // jumps (forgives an early press on a fall -- HL-ish landing feel).
@@ -14101,12 +14114,27 @@ unsafe fn invalidate_actor_occlusion(have_pvs: bool, cam_leaf: i32, eye: [i32; 3
     }
 }
 
-fn prop_clip(state: u8, hit_flash: bool) -> usize {
+fn prop_clip(pi: usize, state: u8, hit_flash: bool) -> usize {
     if state == PROP_STATE_DEAD {
         return PROP_CLIP_DEAD;
     }
     if hit_flash {
         return PROP_CLIP_PAIN;
+    }
+    // Three species play a sequence of their own beyond the five states:
+    // the houndeye's rest after a blast (idle with its cooldown running), the
+    // vortigaunt's claw (attacking with no zap in flight) and the bullsquid's
+    // whip (the whip flag of its bout timer).
+    let alt = unsafe {
+        match PROP_KIND[pi] {
+            6 => state == PROP_STATE_IDLE && PROP_ATTACK_COOLDOWN[pi] != 0,
+            9 => state == PROP_STATE_ATTACK && PROP_AI_TIMER[pi] == 0,
+            7 => state == PROP_STATE_ATTACK && PROP_AI_TIMER[pi] & 32 != 0,
+            _ => false,
+        }
+    };
+    if alt {
+        return PROP_CLIP_ALT;
     }
     match state {
         PROP_STATE_MOVE | PROP_STATE_MOVE_AWAY => PROP_CLIP_MOVE,
@@ -14118,10 +14146,10 @@ fn prop_clip(state: u8, hit_flash: bool) -> usize {
 /// The c1a1b jumpwindow studio sequence carries the houndeye roughly 200 units
 /// away from its actor origin. Expanding every houndeye's sphere would undo
 /// useful culling campaign-wide, so pay for the larger bound only on the actor
-/// whose scripted play clip is present. Slot 5 is fixed by the type-6 roster.
+/// whose scripted play clip is present. Slot 6 is fixed by the type-6 roster.
 #[inline]
 unsafe fn prop_render_radius(pi: usize, ty: u8) -> i32 {
-    const HOUNDEYE_JUMPWINDOW_CLIP: u8 = 5;
+    const HOUNDEYE_JUMPWINDOW_CLIP: u8 = 6;
     const HOUNDEYE_JUMPWINDOW_RADIUS: i32 = 208;
     if ty == PROP_TYPE_HOUNDEYE && PROP_SCRIPT_PLAY_CLIP[pi] == HOUNDEYE_JUMPWINDOW_CLIP {
         HOUNDEYE_JUMPWINDOW_RADIUS
@@ -14177,7 +14205,7 @@ fn prop_anim_frame<const POSE: bool>(
         let clip = SLOTS[sequence].min(md.clip_count().saturating_sub(1));
         return md.one_shot_clip_phase(clip, DURATIONS[sequence], phase);
     }
-    let clip = prop_clip(state, hit_flash > 0);
+    let clip = prop_clip(pi, state, hit_flash > 0);
     // Scripted override: one-shot gesture while its window runs, else the
     // scripted idle pose while the prop is idle (sit1, standing_idle, ...).
     let (clip, scripted_play, scripted_idle) = unsafe {
@@ -14315,7 +14343,15 @@ fn prop_anim_frame<const POSE: bool>(
             if !POSE {
                 return (0, 0, 0);
             }
-            let remaining = unsafe { PROP_AI_TIMER[pi] }.min(action_ticks);
+            let timer = unsafe { PROP_AI_TIMER[pi] };
+            if ty == PROP_TYPE_BARNEY && timer > action_ticks {
+                // Catching sight of an enemy: the draw sequence, in the timer
+                // window above the shot's.
+                let drawn = (action_ticks + BARNEY_DRAW_TICKS).saturating_sub(timer);
+                let draw = PROP_CLIP_ALT.min(md.clip_count().saturating_sub(1));
+                return md.one_shot_clip_phase(draw, BARNEY_DRAW_TICKS as usize, drawn as usize);
+            }
+            let remaining = timer.min(action_ticks);
             let elapsed = action_ticks.saturating_sub(remaining) as usize;
             return md.one_shot_clip_phase(clip, action_ticks as usize, elapsed);
         }
@@ -17165,13 +17201,16 @@ unsafe fn tick_shooter(
             {
                 let damage = skill_damage(ty).unwrap_or(def.atk_damage);
                 damage_target(target, damage, pos, health, armor);
-                // Human weapons crack like an MP5; alien ranged attacks zap.
-                let snd = if ty == 8 || ty >= 20 {
-                    sfx::MP5
-                } else {
-                    sfx::ELECTRO
-                };
-                sfx::play_world(snd, pos);
+                // Human weapons crack like an MP5 (the assassin's silenced pistol
+                // like a glock); the alien grunt and controller have their own
+                // report, the rest zap.
+                match ty {
+                    10 => species::cue_or(hl_format::setpiece_audio::AG_FIRE, sfx::ELECTRO, pos),
+                    11 => species::cue_or(hl_format::setpiece_audio::CON_ATTACK, sfx::ELECTRO, pos),
+                    51 => sfx::play_world(sfx::GLOCK, pos),
+                    8 | 20.. => sfx::play_world(sfx::MP5, pos),
+                    _ => sfx::play_world(sfx::ELECTRO, pos),
+                }
             }
             prop_attack_cooldown_set(pi, def.atk_cooldown);
         }
@@ -17795,6 +17834,7 @@ unsafe fn tick_barney(
     if PROP_AI_TIMER[pi] > 0 {
         PROP_AI_TIMER[pi] -= 1;
     }
+    let had_target = PROP_AI_TARGET[pi] != PROP_TARGET_NONE;
 
     let reacquire = ai_reacquire(pi);
     let target = if reacquire {
@@ -17809,10 +17849,35 @@ unsafe fn tick_barney(
         if let Some(aim) = target_aim_point(target, player_pos, nprops) {
             prop_face_point(pi, aim);
             PROP_AI_TARGET[pi] = target;
+            if !had_target {
+                // Catching sight of an enemy: draw the gun before the first shot.
+                PROP_STATE[pi] = PROP_STATE_ATTACK;
+                PROP_AI_TIMER[pi] = BARNEY_ATTACK_TICKS + BARNEY_DRAW_TICKS;
+                prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(BARNEY_DRAW_TICKS));
+                return;
+            }
             if prop_attack_cooldown(pi) == 0 {
                 PROP_STATE[pi] = PROP_STATE_ATTACK;
                 PROP_AI_TIMER[pi] = BARNEY_ATTACK_TICKS;
                 prop_attack_cooldown_set(pi, BARNEY_ATTACK_COOLDOWN);
+                // Muzzle flash (event 5001) at the gun, a short bright streak.
+                let yaw = prop_yaw_value(PROP_YAW[pi]);
+                let fwd = [sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0x0fff)];
+                let gun = prop_eye(m, pi);
+                let gun = [
+                    gun[0] + ((fwd[0] * 14) >> 12),
+                    gun[1] - 10,
+                    gun[2] + ((fwd[1] * 14) >> 12),
+                ];
+                push_tracer_styled(
+                    gun,
+                    [
+                        gun[0] + ((fwd[0] * 10) >> 12),
+                        gun[1],
+                        gun[2] + ((fwd[1] * 10) >> 12),
+                    ],
+                    TRACER_FLASH,
+                );
                 // CZombie::TakeDamage retains only 30% of DMG_BULLET. Barney's
                 // pistol is the first campaign-visible case (c1a1); without
                 // this the ally deletes its scripted opponent before Gordon
