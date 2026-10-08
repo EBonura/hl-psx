@@ -923,6 +923,27 @@ fn compact_clipnode_remap(clipnodes: &[u8], roots: &[i32]) -> (Vec<i32>, Vec<(us
     (remap, out)
 }
 
+/// Distinct clipnodes reachable from `root` (negative roots are contents).
+fn clip_tree_nodes(clipnodes: &[u8], root: i32) -> usize {
+    let n = clipnodes.len() / SZ_CLIPNODE;
+    let mut seen = vec![false; n];
+    let mut stack = vec![root];
+    let mut count = 0;
+    while let Some(i) = stack.pop() {
+        if i < 0 || i as usize >= n || seen[i as usize] {
+            continue;
+        }
+        seen[i as usize] = true;
+        count += 1;
+        let o = i as usize * SZ_CLIPNODE;
+        for c in 0..2 {
+            let child = i16::from_le_bytes([clipnodes[o + 4 + c * 2], clipnodes[o + 5 + c * 2]]);
+            stack.push(child as i32);
+        }
+    }
+    count
+}
+
 fn remap_clip_head(head: i32, remap: &[i32]) -> i32 {
     if head >= 0 {
         remap.get(head as usize).copied().unwrap_or(-1)
@@ -2413,7 +2434,66 @@ fn patch_blocked_edge_mask(
     mask
 }
 
+/// Face lightmap sampler for light-sample vertices: a vertex cut into a large
+/// lit face by the UV grid takes its shade from the lightmap at its own luxel
+/// instead of a linear blend of the corner shades, so a floor whose lightmap
+/// varies across its span keeps that detail as Gouraud vertices.
+struct LightSampler {
+    lightofs: i32,
+    style0: u8,
+    lit_layers: Vec<(usize, u32)>,
+    lmw: usize,
+    lmh: usize,
+    mins_s: i32,
+    mins_t: i32,
+    /// Cooked-texel to original-texel scale (ow/fw, oh/fh) and the whole-tile
+    /// shift removed from the cooked UVs.
+    scale: (f32, f32),
+    shift: (f32, f32),
+}
+
+impl LightSampler {
+    fn sample(&self, lighting: &[u8], uv: (f32, f32)) -> (u8, u8, u8) {
+        let ou = (uv.0 + self.shift.0) * self.scale.0;
+        let ov = (uv.1 + self.shift.1) * self.scale.1;
+        vertex_shade(
+            lighting,
+            self.lightofs,
+            self.style0,
+            &self.lit_layers,
+            self.lmw,
+            self.lmh,
+            ou,
+            ov,
+            self.mins_s,
+            self.mins_t,
+        )
+    }
+}
+
+/// Faces whose base lightmap spans at least this many luminance levels and
+/// at least [`LIGHT_REFINE_MIN_LUXELS`] luxels are cut on a light-sample grid.
+const LIGHT_REFINE_MIN_CONTRAST: i32 = 28;
+const LIGHT_REFINE_MIN_LUXELS: usize = 6;
+/// Cooked-texel grid step for light-sample vertices (4 luxels).
+const LIGHT_REFINE_GRID: f32 = 64.0;
+/// Per-map ceiling on triangles added for light-sample vertices. Candidates
+/// are taken in descending contrast-times-area order until it is spent.
+const LIGHT_REFINE_MAX_ADDED_TRIS: usize = 1600;
+/// Per-map ceiling on all UV-grid added triangles; hl-build rejects a map above it.
+const GRID_ADDED_TRIS_CEILING: usize = 1_536;
+/// Light-sample refinement stops once a map's cooked triangles pass this count.
+/// The largest maps (c2a4c, c2a4e, c5a1 ...) size the shared MAP_BUF and leave
+/// the weapon cache about a kilobyte of slack, so they must not grow; every
+/// smaller map has the RAM to spend.
+const LIGHT_REFINE_MAX_MAP_TRIS: usize = 15_000;
+
 struct PendingAffineFace {
+    light: Option<LightSampler>,
+    light_score: u64,
+    /// True when the face is grid-cut for texture warp as well; false for a
+    /// face that only the light-sample grid refines.
+    texture_needed: bool,
     face: usize,
     risk: u64,
     priority: u64,
@@ -2728,6 +2808,7 @@ fn emit_uv_grid_poly(
     tri_tex: &mut Vec<u16>,
     tri_uv: &mut Vec<u8>,
     tri_rgb: &mut Vec<u8>,
+    light: Option<&dyn Fn((f32, f32)) -> (u8, u8, u8)>,
 ) -> Option<GridEmitStats> {
     if source.len() < 3 || step <= 0.0 || 256.0 % step != 0.0 {
         return None;
@@ -2761,6 +2842,11 @@ fn emit_uv_grid_poly(
                 clip_grid_half_plane(&clipped, 1, cell_v.1, false, verts, &mut position_cache)?;
             if clipped.len() < 3 {
                 continue;
+            }
+            if let Some(sample) = light {
+                for c in clipped.iter_mut() {
+                    c.shade = sample(c.uv);
+                }
             }
             let cell_tri_first = tri_tex.len();
             let (emitted, pairs) = emit_grid_cell(
@@ -11477,6 +11563,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // brush models retain the established loop/raw paths and entity projection
     // cache; liquids retain their coplanar ordering fallback.
     let mut face_native_patch = vec![false; n_faces];
+    let mut face_affine_candidate_texture = vec![false; n_faces];
     // Masked-cutout faces (grate/fence "{" textures) with solid brushwork close
     // behind them. Only these take the runtime cutout OT pull-forward: a grate
     // must win the painter tie against the slabs it overlays, while a
@@ -11947,7 +12034,46 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let cand_quality = cand_world_span >= AFFINE_QUALITY_MIN_WORLD_SPAN
             && cand_uv_span >= AFFINE_QUALITY_MIN_UV_SPAN;
         face_affine_quality[f] = cand_quality && cand_uv_max <= 255.0;
-        face_affine_candidate[f] = native_patch && (cand_uv_max > 255.0 || cand_quality);
+        // Light-sample vertices: a large face whose base lightmap varies a lot
+        // across its span is cut on a finer grid and each new vertex samples
+        // the lightmap, so the lighting is not reduced to the face corners.
+        let mut light_sampler: Option<LightSampler> = None;
+        let mut light_score = 0u64;
+        if native_patch
+            && lightofs >= 0
+            && style0 != 0xFF
+            && lmw * lmh >= LIGHT_REFINE_MIN_LUXELS
+            && cand_world_span >= AFFINE_QUALITY_MIN_WORLD_SPAN
+        {
+            let mut lum_min = i32::MAX;
+            let mut lum_max = i32::MIN;
+            for i in 0..lmw * lmh {
+                let o = lightofs as usize + i * 3;
+                if let Some(px) = lighting.get(o..o + 3) {
+                    let l = (px[0] as i32 + px[1] as i32 + px[2] as i32) / 3;
+                    lum_min = lum_min.min(l);
+                    lum_max = lum_max.max(l);
+                }
+            }
+            let contrast = lum_max - lum_min;
+            if lum_max >= lum_min && contrast >= LIGHT_REFINE_MIN_CONTRAST {
+                light_score = contrast as u64 * (lmw * lmh) as u64;
+                light_sampler = Some(LightSampler {
+                    lightofs,
+                    style0,
+                    lit_layers: lit_layers.clone(),
+                    lmw,
+                    lmh,
+                    mins_s,
+                    mins_t,
+                    scale: (ow as f32 / fw, oh as f32 / fh),
+                    shift: (shu, shv),
+                });
+            }
+        }
+        face_affine_candidate_texture[f] = native_patch && (cand_uv_max > 255.0 || cand_quality);
+        face_affine_candidate[f] =
+            native_patch && (cand_uv_max > 255.0 || cand_quality || light_sampler.is_some());
         // Preserve the ordered source polygon until the tessellation decision.
         // Large opaque faces are clipped into UV-aligned cells; only untouched
         // faces use the compact source fan.
@@ -11980,7 +12106,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let proximity_boost =
             affine_proximity_boost(face_center[f], face_extent[f], &affine_traversal_samples);
         let detail_boost = affine_texture_detail_boost(&tex_names[tex_id]);
-        let grid_step = if face_affine_quality[f] {
+        let grid_step = if light_sampler.is_some() && !face_affine_candidate_texture[f] {
+            LIGHT_REFINE_GRID
+        } else if face_affine_quality[f] {
             UV_GRID_QUALITY
         } else if world_span >= UV_GRID_FINE_WORLD_SPAN || uv_span >= UV_GRID_FINE_TEXEL_SPAN {
             UV_GRID_FINE
@@ -11994,6 +12122,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             let risk =
                 (world_span as u64).saturating_mul((uv_span.max(0.0) * 256.0).round() as u64);
             pending_affine_faces.push(PendingAffineFace {
+                texture_needed: face_affine_candidate_texture[f],
+                light: light_sampler,
+                light_score,
                 face: f,
                 risk,
                 priority: 0,
@@ -12033,6 +12164,10 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let tex_before = tri_tex.len();
         let uv_before = tri_uv.len();
         let rgb_before = tri_rgb.len();
+        let sampler = pending
+            .light
+            .as_ref()
+            .map(|l| move |uv: (f32, f32)| l.sample(lighting, uv));
         let result = emit_uv_grid_poly(
             &pending.source,
             pending.tex_id,
@@ -12042,6 +12177,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             &mut tri_tex,
             &mut tri_uv,
             &mut tri_rgb,
+            sampler
+                .as_ref()
+                .map(|f| f as &dyn Fn((f32, f32)) -> (u8, u8, u8)),
         );
         let emitted = tri_tex.len().saturating_sub(tex_before);
         pending.estimated_added_tris = if result.is_some() {
@@ -12061,11 +12199,19 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         tri_rgb.truncate(rgb_before);
     }
     pending_affine_faces.sort_unstable_by(|a, b| {
-        b.priority
-            .cmp(&a.priority)
+        // Texture-warp faces are cut first so light-sample refinement only
+        // spends the triangles they leave under the per-map grid ceiling.
+        let a_light_only = a.light.is_some() && !a.texture_needed;
+        let b_light_only = b.light.is_some() && !b.texture_needed;
+        a_light_only
+            .cmp(&b_light_only)
+            .then_with(|| b.priority.cmp(&a.priority))
             .then_with(|| b.risk.cmp(&a.risk))
+            .then_with(|| b.light_score.cmp(&a.light_score))
             .then_with(|| a.face.cmp(&b.face))
     });
+    let mut light_added_tris = 0usize;
+    let mut light_faces = 0usize;
     for pending in pending_affine_faces {
         let f = pending.face;
         let first_tri = tri_idx.len() / 3;
@@ -12075,6 +12221,10 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let tex_before = tri_tex.len();
         let uv_before = tri_uv.len();
         let rgb_before = tri_rgb.len();
+        let sampler = pending
+            .light
+            .as_ref()
+            .map(|l| move |uv: (f32, f32)| l.sample(lighting, uv));
         let grid_result = emit_uv_grid_poly(
             &pending.source,
             pending.tex_id,
@@ -12084,10 +12234,21 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             &mut tri_tex,
             &mut tri_uv,
             &mut tri_rgb,
+            sampler
+                .as_ref()
+                .map(|f| f as &dyn Fn((f32, f32)) -> (u8, u8, u8)),
         );
         let emitted_grid_tris = tri_tex.len().saturating_sub(tex_before);
         let added = emitted_grid_tris.saturating_sub(pending.source_tris);
+        // Light-sample refinement spends its own per-map triangle budget; a
+        // face that needs the grid for texture warp is not charged against it.
+        let light_only = pending.light.is_some() && !pending.texture_needed;
+        let light_over_budget = light_only
+            && (light_added_tris + added > LIGHT_REFINE_MAX_ADDED_TRIS
+                || grid_added_tris + added > GRID_ADDED_TRIS_CEILING
+                || tri_idx.len() / 3 > LIGHT_REFINE_MAX_MAP_TRIS);
         let grid_accepted = grid_result.is_some()
+            && !light_over_budget
             // A one-cell result is the source polygon with a different
             // triangulation. Storing it as raw records wastes RAM and packets
             // without reducing affine error; keep that face as a compact loop.
@@ -12097,6 +12258,10 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             let stats = grid_result.unwrap();
             for pair_first in &stats.pair_first {
                 grid_cell_pair_first.insert(tex_before + *pair_first);
+            }
+            if pending.light.is_some() {
+                light_added_tris += added;
+                light_faces += 1;
             }
             grid_added_tris += added;
             grid_cells += stats.cells;
@@ -12126,6 +12291,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
 
     let grid_added_verts = verts.len().saturating_sub(grid_base_verts);
     let grid_refined_faces = face_affine_refined.iter().filter(|&&v| v).count();
+    eprintln!("  light-sample vertices: +{light_added_tris} tris, {light_faces} faces");
     eprintln!(
         "  UV cell grid: +{grid_added_verts} verts, +{grid_added_tris} tris, {grid_refined_faces} faces, {grid_cells} cells ({grid_quad_cells} quads, {grid_boundary_tris} boundary tris), {grid_budget_fallbacks} fallbacks"
     );
@@ -12943,6 +13109,32 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     for e in &ents {
         clip_roots.push(e.head);
     }
+    // GoldSrc ducks against each submodel's own hull 3 (32x32x36), so a
+    // crouched player fits holes in doors that the standing hull cannot
+    // (c1a0c's broken elevator-door glass). Cook the hull-3 root of every
+    // door; it rides in bits 16..30 of the record's `head`.
+    let ent_head3_raw: Vec<i32> = ents
+        .iter()
+        .map(|e| {
+            // Doors only: they are the brushes with authored holes a ducked
+            // player passes through, and every other brush's hull 3 would
+            // cost clipnode RAM in the largest maps for nothing.
+            // Only a door whose crouch hull has more structure than its
+            // standing hull (a hole or a step) can let a ducked player through
+            // where a standing one cannot, and only small trees (a large one is a whole
+            // machine, and the RAM left in the biggest maps is about a kilobyte).
+            let hull_nodes = |root: i32| clip_tree_nodes(clipnodes, root);
+            let h3 = model_headnode(models, e.submodel as usize, 3).unwrap_or(0);
+            let h1 = model_headnode(models, e.submodel as usize, 1).unwrap_or(0);
+            if e.head != 0 && e.kind == 1 && hull_nodes(h3) > hull_nodes(h1) && hull_nodes(h3) <= 40
+            {
+                h3
+            } else {
+                0
+            }
+        })
+        .collect();
+    clip_roots.extend(ent_head3_raw.iter().copied());
     let shaped = shaped_brush_triggers(&logic.trigger_models, models, clipnodes, planes);
     if !shaped.is_empty() {
         eprintln!("  shaped brush triggers: {} (hull-1 touch)", shaped.len());
@@ -12963,7 +13155,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let hull1_head = remap_clip_head(hull1_head_raw, &clip_remap);
     let hull3_head = remap_clip_head(hull3_head_raw, &clip_remap);
     let tram_head = remap_clip_head(tram_head_raw, &clip_remap);
-    for e in &mut ents {
+    for (e, &raw3) in ents.iter_mut().zip(ent_head3_raw.iter()) {
         // Head 0 marks a non-solid brush (func_water, passable fans and
         // rotators, NOT_SOLID pendulums). Raw clipnode 0 is the world's
         // hull-1 root, so remapping it gave those brushes a copy of the whole
@@ -12971,6 +13163,12 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         // tested against the player-sized world hull.
         if e.head != 0 {
             e.head = remap_clip_head(e.head, &clip_remap);
+            if raw3 != 0 {
+                let h3 = remap_clip_head(raw3, &clip_remap);
+                if h3 > 0 && h3 < 0x8000 && e.head < 0x8000 {
+                    e.head |= h3 << 16;
+                }
+            }
         }
     }
 
@@ -21105,6 +21303,7 @@ mod tests {
             &mut tri_tex,
             &mut tri_uv,
             &mut tri_rgb,
+            None,
         )
         .unwrap();
 
