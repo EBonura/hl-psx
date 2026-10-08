@@ -267,14 +267,14 @@ fn uses_map_variant(ty: u8) -> bool {
 fn base_clip_count(ty: u8) -> usize {
     match ty {
         14 => 2,
-        // Barney's draw, run, second shot and holster sequences follow his five.
-        1 => 9,
+        // Barney's draw sequence follows his five.
+        1 => 6,
         // The bullsquid's whip follows its five.
         7 => 6,
-        // The houndeye's rest and slide follow its five.
-        6 => 7,
-        // The vortigaunt's claw and run follow its five.
-        9 => 7,
+        // The houndeye's rest follows its five.
+        6 => 6,
+        // The vortigaunt's claw follows its five.
+        9 => 6,
         // The gargantua's swipe and stomp sequences follow its five AI clips.
         16 => 7,
         // The nihilanth's attack2, recharge, float_open and attack1_open.
