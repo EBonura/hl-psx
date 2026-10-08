@@ -47,8 +47,6 @@ use psx_goldsrc::route_follow;
 mod apache;
 mod barnacle;
 mod garg;
-mod species;
-mod tripmine;
 mod mortar;
 mod nihilanth;
 mod osprey;
@@ -57,7 +55,9 @@ mod scientist_logic;
 mod scratchpad;
 mod setpiece_logic;
 mod setpiece_sfx;
+mod species;
 mod tank;
+mod tripmine;
 use osprey::{osprey_init, tick_osprey, OSPREY, OSPREY_TILT, PROP_TYPE_OSPREY};
 use psx_goldsrc::semantic_input;
 use tank::{
@@ -3247,7 +3247,8 @@ static mut BEAM_ANIM: u16 = 0;
 // clipping, so a soft-path edge lands bit-identically on the coordinates its
 // fast-path neighbour pushed -- no cross-projector seam.
 static mut SOFT_CACHED_SCREEN: [Option<(i16, i16)>; 3] = [None; 3];
-static mut SOFT_CACHED_CV: [[i32; 3]; 3] = [[0; 3]; 3];// The four GTE-projected corners of the quad the soft quadtree is refining,
+static mut SOFT_CACHED_CV: [[i32; 3]; 3] = [[0; 3]; 3];
+// The four GTE-projected corners of the quad the soft quadtree is refining,
 // keyed by their view-space position. The software projector rounds
 // differently from the GTE (Q12 reciprocal and floor against its unr
 // divide), so an unsnapped corner lands up to a pixel from the coordinate its
@@ -16005,7 +16006,10 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
         return;
     }
-    if PROP_KIND[pi] == tripmine::PROP_TYPE_TRIPMINE { tripmine::shot(pi); return; }
+    if PROP_KIND[pi] == tripmine::PROP_TYPE_TRIPMINE {
+        tripmine::shot(pi);
+        return;
+    }
     // CGargantua::TraceAttack/TakeDamage: only GARG_DAMAGE (blast, energy
     // beam, crush, mortar) hurts, scaled from its 800 HP onto the u8 health;
     // bullets and clubs ricochet.
@@ -17167,7 +17171,9 @@ unsafe fn tick_headcrab(
                     aim[0] - pos[0],
                     aim[2] - pos[2],
                     // Reach the target when the flight ends (8 ticks, as retail).
-                    (isqrt_i32(dist2_xz(pos, aim)) / (PROP_AI_TIMER[pi] - HEADCRAB_ATTACK_IMPACT_TICK) as i32).max(1),
+                    (isqrt_i32(dist2_xz(pos, aim))
+                        / (PROP_AI_TIMER[pi] - HEADCRAB_ATTACK_IMPACT_TICK) as i32)
+                        .max(1),
                     true,
                 );
                 if dist2_xz(PROP_POS[pi], aim) <= 40 * 40 {
@@ -18300,7 +18306,8 @@ unsafe fn tick_props(
         // Keep scripted and seated records on the full path: either can acquire
         // work dynamically even though its initial model definition is idle.
         if ai == AI_IDLE
-            && ty != PROP_TYPE_SITTING_SCI && !species::idle_thinks(ty)
+            && ty != PROP_TYPE_SITTING_SCI
+            && !species::idle_thinks(ty)
             && PROP_SCRIPT_MODE[pi] == 0
             && PROP_SCRIPT_LI[pi] == u16::MAX
             && PROP_SCRIPT_IDLE_CLIP[pi] == 0xFF
@@ -18440,8 +18447,12 @@ unsafe fn tick_props(
             // scan is paid only by staggered sensory checks and has its own
             // cheap segment-vs-sphere broadphase, so it does not restore the
             // old O(props x movers x step probes) frame killer.
-            AI_MELEE => species::tick_melee(m, pm, movers, pi, ty, player_pos, health, armor, nprops),
-            AI_RANGED => species::tick_ranged(m, pm, movers, pi, ty, player_pos, health, armor, nprops),
+            AI_MELEE => {
+                species::tick_melee(m, pm, movers, pi, ty, player_pos, health, armor, nprops)
+            }
+            AI_RANGED => {
+                species::tick_ranged(m, pm, movers, pi, ty, player_pos, health, armor, nprops)
+            }
             AI_TURRET => tick_shooter(m, pm, movers, pi, player_pos, health, armor, nprops, false),
             AI_ALLY => tick_barney(m, pm, movers, pi, player_pos, health, armor, nprops),
             AI_FLEE => tick_scientist(
@@ -23918,8 +23929,16 @@ unsafe fn push_blocked_edge_skirts(
                 nx = -nx;
                 ny = -ny;
             }
-            let ox = if nx.abs() * 2 > ny.abs() { nx.signum() } else { 0 };
-            let oy = if ny.abs() * 2 > nx.abs() { ny.signum() } else { 0 };
+            let ox = if nx.abs() * 2 > ny.abs() {
+                nx.signum()
+            } else {
+                0
+            };
+            let oy = if ny.abs() * 2 > nx.abs() {
+                ny.signum()
+            } else {
+                0
+            };
             let prim = QuadTexturedGouraud {
                 tag: 0,
                 tex_window: mat.tex_window_word,
@@ -24199,7 +24218,12 @@ unsafe fn try_emit_quad_corners(
             if blocked_edges != 0 && !slot.backdrop {
                 push_blocked_edge_skirts(
                     packets,
-                    [(pb.sx, pb.sy), (pa.sx, pa.sy), (pc.sx, pc.sy), (pd.sx, pd.sy)],
+                    [
+                        (pb.sx, pb.sy),
+                        (pa.sx, pa.sy),
+                        (pc.sx, pc.sy),
+                        (pd.sx, pd.sy),
+                    ],
                     uv,
                     qrgb,
                     mat,
@@ -24296,7 +24320,12 @@ unsafe fn try_emit_quad_corners(
         if blocked_edges != 0 && !slot.backdrop {
             push_blocked_edge_skirts(
                 packets,
-                [(pb.sx, pb.sy), (pa.sx, pa.sy), (pc.sx, pc.sy), (pd.sx, pd.sy)],
+                [
+                    (pb.sx, pb.sy),
+                    (pa.sx, pa.sy),
+                    (pc.sx, pc.sy),
+                    (pd.sx, pd.sy),
+                ],
                 uv,
                 qrgb,
                 mat,

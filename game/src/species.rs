@@ -19,13 +19,14 @@ unsafe fn acquire(
     cone: bool,
 ) -> Option<(u8, bool, [i32; 3])> {
     let (target, visible) = if ai_reacquire(pi) {
-        let selected = retained_actor_target(m, sight, pi, player_pos, nprops).unwrap_or_else(|| {
-            if prop_waits_for_trigger(pi) {
-                (PROP_TARGET_NONE, false)
-            } else {
-                find_actor_target(m, sight, pi, player_pos, nprops, wake * wake)
-            }
-        });
+        let selected =
+            retained_actor_target(m, sight, pi, player_pos, nprops).unwrap_or_else(|| {
+                if prop_waits_for_trigger(pi) {
+                    (PROP_TARGET_NONE, false)
+                } else {
+                    find_actor_target(m, sight, pi, player_pos, nprops, wake * wake)
+                }
+            });
         prop_ai_set_target_visible(pi, selected.1);
         selected
     } else {
@@ -80,7 +81,9 @@ pub(crate) unsafe fn tick_grunt(
     nprops: usize,
 ) {
     const RANGE: i32 = 1000;
-    let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, RANGE + 384, false) else {
+    let Some((target, visible, aim)) =
+        acquire(m, sight, pi, player_pos, nprops, RANGE + 384, false)
+    else {
         return;
     };
     let pos = PROP_POS[pi];
@@ -155,7 +158,9 @@ pub(crate) unsafe fn tick_slave(
 ) {
     const RANGE: i32 = 650;
     const CLAW: i32 = 70;
-    let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, RANGE + 300, false) else {
+    let Some((target, visible, aim)) =
+        acquire(m, sight, pi, player_pos, nprops, RANGE + 300, false)
+    else {
         return;
     };
     let pos = PROP_POS[pi];
@@ -232,7 +237,9 @@ pub(crate) unsafe fn tick_ranged(
         7 => tick_squid(m, movers, sight, pi, player_pos, health, armor, nprops),
         8 => tick_grunt(m, movers, sight, pi, player_pos, health, armor, nprops),
         9 => tick_slave(m, movers, sight, pi, player_pos, health, armor, nprops),
-        _ => tick_shooter(m, movers, sight, pi, player_pos, health, armor, nprops, true),
+        _ => tick_shooter(
+            m, movers, sight, pi, player_pos, health, armor, nprops, true,
+        ),
     }
 }
 
@@ -271,10 +278,20 @@ unsafe fn tick_zombie(
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = t - 1;
         let done = if t & 64 != 0 { 32 - left } else { 52 - left };
-        let hit = if t & 64 != 0 { done == 6 } else { done == 12 || done == 24 };
+        let hit = if t & 64 != 0 {
+            done == 6
+        } else {
+            done == 12 || done == 24
+        };
         if hit && d2 <= 76 * 76 {
             let one = skill_damage(PROP_KIND[pi]).unwrap_or(20);
-            damage_target(target, if t & 64 != 0 { one * 2 } else { one }, pos, health, armor);
+            damage_target(
+                target,
+                if t & 64 != 0 { one * 2 } else { one },
+                pos,
+                health,
+                armor,
+            );
             sfx::play_world(sfx::ZO_ATTACK, pos);
         }
     } else if d2 <= 64 * 64 && visible {

@@ -28,7 +28,12 @@ pub(crate) const PROP_TYPE_TRIPMINE: u8 = 57;
 /// Where the beam stops: the first world or brush surface, at most 2,048 away.
 #[inline(never)]
 #[optimize(size)]
-pub(crate) unsafe fn beam_end(m: &Map, movers: &[phys::Mover], from: [i32; 3], dir: [i32; 3]) -> [i32; 3] {
+pub(crate) unsafe fn beam_end(
+    m: &Map,
+    movers: &[phys::Mover],
+    from: [i32; 3],
+    dir: [i32; 3],
+) -> [i32; 3] {
     let far = [
         from[0] + ((dir[0] * BEAM_RANGE) >> 12),
         from[1] + ((dir[1] * BEAM_RANGE) >> 12),

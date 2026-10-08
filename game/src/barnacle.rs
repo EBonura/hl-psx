@@ -55,7 +55,11 @@ unsafe fn find_prey(m: &Map, pi: usize, player_pos: [i32; 3]) -> u8 {
         && phys::line_clear_world(
             m,
             tongue,
-            [player_pos[0], player_pos[1] + PLAYER_HULL_HALF_HEIGHT, player_pos[2]],
+            [
+                player_pos[0],
+                player_pos[1] + PLAYER_HULL_HALF_HEIGHT,
+                player_pos[2],
+            ],
         )
     {
         return PROP_TARGET_PLAYER;
@@ -82,12 +86,7 @@ unsafe fn find_prey(m: &Map, pi: usize, player_pos: [i32; 3]) -> u8 {
 /// One simulation tick of a barnacle: wait, hook, haul, chew.
 #[inline(never)]
 #[optimize(size)]
-pub(crate) unsafe fn tick(
-    m: &Map,
-    pi: usize,
-    player_pos: [i32; 3],
-    health: &mut u16,
-) {
+pub(crate) unsafe fn tick(m: &Map, pi: usize, player_pos: [i32; 3], health: &mut u16) {
     let b = PROP_POS[pi];
     if SIM_NOW.wrapping_sub(LAST_SEEN) > 1 {
         BORN = SIM_NOW;
