@@ -3256,7 +3256,8 @@ static mut SOFT_SNAP: [([i32; 3], i16, i16); 4] = [([0; 3], 0, 0); 4];
 static mut SOFT_SNAP_N: usize = 0;
 
 /// Replace a soft-projected vertex by the GTE coordinate of the same corner.
-#[inline(always)]
+/// Out of line: inlined into the two leaf emitters it cost 2.6 KB of RAM.
+#[inline(never)]
 unsafe fn soft_snap_corner(v: &[i32; 3], s: &mut render::SVert) {
     let n = SOFT_SNAP_N;
     let mut k = 0usize;
