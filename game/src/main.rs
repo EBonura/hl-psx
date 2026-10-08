@@ -12907,6 +12907,7 @@ unsafe fn logic_touch_triggers(
     armor: &mut u16,
     now: u16,
 ) {
+    phys::set_friction_scale(4096);
     // CTriggerHurt::RadiationThink samples the nearest radioactive volume
     // every 0.25 seconds whether or not the player is touching it.
     let geiger_count = GEIGER_COOLDOWN >> 4;
@@ -13098,7 +13099,10 @@ unsafe fn logic_touch_triggers(
                     }
                 }
                 map::LOGIC_TRIGGER_GRAVITY => {
-                    if (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0 {
+                    if rec.flags & map::LOGIC_GRAVITY_FRICTION != 0 {
+                        // CFrictionModifier::ChangeFriction: while touched.
+                        phys::set_friction_scale(rec.arg0 as i32);
+                    } else if (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0 {
                         phys::set_gravity_scale(rec.arg0 as i32);
                     }
                 }
