@@ -3743,6 +3743,19 @@ unsafe fn sway_uv3(uv: [u16; 3]) -> [u16; 3] {
     [sway_uv(uv[0]), sway_uv(uv[1]), sway_uv(uv[2])]
 }
 static mut PUSH_IMPULSE: [i32; 3] = [0; 3]; // per-tick trigger_push velocity add
+/// The room's non-conveyor, non-ONCE trigger_push records (what a monster's
+/// move gets as basevelocity). Empty on the many maps that author none.
+const MAX_PUSH_LI: usize = 32;
+static mut PUSH_LI: [u16; MAX_PUSH_LI] = [0; MAX_PUSH_LI];
+static mut PUSH_N: u8 = 0;
+/// Union of the pushers' boxes: most actors are nowhere near one, and a miss here
+/// skips every per-pusher test.
+static mut PUSH_BOX: [[i32; 3]; 2] = [[0; 3]; 2];
+/// An actor that left the floor under a push: its momentum (vx, down speed,
+/// vz per tick) lives in PROP_SCRIPT_GOAL, unused while no script runs. The bit
+/// is the turret-inactive one, which only AI_TURRET models use, and pushed
+/// walkers are never turrets.
+const PROP_RUNTIME_AIRBORNE: u8 = 8;
 static mut PLAYER_GROUND_ENT: i16 = -1; // brush entity the player stands on (conveyors)
 static mut ENT_ACTIVE: [u8; MAX_ENTS] = [0; MAX_ENTS];
 
@@ -11459,7 +11472,21 @@ unsafe fn maker_make(
     // stock. GoldSrc copies `netname`, not the maker's own targetname, onto
     // a spawned child.
     PROP_NAME[pi] = 0;
-    prop_set_pos(m, &[], pi, PROP_POS[pi]);
+    // CMonsterMaker::MakeMonster creates the child at the maker's origin with
+    // SF_MONSTER_FALL_TO_GROUND, so a walker drops from there instead of
+    // appearing on the floor.
+    let kind = PROP_KIND[pi];
+    if matches!(model_def(kind).ai, AI_MELEE | AI_RANGED | AI_ALLY | AI_FLEE)
+        && kind != PROP_TYPE_CONTROLLER
+        && rec.origin[1] > PROP_POS[pi][1] + 18
+    {
+        let at = [PROP_POS[pi][0], rec.origin[1], PROP_POS[pi][2]];
+        PROP_SCRIPT_GOAL[pi] = [0, 1, 0];
+        PROP_DORMANT[pi] |= PROP_RUNTIME_AIRBORNE;
+        prop_set_pos_exact(m, pi, at);
+    } else {
+        prop_set_pos(m, &[], pi, PROP_POS[pi]);
+    }
     let left = LOGIC_COUNTER[li];
     if left > 0 {
         LOGIC_COUNTER[li] = left - 1;
@@ -13332,6 +13359,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     MONSTER_TRIGGER_FIRST = nlogic as u16;
     MONSTER_TRIGGER_END = 0;
     MONSTER_TOUCH = false;
+    PUSH_N = 0;
     BOSS_WALKER = u16::MAX;
     OSPREY.li = u16::MAX;
     garg::reset();
@@ -13342,6 +13370,28 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     while li < nlogic {
         let rec = m.logic(li);
         LOGIC_KIND[li] = rec.kind;
+        if rec.kind == map::LOGIC_TRIGGER_PUSH
+            && logic_valid_brush(rec.brush, nents).is_none()
+            && rec.spawnflags & 1 == 0
+            && (PUSH_N as usize) < MAX_PUSH_LI
+        {
+            PUSH_LI[PUSH_N as usize] = li as u16;
+            let mut k = 0;
+            while k < 3 {
+                PUSH_BOX[0][k] = if PUSH_N == 0 {
+                    rec.mins[k]
+                } else {
+                    PUSH_BOX[0][k].min(rec.mins[k])
+                };
+                PUSH_BOX[1][k] = if PUSH_N == 0 {
+                    rec.maxs[k]
+                } else {
+                    PUSH_BOX[1][k].max(rec.maxs[k])
+                };
+                k += 1;
+            }
+            PUSH_N += 1;
+        }
         if rec.kind == map::LOGIC_TRIGGER_HURT && rec.flags & map::LOGIC_TRIGGER_HURT_RADIATION != 0
         {
             GEIGER_COOLDOWN = 0xf0;
@@ -14987,6 +15037,207 @@ unsafe fn prop_face_point(pi: usize, p: [i32; 3]) {
         );
         PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], yaw);
     }
+}
+
+/// CTriggerPush::Touch for a monster: the sum of the live, non-ONCE pushers
+/// whose volume the actor's hull touches, as world units per tick (the same
+/// cooked vector the player's basevelocity uses).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_push_vector(m: &Map, pi: usize) -> [i32; 3] {
+    let p = PROP_POS[pi];
+    let (r, h) = prop_hit_extent(PROP_KIND[pi]);
+    let mins = [p[0] - r, p[1], p[2] - r];
+    let maxs = [p[0] + r, p[1] + 2 * h, p[2] + r];
+    let mut v = [0i32; 3];
+    let mut k = 0usize;
+    if mins[0] > PUSH_BOX[1][0]
+        || maxs[0] < PUSH_BOX[0][0]
+        || mins[1] > PUSH_BOX[1][1]
+        || maxs[1] < PUSH_BOX[0][1]
+        || mins[2] > PUSH_BOX[1][2]
+        || maxs[2] < PUSH_BOX[0][2]
+    {
+        return v;
+    }
+    while k < PUSH_N as usize {
+        let li = PUSH_LI[k] as usize;
+        k += 1;
+        if LOGIC_STATE[li] == LOGIC_STATE_TOP
+            || LOGIC_STATE[li] == LOGIC_STATE_REMOVED
+            || !m.logic_touches_bounds(li, mins, maxs)
+        {
+            continue;
+        }
+        let rec = m.logic(li);
+        if rec.brush != map::LOGIC_BRUSH_NONE
+            && rec.brush & map::LOGIC_BRUSH_SHAPE != 0
+            && !phys::inside_clip_hull(m, (rec.brush & !map::LOGIC_BRUSH_SHAPE) as i16, p)
+        {
+            continue;
+        }
+        if rec.aux_count >= 2 {
+            let a = m.logic_aux(rec.first_aux);
+            let b = m.logic_aux(rec.first_aux + 1);
+            v[0] += a.target as i16 as i32;
+            v[1] += a.delay_ticks as i16 as i32;
+            v[2] += b.target as i16 as i32;
+        }
+    }
+    v
+}
+
+/// Move a pushed actor one tick. It slides along a floor like a walker does; a
+/// floor that drops away hands it to the air integrator with the push as its
+/// momentum, as GoldSrc's STEP physics keeps the velocity off a ledge. Returns
+/// true while the actor is airborne.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_push_step(m: &Map, movers: &[phys::Mover], pi: usize, v: [i32; 3]) -> bool {
+    let ty = PROP_KIND[pi];
+    let pos = PROP_POS[pi];
+    let cand = [pos[0] + v[0], pos[1], pos[2] + v[2]];
+    if v[0] != 0 || v[2] != 0 {
+        let from = prop_target(ty, pos);
+        let to = prop_target(ty, cand);
+        if !phys::line_clear_world(m, from, to)
+            || !phys::actor_line_clear_movers(m, movers, from, to)
+            || in_monsterclip(to, 0)
+        {
+            return false;
+        }
+    }
+    refresh_prop_near_ents(movers, pi);
+    if v[1] <= 0 {
+        // GoldSrc supports an actor while any part of its hull base touches
+        // floor, so sample the hull footprint, not only its origin.
+        match prop_spawn_floor_y_down(m, pi, cand, prop_hit_extent(ty).0, PROP_GROUND_PROBE_DOWN) {
+            // A drop steeper than 45 degrees is not standable ground (a ramp
+            // the actor slides off), only a step or a walkable slope is.
+            Some(y) if y - pos[1] <= 18 && pos[1] - y <= 18i32.min(v[0].abs().max(v[2].abs())) => {
+                prop_set_pos_grounded(m, pi, [cand[0], y, cand[2]]);
+                return false;
+            }
+            Some(y) if y > pos[1] => return false,
+            _ => {}
+        }
+    }
+    // The floor is more than a step below (or the push lifts the actor): fly.
+    let hx = v[0].clamp(-127, 127) as i16;
+    let hz = v[2].clamp(-127, 127) as i16;
+    let up = v[1].clamp(0, 100);
+    PROP_SCRIPT_GOAL[pi] = [hx, (if up > 0 { -up } else { 1 }) as i16, hz];
+    PROP_DORMANT[pi] |= PROP_RUNTIME_AIRBORNE;
+    PROP_NEAR_COUNT[pi] = 0xFF;
+    prop_set_pos_exact(m, pi, cand);
+    true
+}
+
+/// Integrate one tick of an airborne actor: gravity (800 u/s^2 is 2 u/tick^2
+/// at 20 Hz), the momentum it left the floor with, and a landing on whatever
+/// the column below holds. Returns true while it is still in the air.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_air_tick(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
+    let ty = PROP_KIND[pi];
+    let pos = PROP_POS[pi];
+    let a = PROP_SCRIPT_GOAL[pi];
+    // GoldSrc adds gravity before the move: the fall is 2, 4, 6, ... units per tick.
+    let vy = (a[1] as i32 + 1).min(100);
+    let mut cand = [pos[0] + a[0] as i32, pos[1] - vy, pos[2] + a[2] as i32];
+    // Zero marks "grounded", so the apex of an upward push steps to 1.
+    let next_vy = a[1] as i32 + 2;
+    let mut momentum = [
+        a[0],
+        (if next_vy == 0 {
+            1
+        } else {
+            next_vy.clamp(-100, 100)
+        }) as i16,
+        a[2],
+    ];
+    if (a[0] != 0 || a[2] != 0) && {
+        let from = prop_target(ty, pos);
+        let to = prop_target(ty, [cand[0], pos[1], cand[2]]);
+        !phys::line_clear_world(m, from, to)
+            || !phys::actor_line_clear_movers(m, movers, from, to)
+            || in_monsterclip(to, 0)
+    } {
+        cand[0] = pos[0];
+        cand[2] = pos[2];
+        momentum[0] = 0;
+        momentum[2] = 0;
+    }
+    if vy > 0 {
+        refresh_prop_near_ents(movers, pi);
+        let landing = prop_spawn_floor_y_down(
+            m,
+            pi,
+            [cand[0], pos[1], cand[2]],
+            prop_hit_extent(ty).0,
+            vy + PROP_GROUND_PROBE_UP,
+        );
+        if let Some(y) = landing {
+            if y >= cand[1] && y <= pos[1] + PROP_GROUND_PROBE_UP {
+                // Landing on a slope steeper than 45 degrees: the actor keeps
+                // sliding down it with its horizontal momentum.
+                let ahead = [
+                    cand[0] + 8 * momentum[0].signum() as i32,
+                    pos[1],
+                    cand[2] + 8 * momentum[2].signum() as i32,
+                ];
+                let steep = (momentum[0] != 0 || momentum[2] != 0)
+                    && prop_spawn_floor_y_down(m, pi, ahead, prop_hit_extent(ty).0, vy + 64)
+                        .is_some_and(|y1| y - y1 > 8);
+                if steep {
+                    momentum[1] = 1;
+                    PROP_SCRIPT_GOAL[pi] = momentum;
+                    prop_set_pos_exact(m, pi, [cand[0], y, cand[2]]);
+                    return true;
+                }
+                PROP_DORMANT[pi] &= !PROP_RUNTIME_AIRBORNE;
+                prop_set_pos_exact(m, pi, [cand[0], y, cand[2]]);
+                return false;
+            }
+        }
+    }
+    if cand[1] < -20000 {
+        PROP_DORMANT[pi] &= !PROP_RUNTIME_AIRBORNE;
+        return false;
+    }
+    PROP_SCRIPT_GOAL[pi] = momentum;
+    prop_set_pos_exact(m, pi, cand);
+    true
+}
+
+/// Environment forces on one actor before its AI thinks: airborne integration
+/// and trigger_push. True when the actor spent the tick in the air.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_environment_move(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
+    if PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0 {
+        return prop_air_tick(m, movers, pi);
+    }
+    // A placed monster that has not been seen is GoldSrc's WaitTillSeen
+    // dormant (SOLID_NOT, never relinked), which no pusher moves; maker
+    // children and engaged actors are live.
+    if PUSH_N == 0
+        || !matches!(
+            model_def(PROP_KIND[pi]).ai,
+            AI_MELEE | AI_RANGED | AI_ALLY | AI_FLEE
+        )
+        || PROP_SCRIPT_MODE[pi] != 0 // PROP_SCRIPT_GOAL holds the momentum while airborne
+        || (PROP_MAKER[pi] == 0
+            && PROP_AI_TARGET[pi] == PROP_TARGET_NONE
+            && PROP_STATE[pi] == PROP_STATE_IDLE)
+    {
+        return false;
+    }
+    let v = prop_push_vector(m, pi);
+    if v == [0; 3] {
+        return false;
+    }
+    prop_push_step(m, movers, pi, v)
 }
 
 #[inline(never)]
@@ -18404,6 +18655,12 @@ unsafe fn tick_props(
             PROP_STATE[pi] = PROP_STATE_DEAD;
             PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
             PROP_AI_TIMER[pi] = 0;
+            pi += 1;
+            continue;
+        }
+        if (PUSH_N != 0 || PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0)
+            && prop_environment_move(m, movers, pi)
+        {
             pi += 1;
             continue;
         }
