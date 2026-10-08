@@ -23822,6 +23822,74 @@ unsafe fn emit_cv_clipped(
         WORLD_AFFINE_EXTRA_EMITTED.saturating_add(emitted.saturating_sub(1));
 }
 
+/// One-pixel skirt along each cook-blocked edge of a patch. A blocked edge
+/// still carries a neighbour's T-junction vertices, which were rounded onto
+/// the integer grid independently of this patch's straight edge, so the two
+/// meet up to a pixel apart and a column of the clear colour shows between
+/// them. The skirt (the edge's own texels, one pixel further out) covers it
+/// for one packet per blocked edge instead of reopening the cook. It is keyed
+/// at the far end of the ordering table, so it is drawn before everything
+/// else and only ever shows where nothing else was drawn: a silhouette edge
+/// gets no halo.
+/// `q` is the GT4 order (b, a, c, d); bits 0..3 are the edges (q0,q1),
+/// (q1,q3), (q3,q2) and (q2,q0).
+#[inline(never)]
+unsafe fn push_blocked_edge_skirts(
+    packets: &mut PrimitivePacketArena<'_>,
+    q: [(i16, i16); 4],
+    uv: [u16; 4],
+    rgb: [u32; 4],
+    mat: TexturedGouraudPacketMaterial,
+    otz: usize,
+    blocked_edges: u8,
+    nq: &mut usize,
+) {
+    const RING: [(usize, usize); 4] = [(0, 1), (1, 3), (3, 2), (2, 0)];
+    let cx = (q[0].0 as i32 + q[1].0 as i32 + q[2].0 as i32 + q[3].0 as i32) >> 2;
+    let cy = (q[0].1 as i32 + q[1].1 as i32 + q[2].1 as i32 + q[3].1 as i32) >> 2;
+    let mut e = 0;
+    while e < 4 {
+        if blocked_edges & (1 << e) != 0 && packets.remaining() > WORLD_AFFINE_PACKET_RESERVE {
+            let (i, j) = RING[e];
+            let (ax, ay) = (q[i].0 as i32, q[i].1 as i32);
+            let (bx, by) = (q[j].0 as i32, q[j].1 as i32);
+            // Edge normal pointing away from the patch centre.
+            let (mut nx, mut ny) = (by - ay, ax - bx);
+            if nx * ((ax + bx) / 2 - cx) + ny * ((ay + by) / 2 - cy) < 0 {
+                nx = -nx;
+                ny = -ny;
+            }
+            let ox = if nx.abs() * 2 > ny.abs() { nx.signum() } else { 0 };
+            let oy = if ny.abs() * 2 > nx.abs() { ny.signum() } else { 0 };
+            let prim = QuadTexturedGouraud {
+                tag: 0,
+                tex_window: mat.tex_window_word,
+                color0_cmd: (mat.color0_command_word | 0x0800_0000) | rgb[i],
+                v0: pack_vertex_word(q[i].0, q[i].1),
+                uv0_clut: uv[i] as u32 | mat.clut_high_word,
+                color1: rgb[j],
+                v1: pack_vertex_word(q[j].0, q[j].1),
+                uv1_tpage: uv[j] as u32 | mat.tpage_high_word,
+                color2: rgb[i],
+                v2: pack_vertex_word((ax + ox) as i16, (ay + oy) as i16),
+                uv2: uv[i] as u32,
+                color3: rgb[j],
+                v3: pack_vertex_word((bx + ox) as i16, (by + oy) as i16),
+                uv3: uv[j] as u32,
+            };
+            if let Some(packet) = packets.push(prim) {
+                world_ot().resume_frame().add_raw(
+                    otz,
+                    core::ptr::from_mut(packet).cast(),
+                    QuadTexturedGouraud::WORDS,
+                );
+                *nq += 1;
+            }
+        }
+        e += 1;
+    }
+}
+
 unsafe fn try_emit_tri_pair_quad_values(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
@@ -24069,6 +24137,18 @@ unsafe fn try_emit_quad_corners(
             false
         };
         if emitted {
+            if blocked_edges != 0 && !slot.backdrop {
+                push_blocked_edge_skirts(
+                    packets,
+                    [(pb.sx, pb.sy), (pa.sx, pa.sy), (pc.sx, pc.sy), (pd.sx, pd.sy)],
+                    uv,
+                    qrgb,
+                    mat,
+                    OT_LEN - 1,
+                    blocked_edges,
+                    nq,
+                );
+            }
             return true;
         }
         // Second classic band: severe error routes to the recursive
@@ -24154,6 +24234,18 @@ unsafe fn try_emit_quad_corners(
     *nq += 1;
     if native_patch {
         WORLD_AFFINE_NATIVE_GT4 = WORLD_AFFINE_NATIVE_GT4.saturating_add(1);
+        if blocked_edges != 0 && !slot.backdrop {
+            push_blocked_edge_skirts(
+                packets,
+                [(pb.sx, pb.sy), (pa.sx, pa.sy), (pc.sx, pc.sy), (pd.sx, pd.sy)],
+                uv,
+                qrgb,
+                mat,
+                OT_LEN - 1,
+                blocked_edges,
+                nq,
+            );
+        }
     }
     true
 }
