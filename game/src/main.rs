@@ -7911,10 +7911,12 @@ unsafe fn push_actors_from_mover(m: &Map, movers: &[phys::Mover], ei: usize, d: 
         let c = [p[0], p[1] + 36, p[2]];
         if PROP_ACTIVE[pi] != 0
             && PROP_HEALTH[pi] != 0
-            && !phys::mover_clear_at(m, movers, ei as i32, c)
+            && !phys::mover_clear_at_hull(m, movers, ei as i32, c, m.hull1_head)
         {
             let moved = [c[0] + d[0], c[1] + d[1], c[2] + d[2]];
-            if phys::standing_fits(m, moved) && phys::movers_clear_at(m, movers, moved) {
+            if phys::standing_fits(m, moved)
+                && phys::movers_clear_at_hull(m, movers, moved, m.hull1_head)
+            {
                 prop_set_pos_exact(m, pi, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
             } else {
                 mover_blocked(m, ei, pi);
@@ -33421,7 +33423,8 @@ fn play(
                 } else {
                     tram_logic::rider_over_tram_footprint(raw[0], raw[2])
                 };
-                let clear_of_tram_hull = phys::mover_clear_at(&m, movers, -2, player.pos);
+                let clear_of_tram_hull =
+                    phys::mover_clear_at_hull(&m, movers, -2, player.pos, m.hull1_head);
                 match tram_logic::rider_motion_decision(supported, clear_of_tram_hull) {
                     tram_logic::RiderMotionDecision::Restore => {
                         // Ordinary mover traces suppress startsolid so a tiny
