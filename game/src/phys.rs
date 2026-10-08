@@ -36,6 +36,13 @@ const GRAVITY_Q6: i32 = 2 * 64;
 // trigger_gravity zones scale gravity (q12; 4096 = normal). Sticky until the
 // next zone or map load, matching GoldSrc's sv_gravity behaviour.
 static mut GRAVITY_SCALE: i32 = 4096;
+/// pev->friction while the player touches a func_friction volume, Q12; the
+/// engine restores 1.0 each tick and the touch scan lowers it again.
+static mut FRICTION_SCALE: i32 = 4096;
+
+pub fn set_friction_scale(scale_q12: i32) {
+    unsafe { FRICTION_SCALE = scale_q12.clamp(0, 4096 * 4) };
+}
 
 pub fn set_gravity_scale(scale_q12: i32) {
     unsafe { GRAVITY_SCALE = scale_q12.clamp(0, 4096 * 4) };
@@ -2635,7 +2642,9 @@ impl Player {
             // truncate from 2 to 1 to 0 while the dominant axis is 16.
             let speed_fine = isqrt_i32(fine_x * fine_x + fine_z * fine_z);
             if speed_fine > 0 {
-                let drop_fine = speed_fine.max(STOP_SPEED * PLANAR_FRAC_ONE) / 5;
+                let drop_fine = unsafe {
+                    speed_fine.max(STOP_SPEED * PLANAR_FRAC_ONE) / 5 * FRICTION_SCALE >> 12
+                };
                 let new_speed_fine = (speed_fine - drop_fine).max(0);
                 let scale_q12 = (new_speed_fine * 4096) / speed_fine;
                 fine_x = mul_q12_round(fine_x, scale_q12);
