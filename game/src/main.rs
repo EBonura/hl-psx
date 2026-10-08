@@ -13046,9 +13046,9 @@ unsafe fn logic_touch_triggers(
                                 if *health > 0 {
                                     *health = (*health + rec.arg0).min(PLAYER_START_HEALTH);
                                 }
-                            } else {
+                            } else if rec.arg0 != 0 {
                                 note_damage_direction(logic_center(rec));
-                                damage_player(health, armor, rec.arg0.max(1));
+                                damage_player(health, armor, rec.arg0);
                             }
                             logic_sub_use_targets(
                                 m,
