@@ -157,6 +157,16 @@ inlining threshold it linked at to `game/pgo/`. Every other build links with
 that committed profile, because HL-PSX no longer fits in RAM without one, so
 commit `game/pgo/` after a `pgo` run to make it the default.
 
+Add `--polls FROM..TO`, the gameplay window of the first recording in port-1
+polls (`1200..5900` for the chapter-two one), and `pgo` also collects an
+instruction-cache layout: it counts every instruction word the window runs and
+saves that as `game/pgo/hl-psx.layout`. The R3000's 4 KB instruction cache is
+direct-mapped, so which functions share a cache set decides how often hot code
+evicts itself. Every later build places the functions with that layout and
+links twice (the code is identical, only its addresses move); a layout that no
+longer binds to the code is reported and skipped. Collect it again whenever
+the profile is.
+
 `HL_DIR`, `PSOXIDE`, and `GAMES_DIR` are accepted as environment defaults.
 Normal builds hydrate the exact SDK, emulator support crates, and editor/engine
 revisions in `components.lock.json`, verifying imported file hashes before reuse.
