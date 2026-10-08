@@ -2873,6 +2873,139 @@ static mut POSE_SCRATCH: [psx_asset::hma1::Affine; POSE_SCRATCH_BONES] =
 unsafe fn pose_scratch() -> &'static mut [psx_asset::hma1::Affine] {
     unsafe { &mut *core::ptr::addr_of_mut!(POSE_SCRATCH) }
 }
+// Pose cross-fade. GoldSrc blends a monster's previous sequence out over 0.2 s
+// whenever its sequence changes; the port cut straight to the new clip, which
+// read as a snap (a gun appearing, an idle becoming a shot). Drawing keeps the
+// last clip and source position each actor showed; a different clip starts a
+// blend from that frozen pose, weighted 4/4 .. 1/4 over the next four ticks.
+const BLEND_TICKS: u8 = 4;
+const BLEND_POOL: usize = 6;
+/// The cross-fade needs two decoded poses in the 80-bone scratch, so it
+/// covers models of up to this many bones (every monster but the largest).
+const BLEND_BONES: usize = POSE_SCRATCH_BONES / 2;
+static mut PROP_SEEN_CLIP: [u8; MAX_PROPS] = [0xFF; MAX_PROPS];
+static mut PROP_SEEN_POS: [u16; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_SEEN_AT: [u8; MAX_PROPS] = [0; MAX_PROPS];
+/// Active blends: actor (0xFF free), old clip, tick it began (low byte), old position.
+static mut BLENDS: [(u8, u8, u8, u16); BLEND_POOL] = [(0xFF, 0, 0, 0); BLEND_POOL];
+/// The blend the next `draw_model` applies: old clip, old position, weight of
+/// the old pose in sixteenths (0: none).
+static mut CROSSFADE: (u8, u16, u8) = (0, 0, 0);
+
+/// Note the pose actor `pi` is about to draw (`clip`, `pos`: source frames * 256)
+/// and set `CROSSFADE` for it.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn crossfade_prepare(pi: usize, clip: usize, pos: u32, now: u32) {
+    CROSSFADE = (0, 0, 0);
+    let (now, clip8, pos16) = (now as u8, clip.min(0xFE) as u8, pos.min(0xFFFF) as u16);
+    let last = PROP_SEEN_CLIP[pi];
+    if last != clip8 && last != 0xFF && now.wrapping_sub(PROP_SEEN_AT[pi]) <= 2 {
+        // A new sequence: blend out of the pose last shown. Take a free slot, else the oldest.
+        let mut slot = 0usize;
+        let mut oldest = 0u8;
+        let mut i = 0usize;
+        while i < BLEND_POOL {
+            let age = if BLENDS[i].0 == 0xFF {
+                0xFF
+            } else {
+                now.wrapping_sub(BLENDS[i].2)
+            };
+            if age >= oldest {
+                oldest = age;
+                slot = i;
+            }
+            i += 1;
+        }
+        BLENDS[slot] = (pi as u8, last, now, PROP_SEEN_POS[pi]);
+    }
+    PROP_SEEN_CLIP[pi] = clip8;
+    PROP_SEEN_POS[pi] = pos16;
+    PROP_SEEN_AT[pi] = now;
+    let mut i = 0usize;
+    while i < BLEND_POOL {
+        if BLENDS[i].0 as usize == pi {
+            let age = now.wrapping_sub(BLENDS[i].2);
+            if age >= BLEND_TICKS {
+                BLENDS[i].0 = 0xFF;
+            } else {
+                CROSSFADE = (BLENDS[i].1, BLENDS[i].3, 16 - age * (16 / BLEND_TICKS));
+            }
+            return;
+        }
+        i += 1;
+    }
+}
+
+/// The pose `md.pose` would decode, mixed with the pose of the clip being
+/// faded out. Rotations mix element-wise and are scaled back toward unit
+/// length (one Newton step on each row); translations mix linearly.
+#[inline(never)]
+unsafe fn crossfade_pose<'a>(
+    md: &'a Model,
+    clip: usize,
+    pos: u32,
+    mouth: u8,
+) -> psx_asset::hmd8::Pose<'a> {
+    let (old_clip, old_pos, weight) = CROSSFADE;
+    let faded = match md.tracks() {
+        Some(tracks) if tracks.model.bone_count() <= BLEND_BONES => {
+            let jaw = match tracks.jaw {
+                Some(j) => psx_asset::hma1::Jaw::open(j.bone, j.post, j.open, mouth),
+                None => psx_asset::hma1::Jaw::NONE,
+            };
+            let (new, old) = pose_scratch().split_at_mut(BLEND_BONES);
+            let clips = md.clip_count().saturating_sub(1);
+            tracks.model.decode_with(clip.min(clips), pos, &jaw, new);
+            tracks
+                .model
+                .decode_with((old_clip as usize).min(clips), old_pos as u32, &jaw, old);
+            let (w, v) = (weight as i32, 16 - weight as i32);
+            let mut b = 0usize;
+            while b < tracks.model.bone_count() {
+                let (n, o) = (&mut new[b], &old[b]);
+                let mut row = 0usize;
+                while row < 3 {
+                    let mut mixed = [0i32; 3];
+                    let mut norm = 0i32;
+                    let mut c = 0usize;
+                    while c < 3 {
+                        mixed[c] = (n.r[row][c] as i32 * v + o.r[row][c] as i32 * w) >> 4;
+                        norm += (mixed[c] * mixed[c]) >> 12;
+                        c += 1;
+                    }
+                    // 4096 is unit length squared in Q12; scale = 1.5 - 0.5 * norm.
+                    let scale = 6144 - (norm >> 1);
+                    c = 0;
+                    while c < 3 {
+                        n.r[row][c] = ((mixed[c] * scale) >> 12).clamp(-32768, 32767) as i16;
+                        c += 1;
+                    }
+                    row += 1;
+                }
+                c_mix(&mut n.t, &o.t, v, w);
+                b += 1;
+            }
+            Some((tracks.map, tracks.model.bone_count()))
+        }
+        _ => None,
+    };
+    match faded {
+        Some((map, bones)) => psx_asset::hmd8::Pose::Tracks {
+            map,
+            bones: &pose_scratch()[..bones],
+        },
+        None => md.pose(clip, clip, pos, mouth, pose_scratch()),
+    }
+}
+
+#[inline(always)]
+fn c_mix(a: &mut [i32; 3], b: &[i32; 3], v: i32, w: i32) {
+    a[0] = (a[0] * v + b[0] * w) >> 4;
+    a[1] = (a[1] * v + b[1] * w) >> 4;
+    a[2] = (a[2] * v + b[2] * w) >> 4;
+}
+
 static mut WEAPON_CACHE_VERTS: usize = 0;
 static mut WEAPON_CACHE_SCALE: u16 = 0;
 
@@ -28272,7 +28405,11 @@ unsafe fn project_hmd7_model_inner(
     projected_xy: *mut u32,
     projected_z: *mut u16,
 ) {
-    let pose = md.pose(frame, frame2, frac16, mouth, unsafe { pose_scratch() });
+    let pose = if unsafe { CROSSFADE.2 } != 0 {
+        unsafe { crossfade_pose(md, frame, frac16, mouth) }
+    } else {
+        md.pose(frame, frame2, frac16, mouth, unsafe { pose_scratch() })
+    };
     // Every cook is struct-of-arrays, so each range below is one checked
     // slice of this view and its vertices stream with no per-index check.
     let words = md.vertex_words();
@@ -35361,6 +35498,12 @@ fn play(
                         false,
                     )
                 };
+                if sf == sf2 && md.has_tracks() {
+                    // HMA1 pose triple: (clip, clip, source position * 256).
+                    crossfade_prepare(pi, sf, sfrac, sim_frame_no);
+                } else {
+                    CROSSFADE = (0, 0, 0);
+                }
                 let base_shade = if ty == PROP_TYPE_ITEM_SUIT || ty == PROP_TYPE_ITEM_BATTERY {
                     128
                 } else if ty == PROP_TYPE_HOLO {
@@ -35403,6 +35546,7 @@ fn play(
                     &rot,
                     &mut np,
                 ));
+                CROSSFADE = (0, 0, 0);
                 // HMD8 projection leaves the final bone affine resident. The
                 // next actor's GTE sphere test needs the world camera again.
                 scene::load_rotation(&rot);
