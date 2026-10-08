@@ -2891,7 +2891,43 @@ unsafe fn invalidate_weapon_tri_cache() {
     WEAPON_CACHE_SCALE = 0;
 }
 static mut PROJ_TOKEN: u16 = 1; // shared world/submodel projection token
+                                // Telemetry only (see `WorldCounters`): kept out of builds that cannot report
+                                // it, where it was a RAM load and store per projected vertex.
+#[cfg(any(feature = "emulator-telemetry", feature = "performance-telemetry"))]
 static mut ROOM_PROJECTED_COUNT: u32 = 0;
+
+/// Count `n` vertices projected for the room this frame.
+#[inline(always)]
+unsafe fn note_room_projected(n: u32) {
+    #[cfg(any(feature = "emulator-telemetry", feature = "performance-telemetry"))]
+    {
+        ROOM_PROJECTED_COUNT = ROOM_PROJECTED_COUNT.saturating_add(n);
+    }
+    #[cfg(not(any(feature = "emulator-telemetry", feature = "performance-telemetry")))]
+    let _ = n;
+}
+
+/// Vertices projected for the room this frame, as `note_room_projected` counted.
+#[inline(always)]
+unsafe fn room_projected() -> u32 {
+    #[cfg(any(feature = "emulator-telemetry", feature = "performance-telemetry"))]
+    {
+        ROOM_PROJECTED_COUNT
+    }
+    #[cfg(not(any(feature = "emulator-telemetry", feature = "performance-telemetry")))]
+    {
+        0
+    }
+}
+
+/// Start the room's projected-vertex count over.
+#[inline(always)]
+unsafe fn reset_room_projected() {
+    #[cfg(any(feature = "emulator-telemetry", feature = "performance-telemetry"))]
+    {
+        ROOM_PROJECTED_COUNT = 0;
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct WorldProjectionKey {
     room_id: u16,
@@ -22610,7 +22646,7 @@ unsafe fn project_vert_fixed(m: &Map, i: usize) -> Projected {
 unsafe fn cache_projected_vert(i: usize, frame: u16, v: Vec3I16, projected: Projected) {
     scratch_set(i, fix_projected_vertex(v, projected));
     VERT_FRAME[i] = frame as u8;
-    ROOM_PROJECTED_COUNT = ROOM_PROJECTED_COUNT.saturating_add(1);
+    note_room_projected(1);
 }
 
 /// Project vertex `i` into the cache once per frame (base view matrix).
@@ -24363,6 +24399,12 @@ unsafe fn try_emit_quad_corners(
     true
 }
 
+/// Per-frame room draw tallies. They only feed `telemetry::counter`, which is
+/// a no-op outside an emulator-telemetry build, but they are passed by
+/// reference into the emitters, so a plain struct costs a RAM load and store
+/// (the R3000 has no data cache) at every emit call of every frame. Without a
+/// telemetry feature it is an empty type and the updates vanish.
+#[cfg(any(feature = "emulator-telemetry", feature = "performance-telemetry"))]
 #[derive(Clone, Copy)]
 struct WorldCounters {
     cells_considered: u32,
@@ -24372,6 +24414,11 @@ struct WorldCounters {
     emit_calls: u32,
 }
 
+#[cfg(not(any(feature = "emulator-telemetry", feature = "performance-telemetry")))]
+#[derive(Clone, Copy)]
+struct WorldCounters;
+
+#[cfg(any(feature = "emulator-telemetry", feature = "performance-telemetry"))]
 impl WorldCounters {
     const fn new() -> WorldCounters {
         WorldCounters {
@@ -24381,6 +24428,63 @@ impl WorldCounters {
             surfaces_considered: 0,
             emit_calls: 0,
         }
+    }
+    #[inline(always)]
+    fn note_emitted(&mut self, calls: u32) {
+        self.emit_calls += calls;
+    }
+    #[inline(always)]
+    fn note_surface(&mut self) {
+        self.surfaces_considered += 1;
+    }
+    #[inline(always)]
+    fn set_pvs(&mut self, leaves: u32, faces: u32) {
+        self.cells_considered = leaves;
+        self.cells_drawn = leaves;
+        self.surfaces_considered = faces;
+    }
+    fn cells_considered(&self) -> u32 {
+        self.cells_considered
+    }
+    fn cells_drawn(&self) -> u32 {
+        self.cells_drawn
+    }
+    fn cells_culled(&self) -> u32 {
+        self.cells_culled
+    }
+    fn surfaces_considered(&self) -> u32 {
+        self.surfaces_considered
+    }
+    fn emit_calls(&self) -> u32 {
+        self.emit_calls
+    }
+}
+
+#[cfg(not(any(feature = "emulator-telemetry", feature = "performance-telemetry")))]
+impl WorldCounters {
+    const fn new() -> WorldCounters {
+        WorldCounters
+    }
+    #[inline(always)]
+    fn note_emitted(&mut self, _calls: u32) {}
+    #[inline(always)]
+    fn note_surface(&mut self) {}
+    #[inline(always)]
+    fn set_pvs(&mut self, _leaves: u32, _faces: u32) {}
+    fn cells_considered(&self) -> u32 {
+        0
+    }
+    fn cells_drawn(&self) -> u32 {
+        0
+    }
+    fn cells_culled(&self) -> u32 {
+        0
+    }
+    fn surfaces_considered(&self) -> u32 {
+        0
+    }
+    fn emit_calls(&self) -> u32 {
+        0
     }
 }
 
@@ -25556,7 +25660,7 @@ unsafe fn emit_affine_quad_children(
         nudge(&mut right, c1, c3, c0);
         nudge(&mut bottom, c2, c3, c0);
     }
-    ROOM_PROJECTED_COUNT = ROOM_PROJECTED_COUNT.saturating_add(5);
+    note_room_projected(5);
     WORLD_AFFINE_ADDED_GTE_TRANSFORMS = WORLD_AFFINE_ADDED_GTE_TRANSFORMS.saturating_add(5);
     work.add(0).write(top);
     work.add(1).write(left);
@@ -26601,7 +26705,7 @@ unsafe fn emit_world_tri(
     proj_vert(m, a, frame);
     proj_vert(m, b, frame);
     proj_vert(m, c, frame);
-    counts.emit_calls += 1;
+    counts.note_emitted(1);
     let (pa, pb, pc) = (scratch_get(a), scratch_get(b), scratch_get(c));
     xhair_consider(m, tt, pa, pb, pc); // pick covers fast + soft-clip paths
     if emit_proj_fast(packets, m, tt, pa, pb, pc, np) {
@@ -27056,7 +27160,7 @@ unsafe fn emit_world_face_tris(
                 try_emit_tri_pair_quad_values(packets, m, t0, t1, frame, affine_face, np, nq)
             };
             if paired {
-                counts.emit_calls += 2;
+                counts.note_emitted(2);
                 tt += 2;
                 continue;
             }
@@ -27084,7 +27188,7 @@ unsafe fn emit_world_loop_tri(
     proj_vert(m, a, frame);
     proj_vert(m, b, frame);
     proj_vert(m, c, frame);
-    counts.emit_calls += 1;
+    counts.note_emitted(1);
     let (pa, pb, pc) = (scratch_get(a), scratch_get(b), scratch_get(c));
     if emit_proj_fast_tri(packets, m, tri, pa, pb, pc, np) {
         return;
@@ -27145,7 +27249,7 @@ unsafe fn emit_world_face_loop(
                 np,
                 nq,
             ) {
-                counts.emit_calls += 2;
+                counts.note_emitted(2);
                 vk = vk2;
                 k += 2;
                 continue;
@@ -27173,7 +27277,7 @@ unsafe fn emit_world_face_loop(
                 )
             {
                 WORLD_CLASSIC_SOFT_ROUTES_LEFT -= 1;
-                counts.emit_calls += 2;
+                counts.note_emitted(2);
                 vk = vk2;
                 k += 2;
                 continue;
@@ -27383,7 +27487,7 @@ fn depth_split_edge_level(a: &Projected, b: &Projected) -> u8 {
 #[inline(never)]
 unsafe fn depth_split_project(v: &mut AffineVertex) {
     v.projected = fix_projected_vertex(v.position, project_vertex_scheduled(v.position));
-    ROOM_PROJECTED_COUNT = ROOM_PROJECTED_COUNT.saturating_add(1);
+    note_room_projected(1);
     WORLD_AFFINE_ADDED_GTE_TRANSFORMS = WORLD_AFFINE_ADDED_GTE_TRANSFORMS.saturating_add(1);
 }
 
@@ -27640,7 +27744,7 @@ unsafe fn emit_world_face_patches(
                 rgb: [corners[0].rgb, corners[1].rgb, corners[2].rgb],
             };
             if try_emit_native_residue(packets, m, &tri, frame, np) {
-                counts.emit_calls += 1;
+                counts.note_emitted(1);
             } else {
                 emit_world_loop_tri(packets, m, &tri, frame, np, counts, 0);
             }
@@ -27662,7 +27766,7 @@ unsafe fn emit_world_face_patches(
             np,
             nq,
         ) {
-            counts.emit_calls += 2;
+            counts.note_emitted(2);
             patch += 1;
             continue;
         }
@@ -27684,7 +27788,7 @@ unsafe fn emit_world_face_patches(
                 SOFT_SPLIT_TARGET_SPAN_PX,
             )
         {
-            counts.emit_calls += 2;
+            counts.note_emitted(2);
             patch += 1;
             continue;
         }
@@ -27692,7 +27796,7 @@ unsafe fn emit_world_face_patches(
             && WORLD_QUAD_DEPTH_SPLIT
             && emit_depth_split_quad(packets, m, tex, corners, frame, nq)
         {
-            counts.emit_calls += 2;
+            counts.note_emitted(2);
             patch += 1;
             continue;
         }
@@ -27731,7 +27835,7 @@ unsafe fn emit_world_face(
     if face >= m.n_faces || face >= MAX_FACES {
         return;
     }
-    counts.surfaces_considered += 1;
+    counts.note_surface();
 
     let (fnrm, fd) = m.face_plane(face);
     if dot_plane(fnrm, eye) <= fd && !(PLAYER_EYE_UNDER && m.face_liquid(face)) {
@@ -33848,9 +33952,7 @@ fn play(
                 // world build is framebuffer-independent, so it all hides the
                 // previous frame's raster.
                 let mut room_counts = WorldCounters::new();
-                room_counts.cells_considered = PVS_LEAF_COUNT as u32;
-                room_counts.cells_drawn = PVS_LEAF_COUNT as u32;
-                room_counts.surfaces_considered = PVS_FACE_COUNT as u32;
+                room_counts.set_pvs(PVS_LEAF_COUNT as u32, PVS_FACE_COUNT as u32);
                 telemetry::stage_begin(telemetry::stage::ROOM_SURFACE_DRAW);
                 // Front-to-back banded emit: when a view exposes more geometry
                 // than the packet arena can hold (huge open rooms), process near
@@ -33893,7 +33995,7 @@ fn play(
                 // In multi-band (overflow) mode, faces of visible groups are
                 // counting-sorted into near-to-far order here.
                 let bucketed = nbands > 1 && PVS_FACE_COUNT <= PVS_BAND_CAP;
-                ROOM_PROJECTED_COUNT = 0;
+                reset_room_projected();
                 prepare_world_affine_candidates(&visibility, frame_no as u16);
                 if use_bands && WORLD_CLASSIC_AFFINE_SELECTION {
                     WORLD_AFFINE_EXTRA_BUDGET_LEFT =
@@ -34286,27 +34388,27 @@ fn play(
 
                 telemetry::counter(
                     telemetry::counter::ROOM_CELLS_CONSIDERED,
-                    room_counts.cells_considered,
+                    room_counts.cells_considered(),
                 );
                 telemetry::counter(
                     telemetry::counter::ROOM_CELLS_DRAWN,
-                    room_counts.cells_drawn,
+                    room_counts.cells_drawn(),
                 );
                 telemetry::counter(
                     telemetry::counter::ROOM_CELLS_CULLED,
-                    room_counts.cells_culled,
+                    room_counts.cells_culled(),
                 );
                 telemetry::counter(
                     telemetry::counter::ROOM_SURFACES_CONSIDERED,
-                    room_counts.surfaces_considered,
+                    room_counts.surfaces_considered(),
                 );
                 telemetry::counter(
                     telemetry::counter::ROOM_SURF_PROFILED,
-                    room_counts.emit_calls,
+                    room_counts.emit_calls(),
                 );
                 telemetry::counter(
                     telemetry::counter::ROOM_PROJECTED_VERTICES,
-                    ROOM_PROJECTED_COUNT,
+                    room_projected(),
                 );
                 telemetry::counter(telemetry::counter::ROOM_CACHED_DRAWS, 0);
                 telemetry::counter(telemetry::counter::ROOM_UNCACHED_DRAWS, 1);
@@ -34318,7 +34420,7 @@ fn play(
                 let mut room_counts = WorldCounters::new();
                 let mut face = 0usize;
                 reset_emit_policy();
-                ROOM_PROJECTED_COUNT = 0;
+                reset_room_projected();
                 prepare_world_affine_candidates(&visibility, frame_no as u16);
                 telemetry::stage_begin(telemetry::stage::ROOM_SURFACE_DRAW);
                 while face < m.n_faces {
@@ -34350,15 +34452,15 @@ fn play(
                 telemetry::counter(telemetry::counter::ROOM_CELLS_CULLED, 0);
                 telemetry::counter(
                     telemetry::counter::ROOM_SURFACES_CONSIDERED,
-                    room_counts.surfaces_considered,
+                    room_counts.surfaces_considered(),
                 );
                 telemetry::counter(
                     telemetry::counter::ROOM_SURF_PROFILED,
-                    room_counts.emit_calls,
+                    room_counts.emit_calls(),
                 );
                 telemetry::counter(
                     telemetry::counter::ROOM_PROJECTED_VERTICES,
-                    ROOM_PROJECTED_COUNT,
+                    room_projected(),
                 );
                 telemetry::counter(telemetry::counter::ROOM_CACHED_DRAWS, 0);
                 telemetry::counter(telemetry::counter::ROOM_UNCACHED_DRAWS, 1);
