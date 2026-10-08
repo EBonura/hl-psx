@@ -10835,7 +10835,9 @@ unsafe fn logic_use_entity(
             if !threaded {
                 LOGIC_STATE[li] = LOGIC_STATE_TOP;
             }
-            logic_kill_targets(m, nlogic, nents, rec.killtarget);
+            // A multi_manager never runs SUB_UseTargets, so its own
+            // `killtarget` key kills nothing (retail c1a1b's water_doormm
+            // authors one that would otherwise remove the flood currents).
             let mut ai = 0usize;
             let mut queued = false;
             while ai < rec.aux_count {
