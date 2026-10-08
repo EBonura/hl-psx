@@ -308,6 +308,26 @@ fn special_fields(map: &str, ty: u8) -> Option<(&'static str, Vec<String>)> {
             "--mdl7",
             &["0:4", "10:4", "8:5", "3:2", "17:3", "eatbody:2"],
         ),
+        // The fleet's tightest weapon-cache margin (about 1.5 KB) cannot hold
+        // Barney's draw sequence here: its slot keeps a single idle pose, so
+        // he raises the gun without the motion on this one map.
+        ("c2a4e", 1) => (
+            "--mdl7",
+            &[
+                "0:4",
+                "4:6",
+                "6:6",
+                "17:3",
+                "25:4",
+                "0:1",
+                "sit1:6",
+                "standing_idle:2",
+                "intropush:8",
+                "laseridle:2",
+                "laser_top:2",
+                "laser_bottom:2",
+            ],
+        ),
         ("c1a2b" | "c4a3", 9) => (
             "--mdl7",
             &["0:4", "4:4", "12:4", "13:2", "19:3", "attack1:2", "grab:2"],
