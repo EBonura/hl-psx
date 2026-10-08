@@ -9888,6 +9888,39 @@ fn append_monster_loot_slots(
     }
 }
 
+/// CBreakable's `spawnobject` index (the SDK's pSpawnObjects table) as the
+/// pickup prop type of the same item. 0 and unknown indices spawn nothing.
+fn breakable_spawn_kind(index: u16) -> Option<u16> {
+    Some(match index {
+        1 => 4,   // item_battery
+        2 => 48,  // item_healthkit
+        3 => 27,  // weapon_9mmhandgun
+        4 => 40,  // ammo_9mmclip
+        5 => 29,  // weapon_9mmAR
+        6 => 41,  // ammo_9mmAR
+        7 => 47,  // ammo_ARgrenades
+        8 => 30,  // weapon_shotgun
+        9 => 42,  // ammo_buckshot
+        10 => 31, // weapon_crossbow
+        11 => 44, // ammo_crossbow
+        12 => 28, // weapon_357
+        13 => 43, // ammo_357
+        14 => 32, // weapon_rpg
+        15 => 45, // ammo_rpgclip
+        16 => 46, // ammo_gaussclip
+        17 => 36, // weapon_handgrenade
+        18 => 38, // weapon_tripmine
+        19 => 39, // weapon_satchel
+        20 => 37, // weapon_snark
+        21 => 35, // weapon_hornetgun
+        _ => return None,
+    })
+}
+
+/// Loot slots of a breakable are owned by `BREAKABLE_LOOT_KEY | submodel`
+/// (monster slots use their actor's index + 1, always far below it).
+const BREAKABLE_LOOT_KEY: u16 = 0x4000;
+
 /// Point entities that place an actor/item. The final word is a stable carry id
 /// (targetname hash, or globalname hash with bit 15 set); it occupies PropRec's
 /// existing padding and therefore does not grow map data.
@@ -10263,6 +10296,39 @@ fn collect_props(
                         monster_loot_types(mt, block),
                     );
                 }
+                continue;
+            }
+            // CBreakable::Die creates its spawnobject at the brush's centre
+            // (VecBModelOrigin). Cook the item as a dormant slot that the
+            // breakable releases when it shatters.
+            "func_breakable" => {
+                let (Some(kind), Some(submodel)) = (
+                    ent_value(block, "spawnobject")
+                        .and_then(|v| v.trim().parse::<u16>().ok())
+                        .and_then(breakable_spawn_kind),
+                    block_model(block),
+                ) else {
+                    continue;
+                };
+                let Some((mins, maxs)) = model_bounds_hl(models, submodel) else {
+                    continue;
+                };
+                let origin_hl = ent_value(block, "origin")
+                    .and_then(parse_vec3)
+                    .unwrap_or([0.0; 3]);
+                let centre_hl = [
+                    (mins[0] + maxs[0]) * 0.5 + origin_hl[0],
+                    (mins[1] + maxs[1]) * 0.5 + origin_hl[1],
+                    (mins[2] + maxs[2]) * 0.5 + origin_hl[2],
+                ];
+                out.push((
+                    kind | LOOT_SLOT_FLAGS,
+                    to_world(centre_hl, scale),
+                    0,
+                    point_leaf(centre_hl, nodes, planes),
+                    BREAKABLE_LOOT_KEY | submodel.min(0x3fff) as u16,
+                    0,
+                ));
                 continue;
             }
             _ => continue,
@@ -21392,6 +21458,45 @@ mod tests {
             dynamic_lightstyle_slots_for_face(&[0, 36, 37, u8::MAX], &lights),
             ([1, 2, 0], [1, 2, 0])
         );
+    }
+
+    #[test]
+    fn breakable_spawnobject_cooks_a_loot_slot_at_its_centre_owned_by_its_submodel() {
+        let ents = br#"
+        { "classname" "func_breakable" "model" "*1" "spawnobject" "2" }
+        { "classname" "func_breakable" "model" "*1" "spawnobject" "0" }
+        { "classname" "func_breakable" "model" "*1" "spawnobject" "99" }
+        "#;
+        let mut models = vec![0u8; 2 * SZ_MODEL];
+        for (offset, value) in [
+            (0usize, -32.0f32),
+            (4, -16.0),
+            (8, 0.0),
+            (12, 32.0),
+            (16, 16.0),
+            (20, 64.0),
+        ] {
+            let at = SZ_MODEL + offset;
+            models[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let props = collect_props(
+            ents,
+            &[],
+            &[],
+            &models,
+            1.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+        );
+        assert_eq!(
+            props.len(),
+            1,
+            "only a known, nonzero spawnobject cooks a slot"
+        );
+        let (ty, origin, _, _, name, _) = props[0];
+        assert_eq!(ty, 48 | LOOT_SLOT_FLAGS, "item_healthkit, dormant loot");
+        assert_eq!(name, BREAKABLE_LOOT_KEY | 1);
+        assert_eq!(origin, to_world([0.0, 0.0, 32.0], 1.0), "bounds centre");
     }
 
     #[test]
