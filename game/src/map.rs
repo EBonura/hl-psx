@@ -523,7 +523,7 @@ pub struct PackedLoopVert {
 }
 
 #[inline]
-fn tri_corner(tri: RenderTri, corner: usize) -> PackedLoopVert {
+fn tri_corner(tri: &RenderTri, corner: usize) -> PackedLoopVert {
     PackedLoopVert {
         idx: tri.idx[corner],
         uv: tri.uv_words[corner],
@@ -549,7 +549,9 @@ pub fn tri_pair_quad_corners(t0: RenderTri, t1: RenderTri) -> Option<[PackedLoop
     if t0.tex != t1.tex {
         return None;
     }
-    let pairs = [(t0, t1), (t1, t0)];
+    // By reference: an array of two tuple copies of both triangles was a
+    // 160-byte memcpy per attempt.
+    let pairs = [(&t0, &t1), (&t1, &t0)];
     for (first, second) in pairs {
         for rotation in 0..3 {
             let b = tri_corner(first, rotation);
@@ -581,7 +583,11 @@ pub fn tri_pair_quad_corners(t0: RenderTri, t1: RenderTri) -> Option<[PackedLoop
 /// bit 4 swaps the two input triangles.
 #[inline(always)]
 pub fn encoded_pair_quad_corners(t0: RenderTri, t1: RenderTri, code: u8) -> [PackedLoopVert; 4] {
-    let (first, second) = if code & 0x10 == 0 { (t0, t1) } else { (t1, t0) };
+    let (first, second) = if code & 0x10 == 0 {
+        (&t0, &t1)
+    } else {
+        (&t1, &t0)
+    };
     let r0 = ((code >> 2) & 3) as usize;
     let r1 = (code & 3) as usize;
     [
