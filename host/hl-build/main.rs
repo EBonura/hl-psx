@@ -861,6 +861,41 @@ fn run(command: &mut Command, label: &str) -> Result<()> {
     Ok(())
 }
 
+/// `run` for a guest compile: the compiler's stderr is still echoed as it
+/// arrives, and a link that overflowed RAM puts the linker's own words in the
+/// error, so a caller can size a retry from them (`overflowed_by`).
+fn run_compile(command: &mut Command, label: &str) -> Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+    println!("\n==> {label}");
+    let mut child = command.stderr(Stdio::piped()).spawn()?;
+    let mut overflow = None;
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr).lines() {
+            let line = line?;
+            let _ = writeln!(std::io::stderr(), "{line}");
+            if line.contains("will not fit in region") {
+                overflow = Some(line);
+            }
+        }
+    }
+    let status = child.wait()?;
+    if !status.success() {
+        return Err(match overflow {
+            Some(line) => format!("{label} failed with {status}: {}", line.trim()),
+            None => format!("{label} failed with {status}"),
+        }
+        .into());
+    }
+    Ok(())
+}
+
+/// Bytes a failed link overflowed its RAM region by, from the error
+/// `run_compile` made of the linker's message.
+fn overflowed_by(error: &str) -> Option<u32> {
+    let tail = error.split("overflowed by ").nth(1)?;
+    tail.split_whitespace().next()?.parse().ok()
+}
+
 /// One of the SDK's post-link checks (`tools/psoxide-hazard`: `hazard-patch`,
 /// `hazard-scan`, `stack-guard`), built from the hydrated tree against its
 /// imported lockfile; append the tool's own arguments.
@@ -1883,11 +1918,13 @@ enum GuestProfile<'a> {
     /// The ordinary build.
     #[default]
     None,
-    /// Line tables and discriminators for sample profiling. The flat image
-    /// drops them at link time, so it runs and measures like any other.
-    Collect,
-    /// The same code as `Collect`, linked as an ELF that keeps its DWARF.
-    CollectElf,
+    /// Line tables and discriminators for sample profiling, linked with this
+    /// stack reserve (see `PGO_COLLECT_STACK_RESERVES`). The flat image drops
+    /// the tables at link time, so it runs and measures like any other.
+    Collect(u32),
+    /// The same code as `Collect`, linked as an ELF that keeps its DWARF, with
+    /// the same stack reserve.
+    CollectElf(u32),
     /// Optimise with this LLVM sample profile, at this hot call-site
     /// inlining threshold (see `PGO_HOT_CALLSITE_LADDER`).
     Use(&'a Path, u32),
@@ -1897,6 +1934,13 @@ enum GuestProfile<'a> {
 /// reserve. The model pool, weapon cache and stacks have their own audited
 /// margins; this is the headroom above all of them.
 const PGO_RAM_FLOOR: u32 = 16 * 1024;
+
+/// Extra free RAM `pgo` asks of the rung it ships, over `PGO_RAM_FLOOR`. A
+/// fresh profile moved the same source's free RAM by 4 KB (24,400 B to
+/// 20,304 B), so a rung that clears the floor by less than this is one
+/// profile from missing it. Builds that link with the committed profile only
+/// need the floor: their rung was chosen with this margin.
+const PGO_RAM_HEADROOM: u32 = 4 * 1024;
 
 /// Hot call-site thresholds a profile-guided build tries in turn until its
 /// link keeps `PGO_RAM_FLOOR`. Inlining moves `.text` by kilobytes on tiny
@@ -1926,8 +1970,63 @@ const SHIPPED_LAYOUT: &str = "game/pgo/hl-psx.layout";
 /// link, since its code hashes are what the layout binds to).
 const NO_LAYOUT: &str = "HLPSX_NO_LAYOUT";
 
-/// Stack reserve for the PGO collect link (see `compile_game`).
-const PGO_COLLECT_STACK_RESERVE: &str = "0x6000";
+/// Stack reserve the PGO collect link starts from, and the least it may shrink
+/// to (see `compile_collect`). The collect build has no profile and carries
+/// line tables, so it links several KB larger than the build its profile
+/// optimises and can overflow `.bss` by a few hundred bytes at the SDK's 32 KB
+/// reserve. It only ever runs on the profiling tapes, never ships, so the
+/// reserve shrinks by exactly the overflow the linker reports. The deepest
+/// stack write on the profiling tapes was 17,760 B below the initial SP
+/// (final-8), so 20 KB keeps 2.7 KB of margin.
+const PGO_COLLECT_STACK_RESERVE: u32 = 0x6000;
+const PGO_COLLECT_STACK_MIN: u32 = 0x5000;
+
+/// The profiling build: `compile_game` with the largest stack reserve, from
+/// `PGO_COLLECT_STACK_RESERVE` down to `PGO_COLLECT_STACK_MIN`, that keeps
+/// `.bss` inside RAM. The first link that overflows reports by how much; the
+/// reserve shrinks by that, rounded up to 256 B, and the next link keeps the
+/// rest. Returns the image and the reserve it linked with (the ELF build for
+/// the symbolizer must use the same one).
+fn compile_collect(
+    repository: &Path,
+    psoxide: &Path,
+    features: Option<&str>,
+) -> Result<(PathBuf, u32)> {
+    let mut reserve = PGO_COLLECT_STACK_RESERVE;
+    loop {
+        match compile_game(
+            repository,
+            psoxide,
+            features,
+            GuestProfile::Collect(reserve),
+        ) {
+            Ok(exe) => {
+                println!("PGO collect build: stack reserve {reserve:#x}");
+                return Ok((exe, reserve));
+            }
+            Err(error) => {
+                let message = error.to_string();
+                let Some(over) = overflowed_by(&message) else {
+                    return Err(error);
+                };
+                let wanted = reserve.saturating_sub(over.div_ceil(256) * 256);
+                if wanted < PGO_COLLECT_STACK_MIN {
+                    return Err(format!(
+                        "the collect build overflows RAM by {over} B at a {reserve:#x} stack reserve and \
+                         would need under {PGO_COLLECT_STACK_MIN:#x}, the least the profiling tapes' stack \
+                         depth allows: {message}"
+                    )
+                    .into());
+                }
+                println!(
+                    "PGO collect build overflowed RAM by {over} B at stack reserve {reserve:#x}; \
+                     retrying at {wanted:#x}"
+                );
+                reserve = wanted;
+            }
+        }
+    }
+}
 
 fn compile_game(
     repository: &Path,
@@ -1987,20 +2086,17 @@ fn compile_game(
             .arg("--config")
             .arg(format!("target.mipsel-sony-psx.rustflags={flags:?}"));
     }
-    if matches!(profile, GuestProfile::CollectElf) {
+    if matches!(profile, GuestProfile::CollectElf(_)) {
         command.env("HLPSX_LINK_ELF", "1");
     }
-    // Line tables and discriminators change inlining: the collect build
-    // links about 4 KB larger than the build its profile optimises (final-8
-    // overflowed RAM by 660 B). It is only run on the profiling tapes, so it
-    // links with a smaller stack reserve; the code is the same. The deepest
-    // stack write on the chapter-two and tram tapes (final-8 plain, first
-    // non-zero word above .bss in a final RAM dump) was 17,760 B below the
-    // initial SP, inside 24 KB with 6.8 KB to spare. The tram canyon's
-    // 640-slot ordering table took the collect link 676 B past a 28 KB
-    // reserve.
-    if matches!(profile, GuestProfile::Collect | GuestProfile::CollectElf) {
-        command.env("HLPSX_STACK_RESERVE", PGO_COLLECT_STACK_RESERVE);
+    // Line tables and discriminators change inlining, and the collect build
+    // has no profile to optimise with: it links several KB larger than the
+    // build its profile optimises (final-8 overflowed RAM by 660 B, main at
+    // 2b7288b by 192 B). It is only run on the profiling tapes and never
+    // ships, so it links with a smaller stack reserve than the SDK's; the
+    // code is the same (`compile_collect` picks the reserve).
+    if let GuestProfile::Collect(reserve) | GuestProfile::CollectElf(reserve) = profile {
+        command.env("HLPSX_STACK_RESERVE", format!("{reserve:#x}"));
     }
     // A link-only argument: the map does not change the emitted bytes. Each
     // build configuration links its own map: a build cargo finds fresh does
@@ -2010,7 +2106,11 @@ fn compile_game(
     let configuration = command
         .get_args()
         .map(|arg| arg.to_string_lossy().into_owned())
-        .chain([matches!(profile, GuestProfile::CollectElf).to_string()])
+        .chain([match profile {
+            GuestProfile::Collect(reserve) => format!("collect {reserve:#x}"),
+            GuestProfile::CollectElf(reserve) => format!("elf {reserve:#x}"),
+            _ => String::new(),
+        }])
         .collect::<Vec<_>>()
         .join("\n");
     let maps = repository.join(".hlpsx/maps");
@@ -2024,7 +2124,7 @@ fn compile_game(
     // second repeats it in the order that layout gives this link's code.
     let mut ordered = false;
     loop {
-        run(&mut command, "compile hl-psx for PlayStation")?;
+        run_compile(&mut command, "compile hl-psx for PlayStation")?;
         let exe = game.join("target/mipsel-sony-psx/release/hl-psx.exe");
         if !exe.is_file() {
             return Err(format!("game build did not produce {}", exe.display()).into());
@@ -2035,7 +2135,7 @@ fn compile_game(
                 build_map.display()
             )
         })?;
-        if matches!(profile, GuestProfile::CollectElf) {
+        if matches!(profile, GuestProfile::CollectElf(_)) {
             // An ELF for the symbolizer, not an executable: nothing to patch.
             return Ok(exe);
         }
@@ -2177,7 +2277,7 @@ fn compile_shipped(repository: &Path, psoxide: &Path, features: Option<&str>) ->
         .trim()
         .parse::<u32>()
         .map_err(|error| format!("{SHIPPED_THRESHOLD}: {error}"))?;
-    Ok(link_with_profile(repository, psoxide, features, &profile, threshold)?.0)
+    Ok(link_with_profile(repository, psoxide, features, &profile, threshold, 0)?.0)
 }
 
 fn pack_disc(repository: &Path, psoxide: &Path, exe: &Path) -> Result<PathBuf> {
@@ -2244,11 +2344,16 @@ fn profile_guided_pack(
     }
     fs::create_dir_all(&work)?;
 
-    let collect_exe = compile_game(repository, psoxide, features, GuestProfile::Collect)?;
+    let (collect_exe, collect_reserve) = compile_collect(repository, psoxide, features)?;
     let collect_cue = pack_disc_into(repository, psoxide, &collect_exe, &work.join("collect"))?;
     let elf = work.join("hl-psx.elf");
     fs::copy(
-        compile_game(repository, psoxide, features, GuestProfile::CollectElf)?,
+        compile_game(
+            repository,
+            psoxide,
+            features,
+            GuestProfile::CollectElf(collect_reserve),
+        )?,
         &elf,
     )?;
 
@@ -2318,12 +2423,13 @@ fn profile_guided_pack(
         features,
         &profile,
         PGO_HOT_CALLSITE_LADDER[0],
+        PGO_RAM_HEADROOM,
     )?;
     if !windows.is_empty() {
         let layout_cue = pack_disc_into(repository, psoxide, &exe, &work.join("layout"))?;
         collect_layout(repository, psoxide, &layout_cue, &windows, &work, &exe)?;
         LAYOUT_ENABLED.store(true, Ordering::Relaxed);
-        exe = link_with_profile(repository, psoxide, features, &profile, threshold)?.0;
+        exe = link_with_profile(repository, psoxide, features, &profile, threshold, 0)?.0;
     }
     fs::write(
         work.join("shipped-variant.txt"),
@@ -2431,19 +2537,48 @@ fn collect_layout(
     Ok(())
 }
 
-/// Link with `profile`, stepping inlining down the ladder from `first` until
-/// the link keeps the RAM floor, by the SDK's check (`psoxide-pgo ram`).
-/// Returns the image and the threshold it linked at.
+/// Free RAM a profile-guided link keeps, by the SDK's check
+/// (`psoxide-pgo ram`, which prints `free N B`).
+fn ram_free(psoxide: &Path, link_map: &Path) -> Result<u32> {
+    let output = Command::new(cargo())
+        .current_dir(psoxide)
+        .args(["run", "-q", "--release", "-p", "psoxide-pgo", "--", "ram"])
+        .arg(link_map)
+        .output()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.lines()
+        .find_map(|line| line.strip_prefix("free ")?.strip_suffix(" B")?.parse().ok())
+        .ok_or_else(|| {
+            format!(
+                "psoxide-pgo ram printed no free byte count for {}",
+                link_map.display()
+            )
+            .into()
+        })
+}
+
+/// Link with `profile`, stepping inlining down the ladder from `first` to the
+/// first rung that keeps `PGO_RAM_FLOOR + headroom` bytes of RAM free, by
+/// the SDK's check. Which rung that is changes with every profile, because
+/// inlining moves `.text` by kilobytes on small profile changes, so a link
+/// that only just clears the floor is one profile away from missing it:
+/// `pgo` asks for `PGO_RAM_HEADROOM` on top, and every rung's free RAM is
+/// printed. If no rung has the headroom, the first that clears the bare
+/// floor is used and the shortfall is reported. Returns the image and the
+/// threshold it linked at.
 fn link_with_profile(
     repository: &Path,
     psoxide: &Path,
     features: Option<&str>,
     profile: &Path,
     first: u32,
+    headroom: u32,
 ) -> Result<(PathBuf, u32)> {
     let link_map = repository.join(".hlpsx/hl-psx.map");
+    let wanted = PGO_RAM_FLOOR + headroom;
     let mut tried = Vec::new();
     let mut link_error = None;
+    let mut fallback = None;
     for threshold in PGO_HOT_CALLSITE_LADDER
         .into_iter()
         .filter(|threshold| *threshold <= first)
@@ -2460,30 +2595,43 @@ fn link_with_profile(
             Ok(exe) => exe,
             Err(error) => {
                 println!("PGO threshold {threshold} did not build ({error}); stepping down");
-                tried.push(format!("{threshold} (did not link)"));
+                tried.push(format!("{threshold}: did not link"));
                 link_error = Some(error);
                 continue;
             }
         };
-        let fits = Command::new(cargo())
-            .current_dir(psoxide)
-            .args(["run", "-q", "--release", "-p", "psoxide-pgo", "--", "ram"])
-            .arg(&link_map)
-            .args(["--floor", &PGO_RAM_FLOOR.to_string()])
-            .status()?
-            .success();
-        tried.push(threshold.to_string());
-        if fits {
+        let free = ram_free(psoxide, &link_map)?;
+        tried.push(format!("{threshold}: {free} B free"));
+        if free >= wanted {
             println!(
-                "PGO variant: hot-callsite-threshold={threshold} (tried {})",
+                "PGO variant: hot-callsite-threshold={threshold}, {free} B of RAM free \
+                 (wanted {wanted}; tried {})",
                 tried.join(", ")
             );
             return Ok((exe, threshold));
         }
+        if free >= PGO_RAM_FLOOR && fallback.is_none() {
+            fallback = Some((threshold, free));
+        }
+    }
+    if let Some((threshold, free)) = fallback {
+        println!(
+            "PGO variant: no rung keeps {wanted} B free ({}); using the first that clears the \
+             {PGO_RAM_FLOOR} B floor, hot-callsite-threshold={threshold} with {free} B free",
+            tried.join(", ")
+        );
+        let exe = compile_game(
+            repository,
+            psoxide,
+            features,
+            GuestProfile::Use(profile, threshold),
+        )?;
+        return Ok((exe, threshold));
     }
     Err(link_error.unwrap_or_else(|| {
         format!(
-            "no hot-callsite threshold from {first} down {PGO_HOT_CALLSITE_LADDER:?} keeps {PGO_RAM_FLOOR} B of RAM free"
+            "no hot-callsite threshold from {first} down {PGO_HOT_CALLSITE_LADDER:?} keeps {PGO_RAM_FLOOR} B of RAM free ({})",
+            tried.join(", ")
         )
         .into()
     }))
@@ -2684,6 +2832,13 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn overflowed_by_reads_the_linker_message() {
+        let error = "compile hl-psx for PlayStation failed with exit status: 101: = note: rust-lld: error: section '.bss' will not fit in region 'IMAGE': overflowed by 192 bytes";
+        assert_eq!(overflowed_by(error), Some(192));
+        assert_eq!(overflowed_by("some other failure"), None);
+    }
 
     #[test]
     fn projection_stack_budget_reads_the_guard_from_the_game() {
