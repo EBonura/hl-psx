@@ -128,7 +128,7 @@ fn class_types() -> HashMap<String, u8> {
 /// scale incoming damage onto it (the Gonarch's pool lives in the boss
 /// walker's counter; the Hard ichthyosaur's in `damage_prop`), so a spawn
 /// health over 255 is not a defect.
-const SCALED_POOLS: [u8; 4] = [16, 17, 23, 61];
+const SCALED_POOLS: [u8; 6] = [16, 17, 18, 19, 23, 61];
 
 /// The health the port spawns a type with at `level`: the cooked skill.cfg
 /// row when `HEALTH_KEYS` lists the type, else the roster fallback.
@@ -697,14 +697,7 @@ fn weapon_rows(cfg: &Cfg, rows: &mut Vec<Row>) {
 // ---- the table ---------------------------------------------------------------
 
 /// FAIL rows that are understood and not yet fixed: (area, subject, field).
-const KNOWN: &[(&str, &str, &str)] = &[
-    ("health", "monster_barnacle", "spawn health"),
-    ("health", "monster_bigmomma", "spawn health"),
-    ("health", "monster_cockroach", "spawn health"),
-    ("health", "monster_gman", "spawn health"),
-    ("health", "monster_ichthyosaur", "spawn health"),
-    ("health", "monster_sitting_scientist", "spawn health"),
-    ("health", "monster_tentacle", "spawn health"),("weapon", "satchel", "damage per hit")];
+const KNOWN: &[(&str, &str, &str)] = &[("weapon", "satchel", "damage per hit")];
 
 fn build(cfg: &Cfg) -> Vec<Row> {
     let mut rows = Vec::new();

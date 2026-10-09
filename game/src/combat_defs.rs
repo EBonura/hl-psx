@@ -188,10 +188,10 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24), // 9 alien_slave (zap)
     mdef_atk(60, 48, 100, AI_RANGED, 16, 500, 8, 4), // 10 alien_grunt (hornets)
     mdef_atk(60, 40, 100, AI_RANGED, 16, 1024, 3, 14), // 11 alien_controller (energy)
-    mdef(40, 32, 170, AI_IDLE),                 // 12 barnacle (ceiling: render only)
+    mdef(25, 32, 170, AI_IDLE),                 // 12 barnacle (retail spawns it with 25)
     mdef(16, 8, 40, AI_IDLE),                   // 13 leech (flyer: render only)
-    mdef(6, 4, 30, AI_IDLE),                    // 14 cockroach (passive)
-    mdef(30, 48, 90, AI_IDLE),                  // 15 gman (passive)
+    mdef(1, 4, 30, AI_IDLE),                    // 14 cockroach (passive; any hit kills it)
+    mdef(100, 48, 90, AI_IDLE),                 // 15 gman (passive)
     // CGargantua: the melee roster wakes it; garg::tick runs its schedules.
     mdef_atk(200, 90, 360, AI_MELEE, 10, 0, 0, 0), // 16 gargantua
     mdef(200, 90, 1748, AI_IDLE),                  // 17 nihilanth (boss: render only)
@@ -202,32 +202,32 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef_atk(30, 30, 60, AI_TURRET, 0, 1000, 5, 3), // 22 miniturret
     mdef(80, 60, 410, AI_IDLE),                    // 23 apache (flyer: render only)
     mdef(10, 20, 60, AI_IDLE),                     // 24 flyer_flock (passive)
-    mdef(SCIENTIST_HEALTH, 25, SCIENTIST_RENDER_RADIUS, AI_IDLE), // 25 sitting scientist
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 26 weapon_crowbar
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 27 weapon_9mmhandgun
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 28 weapon_357
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 29 weapon_9mmAR
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 30 weapon_shotgun
-    mdef(0, 12, 56, AI_ITEM),                      // 31 weapon_crossbow
-    mdef(0, 12, 45, AI_ITEM),                      // 32 weapon_rpg
-    mdef(0, 12, 51, AI_ITEM),                      // 33 weapon_gauss
-    mdef(0, 12, 40, AI_ITEM),                      // 34 weapon_egon
-    mdef(0, 12, 45, AI_ITEM),                      // 35 weapon_hornetgun
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 36 weapon_handgrenade
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 37 weapon_snark
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 38 weapon_tripmine
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 39 weapon_satchel
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 40 ammo_9mmclip
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 41 ammo_9mmAR
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 42 ammo_buckshot
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 43 ammo_357
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 44 ammo_crossbow
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 45 ammo_rpgclip
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 46 ammo_gaussclip
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 47 ammo_ARgrenades
-    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),      // 48 item_healthkit
-    mdef(0, 12, 38, AI_ITEM),                      // 49 item_longjump
-    mdef(200, 90, 912, AI_IDLE), // 50 tentacle (Blast Pit; killtargeted by the rocket)
+    mdef(50, 25, SCIENTIST_RENDER_RADIUS, AI_IDLE), // 25 sitting scientist (50, unlike the standing 20)
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 26 weapon_crowbar
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 27 weapon_9mmhandgun
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 28 weapon_357
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 29 weapon_9mmAR
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 30 weapon_shotgun
+    mdef(0, 12, 56, AI_ITEM),                       // 31 weapon_crossbow
+    mdef(0, 12, 45, AI_ITEM),                       // 32 weapon_rpg
+    mdef(0, 12, 51, AI_ITEM),                       // 33 weapon_gauss
+    mdef(0, 12, 40, AI_ITEM),                       // 34 weapon_egon
+    mdef(0, 12, 45, AI_ITEM),                       // 35 weapon_hornetgun
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 36 weapon_handgrenade
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 37 weapon_snark
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 38 weapon_tripmine
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 39 weapon_satchel
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 40 ammo_9mmclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 41 ammo_9mmAR
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 42 ammo_buckshot
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 43 ammo_357
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 44 ammo_crossbow
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 45 ammo_rpgclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 46 ammo_gaussclip
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 47 ammo_ARgrenades
+    mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 48 item_healthkit
+    mdef(0, 12, 38, AI_ITEM),                       // 49 item_longjump
+    mdef(75, 90, 912, AI_IDLE), // 50 tentacle (Blast Pit; killtargeted by the rocket)
     mdef_atk(30, 40, 90, AI_RANGED, 16, 900, 6, 10), // 51 human assassin (silenced 9mm)
     // Script-only monster_generic. Health must stay nonzero so its exact
     // targetname can be possessed by c0a0d's goingdown sequence.
