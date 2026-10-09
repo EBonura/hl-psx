@@ -240,6 +240,9 @@ pub mod logic {
     /// `trigger_hurt` record flag: a negative `dmg` (Xen's healing pools).
     /// CTriggerHurt::HurtTouch then calls TakeHealth with the magnitude.
     pub const TRIGGER_HURT_HEALS: u8 = 0x02;
+    /// A TRIGGER_GRAVITY record that is really a func_friction volume: `arg0` is
+    /// the friction fraction in Q12 rather than the gravity multiplier.
+    pub const GRAVITY_FRICTION: u8 = 0x01;
     pub const FUNC_TRAIN: u8 = 25;
     pub const WEAPONSTRIP: u8 = 26;
     pub const ENV_MESSAGE: u8 = 27;
@@ -375,6 +378,7 @@ pub mod logic {
     pub const LOGIC_TRIGGER_HURT: u8 = TRIGGER_HURT;
     pub const LOGIC_TRIGGER_HURT_RADIATION: u8 = TRIGGER_HURT_RADIATION;
     pub const LOGIC_TRIGGER_HURT_HEALS: u8 = TRIGGER_HURT_HEALS;
+    pub const LOGIC_GRAVITY_FRICTION: u8 = GRAVITY_FRICTION;
     pub const LOGIC_FUNC_TRACKTRAIN: u8 = FUNC_TRACKTRAIN;
     pub const LOGIC_FUNC_BREAKABLE: u8 = FUNC_BREAKABLE;
     pub const LOGIC_TRIGGER_TELEPORT: u8 = TRIGGER_TELEPORT;
