@@ -1,0 +1,15 @@
+[package]
+name = "hl-census"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Machine-checked census of the entity classes, keyvalues and spawnflags the shipped maps use against what hl-psx implements"
+
+[workspace]
+
+[[bin]]
+name = "hl-census"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"

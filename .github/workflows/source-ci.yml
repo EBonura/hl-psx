@@ -59,6 +59,7 @@ jobs:
           cargo fmt --manifest-path game/Cargo.toml --package hl-psx -- --check
           cargo fmt --manifest-path host/hl-bsp/Cargo.toml --package hl-bsp -- --check
           cargo fmt --manifest-path host/hl-content/Cargo.toml --package hl-content -- --check
+          cargo fmt --manifest-path host/hl-census/Cargo.toml --package hl-census -- --check
           cargo fmt --manifest-path host/hl-logic-tests/Cargo.toml --package hl-logic-tests -- --check
           cargo fmt --manifest-path shared/hl-format/Cargo.toml --package hl-format -- --check
 
@@ -69,6 +70,7 @@ jobs:
           cargo check --manifest-path host/hl-build/Cargo.toml --all-targets --locked
           cargo check --manifest-path host/hl-bsp/Cargo.toml --all-targets --locked
           cargo check --manifest-path host/hl-content/Cargo.toml --all-targets --locked
+          cargo check --manifest-path host/hl-census/Cargo.toml --all-targets --locked
           cargo check --manifest-path host/hl-logic-tests/Cargo.toml --all-targets --locked
           cargo check --manifest-path shared/hl-format/Cargo.toml --all-targets
 
@@ -77,6 +79,7 @@ jobs:
           cargo test --manifest-path host/hl-build/Cargo.toml --locked
           cargo test --manifest-path host/hl-bsp/Cargo.toml --locked
           cargo test --manifest-path host/hl-content/Cargo.toml --locked
+          cargo test --manifest-path host/hl-census/Cargo.toml --locked
           cargo test --manifest-path host/hl-logic-tests/Cargo.toml --locked
           cargo test --manifest-path shared/hl-format/Cargo.toml
 

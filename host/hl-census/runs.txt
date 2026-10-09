@@ -1,0 +1,6 @@
+# Differential and scenario runs a contract row may name as `run:<id>`.
+# id|what
+roots-diff|every player-activated target fired on the retail game and the port, dispatch compared (hl-census roots, compare)
+kills|every monster with a TriggerTarget killed on the port, target fire checked (hl-census kills, check-kills)
+solidity|retail SOLID_NOT brushes against the cooked collision hulls (hl-census solidity)
+levels|changelevel graph: destinations, landmarks, reachability (hl-census levels)
