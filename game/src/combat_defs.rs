@@ -503,3 +503,11 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         10,
     ),
 ];
+
+// Secondary-fire cooldowns in ticks (the primary's live in WEAPON_DEFS).
+pub const GLOCK_ALT_COOLDOWN: u8 = 4;
+pub const M203_COOLDOWN: u8 = 20;
+/// The MP5 grenade's impact damage (`sk_plr_9mmAR_grenade`).
+pub const M203_DAMAGE: u8 = 100;
+pub const SHOTGUN_ALT_COOLDOWN: u8 = 30;
+pub const HORNET_ALT_COOLDOWN: u8 = 2;

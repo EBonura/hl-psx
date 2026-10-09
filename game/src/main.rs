@@ -20571,7 +20571,7 @@ unsafe fn fire_secondary(
                 return false;
             }
             w.clip[W_GLOCK] -= 1;
-            w.cooldown = 4;
+            w.cooldown = GLOCK_ALT_COOLDOWN;
             let d = w.def();
             // fire_weapon adds the weapon's own cone, so pass the difference up
             // to the SDK's wider no-autoaim secondary spread.
@@ -20589,8 +20589,8 @@ unsafe fn fire_secondary(
                 return false;
             }
             w.ammo[AMMO_ARGREN] -= 1;
-            w.cooldown = 20; // SDK: one second for both attack modes
-            spawn_projectile(PROJ_M203, 100, eye, rot);
+            w.cooldown = M203_COOLDOWN;
+            spawn_projectile(PROJ_M203, M203_DAMAGE, eye, rot);
             sfx::play(sfx::M203);
             true
         }
@@ -20602,7 +20602,7 @@ unsafe fn fire_secondary(
                 return false;
             }
             w.clip[W_SHOTGUN] -= 2;
-            w.cooldown = 30;
+            w.cooldown = SHOTGUN_ALT_COOLDOWN;
             let d = w.def();
             fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 4);
             fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 6);
@@ -20616,11 +20616,12 @@ unsafe fn fire_secondary(
                 return false;
             }
             w.ammo[AMMO_HORNET] -= 1;
-            w.cooldown = 2 + if w.ammo[AMMO_HORNET] == 0 {
-                HORNET_REGEN_TICKS
-            } else {
-                0
-            };
+            w.cooldown = HORNET_ALT_COOLDOWN
+                + if w.ammo[AMMO_HORNET] == 0 {
+                    HORNET_REGEN_TICKS
+                } else {
+                    0
+                };
             spawn_projectile(PROJ_HORNET_FAST, w.def().damage, eye, rot);
             sfx::play(sfx::ELECTRO);
             true

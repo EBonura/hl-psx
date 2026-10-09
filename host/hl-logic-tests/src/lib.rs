@@ -50,5 +50,7 @@ pub mod render;
 #[path = "../../../game/src/beverage.rs"]
 pub mod beverage;
 
+#[cfg(test)]
+mod parity;
 #[path = "../../../game/src/setpiece_logic.rs"]
 pub mod setpiece_logic;
