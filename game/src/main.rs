@@ -21826,7 +21826,7 @@ unsafe fn queue_rpg_spot(
 // showers ride it as before (whole-unit motion kept in 1/16 units). Breakable
 // shards add the physics TE_BREAKMODEL tempents have: world collision with
 // half-speed bounces, a rest on the first flat floor hit, and a fade at the end.
-const MAX_DEBRIS: usize = 96;
+const MAX_DEBRIS: usize = 64;
 /// Static rect packets for the non-shard kinds (shards use the frame arena).
 const MAX_DEBRIS_RECTS: usize = 48;
 const DEBRIS_CASING: u8 = 0;
@@ -21846,9 +21846,9 @@ const SHARD_GRAVITY: i16 = 16;
 /// the 20 Hz reference frame = 6 units per tick.
 const SHARD_REST_VY: i32 = 96;
 /// R_BreakModel: one shard per 3*12^2 units^2 of surface, at most 100. The
-/// pool takes 64 so one break leaves room for the next.
+/// pool takes 40 so one break leaves room for the next.
 const SHARD_UNIT_AREA: i32 = 3 * 12 * 12;
-const MAX_SHARDS_PER_BREAK: i32 = 64;
+const MAX_SHARDS_PER_BREAK: i32 = 40;
 
 #[derive(Clone, Copy)]
 struct Debris {
@@ -21898,6 +21898,8 @@ unsafe fn spawn_debris(pos: [i32; 3], vel: [i32; 3], kind: u8, ttl: u8) {
 /// GoldSrc CBreakable::Die emits TE_BREAKMODEL: the client picks a shard count
 /// from the brush's surface area, scatters the shards through its volume with
 /// a +-10 u/s velocity, and lets them live 2.5 to 3.5 seconds, then fade.
+#[inline(never)]
+#[optimize(size)]
 unsafe fn spawn_breakable_shards(rec: map::LogicEnt, live_center: [i32; 3]) {
     let material = rec.arg1.min(9) as u8;
     let sx = rec.maxs[0] - rec.mins[0];
@@ -21979,6 +21981,7 @@ unsafe fn clear_debris() {
 /// brush entities are ignored as PM_WORLD_ONLY does), bounce at half speed or
 /// come to rest on a floor, then apply slow gravity.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn tick_shard(m: &Map, i: usize) {
     let d = DEBRIS[i];
     let mut pos = [
@@ -22102,6 +22105,8 @@ unsafe fn render_debris<const N: usize>(
 /// Break shards draw into the world's ordering table at their view depth, so
 /// walls and doors hide the ones lying behind them and they stay on the floor
 /// they landed on. The last 40 ticks dissolve by dropping more and more frames.
+#[inline(never)]
+#[optimize(size)]
 unsafe fn queue_shards(
     packets: &mut PrimitivePacketArena<'_>,
     ot: &mut OrderingTable<OT_LEN>,
@@ -22134,7 +22139,8 @@ unsafe fn queue_shards(
             11 => (105, 95, 85),       // rocks
             _ => (125, 75, 35),        // wood and untyped
         };
-        let size: i16 = if vz < 320 { 3 } else { 2 };
+        // Gib models are a few units across: scale with distance, 2 to 10 px.
+        let size = ((5 * render::projection_h()) / vz.max(1)).clamp(2, 10) as i16;
         if let Some(packet) = packets.push(RectFlat::new(
             sx - size / 2,
             sy - size / 2,
