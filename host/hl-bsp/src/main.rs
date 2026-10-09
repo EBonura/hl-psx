@@ -880,18 +880,21 @@ fn sky_from_gamma(c: (u8, u8, u8)) -> (u8, u8, u8) {
     (f(c.0), f(c.1), f(c.2))
 }
 
-/// Lloyd refinement of a palette over a sample of the colours: the median cut
-/// splits on pixel counts, so rare but distinct colours (the orange nebula
-/// edges, the stars) were merged into the dominant murk.
+/// Weighted Lloyd refinement of a palette over a sample of the colours: the
+/// median cut splits on pixel counts, so rare but distinct colours (the orange
+/// nebula edges, the stars) were merged into the dominant murk. Saturated
+/// colours count for more, since they carry the sky's character.
 fn sky_refine_palette(colors: &[(u8, u8, u8)], pal: &mut [(u8, u8, u8)]) {
     for _ in 0..8 {
         let mut sum = vec![[0u64; 4]; pal.len()];
-        for c in colors.iter().step_by(3) {
+        for c in colors.iter().step_by(2) {
             let k = nearest16(pal, *c) as usize;
-            sum[k][0] += c.0 as u64;
-            sum[k][1] += c.1 as u64;
-            sum[k][2] += c.2 as u64;
-            sum[k][3] += 1;
+            let chroma = c.0.max(c.1).max(c.2) as u64 - c.0.min(c.1).min(c.2) as u64;
+            let w = 64 + 2 * chroma;
+            sum[k][0] += c.0 as u64 * w;
+            sum[k][1] += c.1 as u64 * w;
+            sum[k][2] += c.2 as u64 * w;
+            sum[k][3] += w;
         }
         for (k, s) in sum.iter().enumerate() {
             if s[3] > 0 {
