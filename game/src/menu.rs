@@ -1198,6 +1198,14 @@ fn draw_vol_bar(x: i16, y: i16, v: i32, bright: bool) {
     }
 }
 
+/// A `psx-display` label as text. Labels are upper-case ASCII by construction.
+pub(crate) fn label_text(label: &psx_display::Label) -> &str {
+    // SAFETY: `Label` only ever holds the ASCII words and digits it was built
+    // from, so the bytes are valid UTF-8; `as_str` would pull in the
+    // validator for no gain.
+    unsafe { core::str::from_utf8_unchecked(label.as_bytes()) }
+}
+
 #[inline(never)]
 #[optimize(size)]
 fn draw_options_menu(font: &FontAtlas, help: &FontAtlas, sel: usize) {
@@ -1234,12 +1242,22 @@ fn draw_options_menu(font: &FontAtlas, help: &FontAtlas, sel: usize) {
             font.draw_text(x_val + 32, y, if on { "ON" } else { "OFF" }, col);
             font.draw_text(x_val + 88, y, ">", col);
         } else if i < OPT_LABELS.len() {
-            // Screen X/Y, stick deadzone and brightness are all "< n >" rows.
+            // Screen X/Y, stick deadzone and brightness are all "< value >"
+            // rows. The picture rows say it in words (`LEFT 4`, `BRIGHTER 3`),
+            // which are wider than a number, so their arrows sit further out.
             let mut buf = [0u8; I32_DEC_MAX];
-            let value = i32_dec(&mut buf, crate::settings::value(i));
+            let label = crate::settings::option_label(i);
+            let (value, x_text, x_close) = match &label {
+                Some(label) => (label_text(label), x_val + 12, x_val + 100),
+                None => (
+                    i32_dec(&mut buf, crate::settings::value(i)),
+                    x_val + 40,
+                    x_val + 88,
+                ),
+            };
             font.draw_text(x_val, y, "<", col);
-            font.draw_text(x_val + 40, y, value, col);
-            font.draw_text(x_val + 88, y, ">", col);
+            font.draw_text(x_text, y, value, col);
+            font.draw_text(x_close, y, ">", col);
         }
         y += ROW_H;
     }
