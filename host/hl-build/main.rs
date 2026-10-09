@@ -2636,13 +2636,13 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
-    // Regression builds carry telemetry and debug hooks the shipped profile
-    // and RAM floor were never sized for.
-    let exe = if options.action == Action::Regress {
-        compile_game(&repository, &psoxide, features, GuestProfile::None)?
-    } else {
-        compile_shipped(&repository, &psoxide, features)?
-    };
+    // Regression builds carry telemetry and debug hooks, and keep core's panic
+    // messages, so they are much larger than the shipping image. They link with
+    // the shipped sample profile like every other build: without it the
+    // instrumented image overflowed `.bss` past the IMAGE region by 25.8 KB,
+    // and with it the telemetry build links with room to spare. The I-cache
+    // layout is not applied to a diagnostic build.
+    let exe = compile_shipped(&repository, &psoxide, features)?;
     if options.action == Action::Compile {
         return Ok(());
     }
