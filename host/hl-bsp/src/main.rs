@@ -439,6 +439,15 @@ struct CookedTex {
     h: u16,
     clut: [u16; 16],
     pix4: Vec<u8>,
+    /// The sky's 8 bit form, which replaces `clut` and `pix4` when present.
+    eight: Option<EightBitTex>,
+}
+
+/// An 8 bit texture: `pix` is one palette index per texel, `clut` the 256
+/// palette entries, or empty when the entry shares the previous 8 bit entry's.
+struct EightBitTex {
+    clut: Vec<u16>,
+    pix: Vec<u8>,
 }
 
 struct RgbImage {
@@ -458,6 +467,7 @@ fn placeholder_tex() -> CookedTex {
         h: 8,
         clut,
         pix4: vec![0u8; 8 * 8 / 2],
+        eight: None,
     }
 }
 
@@ -641,6 +651,20 @@ fn collect_tex_anim_chains(tex_names: &[String]) -> Vec<TexAnimChain> {
 
 fn append_texture_blob(out: &mut Vec<u8>, texs: &[CookedTex]) {
     for tx in texs {
+        if let Some(eight) = &tx.eight {
+            let shared = if eight.clut.is_empty() {
+                cooked::TEXTURE_ENTRY_SHARED_CLUT
+            } else {
+                0
+            };
+            out.extend_from_slice(&(tx.w | cooked::TEXTURE_ENTRY_8BIT | shared).to_le_bytes());
+            out.extend_from_slice(&tx.h.to_le_bytes());
+            for c in &eight.clut {
+                out.extend_from_slice(&c.to_le_bytes());
+            }
+            out.extend_from_slice(&eight.pix);
+            continue;
+        }
         out.extend_from_slice(&tx.w.to_le_bytes());
         out.extend_from_slice(&tx.h.to_le_bytes());
         for c in &tx.clut {
@@ -821,7 +845,10 @@ fn read_bmp_rgb(data: &[u8]) -> Option<RgbImage> {
 }
 
 /// Peak-to-peak dither amplitude, in square-root (gamma 2) colour units.
-const SKY_DITHER_AMPLITUDE: i32 = 16;
+const SKY_DITHER_AMPLITUDE: i32 = 4;
+
+/// Colours in the sky's shared palette (an 8 bit texture's full CLUT).
+const SKY_PALETTE_SIZE: usize = 256;
 
 /// Deterministic per-texel noise in 0..256 for the dither. A regular ordered
 /// pattern beats against the sky's 2.5x screen magnification and shows as
@@ -898,58 +925,73 @@ fn sky_refine_palette(colors: &[(u8, u8, u8)], pal: &mut [(u8, u8, u8)]) {
         }
         for (k, s) in sum.iter().enumerate() {
             if s[3] > 0 {
-                pal[k] = ((s[0] / s[3]) as u8, (s[1] / s[3]) as u8, (s[2] / s[3]) as u8);
+                pal[k] = (
+                    (s[0] / s[3]) as u8,
+                    (s[1] / s[3]) as u8,
+                    (s[2] / s[3]) as u8,
+                );
             }
         }
     }
 }
 
-/// Quantise the six sky faces to 16-colour CLUT textures that all carry the
-/// same palette. Fitting each face its own palette gave every face a
-/// different posterised tint, with hard edges where the cube's faces meet;
-/// one palette keeps the colour continuous across them. The texels are
-/// dithered against it so smooth gradients survive 16 colours.
+/// Quantise the six sky faces to 8 bit textures that share one 256 colour
+/// palette. Fitting each face its own palette gave every face a different
+/// posterised tint, with hard edges where the cube's faces meet; one palette
+/// keeps the colour continuous across them. 256 entries hold the nebulae's
+/// blues, greens and oranges that 16 flattened to beige. The texels are
+/// dithered lightly against it so the darkest gradients (5 bit CLUT channels
+/// are coarse there) do not band. Only the first face carries the palette; the
+/// others point at it.
 fn cook_sky_faces(imgs: &[RgbImage]) -> Vec<CookedTex> {
     let faces: Vec<Vec<(u8, u8, u8)>> = imgs
         .iter()
-        .map(|img| sky_box_downscale(img).into_iter().map(sky_to_gamma).collect())
+        .map(|img| {
+            sky_box_downscale(img)
+                .into_iter()
+                .map(sky_to_gamma)
+                .collect()
+        })
         .collect();
     let all: Vec<(u8, u8, u8)> = faces.iter().flatten().copied().collect();
-    let mut pal = median_cut16(&all);
+    let mut pal = median_cut(&all, SKY_PALETTE_SIZE);
     sky_refine_palette(&all, &mut pal);
     // The CLUT holds 5-bit channels, rounded here from the 8-bit mean:
     // dither against what the GPU will show.
-    let mut shown = [(0u8, 0u8, 0u8); 16];
-    let mut clut = [0u16; 16];
-    for (i, c) in pal.iter().enumerate().take(16) {
+    let mut shown = [(0u8, 0u8, 0u8); SKY_PALETTE_SIZE];
+    let mut clut = vec![0u16; SKY_PALETTE_SIZE];
+    for (i, c) in pal.iter().enumerate().take(SKY_PALETTE_SIZE) {
         let lin = sky_from_gamma(*c);
         let r5 = |v: u8| (v as u16 + 4).min(255) as u8 & 0xF8;
         let snapped = (r5(lin.0), r5(lin.1), r5(lin.2));
         clut[i] = to_bgr555(snapped.0, snapped.1, snapped.2);
         shown[i] = sky_to_gamma(snapped);
     }
-    let used = pal.len().min(16);
+    let used = pal.len().min(SKY_PALETTE_SIZE);
     faces
         .iter()
         .enumerate()
         .map(|(face, colors)| {
-            let mut pix4 = vec![0u8; SKY_TEX_SIZE * SKY_TEX_SIZE / 2];
+            let mut pix = vec![0u8; SKY_TEX_SIZE * SKY_TEX_SIZE];
             for y in 0..SKY_TEX_SIZE {
                 for x in 0..SKY_TEX_SIZE {
                     let c = colors[y * SKY_TEX_SIZE + x];
                     let t = sky_noise(face, x, y) * SKY_DITHER_AMPLITUDE / 256
                         - SKY_DITHER_AMPLITUDE / 2;
                     let adj = |v: u8| (v as i32 + t).clamp(0, 255) as u8;
-                    let i = nearest16(&shown[..used], (adj(c.0), adj(c.1), adj(c.2)));
-                    let at = (y * SKY_TEX_SIZE + x) / 2;
-                    pix4[at] |= i << (4 * (x & 1));
+                    pix[y * SKY_TEX_SIZE + x] =
+                        nearest16(&shown[..used], (adj(c.0), adj(c.1), adj(c.2)));
                 }
             }
             CookedTex {
                 w: SKY_TEX_SIZE as u16,
                 h: SKY_TEX_SIZE as u16,
-                clut,
-                pix4,
+                clut: [0; 16],
+                pix4: Vec::new(),
+                eight: Some(EightBitTex {
+                    clut: if face == 0 { clut.clone() } else { Vec::new() },
+                    pix,
+                }),
             }
         })
         .collect()
@@ -1275,6 +1317,7 @@ fn cook_miptex(l: &[u8], mo: usize, wads: &WadIndex) -> (CookedTex, (u32, u32)) 
             h: fh as u16,
             clut,
             pix4,
+            eight: None,
         },
         (w0 as u32, h0 as u32),
     )
@@ -15940,6 +15983,7 @@ fn cook_mdl_tex(b: &[u8], idx: usize, w0: usize, h0: usize) -> CookedTex {
         h: fh as u16,
         clut,
         pix4,
+        eight: None,
     }
 }
 
@@ -20992,15 +21036,13 @@ mod tests {
         };
         let faces = cook_sky_faces(&[ramp(false), ramp(true)]);
         assert_eq!(faces.len(), 2);
-        assert_eq!(faces[0].clut, faces[1].clut);
-        let texel = |f: &CookedTex, x: usize, y: usize| {
-            let b = f.pix4[(y * SKY_TEX_SIZE + x) / 2];
-            if x & 1 == 0 {
-                b & 15
-            } else {
-                b >> 4
-            }
-        };
+        fn eight(f: &CookedTex) -> &EightBitTex {
+            f.eight.as_ref().expect("sky faces are 8 bit")
+        }
+        // The first face carries the one palette, the others point at it.
+        assert_eq!(eight(&faces[0]).clut.len(), SKY_PALETTE_SIZE);
+        assert!(eight(&faces[1]).clut.is_empty());
+        let texel = |f: &CookedTex, x: usize, y: usize| eight(f).pix[y * SKY_TEX_SIZE + x];
         // The ramp is not posterised into long flat runs: dithering mixes
         // neighbouring palette entries along it.
         let mut changes = 0;
@@ -21008,13 +21050,43 @@ mod tests {
             changes += (texel(&faces[0], x, 0) != texel(&faces[0], x - 1, 0)) as usize;
         }
         assert!(changes > 20, "{changes} palette changes along the ramp");
-        // Mirrored faces use the same palette entries mirrored, so their mean
-        // colours agree (area-averaged, not point-sampled).
+        // Mirrored faces see the same palette mirrored, so their mean colours
+        // agree (area-averaged, not point-sampled).
+        let clut = &eight(&faces[0]).clut;
         let mean = |f: &CookedTex, x: usize| {
-            let c = f.clut[texel(f, x, 5) as usize];
+            let c = clut[texel(f, x, 5) as usize];
             ((c & 31) + ((c >> 5) & 31) + ((c >> 10) & 31)) as i32
         };
         assert!((mean(&faces[0], 64) - mean(&faces[1], 127 - 64)).abs() <= 24);
+    }
+
+    #[test]
+    fn sky_faces_serialise_as_flagged_8_bit_entries() {
+        let faces = cook_sky_faces(&[
+            RgbImage {
+                w: 128,
+                h: 128,
+                pixels: vec![(40, 60, 90); 128 * 128],
+            },
+            RgbImage {
+                w: 128,
+                h: 128,
+                pixels: vec![(200, 90, 30); 128 * 128],
+            },
+        ]);
+        let chunk = build_texture_chunk(&faces);
+        assert_eq!(&chunk[..4], b"HLTX");
+        assert_eq!(u32::from_le_bytes(chunk[4..8].try_into().unwrap()), 2);
+        let first = u16::from_le_bytes([chunk[8], chunk[9]]);
+        assert_eq!(first, 128 | cooked::TEXTURE_ENTRY_8BIT);
+        let pixels = SKY_TEX_SIZE * SKY_TEX_SIZE;
+        let second_at = 8 + 4 + cooked::TEXTURE_CLUT_256_BYTES + pixels;
+        let second = u16::from_le_bytes([chunk[second_at], chunk[second_at + 1]]);
+        assert_eq!(
+            second,
+            128 | cooked::TEXTURE_ENTRY_8BIT | cooked::TEXTURE_ENTRY_SHARED_CLUT
+        );
+        assert_eq!(chunk.len(), second_at + 4 + pixels);
     }
 
     #[test]
