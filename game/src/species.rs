@@ -246,6 +246,7 @@ pub(crate) unsafe fn tick_slave(
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, aim);
     let beam = skill_hit(Sk::SlaveZap);
+    let claw = skill_hit(Sk::SlaveClaw);
     let casting = PROP_AI_TIMER[pi];
     if casting > 0 {
         // Mid-zap: stand and face the enemy; `ZAP - casting + 1` ticks have run.
@@ -284,7 +285,7 @@ pub(crate) unsafe fn tick_slave(
             cooldown
         };
         if matches!(30 - left, 9 | 13 | 21) {
-            damage_target(target, beam, pos, health, armor);
+            damage_target(target, claw, pos, health, armor);
             cue(SP::SLV_CLAW, pos);
         }
     } else if visible && d2 <= RANGE * RANGE && d2 > 150 * 150 && cooldown == 0 {
@@ -388,14 +389,12 @@ unsafe fn tick_zombie(
             done == 12 || done == 24
         };
         if hit && d2 <= 76 * 76 {
-            let one = skill_hit(Sk::ZombieSlash);
-            damage_target(
-                target,
-                if t & 64 != 0 { one * 2 } else { one },
-                pos,
-                health,
-                armor,
-            );
+            let swing = skill_hit(if t & 64 != 0 {
+                Sk::ZombieBothSlash
+            } else {
+                Sk::ZombieSlash
+            });
+            damage_target(target, swing, pos, health, armor);
             if target == PROP_TARGET_PLAYER {
                 // Each claw throws the player 5 units per tick away from the zombie; the
                 // first claw also to the zombie's left, the second to its right.
@@ -432,8 +431,8 @@ unsafe fn tick_zombie(
 }
 
 /// monster_bullchicken: spits twice from 65 to 780 units (10 damage, a 30-tick
-/// stationary animation each), then runs in and whips (25) every 44 ticks or so,
-/// knocking the player back. Far targets are approached at 15 units per tick.
+/// stationary animation each), then runs in and bites (25, the cvar the retail
+/// close attack reads) every 44 ticks or so, knocking the player back. Far targets are approached at 15 units per tick.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn tick_squid(
@@ -464,7 +463,7 @@ unsafe fn tick_squid(
             cue_or(SP::BC_SPIT, sfx::HC_ATTACK, pos);
         } else if t & 32 != 0 && left == 20 && d2 <= 85 * 85 {
             cue(SP::BC_BITE, pos);
-            damage_target(target, skill_hit(Sk::SquidWhip), pos, health, armor);
+            damage_target(target, skill_hit(Sk::SquidBite), pos, health, armor);
             let dir = dir_q12(pos, aim);
             KNOCK = [(dir[0] * 14) >> 12, 15, (dir[2] * 14) >> 12];
         }
