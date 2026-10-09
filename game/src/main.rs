@@ -20868,10 +20868,10 @@ static mut PENDING_GAUSS_SHOVE: [i32; 3] = [0; 3];
 // (speed, life ticks, gravity?, AoE radius (0 = direct hit only), colour, size px)
 fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
     match kind {
-        PROJ_ROCKET => (90, 50, false, 220, (250, 150, 50), 6),
+        PROJ_ROCKET => (90, 50, false, blast_radius(100), (250, 150, 50), 6),
         PROJ_BOLT => (100, 40, false, 0, (210, 210, 170), 3),
         PROJ_BOLT_WATER => (50, 80, false, 0, (210, 210, 170), 3),
-        PROJ_GRENADE => (64, 60, true, 200, (120, 150, 90), 5),
+        PROJ_GRENADE => (64, 60, true, blast_radius(100), (120, 150, 90), 5),
         // Retail hivehand: primary is a 300 u/s tracking hornet; secondary is
         // a straight 1200 u/s dart. At 20 Hz those are 15 and 60 units/tick.
         PROJ_HORNET => (15, 160, false, 0, (250, 230, 70), 3),
@@ -20880,10 +20880,17 @@ fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
         // Measured on the retail game: about 45 units per tick (900 u/s) along a straight
         // line, 9 ticks from the start of the spit animation at 150 units, 17 at 500.
         PROJ_SPIT => (45, 55, false, 0, (150, 220, 80), 4), // bullsquid acid glob
-        PROJ_SATCHEL => (40, u8::MAX, true, 200, (170, 70, 50), 5),
+        PROJ_SATCHEL => (40, u8::MAX, true, blast_radius(150), (170, 70, 50), 5),
         // ShootContact has no fuse: it travels until its first collision. The
         // source blast radius defaults to damage * 2.5 (100 * 2.5 = 250).
-        PROJ_M203 => (40, u8::MAX, true, 250, (120, 150, 90), 5),
+        PROJ_M203 => (
+            40,
+            u8::MAX,
+            true,
+            blast_radius(M203_DAMAGE),
+            (120, 150, 90),
+            5,
+        ),
         _ => (40, 100, true, 200, (170, 70, 50), 5), // PROJ_TRIPMINE
     }
 }
