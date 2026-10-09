@@ -158,11 +158,7 @@ pub(crate) unsafe fn tick(m: &Map, pi: usize, player_pos: [i32; 3], health: &mut
 /// head on the way up, and is drawn in (nothing) while the barnacle chews.
 #[inline(never)]
 #[optimize(size)]
-pub(crate) unsafe fn tongue(
-    m: &Map,
-    movers: &[phys::Mover],
-    pi: usize,
-) -> Option<([i32; 3], [i32; 3])> {
+pub(crate) unsafe fn tongue(m: &Map, pi: usize) -> Option<([i32; 3], [i32; 3])> {
     let b = PROP_POS[pi];
     let grown = TONGUE_RATE * (SIM_NOW.wrapping_sub(BORN) as i32 - TONGUE_DELAY);
     if grown <= 0 || PROP_STATE[pi] == PROP_STATE_ATTACK {
@@ -173,7 +169,8 @@ pub(crate) unsafe fn tongue(
         let p = LOGIC_PLAYER_POS;
         return Some((from, [p[0], p[1] + PLAYER_HULL_HALF_HEIGHT, p[2]]));
     }
-    let floor = crate::tripmine::beam_end(m, movers, from, [0, -4096, 0]);
+    // World geometry only: a brush entity (the c1a2 hatch) must not shorten the tongue.
+    let floor = crate::tripmine::beam_end(m, &[], from, [0, -4096, 0]);
     Some((
         from,
         [from[0], from[1] - grown.min(from[1] - floor[1]), from[2]],
