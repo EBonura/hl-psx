@@ -1425,10 +1425,10 @@ fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i3
         if mv.h1() <= 0 {
             continue; // no clip hull for this submodel
         }
-        let head = mv.pick(crouch);
         if !mover_may_touch_bounds(mv, &low, &high) {
             continue;
         }
+        let head = mv.pick(crouch);
         let (q1, q2) = mover_local_segment(mv, p1, p2);
         let t = trace(map, head, q1, q2);
         // NB: do NOT propagate a mover's startsolid. If the player ends up inside
