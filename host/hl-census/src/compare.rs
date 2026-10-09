@@ -442,6 +442,10 @@ pub fn compare_motion(
     for (b, r) in retail {
         let b_key = b;
         let Some(p) = port.get(b) else {
+            // The player's tram is cooked on its own path, not as an entity record.
+            if r.class == "func_tracktrain" && r.targetname == "train" {
+                continue;
+            }
             let (rm, _) = travel(r);
             if rm > tol || swing(r) > 8.0 {
                 rows.push(MotionRow {
@@ -500,7 +504,10 @@ pub fn compare_motion(
                     | "func_rot_button"
                     | "momentary_rot_button"
             );
-            if d > 16.0 && !rotating {
+            // Retail reports a zero centre for brushes it never linked
+            // (invisible effect trains), and a pushable's centre is its crate.
+            let unlinked = a == [0.0; 3];
+            if d > 16.0 && !rotating && !unlinked && r.class != "func_pushable" {
                 rows.push(MotionRow {
                     class: r.class.clone(),
                     name: r.targetname.clone(),
