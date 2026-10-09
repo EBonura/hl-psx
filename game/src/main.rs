@@ -22701,7 +22701,7 @@ static mut KEY_BIAS: i32 = 0;
 /// Patch faces (the cook's big tessellated floors and walls) draw this many buckets farther
 /// than their depth key says: everything cooked as a detail face, brush entity or studio
 /// model that sits on or in front of one is nearer than a long polygon's mean key admits.
-const KEY_BIAS_PATCH: i32 = 3;
+const KEY_BIAS_PATCH: i32 = 2;
 // Floor for every world key while a split quad's crack backstop is emitted: the backstop
 // must draw before every cell of its own refinement, which only holds if all of its
 // leaves share the parent's far key (each leaf's own far key lets nearer leaves interleave
