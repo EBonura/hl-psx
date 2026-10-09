@@ -36,6 +36,7 @@ pub const CAP: usize = 520;
 pub const WORDS: usize = 6;
 pub const MOD_CAP: usize = 700;
 pub const MOD_WORDS: usize = 3;
+pub const ENT_CAP: usize = 48;
 
 #[no_mangle]
 pub static mut ORD_BUF: [[u32; WORDS]; CAP] = [[0; WORDS]; CAP];
@@ -45,6 +46,15 @@ pub static mut ORD_N: u32 = 0;
 pub static mut MOD_BUF: [[u32; MOD_WORDS]; MOD_CAP] = [[0; MOD_WORDS]; MOD_CAP];
 #[no_mangle]
 pub static mut MOD_N: u32 = 0;
+
+/// Brush entities drawn this frame: first face, face count, world bounds centre (x, y, z), radius.
+#[no_mangle]
+pub static mut ENT_BUF: [[i32; 9]; ENT_CAP] = [[0; 9]; ENT_CAP];
+#[no_mangle]
+pub static mut ENT_N: u32 = 0;
+/// `ENT_N` at the start of the frame being traced (the host reads the entries after it).
+#[no_mangle]
+pub static mut ENT_FRAME_START: u32 = 0;
 
 static mut CALL_KEY: [u16; 2] = [0; 2];
 static mut CALL_DEPTH: [[u16; 4]; 2] = [[0; 4]; 2];
@@ -121,7 +131,12 @@ pub unsafe fn note_packet(site: u32, otz: usize, p: *const u32, words: u8) {
     let mut d = [0u16; 4];
     if quad && pair && !(single && k0 != k1) {
         // try_emit_quad_ctx pair: tri(pb,pa,pc) then tri(pa,pd,pc); packet = pb,pa,pc,pd.
-        d = [CALL_DEPTH[0][0], CALL_DEPTH[0][1], CALL_DEPTH[0][2], CALL_DEPTH[1][1]];
+        d = [
+            CALL_DEPTH[0][0],
+            CALL_DEPTH[0][1],
+            CALL_DEPTH[0][2],
+            CALL_DEPTH[1][1],
+        ];
         mode = 1;
     } else if single {
         let mut i = 0;
@@ -139,7 +154,12 @@ pub unsafe fn note_packet(site: u32, otz: usize, p: *const u32, words: u8) {
             mode = 3;
         }
     }
-    let v = [*p.add(3), *p.add(6), *p.add(9), if quad { *p.add(12) } else { 0 }];
+    let v = [
+        *p.add(3),
+        *p.add(6),
+        *p.add(9),
+        if quad { *p.add(12) } else { 0 },
+    ];
     let e = &mut ORD_BUF[(ORD_N as usize) % CAP];
     let mut i = 0;
     while i < 4 {
@@ -169,4 +189,28 @@ pub unsafe fn note_model(key: u32, p: *const u32) {
     e[2] = pack_xy(*p.add(7));
     MOD_N = MOD_N.wrapping_add(1);
     CALLS = 0;
+}
+
+/// Start a new frame's brush-entity list (call once per world build).
+#[inline(never)]
+pub unsafe fn begin_ents() {
+    ENT_FRAME_START = ENT_N;
+}
+
+/// Record one brush entity about to be emitted: its cooked face range and exact world bounds.
+#[inline(never)]
+pub unsafe fn note_ent(first: usize, count: usize, center: [i32; 3], radius: i32, off: [i32; 3]) {
+    let e = &mut ENT_BUF[(ENT_N as usize) % ENT_CAP];
+    *e = [
+        first as i32,
+        count as i32,
+        center[0],
+        center[1],
+        center[2],
+        radius,
+        off[0],
+        off[1],
+        off[2],
+    ];
+    ENT_N = ENT_N.wrapping_add(1);
 }
