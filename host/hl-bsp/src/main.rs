@@ -7053,6 +7053,9 @@ fn collect_entities(
             } else {
                 entity_leafs(mins, maxs, origin_hl, leaf_move, nodes, planes)
             };
+            // CBaseDoor::Spawn makes a SF_DOOR_PASSABLE door SOLID_NOT: it
+            // still opens and fires, and the player walks through it.
+            let passable_door = cls == "func_door" && sf & 8 != 0;
             let rot_button_solid = if cls == "momentary_rot_button" {
                 sf & 1 != 0 // SF_MOMENTARY_DOOR
             } else {
@@ -7065,12 +7068,12 @@ fn collect_entities(
                 mv,
                 center,
                 r2,
-                head: if is_rot_button && !rot_button_solid {
+                head: if (is_rot_button && !rot_button_solid) || passable_door {
                     0
                 } else {
                     head
                 },
-                head0,
+                head0: if passable_door { 0 } else { head0 },
                 leaves,
             });
         } else if cls == "func_water"
@@ -7260,6 +7263,11 @@ fn collect_entities(
             } else {
                 0
             };
+            // SF_TRAIN_PASSABLE / the tracktrain's "passable" bit (8) make the
+            // train SOLID_NOT: c4a1a's invisible ghost trains carry the player
+            // nowhere and must never push him.
+            let passable_train =
+                matches!(cls, "func_train" | "func_tracktrain") && parse_spawnflags(block) & 8 != 0;
             out.push(EntRec {
                 submodel: submodel as u16,
                 kind: (if retained_angles != 0 {
@@ -7279,8 +7287,8 @@ fn collect_entities(
                 mv: [0, 0, retained_angles],
                 center,
                 r2,
-                head,
-                head0,
+                head: if passable_train { 0 } else { head },
+                head0: if passable_train { 0 } else { head0 },
                 leaves,
             });
         }
@@ -20353,6 +20361,32 @@ mod tests {
         assert_eq!(cooked[0].origin, [1892, 129, 264]);
         assert_eq!(cooked[0].mv, [1820, 1, 0x00e000]);
         assert_eq!((cooked[0].head, cooked[0].head0), (0, 0));
+    }
+
+    #[test]
+    fn passable_doors_and_trains_cook_without_collision() {
+        let ents = br#"
+        { "classname" "func_door" "model" "*1" "spawnflags" "8" }
+        { "classname" "func_door" "model" "*2" "spawnflags" "0" }
+        { "classname" "func_train" "model" "*3" "spawnflags" "9" "target" "a" }
+        { "classname" "func_train" "model" "*4" "spawnflags" "1" "target" "a" }
+        { "classname" "func_wall" "model" "*5" "spawnflags" "8" }
+        "#;
+        let mut models = vec![0u8; 6 * SZ_MODEL];
+        for sub in 1..6 {
+            models[sub * SZ_MODEL + 36..sub * SZ_MODEL + 40].copy_from_slice(&123i32.to_le_bytes());
+            models[sub * SZ_MODEL + 40..sub * SZ_MODEL + 44].copy_from_slice(&456i32.to_le_bytes());
+        }
+        let cooked = collect_entities(ents, &models, &[], &[], 1.0, 0);
+        assert_eq!(cooked.len(), 5);
+        assert_eq!(
+            cooked.iter().map(|e| e.head != 0).collect::<Vec<_>>(),
+            [false, true, false, true, true],
+            "only the passable door and the passable train lose their hull"
+        );
+        assert_eq!(cooked[0].head0, 0);
+        assert_eq!(cooked[2].head0, 0);
+        assert_ne!(cooked[4].head0, 0, "func_wall ignores bit 8");
     }
 
     #[test]
