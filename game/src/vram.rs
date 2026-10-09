@@ -15,6 +15,7 @@
 //! texture pixels, or a texture over a palette. `clut_block_hits_a_texture_page`
 //! below now proves the separation at compile time.
 
+use hl_format::map as cooked;
 use psx_gpu::material::{TextureMaterial, TextureWindow, TexturedGouraudPacketMaterial};
 use psx_vram::{
     upload_bytes, ClutRowAllocator, TextureDepth, TexturePage, TextureWindowAtlas, VramRect,
@@ -126,6 +127,30 @@ pub const ZERO_SLOT: TexSlot = TexSlot {
 static mut ATLAS: TextureWindowAtlas<PAGES> = TextureWindowAtlas::new();
 static mut CLUTS: ClutRowAllocator<CLUT_ROWS> = ClutRowAllocator::new(CLUT_BASE_Y);
 
+/// Where the room's 8 bit (sky) textures go. Each takes half of a whole
+/// texture page (128 texels is 64 VRAM halfwords, the page's full width), so
+/// the atlas, which places 4 bit windows, hands over empty pages and two faces
+/// share one. The 256 entry palette is uploaded once; later entries marked
+/// shared reuse it.
+#[derive(Copy, Clone)]
+struct Sky8State {
+    /// Page with its upper half still free, if any.
+    open_page: Option<u16>,
+    /// The shared palette's CLUT word, once uploaded.
+    clut_word: Option<u16>,
+}
+
+impl Sky8State {
+    const fn new() -> Self {
+        Self {
+            open_page: None,
+            clut_word: None,
+        }
+    }
+}
+
+static mut SKY8: Sky8State = Sky8State::new();
+
 // Viewmodel-pool checkpoint: both allocators are Copy, so we snapshot them once
 // the map's map/HUD/sprite/enemy/glock textures are all uploaded. Restoring frees
 // exactly the switched-viewmodel textures loaded afterwards (nothing else comes
@@ -164,6 +189,7 @@ unsafe fn reset_allocators() {
         ATLAS = TextureWindowAtlas::new();
         CLUTS = ClutRowAllocator::new(CLUT_BASE_Y);
         VM_CP = None; // invalidate the previous map's viewmodel checkpoint
+        SKY8 = Sky8State::new();
     }
 }
 
@@ -313,6 +339,20 @@ pub unsafe fn upload_tex_blob_raw(
         if off + 36 > data.len() {
             break;
         }
+        if data[off + 1] & 0x80 != 0 {
+            // An 8 bit entry (the sky): see `hl_format::map::TEXTURE_ENTRY_8BIT`.
+            let Some((slot, len)) = upload_eight(&data[off..]) else {
+                break;
+            };
+            off += len;
+            if i < slot_len {
+                failed += slot.is_none() as usize;
+                unsafe {
+                    ptr::write(slots.add(i), slot.unwrap_or(EMPTY_SLOT));
+                }
+            }
+            continue;
+        }
         let w = u16::from_le_bytes([data[off], data[off + 1]]);
         let h = u16::from_le_bytes([data[off + 2], data[off + 3]]);
         let clut = &data[off + 4..off + 36];
@@ -382,6 +422,76 @@ fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8]) -> Option<TexSlot> 
             packet,
             valid: true,
             backdrop,
+        })
+    }
+}
+
+/// Upload one 8 bit sky texture: `u16 w | flags | u16 h | [u16 clut[256]] |
+/// u8 pix[w * h]`. Returns the slot (None when it could not be placed) and the
+/// entry's byte length, or None when the entry is cut short.
+#[optimize(size)]
+fn upload_eight(entry: &[u8]) -> Option<(Option<TexSlot>, usize)> {
+    let flags = u16::from_le_bytes([entry[0], entry[1]]);
+    let w = (flags & cooked::TEXTURE_ENTRY_WIDTH_MASK) as usize;
+    let h = u16::from_le_bytes([entry[2], entry[3]]) as usize;
+    let shared = flags & cooked::TEXTURE_ENTRY_SHARED_CLUT != 0;
+    let pix_off = 4 + if shared {
+        0
+    } else {
+        cooked::TEXTURE_CLUT_256_BYTES
+    };
+    let len = pix_off + w * h;
+    if len > entry.len() {
+        return None;
+    }
+    // Half a page is exactly one 128 x 128 face.
+    let slot = if w == 128 && h == 128 {
+        place_eight(&entry[4..pix_off], &entry[pix_off..len], shared)
+    } else {
+        None
+    };
+    Some((slot, len))
+}
+
+/// Place a face's pixels in half a texture page, and its palette (`clut`, empty
+/// when shared) in 16 CLUT slots.
+fn place_eight(clut: &[u8], pix: &[u8], shared: bool) -> Option<TexSlot> {
+    unsafe {
+        let sky = &mut *core::ptr::addr_of_mut!(SKY8);
+        let (page, half) = match sky.open_page.take() {
+            Some(page) => (page, 1u16),
+            None => {
+                let page = (*core::ptr::addr_of_mut!(ATLAS)).reserve_empty_page()? as u16;
+                sky.open_page = Some(page);
+                (page, 0)
+            }
+        };
+        // The page is one the atlas owns, so the rectangle is inside VRAM.
+        let tpage_x = TEX_X0 + (page % COLS) * 64;
+        let tpage_y = if page / COLS == 0 { 0 } else { 256 };
+        if !shared {
+            // 256 entries are 16 CLUT slots in one row, which must end at or
+            // before `CLUT_MAX_X`; a fit beyond it is retired like in
+            // `upload_one` and the search moves on.
+            let at = loop {
+                let candidate = (*core::ptr::addr_of_mut!(CLUTS)).alloc(256)?;
+                if candidate.x() + 256 <= CLUT_MAX_X {
+                    break candidate;
+                }
+            };
+            upload_bytes(VramRect::new(at.x(), at.y(), 256, 1), clut);
+            sky.clut_word = Some(at.uv_word());
+        }
+        upload_bytes(VramRect::new(tpage_x, tpage_y + half * 128, 64, 128), pix);
+        let tpage = TexturePage::new(tpage_x, tpage_y, TextureDepth::Bit8);
+        let win = TextureWindow::power_of_two_tile(0, (half * 128) as u8, 128, 128);
+        let material = TextureMaterial::opaque(sky.clut_word?, tpage.uv_word(0), (128, 128, 128))
+            .with_texture_window(win);
+        Some(TexSlot {
+            material,
+            packet: TexturedGouraudPacketMaterial::from_texture(material),
+            valid: true,
+            backdrop: false,
         })
     }
 }

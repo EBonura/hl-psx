@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Xen's skies keep their colour. The sky was one 16 colour palette shared by
+  all six cube faces, which turned the nebulae's oranges beige and their
+  dither into grain. Each face is now an 8 bit texture against one 256 colour
+  palette, so the blues, greens and oranges of the source images survive. A
+  sky costs 48 KB more of VRAM (three texture pages instead of one and a half)
+  and 49,472 B more in its room's texture chunk, which is staged in the map
+  buffer and not kept; free RAM drops by 2,064 B for the loader. The cooker
+  marks an 8 bit texture with the top bit of its width, so every other
+  texture and every room without a sky is byte for byte what it was.
+
+- No black wedges or hairline cracks in the sky. A sky polygon spanning
+  several cube faces skipped any face that crossed it between corners lying
+  on other faces, which left a wedge of clear colour at the screen's edge
+  as the view turned. Pieces now grow outward along their edges' normals,
+  and the screen's last column and row are covered.
+
 - `cargo hl-build build` links again. Without a sample profile the game had
   outgrown RAM (`.bss` over by about 4 KB), so only `pgo` with a recording
   could make a disc. The profile and threshold `pgo` shipped with now live
