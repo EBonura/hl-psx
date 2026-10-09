@@ -8,19 +8,6 @@
 //!
 //! All world units are i32; plane normals are i16 in 1.3.12 (x4096); fractions
 //! along a move are Q0.12 (4096 = full). No floats (no FPU on the PS1).
-//!
-//! The trace family, `slide_move`, the walking tail and wish-motion step of
-//! `update`, and `update_swim` are being rewritten clean-room from the specs;
-//! until that lands they are `unimplemented!` stubs, and the module-level
-//! `allow` below covers the helpers and constants only those bodies used.
-#![allow(
-    dead_code,
-    unused_variables,
-    unused_mut,
-    unused_assignments,
-    unused_imports,
-    unreachable_code
-)]
 
 use psx_gte::math::Mat3I16;
 use psx_math::{int32::isqrt_i32, sincos};
@@ -251,8 +238,59 @@ pub fn inside_clip_hull(map: &Map, head: i16, p: [i32; 3]) -> bool {
     point_contents(map, head, p) == SOLID
 }
 
+/// Longest descent any trace walk follows before it gives up and fails open.
+const MAX_TRACE_DEPTH: u8 = 120;
+
+/// Where a sub-segment crosses a plane, from the signed distances (Q5) of its
+/// endpoints, as a Q12 fraction. `bias` is the back-off applied to the start
+/// distance (1 for the clip hull, 0 for the render tree).
+#[inline(always)]
+fn crossing_frac(t1: i32, t2: i32, bias: i32) -> i32 {
+    let denom = t1.wrapping_sub(t2);
+    if denom == 0 {
+        return 0;
+    }
+    let nudged = if t1 < 0 {
+        t1.wrapping_add(bias)
+    } else {
+        t1.wrapping_sub(bias)
+    };
+    nudged.wrapping_mul(4096).wrapping_div(denom).clamp(0, 4096)
+}
+
+/// `a + ((b - a) * f) >> 12` on every axis.
+#[inline(always)]
+fn lerp_q12(a: [i32; 3], b: [i32; 3], f: i32) -> [i32; 3] {
+    [
+        a[0] + (((b[0] - a[0]) * f) >> 12),
+        a[1] + (((b[1] - a[1]) * f) >> 12),
+        a[2] + (((b[2] - a[2]) * f) >> 12),
+    ]
+}
+
+#[inline(always)]
+fn negated(n: [i32; 3]) -> [i32; 3] {
+    [-n[0], -n[1], -n[2]]
+}
+
 fn point_contents(map: &Map, mut num: i16, p: [i32; 3]) -> i16 {
-    unimplemented!("clean-room rewrite: see spec");
+    let mut steps = 0u16;
+    while steps <= 256 {
+        if num < 0 {
+            return num;
+        }
+        if num as usize >= map.n_clip {
+            return -1;
+        }
+        let cn = map.clipnode(num as usize);
+        num = if plane_delta(&cn, p) >= 0 {
+            cn.c0
+        } else {
+            cn.c1
+        };
+        steps += 1;
+    }
+    -1
 }
 
 fn recurse(
@@ -265,12 +303,83 @@ fn recurse(
     tr: &mut Trace,
     mut depth: u8,
 ) -> bool {
-    unimplemented!("clean-room rewrite: see spec");
+    loop {
+        if depth > MAX_TRACE_DEPTH {
+            return false;
+        }
+        if num < 0 {
+            if num == SOLID {
+                tr.startsolid = true;
+            } else {
+                tr.allsolid = false;
+            }
+            return false;
+        }
+        if num as usize >= map.n_clip {
+            tr.allsolid = false;
+            return false;
+        }
+        let cn = map.clipnode(num as usize);
+        let t1 = plane_delta(&cn, p1);
+        let t2 = plane_delta(&cn, p2);
+        let back_start = t1 < 0;
+        let (near, far) = if back_start {
+            (cn.c1, cn.c0)
+        } else {
+            (cn.c0, cn.c1)
+        };
+
+        // An end point resting exactly on the plane, with solid just behind
+        // it, counts as contact one step short of the end.
+        if t2 == 0 && t1 != 0 && point_contents(map, far, p2) == SOLID {
+            if recurse(map, near, p1f, p2f, p1, p2, tr, depth + 1) {
+                return true;
+            }
+            let n = plane_normal(&cn);
+            tr.normal = if back_start { negated(n) } else { n };
+            tr.frac = (p2f - 1).max(p1f);
+            tr.allsolid = false;
+            return true;
+        }
+
+        if (t1 >= 0) == (t2 >= 0) {
+            num = near;
+            depth += 1;
+            continue;
+        }
+
+        let f = crossing_frac(t1, t2, 1);
+        let midf = p1f + (((p2f - p1f) * f) >> 12);
+        let mid = lerp_q12(p1, p2, f);
+        if recurse(map, near, p1f, midf, p1, mid, tr, depth + 1) {
+            return true;
+        }
+        if point_contents(map, far, mid) != SOLID {
+            // Continue with the far half of the segment.
+            return recurse(map, far, midf, p2f, mid, p2, tr, depth + 1);
+        }
+        if tr.allsolid {
+            // Still all solid at the far side: the whole query is over.
+            return true;
+        }
+        let n = plane_normal(&cn);
+        tr.normal = if back_start { negated(n) } else { n };
+        tr.frac = midf;
+        return true;
+    }
 }
 
 #[inline(never)]
 fn trace(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> Trace {
-    unimplemented!("clean-room rewrite: see spec");
+    let mut tr = Trace {
+        frac: 4096,
+        normal: [0; 3],
+        allsolid: true,
+        startsolid: false,
+        mover: -1,
+    };
+    recurse(map, head as i16, 0, 4096, p1, p2, &mut tr, 0);
+    tr
 }
 
 /// Hull 0 is the render BSP node tree, not the pre-expanded clipnode tree used
@@ -286,12 +395,71 @@ fn recurse_node_trace(
     tr: &mut Trace,
     mut depth: u8,
 ) -> bool {
-    unimplemented!("clean-room rewrite: see spec");
+    loop {
+        if depth > MAX_TRACE_DEPTH {
+            return false;
+        }
+        if num < 0 {
+            if num == -1 {
+                tr.startsolid = true;
+            } else {
+                tr.allsolid = false;
+            }
+            return false;
+        }
+        if num as usize >= map.n_nodes {
+            tr.allsolid = false;
+            return false;
+        }
+        let nd = map.node(num as usize);
+        let t1 = dot_q5(nd.n, p1).wrapping_sub(nd.dist_q5);
+        let t2 = dot_q5(nd.n, p2).wrapping_sub(nd.dist_q5);
+        let back_start = t1 < 0;
+        let (near, far) = if back_start {
+            (nd.c1, nd.c0)
+        } else {
+            (nd.c0, nd.c1)
+        };
+        if (t1 >= 0) == (t2 >= 0) {
+            num = near;
+            depth += 1;
+            continue;
+        }
+
+        let f = crossing_frac(t1, t2, 0);
+        let midf = p1f + (((p2f - p1f) * f) >> 12);
+        let mid = lerp_q12(p1, p2, f);
+        if recurse_node_trace(map, near, p1f, midf, p1, mid, tr, depth + 1) {
+            return true;
+        }
+        if !node_point_solid_from(map, far, mid) {
+            return recurse_node_trace(map, far, midf, p2f, mid, p2, tr, depth + 1);
+        }
+        if tr.allsolid {
+            return true;
+        }
+        let n = plane_normal_q12(nd.n);
+        tr.normal = if back_start { negated(n) } else { n };
+        tr.frac = midf;
+        return true;
+    }
 }
 
 #[inline(never)]
 fn trace_nodes(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> Trace {
-    unimplemented!("clean-room rewrite: see spec");
+    let mut tr = Trace {
+        frac: 4096,
+        normal: [0; 3],
+        allsolid: true,
+        startsolid: false,
+        mover: -1,
+    };
+    if map.n_nodes == 0 || head < 0 {
+        tr.allsolid = false;
+        return tr;
+    }
+    recurse_node_trace(map, head, 0, 4096, p1, p2, &mut tr, 0);
+    tr
 }
 
 /// Minimal state for a segment-visibility trace. LOS callers only ask whether
@@ -312,12 +480,58 @@ fn recurse_clear(
     tr: &mut ClearTrace,
     mut depth: u8,
 ) -> bool {
-    unimplemented!("clean-room rewrite: see spec");
+    loop {
+        if depth > MAX_TRACE_DEPTH {
+            return false;
+        }
+        if num < 0 {
+            if num == SOLID {
+                tr.startsolid = true;
+            }
+            return false;
+        }
+        if num as usize >= map.n_clip {
+            return false;
+        }
+        let cn = map.clipnode(num as usize);
+        let t1 = plane_delta(&cn, p1);
+        let t2 = plane_delta(&cn, p2);
+        let (near, far) = if t1 < 0 {
+            (cn.c1, cn.c0)
+        } else {
+            (cn.c0, cn.c1)
+        };
+
+        // End point exactly on the plane with solid behind it: blocked once
+        // the near side has been walked (it may still flag a solid start).
+        if t2 == 0 && t1 != 0 && point_contents(map, far, p2) == SOLID {
+            recurse_clear(map, near, p1, p2, tr, depth + 1);
+            return true;
+        }
+
+        if (t1 >= 0) == (t2 >= 0) {
+            num = near;
+            depth += 1;
+            continue;
+        }
+
+        let f = crossing_frac(t1, t2, 1);
+        let mid = lerp_q12(p1, p2, f);
+        if recurse_clear(map, near, p1, mid, tr, depth + 1) {
+            return true;
+        }
+        if point_contents(map, far, mid) != SOLID {
+            return recurse_clear(map, far, mid, p2, tr, depth + 1);
+        }
+        return true;
+    }
 }
 
 #[inline(never)]
 fn trace_clear(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> bool {
-    unimplemented!("clean-room rewrite: see spec");
+    let mut tr = ClearTrace { startsolid: false };
+    let blocked = recurse_clear(map, head as i16, p1, p2, &mut tr, 0);
+    tr.startsolid || !blocked
 }
 
 /// A moving/brush collider: a submodel clip hull at a world offset, optionally
@@ -757,17 +971,82 @@ fn recurse_visual_clear(
     tr: &mut VisualClearTrace,
     mut depth: u8,
 ) -> bool {
-    unimplemented!("clean-room rewrite: see spec");
+    loop {
+        if depth > MAX_TRACE_DEPTH {
+            return false;
+        }
+        if num < 0 {
+            let solid = num == -1;
+            if tr.first_leaf {
+                tr.first_leaf = false;
+                if solid {
+                    tr.startsolid = true;
+                }
+                return false;
+            }
+            return solid;
+        }
+        if num as usize >= map.n_nodes {
+            return false;
+        }
+        let nd = map.node(num as usize);
+        let t1 = dot_q5(nd.n, p1).wrapping_sub(nd.dist_q5);
+        let t2 = dot_q5(nd.n, p2).wrapping_sub(nd.dist_q5);
+        let (near, far) = if t1 < 0 {
+            (nd.c1, nd.c0)
+        } else {
+            (nd.c0, nd.c1)
+        };
+        if (t1 >= 0) == (t2 >= 0) {
+            num = near;
+            depth += 1;
+            continue;
+        }
+
+        let f = crossing_frac(t1, t2, 0);
+        let mid = lerp_q12(p1, p2, f);
+        if recurse_visual_clear(map, near, p1, mid, tr, depth + 1) {
+            return true;
+        }
+        num = far;
+        depth += 1;
+        // The far half runs from the split point to the end.
+        return recurse_visual_clear(map, num, mid, p2, tr, depth);
+    }
 }
 
 #[inline]
 fn line_clear_visual_from(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> bool {
-    unimplemented!("clean-room rewrite: see spec");
+    if map.n_nodes == 0 || head < 0 {
+        return true;
+    }
+    let mut tr = VisualClearTrace {
+        first_leaf: true,
+        startsolid: false,
+    };
+    let blocked = recurse_visual_clear(map, head, p1, p2, &mut tr, 0);
+    tr.startsolid || !blocked
 }
 
 #[inline]
 fn node_point_solid_from(map: &Map, mut num: i32, p: [i32; 3]) -> bool {
-    unimplemented!("clean-room rewrite: see spec");
+    let mut steps = 0u8;
+    while steps <= MAX_TRACE_DEPTH {
+        if num < 0 {
+            return num == -1;
+        }
+        if num as usize >= map.n_nodes {
+            return false;
+        }
+        let nd = map.node(num as usize);
+        num = if dot_q5(nd.n, p).wrapping_sub(nd.dist_q5) >= 0 {
+            nd.c0
+        } else {
+            nd.c1
+        };
+        steps += 1;
+    }
+    false
 }
 
 fn visual_sphere_solid_from(map: &Map, num: i32, p: [i32; 3], radius: i32, depth: u8) -> bool {
@@ -1358,7 +1637,202 @@ fn slide_move(
     mut pos: [i32; 3],
     mut vel: [i32; 3],
 ) -> ([i32; 3], [i32; 3]) {
-    unimplemented!("clean-room rewrite: see spec");
+    use crate::ground_logic as gl;
+    const LEGS: usize = 4;
+    const ZERO: [i32; 3] = [0; 3];
+
+    #[cfg(feature = "deep-reference-trace")]
+    let call = next_player_slide_call();
+
+    let primal_vel = vel;
+    // Velocity as of the last leg that made progress; plane clips start here.
+    let mut base_vel = vel;
+    let mut planes = [ZERO; MAX_CLIP_PLANES];
+    let mut n_planes = 0usize;
+    let mut time_left = 4096i32;
+    let mut remaining = vel;
+    let mut stalled_on: Option<[i32; 3]> = None;
+
+    let mut leg = 0usize;
+    while leg < LEGS {
+        if vel == ZERO || time_left <= 0 || remaining == ZERO {
+            break;
+        }
+        let d = remaining;
+        let end = add(pos, d);
+        let tr = trace_all(map, head, movers, pos, end);
+        #[cfg(feature = "deep-reference-trace")]
+        crate::reference_trace::player_slide(
+            unsafe { PLAYER_STEP_TICK },
+            call,
+            leg as u8,
+            pos,
+            vel,
+            remaining,
+            end,
+            time_left,
+            tr.frac,
+            tr.normal,
+            tr.startsolid,
+            tr.mover,
+        );
+        leg += 1;
+
+        if tr.startsolid {
+            // Buried in the world: hop to the nearest clear spot and let the
+            // next leg re-trace from there, or give up the whole move.
+            match try_unstick(map, head, movers, pos, -1) {
+                Some(p) => {
+                    pos = p;
+                    continue;
+                }
+                None => {
+                    vel = ZERO;
+                    break;
+                }
+            }
+        }
+
+        let mut advanced = ZERO;
+        if tr.frac > 0 {
+            let leg_start = pos;
+            pos = lerp_q12(leg_start, end, tr.frac);
+            if tr.frac < 4096 {
+                // Flooring each axis can land the integer point inside a hull
+                // the exact contact stayed outside of.
+                let diagonal = gl::is_diagonal_contact_plane(tr.normal);
+                let bad = (tr.mover != -1
+                    && !mover_clear_at_hull(map, movers, tr.mover, pos, head))
+                    || (diagonal && !clear_at(map, head, movers, pos));
+                if bad {
+                    pos = leg_start;
+                    if diagonal {
+                        let cand = [
+                            gl::slide_contact_axis_q6(leg_start[0], end[0], tr.frac).0,
+                            gl::slide_contact_axis_q6(leg_start[1], end[1], tr.frac).0,
+                            gl::slide_contact_axis_q6(leg_start[2], end[2], tr.frac).0,
+                        ];
+                        if clear_at(map, head, movers, cand)
+                            && (tr.mover == -1
+                                || mover_clear_at_hull(map, movers, tr.mover, cand, head))
+                        {
+                            pos = cand;
+                        }
+                    }
+                }
+                advanced = [
+                    pos[0] - leg_start[0],
+                    pos[1] - leg_start[1],
+                    pos[2] - leg_start[2],
+                ];
+            }
+            base_vel = vel;
+            n_planes = 0;
+        }
+
+        if tr.frac >= 4096 {
+            break;
+        }
+
+        time_left = (time_left * (4096 - tr.frac)) >> 12;
+        if n_planes == MAX_CLIP_PLANES {
+            vel = ZERO;
+            break;
+        }
+        planes[n_planes] = tr.normal;
+        n_planes += 1;
+        let planes_now = &planes[..n_planes];
+
+        // New velocity: the first plane whose clip of the base velocity does
+        // not run into any other recorded plane.
+        let vel_before = vel;
+        let mut picked = false;
+        let mut i = 0;
+        while i < n_planes {
+            let c = clip_velocity(base_vel, planes_now[i]);
+            let mut j = 0;
+            let mut ok = true;
+            while j < n_planes {
+                if j != i && dot12_i32(c, planes_now[j]) < 0 {
+                    ok = false;
+                    break;
+                }
+                j += 1;
+            }
+            if ok {
+                vel = c;
+                picked = true;
+                break;
+            }
+            i += 1;
+        }
+        if !picked {
+            if n_planes == 2 {
+                // Wedged in a crease: slide along the line where they meet.
+                let dir = cross12(planes_now[0], planes_now[1]);
+                vel = scale12(dir, dot12_i32(vel, dir));
+            } else {
+                vel = ZERO;
+                break;
+            }
+        }
+
+        // What is left of the displacement for the next leg.
+        for a in 0..3 {
+            remaining[a] =
+                gl::remaining_slide_axis(d[a], advanced[a], vel_before[a], vel[a], time_left);
+        }
+        let mut needs_nearest = false;
+        for pl in planes_now {
+            let into = dot_raw(remaining, *pl);
+            if gl::slide_remainder_needs_nearest(tr.frac, advanced, *pl, into) {
+                needs_nearest = true;
+                break;
+            }
+        }
+        if needs_nearest {
+            let mut cand = ZERO;
+            for a in 0..3 {
+                cand[a] = gl::remaining_slide_axis_nearest(
+                    d[a],
+                    advanced[a],
+                    vel_before[a],
+                    vel[a],
+                    time_left,
+                );
+            }
+            if planes_now.iter().all(|pl| dot_raw(cand, *pl) >= 0) {
+                remaining = cand;
+            }
+        }
+
+        // Two bumps in a row on the same diagonal face without moving a unit:
+        // step one unit off it so the integer hull stops re-hitting the same
+        // lattice point.
+        let stalled = tr.frac > 0 && advanced == ZERO;
+        if stalled && stalled_on == Some(tr.normal) && gl::is_diagonal_contact_plane(tr.normal) {
+            let nudge = gl::horizontal_contact_nudge(tr.normal);
+            if nudge != ZERO {
+                let dest = add(pos, nudge);
+                let probe = trace_all(map, head, movers, pos, dest);
+                if probe.frac >= 4096
+                    && !probe.startsolid
+                    && !probe.allsolid
+                    && clear_at(map, head, movers, dest)
+                {
+                    pos = dest;
+                }
+            }
+        }
+        stalled_on = if stalled { Some(tr.normal) } else { None };
+
+        // The slide turned the motion around (or killed it): stop dead.
+        if dot_raw(vel, primal_vel) <= 0 {
+            vel = ZERO;
+            break;
+        }
+    }
+    (pos, vel)
 }
 
 fn dist_xz(a: [i32; 3], b: [i32; 3]) -> i32 {
@@ -1749,7 +2223,169 @@ impl Player {
         yaw: u16,
         pitch: i16,
     ) {
-        unimplemented!("clean-room rewrite: see spec");
+        use crate::ground_logic::integrate_planar_q6 as integrate;
+        let head = self.head(map);
+        let s = sincos::sin_q12(yaw);
+        let c = sincos::sin_q12((yaw + 1024) & 0xFFF);
+
+        let mut f = [
+            self.vel[0] * PLANAR_FRAC_ONE + self.vel_frac_xz[0] as i32,
+            self.vel[1] * PLANAR_FRAC_ONE + self.vel_frac_y as i32,
+            self.vel[2] * PLANAR_FRAC_ONE + self.vel_frac_xz[1] as i32,
+        ];
+
+        // A water jump in flight just coasts: no input, drag or gravity, with
+        // the wall push re-asserted every tick.
+        if water_jump.active() {
+            water_jump.ticks -= 1;
+            if water_level == 0 {
+                water_jump.clear();
+            }
+            f[0] = water_jump.dir_x_q6 as i32;
+            f[2] = water_jump.dir_z_q6 as i32;
+            let (mx, nx) = integrate(f[0], self.move_frac_xz[0]);
+            let (my, ny) = integrate(f[1], self.move_frac_y);
+            let (mz, nz) = integrate(f[2], self.move_frac_xz[1]);
+            let (p, clipped) = slide_move(map, head, movers, self.pos, [mx, my, mz]);
+            self.pos = p;
+            (self.vel[0], self.vel_frac_xz[0]) = split_planar_round(f[0]);
+            (self.vel[2], self.vel_frac_xz[1]) = split_planar_round(f[2]);
+            self.move_frac_xz[0] = if clipped[0] == mx { nx } else { 0 };
+            self.move_frac_xz[1] = if clipped[2] == mz { nz } else { 0 };
+            if clipped[1] == my {
+                (self.vel[1], self.vel_frac_y) = split_planar_round(f[1]);
+                self.move_frac_y = ny;
+            } else {
+                self.vel[1] = clipped[1];
+                self.vel_frac_y = 0;
+                self.move_frac_y = 0;
+            }
+            self.on_ground = false;
+            self.ground_mover = -1;
+            return;
+        }
+
+        let pa = (pitch as i32 & 0xFFF) as u16;
+        let sp = sincos::sin_q12(pa);
+        let cp = sincos::sin_q12((pa + 1024) & 0xFFF);
+        let view = [(s * cp) >> 12, sp, (c * cp) >> 12];
+        let right = [c, 0, -s];
+
+        // Waist-deep and facing a low ledge with open air above it: launch.
+        let mut launched = false;
+        if water_level == 2
+            && f[1] >= WATERJUMP_MIN_FALL_Q6
+            && ((f[0] == 0 && f[2] == 0) || f[0] * s + f[2] * c >= 0)
+        {
+            let reach = [(s * WATERJUMP_PROBE) >> 12, 0, (c * WATERJUMP_PROBE) >> 12];
+            let low = [self.pos[0], self.pos[1] + WATERJUMP_LOW_HEIGHT, self.pos[2]];
+            let wall = trace_point_all(map, movers, low, add(low, reach), -1);
+            if wall.frac < 4096 && wall.normal[1].abs() < WATERJUMP_MAX_WALL_NY {
+                let high = [self.pos[0], self.pos[1] + self.half_height(), self.pos[2]];
+                let over = trace_point_all(map, movers, high, add(high, reach), -1);
+                if !over.startsolid && !over.allsolid && over.frac == 4096 {
+                    water_jump.ticks = WATERJUMP_TICKS;
+                    water_jump.dir_x_q6 = ((-wall.normal[0] * WATERJUMP_PUSH_Q6) >> 12) as i16;
+                    water_jump.dir_z_q6 = ((-wall.normal[2] * WATERJUMP_PUSH_Q6) >> 12) as i16;
+                    f[1] = WATERJUMP_UP_Q6;
+                    launched = true;
+                }
+            }
+        }
+        if jump && !launched {
+            f[1] = SWIM_PADDLE * PLANAR_FRAC_ONE;
+        }
+
+        // Water drag: five percent of the speed per tick.
+        let speed = isqrt_i32(
+            (f[0] * f[0])
+                .saturating_add(f[1] * f[1])
+                .saturating_add(f[2] * f[2]),
+        );
+        if speed > 0 {
+            let slowed = (speed - speed / 20).max(0);
+            f[0] = f[0] * slowed / speed;
+            f[1] = f[1] * slowed / speed;
+            f[2] = f[2] * slowed / speed;
+        }
+
+        // Wish: along the view (pitch included) with the stick, or a slow
+        // sink when idle.
+        let stick = isqrt_i32(fwd * fwd + strafe * strafe).min(128);
+        let (wish_dir, wish_speed) = if stick == 0 {
+            ([0, -4096, 0], SWIM_SINK * PLANAR_FRAC_ONE)
+        } else {
+            let w = [
+                (view[0] * fwd + right[0] * strafe) / 128,
+                (view[1] * fwd) / 128,
+                (view[2] * fwd + right[2] * strafe) / 128,
+            ];
+            let mag = isqrt_i32(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).max(1);
+            (
+                [w[0] * 4096 / mag, w[1] * 4096 / mag, w[2] * 4096 / mag],
+                SWIM_SPEED * PLANAR_FRAC_ONE * stick / 128,
+            )
+        };
+        let gap = wish_speed - (dot_raw(f, wish_dir) >> 12);
+        if gap > 0 {
+            let accel = gap.min((wish_speed / 2).max(1));
+            f[0] += (wish_dir[0] * accel) >> 12;
+            f[1] += (wish_dir[1] * accel) >> 12;
+            f[2] += (wish_dir[2] * accel) >> 12;
+        }
+
+        let (wx, rx) = split_planar_round(f[0]);
+        let (wy, ry) = split_planar_round(f[1]);
+        let (wz, rz) = split_planar_round(f[2]);
+        let (mx, nx) = integrate(f[0], self.move_frac_xz[0]);
+        let (my, ny) = integrate(f[1], self.move_frac_y);
+        let (mz, nz) = integrate(f[2], self.move_frac_xz[1]);
+        let step = [mx, my, mz];
+
+        // Step out onto a lip: if the destination is inside a ledge but the
+        // column just above it is open, drop a vertical line there instead of
+        // sliding (the requested velocity is reported unclipped).
+        let dest = add(self.pos, step);
+        let raised = [dest[0], dest[1] + STEP_UP + 1, dest[2]];
+        let down = trace_all(map, head, movers, raised, dest);
+        let moved = if !down.startsolid && !down.allsolid {
+            self.pos = lerp_q12(raised, dest, down.frac);
+            step
+        } else {
+            let (p, v) = slide_move(map, head, movers, self.pos, step);
+            self.pos = p;
+            v
+        };
+
+        if moved[0] == mx {
+            self.vel[0] = wx;
+            self.vel_frac_xz[0] = rx;
+            self.move_frac_xz[0] = nx;
+        } else {
+            self.vel[0] = moved[0];
+            self.vel_frac_xz[0] = 0;
+            self.move_frac_xz[0] = 0;
+        }
+        if moved[1] == my {
+            self.vel[1] = wy;
+            self.vel_frac_y = ry;
+            self.move_frac_y = ny;
+        } else {
+            self.vel[1] = moved[1];
+            self.vel_frac_y = 0;
+            self.move_frac_y = 0;
+        }
+        if moved[2] == mz {
+            self.vel[2] = wz;
+            self.vel_frac_xz[1] = rz;
+            self.move_frac_xz[1] = nz;
+        } else {
+            self.vel[2] = moved[2];
+            self.vel_frac_xz[1] = 0;
+            self.move_frac_xz[1] = 0;
+        }
+        self.on_ground = false;
+        self.ground_mover = -1;
     }
 
     /// Advance the player one frame. `fwd`/`strafe` are analog deltas in
@@ -1834,7 +2470,56 @@ impl Player {
     /// Specified in SPEC-friction-accel.
     #[inline(always)]
     fn apply_wish_motion(&mut self, fwd: i32, strafe: i32, yaw: u16) {
-        unimplemented!("clean-room rewrite: see spec");
+        let s = sincos::sin_q12(yaw);
+        let c = sincos::sin_q12((yaw + 1024) & 0xFFF);
+        let wx = (s * fwd + c * strafe) / 128;
+        let wz = (c * fwd - s * strafe) / 128;
+        let wish_mag = isqrt_i32(wx * wx + wz * wz);
+        let wish_speed = if wish_mag > 0 {
+            ((wish_mag * MOVE_SPEED * PLANAR_FRAC_ONE + 2048) >> 12)
+                .clamp(1, MOVE_SPEED * PLANAR_FRAC_ONE)
+        } else {
+            0
+        };
+
+        let mut fx = self.vel[0] * PLANAR_FRAC_ONE + self.vel_frac_xz[0] as i32;
+        let mut fz = self.vel[2] * PLANAR_FRAC_ONE + self.vel_frac_xz[1] as i32;
+
+        if self.on_ground {
+            let speed = isqrt_i32(fx * fx + fz * fz);
+            if speed > 0 {
+                let floor = STOP_SPEED * PLANAR_FRAC_ONE;
+                let drop = ((speed.max(floor) / 5) * unsafe { FRICTION_SCALE }) >> 12;
+                let scale = (speed - drop).max(0) * 4096 / speed;
+                fx = mul_q12_round(fx, scale);
+                fz = mul_q12_round(fz, scale);
+            }
+        }
+
+        if wish_speed > 0 {
+            let dir_x = wx * 4096 / wish_mag;
+            let dir_z = wz * 4096 / wish_mag;
+            let dot = fx * dir_x + fz * dir_z;
+            let along = if dot >= 0 {
+                (dot + 2048) >> 12
+            } else {
+                -((-dot + 2048) >> 12)
+            };
+            let target = if self.on_ground {
+                wish_speed
+            } else {
+                wish_speed.min(AIR_WISH_CAP_Q6)
+            };
+            let gap = target - along;
+            if gap > 0 {
+                let take = gap.min((wish_speed / 2).max(1));
+                fx += mul_q12_round(take, dir_x);
+                fz += mul_q12_round(take, dir_z);
+            }
+        }
+
+        (self.vel[0], self.vel_frac_xz[0]) = split_planar_round(fx);
+        (self.vel[2], self.vel_frac_xz[1]) = split_planar_round(fz);
     }
 
     /// Displacement integration, flat move, stair-step attempt and choice,
@@ -1850,6 +2535,188 @@ impl Player {
         fall_speed_q6: i32,
         gravity_post_q6: i32,
     ) {
-        unimplemented!("clean-room rewrite: see spec");
+        use crate::ground_logic as gl;
+        // Only the deep trace records the jump flag.
+        let _ = jump;
+        let head = self.head(map);
+        let start = self.pos;
+        let [base_x, base_z] = base_xz();
+
+        // This tick's displacement from the Q6 velocity and the carried
+        // position residue.
+        let fine = [
+            self.vel[0] * PLANAR_FRAC_ONE + self.vel_frac_xz[0] as i32,
+            self.vertical_velocity_q6(),
+            self.vel[2] * PLANAR_FRAC_ONE + self.vel_frac_xz[1] as i32,
+        ];
+        let prior_carry_y = self.move_frac_y;
+        let (move_x, next_x) = gl::integrate_planar_q6(fine[0], self.move_frac_xz[0]);
+        let (mut move_y, next_y) = gl::integrate_planar_q6(fine[1], prior_carry_y);
+        // On a steep walkable floor the settling unit of downward motion would
+        // clip into a sideways slide; the floor snap restores the contact.
+        if self.on_ground && move_y < 0 && unsafe { FLOOR_NY } <= STEEP_FLOOR_NY {
+            move_y = 0;
+        }
+        let (move_z, next_z) = gl::integrate_planar_q6(fine[2], self.move_frac_xz[1]);
+        let physical_vel = self.vel;
+        let move_vel = [move_x + base_x, move_y, move_z + base_z];
+        #[cfg(feature = "deep-reference-trace")]
+        crate::reference_trace::player_motion(
+            unsafe { PLAYER_STEP_TICK },
+            start,
+            was_air,
+            jump,
+            self.ground_mover as i32,
+            fine,
+            prior_carry_y,
+            [move_x, move_y, move_z],
+            next_y,
+        );
+
+        let (flat_pos, flat_vel) = slide_move(map, head, movers, start, move_vel);
+        let mut new_pos = flat_pos;
+        let mut moved = flat_vel;
+        let mut step_ground: Option<(i16, i8)> = None;
+
+        if self.on_ground && (move_vel[0] != 0 || move_vel[2] != 0) {
+            // Try the same move from one stair higher, then settle back down.
+            let lift = if prior_carry_y < 0 {
+                STEP_UP - 1
+            } else {
+                STEP_UP
+            };
+            let up = trace_all(
+                map,
+                head,
+                movers,
+                start,
+                [start[0], start[1] + lift, start[2]],
+            );
+            let up_pos = [start[0], start[1] + ((lift * up.frac) >> 12), start[2]];
+            let level_vel = [move_vel[0], 0, move_vel[2]];
+            let (raised_pos, step_vel) = slide_move(map, head, movers, up_pos, level_vel);
+            let floor_end = [raised_pos[0], raised_pos[1] - STEP_UP, raised_pos[2]];
+            let down = trace_all(map, head, movers, raised_pos, floor_end);
+            let (step_y, step_residue) =
+                gl::ground_contact_q6(raised_pos[1], floor_end[1], down.frac);
+            let step_pos = [raised_pos[0], step_y, raised_pos[2]];
+            let landed = !down.startsolid
+                && !down.allsolid
+                && down.frac < 4096
+                && down.normal[1] > GROUND_NY;
+            let chose_step = landed && dist_xz(start, step_pos) > dist_xz(start, flat_pos);
+            #[cfg(feature = "deep-reference-trace")]
+            {
+                let direct = trace_all(
+                    map,
+                    head,
+                    movers,
+                    start,
+                    [start[0] + move_vel[0], start[1], start[2] + move_vel[2]],
+                );
+                let raised_direct = trace_all(
+                    map,
+                    head,
+                    movers,
+                    up_pos,
+                    [up_pos[0] + move_vel[0], up_pos[1], up_pos[2] + move_vel[2]],
+                );
+                crate::reference_trace::player_step(
+                    unsafe { PLAYER_STEP_TICK },
+                    PlayerStepProbe {
+                        head,
+                        move_delta: move_vel,
+                        direct_frac: direct.frac,
+                        direct_normal: direct.normal,
+                        flat_pos,
+                        up_frac: up.frac,
+                        up_startsolid: up.startsolid,
+                        up_pos,
+                        raised_direct_frac: raised_direct.frac,
+                        raised_direct_normal: raised_direct.normal,
+                        raised_pos,
+                        down_frac: down.frac,
+                        down_startsolid: down.startsolid,
+                        down_normal: down.normal,
+                        step_pos,
+                        landed,
+                        chose_step,
+                    },
+                );
+            }
+            if chose_step {
+                new_pos = step_pos;
+                moved = [step_vel[0], flat_vel[1], step_vel[2]];
+                step_ground = Some((down.mover as i16, step_residue));
+                unsafe { FLOOR_NY = down.normal[1] as i16 };
+            }
+        }
+        self.pos = new_pos;
+
+        // Reconcile velocity and residues: an axis the world clipped loses its
+        // sub-unit state, an untouched one keeps the unrounded velocity.
+        self.vel[0] = moved[0] - base_x;
+        self.vel[2] = moved[2] - base_z;
+        if moved[0] != move_vel[0] {
+            self.vel_frac_xz[0] = 0;
+            self.move_frac_xz[0] = 0;
+        } else {
+            self.vel[0] = physical_vel[0];
+            self.move_frac_xz[0] = next_x;
+        }
+        if moved[2] != move_vel[2] {
+            self.vel_frac_xz[1] = 0;
+            self.move_frac_xz[1] = 0;
+        } else {
+            self.vel[2] = physical_vel[2];
+            self.move_frac_xz[1] = next_z;
+        }
+        let vertical_q6 = if moved[1] != move_vel[1] {
+            self.vel_frac_y = 0;
+            self.move_frac_y = 0;
+            moved[1] * PLANAR_FRAC_ONE
+        } else {
+            self.move_frac_y = next_y;
+            fine[1]
+        };
+
+        if let Some((mover, residue)) = step_ground {
+            self.on_ground = true;
+            self.ground_mover = mover;
+            self.move_frac_y = residue;
+            self.vel[1] = 0;
+            self.vel_frac_y = 0;
+            return;
+        }
+
+        let probe_end = [new_pos[0], new_pos[1] - GROUND_PROBE_DOWN, new_pos[2]];
+        let probe = trace_all(map, head, movers, new_pos, probe_end);
+        self.on_ground = probe.frac < 4096 && probe.normal[1] > GROUND_NY;
+        if self.on_ground {
+            unsafe { FLOOR_NY = probe.normal[1] as i16 };
+            self.ground_mover = probe.mover as i16;
+            let (y, residue) = gl::ground_contact_q6(new_pos[1], probe_end[1], probe.frac);
+            #[cfg(feature = "deep-reference-trace")]
+            crate::reference_trace::player_ground(
+                unsafe { PLAYER_STEP_TICK },
+                new_pos[1],
+                probe_end[1],
+                probe.frac,
+                probe.normal,
+                y,
+                residue,
+            );
+            self.pos[1] = y;
+            self.move_frac_y = residue;
+            self.vel[1] = 0;
+            self.vel_frac_y = 0;
+            if was_air && fall_speed_q6 > 0 {
+                self.land_impact =
+                    ((fall_speed_q6 + PLANAR_FRAC_HALF) >> PLANAR_FRAC_BITS).min(255) as u8;
+            }
+        } else {
+            self.ground_mover = -1;
+            self.set_vertical_velocity_q6(vertical_q6 - gravity_post_q6);
+        }
     }
 }
