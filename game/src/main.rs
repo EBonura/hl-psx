@@ -29112,6 +29112,10 @@ unsafe fn draw_tripmine_beams(
             let from = PROP_POS[pi];
             let end = tripmine::beam_end(m, movers, from, dir);
             draw_beam(packets, ot, from, end, 1, (255, 30, 20), rot, base_t);
+        } else if PROP_KIND[pi] == 12 && PROP_ACTIVE[pi] != 0 && PROP_HEALTH[pi] > 0 {
+            if let Some((from, tip)) = barnacle::tongue(m, movers, pi) {
+                draw_beam(packets, ot, from, tip, 1, (64, 56, 50), rot, base_t);
+            }
         }
         pi += 1;
     }
