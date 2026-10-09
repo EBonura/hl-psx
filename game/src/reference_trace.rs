@@ -700,3 +700,29 @@ pub fn beverage(
     line.field_u32("health", health as u32);
     line.finish();
 }
+
+/// Scratch interaction-probe event line.
+#[cfg(feature = "interaction-probe")]
+pub fn probe(map_tick: u32, event: &str, name: &str, value: i32) {
+    let mut line = Line::new("probe");
+    common(&mut line, map_tick);
+    line.field_str("event", event);
+    line.field_str("name", name);
+    line.field_i32("value", value);
+    line.finish();
+}
+
+/// Scratch interaction-probe multi-value line.
+#[cfg(feature = "interaction-probe")]
+pub fn probe_vals(map_tick: u32, event: &str, vals: &[i32]) {
+    let mut line = Line::new("probe");
+    common(&mut line, map_tick);
+    line.field_str("event", event);
+    let keys = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+    let mut i = 0;
+    while i < vals.len() && i < keys.len() {
+        line.field_i32(keys[i], vals[i]);
+        i += 1;
+    }
+    line.finish();
+}

@@ -85,6 +85,8 @@ semantic-input = ["reference-trace"]
 # steers the live player toward recorded positions with normal physics. Same
 # diagnostic-only rules as semantic-input; do not combine the two.
 route-follow = ["reference-trace"]
+# Scratch-only interaction probe: scripted teleports, target fires, inputs.
+interaction-probe = ["reference-trace"]
 # SDK crates from the PSoXide source tree hydrated by the root Rust build
 # driver. Keeping one pinned source snapshot makes the linker, runtime decoder,
 # audio encoder, and disc writer a reproducible set. `--psoxide` can seed this
