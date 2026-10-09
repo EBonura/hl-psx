@@ -16317,6 +16317,13 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
             0 => return,
             scaled => scaled,
         }
+    } else if PROP_KIND[pi] == 19 {
+        // The Hard ichthyosaur's 400 health does not fit a u8: its damage
+        // scales onto 255 instead of the spawn clamp making it 1.57 times softer.
+        match skill_value(Sk::IchthyosaurHealth) as u32 {
+            full if full > u8::MAX as u32 => (dmg as u32 * 255 / full).max(1) as u8,
+            _ => dmg,
+        }
     } else if PROP_KIND[pi] == PROP_TYPE_OSPREY {
         // COsprey::TraceAttack: light hits only spark off the hull; its
         // 400 health scales onto the u8 actor health.

@@ -50,6 +50,7 @@ pub enum Sk {
     // Large health pools that the u8 actor health only stands for.
     GargHealth,
     ApacheHealth,
+    IchthyosaurHealth,
     NihilanthHealth,
     /// `sk_bigmomma_health_factor` in Q8 (the info_bigmomma nodes scale by it).
     BigMommaFactorQ8,
@@ -113,6 +114,7 @@ pub const SK_KEYS: [(Sk, &str, u32); SK_COUNT] = [
     (Sk::Bullet12mm, "sk_12mm_bullet", 1000),
     (Sk::GargHealth, "sk_gargantua_health", 1000),
     (Sk::ApacheHealth, "sk_apache_health", 1000),
+    (Sk::IchthyosaurHealth, "sk_ichthyosaur_health", 1000),
     (Sk::NihilanthHealth, "sk_nihilanth_health", 1000),
     (Sk::BigMommaFactorQ8, "sk_bigmomma_health_factor", 256_000),
     (Sk::HealthKit, "sk_healthkit", 1000),
@@ -158,7 +160,6 @@ pub const HEALTH_KEYS: &[(u8, &str, u32)] = &[
     (21, "sk_turret_health", 1000),
     (22, "sk_miniturret_health", 1000),
     (23, "sk_apache_health", 1000),
-    (25, "sk_scientist_health", 1000),
     (51, "sk_hassassin_health", 1000),
     (54, "sk_scientist_health", 1000),
     (55, "sk_zombie_health", 1000),
