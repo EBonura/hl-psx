@@ -7,6 +7,8 @@
 //! service. Keeping both sides on this contract makes format drift a compile
 //! error instead of a visual/gameplay omission.
 
+pub mod skill;
+
 pub mod map {
     pub const SCIENTIST_CORPSE_POSES: [&str; 7] = [
         "lying_on_back",

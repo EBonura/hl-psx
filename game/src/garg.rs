@@ -306,7 +306,7 @@ unsafe fn swipe(pi: usize, target: u8, f: [i32; 3]) {
     let from = [pos[0], pos[1] + 64, pos[2]];
     let mut to = along(from, f, 90);
     to[1] -= 27;
-    let dmg = skill_table::SKILL_GARG_SLASH[settings::skill()];
+    let dmg = skill_value(Sk::GargSlash);
     if player_frac(from, to, 16).is_some() {
         hurt_player(dmg, pos);
         add_view_punch(-341, -341); // punchangle (-30, -30, 30)
@@ -461,7 +461,7 @@ pub(crate) unsafe fn tick_world() {
             g.stomp_pos[2] >> 4,
         ];
         if player_frac(from, along(from, g.stomp_dir, g.stomp.sweep_q4() >> 4), 16).is_some() {
-            hurt_player(skill_table::SKILL_GARG_STOMP[settings::skill()], from);
+            hurt_player(skill_value(Sk::GargStomp), from);
         }
         let (moved, done) = g.stomp.think(g.stomp_first);
         g.stomp_first = false;
@@ -511,6 +511,6 @@ pub(crate) fn scale_damage(dmg: u8, heavy: bool) -> u8 {
     if !heavy {
         return 0;
     }
-    let full = skill_table::SKILL_GARG_HEALTH[settings::skill()].max(1) as u32;
+    let full = skill_value(Sk::GargHealth).max(1) as u32;
     ((dmg as u32 * 255 + full / 2) / full).max(1) as u8
 }
