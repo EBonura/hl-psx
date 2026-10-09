@@ -125,7 +125,9 @@ fn class_types() -> HashMap<String, u8> {
 }
 
 /// Types whose u8 actor health only stands for a larger pool: their modules
-/// scale incoming damage onto it, so a spawn health over 255 is not a defect.
+/// scale incoming damage onto it (the Gonarch's pool lives in the boss
+/// walker's counter; the Hard ichthyosaur's in `damage_prop`), so a spawn
+/// health over 255 is not a defect.
 const SCALED_POOLS: [u8; 4] = [16, 17, 23, 61];
 
 /// The health the port spawns a type with at `level`: the cooked skill.cfg
@@ -222,7 +224,7 @@ const OBSERVED: &[Obs] = &[
         field: "both claws",
         retail: [N, s(40), N],
         cvar: Sk::ZombieBothSlash,
-        port: Port::SkTimes(Sk::ZombieSlash, 2),
+        port: Port::Sk(Sk::ZombieBothSlash),
         source: "profile-organic 2 (medium); cfg for the rest",
     },
     Obs {
@@ -238,7 +240,7 @@ const OBSERVED: &[Obs] = &[
         field: "close attack (seq 9)",
         retail: [s(15), s(25), s(25)],
         cvar: Sk::SquidBite,
-        port: Port::Sk(Sk::SquidWhip),
+        port: Port::Sk(Sk::SquidBite),
         source: "c1a4 squid 244 at 60 u, skill 1/2/3 re-run",
     },
     Obs {
@@ -294,7 +296,7 @@ const OBSERVED: &[Obs] = &[
         field: "claw",
         retail: [s(8), s(10), s(10)],
         cvar: Sk::SlaveClaw,
-        port: Port::Sk(Sk::SlaveZap),
+        port: Port::Sk(Sk::SlaveClaw),
         source: "profile-ranged 2",
     },
     Obs {
@@ -702,12 +704,7 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("health", "monster_gman", "spawn health"),
     ("health", "monster_ichthyosaur", "spawn health"),
     ("health", "monster_sitting_scientist", "spawn health"),
-    ("health", "monster_tentacle", "spawn health"),
-    ("attack", "monster_zombie", "both claws"),
-    ("attack", "monster_bullchicken", "close attack (seq 9)"),
-    ("attack", "monster_alien_slave", "claw"),
-    ("weapon", "satchel", "damage per hit"),
-];
+    ("health", "monster_tentacle", "spawn health"),("weapon", "satchel", "damage per hit")];
 
 fn build(cfg: &Cfg) -> Vec<Row> {
     let mut rows = Vec::new();
