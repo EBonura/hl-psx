@@ -30442,6 +30442,40 @@ unsafe fn sky_piece(m: &Map, face: usize, src: usize, n: usize) -> bool {
     if !slot.valid {
         return false;
     }
+    // Grow the piece by a pixel, in place. The rounded cut points of
+    // neighbouring pieces and windows do not always land on the same pixel
+    // line, which left one pixel wide cracks of clear colour through the sky
+    // along the cube's edges. The sky is drawn first, so the extra pixel only
+    // ever lands on sky or on the world drawn over it, and each corner's
+    // direction (and so its texel) follows its pixel. A window polygon
+    // (buffer 2) is only drawn in place when it needs no cut, which leaves
+    // nothing else to read it.
+    let basis = &*core::ptr::addr_of!(SKY_BASIS);
+    let piece = (*core::ptr::addr_of_mut!(SKY_BUFS).cast::<[SkyV; 12]>().add(src)).as_mut_ptr();
+    let (mut sx, mut sy) = (0i32, 0i32);
+    let mut k = 0usize;
+    while k < n {
+        sx += (*piece.add(k)).p.0;
+        sy += (*piece.add(k)).p.1;
+        k += 1;
+    }
+    // Compared against the corner sum scaled by the corner count, which
+    // spares the division by the count.
+    let count = n as i32;
+    let mut k = 0usize;
+    while k < n {
+        let v = &mut *piece.add(k);
+        let (x, y) = v.p;
+        let nx = (x + (x * count > sx) as i32 - (x * count < sx) as i32).clamp(0, 319);
+        let ny = (y + (y * count > sy) as i32 - (y * count < sy) as i32).clamp(0, 239);
+        let mut j = 0usize;
+        while j < 3 {
+            v.q[j] += (nx - x) * basis.qx[j] + (ny - y) * basis.qy[j];
+            j += 1;
+        }
+        v.p = (nx, ny);
+        k += 1;
+    }
     // Corner texels once, not once per fan triangle.
     let cur = &(*core::ptr::addr_of!(SKY_BUFS))[src];
     let tx = &mut *core::ptr::addr_of_mut!(SKY_TX);
