@@ -28,6 +28,7 @@
 //! started to pass, so the list can only shrink.
 
 use crate::combat_defs::*;
+use hl_format::hitgroup;
 use hl_format::skill::{self, Sk};
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -694,6 +695,48 @@ fn weapon_rows(cfg: &Cfg, rows: &mut Vec<Row>) {
     weapon_damage_rows(cfg, rows);
 }
 
+// ---- hit groups ----------------------------------------------------------------
+
+/// Damage of one bullet by where it lands, measured with the glock (8) and the
+/// .357 (40) at the frozen target: (class, hit group, bullet, retail damage).
+const HIT_OBS: &[(&str, u8, i64, i64)] = &[
+    ("monster_zombie", hitgroup::HEAD, 8, 24),
+    ("monster_alien_slave", hitgroup::HEAD, 8, 24),
+    ("monster_human_grunt", hitgroup::HELMET, 8, 0),
+    ("monster_human_grunt", hitgroup::HELMET, 40, 60),
+    ("monster_human_grunt", hitgroup::HEAD, 8, 24),
+    ("monster_human_grunt", hitgroup::HEAD, 40, 120),
+    ("monster_alien_grunt", hitgroup::ARMOR, 8, 0),
+    ("monster_alien_grunt", hitgroup::ARMOR, 40, 20),
+];
+
+fn hitgroup_rows(cfg: &Cfg, rows: &mut Vec<Row>) {
+    let types = class_types();
+    let head = sk_values(cfg, Sk::MonsterHead)[1].unwrap_or(1) as u16;
+    for &(class, group, bullet, retail) in HIT_OBS {
+        let ty = types[class];
+        let acts = hitgroup::RULES.contains(&(ty, group));
+        let port = if acts {
+            hitgroup::scale(group, bullet as u16, head) as i64
+        } else {
+            bullet
+        };
+        rows.push(Row {
+            area: "hitgroup",
+            subject: class.to_string(),
+            field: format!("group {group}, {bullet} damage"),
+            expected: retail.to_string(),
+            port: port.to_string(),
+            verdict: if port == retail {
+                Verdict::Pass
+            } else {
+                Verdict::Fail
+            },
+            source: "Xash3D glock/.357 scan of the frozen target (Medium)".into(),
+        });
+    }
+}
+
 // ---- the table ---------------------------------------------------------------
 
 /// FAIL rows that are understood and not yet fixed: (area, subject, field).
@@ -704,6 +747,7 @@ fn build(cfg: &Cfg) -> Vec<Row> {
     health_rows(cfg, &mut rows);
     attack_rows(cfg, &mut rows);
     weapon_rows(cfg, &mut rows);
+    hitgroup_rows(cfg, &mut rows);
     coverage_rows(cfg, &mut rows);
     rows
 }
