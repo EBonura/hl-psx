@@ -41,6 +41,8 @@ mod menu;
 mod model;
 mod music;
 use psx_goldsrc::ordering;
+#[cfg(feature = "order-trace")]
+mod order_trace;
 mod phys;
 use psx_goldsrc::pickup_logic;
 use psx_goldsrc::pushable;
@@ -22676,7 +22678,7 @@ unsafe fn spark_burst(at: [i32; 3], count: u8, vy_base: i32, vy_range: u32, ttl:
 #[inline(always)]
 unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: bool) -> usize {
     let policy = EMIT_POLICY;
-    ordering::world_order_key::<OT_LEN>(
+    let key = ordering::world_order_key::<OT_LEN>(
         depths,
         ordering::SurfaceOrder {
             // Mean-depth keys for every world primitive (the far-vertex key
@@ -22688,7 +22690,10 @@ unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: b
             coplanar_backdrop: policy.coplanar_backdrop(),
             texture_backdrop,
         },
-    )
+    );
+    #[cfg(feature = "order-trace")]
+    order_trace::note_key(depths, key);
+    key
 }
 
 /// Non-world render domains (models, beams, sprites) retain their authored
@@ -23556,6 +23561,8 @@ unsafe fn push_tri_uv_words_packed(
         return;
     };
     tram_cache_capture_tri(packet as *const TriTexturedGouraud, otz);
+    #[cfg(feature = "order-trace")]
+    order_trace::note_packet(1, otz, packet.cast::<u32>(), TriTexturedGouraud::WORDS);
     world_ot()
         .resume_frame()
         .add_raw(otz, packet.cast(), TriTexturedGouraud::WORDS);
@@ -24670,6 +24677,8 @@ unsafe fn push_blocked_edge_skirts(
                 uv3: uv[j] as u32,
             };
             if let Some(packet) = packets.push(prim) {
+                #[cfg(feature = "order-trace")]
+                order_trace::note_packet(3, otz, core::ptr::from_mut(&mut *packet).cast::<u32>(), QuadTexturedGouraud::WORDS);
                 world_ot().resume_frame().add_raw(
                     otz,
                     core::ptr::from_mut(packet).cast(),
@@ -25086,6 +25095,8 @@ unsafe fn try_emit_quad_ctx(
         }
         return false;
     };
+    #[cfg(feature = "order-trace")]
+    order_trace::note_packet(2, otz, packet.cast::<u32>(), QuadTexturedGouraud::WORDS);
     world_ot()
         .resume_frame()
         .add_raw(otz, packet.cast(), QuadTexturedGouraud::WORDS);
@@ -26325,6 +26336,8 @@ unsafe fn emit_affine_quad_child(
         false,
     );
     let packet = push_affine_quad_gt4(packets, q, mat, otz, nq);
+    #[cfg(feature = "order-trace")]
+    order_trace::note_packet(4, otz, core::ptr::from_mut(&mut *packet).cast::<u32>(), QuadTexturedGouraud::WORDS);
     world_ot().resume_frame().add_raw(
         otz,
         core::ptr::from_mut(&mut *packet).cast(),
@@ -26421,6 +26434,8 @@ unsafe fn emit_affine_quad_children(
             false,
         );
         let packet = push_affine_quad_gt4(packets, c, mat, otz, nq);
+        #[cfg(feature = "order-trace")]
+        order_trace::note_packet(5, otz, core::ptr::from_mut(&mut *packet).cast::<u32>(), QuadTexturedGouraud::WORDS);
         world_ot().resume_frame().add_raw(
             otz,
             core::ptr::from_mut(&mut *packet).cast(),
@@ -26636,6 +26651,8 @@ unsafe fn push_patch_underlay(
     for p in [p0, p1, p2, p3] {
         render::warp_probe_announce(p.sx as i32, p.sy as i32, p.sz as i32);
     }
+    #[cfg(feature = "order-trace")]
+    order_trace::note_packet(6, otz, packet.cast::<u32>(), QuadTexturedGouraud::WORDS);
     world_ot()
         .resume_frame()
         .add_raw(otz, packet.cast(), QuadTexturedGouraud::WORDS);
@@ -27623,6 +27640,8 @@ unsafe fn emit_submodel_face(
     token: u16,
     np: &mut usize,
 ) {
+    #[cfg(feature = "order-trace")]
+    order_trace::set_face(4, f);
     // The caller establishes the complete policy atomically before entering
     // this shared submodel path.
     if m.face_is_loop(f) {
@@ -27836,6 +27855,8 @@ unsafe fn emit_world_face_tris(
     nq: &mut usize,
     counts: &mut WorldCounters,
 ) {
+    #[cfg(feature = "order-trace")]
+    order_trace::set_face(2, _face);
     #[cfg(feature = "seam-census")]
     {
         SEAM_CENSUS_TINT = SEAM_CENSUS_RAW_TRI;
@@ -27933,6 +27954,8 @@ unsafe fn emit_world_face_loop(
     if count < 3 {
         return;
     }
+    #[cfg(feature = "order-trace")]
+    order_trace::set_face(1, _face);
     #[cfg(feature = "seam-census")]
     {
         SEAM_CENSUS_TINT = SEAM_CENSUS_LOOP_FACE;
@@ -28265,6 +28288,8 @@ unsafe fn depth_split_underlay(
     let far = q.iter().map(|v| v.projected.sz as i32).max().unwrap_or(0);
     let otz = world_order_key(ordering::PrimitiveDepths::quad(far, far, far, far), false);
     let packet = push_affine_quad_gt4(packets, [&q[0], &q[1], &q[2], &q[3]], mat, otz, nq);
+    #[cfg(feature = "order-trace")]
+    order_trace::note_packet(7, otz, core::ptr::from_mut(&mut *packet).cast::<u32>(), QuadTexturedGouraud::WORDS);
     world_ot().resume_frame().add_raw(
         otz,
         core::ptr::from_mut(&mut *packet).cast(),
@@ -28443,6 +28468,8 @@ unsafe fn emit_world_face_patches(
     nq: &mut usize,
     counts: &mut WorldCounters,
 ) {
+    #[cfg(feature = "order-trace")]
+    order_trace::set_face(3, base);
     let tex = map::tex_anim_display(tex);
     let saved_policy = EMIT_POLICY;
     EMIT_POLICY = saved_policy.with_local_depth(refined_topology);
@@ -29196,6 +29223,8 @@ unsafe fn insert_model_depth_stream(first: *mut u32, end: *mut u32) {
             let next = (*packet).tag;
             let key = (*packet).uv2 >> 16;
             (*packet).uv2 &= 0xffff;
+            #[cfg(feature = "order-trace")]
+            order_trace::note_model(key, packet.cast::<u32>());
             world_ot().resume_frame().add_raw(
                 (key >> 4) as usize,
                 core::ptr::from_mut(&mut *packet).cast(),
@@ -29619,6 +29648,8 @@ unsafe fn draw_beam_textured(
             uv2: uv[2] as u32,
         };
         if let Some(pk) = packets.push(prim) {
+            #[cfg(feature = "order-trace")]
+            order_trace::note_packet(8, otz, core::ptr::from_mut(&mut *pk).cast::<u32>(), TriTexturedGouraud::WORDS);
             world_ot().resume_frame().add_raw(
                 otz,
                 core::ptr::from_mut(pk).cast(),
