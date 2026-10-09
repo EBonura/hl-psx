@@ -27064,7 +27064,7 @@ unsafe fn emit_submodel_face(
     np: &mut usize,
 ) {
     #[cfg(feature = "order-trace")]
-    order_trace::set_face(4, f);
+    order_trace::set_face(4, f, m.face_bounds(f).1);
     // The caller establishes the complete policy atomically before entering
     // this shared submodel path.
     if m.face_is_loop(f) {
@@ -27279,7 +27279,7 @@ unsafe fn emit_world_face_tris(
     counts: &mut WorldCounters,
 ) {
     #[cfg(feature = "order-trace")]
-    order_trace::set_face(2, _face);
+    order_trace::set_face(2, _face, m.face_bounds(_face).1);
     #[cfg(feature = "seam-census")]
     {
         SEAM_CENSUS_TINT = SEAM_CENSUS_RAW_TRI;
@@ -27378,7 +27378,7 @@ unsafe fn emit_world_face_loop(
         return;
     }
     #[cfg(feature = "order-trace")]
-    order_trace::set_face(1, _face);
+    order_trace::set_face(1, _face, m.face_bounds(_face).1);
     #[cfg(feature = "seam-census")]
     {
         SEAM_CENSUS_TINT = SEAM_CENSUS_LOOP_FACE;
@@ -27892,7 +27892,7 @@ unsafe fn emit_world_face_patches(
     counts: &mut WorldCounters,
 ) {
     #[cfg(feature = "order-trace")]
-    order_trace::set_face(3, base);
+    order_trace::set_face(3, base, 0);
     let tex = map::tex_anim_display(tex);
     let saved_policy = EMIT_POLICY;
     EMIT_POLICY = saved_policy.with_local_depth(refined_topology);
