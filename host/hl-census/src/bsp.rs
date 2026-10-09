@@ -102,6 +102,29 @@ pub fn parse_entities(text: &str) -> Vec<Ent> {
     ents
 }
 
+/// Submodel bounds (lump 14, 64-byte `dmodel_t`): (mins, maxs) per model.
+pub fn model_bounds(bytes: &[u8]) -> Vec<([f32; 3], [f32; 3])> {
+    const LUMP_MODELS: usize = 14;
+    let at = |o: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(bytes.get(o..o + 4)?.try_into().ok()?))
+    };
+    let (Some(off), Some(len)) = (at(4 + LUMP_MODELS * 8), at(8 + LUMP_MODELS * 8)) else {
+        return Vec::new();
+    };
+    let (off, len) = (off as usize, len as usize);
+    let f = |o: usize| -> f32 { f32::from_le_bytes(bytes[o..o + 4].try_into().unwrap()) };
+    (0..len / 64)
+        .filter(|i| off + (i + 1) * 64 <= bytes.len())
+        .map(|i| {
+            let b = off + i * 64;
+            (
+                [f(b), f(b + 4), f(b + 8)],
+                [f(b + 12), f(b + 16), f(b + 20)],
+            )
+        })
+        .collect()
+}
+
 pub fn load_map(path: &Path) -> Result<Vec<Ent>, String> {
     let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let lump = entity_lump(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;

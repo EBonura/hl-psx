@@ -8,6 +8,7 @@ pub mod contract;
 pub mod graph;
 pub mod roots;
 pub mod solidity;
+pub mod triggers;
 
 use census::{Census, COMMON_KEYS};
 use contract::{Contract, Status};

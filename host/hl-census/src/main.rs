@@ -388,6 +388,110 @@ fn main() {
                 println!("{n:4} {class} flags {flags} {kind}");
             }
         }
+        "instances" => {
+            // instances MAP... --ref-dir DIR --port-dir DIR: entities per class at the first sampled
+            // tick, retail against the port. A class the port instantiates fewer of is a gap.
+            let ref_dir = PathBuf::from(arg(&args, "--ref-dir").unwrap_or_else(|| "ref".into()));
+            let port_dir = PathBuf::from(arg(&args, "--port-dir").unwrap_or_else(|| ".".into()));
+            let gz = |p: PathBuf| -> String {
+                std::process::Command::new("gzip")
+                    .args(["-dc"])
+                    .arg(p)
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                    .unwrap_or_default()
+            };
+            let count = |text: &str, map: &str| -> BTreeMap<String, u32> {
+                let mut c = BTreeMap::new();
+                for l in text
+                    .lines()
+                    .filter(|l| l.contains("|map_tick=0|") && l.contains(&format!("|map={map}|")))
+                {
+                    if let Some(class) = l.split("|class=").nth(1).and_then(|r| r.split('|').next())
+                    {
+                        // Dead bodies are the live class plus a corpse pose in the port.
+                        let class = class.trim_end_matches("_dead").to_string();
+                        *c.entry(class).or_insert(0) += 1;
+                    }
+                }
+                c
+            };
+            let mut totals = BTreeMap::<String, (u32, u32)>::new();
+            for map in args[1..].iter().take_while(|a| !a.starts_with("--")) {
+                let r = count(&gz(ref_dir.join(format!("{map}.ent.gz"))), map);
+                let p = count(&gz(port_dir.join(format!("{map}.ent.gz"))), map);
+                if p.is_empty() {
+                    continue;
+                }
+                for (class, &n) in &r {
+                    let have = p.get(class).copied().unwrap_or(0);
+                    let t = totals.entry(class.clone()).or_default();
+                    t.0 += n;
+                    t.1 += have.min(n);
+                    if have < n {
+                        println!("{map}: {class} retail {n} port {have}");
+                    }
+                }
+            }
+            println!("--- by class (retail total, port instantiated)");
+            for (class, (r, p)) in totals {
+                println!(
+                    "{class:28} {r:5} {p:5}{}",
+                    if p < r { "   <-- short" } else { "" }
+                );
+            }
+        }
+        "triggers" => {
+            // triggers [MAP...] [--hlm DIR | --rooms DIR]: trigger brush bounds from the BSP
+            // against the cooked trigger records.
+            let rooms = PathBuf::from(arg(&args, "--rooms").unwrap_or_else(|| "data/rooms".into()));
+            let mut names: Vec<String> = args[1..]
+                .iter()
+                .take_while(|a| !a.starts_with("--"))
+                .cloned()
+                .collect();
+            if names.is_empty() {
+                names = census.maps.clone();
+            }
+            let (mut total, mut ok) = (0usize, 0usize);
+            for map in &names {
+                let Some(idx) = census.maps.iter().position(|m| m == map) else {
+                    continue;
+                };
+                let path = match arg(&args, "--hlm") {
+                    Some(dir) => PathBuf::from(dir).join(format!("{map}.hlm")),
+                    None => rooms.join(format!("room_{}.psxc", idx * 2)),
+                };
+                let Ok(cooked) = std::fs::read(path) else {
+                    continue;
+                };
+                let retail = hl_census::triggers::bsp_triggers(
+                    census.entities.get(map).map(Vec::as_slice).unwrap_or(&[]),
+                    census.models.get(map).map(Vec::as_slice).unwrap_or(&[]),
+                );
+                let Ok(port) = hl_census::triggers::port_triggers(&cooked) else {
+                    continue;
+                };
+                let (matched, bad) = hl_census::triggers::compare(&retail, &port, 16.0);
+                total += retail.len();
+                ok += matched;
+                for b in bad {
+                    println!(
+                        "{map}: {} {} bounds {:?}..{:?} {}",
+                        b.retail.class,
+                        b.retail.name,
+                        b.retail.mins,
+                        b.retail.maxs,
+                        b.error
+                            .map(|e| format!("closest record is off by {e:.0}"))
+                            .unwrap_or_else(|| "no record of that kind".into())
+                    );
+                }
+            }
+            println!(
+                "--- {ok} of {total} retail trigger brushes have a cooked record within 16 units"
+            );
+        }
         "levels" => {
             // levels [--start MAP]: the changelevel graph of the shipped maps.
             let start = arg(&args, "--start").unwrap_or_else(|| "c0a0".into());
