@@ -820,42 +820,148 @@ fn read_bmp_rgb(data: &[u8]) -> Option<RgbImage> {
     Some(RgbImage { w, h, pixels })
 }
 
-fn cook_rgb_texture(img: &RgbImage) -> CookedTex {
-    let mut colors: Vec<(u8, u8, u8)> = Vec::with_capacity(SKY_TEX_SIZE * SKY_TEX_SIZE);
+/// Peak-to-peak dither amplitude, in square-root (gamma 2) colour units.
+const SKY_DITHER_AMPLITUDE: i32 = 16;
+
+/// Deterministic per-texel noise in 0..256 for the dither. A regular ordered
+/// pattern beats against the sky's 2.5x screen magnification and shows as
+/// diagonal stripes; noise reads as grain.
+fn sky_noise(face: usize, x: usize, y: usize) -> i32 {
+    let mut h = (x as u32).wrapping_mul(0x9E37_79B1)
+        ^ (y as u32).wrapping_mul(0x85EB_CA6B)
+        ^ (face as u32).wrapping_mul(0xC2B2_AE35);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2C1B_3C6D);
+    h ^= h >> 12;
+    ((h >> 8) & 0xFF) as i32
+}
+
+/// Area-average an image down to `SKY_TEX_SIZE` square. Point sampling
+/// dropped every other texel of a 256 px face (stars, thin filaments) and
+/// aliased the rest.
+fn sky_box_downscale(img: &RgbImage) -> Vec<(u8, u8, u8)> {
+    let mut out = Vec::with_capacity(SKY_TEX_SIZE * SKY_TEX_SIZE);
     for y in 0..SKY_TEX_SIZE {
-        let sy = y * img.h / SKY_TEX_SIZE;
+        let y0 = y * img.h / SKY_TEX_SIZE;
+        let y1 = ((y + 1) * img.h / SKY_TEX_SIZE).max(y0 + 1).min(img.h);
         for x in 0..SKY_TEX_SIZE {
-            let sx = x * img.w / SKY_TEX_SIZE;
-            colors.push(img.pixels[sy * img.w + sx]);
+            let x0 = x * img.w / SKY_TEX_SIZE;
+            let x1 = ((x + 1) * img.w / SKY_TEX_SIZE).max(x0 + 1).min(img.w);
+            let (mut r, mut g, mut b, mut n) = (0u32, 0u32, 0u32, 0u32);
+            for sy in y0..y1 {
+                for sx in x0..x1 {
+                    let p = img.pixels[sy * img.w + sx];
+                    r += p.0 as u32;
+                    g += p.1 as u32;
+                    b += p.2 as u32;
+                    n += 1;
+                }
+            }
+            let n = n.max(1);
+            out.push(((r / n) as u8, (g / n) as u8, (b / n) as u8));
         }
     }
-    let pal16 = median_cut16(&colors);
+    out
+}
+
+/// Colour to and from the square-root space the sky is quantised in: the
+/// sky is mostly dark and low contrast, and a linear fit spends its entries
+/// on the few bright smudges.
+fn sky_to_gamma(c: (u8, u8, u8)) -> (u8, u8, u8) {
+    let f = |v: u8| ((v as f32 / 255.0).sqrt() * 255.0).round() as u8;
+    (f(c.0), f(c.1), f(c.2))
+}
+
+fn sky_from_gamma(c: (u8, u8, u8)) -> (u8, u8, u8) {
+    let f = |v: u8| {
+        let x = v as f32 / 255.0;
+        (x * x * 255.0).round() as u8
+    };
+    (f(c.0), f(c.1), f(c.2))
+}
+
+/// Weighted Lloyd refinement of a palette over a sample of the colours: the
+/// median cut splits on pixel counts, so rare but distinct colours (the orange
+/// nebula edges, the stars) were merged into the dominant murk. Saturated
+/// colours count for more, since they carry the sky's character.
+fn sky_refine_palette(colors: &[(u8, u8, u8)], pal: &mut [(u8, u8, u8)]) {
+    for _ in 0..8 {
+        let mut sum = vec![[0u64; 4]; pal.len()];
+        for c in colors.iter().step_by(2) {
+            let k = nearest16(pal, *c) as usize;
+            let chroma = c.0.max(c.1).max(c.2) as u64 - c.0.min(c.1).min(c.2) as u64;
+            let w = 64 + 2 * chroma;
+            sum[k][0] += c.0 as u64 * w;
+            sum[k][1] += c.1 as u64 * w;
+            sum[k][2] += c.2 as u64 * w;
+            sum[k][3] += w;
+        }
+        for (k, s) in sum.iter().enumerate() {
+            if s[3] > 0 {
+                pal[k] = ((s[0] / s[3]) as u8, (s[1] / s[3]) as u8, (s[2] / s[3]) as u8);
+            }
+        }
+    }
+}
+
+/// Quantise the six sky faces to 16-colour CLUT textures that all carry the
+/// same palette. Fitting each face its own palette gave every face a
+/// different posterised tint, with hard edges where the cube's faces meet;
+/// one palette keeps the colour continuous across them. The texels are
+/// dithered against it so smooth gradients survive 16 colours.
+fn cook_sky_faces(imgs: &[RgbImage]) -> Vec<CookedTex> {
+    let faces: Vec<Vec<(u8, u8, u8)>> = imgs
+        .iter()
+        .map(|img| sky_box_downscale(img).into_iter().map(sky_to_gamma).collect())
+        .collect();
+    let all: Vec<(u8, u8, u8)> = faces.iter().flatten().copied().collect();
+    let mut pal = median_cut16(&all);
+    sky_refine_palette(&all, &mut pal);
+    // The CLUT holds 5-bit channels, rounded here from the 8-bit mean:
+    // dither against what the GPU will show.
+    let mut shown = [(0u8, 0u8, 0u8); 16];
     let mut clut = [0u16; 16];
-    for (i, c) in pal16.iter().enumerate() {
-        clut[i] = to_bgr555(c.0, c.1, c.2);
+    for (i, c) in pal.iter().enumerate().take(16) {
+        let lin = sky_from_gamma(*c);
+        let r5 = |v: u8| (v as u16 + 4).min(255) as u8 & 0xF8;
+        let snapped = (r5(lin.0), r5(lin.1), r5(lin.2));
+        clut[i] = to_bgr555(snapped.0, snapped.1, snapped.2);
+        shown[i] = sky_to_gamma(snapped);
     }
-    let mut pix4 = vec![0u8; SKY_TEX_SIZE * SKY_TEX_SIZE / 2];
-    for (i, chunk) in colors.chunks(2).enumerate() {
-        let lo = nearest16(&pal16, chunk[0]);
-        let hi = chunk.get(1).map(|c| nearest16(&pal16, *c)).unwrap_or(0);
-        pix4[i] = lo | (hi << 4);
-    }
-    CookedTex {
-        w: SKY_TEX_SIZE as u16,
-        h: SKY_TEX_SIZE as u16,
-        clut,
-        pix4,
-    }
+    let used = pal.len().min(16);
+    faces
+        .iter()
+        .enumerate()
+        .map(|(face, colors)| {
+            let mut pix4 = vec![0u8; SKY_TEX_SIZE * SKY_TEX_SIZE / 2];
+            for y in 0..SKY_TEX_SIZE {
+                for x in 0..SKY_TEX_SIZE {
+                    let c = colors[y * SKY_TEX_SIZE + x];
+                    let t = sky_noise(face, x, y) * SKY_DITHER_AMPLITUDE / 256
+                        - SKY_DITHER_AMPLITUDE / 2;
+                    let adj = |v: u8| (v as i32 + t).clamp(0, 255) as u8;
+                    let i = nearest16(&shown[..used], (adj(c.0), adj(c.1), adj(c.2)));
+                    let at = (y * SKY_TEX_SIZE + x) / 2;
+                    pix4[at] |= i << (4 * (x & 1));
+                }
+            }
+            CookedTex {
+                w: SKY_TEX_SIZE as u16,
+                h: SKY_TEX_SIZE as u16,
+                clut,
+                pix4,
+            }
+        })
+        .collect()
 }
 
 fn load_skybox_textures(path: &str, sky: &str) -> Option<Vec<CookedTex>> {
     let env_dir = sky_env_dir_for_bsp(path)?;
-    let mut out = Vec::with_capacity(SKY_FACE_SUFFIXES.len());
+    let mut imgs = Vec::with_capacity(SKY_FACE_SUFFIXES.len());
     for suffix in SKY_FACE_SUFFIXES {
-        let img = read_sky_image(&env_dir, sky, suffix)?;
-        out.push(cook_rgb_texture(&img));
+        imgs.push(read_sky_image(&env_dir, sky, suffix)?);
     }
-    Some(out)
+    Some(cook_sky_faces(&imgs))
 }
 
 /// Reachability-compact AND hash-cons the clipnode array: identical subtrees
@@ -20867,6 +20973,48 @@ mod tests {
         assert_eq!(sprites[0].3 >> 6, 10);
         assert_eq!(names, vec!["lamp".to_string(), "flash".to_string()]);
         assert_eq!(sprites[1].2, sprites[2].2, "same targetname shares id");
+    }
+
+    #[test]
+    fn sky_faces_share_one_palette_and_keep_a_gradient_smooth() {
+        // Two 256 px faces: a dark-to-bright horizontal ramp, and the same
+        // ramp reversed. One palette means one CLUT in every face.
+        let ramp = |reverse: bool| RgbImage {
+            w: 256,
+            h: 256,
+            pixels: (0..256 * 256)
+                .map(|i| {
+                    let x = (i % 256) as u32;
+                    let v = if reverse { 255 - x } else { x } as u8;
+                    (v, v / 2, 255 - v)
+                })
+                .collect(),
+        };
+        let faces = cook_sky_faces(&[ramp(false), ramp(true)]);
+        assert_eq!(faces.len(), 2);
+        assert_eq!(faces[0].clut, faces[1].clut);
+        let texel = |f: &CookedTex, x: usize, y: usize| {
+            let b = f.pix4[(y * SKY_TEX_SIZE + x) / 2];
+            if x & 1 == 0 {
+                b & 15
+            } else {
+                b >> 4
+            }
+        };
+        // The ramp is not posterised into long flat runs: dithering mixes
+        // neighbouring palette entries along it.
+        let mut changes = 0;
+        for x in 1..SKY_TEX_SIZE {
+            changes += (texel(&faces[0], x, 0) != texel(&faces[0], x - 1, 0)) as usize;
+        }
+        assert!(changes > 20, "{changes} palette changes along the ramp");
+        // Mirrored faces use the same palette entries mirrored, so their mean
+        // colours agree (area-averaged, not point-sampled).
+        let mean = |f: &CookedTex, x: usize| {
+            let c = f.clut[texel(f, x, 5) as usize];
+            ((c & 31) + ((c >> 5) & 31) + ((c >> 10) & 31)) as i32
+        };
+        assert!((mean(&faces[0], 64) - mean(&faces[1], 127 - 64)).abs() <= 24);
     }
 
     #[test]
