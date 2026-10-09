@@ -289,8 +289,9 @@ fn point_contents(map: &Map, mut num: i16, p: [i32; 3]) -> i16 {
     -1
 }
 
-/// Walk the clip tree for one sub-segment. Returns true once an impact has
-/// been recorded in `tr` (the caller then unwinds without looking further).
+/// Walk the clip tree for one sub-segment. Returns true once the walk must
+/// stop: an impact has been recorded in `tr`, or the segment never left solid
+/// (the caller then unwinds without looking further).
 fn recurse(
     map: &Map,
     mut num: i16,
@@ -357,7 +358,9 @@ fn recurse(
             return recurse(map, far, midf, p2f, mid, p2, tr, depth + 1);
         }
         if tr.allsolid {
-            return false;
+            // Still inside solid: no contact to report, and nothing further
+            // along the segment is examined either.
+            return true;
         }
         let n = plane_normal(&cn);
         tr.normal = if back_start { negated(n) } else { n };
