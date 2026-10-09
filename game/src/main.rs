@@ -46,6 +46,8 @@ mod order_trace;
 mod phys;
 use psx_goldsrc::pickup_logic;
 use psx_goldsrc::pushable;
+#[cfg(feature = "interaction-probe")]
+mod probe;
 #[cfg(feature = "reference-trace")]
 mod reference_trace;
 mod render;
@@ -231,8 +233,14 @@ const BEAM_FX_TRIM: usize = 331;
 ))]
 const MODEL_STREAM_CODE_TRIM: usize = 37;
 
+// The interaction probe bakes its script into the executable; it gives up
+// render packets (drawing only) to stay inside the free-RAM floor.
+#[cfg(all(feature = "reference-trace", feature = "interaction-probe"))]
+const PROBE_RAM_TRIM: usize = 660;
+#[cfg(all(feature = "reference-trace", not(feature = "interaction-probe")))]
+const PROBE_RAM_TRIM: usize = 0;
 #[cfg(feature = "reference-trace")]
-const MAX_RENDER_PACKETS: usize = 1472 - BEAM_FX_TRIM - MODEL_STREAM_CODE_TRIM;
+const MAX_RENDER_PACKETS: usize = 1472 - BEAM_FX_TRIM - MODEL_STREAM_CODE_TRIM - PROBE_RAM_TRIM;
 // Telemetry and its interpolation state displace packet storage. Packet-drop
 // counters expose that diagnostic trade; release discs keep the full budget.
 #[cfg(all(
@@ -13080,8 +13088,12 @@ unsafe fn logic_touch_triggers(
                     // only to trigger_once/multiple (SDK CBaseTrigger).
                     let is_cl = rec.kind == map::LOGIC_TRIGGER_CHANGELEVEL;
                     let is_end = rec.kind == map::LOGIC_TRIGGER_ENDSECTION;
+                    #[cfg(feature = "interaction-probe")]
+                    let probe_hold = probe::hold_changelevel();
+                    #[cfg(not(feature = "interaction-probe"))]
+                    let probe_hold = false;
                     let gated = if is_cl {
-                        (rec.spawnflags & SF_CHANGELEVEL_USE_ONLY) != 0
+                        (rec.spawnflags & SF_CHANGELEVEL_USE_ONLY) != 0 || probe_hold
                     } else if is_end {
                         false
                     } else {
@@ -31502,7 +31514,11 @@ unsafe fn trace_sim_tick(m: &Map, state: reference_trace::TickState) {
     // Named/set-piece actors are checkpointed once per simulated second. Keep
     // this loop out of play(): the reference feature otherwise pushes MIPS-I's
     // largest function beyond a PC16 branch span.
-    if map_tick % 20 == 0 {
+    #[cfg(feature = "interaction-probe")]
+    let due = probe::trace_due(map_tick);
+    #[cfg(not(feature = "interaction-probe"))]
+    let due = map_tick % 20 == 0;
+    if due {
         trace_brush_entities(m, map_tick);
         trace_point_actors(m, map_tick);
         let player_leaf = camera_leaf(
@@ -32799,6 +32815,30 @@ fn play(
             } else {
                 input_sample
             };
+            #[cfg(feature = "interaction-probe")]
+            let input_sample = unsafe {
+                probe::step(
+                    &m,
+                    map_name,
+                    nlogic,
+                    nents,
+                    sim_frame_no,
+                    input_sample,
+                    &mut player,
+                    &mut yaw,
+                    &mut pitch,
+                    &mut health,
+                    &mut weapon,
+                )
+            };
+            #[cfg(feature = "interaction-probe")]
+            if let Some((room, chapter)) = unsafe { probe::take_goto() } {
+                return PlayExit::Chapter(if chapter {
+                    menu_start(room)
+                } else {
+                    menu_launch(room)
+                });
+            }
             #[cfg(feature = "reference-trace")]
             reference_trace::input(
                 sim_frame_no,
