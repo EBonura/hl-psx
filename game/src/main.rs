@@ -29839,8 +29839,15 @@ struct SkyBasis {
     qy: [i32; 3],
 }
 
-const SKY_V0: SkyV = SkyV { p: (0, 0), q: [0; 3] };
-static mut SKY_BASIS: SkyBasis = SkyBasis { q0: [0; 3], qx: [0; 3], qy: [0; 3] };
+const SKY_V0: SkyV = SkyV {
+    p: (0, 0),
+    q: [0; 3],
+};
+static mut SKY_BASIS: SkyBasis = SkyBasis {
+    q0: [0; 3],
+    qx: [0; 3],
+    qy: [0; 3],
+};
 /// Sky polygon scratch: two ping-pong buffers for the cube-face cuts, and the
 /// window polygon being drawn (buffer 2, never written by a cut).
 static mut SKY_BUFS: [[SkyV; 12]; 3] = [[SKY_V0; 12]; 3];
@@ -29855,9 +29862,17 @@ static mut SKY_TX: [(u8, u8); 12] = [(0, 0); 12];
 fn sky_face_of(q: [i32; 3]) -> usize {
     let (ax, ay, az) = (q[0].abs(), q[1].abs(), q[2].abs());
     if ax >= ay && ax >= az {
-        if q[0] > 0 { 1 } else { 3 }
+        if q[0] > 0 {
+            1
+        } else {
+            3
+        }
     } else if ay >= az {
-        if q[1] > 0 { 2 } else { 0 }
+        if q[1] > 0 {
+            2
+        } else {
+            0
+        }
     } else if q[2] > 0 {
         4
     } else {
@@ -29886,7 +29901,10 @@ fn sky_texel(face_s: i32, face_t: i32, d: i32) -> (u8, u8) {
     // direction magnitudes above (d < 2^22); 64 * 2^22 = 2^28.
     let u = 64 + (face_s * 64) / d;
     let v = 64 - (face_t * 64) / d;
-    (u.clamp(0, SKY_TEX_SIZE as i32 - 1) as u8, v.clamp(0, SKY_TEX_SIZE as i32 - 1) as u8)
+    (
+        u.clamp(0, SKY_TEX_SIZE as i32 - 1) as u8,
+        v.clamp(0, SKY_TEX_SIZE as i32 - 1) as u8,
+    )
 }
 
 /// Texel and face denominator of direction `q` on cube face `face`; the one
@@ -29991,7 +30009,15 @@ unsafe fn sky_cut_region(m: &Map, n0: usize, seen: u32) -> bool {
 /// the cut leaves it whole.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn sky_cut_pass(src: usize, n: usize, dst: usize, axis: usize, sign: i32, other: usize, osign: i32) -> usize {
+unsafe fn sky_cut_pass(
+    src: usize,
+    n: usize,
+    dst: usize,
+    axis: usize,
+    sign: i32,
+    other: usize,
+    osign: i32,
+) -> usize {
     let bufs = &mut *core::ptr::addr_of_mut!(SKY_BUFS);
     let sp = bufs[src].as_ptr();
     let dp = bufs[dst].as_mut_ptr();
@@ -30018,13 +30044,21 @@ unsafe fn sky_cut_pass(src: usize, n: usize, dst: usize, axis: usize, sign: i32,
         if (gp >= 0) != (gc >= 0) && on < 12 {
             // Same endpoints in the same order whichever side clips this
             // edge, so neighbouring pieces share the cut point.
-            let (a, ga, b, gb) = if pv.p <= cv.p { (pv, gp, cv, gc) } else { (cv, gc, pv, gp) };
+            let (a, ga, b, gb) = if pv.p <= cv.p {
+                (pv, gp, cv, gc)
+            } else {
+                (cv, gc, pv, gp)
+            };
             let (na, nb) = (ga.abs(), gb.abs());
             let r = (na << 6) / (na + nb).max(1);
             let lerp = |x: i32, y: i32| x + (((y - x) * r) >> 6);
             *dp.add(on) = SkyV {
                 p: (lerp(a.p.0, b.p.0), lerp(a.p.1, b.p.1)),
-                q: [lerp(a.q[0], b.q[0]), lerp(a.q[1], b.q[1]), lerp(a.q[2], b.q[2])],
+                q: [
+                    lerp(a.q[0], b.q[0]),
+                    lerp(a.q[1], b.q[1]),
+                    lerp(a.q[2], b.q[2]),
+                ],
             };
             on += 1;
         }
@@ -30070,7 +30104,17 @@ unsafe fn sky_piece(m: &Map, face: usize, src: usize, n: usize) -> bool {
     let calm = (((hi[0] - lo[0]).max(hi[1] - lo[1])) + 2) * (hi[2] - lo[2]) <= 16 * lo[2];
     let mut j = 2usize;
     while j < n {
-        sky_tri(face, &slot.material, [&*cur.as_ptr(), &*cur.as_ptr().add(j - 1), &*cur.as_ptr().add(j)], [0, j - 1, j], calm);
+        sky_tri(
+            face,
+            &slot.material,
+            [
+                &*cur.as_ptr(),
+                &*cur.as_ptr().add(j - 1),
+                &*cur.as_ptr().add(j),
+            ],
+            [0, j - 1, j],
+            calm,
+        );
         j += 1;
     }
     true
@@ -30085,20 +30129,45 @@ unsafe fn sky_piece(m: &Map, face: usize, src: usize, n: usize) -> bool {
 /// under four, and the test's own rounding under another two.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn sky_tri(face: usize, material: &TextureMaterial, v: [&SkyV; 3], ix: [usize; 3], calm: bool) {
+unsafe fn sky_tri(
+    face: usize,
+    material: &TextureMaterial,
+    v: [&SkyV; 3],
+    ix: [usize; 3],
+    calm: bool,
+) {
     let tx = &*core::ptr::addr_of!(SKY_TX);
-    let t = [*tx.as_ptr().add(ix[0]), *tx.as_ptr().add(ix[1]), *tx.as_ptr().add(ix[2])];
+    let t = [
+        *tx.as_ptr().add(ix[0]),
+        *tx.as_ptr().add(ix[1]),
+        *tx.as_ptr().add(ix[2]),
+    ];
     let (x0, x1, x2) = (v[0].p.0, v[1].p.0, v[2].p.0);
     let (y0, y1, y2) = (v[0].p.1, v[1].p.1, v[2].p.1);
     // No edge is over 32 pixels when the bounding box is not.
-    if !calm && (x0.max(x1).max(x2) - x0.min(x1).min(x2) > 32 || y0.max(y1).max(y2) - y0.min(y1).min(y2) > 32) {
+    if !calm
+        && (x0.max(x1).max(x2) - x0.min(x1).min(x2) > 32
+            || y0.max(y1).max(y2) - y0.min(y1).min(y2) > 32)
+    {
         let off = |i: usize, j: usize| {
-            sky_edge_off(face, v[i], v[j], t[i], t[j], sky_face_terms(face, v[i].q).2, sky_face_terms(face, v[j].q).2)
+            sky_edge_off(
+                face,
+                v[i],
+                v[j],
+                t[i],
+                t[j],
+                sky_face_terms(face, v[i].q).2,
+                sky_face_terms(face, v[j].q).2,
+            )
         };
         if off(0, 1) || off(1, 2) || off(2, 0) {
             let mid = |a: &SkyV, b: &SkyV| SkyV {
                 p: ((a.p.0 + b.p.0) >> 1, (a.p.1 + b.p.1) >> 1),
-                q: [(a.q[0] + b.q[0]) >> 1, (a.q[1] + b.q[1]) >> 1, (a.q[2] + b.q[2]) >> 1],
+                q: [
+                    (a.q[0] + b.q[0]) >> 1,
+                    (a.q[1] + b.q[1]) >> 1,
+                    (a.q[2] + b.q[2]) >> 1,
+                ],
             };
             let texel = |q: [i32; 3]| {
                 let (u, w, _) = sky_texel_d(face, q);
@@ -30119,15 +30188,29 @@ unsafe fn sky_tri(face: usize, material: &TextureMaterial, v: [&SkyV; 3], ix: [u
 /// Whether the affine midpoint texel of edge a-b is off by over six texels
 /// (see `sky_tri`).
 #[inline(always)]
-fn sky_edge_off(face: usize, a: &SkyV, b: &SkyV, ta: (u8, u8), tb: (u8, u8), da: i32, db: i32) -> bool {
+fn sky_edge_off(
+    face: usize,
+    a: &SkyV,
+    b: &SkyV,
+    ta: (u8, u8),
+    tb: (u8, u8),
+    da: i32,
+    db: i32,
+) -> bool {
     if (a.p.0 - b.p.0).abs().max((a.p.1 - b.p.1).abs()) <= 32 {
         return false;
     }
-    let dt = (ta.0 as i32 - tb.0 as i32).abs().max((ta.1 as i32 - tb.1 as i32).abs());
+    let dt = (ta.0 as i32 - tb.0 as i32)
+        .abs()
+        .max((ta.1 as i32 - tb.1 as i32).abs());
     if (dt + 2) * (da - db).abs() <= 16 * da.min(db) {
         return false;
     }
-    let q = [(a.q[0] + b.q[0]) >> 1, (a.q[1] + b.q[1]) >> 1, (a.q[2] + b.q[2]) >> 1];
+    let q = [
+        (a.q[0] + b.q[0]) >> 1,
+        (a.q[1] + b.q[1]) >> 1,
+        (a.q[2] + b.q[2]) >> 1,
+    ];
     let (tu, tv, _) = sky_texel_d(face, q);
     let tm = (tu, tv);
     let du = (tm.0 as i32 * 2 - ta.0 as i32 - tb.0 as i32).abs();
