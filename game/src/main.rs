@@ -20934,7 +20934,9 @@ fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
         PROJ_HORNET => (15, 160, false, 0, (250, 230, 70), 3),
         PROJ_HORNET_FAST => (60, 70, false, 0, (255, 244, 90), 3),
         PROJ_SNARK => (48, 80, true, 110, (190, 170, 50), 5),
-        PROJ_SPIT => (75, 55, true, 0, (150, 220, 80), 4), // bullsquid acid glob
+        // Measured on the retail game: about 45 units per tick (900 u/s) along a straight
+        // line, 9 ticks from the start of the spit animation at 150 units, 17 at 500.
+        PROJ_SPIT => (45, 55, false, 0, (150, 220, 80), 4), // bullsquid acid glob
         PROJ_SATCHEL => (40, u8::MAX, true, 200, (170, 70, 50), 5),
         // ShootContact has no fuse: it travels until its first collision. The
         // source blast radius defaults to damage * 2.5 (100 * 2.5 = 250).
@@ -21306,7 +21308,16 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
                 LOGIC_PLAYER_POS[1] + 18,
                 LOGIC_PLAYER_POS[2],
             ];
-            if dist2_3(ppos, new) < PROJ_HIT_RADIUS * PROJ_HIT_RADIUS {
+            // The spit is a small glob: it lands when it touches the player's box, and a
+            // step of 45 units is checked at its midpoint as well as its end.
+            let spit = kind == PROJ_SPIT;
+            let reach = if spit { 28 } else { PROJ_HIT_RADIUS };
+            let mid = [
+                (old[0] + new[0]) >> 1,
+                (old[1] + new[1]) >> 1,
+                (old[2] + new[2]) >> 1,
+            ];
+            if dist2_3(ppos, new) < reach * reach || (spit && dist2_3(ppos, mid) < reach * reach) {
                 player_hit = true;
                 hit = true;
                 hit_pos = new;
