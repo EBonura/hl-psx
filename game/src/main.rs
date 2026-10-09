@@ -30171,8 +30171,8 @@ unsafe fn draw_sky_windows(
                     // plain quotient stays on screen.
                     let z = v.z.max(render::NEAR_Z);
                     poly[k].p = (
-                        (render::OFX + v.x * h / z).clamp(0, 319),
-                        (render::OFY + v.y * h / z).clamp(0, 239),
+                        (render::OFX + v.x * h / z).clamp(0, 320),
+                        (render::OFY + v.y * h / z).clamp(0, 240),
                     );
                     k += 1;
                 }
@@ -30200,6 +30200,8 @@ struct SkyBasis {
     qy: [i32; 3],
 }
 
+/// Pixels a sky piece grows past its cut (see `sky_piece`).
+const SKY_GROW: i32 = 3;
 const SKY_V0: SkyV = SkyV {
     p: (0, 0),
     q: [0; 3],
@@ -30305,14 +30307,16 @@ unsafe fn sky_draw_region(m: &Map, n0: usize) -> bool {
     if seen & (seen - 1) == 0 {
         return sky_piece(m, seen.trailing_zeros() as usize, 2, n0);
     }
-    sky_cut_region(m, n0, seen)
+    sky_cut_region(m, n0)
 }
 
 /// A polygon over several cube faces: each face's piece is the polygon cut by
-/// that face's four boundary planes, drawn from the face's texture.
+/// that face's four boundary planes, drawn from the face's texture. Every face
+/// is tried, not only those a corner lies on: a face can cross the polygon
+/// between corners that lie on other faces (a wedge at the screen's edge).
 #[inline(never)]
 #[optimize(size)]
-unsafe fn sky_cut_region(m: &Map, n0: usize, seen: u32) -> bool {
+unsafe fn sky_cut_region(m: &Map, n0: usize) -> bool {
     let bufs = &mut *core::ptr::addr_of_mut!(SKY_BUFS);
     // Cooker face order is ft, rt, bk, lf, up, dn: major axis and sign of
     // each; the other two axes give two cuts each.
@@ -30322,22 +30326,27 @@ unsafe fn sky_cut_region(m: &Map, n0: usize, seen: u32) -> bool {
     while f < 6 {
         let face = f;
         f += 1;
-        if seen & (1 << face) == 0 {
-            continue;
-        }
         let (axis, sign) = axis_sign[face];
         // The cuts some corner is outside of; the rest cannot clip anything.
         let (o1, o2) = ((axis + 1) % 3, (axis + 2) % 3);
         let mut need = 0u32;
+        let mut all_out = 0xFu32;
         let mut i = 0usize;
         while i < n0 {
             let q = bufs[2][i].q;
             let a = sign * q[axis];
-            need |= ((a < q[o1]) as u32)
+            let out = ((a < q[o1]) as u32)
                 | (((a < -q[o1]) as u32) << 1)
                 | (((a < q[o2]) as u32) << 2)
                 | (((a < -q[o2]) as u32) << 3);
+            need |= out;
+            all_out &= out;
             i += 1;
+        }
+        // A cut every corner is outside of leaves nothing of this face. The
+        // face may still show between corners that lie on other faces.
+        if all_out != 0 {
+            continue;
         }
         let mut src = 2usize;
         let mut n = n0;
@@ -30442,32 +30451,67 @@ unsafe fn sky_piece(m: &Map, face: usize, src: usize, n: usize) -> bool {
     if !slot.valid {
         return false;
     }
-    // Grow the piece by a pixel, in place. The rounded cut points of
-    // neighbouring pieces and windows do not always land on the same pixel
-    // line, which left one pixel wide cracks of clear colour through the sky
-    // along the cube's edges. The sky is drawn first, so the extra pixel only
-    // ever lands on sky or on the world drawn over it, and each corner's
-    // direction (and so its texel) follows its pixel. A window polygon
-    // (buffer 2) is only drawn in place when it needs no cut, which leaves
-    // nothing else to read it.
+    // Grow the piece by `SKY_GROW` pixels, in place. The rounded cut points
+    // of neighbouring pieces and windows do not always land on the same
+    // pixel line, which left cracks of clear colour through the sky along
+    // the cube's edges. The sky is drawn first, so the extra pixels only
+    // ever land on sky (whose colour depends on the direction alone, so an
+    // overlap shows the same texel) or on the world drawn over it, and each
+    // corner's direction (and so its texel) follows its pixel. A window
+    // polygon (buffer 2) is only drawn in place when it needs no cut, which
+    // leaves nothing else to read it.
+    //
+    // Each corner moves along each axis towards the outside of both its
+    // edges, from the sign of the sum of the edges' unit outward normals.
+    // Moving away from the polygon's centre is not enough: on an edge that
+    // runs at a shallow slope a corner stepping diagonally away from the
+    // centre can move inward and leave the crack open.
     let basis = &*core::ptr::addr_of!(SKY_BASIS);
-    let piece = (*core::ptr::addr_of_mut!(SKY_BUFS).cast::<[SkyV; 12]>().add(src)).as_mut_ptr();
-    let (mut sx, mut sy) = (0i32, 0i32);
+    let piece = (*core::ptr::addr_of_mut!(SKY_BUFS)
+        .cast::<[SkyV; 12]>()
+        .add(src))
+    .as_mut_ptr();
+    // Winding: the sign of twice the area decides which side of an edge is
+    // outside.
+    let mut area2 = 0i32;
     let mut k = 0usize;
     while k < n {
-        sx += (*piece.add(k)).p.0;
-        sy += (*piece.add(k)).p.1;
+        let (x0, y0) = (*piece.add(k)).p;
+        let (x1, y1) = (*piece.add(if k + 1 == n { 0 } else { k + 1 })).p;
+        area2 += x0 * y1 - x1 * y0;
         k += 1;
     }
-    // Compared against the corner sum scaled by the corner count, which
-    // spares the division by the count.
-    let count = n as i32;
+    let wind = if area2 >= 0 { 1 } else { -1 };
+    // An edge's outward normal (unnormalised) and its length, to within the
+    // octagonal approximation of `max + min / 2`.
+    let edge = |a: (i32, i32), b: (i32, i32)| {
+        let (ex, ey) = (b.0 - a.0, b.1 - a.1);
+        let (ax, ay) = (ex.abs(), ey.abs());
+        (
+            (ey * wind, -ex * wind),
+            (ax.max(ay) + (ax.min(ay) >> 1)).max(1),
+        )
+    };
+    let mut step = [(0i32, 0i32); 12];
+    let mut k = 0usize;
+    while k < n {
+        let prev = (*piece.add(if k == 0 { n - 1 } else { k - 1 })).p;
+        let here = (*piece.add(k)).p;
+        let next = (*piece.add(if k + 1 == n { 0 } else { k + 1 })).p;
+        let ((n1x, n1y), l1) = edge(prev, here);
+        let ((n2x, n2y), l2) = edge(here, next);
+        step[k] = (
+            (n1x * l2 + n2x * l1).signum(),
+            (n1y * l2 + n2y * l1).signum(),
+        );
+        k += 1;
+    }
     let mut k = 0usize;
     while k < n {
         let v = &mut *piece.add(k);
         let (x, y) = v.p;
-        let nx = (x + (x * count > sx) as i32 - (x * count < sx) as i32).clamp(0, 319);
-        let ny = (y + (y * count > sy) as i32 - (y * count < sy) as i32).clamp(0, 239);
+        let nx = (x + step[k].0 * SKY_GROW).clamp(0, 320);
+        let ny = (y + step[k].1 * SKY_GROW).clamp(0, 240);
         let mut j = 0usize;
         while j < 3 {
             v.q[j] += (nx - x) * basis.qx[j] + (ny - y) * basis.qy[j];
