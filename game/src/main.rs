@@ -19,6 +19,11 @@
 #![no_std]
 #![no_main]
 #![cfg_attr(target_arch = "mips", feature(asm_experimental_arch))]
+// The SDK deprecates its free pad, memory-card and CD-sector entry points in
+// favour of the ownership tokens in `psx_rt::Peripherals`. The game still calls
+// the free forms, which take the token per call, so behaviour is unchanged;
+// moving the pad, card and CD paths onto tokens is a change of its own.
+#![allow(deprecated)]
 
 extern crate psx_rt;
 
