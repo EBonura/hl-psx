@@ -432,83 +432,67 @@ fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8]) -> Option<TexSlot> 
 #[optimize(size)]
 fn upload_eight(entry: &[u8]) -> Option<(Option<TexSlot>, usize)> {
     let flags = u16::from_le_bytes([entry[0], entry[1]]);
-    let w = flags & cooked::TEXTURE_ENTRY_WIDTH_MASK;
-    let h = u16::from_le_bytes([entry[2], entry[3]]);
+    let w = (flags & cooked::TEXTURE_ENTRY_WIDTH_MASK) as usize;
+    let h = u16::from_le_bytes([entry[2], entry[3]]) as usize;
     let shared = flags & cooked::TEXTURE_ENTRY_SHARED_CLUT != 0;
-    let clut_len = if shared {
+    let pix_off = 4 + if shared {
         0
     } else {
         cooked::TEXTURE_CLUT_256_BYTES
     };
-    let pix_off = 4 + clut_len;
-    let len = pix_off + w as usize * h as usize;
+    let len = pix_off + w * h;
     if len > entry.len() {
         return None;
     }
     // Half a page is exactly one 128 x 128 face.
-    if w != 128 || h != 128 {
-        return Some((None, len));
-    }
-    let pix = &entry[pix_off..len];
+    let slot = if w == 128 && h == 128 {
+        place_eight(&entry[4..pix_off], &entry[pix_off..len], shared)
+    } else {
+        None
+    };
+    Some((slot, len))
+}
+
+/// Place a face's pixels in half a texture page, and its palette (`clut`, empty
+/// when shared) in 16 CLUT slots.
+fn place_eight(clut: &[u8], pix: &[u8], shared: bool) -> Option<TexSlot> {
     unsafe {
         let sky = &mut *core::ptr::addr_of_mut!(SKY8);
         let (page, half) = match sky.open_page.take() {
             Some(page) => (page, 1u16),
             None => {
-                let Some(page) = (*core::ptr::addr_of_mut!(ATLAS)).reserve_empty_page() else {
-                    return Some((None, len));
-                };
-                sky.open_page = Some(page as u16);
-                (page as u16, 0)
+                let page = (*core::ptr::addr_of_mut!(ATLAS)).reserve_empty_page()? as u16;
+                sky.open_page = Some(page);
+                (page, 0)
             }
         };
+        // The page is one the atlas owns, so the rectangle is inside VRAM.
         let tpage_x = TEX_X0 + (page % COLS) * 64;
         let tpage_y = if page / COLS == 0 { 0 } else { 256 };
-        let rect = VramRect::new(tpage_x, tpage_y + half * 128, 64, 128);
-        if !rect_fits_vram(rect.x, rect.y, 64, 128) {
-            return Some((None, len));
-        }
-        let clut_word = if shared {
-            sky.clut_word
-        } else {
+        if !shared {
             // 256 entries are 16 CLUT slots in one row, which must end at or
             // before `CLUT_MAX_X`; a fit beyond it is retired like in
             // `upload_one` and the search moves on.
-            let clut = loop {
-                let Some(candidate) = (*core::ptr::addr_of_mut!(CLUTS)).alloc(256) else {
-                    return Some((None, len));
-                };
+            let at = loop {
+                let candidate = (*core::ptr::addr_of_mut!(CLUTS)).alloc(256)?;
                 if candidate.x() + 256 <= CLUT_MAX_X {
                     break candidate;
                 }
             };
-            if !rect_fits_vram(clut.x(), clut.y(), 256, 1) {
-                return Some((None, len));
-            }
-            upload_bytes(
-                VramRect::new(clut.x(), clut.y(), 256, 1),
-                &entry[4..4 + cooked::TEXTURE_CLUT_256_BYTES],
-            );
-            sky.clut_word = Some(clut.uv_word());
-            sky.clut_word
-        };
-        let Some(clut_word) = clut_word else {
-            return Some((None, len));
-        };
-        upload_bytes(rect, pix);
+            upload_bytes(VramRect::new(at.x(), at.y(), 256, 1), clut);
+            sky.clut_word = Some(at.uv_word());
+        }
+        upload_bytes(VramRect::new(tpage_x, tpage_y + half * 128, 64, 128), pix);
         let tpage = TexturePage::new(tpage_x, tpage_y, TextureDepth::Bit8);
         let win = TextureWindow::power_of_two_tile(0, (half * 128) as u8, 128, 128);
-        let material = TextureMaterial::opaque(clut_word, tpage.uv_word(0), (128, 128, 128))
+        let material = TextureMaterial::opaque(sky.clut_word?, tpage.uv_word(0), (128, 128, 128))
             .with_texture_window(win);
-        Some((
-            Some(TexSlot {
-                material,
-                packet: TexturedGouraudPacketMaterial::from_texture(material),
-                valid: true,
-                backdrop: false,
-            }),
-            len,
-        ))
+        Some(TexSlot {
+            material,
+            packet: TexturedGouraudPacketMaterial::from_texture(material),
+            valid: true,
+            backdrop: false,
+        })
     }
 }
 
