@@ -21844,6 +21844,8 @@ const DEBRIS_SHARD: u8 = 0x40;
 /// Kind flag: the shard came to rest on a floor.
 const DEBRIS_REST: u8 = 0x80;
 const DEBRIS_KIND_MASK: u8 = 0x0f;
+/// Kind bits 4..5: which of the last four breaks' colours a shard wears.
+const DEBRIS_COLOR_SHIFT: u8 = 4;
 /// Opaque ticks 50..70 (2.5 s + 0..1 s) then a 40 tick fade (2 s).
 const SHARD_FADE_TICKS: u8 = 40;
 /// CL_TempEntUpdate FTENT_SLOWGRAVITY: 400 u/s^2 = 1 unit per tick^2.
@@ -21873,6 +21875,9 @@ impl Debris {
 }
 static mut DEBRIS: [Debris; MAX_DEBRIS] = [Debris::ZERO; MAX_DEBRIS];
 static mut DEBRIS_CURSOR: usize = 0;
+/// RGB332 shard colours of the last four breaks (0xFF = the material's own).
+static mut SHARD_COLORS: [u8; 4] = [u8::MAX; 4];
+static mut SHARD_COLOR_NEXT: u8 = 0;
 static mut DEBRIS_RECTS: [RectFlat; MAX_DEBRIS_RECTS] =
     [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_DEBRIS_RECTS];
 
@@ -21922,6 +21927,9 @@ unsafe fn spawn_breakable_shards(rec: map::LogicEnt, live_center: [i32; 3]) {
         live_center[1] - authored_center[1],
         live_center[2] - authored_center[2],
     ];
+    let slot = SHARD_COLOR_NEXT & 3;
+    SHARD_COLOR_NEXT = slot + 1;
+    SHARD_COLORS[slot as usize] = rec.sound1;
     let mut shard = 0;
     while shard < count {
         let sample_axis = |lo: i32, hi: i32| -> i32 {
@@ -21944,7 +21952,7 @@ unsafe fn spawn_breakable_shards(rec: map::LogicEnt, live_center: [i32; 3]) {
         spawn_debris_fixed(
             [p[0] << 4, p[1] << 4, p[2] << 4],
             vel,
-            DEBRIS_SHARD | (DEBRIS_BREAK_BASE + material),
+            DEBRIS_SHARD | (slot << DEBRIS_COLOR_SHIFT) | (DEBRIS_BREAK_BASE + material),
             ttl,
         );
         shard += 1;
@@ -22135,15 +22143,26 @@ unsafe fn queue_shards(
         let Some((sx, sy, vz)) = project_world_point(p, rot, base_t) else {
             continue;
         };
-        let (r, g, b) = match d.kind & DEBRIS_KIND_MASK {
-            3 | 10 => (150, 205, 215), // glass, unbreakable glass
-            5 => (150, 155, 160),      // metal
-            6 => (145, 25, 20),        // flesh
-            7 => (115, 115, 105),      // cinder block
-            8 => (185, 175, 145),      // ceiling tile
-            9 => (75, 105, 70),        // computer
-            11 => (105, 95, 85),       // rocks
-            _ => (125, 75, 35),        // wood and untyped
+        let packed = SHARD_COLORS[((d.kind >> DEBRIS_COLOR_SHIFT) & 3) as usize];
+        let (r, g, b) = if packed != u8::MAX {
+            // The shard model's mean texture colour (RGB332), lifted a third
+            // because the rect is not lit by the room.
+            (
+                (((packed >> 5) as u32 * 255 / 7) * 4 / 3).min(255) as u8,
+                ((((packed >> 2) & 7) as u32 * 255 / 7) * 4 / 3).min(255) as u8,
+                (((packed & 3) as u32 * 255 / 3) * 4 / 3).min(255) as u8,
+            )
+        } else {
+            match d.kind & DEBRIS_KIND_MASK {
+                3 | 10 => (150, 205, 215), // glass, unbreakable glass
+                5 => (150, 155, 160),      // metal
+                6 => (145, 25, 20),        // flesh
+                7 => (115, 115, 105),      // cinder block
+                8 => (185, 175, 145),      // ceiling tile
+                9 => (75, 105, 70),        // computer
+                11 => (105, 95, 85),       // rocks
+                _ => (125, 75, 35),        // wood and untyped
+            }
         };
         // Gib models are a few units across: scale with distance, 2 to 10 px.
         let size = ((5 * render::projection_h()) / vz.max(1)).clamp(2, 10) as i16;
