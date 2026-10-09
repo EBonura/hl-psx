@@ -64,11 +64,19 @@ pub const fn breakable_hp_after_damage(
 }
 
 /// GoldSrc material 7 is `matUnbreakableGlass`. CBreakable::TakeDamage rejects
-/// every damage type before changing health; direct trigger use may still call
-/// Die(), which is why this remains a damage-path predicate.
+/// every damage type before changing health, and CBreakable::Use only calls
+/// Die() when IsBreakable(), so this guards both paths.
 #[inline(always)]
 pub const fn breakable_accepts_damage(material: u16) -> bool {
     material != 7
+}
+
+/// GoldSrc `CBreakable::BreakTouch` with SF_BREAK_TOUCH: the toucher's speed in
+/// units per second times 0.01 must reach the brush's health. The port keeps
+/// speed in units per tick (20 Hz), so each point of health needs five.
+#[inline(always)]
+pub const fn breakable_breaks_on_touch(speed_per_tick: i32, hp: u16) -> bool {
+    speed_per_tick >= hp as i32 * 5
 }
 
 /// GoldSrc radius damage falls off linearly from full damage at the blast
@@ -831,6 +839,15 @@ mod tests {
         assert_eq!(momentary_advance_phase(4090, 35, travel), 4096);
         assert_eq!(momentary_return_phase(turned, 5, travel), 54);
         assert_eq!(momentary_return_phase(4, 5, travel), 0);
+    }
+
+    #[test]
+    fn touch_breaks_when_speed_reaches_a_hundred_times_health() {
+        // plate glass (health 1) breaks at 100 u/s, a running player makes 320
+        assert!(breakable_breaks_on_touch(5, 1));
+        assert!(!breakable_breaks_on_touch(4, 1));
+        assert!(breakable_breaks_on_touch(16, 3));
+        assert!(!breakable_breaks_on_touch(16, 4));
     }
 
     #[test]

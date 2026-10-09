@@ -19,6 +19,11 @@
 #![no_std]
 #![no_main]
 #![cfg_attr(target_arch = "mips", feature(asm_experimental_arch))]
+// The SDK deprecates its free pad, memory-card and CD-sector entry points in
+// favour of the ownership tokens in `psx_rt::Peripherals`. The game still calls
+// the free forms, which take the token per call, so behaviour is unchanged;
+// moving the pad, card and CD paths onto tokens is a change of its own.
+#![allow(deprecated)]
 
 extern crate psx_rt;
 
@@ -3748,6 +3753,19 @@ unsafe fn sway_uv3(uv: [u16; 3]) -> [u16; 3] {
     [sway_uv(uv[0]), sway_uv(uv[1]), sway_uv(uv[2])]
 }
 static mut PUSH_IMPULSE: [i32; 3] = [0; 3]; // per-tick trigger_push velocity add
+/// The room's non-conveyor, non-ONCE trigger_push records (what a monster's
+/// move gets as basevelocity). Empty on the many maps that author none.
+const MAX_PUSH_LI: usize = 32;
+static mut PUSH_LI: [u16; MAX_PUSH_LI] = [0; MAX_PUSH_LI];
+static mut PUSH_N: u8 = 0;
+/// Union of the pushers' boxes: most actors are nowhere near one, and a miss here
+/// skips every per-pusher test.
+static mut PUSH_BOX: [[i32; 3]; 2] = [[0; 3]; 2];
+/// An actor that left the floor under a push: its momentum (vx, down speed,
+/// vz per tick) lives in PROP_SCRIPT_GOAL, unused while no script runs. The bit
+/// is the turret-inactive one, which only AI_TURRET models use, and pushed
+/// walkers are never turrets.
+const PROP_RUNTIME_AIRBORNE: u8 = 8;
 static mut PLAYER_GROUND_ENT: i16 = -1; // brush entity the player stands on (conveyors)
 static mut ENT_ACTIVE: [u8; MAX_ENTS] = [0; MAX_ENTS];
 
@@ -3825,6 +3843,9 @@ static mut TRACKTRAIN_CMD_USE_TYPE: u8 = map::USE_TOGGLE;
 static mut TRACKTRAIN_CMD_SPEED: u16 = 0;
 static mut TRACKTRAIN_USE_SPEED: u16 = 60; // +use drive speed (On A Rail)
 static mut LOGIC_PLAYER_POS: [i32; 3] = [0; 3];
+/// The player's speed (units per tick) this tick or the last, for touch breakables.
+static mut PLAYER_APPROACH_SPEED: i32 = 0;
+static mut PLAYER_LAST_SPEED: i32 = 0;
 static mut SIM_NOW: u16 = 0; // current sim tick, for fire-path logic hooks
 static mut LOGIC_PLAYER_YAW: u16 = 0;
 // Who started the logic chain now running, for CBaseDoor::DoorGoUp's
@@ -6576,6 +6597,9 @@ const SF_TRIGGER_PUSH_START_OFF: u16 = 2; // trigger_push spawns disabled
 const SF_RELAY_FIREONCE: u16 = 1; // trigger_relay removes itself after firing once
 const SF_MULTIMAN_THREAD: u16 = 1; // multi_manager clones concurrent runs in GoldSrc
 const SF_BREAK_TRIGGER_ONLY: u16 = 1; // func_breakable: immune to gunfire
+const BREAK_MATERIAL_NONE: u16 = 9; // GoldSrc matNone: breaks without a sound
+const SF_BREAK_TOUCH: u16 = 2; // func_breakable: breaks when the player runs into it
+const SF_BREAK_PRESSURE: u16 = 4; // func_breakable: breaks when the player stands on it
 const SF_BREAK_CROWBAR: u16 = 256; // func_breakable: one crowbar strike destroys it
 const SF_TRACKTRAIN_NOCONTROL: u16 = 2; // scripted train: +use must not drive/toggle it
 const SF_CHANGELEVEL_USE_ONLY: u16 = 2; // named/target-fired, never Touch()
@@ -6801,6 +6825,10 @@ unsafe fn shatter_breakable(
     if ENT_ACTIVE[ei] == 0 || LOGIC_STATE[li] == LOGIC_STATE_REMOVED {
         return;
     }
+    // CBreakable::Use only dies when IsBreakable(): bulletproof glass stays.
+    if !logic_state::breakable_accepts_damage(rec.arg1) {
+        return;
+    }
     LOGIC_BREAK_HP[li] = 0;
     ENT_ACTIVE[ei] = 0;
     LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
@@ -6816,7 +6844,9 @@ unsafe fn shatter_breakable(
             e.center[2] + off[2],
         ]
     };
-    if rec.sound0 != u8::MAX {
+    if rec.arg1 == BREAK_MATERIAL_NONE {
+        // matNone breaks silently.
+    } else if rec.sound0 != u8::MAX {
         sfx::play_map_world(rec.sound0, sound_pos);
     } else {
         // Legacy cooked rooms had no local material id.
@@ -6828,7 +6858,61 @@ unsafe fn shatter_breakable(
         sfx::play_world(snd, sound_pos);
     }
     spawn_breakable_shards(rec, sound_pos);
+    release_loot(
+        Some(m),
+        map::BREAKABLE_LOOT_KEY | e.submodel.min(0x3fff) as u16,
+        sound_pos,
+        0,
+        0,
+        0,
+    );
     logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, depth);
+    if rec.speed != 0 {
+        // CBreakable::Die: ExplosionCreate(Center(), ..., ExplosionMagnitude(),
+        // TRUE), the same blast an env_explosion of that magnitude makes.
+        explode(
+            m,
+            sound_pos,
+            rec.speed.min(255) as u8,
+            rec.speed as i32 * 5 / 2,
+            false,
+        );
+    }
+}
+
+/// CBreakable::BreakTouch for the player. SF_BREAK_TOUCH: running into it at a
+/// speed whose hundredth reaches its health (units per second, so 5 per tick
+/// per point of health) breaks it. SF_BREAK_PRESSURE: standing on its top arms
+/// Die() after its delay (0.1 s when unset). The approach speed is the larger
+/// of this tick's and the last tick's, as the contact clips the velocity.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn logic_breakable_touch(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    li: usize,
+    rec: map::LogicEnt,
+    player_pos: [i32; 3],
+    half_height: i32,
+    now: u16,
+) {
+    if !logic_state::breakable_accepts_damage(rec.arg1)
+        || rec.spawnflags & SF_BREAK_TRIGGER_ONLY != 0
+        || LOGIC_STATE[li] == LOGIC_STATE_WAITING
+    {
+        return;
+    }
+    if rec.spawnflags & SF_BREAK_TOUCH != 0 {
+        if logic_state::breakable_breaks_on_touch(PLAYER_APPROACH_SPEED, LOGIC_BREAK_HP[li]) {
+            shatter_breakable(m, nlogic, nents, li, rec, now, 0);
+            return;
+        }
+    }
+    if rec.spawnflags & SF_BREAK_PRESSURE != 0 && player_pos[1] - half_height >= rec.maxs[1] - 2 {
+        LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+        LOGIC_NEXT[li] = now.wrapping_add(rec.delay_ticks.max(2));
+    }
 }
 
 /// Damage a brush entity; breakables shatter at 0 HP (vanish, fire targets).
@@ -7890,10 +7974,12 @@ unsafe fn push_actors_from_mover(m: &Map, movers: &[phys::Mover], ei: usize, d: 
         let c = [p[0], p[1] + 36, p[2]];
         if PROP_ACTIVE[pi] != 0
             && PROP_HEALTH[pi] != 0
-            && !phys::mover_clear_at(m, movers, ei as i32, c)
+            && !phys::mover_clear_at_hull(m, movers, ei as i32, c, m.hull1_head)
         {
             let moved = [c[0] + d[0], c[1] + d[1], c[2] + d[2]];
-            if phys::standing_fits(m, moved) && phys::movers_clear_at(m, movers, moved) {
+            if phys::standing_fits(m, moved)
+                && phys::movers_clear_at_hull(m, movers, moved, m.hull1_head)
+            {
                 prop_set_pos_exact(m, pi, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
             } else {
                 mover_blocked(m, ei, pi);
@@ -8224,6 +8310,11 @@ fn logic_player_touch_candidate(rec: map::LogicEnt) -> bool {
             (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0
         }
         map::LOGIC_CDTRACK => rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs,
+        // CBreakable::BreakTouch: run into it, or stand on it.
+        map::LOGIC_FUNC_BREAKABLE => {
+            rec.spawnflags & (SF_BREAK_TOUCH | SF_BREAK_PRESSURE) != 0
+                && (rec.spawnflags & SF_BREAK_TRIGGER_ONLY) == 0
+        }
         _ => false,
     }
 }
@@ -11464,7 +11555,21 @@ unsafe fn maker_make(
     // stock. GoldSrc copies `netname`, not the maker's own targetname, onto
     // a spawned child.
     PROP_NAME[pi] = 0;
-    prop_set_pos(m, &[], pi, PROP_POS[pi]);
+    // CMonsterMaker::MakeMonster creates the child at the maker's origin with
+    // SF_MONSTER_FALL_TO_GROUND, so a walker drops from there instead of
+    // appearing on the floor.
+    let kind = PROP_KIND[pi];
+    if matches!(model_def(kind).ai, AI_MELEE | AI_RANGED | AI_ALLY | AI_FLEE)
+        && kind != PROP_TYPE_CONTROLLER
+        && rec.origin[1] > PROP_POS[pi][1] + 18
+    {
+        let at = [PROP_POS[pi][0], rec.origin[1], PROP_POS[pi][2]];
+        PROP_SCRIPT_GOAL[pi] = [0, 1, 0];
+        PROP_DORMANT[pi] |= PROP_RUNTIME_AIRBORNE;
+        prop_set_pos_exact(m, pi, at);
+    } else {
+        prop_set_pos(m, &[], pi, PROP_POS[pi]);
+    }
     let left = LOGIC_COUNTER[li];
     if left > 0 {
         LOGIC_COUNTER[li] = left - 1;
@@ -12872,6 +12977,7 @@ unsafe fn logic_touch_triggers(
     armor: &mut u16,
     now: u16,
 ) {
+    phys::set_friction_scale(4096);
     // CTriggerHurt::RadiationThink samples the nearest radioactive volume
     // every 0.25 seconds whether or not the player is touching it.
     let geiger_count = GEIGER_COOLDOWN >> 4;
@@ -12916,6 +13022,15 @@ unsafe fn logic_touch_triggers(
                 | map::LOGIC_TRIGGER_GRAVITY
                 | map::LOGIC_CDTRACK
                 | map::LOGIC_TRIGGER_ENDSECTION => {}
+                map::LOGIC_FUNC_BREAKABLE => {
+                    // A pressure plate's delayed Die() fires from here.
+                    if LOGIC_STATE[li] == LOGIC_STATE_WAITING && time_reached(now, LOGIC_NEXT[li]) {
+                        let rec = m.logic(li);
+                        shatter_breakable(m, nlogic, nents, li, rec, now, 0);
+                        scan += 1;
+                        continue;
+                    }
+                }
                 _ => {
                     scan += 1;
                     continue;
@@ -12928,7 +13043,7 @@ unsafe fn logic_touch_triggers(
             // short after rounding and never opens c1a1c's door to c1a1d.
             let contact = matches!(
                 LOGIC_KIND[li],
-                map::LOGIC_FUNC_DOOR | map::LOGIC_FUNC_BUTTON
+                map::LOGIC_FUNC_DOOR | map::LOGIC_FUNC_BUTTON | map::LOGIC_FUNC_BREAKABLE
             );
             let (tmins, tmaxs) = if contact {
                 (pmins_contact, pmaxs_contact)
@@ -13002,6 +13117,9 @@ unsafe fn logic_touch_triggers(
                         logic_activate_door_linked(m, nlogic, nents, li, rec, map::USE_TOGGLE);
                     }
                 }
+                map::LOGIC_FUNC_BREAKABLE => {
+                    logic_breakable_touch(m, nlogic, nents, li, rec, player_pos, half_height, now);
+                }
                 map::LOGIC_TRIGGER_HURT => {
                     if LOGIC_STATE[li] == LOGIC_STATE_BOTTOM {
                         if time_reached(now, LOGIC_NEXT[li]) {
@@ -13010,9 +13128,9 @@ unsafe fn logic_touch_triggers(
                                 if *health > 0 {
                                     *health = (*health + rec.arg0).min(PLAYER_START_HEALTH);
                                 }
-                            } else {
+                            } else if rec.arg0 != 0 {
                                 note_damage_direction(logic_center(rec));
-                                damage_player(health, armor, rec.arg0.max(1));
+                                damage_player(health, armor, rec.arg0);
                             }
                             logic_sub_use_targets(
                                 m,
@@ -13063,7 +13181,10 @@ unsafe fn logic_touch_triggers(
                     }
                 }
                 map::LOGIC_TRIGGER_GRAVITY => {
-                    if (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0 {
+                    if rec.flags & map::LOGIC_GRAVITY_FRICTION != 0 {
+                        // CFrictionModifier::ChangeFriction: while touched.
+                        phys::set_friction_scale(rec.arg0 as i32);
+                    } else if (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0 {
                         phys::set_gravity_scale(rec.arg0 as i32);
                     }
                 }
@@ -13337,6 +13458,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     MONSTER_TRIGGER_FIRST = nlogic as u16;
     MONSTER_TRIGGER_END = 0;
     MONSTER_TOUCH = false;
+    PUSH_N = 0;
     BOSS_WALKER = u16::MAX;
     OSPREY.li = u16::MAX;
     garg::reset();
@@ -13347,6 +13469,28 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     while li < nlogic {
         let rec = m.logic(li);
         LOGIC_KIND[li] = rec.kind;
+        if rec.kind == map::LOGIC_TRIGGER_PUSH
+            && logic_valid_brush(rec.brush, nents).is_none()
+            && rec.spawnflags & 1 == 0
+            && (PUSH_N as usize) < MAX_PUSH_LI
+        {
+            PUSH_LI[PUSH_N as usize] = li as u16;
+            let mut k = 0;
+            while k < 3 {
+                PUSH_BOX[0][k] = if PUSH_N == 0 {
+                    rec.mins[k]
+                } else {
+                    PUSH_BOX[0][k].min(rec.mins[k])
+                };
+                PUSH_BOX[1][k] = if PUSH_N == 0 {
+                    rec.maxs[k]
+                } else {
+                    PUSH_BOX[1][k].max(rec.maxs[k])
+                };
+                k += 1;
+            }
+            PUSH_N += 1;
+        }
         if rec.kind == map::LOGIC_TRIGGER_HURT && rec.flags & map::LOGIC_TRIGGER_HURT_RADIATION != 0
         {
             GEIGER_COOLDOWN = 0xf0;
@@ -14994,6 +15138,207 @@ unsafe fn prop_face_point(pi: usize, p: [i32; 3]) {
     }
 }
 
+/// CTriggerPush::Touch for a monster: the sum of the live, non-ONCE pushers
+/// whose volume the actor's hull touches, as world units per tick (the same
+/// cooked vector the player's basevelocity uses).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_push_vector(m: &Map, pi: usize) -> [i32; 3] {
+    let p = PROP_POS[pi];
+    let (r, h) = prop_hit_extent(PROP_KIND[pi]);
+    let mins = [p[0] - r, p[1], p[2] - r];
+    let maxs = [p[0] + r, p[1] + 2 * h, p[2] + r];
+    let mut v = [0i32; 3];
+    let mut k = 0usize;
+    if mins[0] > PUSH_BOX[1][0]
+        || maxs[0] < PUSH_BOX[0][0]
+        || mins[1] > PUSH_BOX[1][1]
+        || maxs[1] < PUSH_BOX[0][1]
+        || mins[2] > PUSH_BOX[1][2]
+        || maxs[2] < PUSH_BOX[0][2]
+    {
+        return v;
+    }
+    while k < PUSH_N as usize {
+        let li = PUSH_LI[k] as usize;
+        k += 1;
+        if LOGIC_STATE[li] == LOGIC_STATE_TOP
+            || LOGIC_STATE[li] == LOGIC_STATE_REMOVED
+            || !m.logic_touches_bounds(li, mins, maxs)
+        {
+            continue;
+        }
+        let rec = m.logic(li);
+        if rec.brush != map::LOGIC_BRUSH_NONE
+            && rec.brush & map::LOGIC_BRUSH_SHAPE != 0
+            && !phys::inside_clip_hull(m, (rec.brush & !map::LOGIC_BRUSH_SHAPE) as i16, p)
+        {
+            continue;
+        }
+        if rec.aux_count >= 2 {
+            let a = m.logic_aux(rec.first_aux);
+            let b = m.logic_aux(rec.first_aux + 1);
+            v[0] += a.target as i16 as i32;
+            v[1] += a.delay_ticks as i16 as i32;
+            v[2] += b.target as i16 as i32;
+        }
+    }
+    v
+}
+
+/// Move a pushed actor one tick. It slides along a floor like a walker does; a
+/// floor that drops away hands it to the air integrator with the push as its
+/// momentum, as GoldSrc's STEP physics keeps the velocity off a ledge. Returns
+/// true while the actor is airborne.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_push_step(m: &Map, movers: &[phys::Mover], pi: usize, v: [i32; 3]) -> bool {
+    let ty = PROP_KIND[pi];
+    let pos = PROP_POS[pi];
+    let cand = [pos[0] + v[0], pos[1], pos[2] + v[2]];
+    if v[0] != 0 || v[2] != 0 {
+        let from = prop_target(ty, pos);
+        let to = prop_target(ty, cand);
+        if !phys::line_clear_world(m, from, to)
+            || !phys::actor_line_clear_movers(m, movers, from, to)
+            || in_monsterclip(to, 0)
+        {
+            return false;
+        }
+    }
+    refresh_prop_near_ents(movers, pi);
+    if v[1] <= 0 {
+        // GoldSrc supports an actor while any part of its hull base touches
+        // floor, so sample the hull footprint, not only its origin.
+        match prop_spawn_floor_y_down(m, pi, cand, prop_hit_extent(ty).0, PROP_GROUND_PROBE_DOWN) {
+            // A drop steeper than 45 degrees is not standable ground (a ramp
+            // the actor slides off), only a step or a walkable slope is.
+            Some(y) if y - pos[1] <= 18 && pos[1] - y <= 18i32.min(v[0].abs().max(v[2].abs())) => {
+                prop_set_pos_grounded(m, pi, [cand[0], y, cand[2]]);
+                return false;
+            }
+            Some(y) if y > pos[1] => return false,
+            _ => {}
+        }
+    }
+    // The floor is more than a step below (or the push lifts the actor): fly.
+    let hx = v[0].clamp(-127, 127) as i16;
+    let hz = v[2].clamp(-127, 127) as i16;
+    let up = v[1].clamp(0, 100);
+    PROP_SCRIPT_GOAL[pi] = [hx, (if up > 0 { -up } else { 1 }) as i16, hz];
+    PROP_DORMANT[pi] |= PROP_RUNTIME_AIRBORNE;
+    PROP_NEAR_COUNT[pi] = 0xFF;
+    prop_set_pos_exact(m, pi, cand);
+    true
+}
+
+/// Integrate one tick of an airborne actor: gravity (800 u/s^2 is 2 u/tick^2
+/// at 20 Hz), the momentum it left the floor with, and a landing on whatever
+/// the column below holds. Returns true while it is still in the air.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_air_tick(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
+    let ty = PROP_KIND[pi];
+    let pos = PROP_POS[pi];
+    let a = PROP_SCRIPT_GOAL[pi];
+    // GoldSrc adds gravity before the move: the fall is 2, 4, 6, ... units per tick.
+    let vy = (a[1] as i32 + 1).min(100);
+    let mut cand = [pos[0] + a[0] as i32, pos[1] - vy, pos[2] + a[2] as i32];
+    // Zero marks "grounded", so the apex of an upward push steps to 1.
+    let next_vy = a[1] as i32 + 2;
+    let mut momentum = [
+        a[0],
+        (if next_vy == 0 {
+            1
+        } else {
+            next_vy.clamp(-100, 100)
+        }) as i16,
+        a[2],
+    ];
+    if (a[0] != 0 || a[2] != 0) && {
+        let from = prop_target(ty, pos);
+        let to = prop_target(ty, [cand[0], pos[1], cand[2]]);
+        !phys::line_clear_world(m, from, to)
+            || !phys::actor_line_clear_movers(m, movers, from, to)
+            || in_monsterclip(to, 0)
+    } {
+        cand[0] = pos[0];
+        cand[2] = pos[2];
+        momentum[0] = 0;
+        momentum[2] = 0;
+    }
+    if vy > 0 {
+        refresh_prop_near_ents(movers, pi);
+        let landing = prop_spawn_floor_y_down(
+            m,
+            pi,
+            [cand[0], pos[1], cand[2]],
+            prop_hit_extent(ty).0,
+            vy + PROP_GROUND_PROBE_UP,
+        );
+        if let Some(y) = landing {
+            if y >= cand[1] && y <= pos[1] + PROP_GROUND_PROBE_UP {
+                // Landing on a slope steeper than 45 degrees: the actor keeps
+                // sliding down it with its horizontal momentum.
+                let ahead = [
+                    cand[0] + 8 * momentum[0].signum() as i32,
+                    pos[1],
+                    cand[2] + 8 * momentum[2].signum() as i32,
+                ];
+                let steep = (momentum[0] != 0 || momentum[2] != 0)
+                    && prop_spawn_floor_y_down(m, pi, ahead, prop_hit_extent(ty).0, vy + 64)
+                        .is_some_and(|y1| y - y1 > 8);
+                if steep {
+                    momentum[1] = 1;
+                    PROP_SCRIPT_GOAL[pi] = momentum;
+                    prop_set_pos_exact(m, pi, [cand[0], y, cand[2]]);
+                    return true;
+                }
+                PROP_DORMANT[pi] &= !PROP_RUNTIME_AIRBORNE;
+                prop_set_pos_exact(m, pi, [cand[0], y, cand[2]]);
+                return false;
+            }
+        }
+    }
+    if cand[1] < -20000 {
+        PROP_DORMANT[pi] &= !PROP_RUNTIME_AIRBORNE;
+        return false;
+    }
+    PROP_SCRIPT_GOAL[pi] = momentum;
+    prop_set_pos_exact(m, pi, cand);
+    true
+}
+
+/// Environment forces on one actor before its AI thinks: airborne integration
+/// and trigger_push. True when the actor spent the tick in the air.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_environment_move(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
+    if PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0 {
+        return prop_air_tick(m, movers, pi);
+    }
+    // A placed monster that has not been seen is GoldSrc's WaitTillSeen
+    // dormant (SOLID_NOT, never relinked), which no pusher moves; maker
+    // children and engaged actors are live.
+    if PUSH_N == 0
+        || !matches!(
+            model_def(PROP_KIND[pi]).ai,
+            AI_MELEE | AI_RANGED | AI_ALLY | AI_FLEE
+        )
+        || PROP_SCRIPT_MODE[pi] != 0 // PROP_SCRIPT_GOAL holds the momentum while airborne
+        || (PROP_MAKER[pi] == 0
+            && PROP_AI_TARGET[pi] == PROP_TARGET_NONE
+            && PROP_STATE[pi] == PROP_STATE_IDLE)
+    {
+        return false;
+    }
+    let v = prop_push_vector(m, pi);
+    if v == [0; 3] {
+        return false;
+    }
+    prop_push_step(m, movers, pi, v)
+}
+
 #[inline(never)]
 unsafe fn prop_try_step(
     m: &Map,
@@ -15724,10 +16069,27 @@ unsafe fn melee_target_vertical_reachable(
 /// optionally an M203-ammo slot. Duplicate weapons naturally become ammo in
 /// `collect_pickups`, matching CBasePlayerWeapon::AddDuplicate.
 unsafe fn release_monster_loot(owner: usize) {
-    let owner_key = (owner + 1).min(u16::MAX as usize) as u16;
-    let origin = PROP_POS[owner];
-    let leaf = PROP_LEAF[owner];
-    let yaw = prop_yaw_value(PROP_YAW[owner]);
+    release_loot(
+        None,
+        (owner + 1).min(u16::MAX as usize) as u16,
+        PROP_POS[owner],
+        PROP_LEAF[owner],
+        prop_yaw_value(PROP_YAW[owner]),
+        PROP_SCRIPT_YAW[owner],
+    );
+}
+
+/// Release every dormant loot slot owned by `owner_key` at `origin`: a monster
+/// death (key = actor index + 1) or a shattered breakable (key = cooked
+/// BREAKABLE_LOOT_KEY | submodel, centre origin, dropped to the floor below).
+unsafe fn release_loot(
+    m: Option<&Map>,
+    owner_key: u16,
+    origin: [i32; 3],
+    leaf: i16,
+    yaw: u16,
+    script_yaw: u16,
+) {
     let mut released = 0i32;
     let mut pi = 0usize;
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
@@ -15742,7 +16104,7 @@ unsafe fn release_monster_loot(owner: usize) {
             PROP_POS[pi] = [origin[0] + side, origin[1], origin[2]];
             PROP_LEAF[pi] = leaf;
             PROP_YAW[pi] = yaw;
-            PROP_SCRIPT_YAW[pi] = PROP_SCRIPT_YAW[owner];
+            PROP_SCRIPT_YAW[pi] = script_yaw;
             seed_prop_render_transform(pi);
             PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_FRESH;
             PROP_ANIM_START[pi] = 0;
@@ -15758,6 +16120,10 @@ unsafe fn release_monster_loot(owner: usize) {
             PROP_AI_TIMER[pi] = 0;
             PROP_OCC_VIS[pi] = PROP_OCC_VISIBLE | PROP_OCC_DIRTY;
             PROP_NEAR_COUNT[pi] = 0xFF;
+            if let Some(m) = m {
+                // A breakable's centre is above the floor its item rests on.
+                prop_set_pos(m, &[], pi, PROP_POS[pi]);
+            }
             released += 1;
         }
         pi += 1;
@@ -18412,6 +18778,12 @@ unsafe fn tick_props(
             pi += 1;
             continue;
         }
+        if (PUSH_N != 0 || PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0)
+            && prop_environment_move(m, movers, pi)
+        {
+            pi += 1;
+            continue;
+        }
         if PROP_DORMANT[pi] & PROP_RUNTIME_SEE_TRIGGER != 0 && ai_reacquire(pi) {
             monster_sight_ai_triggers(m, movers, pi, player_pos, player_pvs_current);
         }
@@ -19775,7 +20147,7 @@ unsafe fn clear_combat_fx() {
     clear_explosions();
 }
 
-unsafe fn decay_combat_fx() {
+unsafe fn decay_combat_fx(m: &Map) {
     // Particle bursts are transient; bullet/blood MARKS now persist (like HL
     // decals) -- they stay at full colour until the fixed-size ring buffer
     // recycles the oldest, so a wall you shot keeps its holes.
@@ -19787,7 +20159,7 @@ unsafe fn decay_combat_fx() {
         }
         i += 1;
     }
-    tick_debris();
+    tick_debris(m);
     tick_explosions();
 }
 
@@ -21454,20 +21826,42 @@ unsafe fn queue_rpg_spot(
     }
 }
 
-// ---- Transient world debris: shell casings, gibs, sparks -------------------
+// ---- Transient world debris: shell casings, gibs, sparks, break shards ----
 // A small world-space pool: each entry falls under gravity, expires by ttl, and
 // draws as one small coloured rect. Shell casings, death gibs, and env_spark
-// showers all ride it (each just picks a kind + initial velocity).
-const MAX_DEBRIS: usize = 48;
+// showers ride it as before (whole-unit motion kept in 1/16 units). Breakable
+// shards add the physics TE_BREAKMODEL tempents have: world collision with
+// half-speed bounces, a rest on the first flat floor hit, and a fade at the end.
+const MAX_DEBRIS: usize = 64;
+/// Static rect packets for the non-shard kinds (shards use the frame arena).
+const MAX_DEBRIS_RECTS: usize = 48;
 const DEBRIS_CASING: u8 = 0;
 const DEBRIS_GIB: u8 = 1;
 const DEBRIS_SPARK: u8 = 2;
-const DEBRIS_BREAK_BASE: u8 = 3; // + GoldSrc Materials enum (0..6)
+const DEBRIS_BREAK_BASE: u8 = 3; // + GoldSrc Materials enum (0..9)
+/// Kind flag: a break shard (tempent physics, world-OT draw).
+const DEBRIS_SHARD: u8 = 0x40;
+/// Kind flag: the shard came to rest on a floor.
+const DEBRIS_REST: u8 = 0x80;
+const DEBRIS_KIND_MASK: u8 = 0x0f;
+/// Kind bits 4..5: which of the last four breaks' colours a shard wears.
+const DEBRIS_COLOR_SHIFT: u8 = 4;
+/// Opaque ticks 50..70 (2.5 s + 0..1 s) then a 40 tick fade (2 s).
+const SHARD_FADE_TICKS: u8 = 40;
+/// CL_TempEntUpdate FTENT_SLOWGRAVITY: 400 u/s^2 = 1 unit per tick^2.
+const SHARD_GRAVITY: i16 = 16;
+/// Rest when a floor hit comes in slower than 3 frames of gravity: 120 u/s at
+/// the 20 Hz reference frame = 6 units per tick.
+const SHARD_REST_VY: i32 = 96;
+/// R_BreakModel: one shard per 3*12^2 units^2 of surface, at most 100. The
+/// pool takes 40 so one break leaves room for the next.
+const SHARD_UNIT_AREA: i32 = 3 * 12 * 12;
+const MAX_SHARDS_PER_BREAK: i32 = 40;
 
 #[derive(Clone, Copy)]
 struct Debris {
-    pos: [i32; 3],
-    vel: [i32; 3],
+    pos: [i32; 3], // 1/16 unit
+    vel: [i16; 3], // 1/16 unit per tick
     ttl: u8,
     kind: u8,
 }
@@ -21481,11 +21875,14 @@ impl Debris {
 }
 static mut DEBRIS: [Debris; MAX_DEBRIS] = [Debris::ZERO; MAX_DEBRIS];
 static mut DEBRIS_CURSOR: usize = 0;
-static mut DEBRIS_RECTS: [RectFlat; MAX_DEBRIS] =
-    [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_DEBRIS];
+/// RGB332 shard colours of the last four breaks (0xFF = the material's own).
+static mut SHARD_COLORS: [u8; 4] = [u8::MAX; 4];
+static mut SHARD_COLOR_NEXT: u8 = 0;
+static mut DEBRIS_RECTS: [RectFlat; MAX_DEBRIS_RECTS] =
+    [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_DEBRIS_RECTS];
 
 #[inline(never)]
-unsafe fn spawn_debris(pos: [i32; 3], vel: [i32; 3], kind: u8, ttl: u8) {
+unsafe fn spawn_debris_fixed(pos: [i32; 3], vel: [i16; 3], kind: u8, ttl: u8) {
     let i = DEBRIS_CURSOR % MAX_DEBRIS;
     DEBRIS[i] = Debris {
         pos,
@@ -21496,11 +21893,30 @@ unsafe fn spawn_debris(pos: [i32; 3], vel: [i32; 3], kind: u8, ttl: u8) {
     DEBRIS_CURSOR = (DEBRIS_CURSOR + 1) % MAX_DEBRIS;
 }
 
-/// GoldSrc CBreakable::Die emits TE_BREAKMODEL with NUM_SHARDS=6 and a
-/// 2.5-second lifetime. Reuse the resident world-debris pool: material lives in
-/// the existing kind byte, so crates gain visible shards without any new RAM.
+/// Whole-unit position and velocity (units per tick), as the casing, gib,
+/// spark and gibshooter callers have always passed them.
+#[inline(never)]
+unsafe fn spawn_debris(pos: [i32; 3], vel: [i32; 3], kind: u8, ttl: u8) {
+    let q = |v: i32| (v << 4).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+    spawn_debris_fixed(
+        [pos[0] << 4, pos[1] << 4, pos[2] << 4],
+        [q(vel[0]), q(vel[1]), q(vel[2])],
+        kind,
+        ttl,
+    );
+}
+
+/// GoldSrc CBreakable::Die emits TE_BREAKMODEL: the client picks a shard count
+/// from the brush's surface area, scatters the shards through its volume with
+/// a +-10 u/s velocity, and lets them live 2.5 to 3.5 seconds, then fade.
+#[inline(never)]
+#[optimize(size)]
 unsafe fn spawn_breakable_shards(rec: map::LogicEnt, live_center: [i32; 3]) {
-    let material = rec.arg1.min(6) as u8;
+    let material = rec.arg1.min(9) as u8;
+    let sx = rec.maxs[0] - rec.mins[0];
+    let sy = rec.maxs[1] - rec.mins[1];
+    let sz = rec.maxs[2] - rec.mins[2];
+    let count = ((sx * sy + sy * sz + sz * sx) / SHARD_UNIT_AREA).clamp(0, MAX_SHARDS_PER_BREAK);
     let authored_center = [
         (rec.mins[0] + rec.maxs[0]) / 2,
         (rec.mins[1] + rec.maxs[1]) / 2,
@@ -21511,8 +21927,11 @@ unsafe fn spawn_breakable_shards(rec: map::LogicEnt, live_center: [i32; 3]) {
         live_center[1] - authored_center[1],
         live_center[2] - authored_center[2],
     ];
+    let slot = SHARD_COLOR_NEXT & 3;
+    SHARD_COLOR_NEXT = slot + 1;
+    SHARD_COLORS[slot as usize] = rec.sound1;
     let mut shard = 0;
-    while shard < 6 {
+    while shard < count {
         let sample_axis = |lo: i32, hi: i32| -> i32 {
             let span = (hi - lo + 1).max(1);
             lo + (impact_rng().next() as i32).rem_euclid(span)
@@ -21522,14 +21941,20 @@ unsafe fn spawn_breakable_shards(rec: map::LogicEnt, live_center: [i32; 3]) {
             sample_axis(rec.mins[1], rec.maxs[1]) + live_offset[1],
             sample_axis(rec.mins[2], rec.maxs[2]) + live_offset[2],
         ];
-        // TE_BREAKMODEL randomization=10 around a zero base velocity. Bias Y
-        // upward just enough for the six fragments to read as a burst.
+        // TE_BREAKMODEL randomization 10 around a zero velocity: +-10 u/s
+        // sideways, 0..10 u/s up, in 1/16 unit per tick.
         let vel = [
-            (impact_rng().below(21) as i32) - 10,
-            6 + (impact_rng().below(9) as i32),
-            (impact_rng().below(21) as i32) - 10,
+            (impact_rng().below(17) as i16) - 8,
+            impact_rng().below(9) as i16,
+            (impact_rng().below(17) as i16) - 8,
         ];
-        spawn_debris(p, vel, DEBRIS_BREAK_BASE + material, 50);
+        let ttl = 50 + impact_rng().below(21) as u8 + SHARD_FADE_TICKS;
+        spawn_debris_fixed(
+            [p[0] << 4, p[1] << 4, p[2] << 4],
+            vel,
+            DEBRIS_SHARD | (slot << DEBRIS_COLOR_SHIFT) | (DEBRIS_BREAK_BASE + material),
+            ttl,
+        );
         shard += 1;
     }
 }
@@ -21566,23 +21991,78 @@ unsafe fn clear_debris() {
     DEBRIS_CURSOR = 0;
 }
 
+/// CL_TempEntUpdate for one shard: move, collide with the world (point hull,
+/// brush entities are ignored as PM_WORLD_ONLY does), bounce at half speed or
+/// come to rest on a floor, then apply slow gravity.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn tick_shard(m: &Map, i: usize) {
+    let d = DEBRIS[i];
+    let mut pos = [
+        d.pos[0] + d.vel[0] as i32,
+        d.pos[1] + d.vel[1] as i32,
+        d.pos[2] + d.vel[2] as i32,
+    ];
+    let mut vel = [d.vel[0] as i32, d.vel[1] as i32, d.vel[2] as i32];
+    let mut kind = d.kind;
+    let from = [d.pos[0] >> 4, d.pos[1] >> 4, d.pos[2] >> 4];
+    let to = [pos[0] >> 4, pos[1] >> 4, pos[2] >> 4];
+    if from != to {
+        if let Some(hit) = phys::trace_line(m, &[], from, to) {
+            let n = hit.normal;
+            // Contact point, lifted 2 units off the plane so the next sweep
+            // does not start on it.
+            pos = [
+                (hit.pos[0] + (n[0] >> 11)) << 4,
+                (hit.pos[1] + (n[1] >> 11)) << 4,
+                (hit.pos[2] + (n[2] >> 11)) << 4,
+            ];
+            if n[1] > 3686 && vel[1] <= 0 && vel[1] >= -SHARD_REST_VY {
+                vel = [0; 3];
+                kind |= DEBRIS_REST;
+            } else {
+                // Reflect, then damp by 0.5: v' = v/2 - (v.n) n.
+                let dot = (vel[0] * n[0] + vel[1] * n[1] + vel[2] * n[2]) >> 12;
+                vel = [
+                    (vel[0] >> 1) - ((dot * n[0]) >> 12),
+                    (vel[1] >> 1) - ((dot * n[1]) >> 12),
+                    (vel[2] >> 1) - ((dot * n[2]) >> 12),
+                ];
+            }
+        }
+    }
+    if kind & DEBRIS_REST == 0 {
+        vel[1] -= SHARD_GRAVITY as i32;
+    }
+    let q = |v: i32| v.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+    DEBRIS[i].pos = pos;
+    DEBRIS[i].vel = [q(vel[0]), q(vel[1]), q(vel[2])];
+    DEBRIS[i].kind = kind;
+}
+
 /// Advance debris one sim tick: gravity + integrate, sparks fly straighter.
-unsafe fn tick_debris() {
+unsafe fn tick_debris(m: &Map) {
     let mut i = 0;
     while i < MAX_DEBRIS {
         if DEBRIS[i].ttl > 0 {
             DEBRIS[i].ttl -= 1;
-            let g = if DEBRIS[i].kind == DEBRIS_SPARK {
-                6
-            } else if DEBRIS[i].kind >= DEBRIS_BREAK_BASE {
-                2 // sv_gravity 800 at the 20 Hz simulation rate
+            if DEBRIS[i].kind & DEBRIS_SHARD != 0 {
+                if DEBRIS[i].kind & DEBRIS_REST == 0 {
+                    tick_shard(m, i);
+                }
             } else {
-                12
-            };
-            DEBRIS[i].vel[1] -= g;
-            DEBRIS[i].pos[0] += DEBRIS[i].vel[0];
-            DEBRIS[i].pos[1] += DEBRIS[i].vel[1];
-            DEBRIS[i].pos[2] += DEBRIS[i].vel[2];
+                let g: i16 = if DEBRIS[i].kind == DEBRIS_SPARK {
+                    6
+                } else if DEBRIS[i].kind >= DEBRIS_BREAK_BASE {
+                    2 // sv_gravity 800 at the 20 Hz simulation rate
+                } else {
+                    12
+                };
+                DEBRIS[i].vel[1] -= g << 4;
+                DEBRIS[i].pos[0] += DEBRIS[i].vel[0] as i32;
+                DEBRIS[i].pos[1] += DEBRIS[i].vel[1] as i32;
+                DEBRIS[i].pos[2] += DEBRIS[i].vel[2] as i32;
+            }
         }
         i += 1;
     }
@@ -21594,8 +22074,9 @@ unsafe fn render_debris<const N: usize>(
     base_t: [i32; 3],
 ) {
     let mut i = 0;
-    while i < MAX_DEBRIS {
-        if DEBRIS[i].ttl > 0 {
+    let mut rect = 0;
+    while i < MAX_DEBRIS && rect < MAX_DEBRIS_RECTS {
+        if DEBRIS[i].ttl > 0 && DEBRIS[i].kind & DEBRIS_SHARD == 0 {
             let (r, g, b, size) = match DEBRIS[i].kind {
                 DEBRIS_CASING => (200u8, 170u8, 80u8, 2i16),
                 DEBRIS_GIB => (150, 20, 15, 3),
@@ -21608,8 +22089,13 @@ unsafe fn render_debris<const N: usize>(
                 8 => (185, 175, 145, 3), // ceiling tile
                 _ => (75, 105, 70, 3),   // computer
             };
-            if let Some((sx, sy, _)) = project_world_point(DEBRIS[i].pos, rot, base_t) {
-                DEBRIS_RECTS[i] = RectFlat::new(
+            let p = [
+                DEBRIS[i].pos[0] >> 4,
+                DEBRIS[i].pos[1] >> 4,
+                DEBRIS[i].pos[2] >> 4,
+            ];
+            if let Some((sx, sy, _)) = project_world_point(p, rot, base_t) {
+                DEBRIS_RECTS[rect] = RectFlat::new(
                     sx - size / 2,
                     sy - size / 2,
                     size as u16,
@@ -21620,12 +22106,83 @@ unsafe fn render_debris<const N: usize>(
                 );
                 ot.resume_frame().add_raw(
                     0,
-                    core::ptr::from_mut(&mut DEBRIS_RECTS[i]).cast(),
+                    core::ptr::from_mut(&mut DEBRIS_RECTS[rect]).cast(),
                     RectFlat::WORDS,
                 );
+                rect += 1;
             }
         }
         i += 1;
+    }
+}
+
+/// Break shards draw into the world's ordering table at their view depth, so
+/// walls and doors hide the ones lying behind them and they stay on the floor
+/// they landed on. The last 40 ticks dissolve by dropping more and more frames.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn queue_shards(
+    packets: &mut PrimitivePacketArena<'_>,
+    ot: &mut OrderingTable<OT_LEN>,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
+    let mut i = 0;
+    while i < MAX_DEBRIS {
+        let d = DEBRIS[i];
+        i += 1;
+        if d.ttl == 0 || d.kind & DEBRIS_SHARD == 0 {
+            continue;
+        }
+        if d.ttl < SHARD_FADE_TICKS
+            && (((i as u32) + SIM_NOW as u32) & 7) >= d.ttl as u32 * 8 / SHARD_FADE_TICKS as u32
+        {
+            continue;
+        }
+        let p = [d.pos[0] >> 4, d.pos[1] >> 4, d.pos[2] >> 4];
+        let Some((sx, sy, vz)) = project_world_point(p, rot, base_t) else {
+            continue;
+        };
+        let packed = SHARD_COLORS[((d.kind >> DEBRIS_COLOR_SHIFT) & 3) as usize];
+        let (r, g, b) = if packed != u8::MAX {
+            // The shard model's mean texture colour (RGB332), lifted a third
+            // because the rect is not lit by the room.
+            (
+                (((packed >> 5) as u32 * 255 / 7) * 4 / 3).min(255) as u8,
+                ((((packed >> 2) & 7) as u32 * 255 / 7) * 4 / 3).min(255) as u8,
+                (((packed & 3) as u32 * 255 / 3) * 4 / 3).min(255) as u8,
+            )
+        } else {
+            match d.kind & DEBRIS_KIND_MASK {
+                3 | 10 => (150, 205, 215), // glass, unbreakable glass
+                5 => (150, 155, 160),      // metal
+                6 => (145, 25, 20),        // flesh
+                7 => (115, 115, 105),      // cinder block
+                8 => (185, 175, 145),      // ceiling tile
+                9 => (75, 105, 70),        // computer
+                11 => (105, 95, 85),       // rocks
+                _ => (125, 75, 35),        // wood and untyped
+            }
+        };
+        // Gib models are a few units across: scale with distance, 2 to 10 px.
+        let size = ((5 * render::projection_h()) / vz.max(1)).clamp(2, 10) as i16;
+        if let Some(packet) = packets.push(RectFlat::new(
+            sx - size / 2,
+            sy - size / 2,
+            size as u16,
+            size as u16,
+            r,
+            g,
+            b,
+        )) {
+            ot.resume_frame().add_raw(
+                clamp_otz((vz.saturating_sub(4) as usize) >> OT_SHIFT),
+                core::ptr::from_mut(packet).cast(),
+                RectFlat::WORDS,
+            );
+        } else {
+            note_render_packet_drop(false);
+        }
     }
 }
 
@@ -22585,6 +23142,24 @@ unsafe fn live_entity_pvs_bounds(m: &Map, ei: usize, e: map::Ent) -> Option<([i3
 
     let train = ENT_TRAIN_SLOT[ei] as usize;
     if train < TRAIN_COUNT {
+        if e.kind == 6 {
+            // Moving water is a model centred on its path corner: its draw
+            // offset is the absolute centre, not a displacement from the cooked
+            // logic box (c1a1b's flood). The old box was shifted by the whole
+            // offset, so the PVS never admitted the water that rises around
+            // the player and it was never drawn.
+            let off = ent_draw_offset(ei);
+            let c = [
+                e.center[0] + off[0],
+                e.center[1] + off[1],
+                e.center[2] + off[2],
+            ];
+            return Some(visibility_logic::translated_padded_bounds(
+                [-e.mv[0], -e.mv[1], -e.mv[2]],
+                e.mv,
+                c,
+            ));
+        }
         let li = train_logic_index(TRAIN_LI[train]);
         if li < m.n_logic {
             let rec = m.logic(li);
@@ -23652,11 +24227,13 @@ unsafe fn emit_soft_leaf(
         if p.iter().all(render::in_band) {
             let before = *np;
             for t in [[0usize, 1, 2], [1, 3, 2]] {
-                let (a, b, c) = (p[t[0]], p[t[1]], p[t[2]]);
+                // By reference: three 32-byte SVert copies per triangle lower
+                // to memcpy calls under the sample profile's size mode.
+                let (a, b, c) = (&p[t[0]], &p[t[1]], &p[t[2]]);
                 let cr = (b.x - a.x) as i64 * (c.y - a.y) as i64
                     - (c.x - a.x) as i64 * (b.y - a.y) as i64;
                 if !CULL || cr < 0 {
-                    emit_screen_triangle(packets, &a, &b, &c, mat, false, np);
+                    emit_screen_triangle(packets, a, b, c, mat, false, np);
                 }
             }
             WORLD_AFFINE_SPLIT_TRIS =
@@ -24007,7 +24584,7 @@ unsafe fn emit_cv_clipped(
             }
         }
         if matches!(refinement, ClipRefinement::Guard)
-            && try_emit_clipped_residue(packets, projected, mat, texture_backdrop, np)
+            && try_emit_clipped_residue(packets, &projected, mat, texture_backdrop, np)
         {
             continue;
         }
@@ -27539,7 +28116,7 @@ unsafe fn try_emit_native_residue(
 #[optimize(size)]
 unsafe fn try_emit_clipped_residue(
     packets: &mut PrimitivePacketArena<'_>,
-    p: [render::SVert; 3],
+    p: &[render::SVert; 3],
     mat: TexturedGouraudPacketMaterial,
     backdrop: bool,
     np: &mut usize,
@@ -27592,9 +28169,9 @@ unsafe fn emit_residue_children(
     // Children are triples of references into a, b, c and the three
     // midpoints: building them as `[SVert; 3]` values cost ~20 memcpy calls
     // per split under optimize(size).
-    let ab = render::perspective_screen_midpoint(*a, *b);
-    let bc = render::perspective_screen_midpoint(*b, *c);
-    let ca = render::perspective_screen_midpoint(*c, *a);
+    let ab = render::perspective_screen_midpoint(a, b);
+    let bc = render::perspective_screen_midpoint(b, c);
+    let ca = render::perspective_screen_midpoint(c, a);
     for [x, y, z] in [[a, &ab, &ca], [&ab, b, &bc], [&ca, &bc, c], [&ab, &bc, &ca]] {
         if levels & !RESIDUE_OWN_BUDGET > 1 {
             emit_residue_children(packets, x, y, z, mat, np, levels - 1);
@@ -29382,15 +29959,13 @@ fn viewmodel_otz(avgz: u32) -> usize {
 /// else the world does not cover stays the clear colour: the distance cull
 /// empties space past FAR_VIEW, the fog has already taken geometry to black
 /// there, and a tunnel now continues into darkness instead of opening onto
-/// sky (the c0a0b tram ride). Texels are screen-mapped exactly as the old
-/// full-screen backdrop mapped them, so the sky itself looks the same.
+/// sky (the c0a0b tram ride). Each window polygon is textured from the cube
+/// map by the direction of its corners (see `sky_draw_region`).
 #[inline(never)]
 #[optimize(size)]
 unsafe fn draw_sky_windows(
     m: &Map,
     have_pvs: bool,
-    yaw: u16,
-    pitch: i16,
     rot: &Mat3I16,
     t: [i32; 3],
     eye: [i32; 3],
@@ -29402,29 +29977,24 @@ unsafe fn draw_sky_windows(
     if n_boxes == 0 {
         return false;
     }
-    // Cooker face order: ft, rt, bk, lf, up, dn.
-    let sky_yaw = ((yaw as usize) + 512) & 0xFFF;
-    let face = if pitch > 760 {
-        4
-    } else if pitch < -760 {
-        5
-    } else {
-        (sky_yaw >> 10) & 3
-    };
-    let slot = TEX_SLOTS[m.sky_tex_base + face];
-    if !slot.valid {
-        return false;
-    }
-    let u0 = if face < 4 {
-        (((sky_yaw & 1023) * SKY_TEX_SIZE) >> 10) as i32
-    } else {
-        0
-    };
-    // Texel = pixel * 127 / 319 across, * 127 / 239 down (the old
-    // full-screen quad's mapping), as Q16 multiplies instead of divides.
-    const SKY_U_Q16: i32 = (((SKY_TEX_SIZE as i32 - 1) << 16) + 159) / 319;
-    const SKY_V_Q16: i32 = (((SKY_TEX_SIZE as i32 - 1) << 16) + 119) / 239;
     let h = render::projection_h();
+    // The direction of screen pixel (x, y) in GoldSrc axes (x forward at yaw
+    // 0, y left, z up), unnormalised, is affine in the pixel: the view axes
+    // (right, down, forward) weighted by the pixel offsets and the focal
+    // length. The game's world is [x, up, z] = [x, z, y] of GoldSrc.
+    {
+        let basis = &mut *core::ptr::addr_of_mut!(SKY_BASIS);
+        let mut i = 0usize;
+        while i < 3 {
+            let j = [0usize, 2, 1][i];
+            let (qx, qy) = (rot.m[0][j] as i32, rot.m[1][j] as i32);
+            basis.qx[i] = qx;
+            basis.qy[i] = qy;
+            basis.q0[i] = rot.m[2][j] as i32 * h - render::OFX * qx - render::OFY * qy;
+            i += 1;
+        }
+    }
+    let poly = &mut (*core::ptr::addr_of_mut!(SKY_BUFS))[2];
     let mut drew = false;
     let mut i = 0usize;
     while i < n_boxes {
@@ -29474,62 +30044,458 @@ unsafe fn draw_sky_windows(
                 continue;
             }
             let (a, c) = ((axis + 1) % 3, (axis + 2) % 3);
-            let corner = |ua: i32, uc: i32| {
-                let mut p = [plane; 3];
-                p[a] = ua;
-                p[c] = uc;
-                render::CVert {
-                    v: [
-                        dot12(rot.m[0], p) + t[0],
-                        dot12(rot.m[1], p) + t[1],
-                        dot12(rot.m[2], p) + t[2],
-                    ],
-                    rgb: (128, 128, 128),
-                    uv: (0, 0),
-                }
+            // A corner is (plane, lo|hi on a, lo|hi on c): per view row the
+            // plane's term is shared by the four corners, and each of the two
+            // other terms takes two values.
+            let mut base = [0i32; 3];
+            let mut ta = [[0i32; 2]; 3];
+            let mut tc = [[0i32; 2]; 3];
+            let mut r = 0usize;
+            while r < 3 {
+                let row = rot.m[r];
+                base[r] = row[axis] as i32 * plane;
+                ta[r] = [row[a] as i32 * lo[a], row[a] as i32 * hi[a]];
+                tc[r] = [row[c] as i32 * lo[c], row[c] as i32 * hi[c]];
+                r += 1;
+            }
+            let corner = |ia: usize, ic: usize| render::CVert {
+                v: [
+                    ((base[0] + ta[0][ia] + tc[0][ic]) >> 12) + t[0],
+                    ((base[1] + ta[1][ia] + tc[1][ic]) >> 12) + t[1],
+                    ((base[2] + ta[2][ia] + tc[2][ic]) >> 12) + t[2],
+                ],
+                rgb: (128, 128, 128),
+                uv: (0, 0),
             };
-            let q = [
-                corner(lo[a], lo[c]),
-                corner(hi[a], lo[c]),
-                corner(hi[a], hi[c]),
-                corner(lo[a], hi[c]),
-            ];
+            let q = [corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)];
             for tri in [[&q[0], &q[1], &q[2]], [&q[0], &q[2], &q[3]]] {
                 let (clipped, n) = render::visible_clip(tri);
-                let mut xy = [(0i16, 0i16); 8];
-                let mut uv = [(0u8, 0u8); 8];
                 let mut k = 0usize;
                 while k < n {
                     let v = &*clipped.add(k);
                     // Clipped to the view in front of the near plane, so the
                     // plain quotient stays on screen.
                     let z = v.z.max(render::NEAR_Z);
-                    let x = (render::OFX + v.x * h / z).clamp(0, 319);
-                    let y = (render::OFY + v.y * h / z).clamp(0, 239);
-                    xy[k] = (x as i16, y as i16);
-                    uv[k] = (
-                        (u0 + ((x * SKY_U_Q16 + 0x8000) >> 16)) as u8,
-                        ((y * SKY_V_Q16 + 0x8000) >> 16) as u8,
+                    poly[k].p = (
+                        (render::OFX + v.x * h / z).clamp(0, 319),
+                        (render::OFY + v.y * h / z).clamp(0, 239),
                     );
                     k += 1;
                 }
-                // Straight to the GPU, before the world's ordering table:
-                // the previous frame has finished drawing by now, so these
-                // do not wait, and they take no packets from the world.
-                let mut j = 2usize;
-                while j < n {
-                    driver::tri_textured_material(
-                        [xy[0], xy[j - 1], xy[j]],
-                        [uv[0], uv[j - 1], uv[j]],
-                        slot.material,
-                    );
-                    drew = true;
-                    j += 1;
+                if n >= 3 {
+                    drew |= sky_draw_region(m, n);
                 }
             }
         }
     }
     drew
+}
+
+/// A sky polygon corner: its pixel and its GoldSrc-axes direction (affine in
+/// the pixel, so it carries through cuts and midpoints by interpolation).
+#[derive(Clone, Copy)]
+struct SkyV {
+    p: (i32, i32),
+    q: [i32; 3],
+}
+
+/// The frame's pixel to direction map: q(x, y) = q0 + x qx + y qy.
+struct SkyBasis {
+    q0: [i32; 3],
+    qx: [i32; 3],
+    qy: [i32; 3],
+}
+
+const SKY_V0: SkyV = SkyV {
+    p: (0, 0),
+    q: [0; 3],
+};
+static mut SKY_BASIS: SkyBasis = SkyBasis {
+    q0: [0; 3],
+    qx: [0; 3],
+    qy: [0; 3],
+};
+/// Sky polygon scratch: two ping-pong buffers for the cube-face cuts, and the
+/// window polygon being drawn (buffer 2, never written by a cut).
+static mut SKY_BUFS: [[SkyV; 12]; 3] = [[SKY_V0; 12]; 3];
+/// Texel of each corner of the piece being drawn.
+static mut SKY_TX: [(u8, u8); 12] = [(0, 0); 12];
+
+/// Cube face and numerators for a direction, in GoldSrc's own sky mapping
+/// (`st_to_vec`: rt +x, lf -x, bk +y, ft -y, up +z, dn -z). Returns
+/// (face in the cooker's order ft, rt, bk, lf, up, dn, s numerator,
+/// t numerator, denominator).
+#[inline(always)]
+fn sky_face_of(q: [i32; 3]) -> usize {
+    let (ax, ay, az) = (q[0].abs(), q[1].abs(), q[2].abs());
+    if ax >= ay && ax >= az {
+        if q[0] > 0 {
+            1
+        } else {
+            3
+        }
+    } else if ay >= az {
+        if q[1] > 0 {
+            2
+        } else {
+            0
+        }
+    } else if q[2] > 0 {
+        4
+    } else {
+        5
+    }
+}
+
+/// Face numerators (s, t, denominator) of direction `q` on cooker face `face`.
+#[inline(always)]
+fn sky_face_terms(face: usize, q: [i32; 3]) -> (i32, i32, i32) {
+    match face {
+        1 => (-q[1], q[2], q[0]),
+        3 => (q[1], q[2], -q[0]),
+        2 => (q[0], q[2], q[1]),
+        0 => (-q[0], q[2], -q[1]),
+        4 => (-q[1], -q[0], q[2]),
+        _ => (-q[1], q[0], -q[2]),
+    }
+}
+
+/// Texel of a direction on its cube face (128 x 128, row 0 on top).
+#[inline(always)]
+fn sky_texel(face_s: i32, face_t: i32, d: i32) -> (u8, u8) {
+    let d = d.max(1);
+    // |face_s|, |face_t| <= d, so the products stay below 2^31 for the
+    // direction magnitudes above (d < 2^22); 64 * 2^22 = 2^28.
+    let u = 64 + (face_s * 64) / d;
+    let v = 64 - (face_t * 64) / d;
+    (
+        u.clamp(0, SKY_TEX_SIZE as i32 - 1) as u8,
+        v.clamp(0, SKY_TEX_SIZE as i32 - 1) as u8,
+    )
+}
+
+/// Texel and face denominator of direction `q` on cube face `face`; the one
+/// copy of the divisions.
+#[inline(never)]
+#[optimize(size)]
+fn sky_texel_d(face: usize, q: [i32; 3]) -> (u8, u8, i32) {
+    let (s, t, d) = sky_face_terms(face, q);
+    let (u, v) = sky_texel(s, t, d);
+    (u, v, d)
+}
+
+/// Draw the window polygon in `SKY_BUFS[2][..n0]` (corner pixels set). A
+/// polygon whose corners all lie on one cube face is drawn as it is.
+/// Otherwise it is cut along the cube's face boundaries (straight lines in
+/// screen space, because pixel directions are affine in the pixel) and each
+/// piece is drawn from its own face texture. Every corner gets its exact
+/// texel; see `sky_tri` for where a triangle is split.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn sky_draw_region(m: &Map, n0: usize) -> bool {
+    let basis = &*core::ptr::addr_of!(SKY_BASIS);
+    let poly = &mut (*core::ptr::addr_of_mut!(SKY_BUFS))[2];
+    let mut seen = 0u32;
+    let mut k = 0usize;
+    while k < n0 {
+        let v = &mut *poly.as_mut_ptr().add(k);
+        let (x, y) = v.p;
+        v.q = [
+            basis.q0[0] + x * basis.qx[0] + y * basis.qy[0],
+            basis.q0[1] + x * basis.qx[1] + y * basis.qy[1],
+            basis.q0[2] + x * basis.qx[2] + y * basis.qy[2],
+        ];
+        seen |= 1 << sky_face_of(v.q);
+        k += 1;
+    }
+    if seen & (seen - 1) == 0 {
+        return sky_piece(m, seen.trailing_zeros() as usize, 2, n0);
+    }
+    sky_cut_region(m, n0, seen)
+}
+
+/// A polygon over several cube faces: each face's piece is the polygon cut by
+/// that face's four boundary planes, drawn from the face's texture.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn sky_cut_region(m: &Map, n0: usize, seen: u32) -> bool {
+    let bufs = &mut *core::ptr::addr_of_mut!(SKY_BUFS);
+    // Cooker face order is ft, rt, bk, lf, up, dn: major axis and sign of
+    // each; the other two axes give two cuts each.
+    let axis_sign: [(usize, i32); 6] = [(1, -1), (0, 1), (1, 1), (0, -1), (2, 1), (2, -1)];
+    let mut drew = false;
+    let mut f = 0usize;
+    while f < 6 {
+        let face = f;
+        f += 1;
+        if seen & (1 << face) == 0 {
+            continue;
+        }
+        let (axis, sign) = axis_sign[face];
+        // The cuts some corner is outside of; the rest cannot clip anything.
+        let (o1, o2) = ((axis + 1) % 3, (axis + 2) % 3);
+        let mut need = 0u32;
+        let mut i = 0usize;
+        while i < n0 {
+            let q = bufs[2][i].q;
+            let a = sign * q[axis];
+            need |= ((a < q[o1]) as u32)
+                | (((a < -q[o1]) as u32) << 1)
+                | (((a < q[o2]) as u32) << 2)
+                | (((a < -q[o2]) as u32) << 3);
+            i += 1;
+        }
+        let mut src = 2usize;
+        let mut n = n0;
+        let mut k = 0usize;
+        while k < 4 && n >= 3 {
+            let skip = need >> k & 1 == 0;
+            let (other, osign) = (if k < 2 { o1 } else { o2 }, if k & 1 == 0 { 1 } else { -1 });
+            k += 1;
+            if skip {
+                continue;
+            }
+            let dst = (src == 0) as usize;
+            let on = sky_cut_pass(src, n, dst, axis, sign, other, osign);
+            if on == usize::MAX {
+                continue; // this cut leaves the piece whole
+            }
+            src = dst;
+            n = on;
+        }
+        if n >= 3 {
+            drew |= sky_piece(m, face, src, n);
+        }
+    }
+    drew
+}
+
+/// Cut polygon `SKY_BUFS[src][..n]` to g >= 0, with g the major component
+/// `sign q[axis]` less `osign q[other]`, into `SKY_BUFS[dst]`. Returns the
+/// new corner count, 0 for a polygon wholly outside, and `usize::MAX` when
+/// the cut leaves it whole.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn sky_cut_pass(
+    src: usize,
+    n: usize,
+    dst: usize,
+    axis: usize,
+    sign: i32,
+    other: usize,
+    osign: i32,
+) -> usize {
+    let bufs = &mut *core::ptr::addr_of_mut!(SKY_BUFS);
+    let sp = bufs[src].as_ptr();
+    let dp = bufs[dst].as_mut_ptr();
+    let gof = |v: &SkyV| sign * v.q[axis] - osign * v.q[other];
+    let mut inside = 0usize;
+    let mut i = 0usize;
+    while i < n {
+        inside += (gof(&*sp.add(i)) >= 0) as usize;
+        i += 1;
+    }
+    if inside == n {
+        return usize::MAX;
+    }
+    if inside == 0 {
+        return 0;
+    }
+    let mut on = 0usize;
+    let mut pv = &*sp.add(n - 1);
+    let mut gp = gof(pv);
+    let mut i = 0usize;
+    while i < n {
+        let cv = &*sp.add(i);
+        let gc = gof(cv);
+        if (gp >= 0) != (gc >= 0) && on < 12 {
+            // Same endpoints in the same order whichever side clips this
+            // edge, so neighbouring pieces share the cut point.
+            let (a, ga, b, gb) = if pv.p <= cv.p {
+                (pv, gp, cv, gc)
+            } else {
+                (cv, gc, pv, gp)
+            };
+            let (na, nb) = (ga.abs(), gb.abs());
+            let r = (na << 6) / (na + nb).max(1);
+            let lerp = |x: i32, y: i32| x + (((y - x) * r) >> 6);
+            *dp.add(on) = SkyV {
+                p: (lerp(a.p.0, b.p.0), lerp(a.p.1, b.p.1)),
+                q: [
+                    lerp(a.q[0], b.q[0]),
+                    lerp(a.q[1], b.q[1]),
+                    lerp(a.q[2], b.q[2]),
+                ],
+            };
+            on += 1;
+        }
+        if gc >= 0 && on < 12 {
+            *dp.add(on) = *cv;
+            on += 1;
+        }
+        pv = cv;
+        gp = gc;
+        i += 1;
+    }
+    on
+}
+
+/// Draw the polygon `SKY_BUFS[src][..n]`, which lies on cube face `face`.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn sky_piece(m: &Map, face: usize, src: usize, n: usize) -> bool {
+    let slot = &TEX_SLOTS[m.sky_tex_base + face];
+    if !slot.valid {
+        return false;
+    }
+    // Corner texels once, not once per fan triangle.
+    let cur = &(*core::ptr::addr_of!(SKY_BUFS))[src];
+    let tx = &mut *core::ptr::addr_of_mut!(SKY_TX);
+    let (mut lo, mut hi) = ([255i32; 3], [0i32; 3]);
+    let mut k = 0usize;
+    while k < n {
+        let (u, v, d) = sky_texel_d(face, (*cur.as_ptr().add(k)).q);
+        *tx.as_mut_ptr().add(k) = (u, v);
+        let c = [u as i32, v as i32, d];
+        let mut j = 0usize;
+        while j < 3 {
+            lo[j] = if k == 0 || c[j] < lo[j] { c[j] } else { lo[j] };
+            hi[j] = if k == 0 || c[j] > hi[j] { c[j] } else { hi[j] };
+            j += 1;
+        }
+        k += 1;
+    }
+    // Every edge's texel and denominator deltas are within the polygon's
+    // ranges, so when the bound on `sky_tri`'s test holds for the ranges it
+    // holds for every edge and no triangle needs checking.
+    let calm = (((hi[0] - lo[0]).max(hi[1] - lo[1])) + 2) * (hi[2] - lo[2]) <= 16 * lo[2];
+    let mut j = 2usize;
+    while j < n {
+        sky_tri(
+            face,
+            &slot.material,
+            [
+                &*cur.as_ptr(),
+                &*cur.as_ptr().add(j - 1),
+                &*cur.as_ptr().add(j),
+            ],
+            [0, j - 1, j],
+            calm,
+        );
+        j += 1;
+    }
+    true
+}
+
+/// One sky triangle of cooker face `face`, corners `v` with texels and
+/// denominators at `SKY_TX` / `SKY_DV` indices `ix`. It is split once at the
+/// edge midpoints when an edge of over 32 pixels has an affine midpoint
+/// texel off by more than six. The midpoint texel is only computed when an
+/// error bound, (|texel delta| + 2) |denominator delta| / (4 min
+/// denominator) texels at most, cannot rule the split out; the bound stays
+/// under four, and the test's own rounding under another two.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn sky_tri(
+    face: usize,
+    material: &TextureMaterial,
+    v: [&SkyV; 3],
+    ix: [usize; 3],
+    calm: bool,
+) {
+    let tx = &*core::ptr::addr_of!(SKY_TX);
+    let t = [
+        *tx.as_ptr().add(ix[0]),
+        *tx.as_ptr().add(ix[1]),
+        *tx.as_ptr().add(ix[2]),
+    ];
+    let (x0, x1, x2) = (v[0].p.0, v[1].p.0, v[2].p.0);
+    let (y0, y1, y2) = (v[0].p.1, v[1].p.1, v[2].p.1);
+    // No edge is over 32 pixels when the bounding box is not.
+    if !calm
+        && (x0.max(x1).max(x2) - x0.min(x1).min(x2) > 32
+            || y0.max(y1).max(y2) - y0.min(y1).min(y2) > 32)
+    {
+        let off = |i: usize, j: usize| {
+            sky_edge_off(
+                face,
+                v[i],
+                v[j],
+                t[i],
+                t[j],
+                sky_face_terms(face, v[i].q).2,
+                sky_face_terms(face, v[j].q).2,
+            )
+        };
+        if off(0, 1) || off(1, 2) || off(2, 0) {
+            let mid = |a: &SkyV, b: &SkyV| SkyV {
+                p: ((a.p.0 + b.p.0) >> 1, (a.p.1 + b.p.1) >> 1),
+                q: [
+                    (a.q[0] + b.q[0]) >> 1,
+                    (a.q[1] + b.q[1]) >> 1,
+                    (a.q[2] + b.q[2]) >> 1,
+                ],
+            };
+            let texel = |q: [i32; 3]| {
+                let (u, w, _) = sky_texel_d(face, q);
+                (u, w)
+            };
+            let (ab, bc, ca) = (mid(v[0], v[1]), mid(v[1], v[2]), mid(v[2], v[0]));
+            let (tab, tbc, tca) = (texel(ab.q), texel(bc.q), texel(ca.q));
+            sky_draw(material, [v[0], &ab, &ca], [t[0], tab, tca]);
+            sky_draw(material, [&ab, v[1], &bc], [tab, t[1], tbc]);
+            sky_draw(material, [&ca, &bc, v[2]], [tca, tbc, t[2]]);
+            sky_draw(material, [&ab, &bc, &ca], [tab, tbc, tca]);
+            return;
+        }
+    }
+    sky_draw(material, v, t);
+}
+
+/// Whether the affine midpoint texel of edge a-b is off by over six texels
+/// (see `sky_tri`).
+#[inline(always)]
+fn sky_edge_off(
+    face: usize,
+    a: &SkyV,
+    b: &SkyV,
+    ta: (u8, u8),
+    tb: (u8, u8),
+    da: i32,
+    db: i32,
+) -> bool {
+    if (a.p.0 - b.p.0).abs().max((a.p.1 - b.p.1).abs()) <= 32 {
+        return false;
+    }
+    let dt = (ta.0 as i32 - tb.0 as i32)
+        .abs()
+        .max((ta.1 as i32 - tb.1 as i32).abs());
+    if (dt + 2) * (da - db).abs() <= 16 * da.min(db) {
+        return false;
+    }
+    let q = [
+        (a.q[0] + b.q[0]) >> 1,
+        (a.q[1] + b.q[1]) >> 1,
+        (a.q[2] + b.q[2]) >> 1,
+    ];
+    let (tu, tv, _) = sky_texel_d(face, q);
+    let tm = (tu, tv);
+    let du = (tm.0 as i32 * 2 - ta.0 as i32 - tb.0 as i32).abs();
+    let dv = (tm.1 as i32 * 2 - ta.1 as i32 - tb.1 as i32).abs();
+    du.max(dv) > 12
+}
+
+#[inline(never)]
+fn sky_draw(material: &TextureMaterial, v: [&SkyV; 3], t: [(u8, u8); 3]) {
+    driver::tri_textured_material(
+        [
+            (v[0].p.0 as i16, v[0].p.1 as i16),
+            (v[1].p.0 as i16, v[1].p.1 as i16),
+            (v[2].p.0 as i16, v[2].p.1 as i16),
+        ],
+        t,
+        *material,
+    );
 }
 
 /// Small camera-space motion layered over the source animation. Reload/draw/fire
@@ -31795,7 +32761,7 @@ fn play(
                 }
             }
             unsafe {
-                decay_combat_fx();
+                decay_combat_fx(&m);
             }
             if pickup_ticks > 0 {
                 pickup_ticks -= 1;
@@ -32807,7 +33773,8 @@ fn play(
                 } else {
                     tram_logic::rider_over_tram_footprint(raw[0], raw[2])
                 };
-                let clear_of_tram_hull = phys::mover_clear_at(&m, movers, -2, player.pos);
+                let clear_of_tram_hull =
+                    phys::mover_clear_at_hull(&m, movers, -2, player.pos, m.hull1_head);
                 match tram_logic::rider_motion_decision(supported, clear_of_tram_hull) {
                     tram_logic::RiderMotionDecision::Restore => {
                         // Ordinary mover traces suppress startsolid so a tiny
@@ -33263,6 +34230,13 @@ fn play(
                 } else {
                     -1
                 };
+                let speed = isqrt_i32(
+                    player.vel[0] * player.vel[0]
+                        + player.vel[1] * player.vel[1]
+                        + player.vel[2] * player.vel[2],
+                );
+                PLAYER_APPROACH_SPEED = speed.max(PLAYER_LAST_SPEED);
+                PLAYER_LAST_SPEED = speed;
                 logic_touch_triggers(
                     &m,
                     nlogic,
@@ -35463,6 +36437,7 @@ fn play(
             // additive-billboard path as the placed sprites above.
             render_explosions(&mut packets, &mut np, &rot, base_t);
             queue_rpg_spot(&mut packets, world_ot(), &rot, base_t);
+            queue_shards(&mut packets, world_ot(), &rot, base_t);
             if IMPACT_MARKS_LIVE {
                 queue_impact_marks(&m, have_pvs, &mut packets, world_ot(), &rot, base_t);
             }
@@ -35601,7 +36576,7 @@ fn play(
             driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
             // Culls and fog after this point reach FAR_VIEW_WIDE only while
             // the sky shows.
-            let sky_drawn = draw_sky_windows(&m, have_pvs, yaw, pitch, &rot, base_t, eye);
+            let sky_drawn = draw_sky_windows(&m, have_pvs, &rot, base_t, eye);
             set_far(FAR_WIDE_MAP && sky_drawn);
             telemetry::stage_end(telemetry::stage::FRAME_CLEAR);
 
