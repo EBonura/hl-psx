@@ -441,7 +441,6 @@ pub fn player_hull(map_tick: u32, kind: u8, probe: crate::phys::PlayerHullProbe)
 /// intentionally verbose enough to identify the first integer hull decision
 /// that differs from GoldSrc without perturbing production RAM or timing.
 #[cfg(feature = "deep-reference-trace")]
-#[allow(dead_code)] // called again once the clean-room movement core lands
 pub fn player_step(map_tick: u32, probe: crate::phys::PlayerStepProbe) {
     let mut line = Line::new("step");
     common(&mut line, map_tick);
@@ -480,7 +479,6 @@ pub fn player_step(map_tick: u32, probe: crate::phys::PlayerStepProbe) {
 /// Post-walk downward floor probe and retained Q6 origin residue. This is the
 /// bridge between the integer PS1 hull and GoldSrc's float slope origin.
 #[cfg(feature = "deep-reference-trace")]
-#[allow(dead_code)] // called again once the clean-room movement core lands
 pub fn player_ground(
     map_tick: u32,
     start_y: i32,
@@ -508,7 +506,6 @@ pub fn player_ground(
 /// GoldSrc/PSX divergence can be assigned to integration rather than collision.
 /// Deep traces only; shipping/reference builds contain no call or strings.
 #[cfg(feature = "deep-reference-trace")]
-#[allow(dead_code)] // called again once the clean-room movement core lands
 pub fn player_motion(
     map_tick: u32,
     start: [i32; 3],
@@ -544,7 +541,6 @@ pub fn player_motion(
 /// is the collision-plane iteration inside that call. Deep traces only.
 #[cfg(feature = "deep-reference-trace")]
 #[allow(clippy::too_many_arguments)]
-#[allow(dead_code)] // called again once the clean-room movement core lands
 pub fn player_slide(
     map_tick: u32,
     call: u8,
