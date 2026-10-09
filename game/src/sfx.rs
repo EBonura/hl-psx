@@ -104,14 +104,26 @@ pub unsafe fn stop_all() {
     state().stop_all()
 }
 
+/// The SPU driver the pack loaders upload through. `Spu::new` resets the SPU
+/// and writes the silence block every one-shot's repeat address points at,
+/// which `init_from_pack` used to get from `psx_spu::init`, so each bank load
+/// takes a fresh driver. The dialogue loader reuses it: a map change must not
+/// reset the voices that are playing.
+static mut SPU: Option<psx_spu::Spu> = None;
+
 #[inline]
 pub unsafe fn init_from_pack(pack: &[u8]) -> usize {
-    state().init_from_pack(pack)
+    // SAFETY: the game drives the SPU from this module alone, one caller at a time.
+    let spu =
+        (*core::ptr::addr_of_mut!(SPU)).insert(psx_spu::Spu::new(psx_io::periph::SpuDma::steal()));
+    state().init_from_pack(spu, pack)
 }
 
 #[inline]
 pub unsafe fn load_dialogue_pack(pack: &[u8]) -> usize {
-    state().load_dialogue_pack(pack)
+    let spu = (*core::ptr::addr_of_mut!(SPU))
+        .get_or_insert_with(|| psx_spu::Spu::new(psx_io::periph::SpuDma::steal()));
+    state().load_dialogue_pack(spu, pack)
 }
 
 #[inline]
