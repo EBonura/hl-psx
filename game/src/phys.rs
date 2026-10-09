@@ -1575,7 +1575,7 @@ fn clear_at(map: &Map, head: i32, movers: &[Mover], pos: [i32; 3]) -> bool {
 /// and be allowed to pass through it. The tram rider path also uses this after
 /// deliberate movement so a penetrated end wall is restored to the last safe
 /// car-local seat instead of being mistaken for an open-side walk-off.
-#[inline]
+///
 /// The same test for the hull a player trace used (`world_head` is the world
 /// hull root it was traced with: hull 1 standing or hull 3 crouched).
 #[inline(never)]
