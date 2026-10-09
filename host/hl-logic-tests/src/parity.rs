@@ -457,6 +457,7 @@ struct WObs {
 const XASH: &str = "Xash3D weapon bench, frozen zombie at 150 u";
 const FALLOFF: &str = "Xash3D tripmine damage falloff (profile-ranged 8)";
 const SAME_BLAST: &str = "same explosion routine as the tripmine";
+const GRUNT_GREN: &str = "Xash3D hand-grenade grunts, c2a2f (profile-ranged 1)";
 const DOC: &str = "public documentation (manual and wiki)";
 
 fn weapon_obs() -> Vec<WObs> {
@@ -555,6 +556,39 @@ fn weapon_obs() -> Vec<WObs> {
             0,
             d(W_HORNET).reserve_max as i64,
             DOC,
+        ),
+        // The grunt's hand grenade.
+        o(
+            "grunt grenade",
+            "first throw delay",
+            80,
+            0,
+            GRENADE_FIRST_DELAY as i64,
+            GRUNT_GREN,
+        ),
+        o(
+            "grunt grenade",
+            "interval",
+            155,
+            0,
+            GRENADE_INTERVAL as i64,
+            GRUNT_GREN,
+        ),
+        o(
+            "grunt grenade",
+            "blast after the throw begins",
+            26,
+            1,
+            (GRENADE_THROW_TICKS - GRENADE_RELEASE_LEFT) as i64 + GRENADE_FLIGHT as i64,
+            GRUNT_GREN,
+        ),
+        o(
+            "grunt grenade",
+            "damage",
+            99,
+            1,
+            d(W_GRENADE).damage as i64,
+            GRUNT_GREN,
         ),
         // Explosions reach 2.5 units per point of damage (tripmine, 150: 375).
         o(
