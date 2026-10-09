@@ -117,7 +117,18 @@ pub(crate) unsafe fn tick_grunt(
         let mode = (t >> 5) & 3;
         let left = t & 31;
         PROP_STATE[pi] = PROP_STATE_MOVE;
-        if mode == 2 {
+        if mode == 3 {
+            // Throwing a hand grenade: the release is 16 ticks in.
+            PROP_STATE[pi] = PROP_STATE_ATTACK;
+            PROP_AI_TIMER[pi] = if left > 1 {
+                0x80 | (3 << 5) | (left - 1)
+            } else {
+                0
+            };
+            if left == GRENADE_RELEASE_LEFT {
+                throw_grenade(m, pi, aim);
+            }
+        } else if mode == 2 {
             PROP_AI_TIMER[pi] = if left > 1 {
                 0x80 | (2 << 5) | (left - 1)
             } else {
@@ -173,6 +184,19 @@ pub(crate) unsafe fn tick_grunt(
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = 0;
         prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(ATTACK_WINDUP + 1));
+        // The retail grunt never throws in its first 80 ticks of an engagement.
+        GRUNT_GREN[pi] = SIM_NOW.wrapping_add(GRENADE_FIRST_DELAY);
+        return;
+    }
+    // After that it lobs a hand grenade at an enemy 250 to 900 units off, one
+    // every 155 ticks (measured: blasts 155 apart, 25 to 27 ticks after the
+    // 34-tick throw begins).
+    if d2 > GRENADE_MIN_RANGE * GRENADE_MIN_RANGE
+        && d2 < GRENADE_MAX_RANGE * GRENADE_MAX_RANGE
+        && time_reached(SIM_NOW, GRUNT_GREN[pi])
+    {
+        GRUNT_GREN[pi] = SIM_NOW.wrapping_add(GRENADE_INTERVAL);
+        PROP_AI_TIMER[pi] = 0x80 | (3 << 5) | GRENADE_THROW_TICKS;
         return;
     }
     let state = PROP_AI_TIMER[pi]; // low nibble: burst ticks left, high: bursts since the pause
@@ -213,6 +237,30 @@ pub(crate) unsafe fn tick_grunt(
             PROP_AI_TIMER[pi] = (bursts << 4) | 6;
         }
     }
+}
+
+/// Lob a hand grenade that lands on `aim` ten ticks after its release and goes
+/// off where it lands (the retail blast comes 25 to 27 ticks after the throw
+/// begins, 16 of them before the grenade leaves the hand).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn throw_grenade(m: &Map, pi: usize, aim: [i32; 3]) {
+    const FLIGHT: i32 = GRENADE_FLIGHT;
+    let from = prop_eye(m, pi);
+    let slot = spawn_projectile_dir(
+        PROJ_GRENADE,
+        WEAPON_DEFS[W_GRENADE].damage,
+        from,
+        [0; 3],
+        true,
+    );
+    PROJECTILES[slot].vel = [
+        (aim[0] - from[0]) / FLIGHT,
+        // The projectile pass lowers vy by gravity before each move.
+        (aim[1] - from[1] + PROJ_GRAVITY * FLIGHT * (FLIGHT + 1) / 2) / FLIGHT,
+        (aim[2] - from[2]) / FLIGHT,
+    ];
+    PROJECTILES[slot].life = FLIGHT as u8;
 }
 
 /// monster_alien_slave: a 46-tick zap whose two beams land 34 ticks in (20 on

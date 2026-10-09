@@ -3597,6 +3597,13 @@ struct LogicEvent {
 
 const _: [(); 8] = [(); core::mem::size_of::<LogicEvent>()];
 
+const ZERO_LOGIC_EVENT: LogicEvent = LogicEvent {
+    at: 0,
+    target: 0,
+    killtarget: 0,
+    meta: 0,
+};
+
 const EMPTY_LOGIC_EVENT: LogicEvent = LogicEvent {
     at: 0,
     target: 0,
@@ -3631,7 +3638,9 @@ static mut LIGHTSTYLE_ACTIVE_MASK: u32 = 0;
 static mut LOGIC_NEXT: [u16; MAX_LOGIC] = [0; MAX_LOGIC];
 static mut LOGIC_TARGET: [u16; MAX_LOGIC] = [0; MAX_LOGIC];
 static mut LOGIC_COUNTER: [i16; MAX_LOGIC] = [0; MAX_LOGIC];
-static mut LOGIC_PROP_LINK: [u8; MAX_LOGIC] = [LOGIC_PROP_NONE; MAX_LOGIC];
+// Reset to LOGIC_PROP_NONE for every record by init_logic_state before a map plays;
+// zero here keeps the table out of the executable image.
+static mut LOGIC_PROP_LINK: [u8; MAX_LOGIC] = [0; MAX_LOGIC];
 // The cooker appends LOGIC_MONSTER_TRIGGER records after every other record;
 // this is the map's range of them, so damage and sight checks scan only it.
 static mut MONSTER_TRIGGER_FIRST: u16 = 0;
@@ -3644,7 +3653,8 @@ static mut MONSTER_TRIGGER_END: u16 = 0;
 // while the path lasts. A node record's LOGIC_NEXT holds its wait deadline
 // and its LOGIC_COUNTER the ticks spent without closing in.
 static mut BOSS_WALKER: u16 = u16::MAX;
-static mut LOGIC_EVENTS: [LogicEvent; MAX_LOGIC_EVENTS] = [EMPTY_LOGIC_EVENT; MAX_LOGIC_EVENTS];
+// Emptied by init_logic_state before a map plays (see LOGIC_PROP_LINK).
+static mut LOGIC_EVENTS: [LogicEvent; MAX_LOGIC_EVENTS] = [ZERO_LOGIC_EVENT; MAX_LOGIC_EVENTS];
 static mut TRACKTRAIN_SUBMODEL: u16 = 0;
 // Live path_track switches for a branching tram path, one bit per cooked
 // waypoint (<= 256): SF_PATH_ALTERNATE and SF_PATH_DISABLED.
@@ -3707,6 +3717,8 @@ static mut PROP_ANIM_START: [u16; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_LEAF: [i16; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_STATE: [u8; MAX_PROPS] = [PROP_STATE_IDLE; MAX_PROPS];
 static mut PROP_ATTACK_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS];
+// Tick at which each grunt may next throw a hand grenade.
+static mut GRUNT_GREN: [u16; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_AI_TIMER: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_AI_TARGET: [u8; MAX_PROPS] = [PROP_TARGET_NONE; MAX_PROPS];
 const TALKING_PROP_NONE: u8 = 0xff;
@@ -21175,7 +21187,7 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             if PROJECTILES[i].life == 0 {
                 let p = PROJECTILES[i];
                 PROJECTILES[i].active = false;
-                explode(m, p.pos, p.damage, aoe, true);
+                explode(m, p.pos, p.damage, aoe, !p.from_enemy);
             }
             i += 1;
             continue;
@@ -21252,7 +21264,9 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
         // living prop (both within PROJ_HIT_RADIUS of the new pos).
         let mut best = usize::MAX;
         let mut player_hit = false;
-        if from_enemy {
+        if from_enemy && kind == PROJ_GRENADE {
+            // A thrown hand grenade bounces and goes off on its fuse.
+        } else if from_enemy {
             let ppos = [
                 LOGIC_PLAYER_POS[0],
                 LOGIC_PLAYER_POS[1] + 18,
@@ -21331,7 +21345,7 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             if PROJECTILES[i].life == 0 {
                 let p = PROJECTILES[i];
                 PROJECTILES[i].active = false;
-                explode(m, p.pos, p.damage, aoe, true);
+                explode(m, p.pos, p.damage, aoe, !p.from_enemy);
             }
             i += 1;
             continue;

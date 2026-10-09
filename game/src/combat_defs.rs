@@ -486,6 +486,20 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
     ),
 ];
 
+// A HECU grunt's hand grenade, in 20 Hz ticks, measured under the Xash3D
+// reference: none in the first 80 ticks of an engagement, one every 155, the
+// blast 25 to 27 ticks after the 34-tick throw begins. The port's throw runs
+// `GRENADE_THROW_TICKS` and lets go with `GRENADE_RELEASE_LEFT` of them left.
+pub const GRENADE_FIRST_DELAY: u16 = 80;
+pub const GRENADE_INTERVAL: u16 = 155;
+pub const GRENADE_THROW_TICKS: u8 = 31;
+pub const GRENADE_RELEASE_LEFT: u8 = 16;
+/// Ticks from the release to the blast.
+pub const GRENADE_FLIGHT: i32 = 10;
+/// Nearest and farthest target a grunt throws at.
+pub const GRENADE_MIN_RANGE: i32 = 250;
+pub const GRENADE_MAX_RANGE: i32 = 900;
+
 // Secondary-fire cooldowns in ticks (the primary's live in WEAPON_DEFS).
 pub const GLOCK_ALT_COOLDOWN: u8 = 4;
 pub const M203_COOLDOWN: u8 = 20;
