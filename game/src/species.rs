@@ -105,6 +105,63 @@ pub(crate) unsafe fn tick_grunt(
     };
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, aim);
+    // Close-quarters rules (retail Half-Life under Xash3D, profile-ranged.md 9.4): a grunt that
+    // finds the enemy within 80 units runs back to 500..600 and shoots from there; the ones
+    // that charge (which they are is not cooked yet: every odd actor stands in) fire one burst,
+    // run in until the hulls touch (the retail kick reaches 34) and kick for 15 then 10. Timer bit 7 flags these modes, bits 5-6 pick
+    // one (0 backing away, 1 charging, 2 kicking) and bits 0-4 count: pairs of ticks while
+    // backing away or charging, ticks of the kick bout.
+    let t = PROP_AI_TIMER[pi];
+    let charger = pi & 1 != 0;
+    if t & 0x80 != 0 {
+        let mode = (t >> 5) & 3;
+        let left = t & 31;
+        PROP_STATE[pi] = PROP_STATE_MOVE;
+        if mode == 2 {
+            PROP_AI_TIMER[pi] = if left > 1 {
+                0x80 | (2 << 5) | (left - 1)
+            } else {
+                0
+            };
+            if left == 14 || left == 8 {
+                damage_target(target, if left == 14 { 15 } else { 10 }, pos, health, armor);
+            }
+        } else if mode == 1 {
+            if d2 <= 64 * 64 {
+                PROP_AI_TIMER[pi] = 0x80 | (2 << 5) | 20;
+            } else if left > 0 {
+                if MOVE_TICK & 1 == 0 {
+                    PROP_AI_TIMER[pi] = 0x80 | (1 << 5) | (left - 1);
+                }
+                prop_move_towards_point(m, movers, pi, aim, 15);
+            } else {
+                // Could not close in (a wall or a crowd): go back to shooting.
+                PROP_AI_TIMER[pi] = 0;
+            }
+        } else {
+            let far = 500 + (pi as i32 % 101);
+            if left > 0 && d2 < far * far {
+                if MOVE_TICK & 1 == 0 {
+                    PROP_AI_TIMER[pi] = 0x80 | (left - 1);
+                }
+                let (dx, dz) = (pos[0] - aim[0], pos[2] - aim[2]);
+                let l = isqrt_i32(dx * dx + dz * dz).max(1);
+                let goal = [pos[0] + dx * 512 / l, pos[1], pos[2] + dz * 512 / l];
+                prop_move_towards_point(m, movers, pi, goal, 8);
+            } else {
+                PROP_AI_TIMER[pi] = 0;
+            }
+        }
+        return;
+    }
+    if visible && d2 < 80 * 80 && !charger {
+        PROP_AI_TIMER[pi] = 0x80 | 31;
+        return;
+    }
+    if visible && charger && PROP_STATE[pi] == PROP_STATE_ATTACK && t >> 4 != 0 {
+        PROP_AI_TIMER[pi] = 0x80 | (1 << 5) | 31;
+        return;
+    }
     if d2 > RANGE * RANGE || !visible {
         PROP_STATE[pi] = PROP_STATE_MOVE;
         PROP_AI_TIMER[pi] = 0;
@@ -339,6 +396,20 @@ unsafe fn tick_zombie(
                 health,
                 armor,
             );
+            if target == PROP_TARGET_PLAYER {
+                // Each claw throws the player 5 units per tick away from the zombie; the
+                // first claw also to the zombie's left, the second to its right.
+                let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
+                let side = if t & 64 != 0 {
+                    0
+                } else if done == 12 {
+                    -5
+                } else {
+                    5
+                };
+                let len = isqrt_i32(dx * dx + dz * dz).max(1);
+                KNOCK = [(dx * 5 + dz * side) / len, 0, (dz * 5 - dx * side) / len];
+            }
             // The claws land with claw_strike; the second swipe of a bout (or
             // the lone heavy one) adds the zombie's roar.
             if setpiece_sfx::has(SP::ZO_CLAW) {
