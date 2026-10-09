@@ -22,6 +22,10 @@ use crate::map::Map;
 
 const SOLID: i16 = -2; // CONTENTS_SOLID
 const GROUND_NY: i32 = 2867; // floor if plane normal Y > ~0.7 (×4096)
+/// Floors with a normal up-component at or below this (about 0.75) are the steep walkable ones.
+const STEEP_FLOOR_NY: i16 = 3072;
+/// Q12 up-component of the floor plane the player last stood on (4096 = flat).
+static mut FLOOR_NY: i16 = 4096;
 
 // Movement constants are HL values converted to per-tick units at the 20 Hz
 // sim (X u/s = X/20 u/tick; accelerations scale by dt = 0.05 twice). Every
@@ -2734,8 +2738,15 @@ impl Player {
         let prior_move_frac_y = self.move_frac_y;
         let (move_x, next_move_frac_x) =
             crate::ground_logic::integrate_planar_q6(motion_fine_x, self.move_frac_xz[0]);
-        let (move_y, next_move_frac_y) =
+        let (mut move_y, next_move_frac_y) =
             crate::ground_logic::integrate_planar_q6(motion_fine_y, self.move_frac_y);
+        if self.on_ground && move_y < 0 && unsafe { FLOOR_NY } <= STEEP_FLOOR_NY {
+            // On a floor near 45 degrees the one-unit downward carry that settles the origin
+            // clips into a sideways slide, and a pushed or walking player drifted down the
+            // facets of c1a1b's curved pipe where GoldSrc stands. The floor snap below
+            // restores the contact.
+            move_y = 0;
+        }
         let (move_z, next_move_frac_z) =
             crate::ground_logic::integrate_planar_q6(motion_fine_z, self.move_frac_xz[1]);
         let physical_vel = self.vel;
@@ -2841,6 +2852,7 @@ impl Player {
             );
             if chose_step {
                 self.pos = step_pos;
+                unsafe { FLOOR_NY = tdn.normal[1] as i16 };
                 step_ground = Some((tdn.mover as i16, step_residue));
                 // GoldSrc keeps the raised pass's horizontal clipping but the
                 // flat pass's vertical component (pm_shared.c:1279-80).
@@ -2900,6 +2912,7 @@ impl Player {
             self.on_ground = g.frac < 4096 && g.normal[1] > GROUND_NY;
             self.ground_mover = if self.on_ground { g.mover as i16 } else { -1 };
             if self.on_ground {
+                unsafe { FLOOR_NY = g.normal[1] as i16 };
                 // Snap onto the floor and consume the complete vertical component.
                 // PM_WalkMove must not carry an upward component clipped from a
                 // stair/ramp plane into the next frame: doing so made a grounded
