@@ -409,6 +409,20 @@ fn attack_rows(cfg: &Cfg, rows: &mut Vec<Row>) {
 /// Retail attacks the cfg defines and the port never reads.
 fn coverage_rows(cfg: &Cfg, rows: &mut Vec<Row>) {
     for &(sk, key, _) in &skill::SK_KEYS {
+        // The cooked table holds only the first SK_RUNTIME columns: a cvar the
+        // game reads from past them would index off the end.
+        if wired(sk) && sk as usize >= skill::SK_RUNTIME {
+            rows.push(Row {
+                area: "cvar",
+                subject: key.to_string(),
+                field: format!("{sk:?}"),
+                expected: "cooked column".into(),
+                port: "read but not cooked".into(),
+                verdict: Verdict::Fail,
+                source: "hl-format skill.rs".into(),
+            });
+            continue;
+        }
         // The player's weapons are audited as weapon rows against the arsenal
         // table, not read through the skill table at run time.
         if wired(sk) || format!("{sk:?}").starts_with("Plr") {

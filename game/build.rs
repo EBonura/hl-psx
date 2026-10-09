@@ -1046,8 +1046,8 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
             row[ty as usize] = cook(key, milli, level).clamp(1, 255) as u8;
         }
     }
-    let mut value = [[0u16; skill::SK_COUNT]; 3];
-    for &(sk, key, milli) in &skill::SK_KEYS {
+    let mut value = [[0u16; skill::SK_RUNTIME]; 3];
+    for &(sk, key, milli) in &skill::SK_KEYS[..skill::SK_RUNTIME] {
         for (level, row) in value.iter_mut().enumerate() {
             row[sk as usize] = cook(key, milli, level);
         }
@@ -1086,7 +1086,7 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
          pub const SKILL_VALUE: [[u16; {}]; 3] = {value:?};\n\
          /// (actor type, hit group, hitbox mask) for each `hitgroup::RULES` pair.\n\
          pub const HIT_MASKS: [(u8, u8, u32); {}] = {masks:?};\n",
-        skill::SK_COUNT,
+        skill::SK_RUNTIME,
         masks.len()
     );
     fs::write(out_dir.join("skill_table.rs"), generated).expect("write generated skill tables");

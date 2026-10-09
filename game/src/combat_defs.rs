@@ -90,8 +90,6 @@ pub const PROJ_BOLT_WATER: u8 = 10;
 pub const GRENADE_FUSE_TICKS: u32 = 60; // CHandGrenade: three-second fuse at 20 Hz
 
 pub struct WeaponDef {
-    #[allow(dead_code)] // documents the table; a HUD weapon label is the next use
-    pub name: &'static str,
     pub ammo: usize,      // AMMO_*
     pub clip: u16,        // magazine size (0 = fires straight from the reserve)
     pub reserve_max: u16, // carry cap for this ammo type
@@ -281,7 +279,6 @@ pub const AMMO_PICKUPS: [(usize, u16); 8] = [
 pub const WEAPON_DEFAULT_GIVE: [u16; N_WEAPONS] = [0, 17, 6, 25, 12, 5, 1, 20, 20, 8, 5, 5, 1, 1];
 
 pub const fn wdef(
-    name: &'static str,
     ammo: usize,
     clip: u16,
     reserve_max: u16,
@@ -296,7 +293,6 @@ pub const fn wdef(
     wm: u8,
 ) -> WeaponDef {
     WeaponDef {
-        name,
         ammo,
         clip,
         reserve_max,
@@ -316,11 +312,8 @@ pub const fn wdef(
 // primary/secondary state machines live below; this table holds their shared
 // ammo, damage, cadence, and viewmodel data.
 pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
+    wdef(AMMO_NONE, 0, 0, 10, 96, 1, 0, 7, 0, FIRE_MELEE, 0, 4),
     wdef(
-        "CROWBAR", AMMO_NONE, 0, 0, 10, 96, 1, 0, 7, 0, FIRE_MELEE, 0, 4,
-    ),
-    wdef(
-        "GLOCK",
         AMMO_9MM,
         17,
         250,
@@ -335,7 +328,6 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         0,
     ),
     wdef(
-        "357",
         AMMO_357,
         6,
         36,
@@ -350,7 +342,6 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         1,
     ),
     wdef(
-        "MP5",
         AMMO_9MM,
         50,
         250,
@@ -365,7 +356,6 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         2,
     ),
     wdef(
-        "SHOTGUN",
         AMMO_BUCK,
         8,
         125,
@@ -380,7 +370,6 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         12,
     ),
     wdef(
-        "CROSSBOW",
         AMMO_BOLT,
         5,
         50,
@@ -395,7 +384,6 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         3,
     ),
     wdef(
-        "RPG",
         AMMO_ROCKET,
         1,
         5,
@@ -410,7 +398,6 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         9,
     ),
     wdef(
-        "GAUSS",
         AMMO_URANIUM,
         0,
         100,
@@ -425,7 +412,6 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         6,
     ),
     wdef(
-        "EGON",
         AMMO_URANIUM,
         0,
         100,
@@ -440,7 +426,6 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         5,
     ),
     wdef(
-        "HORNET",
         AMMO_HORNET,
         0,
         8,
@@ -455,7 +440,6 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         8,
     ),
     wdef(
-        "GRENADE",
         AMMO_GREN,
         0,
         10,
@@ -470,10 +454,9 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         7,
     ),
     wdef(
-        "SNARK", AMMO_SNARK, 0, 15, 10, 0, 1, 0, 6, 0, FIRE_PROJ, PROJ_SNARK, 13,
+        AMMO_SNARK, 0, 15, 10, 0, 1, 0, 6, 0, FIRE_PROJ, PROJ_SNARK, 13,
     ),
     wdef(
-        "TRIPMINE",
         AMMO_TRIPMINE,
         0,
         5,
@@ -488,7 +471,6 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         14,
     ),
     wdef(
-        "SATCHEL",
         AMMO_SATCHEL,
         0,
         5,
