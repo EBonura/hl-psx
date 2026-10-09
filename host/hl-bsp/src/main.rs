@@ -5062,6 +5062,91 @@ const BREAK_SOUNDS: [Option<&str>; 10] = [
     None,
 ];
 
+thread_local! {
+    /// The valve directory models are read from, and the colours read so far.
+    static GIB_VALVE_DIR: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+    static GIB_COLORS: std::cell::RefCell<std::collections::HashMap<String, u8>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// CBreakable::Precache's shard model for a material when `gibmodel` is unset.
+fn default_gib_model(material: u16) -> Option<&'static str> {
+    match material {
+        0 | 7 => Some("models/glassgibs.mdl"),
+        1 => Some("models/woodgibs.mdl"),
+        2 => Some("models/metalplategibs.mdl"),
+        3 => Some("models/fleshgibs.mdl"),
+        4 => Some("models/cindergibs.mdl"),
+        5 => Some("models/ceilinggibs.mdl"),
+        6 => Some("models/computergibs.mdl"),
+        8 => Some("models/rockgibs.mdl"),
+        _ => None,
+    }
+}
+
+/// Mean colour of a studio model's textures as RGB332 (3 bits red and green, 2
+/// blue), the colour its break shards are drawn in. `None` when the file has no
+/// readable texture. Pixels of palette index 255 in a masked texture are skipped.
+fn mdl_mean_rgb332(mdl: &[u8]) -> Option<u8> {
+    let rd = |o: usize| -> Option<usize> {
+        mdl.get(o..o + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+    };
+    if mdl.get(0..4)? != b"IDST" {
+        return None;
+    }
+    let (count, table) = (rd(180)?, rd(184)?);
+    let mut sum = [0u64; 3];
+    let mut n = 0u64;
+    for t in 0..count.min(32) {
+        let rec = table.checked_add(t * 80)?;
+        let flags = rd(rec + 64)?;
+        let (w, h, index) = (rd(rec + 68)?, rd(rec + 72)?, rd(rec + 76)?);
+        let pixels = mdl.get(index..index.checked_add(w.checked_mul(h)?)?)?;
+        let palette = mdl.get(index + w * h..index + w * h + 768)?;
+        let masked = flags & 0x40 != 0;
+        for &p in pixels {
+            if masked && p == 255 {
+                continue;
+            }
+            let c = &palette[p as usize * 3..p as usize * 3 + 3];
+            sum[0] += c[0] as u64;
+            sum[1] += c[1] as u64;
+            sum[2] += c[2] as u64;
+            n += 1;
+        }
+    }
+    if n == 0 {
+        return None;
+    }
+    let (r, g, b) = (sum[0] / n, sum[1] / n, sum[2] / n);
+    // 0xFF is the "no colour" marker, so a white average steps down one.
+    Some((((r >> 5) << 5) | ((g >> 5) << 2) | (b >> 6)).min(0xFE) as u8)
+}
+
+/// RGB332 shard colour of a func_breakable / func_pushable, from its `gibmodel`
+/// (or its material's stock model); 0xFF when the model cannot be read.
+fn breakable_gib_color(block: &str, material: u16) -> u8 {
+    let key = ent_value(block, "gibmodel")
+        .map(|v| v.trim().trim_start_matches('/').to_ascii_lowercase())
+        .filter(|v| !v.is_empty())
+        .or_else(|| default_gib_model(material).map(str::to_string));
+    let Some(key) = key else {
+        return u8::MAX;
+    };
+    if let Some(&c) = GIB_COLORS.with(|c| c.borrow().get(&key).copied()).as_ref() {
+        return c;
+    }
+    let color = GIB_VALVE_DIR
+        .with(|d| d.borrow().clone())
+        .and_then(|dir| std::fs::read(dir.join(&key)).ok())
+        .and_then(|bytes| mdl_mean_rgb332(&bytes))
+        .unwrap_or(u8::MAX);
+    GIB_COLORS.with(|c| c.borrow_mut().insert(key, color));
+    color
+}
+
 /// CBreakable::KeyValue's material: the Materials enum, wood when out of range.
 fn breakable_material(block: &str) -> u16 {
     let i = parse_f32_key(block, "material", 0.0).round() as i32;
@@ -8463,12 +8548,12 @@ fn collect_logic_entities_with_lightstyles(
                 (map_audio_id(&voices, map_index, path, true), u8::MAX)
             }
             "func_breakable" | "func_pushable" => {
-                let material = breakable_material(block) as usize;
+                let material = breakable_material(block);
                 (
-                    BREAK_SOUNDS[material]
+                    BREAK_SOUNDS[material as usize]
                         .map(|name| map_audio_id(&voices, map_index, name, false))
                         .unwrap_or(u8::MAX),
-                    u8::MAX,
+                    breakable_gib_color(block, material),
                 )
             }
             "env_spark" | "env_debris" => (
@@ -13093,6 +13178,11 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             brush_by_submodel[sm] = ei.min(u16::MAX as usize) as u16;
         }
     }
+    let valve_dir = std::path::Path::new(path)
+        .parent()
+        .and_then(|maps| maps.parent())
+        .map(std::path::Path::to_path_buf);
+    GIB_VALVE_DIR.with(|d| *d.borrow_mut() = valve_dir);
     // titles.txt lives beside the maps dir (valve/titles.txt).
     let titles = std::path::Path::new(path)
         .parent()
@@ -20619,6 +20709,30 @@ mod tests {
         assert_eq!(armed.ents[0].kind, LOGIC_FUNC_BREAKABLE);
         assert_eq!(armed.ents[0].arg0, 15);
         assert_eq!(armed.ents[0].brush, 7);
+    }
+
+    #[test]
+    fn gib_model_mean_colour_reads_the_texture_palette() {
+        // one 2x1 texture: palette index 1 (200, 100, 0) twice, index 255 masked out
+        let mut mdl = vec![0u8; 190];
+        mdl[0..4].copy_from_slice(b"IDST");
+        mdl[180..184].copy_from_slice(&1u32.to_le_bytes());
+        mdl[184..188].copy_from_slice(&200u32.to_le_bytes());
+        let mut tex = vec![0u8; 80];
+        tex[64..68].copy_from_slice(&0x40u32.to_le_bytes());
+        tex[68..72].copy_from_slice(&3u32.to_le_bytes());
+        tex[72..76].copy_from_slice(&1u32.to_le_bytes());
+        tex[76..80].copy_from_slice(&300u32.to_le_bytes());
+        mdl.resize(200, 0);
+        mdl.extend(tex);
+        mdl.resize(300, 0);
+        mdl.extend([1u8, 1, 255]);
+        let mut palette = vec![0u8; 768];
+        palette[3..6].copy_from_slice(&[200, 100, 0]);
+        mdl.extend(palette);
+        // 200 -> 6 (110b), 100 -> 3 (011b), 0 -> 0
+        assert_eq!(mdl_mean_rgb332(&mdl), Some((6 << 5) | (3 << 2)));
+        assert_eq!(mdl_mean_rgb332(b"nope"), None);
     }
 
     #[test]
