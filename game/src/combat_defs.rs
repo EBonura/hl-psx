@@ -492,7 +492,7 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         AMMO_SATCHEL,
         0,
         5,
-        100,
+        150,
         0,
         1,
         0,
@@ -507,6 +507,12 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
 // Secondary-fire cooldowns in ticks (the primary's live in WEAPON_DEFS).
 pub const GLOCK_ALT_COOLDOWN: u8 = 4;
 pub const M203_COOLDOWN: u8 = 20;
+/// Blast radius of an explosion of `dmg`: the retail game spreads every
+/// explosion over two and a half units per point of damage (measured: the
+/// tripmine, 150 damage, reaches 375 units and falls off linearly).
+pub const fn blast_radius(dmg: u8) -> i32 {
+    dmg as i32 * 5 / 2
+}
 /// The MP5 grenade's impact damage (`sk_plr_9mmAR_grenade`).
 pub const M203_DAMAGE: u8 = 100;
 pub const SHOTGUN_ALT_COOLDOWN: u8 = 30;

@@ -441,6 +441,8 @@ struct WObs {
 }
 
 const XASH: &str = "Xash3D weapon bench, frozen zombie at 150 u";
+const FALLOFF: &str = "Xash3D tripmine damage falloff (profile-ranged 8)";
+const SAME_BLAST: &str = "same explosion routine as the tripmine";
 const DOC: &str = "public documentation (manual and wiki)";
 
 fn weapon_obs() -> Vec<WObs> {
@@ -539,6 +541,39 @@ fn weapon_obs() -> Vec<WObs> {
             0,
             d(W_HORNET).reserve_max as i64,
             DOC,
+        ),
+        // Explosions reach 2.5 units per point of damage (tripmine, 150: 375).
+        o(
+            "tripmine",
+            "blast radius",
+            375,
+            0,
+            blast_radius(150) as i64,
+            FALLOFF,
+        ),
+        o(
+            "rpg",
+            "blast radius",
+            250,
+            0,
+            blast_radius(d(W_RPG).damage) as i64,
+            SAME_BLAST,
+        ),
+        o(
+            "hand grenade",
+            "blast radius",
+            250,
+            0,
+            blast_radius(d(W_GRENADE).damage) as i64,
+            SAME_BLAST,
+        ),
+        o(
+            "satchel",
+            "blast radius",
+            375,
+            0,
+            blast_radius(d(W_SATCHEL).damage) as i64,
+            SAME_BLAST,
         ),
         // Ammo pools (maximum carried) and what one pickup gives.
         o("9mm", "max carried", 250, 0, max_carry(AMMO_9MM), DOC),
@@ -740,7 +775,7 @@ fn hitgroup_rows(cfg: &Cfg, rows: &mut Vec<Row>) {
 // ---- the table ---------------------------------------------------------------
 
 /// FAIL rows that are understood and not yet fixed: (area, subject, field).
-const KNOWN: &[(&str, &str, &str)] = &[("weapon", "satchel", "damage per hit")];
+const KNOWN: &[(&str, &str, &str)] = &[];
 
 fn build(cfg: &Cfg) -> Vec<Row> {
     let mut rows = Vec::new();
