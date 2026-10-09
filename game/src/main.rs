@@ -1943,12 +1943,17 @@ const VM_MAX_GEOM_WORDS: usize = room_budget::MAX_VIEWMODEL_GEOM_WORDS;
 const VM_MAX_SLOTS: usize = 24;
 // One previous merged weapon chunk plus the suffix overlapped by the live
 // projection/sort overlay. Both live in the unused tails after the resident
-// map and NPC model set; no fixed PS1 BSS is added. Keep an 8 KB guard so an
-// unexpectedly tight cooked map disables the cache instead of touching data.
+// map and NPC model set; no fixed PS1 BSS is added. A map whose tail is too
+// small disables the cache instead of touching data (`vm_tail_word_ptr` bounds
+// every access), and the cook audit proves a positive margin for every map, so
+// no extra guard sits between the cache and the actor packet stream. The 2,030
+// guard words this used to carry were taken out of the arena (build.rs
+// NPC_MODEL_POOL_WORDS) one for one: every map's tail is word for word what it
+// was.
 const VM_TAIL_CACHE_WORDS: usize = VM_MAX_WORDS;
 // Zero when the largest chunk already ends below the scratch (HMA1 viewmodels).
 const VM_TAIL_BACKUP_WORDS: usize = VM_MAX_WORDS.saturating_sub(VM_CACHE_START_WORD);
-const VM_TAIL_GUARD_WORDS: usize = 2_030;
+const VM_TAIL_GUARD_WORDS: usize = 0;
 const _: () = assert!(VM_MAX_WORDS <= VM_POOL_WORDS);
 const _: () = assert!(VM_MAX_GEOM_WORDS + 2 <= VM_CACHE_START_WORD);
 const _: () = assert!(VM_MAX_SLOTS + 12 <= VM_SLOTS_TOTAL);

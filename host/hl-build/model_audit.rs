@@ -11,7 +11,7 @@ use super::Result;
 // worst-map slack while funding actor interpolation and world-cache replay.
 // The model pool is the live viewmodel's reserve (`viewmodel_pool_words`)
 // followed by this NPC share.
-const NPC_MODEL_POOL_WORDS: usize = 28_544;
+const NPC_MODEL_POOL_WORDS: usize = 26_514;
 const FALLBACK_VM_POOL_WORDS: usize = 20_224;
 const FALLBACK_VM_GEOM_WORDS: usize = 15_800;
 const VIEWMODEL_BACKUP_BUDGET_WORDS: usize = 1_536;
@@ -110,7 +110,7 @@ const VIEWMODEL_CHUNK_BASE: usize = 1000;
 const VIEWMODEL_COUNT: usize = 15;
 const VIEWMODEL_SORT_TRIS: usize = 1_152;
 const VIEWMODEL_SORT_BUCKETS: usize = 64;
-const VIEWMODEL_CACHE_GUARD_WORDS: usize = 2_030;
+const VIEWMODEL_CACHE_GUARD_WORDS: usize = 0;
 const C4A3_GARG_MODEL_CHUNK: usize = 1816;
 const C4A3_GARG_TEXTURE_CHUNK: usize = 1916;
 const C4A1B_GARG_MODEL_CHUNK: usize = 1817;
@@ -2321,13 +2321,13 @@ mod tests {
             "const POOL_FACE_RUN_CAP: usize = 192;",
             "const VM_POOL_WORDS: usize = room_budget::VM_POOL_WORDS;",
             "const MAX_WEAPON_TRIS: usize = 1152;",
-            "const VM_TAIL_GUARD_WORDS: usize = 2_030;",
+            "const VM_TAIL_GUARD_WORDS: usize = 0;",
             "const VM_SORT_RECORD_WORDS: usize = MAX_WEAPON_TRIS;",
         ] {
             assert!(main.contains(declaration), "runtime drift: {declaration}");
         }
         for declaration in [
-            "const NPC_MODEL_POOL_WORDS: usize = 28_544;",
+            "const NPC_MODEL_POOL_WORDS: usize = 26_514;",
             "const FALLBACK_VM_POOL_WORDS: usize = 20_224;",
             "const FALLBACK_VM_GEOM_WORDS: usize = 15_800;",
             "const VIEWMODEL_SORT_TRIS: usize = 1152;",
