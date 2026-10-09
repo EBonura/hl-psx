@@ -64,8 +64,8 @@ pub const fn breakable_hp_after_damage(
 }
 
 /// GoldSrc material 7 is `matUnbreakableGlass`. CBreakable::TakeDamage rejects
-/// every damage type before changing health; direct trigger use may still call
-/// Die(), which is why this remains a damage-path predicate.
+/// every damage type before changing health, and CBreakable::Use only calls
+/// Die() when IsBreakable(), so this guards both paths.
 #[inline(always)]
 pub const fn breakable_accepts_damage(material: u16) -> bool {
     material != 7
