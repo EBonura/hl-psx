@@ -22687,6 +22687,17 @@ unsafe fn spark_burst(at: [i32; 3], count: u8, vy_base: i32, vy_range: u32, ttl:
 const KEY_BIAS_LOOP: i32 = -3;
 const KEY_BIAS_LOOP_MAX_RADIUS: i32 = 128;
 static mut KEY_BIAS: i32 = 0;
+/// Patch faces (the cook's big tessellated floors and walls) draw this many buckets farther
+/// than their depth key says: everything cooked as a detail face, brush entity or studio
+/// model that sits on or in front of one is nearer than a long polygon's mean key admits.
+const KEY_BIAS_PATCH: i32 = 3;
+// Floor for every world key while a split quad's crack backstop is emitted: the backstop
+// must draw before every cell of its own refinement, which only holds if all of its
+// leaves share the parent's far key (each leaf's own far key lets nearer leaves interleave
+// with the cells and paint the backstop's shading over them). Zero outside the backstop.
+static mut KEY_MIN: i32 = 0;
+/// Studio-model packets draw this many table buckets nearer than their centroid depth.
+const MODEL_KEY_BIAS: u32 = 4;
 
 #[inline(always)]
 unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: bool) -> usize {
@@ -22704,7 +22715,7 @@ unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: b
             texture_backdrop,
         },
     );
-    let key = (key as i32 + KEY_BIAS).clamp(1, OT_LEN as i32 - 1) as usize;
+    let key = (key as i32 + KEY_BIAS).max(KEY_MIN).clamp(1, OT_LEN as i32 - 1) as usize;
     #[cfg(feature = "order-trace")]
     order_trace::note_key(depths, key);
     key
@@ -24034,8 +24045,11 @@ unsafe fn emit_soft_quad_split(
     EMIT_POLICY = saved_policy.with_local_depth(false).with_far_key();
     #[cfg(feature = "order-trace")]
     let traced_kind = order_trace::set_kind(5);
+    let far = q[0].v[2].max(q[1].v[2]).max(q[2].v[2]).max(q[3].v[2]);
+    KEY_MIN = world_order_key(ordering::PrimitiveDepths::quad(far, far, far, far), false) as i32;
     emit_cv_flat(packets, [&q[0], &q[1], &q[2]], mat, np);
     emit_cv_flat(packets, [&q[1], &q[3], &q[2]], mat, np);
+    KEY_MIN = 0;
     #[cfg(feature = "order-trace")]
     order_trace::set_kind(traced_kind);
     EMIT_POLICY = saved_policy;
@@ -28514,7 +28528,7 @@ unsafe fn emit_world_face_patches(
     nq: &mut usize,
     counts: &mut WorldCounters,
 ) {
-    KEY_BIAS = 0;
+    KEY_BIAS = KEY_BIAS_PATCH;
     #[cfg(feature = "order-trace")]
     order_trace::set_face(3, base, 0);
     let tex = map::tex_anim_display(tex);
@@ -29270,7 +29284,11 @@ unsafe fn insert_model_depth_stream(first: *mut u32, end: *mut u32) {
         while offset != ordering::MODEL_LINK_END {
             let packet = first.add(offset as usize).cast::<TriTextured>();
             let next = (*packet).tag;
-            let key = (*packet).uv2 >> 16;
+            // A studio triangle is small beside the floor and wall triangles it stands on or
+            // beside, whose scalar keys (a mean over a long polygon) can land nearer than the
+            // model at the pixels where the model is the nearer surface. Draw models
+            // MODEL_KEY_BIAS buckets (four world units each) nearer; the fine rank is kept.
+            let key = ((*packet).uv2 >> 16).saturating_sub(MODEL_KEY_BIAS << 4).max(16);
             (*packet).uv2 &= 0xffff;
             #[cfg(feature = "order-trace")]
             order_trace::note_model(key, packet.cast::<u32>());
