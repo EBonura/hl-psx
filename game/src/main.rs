@@ -35790,6 +35790,8 @@ fn play(
                 BRUSH_MOVING_BITS[w] = 0;
                 w += 1;
             }
+            #[cfg(feature = "order-trace")]
+            order_trace::begin_ents();
             let mut brush_pass = 0u8;
             while brush_pass < 2 {
                 for bi in 0..brush_iter_count {
@@ -35861,6 +35863,11 @@ fn play(
                         if !visible {
                             model_bounds_culled = model_bounds_culled.saturating_add(1);
                             continue;
+                        }
+                        #[cfg(feature = "order-trace")]
+                        {
+                            let (ff, nf) = m.submodel(e.submodel);
+                            order_trace::note_ent(ff, nf, center, radius, off);
                         }
                         // Pass 1 draws exactly the non-cacheable (moving) brushes.
                         if brush_pass == 1 && e.blend == 0 {
