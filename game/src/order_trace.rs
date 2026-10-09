@@ -12,7 +12,8 @@
 //! Entry layout (`WORDS` u32 each, newest at `(ORD_N - 1) % CAP`):
 //!   0  key | n << 16 | site << 20 | kind << 28
 //!   1  face id (kind 1 loop face, 2 raw-tri face: face index; 3 patch: first
-//!      triangle index; 4 submodel face: face index; 0 unknown)
+//!      triangle index; 4 submodel face: face index; 0 unknown); the face's bounding
+//!      radius (cooked face sphere, 0 for patches) sits in the upper 16 bits
 //!   2..6  the packet's v0..v3 vertex words (v3 = 0 for a GT3)
 //!   6  key of the older recorded key call | key of the newer << 16
 //!   7  older call depths d0 | d1 << 16, 8  d2 | d3 << 16
@@ -46,9 +47,9 @@ static mut KIND: u32 = 0;
 const _: () = assert!(core::mem::size_of::<PrimitiveDepths>() == 20);
 
 #[inline(never)]
-pub unsafe fn set_face(kind: u32, face: usize) {
+pub unsafe fn set_face(kind: u32, face: usize, radius: i32) {
     KIND = kind;
-    FACE = face as u32;
+    FACE = face as u32 | (radius.clamp(0, 65535) as u32) << 16;
 }
 
 #[inline(never)]
