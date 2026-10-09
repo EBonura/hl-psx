@@ -1582,9 +1582,9 @@ fn clear_at(map: &Map, head: i32, movers: &[Mover], pos: [i32; 3]) -> bool {
 /// and be allowed to pass through it. The tram rider path also uses this after
 /// deliberate movement so a penetrated end wall is restored to the last safe
 /// car-local seat instead of being mistaken for an open-side walk-off.
-#[inline]
-/// The same test for the hull a player trace used (`world_head` is the world
-/// hull root it was traced with: hull 1 standing or hull 3 crouched).
+///
+/// `world_head` is the world hull root the player trace used: hull 1 standing
+/// or hull 3 crouched.
 #[inline(never)]
 #[optimize(size)]
 pub fn mover_clear_at_hull(
@@ -1605,9 +1605,9 @@ pub fn mover_clear_at_hull(
     true
 }
 
-/// A standing hull at `pos` overlaps no mover (the pusher included), the
-/// SV_TestEntityPosition that ends SV_PushEntity.
-/// A hull at `pos` overlaps no mover, for the hull a player trace used.
+/// A hull at `pos` overlaps no mover (the pusher included), the
+/// SV_TestEntityPosition that ends SV_PushEntity. `world_head` is the world
+/// hull root the player trace used.
 #[inline(never)]
 #[optimize(size)]
 pub fn movers_clear_at_hull(map: &Map, movers: &[Mover], pos: [i32; 3], world_head: i32) -> bool {
