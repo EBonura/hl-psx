@@ -38,6 +38,18 @@ pub mod map {
     pub const HEADER_VERT_COUNT_OFFSET: usize = 4;
     pub const HEADER_TRI_COUNT_OFFSET: usize = 8;
     pub const HEADER_TEXTURE_COUNT_OFFSET: usize = 12;
+
+    /// Texture entry width flags. An HLTX entry is `u16 w | u16 h | u16
+    /// clut[16] | u8 pix4[w * h / 2]` unless the top bit of `w` is set, which
+    /// marks the sky's 8 bit form: `u16 w | u16 h | u16 clut[256] | u8 pix8[w *
+    /// h]`. With bit 14 also set the 256 entry palette is left out and the
+    /// entry uses the one carried by the nearest earlier 8 bit entry of the
+    /// chunk. Room textures are at most 128 wide, so neither bit is ever set
+    /// by a 4 bit entry.
+    pub const TEXTURE_ENTRY_8BIT: u16 = 0x8000;
+    pub const TEXTURE_ENTRY_SHARED_CLUT: u16 = 0x4000;
+    pub const TEXTURE_ENTRY_WIDTH_MASK: u16 = 0x3fff;
+    pub const TEXTURE_CLUT_256_BYTES: usize = 512;
     pub const HEADER_FACE_COUNT_OFFSET: usize = 16;
     pub const HEADER_BSP_OFFSET: usize = 20;
     pub const HEADER_CLIP_OFFSET: usize = 24;
