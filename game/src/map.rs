@@ -272,8 +272,6 @@ pub struct Node {
     pub c1: i32,
 }
 
-// The clip-tree readers are unused while the trace family is a stub.
-#[allow(dead_code)]
 pub struct Map {
     data: &'static [u8],
     pub n_tris: usize,
@@ -358,7 +356,6 @@ pub struct Map {
 const LEAF_SZ: usize = cooked::LEAF_RECORD_SIZE;
 const FACE_SZ: usize = cooked::FACE_RECORD_SIZE;
 const TRI_SZ: usize = cooked::TRI_RECORD_SIZE;
-#[allow(dead_code)]
 const CLIPNODE_SZ: usize = cooked::CLIPNODE_RECORD_SIZE;
 const ENT_SZ: usize = cooked::ENTITY_RECORD_SIZE;
 const PROP_SZ: usize = cooked::PROP_RECORD_SIZE;
@@ -439,7 +436,6 @@ pub const SPRITE_ID_MASK: u16 = 0x000F;
 pub const SPRITE_INITIAL_ON: u16 = 0x0010;
 pub const SPRITE_ONCE: u16 = 0x0020;
 
-#[allow(dead_code)]
 pub struct ClipNode {
     /// Generic plane normal. Tagged axial nodes leave this zero and carry the
     /// canonical positive axis in `axis`, avoiding three normal loads.
@@ -1323,7 +1319,6 @@ impl Map {
     }
 
     #[inline(always)]
-    #[allow(dead_code)]
     pub fn clipnode(&self, i: usize) -> ClipNode {
         let o = self.clipn_off + i * CLIPNODE_SZ;
         let plane_ref = rd_u16(self.data, o);
