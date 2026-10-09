@@ -36,6 +36,13 @@ const GRAVITY_Q6: i32 = 2 * 64;
 // trigger_gravity zones scale gravity (q12; 4096 = normal). Sticky until the
 // next zone or map load, matching GoldSrc's sv_gravity behaviour.
 static mut GRAVITY_SCALE: i32 = 4096;
+/// pev->friction while the player touches a func_friction volume, Q12; the
+/// engine restores 1.0 each tick and the touch scan lowers it again.
+static mut FRICTION_SCALE: i32 = 4096;
+
+pub fn set_friction_scale(scale_q12: i32) {
+    unsafe { FRICTION_SCALE = scale_q12.clamp(0, 4096 * 4) };
+}
 
 pub fn set_gravity_scale(scale_q12: i32) {
     unsafe { GRAVITY_SCALE = scale_q12.clamp(0, 4096 * 4) };
@@ -552,6 +559,10 @@ fn trace_clear(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> bool {
 /// `off` is both its world position and its rotation pivot).
 #[derive(Clone, Copy)]
 pub struct Mover {
+    // Hull-1 (standing) clipnode root in bits 0..15; the crouch hull-3 root of
+    // the same submodel (GoldSrc ducks against the model's own hull 3, so a
+    // crouched player fits holes that the standing hull cannot) in bits 16..30,
+    // 0 when the cooker had none. Packed so the RAM-hot layout does not grow.
     pub head: i32,
     // Point-hull root (hitscans; 0 = fall back to `head`). The high bit is a
     // zero-RAM tag that excludes a rotating brush from actor visual LOS while
@@ -587,6 +598,24 @@ pub const fn mover_rotation_axis_tag(axis: u16) -> i32 {
 }
 
 impl Mover {
+    /// Standing hull-1 root (0 = non-solid brush).
+    #[inline(always)]
+    pub fn h1(self) -> i32 {
+        self.head & 0xFFFF
+    }
+
+    /// Hull root for a player trace: the crouch hull when `crouch` and the
+    /// cooker emitted one, else hull 1.
+    #[inline(always)]
+    pub fn pick(self, crouch: bool) -> i32 {
+        let h3 = (self.head >> 16) & 0x7FFF;
+        if crouch && h3 > 0 {
+            h3
+        } else {
+            self.head & 0xFFFF
+        }
+    }
+
     #[inline]
     pub fn point_head(self) -> i32 {
         self.head0 & !(MOVER_VISUAL_DISABLED | MOVER_ROT_AXIS_MASK)
@@ -881,11 +910,11 @@ pub fn line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]
 #[inline(never)]
 pub fn actor_line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> bool {
     for mv in movers {
-        if mv.head <= 0 || !mover_may_touch_segment(mv, p1, p2) {
+        if mv.h1() <= 0 || !mover_may_touch_segment(mv, p1, p2) {
             continue;
         }
         let (q1, q2) = mover_local_segment(mv, p1, p2);
-        let tr = trace(map, mv.head, q1, q2);
+        let tr = trace(map, mv.h1(), q1, q2);
         // `NAV_CHORD_REACHED`: a step that ends exactly on a brush's expanded
         // hull plane has arrived, not collided.
         if !tr.startsolid && tr.frac < NAV_CHORD_REACHED {
@@ -902,9 +931,9 @@ pub fn actor_line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i
 #[inline(never)]
 pub fn point_in_movers(map: &Map, movers: &[Mover], p: [i32; 3]) -> bool {
     movers.iter().any(|mv| {
-        mv.head > 0 && mover_may_touch_segment(mv, p, p) && {
+        mv.h1() > 0 && mover_may_touch_segment(mv, p, p) && {
             let (q1, q2) = mover_local_segment(mv, p, p);
-            trace(map, mv.head, q1, q2).startsolid
+            trace(map, mv.h1(), q1, q2).startsolid
         }
     })
 }
@@ -925,7 +954,7 @@ pub fn line_clear_movers_except(
             continue;
         }
         let point_head = mv.point_head();
-        if point_head <= 0 && mv.head <= 0 {
+        if point_head <= 0 && mv.h1() <= 0 {
             continue;
         }
         if !mover_may_touch_segment(mv, p1, p2) {
@@ -935,7 +964,7 @@ pub fn line_clear_movers_except(
         let clear = if point_head > 0 {
             line_clear_visual_from(map, point_head, q1, q2)
         } else {
-            trace_clear(map, mv.head, q1, q2)
+            trace_clear(map, mv.h1(), q1, q2)
         };
         if !clear {
             return false;
@@ -1141,10 +1170,10 @@ pub fn line_clear_movers_visual(
                 continue;
             }
             line_clear_visual_from(map, point_head, q1, q2)
-        } else if mv.head > 0 {
+        } else if mv.h1() > 0 {
             // A non-tram mover without a cooked render-node root falls back to
             // its collision hull; the synthetic tram was skipped above.
-            trace_clear(map, mv.head, q1, q2)
+            trace_clear(map, mv.h1(), q1, q2)
         } else {
             true
         };
@@ -1165,14 +1194,14 @@ fn trace_point_all(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3], skip
             continue;
         }
         let point_head = mv.point_head();
-        if point_head <= 0 && mv.head <= 0 {
+        if point_head <= 0 && mv.h1() <= 0 {
             continue;
         }
         let (q1, q2) = mover_local_segment(mv, p1, p2);
         let t = if point_head > 0 {
             trace_nodes(map, point_head, q1, q2)
         } else {
-            trace(map, mv.head, q1, q2)
+            trace(map, mv.h1(), q1, q2)
         };
         // A non-solid/translated brush can contain the ray start. Match the
         // player trace convention: only the static world's startsolid state is
@@ -1239,20 +1268,20 @@ pub fn trace_pushable_sweep(
             continue;
         }
         let point_head = mv.point_head();
-        if point_head <= 0 && mv.head <= 0 {
+        if point_head <= 0 && mv.h1() <= 0 {
             continue;
         }
         let (q1, q2) = mover_local_segment(mv, p1, p2);
         let hit = if point_head > 0 {
             trace_nodes(map, point_head, q1, q2)
         } else {
-            trace(map, mv.head, q1, q2)
+            trace(map, mv.h1(), q1, q2)
         };
         let end_solid = hit.startsolid
             && if point_head > 0 {
                 node_point_solid_from(map, point_head, q2)
             } else {
-                trace(map, mv.head, q2, q2).startsolid
+                trace(map, mv.h1(), q2, q2).startsolid
             };
         let Some(frac) =
             crate::pushable::blocking_sweep_fraction(hit.startsolid, end_solid, hit.frac)
@@ -1344,14 +1373,14 @@ pub fn trace_down_support(
             continue;
         }
         let point_head = mv.point_head();
-        if point_head <= 0 && mv.head <= 0 {
+        if point_head <= 0 && mv.h1() <= 0 {
             continue;
         }
         let (q1, q2) = mover_local_segment(mv, p1, p2);
         let hit = if point_head > 0 {
             trace_nodes(map, point_head, q1, q2)
         } else {
-            trace(map, mv.head, q1, q2)
+            trace(map, mv.h1(), q1, q2)
         };
         if hit.startsolid {
             return Some(RayHit {
@@ -1391,14 +1420,15 @@ fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i3
     // per axis in every broad-phase call.
     let low = [p1[0].min(p2[0]), p1[1].min(p2[1]), p1[2].min(p2[2])];
     let high = [p1[0].max(p2[0]), p1[1].max(p2[1]), p1[2].max(p2[2])];
+    let crouch = map.hull3_head >= 0 && world_head == map.hull3_head;
     for mv in movers {
-        let head = mv.head;
-        if head <= 0 {
+        if mv.h1() <= 0 {
             continue; // no clip hull for this submodel
         }
         if !mover_may_touch_bounds(mv, &low, &high) {
             continue;
         }
+        let head = mv.pick(crouch);
         let (q1, q2) = mover_local_segment(mv, p1, p2);
         let t = trace(map, head, q1, q2);
         // NB: do NOT propagate a mover's startsolid. If the player ends up inside
@@ -1552,29 +1582,42 @@ fn clear_at(map: &Map, head: i32, movers: &[Mover], pos: [i32; 3]) -> bool {
 /// and be allowed to pass through it. The tram rider path also uses this after
 /// deliberate movement so a penetrated end wall is restored to the last safe
 /// car-local seat instead of being mistaken for an open-side walk-off.
-#[inline]
-pub fn mover_clear_at(map: &Map, movers: &[Mover], mover_id: i32, pos: [i32; 3]) -> bool {
+///
+/// `world_head` is the world hull root the player trace used: hull 1 standing
+/// or hull 3 crouched.
+#[inline(never)]
+#[optimize(size)]
+pub fn mover_clear_at_hull(
+    map: &Map,
+    movers: &[Mover],
+    mover_id: i32,
+    pos: [i32; 3],
+    world_head: i32,
+) -> bool {
+    let crouch = map.hull3_head >= 0 && world_head == map.hull3_head;
     for mv in movers {
-        if mv.id != mover_id || mv.head <= 0 {
+        if mv.id != mover_id || mv.h1() <= 0 {
             continue;
         }
         let local = mover_local(mv, pos);
-        return !trace(map, mv.head, local, local).startsolid;
+        return !trace(map, mv.pick(crouch), local, local).startsolid;
     }
     true
 }
 
-/// A standing hull at `pos` overlaps no mover (the pusher included), the
-/// SV_TestEntityPosition that ends SV_PushEntity.
+/// A hull at `pos` overlaps no mover (the pusher included), the
+/// SV_TestEntityPosition that ends SV_PushEntity. `world_head` is the world
+/// hull root the player trace used.
 #[inline(never)]
 #[optimize(size)]
-pub fn movers_clear_at(map: &Map, movers: &[Mover], pos: [i32; 3]) -> bool {
+pub fn movers_clear_at_hull(map: &Map, movers: &[Mover], pos: [i32; 3], world_head: i32) -> bool {
+    let crouch = map.hull3_head >= 0 && world_head == map.hull3_head;
     for mv in movers {
-        if mv.head <= 0 {
+        if mv.h1() <= 0 {
             continue;
         }
         let local = mover_local(mv, pos);
-        if trace(map, mv.head, local, local).startsolid {
+        if trace(map, mv.pick(crouch), local, local).startsolid {
             return false;
         }
     }
@@ -1590,7 +1633,7 @@ fn impact_contact_clear_at(
     pos: [i32; 3],
 ) -> bool {
     clear_at(map, head, movers, pos)
-        && (mover_id == -1 || mover_clear_at(map, movers, mover_id, pos))
+        && (mover_id == -1 || mover_clear_at_hull(map, movers, mover_id, pos, head))
 }
 
 #[inline(never)]
@@ -1687,7 +1730,7 @@ fn slide_move(
             if tr.frac < 4096 {
                 let diagonal = crate::ground_logic::is_diagonal_contact_plane(tr.normal);
                 let rounded_into_mover =
-                    tr.mover != -1 && !mover_clear_at(map, movers, tr.mover, floor);
+                    tr.mover != -1 && !mover_clear_at_hull(map, movers, tr.mover, floor, head);
                 let rounded_into_diagonal_world = diagonal && !clear_at(map, head, movers, floor);
                 if rounded_into_mover || rounded_into_diagonal_world {
                     if diagonal {
@@ -1960,7 +2003,7 @@ impl Player {
         mover_id: i32,
         pos: [i32; 3],
     ) {
-        self.pos = if mover_clear_at(map, movers, mover_id, pos) {
+        self.pos = if mover_clear_at_hull(map, movers, mover_id, pos, self.head(map)) {
             pos
         } else {
             try_unstick(map, self.head(map), movers, pos, mover_id).unwrap_or(pos)
@@ -2020,11 +2063,13 @@ impl Player {
         mover_id: i32,
         delta: [i32; 3],
     ) -> bool {
-        if mover_clear_at(map, movers, mover_id, self.pos) {
+        if mover_clear_at_hull(map, movers, mover_id, self.pos, self.head(map)) {
             return true;
         }
         let moved = add(self.pos, delta);
-        if !clear_at(map, self.head(map), movers, moved) || !movers_clear_at(map, movers, moved) {
+        if !clear_at(map, self.head(map), movers, moved)
+            || !movers_clear_at_hull(map, movers, moved, self.head(map))
+        {
             return false;
         }
         self.pos = moved;
@@ -2635,7 +2680,9 @@ impl Player {
             // truncate from 2 to 1 to 0 while the dominant axis is 16.
             let speed_fine = isqrt_i32(fine_x * fine_x + fine_z * fine_z);
             if speed_fine > 0 {
-                let drop_fine = speed_fine.max(STOP_SPEED * PLANAR_FRAC_ONE) / 5;
+                let drop_fine = unsafe {
+                    speed_fine.max(STOP_SPEED * PLANAR_FRAC_ONE) / 5 * FRICTION_SCALE >> 12
+                };
                 let new_speed_fine = (speed_fine - drop_fine).max(0);
                 let scale_q12 = (new_speed_fine * 4096) / speed_fine;
                 fine_x = mul_q12_round(fine_x, scale_q12);

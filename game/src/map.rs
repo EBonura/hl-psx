@@ -362,6 +362,8 @@ const PROP_SZ: usize = cooked::PROP_RECORD_SIZE;
 /// High targetname bit used by the cooker for actors supplied only by an
 /// incoming transition. Runtime strips it before ordinary target dispatch.
 pub const PROP_NAME_INCOMING_ONLY: u16 = 0x8000;
+/// Owner key of a breakable's cooked loot slots: this | its submodel index.
+pub const BREAKABLE_LOOT_KEY: u16 = 0x4000;
 const SPRITE_REC_SZ: usize = cooked::SPRITE_RECORD_SIZE;
 const LOGIC_SZ: usize = cooked::LOGIC_RECORD_SIZE;
 

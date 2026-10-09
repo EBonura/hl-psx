@@ -923,6 +923,27 @@ fn compact_clipnode_remap(clipnodes: &[u8], roots: &[i32]) -> (Vec<i32>, Vec<(us
     (remap, out)
 }
 
+/// Distinct clipnodes reachable from `root` (negative roots are contents).
+fn clip_tree_nodes(clipnodes: &[u8], root: i32) -> usize {
+    let n = clipnodes.len() / SZ_CLIPNODE;
+    let mut seen = vec![false; n];
+    let mut stack = vec![root];
+    let mut count = 0;
+    while let Some(i) = stack.pop() {
+        if i < 0 || i as usize >= n || seen[i as usize] {
+            continue;
+        }
+        seen[i as usize] = true;
+        count += 1;
+        let o = i as usize * SZ_CLIPNODE;
+        for c in 0..2 {
+            let child = i16::from_le_bytes([clipnodes[o + 4 + c * 2], clipnodes[o + 5 + c * 2]]);
+            stack.push(child as i32);
+        }
+    }
+    count
+}
+
 fn remap_clip_head(head: i32, remap: &[i32]) -> i32 {
     if head >= 0 {
         remap.get(head as usize).copied().unwrap_or(-1)
@@ -2413,7 +2434,66 @@ fn patch_blocked_edge_mask(
     mask
 }
 
+/// Face lightmap sampler for light-sample vertices: a vertex cut into a large
+/// lit face by the UV grid takes its shade from the lightmap at its own luxel
+/// instead of a linear blend of the corner shades, so a floor whose lightmap
+/// varies across its span keeps that detail as Gouraud vertices.
+struct LightSampler {
+    lightofs: i32,
+    style0: u8,
+    lit_layers: Vec<(usize, u32)>,
+    lmw: usize,
+    lmh: usize,
+    mins_s: i32,
+    mins_t: i32,
+    /// Cooked-texel to original-texel scale (ow/fw, oh/fh) and the whole-tile
+    /// shift removed from the cooked UVs.
+    scale: (f32, f32),
+    shift: (f32, f32),
+}
+
+impl LightSampler {
+    fn sample(&self, lighting: &[u8], uv: (f32, f32)) -> (u8, u8, u8) {
+        let ou = (uv.0 + self.shift.0) * self.scale.0;
+        let ov = (uv.1 + self.shift.1) * self.scale.1;
+        vertex_shade(
+            lighting,
+            self.lightofs,
+            self.style0,
+            &self.lit_layers,
+            self.lmw,
+            self.lmh,
+            ou,
+            ov,
+            self.mins_s,
+            self.mins_t,
+        )
+    }
+}
+
+/// Faces whose base lightmap spans at least this many luminance levels and
+/// at least [`LIGHT_REFINE_MIN_LUXELS`] luxels are cut on a light-sample grid.
+const LIGHT_REFINE_MIN_CONTRAST: i32 = 28;
+const LIGHT_REFINE_MIN_LUXELS: usize = 6;
+/// Cooked-texel grid step for light-sample vertices (4 luxels).
+const LIGHT_REFINE_GRID: f32 = 64.0;
+/// Per-map ceiling on triangles added for light-sample vertices. Candidates
+/// are taken in descending contrast-times-area order until it is spent.
+const LIGHT_REFINE_MAX_ADDED_TRIS: usize = 1600;
+/// Per-map ceiling on all UV-grid added triangles; hl-build rejects a map above it.
+const GRID_ADDED_TRIS_CEILING: usize = 1_536;
+/// Light-sample refinement stops once a map's cooked triangles pass this count.
+/// The largest maps (c2a4c, c2a4e, c5a1 ...) size the shared MAP_BUF and leave
+/// the weapon cache about a kilobyte of slack, so they must not grow; every
+/// smaller map has the RAM to spend.
+const LIGHT_REFINE_MAX_MAP_TRIS: usize = 15_000;
+
 struct PendingAffineFace {
+    light: Option<LightSampler>,
+    light_score: u64,
+    /// True when the face is grid-cut for texture warp as well; false for a
+    /// face that only the light-sample grid refines.
+    texture_needed: bool,
     face: usize,
     risk: u64,
     priority: u64,
@@ -2728,6 +2808,7 @@ fn emit_uv_grid_poly(
     tri_tex: &mut Vec<u16>,
     tri_uv: &mut Vec<u8>,
     tri_rgb: &mut Vec<u8>,
+    light: Option<&dyn Fn((f32, f32)) -> (u8, u8, u8)>,
 ) -> Option<GridEmitStats> {
     if source.len() < 3 || step <= 0.0 || 256.0 % step != 0.0 {
         return None;
@@ -2761,6 +2842,11 @@ fn emit_uv_grid_poly(
                 clip_grid_half_plane(&clipped, 1, cell_v.1, false, verts, &mut position_cache)?;
             if clipped.len() < 3 {
                 continue;
+            }
+            if let Some(sample) = light {
+                for c in clipped.iter_mut() {
+                    c.shade = sample(c.uv);
+                }
             }
             let cell_tri_first = tri_tex.len();
             let (emitted, pairs) = emit_grid_cell(
@@ -4961,16 +5047,115 @@ const FAN_SOUNDS: [&str; 6] = [
     "fans/fan4.wav",
     "fans/fan5.wav",
 ];
-const BREAK_SOUNDS: [&str; 8] = [
-    "debris/bustglass1.wav",
-    "debris/bustcrate1.wav",
-    "debris/bustmetal1.wav",
-    "debris/bustflesh1.wav",
-    "debris/bustconcrete1.wav",
-    "debris/bustceiling.wav",
-    "debris/bustmetal1.wav",
-    "debris/bustglass1.wav",
+/// CBreakable::Die's sound per Materials value (none for unbreakable glass,
+/// which never dies, and for matNone).
+const BREAK_SOUNDS: [Option<&str>; 10] = [
+    Some("debris/bustglass1.wav"),
+    Some("debris/bustcrate1.wav"),
+    Some("debris/bustmetal1.wav"),
+    Some("debris/bustflesh1.wav"),
+    Some("debris/bustconcrete1.wav"),
+    Some("debris/bustceiling.wav"),
+    Some("debris/bustmetal1.wav"),
+    None,
+    Some("debris/bustconcrete1.wav"),
+    None,
 ];
+
+thread_local! {
+    /// The valve directory models are read from, and the colours read so far.
+    static GIB_VALVE_DIR: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+    static GIB_COLORS: std::cell::RefCell<std::collections::HashMap<String, u8>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// CBreakable::Precache's shard model for a material when `gibmodel` is unset.
+fn default_gib_model(material: u16) -> Option<&'static str> {
+    match material {
+        0 | 7 => Some("models/glassgibs.mdl"),
+        1 => Some("models/woodgibs.mdl"),
+        2 => Some("models/metalplategibs.mdl"),
+        3 => Some("models/fleshgibs.mdl"),
+        4 => Some("models/cindergibs.mdl"),
+        5 => Some("models/ceilinggibs.mdl"),
+        6 => Some("models/computergibs.mdl"),
+        8 => Some("models/rockgibs.mdl"),
+        _ => None,
+    }
+}
+
+/// Mean colour of a studio model's textures as RGB332 (3 bits red and green, 2
+/// blue), the colour its break shards are drawn in. `None` when the file has no
+/// readable texture. Pixels of palette index 255 in a masked texture are skipped.
+fn mdl_mean_rgb332(mdl: &[u8]) -> Option<u8> {
+    let rd = |o: usize| -> Option<usize> {
+        mdl.get(o..o + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+    };
+    if mdl.get(0..4)? != b"IDST" {
+        return None;
+    }
+    let (count, table) = (rd(180)?, rd(184)?);
+    let mut sum = [0u64; 3];
+    let mut n = 0u64;
+    for t in 0..count.min(32) {
+        let rec = table.checked_add(t * 80)?;
+        let flags = rd(rec + 64)?;
+        let (w, h, index) = (rd(rec + 68)?, rd(rec + 72)?, rd(rec + 76)?);
+        let pixels = mdl.get(index..index.checked_add(w.checked_mul(h)?)?)?;
+        let palette = mdl.get(index + w * h..index + w * h + 768)?;
+        let masked = flags & 0x40 != 0;
+        for &p in pixels {
+            if masked && p == 255 {
+                continue;
+            }
+            let c = &palette[p as usize * 3..p as usize * 3 + 3];
+            sum[0] += c[0] as u64;
+            sum[1] += c[1] as u64;
+            sum[2] += c[2] as u64;
+            n += 1;
+        }
+    }
+    if n == 0 {
+        return None;
+    }
+    let (r, g, b) = (sum[0] / n, sum[1] / n, sum[2] / n);
+    // 0xFF is the "no colour" marker, so a white average steps down one.
+    Some((((r >> 5) << 5) | ((g >> 5) << 2) | (b >> 6)).min(0xFE) as u8)
+}
+
+/// RGB332 shard colour of a func_breakable / func_pushable, from its `gibmodel`
+/// (or its material's stock model); 0xFF when the model cannot be read.
+fn breakable_gib_color(block: &str, material: u16) -> u8 {
+    let key = ent_value(block, "gibmodel")
+        .map(|v| v.trim().trim_start_matches('/').to_ascii_lowercase())
+        .filter(|v| !v.is_empty())
+        .or_else(|| default_gib_model(material).map(str::to_string));
+    let Some(key) = key else {
+        return u8::MAX;
+    };
+    if let Some(&c) = GIB_COLORS.with(|c| c.borrow().get(&key).copied()).as_ref() {
+        return c;
+    }
+    let color = GIB_VALVE_DIR
+        .with(|d| d.borrow().clone())
+        .and_then(|dir| std::fs::read(dir.join(&key)).ok())
+        .and_then(|bytes| mdl_mean_rgb332(&bytes))
+        .unwrap_or(u8::MAX);
+    GIB_COLORS.with(|c| c.borrow_mut().insert(key, color));
+    color
+}
+
+/// CBreakable::KeyValue's material: the Materials enum, wood when out of range.
+fn breakable_material(block: &str) -> u16 {
+    let i = parse_f32_key(block, "material", 0.0).round() as i32;
+    if (0..=9).contains(&i) {
+        i as u16
+    } else {
+        1
+    }
+}
 
 fn ordinal_sound<'a>(block: &str, key: &str, table: &'a [&str]) -> &'a str {
     let ordinal = ent_value(block, key)
@@ -7701,7 +7886,9 @@ fn collect_logic_entities_with_lightstyles(
             "func_pushable" => continue,
             "trigger_teleport" => LOGIC_TRIGGER_TELEPORT,
             "trigger_push" | "func_conveyor" => LOGIC_TRIGGER_PUSH,
-            "trigger_gravity" => LOGIC_TRIGGER_GRAVITY,
+            // func_friction is a SOLID_TRIGGER volume like trigger_gravity: the same
+            // record, flagged LOGIC_GRAVITY_FRICTION, carries the friction fraction.
+            "trigger_gravity" | "func_friction" => LOGIC_TRIGGER_GRAVITY,
             "func_healthcharger" => LOGIC_HEALTH_CHARGER,
             "func_recharge" => LOGIC_HEV_CHARGER,
             "monstermaker" => LOGIC_MONSTERMAKER,
@@ -7969,6 +8156,9 @@ fn collect_logic_entities_with_lightstyles(
             // firerate = shots/sec -> cooldown ticks at the 20Hz sim (min 2).
             let rate = parse_f32_key(block, "firerate", 1.0).max(0.1);
             (20.0 / rate).round().clamp(2.0, 60.0) as u16
+        } else if kind == LOGIC_FUNC_BREAKABLE {
+            // CBreakable's explodemagnitude: Die() blasts with it when positive.
+            parse_f32_key(block, "explodemagnitude", 0.0).clamp(0.0, 1000.0) as u16
         } else if kind == LOGIC_FUNC_PENDULUM {
             let authored = parse_f32_key(block, "speed", speed_default);
             (if authored > 0.0 {
@@ -8048,14 +8238,21 @@ fn collect_logic_entities_with_lightstyles(
             // half-second semaphore interval. Store the effective pulse so the
             // fixed 20 Hz runtime does not deal twice GoldSrc's authored damage.
             // A negative dmg heals by its magnitude (LOGIC_TRIGGER_HURT_HEALS).
-            LOGIC_TRIGGER_HURT => (ent_value(block, "damage")
-                .or_else(|| ent_value(block, "dmg"))
-                .and_then(|v| v.parse::<f32>().ok())
-                .unwrap_or(10.0)
-                .abs()
-                * 0.5)
-                .round()
-                .clamp(1.0, u16::MAX as f32) as u16,
+            // CBasePlayer::TakeDamage casts the damage to int, so a pulse of
+            // 12.5 hurts for 12; a heal keeps its fraction.
+            LOGIC_TRIGGER_HURT => {
+                let dmg = ent_value(block, "damage")
+                    .or_else(|| ent_value(block, "dmg"))
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(10.0);
+                let pulse = dmg.abs() * 0.5;
+                (if dmg < 0.0 {
+                    pulse.round()
+                } else {
+                    pulse.floor()
+                })
+                .clamp(0.0, u16::MAX as f32) as u16
+            }
             LOGIC_FUNC_TRACKTRAIN => (parse_f32_key(block, "startspeed", 0.0) / scale)
                 .round()
                 .clamp(0.0, u16::MAX as f32) as u16,
@@ -8068,7 +8265,10 @@ fn collect_logic_entities_with_lightstyles(
             // Stable cross-map identity for CBasePlatTrain's global
             // overlay. func_train otherwise leaves arg0 unused.
             LOGIC_FUNC_TRAIN => actor_carry_id(ent_value(block, "globalname").unwrap_or(""), true),
-            LOGIC_FUNC_BREAKABLE => parse_f32_key(block, "health", 20.0)
+            // CBreakable keeps the authored health as is (an absent key is
+            // 0): the first hit takes it to <= 0 and breaks it. One point of
+            // health breaks on any damage of at least one, the same.
+            LOGIC_FUNC_BREAKABLE => parse_f32_key(block, "health", 0.0)
                 .round()
                 .clamp(1.0, u16::MAX as f32) as u16,
             // CFuncRotating::KeyValue converts this authored percentage
@@ -8084,6 +8284,12 @@ fn collect_logic_entities_with_lightstyles(
                 .abs()
                 .round()
                 .clamp(1.0, u16::MAX as f32) as u16,
+            // CFrictionModifier::KeyValue: `modifier` is a percentage.
+            LOGIC_TRIGGER_GRAVITY if cls == "func_friction" => {
+                (parse_f32_key(block, "modifier", 100.0) / 100.0 * 4096.0)
+                    .round()
+                    .clamp(0.0, u16::MAX as f32) as u16
+            }
             LOGIC_TRIGGER_GRAVITY => (parse_f32_key(block, "gravity", 1.0) * 4096.0)
                 .round()
                 .clamp(0.0, u16::MAX as f32) as u16,
@@ -8207,9 +8413,9 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
             LOGIC_FUNC_TRACKTRAIN => submodel.unwrap_or(0).min(u16::MAX as usize) as u16,
             LOGIC_FUNC_GUNTARGET => names.id(ent_value(block, "message")),
-            LOGIC_FUNC_BREAKABLE => parse_f32_key(block, "material", 0.0)
-                .round()
-                .clamp(0.0, 7.0) as u16,
+            // CBreakable::KeyValue: 0..9 are the Materials enum (9 = none),
+            // anything else becomes wood.
+            LOGIC_FUNC_BREAKABLE => breakable_material(block),
             // GoldSrc's authored key is m_fMoveTo: 0 = pose in place,
             // 1 = walk, 2 = run, 4/5 = instant. Keep accepting the old
             // misspelling so already-modified/custom maps do not regress.
@@ -8342,12 +8548,12 @@ fn collect_logic_entities_with_lightstyles(
                 (map_audio_id(&voices, map_index, path, true), u8::MAX)
             }
             "func_breakable" | "func_pushable" => {
-                let material = parse_f32_key(block, "material", 0.0)
-                    .round()
-                    .clamp(0.0, 7.0) as usize;
+                let material = breakable_material(block);
                 (
-                    map_audio_id(&voices, map_index, BREAK_SOUNDS[material], false),
-                    u8::MAX,
+                    BREAK_SOUNDS[material as usize]
+                        .map(|name| map_audio_id(&voices, map_index, name, false))
+                        .unwrap_or(u8::MAX),
+                    breakable_gib_color(block, material),
                 )
             }
             "env_spark" | "env_debris" => (
@@ -8377,6 +8583,9 @@ fn collect_logic_entities_with_lightstyles(
         } else {
             0
         };
+        if cls == "func_friction" {
+            record_flags |= LOGIC_GRAVITY_FRICTION;
+        }
         if kind == LOGIC_TRIGGER_HURT {
             const DMG_RADIATION: u32 = 1 << 18;
             let damage_type = ent_value(block, "damagetype")
@@ -9888,6 +10097,39 @@ fn append_monster_loot_slots(
     }
 }
 
+/// CBreakable's `spawnobject` index (the SDK's pSpawnObjects table) as the
+/// pickup prop type of the same item. 0 and unknown indices spawn nothing.
+fn breakable_spawn_kind(index: u16) -> Option<u16> {
+    Some(match index {
+        1 => 4,   // item_battery
+        2 => 48,  // item_healthkit
+        3 => 27,  // weapon_9mmhandgun
+        4 => 40,  // ammo_9mmclip
+        5 => 29,  // weapon_9mmAR
+        6 => 41,  // ammo_9mmAR
+        7 => 47,  // ammo_ARgrenades
+        8 => 30,  // weapon_shotgun
+        9 => 42,  // ammo_buckshot
+        10 => 31, // weapon_crossbow
+        11 => 44, // ammo_crossbow
+        12 => 28, // weapon_357
+        13 => 43, // ammo_357
+        14 => 32, // weapon_rpg
+        15 => 45, // ammo_rpgclip
+        16 => 46, // ammo_gaussclip
+        17 => 36, // weapon_handgrenade
+        18 => 38, // weapon_tripmine
+        19 => 39, // weapon_satchel
+        20 => 37, // weapon_snark
+        21 => 35, // weapon_hornetgun
+        _ => return None,
+    })
+}
+
+/// Loot slots of a breakable are owned by `BREAKABLE_LOOT_KEY | submodel`
+/// (monster slots use their actor's index + 1, always far below it).
+const BREAKABLE_LOOT_KEY: u16 = 0x4000;
+
 /// Point entities that place an actor/item. The final word is a stable carry id
 /// (targetname hash, or globalname hash with bit 15 set); it occupies PropRec's
 /// existing padding and therefore does not grow map data.
@@ -10263,6 +10505,39 @@ fn collect_props(
                         monster_loot_types(mt, block),
                     );
                 }
+                continue;
+            }
+            // CBreakable::Die creates its spawnobject at the brush's centre
+            // (VecBModelOrigin). Cook the item as a dormant slot that the
+            // breakable releases when it shatters.
+            "func_breakable" => {
+                let (Some(kind), Some(submodel)) = (
+                    ent_value(block, "spawnobject")
+                        .and_then(|v| v.trim().parse::<u16>().ok())
+                        .and_then(breakable_spawn_kind),
+                    block_model(block),
+                ) else {
+                    continue;
+                };
+                let Some((mins, maxs)) = model_bounds_hl(models, submodel) else {
+                    continue;
+                };
+                let origin_hl = ent_value(block, "origin")
+                    .and_then(parse_vec3)
+                    .unwrap_or([0.0; 3]);
+                let centre_hl = [
+                    (mins[0] + maxs[0]) * 0.5 + origin_hl[0],
+                    (mins[1] + maxs[1]) * 0.5 + origin_hl[1],
+                    (mins[2] + maxs[2]) * 0.5 + origin_hl[2],
+                ];
+                out.push((
+                    kind | LOOT_SLOT_FLAGS,
+                    to_world(centre_hl, scale),
+                    0,
+                    point_leaf(centre_hl, nodes, planes),
+                    BREAKABLE_LOOT_KEY | submodel.min(0x3fff) as u16,
+                    0,
+                ));
                 continue;
             }
             _ => continue,
@@ -11393,6 +11668,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // brush models retain the established loop/raw paths and entity projection
     // cache; liquids retain their coplanar ordering fallback.
     let mut face_native_patch = vec![false; n_faces];
+    let mut face_affine_candidate_texture = vec![false; n_faces];
     // Masked-cutout faces (grate/fence "{" textures) with solid brushwork close
     // behind them. Only these take the runtime cutout OT pull-forward: a grate
     // must win the painter tie against the slabs it overlays, while a
@@ -11863,7 +12139,46 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let cand_quality = cand_world_span >= AFFINE_QUALITY_MIN_WORLD_SPAN
             && cand_uv_span >= AFFINE_QUALITY_MIN_UV_SPAN;
         face_affine_quality[f] = cand_quality && cand_uv_max <= 255.0;
-        face_affine_candidate[f] = native_patch && (cand_uv_max > 255.0 || cand_quality);
+        // Light-sample vertices: a large face whose base lightmap varies a lot
+        // across its span is cut on a finer grid and each new vertex samples
+        // the lightmap, so the lighting is not reduced to the face corners.
+        let mut light_sampler: Option<LightSampler> = None;
+        let mut light_score = 0u64;
+        if native_patch
+            && lightofs >= 0
+            && style0 != 0xFF
+            && lmw * lmh >= LIGHT_REFINE_MIN_LUXELS
+            && cand_world_span >= AFFINE_QUALITY_MIN_WORLD_SPAN
+        {
+            let mut lum_min = i32::MAX;
+            let mut lum_max = i32::MIN;
+            for i in 0..lmw * lmh {
+                let o = lightofs as usize + i * 3;
+                if let Some(px) = lighting.get(o..o + 3) {
+                    let l = (px[0] as i32 + px[1] as i32 + px[2] as i32) / 3;
+                    lum_min = lum_min.min(l);
+                    lum_max = lum_max.max(l);
+                }
+            }
+            let contrast = lum_max - lum_min;
+            if lum_max >= lum_min && contrast >= LIGHT_REFINE_MIN_CONTRAST {
+                light_score = contrast as u64 * (lmw * lmh) as u64;
+                light_sampler = Some(LightSampler {
+                    lightofs,
+                    style0,
+                    lit_layers: lit_layers.clone(),
+                    lmw,
+                    lmh,
+                    mins_s,
+                    mins_t,
+                    scale: (ow as f32 / fw, oh as f32 / fh),
+                    shift: (shu, shv),
+                });
+            }
+        }
+        face_affine_candidate_texture[f] = native_patch && (cand_uv_max > 255.0 || cand_quality);
+        face_affine_candidate[f] =
+            native_patch && (cand_uv_max > 255.0 || cand_quality || light_sampler.is_some());
         // Preserve the ordered source polygon until the tessellation decision.
         // Large opaque faces are clipped into UV-aligned cells; only untouched
         // faces use the compact source fan.
@@ -11896,7 +12211,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let proximity_boost =
             affine_proximity_boost(face_center[f], face_extent[f], &affine_traversal_samples);
         let detail_boost = affine_texture_detail_boost(&tex_names[tex_id]);
-        let grid_step = if face_affine_quality[f] {
+        let grid_step = if light_sampler.is_some() && !face_affine_candidate_texture[f] {
+            LIGHT_REFINE_GRID
+        } else if face_affine_quality[f] {
             UV_GRID_QUALITY
         } else if world_span >= UV_GRID_FINE_WORLD_SPAN || uv_span >= UV_GRID_FINE_TEXEL_SPAN {
             UV_GRID_FINE
@@ -11910,6 +12227,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             let risk =
                 (world_span as u64).saturating_mul((uv_span.max(0.0) * 256.0).round() as u64);
             pending_affine_faces.push(PendingAffineFace {
+                texture_needed: face_affine_candidate_texture[f],
+                light: light_sampler,
+                light_score,
                 face: f,
                 risk,
                 priority: 0,
@@ -11949,6 +12269,10 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let tex_before = tri_tex.len();
         let uv_before = tri_uv.len();
         let rgb_before = tri_rgb.len();
+        let sampler = pending
+            .light
+            .as_ref()
+            .map(|l| move |uv: (f32, f32)| l.sample(lighting, uv));
         let result = emit_uv_grid_poly(
             &pending.source,
             pending.tex_id,
@@ -11958,6 +12282,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             &mut tri_tex,
             &mut tri_uv,
             &mut tri_rgb,
+            sampler
+                .as_ref()
+                .map(|f| f as &dyn Fn((f32, f32)) -> (u8, u8, u8)),
         );
         let emitted = tri_tex.len().saturating_sub(tex_before);
         pending.estimated_added_tris = if result.is_some() {
@@ -11977,11 +12304,19 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         tri_rgb.truncate(rgb_before);
     }
     pending_affine_faces.sort_unstable_by(|a, b| {
-        b.priority
-            .cmp(&a.priority)
+        // Texture-warp faces are cut first so light-sample refinement only
+        // spends the triangles they leave under the per-map grid ceiling.
+        let a_light_only = a.light.is_some() && !a.texture_needed;
+        let b_light_only = b.light.is_some() && !b.texture_needed;
+        a_light_only
+            .cmp(&b_light_only)
+            .then_with(|| b.priority.cmp(&a.priority))
             .then_with(|| b.risk.cmp(&a.risk))
+            .then_with(|| b.light_score.cmp(&a.light_score))
             .then_with(|| a.face.cmp(&b.face))
     });
+    let mut light_added_tris = 0usize;
+    let mut light_faces = 0usize;
     for pending in pending_affine_faces {
         let f = pending.face;
         let first_tri = tri_idx.len() / 3;
@@ -11991,6 +12326,10 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let tex_before = tri_tex.len();
         let uv_before = tri_uv.len();
         let rgb_before = tri_rgb.len();
+        let sampler = pending
+            .light
+            .as_ref()
+            .map(|l| move |uv: (f32, f32)| l.sample(lighting, uv));
         let grid_result = emit_uv_grid_poly(
             &pending.source,
             pending.tex_id,
@@ -12000,10 +12339,21 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             &mut tri_tex,
             &mut tri_uv,
             &mut tri_rgb,
+            sampler
+                .as_ref()
+                .map(|f| f as &dyn Fn((f32, f32)) -> (u8, u8, u8)),
         );
         let emitted_grid_tris = tri_tex.len().saturating_sub(tex_before);
         let added = emitted_grid_tris.saturating_sub(pending.source_tris);
+        // Light-sample refinement spends its own per-map triangle budget; a
+        // face that needs the grid for texture warp is not charged against it.
+        let light_only = pending.light.is_some() && !pending.texture_needed;
+        let light_over_budget = light_only
+            && (light_added_tris + added > LIGHT_REFINE_MAX_ADDED_TRIS
+                || grid_added_tris + added > GRID_ADDED_TRIS_CEILING
+                || tri_idx.len() / 3 > LIGHT_REFINE_MAX_MAP_TRIS);
         let grid_accepted = grid_result.is_some()
+            && !light_over_budget
             // A one-cell result is the source polygon with a different
             // triangulation. Storing it as raw records wastes RAM and packets
             // without reducing affine error; keep that face as a compact loop.
@@ -12013,6 +12363,10 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             let stats = grid_result.unwrap();
             for pair_first in &stats.pair_first {
                 grid_cell_pair_first.insert(tex_before + *pair_first);
+            }
+            if pending.light.is_some() {
+                light_added_tris += added;
+                light_faces += 1;
             }
             grid_added_tris += added;
             grid_cells += stats.cells;
@@ -12042,6 +12396,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
 
     let grid_added_verts = verts.len().saturating_sub(grid_base_verts);
     let grid_refined_faces = face_affine_refined.iter().filter(|&&v| v).count();
+    eprintln!("  light-sample vertices: +{light_added_tris} tris, {light_faces} faces");
     eprintln!(
         "  UV cell grid: +{grid_added_verts} verts, +{grid_added_tris} tris, {grid_refined_faces} faces, {grid_cells} cells ({grid_quad_cells} quads, {grid_boundary_tris} boundary tris), {grid_budget_fallbacks} fallbacks"
     );
@@ -12823,6 +13178,11 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             brush_by_submodel[sm] = ei.min(u16::MAX as usize) as u16;
         }
     }
+    let valve_dir = std::path::Path::new(path)
+        .parent()
+        .and_then(|maps| maps.parent())
+        .map(std::path::Path::to_path_buf);
+    GIB_VALVE_DIR.with(|d| *d.borrow_mut() = valve_dir);
     // titles.txt lives beside the maps dir (valve/titles.txt).
     let titles = std::path::Path::new(path)
         .parent()
@@ -12859,6 +13219,32 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     for e in &ents {
         clip_roots.push(e.head);
     }
+    // GoldSrc ducks against each submodel's own hull 3 (32x32x36), so a
+    // crouched player fits holes in doors that the standing hull cannot
+    // (c1a0c's broken elevator-door glass). Cook the hull-3 root of every
+    // door; it rides in bits 16..30 of the record's `head`.
+    let ent_head3_raw: Vec<i32> = ents
+        .iter()
+        .map(|e| {
+            // Doors only: they are the brushes with authored holes a ducked
+            // player passes through, and every other brush's hull 3 would
+            // cost clipnode RAM in the largest maps for nothing.
+            // Only a door whose crouch hull has more structure than its
+            // standing hull (a hole or a step) can let a ducked player through
+            // where a standing one cannot, and only small trees (a large one is a whole
+            // machine, and the RAM left in the biggest maps is about a kilobyte).
+            let hull_nodes = |root: i32| clip_tree_nodes(clipnodes, root);
+            let h3 = model_headnode(models, e.submodel as usize, 3).unwrap_or(0);
+            let h1 = model_headnode(models, e.submodel as usize, 1).unwrap_or(0);
+            if e.head != 0 && e.kind == 1 && hull_nodes(h3) > hull_nodes(h1) && hull_nodes(h3) <= 40
+            {
+                h3
+            } else {
+                0
+            }
+        })
+        .collect();
+    clip_roots.extend(ent_head3_raw.iter().copied());
     let shaped = shaped_brush_triggers(&logic.trigger_models, models, clipnodes, planes);
     if !shaped.is_empty() {
         eprintln!("  shaped brush triggers: {} (hull-1 touch)", shaped.len());
@@ -12879,7 +13265,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let hull1_head = remap_clip_head(hull1_head_raw, &clip_remap);
     let hull3_head = remap_clip_head(hull3_head_raw, &clip_remap);
     let tram_head = remap_clip_head(tram_head_raw, &clip_remap);
-    for e in &mut ents {
+    for (e, &raw3) in ents.iter_mut().zip(ent_head3_raw.iter()) {
         // Head 0 marks a non-solid brush (func_water, passable fans and
         // rotators, NOT_SOLID pendulums). Raw clipnode 0 is the world's
         // hull-1 root, so remapping it gave those brushes a copy of the whole
@@ -12887,6 +13273,12 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         // tested against the player-sized world hull.
         if e.head != 0 {
             e.head = remap_clip_head(e.head, &clip_remap);
+            if raw3 != 0 {
+                let h3 = remap_clip_head(raw3, &clip_remap);
+                if h3 > 0 && h3 < 0x8000 && e.head < 0x8000 {
+                    e.head |= h3 << 16;
+                }
+            }
         }
     }
 
@@ -14432,10 +14824,45 @@ const HMD_FLAG_HITBOXES: u16 = 1 << 4;
 const HMD_FLAG_FRAME_TIMES: u16 = 1 << 5;
 const HMD_FLAG_ALIGNED_MODEL_DATA: u16 = 1 << 6;
 const HMD_FLAG_VERTEX_SOA: u16 = 1 << 7;
+/// `psx_anim_cook::encode_within` with the ladder starting no finer than
+/// `floor`: the smallest rung at or above it whose blob fits `max_bytes`, or the
+/// loosest rung when none does.
+fn hma1_encode_within(
+    sk: &psx_anim_cook::Skeleton,
+    clips: &[&dyn psx_anim_cook::ClipSource],
+    bones: &[usize],
+    max_bytes: usize,
+    floor: f64,
+) -> (psx_anim_cook::Encoded, f64) {
+    let mut last = None;
+    for tolerance in HMA1_TOLERANCE_LADDER.into_iter().filter(|t| *t >= floor) {
+        let encoded =
+            psx_anim_cook::encode(sk, clips, bones, psx_anim_cook::production_opts(tolerance));
+        if encoded.bytes.len() <= max_bytes {
+            return (encoded, tolerance);
+        }
+        last = Some((encoded, tolerance));
+    }
+    last.expect("the tolerance ladder has a rung at or above every floor")
+}
+
 /// Local-space HMA1 tracks replace the pose palette (psx_asset::hmd8).
 const HMD_FLAG_HMA1: u16 = 1 << 8;
 /// Bones one HMA1 pose may decode: game/src/main.rs POSE_SCRATCH_BONES.
 const HMA1_MAX_BONES: usize = 80;
+/// The rungs of `psx_anim_cook::encode_within`'s tolerance ladder (world units).
+const HMA1_TOLERANCE_LADDER: [f64; 13] = [
+    0.25, 0.35, 0.5, 0.7, 1.0, 1.4, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0,
+];
+/// Finest tolerance an actor model's tracks may use, in grid steps of the
+/// actor vertex grid (a quarter of a world unit, so 0.5 is an eighth of a unit
+/// of worst-case vertex error). `encode_within` alone takes the finest rung
+/// that fits the bytes of the palettes the tracks replace, and most actors came
+/// out at 0.25..0.5 while a third of the cooked fleet already sits on rungs of 2
+/// and coarser. Every byte of c2a4e's resident animation is a byte of the world
+/// arena, the fleet's tightest map, so the finest rungs are not worth their
+/// bytes. Viewmodels keep the finest rung.
+const HMA1_NPC_MIN_TOLERANCE: f64 = 0.5;
 const HMD7_RANGE_MOUTH: u8 = 1 << 0;
 const HMD7_RANGE_BYTES: usize = 8;
 const HMD8_AFFINE_BYTES: usize = 20;
@@ -16457,7 +16884,17 @@ fn cook_mdl(
                 psx_anim_cook::encode(&sk, &refs, &bones, psx_anim_cook::production_opts(tol)),
                 tol,
             ),
-            None => psx_anim_cook::encode_within(&sk, &refs, &bones, palette_bytes),
+            None => hma1_encode_within(
+                &sk,
+                &refs,
+                &bones,
+                palette_bytes,
+                if camera_locked {
+                    0.0
+                } else {
+                    HMA1_NPC_MIN_TOLERANCE
+                },
+            ),
         };
         eprintln!(
             "[hma1] {}: {} B tracks (tolerance {tol}) replacing {palette_bytes} B of palettes",
@@ -17968,6 +18405,49 @@ mod tests {
         // the authored damage each pulse.
         assert_eq!(logic.ents[0].arg0, 6);
         assert_eq!(logic.names[logic.ents[0].target as usize - 1], "acid_alarm");
+    }
+
+    #[test]
+    fn trigger_hurt_pulse_truncates_like_the_players_int_damage() {
+        let cook = |dmg: &str| {
+            let ents = format!(r#"{{ "classname" "trigger_hurt" "damage" "{dmg}" }}"#);
+            collect_logic_entities(
+                ents.as_bytes(),
+                &[],
+                &[],
+                1.0,
+                &Default::default(),
+                &Default::default(),
+            )
+            .expect("logic cook")
+            .ents[0]
+                .arg0
+        };
+        assert_eq!(cook("25"), 12, "12.5 per pulse hurts for 12");
+        assert_eq!(cook("3"), 1, "1.5 per pulse hurts for 1");
+        assert_eq!(cook("1"), 0, "0.5 per pulse hurts for nothing");
+        assert_eq!(cook("-25"), 13, "a heal keeps its rounded fraction");
+    }
+
+    #[test]
+    fn func_friction_cooks_as_a_flagged_gravity_volume() {
+        let ents = br#"{ "classname" "func_friction" "modifier" "5" }"#;
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
+        assert_eq!(logic.ents.len(), 1);
+        assert_eq!(logic.ents[0].kind, LOGIC_TRIGGER_GRAVITY);
+        assert_eq!(
+            logic.ents[0].flags & LOGIC_GRAVITY_FRICTION,
+            LOGIC_GRAVITY_FRICTION
+        );
+        assert_eq!(logic.ents[0].arg0, 205, "5% of 4096");
     }
 
     #[test]
@@ -20232,6 +20712,66 @@ mod tests {
     }
 
     #[test]
+    fn gib_model_mean_colour_reads_the_texture_palette() {
+        // one 2x1 texture: palette index 1 (200, 100, 0) twice, index 255 masked out
+        let mut mdl = vec![0u8; 190];
+        mdl[0..4].copy_from_slice(b"IDST");
+        mdl[180..184].copy_from_slice(&1u32.to_le_bytes());
+        mdl[184..188].copy_from_slice(&200u32.to_le_bytes());
+        let mut tex = vec![0u8; 80];
+        tex[64..68].copy_from_slice(&0x40u32.to_le_bytes());
+        tex[68..72].copy_from_slice(&3u32.to_le_bytes());
+        tex[72..76].copy_from_slice(&1u32.to_le_bytes());
+        tex[76..80].copy_from_slice(&300u32.to_le_bytes());
+        mdl.resize(200, 0);
+        mdl.extend(tex);
+        mdl.resize(300, 0);
+        mdl.extend([1u8, 1, 255]);
+        let mut palette = vec![0u8; 768];
+        palette[3..6].copy_from_slice(&[200, 100, 0]);
+        mdl.extend(palette);
+        // 200 -> 6 (110b), 100 -> 3 (011b), 0 -> 0
+        assert_eq!(mdl_mean_rgb332(&mdl), Some((6 << 5) | (3 << 2)));
+        assert_eq!(mdl_mean_rgb332(b"nope"), None);
+    }
+
+    #[test]
+    fn breakable_cooks_goldsrc_material_health_and_explosion_magnitude() {
+        let ents = br#"
+        { "classname" "func_breakable" "model" "*1" "material" "8" }
+        { "classname" "func_breakable" "model" "*1" "material" "9" "health" "40"
+          "explodemagnitude" "120" }
+        { "classname" "func_breakable" "model" "*1" "material" "12" "health" "0" }
+        { "classname" "func_breakable" "model" "*1" "material" "7" "health" "30" }
+        "#;
+        let brushes = [LOGIC_BRUSH_NONE, 7];
+        let cooked = collect_logic_entities(
+            ents,
+            &[],
+            &brushes,
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("breakable cook");
+        assert_eq!(cooked.ents.len(), 4);
+        // rocks stay rocks (they were clamped to the unbreakable glass id 7)
+        assert_eq!(cooked.ents[0].arg1, 8);
+        // no health key is health 0: any damage breaks it, as one point does
+        assert_eq!(cooked.ents[0].arg0, 1);
+        assert_eq!(cooked.ents[0].speed, 0);
+        assert_eq!(cooked.ents[1].arg1, 9);
+        assert_eq!(cooked.ents[1].arg0, 40);
+        assert_eq!(cooked.ents[1].speed, 120);
+        // a material past the enum is wood, as CBreakable::KeyValue makes it
+        assert_eq!(cooked.ents[2].arg1, 1);
+        assert_eq!(cooked.ents[2].arg0, 1);
+        assert_eq!(cooked.ents[3].arg1, 7);
+        assert_eq!(BREAK_SOUNDS[7], None);
+        assert_eq!(BREAK_SOUNDS[8], Some("debris/bustconcrete1.wav"));
+    }
+
+    #[test]
     fn platrot_keeps_signed_height_and_multi_turn_rotation() {
         let ents = br#"
         {
@@ -20978,6 +21518,7 @@ mod tests {
             &mut tri_tex,
             &mut tri_uv,
             &mut tri_rgb,
+            None,
         )
         .unwrap();
 
@@ -21392,6 +21933,45 @@ mod tests {
             dynamic_lightstyle_slots_for_face(&[0, 36, 37, u8::MAX], &lights),
             ([1, 2, 0], [1, 2, 0])
         );
+    }
+
+    #[test]
+    fn breakable_spawnobject_cooks_a_loot_slot_at_its_centre_owned_by_its_submodel() {
+        let ents = br#"
+        { "classname" "func_breakable" "model" "*1" "spawnobject" "2" }
+        { "classname" "func_breakable" "model" "*1" "spawnobject" "0" }
+        { "classname" "func_breakable" "model" "*1" "spawnobject" "99" }
+        "#;
+        let mut models = vec![0u8; 2 * SZ_MODEL];
+        for (offset, value) in [
+            (0usize, -32.0f32),
+            (4, -16.0),
+            (8, 0.0),
+            (12, 32.0),
+            (16, 16.0),
+            (20, 64.0),
+        ] {
+            let at = SZ_MODEL + offset;
+            models[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let props = collect_props(
+            ents,
+            &[],
+            &[],
+            &models,
+            1.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+        );
+        assert_eq!(
+            props.len(),
+            1,
+            "only a known, nonzero spawnobject cooks a slot"
+        );
+        let (ty, origin, _, _, name, _) = props[0];
+        assert_eq!(ty, 48 | LOOT_SLOT_FLAGS, "item_healthkit, dormant loot");
+        assert_eq!(name, BREAKABLE_LOOT_KEY | 1);
+        assert_eq!(origin, to_world([0.0, 0.0, 32.0], 1.0), "bounds centre");
     }
 
     #[test]
