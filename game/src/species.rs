@@ -339,6 +339,20 @@ unsafe fn tick_zombie(
                 health,
                 armor,
             );
+            if target == PROP_TARGET_PLAYER {
+                // Each claw throws the player 5 units per tick away from the zombie; the
+                // first claw also to the zombie's left, the second to its right.
+                let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
+                let side = if t & 64 != 0 {
+                    0
+                } else if done == 12 {
+                    -5
+                } else {
+                    5
+                };
+                let len = isqrt_i32(dx * dx + dz * dz).max(1);
+                KNOCK = [(dx * 5 + dz * side) / len, 0, (dz * 5 - dx * side) / len];
+            }
             // The claws land with claw_strike; the second swipe of a bout (or
             // the lone heavy one) adds the zombie's roar.
             if setpiece_sfx::has(SP::ZO_CLAW) {
