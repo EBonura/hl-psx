@@ -6904,8 +6904,7 @@ unsafe fn logic_breakable_touch(
         return;
     }
     if rec.spawnflags & SF_BREAK_TOUCH != 0 {
-        let v = PLAYER_APPROACH_SPEED;
-        if v >= LOGIC_BREAK_HP[li] as i32 * 5 {
+        if logic_state::breakable_breaks_on_touch(PLAYER_APPROACH_SPEED, LOGIC_BREAK_HP[li]) {
             shatter_breakable(m, nlogic, nents, li, rec, now, 0);
             return;
         }
