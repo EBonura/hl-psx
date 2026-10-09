@@ -17,51 +17,50 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Sk {
-    // Monster attacks.
+    // Read by the game at run time: the cooked table holds exactly these columns.
     HeadcrabBite,
+    /// The baby headcrab scales the headcrab's bite.
     BabyHeadcrabBite,
     ZombieSlash,
     ZombieBothSlash,
     HoundeyeBlast,
     SquidSpit,
     SquidBite,
-    SquidWhip,
     SlaveZap,
     SlaveClaw,
-    SlaveClawRake,
-    AgruntPunch,
     Hornet,
     ControllerBall,
-    ControllerZap,
     IchthyosaurShake,
     GargFire,
     GargSlash,
     GargStomp,
     SnarkBite,
-    LeechBite,
-    HgruntKick,
-    BigMommaSlash,
-    BigMommaBlast,
-    NihilanthZap,
-    // Monster bullets (FireBullets maps the three monster bullet types).
     Bullet9mm,
     Bullet9mmAr,
     Bullet12mm,
-    /// `sk_monster_head`: the multiplier on a hit to an actor's head.
-    MonsterHead,
-    // Large health pools that the u8 actor health only stands for.
     GargHealth,
     ApacheHealth,
     IchthyosaurHealth,
     NihilanthHealth,
+    NihilanthZap,
     /// `sk_bigmomma_health_factor` in Q8 (the info_bigmomma nodes scale by it).
     BigMommaFactorQ8,
-    // Pickups and chargers.
     HealthKit,
     Battery,
     HealthCharger,
     SuitCharger,
-    // The player's weapons (the same at every difficulty in a stock cfg).
+    /// `sk_monster_head`: the multiplier on a hit to an actor's head.
+    MonsterHead,
+    // Cvars the port does not read (yet) and the player's weapons, which the
+    // arsenal table carries: audited by the host parity test, never cooked.
+    SquidWhip,
+    SlaveClawRake,
+    AgruntPunch,
+    ControllerZap,
+    LeechBite,
+    HgruntKick,
+    BigMommaSlash,
+    BigMommaBlast,
     PlrCrowbar,
     Plr9mm,
     Plr357,
@@ -79,51 +78,52 @@ pub enum Sk {
     PlrTripmine,
 }
 
-/// Number of [`Sk`] columns in the cooked table.
+/// Number of [`Sk`] variants.
 pub const SK_COUNT: usize = Sk::PlrTripmine as usize + 1;
+/// Columns of the cooked table: the variants the game reads at run time.
+pub const SK_RUNTIME: usize = Sk::MonsterHead as usize + 1;
 
 /// The cvar each [`Sk`] reads and its scale in thousandths, in discriminant
 /// order (checked by the host test).
 pub const SK_KEYS: [(Sk, &str, u32); SK_COUNT] = [
     (Sk::HeadcrabBite, "sk_headcrab_dmg_bite", 1000),
-    // CBabyCrab scales the headcrab's bite.
     (Sk::BabyHeadcrabBite, "sk_headcrab_dmg_bite", 300),
     (Sk::ZombieSlash, "sk_zombie_dmg_one_slash", 1000),
     (Sk::ZombieBothSlash, "sk_zombie_dmg_both_slash", 1000),
     (Sk::HoundeyeBlast, "sk_houndeye_dmg_blast", 1000),
     (Sk::SquidSpit, "sk_bullsquid_dmg_spit", 1000),
     (Sk::SquidBite, "sk_bullsquid_dmg_bite", 1000),
-    (Sk::SquidWhip, "sk_bullsquid_dmg_whip", 1000),
     (Sk::SlaveZap, "sk_islave_dmg_zap", 1000),
     (Sk::SlaveClaw, "sk_islave_dmg_claw", 1000),
-    (Sk::SlaveClawRake, "sk_islave_dmg_clawrake", 1000),
-    (Sk::AgruntPunch, "sk_agrunt_dmg_punch", 1000),
     (Sk::Hornet, "sk_hornet_dmg", 1000),
     (Sk::ControllerBall, "sk_controller_dmgball", 1000),
-    (Sk::ControllerZap, "sk_controller_dmgzap", 1000),
     (Sk::IchthyosaurShake, "sk_ichthyosaur_shake", 1000),
     (Sk::GargFire, "sk_gargantua_dmg_fire", 1000),
     (Sk::GargSlash, "sk_gargantua_dmg_slash", 1000),
     (Sk::GargStomp, "sk_gargantua_dmg_stomp", 1000),
     (Sk::SnarkBite, "sk_snark_dmg_bite", 1000),
-    (Sk::LeechBite, "sk_leech_dmg_bite", 1000),
-    (Sk::HgruntKick, "sk_hgrunt_kick", 1000),
-    (Sk::BigMommaSlash, "sk_bigmomma_dmg_slash", 1000),
-    (Sk::BigMommaBlast, "sk_bigmomma_dmg_blast", 1000),
-    (Sk::NihilanthZap, "sk_nihilanth_zap", 1000),
     (Sk::Bullet9mm, "sk_9mm_bullet", 1000),
     (Sk::Bullet9mmAr, "sk_9mmAR_bullet", 1000),
     (Sk::Bullet12mm, "sk_12mm_bullet", 1000),
-    (Sk::MonsterHead, "sk_monster_head", 1000),
     (Sk::GargHealth, "sk_gargantua_health", 1000),
     (Sk::ApacheHealth, "sk_apache_health", 1000),
     (Sk::IchthyosaurHealth, "sk_ichthyosaur_health", 1000),
     (Sk::NihilanthHealth, "sk_nihilanth_health", 1000),
+    (Sk::NihilanthZap, "sk_nihilanth_zap", 1000),
     (Sk::BigMommaFactorQ8, "sk_bigmomma_health_factor", 256_000),
     (Sk::HealthKit, "sk_healthkit", 1000),
     (Sk::Battery, "sk_battery", 1000),
     (Sk::HealthCharger, "sk_healthcharger", 1000),
     (Sk::SuitCharger, "sk_suitcharger", 1000),
+    (Sk::MonsterHead, "sk_monster_head", 1000),
+    (Sk::SquidWhip, "sk_bullsquid_dmg_whip", 1000),
+    (Sk::SlaveClawRake, "sk_islave_dmg_clawrake", 1000),
+    (Sk::AgruntPunch, "sk_agrunt_dmg_punch", 1000),
+    (Sk::ControllerZap, "sk_controller_dmgzap", 1000),
+    (Sk::LeechBite, "sk_leech_dmg_bite", 1000),
+    (Sk::HgruntKick, "sk_hgrunt_kick", 1000),
+    (Sk::BigMommaSlash, "sk_bigmomma_dmg_slash", 1000),
+    (Sk::BigMommaBlast, "sk_bigmomma_dmg_blast", 1000),
     (Sk::PlrCrowbar, "sk_plr_crowbar", 1000),
     (Sk::Plr9mm, "sk_plr_9mm_bullet", 1000),
     (Sk::Plr357, "sk_plr_357_bullet", 1000),
