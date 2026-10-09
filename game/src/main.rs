@@ -24059,7 +24059,7 @@ unsafe fn emit_soft_quad_split(
     #[cfg(feature = "order-trace")]
     let traced_kind = order_trace::set_kind(5);
     let far = q[0].v[2].max(q[1].v[2]).max(q[2].v[2]).max(q[3].v[2]);
-    KEY_MIN = world_order_key(ordering::PrimitiveDepths::quad(far, far, far, far), false) as i32;
+    KEY_MIN = ((far.max(1) >> ordering::OT_SHIFT) + KEY_BIAS).clamp(1, OT_LEN as i32 - 1);
     emit_cv_flat(packets, [&q[0], &q[1], &q[2]], mat, np);
     emit_cv_flat(packets, [&q[1], &q[3], &q[2]], mat, np);
     KEY_MIN = 0;
