@@ -1970,7 +1970,8 @@ const _: () = assert!(VM_MAX_SLOTS + 12 <= VM_SLOTS_TOTAL);
 /// (it used to overlap texture band 1) caps it, so pin the two against each
 /// other here rather than meeting it as a missing texture on a console. The
 /// measured worst case is lower than this sum: 196 map textures (room 20) plus
-/// 165 model-pool textures (c3a2c) are on different maps.
+/// 165 model-pool textures (c3a2c) are on different maps. The sky's one 256
+/// entry palette takes 16 slots, 15 more than the slot it fills counts for.
 const _: () = assert!(
     MAX_TEX_SLOTS
         + POOL_TEX_SLOTS
@@ -1978,6 +1979,7 @@ const _: () = assert!(
         + sprite::MAX_SPRITE_FRAMES
         + sprite::MAX_EXPL_FRAMES
         + 1 // the resident decal texture
+        + 15 // the sky palette's extra slots
         <= vram::CLUT_CAPACITY
 );
 static mut MODEL_RESIDENT_WORDS: usize = MODEL_WORDS;
