@@ -16,10 +16,12 @@
 //! visibility, hitbox, ordering, semantic input and the core ground rules)
 //! live in `psx-goldsrc` and are tested there.
 
-/// Mirrors of the arsenal dimensions the included modules expect from the game
-/// crate root. `constants_match_the_game_crate` fails if these ever drift.
-pub const N_WEAPONS: usize = 14;
-pub const N_AMMO: usize = 13;
+/// The actor roster and arsenal tables, included from the game itself so the
+/// modules below see the real arsenal dimensions and the parity audit reads the
+/// real numbers.
+#[path = "../../../game/src/combat_defs.rs"]
+pub mod combat_defs;
+pub use combat_defs::{N_AMMO, N_WEAPONS};
 
 #[path = "../../../game/src/sfx.rs"]
 pub mod sfx;
@@ -44,38 +46,6 @@ pub mod tram_follower;
 
 #[path = "../../../game/src/render.rs"]
 pub mod render;
-
-#[cfg(test)]
-mod guard {
-    /// The included modules resolve `crate::N_WEAPONS` / `crate::N_AMMO` to this
-    /// crate's copies. If the game crate changes either, the save layout changes
-    /// with it and these tests would silently be exercising a different format,
-    /// so read the real values out of main.rs and compare.
-    #[test]
-    fn constants_match_the_game_crate() {
-        let src = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../game/src/main.rs"
-        ))
-        .expect("game/src/main.rs is readable from the host runner");
-        for (name, ours) in [("N_WEAPONS", super::N_WEAPONS), ("N_AMMO", super::N_AMMO)] {
-            let needle = format!("const {name}: usize = ");
-            let at = src
-                .find(&needle)
-                .unwrap_or_else(|| panic!("{name} not found in game/src/main.rs"));
-            let rest = &src[at + needle.len()..];
-            let end = rest.find(';').expect("constant is terminated");
-            let theirs: usize = rest[..end]
-                .trim()
-                .parse()
-                .unwrap_or_else(|_| panic!("{name} is not a plain integer literal"));
-            assert_eq!(
-                theirs, ours,
-                "{name} drifted: game/src/main.rs says {theirs}, this runner mirrors {ours}"
-            );
-        }
-    }
-}
 
 #[path = "../../../game/src/beverage.rs"]
 pub mod beverage;

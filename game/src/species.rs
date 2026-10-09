@@ -183,7 +183,7 @@ pub(crate) unsafe fn tick_grunt(
             let from = prop_eye(m, pi);
             let dist = isqrt_i32(dist2_3(from, aim));
             let pct = grunt_hit_pct(dist);
-            let dmg = skill_damage(PROP_KIND[pi]).unwrap_or(4);
+            let dmg = skill_hit(Sk::Bullet9mmAr);
             let bullets = if impact_rng().below(4) == 0 { 3 } else { 1 };
             let mut b = 0;
             while b < bullets {
@@ -245,7 +245,7 @@ pub(crate) unsafe fn tick_slave(
     };
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, aim);
-    let beam = skill_damage(PROP_KIND[pi]).unwrap_or(10);
+    let beam = skill_hit(Sk::SlaveZap);
     let casting = PROP_AI_TIMER[pi];
     if casting > 0 {
         // Mid-zap: stand and face the enemy; `ZAP - casting + 1` ticks have run.
@@ -388,7 +388,7 @@ unsafe fn tick_zombie(
             done == 12 || done == 24
         };
         if hit && d2 <= 76 * 76 {
-            let one = skill_damage(PROP_KIND[pi]).unwrap_or(20);
+            let one = skill_hit(Sk::ZombieSlash);
             damage_target(
                 target,
                 if t & 64 != 0 { one * 2 } else { one },
@@ -460,11 +460,11 @@ unsafe fn tick_squid(
         let from = prop_eye(m, pi);
         if t & 32 == 0 && left == 25 {
             let dir = dir_q12(from, aim);
-            spawn_projectile_dir(PROJ_SPIT, skill_damage(7).unwrap_or(10), from, dir, true);
+            spawn_projectile_dir(PROJ_SPIT, skill_hit(Sk::SquidSpit), from, dir, true);
             cue_or(SP::BC_SPIT, sfx::HC_ATTACK, pos);
         } else if t & 32 != 0 && left == 20 && d2 <= 85 * 85 {
             cue(SP::BC_BITE, pos);
-            damage_target(target, skill_damage(75).unwrap_or(25), pos, health, armor);
+            damage_target(target, skill_hit(Sk::SquidWhip), pos, health, armor);
             let dir = dir_q12(pos, aim);
             KNOCK = [(dir[0] * 14) >> 12, 15, (dir[2] * 14) >> 12];
         }
@@ -554,7 +554,7 @@ unsafe fn tick_hound(
                 }
                 qi += 1;
             }
-            let dmg = skill_damage(PROP_TYPE_HOUNDEYE).unwrap_or(15);
+            let dmg = skill_hit(Sk::HoundeyeBlast);
             houndeye_blast(pos, 384, dmg.saturating_mul(pack.clamp(1, 3)));
             sfx::play_world(sfx::HE_BLAST, pos);
         } else if left == 1 {
