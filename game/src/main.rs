@@ -3843,6 +3843,9 @@ static mut TRACKTRAIN_CMD_USE_TYPE: u8 = map::USE_TOGGLE;
 static mut TRACKTRAIN_CMD_SPEED: u16 = 0;
 static mut TRACKTRAIN_USE_SPEED: u16 = 60; // +use drive speed (On A Rail)
 static mut LOGIC_PLAYER_POS: [i32; 3] = [0; 3];
+/// The player's speed (units per tick) this tick or the last, for touch breakables.
+static mut PLAYER_APPROACH_SPEED: i32 = 0;
+static mut PLAYER_LAST_SPEED: i32 = 0;
 static mut SIM_NOW: u16 = 0; // current sim tick, for fire-path logic hooks
 static mut LOGIC_PLAYER_YAW: u16 = 0;
 // Who started the logic chain now running, for CBaseDoor::DoorGoUp's
@@ -6594,6 +6597,9 @@ const SF_TRIGGER_PUSH_START_OFF: u16 = 2; // trigger_push spawns disabled
 const SF_RELAY_FIREONCE: u16 = 1; // trigger_relay removes itself after firing once
 const SF_MULTIMAN_THREAD: u16 = 1; // multi_manager clones concurrent runs in GoldSrc
 const SF_BREAK_TRIGGER_ONLY: u16 = 1; // func_breakable: immune to gunfire
+const BREAK_MATERIAL_NONE: u16 = 9; // GoldSrc matNone: breaks without a sound
+const SF_BREAK_TOUCH: u16 = 2; // func_breakable: breaks when the player runs into it
+const SF_BREAK_PRESSURE: u16 = 4; // func_breakable: breaks when the player stands on it
 const SF_BREAK_CROWBAR: u16 = 256; // func_breakable: one crowbar strike destroys it
 const SF_TRACKTRAIN_NOCONTROL: u16 = 2; // scripted train: +use must not drive/toggle it
 const SF_CHANGELEVEL_USE_ONLY: u16 = 2; // named/target-fired, never Touch()
@@ -6819,6 +6825,10 @@ unsafe fn shatter_breakable(
     if ENT_ACTIVE[ei] == 0 || LOGIC_STATE[li] == LOGIC_STATE_REMOVED {
         return;
     }
+    // CBreakable::Use only dies when IsBreakable(): bulletproof glass stays.
+    if !logic_state::breakable_accepts_damage(rec.arg1) {
+        return;
+    }
     LOGIC_BREAK_HP[li] = 0;
     ENT_ACTIVE[ei] = 0;
     LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
@@ -6834,7 +6844,9 @@ unsafe fn shatter_breakable(
             e.center[2] + off[2],
         ]
     };
-    if rec.sound0 != u8::MAX {
+    if rec.arg1 == BREAK_MATERIAL_NONE {
+        // matNone breaks silently.
+    } else if rec.sound0 != u8::MAX {
         sfx::play_map_world(rec.sound0, sound_pos);
     } else {
         // Legacy cooked rooms had no local material id.
@@ -6855,6 +6867,53 @@ unsafe fn shatter_breakable(
         0,
     );
     logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, depth);
+    if rec.speed != 0 {
+        // CBreakable::Die: ExplosionCreate(Center(), ..., ExplosionMagnitude(),
+        // TRUE), the same blast an env_explosion of that magnitude makes.
+        explode(
+            m,
+            sound_pos,
+            rec.speed.min(255) as u8,
+            rec.speed as i32 * 5 / 2,
+            false,
+        );
+    }
+}
+
+/// CBreakable::BreakTouch for the player. SF_BREAK_TOUCH: running into it at a
+/// speed whose hundredth reaches its health (units per second, so 5 per tick
+/// per point of health) breaks it. SF_BREAK_PRESSURE: standing on its top arms
+/// Die() after its delay (0.1 s when unset). The approach speed is the larger
+/// of this tick's and the last tick's, as the contact clips the velocity.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn logic_breakable_touch(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    li: usize,
+    rec: map::LogicEnt,
+    player_pos: [i32; 3],
+    half_height: i32,
+    now: u16,
+) {
+    if !logic_state::breakable_accepts_damage(rec.arg1)
+        || rec.spawnflags & SF_BREAK_TRIGGER_ONLY != 0
+        || LOGIC_STATE[li] == LOGIC_STATE_WAITING
+    {
+        return;
+    }
+    if rec.spawnflags & SF_BREAK_TOUCH != 0 {
+        let v = PLAYER_APPROACH_SPEED;
+        if v >= LOGIC_BREAK_HP[li] as i32 * 5 {
+            shatter_breakable(m, nlogic, nents, li, rec, now, 0);
+            return;
+        }
+    }
+    if rec.spawnflags & SF_BREAK_PRESSURE != 0 && player_pos[1] - half_height >= rec.maxs[1] - 2 {
+        LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+        LOGIC_NEXT[li] = now.wrapping_add(rec.delay_ticks.max(2));
+    }
 }
 
 /// Damage a brush entity; breakables shatter at 0 HP (vanish, fire targets).
@@ -8252,6 +8311,11 @@ fn logic_player_touch_candidate(rec: map::LogicEnt) -> bool {
             (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0
         }
         map::LOGIC_CDTRACK => rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs,
+        // CBreakable::BreakTouch: run into it, or stand on it.
+        map::LOGIC_FUNC_BREAKABLE => {
+            rec.spawnflags & (SF_BREAK_TOUCH | SF_BREAK_PRESSURE) != 0
+                && (rec.spawnflags & SF_BREAK_TRIGGER_ONLY) == 0
+        }
         _ => false,
     }
 }
@@ -12959,6 +13023,15 @@ unsafe fn logic_touch_triggers(
                 | map::LOGIC_TRIGGER_GRAVITY
                 | map::LOGIC_CDTRACK
                 | map::LOGIC_TRIGGER_ENDSECTION => {}
+                map::LOGIC_FUNC_BREAKABLE => {
+                    // A pressure plate's delayed Die() fires from here.
+                    if LOGIC_STATE[li] == LOGIC_STATE_WAITING && time_reached(now, LOGIC_NEXT[li]) {
+                        let rec = m.logic(li);
+                        shatter_breakable(m, nlogic, nents, li, rec, now, 0);
+                        scan += 1;
+                        continue;
+                    }
+                }
                 _ => {
                     scan += 1;
                     continue;
@@ -12971,7 +13044,7 @@ unsafe fn logic_touch_triggers(
             // short after rounding and never opens c1a1c's door to c1a1d.
             let contact = matches!(
                 LOGIC_KIND[li],
-                map::LOGIC_FUNC_DOOR | map::LOGIC_FUNC_BUTTON
+                map::LOGIC_FUNC_DOOR | map::LOGIC_FUNC_BUTTON | map::LOGIC_FUNC_BREAKABLE
             );
             let (tmins, tmaxs) = if contact {
                 (pmins_contact, pmaxs_contact)
@@ -13044,6 +13117,9 @@ unsafe fn logic_touch_triggers(
                     if rec.targetname == 0 && (rec.spawnflags & SF_DOOR_USE_ONLY) == 0 {
                         logic_activate_door_linked(m, nlogic, nents, li, rec, map::USE_TOGGLE);
                     }
+                }
+                map::LOGIC_FUNC_BREAKABLE => {
+                    logic_breakable_touch(m, nlogic, nents, li, rec, player_pos, half_height, now);
                 }
                 map::LOGIC_TRIGGER_HURT => {
                     if LOGIC_STATE[li] == LOGIC_STATE_BOTTOM {
@@ -20072,7 +20148,7 @@ unsafe fn clear_combat_fx() {
     clear_explosions();
 }
 
-unsafe fn decay_combat_fx() {
+unsafe fn decay_combat_fx(m: &Map) {
     // Particle bursts are transient; bullet/blood MARKS now persist (like HL
     // decals) -- they stay at full colour until the fixed-size ring buffer
     // recycles the oldest, so a wall you shot keeps its holes.
@@ -20084,7 +20160,7 @@ unsafe fn decay_combat_fx() {
         }
         i += 1;
     }
-    tick_debris();
+    tick_debris(m);
     tick_explosions();
 }
 
@@ -21751,20 +21827,40 @@ unsafe fn queue_rpg_spot(
     }
 }
 
-// ---- Transient world debris: shell casings, gibs, sparks -------------------
+// ---- Transient world debris: shell casings, gibs, sparks, break shards ----
 // A small world-space pool: each entry falls under gravity, expires by ttl, and
 // draws as one small coloured rect. Shell casings, death gibs, and env_spark
-// showers all ride it (each just picks a kind + initial velocity).
-const MAX_DEBRIS: usize = 48;
+// showers ride it as before (whole-unit motion kept in 1/16 units). Breakable
+// shards add the physics TE_BREAKMODEL tempents have: world collision with
+// half-speed bounces, a rest on the first flat floor hit, and a fade at the end.
+const MAX_DEBRIS: usize = 96;
+/// Static rect packets for the non-shard kinds (shards use the frame arena).
+const MAX_DEBRIS_RECTS: usize = 48;
 const DEBRIS_CASING: u8 = 0;
 const DEBRIS_GIB: u8 = 1;
 const DEBRIS_SPARK: u8 = 2;
-const DEBRIS_BREAK_BASE: u8 = 3; // + GoldSrc Materials enum (0..6)
+const DEBRIS_BREAK_BASE: u8 = 3; // + GoldSrc Materials enum (0..9)
+/// Kind flag: a break shard (tempent physics, world-OT draw).
+const DEBRIS_SHARD: u8 = 0x40;
+/// Kind flag: the shard came to rest on a floor.
+const DEBRIS_REST: u8 = 0x80;
+const DEBRIS_KIND_MASK: u8 = 0x0f;
+/// Opaque ticks 50..70 (2.5 s + 0..1 s) then a 40 tick fade (2 s).
+const SHARD_FADE_TICKS: u8 = 40;
+/// CL_TempEntUpdate FTENT_SLOWGRAVITY: 400 u/s^2 = 1 unit per tick^2.
+const SHARD_GRAVITY: i16 = 16;
+/// Rest when a floor hit comes in slower than 3 frames of gravity: 120 u/s at
+/// the 20 Hz reference frame = 6 units per tick.
+const SHARD_REST_VY: i32 = 96;
+/// R_BreakModel: one shard per 3*12^2 units^2 of surface, at most 100. The
+/// pool takes 64 so one break leaves room for the next.
+const SHARD_UNIT_AREA: i32 = 3 * 12 * 12;
+const MAX_SHARDS_PER_BREAK: i32 = 64;
 
 #[derive(Clone, Copy)]
 struct Debris {
-    pos: [i32; 3],
-    vel: [i32; 3],
+    pos: [i32; 3], // 1/16 unit
+    vel: [i16; 3], // 1/16 unit per tick
     ttl: u8,
     kind: u8,
 }
@@ -21778,11 +21874,11 @@ impl Debris {
 }
 static mut DEBRIS: [Debris; MAX_DEBRIS] = [Debris::ZERO; MAX_DEBRIS];
 static mut DEBRIS_CURSOR: usize = 0;
-static mut DEBRIS_RECTS: [RectFlat; MAX_DEBRIS] =
-    [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_DEBRIS];
+static mut DEBRIS_RECTS: [RectFlat; MAX_DEBRIS_RECTS] =
+    [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_DEBRIS_RECTS];
 
 #[inline(never)]
-unsafe fn spawn_debris(pos: [i32; 3], vel: [i32; 3], kind: u8, ttl: u8) {
+unsafe fn spawn_debris_fixed(pos: [i32; 3], vel: [i16; 3], kind: u8, ttl: u8) {
     let i = DEBRIS_CURSOR % MAX_DEBRIS;
     DEBRIS[i] = Debris {
         pos,
@@ -21793,11 +21889,28 @@ unsafe fn spawn_debris(pos: [i32; 3], vel: [i32; 3], kind: u8, ttl: u8) {
     DEBRIS_CURSOR = (DEBRIS_CURSOR + 1) % MAX_DEBRIS;
 }
 
-/// GoldSrc CBreakable::Die emits TE_BREAKMODEL with NUM_SHARDS=6 and a
-/// 2.5-second lifetime. Reuse the resident world-debris pool: material lives in
-/// the existing kind byte, so crates gain visible shards without any new RAM.
+/// Whole-unit position and velocity (units per tick), as the casing, gib,
+/// spark and gibshooter callers have always passed them.
+#[inline(never)]
+unsafe fn spawn_debris(pos: [i32; 3], vel: [i32; 3], kind: u8, ttl: u8) {
+    let q = |v: i32| (v << 4).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+    spawn_debris_fixed(
+        [pos[0] << 4, pos[1] << 4, pos[2] << 4],
+        [q(vel[0]), q(vel[1]), q(vel[2])],
+        kind,
+        ttl,
+    );
+}
+
+/// GoldSrc CBreakable::Die emits TE_BREAKMODEL: the client picks a shard count
+/// from the brush's surface area, scatters the shards through its volume with
+/// a +-10 u/s velocity, and lets them live 2.5 to 3.5 seconds, then fade.
 unsafe fn spawn_breakable_shards(rec: map::LogicEnt, live_center: [i32; 3]) {
-    let material = rec.arg1.min(6) as u8;
+    let material = rec.arg1.min(9) as u8;
+    let sx = rec.maxs[0] - rec.mins[0];
+    let sy = rec.maxs[1] - rec.mins[1];
+    let sz = rec.maxs[2] - rec.mins[2];
+    let count = ((sx * sy + sy * sz + sz * sx) / SHARD_UNIT_AREA).clamp(0, MAX_SHARDS_PER_BREAK);
     let authored_center = [
         (rec.mins[0] + rec.maxs[0]) / 2,
         (rec.mins[1] + rec.maxs[1]) / 2,
@@ -21809,7 +21922,7 @@ unsafe fn spawn_breakable_shards(rec: map::LogicEnt, live_center: [i32; 3]) {
         live_center[2] - authored_center[2],
     ];
     let mut shard = 0;
-    while shard < 6 {
+    while shard < count {
         let sample_axis = |lo: i32, hi: i32| -> i32 {
             let span = (hi - lo + 1).max(1);
             lo + (impact_rng().next() as i32).rem_euclid(span)
@@ -21819,14 +21932,20 @@ unsafe fn spawn_breakable_shards(rec: map::LogicEnt, live_center: [i32; 3]) {
             sample_axis(rec.mins[1], rec.maxs[1]) + live_offset[1],
             sample_axis(rec.mins[2], rec.maxs[2]) + live_offset[2],
         ];
-        // TE_BREAKMODEL randomization=10 around a zero base velocity. Bias Y
-        // upward just enough for the six fragments to read as a burst.
+        // TE_BREAKMODEL randomization 10 around a zero velocity: +-10 u/s
+        // sideways, 0..10 u/s up, in 1/16 unit per tick.
         let vel = [
-            (impact_rng().below(21) as i32) - 10,
-            6 + (impact_rng().below(9) as i32),
-            (impact_rng().below(21) as i32) - 10,
+            (impact_rng().below(17) as i16) - 8,
+            impact_rng().below(9) as i16,
+            (impact_rng().below(17) as i16) - 8,
         ];
-        spawn_debris(p, vel, DEBRIS_BREAK_BASE + material, 50);
+        let ttl = 50 + impact_rng().below(21) as u8 + SHARD_FADE_TICKS;
+        spawn_debris_fixed(
+            [p[0] << 4, p[1] << 4, p[2] << 4],
+            vel,
+            DEBRIS_SHARD | (DEBRIS_BREAK_BASE + material),
+            ttl,
+        );
         shard += 1;
     }
 }
@@ -21863,23 +21982,77 @@ unsafe fn clear_debris() {
     DEBRIS_CURSOR = 0;
 }
 
+/// CL_TempEntUpdate for one shard: move, collide with the world (point hull,
+/// brush entities are ignored as PM_WORLD_ONLY does), bounce at half speed or
+/// come to rest on a floor, then apply slow gravity.
+#[inline(never)]
+unsafe fn tick_shard(m: &Map, i: usize) {
+    let d = DEBRIS[i];
+    let mut pos = [
+        d.pos[0] + d.vel[0] as i32,
+        d.pos[1] + d.vel[1] as i32,
+        d.pos[2] + d.vel[2] as i32,
+    ];
+    let mut vel = [d.vel[0] as i32, d.vel[1] as i32, d.vel[2] as i32];
+    let mut kind = d.kind;
+    let from = [d.pos[0] >> 4, d.pos[1] >> 4, d.pos[2] >> 4];
+    let to = [pos[0] >> 4, pos[1] >> 4, pos[2] >> 4];
+    if from != to {
+        if let Some(hit) = phys::trace_line(m, &[], from, to) {
+            let n = hit.normal;
+            // Contact point, lifted 2 units off the plane so the next sweep
+            // does not start on it.
+            pos = [
+                (hit.pos[0] + (n[0] >> 11)) << 4,
+                (hit.pos[1] + (n[1] >> 11)) << 4,
+                (hit.pos[2] + (n[2] >> 11)) << 4,
+            ];
+            if n[1] > 3686 && vel[1] <= 0 && vel[1] >= -SHARD_REST_VY {
+                vel = [0; 3];
+                kind |= DEBRIS_REST;
+            } else {
+                // Reflect, then damp by 0.5: v' = v/2 - (v.n) n.
+                let dot = (vel[0] * n[0] + vel[1] * n[1] + vel[2] * n[2]) >> 12;
+                vel = [
+                    (vel[0] >> 1) - ((dot * n[0]) >> 12),
+                    (vel[1] >> 1) - ((dot * n[1]) >> 12),
+                    (vel[2] >> 1) - ((dot * n[2]) >> 12),
+                ];
+            }
+        }
+    }
+    if kind & DEBRIS_REST == 0 {
+        vel[1] -= SHARD_GRAVITY as i32;
+    }
+    let q = |v: i32| v.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+    DEBRIS[i].pos = pos;
+    DEBRIS[i].vel = [q(vel[0]), q(vel[1]), q(vel[2])];
+    DEBRIS[i].kind = kind;
+}
+
 /// Advance debris one sim tick: gravity + integrate, sparks fly straighter.
-unsafe fn tick_debris() {
+unsafe fn tick_debris(m: &Map) {
     let mut i = 0;
     while i < MAX_DEBRIS {
         if DEBRIS[i].ttl > 0 {
             DEBRIS[i].ttl -= 1;
-            let g = if DEBRIS[i].kind == DEBRIS_SPARK {
-                6
-            } else if DEBRIS[i].kind >= DEBRIS_BREAK_BASE {
-                2 // sv_gravity 800 at the 20 Hz simulation rate
+            if DEBRIS[i].kind & DEBRIS_SHARD != 0 {
+                if DEBRIS[i].kind & DEBRIS_REST == 0 {
+                    tick_shard(m, i);
+                }
             } else {
-                12
-            };
-            DEBRIS[i].vel[1] -= g;
-            DEBRIS[i].pos[0] += DEBRIS[i].vel[0];
-            DEBRIS[i].pos[1] += DEBRIS[i].vel[1];
-            DEBRIS[i].pos[2] += DEBRIS[i].vel[2];
+                let g: i16 = if DEBRIS[i].kind == DEBRIS_SPARK {
+                    6
+                } else if DEBRIS[i].kind >= DEBRIS_BREAK_BASE {
+                    2 // sv_gravity 800 at the 20 Hz simulation rate
+                } else {
+                    12
+                };
+                DEBRIS[i].vel[1] -= g << 4;
+                DEBRIS[i].pos[0] += DEBRIS[i].vel[0] as i32;
+                DEBRIS[i].pos[1] += DEBRIS[i].vel[1] as i32;
+                DEBRIS[i].pos[2] += DEBRIS[i].vel[2] as i32;
+            }
         }
         i += 1;
     }
@@ -21891,8 +22064,9 @@ unsafe fn render_debris<const N: usize>(
     base_t: [i32; 3],
 ) {
     let mut i = 0;
-    while i < MAX_DEBRIS {
-        if DEBRIS[i].ttl > 0 {
+    let mut rect = 0;
+    while i < MAX_DEBRIS && rect < MAX_DEBRIS_RECTS {
+        if DEBRIS[i].ttl > 0 && DEBRIS[i].kind & DEBRIS_SHARD == 0 {
             let (r, g, b, size) = match DEBRIS[i].kind {
                 DEBRIS_CASING => (200u8, 170u8, 80u8, 2i16),
                 DEBRIS_GIB => (150, 20, 15, 3),
@@ -21905,8 +22079,13 @@ unsafe fn render_debris<const N: usize>(
                 8 => (185, 175, 145, 3), // ceiling tile
                 _ => (75, 105, 70, 3),   // computer
             };
-            if let Some((sx, sy, _)) = project_world_point(DEBRIS[i].pos, rot, base_t) {
-                DEBRIS_RECTS[i] = RectFlat::new(
+            let p = [
+                DEBRIS[i].pos[0] >> 4,
+                DEBRIS[i].pos[1] >> 4,
+                DEBRIS[i].pos[2] >> 4,
+            ];
+            if let Some((sx, sy, _)) = project_world_point(p, rot, base_t) {
+                DEBRIS_RECTS[rect] = RectFlat::new(
                     sx - size / 2,
                     sy - size / 2,
                     size as u16,
@@ -21917,12 +22096,69 @@ unsafe fn render_debris<const N: usize>(
                 );
                 ot.resume_frame().add_raw(
                     0,
-                    core::ptr::from_mut(&mut DEBRIS_RECTS[i]).cast(),
+                    core::ptr::from_mut(&mut DEBRIS_RECTS[rect]).cast(),
                     RectFlat::WORDS,
                 );
+                rect += 1;
             }
         }
         i += 1;
+    }
+}
+
+/// Break shards draw into the world's ordering table at their view depth, so
+/// walls and doors hide the ones lying behind them and they stay on the floor
+/// they landed on. The last 40 ticks dissolve by dropping more and more frames.
+unsafe fn queue_shards(
+    packets: &mut PrimitivePacketArena<'_>,
+    ot: &mut OrderingTable<OT_LEN>,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
+    let mut i = 0;
+    while i < MAX_DEBRIS {
+        let d = DEBRIS[i];
+        i += 1;
+        if d.ttl == 0 || d.kind & DEBRIS_SHARD == 0 {
+            continue;
+        }
+        if d.ttl < SHARD_FADE_TICKS
+            && (((i as u32) + SIM_NOW as u32) & 7) >= d.ttl as u32 * 8 / SHARD_FADE_TICKS as u32
+        {
+            continue;
+        }
+        let p = [d.pos[0] >> 4, d.pos[1] >> 4, d.pos[2] >> 4];
+        let Some((sx, sy, vz)) = project_world_point(p, rot, base_t) else {
+            continue;
+        };
+        let (r, g, b) = match d.kind & DEBRIS_KIND_MASK {
+            3 | 10 => (150, 205, 215), // glass, unbreakable glass
+            5 => (150, 155, 160),      // metal
+            6 => (145, 25, 20),        // flesh
+            7 => (115, 115, 105),      // cinder block
+            8 => (185, 175, 145),      // ceiling tile
+            9 => (75, 105, 70),        // computer
+            11 => (105, 95, 85),       // rocks
+            _ => (125, 75, 35),        // wood and untyped
+        };
+        let size: i16 = if vz < 320 { 3 } else { 2 };
+        if let Some(packet) = packets.push(RectFlat::new(
+            sx - size / 2,
+            sy - size / 2,
+            size as u16,
+            size as u16,
+            r,
+            g,
+            b,
+        )) {
+            ot.resume_frame().add_raw(
+                clamp_otz((vz.saturating_sub(4) as usize) >> OT_SHIFT),
+                core::ptr::from_mut(packet).cast(),
+                RectFlat::WORDS,
+            );
+        } else {
+            note_render_packet_drop(false);
+        }
     }
 }
 
@@ -32499,7 +32735,7 @@ fn play(
                 }
             }
             unsafe {
-                decay_combat_fx();
+                decay_combat_fx(&m);
             }
             if pickup_ticks > 0 {
                 pickup_ticks -= 1;
@@ -33968,6 +34204,13 @@ fn play(
                 } else {
                     -1
                 };
+                let speed = isqrt_i32(
+                    player.vel[0] * player.vel[0]
+                        + player.vel[1] * player.vel[1]
+                        + player.vel[2] * player.vel[2],
+                );
+                PLAYER_APPROACH_SPEED = speed.max(PLAYER_LAST_SPEED);
+                PLAYER_LAST_SPEED = speed;
                 logic_touch_triggers(
                     &m,
                     nlogic,
@@ -36168,6 +36411,7 @@ fn play(
             // additive-billboard path as the placed sprites above.
             render_explosions(&mut packets, &mut np, &rot, base_t);
             queue_rpg_spot(&mut packets, world_ot(), &rot, base_t);
+            queue_shards(&mut packets, world_ot(), &rot, base_t);
             if IMPACT_MARKS_LIVE {
                 queue_impact_marks(&m, have_pvs, &mut packets, world_ot(), &rot, base_t);
             }

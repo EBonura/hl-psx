@@ -5047,16 +5047,30 @@ const FAN_SOUNDS: [&str; 6] = [
     "fans/fan4.wav",
     "fans/fan5.wav",
 ];
-const BREAK_SOUNDS: [&str; 8] = [
-    "debris/bustglass1.wav",
-    "debris/bustcrate1.wav",
-    "debris/bustmetal1.wav",
-    "debris/bustflesh1.wav",
-    "debris/bustconcrete1.wav",
-    "debris/bustceiling.wav",
-    "debris/bustmetal1.wav",
-    "debris/bustglass1.wav",
+/// CBreakable::Die's sound per Materials value (none for unbreakable glass,
+/// which never dies, and for matNone).
+const BREAK_SOUNDS: [Option<&str>; 10] = [
+    Some("debris/bustglass1.wav"),
+    Some("debris/bustcrate1.wav"),
+    Some("debris/bustmetal1.wav"),
+    Some("debris/bustflesh1.wav"),
+    Some("debris/bustconcrete1.wav"),
+    Some("debris/bustceiling.wav"),
+    Some("debris/bustmetal1.wav"),
+    None,
+    Some("debris/bustconcrete1.wav"),
+    None,
 ];
+
+/// CBreakable::KeyValue's material: the Materials enum, wood when out of range.
+fn breakable_material(block: &str) -> u16 {
+    let i = parse_f32_key(block, "material", 0.0).round() as i32;
+    if (0..=9).contains(&i) {
+        i as u16
+    } else {
+        1
+    }
+}
 
 fn ordinal_sound<'a>(block: &str, key: &str, table: &'a [&str]) -> &'a str {
     let ordinal = ent_value(block, key)
@@ -8057,6 +8071,9 @@ fn collect_logic_entities_with_lightstyles(
             // firerate = shots/sec -> cooldown ticks at the 20Hz sim (min 2).
             let rate = parse_f32_key(block, "firerate", 1.0).max(0.1);
             (20.0 / rate).round().clamp(2.0, 60.0) as u16
+        } else if kind == LOGIC_FUNC_BREAKABLE {
+            // CBreakable's explodemagnitude: Die() blasts with it when positive.
+            parse_f32_key(block, "explodemagnitude", 0.0).clamp(0.0, 1000.0) as u16
         } else if kind == LOGIC_FUNC_PENDULUM {
             let authored = parse_f32_key(block, "speed", speed_default);
             (if authored > 0.0 {
@@ -8163,7 +8180,10 @@ fn collect_logic_entities_with_lightstyles(
             // Stable cross-map identity for CBasePlatTrain's global
             // overlay. func_train otherwise leaves arg0 unused.
             LOGIC_FUNC_TRAIN => actor_carry_id(ent_value(block, "globalname").unwrap_or(""), true),
-            LOGIC_FUNC_BREAKABLE => parse_f32_key(block, "health", 20.0)
+            // CBreakable keeps the authored health as is (an absent key is
+            // 0): the first hit takes it to <= 0 and breaks it. One point of
+            // health breaks on any damage of at least one, the same.
+            LOGIC_FUNC_BREAKABLE => parse_f32_key(block, "health", 0.0)
                 .round()
                 .clamp(1.0, u16::MAX as f32) as u16,
             // CFuncRotating::KeyValue converts this authored percentage
@@ -8308,9 +8328,9 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
             LOGIC_FUNC_TRACKTRAIN => submodel.unwrap_or(0).min(u16::MAX as usize) as u16,
             LOGIC_FUNC_GUNTARGET => names.id(ent_value(block, "message")),
-            LOGIC_FUNC_BREAKABLE => parse_f32_key(block, "material", 0.0)
-                .round()
-                .clamp(0.0, 7.0) as u16,
+            // CBreakable::KeyValue: 0..9 are the Materials enum (9 = none),
+            // anything else becomes wood.
+            LOGIC_FUNC_BREAKABLE => breakable_material(block),
             // GoldSrc's authored key is m_fMoveTo: 0 = pose in place,
             // 1 = walk, 2 = run, 4/5 = instant. Keep accepting the old
             // misspelling so already-modified/custom maps do not regress.
@@ -8443,11 +8463,11 @@ fn collect_logic_entities_with_lightstyles(
                 (map_audio_id(&voices, map_index, path, true), u8::MAX)
             }
             "func_breakable" | "func_pushable" => {
-                let material = parse_f32_key(block, "material", 0.0)
-                    .round()
-                    .clamp(0.0, 7.0) as usize;
+                let material = breakable_material(block) as usize;
                 (
-                    map_audio_id(&voices, map_index, BREAK_SOUNDS[material], false),
+                    BREAK_SOUNDS[material]
+                        .map(|name| map_audio_id(&voices, map_index, name, false))
+                        .unwrap_or(u8::MAX),
                     u8::MAX,
                 )
             }
@@ -20599,6 +20619,42 @@ mod tests {
         assert_eq!(armed.ents[0].kind, LOGIC_FUNC_BREAKABLE);
         assert_eq!(armed.ents[0].arg0, 15);
         assert_eq!(armed.ents[0].brush, 7);
+    }
+
+    #[test]
+    fn breakable_cooks_goldsrc_material_health_and_explosion_magnitude() {
+        let ents = br#"
+        { "classname" "func_breakable" "model" "*1" "material" "8" }
+        { "classname" "func_breakable" "model" "*1" "material" "9" "health" "40"
+          "explodemagnitude" "120" }
+        { "classname" "func_breakable" "model" "*1" "material" "12" "health" "0" }
+        { "classname" "func_breakable" "model" "*1" "material" "7" "health" "30" }
+        "#;
+        let brushes = [LOGIC_BRUSH_NONE, 7];
+        let cooked = collect_logic_entities(
+            ents,
+            &[],
+            &brushes,
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("breakable cook");
+        assert_eq!(cooked.ents.len(), 4);
+        // rocks stay rocks (they were clamped to the unbreakable glass id 7)
+        assert_eq!(cooked.ents[0].arg1, 8);
+        // no health key is health 0: any damage breaks it, as one point does
+        assert_eq!(cooked.ents[0].arg0, 1);
+        assert_eq!(cooked.ents[0].speed, 0);
+        assert_eq!(cooked.ents[1].arg1, 9);
+        assert_eq!(cooked.ents[1].arg0, 40);
+        assert_eq!(cooked.ents[1].speed, 120);
+        // a material past the enum is wood, as CBreakable::KeyValue makes it
+        assert_eq!(cooked.ents[2].arg1, 1);
+        assert_eq!(cooked.ents[2].arg0, 1);
+        assert_eq!(cooked.ents[3].arg1, 7);
+        assert_eq!(BREAK_SOUNDS[7], None);
+        assert_eq!(BREAK_SOUNDS[8], Some("debris/bustconcrete1.wav"));
     }
 
     #[test]
