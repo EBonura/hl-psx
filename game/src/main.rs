@@ -24678,7 +24678,12 @@ unsafe fn push_blocked_edge_skirts(
             };
             if let Some(packet) = packets.push(prim) {
                 #[cfg(feature = "order-trace")]
-                order_trace::note_packet(3, otz, core::ptr::from_mut(&mut *packet).cast::<u32>(), QuadTexturedGouraud::WORDS);
+                order_trace::note_packet(
+                    3,
+                    otz,
+                    core::ptr::from_mut(&mut *packet).cast::<u32>(),
+                    QuadTexturedGouraud::WORDS,
+                );
                 world_ot().resume_frame().add_raw(
                     otz,
                     core::ptr::from_mut(packet).cast(),
@@ -26337,7 +26342,12 @@ unsafe fn emit_affine_quad_child(
     );
     let packet = push_affine_quad_gt4(packets, q, mat, otz, nq);
     #[cfg(feature = "order-trace")]
-    order_trace::note_packet(4, otz, core::ptr::from_mut(&mut *packet).cast::<u32>(), QuadTexturedGouraud::WORDS);
+    order_trace::note_packet(
+        4,
+        otz,
+        core::ptr::from_mut(&mut *packet).cast::<u32>(),
+        QuadTexturedGouraud::WORDS,
+    );
     world_ot().resume_frame().add_raw(
         otz,
         core::ptr::from_mut(&mut *packet).cast(),
@@ -26435,7 +26445,12 @@ unsafe fn emit_affine_quad_children(
         );
         let packet = push_affine_quad_gt4(packets, c, mat, otz, nq);
         #[cfg(feature = "order-trace")]
-        order_trace::note_packet(5, otz, core::ptr::from_mut(&mut *packet).cast::<u32>(), QuadTexturedGouraud::WORDS);
+        order_trace::note_packet(
+            5,
+            otz,
+            core::ptr::from_mut(&mut *packet).cast::<u32>(),
+            QuadTexturedGouraud::WORDS,
+        );
         world_ot().resume_frame().add_raw(
             otz,
             core::ptr::from_mut(&mut *packet).cast(),
@@ -28289,7 +28304,12 @@ unsafe fn depth_split_underlay(
     let otz = world_order_key(ordering::PrimitiveDepths::quad(far, far, far, far), false);
     let packet = push_affine_quad_gt4(packets, [&q[0], &q[1], &q[2], &q[3]], mat, otz, nq);
     #[cfg(feature = "order-trace")]
-    order_trace::note_packet(7, otz, core::ptr::from_mut(&mut *packet).cast::<u32>(), QuadTexturedGouraud::WORDS);
+    order_trace::note_packet(
+        7,
+        otz,
+        core::ptr::from_mut(&mut *packet).cast::<u32>(),
+        QuadTexturedGouraud::WORDS,
+    );
     world_ot().resume_frame().add_raw(
         otz,
         core::ptr::from_mut(&mut *packet).cast(),
@@ -29649,7 +29669,12 @@ unsafe fn draw_beam_textured(
         };
         if let Some(pk) = packets.push(prim) {
             #[cfg(feature = "order-trace")]
-            order_trace::note_packet(8, otz, core::ptr::from_mut(&mut *pk).cast::<u32>(), TriTexturedGouraud::WORDS);
+            order_trace::note_packet(
+                8,
+                otz,
+                core::ptr::from_mut(&mut *pk).cast::<u32>(),
+                TriTexturedGouraud::WORDS,
+            );
             world_ot().resume_frame().add_raw(
                 otz,
                 core::ptr::from_mut(pk).cast(),
