@@ -24227,11 +24227,13 @@ unsafe fn emit_soft_leaf(
         if p.iter().all(render::in_band) {
             let before = *np;
             for t in [[0usize, 1, 2], [1, 3, 2]] {
-                let (a, b, c) = (p[t[0]], p[t[1]], p[t[2]]);
+                // By reference: three 32-byte SVert copies per triangle lower
+                // to memcpy calls under the sample profile's size mode.
+                let (a, b, c) = (&p[t[0]], &p[t[1]], &p[t[2]]);
                 let cr = (b.x - a.x) as i64 * (c.y - a.y) as i64
                     - (c.x - a.x) as i64 * (b.y - a.y) as i64;
                 if !CULL || cr < 0 {
-                    emit_screen_triangle(packets, &a, &b, &c, mat, false, np);
+                    emit_screen_triangle(packets, a, b, c, mat, false, np);
                 }
             }
             WORLD_AFFINE_SPLIT_TRIS =
