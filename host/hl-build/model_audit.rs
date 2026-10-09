@@ -2312,9 +2312,13 @@ mod tests {
     #[test]
     fn audit_capacities_match_the_runtime_sources() {
         let main = include_str!("../../game/src/main.rs");
+        let defs = include_str!("../../game/src/combat_defs.rs");
         let build = include_str!("../../game/build.rs");
+        assert!(
+            defs.contains("pub const N_MODEL_TYPES: usize = 76;"),
+            "runtime drift: N_MODEL_TYPES"
+        );
         for declaration in [
-            "const N_MODEL_TYPES: usize = 76;",
             "const MAX_LOADED_MODELS: usize = 23;",
             "const POOL_TEX_SLOTS: usize = 176;",
             "const POOL_FACE_CAP: usize = 7936;",
