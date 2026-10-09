@@ -11,5 +11,8 @@ description = "Machine-checked census of the entity classes, keyvalues and spawn
 name = "hl-census"
 path = "src/main.rs"
 
+[dependencies]
+hl-format = { path = "../../shared/hl-format" }
+
 [lib]
 path = "src/lib.rs"

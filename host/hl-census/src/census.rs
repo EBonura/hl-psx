@@ -56,6 +56,8 @@ pub fn flag_item(bit: u32) -> Item {
 pub struct Census {
     pub maps: Vec<String>,
     pub entities: BTreeMap<String, Vec<Ent>>,
+    /// map -> submodel bounds from the BSP models lump
+    pub models: BTreeMap<String, Vec<([f32; 3], [f32; 3])>>,
     /// class -> usage of the class itself
     pub classes: BTreeMap<String, Usage>,
     /// (class, item) -> usage; items are lowercase keys or `flag:<bit value>`
@@ -104,6 +106,11 @@ pub fn load(hl_dir: &Path, maps: &[String]) -> Result<Census, String> {
     for map in maps {
         let path = valve.join("maps").join(format!("{map}.bsp"));
         let ents = load_map(&path)?;
+        if let Ok(bytes) = std::fs::read(&path) {
+            census
+                .models
+                .insert(map.clone(), crate::bsp::model_bounds(&bytes));
+        }
         census.maps.push(map.clone());
         for e in &ents {
             let class = e.class().to_ascii_lowercase();

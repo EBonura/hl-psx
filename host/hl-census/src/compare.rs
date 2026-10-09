@@ -440,6 +440,7 @@ pub fn compare_motion(
 ) -> Vec<MotionRow> {
     let mut rows = Vec::new();
     for (b, r) in retail {
+        let b_key = b;
         let Some(p) = port.get(b) else {
             let (rm, _) = travel(r);
             if rm > tol || swing(r) > 8.0 {
@@ -486,6 +487,32 @@ pub fn compare_motion(
                 });
             }
             continue;
+        }
+        // Where the brush stands at the first sample, before anything fires.
+        if let (Some((_, &(a, _))), Some((_, &(b, _)))) = (r.pos.iter().next(), p.pos.iter().next())
+        {
+            let d = (0..3).map(|i| (a[i] - b[i]).abs()).fold(0.0, f64::max);
+            let rotating = matches!(
+                r.class.as_str(),
+                "func_door_rotating"
+                    | "func_platrot"
+                    | "func_pendulum"
+                    | "func_rot_button"
+                    | "momentary_rot_button"
+            );
+            if d > 16.0 && !rotating {
+                rows.push(MotionRow {
+                    class: r.class.clone(),
+                    name: r.targetname.clone(),
+                    brush: b_key.clone(),
+                    retail_move: d,
+                    port_move: d,
+                    retail_swing: 0.0,
+                    port_swing: 0.0,
+                    flag: format!("START-POS off by {d:.0}"),
+                });
+                continue;
+            }
         }
         let rotates = matches!(
             r.class.as_str(),
