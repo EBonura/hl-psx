@@ -41,6 +41,10 @@ warp-probe = ["psx-goldsrc/warp-probe"]
 # `performance-telemetry`: builds with it measure quality and will not meet the
 # 20 fps scenario gates.
 affine-heatmap = ["performance-telemetry"]
+# Diagnostic build: record every world packet's ordering key, vertex words,
+# key depths and source face in a RAM ring (game/src/order_trace.rs) for the
+# host-side `hlt wokv` join. Not for shipping discs.
+order-trace = []
 # Diagnostic build: tint every world primitive by the emit mechanism that
 # produced it (patch quad / refined child / triangle record / loop face /
 # raw tri). Tints replace the lightmap colour only, so packets, ordering,
