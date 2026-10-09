@@ -24032,8 +24032,12 @@ unsafe fn emit_soft_quad_split(
     // equal bucket the LAST insert draws FIRST (OT insertion prepends).
     let saved_policy = EMIT_POLICY;
     EMIT_POLICY = saved_policy.with_local_depth(false).with_far_key();
+    #[cfg(feature = "order-trace")]
+    let traced_kind = order_trace::set_kind(5);
     emit_cv_flat(packets, [&q[0], &q[1], &q[2]], mat, np);
     emit_cv_flat(packets, [&q[1], &q[3], &q[2]], mat, np);
+    #[cfg(feature = "order-trace")]
+    order_trace::set_kind(traced_kind);
     EMIT_POLICY = saved_policy;
     SOFT_SNAP_N = 0;
     true
@@ -28685,6 +28689,8 @@ unsafe fn emit_world_face(
     // bias are installed together and can never leak independently.
     set_emit_face(m, face, 0);
     if m.face_is_patch(face) {
+        #[cfg(feature = "order-trace")]
+        order_trace::set_cur_face(face, m.face_bounds(face).1);
         emit_world_face_patches(
             packets,
             m,
@@ -35395,6 +35401,8 @@ fn play(
                                         opaque_stream_ready = true;
                                     }
                                     if rec.is_patch() {
+                                        #[cfg(feature = "order-trace")]
+                                        order_trace::set_cur_face(face, m.face_bounds(face).1);
                                         emit_world_face_patches(
                                             &mut packets,
                                             &m,
@@ -35458,6 +35466,8 @@ fn play(
                                         opaque_stream_ready = true;
                                     }
                                     if m.face_is_patch(face) {
+                                        #[cfg(feature = "order-trace")]
+                                        order_trace::set_cur_face(face, m.face_bounds(face).1);
                                         emit_world_face_patches(
                                             &mut packets,
                                             &m,
@@ -35526,6 +35536,8 @@ fn play(
                                         opaque_stream_ready = true;
                                     }
                                     if rec.is_patch() {
+                                        #[cfg(feature = "order-trace")]
+                                        order_trace::set_cur_face(face, m.face_bounds(face).1);
                                         emit_world_face_patches(
                                             &mut packets,
                                             &m,
@@ -35582,6 +35594,8 @@ fn play(
                                         opaque_stream_ready = true;
                                     }
                                     if m.face_is_patch(face) {
+                                        #[cfg(feature = "order-trace")]
+                                        order_trace::set_cur_face(face, m.face_bounds(face).1);
                                         emit_world_face_patches(
                                             &mut packets,
                                             &m,
