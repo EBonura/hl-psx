@@ -108,9 +108,9 @@ pub(crate) unsafe fn tick_grunt(
     // Close-quarters rules (retail Half-Life under Xash3D, profile-ranged.md 9.4): a grunt that
     // finds the enemy within 80 units runs back to 500..600 and shoots from there; the ones
     // that charge (which they are is not cooked yet: every odd actor stands in) fire one burst,
-    // run in to 34 units and kick for 15 then 10. Timer bit 7 flags these modes, bits 5-6 pick
+    // run in until the hulls touch (the retail kick reaches 34) and kick for 15 then 10. Timer bit 7 flags these modes, bits 5-6 pick
     // one (0 backing away, 1 charging, 2 kicking) and bits 0-4 count: pairs of ticks while
-    // backing away, ticks of the kick bout.
+    // backing away or charging, ticks of the kick bout.
     let t = PROP_AI_TIMER[pi];
     let charger = pi & 1 != 0;
     if t & 0x80 != 0 {
@@ -127,10 +127,16 @@ pub(crate) unsafe fn tick_grunt(
                 damage_target(target, if left == 14 { 15 } else { 10 }, pos, health, armor);
             }
         } else if mode == 1 {
-            if d2 <= 40 * 40 {
+            if d2 <= 64 * 64 {
                 PROP_AI_TIMER[pi] = 0x80 | (2 << 5) | 20;
-            } else {
+            } else if left > 0 {
+                if MOVE_TICK & 1 == 0 {
+                    PROP_AI_TIMER[pi] = 0x80 | (1 << 5) | (left - 1);
+                }
                 prop_move_towards_point(m, movers, pi, aim, 15);
+            } else {
+                // Could not close in (a wall or a crowd): go back to shooting.
+                PROP_AI_TIMER[pi] = 0;
             }
         } else {
             let far = 500 + (pi as i32 % 101);
@@ -141,7 +147,7 @@ pub(crate) unsafe fn tick_grunt(
                 let (dx, dz) = (pos[0] - aim[0], pos[2] - aim[2]);
                 let l = isqrt_i32(dx * dx + dz * dz).max(1);
                 let goal = [pos[0] + dx * 512 / l, pos[1], pos[2] + dz * 512 / l];
-                prop_move_towards_point(m, movers, pi, goal, 15);
+                prop_move_towards_point(m, movers, pi, goal, 8);
             } else {
                 PROP_AI_TIMER[pi] = 0;
             }
@@ -153,7 +159,7 @@ pub(crate) unsafe fn tick_grunt(
         return;
     }
     if visible && charger && PROP_STATE[pi] == PROP_STATE_ATTACK && t >> 4 != 0 {
-        PROP_AI_TIMER[pi] = 0x80 | (1 << 5);
+        PROP_AI_TIMER[pi] = 0x80 | (1 << 5) | 31;
         return;
     }
     if d2 > RANGE * RANGE || !visible {
