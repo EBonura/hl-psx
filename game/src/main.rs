@@ -22675,6 +22675,19 @@ unsafe fn spark_burst(at: [i32; 3], count: u8, vy_base: i32, vy_range: u32, ttl:
     }
 }
 
+// Painter layer for small detail faces. A scalar depth key cannot order two overlapping
+// polygons whose depth ranges overlap: a console body a few units proud of a wall is the
+// nearer surface at every pixel, yet the wall (a long polygon seen obliquely) can have the
+// nearer mean depth, or the same four-unit bucket, and then paints over the console. The
+// cook already separates big tessellated surfaces (patch faces) from small cooked loop
+// faces (consoles, frames, pipes, steps), and a small face sits in front of what it is
+// mounted on, so loop faces whose cooked bounding radius is under KEY_BIAS_LOOP_MAX_RADIUS
+// take a fixed key offset of KEY_BIAS_LOOP table buckets (four world units each): drawn
+// later, as if three buckets nearer.
+const KEY_BIAS_LOOP: i32 = -3;
+const KEY_BIAS_LOOP_MAX_RADIUS: i32 = 128;
+static mut KEY_BIAS: i32 = 0;
+
 #[inline(always)]
 unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: bool) -> usize {
     let policy = EMIT_POLICY;
@@ -22691,6 +22704,7 @@ unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: b
             texture_backdrop,
         },
     );
+    let key = (key as i32 + KEY_BIAS).clamp(1, OT_LEN as i32 - 1) as usize;
     #[cfg(feature = "order-trace")]
     order_trace::note_key(depths, key);
     key
@@ -27655,6 +27669,7 @@ unsafe fn emit_submodel_face(
     token: u16,
     np: &mut usize,
 ) {
+    KEY_BIAS = 0;
     #[cfg(feature = "order-trace")]
     order_trace::set_face(4, f, m.face_bounds(f).1);
     // The caller establishes the complete policy atomically before entering
@@ -27813,6 +27828,7 @@ unsafe fn emit_platrot_entity(
     np: &mut usize,
     model_culled_tris: &mut u32,
 ) {
+    KEY_BIAS = 0;
     let local_rot = platrot_rotation(e, phase);
     let mr = rot.mul(&local_rot);
     let ome = [off[0] - eye[0], off[1] - eye[1], off[2] - eye[2]];
@@ -27870,6 +27886,7 @@ unsafe fn emit_world_face_tris(
     nq: &mut usize,
     counts: &mut WorldCounters,
 ) {
+    KEY_BIAS = 0;
     #[cfg(feature = "order-trace")]
     order_trace::set_face(2, _face, m.face_bounds(_face).1);
     #[cfg(feature = "seam-census")]
@@ -27960,7 +27977,7 @@ unsafe fn emit_world_face_loop(
     tex: usize,
     base: usize,
     count: usize,
-    _face: usize,
+    face: usize,
     frame: u16,
     np: &mut usize,
     nq: &mut usize,
@@ -27969,8 +27986,13 @@ unsafe fn emit_world_face_loop(
     if count < 3 {
         return;
     }
+    KEY_BIAS = if m.face_bounds(face).1 < KEY_BIAS_LOOP_MAX_RADIUS {
+        KEY_BIAS_LOOP
+    } else {
+        0
+    };
     #[cfg(feature = "order-trace")]
-    order_trace::set_face(1, _face, m.face_bounds(_face).1);
+    order_trace::set_face(1, face, m.face_bounds(face).1);
     #[cfg(feature = "seam-census")]
     {
         SEAM_CENSUS_TINT = SEAM_CENSUS_LOOP_FACE;
@@ -28488,6 +28510,7 @@ unsafe fn emit_world_face_patches(
     nq: &mut usize,
     counts: &mut WorldCounters,
 ) {
+    KEY_BIAS = 0;
     #[cfg(feature = "order-trace")]
     order_trace::set_face(3, base, 0);
     let tex = map::tex_anim_display(tex);
