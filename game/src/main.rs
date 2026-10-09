@@ -22726,7 +22726,9 @@ unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: b
             texture_backdrop,
         },
     );
-    let key = (key as i32 + KEY_BIAS).max(KEY_MIN).clamp(1, OT_LEN as i32 - 1) as usize;
+    let key = (key as i32 + KEY_BIAS)
+        .max(KEY_MIN)
+        .clamp(1, OT_LEN as i32 - 1) as usize;
     #[cfg(feature = "order-trace")]
     order_trace::note_key(depths, key);
     key
@@ -28539,7 +28541,14 @@ unsafe fn emit_world_face_patches(
     nq: &mut usize,
     counts: &mut WorldCounters,
 ) {
-    KEY_BIAS = KEY_BIAS_PATCH;
+    // Translucent, swaying and coplanar-backdrop surfaces (water, glass, terrain under water)
+    // carry their own ordering rules and stay at their depth key.
+    KEY_BIAS =
+        if EMIT_POLICY.blend() == 0 && !EMIT_POLICY.wave() && !EMIT_POLICY.coplanar_backdrop() {
+            KEY_BIAS_PATCH
+        } else {
+            0
+        };
     #[cfg(feature = "order-trace")]
     order_trace::set_face(3, base, 0);
     let tex = map::tex_anim_display(tex);
@@ -29299,7 +29308,9 @@ unsafe fn insert_model_depth_stream(first: *mut u32, end: *mut u32) {
             // beside, whose scalar keys (a mean over a long polygon) can land nearer than the
             // model at the pixels where the model is the nearer surface. Draw models
             // MODEL_KEY_BIAS buckets (four world units each) nearer; the fine rank is kept.
-            let key = ((*packet).uv2 >> 16).saturating_sub(MODEL_KEY_BIAS << 4).max(16);
+            let key = ((*packet).uv2 >> 16)
+                .saturating_sub(MODEL_KEY_BIAS << 4)
+                .max(16);
             (*packet).uv2 &= 0xffff;
             #[cfg(feature = "order-trace")]
             order_trace::note_model(key, packet.cast::<u32>());

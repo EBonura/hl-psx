@@ -121,7 +121,12 @@ pub unsafe fn note_packet(site: u32, otz: usize, p: *const u32, words: u8) {
     let mut d = [0u16; 4];
     if quad && pair && !(single && k0 != k1) {
         // try_emit_quad_ctx pair: tri(pb,pa,pc) then tri(pa,pd,pc); packet = pb,pa,pc,pd.
-        d = [CALL_DEPTH[0][0], CALL_DEPTH[0][1], CALL_DEPTH[0][2], CALL_DEPTH[1][1]];
+        d = [
+            CALL_DEPTH[0][0],
+            CALL_DEPTH[0][1],
+            CALL_DEPTH[0][2],
+            CALL_DEPTH[1][1],
+        ];
         mode = 1;
     } else if single {
         let mut i = 0;
@@ -139,7 +144,12 @@ pub unsafe fn note_packet(site: u32, otz: usize, p: *const u32, words: u8) {
             mode = 3;
         }
     }
-    let v = [*p.add(3), *p.add(6), *p.add(9), if quad { *p.add(12) } else { 0 }];
+    let v = [
+        *p.add(3),
+        *p.add(6),
+        *p.add(9),
+        if quad { *p.add(12) } else { 0 },
+    ];
     let e = &mut ORD_BUF[(ORD_N as usize) % CAP];
     let mut i = 0;
     while i < 4 {
