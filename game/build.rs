@@ -8,6 +8,9 @@ use std::{collections::HashSet, env, fs, path::PathBuf};
 // parity test; this script includes them by path (it cannot depend on the
 // `no_std` crate for the host).
 #[allow(dead_code)]
+#[path = "../shared/hl-format/src/hitgroup.rs"]
+mod hitgroup;
+#[allow(dead_code)]
 #[path = "../shared/hl-format/src/skill.rs"]
 mod skill;
 #[path = "../shared/hl-format/src/skill_cfg.rs"]
@@ -1049,13 +1052,42 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
             row[sk as usize] = cook(key, milli, level);
         }
     }
+    // Hit-group masks (the cooker's `hitgroups.txt`): the hitboxes of each
+    // (actor type, group) pair that `hitgroup::RULES` acts on.
+    let masks_path = repo_root.join("data/modelpack/hitgroups.txt");
+    println!("cargo:rerun-if-changed={}", masks_path.display());
+    let masks_text = fs::read_to_string(&masks_path).unwrap_or_else(|_| {
+        panic!(
+            "{} is missing; run `cargo hl-build models`",
+            masks_path.display()
+        )
+    });
+    let mut masks: Vec<(u8, u8, u32)> = Vec::new();
+    for &(ty, group) in hitgroup::RULES {
+        let mask = masks_text
+            .lines()
+            .filter_map(|line| {
+                let mut f = line.split('|');
+                let (t, g, m) = (f.next()?, f.next()?, f.next()?);
+                (t.parse::<u8>().ok()? == ty && g.parse::<u8>().ok()? == group)
+                    .then(|| u64::from_str_radix(m, 16).ok())
+                    .flatten()
+            })
+            .next()
+            .unwrap_or_else(|| panic!("hitgroups.txt has no group {group} for actor type {ty}"));
+        let mask = u32::try_from(mask)
+            .unwrap_or_else(|_| panic!("actor type {ty} group {group} reaches past hitbox 31"));
+        masks.push((ty, group, mask));
+    }
     let generated = format!(
         "/// Spawn health per model type and difficulty; 0 keeps the model default.\n\
          pub const SKILL_HEALTH: [[u8; 76]; 3] = {health:?};\n\
          /// Every other tunable, indexed by `hl_format::skill::Sk`.\n\
          pub const SKILL_VALUE: [[u16; {}]; 3] = {value:?};\n\
-",
-        skill::SK_COUNT
+         /// (actor type, hit group, hitbox mask) for each `hitgroup::RULES` pair.\n\
+         pub const HIT_MASKS: [(u8, u8, u32); {}] = {masks:?};\n",
+        skill::SK_COUNT,
+        masks.len()
     );
     fs::write(out_dir.join("skill_table.rs"), generated).expect("write generated skill tables");
 }

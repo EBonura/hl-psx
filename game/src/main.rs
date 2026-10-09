@@ -20157,10 +20157,34 @@ unsafe fn prop_studio_hit_fraction(
         ];
         if let Some(frac) = hitbox_logic::ray_aabb_fraction_q12(local_start, local_end, mins, maxs)
         {
-            best = Some(best.map_or(frac, |old: i32| old.min(frac)));
+            if best.map_or(true, |old: i32| frac < old) {
+                best = Some(frac);
+                STUDIO_HIT_BOX = hi as u8;
+            }
         }
     }
     best
+}
+
+/// The hitbox the last successful `prop_studio_hit_fraction` entered first.
+static mut STUDIO_HIT_BOX: u8 = 0;
+
+/// Bullet damage after the hit group of box `hitbox` on an actor of type `ty`
+/// (`hl_format::hitgroup`): heads multiply, helmets and armour plates absorb.
+#[inline(never)]
+#[optimize(size)]
+fn hit_group_damage(ty: u8, hitbox: u8, dmg: u8) -> u8 {
+    let mut i = 0;
+    while i < skill_table::HIT_MASKS.len() {
+        let (t, group, mask) = skill_table::HIT_MASKS[i];
+        if t == ty && hitbox < 32 && mask >> hitbox & 1 != 0 {
+            let scaled =
+                hl_format::hitgroup::scale(group, dmg as u16, skill_value(Sk::MonsterHead));
+            return scaled.min(u8::MAX as u16) as u8;
+        }
+        i += 1;
+    }
+    dmg
 }
 
 /// Entry fraction (Q12 of p1->p2) of a segment into an axis-aligned box.
@@ -20252,6 +20276,7 @@ unsafe fn fire_hitscan(
     }
     let mut best = usize::MAX;
     let mut best_frac = 4097i32;
+    let mut best_box = u8::MAX;
     let mut pi = 0usize;
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     while pi < nprops {
@@ -20300,6 +20325,12 @@ unsafe fn fire_hitscan(
         if hit_frac < best_frac {
             best = pi;
             best_frac = hit_frac;
+            // Only a studio-box hit knows which box it entered.
+            best_box = if has_studio_boxes && !club_damage {
+                STUDIO_HIT_BOX
+            } else {
+                u8::MAX
+            };
         }
         pi += 1;
     }
@@ -20403,6 +20434,7 @@ unsafe fn fire_hitscan(
             eye[1] + (((end[1] - eye[1]) as i64 * best_frac as i64) >> 12) as i32,
             eye[2] + (((end[2] - eye[2]) as i64 * best_frac as i64) >> 12) as i32,
         ];
+        let damage = hit_group_damage(ty, best_box, damage);
         damage_prop(best, damage, true);
         // TEXTURETYPE_PlaySound: bullets on flesh thud (bullet_hit1/2); metal
         // turrets keep the ricochet. CCrowbar::Swing plays cbar_hitbod on any
