@@ -30038,13 +30038,15 @@ fn viewmodel_otz(avgz: u32) -> usize {
 /// else the world does not cover stays the clear colour: the distance cull
 /// empties space past FAR_VIEW, the fog has already taken geometry to black
 /// there, and a tunnel now continues into darkness instead of opening onto
-/// sky (the c0a0b tram ride). Each window polygon is textured from the cube
-/// map by the direction of its corners (see `sky_draw_region`).
+/// sky (the c0a0b tram ride). Texels are screen-mapped exactly as the old
+/// full-screen backdrop mapped them, so the sky itself looks the same.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn draw_sky_windows(
     m: &Map,
     have_pvs: bool,
+    yaw: u16,
+    pitch: i16,
     rot: &Mat3I16,
     t: [i32; 3],
     eye: [i32; 3],
@@ -30056,24 +30058,29 @@ unsafe fn draw_sky_windows(
     if n_boxes == 0 {
         return false;
     }
-    let h = render::projection_h();
-    // The direction of screen pixel (x, y) in GoldSrc axes (x forward at yaw
-    // 0, y left, z up), unnormalised, is affine in the pixel: the view axes
-    // (right, down, forward) weighted by the pixel offsets and the focal
-    // length. The game's world is [x, up, z] = [x, z, y] of GoldSrc.
-    {
-        let basis = &mut *core::ptr::addr_of_mut!(SKY_BASIS);
-        let mut i = 0usize;
-        while i < 3 {
-            let j = [0usize, 2, 1][i];
-            let (qx, qy) = (rot.m[0][j] as i32, rot.m[1][j] as i32);
-            basis.qx[i] = qx;
-            basis.qy[i] = qy;
-            basis.q0[i] = rot.m[2][j] as i32 * h - render::OFX * qx - render::OFY * qy;
-            i += 1;
-        }
+    // Cooker face order: ft, rt, bk, lf, up, dn.
+    let sky_yaw = ((yaw as usize) + 512) & 0xFFF;
+    let face = if pitch > 760 {
+        4
+    } else if pitch < -760 {
+        5
+    } else {
+        (sky_yaw >> 10) & 3
+    };
+    let slot = TEX_SLOTS[m.sky_tex_base + face];
+    if !slot.valid {
+        return false;
     }
-    let poly = &mut (*core::ptr::addr_of_mut!(SKY_BUFS))[2];
+    let u0 = if face < 4 {
+        (((sky_yaw & 1023) * SKY_TEX_SIZE) >> 10) as i32
+    } else {
+        0
+    };
+    // Texel = pixel * 127 / 319 across, * 127 / 239 down (the old
+    // full-screen quad's mapping), as Q16 multiplies instead of divides.
+    const SKY_U_Q16: i32 = (((SKY_TEX_SIZE as i32 - 1) << 16) + 159) / 319;
+    const SKY_V_Q16: i32 = (((SKY_TEX_SIZE as i32 - 1) << 16) + 119) / 239;
+    let h = render::projection_h();
     let mut drew = false;
     let mut i = 0usize;
     while i < n_boxes {
@@ -30123,458 +30130,62 @@ unsafe fn draw_sky_windows(
                 continue;
             }
             let (a, c) = ((axis + 1) % 3, (axis + 2) % 3);
-            // A corner is (plane, lo|hi on a, lo|hi on c): per view row the
-            // plane's term is shared by the four corners, and each of the two
-            // other terms takes two values.
-            let mut base = [0i32; 3];
-            let mut ta = [[0i32; 2]; 3];
-            let mut tc = [[0i32; 2]; 3];
-            let mut r = 0usize;
-            while r < 3 {
-                let row = rot.m[r];
-                base[r] = row[axis] as i32 * plane;
-                ta[r] = [row[a] as i32 * lo[a], row[a] as i32 * hi[a]];
-                tc[r] = [row[c] as i32 * lo[c], row[c] as i32 * hi[c]];
-                r += 1;
-            }
-            let corner = |ia: usize, ic: usize| render::CVert {
-                v: [
-                    ((base[0] + ta[0][ia] + tc[0][ic]) >> 12) + t[0],
-                    ((base[1] + ta[1][ia] + tc[1][ic]) >> 12) + t[1],
-                    ((base[2] + ta[2][ia] + tc[2][ic]) >> 12) + t[2],
-                ],
-                rgb: (128, 128, 128),
-                uv: (0, 0),
+            let corner = |ua: i32, uc: i32| {
+                let mut p = [plane; 3];
+                p[a] = ua;
+                p[c] = uc;
+                render::CVert {
+                    v: [
+                        dot12(rot.m[0], p) + t[0],
+                        dot12(rot.m[1], p) + t[1],
+                        dot12(rot.m[2], p) + t[2],
+                    ],
+                    rgb: (128, 128, 128),
+                    uv: (0, 0),
+                }
             };
-            let q = [corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)];
+            let q = [
+                corner(lo[a], lo[c]),
+                corner(hi[a], lo[c]),
+                corner(hi[a], hi[c]),
+                corner(lo[a], hi[c]),
+            ];
             for tri in [[&q[0], &q[1], &q[2]], [&q[0], &q[2], &q[3]]] {
                 let (clipped, n) = render::visible_clip(tri);
+                let mut xy = [(0i16, 0i16); 8];
+                let mut uv = [(0u8, 0u8); 8];
                 let mut k = 0usize;
                 while k < n {
                     let v = &*clipped.add(k);
                     // Clipped to the view in front of the near plane, so the
                     // plain quotient stays on screen.
                     let z = v.z.max(render::NEAR_Z);
-                    poly[k].p = (
-                        (render::OFX + v.x * h / z).clamp(0, 319),
-                        (render::OFY + v.y * h / z).clamp(0, 239),
+                    let x = (render::OFX + v.x * h / z).clamp(0, 319);
+                    let y = (render::OFY + v.y * h / z).clamp(0, 239);
+                    xy[k] = (x as i16, y as i16);
+                    uv[k] = (
+                        (u0 + ((x * SKY_U_Q16 + 0x8000) >> 16)) as u8,
+                        ((y * SKY_V_Q16 + 0x8000) >> 16) as u8,
                     );
                     k += 1;
                 }
-                if n >= 3 {
-                    drew |= sky_draw_region(m, n);
+                // Straight to the GPU, before the world's ordering table:
+                // the previous frame has finished drawing by now, so these
+                // do not wait, and they take no packets from the world.
+                let mut j = 2usize;
+                while j < n {
+                    driver::tri_textured_material(
+                        [xy[0], xy[j - 1], xy[j]],
+                        [uv[0], uv[j - 1], uv[j]],
+                        slot.material,
+                    );
+                    drew = true;
+                    j += 1;
                 }
             }
         }
     }
     drew
-}
-
-/// A sky polygon corner: its pixel and its GoldSrc-axes direction (affine in
-/// the pixel, so it carries through cuts and midpoints by interpolation).
-#[derive(Clone, Copy)]
-struct SkyV {
-    p: (i32, i32),
-    q: [i32; 3],
-}
-
-/// The frame's pixel to direction map: q(x, y) = q0 + x qx + y qy.
-struct SkyBasis {
-    q0: [i32; 3],
-    qx: [i32; 3],
-    qy: [i32; 3],
-}
-
-const SKY_V0: SkyV = SkyV {
-    p: (0, 0),
-    q: [0; 3],
-};
-static mut SKY_BASIS: SkyBasis = SkyBasis {
-    q0: [0; 3],
-    qx: [0; 3],
-    qy: [0; 3],
-};
-/// Sky polygon scratch: two ping-pong buffers for the cube-face cuts, and the
-/// window polygon being drawn (buffer 2, never written by a cut).
-static mut SKY_BUFS: [[SkyV; 12]; 3] = [[SKY_V0; 12]; 3];
-/// Texel of each corner of the piece being drawn.
-static mut SKY_TX: [(u8, u8); 12] = [(0, 0); 12];
-
-/// Cube face and numerators for a direction, in GoldSrc's own sky mapping
-/// (`st_to_vec`: rt +x, lf -x, bk +y, ft -y, up +z, dn -z). Returns
-/// (face in the cooker's order ft, rt, bk, lf, up, dn, s numerator,
-/// t numerator, denominator).
-#[inline(always)]
-fn sky_face_of(q: [i32; 3]) -> usize {
-    let (ax, ay, az) = (q[0].abs(), q[1].abs(), q[2].abs());
-    if ax >= ay && ax >= az {
-        if q[0] > 0 {
-            1
-        } else {
-            3
-        }
-    } else if ay >= az {
-        if q[1] > 0 {
-            2
-        } else {
-            0
-        }
-    } else if q[2] > 0 {
-        4
-    } else {
-        5
-    }
-}
-
-/// Face numerators (s, t, denominator) of direction `q` on cooker face `face`.
-#[inline(always)]
-fn sky_face_terms(face: usize, q: [i32; 3]) -> (i32, i32, i32) {
-    match face {
-        1 => (-q[1], q[2], q[0]),
-        3 => (q[1], q[2], -q[0]),
-        2 => (q[0], q[2], q[1]),
-        0 => (-q[0], q[2], -q[1]),
-        4 => (-q[1], -q[0], q[2]),
-        _ => (-q[1], q[0], -q[2]),
-    }
-}
-
-/// Texel of a direction on its cube face (128 x 128, row 0 on top).
-#[inline(always)]
-fn sky_texel(face_s: i32, face_t: i32, d: i32) -> (u8, u8) {
-    let d = d.max(1);
-    // |face_s|, |face_t| <= d, so the products stay below 2^31 for the
-    // direction magnitudes above (d < 2^22); 64 * 2^22 = 2^28.
-    let u = 64 + (face_s * 64) / d;
-    let v = 64 - (face_t * 64) / d;
-    (
-        u.clamp(0, SKY_TEX_SIZE as i32 - 1) as u8,
-        v.clamp(0, SKY_TEX_SIZE as i32 - 1) as u8,
-    )
-}
-
-/// Texel and face denominator of direction `q` on cube face `face`; the one
-/// copy of the divisions.
-#[inline(never)]
-#[optimize(size)]
-fn sky_texel_d(face: usize, q: [i32; 3]) -> (u8, u8, i32) {
-    let (s, t, d) = sky_face_terms(face, q);
-    let (u, v) = sky_texel(s, t, d);
-    (u, v, d)
-}
-
-/// Draw the window polygon in `SKY_BUFS[2][..n0]` (corner pixels set). A
-/// polygon whose corners all lie on one cube face is drawn as it is.
-/// Otherwise it is cut along the cube's face boundaries (straight lines in
-/// screen space, because pixel directions are affine in the pixel) and each
-/// piece is drawn from its own face texture. Every corner gets its exact
-/// texel; see `sky_tri` for where a triangle is split.
-#[inline(never)]
-#[optimize(size)]
-unsafe fn sky_draw_region(m: &Map, n0: usize) -> bool {
-    let basis = &*core::ptr::addr_of!(SKY_BASIS);
-    let poly = &mut (*core::ptr::addr_of_mut!(SKY_BUFS))[2];
-    let mut seen = 0u32;
-    let mut k = 0usize;
-    while k < n0 {
-        let v = &mut *poly.as_mut_ptr().add(k);
-        let (x, y) = v.p;
-        v.q = [
-            basis.q0[0] + x * basis.qx[0] + y * basis.qy[0],
-            basis.q0[1] + x * basis.qx[1] + y * basis.qy[1],
-            basis.q0[2] + x * basis.qx[2] + y * basis.qy[2],
-        ];
-        seen |= 1 << sky_face_of(v.q);
-        k += 1;
-    }
-    if seen & (seen - 1) == 0 {
-        return sky_piece(m, seen.trailing_zeros() as usize, 2, n0);
-    }
-    sky_cut_region(m, n0, seen)
-}
-
-/// A polygon over several cube faces: each face's piece is the polygon cut by
-/// that face's four boundary planes, drawn from the face's texture.
-#[inline(never)]
-#[optimize(size)]
-unsafe fn sky_cut_region(m: &Map, n0: usize, seen: u32) -> bool {
-    let bufs = &mut *core::ptr::addr_of_mut!(SKY_BUFS);
-    // Cooker face order is ft, rt, bk, lf, up, dn: major axis and sign of
-    // each; the other two axes give two cuts each.
-    let axis_sign: [(usize, i32); 6] = [(1, -1), (0, 1), (1, 1), (0, -1), (2, 1), (2, -1)];
-    let mut drew = false;
-    let mut f = 0usize;
-    while f < 6 {
-        let face = f;
-        f += 1;
-        if seen & (1 << face) == 0 {
-            continue;
-        }
-        let (axis, sign) = axis_sign[face];
-        // The cuts some corner is outside of; the rest cannot clip anything.
-        let (o1, o2) = ((axis + 1) % 3, (axis + 2) % 3);
-        let mut need = 0u32;
-        let mut i = 0usize;
-        while i < n0 {
-            let q = bufs[2][i].q;
-            let a = sign * q[axis];
-            need |= ((a < q[o1]) as u32)
-                | (((a < -q[o1]) as u32) << 1)
-                | (((a < q[o2]) as u32) << 2)
-                | (((a < -q[o2]) as u32) << 3);
-            i += 1;
-        }
-        let mut src = 2usize;
-        let mut n = n0;
-        let mut k = 0usize;
-        while k < 4 && n >= 3 {
-            let skip = need >> k & 1 == 0;
-            let (other, osign) = (if k < 2 { o1 } else { o2 }, if k & 1 == 0 { 1 } else { -1 });
-            k += 1;
-            if skip {
-                continue;
-            }
-            let dst = (src == 0) as usize;
-            let on = sky_cut_pass(src, n, dst, axis, sign, other, osign);
-            if on == usize::MAX {
-                continue; // this cut leaves the piece whole
-            }
-            src = dst;
-            n = on;
-        }
-        if n >= 3 {
-            drew |= sky_piece(m, face, src, n);
-        }
-    }
-    drew
-}
-
-/// Cut polygon `SKY_BUFS[src][..n]` to g >= 0, with g the major component
-/// `sign q[axis]` less `osign q[other]`, into `SKY_BUFS[dst]`. Returns the
-/// new corner count, 0 for a polygon wholly outside, and `usize::MAX` when
-/// the cut leaves it whole.
-#[inline(never)]
-#[optimize(size)]
-unsafe fn sky_cut_pass(
-    src: usize,
-    n: usize,
-    dst: usize,
-    axis: usize,
-    sign: i32,
-    other: usize,
-    osign: i32,
-) -> usize {
-    let bufs = &mut *core::ptr::addr_of_mut!(SKY_BUFS);
-    let sp = bufs[src].as_ptr();
-    let dp = bufs[dst].as_mut_ptr();
-    let gof = |v: &SkyV| sign * v.q[axis] - osign * v.q[other];
-    let mut inside = 0usize;
-    let mut i = 0usize;
-    while i < n {
-        inside += (gof(&*sp.add(i)) >= 0) as usize;
-        i += 1;
-    }
-    if inside == n {
-        return usize::MAX;
-    }
-    if inside == 0 {
-        return 0;
-    }
-    let mut on = 0usize;
-    let mut pv = &*sp.add(n - 1);
-    let mut gp = gof(pv);
-    let mut i = 0usize;
-    while i < n {
-        let cv = &*sp.add(i);
-        let gc = gof(cv);
-        if (gp >= 0) != (gc >= 0) && on < 12 {
-            // Same endpoints in the same order whichever side clips this
-            // edge, so neighbouring pieces share the cut point.
-            let (a, ga, b, gb) = if pv.p <= cv.p {
-                (pv, gp, cv, gc)
-            } else {
-                (cv, gc, pv, gp)
-            };
-            let (na, nb) = (ga.abs(), gb.abs());
-            let r = (na << 6) / (na + nb).max(1);
-            let lerp = |x: i32, y: i32| x + (((y - x) * r) >> 6);
-            *dp.add(on) = SkyV {
-                p: (lerp(a.p.0, b.p.0), lerp(a.p.1, b.p.1)),
-                q: [
-                    lerp(a.q[0], b.q[0]),
-                    lerp(a.q[1], b.q[1]),
-                    lerp(a.q[2], b.q[2]),
-                ],
-            };
-            on += 1;
-        }
-        if gc >= 0 && on < 12 {
-            *dp.add(on) = *cv;
-            on += 1;
-        }
-        pv = cv;
-        gp = gc;
-        i += 1;
-    }
-    on
-}
-
-/// Draw the polygon `SKY_BUFS[src][..n]`, which lies on cube face `face`.
-#[inline(never)]
-#[optimize(size)]
-unsafe fn sky_piece(m: &Map, face: usize, src: usize, n: usize) -> bool {
-    let slot = &TEX_SLOTS[m.sky_tex_base + face];
-    if !slot.valid {
-        return false;
-    }
-    // Corner texels once, not once per fan triangle.
-    let cur = &(*core::ptr::addr_of!(SKY_BUFS))[src];
-    let tx = &mut *core::ptr::addr_of_mut!(SKY_TX);
-    let (mut lo, mut hi) = ([255i32; 3], [0i32; 3]);
-    let mut k = 0usize;
-    while k < n {
-        let (u, v, d) = sky_texel_d(face, (*cur.as_ptr().add(k)).q);
-        *tx.as_mut_ptr().add(k) = (u, v);
-        let c = [u as i32, v as i32, d];
-        let mut j = 0usize;
-        while j < 3 {
-            lo[j] = if k == 0 || c[j] < lo[j] { c[j] } else { lo[j] };
-            hi[j] = if k == 0 || c[j] > hi[j] { c[j] } else { hi[j] };
-            j += 1;
-        }
-        k += 1;
-    }
-    // Every edge's texel and denominator deltas are within the polygon's
-    // ranges, so when the bound on `sky_tri`'s test holds for the ranges it
-    // holds for every edge and no triangle needs checking.
-    let calm = (((hi[0] - lo[0]).max(hi[1] - lo[1])) + 2) * (hi[2] - lo[2]) <= 16 * lo[2];
-    let mut j = 2usize;
-    while j < n {
-        sky_tri(
-            face,
-            &slot.material,
-            [
-                &*cur.as_ptr(),
-                &*cur.as_ptr().add(j - 1),
-                &*cur.as_ptr().add(j),
-            ],
-            [0, j - 1, j],
-            calm,
-        );
-        j += 1;
-    }
-    true
-}
-
-/// One sky triangle of cooker face `face`, corners `v` with texels and
-/// denominators at `SKY_TX` / `SKY_DV` indices `ix`. It is split once at the
-/// edge midpoints when an edge of over 32 pixels has an affine midpoint
-/// texel off by more than six. The midpoint texel is only computed when an
-/// error bound, (|texel delta| + 2) |denominator delta| / (4 min
-/// denominator) texels at most, cannot rule the split out; the bound stays
-/// under four, and the test's own rounding under another two.
-#[inline(never)]
-#[optimize(size)]
-unsafe fn sky_tri(
-    face: usize,
-    material: &TextureMaterial,
-    v: [&SkyV; 3],
-    ix: [usize; 3],
-    calm: bool,
-) {
-    let tx = &*core::ptr::addr_of!(SKY_TX);
-    let t = [
-        *tx.as_ptr().add(ix[0]),
-        *tx.as_ptr().add(ix[1]),
-        *tx.as_ptr().add(ix[2]),
-    ];
-    let (x0, x1, x2) = (v[0].p.0, v[1].p.0, v[2].p.0);
-    let (y0, y1, y2) = (v[0].p.1, v[1].p.1, v[2].p.1);
-    // No edge is over 32 pixels when the bounding box is not.
-    if !calm
-        && (x0.max(x1).max(x2) - x0.min(x1).min(x2) > 32
-            || y0.max(y1).max(y2) - y0.min(y1).min(y2) > 32)
-    {
-        let off = |i: usize, j: usize| {
-            sky_edge_off(
-                face,
-                v[i],
-                v[j],
-                t[i],
-                t[j],
-                sky_face_terms(face, v[i].q).2,
-                sky_face_terms(face, v[j].q).2,
-            )
-        };
-        if off(0, 1) || off(1, 2) || off(2, 0) {
-            let mid = |a: &SkyV, b: &SkyV| SkyV {
-                p: ((a.p.0 + b.p.0) >> 1, (a.p.1 + b.p.1) >> 1),
-                q: [
-                    (a.q[0] + b.q[0]) >> 1,
-                    (a.q[1] + b.q[1]) >> 1,
-                    (a.q[2] + b.q[2]) >> 1,
-                ],
-            };
-            let texel = |q: [i32; 3]| {
-                let (u, w, _) = sky_texel_d(face, q);
-                (u, w)
-            };
-            let (ab, bc, ca) = (mid(v[0], v[1]), mid(v[1], v[2]), mid(v[2], v[0]));
-            let (tab, tbc, tca) = (texel(ab.q), texel(bc.q), texel(ca.q));
-            sky_draw(material, [v[0], &ab, &ca], [t[0], tab, tca]);
-            sky_draw(material, [&ab, v[1], &bc], [tab, t[1], tbc]);
-            sky_draw(material, [&ca, &bc, v[2]], [tca, tbc, t[2]]);
-            sky_draw(material, [&ab, &bc, &ca], [tab, tbc, tca]);
-            return;
-        }
-    }
-    sky_draw(material, v, t);
-}
-
-/// Whether the affine midpoint texel of edge a-b is off by over six texels
-/// (see `sky_tri`).
-#[inline(always)]
-fn sky_edge_off(
-    face: usize,
-    a: &SkyV,
-    b: &SkyV,
-    ta: (u8, u8),
-    tb: (u8, u8),
-    da: i32,
-    db: i32,
-) -> bool {
-    if (a.p.0 - b.p.0).abs().max((a.p.1 - b.p.1).abs()) <= 32 {
-        return false;
-    }
-    let dt = (ta.0 as i32 - tb.0 as i32)
-        .abs()
-        .max((ta.1 as i32 - tb.1 as i32).abs());
-    if (dt + 2) * (da - db).abs() <= 16 * da.min(db) {
-        return false;
-    }
-    let q = [
-        (a.q[0] + b.q[0]) >> 1,
-        (a.q[1] + b.q[1]) >> 1,
-        (a.q[2] + b.q[2]) >> 1,
-    ];
-    let (tu, tv, _) = sky_texel_d(face, q);
-    let tm = (tu, tv);
-    let du = (tm.0 as i32 * 2 - ta.0 as i32 - tb.0 as i32).abs();
-    let dv = (tm.1 as i32 * 2 - ta.1 as i32 - tb.1 as i32).abs();
-    du.max(dv) > 12
-}
-
-#[inline(never)]
-fn sky_draw(material: &TextureMaterial, v: [&SkyV; 3], t: [(u8, u8); 3]) {
-    driver::tri_textured_material(
-        [
-            (v[0].p.0 as i16, v[0].p.1 as i16),
-            (v[1].p.0 as i16, v[1].p.1 as i16),
-            (v[2].p.0 as i16, v[2].p.1 as i16),
-        ],
-        t,
-        *material,
-    );
 }
 
 /// Small camera-space motion layered over the source animation. Reload/draw/fire
@@ -36655,7 +36266,7 @@ fn play(
             driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
             // Culls and fog after this point reach FAR_VIEW_WIDE only while
             // the sky shows.
-            let sky_drawn = draw_sky_windows(&m, have_pvs, &rot, base_t, eye);
+            let sky_drawn = draw_sky_windows(&m, have_pvs, yaw, pitch, &rot, base_t, eye);
             set_far(FAR_WIDE_MAP && sky_drawn);
             telemetry::stage_end(telemetry::stage::FRAME_CLEAR);
 
