@@ -14714,10 +14714,45 @@ const HMD_FLAG_HITBOXES: u16 = 1 << 4;
 const HMD_FLAG_FRAME_TIMES: u16 = 1 << 5;
 const HMD_FLAG_ALIGNED_MODEL_DATA: u16 = 1 << 6;
 const HMD_FLAG_VERTEX_SOA: u16 = 1 << 7;
+/// `psx_anim_cook::encode_within` with the ladder starting no finer than
+/// `floor`: the smallest rung at or above it whose blob fits `max_bytes`, or the
+/// loosest rung when none does.
+fn hma1_encode_within(
+    sk: &psx_anim_cook::Skeleton,
+    clips: &[&dyn psx_anim_cook::ClipSource],
+    bones: &[usize],
+    max_bytes: usize,
+    floor: f64,
+) -> (psx_anim_cook::Encoded, f64) {
+    let mut last = None;
+    for tolerance in HMA1_TOLERANCE_LADDER.into_iter().filter(|t| *t >= floor) {
+        let encoded =
+            psx_anim_cook::encode(sk, clips, bones, psx_anim_cook::production_opts(tolerance));
+        if encoded.bytes.len() <= max_bytes {
+            return (encoded, tolerance);
+        }
+        last = Some((encoded, tolerance));
+    }
+    last.expect("the tolerance ladder has a rung at or above every floor")
+}
+
 /// Local-space HMA1 tracks replace the pose palette (psx_asset::hmd8).
 const HMD_FLAG_HMA1: u16 = 1 << 8;
 /// Bones one HMA1 pose may decode: game/src/main.rs POSE_SCRATCH_BONES.
 const HMA1_MAX_BONES: usize = 80;
+/// The rungs of `psx_anim_cook::encode_within`'s tolerance ladder (world units).
+const HMA1_TOLERANCE_LADDER: [f64; 13] = [
+    0.25, 0.35, 0.5, 0.7, 1.0, 1.4, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0,
+];
+/// Finest tolerance an actor model's tracks may use, in grid steps of the
+/// actor vertex grid (a quarter of a world unit, so 0.5 is an eighth of a unit
+/// of worst-case vertex error). `encode_within` alone takes the finest rung
+/// that fits the bytes of the palettes the tracks replace, and most actors came
+/// out at 0.25..0.5 while a third of the cooked fleet already sits on rungs of 2
+/// and coarser. Every byte of c2a4e's resident animation is a byte of the world
+/// arena, the fleet's tightest map, so the finest rungs are not worth their
+/// bytes. Viewmodels keep the finest rung.
+const HMA1_NPC_MIN_TOLERANCE: f64 = 0.5;
 const HMD7_RANGE_MOUTH: u8 = 1 << 0;
 const HMD7_RANGE_BYTES: usize = 8;
 const HMD8_AFFINE_BYTES: usize = 20;
@@ -16739,7 +16774,17 @@ fn cook_mdl(
                 psx_anim_cook::encode(&sk, &refs, &bones, psx_anim_cook::production_opts(tol)),
                 tol,
             ),
-            None => psx_anim_cook::encode_within(&sk, &refs, &bones, palette_bytes),
+            None => hma1_encode_within(
+                &sk,
+                &refs,
+                &bones,
+                palette_bytes,
+                if camera_locked {
+                    0.0
+                } else {
+                    HMA1_NPC_MIN_TOLERANCE
+                },
+            ),
         };
         eprintln!(
             "[hma1] {}: {} B tracks (tolerance {tol}) replacing {palette_bytes} B of palettes",
