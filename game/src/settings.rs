@@ -3,6 +3,7 @@
 //! across menu<->play within a session and reset on power cycle (no memory-card
 //! save). Modelled on the Celeste Classic Collection's options.
 
+use psx_display::{Brightness, Label, ScreenOffset};
 use psx_pad::Deadzone;
 
 use psx_gpu::display::{DisplayConfig, Resolution, VideoMode};
@@ -12,12 +13,11 @@ use psx_spu::{CdVolume, Volume};
 pub const DISPLAY: DisplayConfig = DisplayConfig::new(VideoMode::Ntsc, Resolution::R320X240);
 
 pub const VOL_MAX: u8 = 8; // slider steps 0..8
-pub const SCREEN_RANGE: i32 = 24; // +-24 px/lines of screen shift
 pub const ANALOG_DEADZONE_DEFAULT: u8 = 28;
 pub const ANALOG_DEADZONE_MAX: u8 = 64;
 
-pub static mut SCREEN_X: i32 = 0; // horizontal TV shift, px
-pub static mut SCREEN_Y: i32 = 0; // vertical TV shift, lines
+/// TV centering: +-24 px (X) and lines (Y) of screen shift.
+pub static mut SCREEN: ScreenOffset<24> = ScreenOffset::CENTRE;
 pub static mut MUSIC_VOL: u8 = VOL_MAX; // CD-DA (music) 0..8
 pub static mut SFX_VOL: u8 = VOL_MAX; // SPU voices (SFX + speech) 0..8
 static mut ANALOG_DEADZONE: u8 = ANALOG_DEADZONE_DEFAULT; // radial, axis units 0..128
@@ -142,8 +142,8 @@ pub fn take_brightness_dirty() -> bool {
 /// the picture on the TV without touching the VRAM layout (so it also shifts the
 /// menu -- a live preview of the setting).
 pub fn apply_display() {
-    let (sx, sy) = unsafe { (SCREEN_X, SCREEN_Y) };
-    crate::driver::with(|gpu| gpu.set_display(DISPLAY.with_offset((sx as i16, sy as i16))));
+    let screen = unsafe { SCREEN };
+    crate::driver::with(|gpu| gpu.set_display(screen.apply_to(DISPLAY)));
 }
 
 /// Apply the audio volumes: music = CD input gain, SFX = SPU main (voice) volume.
@@ -175,14 +175,14 @@ pub fn adjust(index: usize, delta: i32) -> i32 {
     unsafe {
         match index {
             0 => {
-                SCREEN_X = (SCREEN_X + delta).clamp(-SCREEN_RANGE, SCREEN_RANGE);
+                SCREEN = SCREEN.stepped_x(delta as i8);
                 apply_display();
-                SCREEN_X
+                SCREEN.x() as i32
             }
             1 => {
-                SCREEN_Y = (SCREEN_Y + delta).clamp(-SCREEN_RANGE, SCREEN_RANGE);
+                SCREEN = SCREEN.stepped_y(delta as i8);
                 apply_display();
-                SCREEN_Y
+                SCREEN.y() as i32
             }
             2 => {
                 MUSIC_VOL = (MUSIC_VOL as i32 + delta).clamp(0, VOL_MAX as i32) as u8;
@@ -213,15 +213,32 @@ pub fn adjust(index: usize, delta: i32) -> i32 {
 pub fn value(index: usize) -> i32 {
     unsafe {
         match index {
-            0 => SCREEN_X,
-            1 => SCREEN_Y,
+            0 => SCREEN.x() as i32,
+            1 => SCREEN.y() as i32,
             2 => MUSIC_VOL as i32,
             3 => SFX_VOL as i32,
             4 => ANALOG_DEADZONE as i32,
             5 => AUTOSAVE as i32,
-            // Shown 1..6 so the row reads like Quake's, not 0-based.
+            // The 1-based level; the menus print `option_label` instead.
             6 => BRIGHTNESS as i32 + 1,
             _ => 0,
+        }
+    }
+}
+
+/// What a picture row says in words, in the shared `psx-display` text:
+/// `LEFT 4`, `DOWN 2`, `DEFAULT`, `BRIGHTER 3`. `None` for the rows that are
+/// numbers or toggles. `DEFAULT` is the shipped level (`DEFAULT_BRIGHTNESS`), so
+/// the cooked lighting (index 4) reads `BRIGHTER 3`.
+pub fn option_label(index: usize) -> Option<Label> {
+    unsafe {
+        match index {
+            0 => Some(SCREEN.label_x()),
+            1 => Some(SCREEN.label_y()),
+            6 => Some(Brightness::label_for_level(
+                BRIGHTNESS as i8 - DEFAULT_BRIGHTNESS as i8,
+            )),
+            _ => None,
         }
     }
 }
