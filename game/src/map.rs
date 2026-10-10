@@ -358,6 +358,8 @@ pub struct Map {
     // Texture-animation chains (HLME/HLMF; zero on older magics)
     pub n_tex_anim: usize,
     tex_anim_off: usize,
+    // Render-node face table (HLMI; zero on older magics): world faces sit in node order.
+    node_face_off: usize,
 }
 
 const LEAF_SZ: usize = cooked::LEAF_RECORD_SIZE;
@@ -762,7 +764,7 @@ impl Map {
         let vis_off = align4(marks_off + n_marks * 2);
 
         let n_clip = rd_u32(data, clip_off) as usize;
-        // HLMK alone reuses the legacy hull-0 word for controller hull2.
+        // HLMK and HLML reuse the legacy hull-0 word for controller hull2.
         // Earlier versions ignore it; point hull0 remains render-node based.
         let controller_hull_head = cooked::controller_hull_head(magic, rd_i32(data, clip_off + 4));
         let hull1_head = rd_i32(data, clip_off + 8);
@@ -902,7 +904,86 @@ impl Map {
             logic_names_off,
             n_tex_anim,
             tex_anim_off,
+            node_face_off: if cooked::supports_node_faces(magic) {
+                rd_u32(data, cooked::HEADER_NODE_FACE_OFFSET) as usize
+            } else {
+                0
+            },
         }
+    }
+
+    // ---- Render-node face table (HLMI) ----
+    //
+    //   u16 n_nodes | u16 n_checkpoints | u16 n_escapes | u16 run_faces |
+    //   u16 checkpoint[n_checkpoints] | (u16 node, u16 excess)[n_escapes] | u8 nibbles[(n_nodes + 1) / 2]
+    //
+    // The cooked world faces are ordered by render node; node `n` owns the run of
+    // `count(n)` faces that starts at the sum of the counts before it. A nibble holds the
+    // count, 15 meaning "15 plus the escape's excess"; a checkpoint gives the first face of
+    // every 32nd node.
+
+    /// True when the map carries the render-node face table.
+    #[inline(always)]
+    pub fn has_node_faces(&self) -> bool {
+        self.node_face_off != 0
+    }
+
+    /// Faces covered by node runs (faces from here up to the world face count have no node).
+    #[inline]
+    pub fn node_face_run_faces(&self) -> usize {
+        rd_u16(self.data, self.node_face_off + 6) as usize
+    }
+
+    /// First face of the 32-node block `block`.
+    #[inline]
+    pub fn node_face_checkpoint(&self, block: usize) -> usize {
+        rd_u16(self.data, self.node_face_off + 8 + block * 2) as usize
+    }
+
+    #[inline]
+    fn node_face_tables(&self) -> (usize, usize, usize) {
+        let t = self.node_face_off;
+        let n_checkpoints = rd_u16(self.data, t + 2) as usize;
+        let n_escapes = rd_u16(self.data, t + 4) as usize;
+        let escapes = t + 8 + n_checkpoints * 2;
+        (escapes, n_escapes, escapes + n_escapes * 4)
+    }
+
+    /// Faces owned by render node `node`.
+    #[inline]
+    pub fn node_face_count(&self, node: usize) -> usize {
+        let (escapes, n_escapes, nibbles) = self.node_face_tables();
+        let byte = self.data[nibbles + (node >> 1)];
+        let count = if node & 1 == 0 { byte & 15 } else { byte >> 4 } as usize;
+        if count < 15 {
+            return count;
+        }
+        let (mut lo, mut hi) = (0usize, n_escapes);
+        while lo < hi {
+            let mid = (lo + hi) >> 1;
+            let at = rd_u16(self.data, escapes + mid * 4) as usize;
+            if at == node {
+                return 15 + rd_u16(self.data, escapes + mid * 4 + 2) as usize;
+            }
+            if at < node {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        15
+    }
+
+    /// `(first face, count)` of render node `node`'s run.
+    #[inline]
+    pub fn node_faces(&self, node: usize) -> (usize, usize) {
+        let mut first = self.node_face_checkpoint(node >> 5);
+        let mut n = node & !31;
+        while n < node {
+            first += self.node_face_count(n);
+            n += 1;
+        }
+        (first, self.node_face_count(node))
     }
 
     /// Door-occluder section `(record count, first record offset)`, found
@@ -1677,7 +1758,7 @@ impl Map {
     /// signed negative visibility offsets keep their all-visible meaning.
     #[inline]
     pub fn paired_pvs(&self) -> bool {
-        matches!(rd_u32(self.data, cooked::HEADER_MAGIC_OFFSET), cooked::MAGIC_HLMJ | cooked::MAGIC_HLMK)
+        matches!(rd_u32(self.data, cooked::HEADER_MAGIC_OFFSET), cooked::MAGIC_HLMJ | cooked::MAGIC_HLMK | cooked::MAGIC_HLML)
     }
 
     #[inline]

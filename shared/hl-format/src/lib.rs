@@ -37,18 +37,22 @@ pub mod map {
     pub const MAGIC_HLMH: u32 = u32::from_le_bytes(*b"HLMH");
     pub const MAGIC_HLMJ: u32 = u32::from_le_bytes(*b"HLMJ");
     pub const MAGIC_HLMK: u32 = u32::from_le_bytes(*b"HLMK");
-    pub const MAGIC_LATEST: u32 = MAGIC_HLMK;
-    pub const MAGIC_LATEST_BYTES: [u8; 4] = *b"HLMK";
+    /// HLML is HLMK plus the render-node face table (`HEADER_NODE_FACE_OFFSET`): the
+    /// world faces of the cooked face array sit in render-node order.
+    pub const MAGIC_HLML: u32 = u32::from_le_bytes(*b"HLML");
+    pub const MAGIC_LATEST: u32 = MAGIC_HLML;
+    pub const MAGIC_LATEST_BYTES: [u8; 4] = *b"HLML";
 
     /// HLMK reuses the clip header's legacy hull-0 word for an optional
     /// controller hull-2 root. Render hull-0 still uses render nodes.
     pub const CONTROLLER_HULL_ABSENT: i32 = i32::MIN;
     pub const fn controller_hull_head(magic: u32, reserved: i32) -> i32 {
-        if magic == MAGIC_HLMK { reserved } else { CONTROLLER_HULL_ABSENT }
+        if matches!(magic, MAGIC_HLMK | MAGIC_HLML) { reserved } else { CONTROLLER_HULL_ABSENT }
     }
 
     pub const LEGACY_HEADER_SIZE: usize = 52;
     pub const HEADER_SIZE: usize = 56;
+    pub const HEADER_SIZE_V2: usize = 60;
     pub const HEADER_MAGIC_OFFSET: usize = 0;
     pub const HEADER_VERT_COUNT_OFFSET: usize = 4;
     pub const HEADER_TRI_COUNT_OFFSET: usize = 8;
@@ -123,6 +127,7 @@ pub mod map {
     pub const HEADER_NAV_OFFSET: usize = 44;
     pub const HEADER_LOGIC_OFFSET: usize = 48;
     pub const HEADER_WORLD_PIPELINE_OFFSET: usize = 52;
+    pub const HEADER_NODE_FACE_OFFSET: usize = 56;
 
     pub const WORLD_PIPELINE_MAGIC: u32 = u32::from_le_bytes(*b"WRP1");
     pub const WORLD_PIPELINE_VERSION: u16 = 9;
@@ -213,7 +218,9 @@ pub mod map {
 
     #[inline(always)]
     pub const fn header_size(magic: u32) -> usize {
-        if matches!(magic, MAGIC_HLMH | MAGIC_HLMJ | MAGIC_HLMK) {
+        if magic == MAGIC_HLML {
+            HEADER_SIZE_V2
+        } else if matches!(magic, MAGIC_HLMH | MAGIC_HLMJ | MAGIC_HLMK | MAGIC_HLML) {
             HEADER_SIZE
         } else {
             LEGACY_HEADER_SIZE
@@ -233,6 +240,7 @@ pub mod map {
                 | MAGIC_HLMH
                 | MAGIC_HLMJ
                 | MAGIC_HLMK
+                | MAGIC_HLML
         )
     }
 
@@ -242,22 +250,30 @@ pub mod map {
             magic,
             MAGIC_HLMC | MAGIC_HLMD | MAGIC_HLME | MAGIC_HLMF | MAGIC_HLMG | MAGIC_HLMH | MAGIC_HLMJ
                 | MAGIC_HLMK
+                | MAGIC_HLML
         )
     }
 
     #[inline(always)]
     pub const fn supports_texture_animation(magic: u32) -> bool {
-        matches!(magic, MAGIC_HLME | MAGIC_HLMF | MAGIC_HLMG | MAGIC_HLMH | MAGIC_HLMJ | MAGIC_HLMK)
+        matches!(magic, MAGIC_HLME | MAGIC_HLMF | MAGIC_HLMG | MAGIC_HLMH | MAGIC_HLMJ | MAGIC_HLMK | MAGIC_HLML)
     }
 
     #[inline(always)]
     pub const fn supports_dynamic_lightmaps(magic: u32) -> bool {
-        matches!(magic, MAGIC_HLMG | MAGIC_HLMH | MAGIC_HLMJ | MAGIC_HLMK)
+        matches!(magic, MAGIC_HLMG | MAGIC_HLMH | MAGIC_HLMJ | MAGIC_HLMK | MAGIC_HLML)
     }
 
     #[inline(always)]
     pub const fn supports_world_pipeline(magic: u32) -> bool {
-        matches!(magic, MAGIC_HLMH | MAGIC_HLMJ | MAGIC_HLMK)
+        matches!(magic, MAGIC_HLMH | MAGIC_HLMJ | MAGIC_HLMK | MAGIC_HLML)
+    }
+
+    /// The render-node face table: world faces sit in node order and
+    /// `node_faces_off` locates the checkpoint/nibble count table.
+    #[inline(always)]
+    pub const fn supports_node_faces(magic: u32) -> bool {
+        magic == MAGIC_HLML
     }
 
     #[inline(always)]
@@ -862,7 +878,10 @@ mod tests {
         assert!(map::supports_texture_animation(map::MAGIC_LATEST));
         assert!(map::supports_dynamic_lightmaps(map::MAGIC_LATEST));
         assert!(map::supports_world_pipeline(map::MAGIC_LATEST));
-        assert_eq!(map::header_size(map::MAGIC_LATEST), map::HEADER_SIZE);
+        assert_eq!(map::header_size(map::MAGIC_LATEST), map::HEADER_SIZE_V2);
+        assert_eq!(map::header_size(map::MAGIC_HLMH), map::HEADER_SIZE);
+        assert!(map::supports_node_faces(map::MAGIC_LATEST));
+        assert!(!map::supports_node_faces(map::MAGIC_HLMH));
         assert_eq!(map::header_size(map::MAGIC_HLMG), map::LEGACY_HEADER_SIZE);
     }
 

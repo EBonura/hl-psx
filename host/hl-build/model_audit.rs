@@ -719,6 +719,7 @@ fn parse_map_actors(path: &Path) -> Result<Vec<Actor>> {
                     | b"HLMH"
                     | b"HLMJ"
                     | b"HLMK"
+                    | b"HLML"
             )
         )
     {

@@ -290,7 +290,7 @@ mod retail_bank_tests {
             assert!(end<=SPU_BYTES,"map{map}");
             if map==5 {assert_eq!(end,514_752);assert!(end>SPU_BYTES-WORK_BYTES);}
             let room=std::fs::read(root.join(format!("rooms/room_{}.psxc",map*2))).unwrap();
-            assert!(matches!(&room[..4],b"HLMJ"|b"HLMK"));
+            assert!(matches!(&room[..4],b"HLMJ"|b"HLMK"|b"HLML"));
             let logic=u32::from_le_bytes(room[48..52].try_into().unwrap()) as usize;
             let records=u16::from_le_bytes(room[logic..logic+2].try_into().unwrap()) as usize;
             let mut limited=false;

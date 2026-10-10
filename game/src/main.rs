@@ -34057,13 +34057,15 @@ fn play(
     if map_bytes.len() < cooked::LEGACY_HEADER_SIZE
         || ((&map_bytes[0..4] == b"HLMH" || &map_bytes[0..4] == b"HLMJ" || &map_bytes[0..4] == b"HLMK")
             && map_bytes.len() < cooked::HEADER_SIZE)
+        || (&map_bytes[0..4] == b"HLML" && map_bytes.len() < cooked::HEADER_SIZE_V2)
         || (&map_bytes[0..4] != b"HLME"
             && &map_bytes[0..4] != b"HLMF"
             && &map_bytes[0..4] != b"HLMG"
             && &map_bytes[0..4] != b"HLMH"
             && &map_bytes[0..4] != b"HLMJ"
-            && &map_bytes[0..4] != b"HLMK")
-        || (matches!(&map_bytes[0..4],b"HLMJ"|b"HLMK") && !hl_format::pvs_pair::validate_room(map_bytes))
+            && &map_bytes[0..4] != b"HLMK"
+            && &map_bytes[0..4] != b"HLML")
+        || (matches!(&map_bytes[0..4],b"HLMJ"|b"HLMK"|b"HLML") && !hl_format::pvs_pair::validate_room(map_bytes))
     {
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
