@@ -29,11 +29,15 @@ pub mod map {
     pub const MAGIC_HLMF: u32 = u32::from_le_bytes(*b"HLMF");
     pub const MAGIC_HLMG: u32 = u32::from_le_bytes(*b"HLMG");
     pub const MAGIC_HLMH: u32 = u32::from_le_bytes(*b"HLMH");
-    pub const MAGIC_LATEST: u32 = MAGIC_HLMH;
-    pub const MAGIC_LATEST_BYTES: [u8; 4] = *b"HLMH";
+    /// HLMI appends the render-node face table (`HEADER_NODE_FACE_OFFSET`) and keeps the
+    /// world faces of the cooked face array in render-node order.
+    pub const MAGIC_HLMI: u32 = u32::from_le_bytes(*b"HLMI");
+    pub const MAGIC_LATEST: u32 = MAGIC_HLMI;
+    pub const MAGIC_LATEST_BYTES: [u8; 4] = *b"HLMI";
 
     pub const LEGACY_HEADER_SIZE: usize = 52;
     pub const HEADER_SIZE: usize = 56;
+    pub const HEADER_SIZE_V2: usize = 60;
     pub const HEADER_MAGIC_OFFSET: usize = 0;
     pub const HEADER_VERT_COUNT_OFFSET: usize = 4;
     pub const HEADER_TRI_COUNT_OFFSET: usize = 8;
@@ -48,6 +52,7 @@ pub mod map {
     pub const HEADER_NAV_OFFSET: usize = 44;
     pub const HEADER_LOGIC_OFFSET: usize = 48;
     pub const HEADER_WORLD_PIPELINE_OFFSET: usize = 52;
+    pub const HEADER_NODE_FACE_OFFSET: usize = 56;
 
     pub const WORLD_PIPELINE_MAGIC: u32 = u32::from_le_bytes(*b"WRP1");
     pub const WORLD_PIPELINE_VERSION: u16 = 9;
@@ -138,7 +143,9 @@ pub mod map {
 
     #[inline(always)]
     pub const fn header_size(magic: u32) -> usize {
-        if magic == MAGIC_HLMH {
+        if magic == MAGIC_HLMI {
+            HEADER_SIZE_V2
+        } else if magic == MAGIC_HLMH {
             HEADER_SIZE
         } else {
             LEGACY_HEADER_SIZE
@@ -156,6 +163,7 @@ pub mod map {
                 | MAGIC_HLMF
                 | MAGIC_HLMG
                 | MAGIC_HLMH
+                | MAGIC_HLMI
         )
     }
 
@@ -163,23 +171,39 @@ pub mod map {
     pub const fn supports_split_leaf_counts(magic: u32) -> bool {
         matches!(
             magic,
-            MAGIC_HLMC | MAGIC_HLMD | MAGIC_HLME | MAGIC_HLMF | MAGIC_HLMG | MAGIC_HLMH
+            MAGIC_HLMC
+                | MAGIC_HLMD
+                | MAGIC_HLME
+                | MAGIC_HLMF
+                | MAGIC_HLMG
+                | MAGIC_HLMH
+                | MAGIC_HLMI
         )
     }
 
     #[inline(always)]
     pub const fn supports_texture_animation(magic: u32) -> bool {
-        matches!(magic, MAGIC_HLME | MAGIC_HLMF | MAGIC_HLMG | MAGIC_HLMH)
+        matches!(
+            magic,
+            MAGIC_HLME | MAGIC_HLMF | MAGIC_HLMG | MAGIC_HLMH | MAGIC_HLMI
+        )
     }
 
     #[inline(always)]
     pub const fn supports_dynamic_lightmaps(magic: u32) -> bool {
-        matches!(magic, MAGIC_HLMG | MAGIC_HLMH)
+        matches!(magic, MAGIC_HLMG | MAGIC_HLMH | MAGIC_HLMI)
     }
 
     #[inline(always)]
     pub const fn supports_world_pipeline(magic: u32) -> bool {
-        magic == MAGIC_HLMH
+        matches!(magic, MAGIC_HLMH | MAGIC_HLMI)
+    }
+
+    /// The render-node face table: world faces sit in node order and
+    /// `node_faces_off` locates the checkpoint/nibble count table.
+    #[inline(always)]
+    pub const fn supports_node_faces(magic: u32) -> bool {
+        magic == MAGIC_HLMI
     }
 
     #[inline(always)]
@@ -687,7 +711,10 @@ mod tests {
         assert!(map::supports_texture_animation(map::MAGIC_LATEST));
         assert!(map::supports_dynamic_lightmaps(map::MAGIC_LATEST));
         assert!(map::supports_world_pipeline(map::MAGIC_LATEST));
-        assert_eq!(map::header_size(map::MAGIC_LATEST), map::HEADER_SIZE);
+        assert_eq!(map::header_size(map::MAGIC_LATEST), map::HEADER_SIZE_V2);
+        assert_eq!(map::header_size(map::MAGIC_HLMH), map::HEADER_SIZE);
+        assert!(map::supports_node_faces(map::MAGIC_LATEST));
+        assert!(!map::supports_node_faces(map::MAGIC_HLMH));
         assert_eq!(map::header_size(map::MAGIC_HLMG), map::LEGACY_HEADER_SIZE);
     }
 
