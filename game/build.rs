@@ -550,9 +550,12 @@ fn packed_map_capacity(raw: &[u8]) -> usize {
 /// (`HLPSX_COLLECT_MAPS`, comma-separated map indices), or `None` for every map.
 /// The collect build only replays the profiling tapes, so its pools need only
 /// hold the maps those tapes visit; the shipping build never sets this and keeps
-/// the fleet-worst sizes. Only buffer sizes (constants) change, not code. A
-/// tape that enters an unlisted map larger than the pools fails that map's load
-/// in the replay (the loader refuses a chunk past the staging window).
+/// the fleet-worst sizes. Only the map staging window (`MAP_WORDS`, and the
+/// arena sized from it) shrinks, so the code is the same: every other budget
+/// still scans all maps, because several set the 1 KiB scratchpad layout
+/// (group visibility bits, the split stack) rather than RAM. A tape that enters
+/// an unlisted map larger than the window fails that map's load in the replay
+/// (the loader refuses a chunk past the staging window).
 fn collect_maps() -> Option<Vec<usize>> {
     println!("cargo:rerun-if-env-changed=HLPSX_COLLECT_MAPS");
     let raw = env::var("HLPSX_COLLECT_MAPS").ok()?;
@@ -607,16 +610,16 @@ fn scan_room_budget(
             continue;
         }
         // Room chunks 2N (resident) and 2N+1 (textures) belong to map N.
+        let mut staged = true;
         if let Some(maps) = &only_maps {
-            let id = name["room_".len()..]
+            let map = name["room_".len()..]
                 .split('.')
                 .next()
-                .and_then(|id| id.parse::<usize>().ok());
-            match id {
-                Some(id) if maps.contains(&(id / 2)) => {
-                    found_maps.insert(id / 2);
-                }
-                _ => continue,
+                .and_then(|id| id.parse::<usize>().ok())
+                .map(|id| id / 2);
+            staged = map.is_some_and(|map| maps.contains(&map));
+            if let (true, Some(map)) = (staged, map) {
+                found_maps.insert(map);
             }
         }
         println!("cargo:rerun-if-changed={}", path.display());
@@ -624,7 +627,9 @@ fn scan_room_budget(
             continue;
         };
         if data.len() >= 8 && &data[0..4] == b"HLTX" {
-            max_bytes = max_bytes.max(packed_map_capacity(&data));
+            if staged {
+                max_bytes = max_bytes.max(packed_map_capacity(&data));
+            }
             max_texs = max_texs.max(rd_u32(&data, 4).unwrap_or(0) as usize);
             continue;
         }
@@ -641,7 +646,9 @@ fn scan_room_budget(
             continue;
         }
 
-        max_bytes = max_bytes.max(packed_map_capacity(&data));
+        if staged {
+            max_bytes = max_bytes.max(packed_map_capacity(&data));
+        }
         max_verts = max_verts.max(rd_u32(&data, 4).unwrap_or(0) as usize);
         let n_texs = rd_u32(&data, 12).unwrap_or(0) as usize;
         let n_faces = rd_u32(&data, 16).unwrap_or(0) as usize;
@@ -703,7 +710,7 @@ fn scan_room_budget(
             "HLPSX_COLLECT_MAPS lists maps {missing:?} that data/rooms does not hold"
         );
         println!(
-            "cargo:warning=collect build: map pools sized for maps {maps:?} only (never ship it)"
+            "cargo:warning=collect build: map staging window sized for maps {maps:?} only (never ship it)"
         );
     }
 
