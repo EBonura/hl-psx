@@ -369,10 +369,9 @@ pub fn retail_tracks(text: &str, map: &str) -> BTreeMap<String, Track> {
 }
 
 /// Brush-entity tracks from port `HLPSX|entity` rows (height is `cy`).
-pub fn port_tracks(text: &str, map: &str) -> BTreeMap<String, Track> {
+pub fn port_tracks(text: &str, map: &str, end: Option<i64>) -> BTreeMap<String, Track> {
     let mut out: BTreeMap<String, Track> = BTreeMap::new();
     let mut seen: BTreeMap<(String, i64, i64), u32> = BTreeMap::new();
-    let end = second_session(text, map);
     for line in text.lines() {
         let Some(i) = line.find("HLPSX|entity|") else {
             continue;
@@ -475,7 +474,9 @@ pub fn compare_motion(
         let b_key = b;
         let Some(p) = port.get(b) else {
             // The player's tram is cooked on its own path, not as an entity record.
-            if r.class == "func_tracktrain" && r.targetname == "train" {
+            // (Map-wide: the cooker's tram path drives the map's one selected
+            // tracktrain, which has no entity record.)
+            if r.class == "func_tracktrain" {
                 continue;
             }
             let (rm, _) = travel(r);
