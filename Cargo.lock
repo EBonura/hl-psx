@@ -232,6 +232,7 @@ dependencies = [
 name = "psx-settings"
 version = "0.1.0"
 dependencies = [
+ "psx-display",
  "psx-pad",
 ]
 
