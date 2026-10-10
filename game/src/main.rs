@@ -16326,6 +16326,11 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
         return;
     }
+    let dmg = if DMG_BULLET_EXACT && prop_is_zombie(PROP_KIND[pi]) {
+        zombie_exact_bullet(dmg)
+    } else {
+        dmg
+    };
     if PROP_KIND[pi] == tripmine::PROP_TYPE_TRIPMINE {
         tripmine::shot(pi);
         return;
@@ -20607,7 +20612,8 @@ unsafe fn fire_weapon(
             // pixel-perfect from a standstill -- an MP5 that never walks its
             // burst, and a glock as precise as the .357.
             let cone = inacc + d.spread;
-            fire_hitscan(
+            DMG_BULLET_EXACT = d.ammo == AMMO_URANIUM;
+            let hit = fire_hitscan(
                 m,
                 movers,
                 eye,
@@ -20621,7 +20627,9 @@ unsafe fn fire_weapon(
                 jit(cone),
                 jit(cone),
             )
-            .is_some()
+            .is_some();
+            DMG_BULLET_EXACT = false;
+            hit
         }
     }
 }
@@ -20748,6 +20756,7 @@ unsafe fn fire_gauss_charge(
 ) -> u8 {
     let damage = (200u16 * age.min(GAUSS_FULL_CHARGE_TICKS) as u16 / GAUSS_FULL_CHARGE_TICKS as u16)
         .max(1) as u8;
+    DMG_BULLET_EXACT = true;
     fire_hitscan(
         m,
         movers,
@@ -20762,6 +20771,7 @@ unsafe fn fire_gauss_charge(
         0,
         0,
     );
+    DMG_BULLET_EXACT = false;
     // v_forward * damage * 5 units/second, at 20 Hz, with Z dropped (single
     // player never gets the deathmatch pop-up).
     let shove = -(damage as i32) * 5 / 20;
@@ -21099,6 +21109,8 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_inflic
     DMG_BLAST = false;
 }
 
+/// Set while the damage is exactly a bullet (gauss, hornets): zombies keep 30 percent of it.
+static mut DMG_BULLET_EXACT: bool = false;
 /// Set while blast or energy-beam damage is applied (GARG_DAMAGE classes).
 static mut DMG_HEAVY: bool = false;
 /// Set while blast damage is applied (DMG_BLAST: the apache takes it double).
@@ -21410,7 +21422,9 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             if aoe > 0 {
                 explode(m, hit_pos, PROJECTILES[i].damage, aoe, !from_enemy);
             } else if best != usize::MAX {
+                DMG_BULLET_EXACT = kind == PROJ_HORNET || kind == PROJ_HORNET_FAST;
                 damage_prop(best, PROJECTILES[i].damage, true);
+                DMG_BULLET_EXACT = false;
                 PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
             } else if player_hit {
                 PENDING_PLAYER_DAMAGE =
