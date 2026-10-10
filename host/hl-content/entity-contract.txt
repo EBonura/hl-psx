@@ -24,9 +24,9 @@ aiscripted_sequence|delay|yes|cook:"m_iszPlay"|-
 aiscripted_sequence|flag:4|yes|game:SF_SCRIPT_REPEATABLE|-
 aiscripted_sequence|flag:64|unreviewed|-|-|bit 64
 aiscripted_sequence|m_flradius|yes|cook:"m_iszPlay"|-
-aiscripted_sequence|m_flrepeat|no|-|-
+aiscripted_sequence|m_flrepeat|na|-|-|every shipped value is 0
 aiscripted_sequence|m_fmoveto|yes|cook:"m_iszPlay"|-
-aiscripted_sequence|m_ifinishschedule|no|-|-
+aiscripted_sequence|m_ifinishschedule|na|-|-|every shipped value is 0
 aiscripted_sequence|m_iszentity|yes|cook:"m_iszPlay"|-
 aiscripted_sequence|m_iszplay|yes|cook:"m_iszPlay"|-
 ambient_generic|@class|yes|cook:"ambient_generic"|-|speech and map sounds use compact audio records
@@ -125,7 +125,7 @@ env_global|@class|yes|cook:"env_global"|-|persistent global state logic
 env_global|@use|yes|game:LOGIC_ENV_GLOBAL|-
 env_global|flag:1|na|-|-
 env_global|globalstate|yes|cook:"triggermode"|-
-env_global|initialstate|no|-|-|every global starts off
+env_global|initialstate|na|-|-|every shipped value is 0
 env_global|triggermode|yes|cook:"triggermode"|-
 env_glow|@class|yes|cook:"env_glow"|-|compact sprite prop
 env_glow|@use|yes|game:fn sprite_set_visible|-
@@ -978,7 +978,7 @@ scripted_sequence|lfomodvol|unreviewed|-|-|the cooker never names the key
 scripted_sequence|lforate|unreviewed|-|-|the cooker never names the key
 scripted_sequence|lfotype|unreviewed|-|-|the cooker never names the key
 scripted_sequence|m_flradius|yes|cook:"m_iszPlay"|-
-scripted_sequence|m_flrepeat|no|-|-|the repeat interval is not read
+scripted_sequence|m_flrepeat|na|-|-|every shipped value is 0
 scripted_sequence|m_fmoveto|yes|cook:"m_iszPlay"|-
 scripted_sequence|m_iszentity|yes|cook:"m_iszPlay"|-
 scripted_sequence|m_iszidle|yes|cook:"m_iszPlay"|-

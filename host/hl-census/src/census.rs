@@ -34,12 +34,41 @@ pub const COMMON_KEYS: &[&str] = &[
 pub struct Usage {
     pub maps: BTreeSet<String>,
     pub count: u32,
+    /// How often each distinct value occurs (keys only; capped at 12 values).
+    pub values: BTreeMap<String, u32>,
 }
 
 impl Usage {
     fn add(&mut self, map: &str) {
         self.maps.insert(map.to_string());
         self.count += 1;
+    }
+
+    fn add_value(&mut self, map: &str, value: &str) {
+        self.add(map);
+        if self.values.len() < 12 || self.values.contains_key(value) {
+            *self.values.entry(value.to_string()).or_default() += 1;
+        }
+    }
+
+    /// `value x count` for the commonest values, e.g. `0 x38, 1 x4`.
+    pub fn value_summary(&self) -> String {
+        let mut v: Vec<_> = self.values.iter().collect();
+        v.sort_by(|a, b| b.1.cmp(a.1));
+        v.iter()
+            .take(4)
+            .map(|(k, n)| format!("{k} x{n}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Every use carried the same value, and it was 0 or empty.
+    pub fn always_zero(&self) -> bool {
+        !self.values.is_empty()
+            && self
+                .values
+                .keys()
+                .all(|v| matches!(v.trim(), "" | "0" | "0.0" | "0 0 0"))
     }
 }
 
@@ -120,12 +149,16 @@ pub fn load(hl_dir: &Path, maps: &[String]) -> Result<Census, String> {
                 .entry((class.clone(), CLASS_ITEM.to_string()))
                 .or_default()
                 .add(map);
-            for (k, _) in &e.kv {
+            for (k, v) in &e.kv {
                 let k = item_key(&class, k);
                 if k == "classname" || k == "spawnflags" {
                     continue;
                 }
-                census.items.entry((class.clone(), k)).or_default().add(map);
+                census
+                    .items
+                    .entry((class.clone(), k))
+                    .or_default()
+                    .add_value(map, v);
             }
             let flags = e.spawnflags();
             for bit in 0..32 {
