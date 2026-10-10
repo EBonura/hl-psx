@@ -330,9 +330,14 @@ pub unsafe fn upload_tex_blob_raw(
             .get(off..)
             .and_then(|remaining| cooked::parse_texture_entry(remaining, shared_clut_ready))
         else {
+            failed += 1;
             break;
         };
         off += entry.bytes;
+        if entry.eight_bit && !entry.shared_clut {
+            shared_clut_ready = false;
+            unsafe { SKY_CLUT = 0 };
+        }
         if i >= slot_len {
             continue;
         }
