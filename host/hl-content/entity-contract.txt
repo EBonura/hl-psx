@@ -1,0 +1,1159 @@
+# Entity contract: what the shipped Half-Life maps ask of the engine, and what
+# hl-psx answers. Format and statuses are documented in
+# host/hl-census/src/contract.rs. `hl-census check` verifies every row against
+# the 103 shipped maps and the source tree; `hl-census report` prints the gaps.
+#
+# class|item|status|evidence|tested|note
+
+# --- families owned by someone else's contract ---------------------------
+
+
+
+monster_*|*|scope|ai|-|monster stats, senses and attacks (see the AI/weapon parity contract)
+weapon_*|*|scope|pickups|-|weapon pickups
+ammo_*|*|scope|pickups|-|ammo pickups
+item_*|*|scope|pickups|-|item pickups
+light*|*|scope|lighting|-|lightmap compiler input
+info_node*|*|scope|navigation|-|AI node graph
+xen_*|*|scope|props|-|Xen ambient props
+cycler*|*|scope|props|-|studio and sprite props
+
+aiscripted_sequence|@class|yes|cook:"aiscripted_sequence"|-|cooked scripted actor control
+aiscripted_sequence|@use|yes|game:LOGIC_SCRIPTED|-
+aiscripted_sequence|delay|yes|cook:"m_iszPlay"|-
+aiscripted_sequence|flag:4|yes|game:SF_SCRIPT_REPEATABLE|-
+aiscripted_sequence|flag:64|unreviewed|-|-|bit 64
+aiscripted_sequence|m_flradius|yes|cook:"m_iszPlay"|-
+aiscripted_sequence|m_flrepeat|na|-|-|every shipped value is 0
+aiscripted_sequence|m_fmoveto|yes|cook:"m_iszPlay"|-
+aiscripted_sequence|m_ifinishschedule|na|-|-|every shipped value is 0
+aiscripted_sequence|m_iszentity|yes|cook:"m_iszPlay"|-
+aiscripted_sequence|m_iszplay|yes|cook:"m_iszPlay"|-
+ambient_generic|@class|yes|cook:"ambient_generic"|-|speech and map sounds use compact audio records
+ambient_generic|@kill|unreviewed|-|-
+ambient_generic|@use|yes|game:LOGIC_MAP_SOUND|run:roots-diff
+ambient_generic|cspinup|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|fadein|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|fadeout|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|flag:1|yes|cook:fn acoustic_attenuation|-|audible range
+ambient_generic|flag:16|yes|game:SF_AMBIENT_START_SILENT|-
+ambient_generic|flag:2|yes|cook:fn acoustic_attenuation|-|audible range
+ambient_generic|flag:256|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|flag:32|yes|game:SF_AMBIENT_NOT_LOOPING|-
+ambient_generic|flag:4|yes|cook:fn acoustic_attenuation|-|audible range
+ambient_generic|flag:8|yes|cook:fn acoustic_attenuation|-|audible range
+ambient_generic|health|yes|cook:fn acoustic_volume|-|volume
+ambient_generic|lfomodpitch|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|lfomodvol|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|lforate|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|lfotype|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|pitch|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|pitchstart|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|preset|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|radius|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|spindown|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|spinup|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+ambient_generic|volstart|cosmetic|-|-|pitch, fade and LFO shaping of the sound
+env_beam|@class|yes|cook:"env_beam"|-|compact beam logic
+env_beam|@kill|yes|game:fn logic_kill_targets|-
+env_beam|@use|yes|game:LOGIC_BEAM|run:roots-diff
+env_beam|boltwidth|unreviewed|cook:"boltwidth"|-|a source file names the key
+env_beam|damage|unreviewed|cook:"damage"|-|a source file names the key
+env_beam|flag:1|unreviewed|-|-|bit 1
+env_beam|flag:128|unreviewed|-|-|bit 128
+env_beam|flag:16|unreviewed|-|-|bit 16
+env_beam|flag:2|unreviewed|-|-|bit 2
+env_beam|flag:256|unreviewed|-|-|bit 256
+env_beam|flag:32|unreviewed|-|-|bit 32
+env_beam|flag:4|unreviewed|-|-|bit 4
+env_beam|flag:64|unreviewed|-|-|bit 64
+env_beam|flag:8|unreviewed|-|-|bit 8
+env_beam|framerate|unreviewed|cook:"framerate"|-|a source file names the key
+env_beam|framestart|unreviewed|-|-|the cooker never names the key
+env_beam|life|unreviewed|cook:"life"|-|a source file names the key
+env_beam|lightningend|unreviewed|cook:"lightningend"|-|a source file names the key
+env_beam|lightningstart|unreviewed|cook:"lightningstart"|-|a source file names the key
+env_beam|noiseamplitude|unreviewed|cook:"noiseamplitude"|-|a source file names the key
+env_beam|radius|unreviewed|cook:"radius"|-|a source file names the key
+env_beam|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+env_beam|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+env_beam|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+env_beam|striketime|unreviewed|cook:"striketime"|-|a source file names the key
+env_beam|texture|unreviewed|cook:"texture"|-|a source file names the key
+env_beam|texturescroll|unreviewed|cook:"texturescroll"|-|a source file names the key
+env_beverage|@class|yes|cook:"env_beverage"|-|owner stock, delayed soda pickup, six skins and can sound
+env_beverage|@kill|na|-|-
+env_beverage|@use|yes|game:LOGIC_ENV_BEVERAGE|-
+env_beverage|health|unreviewed|cook:"health"|-|a source file names the key
+env_beverage|skin|unreviewed|cook:"skin"|-|a source file names the key
+env_blood|@class|cosmetic|-|-|blood emitter is absent
+env_blood|@use|cosmetic|-|-|blood emitter is absent
+env_blood|amount|cosmetic|-|-|blood emitter is absent
+env_blood|color|cosmetic|-|-|blood emitter is absent
+env_blood|flag:1|cosmetic|-|-|blood emitter is absent
+env_blood|flag:4|cosmetic|-|-|blood emitter is absent
+env_blood|flag:8|cosmetic|-|-|blood emitter is absent
+env_bubbles|@class|cosmetic|-|-|bubble volume is deliberately not rendered
+env_bubbles|@use|cosmetic|-|-|bubble volumes are deliberately not drawn
+env_bubbles|current|cosmetic|-|-|bubble volumes are deliberately not drawn
+env_bubbles|density|cosmetic|-|-|bubble volumes are deliberately not drawn
+env_bubbles|flag:1|cosmetic|-|-|bubble volumes are deliberately not drawn
+env_bubbles|frequency|cosmetic|-|-|bubble volumes are deliberately not drawn
+env_bubbles|master|cosmetic|-|-|bubble volumes are deliberately not drawn
+env_explosion|@class|partial|cook:"env_explosion"|-|compact explosion effect and damage
+env_explosion|@kill|unreviewed|-|-
+env_explosion|@use|yes|game:LOGIC_ENV_EXPLOSION|run:roots-diff
+env_explosion|flag:1|partial|game:LOGIC_ENV_EXPLOSION|-|no-damage, random-magnitude and no-smoke bits are not distinguished
+env_explosion|flag:16|partial|game:LOGIC_ENV_EXPLOSION|-|no-damage, random-magnitude and no-smoke bits are not distinguished
+env_explosion|flag:2|partial|game:LOGIC_ENV_EXPLOSION|-|no-damage, random-magnitude and no-smoke bits are not distinguished
+env_explosion|flag:32|partial|game:LOGIC_ENV_EXPLOSION|-|no-damage, random-magnitude and no-smoke bits are not distinguished
+env_explosion|flag:4|partial|game:LOGIC_ENV_EXPLOSION|-|no-damage, random-magnitude and no-smoke bits are not distinguished
+env_explosion|flag:8|partial|game:LOGIC_ENV_EXPLOSION|-|no-damage, random-magnitude and no-smoke bits are not distinguished
+env_explosion|imagnitude|yes|cook:"iMagnitude"|-
+env_fade|@class|yes|cook:"env_fade"|-|screen fade logic
+env_fade|@kill|unreviewed|-|-
+env_fade|@use|yes|game:LOGIC_ENV_FADE|run:roots-diff
+env_fade|duration|yes|cook:"holdtime"|-
+env_fade|flag:1|yes|cook:"holdtime"|-
+env_fade|holdtime|yes|cook:"holdtime"|-
+env_fade|renderamt|partial|cook:"rendercolor"|-|only whether the colour is light
+env_fade|rendercolor|partial|cook:"rendercolor"|-|only whether the colour is light
+env_funnel|@class|cosmetic|-|-|funnel particles are absent
+env_funnel|@use|cosmetic|-|-
+env_funnel|flag:1|cosmetic|-|-
+env_global|@class|yes|cook:"env_global"|-|persistent global state logic
+env_global|@use|yes|game:LOGIC_ENV_GLOBAL|run:roots-diff
+env_global|flag:1|na|-|-
+env_global|globalstate|yes|cook:"triggermode"|-
+env_global|initialstate|na|-|-|every shipped value is 0
+env_global|triggermode|yes|cook:"triggermode"|-
+env_glow|@class|yes|cook:"env_glow"|-|compact sprite prop
+env_glow|@use|yes|game:fn sprite_set_visible|-
+env_glow|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+env_glow|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+env_glow|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+env_glow|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+env_laser|@class|yes|cook:"env_laser"|-|compact beam logic
+env_laser|@kill|yes|game:fn logic_kill_targets|-
+env_laser|@use|yes|game:LOGIC_BEAM|run:roots-diff
+env_laser|boltwidth|unreviewed|cook:"boltwidth"|-|a source file names the key
+env_laser|damage|unreviewed|cook:"damage"|-|a source file names the key
+env_laser|endsprite|unreviewed|-|-|the cooker never names the key
+env_laser|flag:1|unreviewed|-|-|bit 1
+env_laser|flag:16|unreviewed|-|-|bit 16
+env_laser|flag:32|unreviewed|-|-|bit 32
+env_laser|flag:64|unreviewed|-|-|bit 64
+env_laser|framerate|unreviewed|cook:"framerate"|-|a source file names the key
+env_laser|framestart|unreviewed|-|-|the cooker never names the key
+env_laser|lasertarget|unreviewed|cook:"lasertarget"|-|a source file names the key
+env_laser|life|unreviewed|cook:"life"|-|a source file names the key
+env_laser|lightningend|unreviewed|cook:"lightningend"|-|a source file names the key
+env_laser|lightningstart|unreviewed|cook:"lightningstart"|-|a source file names the key
+env_laser|noiseamplitude|unreviewed|cook:"noiseamplitude"|-|a source file names the key
+env_laser|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+env_laser|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+env_laser|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+env_laser|striketime|unreviewed|cook:"striketime"|-|a source file names the key
+env_laser|texture|unreviewed|cook:"texture"|-|a source file names the key
+env_laser|texturescroll|unreviewed|cook:"texturescroll"|-|a source file names the key
+env_laser|width|unreviewed|cook:"width"|-|a source file names the key
+env_message|@class|yes|cook:"env_message"|-|titles overlay logic
+env_message|@use|yes|game:LOGIC_ENV_MESSAGE|run:roots-diff
+env_message|flag:1|partial|game:LOGIC_ENV_MESSAGE|-|play-once is implied
+env_message|messageattenuation|cosmetic|-|-
+env_message|messagevolume|cosmetic|-|-
+env_render|@class|yes|cook:"env_render"|-|actor render-state controller
+env_render|@use|yes|game:LOGIC_ENV_RENDER|run:roots-diff
+env_render|flag:2|partial|cook:fn brush_render_class|-|brush alpha class only
+env_render|flag:4|partial|cook:fn brush_render_class|-|brush alpha class only
+env_render|flag:8|partial|cook:fn brush_render_class|-|brush alpha class only
+env_render|renderamt|yes|cook:fn brush_render_class|-
+env_render|rendercolor|partial|cook:fn brush_render_class|-|brush alpha class only
+env_render|renderfx|partial|cook:fn brush_render_class|-|brush alpha class only
+env_render|rendermode|yes|cook:fn brush_render_class|-
+env_shake|@class|partial|cook:"env_shake"|-|compact camera shake
+env_shake|@kill|unreviewed|-|-
+env_shake|@use|yes|game:LOGIC_ENV_SHAKE|run:roots-diff
+env_shake|amplitude|yes|cook:"amplitude"|-
+env_shake|duration|yes|cook:"amplitude"|-
+env_shake|flag:1|partial|game:LOGIC_ENV_SHAKE|-|the shake is global and ignores frequency and radius
+env_shake|flag:16|partial|game:LOGIC_ENV_SHAKE|-|the shake is global and ignores frequency and radius
+env_shake|flag:32|partial|game:LOGIC_ENV_SHAKE|-|the shake is global and ignores frequency and radius
+env_shake|flag:8|partial|game:LOGIC_ENV_SHAKE|-|the shake is global and ignores frequency and radius
+env_shake|frequency|partial|game:LOGIC_ENV_SHAKE|-|the shake is global and ignores frequency and radius
+env_shake|radius|partial|game:LOGIC_ENV_SHAKE|-|the shake is global and ignores frequency and radius
+env_shooter|@class|partial|cook:"env_shooter"|-|shoots material-coloured debris, not its model
+env_shooter|@kill|yes|game:fn logic_kill_targets|-
+env_shooter|@use|yes|game:LOGIC_SHOOTER|-
+env_shooter|delay|unreviewed|cook:"delay"|-|a source file names the key
+env_shooter|flag:1|unreviewed|-|-|bit 1
+env_shooter|m_flgiblife|cosmetic|-|-|debris is a material-coloured shard
+env_shooter|m_flvariance|unreviewed|cook:"m_flvariance"|-|a source file names the key
+env_shooter|m_flvelocity|unreviewed|cook:"m_flvelocity"|-|a source file names the key
+env_shooter|m_igibs|unreviewed|cook:"m_igibs"|-|a source file names the key
+env_shooter|pitch|unreviewed|game:"pitch"|-|a source file names the key
+env_shooter|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+env_shooter|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+env_shooter|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+env_shooter|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+env_shooter|scale|unreviewed|cook:"scale"|-|a source file names the key
+env_shooter|shootmodel|cosmetic|-|-|debris is a material-coloured shard
+env_shooter|shootsounds|unreviewed|cook:"shootsounds"|-|a source file names the key
+env_shooter|skin|unreviewed|cook:"skin"|-|a source file names the key
+env_sound|@class|cosmetic|-|-|room DSP/acoustic controller is absent
+env_sound|flag:16|cosmetic|-|-|room DSP is absent
+env_sound|flag:32|cosmetic|-|-|room DSP is absent
+env_sound|flag:4|cosmetic|-|-|room DSP is absent
+env_sound|flag:8|cosmetic|-|-|room DSP is absent
+env_sound|radius|cosmetic|-|-|room DSP is absent
+env_sound|roomtype|cosmetic|-|-|room DSP is absent
+env_spark|@class|partial|cook:"env_spark"|-|compact spark emitter
+env_spark|@kill|yes|game:fn logic_kill_targets|-
+env_spark|@use|yes|game:LOGIC_ENV_SPARK|-
+env_spark|flag:16|cosmetic|-|-
+env_spark|flag:32|cosmetic|-|-
+env_spark|flag:4|cosmetic|-|-
+env_spark|flag:64|cosmetic|-|-
+env_spark|flag:8|cosmetic|-|-
+env_spark|maxdelay|no|-|-|spark interval is fixed
+env_sprite|@class|yes|cook:"env_sprite"|-|compact sprite prop
+env_sprite|@kill|unreviewed|-|-
+env_sprite|@use|yes|game:fn sprite_set_visible|run:roots-diff
+env_sprite|flag:1|yes|game:fn sprite_set_visible|-|start on, play once
+env_sprite|flag:2|yes|game:fn sprite_set_visible|-|start on, play once
+env_sprite|framerate|unreviewed|cook:"framerate"|-|a source file names the key
+env_sprite|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+env_sprite|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+env_sprite|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+env_sprite|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+env_sprite|scale|unreviewed|cook:"scale"|-|a source file names the key
+func_breakable|@class|yes|cook:"func_breakable"|-|breakable brush and compact debris
+func_breakable|@kill|yes|game:fn logic_kill_targets|-
+func_breakable|@use|yes|game:fn shatter_breakable|run:roots-diff
+func_breakable|buoyancy|na|-|-|keys of other classes carried by the editor template
+func_breakable|delay|yes|cook:"explodemagnitude"|run:roots-diff
+func_breakable|dmg|na|-|-|keys of other classes carried by the editor template
+func_breakable|explodemagnitude|yes|cook:"explodemagnitude"|-
+func_breakable|explosion|no|-|-|the explosion gib mode is not read
+func_breakable|flag:1|yes|game:SF_BREAK_TRIGGER_ONLY|-
+func_breakable|flag:128|na|-|-
+func_breakable|flag:2|yes|game:SF_BREAK_TOUCH|-
+func_breakable|flag:256|yes|game:SF_BREAK_CROWBAR|-
+func_breakable|flag:32|na|-|-
+func_breakable|flag:4|yes|game:SF_BREAK_PRESSURE|-
+func_breakable|friction|na|-|-|keys of other classes carried by the editor template
+func_breakable|gibmodel|cosmetic|cook:fn breakable_gib_color|-|gibs are a material colour, not the authored model
+func_breakable|globalname|na|-|-|keys of other classes carried by the editor template
+func_breakable|health|yes|cook:"explodemagnitude"|-
+func_breakable|lip|na|-|-|keys of other classes carried by the editor template
+func_breakable|m_flgiblife|na|-|-|keys of other classes carried by the editor template
+func_breakable|m_flvariance|na|-|-|keys of other classes carried by the editor template
+func_breakable|m_flvelocity|na|-|-|keys of other classes carried by the editor template
+func_breakable|m_igibs|na|-|-|keys of other classes carried by the editor template
+func_breakable|material|yes|cook:"explodemagnitude"|-
+func_breakable|movesnd|na|-|-|keys of other classes carried by the editor template
+func_breakable|renderamt|partial|cook:fn brush_render_class|-
+func_breakable|rendercolor|partial|cook:fn brush_render_class|-
+func_breakable|renderfx|partial|cook:fn brush_render_class|-
+func_breakable|rendermode|partial|cook:fn brush_render_class|-
+func_breakable|shootmodel|na|-|-|keys of other classes carried by the editor template
+func_breakable|shootsounds|na|-|-|keys of other classes carried by the editor template
+func_breakable|size|na|-|-|keys of other classes carried by the editor template
+func_breakable|skin|na|-|-|keys of other classes carried by the editor template
+func_breakable|sounds|na|-|-|keys of other classes carried by the editor template
+func_breakable|spawnobject|yes|cook:"explodemagnitude"|-
+func_breakable|speed|na|-|-|keys of other classes carried by the editor template
+func_breakable|stopsnd|na|-|-|keys of other classes carried by the editor template
+func_breakable|wait|na|-|-|keys of other classes carried by the editor template
+func_button|@class|yes|cook:"func_button"|-|button logic and moving brush
+func_button|@kill|yes|game:fn logic_kill_targets|-
+func_button|@use|yes|game:fn logic_activate_button|run:roots-diff
+func_button|delay|yes|cook:SF_BUTTON_SHOOTABLE|-|health makes it shootable
+func_button|dmg|na|-|-
+func_button|flag:1|yes|game:SF_BUTTON_DONTMOVE|-
+func_button|flag:32|yes|game:SF_BUTTON_TOGGLE|-
+func_button|flag:64|cosmetic|-|-|sparks / no documented effect
+func_button|flag:8|cosmetic|-|-|sparks / no documented effect
+func_button|health|yes|cook:SF_BUTTON_SHOOTABLE|-|health makes it shootable
+func_button|killtarget|yes|cook:SF_BUTTON_SHOOTABLE|-|health makes it shootable
+func_button|lip|yes|cook:SF_BUTTON_SHOOTABLE|-|health makes it shootable
+func_button|locked_sentence|cosmetic|-|-
+func_button|locked_sound|cosmetic|cook:BUTTON_SOUNDS|-
+func_button|master|yes|cook:SF_BUTTON_SHOOTABLE|-|health makes it shootable
+func_button|renderamt|partial|cook:fn brush_render_class|-
+func_button|rendercolor|partial|cook:fn brush_render_class|-
+func_button|renderfx|partial|cook:fn brush_render_class|-
+func_button|rendermode|partial|cook:fn brush_render_class|-
+func_button|skin|na|-|-
+func_button|sounds|cosmetic|cook:BUTTON_SOUNDS|-
+func_button|speed|yes|cook:SF_BUTTON_SHOOTABLE|-|health makes it shootable
+func_button|style|na|-|-
+func_button|unlocked_sentence|cosmetic|-|-
+func_button|unlocked_sound|cosmetic|cook:BUTTON_SOUNDS|-
+func_button|wait|yes|cook:SF_BUTTON_SHOOTABLE|run:roots-diff|health makes it shootable
+func_conveyor|@class|partial|cook:"func_conveyor"|-|implemented through trigger-push semantics
+func_conveyor|@use|partial|game:LOGIC_TRIGGER_PUSH|-|use reverses the belt
+func_conveyor|flag:1|cosmetic|-|-|visual-only belt
+func_conveyor|flag:2|yes|cook:SF_CONVEYOR_NOTSOLID|-
+func_conveyor|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_conveyor|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_conveyor|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_conveyor|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_conveyor|speed|yes|cook:SF_CONVEYOR_NOTSOLID|-
+func_door|@class|yes|cook:"func_door"|-|linear door logic and collision
+func_door|@kill|yes|game:fn logic_kill_targets|-|killtarget removes the record
+func_door|@use|yes|game:fn logic_activate_door|run:roots-diff|toggle/open/close by name
+func_door|_minlight#1|na|-|-|editor leftovers retail ignores for func_door
+func_door|delay|yes|cook:"lip"|-|travel, return delay, mastered lock, close-only output, blocked damage
+func_door|dmg|yes|cook:"lip"|-|travel, return delay, mastered lock, close-only output, blocked damage
+func_door|flag:1|yes|game:SF_DOOR_START_OPEN|-|starts open
+func_door|flag:256|yes|game:SF_DOOR_USE_ONLY|-|touch does not open it
+func_door|flag:32|yes|game:SF_DOOR_TOGGLE|-|toggle
+func_door|flag:4|partial|game:fn logic_activate_door_linked|-|DONT_LINK: untargeted doors link by cooked group, not by flag
+func_door|flag:512|na|-|-|monsters opening doors is the AI contract
+func_door|flag:8|yes|cook:passable_door|unit:passable_doors_and_trains_cook_without_collision|SOLID_NOT; was solid before the passable fix
+func_door|globalname|na|-|-|editor leftovers retail ignores for func_door
+func_door|health|no|-|-|a door with health opens when shot in retail; the port ignores it
+func_door|healthvalue|na|-|-|editor leftovers retail ignores for func_door
+func_door|killtarget|yes|cook:"lip"|-|travel, return delay, mastered lock, close-only output, blocked damage
+func_door|lip|yes|cook:"lip"|-|travel, return delay, mastered lock, close-only output, blocked damage
+func_door|locked_sentence|cosmetic|-|-|HEV voice lines on a locked door
+func_door|locked_sound|cosmetic|cook:ordinal_sound|-|door audio ordinals
+func_door|master|yes|cook:"lip"|-|travel, return delay, mastered lock, close-only output, blocked damage
+func_door|movesnd|cosmetic|cook:ordinal_sound|-|door audio ordinals
+func_door|netname|yes|cook:"lip"|run:roots-diff|travel, return delay, mastered lock, close-only output, blocked damage
+func_door|renderamt|partial|cook:fn brush_render_class|-|brush alpha class only
+func_door|rendercolor|partial|cook:fn brush_render_class|-|brush alpha class only
+func_door|renderfx|partial|cook:fn brush_render_class|-|brush alpha class only
+func_door|rendermode|partial|cook:fn brush_render_class|-|brush alpha class only
+func_door|sounds|cosmetic|cook:ordinal_sound|-|door audio ordinals
+func_door|speed|yes|cook:"lip"|-|travel, return delay, mastered lock, close-only output, blocked damage
+func_door|stopsnd|cosmetic|cook:ordinal_sound|-|door audio ordinals
+func_door|unlocked_sentence|cosmetic|-|-|HEV voice lines on a locked door
+func_door|unlocked_sound|cosmetic|cook:ordinal_sound|-|door audio ordinals
+func_door|value1|na|-|-|editor leftovers retail ignores for func_door
+func_door|value2|na|-|-|editor leftovers retail ignores for func_door
+func_door|value3|na|-|-|editor leftovers retail ignores for func_door
+func_door|wait|yes|cook:"lip"|run:roots-diff|travel, return delay, mastered lock, close-only output, blocked damage
+func_door_rotating|@class|yes|cook:"func_door_rotating"|-|rotating door logic and collision
+func_door_rotating|@kill|yes|game:fn logic_kill_targets|-
+func_door_rotating|@use|yes|game:fn logic_activate_door|run:roots-diff
+func_door_rotating|_minlight#1|na|-|-
+func_door_rotating|delay|yes|cook:"distance"|-
+func_door_rotating|distance|yes|cook:"distance"|-
+func_door_rotating|dmg|yes|cook:"distance"|-
+func_door_rotating|flag:1|yes|game:SF_DOOR_START_OPEN|-|start open, toggle, use only
+func_door_rotating|flag:128|yes|cook:fn rotating_door_world_axis|-|rotate about Z or X
+func_door_rotating|flag:16|yes|game:SF_DOOR_ONEWAY|-|one way
+func_door_rotating|flag:2|yes|cook:let a = if sf & 2 != 0|-|reverse direction
+func_door_rotating|flag:256|yes|game:SF_DOOR_START_OPEN|-|start open, toggle, use only
+func_door_rotating|flag:32|yes|game:SF_DOOR_START_OPEN|-|start open, toggle, use only
+func_door_rotating|flag:4|na|-|-|don't link / monsters can't open
+func_door_rotating|flag:512|na|-|-|don't link / monsters can't open
+func_door_rotating|flag:64|yes|cook:fn rotating_door_world_axis|-|rotate about Z or X
+func_door_rotating|flag:8|yes|cook:head: if sf & 8 != 0|run:solidity|passable
+func_door_rotating|globalname|na|-|-
+func_door_rotating|health|na|-|-
+func_door_rotating|healthvalue|na|-|-
+func_door_rotating|killtarget|yes|cook:"distance"|-
+func_door_rotating|lip|yes|cook:"distance"|-
+func_door_rotating|locked_sentence|cosmetic|-|-
+func_door_rotating|locked_sound|cosmetic|cook:ordinal_sound|-
+func_door_rotating|master|yes|cook:"distance"|-
+func_door_rotating|movesnd|cosmetic|cook:ordinal_sound|-
+func_door_rotating|netname|yes|cook:"distance"|-
+func_door_rotating|renderamt|partial|cook:fn brush_render_class|-
+func_door_rotating|rendercolor|partial|cook:fn brush_render_class|-
+func_door_rotating|renderfx|partial|cook:fn brush_render_class|-
+func_door_rotating|rendermode|partial|cook:fn brush_render_class|-
+func_door_rotating|sounds|cosmetic|cook:ordinal_sound|-
+func_door_rotating|speed|yes|cook:"distance"|-
+func_door_rotating|stopsnd|cosmetic|cook:ordinal_sound|-
+func_door_rotating|unlocked_sentence|cosmetic|-|-
+func_door_rotating|unlocked_sound|cosmetic|cook:ordinal_sound|-
+func_door_rotating|wait|yes|cook:"distance"|-
+func_friction|@class|no|-|-|friction trigger volume is absent
+func_friction|modifier|yes|cook:"modifier"|-
+func_friction|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_friction|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_friction|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_friction|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_guntarget|@class|yes|cook:"func_guntarget"|-|moving damageable target
+func_guntarget|@use|yes|game:LOGIC_FUNC_GUNTARGET|-
+func_guntarget|health|unreviewed|cook:"health"|-|a source file names the key
+func_guntarget|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_guntarget|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_guntarget|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_guntarget|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_guntarget|speed|unreviewed|cook:"speed"|-|a source file names the key
+func_healthcharger|@class|yes|cook:"func_healthcharger"|-|health charger logic
+func_healthcharger|dmdelay|no|-|-|recharge delay is fixed
+func_illusionary|@class|yes|cook:"func_illusionary"|-|rendered brush and optional frame control
+func_illusionary|@kill|unreviewed|-|-
+func_illusionary|@use|yes|game:LOGIC_WALL_FRAME|-
+func_illusionary|dmg|unreviewed|cook:"dmg"|-|a source file names the key
+func_illusionary|flag:1|unreviewed|-|-|bit 1
+func_illusionary|flag:256|unreviewed|-|-|bit 256
+func_illusionary|flag:8|unreviewed|-|-|bit 8
+func_illusionary|health|unreviewed|cook:"health"|-|a source file names the key
+func_illusionary|lip|unreviewed|cook:"lip"|-|a source file names the key
+func_illusionary|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_illusionary|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_illusionary|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_illusionary|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_illusionary|skin|unreviewed|cook:"skin"|-|a source file names the key
+func_illusionary|sounds|unreviewed|cook:"sounds"|-|a source file names the key
+func_illusionary|speed|unreviewed|cook:"speed"|-|a source file names the key
+func_illusionary|wait|unreviewed|cook:"wait"|-|a source file names the key
+func_ladder|@class|yes|cook:"func_ladder"|-|ladder volume participates in player movement
+func_ladder|dmg|unreviewed|cook:"dmg"|-|a source file names the key
+func_ladder|health|unreviewed|cook:"health"|-|a source file names the key
+func_ladder|lip|unreviewed|cook:"lip"|-|a source file names the key
+func_ladder|pitch|unreviewed|game:"pitch"|-|a source file names the key
+func_ladder|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_ladder|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_ladder|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_ladder|skin|unreviewed|cook:"skin"|-|a source file names the key
+func_ladder|sounds|unreviewed|cook:"sounds"|-|a source file names the key
+func_ladder|speed|unreviewed|cook:"speed"|-|a source file names the key
+func_ladder|wait|unreviewed|cook:"wait"|-|a source file names the key
+func_ladder|yaw_speed|unreviewed|cook:"yaw_speed"|-|a source file names the key
+func_monsterclip|@class|yes|cook:"func_monsterclip"|-|NPC-only collision volume
+func_monsterclip|@kill|na|-|-
+func_monsterclip|flag:8|na|-|-
+func_mortar_field|@class|yes|cook:"func_mortar_field"|-|random, activator and momentary-table targeting; delayed shells, blast column and shake
+func_mortar_field|@use|yes|game:LOGIC_MORTAR_FIELD|-
+func_mortar_field|m_fcontrol|unreviewed|cook:"m_fcontrol"|-|a source file names the key
+func_mortar_field|m_fldelay|no|-|-
+func_mortar_field|m_flspread|unreviewed|cook:"m_flspread"|-|a source file names the key
+func_mortar_field|m_icount|unreviewed|cook:"m_icount"|-|a source file names the key
+func_mortar_field|m_iszxcontroller|unreviewed|cook:"m_iszxcontroller"|-|a source file names the key
+func_mortar_field|m_iszycontroller|unreviewed|cook:"m_iszycontroller"|-|a source file names the key
+func_pendulum|@class|yes|cook:"func_pendulum"|-|pendulum pose and collision
+func_pendulum|@use|yes|game:fn logic_use_pendulum|run:roots-diff
+func_pendulum|damp|unreviewed|-|-|the cooker never names the key
+func_pendulum|distance|yes|game:SF_PENDULUM_INSTANT|-
+func_pendulum|dmg|yes|game:SF_PENDULUM_INSTANT|-
+func_pendulum|flag:1|yes|game:SF_PENDULUM_INSTANT|-
+func_pendulum|flag:128|yes|game:SF_PENDULUM_INSTANT|-
+func_pendulum|flag:32|unreviewed|-|-|bit 32
+func_pendulum|flag:64|yes|game:SF_PENDULUM_INSTANT|-
+func_pendulum|flag:8|yes|game:SF_PENDULUM_INSTANT|-
+func_pendulum|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_pendulum|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_pendulum|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_pendulum|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_pendulum|speed|yes|game:SF_PENDULUM_INSTANT|-
+func_platrot|@class|yes|cook:"func_platrot"|-|rotating platform pose and collision
+func_platrot|@use|unreviewed|-|-
+func_platrot|flag:1|unreviewed|-|-|bit 1
+func_platrot|height|unreviewed|cook:"height"|-|a source file names the key
+func_platrot|movesnd|unreviewed|cook:"movesnd"|-|a source file names the key
+func_platrot|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_platrot|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_platrot|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_platrot|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_platrot|rotation|unreviewed|cook:"rotation"|-|a source file names the key
+func_platrot|speed|unreviewed|cook:"speed"|-|a source file names the key
+func_platrot|stopsnd|unreviewed|cook:"stopsnd"|-|a source file names the key
+func_platrot|volume|unreviewed|cook:"volume"|-|a source file names the key
+func_pushable|@class|yes|cook:"func_pushable"|-|pushable brush and collision
+func_pushable|@kill|yes|game:fn logic_kill_targets|-
+func_pushable|buoyancy|unreviewed|cook:"buoyancy"|-|a source file names the key
+func_pushable|delay|unreviewed|cook:"delay"|-|a source file names the key
+func_pushable|explodemagnitude|yes|cook:"friction"|-|friction is the horizontal speed cap
+func_pushable|explosion|no|-|-
+func_pushable|flag:128|yes|cook:SF_PUSH_BREAKABLE|-
+func_pushable|friction|yes|cook:"friction"|-|friction is the horizontal speed cap
+func_pushable|gibmodel|unreviewed|cook:"gibmodel"|-|a source file names the key
+func_pushable|globalname|unreviewed|cook:"globalname"|-|a source file names the key
+func_pushable|health|yes|cook:"friction"|-|friction is the horizontal speed cap
+func_pushable|material|yes|cook:"friction"|-|friction is the horizontal speed cap
+func_pushable|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_pushable|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_pushable|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_pushable|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_pushable|size|unreviewed|cook:"size"|-|a source file names the key
+func_pushable|spawnobject|yes|cook:"friction"|-|friction is the horizontal speed cap
+func_recharge|@class|yes|cook:"func_recharge"|-|HEV charger logic
+func_rot_button|@class|yes|cook:"func_rot_button"|-|rotating button logic
+func_rot_button|delay|yes|cook:"distance"|-
+func_rot_button|distance|yes|cook:"distance"|-
+func_rot_button|flag:128|partial|cook:fn rotating_door_world_axis|-|axis bits shared with rotating doors
+func_rot_button|flag:2|yes|cook:let reverse = sf & 2 != 0|-|reverse
+func_rot_button|flag:256|yes|game:SF_BUTTON_TOUCH_ONLY|-
+func_rot_button|flag:32|yes|game:SF_BUTTON_TOGGLE|-
+func_rot_button|flag:64|partial|cook:fn rotating_door_world_axis|-|axis bits shared with rotating doors
+func_rot_button|health|yes|cook:"distance"|-
+func_rot_button|master|yes|cook:"distance"|-
+func_rot_button|renderamt|na|-|-
+func_rot_button|rendercolor|na|-|-
+func_rot_button|renderfx|na|-|-
+func_rot_button|rendermode|na|-|-
+func_rot_button|returnspeed|na|-|-
+func_rot_button|sounds|cosmetic|cook:BUTTON_SOUNDS|-
+func_rot_button|speed|yes|cook:"distance"|-
+func_rot_button|wait|yes|cook:"distance"|-
+func_rotating|@class|yes|cook:"func_rotating"|-|fan pose and collision
+func_rotating|@kill|unreviewed|-|-
+func_rotating|@use|yes|game:fn logic_use_rotating|run:roots-diff
+func_rotating|_minlight#1|unreviewed|-|-|the cooker never names the key
+func_rotating|dmg|yes|game:SF_ROTATING_INSTANT|-
+func_rotating|fanfriction|yes|game:SF_ROTATING_INSTANT|-
+func_rotating|flag:1|yes|game:SF_ROTATING_INSTANT|-
+func_rotating|flag:128|unreviewed|-|-|bit 128
+func_rotating|flag:16|yes|game:SF_ROTATING_INSTANT|-
+func_rotating|flag:2|yes|game:SF_ROTATING_INSTANT|-
+func_rotating|flag:256|unreviewed|-|-|bit 256
+func_rotating|flag:32|unreviewed|-|-|bit 32
+func_rotating|flag:4|yes|cook:rotating_sweep_bounds|-|rotation axis
+func_rotating|flag:512|unreviewed|-|-|bit 512
+func_rotating|flag:64|yes|game:SF_ROTATING_NOT_SOLID|-
+func_rotating|flag:8|yes|cook:rotating_sweep_bounds|-|rotation axis
+func_rotating|friction|unreviewed|cook:"friction"|-|a source file names the key
+func_rotating|health|unreviewed|cook:"health"|-|a source file names the key
+func_rotating|lip|unreviewed|cook:"lip"|-|a source file names the key
+func_rotating|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_rotating|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_rotating|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_rotating|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_rotating|sounds|unreviewed|cook:"sounds"|-|a source file names the key
+func_rotating|spawnorigin|unreviewed|-|-|the cooker never names the key
+func_rotating|speed|yes|game:SF_ROTATING_INSTANT|-
+func_rotating|volume|unreviewed|cook:"volume"|-|a source file names the key
+func_rotating|wait|unreviewed|cook:"wait"|-|a source file names the key
+func_tank|@class|yes|cook:"func_tank"|-|AI aim/fire (sight, cone, rate, persistence) and player control via Use or tankcontrols
+func_tank|@kill|unreviewed|-|-
+func_tank|@use|unreviewed|-|-
+func_tank|_minlight#1|unreviewed|-|-|the cooker never names the key
+func_tank|barrel|unreviewed|cook:"barrel"|-|a source file names the key
+func_tank|barrely|unreviewed|cook:"barrely"|-|a source file names the key
+func_tank|barrelz|unreviewed|cook:"barrelz"|-|a source file names the key
+func_tank|bullet|unreviewed|cook:"bullet"|-|a source file names the key
+func_tank|bullet_damage|unreviewed|cook:"bullet_damage"|-|a source file names the key
+func_tank|firerate|unreviewed|cook:"firerate"|-|a source file names the key
+func_tank|firespread|unreviewed|cook:"firespread"|-|a source file names the key
+func_tank|flag:1|unreviewed|-|-|bit 1
+func_tank|flag:16|unreviewed|-|-|bit 16
+func_tank|flag:2|unreviewed|-|-|bit 2
+func_tank|flag:32|unreviewed|-|-|bit 32
+func_tank|maxrange|unreviewed|cook:"maxrange"|-|a source file names the key
+func_tank|minrange|unreviewed|cook:"minrange"|-|a source file names the key
+func_tank|persistence|unreviewed|cook:"persistence"|-|a source file names the key
+func_tank|pitchrange|unreviewed|cook:"pitchrange"|-|a source file names the key
+func_tank|pitchrate|unreviewed|cook:"pitchrate"|-|a source file names the key
+func_tank|pitchtolerance|unreviewed|cook:"pitchtolerance"|-|a source file names the key
+func_tank|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_tank|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_tank|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_tank|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_tank|rotatesound|unreviewed|-|-|the cooker never names the key
+func_tank|spriteflash|unreviewed|-|-|the cooker never names the key
+func_tank|spritescale|unreviewed|-|-|the cooker never names the key
+func_tank|targetwait|unreviewed|-|-|the cooker never names the key
+func_tank|yawrange|unreviewed|cook:"yawrange"|-|a source file names the key
+func_tank|yawrate|unreviewed|cook:"yawrate"|-|a source file names the key
+func_tank|yawtolerance|unreviewed|cook:"yawtolerance"|-|a source file names the key
+func_tankcontrols|@class|yes|cook:"func_tankcontrols"|-|cooked controls box mounts its tank; dismount beyond 30 units
+func_tankcontrols|barrel|unreviewed|cook:"barrel"|-|a source file names the key
+func_tankcontrols|barrely|unreviewed|cook:"barrely"|-|a source file names the key
+func_tankcontrols|barrelz|unreviewed|cook:"barrelz"|-|a source file names the key
+func_tankcontrols|bullet|unreviewed|cook:"bullet"|-|a source file names the key
+func_tankcontrols|bullet_damage|unreviewed|cook:"bullet_damage"|-|a source file names the key
+func_tankcontrols|firerate|unreviewed|cook:"firerate"|-|a source file names the key
+func_tankcontrols|firespread|unreviewed|cook:"firespread"|-|a source file names the key
+func_tankcontrols|maxrange|unreviewed|cook:"maxrange"|-|a source file names the key
+func_tankcontrols|minrange|unreviewed|cook:"minrange"|-|a source file names the key
+func_tankcontrols|persistence|unreviewed|cook:"persistence"|-|a source file names the key
+func_tankcontrols|pitchrange|unreviewed|cook:"pitchrange"|-|a source file names the key
+func_tankcontrols|pitchrate|unreviewed|cook:"pitchrate"|-|a source file names the key
+func_tankcontrols|pitchtolerance|unreviewed|cook:"pitchtolerance"|-|a source file names the key
+func_tankcontrols|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_tankcontrols|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_tankcontrols|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_tankcontrols|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_tankcontrols|spritescale|unreviewed|-|-|the cooker never names the key
+func_tankcontrols|yawrange|unreviewed|cook:"yawrange"|-|a source file names the key
+func_tankcontrols|yawrate|unreviewed|cook:"yawrate"|-|a source file names the key
+func_tankcontrols|yawtolerance|unreviewed|cook:"yawtolerance"|-|a source file names the key
+func_tanklaser|@class|partial|cook:"func_tanklaser"|-|tank AI and control; fires the compact hitscan instead of env_laser
+func_tanklaser|@kill|unreviewed|-|-
+func_tanklaser|@use|unreviewed|-|-
+func_tanklaser|barrel|unreviewed|cook:"barrel"|-|a source file names the key
+func_tanklaser|barrely|unreviewed|cook:"barrely"|-|a source file names the key
+func_tanklaser|barrelz|unreviewed|cook:"barrelz"|-|a source file names the key
+func_tanklaser|bullet_damage|unreviewed|cook:"bullet_damage"|-|a source file names the key
+func_tanklaser|firerate|unreviewed|cook:"firerate"|-|a source file names the key
+func_tanklaser|firespread|unreviewed|cook:"firespread"|-|a source file names the key
+func_tanklaser|flag:1|unreviewed|-|-|bit 1
+func_tanklaser|flag:2|unreviewed|-|-|bit 2
+func_tanklaser|flag:4|unreviewed|-|-|bit 4
+func_tanklaser|laserentity|unreviewed|cook:"laserentity"|-|a source file names the key
+func_tanklaser|maxrange|unreviewed|cook:"maxrange"|-|a source file names the key
+func_tanklaser|minrange|unreviewed|cook:"minrange"|-|a source file names the key
+func_tanklaser|persistence|unreviewed|cook:"persistence"|-|a source file names the key
+func_tanklaser|pitchrange|unreviewed|cook:"pitchrange"|-|a source file names the key
+func_tanklaser|pitchrate|unreviewed|cook:"pitchrate"|-|a source file names the key
+func_tanklaser|pitchtolerance|unreviewed|cook:"pitchtolerance"|-|a source file names the key
+func_tanklaser|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_tanklaser|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_tanklaser|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_tanklaser|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_tanklaser|spriteflash|unreviewed|-|-|the cooker never names the key
+func_tanklaser|spritescale|unreviewed|-|-|the cooker never names the key
+func_tanklaser|yawrange|unreviewed|cook:"yawrange"|-|a source file names the key
+func_tanklaser|yawrate|unreviewed|cook:"yawrate"|-|a source file names the key
+func_tanklaser|yawtolerance|unreviewed|cook:"yawtolerance"|-|a source file names the key
+func_tankmortar|@class|yes|cook:"func_tankmortar"|-|tank AI and control; one iMagnitude explosion per shot
+func_tankmortar|@kill|unreviewed|-|-
+func_tankmortar|@use|unreviewed|-|-
+func_tankmortar|barrel|unreviewed|cook:"barrel"|-|a source file names the key
+func_tankmortar|barrely|unreviewed|cook:"barrely"|-|a source file names the key
+func_tankmortar|barrelz|unreviewed|cook:"barrelz"|-|a source file names the key
+func_tankmortar|bullet_damage|unreviewed|cook:"bullet_damage"|-|a source file names the key
+func_tankmortar|firerate|unreviewed|cook:"firerate"|-|a source file names the key
+func_tankmortar|firespread|unreviewed|cook:"firespread"|-|a source file names the key
+func_tankmortar|flag:1|unreviewed|-|-|bit 1
+func_tankmortar|flag:2|unreviewed|-|-|bit 2
+func_tankmortar|flag:32|unreviewed|-|-|bit 32
+func_tankmortar|imagnitude|unreviewed|cook:"imagnitude"|-|a source file names the key
+func_tankmortar|maxrange|unreviewed|cook:"maxrange"|-|a source file names the key
+func_tankmortar|minrange|unreviewed|cook:"minrange"|-|a source file names the key
+func_tankmortar|persistence|unreviewed|cook:"persistence"|-|a source file names the key
+func_tankmortar|pitchrange|unreviewed|cook:"pitchrange"|-|a source file names the key
+func_tankmortar|pitchrate|unreviewed|cook:"pitchrate"|-|a source file names the key
+func_tankmortar|pitchtolerance|unreviewed|cook:"pitchtolerance"|-|a source file names the key
+func_tankmortar|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_tankmortar|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_tankmortar|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_tankmortar|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_tankmortar|spriteflash|unreviewed|-|-|the cooker never names the key
+func_tankmortar|spritescale|unreviewed|-|-|the cooker never names the key
+func_tankmortar|spritesmoke|unreviewed|-|-|the cooker never names the key
+func_tankmortar|yawrange|unreviewed|cook:"yawrange"|-|a source file names the key
+func_tankmortar|yawrate|unreviewed|cook:"yawrate"|-|a source file names the key
+func_tankmortar|yawtolerance|unreviewed|cook:"yawtolerance"|-|a source file names the key
+func_tankrocket|@class|yes|cook:"func_tankrocket"|-|tank AI and control; fires rockets
+func_tankrocket|@kill|unreviewed|-|-
+func_tankrocket|@use|unreviewed|-|-
+func_tankrocket|barrel|unreviewed|cook:"barrel"|-|a source file names the key
+func_tankrocket|barrely|unreviewed|cook:"barrely"|-|a source file names the key
+func_tankrocket|barrelz|unreviewed|cook:"barrelz"|-|a source file names the key
+func_tankrocket|bullet_damage|unreviewed|cook:"bullet_damage"|-|a source file names the key
+func_tankrocket|firerate|unreviewed|cook:"firerate"|-|a source file names the key
+func_tankrocket|firespread|unreviewed|cook:"firespread"|-|a source file names the key
+func_tankrocket|flag:1|unreviewed|-|-|bit 1
+func_tankrocket|flag:2|unreviewed|-|-|bit 2
+func_tankrocket|persistence|unreviewed|cook:"persistence"|-|a source file names the key
+func_tankrocket|pitchrange|unreviewed|cook:"pitchrange"|-|a source file names the key
+func_tankrocket|pitchrate|unreviewed|cook:"pitchrate"|-|a source file names the key
+func_tankrocket|pitchtolerance|unreviewed|cook:"pitchtolerance"|-|a source file names the key
+func_tankrocket|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_tankrocket|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_tankrocket|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_tankrocket|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_tankrocket|rotatesound|unreviewed|-|-|the cooker never names the key
+func_tankrocket|spritescale|unreviewed|-|-|the cooker never names the key
+func_tankrocket|spritesmoke|unreviewed|-|-|the cooker never names the key
+func_tankrocket|yawrange|unreviewed|cook:"yawrange"|-|a source file names the key
+func_tankrocket|yawrate|unreviewed|cook:"yawrate"|-|a source file names the key
+func_tankrocket|yawtolerance|unreviewed|cook:"yawtolerance"|-|a source file names the key
+func_trackautochange|@class|partial|cook:"func_trackautochange"|-|minimal junction button routing
+func_trackautochange|bottomtrack|partial|game:fn tram_path_track_use|-|as func_trackchange
+func_trackautochange|height|partial|game:fn tram_path_track_use|-|as func_trackchange
+func_trackautochange|movesnd|unreviewed|cook:"movesnd"|-|a source file names the key
+func_trackautochange|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_trackautochange|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_trackautochange|rotation|partial|game:fn tram_path_track_use|-|as func_trackchange
+func_trackautochange|sounds|unreviewed|cook:"sounds"|-|a source file names the key
+func_trackautochange|speed|partial|game:fn tram_path_track_use|-|as func_trackchange
+func_trackautochange|stopsnd|unreviewed|cook:"stopsnd"|-|a source file names the key
+func_trackautochange|toptrack|partial|game:fn tram_path_track_use|-|as func_trackchange
+func_trackautochange|train|partial|game:fn tram_path_track_use|-|as func_trackchange
+func_trackchange|@class|partial|cook:"func_trackchange"|-|minimal junction button routing
+func_trackchange|@use|partial|game:fn tram_path_track_use|-|junction button only
+func_trackchange|bottomtrack|partial|game:fn tram_path_track_use|-|the path chain is stitched at cook time, the platform does not rotate
+func_trackchange|flag:1|no|-|-
+func_trackchange|flag:16|no|-|-
+func_trackchange|flag:2|no|-|-
+func_trackchange|flag:8|no|-|-
+func_trackchange|height|partial|game:fn tram_path_track_use|-|the path chain is stitched at cook time, the platform does not rotate
+func_trackchange|movesnd|unreviewed|cook:"movesnd"|-|a source file names the key
+func_trackchange|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_trackchange|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_trackchange|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_trackchange|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_trackchange|rotation|partial|game:fn tram_path_track_use|-|the path chain is stitched at cook time, the platform does not rotate
+func_trackchange|sounds|unreviewed|cook:"sounds"|-|a source file names the key
+func_trackchange|speed|partial|game:fn tram_path_track_use|-|the path chain is stitched at cook time, the platform does not rotate
+func_trackchange|stopsnd|unreviewed|cook:"stopsnd"|-|a source file names the key
+func_trackchange|toptrack|partial|game:fn tram_path_track_use|-|the path chain is stitched at cook time, the platform does not rotate
+func_trackchange|train|partial|game:fn tram_path_track_use|-|the path chain is stitched at cook time, the platform does not rotate
+func_trackchange|volume|unreviewed|cook:"volume"|-|a source file names the key
+func_tracktrain|@class|yes|cook:"func_tracktrain"|-|path-track moving brush
+func_tracktrain|@use|yes|game:fn logic_queue_tracktrain_command|run:roots-diff
+func_tracktrain|bank|cosmetic|-|-|banking angle is not modelled
+func_tracktrain|dmg|yes|cook:"startspeed"|-
+func_tracktrain|flag:1|cosmetic|-|-|no pitch
+func_tracktrain|flag:2|yes|game:SF_TRACKTRAIN_NOCONTROL|-
+func_tracktrain|flag:8|yes|cook:passable_train|unit:passable_doors_and_trains_cook_without_collision|SOLID_NOT; was solid before the passable fix
+func_tracktrain|globalname|yes|cook:"startspeed"|-
+func_tracktrain|height|yes|cook:"startspeed"|-
+func_tracktrain|renderamt|partial|cook:fn brush_render_class|-
+func_tracktrain|rendercolor|partial|cook:fn brush_render_class|-
+func_tracktrain|renderfx|partial|cook:fn brush_render_class|-
+func_tracktrain|rendermode|partial|cook:fn brush_render_class|-
+func_tracktrain|sounds|cosmetic|cook:TRACKTRAIN_SOUNDS|-
+func_tracktrain|speed|yes|cook:"startspeed"|-
+func_tracktrain|startspeed|yes|cook:"startspeed"|-
+func_tracktrain|volume|cosmetic|cook:TRACKTRAIN_SOUNDS|-
+func_tracktrain|wheels|yes|cook:"startspeed"|-
+func_train|@class|yes|cook:"func_train"|-|path-corner moving brush
+func_train|@use|yes|game:fn logic_apply_brush_train_command|run:roots-diff
+func_train|dmg|yes|cook:"globalname"|-
+func_train|flag:1|yes|game:LOGIC_FUNC_TRAIN|-|wait for trigger
+func_train|flag:2|unreviewed|-|-|bit 2
+func_train|flag:8|yes|cook:passable_train|unit:passable_doors_and_trains_cook_without_collision|SOLID_NOT; was solid before the passable fix
+func_train|globalname|yes|cook:"globalname"|-
+func_train|health|na|-|-
+func_train|lip|na|-|-
+func_train|locked_sentence|cosmetic|-|-
+func_train|locked_sound|cosmetic|cook:PLAT_MOVE_SOUNDS|-
+func_train|movesnd|cosmetic|cook:PLAT_MOVE_SOUNDS|-
+func_train|renderamt|partial|cook:fn brush_render_class|-
+func_train|rendercolor|partial|cook:fn brush_render_class|-
+func_train|renderfx|partial|cook:fn brush_render_class|-
+func_train|rendermode|partial|cook:fn brush_render_class|-
+func_train|skin|partial|cook:"skin"|-|only the moving-water value -3
+func_train|sounds|cosmetic|cook:PLAT_MOVE_SOUNDS|-
+func_train|speed|yes|cook:"globalname"|-
+func_train|stopsnd|cosmetic|cook:PLAT_MOVE_SOUNDS|-
+func_train|unlocked_sentence|cosmetic|-|-
+func_train|unlocked_sound|cosmetic|cook:PLAT_MOVE_SOUNDS|-
+func_train|volume|cosmetic|cook:PLAT_MOVE_SOUNDS|-
+func_train|wait|na|-|-
+func_traincontrols|@class|unreviewed|-|-|controls are folded into direct train use
+func_wall|@class|yes|cook:"func_wall"|-|rendered brush and optional frame control
+func_wall|@kill|unreviewed|-|-
+func_wall|@use|yes|game:LOGIC_WALL_FRAME|-|swaps the texture frame
+func_wall|delay|unreviewed|cook:"delay"|-|a source file names the key
+func_wall|dmg|unreviewed|cook:"dmg"|-|a source file names the key
+func_wall|explosion|unreviewed|-|-|the cooker never names the key
+func_wall|flag:1|unreviewed|-|-|bit 1
+func_wall|flag:2|unreviewed|-|-|bit 2
+func_wall|flag:32|unreviewed|-|-|bit 32
+func_wall|flag:4|unreviewed|-|-|bit 4
+func_wall|flag:8|unreviewed|-|-|bit 8
+func_wall|health|unreviewed|cook:"health"|-|a source file names the key
+func_wall|lip|unreviewed|cook:"lip"|-|a source file names the key
+func_wall|locked_sentence|unreviewed|-|-|the cooker never names the key
+func_wall|locked_sound|unreviewed|cook:"locked_sound"|-|a source file names the key
+func_wall|material|unreviewed|cook:"material"|-|a source file names the key
+func_wall|movesnd|unreviewed|cook:"movesnd"|-|a source file names the key
+func_wall|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_wall|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_wall|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_wall|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_wall|skin|unreviewed|cook:"skin"|-|a source file names the key
+func_wall|sounds|unreviewed|cook:"sounds"|-|a source file names the key
+func_wall|speed|unreviewed|cook:"speed"|-|a source file names the key
+func_wall|stopsnd|unreviewed|cook:"stopsnd"|-|a source file names the key
+func_wall|unlocked_sentence|unreviewed|-|-|the cooker never names the key
+func_wall|unlocked_sound|unreviewed|cook:"unlocked_sound"|-|a source file names the key
+func_wall|wait|unreviewed|cook:"wait"|-|a source file names the key
+func_wall_toggle|@class|yes|cook:"func_wall_toggle"|-|toggleable render and collision brush
+func_wall_toggle|@kill|unreviewed|-|-
+func_wall_toggle|@use|yes|game:LOGIC_WALL_TOGGLE|-
+func_wall_toggle|flag:1|yes|game:LOGIC_WALL_TOGGLE|-|starts hidden, hull gated by the active flag
+func_wall_toggle|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_wall_toggle|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_wall_toggle|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_wall_toggle|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_water|@class|yes|cook:"func_water"|-|liquid brush volume and surface
+func_water|@use|unreviewed|-|-
+func_water|delay|unreviewed|cook:"delay"|-|a source file names the key
+func_water|dmg|unreviewed|cook:"dmg"|-|a source file names the key
+func_water|flag:1|unreviewed|-|-|bit 1
+func_water|flag:8|unreviewed|-|-|bit 8
+func_water|health|unreviewed|cook:"health"|-|a source file names the key
+func_water|healthvalue|unreviewed|-|-|the cooker never names the key
+func_water|lip|unreviewed|cook:"lip"|-|a source file names the key
+func_water|locked_sentence|unreviewed|-|-|the cooker never names the key
+func_water|locked_sound|unreviewed|cook:"locked_sound"|-|a source file names the key
+func_water|movesnd|unreviewed|cook:"movesnd"|-|a source file names the key
+func_water|renderamt|unreviewed|cook:"renderamt"|-|a source file names the key
+func_water|rendercolor|unreviewed|cook:"rendercolor"|-|a source file names the key
+func_water|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
+func_water|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
+func_water|skin|unreviewed|cook:"skin"|-|a source file names the key
+func_water|speed|unreviewed|cook:"speed"|-|a source file names the key
+func_water|stopsnd|unreviewed|cook:"stopsnd"|-|a source file names the key
+func_water|unlocked_sentence|unreviewed|-|-|the cooker never names the key
+func_water|unlocked_sound|unreviewed|cook:"unlocked_sound"|-|a source file names the key
+func_water|wait|unreviewed|cook:"wait"|-|a source file names the key
+func_water|waveheight|unreviewed|-|-|the cooker never names the key
+gibshooter|@class|partial|cook:"gibshooter"|-|shoots flesh-coloured debris, not hgibs
+gibshooter|@use|yes|game:LOGIC_SHOOTER|-
+gibshooter|delay|unreviewed|cook:"delay"|-|a source file names the key
+gibshooter|flag:1|unreviewed|-|-|bit 1
+gibshooter|flag:8|unreviewed|-|-|bit 8
+gibshooter|m_flgiblife|cosmetic|-|-
+gibshooter|m_flvariance|unreviewed|cook:"m_flvariance"|-|a source file names the key
+gibshooter|m_flvelocity|unreviewed|cook:"m_flvelocity"|-|a source file names the key
+gibshooter|m_igibs|unreviewed|cook:"m_igibs"|-|a source file names the key
+info_bigmomma|@class|partial|cook:"info_bigmomma"|-|Gonarch node walk: reachdelay, radius, health gates and reachtargets; no node sequences
+info_bigmomma|flag:1|no|-|-|node animations
+info_bigmomma|flag:2|no|-|-|node animations
+info_bigmomma|health|yes|cook:fn bigmomma_entry_node|-
+info_bigmomma|presequence|no|-|-|node animations
+info_bigmomma|radius|yes|cook:fn bigmomma_entry_node|-
+info_bigmomma|reachdelay|yes|cook:fn bigmomma_entry_node|-
+info_bigmomma|reachsequence|no|-|-|node animations
+info_bigmomma|reachtarget|yes|cook:fn bigmomma_entry_node|-
+info_landmark|@class|yes|cook:"info_landmark"|-|transition transform marker
+info_landmark|flag:4|na|-|-
+info_player_start|@class|yes|cook:"info_player_start"|-|spawn selection input
+info_player_start|flag:16|na|-|-
+info_player_start|flag:256|na|-|-
+info_player_start|flag:4|na|-|-
+info_target|@class|yes|cook:"info_target"|-|target and teleport resolution input
+info_target|@kill|na|-|-
+info_target|flag:16|na|-|-
+info_target|flag:32|na|-|-
+info_target|flag:64|na|-|-
+info_teleport_destination|@class|yes|cook:"info_teleport_destination"|-|teleport destination input
+info_teleport_destination|@use|na|-|-
+info_teleport_destination|flag:8|na|-|-
+infodecal|@class|partial|cook:"infodecal"|-|targeted decals stamp a resident atlas splat; static decals are absent
+infodecal|@use|yes|game:LOGIC_INFODECAL|-
+infodecal|flag:2048|na|-|-
+infodecal|texture|yes|cook:fn infodecal_pick|-
+momentary_door|@class|yes|cook:"momentary_door"|-|door logic
+momentary_door|@use|yes|game:fn logic_tick_momentary|-
+momentary_door|delay|yes|cook:"lip"|-
+momentary_door|dmg|yes|cook:"lip"|-
+momentary_door|flag:32|na|-|-
+momentary_door|health|na|-|-
+momentary_door|healthvalue|na|-|-
+momentary_door|lip|yes|cook:"lip"|-
+momentary_door|locked_sentence|na|-|-
+momentary_door|locked_sound|cosmetic|cook:ordinal_sound|-
+momentary_door|movesnd|cosmetic|cook:ordinal_sound|-
+momentary_door|renderamt|partial|cook:fn brush_render_class|-
+momentary_door|rendercolor|partial|cook:fn brush_render_class|-
+momentary_door|renderfx|partial|cook:fn brush_render_class|-
+momentary_door|rendermode|partial|cook:fn brush_render_class|-
+momentary_door|speed|yes|cook:"lip"|-
+momentary_door|stopsnd|cosmetic|cook:ordinal_sound|-
+momentary_door|unlocked_sentence|na|-|-
+momentary_door|unlocked_sound|cosmetic|cook:ordinal_sound|-
+momentary_door|wait|yes|cook:"lip"|-
+momentary_rot_button|@class|yes|cook:"momentary_rot_button"|-|continuous-use rotating control
+momentary_rot_button|distance|yes|cook:"returnspeed"|-
+momentary_rot_button|flag:1|yes|cook:SF_MOMENTARY_DOOR|-
+momentary_rot_button|flag:128|partial|cook:fn rotating_door_world_axis|-
+momentary_rot_button|flag:16|yes|game:SF_MOMENTARY_AUTO_RETURN|-
+momentary_rot_button|flag:64|partial|cook:fn rotating_door_world_axis|-
+momentary_rot_button|renderamt|na|-|-
+momentary_rot_button|rendercolor|na|-|-
+momentary_rot_button|renderfx|na|-|-
+momentary_rot_button|rendermode|na|-|-
+momentary_rot_button|returnspeed|yes|cook:"returnspeed"|-
+momentary_rot_button|skin|na|-|-
+momentary_rot_button|sounds|cosmetic|cook:BUTTON_SOUNDS|-
+momentary_rot_button|speed|yes|cook:"returnspeed"|-
+monstermaker|@class|partial|cook:"monstermaker"|-|bounded dormant actor pool
+monstermaker|@kill|yes|game:fn logic_kill_targets|-
+monstermaker|@use|yes|game:fn maker_make|run:roots-diff
+monstermaker|delay|yes|cook:"m_imaxlivechildren"|-
+monstermaker|flag:1|yes|game:LOGIC_MONSTERMAKER|-|start on
+monstermaker|flag:2|na|-|-
+monstermaker|flag:4|yes|game:SF_MONSTERMAKER_CYCLIC|-
+monstermaker|flag:8|na|-|-
+monstermaker|hck1|na|-|-
+monstermaker|m_imaxlivechildren|yes|cook:"m_imaxlivechildren"|-
+monstermaker|monstercount|yes|cook:"m_imaxlivechildren"|-
+monstermaker|monstertype|yes|cook:"m_imaxlivechildren"|-
+multi_manager|@class|yes|cook:"multi_manager"|-|timed target fan-out logic
+multi_manager|<output>|yes|cook:goldsrc_entvars_key|run:roots-diff|first 16 outputs, delays in ticks
+multi_manager|@kill|yes|game:fn logic_kill_targets|-
+multi_manager|@use|yes|game:SF_MULTIMAN_THREAD|run:roots-diff
+multi_manager|flag:1|yes|game:SF_MULTIMAN_THREAD|run:roots-diff|multithreaded
+multi_manager|flag:16|na|-|-
+multi_manager|flag:2|na|-|-
+multi_manager|flag:32|na|-|-
+multi_manager|flag:8|na|-|-
+multisource|@class|yes|cook:"multisource"|-|multi-input gate logic
+multisource|@kill|na|-|-
+multisource|@use|yes|game:fn logic_multisource_refresh|run:roots-diff|only a registered caller counts
+multisource|flag:1|na|-|-
+multisource|flag:16|na|-|-
+multisource|flag:32|na|-|-
+multisource|flag:4|na|-|-
+multisource|flag:8|na|-|-
+multisource|globalstate|yes|game:fn logic_multisource_refresh|-
+path_corner|@class|yes|cook:"path_corner"|-|func_train route input
+path_corner|@use|na|-|-
+path_corner|cspinup|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|fadein|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|fadeout|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|flag:1|yes|game:TRAIN_CORNER_TELEPORT|-|retrigger and teleport
+path_corner|flag:2|yes|game:TRAIN_CORNER_TELEPORT|-|retrigger and teleport
+path_corner|flag:4|na|-|-
+path_corner|health|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|lfomodpitch|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|lfomodvol|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|lforate|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|lfotype|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|pitch|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|pitchstart|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|preset|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|speed|yes|game:TRAIN_CORNER_TELEPORT|-|retrigger and teleport
+path_corner|spindown|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|spinup|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|volstart|na|-|-|ambient_generic keys pasted on by the editor
+path_corner|wait|yes|game:TRAIN_CORNER_TELEPORT|-|retrigger and teleport
+path_corner|yaw_speed|no|-|-|trains turn at their own rate
+path_track|@class|yes|cook:"path_track"|-|func_tracktrain route with altpath switching, DISABLED stops and Use
+path_track|@use|yes|game:fn tram_path_track_use|run:roots-diff
+path_track|altpath|yes|game:PATH_TRACK_DISABLED|-|disabled, fire once, alternate, branch reverse
+path_track|flag:1|yes|game:PATH_TRACK_DISABLED|-|disabled, fire once, alternate, branch reverse
+path_track|flag:2|yes|game:PATH_TRACK_DISABLED|-|disabled, fire once, alternate, branch reverse
+path_track|flag:4|yes|game:PATH_TRACK_DISABLED|-|disabled, fire once, alternate, branch reverse
+path_track|flag:8|yes|game:PATH_TRACK_DISABLED|-|disabled, fire once, alternate, branch reverse
+path_track|netname|yes|game:PATH_TRACK_DISABLED|-|disabled, fire once, alternate, branch reverse
+path_track|speed|yes|game:PATH_TRACK_DISABLED|-|disabled, fire once, alternate, branch reverse
+path_track|wait|yes|game:PATH_TRACK_DISABLED|-|disabled, fire once, alternate, branch reverse
+path_track|yawspeed|na|-|-
+player_loadsaved|@class|partial|cook:"player_loadsaved"|-|fade, message and reload through the death restart (map entry, not the last save)
+player_loadsaved|@kill|na|-|-
+player_loadsaved|@use|yes|game:LOGIC_ENV_FADE_REVERT|-
+player_loadsaved|duration|yes|cook:"loadtime"|-
+player_loadsaved|flag:1|na|-|-
+player_loadsaved|flag:2|na|-|-
+player_loadsaved|holdtime|yes|cook:"loadtime"|-
+player_loadsaved|loadtime|yes|cook:"loadtime"|-
+player_loadsaved|messagetime|yes|cook:"loadtime"|-
+player_loadsaved|renderamt|yes|cook:"rendercolor"|-
+player_loadsaved|rendercolor|yes|cook:"rendercolor"|-
+player_weaponstrip|@class|yes|cook:"player_weaponstrip"|-|inventory logic
+player_weaponstrip|@use|unreviewed|-|-
+scripted_sentence|@class|yes|cook:"scripted_sentence"|-|compact authored dialogue
+scripted_sentence|@kill|unreviewed|-|-
+scripted_sentence|@use|yes|game:LOGIC_SENTENCE|run:roots-diff
+scripted_sentence|attenuation|yes|cook:"refire"|-
+scripted_sentence|delay|yes|cook:"refire"|-
+scripted_sentence|duration|yes|cook:"refire"|-
+scripted_sentence|entity|yes|cook:"refire"|-
+scripted_sentence|flag:1|yes|game:fn sentence_rearm|-|fire once
+scripted_sentence|flag:4|unreviewed|-|-|bit 4
+scripted_sentence|flag:8|unreviewed|-|-|bit 8
+scripted_sentence|listener|no|-|-
+scripted_sentence|radius|yes|cook:"refire"|-
+scripted_sentence|refire|yes|cook:"refire"|-
+scripted_sentence|sentence|yes|cook:"refire"|-
+scripted_sentence|volume|yes|cook:"refire"|-
+scripted_sequence|@class|yes|cook:"scripted_sequence"|-|compact actor sequence control
+scripted_sequence|@kill|unreviewed|-|-
+scripted_sequence|@use|yes|game:LOGIC_SCRIPTED|run:roots-diff
+scripted_sequence|cspinup|unreviewed|-|-|the cooker never names the key
+scripted_sequence|delay|yes|cook:"m_iszPlay"|-
+scripted_sequence|entity|unreviewed|cook:"entity"|-|a source file names the key
+scripted_sequence|fadein|unreviewed|-|-|the cooker never names the key
+scripted_sequence|fadeout|unreviewed|cook:"fadeout"|-|a source file names the key
+scripted_sequence|flag:1|unreviewed|-|-|bit 1
+scripted_sequence|flag:128|unreviewed|-|-|bit 128
+scripted_sequence|flag:16|unreviewed|-|-|bit 16
+scripted_sequence|flag:2|unreviewed|-|-|bit 2
+scripted_sequence|flag:256|unreviewed|-|-|bit 256
+scripted_sequence|flag:32|yes|game:SF_SCRIPT_NOINTERRUPT|-
+scripted_sequence|flag:4|yes|game:SF_SCRIPT_REPEATABLE|-
+scripted_sequence|flag:64|unreviewed|-|-|bit 64
+scripted_sequence|flag:8|unreviewed|-|-|bit 8
+scripted_sequence|health|unreviewed|cook:"health"|-|a source file names the key
+scripted_sequence|idle|unreviewed|cook:"idle"|-|a source file names the key
+scripted_sequence|killtarget|yes|cook:"m_iszPlay"|-
+scripted_sequence|lfomodpitch|unreviewed|-|-|the cooker never names the key
+scripted_sequence|lfomodvol|unreviewed|-|-|the cooker never names the key
+scripted_sequence|lforate|unreviewed|-|-|the cooker never names the key
+scripted_sequence|lfotype|unreviewed|-|-|the cooker never names the key
+scripted_sequence|m_flradius|yes|cook:"m_iszPlay"|-
+scripted_sequence|m_flrepeat|na|-|-|every shipped value is 0
+scripted_sequence|m_fmoveto|yes|cook:"m_iszPlay"|-
+scripted_sequence|m_iszentity|yes|cook:"m_iszPlay"|-
+scripted_sequence|m_iszidle|yes|cook:"m_iszPlay"|-
+scripted_sequence|m_iszplay|yes|cook:"m_iszPlay"|-
+scripted_sequence|moveto|unreviewed|-|-|the cooker never names the key
+scripted_sequence|pitch|unreviewed|game:"pitch"|-|a source file names the key
+scripted_sequence|pitchstart|unreviewed|-|-|the cooker never names the key
+scripted_sequence|play|unreviewed|-|-|the cooker never names the key
+scripted_sequence|preset|unreviewed|cook:"preset"|-|a source file names the key
+scripted_sequence|radius|unreviewed|cook:"radius"|-|a source file names the key
+scripted_sequence|range|unreviewed|-|-|the cooker never names the key
+scripted_sequence|repeat|unreviewed|-|-|the cooker never names the key
+scripted_sequence|scriptedentity|unreviewed|-|-|the cooker never names the key
+scripted_sequence|sounds|unreviewed|cook:"sounds"|-|a source file names the key
+scripted_sequence|spindown|unreviewed|-|-|the cooker never names the key
+scripted_sequence|spinup|unreviewed|-|-|the cooker never names the key
+scripted_sequence|style|unreviewed|cook:"style"|-|a source file names the key
+scripted_sequence|volstart|unreviewed|-|-|the cooker never names the key
+scripted_sequence|wait|unreviewed|cook:"wait"|-|a source file names the key
+speaker|@class|partial|cook:"speaker"|-|sentence group is folded into compact ambience
+speaker|@kill|unreviewed|-|-
+speaker|health|unreviewed|cook:"health"|-|a source file names the key
+speaker|preset|unreviewed|cook:"preset"|-|a source file names the key
+target_cdaudio|@class|yes|cook:"target_cdaudio"|-|music trigger logic
+target_cdaudio|@use|yes|game:CD_TRACK_WANT|-
+target_cdaudio|flag:1|no|-|-|radius and start-flag are not used
+target_cdaudio|health|yes|cook:LOGIC_CDTRACK|-
+target_cdaudio|radius|no|-|-|radius and start-flag are not used
+trigger_auto|@class|yes|cook:"trigger_auto"|-|map-start target logic
+trigger_auto|delay|yes|cook:fn triggerstate_use_type|run:roots-diff
+trigger_auto|flag:1|yes|game:fn logic_fire_global_autos|-|remove on fire
+trigger_auto|globalstate|yes|cook:fn triggerstate_use_type|run:roots-diff
+trigger_auto|renderamt|na|-|-
+trigger_auto|rendercolor|na|-|-
+trigger_auto|renderfx|na|-|-
+trigger_auto|rendermode|na|-|-
+trigger_auto|skin|na|-|-
+trigger_auto|triggerstate|yes|cook:fn triggerstate_use_type|run:roots-diff
+trigger_autosave|@class|no|-|-|authored checkpoint system is absent
+trigger_autosave|@use|na|-|-
+trigger_autosave|flag:2|na|-|-
+trigger_autosave|flag:256|na|-|-
+trigger_autosave|flag:32|na|-|-
+trigger_autosave|master|na|-|-
+trigger_camera|@class|partial|cook:"trigger_camera"|-|static camera: holds the view on its target for its wait, takes control; no path moves
+trigger_camera|@use|yes|game:fn camera_use|-
+trigger_camera|acceleration|no|-|-|the camera turns at a fixed rate
+trigger_camera|deceleration|no|-|-|the camera turns at a fixed rate
+trigger_camera|delay|yes|game:CAMERA_UNTIL|-
+trigger_camera|flag:4|yes|game:CAMERA_LOCK|-|player takes no control
+trigger_camera|speed|yes|game:CAMERA_UNTIL|-
+trigger_camera|wait|yes|game:CAMERA_UNTIL|-
+trigger_cdaudio|@class|yes|cook:"trigger_cdaudio"|-|music trigger logic
+trigger_cdaudio|@use|yes|game:CD_TRACK_WANT|-
+trigger_cdaudio|flag:256|na|-|-
+trigger_cdaudio|health|yes|cook:LOGIC_CDTRACK|-|CD track
+trigger_cdaudio|tartgetname|na|-|-
+trigger_changelevel|@class|yes|cook:"trigger_changelevel"|-|transition logic and carry snapshot
+trigger_changelevel|@use|yes|game:fn logic_request_changelevel|-
+trigger_changelevel|changedelay|yes|cook:"landmark"|-
+trigger_changelevel|changetarget|yes|cook:"landmark"|-
+trigger_changelevel|flag:1|na|-|-
+trigger_changelevel|flag:2|yes|game:SF_CHANGELEVEL_USE_ONLY|-
+trigger_changelevel|landmark|yes|cook:"landmark"|run:levels
+trigger_changelevel|map|yes|cook:"landmark"|run:levels
+trigger_endsection|@class|yes|cook:"trigger_endsection"|-|Hazard Course completion logic
+trigger_endsection|@use|yes|game:LOGIC_TRIGGER_ENDSECTION|-
+trigger_endsection|section|na|-|-
+trigger_gravity|@class|yes|cook:"trigger_gravity"|-|player gravity volume
+trigger_gravity|delay|na|-|-
+trigger_gravity|flag:256|na|-|-
+trigger_gravity|gravity|yes|cook:"gravity"|-
+trigger_gravity|killtarget|na|-|-
+trigger_gravity|sounds|na|-|-
+trigger_gravity|style|na|-|-
+trigger_hurt|@class|yes|cook:"trigger_hurt"|-|damage volume
+trigger_hurt|@kill|yes|game:fn logic_kill_targets|-
+trigger_hurt|@use|yes|game:SF_TRIGGER_HURT_START_OFF|run:roots-diff|toggles the damage volume
+trigger_hurt|damagetype|partial|cook:DMG_RADIATION|-|only the radiation bit is read
+trigger_hurt|delay|yes|cook:"dmg"|-
+trigger_hurt|dmg|yes|cook:"dmg"|-
+trigger_hurt|flag:2|yes|game:SF_TRIGGER_HURT_START_OFF|-
+trigger_hurt|flag:32|no|-|-|no-clients / touch-client-only variants are not honoured
+trigger_hurt|flag:8|no|-|-|no-clients / touch-client-only variants are not honoured
+trigger_hurt|master|yes|cook:"dmg"|-
+trigger_hurt|renderamt|na|-|-
+trigger_hurt|rendercolor|na|-|-
+trigger_hurt|renderfx|na|-|-
+trigger_hurt|rendermode|na|-|-
+trigger_monsterjump|@class|no|-|-|monster jump volume is absent
+trigger_monsterjump|delay|no|-|-|monster jump volumes are absent
+trigger_monsterjump|height|no|-|-|monster jump volumes are absent
+trigger_monsterjump|sounds|no|-|-|monster jump volumes are absent
+trigger_monsterjump|speed|no|-|-|monster jump volumes are absent
+trigger_monsterjump|style|no|-|-|monster jump volumes are absent
+trigger_multiple|@class|yes|cook:"trigger_multiple"|-|repeatable touch trigger
+trigger_multiple|@kill|na|-|-|CBaseTrigger has no Use
+trigger_multiple|@use|na|-|-|CBaseTrigger has no Use
+trigger_multiple|delay|yes|cook:"master"|-
+trigger_multiple|flag:1|yes|game:SF_TRIGGER_ALLOWMONSTERS|-
+trigger_multiple|flag:2|yes|game:SF_TRIGGER_NOCLIENTS|-
+trigger_multiple|flag:4|yes|game:SF_TRIGGER_PUSHABLES|-
+trigger_multiple|killtarget|yes|cook:"master"|-
+trigger_multiple|master|yes|cook:"master"|-
+trigger_multiple|sounds|na|-|-
+trigger_multiple|style|na|-|-
+trigger_multiple|wait|yes|cook:"master"|-
+trigger_once|@class|yes|cook:"trigger_once"|-|single-use touch trigger
+trigger_once|@kill|na|-|-|CBaseTrigger has no Use: firing one by name does nothing in retail either
+trigger_once|delay|yes|cook:"master"|-
+trigger_once|flag:1|yes|game:SF_TRIGGER_ALLOWMONSTERS|-|monsters touch it
+trigger_once|flag:2|yes|game:SF_TRIGGER_NOCLIENTS|-|the player does not
+trigger_once|flag:4|yes|game:SF_TRIGGER_PUSHABLES|-|pushables touch it
+trigger_once|killtarget|yes|cook:"master"|-
+trigger_once|master|yes|cook:"master"|-
+trigger_once|netname|na|-|-
+trigger_once|sounds|na|-|-
+trigger_once|style|na|-|-
+trigger_push|@class|yes|cook:"trigger_push"|-|push volume
+trigger_push|@kill|unreviewed|-|-
+trigger_push|@use|yes|game:SF_TRIGGER_PUSH_START_OFF|-
+trigger_push|delay|yes|cook:LOGIC_TRIGGER_PUSH|-
+trigger_push|flag:1|no|-|-|push-once is ignored; the volume keeps pushing
+trigger_push|flag:2|yes|game:SF_TRIGGER_PUSH_START_OFF|-
+trigger_push|flag:4|na|-|-
+trigger_push|sounds|na|-|-
+trigger_push|speed|yes|cook:LOGIC_TRIGGER_PUSH|-
+trigger_push|style|na|-|-
+trigger_relay|@class|yes|cook:"trigger_relay"|-|target relay logic
+trigger_relay|@kill|yes|game:fn logic_kill_targets|-
+trigger_relay|@use|yes|game:SF_RELAY_FIREONCE|run:roots-diff
+trigger_relay|delay|yes|cook:fn triggerstate_use_type|run:roots-diff
+trigger_relay|flag:1|yes|game:SF_RELAY_FIREONCE|run:roots-diff
+trigger_relay|flag:16|na|-|-|retail only reads bit 1
+trigger_relay|flag:2|na|-|-|retail only reads bit 1
+trigger_relay|flag:32|na|-|-|retail only reads bit 1
+trigger_relay|flag:4|na|-|-|retail only reads bit 1
+trigger_relay|flag:64|na|-|-|retail only reads bit 1
+trigger_relay|killtarget|yes|cook:fn triggerstate_use_type|run:roots-diff
+trigger_relay|triggerstate|yes|cook:fn triggerstate_use_type|run:roots-diff
+trigger_teleport|@class|yes|cook:"trigger_teleport"|-|teleport volume and destination
+trigger_teleport|@kill|unreviewed|-|-
+trigger_teleport|delay|yes|cook:"master"|-
+trigger_teleport|flag:1|partial|game:SF_TRIGGER_ALLOWMONSTERS|-|monsters on a pad are placed at their destination at cook time
+trigger_teleport|flag:2|yes|game:SF_TRIGGER_NOCLIENTS|-
+trigger_teleport|killtarget|yes|cook:"master"|-
+trigger_teleport|master|yes|cook:"master"|-
+trigger_teleport|sounds|na|-|-
+trigger_teleport|style|na|-|-
+trigger_transition|@class|yes|cook:"trigger_transition"|-|transition carry filter volume
+weaponbox|@class|no|-|-|dropped inventory container is absent
+weaponbox|357|no|-|-|the dropped-inventory container is absent
+weaponbox|9mm|no|-|-|the dropped-inventory container is absent
+weaponbox|argrenades|no|-|-|the dropped-inventory container is absent
+weaponbox|bolts|no|-|-|the dropped-inventory container is absent
+weaponbox|buckshot|no|-|-|the dropped-inventory container is absent
+weaponbox|hand grenade|no|-|-|the dropped-inventory container is absent
+weaponbox|rockets|no|-|-|the dropped-inventory container is absent
+weaponbox|satchel charge|no|-|-|the dropped-inventory container is absent
+weaponbox|trip mine|no|-|-|the dropped-inventory container is absent
+weaponbox|uranium|no|-|-|the dropped-inventory container is absent
+world_items|@class|yes|cook:"world_items"|-|legacy suit and battery pickup aliases
+world_items|delay|yes|cook:"type"|-
+world_items|type|yes|cook:"type"|-
+worldspawn|@class|yes|cook:"worldspawn"|-|map flags and world data
+worldspawn|chaptertitle|yes|cook:"chaptertitle"|-
+worldspawn|gametitle|yes|cook:"chaptertitle"|-
+worldspawn|light|yes|cook:"chaptertitle"|-
+worldspawn|maxrange|yes|cook:"chaptertitle"|-
+worldspawn|newunit|unreviewed|-|-|clearing the previous unit's global state is unchecked
+worldspawn|skyname|yes|cook:"chaptertitle"|-
+worldspawn|sounds|yes|cook:"chaptertitle"|-
+worldspawn|startdark|yes|cook:"chaptertitle"|-
+worldspawn|waveheight|cosmetic|-|-
+worldspawn|worldtype|cosmetic|-|-
+
+# Monster outputs belong to the map contract even though the monsters do not.
+monster_*|triggertarget,triggercondition|yes|cook:fn monster_trigger_condition|run:kills|conditions 2, 3 and 4 fire the target; 1, 9 and 10 (sight) are the AI contract
