@@ -22,6 +22,7 @@ fn usage() -> ! {
          \x20 hl-content merge-model <geometry.psxm> <texture.psxm>\n\
          \x20 hl-content clips <models-dir> <roster.txt> <clips.txt>\n\
          \x20 hl-content studio-events <models-dir> <roster.txt> <out.txt>\n\
+         \x20 hl-content hitgroups <models-dir> <roster.txt> <out.txt>\n\
          \x20 hl-content transition-props <maps-dir> <out.txt> <maps...>"
     );
     std::process::exit(2);
@@ -59,6 +60,11 @@ fn main() -> Result<()> {
             Path::new(arg(&args, 4)),
         ),
         "studio-events" => generators::studio_events(
+            Path::new(arg(&args, 2)),
+            Path::new(arg(&args, 3)),
+            Path::new(arg(&args, 4)),
+        ),
+        "hitgroups" => generators::hitgroups(
             Path::new(arg(&args, 2)),
             Path::new(arg(&args, 3)),
             Path::new(arg(&args, 4)),

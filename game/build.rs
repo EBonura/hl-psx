@@ -4,6 +4,18 @@
 
 use std::{collections::HashSet, env, fs, path::PathBuf};
 
+// The difficulty contract and the skill.cfg reader are shared with the host
+// parity test; this script includes them by path (it cannot depend on the
+// `no_std` crate for the host).
+#[allow(dead_code)]
+#[path = "../shared/hl-format/src/hitgroup.rs"]
+mod hitgroup;
+#[allow(dead_code)]
+#[path = "../shared/hl-format/src/skill.rs"]
+mod skill;
+#[path = "../shared/hl-format/src/skill_cfg.rs"]
+mod skill_cfg;
+
 const FALLBACK_MAP_WORDS: usize = 255_000;
 const FALLBACK_MAX_VERTS: usize = 12_288;
 const FALLBACK_MAX_FACES: usize = 6144;
@@ -1011,161 +1023,71 @@ fn talk_voice_layout(repo: &std::path::Path) -> Vec<[u8; 7]> {
     rows
 }
 
-/// Parse `sk_<name><1..3> "value"` lines of Half-Life's skill.cfg.
-fn parse_skill_cfg(text: &str) -> std::collections::HashMap<String, [f64; 3]> {
-    let mut out: std::collections::HashMap<String, [f64; 3]> = std::collections::HashMap::new();
-    for line in text.lines() {
-        let line = line.split("//").next().unwrap_or("").trim();
-        let mut fields = line.split_whitespace();
-        let (Some(key), Some(value)) = (fields.next(), fields.next()) else {
-            continue;
-        };
-        let Some(level) = key.chars().last().and_then(|c| c.to_digit(10)) else {
-            continue;
-        };
-        if !(1..=3).contains(&level) || !key.starts_with("sk_") {
-            continue;
-        }
-        let Ok(value) = value.trim_matches('"').parse::<f64>() else {
-            continue;
-        };
-        out.entry(key[..key.len() - 1].to_string())
-            .or_insert([f64::NAN; 3])[level as usize - 1] = value;
-    }
-    out
-}
-
 /// Skill tables for the three difficulty levels, from the cooked copy of
-/// the user's skill.cfg (hl-build `assets` copies it into data/). Each row is
-/// a monster model type and the cvar CBaseMonster reads for it in Spawn or
-/// its attack; a scale applies the SDK's own derivations (baby headcrab, the
-/// Gonarch's 150 * health factor).
+/// the user's skill.cfg (hl-build `assets` copies it into data/). The cvar each
+/// entry reads is `shared/hl-format/src/skill.rs`, the one list the game, this
+/// script and the host parity test share: `SKILL_HEALTH` is the spawn health of
+/// every actor model type, `SKILL_VALUE` every other tunable by `Sk` column.
 fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
     let path = repo_root.join("data/skill.cfg");
     println!("cargo:rerun-if-changed={}", path.display());
     let text = fs::read_to_string(&path)
         .unwrap_or_else(|_| panic!("{} is missing; run `cargo hl-build assets`", path.display()));
-    let cfg = parse_skill_cfg(&text);
-    let get = |name: &str, scale: f64| -> [f64; 3] {
-        let v = cfg
-            .get(name)
-            .unwrap_or_else(|| panic!("skill.cfg has no {name}1..3"));
-        assert!(
-            v.iter().all(|x| x.is_finite()),
-            "skill.cfg lacks a level of {name}"
-        );
-        [v[0] * scale, v[1] * scale, v[2] * scale]
+    let cfg = skill_cfg::parse_cfg(&text);
+    let cook = |key: &str, milli: u32, level: usize| -> u16 {
+        skill_cfg::cooked(&cfg, key, milli, level)
+            .unwrap_or_else(|| panic!("skill.cfg lacks level {} of {key}", level + 1))
     };
-    const HEALTH: [(u8, &str, f64); 25] = [
-        (0, "sk_scientist_health", 1.0),
-        (1, "sk_barney_health", 1.0),
-        (2, "sk_headcrab_health", 1.0),
-        (5, "sk_zombie_health", 1.0),
-        (6, "sk_houndeye_health", 1.0),
-        (7, "sk_bullsquid_health", 1.0),
-        (8, "sk_hgrunt_health", 1.0),
-        (9, "sk_islave_health", 1.0),
-        (10, "sk_agrunt_health", 1.0),
-        (11, "sk_controller_health", 1.0),
-        (13, "sk_leech_health", 1.0),
-        (16, "sk_gargantua_health", 1.0),
-        (17, "sk_nihilanth_health", 1.0),
-        (18, "sk_bigmomma_health_factor", 150.0),
-        (19, "sk_ichthyosaur_health", 1.0),
-        (20, "sk_sentry_health", 1.0),
-        (21, "sk_turret_health", 1.0),
-        (22, "sk_miniturret_health", 1.0),
-        (23, "sk_apache_health", 1.0),
-        (25, "sk_scientist_health", 1.0),
-        (51, "sk_hassassin_health", 1.0),
-        (54, "sk_scientist_health", 1.0),
-        (55, "sk_zombie_health", 1.0),
-        (58, "sk_snark_health", 1.0),
-        (59, "sk_headcrab_health", 0.25),
-    ];
-    // Damage per attack: bites/slashes for the melee types, the bullet,
-    // hornet, zap, spit or blast each ranged type fires (FireBullets'
-    // BULLET_MONSTER_9MM/MP5/12MM map to sk_9mm/9mmAR/12mm_bullet).
-    const DAMAGE: [(u8, &str, f64); 19] = [
-        (1, "sk_9mm_bullet", 1.0),
-        (16, "sk_gargantua_dmg_fire", 1.0),
-        (2, "sk_headcrab_dmg_bite", 1.0),
-        (5, "sk_zombie_dmg_one_slash", 1.0),
-        (6, "sk_houndeye_dmg_blast", 1.0),
-        (7, "sk_bullsquid_dmg_spit", 1.0),
-        (8, "sk_9mmAR_bullet", 1.0),
-        (9, "sk_islave_dmg_zap", 1.0),
-        (10, "sk_hornet_dmg", 1.0),
-        (11, "sk_controller_dmgball", 1.0),
-        (19, "sk_ichthyosaur_shake", 1.0),
-        (20, "sk_9mmAR_bullet", 1.0),
-        (21, "sk_12mm_bullet", 1.0),
-        (22, "sk_9mm_bullet", 1.0),
-        (51, "sk_9mm_bullet", 1.0),
-        (55, "sk_zombie_dmg_one_slash", 1.0),
-        (58, "sk_snark_dmg_bite", 1.0),
-        (59, "sk_headcrab_dmg_bite", 0.3),
-        // Slot 75 (the soda can) has no attack of its own; it carries the bullsquid whip.
-        (75, "sk_bullsquid_dmg_whip", 1.0),
-    ];
-    let level_u8 = |v: f64| (v.floor().clamp(1.0, 255.0)) as u8;
-    let level_u16 = |v: f64| (v.floor().clamp(0.0, u16::MAX as f64)) as u16;
+    // Actor health is a u8 at runtime: the bosses clamp to 255 (their own
+    // modules scale damage onto it) and nothing spawns at 0.
     let mut health = [[0u8; 76]; 3];
-    for (ty, name, scale) in HEALTH {
-        let v = get(name, scale);
-        for level in 0..3 {
-            // Actor health is a u8 at runtime: the bosses clamp to 255.
-            health[level][ty as usize] = level_u8(v[level]);
+    for &(ty, key, milli) in skill::HEALTH_KEYS {
+        for (level, row) in health.iter_mut().enumerate() {
+            row[ty as usize] = cook(key, milli, level).clamp(1, 255) as u8;
         }
     }
-    let mut damage = [[0u8; 76]; 3];
-    for (ty, name, scale) in DAMAGE {
-        let v = get(name, scale);
-        for level in 0..3 {
-            damage[level][ty as usize] = level_u8(v[level]);
+    let mut value = [[0u16; skill::SK_RUNTIME]; 3];
+    for &(sk, key, milli) in &skill::SK_KEYS[..skill::SK_RUNTIME] {
+        for (level, row) in value.iter_mut().enumerate() {
+            row[sk as usize] = cook(key, milli, level);
         }
     }
-    let row = |name: &str, scale: f64| {
-        let v = get(name, scale);
-        format!(
-            "[{}, {}, {}]",
-            level_u16(v[0]),
-            level_u16(v[1]),
-            level_u16(v[2])
+    // Hit-group masks (the cooker's `hitgroups.txt`): the hitboxes of each
+    // (actor type, group) pair that `hitgroup::RULES` acts on.
+    let masks_path = repo_root.join("data/modelpack/hitgroups.txt");
+    println!("cargo:rerun-if-changed={}", masks_path.display());
+    let masks_text = fs::read_to_string(&masks_path).unwrap_or_else(|_| {
+        panic!(
+            "{} is missing; run `cargo hl-build models`",
+            masks_path.display()
         )
-    };
+    });
+    let mut masks: Vec<(u8, u8, u32)> = Vec::new();
+    for &(ty, group) in hitgroup::RULES {
+        let mask = masks_text
+            .lines()
+            .filter_map(|line| {
+                let mut f = line.split('|');
+                let (t, g, m) = (f.next()?, f.next()?, f.next()?);
+                (t.parse::<u8>().ok()? == ty && g.parse::<u8>().ok()? == group)
+                    .then(|| u64::from_str_radix(m, 16).ok())
+                    .flatten()
+            })
+            .next()
+            .unwrap_or_else(|| panic!("hitgroups.txt has no group {group} for actor type {ty}"));
+        let mask = u32::try_from(mask)
+            .unwrap_or_else(|_| panic!("actor type {ty} group {group} reaches past hitbox 31"));
+        masks.push((ty, group, mask));
+    }
     let generated = format!(
         "/// Spawn health per model type and difficulty; 0 keeps the model default.\n\
          pub const SKILL_HEALTH: [[u8; 76]; 3] = {health:?};\n\
-         /// Damage per attack per model type and difficulty; 0 = no skill value.\n\
-         pub const SKILL_DAMAGE: [[u8; 76]; 3] = {damage:?};\n\
-         pub const SKILL_HEALTHKIT: [u16; 3] = {};\n\
-         pub const SKILL_BATTERY: [u16; 3] = {};\n\
-         pub const SKILL_HEALTHCHARGER: [u16; 3] = {};\n\
-         pub const SKILL_SUITCHARGER: [u16; 3] = {};\n\
-         /// sk_bigmomma_health_factor in Q8, for info_bigmomma node health.\n\
-         pub const SKILL_BIGMOMMA_FACTOR_Q8: [u16; 3] = {};\n\
-         /// The gargantua's full health (its u8 actor health stands for it),\n\
-         /// swipe and stomp damage.\n\
-         pub const SKILL_GARG_HEALTH: [u16; 3] = {};\n\
-         pub const SKILL_GARG_SLASH: [u16; 3] = {};\n\
-         pub const SKILL_GARG_STOMP: [u16; 3] = {};\n\
-         /// The apache's full health.\n\
-         pub const SKILL_APACHE_HEALTH: [u16; 3] = {};\n\
-         /// The nihilanth's full health and energy-ball zap.\n\
-         pub const SKILL_NIHILANTH_HEALTH: [u16; 3] = {};\n\
-         pub const SKILL_NIHILANTH_ZAP: [u16; 3] = {};\n",
-        row("sk_healthkit", 1.0),
-        row("sk_battery", 1.0),
-        row("sk_healthcharger", 1.0),
-        row("sk_suitcharger", 1.0),
-        row("sk_bigmomma_health_factor", 256.0),
-        row("sk_gargantua_health", 1.0),
-        row("sk_gargantua_dmg_slash", 1.0),
-        row("sk_gargantua_dmg_stomp", 1.0),
-        row("sk_apache_health", 1.0),
-        row("sk_nihilanth_health", 1.0),
-        row("sk_nihilanth_zap", 1.0),
+         /// Every other tunable, indexed by `hl_format::skill::Sk`.\n\
+         pub const SKILL_VALUE: [[u16; {}]; 3] = {value:?};\n\
+         /// (actor type, hit group, hitbox mask) for each `hitgroup::RULES` pair.\n\
+         pub const HIT_MASKS: [(u8, u8, u32); {}] = {masks:?};\n",
+        skill::SK_RUNTIME,
+        masks.len()
     );
     fs::write(out_dir.join("skill_table.rs"), generated).expect("write generated skill tables");
 }

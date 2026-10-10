@@ -117,7 +117,18 @@ pub(crate) unsafe fn tick_grunt(
         let mode = (t >> 5) & 3;
         let left = t & 31;
         PROP_STATE[pi] = PROP_STATE_MOVE;
-        if mode == 2 {
+        if mode == 3 {
+            // Throwing a hand grenade: the release is 16 ticks in.
+            PROP_STATE[pi] = PROP_STATE_ATTACK;
+            PROP_AI_TIMER[pi] = if left > 1 {
+                0x80 | (3 << 5) | (left - 1)
+            } else {
+                0
+            };
+            if left == GRENADE_RELEASE_LEFT {
+                throw_grenade(m, pi, aim);
+            }
+        } else if mode == 2 {
             PROP_AI_TIMER[pi] = if left > 1 {
                 0x80 | (2 << 5) | (left - 1)
             } else {
@@ -173,6 +184,19 @@ pub(crate) unsafe fn tick_grunt(
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = 0;
         prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(ATTACK_WINDUP + 1));
+        // The retail grunt never throws in its first 80 ticks of an engagement.
+        GRUNT_GREN[pi] = SIM_NOW.wrapping_add(GRENADE_FIRST_DELAY);
+        return;
+    }
+    // After that it lobs a hand grenade at an enemy 250 to 900 units off, one
+    // every 155 ticks (measured: blasts 155 apart, 25 to 27 ticks after the
+    // 34-tick throw begins).
+    if d2 > GRENADE_MIN_RANGE * GRENADE_MIN_RANGE
+        && d2 < GRENADE_MAX_RANGE * GRENADE_MAX_RANGE
+        && time_reached(SIM_NOW, GRUNT_GREN[pi])
+    {
+        GRUNT_GREN[pi] = SIM_NOW.wrapping_add(GRENADE_INTERVAL);
+        PROP_AI_TIMER[pi] = 0x80 | (3 << 5) | GRENADE_THROW_TICKS;
         return;
     }
     let state = PROP_AI_TIMER[pi]; // low nibble: burst ticks left, high: bursts since the pause
@@ -183,7 +207,7 @@ pub(crate) unsafe fn tick_grunt(
             let from = prop_eye(m, pi);
             let dist = isqrt_i32(dist2_3(from, aim));
             let pct = grunt_hit_pct(dist);
-            let dmg = skill_damage(PROP_KIND[pi]).unwrap_or(4);
+            let dmg = skill_hit(Sk::Bullet9mmAr);
             let bullets = if impact_rng().below(4) == 0 { 3 } else { 1 };
             let mut b = 0;
             while b < bullets {
@@ -213,6 +237,30 @@ pub(crate) unsafe fn tick_grunt(
             PROP_AI_TIMER[pi] = (bursts << 4) | 6;
         }
     }
+}
+
+/// Lob a hand grenade that lands on `aim` ten ticks after its release and goes
+/// off where it lands (the retail blast comes 25 to 27 ticks after the throw
+/// begins, 16 of them before the grenade leaves the hand).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn throw_grenade(m: &Map, pi: usize, aim: [i32; 3]) {
+    const FLIGHT: i32 = GRENADE_FLIGHT;
+    let from = prop_eye(m, pi);
+    let slot = spawn_projectile_dir(
+        PROJ_GRENADE,
+        WEAPON_DEFS[W_GRENADE].damage,
+        from,
+        [0; 3],
+        true,
+    );
+    PROJECTILES[slot].vel = [
+        (aim[0] - from[0]) / FLIGHT,
+        // The projectile pass lowers vy by gravity before each move.
+        (aim[1] - from[1] + PROJ_GRAVITY * FLIGHT * (FLIGHT + 1) / 2) / FLIGHT,
+        (aim[2] - from[2]) / FLIGHT,
+    ];
+    PROJECTILES[slot].life = FLIGHT as u8;
 }
 
 /// monster_alien_slave: a 46-tick zap whose two beams land 34 ticks in (20 on
@@ -245,7 +293,8 @@ pub(crate) unsafe fn tick_slave(
     };
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, aim);
-    let beam = skill_damage(PROP_KIND[pi]).unwrap_or(10);
+    let beam = skill_hit(Sk::SlaveZap);
+    let claw = skill_hit(Sk::SlaveClaw);
     let casting = PROP_AI_TIMER[pi];
     if casting > 0 {
         // Mid-zap: stand and face the enemy; `ZAP - casting + 1` ticks have run.
@@ -284,7 +333,7 @@ pub(crate) unsafe fn tick_slave(
             cooldown
         };
         if matches!(30 - left, 9 | 13 | 21) {
-            damage_target(target, beam, pos, health, armor);
+            damage_target(target, claw, pos, health, armor);
             cue(SP::SLV_CLAW, pos);
         }
     } else if visible && d2 <= RANGE * RANGE && d2 > 150 * 150 && cooldown == 0 {
@@ -388,14 +437,12 @@ unsafe fn tick_zombie(
             done == 12 || done == 24
         };
         if hit && d2 <= 76 * 76 {
-            let one = skill_damage(PROP_KIND[pi]).unwrap_or(20);
-            damage_target(
-                target,
-                if t & 64 != 0 { one * 2 } else { one },
-                pos,
-                health,
-                armor,
-            );
+            let swing = skill_hit(if t & 64 != 0 {
+                Sk::ZombieBothSlash
+            } else {
+                Sk::ZombieSlash
+            });
+            damage_target(target, swing, pos, health, armor);
             if target == PROP_TARGET_PLAYER {
                 // Each claw throws the player 5 units per tick away from the zombie; the
                 // first claw also to the zombie's left, the second to its right.
@@ -432,8 +479,8 @@ unsafe fn tick_zombie(
 }
 
 /// monster_bullchicken: spits twice from 65 to 780 units (10 damage, a 30-tick
-/// stationary animation each), then runs in and whips (25) every 44 ticks or so,
-/// knocking the player back. Far targets are approached at 15 units per tick.
+/// stationary animation each), then runs in and bites (25, the cvar the retail
+/// close attack reads) every 44 ticks or so, knocking the player back. Far targets are approached at 15 units per tick.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn tick_squid(
@@ -460,11 +507,11 @@ unsafe fn tick_squid(
         let from = prop_eye(m, pi);
         if t & 32 == 0 && left == 25 {
             let dir = dir_q12(from, aim);
-            spawn_projectile_dir(PROJ_SPIT, skill_damage(7).unwrap_or(10), from, dir, true);
+            spawn_projectile_dir(PROJ_SPIT, skill_hit(Sk::SquidSpit), from, dir, true);
             cue_or(SP::BC_SPIT, sfx::HC_ATTACK, pos);
         } else if t & 32 != 0 && left == 20 && d2 <= 85 * 85 {
             cue(SP::BC_BITE, pos);
-            damage_target(target, skill_damage(75).unwrap_or(25), pos, health, armor);
+            damage_target(target, skill_hit(Sk::SquidBite), pos, health, armor);
             let dir = dir_q12(pos, aim);
             KNOCK = [(dir[0] * 14) >> 12, 15, (dir[2] * 14) >> 12];
         }
@@ -554,7 +601,7 @@ unsafe fn tick_hound(
                 }
                 qi += 1;
             }
-            let dmg = skill_damage(PROP_TYPE_HOUNDEYE).unwrap_or(15);
+            let dmg = skill_hit(Sk::HoundeyeBlast);
             houndeye_blast(pos, 384, dmg.saturating_mul(pack.clamp(1, 3)));
             sfx::play_world(sfx::HE_BLAST, pos);
         } else if left == 1 {
