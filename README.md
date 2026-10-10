@@ -155,9 +155,15 @@ is 6% faster than `pack`, and 4% faster on a route the recording never
 visits. It takes about four minutes. It also writes the profile and the
 inlining threshold it linked at to `game/pgo/`. The threshold is the first
 rung of the inlining ladder that leaves at least 4 KB of RAM free over the
-16 KB floor, and the build prints every rung's free RAM. The profiling build
+16 KB floor, and the build prints every rung's free RAM (when no rung has the
+4 KB, the first that clears the bare 16 KB is used). The free RAM `pgo`
+prints for the rung it ships is measured on the link that ships, and the
+build stops with both figures if the shipped link leaves a different amount.
+The profiling build
 itself links with a smaller stack reserve than the shipped one (it only runs
-on the tapes), shrinking it by whatever its link overflows RAM by. Every
+on the tapes), shrinking it by whatever its link overflows RAM by, down to the
+deepest stack the profiling tapes have written (17,760 B) plus a 2 KB margin,
+rounded up to 256 B (0x4E00). Every
 other build links with
 that committed profile, because HL-PSX no longer fits in RAM without one, so
 commit `game/pgo/` after a `pgo` run to make it the default.
