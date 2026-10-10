@@ -185,7 +185,7 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef_atk(50, 40, 90, AI_RANGED, 16, 1000, 5, 8), // 8 hgrunt (mp5 bursts)
     mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24), // 9 alien_slave (zap)
     mdef_atk(60, 48, 100, AI_RANGED, 16, 500, 8, 4), // 10 alien_grunt (hornets)
-    mdef_atk(60, 40, 100, AI_RANGED, 16, 1024, 3, 14), // 11 alien_controller (energy)
+    mdef_atk(60, 40, 100, AI_RANGED, 6, 800, 3, 14), // 11 alien_controller (energy)
     mdef(25, 32, 170, AI_IDLE),                 // 12 barnacle (retail spawns it with 25)
     mdef(16, 8, 40, AI_IDLE),                   // 13 leech (flyer: render only)
     mdef(1, 4, 30, AI_IDLE),                    // 14 cockroach (passive; any hit kills it)

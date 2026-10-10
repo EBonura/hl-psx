@@ -10622,6 +10622,14 @@ fn collect_props(
             }
         } else if model_type == 1 && ty & DEAD != 0 {
             2 // CBarney::Killed drops the gun and selects GUNGONE.
+        } else if model_type == 8 && ty & DEAD == 0 {
+            // A live grunt carries its `weapons` mask in the body nibble (the model has no body
+            // masks, so the renderer ignores it): 1 MP5, 2 hand grenades, 4 grenade launcher,
+            // 8 shotgun. CHGrunt::Spawn gives a mask of 0 the MP5 and grenades.
+            match ent_value(block, "weapons").and_then(|v| v.parse::<u32>().ok()) {
+                None | Some(0) => 3,
+                Some(w) => (w & 15) as u8,
+            }
         } else {
             0
         };
