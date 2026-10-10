@@ -355,48 +355,99 @@ fn main() {
                 names = census.maps.clone();
             }
             let mut total = BTreeMap::<(String, i64, &str), u32>::new();
+            let mut coverage = (0usize, 0usize, 0usize, 0usize, 0usize);
+            let mut issue_count = 0usize;
             for map in &names {
-                let Some(idx) = census.maps.iter().position(|m| m == map) else {
-                    continue;
-                };
+                let idx = census
+                    .maps
+                    .iter()
+                    .position(|m| m == map)
+                    .unwrap_or_else(|| {
+                        eprintln!("unknown map {map}");
+                        exit(2)
+                    });
                 let path = match arg(&args, "--hlm") {
                     Some(dir) => PathBuf::from(dir).join(format!("{map}.hlm")),
                     None => rooms.join(format!("room_{}.psxc", idx * 2)),
                 };
-                let Ok(cooked) = std::fs::read(path) else {
-                    continue;
-                };
-                let gz = std::process::Command::new("gzip")
+                let cooked = std::fs::read(&path).unwrap_or_else(|e| {
+                    eprintln!("{}: {e}", path.display());
+                    exit(2)
+                });
+                let ref_path = ref_dir.join(format!("{map}.ent.gz"));
+                let output = std::process::Command::new("gzip")
                     .args(["-dc"])
-                    .arg(ref_dir.join(format!("{map}.ent.gz")))
+                    .arg(&ref_path)
                     .output()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-                    .unwrap_or_default();
-                let retail = hl_census::solidity::retail_brushes(&gz, map);
-                let Ok(port) = hl_census::solidity::port_brushes(&cooked) else {
-                    continue;
-                };
-                for mm in hl_census::solidity::compare(&retail, &port) {
+                    .unwrap_or_else(|e| {
+                        eprintln!("{}: {e}", ref_path.display());
+                        exit(2)
+                    });
+                if !output.status.success() || output.stdout.is_empty() {
+                    eprintln!(
+                        "{}: missing or empty retail entity trace",
+                        ref_path.display()
+                    );
+                    exit(2);
+                }
+                let gz = String::from_utf8(output.stdout).unwrap_or_else(|e| {
+                    eprintln!("{}: {e}", ref_path.display());
+                    exit(2)
+                });
+                let retail = hl_census::solidity::retail_brushes(&gz, map).unwrap_or_else(|e| {
+                    eprintln!("{map}: {e}");
+                    exit(2)
+                });
+                let port = hl_census::solidity::port_brushes(&cooked).unwrap_or_else(|e| {
+                    eprintln!("{map}: {e}");
+                    exit(2)
+                });
+                let report = hl_census::solidity::compare(&retail, &port);
+                coverage.0 += report.retail;
+                coverage.1 += report.port;
+                coverage.2 += report.compared;
+                coverage.3 += report.excluded_trigger;
+                coverage.4 += report.excluded_wall_toggle;
+                issue_count += report.issues.len();
+                println!(
+                    "{map}: retail {} port {} compared {} excluded trigger {} wall_toggle {} issues {}",
+                    report.retail, report.port, report.compared,
+                    report.excluded_trigger, report.excluded_wall_toggle, report.issues.len()
+                );
+                for mm in report.issues {
                     println!(
                         "{map} *{} {} {} flags {} retail solid {} port kind {} head {}  {}",
                         mm.submodel,
-                        mm.retail.class,
-                        mm.retail.name,
-                        mm.retail.spawnflags,
-                        mm.retail.solid,
+                        mm.retail
+                            .as_ref()
+                            .map(|r| r.class.as_str())
+                            .unwrap_or("<port-only>"),
+                        mm.retail.as_ref().map(|r| r.name.as_str()).unwrap_or(""),
+                        mm.retail.as_ref().map(|r| r.spawnflags).unwrap_or(0),
+                        mm.retail.as_ref().map(|r| r.solid).unwrap_or(-1),
                         mm.port.as_ref().map(|p| p.kind).unwrap_or(0),
                         mm.port.as_ref().map(|p| p.head).unwrap_or(0),
                         mm.kind
                     );
                     *total
-                        .entry((mm.retail.class.clone(), mm.retail.spawnflags, mm.kind))
+                        .entry((
+                            mm.retail
+                                .as_ref()
+                                .map(|r| r.class.clone())
+                                .unwrap_or_else(|| "<port-only>".into()),
+                            mm.retail.as_ref().map(|r| r.spawnflags).unwrap_or(0),
+                            mm.kind,
+                        ))
                         .or_default() += 1;
                 }
             }
+            println!("--- coverage retail {} port {} compared {} excluded trigger {} wall_toggle {} issues {}",
+                coverage.0, coverage.1, coverage.2, coverage.3, coverage.4, issue_count);
             println!("--- by class and spawnflags");
             for ((class, flags, kind), n) in total {
                 println!("{n:4} {class} flags {flags} {kind}");
             }
+            exit(if issue_count == 0 { 0 } else { 1 });
         }
         "instances" => {
             // instances MAP... --ref-dir DIR --port-dir DIR: entities per class at the first sampled
@@ -404,12 +455,22 @@ fn main() {
             let ref_dir = PathBuf::from(arg(&args, "--ref-dir").unwrap_or_else(|| "ref".into()));
             let port_dir = PathBuf::from(arg(&args, "--port-dir").unwrap_or_else(|| ".".into()));
             let gz = |p: PathBuf| -> String {
-                std::process::Command::new("gzip")
+                let output = std::process::Command::new("gzip")
                     .args(["-dc"])
-                    .arg(p)
+                    .arg(&p)
                     .output()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-                    .unwrap_or_default()
+                    .unwrap_or_else(|e| {
+                        eprintln!("{}: {e}", p.display());
+                        exit(2)
+                    });
+                if !output.status.success() || output.stdout.is_empty() {
+                    eprintln!("{}: missing or empty entity trace", p.display());
+                    exit(2);
+                }
+                String::from_utf8(output.stdout).unwrap_or_else(|e| {
+                    eprintln!("{}: {e}", p.display());
+                    exit(2)
+                })
             };
             let count = |text: &str, map: &str| -> BTreeMap<String, u32> {
                 let mut c = BTreeMap::new();
@@ -427,18 +488,26 @@ fn main() {
                 c
             };
             let mut totals = BTreeMap::<String, (u32, u32)>::new();
+            let mut gaps = 0u32;
             for map in args[1..].iter().take_while(|a| !a.starts_with("--")) {
                 let r = count(&gz(ref_dir.join(format!("{map}.ent.gz"))), map);
                 let p = count(&gz(port_dir.join(format!("{map}.ent.gz"))), map);
-                if p.is_empty() {
-                    continue;
+                if r.is_empty() || p.is_empty() {
+                    eprintln!("{map}: first-tick retail or port trace has no entities");
+                    exit(2);
                 }
-                for (class, &n) in &r {
+                for class in r
+                    .keys()
+                    .chain(p.keys())
+                    .collect::<std::collections::BTreeSet<_>>()
+                {
+                    let n = r.get(class).copied().unwrap_or(0);
                     let have = p.get(class).copied().unwrap_or(0);
                     let t = totals.entry(class.clone()).or_default();
                     t.0 += n;
-                    t.1 += have.min(n);
-                    if have < n {
+                    t.1 += have;
+                    if have != n {
+                        gaps += n.abs_diff(have);
                         println!("{map}: {class} retail {n} port {have}");
                     }
                 }
@@ -447,9 +516,11 @@ fn main() {
             for (class, (r, p)) in totals {
                 println!(
                     "{class:28} {r:5} {p:5}{}",
-                    if p < r { "   <-- short" } else { "" }
+                    if p == r { "" } else { "   <-- differs" }
                 );
             }
+            println!("--- unmatched first-tick instances {gaps}");
+            exit(if gaps == 0 { 0 } else { 1 });
         }
         "triggers" => {
             // triggers [MAP...] [--hlm DIR | --rooms DIR]: trigger brush bounds from the BSP

@@ -52,7 +52,12 @@ pub fn port_brushes(cooked: &[u8]) -> Result<BTreeMap<u32, PortBrush>, String> {
         let solid = !NON_COLLIDING_KINDS.contains(&kind)
             && head & 0xffff != 0
             && !(kind == KIND_FAN && mv2 & SF_ROTATING_NOT_SOLID != 0);
-        out.insert(submodel, PortBrush { kind, head, solid });
+        if out
+            .insert(submodel, PortBrush { kind, head, solid })
+            .is_some()
+        {
+            return Err(format!("duplicate cooked brush submodel {submodel}"));
+        }
     }
     Ok(out)
 }
@@ -67,7 +72,7 @@ pub struct RetailBrush {
 }
 
 /// Brush entities at the retail game's first sampled tick, by submodel index.
-pub fn retail_brushes(entity_rows: &str, map: &str) -> BTreeMap<u32, RetailBrush> {
+pub fn retail_brushes(entity_rows: &str, map: &str) -> Result<BTreeMap<u32, RetailBrush>, String> {
     let mut out = BTreeMap::new();
     for line in entity_rows.lines() {
         if !line.contains("|map_tick=0|") {
@@ -88,59 +93,105 @@ pub fn retail_brushes(entity_rows: &str, map: &str) -> BTreeMap<u32, RetailBrush
         else {
             continue;
         };
-        out.insert(
-            brush as u32,
-            RetailBrush {
-                class: m.get("class").unwrap_or(&"").to_string(),
-                name: m.get("targetname").unwrap_or(&"").to_string(),
-                spawnflags: m
-                    .get("spawnflags")
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0),
-                solid: m.get("solid").and_then(|v| v.parse().ok()).unwrap_or(-1),
-            },
-        );
+        if out
+            .insert(
+                brush as u32,
+                RetailBrush {
+                    class: m.get("class").unwrap_or(&"").to_string(),
+                    name: m.get("targetname").unwrap_or(&"").to_string(),
+                    spawnflags: m
+                        .get("spawnflags")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0),
+                    solid: m.get("solid").and_then(|v| v.parse().ok()).unwrap_or(-1),
+                },
+            )
+            .is_some()
+        {
+            return Err(format!("duplicate retail brush submodel {brush} in {map}"));
+        }
     }
-    out
+    Ok(out)
 }
 
 #[derive(Debug)]
 pub struct Mismatch {
     pub submodel: u32,
-    pub retail: RetailBrush,
+    pub retail: Option<RetailBrush>,
     pub port: Option<PortBrush>,
-    /// "PORT-SOLID" (retail walks through it) or "PORT-HOLLOW" (retail blocks).
+    /// A collision mismatch, missing side, or invalid retail solid value.
     pub kind: &'static str,
 }
 
-/// Brushes whose collision differs. Triggers and volumes (retail solid 1) are
-/// not collision entities and are skipped.
-pub fn compare(
-    retail: &BTreeMap<u32, RetailBrush>,
-    port: &BTreeMap<u32, PortBrush>,
-) -> Vec<Mismatch> {
-    let mut out = Vec::new();
+#[derive(Default, Debug)]
+pub struct Report {
+    pub retail: usize,
+    pub port: usize,
+    pub compared: usize,
+    pub excluded_trigger: usize,
+    pub excluded_wall_toggle: usize,
+    pub issues: Vec<Mismatch>,
+}
+
+/// Account for both sides of every brush submodel. Trigger volumes do not
+/// block movement; wall toggles change their active state after spawning.
+pub fn compare(retail: &BTreeMap<u32, RetailBrush>, port: &BTreeMap<u32, PortBrush>) -> Report {
+    let mut report = Report {
+        retail: retail.len(),
+        port: port.len(),
+        ..Report::default()
+    };
     for (&sub, r) in retail {
-        if r.solid == 1 || r.solid < 0 {
+        if !(0..=4).contains(&r.solid) {
+            report.issues.push(Mismatch {
+                submodel: sub,
+                retail: Some(r.clone()),
+                port: port.get(&sub).cloned(),
+                kind: "INVALID-RETAIL-SOLID",
+            });
+            continue;
+        }
+        if r.solid == 1 {
+            report.excluded_trigger += 1;
             continue;
         }
         // A func_wall_toggle that starts off keeps its hull in the record; the
         // runtime hides and unlinks it through the entity's active flag.
         if r.class == "func_wall_toggle" {
+            report.excluded_wall_toggle += 1;
             continue;
         }
-        let Some(p) = port.get(&sub) else { continue };
+        let Some(p) = port.get(&sub) else {
+            report.issues.push(Mismatch {
+                submodel: sub,
+                retail: Some(r.clone()),
+                port: None,
+                kind: "MISSING-PORT",
+            });
+            continue;
+        };
+        report.compared += 1;
         let retail_solid = r.solid != 0;
         if retail_solid != p.solid {
-            out.push(Mismatch {
+            report.issues.push(Mismatch {
                 submodel: sub,
-                retail: r.clone(),
+                retail: Some(r.clone()),
                 port: Some(p.clone()),
                 kind: if p.solid { "PORT-SOLID" } else { "PORT-HOLLOW" },
             });
         }
     }
-    out
+    for (&sub, p) in port {
+        if !retail.contains_key(&sub) {
+            report.issues.push(Mismatch {
+                submodel: sub,
+                retail: None,
+                port: Some(p.clone()),
+                kind: "PORT-ONLY",
+            });
+        }
+    }
+    report
 }
 
 #[cfg(test)]
@@ -182,11 +233,36 @@ mod tests {
         let retail = retail_brushes(
             "HLREF|entity|map=m|tick=3|map_tick=0|class=func_door|targetname=d|brush=1|solid=0|spawnflags=8\n",
             "m",
-        );
+        ).unwrap();
         let port = port_brushes(&map_with(&[rec(1, 7)])).unwrap();
-        let mm = compare(&retail, &port);
-        assert_eq!(mm.len(), 1);
-        assert_eq!(mm[0].kind, "PORT-SOLID");
+        let report = compare(&retail, &port);
+        assert_eq!(report.compared, 1);
+        assert_eq!(report.issues.len(), 1);
+        assert_eq!(report.issues[0].kind, "PORT-SOLID");
+    }
+
+    #[test]
+    fn every_unmatched_or_invalid_brush_is_reported() {
+        let retail = retail_brushes(
+            "HLREF|entity|map=m|map_tick=0|class=func_door|brush=1|solid=0\n\
+             HLREF|entity|map=m|map_tick=0|class=func_door|brush=2|solid=-1\n\
+             HLREF|entity|map=m|map_tick=0|class=func_wall_toggle|brush=3|solid=4\n\
+             HLREF|entity|map=m|map_tick=0|class=trigger_once|brush=4|solid=1\n\
+             HLREF|entity|map=m|map_tick=0|class=func_train|brush=5|solid=4\n",
+            "m",
+        )
+        .unwrap();
+        let mut extra = rec(1, 7);
+        extra[0] = 6;
+        let port = port_brushes(&map_with(&[rec(1, 7), extra])).unwrap();
+        let report = compare(&retail, &port);
+        assert_eq!(report.excluded_trigger, 1);
+        assert_eq!(report.excluded_wall_toggle, 1);
+        assert_eq!(report.issues.len(), 4);
+        assert_eq!(report.issues[0].kind, "PORT-SOLID");
+        assert_eq!(report.issues[1].kind, "INVALID-RETAIL-SOLID");
+        assert_eq!(report.issues[2].kind, "MISSING-PORT");
+        assert_eq!(report.issues[3].kind, "PORT-ONLY");
     }
 }
 
