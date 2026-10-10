@@ -1606,6 +1606,16 @@ fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
         ],
         "generate studio event manifest",
     )?;
+    run_content(
+        &bins.content,
+        &[
+            OsStr::new("hitgroups"),
+            models_dir.as_os_str(),
+            roster.as_os_str(),
+            model_pack.join("hitgroups.txt").as_os_str(),
+        ],
+        "generate head hitbox table",
+    )?;
     fs::remove_file(roster)?;
     Ok(())
 }
