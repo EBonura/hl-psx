@@ -551,6 +551,33 @@ fn packed_map_capacity(raw: &[u8]) -> usize {
     low + GUARD_BYTES
 }
 
+/// The maps a PGO collect build sizes its static map pools for
+/// (`HLPSX_COLLECT_MAPS`, comma-separated map indices), or `None` for every map.
+/// The collect build only replays the profiling tapes, so its pools need only
+/// hold the maps those tapes visit; the shipping build never sets this and keeps
+/// the fleet-worst sizes. Only the map staging window (`MAP_WORDS`, and the
+/// arena sized from it) shrinks, so the code is the same: every other budget
+/// still scans all maps, because several set the 1 KiB scratchpad layout
+/// (group visibility bits, the split stack) rather than RAM. A tape that enters
+/// an unlisted map larger than the window fails that map's load in the replay
+/// (the loader refuses a chunk past the staging window).
+fn collect_maps() -> Option<Vec<usize>> {
+    println!("cargo:rerun-if-env-changed=HLPSX_COLLECT_MAPS");
+    let raw = env::var("HLPSX_COLLECT_MAPS").ok()?;
+    if raw.trim().is_empty() {
+        return None;
+    }
+    Some(
+        raw.split(',')
+            .map(|map| {
+                map.trim()
+                    .parse::<usize>()
+                    .unwrap_or_else(|_| panic!("HLPSX_COLLECT_MAPS holds a non-integer: {map:?}"))
+            })
+            .collect(),
+    )
+}
+
 fn scan_room_budget(
     repo_root: &std::path::Path,
 ) -> (usize, usize, usize, usize, usize, usize, usize) {
@@ -576,6 +603,8 @@ fn scan_room_budget(
     let mut max_leaves = 0usize;
     let mut max_ents = 0usize;
     let mut max_texs = 0usize;
+    let only_maps = collect_maps();
+    let mut found_maps = std::collections::BTreeSet::new();
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -585,12 +614,27 @@ fn scan_room_budget(
         if !name.starts_with("room_") || !(name.ends_with(".psxc") || name.ends_with(".psxw")) {
             continue;
         }
+        // Room chunks 2N (resident) and 2N+1 (textures) belong to map N.
+        let mut staged = true;
+        if let Some(maps) = &only_maps {
+            let map = name["room_".len()..]
+                .split('.')
+                .next()
+                .and_then(|id| id.parse::<usize>().ok())
+                .map(|id| id / 2);
+            staged = map.is_some_and(|map| maps.contains(&map));
+            if let (true, Some(map)) = (staged, map) {
+                found_maps.insert(map);
+            }
+        }
         println!("cargo:rerun-if-changed={}", path.display());
         let Ok(data) = fs::read(&path) else {
             continue;
         };
         if data.len() >= 8 && &data[0..4] == b"HLTX" {
-            max_bytes = max_bytes.max(packed_map_capacity(&data));
+            if staged {
+                max_bytes = max_bytes.max(packed_map_capacity(&data));
+            }
             max_texs = max_texs.max(rd_u32(&data, 4).unwrap_or(0) as usize);
             continue;
         }
@@ -607,7 +651,9 @@ fn scan_room_budget(
             continue;
         }
 
-        max_bytes = max_bytes.max(packed_map_capacity(&data));
+        if staged {
+            max_bytes = max_bytes.max(packed_map_capacity(&data));
+        }
         max_verts = max_verts.max(rd_u32(&data, 4).unwrap_or(0) as usize);
         let n_texs = rd_u32(&data, 12).unwrap_or(0) as usize;
         let n_faces = rd_u32(&data, 16).unwrap_or(0) as usize;
@@ -656,6 +702,21 @@ fn scan_room_budget(
                 max_ents = max_ents.max(rd_u32(&data, n_ents_off).unwrap_or(0) as usize);
             }
         }
+    }
+
+    if let Some(maps) = &only_maps {
+        // The pools are sized from exactly these maps: every one must exist.
+        let missing: Vec<_> = maps
+            .iter()
+            .filter(|map| !found_maps.contains(map))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "HLPSX_COLLECT_MAPS lists maps {missing:?} that data/rooms does not hold"
+        );
+        println!(
+            "cargo:warning=collect build: map staging window sized for maps {maps:?} only (never ship it)"
+        );
     }
 
     // These chunk families are also HLZC-compressed by mkisopsx and staged in
