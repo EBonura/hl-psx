@@ -1606,6 +1606,16 @@ fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
         ],
         "generate studio event manifest",
     )?;
+    run_content(
+        &bins.content,
+        &[
+            OsStr::new("hitgroups"),
+            models_dir.as_os_str(),
+            roster.as_os_str(),
+            model_pack.join("hitgroups.txt").as_os_str(),
+        ],
+        "generate head hitbox table",
+    )?;
     fs::remove_file(roster)?;
     Ok(())
 }
@@ -1930,20 +1940,56 @@ enum GuestProfile<'a> {
     Use(&'a Path, u32),
 }
 
-/// Free RAM a profile-guided disc must keep between `.bss` and the stack
-/// reserve. The model pool, weapon cache and stacks have their own audited
-/// margins; this is the headroom above all of them.
-const PGO_RAM_FLOOR: u32 = 16 * 1024;
+/// A profile-guided disc uses whatever RAM its link leaves: there is no free-RAM
+/// floor. The one thing RAM past `.bss` is for is the stack, which grows down
+/// from `STACK_INIT` through the SDK's reserved region and on into the space
+/// `.bss` leaves free. A rung is safe when that room, below the initial SP, holds
+/// the deepest stack the game has been measured to use plus a margin.
+///
+/// The deepest stack write seen on the profiling tapes was 17,760 B below the
+/// initial SP (final-8; the `emulator-telemetry` build's `stackwm` line reports
+/// the same quantity as `peak`, measured from the RAM top). Re-measure it, and
+/// raise this constant, when a tape or the game's call depth changes.
+const STACK_DEEPEST_MEASURED: u32 = 17_760;
 
-/// Extra free RAM `pgo` asks of the rung it ships, over `PGO_RAM_FLOOR`. A
-/// fresh profile moved the same source's free RAM by 4 KB (24,400 B to
-/// 20,304 B), so a rung that clears the floor by less than this is one
-/// profile from missing it. Builds that link with the committed profile only
-/// need the floor: their rung was chosen with this margin.
-const PGO_RAM_HEADROOM: u32 = 4 * 1024;
+/// Margin kept over `STACK_DEEPEST_MEASURED`.
+const STACK_MARGIN: u32 = 2 * 1024;
 
-/// Hot call-site thresholds a profile-guided build tries in turn until its
-/// link keeps `PGO_RAM_FLOOR`. Inlining moves `.text` by kilobytes on tiny
+/// Where the SDK's linker script puts the stack: `STACK_RESERVE`, and
+/// `STACK_INIT` as an offset from `RAM_BASE`. The RAM top is `RAM_SIZE`, 2 MiB.
+const RAM_TOP_OFFSET: u32 = 0x20_0000;
+
+/// `(STACK_RESERVE, gap from the RAM top down to STACK_INIT)` from psoxide.ld.
+fn sdk_stack_geometry(script: &str) -> Result<(u32, u32)> {
+    let value = |name: &str, prefix: &str| -> Result<u32> {
+        script
+            .lines()
+            .find_map(|line| {
+                let rest = line.trim().strip_prefix(name)?.trim_start();
+                let rest = rest.strip_prefix('=')?.trim().strip_prefix(prefix)?;
+                let digits = rest.split(|c: char| !c.is_ascii_hexdigit()).next()?;
+                u32::from_str_radix(digits, 16).ok()
+            })
+            .ok_or_else(|| format!("psoxide.ld has no `{name} = {prefix}<hex>`").into())
+    };
+    let reserve = value("STACK_RESERVE", "0x")?;
+    let init = value("STACK_INIT", "RAM_BASE + 0x")?;
+    Ok((reserve, RAM_TOP_OFFSET - init))
+}
+
+/// Stack room below the initial SP of a link that leaves `free` B of RAM
+/// (`psoxide-pgo ram`, measured from the end of the SDK's reserve).
+fn stack_room(free: u32, reserve: u32, gap: u32) -> u32 {
+    (free + reserve).saturating_sub(gap)
+}
+
+/// Whether `room` bytes below the initial SP hold the measured stack and margin.
+fn stack_is_safe(room: u32) -> bool {
+    room >= STACK_DEEPEST_MEASURED + STACK_MARGIN
+}
+
+/// Hot call-site thresholds a profile-guided build tries in turn, highest (most
+/// inlining, fastest) first, until one links with a safe stack. Inlining moves `.text` by kilobytes on tiny
 /// profile changes: final-7's source left 5,500 B free at 1000, 17,788 B at
 /// 500 and 28,028 B at 250. With the ACK-paced pad driver and the analog request
 /// at boot, 250 left 14,428 B, so the ladder has one more rung.
@@ -1983,8 +2029,8 @@ const NO_LAYOUT: &str = "HLPSX_NO_LAYOUT";
 /// depth (and raise `PGO_COLLECT_STACK_DEEPEST`) when a tape or the game's call
 /// depth changes; the README states the margin.
 const PGO_COLLECT_STACK_RESERVE: u32 = 0x6000;
-const PGO_COLLECT_STACK_DEEPEST: u32 = 17_760;
-const PGO_COLLECT_STACK_MARGIN: u32 = 2 * 1024;
+const PGO_COLLECT_STACK_DEEPEST: u32 = STACK_DEEPEST_MEASURED;
+const PGO_COLLECT_STACK_MARGIN: u32 = STACK_MARGIN;
 const PGO_COLLECT_STACK_MIN: u32 =
     (PGO_COLLECT_STACK_DEEPEST + PGO_COLLECT_STACK_MARGIN).next_multiple_of(256);
 
@@ -2273,7 +2319,7 @@ fn projection_stack_budget(scratchpad_rs: &Path) -> Result<usize> {
 }
 
 /// The ordinary build: the committed profile at the threshold it shipped at,
-/// stepping down only if source changes since then outgrew the RAM floor.
+/// stepping down only if source changes since then no longer link or leave a safe stack.
 fn compile_shipped(repository: &Path, psoxide: &Path, features: Option<&str>) -> Result<PathBuf> {
     let profile = repository.join(SHIPPED_PROFILE);
     if !profile.is_file() {
@@ -2284,7 +2330,7 @@ fn compile_shipped(repository: &Path, psoxide: &Path, features: Option<&str>) ->
         .trim()
         .parse::<u32>()
         .map_err(|error| format!("{SHIPPED_THRESHOLD}: {error}"))?;
-    Ok(link_with_profile(repository, psoxide, features, &profile, threshold, 0)?.exe)
+    Ok(link_with_profile(repository, psoxide, features, &profile, threshold)?.exe)
 }
 
 fn pack_disc(repository: &Path, psoxide: &Path, exe: &Path) -> Result<PathBuf> {
@@ -2430,7 +2476,6 @@ fn profile_guided_pack(
         features,
         &profile,
         PGO_HOT_CALLSITE_LADDER[0],
-        PGO_RAM_HEADROOM,
     )?;
     let threshold = trial.threshold;
     let mut shipped = trial.free;
@@ -2460,7 +2505,7 @@ fn profile_guided_pack(
     );
     fs::write(
         work.join("shipped-variant.txt"),
-        format!("hot-callsite-threshold {threshold}\nfloor {PGO_RAM_FLOOR}\nfree {shipped}\n"),
+        format!("hot-callsite-threshold {threshold}\nfree {shipped}\n"),
     )?;
     let cue = pack_disc(repository, psoxide, &exe)?;
     // Nothing has been linked since the shipping link, so the map on disk is
@@ -2625,34 +2670,6 @@ fn link_rung(
     })
 }
 
-/// The rung the ladder settles on.
-#[derive(Debug, PartialEq, Eq)]
-enum Pick {
-    /// Keeps the floor and the headroom.
-    Headroom { threshold: u32, free: u32 },
-    /// Keeps only the bare floor (no rung kept the headroom).
-    Floor { threshold: u32, free: u32 },
-}
-
-/// The rung to ship from `tried` (each rung's free RAM, `None` for one that
-/// did not link, in ladder order): the first that keeps `wanted`, else the
-/// first that keeps `floor`, else none.
-fn pick_rung(tried: &[(u32, Option<u32>)], floor: u32, wanted: u32) -> Option<Pick> {
-    let linked = || {
-        tried
-            .iter()
-            .filter_map(|&(threshold, free)| Some((threshold, free?)))
-    };
-    linked()
-        .find(|&(_, free)| free >= wanted)
-        .map(|(threshold, free)| Pick::Headroom { threshold, free })
-        .or_else(|| {
-            linked()
-                .find(|&(_, free)| free >= floor)
-                .map(|(threshold, free)| Pick::Floor { threshold, free })
-        })
-}
-
 /// Every rung's outcome, for the ladder's report and its errors.
 fn describe_rungs(tried: &[(u32, Option<u32>)]) -> String {
     tried
@@ -2683,88 +2700,58 @@ fn check_free_matches(what: &str, threshold: u32, ladder: u32, shipped: u32) -> 
 }
 
 /// Link with `profile`, stepping inlining down the ladder from `first` to the
-/// first rung that keeps `PGO_RAM_FLOOR + headroom` bytes of RAM free, by
-/// the SDK's check. Which rung that is changes with every profile, because
-/// inlining moves `.text` by kilobytes on small profile changes, so a link
-/// that only just clears the floor is one profile away from missing it:
-/// `pgo` asks for `PGO_RAM_HEADROOM` on top, and every rung's free RAM is
-/// printed. If no rung has the headroom, the first that clears the bare
-/// floor is used and the shortfall is reported.
+/// first (highest, so fastest) rung that links and leaves a safe stack (see
+/// `stack_is_safe`). There is no free-RAM floor: whatever the link leaves is
+/// used. Every rung's free RAM is printed. A threshold that inlines past the RAM
+/// region fails to link; step down from that too. A real compile error fails
+/// every threshold and is reported with the ladder.
 ///
-/// The returned image is a link that was measured: the trial itself when it
-/// is the last one made, otherwise the chosen rung linked again and held to
-/// the figure its trial reported.
+/// The returned image is the trial link itself: the first rung that passes is
+/// the last one made, so its map is the one on disk.
 fn link_with_profile(
     repository: &Path,
     psoxide: &Path,
     features: Option<&str>,
     profile: &Path,
     first: u32,
-    headroom: u32,
 ) -> Result<Linked> {
-    let wanted = PGO_RAM_FLOOR + headroom;
+    let (reserve, gap) = sdk_stack_geometry(&fs::read_to_string(psoxide.join("sdk/psoxide.ld"))?)?;
     let mut tried: Vec<(u32, Option<u32>)> = Vec::new();
     let mut link_error = None;
-    let mut last = None;
     for threshold in PGO_HOT_CALLSITE_LADDER
         .into_iter()
         .filter(|threshold| *threshold <= first)
     {
-        // A threshold that inlines past the RAM region fails to link
-        // rather than linking under the floor; step down from that too. A
-        // real compile error fails every threshold and is returned below.
         match link_rung(repository, psoxide, features, profile, threshold) {
             Ok(linked) => {
                 tried.push((threshold, Some(linked.free)));
-                if linked.free >= wanted {
+                let room = stack_room(linked.free, reserve, gap);
+                if stack_is_safe(room) {
                     println!(
-                        "PGO variant: hot-callsite-threshold={threshold}, {} B of RAM free \
-                         (wanted {wanted}; tried {})",
+                        "PGO variant: hot-callsite-threshold={threshold}, {} B of RAM free, \
+                         {room} B of stack room below the initial SP (needs {}; tried {})",
                         linked.free,
+                        STACK_DEEPEST_MEASURED + STACK_MARGIN,
                         describe_rungs(&tried)
                     );
                     return Ok(linked);
                 }
-                last = Some(linked);
             }
             Err(error) => {
                 println!("PGO threshold {threshold} did not build ({error}); stepping down");
                 tried.push((threshold, None));
                 link_error = Some(error);
-                last = None;
             }
         }
     }
-    match pick_rung(&tried, PGO_RAM_FLOOR, wanted) {
-        Some(Pick::Floor { threshold, free }) => {
-            println!(
-                "PGO variant: no rung keeps {wanted} B free ({}); using the first that clears the \
-                 {PGO_RAM_FLOOR} B floor, hot-callsite-threshold={threshold} with {free} B free",
-                describe_rungs(&tried)
-            );
-            // The last rung linked is the image on disk, with its map.
-            if let Some(linked) = last.filter(|linked| linked.threshold == threshold) {
-                return Ok(linked);
-            }
-            // A later rung overwrote it: link the chosen one again and hold
-            // that link to its trial's figure.
-            let linked = link_rung(repository, psoxide, features, profile, threshold)?;
-            check_free_matches("relink of the chosen rung", threshold, free, linked.free)?;
-            Ok(linked)
-        }
-        // A rung with the headroom returns from the loop as soon as it links.
-        Some(Pick::Headroom { .. }) => unreachable!("a rung with the headroom returns early"),
-        // Report the ladder as it was, not the first rung's link error: a
-        // rung can link and still miss the floor, and its shortfall is the
-        // figure that matters.
-        None => Err(format!(
-            "no hot-callsite threshold from {first} down {PGO_HOT_CALLSITE_LADDER:?} keeps \
-             {PGO_RAM_FLOOR} B of RAM free ({}){}",
-            describe_rungs(&tried),
-            link_error.map_or_else(String::new, |error| format!("; last link error: {error}"))
-        )
-        .into()),
-    }
+    Err(format!(
+        "no hot-callsite threshold from {first} down {PGO_HOT_CALLSITE_LADDER:?} links with \
+         {} B of stack room below the initial SP ({}){}",
+        STACK_DEEPEST_MEASURED + STACK_MARGIN,
+        describe_rungs(&tried),
+        link_error.map_or_else(String::new, |error| format!("; last link error: {error}"))
+    )
+    .into())
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -2964,55 +2951,31 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn pick_rung_prefers_headroom_then_the_first_rung_over_the_floor() {
-        let floor = 16_384;
-        let wanted = floor + 4_096;
-        // The first rung with the headroom, even after one that cleared the floor.
-        let tried = [
-            (1000, None),
-            (500, Some(16_500)),
-            (250, Some(21_000)),
-            (125, Some(30_000)),
-        ];
-        assert_eq!(
-            pick_rung(&tried, floor, wanted),
-            Some(Pick::Headroom {
-                threshold: 250,
-                free: 21_000
-            })
-        );
-        // No headroom anywhere: the first rung over the bare floor, not the roomiest.
-        let tried = [
-            (1000, None),
-            (500, Some(8_016)),
-            (250, Some(16_384)),
-            (125, Some(18_256)),
-        ];
-        assert_eq!(
-            pick_rung(&tried, floor, wanted),
-            Some(Pick::Floor {
-                threshold: 250,
-                free: 16_384
-            })
-        );
-        // One byte short of the floor does not count.
-        let tried = [(250, Some(16_383)), (125, Some(18_256))];
-        assert_eq!(
-            pick_rung(&tried, floor, wanted),
-            Some(Pick::Floor {
-                threshold: 125,
-                free: 18_256
-            })
-        );
-        // Nothing clears the floor.
-        let tried = [
-            (1000, None),
-            (500, Some(5_968)),
-            (250, Some(16_208)),
-            (125, Some(16_208)),
-        ];
-        assert_eq!(pick_rung(&tried, floor, wanted), None);
-        assert_eq!(pick_rung(&[], floor, wanted), None);
+    fn the_sdk_stack_geometry_is_read_from_its_linker_script() {
+        let script =
+            "STACK_INIT  = RAM_BASE + 0x001FFF00;\nSTACK_RESERVE = 0x8000;     /* 32 KiB */\n";
+        assert_eq!(sdk_stack_geometry(script).unwrap(), (0x8000, 0x100));
+        assert!(sdk_stack_geometry("STACK_RESERVE = 0x8000;").is_err());
+        // The repository's own pin has both lines.
+        let ld = root().join(".psoxide/sdk/psoxide.ld");
+        if let Ok(text) = fs::read_to_string(ld) {
+            assert_eq!(sdk_stack_geometry(&text).unwrap(), (0x8000, 0x100));
+        }
+    }
+
+    #[test]
+    fn stack_safety_needs_the_measured_depth_and_margin_and_no_free_ram() {
+        let (reserve, gap) = (0x8000, 0x100);
+        let need = STACK_DEEPEST_MEASURED + STACK_MARGIN;
+        // The SDK's reserve alone covers it, so a link with no free RAM passes.
+        assert_eq!(stack_room(0, reserve, gap), 0x7F00);
+        assert!(stack_is_safe(stack_room(0, reserve, gap)));
+        // The edge: room of exactly `need` is safe, one byte less is not.
+        assert!(stack_is_safe(need));
+        assert!(!stack_is_safe(need - 1));
+        // A smaller reserve (a collect-style link) is judged on what it leaves.
+        assert!(!stack_is_safe(stack_room(100, 0x4000, gap)));
+        assert!(stack_is_safe(stack_room(5_000, 0x4000, gap)));
     }
 
     #[test]

@@ -351,6 +351,63 @@ pub fn studio_events(models: &Path, roster: &Path, output: &Path) -> Result<()> 
     Ok(())
 }
 
+/// Hit groups the game applies a damage rule to (`shared/hl-format` hitgroup):
+/// the head, the alien grunt's armour plates and the HECU helmet.
+const HITGROUPS: [i32; 3] = [1, 10, 11];
+
+/// The hitboxes of one hit group in a studio model, as a bit per box in
+/// authored order (the alien grunt's plates are scattered, so a run will not
+/// do). Models with more than 64 boxes cannot be described and are rejected.
+fn hitgroup_mask(data: &[u8], group: i32) -> Result<u64> {
+    // studiohdr: numhitboxes at 156, hitboxindex at 160; a hitbox is 32 bytes
+    // (bone, group, bbmin[3], bbmax[3]).
+    let count = i32le(data, 156)?.max(0) as usize;
+    let at = i32le(data, 160)?.max(0) as usize;
+    let mut mask = 0u64;
+    for index in 0..count {
+        let offset = at + index * 32;
+        if offset + 32 > data.len() {
+            return Err("studio hitbox table exceeds MDL".into());
+        }
+        if i32le(data, offset + 4)? == group {
+            if index >= 64 {
+                return Err(format!("hit group {group} reaches box {index}, past 64").into());
+            }
+            mask |= 1 << index;
+        }
+    }
+    Ok(mask)
+}
+
+/// Write `type|group|mask` (mask in hex, one bit per hitbox) for every roster
+/// model's hit groups.
+pub fn hitgroups(models: &Path, roster: &Path, output: &Path) -> Result<()> {
+    let mut records = Vec::new();
+    for raw in fs::read_to_string(roster)?.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.splitn(3, '|');
+        let actor_type: u8 = fields.next().ok_or("roster type missing")?.parse()?;
+        let model = fields.next().ok_or("roster model missing")?;
+        let data = fs::read(models.join(format!("{model}.mdl")))?;
+        for group in HITGROUPS {
+            let mask = hitgroup_mask(&data, group)?;
+            if mask != 0 {
+                records.push(format!("{actor_type}|{group}|{mask:x}"));
+            }
+        }
+    }
+    fs::write(output, records.join("\n") + "\n")?;
+    println!(
+        "hit groups: {} masks -> {}",
+        records.len(),
+        output.display()
+    );
+    Ok(())
+}
+
 pub(crate) type Entity = HashMap<String, String>;
 
 fn quoted(input: &[u8], cursor: &mut usize) -> Option<String> {
@@ -898,5 +955,19 @@ mod tests {
             transition_prop_lines(&maps, &order).unwrap(),
             ["c|0|walker|210|10|0|0|a|0|0"]
         );
+    }
+
+    #[test]
+    fn hit_group_mask_has_a_bit_per_matching_box() {
+        // A minimal studiohdr: four hitboxes at offset 200, groups 3, 10, 1, 10.
+        let mut data = vec![0u8; 200 + 4 * 32];
+        data[156..160].copy_from_slice(&4i32.to_le_bytes());
+        data[160..164].copy_from_slice(&200i32.to_le_bytes());
+        for (i, group) in [3i32, 10, 1, 10].into_iter().enumerate() {
+            data[200 + i * 32 + 4..200 + i * 32 + 8].copy_from_slice(&group.to_le_bytes());
+        }
+        assert_eq!(hitgroup_mask(&data, 10).unwrap(), 0b1010);
+        assert_eq!(hitgroup_mask(&data, 1).unwrap(), 0b0100);
+        assert_eq!(hitgroup_mask(&data, 7).unwrap(), 0);
     }
 }

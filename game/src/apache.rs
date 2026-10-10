@@ -248,7 +248,7 @@ pub(crate) fn scale_damage(dmg: u8, blast: bool) -> u8 {
     if d <= 50 {
         return 0;
     }
-    let full = skill_table::SKILL_APACHE_HEALTH[settings::skill()].max(255) as u32;
+    let full = skill_value(Sk::ApacheHealth).max(255) as u32;
     (d * 255 / full).min(255) as u8
 }
 
