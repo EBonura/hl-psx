@@ -47,8 +47,12 @@ pub struct Scripts {
     pub end_tick: u32,
 }
 
-pub fn scripts(roots: &[Root], gap: u32, start: u32) -> Scripts {
+pub fn scripts(roots: &[Root], gap: u32, start: u32, spawn: Option<[f64; 4]>) -> Scripts {
     let mut port = vec!["0 god 2".to_string(), "0 trace 20".to_string()];
+    // Put the player where the retail game started him (x y z yaw, HL axes).
+    if let Some(s) = spawn {
+        port.push(format!("2 tp {} {} {} {} 0 0", s[0], s[1], s[2], s[3]));
+    }
     let mut retail = vec!["sv_cheats 1".to_string(), "god".to_string()];
     retail.extend(std::iter::repeat("wait".to_string()).take(start as usize));
     let mut tick = start;
@@ -83,7 +87,7 @@ mod tests {
             r.iter().map(|r| r.target.as_str()).collect::<Vec<_>>(),
             ["a", "c"]
         );
-        let s = scripts(&r, 100, 60);
+        let s = scripts(&r, 100, 60, None);
         assert_eq!(s.end_tick, 260);
         assert!(s.port[2].starts_with("60 fire a"));
     }

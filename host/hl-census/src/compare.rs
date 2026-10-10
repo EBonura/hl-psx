@@ -59,12 +59,41 @@ pub fn retail_fires(text: &str, map: &str) -> (Vec<Fire>, i64) {
     (fires, last)
 }
 
+/// Global tick at which the port reloaded `map` a second time (a death or a
+/// revert restarts the level); rows from then on belong to a second session.
+pub fn second_session(text: &str, map: &str) -> Option<i64> {
+    let key = format!("|map={map}|");
+    let mut starts = text
+        .lines()
+        .filter(|l| l.contains("HLPSX|event|") && l.contains(&key) && l.contains("event=map_start"))
+        .filter_map(|l| {
+            l.split("|global_tick=")
+                .nth(1)?
+                .split('|')
+                .next()?
+                .parse::<i64>()
+                .ok()
+        });
+    starts.nth(1)
+}
+
+fn in_first_session(m: &BTreeMap<&str, &str>, end: Option<i64>) -> bool {
+    match (
+        end,
+        m.get("global_tick").and_then(|v| v.parse::<i64>().ok()),
+    ) {
+        (Some(e), Some(g)) => g < e,
+        _ => true,
+    }
+}
+
 /// Port target fires of one map, minus the probe's own depth-0 fires.
 pub fn port_fires(text: &str, map: &str) -> (Vec<Fire>, i64) {
     let mut fires = Vec::new();
     let mut probe: BTreeSet<(i64, String)> = BTreeSet::new();
     let mut last = 0;
     let mut raw: Vec<(Fire, bool)> = Vec::new();
+    let end = second_session(text, map);
     for line in text.lines() {
         let Some(i) = line.find("HLPSX|") else {
             continue;
@@ -72,7 +101,7 @@ pub fn port_fires(text: &str, map: &str) -> (Vec<Fire>, i64) {
         let line = &line[i..];
         let kind = line.split('|').nth(1).unwrap_or("");
         let m = kv(line);
-        if m.get("map") != Some(&map) {
+        if m.get("map") != Some(&map) || !in_first_session(&m, end) {
             continue;
         }
         let tick: i64 = m.get("tick").and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -342,13 +371,14 @@ pub fn retail_tracks(text: &str, map: &str) -> BTreeMap<String, Track> {
 /// Brush-entity tracks from port `HLPSX|entity` rows (height is `cy`).
 pub fn port_tracks(text: &str, map: &str) -> BTreeMap<String, Track> {
     let mut out: BTreeMap<String, Track> = BTreeMap::new();
-    let mut seen: BTreeMap<(String, i64), u32> = BTreeMap::new();
+    let mut seen: BTreeMap<(String, i64, i64), u32> = BTreeMap::new();
+    let end = second_session(text, map);
     for line in text.lines() {
         let Some(i) = line.find("HLPSX|entity|") else {
             continue;
         };
         let m = kv(&line[i..]);
-        if m.get("map") != Some(&map) {
+        if m.get("map") != Some(&map) || !in_first_session(&m, end) {
             continue;
         }
         let brush = f(&m, "brush") as i64;
@@ -365,7 +395,9 @@ pub fn port_tracks(text: &str, map: &str) -> BTreeMap<String, Track> {
         } else {
             continue;
         };
-        *seen.entry((key.clone(), tick)).or_default() += 1;
+        *seen
+            .entry((key.clone(), f(&m, "global_tick") as i64, tick))
+            .or_default() += 1;
         let yaw = f(&m, "yaw_q12") * 360.0 / 4096.0;
         let t = out.entry(key).or_default();
         t.class = class.to_string();
@@ -375,7 +407,7 @@ pub fn port_tracks(text: &str, map: &str) -> BTreeMap<String, Track> {
     let ambiguous: BTreeSet<&String> = seen
         .iter()
         .filter(|(_, n)| **n > 1)
-        .map(|((k, _), _)| k)
+        .map(|((k, _, _), _)| k)
         .collect();
     out.retain(|k, _| !ambiguous.contains(k));
     out
