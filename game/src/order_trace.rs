@@ -13,7 +13,7 @@
 //! screen (x, y) kept to the 11 bits per axis the GPU keeps (x | y << 11), which is
 //! what the host matches against a GP0 draw dump.
 //!   0..4  vertex v0..v3 (v3 = 0 for a GT3) | that vertex's depth (clamped to 1023) << 22
-//!   4     key (9 bits) | (n - 3) << 9 | site << 10 | mode << 14 | kind << 16 | radius << 19
+//!   4     key (11 bits) | (n - 3) << 11 | site << 12 | mode << 16 | kind << 18 | radius << 21
 //!           mode: 1 = refined pair, 2 = one key call, 3 = one key call with a vertex
 //!           count mismatch, 0 = not derivable; depths are in the packet's own vertex order
 //!           kind: 1 loop face, 2 raw-tri face, 3 patch face, 4 submodel face, 5 crack
@@ -32,11 +32,14 @@
 
 use psx_goldsrc::ordering::PrimitiveDepths;
 
-pub const CAP: usize = 520;
+pub const CAP: usize = 330;
 pub const WORDS: usize = 6;
-pub const MOD_CAP: usize = 700;
+pub const MOD_CAP: usize = 600;
 pub const MOD_WORDS: usize = 3;
 pub const ENT_CAP: usize = 48;
+/// Words of static RAM the rings take; a trace build takes them back out of the world arena.
+pub const RING_WORDS: usize =
+    CAP * WORDS + MOD_CAP * MOD_WORDS + ENT_CAP * 9 + 16;
 
 #[no_mangle]
 pub static mut ORD_BUF: [[u32; WORDS]; CAP] = [[0; WORDS]; CAP];
@@ -166,13 +169,13 @@ pub unsafe fn note_packet(site: u32, otz: usize, p: *const u32, words: u8) {
         e[i] = pack_xy(v[i]) | ((d[i] as u32).min(1023)) << 22;
         i += 1;
     }
-    let radius = (FACE >> 16).min(4095);
-    e[4] = (otz as u32 & 0x1ff)
-        | (((n - 3) as u32) << 9)
-        | ((site & 15) << 10)
-        | (mode << 14)
-        | ((KIND & 7) << 16)
-        | (radius << 19);
+    let radius = (FACE >> 16).min(2047);
+    e[4] = (otz as u32 & 0x7ff)
+        | (((n - 3) as u32) << 11)
+        | ((site & 15) << 12)
+        | (mode << 16)
+        | ((KIND & 7) << 18)
+        | (radius << 21);
     e[5] = FACE & 0xffff;
     ORD_N = ORD_N.wrapping_add(1);
     CALLS = 0;
@@ -183,7 +186,7 @@ pub unsafe fn note_packet(site: u32, otz: usize, p: *const u32, words: u8) {
 #[inline(never)]
 pub unsafe fn note_model(key: u32, p: *const u32) {
     let e = &mut MOD_BUF[(MOD_N as usize) % MOD_CAP];
-    let key = key.min(0x1fff);
+    let key = key.min(0xfffff);
     e[0] = pack_xy(*p.add(3)) | (key & 0x3ff) << 22;
     e[1] = pack_xy(*p.add(5)) | (key >> 10) << 22;
     e[2] = pack_xy(*p.add(7));
