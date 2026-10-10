@@ -2969,6 +2969,19 @@ static mut WORLD_PROJECTION_KEY: WorldProjectionKey = WorldProjectionKey {
 static mut WORLD_PROJECTION_TOKEN: u16 = 0;
 use psx_goldsrc::pvs_faces::{PvsFaceRec, EMPTY_PVS_FACE_REC, PVS_GROUP_LIQUID, PVS_LINK_END};
 static mut VIS_BITS: [u8; MAX_LEAVES / 8] = [0; MAX_LEAVES / 8];
+// What VIS_BITS currently holds: the PVS row of leaf `VIS_ROW_LEAF` merged with
+// the row of dry leaf `VIS_ROW_DRY` (-1 = none); leaf -1 = unknown. Both the
+// simulation (the player's eye leaf, every tick) and the renderer (its camera
+// leaf, every frame) need a row in this one buffer, so each makes it hold the
+// row it wants before reading it (`vis_row_ensure`) and the key makes that a
+// no-op while they agree. The simulation never reads what the renderer last
+// left behind, so a slow or stalled renderer cannot change what actors do.
+static mut VIS_ROW_LEAF: i32 = -1;
+static mut VIS_ROW_DRY: i32 = -1;
+// The row the renderer's cached PVS was built from; restored at the start of
+// each frame if the simulation has changed the buffer since.
+static mut RENDER_ROW_LEAF: i32 = -1;
+static mut RENDER_ROW_DRY: i32 = -1;
 static mut PVS_LEAF_COUNT: usize = 0;
 // The live PVS uses u16 links. Four-byte alignment lets the unused suffix hold
 // native u32 GPU packet words without unaligned R3000 loads; the cache begins at
@@ -8783,6 +8796,7 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
     if use_pvs {
         let (visofs, _, _) = m.leaf(landmark_leaf as usize);
         decompress_vis(m, visofs, &mut *core::ptr::addr_of_mut!(VIS_BITS));
+        VIS_ROW_LEAF = -1;
     }
 
     let mut carried = 0usize;
@@ -18764,15 +18778,9 @@ unsafe fn tick_props(
 ) {
     AI_TICK = AI_TICK.wrapping_add(1); // drives staggered AI target re-acquisition
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-    // VIS_BITS belongs to the last rendered camera leaf. During a catch-up
-    // burst the player can cross a portal before rendering rebuilds it; only
-    // use the cached PVS while it still describes the current eye leaf.
-    let cached_pvs_leaf = pvs_cam_leaf_load();
-    let player_pvs_current = valid_pvs_leaf(m, cached_pvs_leaf)
-        && camera_leaf(
-            m,
-            [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
-        ) == cached_pvs_leaf;
+    // The player's PVS comes from simulation state alone: the same row at the
+    // same tick whatever the renderer has or has not drawn yet.
+    let player_pvs_current = sim_pvs_refresh(m, player_pos);
     let mut pi = 0usize;
     while pi < nprops {
         if PROP_ACTIVE[pi] == 0 {
@@ -22953,12 +22961,18 @@ unsafe fn rebuild_pvs_cache(
 ) {
     let (visofs, _, _) = m.leaf(cam_leaf as usize);
     decompress_vis(m, visofs, &mut *core::ptr::addr_of_mut!(VIS_BITS));
+    let mut dry = -1i32;
     if eye_under {
         if let Some(dry_leaf) = dry_leaf_above(m, eye) {
             let (dry_visofs, _, _) = m.leaf(dry_leaf);
             merge_vis(m, dry_visofs, &mut *core::ptr::addr_of_mut!(VIS_BITS));
+            dry = dry_leaf as i32;
         }
     }
+    VIS_ROW_LEAF = cam_leaf;
+    VIS_ROW_DRY = dry;
+    RENDER_ROW_LEAF = cam_leaf;
+    RENDER_ROW_DRY = dry;
     PVS_TEX_ANIM_GEN = 0;
     PVS_ENT_COUNT = 0;
     let compiled = psx_goldsrc::pvs_faces::compile_faces(
@@ -23144,6 +23158,66 @@ fn pvs_leaf_visible(m: &Map, leaf: usize) -> bool {
         return false;
     }
     unsafe { (VIS_BITS[bit >> 3] & (1u8 << (bit & 7))) != 0 }
+}
+
+/// Diagnostic only: burn an uneven, frame-dependent amount of CPU before each
+/// render so presentation lags and jitters against the fixed simulation tick.
+/// A simulation trace taken with this on must equal the one taken with it off.
+#[cfg(feature = "debug-render-stall")]
+#[inline(never)]
+fn render_stall() {
+    static mut FRAME: u32 = 0;
+    let n = unsafe {
+        FRAME = FRAME.wrapping_add(1);
+        FRAME
+    };
+    let mut i = 0u32;
+    let iters = 100_000 * (n.wrapping_mul(7) & 15);
+    while i < iters {
+        core::hint::black_box(i);
+        i += 1;
+    }
+}
+
+/// Make VIS_BITS hold the PVS row of `leaf` merged with the row of `dry`
+/// (-1 = none). A no-op while it already does.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn vis_row_ensure(m: &Map, leaf: i32, dry: i32) {
+    if !valid_pvs_leaf(m, leaf) || (VIS_ROW_LEAF == leaf && VIS_ROW_DRY == dry) {
+        return;
+    }
+    let bits = &mut *core::ptr::addr_of_mut!(VIS_BITS);
+    let (visofs, _, _) = m.leaf(leaf as usize);
+    decompress_vis(m, visofs, bits);
+    if dry > 0 {
+        let (dry_visofs, _, _) = m.leaf(dry as usize);
+        merge_vis(m, dry_visofs, bits);
+    }
+    VIS_ROW_LEAF = leaf;
+    VIS_ROW_DRY = dry;
+}
+
+/// Point VIS_BITS at the player's eye leaf, decoded from simulation state
+/// alone, and report whether that leaf is inside the world (false while the
+/// eye is outside it). Underwater eyes also see the first dry leaf above them,
+/// as the renderer's row does.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn sim_pvs_refresh(m: &Map, player_pos: [i32; 3]) -> bool {
+    let eye = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
+    let leaf = camera_leaf(m, eye);
+    if !valid_pvs_leaf(m, leaf) {
+        return false;
+    }
+    let mut dry = -1i32;
+    if PLAYER_EYE_UNDER || m.leaf_liquid(leaf as usize) != 0 {
+        if let Some(dry_leaf) = dry_leaf_above(m, eye) {
+            dry = dry_leaf as i32;
+        }
+    }
+    vis_row_ensure(m, leaf, dry);
+    true
 }
 
 #[inline]
@@ -31534,7 +31608,7 @@ unsafe fn trace_sim_tick(m: &Map, state: reference_trace::TickState) {
                 state.player_pos[2],
             ],
         );
-        let cached_pvs_leaf = pvs_cam_leaf_load();
+        let cached_pvs_leaf = VIS_ROW_LEAF;
         let pvs_current = valid_pvs_leaf(m, cached_pvs_leaf) && player_leaf == cached_pvs_leaf;
         let mut pi = 0usize;
         while pi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
@@ -32005,6 +32079,8 @@ fn play(
         WORLD_AFFINE_EDGES_PENDING = false;
         WORLD_AFFINE_FORCE_RANK = true;
         pvs_cam_leaf_store(-1);
+        VIS_ROW_LEAF = -1;
+        RENDER_ROW_LEAF = -1;
         PVS_LEAF_COUNT = 0;
         PVS_ENT_COUNT = 0;
         TRAM_CACHE_VALID = false;
@@ -35152,6 +35228,13 @@ fn play(
                 tram_pre_total,
                 tram_pre_left,
             );
+            #[cfg(feature = "debug-render-stall")]
+            render_stall();
+            // The simulation reads its own PVS row through the same buffer;
+            // put back the row this frame's cached PVS was built from.
+            if pvs_cam_leaf_load() >= 0 {
+                vis_row_ensure(&m, RENDER_ROW_LEAF, RENDER_ROW_DRY);
+            }
             let mut cam_leaf = recover_camera_leaf(&m, eye, player.pos, train_hint);
             let mut have_pvs = valid_pvs_leaf(&m, cam_leaf);
             let render_eye_under =
@@ -35208,7 +35291,12 @@ fn play(
                         && render_pvs_visofs >= 0
                         && m.leaf(cam_leaf as usize).0 == render_pvs_visofs;
                     if same_row {
+                        // The new leaf's row is the one already built.
                         render_pvs_leaf = cam_leaf;
+                        RENDER_ROW_LEAF = cam_leaf;
+                        if VIS_ROW_LEAF == cached_pvs_leaf {
+                            VIS_ROW_LEAF = cam_leaf;
+                        }
                     } else {
                         telemetry::stage_begin(telemetry::stage::ROOM_VISIBLE_LIST);
                         rebuild_pvs_cache(&m, cam_leaf, nents, eye, render_eye_under, seal_state);
