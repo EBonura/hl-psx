@@ -1,0 +1,132 @@
+# Shipping HL route: menu to Hazard Course gameplay, then chapter select to
+# Interloper gameplay. Brush-solidity identity coverage is audited separately.
+name = "hl"
+title = "Half-Life: Hazard Course and Interloper"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 5000
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+checkpoint = "main-menu"
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "open Hazard Course map select"
+press = ["down"]
+hold = 4
+wait = 12
+
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 25
+
+[[step]]
+checkpoint = "hazard-maps"
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "enter the first Hazard Course map"
+press = ["cross"]
+hold = 4
+wait = 1180
+
+[[step]]
+checkpoint = "hazard-spawn"
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "presenting"
+window = 120
+min_changes = 5
+[[step.assert]]
+kind = "pc_not_stuck"
+window = 120
+
+[[step]]
+label = "walk into the authored training route"
+lstick = [128, 0]
+hold = 160
+wait = 20
+
+[[step]]
+checkpoint = "hazard-walk"
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "frame_diff"
+from = "hazard-spawn"
+min_changed = 0.05
+
+[[step]]
+label = "pause and open chapter select"
+press = ["start"]
+hold = 4
+wait = 25
+
+[[step]]
+checkpoint = "pause-menu"
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+repeat = 3
+
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+
+[[step]]
+label = "select Interloper, three rows above the first chapter"
+press = ["up"]
+hold = 4
+wait = 12
+repeat = 3
+
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 15
+
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 1180
+
+[[step]]
+checkpoint = "interloper-entry"
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "presenting"
+window = 120
+min_changes = 5
+[[step.assert]]
+kind = "pc_not_stuck"
+window = 120
+
+[[step]]
+label = "walk through the Interloper entry terrain"
+lstick = [128, 0]
+hold = 150
+wait = 20
+
+[[step]]
+checkpoint = "interloper-walk"
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "frame_diff"
+from = "interloper-entry"
+min_changed = 0.05
