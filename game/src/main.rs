@@ -28,6 +28,7 @@
 extern crate psx_rt;
 
 mod beverage;
+mod bsp_order;
 mod cdstream;
 mod driver;
 mod ground_logic;
@@ -22699,8 +22700,46 @@ const KEY_BIAS_LOOP: i32 = -3;
 const KEY_BIAS_LOOP_MAX_RADIUS: i32 = 128;
 static mut KEY_BIAS: i32 = 0;
 
+/// Key the BSP walk gave the world face or brush entity being emitted; 0 = use its depth key.
+static mut FACE_KEY: u16 = 0;
+
+/// Ordering key of the cached face `face` (record `e`): the key of its node, else of the brush
+/// entity that owns it, else 0.
+#[inline(always)]
+unsafe fn bsp_world_face_key(m: &Map, e: usize, face: usize) -> u16 {
+    let k = bsp_order::face_key(e, face);
+    if k != 0 {
+        k
+    } else {
+        bsp_entity_face_key(m, face)
+    }
+}
+
+#[inline(never)]
+unsafe fn bsp_entity_face_key(m: &Map, face: usize) -> u16 {
+    if !bsp_order::active() {
+        return 0;
+    }
+    let mut i = 0usize;
+    while i < PVS_ENT_COUNT {
+        let ei = PVS_ENTS[i] as usize;
+        let (ff, nf) = m.submodel(ENT_CACHE[ei].submodel);
+        if face >= ff && face < ff + nf {
+            return bsp_order::item_key(ei as u8);
+        }
+        i += 1;
+    }
+    0
+}
+
 #[inline(always)]
 unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: bool) -> usize {
+    let ranked = FACE_KEY;
+    if ranked != 0 {
+        #[cfg(feature = "order-trace")]
+        order_trace::note_key(depths, ranked as usize);
+        return ranked as usize;
+    }
     let policy = EMIT_POLICY;
     let key = ordering::world_order_key::<OT_LEN>(
         depths,
@@ -22716,6 +22755,7 @@ unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: b
         },
     );
     let key = (key as i32 + KEY_BIAS).clamp(1, OT_LEN as i32 - 1) as usize;
+    let key = bsp_order::map_key(key);
     #[cfg(feature = "order-trace")]
     order_trace::note_key(depths, key);
     key
@@ -22725,7 +22765,7 @@ unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: b
 /// depth rules but share the physical bounds of the hardware ordering table.
 #[inline(always)]
 fn clamp_otz(z: usize) -> usize {
-    z.clamp(1, OT_LEN - 1)
+    unsafe { bsp_order::map_key(z.clamp(1, OT_LEN - 1)) }
 }
 
 fn camera_leaf(m: &Map, eye: [i32; 3]) -> i32 {
@@ -22960,6 +23000,13 @@ unsafe fn rebuild_pvs_cache(
     PVS_FACE_COUNT = compiled.face_count;
     PVS_GROUP_COUNT = compiled.group_count;
     PVS_TRI_REF_COUNT = compiled.triangle_references;
+    // Render-node order of the listed faces (before the closed-door cut below trims the marks).
+    bsp_order::rebuild(
+        m,
+        PVS_FACE_COUNT,
+        &*core::ptr::addr_of!(PVS_FACE_INDEX.0),
+        &*core::ptr::addr_of!(PVS_FACE_MARK),
+    );
     // Closed doors: the face list stays the full PVS, so a door opening only
     // stops the hiding. PVS_FACE_MARK, which the compile leaves holding
     // every listed face, is cut down to the faces no leaf on the camera's
@@ -23154,6 +23201,39 @@ unsafe fn entity_uses_live_pvs(ei: usize, e: map::Ent) -> bool {
         return true;
     }
     (e.kind == 1 || e.kind == 3) && (ENT_BRUSH_LOGIC[ei] as usize) < MAX_LOGIC
+}
+
+/// World-space bounds centre of brush entity `ei` drawn at `off` (rotating kinds turn their
+/// local centre with the current brush rotation).
+#[inline(never)]
+unsafe fn brush_entity_center(
+    ei: usize,
+    e: &map::Ent,
+    off: [i32; 3],
+    sim_frame_no: u32,
+) -> [i32; 3] {
+    if e.kind == ENT_KIND_PLATROT {
+        platrot_local_to_world(e.center, off, &platrot_rotation(*e, ENT_PHASE[ei]))
+    } else if e.kind == 5 {
+        let rm = fan_rotation(*e, fan_angle_q12(ei, sim_frame_no));
+        rotating_local_center(*e, rm)
+    } else if e.kind == ENT_KIND_PENDULUM {
+        rotating_local_center(*e, pendulum_rotation(*e, pendulum_angle_q12(ei)))
+    } else if e.kind == 7 || e.kind == ENT_KIND_ROT_BUTTON {
+        let ang = (((ENT_PHASE[ei] * e.mv[0]) >> 12) as u16) & 0x0fff;
+        let rm = axial_brush_rotation(*e, ang);
+        [
+            off[0] + dot12(rm.m[0], e.center),
+            off[1] + dot12(rm.m[1], e.center),
+            off[2] + dot12(rm.m[2], e.center),
+        ]
+    } else {
+        [
+            e.center[0] + off[0],
+            e.center[1] + off[1],
+            e.center[2] + off[2],
+        ]
+    }
 }
 
 /// Current world-space visibility bounds from the same transform state used by
@@ -29240,7 +29320,12 @@ unsafe fn draw_model(
             // PS1 choice for compact triangles and matches the viewmodel path.
             // Retain quarter-unit precision until the shared model pass sorts
             // ties inside each existing four-unit world bucket.
-            let depth_key = ordering::model_depth_key::<OT_LEN>(pa_z, pb_z, pc_z, scale_shift);
+            let depth_key = bsp_order::map_model_key(ordering::model_depth_key::<OT_LEN>(
+                pa_z,
+                pb_z,
+                pc_z,
+                scale_shift,
+            ));
             let payload = *face_payloads.add(t);
             // XY is already in the GPU packet's packed word layout. Preserve
             // it directly instead of unpacking to i16 pairs only to repack it.
@@ -35163,6 +35248,7 @@ fn play(
                 base_t,
                 have_pvs,
             };
+            bsp_order::begin_frame();
             if have_pvs {
                 let mut pvs_rebuilt = false;
                 // A reused leaf means the eye is outside the world; stay unsealed.
@@ -35219,6 +35305,35 @@ fn play(
                 // its portals. Refresh only moving candidates from their live
                 // bounds; static entity membership remains camera-leaf cached.
                 refresh_live_entity_pvs(&m, pvs_rebuilt);
+
+                // BSP ordering: place the brush entities in the tree by their exact bounds
+                // centre, walk the visible nodes far side first, and derive the depth map the
+                // primitives outside the tree use.
+                if bsp_order::valid() {
+                    let mut pi = 0usize;
+                    while pi < PVS_ENT_COUNT {
+                        let ei = PVS_ENTS[pi] as usize;
+                        pi += 1;
+                        let e = &*core::ptr::addr_of!(ENT_CACHE[ei]);
+                        if ENT_ACTIVE[ei] == 0 || e.blend & 0x80 != 0 || e.kind == 4 {
+                            continue;
+                        }
+                        let off = ent_draw_offset(ei);
+                        let center = brush_entity_center(ei, e, off, sim_frame_no);
+                        let depth = (dot12(rot.m[2], center) + base_t[2]).max(0);
+                        bsp_order::add_item(
+                            bsp_order::anchor_of(&m, center),
+                            ei as u8,
+                            (depth >> OT_SHIFT).clamp(1, OT_LEN as i32 - 1) as u16,
+                        );
+                    }
+                    bsp_order::walk(&m, eye, OT_LEN as u16 - 8);
+                    bsp_order::build_depth_map(&mut |face| {
+                        let (bc, _) = m.face_bounds(face);
+                        let depth = (dot12(rot.m[2], bc) + base_t[2]).max(0);
+                        (depth >> OT_SHIFT) as usize
+                    });
+                }
 
                 // Presentation happens just before `fb.clear` (see below): the entire
                 // world build is framebuffer-independent, so it all hides the
@@ -35417,6 +35532,7 @@ fn play(
                                         reset_emit_policy();
                                         opaque_stream_ready = true;
                                     }
+                                    FACE_KEY = bsp_world_face_key(&m, e, face);
                                     if rec.is_patch() {
                                         #[cfg(feature = "order-trace")]
                                         order_trace::set_cur_face(face, m.face_bounds(face).1);
@@ -35482,6 +35598,7 @@ fn play(
                                         reset_emit_policy();
                                         opaque_stream_ready = true;
                                     }
+                                    FACE_KEY = bsp_world_face_key(&m, e, face);
                                     if m.face_is_patch(face) {
                                         #[cfg(feature = "order-trace")]
                                         order_trace::set_cur_face(face, m.face_bounds(face).1);
@@ -35552,6 +35669,7 @@ fn play(
                                         reset_emit_policy();
                                         opaque_stream_ready = true;
                                     }
+                                    FACE_KEY = bsp_world_face_key(&m, e, face);
                                     if rec.is_patch() {
                                         #[cfg(feature = "order-trace")]
                                         order_trace::set_cur_face(face, m.face_bounds(face).1);
@@ -35610,6 +35728,7 @@ fn play(
                                         reset_emit_policy();
                                         opaque_stream_ready = true;
                                     }
+                                    FACE_KEY = bsp_world_face_key(&m, e, face);
                                     if m.face_is_patch(face) {
                                         #[cfg(feature = "order-trace")]
                                         order_trace::set_cur_face(face, m.face_bounds(face).1);
@@ -35659,6 +35778,7 @@ fn play(
                     band += 1;
                 }
                 telemetry::stage_end(telemetry::stage::ROOM_PROJECT);
+                FACE_KEY = 0;
                 reset_emit_policy();
                 room_affine_split_tris = WORLD_AFFINE_SPLIT_TRIS;
                 finish_world_affine_candidates();
@@ -35825,35 +35945,11 @@ fn play(
                     }
                     SUBMODEL_ACTOR_OVERLAP = false;
                     let off = ent_draw_offset(ei);
+                    FACE_KEY = bsp_order::item_key(ei as u8);
                     if e.r2 > 0 {
                         model_bounds_tests = model_bounds_tests.saturating_add(1);
                         let radius = ENT_RADIUS[ei];
-                        let center = if e.kind == ENT_KIND_PLATROT {
-                            platrot_local_to_world(
-                                e.center,
-                                off,
-                                &platrot_rotation(*e, ENT_PHASE[ei]),
-                            )
-                        } else if e.kind == 5 {
-                            let rm = fan_rotation(*e, fan_angle_q12(ei, sim_frame_no));
-                            rotating_local_center(*e, rm)
-                        } else if e.kind == ENT_KIND_PENDULUM {
-                            rotating_local_center(*e, pendulum_rotation(*e, pendulum_angle_q12(ei)))
-                        } else if e.kind == 7 || e.kind == ENT_KIND_ROT_BUTTON {
-                            let ang = (((ENT_PHASE[ei] * e.mv[0]) >> 12) as u16) & 0x0fff;
-                            let rm = axial_brush_rotation(*e, ang);
-                            [
-                                off[0] + dot12(rm.m[0], e.center),
-                                off[1] + dot12(rm.m[1], e.center),
-                                off[2] + dot12(rm.m[2], e.center),
-                            ]
-                        } else {
-                            [
-                                e.center[0] + off[0],
-                                e.center[1] + off[1],
-                                e.center[2] + off[2],
-                            ]
-                        };
+                        let center = brush_entity_center(ei, e, off, sim_frame_no);
                         let visible = if e.kind == 6 {
                             // Liquid brushes can span several rooms; their sphere
                             // almost always intersects the frustum and made every
@@ -36088,6 +36184,7 @@ fn play(
                 brush_pass += 1;
             }
             SUBMODEL_ACTOR_OVERLAP = false;
+            FACE_KEY = 0;
             // Delay this snapshot until both passes have used the prior visual
             // state for the same static/moving decision.
             for ei in 0..nents {
