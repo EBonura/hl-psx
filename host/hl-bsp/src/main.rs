@@ -12708,6 +12708,34 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             *index = first;
         }
     }
+    // The canonical pass above (and the grid/T-junction passes before it)
+    // leave coincident or superseded vertices in `verts` that no corner
+    // references. They cost 6 B each in the resident map and 7 B each in the
+    // runtime's per-vertex projection scratch (which is sized by the largest
+    // cooked map), so drop them. The remap is order-preserving and injective:
+    // it never merges or reorders anything a face can see, so every index
+    // equality the later stages test, the first-use projection order and the
+    // rendered output stay identical.
+    {
+        let mut referenced = vec![false; verts.len()];
+        for &index in &tri_idx {
+            referenced[index as usize] = true;
+        }
+        let mut remap = vec![u16::MAX; verts.len()];
+        let mut kept: Vec<[i16; 3]> = Vec::with_capacity(verts.len());
+        for (old, &used) in referenced.iter().enumerate() {
+            if used {
+                remap[old] = kept.len() as u16;
+                kept.push(verts[old]);
+            }
+        }
+        let dropped = verts.len() - kept.len();
+        for index in &mut tri_idx {
+            *index = remap[*index as usize];
+        }
+        verts = kept;
+        eprintln!("  vertex compaction: -{dropped} unreferenced");
+    }
 
     // Grid tessellation is the cook's affine-correction pass. Runtime classic
     // subdivision adds view-dependent detail. The weld above only restores
