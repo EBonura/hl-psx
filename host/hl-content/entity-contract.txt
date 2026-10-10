@@ -1154,3 +1154,6 @@ worldspawn|sounds|yes|cook:"chaptertitle"|-
 worldspawn|startdark|yes|cook:"chaptertitle"|-
 worldspawn|waveheight|cosmetic|-|-
 worldspawn|worldtype|cosmetic|-|-
+
+# Monster outputs belong to the map contract even though the monsters do not.
+monster_*|triggertarget,triggercondition|yes|cook:fn monster_trigger_condition|run:kills|conditions 2, 3 and 4 fire the target; 1, 9 and 10 (sight) are the AI contract
