@@ -155,7 +155,11 @@ const MODEL_WORDS: usize = room_budget::MODEL_WORDS;
 // pool -- but the pool starts where the *loaded* map ends, so a 603 KiB map on a
 // 928 KiB arena gets 325 KiB of models instead of 219. Every map is >= its old
 // budget and most are far above it; nothing shrank to pay for it.
-const ARENA_WORDS: usize = MAP_WORDS + MODEL_WORDS;
+#[cfg(feature = "order-trace")]
+const TRACE_ARENA_CUT_WORDS: usize = order_trace::RING_WORDS;
+#[cfg(not(feature = "order-trace"))]
+const TRACE_ARENA_CUT_WORDS: usize = 0;
+const ARENA_WORDS: usize = MAP_WORDS + MODEL_WORDS - TRACE_ARENA_CUT_WORDS;
 static mut WORLD_ARENA: [u32; ARENA_WORDS] = [0; ARENA_WORDS];
 /// First arena word owned by the model pool. Conservative (= the full staging
 /// capacity, i.e. the old fixed split) until a map is resident, because model
@@ -200,7 +204,10 @@ static mut CORE_SFX_PROFILE: [u16; sfx::CORE_TABLE_MAPS] = [0; sfx::CORE_TABLE_M
 // frame, so keep only the slots the chosen far plane actually needs. 640
 // covers FAR_VIEW_WIDE (2400)>>2 plus the backdrop bias without reducing depth
 // precision; on every other map the far half of the chain stays empty.
-const OT_LEN: usize = 640;
+const DEPTH_LEN: usize = 640;
+// Ordering-table length: the depth buckets above, plus room above them for the BSP walk's rank
+// keys (one per visible node and brush entity; a camera sees up to about 800 nodes).
+const OT_LEN: usize = 1280;
 const OT_SHIFT: u32 = ordering::OT_SHIFT;
 const HUD_OT_LEN: usize = 1;
 const FX_OT_LEN: usize = 1;
@@ -693,7 +700,7 @@ const FAR_VIEW: i32 = 1200;
 // visible cull), lower it for more fps. Kept at two thirds of FAR_VIEW.
 const FOG_START: i32 = 800;
 const FOG_INV: i32 = (256i32 << 12) / (FAR_VIEW - FOG_START); // compile-time
-const _: () = assert!(OT_LEN > (FAR_VIEW_WIDE as usize >> OT_SHIFT));
+const _: () = assert!(DEPTH_LEN > (FAR_VIEW_WIDE as usize >> OT_SHIFT));
 // The tram ride's canyon (c0a0b) is seen through tunnel openings well past
 // FAR_VIEW, and with FAR_VIEW the openings showed only sky over black. That
 // map alone draws and fogs to FAR_VIEW_WIDE, and only while the sky windows
@@ -22730,6 +22737,7 @@ static mut FACE_KEY: u16 = 0;
 unsafe fn bsp_world_face_key(m: &Map, e: usize, face: usize) -> u16 {
     let k = bsp_order::face_key(e, face);
     if k != 0 {
+        bsp_order::select_node();
         k
     } else {
         bsp_entity_face_key(m, face)
@@ -22746,7 +22754,7 @@ unsafe fn bsp_entity_face_key(m: &Map, face: usize) -> u16 {
         let ei = PVS_ENTS[i] as usize;
         let (ff, nf) = m.submodel(ENT_CACHE[ei].submodel);
         if face >= ff && face < ff + nf {
-            return bsp_order::item_key(ei as u8);
+            return bsp_order::select_item(ei as u8);
         }
         i += 1;
     }
@@ -22757,12 +22765,27 @@ unsafe fn bsp_entity_face_key(m: &Map, face: usize) -> u16 {
 unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: bool) -> usize {
     let ranked = FACE_KEY;
     if ranked != 0 {
+        let key = if bsp_order::banded() {
+            bsp_order::band_key(world_depth_key(depths, texture_backdrop)) as usize
+        } else {
+            ranked as usize
+        };
         #[cfg(feature = "order-trace")]
-        order_trace::note_key(depths, ranked as usize);
-        return ranked as usize;
+        order_trace::note_key(depths, key);
+        return key;
     }
+    let key = world_depth_key(depths, texture_backdrop);
+    let key = bsp_order::map_key(key);
+    #[cfg(feature = "order-trace")]
+    order_trace::note_key(depths, key);
+    key
+}
+
+/// The depth key (table bucket) of a world primitive by the emit policy's rules.
+#[inline(always)]
+unsafe fn world_depth_key(depths: ordering::PrimitiveDepths, texture_backdrop: bool) -> usize {
     let policy = EMIT_POLICY;
-    let key = ordering::world_order_key::<OT_LEN>(
+    let key = ordering::world_order_key::<DEPTH_LEN>(
         depths,
         ordering::SurfaceOrder {
             // Mean-depth keys for every world primitive (the far-vertex key
@@ -22775,18 +22798,14 @@ unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: b
             texture_backdrop,
         },
     );
-    let key = (key as i32 + KEY_BIAS).clamp(1, OT_LEN as i32 - 1) as usize;
-    let key = bsp_order::map_key(key);
-    #[cfg(feature = "order-trace")]
-    order_trace::note_key(depths, key);
-    key
+    (key as i32 + KEY_BIAS).clamp(1, DEPTH_LEN as i32 - 1) as usize
 }
 
 /// Non-world render domains (models, beams, sprites) retain their authored
 /// depth rules but share the physical bounds of the hardware ordering table.
 #[inline(always)]
 fn clamp_otz(z: usize) -> usize {
-    unsafe { bsp_order::map_key(z.clamp(1, OT_LEN - 1)) }
+    unsafe { bsp_order::map_key(z.clamp(1, DEPTH_LEN - 1)) }
 }
 
 fn camera_leaf(m: &Map, eye: [i32; 3]) -> i32 {
@@ -29341,7 +29360,7 @@ unsafe fn draw_model(
             // PS1 choice for compact triangles and matches the viewmodel path.
             // Retain quarter-unit precision until the shared model pass sorts
             // ties inside each existing four-unit world bucket.
-            let depth_key = bsp_order::map_model_key(ordering::model_depth_key::<OT_LEN>(
+            let depth_key = bsp_order::map_model_key(ordering::model_depth_key::<DEPTH_LEN>(
                 pa_z,
                 pb_z,
                 pc_z,
@@ -35342,10 +35361,19 @@ fn play(
                         let off = ent_draw_offset(ei);
                         let center = brush_entity_center(ei, e, off, sim_frame_no);
                         let depth = (dot12(rot.m[2], center) + base_t[2]).max(0);
+                        // wide entities hold one key per depth bucket of their radius (a flat
+                        // platform and its sub-faces keep their own front-to-back order)
+                        let radius = ENT_RADIUS[ei].max(0);
+                        let rb = if depth + radius >= 0 {
+                            (radius >> OT_SHIFT).min(255) as u8
+                        } else {
+                            0
+                        };
                         bsp_order::add_item(
                             bsp_order::anchor_of(&m, center),
                             ei as u8,
-                            (depth >> OT_SHIFT).clamp(1, OT_LEN as i32 - 1) as u16,
+                            (depth >> OT_SHIFT).clamp(1, DEPTH_LEN as i32 - 1) as u16,
+                            rb,
                         );
                     }
                     bsp_order::walk(&m, eye, OT_LEN as u16 - 8);
@@ -35966,7 +35994,7 @@ fn play(
                     }
                     SUBMODEL_ACTOR_OVERLAP = false;
                     let off = ent_draw_offset(ei);
-                    FACE_KEY = bsp_order::item_key(ei as u8);
+                    FACE_KEY = bsp_order::select_item(ei as u8);
                     if e.r2 > 0 {
                         model_bounds_tests = model_bounds_tests.saturating_add(1);
                         let radius = ENT_RADIUS[ei];

@@ -15,12 +15,12 @@
 use crate::map::Map;
 
 /// Visible render nodes tracked per camera leaf (nodes that own at least one listed face).
-pub const MAX_VIS: usize = 224;
+pub const MAX_VIS: usize = 1024;
 /// Brush entities placed in the tree per frame.
 pub const MAX_ITEMS: usize = 48;
 /// Cached face records with a node slot (`MAX_PVS_FACE_RECS`).
 pub const KIDX_CAP: usize = 1024;
-const NO_SLOT: u8 = 0xff;
+const NO_SLOT: u16 = 0xffff;
 const WALK_DEPTH: usize = 64;
 
 /// The cached visible-node list is valid for the PVS in use.
@@ -28,10 +28,13 @@ static mut VALID: bool = false;
 /// This frame's walk ran and the world, entities and depth-keyed primitives take rank keys.
 static mut ACTIVE: bool = false;
 static mut VIS_N: usize = 0;
+/// Most visible nodes any rebuilt view has listed (counts past the table too).
+static mut VIS_PEAK: u16 = 0;
+static mut VIS_SEEN: u16 = 0;
 static mut VIS_NODE: [u16; MAX_VIS] = [0; MAX_VIS];
 static mut VIS_FIRST: [u16; MAX_VIS] = [0; MAX_VIS];
 static mut VIS_COUNT: [u8; MAX_VIS] = [0; MAX_VIS];
-static mut KIDX: [u8; KIDX_CAP] = [NO_SLOT; KIDX_CAP];
+static mut KIDX: [u16; KIDX_CAP] = [NO_SLOT; KIDX_CAP];
 /// Ordering-table key of each visible node (valid after `frame`).
 static mut KEY_K: [u16; MAX_VIS] = [0; MAX_VIS];
 /// Items anchored in the tree this frame, sorted by anchor node.
@@ -41,19 +44,33 @@ static mut ITEM_SIDE: [u8; MAX_ITEMS] = [0; MAX_ITEMS];
 static mut ITEM_ID: [u8; MAX_ITEMS] = [0; MAX_ITEMS];
 static mut ITEM_KEY: [u16; MAX_ITEMS] = [0; MAX_ITEMS];
 static mut ITEM_DEPTH: [u16; MAX_ITEMS] = [0; MAX_ITEMS];
+/// Key levels each item holds (1 for a small entity) and its radius in depth buckets.
+static mut ITEM_LEVELS: [u8; MAX_ITEMS] = [1; MAX_ITEMS];
+static mut ITEM_RB: [u8; MAX_ITEMS] = [0; MAX_ITEMS];
+static mut ITEM_HI: [u16; MAX_ITEMS] = [0; MAX_ITEMS];
+/// The face being emitted belongs to a banded item: its key is `CUR_LO` plus its relative depth.
+static mut CUR_LEVELS: u8 = 1;
+static mut CUR_LO: u16 = 0;
+static mut CUR_HI: u16 = 0;
+static mut CUR_DLO: i32 = 0;
+static mut CUR_SPAN: i32 = 1;
+/// Most key levels one entity takes (its radius in depth buckets, doubled).
+pub const MAX_BAND: u8 = 24;
 /// Monotone depth bucket -> sixteenths of an ordering-table key (see `build_depth_map`).
-static mut DEPTH_KEY16: [u16; crate::OT_LEN] = [0; crate::OT_LEN];
-/// First key of the next walk step, counting down.
-static mut NEXT_KEY: u16 = 0;
+static mut DEPTH_KEY16: [u16; crate::DEPTH_LEN] = [0; crate::DEPTH_LEN];
+/// Key of the next walk step in 8.8 fixed point, counting down.
+static mut NEXT_KEY: u32 = 0;
+/// Fixed-point decrement per walk step (256 = one key; less when the walk has more steps than keys).
+static mut KEY_STEP: u32 = 256;
 
 /// Bytes of static RAM the ordering tables take.
 pub const fn ram_bytes() -> usize {
     MAX_VIS * 2 * 2
         + MAX_VIS
         + MAX_VIS * 2
-        + KIDX_CAP
+        + KIDX_CAP * 2
         + MAX_ITEMS * (2 + 1 + 1 + 2 + 2)
-        + crate::OT_LEN * 2
+        + crate::DEPTH_LEN * 2
         + 16
 }
 
@@ -118,6 +135,7 @@ pub unsafe fn rebuild(m: &Map, face_count: usize, index: &[u16], marks: &[u32]) 
     let run_faces = m.node_face_run_faces();
     let n_nodes = m.n_nodes;
     let blocks = n_nodes.div_ceil(32);
+    let mut seen = 0usize;
     let mut b = 0usize;
     while b < blocks {
         let mut first = m.node_face_checkpoint(b);
@@ -128,20 +146,27 @@ pub unsafe fn rebuild(m: &Map, face_count: usize, index: &[u16], marks: &[u32]) 
             while n < stop {
                 let c = m.node_face_count(n);
                 if c != 0 && any_marked(marks, first, first + c) {
-                    if VIS_N >= MAX_VIS {
-                        VIS_N = 0;
-                        return;
+                    seen += 1;
+                    if VIS_N < MAX_VIS {
+                        VIS_NODE[VIS_N] = n as u16;
+                        VIS_FIRST[VIS_N] = first as u16;
+                        VIS_COUNT[VIS_N] = c.min(255) as u8;
+                        VIS_N += 1;
                     }
-                    VIS_NODE[VIS_N] = n as u16;
-                    VIS_FIRST[VIS_N] = first as u16;
-                    VIS_COUNT[VIS_N] = c.min(255) as u8;
-                    VIS_N += 1;
                 }
                 first += c;
                 n += 1;
             }
         }
         b += 1;
+    }
+    core::ptr::write_volatile(core::ptr::addr_of_mut!(VIS_SEEN), seen as u16);
+    if seen as u16 > core::ptr::read_volatile(core::ptr::addr_of!(VIS_PEAK)) {
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(VIS_PEAK), seen as u16);
+    }
+    if seen > MAX_VIS {
+        VIS_N = 0;
+        return;
     }
     // Node slot of every cached record, by the node run its face falls in.
     let cached = face_count.min(KIDX_CAP).min(index.len());
@@ -159,7 +184,7 @@ pub unsafe fn rebuild(m: &Map, face_count: usize, index: &[u16], marks: &[u32]) 
 
 /// Visible-node slot whose run holds `face`, or `NO_SLOT`.
 #[inline]
-unsafe fn slot_of_face(face: usize) -> u8 {
+unsafe fn slot_of_face(face: usize) -> u16 {
     let (mut lo, mut hi) = (0usize, VIS_N);
     while lo < hi {
         let mid = (lo + hi) >> 1;
@@ -174,7 +199,7 @@ unsafe fn slot_of_face(face: usize) -> u8 {
     }
     let k = lo - 1;
     if face < VIS_FIRST[k] as usize + VIS_COUNT[k] as usize {
-        k as u8
+        k as u16
     } else {
         NO_SLOT
     }
@@ -227,7 +252,7 @@ fn dot_q5(row: [i16; 3], e: [i32; 3]) -> i32 {
 
 /// Queue one brush entity for this frame's walk.
 #[inline]
-pub unsafe fn add_item(anchor: (u16, u8), id: u8, depth_bucket: u16) {
+pub unsafe fn add_item(anchor: (u16, u8), id: u8, depth_bucket: u16, radius_bucket: u8) {
     if !VALID || ITEM_N >= MAX_ITEMS {
         return;
     }
@@ -238,12 +263,16 @@ pub unsafe fn add_item(anchor: (u16, u8), id: u8, depth_bucket: u16) {
         ITEM_SIDE[i] = ITEM_SIDE[i - 1];
         ITEM_ID[i] = ITEM_ID[i - 1];
         ITEM_DEPTH[i] = ITEM_DEPTH[i - 1];
+        ITEM_LEVELS[i] = ITEM_LEVELS[i - 1];
+        ITEM_RB[i] = ITEM_RB[i - 1];
         i -= 1;
     }
     ITEM_ANCHOR[i] = anchor.0;
     ITEM_SIDE[i] = anchor.1;
     ITEM_ID[i] = id;
     ITEM_DEPTH[i] = depth_bucket;
+    ITEM_RB[i] = radius_bucket;
+    ITEM_LEVELS[i] = (radius_bucket as u16 * 2 + 1).min(MAX_BAND as u16) as u8;
     ITEM_N += 1;
 }
 
@@ -266,6 +295,47 @@ pub unsafe fn item_key(id: u8) -> u16 {
         i += 1;
     }
     0
+}
+
+/// Make item `id` the owner of the faces about to be emitted; returns its nearest key, `0` if unplaced.
+#[inline]
+pub unsafe fn select_item(id: u8) -> u16 {
+    if !ACTIVE {
+        return 0;
+    }
+    let mut i = 0usize;
+    while i < ITEM_N {
+        if ITEM_ID[i] == id {
+            CUR_LEVELS = ITEM_LEVELS[i];
+            CUR_LO = ITEM_KEY[i];
+            CUR_HI = ITEM_HI[i];
+            let rb = ITEM_RB[i] as i32;
+            CUR_DLO = ITEM_DEPTH[i] as i32 - rb;
+            CUR_SPAN = (rb * 2).max(1);
+            return ITEM_KEY[i];
+        }
+        i += 1;
+    }
+    0
+}
+
+/// The faces about to be emitted are a node's (one key each).
+#[inline(always)]
+pub unsafe fn select_node() {
+    CUR_LEVELS = 1;
+}
+
+#[inline(always)]
+pub unsafe fn banded() -> bool {
+    CUR_LEVELS > 1
+}
+
+/// Key of a face of the selected banded item from its depth key `dk` (depth buckets).
+#[inline]
+pub unsafe fn band_key(dk: usize) -> u16 {
+    let levels = CUR_LEVELS as i32;
+    let off = (((dk as i32 - CUR_DLO) * (levels - 1)) / CUR_SPAN).clamp(0, levels - 1);
+    (CUR_LO as i32 + off).min(CUR_HI as i32) as u16
 }
 
 #[derive(Clone, Copy)]
@@ -301,7 +371,18 @@ pub unsafe fn walk(m: &Map, eye: [i32; 3], key_top: u16) {
     if !VALID {
         return;
     }
-    NEXT_KEY = key_top;
+    NEXT_KEY = (key_top as u32) << 8;
+    let mut steps = VIS_N as u32;
+    let mut q = 0usize;
+    while q < ITEM_N {
+        steps += ITEM_LEVELS[q] as u32;
+        q += 1;
+    }
+    KEY_STEP = if steps > key_top as u32 - 1 {
+        (((key_top as u32 - 1) << 8) / steps).max(1)
+    } else {
+        256
+    };
     let mut stack = [Frame {
         node: 0,
         end: 0,
@@ -377,7 +458,15 @@ pub unsafe fn walk(m: &Map, eye: [i32; 3], key_top: u16) {
                     let mut i = f.elo as usize;
                     while i < f.ehi as usize && ITEM_ANCHOR[i] == f.node {
                         if ITEM_SIDE[i] == side_flag {
-                            ITEM_KEY[i] = take_key();
+                            let first = take_key();
+                            let mut last = first;
+                            let mut l = 1u8;
+                            while l < ITEM_LEVELS[i] {
+                                last = take_key();
+                                l += 1;
+                            }
+                            ITEM_KEY[i] = last;
+                            ITEM_HI[i] = first;
                         }
                         i += 1;
                     }
@@ -399,11 +488,11 @@ pub unsafe fn walk(m: &Map, eye: [i32; 3], key_top: u16) {
 
 #[inline(always)]
 unsafe fn take_key() -> u16 {
-    let k = NEXT_KEY;
-    if NEXT_KEY > 1 {
-        NEXT_KEY -= 1;
+    let k = (NEXT_KEY >> 8) as u16;
+    if NEXT_KEY >= (2 << 8) + KEY_STEP {
+        NEXT_KEY -= KEY_STEP;
     }
-    k
+    k.max(1)
 }
 
 /// Items anchored at exactly `node` starting at `lo` (items are sorted by anchor).
@@ -442,8 +531,9 @@ pub unsafe fn build_depth_map(depth_of_face: &mut dyn FnMut(usize) -> usize) {
     let mut i = 0usize;
     while i < ITEM_N {
         let bucket = (ITEM_DEPTH[i] as usize).clamp(1, table.len() - 1);
-        if ITEM_KEY[i] > table[bucket] {
-            table[bucket] = ITEM_KEY[i];
+        let mid = ITEM_KEY[i] + (ITEM_HI[i] - ITEM_KEY[i]) / 2;
+        if mid > table[bucket] {
+            table[bucket] = mid;
         }
         i += 1;
     }
@@ -495,7 +585,7 @@ pub unsafe fn build_depth_map(depth_of_face: &mut dyn FnMut(usize) -> usize) {
 #[inline(never)]
 pub unsafe fn map_key(bucket: usize) -> usize {
     if ACTIVE {
-        (DEPTH_KEY16[bucket.min(crate::OT_LEN - 1)] >> 4) as usize
+        (DEPTH_KEY16[bucket.min(crate::DEPTH_LEN - 1)] >> 4) as usize
     } else {
         bucket
     }
@@ -507,7 +597,7 @@ pub unsafe fn map_model_key(key: u16) -> u16 {
     if !ACTIVE {
         return key;
     }
-    let b = ((key >> 4) as usize).min(crate::OT_LEN - 2);
+    let b = ((key >> 4) as usize).min(crate::DEPTH_LEN - 2);
     let lo = DEPTH_KEY16[b] as u32;
     let hi = DEPTH_KEY16[b + 1] as u32;
     let fine = (key & 15) as u32;
