@@ -35370,7 +35370,7 @@ fn play(
                             0
                         };
                         bsp_order::add_item(
-                            bsp_order::anchor_of(&m, center),
+                            bsp_order::anchor_of(&m, bsp_order::toward_eye(center, eye)),
                             ei as u8,
                             (depth >> OT_SHIFT).clamp(1, DEPTH_LEN as i32 - 1) as u16,
                             rb,
