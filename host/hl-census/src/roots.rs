@@ -142,10 +142,19 @@ pub fn kill_script(kills: &[Kill], gap: u32, start: u32) -> (Vec<String>, u32) {
     let mut lines = vec!["0 god 2".to_string(), "0 trace 20".to_string()];
     let mut tick = start;
     for k in kills {
-        lines.push(format!(
-            "{tick} killat {} {} {}   # {} {} cond {} -> {}",
-            k.origin[0], k.origin[1], k.origin[2], k.class, k.name, k.condition, k.target
-        ));
+        // A named monster is found by name (a script may have moved it);
+        // an unnamed one by where the map placed it.
+        if k.name.is_empty() {
+            lines.push(format!(
+                "{tick} killat {} {} {}   # {} cond {} -> {}",
+                k.origin[0], k.origin[1], k.origin[2], k.class, k.condition, k.target
+            ));
+        } else {
+            lines.push(format!(
+                "{tick} kill {}   # {} cond {} -> {}",
+                k.name, k.class, k.condition, k.target
+            ));
+        }
         tick += gap;
     }
     (lines, tick)
