@@ -22,6 +22,9 @@
 //!   optional legacy textures × n_texs: u16 w,h | u16 clut[16] | u8 pix[w*h/2]
 //!   modern streamed builds keep texture pixels in a separate HLTX chunk:
 //!     magic "HLTX" | u32 n_texs | textures...
+//!     A sky face is an 8 bit entry instead: top bit of w set, then
+//!     u16 w,h | u16 clut[256] | u8 pix[w*h], the clut left out (and bit 14
+//!     of w set) when it shares the earlier sky entry's.
 //!   bsp @ bsp_off:
 //!     u32 n_planes,n_face_groups,n_nodes,leaf_counts,n_marks,vis_len
 //!       HLMA/B leaf_counts = n_leaves (legacy; PVS bits assumed n_leaves-1)
