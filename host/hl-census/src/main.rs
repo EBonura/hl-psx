@@ -282,8 +282,12 @@ fn main() {
                     let mut rtracks = hl_census::compare::retail_tracks(&rt2, map);
                     let mut ptracks = hl_census::compare::port_tracks(&pt2, map);
                     // Only the window both runs covered counts.
-                    let window = rl.min(pl);
-                    for t in rtracks.values_mut().chain(ptracks.values_mut()) {
+                    // Retail ticks run `offset` ahead of the port's.
+                    let window = pl.min(rl - rep.offset);
+                    for t in rtracks.values_mut() {
+                        t.pos.retain(|&k, _| k <= window + rep.offset);
+                    }
+                    for t in ptracks.values_mut() {
                         t.pos.retain(|&k, _| k <= window);
                     }
                     if let Some(b) = arg(&args, "--track") {
@@ -491,6 +495,51 @@ fn main() {
             println!(
                 "--- {ok} of {total} retail trigger brushes have a cooked record within 16 units"
             );
+        }
+        "health" => {
+            // health [MAP...] --ref-dir DIR [--hlm DIR | --rooms DIR]: retail func_breakable health
+            // against the cooked record (a retail health of 0 cooks as 1).
+            let ref_dir = PathBuf::from(arg(&args, "--ref-dir").unwrap_or_else(|| "ref".into()));
+            let rooms = PathBuf::from(arg(&args, "--rooms").unwrap_or_else(|| "data/rooms".into()));
+            let mut names: Vec<String> = args[1..]
+                .iter()
+                .take_while(|a| !a.starts_with("--"))
+                .cloned()
+                .collect();
+            if names.is_empty() {
+                names = census.maps.clone();
+            }
+            let (mut total, mut bad) = (0, 0);
+            for map in &names {
+                let Some(idx) = census.maps.iter().position(|m| m == map) else {
+                    continue;
+                };
+                let path = match arg(&args, "--hlm") {
+                    Some(dir) => PathBuf::from(dir).join(format!("{map}.hlm")),
+                    None => rooms.join(format!("room_{}.psxc", idx * 2)),
+                };
+                let Ok(cooked) = std::fs::read(path) else {
+                    continue;
+                };
+                let gz = std::process::Command::new("gzip")
+                    .args(["-dc"])
+                    .arg(ref_dir.join(format!("{map}.ent.gz")))
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                    .unwrap_or_default();
+                let retail = hl_census::solidity::retail_breakable_health(&gz, map);
+                let port = hl_census::solidity::port_breakable_health(&cooked);
+                for (sub, (hp, sf)) in &retail {
+                    let Some(&have) = port.get(sub) else { continue };
+                    total += 1;
+                    let want = hp.max(1.0).round() as u32;
+                    if have != want {
+                        bad += 1;
+                        println!("{map} *{sub} flags {sf}: retail health {hp} cooked {have}");
+                    }
+                }
+            }
+            println!("--- {bad} of {total} breakables cook a different health than retail");
         }
         "levels" => {
             // levels [--start MAP]: the changelevel graph of the shipped maps.

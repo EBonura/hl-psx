@@ -189,3 +189,82 @@ mod tests {
         assert_eq!(mm[0].kind, "PORT-SOLID");
     }
 }
+
+/// Cooked health of every func_breakable record, by BSP submodel index.
+pub fn port_breakable_health(cooked: &[u8]) -> BTreeMap<u32, u32> {
+    use hl_format::logic as k;
+    const HEADER_LOGIC_OFFSET: usize = 48;
+    const LOGIC_SZ: usize = 64;
+    let mut out = BTreeMap::new();
+    let Ok(brushes) = port_brush_list(cooked) else {
+        return out;
+    };
+    let Some(off) = i32_at(cooked, HEADER_LOGIC_OFFSET).map(|v| v as usize) else {
+        return out;
+    };
+    let n = u16::from_le_bytes([cooked[off], cooked[off + 1]]) as usize;
+    for i in 0..n {
+        let o = off + 8 + i * LOGIC_SZ;
+        if cooked.get(o + LOGIC_SZ).is_none() || cooked[o] != k::FUNC_BREAKABLE {
+            continue;
+        }
+        let brush = u16::from_le_bytes([cooked[o + 10], cooked[o + 11]]) as usize;
+        let hp = u16::from_le_bytes([cooked[o + 22], cooked[o + 23]]) as u32;
+        if let Some(&sub) = brushes.get(brush) {
+            out.insert(sub, hp);
+        }
+    }
+    out
+}
+
+/// Submodel index of every entity record, in record order.
+fn port_brush_list(cooked: &[u8]) -> Result<Vec<u32>, String> {
+    let ent_off = u32_at(cooked, HEADER_ENTITY_OFFSET).ok_or("short header")? as usize;
+    let n_models = u32_at(cooked, ent_off).ok_or("short entity section")? as usize;
+    let o = ent_off + 4 + n_models * 8;
+    let n_ents = u32_at(cooked, o).ok_or("short entity count")? as usize;
+    (0..n_ents)
+        .map(|i| {
+            let r = o + 4 + i * ENT_SZ;
+            cooked
+                .get(r..r + 2)
+                .map(|b| u16::from_le_bytes([b[0], b[1]]) as u32)
+                .ok_or_else(|| "entity record past the end".to_string())
+        })
+        .collect()
+}
+
+/// Retail health of every func_breakable at the first sampled tick, by submodel.
+pub fn retail_breakable_health(entity_rows: &str, map: &str) -> BTreeMap<u32, (f64, i64)> {
+    let mut out = BTreeMap::new();
+    for line in entity_rows.lines() {
+        if !line.contains("|map_tick=0|") || !line.contains("|class=func_breakable|") {
+            continue;
+        }
+        let m: BTreeMap<&str, &str> = line
+            .split('|')
+            .skip(2)
+            .filter_map(|p| p.split_once('='))
+            .collect();
+        if m.get("map") != Some(&map) {
+            continue;
+        }
+        let Some(b) = m
+            .get("brush")
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|b| *b > 0)
+        else {
+            continue;
+        };
+        let hp = m
+            .get("health")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        let sf = m
+            .get("spawnflags")
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+        out.insert(b, (hp, sf));
+    }
+    out
+}

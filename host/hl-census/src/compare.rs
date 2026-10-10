@@ -467,27 +467,23 @@ pub fn compare_motion(
             continue;
         }
         if r.class.starts_with("monster_") {
-            let (rm, _) = travel(r);
-            let (pm, _) = travel(p);
-            let flag = if (rm > 64.0) != (pm > 64.0) {
-                if rm > 64.0 {
-                    "STILL-IN-PORT"
-                } else {
-                    "MOVES-ONLY-IN-PORT"
-                }
-            } else {
-                ""
-            };
-            if !flag.is_empty() {
+            // Scripted actors end where their sequence leaves them; compare the
+            // last common sample, not the path (the port may place a mark early).
+            let last = r.pos.keys().rev().find(|t| p.pos.contains_key(*t)).copied();
+            let off = last.map(|t| {
+                let (a, b) = (r.pos[&t].0, p.pos[&t].0);
+                (0..3).map(|i| (a[i] - b[i]).abs()).fold(0.0, f64::max)
+            });
+            if let Some(d) = off.filter(|d| *d > 128.0) {
                 rows.push(MotionRow {
                     class: r.class.clone(),
                     name: r.targetname.clone(),
                     brush: b.clone(),
-                    retail_move: rm,
-                    port_move: pm,
+                    retail_move: d,
+                    port_move: d,
                     retail_swing: 0.0,
                     port_swing: 0.0,
-                    flag: flag.into(),
+                    flag: format!("FINAL-POS off by {d:.0}"),
                 });
             }
             continue;
