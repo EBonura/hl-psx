@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Doors and trains the maps mark passable no longer block. Retail spawns a
+  `func_door`, `func_train` or `func_tracktrain` with spawnflag 8 non-solid,
+  and the cooker gave all 153 of them a collision hull (99 doors, 51 trains,
+  3 tracktrains), so the player stood against walls the original lets him walk
+  through and Interloper's invisible trains pushed him around.
+- A moving door or train is no longer held still by a barnacle, tripmine,
+  cabinet or Xen plant in its path. Retail's pusher skips every entity with
+  MOVETYPE_NONE; here a small fungus froze Interloper's stalk doors for the
+  whole map.
+- Add `hl-census`, which checks the shipped maps against the port: a reviewed
+  contract of every class, keyvalue and spawnflag, retail-versus-port
+  differentials for target dispatch, brush solidity, trigger volumes and
+  breakable health, and the changelevel graph.
+- Add an off-by-default `interaction-probe` build feature that fires targets,
+  kills monsters and teleports the player from a baked script.
+
 - `cargo hl-build build` links again. Without a sample profile the game had
   outgrown RAM (`.bss` over by about 4 KB), so only `pgo` with a recording
   could make a disc. The profile and threshold `pgo` shipped with now live
