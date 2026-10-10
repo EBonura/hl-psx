@@ -234,7 +234,13 @@ pub fn analyse(c: &Census, ct: &Contract, src: &Sources) -> (Findings, Tally) {
             f.broken.push(format!("{tag}: {e}"));
         }
         if row.class != "*" && row.status != Status::Scope {
-            let used = c.items.contains_key(&(row.class.clone(), row.item.clone()));
+            let used = match row.class.strip_suffix('*') {
+                Some(prefix) => c
+                    .items
+                    .keys()
+                    .any(|(cl, it)| cl.starts_with(prefix) && *it == row.item),
+                None => c.items.contains_key(&(row.class.clone(), row.item.clone())),
+            };
             if !used {
                 f.stale.push(tag);
             }
