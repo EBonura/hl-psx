@@ -1158,6 +1158,170 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
     fs::write(out_dir.join("skill_table.rs"), generated).expect("write generated skill tables");
 }
 
+/// Scratch-only interaction probe script (feature `interaction-probe`).
+/// HLPSX_PROBE names a text file: first `map NAME`, then `TICK OP ARGS...`.
+/// Coordinates are HL units (x y z), angles HL degrees (yaw pitch).
+fn write_probe_script(out_dir: &std::path::Path) {
+    println!("cargo:rerun-if-env-changed=HLPSX_PROBE");
+    let mut map = String::new();
+    let mut secs: Vec<String> = Vec::new();
+    let mut chapter = false;
+    let mut cmds = String::new();
+    let mut names: Vec<String> = vec![String::new()];
+    let mut last_tp = [0.0f64; 3];
+    if let Ok(path) = std::env::var("HLPSX_PROBE") {
+        println!("cargo:rerun-if-changed={path}");
+        let text = fs::read_to_string(&path).expect("read HLPSX_PROBE");
+        for raw in text.lines() {
+            let line = raw.split('#').next().unwrap().trim();
+            if line.is_empty() {
+                continue;
+            }
+            let w: Vec<&str> = line.split_whitespace().collect();
+            if w[0] == "map" {
+                if map.is_empty() {
+                    map = w[1].to_string();
+                }
+                secs.push(w[1].to_string());
+                continue;
+            }
+            if w[0] == "chapter" {
+                chapter = true;
+                continue;
+            }
+            let sec = secs.len().saturating_sub(1);
+            let tick: u32 = w[0].parse().expect("probe tick");
+            let num = |i: usize| -> f64 {
+                w.get(i)
+                    .map(|v| v.parse::<f64>().expect("probe number"))
+                    .unwrap_or(0.0)
+            };
+            let yawc =
+                |y: f64| (((90.0 - y) * 4096.0 / 360.0).round() as i64).rem_euclid(4096) as i32;
+            let pitc = |p: f64| (-p * 4096.0 / 360.0).round() as i32;
+            let (op, a, name): (u8, [i32; 6], String) = match w[1] {
+                "tp" => {
+                    last_tp = [num(2), num(3), num(4)];
+                    (
+                        1,
+                        [
+                            num(2) as i32,
+                            num(4) as i32,
+                            num(3) as i32,
+                            yawc(num(5)),
+                            pitc(num(6)),
+                            num(7) as i32,
+                        ],
+                        String::new(),
+                    )
+                }
+                "fire" => (
+                    2,
+                    [
+                        match w.get(3).copied().unwrap_or("toggle") {
+                            "on" => 1,
+                            "off" => 0,
+                            _ => 3,
+                        },
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ],
+                    w[2].to_string(),
+                ),
+                "in" => (
+                    3,
+                    [
+                        num(2) as i32,
+                        num(3) as i32,
+                        num(4) as i32,
+                        num(5) as i32,
+                        num(6) as i32,
+                        num(7) as i32,
+                    ],
+                    String::new(),
+                ),
+                "pin" => (4, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
+                "god" => (5, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
+                "trace" => (6, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
+                "look" => {
+                    let d = [
+                        num(2) - last_tp[0],
+                        num(3) - last_tp[1],
+                        num(4) - last_tp[2] - 28.0,
+                    ];
+                    let yaw = d[1].atan2(d[0]).to_degrees();
+                    let pitch = -(d[2].atan2((d[0] * d[0] + d[1] * d[1]).sqrt())).to_degrees();
+                    (7, [yawc(yaw), pitc(pitch), 0, 0, 0, 0], String::new())
+                }
+                "mark" => (8, [0; 6], w[2].to_string()),
+                // view yaw pitch : set the view angles (HL degrees) without moving
+                "view" => (7, [yawc(num(2)), pitc(num(3)), 0, 0, 0, 0], String::new()),
+                "weapons" => (9, [0; 6], String::new()),
+                "use" => (10, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
+                // kill NAME : damage every live monster with that targetname to death
+                "kill" => (11, [255, 0, 0, 0, 0, 0], w[2].to_string()),
+                // hurt NAME DMG : one hit of DMG (player-inflicted) on those monsters
+                "hurt" => (11, [num(3) as i32, 0, 0, 0, 0, 0], w[2].to_string()),
+                // killkind KIND : kill every live monster of a PROP_KIND
+                "killkind" => (12, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
+                // hurtkind KIND DMG : one hit on every live monster of a PROP_KIND
+                "hurtkind" => (
+                    12,
+                    [num(2) as i32, num(3) as i32, 0, 0, 0, 0],
+                    String::new(),
+                ),
+                // killat X Y Z : kill the live monster nearest to that HL point
+                "killat" => (
+                    17,
+                    [num(2) as i32, num(4) as i32, num(3) as i32, 0, 0, 0],
+                    String::new(),
+                ),
+                // pos : log the player position
+                "pos" => (13, [0; 6], String::new()),
+                // die : drop the player's health to zero (god off)
+                "die" => (15, [0; 6], String::new()),
+                // face NAME : keep the view on that monster every tick ("face -" stops)
+                "face" => (16, [0; 6], w[2].to_string()),
+                // goto MAP [chapter] : leave for MAP (a fresh start, or its chapter arrival)
+                "goto" => (
+                    14,
+                    [
+                        if w.get(3).copied() == Some("chapter") {
+                            1
+                        } else {
+                            0
+                        },
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ],
+                    w[2].to_string(),
+                ),
+                other => panic!("unknown probe op {other}"),
+            };
+            let ni = match names.iter().position(|n| *n == name) {
+                Some(i) => i,
+                None => {
+                    names.push(name.clone());
+                    names.len() - 1
+                }
+            };
+            cmds.push_str(&format!(
+                "    Cmd {{ sec: {sec}, tick: {tick}, op: {op}, a: {a:?}, name: {ni} }},\n"
+            ));
+        }
+    }
+    let generated = format!(
+        "#[allow(dead_code)]\npub const PROBE_MAP: &str = {map:?};\npub const PROBE_CHAPTER: bool = {chapter};\npub static PROBE_SECS: &[&str] = &{secs:?};\npub static PROBE_NAMES: &[&str] = &{names:?};\npub static PROBE_CMDS: &[Cmd] = &[\n{cmds}];\n"
+    );
+    fs::write(out_dir.join("probe_script.rs"), generated).expect("write probe script");
+}
+
 fn main() {
     // This crate lives at <repo>/game, so the repo root is one level up.
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -1254,6 +1418,7 @@ fn main() {
     assert_eq!(max_face_groups % 32, 0);
     assert!(MODEL_INDEX_VERTEX_LIMIT <= 1 << 10);
     write_reference_checkpoint(&out_dir);
+    write_probe_script(&out_dir);
     let talk_voices = talk_voice_layout(repo_root);
     let budget = format!(
         "pub const TALK_VOICES: [[u8; 7]; {}] = {talk_voices:?};\n\
