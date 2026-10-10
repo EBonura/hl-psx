@@ -509,6 +509,12 @@ pub const M203_COOLDOWN: u8 = 20;
 pub const fn blast_radius(dmg: u8) -> i32 {
     dmg as i32 * 5 / 2
 }
+/// What a zombie keeps of a hit that is exactly a bullet (the gauss, the hive
+/// hand's hornets: 20 -> 6, 5 -> 2 under the Xash3D reference): 30 percent,
+/// rounded up from a half. Ordinary gun fire and bolts take full damage.
+pub const fn zombie_exact_bullet(dmg: u8) -> u8 {
+    ((dmg as u16 * 3 + 9) / 10) as u8
+}
 /// The MP5 grenade's impact damage (`sk_plr_9mmAR_grenade`).
 pub const M203_DAMAGE: u8 = 100;
 pub const SHOTGUN_ALT_COOLDOWN: u8 = 30;

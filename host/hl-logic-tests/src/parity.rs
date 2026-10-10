@@ -581,6 +581,23 @@ fn weapon_obs() -> Vec<WObs> {
             d(W_HORNET).reserve_max as i64,
             DOC,
         ),
+        // A zombie keeps 30 percent of exactly-bullet damage (gauss 20 -> 6, hornet 5 -> 2).
+        o(
+            "zombie vs gauss",
+            "damage per hit",
+            6,
+            0,
+            zombie_exact_bullet(20) as i64,
+            "Xash3D weapon bench (zombie target)",
+        ),
+        o(
+            "zombie vs hornet",
+            "damage per hit",
+            2,
+            0,
+            zombie_exact_bullet(5) as i64,
+            "Xash3D weapon bench (zombie target)",
+        ),
         // The grunt's hand grenade.
         o(
             "grunt grenade",
