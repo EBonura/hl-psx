@@ -17442,8 +17442,32 @@ unsafe fn tick_shooter(
             prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(ATTACK_WINDUP));
         }
         if prop_attack_cooldown(pi) == 0 {
+            let mut cooldown = def.atk_cooldown;
             {
-                let damage = skill_damage(ty).unwrap_or(def.atk_damage);
+                let damage = match ty {
+                    // An alien grunt with the enemy inside 80 units punches (20 on Medium,
+                    // twice 24 ticks apart in the retail trace) instead of firing.
+                    10 if d2 <= 80 * 80 => {
+                        cooldown = 24;
+                        skill_hit(Sk::AgruntPunch)
+                    }
+                    // The controller throws volleys of three balls four ticks apart, then
+                    // one ball, then pauses (retail: 12, 12, 12, 12, 4 damage events).
+                    11 => {
+                        let ball = skill_hit(Sk::ControllerBall);
+                        let n = PROP_AI_TIMER[pi];
+                        if n < 4 {
+                            PROP_AI_TIMER[pi] = n + 1;
+                            cooldown = 4;
+                            ball * 3
+                        } else {
+                            PROP_AI_TIMER[pi] = 0;
+                            cooldown = 52;
+                            ball
+                        }
+                    }
+                    _ => skill_damage(ty).unwrap_or(def.atk_damage),
+                };
                 damage_target(target, damage, pos, health, armor);
                 // Human weapons crack like an MP5 (the assassin's silenced pistol
                 // like a glock); the alien grunt and controller have their own
@@ -17456,7 +17480,7 @@ unsafe fn tick_shooter(
                     _ => sfx::play_world(sfx::ELECTRO, pos),
                 }
             }
-            prop_attack_cooldown_set(pi, def.atk_cooldown);
+            prop_attack_cooldown_set(pi, cooldown);
         }
     } else if can_move {
         PROP_STATE[pi] = PROP_STATE_MOVE;
@@ -18827,7 +18851,7 @@ unsafe fn tick_props(
                 map_index,
                 in_player_pvs,
             ),
-            _ => species::idle_think(m, pm, pi, ty, player_pos, health),
+            _ => species::idle_think(m, pm, pi, ty, player_pos, health, armor),
         }
         pi += 1;
     }

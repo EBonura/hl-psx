@@ -191,12 +191,38 @@ pub(crate) unsafe fn tick_grunt(
     // After that it lobs a hand grenade at an enemy 250 to 900 units off, one
     // every 155 ticks (measured: blasts 155 apart, 25 to 27 ticks after the
     // 34-tick throw begins).
-    if d2 > GRENADE_MIN_RANGE * GRENADE_MIN_RANGE
+    let weapons = grunt_weapons(pi);
+    if weapons & (GRUNT_GRENADES | GRUNT_LAUNCHER) != 0
+        && d2 > GRENADE_MIN_RANGE * GRENADE_MIN_RANGE
         && d2 < GRENADE_MAX_RANGE * GRENADE_MAX_RANGE
         && time_reached(SIM_NOW, GRUNT_GREN[pi])
     {
         GRUNT_GREN[pi] = SIM_NOW.wrapping_add(GRENADE_INTERVAL);
         PROP_AI_TIMER[pi] = 0x80 | (3 << 5) | GRENADE_THROW_TICKS;
+        return;
+    }
+    if weapons & GRUNT_SHOTGUN != 0 {
+        // Shotgun grunt: one blast every 14 ticks of `sk_hgrunt_pellets` pellets, a pellet
+        // landing about 60 percent of the time at 200 units and 28 percent at 400.
+        if prop_attack_cooldown(pi) == 0 {
+            let from = prop_eye(m, pi);
+            let dist = isqrt_i32(dist2_3(from, aim));
+            let chance = (920 - dist * 8 / 5).clamp(50, 1000) as u32;
+            let mut hits = 0u8;
+            let mut n = skill_value(Sk::HgruntPellets);
+            while n > 0 {
+                hits += (impact_rng().below(1000) < chance) as u8;
+                n -= 1;
+            }
+            if hits > 0 {
+                damage_target(target, hits * skill_hit(Sk::Bullet9mm), pos, health, armor);
+                push_tracer(from, aim);
+            } else {
+                push_tracer(from, [aim[0] + 40, aim[1] + 20, aim[2] - 40]);
+            }
+            sfx::play_world(sfx::SHOTGUN, pos);
+            prop_attack_cooldown_set(pi, 14);
+        }
         return;
     }
     let state = PROP_AI_TIMER[pi]; // low nibble: burst ticks left, high: bursts since the pause
@@ -236,6 +262,19 @@ pub(crate) unsafe fn tick_grunt(
             prop_attack_cooldown_set(pi, gap);
             PROP_AI_TIMER[pi] = (bursts << 4) | 6;
         }
+    }
+}
+
+/// Weapon bits of a grunt's `weapons` key, carried in its body nibble; an older cook (0) means MP5 and grenades.
+const GRUNT_GRENADES: u8 = 2;
+const GRUNT_LAUNCHER: u8 = 4;
+const GRUNT_SHOTGUN: u8 = 8;
+
+#[inline(always)]
+unsafe fn grunt_weapons(pi: usize) -> u8 {
+    match prop_body_value(PROP_YAW[pi]) {
+        0 => 3,
+        w => w,
     }
 }
 
@@ -354,7 +393,7 @@ pub(crate) unsafe fn tick_slave(
 /// passive: they are the only AI_IDLE actors the actor loop does not skip.
 #[inline(always)]
 pub(crate) fn idle_thinks(ty: u8) -> bool {
-    ty == 12 || ty == tripmine::PROP_TYPE_TRIPMINE
+    ty == 12 || ty == 13 || ty == tripmine::PROP_TYPE_TRIPMINE
 }
 
 pub(crate) unsafe fn idle_think(
@@ -364,11 +403,67 @@ pub(crate) unsafe fn idle_think(
     ty: u8,
     player_pos: [i32; 3],
     health: &mut u16,
+    armor: &mut u16,
 ) {
     if ty == 12 {
         barnacle::tick(m, pi, player_pos, health);
+    } else if ty == 13 {
+        tick_leech(m, pi, player_pos, health, armor);
     } else if ty == tripmine::PROP_TYPE_TRIPMINE {
         tripmine::tick_map(m, movers, pi);
+    }
+}
+
+/// monster_leech: stays in its water and, when the player is in the water too, swims at him
+/// (2 units per tick, 4 inside 150) and bites for `sk_leech_dmg_bite` every 4 ticks (measured
+/// under the Xash3D reference, c2a3b: approach 2.1, bites 2 every 4 ticks, up to 4.7 attacking).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn tick_leech(m: &Map, pi: usize, player_pos: [i32; 3], health: &mut u16, armor: &mut u16) {
+    if PROP_HEALTH[pi] == 0 {
+        return;
+    }
+    let pos = PROP_POS[pi];
+    let body = [
+        player_pos[0],
+        player_pos[1] + VIEW_HEIGHT / 2,
+        player_pos[2],
+    ];
+    let eye = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
+    let wet = |p: [i32; 3]| {
+        let leaf = camera_leaf(m, p);
+        leaf > 0 && m.leaf_liquid(leaf as usize) != 0
+    };
+    let d2 = dist2_3(pos, body);
+    if !wet(eye) || d2 > 800 * 800 || !phys::line_clear_world(m, pos, body) {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        return;
+    }
+    prop_face_point(pi, body);
+    if d2 <= 40 * 40 {
+        PROP_STATE[pi] = PROP_STATE_ATTACK;
+        if prop_attack_cooldown(pi) == 0 {
+            damage_target(
+                PROP_TARGET_PLAYER,
+                skill_hit(Sk::LeechBite),
+                pos,
+                health,
+                armor,
+            );
+            prop_attack_cooldown_set(pi, 4);
+        }
+        return;
+    }
+    PROP_STATE[pi] = PROP_STATE_MOVE;
+    let speed = if d2 <= 150 * 150 { 4 } else { 2 };
+    let len = isqrt_i32(d2).max(1);
+    let next = [
+        pos[0] + (body[0] - pos[0]) * speed / len,
+        pos[1] + (body[1] - pos[1]) * speed / len,
+        pos[2] + (body[2] - pos[2]) * speed / len,
+    ];
+    if wet(next) && phys::line_clear_world(m, pos, next) {
+        prop_set_pos_exact(m, pi, next);
     }
 }
 
