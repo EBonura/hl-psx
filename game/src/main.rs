@@ -7934,6 +7934,9 @@ unsafe fn carry_player_on_brush_mover(
         PLATROT_RIDER_ENT = -1;
     }
     let mut ei = 0usize;
+    // `movers` is built in ascending entity order, so one cursor walking it
+    // alongside `ei` finds each moved brush's mover without a scan per brush.
+    let mut slot = 0usize;
     while ei < nents {
         let now_off = ent_draw_offset(ei);
         let prev = ent_prev_off(ei);
@@ -7954,10 +7957,21 @@ unsafe fn carry_player_on_brush_mover(
                 now_off[1] - prev[1],
                 now_off[2] - prev[2],
             ];
-            if !player.push_by_mover(m, movers, ei as i32, d) {
-                mover_blocked(m, ei, usize::MAX);
+            while slot < movers.len() && movers[slot].id < ei as i32 {
+                slot += 1;
             }
-            push_actors_from_mover(m, movers, ei, d);
+            // A brush with no solid mover (hull-less, inactive) holds nothing
+            // and pushes nothing. The player is shoved, or the brush blocked,
+            // only when the player is inside the pusher's broad-phase bounds.
+            if slot < movers.len() && movers[slot].id == ei as i32 && movers[slot].h1() > 0 {
+                let mv = &movers[slot];
+                if phys::mover_may_hold(mv, player.pos)
+                    && !player.push_by_mover(m, movers, ei as i32, d)
+                {
+                    mover_blocked(m, ei, usize::MAX);
+                }
+                push_actors_from_mover(m, mv, movers, ei, d);
+            }
             // A blocked door reverses, so store where it ends up.
             ent_prev_off_store(ei, ent_draw_offset(ei));
         } else {
@@ -7971,14 +7985,21 @@ unsafe fn carry_player_on_brush_mover(
 /// hull-1 at the actor's centre) is shoved along, or blocks the brush.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn push_actors_from_mover(m: &Map, movers: &[phys::Mover], ei: usize, d: [i32; 3]) {
+unsafe fn push_actors_from_mover(
+    m: &Map,
+    mover: &phys::Mover,
+    movers: &[phys::Mover],
+    ei: usize,
+    d: [i32; 3],
+) {
     let mut pi = 0usize;
     while pi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
         let p = PROP_POS[pi];
         let c = [p[0], p[1] + 36, p[2]];
         if PROP_ACTIVE[pi] != 0
             && PROP_HEALTH[pi] != 0
-            && !phys::mover_clear_at_hull(m, movers, ei as i32, c, m.hull1_head)
+            && phys::mover_may_hold(mover, c)
+            && !phys::mover_hull_clear(m, mover, c, m.hull1_head)
         {
             let moved = [c[0] + d[0], c[1] + d[1], c[2] + d[2]];
             if phys::standing_fits(m, moved)
