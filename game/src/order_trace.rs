@@ -38,8 +38,7 @@ pub const MOD_CAP: usize = 600;
 pub const MOD_WORDS: usize = 3;
 pub const ENT_CAP: usize = 48;
 /// Words of static RAM the rings take; a trace build takes them back out of the world arena.
-pub const RING_WORDS: usize =
-    CAP * WORDS + MOD_CAP * MOD_WORDS + ENT_CAP * 9 + 16;
+pub const RING_WORDS: usize = CAP * WORDS + MOD_CAP * MOD_WORDS + ENT_CAP * 9 + 16;
 
 #[no_mangle]
 pub static mut ORD_BUF: [[u32; WORDS]; CAP] = [[0; WORDS]; CAP];
