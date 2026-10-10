@@ -30473,47 +30473,30 @@ unsafe fn sky_piece(m: &Map, face: usize, src: usize, n: usize) -> bool {
         .cast::<[SkyV; 12]>()
         .add(src))
     .as_mut_ptr();
-    // Winding: the sign of twice the area decides which side of an edge is
-    // outside.
+    // Each edge's outward normal (unnormalised, up to the polygon's winding)
+    // and its length, to within the octagonal approximation `max + min / 2`.
+    // Twice the polygon's area, whose sign is the winding, comes with them.
+    let mut edge = [(0i32, 0i32, 0i32); 12];
     let mut area2 = 0i32;
     let mut k = 0usize;
     while k < n {
         let (x0, y0) = (*piece.add(k)).p;
         let (x1, y1) = (*piece.add(if k + 1 == n { 0 } else { k + 1 })).p;
+        let (ex, ey) = (x1 - x0, y1 - y0);
+        let (ax, ay) = (ex.abs(), ey.abs());
+        edge[k] = (ey, -ex, (ax.max(ay) + (ax.min(ay) >> 1)).max(1));
         area2 += x0 * y1 - x1 * y0;
         k += 1;
     }
-    let wind = if area2 >= 0 { 1 } else { -1 };
-    // An edge's outward normal (unnormalised) and its length, to within the
-    // octagonal approximation of `max + min / 2`.
-    let edge = |a: (i32, i32), b: (i32, i32)| {
-        let (ex, ey) = (b.0 - a.0, b.1 - a.1);
-        let (ax, ay) = (ex.abs(), ey.abs());
-        (
-            (ey * wind, -ex * wind),
-            (ax.max(ay) + (ax.min(ay) >> 1)).max(1),
-        )
-    };
-    let mut step = [(0i32, 0i32); 12];
+    let wind = if area2 >= 0 { SKY_GROW } else { -SKY_GROW };
     let mut k = 0usize;
     while k < n {
-        let prev = (*piece.add(if k == 0 { n - 1 } else { k - 1 })).p;
-        let here = (*piece.add(k)).p;
-        let next = (*piece.add(if k + 1 == n { 0 } else { k + 1 })).p;
-        let ((n1x, n1y), l1) = edge(prev, here);
-        let ((n2x, n2y), l2) = edge(here, next);
-        step[k] = (
-            (n1x * l2 + n2x * l1).signum(),
-            (n1y * l2 + n2y * l1).signum(),
-        );
-        k += 1;
-    }
-    let mut k = 0usize;
-    while k < n {
+        let (px, py, pl) = edge[if k == 0 { n - 1 } else { k - 1 }];
+        let (cx, cy, cl) = edge[k];
         let v = &mut *piece.add(k);
         let (x, y) = v.p;
-        let nx = (x + step[k].0 * SKY_GROW).clamp(0, 320);
-        let ny = (y + step[k].1 * SKY_GROW).clamp(0, 240);
+        let nx = (x + wind * (px * cl + cx * pl).signum()).clamp(0, 320);
+        let ny = (y + wind * (py * cl + cy * pl).signum()).clamp(0, 240);
         let mut j = 0usize;
         while j < 3 {
             v.q[j] += (nx - x) * basis.qx[j] + (ny - y) * basis.qy[j];
@@ -30562,9 +30545,9 @@ unsafe fn sky_piece(m: &Map, face: usize, src: usize, n: usize) -> bool {
 }
 
 /// One sky triangle of cooker face `face`, corners `v` with texels and
-/// denominators at `SKY_TX` / `SKY_DV` indices `ix`. It is split once at the
-/// edge midpoints when an edge of over 32 pixels has an affine midpoint
-/// texel off by more than six. The midpoint texel is only computed when an
+/// denominators at `SKY_TX` / `SKY_DV` indices `ix`. Each edge of over 32
+/// pixels whose affine midpoint texel is off by more than six is split once
+/// at its midpoint. The midpoint texel is only computed when an
 /// error bound, (|texel delta| + 2) |denominator delta| / (4 min
 /// denominator) texels at most, cannot rule the split out; the bound stays
 /// under four, and the test's own rounding under another two.
@@ -30601,25 +30584,51 @@ unsafe fn sky_tri(
                 sky_face_terms(face, v[j].q).2,
             )
         };
-        if off(0, 1) || off(1, 2) || off(2, 0) {
-            let mid = |a: &SkyV, b: &SkyV| SkyV {
-                p: ((a.p.0 + b.p.0) >> 1, (a.p.1 + b.p.1) >> 1),
-                q: [
-                    (a.q[0] + b.q[0]) >> 1,
-                    (a.q[1] + b.q[1]) >> 1,
-                    (a.q[2] + b.q[2]) >> 1,
-                ],
-            };
-            let texel = |q: [i32; 3]| {
-                let (u, w, _) = sky_texel_d(face, q);
-                (u, w)
-            };
-            let (ab, bc, ca) = (mid(v[0], v[1]), mid(v[1], v[2]), mid(v[2], v[0]));
-            let (tab, tbc, tca) = (texel(ab.q), texel(bc.q), texel(ca.q));
-            sky_draw(material, [v[0], &ab, &ca], [t[0], tab, tca]);
-            sky_draw(material, [&ab, v[1], &bc], [tab, t[1], tbc]);
-            sky_draw(material, [&ca, &bc, v[2]], [tca, tbc, t[2]]);
-            sky_draw(material, [&ab, &bc, &ca], [tab, tbc, tca]);
+        let flag = [off(0, 1), off(1, 2), off(2, 0)];
+        if flag[0] || flag[1] || flag[2] {
+            // Split along exactly the flagged edges, so that the triangle
+            // across a flagged edge, which flags it too, meets this one at
+            // the same midpoint. Splitting all three edges for any one left
+            // a vertex off its neighbour's unsplit edge, and the sliver
+            // between them (up to half a pixel wide) let the clear colour
+            // through. The corners and midpoints go round the outline in
+            // order, and a fan from the first midpoint covers it without a
+            // sliver of its own.
+            let mut mids = [SKY_V0; 3];
+            let mut ring: [(*const SkyV, (u8, u8)); 6] = [(v[0], t[0]); 6];
+            let mut n = 0usize;
+            let mut hub = 0usize;
+            let mut i = 0usize;
+            while i < 3 {
+                ring[n] = (v[i], t[i]);
+                n += 1;
+                if flag[i] {
+                    let (a, b) = (v[i], v[(i + 1) % 3]);
+                    let q = [
+                        (a.q[0] + b.q[0]) >> 1,
+                        (a.q[1] + b.q[1]) >> 1,
+                        (a.q[2] + b.q[2]) >> 1,
+                    ];
+                    mids[i] = SkyV {
+                        p: ((a.p.0 + b.p.0) >> 1, (a.p.1 + b.p.1) >> 1),
+                        q,
+                    };
+                    let (u, w, _) = sky_texel_d(face, q);
+                    if hub == 0 {
+                        hub = n;
+                    }
+                    ring[n] = (mids.as_ptr().add(i), (u, w));
+                    n += 1;
+                }
+                i += 1;
+            }
+            let (hv, ht) = ring[hub];
+            let mut k = 1usize;
+            while k + 1 < n {
+                let (a, b) = (ring[(hub + k) % n], ring[(hub + k + 1) % n]);
+                sky_draw(material, [&*hv, &*a.0, &*b.0], [ht, a.1, b.1]);
+                k += 1;
+            }
             return;
         }
     }
