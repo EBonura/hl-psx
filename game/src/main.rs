@@ -7973,6 +7973,15 @@ unsafe fn carry_player_on_brush_mover(
     }
 }
 
+/// SV_PushMove skips an entity whose movetype is MOVETYPE_NONE: a pusher
+/// neither shoves it nor is held up by it. Barnacles, tripmines, furniture and
+/// the Xen flora and bubble cyclers are such entities; c4a1a's stalk doors
+/// stood still for the whole map under a small fungus.
+#[inline(always)]
+fn prop_ignores_pushers(kind: u8) -> bool {
+    matches!(kind, 12 | 57 | 67..=74)
+}
+
 /// SV_PushMove for monsters: an actor the moved brush now overlaps (its
 /// hull-1 at the actor's centre) is shoved along, or blocks the brush.
 #[inline(never)]
@@ -7984,6 +7993,7 @@ unsafe fn push_actors_from_mover(m: &Map, movers: &[phys::Mover], ei: usize, d: 
         let c = [p[0], p[1] + 36, p[2]];
         if PROP_ACTIVE[pi] != 0
             && PROP_HEALTH[pi] != 0
+            && !prop_ignores_pushers(PROP_KIND[pi])
             && !phys::mover_clear_at_hull(m, movers, ei as i32, c, m.hull1_head)
         {
             let moved = [c[0] + d[0], c[1] + d[1], c[2] + d[2]];
@@ -8013,6 +8023,19 @@ unsafe fn mover_blocked(m: &Map, ei: usize, victim: usize) {
         return;
     }
     let rec = m.logic(li);
+    #[cfg(feature = "interaction-probe")]
+    if SIM_NOW % 10 == 0 {
+        let (k, p) = if victim < MAX_PROPS {
+            (PROP_KIND[victim] as i32, PROP_POS[victim])
+        } else {
+            (-1, [0; 3])
+        };
+        reference_trace::probe_vals(
+            SIM_NOW as u32,
+            "blocked",
+            &[ei as i32, victim as i32, k, p[0], p[1], p[2]],
+        );
+    }
     let dmg = if rec.kind == map::LOGIC_FUNC_TRAIN {
         if SIM_NOW % 10 == 0 {
             rec.arg1.max(2)
