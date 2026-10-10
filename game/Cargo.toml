@@ -61,6 +61,9 @@ decoupled-present = []
 # Event/counter-only profile build. This leaves the large guest debug-log
 # diagnostics out so the profiler fits beside the shipping campaign pools.
 performance-telemetry = ["psx-goldsrc/performance-telemetry"]
+# Diagnostic only: stall the renderer by an uneven amount each frame so a
+# simulation trace can be compared against an unstalled run. Never ship.
+debug-render-stall = []
 # Headless-only test hook: hold L1 plus a low-byte map index at boot to skip the
 # menu and load that map directly. Off for normal discs.
 debug-map-boot = []
