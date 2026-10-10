@@ -207,7 +207,7 @@ pub(crate) unsafe fn tick_grunt(
         if prop_attack_cooldown(pi) == 0 {
             let from = prop_eye(m, pi);
             let dist = isqrt_i32(dist2_3(from, aim));
-            let chance = (920 - dist * 8 / 5).clamp(50, 1000) as u32;
+            let chance = (1120 - dist * 21 / 10).clamp(50, 1000) as u32;
             let mut hits = 0u8;
             let mut n = skill_value(Sk::HgruntPellets);
             while n > 0 {
