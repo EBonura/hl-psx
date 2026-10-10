@@ -585,7 +585,8 @@ fn scan_room_budget(
                 && &data[0..4] != b"HLME"
                 && &data[0..4] != b"HLMF"
                 && &data[0..4] != b"HLMG"
-                && &data[0..4] != b"HLMH")
+                && &data[0..4] != b"HLMH"
+                && &data[0..4] != b"HLMI")
         {
             continue;
         }
@@ -610,6 +611,7 @@ fn scan_room_budget(
                 || &data[0..4] == b"HLMF"
                 || &data[0..4] == b"HLMG"
                 || &data[0..4] == b"HLMH"
+                || &data[0..4] == b"HLMI"
             {
                 (leaf_counts >> 16) as usize
             } else {
