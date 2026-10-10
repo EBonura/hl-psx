@@ -31933,10 +31933,12 @@ fn play(
     // for diagnostics; HLMH alone carries the larger source-addressed header.
     if map_bytes.len() < cooked::LEGACY_HEADER_SIZE
         || (&map_bytes[0..4] == b"HLMH" && map_bytes.len() < cooked::HEADER_SIZE)
+        || (&map_bytes[0..4] == b"HLMI" && map_bytes.len() < cooked::HEADER_SIZE_V2)
         || (&map_bytes[0..4] != b"HLME"
             && &map_bytes[0..4] != b"HLMF"
             && &map_bytes[0..4] != b"HLMG"
-            && &map_bytes[0..4] != b"HLMH")
+            && &map_bytes[0..4] != b"HLMH"
+            && &map_bytes[0..4] != b"HLMI")
     {
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);

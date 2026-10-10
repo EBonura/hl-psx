@@ -88,6 +88,49 @@ fn f32le(b: &[u8], o: usize) -> Option<f32> {
 
 /// GoldSrc's PVS rows cover `dmodel[0].visleafs`, not every record in the
 /// leaf lump. BSP compilers append submodel-only leaves after the world set.
+/// Encode per-node face counts for the runtime (`Map::node_faces`): checkpoint first-face indices
+/// every 32 nodes, one nibble per node (15 = "15 or more", the excess is in the escape list).
+///
+///   u16 n_nodes | u16 n_checkpoints | u16 n_escapes | u16 run_faces |
+///   u16 checkpoint[n_checkpoints] | (u16 node, u16 excess)[n_escapes] | u8 nibbles[(n_nodes + 1) / 2]
+fn build_node_face_table(counts: &[u32]) -> Vec<u8> {
+    let n_nodes = counts.len();
+    let n_checkpoints = n_nodes.div_ceil(32) + 1;
+    let mut checkpoints = Vec::with_capacity(n_checkpoints);
+    let mut escapes: Vec<(u16, u16)> = Vec::new();
+    let mut running = 0u32;
+    for (n, &c) in counts.iter().enumerate() {
+        if n % 32 == 0 {
+            checkpoints.push(running.min(u16::MAX as u32) as u16);
+        }
+        if c >= 15 {
+            escapes.push((n as u16, (c - 15).min(u16::MAX as u32) as u16));
+        }
+        running += c;
+    }
+    while checkpoints.len() < n_checkpoints {
+        checkpoints.push(running.min(u16::MAX as u32) as u16);
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(&(n_nodes as u16).to_le_bytes());
+    out.extend_from_slice(&(n_checkpoints as u16).to_le_bytes());
+    out.extend_from_slice(&(escapes.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(running.min(u16::MAX as u32) as u16).to_le_bytes());
+    for c in &checkpoints {
+        out.extend_from_slice(&c.to_le_bytes());
+    }
+    for (node, excess) in &escapes {
+        out.extend_from_slice(&node.to_le_bytes());
+        out.extend_from_slice(&excess.to_le_bytes());
+    }
+    for pair in counts.chunks(2) {
+        let lo = pair[0].min(15) as u8;
+        let hi = pair.get(1).map_or(0, |&c| c.min(15) as u8);
+        out.push(lo | (hi << 4));
+    }
+    out
+}
+
 fn world_visleaf_count(models: &[u8], n_leaves: usize) -> Result<usize, String> {
     let raw = i32le(models, SZ_MODEL_VISLEAFS)
         .ok_or_else(|| "BSP model lump has no world dmodel visleaf count".to_string())?;
@@ -13058,7 +13101,10 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     o.extend_from_slice(&0u32.to_le_bytes()); // target/use/touch logic section offset
     let world_pipeline_off_pos = o.len();
     o.extend_from_slice(&0u32.to_le_bytes()); // source-addressed world pipeline
-    debug_assert_eq!(o.len(), cooked::HEADER_SIZE);
+    let node_face_off_pos = o.len();
+    o.extend_from_slice(&0u32.to_le_bytes()); // render-node face table, patched below
+    debug_assert_eq!(o.len(), cooked::HEADER_SIZE_V2);
+    debug_assert_eq!(node_face_off_pos, cooked::HEADER_NODE_FACE_OFFSET);
     debug_assert_eq!(face_count_pos, cooked::HEADER_FACE_COUNT_OFFSET);
     debug_assert_eq!(bsp_off_pos, cooked::HEADER_BSP_OFFSET);
     debug_assert_eq!(clip_off_pos, cooked::HEADER_CLIP_OFFSET);
@@ -13363,14 +13409,43 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         }
     }
 
+    // The cooked world faces sit in render-node order: a node's faces are one run, so the
+    // runtime ranks a node's faces without a per-face node field. dnode_t carries
+    // firstface/numfaces; a face absent from every node sorts after the last node.
+    let mut face_node = vec![u32::MAX; n_faces];
+    for ni in 0..n_nodes {
+        let no = ni * SZ_NODE;
+        let first = u16le(nodes, no + 20).unwrap_or(0) as usize;
+        let num = u16le(nodes, no + 22).unwrap_or(0) as usize;
+        for f in first..(first + num).min(n_faces) {
+            if face_node[f] == u32::MAX {
+                face_node[f] = ni as u32;
+            }
+        }
+    }
+    let world_first_src = u32le(models, 56).unwrap_or(0) as usize;
+    let world_end_src = world_first_src + u32le(models, 60).unwrap_or(0) as usize;
+    if world_first_src != 0 {
+        return Err(format!("{}: world model does not start at face 0", path));
+    }
     let mut face_remap = vec![u16::MAX; n_faces];
-    let mut compact_faces: Vec<usize> = Vec::new();
-    for f in 0..n_faces {
+    let mut compact_faces: Vec<usize> = (world_first_src..world_end_src.min(n_faces))
+        .filter(|&f| face_ntri[f] != 0)
+        .collect();
+    compact_faces.sort_by_key(|&f| face_node[f]);
+    let mut node_run_counts = vec![0u32; n_nodes];
+    for &f in &compact_faces {
+        if face_node[f] != u32::MAX {
+            node_run_counts[face_node[f] as usize] += 1;
+        }
+    }
+    for f in world_end_src.min(n_faces)..n_faces {
         if face_ntri[f] != 0 {
-            let id = compact_faces.len().min(u16::MAX as usize) as u16;
-            face_remap[f] = id;
             compact_faces.push(f);
         }
+    }
+    for (id, &f) in compact_faces.iter().enumerate() {
+        face_remap[f] = id.min(u16::MAX as usize) as u16;
     }
     let n_cooked_faces = compact_faces.len();
     o[face_count_pos..face_count_pos + 4].copy_from_slice(&(n_cooked_faces as u32).to_le_bytes());
@@ -14592,6 +14667,20 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
                 .sum::<usize>()
         );
     }
+
+    // Render-node face table (HLMI): runs of cooked world faces per node.
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+    let node_face_off = o.len() as u32;
+    o[node_face_off_pos..node_face_off_pos + 4].copy_from_slice(&node_face_off.to_le_bytes());
+    let node_face_table = build_node_face_table(&node_run_counts);
+    o.extend_from_slice(&node_face_table);
+    eprintln!(
+        "  node face table: {} nodes, {} bytes",
+        node_run_counts.len(),
+        node_face_table.len()
+    );
 
     // Sky volumes only matter where there is a skybox to show through them.
     let n_visleaves = world_visleaf_count(models, leaves.len() / SZ_LEAF)?;
