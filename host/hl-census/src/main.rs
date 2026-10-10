@@ -704,7 +704,7 @@ fn report(c: &census::Census, ct: &Contract, t: &hl_census::Tally, f: &hl_census
     println!("{} maps, {} entities.\n", c.maps.len(), c.total_entities());
     println!("{}\n", summary_line(t));
     // Gap table: class, item, maps, status, tested, ranked by maps.
-    let mut rows: Vec<(usize, u32, &str, &str, String, String)> = Vec::new();
+    let mut rows: Vec<(usize, u32, &str, &str, String, String, String)> = Vec::new();
     let mut per_class: BTreeMap<&str, (usize, usize, usize, usize)> = BTreeMap::new();
     for ((class, item), u) in &c.items {
         if census::COMMON_KEYS.contains(&item.as_str())
@@ -731,6 +731,7 @@ fn report(c: &census::Census, ct: &Contract, t: &hl_census::Tally, f: &hl_census
                         item,
                         "no".into(),
                         r.note.clone(),
+                        u.value_summary(),
                     ));
                 }
             }
@@ -743,6 +744,7 @@ fn report(c: &census::Census, ct: &Contract, t: &hl_census::Tally, f: &hl_census
                     item,
                     "unclassified".into(),
                     String::new(),
+                    u.value_summary(),
                 ));
             }
         }
@@ -759,9 +761,11 @@ fn report(c: &census::Census, ct: &Contract, t: &hl_census::Tally, f: &hl_census
     }
     rows.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
     println!("\n## Gaps by reach\n");
-    println!("| class | item | maps | uses | status | note |\n|---|---|---|---|---|---|");
-    for (maps, n, class, item, st, note) in rows {
-        println!("| {class} | {item} | {maps} | {n} | {st} | {note} |");
+    println!(
+        "| class | item | maps | uses | values | status | note |\n|---|---|---|---|---|---|---|"
+    );
+    for (maps, n, class, item, st, note, vals) in rows {
+        println!("| {class} | {item} | {maps} | {n} | {vals} | {st} | {note} |");
     }
     if !f.broken.is_empty() {
         println!("\n## Broken contract pointers\n");
