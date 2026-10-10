@@ -322,38 +322,36 @@ pub unsafe fn upload_tex_blob_raw(
     let slots = canonical_ram_mut(slots);
     let mut off = 0usize;
     let mut failed = 0usize;
+    let mut shared_clut_ready = false;
+    // A following HLTX chunk must establish its own 8-bit palette.
+    unsafe { SKY_CLUT = 0 };
     for i in 0..n_texs {
-        if off + 36 > data.len() {
+        let Some(entry) = data
+            .get(off..)
+            .and_then(|remaining| cooked::parse_texture_entry(remaining, shared_clut_ready))
+        else {
             break;
-        }
-        // `hl_format::map::TEXTURE_ENTRY_8BIT` marks an 8 bit entry (the sky).
-        let flags = u16::from_le_bytes([data[off], data[off + 1]]);
-        let eight = flags & cooked::TEXTURE_ENTRY_8BIT != 0;
-        let w = flags & cooked::TEXTURE_ENTRY_WIDTH_MASK;
-        let h = u16::from_le_bytes([data[off + 2], data[off + 3]]);
-        let clut_len = match (eight, flags & cooked::TEXTURE_ENTRY_SHARED_CLUT != 0) {
-            (false, _) => 32,
-            (true, false) => cooked::TEXTURE_CLUT_256_BYTES,
-            (true, true) => 0,
         };
-        let clut = &data[off + 4..off + 4 + clut_len];
-        let pix_len = w as usize * h as usize / if eight { 1 } else { 2 };
-        let pix_off = off + 4 + clut_len;
-        if pix_off + pix_len > data.len() {
-            break;
-        }
-        let pix = &data[pix_off..pix_off + pix_len];
-        off = pix_off + pix_len;
+        off += entry.bytes;
         if i >= slot_len {
             continue;
         }
-        let slot = match upload_one(w, h, clut, pix, eight) {
+        let slot = match upload_one(
+            entry.width,
+            entry.height,
+            entry.clut,
+            entry.pixels,
+            entry.eight_bit,
+        ) {
             Some(s) => s,
             None => {
                 failed += 1;
                 EMPTY_SLOT
             }
         };
+        if entry.eight_bit && !entry.shared_clut && slot.valid {
+            shared_clut_ready = true;
+        }
         unsafe {
             ptr::write(slots.add(i), slot);
         }

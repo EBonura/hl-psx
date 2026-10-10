@@ -53,6 +53,54 @@ pub mod map {
     pub const TEXTURE_ENTRY_SHARED_CLUT: u16 = 0x4000;
     pub const TEXTURE_ENTRY_WIDTH_MASK: u16 = 0x3fff;
     pub const TEXTURE_CLUT_256_BYTES: usize = 512;
+
+    /// One bounded entry from an HLTX texture blob. A shared 8-bit palette
+    /// is valid only after this same blob uploaded its own palette.
+    pub struct TextureEntry<'a> {
+        pub width: u16,
+        pub height: u16,
+        pub eight_bit: bool,
+        pub shared_clut: bool,
+        pub clut: &'a [u8],
+        pub pixels: &'a [u8],
+        pub bytes: usize,
+    }
+
+    pub fn parse_texture_entry(data: &[u8], shared_clut_ready: bool) -> Option<TextureEntry<'_>> {
+        let header = data.get(..4)?;
+        let flags = u16::from_le_bytes([header[0], header[1]]);
+        let width = flags & TEXTURE_ENTRY_WIDTH_MASK;
+        let height = u16::from_le_bytes([header[2], header[3]]);
+        let eight_bit = flags & TEXTURE_ENTRY_8BIT != 0;
+        let shared_clut = eight_bit && flags & TEXTURE_ENTRY_SHARED_CLUT != 0;
+        // The 8-bit allocator owns exactly half a page per sky face.
+        if eight_bit && (width != 128 || height != 128 || (shared_clut && !shared_clut_ready)) {
+            return None;
+        }
+        let clut_bytes = if eight_bit {
+            if shared_clut {
+                0
+            } else {
+                TEXTURE_CLUT_256_BYTES
+            }
+        } else {
+            32
+        };
+        let pixels_start = 4usize.checked_add(clut_bytes)?;
+        let pixels_len =
+            (width as usize).checked_mul(height as usize)? / if eight_bit { 1 } else { 2 };
+        let bytes = pixels_start.checked_add(pixels_len)?;
+        let entry = data.get(..bytes)?;
+        Some(TextureEntry {
+            width,
+            height,
+            eight_bit,
+            shared_clut,
+            clut: &entry[4..pixels_start],
+            pixels: &entry[pixels_start..bytes],
+            bytes,
+        })
+    }
     pub const HEADER_FACE_COUNT_OFFSET: usize = 16;
     pub const HEADER_BSP_OFFSET: usize = 20;
     pub const HEADER_CLIP_OFFSET: usize = 24;
@@ -694,6 +742,42 @@ pub mod music {
 #[cfg(test)]
 mod tests {
     use super::{logic, map};
+
+    #[test]
+    fn texture_entry_bounds_the_full_palette_and_pixels() {
+        let mut sky = [0u8; 4 + map::TEXTURE_CLUT_256_BYTES + 128 * 128];
+        sky[..2].copy_from_slice(&(128 | map::TEXTURE_ENTRY_8BIT).to_le_bytes());
+        sky[2..4].copy_from_slice(&128u16.to_le_bytes());
+        assert!(map::parse_texture_entry(&sky[..36], false).is_none());
+        assert!(map::parse_texture_entry(&sky[..515], false).is_none());
+        assert!(map::parse_texture_entry(&sky[..sky.len() - 1], false).is_none());
+        let parsed = map::parse_texture_entry(&sky, false).unwrap();
+        assert_eq!(parsed.clut.len(), 512);
+        assert_eq!(parsed.pixels.len(), 128 * 128);
+        assert_eq!(parsed.bytes, sky.len());
+    }
+
+    #[test]
+    fn sky_entry_rejects_page_overlap_and_foreign_shared_palette() {
+        let mut sky = [0u8; 4 + map::TEXTURE_CLUT_256_BYTES + 128 * 128];
+        sky[..2].copy_from_slice(&(256 | map::TEXTURE_ENTRY_8BIT).to_le_bytes());
+        sky[2..4].copy_from_slice(&128u16.to_le_bytes());
+        assert!(map::parse_texture_entry(&sky, false).is_none());
+        sky[..2].copy_from_slice(&(128 | map::TEXTURE_ENTRY_8BIT).to_le_bytes());
+        sky[2..4].copy_from_slice(&129u16.to_le_bytes());
+        assert!(map::parse_texture_entry(&sky, false).is_none());
+
+        sky[..2].copy_from_slice(
+            &(128 | map::TEXTURE_ENTRY_8BIT | map::TEXTURE_ENTRY_SHARED_CLUT).to_le_bytes(),
+        );
+        sky[2..4].copy_from_slice(&128u16.to_le_bytes());
+        let shared = &sky[..4 + 128 * 128];
+        assert!(map::parse_texture_entry(shared, false).is_none());
+        assert!(map::parse_texture_entry(shared, true)
+            .unwrap()
+            .clut
+            .is_empty());
+    }
 
     #[test]
     fn latest_format_is_supported_by_every_version_gate() {
