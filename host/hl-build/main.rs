@@ -2034,6 +2034,17 @@ const PGO_COLLECT_STACK_MARGIN: u32 = STACK_MARGIN;
 const PGO_COLLECT_STACK_MIN: u32 =
     (PGO_COLLECT_STACK_DEEPEST + PGO_COLLECT_STACK_MARGIN).next_multiple_of(256);
 
+/// Maps the profiling tapes visit; the collect build sizes the map arena and the
+/// other room-derived static pools for these only (`HLPSX_COLLECT_MAPS`, see
+/// game/build.rs), so it fits RAM when the fleet's largest map (727 KB) would
+/// not. The shipping build keeps the full sizes. Found by replaying each tape on
+/// a disc with `--cd-command-log` and matching its SetLoc sectors to WORLD.PAK
+/// chunk starts (room chunk 2N is map N's resident data, 2N+1 its textures):
+/// chapter-two.pxtape loads maps 6, 7 and 10, hl-ch3-2026-10-08.pxtape map 9.
+/// A tape that enters another map larger than the pools fails that map's load
+/// in the replay; add its map here (or set `HLPSX_COLLECT_MAPS` yourself).
+const PGO_COLLECT_MAPS: &str = "6,7,9,10";
+
 /// The profiling build: `compile_game` with the largest stack reserve, from
 /// `PGO_COLLECT_STACK_RESERVE` down to `PGO_COLLECT_STACK_MIN`, that keeps
 /// `.bss` inside RAM. The first link that overflows reports by how much; the
@@ -2150,6 +2161,15 @@ fn compile_game(
     // code is the same (`compile_collect` picks the reserve).
     if let GuestProfile::Collect(reserve) | GuestProfile::CollectElf(reserve) = profile {
         command.env("HLPSX_STACK_RESERVE", format!("{reserve:#x}"));
+        // The collect build only replays the profiling tapes; an explicit
+        // HLPSX_COLLECT_MAPS in the environment wins.
+        if env::var_os("HLPSX_COLLECT_MAPS").is_none() {
+            command.env("HLPSX_COLLECT_MAPS", PGO_COLLECT_MAPS);
+        }
+    } else {
+        // Reduced pools are for the collect build only: no other build, the
+        // shipping one included, may inherit them.
+        command.env_remove("HLPSX_COLLECT_MAPS");
     }
     // A link-only argument: the map does not change the emitted bytes. Each
     // build configuration links its own map: a build cargo finds fresh does
