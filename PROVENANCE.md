@@ -84,7 +84,7 @@ Upstream source: <https://github.com/FWGS/xash3d-fwgs>
 ### PSoXide
 
 The build pins PSoXide commit
-`8df242b353b8a3664c1d2ed20622d692d1349306`. PSoXide crates and tools are
+`548d8070b5417bf010d0c8ab007fe111be4f25a6`. PSoXide crates and tools are
 GPL-2.0-or-later. PSoXide documents that parts of its emulator derive from
 GPL-licensed PCSX-Redux; that downstream provenance belongs to PSoXide and is
 not evidence that HL-PSX itself contains PCSX-Redux code.
