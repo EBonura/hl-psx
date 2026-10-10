@@ -2034,10 +2034,10 @@ const PGO_COLLECT_STACK_MARGIN: u32 = STACK_MARGIN;
 const PGO_COLLECT_STACK_MIN: u32 =
     (PGO_COLLECT_STACK_DEEPEST + PGO_COLLECT_STACK_MARGIN).next_multiple_of(256);
 
-/// Maps the profiling tapes visit; the collect build sizes the map arena and the
-/// other room-derived static pools for these only (`HLPSX_COLLECT_MAPS`, see
-/// game/build.rs), so it fits RAM when the fleet's largest map (727 KB) would
-/// not. The shipping build keeps the full sizes. Found by replaying each tape on
+/// Maps the profiling tapes visit; the collect build sizes the map staging
+/// window (and the arena built from it) for these only (`HLPSX_COLLECT_MAPS`,
+/// see game/build.rs), so it fits RAM when the fleet's largest map (727 KB)
+/// would not. Every other budget keeps its full size. The shipping build keeps the full sizes. Found by replaying each tape on
 /// a disc with `--cd-command-log` and matching its SetLoc sectors to WORLD.PAK
 /// chunk starts (room chunk 2N is map N's resident data, 2N+1 its textures):
 /// chapter-two.pxtape loads maps 6, 7 and 10, hl-ch3-2026-10-08.pxtape map 9.

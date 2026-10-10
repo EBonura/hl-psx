@@ -167,8 +167,8 @@ The profiling build
 itself links with a smaller stack reserve than the shipped one (it only runs
 on the tapes), shrinking it by whatever its link overflows RAM by, down to the
 deepest stack the profiling tapes have written (17,760 B) plus a 2 KB margin,
-rounded up to 256 B (0x4E00). It also sizes its map arena and room-derived
-tables for the maps the profiling tapes load (`PGO_COLLECT_MAPS` in
+rounded up to 256 B (0x4E00). It also sizes its map staging window and arena
+for the maps the profiling tapes load (`PGO_COLLECT_MAPS` in
 `host/hl-build/main.rs`: maps 6, 7, 9 and 10 for the chapter-two and chapter-three
 recordings) instead of the largest map; set `HLPSX_COLLECT_MAPS=N,N,...` to
 profile a recording that visits others. Every other build links with
