@@ -30344,12 +30344,41 @@ unsafe fn sky_cut_region(m: &Map, n0: usize) -> bool {
     // Cooker face order is ft, rt, bk, lf, up, dn: major axis and sign of
     // each; the other two axes give two cuts each.
     let axis_sign: [(usize, i32); 6] = [(1, -1), (0, 1), (1, 1), (0, -1), (2, 1), (2, -1)];
+    // The box of the corner directions. A face whose cone the box lies wholly
+    // outside of is dropped here with a few compares, before any corner is
+    // tested against its cuts.
+    let (mut lo, mut hi) = ([i32::MAX; 3], [i32::MIN; 3]);
+    let mut i = 0usize;
+    while i < n0 {
+        let q = bufs[2][i].q;
+        let mut j = 0usize;
+        while j < 3 {
+            lo[j] = lo[j].min(q[j]);
+            hi[j] = hi[j].max(q[j]);
+            j += 1;
+        }
+        i += 1;
+    }
+    // Smallest |component| over the box, for each axis.
+    let near = [0, 1, 2].map(|j: usize| {
+        if lo[j] <= 0 && hi[j] >= 0 {
+            0
+        } else {
+            lo[j].abs().min(hi[j].abs())
+        }
+    });
     let mut drew = false;
     let mut f = 0usize;
     while f < 6 {
         let face = f;
         f += 1;
         let (axis, sign) = axis_sign[face];
+        // Largest `sign q[axis]` over the box against the smallest |q| of
+        // the two other axes: the cone needs the first to reach the second.
+        let top = if sign > 0 { hi[axis] } else { -lo[axis] };
+        if top < near[(axis + 1) % 3] || top < near[(axis + 2) % 3] {
+            continue;
+        }
         // The cuts some corner is outside of; the rest cannot clip anything.
         let (o1, o2) = ((axis + 1) % 3, (axis + 2) % 3);
         let mut need = 0u32;
@@ -30466,6 +30495,25 @@ unsafe fn sky_cut_pass(
     on
 }
 
+/// The sign of `a lb + b la` for the lengths la, lb > 0 of two edges e0 and e1
+/// (to within the octagonal `max + min / 2`), which the signs of a and b settle
+/// unless they are opposite: only then are the lengths worked out.
+#[inline(always)]
+fn sky_sign_of(a: i32, b: i32, e0: (i32, i32), e1: (i32, i32)) -> i32 {
+    let (sa, sb) = (a.signum(), b.signum());
+    if sa == sb || sb == 0 {
+        sa
+    } else if sa == 0 {
+        sb
+    } else {
+        let len = |e: (i32, i32)| {
+            let (ax, ay) = (e.0.abs(), e.1.abs());
+            (ax.max(ay) + (ax.min(ay) >> 1)).max(1)
+        };
+        (a * len(e1) + b * len(e0)).signum()
+    }
+}
+
 /// Draw the polygon `SKY_BUFS[src][..n]`, which lies on cube face `face`.
 #[inline(never)]
 #[optimize(size)]
@@ -30494,36 +30542,49 @@ unsafe fn sky_piece(m: &Map, face: usize, src: usize, n: usize) -> bool {
         .cast::<[SkyV; 12]>()
         .add(src))
     .as_mut_ptr();
-    // Each edge's outward normal (unnormalised, up to the polygon's winding)
-    // and its length, to within the octagonal approximation `max + min / 2`.
-    // Twice the polygon's area, whose sign is the winding, comes with them.
-    let mut edge = [(0i32, 0i32, 0i32); 12];
-    let mut area2 = 0i32;
-    let mut k = 0usize;
-    while k < n {
-        let (x0, y0) = (*piece.add(k)).p;
-        let (x1, y1) = (*piece.add(if k + 1 == n { 0 } else { k + 1 })).p;
-        let (ex, ey) = (x1 - x0, y1 - y0);
-        let (ax, ay) = (ex.abs(), ey.abs());
-        edge[k] = (ey, -ex, (ax.max(ay) + (ax.min(ay) >> 1)).max(1));
-        area2 += x0 * y1 - x1 * y0;
-        k += 1;
+    // The winding is the sign of twice the polygon's area. Three corners of
+    // a convex piece far enough from collinear give it (a rounded cut point
+    // can put a corner a pixel off); a thinner triple takes the whole sum.
+    let (a, b, c) = ((*piece).p, (*piece.add(1)).p, (*piece.add(2)).p);
+    let mut area2 = (b.0 - a.0) * (c.1 - a.1) - (c.0 - a.0) * (b.1 - a.1);
+    if area2.abs() < 16 {
+        area2 = 0;
+        let mut k = 0usize;
+        while k < n {
+            let (x, y) = (*piece.add(k)).p;
+            let next = (*piece.add(if k + 1 == n { 0 } else { k + 1 })).p;
+            area2 += x * next.1 - next.0 * y;
+            k += 1;
+        }
     }
     let wind = if area2 >= 0 { SKY_GROW } else { -SKY_GROW };
+    // Each corner moves along each axis towards the outside of both its edges
+    // (normals (ey, -ex), turned outward by the winding). The corners before
+    // it have moved already and the last one's next is the first, so the
+    // original neighbours are carried.
+    let first = (*piece).p;
+    let mut prev = (*piece.add(n - 1)).p;
     let mut k = 0usize;
     while k < n {
-        let (px, py, pl) = edge[if k == 0 { n - 1 } else { k - 1 }];
-        let (cx, cy, cl) = edge[k];
         let v = &mut *piece.add(k);
         let (x, y) = v.p;
-        let nx = (x + wind * (px * cl + cx * pl).signum()).clamp(0, 320);
-        let ny = (y + wind * (py * cl + cy * pl).signum()).clamp(0, 240);
-        let mut j = 0usize;
-        while j < 3 {
-            v.q[j] += (nx - x) * basis.qx[j] + (ny - y) * basis.qy[j];
-            j += 1;
+        let next = if k + 1 == n {
+            first
+        } else {
+            (*piece.add(k + 1)).p
+        };
+        let (e0, e1) = ((x - prev.0, y - prev.1), (next.0 - x, next.1 - y));
+        let nx = (x + wind * sky_sign_of(e0.1, e1.1, e0, e1)).clamp(0, 320);
+        let ny = (y + wind * sky_sign_of(-e0.0, -e1.0, e0, e1)).clamp(0, 240);
+        prev = (x, y);
+        if nx != x || ny != y {
+            let mut j = 0usize;
+            while j < 3 {
+                v.q[j] += (nx - x) * basis.qx[j] + (ny - y) * basis.qy[j];
+                j += 1;
+            }
+            v.p = (nx, ny);
         }
-        v.p = (nx, ny);
         k += 1;
     }
     // Corner texels once, not once per fan triangle.
