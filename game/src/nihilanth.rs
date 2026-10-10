@@ -167,7 +167,7 @@ pub(crate) unsafe fn bind(m: &Map, pi: usize) {
     g.teleport = 1;
     g.spheres = N_SPHERES;
     g.dead = false;
-    g.full = skill_table::SKILL_NIHILANTH_HEALTH[settings::skill()] as i32;
+    g.full = skill_value(Sk::NihilanthHealth) as i32;
     g.health = g.full;
     g.z = PROP_POS[pi][1] * 16;
     g.vz = 0;
@@ -565,8 +565,8 @@ unsafe fn tick_balls(m: &Map, movers: &[phys::Mover], nlogic: usize, now: u16) {
             if d < 256 {
                 g.ball_kind[b] = 0;
                 if phys::trace_line(m, movers, pos, p).is_none() && LOGIC_PLAYER_HEALTH > 0 {
-                    PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE
-                        .saturating_add(skill_table::SKILL_NIHILANTH_ZAP[settings::skill()]);
+                    PENDING_PLAYER_DAMAGE =
+                        PENDING_PLAYER_DAMAGE.saturating_add(skill_value(Sk::NihilanthZap));
                     note_damage_direction(pos);
                 }
                 continue;
