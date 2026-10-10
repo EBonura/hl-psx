@@ -31,7 +31,7 @@ aiscripted_sequence|m_iszentity|yes|cook:"m_iszPlay"|-
 aiscripted_sequence|m_iszplay|yes|cook:"m_iszPlay"|-
 ambient_generic|@class|yes|cook:"ambient_generic"|-|speech and map sounds use compact audio records
 ambient_generic|@kill|unreviewed|-|-
-ambient_generic|@use|yes|game:LOGIC_MAP_SOUND|-
+ambient_generic|@use|yes|game:LOGIC_MAP_SOUND|run:roots-diff
 ambient_generic|cspinup|cosmetic|-|-|pitch, fade and LFO shaping of the sound
 ambient_generic|fadein|cosmetic|-|-|pitch, fade and LFO shaping of the sound
 ambient_generic|fadeout|cosmetic|-|-|pitch, fade and LFO shaping of the sound
@@ -56,7 +56,7 @@ ambient_generic|spinup|cosmetic|-|-|pitch, fade and LFO shaping of the sound
 ambient_generic|volstart|cosmetic|-|-|pitch, fade and LFO shaping of the sound
 env_beam|@class|yes|cook:"env_beam"|-|compact beam logic
 env_beam|@kill|yes|game:fn logic_kill_targets|-
-env_beam|@use|yes|game:LOGIC_BEAM|-
+env_beam|@use|yes|game:LOGIC_BEAM|run:roots-diff
 env_beam|boltwidth|unreviewed|cook:"boltwidth"|-|a source file names the key
 env_beam|damage|unreviewed|cook:"damage"|-|a source file names the key
 env_beam|flag:1|unreviewed|-|-|bit 1
@@ -102,7 +102,7 @@ env_bubbles|frequency|cosmetic|-|-|bubble volumes are deliberately not drawn
 env_bubbles|master|cosmetic|-|-|bubble volumes are deliberately not drawn
 env_explosion|@class|partial|cook:"env_explosion"|-|compact explosion effect and damage
 env_explosion|@kill|unreviewed|-|-
-env_explosion|@use|yes|game:LOGIC_ENV_EXPLOSION|-
+env_explosion|@use|yes|game:LOGIC_ENV_EXPLOSION|run:roots-diff
 env_explosion|flag:1|partial|game:LOGIC_ENV_EXPLOSION|-|no-damage, random-magnitude and no-smoke bits are not distinguished
 env_explosion|flag:16|partial|game:LOGIC_ENV_EXPLOSION|-|no-damage, random-magnitude and no-smoke bits are not distinguished
 env_explosion|flag:2|partial|game:LOGIC_ENV_EXPLOSION|-|no-damage, random-magnitude and no-smoke bits are not distinguished
@@ -112,7 +112,7 @@ env_explosion|flag:8|partial|game:LOGIC_ENV_EXPLOSION|-|no-damage, random-magnit
 env_explosion|imagnitude|yes|cook:"iMagnitude"|-
 env_fade|@class|yes|cook:"env_fade"|-|screen fade logic
 env_fade|@kill|unreviewed|-|-
-env_fade|@use|yes|game:LOGIC_ENV_FADE|-
+env_fade|@use|yes|game:LOGIC_ENV_FADE|run:roots-diff
 env_fade|duration|yes|cook:"holdtime"|-
 env_fade|flag:1|yes|cook:"holdtime"|-
 env_fade|holdtime|yes|cook:"holdtime"|-
@@ -122,7 +122,7 @@ env_funnel|@class|cosmetic|-|-|funnel particles are absent
 env_funnel|@use|cosmetic|-|-
 env_funnel|flag:1|cosmetic|-|-
 env_global|@class|yes|cook:"env_global"|-|persistent global state logic
-env_global|@use|yes|game:LOGIC_ENV_GLOBAL|-
+env_global|@use|yes|game:LOGIC_ENV_GLOBAL|run:roots-diff
 env_global|flag:1|na|-|-
 env_global|globalstate|yes|cook:"triggermode"|-
 env_global|initialstate|na|-|-|every shipped value is 0
@@ -135,7 +135,7 @@ env_glow|renderfx|unreviewed|cook:"renderfx"|-|a source file names the key
 env_glow|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
 env_laser|@class|yes|cook:"env_laser"|-|compact beam logic
 env_laser|@kill|yes|game:fn logic_kill_targets|-
-env_laser|@use|yes|game:LOGIC_BEAM|-
+env_laser|@use|yes|game:LOGIC_BEAM|run:roots-diff
 env_laser|boltwidth|unreviewed|cook:"boltwidth"|-|a source file names the key
 env_laser|damage|unreviewed|cook:"damage"|-|a source file names the key
 env_laser|endsprite|unreviewed|-|-|the cooker never names the key
@@ -158,12 +158,12 @@ env_laser|texture|unreviewed|cook:"texture"|-|a source file names the key
 env_laser|texturescroll|unreviewed|cook:"texturescroll"|-|a source file names the key
 env_laser|width|unreviewed|cook:"width"|-|a source file names the key
 env_message|@class|yes|cook:"env_message"|-|titles overlay logic
-env_message|@use|yes|game:LOGIC_ENV_MESSAGE|-
+env_message|@use|yes|game:LOGIC_ENV_MESSAGE|run:roots-diff
 env_message|flag:1|partial|game:LOGIC_ENV_MESSAGE|-|play-once is implied
 env_message|messageattenuation|cosmetic|-|-
 env_message|messagevolume|cosmetic|-|-
 env_render|@class|yes|cook:"env_render"|-|actor render-state controller
-env_render|@use|yes|game:LOGIC_ENV_RENDER|-
+env_render|@use|yes|game:LOGIC_ENV_RENDER|run:roots-diff
 env_render|flag:2|partial|cook:fn brush_render_class|-|brush alpha class only
 env_render|flag:4|partial|cook:fn brush_render_class|-|brush alpha class only
 env_render|flag:8|partial|cook:fn brush_render_class|-|brush alpha class only
@@ -173,7 +173,7 @@ env_render|renderfx|partial|cook:fn brush_render_class|-|brush alpha class only
 env_render|rendermode|yes|cook:fn brush_render_class|-
 env_shake|@class|partial|cook:"env_shake"|-|compact camera shake
 env_shake|@kill|unreviewed|-|-
-env_shake|@use|yes|game:LOGIC_ENV_SHAKE|-
+env_shake|@use|yes|game:LOGIC_ENV_SHAKE|run:roots-diff
 env_shake|amplitude|yes|cook:"amplitude"|-
 env_shake|duration|yes|cook:"amplitude"|-
 env_shake|flag:1|partial|game:LOGIC_ENV_SHAKE|-|the shake is global and ignores frequency and radius
@@ -218,7 +218,7 @@ env_spark|flag:8|cosmetic|-|-
 env_spark|maxdelay|no|-|-|spark interval is fixed
 env_sprite|@class|yes|cook:"env_sprite"|-|compact sprite prop
 env_sprite|@kill|unreviewed|-|-
-env_sprite|@use|yes|game:fn sprite_set_visible|-
+env_sprite|@use|yes|game:fn sprite_set_visible|run:roots-diff
 env_sprite|flag:1|yes|game:fn sprite_set_visible|-|start on, play once
 env_sprite|flag:2|yes|game:fn sprite_set_visible|-|start on, play once
 env_sprite|framerate|unreviewed|cook:"framerate"|-|a source file names the key
@@ -229,9 +229,9 @@ env_sprite|rendermode|unreviewed|cook:"rendermode"|-|a source file names the key
 env_sprite|scale|unreviewed|cook:"scale"|-|a source file names the key
 func_breakable|@class|yes|cook:"func_breakable"|-|breakable brush and compact debris
 func_breakable|@kill|yes|game:fn logic_kill_targets|-
-func_breakable|@use|yes|game:fn shatter_breakable|-
+func_breakable|@use|yes|game:fn shatter_breakable|run:roots-diff
 func_breakable|buoyancy|na|-|-|keys of other classes carried by the editor template
-func_breakable|delay|yes|cook:"explodemagnitude"|-
+func_breakable|delay|yes|cook:"explodemagnitude"|run:roots-diff
 func_breakable|dmg|na|-|-|keys of other classes carried by the editor template
 func_breakable|explodemagnitude|yes|cook:"explodemagnitude"|-
 func_breakable|explosion|no|-|-|the explosion gib mode is not read
@@ -267,7 +267,7 @@ func_breakable|stopsnd|na|-|-|keys of other classes carried by the editor templa
 func_breakable|wait|na|-|-|keys of other classes carried by the editor template
 func_button|@class|yes|cook:"func_button"|-|button logic and moving brush
 func_button|@kill|yes|game:fn logic_kill_targets|-
-func_button|@use|yes|game:fn logic_activate_button|-
+func_button|@use|yes|game:fn logic_activate_button|run:roots-diff
 func_button|delay|yes|cook:SF_BUTTON_SHOOTABLE|-|health makes it shootable
 func_button|dmg|na|-|-
 func_button|flag:1|yes|game:SF_BUTTON_DONTMOVE|-
@@ -290,7 +290,7 @@ func_button|speed|yes|cook:SF_BUTTON_SHOOTABLE|-|health makes it shootable
 func_button|style|na|-|-
 func_button|unlocked_sentence|cosmetic|-|-
 func_button|unlocked_sound|cosmetic|cook:BUTTON_SOUNDS|-
-func_button|wait|yes|cook:SF_BUTTON_SHOOTABLE|-|health makes it shootable
+func_button|wait|yes|cook:SF_BUTTON_SHOOTABLE|run:roots-diff|health makes it shootable
 func_conveyor|@class|partial|cook:"func_conveyor"|-|implemented through trigger-push semantics
 func_conveyor|@use|partial|game:LOGIC_TRIGGER_PUSH|-|use reverses the belt
 func_conveyor|flag:1|cosmetic|-|-|visual-only belt
@@ -302,7 +302,7 @@ func_conveyor|rendermode|unreviewed|cook:"rendermode"|-|a source file names the 
 func_conveyor|speed|yes|cook:SF_CONVEYOR_NOTSOLID|-
 func_door|@class|yes|cook:"func_door"|-|linear door logic and collision
 func_door|@kill|yes|game:fn logic_kill_targets|-|killtarget removes the record
-func_door|@use|yes|game:fn logic_activate_door|-|toggle/open/close by name
+func_door|@use|yes|game:fn logic_activate_door|run:roots-diff|toggle/open/close by name
 func_door|_minlight#1|na|-|-|editor leftovers retail ignores for func_door
 func_door|delay|yes|cook:"lip"|-|travel, return delay, mastered lock, close-only output, blocked damage
 func_door|dmg|yes|cook:"lip"|-|travel, return delay, mastered lock, close-only output, blocked damage
@@ -321,7 +321,7 @@ func_door|locked_sentence|cosmetic|-|-|HEV voice lines on a locked door
 func_door|locked_sound|cosmetic|cook:ordinal_sound|-|door audio ordinals
 func_door|master|yes|cook:"lip"|-|travel, return delay, mastered lock, close-only output, blocked damage
 func_door|movesnd|cosmetic|cook:ordinal_sound|-|door audio ordinals
-func_door|netname|yes|cook:"lip"|-|travel, return delay, mastered lock, close-only output, blocked damage
+func_door|netname|yes|cook:"lip"|run:roots-diff|travel, return delay, mastered lock, close-only output, blocked damage
 func_door|renderamt|partial|cook:fn brush_render_class|-|brush alpha class only
 func_door|rendercolor|partial|cook:fn brush_render_class|-|brush alpha class only
 func_door|renderfx|partial|cook:fn brush_render_class|-|brush alpha class only
@@ -334,10 +334,10 @@ func_door|unlocked_sound|cosmetic|cook:ordinal_sound|-|door audio ordinals
 func_door|value1|na|-|-|editor leftovers retail ignores for func_door
 func_door|value2|na|-|-|editor leftovers retail ignores for func_door
 func_door|value3|na|-|-|editor leftovers retail ignores for func_door
-func_door|wait|yes|cook:"lip"|-|travel, return delay, mastered lock, close-only output, blocked damage
+func_door|wait|yes|cook:"lip"|run:roots-diff|travel, return delay, mastered lock, close-only output, blocked damage
 func_door_rotating|@class|yes|cook:"func_door_rotating"|-|rotating door logic and collision
 func_door_rotating|@kill|yes|game:fn logic_kill_targets|-
-func_door_rotating|@use|yes|game:fn logic_activate_door|-
+func_door_rotating|@use|yes|game:fn logic_activate_door|run:roots-diff
 func_door_rotating|_minlight#1|na|-|-
 func_door_rotating|delay|yes|cook:"distance"|-
 func_door_rotating|distance|yes|cook:"distance"|-
@@ -351,7 +351,7 @@ func_door_rotating|flag:32|yes|game:SF_DOOR_START_OPEN|-|start open, toggle, use
 func_door_rotating|flag:4|na|-|-|don't link / monsters can't open
 func_door_rotating|flag:512|na|-|-|don't link / monsters can't open
 func_door_rotating|flag:64|yes|cook:fn rotating_door_world_axis|-|rotate about Z or X
-func_door_rotating|flag:8|yes|cook:head: if sf & 8 != 0|-|passable
+func_door_rotating|flag:8|yes|cook:head: if sf & 8 != 0|run:solidity|passable
 func_door_rotating|globalname|na|-|-
 func_door_rotating|health|na|-|-
 func_door_rotating|healthvalue|na|-|-
@@ -430,7 +430,7 @@ func_mortar_field|m_icount|unreviewed|cook:"m_icount"|-|a source file names the 
 func_mortar_field|m_iszxcontroller|unreviewed|cook:"m_iszxcontroller"|-|a source file names the key
 func_mortar_field|m_iszycontroller|unreviewed|cook:"m_iszycontroller"|-|a source file names the key
 func_pendulum|@class|yes|cook:"func_pendulum"|-|pendulum pose and collision
-func_pendulum|@use|yes|game:fn logic_use_pendulum|-
+func_pendulum|@use|yes|game:fn logic_use_pendulum|run:roots-diff
 func_pendulum|damp|unreviewed|-|-|the cooker never names the key
 func_pendulum|distance|yes|game:SF_PENDULUM_INSTANT|-
 func_pendulum|dmg|yes|game:SF_PENDULUM_INSTANT|-
@@ -496,7 +496,7 @@ func_rot_button|speed|yes|cook:"distance"|-
 func_rot_button|wait|yes|cook:"distance"|-
 func_rotating|@class|yes|cook:"func_rotating"|-|fan pose and collision
 func_rotating|@kill|unreviewed|-|-
-func_rotating|@use|yes|game:fn logic_use_rotating|-
+func_rotating|@use|yes|game:fn logic_use_rotating|run:roots-diff
 func_rotating|_minlight#1|unreviewed|-|-|the cooker never names the key
 func_rotating|dmg|yes|game:SF_ROTATING_INSTANT|-
 func_rotating|fanfriction|yes|game:SF_ROTATING_INSTANT|-
@@ -691,7 +691,7 @@ func_trackchange|toptrack|partial|game:fn tram_path_track_use|-|the path chain i
 func_trackchange|train|partial|game:fn tram_path_track_use|-|the path chain is stitched at cook time, the platform does not rotate
 func_trackchange|volume|unreviewed|cook:"volume"|-|a source file names the key
 func_tracktrain|@class|yes|cook:"func_tracktrain"|-|path-track moving brush
-func_tracktrain|@use|yes|game:fn logic_queue_tracktrain_command|-
+func_tracktrain|@use|yes|game:fn logic_queue_tracktrain_command|run:roots-diff
 func_tracktrain|bank|cosmetic|-|-|banking angle is not modelled
 func_tracktrain|dmg|yes|cook:"startspeed"|-
 func_tracktrain|flag:1|cosmetic|-|-|no pitch
@@ -709,7 +709,7 @@ func_tracktrain|startspeed|yes|cook:"startspeed"|-
 func_tracktrain|volume|cosmetic|cook:TRACKTRAIN_SOUNDS|-
 func_tracktrain|wheels|yes|cook:"startspeed"|-
 func_train|@class|yes|cook:"func_train"|-|path-corner moving brush
-func_train|@use|yes|game:fn logic_apply_brush_train_command|-
+func_train|@use|yes|game:fn logic_apply_brush_train_command|run:roots-diff
 func_train|dmg|yes|cook:"globalname"|-
 func_train|flag:1|yes|game:LOGIC_FUNC_TRAIN|-|wait for trigger
 func_train|flag:2|unreviewed|-|-|bit 2
@@ -864,7 +864,7 @@ momentary_rot_button|sounds|cosmetic|cook:BUTTON_SOUNDS|-
 momentary_rot_button|speed|yes|cook:"returnspeed"|-
 monstermaker|@class|partial|cook:"monstermaker"|-|bounded dormant actor pool
 monstermaker|@kill|yes|game:fn logic_kill_targets|-
-monstermaker|@use|yes|game:fn maker_make|-
+monstermaker|@use|yes|game:fn maker_make|run:roots-diff
 monstermaker|delay|yes|cook:"m_imaxlivechildren"|-
 monstermaker|flag:1|yes|game:LOGIC_MONSTERMAKER|-|start on
 monstermaker|flag:2|na|-|-
@@ -875,17 +875,17 @@ monstermaker|m_imaxlivechildren|yes|cook:"m_imaxlivechildren"|-
 monstermaker|monstercount|yes|cook:"m_imaxlivechildren"|-
 monstermaker|monstertype|yes|cook:"m_imaxlivechildren"|-
 multi_manager|@class|yes|cook:"multi_manager"|-|timed target fan-out logic
-multi_manager|<output>|yes|cook:goldsrc_entvars_key|-|first 16 outputs, delays in ticks
+multi_manager|<output>|yes|cook:goldsrc_entvars_key|run:roots-diff|first 16 outputs, delays in ticks
 multi_manager|@kill|yes|game:fn logic_kill_targets|-
-multi_manager|@use|yes|game:SF_MULTIMAN_THREAD|-
-multi_manager|flag:1|yes|game:SF_MULTIMAN_THREAD|-|multithreaded
+multi_manager|@use|yes|game:SF_MULTIMAN_THREAD|run:roots-diff
+multi_manager|flag:1|yes|game:SF_MULTIMAN_THREAD|run:roots-diff|multithreaded
 multi_manager|flag:16|na|-|-
 multi_manager|flag:2|na|-|-
 multi_manager|flag:32|na|-|-
 multi_manager|flag:8|na|-|-
 multisource|@class|yes|cook:"multisource"|-|multi-input gate logic
 multisource|@kill|na|-|-
-multisource|@use|yes|game:fn logic_multisource_refresh|-|only a registered caller counts
+multisource|@use|yes|game:fn logic_multisource_refresh|run:roots-diff|only a registered caller counts
 multisource|flag:1|na|-|-
 multisource|flag:16|na|-|-
 multisource|flag:32|na|-|-
@@ -915,7 +915,7 @@ path_corner|volstart|na|-|-|ambient_generic keys pasted on by the editor
 path_corner|wait|yes|game:TRAIN_CORNER_TELEPORT|-|retrigger and teleport
 path_corner|yaw_speed|no|-|-|trains turn at their own rate
 path_track|@class|yes|cook:"path_track"|-|func_tracktrain route with altpath switching, DISABLED stops and Use
-path_track|@use|yes|game:fn tram_path_track_use|-
+path_track|@use|yes|game:fn tram_path_track_use|run:roots-diff
 path_track|altpath|yes|game:PATH_TRACK_DISABLED|-|disabled, fire once, alternate, branch reverse
 path_track|flag:1|yes|game:PATH_TRACK_DISABLED|-|disabled, fire once, alternate, branch reverse
 path_track|flag:2|yes|game:PATH_TRACK_DISABLED|-|disabled, fire once, alternate, branch reverse
@@ -940,7 +940,7 @@ player_weaponstrip|@class|yes|cook:"player_weaponstrip"|-|inventory logic
 player_weaponstrip|@use|unreviewed|-|-
 scripted_sentence|@class|yes|cook:"scripted_sentence"|-|compact authored dialogue
 scripted_sentence|@kill|unreviewed|-|-
-scripted_sentence|@use|yes|game:LOGIC_SENTENCE|-
+scripted_sentence|@use|yes|game:LOGIC_SENTENCE|run:roots-diff
 scripted_sentence|attenuation|yes|cook:"refire"|-
 scripted_sentence|delay|yes|cook:"refire"|-
 scripted_sentence|duration|yes|cook:"refire"|-
@@ -955,7 +955,7 @@ scripted_sentence|sentence|yes|cook:"refire"|-
 scripted_sentence|volume|yes|cook:"refire"|-
 scripted_sequence|@class|yes|cook:"scripted_sequence"|-|compact actor sequence control
 scripted_sequence|@kill|unreviewed|-|-
-scripted_sequence|@use|yes|game:LOGIC_SCRIPTED|-
+scripted_sequence|@use|yes|game:LOGIC_SCRIPTED|run:roots-diff
 scripted_sequence|cspinup|unreviewed|-|-|the cooker never names the key
 scripted_sequence|delay|yes|cook:"m_iszPlay"|-
 scripted_sequence|entity|unreviewed|cook:"entity"|-|a source file names the key
@@ -1008,15 +1008,15 @@ target_cdaudio|flag:1|no|-|-|radius and start-flag are not used
 target_cdaudio|health|yes|cook:LOGIC_CDTRACK|-
 target_cdaudio|radius|no|-|-|radius and start-flag are not used
 trigger_auto|@class|yes|cook:"trigger_auto"|-|map-start target logic
-trigger_auto|delay|yes|cook:fn triggerstate_use_type|-
+trigger_auto|delay|yes|cook:fn triggerstate_use_type|run:roots-diff
 trigger_auto|flag:1|yes|game:fn logic_fire_global_autos|-|remove on fire
-trigger_auto|globalstate|yes|cook:fn triggerstate_use_type|-
+trigger_auto|globalstate|yes|cook:fn triggerstate_use_type|run:roots-diff
 trigger_auto|renderamt|na|-|-
 trigger_auto|rendercolor|na|-|-
 trigger_auto|renderfx|na|-|-
 trigger_auto|rendermode|na|-|-
 trigger_auto|skin|na|-|-
-trigger_auto|triggerstate|yes|cook:fn triggerstate_use_type|-
+trigger_auto|triggerstate|yes|cook:fn triggerstate_use_type|run:roots-diff
 trigger_autosave|@class|no|-|-|authored checkpoint system is absent
 trigger_autosave|@use|na|-|-
 trigger_autosave|flag:2|na|-|-
@@ -1042,8 +1042,8 @@ trigger_changelevel|changedelay|yes|cook:"landmark"|-
 trigger_changelevel|changetarget|yes|cook:"landmark"|-
 trigger_changelevel|flag:1|na|-|-
 trigger_changelevel|flag:2|yes|game:SF_CHANGELEVEL_USE_ONLY|-
-trigger_changelevel|landmark|yes|cook:"landmark"|-
-trigger_changelevel|map|yes|cook:"landmark"|-
+trigger_changelevel|landmark|yes|cook:"landmark"|run:levels
+trigger_changelevel|map|yes|cook:"landmark"|run:levels
 trigger_endsection|@class|yes|cook:"trigger_endsection"|-|Hazard Course completion logic
 trigger_endsection|@use|yes|game:LOGIC_TRIGGER_ENDSECTION|-
 trigger_endsection|section|na|-|-
@@ -1056,7 +1056,7 @@ trigger_gravity|sounds|na|-|-
 trigger_gravity|style|na|-|-
 trigger_hurt|@class|yes|cook:"trigger_hurt"|-|damage volume
 trigger_hurt|@kill|yes|game:fn logic_kill_targets|-
-trigger_hurt|@use|yes|game:SF_TRIGGER_HURT_START_OFF|-|toggles the damage volume
+trigger_hurt|@use|yes|game:SF_TRIGGER_HURT_START_OFF|run:roots-diff|toggles the damage volume
 trigger_hurt|damagetype|partial|cook:DMG_RADIATION|-|only the radiation bit is read
 trigger_hurt|delay|yes|cook:"dmg"|-
 trigger_hurt|dmg|yes|cook:"dmg"|-
@@ -1109,16 +1109,16 @@ trigger_push|speed|yes|cook:LOGIC_TRIGGER_PUSH|-
 trigger_push|style|na|-|-
 trigger_relay|@class|yes|cook:"trigger_relay"|-|target relay logic
 trigger_relay|@kill|yes|game:fn logic_kill_targets|-
-trigger_relay|@use|yes|game:SF_RELAY_FIREONCE|-
-trigger_relay|delay|yes|cook:fn triggerstate_use_type|-
-trigger_relay|flag:1|yes|game:SF_RELAY_FIREONCE|-
+trigger_relay|@use|yes|game:SF_RELAY_FIREONCE|run:roots-diff
+trigger_relay|delay|yes|cook:fn triggerstate_use_type|run:roots-diff
+trigger_relay|flag:1|yes|game:SF_RELAY_FIREONCE|run:roots-diff
 trigger_relay|flag:16|na|-|-|retail only reads bit 1
 trigger_relay|flag:2|na|-|-|retail only reads bit 1
 trigger_relay|flag:32|na|-|-|retail only reads bit 1
 trigger_relay|flag:4|na|-|-|retail only reads bit 1
 trigger_relay|flag:64|na|-|-|retail only reads bit 1
-trigger_relay|killtarget|yes|cook:fn triggerstate_use_type|-
-trigger_relay|triggerstate|yes|cook:fn triggerstate_use_type|-
+trigger_relay|killtarget|yes|cook:fn triggerstate_use_type|run:roots-diff
+trigger_relay|triggerstate|yes|cook:fn triggerstate_use_type|run:roots-diff
 trigger_teleport|@class|yes|cook:"trigger_teleport"|-|teleport volume and destination
 trigger_teleport|@kill|unreviewed|-|-
 trigger_teleport|delay|yes|cook:"master"|-

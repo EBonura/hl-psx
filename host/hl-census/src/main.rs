@@ -282,7 +282,11 @@ fn main() {
                         .collect::<Vec<_>>()
                         .join("\n");
                     let mut rtracks = hl_census::compare::retail_tracks(&rt2, map);
-                    let mut ptracks = hl_census::compare::port_tracks(&pt2, map);
+                    let mut ptracks = hl_census::compare::port_tracks(
+                        &pt2,
+                        map,
+                        hl_census::compare::second_session(&port_text, map),
+                    );
                     // Only the window both runs covered counts.
                     // Retail ticks run `offset` ahead of the port's.
                     let window = pl.min(rl - rep.offset);
