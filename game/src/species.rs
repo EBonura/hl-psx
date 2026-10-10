@@ -415,7 +415,7 @@ pub(crate) unsafe fn idle_think(
 }
 
 /// monster_leech: stays in its water and, when the player is in the water too, swims at him
-/// (2 units per tick, 4 inside 150) and bites for `sk_leech_dmg_bite` every 4 ticks (measured
+/// (2 units per tick, 4 inside 60) and bites for `sk_leech_dmg_bite` every 4 ticks (measured
 /// under the Xash3D reference, c2a3b: approach 2.1, bites 2 every 4 ticks, up to 4.7 attacking).
 #[inline(never)]
 #[optimize(size)]
@@ -455,7 +455,7 @@ unsafe fn tick_leech(m: &Map, pi: usize, player_pos: [i32; 3], health: &mut u16,
         return;
     }
     PROP_STATE[pi] = PROP_STATE_MOVE;
-    let speed = if d2 <= 150 * 150 { 4 } else { 2 };
+    let speed = if d2 <= 60 * 60 { 4 } else { 2 };
     let len = isqrt_i32(d2).max(1);
     let next = [
         pos[0] + (body[0] - pos[0]) * speed / len,
