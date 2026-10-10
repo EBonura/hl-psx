@@ -115,7 +115,7 @@ dependencies = [
 [[package]]
 name = "psoxide-link"
 version = "0.1.0"
-source = "git+https://github.com/EBonura/PSoXide.git?rev=3d41b9deba9ba3609b0981ae00b145ac86fc5076#3d41b9deba9ba3609b0981ae00b145ac86fc5076"
+source = "git+https://github.com/EBonura/PSoXide.git?rev=36ead4b0c71e0b9a3311e86faf77966f1ef44fdc#36ead4b0c71e0b9a3311e86faf77966f1ef44fdc"
 dependencies = [
  "serde_json",
 ]
@@ -123,7 +123,7 @@ dependencies = [
 [[package]]
 name = "psx-hw"
 version = "0.1.0"
-source = "git+https://github.com/EBonura/PSoXide.git?rev=3d41b9deba9ba3609b0981ae00b145ac86fc5076#3d41b9deba9ba3609b0981ae00b145ac86fc5076"
+source = "git+https://github.com/EBonura/PSoXide.git?rev=36ead4b0c71e0b9a3311e86faf77966f1ef44fdc#36ead4b0c71e0b9a3311e86faf77966f1ef44fdc"
 dependencies = [
  "bitflags",
 ]
@@ -131,7 +131,7 @@ dependencies = [
 [[package]]
 name = "psx-io"
 version = "0.1.0"
-source = "git+https://github.com/EBonura/PSoXide.git?rev=3d41b9deba9ba3609b0981ae00b145ac86fc5076#3d41b9deba9ba3609b0981ae00b145ac86fc5076"
+source = "git+https://github.com/EBonura/PSoXide.git?rev=36ead4b0c71e0b9a3311e86faf77966f1ef44fdc#36ead4b0c71e0b9a3311e86faf77966f1ef44fdc"
 dependencies = [
  "psx-hw",
 ]
@@ -139,7 +139,7 @@ dependencies = [
 [[package]]
 name = "psx-pack"
 version = "0.1.0"
-source = "git+https://github.com/EBonura/PSoXide.git?rev=3d41b9deba9ba3609b0981ae00b145ac86fc5076#3d41b9deba9ba3609b0981ae00b145ac86fc5076"
+source = "git+https://github.com/EBonura/PSoXide.git?rev=36ead4b0c71e0b9a3311e86faf77966f1ef44fdc#36ead4b0c71e0b9a3311e86faf77966f1ef44fdc"
 dependencies = [
  "psx-io",
 ]
