@@ -68,7 +68,12 @@ const MODEL_INDEX_VERTEX_LIMIT: usize = 1024;
 // HMA1_NPC_MIN_TOLERANCE): that took 10,552 B out of c2a4e's resident models,
 // the map whose weapon-cache tail sets this pool, and leaves its audited margin
 // at 1,412 B (it was 1,364 B before the floor).
-const NPC_MODEL_POOL_WORDS: usize = 23_954;
+//
+// 400 words (1,600 B) went back when the cooker stopped writing unreferenced
+// vertices (host/hl-bsp): that shrank the largest room and c2a4e's room by
+// 7,056 B and 7,680 B, which lifted c2a4e's audited margin to 2,036 B and left
+// 436 B of it after this step.
+const NPC_MODEL_POOL_WORDS: usize = 23_554;
 // Viewmodel reserve when no cooked viewmodels exist yet (a fresh checkout).
 const FALLBACK_VM_POOL_WORDS: usize = 20_224;
 const FALLBACK_VM_GEOM_WORDS: usize = 15_800;
