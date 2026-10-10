@@ -153,18 +153,21 @@ in the hydrated emulator, which counts every instruction the game executes;
 the second is compiled around those counts. On the chapter-two recording it
 is 6% faster than `pack`, and 4% faster on a route the recording never
 visits. It takes about four minutes. It also writes the profile and the
-inlining threshold it linked at to `game/pgo/`. The threshold is the first
-rung of the inlining ladder that leaves at least 4 KB of RAM free over the
-2 KB floor, and the build prints every rung's free RAM (when no rung has the
-4 KB, the first that clears the bare 2 KB is used). The free RAM `pgo`
-prints for the rung it ships is measured on the link that ships, and the
-build stops with both figures if the shipped link leaves a different amount.
+inlining threshold it linked at to `game/pgo/`. There is no free-RAM floor:
+the game uses whatever RAM its link leaves. The threshold is the highest rung
+of the inlining ladder (most inlining, fastest) that links and leaves a safe
+stack, meaning at least 19,808 B between `.bss` and the initial stack pointer
+(the deepest stack the profiling tapes have written, 17,760 B, plus a 2 KB
+margin; the SDK's 32 KB stack reserve alone covers it). The build prints every
+rung's free RAM. The free RAM `pgo` prints for the rung it ships is measured on
+the link that ships, and the build stops with both figures if the shipped link
+leaves a different amount. Plain builds apply the same rule from the committed
+threshold down.
 The profiling build
 itself links with a smaller stack reserve than the shipped one (it only runs
 on the tapes), shrinking it by whatever its link overflows RAM by, down to the
 deepest stack the profiling tapes have written (17,760 B) plus a 2 KB margin,
-rounded up to 256 B (0x4E00). Every
-other build links with
+rounded up to 256 B (0x4E00). Every other build links with
 that committed profile, because HL-PSX no longer fits in RAM without one, so
 commit `game/pgo/` after a `pgo` run to make it the default.
 
