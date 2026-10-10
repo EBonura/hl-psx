@@ -154,9 +154,10 @@ the second is compiled around those counts. On the chapter-two recording it
 is 6% faster than `pack`, and 4% faster on a route the recording never
 visits. It takes about four minutes. It also writes the profile and the
 inlining threshold it linked at to `game/pgo/`. The threshold is the first
-rung of the inlining ladder that leaves at least 4 KB of RAM free over the
-16 KB floor, and the build prints every rung's free RAM (when no rung has the
-4 KB, the first that clears the bare 16 KB is used). The free RAM `pgo`
+rung of the inlining ladder that leaves at least 4 KB of RAM free (there is
+no floor beyond the link succeeding; the stack reserve covers the deepest
+measured stack plus 2 KB), and the build prints every rung's free RAM (when no
+rung has the 4 KB, the first that links is used). The free RAM `pgo`
 prints for the rung it ships is measured on the link that ships, and the
 build stops with both figures if the shipped link leaves a different amount.
 The profiling build

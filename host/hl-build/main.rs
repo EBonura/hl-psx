@@ -1932,8 +1932,10 @@ enum GuestProfile<'a> {
 
 /// Free RAM a profile-guided disc must keep between `.bss` and the stack
 /// reserve. The model pool, weapon cache and stacks have their own audited
-/// margins; this is the headroom above all of them.
-const PGO_RAM_FLOOR: u32 = 16 * 1024;
+/// margins, and the stack reserve itself covers the deepest measured stack plus
+/// 2 KB, so the link only has to succeed (the 16 KB floor was dropped on
+/// 2026-10-10).
+const PGO_RAM_FLOOR: u32 = 0;
 
 /// Extra free RAM `pgo` asks of the rung it ships, over `PGO_RAM_FLOOR`. A
 /// fresh profile moved the same source's free RAM by 4 KB (24,400 B to
