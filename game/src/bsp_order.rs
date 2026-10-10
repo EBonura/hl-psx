@@ -64,6 +64,7 @@ static mut NEXT_KEY: u32 = 0;
 static mut KEY_STEP: u32 = 256;
 
 /// Bytes of static RAM the ordering tables take.
+#[allow(dead_code)] // reported by the host walk check
 pub const fn ram_bytes() -> usize {
     MAX_VIS * 2 * 2
         + MAX_VIS
@@ -83,14 +84,6 @@ pub unsafe fn active() -> bool {
 #[inline(always)]
 pub unsafe fn valid() -> bool {
     VALID
-}
-
-/// Drop the ranking (the map has no node table or a view exposes more nodes than the tables hold).
-#[inline(never)]
-pub unsafe fn deactivate() {
-    VALID = false;
-    ACTIVE = false;
-    VIS_N = 0;
 }
 
 /// Clear the per-frame state before the world is built.
@@ -276,27 +269,6 @@ pub unsafe fn add_item(anchor: (u16, u8), id: u8, depth_bucket: u16, radius_buck
     ITEM_N += 1;
 }
 
-#[inline(always)]
-pub unsafe fn begin_items() {
-    ITEM_N = 0;
-}
-
-/// Ordering key given to item `id` by the last walk, `0` when it was not placed.
-#[inline]
-pub unsafe fn item_key(id: u8) -> u16 {
-    if !ACTIVE {
-        return 0;
-    }
-    let mut i = 0usize;
-    while i < ITEM_N {
-        if ITEM_ID[i] == id {
-            return ITEM_KEY[i];
-        }
-        i += 1;
-    }
-    0
-}
-
 /// Make item `id` the owner of the faces about to be emitted; returns its nearest key, `0` if unplaced.
 #[inline]
 pub unsafe fn select_item(id: u8) -> u16 {
@@ -428,10 +400,19 @@ pub unsafe fn walk(m: &Map, eye: [i32; 3], key_top: u16) {
                     // sub-ranges of this child's subtree
                     let own = (f.vlo < f.vhi && VIS_NODE[f.vlo as usize] == f.node) as u16;
                     let v0 = f.vlo + own;
-                    let vmid = lower_bound16(&VIS_NODE, v0 as usize, f.vhi as usize, split) as u16;
+                    let vmid = lower_bound16(
+                        &*core::ptr::addr_of!(VIS_NODE),
+                        v0 as usize,
+                        f.vhi as usize,
+                        split,
+                    ) as u16;
                     let e0 = f.elo + count_anchor(f.elo, f.ehi, f.node);
-                    let emid =
-                        lower_bound16(&ITEM_ANCHOR, e0 as usize, f.ehi as usize, split) as u16;
+                    let emid = lower_bound16(
+                        &*core::ptr::addr_of!(ITEM_ANCHOR),
+                        e0 as usize,
+                        f.ehi as usize,
+                        split,
+                    ) as u16;
                     let (vlo, vhi, elo, ehi, end) = if want_front {
                         // front child = c0: nodes in (node, split)
                         (v0, vmid, e0, emid, split)
@@ -606,15 +587,20 @@ pub unsafe fn map_model_key(key: u16) -> u16 {
 }
 
 /// Host check hooks: visible-node count and `(node, key)` of slot `k`.
+#[allow(dead_code)]
 pub unsafe fn debug_vis_len() -> usize {
     VIS_N
 }
+#[allow(dead_code)]
 pub unsafe fn debug_slot(k: usize) -> (u16, u16) {
     (VIS_NODE[k], KEY_K[k])
 }
+#[allow(dead_code)]
 pub unsafe fn debug_item(i: usize) -> (u16, u8, u8, u16) {
     (ITEM_ANCHOR[i], ITEM_SIDE[i], ITEM_ID[i], ITEM_KEY[i])
 }
+#[allow(dead_code)]
+#[allow(dead_code)]
 pub unsafe fn debug_item_len() -> usize {
     ITEM_N
 }

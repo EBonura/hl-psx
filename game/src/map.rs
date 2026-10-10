@@ -966,18 +966,6 @@ impl Map {
         15
     }
 
-    /// `(first face, count)` of render node `node`'s run.
-    #[inline]
-    pub fn node_faces(&self, node: usize) -> (usize, usize) {
-        let mut first = self.node_face_checkpoint(node >> 5);
-        let mut n = node & !31;
-        while n < node {
-            first += self.node_face_count(n);
-            n += 1;
-        }
-        (first, self.node_face_count(node))
-    }
-
     /// Door-occluder section `(record count, first record offset)`, found
     /// from the trailing `u32 offset | "DSL1"` the cook appends 4-aligned;
     /// `(0, 0)` when absent. Older runtimes ignore the trailing bytes.
