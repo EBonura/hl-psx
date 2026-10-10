@@ -32,6 +32,7 @@ static mut IN_SAMPLE: semantic_input::Sample = semantic_input::Sample {
 static mut LAST_MAP: &str = "";
 static mut SEC: usize = 0;
 static mut HOLD_CL: bool = false;
+static mut ENDED: bool = false;
 static mut GOTO: Option<(usize, bool)> = None;
 static mut FORCE_NEXT: bool = false;
 
@@ -88,37 +89,25 @@ pub unsafe fn step(
     weapons: &mut crate::Arsenal,
 ) -> semantic_input::Sample {
     // Commands belong to the probed map only; a changelevel ends the script.
+    if ENDED {
+        return sample;
+    }
     if LAST_MAP != map_name || FORCE_NEXT {
         FORCE_NEXT = false;
+        if !LAST_MAP.is_empty() {
+            ENDED = true;
+            LAST_MAP = map_name;
+            crate::reference_trace::probe(now, "ended", map_name, SEC as i32);
+            return sample;
+        }
         // The first map of a run picks its own section, so one baked script
         // serves a separate launch per map.
-        if LAST_MAP.is_empty() {
-            SEC = 0;
-            while SEC < PROBE_SECS.len() && PROBE_SECS[SEC] != map_name {
-                SEC += 1;
-            }
-            if SEC == PROBE_SECS.len() {
-                SEC = 0;
-            }
-        }
-        if !LAST_MAP.is_empty() {
+        SEC = 0;
+        while SEC < PROBE_SECS.len() && PROBE_SECS[SEC] != map_name {
             SEC += 1;
-            PIN = false;
-            IN_UNTIL = 0;
         }
-        // Sections run in order. A map the script did not expect (a bounce, a
-        // wrong exit) is logged and the run jumps straight to the expected map.
-        if SEC < PROBE_SECS.len() && PROBE_SECS[SEC] != map_name {
-            crate::reference_trace::probe(now, "sec_mismatch", map_name, SEC as i32);
-            let want = PROBE_SECS[SEC];
-            let mut i = 0usize;
-            while i < crate::menu::MAPS.len() && crate::menu::MAPS[i] != want {
-                i += 1;
-            }
-            SEC -= 1;
-            LAST_MAP = map_name;
-            GOTO = Some((i, false));
-            return sample;
+        if SEC == PROBE_SECS.len() {
+            SEC = 0;
         }
         crate::reference_trace::probe(now, "sec", map_name, SEC as i32);
         NEXT = 0;
@@ -140,7 +129,6 @@ pub unsafe fn step(
         match c.op {
             1 => {
                 player.pos = [c.a[0] as i32, c.a[1] as i32, c.a[2] as i32];
-                HOLD_CL = false;
                 crate::reference_trace::probe_vals(
                     now,
                     "tp",

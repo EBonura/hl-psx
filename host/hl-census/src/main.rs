@@ -176,7 +176,9 @@ fn main() {
                     exit(2)
                 });
                 let r = hl_census::roots::roots(ents);
-                let s = hl_census::roots::scripts(&r, gap, start);
+                let spawn =
+                    arg(&args, "--ref-dir").and_then(|d| retail_spawn(&PathBuf::from(d), map));
+                let s = hl_census::roots::scripts(&r, gap, start, spawn);
                 println!("{map}: {} roots, ends at tick {}", r.len(), s.end_tick);
                 let mut port = format!("map {map}\n{}\n", s.port.join("\n"));
                 if let (true, Some(next)) = (args.iter().any(|a| a == "--chain"), names.get(n + 1))
@@ -773,4 +775,17 @@ fn report(c: &census::Census, ct: &Contract, t: &hl_census::Tally, f: &hl_census
             println!("- {b}");
         }
     }
+}
+
+/// Where the retail game put the player on its first sampled tick: x y z yaw (HL axes).
+fn retail_spawn(ref_dir: &std::path::Path, map: &str) -> Option<[f64; 4]> {
+    let text = std::fs::read_to_string(ref_dir.join(format!("{map}.trace"))).ok()?;
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("HLREF|tick|") && l.contains(&format!("|map={map}|")))?;
+    let f = |k: &str| -> Option<f64> {
+        line.split('|')
+            .find_map(|p| p.strip_prefix(&format!("{k}="))?.parse().ok())
+    };
+    Some([f("px")?, f("py")?, f("pz")?, f("yaw")?])
 }
