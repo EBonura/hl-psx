@@ -1560,15 +1560,46 @@ pub fn mover_clear_at_hull(
     pos: [i32; 3],
     world_head: i32,
 ) -> bool {
-    let crouch = map.hull3_head >= 0 && world_head == map.hull3_head;
-    for mv in movers {
-        if mv.id != mover_id || mv.h1() <= 0 {
-            continue;
-        }
-        let local = mover_local(mv, pos);
-        return !trace(map, mv.pick(crouch), local, local).startsolid;
+    match mover_by_id(movers, mover_id) {
+        Some(mv) => mover_hull_clear(map, mv, pos, world_head),
+        None => true,
     }
-    true
+}
+
+/// The solid mover that owns brush entity `mover_id`, if it has one. A brush
+/// without a hull (`h1() <= 0`) cannot hold anything, so it has no mover here.
+#[inline(always)]
+pub fn mover_by_id(movers: &[Mover], mover_id: i32) -> Option<&Mover> {
+    movers.iter().find(|mv| mv.id == mover_id && mv.h1() > 0)
+}
+
+/// [`mover_clear_at_hull`] for a mover the caller has already resolved: a
+/// caller testing many points against one mover finds it once instead of
+/// scanning the whole table per point.
+#[inline(always)]
+pub fn mover_hull_clear(map: &Map, mv: &Mover, pos: [i32; 3], world_head: i32) -> bool {
+    let crouch = map.hull3_head >= 0 && world_head == map.hull3_head;
+    let local = mover_local(mv, pos);
+    !trace(map, mv.pick(crouch), local, local).startsolid
+}
+
+/// False when `pos` is outside the mover's broad-phase bounds, so no hull
+/// centred there can overlap it: the cooked radius already includes the
+/// player-hull margin, which is what `trace_all` relies on to skip a mover.
+/// A pusher sweep tests every nearby point against every mover that moved
+/// this tick, so the cheap bounds test comes first.
+#[inline(always)]
+pub fn mover_may_hold(mv: &Mover, pos: [i32; 3]) -> bool {
+    if mv.radius <= 0 {
+        return true;
+    }
+    let (c, r) = (mv.center, mv.radius);
+    c[0] + r >= pos[0]
+        && c[0] - r <= pos[0]
+        && c[1] + r >= pos[1]
+        && c[1] - r <= pos[1]
+        && c[2] + r >= pos[2]
+        && c[2] - r <= pos[2]
 }
 
 /// A hull at `pos` overlaps no mover (the pusher included): the position test
