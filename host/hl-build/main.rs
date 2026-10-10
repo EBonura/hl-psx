@@ -1634,7 +1634,7 @@ fn cook_rooms(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
     let entity_coverage_report = report_dir.join("entity-coverage.csv");
     fs::write(
         &subdivision_report,
-        "map_index,map,source_vertices,source_fan_triangles,pre_grid_vertices,pre_grid_triangles,grid_added_vertices,grid_added_triangles,cooked_vertices,cooked_triangles,candidate_faces,grid_refined_faces,grid_cells,grid_quad_cells,grid_boundary_triangles,grid_budget_fallbacks,liquid_planes,coplanar_liquid_faces,tjunction_triangles,resident_bytes,texture_bytes,native_patch_faces,native_patch_quad_records,native_patch_triangle_records,native_patch_blocked_records,native_patch_seamed_pair_records,world_cells,world_source_faces,world_patches,world_cell_vertices,world_unique_vertices,world_max_visible_cells,world_max_visible_vertices,world_max_visible_packets,world_max_neighbor_packets,world_max_exact_cells,world_max_exact_vertices,world_max_exact_packets,world_min_exact_fill_x100,world_fallback_patches\n",
+        "map_index,map,source_vertices,source_fan_triangles,pre_grid_vertices,pre_grid_triangles,grid_added_vertices,grid_added_triangles,cooked_vertices,cooked_triangles,candidate_faces,grid_refined_faces,grid_cells,grid_quad_cells,grid_boundary_triangles,grid_budget_fallbacks,liquid_planes,coplanar_liquid_faces,tjunction_triangles,resident_bytes,texture_bytes,native_patch_faces,native_patch_quad_records,native_patch_triangle_records,native_patch_blocked_records,native_patch_seamed_pair_records,world_cells,world_source_faces,world_patches,world_cell_vertices,world_unique_vertices,world_max_visible_cells,world_max_visible_vertices,world_max_visible_packets,world_max_neighbor_packets,world_max_exact_cells,world_max_exact_vertices,world_max_exact_packets,world_min_exact_fill_x100,world_fallback_patches,removed_unreferenced_vertices\n",
     )?;
     fs::write(&entity_coverage_report, "map,classname,count,status\n")?;
 
@@ -1732,7 +1732,7 @@ fn validate_world_subdivision_report(path: &Path, map_names: &[&str]) -> Result<
     let report = fs::read_to_string(path)?;
     let mut rows = report.lines();
     let header = rows.next().ok_or("world subdivision report is empty")?;
-    if header.split(',').count() != 40 {
+    if header.split(',').count() != 41 {
         return Err(format!("world subdivision report has an unexpected header: {header}").into());
     }
 
@@ -1747,7 +1747,7 @@ fn validate_world_subdivision_report(path: &Path, map_names: &[&str]) -> Result<
     }
     for (expected_index, (expected_map, row)) in map_names.iter().zip(&rows).enumerate() {
         let columns = row.split(',').collect::<Vec<_>>();
-        if columns.len() != 40
+        if columns.len() != 41
             || columns[0].parse::<usize>() != Ok(expected_index)
             || columns[1] != *expected_map
         {
@@ -1795,9 +1795,13 @@ fn validate_world_subdivision_report(path: &Path, map_names: &[&str]) -> Result<
         let world_max_exact_packets = number(37)?;
         let world_min_exact_fill_x100 = number(38)?;
         let world_fallback_patches = number(39)?;
+        let removed_unreferenced_vertices = number(40)?;
+        let pre_compaction_vertices = pre_grid_vertices.checked_add(added_vertices);
+        let accounted_vertices = pre_compaction_vertices
+            .and_then(|total| total.checked_sub(removed_unreferenced_vertices));
         if cooked_vertices > 12_288
             || added_triangles > 1_536
-            || pre_grid_vertices + added_vertices != cooked_vertices
+            || accounted_vertices != Some(cooked_vertices)
             || pre_grid_triangles + added_triangles != cooked_triangles
             || refined_faces > candidate_faces
             || grid_quad_cells > grid_cells
@@ -3126,13 +3130,17 @@ mod tests {
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));
-        let header = (0..40)
+        let header = (0..41)
             .map(|index| format!("h{index}"))
             .collect::<Vec<_>>()
             .join(",");
         let row = |index: usize, map: &str| {
             let mut columns = vec![index.to_string(), map.to_string()];
-            columns.extend((2..40).map(|_| "0".to_string()));
+            columns.extend((2..41).map(|_| "0".to_string()));
+            columns[4] = "10".to_string();
+            columns[6] = "5".to_string();
+            columns[8] = "12".to_string();
+            columns[40] = "3".to_string();
             columns[21] = "1".to_string();
             columns[22] = "1".to_string();
             for column in &mut columns[26..40] {
@@ -3146,6 +3154,20 @@ mod tests {
         )
         .unwrap();
         assert!(validate_world_subdivision_report(&temp, &["a", "b"]).is_ok());
+        let first = row(0, "a");
+        let mut bad = first.split(',').collect::<Vec<_>>();
+        bad[40] = "2";
+        fs::write(
+            &temp,
+            format!("{header}\n{}\n{}\n", bad.join(","), row(1, "b")),
+        )
+        .unwrap();
+        assert!(validate_world_subdivision_report(&temp, &["a", "b"]).is_err());
+        fs::write(
+            &temp,
+            format!("{header}\n{}\n{}\n", row(0, "a"), row(1, "b")),
+        )
+        .unwrap();
         assert!(validate_world_subdivision_report(&temp, &["b", "a"]).is_err());
         assert!(validate_world_subdivision_report(&temp, &["a"]).is_err());
         fs::remove_file(temp).unwrap();

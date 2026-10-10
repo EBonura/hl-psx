@@ -12724,7 +12724,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // it never merges or reorders anything a face can see, so every index
     // equality the later stages test, the first-use projection order and the
     // rendered output stay identical.
-    {
+    let removed_unreferenced_vertices = {
         let mut referenced = vec![false; verts.len()];
         for &index in &tri_idx {
             referenced[index as usize] = true;
@@ -12743,7 +12743,8 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         }
         verts = kept;
         eprintln!("  vertex compaction: -{dropped} unreferenced");
-    }
+        dropped
+    };
 
     // Grid tessellation is the cook's affine-correction pass. Runtime classic
     // subdivision adds view-dependent detail. The weld above only restores
@@ -14833,7 +14834,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             .map_err(|e| format!("open subdivision report {:?}: {}", report_path, e))?;
         writeln!(
             report,
-            "{map_index},{map_name},{orig_n_verts},{fan_tris},{affine_base_verts},{affine_base_tris},{affine_added_verts},{affine_added_tris},{n_verts},{n_tris},{candidate_faces},{affine_refined_faces},{grid_cells},{grid_quad_cells},{grid_boundary_tris},{grid_budget_fallbacks},{liquid_plane_count},{coplanar_liquid_faces},{tj_added},{},{texture_bytes},{native_patch_faces},{native_patch_quad_records},{native_patch_triangle_records},{native_patch_blocked_records},{native_patch_seamed_pair_records},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{map_index},{map_name},{orig_n_verts},{fan_tris},{affine_base_verts},{affine_base_tris},{affine_added_verts},{affine_added_tris},{n_verts},{n_tris},{candidate_faces},{affine_refined_faces},{grid_cells},{grid_quad_cells},{grid_boundary_tris},{grid_budget_fallbacks},{liquid_plane_count},{coplanar_liquid_faces},{tj_added},{},{texture_bytes},{native_patch_faces},{native_patch_quad_records},{native_patch_triangle_records},{native_patch_blocked_records},{native_patch_seamed_pair_records},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             o.len(),
             world_pipeline.stats.cells,
             world_pipeline.stats.source_faces,
@@ -14849,6 +14850,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             world_pipeline.stats.max_exact_packets,
             world_pipeline.stats.min_exact_fill_x100,
             world_ineligible_patches,
+            removed_unreferenced_vertices,
         )
         .map_err(|e| format!("write subdivision report {:?}: {}", report_path, e))?;
     }
