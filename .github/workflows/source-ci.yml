@@ -143,6 +143,7 @@ jobs:
             "--features deep-reference-trace"
             "--features semantic-input"
             "--features route-follow"
+            "--features debug-render-stall"
           )
           for features in "${sets[@]}"; do
             echo "::group::cargo check ${features:-(default features)}"
