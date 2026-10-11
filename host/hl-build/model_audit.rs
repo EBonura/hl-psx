@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::Result;
+use hl_format::room_budget;
 
 // These are the shipping runtime capacities. Keep the synchronization tests at
 // the bottom of this file: a pool change must update the auditor in the same
@@ -73,12 +74,22 @@ pub fn viewmodel_pool_words(model_pack: &Path) -> Result<usize> {
 /// the model pool) and starts the model pool where the *loaded* map ends, so a
 /// map's real budget is the arena minus its own cooked size. That is never below
 /// the model pool and is far above it wherever the BSP is smaller than the
-/// fleet's largest. The staging capacity is taken as the largest cooked chunk,
-/// which understates game/build.rs's MAP_WORDS (it adds a decode margin), so
-/// every budget here is conservative.
+/// fleet's largest. The staging capacity uses the same installed floor and
+/// cooked maximum as game/build.rs. A smaller room cannot shrink weapon tails.
 fn map_pool_budgets(repository: &Path, maps: usize, model_pool_words: usize) -> Result<Vec<usize>> {
     let rooms = repository.join("data/rooms");
-    let staging_words = fs::read_dir(&rooms)?
+    let staging_words = room_staging_words(&rooms)?;
+    (0..maps)
+        .map(|index| {
+            let world =
+                fs::metadata(rooms.join(format!("room_{}.psxc", index * 2)))?.len() as usize;
+            Ok(staging_words + model_pool_words - world.div_ceil(4).min(staging_words))
+        })
+        .collect()
+}
+
+fn room_staging_words(rooms: &Path) -> Result<usize> {
+    let largest = fs::read_dir(rooms)?
         .flatten()
         .filter_map(|entry| {
             let path = entry.path();
@@ -88,15 +99,8 @@ fn map_pool_budgets(repository: &Path, maps: usize, model_pool_words: usize) -> 
                 .flatten()
         })
         .max()
-        .ok_or("model residency audit found no cooked room chunks")?
-        .div_ceil(4);
-    (0..maps)
-        .map(|index| {
-            let world =
-                fs::metadata(rooms.join(format!("room_{}.psxc", index * 2)))?.len() as usize;
-            Ok(staging_words + model_pool_words - world.div_ceil(4).min(staging_words))
-        })
-        .collect()
+        .ok_or("model residency audit found no cooked room chunks")?;
+    Ok(room_budget::map_staging_words(largest))
 }
 const MAX_LOADED_MODELS: usize = 23;
 const POOL_FACE_CAP: usize = 7_936;
@@ -704,7 +708,7 @@ fn parse_map_actors(path: &Path) -> Result<Vec<Actor>> {
     if data.len() < 52
         || !matches!(
             data.get(0..4),
-            Some(b"HLMA" | b"HLMB" | b"HLMC" | b"HLMD" | b"HLME" | b"HLMF" | b"HLMG" | b"HLMH")
+            Some(b"HLMA" | b"HLMB" | b"HLMC" | b"HLMD" | b"HLME" | b"HLMF" | b"HLMG" | b"HLMH" | b"HLMJ")
         )
     {
         return Err(format!("{what}: not a cooked HLM map").into());
@@ -1566,22 +1570,7 @@ fn audit_weapon_cache_tail(
 ) -> Result<PathBuf> {
     let model_pool_words = NPC_MODEL_POOL_WORDS + vm_pool_words;
     let rooms = repository.join("data/rooms");
-    let map_pool_words = fs::read_dir(&rooms)?
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            let name = path.file_name()?.to_str()?;
-            (name.starts_with("room_") && matches!(path.extension()?.to_str()?, "psxc" | "psxw"))
-                .then(|| {
-                    fs::metadata(path)
-                        .ok()
-                        .map(|metadata| metadata.len() as usize)
-                })
-                .flatten()
-        })
-        .max()
-        .ok_or("weapon cache audit found no cooked room chunks")?
-        .div_ceil(4);
+    let map_pool_words = room_staging_words(&rooms)?;
 
     let model_pack = repository.join("data/modelpack");
     let mut max_chunk_words = 0usize;

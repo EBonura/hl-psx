@@ -11,6 +11,7 @@
 
 mod door_seal;
 mod entity_support;
+mod pvs_pair;
 mod hma1_cook;
 mod quad_grid;
 mod seated_placement;
@@ -13338,6 +13339,8 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let clipnodes = bsp.lump(LUMP_CLIPNODES);
     let raw_n_clip = clipnodes.len() / SZ_CLIPNODE;
     let n_visleaves = world_visleaf_count(models, n_leaves)?;
+    let (cooked_vis, cooked_vis_offsets) = pvs_pair::encode(vis, leaves, n_visleaves)
+        .map_err(|e| format!("{}: PVS pair encode: {}", path, e))?;
     let packed_leaf_counts = pack_leaf_counts(n_leaves, n_visleaves)?;
     // dmodel_t.headnode[0] indexes LUMP_NODES, not LUMP_CLIPNODES. Runtime
     // point traces walk the already-cooked render-node tree directly; feeding
@@ -13796,7 +13799,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     o.extend_from_slice(&(n_nodes as u32).to_le_bytes());
     o.extend_from_slice(&packed_leaf_counts.to_le_bytes());
     o.extend_from_slice(&(n_cooked_marks as u32).to_le_bytes());
-    o.extend_from_slice(&(vis.len() as u32).to_le_bytes());
+    o.extend_from_slice(&(cooked_vis.len() as u32).to_le_bytes());
 
     for &pi in &cooked_planes {
         let (n, dist) = plane_rec_q5(planes, pi, scale);
@@ -13885,11 +13888,8 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let leaf_records_start = o.len();
     for (li, &(mark_start, mark_count)) in leaf_mark_ranges.iter().enumerate() {
         let lo = li * SZ_LEAF;
-        o.extend_from_slice(
-            &i32le(leaves, lo + SZ_LEAF_VISOFS)
-                .unwrap_or(-1)
-                .to_le_bytes(),
-        );
+        let vis_offset = cooked_vis_offsets.get(li).copied().unwrap_or(u32::MAX);
+        o.extend_from_slice(&vis_offset.to_le_bytes());
         o.extend_from_slice(&mark_start.to_le_bytes());
         let packed_mark_count = pack_leaf_mark_count(mark_count, i32le(leaves, lo).unwrap_or(-2))
             .map_err(|e| format!("{}: leaf {}: {}", path, li, e))?;
@@ -13909,7 +13909,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     while o.len() % 4 != 0 {
         o.push(0);
     }
-    o.extend_from_slice(vis);
+    o.extend_from_slice(&cooked_vis);
     while o.len() % 4 != 0 {
         o.push(0);
     }

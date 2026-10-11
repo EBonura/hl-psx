@@ -8,6 +8,8 @@
 //! error instead of a visual/gameplay omission.
 
 pub mod hitgroup;
+pub mod pvs_pair;
+pub mod room_budget;
 pub mod skill;
 
 pub mod map {
@@ -32,8 +34,9 @@ pub mod map {
     pub const MAGIC_HLMF: u32 = u32::from_le_bytes(*b"HLMF");
     pub const MAGIC_HLMG: u32 = u32::from_le_bytes(*b"HLMG");
     pub const MAGIC_HLMH: u32 = u32::from_le_bytes(*b"HLMH");
-    pub const MAGIC_LATEST: u32 = MAGIC_HLMH;
-    pub const MAGIC_LATEST_BYTES: [u8; 4] = *b"HLMH";
+    pub const MAGIC_HLMJ: u32 = u32::from_le_bytes(*b"HLMJ");
+    pub const MAGIC_LATEST: u32 = MAGIC_HLMJ;
+    pub const MAGIC_LATEST_BYTES: [u8; 4] = *b"HLMJ";
 
     pub const LEGACY_HEADER_SIZE: usize = 52;
     pub const HEADER_SIZE: usize = 56;
@@ -201,7 +204,7 @@ pub mod map {
 
     #[inline(always)]
     pub const fn header_size(magic: u32) -> usize {
-        if magic == MAGIC_HLMH {
+        if matches!(magic, MAGIC_HLMH | MAGIC_HLMJ) {
             HEADER_SIZE
         } else {
             LEGACY_HEADER_SIZE
@@ -219,6 +222,7 @@ pub mod map {
                 | MAGIC_HLMF
                 | MAGIC_HLMG
                 | MAGIC_HLMH
+                | MAGIC_HLMJ
         )
     }
 
@@ -226,23 +230,23 @@ pub mod map {
     pub const fn supports_split_leaf_counts(magic: u32) -> bool {
         matches!(
             magic,
-            MAGIC_HLMC | MAGIC_HLMD | MAGIC_HLME | MAGIC_HLMF | MAGIC_HLMG | MAGIC_HLMH
+            MAGIC_HLMC | MAGIC_HLMD | MAGIC_HLME | MAGIC_HLMF | MAGIC_HLMG | MAGIC_HLMH | MAGIC_HLMJ
         )
     }
 
     #[inline(always)]
     pub const fn supports_texture_animation(magic: u32) -> bool {
-        matches!(magic, MAGIC_HLME | MAGIC_HLMF | MAGIC_HLMG | MAGIC_HLMH)
+        matches!(magic, MAGIC_HLME | MAGIC_HLMF | MAGIC_HLMG | MAGIC_HLMH | MAGIC_HLMJ)
     }
 
     #[inline(always)]
     pub const fn supports_dynamic_lightmaps(magic: u32) -> bool {
-        matches!(magic, MAGIC_HLMG | MAGIC_HLMH)
+        matches!(magic, MAGIC_HLMG | MAGIC_HLMH | MAGIC_HLMJ)
     }
 
     #[inline(always)]
     pub const fn supports_world_pipeline(magic: u32) -> bool {
-        magic == MAGIC_HLMH
+        matches!(magic, MAGIC_HLMH | MAGIC_HLMJ)
     }
 
     #[inline(always)]

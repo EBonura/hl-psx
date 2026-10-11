@@ -8654,8 +8654,7 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
     let landmark_leaf = camera_leaf(m, landmark_origin);
     let use_pvs = valid_pvs_leaf(m, landmark_leaf);
     if use_pvs {
-        let (visofs, _, _) = m.leaf(landmark_leaf as usize);
-        decompress_vis(m, visofs, &mut *core::ptr::addr_of_mut!(VIS_BITS));
+        decompress_vis(m, landmark_leaf as usize, &mut *core::ptr::addr_of_mut!(VIS_BITS));
         VIS_ROW_LEAF = -1;
     }
 
@@ -22484,9 +22483,14 @@ fn recover_camera_leaf(m: &Map, eye: [i32; 3], player_pos: [i32; 3], train_hint:
     leaf
 }
 
-fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
+fn decompress_vis(m: &Map, leaf: usize, out: &mut [u8]) {
     // GoldSrc's model[0] visibility width excludes submodel-only leaves.
     let row = ((m.n_visleaves + 7) / 8).min(out.len());
+    if m.paired_pvs() {
+        assert!(m.decode_paired_pvs(leaf, &mut out[..row], false), "HLMJ PVS row invalid");
+        return;
+    }
+    let (visofs, _, _) = m.leaf(leaf);
     if visofs < 0 {
         out[..row].fill(0xff);
     } else {
@@ -22499,8 +22503,13 @@ fn decompress_vis(m: &Map, visofs: i32, out: &mut [u8]) {
 /// above the eye, matching the visibility on both sides of a transparent
 /// boundary instead of presenting an otherwise-correct water polygon over
 /// black.
-fn merge_vis(m: &Map, visofs: i32, out: &mut [u8]) {
+fn merge_vis(m: &Map, leaf: usize, out: &mut [u8]) {
     let row = ((m.n_visleaves + 7) / 8).min(out.len());
+    if m.paired_pvs() {
+        assert!(m.decode_paired_pvs(leaf, &mut out[..row], true), "HLMJ PVS merge invalid");
+        return;
+    }
+    let (visofs, _, _) = m.leaf(leaf);
     if visofs < 0 {
         out[..row].fill(0xff);
     } else {
@@ -22599,13 +22608,11 @@ unsafe fn rebuild_pvs_cache(
     eye_under: bool,
     seal_state: u32,
 ) {
-    let (visofs, _, _) = m.leaf(cam_leaf as usize);
-    decompress_vis(m, visofs, &mut *core::ptr::addr_of_mut!(VIS_BITS));
+    decompress_vis(m, cam_leaf as usize, &mut *core::ptr::addr_of_mut!(VIS_BITS));
     let mut dry = -1i32;
     if eye_under {
         if let Some(dry_leaf) = dry_leaf_above(m, eye) {
-            let (dry_visofs, _, _) = m.leaf(dry_leaf);
-            merge_vis(m, dry_visofs, &mut *core::ptr::addr_of_mut!(VIS_BITS));
+            merge_vis(m, dry_leaf, &mut *core::ptr::addr_of_mut!(VIS_BITS));
             dry = dry_leaf as i32;
         }
     }
@@ -22658,7 +22665,7 @@ unsafe fn rebuild_pvs_cache(
             }
             i += 1;
         }
-        decompress_vis(m, visofs, &mut *core::ptr::addr_of_mut!(VIS_BITS));
+        decompress_vis(m, cam_leaf as usize, &mut *core::ptr::addr_of_mut!(VIS_BITS));
     }
 
     let mut ei = 0usize;
@@ -22828,11 +22835,9 @@ unsafe fn vis_row_ensure(m: &Map, leaf: i32, dry: i32) {
         return;
     }
     let bits = &mut *core::ptr::addr_of_mut!(VIS_BITS);
-    let (visofs, _, _) = m.leaf(leaf as usize);
-    decompress_vis(m, visofs, bits);
+    decompress_vis(m, leaf as usize, bits);
     if dry > 0 {
-        let (dry_visofs, _, _) = m.leaf(dry as usize);
-        merge_vis(m, dry_visofs, bits);
+        merge_vis(m, dry as usize, bits);
     }
     VIS_ROW_LEAF = leaf;
     VIS_ROW_DRY = dry;
@@ -31831,15 +31836,19 @@ fn play(
 
     let map_bytes = unsafe { streamed_map_bytes(map_len) };
     // Map's field readers are intentionally unchecked on the PS1 hot path.
-    // Reject a truncated or unknown payload once, before any offset/count can
-    // turn into an out-of-bounds read. Transitional formats remain readable
-    // for diagnostics; HLMH alone carries the larger source-addressed header.
+    // Reject an unknown or short header. HLMJ also checks its BSP/PVS row
+    // bounds before exposing that format's tagged offsets to the hot path.
+    // Transitional formats remain readable for diagnostics; HLMH and HLMJ
+    // carry the larger source-addressed header.
     if map_bytes.len() < cooked::LEGACY_HEADER_SIZE
-        || (&map_bytes[0..4] == b"HLMH" && map_bytes.len() < cooked::HEADER_SIZE)
+        || ((&map_bytes[0..4] == b"HLMH" || &map_bytes[0..4] == b"HLMJ")
+            && map_bytes.len() < cooked::HEADER_SIZE)
         || (&map_bytes[0..4] != b"HLME"
             && &map_bytes[0..4] != b"HLMF"
             && &map_bytes[0..4] != b"HLMG"
-            && &map_bytes[0..4] != b"HLMH")
+            && &map_bytes[0..4] != b"HLMH"
+            && &map_bytes[0..4] != b"HLMJ")
+        || (&map_bytes[0..4] == b"HLMJ" && !hl_format::pvs_pair::validate_room(map_bytes))
     {
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
@@ -35116,16 +35125,20 @@ fn play(
                     && (cached_pvs_leaf != cam_leaf || render_pvs_underwater != render_eye_under))
                     || seal_rebuild
                 {
-                    // Compilers deduplicate identical vis rows, so adjacent
-                    // leaves frequently share one. A leaf change whose row
+                    // Legacy maps can alias identical vis rows by offset. A
+                    // leaf change whose row
                     // offset matches the built PVS (dry both sides -- the
                     // underwater merge also depends on the eye) derives the
                     // exact same visible set, marks, and plan: skip the whole
                     // rebuild and just move the bookkeeping to the new leaf.
+                    // HLMJ tags offsets and deliberately gives every world
+                    // leaf its own encoded row. The installed HLMH corpus had
+                    // no aliased world offsets, so this shortcut was unused.
                     let same_row = cached_pvs_leaf >= 0
                         && seal_state == render_seal_state
                         && !render_pvs_underwater
                         && !render_eye_under
+                        && !m.paired_pvs()
                         && render_pvs_visofs >= 0
                         && m.leaf(cam_leaf as usize).0 == render_pvs_visofs;
                     if same_row {

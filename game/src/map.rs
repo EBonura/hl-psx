@@ -10,11 +10,12 @@
 //! independently switchable lightmap planes after the base light palette; its
 //! 15-bit face count carries GoldSrc's map-wide water-alpha verdict in bit 15.
 //! HLMH grows the header by one word for a versioned source-addressed world
-//! pipeline section.
+//! pipeline section. HLMJ keeps the same layout and stores world PVS rows as
+//! complete odd-leaf anchors or tagged even-leaf XOR deltas.
 //!
-//!   magic "HLMA" .. "HLMH" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
+//!   magic "HLMA" .. "HLMJ" | u32 n_verts,n_tris,n_texs,n_faces,bsp_off
 //!     | u32 clip_off,ent_off,tram_off,prop_off,sky_tex_base,nav_off,logic_off
-//!     | HLMH: u32 world_pipeline_off
+//!     | HLMH/J: u32 world_pipeline_off
 //!   verts i16×3 | u32 n_loopverts | FaceVert[5B] × n_loopverts
 //!     | TriRec[16B] × n_tris (raw/dirty faces only) | light palette (u16 × 256)
 //!     FaceVert = u16 idx, u8 uv[2], u8 light_idx     (loop faces fan these)
@@ -39,7 +40,9 @@
 //!       patch face: first = loopvert start, count = fixed four-corner records
 //!         (bit15 on record corner 3 marks a triangle fallback)
 //!     nodes  (u16 plane, i16 c0, i16 c1) × n_nodes
-//!     leaves (i32 visofs, u16 mark_start, u16 mark_count) × n_leaves
+//!     leaves (u32 visofs, u16 mark_start, u16 mark_count) × n_leaves
+//!       HLMH and earlier: signed -1 means all visible; HLMJ world rows use
+//!       bit31 for even-leaf deltas, submodel-only leaves still use -1
 //!     marks  u16 × n_marks (4-aligned on BOTH sides -- see marks_off)
 //!     vis    u8  × vis_len (pad 4)
 //!   clip:
@@ -1674,6 +1677,22 @@ impl Map {
             rd_u16(self.data, o + 4) as usize,
             cooked::leaf_mark_count(rd_u16(self.data, o + 6)) as usize,
         )
+    }
+
+    /// The HLMJ tag is meaningful only after checking the map version. Older
+    /// signed negative visibility offsets keep their all-visible meaning.
+    #[inline]
+    pub fn paired_pvs(&self) -> bool {
+        rd_u32(self.data, cooked::HEADER_MAGIC_OFFSET) == cooked::MAGIC_HLMJ
+    }
+
+    #[inline]
+    pub fn decode_paired_pvs(&self, leaf: usize, out: &mut [u8], merge: bool) -> bool {
+        if !self.paired_pvs() || leaf == 0 || leaf > self.n_visleaves {
+            return false;
+        }
+        let leaves = &self.data[self.leaves_off..self.leaves_off + (self.n_visleaves + 1) * LEAF_SZ];
+        hl_format::pvs_pair::decode(self.vis(), leaves, leaf, out.len(), out, merge)
     }
 
     /// Source BSP liquid class for leaf `i`: 0 ordinary, 1 water, 2 slime,

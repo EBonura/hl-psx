@@ -15,6 +15,8 @@ mod hitgroup;
 mod skill;
 #[path = "../shared/hl-format/src/skill_cfg.rs"]
 mod skill_cfg;
+#[path = "../shared/hl-format/src/room_budget.rs"]
+mod room_budget;
 
 const FALLBACK_MAP_WORDS: usize = 255_000;
 const FALLBACK_MAX_VERTS: usize = 12_288;
@@ -646,7 +648,8 @@ fn scan_room_budget(
                 && &data[0..4] != b"HLME"
                 && &data[0..4] != b"HLMF"
                 && &data[0..4] != b"HLMG"
-                && &data[0..4] != b"HLMH")
+                && &data[0..4] != b"HLMH"
+                && &data[0..4] != b"HLMJ")
         {
             continue;
         }
@@ -673,6 +676,7 @@ fn scan_room_budget(
                 || &data[0..4] == b"HLMF"
                 || &data[0..4] == b"HLMG"
                 || &data[0..4] == b"HLMH"
+                || &data[0..4] == b"HLMJ"
             {
                 (leaf_counts >> 16) as usize
             } else {
@@ -758,7 +762,7 @@ fn scan_room_budget(
     }
 
     (
-        max_bytes.div_ceil(4),
+        room_budget::map_staging_words(max_bytes),
         // Projection scratch is indexed directly, but has no SIMD/alignment
         // requirement. Preserve the audited +128-vertex recook guard while
         // avoiding up to 255 vertices of dead linker allocation.
