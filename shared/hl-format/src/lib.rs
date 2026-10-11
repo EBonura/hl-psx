@@ -370,6 +370,8 @@ pub mod logic {
     /// names, `speed` m_iCount | m_fControl << 8, one aux word (m_flSpread,
     /// 0); the record's bounds are the field.
     pub const MORTAR_FIELD: u8 = 58;
+    /// Monster-only launch volume; two aux words hold Q4 per-tick x/y/z velocity.
+    pub const TRIGGER_MONSTERJUMP: u8 = 59;
 
     // CBaseMonster TriggerCondition values (monsters.h AITRIGGER_*). The
     // cooker emits only the ones the runtime evaluates.
@@ -490,12 +492,13 @@ pub mod logic {
     pub const LOGIC_ENV_BEVERAGE: u8 = ENV_BEVERAGE;
     pub const LOGIC_MONSTER_TRIGGER: u8 = MONSTER_TRIGGER;
     pub const LOGIC_MORTAR_FIELD: u8 = MORTAR_FIELD;
+    pub const LOGIC_TRIGGER_MONSTERJUMP: u8 = TRIGGER_MONSTERJUMP;
     pub const LOGIC_BIGMOMMA_NODE: u8 = BIGMOMMA_NODE;
     pub const LOGIC_INFODECAL: u8 = INFODECAL;
     pub const LOGIC_SHOOTER: u8 = SHOOTER;
     pub const LOGIC_TRIGGER_CAMERA: u8 = TRIGGER_CAMERA;
 
-    pub const KINDS: [u8; 58] = [
+    pub const KINDS: [u8; 59] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -554,6 +557,7 @@ pub mod logic {
         SHOOTER,
         TRIGGER_CAMERA,
         MORTAR_FIELD,
+        TRIGGER_MONSTERJUMP,
     ];
 }
 

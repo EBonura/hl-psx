@@ -62,6 +62,7 @@ mod nihilanth;
 mod osprey;
 mod save;
 mod scientist_logic;
+mod monsterjump;
 mod scratchpad;
 mod setpiece_logic;
 mod setpiece_sfx;
@@ -3587,6 +3588,9 @@ static mut PUSH_IMPULSE: [i32; 3] = [0; 3]; // per-tick trigger_push velocity ad
 const MAX_PUSH_LI: usize = 32;
 static mut PUSH_LI: [u16; MAX_PUSH_LI] = [0; MAX_PUSH_LI];
 static mut PUSH_N: u8 = 0;
+static mut MONSTERJUMP_N: u16 = 0;
+static mut PROP_JUMP: [monsterjump::State; MAX_PROPS] = [monsterjump::State::EMPTY; MAX_PROPS];
+const _: () = assert!(core::mem::size_of::<monsterjump::State>() == 10);
 /// Union of the pushers' boxes: most actors are nowhere near one, and a miss here
 /// skips every per-pusher test.
 static mut PUSH_BOX: [[i32; 3]; 2] = [[0; 3]; 2];
@@ -8955,6 +8959,7 @@ unsafe fn restore_transition_actors(
             carry_name_id(m, carry_id)
         };
         PROP_SCRIPT_GOAL[pi] = [0; 3];
+        PROP_JUMP[pi] = monsterjump::State::EMPTY;
         PROP_SCRIPT_YAW[pi] = 0;
         PROP_SCRIPT_MODE[pi] = 0;
         PROP_SCRIPT_LI[pi] = u16::MAX;
@@ -10936,7 +10941,7 @@ unsafe fn logic_use_entity(
         }
         // trigger_hurt and trigger_push share the START_OFF on/off toggle
         // (TOP = off, BOTTOM = on): a fire on their targetname enables/disables.
-        map::LOGIC_TRIGGER_HURT | map::LOGIC_TRIGGER_PUSH => match use_type {
+        map::LOGIC_TRIGGER_HURT | map::LOGIC_TRIGGER_PUSH | map::LOGIC_TRIGGER_MONSTERJUMP => match use_type {
             map::USE_ON => LOGIC_STATE[li] = LOGIC_STATE_BOTTOM,
             map::USE_OFF => LOGIC_STATE[li] = LOGIC_STATE_TOP,
             _ => {
@@ -11404,6 +11409,7 @@ unsafe fn maker_make(
                 PROP_SCRIPT_LI[pi] = u16::MAX;
                 PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_FRESH;
                 PROP_POS[pi] = rec.origin;
+                PROP_JUMP[pi] = monsterjump::State::EMPTY;
                 PROP_ACTIVE[pi] = 0;
                 PROP_DORMANT[pi] = PROP_RUNTIME_DORMANT_STOCK;
                 found = pi;
@@ -11434,6 +11440,7 @@ unsafe fn maker_make(
     }
     prop_nav_cache_invalidate(pi);
     PROP_DORMANT[pi] = 0;
+    PROP_JUMP[pi] = monsterjump::State::EMPTY;
     PROP_ACTIVE[pi] = 1;
     PROP_MAKER[pi] = tag;
     // The maker targetname is only an allocation-free link to its dormant
@@ -13348,6 +13355,8 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     MONSTER_TRIGGER_END = 0;
     MONSTER_TOUCH = false;
     PUSH_N = 0;
+    MONSTERJUMP_N = 0;
+    PROP_JUMP = [monsterjump::State::EMPTY; MAX_PROPS];
     BOSS_WALKER = u16::MAX;
     OSPREY.li = u16::MAX;
     garg::reset();
@@ -13358,6 +13367,10 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     while li < nlogic {
         let rec = m.logic(li);
         LOGIC_KIND[li] = rec.kind;
+        if rec.kind == map::LOGIC_TRIGGER_MONSTERJUMP {
+            MONSTERJUMP_N += 1;
+            if rec.targetname != 0 { LOGIC_STATE[li] = LOGIC_STATE_TOP; }
+        }
         if rec.kind == map::LOGIC_TRIGGER_PUSH
             && logic_valid_brush(rec.brush, nents).is_none()
             && rec.spawnflags & 1 == 0
@@ -15145,18 +15158,22 @@ unsafe fn prop_push_step(m: &Map, movers: &[phys::Mover], pi: usize, v: [i32; 3]
 unsafe fn prop_air_tick(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
     let ty = PROP_KIND[pi];
     let pos = PROP_POS[pi];
-    let a = PROP_SCRIPT_GOAL[pi];
+    let a = if PROP_JUMP[pi].active {PROP_JUMP[pi].velocity}else{PROP_SCRIPT_GOAL[pi]};
     // GoldSrc adds gravity before the move: the fall is 2, 4, 6, ... units per tick.
-    let vy = (a[1] as i32 + 1).min(100);
-    let mut cand = [pos[0] + a[0] as i32, pos[1] - vy, pos[2] + a[2] as i32];
+    let fractional=PROP_JUMP[pi].active;
+    let gravity=if fractional {16}else{1};
+    let down=(a[1] as i32+gravity).min(if fractional {1600}else{100});
+    let delta=if fractional {PROP_JUMP[pi].step([a[0],down as i16,a[2]])}else{[a[0] as i32,down,a[2] as i32]};
+    let vy=delta[1];
+    let mut cand = [pos[0] + delta[0], pos[1] - vy, pos[2] + delta[2]];
     // Zero marks "grounded", so the apex of an upward push steps to 1.
-    let next_vy = a[1] as i32 + 2;
+    let next_vy = a[1] as i32 + 2*gravity;
     let mut momentum = [
         a[0],
         (if next_vy == 0 {
-            1
+            if fractional {0}else{1}
         } else {
-            next_vy.clamp(-100, 100)
+            next_vy.clamp(-100*gravity, 100*gravity)
         }) as i16,
         a[2],
     ];
@@ -15194,12 +15211,13 @@ unsafe fn prop_air_tick(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
                     && prop_spawn_floor_y_down(m, pi, ahead, prop_hit_extent(ty).0, vy + 64)
                         .is_some_and(|y1| y - y1 > 8);
                 if steep {
-                    momentum[1] = 1;
-                    PROP_SCRIPT_GOAL[pi] = momentum;
+                    momentum[1] = gravity as i16;
+                    if PROP_JUMP[pi].active {PROP_JUMP[pi].velocity=momentum;}else{PROP_SCRIPT_GOAL[pi]=momentum;}
                     prop_set_pos_exact(m, pi, [cand[0], y, cand[2]]);
                     return true;
                 }
                 PROP_DORMANT[pi] &= !PROP_RUNTIME_AIRBORNE;
+                PROP_JUMP[pi]=monsterjump::State::EMPTY;
                 prop_set_pos_exact(m, pi, [cand[0], y, cand[2]]);
                 return false;
             }
@@ -15207,11 +15225,41 @@ unsafe fn prop_air_tick(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
     }
     if cand[1] < -20000 {
         PROP_DORMANT[pi] &= !PROP_RUNTIME_AIRBORNE;
+        PROP_JUMP[pi]=monsterjump::State::EMPTY;
         return false;
     }
-    PROP_SCRIPT_GOAL[pi] = momentum;
+    if PROP_JUMP[pi].active {PROP_JUMP[pi].velocity=momentum;}else{PROP_SCRIPT_GOAL[pi]=momentum;}
     prop_set_pos_exact(m, pi, cand);
     true
+}
+
+/// Only live walking monsters enter this path; players, pickups, flyers and
+/// swimmers never receive the trigger's launch impulse.
+unsafe fn prop_monsterjump_touch(m: &Map, pi: usize) {
+    if MONSTERJUMP_N == 0 || PROP_HEALTH[pi] == 0
+        || !monsterjump::walker(PROP_KIND[pi]) { return; }
+    let pos = PROP_POS[pi];
+    let (mins,maxs)=actor_collision_bounds(PROP_KIND[pi],pos);
+    for li in 0..m.n_logic.min(MAX_LOGIC) {
+        let rec=m.logic(li);
+        if rec.kind != map::LOGIC_TRIGGER_MONSTERJUMP || LOGIC_STATE[li] == LOGIC_STATE_TOP
+            || LOGIC_STATE[li] == LOGIC_STATE_REMOVED || rec.aux_count < 2
+            || !monsterjump::touches([rec.mins,rec.maxs],[mins,maxs]) { continue; }
+        // Trigger contact uses the actor box, not origin containment.
+        let a=m.logic_aux(rec.first_aux);let b=m.logic_aux(rec.first_aux+1);
+        let airborne=PROP_DORMANT[pi]&PROP_RUNTIME_AIRBORNE != 0;
+        if !PROP_JUMP[pi].active {
+            let old=PROP_SCRIPT_GOAL[pi];
+            PROP_JUMP[pi].start();
+            PROP_JUMP[pi].velocity=if airborne {old.map(|n| n.saturating_mul(16))}else{[0;3]};
+        }
+        PROP_JUMP[pi].launch([a.target as i16,a.delay_ticks as i16,b.target as i16],!airborne);
+        if !airborne {
+            PROP_DORMANT[pi]|=PROP_RUNTIME_AIRBORNE;
+            PROP_NEAR_COUNT[pi]=0xff;
+            prop_set_pos_exact(m,pi,[pos[0],pos[1]+1,pos[2]]);
+        }
+    }
 }
 
 /// Environment forces on one actor before its AI thinks: airborne integration
@@ -15219,6 +15267,7 @@ unsafe fn prop_air_tick(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
 #[inline(never)]
 #[optimize(size)]
 unsafe fn prop_environment_move(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
+    prop_monsterjump_touch(m, pi);
     if PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0 {
         return prop_air_tick(m, movers, pi);
     }
@@ -16428,6 +16477,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         prop_script_clear(pi);
     }
     if PROP_HEALTH[pi] == 0 {
+        PROP_JUMP[pi] = monsterjump::State::EMPTY;
         PROP_STATE[pi] = PROP_STATE_DEAD;
         PROP_DEATH_START[pi] = SIM_NOW; // play the death clip forward from now
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
@@ -18411,6 +18461,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         PROP_MAKER[i] = 0;
         PROP_LOGIC_LINK[i] = u16::MAX;
         PROP_SCRIPT_GOAL[i] = [0; 3];
+        PROP_JUMP[i] = monsterjump::State::EMPTY;
         PROP_SCRIPT_YAW[i] = 0;
         PROP_SCRIPT_MODE[i] = 0;
         PROP_SCRIPT_LI[i] = u16::MAX;
@@ -18684,7 +18735,7 @@ unsafe fn tick_props(
             pi += 1;
             continue;
         }
-        if (PUSH_N != 0 || PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0)
+        if (PUSH_N != 0 || MONSTERJUMP_N != 0 || PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0)
             && prop_environment_move(m, movers, pi)
         {
             pi += 1;

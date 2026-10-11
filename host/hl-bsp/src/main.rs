@@ -8044,6 +8044,7 @@ fn collect_logic_entities_with_lightstyles(
             "func_pushable" => continue,
             "trigger_teleport" => LOGIC_TRIGGER_TELEPORT,
             "trigger_push" | "func_conveyor" => LOGIC_TRIGGER_PUSH,
+            "trigger_monsterjump" => LOGIC_TRIGGER_MONSTERJUMP,
             // func_friction is a SOLID_TRIGGER volume like trigger_gravity: the same
             // record, flagged LOGIC_GRAVITY_FRICTION, carries the friction fraction.
             "trigger_gravity" | "func_friction" => LOGIC_TRIGGER_GRAVITY,
@@ -9259,6 +9260,22 @@ fn collect_logic_entities_with_lightstyles(
                 }
             }
         }
+        if kind == LOGIC_TRIGGER_MONSTERJUMP {
+            // Horizontal speed and upward height are velocity keys, not a
+            // teleport or a displacement. Q4 retains c2a1's 10 u/s launch.
+            let dir = ent_move_dir(block);
+            let speed = parse_f32_key(block, "speed", 200.0);
+            let speed = if speed == 0.0 {200.0}else{speed};
+            let height = parse_f32_key(block, "height", 150.0);
+            let height = if height == 0.0 {150.0}else{height};
+            let v = to_world([dir[0] * speed * 16.0 / 20.0,
+                dir[1] * speed * 16.0 / 20.0, height * 16.0 / 20.0], scale);
+            if v.iter().any(|&n| i16::try_from(n).is_err()) || v[1] == i16::MIN as i32 { return Err("monsterjump velocity exceeds Q4 representation".into()); }
+            let checked = v.map(|n| n as i16);
+            aux.push(LogicAuxRec { target: checked[0] as u16, delay_ticks: checked[1] as u16 });
+            aux.push(LogicAuxRec { target: checked[2] as u16, delay_ticks: 0 });
+            aux_count = 2;
+        }
         if kind == LOGIC_TRIGGER_PUSH {
             // Per-tick world push vector from HL angles + speed (u/s at 20 Hz).
             // func_conveyor: the engine gives whoever stands on the belt its
@@ -9303,6 +9320,7 @@ fn collect_logic_entities_with_lightstyles(
                         | LOGIC_TRIGGER_HURT
                         | LOGIC_TRIGGER_TELEPORT
                         | LOGIC_TRIGGER_PUSH
+                        | LOGIC_TRIGGER_MONSTERJUMP
                         | LOGIC_TRIGGER_GRAVITY
                         | LOGIC_CDTRACK
                 ),
@@ -17590,6 +17608,26 @@ mod tests {
 
     fn put_i32(buf: &mut Vec<u8>, v: i32) {
         buf.extend_from_slice(&v.to_le_bytes());
+    }
+
+    #[test]
+    fn monsterjump_cooks_fractional_retail_launch_and_defaults() {
+        for (keys, expected) in [
+            ("\"angle\" \"61\" \"speed\" \"10\" \"height\" \"128\"", [4,102,7]),
+            ("\"angles\" \"0 120 0\" \"speed\" \"10\" \"height\" \"128\"", [-4,102,7]),
+            ("\"angle\" \"0\"", [160,120,0]),
+            ("\"speed\" \"0\" \"height\" \"0\"", [160,120,0]),
+        ] {
+            let entities=format!("{{ \"classname\" \"trigger_monsterjump\" {keys} }}");
+            let logic=collect_logic_entities(entities.as_bytes(),&[],&[],1.0,&Default::default(),&Default::default()).unwrap();
+            let rec=&logic.ents[0];
+            assert_eq!(rec.kind,LOGIC_TRIGGER_MONSTERJUMP);
+            assert_eq!(rec.aux_count,2);
+            let a=&logic.aux[rec.first_aux as usize];let b=&logic.aux[rec.first_aux as usize+1];
+            assert_eq!([a.target as i16,a.delay_ticks as i16,b.target as i16],expected);
+        }
+        assert!(collect_logic_entities(br#"{ "classname" "trigger_monsterjump" "speed" "1000000" }"#,
+            &[],&[],1.0,&Default::default(),&Default::default()).is_err());
     }
 
     #[test]

@@ -137,7 +137,7 @@ trigger_changelevel|runtime|transition logic and carry snapshot
 trigger_endsection|runtime|Hazard Course completion logic
 trigger_gravity|runtime|player gravity volume
 trigger_hurt|runtime|damage volume
-trigger_monsterjump|missing_gameplay|monster jump volume is absent
+trigger_monsterjump|runtime|brush touch launches live walking monsters with fractional horizontal speed and grounded vertical impulse
 trigger_multiple|runtime|repeatable touch trigger
 trigger_once|runtime|single-use touch trigger
 trigger_push|runtime|push volume
