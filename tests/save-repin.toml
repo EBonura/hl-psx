@@ -1,0 +1,159 @@
+# Save at a moved Hazard Course position, reboot on the persisted card, and
+# load that position through the title menu. Run with psoxide-gate and a fresh
+# report directory. The ordinary visual journey remains tests/journey.toml.
+name = "hl-save-repin"
+title = "Half-Life: Hazard Course save and cold load"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 7000
+
+[[step]]
+label = "boot to title, then choose Hazard Course"
+wait = 620
+
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 25
+
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 1180
+
+[[step]]
+checkpoint = "hazard-spawn"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "walk to a position distinct from the spawn"
+lstick = [128, 0]
+hold = 160
+wait = 20
+
+[[step]]
+checkpoint = "before-save"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "hazard-spawn"
+min_changed = 0.05
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+signed = true
+op = "eq"
+value = -1380
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+offset = 4
+signed = true
+op = "eq"
+value = -28
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+offset = 8
+signed = true
+op = "eq"
+value = -1555
+
+[[step]]
+label = "pause and open Save Game"
+press = ["start"]
+hold = 4
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 35
+
+[[step]]
+checkpoint = "save-slots"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "save to Card 1 Manual"
+press = ["cross"]
+hold = 4
+wait = 400
+
+[[step]]
+checkpoint = "game-saved"
+golden = false
+[[step.assert]]
+kind = "card_writes"
+min_count = 5
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+card = { action = "snapshot" }
+
+[[step]]
+card = { action = "reboot" }
+
+[[step]]
+label = "fresh title menu, choose Load game"
+wait = 620
+
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+repeat = 3
+
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 1180
+
+[[step]]
+checkpoint = "world-reloaded"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "presenting"
+window = 120
+min_changes = 5
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+signed = true
+op = "eq"
+value = -1380
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+offset = 4
+signed = true
+op = "eq"
+value = -28
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+offset = 8
+signed = true
+op = "eq"
+value = -1555
+
+[[step]]
+card = { action = "snapshot" }

@@ -32,7 +32,7 @@ is included in `LICENSE`.
 ## PSoXide
 
 HL-PSX links to and invokes PSoXide crates and tools pinned at commit
-`36ead4b0c71e0b9a3311e86faf77966f1ef44fdc`:
+`448bd58be8204e2fae851a64b8cd30ba461707ee`:
 
 <https://github.com/EBonura/PSoXide>
 
