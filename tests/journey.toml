@@ -13,6 +13,13 @@ wait = 620
 
 [[step]]
 checkpoint = "main-menu"
+# The title film advances on presentation frames; compare the stable menu UI.
+mask = [{ x = 0, y = 0, w = 320, h = 85 }]
+
+[[step]]
+checkpoint = "main-menu-full-render"
+golden = false
+# Capture again without advancing time or masking the CPU/HW renderer matrix.
 [[step.assert]]
 kind = "not_flat"
 
@@ -29,6 +36,11 @@ wait = 25
 
 [[step]]
 checkpoint = "hazard-maps"
+mask = [{ x = 0, y = 0, w = 320, h = 85 }]
+
+[[step]]
+checkpoint = "hazard-maps-full-render"
+golden = false
 [[step.assert]]
 kind = "not_flat"
 
@@ -106,6 +118,56 @@ wait = 1180
 
 [[step]]
 checkpoint = "interloper-entry"
+# Moving props and the interpolated view make this frame cadence-sensitive.
+# Verify the settled entry pose and keep the full renderer matrix unmasked.
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+signed = true
+op = "eq"
+value = -174
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+offset = 4
+signed = true
+op = "eq"
+value = 276
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+offset = 8
+signed = true
+op = "eq"
+value = -802
+[[step.assert]]
+kind = "ram"
+sym = "CAM_CUR"
+signed = true
+op = "eq"
+value = -174
+[[step.assert]]
+kind = "ram"
+sym = "CAM_CUR"
+offset = 4
+signed = true
+op = "eq"
+value = 276
+[[step.assert]]
+kind = "ram"
+sym = "CAM_CUR"
+offset = 8
+signed = true
+op = "eq"
+value = -802
+[[step.assert]]
+kind = "ram"
+sym = "CAM_CUR"
+offset = 16
+size = 2
+op = "eq"
+value = 0
 [[step.assert]]
 kind = "not_flat"
 [[step.assert]]
@@ -124,6 +186,82 @@ wait = 20
 
 [[step]]
 checkpoint = "interloper-walk"
+# The same traversal can end on adjacent simulation and display frames.
+# Bound the reached terrain and camera pose while checking the full image matrix.
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+signed = true
+op = "eq"
+value = -166
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+offset = 4
+signed = true
+op = "between"
+value = 45
+value_hi = 75
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+offset = 8
+signed = true
+op = "between"
+value = -105
+value_hi = -35
+[[step.assert]]
+kind = "ram"
+sym = "CAM_CUR"
+signed = true
+op = "eq"
+value = -166
+[[step.assert]]
+kind = "ram"
+sym = "CAM_CUR"
+offset = 4
+signed = true
+op = "between"
+value = 45
+value_hi = 75
+[[step.assert]]
+kind = "ram"
+sym = "CAM_CUR"
+offset = 8
+signed = true
+op = "between"
+value = -105
+value_hi = -35
+[[step.assert]]
+kind = "ram"
+sym = "CAM_PREV"
+signed = true
+op = "eq"
+value = -166
+[[step.assert]]
+kind = "ram"
+sym = "CAM_PREV"
+offset = 4
+signed = true
+op = "between"
+value = 45
+value_hi = 75
+[[step.assert]]
+kind = "ram"
+sym = "CAM_PREV"
+offset = 8
+signed = true
+op = "between"
+value = -105
+value_hi = -35
+[[step.assert]]
+kind = "ram"
+sym = "CAM_CUR"
+offset = 16
+size = 2
+op = "eq"
+value = 0
 [[step.assert]]
 kind = "not_flat"
 [[step.assert]]
