@@ -1,0 +1,2403 @@
+{
+  "entity:env_beverage": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_ENV_BEVERAGE cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:monster_barnacle": {
+    "file": "game/src/barnacle.rs",
+    "symbol": "pub(crate) unsafe fn tick",
+    "reason": "Reviewed prey selection, pulling and damage state machine; no accepted barnacle interaction journey.",
+    "classification": "implemented",
+    "source_sha256": "379cd7c58cad51c0fe27cc205034a7d03d4659e08171ea64ba5baea3c1d46dfa"
+  },
+  "entity:func_door": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_DOOR cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_platrot": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_DOOR cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_door_rotating": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_DOOR cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:momentary_door": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_DOOR cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_button": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_BUTTON cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_rot_button": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_BUTTON cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:momentary_rot_button": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_MOMENTARY cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_rotating": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_ROTATING cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_pendulum": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_PENDULUM cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_breakable": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_BREAKABLE cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:trigger_teleport": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_TELEPORT cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:trigger_push": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_PUSH cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_conveyor": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_PUSH cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:trigger_gravity": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_GRAVITY cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_friction": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_GRAVITY cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_healthcharger": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_HEALTH_CHARGER cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_recharge": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_HEV_CHARGER cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:monstermaker": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_MONSTERMAKER cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:scripted_sequence": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_SCRIPTED cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:aiscripted_sequence": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_SCRIPTED cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_train": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_TRAIN cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_guntarget": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_GUNTARGET cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:trigger_endsection": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_ENDSECTION cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:env_render": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_ENV_RENDER cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:gibshooter": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_SHOOTER cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:env_shooter": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_SHOOTER cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_mortar_field": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_MORTAR_FIELD cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:player_weaponstrip": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_WEAPONSTRIP cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:trigger_once": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_ONCE cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:trigger_multiple": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_MULTIPLE cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:trigger_relay": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_RELAY cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:multi_manager": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_MULTI_MANAGER cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:trigger_auto": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_AUTO cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:env_message": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_ENV_MESSAGE cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:env_fade": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_ENV_FADE cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:player_loadsaved": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_ENV_FADE cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:trigger_camera": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_CAMERA cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:worldspawn": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_MAP_FLAGS cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:trigger_cdaudio": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_CDTRACK cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:target_cdaudio": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_CDTRACK cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:scripted_sentence": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_SENTENCE cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:ambient_generic": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_MAP_SOUND cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:speaker": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_AMBIENT cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:env_shake": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_ENV_SHAKE cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_wall_toggle": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_WALL_TOGGLE cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_wall": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_WALL_FRAME cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_illusionary": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_WALL_FRAME cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:multisource": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_MULTISOURCE cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:env_global": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_ENV_GLOBAL cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:env_explosion": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_ENV_EXPLOSION cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:env_spark": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_ENV_SPARK cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_monsterclip": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_MONSTERCLIP cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_trackchange": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_BUTTON cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_trackautochange": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_BUTTON cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_tank": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TANK cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_tanklaser": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TANK cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_tankrocket": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TANK cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_tankmortar": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TANK cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:trigger_changelevel": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_CHANGELEVEL cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:trigger_transition": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_TRANSITION cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:info_landmark": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_INFO_LANDMARK cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:trigger_hurt": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_TRIGGER_HURT cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:func_tracktrain": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_FUNC_TRACKTRAIN cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:item_suit": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_ITEM_SUIT cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:item_battery": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_ITEM_BATTERY cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:world_items": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed classname to LOGIC_ITEM_SUIT cook mapping at collect_logic_entities_with_lightstyles, consumed by game main logic_use_entity/tick/touch dispatch. Some conditions, flags and original parity remain unverified; no feature-specific accepted journey.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:env_blood": {
+    "classification": "missing",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed no entity emission in logic collector default continue, prop collector default continue and sprite allowlist. No dedicated runtime record exists. Prior explicit missing contract corroborates absence; source snapshots bound, no classname-only inference.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "host/hl-content/entity-contract.txt": "2bd86ec85c544d52e162d4736b8bfb684cc3fb1f13fdae4172a816a8a292c028",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:env_funnel": {
+    "classification": "missing",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed no entity emission in logic collector default continue, prop collector default continue and sprite allowlist. No dedicated runtime record exists. Prior explicit missing contract corroborates absence; source snapshots bound, no classname-only inference.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "host/hl-content/entity-contract.txt": "2bd86ec85c544d52e162d4736b8bfb684cc3fb1f13fdae4172a816a8a292c028",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:env_sound": {
+    "classification": "missing",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed no entity emission in logic collector default continue, prop collector default continue and sprite allowlist. No dedicated runtime record exists. Prior explicit missing contract corroborates absence; source snapshots bound, no classname-only inference.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "host/hl-content/entity-contract.txt": "2bd86ec85c544d52e162d4736b8bfb684cc3fb1f13fdae4172a816a8a292c028",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:trigger_autosave": {
+    "classification": "missing",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed no entity emission in logic collector default continue, prop collector default continue and sprite allowlist. No dedicated runtime record exists. Prior explicit missing contract corroborates absence; source snapshots bound, no classname-only inference.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "host/hl-content/entity-contract.txt": "2bd86ec85c544d52e162d4736b8bfb684cc3fb1f13fdae4172a816a8a292c028",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:trigger_monsterjump": {
+    "classification": "missing",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed no entity emission in logic collector default continue, prop collector default continue and sprite allowlist. No dedicated runtime record exists. Prior explicit missing contract corroborates absence; source snapshots bound, no classname-only inference.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "host/hl-content/entity-contract.txt": "2bd86ec85c544d52e162d4736b8bfb684cc3fb1f13fdae4172a816a8a292c028",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:weaponbox": {
+    "classification": "missing",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed no entity emission in logic collector default continue, prop collector default continue and sprite allowlist. No dedicated runtime record exists. Prior explicit missing contract corroborates absence; source snapshots bound, no classname-only inference.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "host/hl-content/entity-contract.txt": "2bd86ec85c544d52e162d4736b8bfb684cc3fb1f13fdae4172a816a8a292c028",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:ammo_9mmARclip": {
+    "classification": "missing",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed no entity emission in logic collector default continue, prop collector default continue and sprite allowlist. No dedicated runtime record exists. Prior explicit missing contract corroborates absence; source snapshots bound, no classname-only inference.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "host/hl-content/entity-contract.txt": "2bd86ec85c544d52e162d4736b8bfb684cc3fb1f13fdae4172a816a8a292c028",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:info_node_air": {
+    "classification": "missing",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_logic_entities_with_lightstyles",
+    "reason": "Reviewed no entity emission in logic collector default continue, prop collector default continue and sprite allowlist. No dedicated runtime record exists. Prior explicit missing contract corroborates absence; source snapshots bound, no classname-only inference.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "host/hl-content/entity-contract.txt": "2bd86ec85c544d52e162d4736b8bfb684cc3fb1f13fdae4172a816a8a292c028",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:env_bubbles": {
+    "classification": "missing",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_entities",
+    "reason": "Brush collector deliberately drops this invisible controller; no bubble sprite/logic emitter in reviewed collectors or runtime. This is a visible-effects gap, not missing collision.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:monster_tripmine": {
+    "classification": "implemented",
+    "file": "game/src/species.rs",
+    "symbol": "pub(crate) unsafe fn idle_think",
+    "reason": "Reviewed authored type57 cooking and idle_think dispatch to tripmine::tick_map, including beam state and detonation; old missing support row is stale. Full behavior journey unexercised.",
+    "source_sha256": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a",
+    "additional_sources": {
+      "host/hl-bsp/src/main.rs": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+      "game/src/tripmine.rs": "8e01ea70ab85c79c87addc74c0c8b030c61f716837dee54d3f5975d1809468ed",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:weapon_crowbar": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_9mmhandgun": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_glock": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_357": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_9mmAR": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_mp5": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_shotgun": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_crossbow": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_rpg": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_gauss": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_egon": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_hornetgun": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_handgrenade": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_snark": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_tripmine": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:weapon_satchel": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:ammo_9mmclip": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:ammo_glockclip": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:ammo_9mmAR": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:ammo_mp5clip": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:ammo_buckshot": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:ammo_357": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:ammo_crossbow": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:ammo_rpgclip": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:ammo_gaussclip": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:ammo_ARgrenades": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:ammo_mp5grenades": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:item_healthkit": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:item_longjump": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit pickup type emission in collect_props, consumed by prop_is_pickup and pickup branches in game main. This proves a pickup path, not full weapon/combat parity or original authored outputs.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/combat_defs.rs": "1da59f0bbd1f7a7ed01d2476b1630062e1996ad0e560dae6c3dc9943f81bc7c6"
+    }
+  },
+  "entity:monster_human_grunt": {
+    "classification": "implemented",
+    "file": "game/src/species.rs",
+    "symbol": "pub(crate) unsafe fn tick_grunt",
+    "reason": "Reviewed cooked actor ID into species ranged/melee dispatch and attack state machine. Partial compact behavior; no claim of original AI parity or feature-specific journey.",
+    "source_sha256": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a",
+    "additional_sources": {
+      "host/hl-bsp/src/main.rs": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:monster_alien_slave": {
+    "classification": "implemented",
+    "file": "game/src/species.rs",
+    "symbol": "pub(crate) unsafe fn tick_slave",
+    "reason": "Reviewed cooked actor ID into species ranged/melee dispatch and attack state machine. Partial compact behavior; no claim of original AI parity or feature-specific journey.",
+    "source_sha256": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a",
+    "additional_sources": {
+      "host/hl-bsp/src/main.rs": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:monster_houndeye": {
+    "classification": "implemented",
+    "file": "game/src/species.rs",
+    "symbol": "unsafe fn tick_hound",
+    "reason": "Reviewed cooked actor ID into species ranged/melee dispatch and attack state machine. Partial compact behavior; no claim of original AI parity or feature-specific journey.",
+    "source_sha256": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a",
+    "additional_sources": {
+      "host/hl-bsp/src/main.rs": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:monster_bullchicken": {
+    "classification": "implemented",
+    "file": "game/src/species.rs",
+    "symbol": "unsafe fn tick_squid",
+    "reason": "Reviewed cooked actor ID into species ranged/melee dispatch and attack state machine. Partial compact behavior; no claim of original AI parity or feature-specific journey.",
+    "source_sha256": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a",
+    "additional_sources": {
+      "host/hl-bsp/src/main.rs": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:monster_zombie": {
+    "classification": "implemented",
+    "file": "game/src/species.rs",
+    "symbol": "unsafe fn tick_zombie",
+    "reason": "Reviewed cooked actor ID into species ranged/melee dispatch and attack state machine. Partial compact behavior; no claim of original AI parity or feature-specific journey.",
+    "source_sha256": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a",
+    "additional_sources": {
+      "host/hl-bsp/src/main.rs": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:monster_apache": {
+    "classification": "implemented",
+    "file": "game/src/apache.rs",
+    "symbol": "pub(crate) unsafe fn",
+    "reason": "Reviewed dedicated runtime actor module and cooked actor ID dispatch in game main; compact partial behavior remains unexercised and original parity unverified.",
+    "source_sha256": "48fc67d37c1a31a365507702f7ce95ed61db9c476068247f21519d735cf5dc76",
+    "additional_sources": {
+      "host/hl-bsp/src/main.rs": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:monster_gargantua": {
+    "classification": "implemented",
+    "file": "game/src/garg.rs",
+    "symbol": "pub(crate) unsafe fn",
+    "reason": "Reviewed dedicated runtime actor module and cooked actor ID dispatch in game main; compact partial behavior remains unexercised and original parity unverified.",
+    "source_sha256": "213e2257c1456458063674aef6b14d94fc2484b8230eb4269811fbaa66e2faaa",
+    "additional_sources": {
+      "host/hl-bsp/src/main.rs": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:monster_nihilanth": {
+    "classification": "implemented",
+    "file": "game/src/nihilanth.rs",
+    "symbol": "pub(crate) unsafe fn",
+    "reason": "Reviewed dedicated runtime actor module and cooked actor ID dispatch in game main; compact partial behavior remains unexercised and original parity unverified.",
+    "source_sha256": "326497b19b898d6879fd2d8ab5d01059d099c45f440059d855277d382206b3ee",
+    "additional_sources": {
+      "host/hl-bsp/src/main.rs": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:monster_osprey": {
+    "classification": "implemented",
+    "file": "game/src/osprey.rs",
+    "symbol": "pub(crate) unsafe fn",
+    "reason": "Reviewed dedicated runtime actor module and cooked actor ID dispatch in game main; compact partial behavior remains unexercised and original parity unverified.",
+    "source_sha256": "fcc675da547140651cc7ed441d1dea0c899a7473552186e846b7a4a6c223dfb5",
+    "additional_sources": {
+      "host/hl-bsp/src/main.rs": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "entity:env_sprite": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_sprite_props",
+    "reason": "Reviewed compact sprite/beam record emission, texture hydration and game sprite rendering/visibility dispatch. Original animation, attachment and blend parity unverified.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/sprite.rs": "ab691f43a9d31687f0af699576636f26bc06d6a789fc491ce0f974e842c2e3e0"
+    }
+  },
+  "entity:env_glow": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_sprite_props",
+    "reason": "Reviewed compact sprite/beam record emission, texture hydration and game sprite rendering/visibility dispatch. Original animation, attachment and blend parity unverified.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/sprite.rs": "ab691f43a9d31687f0af699576636f26bc06d6a789fc491ce0f974e842c2e3e0"
+    }
+  },
+  "entity:cycler_sprite": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_sprite_props",
+    "reason": "Reviewed compact sprite/beam record emission, texture hydration and game sprite rendering/visibility dispatch. Original animation, attachment and blend parity unverified.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/sprite.rs": "ab691f43a9d31687f0af699576636f26bc06d6a789fc491ce0f974e842c2e3e0"
+    }
+  },
+  "entity:env_beam": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_sprite_props",
+    "reason": "Reviewed compact sprite/beam record emission, texture hydration and game sprite rendering/visibility dispatch. Original animation, attachment and blend parity unverified.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/sprite.rs": "ab691f43a9d31687f0af699576636f26bc06d6a789fc491ce0f974e842c2e3e0"
+    }
+  },
+  "entity:env_laser": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_sprite_props",
+    "reason": "Reviewed compact sprite/beam record emission, texture hydration and game sprite rendering/visibility dispatch. Original animation, attachment and blend parity unverified.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/sprite.rs": "ab691f43a9d31687f0af699576636f26bc06d6a789fc491ce0f974e842c2e3e0"
+    }
+  },
+  "entity:func_ladder": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_entities",
+    "reason": "Reviewed brush kind/bounds emission and game main movement/controls consumers. Train controls fold into direct use, not complete original control semantics.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/phys.rs": "b8edb87e29789dc420c8d42bd4fe64a319fcbd2b058209a3ca2cf9f74cfa5061"
+    }
+  },
+  "entity:func_pushable": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_entities",
+    "reason": "Reviewed brush kind/bounds emission and game main movement/controls consumers. Train controls fold into direct use, not complete original control semantics.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/phys.rs": "b8edb87e29789dc420c8d42bd4fe64a319fcbd2b058209a3ca2cf9f74cfa5061"
+    }
+  },
+  "entity:func_water": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_entities",
+    "reason": "Reviewed brush kind/bounds emission and game main movement/controls consumers. Train controls fold into direct use, not complete original control semantics.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/phys.rs": "b8edb87e29789dc420c8d42bd4fe64a319fcbd2b058209a3ca2cf9f74cfa5061"
+    }
+  },
+  "entity:func_tankcontrols": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_entities",
+    "reason": "Reviewed brush kind/bounds emission and game main movement/controls consumers. Train controls fold into direct use, not complete original control semantics.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/phys.rs": "b8edb87e29789dc420c8d42bd4fe64a319fcbd2b058209a3ca2cf9f74cfa5061"
+    }
+  },
+  "entity:func_traincontrols": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_entities",
+    "reason": "Reviewed brush kind/bounds emission and game main movement/controls consumers. Train controls fold into direct use, not complete original control semantics.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/phys.rs": "b8edb87e29789dc420c8d42bd4fe64a319fcbd2b058209a3ca2cf9f74cfa5061"
+    }
+  },
+  "entity:info_node": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn cook(",
+    "reason": "Reviewed host consumption into navigation, spawn, target/route resolution and baked/dynamic lighting inputs. Cook-only records do not imply independent runtime entity behavior or original parity.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:info_player_start": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn cook(",
+    "reason": "Reviewed host consumption into navigation, spawn, target/route resolution and baked/dynamic lighting inputs. Cook-only records do not imply independent runtime entity behavior or original parity.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:info_target": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn cook(",
+    "reason": "Reviewed host consumption into navigation, spawn, target/route resolution and baked/dynamic lighting inputs. Cook-only records do not imply independent runtime entity behavior or original parity.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:info_teleport_destination": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn cook(",
+    "reason": "Reviewed host consumption into navigation, spawn, target/route resolution and baked/dynamic lighting inputs. Cook-only records do not imply independent runtime entity behavior or original parity.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:path_corner": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn cook(",
+    "reason": "Reviewed host consumption into navigation, spawn, target/route resolution and baked/dynamic lighting inputs. Cook-only records do not imply independent runtime entity behavior or original parity.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:path_track": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn cook(",
+    "reason": "Reviewed host consumption into navigation, spawn, target/route resolution and baked/dynamic lighting inputs. Cook-only records do not imply independent runtime entity behavior or original parity.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:light": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn cook(",
+    "reason": "Reviewed host consumption into navigation, spawn, target/route resolution and baked/dynamic lighting inputs. Cook-only records do not imply independent runtime entity behavior or original parity.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:light_environment": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn cook(",
+    "reason": "Reviewed host consumption into navigation, spawn, target/route resolution and baked/dynamic lighting inputs. Cook-only records do not imply independent runtime entity behavior or original parity.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:light_spot": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn cook(",
+    "reason": "Reviewed host consumption into navigation, spawn, target/route resolution and baked/dynamic lighting inputs. Cook-only records do not imply independent runtime entity behavior or original parity.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/map.rs": "7b1b44912fc75e40b5f4afecee59885cfaac29695858018ef732f073b23d8614"
+    }
+  },
+  "entity:infodecal": {
+    "classification": "implemented",
+    "file": "game/src/main.rs",
+    "symbol": "map::LOGIC_INFODECAL",
+    "reason": "Reviewed named infodecal cook record and runtime stamp dispatch; static authored infodecals remain missing.",
+    "source_sha256": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+    "additional_sources": {
+      "host/hl-bsp/src/main.rs": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+      "game/src/sprite.rs": "ab691f43a9d31687f0af699576636f26bc06d6a789fc491ce0f974e842c2e3e0"
+    }
+  },
+  "entity:monster_alien_controller": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_alien_grunt": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_barney": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_scientist": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_sitting_scientist": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_human_assassin": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_headcrab": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_turret": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_miniturret": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_sentry": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_leech": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_ichthyosaur": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_cockroach": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_gman": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_generic": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_furniture": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_flyer_flock": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_tentacle": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_rat": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_bigmomma": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_barney_dead": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_scientist_dead": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_hevsuit_dead": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:monster_hgrunt_dead": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:cycler": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:xen_hair": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:xen_plantlight": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:xen_spore_large": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:xen_spore_medium": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:xen_spore_small": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:xen_tree": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "entity:info_bigmomma": {
+    "classification": "implemented",
+    "file": "host/hl-bsp/src/main.rs",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed explicit cooked type and resident actor render/script/AI dispatch. This certifies a port representation only, not complete AI; passive rat, plantlight/tree, swimming actors and tentacle retain behavior gaps noted by entity-support.txt.",
+    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "additional_sources": {
+      "host/hl-content/src/generators.rs": "7f99e7da56e2a5dd0238791e2a6c69f5c97078b3029fb031c9c4fb80aad2739e",
+      "host/hl-content/entity-support.txt": "dd27ec678b737496ad15c9d480903f6672ea2c9c17f610f2c9259e81bbbbb9f9",
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/species.rs": "9406cb74c3788db485419461f1c02a5b94ba60b64b4157b8d29a8a085b94220a"
+    }
+  },
+  "menu:GameMenu.res:GameMenu/1/command": {
+    "classification": "implemented",
+    "file": "game/src/menu.rs",
+    "symbol": "const MAIN_ITEMS",
+    "reason": "Reviewed normal menu route or native pause equivalent in game main. Native checkpoint loading/saving is a partial replacement; no claim of original PC slot browser or OS command parity.",
+    "source_sha256": "6ae911a0b39e9a66e8097b38a68674ecdb643aca14eded03de4070c570f33982",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/save.rs": "d2b28fa5e8cb66852be6f676c12070393a5a08260148ffd139be92d38872738d"
+    }
+  },
+  "menu:GameMenu.res:GameMenu/14/command": {
+    "classification": "missing",
+    "file": "game/src/menu.rs",
+    "symbol": "const MAIN_ITEMS",
+    "reason": "Reviewed title menu exhaustively offers seven console routes and no implementation of this original command. Hardware scope review remains queued; omission is explicit rather than exempt.",
+    "source_sha256": "6ae911a0b39e9a66e8097b38a68674ecdb643aca14eded03de4070c570f33982",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "menu:GameMenu.res:GameMenu/15/command": {
+    "classification": "missing",
+    "file": "game/src/menu.rs",
+    "symbol": "const MAIN_ITEMS",
+    "reason": "Reviewed title menu exhaustively offers seven console routes and no implementation of this original command. Hardware scope review remains queued; omission is explicit rather than exempt.",
+    "source_sha256": "6ae911a0b39e9a66e8097b38a68674ecdb643aca14eded03de4070c570f33982",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "menu:GameMenu.res:GameMenu/17/command": {
+    "classification": "missing",
+    "file": "game/src/menu.rs",
+    "symbol": "const MAIN_ITEMS",
+    "reason": "Reviewed title menu exhaustively offers seven console routes and no implementation of this original command. Hardware scope review remains queued; omission is explicit rather than exempt.",
+    "source_sha256": "6ae911a0b39e9a66e8097b38a68674ecdb643aca14eded03de4070c570f33982",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "menu:GameMenu.res:GameMenu/18/command": {
+    "classification": "implemented",
+    "file": "game/src/menu.rs",
+    "symbol": "const MAIN_ITEMS",
+    "reason": "Reviewed normal menu route or native pause equivalent in game main. Native checkpoint loading/saving is a partial replacement; no claim of original PC slot browser or OS command parity.",
+    "source_sha256": "6ae911a0b39e9a66e8097b38a68674ecdb643aca14eded03de4070c570f33982",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/save.rs": "d2b28fa5e8cb66852be6f676c12070393a5a08260148ffd139be92d38872738d"
+    }
+  },
+  "menu:GameMenu.res:GameMenu/19/command": {
+    "classification": "implemented",
+    "file": "game/src/menu.rs",
+    "symbol": "const MAIN_ITEMS",
+    "reason": "Reviewed normal menu route or native pause equivalent in game main. Native checkpoint loading/saving is a partial replacement; no claim of original PC slot browser or OS command parity.",
+    "source_sha256": "6ae911a0b39e9a66e8097b38a68674ecdb643aca14eded03de4070c570f33982",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/save.rs": "d2b28fa5e8cb66852be6f676c12070393a5a08260148ffd139be92d38872738d"
+    }
+  },
+  "menu:GameMenu.res:GameMenu/20/command": {
+    "classification": "implemented",
+    "file": "game/src/menu.rs",
+    "symbol": "const MAIN_ITEMS",
+    "reason": "Reviewed normal menu route or native pause equivalent in game main. Native checkpoint loading/saving is a partial replacement; no claim of original PC slot browser or OS command parity.",
+    "source_sha256": "6ae911a0b39e9a66e8097b38a68674ecdb643aca14eded03de4070c570f33982",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/save.rs": "d2b28fa5e8cb66852be6f676c12070393a5a08260148ffd139be92d38872738d"
+    }
+  },
+  "menu:GameMenu.res:GameMenu/21/command": {
+    "classification": "missing",
+    "file": "game/src/menu.rs",
+    "symbol": "const MAIN_ITEMS",
+    "reason": "Reviewed title menu exhaustively offers seven console routes and no implementation of this original command. Hardware scope review remains queued; omission is explicit rather than exempt.",
+    "source_sha256": "6ae911a0b39e9a66e8097b38a68674ecdb643aca14eded03de4070c570f33982",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "menu:GameMenu.res:GameMenu/5/command": {
+    "classification": "missing",
+    "file": "game/src/menu.rs",
+    "symbol": "const MAIN_ITEMS",
+    "reason": "Reviewed title menu exhaustively offers seven console routes and no implementation of this original command. Hardware scope review remains queued; omission is explicit rather than exempt.",
+    "source_sha256": "6ae911a0b39e9a66e8097b38a68674ecdb643aca14eded03de4070c570f33982",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+    }
+  },
+  "menu:GameMenu.res:GameMenu/7/command": {
+    "classification": "implemented",
+    "file": "game/src/menu.rs",
+    "symbol": "const MAIN_ITEMS",
+    "reason": "Reviewed normal menu route or native pause equivalent in game main. Native checkpoint loading/saving is a partial replacement; no claim of original PC slot browser or OS command parity.",
+    "source_sha256": "6ae911a0b39e9a66e8097b38a68674ecdb643aca14eded03de4070c570f33982",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/save.rs": "d2b28fa5e8cb66852be6f676c12070393a5a08260148ffd139be92d38872738d"
+    }
+  },
+  "menu:GameMenu.res:GameMenu/8/command": {
+    "classification": "implemented",
+    "file": "game/src/menu.rs",
+    "symbol": "const MAIN_ITEMS",
+    "reason": "Reviewed normal menu route or native pause equivalent in game main. Native checkpoint loading/saving is a partial replacement; no claim of original PC slot browser or OS command parity.",
+    "source_sha256": "6ae911a0b39e9a66e8097b38a68674ecdb643aca14eded03de4070c570f33982",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/save.rs": "d2b28fa5e8cb66852be6f676c12070393a5a08260148ffd139be92d38872738d"
+    }
+  },
+  "menu:GameMenu.res:GameMenu/9/command": {
+    "classification": "implemented",
+    "file": "game/src/menu.rs",
+    "symbol": "const MAIN_ITEMS",
+    "reason": "Reviewed normal menu route or native pause equivalent in game main. Native checkpoint loading/saving is a partial replacement; no claim of original PC slot browser or OS command parity.",
+    "source_sha256": "6ae911a0b39e9a66e8097b38a68674ecdb643aca14eded03de4070c570f33982",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "game/src/save.rs": "d2b28fa5e8cb66852be6f676c12070393a5a08260148ffd139be92d38872738d"
+    }
+  },
+  "hud:cross": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:divider": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:selection": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:suit_full": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:suit_empty": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:flash_full": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:flash_empty": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:flash_beam": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:item_healthkit": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:item_battery": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:item_longjump": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:number_0": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:number_1": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:number_2": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:number_3": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:number_4": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:number_5": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:number_6": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:number_7": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:number_8": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:number_9": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:bucket0": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:bucket1": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:bucket2": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:bucket3": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:bucket4": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:bucket5": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:train_back": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:train_forward1": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:train_forward2": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:train_forward3": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  },
+  "hud:train_stop": {
+    "classification": "implemented",
+    "file": "game/src/hud.rs",
+    "symbol": "pub unsafe fn draw",
+    "reason": "Reviewed native atlas packet emission in HUD draw/helper paths. Sprite declaration presence alone was not used as evidence; original timing/layout and state-change journey unverified.",
+    "source_sha256": "7268c2bb87228a8fd4795b586624f1e0f1b108c5857d64c5e15f85c38458d006",
+    "additional_sources": {
+      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b",
+      "host/hl-content/src/menu.rs": "ed2f298c2d8044970c6af4b172008a5bb5a7cd56bf3ffcee9a03e6fae49f00da"
+    }
+  }
+}

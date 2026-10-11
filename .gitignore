@@ -38,6 +38,7 @@ config.mk
 docs/
 reference/
 /tools/*
+!/tools/census/
 
 # ---- OS / editor cruft ----
 .DS_Store
