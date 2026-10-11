@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+mod cook_provenance;
 mod model_audit;
 mod model_variants;
 mod regression;
@@ -289,6 +290,9 @@ fn write_cook_manifest(repository: &Path, valve: &Path, psoxide: &Path) -> Resul
 }
 
 fn verify_cook_manifest(repository: &Path, psoxide: &Path) -> Result<CookManifest> {
+    if let Some(manifest) = cook_provenance::verify_reuse(repository, psoxide)? {
+        return Ok(manifest);
+    }
     let path = cook_manifest_path(repository);
     let manifest: CookManifest = serde_json::from_slice(&fs::read(&path).map_err(|error| {
         format!(
