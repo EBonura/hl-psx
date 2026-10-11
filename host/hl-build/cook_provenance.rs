@@ -94,7 +94,7 @@ fn normalize_sdk_references(bytes: Vec<u8>, current: &str, original: &str) -> Re
         let sdk_dependency =
             line.starts_with("psoxide-link = {") || line.starts_with("psx-pack = {");
         let sdk_lock_source =
-            line.starts_with("source = \"git+https://github.com/EBonura/PSoXide?");
+            line.starts_with("source = \"git+https://github.com/EBonura/PSoXide.git?");
         if sdk_dependency || sdk_lock_source {
             normalized.push_str(&line.replace(current, original));
         } else {
@@ -527,6 +527,16 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    #[test]
+    fn sdk_git_lock_revision_is_normalized_without_changing_other_sources() {
+        let input = b"source = \"git+https://github.com/EBonura/PSoXide.git?rev=current#current\"\nsource = \"git+https://github.com/Other/PSoXide.git?rev=current#current\"\n".to_vec();
+        let expected = b"source = \"git+https://github.com/EBonura/PSoXide.git?rev=original#original\"\nsource = \"git+https://github.com/Other/PSoXide.git?rev=current#current\"\n".to_vec();
+        assert_eq!(
+            normalize_sdk_references(input, "current", "original").unwrap(),
+            expected
+        );
     }
 
     #[test]
