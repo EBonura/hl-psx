@@ -23,7 +23,7 @@ use psx_gpu::material::TextureMaterial;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_pad::{button, poll_port1, PadTracker};
 use psx_rt::interrupts;
-use psx_vram::{upload_bytes, Clut, TextureDepth, TexturePage, VramRect};
+use psx_vram::{upload_bytes, upload_bytes_aligned, Clut, TextureDepth, TexturePage, VramRect};
 
 const FONT_TPAGE: TexturePage = TexturePage::new(320, 0, TextureDepth::Bit4);
 const FONT_CLUT: Clut = Clut::new(320, 256);
@@ -431,7 +431,7 @@ fn update_logo_anim(
         return;
     };
 
-    upload_bytes(VramRect::new(LOGO_ANIM_VRAM_X, 0, w / 4, h), pixels);
+    upload_bytes_aligned(VramRect::new(LOGO_ANIM_VRAM_X, 0, w / 4, h), pixels);
     upload_bytes(
         VramRect::new(LOGO_ANIM_VRAM_X, 256, 16, 1),
         &blob[8..LOGO_ANIM_HEADER],
