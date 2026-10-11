@@ -1,8 +1,9 @@
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::{cargo, run, Result};
+use super::{run, Result};
 
 // PSoXide's measured NTSC visual deadline: 2.967 vblanks at 564,480 bus
 // cycles/vblank. This is the real 20 fps gate used by the frontend profiler.
@@ -595,42 +596,77 @@ const fn satchel_fire_scenario(name: &'static str, extra_pulses: &'static str) -
     }
 }
 
-pub(crate) fn frontend(psoxide: &Path) -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("HLPSX_FRONTEND") {
-        let binary = PathBuf::from(path);
-        if !binary.is_file() {
-            return Err(
-                format!("HLPSX_FRONTEND does not name a file: {}", binary.display()).into(),
-            );
-        }
-        return Ok(binary);
-    }
-    let binary = psoxide.join("target/release").join(if cfg!(windows) {
-        "frontend.exe"
-    } else {
-        "frontend"
-    });
-    // A local fidelity checkout changes frequently during hardware passes.
-    // Cargo's incremental no-op is cheap; silently reusing an older frontend
-    // binary invalidates every visual/performance conclusion from this matrix.
-    let mut command = Command::new(cargo());
-    command
-        .current_dir(psoxide)
-        // Headless regressions exercise the emulator core, GPU, SPU and CLI;
-        // they do not embed the editor. Keeping default editor features here
-        // made unrelated in-progress FBX/UI work block hardware-fidelity tests.
-        .args([
-            "build",
-            "--release",
-            "-p",
-            "frontend",
-            "--no-default-features",
-        ]);
-    run(&mut command, "build PSoXide headless frontend")?;
-    if !binary.is_file() {
-        return Err(format!("PSoXide frontend missing at {}", binary.display()).into());
-    }
+pub(crate) fn frontend(_psoxide: &Path) -> Result<PathBuf> {
+    let binary = PathBuf::from(
+        std::env::var_os("HLPSX_FRONTEND")
+            .ok_or("set HLPSX_FRONTEND to the retained, source-verified emulator frontend")?,
+    );
+    let expected = std::env::var("HLPSX_FRONTEND_SHA256")
+        .map_err(|_| "set HLPSX_FRONTEND_SHA256 to the SHA-256 from its retained build receipt")?;
+    verify_frontend(&binary, &expected)?;
+    println!(
+        "Verified retained frontend {} SHA-256 {}",
+        binary.display(),
+        expected
+    );
     Ok(binary)
+}
+
+fn verify_frontend(binary: &Path, expected: &str) -> Result<()> {
+    if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("HLPSX_FRONTEND_SHA256 must contain exactly 64 hexadecimal digits".into());
+    }
+    let bytes = fs::read(binary).map_err(|error| {
+        format!(
+            "cannot read retained frontend {}: {error}",
+            binary.display()
+        )
+    })?;
+    let actual = super::hex_sha256(Sha256::digest(&bytes));
+    if !actual.eq_ignore_ascii_case(expected) {
+        return Err(format!(
+            "retained frontend hash mismatch at {}: expected {expected}, actual {actual}",
+            binary.display()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod retained_frontend_tests {
+    use super::*;
+
+    #[test]
+    fn validates_receipt_and_rejects_replaced_binary() {
+        let path = std::env::temp_dir().join(format!("hl-frontend-receipt-{}", std::process::id()));
+        fs::write(&path, b"retained artifact").unwrap();
+        let digest = super::super::hex_sha256(Sha256::digest(b"retained artifact"));
+        assert!(verify_frontend(&path, &digest).is_ok());
+        assert!(verify_frontend(&path, &digest.to_ascii_uppercase()).is_ok());
+        fs::write(&path, b"replaced artifact").unwrap();
+        assert!(verify_frontend(&path, &digest)
+            .unwrap_err()
+            .to_string()
+            .contains("hash mismatch"));
+        fs::remove_file(&path).unwrap();
+        assert!(verify_frontend(&path, &digest).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_receipt_before_reading_artifact() {
+        let missing = Path::new("missing-retained-frontend");
+        for digest in [
+            "",
+            "abc",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+        ] {
+            assert!(verify_frontend(missing, digest)
+                .unwrap_err()
+                .to_string()
+                .contains("64 hexadecimal"));
+        }
+    }
 }
 
 fn csv_column(path: &Path, name: &str) -> Result<Vec<String>> {

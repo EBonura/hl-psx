@@ -2817,6 +2817,11 @@ fn main() -> Result<()> {
         return Err("pgo needs at least one --tape PATH to profile".into());
     }
     let repository = root();
+    // Fail before hydration, cooking, compilation or profile output retirement.
+    // Both actions reuse the one retained emulator configured by its build receipt.
+    if matches!(options.action, Action::Pgo | Action::Regress) {
+        regression::frontend(&repository)?;
+    }
     let needs_half_life = matches!(
         options.action,
         Action::Build

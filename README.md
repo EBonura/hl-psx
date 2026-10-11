@@ -148,8 +148,14 @@ cargo hl-build pgo --tape "RECORDING.pxtape"           # profile-guided disc
 cargo hl-build --help                 # show every option
 ```
 
+Before `pgo` or `regress`, set `HLPSX_FRONTEND` to the retained emulator
+frontend and `HLPSX_FRONTEND_SHA256` to its verified build receipt's digest.
+Both commands check that artifact before changing build or profile outputs.
+Use the same verified frontend for every paired measurement. The driver
+never builds an emulator frontend.
+
 `pgo` builds the disc twice. The first build replays a PSoXide input recording
-in the hydrated emulator, which counts every instruction the game executes;
+in the retained emulator, which counts every instruction the game executes;
 the second is compiled around those counts. On the chapter-two recording it
 is 6% faster than `pack`, and 4% faster on a route the recording never
 visits. It takes about four minutes. It also writes the profile and the
