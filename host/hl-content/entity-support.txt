@@ -5,7 +5,7 @@ aiscripted_sequence|runtime|cooked scripted actor control
 ambient_generic|runtime|speech and map sounds use compact audio records
 ammo_357|runtime|pickup prop
 ammo_9mmAR|runtime|pickup prop
-ammo_9mmARclip|missing_gameplay|legacy ammo alias is not mapped
+ammo_9mmARclip|runtime|MP5 clip pickup alias
 ammo_9mmclip|runtime|pickup prop
 ammo_ARgrenades|runtime|pickup prop
 ammo_buckshot|runtime|pickup prop

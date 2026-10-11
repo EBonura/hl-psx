@@ -796,7 +796,7 @@
     "file": "host/hl-bsp/src/main.rs",
     "symbol": "fn collect_logic_entities_with_lightstyles",
     "reason": "Reviewed dedicated LOGIC_TRIGGER_MONSTERJUMP cook record with two Q4 impulse aux entries, then game prop_environment_move calls prop_monsterjump_touch before ordinary actor AI. Live walking actors use actual collision bounds and enabled trigger volumes; grounded contact launches while airborne contact preserves vertical momentum. Fractional launch integration is covered by four native policy fixtures and the production cooker fixture. Genuine authored actor contact and original parity remain unexercised; no accepted journey is claimed.",
-    "source_sha256": "4a8bd478cd447bb5a944b48916e9d6e32b54f1e9d04703de9fcf8df6bd43c42b",
+    "source_sha256": "9691675a37fd97d10f9c048dddf5200087fc916a7642b8d60551a4cb125b1fae",
     "additional_sources": {
       "game/src/main.rs": "e02ca3826526a5b6f504774554eb1d1e632d3dfbfb8f14ea16a591922b9877d3",
       "game/src/monsterjump.rs": "26b4042a73906262792fab6a3f19b09f00b7e5bfe5559d366f9eaea9a380b8a4",
@@ -816,15 +816,13 @@
     }
   },
   "entity:ammo_9mmARclip": {
-    "classification": "missing",
+    "classification": "implemented",
     "file": "host/hl-bsp/src/main.rs",
-    "symbol": "fn collect_logic_entities_with_lightstyles",
-    "reason": "Reviewed no entity emission in logic collector default continue, prop collector default continue and sprite allowlist. No dedicated runtime record exists. Prior explicit missing contract corroborates absence; source snapshots bound, no classname-only inference.",
-    "source_sha256": "54afac7f0b2311d1bbb2bc4a54c67c91ad65d377dea88da8212b2f0359efc667",
+    "symbol": "fn collect_props",
+    "reason": "Reviewed original c2a4f entity271 alias emits the existing type41 MP5 clip record, identical to ammo_9mmAR and ammo_mp5clip in the actual collector fixture. Game collect_pickups routes type41 through AMMO_PICKUPS to the existing 9mm reserve, clamps through give_ammo, consumes only accepted pickups and plays AMMO_PICKUP. Live original pickup and cap/deny-full journey remain unexercised.",
+    "source_sha256": "9691675a37fd97d10f9c048dddf5200087fc916a7642b8d60551a4cb125b1fae",
     "additional_sources": {
-      "host/hl-content/src/sprites.rs": "d9658fd9f896b7ff11a85e1f09fa0373a9e07e29322dd8659eabf9ba103d6fbe",
-      "host/hl-content/entity-contract.txt": "2bd86ec85c544d52e162d4736b8bfb684cc3fb1f13fdae4172a816a8a292c028",
-      "game/src/main.rs": "c8ac62e5e6304b3804de4cb28c9104a16db394b379a43c240557718cc4df344b"
+      "game/src/main.rs": "e02ca3826526a5b6f504774554eb1d1e632d3dfbfb8f14ea16a591922b9877d3"
     }
   },
   "entity:info_node_air": {

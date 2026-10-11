@@ -10588,7 +10588,7 @@ fn collect_props(
             "weapon_tripmine" => 38u16,
             "weapon_satchel" => 39u16,
             "ammo_9mmclip" | "ammo_glockclip" => 40u16,
-            "ammo_9mmAR" | "ammo_mp5clip" => 41u16,
+            "ammo_9mmAR" | "ammo_9mmARclip" | "ammo_mp5clip" => 41u16,
             "ammo_buckshot" => 42u16,
             "ammo_357" => 43u16,
             "ammo_crossbow" => 44u16,
@@ -17604,6 +17604,24 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn retail_9mmarclip_alias_emits_the_existing_mp5_ammo_pickup() {
+        let mut expected = None;
+        for classname in ["ammo_9mmARclip", "ammo_9mmAR", "ammo_mp5clip"] {
+            // Original c2a4f entity 271, changing only the alias under test.
+            let entity = format!("{{ \"origin\" \"-800 -304 464\" \"delay\" \"0\" \"classname\" \"{classname}\" }}");
+            let props = super::collect_props(entity.as_bytes(), &[], &[], &[], 1.0,
+                &mut Vec::new(), &mut Vec::new());
+            assert_eq!(props.len(), 1);
+            assert_eq!(props[0].0, 41);
+            assert_eq!(props[0].1, [-800, 464, -304]);
+            if let Some(existing) = expected {
+                assert_eq!(props[0], existing);
+            } else {
+                expected = Some(props[0]);
+            }
+        }
+    }
     use super::*;
 
     fn put_i32(buf: &mut Vec<u8>, v: i32) {
