@@ -70,13 +70,22 @@ impl Target {
             slot: Slot::Auto,
         },
     ];
+    pub const MANUAL: [Target; 2] = [Self::ALL[0], Self::ALL[2]];
+    /// Legacy automatic files remain readable; only explicit manual slots write.
+    pub fn choices(loading: bool) -> &'static [Target] {
+        if loading {
+            &Self::ALL
+        } else {
+            &Self::MANUAL
+        }
+    }
     #[cfg(not(feature = "semantic-input"))]
     pub const fn label(self) -> &'static str {
         match (self.port, self.slot) {
             (Port::One, Slot::Manual) => "Card 1  Manual",
-            (Port::One, Slot::Auto) => "Card 1  Autosave",
+            (Port::One, Slot::Auto) => "Card 1  Legacy auto",
             (Port::Two, Slot::Manual) => "Card 2  Manual",
-            (Port::Two, Slot::Auto) => "Card 2  Autosave",
+            (Port::Two, Slot::Auto) => "Card 2  Legacy auto",
         }
     }
 }
@@ -367,6 +376,9 @@ fn with_card<T>(port: Port, f: impl FnOnce(&mut psx_mc::Card<psx_mc::HardwareCar
 #[inline(never)]
 #[optimize(size)]
 pub fn write(target: Target, cp: &Checkpoint, staging: &mut [u8]) -> CardResult {
+    if target.slot != Slot::Manual {
+        return CardResult::Failed;
+    }
     let next = latest_sequence(staging).wrapping_add(1);
     let mut stamped = *cp;
     stamped.sequence = next;
@@ -547,6 +559,18 @@ mod tests {
         assert!(decode(&buf[..len]).is_none());
         buf[0] = 0; // magic
         assert!(decode(&buf[..len]).is_none());
+    }
+
+    #[test]
+    fn only_manual_slots_are_available_for_writes() {
+        assert_eq!(Target::choices(false).len(), 2);
+        assert!(Target::choices(false)
+            .iter()
+            .all(|t| t.slot == Slot::Manual));
+        assert_eq!(Target::choices(true).len(), 4);
+        assert!(Target::choices(true).iter().any(|t| t.slot == Slot::Auto));
+        assert!(Target::choices(false)[0].port == Port::One);
+        assert!(Target::choices(false)[1].port == Port::Two);
     }
 
     #[test]

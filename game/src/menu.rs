@@ -1087,19 +1087,18 @@ fn draw_chapter_menu(font: &FontAtlas, sel: i32) {
 /// Row labels for the settings list, shared with the in-game pause menu so the
 /// two cannot drift apart. The pause version shows exactly these rows: the
 /// Debug row that follows them here is already a page of its own there.
-pub const OPT_LABELS: [&str; 7] = [
+pub const OPT_LABELS: [&str; 6] = [
     "Screen X",
     "Screen Y",
     "Music",
     "SFX",
     "Stick Deadzone",
-    "Autosave",
     "Brightness",
 ];
-pub const N_OPTIONS: i32 = 8; // 6 adjustable values + Autosave + Debug
+pub const N_OPTIONS: i32 = 7; // 6 adjustable values + Debug
 /// Index of the brightness row inside [`OPT_LABELS`]; `settings::adjust` and
 /// `settings::value` dispatch on the same number.
-pub const OPT_BRIGHTNESS: usize = 6;
+pub const OPT_BRIGHTNESS: usize = 5;
 
 /// Title shown above a chapter's sub-map list.
 pub fn chapter_title(chapter: usize) -> &'static str {
@@ -1236,11 +1235,6 @@ fn draw_options_menu(font: &FontAtlas, help: &FontAtlas, sel: usize) {
         let col = if is_sel { ITEM_ARMED } else { ITEM };
         if (2..4).contains(&i) {
             draw_vol_bar(x_val, y, crate::settings::value(i), is_sel);
-        } else if i == 5 {
-            font.draw_text(x_val, y, "<", col);
-            let on = crate::settings::autosave_enabled();
-            font.draw_text(x_val + 32, y, if on { "ON" } else { "OFF" }, col);
-            font.draw_text(x_val + 88, y, ">", col);
         } else if i < OPT_LABELS.len() {
             // Screen X/Y, stick deadzone and brightness are all "< value >"
             // rows. The picture rows say it in words (`LEFT 4`, `BRIGHTER 3`),
@@ -1511,10 +1505,7 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
                     crate::settings::adjust(idx, if input.right { step } else { -step });
                     play_menu_move(); // restrained live feedback for each adjustment
                 }
-                if idx == 5 && (input.left || input.right || input.ok) {
-                    crate::settings::toggle_autosave();
-                    play_menu_move();
-                }
+
                 if input.ok && idx == OPT_LABELS.len() {
                     play_menu_accept();
                     debug_sel = 0;

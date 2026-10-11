@@ -1,5 +1,5 @@
 //! User options: screen position (TV centering), brightness, music/SFX volume,
-//! analog-stick deadzone, and transition autosaves. Held in RAM -- they persist
+//! analog-stick deadzone. Held in RAM -- they persist
 //! across menu<->play within a session and reset on power cycle (no memory-card
 //! save). Modelled on the Celeste Classic Collection's options.
 
@@ -24,7 +24,6 @@ static mut ANALOG_DEADZONE: u8 = ANALOG_DEADZONE_DEFAULT; // radial, axis units 
                                                           // psx_pad::Deadzone owns the radial test and squares the radius itself, so
                                                           // there is one implementation of that shape rather than one per game.
 static mut ANALOG_DEADZONE_ZONE: Deadzone = Deadzone::new(ANALOG_DEADZONE_DEFAULT as i16);
-static mut AUTOSAVE: bool = false; // opt in: level changes do not write by default
 
 // ---- Brightness ------------------------------------------------------------
 // Quake-PSX cooks six gamma'd copies of its one shared 256-colour palette into
@@ -200,7 +199,7 @@ pub fn adjust(index: usize, delta: i32) -> i32 {
                 ANALOG_DEADZONE_ZONE = Deadzone::new(ANALOG_DEADZONE as i16);
                 ANALOG_DEADZONE as i32
             }
-            6 => {
+            5 => {
                 let level = (BRIGHTNESS as i32 + delta).clamp(0, BRIGHTNESS_LEVELS as i32 - 1);
                 set_brightness_level(level as u8);
                 BRIGHTNESS as i32 + 1
@@ -218,9 +217,8 @@ pub fn value(index: usize) -> i32 {
             2 => MUSIC_VOL as i32,
             3 => SFX_VOL as i32,
             4 => ANALOG_DEADZONE as i32,
-            5 => AUTOSAVE as i32,
             // The 1-based level; the menus print `option_label` instead.
-            6 => BRIGHTNESS as i32 + 1,
+            5 => BRIGHTNESS as i32 + 1,
             _ => 0,
         }
     }
@@ -235,7 +233,7 @@ pub fn option_label(index: usize) -> Option<Label> {
         match index {
             0 => Some(SCREEN.label_x()),
             1 => Some(SCREEN.label_y()),
-            6 => Some(Brightness::label_for_level(
+            5 => Some(Brightness::label_for_level(
                 BRIGHTNESS as i8 - DEFAULT_BRIGHTNESS as i8,
             )),
             _ => None,
@@ -248,15 +246,6 @@ pub fn option_label(index: usize) -> Option<Label> {
 #[cfg(not(feature = "semantic-input"))]
 pub fn analog_deadzone() -> Deadzone {
     unsafe { ANALOG_DEADZONE_ZONE }
-}
-
-#[inline(always)]
-pub fn autosave_enabled() -> bool {
-    unsafe { AUTOSAVE }
-}
-
-pub fn toggle_autosave() {
-    unsafe { AUTOSAVE = !AUTOSAVE };
 }
 
 // ---- Difficulty ------------------------------------------------------------

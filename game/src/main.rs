@@ -2259,13 +2259,6 @@ static mut OPTION_VALUE_TEXT: [[u8; 8]; PAUSE_OPTION_ROWS] = [[0; 8]; PAUSE_OPTI
 #[cfg(not(feature = "semantic-input"))]
 unsafe fn pause_option_row(i: usize) -> Row {
     let label = menu::OPT_LABELS[i];
-    if i == 5 {
-        return Row::new(label).with_detail(if settings::autosave_enabled() {
-            "ON"
-        } else {
-            "OFF"
-        });
-    }
     let mut value = settings::value(i);
     let slot = core::ptr::addr_of_mut!(OPTION_VALUE_TEXT)
         .cast::<[u8; 8]>()
@@ -2299,8 +2292,9 @@ unsafe fn pause_option_row(i: usize) -> Row {
 
 #[cfg(not(feature = "semantic-input"))]
 unsafe fn save_slot_row(i: usize, loading: bool) -> Row {
-    let target = save::Target::ALL[i];
-    let held = SLOT_MAP[i];
+    let target = save::Target::choices(loading)[i];
+    let source = save::Target::ALL.iter().position(|t| *t == target).unwrap();
+    let held = SLOT_MAP[source];
     let row = Row::new(target.label());
     if (held as usize) < menu::MAPS.len() {
         row.with_detail(menu::MAPS[held as usize])
@@ -2483,18 +2477,13 @@ fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
             unsafe { sfx::play_vol(sfx::MENU_MOVE, 3) };
         }
         // Left/Right adjust the armed setting, on the settings page only, and
-        // through the same settings::adjust the front end calls. Autosave is a
-        // toggle rather than a value, so either direction flips it.
+        // through the same settings::adjust the front end calls.
         if matches!(page, PausePage::Options) {
             let dec = pad.just_pressed(button::LEFT);
             let inc = pad.just_pressed(button::RIGHT);
             if dec || inc {
                 unsafe { sfx::play_vol(sfx::MENU_MOVE, 3) };
-                if options_sel == 5 {
-                    settings::toggle_autosave();
-                } else {
-                    settings::adjust(options_sel, if inc { 1 } else { -1 });
-                }
+                settings::adjust(options_sel, if inc { 1 } else { -1 });
             }
         }
         let (chapter_start, chapter_end) = menu::chapter_rooms(chapter_sel);
@@ -2506,7 +2495,7 @@ fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
             PausePage::Chapters => (&mut chapter_sel, menu::CHAPTERS.len()),
             PausePage::Maps => (&mut map_sel, map_rows),
             PausePage::Debug => (&mut debug_sel, debug_rows),
-            PausePage::Slots { .. } => (&mut slot_sel, save::Target::ALL.len()),
+            PausePage::Slots { loading } => (&mut slot_sel, save::Target::choices(loading).len()),
         };
         if up {
             *cursor = (*cursor + rows - 1) % rows;
@@ -2563,7 +2552,7 @@ fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
                 PausePage::Options => {}
                 PausePage::Debug => settings::debug_toggle(debug_sel),
                 PausePage::Slots { loading } => unsafe {
-                    let target = save::Target::ALL[slot_sel];
+                    let target = save::Target::choices(loading)[slot_sel];
                     if loading {
                         match save::read(target, save_staging()) {
                             Ok(cp) if (cp.room_id as usize) < menu::MAPS.len() => {
@@ -2616,7 +2605,7 @@ fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
             PausePage::Slots { loading } => draw_pause_list(
                 fb,
                 if loading { "Load Game" } else { "Save Game" },
-                save::Target::ALL.len(),
+                save::Target::choices(loading).len(),
                 slot_sel,
                 &|i| unsafe { save_slot_row(i, loading) },
             ),
@@ -34781,7 +34770,7 @@ fn play(
             telemetry::task_end(telemetry::task::FIXED_UPDATE);
 
             unsafe {
-                // Every exit (and the level-change autosave badge) leaves the
+                // Every exit leaves the
                 // GPU the way the blocking submits used to: all lists drawn.
                 if restart_requested || TRAINING_COMPLETE_REQUEST || CHANGE_REQUEST_ACTIVE != 0 {
                     finish_deferred_overlays();
@@ -34811,26 +34800,6 @@ fn play(
                         tram_active,
                     ) {
                         sfx::charger_stop();
-                        if settings::autosave_enabled() {
-                            // Opt-in autosave at the level change. The
-                            // destination map is what the player wants to
-                            // resume from, so stamp the checkpoint with it
-                            // rather than the map being left.
-                            let mut cp = LIVE_CHECKPOINT;
-                            cp.room_id = next.room_id;
-                            cp.has_pos = false; // arrive at the destination's own spawn
-                            cp.health = health.max(1);
-                            cp.armor = armor;
-                            cp.suit = suit_equipped;
-                            let _ = save_with_badge(
-                                fb,
-                                save::Target {
-                                    port: save::Port::One,
-                                    slot: save::Slot::Auto,
-                                },
-                                &cp,
-                            );
-                        }
                         LEVEL_ENTRY_GRAVITY = phys::gravity_scale();
                         return PlayExit::ChangeLevel(next);
                     }
