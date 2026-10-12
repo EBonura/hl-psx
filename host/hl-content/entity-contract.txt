@@ -200,13 +200,13 @@ env_shooter|scale|unreviewed|cook:"scale"|-|a source file names the key
 env_shooter|shootmodel|cosmetic|-|-|debris is a material-coloured shard
 env_shooter|shootsounds|unreviewed|cook:"shootsounds"|-|a source file names the key
 env_shooter|skin|unreviewed|cook:"skin"|-|a source file names the key
-env_sound|@class|cosmetic|-|-|room DSP/acoustic controller is absent
-env_sound|flag:16|cosmetic|-|-|room DSP is absent
-env_sound|flag:32|cosmetic|-|-|room DSP is absent
-env_sound|flag:4|cosmetic|-|-|room DSP is absent
-env_sound|flag:8|cosmetic|-|-|room DSP is absent
-env_sound|radius|cosmetic|-|-|room DSP is absent
-env_sound|roomtype|cosmetic|-|-|room DSP is absent
+env_sound|@class|partial|cook:"env_sound"|run:sound_room_think|authored room selection and bounded SPU delay/reflection effects; original DSP topology parity remains open
+env_sound|flag:16|cosmetic|-|-|class flag semantics remain unreviewed
+env_sound|flag:32|cosmetic|-|-|class flag semantics remain unreviewed
+env_sound|flag:4|cosmetic|-|-|class flag semantics remain unreviewed
+env_sound|flag:8|cosmetic|-|-|class flag semantics remain unreviewed
+env_sound|radius|yes|cook:sound_number|run:sound_room_think|scaled radius and original numeric-prefix parsing
+env_sound|roomtype|partial|cook:sound_number|run:apply_room|original numerical controls; device filter/modulation/stereo parity open
 env_spark|@class|partial|cook:"env_spark"|-|compact spark emitter
 env_spark|@kill|yes|game:fn logic_kill_targets|-
 env_spark|@use|yes|game:LOGIC_ENV_SPARK|-

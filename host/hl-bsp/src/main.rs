@@ -6249,6 +6249,16 @@ fn parse_f32_key(block: &str, key: &str, default: f32) -> f32 {
         .unwrap_or(default)
 }
 
+// These two point keys retain the retail numeric prefix (128S means128).
+fn sound_number(block: &str, key: &str) -> f32 {
+    let value = ent_value(block,key).unwrap_or("").trim_start();
+    for end in (1..=value.len()).rev() {
+        if !value.is_char_boundary(end) {continue;}
+        if let Ok(number) = value[..end].parse::<f32>() {return number;}
+    }
+    0.0
+}
+
 fn seconds_to_ticks_u16(seconds: f32) -> u16 {
     if seconds <= 0.0 {
         return 0;
@@ -8124,6 +8134,7 @@ fn collect_logic_entities_with_lightstyles(
             "env_blood" => LOGIC_ENV_BLOOD,
             "env_bubbles" => LOGIC_ENV_BUBBLES,
             "env_funnel" => LOGIC_ENV_FUNNEL,
+            "env_sound" => LOGIC_ENV_SOUND,
             "env_spark" | "env_debris" => LOGIC_ENV_SPARK,
             "func_monsterclip" => LOGIC_MONSTERCLIP,
             // On A Rail junctions: the path chain is stitched at cook so the train
@@ -8373,6 +8384,13 @@ fn collect_logic_entities_with_lightstyles(
             _ => USE_TOGGLE,
         };
         let arg0 = match kind {
+            LOGIC_ENV_SOUND => {
+                let radius = sound_number(block,"radius") / scale;
+                if !radius.is_finite() || radius < 0.0 || radius > u16::MAX as f32 {
+                    return Err("env_sound radius exceeds representation".into());
+                }
+                radius.round() as u16
+            },
             // The Blocked callback's damage: CBaseDoor's dmg (no default),
             // CFuncPlat's fixed 1.
             LOGIC_FUNC_DOOR => {
@@ -8563,6 +8581,13 @@ fn collect_logic_entities_with_lightstyles(
             _ => names.id(ent_value(block, "changetarget")),
         };
         let arg1 = match kind {
+            LOGIC_ENV_SOUND => {
+                let room = sound_number(block,"roomtype");
+                if !room.is_finite() || !(0.0..29.0).contains(&room) {
+                    return Err("env_sound requires original room type 0 through28".into());
+                }
+                room.trunc() as u16
+            },
             // CFuncTrain's Blocked damage (Spawn makes 0 into 2).
             LOGIC_FUNC_TRAIN => parse_f32_key(block, "dmg", 0.0).clamp(0.0, u16::MAX as f32) as u16,
             // m_iMaxLiveChildren (0 = no limit).
@@ -17662,6 +17687,54 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn env_sound_suffix_radius_and_scaled_point_use_original_controls() {
+        let input=br#"{ "classname" "env_sound" "origin" "144 312 -32" "radius" "128S" "roomtype" "18" }"#;
+        let cook=collect_logic_entities(input,&[],&[],2.0,&Default::default(),&Default::default()).unwrap();
+        assert_eq!(cook.ents.len(),1);
+        let r=&cook.ents[0];
+        assert_eq!((r.kind,r.arg0,r.arg1),(LOGIC_ENV_SOUND,64,18));
+        assert_eq!(r.origin,[72,-16,156]);
+        assert_eq!(r.brush,LOGIC_BRUSH_NONE);
+        for bad in [br#"{ "classname" "env_sound" "roomtype" "29" }"#.as_slice(),
+                    br#"{ "classname" "env_sound" "radius" "1000000" }"#.as_slice()] {
+            assert!(collect_logic_entities(bad,&[],&[],1.0,&Default::default(),&Default::default()).is_err());
+        }
+    }
+    #[test]
+    #[ignore="requires original retail103-map assets"]
+    fn env_sound_all812_retail_points_are_admitted() {
+        let root=std::env::var("HL_ENV_SOUND_RETAIL_DIR").expect("explicit retail map directory");
+        let mut total=0usize;
+        let mut suffixes=0usize;
+        for name in include_str!("../../hl-content/map-list.txt").lines().filter(|s| !s.is_empty()) {
+            let bytes=std::fs::read(std::path::Path::new(&root).join(format!("{name}.bsp"))).unwrap();
+            let start=u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+            let len=u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+            let text=String::from_utf8_lossy(&bytes[start..start+len]);
+            let mut selected=String::new();
+            let mut expected=0;
+            for raw in text.split('{').skip(1) {
+                let block=raw.split('}').next().unwrap();
+                if ent_value(block,"classname")!=Some("env_sound") {continue;}
+                expected+=1;
+                if ent_value(block,"radius").is_some_and(|v| v.ends_with('S')) {suffixes+=1;}
+                selected.push('{');selected.push_str(block);selected.push('}');
+            }
+            for scale in [1.0,2.0] {
+                let cook=collect_logic_entities(selected.as_bytes(),&[],&[],scale,&Default::default(),&Default::default()).unwrap();
+                assert_eq!(cook.ents.len(),expected,"{name}");
+                for rec in &cook.ents {
+                    assert_eq!(rec.kind,LOGIC_ENV_SOUND);
+                    assert!(rec.arg1<29);
+                    assert_eq!(rec.brush,LOGIC_BRUSH_NONE);
+                }
+            }
+            total+=expected;
+        }
+        assert_eq!(total,812);
+        assert!(suffixes>0,"real numeric-suffix recipe exercised");
+    }
     #[test]
     fn retail_funnel_pair_keeps_original_height_reverse_and_complete_admission() {
         let entities = br#"{ "classname" "env_funnel" "origin" "1664 623 -368" "targetname" "funnel" "spawnflags" "0" }

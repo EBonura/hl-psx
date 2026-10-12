@@ -33,6 +33,8 @@ mod env_bubbles;
 mod env_bubbles_fx;
 mod env_funnel;
 mod env_funnel_fx;
+mod env_sound;
+mod env_sound_audio;
 mod cdstream;
 mod combat_defs;
 mod driver;
@@ -3659,6 +3661,7 @@ const EMPTY_IMPACT_MARK: ImpactMark = ImpactMark {
 static mut LOGIC_STATE: [u8; MAX_LOGIC] = [0; MAX_LOGIC];
 static mut LIGHTSTYLE_ACTIVE_MASK: u32 = 0;
 static mut LOGIC_NEXT: [u16; MAX_LOGIC] = [0; MAX_LOGIC];
+static mut ROOM_LISTENER: env_sound::Listener = env_sound::Listener::NEW;
 static mut LOGIC_TARGET: [u16; MAX_LOGIC] = [0; MAX_LOGIC];
 static mut LOGIC_COUNTER: [i16; MAX_LOGIC] = [0; MAX_LOGIC];
 // Reset to LOGIC_PROP_NONE for every record by init_logic_state before a map plays;
@@ -8230,6 +8233,7 @@ fn logic_pre_tick_candidate(kind: u8) -> bool {
             | map::LOGIC_SENTENCE
             | map::LOGIC_SHOOTER
             | map::LOGIC_ENV_BUBBLES
+            | map::LOGIC_ENV_SOUND
             | map::LOGIC_MONSTERMAKER
     )
 }
@@ -12260,6 +12264,24 @@ unsafe fn logic_tick_pendulum(nents: usize, li: usize, rec: map::LogicEnt, now: 
     store_pendulum_state(li, ei, next);
 }
 
+#[inline(never)]
+#[optimize(size)]
+unsafe fn sound_room_think(m: &Map,nents: usize,li: usize,rec: map::LogicEnt,now: u16) {
+    if !env_sound::due(now,LOGIC_NEXT[li]) {return;}
+    let leaf=camera_leaf(m,rec.origin);
+    if !valid_pvs_leaf(m,leaf) || !pvs_leaf_visible(m,leaf as usize) {
+        LOGIC_NEXT[li]=env_sound::next(now,env_sound::FAR_TICKS);
+        return;
+    }
+    let eye=[LOGIC_PLAYER_POS[0],LOGIC_PLAYER_POS[1]+LOGIC_PLAYER_VIEW_HEIGHT,LOGIC_PLAYER_POS[2]];
+    let movers=&(&*core::ptr::addr_of!(MOVERS))[..nents+1];
+    let range=env_sound::in_range(rec.origin,eye,rec.arg0,true,false)
+        .filter(|_| phys::sound_line_clear(m,movers,rec.origin,eye));
+    let observed=(*core::ptr::addr_of_mut!(ROOM_LISTENER)).observe(li as u16,rec.arg1 as u8,range);
+    LOGIC_NEXT[li]=env_sound::next(now,observed.next_ticks);
+    if let Some(room)=observed.room_update {sfx::apply_room(room);}
+}
+
 unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
     logic_process_events(m, nlogic, nents, now);
     if CAMERA_LI != u16::MAX {
@@ -12278,6 +12300,10 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
         } else {
             scan
         };
+        if LOGIC_KIND[li] == map::LOGIC_ENV_SOUND {
+            sound_room_think(m,nents,li,m.logic(li),now);
+            scan+=1;continue;
+        }
         if LOGIC_KIND[li] == map::LOGIC_ENV_BUBBLES {
             let rec=m.logic(li);
             let mut schedule=env_bubbles::Scheduler {enabled:LOGIC_STATE[li]==LOGIC_STATE_TOP,next:LOGIC_NEXT[li]};
@@ -13288,6 +13314,8 @@ unsafe fn prop_mouth_open(pi: usize, now: u16, map_index: u16) -> u8 {
 #[inline(never)]
 #[optimize(size)]
 unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
+    ROOM_LISTENER=env_sound::Listener::NEW;
+    sfx::apply_room(0);
     TITLE_TEXT_ID = 0;
     TITLE_T = 0;
     CHAPTER_TITLE_ID = 0;
@@ -13488,6 +13516,10 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         if rec.kind == map::LOGIC_MONSTERMAKER && rec.targetname == 0 {
             LOGIC_STATE[li] = LOGIC_STATE_WAITING;
             LOGIC_NEXT[li] = now.wrapping_add(maker_delay(rec));
+        }
+        if rec.kind==map::LOGIC_ENV_SOUND {
+            assert!(rec.arg1<29,"unsupported cooked room type");
+            LOGIC_NEXT[li]=now.wrapping_add(2+impact_rng().below(7) as u16);
         }
         if rec.kind==map::LOGIC_ENV_BUBBLES {
             let schedule=env_bubbles::Scheduler::spawn(rec.spawnflags,now);

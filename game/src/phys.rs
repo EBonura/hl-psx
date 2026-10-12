@@ -1181,6 +1181,36 @@ fn trace_point_all(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3], skip
     best
 }
 
+// Open/liquid contents along an acoustic point ray. Unlike player hull
+// collision, a ray that visits both media must not select a room controller.
+fn sound_contents(map: &Map, mut node: i32, p1: [i32;3], p2: [i32;3], mut depth: u8) -> u8 {
+    loop {
+        if depth > MAX_TRACE_DEPTH {return 4;}
+        if node < 0 {
+            let leaf=(-node-1) as usize;
+            if leaf==0 || leaf>map.n_visleaves {return 4;}
+            return if map.leaf_liquid(leaf)==0 {1}else{2};
+        }
+        if node as usize >= map.n_nodes {return 4;}
+        let nd=map.node(node as usize);
+        let a=dot_q5(nd.n,p1).wrapping_sub(nd.dist_q5);
+        let b=dot_q5(nd.n,p2).wrapping_sub(nd.dist_q5);
+        let start_front=a>=0;
+        let (near,far)=if start_front {(nd.c0,nd.c1)}else{(nd.c1,nd.c0)};
+        if start_front==(b>=0) {node=near;depth+=1;continue;}
+        let mid=lerp_q12(p1,p2,crossing_frac(a,b,0));
+        let first=sound_contents(map,near,p1,mid,depth+1);
+        if first&4!=0 {return first;}
+        return first|sound_contents(map,far,mid,p2,depth+1);
+    }
+}
+/// Brush/world occlusion only; monsters do not obstruct the original sound ray.
+pub fn sound_line_clear(map: &Map,movers: &[Mover],p1: [i32;3],p2: [i32;3]) -> bool {
+    if trace_line(map,movers,p1,p2).is_some() {return false;}
+    let contents=sound_contents(map,0,p1,p2,0);
+    contents&4==0 && contents&3!=3
+}
+
 /// Trace a point ray through static world and active mover hulls.
 pub fn trace_line(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Option<RayHit> {
     trace_line_skip(map, movers, p1, p2, -1)

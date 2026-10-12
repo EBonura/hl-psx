@@ -110,9 +110,69 @@ pub unsafe fn stop_all() {
 /// takes a fresh driver. The dialogue loader reuses it: a map change must not
 /// reset the voices that are playing.
 static mut SPU: Option<psx_spu::Spu> = None;
+static mut ROOM_CORE_END: u32 = 0x1010;
+static mut ROOM_APPLIED: u8 = u8::MAX;
+
+fn checked_room_bank(pack: &[u8], base: u32, limit: usize) -> u32 {
+    let end=crate::env_sound_audio::bank_end(pack,base,limit)
+        .expect("sound bank overlaps room workspace or has invalid layout");
+    let n=u32::from_le_bytes(pack[4..8].try_into().unwrap()) as usize;
+    for index in 0..n {
+        let at=8+index*8;
+        let off=u32::from_le_bytes(pack[at..at+4].try_into().unwrap()) as usize;
+        let len=u32::from_le_bytes(pack[at+4..at+8].try_into().unwrap()) as usize;
+        psx_asset::Audio::from_bytes(&pack[off..off+len])
+            .expect("invalid sound payload before bank DMA");
+    }
+    end
+}
+
+/// The game reserves a separate physical SPU region, validated before every
+/// sample upload. No sample is omitted or overwritten to admit room effects.
+pub unsafe fn apply_room(room: u8) {
+    use psx_hw::spu::{SPUCNT,REVERB_WORK_BASE,REVERB_VOL_LEFT,REVERB_VOL_RIGHT};
+    const INPUT_LO: u32=0x1f801d98;
+    const INPUT_HI: u32=0x1f801d9a;
+    const CONFIG: u32=0x1f801dc0;
+    const MASTER: u16=1<<7;
+    if ROOM_APPLIED == room {return;}
+    let program=crate::env_sound_audio::program(room).expect("unsupported room program");
+    let control=psx_io::read_u16(SPUCNT);
+    // Muting wet output also stops stale reads while the master write bit is
+    // off. CD/XA routing and all voice volumes remain under their current owner.
+    psx_io::write_u16(REVERB_VOL_LEFT,0);
+    psx_io::write_u16(REVERB_VOL_RIGHT,0);
+    psx_io::write_u16(INPUT_LO,0);
+    psx_io::write_u16(INPUT_HI,0);
+    psx_io::write_u16(SPUCNT,control & !MASTER);
+    if program.wet != 0 {
+        #[repr(C,align(4))]
+        struct Zeros([u8;1024]);
+        static ZERO: Zeros=Zeros([0;1024]);
+        let spu=(*core::ptr::addr_of_mut!(SPU)).as_mut().expect("room effect before SPU init");
+        let mut offset=0;
+        while offset < crate::env_sound_audio::WORK_BYTES {
+            spu.upload_adpcm(psx_spu::SpuAddr::new(crate::env_sound_audio::WORK_BASE+offset),&ZERO.0);
+            offset+=ZERO.0.len() as u32;
+        }
+        psx_io::write_u16(REVERB_WORK_BASE,(crate::env_sound_audio::WORK_BASE/8) as u16);
+        for (index,value) in program.registers.iter().enumerate() {
+            psx_io::write_u16(CONFIG+index as u32*2,*value);
+        }
+        psx_io::write_u16(INPUT_LO,0xffff);
+        psx_io::write_u16(INPUT_HI,0x00ff);
+        psx_io::write_u16(REVERB_VOL_LEFT,program.wet);
+        psx_io::write_u16(REVERB_VOL_RIGHT,program.wet);
+        psx_io::write_u16(SPUCNT,control | MASTER);
+    }
+    ROOM_APPLIED=room;
+}
 
 #[inline]
 pub unsafe fn init_from_pack(pack: &[u8]) -> usize {
+    let end=checked_room_bank(pack,0x1010,MAX_SFX);
+    ROOM_CORE_END=end;
+    ROOM_APPLIED=u8::MAX;
     // SAFETY: the game drives the SPU from this module alone, one caller at a time.
     let spu =
         (*core::ptr::addr_of_mut!(SPU)).insert(psx_spu::Spu::new(psx_io::periph::SpuDma::steal()));
@@ -121,6 +181,7 @@ pub unsafe fn init_from_pack(pack: &[u8]) -> usize {
 
 #[inline]
 pub unsafe fn load_dialogue_pack(pack: &[u8]) -> usize {
+    if !pack.is_empty() {checked_room_bank(pack,ROOM_CORE_END,96);}
     let spu = (*core::ptr::addr_of_mut!(SPU))
         .get_or_insert_with(|| psx_spu::Spu::new(psx_io::periph::SpuDma::steal()));
     state().load_dialogue_pack(spu, pack)

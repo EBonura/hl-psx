@@ -382,6 +382,8 @@ pub mod logic {
     /// One-shot funnel: arg1 flare6 sprite, flag 1 reverses flight; aux
     /// words contain Q12 world scale and signed original absolute Z height.
     pub const ENV_FUNNEL: u8 = 62;
+    /// Acoustic point: arg0 scaled radius, arg1 original room type.
+    pub const ENV_SOUND: u8 = 63;
 
     // CBaseMonster TriggerCondition values (monsters.h AITRIGGER_*). The
     // cooker emits only the ones the runtime evaluates.
@@ -510,8 +512,9 @@ pub mod logic {
     pub const LOGIC_ENV_BLOOD: u8 = ENV_BLOOD;
     pub const LOGIC_ENV_BUBBLES: u8 = ENV_BUBBLES;
     pub const LOGIC_ENV_FUNNEL: u8 = ENV_FUNNEL;
+    pub const LOGIC_ENV_SOUND: u8 = ENV_SOUND;
 
-    pub const KINDS: [u8; 62] = [
+    pub const KINDS: [u8; 63] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -574,6 +577,7 @@ pub mod logic {
         ENV_BLOOD,
         ENV_BUBBLES,
         ENV_FUNNEL,
+        ENV_SOUND,
     ];
 }
 

@@ -31,7 +31,7 @@ env_message|runtime|titles overlay logic
 env_render|runtime|actor render-state controller
 env_shake|approximated|compact camera shake
 env_shooter|approximated|shoots material-coloured debris, not its model
-env_sound|missing_visual|room DSP/acoustic controller is absent
+env_sound|approximated|authored acoustic ownership and numerical SPU room effects; original filter/modulation/stereo topology parity remains open
 env_spark|approximated|compact spark emitter
 env_sprite|runtime|compact sprite prop
 func_breakable|runtime|breakable brush and compact debris
