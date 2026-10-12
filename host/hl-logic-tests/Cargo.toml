@@ -11,6 +11,7 @@ description = "Host runner for the PS1 crate's pure-logic unit tests"
 psx-goldsrc = { path = "../../.psoxide/engine/crates/psx-goldsrc" }
 psx-asset = { path = "../../.psoxide/sdk/crates/psx-asset" }
 psx-io = { path = "../../.psoxide/sdk/crates/psx-io" }
+psx-hw = { path = "../../.psoxide/crates/psx-hw" }
 psx-spu = { path = "../../.psoxide/sdk/crates/psx-spu" }
 psx-sfx = { path = "../../.psoxide/sdk/crates/psx-sfx" }
 psx-math = { path = "../../.psoxide/sdk/crates/psx-math" }

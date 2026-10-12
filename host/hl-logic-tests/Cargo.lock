@@ -20,6 +20,7 @@ dependencies = [
  "psx-asset",
  "psx-engine",
  "psx-goldsrc",
+ "psx-hw",
  "psx-io",
  "psx-math",
  "psx-segments",
