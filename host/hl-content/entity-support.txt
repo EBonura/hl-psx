@@ -23,7 +23,7 @@ env_blood|missing_visual|blood emitter is absent
 env_bubbles|runtime|authored brush bubble emitter; bounded world particle pool
 env_explosion|approximated|compact explosion effect and damage
 env_fade|runtime|screen fade logic
-env_funnel|missing_visual|funnel particles are absent
+env_funnel|runtime|one-shot 81-particle inward/reverse funnel; original flare6 frame zero and fade
 env_global|runtime|persistent global state logic
 env_glow|runtime|compact sprite prop
 env_laser|runtime|compact beam logic

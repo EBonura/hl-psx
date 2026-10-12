@@ -333,6 +333,14 @@ fn map_sprite_names(bsp: &Path) -> Result<Vec<(String, bool)>> {
     let mut required_effects = false;
     for entity in bsp_entities(bsp)? {
         let class = entity.get("classname").map(String::as_str).unwrap_or("");
+        if class == "env_funnel" {
+            if let Some(&i) = seen.get("flare6.spr") {result[i].1 = true;} else {
+                seen.insert("flare6.spr".to_string(),result.len());
+                result.push(("flare6.spr".to_string(),true));
+            }
+            required_effects=true;
+            continue;
+        }
         if class == "env_bubbles" {
             if !seen.contains_key("bubble.spr") {seen.insert("bubble.spr".to_string(),result.len());result.push(("bubble.spr".to_string(),true));}
             required_effects=true; // required effect textures share the same fail-closed limits
@@ -591,7 +599,7 @@ pub fn build(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
         let mut frames = Vec::new();
         let mut first = 0usize;
         let names = map_sprite_names(&bsp)?;
-        let required_effects = names.iter().any(|(n,_)|n=="blood.spr" || n=="bubble.spr");
+        let required_effects = names.iter().any(|(n,_)|n=="blood.spr" || n=="bubble.spr" || n=="flare6.spr");
         for (base, is_beam) in names {
             if !cache.contains_key(&base) {
                 let decoded = find_case_insensitive(&sprite_dir, &base)?
@@ -600,7 +608,7 @@ pub fn build(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                 cache.insert(base.clone(), decoded);
             }
             let Some(sprite) = cache.get(&base).and_then(Option::as_ref) else {
-                if base == "blood.spr" || base == "bloodspray.spr" || base == "bubble.spr" {
+                if base == "blood.spr" || base == "bloodspray.spr" || base == "bubble.spr" || base == "flare6.spr" {
                     return Err(format!("required effect resource missing: {base}").into());
                 }
                 continue;
@@ -666,10 +674,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn blood_resources_keep_every_frame_without_changing_other_sprite_sampling() {
+    fn effect_resources_keep_required_frames_and_funnel_keeps_frame_zero() {
         let root = std::env::temp_dir().join(format!("hl-blood-frames-{}",std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        for (name,count,expected) in [("blood.spr",9,9),("bloodspray.spr",10,10),("ordinary.spr",10,6)] {
+        for (name,count,expected) in [("blood.spr",9,9),("bloodspray.spr",10,10),("ordinary.spr",10,6),("flare6.spr",20,6)] {
             let mut bytes=vec![0u8;42]; bytes[..4].copy_from_slice(b"IDSP");
             bytes[12..16].copy_from_slice(&3i32.to_le_bytes());
             bytes[20..24].copy_from_slice(&1i32.to_le_bytes());
@@ -683,7 +691,9 @@ mod tests {
                 bytes.push(0);
             }
             let path=root.join(name);fs::write(&path,bytes).unwrap();
-            assert_eq!(decode(&path).unwrap().frames.len(),expected);
+            let decoded=decode(&path).unwrap();
+            assert_eq!(decoded.frames.len(),expected);
+            assert_eq!(decoded.frames[0].indices,[0]);
             fs::remove_file(path).unwrap();
         }
         fs::remove_dir(root).unwrap();

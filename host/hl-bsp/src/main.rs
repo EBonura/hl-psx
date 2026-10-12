@@ -8123,6 +8123,7 @@ fn collect_logic_entities_with_lightstyles(
             "env_explosion" => LOGIC_ENV_EXPLOSION,
             "env_blood" => LOGIC_ENV_BLOOD,
             "env_bubbles" => LOGIC_ENV_BUBBLES,
+            "env_funnel" => LOGIC_ENV_FUNNEL,
             "env_spark" | "env_debris" => LOGIC_ENV_SPARK,
             "func_monsterclip" => LOGIC_MONSTERCLIP,
             // On A Rail junctions: the path chain is stitched at cook so the train
@@ -8580,6 +8581,7 @@ fn collect_logic_entities_with_lightstyles(
                 (_, Some("4")) => 7,
                 _ => 5,
             },
+            LOGIC_ENV_FUNNEL => load_sprites_manifest().get(&(map_index,"flare6.spr".to_string())).map_or(255,|r|r.0),
             LOGIC_ENV_BUBBLES => load_sprites_manifest().get(&(map_index,"bubble.spr".to_string())).map_or(255,|r|r.0),
             LOGIC_ENV_BLOOD => if parse_f32_key(block, "color", 0.0) == 1.0 {195}else{247},
             LOGIC_ENV_BEVERAGE => parse_f32_key(block, "skin", 0.0).clamp(0.0, 6.0) as u16,
@@ -9273,6 +9275,22 @@ fn collect_logic_entities_with_lightstyles(
                     aux_count += 1;
                 }
             }
+        }
+        if kind == LOGIC_ENV_FUNNEL {
+            if out.iter().filter(|r: &&LogicRec| r.kind == LOGIC_ENV_FUNNEL).count() >= 2 {
+                return Err("env_funnel exceeds two complete simultaneous bursts".into());
+            }
+            if std::env::var_os("SPRITES_MANIFEST").is_some() && arg1 == 255 {
+                return Err("env_funnel requires original flare6 sprite".into());
+            }
+            let q12 = (4096.0 / scale).round();
+            let source = ent_value(block,"origin").and_then(parse_vec3).unwrap_or([0.0;3]);
+            if !(1.0..=i16::MAX as f32).contains(&q12) || source[2].abs() > i16::MAX as f32 {
+                return Err("env_funnel scale or original height exceeds representation".into());
+            }
+            aux.push(LogicAuxRec {target:q12 as u16,delay_ticks:0});
+            aux.push(LogicAuxRec {target:source[2] as i16 as u16,delay_ticks:0});
+            aux_count=2;
         }
         if kind == LOGIC_ENV_BUBBLES {
             if submodel.is_none() {return Err("env_bubbles requires its original brush volume".into());}
@@ -17644,6 +17662,23 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn retail_funnel_pair_keeps_original_height_reverse_and_complete_admission() {
+        let entities = br#"{ "classname" "env_funnel" "origin" "1664 623 -368" "targetname" "funnel" "spawnflags" "0" }
+        { "classname" "env_funnel" "origin" "1664 623 -368" "targetname" "funnel2" "spawnflags" "1" }"#;
+        let cook=collect_logic_entities(entities,&[],&[],2.0,&Default::default(),&Default::default()).unwrap();
+        assert_eq!(cook.ents.len(),2);
+        for (index,r) in cook.ents.iter().enumerate() {
+            assert_eq!(r.kind,LOGIC_ENV_FUNNEL);
+            assert_eq!(r.origin,[832,-184,312]);
+            assert_eq!(r.spawnflags,index as u16);
+            assert_eq!(r.aux_count,2);
+            assert_eq!(cook.aux[r.first_aux as usize].target,2048);
+            assert_eq!(cook.aux[r.first_aux as usize+1].target as i16,-368);
+        }
+        let mut third=entities.to_vec();third.extend_from_slice(br#"{ "classname" "env_funnel" }"#);
+        assert!(matches!(collect_logic_entities(&third,&[],&[],1.0,&Default::default(),&Default::default()),Err(e) if e.contains("two complete")));
+    }
     #[test]
     fn retail_bubble_brush_keeps_original_bounds_and_current_without_solid_entity() {
         let entities = br#"{ "model" "*66" "current" "100" "frequency" "3" "density" "10" "targetname" "waterbubbles1" "spawnflags" "1" "angle" "180" "classname" "env_bubbles" }"#;

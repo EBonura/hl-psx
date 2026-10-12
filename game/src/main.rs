@@ -31,6 +31,8 @@ mod beverage;
 mod env_blood;
 mod env_bubbles;
 mod env_bubbles_fx;
+mod env_funnel;
+mod env_funnel_fx;
 mod cdstream;
 mod combat_defs;
 mod driver;
@@ -11207,6 +11209,9 @@ unsafe fn logic_use_entity(
             LOGIC_STATE[li]=if schedule.enabled {LOGIC_STATE_TOP}else{LOGIC_STATE_BOTTOM};
             LOGIC_NEXT[li]=schedule.next;
         }
+        map::LOGIC_ENV_FUNNEL => {
+            if env_funnel_fx::emit(m, rec) { LOGIC_STATE[li] = LOGIC_STATE_REMOVED; }
+        }
         map::LOGIC_ENV_BLOOD => logic_blood(m, rec),
         map::LOGIC_ENV_EXPLOSION => {
             // CEnvExplosion::Use calls RadiusDamage with the magnitude over
@@ -19841,6 +19846,7 @@ unsafe fn decay_combat_fx(m: &Map) {
         i += 1;
     }
     tick_debris(m);
+    env_funnel_fx::tick();
     tick_explosions();
     for fx in (*core::ptr::addr_of_mut!(BLOOD_FX)).iter_mut() { fx.age = fx.age.saturating_add(1); }
 }
@@ -21704,6 +21710,7 @@ unsafe fn logic_shoot(m: &Map, li: usize, now: u16) {
 }
 
 unsafe fn clear_debris() {
+    env_funnel_fx::clear();
     let mut i = 0;
     while i < MAX_DEBRIS {
         DEBRIS[i].ttl = 0;
@@ -36643,6 +36650,7 @@ fn play(
             render_explosions(&mut packets, &mut np, &rot, base_t);
             render_blood_fx(&mut packets, &mut np, &rot, base_t);
             env_bubbles_fx::render(&mut packets,&mut np,&rot,base_t);
+            env_funnel_fx::render(&mut packets,&mut np,&rot,base_t);
             queue_rpg_spot(&mut packets, world_ot(), &rot, base_t);
             queue_shards(&mut packets, world_ot(), &rot, base_t);
             if IMPACT_MARKS_LIVE {

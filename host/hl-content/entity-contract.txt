@@ -118,9 +118,9 @@ env_fade|flag:1|yes|cook:"holdtime"|-
 env_fade|holdtime|yes|cook:"holdtime"|-
 env_fade|renderamt|partial|cook:"rendercolor"|-|only whether the colour is light
 env_fade|rendercolor|partial|cook:"rendercolor"|-|only whether the colour is light
-env_funnel|@class|cosmetic|-|-|funnel particles are absent
-env_funnel|@use|cosmetic|-|-
-env_funnel|flag:1|cosmetic|-|-
+env_funnel|@class|runtime|-|-|one-shot authored funnel
+env_funnel|@use|runtime|-|-
+env_funnel|flag:1|runtime|-|-
 env_global|@class|yes|cook:"env_global"|-|persistent global state logic
 env_global|@use|yes|game:LOGIC_ENV_GLOBAL|run:roots-diff
 env_global|flag:1|na|-|-
