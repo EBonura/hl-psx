@@ -103,7 +103,7 @@ fn room_staging_words(rooms: &Path) -> Result<usize> {
     Ok(room_budget::map_staging_words(largest))
 }
 const MAX_LOADED_MODELS: usize = 24;
-const POOL_FACE_CAP: usize = 7_936;
+const POOL_FACE_CAP: usize = 8_064;
 const POOL_FACE_RUN_CAP: usize = 192;
 const POOL_TEX_SLOTS: usize = 176;
 const N_MODEL_TYPES: usize = 77;
@@ -2310,7 +2310,7 @@ mod tests {
         for declaration in [
             "const MAX_LOADED_MODELS: usize = 24;",
             "const POOL_TEX_SLOTS: usize = 176;",
-            "const POOL_FACE_CAP: usize = 7936;",
+            "const POOL_FACE_CAP: usize = 8064;",
             "const POOL_FACE_RUN_CAP: usize = 192;",
             "const VM_POOL_WORDS: usize = room_budget::VM_POOL_WORDS;",
             "const MAX_WEAPON_TRIS: usize = 1152;",

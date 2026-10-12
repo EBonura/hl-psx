@@ -1025,13 +1025,11 @@ const MAX_LOADED_MODELS: usize = 24; // c3a2d roster, weaponbox and carried-weap
                                      // textures on c1a1f -> c1a1b. Two spare slots cover alignment/roster churn;
                                      // each TexSlot is 32 bytes.
 const POOL_TEX_SLOTS: usize = 176;
-// Shared RenderFace pool. With every authored scientist head retained and the
-// distant c4a3 Garg variant welded to 768 vertices, the campaign peak (103 maps
-// and 237 transitions, 2026-09-23 cook) is c4a3 at 7,891 faces; the next map is
-// c4a1b at 7,043. Keep 45 faces of guard: each face is ten bytes of RAM, and
-// whole-type drops are forbidden by the Rust campaign model-pool audit, which
-// fails the build before a recook can outgrow the pool.
-const POOL_FACE_CAP: usize = 7936;
+// Authored weaponboxes raise the full-campaign c4a3 model roster to 8,027
+// faces. Keep 37 faces of guard without dropping models. Each face occupies
+// ten bytes across the index and UV pools: this adds 1,280 resident bytes.
+// The Rust campaign model-pool audit rejects any later overflow.
+const POOL_FACE_CAP: usize = 8064;
 // Body/texture runs peak at 184 on the carry-heavy c1a1f -> c1a1b edge after
 // compact carry variants make every actor resident. Keep eight aligned guards.
 // Texture ids live here rather than in every face payload, saving over 15 KiB
