@@ -310,6 +310,45 @@ pub const fn multisource_complete(
     bits & mask == mask && (!global_required || global_on)
 }
 
+/// Reconstruct an acquired inventory item's registered input without toggling
+/// an already restored input or inventing a completion output event.
+pub const fn multisource_restore_inventory(
+    bits: u32,
+    member_count: u8,
+    member_index: u8,
+    acquired: bool,
+) -> u32 {
+    if acquired && member_index < member_count && member_index < 32 {
+        bits | (1u32 << member_index)
+    } else {
+        bits
+    }
+}
+
+#[cfg(test)]
+mod inventory_restore_tests {
+    use super::*;
+
+    #[test]
+    fn suitless_and_unregistered_inputs_do_not_unlock() {
+        assert_eq!(multisource_restore_inventory(0, 1, 0, false), 0);
+        assert_eq!(multisource_restore_inventory(0, 1, 1, true), 0);
+        assert_eq!(multisource_restore_inventory(0, 0, 0, true), 0);
+        assert_eq!(multisource_restore_inventory(0, 33, 32, true), 0);
+    }
+
+    #[test]
+    fn acquired_input_is_idempotent_and_preserves_other_requirements() {
+        let restored = multisource_restore_inventory(0, 2, 0, true);
+        assert_eq!(restored, 1);
+        assert!(!multisource_complete(restored, 2, false, false));
+        assert_eq!(multisource_restore_inventory(restored, 2, 0, true), restored);
+        let all = multisource_restore_inventory(restored, 2, 1, true);
+        assert!(multisource_complete(all, 2, false, false));
+        assert!(!multisource_complete(all, 2, true, false));
+    }
+}
+
 #[inline(always)]
 pub const fn multisource_toggle(
     bits: u32,

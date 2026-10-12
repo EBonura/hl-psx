@@ -9559,6 +9559,43 @@ unsafe fn logic_check_multisources(m: &Map, nlogic: usize, _nents: usize, _now: 
     }
 }
 
+/// Manual saves retain the acquired suit, but do not serialize map-local
+/// multisource inputs. Restore only exact inputs registered to the authored
+/// suit pickup; actors, doors and output chains still run through normal use.
+unsafe fn logic_restore_saved_suit(m: &Map, nlogic: usize, nents: usize, suit: bool) {
+    if !suit {
+        return;
+    }
+    for source in 0..nlogic {
+        let item = m.logic(source);
+        if item.kind != map::LOGIC_ITEM_SUIT || item.target == 0 {
+            continue;
+        }
+        let mut registered = false;
+        for gate in 0..nlogic {
+            let rec = m.logic(gate);
+            if rec.kind != map::LOGIC_MULTISOURCE || rec.targetname != item.target {
+                continue;
+            }
+            for member in 0..rec.aux_count.min(32) {
+                if m.logic_aux(rec.first_aux + member).target != source as u16 {
+                    continue;
+                }
+                let bits = logic_state::multisource_restore_inventory(
+                    logic_multisource_bits(gate), rec.aux_count.min(32) as u8,
+                    member as u8, suit,
+                );
+                logic_multisource_store_bits(gate, bits);
+                logic_multisource_refresh(gate, rec);
+                registered = true;
+            }
+        }
+        if registered {
+            logic_remove_entity(source, item, nents);
+        }
+    }
+}
+
 unsafe fn logic_fire_targets(
     m: &Map,
     nlogic: usize,
@@ -32700,6 +32737,7 @@ fn play(
             GLOBAL_ON = cp.global_on;
             GLOBAL_COUNT =
                 (cp.global_count as usize).min((*core::ptr::addr_of!(GLOBAL_HASH)).len());
+            logic_restore_saved_suit(&m, nlogic, nents, cp.suit);
             pending_vm_switch = true;
         } else {
             PENDING_RESTORE_ACTIVE = false;
