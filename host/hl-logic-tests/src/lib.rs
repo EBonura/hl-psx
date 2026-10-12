@@ -22,6 +22,8 @@
 #[path = "../../../game/src/combat_defs.rs"]
 pub mod combat_defs;
 pub use combat_defs::{N_AMMO, N_WEAPONS};
+#[path = "../../../game/src/weaponbox.rs"]
+pub mod weaponbox;
 
 #[path = "../../../game/src/sfx.rs"]
 pub mod sfx;

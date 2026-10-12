@@ -1020,7 +1020,7 @@ const MOVE_AWAY_TIMEOUT_TICKS: u8 = 80;
 // geometry chunk `1300+id`, texture chunk `1100+id`. The runtime keeps only the
 // types a map places resident (TYPE_TO_SLOT -> LOADED_MODELS).
 const MODEL_STREAM_ORDER: [u8; N_MODEL_TYPES] = room_budget::MODEL_STREAM_ORDER;
-const MAX_LOADED_MODELS: usize = 23; // c3a2d roster + carried-weapon death drop
+const MAX_LOADED_MODELS: usize = 24; // c3a2d roster, weaponbox and carried-weapon death drop
                                      // Full 96-map + 222-transition roster audit peaks at 174 resident actor
                                      // textures on c1a1f -> c1a1b. Two spare slots cover alignment/roster churn;
                                      // each TexSlot is 32 bytes.
@@ -5913,6 +5913,11 @@ static mut LIVE_CHECKPOINT: save::Checkpoint = save::Checkpoint::EMPTY;
 static mut LEVEL_ENTRY_GRAVITY: i32 = 4096;
 static mut PENDING_RESTORE: save::Checkpoint = save::Checkpoint::EMPTY;
 static mut PENDING_RESTORE_ACTIVE: bool = false;
+static mut WEAPONBOX_REMOVED: u32 = 0;
+
+pub fn reset_weaponboxes_for_new_game() {
+    unsafe { WEAPONBOX_REMOVED = 0; }
+}
 
 /// Save staging borrows the head of the per-frame projection scratch. A save
 /// only runs from the pause menu with no render in flight, and the next world
@@ -8388,6 +8393,7 @@ fn carry_actor_capable(kind: u8) -> bool {
             PROP_TYPE_ITEM_SUIT
                 | PROP_TYPE_ITEM_BATTERY
                 | PROP_TYPE_WEAPONBOX
+                // Ammo payload carry is not implemented by the actor mailbox.
                 | 16 // Gargantua: FCAP_DONT_SAVE
                 | PROP_TYPE_WEAPON_FIRST..=PROP_TYPE_LONGJUMP | 50 // Tentacle: !FCAP_ACROSS_TRANSITION
         )
@@ -19067,6 +19073,7 @@ unsafe fn collect_pickups(
     nlogic: usize,
     nents: usize,
     now: u16,
+    room_id: u16,
     player_pos: [i32; 3],
     player_half_height: i32,
     suit_equipped: &mut bool,
@@ -19112,6 +19119,10 @@ unsafe fn collect_pickups(
                 if weaponbox::can_touch(grounded, *health != 0) {
                     let li = PROP_LOGIC_LINK[pi] as usize;
                     let rec = m.logic(li);
+                    let Some(id) = weaponbox::original_id(room_id, rec.arg0) else {
+                        scan += 1;
+                        continue;
+                    };
                     for index in 0..rec.aux_count {
                         let entry = m.logic_aux(rec.first_aux + index);
                         let slot = entry.target as usize;
@@ -19120,6 +19131,7 @@ unsafe fn collect_pickups(
                                 entry.delay_ticks, max_reserve_for(slot));
                         }
                     }
+                    WEAPONBOX_REMOVED |= 1 << id;
                     logic_remove_entity(li, rec, nents);
                     sfx::play(sfx::PICKUP);
                 }
@@ -32507,12 +32519,22 @@ fn play(
             phys::set_gravity_scale(cp.gravity as i32);
             LEVEL_ENTRY_GRAVITY = cp.gravity as i32;
             GLOBAL_HASH = cp.global_hash;
+            WEAPONBOX_REMOVED = cp.weaponbox_removed;
             GLOBAL_ON = cp.global_on;
             GLOBAL_COUNT =
                 (cp.global_count as usize).min((*core::ptr::addr_of!(GLOBAL_HASH)).len());
             pending_vm_switch = true;
         } else {
             PENDING_RESTORE_ACTIVE = false;
+        }
+        let mut li = 0;
+        while li < nlogic {
+            let rec = m.logic(li);
+            if rec.kind == map::LOGIC_WEAPONBOX
+                && weaponbox::is_removed(WEAPONBOX_REMOVED, launch.room_id, rec.arg0) {
+                logic_remove_entity(li, rec, nents);
+            }
+            li += 1;
         }
         logic_fire_global_autos(&m, nlogic);
     }
@@ -34353,6 +34375,7 @@ fn play(
                     nlogic,
                     nents,
                     sim_frame_no as u16,
+                    launch.room_id,
                     player.pos,
                     player.half_height(),
                     &mut suit_equipped,
@@ -34419,6 +34442,7 @@ fn play(
                     gravity: phys::gravity_scale().clamp(0, u16::MAX as i32) as u16,
                     skill: settings::skill() as u8,
                     sequence: 0, // stamped by save::write
+                    weaponbox_removed: WEAPONBOX_REMOVED,
                 };
                 let mut charger_pulse = 0u8;
                 if want_use && MOUNTED_TANK >= 0 {

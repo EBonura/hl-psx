@@ -107,10 +107,10 @@ impl Slot {
     }
 }
 
-/// Bumped whenever the field layout changes. A card written by an older build
-/// is reported as absent rather than misread: every field here is raw state fed
-/// straight back into the simulation, so a stale layout is not recoverable.
-const SAVE_VERSION: u16 = 4;
+/// Version 5 appends the authored weaponbox consumed mask; legacy versions
+/// 2..4 remain readable and start with no recorded box removals.
+const SAVE_VERSION: u16 = 5;
+const SAVE_VERSION_WITH_SKILL: u16 = 4;
 /// Version 3 lacks the difficulty field; those saves were played on the
 /// values the port then hardcoded, which were Easy's.
 const SAVE_VERSION_NO_SKILL: u16 = 3;
@@ -153,6 +153,7 @@ pub struct Checkpoint {
     /// this is what "most recent" means: each write takes the highest sequence
     /// on the card and adds one.
     pub sequence: u32,
+    pub weaponbox_removed: u32,
 }
 
 impl Checkpoint {
@@ -177,6 +178,7 @@ impl Checkpoint {
         gravity: 4096,
         skill: 0,
         sequence: 0,
+        weaponbox_removed: 0,
     };
 }
 
@@ -275,6 +277,7 @@ pub fn encode(cp: &Checkpoint, buf: &mut [u8]) -> usize {
     w.u32(cp.sequence);
     w.u16(cp.gravity);
     w.u8(cp.skill);
+    w.u32(cp.weaponbox_removed);
     let end = w.at;
     let sum = checksum(&w.buf[..end]);
     w.u32(sum);
@@ -291,6 +294,7 @@ pub fn decode(buf: &[u8]) -> Option<Checkpoint> {
     }
     let version = r.u16();
     if version != SAVE_VERSION
+        && version != SAVE_VERSION_WITH_SKILL
         && version != SAVE_VERSION_NO_SKILL
         && version != SAVE_VERSION_NO_GRAVITY
     {
@@ -328,8 +332,14 @@ pub fn decode(buf: &[u8]) -> Option<Checkpoint> {
     if version >= SAVE_VERSION_NO_SKILL {
         cp.gravity = r.u16();
     }
-    if version >= SAVE_VERSION {
+    if version >= SAVE_VERSION_WITH_SKILL {
         cp.skill = r.u8().min(2);
+    }
+    if version >= SAVE_VERSION {
+        cp.weaponbox_removed = r.u32();
+        if cp.weaponbox_removed & !crate::weaponbox::VALID_REMOVED_MASK != 0 {
+            return None;
+        }
     }
     let end = r.at;
     let stored = r.u32();
@@ -489,6 +499,7 @@ mod tests {
         cp.sequence = 7;
         cp.gravity = 2458;
         cp.skill = 2;
+        cp.weaponbox_removed = (1 << 0) | (1 << 28);
         cp
     }
 
@@ -515,6 +526,7 @@ mod tests {
         assert_eq!(back.sequence, cp.sequence);
         assert_eq!(back.gravity, cp.gravity);
         assert_eq!(back.skill, cp.skill);
+        assert_eq!(back.weaponbox_removed, cp.weaponbox_removed);
         assert!(back.has_pos);
     }
 
@@ -523,7 +535,7 @@ mod tests {
         // A version 2 payload is the version 3 one without the trailing
         // gravity field, under the old version number and its own checksum.
         let mut buf = [0u8; 512];
-        let len = encode(&sample(), &mut buf) - 4 - 1 - 2;
+        let len = encode(&sample(), &mut buf) - 4 - 4 - 1 - 2;
         buf[4..6].copy_from_slice(&SAVE_VERSION_NO_GRAVITY.to_le_bytes());
         let sum = checksum(&buf[..len]);
         buf[len..len + 4].copy_from_slice(&sum.to_le_bytes());
@@ -531,18 +543,44 @@ mod tests {
         assert_eq!(back.gravity, 4096);
         assert_eq!(back.skill, 0);
         assert_eq!(back.sequence, 7);
+        assert_eq!(back.weaponbox_removed, 0);
     }
 
     #[test]
     fn version_three_saves_load_on_easy() {
         let mut buf = [0u8; 512];
-        let len = encode(&sample(), &mut buf) - 4 - 1;
+        let len = encode(&sample(), &mut buf) - 4 - 4 - 1;
         buf[4..6].copy_from_slice(&SAVE_VERSION_NO_SKILL.to_le_bytes());
         let sum = checksum(&buf[..len]);
         buf[len..len + 4].copy_from_slice(&sum.to_le_bytes());
         let back = decode(&buf[..len + 4]).expect("version 3 decodes");
         assert_eq!(back.gravity, 2458);
         assert_eq!(back.skill, 0);
+        assert_eq!(back.weaponbox_removed, 0);
+    }
+
+    #[test]
+    fn version_four_preserves_inventory_and_defaults_box_removals() {
+        let mut buf = [0u8; 512];
+        let len = encode(&sample(), &mut buf) - 4 - 4;
+        buf[4..6].copy_from_slice(&SAVE_VERSION_WITH_SKILL.to_le_bytes());
+        let sum = checksum(&buf[..len]);
+        buf[len..len+4].copy_from_slice(&sum.to_le_bytes());
+        let back = decode(&buf[..len+4]).expect("version 4 decodes");
+        assert_eq!(back.ammo,sample().ammo);
+        assert_eq!(back.owned,sample().owned);
+        assert_eq!(back.skill,2);
+        assert_eq!(back.weaponbox_removed,0);
+    }
+
+    #[test]
+    fn valid_checksum_cannot_admit_unbound_box_bits() {
+        let mut buf = [0u8;512];
+        let len = encode(&sample(), &mut buf);
+        buf[len-8..len-4].copy_from_slice(&0x8000_0000u32.to_le_bytes());
+        let sum = checksum(&buf[..len-4]);
+        buf[len-4..len].copy_from_slice(&sum.to_le_bytes());
+        assert!(decode(&buf[..len]).is_none());
     }
 
     #[test]

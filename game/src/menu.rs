@@ -1329,6 +1329,7 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
                     play_menu_accept();
                     match main_sel {
                         0 => {
+                            crate::reset_weaponboxes_for_new_game();
                             // No screen of our own here: play() overlays its
                             // loading strip on this very frame a moment later.
                             return CHAPTER_ROOM[0] as usize;

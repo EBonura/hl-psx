@@ -8393,6 +8393,7 @@ fn collect_logic_entities_with_lightstyles(
             _ => USE_TOGGLE,
         };
         let arg0 = match kind {
+            LOGIC_WEAPONBOX => out.iter().filter(|r: &&LogicRec| r.kind == LOGIC_WEAPONBOX).count() as u16,
             LOGIC_ENV_SOUND => {
                 let radius = sound_number(block,"radius") / scale;
                 if !radius.is_finite() || radius < 0.0 || radius > u16::MAX as f32 {
@@ -9312,6 +9313,10 @@ fn collect_logic_entities_with_lightstyles(
         }
         if kind == LOGIC_WEAPONBOX {
             let mut error = None;
+            if std::env::var_os("MAP_INDEX").is_some()
+                && weaponbox::original_id(map_index,arg0).is_none() {
+                return Err("weaponbox has no supported original persistence identity".into());
+            }
             iter_ent_pairs(block, |key, value| {
                 if let Some(slot) = weaponbox::ammo_slot(key) {
                     match value.parse::<u16>() {
@@ -17744,11 +17749,14 @@ mod tests {
     fn weaponbox_all29_retail_records_preserve_every_ammo_quantity() {
         let root = std::env::var("HL_WEAPONBOX_RETAIL_DIR").expect("explicit retail map directory");
         let mut total = 0;
-        for name in include_str!("../../hl-content/map-list.txt").lines().filter(|s| !s.is_empty()) {
+        let mut identities = 0u32;
+        for (room,name) in include_str!("../../hl-content/map-list.txt").lines().filter(|s| !s.is_empty()).enumerate() {
             let bytes = std::fs::read(std::path::Path::new(&root).join(format!("{name}.bsp"))).unwrap();
             let start = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
             let len = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
             let text = String::from_utf8_lossy(&bytes[start..start+len]);
+            let mut selected = String::new();
+            let mut expected_boxes = Vec::new();
             for raw in text.split('{').skip(1) {
                 let block = raw.split('}').next().unwrap();
                 if ent_value(block,"classname") != Some("weaponbox") { continue; }
@@ -17758,12 +17766,18 @@ mod tests {
                         expected.push((slot,value.parse::<u16>().unwrap()));
                     }
                 });
-                let selected = format!("{{{block}}}");
-                let cook = collect_logic_entities(selected.as_bytes(),&[],&[],1.0,
-                    &Default::default(),&Default::default()).unwrap();
-                assert_eq!(cook.ents.len(),1,"{name}");
-                let rec = &cook.ents[0];
+                selected.push_str(&format!("{{{block}}}"));
+                expected_boxes.push(expected);
+            }
+            let cook = collect_logic_entities(selected.as_bytes(),&[],&[],1.0,
+                &Default::default(),&Default::default()).unwrap();
+            assert_eq!(cook.ents.len(),expected_boxes.len(),"{name}");
+            for (ordinal,(rec,expected)) in cook.ents.iter().zip(expected_boxes).enumerate() {
                 assert_eq!(rec.kind,LOGIC_WEAPONBOX);
+                assert_eq!(rec.arg0,ordinal as u16);
+                let id = weaponbox::original_id(room as u16,rec.arg0).expect("original identity");
+                assert_eq!(identities & (1 << id),0,"duplicate box identity");
+                identities |= 1 << id;
                 let actual = cook.aux[rec.first_aux as usize..rec.first_aux as usize+rec.aux_count as usize]
                     .iter().map(|entry|(entry.target,entry.delay_ticks)).collect::<Vec<_>>();
                 assert_eq!(actual,expected,"{name}");
@@ -17771,6 +17785,7 @@ mod tests {
             }
         }
         assert_eq!(total,29);
+        assert_eq!(identities,weaponbox::VALID_REMOVED_MASK);
     }
 
     #[test]

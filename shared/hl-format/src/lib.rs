@@ -384,7 +384,8 @@ pub mod logic {
     pub const ENV_FUNNEL: u8 = 62;
     /// Acoustic point: arg0 scaled radius, arg1 original room type.
     pub const ENV_SOUND: u8 = 63;
-    /// Authored ammunition box: each aux pair is (Arsenal ammo slot, quantity).
+    /// Authored ammunition box: arg0 is its original per-map ordinal;
+    /// each aux pair is (Arsenal ammo slot, quantity).
     pub const WEAPONBOX: u8 = 64;
 
     // CBaseMonster TriggerCondition values (monsters.h AITRIGGER_*). The

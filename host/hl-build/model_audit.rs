@@ -102,7 +102,7 @@ fn room_staging_words(rooms: &Path) -> Result<usize> {
         .ok_or("model residency audit found no cooked room chunks")?;
     Ok(room_budget::map_staging_words(largest))
 }
-const MAX_LOADED_MODELS: usize = 23;
+const MAX_LOADED_MODELS: usize = 24;
 const POOL_FACE_CAP: usize = 7_936;
 const POOL_FACE_RUN_CAP: usize = 192;
 const POOL_TEX_SLOTS: usize = 176;
@@ -2308,7 +2308,7 @@ mod tests {
             "runtime drift: N_MODEL_TYPES"
         );
         for declaration in [
-            "const MAX_LOADED_MODELS: usize = 23;",
+            "const MAX_LOADED_MODELS: usize = 24;",
             "const POOL_TEX_SLOTS: usize = 176;",
             "const POOL_FACE_CAP: usize = 7936;",
             "const POOL_FACE_RUN_CAP: usize = 192;",
