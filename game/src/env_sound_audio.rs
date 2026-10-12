@@ -2,7 +2,7 @@
 //! different filter graph; modulation, low-pass and stereo parity remain open.
 
 pub const WORK_BYTES: u32 = 64 * 1024;
-pub const WORK_BASE: u32 = 512 * 1024 - WORK_BYTES;
+pub const SPU_BYTES: u32 = 512 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Preset {
     /// Delays in tenths of a millisecond; feedback in Q15.
@@ -161,11 +161,34 @@ mod tests {
 /// Validate the complete bank's upload extent before any DMA. Payload decoding
 /// remains the SDK's responsibility; its aligned ADPCM plus parking-tail layout
 /// must stay below the independent room workspace.
+/// Exact sample admission is independent of optional effect workspace.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Workspace {
+    pub base: u32,
+    pub bytes: u32,
+}
+pub fn workspace(program: &Program, sample_end: u32) -> Option<Workspace> {
+    if program.wet == 0 || program.used_bytes == 0 || program.used_bytes > WORK_BYTES
+        || sample_end > SPU_BYTES || sample_end & 15 != 0 {
+        return None;
+    }
+    // Every absolute SPU tap (including disabled taps, which the hardware
+    // still reads) and each delayed all-pass read stays in the reserved ring.
+    if program.registers[10..30].iter().any(|tap| *tap as u32 * 8 + 2 > program.used_bytes)
+        || program.registers[26..28].iter().any(|tap| *tap < program.registers[0])
+        || program.registers[28..30].iter().any(|tap| *tap < program.registers[1]) {
+        return None;
+    }
+    let base = SPU_BYTES.checked_sub(program.used_bytes)?;
+    if base < sample_end || base & 15 != 0 {return None;}
+    Some(Workspace {base,bytes:program.used_bytes})
+}
+
 pub fn bank_end(pack: &[u8], base: u32, limit: usize) -> Option<u32> {
     fn word(bytes: &[u8], at: usize) -> Option<u32> {
         Some(u32::from_le_bytes(bytes.get(at..at+4)?.try_into().ok()?))
     }
-    if base>WORK_BASE || base&15!=0 || pack.get(..4)? != b"HSFX" {return None;}
+    if base>SPU_BYTES || base&15!=0 || pack.get(..4)? != b"HSFX" {return None;}
     let count = word(pack,4)? as usize;
     if count > limit || 8usize.checked_add(count.checked_mul(8)?)? > pack.len() {return None;}
     let mut end=base;
@@ -178,7 +201,7 @@ pub fn bank_end(pack: &[u8], base: u32, limit: usize) -> Option<u32> {
         if 32usize.checked_add(blocks as usize)? != sample.len() {return None;}
         end=end.checked_add(blocks)?.checked_add(15)? & !15;
         end=end.checked_add(16)?;
-        if end > WORK_BASE {return None;}
+        if end > SPU_BYTES {return None;}
     }
     Some(end)
 }
@@ -199,8 +222,23 @@ mod bank_tests {
     #[test]
     fn extent_matches_sdk_adpcm_alignment_and_parking_tail() {
         assert_eq!(bank_end(&one_sample(),0x1010,70),Some(0x1030));
-        assert_eq!(bank_end(&one_sample(),WORK_BASE-32,70),Some(WORK_BASE));
-        assert_eq!(bank_end(&one_sample(),WORK_BASE-16,70),None);
+        assert_eq!(bank_end(&one_sample(),SPU_BYTES-32,70),Some(SPU_BYTES));
+        assert_eq!(bank_end(&one_sample(),SPU_BYTES-16,70),None);
+    }
+    #[test]
+    fn optional_workspace_never_rejects_or_overwrites_valid_samples() {
+        assert_eq!(bank_end(&one_sample(),SPU_BYTES-WORK_BYTES,70),Some(SPU_BYTES-WORK_BYTES+32));
+        let program=program(19).unwrap();
+        let base=SPU_BYTES-program.used_bytes;
+        assert_eq!(workspace(&program,base),Some(Workspace {base,bytes:program.used_bytes}));
+        assert_eq!(workspace(&program,base+16),None);
+        assert_eq!(workspace(&super::program(0).unwrap(),SPU_BYTES),None);
+        let mut invalid=program;
+        invalid.registers[19]=(invalid.used_bytes/8) as u16;
+        assert_eq!(workspace(&invalid,0x1010),None);
+        invalid=program;
+        invalid.registers[0]=invalid.registers[26]+1;
+        assert_eq!(workspace(&invalid,0x1010),None);
     }
     #[test]
     fn malformed_or_oversized_banks_fail_before_any_upload() {
@@ -218,26 +256,44 @@ mod bank_tests {
 mod retail_bank_tests {
     use super::*;
     #[test]
-    #[ignore="requires complete cooked103-map audio banks"]
-    fn all103_actual_banks_leave_workspace_without_sample_omission() {
-        let root=std::path::PathBuf::from(std::env::var("HL_ENV_SOUND_COOKED_SFX").expect("explicit cooked bank path"));
-        let table=std::fs::read(root.join("chunk_3052.psxa")).unwrap();
+    #[ignore="requires complete cooked103-map core AND dialogue banks"]
+    fn all103_actual_combined_banks_preserve_samples_and_admit_only_safe_effects() {
+        let root=std::path::PathBuf::from(std::env::var("HL_ENV_SOUND_COOKED_DATA").expect("explicit cooked data path"));
+        let table=std::fs::read(root.join("sfx/chunk_3052.psxa")).unwrap();
         assert_eq!(&table[..4],b"HCPT");
         let count=u16::from_le_bytes(table[4..6].try_into().unwrap()) as usize;
         assert_eq!(count,103);
-        let mut peak=0;
+        let mut capacity_limited=Vec::new();
         for map in 0..count {
             let profile=u16::from_le_bytes(table[8+map*2..10+map*2].try_into().unwrap());
             let profile=if profile==0 {3000}else{profile};
-            let core=std::fs::read(root.join(format!("chunk_{profile}.psxa"))).unwrap();
-            let base=bank_end(&core,0x1010,70).expect("complete core bank");
-            let voice=root.join(format!("chunk_{}.psxa",3100+map));
-            let end=if voice.exists() {
-                bank_end(&std::fs::read(voice).unwrap(),base,96).expect("complete dialogue bank")
-            }else{base};
-            peak=peak.max(end);
-            assert!(end<=WORK_BASE,"map{map}");
+            let core=std::fs::read(root.join(format!("sfx/chunk_{profile}.psxa"))).unwrap();
+            let core_end=bank_end(&core,0x1010,70).expect("complete core bank");
+            // Missing dialogue is a failed fixture, not an absent allocation.
+            let voice=std::fs::read(root.join(format!("voices/chunk_{}.psxa",3100+map))).unwrap();
+            let end=bank_end(&voice,core_end,96).expect("complete dialogue bank");
+            assert!(end<=SPU_BYTES,"map{map}");
+            if map==5 {assert_eq!(end,514_752);assert!(end>SPU_BYTES-WORK_BYTES);}
+            let room=std::fs::read(root.join(format!("rooms/room_{}.psxc",map*2))).unwrap();
+            assert_eq!(&room[..4],b"HLMJ");
+            let logic=u32::from_le_bytes(room[48..52].try_into().unwrap()) as usize;
+            let records=u16::from_le_bytes(room[logic..logic+2].try_into().unwrap()) as usize;
+            let mut limited=false;
+            for record in 0..records {
+                let at=logic+8+record*64;
+                if room[at]!=63 {continue;}
+                let preset=u16::from_le_bytes(room[at+24..at+26].try_into().unwrap()) as u8;
+                let program=program(preset).expect("original room control");
+                if program.wet==0 {continue;}
+                if let Some(work)=workspace(&program,end) {
+                    assert!(work.base>=end && work.base+work.bytes==SPU_BYTES);
+                } else {limited=true;}
+            }
+            if limited {capacity_limited.push(map);}
+            if map==7 {assert!(workspace(&program(19).unwrap(),end).is_some());}
+            if map==8 {assert!(workspace(&program(9).unwrap(),end).is_none());}
         }
-        assert_eq!(peak,296_144);
+        assert_eq!(capacity_limited.len(),45);
+        println!("all103 combined banks admitted; neutral-capacity maps: {capacity_limited:?}");
     }
 }
