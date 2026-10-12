@@ -28,6 +28,7 @@
 extern crate psx_rt;
 
 mod beverage;
+mod env_blood;
 mod cdstream;
 mod combat_defs;
 mod driver;
@@ -3686,6 +3687,7 @@ static mut TRACKTRAIN_CMD_USE_TYPE: u8 = map::USE_TOGGLE;
 static mut TRACKTRAIN_CMD_SPEED: u16 = 0;
 static mut TRACKTRAIN_USE_SPEED: u16 = 60; // +use drive speed (On A Rail)
 static mut LOGIC_PLAYER_POS: [i32; 3] = [0; 3];
+static mut LOGIC_PLAYER_VIEW_HEIGHT: i32 = VIEW_HEIGHT;
 /// The player's speed (units per tick) this tick or the last, for touch breakables.
 static mut PLAYER_APPROACH_SPEED: i32 = 0;
 static mut PLAYER_LAST_SPEED: i32 = 0;
@@ -11196,6 +11198,7 @@ unsafe fn logic_use_entity(
             LOGIC_STATE[li] = LOGIC_STATE_WAITING;
             LOGIC_NEXT[li] = now;
         }
+        map::LOGIC_ENV_BLOOD => logic_blood(m, rec),
         map::LOGIC_ENV_EXPLOSION => {
             // CEnvExplosion::Use calls RadiusDamage with the magnitude over
             // 2.5x its radius unless SF_ENVEXPLOSION_NODAMAGE: scripted blasts
@@ -19800,6 +19803,8 @@ unsafe fn clear_combat_fx() {
     TRACER_CURSOR = 0;
     clear_debris();
     clear_explosions();
+    BLOOD_FX = [BloodFx::EMPTY; 4];
+    BLOOD_CURSOR = 0;
 }
 
 unsafe fn decay_combat_fx(m: &Map) {
@@ -19816,6 +19821,7 @@ unsafe fn decay_combat_fx(m: &Map) {
     }
     tick_debris(m);
     tick_explosions();
+    for fx in (*core::ptr::addr_of_mut!(BLOOD_FX)).iter_mut() { fx.age = fx.age.saturating_add(1); }
 }
 
 /// Record a decal on the surface `hit` struck, lifted 2 units off it so its
@@ -21546,6 +21552,8 @@ const MAX_DEBRIS_RECTS: usize = 48;
 const DEBRIS_CASING: u8 = 0;
 const DEBRIS_GIB: u8 = 1;
 const DEBRIS_SPARK: u8 = 2;
+const DEBRIS_RED_BLOOD: u8 = 13;
+const DEBRIS_YELLOW_BLOOD: u8 = 14;
 const DEBRIS_BREAK_BASE: u8 = 3; // + GoldSrc Materials enum (0..9)
 /// Kind flag: a break shard (tempent physics, world-OT draw).
 const DEBRIS_SHARD: u8 = 0x40;
@@ -21557,7 +21565,7 @@ const DEBRIS_COLOR_SHIFT: u8 = 4;
 /// Opaque ticks 50..70 (2.5 s + 0..1 s) then a 40 tick fade (2 s).
 const SHARD_FADE_TICKS: u8 = 40;
 /// CL_TempEntUpdate FTENT_SLOWGRAVITY: 400 u/s^2 = 1 unit per tick^2.
-const SHARD_GRAVITY: i16 = 16;
+const SHARD_GRAVITY: i16 = env_blood::SLOW_GRAVITY_Q4;
 /// Rest when a floor hit comes in slower than 3 frames of gravity: 120 u/s at
 /// the 20 Hz reference frame = 6 units per tick.
 const SHARD_REST_VY: i32 = 96;
@@ -21566,21 +21574,7 @@ const SHARD_REST_VY: i32 = 96;
 const SHARD_UNIT_AREA: i32 = 3 * 12 * 12;
 const MAX_SHARDS_PER_BREAK: i32 = 40;
 
-#[derive(Clone, Copy)]
-struct Debris {
-    pos: [i32; 3], // 1/16 unit
-    vel: [i16; 3], // 1/16 unit per tick
-    ttl: u8,
-    kind: u8,
-}
-impl Debris {
-    const ZERO: Debris = Debris {
-        pos: [0; 3],
-        vel: [0; 3],
-        ttl: 0,
-        kind: 0,
-    };
-}
+use env_blood::Debris;
 static mut DEBRIS: [Debris; MAX_DEBRIS] = [Debris::ZERO; MAX_DEBRIS];
 static mut DEBRIS_CURSOR: usize = 0;
 /// RGB332 shard colours of the last four breaks (0xFF = the material's own).
@@ -21591,14 +21585,8 @@ static mut DEBRIS_RECTS: [RectFlat; MAX_DEBRIS_RECTS] =
 
 #[inline(never)]
 unsafe fn spawn_debris_fixed(pos: [i32; 3], vel: [i16; 3], kind: u8, ttl: u8) {
-    let i = DEBRIS_CURSOR % MAX_DEBRIS;
-    DEBRIS[i] = Debris {
-        pos,
-        vel,
-        ttl,
-        kind,
-    };
-    DEBRIS_CURSOR = (DEBRIS_CURSOR + 1) % MAX_DEBRIS;
+    let debris = Debris {pos,vel,ttl,kind,blood_sprite:255,blood_frame:0,blood_half_q4:0};
+    env_blood::admit(&mut *core::ptr::addr_of_mut!(DEBRIS), &mut *core::ptr::addr_of_mut!(DEBRIS_CURSOR),debris);
 }
 
 /// Whole-unit position and velocity (units per tick), as the casing, gib,
@@ -21753,13 +21741,15 @@ unsafe fn tick_debris(m: &Map) {
     let mut i = 0;
     while i < MAX_DEBRIS {
         if DEBRIS[i].ttl > 0 {
-            DEBRIS[i].ttl -= 1;
+            env_blood::advance_lifetime(&mut DEBRIS[i]);
             if DEBRIS[i].kind & DEBRIS_SHARD != 0 {
                 if DEBRIS[i].kind & DEBRIS_REST == 0 {
                     tick_shard(m, i);
                 }
             } else {
-                let g: i16 = if DEBRIS[i].kind == DEBRIS_SPARK {
+                let g: i16 = if matches!(DEBRIS[i].kind, DEBRIS_RED_BLOOD | DEBRIS_YELLOW_BLOOD) {
+                    1 // FTENT_SLOWGRAVITY, same 400 u/s² as breakmodel shards
+                } else if DEBRIS[i].kind == DEBRIS_SPARK {
                     6
                 } else if DEBRIS[i].kind >= DEBRIS_BREAK_BASE {
                     2 // sv_gravity 800 at the 20 Hz simulation rate
@@ -21784,7 +21774,8 @@ unsafe fn render_debris<const N: usize>(
     let mut i = 0;
     let mut rect = 0;
     while i < MAX_DEBRIS && rect < MAX_DEBRIS_RECTS {
-        if DEBRIS[i].ttl > 0 && DEBRIS[i].kind & DEBRIS_SHARD == 0 {
+        if DEBRIS[i].ttl > 0 && DEBRIS[i].kind & DEBRIS_SHARD == 0
+            && !matches!(DEBRIS[i].kind,DEBRIS_RED_BLOOD|DEBRIS_YELLOW_BLOOD) {
             let (r, g, b, size) = match DEBRIS[i].kind {
                 DEBRIS_CASING => (200u8, 170u8, 80u8, 2i16),
                 DEBRIS_GIB => (150, 20, 15, 3),
@@ -21839,7 +21830,8 @@ unsafe fn queue_shards(
     while i < MAX_DEBRIS {
         let d = DEBRIS[i];
         i += 1;
-        if d.ttl == 0 || d.kind & DEBRIS_SHARD == 0 {
+        if d.ttl == 0 || d.kind & DEBRIS_SHARD == 0
+            || matches!(d.kind & DEBRIS_KIND_MASK,DEBRIS_RED_BLOOD|DEBRIS_YELLOW_BLOOD) {
             continue;
         }
         if d.ttl < SHARD_FADE_TICKS
@@ -22012,6 +22004,85 @@ unsafe fn spawn_gibs(pos: [i32; 3], n: u8) {
         let vy = 8 + (impact_rng().below(8) as i32);
         spawn_debris([pos[0], pos[1] + 20, pos[2]], [vx, vy, vz], DEBRIS_GIB, 70);
         k += 1;
+    }
+}
+
+// Reuse per-map texture residency; no additional persistent VRAM atlas.
+#[derive(Clone, Copy)]
+struct BloodFx { pos: [i32;3], sprites: u16, half_q4: i16, age: u8, yellow: bool }
+impl BloodFx { const EMPTY: Self = Self {pos:[0;3],sprites:0xffff,half_q4:0,age:255,yellow:false}; }
+static mut BLOOD_FX: [BloodFx;4] = [BloodFx::EMPTY;4];
+static mut BLOOD_CURSOR: usize = 0;
+unsafe fn blood_position(rec: map::LogicEnt) -> [i32;3] {
+    let jitter = if rec.spawnflags & env_blood::PLAYER != 0 {
+        core::array::from_fn(|_| ((impact_rng().below(21) as i32 - 10)*rec.maxs[0])>>12)
+    } else {[0;3]};
+    let eye = [LOGIC_PLAYER_POS[0],LOGIC_PLAYER_POS[1]+LOGIC_PLAYER_VIEW_HEIGHT,LOGIC_PLAYER_POS[2]];
+    env_blood::position(rec.origin, eye, rec.spawnflags, jitter)
+}
+#[inline(never)]
+#[optimize(size)]
+unsafe fn logic_blood(m: &Map, rec: map::LogicEnt) {
+    if rec.arg0 == 0 { return; }
+    let sample = if rec.spawnflags & env_blood::RANDOM != 0 {
+        [impact_rng().below(8193) as i32-4096, impact_rng().below(4097) as i32,
+            impact_rng().below(8193) as i32-4096]
+    } else {[0;3]};
+    let direction = env_blood::direction(rec.mins,rec.spawnflags,sample);
+    let pos = blood_position(rec);
+    // No admitted retail emitter uses STREAM; its client particle effect is
+    // not substituted with a sprite burst. Its decal remains independent.
+    if rec.spawnflags & env_blood::STREAM == 0 {
+        let scale = env_blood::sprite_scale(rec.arg0) as i32;
+        let spray = sprite::def(rec.speed as u8 as usize);
+        let puff_scale_q8 = scale*256/35 + impact_rng().below((scale*256/25-scale*256/35+1) as u32) as i32;
+        BLOOD_FX[BLOOD_CURSOR] = BloodFx {pos,sprites:rec.speed,age:0,
+            half_q4: ((spray.base_w as i64*puff_scale_q8 as i64*rec.maxs[0] as i64)>>17) as i16,yellow:rec.arg1==195};
+        BLOOD_CURSOR = (BLOOD_CURSOR+1)%4;
+        let count = env_blood::drop_count(scale as u8,impact_rng().below(8) as u8+1,impact_rng().below(8) as u8+1);
+        let id = (rec.speed>>8) as u8;
+        let d = sprite::def(id as usize);
+        if d.n_frames>1 {
+            for _ in 0..count {
+                let velocity = [impact_rng().below(192) as i32-96,impact_rng().below(128) as i32-32,impact_rng().below(192) as i32-96];
+                let velocity = env_blood::velocity_q4(velocity,rec.maxs[0]);
+                let life = env_blood::lifetime(impact_rng().below(21) as u8);
+                let slot = DEBRIS_CURSOR%MAX_DEBRIS;
+                spawn_debris_fixed(pos.map(|v|v*16),velocity,(if rec.arg1==195 {DEBRIS_YELLOW_BLOOD}else{DEBRIS_RED_BLOOD})|DEBRIS_SHARD,life);
+                DEBRIS[slot].blood_sprite = id;
+                DEBRIS[slot].blood_frame = 1+impact_rng().below((d.n_frames-1) as u32) as u8;
+                let size = scale*256/25+impact_rng().below((scale*256/15-scale*256/25+1) as u32) as i32;
+                DEBRIS[slot].blood_half_q4 = ((d.base_w as i64*size as i64*rec.maxs[0] as i64)>>17) as i16;
+            }
+        }
+    }
+    if rec.spawnflags & env_blood::DECAL != 0 {
+        let start = blood_position(rec); // distinct retail position sample
+        let scaled_direction = direction.map(|v| ((v as i64*rec.maxs[0] as i64)>>12) as i32);
+        let end = env_blood::decal_end(start,scaled_direction,rec.arg0);
+        let movers = core::slice::from_raw_parts(core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),MOVER_COUNT.min(MAX_ENTS+1));
+        if let Some(hit) = phys::trace_line(m,movers,start,end) {
+            spawn_impact_mark(m,&hit,if rec.arg1==195 {IMPACT_KIND_YBLOOD}else{IMPACT_KIND_BLOOD});
+        }
+    }
+}
+unsafe fn render_blood_fx(packets: &mut PrimitivePacketArena<'_>, np: &mut usize, rot: &Mat3I16, base_t: [i32;3]) {
+    for fx in (*core::ptr::addr_of!(BLOOD_FX)).iter() {
+        let id = fx.sprites as u8;
+        if id == 255 || fx.age>=env_blood::SPRAY_TICKS {continue;}
+        let d = sprite::def(id as usize);
+        let frame = fx.age as usize*d.n_frames as usize/env_blood::SPRAY_TICKS as usize;
+        let half = fx.half_q4 as i32/16;
+        emit_billboard_rgb(packets,np,fx.pos,half,half,sprite::slot_for(id as usize,frame),d.crush_w,d.crush_h,
+            rot,base_t,env_blood::modulation(if fx.yellow {195}else{247}));
+    }
+    for drop in (*core::ptr::addr_of!(DEBRIS)).iter() {
+        if drop.ttl==0 || !matches!(drop.kind & DEBRIS_KIND_MASK,DEBRIS_RED_BLOOD|DEBRIS_YELLOW_BLOOD) {continue;}
+        let d = sprite::def(drop.blood_sprite as usize);
+        let half = drop.blood_half_q4 as i32/16;
+        emit_billboard_rgb(packets,np,drop.pos.map(|p|p>>4),half,half,
+            sprite::slot_for(drop.blood_sprite as usize,drop.blood_frame as usize),d.crush_w,d.crush_h,
+            rot,base_t,env_blood::modulation(if drop.kind & DEBRIS_KIND_MASK==DEBRIS_YELLOW_BLOOD {195}else{247}));
     }
 }
 
@@ -29140,6 +29211,15 @@ unsafe fn emit_billboard(
     base_t: [i32; 3],
     tint: u8,
 ) {
+    emit_billboard_rgb(packets, np, center, world_half_w, world_half_h, sl,
+        crush_w, crush_h, rot, base_t, (tint,tint,tint));
+}
+#[allow(clippy::too_many_arguments)]
+unsafe fn emit_billboard_rgb(
+    packets: &mut PrimitivePacketArena<'_>, np: &mut usize, center: [i32;3],
+    world_half_w: i32, world_half_h: i32, sl: TexSlot, crush_w: u16, crush_h: u16,
+    rot: &Mat3I16, base_t: [i32;3], tint: (u8,u8,u8),
+) {
     if !sl.valid {
         return;
     }
@@ -29175,7 +29255,7 @@ unsafe fn emit_billboard(
         np,
         [(l, t), (r, t), (l, b)],
         [uv_tl, uv_tr, uv_bl],
-        [(tint, tint, tint); 3],
+        [tint; 3],
         packet,
         otz,
     );
@@ -29184,7 +29264,7 @@ unsafe fn emit_billboard(
         np,
         [(r, t), (r, b), (l, b)],
         [uv_tr, uv_br, uv_bl],
-        [(tint, tint, tint); 3],
+        [tint; 3],
         packet,
         otz,
     );
@@ -33137,6 +33217,7 @@ fn play(
                 .clamp(-PITCH_MAX, PITCH_MAX);
             unsafe {
                 LOGIC_PLAYER_POS = player.pos;
+                LOGIC_PLAYER_VIEW_HEIGHT = if player.crouch {CROUCH_VIEW_HEIGHT}else{VIEW_HEIGHT};
                 LOGIC_PLAYER_HALF_HEIGHT = if player.crouch {
                     PLAYER_DUCK_HALF_HEIGHT
                 } else {
@@ -34173,6 +34254,7 @@ fn play(
                     weapon_icon_ticks = WEAPON_ICON_TICKS;
                 }
                 LOGIC_PLAYER_POS = player.pos;
+                LOGIC_PLAYER_VIEW_HEIGHT = if player.crouch {CROUCH_VIEW_HEIGHT}else{VIEW_HEIGHT};
                 LOGIC_PLAYER_HALF_HEIGHT = if player.crouch {
                     PLAYER_DUCK_HALF_HEIGHT
                 } else {
@@ -36518,6 +36600,7 @@ fn play(
             // Animated explosion fireballs (weapon blasts + env_explosion), same
             // additive-billboard path as the placed sprites above.
             render_explosions(&mut packets, &mut np, &rot, base_t);
+            render_blood_fx(&mut packets, &mut np, &rot, base_t);
             queue_rpg_spot(&mut packets, world_ot(), &rot, base_t);
             queue_shards(&mut packets, world_ot(), &rot, base_t);
             if IMPACT_MARKS_LIVE {

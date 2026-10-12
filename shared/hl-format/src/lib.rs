@@ -372,6 +372,10 @@ pub mod logic {
     pub const MORTAR_FIELD: u8 = 58;
     /// Monster-only launch volume; two aux words hold Q4 per-tick x/y/z velocity.
     pub const TRIGGER_MONSTERJUMP: u8 = 59;
+    /// Blood emitter: arg0 amount, arg1 palette color, mins Q12 direction,
+    /// speed packs per-map bloodspray/blood sprite IDs (255 = absent),
+    /// maxs[0] is Q12 world units per original unit.
+    pub const ENV_BLOOD: u8 = 60;
 
     // CBaseMonster TriggerCondition values (monsters.h AITRIGGER_*). The
     // cooker emits only the ones the runtime evaluates.
@@ -497,8 +501,9 @@ pub mod logic {
     pub const LOGIC_INFODECAL: u8 = INFODECAL;
     pub const LOGIC_SHOOTER: u8 = SHOOTER;
     pub const LOGIC_TRIGGER_CAMERA: u8 = TRIGGER_CAMERA;
+    pub const LOGIC_ENV_BLOOD: u8 = ENV_BLOOD;
 
-    pub const KINDS: [u8; 59] = [
+    pub const KINDS: [u8; 60] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -558,6 +563,7 @@ pub mod logic {
         TRIGGER_CAMERA,
         MORTAR_FIELD,
         TRIGGER_MONSTERJUMP,
+        ENV_BLOOD,
     ];
 }
 

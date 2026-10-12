@@ -120,8 +120,9 @@ fn decode(path: &Path) -> Result<Sprite> {
         .map(|v| [v[0], v[1], v[2]])
         .collect();
     let mut cursor = palette_at + color_count * 3;
-    let step = if frame_count > MAX_FRAMES {
-        (frame_count / MAX_FRAMES).max(1)
+    let max_frames = if matches!(path.file_name().and_then(|n|n.to_str()),Some("blood.spr" | "bloodspray.spr")) {frame_count}else{MAX_FRAMES};
+    let step = if frame_count > max_frames {
+        (frame_count / max_frames).max(1)
     } else {
         1
     };
@@ -145,7 +146,7 @@ fn decode(path: &Path) -> Result<Sprite> {
             .ok_or("sprite frame exceeds file")?
             .to_vec();
         cursor += size;
-        if frame_index % step == 0 && frames.len() < MAX_FRAMES {
+        if frame_index % step == 0 && frames.len() < max_frames {
             frames.push(Frame {
                 width: width as usize,
                 height: height as usize,
@@ -309,8 +310,19 @@ fn map_sprite_names(bsp: &Path) -> Result<Vec<(String, bool)>> {
     ];
     let mut seen = HashMap::<String, usize>::new();
     let mut result: Vec<(String, bool)> = Vec::new();
+    let mut blood = false;
     for entity in bsp_entities(bsp)? {
         let class = entity.get("classname").map(String::as_str).unwrap_or("");
+        if class == "env_blood" {
+            blood = true;
+            for base in ["bloodspray.spr", "blood.spr"] {
+                if let Some(&i) = seen.get(base) { result[i].1 = true; } else {
+                    seen.insert(base.to_string(), result.len());
+                    result.push((base.to_string(), true));
+                }
+            }
+            continue;
+        }
         if !CLASSES.contains(&class) {
             continue;
         }
@@ -335,6 +347,9 @@ fn map_sprite_names(bsp: &Path) -> Result<Vec<(String, bool)>> {
                 result.push((base, is_beam));
             }
         }
+    }
+    if blood && result.len() > MAX_SPRITES_PER_MAP {
+        return Err("blood resources exceed per-map sprite residency".into());
     }
     result.truncate(MAX_SPRITES_PER_MAP);
     Ok(result)
@@ -550,7 +565,9 @@ pub fn build(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
         let mut records = Vec::new();
         let mut frames = Vec::new();
         let mut first = 0usize;
-        for (base, is_beam) in map_sprite_names(&bsp)? {
+        let names = map_sprite_names(&bsp)?;
+        let blood = names.iter().any(|(n,_)|n=="blood.spr");
+        for (base, is_beam) in names {
             if !cache.contains_key(&base) {
                 let decoded = find_case_insensitive(&sprite_dir, &base)?
                     .map(|path| decode(&path))
@@ -558,6 +575,9 @@ pub fn build(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                 cache.insert(base.clone(), decoded);
             }
             let Some(sprite) = cache.get(&base).and_then(Option::as_ref) else {
+                if base == "blood.spr" || base == "bloodspray.spr" {
+                    return Err(format!("required blood resource missing: {base}").into());
+                }
                 continue;
             };
             // Beam textures render additive whatever their texFormat says.
@@ -571,6 +591,9 @@ pub fn build(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                 continue;
             }
             if first + crushed.len() > MAX_FRAMES_PER_MAP {
+                if blood {
+                    return Err("blood map frames exceed per-map texture residency".into());
+                }
                 break;
             }
             let local_id = records.len();
@@ -614,6 +637,30 @@ pub fn build(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blood_resources_keep_every_frame_without_changing_other_sprite_sampling() {
+        let root = std::env::temp_dir().join(format!("hl-blood-frames-{}",std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        for (name,count,expected) in [("blood.spr",9,9),("bloodspray.spr",10,10),("ordinary.spr",10,6)] {
+            let mut bytes=vec![0u8;42]; bytes[..4].copy_from_slice(b"IDSP");
+            bytes[12..16].copy_from_slice(&3i32.to_le_bytes());
+            bytes[20..24].copy_from_slice(&1i32.to_le_bytes());
+            bytes[24..28].copy_from_slice(&1i32.to_le_bytes());
+            bytes[28..32].copy_from_slice(&(count as i32).to_le_bytes());
+            bytes[40..42].copy_from_slice(&2u16.to_le_bytes());
+            bytes.extend_from_slice(&[255,255,255,0,0,0]);
+            for _ in 0..count {
+                bytes.extend_from_slice(&0i32.to_le_bytes());
+                for value in [0i32,0,1,1] {bytes.extend_from_slice(&value.to_le_bytes());}
+                bytes.push(0);
+            }
+            let path=root.join(name);fs::write(&path,bytes).unwrap();
+            assert_eq!(decode(&path).unwrap().frames.len(),expected);
+            fs::remove_file(path).unwrap();
+        }
+        fs::remove_dir(root).unwrap();
+    }
 
     #[test]
     fn dimensions_are_power_of_two_and_capped() {

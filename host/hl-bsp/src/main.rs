@@ -8119,6 +8119,7 @@ fn collect_logic_entities_with_lightstyles(
             "multisource" => LOGIC_MULTISOURCE,
             "env_global" => LOGIC_ENV_GLOBAL,
             "env_explosion" => LOGIC_ENV_EXPLOSION,
+            "env_blood" => LOGIC_ENV_BLOOD,
             "env_spark" | "env_debris" => LOGIC_ENV_SPARK,
             "func_monsterclip" => LOGIC_MONSTERCLIP,
             // On A Rail junctions: the path chain is stitched at cook so the train
@@ -8298,7 +8299,11 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_MOMENTARY => 100.0,
             _ => 0.0,
         };
-        let speed = if kind == LOGIC_SCRIPTED || kind == LOGIC_TRIGGER_CAMERA {
+        let speed = if kind == LOGIC_ENV_BLOOD {
+            let sprites = load_sprites_manifest();
+            let id = |name: &str| sprites.get(&(map_index, name.to_string())).map_or(255, |r| r.0.min(254));
+            id("bloodspray.spr") | (id("blood.spr") << 8)
+        } else if kind == LOGIC_SCRIPTED || kind == LOGIC_TRIGGER_CAMERA {
             // Scripts carry their facing yaw here (q12); they have no speed key.
             // A camera starts at its authored yaw and turns to its target.
             hl_yaw_to_world_q12(ent_yaw_degrees(block).unwrap_or(0.0)) as u16
@@ -8533,6 +8538,7 @@ fn collect_logic_entities_with_lightstyles(
             // a stable cooked logic index.
             LOGIC_MULTISOURCE => 0,
             LOGIC_ENV_GLOBAL => global_hash(ent_value(block, "globalstate").unwrap_or("")),
+            LOGIC_ENV_BLOOD => parse_f32_key(block, "amount", 0.0).clamp(0.0, u16::MAX as f32) as u16,
             LOGIC_ENV_EXPLOSION => parse_f32_key(block, "iMagnitude", 100.0)
                 .round()
                 .clamp(1.0, 255.0) as u16,
@@ -8568,6 +8574,7 @@ fn collect_logic_entities_with_lightstyles(
                 (_, Some("4")) => 7,
                 _ => 5,
             },
+            LOGIC_ENV_BLOOD => if parse_f32_key(block, "color", 0.0) == 1.0 {195}else{247},
             LOGIC_ENV_BEVERAGE => parse_f32_key(block, "skin", 0.0).clamp(0.0, 6.0) as u16,
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
             LOGIC_FUNC_TRACKTRAIN => submodel.unwrap_or(0).min(u16::MAX as usize) as u16,
@@ -9258,6 +9265,18 @@ fn collect_logic_entities_with_lightstyles(
                     });
                     aux_count += 1;
                 }
+            }
+        }
+        if kind == LOGIC_ENV_BLOOD {
+            if raw_spawnflags & 2 != 0 {return Err("env_blood stream particles are not supported".into());}
+            // Direction is dimensionless Q12, remapped using the same axis
+            // convention as positions, independently of map world scale.
+            let dir = ent_move_dir(block);
+            mins = to_world(dir.map(|v| v * 4096.0), 1.0);
+            maxs = [to_world([4096.0,0.0,0.0],scale)[0],0,0];
+            if !(1..=i16::MAX as i32).contains(&maxs[0]) {return Err("blood world scale exceeds Q12 representation".into());}
+            if std::env::var_os("SPRITES_MANIFEST").is_some() && (speed & 255 == 255 || speed >> 8 == 255) {
+                return Err("env_blood requires both original sprite resources in manifest".into());
             }
         }
         if kind == LOGIC_TRIGGER_MONSTERJUMP {
@@ -17604,6 +17623,26 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn retail_blood_keeps_amount_palette_direction_and_manager_delay() {
+        let entities = br#"{ "classname" "env_blood" "origin" "64 624 -176" "amount" "2000" "color" "1" "spawnflags" "13" "targetname" "momma_blood" }
+        { "classname" "multi_manager" "targetname" "falltodeath2_mm" "momma_blood" "4.5" }"#;
+        let cook = collect_logic_entities(entities,&[],&[],1.0,&Default::default(),&Default::default()).unwrap();
+        let blood = cook.ents.iter().find(|r| r.kind == LOGIC_ENV_BLOOD).unwrap();
+        assert_eq!(blood.origin,[64,-176,624]);
+        assert_eq!((blood.arg0,blood.arg1,blood.spawnflags),(2000,195,13));
+        assert_eq!(blood.mins,[4096,0,0]);
+        let manager = cook.ents.iter().find(|r| r.kind == LOGIC_MULTI_MANAGER).unwrap();
+        let event = &cook.aux[manager.first_aux as usize];
+        assert_eq!(event.target,blood.targetname);
+        assert_eq!(event.delay_ticks,90);
+        let scaled = collect_logic_entities(entities,&[],&[],2.0,&Default::default(),&Default::default()).unwrap();
+        let blood = scaled.ents.iter().find(|r| r.kind == LOGIC_ENV_BLOOD).unwrap();
+        assert_eq!(blood.origin,[32,-88,312]);
+        assert_eq!(blood.maxs[0],2048);
+        let stream = br#"{ "classname" "env_blood" "spawnflags" "2" }"#;
+        assert!(matches!(collect_logic_entities(stream,&[],&[],1.0,&Default::default(),&Default::default()),Err(e) if e.contains("stream")));
+    }
     #[test]
     fn retail_9mmarclip_alias_emits_the_existing_mp5_ammo_pickup() {
         let mut expected = None;
