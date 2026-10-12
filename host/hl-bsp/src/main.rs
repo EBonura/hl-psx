@@ -7969,6 +7969,7 @@ fn collect_logic_entities_with_lightstyles(
     let mut names = LogicNames::default();
     let mut out = Vec::new();
     let mut aux = Vec::new();
+    let mut global_door_count = 0usize;
     // One entry per record emitted by the main raw-entity pass. Registration
     // of multisource inputs happens only after every source has its final logic
     // index, so the runtime can compare an exact caller without name scans.
@@ -8919,6 +8920,25 @@ fn collect_logic_entities_with_lightstyles(
                     delay_ticks: 0,
                 });
                 aux_count = 1;
+            }
+            let global_name = ent_value(block, "globalname").unwrap_or("").trim();
+            if !global_name.is_empty() {
+                if !matches!(cls,"func_door"|"func_door_rotating") {
+                    return Err("global platform door transition is not supported".into());
+                }
+                global_door_count += 1;
+                if global_door_count > 9 {
+                    return Err("global door transition capacity exceeds nine retail doors".into());
+                }
+                // Preserve the close-only output at index zero, including its
+                // empty sentinel. Index one is the stable global identity.
+                if aux_count == 0 {
+                    aux.push(LogicAuxRec { target: 0, delay_ticks: 0 });
+                }
+                aux.push(LogicAuxRec {
+                    target: actor_carry_id(global_name, true), delay_ticks: 0,
+                });
+                aux_count = 2;
             }
         }
         if kind == LOGIC_MAP_FLAGS {
@@ -19597,6 +19617,66 @@ mod tests {
         assert_eq!(actor_carry_id("barney1", true), ordinary | CARRY_GLOBAL_BIT);
         assert_ne!(actor_carry_id("barney1", true), u16::MAX);
         assert_eq!(actor_carry_id("", false), 0);
+    }
+
+    #[test]
+    fn global_door_aux_preserves_close_output_and_legacy_records() {
+        let ents=br#"
+        { "classname" "func_door" "model" "*1" "globalname" "shared" "netname" "closed" }
+        { "classname" "func_door" "model" "*2" "globalname" "second" }
+        { "classname" "func_door" "model" "*3" "netname" "legacy" }
+        "#;
+        let models=vec![0;4*SZ_MODEL];
+        let cooked=collect_logic_entities(ents,&models,&[0,1,2,3],1.0,&Default::default(),&Default::default()).unwrap();
+        assert_eq!(cooked.ents.len(),3);
+        let a=&cooked.ents[0];
+        assert_eq!(a.aux_count,2);
+        assert_eq!(cooked.names[cooked.aux[a.first_aux as usize].target as usize-1],"closed");
+        assert_eq!(cooked.aux[a.first_aux as usize+1].target,actor_carry_id("shared",true));
+        let b=&cooked.ents[1];
+        assert_eq!(b.aux_count,2);
+        assert_eq!(cooked.aux[b.first_aux as usize].target,0);
+        assert_eq!(cooked.ents[2].aux_count,1);
+        let too_many=(1..=10).map(|i|format!("{{ \"classname\" \"func_door\" \"model\" \"*1\" \"globalname\" \"d{i}\" }}")).collect::<String>();
+        assert!(collect_logic_entities(too_many.as_bytes(),&models,&[0,1,2,3],1.0,&Default::default(),&Default::default()).err().unwrap().contains("capacity"));
+    }
+
+    #[test]
+    #[ignore = "requires supplied original retail BSP data"]
+    fn original_global_doors_admit_all_63_and_stable_identities() {
+        let catalog=include_str!("../../../game/src/map_catalog.rs");
+        let maps=catalog.split("pub const MAPS").nth(1).expect("map catalog");
+        let maps=maps.split("];").next().unwrap();
+        let root=std::path::Path::new("/Users/ebonura/Library/Application Support/Steam/steamapps/common/Half-Life/valve/maps");
+        let mut count=0;
+        let mut maximum=0;
+        let mut names=std::collections::HashMap::new();
+        let mut scanned=0;
+        for (index,name) in maps.split('"').enumerate() {
+            if index%2==0 {continue;}
+            let raw=std::fs::read(root.join(format!("{name}.bsp"))).expect("required original map");
+            let entity_off=u32le(&raw,4).unwrap() as usize;
+            let entity_len=u32le(&raw,8).unwrap() as usize;
+            let model_off=u32le(&raw,4+14*8).unwrap() as usize;
+            let model_len=u32le(&raw,8+14*8).unwrap() as usize;
+            let entities=&raw[entity_off..entity_off+entity_len];
+            let models=&raw[model_off..model_off+model_len];
+            let brushes=(0..models.len()/SZ_MODEL).map(|i|i as u16).collect::<Vec<_>>();
+            let cooked=collect_logic_entities(entities,models,&brushes,1.0,&Default::default(),&Default::default()).expect("retail logic admission");
+            let mut local=0;
+            for block in entity_text(entities).split('{') {
+                if !matches!(ent_value(block,"classname"),Some("func_door"|"func_door_rotating")) {continue;}
+                let global=ent_value(block,"globalname").unwrap_or("").trim();
+                if global.is_empty() {continue;}
+                let id=actor_carry_id(global,true);
+                if let Some(previous)=names.insert(id,global.to_string()) {assert_eq!(previous,global,"global identity collision");}
+                let original_count=entity_text(entities).split('{').filter(|candidate|matches!(ent_value(candidate,"classname"),Some("func_door"|"func_door_rotating")) && ent_value(candidate,"globalname").unwrap_or("").trim()==global).count();
+                assert_eq!(cooked.ents.iter().filter(|rec|rec.kind==LOGIC_FUNC_DOOR && rec.aux_count==2 && cooked.aux[rec.first_aux as usize+1].target==id).count(),original_count);
+                local+=1;
+            }
+            count+=local;maximum=maximum.max(local);scanned+=1;
+        }
+        assert_eq!((scanned,count,names.len(),maximum),(103,63,33,9));
     }
 
     #[test]

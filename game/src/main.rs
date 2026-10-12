@@ -37,6 +37,7 @@ mod env_sound;
 mod env_sound_audio;
 mod weaponbox;
 mod air_navigation;
+mod door_transition;
 mod cdstream;
 mod combat_defs;
 mod driver;
@@ -3003,6 +3004,10 @@ const ZERO_ENT: map::Ent = map::Ent {
     leaf_count: 0,
 };
 static mut ENT_CACHE: [map::Ent; MAX_ENTS] = [ZERO_ENT; MAX_ENTS];
+// Global doors must not compete with actor/train transition mailbox rows.
+static mut DOOR_CARRY: [door_transition::Carry; door_transition::CAPACITY] =
+    [door_transition::Carry::EMPTY; door_transition::CAPACITY];
+static mut DOOR_CARRY_COUNT: usize = 0;
 /// Indices of the map's func_water brushes (ENT_CACHE kind 6), filled when the
 /// brush entities load. The liquid tests walked and copied every entity record
 /// per sample to find these (usually none). More than the list holds falls
@@ -8659,6 +8664,7 @@ fn carry_name_id(m: &Map, carry_id: u16) -> u16 {
 #[inline(never)]
 #[optimize(size)]
 unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkName) -> u8 {
+    DOOR_CARRY_COUNT = 0;
     if PROP_COUNT > CARRY_MAILBOX_FIRST {
         telemetry::debug_log("hl-psx: transition live-prop invariant exceeded");
         return 0;
@@ -8673,6 +8679,7 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
         decompress_vis(m, landmark_leaf as usize, &mut *core::ptr::addr_of_mut!(VIS_BITS));
         VIS_ROW_LEAF = -1;
     }
+    snapshot_transition_doors(m, nlogic, landmark_id, landmark_origin, use_pvs);
 
     let mut carried = 0usize;
     let mut pi = 0usize;
@@ -8876,6 +8883,95 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
         li += 1;
     }
     carried as u8
+}
+
+#[inline]
+fn door_global_id(m: &Map, rec: map::LogicEnt) -> u16 {
+    if rec.kind != map::LOGIC_FUNC_DOOR || rec.aux_count < 2 { return 0; }
+    let id = m.logic_aux(rec.first_aux + 1).target;
+    if id & CARRY_GLOBAL_BIT != 0 && id != CARRY_ID_NONE { id } else { 0 }
+}
+
+#[inline(never)]
+#[optimize(size)]
+unsafe fn snapshot_transition_doors(m: &Map, nlogic: usize, landmark_id: u16,
+    landmark: [i32;3], use_pvs: bool) {
+    let mut li = 0;
+    while li < nlogic {
+        let rec = m.logic(li);
+        let id = door_global_id(m, rec);
+        if id != 0 {
+            if let Some(ei) = logic_valid_brush(rec.brush, ENT_SOLID_COUNT) {
+                if ENT_ACTIVE[ei] != 0 {
+                    let off = ent_draw_offset(ei);
+                    let mins = [0,1,2].map(|axis| rec.mins[axis]+off[axis]);
+                    let maxs = [0,1,2].map(|axis| rec.maxs[axis]+off[axis]);
+                    let mut has_volume = false;
+                    let mut inside = false;
+                    for vi in 0..nlogic {
+                        let volume = m.logic(vi);
+                        if volume.kind == map::LOGIC_TRIGGER_TRANSITION && volume.targetname == landmark_id {
+                            has_volume = true;
+                            inside |= aabb_overlaps(mins,maxs,volume.mins,volume.maxs);
+                        }
+                    }
+                    if (!use_pvs || box_touches_pvs_node(m,0,mins,maxs,0)) && (!has_volume || inside) {
+                        let e = ENT_CACHE[ei];
+                        let relative = [0,1,2].map(|axis| e.center[axis]+off[axis]-landmark[axis]);
+                        assert!(relative.iter().chain(e.mv.iter()).all(|&v| (i16::MIN as i32..=i16::MAX as i32).contains(&v)),
+                            "global door transition coordinate overflow");
+                        assert!(DOOR_CARRY_COUNT < door_transition::CAPACITY,"global door transition capacity");
+                        DOOR_CARRY[DOOR_CARRY_COUNT] = door_transition::Carry {
+                            id, phase: ENT_PHASE[ei].clamp(0,4096) as u16,
+                            remaining: door_transition::remaining(SIM_NOW,LOGIC_NEXT[li]),
+                            speed: if LOGIC_COUNTER[li] != 0 {LOGIC_COUNTER[li] as u16} else {rec.speed},
+                            relative_center: relative.map(|v|v as i16), movement:e.mv.map(|v|v as i16),
+                            state: LOGIC_STATE[li], flags: if e.kind==7 {
+                                door_transition::ANGULAR | if ROT_DOOR_REVERSED[ei>>3] & (1<<(ei&7)) != 0 {door_transition::REVERSED} else {0}
+                            } else {0},
+                        };
+                        DOOR_CARRY_COUNT += 1;
+                    }
+                }
+            }
+        }
+        li += 1;
+    }
+}
+
+#[inline(never)]
+#[optimize(size)]
+unsafe fn restore_transition_doors(m: &Map, nlogic: usize, landmark: Option<[i32;3]>) {
+    let count=door_transition::take_count(&mut *core::ptr::addr_of_mut!(DOOR_CARRY_COUNT));
+    let Some(landmark) = landmark else { return; };
+    for li in 0..nlogic {
+        let rec=m.logic(li);
+        let id=door_global_id(m,rec);
+        if id == 0 { continue; }
+        let Some(ei)=logic_valid_brush(rec.brush,ENT_SOLID_COUNT) else {continue;};
+        let e=ENT_CACHE[ei];
+        let center=[0,1,2].map(|axis|e.center[axis]+e.origin[axis]);
+        let records=&(&*core::ptr::addr_of!(DOOR_CARRY))[..count];
+        if let Some((carry,phase))=door_transition::matching(records,id,landmark,center,e.mv) {
+            ENT_CACHE[ei].mv=carry.destination_movement(e.mv);
+            let bit=1u8<<(ei&7);
+            ROT_DOOR_REVERSED[ei>>3]=(ROT_DOOR_REVERSED[ei>>3]&!bit) |
+                if carry.flags & door_transition::REVERSED != 0 {bit} else {0};
+            ENT_PHASE[ei]=phase;
+            LOGIC_STATE[li]=carry.state;
+            LOGIC_NEXT[li]=carry.remaining;
+            // Door counters have no other runtime role. Retain the source
+            // speed even when the destination copy authors a different one.
+            LOGIC_COUNTER[li]=carry.speed as i16;
+            ent_prev_off_store(ei,ent_draw_offset(ei));
+            live_entity_pvs_mark_dirty(ei);
+            if matches!(carry.state,LOGIC_STATE_GOING_UP|LOGIC_STATE_GOING_DOWN) && rec.sound0 != u8::MAX {
+                sfx::play_map_loop_world(rec.sound0,e.center,li as u16);
+            }
+        } else if records.iter().any(|record|record.id==id) {
+            telemetry::debug_log("hl-psx: global door transition geometry mismatch");
+        }
+    }
 }
 
 #[inline(never)]
@@ -9539,7 +9635,10 @@ unsafe fn logic_fire_targets(
 #[inline]
 unsafe fn logic_phase_step(rec: map::LogicEnt, ei: usize) -> i32 {
     let e = ENT_CACHE[ei];
-    let speed = (rec.speed as i32).max(1);
+    let li=ENT_BRUSH_LOGIC[ei] as usize;
+    let speed = if rec.kind == map::LOGIC_FUNC_DOOR && li < MAX_LOGIC && LOGIC_COUNTER[li] != 0 {
+        LOGIC_COUNTER[li] as u16 as i32
+    } else { rec.speed as i32 }.max(1);
     if e.kind == ENT_KIND_PLATROT {
         // CFuncPlatRot uses the linear platform travel time for BOTH origin
         // and angles. Round the per-tick phase upward so 216u at 80u/s lands
@@ -9551,7 +9650,7 @@ unsafe fn logic_phase_step(rec: map::LogicEnt, ei: usize) -> i32 {
         // GoldSrc AngularMove uses exactly distance/speed seconds. mv[0] is the
         // authored travel in Q12 turns, so derive the phase step from that
         // angle rather than the old hard-coded nominal 100-degree swing.
-        return logic_state::angular_move_phase_step(rec.speed, e.mv[0]);
+        return logic_state::angular_move_phase_step(speed as u16, e.mv[0]);
     }
     let len = isqrt_i32(e.mv[0] * e.mv[0] + e.mv[1] * e.mv[1] + e.mv[2] * e.mv[2]).max(1);
     ((speed * 4096) / (20 * len)).max(1).min(4096)
@@ -31819,6 +31918,7 @@ unsafe fn init_room_logic(
     logic_check_multisources(m, nlogic, nents, 0);
     init_trains(m, nlogic, nents);
     restore_transition_trains(m, nlogic, landmark, launch.carry_count);
+    restore_transition_doors(m, nlogic, landmark);
     logic_schedule_changelevel_post_target(m, launch.ride_seat, 0);
     // Untargeted scripted_sequences run at spawn in GoldSrc. A targeted script
     // with m_iszIdle also starts CineThink: it possesses/moves its actor now,
