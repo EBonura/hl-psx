@@ -35,6 +35,7 @@ mod env_funnel;
 mod env_funnel_fx;
 mod env_sound;
 mod env_sound_audio;
+mod weaponbox;
 mod cdstream;
 mod combat_defs;
 mod driver;
@@ -997,6 +998,7 @@ const PROP_TYPE_AMMO_FIRST: u8 = 40; // ammo pickups 40..=47
 const PROP_TYPE_AMMO_LAST: u8 = 47;
 const PROP_TYPE_MEDKIT: u8 = 48;
 const PROP_TYPE_SODACAN: u8 = 75;
+const PROP_TYPE_WEAPONBOX: u8 = 76;
 const PROP_TYPE_LONGJUMP: u8 = 49;
 const PROP_STATE_IDLE: u8 = 0;
 const PROP_STATE_MOVE: u8 = 1;
@@ -7994,6 +7996,7 @@ fn logic_item_prop_kind(kind: u8, arg0: u16) -> Option<u8> {
         map::LOGIC_ENV_BEVERAGE => Some(PROP_TYPE_SODACAN),
         map::LOGIC_ITEM_SUIT => Some(PROP_TYPE_ITEM_SUIT),
         map::LOGIC_ITEM_BATTERY => Some(PROP_TYPE_ITEM_BATTERY),
+        map::LOGIC_WEAPONBOX => Some(PROP_TYPE_WEAPONBOX),
         map::LOGIC_WEAPON_PICKUP
             if arg0 <= u8::MAX as u16
                 && (PROP_TYPE_WEAPON_FIRST..=PROP_TYPE_WEAPON_LAST).contains(&(arg0 as u8)) =>
@@ -8384,6 +8387,7 @@ fn carry_actor_capable(kind: u8) -> bool {
             kind,
             PROP_TYPE_ITEM_SUIT
                 | PROP_TYPE_ITEM_BATTERY
+                | PROP_TYPE_WEAPONBOX
                 | 16 // Gargantua: FCAP_DONT_SAVE
                 | PROP_TYPE_WEAPON_FIRST..=PROP_TYPE_LONGJUMP | 50 // Tentacle: !FCAP_ACROSS_TRANSITION
         )
@@ -13584,6 +13588,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
             map::LOGIC_ITEM_SUIT
             | map::LOGIC_ITEM_BATTERY
             | map::LOGIC_WEAPON_PICKUP
+            | map::LOGIC_WEAPONBOX
             | map::LOGIC_ENV_BEVERAGE => {
                 if rec.kind == map::LOGIC_ENV_BEVERAGE {
                     LOGIC_COUNTER[li] = rec.arg0 as i16;
@@ -14672,6 +14677,7 @@ fn prop_is_pickup(ty: u8) -> bool {
     ty == PROP_TYPE_ITEM_SUIT
         || ty == PROP_TYPE_ITEM_BATTERY
         || ty == PROP_TYPE_SODACAN
+        || ty == PROP_TYPE_WEAPONBOX
         || (ty >= PROP_TYPE_WEAPON_FIRST && ty <= PROP_TYPE_LONGJUMP)
 }
 
@@ -18786,7 +18792,7 @@ unsafe fn tick_props(
             continue;
         }
         prop_attack_cooldown_tick(pi);
-        if ty == PROP_TYPE_ITEM_SUIT || ty == PROP_TYPE_ITEM_BATTERY {
+        if ty == PROP_TYPE_ITEM_SUIT || ty == PROP_TYPE_ITEM_BATTERY || ty == PROP_TYPE_WEAPONBOX {
             pi += 1;
             continue;
         }
@@ -19081,14 +19087,43 @@ unsafe fn collect_pickups(
         } else {
             scan
         };
-        if pi >= nprops
-            || PROP_ACTIVE[pi] == 0
-            || !player_touches_pickup(player_pos, player_half_height, PROP_POS[pi], PROP_KIND[pi])
+        let is_box = pi < nprops && PROP_KIND[pi] == PROP_TYPE_WEAPONBOX;
+        let touches = if is_box {
+            let li = PROP_LOGIC_LINK[pi] as usize;
+            if li < nlogic && LOGIC_KIND[li] == map::LOGIC_WEAPONBOX {
+                let rec = m.logic(li);
+                let delta = [0,1,2].map(|axis| PROP_POS[pi][axis] - rec.origin[axis]);
+                weaponbox::touches(player_pos, player_half_height,
+                    [0,1,2].map(|axis| rec.mins[axis] + delta[axis]),
+                    [0,1,2].map(|axis| rec.maxs[axis] + delta[axis]))
+            } else { false }
+        } else if pi < nprops {
+            player_touches_pickup(player_pos, player_half_height, PROP_POS[pi], PROP_KIND[pi])
+        } else { false };
+        if pi >= nprops || PROP_ACTIVE[pi] == 0 || !touches
         {
             scan += 1;
             continue;
         }
         match PROP_KIND[pi] {
+            PROP_TYPE_WEAPONBOX => {
+                let grounded = prop_floor_y_down(m, pi, PROP_POS[pi], 2)
+                    .is_some_and(|floor| (PROP_POS[pi][1] - floor).abs() <= 1);
+                if weaponbox::can_touch(grounded, *health != 0) {
+                    let li = PROP_LOGIC_LINK[pi] as usize;
+                    let rec = m.logic(li);
+                    for index in 0..rec.aux_count {
+                        let entry = m.logic_aux(rec.first_aux + index);
+                        let slot = entry.target as usize;
+                        if slot > AMMO_NONE && slot < N_AMMO {
+                            weapon.ammo[slot] = weaponbox::after_give(weapon.ammo[slot],
+                                entry.delay_ticks, max_reserve_for(slot));
+                        }
+                    }
+                    logic_remove_entity(li, rec, nents);
+                    sfx::play(sfx::PICKUP);
+                }
+            }
             PROP_TYPE_SODACAN if PROP_AI_TIMER[pi] != 0 => {
                 *health = beverage::heal(*health, PLAYER_START_HEALTH);
                 #[cfg(feature = "reference-trace")]

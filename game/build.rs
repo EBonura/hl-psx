@@ -780,7 +780,7 @@ fn scan_room_budget(
 }
 
 /// Model type count, mirrored by game/src/main.rs N_MODEL_TYPES.
-const MODEL_TYPES: usize = 76;
+const MODEL_TYPES: usize = 77;
 
 struct ModelBudget {
     model_words: usize,
@@ -1110,7 +1110,7 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
     };
     // Actor health is a u8 at runtime: the bosses clamp to 255 (their own
     // modules scale damage onto it) and nothing spawns at 0.
-    let mut health = [[0u8; 76]; 3];
+    let mut health = [[0u8; MODEL_TYPES]; 3];
     for &(ty, key, milli) in skill::HEALTH_KEYS {
         for (level, row) in health.iter_mut().enumerate() {
             row[ty as usize] = cook(key, milli, level).clamp(1, 255) as u8;
@@ -1151,7 +1151,7 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
     }
     let generated = format!(
         "/// Spawn health per model type and difficulty; 0 keeps the model default.\n\
-         pub const SKILL_HEALTH: [[u8; 76]; 3] = {health:?};\n\
+         pub const SKILL_HEALTH: [[u8; {MODEL_TYPES}]; 3] = {health:?};\n\
          /// Every other tunable, indexed by `hl_format::skill::Sk`.\n\
          pub const SKILL_VALUE: [[u16; {}]; 3] = {value:?};\n\
          /// (actor type, hit group, hitbox mask) for each `hitgroup::RULES` pair.\n\

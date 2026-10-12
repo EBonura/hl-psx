@@ -106,7 +106,7 @@ const MAX_LOADED_MODELS: usize = 23;
 const POOL_FACE_CAP: usize = 7_936;
 const POOL_FACE_RUN_CAP: usize = 192;
 const POOL_TEX_SLOTS: usize = 176;
-const N_MODEL_TYPES: usize = 76;
+const N_MODEL_TYPES: usize = 77;
 const MODEL_GEOM_CHUNK_BASE: usize = 1300;
 const MODEL_TEX_CHUNK_BASE: usize = 1100;
 const MODEL_CARRY_CHUNK_BASE: usize = 1500;
@@ -737,7 +737,7 @@ fn parse_map_actors(path: &Path) -> Result<Vec<Actor>> {
 }
 
 fn ai_pass(ty: u8) -> usize {
-    if (3..=4).contains(&ty) || (26..=49).contains(&ty) || ty == 75 {
+    if (3..=4).contains(&ty) || (26..=49).contains(&ty) || matches!(ty,75|76) {
         1
     } else if matches!(ty, 12..=18 | 23..=25 | 50 | 52 | 53) {
         2
@@ -2304,7 +2304,7 @@ mod tests {
         let defs = include_str!("../../game/src/combat_defs.rs");
         let build = include_str!("../../game/build.rs");
         assert!(
-            defs.contains("pub const N_MODEL_TYPES: usize = 76;"),
+            defs.contains("pub const N_MODEL_TYPES: usize = 77;"),
             "runtime drift: N_MODEL_TYPES"
         );
         for declaration in [

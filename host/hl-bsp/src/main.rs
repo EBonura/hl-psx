@@ -21,6 +21,8 @@ mod testmap;
 
 use hl_format::logic::*;
 use hl_format::map as cooked;
+#[path = "../../../game/src/weaponbox.rs"]
+mod weaponbox;
 use psx_render_contract::CookedDrawSurfaceCommand;
 use std::borrow::Cow;
 use std::cmp::Reverse;
@@ -8162,6 +8164,7 @@ fn collect_logic_entities_with_lightstyles(
             "trigger_hurt" => LOGIC_TRIGGER_HURT,
             "func_tracktrain" => LOGIC_FUNC_TRACKTRAIN,
             "item_suit" => LOGIC_ITEM_SUIT,
+            "weaponbox" => LOGIC_WEAPONBOX,
             "item_battery" => LOGIC_ITEM_BATTERY,
             "world_items" => match ent_value(block, "type").and_then(|v| v.parse::<u16>().ok()) {
                 Some(45) => LOGIC_ITEM_SUIT,
@@ -8213,6 +8216,12 @@ fn collect_logic_entities_with_lightstyles(
         }
 
         let (origin, mut mins, mut maxs) = entity_bounds_world(block, models, scale);
+        if kind == LOGIC_WEAPONBOX {
+            let low = to_world([-16.0, -16.0, 0.0], scale);
+            let high = to_world([16.0, 16.0, 16.0], scale);
+            mins = [0,1,2].map(|axis| origin[axis] + low[axis]);
+            maxs = [0,1,2].map(|axis| origin[axis] + high[axis]);
+        }
         if cls == "player_loadsaved" {
             // A point record has no volume: the bounds words carry the revert's
             // message (text id, title layout, hold) and its message time.
@@ -9300,6 +9309,25 @@ fn collect_logic_entities_with_lightstyles(
                     aux_count += 1;
                 }
             }
+        }
+        if kind == LOGIC_WEAPONBOX {
+            let mut error = None;
+            iter_ent_pairs(block, |key, value| {
+                if let Some(slot) = weaponbox::ammo_slot(key) {
+                    match value.parse::<u16>() {
+                        Ok(amount) if aux_count < 32 => {
+                            aux.push(LogicAuxRec { target: slot, delay_ticks: amount });
+                            aux_count += 1;
+                        }
+                        _ => error = Some(format!("weaponbox ammunition {key} is out of range")),
+                    }
+                } else if !matches!(key, "classname" | "origin" | "angle" | "angles"
+                    | "targetname" | "target" | "killtarget" | "spawnflags") {
+                    error = Some(format!("weaponbox unsupported authored field {key}"));
+                }
+            });
+            if let Some(error) = error { return Err(error.into()); }
+            if aux_count == 0 { return Err("weaponbox has no authored ammunition".into()); }
         }
         if kind == LOGIC_ENV_FUNNEL {
             if out.iter().filter(|r: &&LogicRec| r.kind == LOGIC_ENV_FUNNEL).count() >= 2 {
@@ -10634,6 +10662,7 @@ fn collect_props(
             "monster_headcrab" => 2u16,
             "item_suit" => 3u16,
             "item_battery" => 4u16,
+            "weaponbox" => 76u16,
             "monster_zombie" if map_uses_vent_zombies => VENT_SCRIPT_ZOMBIE_TYPE,
             "monster_zombie" => 5u16,
             "monster_houndeye" => 6u16,
@@ -17687,6 +17716,63 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn weaponbox_preserves_named_ammunition_and_scaled_original_bounds() {
+        let input = br#"{ "classname" "weaponbox" "origin" "1584 -696 -248"
+            "uranium" "60" "Trip Mine" "7" "Satchel Charge" "5" }"#;
+        let cook = collect_logic_entities(input,&[],&[],2.0,
+            &Default::default(),&Default::default()).unwrap();
+        assert_eq!(cook.ents.len(),1);
+        let r = &cook.ents[0];
+        assert_eq!(r.kind,LOGIC_WEAPONBOX);
+        assert_eq!(r.origin,[792,-124,-348]);
+        assert_eq!(r.mins,[784,-124,-356]);
+        assert_eq!(r.maxs,[800,-116,-340]);
+        let ammo = cook.aux[r.first_aux as usize..r.first_aux as usize+r.aux_count as usize]
+            .iter().map(|a|(a.target,a.delay_ticks)).collect::<Vec<_>>();
+        assert_eq!(ammo,vec![(6,60),(11,7),(10,5)]);
+        for bad in [br#"{ "classname" "weaponbox" "rockets" "-1" }"#.as_slice(),
+            br#"{ "classname" "weaponbox" "rockets" "65536" }"#.as_slice(),
+            br#"{ "classname" "weaponbox" "weapon_mp5" "1" }"#.as_slice()] {
+            assert!(collect_logic_entities(bad,&[],&[],1.0,
+                &Default::default(),&Default::default()).is_err());
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the original retail 103-map directory"]
+    fn weaponbox_all29_retail_records_preserve_every_ammo_quantity() {
+        let root = std::env::var("HL_WEAPONBOX_RETAIL_DIR").expect("explicit retail map directory");
+        let mut total = 0;
+        for name in include_str!("../../hl-content/map-list.txt").lines().filter(|s| !s.is_empty()) {
+            let bytes = std::fs::read(std::path::Path::new(&root).join(format!("{name}.bsp"))).unwrap();
+            let start = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+            let len = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+            let text = String::from_utf8_lossy(&bytes[start..start+len]);
+            for raw in text.split('{').skip(1) {
+                let block = raw.split('}').next().unwrap();
+                if ent_value(block,"classname") != Some("weaponbox") { continue; }
+                let mut expected = Vec::new();
+                iter_ent_pairs(block,|key,value| {
+                    if let Some(slot) = weaponbox::ammo_slot(key) {
+                        expected.push((slot,value.parse::<u16>().unwrap()));
+                    }
+                });
+                let selected = format!("{{{block}}}");
+                let cook = collect_logic_entities(selected.as_bytes(),&[],&[],1.0,
+                    &Default::default(),&Default::default()).unwrap();
+                assert_eq!(cook.ents.len(),1,"{name}");
+                let rec = &cook.ents[0];
+                assert_eq!(rec.kind,LOGIC_WEAPONBOX);
+                let actual = cook.aux[rec.first_aux as usize..rec.first_aux as usize+rec.aux_count as usize]
+                    .iter().map(|entry|(entry.target,entry.delay_ticks)).collect::<Vec<_>>();
+                assert_eq!(actual,expected,"{name}");
+                total += 1;
+            }
+        }
+        assert_eq!(total,29);
+    }
+
     #[test]
     fn env_sound_suffix_radius_and_scaled_point_use_original_controls() {
         let input=br#"{ "classname" "env_sound" "origin" "144 312 -32" "radius" "128S" "roomtype" "18" }"#;
