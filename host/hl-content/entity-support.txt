@@ -20,7 +20,7 @@ cycler_sprite|runtime|compact sprite prop
 env_beam|runtime|compact beam logic
 env_beverage|runtime|owner stock, delayed soda pickup, six skins and can sound
 env_blood|missing_visual|blood emitter is absent
-env_bubbles|missing_visual|bubble volume is deliberately not rendered
+env_bubbles|runtime|authored brush bubble emitter; bounded world particle pool
 env_explosion|approximated|compact explosion effect and damage
 env_fade|runtime|screen fade logic
 env_funnel|missing_visual|funnel particles are absent

@@ -93,13 +93,13 @@ env_blood|color|cosmetic|-|-|blood emitter is absent
 env_blood|flag:1|cosmetic|-|-|blood emitter is absent
 env_blood|flag:4|cosmetic|-|-|blood emitter is absent
 env_blood|flag:8|cosmetic|-|-|blood emitter is absent
-env_bubbles|@class|cosmetic|-|-|bubble volume is deliberately not rendered
-env_bubbles|@use|cosmetic|-|-|bubble volumes are deliberately not drawn
-env_bubbles|current|cosmetic|-|-|bubble volumes are deliberately not drawn
-env_bubbles|density|cosmetic|-|-|bubble volumes are deliberately not drawn
-env_bubbles|flag:1|cosmetic|-|-|bubble volumes are deliberately not drawn
-env_bubbles|frequency|cosmetic|-|-|bubble volumes are deliberately not drawn
-env_bubbles|master|cosmetic|-|-|bubble volumes are deliberately not drawn
+env_bubbles|@class|yes|cook:"env_bubbles"|-|brush volume and original sprite emitter
+env_bubbles|@use|yes|game:fn logic_use_entity|-|retail state toggle and scheduler
+env_bubbles|current|yes|cook:"current"|-|authored horizontal current
+env_bubbles|density|yes|cook:"density"|-|retail wire density and inclusive burst count
+env_bubbles|flag:1|yes|game:fn init_logic_state|-|start off until used
+env_bubbles|frequency|yes|cook:"frequency"|-|retail recurrence interval
+env_bubbles|master|unreviewed|-|-|retail Use branch has no master check; no extra gate imposed
 env_explosion|@class|partial|cook:"env_explosion"|-|compact explosion effect and damage
 env_explosion|@kill|unreviewed|-|-
 env_explosion|@use|yes|game:LOGIC_ENV_EXPLOSION|run:roots-diff

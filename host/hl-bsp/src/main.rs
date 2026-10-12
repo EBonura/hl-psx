@@ -9,6 +9,8 @@
 //! Usage:  hl-bsp <path/to/map.bsp>
 //!     cargo run --release --manifest-path host/hl-bsp/Cargo.toml -- valve/maps/c1a0.bsp
 
+#[path = "../../../game/src/env_bubbles.rs"]
+mod env_bubbles;
 mod door_seal;
 mod entity_support;
 mod pvs_pair;
@@ -8120,6 +8122,7 @@ fn collect_logic_entities_with_lightstyles(
             "env_global" => LOGIC_ENV_GLOBAL,
             "env_explosion" => LOGIC_ENV_EXPLOSION,
             "env_blood" => LOGIC_ENV_BLOOD,
+            "env_bubbles" => LOGIC_ENV_BUBBLES,
             "env_spark" | "env_debris" => LOGIC_ENV_SPARK,
             "func_monsterclip" => LOGIC_MONSTERCLIP,
             // On A Rail junctions: the path chain is stitched at cook so the train
@@ -8275,6 +8278,8 @@ fn collect_logic_entities_with_lightstyles(
             (parse_f32_key(block, "m_flRadius", 0.0) / scale)
                 .round()
                 .clamp(0.0, i16::MAX as f32) as i16
+        } else if kind == LOGIC_ENV_BUBBLES {
+            env_bubbles::interval_ticks(parse_f32_key(block,"frequency",0.0) as i32).min(i16::MAX as u16) as i16
         } else if cls == "player_loadsaved" {
             // CRevertSaved::LoadThink reloads `loadtime` seconds after Use.
             seconds_to_ticks_i16(parse_f32_key(block, "loadtime", 0.0))
@@ -8538,6 +8543,7 @@ fn collect_logic_entities_with_lightstyles(
             // a stable cooked logic index.
             LOGIC_MULTISOURCE => 0,
             LOGIC_ENV_GLOBAL => global_hash(ent_value(block, "globalstate").unwrap_or("")),
+            LOGIC_ENV_BUBBLES => (parse_f32_key(block,"density",0.0) as i32 as u8) as u16,
             LOGIC_ENV_BLOOD => parse_f32_key(block, "amount", 0.0).clamp(0.0, u16::MAX as f32) as u16,
             LOGIC_ENV_EXPLOSION => parse_f32_key(block, "iMagnitude", 100.0)
                 .round()
@@ -8574,6 +8580,7 @@ fn collect_logic_entities_with_lightstyles(
                 (_, Some("4")) => 7,
                 _ => 5,
             },
+            LOGIC_ENV_BUBBLES => load_sprites_manifest().get(&(map_index,"bubble.spr".to_string())).map_or(255,|r|r.0),
             LOGIC_ENV_BLOOD => if parse_f32_key(block, "color", 0.0) == 1.0 {195}else{247},
             LOGIC_ENV_BEVERAGE => parse_f32_key(block, "skin", 0.0).clamp(0.0, 6.0) as u16,
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
@@ -9266,6 +9273,20 @@ fn collect_logic_entities_with_lightstyles(
                     aux_count += 1;
                 }
             }
+        }
+        if kind == LOGIC_ENV_BUBBLES {
+            if submodel.is_none() {return Err("env_bubbles requires its original brush volume".into());}
+            if std::env::var_os("SPRITES_MANIFEST").is_some() && arg1 == 255 {return Err("env_bubbles requires original bubble sprite".into());}
+            let yaw = ent_yaw_degrees(block).unwrap_or(0.0).to_radians();
+            let speed = parse_f32_key(block,"current",0.0).trunc()/scale*16.0/20.0;
+            let vx=(yaw.cos()*speed).round(); let vz=(yaw.sin()*speed).round();
+            if vx.abs()>i16::MAX as f32 || vz.abs()>i16::MAX as f32 {return Err("bubble current exceeds Q4 range".into());}
+            aux.push(LogicAuxRec {target:vx as i16 as u16,delay_ticks:vz as i16 as u16});
+            if ((maxs[1]-mins[1]) as f64*scale as f64).round()*20.0/80.0+10.0 > u16::MAX as f64 {return Err("bubble lifetime exceeds current particle storage".into());}
+            let scale_q12 = (4096.0/scale).round();
+            if !(1.0..=i16::MAX as f32).contains(&scale_q12) {return Err("bubble scale exceeds Q12 range".into());}
+            aux.push(LogicAuxRec {target:scale_q12 as u16,delay_ticks:0});
+            aux_count=2;
         }
         if kind == LOGIC_ENV_BLOOD {
             if raw_spawnflags & 2 != 0 {return Err("env_blood stream particles are not supported".into());}
@@ -17623,6 +17644,19 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn retail_bubble_brush_keeps_original_bounds_and_current_without_solid_entity() {
+        let entities = br#"{ "model" "*66" "current" "100" "frequency" "3" "density" "10" "targetname" "waterbubbles1" "spawnflags" "1" "angle" "180" "classname" "env_bubbles" }"#;
+        let mut models=vec![0u8;67*64];
+        for (i,value) in [2504f32,-1158.,-448.,2531.,-1116.,-350.].iter().enumerate() {models[66*64+i*4..66*64+i*4+4].copy_from_slice(&value.to_le_bytes());}
+        let cook=collect_logic_entities(entities,&models,&vec![LOGIC_BRUSH_NONE;67],1.0,&Default::default(),&Default::default()).unwrap();
+        let r=&cook.ents[0]; assert_eq!(r.kind,LOGIC_ENV_BUBBLES);
+        assert_eq!((r.arg0,r.spawnflags,r.wait_ticks),(10,1,44));
+        assert_eq!(r.mins,[2504,-448,-1158]); assert_eq!(r.maxs,[2531,-350,-1116]);
+        assert_eq!(r.brush,LOGIC_BRUSH_NONE);
+        let a=&cook.aux[r.first_aux as usize]; assert_eq!((a.target as i16,a.delay_ticks as i16),(-80,0));
+        assert_eq!(cook.aux[r.first_aux as usize+1].target,4096);
+    }
     #[test]
     fn retail_blood_keeps_amount_palette_direction_and_manager_delay() {
         let entities = br#"{ "classname" "env_blood" "origin" "64 624 -176" "amount" "2000" "color" "1" "spawnflags" "13" "targetname" "momma_blood" }

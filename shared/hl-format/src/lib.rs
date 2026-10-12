@@ -376,6 +376,9 @@ pub mod logic {
     /// speed packs per-map bloodspray/blood sprite IDs (255 = absent),
     /// maxs[0] is Q12 world units per original unit.
     pub const ENV_BLOOD: u8 = 60;
+    /// Bubble brush: bounds, arg0 wire density, arg1 sprite, wait interval;
+    /// two aux words hold Q4 current velocity and Q12 world scale.
+    pub const ENV_BUBBLES: u8 = 61;
 
     // CBaseMonster TriggerCondition values (monsters.h AITRIGGER_*). The
     // cooker emits only the ones the runtime evaluates.
@@ -502,8 +505,9 @@ pub mod logic {
     pub const LOGIC_SHOOTER: u8 = SHOOTER;
     pub const LOGIC_TRIGGER_CAMERA: u8 = TRIGGER_CAMERA;
     pub const LOGIC_ENV_BLOOD: u8 = ENV_BLOOD;
+    pub const LOGIC_ENV_BUBBLES: u8 = ENV_BUBBLES;
 
-    pub const KINDS: [u8; 60] = [
+    pub const KINDS: [u8; 61] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -564,6 +568,7 @@ pub mod logic {
         MORTAR_FIELD,
         TRIGGER_MONSTERJUMP,
         ENV_BLOOD,
+        ENV_BUBBLES,
     ];
 }
 

@@ -29,6 +29,8 @@ extern crate psx_rt;
 
 mod beverage;
 mod env_blood;
+mod env_bubbles;
+mod env_bubbles_fx;
 mod cdstream;
 mod combat_defs;
 mod driver;
@@ -8223,6 +8225,7 @@ fn logic_pre_tick_candidate(kind: u8) -> bool {
             | map::LOGIC_SCRIPTED
             | map::LOGIC_SENTENCE
             | map::LOGIC_SHOOTER
+            | map::LOGIC_ENV_BUBBLES
             | map::LOGIC_MONSTERMAKER
     )
 }
@@ -11198,6 +11201,12 @@ unsafe fn logic_use_entity(
             LOGIC_STATE[li] = LOGIC_STATE_WAITING;
             LOGIC_NEXT[li] = now;
         }
+        map::LOGIC_ENV_BUBBLES => {
+            let mut schedule=env_bubbles::Scheduler {enabled:LOGIC_STATE[li]==LOGIC_STATE_TOP,next:LOGIC_NEXT[li]};
+            schedule.use_event(use_type,now);
+            LOGIC_STATE[li]=if schedule.enabled {LOGIC_STATE_TOP}else{LOGIC_STATE_BOTTOM};
+            LOGIC_NEXT[li]=schedule.next;
+        }
         map::LOGIC_ENV_BLOOD => logic_blood(m, rec),
         map::LOGIC_ENV_EXPLOSION => {
             // CEnvExplosion::Use calls RadiusDamage with the magnitude over
@@ -12262,6 +12271,13 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
         } else {
             scan
         };
+        if LOGIC_KIND[li] == map::LOGIC_ENV_BUBBLES {
+            let rec=m.logic(li);
+            let mut schedule=env_bubbles::Scheduler {enabled:LOGIC_STATE[li]==LOGIC_STATE_TOP,next:LOGIC_NEXT[li]};
+            if schedule.tick(now,rec.wait_ticks.max(1) as u16) {env_bubbles_fx::emit(m,rec);}
+            LOGIC_NEXT[li]=schedule.next;
+            scan+=1;continue;
+        }
         if LOGIC_KIND[li] == map::LOGIC_FUNC_ROTATING {
             logic_tick_rotating(nents, li, m.logic(li), now);
             scan += 1;
@@ -13465,6 +13481,11 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         if rec.kind == map::LOGIC_MONSTERMAKER && rec.targetname == 0 {
             LOGIC_STATE[li] = LOGIC_STATE_WAITING;
             LOGIC_NEXT[li] = now.wrapping_add(maker_delay(rec));
+        }
+        if rec.kind==map::LOGIC_ENV_BUBBLES {
+            let schedule=env_bubbles::Scheduler::spawn(rec.spawnflags,now);
+            LOGIC_STATE[li]=if schedule.enabled {LOGIC_STATE_TOP}else{LOGIC_STATE_BOTTOM};
+            LOGIC_NEXT[li]=schedule.next;
         }
         match rec.kind {
             map::LOGIC_LIGHTSTYLE => {
@@ -21554,6 +21575,7 @@ const DEBRIS_GIB: u8 = 1;
 const DEBRIS_SPARK: u8 = 2;
 const DEBRIS_RED_BLOOD: u8 = 13;
 const DEBRIS_YELLOW_BLOOD: u8 = 14;
+const DEBRIS_BUBBLE: u8 = 15;
 const DEBRIS_BREAK_BASE: u8 = 3; // + GoldSrc Materials enum (0..9)
 /// Kind flag: a break shard (tempent physics, world-OT draw).
 const DEBRIS_SHARD: u8 = 0x40;
@@ -21577,6 +21599,9 @@ const MAX_SHARDS_PER_BREAK: i32 = 40;
 use env_blood::Debris;
 static mut DEBRIS: [Debris; MAX_DEBRIS] = [Debris::ZERO; MAX_DEBRIS];
 static mut DEBRIS_CURSOR: usize = 0;
+// Bubble volumes can outlive the existing debris byte counter. Other kinds
+// retain their layout and lifetime behavior; ttl is only a live marker here.
+static mut BUBBLE_TTL: [u16; MAX_DEBRIS] = [0; MAX_DEBRIS];
 /// RGB332 shard colours of the last four breaks (0xFF = the material's own).
 static mut SHARD_COLORS: [u8; 4] = [u8::MAX; 4];
 static mut SHARD_COLOR_NEXT: u8 = 0;
@@ -21682,6 +21707,7 @@ unsafe fn clear_debris() {
     let mut i = 0;
     while i < MAX_DEBRIS {
         DEBRIS[i].ttl = 0;
+        BUBBLE_TTL[i] = 0;
         i += 1;
     }
     DEBRIS_CURSOR = 0;
@@ -21741,8 +21767,15 @@ unsafe fn tick_debris(m: &Map) {
     let mut i = 0;
     while i < MAX_DEBRIS {
         if DEBRIS[i].ttl > 0 {
-            env_blood::advance_lifetime(&mut DEBRIS[i]);
-            if DEBRIS[i].kind & DEBRIS_SHARD != 0 {
+            if DEBRIS[i].kind == DEBRIS_BUBBLE {
+                DEBRIS[i].ttl = env_bubbles::advance_lifetime(&mut BUBBLE_TTL[i]) as u8;
+            } else {
+                env_blood::advance_lifetime(&mut DEBRIS[i]);
+            }
+            if DEBRIS[i].kind == DEBRIS_BUBBLE {
+                let velocity=DEBRIS[i].vel;
+                env_bubbles::advance_position(&mut DEBRIS[i].pos,velocity);
+            } else if DEBRIS[i].kind & DEBRIS_SHARD != 0 {
                 if DEBRIS[i].kind & DEBRIS_REST == 0 {
                     tick_shard(m, i);
                 }
@@ -21775,7 +21808,7 @@ unsafe fn render_debris<const N: usize>(
     let mut rect = 0;
     while i < MAX_DEBRIS && rect < MAX_DEBRIS_RECTS {
         if DEBRIS[i].ttl > 0 && DEBRIS[i].kind & DEBRIS_SHARD == 0
-            && !matches!(DEBRIS[i].kind,DEBRIS_RED_BLOOD|DEBRIS_YELLOW_BLOOD) {
+            && !matches!(DEBRIS[i].kind,DEBRIS_RED_BLOOD|DEBRIS_YELLOW_BLOOD|DEBRIS_BUBBLE) {
             let (r, g, b, size) = match DEBRIS[i].kind {
                 DEBRIS_CASING => (200u8, 170u8, 80u8, 2i16),
                 DEBRIS_GIB => (150, 20, 15, 3),
@@ -29220,6 +29253,14 @@ unsafe fn emit_billboard_rgb(
     world_half_w: i32, world_half_h: i32, sl: TexSlot, crush_w: u16, crush_h: u16,
     rot: &Mat3I16, base_t: [i32;3], tint: (u8,u8,u8),
 ) {
+    emit_billboard_rgb_mode(packets,np,center,world_half_w,world_half_h,sl,crush_w,crush_h,rot,base_t,tint,BlendMode::Add);
+}
+#[allow(clippy::too_many_arguments)]
+unsafe fn emit_billboard_rgb_mode(
+    packets:&mut PrimitivePacketArena<'_>,np:&mut usize,center:[i32;3],
+    world_half_w:i32,world_half_h:i32,sl:TexSlot,crush_w:u16,crush_h:u16,
+    rot:&Mat3I16,base_t:[i32;3],tint:(u8,u8,u8),blend:BlendMode,
+) {
     if !sl.valid {
         return;
     }
@@ -29236,10 +29277,10 @@ unsafe fn emit_billboard_rgb(
     let b = (sy as i32 + shh).clamp(-1023, 1023) as i16;
     let uw = crush_w.saturating_sub(1).min(255) as u8;
     let uh = crush_h.saturating_sub(1).min(255) as u8;
-    // Sprites are additive (glows/explosions add light); the cook baked the dark
-    // background to black so it contributes nothing under Add, and set the
-    // per-texel semi-transparency bit so the GPU blends instead of drawing opaque.
-    let mat = sl.material.with_blend_mode(BlendMode::Add);
+    // Existing callers select Add for glows/explosions. Bubble index-alpha
+    // textures select Average; their cooked STP bits distinguish half-alpha
+    // texels from opaque texels, while zero texels remain transparent.
+    let mat = sl.material.with_blend_mode(blend);
     let packet = TexturedGouraudPacketMaterial::from_texture(mat);
     let otz = clamp_otz((sz >> OT_SHIFT) as usize);
     let (uv_tl, uv_tr, uv_bl, uv_br) = (
@@ -36601,6 +36642,7 @@ fn play(
             // additive-billboard path as the placed sprites above.
             render_explosions(&mut packets, &mut np, &rot, base_t);
             render_blood_fx(&mut packets, &mut np, &rot, base_t);
+            env_bubbles_fx::render(&mut packets,&mut np,&rot,base_t);
             queue_rpg_spot(&mut packets, world_ot(), &rot, base_t);
             queue_shards(&mut packets, world_ot(), &rot, base_t);
             if IMPACT_MARKS_LIVE {
