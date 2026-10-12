@@ -123,6 +123,39 @@ pub const fn play_rank(room: usize) -> usize {
     PLAY_ORDER.len()
 }
 
+/// Diagnostic launches after the authored suit pickup inherit the suit.
+/// Room IDs address chunks, so they must not define campaign progression.
+pub const fn diagnostic_has_hev(room: usize, suit_room: usize) -> bool {
+    room < CAMPAIGN_MAP_COUNT && play_rank(room) > play_rank(suit_room)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_equipment_follows_actual_anomalous_materials_order() {
+        assert_eq!(&PLAY_ORDER[6..11], &[6, 10, 7, 8, 11]);
+        assert_eq!(MAPS[10], "c1a0d");
+        assert_eq!(MAPS[7], "c1a0a");
+        assert_eq!(MAPS[8], "c1a0b");
+        assert!(!diagnostic_has_hev(6, 10));
+        assert!(!diagnostic_has_hev(10, 10));
+        for room in [7, 8, 9, 11, 94] {
+            assert!(diagnostic_has_hev(room, 10), "room {room}");
+        }
+    }
+
+    #[test]
+    fn training_and_invalid_rooms_do_not_receive_diagnostic_equipment() {
+        for room in TRAINING_START_ROOM..MAPS.len() {
+            assert!(!diagnostic_has_hev(room, 10));
+        }
+        assert!(!diagnostic_has_hev(MAPS.len(), 10));
+        assert!(!diagnostic_has_hev(usize::MAX, 10));
+    }
+}
+
 /// The chapter whose first map is `room`, if any.
 pub fn chapter_starting_in(room: usize) -> Option<usize> {
     CHAPTER_ROOM.iter().position(|&r| r as usize == room)

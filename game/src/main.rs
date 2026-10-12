@@ -6007,7 +6007,7 @@ const fn standalone_room_starts_with_hev(room_id: usize) -> bool {
     // must begin suitless and weaponless, then award both through its pickups.
     // NB this must NOT apply to changelevel arrivals -- a real playthrough
     // carries the suit state and picks it up in c1a0d.
-    room_id < menu::CAMPAIGN_MAP_COUNT && room_id > HEV_SUIT_ROOM
+    map_catalog::diagnostic_has_hev(room_id, HEV_SUIT_ROOM)
 }
 
 const _: () = {
