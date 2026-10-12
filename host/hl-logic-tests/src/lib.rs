@@ -24,6 +24,8 @@ pub mod combat_defs;
 pub use combat_defs::{N_AMMO, N_WEAPONS};
 #[path = "../../../game/src/weaponbox.rs"]
 pub mod weaponbox;
+#[path = "../../../game/src/air_navigation.rs"]
+pub mod air_navigation;
 #[path = "../../../game/src/env_sound_audio.rs"]
 pub mod env_sound_audio;
 

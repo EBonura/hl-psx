@@ -1457,6 +1457,26 @@ pub fn human_hull_line_clear(map: &Map, from: [i32; 3], to: [i32; 3]) -> bool {
     trace_clear(map, map.hull1_head, from, to)
 }
 
+/// Controller CheckLocalMove sweeps hull 2 at origin + 32, without a floor
+/// settle. Legacy maps use bounded conservative standing-hull corner sweeps.
+pub fn controller_world_line_clear(map: &Map, from: [i32;3], to: [i32;3]) -> bool {
+    let center = |p: [i32;3]| [p[0],p[1]+32,p[2]];
+    let a=center(from);let b=center(to);
+    if map.controller_hull_head != hl_format::map::CONTROLLER_HULL_ABSENT {
+        let tr=trace(map,map.controller_hull_head,a,b);
+        return !tr.startsolid && tr.frac >= NAV_CHORD_REACHED;
+    }
+    for dx in [-16,16] {
+        for dz in [-16,16] {
+            let start=[a[0]+dx,a[1],a[2]+dz];
+            let end=[b[0]+dx,b[1],b[2]+dz];
+            let tr=trace(map,map.hull1_head,start,end);
+            if tr.startsolid || tr.frac < NAV_CHORD_REACHED {return false;}
+        }
+    }
+    true
+}
+
 /// An impact this close to the chord end is the exact-endpoint contact rule in
 /// `recurse` (`frac = p2f - 1`) rather than real obstruction: an authored goal
 /// that sits flush against a brush lands exactly on that brush's expanded hull

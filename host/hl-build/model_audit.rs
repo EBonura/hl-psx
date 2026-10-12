@@ -708,7 +708,7 @@ fn parse_map_actors(path: &Path) -> Result<Vec<Actor>> {
     if data.len() < 52
         || !matches!(
             data.get(0..4),
-            Some(b"HLMA" | b"HLMB" | b"HLMC" | b"HLMD" | b"HLME" | b"HLMF" | b"HLMG" | b"HLMH" | b"HLMJ")
+            Some(b"HLMA" | b"HLMB" | b"HLMC" | b"HLMD" | b"HLME" | b"HLMF" | b"HLMG" | b"HLMH" | b"HLMJ" | b"HLMK")
         )
     {
         return Err(format!("{what}: not a cooked HLM map").into());

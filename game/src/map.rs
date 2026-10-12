@@ -312,6 +312,7 @@ pub struct Map {
     // Clip hull + spawn
     pub n_clip: usize,
     pub hull1_head: i32,
+    pub controller_hull_head: i32,
     pub hull3_head: i32, // crouch hull (32x32x36); < 0 = none -> fall back to hull1
     pub spawn_pos: [i32; 3],
     pub spawn_yaw: i32,
@@ -761,9 +762,9 @@ impl Map {
         let vis_off = align4(marks_off + n_marks * 2);
 
         let n_clip = rd_u32(data, clip_off) as usize;
-        // Reserved legacy field. GoldSrc hull 0 uses render-node root 0; new
-        // cooks write -1 here so it can never alias a compact clipnode.
-        let _legacy_hull0_head = rd_i32(data, clip_off + 4);
+        // HLMK alone reuses the legacy hull-0 word for controller hull2.
+        // Earlier versions ignore it; point hull0 remains render-node based.
+        let controller_hull_head = cooked::controller_hull_head(magic, rd_i32(data, clip_off + 4));
         let hull1_head = rd_i32(data, clip_off + 8);
         let hull3_head = rd_i32(data, clip_off + 12);
         let spawn_pos = [
@@ -864,6 +865,7 @@ impl Map {
             vis_len,
             n_clip,
             hull1_head,
+            controller_hull_head,
             hull3_head,
             spawn_pos,
             spawn_yaw,
@@ -1683,7 +1685,7 @@ impl Map {
     /// signed negative visibility offsets keep their all-visible meaning.
     #[inline]
     pub fn paired_pvs(&self) -> bool {
-        rd_u32(self.data, cooked::HEADER_MAGIC_OFFSET) == cooked::MAGIC_HLMJ
+        matches!(rd_u32(self.data, cooked::HEADER_MAGIC_OFFSET), cooked::MAGIC_HLMJ | cooked::MAGIC_HLMK)
     }
 
     #[inline]

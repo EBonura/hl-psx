@@ -113,7 +113,7 @@ fn align4(value: usize) -> Option<usize> {
 /// map reader uses its intentionally unchecked hot-path visibility accessors.
 pub fn validate_room(data: &[u8]) -> bool {
     let Some(magic) = word(data, map::HEADER_MAGIC_OFFSET) else { return false };
-    if magic != map::MAGIC_HLMJ || data.len() < map::HEADER_SIZE { return false; }
+    if !matches!(magic,map::MAGIC_HLMJ | map::MAGIC_HLMK) || data.len() < map::HEADER_SIZE { return false; }
     let (Some(bsp), Some(clip), Some(faces)) = (
         word(data, map::HEADER_BSP_OFFSET),
         word(data, map::HEADER_CLIP_OFFSET),

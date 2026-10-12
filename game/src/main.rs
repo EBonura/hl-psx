@@ -36,6 +36,7 @@ mod env_funnel_fx;
 mod env_sound;
 mod env_sound_audio;
 mod weaponbox;
+mod air_navigation;
 mod cdstream;
 mod combat_defs;
 mod driver;
@@ -3599,6 +3600,7 @@ static mut PUSH_LI: [u16; MAX_PUSH_LI] = [0; MAX_PUSH_LI];
 static mut PUSH_N: u8 = 0;
 static mut MONSTERJUMP_N: u16 = 0;
 static mut PROP_JUMP: [monsterjump::State; MAX_PROPS] = [monsterjump::State::EMPTY; MAX_PROPS];
+static mut PROP_FLIGHT: [air_navigation::Flight; MAX_PROPS] = [air_navigation::Flight::EMPTY; MAX_PROPS];
 const _: () = assert!(core::mem::size_of::<monsterjump::State>() == 10);
 /// Union of the pushers' boxes: most actors are nowhere near one, and a miss here
 /// skips every per-pusher test.
@@ -8981,6 +8983,7 @@ unsafe fn restore_transition_actors(
         };
         PROP_SCRIPT_GOAL[pi] = [0; 3];
         PROP_JUMP[pi] = monsterjump::State::EMPTY;
+        PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
         PROP_SCRIPT_YAW[pi] = 0;
         PROP_SCRIPT_MODE[pi] = 0;
         PROP_SCRIPT_LI[pi] = u16::MAX;
@@ -9872,6 +9875,11 @@ unsafe fn script_human_chord_clear(
     start: [i32; 3],
     goal: [i32; 3],
 ) -> bool {
+    if PROP_KIND[pi] == PROP_TYPE_CONTROLLER {
+        return phys::controller_world_line_clear(m,start,goal)
+            && phys::actor_line_clear_movers(m,movers,
+                [start[0],start[1]+32,start[2]],[goal[0],goal[1]+32,goal[2]]);
+    }
     if actor_nav_hull(m, pi).1 == 18 {
         return actor_chord_blocked(m, movers, pi, start, goal).is_none();
     }
@@ -11441,6 +11449,7 @@ unsafe fn maker_make(
                 PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_FRESH;
                 PROP_POS[pi] = rec.origin;
                 PROP_JUMP[pi] = monsterjump::State::EMPTY;
+        PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
                 PROP_ACTIVE[pi] = 0;
                 PROP_DORMANT[pi] = PROP_RUNTIME_DORMANT_STOCK;
                 found = pi;
@@ -11472,6 +11481,7 @@ unsafe fn maker_make(
     prop_nav_cache_invalidate(pi);
     PROP_DORMANT[pi] = 0;
     PROP_JUMP[pi] = monsterjump::State::EMPTY;
+        PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
     PROP_ACTIVE[pi] = 1;
     PROP_MAKER[pi] = tag;
     // The maker targetname is only an allocation-free link to its dormant
@@ -15546,18 +15556,32 @@ fn nav_land_node(m: &Map, i: usize) -> bool {
     m.nav_node_type(i) & 1 != 0
 }
 
-unsafe fn nav_nearest(m: &Map, movers: &[phys::Mover], pos: [i32; 3], max_d2: i32) -> u8 {
+#[inline]
+unsafe fn nav_actor_node(m: &Map, pi: usize, i: usize) -> bool {
+    air_navigation::accepts(m.nav_node_type(i), PROP_KIND[pi] == PROP_TYPE_CONTROLLER)
+}
+#[inline]
+unsafe fn nav_actor_distance(pi: usize, a: [i32;3], b: [i32;3]) -> i32 {
+    if PROP_KIND[pi] == PROP_TYPE_CONTROLLER { air_navigation::distance2(a,b) }
+    else { dist2_xz(a,b) }
+}
+#[inline]
+unsafe fn nav_actor_vertical(pi: usize, a: [i32;3], b: [i32;3]) -> bool {
+    PROP_KIND[pi] == PROP_TYPE_CONTROLLER || (a[1]-b[1]).abs() <= NAV_VERTICAL_MAX
+}
+
+unsafe fn nav_nearest(m: &Map, movers: &[phys::Mover], pi: usize, pos: [i32; 3], max_d2: i32) -> u8 {
     let n = nav_node_count(m);
     let mut best = NAV_NODE_NONE;
     let mut best_d2 = max_d2;
     let mut i = 0usize;
     while i < n {
         let node = m.nav_node(i);
-        if nav_land_node(m, i) {
+        if nav_actor_node(m, pi, i) {
             // Retail LAND-node m_vecOriginPeek is exactly eight units above
             // m_vecOrigin. FindNearestNode ranks that 3D point, not the
             // ground-plane origin used by movement steering.
-            let peek = [node.pos[0], node.pos[1] + 8, node.pos[2]];
+            let peek = [node.pos[0], node.pos[1] + if PROP_KIND[pi] == PROP_TYPE_CONTROLLER { 0 } else { 8 }, node.pos[2]];
             let dy = peek[1] - pos[1];
             let d2 = dist2_xz(pos, peek) + dy * dy;
             // GoldSrc CheckNode accepts the nearest candidate only when a
@@ -15583,6 +15607,20 @@ unsafe fn nav_nearest_reachable(
     max_d2: i32,
 ) -> u8 {
     let n = nav_node_count(m);
+    if PROP_KIND[pi] == PROP_TYPE_CONTROLLER {
+        let mut best = NAV_NODE_NONE;
+        let mut distance = max_d2;
+        for i in 0..n {
+            if !nav_actor_node(m, pi, i) { continue; }
+            let node = m.nav_node(i).pos;
+            let d2 = air_navigation::distance2(pos, node);
+            if d2 < distance && script_human_chord_clear(m, movers, pi, PROP_POS[pi], node) {
+                best = i as u8; distance = d2;
+            }
+        }
+        prop_nav_cache_set_src(pi, best);
+        return best;
+    }
 
     // The previous winner is only an incumbent, never an unverified answer:
     // trace it again from the actor's exact current position.  If it is still
@@ -15592,7 +15630,7 @@ unsafe fn nav_nearest_reachable(
     // win.  This therefore returns exactly the same node as the full scan while
     // avoiding its chain of progressively-closer BSP traces.
     let cached = prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) as usize;
-    if cached < n && nav_land_node(m, cached) {
+    if cached < n && nav_actor_node(m, pi, cached) {
         let node = m.nav_node(cached);
         let dy = (node.pos[1] - pos[1]).abs();
         let d2 = dist2_xz(pos, node.pos);
@@ -15603,7 +15641,7 @@ unsafe fn nav_nearest_reachable(
                 let mut best_d2 = d2;
                 let mut i = 0usize;
                 while i < n {
-                    if i != cached && nav_land_node(m, i) {
+                    if i != cached && nav_actor_node(m, pi, i) {
                         let candidate = m.nav_node(i);
                         let candidate_dy = (candidate.pos[1] - pos[1]).abs();
                         if candidate_dy <= NAV_VERTICAL_MAX {
@@ -15635,7 +15673,7 @@ unsafe fn nav_nearest_reachable(
     while i < n {
         let node = m.nav_node(i);
         let dy = (node.pos[1] - pos[1]).abs();
-        if nav_land_node(m, i) && dy <= NAV_VERTICAL_MAX {
+        if nav_actor_node(m, pi, i) && dy <= NAV_VERTICAL_MAX {
             let d2 = dist2_xz(pos, node.pos);
             let to = [node.pos[0], from[1], node.pos[2]];
             if d2 < best_d2 && actor_line_clear(m, movers, from, to) {
@@ -15702,12 +15740,12 @@ unsafe fn nav_route_available(m: &Map, movers: &[phys::Mover], pi: usize, goal: 
     // eight-unit-high peek point.  A full human-hull sweep is stricter and can
     // reject the real nearest node even though Gold's graph accepts it; c1a0's
     // introwalkerguy1 then takes a different first corridor and blocks Gordon.
-    let src = nav_nearest(m, movers, pos, NAV_NEAREST_RANGE2);
+    let src = nav_nearest(m, movers, pi, pos, NAV_NEAREST_RANGE2);
     if src == NAV_NODE_NONE {
         prop_nav_cache_invalidate(pi);
         return false;
     }
-    let dst = nav_nearest(m, movers, goal, NAV_NEAREST_RANGE2);
+    let dst = nav_nearest(m, movers, pi, goal, NAV_NEAREST_RANGE2);
     if dst == NAV_NODE_NONE {
         prop_nav_cache_invalidate(pi);
         return false;
@@ -15810,9 +15848,9 @@ unsafe fn nav_waypoint_towards(
     // cannot become invalid en route. This is also standard waypoint behavior:
     // choose a route, advance it at node boundaries, do not re-seed it per step.
     let cached_next = prop_nav_cache_get(pi, PROP_NAV_NEXT_SLOT) as usize;
-    if cached_next < n && nav_land_node(m, cached_next) {
+    if cached_next < n && nav_actor_node(m, pi, cached_next) {
         let next_pos = m.nav_node(cached_next).pos;
-        let next_d2 = dist2_xz(pos, next_pos);
+        let next_d2 = nav_actor_distance(pi, pos, next_pos);
         // A scripted route's cached hop is a graph link RouteSimplify chose,
         // however long or steep (c0a0's room2 runners cut 1,340 units to
         // node 1, then climb 256 up the ramp to node 2). Only unscripted
@@ -15820,17 +15858,17 @@ unsafe fn nav_waypoint_towards(
         let scripted = scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]);
         if next_d2 > reached_range2
             && (scripted
-                || ((pos[1] - next_pos[1]).abs() <= NAV_VERTICAL_MAX
+                || (nav_actor_vertical(pi, pos, next_pos)
                     && next_d2 < NAV_NEAREST_RANGE2))
         {
             return Some(next_pos);
         }
-        if next_d2 <= reached_range2 && (pos[1] - next_pos[1]).abs() <= NAV_VERTICAL_MAX {
+        if next_d2 <= reached_range2 && nav_actor_vertical(pi, pos, next_pos) {
             // FGetNodeRoute selects its destination once. Keep that exact
             // endpoint instead of repeating FindNearestNode (and its BSP
             // traces) at every hop.
             let dst = prop_nav_cache_get(pi, PROP_NAV_DST_SLOT);
-            if dst as usize >= n || !nav_land_node(m, dst as usize) {
+            if dst as usize >= n || !nav_actor_node(m, pi, dst as usize) {
                 return nav_route_fail_open(pi, goal);
             }
             // RouteSimplify: once the mark itself is a clear local move,
@@ -15863,10 +15901,10 @@ unsafe fn nav_waypoint_towards(
     // avoids a second exact nearest scan before the route BFS below.
     let cached_src = prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) as usize;
     let mut src = NAV_NODE_NONE;
-    if cached_src < n && nav_land_node(m, cached_src) {
+    if cached_src < n && nav_actor_node(m, pi, cached_src) {
         let src_pos = m.nav_node(cached_src).pos;
-        let src_d2 = dist2_xz(pos, src_pos);
-        if (pos[1] - src_pos[1]).abs() <= NAV_VERTICAL_MAX && src_d2 < NAV_NEAREST_RANGE2 {
+        let src_d2 = nav_actor_distance(pi, pos, src_pos);
+        if nav_actor_vertical(pi, pos, src_pos) && src_d2 < NAV_NEAREST_RANGE2 {
             if src_d2 > reached_range2 {
                 return Some(src_pos);
             }
@@ -15882,18 +15920,18 @@ unsafe fn nav_waypoint_towards(
     let cached_dst = prop_nav_cache_get(pi, PROP_NAV_DST_SLOT);
     let dst = if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi])
         && (cached_dst as usize) < n
-        && nav_land_node(m, cached_dst as usize)
+        && nav_actor_node(m, pi, cached_dst as usize)
     {
         cached_dst
     } else {
-        nav_nearest(m, movers, goal, NAV_NEAREST_RANGE2)
+        nav_nearest(m, movers, pi, goal, NAV_NEAREST_RANGE2)
     };
     if dst == NAV_NODE_NONE {
         return nav_route_fail_open(pi, goal);
     }
 
     let src_pos = m.nav_node(src as usize).pos;
-    if dist2_xz(pos, src_pos) > reached_range2 || (pos[1] - src_pos[1]).abs() > NAV_VERTICAL_MAX {
+    if nav_actor_distance(pi, pos, src_pos) > reached_range2 || !nav_actor_vertical(pi, pos, src_pos) {
         return Some(src_pos);
     }
     if src == dst {
@@ -15939,6 +15977,41 @@ unsafe fn nav_flee_goal(m: &Map, threat: [i32; 3], pos: [i32; 3]) -> Option<[i32
     }
 }
 
+#[inline(never)]
+unsafe fn prop_controller_move_towards(
+    m: &Map, movers: &[phys::Mover], pi: usize, goal: [i32;3], speed: i32,
+) -> bool {
+    let pos=PROP_POS[pi];
+    let target=if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]) {
+        nav_waypoint_towards(m,movers,pi,goal).unwrap_or(goal)
+    } else if script_human_chord_clear(m,movers,pi,pos,goal) {
+        goal
+    } else {
+        let Some(node)=nav_waypoint_towards(m,movers,pi,goal) else { return false; };
+        node
+    };
+    let mut flight=PROP_FLIGHT[pi];
+    let candidate=flight.candidate(pos,target,speed);
+    let from=prop_target(PROP_TYPE_CONTROLLER,pos);
+    let to=prop_target(PROP_TYPE_CONTROLLER,candidate);
+    // World hull2 is source-sized; moving brushes keep the existing bounded
+    // expanded-hull gate. Exact moving-brush hull2 remains a parity gap.
+    if !phys::controller_world_line_clear(m,pos,candidate)
+        || !phys::actor_line_clear_movers(m,movers,from,to) || in_monsterclip(to,0) {
+        PROP_FLIGHT[pi]=air_navigation::Flight::EMPTY;
+        return false;
+    }
+    let (mins,maxs)=actor_collision_bounds(PROP_TYPE_CONTROLLER,candidate);
+    if PROP_SCRIPT_MODE[pi]==0 && PROP_AI_TARGET[pi]==PROP_TARGET_PLAYER
+        && ground_logic::actor_candidate_overlaps_player(mins,maxs,LOGIC_PLAYER_POS,36) {
+        return false;
+    }
+    PROP_FLIGHT[pi]=flight;
+    prop_face_point(pi,target);
+    prop_set_pos_exact(m,pi,candidate);
+    true
+}
+
 unsafe fn prop_move_towards_point(
     m: &Map,
     movers: &[phys::Mover],
@@ -15959,6 +16032,9 @@ unsafe fn prop_move_towards_point(
         return false;
     }
     let speed = speed * 2;
+    if PROP_KIND[pi] == PROP_TYPE_CONTROLLER {
+        return prop_controller_move_towards(m, movers, pi, goal, speed);
+    }
     let pos = PROP_POS[pi];
     // Flanking spread (cheap separation): fan hostile combat AI sideways so a
     // group closes on the player in a rough arc instead of stacking on one
@@ -16551,6 +16627,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     }
     if PROP_HEALTH[pi] == 0 {
         PROP_JUMP[pi] = monsterjump::State::EMPTY;
+        PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
         PROP_STATE[pi] = PROP_STATE_DEAD;
         PROP_DEATH_START[pi] = SIM_NOW; // play the death clip forward from now
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
@@ -18535,6 +18612,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         PROP_LOGIC_LINK[i] = u16::MAX;
         PROP_SCRIPT_GOAL[i] = [0; 3];
         PROP_JUMP[i] = monsterjump::State::EMPTY;
+        PROP_FLIGHT[i] = air_navigation::Flight::EMPTY;
         PROP_SCRIPT_YAW[i] = 0;
         PROP_SCRIPT_MODE[i] = 0;
         PROP_SCRIPT_LI[i] = u16::MAX;
@@ -32088,14 +32166,15 @@ fn play(
     // Transitional formats remain readable for diagnostics; HLMH and HLMJ
     // carry the larger source-addressed header.
     if map_bytes.len() < cooked::LEGACY_HEADER_SIZE
-        || ((&map_bytes[0..4] == b"HLMH" || &map_bytes[0..4] == b"HLMJ")
+        || ((&map_bytes[0..4] == b"HLMH" || &map_bytes[0..4] == b"HLMJ" || &map_bytes[0..4] == b"HLMK")
             && map_bytes.len() < cooked::HEADER_SIZE)
         || (&map_bytes[0..4] != b"HLME"
             && &map_bytes[0..4] != b"HLMF"
             && &map_bytes[0..4] != b"HLMG"
             && &map_bytes[0..4] != b"HLMH"
-            && &map_bytes[0..4] != b"HLMJ")
-        || (&map_bytes[0..4] == b"HLMJ" && !hl_format::pvs_pair::validate_room(map_bytes))
+            && &map_bytes[0..4] != b"HLMJ"
+            && &map_bytes[0..4] != b"HLMK")
+        || (matches!(&map_bytes[0..4],b"HLMJ"|b"HLMK") && !hl_format::pvs_pair::validate_room(map_bytes))
     {
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);

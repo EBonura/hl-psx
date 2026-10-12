@@ -5414,6 +5414,7 @@ const NAV_LINK_TRACE_LIFT: f32 = 24.0;
 const NAV_LINK_VERTICAL_MAX: f32 = 128.0;
 const CONTENTS_SOLID: i16 = -2;
 const NAV_NODE_LAND: u8 = 1;
+const NAV_NODE_AIR: u8 = 2;
 const NAV_EXACT_ROUTES: u16 = 0x8000;
 const NAV_ROUTE_BYTES_MAX: usize = (NAV_EXACT_ROUTES - 1) as usize;
 
@@ -5431,6 +5432,8 @@ const RETAIL_GRAPH_ROUTE_BYTES: usize = 32;
 const RETAIL_GRAPH_HASH_LINKS: usize = 8384;
 const RETAIL_NODE_HUMAN_DOOR_ROUTE: usize = 40 + (1 * 2 + 1) * 4;
 const RETAIL_LINK_HUMAN: i32 = 1 << 1;
+const RETAIL_NODE_FLY_DOOR_ROUTE: usize = 40 + (3 * 2 + 1) * 4;
+const RETAIL_LINK_FLY: i32 = 1 << 3;
 
 struct NavNodeRec {
     origin_hl: [f32; 3],
@@ -5873,13 +5876,15 @@ fn collect_nav_nodes(
         script_marks.push((target.to_string(), origin, ent_yaw_degrees(block)));
     }
     for block in s.split('{') {
-        if ent_value(block, "classname").unwrap_or("") != "info_node" {
-            continue;
-        }
+        let node_type = match ent_value(block, "classname") {
+            Some("info_node") => NAV_NODE_LAND,
+            Some("info_node_air") => NAV_NODE_AIR,
+            _ => continue,
+        };
         let mut origin_hl = ent_value(block, "origin")
             .and_then(parse_vec3)
             .unwrap_or([0.0; 3]);
-        origin_hl[2] += NAV_NODE_HEIGHT;
+        if node_type == NAV_NODE_LAND { origin_hl[2] += NAV_NODE_HEIGHT; }
         let origin = to_world(origin_hl, scale);
         let leaf = point_leaf(origin_hl, nodes_lump, planes);
         out.push(NavNodeRec {
@@ -5888,7 +5893,7 @@ fn collect_nav_nodes(
             leaf,
             links: Vec::new(),
             route_offset: 0,
-            node_type: NAV_NODE_LAND,
+            node_type,
         });
         if out.len() >= MAX_NAV_NODES_COOK {
             break;
@@ -5904,7 +5909,9 @@ fn collect_nav_nodes(
             }
             let a = out[i].origin_hl;
             let b = out[j].origin_hl;
-            if (a[2] - b[2]).abs() > NAV_LINK_VERTICAL_MAX {
+            if out[i].node_type != out[j].node_type { continue; }
+            if out[i].node_type == NAV_NODE_LAND
+                && (a[2] - b[2]).abs() > NAV_LINK_VERTICAL_MAX {
                 continue;
             }
             let d2 = nav_dist2_hl(a, b);
@@ -5913,8 +5920,10 @@ fn collect_nav_nodes(
             }
             let mut ta = a;
             let mut tb = b;
-            ta[2] += NAV_LINK_TRACE_LIFT;
-            tb[2] += NAV_LINK_TRACE_LIFT;
+            if out[i].node_type == NAV_NODE_LAND {
+                ta[2] += NAV_LINK_TRACE_LIFT;
+                tb[2] += NAV_LINK_TRACE_LIFT;
+            }
             if nav_segment_clear(clipnodes, planes, hull1_head, ta, tb) {
                 candidates.push((j, d2));
             }
@@ -6082,8 +6091,10 @@ fn parse_retail_nav(
         }
         let route_offset = read_count_at(
             data,
-            o + RETAIL_NODE_HUMAN_DOOR_ROUTE,
-            "node human route offset",
+            o + if node_type & NAV_NODE_AIR != 0 {
+                RETAIL_NODE_FLY_DOOR_ROUTE
+            } else { RETAIL_NODE_HUMAN_DOOR_ROUTE },
+            "node movement-hull route offset",
         )?;
         original_nodes.push(RetailNavNode {
             origin,
@@ -6124,11 +6135,14 @@ fn parse_retail_nav(
                 [raw_node.first_link..raw_node.first_link + raw_node.link_count]
                 .iter()
                 .any(|link| {
-                    link.source == source && link.dest == next && link.mask & RETAIL_LINK_HUMAN != 0
+                    link.source == source && link.dest == next
+                        && link.mask & if raw_node.node_type & NAV_NODE_AIR != 0 {
+                            RETAIL_LINK_FLY
+                        } else { RETAIL_LINK_HUMAN } != 0
                 });
             if !usable {
                 return Err(format!(
-                    "node {source} route selects non-human or non-adjacent next hop {next}"
+                    "node {source} route selects incompatible-hull or non-adjacent next hop {next}"
                 ));
             }
         }
@@ -13483,6 +13497,15 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // hull (c1a1b prop floors ended up 37 units too high).
     let hull1_head_raw = model_headnode(models, 0, 1).unwrap_or(0); // standing player hull
     let hull3_head_raw = model_headnode(models, 0, 3).unwrap_or(0); // crouch hull, 32x32x36
+    let controller_hull_needed = entity_text(bsp.lump(LUMP_ENTITIES)).split('{').any(|block| {
+        matches!(ent_value(block,"classname"),Some("info_node_air"|"monster_alien_controller"))
+            || (ent_value(block,"classname")==Some("monstermaker")
+                && ent_value(block,"monstertype")==Some("monster_alien_controller"))
+    });
+    let controller_hull_raw = if controller_hull_needed {
+        model_headnode(models,0,2).unwrap_or(cooked::CONTROLLER_HULL_ABSENT)
+    } else { cooked::CONTROLLER_HULL_ABSENT };
+
     let (tram_model, tram_speed, tram_start, tram_wheels, way, _, tram_graph) =
         collect_tram_graph(bsp.lump(LUMP_ENTITIES), models, scale);
     let mut ents = collect_entities(
@@ -13538,6 +13561,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     };
     let mut clip_roots = Vec::with_capacity(3 + ents.len());
     clip_roots.push(hull1_head_raw);
+    if controller_hull_needed { clip_roots.push(controller_hull_raw); }
     clip_roots.push(hull3_head_raw); // crouch hull for the world model (fits low vents)
     clip_roots.push(tram_head_raw);
     for e in &ents {
@@ -13585,7 +13609,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let stripped_clip_count = raw_n_clip.saturating_sub(n_clip);
     // Preserve the on-disc field for format compatibility, but make accidental
     // legacy use fail open instead of silently tracing an expanded clip hull.
-    let hull0_head = -1i32;
+    let hull0_head = if controller_hull_needed {
+        remap_clip_head(controller_hull_raw,&clip_remap)
+    } else { cooked::CONTROLLER_HULL_ABSENT };
     let hull1_head = remap_clip_head(hull1_head_raw, &clip_remap);
     let hull3_head = remap_clip_head(hull3_head_raw, &clip_remap);
     let tram_head = remap_clip_head(tram_head_raw, &clip_remap);
@@ -14050,7 +14076,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     }
 
     // ---- Clip hull (player collision / LOS) + spawn ----
-    // u32 n_clip | i32 legacy_hull0_head (-1; point hull uses render nodes) |
+    // u32 n_clip | i32 controller_hull2_head (HLMK, MIN means absent) |
     // i32 hull1_head | i32 hull3_head (crouch) |
     // i32 spawn x,y,z (world) | i32 spawn_yaw (Q0.12)
     // clipnodes (u16 plane_ref, i16 c0, i16 c1) × n_clip [6B]
@@ -18029,6 +18055,106 @@ mod tests {
         assert_eq!(nav.nodes[0].route_offset, 0);
         assert_eq!(nav.nodes[1].route_offset, 0, "identical rows share storage");
         assert_eq!(nav.nodes[1].origin, [64, 0, 0]);
+    }
+
+    #[test]
+    fn air_nav_parser_selects_flying_routes_and_rejects_human_links() {
+        let n = 2usize;
+        let l = 2usize;
+        let route = [0xfeu8]; // both destinations are direct
+        let total = 4
+            + RETAIL_GRAPH_BYTES
+            + n * RETAIL_NODE_BYTES
+            + l * RETAIL_LINK_BYTES
+            + n * RETAIL_DIST_BYTES
+            + route.len();
+        let mut data = vec![0u8; total];
+        data[0..4].copy_from_slice(&RETAIL_GRAPH_VERSION.to_le_bytes());
+        data[12..16].copy_from_slice(&1i32.to_le_bytes()); // routing complete
+        data[28..32].copy_from_slice(&(n as i32).to_le_bytes());
+        data[32..36].copy_from_slice(&(l as i32).to_le_bytes());
+        data[36..40].copy_from_slice(&(route.len() as i32).to_le_bytes());
+        data[8388..8392].copy_from_slice(&0i32.to_le_bytes());
+
+        let nodes_off = 4 + RETAIL_GRAPH_BYTES;
+        for i in 0..n {
+            let o = nodes_off + i * RETAIL_NODE_BYTES;
+            let origin = [i as f32 * 64.0, 0.0, 0.0];
+            for (axis, value) in origin.into_iter().enumerate() {
+                data[o + axis * 4..o + axis * 4 + 4].copy_from_slice(&value.to_le_bytes());
+                data[o + 12 + axis * 4..o + 16 + axis * 4].copy_from_slice(&value.to_le_bytes());
+            }
+            data[o + 28..o + 32].copy_from_slice(&(NAV_NODE_AIR as i32).to_le_bytes());
+            data[o + 32..o + 36].copy_from_slice(&1i32.to_le_bytes());
+            data[o + 36..o + 40].copy_from_slice(&(i as i32).to_le_bytes());
+            data[o + RETAIL_NODE_FLY_DOOR_ROUTE..o + RETAIL_NODE_FLY_DOOR_ROUTE + 4]
+                .copy_from_slice(&0i32.to_le_bytes());
+        }
+        let links_off = nodes_off + n * RETAIL_NODE_BYTES;
+        for (i, (source, dest)) in [(0i32, 1i32), (1, 0)].into_iter().enumerate() {
+            let o = links_off + i * RETAIL_LINK_BYTES;
+            data[o..o + 4].copy_from_slice(&source.to_le_bytes());
+            data[o + 4..o + 8].copy_from_slice(&dest.to_le_bytes());
+            data[o + 16..o + 20].copy_from_slice(&RETAIL_LINK_FLY.to_le_bytes());
+        }
+        let route_off = links_off + l * RETAIL_LINK_BYTES + n * RETAIL_DIST_BYTES;
+        data[route_off..route_off + route.len()].copy_from_slice(&route);
+
+        for i in 0..n {
+            let o=nodes_off+i*RETAIL_NODE_BYTES+RETAIL_NODE_HUMAN_DOOR_ROUTE;
+            data[o..o+4].copy_from_slice(&999i32.to_le_bytes());
+        }
+        let nav = parse_retail_nav(&data, &[], &[], 1.0).expect("retail nav");
+        assert_eq!(nav.nodes.len(), 2);
+        assert_eq!(nav.routes.as_deref(), Some(route.as_slice()));
+        assert_eq!(nav.nodes[0].route_offset, 0);
+        assert_eq!(nav.nodes[1].route_offset, 0, "identical rows share storage");
+        assert_eq!(nav.nodes[1].origin, [64, 0, 0]);
+        for i in 0..l {
+            let o=links_off+i*RETAIL_LINK_BYTES+16;
+            data[o..o+4].copy_from_slice(&RETAIL_LINK_HUMAN.to_le_bytes());
+        }
+        assert!(parse_retail_nav(&data,&[],&[],1.0).is_err());
+    }
+
+    #[test]
+    fn air_nav_bsp_preserves_height_and_node_class() {
+        let input=br#"{ "classname" "info_node" "origin" "128 256 512" }
+            { "classname" "info_node_air" "origin" "128 256 512" }"#;
+        let nodes=collect_nav_nodes(input,&[],&[],&[],-1,2.0);
+        assert_eq!(nodes.len(),2);
+        assert_eq!((nodes[0].node_type,nodes[0].origin),(NAV_NODE_LAND,[64,260,128]));
+        assert_eq!((nodes[1].node_type,nodes[1].origin),(NAV_NODE_AIR,[64,256,128]));
+        assert!(nodes.iter().all(|node|node.links.is_empty()));
+    }
+    #[test]
+    #[ignore="requires original retail 103-map assets"]
+    fn air_nav_all261_original_nodes_and_flying_tables_are_admitted() {
+        let root=std::path::PathBuf::from(std::env::var("HL_AIR_RETAIL_DIR").expect("explicit original maps"));
+        let mut total=0;let mut maps=0;
+        for name in include_str!("../../hl-content/map-list.txt").lines().filter(|s|!s.is_empty()) {
+            let b=std::fs::read(root.join(format!("{name}.bsp"))).unwrap();
+            let start=u32::from_le_bytes(b[4..8].try_into().unwrap()) as usize;
+            let len=u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize;
+            let text=entity_text(&b[start..start+len]);let mut selected=String::new();let mut expected=Vec::new();
+            for block in text.split('{') {
+                if ent_value(block,"classname")!=Some("info_node_air") {continue;}
+                selected.push_str(&format!("{{{block}"));
+                expected.push(to_world(parse_vec3(ent_value(block,"origin").unwrap()).unwrap(),1.0));
+            }
+            if expected.is_empty(){continue;}
+            let nodes=collect_nav_nodes(selected.as_bytes(),&[],&[],&[],-1,1.0);
+            assert_eq!(nodes.len(),expected.len(),"{name}: no AIR omission");
+            for (node,origin) in nodes.iter().zip(expected) {
+                assert_eq!(node.node_type,NAV_NODE_AIR);assert_eq!(node.origin,origin,"{name}");
+                total+=1;
+            }
+            let graph=std::fs::read(root.join("graphs").join(format!("{name}.nod"))).unwrap();
+            let nav=parse_retail_nav(&graph,&[],&[],1.0).unwrap_or_else(|e|panic!("{name}: {e}"));
+            assert!(nav.nodes.iter().any(|n|n.node_type & NAV_NODE_AIR !=0),"{name}");
+            assert!(nav.routes.is_some());maps+=1;
+        }
+        assert_eq!((total,maps),(261,7));
     }
 
     #[test]
