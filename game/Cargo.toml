@@ -118,6 +118,7 @@ psx-display = { path = "../.psoxide/sdk/crates/psx-display" }
 psx-font = { path = "../.psoxide/sdk/crates/psx-font" }
 psx-fx   = { path = "../.psoxide/sdk/crates/psx-fx" }
 psx-telemetry = { path = "../.psoxide/sdk/crates/psx-telemetry" }
+psx-segments = { path = "../.psoxide/sdk/crates/psx-segments" }
 psx-engine = { path = "../.psoxide/engine/crates/psx-engine" }
 psx-render-contract = { path = "../.psoxide/engine/crates/psx-render-contract" }
 

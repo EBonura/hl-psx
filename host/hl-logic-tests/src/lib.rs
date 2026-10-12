@@ -29,6 +29,12 @@ pub mod sfx;
 #[path = "../../../game/src/save.rs"]
 pub mod save;
 
+#[path = "../../../game/src/map_catalog.rs"]
+pub mod map_catalog;
+
+#[path = "../../../game/src/segments.rs"]
+pub mod segments;
+
 #[path = "../../../game/src/ground_logic.rs"]
 pub mod ground_logic;
 

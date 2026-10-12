@@ -1,0 +1,136 @@
+# Controller-only additive Debug page journey. Every launch here is a
+# diagnostic reset; this does not certify independent earned progression.
+name = "hl-segment-select"
+title = "Half-Life: Debug Segment select diagnostic launch"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+card_observe = true
+max_ticks = 4000
+
+[[step]]
+wait = 620
+[[step]]
+label = "open Options from the normal title menu"
+press = ["down"]
+hold = 4
+wait = 12
+repeat = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 25
+[[step]]
+label = "wrap Options selection to Debug"
+press = ["up"]
+hold = 4
+wait = 12
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 25
+[[step]]
+checkpoint = "debug-page"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+label = "select the additive Segment select row"
+press = ["up"]
+hold = 4
+wait = 12
+repeat = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 25
+[[step]]
+checkpoint = "segments-first"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+label = "wrap to the final Hazard map"
+press = ["up"]
+hold = 4
+wait = 12
+[[step]]
+checkpoint = "segments-last"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
+label = "scroll beyond the first visible list window"
+press = ["down"]
+hold = 4
+wait = 12
+repeat = 6
+[[step]]
+checkpoint = "segments-scrolled"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+press = ["up"]
+hold = 4
+wait = 12
+repeat = 6
+[[step]]
+label = "Back returns to Debug"
+press = ["circle"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "debug-return"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 25
+[[step]]
+label = "select first Hazard map by wrapping from the first campaign row"
+press = ["up"]
+hold = 4
+wait = 12
+repeat = 7
+[[step]]
+checkpoint = "segments-hazard-selected"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+label = "launch the explicitly labeled diagnostic reset"
+press = ["cross"]
+hold = 4
+wait = 1180
+[[step]]
+checkpoint = "segment-hazard-spawn"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "pc_not_stuck"
+window = 120
+[[step.assert]]
+kind = "presenting"
+window = 120
+min_changes = 5
+[[step]]
+lstick = [128, 0]
+hold = 160
+wait = 20
+[[step]]
+checkpoint = "segment-hazard-walk"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "segment-hazard-spawn"
+min_changed = 0.05
+[[step.assert]]
+kind = "card_unchanged"
