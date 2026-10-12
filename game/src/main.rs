@@ -16068,6 +16068,11 @@ unsafe fn nav_waypoint_towards(
 
     let src_pos = m.nav_node(src as usize).pos;
     if nav_actor_distance(pi, pos, src_pos) > reached_range2 || !nav_actor_vertical(pi, pos, src_pos) {
+        if prop_scientist_flag(pi, PROP_SCI_FOLLOWING) && PROP_SCRIPT_MODE[pi] == 0 {
+            // Retain the intended endpoint while approaching the source so a
+            // moving player's new destination can invalidate this approach.
+            prop_nav_cache_set_route(pi, src, dst, NAV_NODE_NONE);
+        }
         return Some(src_pos);
     }
     if src == dst {
@@ -16196,6 +16201,31 @@ unsafe fn prop_move_towards_point(
             goal
         }
     };
+    if scientist_logic::follow_route_precedes_local_step(
+        prop_is_human(PROP_KIND[pi]) && prop_scientist_flag(pi, PROP_SCI_FOLLOWING),
+        PROP_SCRIPT_MODE[pi],
+        prop_nav_cache_get(pi, PROP_NAV_SRC_SLOT) as usize,
+        nav_node_count(m),
+    ) {
+        let cached_dst = prop_nav_cache_get(pi, PROP_NAV_DST_SLOT);
+        let destination = if cached_dst == NAV_NODE_NONE { NAV_NODE_NONE }
+            else { nav_nearest(m, movers, pi, goal, NAV_NEAREST_RANGE2) };
+        if scientist_logic::follow_route_should_replan(cached_dst, destination, false) {
+            prop_nav_cache_invalidate(pi);
+        } else if let Some(wp) = nav_waypoint_towards(m, movers, pi, goal) {
+            prop_face_point(pi, wp);
+            let moved = prop_try_step(m, movers, pi, wp[0] - pos[0], wp[2] - pos[2], speed, true);
+            if scientist_logic::follow_route_should_replan(cached_dst, destination, !moved) {
+                // A moving brush/crowd can invalidate an otherwise static
+                // graph approach. Rebuild from the actual position next time.
+                prop_nav_cache_invalidate(pi);
+                PROP_MOVE_COOLDOWN[pi] = 6;
+            }
+            return moved;
+        } else {
+            prop_nav_cache_invalidate(pi);
+        }
+    }
     if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi])
         && !scientist_logic::script_uses_detour(PROP_SCRIPT_MODE[pi])
     {

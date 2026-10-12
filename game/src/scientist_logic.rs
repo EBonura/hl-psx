@@ -23,6 +23,74 @@ pub const SCRIPT_PRIME_DELAY_TICKS: u16 = 19;
 /// GoldSrc `CCineMonster::CineThink` retries an unavailable scripted actor one
 /// second later. The fixed simulation runs at 20 Hz.
 pub const SCRIPT_RETRY_TICKS: u16 = 20;
+
+/// A follower that selected an obstacle approach must finish that approach
+/// before retrying short steps toward the player. Otherwise those steps can
+/// continually undo the retreat needed to reach the first graph node.
+pub const fn follow_route_precedes_local_step(
+    following: bool,
+    script_mode: u8,
+    cached_source: usize,
+    node_count: usize,
+) -> bool {
+    following && script_mode == 0 && cached_source < node_count
+}
+
+pub const fn follow_route_should_replan(cached_destination: u8, destination: u8, blocked: bool) -> bool {
+    blocked || (cached_destination != u8::MAX && cached_destination != destination)
+}
+
+#[cfg(test)]
+mod follow_route_tests {
+    use super::*;
+
+    #[test]
+    fn original_console_approach_survives_clear_short_goal_steps() {
+        // A bounded policy fixture with the original node coordinates. This
+        // models the alcove corner, not the production hull or full physics.
+        let nodes = [[128, 56], [132, 240], [464, 248]];
+        let goal = [860, 277];
+        fn step(pos: [i32; 2], target: [i32; 2]) -> Option<[i32; 2]> {
+            let dx = target[0] - pos[0];
+            let dz = target[1] - pos[1];
+            let divisor = dx.abs().max(dz.abs()).max(1);
+            let next = [pos[0] + dx * 14 / divisor, pos[1] + dz * 14 / divisor];
+            if next[0] >= 224 && next[1] < 160 { None } else { Some(next) }
+        }
+        fn distance2(a: [i32; 2], b: [i32; 2]) -> i32 {
+            (a[0] - b[0]).pow(2) + (a[1] - b[1]).pow(2)
+        }
+        let mut old = [210, 81];
+        for _ in 0..100 {
+            old = step(old, goal).or_else(|| step(old, nodes[0])).unwrap();
+        }
+        assert!(distance2(old, goal) > 500 * 500);
+        let mut fixed = [210, 81];
+        let mut hop = 0;
+        for _ in 0..100 {
+            if hop < nodes.len() && distance2(fixed, nodes[hop]) <= 48 * 48 {
+                hop += 1;
+            }
+            let committed = follow_route_precedes_local_step(true, 0,
+                if hop < nodes.len() { 9 } else { 255 }, 19);
+            let target = if committed { nodes[hop] } else { goal };
+            fixed = step(fixed, target).unwrap();
+            if distance2(fixed, goal) <= 48 * 48 { break; }
+        }
+        assert!(distance2(fixed, goal) <= 48 * 48);
+        for (destination, blocked) in [(11, false), (10, true)] {
+            let source = if follow_route_should_replan(10, destination, blocked) { 255 } else { 9 };
+            assert!(!follow_route_precedes_local_step(true, 0, source, 19));
+        }
+        assert!(!follow_route_should_replan(10, 10, false));
+        assert!(!follow_route_should_replan(255, 10, false));
+        assert!(!follow_route_precedes_local_step(false, 0, 9, 19));
+        assert!(!follow_route_precedes_local_step(true, 128, 9, 19));
+        // Collision failure/changed destination invalidates the source cache.
+        assert!(!follow_route_precedes_local_step(true, 0, 255, 19));
+        assert!(!follow_route_precedes_local_step(true, 0, 9, 0));
+    }
+}
 /// Script schedules spend several 10 Hz monster thinks selecting a route and
 /// enabling movement before their first step. Reuse the existing failed-move
 /// cooldown for five active thinks (about 0.5 seconds), with no new state.
