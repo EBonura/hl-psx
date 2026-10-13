@@ -34,6 +34,7 @@ mod env_bubbles_fx;
 mod env_funnel;
 mod env_funnel_fx;
 mod gman_damage;
+mod hecu_grenades;
 mod sentry_wake;
 mod pushable_transition;
 mod env_sound;
@@ -8768,6 +8769,9 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
             prop_scientist_flag(pi, PROP_SCI_PREDISASTER),
             prop_scientist_flag(pi, PROP_SCI_HELLO_SAID),
         );
+        let carry_state=if kind==8 {
+            hecu_grenades::carry_state(carry_base_state,hecu_grenades::weapons(GRUNT_GREN[pi]))
+        } else {carry_state};
         carry_mail_write(
             carried,
             kind,
@@ -9079,8 +9083,9 @@ unsafe fn restore_transition_actors(
     let mut slot = 0usize;
     while slot < logic_state::carry_record_count(requested).min(CARRY_CAPACITY) {
         let (kind, health, packed_state, carry_id, rel, yaw) = carry_mail_read(slot);
-        let (state, following, provoked, predisaster, hello_said) =
-            scientist_logic::unpack_carry_state(packed_state);
+        let (state, following, provoked, predisaster, hello_said) = if kind == 8 {
+            (packed_state & 15,false,false,false,false)
+        } else { scientist_logic::unpack_carry_state(packed_state) };
         if carry_id == 0 || carry_id == CARRY_ID_NONE || !carry_actor_capable(kind) {
             slot += 1;
             continue;
@@ -9150,6 +9155,10 @@ unsafe fn restore_transition_actors(
         PROP_AI_TIMER[pi] = 0;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_HEALTH[pi] = health;
+        if kind == 8 {
+            GRUNT_GREN[pi]=hecu_grenades::clock(hecu_grenades::carry_weapons(packed_state),
+                SIM_NOW.wrapping_add(hecu_grenades::CHECK_TICKS));
+        }
         PROP_HIT_FLASH[pi] = 0;
         PROP_DEATH_START[pi] = if health == 0 {
             0u16.wrapping_sub(300)
@@ -14525,6 +14534,10 @@ fn prop_clip(pi: usize, state: u8, hit_flash: bool) -> usize {
     if hit_flash {
         return PROP_CLIP_PAIN;
     }
+    if unsafe { PROP_KIND[pi] == 8 } {
+        if state == 6 { return 5; }
+        if state == 7 { return 6; }
+    }
     // Three species play a sequence of their own beyond the five states:
     // the houndeye's rest after a blast (idle with its cooldown running), the
     // vortigaunt's claw (attacking with no zap in flight) and the bullsquid's
@@ -19024,6 +19037,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
         PROP_SCRIPT_PLAY_UNTIL[pi] = 0;
         PROP_KIND[pi] = kind;
+        if kind == 8 { GRUNT_GREN[pi] = hecu_grenades::clock(3,hecu_grenades::CHECK_TICKS); }
         PROP_POS[pi] = org;
         PROP_YAW[pi] = yaw as u16;
         seed_prop_render_transform(pi);
@@ -19056,6 +19070,16 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         PROP_COUNT += 1;
         pi += 1;
     }
+    for li in 0..m.n_logic {
+        let rec=m.logic(li);
+        if rec.kind == map::LOGIC_GRUNT_EQUIPMENT && rec.arg1 <= 15 {
+            let pi=rec.arg0 as usize;
+            if pi < PROP_COUNT && PROP_KIND[pi] == 8 {
+                GRUNT_GREN[pi]=hecu_grenades::clock(rec.arg1 as u8,hecu_grenades::CHECK_TICKS);
+            }
+        }
+    }
+
 }
 
 // Build exact candidate lists only after incoming actors have been appended or
@@ -21435,6 +21459,7 @@ struct Projectile {
     damage: u8,
     life: u8,
     from_enemy: bool, // enemy shots hit the player; player shots hit props
+    remainder: [i8; 3], // enemy grenade Q4 integration; existing shots remain integral
 }
 
 impl Projectile {
@@ -21446,6 +21471,7 @@ impl Projectile {
         damage: 0,
         life: 0,
         from_enemy: false,
+        remainder: [0; 3],
     };
 }
 
@@ -21611,8 +21637,21 @@ unsafe fn spawn_projectile_dir(
         damage,
         life,
         from_enemy,
+        remainder: [0; 3],
     };
     slot
+}
+
+/// Authored enemy grenades reserve a free slot rather than evict a live charge.
+unsafe fn spawn_grunt_grenade(origin: [i32; 3], velocity: [i16; 3], launcher: bool, damage: u8) -> bool {
+    let Some(slot) = (&PROJECTILES).iter().position(|p| !p.active) else { return false; };
+    PROJECTILES[slot] = Projectile {
+        active: true, pos: origin, vel: velocity.map(i32::from),
+        kind: if launcher { PROJ_M203 } else { PROJ_GRENADE }, damage,
+        life: if launcher { u8::MAX } else { hecu_grenades::HAND_FUSE_TICKS },
+        from_enemy: true, remainder: [0; 3],
+    };
+    true
 }
 
 /// Detonate every charge thrown by the selected satchel weapon. Tripmines use
@@ -21832,7 +21871,10 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             }
         }
         let old = PROJECTILES[i].pos;
-        if gravity {
+        let grunt_grenade = PROJECTILES[i].from_enemy && matches!(kind, PROJ_GRENADE | PROJ_M203);
+        if grunt_grenade {
+            PROJECTILES[i].vel[1] -= 8;
+        } else if gravity {
             PROJECTILES[i].vel[1] -= if kind == PROJ_M203 {
                 M203_GRAVITY
             } else {
@@ -21840,7 +21882,16 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             };
         }
         let v = PROJECTILES[i].vel;
-        let new = [old[0] + v[0], old[1] + v[1], old[2] + v[2]];
+        let new = if grunt_grenade {
+            let mut new = old;
+            for axis in 0..3 {
+                let step = v[axis] + PROJECTILES[i].remainder[axis] as i32;
+                new[axis] += step / 16;
+                PROJECTILES[i].remainder[axis] = (step % 16) as i8;
+            }
+            PROJECTILES[i].vel[1] -= 8;
+            new
+        } else { [old[0] + v[0], old[1] + v[1], old[2] + v[2]] };
         let mut hit = false;
         let mut hit_pos = new;
         let mut hit_normal = [0i32; 3];
@@ -21927,11 +21978,12 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
                 hit_pos[2] + (hit_normal[2] >> 11),
             ];
             PROJECTILES[i].vel =
-                if reflected[0].abs() + reflected[1].abs() + reflected[2].abs() < 12 {
+                if reflected[0].abs() + reflected[1].abs() + reflected[2].abs() < if grunt_grenade { 192 } else { 12 } {
                     [0; 3]
                 } else {
                     reflected
                 };
+            PROJECTILES[i].remainder = [0; 3];
             if PROJECTILES[i].life == 0 {
                 let p = PROJECTILES[i];
                 PROJECTILES[i].active = false;

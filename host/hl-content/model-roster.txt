@@ -7,7 +7,7 @@
 5|zombie|0:4,10:8,8:10,3:2,17:3,eatbody:4,eatbodystand=eatbody,pause=@0,idle1=@0,attack1=@2
 6|houndeye|0:4,3:4,10:4,12:2,6:3,madidle2:3,jumpwindow:5,idle1=@0
 7|bullsquid|7:4,1:5,10:4,3:2,16:5,bite:2,eat:4,idle=@0
-8|hgrunt|11:4,1:8,18:6,4:2,35:3,idle1=@0,combatidle=@0,walk1=@1,divecover=@2
+8|hgrunt|11:4,1:8,18:6,4:2,35:3,10:8,9:8,idle1=@0,combatidle=@0,walk1=@1,divecover=@2,throwgrenade=@5,launchgrenade=@6
 9|islave|0:4,4:4,12:4,13:2,19:3,attack1:3,grab:3,downup=grab,pushup=grab,updown=grab,jabber=grab,jibber=grab,idle1=@0
 10|agrunt|0:4,2:4,19:4,6:2,25:3,idle1=@0,threat=@2
 11|controller|15:4,16:4,0:4,6:2,18:3

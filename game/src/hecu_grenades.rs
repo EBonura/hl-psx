@@ -17,6 +17,8 @@ pub fn clock(weapons: u8, deadline: u16) -> u16 {
     ((normalize_weapons(weapons) as u16) << 12) | (deadline & CLOCK_MASK)
 }
 pub fn weapons(clock: u16) -> u8 { normalize_weapons((clock >> 12) as u8) }
+pub fn carry_state(state: u8, weapons: u8) -> u8 { (state & 15) | (normalize_weapons(weapons) << 4) }
+pub fn carry_weapons(state: u8) -> u8 { normalize_weapons(state >> 4) }
 pub fn due(clock: u16, now: u16) -> bool {
     (now.wrapping_sub(clock & CLOCK_MASK) & CLOCK_MASK) < 0x0800
 }
@@ -82,6 +84,8 @@ mod tests {
         assert_eq!(attack(5),Some(Attack::Launcher));
         assert_eq!(attack(8),None); assert_eq!(attack(1),None);
         assert_eq!(attack(10),Some(Attack::Hand));
+        assert_eq!(carry_weapons(carry_state(2,5)),5);
+        assert_eq!(carry_weapons(2),3); // old transient records had no equipment bits
         let c=clock(10,4094);assert!(!due(c,4093));assert!(due(c,4094));
         let c=reschedule(c,4094,120);assert_eq!(weapons(c),10);
         assert!(!due(c,4095));assert!(!due(c,117));assert!(due(c,118));

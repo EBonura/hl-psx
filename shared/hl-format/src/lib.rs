@@ -400,6 +400,8 @@ pub mod logic {
     /// Global func_pushable identity metadata. `brush` binds destination-owned
     /// geometry; `arg0` is the stable global id. No touch/use action or HP.
     pub const GLOBAL_PUSHABLE: u8 = 65;
+    /// Inert equipment metadata: arg0 is the cooked grunt index, arg1 its authored weapons.
+    pub const GRUNT_EQUIPMENT: u8 = 66;
 
     // CBaseMonster TriggerCondition values (monsters.h AITRIGGER_*). The
     // cooker emits only the ones the runtime evaluates.
@@ -531,8 +533,9 @@ pub mod logic {
     pub const LOGIC_ENV_SOUND: u8 = ENV_SOUND;
     pub const LOGIC_WEAPONBOX: u8 = WEAPONBOX;
     pub const LOGIC_GLOBAL_PUSHABLE: u8 = GLOBAL_PUSHABLE;
+    pub const LOGIC_GRUNT_EQUIPMENT: u8 = GRUNT_EQUIPMENT;
 
-    pub const KINDS: [u8; 65] = [
+    pub const KINDS: [u8; 66] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -598,6 +601,7 @@ pub mod logic {
         ENV_SOUND,
         WEAPONBOX,
         GLOBAL_PUSHABLE,
+        GRUNT_EQUIPMENT,
     ];
 }
 

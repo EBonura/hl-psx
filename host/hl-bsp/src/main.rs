@@ -10611,6 +10611,44 @@ fn monster_trigger_condition(block: &str) -> Option<(u16, &str)> {
     .then_some((condition, target))
 }
 
+/// Keep nondefault authored equipment without changing the 24-byte actor record.
+/// Default/zero weapons is CHGrunt's AR+hand grenade loadout.
+fn collect_grunt_equipment(
+    ents: &[u8], scale: f32,
+    props: &[(u16, [i32;3], i32, i16, u16, u16)], names: &[String],
+) -> Result<Vec<LogicRec>,String> {
+    let text=entity_text(ents);
+    let mut result=Vec::new();
+    for block in text.split('{') {
+        if ent_value(block,"classname") != Some("monster_human_grunt") {continue;}
+        let raw=ent_value(block,"weapons").unwrap_or("0").parse::<u8>()
+            .map_err(|_| "invalid grunt weapons".to_string())?;
+        if raw & !15 != 0 {return Err("unsupported grunt weapons bits".into());}
+        let weapons=if raw==0 {3}else{raw};
+        if weapons==3 {continue;}
+        let origin=to_world(ent_value(block,"origin").and_then(parse_vec3).unwrap_or([0.;3]),scale);
+        let name=ent_value(block,"targetname").unwrap_or("");
+        let named=|prop: &(u16,[i32;3],i32,i16,u16,u16)|
+            !name.is_empty() && prop.4 != 0 && names.get(prop.4 as usize-1).is_some_and(|n|n==name);
+        let valid=|prop: &(u16,[i32;3],i32,i16,u16,u16)| prop.0 & 0x0fff == 8 && prop.0 & 0x8000 == 0;
+        let exact: Vec<_>=props.iter().enumerate().filter(|(_,p)|valid(p)&&p.1==origin).collect();
+        let candidates=if exact.len()==1 {exact} else {
+            props.iter().enumerate().filter(|(_,p)|valid(p)&&named(p)).collect()
+        };
+        if candidates.len()!=1 {return Err("authored grunt equipment binding is ambiguous".into());}
+        let index=candidates[0].0;
+        if result.iter().any(|r: &LogicRec|r.arg0 as usize==index) {
+            return Err("duplicate grunt equipment binding".into());
+        }
+        result.push(LogicRec {kind:LOGIC_GRUNT_EQUIPMENT,use_type:0,spawnflags:0,
+            targetname:0,target:0,killtarget:0,brush:LOGIC_BRUSH_NONE,
+            first_aux:0,aux_count:0,flags:0,wait_ticks:0,delay_ticks:0,speed:0,
+            arg0:u16::try_from(index).map_err(|_|"grunt index overflow")?,arg1:weapons as u16,
+            sound0:u8::MAX,sound1:u8::MAX,origin,mins:origin,maxs:origin});
+    }
+    Ok(result)
+}
+
 fn collect_props(
     ents: &[u8],
     nodes: &[u8],
@@ -14355,6 +14393,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         &mut logic.names,
         &mut trigger_links,
     );
+    logic.ents.extend(collect_grunt_equipment(bsp.lump(LUMP_ENTITIES),scale,&props,&logic.names)?);
     // A map with Gonarch nodes but no Gonarch of its own gets a walker for
     // the one that follows the player in (c4a2a, c4a2b).
     let ent_text = entity_text(bsp.lump(LUMP_ENTITIES));
