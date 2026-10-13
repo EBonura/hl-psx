@@ -571,6 +571,45 @@ pub struct RotatingState {
     pub next_tick: u16,
 }
 
+/// CFuncRotating::HurtTouch replaces dmg with |avelocity| / 10 for each
+/// contact callback. The player converts that float to integer damage per
+/// callback, so fractional damage must not accumulate across contacts.
+/// Angular speed is authored degrees/second, independent of world scale.
+pub fn rotating_touch_damage(degrees_per_second: u16, speed_percent: i16) -> u16 {
+    (degrees_per_second as u32 * speed_percent.clamp(0, 100) as u32 / 1000) as u16
+}
+
+pub fn record_mover_contact(words: &mut [u32], id: i32) {
+    if id >= 0 && (id as usize / 32) < words.len() {
+        words[id as usize / 32] |= 1 << (id as usize % 32);
+    }
+}
+pub fn has_mover_contact(words: &[u32], id: usize) -> bool {
+    id / 32 < words.len() && words[id / 32] & (1 << (id % 32)) != 0
+}
+
+#[cfg(test)]
+mod rotating_contact_tests {
+    use super::rotating_touch_damage;
+    #[test]
+    fn touch_uses_current_angular_speed_and_player_truncation() {
+        assert_eq!(rotating_touch_damage(400, 100), 40);
+        assert_eq!(rotating_touch_damage(400, 50), 20);
+        assert_eq!(rotating_touch_damage(75, 100), 7);
+        assert_eq!(rotating_touch_damage(15, 50), 0);
+        assert_eq!(rotating_touch_damage(400, 0), 0);
+        assert_eq!(rotating_touch_damage(400, -1), 0);
+    }
+    #[test]
+    fn contact_set_deduplicates_and_rejects_world_or_out_of_range() {
+        let mut contacts = [0; 2];
+        for id in [-2, -1, 64, 17, 17, 63] { super::record_mover_contact(&mut contacts, id); }
+        assert_eq!(contacts, [1 << 17, 1 << 31]);
+        assert!(super::has_mover_contact(&contacts, 17));
+        assert!(!super::has_mover_contact(&contacts, 64));
+    }
+}
+
 #[inline(always)]
 fn tick_reached(now: u16, at: u16) -> bool {
     now.wrapping_sub(at) < 0x8000

@@ -8051,10 +8051,11 @@ fn collect_logic_entities_with_lightstyles(
             | "momentary_door" => LOGIC_FUNC_DOOR,
             "func_button" | "func_rot_button" => LOGIC_FUNC_BUTTON,
             "momentary_rot_button" => LOGIC_MOMENTARY,
-            // Untargeted fans keep the cheaper map-tick-derived cosmetic path.
-            // A named fan participates in FireTargets and therefore needs a
-            // persistent angle/velocity state at runtime.
-            "func_rotating" if !ent_value(block, "targetname").unwrap_or("").is_empty() => {
+            // Cosmetic untargeted fans keep the map-tick path. Hazardous fans
+            // need live angular speed even without a FireTargets name.
+            "func_rotating" if !ent_value(block, "targetname").unwrap_or("").is_empty()
+                || parse_spawnflags(block) & 128 != 0
+                || parse_f32_key(block, "dmg", 0.0) != 0.0 => {
                 LOGIC_FUNC_ROTATING
             }
             "func_pendulum"
@@ -8364,6 +8365,10 @@ fn collect_logic_entities_with_lightstyles(
         } else if kind == LOGIC_FUNC_BREAKABLE {
             // CBreakable's explodemagnitude: Die() blasts with it when positive.
             parse_f32_key(block, "explodemagnitude", 0.0).clamp(0.0, 1000.0) as u16
+        } else if kind == LOGIC_FUNC_ROTATING {
+            // Angular velocity is degrees/second, never divided by map scale.
+            parse_f32_key(block, "speed", speed_default).abs()
+                .round().clamp(1.0, u16::MAX as f32) as u16
         } else if kind == LOGIC_FUNC_PENDULUM {
             let authored = parse_f32_key(block, "speed", speed_default);
             (if authored > 0.0 {
@@ -8606,6 +8611,8 @@ fn collect_logic_entities_with_lightstyles(
             _ => names.id(ent_value(block, "changetarget")),
         };
         let arg1 = match kind {
+            LOGIC_FUNC_ROTATING => parse_f32_key(block, "dmg", 0.0)
+                .clamp(0.0, u16::MAX as f32) as u16,
             LOGIC_ENV_SOUND => {
                 let room = sound_number(block,"roomtype");
                 if !room.is_finite() || !(0.0..29.0).contains(&room) {
@@ -20817,6 +20824,7 @@ mod tests {
         "targetname" "fanpwr"
         "speed" "400"
         "fanfriction" "2"
+        "dmg" "200"
         "spawnflags" "151"
         }
         "#;
@@ -20838,6 +20846,7 @@ mod tests {
         assert_eq!(fan.spawnflags, 151);
         assert_eq!(fan.speed, 400);
         assert_eq!(fan.arg0, 2, "fanfriction remains an authored percentage");
+        assert_eq!(fan.arg1, 200, "Blocked dmg stays distinct from angular touch damage");
         assert_eq!(logic.names[fan.targetname as usize - 1], "fanpwr");
 
         let models = vec![0u8; 2 * SZ_MODEL];
@@ -20850,6 +20859,21 @@ mod tests {
             [3641, 1, (2 << 16) | 151],
             "reverse GoldSrc Z/roll fan maps to reflected PSX X rotation"
         );
+    }
+
+    #[test]
+    fn unnamed_hazardous_fans_keep_unscaled_angular_speed() {
+        let ents = br#"
+          { "classname" "func_rotating" "model" "*1" "speed" "400" "dmg" "200" "spawnflags" "147" }
+          { "classname" "func_rotating" "model" "*2" "speed" "75" "dmg" "50" "spawnflags" "139" }
+          { "classname" "func_rotating" "model" "*3" "speed" "100" "spawnflags" "1" }
+        "#;
+        let logic = collect_logic_entities(ents, &[], &[LOGIC_BRUSH_NONE, 7, 8, 9],
+            2.0, &Default::default(), &Default::default()).unwrap();
+        assert_eq!(logic.ents.len(), 2, "cosmetic fans remain allocation-free");
+        assert_eq!((logic.ents[0].speed, logic.ents[0].arg1), (400, 200));
+        assert_eq!((logic.ents[1].speed, logic.ents[1].arg1), (75, 50));
+        assert!(logic.ents.iter().all(|r| r.targetname == 0));
     }
 
     #[test]

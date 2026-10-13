@@ -7915,7 +7915,9 @@ unsafe fn mover_blocked(m: &Map, ei: usize, victim: usize) {
             &[ei as i32, victim as i32, k, p[0], p[1], p[2]],
         );
     }
-    let dmg = if rec.kind == map::LOGIC_FUNC_TRAIN {
+    let dmg = if rec.kind == map::LOGIC_FUNC_ROTATING {
+        rec.arg1
+    } else if rec.kind == map::LOGIC_FUNC_TRAIN {
         if SIM_NOW % 10 == 0 {
             rec.arg1.max(2)
         } else {
@@ -12372,6 +12374,30 @@ unsafe fn logic_tick_rotating(nents: usize, li: usize, rec: map::LogicEnt, now: 
         } else if previous.speed_percent != 0 && next.speed_percent == 0 {
             sfx::stop_map_loop(li as u16);
         }
+    }
+}
+
+/// Dispatch fan impacts from the player's accepted collision path, once per
+/// fixed simulation update rather than inventing a trigger_hurt semaphore.
+#[inline(never)]
+unsafe fn damage_player_fan_contacts(
+    m: &Map, nents: usize, health: &mut u16, armor: &mut u16,
+) {
+    let mut ei = 0;
+    while ei < nents {
+        if phys::player_touched_mover(ei) {
+            if let Some(li) = fan_logic_index(ei) {
+                let rec = m.logic(li);
+                if rec.spawnflags & 128 != 0 {
+                    let damage = logic_state::rotating_touch_damage(rec.speed, LOGIC_COUNTER[li]);
+                    if damage != 0 {
+                        note_damage_direction(ENT_CACHE[ei].origin);
+                        damage_player(health, armor, damage);
+                    }
+                }
+            }
+        }
+        ei += 1;
     }
 }
 
@@ -34240,6 +34266,12 @@ fn play(
                 phys::set_player_step_tick(sim_frame_no);
                 trace_player_hull_probes(sim_frame_no, &m, movers, &player, fwd, yaw, jump_want);
             }
+            phys::clear_player_touches();
+            if !settings::debug_on(settings::DEBUG_FLY) {
+                player.record_mover_contacts(&m, movers, |id| {
+                    id >= 0 && unsafe { fan_logic_index(id as usize).is_some() }
+                });
+            }
             if settings::debug_on(settings::DEBUG_FLY) {
                 fly_move(&mut player, fwd, strafe, jump_held, yaw, pitch);
             } else if let Some((center, half)) = ladder {
@@ -34762,6 +34794,7 @@ fn play(
                 );
                 PLAYER_APPROACH_SPEED = speed.max(PLAYER_LAST_SPEED);
                 PLAYER_LAST_SPEED = speed;
+                damage_player_fan_contacts(&m, nents, &mut health, &mut armor);
                 logic_touch_triggers(
                     &m,
                     nlogic,

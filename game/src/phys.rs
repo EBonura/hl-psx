@@ -1711,6 +1711,27 @@ fn try_unstick(
 
 /// Slide `vel` from `pos` for one frame, sliding along walls (4 iterations).
 /// Returns the new position and the wall-clipped velocity.
+// Per-update actual slide impacts. Speculative stair paths restore the chosen
+// path's set before gameplay dispatch, so rejected movement cannot hurt.
+pub const PLAYER_TOUCH_WORDS: usize = (crate::MAX_ENTS + 31) / 32;
+static mut PLAYER_TOUCHES: [u32; PLAYER_TOUCH_WORDS] = [0; PLAYER_TOUCH_WORDS];
+
+pub fn clear_player_touches() {
+    unsafe { PLAYER_TOUCHES = [0; PLAYER_TOUCH_WORDS]; }
+}
+fn player_touches() -> [u32; PLAYER_TOUCH_WORDS] { unsafe { PLAYER_TOUCHES } }
+fn restore_player_touches(touches: [u32; PLAYER_TOUCH_WORDS]) {
+    unsafe { PLAYER_TOUCHES = touches; }
+}
+fn note_player_touch(id: i32) {
+    if id >= 0 && (id as usize) < crate::MAX_ENTS {
+        unsafe { crate::logic_state::record_mover_contact(&mut *core::ptr::addr_of_mut!(PLAYER_TOUCHES), id); }
+    }
+}
+pub fn player_touched_mover(id: usize) -> bool {
+    id < crate::MAX_ENTS && unsafe { crate::logic_state::has_mover_contact(&*core::ptr::addr_of!(PLAYER_TOUCHES), id) }
+}
+
 fn slide_move(
     map: &Map,
     head: i32,
@@ -1742,6 +1763,7 @@ fn slide_move(
         let d = remaining;
         let end = add(pos, d);
         let tr = trace_all(map, head, movers, pos, end);
+        if tr.frac < 4096 { note_player_touch(tr.mover); }
         #[cfg(feature = "deep-reference-trace")]
         crate::reference_trace::player_slide(
             unsafe { PLAYER_STEP_TICK },
@@ -1950,6 +1972,19 @@ pub struct Player {
 const _: [(); 36] = [(); core::mem::size_of::<Player>()];
 
 impl Player {
+    /// Rotation may bring a solid brush into a stationary player before the
+    /// player's slide runs. Retain that actual transformed-hull contact even
+    /// though trace_all deliberately ignores mover startsolid for recovery.
+    pub fn record_mover_contacts(&self, map: &Map, movers: &[Mover], eligible: impl Fn(i32) -> bool) {
+        for mv in movers {
+            if eligible(mv.id) && mover_may_hold(mv, self.pos) && !mover_hull_clear(map, mv, self.pos, self.head(map)) {
+                note_player_touch(mv.id);
+            }
+        }
+        if self.on_ground && eligible(self.ground_mover as i32) {
+            note_player_touch(self.ground_mover as i32);
+        }
+    }
     /// Keep a rotated rider outside both the lift and the surrounding world.
     /// The usual mover trace ignores startsolid, so repair quantization before
     /// the movement/ground traces can lose their supporting floor.
@@ -2236,16 +2271,21 @@ impl Player {
         let start = self.pos;
         #[cfg(feature = "deep-reference-trace")]
         let first = trace_all(map, head, movers, start, add(start, move_vel));
+        let preceding_touches = player_touches();
         let (mut p, mut v) = slide_move(map, head, movers, start, move_vel);
+        let direct_touches = player_touches();
         if crate::ladder_logic::should_retry_vertical(start[1], p[1], move_y) {
             // A thin ladder beside an integer-quantized frame can make the
             // combined move hit a corner.  Gold's multi-plane float slide
             // keeps the vertical tangent; recover it without moving through
             // any solid by tracing the same hull vertically once.
+            restore_player_touches(preceding_touches);
             let (vertical_p, vertical_v) = slide_move(map, head, movers, start, [0, move_y, 0]);
             if crate::ladder_logic::retry_improves_vertical(start[1], p[1], vertical_p[1], move_y) {
                 p = vertical_p;
                 v = vertical_v;
+            } else {
+                restore_player_touches(direct_touches);
             }
         }
         #[cfg(feature = "deep-reference-trace")]
@@ -2654,7 +2694,9 @@ impl Player {
             next_y,
         );
 
+        let preceding_touches = player_touches();
         let (flat_pos, flat_vel) = slide_move(map, head, movers, start, move_vel);
+        let flat_touches = player_touches();
         let mut new_pos = flat_pos;
         let mut moved = flat_vel;
         let mut step_ground: Option<(i16, i8)> = None;
@@ -2675,6 +2717,7 @@ impl Player {
             );
             let up_pos = [start[0], start[1] + ((lift * up.frac) >> 12), start[2]];
             let level_vel = [move_vel[0], 0, move_vel[2]];
+            restore_player_touches(preceding_touches);
             let (raised_pos, step_vel) = slide_move(map, head, movers, up_pos, level_vel);
             let floor_end = [raised_pos[0], raised_pos[1] - STEP_UP, raised_pos[2]];
             let down = trace_all(map, head, movers, raised_pos, floor_end);
@@ -2726,10 +2769,13 @@ impl Player {
                 );
             }
             if chose_step {
+                note_player_touch(down.mover);
                 new_pos = step_pos;
                 moved = [step_vel[0], flat_vel[1], step_vel[2]];
                 step_ground = Some((down.mover as i16, step_residue));
                 unsafe { FLOOR_NY = down.normal[1] as i16 };
+            } else {
+                restore_player_touches(flat_touches);
             }
         }
         self.pos = new_pos;
