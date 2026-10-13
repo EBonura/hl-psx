@@ -33,6 +33,7 @@ mod env_bubbles;
 mod env_bubbles_fx;
 mod env_funnel;
 mod env_funnel_fx;
+mod gman_damage;
 mod env_sound;
 mod env_sound_audio;
 mod weaponbox;
@@ -16753,6 +16754,16 @@ unsafe fn monster_command_touch(m: &Map, nlogic: usize, target: u16) {
 #[optimize(size)]
 unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
+        return;
+    }
+    if PROP_KIND[pi] == gman_damage::PROP_KIND {
+        let response = gman_damage::take_damage(prop_start_health(PROP_KIND[pi]), dmg);
+        PROP_HEALTH[pi] = response.health;
+        if response.light_damage || response.heavy_damage {
+            if MONSTER_TRIGGER_END != 0 {
+                monster_damage_ai_triggers(pi);
+            }
+        }
         return;
     }
     if PROP_KIND[pi] == tripmine::PROP_TYPE_TRIPMINE {
