@@ -17979,17 +17979,13 @@ unsafe fn grunt_grenade_plan(m: &Map, movers: &[phys::Mover], pi: usize,
 }
 
 unsafe fn advance_grunt_grenade(pi: usize) -> bool {
-    if matches!(PROP_STATE[pi], 6 | 7)
-        && PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0 {
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        PROP_AI_TIMER[pi] = 0;
-    }
-    if matches!(PROP_STATE[pi], 6 | 7) {
-        let launcher = PROP_STATE[pi] == 7;
-        let total = if launcher { hecu_grenades::LAUNCH_ANIMATION_TICKS } else { hecu_grenades::TOSS_ANIMATION_TICKS };
-        let release = if launcher { hecu_grenades::LAUNCH_RELEASE_TICKS } else { hecu_grenades::TOSS_RELEASE_TICKS };
-        let remaining = PROP_AI_TIMER[pi];
-        if hecu_grenades::release_due(remaining, total, release) {
+    let step=hecu_grenades::action_step(&mut PROP_STATE[pi],&mut PROP_AI_TIMER[pi],
+        PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0);
+    match step {
+        hecu_grenades::ActionStep::Inactive=>false,
+        hecu_grenades::ActionStep::Hold=>true,
+        hecu_grenades::ActionStep::Release(attack)=>{
+            let launcher=attack==hecu_grenades::Attack::Launcher;
             let pos = PROP_POS[pi];
             let damage = skill_hit(if launcher { Sk::PlrM203 } else { Sk::PlrHandGrenade });
             spawn_grunt_grenade([pos[0], pos[1] + 60, pos[2]], PROP_SCRIPT_GOAL[pi], launcher, damage);
@@ -17997,12 +17993,9 @@ unsafe fn advance_grunt_grenade(pi: usize) -> bool {
             let roll = if launcher && hard {impact_rng().below(61) as u16}else{0};
             let recovery = hecu_grenades::recovery_ticks(launcher,hard,roll);
             GRUNT_GREN[pi] = hecu_grenades::reschedule(GRUNT_GREN[pi], SIM_NOW as u16, recovery);
+            true
         }
-        PROP_AI_TIMER[pi] = remaining.saturating_sub(1);
-        if remaining == 0 { PROP_STATE[pi] = PROP_STATE_IDLE; }
-        return true;
     }
-    false
 }
 
 unsafe fn try_grunt_grenade(m: &Map, movers: &[phys::Mover], pi: usize,

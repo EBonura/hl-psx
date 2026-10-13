@@ -42,6 +42,22 @@ pub fn due(clock: u16, now: u16) -> bool {
 pub fn reschedule(value: u16, now: u16, delay: u16) -> u16 { clock(weapons(value), now.wrapping_add(delay)) }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Attack { Hand, Launcher }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActionStep { Inactive, Hold, Release(Attack) }
+/// Advance the action fields used by the production grunt adapter. Airborne
+/// environment motion owns the shared velocity field and cancels this action.
+pub fn action_step(state: &mut u8, remaining: &mut u8, airborne: bool) -> ActionStep {
+    let attack=match *state {6=>Attack::Hand,7=>Attack::Launcher,_=>return ActionStep::Inactive};
+    if airborne { *state=0; *remaining=0; return ActionStep::Inactive; }
+    let (duration,release)=match attack {
+        Attack::Hand=>(TOSS_ANIMATION_TICKS,TOSS_RELEASE_TICKS),
+        Attack::Launcher=>(LAUNCH_ANIMATION_TICKS,LAUNCH_RELEASE_TICKS),
+    };
+    let releasing=release_due(*remaining,duration,release);
+    *remaining=remaining.saturating_sub(1);
+    if *remaining==0 {*state=0;}
+    if releasing {ActionStep::Release(attack)} else {ActionStep::Hold}
+}
 pub fn attack(weapons: u8) -> Option<Attack> {
     let value = normalize_weapons(weapons);
     if value & HAND != 0 { Some(Attack::Hand) }
@@ -135,6 +151,26 @@ mod tests {
             let events=(1..=duration).filter(|tick|
                 release_due(duration-tick+1,duration,release)).collect::<std::vec::Vec<_>>();
             assert_eq!(events,[release]);
+        }
+    }
+    #[test] fn production_action_adapter_releases_once_and_cancels_environment_conflict() {
+        for (mut state,duration,release,attack) in [(6,TOSS_ANIMATION_TICKS,TOSS_RELEASE_TICKS,Attack::Hand),
+            (7,LAUNCH_ANIMATION_TICKS,LAUNCH_RELEASE_TICKS,Attack::Launcher)] {
+            let mut remaining=duration;
+            for tick in 1..=duration {
+                assert_eq!(action_step(&mut state,&mut remaining,false),
+                    if tick==release {ActionStep::Release(attack)} else {ActionStep::Hold});
+            }
+            assert_eq!((state,remaining),(0,0));
+            assert_eq!(action_step(&mut state,&mut remaining,false),ActionStep::Inactive);
+        }
+        let mut state=6;let mut remaining=TOSS_ANIMATION_TICKS-TOSS_RELEASE_TICKS+1;
+        assert_eq!(action_step(&mut state,&mut remaining,true),ActionStep::Inactive);
+        assert_eq!((state,remaining),(0,0));
+        for original in [2,3] {
+            let mut state=original;let mut timer=0x56;
+            assert_eq!(action_step(&mut state,&mut timer,false),ActionStep::Inactive);
+            assert_eq!((state,timer),(original,0x56));
         }
     }
     #[test] fn fractional_ballistics_preserve_half_gravity_and_signed_motion() {
