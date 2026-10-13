@@ -34,6 +34,7 @@ mod env_bubbles_fx;
 mod env_funnel;
 mod env_funnel_fx;
 mod gman_damage;
+mod sentry_wake;
 mod pushable_transition;
 mod env_sound;
 mod env_sound_audio;
@@ -8498,6 +8499,9 @@ unsafe fn resolve_player_actor_collision(player: &mut phys::Player, start: [i32;
     if best_frac >= 4096 {
         return;
     }
+    if best_prop < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
+        sentry_schedule_wake(best_prop);
+    }
     let pushes = scientist_logic::client_push_speed(player.vel[0], player.vel[2]);
     let axis = best_axis as usize;
     player.pos[axis] = start[axis] + (((end[axis] - start[axis]) * best_frac) >> 12);
@@ -9744,6 +9748,8 @@ unsafe fn logic_fire_targets(
                 map::USE_OFF => false,
                 _ => inactive,
             };
+            // Explicit turret Use replaces a pending touch/damage deployment.
+            if PROP_KIND[pi] == sentry_wake::KIND { PROP_AI_TIMER[pi] = 0; }
             if enable {
                 PROP_DORMANT[pi] &= !PROP_RUNTIME_TURRET_INACTIVE;
             } else {
@@ -15599,8 +15605,10 @@ unsafe fn prop_monsterjump_touch(m: &Map, pi: usize) {
 #[inline(never)]
 #[optimize(size)]
 unsafe fn prop_environment_move(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
+    // Mounted turrets own bit 8 as inactivity, not falling momentum.
+    if !monsterjump::environment_eligible(PROP_KIND[pi]) { return false; }
     prop_monsterjump_touch(m, pi);
-    if PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0 {
+    if monsterjump::airborne(PROP_KIND[pi], PROP_DORMANT[pi]) {
         return prop_air_tick(m, movers, pi);
     }
     // A placed monster that has not been seen is GoldSrc's WaitTillSeen
@@ -16837,11 +16845,22 @@ unsafe fn monster_command_touch(m: &Map, nlogic: usize, target: u16) {
     }
 }
 
+unsafe fn sentry_schedule_wake(pi: usize) {
+    if let Some(deadline) = sentry_wake::schedule(PROP_KIND[pi], PROP_ACTIVE[pi] != 0,
+        PROP_HEALTH[pi], PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_INACTIVE != 0, SIM_NOW) {
+        // This timer/death timestamp is otherwise unused by a living sentry.
+        PROP_AI_TIMER[pi] = 1;
+        PROP_DEATH_START[pi] = deadline;
+    }
+}
+
 #[optimize(size)]
 unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
         return;
     }
+    // CSentry schedules deployment before subtracting damage; death below cancels it.
+    sentry_schedule_wake(pi);
     if PROP_KIND[pi] == gman_damage::PROP_KIND {
         let response = gman_damage::take_damage(prop_start_health(PROP_KIND[pi]), dmg);
         PROP_HEALTH[pi] = response.health;
@@ -19175,7 +19194,7 @@ unsafe fn tick_props(
             pi += 1;
             continue;
         }
-        if (PUSH_N != 0 || MONSTERJUMP_N != 0 || PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0)
+        if (PUSH_N != 0 || MONSTERJUMP_N != 0 || monsterjump::airborne(ty, PROP_DORMANT[pi]))
             && prop_environment_move(m, movers, pi)
         {
             pi += 1;
@@ -19294,6 +19313,14 @@ unsafe fn tick_props(
             PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
             pi += 1;
             continue;
+        }
+        if ty == sentry_wake::KIND && PROP_AI_TIMER[pi] != 0 {
+            if PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_INACTIVE == 0 {
+                PROP_AI_TIMER[pi] = 0;
+            } else if sentry_wake::due(PROP_HEALTH[pi], true, true, SIM_NOW, PROP_DEATH_START[pi]) {
+                PROP_AI_TIMER[pi] = 0;
+                PROP_DORMANT[pi] &= !PROP_RUNTIME_TURRET_INACTIVE;
+            }
         }
         if (PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_INACTIVE) != 0 {
             PROP_STATE[pi] = PROP_STATE_IDLE;

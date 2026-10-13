@@ -5,6 +5,10 @@
 pub fn walker(kind: u8) -> bool {
     matches!(kind, 0..=2 | 5..=10 | 14..=16 | 18 | 25 | 51..=55 | 59..=60)
 }
+/// Mounted turrets own bit 8 as inactivity. Keep every other class's existing
+/// push/environment eligibility unchanged.
+pub fn environment_eligible(kind: u8) -> bool { !matches!(kind, 20..=22) }
+pub fn airborne(kind: u8, flags: u8) -> bool { environment_eligible(kind) && flags & 8 != 0 }
 pub fn touches(trigger: [[i32;3];2], actor: [[i32;3];2]) -> bool {
     (0..3).all(|k| actor[0][k] <= trigger[1][k] && actor[1][k] >= trigger[0][k])
 }
@@ -60,5 +64,17 @@ mod tests {
         for _ in 0..20 { let d=s.step([8, -102, -8]); for k in 0..3 { distance[k]+=d[k]; } }
         assert_eq!(distance,[10,-127,-10]);
         s.start(); assert_eq!(s.step([0;3]),[0;3]);
+    }
+}
+
+#[cfg(test)]
+mod packed_airborne_tests {
+    #[test]
+    fn inactive_turrets_are_not_airborne_walkers() {
+        for kind in [20,21,22] { assert!(!super::airborne(kind,8)); }
+        for kind in [0,1,2,8,11,15,19,23,24,54,58] {
+            assert!(super::airborne(kind,8));
+            assert!(!super::airborne(kind,0));
+        }
     }
 }
