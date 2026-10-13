@@ -13,6 +13,17 @@ pub const LAUNCH_ANIMATION_TICKS: u8 = 30;
 pub fn release_due(remaining: u8, duration: u8, release_tick: u8) -> bool {
     remaining == duration - release_tick + 1
 }
+pub fn advance(velocity_q4: &mut [i32;3], remainder: &mut [i8;3]) -> [i32;3] {
+    velocity_q4[1] -= 8;
+    let mut step=[0;3];
+    for axis in 0..3 {
+        let value=velocity_q4[axis]+remainder[axis] as i32;
+        step[axis]=value/16;
+        remainder[axis]=(value%16) as i8;
+    }
+    velocity_q4[1] -= 8;
+    step
+}
 const CLOCK_MASK: u16 = 0x0fff;
 
 pub fn normalize_weapons(value: u8) -> u8 { if value == 0 { DEFAULT_WEAPONS } else { value & 15 } }
@@ -118,5 +129,15 @@ mod tests {
                 release_due(duration-tick+1,duration,release)).collect::<std::vec::Vec<_>>();
             assert_eq!(events,[release]);
         }
+    }
+    #[test] fn fractional_ballistics_preserve_half_gravity_and_signed_motion() {
+        let mut velocity=[17,160,-17];let mut remainder=[0;3];let mut pos=[0;3];
+        for _ in 0..10 {
+            let step=advance(&mut velocity,&mut remainder);
+            for axis in 0..3 {pos[axis]+=step[axis];}
+        }
+        assert_eq!(pos,[10,50,-10]);
+        assert_eq!(velocity,[17,0,-17]);
+        assert_eq!(remainder,[10,0,-10]);
     }
 }

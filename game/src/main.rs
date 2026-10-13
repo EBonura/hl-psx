@@ -21949,9 +21949,7 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
         }
         let old = PROJECTILES[i].pos;
         let grunt_grenade = PROJECTILES[i].from_enemy && matches!(kind, PROJ_GRENADE | PROJ_M203);
-        if grunt_grenade {
-            PROJECTILES[i].vel[1] -= 8;
-        } else if gravity {
+        if !grunt_grenade && gravity {
             PROJECTILES[i].vel[1] -= if kind == PROJ_M203 {
                 M203_GRAVITY
             } else {
@@ -21960,14 +21958,9 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
         }
         let v = PROJECTILES[i].vel;
         let new = if grunt_grenade {
-            let mut new = old;
-            for axis in 0..3 {
-                let step = v[axis] + PROJECTILES[i].remainder[axis] as i32;
-                new[axis] += step / 16;
-                PROJECTILES[i].remainder[axis] = (step % 16) as i8;
-            }
-            PROJECTILES[i].vel[1] -= 8;
-            new
+            let p = &mut PROJECTILES[i];
+            let step = hecu_grenades::advance(&mut p.vel, &mut p.remainder);
+            [old[0]+step[0],old[1]+step[1],old[2]+step[2]]
         } else { [old[0] + v[0], old[1] + v[1], old[2] + v[2]] };
         let mut hit = false;
         let mut hit_pos = new;
