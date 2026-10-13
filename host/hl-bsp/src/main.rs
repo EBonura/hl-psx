@@ -9814,6 +9814,29 @@ fn collect_logic_entities_with_lightstyles(
         }
     }
 
+    // Separate inert identity records preserve non-breakable global boxes
+    // without giving them CBreakable damage/use semantics. Existing brush
+    // records continue to own HP and outputs.
+    let mut pushable_ids = std::collections::HashSet::new();
+    for block in s.split('{') {
+        if ent_value(block, "classname") != Some("func_pushable") { continue; }
+        let global = ent_value(block, "globalname").unwrap_or("").trim();
+        if global.is_empty() { continue; }
+        let id = actor_carry_id(global, true);
+        if !pushable_ids.insert(id) { return Err("duplicate global pushable identity".into()); }
+        if pushable_ids.len() > 10 { return Err("global pushable transition capacity exceeds ten".into()); }
+        let brush = block_model(block).and_then(|sm| brush_by_submodel.get(sm).copied())
+            .filter(|&b| b != LOGIC_BRUSH_NONE).ok_or("global pushable has no cooked brush")?;
+        let (origin, mins, maxs) = entity_bounds_world(block, models, scale);
+        out.push(LogicRec {
+            kind: LOGIC_GLOBAL_PUSHABLE, use_type: 0, spawnflags: 0,
+            targetname: 0, target: 0, killtarget: 0, brush,
+            first_aux: 0, aux_count: 0, flags: 0, wait_ticks: 0, delay_ticks: 0,
+            speed: 0, arg0: id, arg1: 0, sound0: u8::MAX, sound1: u8::MAX,
+            origin, mins, maxs,
+        });
+    }
+
     Ok(LogicCook {
         ents: out,
         aux,
@@ -19624,6 +19647,68 @@ mod tests {
         assert_eq!(actor_carry_id("barney1", true), ordinary | CARRY_GLOBAL_BIT);
         assert_ne!(actor_carry_id("barney1", true), u16::MAX);
         assert_eq!(actor_carry_id("", false), 0);
+    }
+
+    #[test]
+    fn global_pushable_metadata_does_not_make_unbreakable_boxes_damageable() {
+        let ents=br#"
+        { "classname" "func_pushable" "model" "*1" "globalname" "safe" "health" "100" }
+        { "classname" "func_pushable" "model" "*2" "globalname" "break" "spawnflags" "128" "health" "20" }
+        "#;
+        let models=vec![0;3*SZ_MODEL];
+        let cooked=collect_logic_entities(ents,&models,&[0,1,2],1.0,&Default::default(),&Default::default()).unwrap();
+        let records=cooked.ents.iter().filter(|r|r.kind==LOGIC_GLOBAL_PUSHABLE).collect::<Vec<_>>();
+        assert_eq!(records.len(),2);
+        assert_eq!((records[0].brush,records[0].arg0),(1,actor_carry_id("safe",true)));
+        assert_eq!((records[1].brush,records[1].arg0),(2,actor_carry_id("break",true)));
+        assert!(records.iter().all(|r|r.targetname==0 && r.target==0 && r.killtarget==0 && r.aux_count==0));
+        let breakables=cooked.ents.iter().filter(|r|r.kind==LOGIC_FUNC_BREAKABLE).collect::<Vec<_>>();
+        assert_eq!(breakables.len(),1);
+        assert_eq!((breakables[0].brush,breakables[0].arg0),(2,20));
+        let too_many=(1..=11).map(|i|format!("{{ \"classname\" \"func_pushable\" \"model\" \"*1\" \"globalname\" \"b{i}\" }}")).collect::<String>();
+        assert!(collect_logic_entities(too_many.as_bytes(),&models,&[0,1,2],1.0,&Default::default(),&Default::default()).err().unwrap().contains("capacity"));
+        let duplicate=br#"{ "classname" "func_pushable" "model" "*1" "globalname" "same" } { "classname" "func_pushable" "model" "*2" "globalname" "same" }"#;
+        assert!(collect_logic_entities(duplicate,&models,&[0,1,2],1.0,&Default::default(),&Default::default()).err().unwrap().contains("duplicate"));
+    }
+
+    #[test]
+    #[ignore = "requires supplied original retail BSP data"]
+    fn original_global_pushables_admit_all_50_and_matching_geometry() {
+        let catalog=include_str!("../../../game/src/map_catalog.rs");
+        let maps=catalog.split("pub const MAPS").nth(1).expect("map catalog").split("];").next().unwrap();
+        let root=std::path::Path::new("/Users/ebonura/Library/Application Support/Steam/steamapps/common/Half-Life/valve/maps");
+        let (mut count,mut maximum,mut scanned)=(0,0,0);
+        let mut identities=std::collections::HashMap::new();
+        let mut dimensions=std::collections::HashMap::new();
+        for (index,name) in maps.split('"').enumerate() {
+            if index%2==0 {continue;}
+            let raw=std::fs::read(root.join(format!("{name}.bsp"))).expect("required original map");
+            let eo=u32le(&raw,4).unwrap() as usize;let en=u32le(&raw,8).unwrap() as usize;
+            let mo=u32le(&raw,4+14*8).unwrap() as usize;let mn=u32le(&raw,8+14*8).unwrap() as usize;
+            let entities=&raw[eo..eo+en];let models=&raw[mo..mo+mn];
+            let brushes=(0..models.len()/SZ_MODEL).map(|i|i as u16).collect::<Vec<_>>();
+            let cooked=collect_logic_entities(entities,models,&brushes,1.0,&Default::default(),&Default::default()).expect("retail logic admission");
+            let mut local=0;
+            for block in entity_text(entities).split('{') {
+                if ent_value(block,"classname")!=Some("func_pushable") {continue;}
+                let global=ent_value(block,"globalname").unwrap_or("").trim();
+                if global.is_empty() {continue;}
+                let id=actor_carry_id(global,true);
+                if let Some(previous)=identities.insert(id,global.to_string()) {assert_eq!(previous,global,"identity collision");}
+                let model=block_model(block).expect("original model");
+                let half=[0,1,2].map(|a| f32le(models,model*SZ_MODEL+12+a*4).unwrap()-f32le(models,model*SZ_MODEL+a*4).unwrap());
+                if let Some(previous)=dimensions.insert(id,half) {assert_eq!(previous,half,"matching global model dimensions");}
+                let rec=cooked.ents.iter().find(|r|r.kind==LOGIC_GLOBAL_PUSHABLE && r.arg0==id).expect("original metadata");
+                assert_eq!(rec.brush,model as u16);
+                if parse_spawnflags(block)&SF_PUSH_BREAKABLE==0 {
+                    assert!(!cooked.ents.iter().any(|r|r.kind==LOGIC_FUNC_BREAKABLE && r.brush==rec.brush));
+                }
+                local+=1;
+            }
+            assert_eq!(cooked.ents.iter().filter(|r|r.kind==LOGIC_GLOBAL_PUSHABLE).count(),local);
+            count+=local;maximum=maximum.max(local);scanned+=1;
+        }
+        assert_eq!((scanned,count,identities.len(),maximum),(103,50,25,10));
     }
 
     #[test]

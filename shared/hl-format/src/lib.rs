@@ -397,6 +397,9 @@ pub mod logic {
     /// Authored ammunition box: arg0 is its original per-map ordinal;
     /// each aux pair is (Arsenal ammo slot, quantity).
     pub const WEAPONBOX: u8 = 64;
+    /// Global func_pushable identity metadata. `brush` binds destination-owned
+    /// geometry; `arg0` is the stable global id. No touch/use action or HP.
+    pub const GLOBAL_PUSHABLE: u8 = 65;
 
     // CBaseMonster TriggerCondition values (monsters.h AITRIGGER_*). The
     // cooker emits only the ones the runtime evaluates.
@@ -527,8 +530,9 @@ pub mod logic {
     pub const LOGIC_ENV_FUNNEL: u8 = ENV_FUNNEL;
     pub const LOGIC_ENV_SOUND: u8 = ENV_SOUND;
     pub const LOGIC_WEAPONBOX: u8 = WEAPONBOX;
+    pub const LOGIC_GLOBAL_PUSHABLE: u8 = GLOBAL_PUSHABLE;
 
-    pub const KINDS: [u8; 64] = [
+    pub const KINDS: [u8; 65] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -593,6 +597,7 @@ pub mod logic {
         ENV_FUNNEL,
         ENV_SOUND,
         WEAPONBOX,
+        GLOBAL_PUSHABLE,
     ];
 }
 

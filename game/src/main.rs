@@ -34,6 +34,7 @@ mod env_bubbles_fx;
 mod env_funnel;
 mod env_funnel_fx;
 mod gman_damage;
+mod pushable_transition;
 mod env_sound;
 mod env_sound_audio;
 mod weaponbox;
@@ -3009,6 +3010,10 @@ static mut ENT_CACHE: [map::Ent; MAX_ENTS] = [ZERO_ENT; MAX_ENTS];
 static mut DOOR_CARRY: [door_transition::Carry; door_transition::CAPACITY] =
     [door_transition::Carry::EMPTY; door_transition::CAPACITY];
 static mut DOOR_CARRY_COUNT: usize = 0;
+// Ten supplied global boxes per map maximum: 200 B plus the 4 B count.
+static mut PUSHABLE_CARRY: [pushable_transition::Carry; pushable_transition::CAPACITY] =
+    [pushable_transition::EMPTY; pushable_transition::CAPACITY];
+static mut PUSHABLE_CARRY_COUNT: usize = 0;
 /// Indices of the map's func_water brushes (ENT_CACHE kind 6), filled when the
 /// brush entities load. The liquid tests walked and copied every entity record
 /// per sample to find these (usually none). More than the list holds falls
@@ -8668,6 +8673,7 @@ fn carry_name_id(m: &Map, carry_id: u16) -> u16 {
 #[optimize(size)]
 unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkName) -> u8 {
     DOOR_CARRY_COUNT = 0;
+    PUSHABLE_CARRY_COUNT = 0;
     if PROP_COUNT > CARRY_MAILBOX_FIRST {
         telemetry::debug_log("hl-psx: transition live-prop invariant exceeded");
         return 0;
@@ -8683,6 +8689,7 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
         VIS_ROW_LEAF = -1;
     }
     snapshot_transition_doors(m, nlogic, landmark_id, landmark_origin, use_pvs);
+    snapshot_transition_pushables(m, nlogic, landmark_id, landmark_origin, use_pvs);
 
     let mut carried = 0usize;
     let mut pi = 0usize;
@@ -8974,6 +8981,83 @@ unsafe fn restore_transition_doors(m: &Map, nlogic: usize, landmark: Option<[i32
         } else if records.iter().any(|record|record.id==id) {
             telemetry::debug_log("hl-psx: global door transition geometry mismatch");
         }
+    }
+}
+
+#[inline(never)]
+#[optimize(size)]
+unsafe fn snapshot_transition_pushables(
+    m: &Map, nlogic: usize, landmark_id: u16, landmark: [i32; 3], use_pvs: bool,
+) {
+    for li in 0..nlogic {
+        let rec = m.logic(li);
+        if rec.kind != map::LOGIC_GLOBAL_PUSHABLE { continue; }
+        let Some(ei) = logic_valid_brush(rec.brush, ENT_SOLID_COUNT) else { continue; };
+        let e = ENT_CACHE[ei];
+        if e.kind != ENT_KIND_PUSHABLE { continue; }
+        let center = pushable_world_center(e, e.origin);
+        let half = pushable_half_extents(e);
+        let mins = [0,1,2].map(|axis| center[axis] - half[axis]);
+        let maxs = [0,1,2].map(|axis| center[axis] + half[axis]);
+        let mut has_volume = false;
+        let mut inside = false;
+        for vi in 0..nlogic {
+            let volume = m.logic(vi);
+            if volume.kind == map::LOGIC_TRIGGER_TRANSITION && volume.targetname == landmark_id {
+                has_volume = true;
+                inside |= aabb_overlaps(mins, maxs, volume.mins, volume.maxs);
+            }
+        }
+        if (has_volume && !inside) || (use_pvs && !box_touches_pvs_node(m,0,mins,maxs,0)) {
+            continue;
+        }
+        let owner = ENT_BRUSH_LOGIC[ei] as usize;
+        let health = if owner < nlogic && LOGIC_KIND[owner] == map::LOGIC_FUNC_BREAKABLE {
+            LOGIC_BREAK_HP[owner]
+        } else { 0 };
+        let state = pushable::unpack(ENT_PHASE[ei]);
+        assert!(PUSHABLE_CARRY_COUNT < pushable_transition::CAPACITY, "global pushable transition capacity");
+        PUSHABLE_CARRY[PUSHABLE_CARRY_COUNT] = pushable_transition::Carry {
+            relative_center: [0,1,2].map(|axis| center[axis] - landmark[axis]),
+            id: rec.arg0, health, velocity: [state.vx, state.vy, state.vz], active: ENT_ACTIVE[ei],
+        };
+        PUSHABLE_CARRY_COUNT += 1;
+    }
+}
+
+#[inline(never)]
+#[optimize(size)]
+unsafe fn restore_transition_pushables(m: &Map, nlogic: usize, landmark: Option<[i32; 3]>) {
+    // Clear even without a landmark/match, so restart/manual load cannot
+    // replay transient state left by an earlier natural transition.
+    let count = pushable_transition::take_count(&mut *core::ptr::addr_of_mut!(PUSHABLE_CARRY_COUNT));
+    let Some(landmark) = landmark else { return; };
+    for li in 0..nlogic {
+        let rec = m.logic(li);
+        if rec.kind != map::LOGIC_GLOBAL_PUSHABLE { continue; }
+        let Some(ei) = logic_valid_brush(rec.brush, ENT_SOLID_COUNT) else { continue; };
+        let e = ENT_CACHE[ei];
+        if e.kind != ENT_KIND_PUSHABLE { continue; }
+        let records = &(&*core::ptr::addr_of!(PUSHABLE_CARRY))[..count];
+        let Some(carry) = pushable_transition::matching(records, rec.arg0) else { continue; };
+        let Some(offset) = carry.destination_offset(landmark, e.center) else {
+            telemetry::debug_log("hl-psx: global pushable transition offset overflow");
+            continue;
+        };
+        ENT_CACHE[ei].origin = offset;
+        ENT_ACTIVE[ei] = carry.active;
+        // Source mover indices have no meaning in this room. Preserve velocity,
+        // invalidate support and request the existing destination support probe.
+        ENT_PHASE[ei] = pushable::pack(carry.velocity[0], carry.velocity[2], carry.velocity[1],
+            pushable::SUPPORT_NONE, true);
+        ENT_RENDER_PHASE[ei] = ENT_PHASE[ei];
+        let owner = ENT_BRUSH_LOGIC[ei] as usize;
+        if owner < nlogic && LOGIC_KIND[owner] == map::LOGIC_FUNC_BREAKABLE {
+            LOGIC_BREAK_HP[owner] = carry.health;
+            if carry.active == 0 { LOGIC_STATE[owner] = LOGIC_STATE_REMOVED; }
+        }
+        ent_prev_off_store(ei, offset);
+        live_entity_pvs_mark_dirty(ei);
     }
 }
 
@@ -13636,8 +13720,10 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         // collision, rendering and gameplay can now derive the same live
         // bounds without rediscovering entity classes or scanning the logic
         // table. Existing users still disambiguate through LOGIC_KIND.
-        if let Some(ei) = logic_valid_brush(rec.brush, nents) {
-            ENT_BRUSH_LOGIC[ei] = li as u16;
+        if rec.kind != map::LOGIC_GLOBAL_PUSHABLE {
+            if let Some(ei) = logic_valid_brush(rec.brush, nents) {
+                ENT_BRUSH_LOGIC[ei] = li as u16;
+            }
         }
         // Target dispatch is hot when delayed multi_manager events fan out.
         // Cache the name in already-allocated per-record storage so a fire does
@@ -32002,6 +32088,7 @@ unsafe fn init_room_logic(
     init_trains(m, nlogic, nents);
     restore_transition_trains(m, nlogic, landmark, launch.carry_count);
     restore_transition_doors(m, nlogic, landmark);
+    restore_transition_pushables(m, nlogic, landmark);
     logic_schedule_changelevel_post_target(m, launch.ride_seat, 0);
     // Untargeted scripted_sequences run at spawn in GoldSrc. A targeted script
     // with m_iszIdle also starts CineThink: it possesses/moves its actor now,
