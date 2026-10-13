@@ -17837,6 +17837,18 @@ fn main() {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn grunt_equipment_binds_authored_actor_and_rejects_ambiguity() {
+        let entities = br#"{ "classname" "monster_human_grunt" "origin" "10 20 30" "weapons" "5" }
+            { "classname" "monster_human_grunt" "origin" "40 50 60" }"#;
+        let props = [(8, [5,15,10], 0, 0, 0, 0), (8,[20,30,25],0,0,0,0)];
+        let records = super::collect_grunt_equipment(entities,2.0,&props,&[]).unwrap();
+        assert_eq!(records.len(),1);
+        assert_eq!(records[0].arg0,0);
+        assert_eq!(records[0].arg1,5);
+        assert!(super::collect_grunt_equipment(entities,2.0,&[props[0],props[0]],&[]).is_err());
+        assert!(super::collect_grunt_equipment(br#"{ "classname" "monster_human_grunt" "weapons" "16" }"#,1.0,&[],&[]).is_err());
+    }
+    #[test]
     fn weaponbox_preserves_named_ammunition_and_scaled_original_bounds() {
         let input = br#"{ "classname" "weaponbox" "origin" "1584 -696 -248"
             "uranium" "60" "Trip Mine" "7" "Satchel Charge" "5" }"#;

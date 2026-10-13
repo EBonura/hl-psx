@@ -11730,6 +11730,10 @@ unsafe fn maker_make(
     // SF_MONSTER_FALL_TO_GROUND, so a walker drops from there instead of
     // appearing on the floor.
     let kind = PROP_KIND[pi];
+    if kind == 8 {
+        GRUNT_GREN[pi] = hecu_grenades::clock(hecu_grenades::weapons(GRUNT_GREN[pi]),
+            (SIM_NOW as u16).wrapping_add(hecu_grenades::CHECK_TICKS));
+    }
     if matches!(model_def(kind).ai, AI_MELEE | AI_RANGED | AI_ALLY | AI_FLEE)
         && kind != PROP_TYPE_CONTROLLER
         && rec.origin[1] > PROP_POS[pi][1] + 18
@@ -14740,6 +14744,13 @@ fn prop_anim_frame<const POSE: bool>(
                 };
             }
         }
+    }
+    if unsafe { PROP_KIND[pi] } == 8 && matches!(state, 6 | 7) && hit_flash == 0 {
+        let duration = if state == 7 { hecu_grenades::LAUNCH_ANIMATION_TICKS }
+            else { hecu_grenades::TOSS_ANIMATION_TICKS } as usize;
+        let elapsed = duration.saturating_sub(unsafe { PROP_AI_TIMER[pi] } as usize);
+        forget_clip();
+        return if POSE { md.one_shot_clip_phase(clip, duration, elapsed) } else { (0, 0, 0) };
     }
     if state == PROP_STATE_ATTACK {
         // Melee and Barney attacks have a bounded AI action window.  Starting
@@ -17977,6 +17988,11 @@ unsafe fn tick_shooter(
     let def = model_def(ty);
     let range = def.atk_range as i32;
     let range2 = range.saturating_mul(range);
+    if ty == 8 && matches!(PROP_STATE[pi], 6 | 7)
+        && PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0 {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        PROP_AI_TIMER[pi] = 0;
+    }
     if ty == 8 && matches!(PROP_STATE[pi], 6 | 7) {
         let launcher = PROP_STATE[pi] == 7;
         let total = if launcher { hecu_grenades::LAUNCH_ANIMATION_TICKS } else { hecu_grenades::TOSS_ANIMATION_TICKS };
@@ -18031,6 +18047,7 @@ unsafe fn tick_shooter(
     let d2 = dist2_xz(pos, aim);
 
     if ty == 8 && matches!(PROP_STATE[pi], PROP_STATE_IDLE | PROP_STATE_ATTACK)
+        && PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE == 0
         && d2 <= range2 && visible && hecu_grenades::due(GRUNT_GREN[pi], SIM_NOW as u16) {
         GRUNT_GREN[pi] = hecu_grenades::reschedule(GRUNT_GREN[pi], SIM_NOW as u16, hecu_grenades::CHECK_TICKS);
         if let Some(attack) = hecu_grenades::attack(hecu_grenades::weapons(GRUNT_GREN[pi])) {
@@ -21515,6 +21532,7 @@ struct Projectile {
     from_enemy: bool, // enemy shots hit the player; player shots hit props
     remainder: [i8; 3], // enemy grenade Q4 integration; existing shots remain integral
 }
+const _: () = assert!(core::mem::size_of::<Projectile>() == 32);
 
 impl Projectile {
     const ZERO: Projectile = Projectile {
