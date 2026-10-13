@@ -17937,6 +17937,31 @@ unsafe fn find_actor_target(
 /// Ranged + turret AI. Acquire a target, face it, and fire a hitscan shot every
 /// `atk_cooldown` ticks while it is within `atk_range` and in line of sight.
 /// Movers (`can_move`) close to range first; turrets (`!can_move`) hold still.
+unsafe fn grunt_grenade_plan(m: &Map, movers: &[phys::Mover], pi: usize,
+    target: [i32; 3], launcher: bool, nprops: usize) -> Option<hecu_grenades::Plan> {
+    let origin = PROP_POS[pi];
+    if !hecu_grenades::safe_target(origin, target) { return None; }
+    let start = [origin[0], origin[1] + 60, origin[2]];
+    let plan = if launcher {
+        hecu_grenades::launch(start, target, skill_value(Sk::HgruntGrenadeSpeed))?
+    } else {
+        let middle = [(start[0] + target[0]) / 2, (start[1] + target[1]) / 2,
+            (start[2] + target[2]) / 2];
+        let ceiling = [middle[0], middle[1] + 500, middle[2]];
+        let top = phys::trace_line(m, movers, middle, ceiling).map_or(ceiling, |hit| hit.pos);
+        hecu_grenades::toss(start, target, top[1] - 15)?
+    };
+    if phys::trace_line(m, movers, start, plan.apex).is_some()
+        || phys::trace_line(m, movers, plan.apex, target).is_some() { return None; }
+    // The ascending trace includes live actors; descent ignores them.
+    for other in 0..nprops {
+        if other == pi || PROP_ACTIVE[other] == 0 || PROP_HEALTH[other] == 0 { continue; }
+        let bounds = actor_collision_bounds(PROP_KIND[other], PROP_POS[other]);
+        if segment_box_frac(start, plan.apex, bounds.0, bounds.1).is_some() { return None; }
+    }
+    Some(plan)
+}
+
 unsafe fn tick_shooter(
     m: &Map,
     movers: &[phys::Mover],
@@ -17952,6 +17977,21 @@ unsafe fn tick_shooter(
     let def = model_def(ty);
     let range = def.atk_range as i32;
     let range2 = range.saturating_mul(range);
+    if ty == 8 && matches!(PROP_STATE[pi], 6 | 7) {
+        let launcher = PROP_STATE[pi] == 7;
+        let total = if launcher { hecu_grenades::LAUNCH_ANIMATION_TICKS } else { hecu_grenades::TOSS_ANIMATION_TICKS };
+        let release = if launcher { hecu_grenades::LAUNCH_RELEASE_TICKS } else { hecu_grenades::TOSS_RELEASE_TICKS };
+        let remaining = PROP_AI_TIMER[pi];
+        if remaining == total - release {
+            let pos = PROP_POS[pi];
+            let damage = skill_hit(if launcher { Sk::PlrM203 } else { Sk::PlrHandGrenade });
+            spawn_grunt_grenade([pos[0], pos[1] + 60, pos[2]], PROP_SCRIPT_GOAL[pi], launcher, damage);
+            GRUNT_GREN[pi] = hecu_grenades::reschedule(GRUNT_GREN[pi], SIM_NOW as u16, hecu_grenades::RECOVERY_TICKS);
+        }
+        PROP_AI_TIMER[pi] = remaining.saturating_sub(1);
+        if remaining == 0 { PROP_STATE[pi] = PROP_STATE_IDLE; }
+        return;
+    }
     // Wake a little beyond firing range so movers start closing; turrets only
     // engage once the target is actually inside range.
     let wake = if can_move { range + 384 } else { range };
@@ -17989,6 +18029,20 @@ unsafe fn tick_shooter(
 
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, aim);
+
+    if ty == 8 && matches!(PROP_STATE[pi], PROP_STATE_IDLE | PROP_STATE_ATTACK)
+        && d2 <= range2 && visible && hecu_grenades::due(GRUNT_GREN[pi], SIM_NOW as u16) {
+        GRUNT_GREN[pi] = hecu_grenades::reschedule(GRUNT_GREN[pi], SIM_NOW as u16, hecu_grenades::CHECK_TICKS);
+        if let Some(attack) = hecu_grenades::attack(hecu_grenades::weapons(GRUNT_GREN[pi])) {
+            let launcher = attack == hecu_grenades::Attack::Launcher;
+            if let Some(plan) = grunt_grenade_plan(m, sight_movers, pi, aim, launcher, nprops) {
+                PROP_SCRIPT_GOAL[pi] = plan.velocity_q4;
+                PROP_STATE[pi] = if launcher { 7 } else { 6 };
+                PROP_AI_TIMER[pi] = if launcher { hecu_grenades::LAUNCH_ANIMATION_TICKS } else { hecu_grenades::TOSS_ANIMATION_TICKS };
+                return;
+            }
+        }
+    }
 
     if d2 <= range2 && visible {
         // In range + line of sight: hold and fire on the cooldown. The attack
