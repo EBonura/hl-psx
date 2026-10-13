@@ -19631,12 +19631,6 @@ const SATCHEL_TO_RADIO: u8 = 1;
 const SATCHEL_RADIO: u8 = 2;
 const SATCHEL_TO_PACK: u8 = 3;
 
-/// The MAPLIST index at which each weapon FIRST appears as a pickup in the
-/// campaign (measured by scanning every map's weapon_* entities). A chapter-
-/// select launch grants every weapon whose first-appearance index is <= the
-/// selected room, so you start a chapter with the arsenal you'd have earned by
-/// then -- and a late chapter hands you everything, which doubles as a way to
-/// test all weapons. Order matches the W_* ids (0..N_WEAPONS).
 /// Per-weapon upward view-punch on fire (12-bit view-pitch units) -- a glock taps,
 /// the .357/shotgun/RPG kick hard, the crowbar barely nudges. Order = W_* ids.
 const WEAPON_KICK: [i32; N_WEAPONS] = [
@@ -19656,22 +19650,7 @@ const WEAPON_KICK: [i32; N_WEAPONS] = [
     6,  // SATCHEL
 ];
 
-const WEAPON_FIRST_MAP: [usize; N_WEAPONS] = [
-    12, // CROWBAR   c1a1
-    14, // GLOCK     c1a1b
-    33, // 357       c1a4g
-    23, // MP5       c1a3
-    18, // SHOTGUN   c1a2
-    51, // CROSSBOW  c2a3a
-    65, // RPG       c2a5a
-    62, // GAUSS     c2a4f
-    77, // EGON      c3a2
-    68, // HORNET    c2a5d
-    14, // GRENADE   c1a1b
-    61, // SNARK     c2a4e
-    43, // TRIPMINE  c2a2b2
-    43, // SATCHEL   c2a2b2
-];
+const WEAPON_FIRST_MAP: [usize; N_WEAPONS] = map_catalog::WEAPON_FIRST_MAP;
 
 const HORNET_REGEN_TICKS: u8 = 10; // 1 hornet / 0.5 s (hornetgun.cpp:33)
 const CROWBAR_HIT_COOLDOWN_TICKS: u8 = 5; // CCrowbar::Swing hit: 0.25 s
@@ -19731,12 +19710,12 @@ impl Arsenal {
     }
 
     /// Grant the arsenal you'd have earned by `room_id` (chapter select): every
-    /// weapon whose first-appearance map index is <= the selected room, each with
+    /// weapon whose first appearance is at or before the selected room in play order, each with
     /// a full clip and ~3 magazines of reserve so the loadout is immediately
     /// usable (and testable). A late chapter thus hands you every weapon.
     #[optimize(size)]
     fn give_chapter_loadout(&mut self, room_id: usize) {
-        self.give_loadout(|first_map| first_map <= room_id);
+        self.give_loadout(|first_map| map_catalog::diagnostic_has_weapon(room_id, first_map));
     }
 
     /// The arsenal normal play has collected on arriving in `room_id`: every

@@ -129,6 +129,34 @@ pub const fn diagnostic_has_hev(room: usize, suit_room: usize) -> bool {
     room < CAMPAIGN_MAP_COUNT && play_rank(room) > play_rank(suit_room)
 }
 
+/// First authored pickup in campaign play order, indexed by the runtime W_* ids.
+/// Retail c1a1f contains a Glock before c1a1b's Glock and grenades, despite its
+/// larger chunk ID. Aliases share the same weapon entry.
+pub const WEAPON_FIRST_MAP: [usize; 14] = [
+    12, // crowbar: c1a1
+    17, // Glock: c1a1f
+    33, // .357: c1a4g
+    23, // MP5: c1a3
+    18, // shotgun: c1a2
+    51, // crossbow: c2a3a
+    65, // RPG: c2a5a
+    62, // Gauss: c2a4f
+    77, // Egon: c3a2
+    68, // hornetgun: c2a5d
+    14, // hand grenade: c1a1b
+    61, // snark: c2a4e
+    43, // tripmine: c2a2b2
+    43, // satchel: c2a2b2
+];
+
+/// Standalone diagnostics include pickups in the selected map. Chapter
+/// arrivals keep their separate, strict-before policy; earned saves bypass both.
+pub const fn diagnostic_has_weapon(room: usize, first_room: usize) -> bool {
+    room < CAMPAIGN_MAP_COUNT
+        && first_room < CAMPAIGN_MAP_COUNT
+        && play_rank(first_room) <= play_rank(room)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,6 +181,42 @@ mod tests {
         }
         assert!(!diagnostic_has_hev(MAPS.len(), 10));
         assert!(!diagnostic_has_hev(usize::MAX, 10));
+    }
+
+    fn weapon_mask(room: usize) -> u16 {
+        WEAPON_FIRST_MAP.iter().enumerate().fold(0, |mask, (w, &first)| {
+            mask | ((diagnostic_has_weapon(room, first) as u16) << w)
+        })
+    }
+
+    #[test]
+    fn reordered_unforeseen_maps_keep_glock_and_defer_grenades() {
+        assert_eq!(MAPS[17], "c1a1f");
+        assert_eq!(MAPS[14], "c1a1b");
+        assert!(play_rank(17) < play_rank(14));
+        assert_eq!(weapon_mask(17), (1 << 0) | (1 << 1));
+        assert_eq!(weapon_mask(14), (1 << 0) | (1 << 1) | (1 << 10));
+    }
+
+    #[test]
+    fn reordered_late_maps_do_not_grant_future_weapons() {
+        assert_eq!(MAPS[36], "c1a4k");
+        assert_eq!(weapon_mask(36) & (1 << 2), 0);
+        assert_ne!(weapon_mask(33) & (1 << 2), 0);
+        for room in [72, 73] {
+            assert_eq!(weapon_mask(room) & ((1 << 6) | (1 << 9)), 0);
+            assert_ne!(weapon_mask(room) & (1 << 7), 0);
+        }
+        assert_eq!(weapon_mask(82) & (1 << 8), 0);
+        assert_ne!(weapon_mask(77) & (1 << 8), 0);
+    }
+
+    #[test]
+    fn diagnostic_weapon_policy_rejects_training_and_invalid_ids() {
+        for room in [TRAINING_START_ROOM, MAPS.len(), usize::MAX] {
+            assert_eq!(weapon_mask(room), 0);
+        }
+        assert!(!diagnostic_has_weapon(18, MAPS.len()));
     }
 }
 
