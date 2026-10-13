@@ -17849,6 +17849,36 @@ mod tests {
         assert!(super::collect_grunt_equipment(br#"{ "classname" "monster_human_grunt" "weapons" "16" }"#,1.0,&[],&[]).is_err());
     }
     #[test]
+    #[ignore="requires original retail 103-map assets"]
+    fn hecu_all_original_equipment_records_bind_actual_collected_props() {
+        let root=std::path::PathBuf::from(std::env::var("HL_HECU_RETAIL_DIR").expect("explicit original maps"));
+        let mut total=0; let mut nondefault=0; let mut maps=0;
+        for name in include_str!("../../hl-content/map-list.txt").lines().filter(|s| !s.is_empty()) {
+            let bytes=std::fs::read(root.join(format!("{name}.bsp"))).unwrap();
+            let bsp=Bsp::parse(&bytes).unwrap();
+            let ents=bsp.lump(LUMP_ENTITIES);
+            let mut names=Vec::new(); let mut links=Vec::new();
+            let props=collect_props(ents,bsp.lump(LUMP_NODES),bsp.lump(LUMP_PLANES),
+                bsp.lump(LUMP_MODELS),1.0,&mut names,&mut links);
+            let records=collect_grunt_equipment(ents,1.0,&props,&names).unwrap_or_else(|e|panic!("{name}: {e}"));
+            let mut expected=0;
+            for block in entity_text(ents).split('{') {
+                if ent_value(block,"classname")!=Some("monster_human_grunt") {continue;}
+                total+=1;
+                let equipment=ent_value(block,"weapons").unwrap_or("0").parse::<u8>().unwrap();
+                if equipment!=0 && equipment!=3 {expected+=1;}
+            }
+            assert_eq!(records.len(),expected,"{name}: no equipment omission");
+            for record in records {
+                assert_eq!(props[record.arg0 as usize].0 & 0x0fff,8);
+                assert_eq!(record.kind,LOGIC_GRUNT_EQUIPMENT);
+                nondefault+=1;
+            }
+            maps+=1;
+        }
+        assert_eq!((maps,total,nondefault),(103,163,29));
+    }
+    #[test]
     fn weaponbox_preserves_named_ammunition_and_scaled_original_bounds() {
         let input = br#"{ "classname" "weaponbox" "origin" "1584 -696 -248"
             "uranium" "60" "Trip Mine" "7" "Satchel Charge" "5" }"#;
