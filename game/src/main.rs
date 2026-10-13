@@ -17967,6 +17967,11 @@ unsafe fn grunt_grenade_plan(m: &Map, movers: &[phys::Mover], pi: usize,
     // The ascending trace includes live actors; descent ignores them.
     for other in 0..nprops {
         if other == pi || PROP_ACTIVE[other] == 0 || PROP_HEALTH[other] == 0 { continue; }
+        // The port has no squad membership registry. Keep live HECU allies
+        // outside the authored target clearance even when the arc is clear.
+        if PROP_KIND[other] == 8 && !hecu_grenades::ally_clear(PROP_POS[other], target) {
+            return None;
+        }
         let bounds = actor_collision_bounds(PROP_KIND[other], PROP_POS[other]);
         if segment_box_frac(start, plan.apex, bounds.0, bounds.1).is_some() { return None; }
     }
@@ -19108,7 +19113,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
         PROP_SCRIPT_PLAY_UNTIL[pi] = 0;
         PROP_KIND[pi] = kind;
-        if kind == 8 { GRUNT_GREN[pi] = hecu_grenades::clock(3,hecu_grenades::CHECK_TICKS); }
+        if kind == 8 { GRUNT_GREN[pi] = hecu_grenades::clock(3,(SIM_NOW as u16).wrapping_add(hecu_grenades::CHECK_TICKS)); }
         PROP_POS[pi] = org;
         PROP_YAW[pi] = yaw as u16;
         seed_prop_render_transform(pi);
@@ -19146,7 +19151,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         if rec.kind == map::LOGIC_GRUNT_EQUIPMENT && rec.arg1 <= 15 {
             let pi=rec.arg0 as usize;
             if pi < PROP_COUNT && PROP_KIND[pi] == 8 {
-                GRUNT_GREN[pi]=hecu_grenades::clock(rec.arg1 as u8,hecu_grenades::CHECK_TICKS);
+                GRUNT_GREN[pi]=hecu_grenades::clock(rec.arg1 as u8,(SIM_NOW as u16).wrapping_add(hecu_grenades::CHECK_TICKS));
             }
         }
     }

@@ -35,6 +35,10 @@ pub fn safe_target(origin: [i32;3], target: [i32;3]) -> bool {
     let dz=target[2] as i64-origin[2] as i64;
     dx*dx+dz*dz > 256*256
 }
+pub fn ally_clear(origin: [i32;3], target: [i32;3]) -> bool {
+    let delta=[0,1,2].map(|axis|origin[axis] as i64-target[axis] as i64);
+    delta.iter().map(|n|n*n).sum::<i64>() > 256*256
+}
 #[derive(Clone, Copy, Debug)]
 pub struct Plan { pub velocity_q4: [i16;3], pub apex: [i32;3] }
 fn sqrt(value: i64) -> Option<i32> {
@@ -97,6 +101,9 @@ mod tests {
         assert!(toss([0,48,0],[512,600,0],700).is_none());
         assert!(toss([0,48,0],[512,0,0],48).is_none());
         assert!(!safe_target([0,0,0],[256,0,0]));assert!(safe_target([0,0,0],[257,0,0]));
+        assert!(!ally_clear([600,0,0],[512,0,0])); // partner behind target, clear arc
+        assert!(!ally_clear([512,0,200],[512,0,0])); // partner beside target
+        assert!(ally_clear([512,300,0],[512,0,0]));
         let slow=launch([0,48,0],[512,0,0],400).unwrap();
         let fast=launch([0,48,0],[512,0,0],800).unwrap();
         assert!(slow.apex[1]>fast.apex[1]);assert!(slow.velocity_q4[0]<fast.velocity_q4[0]);
