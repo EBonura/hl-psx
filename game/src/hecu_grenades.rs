@@ -10,6 +10,9 @@ pub const TOSS_RELEASE_TICKS: u8 = 24; // retail frame36 /30fps
 pub const TOSS_ANIMATION_TICKS: u8 = 37; // retail55 intervals /30fps
 pub const LAUNCH_RELEASE_TICKS: u8 = 11; // retail frame16 /30fps
 pub const LAUNCH_ANIMATION_TICKS: u8 = 30;
+pub fn release_due(remaining: u8, duration: u8, release_tick: u8) -> bool {
+    remaining == duration - release_tick + 1
+}
 const CLOCK_MASK: u16 = 0x0fff;
 
 pub fn normalize_weapons(value: u8) -> u8 { if value == 0 { DEFAULT_WEAPONS } else { value & 15 } }
@@ -107,5 +110,13 @@ mod tests {
         let slow=launch([0,48,0],[512,0,0],400).unwrap();
         let fast=launch([0,48,0],[512,0,0],800).unwrap();
         assert!(slow.apex[1]>fast.apex[1]);assert!(slow.velocity_q4[0]<fast.velocity_q4[0]);
+    }
+    #[test] fn authored_animation_events_release_once_on_exact_simulation_tick() {
+        for (duration,release) in [(TOSS_ANIMATION_TICKS,TOSS_RELEASE_TICKS),
+            (LAUNCH_ANIMATION_TICKS,LAUNCH_RELEASE_TICKS)] {
+            let events=(1..=duration).filter(|tick|
+                release_due(duration-tick+1,duration,release)).collect::<std::vec::Vec<_>>();
+            assert_eq!(events,[release]);
+        }
     }
 }

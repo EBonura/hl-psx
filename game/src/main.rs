@@ -18003,7 +18003,7 @@ unsafe fn tick_shooter(
         let total = if launcher { hecu_grenades::LAUNCH_ANIMATION_TICKS } else { hecu_grenades::TOSS_ANIMATION_TICKS };
         let release = if launcher { hecu_grenades::LAUNCH_RELEASE_TICKS } else { hecu_grenades::TOSS_RELEASE_TICKS };
         let remaining = PROP_AI_TIMER[pi];
-        if remaining == total - release {
+        if hecu_grenades::release_due(remaining, total, release) {
             let pos = PROP_POS[pi];
             let damage = skill_hit(if launcher { Sk::PlrM203 } else { Sk::PlrHandGrenade });
             spawn_grunt_grenade([pos[0], pos[1] + 60, pos[2]], PROP_SCRIPT_GOAL[pi], launcher, damage);
