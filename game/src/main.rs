@@ -17978,6 +17978,45 @@ unsafe fn grunt_grenade_plan(m: &Map, movers: &[phys::Mover], pi: usize,
     Some(plan)
 }
 
+unsafe fn advance_grunt_grenade(pi: usize) -> bool {
+    if matches!(PROP_STATE[pi], 6 | 7)
+        && PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0 {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        PROP_AI_TIMER[pi] = 0;
+    }
+    if matches!(PROP_STATE[pi], 6 | 7) {
+        let launcher = PROP_STATE[pi] == 7;
+        let total = if launcher { hecu_grenades::LAUNCH_ANIMATION_TICKS } else { hecu_grenades::TOSS_ANIMATION_TICKS };
+        let release = if launcher { hecu_grenades::LAUNCH_RELEASE_TICKS } else { hecu_grenades::TOSS_RELEASE_TICKS };
+        let remaining = PROP_AI_TIMER[pi];
+        if hecu_grenades::release_due(remaining, total, release) {
+            let pos = PROP_POS[pi];
+            let damage = skill_hit(if launcher { Sk::PlrM203 } else { Sk::PlrHandGrenade });
+            spawn_grunt_grenade([pos[0], pos[1] + 60, pos[2]], PROP_SCRIPT_GOAL[pi], launcher, damage);
+            GRUNT_GREN[pi] = hecu_grenades::reschedule(GRUNT_GREN[pi], SIM_NOW as u16, hecu_grenades::RECOVERY_TICKS);
+        }
+        PROP_AI_TIMER[pi] = remaining.saturating_sub(1);
+        if remaining == 0 { PROP_STATE[pi] = PROP_STATE_IDLE; }
+        return true;
+    }
+    false
+}
+
+unsafe fn try_grunt_grenade(m: &Map, movers: &[phys::Mover], pi: usize,
+    aim: [i32;3], nprops: usize) -> bool {
+    if !matches!(PROP_STATE[pi], PROP_STATE_IDLE | PROP_STATE_ATTACK)
+        || PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0
+        || !hecu_grenades::due(GRUNT_GREN[pi],SIM_NOW as u16) {return false;}
+    GRUNT_GREN[pi]=hecu_grenades::reschedule(GRUNT_GREN[pi],SIM_NOW as u16,hecu_grenades::CHECK_TICKS);
+    let Some(attack)=hecu_grenades::attack(hecu_grenades::weapons(GRUNT_GREN[pi])) else {return false;};
+    let launcher=attack==hecu_grenades::Attack::Launcher;
+    let Some(plan)=grunt_grenade_plan(m,movers,pi,aim,launcher,nprops) else {return false;};
+    PROP_SCRIPT_GOAL[pi]=plan.velocity_q4;
+    PROP_STATE[pi]=if launcher {7}else{6};
+    PROP_AI_TIMER[pi]=if launcher {hecu_grenades::LAUNCH_ANIMATION_TICKS}else{hecu_grenades::TOSS_ANIMATION_TICKS};
+    true
+}
+
 unsafe fn tick_shooter(
     m: &Map,
     movers: &[phys::Mover],
@@ -17993,26 +18032,6 @@ unsafe fn tick_shooter(
     let def = model_def(ty);
     let range = def.atk_range as i32;
     let range2 = range.saturating_mul(range);
-    if ty == 8 && matches!(PROP_STATE[pi], 6 | 7)
-        && PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0 {
-        PROP_STATE[pi] = PROP_STATE_IDLE;
-        PROP_AI_TIMER[pi] = 0;
-    }
-    if ty == 8 && matches!(PROP_STATE[pi], 6 | 7) {
-        let launcher = PROP_STATE[pi] == 7;
-        let total = if launcher { hecu_grenades::LAUNCH_ANIMATION_TICKS } else { hecu_grenades::TOSS_ANIMATION_TICKS };
-        let release = if launcher { hecu_grenades::LAUNCH_RELEASE_TICKS } else { hecu_grenades::TOSS_RELEASE_TICKS };
-        let remaining = PROP_AI_TIMER[pi];
-        if hecu_grenades::release_due(remaining, total, release) {
-            let pos = PROP_POS[pi];
-            let damage = skill_hit(if launcher { Sk::PlrM203 } else { Sk::PlrHandGrenade });
-            spawn_grunt_grenade([pos[0], pos[1] + 60, pos[2]], PROP_SCRIPT_GOAL[pi], launcher, damage);
-            GRUNT_GREN[pi] = hecu_grenades::reschedule(GRUNT_GREN[pi], SIM_NOW as u16, hecu_grenades::RECOVERY_TICKS);
-        }
-        PROP_AI_TIMER[pi] = remaining.saturating_sub(1);
-        if remaining == 0 { PROP_STATE[pi] = PROP_STATE_IDLE; }
-        return;
-    }
     // Wake a little beyond firing range so movers start closing; turrets only
     // engage once the target is actually inside range.
     let wake = if can_move { range + 384 } else { range };
@@ -18050,21 +18069,6 @@ unsafe fn tick_shooter(
 
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, aim);
-
-    if ty == 8 && matches!(PROP_STATE[pi], PROP_STATE_IDLE | PROP_STATE_ATTACK)
-        && PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE == 0
-        && d2 <= range2 && visible && hecu_grenades::due(GRUNT_GREN[pi], SIM_NOW as u16) {
-        GRUNT_GREN[pi] = hecu_grenades::reschedule(GRUNT_GREN[pi], SIM_NOW as u16, hecu_grenades::CHECK_TICKS);
-        if let Some(attack) = hecu_grenades::attack(hecu_grenades::weapons(GRUNT_GREN[pi])) {
-            let launcher = attack == hecu_grenades::Attack::Launcher;
-            if let Some(plan) = grunt_grenade_plan(m, sight_movers, pi, aim, launcher, nprops) {
-                PROP_SCRIPT_GOAL[pi] = plan.velocity_q4;
-                PROP_STATE[pi] = if launcher { 7 } else { 6 };
-                PROP_AI_TIMER[pi] = if launcher { hecu_grenades::LAUNCH_ANIMATION_TICKS } else { hecu_grenades::TOSS_ANIMATION_TICKS };
-                return;
-            }
-        }
-    }
 
     if d2 <= range2 && visible {
         // In range + line of sight: hold and fire on the cooldown. The attack
