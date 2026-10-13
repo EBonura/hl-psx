@@ -17993,7 +17993,10 @@ unsafe fn advance_grunt_grenade(pi: usize) -> bool {
             let pos = PROP_POS[pi];
             let damage = skill_hit(if launcher { Sk::PlrM203 } else { Sk::PlrHandGrenade });
             spawn_grunt_grenade([pos[0], pos[1] + 60, pos[2]], PROP_SCRIPT_GOAL[pi], launcher, damage);
-            GRUNT_GREN[pi] = hecu_grenades::reschedule(GRUNT_GREN[pi], SIM_NOW as u16, hecu_grenades::RECOVERY_TICKS);
+            let hard = settings::skill() == 2;
+            let roll = if launcher && hard {impact_rng().below(61) as u16}else{0};
+            let recovery = hecu_grenades::recovery_ticks(launcher,hard,roll);
+            GRUNT_GREN[pi] = hecu_grenades::reschedule(GRUNT_GREN[pi], SIM_NOW as u16, recovery);
         }
         PROP_AI_TIMER[pi] = remaining.saturating_sub(1);
         if remaining == 0 { PROP_STATE[pi] = PROP_STATE_IDLE; }

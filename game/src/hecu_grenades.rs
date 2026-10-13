@@ -5,6 +5,9 @@ pub const LAUNCHER: u8 = 4;
 pub const DEFAULT_WEAPONS: u8 = 3;
 pub const CHECK_TICKS: u16 = 20;
 pub const RECOVERY_TICKS: u16 = 120;
+pub fn recovery_ticks(launcher: bool, hard: bool, roll: u16) -> u16 {
+    if launcher && hard {40+roll.min(60)} else {RECOVERY_TICKS}
+}
 pub const HAND_FUSE_TICKS: u8 = 70;
 pub const TOSS_RELEASE_TICKS: u8 = 24; // retail frame36 /30fps
 pub const TOSS_ANIMATION_TICKS: u8 = 37; // retail55 intervals /30fps
@@ -107,6 +110,10 @@ mod tests {
         let c=clock(10,4094);assert!(!due(c,4093));assert!(due(c,4094));
         let c=reschedule(c,4094,120);assert_eq!(weapons(c),10);
         assert!(!due(c,4095));assert!(!due(c,117));assert!(due(c,118));
+        assert_eq!(recovery_ticks(true,true,0),40);
+        assert_eq!(recovery_ticks(true,true,60),100);
+        assert_eq!(recovery_ticks(false,true,0),120);
+        assert_eq!(recovery_ticks(true,false,0),120);
     }
     #[test] fn ballistic_plans_and_original_self_clearance() {
         let p=toss([0,48,0],[512,0,0],256).unwrap();
