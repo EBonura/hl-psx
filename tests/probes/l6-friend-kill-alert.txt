@@ -1,0 +1,15 @@
+# Kill a scientist in the closed upstairs room: the two friends with a clear line (7, 8) are alerted, Barney (9, other room) is not.
+# Then hurt a Barney the player faces: one hit is enough to provoke him, and he shoots back.
+map c1a1
+0 trace 20
+0 god 0
+2 hp 100
+3 kill attacking_zombie
+5 tp 730 2120 574 0 0 5
+8 follow 0
+20 killat 714 2152 572
+40 tp 1160 1900 800 90 0 120
+44 hurt fighting_barney 3
+60 pos
+100 pos
+140 pos

@@ -1,0 +1,19 @@
+# Barney not faced: first player hit = suspicious (still follows), second = provoked, he shoots back
+map c1a1
+0 trace 20
+0 god 0
+2 hp 100
+2 watch 1 10
+3 kill attacking_zombie
+5 tp 1160 1900 800 0 0 400
+8 follow 1
+20 pos
+30 hurt fighting_barney 3
+50 pos
+60 hurt fighting_barney 3
+80 pos
+100 pos
+140 pos
+180 pos
+220 pos
+260 pos

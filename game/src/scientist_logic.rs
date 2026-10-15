@@ -340,6 +340,21 @@ pub const fn script_move_speed(mode: u8, move_tick: u16, barney: bool) -> u16 {
     }
 }
 
+/// Distance (units) at which a follower changes gait. TASK_MOVE_TO_TARGET_RANGE
+/// walks below 190 and runs from 270, holding the current gait between; the
+/// port keeps no gait bit, so it splits the band at its middle.
+pub const FOLLOW_GAIT_SPLIT: i32 = 230;
+
+/// Units per walker step for a follower `d2` (squared horizontal distance)
+/// from its target: the source actor's run (275 / 362 u/s) when far, its walk
+/// (59 / 61 u/s) when near (talkmonster.cpp follow, schedule.cpp
+/// TASK_MOVE_TO_TARGET_RANGE; inventory rows S7, B15).
+#[inline(never)]
+pub const fn follow_move_speed(d2: i32, move_tick: u16, barney: bool) -> i32 {
+    let mode = if d2 >= FOLLOW_GAIT_SPLIT * FOLLOW_GAIT_SPLIT { 2 } else { 1 };
+    script_move_speed(mode, move_tick, barney) as i32
+}
+
 /// Advance one horizontal component using a centered signed-Q4 remainder.
 /// The returned remainder is always in -8..=7, so a four-bit field is enough
 /// to retain GoldSrc's sub-unit motion without another per-actor array.
@@ -759,6 +774,44 @@ pub const fn heal_wanted(player_health: u16) -> bool {
     player_health > 0 && player_health <= HEAL_HEALTH_MAX
 }
 
+// ---------------------------------------------------------------------------
+// Barney shot by the player (CBarney::TakeDamage, CTalkMonster::IsFacing).
+//
+// With no enemy of his own, a Barney the player hurts decides whether the
+// player meant it: facing him within about 15 degrees, or a second hit after
+// an earlier "hey, careful", makes him angry for good (provoked: he stops
+// following and treats the player as an enemy). Otherwise he only grows
+// suspicious. A Barney already fighting something shrugs it off as crossfire.
+// ---------------------------------------------------------------------------
+
+/// Barney's response to one player hit.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HurtReaction {
+    Ignore,
+    Suspicious,
+    Provoked,
+}
+
+#[inline(always)]
+pub const fn barney_hurt_reaction(has_enemy: bool, suspicious: bool, facing: bool) -> HurtReaction {
+    if has_enemy {
+        HurtReaction::Ignore
+    } else if suspicious || facing {
+        HurtReaction::Provoked
+    } else {
+        HurtReaction::Suspicious
+    }
+}
+
+/// IsFacing: the player's view yaw (Q12) points at the monster, whose bearing
+/// from the player is `to_him`, within a dot product of 0.96 (16.26 degrees,
+/// 185 units of 4096).
+#[inline(always)]
+pub const fn player_faces(view_yaw: u16, to_him: u16) -> bool {
+    let d = (to_him.wrapping_sub(view_yaw) & 0x0fff) as i32;
+    d <= 185 || d >= 4096 - 185
+}
+
 /// The heal event (give_shot frame 17) fires while `left` ticks remain, and
 /// does something only if the player still wants it and is within reach.
 #[inline(always)]
@@ -1173,6 +1226,40 @@ mod tests {
     }
 
     #[optimize(size)]
+    #[test]
+    fn barney_decides_by_enemy_suspicion_and_facing() {
+        use HurtReaction::*;
+        assert_eq!(barney_hurt_reaction(true, true, true), Ignore, "crossfire");
+        assert_eq!(barney_hurt_reaction(false, false, false), Suspicious);
+        assert_eq!(barney_hurt_reaction(false, false, true), Provoked);
+        assert_eq!(barney_hurt_reaction(false, true, false), Provoked);
+    }
+
+    #[test]
+    fn facing_is_the_096_dot_cone() {
+        let deg = |d: i32| ((d * 4096 + 180) / 360) as u16 & 0x0fff;
+        assert!(player_faces(deg(90), deg(90)));
+        assert!(player_faces(deg(90), deg(90 + 16)));
+        assert!(player_faces(deg(90), deg(90 - 16)));
+        assert!(!player_faces(deg(90), deg(90 + 17)));
+        assert!(!player_faces(deg(90), deg(90 - 17)));
+        assert!(!player_faces(deg(90), deg(270)));
+        // The wrap at yaw zero.
+        assert!(player_faces(deg(5), deg(355)));
+    }
+
+    #[test]
+    fn followers_run_at_the_source_rate_when_far_and_walk_when_near() {
+        let far = 400 * 400;
+        let near = 150 * 150;
+        assert_eq!(follow_move_speed(far, 0, false), 14, "scientist run 275 u/s");
+        assert_eq!(follow_move_speed(far, 0, true), 18, "Barney run 362 u/s");
+        assert_eq!(follow_move_speed(near, 0, false), 3);
+        assert_eq!(follow_move_speed(near, 0, true), 3);
+        assert_eq!(follow_move_speed(229 * 229, 0, false), 3);
+        assert_eq!(follow_move_speed(230 * 230, 0, false), 14);
+    }
+
     #[test]
     fn scripted_face_uses_goldsrc_first_step_and_short_arc() {
         let deg = |d: u16| ((d as u32 * 4096 + 180) / 360) as u16 & 0x0fff;

@@ -35,6 +35,7 @@ mod env_funnel;
 mod env_funnel_fx;
 mod gman_damage;
 mod sentry_wake;
+mod turret_aim;
 mod pushable_transition;
 mod env_sound;
 mod env_sound_audio;
@@ -1183,15 +1184,13 @@ const BARNEY_DRAW_TICKS: u8 = 18;
 /// beyond them (host/hl-content/model-roster.txt): Barney's draw, the
 /// houndeye's rest, the vortigaunt's claw and the bullsquid's whip.
 const PROP_CLIP_ALT: usize = 5;
-const BARNEY_DAMAGE: u8 = 8;
-const BARNEY_SPEED: i32 = 7;
+const BARNEY_DAMAGE: u8 = 5; // sk_9mm_bullet 5/5/8 (skill.cfg), scaled by skill
 const BARNEY_FOLLOW_RANGE2: i32 = 640 * 640;
 const BARNEY_STOP_RANGE2: i32 = 128 * 128;
 const SCIENTIST_FEAR_RANGE2: i32 = 896 * 896;
 const SCIENTIST_FEAR_TICKS: u8 = 80;
 const SCIENTIST_FLEE_SPEED: i32 = 7;
 const SCIENTIST_FACE_RANGE2: i32 = 192 * 192;
-const SCIENTIST_FOLLOW_SPEED: i32 = 7;
 const SCIENTIST_FOLLOW_STOP_RANGE2: i32 = 128 * 128;
 const SCIENTIST_USE_REACH: i32 = 64; // PlayerUse radius in the GoldSrc SDK
 const PROP_HIT_FLASH_TICKS: u8 = 4;
@@ -3916,6 +3915,9 @@ const PROP_RUNTIME_DORMANT_STOCK: u8 = 1;
 // reuses PROP_DEATH_START while that actor is alive; death overwrites it with
 // the animation start tick, so the source conversation state costs no RAM.
 const PROP_RUNTIME_TALK_RESPONSE: u8 = 2;
+// Barney (never a respondent) keeps CBarney's bits_MEMORY_SUSPICIOUS here: the
+// player hurt him once without facing him.
+const PROP_RUNTIME_BARNEY_SUSPICIOUS: u8 = 2;
 // Cooked weapon/ammo slot owned by a monster death drop. The slot is already in
 // PROP_* and the map model roster, so releasing loot needs no heap or new BSS.
 const PROP_RUNTIME_LOOT_SLOT: u8 = 4;
@@ -16902,6 +16904,70 @@ unsafe fn sentry_schedule_wake(pi: usize) {
     }
 }
 
+/// The friend the player just killed (CTalkMonster::Killed), handled once per
+/// tick by tick_props; 255 when none.
+static mut ALERT_FRIENDS: u8 = 255;
+
+/// The player hurt a talk monster. CScientist::TakeDamage provokes at once.
+/// CBarney::TakeDamage only does when he meant it (see barney_hurt_reaction).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn talk_hurt_by_player(pi: usize) {
+    if PROP_KIND[pi] == PROP_TYPE_BARNEY {
+        let to_him = yaw_from_vec(
+            PROP_POS[pi][0] - LOGIC_PLAYER_POS[0],
+            PROP_POS[pi][2] - LOGIC_PLAYER_POS[2],
+        );
+        match scientist_logic::barney_hurt_reaction(
+            PROP_AI_TARGET[pi] != PROP_TARGET_NONE,
+            PROP_DORMANT[pi] & PROP_RUNTIME_BARNEY_SUSPICIOUS != 0,
+            scientist_logic::player_faces(LOGIC_PLAYER_YAW, to_him),
+        ) {
+            scientist_logic::HurtReaction::Ignore => return,
+            scientist_logic::HurtReaction::Suspicious => {
+                #[cfg(feature = "interaction-probe")]
+                reference_trace::probe(SIM_NOW as u32, "suspicious", "", pi as i32);
+                PROP_DORMANT[pi] |= PROP_RUNTIME_BARNEY_SUSPICIOUS;
+                return;
+            }
+            scientist_logic::HurtReaction::Provoked => {
+                #[cfg(feature = "interaction-probe")]
+                reference_trace::probe(SIM_NOW as u32, "provoked", "", pi as i32);
+            }
+        }
+    }
+    // Talk allies remember player provocation permanently and immediately
+    // stop following.
+    prop_scientist_set_flag(pi, PROP_SCI_PROVOKED, true);
+    prop_scientist_set_flag(pi, PROP_SCI_FOLLOWING, false);
+}
+
+/// CTalkMonster::Killed after the player kills friend `vi`: AlertFriends
+/// provokes every other talk monster with a clear line to the corpse, and
+/// LimitFollowers(player, 0) drops every follower.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn alert_friends(m: &Map, movers: &[phys::Mover], nprops: usize, vi: usize) {
+    let from = [PROP_POS[vi][0], PROP_POS[vi][1] + 36, PROP_POS[vi][2]];
+    let mut fi = 0usize;
+    while fi < nprops {
+        if fi != vi
+            && PROP_ACTIVE[fi] != 0
+            && PROP_HEALTH[fi] != 0
+            && prop_is_human(PROP_KIND[fi])
+        {
+            prop_scientist_set_flag(fi, PROP_SCI_FOLLOWING, false);
+            let p = PROP_POS[fi];
+            if PROP_SCRIPT_MODE[fi] == 0 && actor_line_clear(m, movers, from, [p[0], p[1] + 40, p[2]]) {
+                prop_scientist_set_flag(fi, PROP_SCI_PROVOKED, true);
+                #[cfg(feature = "interaction-probe")]
+                reference_trace::probe(SIM_NOW as u32, "alerted", "", fi as i32);
+            }
+        }
+        fi += 1;
+    }
+}
+
 #[optimize(size)]
 unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
@@ -16950,6 +17016,12 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
             full if full > u8::MAX as u32 => (dmg as u32 * 255 / full).max(1) as u8,
             _ => dmg,
         }
+    } else if (PROP_KIND[pi] == 21 || PROP_KIND[pi] == 22)
+        && PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_INACTIVE != 0
+    {
+        // CBaseTurret::TakeDamage: a closed turret takes a tenth (a sentry
+        // overrides it, deploys and takes full damage).
+        (dmg + 5) / 10
     } else if PROP_KIND[pi] == PROP_TYPE_OSPREY {
         // COsprey::TraceAttack: light hits only spark off the hull; its
         // 400 health scales onto the u8 actor health.
@@ -16971,10 +17043,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         monster_damage_ai_triggers(pi);
     }
     if player_inflicted && prop_is_human(PROP_KIND[pi]) {
-        // Talk allies remember player provocation permanently and immediately
-        // stop following.
-        prop_scientist_set_flag(pi, PROP_SCI_PROVOKED, true);
-        prop_scientist_set_flag(pi, PROP_SCI_FOLLOWING, false);
+        talk_hurt_by_player(pi);
     }
     // Damage cancels an interruptible cine without firing completion outputs.
     // NOINTERRUPT suppresses that break condition, but death always releases it.
@@ -16988,6 +17057,9 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         PROP_DEATH_START[pi] = SIM_NOW; // play the death clip forward from now
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_AI_TIMER[pi] = 0;
+        if player_inflicted && prop_is_human(PROP_KIND[pi]) {
+            ALERT_FRIENDS = pi as u8; // CTalkMonster::Killed, run by tick_props
+        }
         // GoldSrc leaves no blood pool at a corpse: its decals come only from
         // TraceBleed on each hit (fire_hitscan). Actors that do not bleed
         // throw no gore either.
@@ -17880,6 +17952,17 @@ unsafe fn find_barney_target(m: &Map, movers: &[phys::Mover], pi: usize, nprops:
         }
         scan += 1;
     }
+    // CTalkMonster::IRelationship: a provoked talk monster hates the player.
+    if prop_scientist_flag(pi, PROP_SCI_PROVOKED) && dist2_xz(pos, LOGIC_PLAYER_POS) < best_d2 {
+        let to = [
+            LOGIC_PLAYER_POS[0],
+            LOGIC_PLAYER_POS[1] + VIEW_HEIGHT,
+            LOGIC_PLAYER_POS[2],
+        ];
+        if actor_line_clear(m, movers, from, to) {
+            best = PROP_TARGET_PLAYER;
+        }
+    }
     best
 }
 
@@ -17975,6 +18058,15 @@ unsafe fn find_actor_target(
     (best_visible, best_visible != PROP_TARGET_NONE)
 }
 
+/// The spinning turret's barrel winds down one tick per tick without a target.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn turret_spin_down(pi: usize) {
+    if PROP_KIND[pi] == turret_aim::SPINNING_KIND && PROP_AI_TIMER[pi] > 0 {
+        PROP_AI_TIMER[pi] -= 1;
+    }
+}
+
 #[optimize(size)]
 /// Ranged + turret AI. Acquire a target, face it, and fire a hitscan shot every
 /// `atk_cooldown` ticks while it is within `atk_range` and in line of sight.
@@ -18003,7 +18095,9 @@ unsafe fn tick_shooter(
     let (target, visible) = if reacquire {
         let selected = retained_actor_target(m, sight_movers, pi, player_pos, nprops)
             .unwrap_or_else(|| {
-                if prop_waits_for_trigger(pi) {
+                // Turrets run their own think chain, not StartMonster's five
+                // second SCHED_WAIT_TRIGGER, so only walkers wait.
+                if can_move && prop_waits_for_trigger(pi) {
                     (PROP_TARGET_NONE, false)
                 } else {
                     find_actor_target(m, sight_movers, pi, player_pos, nprops, wake2)
@@ -18018,35 +18112,70 @@ unsafe fn tick_shooter(
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         prop_ai_set_target_visible(pi, false);
+        turret_spin_down(pi);
         return;
     }
     let Some(aim) = target_aim_point(target, player_pos, nprops) else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         prop_ai_set_target_visible(pi, false);
+        turret_spin_down(pi);
         return;
     };
     PROP_AI_TARGET[pi] = target;
-    prop_face_point(pi, aim);
-
     let pos = PROP_POS[pi];
+    // A turret's gun swings at a finite rate and shoots along its barrel
+    // (turret.cpp ActiveThink); `aim_err` is the yaw error before this tick's
+    // swing, which is what the shot uses. Walkers snap their facing.
+    let mut aim_err = 0u16;
+    if can_move {
+        prop_face_point(pi, aim);
+    } else {
+        let want = yaw_from_vec(aim[0] - pos[0], aim[2] - pos[2]);
+        let cur = prop_yaw_value(PROP_YAW[pi]);
+        aim_err = turret_aim::yaw_error(cur, want);
+        PROP_YAW[pi] = prop_with_yaw(
+            PROP_YAW[pi],
+            turn_toward(cur, want, turret_aim::turn_step(aim_err)),
+        );
+    }
     let d2 = dist2_xz(pos, aim);
+    #[cfg(feature = "interaction-probe")]
+    if !can_move && SIM_NOW % 10 == 0 {
+        reference_trace::probe_vals(
+            SIM_NOW as u32,
+            "turret",
+            &[pi as i32, visible as i32, aim_err as i32, isqrt_i32(d2), prop_attack_cooldown(pi) as i32],
+        );
+    }
 
     if d2 <= range2 && visible {
         // In range + line of sight: hold and fire on the cooldown. The attack
         // clip plays while STATE_ATTACK; the hit is instant (hitscan).
         let was_attacking = PROP_STATE[pi] == PROP_STATE_ATTACK;
         PROP_STATE[pi] = PROP_STATE_ATTACK;
-        if !was_attacking {
-            // Just acquired the target: wind up first so the attack animation
-            // reads as a telegraph (and gives the player a dodge window) instead
-            // of an instant hitscan the tick the enemy sees you.
-            prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(ATTACK_WINDUP));
+        if can_move {
+            if !was_attacking {
+                // Just acquired the target: wind up first so the attack animation
+                // reads as a telegraph (and gives the player a dodge window) instead
+                // of an instant hitscan the tick the enemy sees you.
+                prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(ATTACK_WINDUP));
+            }
+        } else if ty == turret_aim::SPINNING_KIND {
+            // monster_turret spins its barrel up for 2.2 s before the first
+            // shot and keeps it spinning for 5 s after the target is gone.
+            if PROP_AI_TIMER[pi] == 0 {
+                prop_attack_cooldown_set(pi, turret_aim::SPIN_UP_TICKS);
+            }
+            PROP_AI_TIMER[pi] = turret_aim::SPIN_HOLD_TICKS;
         }
-        if prop_attack_cooldown(pi) == 0 {
+        if prop_attack_cooldown(pi) == 0 && (can_move || turret_aim::can_fire(aim_err)) {
             {
                 let damage = skill_damage(ty).unwrap_or(def.atk_damage);
-                damage_target(target, damage, pos, health, armor);
+                // Zero-spread bullet along the barrel: a miss still fires.
+                if can_move || turret_aim::bullet_hits(aim_err, isqrt_i32(d2)) {
+                    damage_target(target, damage, pos, health, armor);
+                }
                 // Human weapons crack like an MP5 (the assassin's silenced pistol
                 // like a glock); the alien grunt and controller have their own
                 // report, the rest zap.
@@ -18065,6 +18194,7 @@ unsafe fn tick_shooter(
         prop_move_towards_point(m, movers, pi, aim, def.speed as i32);
     } else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
+        turret_spin_down(pi);
     }
 }
 
@@ -18739,7 +18869,7 @@ unsafe fn tick_barney(
                 // reaches the room.
                 let damage =
                     if (target as usize) < nprops && prop_is_zombie(PROP_KIND[target as usize]) {
-                        ((skill_scaled_damage(PROP_TYPE_BARNEY, BARNEY_DAMAGE) as u16 * 3) / 10)
+                        ((skill_scaled_damage(PROP_TYPE_BARNEY, BARNEY_DAMAGE) as u16 * 3 + 5) / 10)
                             .max(1) as u8
                     } else {
                         skill_scaled_damage(PROP_TYPE_BARNEY, BARNEY_DAMAGE)
@@ -18766,6 +18896,17 @@ unsafe fn tick_barney(
 
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, player_pos);
+    if prop_scientist_flag(pi, PROP_SCI_PROVOKED) {
+        // The player is his enemy: close in until he is in sight and range.
+        if d2 > BARNEY_STOP_RANGE2 && d2 < BARNEY_ATTACK_RANGE2 * 4 {
+            PROP_STATE[pi] = PROP_STATE_MOVE;
+            let speed = scientist_logic::follow_move_speed(d2, MOVE_TICK, true);
+            prop_move_towards_point(m, movers, pi, player_pos, speed);
+        } else {
+            PROP_STATE[pi] = PROP_STATE_IDLE;
+        }
+        return;
+    }
     if prop_scientist_flag(pi, PROP_SCI_FOLLOWING) {
         let player_eye = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
         let sees_player = if reacquire {
@@ -18787,7 +18928,8 @@ unsafe fn tick_barney(
         }
         if d2 > BARNEY_STOP_RANGE2 {
             PROP_STATE[pi] = PROP_STATE_MOVE;
-            prop_move_towards_point(m, movers, pi, player_pos, BARNEY_SPEED);
+            let speed = scientist_logic::follow_move_speed(d2, MOVE_TICK, true);
+            prop_move_towards_point(m, movers, pi, player_pos, speed);
             return;
         }
         PROP_STATE[pi] = PROP_STATE_IDLE;
@@ -18973,14 +19115,20 @@ unsafe fn tick_scientist(
             }
             if reach2 <= offer * offer {
                 PROP_STATE[pi] = PROP_STATE_MOVE;
-                prop_move_towards_point(m, movers, pi, player_pos, SCIENTIST_FOLLOW_SPEED);
+                let speed = scientist_logic::follow_move_speed(
+                    dist2_xz(pos, player_pos),
+                    MOVE_TICK,
+                    false,
+                );
+                prop_move_towards_point(m, movers, pi, player_pos, speed);
                 return;
             }
         }
         let d2 = dist2_xz(pos, player_pos);
         if d2 > SCIENTIST_FOLLOW_STOP_RANGE2 {
             PROP_STATE[pi] = PROP_STATE_MOVE;
-            prop_move_towards_point(m, movers, pi, player_pos, SCIENTIST_FOLLOW_SPEED);
+            let speed = scientist_logic::follow_move_speed(d2, MOVE_TICK, false);
+            prop_move_towards_point(m, movers, pi, player_pos, speed);
         } else {
             PROP_STATE[pi] = PROP_STATE_IDLE;
             prop_face_point(
@@ -19300,6 +19448,11 @@ unsafe fn tick_props(
 ) {
     AI_TICK = AI_TICK.wrapping_add(1); // drives staggered AI target re-acquisition
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    if ALERT_FRIENDS != 255 {
+        let victim = ALERT_FRIENDS as usize;
+        ALERT_FRIENDS = 255;
+        alert_friends(m, movers, nprops, victim);
+    }
     // The player's PVS comes from simulation state alone: the same row at the
     // same tick whatever the renderer has or has not drawn yet.
     let player_pvs_current = sim_pvs_refresh(m, player_pos);

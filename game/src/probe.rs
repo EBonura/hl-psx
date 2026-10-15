@@ -36,6 +36,7 @@ static mut ENDED: bool = false;
 static mut GOTO: Option<(usize, bool)> = None;
 static mut FORCE_NEXT: bool = false;
 static mut WATCH_KIND: i32 = -1;
+static mut WATCH_EVERY: u32 = 10;
 
 pub unsafe fn take_goto() -> Option<(usize, bool)> {
     let g = GOTO;
@@ -347,7 +348,10 @@ pub unsafe fn step(
                     crate::damage_prop(best, dmg, true);
                 }
             }
-            23 => WATCH_KIND = c.a[0] as i32,
+            23 => {
+                WATCH_KIND = c.a[0] as i32;
+                WATCH_EVERY = if c.a[1] > 0 { c.a[1] as u32 } else { 10 };
+            }
             16 => FACE = if cname == "-" { 0 } else { name_id(m, cname) },
             13 => crate::reference_trace::probe_vals(
                 now,
@@ -357,7 +361,7 @@ pub unsafe fn step(
             _ => {}
         }
     }
-    if WATCH_KIND >= 0 && now % 10 == 0 {
+    if WATCH_KIND >= 0 && now % WATCH_EVERY == 0 {
         let mut pi = 0usize;
         while pi < crate::PROP_COUNT {
             if crate::PROP_KIND[pi] as i32 == WATCH_KIND && crate::PROP_ACTIVE[pi] != 0 {

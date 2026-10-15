@@ -1,0 +1,43 @@
+# Sentry c1a3_turret00 (-656,336,0) faces west, range 1200, ten shots a second.
+# A (ticks 3-95): the player stands 160 units in front of it and is hit every shot once the barrel is on him.
+# B (ticks 100-122): the player strafes at 320 u/s past it (a tp of 32 units every 2 ticks); the barrel falls behind and most shots miss.
+# C (ticks 124-200): he stands again and is shot again.
+map c1a3
+0 trace 20
+0 god 0
+2 hp 1000
+2 watch 20 10
+3 tp -816 352 32 0 0 90
+6 hurt c1a3_turret00 1
+15 pos
+25 pos
+35 pos
+45 pos
+55 pos
+65 pos
+75 pos
+85 pos
+95 hp 1000
+99 pos
+100 tp -816 560 32 0 0 2
+102 tp -816 528 32 0 0 2
+104 tp -816 496 32 0 0 2
+106 tp -816 464 32 0 0 2
+108 tp -816 432 32 0 0 2
+110 tp -816 400 32 0 0 2
+112 tp -816 368 32 0 0 2
+114 tp -816 336 32 0 0 2
+116 tp -816 304 32 0 0 2
+118 tp -816 272 32 0 0 2
+120 tp -816 240 32 0 0 2
+122 tp -816 208 32 0 0 2
+124 tp -816 176 32 0 0 2
+126 pos
+128 hp 1000
+130 pos
+140 pos
+150 pos
+160 pos
+170 pos
+180 pos
+190 pos
