@@ -158,6 +158,7 @@ pub const fn encode_carry_state(
         }
 }
 
+#[optimize(size)]
 /// Cross-map target identity. Logic name ids are local to one cooked map, so
 /// trigger_changelevel's `changetarget` travels as a stable, case-insensitive
 /// hash and is resolved back to a destination-local id after the new map loads.
@@ -213,6 +214,7 @@ pub const fn unpack_changelevel_payload(payload: [i32; 3]) -> (u32, u16) {
     (hi | lo, delay)
 }
 
+#[optimize(size)]
 /// Store a signed landmark-relative coordinate and signed per-tick velocity in
 /// one existing `RoomLaunch` word. Transition offsets are local to a landmark
 /// and GoldSrc BSP coordinates are signed 16-bit, so neither half needs the
@@ -236,6 +238,7 @@ pub const fn pack_landmark_axis(offset: i32, velocity: i32) -> i32 {
     (((vel as u16 as u32) << 16) | off as u16 as u32) as i32
 }
 
+#[optimize(size)]
 pub const fn unpack_landmark_axis(packed: i32) -> (i32, i32) {
     (
         packed as u16 as i16 as i32,
@@ -336,6 +339,7 @@ pub const fn multisource_complete(
     bits & mask == mask && (!global_required || global_on)
 }
 
+#[optimize(size)]
 /// Reconstruct an acquired inventory item's registered input without toggling
 /// an already restored input or inventing a completion output event.
 pub const fn multisource_restore_inventory(
@@ -355,6 +359,7 @@ pub const fn multisource_restore_inventory(
 mod inventory_restore_tests {
     use super::*;
 
+    #[optimize(size)]
     #[test]
     fn suitless_and_unregistered_inputs_do_not_unlock() {
         assert_eq!(multisource_restore_inventory(0, 1, 0, false), 0);
@@ -363,6 +368,7 @@ mod inventory_restore_tests {
         assert_eq!(multisource_restore_inventory(0, 33, 32, true), 0);
     }
 
+    #[optimize(size)]
     #[test]
     fn acquired_input_is_idempotent_and_preserves_other_requirements() {
         let restored = multisource_restore_inventory(0, 2, 0, true);
@@ -457,6 +463,7 @@ fn rotating_ramp_callbacks_by(tick: u32) -> u32 {
     }
 }
 
+#[optimize(size)]
 /// Convert host 20 Hz samples at full speed into the samples GoldSrc actually
 /// integrates for a `func_rotating` pusher.
 ///
@@ -493,6 +500,7 @@ fn rotating_goldsrc_full_speed_samples(host_samples: u32, start_tenths: u32) -> 
     host_samples - count(first_a, count_a) - count(first_b, count_b)
 }
 
+#[optimize(size)]
 /// Untargeted rotating brushes have no runtime state slot. Only START_ON fans
 /// animate on this cosmetic path; an ordinary unnamed rotator must remain at
 /// its authored rest angle until something can target it (which requires a
@@ -597,6 +605,7 @@ pub struct RotatingState {
     pub next_tick: u16,
 }
 
+#[optimize(size)]
 /// CFuncRotating::HurtTouch replaces dmg with |avelocity| / 10 for each
 /// contact callback. The player converts that float to integer damage per
 /// callback, so fractional damage must not accumulate across contacts.
@@ -605,11 +614,13 @@ pub fn rotating_touch_damage(degrees_per_second: u16, speed_percent: i16) -> u16
     (degrees_per_second as u32 * speed_percent.clamp(0, 100) as u32 / 1000) as u16
 }
 
+#[optimize(size)]
 pub fn record_mover_contact(words: &mut [u32], id: i32) {
     if id >= 0 && (id as usize / 32) < words.len() {
         words[id as usize / 32] |= 1 << (id as usize % 32);
     }
 }
+#[optimize(size)]
 pub fn has_mover_contact(words: &[u32], id: usize) -> bool {
     id / 32 < words.len() && words[id / 32] & (1 << (id % 32)) != 0
 }
@@ -617,6 +628,7 @@ pub fn has_mover_contact(words: &[u32], id: usize) -> bool {
 #[cfg(test)]
 mod rotating_contact_tests {
     use super::rotating_touch_damage;
+    #[optimize(size)]
     #[test]
     fn touch_uses_current_angular_speed_and_player_truncation() {
         assert_eq!(rotating_touch_damage(400, 100), 40);
@@ -626,6 +638,7 @@ mod rotating_contact_tests {
         assert_eq!(rotating_touch_damage(400, 0), 0);
         assert_eq!(rotating_touch_damage(400, -1), 0);
     }
+    #[optimize(size)]
     #[test]
     fn contact_set_deduplicates_and_rejects_world_or_out_of_range() {
         let mut contacts = [0; 2];
@@ -655,6 +668,7 @@ fn approach_i16(value: i16, target: i16, step: i16) -> i16 {
     }
 }
 
+#[optimize(size)]
 /// CFuncRotating::RotatingUse deliberately ignores USE_ON/OFF: a non-zero
 /// angular velocity means "spin down", while a stopped brush means "start".
 #[inline]
@@ -677,6 +691,7 @@ pub fn rotating_use(
     current
 }
 
+#[optimize(size)]
 /// Advance one fixed 20 Hz sample, including GoldSrc's two-tick friction
 /// cadence. Phase is retained when the fan reaches rest rather than reverting
 /// to a map-tick-derived angle.
@@ -823,6 +838,7 @@ fn pendulum_accelerate(
     next.clamp(-limit, limit) as i16
 }
 
+#[optimize(size)]
 /// GoldSrc PendulumUse toggles a moving pendulum to a dead stop, retaining its
 /// angle. A stopped one schedules Swing for the next 0.1 local second.
 #[inline]
@@ -841,6 +857,7 @@ pub fn pendulum_use(mut current: PendulumState, now: u16) -> PendulumState {
     current
 }
 
+#[optimize(size)]
 /// Advance one host sample of CPendulum/SV_Physics_Pusher. Parameters are
 /// cooked once into the brush record, so this hot path uses only integer adds,
 /// compares and one clamp per 0.1-second think.
@@ -901,6 +918,7 @@ pub fn pendulum_tick(
     current
 }
 
+#[optimize(size)]
 /// A played scripted_sentence fires its output once, then cannot be reused
 /// until duration + refire have elapsed. SF_SENTENCE_ONCE never rearms.
 pub const fn sentence_rearm(now: u16, cooldown: u16, once: bool) -> Option<u16> {
@@ -914,6 +932,7 @@ pub const fn sentence_rearm(now: u16, cooldown: u16, once: bool) -> Option<u16> 
 #[cfg(test)]
 mod tests {
 
+    #[optimize(size)]
     #[test]
     fn one_crowbar_swing_kills_a_barnacle_but_nothing_else_changes() {
         assert_eq!(club_damage_for(12, true, 10), u8::MAX);
@@ -921,6 +940,7 @@ mod tests {
         assert_eq!(club_damage_for(2, true, 10), 10, "a headcrab takes the swing");
     }
 
+    #[optimize(size)]
     #[test]
     fn blasts_need_a_line_and_do_not_cross_the_water_surface() {
         // Open air to a dry victim: hurt. Behind a wall: not.
@@ -937,6 +957,7 @@ mod tests {
     }
     use super::*;
 
+    #[optimize(size)]
     #[test]
     fn scripted_sentence_outputs_wait_before_rearming() {
         assert_eq!(sentence_rearm(222, 120, false), Some(342));
@@ -945,6 +966,7 @@ mod tests {
         assert_eq!(sentence_rearm(222, 0, false), Some(223));
     }
 
+    #[optimize(size)]
     #[test]
     fn angular_move_uses_the_authored_swing_not_a_nominal_angle() {
         // c1a0e motor_button_cover: 160 degrees at 120 degrees/sec.
@@ -956,6 +978,7 @@ mod tests {
         assert!(angular_move_phase_step(120, 1024) > step);
     }
 
+    #[optimize(size)]
     #[test]
     fn hazard_valve_uses_one_normalized_phase_for_turn_and_return() {
         // t0a0a's paired wheels: distance=115, speed=35, returnspeed=5.
@@ -967,6 +990,7 @@ mod tests {
         assert_eq!(momentary_return_phase(4, 5, travel), 0);
     }
 
+    #[optimize(size)]
     #[test]
     fn touch_breaks_when_speed_reaches_a_hundred_times_health() {
         // plate glass (health 1) breaks at 100 u/s, a running player makes 320
@@ -976,6 +1000,7 @@ mod tests {
         assert!(!breakable_breaks_on_touch(16, 4));
     }
 
+    #[optimize(size)]
     #[test]
     fn breakables_take_goldsrc_club_damage() {
         // c1a1's observation panes have 15 HP: a 10-damage bullet leaves five,
@@ -990,6 +1015,7 @@ mod tests {
         assert!(!breakable_accepts_damage(7));
     }
 
+    #[optimize(size)]
     #[test]
     fn radius_damage_uses_goldsrc_linear_falloff() {
         assert_eq!(radius_damage_at_distance(100, 250, 0), 100);
@@ -998,6 +1024,7 @@ mod tests {
         assert_eq!(radius_damage_at_distance(100, 250, 250), 0);
     }
 
+    #[optimize(size)]
     #[test]
     fn carry_count_tram_motion_and_player_crouch_share_one_byte_without_aliasing() {
         for count in 0..=CARRY_COUNT_MASK {
@@ -1016,6 +1043,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     #[test]
     fn legacy_unflagged_carry_counts_remain_exact_and_stopped() {
         for old_count in 0..=15 {
@@ -1028,6 +1056,7 @@ mod tests {
         assert_eq!(carry_record_count(0x7f), CARRY_COUNT_MASK as usize);
     }
 
+    #[optimize(size)]
     #[test]
     fn event_metadata_round_trips_every_runtime_edge() {
         for caller in [CALLER_NONE, 0, 1, 383] {
@@ -1041,6 +1070,7 @@ mod tests {
         assert!(!event_active(event_meta(false, 3, 17)));
     }
 
+    #[optimize(size)]
     #[test]
     fn non_threaded_multi_manager_ignores_self_use_until_completion() {
         assert!(multi_manager_accepts_use(false, false));
@@ -1048,6 +1078,7 @@ mod tests {
         assert!(multi_manager_accepts_use(true, true));
     }
 
+    #[optimize(size)]
     #[test]
     fn exact_members_toggle_and_only_completion_edges_fire() {
         let first = multisource_toggle(0, 2, 0, false, false);
@@ -1070,6 +1101,7 @@ mod tests {
         assert!(on_again.became_complete);
     }
 
+    #[optimize(size)]
     #[test]
     fn unknown_callers_are_ignored_and_global_is_an_and_gate() {
         let unknown = multisource_toggle(0, 2, 2, false, false);
@@ -1083,6 +1115,7 @@ mod tests {
         assert!(multisource_complete(3, 2, true, true));
     }
 
+    #[optimize(size)]
     #[test]
     fn zero_member_source_is_vacuously_complete() {
         assert!(multisource_complete(0, 0, false, false));
@@ -1092,6 +1125,7 @@ mod tests {
         assert!(multisource_complete(0, 0, true, true));
     }
 
+    #[optimize(size)]
     #[test]
     fn changelevel_payload_round_trips_target_delay_and_signed_train_seat() {
         let seat = [-120, 70, -1];
@@ -1101,6 +1135,7 @@ mod tests {
         assert_eq!(unpack_changelevel_payload(packed), (hash, 240));
     }
 
+    #[optimize(size)]
     #[test]
     fn landmark_axis_round_trips_signed_offset_and_velocity() {
         for (offset, velocity) in [(0, 0), (-143, -16), (32767, -32768), (-32768, 32767)] {
@@ -1115,6 +1150,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn cross_map_name_hash_is_case_insensitive_and_reserves_zero() {
         assert_eq!(
@@ -1125,6 +1161,7 @@ mod tests {
         assert_eq!(logic_name_hash32("   "), 0);
     }
 
+    #[optimize(size)]
     #[test]
     fn global_train_speed_and_wait_share_one_mailbox_word() {
         for (speed, wait) in [(32, 0), (150, 1), (600, 60), (1023, 63)] {
@@ -1139,6 +1176,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn c1a2_fan_auto_starts_then_spins_down_without_losing_phase() {
         // speed=400, reverse, at 20 Hz in Q16-turn units; fanfriction=2%.
@@ -1197,6 +1235,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn ordinary_rotator_starts_immediately_and_stops_on_next_think() {
         let mut fan = RotatingState {
@@ -1215,6 +1254,7 @@ mod tests {
         assert_eq!((fan.state, fan.speed_percent), (ROTATING_STOPPED, 0));
     }
 
+    #[optimize(size)]
     #[test]
     fn untargeted_cosmetic_rotator_obeys_start_on() {
         assert_eq!(
@@ -1247,6 +1287,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn cosmetic_closed_form_stays_in_wrapped_phase_range_for_all_profiles() {
         for velocity in [3641i16, -1820, 512, -700] {
@@ -1261,6 +1302,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     #[test]
     fn goldsrc_rotator_heartbeat_reproduces_float_ltime_holes() {
         // Full speed at ltime=1.5: 1.5->11.5 takes 200 host frames, while
@@ -1278,6 +1320,7 @@ mod tests {
         assert_eq!(rotating_goldsrc_full_speed_samples(201, 115), 200);
     }
 
+    #[optimize(size)]
     #[test]
     fn c1a1b_cosmetic_fans_stall_on_goldsrc_rotate_heartbeat() {
         // brushes *6/*7 reach full speed at map tick 26. GoldSrc's second
@@ -1297,6 +1340,7 @@ mod tests {
         assert_eq!(p431, (p429 - 1820) & 0xffff);
     }
 
+    #[optimize(size)]
     #[test]
     fn c1a1b_cosmetic_fans_match_reference_tick_40() {
         let q12 = |phase: i32| ((phase >> 4) as u16) & 0x0fff;
@@ -1320,6 +1364,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn c1a1c_twenty_percent_ramp_matches_goldsrc_checkpoints() {
         let q12 = |phase: i32| ((phase >> 4) as u16) & 0x0fff;
@@ -1342,6 +1387,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     #[test]
     fn c1a1c_copivot_fans_retain_their_first_blocked_sample() {
         for tick in 27..=600 {
@@ -1352,6 +1398,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     #[test]
     fn pendulum_phase_word_keeps_signed_q19_angle_and_heartbeat_index() {
         for (phase, index) in [
@@ -1366,6 +1413,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     #[test]
     fn c1a1b_pendulum_matches_goldsrc_float_pusher_checkpoints() {
         // brush *79: distance=3, speed=5. The cooker stores centre, maximum
@@ -1404,6 +1452,7 @@ mod tests {
         assert_eq!(next_expected, expected.len());
     }
 
+    #[optimize(size)]
     #[test]
     fn pendulum_use_stops_without_resetting_visible_angle() {
         let moving = PendulumState {

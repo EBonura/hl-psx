@@ -36,14 +36,17 @@ static mut GRAVITY_SCALE: i32 = 4096;
 /// engine restores 1.0 each tick and the touch scan lowers it again.
 static mut FRICTION_SCALE: i32 = 4096;
 
+#[optimize(size)]
 pub fn set_friction_scale(scale_q12: i32) {
     unsafe { FRICTION_SCALE = scale_q12.clamp(0, 4096 * 4) };
 }
 
+#[optimize(size)]
 pub fn set_gravity_scale(scale_q12: i32) {
     unsafe { GRAVITY_SCALE = scale_q12.clamp(0, 4096 * 4) };
 }
 
+#[optimize(size)]
 /// The player's gravity multiplier (pev->gravity), Q12.
 pub fn gravity_scale() -> i32 {
     unsafe { GRAVITY_SCALE }
@@ -54,10 +57,12 @@ pub fn gravity_scale() -> i32 {
 // collides, slides and climbs slopes like the player's own velocity.
 static mut BASE_XZ: [i32; 2] = [0; 2];
 
+#[optimize(size)]
 pub fn base_xz() -> [i32; 2] {
     unsafe { BASE_XZ }
 }
 
+#[optimize(size)]
 pub fn set_base_xz(base: [i32; 2]) {
     unsafe { BASE_XZ = base };
 }
@@ -66,10 +71,12 @@ pub fn set_base_xz(base: [i32; 2]) {
 // (the Xen crossings need it). Persists for the session once picked up.
 static mut LONGJUMP: bool = false;
 
+#[optimize(size)]
 pub fn set_longjump(on: bool) {
     unsafe { LONGJUMP = on };
 }
 
+#[optimize(size)]
 #[inline]
 fn gravity_step_q6() -> i32 {
     unsafe { (GRAVITY_Q6 * GRAVITY_SCALE) >> 12 }
@@ -232,6 +239,7 @@ pub struct RayHit {
     pub mover: i32,
 }
 
+#[optimize(size)]
 /// True when `p` is inside the clip tree rooted at `head` (a shaped brush
 /// trigger's hull-1 volume; the brush-trigger overlap test).
 pub fn inside_clip_hull(map: &Map, head: i16, p: [i32; 3]) -> bool {
@@ -273,6 +281,7 @@ fn negated(n: [i32; 3]) -> [i32; 3] {
     [-n[0], -n[1], -n[2]]
 }
 
+#[optimize(size)]
 fn point_contents(map: &Map, mut num: i16, p: [i32; 3]) -> i16 {
     let mut steps = 0u16;
     while steps <= 256 {
@@ -293,6 +302,7 @@ fn point_contents(map: &Map, mut num: i16, p: [i32; 3]) -> i16 {
     -1
 }
 
+#[optimize(size)]
 fn recurse(
     map: &Map,
     mut num: i16,
@@ -369,6 +379,7 @@ fn recurse(
     }
 }
 
+#[optimize(size)]
 #[inline(never)]
 fn trace(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> Trace {
     let mut tr = Trace {
@@ -382,6 +393,7 @@ fn trace(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> Trace {
     tr
 }
 
+#[optimize(size)]
 /// Hull 0 is the render BSP node tree, not the pre-expanded clipnode tree used
 /// by hulls 1/3. Point rays walk it with node children ending in BSP leaves
 /// (leaf 0 is solid).
@@ -445,6 +457,7 @@ fn recurse_node_trace(
     }
 }
 
+#[optimize(size)]
 #[inline(never)]
 fn trace_nodes(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> Trace {
     let mut tr = Trace {
@@ -470,6 +483,7 @@ struct ClearTrace {
     startsolid: bool,
 }
 
+#[optimize(size)]
 /// Boolean twin of `recurse`. The split side, epsilon, midpoint rounding, bad
 /// data guards, and start-solid convention intentionally match it exactly.
 fn recurse_clear(
@@ -527,6 +541,7 @@ fn recurse_clear(
     }
 }
 
+#[optimize(size)]
 #[inline(never)]
 fn trace_clear(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> bool {
     let mut tr = ClearTrace { startsolid: false };
@@ -596,11 +611,13 @@ impl Mover {
         }
     }
 
+    #[optimize(size)]
     #[inline]
     pub fn point_head(self) -> i32 {
         self.head0 & !(MOVER_VISUAL_DISABLED | MOVER_ROT_AXIS_MASK)
     }
 
+    #[optimize(size)]
     #[inline]
     fn visual_disabled(self) -> bool {
         self.head0 & MOVER_VISUAL_DISABLED != 0
@@ -617,6 +634,7 @@ impl Mover {
 // This transform is used by five trace paths. Keeping one shared copy saves
 // several kilobytes of MIPS text while the call cost is paid only for a live
 // rotated mover (the identity fast paths never reach it).
+#[optimize(size)]
 #[inline(never)]
 fn rot_axis(p: [i32; 3], c: i32, s: i32, axis: u16) -> [i32; 3] {
     match axis {
@@ -638,12 +656,14 @@ fn rot_axis(p: [i32; 3], c: i32, s: i32, axis: u16) -> [i32; 3] {
     }
 }
 
+#[optimize(size)]
 /// Inverse (transpose) of [`rot_axis`]: world -> mover-local space.
 #[inline]
 fn rot_axis_inv(p: [i32; 3], c: i32, s: i32, axis: u16) -> [i32; 3] {
     rot_axis(p, c, -s, axis)
 }
 
+#[optimize(size)]
 /// Matrix shared by renderer and collision for reflected GoldSrc Euler bytes.
 #[inline(never)]
 pub fn packed_euler_rotation(packed: u32) -> Mat3I16 {
@@ -688,6 +708,7 @@ pub fn packed_euler_rotation(packed: u32) -> Mat3I16 {
     }
 }
 
+#[optimize(size)]
 #[inline(never)]
 fn mat_world(r: &Mat3I16, p: [i32; 3]) -> [i32; 3] {
     [
@@ -697,6 +718,7 @@ fn mat_world(r: &Mat3I16, p: [i32; 3]) -> [i32; 3] {
     ]
 }
 
+#[optimize(size)]
 #[inline(never)]
 fn mat_local(r: &Mat3I16, p: [i32; 3]) -> [i32; 3] {
     [
@@ -706,6 +728,7 @@ fn mat_local(r: &Mat3I16, p: [i32; 3]) -> [i32; 3] {
     ]
 }
 
+#[optimize(size)]
 #[inline(never)]
 fn mover_world_vector(mv: &Mover, p: [i32; 3]) -> [i32; 3] {
     if mv.rc == MOVER_FULL_ROTATION {
@@ -717,6 +740,7 @@ fn mover_world_vector(mv: &Mover, p: [i32; 3]) -> [i32; 3] {
     }
 }
 
+#[optimize(size)]
 #[inline(never)]
 fn mover_local(mv: &Mover, p: [i32; 3]) -> [i32; 3] {
     let d = [p[0] - mv.off[0], p[1] - mv.off[1], p[2] - mv.off[2]];
@@ -729,6 +753,7 @@ fn mover_local(mv: &Mover, p: [i32; 3]) -> [i32; 3] {
     }
 }
 
+#[optimize(size)]
 /// Convert a world impact point and normal into the same entity-local space
 /// used by the mover's hull-0 trace. This is a cold crowbar/material lookup,
 /// kept out of the movement hot paths.
@@ -744,11 +769,13 @@ pub fn mover_local_impact(mv: &Mover, p: [i32; 3], n: [i32; 3]) -> ([i32; 3], [i
     (p, n)
 }
 
+#[optimize(size)]
 #[inline]
 pub fn longjump_enabled() -> bool {
     unsafe { LONGJUMP }
 }
 
+#[optimize(size)]
 /// Transform both endpoints together so the yaw/identity dispatch and its
 /// sizeable fixed-point matrix path exist once instead of being cloned into
 /// every point/clip trace loop twice.
@@ -757,6 +784,7 @@ fn mover_local_segment(mv: &Mover, p1: [i32; 3], p2: [i32; 3]) -> ([i32; 3], [i3
     (mover_local(mv, p1), mover_local(mv, p2))
 }
 
+#[optimize(size)]
 #[inline]
 pub fn mover_bounds_center(
     center: [i32; 3],
@@ -798,6 +826,7 @@ pub struct WaterJumpState {
 }
 
 impl WaterJumpState {
+    #[optimize(size)]
     pub const fn new() -> Self {
         Self {
             ticks: 0,
@@ -841,6 +870,7 @@ pub const NO_MOVER: Mover = Mover {
     rs: 0,
 };
 
+#[optimize(size)]
 #[inline(never)]
 fn mover_may_touch_segment(mv: &Mover, p1: [i32; 3], p2: [i32; 3]) -> bool {
     if mv.radius <= 0 {
@@ -874,11 +904,13 @@ fn mover_may_touch_bounds(mv: &Mover, low: &[i32; 3], high: &[i32; 3]) -> bool {
     overlaps(0) && overlaps(1) && overlaps(2)
 }
 
+#[optimize(size)]
 /// True when the segment does not hit any shifted mover hull.
 pub fn line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> bool {
     line_clear_movers_except(map, movers, p1, p2, i32::MIN)
 }
 
+#[optimize(size)]
 /// True when an actor-sized segment does not enter any nearby brush collider.
 ///
 /// Actor movement must use the submodel clip hull, not hull 0: a small actor's
@@ -904,6 +936,7 @@ pub fn actor_line_clear_movers(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i
     true
 }
 
+#[optimize(size)]
 /// Is `p` inside any mover's clip hull? `actor_line_clear_movers` lets a
 /// step that starts inside a hull through (so an actor can leave an overlap);
 /// a fast actor can reach a door's expanded plane in one step and then pass
@@ -918,6 +951,7 @@ pub fn point_in_movers(map: &Map, movers: &[Mover], p: [i32; 3]) -> bool {
     })
 }
 
+#[optimize(size)]
 /// Like [`line_clear_movers`] but ignores the mover whose id is `exclude_id`.
 /// Aim-use traces end INSIDE the target button/charger/door brush, so that
 /// brush's own hull would always report "blocked" -- exclude it so line of
@@ -953,6 +987,7 @@ pub fn line_clear_movers_except(
     true
 }
 
+#[optimize(size)]
 /// True when the segment does not hit the static world point hull.
 pub fn line_clear_world(map: &Map, p1: [i32; 3], p2: [i32; 3]) -> bool {
     line_clear_visual_from(map, 0, p1, p2)
@@ -963,6 +998,7 @@ struct VisualClearTrace {
     startsolid: bool,
 }
 
+#[optimize(size)]
 fn recurse_visual_clear(
     map: &Map,
     mut num: i32,
@@ -1015,6 +1051,7 @@ fn recurse_visual_clear(
     }
 }
 
+#[optimize(size)]
 #[inline]
 fn line_clear_visual_from(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> bool {
     if map.n_nodes == 0 || head < 0 {
@@ -1028,6 +1065,7 @@ fn line_clear_visual_from(map: &Map, head: i32, p1: [i32; 3], p2: [i32; 3]) -> b
     tr.startsolid || !blocked
 }
 
+#[optimize(size)]
 #[inline]
 fn node_point_solid_from(map: &Map, mut num: i32, p: [i32; 3]) -> bool {
     let mut steps = 0u8;
@@ -1049,6 +1087,7 @@ fn node_point_solid_from(map: &Map, mut num: i32, p: [i32; 3]) -> bool {
     false
 }
 
+#[optimize(size)]
 fn visual_sphere_solid_from(map: &Map, num: i32, p: [i32; 3], radius: i32, depth: u8) -> bool {
     // This is a render-only exception test. Malformed/cyclic data must fail
     // open (report no overlap) so it can never make an unrelated occluder
@@ -1075,6 +1114,7 @@ fn visual_sphere_solid_from(map: &Map, num: i32, p: [i32; 3], radius: i32, depth
         || visual_sphere_solid_from(map, nd.c1, p, radius, depth + 1)
 }
 
+#[optimize(size)]
 /// True when a visual point segment stays outside the static world's solid
 /// leaves. Unlike `line_clear_world`, this walks the render BSP node tree rooted
 /// at node 0. GoldSrc's `headnode[0]` indexes that tree, but the legacy cooker
@@ -1085,6 +1125,7 @@ pub fn line_clear_world_visual(map: &Map, p1: [i32; 3], p2: [i32; 3]) -> bool {
     line_clear_visual_from(map, 0, p1, p2)
 }
 
+#[optimize(size)]
 /// Visual point trace through active brush entities (doors, plats, grates and
 /// the tram). Submodel `head0` values index the same render-node array as the
 /// world tree, so they must not be interpreted as clipnode roots either.
@@ -1150,6 +1191,7 @@ pub fn line_clear_movers_visual(
     true
 }
 
+#[optimize(size)]
 /// Trace the static world render-node tree plus every brush entity's render
 /// hull-0 subtree. Brush records without a point subtree fall back to their
 /// clip hull, but render-node indices are never interpreted as clipnode ids.
@@ -1183,6 +1225,7 @@ fn trace_point_all(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3], skip
 
 // Open/liquid contents along an acoustic point ray. Unlike player hull
 // collision, a ray that visits both media must not select a room controller.
+#[optimize(size)]
 fn sound_contents(map: &Map, mut node: i32, p1: [i32;3], p2: [i32;3], mut depth: u8) -> u8 {
     loop {
         if depth > MAX_TRACE_DEPTH {return 4;}
@@ -1204,6 +1247,7 @@ fn sound_contents(map: &Map, mut node: i32, p1: [i32;3], p2: [i32;3], mut depth:
         return first|sound_contents(map,far,mid,p2,depth+1);
     }
 }
+#[optimize(size)]
 /// Brush/world occlusion only; monsters do not obstruct the original sound ray.
 pub fn sound_line_clear(map: &Map,movers: &[Mover],p1: [i32;3],p2: [i32;3]) -> bool {
     if trace_line(map,movers,p1,p2).is_some() {return false;}
@@ -1211,11 +1255,13 @@ pub fn sound_line_clear(map: &Map,movers: &[Mover],p1: [i32;3],p2: [i32;3]) -> b
     contents&4==0 && contents&3!=3
 }
 
+#[optimize(size)]
 /// Trace a point ray through static world and active mover hulls.
 pub fn trace_line(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Option<RayHit> {
     trace_line_skip(map, movers, p1, p2, -1)
 }
 
+#[optimize(size)]
 /// `trace_line` ignoring the brush entity `skip` (UTIL_TraceLine's ignore
 /// edict: a func_tank never blocks its own shots).
 pub fn trace_line_skip(
@@ -1241,6 +1287,7 @@ pub fn trace_line_skip(
     })
 }
 
+#[optimize(size)]
 /// Point sweep for a translated pushable face. Ordinary interaction/LOS rays
 /// treat `startsolid` as no hit, but that lets a box sample already quantized
 /// onto a wall advance farther through it. Here a startsolid sample blocks when
@@ -1304,6 +1351,7 @@ pub fn trace_pushable_sweep(
     })
 }
 
+#[optimize(size)]
 /// Trace one translated brush entity's hull-0 subtree. Actor floor probes
 /// already broad-phase the small set of brush entities touching their vertical
 /// column, so walking each exact BSP segment is both cheaper and more reliable
@@ -1338,6 +1386,7 @@ pub fn trace_submodel_line(
     })
 }
 
+#[optimize(size)]
 /// Downward point probe used by a translated bbox to discover its floor.
 /// Unlike ordinary rays, a start point already touching/quantized into the
 /// supporting solid is a valid hit. Generic gameplay traces intentionally
@@ -1407,6 +1456,7 @@ pub fn trace_down_support(
     })
 }
 
+#[optimize(size)]
 /// Trace the world hull plus every mover hull (each shifted by its offset);
 /// return the nearest impact.
 fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> Trace {
@@ -1441,6 +1491,7 @@ fn trace_all(map: &Map, world_head: i32, movers: &[Mover], p1: [i32; 3], p2: [i3
     best
 }
 
+#[optimize(size)]
 /// True if the STANDING hull (hull-1) has room at `pos` (a point trace that is
 /// not startsolid). Lets the caller keep the player crouched when they can't
 /// stand under a low ceiling (HL behaviour) -- else un-ducking inside a vent
@@ -1449,6 +1500,7 @@ pub fn standing_fits(map: &Map, pos: [i32; 3]) -> bool {
     !trace(map, map.hull1_head, pos, pos).startsolid
 }
 
+#[optimize(size)]
 /// Whole-path human-hull probe used when a scripted monster chooses its route.
 /// A boolean trace stops at the first solid, so it is much cheaper than the
 /// fraction a triangulation needs. Callers pass hull-centre coordinates.
@@ -1457,6 +1509,7 @@ pub fn human_hull_line_clear(map: &Map, from: [i32; 3], to: [i32; 3]) -> bool {
     trace_clear(map, map.hull1_head, from, to)
 }
 
+#[optimize(size)]
 /// Controller CheckLocalMove sweeps hull 2 at origin + 32, without a floor
 /// settle. Legacy maps use bounded conservative standing-hull corner sweeps.
 pub fn controller_world_line_clear(map: &Map, from: [i32;3], to: [i32;3]) -> bool {
@@ -1492,6 +1545,7 @@ pub fn controller_world_line_clear(map: &Map, from: [i32;3], to: [i32;3]) -> boo
 /// the route had walked the player past the still-closed scanner door.
 const NAV_CHORD_REACHED: i32 = 4095;
 
+#[optimize(size)]
 /// Whole-path hull probe used when a scripted monster chooses its route.
 /// GoldSrc tests the complete local move before falling back to its node graph;
 /// a short point step cannot make that decision because it walks straight up
@@ -1517,16 +1571,19 @@ pub fn hull_blocked_fraction_movers(
     }
 }
 
+#[optimize(size)]
 #[inline]
 fn dot12_i32(a: [i32; 3], b: [i32; 3]) -> i32 {
     ((a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2])) >> 12
 }
 
+#[optimize(size)]
 #[inline]
 fn dot_raw(a: [i32; 3], b: [i32; 3]) -> i32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
+#[optimize(size)]
 #[inline]
 fn scale12(v: [i32; 3], s: i32) -> [i32; 3] {
     [(v[0] * s) >> 12, (v[1] * s) >> 12, (v[2] * s) >> 12]
@@ -1559,11 +1616,13 @@ fn split_planar_round(value: i32) -> (i32, i8) {
     (whole, (value - whole * PLANAR_FRAC_ONE) as i8)
 }
 
+#[optimize(size)]
 #[inline]
 fn add(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
+#[optimize(size)]
 fn cross12(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
     [
         ((a[1] * b[2] - a[2] * b[1]) >> 12),
@@ -1572,6 +1631,7 @@ fn cross12(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
     ]
 }
 
+#[optimize(size)]
 /// Remove the component of `v` along `n` (×4096) -- slide along a plane.
 fn clip_velocity(v: [i32; 3], n: [i32; 3]) -> [i32; 3] {
     let proj = dot12_i32(v, n);
@@ -1585,6 +1645,7 @@ fn clip_velocity(v: [i32; 3], n: [i32; 3]) -> [i32; 3] {
     ]
 }
 
+#[optimize(size)]
 fn clear_at(map: &Map, head: i32, movers: &[Mover], pos: [i32; 3]) -> bool {
     !trace_all(map, head, movers, pos, pos).startsolid
 }
@@ -1671,6 +1732,7 @@ pub fn movers_clear_at_hull(map: &Map, movers: &[Mover], pos: [i32; 3], world_he
     true
 }
 
+#[optimize(size)]
 #[inline]
 fn impact_contact_clear_at(
     map: &Map,
@@ -1716,22 +1778,28 @@ fn try_unstick(
 pub const PLAYER_TOUCH_WORDS: usize = (crate::MAX_ENTS + 31) / 32;
 static mut PLAYER_TOUCHES: [u32; PLAYER_TOUCH_WORDS] = [0; PLAYER_TOUCH_WORDS];
 
+#[optimize(size)]
 pub fn clear_player_touches() {
     unsafe { PLAYER_TOUCHES = [0; PLAYER_TOUCH_WORDS]; }
 }
+#[optimize(size)]
 fn player_touches() -> [u32; PLAYER_TOUCH_WORDS] { unsafe { PLAYER_TOUCHES } }
+#[optimize(size)]
 fn restore_player_touches(touches: [u32; PLAYER_TOUCH_WORDS]) {
     unsafe { PLAYER_TOUCHES = touches; }
 }
+#[optimize(size)]
 fn note_player_touch(id: i32) {
     if id >= 0 && (id as usize) < crate::MAX_ENTS {
         unsafe { crate::logic_state::record_mover_contact(&mut *core::ptr::addr_of_mut!(PLAYER_TOUCHES), id); }
     }
 }
+#[optimize(size)]
 pub fn player_touched_mover(id: usize) -> bool {
     id < crate::MAX_ENTS && unsafe { crate::logic_state::has_mover_contact(&*core::ptr::addr_of!(PLAYER_TOUCHES), id) }
 }
 
+#[optimize(size)]
 fn slide_move(
     map: &Map,
     head: i32,
@@ -1938,6 +2006,7 @@ fn slide_move(
     (pos, vel)
 }
 
+#[optimize(size)]
 fn dist_xz(a: [i32; 3], b: [i32; 3]) -> i32 {
     let dx = b[0] - a[0];
     let dz = b[2] - a[2];
@@ -1972,6 +2041,7 @@ pub struct Player {
 const _: [(); 36] = [(); core::mem::size_of::<Player>()];
 
 impl Player {
+    #[optimize(size)]
     /// Rotation may bring a solid brush into a stationary player before the
     /// player's slide runs. Retain that actual transformed-hull contact even
     /// though trace_all deliberately ignores mover startsolid for recovery.
@@ -2004,6 +2074,7 @@ impl Player {
         };
     }
 
+    #[optimize(size)]
     pub fn new(pos: [i32; 3]) -> Player {
         Player {
             pos,
@@ -2019,6 +2090,7 @@ impl Player {
         }
     }
 
+    #[optimize(size)]
     /// External gameplay velocity replacement (pushables) must discard the
     /// prior PM sub-unit residue just like GoldSrc overwriting `velocity`.
     pub fn set_planar_velocity(&mut self, x: i32, z: i32) {
@@ -2028,6 +2100,7 @@ impl Player {
         self.move_frac_xz = [0, 0];
     }
 
+    #[optimize(size)]
     pub fn clear_velocity(&mut self) {
         self.vel = [0, 0, 0];
         self.vel_frac_xz = [0, 0];
@@ -2036,6 +2109,7 @@ impl Player {
         self.move_frac_y = 0;
     }
 
+    #[optimize(size)]
     /// Replace a scripted vertical velocity and discard PM's old fractional
     /// state, matching a GoldSrc basevelocity/trigger assignment.
     pub fn set_vertical_velocity(&mut self, y: i32) {
@@ -2070,6 +2144,7 @@ impl Player {
         true
     }
 
+    #[optimize(size)]
     /// A push field's vertical basevelocity is an
     /// acceleration, `basevelocity.z * frametime` added to the velocity.
     pub fn add_vertical_push(&mut self, per_tick: i32) {
@@ -2087,6 +2162,7 @@ impl Player {
         (self.vel[1], self.vel_frac_y) = split_planar_round(fine);
     }
 
+    #[optimize(size)]
     #[cfg(feature = "deep-reference-trace")]
     pub fn hull_probe(&self, map: &Map, movers: &[Mover], delta: [i32; 3]) -> PlayerHullProbe {
         let end = add(self.pos, delta);
@@ -2099,6 +2175,7 @@ impl Player {
         }
     }
 
+    #[optimize(size)]
     /// Exact next pre-move ballistic displacement for differential probes.
     #[cfg(feature = "deep-reference-trace")]
     pub fn next_fall_delta(&self) -> [i32; 3] {
@@ -2112,6 +2189,7 @@ impl Player {
         ]
     }
 
+    #[optimize(size)]
     /// Stop one axis at a dynamic actor face and discard its sub-unit motion
     /// carry, just as a BSP plane clip inside `update` would.
     #[inline]
@@ -2129,6 +2207,7 @@ impl Player {
         }
     }
 
+    #[optimize(size)]
     /// Reposition a ladder mount on the horizontal plane only when the active
     /// player hull is clear at the destination. This keeps mount assistance
     /// from pulling the player through an adjacent solid brush.
@@ -2146,6 +2225,7 @@ impl Player {
         }
     }
 
+    #[optimize(size)]
     /// The world clip-hull headnode to trace against: the shorter crouch hull
     /// (hull-3, fits low vents) while ducking, else the standing hull-1. Falls
     /// back to hull-1 if the map has no crouch hull (headnode[3] empty -> < 0).
@@ -2167,6 +2247,7 @@ impl Player {
         }
     }
 
+    #[optimize(size)]
     /// Duck/un-duck with HL's centred-hull origin rules
     /// Grounded switches move the origin by the
     /// 18-unit half-height difference to keep the feet fixed; airborne
@@ -2194,6 +2275,7 @@ impl Player {
         }
     }
 
+    #[optimize(size)]
     /// Ladder-climb frame: gravity off, forward input runs up or down the
     /// ladder by view pitch (HL feel: look up + forward climbs up), strafe
     /// slides along it. The ladder move checks the current jump button
@@ -2330,6 +2412,7 @@ impl Player {
         self.ground_mover = -1;
     }
 
+    #[optimize(size)]
     /// Swim physics inside a func_water volume: move along the LOOK direction
     /// (pitch included), jump paddles straight up, and idle sinks slowly.
     pub fn update_swim(
@@ -2509,6 +2592,7 @@ impl Player {
         self.ground_mover = -1;
     }
 
+    #[optimize(size)]
     /// Advance the player one frame. `fwd`/`strafe` are analog deltas in
     /// `-128..=127` (D-pad sends ±127) relative to `yaw` (Q0.12); `jump`
     /// triggers when grounded.

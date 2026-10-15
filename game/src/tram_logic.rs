@@ -78,6 +78,7 @@ const fn round_shift15(value: i32) -> i32 {
     }
 }
 
+#[optimize(size)]
 /// Floor `numerator / denominator` as an unsigned Q16 ratio without shifting
 /// the numerator out of i32 range. The loop is a restoring binary divide; its
 /// `denominator - remainder` comparison is the overflow-free form of
@@ -99,6 +100,7 @@ const fn ratio_q16(numerator: i32, denominator: i32) -> i32 {
     quotient
 }
 
+#[optimize(size)]
 /// High-precision, i32-only atan2 in Q28 turns.
 ///
 /// A Q15 degree-nine minimax polynomial stays below half of one GoldSrc q16
@@ -165,6 +167,7 @@ pub const fn atan2_q28(y: i32, x: i32) -> i32 {
     }
 }
 
+#[optimize(size)]
 /// Scale a signed Q28 platform rotation across an integer travel distance
 /// without overflowing `delta * distance`.
 pub const fn scale_angle_offset_q28(delta: i32, distance: i32, length: i32) -> i32 {
@@ -381,6 +384,7 @@ pub const fn rider_motion_decision(
 mod tests {
     use super::*;
 
+    #[optimize(size)]
     #[test]
     fn legacy_and_packed_motion_words_decode_without_a_format_version() {
         assert_eq!(decode_motion_word(300, 12), (300, 0, 100));
@@ -390,6 +394,7 @@ mod tests {
         assert_eq!(decode_motion_word(packed, 12), (300, 7, 170));
     }
 
+    #[optimize(size)]
     #[test]
     fn angular_controller_halves_the_shortest_q28_error() {
         let q = TRAM_YAW_Q28_TURN / 4;
@@ -399,6 +404,7 @@ mod tests {
         assert_eq!(half_angle_step_q28(20, TRAM_YAW_Q28_TURN - 20), -20);
     }
 
+    #[optimize(size)]
     #[test]
     fn addangle_floors_negative_steps_and_preserves_q16_fraction() {
         assert_eq!(camera_step_q16_from_physical_q28(4095), 0);
@@ -410,6 +416,7 @@ mod tests {
         assert_eq!(add_camera_step_q16(0, 0, -1), (4095, 15));
     }
 
+    #[optimize(size)]
     #[test]
     fn high_precision_atan_has_exact_axes_and_diagonals() {
         let q = TRAM_YAW_Q28_TURN / 4;
@@ -424,6 +431,7 @@ mod tests {
         assert!((atan2_q28(1, 2) - 19_808_338).abs() < 4096);
     }
 
+    #[optimize(size)]
     #[test]
     fn trackchange_angle_scaling_is_signed_and_overflow_safe() {
         for &(delta, length) in &[(1 << 26, 1271), (-(1 << 26), 1582), (-(1 << 27), 46_340)] {
@@ -440,6 +448,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     #[test]
     fn authored_heading_uses_start_segment_and_clamps_a_terminal_start() {
         assert_eq!(authored_heading_segment(0, 0), 0);
@@ -448,6 +457,7 @@ mod tests {
         assert_eq!(authored_heading_segment(7, 8), 6);
     }
 
+    #[optimize(size)]
     #[test]
     fn tracktrain_uses_the_fixed_west_facing_brush_basis() {
         let q = TRAM_YAW_Q28_TURN / 4;
@@ -457,6 +467,7 @@ mod tests {
         assert_eq!(visible_yaw_q12(q * 3), 1024); // southward path -> car yaw 90
     }
 
+    #[optimize(size)]
     #[test]
     fn psx_world_rotation_inverts_gold_path_yaw() {
         assert_eq!(world_rotation_angle_q8(0), 0);
@@ -468,12 +479,14 @@ mod tests {
         assert_eq!(world_rotation_angle_q8(4095), 1);
     }
 
+    #[optimize(size)]
     #[test]
     fn transferred_tram_state_overrides_destination_startspeed_only_at_spawn() {
         assert!(should_apply_spawn_startspeed(false));
         assert!(!should_apply_spawn_startspeed(true));
     }
 
+    #[optimize(size)]
     #[test]
     fn carried_train_positions_before_waypoint_zero_keep_their_overlap() {
         let c0a0c_first = [-126, 1328, 251];
@@ -501,6 +514,7 @@ mod tests {
         assert!(!is_upstream_of_first([1, 2, 3], [0, 0, 0], [0, 0, 0]));
     }
 
+    #[optimize(size)]
     #[test]
     fn rider_local_z_keeps_the_goldsrc_edge_seat() {
         assert_eq!(clamp_rider_local_z(-94), -91);
@@ -512,6 +526,7 @@ mod tests {
         assert_eq!(clamp_transfer_rider_local_z(93), 89);
     }
 
+    #[optimize(size)]
     #[test]
     fn signed_q12_rounding_has_no_negative_floor_bias() {
         assert_eq!(round_q12(-4096), -1);
@@ -525,6 +540,7 @@ mod tests {
         assert_eq!(round_q12(4096), 1);
     }
 
+    #[optimize(size)]
     #[test]
     fn repeated_rider_rotation_round_trips_do_not_walk_into_the_clamps() {
         // Q12 sin/cos at 45 degrees. These are the non-cardinal turns that
@@ -552,6 +568,7 @@ mod tests {
         assert_eq!(edge, [33, -89]);
     }
 
+    #[optimize(size)]
     #[test]
     fn stopped_tram_support_uses_the_expanded_brush_footprint() {
         assert!(rider_over_tram_footprint(162, 98));
@@ -562,6 +579,7 @@ mod tests {
         assert!(!rider_over_tram_footprint(-53, -99));
     }
 
+    #[optimize(size)]
     #[test]
     fn solid_tram_hull_contact_restores_instead_of_detaching() {
         assert_eq!(

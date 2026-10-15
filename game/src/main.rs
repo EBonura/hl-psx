@@ -6538,6 +6538,7 @@ fn logic_valid_brush(brush: u16, nents: usize) -> Option<usize> {
     }
 }
 
+#[optimize(size)]
 /// GoldSrc PM_PointContents for liquids. Static world water/slime/lava comes
 /// from the authoritative BSP leaf contents; authored func_water and moving
 /// water trains retain their live AABB path.
@@ -10038,6 +10039,7 @@ unsafe fn prop_script_clear(pi: usize) {
     prop_nav_cache_invalidate(pi);
 }
 
+#[optimize(size)]
 /// Exact targetname selection is always attempted first.  A cooked classname
 /// selector is only the fallback, matching `CCineMonster::FindEntity`; it picks
 /// the first eligible living actor in cooked engine order inside m_flRadius.
@@ -11909,6 +11911,7 @@ unsafe fn revert_saved_tick() {
     }
 }
 
+#[optimize(size)]
 /// Advance the screen-title + fade timers once per sim tick; auto-fire the
 /// worldspawn chapter title shortly after load (like HL's chapter cards).
 unsafe fn tick_screen_fx(sim_frame_no: u32) {
@@ -16513,6 +16516,7 @@ unsafe fn release_monster_loot(owner: usize) {
     );
 }
 
+#[optimize(size)]
 /// Release every dormant loot slot owned by `owner_key` at `origin`: a monster
 /// death (key = actor index + 1) or a shattered breakable (key = cooked
 /// BREAKABLE_LOOT_KEY | submodel, centre origin, dropped to the floor below).
@@ -17667,6 +17671,7 @@ fn prop_voice(kind: u8, dying: bool) -> u8 {
 
 static mut PAIN_SFX_COOLDOWN: u8 = 0;
 
+#[optimize(size)]
 /// Source `CalcDamageDirection`: compare the world-space inflictor with the
 /// current view and light every matching screen edge. Close damage lights all
 /// four, matching GoldSrc's special case for a source within 50 units.
@@ -19185,6 +19190,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
 // Build exact candidate lists only after incoming actors have been appended or
 // overlaid. Keeping this separate from base prop init prevents the mailbox
 // restore from leaving the hot paths blind to carried humans/headcrabs/items.
+#[optimize(size)]
 #[inline(never)]
 unsafe fn rebuild_prop_hotlists() {
     // Read inside the cold function. Passing PROP_COUNT through the surrounding
@@ -20964,6 +20970,7 @@ unsafe fn shoot_buttons(m: &Map, eye: [i32; 3], end: [i32; 3], limit_frac: i32) 
     }
 }
 
+#[optimize(size)]
 /// One hitscan trace. `damage`/`range` from the weapon; (`aim_x`,`aim_y`) is the
 /// half-cone in screen px; (`cx_px`,`cy_px`) offsets the cone centre (shotgun
 /// pellets). Returns `Some` for either an actor or world hit, applying damage
@@ -21204,6 +21211,7 @@ fn pellet_offset(i: u8, spread: i32) -> (i32, i32) {
     (px * spread / 2, py * spread / 2)
 }
 
+#[optimize(size)]
 /// Run a weapon's fire archetype for one shot already paid for by try_fire.
 /// Returns true when a hitscan connected with an enemy (drives the crowbar
 /// hit-vs-miss sound).
@@ -21299,6 +21307,7 @@ unsafe fn fire_weapon(
     }
 }
 
+#[optimize(size)]
 /// Repeating secondary shots (L2). Toggle/charge/radio modes live at the input
 /// site because they need edge/release state; this function owns only attacks
 /// that may repeat while L2 remains held.

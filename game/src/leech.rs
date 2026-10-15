@@ -88,6 +88,7 @@ impl Swim {
         z_left: 0,
     };
 
+    #[optimize(size)]
     /// CLeech::Spawn plus Activate: idle for one to five seconds, then look.
     pub fn spawn<W: World>(prop: u8, pos: [i32; 3], w: &mut W) -> Self {
         let mut s = Self::EMPTY;
@@ -97,6 +98,7 @@ impl Swim {
         s
     }
 
+    #[optimize(size)]
     /// RecalculateWaterlevel: the water column under and over the leech with
     /// its outer fifths trimmed off, and a random swimming height inside it.
     fn recalculate_water<W: World>(&mut self, pos: [i32; 3], w: &mut W) {
@@ -110,11 +112,13 @@ impl Swim {
         self.water_left = secs(w.rand(5, 7));
     }
 
+    #[optimize(size)]
     fn random_height<W: World>(&self, w: &mut W) -> i16 {
         let (lo, hi) = (self.bottom.min(self.top), self.bottom.max(self.top));
         w.rand(lo as i32, hi as i32) as i16
     }
 
+    #[optimize(size)]
     /// SwitchLeechState.
     fn switch_state<W: World>(&mut self, w: &mut W) {
         self.state_left = secs(w.rand(3, 6));
@@ -126,6 +130,7 @@ impl Swim {
         }
     }
 
+    #[optimize(size)]
     /// One 0.1 s think. `yaw` is the 12-bit heading (0 = +Z, 1024 = +X).
     /// The result is the displacement and turn to apply for this think.
     pub fn think<W: World>(&mut self, pos: [i32; 3], yaw: u16, wet: bool, w: &mut W) -> Motion {
@@ -258,6 +263,7 @@ impl Swim {
         out
     }
 
+    #[optimize(size)]
     /// A bite landed: `m_stateTime -= 2`.
     pub fn bit(&mut self) {
         self.state_left -= secs(2);
@@ -293,6 +299,7 @@ impl Motion {
     };
 }
 
+#[optimize(size)]
 /// Whether the prey is inside the front 240 degrees (`m_flFieldOfView -0.5`),
 /// judged on the horizontal plane.
 pub fn in_view(yaw: u16, dx: i32, dz: i32) -> bool {
@@ -301,6 +308,7 @@ pub fn in_view(yaw: u16, dx: i32, dz: i32) -> bool {
     (f[0] * dx + f[1] * dz) / len > -2048
 }
 
+#[optimize(size)]
 /// Whether a bite connects: the prey is within 25 degrees of straight ahead
 /// on the horizontal plane (dot > 0.9).
 pub fn bite_connects(yaw: u16, dx: i32, dz: i32) -> bool {
@@ -309,6 +317,7 @@ pub fn bite_connects(yaw: u16, dx: i32, dz: i32) -> bool {
     len != 0 && (f[0] * dx + f[1] * dz) / len > 3686
 }
 
+#[optimize(size)]
 /// UTIL_WaterLevel from the leech's origin: the first non-water height in the
 /// 400 units above, by bisection; the origin itself when it is already dry.
 fn water_surface<W: World>(pos: [i32; 3], w: &mut W) -> i32 {
@@ -330,10 +339,12 @@ fn water_surface<W: World>(pos: [i32; 3], w: &mut W) -> i32 {
     lo
 }
 
+#[optimize(size)]
 fn secs(s: i32) -> i16 {
     (s * HZ) as i16
 }
 
+#[optimize(size)]
 fn approach(target: i32, value: i32, step: i32) -> i32 {
     if value < target {
         (value + step).min(target)
@@ -342,10 +353,12 @@ fn approach(target: i32, value: i32, step: i32) -> i32 {
     }
 }
 
+#[optimize(size)]
 fn length(v: [i32; 3]) -> i32 {
     isqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
 }
 
+#[optimize(size)]
 fn isqrt(n: i32) -> i32 {
     let mut remainder = n.max(0) as u32;
     let mut root = 0u32;
@@ -365,14 +378,17 @@ fn isqrt(n: i32) -> i32 {
     root as i32
 }
 
+#[optimize(size)]
 fn deg(q12: i32) -> i32 {
     q12 * 360 / 4096
 }
 
+#[optimize(size)]
 fn heading_deg(dx: i32, dz: i32) -> i32 {
     deg(psx_math::atan2_q12(dx, dz) as i32)
 }
 
+#[optimize(size)]
 /// Shortest signed difference `target - current` in degrees, in (-180, 180].
 fn angle_diff_deg(target: i32, current: i32) -> i32 {
     let d = (target - current).rem_euclid(360);
@@ -383,6 +399,7 @@ fn angle_diff_deg(target: i32, current: i32) -> i32 {
     }
 }
 
+#[optimize(size)]
 /// Horizontal forward (x, z) of a heading, Q12.
 fn flat_forward(yaw: u16) -> [i32; 2] {
     [
@@ -457,6 +474,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     fn run(
         world: &mut Pool,
         s: &mut Swim,
@@ -477,10 +495,12 @@ mod tests {
         out
     }
 
+    #[optimize(size)]
     fn speed_of(m: &Motion) -> i32 {
         length(m.step) * 10
     }
 
+    #[optimize(size)]
     #[test]
     fn spawn_idles_one_to_five_seconds_then_looks() {
         let mut w = Pool::new();
@@ -496,6 +516,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn idle_leech_cruises_at_fifty() {
         let mut w = Pool::new();
@@ -509,6 +530,7 @@ mod tests {
         assert!(w.wet(pos), "stays in the water: {pos:?}");
     }
 
+    #[optimize(size)]
     #[test]
     fn a_wet_visible_player_starts_the_hunt_a_dry_one_does_not() {
         let mut w = Pool::new();
@@ -536,6 +558,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn hunting_doubles_speed_when_facing_and_closes_to_bite_range() {
         let mut w = Pool::new();
@@ -556,6 +579,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn bites_come_every_fifth_of_a_second_and_each_shortens_the_hunt() {
         let mut w = Pool::new();
@@ -579,6 +603,7 @@ mod tests {
         assert_eq!(before - s.state_left, 100 + 40 * bites as i16);
     }
 
+    #[optimize(size)]
     #[test]
     fn a_wall_ahead_makes_it_back_off_and_turn() {
         let mut w = Pool::new();
@@ -595,6 +620,7 @@ mod tests {
         assert!(speed_of(motion.last().unwrap()) <= 55);
     }
 
+    #[optimize(size)]
     #[test]
     fn hunting_ends_when_the_state_runs_out() {
         let mut w = Pool::new();
@@ -615,6 +641,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn out_of_the_water_it_stops_and_drops() {
         let mut w = Pool::new();
@@ -624,6 +651,7 @@ mod tests {
         assert!(m.dry && m.step[0] == 0 && m.step[1] < 0 && !m.biting);
     }
 
+    #[optimize(size)]
     #[test]
     fn view_cone_is_240_degrees_and_bites_need_a_facing_prey() {
         // Facing +Z: behind is outside, the side is inside.
@@ -635,6 +663,7 @@ mod tests {
         assert!(!bite_connects(0, 100, 100));
     }
 
+    #[optimize(size)]
     #[test]
     fn it_climbs_toward_a_higher_prey_at_a_dive_angle() {
         let mut w = Pool::new();
