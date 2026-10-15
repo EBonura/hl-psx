@@ -41,34 +41,6 @@ pub const fn accel_step(gap: i32, wish: i32, friction_q12: i32) -> i32 {
     }
 }
 
-/// Ground friction scale with the edge rule: the original doubles friction
-/// when the player is walking toward a drop so he stops at a ledge.
-pub const fn edge_scaled(friction_q12: i32, over_drop: bool) -> i32 {
-    if over_drop {
-        friction_q12 * 2
-    } else {
-        friction_q12
-    }
-}
-
-/// Where the edge probe starts and ends, relative to the origin of a player
-/// moving with horizontal velocity `(vx, vz)` (Q6): 16 units ahead along the
-/// velocity, at the feet, and 34 units below that. `None` when there is no
-/// direction. The length uses the octagon approximation (within 4%), which is
-/// plenty for a 16 unit probe and saves a square root.
-#[cfg_attr(target_arch = "mips", optimize(size))]
-#[inline(never)]
-pub fn edge_probe(vx: i32, vz: i32, feet: i32) -> Option<([i32; 3], [i32; 3])> {
-    let (ax, az) = (vx.abs(), vz.abs());
-    let len = ax.max(az) + ax.min(az) * 3 / 8;
-    if len == 0 {
-        return None;
-    }
-    let ahead = |v: i32| v * 16 / len;
-    let (x, z) = (ahead(vx), ahead(vz));
-    Some(([x, -feet, z], [x, -feet - 34, z]))
-}
-
 /// Overbounce used when a walking player hits a wall while inside a friction
 /// volume: `1 + bounce * (1 - friction)` with `sv_bounce` 1, in Q12. Floors
 /// and slopes (up-component above 0.7) always clip at exactly 1.
@@ -377,26 +349,6 @@ mod tests {
         assert_eq!(accel_step(10_000, 1024, 0), 0);
         // the gap still caps the step
         assert_eq!(accel_step(100, 1024, 4096), 100);
-    }
-
-    #[test]
-    fn edge_friction_doubles_only_over_a_drop() {
-        assert_eq!(edge_scaled(4096, false), 4096);
-        assert_eq!(edge_scaled(4096, true), 8192);
-        assert_eq!(edge_scaled(2048, true), 4096);
-    }
-
-    #[test]
-    fn edge_probe_looks_sixteen_ahead_and_thirty_four_down() {
-        let (a, b) = edge_probe(640, 0, 36).unwrap();
-        assert_eq!(a, [16, -36, 0]);
-        assert_eq!(b, [16, -70, 0]);
-        let (a, _) = edge_probe(0, -300, 18).unwrap();
-        assert_eq!(a, [0, -18, -16]);
-        assert!(edge_probe(0, 0, 36).is_none());
-        // diagonal: within a unit of 16 / sqrt(2) on each axis
-        let (a, _) = edge_probe(500, 500, 36).unwrap();
-        assert!((a[0] - 11).abs() <= 1 && (a[2] - 11).abs() <= 1, "{a:?}");
     }
 
     #[test]

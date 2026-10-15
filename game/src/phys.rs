@@ -2596,8 +2596,7 @@ impl Player {
 
         // Wish direction, ground friction and acceleration, then the
         // integrate / step / settle tail. Both are rewritten from the specs.
-        let over_drop = self.on_ground && self.walking_off_a_drop(map, movers);
-        self.apply_wish_motion(fwd, strafe, yaw, over_drop);
+        self.apply_wish_motion(fwd, strafe, yaw);
         self.walk_move_tail(map, movers, jump, was_air, fall_speed_q6, gravity_post_q6);
     }
 
@@ -2632,27 +2631,12 @@ impl Player {
         }
     }
 
-    /// The retail edge rule: probe 16 units ahead along the velocity, from
-    /// the feet down 34 units; with nothing under that point friction doubles
-    /// so a player stops at a ledge instead of sliding off it.
-    #[inline(never)]
-    #[cfg_attr(target_arch = "mips", optimize(size))]
-    fn walking_off_a_drop(&self, map: &Map, movers: &[Mover]) -> bool {
-        let fx = self.vel[0] * PLANAR_FRAC_ONE + self.vel_frac_xz[0] as i32;
-        let fz = self.vel[2] * PLANAR_FRAC_ONE + self.vel_frac_xz[1] as i32;
-        let Some((from, to)) = player_rules::edge_probe(fx, fz, self.half_height()) else {
-            return false;
-        };
-        let t = trace_all(map, self.head(map), movers, add(self.pos, from), add(self.pos, to));
-        !t.startsolid && !t.allsolid && t.frac >= 4096
-    }
-
     /// Wish direction, ground friction (scaled by the func_friction multiplier)
     /// and ground / air acceleration for one tick: turns `fwd`/`strafe`/`yaw`
     /// into the post-acceleration horizontal velocity in `vel` / `vel_frac_xz`.
     /// Specified in SPEC-friction-accel.
     #[inline(always)]
-    fn apply_wish_motion(&mut self, fwd: i32, strafe: i32, yaw: u16, over_drop: bool) {
+    fn apply_wish_motion(&mut self, fwd: i32, strafe: i32, yaw: u16) {
         let s = sincos::sin_q12(yaw);
         let c = sincos::sin_q12((yaw + 1024) & 0xFFF);
         let wx = (s * fwd + c * strafe) / 128;
@@ -2672,8 +2656,7 @@ impl Player {
             let speed = isqrt_i32(fx * fx + fz * fz);
             if speed > 0 {
                 let floor = STOP_SPEED * PLANAR_FRAC_ONE;
-                let friction = player_rules::edge_scaled(unsafe { FRICTION_SCALE }, over_drop);
-                let drop = ((speed.max(floor) / 5) * friction) >> 12;
+                let drop = ((speed.max(floor) / 5) * unsafe { FRICTION_SCALE }) >> 12;
                 let scale = (speed - drop).max(0) * 4096 / speed;
                 fx = mul_q12_round(fx, scale);
                 fz = mul_q12_round(fz, scale);
