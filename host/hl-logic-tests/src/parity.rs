@@ -560,26 +560,10 @@ fn weapon_obs() -> Vec<WObs> {
         // The grunt's hand grenade.
         o(
             "grunt grenade",
-            "first throw delay",
-            80,
+            "re-check interval after a throw",
+            120,
             0,
-            GRENADE_FIRST_DELAY as i64,
-            GRUNT_GREN,
-        ),
-        o(
-            "grunt grenade",
-            "interval",
-            155,
-            0,
-            GRENADE_INTERVAL as i64,
-            GRUNT_GREN,
-        ),
-        o(
-            "grunt grenade",
-            "blast after the throw begins",
-            26,
-            1,
-            (GRENADE_THROW_TICKS - GRENADE_RELEASE_LEFT) as i64 + GRENADE_FLIGHT as i64,
+            crate::hecu_grenades::RECOVERY_TICKS as i64,
             GRUNT_GREN,
         ),
         o(

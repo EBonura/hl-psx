@@ -2042,6 +2042,50 @@ const PGO_COLLECT_STACK_MARGIN: u32 = STACK_MARGIN;
 const PGO_COLLECT_STACK_MIN: u32 =
     (PGO_COLLECT_STACK_DEEPEST + PGO_COLLECT_STACK_MARGIN).next_multiple_of(256);
 
+/// The stack reserve the shipping links carry. The SDK reserves 32 KiB at the
+/// top of RAM for the stack, but the game has been measured to use 17,760 B of
+/// it, and a rung is judged safe by the room it leaves below the initial SP
+/// (`stack_is_safe`), not by the reserve. Reserving only the measured depth
+/// plus the margin hands the rest to `.bss` and `.text`. The link itself then
+/// guarantees the room: the image cannot end above `RAM_TOP - reserve`, which
+/// leaves `reserve - gap` below the initial SP before any free RAM.
+const SHIP_STACK_RESERVE: u32 = PGO_COLLECT_STACK_MIN;
+
+/// The stack reserve a link carries: the shipping one, or for a developer's
+/// diagnostic build (a non-shipping feature set) the value of
+/// `HLPSX_DEV_STACK_RESERVE`, which lets the trace machinery of a probe disc
+/// fit. Such a disc is never shipped.
+fn link_stack_reserve(features: Option<&str>) -> u32 {
+    if !is_shipping_build(features) {
+        if let Some(value) = env::var("HLPSX_DEV_STACK_RESERVE")
+            .ok()
+            .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+        {
+            return value;
+        }
+    }
+    SHIP_STACK_RESERVE
+}
+
+/// `__bss_end` of a link map (the address of the line that assigns it).
+fn bss_end_of(link_map: &Path) -> Result<u32> {
+    let text = fs::read_to_string(link_map)?;
+    text.lines()
+        .filter(|line| line.contains("__bss_end = ."))
+        .find_map(|line| u32::from_str_radix(line.split_whitespace().next()?, 16).ok())
+        .ok_or_else(|| format!("{} has no __bss_end", link_map.display()).into())
+}
+
+/// Free RAM of a shipping link: the gap between `.bss` and the stack reserve
+/// the shipping links carry (`SHIP_STACK_RESERVE`).
+fn ship_free(link_map: &Path, reserve: u32) -> Result<u32> {
+    let limit = 0x8000_0000u32 + RAM_TOP_OFFSET - reserve;
+    let end = bss_end_of(link_map)?;
+    limit
+        .checked_sub(end)
+        .ok_or_else(|| format!("{} ends {} B past the stack reserve", link_map.display(), end - limit).into())
+}
+
 /// Maps the profiling tapes visit; the collect build sizes the map staging
 /// window (and the arena built from it) for these only (`HLPSX_COLLECT_MAPS`,
 /// see game/build.rs), so it fits RAM when the fleet's largest map (727 KB)
@@ -2167,6 +2211,12 @@ fn compile_game(
     // 2b7288b by 192 B). It is only run on the profiling tapes and never
     // ships, so it links with a smaller stack reserve than the SDK's; the
     // code is the same (`compile_collect` picks the reserve).
+    if let GuestProfile::Use(..) = profile {
+        command.env(
+            "HLPSX_STACK_RESERVE",
+            format!("{:#x}", link_stack_reserve(features)),
+        );
+    }
     if let GuestProfile::Collect(reserve) | GuestProfile::CollectElf(reserve) = profile {
         command.env("HLPSX_STACK_RESERVE", format!("{reserve:#x}"));
         // The collect build only replays the profiling tapes; an explicit
@@ -2543,7 +2593,7 @@ fn profile_guided_pack(
         "map of the image just packed",
         threshold,
         shipped,
-        ram_free(psoxide, &repository.join(".hlpsx/hl-psx.map"))?,
+        ship_free(&repository.join(".hlpsx/hl-psx.map"), link_stack_reserve(features))?,
     )?;
     fs::create_dir_all(repository.join("game/pgo"))?;
     fs::copy(&profile, repository.join(SHIPPED_PROFILE))?;
@@ -2690,7 +2740,7 @@ fn link_rung(
         features,
         GuestProfile::Use(profile, threshold),
     )?;
-    let free = ram_free(psoxide, &repository.join(".hlpsx/hl-psx.map"))?;
+    let free = ship_free(&repository.join(".hlpsx/hl-psx.map"), link_stack_reserve(features))?;
     Ok(Linked {
         exe,
         threshold,
@@ -2743,7 +2793,8 @@ fn link_with_profile(
     profile: &Path,
     first: u32,
 ) -> Result<Linked> {
-    let (reserve, gap) = sdk_stack_geometry(&fs::read_to_string(psoxide.join("sdk/psoxide.ld"))?)?;
+    let (_, gap) = sdk_stack_geometry(&fs::read_to_string(psoxide.join("sdk/psoxide.ld"))?)?;
+    let reserve = link_stack_reserve(features);
     let mut tried: Vec<(u32, Option<u32>)> = Vec::new();
     let mut link_error = None;
     for threshold in PGO_HOT_CALLSITE_LADDER
@@ -2754,7 +2805,7 @@ fn link_with_profile(
             Ok(linked) => {
                 tried.push((threshold, Some(linked.free)));
                 let room = stack_room(linked.free, reserve, gap);
-                if stack_is_safe(room) {
+                if stack_is_safe(room) || !is_shipping_build(features) {
                     println!(
                         "PGO variant: hot-callsite-threshold={threshold}, {} B of RAM free, \
                          {room} B of stack room below the initial SP (needs {}; tried {})",

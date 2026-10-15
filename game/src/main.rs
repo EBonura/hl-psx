@@ -35,6 +35,8 @@ mod env_funnel;
 mod env_funnel_fx;
 mod gman_damage;
 mod hecu_grenades;
+mod proj_logic;
+mod senses;
 mod sentry_wake;
 mod pushable_transition;
 mod env_sound;
@@ -14946,10 +14948,6 @@ unsafe fn prop_render_transform(pi: usize) -> ([i32; 3], u16) {
     (origin, yaw)
 }
 
-/// How fast NPCs turn to face a target, 12-bit yaw units per sim tick
-/// (~22 deg/tick ≈ 440 deg/s -- brisk but visibly rotating, not instant).
-const PROP_TURN_RATE: u16 = 250;
-
 #[inline]
 fn prop_is_scientist(ty: u8) -> bool {
     ty == PROP_TYPE_SCIENTIST || ty == PROP_TYPE_SCRIPTED_SITTING_SCI
@@ -15417,7 +15415,7 @@ unsafe fn prop_face_point(pi: usize, p: [i32; 3]) {
         let yaw = turn_toward(
             prop_yaw_value(PROP_YAW[pi]),
             yaw_from_vec(dx, dz),
-            PROP_TURN_RATE,
+            senses::turn_rate_q12(PROP_KIND[pi]),
         );
         PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], yaw);
     }
@@ -16731,7 +16729,6 @@ unsafe fn monster_sight_ai_triggers(
         PROP_DORMANT[pi] &= !PROP_RUNTIME_SEE_TRIGGER;
     }
 }
-
 // Walk speeds are approximations of big_mom.mdl's walk and run sequences.
 const BIGMOMMA_WALK_SPEED: i32 = 4;
 const BIGMOMMA_RUN_SPEED: i32 = 8;
@@ -17027,6 +17024,93 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         }
         si += 1;
     }
+}
+
+/// Noises carrying through the level that idle monsters turn toward: the
+/// player's gunfire, blasts and the marines' bursts.
+static mut SOUNDS: senses::Sounds = senses::Sounds::EMPTY;
+
+#[inline]
+unsafe fn make_noise(pos: [i32; 3], volume: u16) {
+    (*core::ptr::addr_of_mut!(SOUNDS)).insert(pos, volume, 6);
+}
+
+/// Where each hunter last saw its enemy (`m_vecEnemyLKP`) and which enemy
+/// that memory is of. A hunter that loses sight walks to this spot, not to
+/// where the enemy really is.
+static mut PROP_LKP: [[i16; 3]; MAX_PROPS] = [[0; 3]; MAX_PROPS];
+static mut PROP_LKP_FOR: [u8; MAX_PROPS] = [PROP_TARGET_NONE; MAX_PROPS];
+
+/// The point a hunter heads for: the enemy while it is in sight (remembering
+/// it), else the last place it was seen. `None` once the hunter has come to
+/// that spot and still sees nothing: it gives up.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn pursue_point(pi: usize, target: u8, true_aim: [i32; 3], visible: bool) -> Option<[i32; 3]> {
+    if visible || PROP_LKP_FOR[pi] != target {
+        PROP_LKP[pi] = [true_aim[0] as i16, true_aim[1] as i16, true_aim[2] as i16];
+        PROP_LKP_FOR[pi] = target;
+        return Some(true_aim);
+    }
+    let l = PROP_LKP[pi];
+    let spot = [l[0] as i32, l[1] as i32, l[2] as i32];
+    if dist2_xz(PROP_POS[pi], spot) < 40 * 40 {
+        PROP_LKP_FOR[pi] = PROP_TARGET_NONE;
+        return None;
+    }
+    Some(spot)
+}
+
+/// Cone of a monster's bullet as a q12 spread per unit of distance
+/// (`VECTOR_CONE_2DEGREES` is 0.01745).
+const MONSTER_CONE_2_DEGREES: i32 = 71;
+
+/// Where a monster's bullet goes: aimed at `aim` with the retail cone (two
+/// uniform draws per axis, so centre-weighted), 1024 units long. Returns the
+/// studio box it entered on the target (`u8::MAX` when the target has none) or
+/// `None` when the bullet misses.
+#[optimize(size)]
+#[inline(never)]
+unsafe fn monster_shot_lands(
+    m: &Map,
+    from: [i32; 3],
+    aim: [i32; 3],
+    target: u8,
+    player_pos: [i32; 3],
+    nprops: usize,
+    cone_q12: i32,
+) -> Option<u8> {
+    let d = isqrt_i32(dist2_3(from, aim)).max(1);
+    let spread = d * cone_q12 >> 12;
+    let tri = |half: i32| -> i32 {
+        if half <= 0 {
+            0
+        } else {
+            impact_rng().below((half + 1) as u32) as i32 + impact_rng().below((half + 1) as u32) as i32 - half
+        }
+    };
+    let end = [aim[0] + tri(spread), aim[1] + tri(spread), aim[2] + tri(spread)];
+    // carry the bullet 25 percent past the target so a graze on the far side counts
+    let far = [
+        from[0] + (end[0] - from[0]) * 5 / 4,
+        from[1] + (end[1] - from[1]) * 5 / 4,
+        from[2] + (end[2] - from[2]) * 5 / 4,
+    ];
+    if target == PROP_TARGET_PLAYER {
+        let body = [player_pos[0], player_pos[1] + 18, player_pos[2]];
+        return proj_logic::segment_hits_cylinder(from, far, body, 16, 36, 0).map(|_| u8::MAX);
+    }
+    let ti = target as usize;
+    if ti >= nprops {
+        return None;
+    }
+    let ty = PROP_KIND[ti];
+    let slot = TYPE_TO_SLOT[(ty as usize).min(N_MODEL_TYPES - 1)];
+    if slot != MODEL_SLOT_NONE && loaded_model(slot as usize).hitbox_count() != 0 {
+        return prop_studio_hit_fraction(m, ti, from, far).map(|_| STUDIO_HIT_BOX);
+    }
+    let (r, hh) = prop_hit_extent(ty);
+    proj_logic::segment_hits_cylinder(from, far, prop_target(ty, PROP_POS[ti]), r, hh, 0).map(|_| u8::MAX)
 }
 
 const SQUAD_ALERT_RADIUS2: i32 = 400 * 400;
@@ -17776,57 +17860,110 @@ unsafe fn find_headcrab_target(
     player_pos: [i32; 3],
     nprops: usize,
 ) -> (u8, bool) {
-    let pos = PROP_POS[pi];
     // This routine serves every melee alien, not only headcrabs. Tracing a
     // full-height zombie from the headcrab's low target point can see under
     // cover and establish the wrong initial enemy (c1a1 selected Gordon
     // instead of the scripted Barney fight).
-    let from = prop_target(PROP_KIND[pi], pos);
-    let mut best_visible = PROP_TARGET_NONE;
-    let mut best_visible_d2 = HEADCRAB_WAKE_RANGE2;
+    let from = prop_target(PROP_KIND[pi], PROP_POS[pi]);
+    pick_target(m, movers, pi, player_pos, nprops, HEADCRAB_WAKE_RANGE2, from)
+}
 
-    let player_d2 = dist2_xz(pos, player_pos);
-    if player_d2 < best_visible_d2 {
-        let to = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
-        if actor_line_clear(m, movers, from, to) {
-            best_visible = PROP_TARGET_PLAYER;
-            best_visible_d2 = player_d2;
+/// The enemy an idle monster picks out: among the player and every actor it
+/// has a feeling against (`senses::relation`), the one it hates most that it
+/// can see inside `wake2`, the nearer of equals. The way it faces limits what
+/// it sees (`m_flFieldOfView`), so approaching from behind works; a prisoner
+/// is never seen.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn pick_target(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    nprops: usize,
+    wake2: i32,
+    from: [i32; 3],
+) -> (u8, bool) {
+    let kind = PROP_KIND[pi];
+    let pos = PROP_POS[pi];
+    let yaw = prop_yaw_value(PROP_YAW[pi]);
+    let (fx, fz) = (sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0x0fff));
+    let mut best = PROP_TARGET_NONE;
+    let mut best_rel = senses::R_NO;
+    let mut best_d2 = wake2;
+
+    let rel = senses::relation(kind, senses::KIND_PLAYER);
+    if senses::is_enemy(rel) {
+        let d2 = dist2_xz(pos, player_pos);
+        if d2 < best_d2
+            && senses::in_view_cone(kind, fx, fz, player_pos[0] - pos[0], player_pos[2] - pos[2])
+        {
+            let to = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
+            if actor_line_clear(m, movers, from, to) {
+                best = PROP_TARGET_PLAYER;
+                best_rel = rel;
+                best_d2 = d2;
+            }
         }
     }
-
-    let hot_count = prop_hotlist_count(PROP_AI_TARGET[nprops], nprops);
-    let indexed = hot_count.is_some();
-    let scan_count = hot_count.unwrap_or(nprops);
-    let mut scan = 0usize;
-    while scan < scan_count {
-        let ti = if indexed {
-            PROP_AI_TARGET[nprops + 1 + scan] as usize
-        } else {
-            scan
-        };
-        if ti < nprops
-            && ti != pi
-            && PROP_ACTIVE[ti] != 0
-            && PROP_HEALTH[ti] > 0
-            && prop_is_human(PROP_KIND[ti])
-        {
-            let d2 = dist2_xz(pos, PROP_POS[ti]);
-            if d2 < best_visible_d2 {
-                let to = prop_target(PROP_KIND[ti], PROP_POS[ti]);
-                if actor_line_clear(m, movers, from, to) {
-                    best_visible = ti as u8;
-                    best_visible_d2 = d2;
+    let mut ti = 0usize;
+    while ti < nprops {
+        if ti != pi && PROP_ACTIVE[ti] != 0 && PROP_HEALTH[ti] > 0 {
+            let rel = senses::relation(kind, PROP_KIND[ti]);
+            if senses::is_enemy(rel) && rel >= best_rel && PROP_DORMANT[ti] & PROP_RUNTIME_PRISONER == 0 {
+                let d2 = dist2_xz(pos, PROP_POS[ti]);
+                if d2 < wake2
+                    && (rel > best_rel || d2 < best_d2)
+                    && senses::in_view_cone(
+                        kind,
+                        fx,
+                        fz,
+                        PROP_POS[ti][0] - pos[0],
+                        PROP_POS[ti][2] - pos[2],
+                    )
+                {
+                    let to = prop_target(PROP_KIND[ti], PROP_POS[ti]);
+                    if actor_line_clear(m, movers, from, to) {
+                        best = ti as u8;
+                        best_rel = rel;
+                        best_d2 = d2;
+                    }
                 }
             }
         }
-        scan += 1;
+        ti += 1;
     }
-    (best_visible, best_visible != PROP_TARGET_NONE)
+    if best == PROP_TARGET_NONE {
+        // Nothing seen: a noise inside earshot turns the monster toward it
+        // (SCHED_ALERT_FACE), at the turn it makes over one interval.
+        if let Some(src) = (*core::ptr::addr_of!(SOUNDS)).heard(pos) {
+            let yaw = turn_toward(
+                prop_yaw_value(PROP_YAW[pi]),
+                yaw_from_vec(src[0] - pos[0], src[2] - pos[2]),
+                senses::turn_rate_q12(kind) * AI_REACQUIRE_INTERVAL as u16,
+            );
+            PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], yaw);
+        }
+    }
+    (best, best != PROP_TARGET_NONE)
 }
 
-unsafe fn find_barney_target(m: &Map, movers: &[phys::Mover], pi: usize, nprops: usize) -> u8 {
+unsafe fn find_barney_target(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    nprops: usize,
+) -> u8 {
     let pos = PROP_POS[pi];
     let from = prop_target(PROP_TYPE_BARNEY, pos);
+    if prop_scientist_flag(pi, PROP_SCI_PROVOKED) {
+        // A provoked Barney hates the player above everything else.
+        let eye = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
+        if dist2_xz(pos, player_pos) < BARNEY_ATTACK_RANGE2 && actor_line_clear(m, movers, from, eye) {
+            return PROP_TARGET_PLAYER;
+        }
+    }
     let mut best = PROP_TARGET_NONE;
     let mut best_d2 = BARNEY_ATTACK_RANGE2;
     let hot_count = prop_hotlist_count(PROP_KIND[nprops], nprops);
@@ -17906,48 +18043,112 @@ unsafe fn find_actor_target(
     nprops: usize,
     wake2: i32,
 ) -> (u8, bool) {
+    pick_target(m, movers, pi, player_pos, nprops, wake2, prop_eye(m, pi))
+}
+
+/// The cosine (q12) of the angle between where an actor faces and the point
+/// `aim`, flattened.
+#[inline]
+unsafe fn facing_q12(pi: usize, aim: [i32; 3]) -> i32 {
     let pos = PROP_POS[pi];
-    let from = prop_eye(m, pi);
-    let mut best_visible = PROP_TARGET_NONE;
-    let mut best_visible_d2 = wake2;
+    let yaw = prop_yaw_value(PROP_YAW[pi]);
+    let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
+    let flat = isqrt_i32(dx * dx + dz * dz).max(1);
+    (sincos::sin_q12(yaw) * dx + sincos::sin_q12((yaw + 1024) & 0x0fff) * dz) / flat
+}
 
-    let player_d2 = dist2_xz(pos, player_pos);
-    if player_d2 < best_visible_d2 {
-        let to = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
-        if actor_line_clear(m, movers, from, to) {
-            best_visible = PROP_TARGET_PLAYER;
-            best_visible_d2 = player_d2;
-        }
-    }
-
-    let hot_count = prop_hotlist_count(PROP_AI_TARGET[nprops], nprops);
-    let indexed = hot_count.is_some();
-    let scan_count = hot_count.unwrap_or(nprops);
-    let mut scan = 0usize;
-    while scan < scan_count {
-        let ti = if indexed {
-            PROP_AI_TARGET[nprops + 1 + scan] as usize
-        } else {
-            scan
-        };
-        if ti < nprops
-            && ti != pi
-            && PROP_ACTIVE[ti] != 0
-            && PROP_HEALTH[ti] > 0
-            && prop_is_human(PROP_KIND[ti])
-        {
-            let d2 = dist2_xz(pos, PROP_POS[ti]);
-            if d2 < best_visible_d2 {
-                let to = prop_target(PROP_KIND[ti], PROP_POS[ti]);
-                if actor_line_clear(m, movers, from, to) {
-                    best_visible = ti as u8;
-                    best_visible_d2 = d2;
-                }
+/// The alien grunt's and the controller's attacks. The alien grunt punches
+/// inside 100 units (`sk_agrunt_dmg_punch`) and otherwise, from 100 to 1024
+/// units and facing within 60 degrees, sends a volley of five hornets that
+/// leave its arm 0.3, 0.5, 0.7, 0.8 and 1.1 s into the attack, then waits 2 to
+/// 5 seconds. The controller throws balls (`sk_controller_dmgball`, 650, 800
+/// or 1000 u/s) four ticks apart in volleys of four, a pause between.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn tick_alien_attack(
+    pi: usize,
+    ty: u8,
+    pos: [i32; 3],
+    aim: [i32; 3],
+    d2: i32,
+    target: u8,
+    health: &mut u16,
+    armor: &mut u16,
+) {
+    let left = PROP_AI_TIMER[pi];
+    let from = [pos[0], pos[1] + 36, pos[2]];
+    let dir = dir_q12(from, aim);
+    if ty == 10 {
+        if left > 0 {
+            PROP_AI_TIMER[pi] = left - 1;
+            if matches!(left, 18 | 14 | 10 | 8 | 2) {
+                let arm = [
+                    from[0] + ((dir[0] * 32) >> 12),
+                    from[1] + ((dir[1] * 32) >> 12),
+                    from[2] + ((dir[2] * 32) >> 12),
+                ];
+                spawn_projectile_dir(PROJ_HORNET, skill_hit(Sk::Hornet), arm, dir, true);
+                species::cue_or(hl_format::setpiece_audio::AG_FIRE, sfx::ELECTRO, pos);
             }
+            return;
         }
-        scan += 1;
+        if prop_attack_cooldown(pi) != 0 {
+            return;
+        }
+        if d2 <= 100 * 100 && facing_q12(pi, aim) >= 2458 {
+            damage_target(target, skill_hit(Sk::AgruntPunch), pos, health, armor);
+            prop_attack_cooldown_set(pi, 24);
+        } else if d2 >= 100 * 100 && d2 <= 1024 * 1024 && facing_q12(pi, aim) >= 2048 {
+            PROP_AI_TIMER[pi] = 24;
+            prop_attack_cooldown_set(pi, 40 + impact_rng().below(61) as u8);
+        }
+        return;
     }
-    (best_visible, best_visible != PROP_TARGET_NONE)
+    // the controller
+    if prop_attack_cooldown(pi) != 0 || d2 < 256 * 256 || d2 > 2048 * 2048 {
+        return;
+    }
+    let speed = [32, 40, 50][settings::skill().min(2)];
+    let slot = spawn_projectile_dir(PROJ_CBALL, skill_hit(Sk::ControllerBall), from, dir, true);
+    PROJECTILES[slot].vel = [(dir[0] * speed) >> 12, (dir[1] * speed) >> 12, (dir[2] * speed) >> 12];
+    species::cue_or(hl_format::setpiece_audio::CON_ATTACK, sfx::ELECTRO, pos);
+    if left >= 3 {
+        PROP_AI_TIMER[pi] = 0;
+        prop_attack_cooldown_set(pi, 52);
+    } else {
+        PROP_AI_TIMER[pi] = left + 1;
+        prop_attack_cooldown_set(pi, 4);
+    }
+}
+
+/// Whether a turret's barrel points at its target (inside 30 degrees) and
+/// whether the round along the barrel then strikes it.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn turret_line(
+    m: &Map,
+    pi: usize,
+    pos: [i32; 3],
+    aim: [i32; 3],
+    target: u8,
+    player_pos: [i32; 3],
+    nprops: usize,
+) -> (bool, bool) {
+    let yaw = prop_yaw_value(PROP_YAW[pi]);
+    let (fx, fz) = (sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0x0fff));
+    let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
+    let flat = isqrt_i32(dx * dx + dz * dz).max(1);
+    let along = (fx * dx + fz * dz) / flat; // cosine, q12
+    if along < 3547 {
+        return (false, false);
+    }
+    let from = prop_eye(m, pi);
+    let gun_point = [
+        from[0] + ((fx * flat) >> 12),
+        aim[1],
+        from[2] + ((fz * flat) >> 12),
+    ];
+    (true, monster_shot_lands(m, from, gun_point, target, player_pos, nprops, 0).is_some())
 }
 
 /// Ranged + turret AI. Acquire a target, face it, and fire a hitscan shot every
@@ -18059,7 +18260,9 @@ unsafe fn tick_shooter(
         prop_ai_set_target_visible(pi, false);
         return;
     }
-    let Some(aim) = target_aim_point(target, player_pos, nprops) else {
+    let Some(aim) = target_aim_point(target, player_pos, nprops)
+        .and_then(|truth| pursue_point(pi, target, truth, visible))
+    else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         prop_ai_set_target_visible(pi, false);
@@ -18082,10 +18285,23 @@ unsafe fn tick_shooter(
             // of an instant hitscan the tick the enemy sees you.
             prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(ATTACK_WINDUP));
         }
-        if prop_attack_cooldown(pi) == 0 {
+        if matches!(ty, 10 | 11) {
+            tick_alien_attack(pi, ty, pos, aim, d2, target, health, armor);
+            return;
+        }
+        // A turret fires along its own barrel: only once the gun is within 30
+        // degrees of the target, and the round misses if the barrel lags it.
+        let (fires, lands) = if can_move {
+            (true, true)
+        } else {
+            turret_line(m, pi, pos, aim, target, player_pos, nprops)
+        };
+        if fires && prop_attack_cooldown(pi) == 0 {
             {
                 let damage = skill_damage(ty).unwrap_or(def.atk_damage);
-                damage_target(target, damage, pos, health, armor);
+                if lands {
+                    damage_target(target, damage, pos, health, armor);
+                }
                 // Human weapons crack like an MP5 (the assassin's silenced pistol
                 // like a glock); the alien grunt and controller have their own
                 // report, the rest zap.
@@ -18107,6 +18323,7 @@ unsafe fn tick_shooter(
     }
 }
 
+#[optimize(size)]
 unsafe fn tick_headcrab(
     m: &Map,
     movers: &[phys::Mover],
@@ -18123,7 +18340,7 @@ unsafe fn tick_headcrab(
     }
     // Only headcrabs LEAP; big melee aliens (zombie/bullsquid/ichthyosaur) shamble
     // in and swipe in place -- leaping made them look like giant headcrabs.
-    let leaper = PROP_KIND[pi] == PROP_TYPE_HEADCRAB;
+    let leaper = PROP_KIND[pi] == PROP_TYPE_HEADCRAB || PROP_KIND[pi] == 59;
     let reach2 = if leaper {
         HEADCRAB_BITE_RANGE2
     } else {
@@ -18205,7 +18422,9 @@ unsafe fn tick_headcrab(
         return;
     }
 
-    let Some(aim) = target_aim_point(target, player_pos, nprops) else {
+    let Some(aim) = target_aim_point(target, player_pos, nprops)
+        .and_then(|truth| pursue_point(pi, target, truth, visible))
+    else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         prop_ai_set_target_visible(pi, false);
@@ -18216,11 +18435,33 @@ unsafe fn tick_headcrab(
     prop_face_point(pi, aim);
     PROP_AI_TARGET[pi] = target;
     // Leapers spring from leap range; big types must close to melee reach first.
-    let trigger2 = if leaper { HEADCRAB_LEAP_RANGE2 } else { reach2 };
-    if d2 <= trigger2 && prop_attack_cooldown(pi) == 0 && visible {
+    // A headcrab leaps from 256 units (a baby crab from 180) and only once it
+    // faces the target (cosine 0.65, `CheckRangeAttack1`).
+    let trigger2 = if PROP_KIND[pi] == 59 {
+        180 * 180
+    } else if leaper {
+        HEADCRAB_LEAP_RANGE2
+    } else {
+        reach2
+    };
+    let facing = !leaper || {
+        let yaw = prop_yaw_value(PROP_YAW[pi]);
+        let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
+        let flat = isqrt_i32(dx * dx + dz * dz).max(1);
+        (sincos::sin_q12(yaw) * dx + sincos::sin_q12((yaw + 1024) & 0x0fff) * dz) / flat >= 2662
+    };
+    if d2 <= trigger2 && prop_attack_cooldown(pi) == 0 && visible && facing {
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = HEADCRAB_ATTACK_TICKS;
-        prop_attack_cooldown_set(pi, HEADCRAB_ATTACK_COOLDOWN);
+        // The next bite is 2 s after the leap plus up to half a second of waiting.
+        prop_attack_cooldown_set(
+            pi,
+            if leaper {
+                HEADCRAB_ATTACK_COOLDOWN + 5 + impact_rng().below(11) as u8
+            } else {
+                HEADCRAB_ATTACK_COOLDOWN
+            },
+        );
         let snd = match PROP_KIND[pi] {
             5 => sfx::ZO_ATTACK, // zombie swipe
             6 => sfx::HE_BLAST,  // houndeye sonic blast
@@ -18723,7 +18964,7 @@ unsafe fn tick_barney(
 
     let reacquire = ai_reacquire(pi);
     let target = if reacquire {
-        let found = find_barney_target(m, sight_movers, pi, nprops);
+        let found = find_barney_target(m, sight_movers, pi, player_pos, nprops);
         // Barney's target search only returns candidates with clear LOS.
         prop_ai_set_target_visible(pi, found != PROP_TARGET_NONE);
         found
@@ -18923,7 +19164,7 @@ unsafe fn tick_scientist(
         let yaw = turn_toward(
             prop_yaw_value(PROP_YAW[pi]),
             yaw_from_vec(dx, dz),
-            PROP_TURN_RATE,
+            senses::turn_rate_q12(PROP_KIND[pi]),
         );
         PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], yaw);
         PROP_STATE[pi] = PROP_STATE_MOVE;
@@ -21661,6 +21902,8 @@ fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
         // Measured on the retail game: about 45 units per tick (900 u/s) along a straight
         // line, 9 ticks from the start of the spit animation at 150 units, 17 at 500.
         PROJ_SPIT => (45, 55, false, 0, (150, 220, 80), 4), // bullsquid acid glob
+        // The controller's ball: 800 u/s at Medium (650 and 1000 at Easy and Hard).
+        PROJ_CBALL => (40, 60, false, 0, (130, 170, 255), 4),
         PROJ_SATCHEL => (40, u8::MAX, true, blast_radius(150), (170, 70, 50), 5),
         // ShootContact has no fuse: it travels until its first collision. The
         // source blast radius defaults to damage * 2.5 (100 * 2.5 = 250).
@@ -21970,27 +22213,51 @@ unsafe fn blast_sees(
     logic_state::blast_reaches(blast_wet, level, blast_line_clear(m, src, body))
 }
 
-/// Houndeye sonic shockwave: radius damage centred on the animal, player only
-/// (HL's houndeye pulse). Falls off with distance. Visual is the HE_BLAST sound
-/// plus the caller's particle burst.
-unsafe fn houndeye_blast(center: [i32; 3], radius: i32, dmg: u8) {
-    let d2 = dist2_3(
-        [
-            LOGIC_PLAYER_POS[0],
-            LOGIC_PLAYER_POS[1] + 18,
-            LOGIC_PLAYER_POS[2],
-        ],
-        center,
-    );
-    if d2 < radius * radius {
-        let scaled = logic_state::radius_damage_at_distance(dmg, radius, isqrt_i32(d2));
+/// A houndeye's sonic wave (`CHoundeye::SonicAttack`): everything that can be
+/// hurt inside `radius` except other houndeyes takes `damage` less its share of
+/// the distance. The player who is out of sight takes half; an actor out of
+/// sight takes nothing (so a houndeye next door hurts no one); breakables take
+/// it through walls.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn houndeye_blast(m: &Map, pi: usize, radius: i32, dmg: u8) {
+    let src = prop_target(PROP_KIND[pi], PROP_POS[pi]);
+    let falloff = |d: i32, full: i32| (full * (radius - d).max(0) / radius).clamp(0, 255) as u8;
+    let body = [LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]];
+    let d = isqrt_i32(dist2_3(body, src));
+    if d < radius {
+        let mut scaled = falloff(d, dmg as i32);
+        if !blast_line_clear(m, src, body) {
+            scaled /= 2;
+        }
         PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(scaled as u16);
-        note_damage_direction(center);
+        note_damage_direction(src);
     }
-    queue_explosion_fx(center, 40); // pale burst stand-in (a proper ring lands with the FX pool)
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut q = 0usize;
+    while q < nprops {
+        if q != pi
+            && PROP_ACTIVE[q] != 0
+            && PROP_HEALTH[q] != 0
+            && PROP_KIND[q] != PROP_TYPE_HOUNDEYE
+            && prop_start_health(PROP_KIND[q]) != 0
+        {
+            let t = prop_target(PROP_KIND[q], PROP_POS[q]);
+            let d = isqrt_i32(dist2_3(t, src));
+            if d < radius && blast_line_clear(m, src, t) {
+                let scaled = falloff(d, dmg as i32);
+                if scaled != 0 {
+                    damage_prop(q, scaled, false);
+                }
+            }
+        }
+        q += 1;
+    }
+    queue_explosion_fx(src, 40); // pale burst stand-in (a proper ring lands with the FX pool)
 }
 
 #[inline(never)]
+#[optimize(size)]
 unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
     let mut i = 0;
     while i < MAX_PROJECTILES {
@@ -35394,6 +35661,7 @@ fn play(
                     viewmodel_anim_start = sim_frame_no;
                 }
                 recoil = 16;
+                unsafe { make_noise(eye, senses::weapon_volume(weapon.current)) };
                 #[cfg(feature = "emulator-telemetry")]
                 if DEBUG_ALL_WEAPONS {
                     debug_line(
@@ -35550,6 +35818,7 @@ fn play(
                     PAIN_SFX_COOLDOWN -= 1;
                 }
                 MOVE_TICK = MOVE_TICK.wrapping_add(1);
+                (*core::ptr::addr_of_mut!(SOUNDS)).tick();
                 if MON_PAIN_COOLDOWN > 0 {
                     MON_PAIN_COOLDOWN -= 1;
                 }

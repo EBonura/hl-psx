@@ -87,6 +87,7 @@ pub const PROJ_TRIPMINE: u8 = 7;
 pub const PROJ_M203: u8 = 8;
 pub const PROJ_HORNET_FAST: u8 = 9;
 pub const PROJ_BOLT_WATER: u8 = 10;
+pub const PROJ_CBALL: u8 = 12; // the controller's energy ball (enemy projectile)
 pub const GRENADE_FUSE_TICKS: u32 = 60; // CHandGrenade: three-second fuse at 20 Hz
 
 pub struct WeaponDef {
@@ -184,8 +185,8 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef_atk(40, 32, 91, AI_RANGED, 6, 600, 15, 55), // 7 bullsquid (acid spit at range)
     mdef_atk(50, 40, 90, AI_RANGED, 16, 1000, 5, 8), // 8 hgrunt (mp5 bursts)
     mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24), // 9 alien_slave (zap)
-    mdef_atk(60, 48, 100, AI_RANGED, 16, 500, 8, 4), // 10 alien_grunt (hornets)
-    mdef_atk(60, 40, 100, AI_RANGED, 16, 1024, 3, 14), // 11 alien_controller (energy)
+    mdef_atk(60, 48, 100, AI_RANGED, 16, 1024, 8, 4), // 10 alien_grunt (hornet volleys inside 1024 units)
+    mdef_atk(60, 40, 100, AI_RANGED, 16, 2048, 3, 14), // 11 alien_controller (energy balls out to 2048)
     mdef(25, 32, 170, AI_IDLE),                 // 12 barnacle (retail spawns it with 25)
     mdef(16, 8, 40, AI_IDLE),                   // 13 leech (swimmer; species::tick_leech)
     mdef(1, 4, 30, AI_IDLE),                    // 14 cockroach (passive; any hit kills it)
