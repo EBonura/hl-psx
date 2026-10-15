@@ -1698,10 +1698,6 @@ const TRACER_LOOKS: [(i32, (u8, u8, u8)); 10] = [
     (5, (180, 255, 96)),
     (7, (255, 224, 160)),
 ];
-// Jump input buffer: a Cross press up to JUMP_BUFFER_TICKS before landing still
-// jumps (forgives an early press on a fall -- HL-ish landing feel).
-static mut JUMP_BUFFER: u8 = 0;
-const JUMP_BUFFER_TICKS: u8 = 2;
 // Drowning state (player.cpp:1215-1329): air timer, escalation, and the
 // recoverable damage tally. Self-resetting the first tick the eye surfaces.
 /// Air, the drowning hits and the health owed back (player_rules::Breath).
@@ -34588,26 +34584,13 @@ fn play(
             // delta before the update, then block them through their shifted hull.
             telemetry::stage_begin(telemetry::stage::SIM_COLLISION);
             // Jump is edge-triggered like HL (holding Cross does not pogo --
-            // pm_shared.c:2554 requires a release between jumps), with the
-            // 2-tick buffer forgiving a press just before touchdown.
+            // pm_shared.c:2554 requires a release between jumps).
             let jump_held = input_sample.held(semantic_input::ACTION_JUMP);
             let jump_edge = semantic_input::rising_edge(jump_held, jump_was_held);
             jump_was_held = jump_held;
-            let jump_want = unsafe {
-                let want = (jump_edge || JUMP_BUFFER > 0) && player.on_ground;
-                // A press on the ladder is the detach input, not a queued
-                // hop: HL needs a release between jumps, so dismounting near
-                // the floor must land silent instead of buffer-bouncing.
-                if jump_edge && !player.on_ground && active_ladder < 0 {
-                    JUMP_BUFFER = JUMP_BUFFER_TICKS;
-                } else if JUMP_BUFFER > 0 {
-                    JUMP_BUFFER -= 1;
-                }
-                if want {
-                    JUMP_BUFFER = 0; // consumed on the landing tick
-                }
-                want
-            };
+            // PM_Jump: only a fresh press on the ground jumps; a press in the air
+            // marks the button used, so there is no early-press buffer.
+            let jump_want = player_rules::jump_starts(jump_edge, player.on_ground);
             let was_attached = active_ladder >= 0;
             let contact = unsafe {
                 ladder_touch(

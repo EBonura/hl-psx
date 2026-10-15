@@ -153,6 +153,15 @@ pub fn view_height_next(cur: i32, crouch: bool, was_crouch: bool, pending: Optio
     }
 }
 
+// --------------------------------------------------------------------- jump
+
+/// PM_Jump: a jump starts only from a fresh press while standing. A press in
+/// the air marks the button used and a held button does not hop again, so
+/// there is no early-press buffer and no auto-hop.
+pub const fn jump_starts(fresh_press: bool, on_ground: bool) -> bool {
+    fresh_press && on_ground
+}
+
 // ---------------------------------------------------------------------- use
 
 /// Ticks between pulses of a held use button (chargers, valve wheels).
@@ -450,6 +459,13 @@ mod tests {
         assert_eq!(view_height_next(up, false, false, None), 18);
         assert_eq!(view_height_next(26, false, false, None), 28);
         assert_eq!(view_height_next(28, false, false, None), 28);
+    }
+
+    #[test]
+    fn a_jump_needs_a_fresh_press_on_the_ground() {
+        assert!(jump_starts(true, true));
+        assert!(!jump_starts(true, false));
+        assert!(!jump_starts(false, true));
     }
 
     #[test]
