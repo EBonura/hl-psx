@@ -8627,6 +8627,12 @@ fn collect_logic_entities_with_lightstyles(
                 parse_f32_key(block, "m_imaxlivechildren", 0.0).clamp(0.0, u16::MAX as f32) as u16
             }
             LOGIC_INFODECAL => infodecal_pick(ent_value(block, "texture").unwrap_or("")).1,
+            // CTargetCDAudio::KeyValue: `radius` (pev->scale). A target_cdaudio
+            // with one starts its track when the player comes within it
+            // (Think, 0.5 s poll); trigger_cdaudio has none. Cooked units.
+            LOGIC_CDTRACK => (parse_f32_key(block, "radius", 0.0) / scale)
+                .round()
+                .clamp(0.0, u16::MAX as f32) as u16,
             // Debris kind: 3 + GoldSrc material. gibshooter throws flesh;
             // env_shooter's shootsounds picks glass, wood, metal, flesh or
             // rocks (drawn as cinder block), none as metal.
@@ -17862,6 +17868,19 @@ mod tests {
         }
         assert_eq!(total,29);
         assert_eq!(identities,weaponbox::VALID_REMOVED_MASK);
+    }
+
+    #[test]
+    fn target_cdaudio_cooks_its_radius_and_track_in_world_units() {
+        // CTargetCDAudio::KeyValue: radius (pev->scale); health is the track.
+        let input = br#"{ "classname" "target_cdaudio" "origin" "416 -480 48" "radius" "256" "health" "13" }
+{ "classname" "target_cdaudio" "origin" "0 0 0" "targetname" "gargdeathtrack" "health" "28" }"#;
+        let cook = collect_logic_entities(input, &[], &[], 2.0, &Default::default(), &Default::default()).unwrap();
+        assert_eq!(cook.ents.len(), 2);
+        assert_eq!((cook.ents[0].kind, cook.ents[0].arg0, cook.ents[0].arg1), (LOGIC_CDTRACK, 13, 128));
+        assert_eq!(cook.ents[0].origin, [208, 24, -240]);
+        // No radius: fired by name only, never polled.
+        assert_eq!((cook.ents[1].arg0, cook.ents[1].arg1), (28, 0));
     }
 
     #[test]

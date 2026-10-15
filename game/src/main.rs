@@ -5869,6 +5869,8 @@ unsafe fn music_apply() {
         music::stop();
         CD_TRACK_CUR = CD_TRACK_WANT;
     }
+    #[cfg(feature = "reference-trace")]
+    reference_trace::music(SIM_NOW, CD_TRACK_WANT, CD_TRACK_CUR);
 }
 
 /// Close the physical CD audio path before a runtime WORLD.PAK data read.
@@ -6453,6 +6455,9 @@ const LOGIC_STATE_TOP: u8 = 2;
 const LOGIC_STATE_GOING_DOWN: u8 = 3;
 const LOGIC_STATE_WAITING: u8 = 4;
 const LOGIC_STATE_REMOVED: u8 = 255;
+/// target_cdaudio radius poll: Spawn waits 1.0 s, Think repeats every 0.5 s.
+const CD_RADIUS_FIRST_TICKS: u16 = 20;
+const CD_RADIUS_POLL_TICKS: u16 = 10;
 const LOGIC_PROP_NONE: u8 = 255;
 const SF_DOOR_START_OPEN: u16 = 1;
 const SF_DOOR_TOGGLE: u16 = 32;
@@ -11293,10 +11298,7 @@ unsafe fn logic_use_entity(
             TITLE_LEFT_ALIGNED = rec.arg1 & 4 != 0;
             TITLE_Y_Q5 = ((rec.arg1 >> 3) & 31) as u8;
         }
-        map::LOGIC_CDTRACK => {
-            CD_TRACK_WANT = rec.arg0 as i16;
-            music_apply();
-        }
+        map::LOGIC_CDTRACK => cd_play(li, rec),
         map::LOGIC_SENTENCE => {
             if LOGIC_STATE[li] != LOGIC_STATE_BOTTOM {
                 return;
@@ -12558,6 +12560,34 @@ unsafe fn sound_room_think(m: &Map,nents: usize,li: usize,rec: map::LogicEnt,now
     if let Some(room)=observed.room_update {sfx::apply_room(room);}
 }
 
+/// CTargetCDAudio::Think: a target_cdaudio with a radius polls every half
+/// second (10 ticks, first one second after spawn) and, once the player's
+/// origin is within the radius, plays its track and removes itself. The origin
+/// is the hull centre on both sides.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn cd_radius_think(li: usize, rec: map::LogicEnt, now: u16) {
+    LOGIC_NEXT[li] = now.wrapping_add(CD_RADIUS_POLL_TICKS);
+    let r = rec.arg1 as i32;
+    let dx = (rec.origin[0] - LOGIC_PLAYER_POS[0]).clamp(-4096, 4096);
+    let dy = (rec.origin[1] - LOGIC_PLAYER_POS[1]).clamp(-4096, 4096);
+    let dz = (rec.origin[2] - LOGIC_PLAYER_POS[2]).clamp(-4096, 4096);
+    if dx * dx + dy * dy + dz * dz <= r * r {
+        cd_play(li, rec);
+    }
+}
+
+/// CTargetCDAudio::Play / CTriggerCDAudio::PlayTrack: `cd play N` (N = -1
+/// stops), then the entity removes itself, so a second touch, use or poll does
+/// nothing.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn cd_play(li: usize, rec: map::LogicEnt) {
+    CD_TRACK_WANT = rec.arg0 as i16;
+    music_apply();
+    LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+}
+
 unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
     logic_process_events(m, nlogic, nents, now);
     if CAMERA_LI != u16::MAX {
@@ -12579,6 +12609,13 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
         if LOGIC_KIND[li] == map::LOGIC_ENV_SOUND {
             sound_room_think(m,nents,li,m.logic(li),now);
             scan+=1;continue;
+        }
+        if LOGIC_KIND[li] == map::LOGIC_CDTRACK {
+            if LOGIC_STATE[li] != LOGIC_STATE_REMOVED && env_sound::due(now, LOGIC_NEXT[li]) {
+                cd_radius_think(li, m.logic(li), now);
+            }
+            scan += 1;
+            continue;
         }
         if LOGIC_KIND[li] == map::LOGIC_ENV_BUBBLES {
             let rec=m.logic(li);
@@ -13415,11 +13452,9 @@ unsafe fn logic_touch_triggers(
                 map::LOGIC_CDTRACK => {
                     // trigger_cdaudio: brush touch plays once then removes
                     // itself (HL kills the trigger). target_cdaudio has no
-                    // volume and only fires via targets.
+                    // volume; it plays by use or by radius (cd_radius_think).
                     if rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs {
-                        CD_TRACK_WANT = rec.arg0 as i16;
-                        music_apply();
-                        LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+                        cd_play(li, rec);
                     }
                 }
                 _ => {}
@@ -13795,6 +13830,9 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
             LOGIC_STATE[li] = LOGIC_STATE_WAITING;
             LOGIC_NEXT[li] = now.wrapping_add(maker_delay(rec));
         }
+        if rec.kind == map::LOGIC_CDTRACK {
+            LOGIC_NEXT[li] = now.wrapping_add(CD_RADIUS_FIRST_TICKS);
+        }
         if rec.kind==map::LOGIC_ENV_SOUND {
             assert!(rec.arg1<29,"unsupported cooked room type");
             LOGIC_NEXT[li]=now.wrapping_add(2+impact_rng().below(7) as u16);
@@ -13958,7 +13996,9 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     if !hot_overflow {
         li = 0;
         while li < nlogic {
-            if logic_pre_tick_candidate(LOGIC_KIND[li]) {
+            if logic_pre_tick_candidate(LOGIC_KIND[li])
+                || (LOGIC_KIND[li] == map::LOGIC_CDTRACK && m.logic(li).arg1 != 0)
+            {
                 let slot = nlogic + LOGIC_TOUCH_COUNT as usize + LOGIC_PRE_COUNT as usize;
                 let high_floor = LOGIC_STORAGE_WORDS - LOGIC_SPARK_COUNT as usize;
                 if slot < high_floor {
