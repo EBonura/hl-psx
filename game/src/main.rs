@@ -21759,41 +21759,45 @@ unsafe fn gauss_beam(
             // Punch through: find where the beam leaves the wall within its
             // remaining damage in units, then blast there with what is left.
             punched = true;
-            let far = [
-                h.pos[0] + ((dir[0] * (dmg + 8)) >> 12),
-                h.pos[1] + ((dir[1] * (dmg + 8)) >> 12),
-                h.pos[2] + ((dir[2] * (dmg + 8)) >> 12),
-            ];
-            match phys::trace_line(m, movers, far, h.pos) {
-                Some(x) => {
-                    let d = [x.pos[0] - h.pos[0], x.pos[1] - h.pos[1], x.pos[2] - h.pos[2]];
-                    let thick = isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
-                    if thick >= dmg {
-                        DMG_BLAST = false;
-                        break;
-                    }
-                    dmg -= thick;
-                    #[cfg(feature = "interaction-probe")]
-                    reference_trace::probe_vals(SIM_NOW as u32, "gauss_punch", &[thick, dmg, x.pos[0], x.pos[1], x.pos[2]]);
-                    let blast = dmg.clamp(0, 255) as u8;
-                    let out = [
-                        x.pos[0] + ((dir[0] * 8) >> 12),
-                        x.pos[1] + ((dir[1] * 8) >> 12),
-                        x.pos[2] + ((dir[2] * 8) >> 12),
-                    ];
-                    radius_damage(m, out, blast, blast_radius(blast), true);
-                    src = [
-                        x.pos[0] + (dir[0] >> 12),
-                        x.pos[1] + (dir[1] >> 12),
-                        x.pos[2] + (dir[2] >> 12),
-                    ];
-                    tracer_from = x.pos;
-                }
-                None => {
-                    DMG_BLAST = false;
-                    break;
-                }
+            // The far point must lie in open air past the wall: try the full
+            // reach first, then shorter ones for a wall with more behind it.
+            let mut exit = None;
+            let mut reach = dmg + 8;
+            while exit.is_none() && reach >= 16 {
+                let far = [
+                    h.pos[0] + ((dir[0] * reach) >> 12),
+                    h.pos[1] + ((dir[1] * reach) >> 12),
+                    h.pos[2] + ((dir[2] * reach) >> 12),
+                ];
+                exit = phys::trace_line(m, movers, far, h.pos);
+                reach = reach * 3 / 4;
             }
+            let Some(x) = exit else {
+                DMG_BLAST = false;
+                break;
+            };
+            let d = [x.pos[0] - h.pos[0], x.pos[1] - h.pos[1], x.pos[2] - h.pos[2]];
+            let thick = isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
+            if thick >= dmg {
+                DMG_BLAST = false;
+                break;
+            }
+            dmg -= thick;
+            #[cfg(feature = "interaction-probe")]
+            reference_trace::probe_vals(SIM_NOW as u32, "gauss_punch", &[thick, dmg, x.pos[0], x.pos[1], x.pos[2]]);
+            let blast = dmg.clamp(0, 255) as u8;
+            let out = [
+                x.pos[0] + ((dir[0] * 8) >> 12),
+                x.pos[1] + ((dir[1] * 8) >> 12),
+                x.pos[2] + ((dir[2] * 8) >> 12),
+            ];
+            radius_damage(m, out, blast, blast_radius(blast), true);
+            src = [
+                x.pos[0] + (dir[0] >> 12),
+                x.pos[1] + (dir[1] >> 12),
+                x.pos[2] + (dir[2] >> 12),
+            ];
+            tracer_from = x.pos;
         } else {
             DMG_BLAST = false;
             break;
