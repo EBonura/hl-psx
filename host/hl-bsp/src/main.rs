@@ -18074,13 +18074,20 @@ mod tests {
                 r#""classname" "trigger_hurt" "model" "*1" "damage" "10" "damagetype" "{damagetype}""#
             ))
         };
+        // The suit's damage-kind code rides in bits 4..6 (hl_format::hev).
+        let kind = |damagetype: &str| (hurt(damagetype).flags & hl_format::hev::HURT_KIND_MASK) >> hl_format::hev::HURT_KIND_SHIFT;
+        assert_eq!(kind("32"), hl_format::hev::HURT_FALL);
+        assert_eq!(kind("131072"), hl_format::hev::HURT_POISON);
+        assert_eq!(kind("1048576"), hl_format::hev::HURT_ACID);
+        assert_eq!(kind("262144"), 0);
         // generic, fall (1 << 5), drown (1 << 14), poison (1 << 17), radiation (1 << 18)
-        assert_eq!(hurt("0").flags, 0);
-        assert_eq!(hurt("32").flags, LOGIC_TRIGGER_HURT_BYPASS_ARMOUR);
-        assert_eq!(hurt("16384").flags, LOGIC_TRIGGER_HURT_BYPASS_ARMOUR);
-        assert_eq!(hurt("131072").flags, LOGIC_TRIGGER_HURT_POISON);
-        assert_eq!(hurt("262144").flags, LOGIC_TRIGGER_HURT_RADIATION);
-        assert_eq!(hurt("393216").flags, LOGIC_TRIGGER_HURT_RADIATION | LOGIC_TRIGGER_HURT_POISON);
+        let flags = |d: &str| hurt(d).flags & !hl_format::hev::HURT_KIND_MASK;
+        assert_eq!(flags("0"), 0);
+        assert_eq!(flags("32"), LOGIC_TRIGGER_HURT_BYPASS_ARMOUR);
+        assert_eq!(flags("16384"), LOGIC_TRIGGER_HURT_BYPASS_ARMOUR);
+        assert_eq!(flags("131072"), LOGIC_TRIGGER_HURT_POISON);
+        assert_eq!(flags("262144"), LOGIC_TRIGGER_HURT_RADIATION);
+        assert_eq!(flags("393216"), LOGIC_TRIGGER_HURT_RADIATION | LOGIC_TRIGGER_HURT_POISON);
     }
     #[test]
     fn missing_waits_follow_the_base_classes() {
