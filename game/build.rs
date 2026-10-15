@@ -1301,6 +1301,8 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 "watch" => (23, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
                 // club KIND DMG : one crowbar-class hit of DMG on the nearest live monster of that kind
                 "club" => (25, [num(2) as i32, num(3) as i32, 0, 0, 0, 0], String::new()),
+                // projlog 1|0 : log every live projectile (kind, position, velocity) each tick
+                "projlog" => (24, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
                 // pos : log the player position
                 "pos" => (13, [0; 6], String::new()),
                 // die : drop the player's health to zero (god off)

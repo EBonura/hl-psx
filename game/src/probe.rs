@@ -36,6 +36,7 @@ static mut ENDED: bool = false;
 static mut GOTO: Option<(usize, bool)> = None;
 static mut FORCE_NEXT: bool = false;
 static mut WATCH_KIND: i32 = -1;
+static mut PROJ_LOG: bool = false;
 
 pub unsafe fn take_goto() -> Option<(usize, bool)> {
     let g = GOTO;
@@ -348,6 +349,7 @@ pub unsafe fn step(
                 }
             }
             23 => WATCH_KIND = c.a[0] as i32,
+            24 => PROJ_LOG = c.a[0] != 0,
             16 => FACE = if cname == "-" { 0 } else { name_id(m, cname) },
             13 => crate::reference_trace::probe_vals(
                 now,
@@ -356,6 +358,9 @@ pub unsafe fn step(
             ),
             _ => {}
         }
+    }
+    if PROJ_LOG {
+        crate::probe_projectiles(now);
     }
     if WATCH_KIND >= 0 && now % 10 == 0 {
         let mut pi = 0usize;

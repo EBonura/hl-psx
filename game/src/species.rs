@@ -257,7 +257,7 @@ unsafe fn throw_grenade(m: &Map, pi: usize, aim: [i32; 3]) {
     PROJECTILES[slot].vel = [
         (aim[0] - from[0]) / FLIGHT,
         // The projectile pass lowers vy by gravity before each move.
-        (aim[1] - from[1] + PROJ_GRAVITY * FLIGHT * (FLIGHT + 1) / 2) / FLIGHT,
+        (aim[1] - from[1] + throwable::LOB_GRAVITY * FLIGHT * (FLIGHT + 1) / 2) / FLIGHT,
         (aim[2] - from[2]) / FLIGHT,
     ];
     PROJECTILES[slot].life = FLIGHT as u8;

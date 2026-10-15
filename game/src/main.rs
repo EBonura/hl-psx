@@ -84,6 +84,7 @@ mod setpiece_logic;
 mod setpiece_sfx;
 mod species;
 mod tank;
+mod throwable;
 mod tripmine;
 use osprey::{osprey_init, tick_osprey, OSPREY, OSPREY_TILT, PROP_TYPE_OSPREY};
 use psx_goldsrc::semantic_input;
@@ -21511,6 +21512,9 @@ struct Projectile {
     damage: u8,
     life: u8,
     from_enemy: bool, // enemy shots hit the player; player shots hit props
+    /// Ticks since a lobbed body last touched the floor (255 = not recently):
+    /// a body that did within two ticks is rolling and loses speed to it.
+    since_floor: u8,
 }
 
 impl Projectile {
@@ -21522,6 +21526,7 @@ impl Projectile {
         damage: 0,
         life: 0,
         from_enemy: false,
+        since_floor: 255,
     };
 }
 
@@ -21641,8 +21646,28 @@ unsafe fn guide_projectile(index: usize, target: [i32; 3], old_weight: i32) {
 /// Player weapon projectile: fires forward along the view.
 unsafe fn spawn_projectile(kind: u8, damage: u8, eye: [i32; 3], rot: &Mat3I16) -> usize {
     let fwd = [rot.m[2][0] as i32, rot.m[2][1] as i32, rot.m[2][2] as i32];
-    spawn_projectile_dir(kind, damage, eye, fwd, false)
+    let slot = spawn_projectile_dir(kind, damage, eye, fwd, false);
+    // Hand grenade and satchel leave the player the way handgrenade.cpp and
+    // satchel.cpp throw them: a pitch-scaled lob (650 u/s level) from 16 units
+    // ahead of the eye, and a 274 u/s toss from the player origin, both on top
+    // of the thrower's own velocity.
+    if kind == PROJ_GRENADE {
+        PROJECTILES[slot].vel = throwable::hand_grenade_velocity(fwd, LOGIC_PLAYER_YAW, FIRE_VEL);
+        PROJECTILES[slot].pos = [
+            eye[0] + ((fwd[0] * 16) >> 12),
+            eye[1] + ((fwd[1] * 16) >> 12),
+            eye[2] + ((fwd[2] * 16) >> 12),
+        ];
+    } else if kind == PROJ_SATCHEL {
+        PROJECTILES[slot].vel = throwable::satchel_velocity(fwd, FIRE_VEL);
+        PROJECTILES[slot].pos = [eye[0], eye[1] - VIEW_HEIGHT, eye[2]];
+    }
+    slot
 }
+
+/// The thrower's velocity (units/tick) at the moment a lobbed weapon leaves
+/// the hand; `handgrenade.cpp` and `satchel.cpp` both add it to the throw.
+static mut FIRE_VEL: [i32; 3] = [0; 3];
 
 /// Spawn a projectile from `origin` along the q12 direction `dir`. `from_enemy`
 /// routes its damage at the player instead of props.
@@ -21687,6 +21712,7 @@ unsafe fn spawn_projectile_dir(
         damage,
         life,
         from_enemy,
+        since_floor: 255,
     };
     slot
 }
@@ -21700,7 +21726,13 @@ unsafe fn detonate_satchels(m: &Map) -> bool {
         if PROJECTILES[i].active && PROJECTILES[i].kind == PROJ_SATCHEL {
             let p = PROJECTILES[i];
             PROJECTILES[i].active = false;
-            explode(m, p.pos, p.damage, proj_params(PROJ_SATCHEL).3, true);
+            let at = grenade_blast_origin(
+                m,
+                &MOVERS[..MOVER_COUNT.min(MAX_ENTS + 1)],
+                p.pos,
+                p.damage,
+            );
+            explode(m, at, p.damage, proj_params(PROJ_SATCHEL).3, true);
             detonated = true;
         }
         i += 1;
@@ -21874,6 +21906,69 @@ unsafe fn houndeye_blast(center: [i32; 3], radius: i32, dmg: u8) {
     queue_explosion_fx(center, 40); // pale burst stand-in (a proper ring lands with the FX pool)
 }
 
+/// Interaction probe: one trace line per live projectile
+/// (slot, kind, position, velocity), for headless weapon checks.
+#[cfg(feature = "interaction-probe")]
+unsafe fn probe_projectiles(now: u32) {
+    let mut i = 0;
+    while i < MAX_PROJECTILES {
+        let p = PROJECTILES[i];
+        if p.active {
+            reference_trace::probe_vals(
+                now,
+                "proj",
+                &[
+                    i as i32,
+                    p.kind as i32,
+                    p.pos[0],
+                    p.pos[1],
+                    p.pos[2],
+                    p.vel[0],
+                    p.vel[1],
+                    p.vel[2],
+                    p.life as i32,
+                ],
+            );
+        }
+        i += 1;
+    }
+}
+
+/// Where an explosion of `dmg` that touched `normal` at `pos` is centred:
+/// ggrenade.cpp Explode moves it (damage - 24) * 0.6 units off the surface
+/// (45 for a 100 damage grenade or rocket).
+#[inline(never)]
+#[optimize(size)]
+fn surface_lift(pos: [i32; 3], normal: [i32; 3], dmg: u8) -> [i32; 3] {
+    let off = (dmg as i32 * 3 - 72).max(0) / 5;
+    [
+        pos[0] + ((normal[0] * off) >> 12),
+        pos[1] + ((normal[1] * off) >> 12),
+        pos[2] + ((normal[2] * off) >> 12),
+    ]
+}
+
+/// CGrenade::Detonate: look 40 units below the grenade (from 8 above it) and,
+/// when a surface is there, centre the blast off it as `surface_lift` does.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn grenade_blast_origin(
+    m: &Map,
+    movers: &[phys::Mover],
+    pos: [i32; 3],
+    dmg: u8,
+) -> [i32; 3] {
+    match phys::trace_line(
+        m,
+        movers,
+        [pos[0], pos[1] + 8, pos[2]],
+        [pos[0], pos[1] - 32, pos[2]],
+    ) {
+        Some(h) => surface_lift(h.pos, h.normal, dmg),
+        None => pos,
+    }
+}
+
 #[inline(never)]
 unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
     let mut i = 0;
@@ -21895,7 +21990,7 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             if PROJECTILES[i].life == 0 {
                 let p = PROJECTILES[i];
                 PROJECTILES[i].active = false;
-                explode(m, p.pos, p.damage, aoe, !p.from_enemy);
+                explode(m, grenade_blast_origin(m, movers, p.pos, p.damage), p.damage, aoe, !p.from_enemy);
             }
             i += 1;
             continue;
@@ -21950,11 +22045,15 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             }
         }
         let old = PROJECTILES[i].pos;
+        let rolling = PROJECTILES[i].since_floor <= 2;
         if gravity {
-            PROJECTILES[i].vel[1] -= if kind == PROJ_M203 {
-                M203_GRAVITY
-            } else {
-                PROJ_GRAVITY
+            PROJECTILES[i].vel[1] -= match kind {
+                PROJ_M203 => M203_GRAVITY,
+                PROJ_GRENADE => throwable::LOB_GRAVITY,
+                // satchel.cpp: gravity 0.5 until it first touches anything, then 1.
+                PROJ_SATCHEL if PROJECTILES[i].life == u8::MAX => throwable::LOB_GRAVITY,
+                PROJ_SATCHEL => throwable::LOB_GRAVITY_FULL,
+                _ => PROJ_GRAVITY,
             };
         }
         let v = PROJECTILES[i].vel;
@@ -22014,46 +22113,44 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             if best != usize::MAX {
                 hit = true;
                 hit_pos = prop_target(PROP_KIND[best], PROP_POS[best]);
+                hit_normal = [0; 3];
             }
         }
         PROJECTILES[i].pos = new;
+        if !hit {
+            PROJECTILES[i].since_floor = PROJECTILES[i].since_floor.saturating_add(1);
+        }
         if kind != PROJ_SATCHEL && kind != PROJ_M203 && PROJECTILES[i].life > 0 {
             PROJECTILES[i].life -= 1;
         }
-        if kind == PROJ_SATCHEL && hit {
-            PROJECTILES[i].pos = hit_pos;
-            PROJECTILES[i].vel = [0; 3];
-            i += 1;
-            continue;
-        }
-        if kind == PROJ_GRENADE && hit {
-            let v = PROJECTILES[i].vel;
-            let reflected = if hit_normal == [0; 3] {
-                [-v[0] / 2, -v[1] / 2, -v[2] / 2]
+        if (kind == PROJ_SATCHEL || kind == PROJ_GRENADE) && hit {
+            // MOVETYPE_BOUNCE with friction 0.8: the normal part comes back
+            // at a fifth, the slide stays, and a body rolling on the floor
+            // keeps losing speed until it stops (throwable.rs).
+            let roll_64 = if kind == PROJ_SATCHEL {
+                throwable::SATCHEL_ROLL_64
             } else {
-                let along =
-                    (v[0] * hit_normal[0] + v[1] * hit_normal[1] + v[2] * hit_normal[2]) >> 12;
+                throwable::GRENADE_ROLL_64
+            };
+            let b = throwable::bounce(PROJECTILES[i].vel, hit_normal, rolling, roll_64);
+            PROJECTILES[i].vel = b.vel;
+            PROJECTILES[i].pos = if hit_normal == [0; 3] {
+                old
+            } else {
                 [
-                    (v[0] - ((hit_normal[0] * along * 2) >> 12)) / 2,
-                    (v[1] - ((hit_normal[1] * along * 2) >> 12)) / 2,
-                    (v[2] - ((hit_normal[2] * along * 2) >> 12)) / 2,
+                    hit_pos[0] + (hit_normal[0] >> 11),
+                    hit_pos[1] + (hit_normal[1] >> 11),
+                    hit_pos[2] + (hit_normal[2] >> 11),
                 ]
             };
-            PROJECTILES[i].pos = [
-                hit_pos[0] + (hit_normal[0] >> 11),
-                hit_pos[1] + (hit_normal[1] >> 11),
-                hit_pos[2] + (hit_normal[2] >> 11),
-            ];
-            PROJECTILES[i].vel =
-                if reflected[0].abs() + reflected[1].abs() + reflected[2].abs() < 12 {
-                    [0; 3]
-                } else {
-                    reflected
-                };
-            if PROJECTILES[i].life == 0 {
+            PROJECTILES[i].since_floor = if b.ground { 0 } else { u8::MAX };
+            if kind == PROJ_SATCHEL {
+                // Touched: full gravity from here on (life is otherwise unused).
+                PROJECTILES[i].life = u8::MAX - 1;
+            } else if PROJECTILES[i].life == 0 {
                 let p = PROJECTILES[i];
                 PROJECTILES[i].active = false;
-                explode(m, p.pos, p.damage, aoe, !p.from_enemy);
+                explode(m, grenade_blast_origin(m, movers, p.pos, p.damage), p.damage, aoe, !p.from_enemy);
             }
             i += 1;
             continue;
@@ -22071,7 +22168,17 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
         }
         if hit || PROJECTILES[i].life == 0 {
             if aoe > 0 {
-                explode(m, hit_pos, PROJECTILES[i].damage, aoe, !from_enemy);
+                let dmg = PROJECTILES[i].damage;
+                // CGrenade::Detonate and ExplodeTouch both pull the blast off
+                // the surface it lies on or struck, by (damage - 24) * 0.6.
+                let at = if kind == PROJ_GRENADE {
+                    grenade_blast_origin(m, movers, hit_pos, dmg)
+                } else if hit_normal != [0; 3] {
+                    surface_lift(hit_pos, hit_normal, dmg)
+                } else {
+                    hit_pos
+                };
+                explode(m, at, dmg, aoe, !from_enemy);
             } else if best != usize::MAX {
                 damage_prop(best, PROJECTILES[i].damage, true);
                 PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
@@ -35304,6 +35411,7 @@ fn play(
                     let hs =
                         isqrt_i32(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
                     let inacc = (hs / 12).min(6) + if player.on_ground { 0 } else { 5 };
+                    FIRE_VEL = player.vel;
                     // GoldSrc's first crowbar swing after a one-second idle gap
                     // does full damage; a held combo does half. `dry_ticks` was
                     // otherwise write-only and is zeroed on weapon switches, so
