@@ -40,6 +40,7 @@ mod env_sound;
 mod env_sound_audio;
 mod weaponbox;
 mod air_navigation;
+mod drowning;
 mod door_transition;
 mod cdstream;
 mod combat_defs;
@@ -1702,11 +1703,7 @@ static mut JUMP_BUFFER: u8 = 0;
 const JUMP_BUFFER_TICKS: u8 = 2;
 // Drowning state (player.cpp:1215-1329): air timer, escalation, and the
 // recoverable damage tally. Self-resetting the first tick the eye surfaces.
-const DROWN_AIR_TICKS: u16 = 240; // AIRTIME 12 s at 20 Hz
-static mut DROWN_AIR: u16 = DROWN_AIR_TICKS;
-static mut DROWN_NEXT: u16 = 2;
-static mut DROWN_TICK: u8 = 0;
-static mut DROWN_TAKEN: u16 = 0;
+static mut DROWN: drowning::Drowning = drowning::Drowning::new();
 // Presentation and visibility consume the same authoritative eye sample as
 // swim/drowning. Keeping one state prevents the HUD, PVS and render cache from
 // independently disagreeing about whether the camera is submerged.
@@ -11989,7 +11986,7 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
             const BAR_X: i16 = 270;
             const BAR_Y: i16 = 21;
             const BAR_W: i16 = 40;
-            let fill = (DROWN_AIR as i32 * (BAR_W - 2) as i32 / DROWN_AIR_TICKS as i32) as i16;
+            let fill = (DROWN.air as i32 * (BAR_W - 2) as i32 / drowning::AIR_TICKS as i32) as i16;
             hltext::draw_text_gameplay_scaled(244, 17, "O2", 192, (210, 160, 48));
             fx_quad_flat(
                 [
@@ -12002,7 +11999,7 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
                 18,
                 12,
             );
-            let (r, g, b) = if DROWN_AIR < DROWN_AIR_TICKS / 4 {
+            let (r, g, b) = if DROWN.air < drowning::AIR_TICKS / 4 {
                 (220, 50, 28)
             } else {
                 (224, 174, 48)
@@ -34766,10 +34763,9 @@ fn play(
             };
             view_h_cur += (view_h_target - view_h_cur).clamp(-4, 4);
             let view_h = view_h_cur;
-            // Drowning (player.cpp:1215-1329): 12 s of air once the eye goes
-            // under, then escalating 2,3,4,5,5.. damage per second straight to
-            // health (the suit doesn't absorb DMG_DROWN); surfacing restores
-            // the drowned-off health.
+            // Drowning (drowning.rs, player.cpp WaterMove): 12 s of air once the
+            // eye goes under, then 3,4,5,5.. damage a second straight to health
+            // (the suit doesn't absorb DMG_DROWN); surfacing gives it back.
             let eye_under = health > 0
                 && if !on_ladder && player.pos == movement_water_pos && view_h == swim_eye_height {
                     movement_water.eye_under
@@ -34784,31 +34780,12 @@ fn play(
                 };
             unsafe {
                 PLAYER_EYE_UNDER = eye_under;
-                if eye_under {
-                    if DROWN_AIR > 0 {
-                        DROWN_AIR -= 1;
-                    } else {
-                        DROWN_TICK += 1;
-                        if DROWN_TICK >= 20 {
-                            DROWN_TICK = 0;
-                            let d = DROWN_NEXT.min(5);
-                            DROWN_NEXT += 1;
-                            DROWN_TAKEN = DROWN_TAKEN.saturating_add(d);
-                            fall_damage_player(&mut health, d);
-                        }
+                match DROWN.step(eye_under, health > 0) {
+                    drowning::Event::Hurt(d) => fall_damage_player(&mut health, d as u16),
+                    drowning::Event::Heal(h) => {
+                        health = (health + h as u16).min(PLAYER_START_HEALTH)
                     }
-                } else {
-                    DROWN_AIR = DROWN_AIR_TICKS;
-                    DROWN_NEXT = 2;
-                    DROWN_TICK = 0;
-                    if DROWN_TAKEN > 0
-                        && health > 0
-                        && health < PLAYER_START_HEALTH
-                        && (sim_frame_no % 10) == 0
-                    {
-                        DROWN_TAKEN -= 1;
-                        health += 1;
-                    }
+                    drowning::Event::None => {}
                 }
             }
             // A paused tracktrain remains the rider's ground entity in

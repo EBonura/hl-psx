@@ -71,3 +71,6 @@ pub mod setpiece_logic;
 
 #[path = "../../../game/src/env_funnel.rs"]
 pub mod env_funnel;
+
+#[path = "../../../game/src/drowning.rs"]
+pub mod drowning;
