@@ -21279,6 +21279,11 @@ unsafe fn fire_weapon(
             // the shotgun's pellet rosette, so every single-bullet gun fired
             // pixel-perfect from a standstill -- an MP5 that never walks its
             // burst, and a glock as precise as the .357.
+            if d.ammo == AMMO_URANIUM && d.fire == FIRE_SEMI {
+                // The Tau Cannon's primary shares the charged shot's beam.
+                gauss_beam(m, movers, eye, rot, base_t, damage as i32, false);
+                return true;
+            }
             let cone = inacc + d.spread;
             fire_hitscan(
                 m,
@@ -21400,6 +21405,160 @@ unsafe fn fire_secondary(
     }
 }
 
+/// Whether the segment `a`..`b` passes through live actor `pi`: its studio
+/// hit boxes when the model carries them, else its collision box.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn beam_crosses_actor(m: &Map, pi: usize, a: [i32; 3], b: [i32; 3]) -> bool {
+    let ty = PROP_KIND[pi];
+    let slot = TYPE_TO_SLOT[(ty as usize).min(N_MODEL_TYPES - 1)];
+    if slot != MODEL_SLOT_NONE && loaded_model(slot as usize).hitbox_count() != 0 {
+        prop_studio_hit_fraction(m, pi, a, b).is_some()
+    } else {
+        let (lo, hi) = actor_collision_bounds(ty, PROP_POS[pi]);
+        tripmine::touches(a, b, lo, hi)
+    }
+}
+
+/// CGauss::Fire: the Tau Cannon beam. It passes through every actor on its
+/// way (a charged shot is a multi-kill line), bounces off a surface it meets
+/// at a grazing angle (under 60 degrees from the plane, `n < 0.5`) with a
+/// small blast and the energy `1 - n` kept, and a charged shot (`secondary`)
+/// can punch once through a wall thinner than its remaining damage, blasting
+/// where it comes out. At most ten surfaces, and it ends at 10 damage.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn gauss_beam(
+    m: &Map,
+    movers: &[phys::Mover],
+    eye: [i32; 3],
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+    damage: i32,
+    secondary: bool,
+) {
+    let mut dmg = damage;
+    let mut src = eye;
+    let mut dir = [rot.m[2][0] as i32, rot.m[2][1] as i32, rot.m[2][2] as i32];
+    let mut punched = false;
+    let mut tracer_from = [
+        eye[0] + ((dir[0] * 20 + rot.m[0][0] as i32 * 7 + rot.m[1][0] as i32 * 7) >> 12),
+        eye[1] + ((dir[1] * 20 + rot.m[0][1] as i32 * 7 + rot.m[1][1] as i32 * 7) >> 12),
+        eye[2] + ((dir[2] * 20 + rot.m[0][2] as i32 * 7 + rot.m[1][2] as i32 * 7) >> 12),
+    ];
+    let mut left = 10;
+    while dmg > 10 && left > 0 {
+        left -= 1;
+        let end = [
+            src[0] + ((dir[0] * 8192) >> 12),
+            src[1] + ((dir[1] * 8192) >> 12),
+            src[2] + ((dir[2] * 8192) >> 12),
+        ];
+        let wall = phys::trace_line(m, movers, src, end);
+        let stop = wall.map_or(end, |h| h.pos);
+        // Every actor the beam crosses before the surface takes the full hit.
+        let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+        let mut pi = 0usize;
+        while pi < nprops {
+            let ty = PROP_KIND[pi];
+            if PROP_ACTIVE[pi] != 0
+                && PROP_HEALTH[pi] != 0
+                && ty != PROP_TYPE_HOLO
+                && prop_start_health(ty) != 0
+                && beam_crosses_actor(m, pi, src, stop)
+            {
+                let at = prop_target(ty, PROP_POS[pi]);
+                let hurt = hit_group_damage(ty, STUDIO_HIT_BOX, dmg.min(255) as u8);
+                #[cfg(feature = "interaction-probe")]
+                reference_trace::probe_vals(SIM_NOW as u32, "gauss_hit", &[pi as i32, ty as i32, hurt as i32, PROP_HEALTH[pi] as i32]);
+                damage_prop(pi, hurt, true);
+                sfx::play_world(sfx::BULLET_HIT1, at);
+                spawn_blood(m, movers, at, src, stop, 8192, hurt, ty, rot, base_t);
+                PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
+                if prop_is_scientist(ty) {
+                    PROP_AI_TIMER[pi] = SCIENTIST_FEAR_TICKS;
+                }
+            }
+            pi += 1;
+        }
+        push_tracer(tracer_from, stop);
+        let Some(h) = wall else {
+            break;
+        };
+        spawn_impact_fx(m, &h, rot, base_t);
+        if h.mover >= 0 {
+            damage_brush_ent(m, m.n_logic, m.n_ents, h.mover as usize, dmg.min(255) as u8, false, SIM_NOW);
+        }
+        #[cfg(feature = "interaction-probe")]
+        reference_trace::probe_vals(SIM_NOW as u32, "gauss_wall", &[dmg, h.pos[0], h.pos[1], h.pos[2], h.normal[0], h.normal[1], h.normal[2], left]);
+        // n: cosine of the angle between the beam and the surface normal.
+        let n = -((dir[0] * h.normal[0] + dir[1] * h.normal[1] + dir[2] * h.normal[2]) >> 12);
+        DMG_BLAST = true;
+        if n < 2048 {
+            // Bounce, with a blast of damage * n and 1 - n of the energy kept.
+            let n = n.max(0);
+            let r = [
+                dir[0] + ((2 * h.normal[0] * n) >> 12),
+                dir[1] + ((2 * h.normal[1] * n) >> 12),
+                dir[2] + ((2 * h.normal[2] * n) >> 12),
+            ];
+            let blast = ((dmg * n) >> 12).clamp(0, 255) as u8;
+            radius_damage(m, h.pos, blast, blast_radius(blast), true);
+            dmg = (dmg * (4096 - n.max(410))) >> 12;
+            dir = r;
+            src = [
+                h.pos[0] + ((r[0] * 8) >> 12),
+                h.pos[1] + ((r[1] * 8) >> 12),
+                h.pos[2] + ((r[2] * 8) >> 12),
+            ];
+            tracer_from = h.pos;
+        } else if secondary && !punched {
+            // Punch through: find where the beam leaves the wall within its
+            // remaining damage in units, then blast there with what is left.
+            punched = true;
+            let far = [
+                h.pos[0] + ((dir[0] * (dmg + 8)) >> 12),
+                h.pos[1] + ((dir[1] * (dmg + 8)) >> 12),
+                h.pos[2] + ((dir[2] * (dmg + 8)) >> 12),
+            ];
+            match phys::trace_line(m, movers, far, h.pos) {
+                Some(x) => {
+                    let d = [x.pos[0] - h.pos[0], x.pos[1] - h.pos[1], x.pos[2] - h.pos[2]];
+                    let thick = isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
+                    if thick >= dmg {
+                        DMG_BLAST = false;
+                        break;
+                    }
+                    dmg -= thick;
+                    #[cfg(feature = "interaction-probe")]
+                    reference_trace::probe_vals(SIM_NOW as u32, "gauss_punch", &[thick, dmg, x.pos[0], x.pos[1], x.pos[2]]);
+                    let blast = dmg.clamp(0, 255) as u8;
+                    let out = [
+                        x.pos[0] + ((dir[0] * 8) >> 12),
+                        x.pos[1] + ((dir[1] * 8) >> 12),
+                        x.pos[2] + ((dir[2] * 8) >> 12),
+                    ];
+                    radius_damage(m, out, blast, blast_radius(blast), true);
+                    src = [
+                        x.pos[0] + (dir[0] >> 12),
+                        x.pos[1] + (dir[1] >> 12),
+                        x.pos[2] + (dir[2] >> 12),
+                    ];
+                    tracer_from = x.pos;
+                }
+                None => {
+                    DMG_BLAST = false;
+                    break;
+                }
+            }
+        } else {
+            DMG_BLAST = false;
+            break;
+        }
+        DMG_BLAST = false;
+    }
+}
+
 const GAUSS_FULL_CHARGE_TICKS: u8 = 80; // GetFullChargeTime(): 4.0 s in SP
 const GAUSS_SPINUP_TICKS: u8 = 10; // gauss.cpp switches SPINUP -> SPIN at 0.5 s
 const GAUSS_AMMO_BURN_TICKS: u8 = 6; // one uranium cell every 0.3 s in SP
@@ -21422,20 +21581,7 @@ unsafe fn fire_gauss_charge(
 ) -> u8 {
     let damage = (200u16 * age.min(GAUSS_FULL_CHARGE_TICKS) as u16 / GAUSS_FULL_CHARGE_TICKS as u16)
         .max(1) as u8;
-    fire_hitscan(
-        m,
-        movers,
-        eye,
-        rot,
-        base_t,
-        damage,
-        false,
-        w.def().range,
-        GLOCK_AIM_PIX_X,
-        GLOCK_AIM_PIX_Y,
-        0,
-        0,
-    );
+    gauss_beam(m, movers, eye, rot, base_t, damage as i32, true);
     // v_forward * damage * 5 units/second, at 20 Hz, with Z dropped (single
     // player never gets the deathmatch pop-up).
     let shove = -(damage as i32) * 5 / 20;
@@ -21909,6 +22055,12 @@ unsafe fn explode_inner(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_
         spawn_debris(pos, [vx, vy, vz], DEBRIS_SPARK, 14);
         s += 1;
     }
+    radius_damage(m, pos, damage, radius, player_inflicted);
+}
+
+/// CBaseEntity RadiusDamage: the damage half of an explosion, without its
+/// sound and fireball (the Tau Cannon's bounce and exit blasts are silent).
+unsafe fn radius_damage(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_inflicted: bool) {
     // GoldSrc RadiusDamage reaches every damageable brush, including the
     // Hazard Course's moving func_guntarget. A point trace to the live brush
     // centre keeps walls/glass authoritative while accepting a hit on the
@@ -35405,6 +35557,10 @@ fn play(
                 zoom_aim = false;
             }
             if weapon.current != W_EGON || !fire_held {
+                if egon_firing && weapon.current == W_EGON {
+                    // EndAttack: 0.5 s before the beam can start again.
+                    weapon.cooldown = weapon.cooldown.max(10);
+                }
                 egon_firing = false;
             }
 

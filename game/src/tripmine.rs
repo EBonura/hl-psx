@@ -48,7 +48,7 @@ pub(crate) unsafe fn beam_end(
 /// Whether the box `lo..hi` touches the segment a-b.
 #[inline(never)]
 #[optimize(size)]
-fn touches(a: [i32; 3], b: [i32; 3], lo: [i32; 3], hi: [i32; 3]) -> bool {
+pub(crate) fn touches(a: [i32; 3], b: [i32; 3], lo: [i32; 3], hi: [i32; 3]) -> bool {
     let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
     // Slab test in fixed point: t runs 0..=4096 along the segment.
     let mut t0 = 0i32;
