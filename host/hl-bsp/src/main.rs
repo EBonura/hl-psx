@@ -8700,6 +8700,11 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_ENV_BUBBLES => load_sprites_manifest().get(&(map_index,"bubble.spr".to_string())).map_or(255,|r|r.0),
             LOGIC_ENV_BLOOD => if parse_f32_key(block, "color", 0.0) == 1.0 {195}else{247},
             LOGIC_ENV_BEVERAGE => parse_f32_key(block, "skin", 0.0).clamp(0.0, 6.0) as u16,
+            // CTargetCDAudio's `radius`: the track starts when the player comes
+            // within it (a trigger_cdaudio has none and works by touch).
+            LOGIC_CDTRACK => (parse_f32_key(block, "radius", 0.0) / scale)
+                .round()
+                .clamp(0.0, u16::MAX as f32) as u16,
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
             LOGIC_FUNC_TRACKTRAIN => submodel.unwrap_or(0).min(u16::MAX as usize) as u16,
             LOGIC_FUNC_GUNTARGET => names.id(ent_value(block, "message")),
@@ -18122,6 +18127,23 @@ mod tests {
         assert_eq!((r.kind, r.arg0), (LOGIC_ENV_EXPLOSION, 350));
         let r = cook_one(r#""classname" "env_explosion" "origin" "0 0 0" "iMagnitude" "90""#);
         assert_eq!(r.arg0, 90);
+    }
+    #[test]
+    fn target_cdaudio_keeps_its_radius() {
+        let r = cook_one(r#""classname" "target_cdaudio" "origin" "0 0 0" "health" "13" "radius" "256""#);
+        assert_eq!((r.kind, r.arg0, r.arg1), (LOGIC_CDTRACK, 13, 256));
+        let r = cook_one(r#""classname" "target_cdaudio" "origin" "0 0 0" "health" "13" "targetname" "cd""#);
+        assert_eq!(r.arg1, 0);
+    }
+    #[test]
+    fn a_breakable_carries_the_hash_of_its_globalname() {
+        let named = cook_one(r#""classname" "func_breakable" "model" "*1" "targetname" "glass" "globalname" "airlock_glass" "health" "5" "material" "1""#);
+        assert_eq!(named.kind, LOGIC_FUNC_BREAKABLE);
+        assert_ne!(named.wait_ticks, 0);
+        let again = cook_one(r#""classname" "func_breakable" "model" "*1" "targetname" "other" "globalname" "airlock_glass" "health" "5""#);
+        assert_eq!(again.wait_ticks, named.wait_ticks);
+        let plain = cook_one(r#""classname" "func_breakable" "model" "*1" "targetname" "glass" "health" "5""#);
+        assert_eq!(plain.wait_ticks, 0);
     }
     #[test]
     fn env_shake_keeps_its_radius_unless_everyone() {

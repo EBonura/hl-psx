@@ -252,6 +252,13 @@ mod tests {
     }
 
     #[test]
+    fn a_cd_target_starts_inside_its_radius_only() {
+        assert!(cdaudio_in_range(256, 256 * 256));
+        assert!(!cdaudio_in_range(256, 256 * 256 + 1));
+        assert!(!cdaudio_in_range(0, 0));
+    }
+
+    #[test]
     fn a_multiple_with_a_negative_wait_fires_once() {
         assert_eq!(multiple_after_fire(-20), None);
         assert_eq!(multiple_after_fire(4), Some(4));
