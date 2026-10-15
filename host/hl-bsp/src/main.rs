@@ -15385,7 +15385,14 @@ const HMA1_TOLERANCE_LADDER: [f64; 13] = [
 /// and coarser. Every byte of c2a4e's resident animation is a byte of the world
 /// arena, the fleet's tightest map, so the finest rungs are not worth their
 /// bytes. Viewmodels keep the finest rung.
-const HMA1_NPC_MIN_TOLERANCE: f64 = 0.5;
+///
+/// 2026-10-16: 0.5 -> 1.4 (0.35 of a world unit of worst-case vertex error, under
+/// a pixel at 64 units and far below the baked-pose error the clips already
+/// carry: rms 2.5 units over the 315 actor clips). The c5a1 weapon-cache margin
+/// goes 5,280 -> 14,164 B, c2a4e's 11,388 -> 19,576 B, and the c4a1b model slack
+/// 33,476 -> 41,568 B. Measured rungs: 1.0 -> 11,132 B, 1.4 -> 14,164 B, 2.0 ->
+/// 17,040 B at c5a1.
+const HMA1_NPC_MIN_TOLERANCE: f64 = 1.4;
 const HMD7_RANGE_MOUTH: u8 = 1 << 0;
 const HMD7_RANGE_BYTES: usize = 8;
 const HMD8_AFFINE_BYTES: usize = 20;
