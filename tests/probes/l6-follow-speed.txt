@@ -1,0 +1,14 @@
+# L6 #9: followers run at the source rate. c1a1 scientist (run 275 u/s = 27 units per 2 ticks) and Barney (362 u/s = 36 per 2 ticks), then both walk (59-61 u/s) inside 230 units.
+# Build: HLPSX_PROBE=this-file with --features interaction-probe; run map c1a1; read the watch lines (a=index b=hp c,d,e=x,y,z f=state).
+map c1a1
+0 trace 20
+0 god 2
+2 watch 0 2
+3 tp 730 2120 574 0 0 5
+8 follow 0
+12 tp 1120 2112 800 0 0 60
+80 kill attacking_zombie
+82 watch 1 2
+84 tp 1160 1900 800 0 0 4
+88 follow 1
+92 tp 416 1856 800 0 0 120

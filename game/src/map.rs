@@ -1271,14 +1271,6 @@ impl Map {
         }
     }
 
-    /// A logic record's origin alone (three words of its 64 bytes).
-    #[inline]
-    pub fn logic_origin(&self, i: usize) -> [i32; 3] {
-        let o = self.logic_off + i * LOGIC_SZ;
-        let d = self.data;
-        [rd_i32(d, o + 28), rd_i32(d, o + 32), rd_i32(d, o + 36)]
-    }
-
     /// AABB-only precheck for the per-tick touch hotlist. Logic records are
     /// 64 bytes; reject the overwhelmingly common non-overlap after reading
     /// only the six bounds words, before decoding the rest of the record.

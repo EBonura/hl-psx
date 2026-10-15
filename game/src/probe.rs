@@ -36,6 +36,7 @@ static mut ENDED: bool = false;
 static mut GOTO: Option<(usize, bool)> = None;
 static mut FORCE_NEXT: bool = false;
 static mut WATCH_KIND: i32 = -1;
+static mut WATCH_EVERY: u32 = 10;
 static mut PROJ_LOG: bool = false;
 
 pub unsafe fn take_goto() -> Option<(usize, bool)> {
@@ -348,7 +349,10 @@ pub unsafe fn step(
                     crate::damage_prop(best, dmg, true);
                 }
             }
-            23 => WATCH_KIND = c.a[0] as i32,
+            23 => {
+                WATCH_KIND = c.a[0] as i32;
+                WATCH_EVERY = if c.a[1] > 0 { c.a[1] as u32 } else { 10 };
+            }
             24 => PROJ_LOG = c.a[0] != 0,
             27 => {
                 // ammo POOL N : set one ammo pool (and every magazine to N when POOL is 99)
@@ -382,7 +386,7 @@ pub unsafe fn step(
     if PROJ_LOG {
         crate::probe_projectiles(now);
     }
-    if WATCH_KIND >= 0 && now % 10 == 0 {
+    if WATCH_KIND >= 0 && now % WATCH_EVERY == 0 {
         let mut pi = 0usize;
         while pi < crate::PROP_COUNT {
             if crate::PROP_KIND[pi] as i32 == WATCH_KIND && crate::PROP_ACTIVE[pi] != 0 {
