@@ -35,6 +35,7 @@ static mut HOLD_CL: bool = false;
 static mut ENDED: bool = false;
 static mut GOTO: Option<(usize, bool)> = None;
 static mut FORCE_NEXT: bool = false;
+static mut WATCH_KIND: i32 = -1;
 
 pub unsafe fn take_goto() -> Option<(usize, bool)> {
     let g = GOTO;
@@ -282,6 +283,71 @@ pub unsafe fn step(
                     }
                 }
             }
+            18 => *health = c.a[0].clamp(0, 1000) as u16,
+            19 => {
+                // The nearest live monster of that kind starts following the player.
+                let mut best = usize::MAX;
+                let mut best_d = i32::MAX;
+                let mut pi = 0usize;
+                while pi < crate::PROP_COUNT {
+                    if crate::PROP_ACTIVE[pi] != 0
+                        && crate::PROP_HEALTH[pi] != 0
+                        && crate::PROP_KIND[pi] as i32 == c.a[0] as i32
+                    {
+                        let d = crate::dist2_3(crate::PROP_POS[pi], player.pos);
+                        if d < best_d {
+                            best_d = d;
+                            best = pi;
+                        }
+                    }
+                    pi += 1;
+                }
+                if best != usize::MAX {
+                    crate::prop_scientist_set_flag(best, crate::PROP_SCI_FOLLOWING, true);
+                    crate::prop_scientist_set_flag(best, crate::PROP_SCI_HELLO_SAID, true);
+                    crate::reference_trace::probe(now, "follow", "", best as i32);
+                }
+            }
+            20 => {
+                let dmg = c.a[3].clamp(1, 255) as u8;
+                crate::reference_trace::probe(now, "explode", "", dmg as i32);
+                crate::explode(
+                    m,
+                    [c.a[0] as i32, c.a[1] as i32, c.a[2] as i32],
+                    dmg,
+                    crate::combat_defs::blast_radius(dmg),
+                    true,
+                );
+            }
+            22 => weapons.current = c.a[0].clamp(0, 13) as usize,
+            25 => {
+                let mut best = usize::MAX;
+                let mut best_d = i32::MAX;
+                let mut pi = 0usize;
+                while pi < crate::PROP_COUNT {
+                    if crate::PROP_ACTIVE[pi] != 0
+                        && crate::PROP_HEALTH[pi] != 0
+                        && crate::PROP_KIND[pi] as i32 == c.a[0] as i32
+                    {
+                        let d = crate::dist2_3(crate::PROP_POS[pi], player.pos);
+                        if d < best_d {
+                            best_d = d;
+                            best = pi;
+                        }
+                    }
+                    pi += 1;
+                }
+                if best != usize::MAX {
+                    let dmg = crate::logic_state::club_damage_for(
+                        crate::PROP_KIND[best],
+                        true,
+                        c.a[1].clamp(1, 255) as u8,
+                    );
+                    crate::reference_trace::probe_vals(now, "club", &[best as i32, dmg as i32, crate::PROP_HEALTH[best] as i32]);
+                    crate::damage_prop(best, dmg, true);
+                }
+            }
+            23 => WATCH_KIND = c.a[0] as i32,
             16 => FACE = if cname == "-" { 0 } else { name_id(m, cname) },
             13 => crate::reference_trace::probe_vals(
                 now,
@@ -289,6 +355,20 @@ pub unsafe fn step(
                 &[player.pos[0], player.pos[1], player.pos[2], *health as i32],
             ),
             _ => {}
+        }
+    }
+    if WATCH_KIND >= 0 && now % 10 == 0 {
+        let mut pi = 0usize;
+        while pi < crate::PROP_COUNT {
+            if crate::PROP_KIND[pi] as i32 == WATCH_KIND && crate::PROP_ACTIVE[pi] != 0 {
+                let t = crate::PROP_POS[pi];
+                crate::reference_trace::probe_vals(
+                    now,
+                    "watch",
+                    &[pi as i32, crate::PROP_HEALTH[pi] as i32, t[0], t[1], t[2], crate::PROP_STATE[pi] as i32],
+                );
+            }
+            pi += 1;
         }
     }
     if FACE != 0 {

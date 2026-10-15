@@ -395,6 +395,7 @@ struct LeechWorld<'a> {
 }
 
 impl leech::World for LeechWorld<'_> {
+    #[inline(never)]
     fn free_frac(&mut self, from: [i32; 3], to: [i32; 3]) -> i32 {
         match phys::trace_line(self.m, self.movers, from, to) {
             Some(hit) => hit.frac,
@@ -402,14 +403,17 @@ impl leech::World for LeechWorld<'_> {
         }
     }
 
+    #[inline(never)]
     fn wet(&mut self, p: [i32; 3]) -> bool {
         unsafe { water_touch(self.m, self.m.n_ents, p) }
     }
 
+    #[inline(never)]
     fn rand(&mut self, lo: i32, hi: i32) -> i32 {
         unsafe { lo + impact_rng().below((hi - lo + 1).max(1) as u32) as i32 }
     }
 
+    #[inline(never)]
     fn look(&mut self) -> Option<leech::Enemy> {
         let eye = self.eye?;
         let (dx, dz) = (eye[0] - self.pos[0], eye[2] - self.pos[2]);
@@ -423,6 +427,7 @@ impl leech::World for LeechWorld<'_> {
         self.enemy()
     }
 
+    #[inline(never)]
     fn enemy(&mut self) -> Option<leech::Enemy> {
         // FVisible: a leech never sees a player standing on dry land, and
         // Look only keeps enemies whose waterlevel is not zero.
@@ -498,6 +503,14 @@ unsafe fn tick_leech(
     let wet = water_touch(m, m.n_ents, [pos[0], pos[1] + 1, pos[2]]);
     if (AI_TICK.wrapping_add(pi as u32)) % leech::THINK_TICKS == 0 {
         let motion = LEECHES[slot].think(pos, yaw, wet, &mut world);
+        #[cfg(feature = "interaction-probe")]
+        if SIM_NOW % 10 == 0 || motion.bite {
+            reference_trace::probe_vals(
+                SIM_NOW as u32,
+                if motion.bite { "leech_bite" } else { "leech" },
+                &[pi as i32, pos[0], pos[1], pos[2], motion.biting as i32, motion.dry as i32],
+            );
+        }
         if motion.bite {
             // The bite event only hurts a prey the leech is facing.
             if let Some(eye) = eye {
@@ -520,23 +533,21 @@ unsafe fn tick_leech(
         } else {
             PROP_STATE_MOVE
         };
-    }
-    let (step, turn) = LEECHES[slot].tick_displacement();
-    if turn != 0 {
-        PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], ((yaw as i32 + turn) & 0x0fff) as u16);
-    }
-    if step != [0; 3] {
+        if motion.turn_q12 != 0 {
+            let turned = ((yaw as i32 + motion.turn_q12) & 0x0fff) as u16;
+            PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], turned);
+        }
         let mut to = pos;
         let mut axis = 0usize;
         while axis < 3 {
             // Slide: each axis moves on its own until a wall stops it.
-            if step[axis] != 0 {
+            if motion.step[axis] != 0 {
                 let mut next = to;
-                next[axis] += step[axis];
-                if phys::trace_line(m, movers, to, next).is_none() {
+                next[axis] += motion.step[axis];
+                // A start inside a hull reads as no hit, so also refuse any
+                // step that ends in solid rock.
+                if phys::trace_line(m, movers, to, next).is_none() && camera_leaf(m, next) > 0 {
                     to = next;
-                } else {
-                    LEECHES[slot].land();
                 }
             }
             axis += 1;

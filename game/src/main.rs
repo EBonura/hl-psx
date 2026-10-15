@@ -18776,6 +18776,8 @@ unsafe fn scientist_heal_tick(pi: usize, left: u8, player_pos: [i32; 3], health:
         prop_attack_cooldown_set(pi, next);
     }
     if scientist_logic::heal_event(left, d2, scientist_logic::heal_wanted(*health)) {
+        #[cfg(feature = "interaction-probe")]
+        reference_trace::probe(SIM_NOW as u32, "heal", "", *health as i32);
         *health = scientist_logic::healed_health(*health, skill_hit(Sk::ScientistHeal) as u16);
         heal_clock().start(pi as u8, SIM_NOW);
     }
@@ -18899,6 +18901,8 @@ unsafe fn tick_scientist(
             let offer = scientist_logic::HEAL_OFFER_RANGE;
             let near = scientist_logic::HEAL_WALK_RANGE;
             if reach2 <= near * near {
+                #[cfg(feature = "interaction-probe")]
+                reference_trace::probe(SIM_NOW as u32, "heal_start", "", *health as i32);
                 prop_attack_cooldown_set(pi, scientist_logic::HEAL_TOTAL_TICKS);
                 PROP_STATE[pi] = PROP_STATE_IDLE;
                 prop_face_point(
