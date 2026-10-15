@@ -13006,6 +13006,7 @@ unsafe fn logic_try_use(
     now: u16,
     health: &mut u16,
     armor: &mut u16,
+    pressed: bool,
 ) -> u8 {
     let rot = view_rotation(yaw, pitch);
     let mut best = usize::MAX;
@@ -13095,6 +13096,9 @@ unsafe fn logic_try_use(
     }
 
     if best_prop != usize::MAX {
+        if !pressed {
+            return 0;
+        }
         let following = prop_scientist_flag(best_prop, PROP_SCI_FOLLOWING);
         match scientist_logic::follow_use(
             PROP_HEALTH[best_prop] > 0,
@@ -13180,17 +13184,26 @@ unsafe fn logic_try_use(
                     return sfx::CHARGER_HEV_LOOP;
                 }
             }
-            _ => logic_use_entity(
-                m,
-                nlogic,
-                nents,
-                best,
-                map::USE_TOGGLE,
-                now,
-                0,
-                logic_state::CALLER_NONE,
-            ),
+            _ if !pressed => {}
+            _ => {
+                #[cfg(feature = "interaction-probe")]
+                reference_trace::probe(now as u32, "use_fire", "", best as i32);
+                logic_use_entity(
+                    m,
+                    nlogic,
+                    nents,
+                    best,
+                    map::USE_TOGGLE,
+                    now,
+                    0,
+                    logic_state::CALLER_NONE,
+                );
+            }
         }
+    } else if pressed {
+        // PlayerUse: nothing within reach plays common/wpn_denyselect.wav at
+        // 0.4 volume (the empty-clip click is the same sample).
+        sfx::play_vol(sfx::DRY, 2);
     }
     0
 }
@@ -33071,6 +33084,7 @@ fn play(
     let mut pickup_kind: u8 = hud::PICKUP_NONE;
     let mut pickup_ticks: u8 = 0;
     let mut use_cooldown: u8 = 0;
+    let mut use_held_prev = false;
     let mut charger_sound: u8 = 0;
     let mut charger_intro_ticks: u8 = 0;
 
@@ -33808,7 +33822,13 @@ fn play(
                     panel_li += 1;
                 }
             }
-            let want_use = use_held_raw && use_cooldown == 0;
+            // PlayerUse: an impulse object (door, button, train, tank, a
+            // scientist to follow) answers the press only; a held +use drives
+            // just the continuous ones (chargers, valve wheels), which is what
+            // the 8-tick cadence below paces.
+            let use_pressed = use_held_raw && !use_held_prev;
+            use_held_prev = use_held_raw;
+            let want_use = use_held_raw && (use_cooldown == 0 || use_pressed);
             if want_use {
                 use_cooldown = 8;
             }
@@ -34962,7 +34982,7 @@ fn play(
                     weaponbox_removed: WEAPONBOX_REMOVED,
                 };
                 let mut charger_pulse = 0u8;
-                if want_use && MOUNTED_TANK >= 0 {
+                if use_pressed && MOUNTED_TANK >= 0 {
                     // Any use press while mounted dismounts (works even if the
                     // player has swung the view off the tank brush).
                     MOUNTED_TANK = -1;
@@ -34978,7 +34998,8 @@ fn play(
                         tram_pre_total,
                         tram_pre_left,
                     );
-                    if m.tram_submodel > 0
+                    if use_pressed
+                        && m.tram_submodel > 0
                         && TRACKTRAIN_USE_SPEED > 0
                         && tram_should_carry_player(player.pos, train_pos)
                     {
@@ -34987,7 +35008,7 @@ fn play(
                         sfx::play(sfx::BUTTON);
                     } else {
                         LOGIC_ACTIVATOR = 1;
-                        if !tank_try_control(&m, nlogic, player.pos) {
+                        if !(use_pressed && tank_try_control(&m, nlogic, player.pos)) {
                             charger_pulse = logic_try_use(
                                 &m,
                                 nlogic,
@@ -34999,6 +35020,7 @@ fn play(
                                 sim_frame_no as u16,
                                 &mut health,
                                 &mut armor,
+                                use_pressed,
                             );
                         }
                     }
