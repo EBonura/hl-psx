@@ -1266,6 +1266,11 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 // view yaw pitch : set the view angles (HL degrees) without moving
                 "view" => (7, [yawc(num(2)), pitc(num(3)), 0, 0, 0, 0], String::new()),
                 "weapons" => (9, [0; 6], String::new()),
+                // hit KIND DMG : a hit on the player (1 fall 2 crush 3 bullet 4 slash
+                // 5 sonic 6 poison 7 acid 8 nerve gas 9 radiation)
+                "hit" => (26, [num(2) as i32, num(3) as i32, 0, 0, 0, 0], String::new()),
+                // ammo : one round left in the current weapon, nothing in reserve
+                "ammo" => (27, [0; 6], String::new()),
                 "use" => (10, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
                 // kill NAME : damage every live monster with that targetname to death
                 "kill" => (11, [255, 0, 0, 0, 0, 0], w[2].to_string()),

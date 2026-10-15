@@ -347,6 +347,28 @@ pub unsafe fn step(
                     crate::damage_prop(best, dmg, true);
                 }
             }
+            26 => {
+                // hit KIND DMG : one hit on the player of that HEV damage kind
+                let kind = match c.a[0] {
+                    1 => crate::hev::Kind::Fall,
+                    2 => crate::hev::Kind::Crush,
+                    3 => crate::hev::Kind::Bullet,
+                    4 => crate::hev::Kind::Slash,
+                    5 => crate::hev::Kind::Sonic,
+                    6 => crate::hev::Kind::Poison,
+                    7 => crate::hev::Kind::Acid,
+                    8 => crate::hev::Kind::NerveGas,
+                    9 => crate::hev::Kind::Radiation,
+                    _ => crate::hev::Kind::Generic,
+                };
+                crate::fall_damage_player(health, c.a[1].max(0) as u16, kind);
+            }
+            27 => {
+                // ammo : the current weapon has one round left and no reserve
+                let d = weapons.def();
+                weapons.clip[weapons.current] = 1;
+                weapons.ammo[d.ammo] = 0;
+            }
             23 => WATCH_KIND = c.a[0] as i32,
             16 => FACE = if cname == "-" { 0 } else { name_id(m, cname) },
             13 => crate::reference_trace::probe_vals(

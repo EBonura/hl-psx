@@ -41,6 +41,7 @@ mod env_sound_audio;
 mod weaponbox;
 mod air_navigation;
 mod drowning;
+mod hev;
 mod door_transition;
 mod cdstream;
 mod combat_defs;
@@ -5739,7 +5740,6 @@ static mut DAMAGE_DIRECTION: u8 = 0;
 static mut DAMAGE_TICKS: u8 = 0;
 // HEV suit voice: 0 = fine, 1 = health critical, 2 = near death (fire once per
 // worsening threshold crossing). Geiger cooldown throttles the radiation click.
-static mut HEV_HEALTH_STATE: u8 = 0;
 static mut GEIGER_COOLDOWN: u8 = 0;
 
 /// Kick the view (decaying) -- HL's punchangle. `pitch` up is negative here to
@@ -12487,6 +12487,7 @@ unsafe fn damage_player_fan_contacts(
                     let damage = logic_state::rotating_touch_damage(rec.speed, LOGIC_COUNTER[li]);
                     if damage != 0 {
                         note_damage_direction(ENT_CACHE[ei].origin);
+                        hev::set_kind(hev::Kind::Crush);
                         damage_player(health, armor, damage);
                     }
                 }
@@ -13401,6 +13402,7 @@ unsafe fn logic_touch_triggers(
                                 }
                             } else if rec.arg0 != 0 {
                                 note_damage_direction(logic_center(rec));
+                                hev::set_kind(hev::hurt_kind(rec.flags));
                                 damage_player(health, armor, rec.arg0);
                             }
                             logic_sub_use_targets(
@@ -17708,10 +17710,11 @@ unsafe fn note_damage_direction(source: [i32; 3]) {
 
 /// Fall damage: same feedback as `damage_player`, but straight to health --
 /// the HEV suit does not absorb DMG_FALL (player.cpp TakeDamage bit set).
-fn fall_damage_player(health: &mut u16, dmg: u16) {
+fn fall_damage_player(health: &mut u16, dmg: u16, kind: hev::Kind) {
     if dmg == 0 {
         return;
     }
+    let before = *health;
     unsafe {
         if PAIN_SFX_COOLDOWN == 0 {
             sfx::play(sfx::PAIN);
@@ -17719,9 +17722,27 @@ fn fall_damage_player(health: &mut u16, dmg: u16) {
         }
     }
     *health = health.saturating_sub(dmg);
+    unsafe { hev_hit(kind, dmg, before, *health) };
+}
+
+/// The suit's side of a hit: what it was, and the health around it.
+unsafe fn hev_hit(kind: hev::Kind, dmg: u16, before: u16, after: u16) {
+    if LOGIC_PLAYER_SUIT == 0 {
+        return;
+    }
+    let chance = impact_rng().next() & 3 == 0;
+    hev::react(kind, dmg, before, after, chance, |sentence, secs| {
+        hev::request(sentence, secs)
+    });
 }
 
 fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
+    let before = *health;
+    damage_player_hit(health, armor, dmg);
+    unsafe { hev_hit(hev::take_kind(), dmg, before, *health) };
+}
+
+fn damage_player_hit(health: &mut u16, armor: &mut u16, dmg: u16) {
     if dmg == 0 || settings::debug_on(settings::DEBUG_GOD) {
         return;
     }
@@ -19476,6 +19497,7 @@ unsafe fn tick_props(
             pi += 1;
             continue;
         }
+        hev::set_kind(hev::actor_kind(ty));
         match ai {
             // Melee aliens (zombie/houndeye/bullsquid/ichy) reuse the headcrab
             // approach+bite AI; ranged/boss/flyer types render but don't move yet.
@@ -19761,7 +19783,12 @@ unsafe fn collect_pickups(
                     PROP_ACTIVE[pi] = 0;
                     *pickup_kind = hud::PICKUP_LONGJUMP;
                     *pickup_ticks = HUD_HISTORY_TICKS;
-                    sfx::play(sfx::SUIT);
+                    // CItemLongJump::MyTouch speaks !HEV_A1 at once.
+                    if hev::can_say(hl_format::hev::S_A1) {
+                        hev::say_now(hl_format::hev::S_A1);
+                    } else {
+                        sfx::play(sfx::SUIT);
+                    }
                 }
             }
             PROP_TYPE_ITEM_BATTERY => {
@@ -19782,6 +19809,12 @@ unsafe fn collect_pickups(
                     *pickup_kind = hud::PICKUP_BATTERY;
                     *pickup_ticks = HUD_HISTORY_TICKS;
                     sfx::play(sfx::PICKUP);
+                    // CItemBattery::MyTouch: the new power level, once in 30 s.
+                    if let Some(sentence) = hl_format::hev::battery_sentence(
+                        hl_format::hev::battery_level(*armor),
+                    ) {
+                        hev::request(sentence, hl_format::hev::NEXT_IN_30SEC);
+                    }
                     telemetry::debug_log("hl-psx: HEV battery picked up");
                 }
             }
@@ -20295,6 +20328,14 @@ impl Arsenal {
                 return false;
             }
             self.clip[self.current] -= 1;
+            // The pistols, MP5, shotgun and crossbow end the shot that empties
+            // both the clip and the reserve with !HEV_AMO0 (no repeat time).
+            if self.clip[self.current] == 0
+                && self.ammo[d.ammo] == 0
+                && matches!(self.current, W_GLOCK | W_357 | W_MP5 | W_SHOTGUN | W_CROSSBOW)
+            {
+                unsafe { hev::request(hl_format::hev::S_AMO0, 0) };
+            }
         } else {
             // The Tau Cannon's primary shot consumes two uranium cells in the
             // SDK; every other clipless weapon consumes one per attack pulse.
@@ -34716,32 +34757,19 @@ fn play(
                 if li > 29 && !unsafe { feet_in_water(&m, nents, player.pos, player.half_height()) }
                 {
                     let d = ((li - 29) * 9 / 2).max(1) as u16;
-                    fall_damage_player(&mut health, d);
+                    fall_damage_player(&mut health, d, hev::Kind::Fall);
                 }
                 // One landing, one impact. PlayerMove::update clears this at
                 // the start of its tick, but a tick spent swimming or on a
                 // ladder skips update and would otherwise re-apply the fall.
                 player.land_impact = 0;
             }
-            // HEV suit voice: announce each worsening health threshold once.
+            // HEV suit voice (hev.rs): the queue of sentences, one every 3.5 s.
             unsafe {
-                let hstate = if health == 0 || !suit_equipped {
-                    0
-                } else if health < 10 {
-                    2
-                } else if health < 25 {
-                    1
-                } else {
-                    0
-                };
-                if hstate > HEV_HEALTH_STATE {
-                    sfx::play(if hstate == 2 {
-                        sfx::HEV_NEAR_DEATH
-                    } else {
-                        sfx::HEV_HEALTH_CRIT
-                    });
+                if health == 0 {
+                    hev::clear_queue();
                 }
-                HEV_HEALTH_STATE = hstate;
+                hev::tick(suit_equipped);
             }
             // Footsteps: input-magnitude cadence while grounded (full run =
             // a step roughly every 8 ticks), alternating the two samples.
@@ -34801,7 +34829,9 @@ fn play(
             unsafe {
                 PLAYER_EYE_UNDER = eye_under;
                 match DROWN.step(eye_under, health > 0) {
-                    drowning::Event::Hurt(d) => fall_damage_player(&mut health, d as u16),
+                    drowning::Event::Hurt(d) => {
+                        fall_damage_player(&mut health, d as u16, hev::Kind::Drown)
+                    }
                     drowning::Event::Heal(h) => {
                         health = (health + h as u16).min(PLAYER_START_HEALTH)
                     }

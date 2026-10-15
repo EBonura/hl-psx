@@ -74,3 +74,6 @@ pub mod env_funnel;
 
 #[path = "../../../game/src/drowning.rs"]
 pub mod drowning;
+
+#[path = "../../../game/src/hev.rs"]
+pub mod hev;
