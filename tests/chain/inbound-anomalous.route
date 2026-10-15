@@ -1,4 +1,4 @@
-@journey name=hl-chain-inbound-to-c1a1f title="Half-Life New Game: Black Mesa Inbound, Anomalous Materials, to the c1a1f arrival" prologue=new_game max_ticks=130000
+@journey name=hl-chain-new-game-to-c1a0e title="Half-Life New Game: tram ride, station, Anomalous Materials through the c1a0e sample cart" prologue=new_game max_ticks=130000
 
 
 map c0a0 next c0a0a
@@ -67,6 +67,7 @@ map c1a0 next c1a0d
 
 map c1a0d next c1a0a
   @checkpoint arrive-c1a0d
+  @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=0
   20
   30 f127
   21 f-40
@@ -139,6 +140,8 @@ map c1a0d next c1a0a
 
 map c1a0a next c1a0b
   @checkpoint arrive-c1a0a
+  @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=ge value=100
   40
   20 f-127
   5 f127
@@ -212,6 +215,8 @@ map c1a0a next c1a0b
 
 map c1a0b next c1a0e
   @checkpoint arrive-c1a0b
+  @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=ge value=100
   40
   50 f-127
   2 f127
@@ -270,6 +275,8 @@ map c1a0b next c1a0e
 
 map c1a0e next c1a0c
   @checkpoint arrive-c1a0e
+  @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=ge value=100
   40
   8 s-127
   2 s127
@@ -354,6 +361,10 @@ map c1a0e next c1a0c
   2 f-127
   1020
   600
+  # Alive and hurt: the disaster sequence has started by the end of the route.
+  @checkpoint c1a0e-route-end
+  @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=40 value_hi=99
 
 map c1a0c next c1a1
   @checkpoint arrive-c1a0c

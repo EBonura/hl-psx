@@ -497,11 +497,16 @@ struct Opts {
     /// Linker map used to bind symbols the gate's own loader cannot read
     /// (the map prints `NAME (.0)` for split statics) as fixed addresses.
     map: Option<PathBuf>,
+    until: Option<String>,
 }
 
 fn compile(o: &Opts) -> Result<(), String> {
     let text = fs::read_to_string(&o.route).map_err(|e| format!("{}: {e}", o.route.display()))?;
-    let route = parse_route(&text)?;
+    let mut route = parse_route(&text)?;
+    if let Some(until) = &o.until {
+        let at = route.blocks.iter().position(|b| &b.map == until).ok_or_else(|| format!("no block {until}"))?;
+        route.blocks.truncate(at + 1);
+    }
     let jv = |k: &str| route.journey.iter().find(|(n, _)| n == k).map(|(_, v)| v.trim_matches('"').to_string());
     let name = jv("name").ok_or("@journey needs name=")?;
     let title = jv("title").unwrap_or_else(|| name.clone());
@@ -545,7 +550,7 @@ fn compile(o: &Opts) -> Result<(), String> {
                 .ok_or_else(|| format!("map {} has no id= and is not in map-ids.txt", block.map))?,
         };
         let _ = writeln!(t, "[[step]]\nlabel = \"{} loads\"\nwait_until = {{ kind = \"ram\", {}, size = 4, op = \"eq\", value = {id} }}\ntimeout = 9000", block.map, o.header);
-        let _ = writeln!(t, "\n[[step]]\nlabel = \"{} first simulation tick\"\nwait_until = {{ kind = \"ram\", sym = \"SIM_NOW\", size = 2, op = \"between\", value = 0, value_hi = 4 }}\ntimeout = 9000", block.map);
+        let _ = writeln!(t, "\n[[step]]\nlabel = \"{} first simulation tick\"\nwait_until = {{ kind = \"ram\", sym = \"SIM_NOW\", size = 2, op = \"lt\", value = 64 }}\ntimeout = 9000", block.map);
         // Drop the trailing neutral run: the journey waits for the next map.
         let mut items: Vec<&Item> = block.items.iter().collect();
         let mut tail_ticks = 0u32;
@@ -566,7 +571,7 @@ fn compile(o: &Opts) -> Result<(), String> {
             let file = format!("{}/{}-{:02}.pxtape", o.tape_dir, block.map, *piece);
             compensate(pending);
             write_tape(&o.repo.join(&file), pending)?;
-            let _ = writeln!(t, "\n[[step]]\nlabel = \"{} controller tape {}\"\ntape = {file:?}\ntape_rebase = true\ntimeout = {}", block.map, *piece, pending.len() as u64 * 3 + 600);
+            let _ = writeln!(t, "\n[[step]]\nlabel = \"{} controller tape {}\"\ntape = {file:?}\ntape_rebase = true\ntimeout = {}", block.map, *piece, pending.len() as u64 * 4 + 1200);
             *total += pending.len();
             *piece += 1;
             pending.clear();
@@ -749,6 +754,7 @@ fn main() {
                 symbols: ".hlpsx/hl-psx.map".into(),
                 header: "sym = \"WORLD_ARENA\", offset = 4".into(),
                 map: None,
+                until: None,
             };
             let mut i = 5;
             while i + 1 < args.len() {
@@ -757,6 +763,7 @@ fn main() {
                     "--symbols" => o.symbols = args[i + 1].clone(),
                     "--tape-dir" => o.tape_dir = args[i + 1].clone(),
                     "--map" => o.map = Some(PathBuf::from(&args[i + 1])),
+                    "--until" => o.until = Some(args[i + 1].clone()),
                     _ => {}
                 }
                 i += 2;
