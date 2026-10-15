@@ -21904,8 +21904,9 @@ static mut RPG_SPOT_POS: [i32; 3] = [0; 3];
 // Enemy AoE / projectiles / hazards deal damage here; the sim loop drains it into
 // health/armor once per tick (keeps explode() off the &mut health thread).
 static mut PENDING_PLAYER_DAMAGE: u16 = 0;
-/// Horizontal shove owed to the player from a charged Tau shot, in world units
-/// per tick. CGauss::StartFire subtracts `v_forward * flDamage * 5` from the
+/// Shove owed to the player this tick, in world units per tick: the
+/// blast knockback of `radius_damage`, and a charged Tau shot's horizontal
+/// recoil. CGauss::StartFire subtracts `v_forward * flDamage * 5` from the
 /// player's velocity on a secondary shot and then restores the Z component in
 /// single player, so the kick is a pure horizontal shove -- the recoil that
 /// makes a full-charge shot feel like a cannon instead of a rifle.
@@ -22322,6 +22323,18 @@ unsafe fn radius_damage(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_
         let dmg = logic_state::radius_damage_at_distance(damage, radius, isqrt_i32(pd2));
         PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(dmg as u16);
         note_damage_direction(pos);
+        // TakeDamage: velocity += away * min(5 x damage, 1000) u/s, away being
+        // from the blast (10 units lower) through the player's centre.
+        let away = [
+            LOGIC_PLAYER_POS[0] - pos[0],
+            LOGIC_PLAYER_POS[1] + 10 - pos[1],
+            LOGIC_PLAYER_POS[2] - pos[2],
+        ];
+        let len = isqrt_i32(away[0] * away[0] + away[1] * away[1] + away[2] * away[2]).max(1);
+        let push = (dmg as i32 / 4).min(50);
+        PENDING_GAUSS_SHOVE[0] += away[0] * push / len;
+        PENDING_GAUSS_SHOVE[1] += away[1] * push / len;
+        PENDING_GAUSS_SHOVE[2] += away[2] * push / len;
     }
 }
 
@@ -36215,6 +36228,11 @@ fn play(
                 }
                 if PENDING_GAUSS_SHOVE != [0; 3] {
                     player.vel[0] += PENDING_GAUSS_SHOVE[0];
+                    player.vel[1] += PENDING_GAUSS_SHOVE[1];
+                    if player.vel[1] > 9 {
+                        // PM_CheckVelocity: climbing faster than 180 u/s leaves the ground.
+                        player.on_ground = false;
+                    }
                     player.vel[2] += PENDING_GAUSS_SHOVE[2];
                     PENDING_GAUSS_SHOVE = [0; 3];
                 }
