@@ -9,7 +9,7 @@ simulation tick) and the `psoxide-gate` journey that plays them:
 
     rustc --edition=2021 -O tests/chain/hlroute.rs -o /tmp/hlroute
     /tmp/hlroute build tests/chain/inbound-anomalous.route . tests/chain-new-game.toml \
-        --map .hlpsx/hl-psx.map --until c1a0e
+        --map .hlpsx/hl-psx.map --until c1a0c
     psoxide-gate run tests/chain-new-game.toml --no-hw
 
 Route units are the ones the game derives from a DualShock (forward, strafe, turn, look, buttons), so a
@@ -23,3 +23,8 @@ which map is resident. It was read from the HLMK headers of the installed disc i
 
 `--map` binds symbols the gate's own loader cannot read (the linker map prints `NAME (.0)` for split
 statics) as fixed addresses, so a journey is written against one build.
+
+Routes may also close the loop where a PS1 line cannot be written open loop: `@hold <input> until
+sym=... offset=N size=4 signed op=le value=V timeout=T` presses that input until a RAM word crosses
+a value (a gate `hold_until`, ordinary controller input throughout), and `@wait` waits on RAM without
+input. The player position is read from `LOGIC_PLAYER_POS` (x, up, y). `@stop` ends the journey.

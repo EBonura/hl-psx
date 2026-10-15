@@ -216,13 +216,15 @@ enum Item {
         name: String,
         asserts: Vec<String>,
     },
-    Wait(String),
+    Wait(String, u32),
     Hold {
         sample: Sample,
         until: String,
         timeout: u32,
     },
     Raw(String),
+    /// End of the journey: later items and blocks are not compiled.
+    Stop,
 }
 
 #[derive(Debug)]
@@ -369,7 +371,12 @@ fn parse_route(text: &str) -> Result<Route, String> {
             }
             "@wait" => {
                 let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
-                b.items.push(Item::Wait(assert_table("ram", &parse_kv(&tok[1..]))));
+                let mut kv = parse_kv(&tok[1..]);
+                let timeout = match kv.iter().position(|(k, _)| k == "timeout") {
+                    Some(i) => kv.remove(i).1.parse().map_err(|_| at("timeout".into()))?,
+                    None => 9000,
+                };
+                b.items.push(Item::Wait(assert_table("ram", &kv), timeout));
             }
             "@hold" => {
                 let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
@@ -389,6 +396,10 @@ fn parse_route(text: &str) -> Result<Route, String> {
                     until: assert_table("ram", &kv),
                     timeout,
                 });
+            }
+            "@stop" => {
+                let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
+                b.items.push(Item::Stop);
             }
             "@raw" => {
                 let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
@@ -507,6 +518,16 @@ fn compile(o: &Opts) -> Result<(), String> {
         let at = route.blocks.iter().position(|b| &b.map == until).ok_or_else(|| format!("no block {until}"))?;
         route.blocks.truncate(at + 1);
     }
+    if let Some(bi) = route
+        .blocks
+        .iter()
+        .position(|b| b.items.iter().any(|i| matches!(i, Item::Stop)))
+    {
+        route.blocks.truncate(bi + 1);
+        let b = &mut route.blocks[bi];
+        let at = b.items.iter().position(|i| matches!(i, Item::Stop)).unwrap();
+        b.items.truncate(at);
+    }
     let jv = |k: &str| route.journey.iter().find(|(n, _)| n == k).map(|(_, v)| v.trim_matches('"').to_string());
     let name = jv("name").ok_or("@journey needs name=")?;
     let title = jv("title").unwrap_or_else(|| name.clone());
@@ -588,9 +609,9 @@ fn compile(o: &Opts) -> Result<(), String> {
                         let _ = writeln!(t, "[[step.assert]]\n{}", a.trim_start_matches("{ ").trim_end_matches(" }").replace(", ", "\n"));
                     }
                 }
-                Item::Wait(cond) => {
+                Item::Wait(cond, timeout) => {
                     flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
-                    let _ = writeln!(t, "\n[[step]]\nwait_until = {cond}\ntimeout = 9000");
+                    let _ = writeln!(t, "\n[[step]]\nwait_until = {cond}\ntimeout = {timeout}");
                 }
                 Item::Hold { sample, until, timeout } => {
                     flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
@@ -604,6 +625,7 @@ fn compile(o: &Opts) -> Result<(), String> {
                     let _ = writeln!(t, "\n[[step]]\nlstick = [{}, {}]\nrstick = [{}, {}]\npress = {press:?}\nhold_until = {until}\ntimeout = {timeout}", e[4], e[5], e[2], e[3]);
                     let _ = button_name(0);
                 }
+                Item::Stop => {}
                 Item::Raw(line) => {
                     flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
                     let _ = writeln!(t, "{line}");
