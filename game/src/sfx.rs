@@ -152,8 +152,8 @@ pub unsafe fn apply_room(room: u8) {
     let control=psx_io::read_u16(SPUCNT);
     if let Some(work)=crate::env_sound_audio::workspace(&program,ROOM_SAMPLE_END) {
         #[repr(C,align(4))]
-        struct Zeros([u8;1024]);
-        static ZERO: Zeros=Zeros([0;1024]);
+        struct Zeros([u8;256]);
+        static ZERO: Zeros=Zeros([0;256]);
         let spu=(*core::ptr::addr_of_mut!(SPU)).as_mut().expect("room effect before SPU init");
         let mut offset=0;
         while offset < work.bytes {
