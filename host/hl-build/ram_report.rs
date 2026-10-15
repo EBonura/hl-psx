@@ -240,7 +240,14 @@ pub fn report(parsed: &Map) -> String {
     for kind in [Kind::Text, Kind::Data, Kind::Bss] {
         let items: Vec<&Item> = parsed.items.iter().filter(|i| i.kind == kind).collect();
         let total: u32 = items.iter().map(|i| i.size).sum();
-        let _ = writeln!(out, "\n{} {} B ({}), {} items", kind.label(), total, kb(total), items.len());
+        let _ = writeln!(
+            out,
+            "\n{} {} B ({}), {} items",
+            kind.label(),
+            total,
+            kb(total),
+            items.len()
+        );
         let mut by_crate = BTreeMap::new();
         let mut by_module = BTreeMap::new();
         let mut by_symbol = BTreeMap::new();
@@ -315,15 +322,36 @@ mod tests {
         let parsed = parse(MAP);
         assert_eq!(parsed.text_total, 0x100);
         assert_eq!(parsed.bss_end, Some(0x8001_0600));
-        let text: u32 = parsed.items.iter().filter(|i| i.kind == Kind::Text).map(|i| i.size).sum();
+        let text: u32 = parsed
+            .items
+            .iter()
+            .filter(|i| i.kind == Kind::Text)
+            .map(|i| i.size)
+            .sum();
         assert_eq!(text, 0x78 + 0x88);
-        let pose = parsed.items.iter().find(|i| i.name.contains("pose")).unwrap();
+        let pose = parsed
+            .items
+            .iter()
+            .find(|i| i.name.contains("pose"))
+            .unwrap();
         assert_eq!(pose.krate, "psx_asset");
-        let pool = parsed.items.iter().find(|i| i.name.contains("POOL")).unwrap();
+        let pool = parsed
+            .items
+            .iter()
+            .find(|i| i.name.contains("POOL"))
+            .unwrap();
         assert_eq!(module_of(pool), "hl_psx::species");
-        let big = parsed.items.iter().find(|i| i.name.contains("BIG")).unwrap();
+        let big = parsed
+            .items
+            .iter()
+            .find(|i| i.name.contains("BIG"))
+            .unwrap();
         assert_eq!(module_of(big), "hl_psx (root)");
-        let unnamed = parsed.items.iter().find(|i| i.name.contains("unnamed")).unwrap();
+        let unnamed = parsed
+            .items
+            .iter()
+            .find(|i| i.name.contains("unnamed"))
+            .unwrap();
         assert_eq!(module_of(unnamed), "hl_psx (unnamed)");
     }
 
