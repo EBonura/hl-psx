@@ -1,0 +1,6 @@
+# blast knockback: c1a2, a 100 damage blast 50 units under the player, then one 60 units to his west.
+map c1a2
+0 god 0
+0 trace 5
+40 explode 2972 -894 -557 100
+100 explode 2912 -894 -507 100
