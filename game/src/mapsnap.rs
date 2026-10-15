@@ -25,7 +25,7 @@ use crate::*;
 /// restarts it from its entry.
 pub const CAPACITY: usize = 1024;
 
-const VERSION: u8 = 6;
+const VERSION: u8 = 7;
 const OCC_STATE: u8 = PROP_SCI_FOLLOWING
     | PROP_SCI_PROVOKED
     | PROP_SCI_PREDISASTER
@@ -364,6 +364,33 @@ unsafe fn walk_world(p: &mut Port, nlogic: usize, nents: usize, dead: bool) {
                 ENT_PHASE[ei] = v as i16 as i32;
                 ENT_RENDER_PHASE[ei] = ENT_PHASE[ei];
                 ent_prev_off_store(ei, ent_draw_offset(ei));
+            }
+        }
+        ei += 1;
+    }
+    // Pushables: one byte for a crate still where the map put it (a settled one sits
+    // a few units off, so within 8 counts), else the marker and its offset
+    // from there, as the changelevel carry keeps a func_pushable.
+    ei = 0;
+    while ei < nents {
+        if ENT_CACHE[ei].kind == ENT_KIND_PUSHABLE {
+            let mut o = ENT_CACHE[ei].origin;
+            let mut moved = if !p.read && o[0].abs().max(o[1].abs()).max(o[2].abs()) > 8 { 0xFF } else { 0 };
+            p.b(&mut moved);
+            if moved != 0 {
+                let mut axis = 0;
+                while axis < 3 {
+                    let mut v = o[axis] as u16;
+                    p.w(&mut v);
+                    o[axis] = v as i16 as i32;
+                    axis += 1;
+                }
+                if p.read {
+                    ENT_CACHE[ei].origin = o;
+                    ENT_PHASE[ei] = pushable::pack(0, 0, 0, pushable::SUPPORT_NONE, true);
+                    ENT_RENDER_PHASE[ei] = ENT_PHASE[ei];
+                    ent_prev_off_store(ei, o);
+                }
             }
         }
         ei += 1;

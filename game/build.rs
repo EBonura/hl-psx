@@ -1316,6 +1316,14 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 "savecard" => (28, [0; 6], String::new()),
                 // loadcard : read the latest save from the cards and go to its map
                 "loadcard" => (29, [0; 6], String::new()),
+                // nudge N X Y Z : push the Nth pushable of the map by that offset
+                "nudge" => (
+                    30,
+                    [num(2) as i32, num(3) as i32, num(5) as i32, num(4) as i32, 0, 0],
+                    String::new(),
+                ),
+                // pushpos N : log the Nth pushable's offset
+                "pushpos" => (31, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
                 // pos : log the player position
                 "pos" => (13, [0; 6], String::new()),
                 // die : drop the player's health to zero (god off)

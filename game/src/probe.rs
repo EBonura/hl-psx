@@ -330,6 +330,27 @@ pub unsafe fn step(
                     true,
                 );
             }
+            30 | 31 => {
+                let mut n = c.a[0] as i32;
+                let mut ei = 0usize;
+                while ei < crate::ENT_SOLID_COUNT {
+                    if crate::ENT_CACHE[ei].kind == crate::ENT_KIND_PUSHABLE {
+                        if n == 0 {
+                            if c.op == 30 {
+                                let o = &mut crate::ENT_CACHE[ei].origin;
+                                o[0] += c.a[1] as i32;
+                                o[1] += c.a[2] as i32;
+                                o[2] += c.a[3] as i32;
+                            }
+                            let o = crate::ENT_CACHE[ei].origin;
+                            crate::reference_trace::probe_vals(now, "pushpos", &[ei as i32, o[0], o[1], o[2]]);
+                            break;
+                        }
+                        n -= 1;
+                    }
+                    ei += 1;
+                }
+            }
             #[cfg(feature = "probe-fixes")]
             22 => weapons.current = c.a[0].clamp(0, 13) as usize,
             #[cfg(feature = "probe-fixes")]

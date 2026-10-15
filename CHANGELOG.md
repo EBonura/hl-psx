@@ -12,7 +12,8 @@
   c1a1b/c1a1c/c1a1f) stay broken in the maps that share the name. Dying with no
   save point restarts the map from its entry with its globals as they were on
   arrival. A save point or a map walked back into resumes the tick count it was
-  taken at. A saved map progress that held a removed trigger (state 255) was
+  taken at. Pushed crates (func_pushable) are kept
+  where they were left. A saved map progress that held a removed trigger (state 255) was
   decoded wrongly and is fixed. Costs 3.2 KB of RAM over the previous commit
   (796 B free), most of it the second capture slot.
 - A save keeps the map's progress, and dying reloads it. A manual save used to
@@ -24,7 +25,7 @@
   needs more is not recorded and a death restarts it from its entry as
   before). The save is held in RAM as well, so a death after a save reloads
   that save, as retail does, instead of the level entry. Not recorded:
-  trains and tracktrains, pushables, scripted sequences in flight, boss
+  trains and tracktrains, scripted sequences in flight, boss
   schedules, and where monsters other than followers stand (the living go
   back to their spawn with their health). Delayed events not yet fired are
   recorded.
