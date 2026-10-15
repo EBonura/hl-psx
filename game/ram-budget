@@ -1,0 +1,5 @@
+# Free-RAM floor, in bytes, for a shipping link (`cargo hl-build compile|pack|ram`).
+# The first number is the floor; a link that leaves less fails the build.
+# Free RAM is the SDK's check: bytes between .bss end and the stack reserve
+# (`psoxide-pgo ram`). `cargo hl-build ram` prints it and where the rest went.
+2048
