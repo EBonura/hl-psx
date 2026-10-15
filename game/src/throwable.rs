@@ -134,9 +134,21 @@ pub struct Bounce {
 /// was zero before gravity), `roll_64` the per-tick friction in 64ths that
 /// then applies. A contact with no known normal (an actor) reflects the
 /// velocity at the same 0.2 and keeps it flying.
+pub fn bounce(vel: [i32; 3], normal: [i32; 3], rolling: bool, roll_64: i32) -> Bounce {
+    bounce_with(vel, normal, rolling, roll_64, 12)
+}
+
+/// `bounce` with the engine's backoff (`2 - friction`) given in tenths: 12 for
+/// friction 0.8 (grenade, satchel), 15 for friction 0.5 (the snark).
 #[inline(never)]
 #[cfg_attr(target_arch = "mips", optimize(size))]
-pub fn bounce(vel: [i32; 3], normal: [i32; 3], rolling: bool, roll_64: i32) -> Bounce {
+pub fn bounce_with(
+    vel: [i32; 3],
+    normal: [i32; 3],
+    rolling: bool,
+    roll_64: i32,
+    backoff_10: i32,
+) -> Bounce {
     let mut v = vel;
     let ground = normal[1] > GROUND_NORMAL_Y;
     if rolling && ground {
@@ -150,8 +162,8 @@ pub fn bounce(vel: [i32; 3], normal: [i32; 3], rolling: bool, roll_64: i32) -> B
         };
     }
     let along = (v[0] * normal[0] + v[1] * normal[1] + v[2] * normal[2]) >> 12;
-    // backoff 1.2: remove 1.2 x the normal component.
-    let cut = along * 6 / 5;
+    // remove `backoff` x the normal component (1.2 for friction 0.8).
+    let cut = along * backoff_10 / 10;
     let mut out = [
         v[0] - ((normal[0] * cut) >> 12),
         v[1] - ((normal[1] * cut) >> 12),
@@ -271,6 +283,13 @@ mod tests {
         assert_eq!(b.vel[1], -3);
         assert_eq!(b.vel[2], 10);
         assert!(!b.ground && !b.rest);
+    }
+
+    #[test]
+    fn the_snark_bounces_back_half_of_the_drop() {
+        // friction 0.5: backoff 1.5, so the normal part returns at 0.5.
+        let b = bounce_with([10, -14, 0], UP, false, 64, 15);
+        assert_eq!(b.vel, [10, 7, 0]);
     }
 
     #[test]

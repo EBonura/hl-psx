@@ -21408,6 +21408,33 @@ unsafe fn fire_weapon(
             hit
         }
         FIRE_PROJ => {
+            if d.proj == PROJ_SNARK {
+                // squeakgrenade.cpp: the toss needs room 20 to 64 units ahead.
+                let fwd = [rot.m[2][0] as i32, rot.m[2][1] as i32, rot.m[2][2] as i32];
+                let from = [
+                    eye[0] + ((fwd[0] * 20) >> 12),
+                    eye[1] + ((fwd[1] * 20) >> 12),
+                    eye[2] + ((fwd[2] * 20) >> 12),
+                ];
+                let to = [
+                    eye[0] + ((fwd[0] * 64) >> 12),
+                    eye[1] + ((fwd[1] * 64) >> 12),
+                    eye[2] + ((fwd[2] * 64) >> 12),
+                ];
+                return match phys::trace_line(m, movers, from, to) {
+                    Some(h) if h.frac <= 1024 => false,
+                    hit => {
+                        let slot = spawn_projectile_dir(PROJ_SNARK, 5, hit.map_or(to, |h| h.pos), [0; 3], false);
+                        // 200 u/s along the view plus the thrower's velocity.
+                        let mut a = 0;
+                        while a < 3 {
+                            PROJECTILES[slot].vel[a] = ((fwd[a] * 10) >> 12) + FIRE_VEL[a];
+                            a += 1;
+                        }
+                        true
+                    }
+                };
+            }
             if d.proj == PROJ_TRIPMINE {
                 // Placed, not thrown; the caller refunds the mine on a miss.
                 let fwd = [rot.m[2][0] as i32, rot.m[2][1] as i32, rot.m[2][2] as i32];
@@ -21923,7 +21950,7 @@ fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
         // a straight 1200 u/s dart. At 20 Hz those are 15 and 60 units/tick.
         PROJ_HORNET => (15, 100, false, 0, (250, 230, 70), 3),
         PROJ_HORNET_FAST => (60, 80, false, 0, (255, 244, 90), 3),
-        PROJ_SNARK => (48, 80, true, 110, (190, 170, 50), 5),
+        PROJ_SNARK => (10, 150, true, 0, (190, 170, 50), 5),
         // Measured on the retail game: about 45 units per tick (900 u/s) along a straight
         // line, 9 ticks from the start of the spit animation at 150 units, 17 at 500.
         PROJ_SPIT => (45, 55, false, 0, (150, 220, 80), 4), // bullsquid acid glob
@@ -22142,10 +22169,16 @@ unsafe fn spawn_projectile_dir(
         // Pool full: a bolt stuck in a wall is the cheapest to lose, else slot 0.
         slot = 0;
         let mut j = 0;
+        let mut oldest = u8::MAX;
         while j < MAX_PROJECTILES {
             if (PROJECTILES[j].kind == PROJ_BOLT || PROJECTILES[j].kind == PROJ_BOLT_WATER) && PROJECTILES[j].vel == [0; 3] {
                 slot = j;
                 break;
+            }
+            // Next cheapest: the snark closest to popping.
+            if PROJECTILES[j].kind == PROJ_SNARK && PROJECTILES[j].life < oldest {
+                oldest = PROJECTILES[j].life;
+                slot = j;
             }
             j += 1;
         }
@@ -22481,6 +22514,154 @@ unsafe fn think_rocket(m: &Map, movers: &[phys::Mover], i: usize) {
     PROJECTILES[i].vel = v;
 }
 
+/// Whether alien military sits with the snark (R_AL in the relationship
+/// table: the alien grunt, slave and controller), roaches and the G-Man are
+/// ignored; everything else with health, the scientists included, is prey.
+fn snark_prey(ty: u8) -> bool {
+    !matches!(ty, 9 | 10 | 11 | 14 | 15 | 52 | 53 | PROP_TYPE_HOLO)
+}
+
+/// CSqueakGrenade: a bouncing creature, not a grenade. Thrown at 200 u/s plus
+/// the thrower's velocity, it bounces under half gravity with friction 0.5 and
+/// stays idle until its first touch; after that every bounce, and every two
+/// seconds on the ground, `HuntThink` points it at the nearest visible actor
+/// (the player too, once it has bounced) inside 512 units and 90 degrees of
+/// its heading: velocity = velocity x min(1.2, 50 / (speed + 10)) + 300 u/s
+/// toward the target. A touch bites for 10 and adds 5 to the pop damage, half a
+/// second apart; after 15 s it pops for its damage at radius 2.5 x damage
+/// (5 and 12 units, more per bite). Slot fields: damage is the pop damage,
+/// life counts 0.1 s steps left, aux the ticks to the next hunt, dir[0] the bite
+/// lockout and dir[1] 1 once it has bounced.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
+    let mut p = PROJECTILES[i];
+    // 15 s: one step of life per two ticks.
+    if SIM_NOW & 1 == 0 {
+        p.life = p.life.saturating_sub(1);
+    }
+    if p.life == 0 {
+        PROJECTILES[i].active = false;
+        DMG_BLAST = true;
+        radius_damage(m, p.pos, p.damage, blast_radius(p.damage), true);
+        DMG_BLAST = false;
+        let mut k = 0;
+        while k < 4 {
+            let v = [
+                (impact_rng().below(9) as i32) - 4,
+                2 + (impact_rng().below(6) as i32),
+                (impact_rng().below(9) as i32) - 4,
+            ];
+            spawn_debris(p.pos, v, DEBRIS_YELLOW_BLOOD, 12);
+            k += 1;
+        }
+        return;
+    }
+    p.aux = p.aux.saturating_sub(1);
+    if p.dir[0] > 0 {
+        p.dir[0] -= 1;
+    }
+    // Hunt and bite at the nearest target we can touch or see.
+    let armed = p.dir[1] != 0;
+    let heading = dir_q12([0; 3], p.vel);
+    let mut best = usize::MAX; // MAX - 1 = the player
+    let mut best_d2 = 512 * 512;
+    let mut best_at = [0i32; 3];
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut pi = 0usize;
+    while pi < nprops {
+        let ty = PROP_KIND[pi];
+        if PROP_ACTIVE[pi] != 0
+            && PROP_HEALTH[pi] != 0
+            && prop_start_health(ty) != 0
+            && snark_prey(ty)
+            && PROP_KIND[pi] != 58
+        {
+            let at = prop_target(ty, PROP_POS[pi]);
+            let d2 = dist2_3(p.pos, at);
+            let to = dir_q12(p.pos, at);
+            let front = (to[0] * heading[0] + to[1] * heading[1] + to[2] * heading[2]) >> 12;
+            if d2 < best_d2 && (front > 0 || p.vel == [0; 3]) && actor_line_clear(m, movers, p.pos, at) {
+                best = pi;
+                best_d2 = d2;
+                best_at = at;
+            }
+        }
+        pi += 1;
+    }
+    if armed && LOGIC_PLAYER_HEALTH > 0 {
+        let at = [LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]];
+        let d2 = dist2_3(p.pos, at);
+        if d2 < best_d2 && actor_line_clear(m, movers, p.pos, at) {
+            best = usize::MAX - 1;
+            best_d2 = d2;
+            best_at = at;
+        }
+    }
+    let mut bounced = false;
+    // Move: gravity 0.5, a point trace, the bounce.
+    p.vel[1] -= throwable::LOB_GRAVITY;
+    let new = [p.pos[0] + p.vel[0], p.pos[1] + p.vel[1], p.pos[2] + p.vel[2]];
+    match phys::trace_line(m, movers, p.pos, new) {
+        Some(h) => {
+            let b = throwable::bounce_with(p.vel, h.normal, false, 64, 15);
+            p.vel = b.vel;
+            p.pos = [
+                h.pos[0] + (h.normal[0] >> 11),
+                h.pos[1] + (h.normal[1] >> 11),
+                h.pos[2] + (h.normal[2] >> 11),
+            ];
+            bounced = true;
+        }
+        None => p.pos = new,
+    }
+    // Touch: inside the target's box, the bite.
+    if best != usize::MAX {
+        let (r, hh) = if best == usize::MAX - 1 {
+            (16, 36)
+        } else {
+            prop_hit_extent(PROP_KIND[best])
+        };
+        let d = [p.pos[0] - best_at[0], p.pos[1] - best_at[1], p.pos[2] - best_at[2]];
+        if d[0].abs() <= r + 6 && d[2].abs() <= r + 6 && d[1].abs() <= hh + 4 {
+            bounced = true;
+            if p.dir[0] == 0 && (armed || best != usize::MAX - 1) {
+                if best == usize::MAX - 1 {
+                    PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(10);
+                    note_damage_direction(p.pos);
+                } else {
+                    damage_prop(best, 10, true);
+                    PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
+                }
+                p.damage = p.damage.saturating_add(5);
+                p.dir[0] = 10; // half a second between bites
+            }
+        }
+    }
+    if bounced {
+        p.dir[1] = 1;
+        p.aux = 0; // SuperBounceTouch: hunt now
+    }
+    if p.dir[1] != 0 && p.aux == 0 {
+        p.aux = 40; // and again in two seconds
+        if best != usize::MAX {
+            let to = dir_q12(p.pos, best_at);
+            let speed_ups = isqrt_i32(p.vel[0] * p.vel[0] + p.vel[1] * p.vel[1] + p.vel[2] * p.vel[2]) * 20;
+            let adj = (50 * 4096 / (speed_ups + 10)).min(4915);
+            let mut a = 0;
+            while a < 3 {
+                p.vel[a] = ((p.vel[a] * adj) >> 12) + ((to[a] * 15) >> 12);
+                a += 1;
+            }
+        } else if p.vel[0].abs() + p.vel[2].abs() < 2 {
+            // Stuck in place: skitter off in a random direction.
+            p.vel[0] = (impact_rng().below(11) as i32) - 5;
+            p.vel[2] = (impact_rng().below(11) as i32) - 5;
+        }
+    }
+    PROJECTILES[i] = p;
+}
+
 /// CHornet::TrackTarget for a player's hornet: after a 0.1 s coast at 300 u/s,
 /// every 0.1 s it turns half way toward the nearest visible enemy inside 512
 /// units and 25 degrees of its heading, flying at 800 u/s (orange) or at 600
@@ -22618,6 +22799,11 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
         let kind = PROJECTILES[i].kind;
         if kind == PROJ_BOLT || kind == PROJ_BOLT_WATER {
             tick_bolt(m, movers, i);
+            i += 1;
+            continue;
+        }
+        if kind == PROJ_SNARK {
+            tick_snark(m, movers, i);
             i += 1;
             continue;
         }
@@ -36105,6 +36291,10 @@ fn play(
                     if weapon.current == W_TRIPMINE && !hit {
                         // Nothing within 128 units took the mine: not spent.
                         weapon.ammo[AMMO_TRIPMINE] += 1;
+                    }
+                    if weapon.current == W_SNARK && !hit {
+                        // No room ahead to toss it: not spent.
+                        weapon.ammo[AMMO_SNARK] += 1;
                     }
                     if weapon.current == W_CROWBAR {
                         if hit {
