@@ -9,6 +9,8 @@
 //! Usage:  hl-bsp <path/to/map.bsp>
 //!     cargo run --release --manifest-path host/hl-bsp/Cargo.toml -- valve/maps/c1a0.bsp
 
+#![feature(optimize_attribute)]
+
 #[path = "../../../game/src/env_bubbles.rs"]
 mod env_bubbles;
 mod door_seal;
