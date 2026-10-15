@@ -17290,6 +17290,8 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         // CBaseTurret::TakeDamage: a closed turret takes a tenth (a sentry
         // overrides it, deploys and takes full damage).
         (dmg + 5) / 10
+    } else if DMG_BULLET_EXACT && prop_is_zombie(PROP_KIND[pi]) {
+        zombie_exact_bullet(dmg)
     } else if PROP_KIND[pi] == PROP_TYPE_OSPREY {
         // COsprey::TraceAttack: light hits only spark off the hull; its
         // 400 health scales onto the u8 actor health.
@@ -22154,7 +22156,9 @@ unsafe fn gauss_beam(
             let hurt = hit_group_damage(ty, bx, dmg.min(255) as u8);
             #[cfg(feature = "interaction-probe")]
             reference_trace::probe_vals(SIM_NOW as u32, "gauss_hit", &[pi as i32, ty as i32, hurt as i32, PROP_HEALTH[pi] as i32]);
+            DMG_BULLET_EXACT = true;
             damage_prop(pi, hurt, true);
+            DMG_BULLET_EXACT = false;
             sfx::play_world(sfx::BULLET_HIT1, at);
             spawn_blood(m, movers, at, src, stop, 8192, hurt, ty, rot, base_t);
             PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
@@ -22746,6 +22750,8 @@ unsafe fn explode(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_inflic
     DMG_BLAST = false;
 }
 
+/// Set while the damage is exactly a bullet (gauss, hornets): zombies keep 30 percent of it.
+static mut DMG_BULLET_EXACT: bool = false;
 /// Set while blast or energy-beam damage is applied (GARG_DAMAGE classes).
 static mut DMG_HEAVY: bool = false;
 /// Set while blast damage is applied (DMG_BLAST: the apache takes it double).
@@ -23510,7 +23516,9 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
                 };
                 explode(m, at, dmg, aoe, !from_enemy);
             } else if best != usize::MAX {
+                DMG_BULLET_EXACT = kind == PROJ_HORNET || kind == PROJ_HORNET_FAST;
                 damage_prop(best, PROJECTILES[i].damage, true);
+                DMG_BULLET_EXACT = false;
                 PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
             } else if player_hit {
                 PENDING_PLAYER_DAMAGE =
