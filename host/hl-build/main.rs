@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 mod cook_provenance;
 mod model_audit;
 mod model_variants;
+mod profile_prune;
 mod ram_report;
 mod regression;
 mod stack_gate;
@@ -2056,6 +2057,29 @@ fn stack_is_safe(room: u32) -> bool {
 /// at boot, 250 left 14,428 B, so the ladder has one more rung.
 const PGO_HOT_CALLSITE_LADDER: [u32; 6] = [1000, 500, 250, 125, 60, 0];
 
+/// The sample-profile loader's hot call-site threshold for `-Zprofile-sample-use`
+/// builds (LLVM's default is 3000).
+const PGO_SAMPLE_HOT_INLINE_THRESHOLD: u32 = 50;
+
+/// How much of the replays' samples the shipped profile keeps, in permille, and
+/// the functions it never keeps. A profile that names everything the replays
+/// touched inlines hot callees into dozens of callers: +47 KB of `.text` and
+/// `play()` 56 KB -> 128 KB over the committed one on 2026-10-15, for +19..+34%
+/// frame rate. The samples are concentrated (33 of 561 functions hold 80%), so
+/// the profile keeps the hottest ones and leaves the rest unnamed, which
+/// `-profile-sample-accurate` turns into size-optimised cold code: at 80% it
+/// costs 5 KB for +12% (c0a0 tram +16, c1a0 +14, c1a2b +13, c4a3 +7). The CD,
+/// stream and decompression functions are dropped first: they top the histogram
+/// while the CPU waits for the drive and do not run in a frame.
+const PGO_HOT_COVERAGE_PERMILLE: u64 = 800;
+const PGO_COLD_FUNCTIONS: [&str; 5] = [
+    "6psx_io2cd",
+    "chunk_stream",
+    "cdstream",
+    "SectorReader",
+    "psx_pack",
+];
+
 /// The sample profile the last `pgo` run shipped with, and the hot call-site
 /// threshold it linked at. Every other build links with them: without a
 /// profile the game no longer fits in RAM. They feed only the guest compile,
@@ -2208,10 +2232,17 @@ fn compile_game(
             ));
             // Tuning aid: extra LLVM options for a profile-guided link, space
             // separated (`HLPSX_LLVM_ARGS="-sample-profile-inline-growth-limit=4"`).
-            if let Some(extra) = env::var_os("HLPSX_LLVM_ARGS") {
-                for arg in extra.to_string_lossy().split_whitespace() {
-                    flags.push(format!("-Cllvm-args={arg}"));
-                }
+            let extra = env::var("HLPSX_LLVM_ARGS").unwrap_or_default();
+            // The profile-driven inliner's own hot threshold (default 3000):
+            // 50 keeps most of the frame rate for a fraction of the code growth
+            // (see PGO_HOT_COVERAGE_PERMILLE).
+            if !extra.contains("sample-profile-hot-inline-threshold") {
+                flags.push(format!(
+                    "-Cllvm-args=-sample-profile-hot-inline-threshold={PGO_SAMPLE_HOT_INLINE_THRESHOLD}"
+                ));
+            }
+            for arg in extra.split_whitespace() {
+                flags.push(format!("-Cllvm-args={arg}"));
             }
         }
     }
@@ -2461,19 +2492,23 @@ const RAM_BUDGET: &str = "game/ram-budget";
 /// the same commit, with the reason. Diagnostic feature builds are measured
 /// but not held to it (they carry code the shipping disc never has).
 /// `HLPSX_RAM_FLOOR=N` overrides the file for one run.
-fn enforce_ram_budget(repository: &Path, features: Option<&str>, free: u32) -> Result<()> {
-    let floor = match env::var("HLPSX_RAM_FLOOR") {
+fn ram_floor(repository: &Path) -> Result<u32> {
+    match env::var("HLPSX_RAM_FLOOR") {
         Ok(value) => value
             .trim()
             .parse::<u32>()
-            .map_err(|error| format!("HLPSX_RAM_FLOOR: {error}"))?,
+            .map_err(|error| format!("HLPSX_RAM_FLOOR: {error}").into()),
         Err(_) => {
             let text = fs::read_to_string(repository.join(RAM_BUDGET))
                 .map_err(|error| format!("read {RAM_BUDGET}: {error}"))?;
             ram_report::parse_floor(&text)
-                .ok_or_else(|| format!("{RAM_BUDGET} holds no floor in bytes"))?
+                .ok_or_else(|| format!("{RAM_BUDGET} holds no floor in bytes").into())
         }
-    };
+    }
+}
+
+fn enforce_ram_budget(repository: &Path, features: Option<&str>, free: u32) -> Result<()> {
+    let floor = ram_floor(repository)?;
     let shipping = features.is_none_or(|list| list.trim().is_empty());
     if free >= floor {
         println!(
@@ -2657,6 +2692,25 @@ fn profile_guided_pack(
             .arg(&profile),
         "convert the PC histogram into a sample profile",
     )?;
+    let coverage = env::var("HLPSX_PGO_COVERAGE")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(PGO_HOT_COVERAGE_PERMILLE);
+    let full_profile = work.join("hl-psx.full.prof");
+    fs::copy(&profile, &full_profile)?;
+    let (pruned_text, pruned) = profile_prune::prune(
+        &fs::read_to_string(&full_profile)?,
+        coverage,
+        &PGO_COLD_FUNCTIONS,
+    );
+    fs::write(&profile, pruned_text)?;
+    println!(
+        "PGO profile pruned to the hottest {} of {} functions, {}.{}% of the samples (HLPSX_PGO_COVERAGE={coverage})",
+        pruned.kept,
+        pruned.total,
+        pruned.covered_permille / 10,
+        pruned.covered_permille % 10
+    );
 
     // The layout binds to the code of a link in the linker's own order, so
     // collect it on that link, then link again with the layout applied.
@@ -2887,9 +2941,10 @@ fn check_free_matches(what: &str, threshold: u32, ladder: u32, shipped: u32) -> 
 }
 
 /// Link with `profile`, stepping inlining down the ladder from `first` to the
-/// first (highest, so fastest) rung that links and leaves a safe stack (see
-/// `stack_is_safe`). There is no free-RAM floor: whatever the link leaves is
-/// used. Every rung's free RAM is printed. A threshold that inlines past the RAM
+/// first (highest, so fastest) rung that links, leaves a safe stack (see
+/// `stack_is_safe`) and, for a shipping build, keeps the committed free-RAM
+/// floor (`game/ram-budget`: the allowance the unmerged lanes are promised, so
+/// raising it trades inlining for headroom). Every rung's free RAM is printed. A threshold that inlines past the RAM
 /// region fails to link; step down from that too. A real compile error fails
 /// every threshold and is reported with the ladder.
 ///
@@ -2904,6 +2959,11 @@ fn link_with_profile(
 ) -> Result<Linked> {
     let (_, gap) = sdk_stack_geometry(&fs::read_to_string(psoxide.join("sdk/psoxide.ld"))?)?;
     let reserve = stack_gate::committed_reserve(repository)?;
+    let floor = if is_shipping_build(features) {
+        ram_floor(repository)?
+    } else {
+        0
+    };
     let mut tried: Vec<(u32, Option<u32>)> = Vec::new();
     let mut link_error = None;
     for threshold in PGO_HOT_CALLSITE_LADDER
@@ -2914,7 +2974,12 @@ fn link_with_profile(
             Ok(linked) => {
                 tried.push((threshold, Some(linked.free)));
                 let room = stack_room(linked.free, reserve, gap);
-                if stack_is_safe(room) {
+                if stack_is_safe(room) && linked.free < floor {
+                    println!(
+                        "PGO threshold {threshold} links with {} B free, under the {floor} B floor; stepping down",
+                        linked.free
+                    );
+                } else if stack_is_safe(room) {
                     println!(
                         "PGO variant: hot-callsite-threshold={threshold}, {} B of RAM free, \
                          {room} B of stack room below the initial SP (needs {}; tried {})",
