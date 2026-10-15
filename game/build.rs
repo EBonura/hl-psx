@@ -1371,12 +1371,12 @@ fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     write_skill_tables(repo_root, &out_dir);
 
-    // hl-psx measures its real stack high-water mark in emulator-telemetry
-    // builds. Keep the SDK's full 32 KiB link-time reservation: menu/intro
-    // entry points are deliberately kept out of main so their mutually
-    // exclusive scratch frames do not inflate main's permanent frame and
-    // collide with the tail of BSS. Generate the derivative in OUT_DIR so the
-    // pinned SDK remains pristine and an upstream linker-layout change fails
+    // The stack reserve is `game/stack-reserve`, held to the stack the shipped
+    // image can reach by `cargo hl-build stack` (emulator watermark over the
+    // campaign maps plus a static call-graph bound). The title menu, intro and
+    // ending keep their mutually exclusive scratch frames out of main so they do
+    // not inflate main's permanent frame. Generate the derivative in OUT_DIR so
+    // the pinned SDK remains pristine and an upstream linker-layout change fails
     // loudly rather than being patched blindly.
     let sdk_linker = fs::read_to_string(&ld).expect("read PSoXide linker script");
     const SDK_STACK: &str = "STACK_RESERVE = 0x8000;";
@@ -1385,9 +1385,25 @@ fn main() {
     // only profiled, never shipped (hl-build's PGO collect link). A link-only
     // input: the code and its addresses do not change.
     println!("cargo:rerun-if-env-changed=HLPSX_STACK_RESERVE");
+    // The shipped reserve is `game/stack-reserve`, held to the measured stack
+    // by `cargo hl-build stack`.
+    let stack_file = manifest.join("stack-reserve");
+    println!("cargo:rerun-if-changed={}", stack_file.display());
+    let committed: Option<u32> = fs::read_to_string(&stack_file).ok().and_then(|text| {
+        text.lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty() && !line.starts_with('#'))?
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()
+    });
     let hlpsx_stack = match env::var("HLPSX_STACK_RESERVE") {
         Ok(reserve) if !reserve.is_empty() => format!("STACK_RESERVE = {reserve};"),
-        _ => SDK_STACK.to_string(),
+        _ => match committed {
+            Some(bytes) => format!("STACK_RESERVE = {bytes};"),
+            None => SDK_STACK.to_string(),
+        },
     };
     // Rare renderer extensions live outside `.text.*` so enabling one does
     // not shift the PS1's cache-sensitive world loop. Keep the custom bucket
