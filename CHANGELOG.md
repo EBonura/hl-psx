@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Death waits for you. The red death screen used to end by itself after three
+  seconds. It now holds for two seconds (the cap retail puts on the death
+  animation), then waits until every action button has been let go and one is
+  pressed again, and only then reloads the latest save point (or the level
+  entry when there is none). Stick movement does not count as a press.
 - Autosave points and walking back. A trigger_autosave (a first touch by the
   player, once) now keeps the map as a save point in RAM, and dying reloads it,
   as retail does; the card is still written only by a manual save. Leaving a

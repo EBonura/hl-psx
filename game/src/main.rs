@@ -1151,7 +1151,7 @@ const PROP_CLIP_ATTACK: usize = 2;
 const PROP_CLIP_PAIN: usize = 3;
 const PROP_CLIP_DEAD: usize = 4;
 const PLAYER_START_HEALTH: u16 = 100;
-const DEATH_TICKS: u8 = 60; // frozen "you died" window before respawn (3s at 20 Hz)
+const DEATH_TICKS: u8 = 40; // death window before a press is taken: the 2 s cap retail puts on the death animation
 const PLAYER_START_ARMOR: u16 = 0;
 const HEV_MAX_ARMOR: u16 = 100;
 const CHARGER_RATE: u16 = 4; // health/armor points per use pulse (8-tick cadence)
@@ -33013,8 +33013,9 @@ fn play(
         health = initial_health;
     }
     let mut armor: u16 = launch.armor.min(HEV_MAX_ARMOR);
-    let mut death_ticks: u8 = 0; // >0 while dead; respawns at 0
+    let mut death_ticks: u8 = 0; // >0 while dead; waits at 1 for a button
     let mut restart_requested = false;
+    let mut death_released = false; // every button let go since dying
     unsafe {
         MOUNTED_TANK = -1; // never carry a mount across maps
         TANK_FIRE_CD = 0;
@@ -33619,13 +33620,19 @@ fn play(
                 restart_requested = true;
             }
             // Player death: freeze for DEATH_TICKS (a red death screen renders),
-            // then reload the immutable entry handoff. That handoff is either
+            // then wait for a button press and reload the latest save point, or
+            // the immutable entry handoff when there is none. That handoff is either
             // the latest successful changelevel (full carried player state) or
             // the selected chapter start; the current room's pickups/damage
             // never leak into the retry.
-            if death_ticks > 0 {
+            if death_ticks > 1 {
                 death_ticks -= 1;
-                if death_ticks == 0 {
+            } else if death_ticks == 1 {
+                // PlayerDeathThink: after the death animation the player must let
+                // go of every button, then press one to reload the latest save.
+                if input_sample.actions == 0 {
+                    death_released = true;
+                } else if death_released {
                     restart_requested = true;
                 }
             }
