@@ -245,25 +245,27 @@ fn dot_q5(row: [i16; 3], e: [i32; 3]) -> i32 {
 
 /// Units a brush entity's placement point moves toward the eye: a button, panel or platform sits
 /// flush with a surface of the world, and its visible faces are on the eye side of its centre.
-const NUDGE: i64 = 16;
+const NUDGE: i32 = 16;
 
 /// `center` moved `NUDGE` units toward `eye` (unchanged when the eye is closer than that).
+/// 32-bit math: the offset is shifted down until its squares fit, which keeps the direction.
 #[inline]
 pub fn toward_eye(center: [i32; 3], eye: [i32; 3]) -> [i32; 3] {
-    let d = [
-        (eye[0] - center[0]) as i64,
-        (eye[1] - center[1]) as i64,
-        (eye[2] - center[2]) as i64,
-    ];
-    let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) as u64;
-    let len = len.isqrt() as i64;
-    if len <= NUDGE {
+    let mut d = [eye[0] - center[0], eye[1] - center[1], eye[2] - center[2]];
+    let mut shift = 0;
+    while d[0].abs().max(d[1].abs()).max(d[2].abs()) >= 8192 {
+        d = [d[0] >> 1, d[1] >> 1, d[2] >> 1];
+        shift += 1;
+    }
+    let len = crate::isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if shift == 0 && len <= NUDGE {
         return center;
     }
+    let len = len.max(1);
     [
-        center[0] + (d[0] * NUDGE / len) as i32,
-        center[1] + (d[1] * NUDGE / len) as i32,
-        center[2] + (d[2] * NUDGE / len) as i32,
+        center[0] + d[0] * NUDGE / len,
+        center[1] + d[1] * NUDGE / len,
+        center[2] + d[2] * NUDGE / len,
     ]
 }
 
