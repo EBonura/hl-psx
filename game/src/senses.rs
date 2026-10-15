@@ -149,7 +149,9 @@ pub fn in_view_cone(kind: u8, fx: i32, fz: i32, dx: i32, dz: i32) -> bool {
 
 /// Yaw per 20 Hz tick in q12 units for each species: the retail yaw speed in
 /// degrees a second, doubled by `ChangeYaw`, over 20, in 4096ths of a turn.
-/// Species with no entry keep the generic quick turn.
+/// Species with no entry keep the generic quick turn. The talking allies have none
+/// on purpose: the c1a0e cascade does not finish when the scientists turn at their
+/// retail 120 to 180 degrees a second (journey tests/chain-new-game).
 pub const fn turn_rate_q12(kind: u8) -> u16 {
     match kind {
         2 => 34,              // headcrab: 30
@@ -159,8 +161,6 @@ pub const fn turn_rate_q12(kind: u8) -> u16 {
         9 => 80,              // vortigaunt: 70
         10 | 19 => 114,       // alien grunt, ichthyosaur: 100
         16 => 68,             // gargantua: 60
-        0 | 54 | 25 => 171,   // scientists: 120 to 180
-        1 => 102,             // Barney: 70 to 90
         51 => 410,            // assassin: 360
         20 | 21 | 22 => 17,   // turrets: the gun swings 30 degrees a second
         _ => 250,
