@@ -3125,6 +3125,24 @@ mod tests {
     }
 
     #[test]
+    fn ram_budget_fails_a_shipping_link_under_the_floor_only() {
+        let dir = env::temp_dir().join(format!("hl-ram-budget-{}", std::process::id()));
+        fs::create_dir_all(dir.join("game")).unwrap();
+        fs::write(dir.join(RAM_BUDGET), "# floor\n4096  # bytes\n").unwrap();
+        // The file is read unless the override is set; tests do not set it.
+        assert!(env::var_os("HLPSX_RAM_FLOOR").is_none());
+        assert!(enforce_ram_budget(&dir, None, 4096).is_ok());
+        let error = enforce_ram_budget(&dir, None, 4095)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("1 B under the 4096 B floor"), "{error}");
+        assert!(enforce_ram_budget(&dir, Some(""), 0).is_err());
+        // A diagnostic build is reported, not failed.
+        assert!(enforce_ram_budget(&dir, Some("reference-trace"), 0).is_ok());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn shipped_free_ram_must_equal_the_ladders_figure() {
         assert!(check_free_matches("link", 125, 18_256, 18_256).is_ok());
         let error = check_free_matches("link", 125, 18_256, 16_208)
