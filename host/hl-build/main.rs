@@ -14,6 +14,8 @@ mod model_audit;
 mod model_variants;
 mod ram_report;
 mod regression;
+mod stack_gate;
+mod stack_static;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -687,6 +689,7 @@ enum Action {
     Regress,
     Compile,
     Ram,
+    Stack,
     Pack,
     Disc,
     Install,
@@ -710,13 +713,17 @@ struct Options {
     map: Option<PathBuf>,
     /// `ram`: list every placed section (kind, size, crate, name) instead of the summary.
     items: bool,
+    /// `stack`: play-order indices to run, or `all` (default: the gate's own list).
+    maps: Option<String>,
+    /// `pgo`: scripted scenarios (play-order, port-1 polls) profiled beside the tapes.
+    scripts: Vec<(usize, u32)>,
 }
 
 const CANONICAL_GAME_NAME: &str = "Half-Life (hl-psx)";
 
 const HELP: &str = "hl-psx Rust build\n\n\
          USAGE:\n\
-           cargo hl-build [sdk|build|assets|models|audit|regress|compile|ram|pack|disc|install|pgo|check] [OPTIONS]\n\
+           cargo hl-build [sdk|build|assets|models|audit|regress|compile|ram|stack|pack|disc|install|pgo|check] [OPTIONS]\n\
          from the repository root; `cargo hl-build` is an alias for\n\
            cargo run --release --manifest-path host/hl-build/Cargo.toml --\n\n\
          ACTIONS:\n\
@@ -729,6 +736,8 @@ const HELP: &str = "hl-psx Rust build\n\n\
            compile    compile only the PS1 executable (requires cooked assets)\n\
            ram        compile, then print the free RAM and where the rest went;\n\
                       fails under the floor in game/ram-budget\n\
+           stack      pack the shipping disc, walk maps in PSoXide and fail when a stack\n\
+                      watermark comes within 25% of game/stack-reserve\n\
            pack       compile and pack dist/hl-psx.bin/.cue\n\
            disc       compile, pack, and copy the disc to --games-dir\n\
            install    full build and copy the disc to --games-dir\n\
@@ -742,6 +751,10 @@ const HELP: &str = "hl-psx Rust build\n\n\
            --scenario NAME    regress only one named deterministic scenario\n\
            --games-dir PATH   destination required by disc/install; optional after regress/pgo\n\
            --tape PATH        input tape for pgo to profile; repeat for more routes\n\
+           --script MAP:POLLS pgo: also profile this play-order map, entered through the menu and\n\
+                              walked, for that many port-1 polls (repeatable; set HLPSX_COLLECT_MAPS\n\
+                              to the maps' room ids so the collect build holds them)\n\
+           --maps LIST|all    stack: play-order indices to run (default: a representative set)\n\
            --items            ram: list every placed section instead of the summary\n\
            --map PATH         ram: report this link map (default .hlpsx/hl-psx.map) without linking\n\
            --polls FROM..TO   gameplay window (port-1 polls) of the preceding --tape; with one pgo\n\
@@ -794,6 +807,10 @@ fn parse_args() -> Options {
             args.next();
             Action::Ram
         }
+        Some("stack") => {
+            args.next();
+            Action::Stack
+        }
         Some("pack") => {
             args.next();
             Action::Pack
@@ -830,6 +847,8 @@ fn parse_args() -> Options {
         polls: Vec::new(),
         map: None,
         items: false,
+        maps: None,
+        scripts: Vec::new(),
     };
     while let Some(arg) = args.next() {
         let Some(flag) = arg.to_str() else { usage() };
@@ -846,6 +865,17 @@ fn parse_args() -> Options {
                 options.regression_scenario = Some(value(&mut args).to_string_lossy().into_owned())
             }
             "--items" => options.items = true,
+            "--script" => {
+                let text = value(&mut args).to_string_lossy().into_owned();
+                match text
+                    .split_once(':')
+                    .and_then(|(map, polls)| Some((map.parse().ok()?, polls.parse().ok()?)))
+                {
+                    Some(script) => options.scripts.push(script),
+                    None => usage(),
+                }
+            }
+            "--maps" => options.maps = Some(value(&mut args).to_string_lossy().into_owned()),
             "--map" => options.map = Some(PathBuf::from(value(&mut args))),
             "--games-dir" => options.games_dir = Some(PathBuf::from(value(&mut args))),
             "--tape" => {
@@ -1964,6 +1994,9 @@ enum GuestProfile<'a> {
     /// Optimise with this LLVM sample profile, at this hot call-site
     /// inlining threshold (see `PGO_HOT_CALLSITE_LADDER`).
     Use(&'a Path, u32),
+    /// The same compile as `Use`, linked as an ELF (not an executable) so the
+    /// stack analysis can read its code.
+    UseElf(&'a Path, u32),
 }
 
 /// A profile-guided disc uses whatever RAM its link leaves: there is no free-RAM
@@ -1972,14 +2005,16 @@ enum GuestProfile<'a> {
 /// `.bss` leaves free. A rung is safe when that room, below the initial SP, holds
 /// the deepest stack the game has been measured to use plus a margin.
 ///
-/// The deepest stack write seen on the profiling tapes was 17,760 B below the
-/// initial SP (final-8; the `emulator-telemetry` build's `stackwm` line reports
-/// the same quantity as `peak`, measured from the RAM top). Re-measure it, and
-/// raise this constant, when a tape or the game's call depth changes.
-const STACK_DEEPEST_MEASURED: u32 = 17_760;
+/// The deepest stack the shipping link can reach: the static bound over every
+/// call chain with the recursion at the campaign's deepest BSP trees
+/// (`cargo hl-build stack`, stack_static.rs), 19,616 B below `main`'s entry
+/// plus the 48 B above it on 2026-10-15. The emulator watermark of the same
+/// image over eight maps is 9.8 KB at most; the bound is what the reserve has
+/// to cover because a trace down the deepest tree nests 85 frames of 136 B.
+const STACK_DEEPEST_MEASURED: u32 = 19_664;
 
-/// Margin kept over `STACK_DEEPEST_MEASURED`.
-const STACK_MARGIN: u32 = 2 * 1024;
+/// Margin kept over `STACK_DEEPEST_MEASURED`: a quarter.
+const STACK_MARGIN: u32 = STACK_DEEPEST_MEASURED / 4;
 
 /// Where the SDK's linker script puts the stack: `STACK_RESERVE`, and
 /// `STACK_INIT` as an offset from `RAM_BASE`. The RAM top is `RAM_SIZE`, 2 MiB.
@@ -2055,8 +2090,8 @@ const NO_LAYOUT: &str = "HLPSX_NO_LAYOUT";
 /// depth (and raise `PGO_COLLECT_STACK_DEEPEST`) when a tape or the game's call
 /// depth changes; the README states the margin.
 const PGO_COLLECT_STACK_RESERVE: u32 = 0x6000;
-const PGO_COLLECT_STACK_DEEPEST: u32 = STACK_DEEPEST_MEASURED;
-const PGO_COLLECT_STACK_MARGIN: u32 = STACK_MARGIN;
+const PGO_COLLECT_STACK_DEEPEST: u32 = 17_760;
+const PGO_COLLECT_STACK_MARGIN: u32 = 2 * 1024;
 const PGO_COLLECT_STACK_MIN: u32 =
     (PGO_COLLECT_STACK_DEEPEST + PGO_COLLECT_STACK_MARGIN).next_multiple_of(256);
 
@@ -2154,7 +2189,9 @@ fn compile_game(
             "-Zdebug-info-for-profiling".to_string(),
             "-Cstrip=none".to_string(),
         ]);
-        if let GuestProfile::Use(samples, hot_callsite_threshold) = profile {
+        if let GuestProfile::Use(samples, hot_callsite_threshold)
+        | GuestProfile::UseElf(samples, hot_callsite_threshold) = profile
+        {
             flags.push(format!("-Zprofile-sample-use={}", samples.display()));
             // LLVM's default hot call-site threshold (3000) inlined enough to
             // grow .text by 17 KB on hl-psx and 25 KB on cs-psx, leaving
@@ -2176,7 +2213,10 @@ fn compile_game(
             .arg("--config")
             .arg(format!("target.mipsel-sony-psx.rustflags={flags:?}"));
     }
-    if matches!(profile, GuestProfile::CollectElf(_)) {
+    if matches!(
+        profile,
+        GuestProfile::CollectElf(_) | GuestProfile::UseElf(..)
+    ) {
         command.env("HLPSX_LINK_ELF", "1");
     }
     // Line tables and discriminators change inlining, and the collect build
@@ -2216,6 +2256,7 @@ fn compile_game(
         .chain([match profile {
             GuestProfile::Collect(reserve) => format!("collect {reserve:#x}"),
             GuestProfile::CollectElf(reserve) => format!("elf {reserve:#x}"),
+            GuestProfile::UseElf(..) => "use-elf".to_string(),
             _ => String::new(),
         }])
         .collect::<Vec<_>>()
@@ -2242,8 +2283,12 @@ fn compile_game(
                 build_map.display()
             )
         })?;
-        if matches!(profile, GuestProfile::CollectElf(_)) {
-            // An ELF for the symbolizer, not an executable: nothing to patch.
+        if matches!(
+            profile,
+            GuestProfile::CollectElf(_) | GuestProfile::UseElf(..)
+        ) {
+            // An ELF for the symbolizer or the stack analysis, not an
+            // executable: nothing to patch.
             return Ok(exe);
         }
         // Reroute the R3000 load-delay hazards LLVM's delay-slot filler leaves
@@ -2385,9 +2430,13 @@ fn compile_shipped(repository: &Path, psoxide: &Path, features: Option<&str>) ->
         .parse::<u32>()
         .map_err(|error| format!("{SHIPPED_THRESHOLD}: {error}"))?;
     let linked = link_with_profile(repository, psoxide, features, &profile, threshold)?;
+    SHIPPED_THRESHOLD_USED.store(linked.threshold, Ordering::Relaxed);
     enforce_ram_budget(repository, features, linked.free)?;
     Ok(linked.exe)
 }
+
+/// The hot call-site threshold the last shipping link settled on.
+static SHIPPED_THRESHOLD_USED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// The link map `compile_game` leaves behind.
 const LINK_MAP: &str = ".hlpsx/hl-psx.map";
@@ -2493,6 +2542,7 @@ fn profile_guided_pack(
     features: Option<&str>,
     tapes: &[PathBuf],
     polls: &[Option<(u64, u64)>],
+    scripts: &[(usize, u32)],
 ) -> Result<PathBuf> {
     let work = repository.join(".hlpsx/pgo");
     if work.exists() {
@@ -2534,6 +2584,38 @@ fn profile_guided_pack(
                 // Prime, so the sampler cannot fall into step with a loop.
                 .args(["--pc-sample-instructions", "61"]),
             "replay a profiling tape in PSoXide",
+        )?;
+        for line in fs::read_to_string(&log)?.lines().skip(1) {
+            let mut fields = line.split(',');
+            if let (Some(pc), Some(Ok(count))) =
+                (fields.next(), fields.next().map(str::parse::<u64>))
+            {
+                *samples.entry(pc.to_string()).or_default() += count;
+            }
+        }
+    }
+    let catalog = stack_gate::Catalog::parse(include_str!("../../game/src/map_catalog.rs"))
+        .ok_or("cannot read the map catalog")?;
+    for (index, (play_order, stop)) in scripts.iter().enumerate() {
+        let log = work.join(format!("pc-script-{index}.csv"));
+        run(
+            Command::new(&frontend)
+                .arg("launch")
+                .arg("--path")
+                .arg(&collect_cue)
+                .args([
+                    "--embedded-playtest",
+                    "--steps",
+                    "40000000000",
+                    "--no-memcard",
+                ])
+                .arg("--pad-pulses")
+                .arg(catalog.pulses(*play_order))
+                .args(["--stop-at-poll", &stop.to_string()])
+                .arg("--pc-sample-log")
+                .arg(&log)
+                .args(["--pc-sample-instructions", "61"]),
+            "replay a scripted map in PSoXide",
         )?;
         for line in fs::read_to_string(&log)?.lines().skip(1) {
             let mut fields = line.split(',');
@@ -2721,24 +2803,15 @@ fn collect_layout(
     Ok(())
 }
 
-/// Free RAM a profile-guided link keeps, by the SDK's check
-/// (`psoxide-pgo ram`, which prints `free N B`).
-fn ram_free(psoxide: &Path, link_map: &Path) -> Result<u32> {
-    let output = Command::new(cargo())
-        .current_dir(psoxide)
-        .args(["run", "-q", "--release", "-p", "psoxide-pgo", "--", "ram"])
-        .arg(link_map)
-        .output()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.lines()
-        .find_map(|line| line.strip_prefix("free ")?.strip_suffix(" B")?.parse().ok())
-        .ok_or_else(|| {
-            format!(
-                "psoxide-pgo ram printed no free byte count for {}",
-                link_map.display()
-            )
-            .into()
-        })
+/// Free RAM a link keeps: bytes between `.bss` end and the stack reserve the
+/// link was made with (the SDK's `psoxide-pgo ram` figure when that is the SDK's
+/// 32 KiB; the map names the reserve, so a smaller committed one is honoured).
+fn ram_free(_psoxide: &Path, link_map: &Path) -> Result<u32> {
+    let text = fs::read_to_string(link_map)
+        .map_err(|error| format!("read {}: {error}", link_map.display()))?;
+    ram_report::parse(&text)
+        .free()
+        .ok_or_else(|| format!("{} has no __bss_end", link_map.display()).into())
 }
 
 /// A profile-guided link: the image, the hot call-site threshold it was
@@ -2818,7 +2891,8 @@ fn link_with_profile(
     profile: &Path,
     first: u32,
 ) -> Result<Linked> {
-    let (reserve, gap) = sdk_stack_geometry(&fs::read_to_string(psoxide.join("sdk/psoxide.ld"))?)?;
+    let (_, gap) = sdk_stack_geometry(&fs::read_to_string(psoxide.join("sdk/psoxide.ld"))?)?;
+    let reserve = stack_gate::committed_reserve(repository)?;
     let mut tried: Vec<(u32, Option<u32>)> = Vec::new();
     let mut link_error = None;
     for threshold in PGO_HOT_CALLSITE_LADDER
@@ -2890,10 +2964,100 @@ fn install_disc(cue: &Path, games_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Static worst-case stack of the shipping link: relink it as an ELF (same
+/// flags, same profile, same threshold) and read its call graph.
+fn static_stack_bound(
+    repository: &Path,
+    psoxide: &Path,
+    features: Option<&str>,
+) -> Result<stack_static::Analysis> {
+    let profile = repository.join(SHIPPED_PROFILE);
+    let used = SHIPPED_THRESHOLD_USED.load(Ordering::Relaxed);
+    let threshold = if used != 0 {
+        used
+    } else {
+        fs::read_to_string(repository.join(SHIPPED_THRESHOLD))?
+            .trim()
+            .parse::<u32>()?
+    };
+    let elf = compile_game(
+        repository,
+        psoxide,
+        features,
+        GuestProfile::UseElf(&profile, threshold),
+    )?;
+    let sysroot = Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .output()?;
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    let objdump = fs::read_dir(sysroot.join("lib/rustlib"))?
+        .flatten()
+        .map(|entry| entry.path().join("bin/llvm-objdump"))
+        .find(|path| path.is_file())
+        .ok_or("llvm-objdump is missing (rustup component add llvm-tools)")?;
+    let output = Command::new(objdump)
+        .args(["-d", "--no-show-raw-insn"])
+        .arg(&elf)
+        .output()?;
+    if !output.status.success() {
+        return Err("llvm-objdump failed on the shipping ELF".into());
+    }
+    stack_static::analyse(
+        &String::from_utf8_lossy(&output.stdout),
+        "main",
+        stack_static::CAMPAIGN_DEPTHS,
+        &[],
+    )
+    .ok_or_else(|| "`main` is not in the shipping ELF".into())
+}
+
+/// Replay the shipped disc on a set of maps and hold the stack watermark to
+/// `game/stack-reserve` with a 25% margin (see stack_gate.rs).
+fn run_stack_gate(repository: &Path, psoxide: &Path, cue: &Path, maps: Option<&str>) -> Result<()> {
+    let frontend = regression::frontend(psoxide)?;
+    let catalog = stack_gate::Catalog::parse(include_str!("../../game/src/map_catalog.rs"))
+        .ok_or("cannot read the map catalog")?;
+    let play_pc = stack_gate::play_pc(&fs::read_to_string(repository.join(LINK_MAP))?)
+        .ok_or("hl_psx::play is not in the link map")?;
+    let wanted: Vec<usize> = match maps {
+        None => stack_gate::DEFAULT_MAPS.to_vec(),
+        Some("all") => (0..catalog.maps).collect(),
+        Some(list) => list
+            .split(',')
+            .map(|item| item.trim().parse::<usize>())
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|error| format!("--maps: {error}"))?,
+    };
+    let out = repository.join(".hlpsx/stack");
+    let mut readings = Vec::new();
+    for play_order in wanted {
+        println!("==> stack watermark, play-order {play_order}");
+        readings.push(stack_gate::measure(
+            &frontend, cue, &catalog, play_pc, play_order, &out,
+        )?);
+    }
+    let bound = static_stack_bound(repository, psoxide, None)?;
+    for (total, what) in bound.recursion.iter().take(6) {
+        println!("  recursion bound {total:>6} B  {what}");
+    }
+    println!(
+        "static stack bound {} B (+{} B below the top of RAM) limited by {}",
+        bound.worst,
+        stack_gate::MAIN_ENTRY_OFFSET,
+        bound.limiter
+    );
+    stack_gate::check(
+        &readings,
+        Some(bound.worst + stack_gate::MAIN_ENTRY_OFFSET),
+        stack_gate::committed_reserve(repository)?,
+    )?;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let options = parse_args();
-    if options.action == Action::Pgo && options.tapes.is_empty() {
-        return Err("pgo needs at least one --tape PATH to profile".into());
+    if options.action == Action::Pgo && options.tapes.is_empty() && options.scripts.is_empty() {
+        return Err("pgo needs at least one --tape PATH or --script MAP:POLLS to profile".into());
     }
     let repository = root();
     if options.action == Action::Ram {
@@ -2914,7 +3078,10 @@ fn main() -> Result<()> {
     }
     // Fail before hydration, cooking, compilation or profile output retirement.
     // Both actions reuse the one retained emulator configured by its build receipt.
-    if matches!(options.action, Action::Pgo | Action::Regress) {
+    if matches!(
+        options.action,
+        Action::Pgo | Action::Regress | Action::Stack
+    ) {
         regression::frontend(&repository)?;
     }
     let needs_half_life = matches!(
@@ -2983,7 +3150,13 @@ fn main() -> Result<()> {
 
     if matches!(
         options.action,
-        Action::Compile | Action::Ram | Action::Pack | Action::Disc | Action::Regress | Action::Pgo
+        Action::Compile
+            | Action::Ram
+            | Action::Stack
+            | Action::Pack
+            | Action::Disc
+            | Action::Regress
+            | Action::Pgo
     ) {
         verify_cook_manifest(
             &repository,
@@ -3019,6 +3192,7 @@ fn main() -> Result<()> {
             features,
             &options.tapes,
             &options.polls,
+            &options.scripts,
         )?;
         if let Some(games_dir) = options.games_dir.as_deref() {
             install_disc(&cue, games_dir)?;
@@ -3049,6 +3223,10 @@ fn main() -> Result<()> {
         return Ok(());
     }
     let cue = pack_disc(&repository, &psoxide, &exe)?;
+    if options.action == Action::Stack {
+        run_stack_gate(&repository, &psoxide, &cue, options.maps.as_deref())?;
+        return Ok(());
+    }
     if options.action == Action::Regress {
         // The game links against the hydrated SDK copy above, while the
         // frontend runs directly from an explicit development checkout so its
@@ -3066,8 +3244,10 @@ fn main() -> Result<()> {
         );
         // Leave dist/ as the shipping artifact, not the instrumented test disc.
         let shipping_exe = compile_shipped(&repository, &psoxide, None)?;
-        pack_disc(&repository, &psoxide, &shipping_exe)?;
+        let shipping_cue = pack_disc(&repository, &psoxide, &shipping_exe)?;
         regression_result?;
+        // The shipped image, not the telemetry one, is what the stack reserve covers.
+        run_stack_gate(&repository, &psoxide, &shipping_cue, None)?;
         if let Some(games_dir) = options.games_dir.as_deref() {
             install_disc(&cue, games_dir)?;
         }
@@ -3112,7 +3292,7 @@ mod tests {
         assert!(!stack_is_safe(need - 1));
         // A smaller reserve (a collect-style link) is judged on what it leaves.
         assert!(!stack_is_safe(stack_room(100, 0x4000, gap)));
-        assert!(stack_is_safe(stack_room(5_000, 0x4000, gap)));
+        assert!(stack_is_safe(stack_room(9_000, 0x4000, gap)));
     }
 
     #[test]

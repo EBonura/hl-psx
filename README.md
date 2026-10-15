@@ -145,6 +145,7 @@ cargo hl-build pack                   # rebuild the executable and disc
 cargo hl-build install --games-dir "DESTINATION_FOLDER" # build and copy
 cargo hl-build regress --psoxide "PATH_TO_PSOXIDE"      # test matrix
 cargo hl-build ram                    # free RAM, and where the rest went
+cargo hl-build stack                  # stack watermarks and bound against game/stack-reserve
 cargo hl-build pgo --tape "RECORDING.pxtape"           # profile-guided disc
 cargo hl-build --help                 # show every option
 ```
@@ -163,9 +164,10 @@ visits. It takes about four minutes. It also writes the profile and the
 inlining threshold it linked at to `game/pgo/`. There is no free-RAM floor:
 the game uses whatever RAM its link leaves. The threshold is the highest rung
 of the inlining ladder (most inlining, fastest) that links and leaves a safe
-stack, meaning at least 19,808 B between `.bss` and the initial stack pointer
-(the deepest stack the profiling tapes have written, 17,760 B, plus a 2 KB
-margin; the SDK's 32 KB stack reserve alone covers it). The build prints every
+stack, meaning at least 24,580 B between `.bss` and the initial stack pointer
+(the deepest stack the shipping link can reach, 19,664 B by `cargo hl-build
+stack`, plus a 25% margin; `game/stack-reserve`, 25 KiB, alone covers it). The
+build prints every
 rung's free RAM. The free RAM `pgo` prints for the rung it ships is measured on
 the link that ships, and the build stops with both figures if the shipped link
 leaves a different amount. Plain builds apply the same rule from the committed

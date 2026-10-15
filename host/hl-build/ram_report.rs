@@ -11,10 +11,10 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-/// End of psoxide.ld's RAM region: 2 MiB from 0x8000_0000 less the 64 KiB the
-/// BIOS keeps and the 32 KiB stack reserve. Mirrors `psoxide-pgo`'s
-/// `ram::RAM_END`; `free_matches_sdk_check` below pins the two together.
-pub const RAM_END: u32 = 0x801F_8000;
+/// Top of main RAM; the linker region ends `STACK_RESERVE` below it.
+pub const RAM_TOP: u32 = 0x8020_0000;
+/// The SDK's own reserve, which a link map that names none is taken to use.
+pub const SDK_STACK_RESERVE: u32 = 0x8000;
 
 /// How many of the largest symbols each section lists.
 const TOP: usize = 30;
@@ -55,11 +55,20 @@ pub struct Map {
     pub data_total: u32,
     pub bss_total: u32,
     pub bss_end: Option<u32>,
+    /// `STACK_RESERVE` from the link script (the map prints its assignment).
+    pub stack_reserve: Option<u32>,
 }
 
 impl Map {
+    /// End of the region the image may occupy: below the stack reserve.
+    pub fn ram_end(&self) -> u32 {
+        RAM_TOP - self.stack_reserve.unwrap_or(SDK_STACK_RESERVE)
+    }
+
+    /// Bytes between `__bss_end` and the stack reserve. For the SDK's 32 KiB
+    /// reserve this is `psoxide-pgo ram`'s figure.
     pub fn free(&self) -> Option<u32> {
-        self.bss_end.map(|end| RAM_END.saturating_sub(end))
+        self.bss_end.map(|end| self.ram_end().saturating_sub(end))
     }
 }
 
@@ -143,6 +152,18 @@ pub fn parse(map: &str) -> Map {
                 _ => {}
             }
         }
+        if tail.starts_with("STACK_RESERVE = ") {
+            // The map prints the assignment as written: hex for the SDK's
+            // 0x8000, decimal for a committed byte count.
+            parsed.stack_reserve = tail.rsplit("= ").next().and_then(|value| {
+                let value = value.trim();
+                match value.strip_prefix("0x") {
+                    Some(hex_digits) => hex(hex_digits),
+                    None => value.parse().ok(),
+                }
+            });
+            continue;
+        }
         if line.contains("__bss_end = .") {
             parsed.bss_end = Some(vma);
             continue;
@@ -225,6 +246,11 @@ pub fn report(parsed: &Map) -> String {
     let mut out = String::new();
     let free = parsed.free().unwrap_or(0);
     let _ = writeln!(out, "free {free} B");
+    let _ = writeln!(
+        out,
+        "stack reserve {} B (the link script's STACK_RESERVE)",
+        parsed.stack_reserve.unwrap_or(SDK_STACK_RESERVE)
+    );
     let image = parsed.text_total + parsed.data_total + parsed.bss_total;
     let _ = writeln!(
         out,
@@ -357,8 +383,17 @@ mod tests {
 
     #[test]
     fn free_matches_sdk_check() {
-        // psoxide-pgo ram: RAM_END - __bss_end, same region constant.
+        // psoxide-pgo ram: 0x801F_8000 - __bss_end for the SDK's 32 KiB reserve.
         assert_eq!(parse(MAP).free(), Some(0x801F_8000 - 0x8001_0600));
+    }
+
+    #[test]
+    fn free_follows_the_maps_stack_reserve() {
+        let decimal = MAP.replace("STACK_RESERVE = 0x8000", "STACK_RESERVE = 25600");
+        assert_eq!(parse(&decimal).stack_reserve, Some(25_600));
+        let map = MAP.replace("STACK_RESERVE = 0x8000", "STACK_RESERVE = 0x4000");
+        assert_eq!(parse(&map).stack_reserve, Some(0x4000));
+        assert_eq!(parse(&map).free(), Some(0x801F_C000 - 0x8001_0600));
     }
 
     #[test]

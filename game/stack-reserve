@@ -1,0 +1,14 @@
+# Bytes of RAM the linker keeps below the initial stack pointer for the call
+# stack (`STACK_RESERVE` in the link script; the SDK's default is 32768).
+# The first number is the reserve. It must hold the deepest stack the shipped
+# game reaches plus a 25% margin, rounded up to 1 KiB:
+# `cargo hl-build stack` replays the shipped disc on maps through the title menu
+# and fails when a watermark comes within that margin, and it relinks the
+# shipping image as an ELF and bounds every call chain statically (recursion
+# taken to the depth of the campaign's deepest BSP trees, c2a4a: 84 levels of
+# 136 B). The static bound is the one that sets this number: 19,664 B on
+# 2026-10-15, so 19,664 * 1.25 = 24,580 rounds up to 25 KiB. The emulator
+# watermark over the campaign maps is about 10 KB, but a trace down the deepest
+# tree nests 85 frames, which no walk is certain to hit.
+# HLPSX_STACK_RESERVE overrides it for a build that is only profiled.
+25600
