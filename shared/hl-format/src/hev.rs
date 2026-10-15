@@ -238,12 +238,12 @@ pub const fn battery_sentence(level: u8) -> Option<u8> {
 
 // ---- trigger_hurt damage kinds ----
 //
-// A `trigger_hurt` record keeps its damage type in bits 2..4 of the record
-// flags (bit 0 is the Geiger radiation flag, bit 1 the healing pool), so the
+// A `trigger_hurt` record keeps its damage type in bits 4..6 of the record
+// flags (bits 0..3 are the Geiger, healing, armour-bypass and poison flags), so the
 // suit can name what hurt the player. 0 is every type it has nothing to say
 // about (generic, burn, shock, blast...).
-pub const HURT_KIND_SHIFT: u8 = 2;
-pub const HURT_KIND_MASK: u8 = 0x1c;
+pub const HURT_KIND_SHIFT: u8 = 4;
+pub const HURT_KIND_MASK: u8 = 0x70;
 pub const HURT_CRUSH: u8 = 1;
 pub const HURT_FALL: u8 = 2;
 pub const HURT_POISON: u8 = 3;

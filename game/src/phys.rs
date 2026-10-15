@@ -13,6 +13,7 @@ use psx_gte::math::Mat3I16;
 use psx_math::{int32::isqrt_i32, sincos};
 
 use crate::map::Map;
+use crate::player_rules;
 
 const SOLID: i16 = -2; // CONTENTS_SOLID
 const GROUND_NY: i32 = 2867; // floor if plane normal Y > ~0.7 (×4096)
@@ -82,9 +83,8 @@ const STOP_SPEED: i32 = 5; // sv_stopspeed 100 u/s (friction floor)
                            // Air acceleration caps the wish speed at 30 u/s = 1.5 u/tick. Keep the half-unit:
                            // rounding this to two materially over-accelerates repeated air-control ticks.
 const AIR_WISH_CAP_Q6: i32 = 96;
-// Long jump module: 350*1.6 = 560 u/s forward,
-// sqrt(2*800*56) = 299 u/s up, fired by a DUCKED jump while moving.
-const LONGJUMP_FWD: i32 = 28;
+// Long jump module: sqrt(2*800*56) = 299 u/s up; the 560 u/s forward launch
+// lives in player_rules::longjump_velocity.
 const LONGJUMP_UP_Q6: i32 = 958;
 // The ground check traces the player origin exactly two units down after
 // movement.  This is deliberately much shorter than the separate 18-unit
@@ -776,8 +776,6 @@ pub fn mover_bounds_center(
     [local[0] + off[0], local[1] + off[1], local[2] + off[2]]
 }
 
-const SWIM_SPEED: i32 = 13; // water wishspeed = 0.8 * maxspeed = 256 u/s
-const SWIM_SINK: i32 = 3; // idle sink -60 u/s
 const SWIM_PADDLE: i32 = 5; // jump in water swims up 100 u/s
                             // The water jump launches at 225 u/s. Keep the quarter-unit which the old
                             // whole-unit approximation lost: 225 / 20 Hz = 11.25 u/tick.
@@ -1585,6 +1583,18 @@ fn clip_velocity(v: [i32; 3], n: [i32; 3]) -> [i32; 3] {
     ]
 }
 
+/// `clip_velocity` with an overbounce factor (Q12, 4096 = a plain slide).
+#[inline(never)]
+#[cfg_attr(target_arch = "mips", optimize(size))]
+fn clip_velocity_over(v: [i32; 3], n: [i32; 3], over_q12: i32) -> [i32; 3] {
+    let proj = ((dot_raw(v, n) >> 6) * (over_q12 >> 6)) >> 12;
+    [
+        crate::ground_logic::clip_slide_component(v[0], n[0], proj),
+        crate::ground_logic::clip_slide_component(v[1], n[1], proj),
+        crate::ground_logic::clip_slide_component(v[2], n[2], proj),
+    ]
+}
+
 fn clear_at(map: &Map, head: i32, movers: &[Mover], pos: [i32; 3]) -> bool {
     !trace_all(map, head, movers, pos, pos).startsolid
 }
@@ -1847,11 +1857,24 @@ fn slide_move(
         let planes_now = &planes[..n_planes];
 
         // New velocity: the first plane whose clip of the base velocity does
-        // not run into any other recorded plane.
+        // not run into any other recorded plane. Inside a func_friction
+        // volume the first wall a walker hits reflects (overbounce 1 plus the
+        // friction deficit) instead of sliding, and that branch never stops
+        // dead on a reversed velocity.
         let vel_before = vel;
         let mut picked = false;
+        let over = if n_planes == 1 {
+            player_rules::wall_overbounce_q12(unsafe { FRICTION_SCALE }, tr.normal[1])
+        } else {
+            4096
+        };
+        let bounced = over > 4096;
+        if bounced {
+            vel = clip_velocity_over(base_vel, tr.normal, over);
+            picked = true;
+        }
         let mut i = 0;
-        while i < n_planes {
+        while i < n_planes && !picked {
             let c = clip_velocity(base_vel, planes_now[i]);
             let mut j = 0;
             let mut ok = true;
@@ -1930,7 +1953,7 @@ fn slide_move(
         stalled_on = if stalled { Some(tr.normal) } else { None };
 
         // The slide turned the motion around (or killed it): stop dead.
-        if dot_raw(vel, primal_vel) <= 0 {
+        if !bounced && dot_raw(vel, primal_vel) <= 0 {
             vel = ZERO;
             break;
         }
@@ -2216,11 +2239,16 @@ impl Player {
         let (normal_axis, normal_sign) =
             crate::ladder_logic::cardinal_normal(self.pos, ladder_center, ladder_half);
         if jump_held {
-            // Let go: push back off the ladder (270 u/s).
-            const DISMOUNT: i32 = 14;
+            // Let go: push back off the ladder (270 u/s, kept to the Q6).
             self.vel = [0, 0, 0];
-            self.vel[normal_axis] = normal_sign * DISMOUNT;
             self.vel_frac_xz = [0, 0];
+            let (whole, frac) = split_planar_round(normal_sign * player_rules::LADDER_DISMOUNT_Q6);
+            self.vel[normal_axis] = whole;
+            if normal_axis == 0 {
+                self.vel_frac_xz[0] = frac;
+            } else if normal_axis == 2 {
+                self.vel_frac_xz[1] = frac;
+            }
             self.move_frac_xz = [0, 0];
             self.vel_frac_y = 0;
             self.move_frac_y = 0;
@@ -2417,24 +2445,27 @@ impl Player {
             f[1] = SWIM_PADDLE * PLANAR_FRAC_ONE;
         }
 
-        // Water drag: five percent of the speed per tick.
+        // Water friction: the original keeps 1 - 0.05 * sv_friction (4) of the
+        // speed each tick, scaled by the toucher's friction.
         let speed = isqrt_i32(
             (f[0] * f[0])
                 .saturating_add(f[1] * f[1])
                 .saturating_add(f[2] * f[2]),
         );
+        let friction = unsafe { FRICTION_SCALE };
+        let mut kept = speed;
         if speed > 0 {
-            let slowed = (speed - speed / 20).max(0);
-            f[0] = f[0] * slowed / speed;
-            f[1] = f[1] * slowed / speed;
-            f[2] = f[2] * slowed / speed;
+            kept = (speed * player_rules::water_keep_q12(friction)) >> 12;
+            f[0] = f[0] * kept / speed;
+            f[1] = f[1] * kept / speed;
+            f[2] = f[2] * kept / speed;
         }
 
         // Wish: along the view (pitch included) with the stick, or a slow
-        // sink when idle.
+        // sink when idle (-60 u/s scaled by the same 0.8 as the swim speed).
         let stick = isqrt_i32(fwd * fwd + strafe * strafe).min(128);
         let (wish_dir, wish_speed) = if stick == 0 {
-            ([0, -4096, 0], SWIM_SINK * PLANAR_FRAC_ONE)
+            ([0, -4096, 0], player_rules::SWIM_SINK_Q6)
         } else {
             let w = [
                 (view[0] * fwd + right[0] * strafe) / 128,
@@ -2444,12 +2475,14 @@ impl Player {
             let mag = isqrt_i32(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).max(1);
             (
                 [w[0] * 4096 / mag, w[1] * 4096 / mag, w[2] * 4096 / mag],
-                SWIM_SPEED * PLANAR_FRAC_ONE * stick / 128,
+                player_rules::SWIM_WISH_Q6 * stick / 128,
             )
         };
-        let gap = wish_speed - (dot_raw(f, wish_dir) >> 12);
+        // The deficit is measured against the whole speed left after the
+        // friction, not its component along the wish direction.
+        let gap = wish_speed - kept;
         if gap > 0 {
-            let accel = gap.min((wish_speed / 2).max(1));
+            let accel = player_rules::accel_step(gap, wish_speed, friction);
             f[0] += (wish_dir[0] * accel) >> 12;
             f[1] += (wish_dir[1] * accel) >> 12;
             f[2] += (wish_dir[2] * accel) >> 12;
@@ -2525,8 +2558,9 @@ impl Player {
         fwd: i32,
         strafe: i32,
         jump: bool,
-        duck_jump: bool,
+        duck_window: u8,
         yaw: u16,
+        pitch: i16,
     ) {
         self.land_impact = 0;
         let was_air = !self.on_ground;
@@ -2549,26 +2583,7 @@ impl Player {
         if self.on_ground {
             vertical_q6 = 0;
             if jump {
-                let moving = self.vel[0].abs() + self.vel[2].abs() > 2;
-                // A pending duck request counts as well as an active duck. On the first
-                // frame of a ground duck+jump the standing collision hull is
-                // intentionally still active, but the long-jump module must
-                // already see the pending duck request.
-                let longjumping = unsafe { LONGJUMP } && (self.crouch || duck_jump) && moving;
-                if longjumping {
-                    // Ducked jump with the module: launch along the move
-                    // direction at 560 u/s, 299 u/s up. This precedes the
-                    // air-movement step, so apply it before horizontal
-                    // acceleration.
-                    let (vx, vz) = (self.vel[0], self.vel[2]);
-                    let speed = vx.abs().max(vz.abs()) + vx.abs().min(vz.abs()) * 3 / 8;
-                    self.vel[0] = vx * LONGJUMP_FWD / speed.max(1);
-                    self.vel[2] = vz * LONGJUMP_FWD / speed.max(1);
-                    self.vel_frac_xz = [0, 0];
-                    vertical_q6 = LONGJUMP_UP_Q6;
-                } else {
-                    vertical_q6 = JUMP_Q6;
-                }
+                vertical_q6 = self.jump_launch(duck_window, yaw, pitch);
                 // One half gravity step is applied before the air-movement
                 // step; the second one follows the move.
                 vertical_q6 -= gravity_pre_q6;
@@ -2581,8 +2596,55 @@ impl Player {
 
         // Wish direction, ground friction and acceleration, then the
         // integrate / step / settle tail. Both are rewritten from the specs.
-        self.apply_wish_motion(fwd, strafe, yaw);
+        let over_drop = self.on_ground && self.walking_off_a_drop(map, movers);
+        self.apply_wish_motion(fwd, strafe, yaw, over_drop);
         self.walk_move_tail(map, movers, jump, was_air, fall_speed_q6, gravity_post_q6);
+    }
+
+    /// The horizontal part of a ground jump and its vertical launch speed (Q6).
+    /// The long jump module fires for a jump with duck held inside the second
+    /// after the duck press (`duck_window`), while moving faster than 50 u/s,
+    /// and throws Gordon along where he LOOKS: the horizontal part of the view
+    /// direction at 560 u/s, so pitch shortens it and a strafing runner still
+    /// goes where he faces. Any other jump above 1.7 x the run speed is cut to
+    /// 65% of that first.
+    #[inline(never)]
+    #[cfg_attr(target_arch = "mips", optimize(size))]
+    fn jump_launch(&mut self, duck_window: u8, yaw: u16, pitch: i16) -> i32 {
+        let fx = self.vel[0] * PLANAR_FRAC_ONE + self.vel_frac_xz[0] as i32;
+        let fz = self.vel[2] * PLANAR_FRAC_ONE + self.vel_frac_xz[1] as i32;
+        if unsafe { LONGJUMP } && player_rules::longjump_ready(true, true, duck_window, fx, fz) {
+            let sy = sincos::sin_q12(yaw);
+            let cy = sincos::sin_q12((yaw + 1024) & 0xFFF);
+            let pa = (pitch as i32 & 0xFFF) as u16;
+            let cp = sincos::sin_q12((pa + 1024) & 0xFFF);
+            let (lx, lz) = player_rules::longjump_velocity(sy, cy, cp);
+            (self.vel[0], self.vel_frac_xz[0]) = split_planar_round(lx);
+            (self.vel[2], self.vel_frac_xz[1]) = split_planar_round(lz);
+            LONGJUMP_UP_Q6
+        } else {
+            let (cx, cz) = player_rules::bunny_cap(fx, fz);
+            if (cx, cz) != (fx, fz) {
+                (self.vel[0], self.vel_frac_xz[0]) = split_planar_round(cx);
+                (self.vel[2], self.vel_frac_xz[1]) = split_planar_round(cz);
+            }
+            JUMP_Q6
+        }
+    }
+
+    /// The retail edge rule: probe 16 units ahead along the velocity, from
+    /// the feet down 34 units; with nothing under that point friction doubles
+    /// so a player stops at a ledge instead of sliding off it.
+    #[inline(never)]
+    #[cfg_attr(target_arch = "mips", optimize(size))]
+    fn walking_off_a_drop(&self, map: &Map, movers: &[Mover]) -> bool {
+        let fx = self.vel[0] * PLANAR_FRAC_ONE + self.vel_frac_xz[0] as i32;
+        let fz = self.vel[2] * PLANAR_FRAC_ONE + self.vel_frac_xz[1] as i32;
+        let Some((from, to)) = player_rules::edge_probe(fx, fz, self.half_height()) else {
+            return false;
+        };
+        let t = trace_all(map, self.head(map), movers, add(self.pos, from), add(self.pos, to));
+        !t.startsolid && !t.allsolid && t.frac >= 4096
     }
 
     /// Wish direction, ground friction (scaled by the func_friction multiplier)
@@ -2590,7 +2652,7 @@ impl Player {
     /// into the post-acceleration horizontal velocity in `vel` / `vel_frac_xz`.
     /// Specified in SPEC-friction-accel.
     #[inline(always)]
-    fn apply_wish_motion(&mut self, fwd: i32, strafe: i32, yaw: u16) {
+    fn apply_wish_motion(&mut self, fwd: i32, strafe: i32, yaw: u16, over_drop: bool) {
         let s = sincos::sin_q12(yaw);
         let c = sincos::sin_q12((yaw + 1024) & 0xFFF);
         let wx = (s * fwd + c * strafe) / 128;
@@ -2610,7 +2672,8 @@ impl Player {
             let speed = isqrt_i32(fx * fx + fz * fz);
             if speed > 0 {
                 let floor = STOP_SPEED * PLANAR_FRAC_ONE;
-                let drop = ((speed.max(floor) / 5) * unsafe { FRICTION_SCALE }) >> 12;
+                let friction = player_rules::edge_scaled(unsafe { FRICTION_SCALE }, over_drop);
+                let drop = ((speed.max(floor) / 5) * friction) >> 12;
                 let scale = (speed - drop).max(0) * 4096 / speed;
                 fx = mul_q12_round(fx, scale);
                 fz = mul_q12_round(fz, scale);
@@ -2633,7 +2696,7 @@ impl Player {
             };
             let gap = target - along;
             if gap > 0 {
-                let take = gap.min((wish_speed / 2).max(1));
+                let take = player_rules::accel_step(gap, wish_speed, unsafe { FRICTION_SCALE });
                 fx += mul_q12_round(take, dir_x);
                 fz += mul_q12_round(take, dir_z);
             }
