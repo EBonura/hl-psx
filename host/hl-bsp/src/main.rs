@@ -8826,6 +8826,14 @@ fn collect_logic_entities_with_lightstyles(
             if damage_type & DMG_RADIATION != 0 {
                 record_flags |= LOGIC_TRIGGER_HURT_RADIATION;
             }
+            // DMG_FALL (1 << 5) and DMG_DROWN (1 << 14) walk through the suit;
+            // DMG_PARALYZE (1 << 15) and DMG_POISON (1 << 17) are the poisons.
+            if damage_type & ((1 << 5) | (1 << 14)) != 0 {
+                record_flags |= LOGIC_TRIGGER_HURT_BYPASS_ARMOUR;
+            }
+            if damage_type & ((1 << 15) | (1 << 17)) != 0 {
+                record_flags |= LOGIC_TRIGGER_HURT_POISON;
+            }
             let dmg = ent_value(block, "damage")
                 .or_else(|| ent_value(block, "dmg"))
                 .and_then(|v| v.parse::<f32>().ok())

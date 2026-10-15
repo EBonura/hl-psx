@@ -78,6 +78,8 @@ mod save;
 mod segments;
 mod scientist_logic;
 mod leech;
+mod player_rules;
+mod trigger_rules;
 mod monsterjump;
 mod scratchpad;
 mod setpiece_logic;
@@ -1702,11 +1704,10 @@ static mut JUMP_BUFFER: u8 = 0;
 const JUMP_BUFFER_TICKS: u8 = 2;
 // Drowning state (player.cpp:1215-1329): air timer, escalation, and the
 // recoverable damage tally. Self-resetting the first tick the eye surfaces.
-const DROWN_AIR_TICKS: u16 = 240; // AIRTIME 12 s at 20 Hz
-static mut DROWN_AIR: u16 = DROWN_AIR_TICKS;
-static mut DROWN_NEXT: u16 = 2;
-static mut DROWN_TICK: u8 = 0;
-static mut DROWN_TAKEN: u16 = 0;
+/// Air, the drowning hits and the health owed back (player_rules::Breath).
+static mut BREATH: player_rules::Breath = player_rules::Breath::new();
+/// Poison that keeps hurting after the player leaves a poisonous volume.
+static mut POISON: player_rules::Poison = player_rules::Poison::new();
 // Presentation and visibility consume the same authoritative eye sample as
 // swim/drowning. Keeping one state prevents the HUD, PVS and render cache from
 // independently disagreeing about whether the camera is submerged.
@@ -6464,8 +6465,6 @@ const SF_BUTTON_TOGGLE: u16 = 32;
 const SF_BUTTON_TOUCH_ONLY: u16 = 256;
 const SF_AMBIENT_START_SILENT: u16 = 16;
 const SF_AMBIENT_NOT_LOOPING: u16 = 32;
-const SF_TRIGGER_HURT_TARGET_ONCE: u16 = 1;
-const SF_TRIGGER_HURT_START_OFF: u16 = 2;
 const SF_TRIGGER_ALLOWMONSTERS: u16 = 1; // monsters fire it too
 const SF_TRIGGER_NOCLIENTS: u16 = 2; // player may NOT fire this trigger (monster-only)
 const SF_TRIGGER_PUSHABLES: u16 = 4; // func_pushable may fire independently of NOCLIENTS
@@ -6498,7 +6497,6 @@ const ENT_KIND_PLATROT: u16 = 8;
 const ENT_KIND_PUSHABLE: u16 = 9;
 const ENT_KIND_PENDULUM: u16 = 10;
 const ENT_KIND_ROT_BUTTON: u16 = 11;
-const TRIGGER_HURT_REPEAT_TICKS: u16 = 10;
 const TRAM_CARRY_RADIUS2: i32 = 384 * 384;
 // Tracktrain pivots are not consistently near the passenger floor. c0a0b's
 // car floor is about 245 units below its path pivot while the surrounding intro
@@ -11987,7 +11985,8 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
             const BAR_X: i16 = 270;
             const BAR_Y: i16 = 21;
             const BAR_W: i16 = 40;
-            let fill = (DROWN_AIR as i32 * (BAR_W - 2) as i32 / DROWN_AIR_TICKS as i32) as i16;
+            let fill =
+                (BREATH.air as i32 * (BAR_W - 2) as i32 / player_rules::AIR_TICKS as i32) as i16;
             hltext::draw_text_gameplay_scaled(244, 17, "O2", 192, (210, 160, 48));
             fx_quad_flat(
                 [
@@ -12000,7 +11999,7 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
                 18,
                 12,
             );
-            let (r, g, b) = if DROWN_AIR < DROWN_AIR_TICKS / 4 {
+            let (r, g, b) = if BREATH.air < player_rules::AIR_TICKS / 4 {
                 (220, 50, 28)
             } else {
                 (224, 174, 48)
@@ -12972,6 +12971,7 @@ unsafe fn logic_try_use(
     now: u16,
     health: &mut u16,
     armor: &mut u16,
+    edge: bool,
 ) -> u8 {
     let rot = view_rotation(yaw, pitch);
     let mut best = usize::MAX;
@@ -13060,7 +13060,19 @@ unsafe fn logic_try_use(
         pi += 1;
     }
 
+    // PlayerUse clicks on the press: the select tick when something is in
+    // reach, the deny tick when nothing is.
+    if edge {
+        if best == usize::MAX && best_prop == usize::MAX {
+            sfx::play(sfx::DRY);
+        } else {
+            sfx::play_vol(sfx::MENU_MOVE, 2);
+        }
+    }
     if best_prop != usize::MAX {
+        if !edge {
+            return 0;
+        }
         let following = prop_scientist_flag(best_prop, PROP_SCI_FOLLOWING);
         match scientist_logic::follow_use(
             PROP_HEALTH[best_prop] > 0,
@@ -13146,6 +13158,7 @@ unsafe fn logic_try_use(
                     return sfx::CHARGER_HEV_LOOP;
                 }
             }
+            _ if !edge => {}
             _ => logic_use_entity(
                 m,
                 nlogic,
@@ -13184,6 +13197,96 @@ unsafe fn logic_teleport_touch(m: &Map, nlogic: usize, rec: map::LogicEnt) {
             ],
             b.delay_ticks, // destination yaw (q12)
         ));
+    }
+}
+
+/// One trigger_hurt: when its half-second timer is up, hurt every toucher that
+/// can take damage (the player, unless NO_CLIENTS; monsters, unless
+/// CLIENT_ONLY_TOUCH), fire the target once per toucher hurt, and restart the
+/// timer. A negative `dmg` heals the player (Xen's pools); a DMG_FALL/DROWN
+/// volume walks through the suit; a poisonous one leaves the player poisoned.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn logic_hurt_touch(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    li: usize,
+    pmins: [i32; 3],
+    pmaxs: [i32; 3],
+    player_pos: [i32; 3],
+    health: &mut u16,
+    armor: &mut u16,
+    now: u16,
+) {
+    if LOGIC_STATE[li] != LOGIC_STATE_BOTTOM || !time_reached(now, LOGIC_NEXT[li]) {
+        return;
+    }
+    let rec = m.logic(li);
+    // A brush volume that is not its box counts a toucher only with the
+    // origin inside its hull-1 clip.
+    let shaped = rec.brush != map::LOGIC_BRUSH_NONE && rec.brush & map::LOGIC_BRUSH_SHAPE != 0;
+    let head = (rec.brush & !map::LOGIC_BRUSH_SHAPE) as i16;
+    let mut hurt_any = false;
+    let mut fired = false;
+    if trigger_rules::hurt_touches(rec.spawnflags, true)
+        && m.logic_touches_bounds(li, pmins, pmaxs)
+        && (!shaped || phys::inside_clip_hull(m, head, player_pos))
+    {
+        hurt_any = true;
+        if rec.flags & map::LOGIC_TRIGGER_HURT_HEALS != 0 {
+            // CBaseMonster::TakeHealth, capped at max health.
+            if *health > 0 {
+                *health = (*health + rec.arg0).min(PLAYER_START_HEALTH);
+            }
+        } else if rec.arg0 != 0 {
+            note_damage_direction(logic_center(rec));
+            if rec.flags & map::LOGIC_TRIGGER_HURT_BYPASS_ARMOUR != 0 {
+                fall_damage_player(health, rec.arg0);
+            } else {
+                damage_player(health, armor, rec.arg0);
+            }
+            if rec.flags & map::LOGIC_TRIGGER_HURT_POISON != 0 {
+                (*core::ptr::addr_of_mut!(POISON)).poison();
+            }
+        }
+        fired = true;
+    }
+    if rec.flags & map::LOGIC_TRIGGER_HURT_HEALS == 0
+        && rec.arg0 != 0
+        && trigger_rules::hurt_touches(rec.spawnflags, false)
+    {
+        let dmg = rec.arg0.min(255) as u8;
+        let mut pi = 0usize;
+        while pi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
+            if PROP_ACTIVE[pi] != 0
+                && PROP_HEALTH[pi] > 0
+                && monsterjump::environment_eligible(PROP_KIND[pi])
+            {
+                let (mins, maxs) = actor_collision_bounds(PROP_KIND[pi], PROP_POS[pi]);
+                if monsterjump::touches([rec.mins, rec.maxs], [mins, maxs])
+                    && (!shaped || phys::inside_clip_hull(m, head, PROP_POS[pi]))
+                {
+                    damage_prop(pi, dmg, false);
+                    hurt_any = true;
+                    // The target fires for each toucher it hurts, but only a
+                    // client's touch counts when CLIENT_ONLY_FIRE is set.
+                    if trigger_rules::hurt_fires_target(rec.spawnflags, false) {
+                        fired = true;
+                    }
+                }
+            }
+            pi += 1;
+        }
+    }
+    if hurt_any {
+        if fired {
+            logic_sub_use_targets(m, nlogic, nents, li, rec, now, map::USE_TOGGLE, 0);
+            if (rec.spawnflags & trigger_rules::SF_HURT_TARGET_ONCE) != 0 {
+                LOGIC_TARGET[li] = 0;
+            }
+        }
+        LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::HURT_REPEAT_TICKS);
     }
 }
 
@@ -13270,6 +13373,13 @@ unsafe fn logic_touch_triggers(
             } else {
                 (pmins, pmaxs)
             };
+            if LOGIC_KIND[li] == map::LOGIC_TRIGGER_HURT {
+                // Hurt volumes are touched by monsters as well as the player,
+                // so they run whether or not the player is inside.
+                logic_hurt_touch(m, nlogic, nents, li, pmins, pmaxs, player_pos, health, armor, now);
+                scan += 1;
+                continue;
+            }
             if !m.logic_touches_bounds(li, tmins, tmaxs) {
                 scan += 1;
                 continue;
@@ -13343,35 +13453,6 @@ unsafe fn logic_touch_triggers(
                 }
                 map::LOGIC_FUNC_BREAKABLE => {
                     logic_breakable_touch(m, nlogic, nents, li, rec, player_pos, half_height, now);
-                }
-                map::LOGIC_TRIGGER_HURT => {
-                    if LOGIC_STATE[li] == LOGIC_STATE_BOTTOM {
-                        if time_reached(now, LOGIC_NEXT[li]) {
-                            if rec.flags & map::LOGIC_TRIGGER_HURT_HEALS != 0 {
-                                // CBaseMonster::TakeHealth, capped at max health.
-                                if *health > 0 {
-                                    *health = (*health + rec.arg0).min(PLAYER_START_HEALTH);
-                                }
-                            } else if rec.arg0 != 0 {
-                                note_damage_direction(logic_center(rec));
-                                damage_player(health, armor, rec.arg0);
-                            }
-                            logic_sub_use_targets(
-                                m,
-                                nlogic,
-                                nents,
-                                li,
-                                rec,
-                                now,
-                                map::USE_TOGGLE,
-                                0,
-                            );
-                            LOGIC_NEXT[li] = now.wrapping_add(TRIGGER_HURT_REPEAT_TICKS);
-                            if (rec.spawnflags & SF_TRIGGER_HURT_TARGET_ONCE) != 0 {
-                                LOGIC_TARGET[li] = 0;
-                            }
-                        }
-                    }
                 }
                 map::LOGIC_TRIGGER_TELEPORT => logic_teleport_touch(m, nlogic, rec),
                 map::LOGIC_TRIGGER_PUSH => {
@@ -13877,7 +13958,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                 init_monster_trigger(li, rec);
             }
             map::LOGIC_TRIGGER_HURT => {
-                if (rec.spawnflags & SF_TRIGGER_HURT_START_OFF) != 0 {
+                if (rec.spawnflags & trigger_rules::SF_HURT_START_OFF) != 0 {
                     LOGIC_STATE[li] = LOGIC_STATE_TOP;
                 }
             }
@@ -32936,6 +33017,11 @@ fn play(
     // PM_Duck's 0.4 s standing-hull transition. Keeping this map-local rather
     // than in Player preserves the latter's strict 36-byte resident footprint.
     let mut duck_transition_ticks = 0u8;
+    // Ticks left of the second after a duck press in which the long jump
+    // module can fire, and last tick's duck request (for the press edge).
+    let mut duck_window = 0u8;
+    let mut duck_prev = false;
+    let mut view_prev_crouch = false;
     // Physical overlap is not attachment. Keeping a distinct latch means an
     // idle brush against a ladder cannot consume the later, intentional mount
     // snap, while an established climb gets a tiny tangential quantization
@@ -33034,6 +33120,7 @@ fn play(
     let mut pickup_kind: u8 = hud::PICKUP_NONE;
     let mut pickup_ticks: u8 = 0;
     let mut use_cooldown: u8 = 0;
+    let mut use_was_held = false; // press edge: impulse objects react to the press only
     let mut charger_sound: u8 = 0;
     let mut charger_intro_ticks: u8 = 0;
 
@@ -33738,9 +33825,6 @@ fn play(
                 }
                 VmSwitchPump::Idle => {}
             }
-            if use_cooldown > 0 {
-                use_cooldown -= 1;
-            }
             let use_held_raw = !dead && input_sample.held(semantic_input::ACTION_USE);
             #[cfg(feature = "debug-regression-viewpoints")]
             if launch.pitch == DEBUG_PANEL_VIEW_PITCH_SENTINEL && use_held_raw {
@@ -33771,10 +33855,13 @@ fn play(
                     panel_li += 1;
                 }
             }
-            let want_use = use_held_raw && use_cooldown == 0;
-            if want_use {
-                use_cooldown = 8;
-            }
+            // PlayerUse: a door, button or scientist reacts to the press; only
+            // a continuous-use object (chargers, valve wheels, a cart being
+            // pulled) follows the held button, at the cooldown's cadence.
+            let (use_edge, want_use, next_cooldown) =
+                player_rules::use_phase(use_held_raw, use_was_held, use_cooldown);
+            use_was_held = use_held_raw;
+            use_cooldown = next_cooldown;
             let (mut fwd, mut strafe, mut turn, mut look) = (
                 input_sample.forward as i32,
                 input_sample.strafe as i32,
@@ -34464,6 +34551,13 @@ fn play(
                 duck_transition_ticks,
             );
             duck_transition_ticks = next_duck_timer;
+            duck_window = player_rules::duck_window_next(
+                duck_window,
+                duck_requested && !duck_prev,
+                player.crouch,
+                duck_requested,
+            );
+            duck_prev = duck_requested;
             if activate_duck_hull {
                 player.set_crouch(&m, movers, true);
             } else if !duck_requested {
@@ -34539,7 +34633,16 @@ fn play(
                     pitch,
                 );
             } else {
-                player.update(&m, movers, fwd, strafe, jump_want, duck_requested, yaw);
+                player.update(
+                    &m,
+                    movers,
+                    fwd,
+                    strafe,
+                    jump_want,
+                    if duck_requested { duck_window } else { 0 },
+                    yaw,
+                    pitch,
+                );
             }
             unsafe { resolve_player_actor_collision(&mut player, player_actor_start) };
             // The moving-car carry path intentionally keeps one stable
@@ -34719,15 +34822,28 @@ fn play(
                 }
             }
             telemetry::stage_end(telemetry::stage::SIM_COLLISION);
-            let view_h_target = if crouching {
-                CROUCH_VIEW_HEIGHT
+            // PM_Duck's eye: a cubic ease down while the standing hull is still
+            // live, the ducking view the moment the hull switches (in the air
+            // that is at once), and a smoothed rise after standing up.
+            let pending_duck = if !player.crouch
+                && duck_requested
+                && player.on_ground
+                && duck_transition_ticks > 0
+            {
+                Some(player_rules::DUCK_TICKS - duck_transition_ticks as i32)
             } else {
-                VIEW_HEIGHT
+                None
             };
-            view_h_cur += (view_h_target - view_h_cur).clamp(-4, 4);
+            view_h_cur = player_rules::view_height_next(
+                view_h_cur,
+                player.crouch,
+                view_prev_crouch,
+                pending_duck,
+            );
+            view_prev_crouch = player.crouch;
             let view_h = view_h_cur;
             // Drowning (player.cpp:1215-1329): 12 s of air once the eye goes
-            // under, then escalating 2,3,4,5,5.. damage per second straight to
+            // under, then escalating 3,4,5,5.. damage per second straight to
             // health (the suit doesn't absorb DMG_DROWN); surfacing restores
             // the drowned-off health.
             let eye_under = health > 0
@@ -34744,31 +34860,21 @@ fn play(
                 };
             unsafe {
                 PLAYER_EYE_UNDER = eye_under;
-                if eye_under {
-                    if DROWN_AIR > 0 {
-                        DROWN_AIR -= 1;
-                    } else {
-                        DROWN_TICK += 1;
-                        if DROWN_TICK >= 20 {
-                            DROWN_TICK = 0;
-                            let d = DROWN_NEXT.min(5);
-                            DROWN_NEXT += 1;
-                            DROWN_TAKEN = DROWN_TAKEN.saturating_add(d);
-                            fall_damage_player(&mut health, d);
-                        }
-                    }
-                } else {
-                    DROWN_AIR = DROWN_AIR_TICKS;
-                    DROWN_NEXT = 2;
-                    DROWN_TICK = 0;
-                    if DROWN_TAKEN > 0
-                        && health > 0
-                        && health < PLAYER_START_HEALTH
-                        && (sim_frame_no % 10) == 0
-                    {
-                        DROWN_TAKEN -= 1;
-                        health += 1;
-                    }
+                // player.cpp WaterMove: 12 s of air, then 3,4,5,5.. a second
+                // apart; surfacing hands the drowned health back, ten at a
+                // time every two seconds.
+                let (hurt, heal) = (*core::ptr::addr_of_mut!(BREATH)).tick(eye_under, health > 0);
+                if hurt > 0 {
+                    fall_damage_player(&mut health, hurt);
+                }
+                if heal > 0 {
+                    health = (health + heal).min(PLAYER_START_HEALTH);
+                }
+                // CheckTimeBasedDamage: poison goes on hurting, through the
+                // suit, every two seconds after the last touch.
+                let poison = (*core::ptr::addr_of_mut!(POISON)).tick();
+                if poison > 0 && health > 0 {
+                    damage_player(&mut health, &mut armor, poison);
                 }
             }
             // A paused tracktrain remains the rider's ground entity in
@@ -34945,7 +35051,7 @@ fn play(
                     weaponbox_removed: WEAPONBOX_REMOVED,
                 };
                 let mut charger_pulse = 0u8;
-                if want_use && MOUNTED_TANK >= 0 {
+                if use_edge && MOUNTED_TANK >= 0 {
                     // Any use press while mounted dismounts (works even if the
                     // player has swung the view off the tank brush).
                     MOUNTED_TANK = -1;
@@ -34961,7 +35067,8 @@ fn play(
                         tram_pre_total,
                         tram_pre_left,
                     );
-                    if m.tram_submodel > 0
+                    if use_edge
+                        && m.tram_submodel > 0
                         && TRACKTRAIN_USE_SPEED > 0
                         && tram_should_carry_player(player.pos, train_pos)
                     {
@@ -34970,7 +35077,7 @@ fn play(
                         sfx::play(sfx::BUTTON);
                     } else {
                         LOGIC_ACTIVATOR = 1;
-                        if !tank_try_control(&m, nlogic, player.pos) {
+                        if !(use_edge && tank_try_control(&m, nlogic, player.pos)) {
                             charger_pulse = logic_try_use(
                                 &m,
                                 nlogic,
@@ -34982,6 +35089,7 @@ fn play(
                                 sim_frame_no as u16,
                                 &mut health,
                                 &mut armor,
+                                use_edge,
                             );
                         }
                     }
