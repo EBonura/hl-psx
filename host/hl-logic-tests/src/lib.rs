@@ -32,6 +32,10 @@ pub mod weaponbox;
 pub mod air_navigation;
 #[path = "../../../game/src/leech.rs"]
 pub mod leech;
+#[path = "../../../game/src/player_rules.rs"]
+pub mod player_rules;
+#[path = "../../../game/src/trigger_rules.rs"]
+pub mod trigger_rules;
 #[path = "../../../game/src/env_sound_audio.rs"]
 pub mod env_sound_audio;
 
