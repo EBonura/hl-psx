@@ -320,7 +320,7 @@ pub(crate) unsafe fn tick_slave(
 /// passive: they are the only AI_IDLE actors the actor loop does not skip.
 #[inline(always)]
 pub(crate) fn idle_thinks(ty: u8) -> bool {
-    ty == 12 || ty == PROP_TYPE_LEECH || ty == tripmine::PROP_TYPE_TRIPMINE
+    ty == 12 || ty == 14 || ty == 50 || ty == PROP_TYPE_LEECH || ty == tripmine::PROP_TYPE_TRIPMINE
 }
 
 pub(crate) unsafe fn idle_think(
@@ -335,10 +335,49 @@ pub(crate) unsafe fn idle_think(
 ) {
     if ty == 12 {
         barnacle::tick(m, pi, player_pos, health);
+    } else if ty == 14 {
+        tick_roach(m, movers, pi, player_pos, in_player_pvs);
+    } else if ty == 50 {
+        tick_tentacle(pi, player_pos, health, armor);
     } else if ty == PROP_TYPE_LEECH {
         tick_leech(m, movers, pi, player_pos, in_player_pvs, health, armor);
     } else if ty == tripmine::PROP_TYPE_TRIPMINE {
         tripmine::tick_map(m, movers, pi);
+    }
+}
+
+/// A cockroach scatters from the player: it runs straight away from him once he
+/// comes within 192 units, and stands still otherwise.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn tick_roach(m: &Map, movers: &[phys::Mover], pi: usize, player_pos: [i32; 3], in_pvs: bool) {
+    if !in_pvs || PROP_HEALTH[pi] == 0 {
+        return;
+    }
+    let pos = PROP_POS[pi];
+    if dist2_xz(pos, player_pos) < 192 * 192 && (pos[1] - player_pos[1]).abs() < 96 {
+        let (dx, dz) = (pos[0] - player_pos[0], pos[2] - player_pos[2]);
+        prop_face_point(pi, [pos[0] + dx, pos[1], pos[2] + dz]);
+        PROP_STATE[pi] = PROP_STATE_MOVE;
+        prop_try_step(m, movers, pi, dx, dz, 9, true);
+    } else {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+    }
+}
+
+/// CTentacle::HitTouch: its body touching the player taps for 20, at most every
+/// half second.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn tick_tentacle(pi: usize, player_pos: [i32; 3], health: &mut u16, armor: &mut u16) {
+    let pos = PROP_POS[pi];
+    if prop_attack_cooldown(pi) == 0
+        && dist2_xz(pos, player_pos) < 48 * 48
+        && player_pos[1] >= pos[1] - 16
+        && player_pos[1] <= pos[1] + 64
+    {
+        damage_target(PROP_TARGET_PLAYER, 20, pos, health, armor);
+        prop_attack_cooldown_set(pi, 10);
     }
 }
 
@@ -572,7 +611,7 @@ unsafe fn tick_zombie(
     armor: &mut u16,
     nprops: usize,
 ) {
-    let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 700) else {
+    let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 2048) else {
         return;
     };
     let pos = PROP_POS[pi];
@@ -645,7 +684,7 @@ unsafe fn tick_squid(
     armor: &mut u16,
     nprops: usize,
 ) {
-    let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 900) else {
+    let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 2048) else {
         PROP_AI_TIMER[pi] = 0;
         return;
     };
@@ -726,7 +765,7 @@ unsafe fn tick_hound(
     nprops: usize,
 ) {
     let had_target = PROP_AI_TARGET[pi] != PROP_TARGET_NONE;
-    let Some((_, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 900) else {
+    let Some((_, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 2048) else {
         PROP_AI_TIMER[pi] = 0;
         return;
     };

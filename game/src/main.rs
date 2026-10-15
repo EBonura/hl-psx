@@ -1165,7 +1165,7 @@ const PROP_GROUND_PROBE_UP: i32 = 24;
 const PROP_GROUND_PROBE_DOWN: i32 = 160;
 const PROP_SPAWN_DROP_DOWN: i32 = 256; // engine pfnDropToFloor endpoint
 const HEADCRAB_SPEED: i32 = 2;
-const HEADCRAB_WAKE_RANGE2: i32 = 700 * 700;
+const HEADCRAB_WAKE_RANGE2: i32 = 2048 * 2048;
 const HEADCRAB_STOP_RANGE: i32 = 34;
 const HEADCRAB_LEAP_RANGE2: i32 = 256 * 256;
 const HEADCRAB_ATTACK_DAMAGE: u16 = 6;
@@ -16887,6 +16887,12 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     }
     // CSentry schedules deployment before subtracting damage; death below cancels it.
     sentry_schedule_wake(pi);
+    if PROP_KIND[pi] == 50 {
+        // CTentacle::TakeDamage: a hit never takes it below 1; only a killtarget
+        // removes the Blast Pit tentacles.
+        PROP_HEALTH[pi] = if dmg >= PROP_HEALTH[pi] { 1 } else { PROP_HEALTH[pi] - dmg };
+        return;
+    }
     if PROP_KIND[pi] == gman_damage::PROP_KIND {
         let response = gman_damage::take_damage(prop_start_health(PROP_KIND[pi]), dmg);
         PROP_HEALTH[pi] = response.health;
@@ -18340,7 +18346,21 @@ unsafe fn tick_headcrab(
     }
     // Only headcrabs LEAP; big melee aliens (zombie/bullsquid/ichthyosaur) shamble
     // in and swipe in place -- leaping made them look like giant headcrabs.
-    let leaper = PROP_KIND[pi] == PROP_TYPE_HEADCRAB || PROP_KIND[pi] == 59;
+    let leaper = PROP_KIND[pi] == PROP_TYPE_HEADCRAB || PROP_KIND[pi] == 59 || PROP_KIND[pi] == 58;
+    if PROP_KIND[pi] == 58 {
+        // squeakgrenade: a hunting snark pops 15 s after it is made
+        // (`sk_snark_dmg_pop`); the spawn tick rides in the death-start slot
+        // while it lives.
+        let born = PROP_DEATH_START[pi];
+        if born == 0 {
+            PROP_DEATH_START[pi] = SIM_NOW | 1;
+        } else if SIM_NOW.wrapping_sub(born) > 300 {
+            let pop = skill_hit(Sk::SnarkPop);
+            explode(m, PROP_POS[pi], pop, blast_radius(pop), false);
+            damage_prop(pi, u8::MAX, false);
+            return;
+        }
+    }
     let reach2 = if leaper {
         HEADCRAB_BITE_RANGE2
     } else {
