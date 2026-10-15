@@ -19974,6 +19974,10 @@ fn weapon_viewmodel(id: usize, satchel_mode: u8) -> usize {
     }
 }
 
+/// Ticks until the shotgun's pump sound (0.5 s after a single blast, 0.95 s
+/// after the double); 0 when none is due.
+static mut PUMP_IN: u8 = 0;
+
 /// `m_iPlayEmptySound`: the empty-gun click plays once per trigger pull and is
 /// re-armed when both triggers are let go (`WeaponIdle` -> `ResetEmptySound`).
 static mut DRY_CLICKED: bool = false;
@@ -20207,6 +20211,17 @@ impl Arsenal {
     /// Advance weapon timers. A returned animation is a staged shotgun reload
     /// transition that must begin on this same simulation tick.
     fn tick(&mut self) -> Option<u8> {
+        // shotgun.cpp m_flPumpTime: the pump sounds after each blast.
+        unsafe {
+            if PUMP_IN > 0 {
+                PUMP_IN -= 1;
+                if PUMP_IN == 0 && self.current == W_SHOTGUN {
+                    #[cfg(feature = "interaction-probe")]
+                    reference_trace::probe_vals(SIM_NOW as u32, "pump", &[]);
+                    sfx::play(sfx::SHOTGUN_PUMP);
+                }
+            }
+        }
         // The hornetgun self-recharges once owned (HL's infinite-ammo weapon);
         // without this it is 8 lifetime shots.
         if self.owns(W_HORNET) && self.ammo[AMMO_HORNET] < WEAPON_DEFS[W_HORNET].reserve_max {
@@ -20480,6 +20495,7 @@ impl Arsenal {
     }
 
     fn select(&mut self, id: usize) {
+        unsafe { PUMP_IN = 0 };
         self.current = id;
         self.reload_ticks = 0;
         self.cooldown = 0;
@@ -21100,6 +21116,10 @@ unsafe fn shoot_buttons(m: &Map, eye: [i32; 3], end: [i32; 3], limit_frac: i32) 
     }
 }
 
+/// Whether this player shot draws a tracer streak (ev_hldm.cpp iTracerFreq: 2
+/// for the MP5, 0 for every other bullet weapon).
+static mut TRACER_ON: bool = false;
+
 #[optimize(size)]
 /// One hitscan trace. `damage`/`range` from the weapon; (`aim_x`,`aim_y`) is the
 /// half-cone in screen px; (`cx_px`,`cy_px`) offsets the cone centre (shotgun
@@ -21290,7 +21310,7 @@ unsafe fn fire_hitscan(
         } else {
             end // shot into the void: streak to the far range point
         };
-        if range > 1000 {
+        if range > 1000 && TRACER_ON {
             push_tracer(muzzle, tracer_end);
         }
         world_hit.map(|_| usize::MAX)
@@ -21321,7 +21341,7 @@ unsafe fn fire_hitscan(
             sfx::play_world(thud, target);
         }
         spawn_blood(m, movers, target, eye, end, range, damage, ty, rot, base_t);
-        if range > 1000 {
+        if range > 1000 && TRACER_ON {
             push_tracer(muzzle, target);
         }
         PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
@@ -21358,11 +21378,16 @@ unsafe fn fire_weapon(
     // Random screen-space aim jitter of magnitude +-mag px. `inacc` grows with
     // player speed / being airborne (HL cone-of-fire); the shotgun adds its own
     // scatter so the pellet pattern isn't a fixed rosette.
+    // FireBulletsPlayer sums two uniform draws per axis, so shots cluster at
+    // the centre of the cone instead of filling a square.
     let jit = |mag: i32| {
         if mag <= 0 {
             0
         } else {
-            (impact_rng().below((2 * mag + 1) as u32) as i32) - mag
+            ((impact_rng().below((2 * mag + 1) as u32) as i32)
+                + (impact_rng().below((2 * mag + 1) as u32) as i32)
+                - 2 * mag)
+                / 2
         }
     };
     match d.fire {
@@ -21549,6 +21574,7 @@ unsafe fn fire_secondary(
             }
             w.clip[W_SHOTGUN] -= 2;
             w.cooldown = SHOTGUN_ALT_COOLDOWN;
+            PUMP_IN = 19;
             let d = w.def();
             fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 4);
             fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 6);
@@ -36245,11 +36271,12 @@ fn play(
                     -dot12(fire_rot.m[2], eye),
                 ];
                 unsafe {
-                    // Cone-of-fire: shots wander more while moving fast or airborne.
-                    let hs =
-                        isqrt_i32(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
-                    let inacc = (hs / 12).min(6) + if player.on_ground { 0 } else { 5 };
+                    // FireBulletsPlayer has no movement or air term: the cone is
+                    // the weapon's own, running or standing.
+                    let inacc = 0;
                     FIRE_VEL = player.vel;
+                    // Only the MP5 draws tracers, every second round (iTracerFreq).
+                    TRACER_ON = weapon.current == W_MP5 && sim_frame_no & 1 == 0;
                     // GoldSrc's first crowbar swing after a one-second idle gap
                     // does full damage; a held combo does half. `dry_ticks` was
                     // otherwise write-only and is zeroed on weapon switches, so
@@ -36288,6 +36315,9 @@ fn play(
                         DMG_HEAVY = false;
                         hit
                     };
+                    if weapon.current == W_SHOTGUN {
+                        PUMP_IN = 10;
+                    }
                     if weapon.current == W_TRIPMINE && !hit {
                         // Nothing within 128 units took the mine: not spent.
                         weapon.ammo[AMMO_TRIPMINE] += 1;
@@ -36331,6 +36361,7 @@ fn play(
                     }
                 }
             }
+            unsafe { TRACER_ON = false };
             // Repeating secondary guns consume held L2 and their own authored
             // cooldown. Toggle/charge/radio weapons were handled above.
             if sec_held
