@@ -14,6 +14,30 @@
 /// while still stopping a map that fires itself in a loop.
 pub const MAX_FIRE_DEPTH: u8 = 24;
 
+// ---------------------------------------------------------------- use types
+
+/// CBaseEntity::ShouldToggle: an ON use does nothing to something already on,
+/// an OFF use nothing to something already off; toggle and set always act.
+pub const fn should_toggle(use_type: u8, is_on: bool) -> bool {
+    !((use_type == USE_ON && is_on) || (use_type == USE_OFF && !is_on))
+}
+
+pub const USE_OFF: u8 = 0;
+pub const USE_ON: u8 = 1;
+
+// --------------------------------------------------------------- trigger_push
+
+/// How a push volume treats what stands in it: a conveyor belt always carries
+/// (backwards once its Use has reversed it, `reversed`), a plain push field
+/// pushes only while switched on. `None` means no push.
+pub const fn push_sign(is_belt: bool, off_or_reversed: bool) -> Option<i32> {
+    match (is_belt, off_or_reversed) {
+        (true, true) => Some(-1),
+        (false, true) => None,
+        _ => Some(1),
+    }
+}
+
 // ------------------------------------------------------------- globalname
 
 /// Entities that carry a `globalname` and are removed (a breakable that broke)
@@ -68,6 +92,11 @@ pub const fn shake_reaches(on_ground: bool, radius: i32, distance_sq: i64) -> bo
 
 // ---------------------------------------------------------------- env_spark
 
+/// A button with this spawnflag sparks while it rests. One chance in this many
+/// per tick matches the original's 0.1 s plus a uniform draw up to 1.5 s
+/// (mean 0.85 s, 17 ticks).
+pub const SF_BUTTON_SPARK_IF_OFF: u16 = 64;
+pub const BUTTON_SPARK_ODDS: u32 = 17;
 pub const SF_SPARK_TOGGLE: u16 = 32;
 pub const SF_SPARK_START_ON: u16 = 64;
 /// `MaxDelay` default: 1.5 s.
@@ -134,6 +163,23 @@ mod tests {
     }
 
     #[test]
+    fn use_types_only_act_when_they_change_something() {
+        assert!(should_toggle(3, true) && should_toggle(3, false));
+        assert!(!should_toggle(USE_ON, true) && should_toggle(USE_ON, false));
+        assert!(!should_toggle(USE_OFF, false) && should_toggle(USE_OFF, true));
+        // USE_SET (2) always acts
+        assert!(should_toggle(2, true) && should_toggle(2, false));
+    }
+
+    #[test]
+    fn belts_reverse_and_fields_switch_off() {
+        assert_eq!(push_sign(true, false), Some(1));
+        assert_eq!(push_sign(true, true), Some(-1));
+        assert_eq!(push_sign(false, false), Some(1));
+        assert_eq!(push_sign(false, true), None);
+    }
+
+    #[test]
     fn a_dead_global_stays_dead_until_cleared() {
         let mut dead = DeadGlobals::<4>::new();
         assert!(!dead.contains(77));
@@ -181,6 +227,14 @@ mod tests {
         // toggled and START_ON: running, and the first Use stops it
         assert!(spark_starts_running(SF_SPARK_TOGGLE | SF_SPARK_START_ON));
         assert!(!spark_after_use(SF_SPARK_TOGGLE | SF_SPARK_START_ON, true));
+    }
+
+    #[test]
+    fn a_resting_button_sparks_about_as_often_as_a_spark_entity() {
+        // mean wait of a one-in-N chance per tick is N ticks
+        let default_mean = (0..=SPARK_DEFAULT_MAX_DELAY_TICKS).map(|r| spark_gap_ticks(r) as u32).sum::<u32>()
+            / (SPARK_DEFAULT_MAX_DELAY_TICKS as u32 + 1);
+        assert_eq!(BUTTON_SPARK_ODDS, default_mean);
     }
 
     #[test]

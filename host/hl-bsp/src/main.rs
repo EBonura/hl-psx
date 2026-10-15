@@ -9461,13 +9461,12 @@ fn collect_logic_entities_with_lightstyles(
             }
         }
         if kind == LOGIC_TRIGGER_MONSTERJUMP {
-            // Horizontal speed and upward height are velocity keys, not a
-            // teleport or a displacement. Q4 retains c2a1's 10 u/s launch.
+            // CTriggerMonsterJump::Spawn sets speed 200 and height 150 after the
+            // keys are read, so the authored speed and height never count.
+            // The launch is a velocity, not a displacement (Q4 per tick).
             let dir = ent_move_dir(block);
-            let speed = parse_f32_key(block, "speed", 200.0);
-            let speed = if speed == 0.0 {200.0}else{speed};
-            let height = parse_f32_key(block, "height", 150.0);
-            let height = if height == 0.0 {150.0}else{height};
+            let speed = 200.0;
+            let height = 150.0;
             let v = to_world([dir[0] * speed * 16.0 / 20.0,
                 dir[1] * speed * 16.0 / 20.0, height * 16.0 / 20.0], scale);
             if v.iter().any(|&n| i16::try_from(n).is_err()) || v[1] == i16::MIN as i32 { return Err("monsterjump velocity exceeds Q4 representation".into()); }
@@ -18102,10 +18101,10 @@ mod tests {
     }
 
     #[test]
-    fn monsterjump_cooks_fractional_retail_launch_and_defaults() {
+    fn monsterjump_ignores_authored_speed_and_height_like_spawn() {
         for (keys, expected) in [
-            ("\"angle\" \"61\" \"speed\" \"10\" \"height\" \"128\"", [4,102,7]),
-            ("\"angles\" \"0 120 0\" \"speed\" \"10\" \"height\" \"128\"", [-4,102,7]),
+            ("\"angle\" \"61\" \"speed\" \"10\" \"height\" \"128\"", [78,120,140]),
+            ("\"angles\" \"0 120 0\" \"speed\" \"10\" \"height\" \"128\"", [-80,120,139]),
             ("\"angle\" \"0\"", [160,120,0]),
             ("\"speed\" \"0\" \"height\" \"0\"", [160,120,0]),
         ] {
@@ -18117,8 +18116,9 @@ mod tests {
             let a=&logic.aux[rec.first_aux as usize];let b=&logic.aux[rec.first_aux as usize+1];
             assert_eq!([a.target as i16,a.delay_ticks as i16,b.target as i16],expected);
         }
+        // an absurd authored speed is ignored too
         assert!(collect_logic_entities(br#"{ "classname" "trigger_monsterjump" "speed" "1000000" }"#,
-            &[],&[],1.0,&Default::default(),&Default::default()).is_err());
+            &[],&[],1.0,&Default::default(),&Default::default()).is_ok());
     }
 
     #[test]

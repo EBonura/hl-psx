@@ -11360,8 +11360,11 @@ unsafe fn logic_use_entity(
         }
         map::LOGIC_WALL_TOGGLE => {
             if let Some(ei) = logic_valid_brush(rec.brush, nents) {
-                ENT_ACTIVE[ei] = 1 - ENT_ACTIVE[ei].min(1);
-                pvs_cam_leaf_store(-1); // re-gather the visible-ent list next frame
+                // CFuncWallToggle::Use: ShouldToggle(useType, IsOn()).
+                if trigger_rules::should_toggle(use_type, ENT_ACTIVE[ei] != 0) {
+                    ENT_ACTIVE[ei] = 1 - ENT_ACTIVE[ei].min(1);
+                    pvs_cam_leaf_store(-1); // re-gather the visible-ent list next frame
+                }
             }
         }
         map::LOGIC_WALL_FRAME => {
@@ -13822,8 +13825,8 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
             MONSTERJUMP_N += 1;
             if rec.targetname != 0 { LOGIC_STATE[li] = LOGIC_STATE_TOP; }
         }
+        // Conveyors join the push list: whatever walks the belt is carried.
         if rec.kind == map::LOGIC_TRIGGER_PUSH
-            && logic_valid_brush(rec.brush, nents).is_none()
             && rec.spawnflags & 1 == 0
             && (PUSH_N as usize) < MAX_PUSH_LI
         {
@@ -13879,7 +13882,10 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                 hot_overflow = true;
             }
         }
-        if rec.kind == map::LOGIC_ENV_SPARK {
+        // A button flagged SPARK_IF_OFF (64) sparks while it rests unpressed.
+        if rec.kind == map::LOGIC_ENV_SPARK
+            || (rec.kind == map::LOGIC_FUNC_BUTTON && rec.spawnflags & trigger_rules::SF_BUTTON_SPARK_IF_OFF != 0)
+        {
             let next = LOGIC_SPARK_COUNT as usize + 1;
             let slot = LOGIC_STORAGE_WORDS - next;
             let touch_end = nlogic + LOGIC_TOUCH_COUNT as usize;
@@ -15557,10 +15563,13 @@ unsafe fn prop_push_vector(m: &Map, pi: usize) -> [i32; 3] {
     while k < PUSH_N as usize {
         let li = PUSH_LI[k] as usize;
         k += 1;
-        if LOGIC_STATE[li] == LOGIC_STATE_TOP
-            || LOGIC_STATE[li] == LOGIC_STATE_REMOVED
-            || !m.logic_touches_bounds(li, mins, maxs)
-        {
+        // A belt in TOP state runs backwards; a field in TOP state is off.
+        let brush = m.logic(li).brush;
+        let belt = brush != map::LOGIC_BRUSH_NONE && brush & map::LOGIC_BRUSH_SHAPE == 0;
+        let Some(sign) = trigger_rules::push_sign(belt, LOGIC_STATE[li] == LOGIC_STATE_TOP) else {
+            continue;
+        };
+        if LOGIC_STATE[li] == LOGIC_STATE_REMOVED || !m.logic_touches_bounds(li, mins, maxs) {
             continue;
         }
         let rec = m.logic(li);
@@ -15573,9 +15582,9 @@ unsafe fn prop_push_vector(m: &Map, pi: usize) -> [i32; 3] {
         if rec.aux_count >= 2 {
             let a = m.logic_aux(rec.first_aux);
             let b = m.logic_aux(rec.first_aux + 1);
-            v[0] += a.target as i16 as i32;
-            v[1] += a.delay_ticks as i16 as i32;
-            v[2] += b.target as i16 as i32;
+            v[0] += sign * a.target as i16 as i32;
+            v[1] += sign * a.delay_ticks as i16 as i32;
+            v[2] += sign * b.target as i16 as i32;
         }
     }
     v
@@ -15731,6 +15740,9 @@ unsafe fn prop_monsterjump_touch(m: &Map, pi: usize) {
             PROP_JUMP[pi].velocity=if airborne {old.map(|n| n.saturating_mul(16))}else{[0;3]};
         }
         PROP_JUMP[pi].launch([a.target as i16,a.delay_ticks as i16,b.target as i16],!airborne);
+        // CTriggerMonsterJump::Think: the volume switches itself off after
+        // launching one monster (until a Use turns it back on).
+        LOGIC_STATE[li] = LOGIC_STATE_TOP;
         if !airborne {
             PROP_DORMANT[pi]|=PROP_RUNTIME_AIRBORNE;
             PROP_NEAR_COUNT[pi]=0xff;
@@ -22851,6 +22863,24 @@ unsafe fn tick_env_sparks(m: &Map, nlogic: usize, now: u16) {
         };
         // Full maps can exhaust the hotlist tail. Their cached kinds still
         // let us skip unrelated records without decoding 64 bytes each.
+        // CBaseButton::ButtonSpark: a resting button sparks every 0.1 s plus up
+        // to 1.5 s; its timer is the return timer, so draw the gap by chance.
+        if LOGIC_KIND[li] == map::LOGIC_FUNC_BUTTON {
+            if LOGIC_STATE[li] == LOGIC_STATE_BOTTOM
+                && impact_rng().below(trigger_rules::BUTTON_SPARK_ODDS) == 0
+            {
+                let rec = m.logic(li);
+                let o = logic_center(rec);
+                if rec.spawnflags & trigger_rules::SF_BUTTON_SPARK_IF_OFF != 0
+                    && dist2_3(o, LOGIC_PLAYER_POS) < 1200 * 1200
+                {
+                    spark_burst(o, 4, 3, 8, 10);
+                    sfx::play_world(sfx::RIC, o);
+                }
+            }
+            scan += 1;
+            continue;
+        }
         if LOGIC_KIND[li] != map::LOGIC_ENV_SPARK
             || LOGIC_STATE[li] != LOGIC_STATE_BOTTOM
             || !time_reached(now, LOGIC_NEXT[li])
