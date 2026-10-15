@@ -1,0 +1,11 @@
+# hornet gun: c1a1 zombie at (348,2048). Primary hornet fired 12 degrees wide from 500 units must coast 2 ticks at 15/tick, then fly 30 (red) or 40 (orange) and curve onto the zombie.
+map c1a1
+0 god 2
+0 trace 20
+3 weapons
+4 watch 5
+5 weapon 9
+9 projlog 1
+100 tp 348 2548 764 270 0 0
+118 view 282 0
+122 in 0 0 0 0 1 1

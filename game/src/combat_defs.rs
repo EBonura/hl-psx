@@ -432,7 +432,7 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         AMMO_HORNET,
         0,
         8,
-        8,
+        7, // gamerules.cpp plrDmgHornet
         0,
         1,
         0,

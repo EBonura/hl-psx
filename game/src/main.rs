@@ -20304,14 +20304,11 @@ impl Arsenal {
             }
             self.ammo[d.ammo] -= cost;
         }
-        // Both hivehand modes add the 0.5 s recharge interval when the shot
-        // empties the internal eight-hornet store.
-        self.cooldown = d.cooldown
-            + if self.current == W_HORNET && self.ammo[d.ammo] == 0 {
-                HORNET_REGEN_TICKS
-            } else {
-                0
-            };
+        // hornetgun.cpp: every shot pushes the next recharge out by 0.5 s.
+        if self.current == W_HORNET {
+            self.hornet_regen = 0;
+        }
+        self.cooldown = d.cooldown;
         true
     }
 
@@ -21391,12 +21388,8 @@ unsafe fn fire_secondary(
                 return false;
             }
             w.ammo[AMMO_HORNET] -= 1;
-            w.cooldown = HORNET_ALT_COOLDOWN
-                + if w.ammo[AMMO_HORNET] == 0 {
-                    HORNET_REGEN_TICKS
-                } else {
-                    0
-                };
+            w.hornet_regen = 0;
+            w.cooldown = HORNET_ALT_COOLDOWN;
             spawn_projectile(PROJ_HORNET_FAST, w.def().damage, eye, rot);
             sfx::play(sfx::ELECTRO);
             true
@@ -21710,9 +21703,10 @@ struct Projectile {
     damage: u8,
     life: u8,
     from_enemy: bool, // enemy shots hit the player; player shots hit props
-    /// Ticks since a lobbed body last touched the floor (255 = not recently):
-    /// a body that did within two ticks is rolling and loses speed to it.
-    since_floor: u8,
+    /// Lobbed bodies: ticks since the last floor touch (255 = not recently),
+    /// a body that touched within two ticks is rolling and loses speed to it.
+    /// Player hornets: bit 0 orange (800 u/s, else red 600), bit 1 jetting.
+    aux: u8,
 }
 
 impl Projectile {
@@ -21724,7 +21718,7 @@ impl Projectile {
         damage: 0,
         life: 0,
         from_enemy: false,
-        since_floor: 255,
+        aux: 255,
     };
 }
 
@@ -21755,8 +21749,8 @@ fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
         PROJ_GRENADE => (64, 60, true, blast_radius(100), (120, 150, 90), 5),
         // Retail hivehand: primary is a 300 u/s tracking hornet; secondary is
         // a straight 1200 u/s dart. At 20 Hz those are 15 and 60 units/tick.
-        PROJ_HORNET => (15, 160, false, 0, (250, 230, 70), 3),
-        PROJ_HORNET_FAST => (60, 70, false, 0, (255, 244, 90), 3),
+        PROJ_HORNET => (15, 100, false, 0, (250, 230, 70), 3),
+        PROJ_HORNET_FAST => (60, 80, false, 0, (255, 244, 90), 3),
         PROJ_SNARK => (48, 80, true, 110, (190, 170, 50), 5),
         // Measured on the retail game: about 45 units per tick (900 u/s) along a straight
         // line, 9 ticks from the start of the spit animation at 150 units, 17 at 500.
@@ -21841,6 +21835,20 @@ unsafe fn guide_projectile(index: usize, target: [i32; 3], old_weight: i32) {
     ];
 }
 
+/// A live actor the player's weapons seek: DAMAGE_AIM and not an ally (the
+/// scientists and Barneys have IRelationship < 0), not the G-Man, roaches or
+/// scripted loaders. Autoaim and the hornet gun's tracking share it.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_is_enemy_target(pi: usize) -> bool {
+    let ty = PROP_KIND[pi];
+    PROP_ACTIVE[pi] != 0
+        && PROP_HEALTH[pi] != 0
+        && prop_start_health(ty) != 0
+        && !prop_is_human_hot_candidate(ty)
+        && !matches!(ty, 14 | 15 | 52 | 53 | PROP_TYPE_HOLO)
+}
+
 /// `GetAutoaimVector` for the weapon about to fire: the aim rotation `rot`
 /// (view plus punch) leaned toward the best visible hostile inside the
 /// weapon's cone (see autoaim.rs). `rot` comes back untouched for weapons that
@@ -21884,18 +21892,8 @@ unsafe fn autoaim_rotation(
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     let mut pi = 0usize;
     while pi < nprops {
-        let ty = PROP_KIND[pi];
-        if PROP_ACTIVE[pi] != 0
-            && PROP_HEALTH[pi] != 0
-            && prop_start_health(ty) != 0
-            // DAMAGE_AIM and not an ally: not the scientists and Barneys
-            // (IRelationship < 0), the G-Man, roaches, scripted loaders.
-            && !prop_is_human_hot_candidate(ty)
-            && !matches!(
-                ty,
-                14 | 15 | 52 | 53 | PROP_TYPE_HOLO
-            )
-        {
+        if prop_is_enemy_target(pi) {
+            let ty = PROP_KIND[pi];
             let target = prop_target(ty, PROP_POS[pi]);
             let d = [target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]];
             if let Some(aim) = autoaim::aim_at(d, fwd, right, up, cone) {
@@ -21944,6 +21942,9 @@ unsafe fn spawn_projectile(kind: u8, damage: u8, eye: [i32; 3], rot: &Mat3I16) -
             eye[1] + ((fwd[1] * 16) >> 12),
             eye[2] + ((fwd[2] * 16) >> 12),
         ];
+    } else if kind == PROJ_HORNET {
+        // hornet.cpp Spawn: two in five are red (600 u/s), the rest orange (800).
+        PROJECTILES[slot].aux = (impact_rng().below(5) >= 2) as u8;
     } else if kind == PROJ_SATCHEL {
         PROJECTILES[slot].vel = throwable::satchel_velocity(fwd, FIRE_VEL);
         PROJECTILES[slot].pos = [eye[0], eye[1] - VIEW_HEIGHT, eye[2]];
@@ -21998,7 +21999,7 @@ unsafe fn spawn_projectile_dir(
         damage,
         life,
         from_enemy,
-        since_floor: 255,
+        aux: 255,
     };
     slot
 }
@@ -22198,6 +22199,68 @@ unsafe fn houndeye_blast(center: [i32; 3], radius: i32, dmg: u8) {
     queue_explosion_fx(center, 40); // pale burst stand-in (a proper ring lands with the FX pool)
 }
 
+/// CHornet::TrackTarget for a player's hornet: after a 0.1 s coast at 300 u/s,
+/// every 0.1 s it turns half way toward the nearest visible enemy inside 512
+/// units and 25 degrees of its heading, flying at 800 u/s (orange) or at 600
+/// scaled by how straight the turn is (red). A hornet with nothing to chase
+/// flies straight at that speed. Close in (within 300, nearly lined up) it
+/// jets straight at twice the speed and stops chasing.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn track_hornet(m: &Map, movers: &[phys::Mover], i: usize) {
+    let p = PROJECTILES[i];
+    let age = 100u8.saturating_sub(p.life);
+    if age < 2 || age & 1 != 0 || p.aux & 2 != 0 {
+        return;
+    }
+    let fly = if p.aux & 1 != 0 { 40 } else { 30 };
+    let flight = dir_q12([0; 3], p.vel);
+    let mut best = usize::MAX;
+    let mut best_d2 = 512 * 512;
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut pi = 0usize;
+    while pi < nprops {
+        if prop_is_enemy_target(pi) {
+            let target = prop_target(PROP_KIND[pi], PROP_POS[pi]);
+            let d2 = dist2_3(p.pos, target);
+            let to = dir_q12(p.pos, target);
+            let dot = (to[0] * flight[0] + to[1] * flight[1] + to[2] * flight[2]) >> 12;
+            if d2 < best_d2 && dot > 3686 && actor_line_clear(m, movers, p.pos, target) {
+                best = pi;
+                best_d2 = d2;
+            }
+        }
+        pi += 1;
+    }
+    let (heading, speed) = if best == usize::MAX {
+        (flight, fly)
+    } else {
+        let target = prop_target(PROP_KIND[best], PROP_POS[best]);
+        let to = dir_q12(p.pos, target);
+        let mut delta = (to[0] * flight[0] + to[1] * flight[1] + to[2] * flight[2]) >> 12;
+        let sum = [flight[0] + to[0], flight[1] + to[1], flight[2] + to[2]];
+        let len = isqrt_i32(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]).max(1);
+        let turn = [(sum[0] << 12) / len, (sum[1] << 12) / len, (sum[2] << 12) / len];
+        let mut speed = fly;
+        if p.aux & 1 == 0 {
+            if delta <= 0 {
+                delta = 1024;
+            }
+            speed = fly * delta / 4096;
+        }
+        if delta >= 1638 && best_d2 <= 300 * 300 {
+            PROJECTILES[i].aux |= 2;
+            speed *= 2;
+        }
+        (turn, speed)
+    };
+    PROJECTILES[i].vel = [
+        (heading[0] * speed) >> 12,
+        (heading[1] * speed) >> 12,
+        (heading[2] * speed) >> 12,
+    ];
+}
+
 /// Interaction probe: one trace line per live projectile
 /// (slot, kind, position, velocity), for headless weapon checks.
 #[cfg(feature = "interaction-probe")]
@@ -22306,38 +22369,10 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             // of snapping the missile directly onto the crosshair.
             guide_projectile(i, RPG_SPOT_POS, 3);
         } else if kind == PROJ_HORNET && !PROJECTILES[i].from_enemy {
-            // Tracking-mode hornets seek the nearest visible living target;
-            // the fast secondary kind deliberately skips this branch.
-            let origin = PROJECTILES[i].pos;
-            let mut best = usize::MAX;
-            let mut best_d2 = 1024 * 1024;
-            let mut pi = 0usize;
-            let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-            while pi < nprops {
-                if PROP_ACTIVE[pi] != 0
-                    && prop_start_health(PROP_KIND[pi]) != 0
-                    && PROP_HEALTH[pi] != 0
-                {
-                    let target = prop_target(PROP_KIND[pi], PROP_POS[pi]);
-                    let d2 = dist2_3(origin, target);
-                    if d2 < best_d2 {
-                        best_d2 = d2;
-                        best = pi;
-                    }
-                }
-                pi += 1;
-            }
-            if best != usize::MAX {
-                let target = prop_target(PROP_KIND[best], PROP_POS[best]);
-                if phys::line_clear_world(m, origin, target)
-                    && phys::line_clear_movers(m, movers, origin, target)
-                {
-                    guide_projectile(i, target, 2);
-                }
-            }
+            track_hornet(m, movers, i);
         }
         let old = PROJECTILES[i].pos;
-        let rolling = PROJECTILES[i].since_floor <= 2;
+        let rolling = PROJECTILES[i].aux <= 2;
         if gravity {
             PROJECTILES[i].vel[1] -= match kind {
                 PROJ_M203 => M203_GRAVITY,
@@ -22410,7 +22445,7 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
         }
         PROJECTILES[i].pos = new;
         if !hit {
-            PROJECTILES[i].since_floor = PROJECTILES[i].since_floor.saturating_add(1);
+            PROJECTILES[i].aux = PROJECTILES[i].aux.saturating_add(1);
         }
         if kind != PROJ_SATCHEL && kind != PROJ_M203 && PROJECTILES[i].life > 0 {
             PROJECTILES[i].life -= 1;
@@ -22435,7 +22470,7 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
                     hit_pos[2] + (hit_normal[2] >> 11),
                 ]
             };
-            PROJECTILES[i].since_floor = if b.ground { 0 } else { u8::MAX };
+            PROJECTILES[i].aux = if b.ground { 0 } else { u8::MAX };
             if kind == PROJ_SATCHEL {
                 // Touched: full gravity from here on (life is otherwise unused).
                 PROJECTILES[i].life = u8::MAX - 1;
