@@ -388,14 +388,20 @@ map c1a0c next c1a1
   3
   60 s127 jump
   5
-  8 f127
+  # The oracle line stalls at a hop near x 1340 and stops at x 1631 when its run ends; the
+  # PS1 does not stall, so the open-loop x run overshoots. Same world path, closed loop.
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1300 timeout=900
   3
-  31 f127 jump
+  @hold f127 jump until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1600 timeout=900
   2 f-127
   8
-  30 s127
+  @checkpoint c-p1
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=85 timeout=900
   5
+  # The barrier at y 40..64 is 23 units high: the oracle jumps it from a standstill at y 80
+  # and walks across its top; the same input does it here.
   25 s127 jump
+  @checkpoint c-p2
   5
   7 s-127
   1 s127
@@ -403,9 +409,13 @@ map c1a0c next c1a1
   9 f-127
   1 f127
   5
+  @checkpoint c-p3
   16 t127
   3 use
+  @checkpoint c-u1
   220
+  @checkpoint c-u2
+  @stop
   16 t-127
   5
   8 s127
