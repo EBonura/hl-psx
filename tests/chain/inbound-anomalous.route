@@ -1,0 +1,602 @@
+@journey name=hl-chain-inbound-to-c1a1f title="Half-Life New Game: Black Mesa Inbound, Anomalous Materials, to the c1a1f arrival" prologue=new_game max_ticks=130000
+
+
+map c0a0 next c0a0a
+  @checkpoint arrive-c0a0
+  900
+
+map c0a0a next c0a0b
+  @checkpoint arrive-c0a0a
+  1000
+
+map c0a0b next c0a0c
+  @checkpoint arrive-c0a0b
+  1900
+
+map c0a0c next c0a0d
+  @checkpoint arrive-c0a0c
+  1500
+
+map c0a0d next c0a0e
+  @checkpoint arrive-c0a0d
+  1250
+
+map c0a0e next c1a0
+  @checkpoint arrive-c0a0e
+  560
+  15 t127
+  4 f127
+  8 t-127
+  60 f127
+  200
+  72 f127
+  8 t127
+  3 f127
+  8 t-127
+  45 f127
+  520
+  8 t127
+  7 f127
+  8 t-127
+  100 f127
+  200
+
+map c1a0 next c1a0d
+  @checkpoint arrive-c1a0
+  # The tram ride hands the player over 44 yaw units (3.9 degrees) south of the
+  # heading the oracle route assumes; one turn tick restores it.
+  20
+  1 t43
+  179
+  35 f127
+  1 s127
+  3 use
+  180
+  9 s127
+  2 f127 s-30
+  7 f127
+  20 s127
+  4 f127 s-60
+  70 f127
+  28 s-127
+  17 f-127 s-80
+  40 f127
+  # The fixed-point port stops about 16 units short of the volume the oracle reaches.
+  8 f127
+  20
+
+map c1a0d next c1a0a
+  @checkpoint arrive-c1a0d
+  20
+  30 f127
+  21 f-40
+  10
+  50 s127
+  60 f127
+  16 f-40
+  10
+  44 s40
+  10
+  80 f127
+  30 s-127
+  30 f127
+  25 s127
+  4 f-127
+  4 f80 s127
+  20
+  3 s-127
+  2 s127
+  6
+  5 t-127 l-127
+  3 use
+  5 t127 l127
+  50
+  8 s-127
+  8 f127
+  20 s-127 jump
+  25 f127
+  18 f-40
+  10
+  5 s127
+  4 f127 s-127
+  5 f127
+  20 f127 s127 jump
+  80
+  20 f-127 s-127 jump
+  12 s-127
+  15 f-127
+  3 f40
+  5
+  8 s127
+  8 s-40
+  30
+  5 f127
+  8 f-40
+  5
+  19 s127
+  8 s-40
+  5
+  2 s-127
+  60 f-127
+  16 f40
+  5
+  16 s-127
+  8 s40
+  30
+  65 f-127
+  5
+  65 s-127
+  5
+  5 s127
+  10
+  90 f127
+  5
+  55 s-127
+  5
+  2 s127
+  230
+  70 f-127
+
+map c1a0a next c1a0b
+  @checkpoint arrive-c1a0a
+  40
+  20 f-127
+  5 f127
+  5
+  20 s-127
+  28 f-127
+  20 s127
+  12 f-127
+  8
+  10 s127
+  8
+  4 f127
+  6
+  5 s-127
+  5
+  4 l-127
+  3 use
+  4 l127
+  100
+  6 s127
+  2 s-127
+  15 f127
+  2 f-127
+  10
+  4 s127
+  2 s-127
+  1 f-127
+  1 f127
+  10
+  8 t127
+  4 t127 l-127
+  3 use
+  4 t-127 l127
+  8 t-127
+  400
+  2 s-127
+  1 s127
+  100 f-127
+  40
+  20 s127
+  50 f-127
+  30
+  100 s-127
+  30
+  6 f127
+  2 f-127
+  100 s-127
+  30
+  2 s127
+  1 s-127
+  100 f127
+  30
+  1 s127
+  100 f127
+  20
+  100 f127
+  10 f-127
+  2 f127
+  8
+  50 s-127
+  20
+  4 s127
+  2 s-127
+  100 f-127
+  20
+  50 f-127 s127
+  20
+  100 s-127
+  20
+  30 f-127
+
+map c1a0b next c1a0e
+  @checkpoint arrive-c1a0b
+  40
+  50 f-127
+  2 f127
+  20 s-127
+  30
+  10 f-127
+  2 f127
+  50 s-127
+  2 s127
+  620
+  # The scanner doorway edge sits between x=903 and x=904 in the fixed-point hull;
+  # the oracle line at 904 clears it, the PS1 line at 903 does not. Step 5 units east.
+  1 f-40
+  5
+  100 s-127
+  40
+  44 f127
+  2 f-127
+  14 s127
+  2 s-127
+  10
+  8 t127
+  3 use
+  8 t-127
+  130
+  18 f40
+  3 f-40
+  5
+  20 s127
+  2 s-127
+  20
+  8 f-40
+  2 f40
+  5
+  16 t127
+  3 use
+  16 t-127
+  200
+  7 f40
+  2 f-40
+  3
+  8 t-127
+  3
+  10 f127
+  25
+  20 f127
+  2 f-127
+  20
+  50 f127
+  2 f-127
+  5
+  100 s127
+  2 s-127
+  20
+  30 f127
+
+map c1a0e next c1a0c
+  @checkpoint arrive-c1a0e
+  40
+  8 s-127
+  2 s127
+  20
+  3 f127
+  3 f-127
+  20
+  1 f127 s32
+  1 f127 s-32
+  48 f127
+  14 f-127
+  2 f127
+  971
+  45 s-127
+  2 s127
+  801
+  40 f127
+  3 f-127
+  10
+  4 s-127
+  1 f-127
+  30 s-127
+  25 f-127
+  1 f127
+  8
+  2 f127 s127
+  1 f-127 s-127
+  6
+  2 f32 s32
+  5
+  8 s-127
+  30 f127 s-40
+  2 f-127 s40
+  20
+  29 f127 s127
+  47 f127
+  2 f-127
+  20
+  30 s127
+  2 s-127
+  8
+  20 f-127 s127
+  2 f127 s-127
+  8
+  16 t127
+  5
+  3 use
+  16 t-127
+  1776
+  20 f127
+  22 s-127
+  1 f-127
+  1 f127
+  3
+  2 s-127
+  11 l-127
+  55 f127
+  11 l127
+  10
+  26 f-127 s-127
+  2 f127 s127
+  15
+  42 f-127 s40
+  2 f127 s-40
+  20
+  30 f-127
+  2 f127
+  8
+  22 s127
+  2 s-127
+  20
+  6 s-127
+  1 s127
+  5
+  8 f-127
+  1 f127
+  5
+  8 s127
+  1 s-127
+  5
+  30 f127
+  2 f-127
+  1020
+  600
+
+map c1a0c next c1a1
+  @checkpoint arrive-c1a0c
+  50
+  10 s127
+  3
+  60 s127 jump
+  5
+  8 f127
+  3
+  31 f127 jump
+  2 f-127
+  8
+  30 s127
+  5
+  25 s127 jump
+  5
+  7 s-127
+  1 s127
+  5
+  9 f-127
+  1 f127
+  5
+  16 t127
+  3 use
+  220
+  16 t-127
+  5
+  8 s127
+  1 s-127
+  5
+  35 f-127
+  2 f127
+  5
+  45 s-127
+  5
+  5 f127
+  1 f-127
+  5
+  13 s-127
+  1 s127
+  5
+  45 f-127 jump
+  5
+  45 f-127 jump
+  2 f127
+  80
+  15 f-127
+  1 f127
+  5
+  3 s-127
+  1 s127
+  5
+  8 t-127
+  3 use
+  100
+  8 t127
+  30 f-127
+  2 f127
+  4 t-127
+  3 use
+  120
+  4 t-127
+  8 s127
+  40
+  18 s127
+  2 s-127
+  10 s127
+  650
+  8 t127
+  3 use
+  10
+  8 t-127
+  5
+  14 s-127
+  1 s127
+  5
+  40 f127
+  2 f-127
+  100
+  10 s-127
+  2 s127
+  256
+  5 f127
+  1 f-127
+  5
+  10 s-127
+  1 s127
+  5
+  7 f127
+  1 f-127
+  5
+  1 f-127
+  5
+  45 s-127
+  2 s127
+  207
+  15 s-127
+  1 s127
+  5
+  22 f-127
+  1 f127
+
+map c1a1 next c1a1a
+  @checkpoint arrive-c1a1
+  50
+  20 s-127
+  30 f-127
+  40 s-127
+  3 s127
+  2 s-127
+  5
+  30 f-127
+  30 s-127 jump
+  10 f40
+  65 s-127
+  50 f127
+  25 s127
+  70 f127 jump
+  35 f-40
+  55 s-127
+  10
+  3 s127
+  2 s-127
+  5
+  6 f127
+  2 f-127
+  19
+  3 s-127
+  3
+  8 t-127
+  3
+  5 l-127
+  2
+  15 attack
+  2
+  10 l127
+  2
+  15 attack
+  3
+  25 f127 jump duck
+  5 duck
+  15
+  5 t127 l-127
+  3 t127
+  3
+  15 s-127
+  2 s127
+  5
+  50 f-127
+  5
+  4 s-20
+  5
+  16 t-127
+  2
+  3 use
+  100
+  16 t-127
+  3
+  15 s127
+  10
+  8 f-127
+  10
+  6 s-40
+  5
+  16 t-127
+  3
+  15 attack
+  2
+  5 l-127
+  2
+  15 attack
+  3
+  25 f127 jump duck
+  5 duck
+  30
+  16 t127
+  3
+  6 s-127
+  2 s127
+  5
+  8 t127
+  3
+  10 l127
+  3
+  6 f127
+  1 f127 jump
+  120 f127
+  30
+  8 t-127
+  3
+  10 f127
+  15
+  25 f40 s-127
+  15
+  2 f127
+  3
+  12 f40 s-127
+  10
+  16 t-127
+  3
+  40 f127
+  2 f-127
+  10
+  8 f127
+  2 f-127
+  5
+  8 t-127
+  3
+  15 f127
+  2 f-127
+  8
+  8 t127
+  3
+  40 f127
+  20
+
+map c1a1a next c1a1f
+  @checkpoint arrive-c1a1a
+  10 l-127
+  25 f127
+  10
+  8 t127
+  3
+  48 f127
+  3
+  8 t127
+  1 t31
+  1 s127
+  228 f127 attack
+  7 f-127
+  3
+  8 t-127
+  1 t8
+  2
+  20 f127
+  3
+  8 t127
+  1 t-8
+  2
+  40 f127
+  20
+
+map c1a1f next 
+  @checkpoint arrive-c1a1f
+  200

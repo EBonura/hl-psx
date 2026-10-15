@@ -1,0 +1,772 @@
+//! Route compiler for the Half-Life chain journeys.
+//!
+//! Single-file tool, built with `rustc --edition=2021 -O tests/chain/hlroute.rs`.
+//!
+//! A route is plain text: one block per map, each block a list of run-length
+//! controller commands in the semantic units the game itself derives from a
+//! DualShock (forward, strafe, turn, look, buttons). The compiler turns every
+//! block into poll-bound `PXITAPE2` tapes (one stick/button state per sim
+//! tick, which is one controller poll) and writes the `psoxide-gate` journey
+//! that plays them: wait for the map to load, wait for its first simulation
+//! tick, replay the tape, move on. Nothing here edits game state; the journey
+//! only presses controller inputs and reads RAM.
+//!
+//! Route syntax (`#` starts a comment):
+//!
+//! ```text
+//! @journey name=hl-chain title="..."        # once, first non-comment line
+//! map c0a0 next c0a0a [id=6050]             # begin a block; id is the cooked
+//!                                           # header word that identifies the map
+//!   900                                     # 900 neutral ticks
+//!   35 f127                                 # forward full for 35 ticks
+//!   1 s127                                  # strafe right
+//!   3 use                                   # press Square (use) for 3 ticks
+//!   8 t127 l-127 jump                       # axes: f s t l, buttons by name
+//!   @checkpoint name                        # frame capture; splits the tape
+//!   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=ge value=50
+//!   @wait sym=... size=.. op=.. value=.. timeout=N   # route-tick RAM wait
+//!   @hold f127 until sym=... op=.. value=.. timeout=N # closed-loop input
+//!   @raw <toml line>                        # copied verbatim into the journey
+//! ```
+//!
+//! A block's trailing neutral run is not replayed: it only waits for the next
+//! map to load, which the journey does with a RAM wait instead, so a map that
+//! changes a few ticks earlier or later than the route author saw cannot shift
+//! the next block.
+
+use std::fmt::Write as _;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+const BTN_SELECT: u16 = 0x0001;
+const BTN_L3: u16 = 0x0002;
+const BTN_START: u16 = 0x0008;
+const BTN_L2: u16 = 0x0100;
+const BTN_R2: u16 = 0x0200;
+const BTN_L1: u16 = 0x0400;
+const BTN_R1: u16 = 0x0800;
+const BTN_TRIANGLE: u16 = 0x1000;
+const BTN_CIRCLE: u16 = 0x2000;
+const BTN_CROSS: u16 = 0x4000;
+const BTN_SQUARE: u16 = 0x8000;
+
+/// Radial stick dead zone the game ships with (`ANALOG_DEADZONE_DEFAULT`).
+const DEADZONE: i32 = 28;
+
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+struct Sample {
+    forward: i32,
+    strafe: i32,
+    turn: i32,
+    look: i32,
+    buttons: u16,
+    /// Right-stick deflection chosen by [`compensate`]; replaces the plain
+    /// inverse of the aim curve when set.
+    rx: Option<i32>,
+    ry: Option<i32>,
+}
+
+impl Sample {
+    fn neutral(&self) -> bool {
+        *self == Sample::default()
+    }
+}
+
+fn button_for(name: &str) -> Option<u16> {
+    Some(match name {
+        "use" => BTN_SQUARE,
+        "jump" => BTN_CROSS,
+        "duck" => BTN_TRIANGLE,
+        "attack" => BTN_R2,
+        "attack2" => BTN_L2,
+        "reload" => BTN_CIRCLE,
+        "next" => BTN_R1,
+        "prev" => BTN_L1,
+        "flash" => BTN_L3,
+        "start" => BTN_START,
+        "select" => BTN_SELECT,
+        _ => return None,
+    })
+}
+
+fn button_name(bit: u16) -> &'static str {
+    match bit {
+        BTN_SQUARE => "use",
+        BTN_CROSS => "jump",
+        BTN_TRIANGLE => "duck",
+        BTN_R2 => "attack",
+        BTN_L2 => "attack2",
+        BTN_CIRCLE => "reload",
+        BTN_R1 => "next",
+        BTN_L1 => "prev",
+        BTN_L3 => "flash",
+        BTN_START => "start",
+        BTN_SELECT => "select",
+        _ => "?",
+    }
+}
+
+/// `psx_pad::aim_curve_symmetric`, the game's right-stick response.
+fn aim_curve(v: i32) -> i32 {
+    let v = v.clamp(-128, 128);
+    let sign = if v < 0 { -1 } else { 1 };
+    let m = v.abs();
+    let cubic = m * m / 128 * m / 128;
+    sign * ((m * 45 + cubic * 55) / 100)
+}
+
+/// Right-stick deflection (-127..=127) whose curve output is nearest `want`.
+fn invert_aim(want: i32) -> i32 {
+    let mut best: i32 = 0;
+    let mut err = i32::MAX;
+    for d in -127..=127 {
+        let e = (aim_curve(d) - want).abs();
+        if e < err || (e == err && d.abs() < best.abs()) {
+            best = d;
+            err = e;
+        }
+    }
+    best
+}
+
+/// Scale a stick vector that sits inside the radial dead zone out to its edge,
+/// keeping the direction. The game reads nothing from a stick inside the zone,
+/// so a route nudge smaller than that cannot be made with a controller; the
+/// smallest real nudge is used instead and reported.
+fn clear_deadzone(x: i32, y: i32, note: &mut Vec<String>, what: &str) -> (i32, i32) {
+    if (x != 0 || y != 0) && x * x + y * y <= DEADZONE * DEADZONE {
+        let mag = ((x * x + y * y) as f64).sqrt();
+        let k = (DEADZONE as f64 + 1.0) / mag;
+        let r = ((x as f64 * k).round() as i32, (y as f64 * k).round() as i32);
+        note.push(format!("{what} ({x},{y}) raised to ({},{})", r.0, r.1));
+        r
+    } else {
+        (x, y)
+    }
+}
+
+/// The game's per-tick view step for a stick axis value (`angle_step_nearest`).
+fn angle_step(axis: i32, rate: i32) -> i32 {
+    let p = axis * rate;
+    if p >= 0 { (p + 64) / 128 } else { -((-p + 64) / 128) }
+}
+
+/// A DualShock cannot reach a turn value of +127 (its fullest right deflection
+/// reads 125), so a route written in the oracle's semantic units would slowly
+/// lose heading. Walk the tape and choose the right-stick deflection for each
+/// tick that keeps the accumulated view angle as close as the stick allows to
+/// what the semantic route asks for. Ticks that also move or press a button
+/// keep their own value; only turn/look and idle ticks are adjusted.
+fn compensate(samples: &mut [Sample]) {
+    // (rate, extract semantic, set stick) for yaw (turn) then pitch (look).
+    let axes: [(i32, bool); 2] = [(130, false), (95, true)];
+    for (rate, is_look) in axes {
+        let (mut want, mut got) = (0i32, 0i32);
+        for s in samples.iter_mut() {
+            let sem = if is_look { s.look } else { s.turn };
+            let target = want + angle_step(sem, rate);
+            let idle = s.forward == 0 && s.strafe == 0 && s.buttons == 0;
+            let other_active = if is_look { s.turn != 0 } else { s.look != 0 };
+            let mut best = 0i32;
+            let mut best_err = i32::MAX;
+            let mut best_abs = i32::MAX;
+            if sem != 0 || idle {
+                for d in -128..=127i32 {
+                    let reach = if is_look { -d } else { d };
+                    if d != 0 && d.abs() <= DEADZONE && !other_active {
+                        continue;
+                    }
+                    let step = angle_step(aim_curve(reach), rate);
+                    let err = (got + step - target).abs();
+                    if err < best_err || (err == best_err && d.abs() < best_abs) {
+                        best = d;
+                        best_err = err;
+                        best_abs = d.abs();
+                    }
+                }
+            }
+            let applied = if is_look { -best } else { best };
+            if sem != 0 || idle {
+                if is_look { s.ry = Some(best); } else { s.rx = Some(best); }
+            }
+            let _ = applied;
+            got += if sem != 0 || idle { angle_step(aim_curve(if is_look { -best } else { best }), rate) } else { 0 };
+            want = target;
+        }
+    }
+}
+
+fn encode(s: Sample, note: &mut Vec<String>) -> Result<[u8; 6], String> {
+    let (lx, ly) = clear_deadzone(s.strafe, -s.forward, note, "move");
+    let rx = s.rx.unwrap_or(if s.turn == 0 { 0 } else { invert_aim(s.turn) });
+    let ry = s.ry.unwrap_or(if s.look == 0 { 0 } else { -invert_aim(s.look) });
+    let (rx, ry) = clear_deadzone(rx, ry, note, "aim");
+    let byte = |c: i32| (128 + c.clamp(-128, 127)) as u8;
+    let b = s.buttons.to_le_bytes();
+    Ok([b[0], b[1], byte(rx), byte(ry), byte(lx), byte(ly)])
+}
+
+// ---------------------------------------------------------------------------
+// Route model
+
+#[derive(Debug)]
+enum Item {
+    Run(u32, Sample),
+    Checkpoint {
+        name: String,
+        asserts: Vec<String>,
+    },
+    Wait(String),
+    Hold {
+        sample: Sample,
+        until: String,
+        timeout: u32,
+    },
+    Raw(String),
+}
+
+#[derive(Debug)]
+struct Block {
+    map: String,
+    next: String,
+    id: Option<i64>,
+    items: Vec<Item>,
+}
+
+#[derive(Debug, Default)]
+struct Route {
+    journey: Vec<(String, String)>,
+    blocks: Vec<Block>,
+}
+
+fn parse_kv(tokens: &[&str]) -> Vec<(String, String)> {
+    tokens
+        .iter()
+        .map(|t| match t.split_once('=') {
+            Some((k, v)) => (k.to_string(), v.to_string()),
+            None => (t.to_string(), "true".to_string()),
+        })
+        .collect()
+}
+
+fn assert_table(kind: &str, kvs: &[(String, String)]) -> String {
+    let mut out = format!("kind={kind:?}");
+    for (k, v) in kvs {
+        let numeric = v.parse::<i64>().is_ok() || v.starts_with("0x") || v == "true" || v == "false";
+        if numeric {
+            let _ = write!(out, ", {k}={v}");
+        } else {
+            let _ = write!(out, ", {k}={:?}", v.trim_matches('"'));
+        }
+    }
+    format!("{{ {out} }}")
+}
+
+fn parse_sample(tokens: &[&str]) -> Result<Sample, String> {
+    let mut s = Sample::default();
+    for t in tokens {
+        if let Some(b) = button_for(t) {
+            s.buttons |= b;
+            continue;
+        }
+        let (head, rest) = t.split_at(1);
+        let v: i32 = rest
+            .parse()
+            .map_err(|_| format!("unknown run token `{t}`"))?;
+        match head {
+            "f" => s.forward = v,
+            "s" => s.strafe = v,
+            "t" => s.turn = v,
+            "l" => s.look = v,
+            _ => return Err(format!("unknown run token `{t}`")),
+        }
+    }
+    Ok(s)
+}
+
+fn split_line(line: &str) -> Vec<&str> {
+    // Quoted values (`title="a b"`) stay whole.
+    let mut out = Vec::new();
+    let mut start = None;
+    let mut quoted = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            '"' => quoted = !quoted,
+            c if c.is_whitespace() && !quoted => {
+                if let Some(s) = start.take() {
+                    out.push(&line[s..i]);
+                }
+            }
+            _ => {
+                if start.is_none() {
+                    start = Some(i);
+                }
+            }
+        }
+    }
+    if let Some(s) = start {
+        out.push(&line[s..]);
+    }
+    out
+}
+
+fn parse_route(text: &str) -> Result<Route, String> {
+    let mut route = Route::default();
+    let mut pending_checkpoint: Option<(String, Vec<String>)> = None;
+    for (n, raw) in text.lines().enumerate() {
+        let at = |m: String| format!("line {}: {m}", n + 1);
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let tok = split_line(line);
+        let head = tok[0];
+        if head != "@assert" {
+            if let (Some((name, asserts)), Some(b)) =
+                (pending_checkpoint.take(), route.blocks.last_mut())
+            {
+                b.items.push(Item::Checkpoint { name, asserts });
+            }
+        }
+        match head {
+            "@journey" => route.journey = parse_kv(&tok[1..]),
+            "map" => {
+                let mut kv = parse_kv(&tok[2..]);
+                let mut next = String::new();
+                let mut id = None;
+                if tok.len() < 2 {
+                    return Err(at("map needs a name".into()));
+                }
+                let mut i = 0;
+                while i < kv.len() {
+                    // `next c0a0a` is two bare tokens.
+                    if kv[i].0 == "next" && kv[i].1 == "true" && i + 1 < kv.len() {
+                        next = kv[i + 1].0.clone();
+                        kv.remove(i + 1);
+                        kv.remove(i);
+                        continue;
+                    }
+                    if kv[i].0 == "id" {
+                        id = Some(kv[i].1.parse().map_err(|_| at("bad id".into()))?);
+                    }
+                    i += 1;
+                }
+                route.blocks.push(Block {
+                    map: tok[1].to_string(),
+                    next,
+                    id,
+                    items: Vec::new(),
+                });
+            }
+            "@checkpoint" => {
+                pending_checkpoint = Some((tok.get(1).ok_or_else(|| at("name".into()))?.to_string(), Vec::new()));
+            }
+            "@assert" => {
+                let (_, asserts) = pending_checkpoint
+                    .as_mut()
+                    .ok_or_else(|| at("@assert outside a checkpoint".into()))?;
+                asserts.push(assert_table("ram", &parse_kv(&tok[1..])));
+            }
+            "@wait" => {
+                let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
+                b.items.push(Item::Wait(assert_table("ram", &parse_kv(&tok[1..]))));
+            }
+            "@hold" => {
+                let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
+                let split = tok
+                    .iter()
+                    .position(|t| *t == "until")
+                    .ok_or_else(|| at("@hold needs `until`".into()))?;
+                let sample = parse_sample(&tok[1..split]).map_err(at)?;
+                let mut kv = parse_kv(&tok[split + 1..]);
+                let ti = kv.iter().position(|(k, _)| k == "timeout");
+                let timeout = match ti {
+                    Some(i) => kv.remove(i).1.parse().map_err(|_| at("timeout".into()))?,
+                    None => return Err(at("@hold needs timeout=".into())),
+                };
+                b.items.push(Item::Hold {
+                    sample,
+                    until: assert_table("ram", &kv),
+                    timeout,
+                });
+            }
+            "@raw" => {
+                let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
+                b.items.push(Item::Raw(line["@raw".len()..].trim().to_string()));
+            }
+            _ => {
+                let b = route.blocks.last_mut().ok_or_else(|| at("run before any map".into()))?;
+                let ticks: u32 = head.parse().map_err(|_| at(format!("unknown directive `{head}`")))?;
+                let s = parse_sample(&tok[1..]).map_err(at)?;
+                let mut note = Vec::new();
+                encode(s, &mut note).map_err(at)?;
+                for msg in note {
+                    eprintln!("note: line {}: {msg}", n + 1);
+                }
+                b.items.push(Item::Run(ticks, s));
+            }
+        }
+    }
+    if let (Some((name, asserts)), Some(b)) = (pending_checkpoint.take(), route.blocks.last_mut()) {
+        b.items.push(Item::Checkpoint { name, asserts });
+    }
+    Ok(route)
+}
+
+// ---------------------------------------------------------------------------
+// HLINPUT1 import (the oracle route format)
+
+fn import(path: &Path) -> Result<String, String> {
+    let d = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if d.len() < 16 || &d[..8] != b"HLINPUT1" {
+        return Err("not an HLINPUT1 tape".into());
+    }
+    let u16_at = |o: usize| u16::from_le_bytes([d[o], d[o + 1]]) as usize;
+    let u32_at = |o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap()) as usize;
+    let segments = u16_at(10);
+    let mut o = 16;
+    let mut out = String::new();
+    out.push_str("# Imported from an HLINPUT1 route; tick counts are 20 Hz gameplay ticks.\n");
+    for _ in 0..segments {
+        let name = |s: &[u8]| String::from_utf8_lossy(s).trim_end_matches('\0').to_string();
+        let map = name(&d[o..o + 16]);
+        let next = name(&d[o + 16..o + 32]);
+        let runs = u32_at(o + 36);
+        o += 48;
+        let _ = writeln!(out, "\nmap {map} next {next}");
+        for _ in 0..runs {
+            let dur = u16_at(o);
+            let (f, s, t, l) = (d[o + 2] as i8, d[o + 3] as i8, d[o + 4] as i8, d[o + 5] as i8);
+            let act = u16_at(o + 6);
+            o += 8;
+            let mut line = format!("  {dur}");
+            for (k, v) in [("f", f), ("s", s), ("t", t), ("l", l)] {
+                if v != 0 {
+                    let _ = write!(line, " {k}{v}");
+                }
+            }
+            for (bit, name) in [
+                (0, "attack"),
+                (1, "jump"),
+                (2, "duck"),
+                (3, "use"),
+                (4, "attack2"),
+                (5, "reload"),
+                (6, "next"),
+                (7, "prev"),
+                (8, "flash"),
+            ] {
+                if act & (1 << bit) != 0 {
+                    let _ = write!(line, " {name}");
+                }
+            }
+            let _ = writeln!(out, "{line}");
+        }
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Compilation
+
+fn write_tape(path: &Path, samples: &[Sample]) -> Result<(), String> {
+    let mut b = Vec::with_capacity(16 + samples.len() * 6);
+    b.extend_from_slice(b"PXITAPE2");
+    b.extend_from_slice(&(samples.len() as u32).to_le_bytes());
+    b.extend_from_slice(&0u32.to_le_bytes());
+    let mut note = Vec::new();
+    for s in samples {
+        b.extend_from_slice(&encode(*s, &mut note)?);
+    }
+    if let Some(p) = path.parent() {
+        fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    fs::write(path, b).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+struct Opts {
+    route: PathBuf,
+    /// Repo-relative directory the tapes are written to and referenced from.
+    tape_dir: String,
+    repo: PathBuf,
+    out: PathBuf,
+    disc: String,
+    symbols: String,
+    /// Symbol/address of the cooked map header's identifying word.
+    header: String,
+    /// Linker map used to bind symbols the gate's own loader cannot read
+    /// (the map prints `NAME (.0)` for split statics) as fixed addresses.
+    map: Option<PathBuf>,
+}
+
+fn compile(o: &Opts) -> Result<(), String> {
+    let text = fs::read_to_string(&o.route).map_err(|e| format!("{}: {e}", o.route.display()))?;
+    let route = parse_route(&text)?;
+    let jv = |k: &str| route.journey.iter().find(|(n, _)| n == k).map(|(_, v)| v.trim_matches('"').to_string());
+    let name = jv("name").ok_or("@journey needs name=")?;
+    let title = jv("title").unwrap_or_else(|| name.clone());
+    let mut t = String::new();
+    let _ = writeln!(t, "# Generated by tests/chain/hlroute.rs from {}.", o.route.file_name().unwrap().to_string_lossy());
+    let _ = writeln!(t, "# Controller input only: no state is written, no map is forced.");
+    let _ = writeln!(t, "name = {name:?}\ntitle = {title:?}");
+    let _ = writeln!(t, "disc = [{:?}]\nsymbols = [{:?}]", o.disc, o.symbols);
+    let _ = writeln!(t, "pad = \"analog\"\ncard_observe = true");
+    let _ = writeln!(t, "max_ticks = {}", jv("max_ticks").unwrap_or("400000".into()));
+    for (k, v) in &route.journey {
+        if k == "memcard" {
+            let _ = writeln!(t, "memcard = {v:?}");
+        }
+    }
+    if let Some(card) = jv("card_fixture") {
+        let sha = jv("card_sha256").ok_or("card_fixture needs card_sha256")?;
+        let _ = writeln!(t, "[card_fixture]\npath = {card:?}\nsha256 = {sha:?}");
+    }
+    if let Some(prologue) = jv("prologue") {
+        // `new_game`: wait out the boot and press Cross on the title.
+        if prologue == "new_game" {
+            t.push_str("\n[[step]]\nlabel = \"boot to the title\"\nwait = 620\n");
+            t.push_str("\n[[step]]\nlabel = \"title: New Game, default skill\"\npress = [\"cross\"]\nhold = 12\nwait = 24\n");
+        }
+    }
+    let mut total_samples = 0usize;
+    let mut ids = std::collections::HashMap::new();
+    let ids_text = fs::read_to_string(o.repo.join("tests/chain/map-ids.txt")).unwrap_or_default();
+    for line in ids_text.lines().filter(|l| !l.starts_with('#')) {
+        if let Some((m, v)) = line.split_once(' ') {
+            ids.insert(m.to_string(), v.trim().parse::<i64>().map_err(|e| e.to_string())?);
+        }
+    }
+    for block in &route.blocks {
+        let _ = writeln!(t, "\n# ---- {} -> {} ----", block.map, block.next);
+        let id = match block.id {
+            Some(id) => id,
+            None => *ids
+                .get(&block.map)
+                .ok_or_else(|| format!("map {} has no id= and is not in map-ids.txt", block.map))?,
+        };
+        let _ = writeln!(t, "[[step]]\nlabel = \"{} loads\"\nwait_until = {{ kind = \"ram\", {}, size = 4, op = \"eq\", value = {id} }}\ntimeout = 9000", block.map, o.header);
+        let _ = writeln!(t, "\n[[step]]\nlabel = \"{} first simulation tick\"\nwait_until = {{ kind = \"ram\", sym = \"SIM_NOW\", size = 2, op = \"between\", value = 0, value_hi = 4 }}\ntimeout = 9000", block.map);
+        // Drop the trailing neutral run: the journey waits for the next map.
+        let mut items: Vec<&Item> = block.items.iter().collect();
+        let mut tail_ticks = 0u32;
+        while let Some(Item::Run(n, s)) = items.last() {
+            if s.neutral() {
+                tail_ticks += n;
+                items.pop();
+            } else {
+                break;
+            }
+        }
+        let mut pending: Vec<Sample> = Vec::new();
+        let mut piece = 0;
+        let flush = |t: &mut String, pending: &mut Vec<Sample>, piece: &mut usize, total: &mut usize| -> Result<(), String> {
+            if pending.is_empty() {
+                return Ok(());
+            }
+            let file = format!("{}/{}-{:02}.pxtape", o.tape_dir, block.map, *piece);
+            compensate(pending);
+            write_tape(&o.repo.join(&file), pending)?;
+            let _ = writeln!(t, "\n[[step]]\nlabel = \"{} controller tape {}\"\ntape = {file:?}\ntape_rebase = true\ntimeout = {}", block.map, *piece, pending.len() as u64 * 3 + 600);
+            *total += pending.len();
+            *piece += 1;
+            pending.clear();
+            Ok(())
+        };
+        for item in items {
+            match item {
+                Item::Run(n, s) => pending.extend(std::iter::repeat(*s).take(*n as usize)),
+                Item::Checkpoint { name, asserts } => {
+                    flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
+                    let _ = writeln!(t, "\n[[step]]\ncheckpoint = {name:?}\ngolden = false");
+                    let _ = writeln!(t, "[[step.assert]]\nkind = \"not_flat\"\n[[step.assert]]\nkind = \"card_unchanged\"");
+                    for a in asserts {
+                        let _ = writeln!(t, "[[step.assert]]\n{}", a.trim_start_matches("{ ").trim_end_matches(" }").replace(", ", "\n"));
+                    }
+                }
+                Item::Wait(cond) => {
+                    flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
+                    let _ = writeln!(t, "\n[[step]]\nwait_until = {cond}\ntimeout = 9000");
+                }
+                Item::Hold { sample, until, timeout } => {
+                    flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
+                    let e = encode(*sample, &mut Vec::new())?;
+                    let mut press: Vec<&str> = Vec::new();
+                    for bit in [BTN_SQUARE, BTN_CROSS, BTN_TRIANGLE, BTN_R2, BTN_L2, BTN_CIRCLE, BTN_R1, BTN_L1, BTN_L3] {
+                        if sample.buttons & bit != 0 {
+                            press.push(match bit { BTN_SQUARE => "square", BTN_CROSS => "cross", BTN_TRIANGLE => "triangle", BTN_R2 => "r2", BTN_L2 => "l2", BTN_CIRCLE => "circle", BTN_R1 => "r1", BTN_L1 => "l1", _ => "l3" });
+                        }
+                    }
+                    let _ = writeln!(t, "\n[[step]]\nlstick = [{}, {}]\nrstick = [{}, {}]\npress = {press:?}\nhold_until = {until}\ntimeout = {timeout}", e[4], e[5], e[2], e[3]);
+                    let _ = button_name(0);
+                }
+                Item::Raw(line) => {
+                    flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
+                    let _ = writeln!(t, "{line}");
+                }
+            }
+        }
+        flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
+        let _ = writeln!(t, "# trailing wait of {tail_ticks} ticks is replaced by the next block's load wait");
+    }
+    if let Some(last) = route.blocks.last() {
+        if !last.next.is_empty() {
+            // Terminal block: nothing more to wait for.
+        }
+    }
+    if let Some(map) = &o.map {
+        let mut names = std::collections::BTreeSet::new();
+        for chunk in t.split("sym").skip(1) {
+            let c = chunk.trim_start().trim_start_matches('=').trim_start();
+            if let Some(rest) = c.strip_prefix('"') {
+                if let Some(end) = rest.find('"') {
+                    names.insert(rest[..end].to_string());
+                }
+            }
+        }
+        let map_text = fs::read_to_string(map).map_err(|e| format!("{}: {e}", map.display()))?;
+        let mut table = String::from("\n# Bound to the build this journey was written against.\n[addr]\n");
+        for name in &names {
+            let needle = format!("hl_psx::{name}");
+            let hit = map_text.lines().find_map(|l| {
+                let tk: Vec<&str> = l.split_whitespace().collect();
+                let first_is_addr = tk.first().is_some_and(|a| a.len() == 8 && u32::from_str_radix(a, 16).is_ok());
+                if first_is_addr && tk.get(4).is_none() && tk.get(3).is_some_and(|x| *x == needle) {
+                    return None;
+                }
+                if tk.len() >= 5 && tk[4] == needle && (tk.len() == 5 || tk[5] == "(.0)") {
+                    return u32::from_str_radix(tk[0], 16).ok();
+                }
+                None
+            });
+            match hit {
+                Some(a) => { let _ = writeln!(table, "{name} = {a:#x}"); }
+                None => eprintln!("note: {name} not found in the map; left to the gate's loader"),
+            }
+        }
+        // Insert the table before the first step.
+        if let Some(at) = t.find("\n[[step]]") {
+            t.insert_str(at, &table);
+        }
+    }
+    fs::write(&o.out, t).map_err(|e| format!("{}: {e}", o.out.display()))?;
+    println!("wrote {} ({} blocks, {} tape samples)", o.out.display(), route.blocks.len(), total_samples);
+    Ok(())
+}
+
+/// One block as a single poll-bound tape (trailing neutral kept) that starts
+/// at `start_poll`, for replays through the frontend's `--input-tape`.
+fn block_tape(route: &Path, maps: &[String], start_poll: u32, out: &Path) -> Result<(), String> {
+    let text = fs::read_to_string(route).map_err(|e| format!("{}: {e}", route.display()))?;
+    let parsed = parse_route(&text)?;
+    let mut samples: Vec<Sample> = Vec::new();
+    for m in maps {
+        let b = parsed.blocks.iter().find(|b| &b.map == m).ok_or_else(|| format!("no block {m}"))?;
+        for item in &b.items {
+            if let Item::Run(n, s) = item {
+                samples.extend(std::iter::repeat(*s).take(*n as usize));
+            }
+        }
+    }
+    compensate(&mut samples);
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"PXITAPE2");
+    bytes.extend_from_slice(&(samples.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&start_poll.to_le_bytes());
+    let mut note = Vec::new();
+    for s in &samples {
+        bytes.extend_from_slice(&encode(*s, &mut note)?);
+    }
+    fs::write(out, bytes).map_err(|e| format!("{}: {e}", out.display()))?;
+    println!("wrote {} ({} samples from poll {start_poll})", out.display(), samples.len());
+    Ok(())
+}
+
+/// Write the named blocks as an HLINPUT1 oracle route (semantic units, 20 Hz
+/// ticks, trailing neutral kept, 400-tick neutral tail), so the same route text
+/// can be tried against the GoldSrc reference runtime.
+fn export(route: &Path, maps: &[String], out: &Path) -> Result<(), String> {
+    let text = fs::read_to_string(route).map_err(|e| format!("{}: {e}", route.display()))?;
+    let parsed = parse_route(&text)?;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"HLINPUT1");
+    bytes.extend_from_slice(&20u16.to_le_bytes());
+    bytes.extend_from_slice(&(maps.len() as u16).to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    for (mi, m) in maps.iter().enumerate() {
+        let b = parsed.blocks.iter().find(|b| &b.map == m).ok_or_else(|| format!("no block {m}"))?;
+        let next = if mi + 1 == maps.len() { String::new() } else { b.next.clone() };
+        let mut runs: Vec<(u32, Sample)> = Vec::new();
+        for item in &b.items {
+            if let Item::Run(n, s) = item {
+                match runs.last_mut() {
+                    Some((c, last)) if last == s && *c + n <= 65535 => *c += n,
+                    _ => runs.push((*n, *s)),
+                }
+            }
+        }
+        let total: u32 = runs.iter().map(|r| r.0).sum();
+        let pad = |s: &str| { let mut v = s.as_bytes().to_vec(); v.resize(16, 0); v };
+        bytes.extend(pad(&b.map));
+        bytes.extend(pad(&next));
+        bytes.extend_from_slice(&total.to_le_bytes());
+        bytes.extend_from_slice(&(runs.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&400u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        for (n, s) in runs {
+            bytes.extend_from_slice(&(n as u16).to_le_bytes());
+            bytes.extend_from_slice(&[s.forward as i8 as u8, s.strafe as i8 as u8, s.turn as i8 as u8, s.look as i8 as u8]);
+            let mut act = 0u16;
+            for (bit, mask) in [(0, BTN_R2), (1, BTN_CROSS), (2, BTN_TRIANGLE), (3, BTN_SQUARE), (4, BTN_L2), (5, BTN_CIRCLE), (6, BTN_R1), (7, BTN_L1), (8, BTN_L3)] {
+                if s.buttons & mask != 0 { act |= 1 << bit; }
+            }
+            bytes.extend_from_slice(&act.to_le_bytes());
+        }
+    }
+    fs::write(out, bytes).map_err(|e| format!("{}: {e}", out.display()))?;
+    println!("wrote {}", out.display());
+    Ok(())
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let result = match args.get(1).map(String::as_str) {
+        Some("export") if args.len() >= 5 => {
+            let maps: Vec<String> = args[3].split(',').map(String::from).collect();
+            export(Path::new(&args[2]), &maps, Path::new(&args[4]))
+        }
+        Some("tape") if args.len() >= 6 => {
+            let maps: Vec<String> = args[3].split(',').map(String::from).collect();
+            block_tape(Path::new(&args[2]), &maps, args[4].parse().unwrap_or(0), Path::new(&args[5]))
+        }
+        Some("import") if args.len() == 3 => import(Path::new(&args[2])).map(|s| print!("{s}")),
+        Some("build") if args.len() >= 5 => {
+            let mut o = Opts {
+                route: PathBuf::from(&args[2]),
+                tape_dir: "tests/chain/tapes".into(),
+                repo: PathBuf::from(&args[3]),
+                out: PathBuf::from(&args[4]),
+                disc: "dist/hl-psx.cue".into(),
+                symbols: ".hlpsx/hl-psx.map".into(),
+                header: "sym = \"WORLD_ARENA\", offset = 4".into(),
+                map: None,
+            };
+            let mut i = 5;
+            while i + 1 < args.len() {
+                match args[i].as_str() {
+                    "--disc" => o.disc = args[i + 1].clone(),
+                    "--symbols" => o.symbols = args[i + 1].clone(),
+                    "--tape-dir" => o.tape_dir = args[i + 1].clone(),
+                    "--map" => o.map = Some(PathBuf::from(&args[i + 1])),
+                    _ => {}
+                }
+                i += 2;
+            }
+            compile(&o)
+        }
+        _ => Err("usage: hlroute import FILE.hlinput | hlroute build ROUTE REPO OUT.toml [--disc P] [--symbols P] [--tape-dir D]".into()),
+    };
+    if let Err(e) = result {
+        eprintln!("hlroute: {e}");
+        std::process::exit(1);
+    }
+}
