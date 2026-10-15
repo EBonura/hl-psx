@@ -5737,16 +5737,14 @@ static mut PUNCH_YAW: i32 = 0;
 // Walk view-bob phase (advances with movement each sim tick) -> a vertical head
 // bob + a subtle strafe roll are derived from it in the render view setup.
 static mut BOB_PHASE: u32 = 0;
-// GoldSrc pain-compass edge intensities (front/right/rear/left, 0..255). This
+// GoldSrc pain-compass edges packed as front/right/rear/left bits. This
 // replaces the port-specific full-screen red wash with the original
 // directional feedback without adding a resident array.
-static mut DAMAGE_EDGE: [u8; 4] = [0; 4]; // front, right, rear, left
+static mut DAMAGE_DIRECTION: u8 = 0;
+static mut DAMAGE_TICKS: u8 = 0;
 // HEV suit voice: 0 = fine, 1 = health critical, 2 = near death (fire once per
 // worsening threshold crossing). Geiger cooldown throttles the radiation click.
-static mut HEV_PREV_HEALTH: u16 = 100;
-static mut HEV_LAST_DAMAGE: u16 = 0;
-static mut HEV_CRIT_READY: u32 = 0;
-static mut HEV_NEAR_READY: u32 = 0;
+static mut HEV_HEALTH_STATE: u8 = 0;
 /// Roll of the landing punch (player.cpp: fall speed x 0.013 degrees), Q12
 /// turns like the other punches; springs back with them.
 static mut PUNCH_ROLL: i32 = 0;
@@ -8248,9 +8246,7 @@ fn logic_player_touch_candidate(rec: map::LogicEnt) -> bool {
         map::LOGIC_TRIGGER_TELEPORT | map::LOGIC_TRIGGER_GRAVITY => {
             (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0
         }
-        map::LOGIC_CDTRACK => {
-            rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs || rec.arg1 != 0
-        }
+        map::LOGIC_CDTRACK => rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs,
         // CBreakable::BreakTouch: run into it, or stand on it.
         map::LOGIC_FUNC_BREAKABLE => {
             rec.spawnflags & (SF_BREAK_TOUCH | SF_BREAK_PRESSURE) != 0
@@ -11914,10 +11910,11 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
     PUNCH_PITCH -= (PUNCH_PITCH * 5) / 16 + PUNCH_PITCH.signum();
     PUNCH_YAW -= (PUNCH_YAW * 5) / 16 + PUNCH_YAW.signum();
     PUNCH_ROLL -= (PUNCH_ROLL * 5) / 16 + PUNCH_ROLL.signum();
-    let mut edge = 0;
-    while edge < 4 {
-        DAMAGE_EDGE[edge] = player_rules::compass_fade(DAMAGE_EDGE[edge]);
-        edge += 1;
+    if DAMAGE_TICKS > 0 {
+        DAMAGE_TICKS -= 1;
+        if DAMAGE_TICKS == 0 {
+            DAMAGE_DIRECTION = 0;
+        }
     }
     if GEIGER_COOLDOWN & 0x0f != 0 {
         GEIGER_COOLDOWN -= 1;
@@ -12196,27 +12193,26 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
 /// GoldSrc's `320_pain.spr` is four additive edge arrows. Flat PS1 arrows keep
 /// the same screen positions and fade law without spending another atlas page
 /// or resident texture packet pool.
-#[inline(never)]
-#[optimize(size)]
 fn draw_damage_compass(health: u16) {
-    let edges = unsafe { DAMAGE_EDGE };
+    let edges = unsafe { DAMAGE_DIRECTION };
+    if edges == 0 {
+        return;
+    }
+    // GoldSrc uses amber above 25 health and red below it. Keep this much
+    // softer than the removed full-screen red wash.
+    let green = if health > 25 { 40 } else { 0 };
+    let mut edge = 0usize;
     let arrows = [
         [(152, 24), (168, 24), (160, 38)],    // front / top
         [(240, 112), (240, 128), (226, 120)], // right
         [(152, 200), (168, 200), (160, 186)], // rear / bottom
         [(80, 112), (80, 128), (94, 120)],    // left
     ];
-    let mut edge = 0usize;
     while edge < arrows.len() {
-        // GoldSrc draws an edge while its intensity is above 0.4, at least
-        // half bright, amber above 25 health and red below it. Kept much
-        // softer than the removed full-screen red wash.
-        if edges[edge] > player_rules::COMPASS_DRAW_MIN {
-            let red = player_rules::compass_shade(edges[edge]) >> 1;
-            let green = if health > 25 { red / 3 } else { 0 };
+        if edges & (1 << edge) != 0 {
             fx_tri_flat_blended(
                 arrows[edge],
-                red,
+                128,
                 green,
                 0,
                 psx_gpu::material::BlendMode::Add,
@@ -13221,27 +13217,6 @@ unsafe fn logic_teleport_touch(m: &Map, nlogic: usize, rec: map::LogicEnt) {
     }
 }
 
-/// CTargetCDAudio::Think for a point target with a radius: look every half
-/// second and start the track once the player is within the radius. True when
-/// the record is such a target (so the touch scan skips it).
-#[inline(never)]
-#[optimize(size)]
-unsafe fn logic_cd_radius_poll(m: &Map, li: usize, player_pos: [i32; 3], now: u16) -> bool {
-    let rec = m.logic(li);
-    if rec.arg1 == 0 || rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs {
-        return false;
-    }
-    if time_reached(now, LOGIC_NEXT[li]) {
-        LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::CDAUDIO_POLL_TICKS);
-        if trigger_rules::cdaudio_in_range(rec.arg1, dist2_3(rec.origin, player_pos) as i64) {
-            CD_TRACK_WANT = rec.arg0 as i16;
-            music_apply();
-            LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
-        }
-    }
-    true
-}
-
 /// CEnvSpark: a toggled spark flips between sparking and stopped on every Use;
 /// the others have no Use.
 #[inline(never)]
@@ -13432,10 +13407,6 @@ unsafe fn logic_touch_triggers(
             } else {
                 (pmins, pmaxs)
             };
-            if LOGIC_KIND[li] == map::LOGIC_CDTRACK && logic_cd_radius_poll(m, li, player_pos, now) {
-                scan += 1;
-                continue;
-            }
             if LOGIC_KIND[li] == map::LOGIC_TRIGGER_HURT {
                 // Hurt volumes are touched by monsters as well as the player,
                 // so they run whether or not the player is inside.
@@ -13756,7 +13727,8 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     ENDING_FROM = 0;
     CAMERA_LI = u16::MAX;
     CAMERA_LOCK = false;
-    DAMAGE_EDGE = [0; 4];
+    DAMAGE_DIRECTION = 0;
+    DAMAGE_TICKS = 0;
     GEIGER_COOLDOWN = 0;
     TRACKTRAIN_SUBMODEL = m.tram_submodel.min(u16::MAX as usize) as u16;
     TRAM_NODE_ALT = [0; 8];
@@ -13943,9 +13915,6 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         if rec.kind == map::LOGIC_MONSTERMAKER && rec.targetname == 0 {
             LOGIC_STATE[li] = LOGIC_STATE_WAITING;
             LOGIC_NEXT[li] = now.wrapping_add(maker_delay(rec));
-        }
-        if rec.kind == map::LOGIC_CDTRACK && rec.arg1 != 0 {
-            LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::CDAUDIO_FIRST_POLL_TICKS);
         }
         if rec.kind == map::LOGIC_ENV_SPARK {
             // Spawn: the first spark comes 0.1 s plus up to 1.5 s in.
@@ -17175,7 +17144,7 @@ const SFX_NONE: u8 = 0xFF;
 static mut MON_PAIN_COOLDOWN: u8 = 0;
 static mut MOVERS: [phys::Mover; MAX_ENTS + 1] = [phys::ZERO_MOVER; MAX_ENTS + 1];
 static mut MOVER_COUNT: usize = 0;
-static mut STEP_CLOCK: u8 = 0;
+static mut STEP_ACC: u32 = 0;
 static mut STEP_ALT: u8 = 0;
 static mut MOVE_TICK: u16 = 0; // walker half-rate phase
                                // Parsed-model caches: Model::load re-parsed headers on EVERY draw call
@@ -17795,27 +17764,30 @@ static mut PAIN_SFX_COOLDOWN: u8 = 0;
 /// current view and light every matching screen edge. Close damage lights all
 /// four, matching GoldSrc's special case for a source within 50 units.
 #[inline(never)]
-#[optimize(size)]
 unsafe fn note_damage_direction(source: [i32; 3]) {
     let dx = (source[0] - LOGIC_PLAYER_POS[0]).clamp(-4096, 4096);
     let dy = (source[1] - LOGIC_PLAYER_POS[1]).clamp(-4096, 4096);
     let dz = (source[2] - LOGIC_PLAYER_POS[2]).clamp(-4096, 4096);
     let delta = [dx, dy, dz];
     let d2 = dx * dx + dy * dy + dz * dz;
+    let mut edges = 0u8;
     if d2 <= 50 * 50 {
-        DAMAGE_EDGE = [255; 4];
-        return;
+        edges = 0x0f;
+    } else {
+        let distance = isqrt_i32(d2);
+        let rot = view_rotation(LOGIC_PLAYER_YAW, 0);
+        let forward = dot12(rot.m[2], delta);
+        let right = dot12(rot.m[0], delta);
+        let threshold = distance * 3;
+        if forward.abs() * 10 > threshold {
+            edges |= if forward > 0 { 1 << 0 } else { 1 << 2 };
+        }
+        if right.abs() * 10 > threshold {
+            edges |= if right > 0 { 1 << 1 } else { 1 << 3 };
+        }
     }
-    // Each edge takes the dot of the unit direction to the source with the
-    // view axis (forward, right), kept above 0.3, and holds the larger value.
-    let distance = isqrt_i32(d2);
-    let rot = view_rotation(LOGIC_PLAYER_YAW, LOGIC_PLAYER_PITCH);
-    let forward = dot12(rot.m[2], delta);
-    let right = dot12(rot.m[0], delta);
-    let front = if forward > 0 { 0 } else { 2 };
-    let side = if right > 0 { 1 } else { 3 };
-    DAMAGE_EDGE[front] = DAMAGE_EDGE[front].max(player_rules::compass_intensity(forward, distance));
-    DAMAGE_EDGE[side] = DAMAGE_EDGE[side].max(player_rules::compass_intensity(right, distance));
+    DAMAGE_DIRECTION |= edges;
+    DAMAGE_TICKS = 10;
 }
 
 /// Fall damage: same feedback as `damage_player`, but straight to health --
@@ -17825,7 +17797,6 @@ fn fall_damage_player(health: &mut u16, dmg: u16) {
         return;
     }
     unsafe {
-        HEV_LAST_DAMAGE = dmg;
         PUNCH_PITCH = -23;
         if PAIN_SFX_COOLDOWN == 0 {
             sfx::play(sfx::PAIN);
@@ -17849,7 +17820,6 @@ fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
         // full-screen red damage wash.
         // CBasePlayer::TakeDamage: a fixed 2 degree nod, whatever the damage.
         PUNCH_PITCH = -23;
-        HEV_LAST_DAMAGE = dmg;
     }
     if *armor > 0 {
         // GoldSrc's HEV suit keeps only 20% of generic damage on health and
@@ -34694,7 +34664,6 @@ fn play(
                 trace_player_hull_probes(sim_frame_no, &m, movers, &player, fwd, yaw, jump_want);
             }
             phys::clear_player_touches();
-            let was_on_ground = player.on_ground;
             if !settings::debug_on(settings::DEBUG_FLY) {
                 player.record_mover_contacts(&m, movers, |id| {
                     id >= 0 && unsafe { fan_logic_index(id as usize).is_some() }
@@ -34841,9 +34810,8 @@ fn play(
             // DAMAGE_FOR_FALL_SPEED to 100 at ~1024 u/s. Fall damage bypasses
             // armor (DMG_FALL is not in the suit's absorb set) and is uncapped
             // -- long drops are lethal, as authored.
-            let land_impact = player.land_impact as i32;
             {
-                let li = land_impact;
+                let li = player.land_impact as i32;
                 if li > 17 {
                     // PM_CheckFalling rolls the screen by fall speed x 0.013
                     // degrees; it does not nod the view.
@@ -34862,28 +34830,28 @@ fn play(
                 // ladder skips update and would otherwise re-apply the fall.
                 player.land_impact = 0;
             }
-            // HEV suit voice: after a real hit, "health critical" under 20 and
-            // "near death" under 6, each at most once in ten minutes.
+            // HEV suit voice: announce each worsening health threshold once.
             unsafe {
-                if suit_equipped && health > 0 {
-                    match player_rules::health_voice(
-                        HEV_PREV_HEALTH,
-                        health,
-                        HEV_LAST_DAMAGE,
-                        sim_frame_no,
-                        &mut *core::ptr::addr_of_mut!(HEV_CRIT_READY),
-                        &mut *core::ptr::addr_of_mut!(HEV_NEAR_READY),
-                    ) {
-                        player_rules::HealthVoice::NearDeath => sfx::play(sfx::HEV_NEAR_DEATH),
-                        player_rules::HealthVoice::Critical => sfx::play(sfx::HEV_HEALTH_CRIT),
-                        player_rules::HealthVoice::None => {}
-                    }
+                let hstate = if health == 0 || !suit_equipped {
+                    0
+                } else if health < 10 {
+                    2
+                } else if health < 25 {
+                    1
+                } else {
+                    0
+                };
+                if hstate > HEV_HEALTH_STATE {
+                    sfx::play(if hstate == 2 {
+                        sfx::HEV_NEAR_DEATH
+                    } else {
+                        sfx::HEV_HEALTH_CRIT
+                    });
                 }
-                HEV_PREV_HEALTH = health;
-                HEV_LAST_DAMAGE = 0;
+                HEV_HEALTH_STATE = hstate;
             }
-            // Footsteps (PM_UpdateStepSound): a clock keyed to ground speed,
-            // slower and quieter when walking or ducked, a rung on a ladder.
+            // Footsteps: input-magnitude cadence while grounded (full run =
+            // a step roughly every 8 ticks), alternating the two samples.
             unsafe {
                 // View-bob phase advances with horizontal ground speed; the render
                 // derives a vertical head-bob + strafe roll from it. Frozen while
@@ -34893,26 +34861,25 @@ fn play(
                 if player.on_ground && hspeed > 4 {
                     BOB_PHASE = BOB_PHASE.wrapping_add(((hspeed as u32) / 3 + 3).min(22));
                 }
-                let (clock, step) = player_rules::step_tick(
-                    STEP_CLOCK,
-                    player.on_ground && !in_water,
-                    on_ladder,
-                    hspeed * player_rules::Q6,
-                    player.crouch,
-                );
-                STEP_CLOCK = clock;
-                if let Some(den) = step {
-                    STEP_ALT ^= 1;
-                    sfx::play_vol(if STEP_ALT == 0 { sfx::STEP1 } else { sfx::STEP2 }, den);
-                }
-                // PM_Jump and PM_CheckFalling: a footfall at full volume leaving
-                // the ground and one on landing from 350 u/s or more.
-                if (jump_want && was_on_ground && !player.on_ground && !on_ladder && !in_water)
-                    || land_impact > 17
-                {
-                    STEP_ALT ^= 1;
-                    sfx::play(if STEP_ALT == 0 { sfx::STEP1 } else { sfx::STEP2 });
-                    STEP_CLOCK = 2;
+                if player.on_ground {
+                    let mag = (fwd.unsigned_abs()).max(strafe.unsigned_abs()) as u32;
+                    if mag > 20 {
+                        STEP_ACC += mag;
+                        if STEP_ACC >= 1000 {
+                            STEP_ACC = 0;
+                            STEP_ALT ^= 1;
+                            sfx::play_vol(
+                                if STEP_ALT == 0 {
+                                    sfx::STEP1
+                                } else {
+                                    sfx::STEP2
+                                },
+                                3,
+                            );
+                        }
+                    } else {
+                        STEP_ACC = 0;
+                    }
                 }
             }
             telemetry::stage_end(telemetry::stage::SIM_COLLISION);
