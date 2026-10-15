@@ -65,6 +65,8 @@ use psx_goldsrc::pushable;
 mod probe;
 #[cfg(feature = "reference-trace")]
 mod reference_trace;
+#[cfg(hl_event_ring)]
+mod event_ring;
 mod render;
 #[cfg(feature = "route-follow")]
 use psx_goldsrc::route_follow;
@@ -9326,6 +9328,8 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
     }
     #[cfg(feature = "reference-trace")]
     reference_trace::changelevel(SIM_NOW, map_name, landmark_name);
+    #[cfg(hl_event_ring)]
+    event_ring::push(SIM_NOW, map_name, 0xff, 0xff);
     telemetry::debug_log("hl-psx: changelevel request");
     telemetry::debug_log(map_name);
     if !landmark_name.is_empty() {
@@ -9702,6 +9706,8 @@ unsafe fn logic_fire_targets(
     }
     #[cfg(feature = "reference-trace")]
     reference_trace::target_fire(now, m.logic_name(target), use_type, depth);
+    #[cfg(hl_event_ring)]
+    event_ring::push(now, m.logic_name(target), use_type, depth);
     let mut li = 0usize;
     while li < nlogic {
         // trigger_once/multiple have no Use in CBaseTrigger: firing one by

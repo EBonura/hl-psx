@@ -1339,6 +1339,15 @@ fn main() {
     let ld = ld.canonicalize().unwrap_or(ld);
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     write_skill_tables(repo_root, &out_dir);
+    // Diagnostic ring of fired targets (src/event_ring.rs). Selected by an
+    // environment variable rather than a Cargo feature so the shipped sample
+    // profile still matches the build: its function names carry a hash of the
+    // feature set.
+    println!("cargo:rustc-check-cfg=cfg(hl_event_ring)");
+    println!("cargo:rerun-if-env-changed=HLPSX_EVENT_RING");
+    if std::env::var_os("HLPSX_EVENT_RING").is_some() {
+        println!("cargo:rustc-cfg=hl_event_ring");
+    }
 
     // hl-psx measures its real stack high-water mark in emulator-telemetry
     // builds. Keep the SDK's full 32 KiB link-time reservation: menu/intro
