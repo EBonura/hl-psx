@@ -38,6 +38,8 @@ pub enum Sk {
     Bullet9mm,
     Bullet9mmAr,
     Bullet12mm,
+    /// Pellets in one shotgun grunt blast (`sk_hgrunt_pellets`: 3, 5, 6).
+    HgruntPellets,
     GargHealth,
     ApacheHealth,
     IchthyosaurHealth,
@@ -106,6 +108,7 @@ pub const SK_KEYS: [(Sk, &str, u32); SK_COUNT] = [
     (Sk::Bullet9mm, "sk_9mm_bullet", 1000),
     (Sk::Bullet9mmAr, "sk_9mmAR_bullet", 1000),
     (Sk::Bullet12mm, "sk_12mm_bullet", 1000),
+    (Sk::HgruntPellets, "sk_hgrunt_pellets", 1000),
     (Sk::GargHealth, "sk_gargantua_health", 1000),
     (Sk::ApacheHealth, "sk_apache_health", 1000),
     (Sk::IchthyosaurHealth, "sk_ichthyosaur_health", 1000),
