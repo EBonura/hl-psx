@@ -1,0 +1,8 @@
+# auto reload: hold the glock trigger until the magazine runs dry, keep holding (no reload may start), release (reload starts by itself)
+map t0a0
+0 god 2
+0 trace 10
+5 weapons
+8 weapon 1
+20 in 0 0 0 0 1 150
+200 in 0 0 0 0 0 1

@@ -28,6 +28,8 @@ pub mod weaponbox;
 pub mod air_navigation;
 #[path = "../../../game/src/throwable.rs"]
 pub mod throwable;
+#[path = "../../../game/src/autoaim.rs"]
+pub mod autoaim;
 #[path = "../../../game/src/leech.rs"]
 pub mod leech;
 #[path = "../../../game/src/env_sound_audio.rs"]

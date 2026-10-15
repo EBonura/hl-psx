@@ -83,6 +83,7 @@ mod scratchpad;
 mod setpiece_logic;
 mod setpiece_sfx;
 mod species;
+mod autoaim;
 mod tank;
 mod throwable;
 mod tripmine;
@@ -19898,6 +19899,33 @@ fn weapon_viewmodel(id: usize, satchel_mode: u8) -> usize {
     }
 }
 
+/// `m_iPlayEmptySound`: the empty-gun click plays once per trigger pull and is
+/// re-armed when both triggers are let go (`WeaponIdle` -> `ResetEmptySound`).
+static mut DRY_CLICKED: bool = false;
+
+unsafe fn dry_click() {
+    if !DRY_CLICKED {
+        DRY_CLICKED = true;
+        sfx::play(sfx::DRY);
+    }
+}
+
+/// `CRpg::Reload` refuses while a rocket is flying and the designator is on:
+/// the dot is guiding it, so the launcher stays empty until it lands.
+unsafe fn rpg_reload_blocked() -> bool {
+    if !RPG_SPOT_ACTIVE {
+        return false;
+    }
+    let mut i = 0;
+    while i < MAX_PROJECTILES {
+        if PROJECTILES[i].active && PROJECTILES[i].kind == PROJ_ROCKET && !PROJECTILES[i].from_enemy {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 /// The player's whole arsenal: owned set, per-weapon magazines, per-type reserve,
 /// and the live firing/reload/switch timers for the selected weapon.
 struct Arsenal {
@@ -20168,6 +20196,11 @@ impl Arsenal {
         if self.clip[self.current] >= d.clip || self.ammo[d.ammo] == 0 {
             return false;
         }
+        if self.current == W_RPG && unsafe { rpg_reload_blocked() } {
+            // CRpg::Reload pushes the next attack a second out and bails.
+            self.cooldown = self.cooldown.max(20);
+            return false;
+        }
         if self.current == W_SHOTGUN {
             self.reload_ticks = SHOTGUN_RELOAD_START_TAG | SHOTGUN_START_RELOAD_TICKS;
             // GoldSrc blocks attack for one second while the gun first moves
@@ -20239,10 +20272,23 @@ impl Arsenal {
         }
         if d.clip > 0 {
             if self.clip[self.current] == 0 {
-                self.cooldown = GLOCK_EMPTY_COOLDOWN_TICKS;
+                if self.current == W_SHOTGUN {
+                    // shotgun.cpp PrimaryAttack: reload at once, click only if
+                    // that found no shells.
+                    if !self.start_reload() {
+                        unsafe { dry_click() };
+                    }
+                    return false;
+                }
+                // Every other magazine gun clicks once per trigger pull and
+                // reloads only when the trigger is let go (ItemPostFrame).
+                self.cooldown = if self.current == W_GLOCK {
+                    GLOCK_EMPTY_COOLDOWN_TICKS
+                } else {
+                    3
+                };
                 self.dry_ticks = GLOCK_EMPTY_COOLDOWN_TICKS;
-                unsafe { sfx::play(sfx::DRY) };
-                let _ = self.start_reload();
+                unsafe { dry_click() };
                 return false;
             }
             self.clip[self.current] -= 1;
@@ -20253,7 +20299,7 @@ impl Arsenal {
             if self.ammo[d.ammo] < cost {
                 self.cooldown = GLOCK_EMPTY_COOLDOWN_TICKS;
                 self.dry_ticks = GLOCK_EMPTY_COOLDOWN_TICKS;
-                unsafe { sfx::play(sfx::DRY) };
+                unsafe { dry_click() };
                 return false;
             }
             self.ammo[d.ammo] -= cost;
@@ -21284,8 +21330,9 @@ unsafe fn fire_secondary(
             // Glock secondary: faster, deliberately less accurate fire. It
             // shares the source shoot clip but not the primary's accuracy.
             if w.clip[W_GLOCK] == 0 {
-                w.start_reload();
-                sfx::play(sfx::DRY);
+                // GlockFire on an empty clip: click once, reload on release.
+                w.cooldown = GLOCK_EMPTY_COOLDOWN_TICKS;
+                dry_click();
                 return false;
             }
             w.clip[W_GLOCK] -= 1;
@@ -21641,6 +21688,94 @@ unsafe fn guide_projectile(index: usize, target: [i32; 3], old_weight: i32) {
         blended[1] * speed / len,
         blended[2] * speed / len,
     ];
+}
+
+/// `GetAutoaimVector` for the weapon about to fire: the aim rotation `rot`
+/// (view plus punch) leaned toward the best visible hostile inside the
+/// weapon's cone (see autoaim.rs). `rot` comes back untouched for weapons that
+/// do not steer, on Hard, when the shot already lines up with a hostile, or
+/// with nothing in the cone.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn autoaim_rotation(
+    m: &Map,
+    movers: &[phys::Mover],
+    weapon: usize,
+    secondary: bool,
+    eye: [i32; 3],
+    yaw: u16,
+    pitch: i16,
+    rot: Mat3I16,
+) -> Mat3I16 {
+    let cone = match (weapon, secondary) {
+        (W_GLOCK | W_357, false) => autoaim::CONE_10,
+        (W_MP5, false) | (W_SHOTGUN, _) => autoaim::CONE_5,
+        _ => return rot,
+    };
+    let skill = settings::skill();
+    if skill >= 2 {
+        return rot;
+    }
+    let axis = |row: usize, sign: i32| {
+        [
+            sign * rot.m[row][0] as i32,
+            sign * rot.m[row][1] as i32,
+            sign * rot.m[row][2] as i32,
+        ]
+    };
+    let (fwd, right, up) = (axis(2, 1), axis(0, 1), axis(1, -1));
+    let end = [
+        eye[0] + ((fwd[0] * 8192) >> 12),
+        eye[1] + ((fwd[1] * 8192) >> 12),
+        eye[2] + ((fwd[2] * 8192) >> 12),
+    ];
+    let mut best: Option<autoaim::Aim> = None;
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut pi = 0usize;
+    while pi < nprops {
+        let ty = PROP_KIND[pi];
+        if PROP_ACTIVE[pi] != 0
+            && PROP_HEALTH[pi] != 0
+            && prop_start_health(ty) != 0
+            // DAMAGE_AIM and not an ally: not the scientists and Barneys
+            // (IRelationship < 0), the G-Man, roaches, scripted loaders.
+            && !prop_is_human_hot_candidate(ty)
+            && !matches!(
+                ty,
+                14 | 15 | 52 | 53 | PROP_TYPE_HOLO
+            )
+        {
+            let target = prop_target(ty, PROP_POS[pi]);
+            let d = [target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]];
+            if let Some(aim) = autoaim::aim_at(d, fwd, right, up, cone) {
+                if actor_line_clear(m, movers, eye, target) {
+                    // A shot that already finds a hostile keeps the player's aim.
+                    if prop_studio_hit_fraction(m, pi, eye, end).is_some() {
+                        return rot;
+                    }
+                    if best.map_or(true, |b| aim.score < b.score) {
+                        best = Some(aim);
+                    }
+                }
+            }
+        }
+        pi += 1;
+    }
+    let Some(aim) = best else {
+        return rot;
+    };
+    let (dyaw, dpitch) = autoaim::steer(aim.yaw, aim.pitch, skill);
+    let steered = aim_rotation(
+        ((yaw as i32 + dyaw) & 0xFFF) as u16,
+        (pitch as i32 + dpitch).clamp(-(PITCH_MAX as i32), PITCH_MAX as i32) as i16,
+    );
+    #[cfg(feature = "interaction-probe")]
+    reference_trace::probe_vals(
+        SIM_NOW as u32,
+        "autoaim",
+        &[aim.score, aim.yaw, aim.pitch, dyaw, dpitch],
+    );
+    steered
 }
 
 /// Player weapon projectile: fires forward along the view.
@@ -35279,7 +35414,15 @@ fn play(
                 egon_firing = false;
             }
 
-            let alt_rot = unsafe { aim_rotation(yaw, pitch) };
+            let alt_rot = unsafe {
+                let plain = aim_rotation(yaw, pitch);
+                // The double barrel leans toward a target like the single one.
+                if weapon.current == W_SHOTGUN && sec_held && weapon.cooldown == 0 {
+                    autoaim_rotation(&m, movers, W_SHOTGUN, true, eye, yaw, pitch, plain)
+                } else {
+                    plain
+                }
+            };
             let alt_base_t = [
                 -dot12(alt_rot.m[0], eye),
                 -dot12(alt_rot.m[1], eye),
@@ -35291,7 +35434,8 @@ fn play(
                     movers,
                     eye,
                     &alt_rot,
-                    weapon.current == W_RPG && rpg_laser,
+                    // CRpg::Reload suspends the dot while the launcher reloads.
+                    weapon.current == W_RPG && rpg_laser && weapon.reload_ticks == 0,
                 );
                 match tick_gauss_secondary(
                     &mut weapon,
@@ -35393,7 +35537,18 @@ fn play(
                 // Aim along the punch accumulated so far, THEN add this shot's
                 // kick -- CGlock::GlockFire makes its vectors before
                 // `punchangle.x -= 2`, so a shot never eats its own recoil.
-                let fire_rot = unsafe { aim_rotation(yaw, pitch) };
+                let fire_rot = unsafe {
+                    autoaim_rotation(
+                        &m,
+                        movers,
+                        weapon.current,
+                        false,
+                        eye,
+                        yaw,
+                        pitch,
+                        aim_rotation(yaw, pitch),
+                    )
+                };
                 unsafe {
                     // Camera kick: up per the weapon's class + a small random
                     // horizontal jolt so bursts wander like the real guns.
@@ -35520,6 +35675,24 @@ fn play(
                             );
                         }
                     }
+                }
+            }
+            // ItemPostFrame: with no trigger down, an empty magazine whose
+            // attack delay has run out reloads by itself, and the empty-gun
+            // click is armed again.
+            if !fire_held && !sec_held {
+                unsafe { DRY_CLICKED = false };
+                if weapon.cooldown == 0
+                    && weapon.switch_ticks == 0
+                    && weapon.reload_ticks == 0
+                    && weapon.owns(weapon.current)
+                    && weapon.def().clip > 0
+                    && weapon.clip[weapon.current] == 0
+                    && unsafe { MOUNTED_TANK } < 0
+                    && weapon.start_reload()
+                    && weapon.current == W_CROSSBOW
+                {
+                    zoom_aim = false; // CCrossbow::Reload exits zoom first
                 }
             }
             // Empty-magazine primary and secondary paths can both start a

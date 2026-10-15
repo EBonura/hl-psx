@@ -350,6 +350,21 @@ pub unsafe fn step(
             }
             23 => WATCH_KIND = c.a[0] as i32,
             24 => PROJ_LOG = c.a[0] != 0,
+            26 => {
+                // propdump : one line per live actor (index, kind, health, position)
+                let mut pi = 0usize;
+                while pi < crate::PROP_COUNT {
+                    if crate::PROP_ACTIVE[pi] != 0 && crate::PROP_HEALTH[pi] != 0 {
+                        let t = crate::PROP_POS[pi];
+                        crate::reference_trace::probe_vals(
+                            now,
+                            "prop",
+                            &[pi as i32, crate::PROP_KIND[pi] as i32, crate::PROP_HEALTH[pi] as i32, t[0], t[1], t[2]],
+                        );
+                    }
+                    pi += 1;
+                }
+            }
             16 => FACE = if cname == "-" { 0 } else { name_id(m, cname) },
             13 => crate::reference_trace::probe_vals(
                 now,

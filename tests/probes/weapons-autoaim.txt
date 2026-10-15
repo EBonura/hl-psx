@@ -1,0 +1,10 @@
+# autoaim: c1a1 zombie at (348,2048), still until shot. One glock shot from 500 units north at its body height, 8 degrees off to the side (70 units wide of it).
+map c1a1
+0 god 2
+0 trace 20
+3 weapons
+4 watch 5
+14 weapon 1
+100 tp 348 2548 764 270 0 0
+118 view 278 0
+120 in 0 0 0 0 1 1
