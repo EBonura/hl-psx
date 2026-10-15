@@ -1,0 +1,9 @@
+# thrown weapons: one grenade left. Throw it: the grenade leaves the inventory and the player is switched on (weapon= in the tick lines).
+map c1a2
+0 god 2
+0 trace 10
+3 weapons
+5 weapon 10
+6 ammo 8 1
+20 in 0 0 0 0 1 3
+25 in 0 0 0 0 0 1
