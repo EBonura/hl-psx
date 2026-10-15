@@ -35,6 +35,7 @@ mod env_funnel;
 mod env_funnel_fx;
 mod gman_damage;
 mod sentry_wake;
+mod turret_aim;
 mod pushable_transition;
 mod env_sound;
 mod env_sound_audio;
@@ -16972,6 +16973,12 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
             full if full > u8::MAX as u32 => (dmg as u32 * 255 / full).max(1) as u8,
             _ => dmg,
         }
+    } else if (PROP_KIND[pi] == 21 || PROP_KIND[pi] == 22)
+        && PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_INACTIVE != 0
+    {
+        // CBaseTurret::TakeDamage: a closed turret takes a tenth (a sentry
+        // overrides it, deploys and takes full damage).
+        (dmg + 5) / 10
     } else if PROP_KIND[pi] == PROP_TYPE_OSPREY {
         // COsprey::TraceAttack: light hits only spark off the hull; its
         // 400 health scales onto the u8 actor health.
@@ -18002,7 +18009,17 @@ unsafe fn find_actor_target(
     (best_visible, best_visible != PROP_TARGET_NONE)
 }
 
+/// The spinning turret's barrel winds down one tick per tick without a target.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn turret_spin_down(pi: usize) {
+    if PROP_KIND[pi] == turret_aim::SPINNING_KIND && PROP_AI_TIMER[pi] > 0 {
+        PROP_AI_TIMER[pi] -= 1;
+    }
+}
+
 /// Ranged + turret AI. Acquire a target, face it, and fire a hitscan shot every
+
 /// `atk_cooldown` ticks while it is within `atk_range` and in line of sight.
 /// Movers (`can_move`) close to range first; turrets (`!can_move`) hold still.
 unsafe fn tick_shooter(
@@ -18029,7 +18046,9 @@ unsafe fn tick_shooter(
     let (target, visible) = if reacquire {
         let selected = retained_actor_target(m, sight_movers, pi, player_pos, nprops)
             .unwrap_or_else(|| {
-                if prop_waits_for_trigger(pi) {
+                // Turrets run their own think chain, not StartMonster's five
+                // second SCHED_WAIT_TRIGGER, so only walkers wait.
+                if can_move && prop_waits_for_trigger(pi) {
                     (PROP_TARGET_NONE, false)
                 } else {
                     find_actor_target(m, sight_movers, pi, player_pos, nprops, wake2)
@@ -18044,35 +18063,70 @@ unsafe fn tick_shooter(
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         prop_ai_set_target_visible(pi, false);
+        turret_spin_down(pi);
         return;
     }
     let Some(aim) = target_aim_point(target, player_pos, nprops) else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         prop_ai_set_target_visible(pi, false);
+        turret_spin_down(pi);
         return;
     };
     PROP_AI_TARGET[pi] = target;
-    prop_face_point(pi, aim);
-
     let pos = PROP_POS[pi];
+    // A turret's gun swings at a finite rate and shoots along its barrel
+    // (turret.cpp ActiveThink); `aim_err` is the yaw error before this tick's
+    // swing, which is what the shot uses. Walkers snap their facing.
+    let mut aim_err = 0u16;
+    if can_move {
+        prop_face_point(pi, aim);
+    } else {
+        let want = yaw_from_vec(aim[0] - pos[0], aim[2] - pos[2]);
+        let cur = prop_yaw_value(PROP_YAW[pi]);
+        aim_err = turret_aim::yaw_error(cur, want);
+        PROP_YAW[pi] = prop_with_yaw(
+            PROP_YAW[pi],
+            turn_toward(cur, want, turret_aim::turn_step(aim_err)),
+        );
+    }
     let d2 = dist2_xz(pos, aim);
+    #[cfg(feature = "interaction-probe")]
+    if !can_move && SIM_NOW % 10 == 0 {
+        reference_trace::probe_vals(
+            SIM_NOW as u32,
+            "turret",
+            &[pi as i32, visible as i32, aim_err as i32, isqrt_i32(d2), prop_attack_cooldown(pi) as i32],
+        );
+    }
 
     if d2 <= range2 && visible {
         // In range + line of sight: hold and fire on the cooldown. The attack
         // clip plays while STATE_ATTACK; the hit is instant (hitscan).
         let was_attacking = PROP_STATE[pi] == PROP_STATE_ATTACK;
         PROP_STATE[pi] = PROP_STATE_ATTACK;
-        if !was_attacking {
-            // Just acquired the target: wind up first so the attack animation
-            // reads as a telegraph (and gives the player a dodge window) instead
-            // of an instant hitscan the tick the enemy sees you.
-            prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(ATTACK_WINDUP));
+        if can_move {
+            if !was_attacking {
+                // Just acquired the target: wind up first so the attack animation
+                // reads as a telegraph (and gives the player a dodge window) instead
+                // of an instant hitscan the tick the enemy sees you.
+                prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(ATTACK_WINDUP));
+            }
+        } else if ty == turret_aim::SPINNING_KIND {
+            // monster_turret spins its barrel up for 2.2 s before the first
+            // shot and keeps it spinning for 5 s after the target is gone.
+            if PROP_AI_TIMER[pi] == 0 {
+                prop_attack_cooldown_set(pi, turret_aim::SPIN_UP_TICKS);
+            }
+            PROP_AI_TIMER[pi] = turret_aim::SPIN_HOLD_TICKS;
         }
-        if prop_attack_cooldown(pi) == 0 {
+        if prop_attack_cooldown(pi) == 0 && (can_move || turret_aim::can_fire(aim_err)) {
             {
                 let damage = skill_damage(ty).unwrap_or(def.atk_damage);
-                damage_target(target, damage, pos, health, armor);
+                // Zero-spread bullet along the barrel: a miss still fires.
+                if can_move || turret_aim::bullet_hits(aim_err, isqrt_i32(d2)) {
+                    damage_target(target, damage, pos, health, armor);
+                }
                 // Human weapons crack like an MP5 (the assassin's silenced pistol
                 // like a glock); the alien grunt and controller have their own
                 // report, the rest zap.
@@ -18091,6 +18145,7 @@ unsafe fn tick_shooter(
         prop_move_towards_point(m, movers, pi, aim, def.speed as i32);
     } else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
+        turret_spin_down(pi);
     }
 }
 

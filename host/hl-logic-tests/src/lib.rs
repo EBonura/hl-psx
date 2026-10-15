@@ -71,3 +71,9 @@ pub mod setpiece_logic;
 
 #[path = "../../../game/src/env_funnel.rs"]
 pub mod env_funnel;
+
+#[path = "../../../game/src/turret_aim.rs"]
+pub mod turret_aim;
+
+#[path = "../../../game/src/sentry_wake.rs"]
+pub mod sentry_wake;

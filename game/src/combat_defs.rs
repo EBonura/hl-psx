@@ -195,9 +195,11 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(200, 90, 1748, AI_IDLE),                  // 17 nihilanth (boss: render only)
     mdef(150, 70, 200, AI_IDLE),                   // 18 bigmomma (boss: render only)
     mdef_atk(40, 20, 223, AI_MELEE, 6, 0, 0, 0),   // 19 ichthyosaur
-    mdef_atk(40, 40, 80, AI_TURRET, 0, 1000, 7, 3), // 20 sentry
-    mdef_atk(50, 40, 80, AI_TURRET, 0, 1200, 8, 7), // 21 turret
-    mdef_atk(30, 30, 60, AI_TURRET, 0, 1000, 5, 3), // 22 miniturret
+    // Turrets: TURRET_RANGE 1200 and one bullet per 0.1 s think (a cooldown of 2
+    // ticks); the gun swings and aims in tick_shooter (turret_aim.rs).
+    mdef_atk(40, 40, 80, AI_TURRET, 0, 1200, 7, 2), // 20 sentry
+    mdef_atk(50, 40, 80, AI_TURRET, 0, 1200, 8, 2), // 21 turret
+    mdef_atk(30, 30, 60, AI_TURRET, 0, 1200, 5, 2), // 22 miniturret
     mdef(80, 60, 410, AI_IDLE),                    // 23 apache (flyer: render only)
     mdef(10, 20, 60, AI_IDLE),                     // 24 flyer_flock (passive)
     mdef(50, 25, SCIENTIST_RENDER_RADIUS, AI_IDLE), // 25 sitting scientist (50, unlike the standing 20)
