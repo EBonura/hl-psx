@@ -1,0 +1,12 @@
+# Free-RAM floor, in bytes, for a shipping link (`cargo hl-build compile|pack|ram`).
+# The first number is the floor; a shipping link that leaves less fails the build.
+# Free RAM is the SDK's check: bytes between .bss end and the stack reserve
+# (`psoxide-pgo ram`). `cargo hl-build ram` prints it and where the rest went.
+#
+# 2026-10-15: the link leaves 32,184 B; the floor keeps the 4 KB the game has
+# always shipped with, so the feature work (decals, lightstyles, grenades,
+# monster senses and squads, boss attacks, audio) has about 28 KB to share,
+# roughly 4.5 KB a lane. A change that needs more frees bytes elsewhere first
+# or lowers this number in the same commit and says why.
+# HLPSX_RAM_FLOOR=N overrides it for one local run.
+4096

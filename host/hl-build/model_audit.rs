@@ -708,7 +708,18 @@ fn parse_map_actors(path: &Path) -> Result<Vec<Actor>> {
     if data.len() < 52
         || !matches!(
             data.get(0..4),
-            Some(b"HLMA" | b"HLMB" | b"HLMC" | b"HLMD" | b"HLME" | b"HLMF" | b"HLMG" | b"HLMH" | b"HLMJ" | b"HLMK")
+            Some(
+                b"HLMA"
+                    | b"HLMB"
+                    | b"HLMC"
+                    | b"HLMD"
+                    | b"HLME"
+                    | b"HLMF"
+                    | b"HLMG"
+                    | b"HLMH"
+                    | b"HLMJ"
+                    | b"HLMK"
+            )
         )
     {
         return Err(format!("{what}: not a cooked HLM map").into());
@@ -737,7 +748,7 @@ fn parse_map_actors(path: &Path) -> Result<Vec<Actor>> {
 }
 
 fn ai_pass(ty: u8) -> usize {
-    if (3..=4).contains(&ty) || (26..=49).contains(&ty) || matches!(ty,75|76) {
+    if (3..=4).contains(&ty) || (26..=49).contains(&ty) || matches!(ty, 75 | 76) {
         1
     } else if matches!(ty, 12..=18 | 23..=25 | 50 | 52 | 53) {
         2

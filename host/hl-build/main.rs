@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 mod cook_provenance;
 mod model_audit;
 mod model_variants;
+mod ram_report;
 mod regression;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -685,6 +686,7 @@ enum Action {
     Audit,
     Regress,
     Compile,
+    Ram,
     Pack,
     Disc,
     Install,
@@ -704,13 +706,17 @@ struct Options {
     /// The gameplay window, in port-1 polls, of each tape (same order), for
     /// the layout; a tape without one adds only to the profile.
     polls: Vec<Option<(u64, u64)>>,
+    /// `ram`: report this existing link map instead of linking.
+    map: Option<PathBuf>,
+    /// `ram`: list every placed section (kind, size, crate, name) instead of the summary.
+    items: bool,
 }
 
 const CANONICAL_GAME_NAME: &str = "Half-Life (hl-psx)";
 
 const HELP: &str = "hl-psx Rust build\n\n\
          USAGE:\n\
-           cargo hl-build [sdk|build|assets|models|audit|regress|compile|pack|disc|install|pgo|check] [OPTIONS]\n\
+           cargo hl-build [sdk|build|assets|models|audit|regress|compile|ram|pack|disc|install|pgo|check] [OPTIONS]\n\
          from the repository root; `cargo hl-build` is an alias for\n\
            cargo run --release --manifest-path host/hl-build/Cargo.toml --\n\n\
          ACTIONS:\n\
@@ -721,6 +727,8 @@ const HELP: &str = "hl-psx Rust build\n\n\
            audit      verify every cooked map/transition model RAM residency\n\
            regress    run deterministic PSoXide visual/performance scenarios\n\
            compile    compile only the PS1 executable (requires cooked assets)\n\
+           ram        compile, then print the free RAM and where the rest went;\n\
+                      fails under the floor in game/ram-budget\n\
            pack       compile and pack dist/hl-psx.bin/.cue\n\
            disc       compile, pack, and copy the disc to --games-dir\n\
            install    full build and copy the disc to --games-dir\n\
@@ -734,6 +742,8 @@ const HELP: &str = "hl-psx Rust build\n\n\
            --scenario NAME    regress only one named deterministic scenario\n\
            --games-dir PATH   destination required by disc/install; optional after regress/pgo\n\
            --tape PATH        input tape for pgo to profile; repeat for more routes\n\
+           --items            ram: list every placed section instead of the summary\n\
+           --map PATH         ram: report this link map (default .hlpsx/hl-psx.map) without linking\n\
            --polls FROM..TO   gameplay window (port-1 polls) of the preceding --tape; with one pgo\n\
                               also collects the I-cache layout (game/pgo/hl-psx.layout)\n\n\
          HL_DIR, PSOXIDE, and GAMES_DIR provide environment defaults.\n\
@@ -780,6 +790,10 @@ fn parse_args() -> Options {
             args.next();
             Action::Compile
         }
+        Some("ram") => {
+            args.next();
+            Action::Ram
+        }
         Some("pack") => {
             args.next();
             Action::Pack
@@ -814,6 +828,8 @@ fn parse_args() -> Options {
         games_dir: env::var_os("GAMES_DIR").map(PathBuf::from),
         tapes: Vec::new(),
         polls: Vec::new(),
+        map: None,
+        items: false,
     };
     while let Some(arg) = args.next() {
         let Some(flag) = arg.to_str() else { usage() };
@@ -829,6 +845,8 @@ fn parse_args() -> Options {
             "--scenario" => {
                 options.regression_scenario = Some(value(&mut args).to_string_lossy().into_owned())
             }
+            "--items" => options.items = true,
+            "--map" => options.map = Some(PathBuf::from(value(&mut args))),
             "--games-dir" => options.games_dir = Some(PathBuf::from(value(&mut args))),
             "--tape" => {
                 options.tapes.push(PathBuf::from(value(&mut args)));
@@ -2178,6 +2196,14 @@ fn compile_game(
         // Reduced pools are for the collect build only: no other build, the
         // shipping one included, may inherit them.
         command.env_remove("HLPSX_COLLECT_MAPS");
+        // Measurement only: `HLPSX_BENCH_MAPS=6,7` sizes the map pools for those
+        // maps so a telemetry build that overflows RAM on the fleet-worst pools
+        // still links for an A/B frame-cost run (same code, smaller arena). The
+        // result is never a shipping image and the RAM budget does not apply.
+        if let Some(maps) = env::var_os("HLPSX_BENCH_MAPS").filter(|_| !is_shipping_build(features))
+        {
+            command.env("HLPSX_COLLECT_MAPS", maps);
+        }
     }
     // A link-only argument: the map does not change the emitted bytes. Each
     // build configuration links its own map: a build cargo finds fresh does
@@ -2358,7 +2384,56 @@ fn compile_shipped(repository: &Path, psoxide: &Path, features: Option<&str>) ->
         .trim()
         .parse::<u32>()
         .map_err(|error| format!("{SHIPPED_THRESHOLD}: {error}"))?;
-    Ok(link_with_profile(repository, psoxide, features, &profile, threshold)?.exe)
+    let linked = link_with_profile(repository, psoxide, features, &profile, threshold)?;
+    enforce_ram_budget(repository, features, linked.free)?;
+    Ok(linked.exe)
+}
+
+/// The link map `compile_game` leaves behind.
+const LINK_MAP: &str = ".hlpsx/hl-psx.map";
+
+/// The free-RAM floor the repository commits (`game/ram-budget`, first number).
+const RAM_BUDGET: &str = "game/ram-budget";
+
+/// Fail a shipping link that leaves less free RAM than the committed floor.
+/// The floor is what is left for the lanes still to land; a change that eats
+/// into it has to free the bytes elsewhere or raise the floor on purpose, in
+/// the same commit, with the reason. Diagnostic feature builds are measured
+/// but not held to it (they carry code the shipping disc never has).
+/// `HLPSX_RAM_FLOOR=N` overrides the file for one run.
+fn enforce_ram_budget(repository: &Path, features: Option<&str>, free: u32) -> Result<()> {
+    let floor = match env::var("HLPSX_RAM_FLOOR") {
+        Ok(value) => value
+            .trim()
+            .parse::<u32>()
+            .map_err(|error| format!("HLPSX_RAM_FLOOR: {error}"))?,
+        Err(_) => {
+            let text = fs::read_to_string(repository.join(RAM_BUDGET))
+                .map_err(|error| format!("read {RAM_BUDGET}: {error}"))?;
+            ram_report::parse_floor(&text)
+                .ok_or_else(|| format!("{RAM_BUDGET} holds no floor in bytes"))?
+        }
+    };
+    let shipping = features.is_none_or(|list| list.trim().is_empty());
+    if free >= floor {
+        println!(
+            "RAM budget: {free} B free, floor {floor} B ({} B of allowance)",
+            free - floor
+        );
+        return Ok(());
+    }
+    let message = format!(
+        "RAM budget: {free} B free is {} B under the {floor} B floor in {RAM_BUDGET}. \
+         Free the bytes (`cargo hl-build ram` shows where they went) or lower the floor in the same \
+         commit with the reason.",
+        floor - free
+    );
+    if shipping {
+        Err(message.into())
+    } else {
+        println!("{message} (diagnostic build, not enforced)");
+        Ok(())
+    }
 }
 
 fn pack_disc(repository: &Path, psoxide: &Path, exe: &Path) -> Result<PathBuf> {
@@ -2821,6 +2896,22 @@ fn main() -> Result<()> {
         return Err("pgo needs at least one --tape PATH to profile".into());
     }
     let repository = root();
+    if options.action == Action::Ram {
+        if let Some(map) = options.map.as_deref() {
+            let text = fs::read_to_string(map)
+                .map_err(|error| format!("read {}: {error}", map.display()))?;
+            let parsed = ram_report::parse(&text);
+            print!(
+                "{}",
+                if options.items {
+                    ram_report::items(&parsed)
+                } else {
+                    ram_report::report(&parsed)
+                }
+            );
+            return Ok(());
+        }
+    }
     // Fail before hydration, cooking, compilation or profile output retirement.
     // Both actions reuse the one retained emulator configured by its build receipt.
     if matches!(options.action, Action::Pgo | Action::Regress) {
@@ -2892,7 +2983,7 @@ fn main() -> Result<()> {
 
     if matches!(
         options.action,
-        Action::Compile | Action::Pack | Action::Disc | Action::Regress | Action::Pgo
+        Action::Compile | Action::Ram | Action::Pack | Action::Disc | Action::Regress | Action::Pgo
     ) {
         verify_cook_manifest(
             &repository,
@@ -2941,6 +3032,19 @@ fn main() -> Result<()> {
     // and with it the telemetry build links with room to spare. The I-cache
     // layout is not applied to a diagnostic build.
     let exe = compile_shipped(&repository, &psoxide, features)?;
+    if options.action == Action::Ram {
+        let map = fs::read_to_string(repository.join(LINK_MAP))?;
+        let parsed = ram_report::parse(&map);
+        print!(
+            "{}",
+            if options.items {
+                ram_report::items(&parsed)
+            } else {
+                ram_report::report(&parsed)
+            }
+        );
+        return Ok(());
+    }
     if options.action == Action::Compile {
         return Ok(());
     }
@@ -3018,6 +3122,24 @@ mod tests {
             describe_rungs(&tried),
             "1000: did not link, 500: 8016 B free, 125: 18256 B free"
         );
+    }
+
+    #[test]
+    fn ram_budget_fails_a_shipping_link_under_the_floor_only() {
+        let dir = env::temp_dir().join(format!("hl-ram-budget-{}", std::process::id()));
+        fs::create_dir_all(dir.join("game")).unwrap();
+        fs::write(dir.join(RAM_BUDGET), "# floor\n4096  # bytes\n").unwrap();
+        // The file is read unless the override is set; tests do not set it.
+        assert!(env::var_os("HLPSX_RAM_FLOOR").is_none());
+        assert!(enforce_ram_budget(&dir, None, 4096).is_ok());
+        let error = enforce_ram_budget(&dir, None, 4095)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("1 B under the 4096 B floor"), "{error}");
+        assert!(enforce_ram_budget(&dir, Some(""), 0).is_err());
+        // A diagnostic build is reported, not failed.
+        assert!(enforce_ram_budget(&dir, Some("reference-trace"), 0).is_ok());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

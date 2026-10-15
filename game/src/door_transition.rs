@@ -19,11 +19,13 @@ impl Carry {
     pub const EMPTY: Self = Self { id: 0, phase: 0, remaining: 0, speed: 0,
         relative_center: [0;3], movement: [0;3], state: 0, flags: 0 };
 
+    #[optimize(size)]
     pub fn destination_movement(self, mut authored: [i32;3]) -> [i32;3] {
         if self.flags & (ANGULAR|REVERSED) == (ANGULAR|REVERSED) { authored[0] = -authored[0]; }
         authored
     }
 
+    #[optimize(size)]
     pub fn phase_at(self, landmark: [i32;3], base_center: [i32;3], movement: [i32;3]) -> Option<i32> {
         if self.phase > 4096 { return None; }
         let movement=self.destination_movement(movement);
@@ -48,13 +50,16 @@ impl Carry {
     }
 }
 
+#[optimize(size)]
 pub fn remaining(now: u16, deadline: u16) -> u16 {
     let delta = deadline.wrapping_sub(now);
     if delta <= i16::MAX as u16 { delta } else { 0 }
 }
 
+#[optimize(size)]
 pub fn take_count(count: &mut usize) -> usize { core::mem::take(count) }
 
+#[optimize(size)]
 pub fn matching(records: &[Carry], id: u16, landmark: [i32;3], center: [i32;3], movement: [i32;3]) -> Option<(Carry,i32)> {
     for &record in records {
         if record.id == id {
@@ -67,6 +72,7 @@ pub fn matching(records: &[Carry], id: u16, landmark: [i32;3], center: [i32;3], 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[optimize(size)]
     #[test]
     fn in_flight_landmark_translation_preserves_fraction_and_direction() {
         let source_landmark = [-1508,-2672,1404];
@@ -78,6 +84,7 @@ mod tests {
         assert_eq!(carry.phase_at(source_landmark,[-1544,-2688,1442],[-58,0,0]),Some(1537));
         assert_eq!(carry.speed,150);
     }
+    #[optimize(size)]
     #[test]
     fn mismatched_destination_does_not_relocate_a_brush() {
         let carry=Carry { id: 1, phase: 4096, relative_center: [10,0,0], movement:[10,0,0], ..Carry::EMPTY };
@@ -85,6 +92,7 @@ mod tests {
         assert_eq!(carry.phase_at([100,200,300],[100,204,300],[10,0,0]),None);
         assert_eq!(carry.phase_at([100,200,300],[100,200,300],[0,0,0]),None);
     }
+    #[optimize(size)]
     #[test]
     fn wait_preserves_remaining_time_across_clock_reset_and_wrap() {
         assert_eq!(remaining(65530,4),10);
@@ -93,6 +101,7 @@ mod tests {
         assert_eq!(remaining(100,100),0);
         assert_eq!(core::mem::size_of::<Carry>(),22);
     }
+    #[optimize(size)]
     #[test]
     fn duplicate_authored_global_names_match_geometry_and_are_consumed_once() {
         let left=Carry {id:1,phase:4096,relative_center:[-20,0,0],movement:[-10,0,0],..Carry::EMPTY};
@@ -106,6 +115,7 @@ mod tests {
         assert_eq!(count,0);
         assert_eq!(take_count(&mut count),0,"later restart must not replay transient state");
     }
+    #[optimize(size)]
     #[test]
     fn rotating_global_preserves_phase_at_translated_pivot() {
         let carry=Carry {id:1,phase:1537,flags: ANGULAR,movement:[2048,0,0],relative_center:[4,8,12],..Carry::EMPTY};

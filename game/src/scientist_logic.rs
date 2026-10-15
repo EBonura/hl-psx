@@ -24,6 +24,7 @@ pub const SCRIPT_PRIME_DELAY_TICKS: u16 = 19;
 /// second later. The fixed simulation runs at 20 Hz.
 pub const SCRIPT_RETRY_TICKS: u16 = 20;
 
+#[optimize(size)]
 /// A follower that selected an obstacle approach must finish that approach
 /// before retrying short steps toward the player. Otherwise those steps can
 /// continually undo the retreat needed to reach the first graph node.
@@ -36,6 +37,7 @@ pub const fn follow_route_precedes_local_step(
     following && script_mode == 0 && cached_source < node_count
 }
 
+#[optimize(size)]
 pub const fn follow_route_should_replan(cached_destination: u8, destination: u8, blocked: bool) -> bool {
     blocked || (cached_destination != u8::MAX && cached_destination != destination)
 }
@@ -44,6 +46,7 @@ pub const fn follow_route_should_replan(cached_destination: u8, destination: u8,
 mod follow_route_tests {
     use super::*;
 
+    #[optimize(size)]
     #[test]
     fn original_console_approach_survives_clear_short_goal_steps() {
         // A bounded policy fixture with the original node coordinates. This
@@ -220,6 +223,7 @@ pub const fn idle_hello_attempt(map_tick: u16) -> bool {
     map_tick & 15 == IDLE_HELLO_ATTEMPT_PHASE
 }
 
+#[optimize(size)]
 /// Higher-accuracy fixed `atan2(dx, dz)` for source `MakeIdealYaw` decisions.
 /// The shared renderer/steering atan is deliberately octant-linear (up to
 /// several degrees of error); that is fine visually but moves a 100-unit
@@ -251,6 +255,7 @@ pub fn precise_yaw_from_vec(dx: i32, dz: i32) -> u16 {
     (angle & 0x0fff) as u16
 }
 
+#[optimize(size)]
 /// Scientist/Barney use VIEW_FIELD_WIDE (-0.7): everything except the rear
 /// 90-degree wedge. `forward_*` are Q1.12 and the comparison remains strict,
 /// matching `FInViewCone`'s normalized dot > -0.7 without a square root.
@@ -539,6 +544,7 @@ pub const fn follow_use(
     }
 }
 
+#[optimize(size)]
 #[inline]
 fn angular_score(vx: i32, vy: i32, vz: i32) -> Option<i32> {
     if vz <= 0 {
@@ -553,6 +559,7 @@ fn angular_score(vx: i32, vy: i32, vz: i32) -> Option<i32> {
     Some(((side2 << 16) / forward2).min(i32::MAX as i64) as i32)
 }
 
+#[optimize(size)]
 /// GoldSrc `FIND_ENTITY_IN_SPHERE` measures from the search point to the
 /// nearest point of each entity AABB, not to its origin/centre. The comparison
 /// is strict (`distance^2 < radius^2`). Rejecting an axis outside the small
@@ -581,6 +588,7 @@ pub fn aabb_in_search_radius(point: [i32; 3], mins: [i32; 3], maxs: [i32; 3], ra
     distance_sq < radius * radius
 }
 
+#[optimize(size)]
 /// Vector from `point` to the nearest point of an AABB. This is the exact
 /// geometric result of GoldSrc's `VecBModelOrigin - eye` followed by
 /// `UTIL_ClampVectorToBox(..., size * 0.5)` before normalization.
@@ -601,6 +609,7 @@ pub fn nearest_aabb_delta(point: [i32; 3], mins: [i32; 3], maxs: [i32; 3]) -> [i
     out
 }
 
+#[optimize(size)]
 /// GoldSrc PlayerUse's normalized forward-dot gate (`VIEW_FIELD_NARROW =
 /// 0.7`), scored so a smaller integer is a better-centred candidate.
 #[inline]
@@ -608,6 +617,7 @@ pub fn player_use_score(vx: i32, vy: i32, vz: i32) -> Option<i32> {
     scientist_use_score(vx, vy, vz)
 }
 
+#[optimize(size)]
 /// GoldSrc scientist PlayerUse view gate: normalized forward dot strictly >0.7.
 #[inline]
 pub fn scientist_use_score(vx: i32, vy: i32, vz: i32) -> Option<i32> {
@@ -625,6 +635,7 @@ pub fn scientist_use_score(vx: i32, vy: i32, vz: i32) -> Option<i32> {
     angular_score(vx, vy, vz)
 }
 
+#[optimize(size)]
 /// Use searches live entity bounds, including buttons after they slide away.
 pub fn translated_use_bounds(
     mins: [i32; 3],
@@ -637,6 +648,7 @@ pub fn translated_use_bounds(
     )
 }
 
+#[optimize(size)]
 pub fn scientist_in_use_range(player: [i32; 3], origin: [i32; 3], radius: i32) -> bool {
     aabb_in_search_radius(
         player,
@@ -646,6 +658,7 @@ pub fn scientist_in_use_range(player: [i32; 3], origin: [i32; 3], radius: i32) -
     )
 }
 
+#[optimize(size)]
 /// Vector from the player eye to the nearest point of a standing scientist's
 /// GoldSrc 32x32x72 bbox, matching UTIL_ClampVectorToBox.
 #[inline]
@@ -668,6 +681,7 @@ pub fn scientist_bbox_delta(eye: [i32; 3], actor_origin: [i32; 3]) -> [i32; 3] {
     out
 }
 
+#[optimize(size)]
 /// Eligibility for classname selection. Runtime keeps the first viable actor in
 /// cooked/engine order, exactly like UTIL_FindEntityInSphere enumeration.
 #[inline]
@@ -691,6 +705,7 @@ pub fn script_candidate_eligible(
     d2 <= r2
 }
 
+#[optimize(size)]
 /// Fail-safe deadline for an authored walk/run sequence. It gives normal path
 /// finding 2.5x the straight-line travel time plus 2.5 seconds, then allows the
 /// runtime to plant the actor on the script mark so a cinematic can never hold
@@ -794,6 +809,7 @@ impl HealClock {
         next: 0,
     };
 
+    #[optimize(size)]
     /// m_healTime <= now (a scientist that never healed is always ready).
     pub fn ready(&self, prop: u8, now: u16) -> bool {
         let mut i = 0;
@@ -806,6 +822,7 @@ impl HealClock {
         true
     }
 
+    #[optimize(size)]
     /// m_healTime = now + 60 s.
     pub fn start(&mut self, prop: u8, now: u16) {
         let until = now.wrapping_add(HEAL_COOLDOWN_TICKS);
@@ -858,6 +875,7 @@ pub const fn unpack_carry_state(state: u8) -> (u8, bool, bool, bool, bool) {
 mod tests {
     use super::*;
 
+    #[optimize(size)]
     #[test]
     fn microwave_overlapping_buttons_use_their_live_positions() {
         // c1a0d authors all five button hulls at this same position. A used
@@ -873,12 +891,14 @@ mod tests {
         assert!(next_button < pressed_button);
     }
 
+    #[optimize(size)]
     #[test]
     fn npc_use_radius_measures_hull_not_floor_origin() {
         assert!(scientist_in_use_range([0, 36, 0], [75, 0, 0], 64));
         assert!(!scientist_in_use_range([0, 36, 0], [81, 0, 0], 64));
     }
 
+    #[optimize(size)]
     #[test]
     fn follower_use_obeys_predisaster_provoked_dead_and_nointerrupt_rules() {
         assert_eq!(
@@ -911,6 +931,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn scientist_use_score_stops_at_the_cone_edge() {
         assert!(scientist_use_score(22, 8, 70).is_some());
@@ -918,6 +939,7 @@ mod tests {
         assert!(scientist_use_score(51, 0, 50).is_some());
     }
 
+    #[optimize(size)]
     #[test]
     fn retinal_class_selector_uses_first_eligible_living_scientist() {
         let candidates = [
@@ -968,12 +990,14 @@ mod tests {
         ));
     }
 
+    #[optimize(size)]
     #[test]
     fn scientist_use_clamps_to_nearest_bbox_point() {
         assert_eq!(scientist_bbox_delta([0, 28, 0], [40, 0, 0]), [24, 0, 0]);
         assert_eq!(scientist_bbox_delta([0, 28, 0], [0, 0, 40]), [0, 0, 24]);
     }
 
+    #[optimize(size)]
     #[test]
     fn player_use_searches_nearest_brush_bounds_with_strict_radius() {
         let mins = [100, -20, -10];
@@ -984,6 +1008,7 @@ mod tests {
         assert_eq!(nearest_aabb_delta([150, 5, -30], mins, maxs), [-42, 0, 20]);
     }
 
+    #[optimize(size)]
     #[test]
     fn player_use_matches_goldsrc_point_seven_forward_dot() {
         assert!(player_use_score(7, 0, 8).is_some());
@@ -993,6 +1018,7 @@ mod tests {
         assert!(centred < off_axis);
     }
 
+    #[optimize(size)]
     #[test]
     fn follow_bit_round_trips_through_existing_transition_state_byte() {
         let packed = pack_carry_state(2, true, true, false, true);
@@ -1008,6 +1034,7 @@ mod tests {
         assert_eq!(selector_kind(0x82), Some(1));
     }
 
+    #[optimize(size)]
     #[test]
     fn c1a0a_hello_sequence_matches_fixed_goldsrc_reference() {
         assert_eq!(hello_variant(7, 0, true), 5);
@@ -1016,6 +1043,7 @@ mod tests {
         assert_eq!(hello_duration_ticks(7, 1), 64);
     }
 
+    #[optimize(size)]
     #[test]
     fn opening_small_talk_matches_fixed_goldsrc_reference() {
         // c1a0: introroomgizmosci asks introwalkerguy1 at map tick 205.
@@ -1042,6 +1070,7 @@ mod tests {
         assert_eq!(scientist_answer_duration_ticks(7, 0), 61);
     }
 
+    #[optimize(size)]
     #[test]
     fn wide_view_cone_excludes_only_the_rear_wedge() {
         assert!(wide_view_cone(0, 100, 0, 4096));
@@ -1051,6 +1080,7 @@ mod tests {
         assert!(!wide_view_cone(50, -87, 0, 4096)); // about 150 degrees
     }
 
+    #[optimize(size)]
     #[test]
     fn source_fifty_units_per_second_push_threshold_is_strict() {
         assert!(!client_push_speed(2, 0));
@@ -1059,6 +1089,7 @@ mod tests {
         assert!(client_push_speed(-2, 1));
     }
 
+    #[optimize(size)]
     #[test]
     fn talk_range_uses_hull_tops_and_is_strictly_under_five_hundred() {
         assert!(friend_in_talk_range([0, 72, 0], [499, 72, 0]));
@@ -1070,6 +1101,7 @@ mod tests {
         assert!(friend_in_talk_range([0, -72, 0], [499, -72, 0]));
     }
 
+    #[optimize(size)]
     #[test]
     fn idle_hello_retries_on_the_source_task_cadence() {
         assert!(!idle_hello_attempt(11));
@@ -1080,6 +1112,7 @@ mod tests {
         assert!(idle_hello_attempt(u16::MAX.wrapping_sub(3)));
     }
 
+    #[optimize(size)]
     #[test]
     fn client_push_yaw_avoids_the_octant_linear_endpoint_error() {
         assert_eq!(precise_yaw_from_vec(0, 1), 0);
@@ -1093,12 +1126,14 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn move_away_path_is_one_hundred_units_behind_ideal_yaw() {
         assert_eq!(move_away_goal([10, 20, 30], 4096, 0), [110, 20, 30]);
         assert_eq!(move_away_goal([10, 20, 30], 0, -4096), [10, 20, -70]);
     }
 
+    #[optimize(size)]
     #[test]
     fn script_timeout_scales_with_route_and_is_bounded() {
         assert_eq!(script_move_timeout_ticks(0, 4), SCRIPT_MOVE_TIMEOUT_MIN);
@@ -1110,6 +1145,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn scripted_arrival_is_the_source_pre_move_eight_unit_gate() {
         assert!(script_at_mark(64, false));
@@ -1117,6 +1153,7 @@ mod tests {
         assert!(!script_at_mark(0, true));
     }
 
+    #[optimize(size)]
     #[test]
     fn scripted_walk_and_run_match_each_source_actor_rate() {
         let mut scientist_walk = 0u16;
@@ -1135,6 +1172,7 @@ mod tests {
         assert_eq!(script_timeout_speed(2, true), 18);
     }
 
+    #[optimize(size)]
     #[test]
     fn scripted_face_uses_goldsrc_first_step_and_short_arc() {
         let deg = |d: u16| ((d as u32 * 4096 + 180) / 360) as u16 & 0x0fff;
@@ -1146,6 +1184,7 @@ mod tests {
         assert_eq!(script_face_yaw_step(deg(10), target, true), target);
     }
 
+    #[optimize(size)]
     #[test]
     fn scripted_q4_motion_retains_exact_centered_remainders() {
         for residue in -8..=7 {
@@ -1168,6 +1207,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     #[test]
     fn primed_script_ownership_round_trips_in_the_existing_mode_byte() {
         for mode in 0..=4 {
@@ -1199,6 +1239,7 @@ mod tests {
         )));
     }
 
+    #[optimize(size)]
     #[test]
     fn every_primed_move_mode_waits_for_cinethink_before_acting() {
         assert_eq!(SCRIPT_PRIME_DELAY_TICKS, 19);
@@ -1228,6 +1269,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn primed_walk_route_deadline_reuses_the_same_timer_after_start() {
         for mode in [1, 2] {
@@ -1244,6 +1286,7 @@ mod tests {
         assert_eq!(script_prime_gate(2, false, false), ScriptPrimeGate::Execute);
     }
 
+    #[optimize(size)]
     #[test]
     fn primed_actor_keeps_turning_after_it_reaches_the_mark() {
         assert_eq!(
@@ -1252,6 +1295,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn scripted_use_retries_busy_actors_but_not_its_own_playing_actor() {
         assert_eq!(script_owned_use(false, false), ScriptOwnedUse::Search);
@@ -1265,6 +1309,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn untargeted_idle_only_script_holds_without_firing_its_output() {
         assert!(script_untargeted_idle_holds(true, false));
@@ -1272,6 +1317,7 @@ mod tests {
         assert!(!script_untargeted_idle_holds(false, false));
     }
 
+    #[optimize(size)]
     #[test]
     fn heal_runs_pull_shot_return_and_fires_once_on_the_event() {
         // The caller counts `left` down one per tick; the event sits 71 ticks in.
@@ -1290,6 +1336,7 @@ mod tests {
         assert_eq!(fired_at, 71);
     }
 
+    #[optimize(size)]
     #[test]
     fn walking_off_during_the_shot_skips_the_heal() {
         let mid_shot = HEAL_RETURN_TICKS + HEAL_SHOT_TICKS - 5;
@@ -1306,6 +1353,7 @@ mod tests {
         assert!(!heal_event(HEAL_EVENT_LEFT, 0, false));
     }
 
+    #[optimize(size)]
     #[test]
     fn only_half_health_or_less_is_offered_a_shot_and_it_caps_at_100() {
         assert!(heal_wanted(50));
@@ -1316,6 +1364,7 @@ mod tests {
         assert_eq!(healed_health(90, 25), 100);
     }
 
+    #[optimize(size)]
     #[test]
     fn each_scientist_waits_a_minute_between_shots() {
         let mut clock = HealClock::EMPTY;

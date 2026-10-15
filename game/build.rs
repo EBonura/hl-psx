@@ -764,7 +764,14 @@ fn scan_room_budget(
     }
 
     (
-        room_budget::map_staging_words(max_bytes),
+        // A collect/bench build sizes the window for its listed maps alone; the
+        // installed floor exists for the fleet-worst weapon-cache margin, which
+        // those builds never reach.
+        if only_maps.is_some() {
+            max_bytes.div_ceil(4)
+        } else {
+            room_budget::map_staging_words(max_bytes)
+        },
         // Projection scratch is indexed directly, but has no SIMD/alignment
         // requirement. Preserve the audited +128-vertex recook guard while
         // avoiding up to 255 vertices of dead linker allocation.

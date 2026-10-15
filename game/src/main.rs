@@ -505,6 +505,7 @@ const PATCH_PX_Q3: u32 = 512;
 /// drawn behind its children (patch and screen-split underlays off).
 const WATERTIGHT_SPLITS: bool = true;
 
+#[optimize(size)]
 /// Patch-split edge midpoint moved outward (see `outward_point`); out of line
 /// so the four call sites in `emit_affine_quad_children` share one copy.
 #[inline(never)]
@@ -1368,6 +1369,7 @@ fn sort_probe_class(class: u32) {
     let _ = class;
 }
 
+#[optimize(size)]
 unsafe fn finish_deferred_overlays() {
     let Some(d) = (*core::ptr::addr_of_mut!(DEFERRED_OVERLAYS)).take() else {
         return;
@@ -5193,6 +5195,7 @@ fn tram_lerp_q8(a: [i32; 3], b: [i32; 3], dist: i32, len: i32) -> [i32; 3] {
     ]
 }
 
+#[optimize(size)]
 /// Point `ahead` 3-D path units beyond `(seg,seg_dist)`, in Q8 world space.
 /// CPathTrack::LookAhead crosses as many nodes as necessary and projects past
 /// a terminal node along the final segment; clamping at the last point makes a
@@ -5301,6 +5304,7 @@ fn tram_is_trackchange_segment(m: &Map, seg: usize) -> bool {
     a[0] == b[0] && a[2] == b[2] && a[1] != b[1]
 }
 
+#[optimize(size)]
 /// A func_trackchange carries the train while translating/rotating its
 /// platform; CFuncTrackTrain is stopped during that interval. The cooker
 /// represents the translation as a vertical path segment. Return the signed
@@ -5448,6 +5452,7 @@ fn tram_pos_ext(
     }
 }
 
+#[optimize(size)]
 /// Nearest point on the tram path to `pos` as (segment, distance-into-segment).
 /// Ride transfer seats the arriving map's car where the landmark put the
 /// player. 16-sample projection per segment: no runtime i64 division (the
@@ -5488,6 +5493,7 @@ fn tram_seek_nearest(m: &Map, pos: [i32; 3]) -> (usize, i32) {
     (best_seg, best_dist)
 }
 
+#[optimize(size)]
 #[inline(never)]
 fn tram_advance(
     m: &Map,
@@ -6523,6 +6529,7 @@ fn logic_valid_brush(brush: u16, nents: usize) -> Option<usize> {
     }
 }
 
+#[optimize(size)]
 /// GoldSrc PM_PointContents for liquids. Static world water/slime/lava comes
 /// from the authoritative BSP leaf contents; authored func_water and moving
 /// water trains retain their live AABB path.
@@ -6575,6 +6582,8 @@ struct WaterState {
     eye_under: bool,
 }
 
+#[optimize(size)]
+#[optimize(size)]
 /// GoldSrc PM_CheckWater samples the hull bottom, origin and eye rather than a
 /// single arbitrary point. Level 2 (origin submerged) selects swim movement;
 /// level 3 (eye submerged) drives drowning. This is also the surface transition
@@ -6797,6 +6806,7 @@ unsafe fn logic_breakable_touch(
     }
 }
 
+#[optimize(size)]
 /// Damage a brush entity; breakables shatter at 0 HP (vanish, fire targets).
 unsafe fn damage_brush_ent(
     m: &Map,
@@ -7210,6 +7220,7 @@ fn platrot_local_i32(p: [i16; 3]) -> [i32; 3] {
     [p[0] as i32, p[1] as i32, p[2] as i32]
 }
 
+#[optimize(size)]
 /// Publish one cart translation to render, collision, PVS and actor LOS in the
 /// same simulation tick. Kept out of `play` for MIPS branch-span safety.
 #[inline(never)]
@@ -7290,6 +7301,7 @@ unsafe fn pushable_apply_settle(
     true
 }
 
+#[optimize(size)]
 /// Swept 3x3 samples on every leading AABB face. One Q12 minimum fraction
 /// clamps the whole move, so a 9-unit cart step cannot tunnel through a thin
 /// wall or another mover even though the cart's own hull is translated.
@@ -7374,6 +7386,7 @@ fn pushable_player_overlap(e: map::Ent, player: &phys::Player) -> bool {
         && player.pos[2] + 18 >= c[2] - h[2]
 }
 
+#[optimize(size)]
 /// GoldSrc exposes `func_pushable` through FCAP_CONTINUOUS_USE. Every held-use
 /// frame searches dynamic brush bounds within 64 units and selects the most
 /// centred candidate; physical overlap is deliberately not required. This is
@@ -7527,6 +7540,7 @@ unsafe fn touch_triggers_box(
     }
 }
 
+#[optimize(size)]
 /// Carry carts physically resting on a brush mover before the player carry
 /// publishes ENT_PREV_OFF. This is the sample-cart/lift parent relationship:
 /// no target link or extra resident array is involved.
@@ -7566,6 +7580,7 @@ unsafe fn carry_pushables_on_support(m: &Map, movers: &mut [phys::Mover], nents:
     }
 }
 
+#[optimize(size)]
 /// Player/cart contact, swept planar motion, gravity/support and PUSHABLES
 /// trigger dispatch. All heavy work stays outlined from the fixed-update loop.
 #[inline(never)]
@@ -8446,6 +8461,7 @@ fn actor_collision_bounds(kind: u8, pos: [i32; 3]) -> ([i32; 3], [i32; 3]) {
     )
 }
 
+#[optimize(size)]
 /// Resolve a completed BSP move against the nearest live actor in one roster
 /// pass. This exact swept-AABB broadphase avoids both repeated BSP-trace work
 /// and a temporary collider list; tangential motion remains untouched.
@@ -9657,6 +9673,7 @@ unsafe fn logic_check_multisources(m: &Map, nlogic: usize, _nents: usize, _now: 
     }
 }
 
+#[optimize(size)]
 /// Manual saves retain the acquired suit, but do not serialize map-local
 /// multisource inputs. Restore only exact inputs registered to the authored
 /// suit pickup; actors, doors and output chains still run through normal use.
@@ -9694,6 +9711,7 @@ unsafe fn logic_restore_saved_suit(m: &Map, nlogic: usize, nents: usize, suit: b
     }
 }
 
+#[optimize(size)]
 unsafe fn logic_fire_targets(
     m: &Map,
     nlogic: usize,
@@ -9769,6 +9787,7 @@ unsafe fn logic_fire_targets(
     }
 }
 
+#[optimize(size)]
 #[inline]
 unsafe fn logic_phase_step(rec: map::LogicEnt, ei: usize) -> i32 {
     let e = ENT_CACHE[ei];
@@ -9913,6 +9932,7 @@ unsafe fn rotating_door_swing_away(ei: usize, spawnflags: u16) {
     }
 }
 
+#[optimize(size)]
 unsafe fn logic_activate_button(
     m: &Map,
     nlogic: usize,
@@ -10016,6 +10036,7 @@ unsafe fn prop_script_clear(pi: usize) {
     prop_nav_cache_invalidate(pi);
 }
 
+#[optimize(size)]
 /// Exact targetname selection is always attempted first.  A cooked classname
 /// selector is only the fallback, matching `CCineMonster::FindEntity`; it picks
 /// the first eligible living actor in cooked engine order inside m_flRadius.
@@ -10126,6 +10147,7 @@ unsafe fn script_human_chord_clear(
     phys::human_hull_line_clear(m, from, to) && phys::actor_line_clear_movers(m, movers, from, to)
 }
 
+#[optimize(size)]
 /// Earliest `SOLID_SLIDEBOX` impact for a standing human hull moving between
 /// two foot origins. GoldSrc's `WALK_MOVE` includes the player and live actors
 /// in the same world trace; BSP/mover-only probes therefore miss precisely the
@@ -10206,6 +10228,7 @@ unsafe fn script_human_chord_clear_actors(
         && script_human_actor_blocked_fraction(pi, start, goal, player).is_none()
 }
 
+#[optimize(size)]
 /// GoldSrc BuildRoute tries FTriangulate before consulting the node graph.
 /// Human actors use a 32-unit-wide hull, clamped inside the source's 24..48
 /// range.  Candidate points are tested right-first in eight 64-unit lateral
@@ -10302,6 +10325,8 @@ unsafe fn script_local_detour(
     None
 }
 
+#[optimize(size)]
+#[optimize(size)]
 /// GoldSrc does not trust the route selected by `BuildRoute` for the whole
 /// trip. `CBaseMonster::Move` repeats a 200-unit `CheckLocalMove` before every
 /// 10 Hz movement step and inserts an `FTriangulate` apex when that lookahead
@@ -10412,6 +10437,7 @@ unsafe fn script_dynamic_local_replan(
     }
 }
 
+#[optimize(size)]
 #[inline(never)]
 unsafe fn script_remaining_path_distance(m: &Map, pi: usize) -> u32 {
     let pos = PROP_POS[pi];
@@ -10594,6 +10620,7 @@ unsafe fn script_clip_hold_ticks(pi: usize, clip: u8, fallback: u16) -> u16 {
     }
 }
 
+#[optimize(size)]
 /// Fire source MDL event 1003 records folded into this scripted_sequence's
 /// LogicAux tail. Idle events loop over the authored sequence duration; play
 /// events run once. The actor's existing gesture timer doubles as the phase
@@ -10714,6 +10741,7 @@ unsafe fn script_finish_face_phase(m: &Map, pi: usize, primed: bool) {
     };
 }
 
+#[optimize(size)]
 /// Advance one actor's cinematic state outside tick_props. Besides keeping the
 /// hot function's MIPS branches in range, this call is paid only by actors that
 /// actually carry script state; ordinary combat props stay on the direct path.
@@ -11883,6 +11911,7 @@ unsafe fn revert_saved_tick() {
     }
 }
 
+#[optimize(size)]
 /// Advance the screen-title + fade timers once per sim tick; auto-fire the
 /// worldspawn chapter title shortly after load (like HL's chapter cards).
 unsafe fn tick_screen_fx(sim_frame_no: u32) {
@@ -12315,6 +12344,7 @@ unsafe fn draw_debug_stats(
     }
 }
 
+#[optimize(size)]
 unsafe fn logic_process_events(m: &Map, nlogic: usize, nents: usize, now: u16) {
     // GoldSrc runs a zero-delay multi_manager output from ManagerThink in the
     // same server frame. Rescan freed slots so an event enqueued by a due event
@@ -12560,6 +12590,7 @@ unsafe fn sound_room_think(m: &Map,nents: usize,li: usize,rec: map::LogicEnt,now
     if let Some(room)=observed.room_update {sfx::apply_room(room);}
 }
 
+#[optimize(size)]
 unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
     logic_process_events(m, nlogic, nents, now);
     if CAMERA_LI != u16::MAX {
@@ -12835,6 +12866,7 @@ unsafe fn logic_tick_momentary(
     }
 }
 
+#[optimize(size)]
 /// Hold-to-turn valve: while +use is held on a momentary_rot_button, advance
 /// one normalized mechanism phase and publish it to the complete linked rig.
 unsafe fn tick_momentary(
@@ -13189,6 +13221,7 @@ unsafe fn logic_teleport_touch(m: &Map, nlogic: usize, rec: map::LogicEnt) {
     }
 }
 
+#[optimize(size)]
 unsafe fn logic_touch_triggers(
     m: &Map,
     nlogic: usize,
@@ -15105,6 +15138,7 @@ unsafe fn prop_nav_cache_invalidate(pi: usize) {
     prop_nav_cache_put(pi, PROP_NAV_NEXT_SLOT, NAV_NODE_NONE);
 }
 
+#[optimize(size)]
 /// Was 75% of the frame on walker-heavy maps: the old scan probed ~27 points
 /// per column, each walking the BSP AND sphere-testing EVERY brush entity.
 /// Now: filter the entities that can touch this vertical column ONCE (almost
@@ -15173,6 +15207,7 @@ fn prop_floor_y(m: &Map, pi: usize, pos: [i32; 3]) -> Option<i32> {
     prop_floor_y_down(m, pi, pos, PROP_GROUND_PROBE_DOWN)
 }
 
+#[optimize(size)]
 /// As `prop_floor_y` but with an explicit downward probe range. Items placed high
 /// in the editor rely on HL's DROP_TO_FLOOR (any distance); they use a deep range
 /// so the HEV suit / weapons settle on the floor instead of floating in mid-air.
@@ -15640,6 +15675,7 @@ unsafe fn prop_environment_move(m: &Map, movers: &[phys::Mover], pi: usize) -> b
     prop_push_step(m, movers, pi, v)
 }
 
+#[optimize(size)]
 #[inline(never)]
 unsafe fn prop_try_step(
     m: &Map,
@@ -15834,6 +15870,7 @@ unsafe fn nav_actor_vertical(pi: usize, a: [i32;3], b: [i32;3]) -> bool {
     PROP_KIND[pi] == PROP_TYPE_CONTROLLER || (a[1]-b[1]).abs() <= NAV_VERTICAL_MAX
 }
 
+#[optimize(size)]
 unsafe fn nav_nearest(m: &Map, movers: &[phys::Mover], pi: usize, pos: [i32; 3], max_d2: i32) -> u8 {
     let n = nav_node_count(m);
     let mut best = NAV_NODE_NONE;
@@ -15862,6 +15899,7 @@ unsafe fn nav_nearest(m: &Map, movers: &[phys::Mover], pi: usize, pos: [i32; 3],
     best
 }
 
+#[optimize(size)]
 unsafe fn nav_nearest_reachable(
     m: &Map,
     movers: &[phys::Mover],
@@ -16025,6 +16063,7 @@ unsafe fn nav_route_available(m: &Map, movers: &[phys::Mover], pi: usize, goal: 
     true
 }
 
+#[optimize(size)]
 /// Reproduce RouteSimplify's first useful cut without retaining GoldSrc's
 /// eight-waypoint Route array. The existing script goal temporarily stores a
 /// midpoint, while the packed nav cache keeps the raw next node to resume from
@@ -16086,6 +16125,7 @@ unsafe fn nav_route_fail_open(pi: usize, goal: [i32; 3]) -> Option<[i32; 3]> {
     }
 }
 
+#[optimize(size)]
 unsafe fn nav_waypoint_towards(
     m: &Map,
     movers: &[phys::Mover],
@@ -16246,6 +16286,7 @@ unsafe fn nav_flee_goal(m: &Map, threat: [i32; 3], pos: [i32; 3]) -> Option<[i32
     }
 }
 
+#[optimize(size)]
 #[inline(never)]
 unsafe fn prop_controller_move_towards(
     m: &Map, movers: &[phys::Mover], pi: usize, goal: [i32;3], speed: i32,
@@ -16281,6 +16322,7 @@ unsafe fn prop_controller_move_towards(
     true
 }
 
+#[optimize(size)]
 unsafe fn prop_move_towards_point(
     m: &Map,
     movers: &[phys::Mover],
@@ -16476,6 +16518,7 @@ unsafe fn release_monster_loot(owner: usize) {
     );
 }
 
+#[optimize(size)]
 /// Release every dormant loot slot owned by `owner_key` at `origin`: a monster
 /// death (key = actor index + 1) or a shattered breakable (key = cooked
 /// BREAKABLE_LOOT_KEY | submodel, centre origin, dropped to the floor below).
@@ -17235,6 +17278,7 @@ fn train_isqrt_u64(n: u64) -> u64 {
     psx_math::int32::isqrt_u64(n) as u64
 }
 
+#[optimize(size)]
 /// Project a carried global train's authoritative center onto the destination
 /// path. Segment indices are map-local and differ on several real transitions;
 /// deriving them here prevents the first destination tick from snapping the
@@ -17344,6 +17388,7 @@ unsafe fn train_seek_position(
 }
 
 // Called from spawn, interpolation, arrival and test hooks.
+#[optimize(size)]
 #[inline(never)]
 unsafe fn train_set_offset(rec: map::LogicEnt, t: usize, pos: [i32; 3]) {
     let e = ENT_CACHE[rec.brush as usize];
@@ -17433,6 +17478,7 @@ unsafe fn init_trains(m: &Map, nlogic: usize, nents: usize) {
     }
 }
 
+#[optimize(size)]
 /// Advance every running train along its corner chain.
 unsafe fn tick_trains(m: &Map, nlogic: usize, nents: usize) {
     let mut t = 0usize;
@@ -17628,6 +17674,7 @@ fn prop_voice(kind: u8, dying: bool) -> u8 {
 
 static mut PAIN_SFX_COOLDOWN: u8 = 0;
 
+#[optimize(size)]
 /// Source `CalcDamageDirection`: compare the world-space inflictor with the
 /// current view and light every matching screen edge. Close damage lights all
 /// four, matching GoldSrc's special case for a source within 50 units.
@@ -17673,6 +17720,7 @@ fn fall_damage_player(health: &mut u16, dmg: u16) {
     *health = health.saturating_sub(dmg);
 }
 
+#[optimize(size)]
 fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
     if dmg == 0 || settings::debug_on(settings::DEBUG_GOD) {
         return;
@@ -17872,6 +17920,7 @@ unsafe fn find_scientist_threat(m: &Map, movers: &[phys::Mover], pi: usize, npro
     best
 }
 
+#[optimize(size)]
 /// Target acquisition for hostile actors: nearest visible player-or-human
 /// within `wake2`. Generalizes find_headcrab_target by wake range and uses the
 /// actor's own eye height. A caller may separately retain an enemy it has
@@ -17928,6 +17977,7 @@ unsafe fn find_actor_target(
     (best_visible, best_visible != PROP_TARGET_NONE)
 }
 
+#[optimize(size)]
 /// Ranged + turret AI. Acquire a target, face it, and fire a hitscan shot every
 /// `atk_cooldown` ticks while it is within `atk_range` and in line of sight.
 /// Movers (`can_move`) close to range first; turrets (`!can_move`) hold still.
@@ -18020,6 +18070,7 @@ unsafe fn tick_shooter(
     }
 }
 
+#[optimize(size)]
 unsafe fn tick_headcrab(
     m: &Map,
     movers: &[phys::Mover],
@@ -18174,6 +18225,7 @@ unsafe fn scientist_ordinal(pi: usize) -> usize {
     ordinal
 }
 
+#[optimize(size)]
 /// Recreate the cooker's first-occurrence dialogue id from the resident prop
 /// order. At most 16 retail hello variants fit in a u16 seen mask; the scan is
 /// paid once per scientist lifetime and replaces a persistent per-map table.
@@ -18225,6 +18277,7 @@ fn scientist_dialogue_variant(group: u8, map_index: u16, ordinal: usize) -> u8 {
     }
 }
 
+#[optimize(size)]
 /// Recreate the cooker's bounded pre-disaster small-talk ids without a resident
 /// lookup table. This cold scan runs only when a sentence actually begins.
 #[inline(never)]
@@ -18289,6 +18342,7 @@ unsafe fn scientist_dialogue_local_id(
     0
 }
 
+#[optimize(size)]
 /// Source FIdleHello for standing scientists. PVS gating is supplied by the
 /// caller because tick_props already paid for that exact leaf test.
 #[inline(never)]
@@ -18364,6 +18418,7 @@ unsafe fn scientist_try_hello(
     true
 }
 
+#[optimize(size)]
 #[inline(never)]
 unsafe fn scientist_talk_friend(m: &Map, sight_movers: &[phys::Mover], pi: usize) -> Option<usize> {
     let from = [PROP_POS[pi][0], PROP_POS[pi][1] + 72, PROP_POS[pi][2]];
@@ -18396,6 +18451,7 @@ unsafe fn scientist_talk_friend(m: &Map, sight_movers: &[phys::Mover], pi: usize
     nearest
 }
 
+#[optimize(size)]
 /// Forced IdleRespond ignores the global two-second conversation gap and
 /// starts as soon as the question's actual sentence finishes. A long authored
 /// scripted sentence can pre-empt the one PS1 voice channel; stale responses
@@ -18448,6 +18504,7 @@ unsafe fn scientist_try_response(
     true
 }
 
+#[optimize(size)]
 /// Source FIdleSpeak as used by TASK_WAIT_FOR_MOVEMENT and predisaster idle
 /// schedules. Questions mark a nearby stationary scientist for IdleRespond;
 /// otherwise a visible nearby player receives an idle statement.
@@ -18588,6 +18645,7 @@ unsafe fn tick_talk_move_away(
     false
 }
 
+#[optimize(size)]
 /// Consume CLIENT_PUSH on the next 10 Hz monster think and build the exact
 /// 100-unit endpoint behind the latest MakeIdealYaw direction.
 #[inline(never)]
@@ -18616,6 +18674,7 @@ unsafe fn try_start_talk_move_away(pi: usize) -> bool {
     true
 }
 
+#[optimize(size)]
 unsafe fn tick_barney(
     m: &Map,
     movers: &[phys::Mover],
@@ -18785,6 +18844,7 @@ unsafe fn scientist_heal_tick(pi: usize, left: u8, player_pos: [i32; 3], health:
     }
 }
 
+#[optimize(size)]
 unsafe fn tick_scientist(
     m: &Map,
     movers: &[phys::Mover],
@@ -19138,6 +19198,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
 // Build exact candidate lists only after incoming actors have been appended or
 // overlaid. Keeping this separate from base prop init prevents the mailbox
 // restore from leaving the hot paths blind to carried humans/headcrabs/items.
+#[optimize(size)]
 #[inline(never)]
 unsafe fn rebuild_prop_hotlists() {
     // Read inside the cold function. Passing PROP_COUNT through the surrounding
@@ -19230,6 +19291,7 @@ unsafe fn trace_prop_hotlist_state(stage: u8) {
     reference_trace::prop_hotlist(0, stage, nprops, count, entries);
 }
 
+#[optimize(size)]
 unsafe fn tick_props(
     m: &Map,
     movers: &[phys::Mover],
@@ -19462,6 +19524,7 @@ unsafe fn tick_props(
     }
 }
 
+#[optimize(size)]
 /// The can is a point-sized MOVETYPE_TOSS entity until CanThink enables its
 /// trigger box. Reuse its idle script velocity and timer slots; no new arena.
 #[inline(never)]
@@ -19538,6 +19601,7 @@ unsafe fn consume_weapon_pickup(m: &Map, nlogic: usize, nents: usize, now: u16, 
     }
 }
 
+#[optimize(size)]
 unsafe fn collect_pickups(
     m: &Map,
     nlogic: usize,
@@ -20484,6 +20548,7 @@ unsafe fn clear_combat_fx() {
     BLOOD_CURSOR = 0;
 }
 
+#[optimize(size)]
 unsafe fn decay_combat_fx(m: &Map) {
     // Particle bursts are transient; bullet/blood MARKS now persist (like HL
     // decals) -- they stay at full colour until the fixed-size ring buffer
@@ -21035,6 +21100,7 @@ unsafe fn shoot_buttons(m: &Map, eye: [i32; 3], end: [i32; 3], limit_frac: i32) 
     }
 }
 
+#[optimize(size)]
 /// One hitscan trace. `damage`/`range` from the weapon; (`aim_x`,`aim_y`) is the
 /// half-cone in screen px; (`cx_px`,`cy_px`) offsets the cone centre (shotgun
 /// pellets). Returns `Some` for either an actor or world hit, applying damage
@@ -21275,6 +21341,7 @@ fn pellet_offset(i: u8, spread: i32) -> (i32, i32) {
     (px * spread / 2, py * spread / 2)
 }
 
+#[optimize(size)]
 /// Run a weapon's fire archetype for one shot already paid for by try_fire.
 /// Returns true when a hitscan connected with an enemy (drives the crowbar
 /// hit-vs-miss sound).
@@ -21380,6 +21447,7 @@ unsafe fn fire_weapon(
     }
 }
 
+#[optimize(size)]
 /// Repeating secondary shots (L2). Toggle/charge/radio modes live at the input
 /// site because they need edge/release state; this function owns only attacks
 /// that may repeat while L2 remains held.
@@ -21687,6 +21755,7 @@ unsafe fn fire_gauss_charge(
     GAUSS_EVENT_FIRE
 }
 
+#[optimize(size)]
 /// Advance the Tau Cannon's hold-to-charge secondary attack. Damage and ammo
 /// cadence follow gauss.cpp; the one-byte age is the complete persistent state.
 #[inline(never)]
@@ -22050,6 +22119,7 @@ static mut FIRE_VEL: [i32; 3] = [0; 3];
 
 /// Spawn a projectile from `origin` along the q12 direction `dir`. `from_enemy`
 /// routes its damage at the player instead of props.
+#[optimize(size)]
 unsafe fn spawn_projectile_dir(
     kind: u8,
     damage: u8,
@@ -22106,6 +22176,7 @@ unsafe fn spawn_projectile_dir(
     slot
 }
 
+#[optimize(size)]
 /// Detonate every charge thrown by the selected satchel weapon. Tripmines use
 /// a distinct projectile kind and are intentionally unaffected by the radio.
 unsafe fn detonate_satchels(m: &Map) -> bool {
@@ -22522,6 +22593,7 @@ unsafe fn grenade_blast_origin(
     }
 }
 
+#[optimize(size)]
 #[inline(never)]
 unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
     let mut i = 0;
@@ -23361,6 +23433,7 @@ unsafe fn tick_env_sparks(m: &Map, nlogic: usize) {
     }
 }
 
+#[optimize(size)]
 /// Sim-side beam timers. Transient beams (`life` > 0, the cascade's debris and
 /// probe strikes) turn themselves back off when the strike expires; random-area
 /// beams (no authored endpoint -- wacky_beams, the c1a0c arcs) re-strike a

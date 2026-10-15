@@ -40,6 +40,7 @@ pub enum Start {
     Refused,
 }
 
+#[optimize(size)]
 /// Hand over the CD token the player drives.
 pub fn install(cd: Cd) {
     // SAFETY: single-threaded boot code, before anything plays.
@@ -93,6 +94,7 @@ pub unsafe fn locate_files(sector: &mut [u32; SECTOR_WORDS]) {
     }
 }
 
+#[optimize(size)]
 /// Start `track`'s song `from_sector` sectors into its file (0 for the top),
 /// with the drive's own mixer at unity. The SPU's CD input is the caller's.
 pub unsafe fn start(track: u8, from_sector: u32) -> Start {
@@ -125,6 +127,7 @@ pub unsafe fn start(track: u8, from_sector: u32) -> Start {
     }
 }
 
+#[optimize(size)]
 /// Ask the drive where the head is. Notices the end of the song, which
 /// pauses the drive. Call every few frames while a song plays.
 pub unsafe fn poll() {
@@ -133,6 +136,7 @@ pub unsafe fn poll() {
     }
 }
 
+#[optimize(size)]
 /// Where the song now playing has reached, as a sector of its file, or
 /// `None` once it has finished. Polls the drive first.
 pub unsafe fn position() -> Option<u32> {
@@ -146,6 +150,7 @@ pub unsafe fn position() -> Option<u32> {
     Some(here & !(layout::SONGS_PER_FILE as u32 - 1))
 }
 
+#[optimize(size)]
 /// Pause the drive and forget the song.
 pub unsafe fn stop() {
     if let Some(player) = (*core::ptr::addr_of_mut!(PLAYER)).as_mut() {

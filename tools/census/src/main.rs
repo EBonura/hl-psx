@@ -645,9 +645,9 @@ mod tests {
         git(&["add", "source.rs"]);
         git(&[
             "-c",
-            "user.name=ebonura-fastly",
+            "user.name=Census Fixture",
             "-c",
-            "user.email=ebonura@fastly.com",
+            "user.email=census-fixture@example.invalid",
             "commit",
             "--quiet",
             "-m",
