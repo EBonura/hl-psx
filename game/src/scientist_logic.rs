@@ -335,6 +335,21 @@ pub const fn script_move_speed(mode: u8, move_tick: u16, barney: bool) -> u16 {
     }
 }
 
+/// Distance (units) at which a follower changes gait. TASK_MOVE_TO_TARGET_RANGE
+/// walks below 190 and runs from 270, holding the current gait between; the
+/// port keeps no gait bit, so it splits the band at its middle.
+pub const FOLLOW_GAIT_SPLIT: i32 = 230;
+
+/// Units per walker step for a follower `d2` (squared horizontal distance)
+/// from its target: the source actor's run (275 / 362 u/s) when far, its walk
+/// (59 / 61 u/s) when near (talkmonster.cpp follow, schedule.cpp
+/// TASK_MOVE_TO_TARGET_RANGE; inventory rows S7, B15).
+#[inline(never)]
+pub const fn follow_move_speed(d2: i32, move_tick: u16, barney: bool) -> i32 {
+    let mode = if d2 >= FOLLOW_GAIT_SPLIT * FOLLOW_GAIT_SPLIT { 2 } else { 1 };
+    script_move_speed(mode, move_tick, barney) as i32
+}
+
 /// Advance one horizontal component using a centered signed-Q4 remainder.
 /// The returned remainder is always in -8..=7, so a four-bit field is enough
 /// to retain GoldSrc's sub-unit motion without another per-actor array.
@@ -1133,6 +1148,18 @@ mod tests {
         assert_eq!(script_timeout_speed(1, false), 3);
         assert_eq!(script_timeout_speed(2, false), 14);
         assert_eq!(script_timeout_speed(2, true), 18);
+    }
+
+    #[test]
+    fn followers_run_at_the_source_rate_when_far_and_walk_when_near() {
+        let far = 400 * 400;
+        let near = 150 * 150;
+        assert_eq!(follow_move_speed(far, 0, false), 14, "scientist run 275 u/s");
+        assert_eq!(follow_move_speed(far, 0, true), 18, "Barney run 362 u/s");
+        assert_eq!(follow_move_speed(near, 0, false), 3);
+        assert_eq!(follow_move_speed(near, 0, true), 3);
+        assert_eq!(follow_move_speed(229 * 229, 0, false), 3);
+        assert_eq!(follow_move_speed(230 * 230, 0, false), 14);
     }
 
     #[test]

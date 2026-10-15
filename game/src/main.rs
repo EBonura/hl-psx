@@ -1183,14 +1183,12 @@ const BARNEY_DRAW_TICKS: u8 = 18;
 /// houndeye's rest, the vortigaunt's claw and the bullsquid's whip.
 const PROP_CLIP_ALT: usize = 5;
 const BARNEY_DAMAGE: u8 = 8;
-const BARNEY_SPEED: i32 = 7;
 const BARNEY_FOLLOW_RANGE2: i32 = 640 * 640;
 const BARNEY_STOP_RANGE2: i32 = 128 * 128;
 const SCIENTIST_FEAR_RANGE2: i32 = 896 * 896;
 const SCIENTIST_FEAR_TICKS: u8 = 80;
 const SCIENTIST_FLEE_SPEED: i32 = 7;
 const SCIENTIST_FACE_RANGE2: i32 = 192 * 192;
-const SCIENTIST_FOLLOW_SPEED: i32 = 7;
 const SCIENTIST_FOLLOW_STOP_RANGE2: i32 = 128 * 128;
 const SCIENTIST_USE_REACH: i32 = 64; // PlayerUse radius in the GoldSrc SDK
 const PROP_HIT_FLASH_TICKS: u8 = 4;
@@ -18728,7 +18726,8 @@ unsafe fn tick_barney(
         }
         if d2 > BARNEY_STOP_RANGE2 {
             PROP_STATE[pi] = PROP_STATE_MOVE;
-            prop_move_towards_point(m, movers, pi, player_pos, BARNEY_SPEED);
+            let speed = scientist_logic::follow_move_speed(d2, MOVE_TICK, true);
+            prop_move_towards_point(m, movers, pi, player_pos, speed);
             return;
         }
         PROP_STATE[pi] = PROP_STATE_IDLE;
@@ -18913,14 +18912,20 @@ unsafe fn tick_scientist(
             }
             if reach2 <= offer * offer {
                 PROP_STATE[pi] = PROP_STATE_MOVE;
-                prop_move_towards_point(m, movers, pi, player_pos, SCIENTIST_FOLLOW_SPEED);
+                let speed = scientist_logic::follow_move_speed(
+                    dist2_xz(pos, player_pos),
+                    MOVE_TICK,
+                    false,
+                );
+                prop_move_towards_point(m, movers, pi, player_pos, speed);
                 return;
             }
         }
         let d2 = dist2_xz(pos, player_pos);
         if d2 > SCIENTIST_FOLLOW_STOP_RANGE2 {
             PROP_STATE[pi] = PROP_STATE_MOVE;
-            prop_move_towards_point(m, movers, pi, player_pos, SCIENTIST_FOLLOW_SPEED);
+            let speed = scientist_logic::follow_move_speed(d2, MOVE_TICK, false);
+            prop_move_towards_point(m, movers, pi, player_pos, speed);
         } else {
             PROP_STATE[pi] = PROP_STATE_IDLE;
             prop_face_point(

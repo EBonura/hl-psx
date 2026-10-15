@@ -1297,8 +1297,8 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 ),
                 // weapon N : select weapon slot N (0 crowbar, 1 glock ...)
                 "weapon" => (22, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
-                // watch KIND : log health and position of every live monster of that kind every half second
-                "watch" => (23, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
+                // watch KIND [TICKS] : log health and position of every live monster of that kind every TICKS (default 10)
+                "watch" => (23, [num(2) as i32, num(3) as i32, 0, 0, 0, 0], String::new()),
                 // club KIND DMG : one crowbar-class hit of DMG on the nearest live monster of that kind
                 "club" => (25, [num(2) as i32, num(3) as i32, 0, 0, 0, 0], String::new()),
                 // pos : log the player position
