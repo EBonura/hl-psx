@@ -15415,7 +15415,7 @@ unsafe fn prop_face_point(pi: usize, p: [i32; 3]) {
         let yaw = turn_toward(
             prop_yaw_value(PROP_YAW[pi]),
             yaw_from_vec(dx, dz),
-            senses::turn_rate_q12(PROP_KIND[pi]),
+            if PROP_AI_TARGET[pi] == PROP_TARGET_NONE { 250 } else { senses::turn_rate_q12(PROP_KIND[pi]) },
         );
         PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], yaw);
     }
