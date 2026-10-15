@@ -2054,7 +2054,7 @@ fn stack_is_safe(room: u32) -> bool {
 /// profile changes: final-7's source left 5,500 B free at 1000, 17,788 B at
 /// 500 and 28,028 B at 250. With the ACK-paced pad driver and the analog request
 /// at boot, 250 left 14,428 B, so the ladder has one more rung.
-const PGO_HOT_CALLSITE_LADDER: [u32; 4] = [1000, 500, 250, 125];
+const PGO_HOT_CALLSITE_LADDER: [u32; 6] = [1000, 500, 250, 125, 60, 0];
 
 /// The sample profile the last `pgo` run shipped with, and the hot call-site
 /// threshold it linked at. Every other build links with them: without a
@@ -2206,6 +2206,13 @@ fn compile_game(
             flags.push(format!(
                 "-Cllvm-args=-hot-callsite-threshold={hot_callsite_threshold}"
             ));
+            // Tuning aid: extra LLVM options for a profile-guided link, space
+            // separated (`HLPSX_LLVM_ARGS="-sample-profile-inline-growth-limit=4"`).
+            if let Some(extra) = env::var_os("HLPSX_LLVM_ARGS") {
+                for arg in extra.to_string_lossy().split_whitespace() {
+                    flags.push(format!("-Cllvm-args={arg}"));
+                }
+            }
         }
     }
     if !flags.is_empty() {
@@ -2240,8 +2247,12 @@ fn compile_game(
         // maps so a telemetry build that overflows RAM on the fleet-worst pools
         // still links for an A/B frame-cost run (same code, smaller arena). The
         // result is never a shipping image and the RAM budget does not apply.
-        if let Some(maps) = env::var_os("HLPSX_BENCH_MAPS").filter(|_| !is_shipping_build(features))
-        {
+        // A shipping-feature build honours it too, so an A/B of profiles that
+        // do not fit RAM yet can still be timed on the shipped code.
+        if let Some(maps) = env::var_os("HLPSX_BENCH_MAPS") {
+            println!(
+                "warning: HLPSX_BENCH_MAPS sizes the map pools for {maps:?} only; this image is for timing, never for shipping"
+            );
             command.env("HLPSX_COLLECT_MAPS", maps);
         }
     }
