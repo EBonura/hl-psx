@@ -8679,6 +8679,12 @@ fn collect_logic_entities_with_lightstyles(
                 parse_f32_key(block, "m_imaxlivechildren", 0.0).clamp(0.0, u16::MAX as f32) as u16
             }
             LOGIC_INFODECAL => infodecal_pick(ent_value(block, "texture").unwrap_or("")).1,
+            // CTargetCDAudio::KeyValue: `radius` (pev->scale). A target_cdaudio
+            // with one starts its track when the player comes within it
+            // (Think, 0.5 s poll); trigger_cdaudio has none. Cooked units.
+            LOGIC_CDTRACK => (parse_f32_key(block, "radius", 0.0) / scale)
+                .round()
+                .clamp(0.0, u16::MAX as f32) as u16,
             // Debris kind: 3 + GoldSrc material. gibshooter throws flesh;
             // env_shooter's shootsounds picks glass, wood, metal, flesh or
             // rocks (drawn as cinder block), none as metal.
@@ -8898,6 +8904,7 @@ fn collect_logic_entities_with_lightstyles(
             if damage_type & ((1 << 15) | (1 << 17)) != 0 {
                 record_flags |= LOGIC_TRIGGER_HURT_POISON;
             }
+            record_flags |= hl_format::hev::hurt_kind_bits(damage_type);
             let dmg = ent_value(block, "damage")
                 .or_else(|| ent_value(block, "dmg"))
                 .and_then(|v| v.parse::<f32>().ok())
@@ -17978,6 +17985,19 @@ mod tests {
     }
 
     #[test]
+    fn target_cdaudio_cooks_its_radius_and_track_in_world_units() {
+        // CTargetCDAudio::KeyValue: radius (pev->scale); health is the track.
+        let input = br#"{ "classname" "target_cdaudio" "origin" "416 -480 48" "radius" "256" "health" "13" }
+{ "classname" "target_cdaudio" "origin" "0 0 0" "targetname" "gargdeathtrack" "health" "28" }"#;
+        let cook = collect_logic_entities(input, &[], &[], 2.0, &Default::default(), &Default::default()).unwrap();
+        assert_eq!(cook.ents.len(), 2);
+        assert_eq!((cook.ents[0].kind, cook.ents[0].arg0, cook.ents[0].arg1), (LOGIC_CDTRACK, 13, 128));
+        assert_eq!(cook.ents[0].origin, [208, 24, -240]);
+        // No radius: fired by name only, never polled.
+        assert_eq!((cook.ents[1].arg0, cook.ents[1].arg1), (28, 0));
+    }
+
+    #[test]
     fn env_sound_suffix_radius_and_scaled_point_use_original_controls() {
         let input=br#"{ "classname" "env_sound" "origin" "144 312 -32" "radius" "128S" "roomtype" "18" }"#;
         let cook=collect_logic_entities(input,&[],&[],2.0,&Default::default(),&Default::default()).unwrap();
@@ -18119,13 +18139,20 @@ mod tests {
                 r#""classname" "trigger_hurt" "model" "*1" "damage" "10" "damagetype" "{damagetype}""#
             ))
         };
+        // The suit's damage-kind code rides in bits 4..6 (hl_format::hev).
+        let kind = |damagetype: &str| (hurt(damagetype).flags & hl_format::hev::HURT_KIND_MASK) >> hl_format::hev::HURT_KIND_SHIFT;
+        assert_eq!(kind("32"), hl_format::hev::HURT_FALL);
+        assert_eq!(kind("131072"), hl_format::hev::HURT_POISON);
+        assert_eq!(kind("1048576"), hl_format::hev::HURT_ACID);
+        assert_eq!(kind("262144"), 0);
         // generic, fall (1 << 5), drown (1 << 14), poison (1 << 17), radiation (1 << 18)
-        assert_eq!(hurt("0").flags, 0);
-        assert_eq!(hurt("32").flags, LOGIC_TRIGGER_HURT_BYPASS_ARMOUR);
-        assert_eq!(hurt("16384").flags, LOGIC_TRIGGER_HURT_BYPASS_ARMOUR);
-        assert_eq!(hurt("131072").flags, LOGIC_TRIGGER_HURT_POISON);
-        assert_eq!(hurt("262144").flags, LOGIC_TRIGGER_HURT_RADIATION);
-        assert_eq!(hurt("393216").flags, LOGIC_TRIGGER_HURT_RADIATION | LOGIC_TRIGGER_HURT_POISON);
+        let flags = |d: &str| hurt(d).flags & !hl_format::hev::HURT_KIND_MASK;
+        assert_eq!(flags("0"), 0);
+        assert_eq!(flags("32"), LOGIC_TRIGGER_HURT_BYPASS_ARMOUR);
+        assert_eq!(flags("16384"), LOGIC_TRIGGER_HURT_BYPASS_ARMOUR);
+        assert_eq!(flags("131072"), LOGIC_TRIGGER_HURT_POISON);
+        assert_eq!(flags("262144"), LOGIC_TRIGGER_HURT_RADIATION);
+        assert_eq!(flags("393216"), LOGIC_TRIGGER_HURT_RADIATION | LOGIC_TRIGGER_HURT_POISON);
     }
     #[test]
     fn missing_waits_follow_the_base_classes() {

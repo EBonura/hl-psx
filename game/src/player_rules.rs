@@ -162,6 +162,72 @@ pub const fn jump_starts(fresh_press: bool, on_ground: bool) -> bool {
     fresh_press && on_ground
 }
 
+/// Intensity (0..=255) the pain compass gives an edge for a damage source:
+/// the dot product of the unit direction to the source with the view axis,
+/// kept only above 0.3. `along` is the source's offset along that axis and
+/// `distance` its length, both in world units.
+#[cfg_attr(target_arch = "mips", optimize(size))]
+#[inline(never)]
+pub fn compass_intensity(along: i32, distance: i32) -> u8 {
+    let v = along.abs() * 255 / distance.max(1);
+    if v > 76 {
+        v.min(255) as u8
+    } else {
+        0
+    }
+}
+
+/// An edge fades by 2.0 per second (of 1.0) and is drawn while above 0.4.
+pub const COMPASS_FADE: u8 = 25;
+pub const COMPASS_DRAW_MIN: u8 = 102;
+
+/// Next intensity of an edge after a tick: fades while drawn, drops to zero
+/// once it is no longer drawn.
+pub const fn compass_fade(v: u8) -> u8 {
+    if v > COMPASS_DRAW_MIN {
+        v.saturating_sub(COMPASS_FADE)
+    } else {
+        0
+    }
+}
+
+/// Brightness an edge is drawn with: its intensity, at least one half.
+pub const fn compass_shade(v: u8) -> u8 {
+    if v < 128 {
+        128
+    } else {
+        v
+    }
+}
+
+// ------------------------------------------------------------------ footsteps
+
+/// Footstep clock for one tick. Returns the new clock (ticks to the next step)
+/// and, when a step sounds, the volume divisor (`play_vol` denominator).
+///
+/// The original steps whenever its clock is idle and the player is moving on
+/// the ground or a ladder: a walk (under 210 u/s, 80 ducked) every 0.4 s at
+/// 0.2 volume, a run every 0.3 s at 0.5, a ladder rung every 0.35 s at 0.35;
+/// ducking adds 0.1 s and cuts the volume to 35%.
+pub fn step_tick(clock: u8, grounded: bool, ladder: bool, speed_q6: i32, ducking: bool) -> (u8, Option<u16>) {
+    let clock = clock.saturating_sub(1);
+    if clock > 0 || !(grounded || ladder) || speed_q6 <= 0 {
+        return (clock, None);
+    }
+    let run = ups_to_q6(if ducking || ladder { 80 } else { 210 });
+    // (ticks, volume divisor): volumes 0.35 (rung), 0.2 (walk), 0.5 (run),
+    // times 0.35 when ducking; the divisors are the rounded reciprocals.
+    let (ticks, den): (u8, u16) = match (ladder, speed_q6 < run, ducking) {
+        (true, _, false) => (7, 3),
+        (true, _, true) => (9, 8),
+        (false, true, false) => (8, 5),
+        (false, true, true) => (10, 14),
+        (false, false, false) => (6, 2),
+        (false, false, true) => (8, 6),
+    };
+    (ticks, Some(den))
+}
+
 // ---------------------------------------------------------------------- use
 
 /// Ticks between pulses of a held use button (chargers, valve wheels).
@@ -466,6 +532,55 @@ mod tests {
         assert!(jump_starts(true, true));
         assert!(!jump_starts(true, false));
         assert!(!jump_starts(false, true));
+    }
+
+    #[test]
+    fn the_compass_grades_each_edge_and_fades_it_in_a_few_ticks() {
+        // straight ahead: full; 45 degrees: 0.7; barely sideways: dropped
+        assert_eq!(compass_intensity(100, 100), 255);
+        assert_eq!(compass_intensity(-71, 100), 181);
+        assert_eq!(compass_intensity(20, 100), 0);
+        assert_eq!(compass_intensity(31, 100), 79);
+        // a full hit is drawn for six ticks (255 -> 230 .. -> 105 -> gone)
+        let (mut v, mut drawn) = (255u8, 0);
+        while v > 0 {
+            if v > COMPASS_DRAW_MIN {
+                drawn += 1;
+            }
+            v = compass_fade(v);
+        }
+        assert_eq!(drawn, 7);
+        // dim edges are drawn at half brightness at least
+        assert_eq!(compass_shade(110), 128);
+        assert_eq!(compass_shade(200), 200);
+    }
+
+    #[test]
+    fn footsteps_walk_slowly_and_quietly_run_fast_and_loud() {
+        // standing still: silent
+        assert_eq!(step_tick(0, true, false, 0, false), (0, None));
+        // walking at 150 u/s: step at once, quiet (1/0.2 = 5), then 8 ticks
+        let (c, s) = step_tick(0, true, false, ups_to_q6(150), false);
+        assert_eq!((c, s), (8, Some(5)));
+        let mut c = c;
+        let mut next = 0;
+        for t in 1..=8 {
+            let (nc, s) = step_tick(c, true, false, ups_to_q6(150), false);
+            c = nc;
+            if s.is_some() {
+                next = t;
+                break;
+            }
+        }
+        assert_eq!(next, 8);
+        // running at 320 u/s: every 6 ticks, half volume
+        assert_eq!(step_tick(0, true, false, ups_to_q6(320), false), (6, Some(2)));
+        // ducked run: slower, much quieter (0.5 * 0.35 = 0.175)
+        assert_eq!(step_tick(0, true, false, ups_to_q6(100), true), (8, Some(6)));
+        // ladder rung
+        assert_eq!(step_tick(0, false, true, ups_to_q6(100), false), (7, Some(3)));
+        // airborne: nothing
+        assert_eq!(step_tick(0, false, false, ups_to_q6(300), false), (0, None));
     }
 
     #[test]

@@ -41,6 +41,7 @@ mod env_sound;
 mod env_sound_audio;
 mod weaponbox;
 mod air_navigation;
+mod hev;
 mod door_transition;
 mod cdstream;
 mod combat_defs;
@@ -5755,7 +5756,6 @@ static mut DAMAGE_DIRECTION: u8 = 0;
 static mut DAMAGE_TICKS: u8 = 0;
 // HEV suit voice: 0 = fine, 1 = health critical, 2 = near death (fire once per
 // worsening threshold crossing). Geiger cooldown throttles the radiation click.
-static mut HEV_HEALTH_STATE: u8 = 0;
 /// Roll of the landing punch (player.cpp: fall speed x 0.013 degrees), Q12
 /// turns like the other punches; springs back with them.
 static mut PUNCH_ROLL: i32 = 0;
@@ -5885,6 +5885,8 @@ unsafe fn music_apply() {
         music::stop();
         CD_TRACK_CUR = CD_TRACK_WANT;
     }
+    #[cfg(feature = "reference-trace")]
+    reference_trace::music(SIM_NOW, CD_TRACK_WANT, CD_TRACK_CUR);
 }
 
 /// Close the physical CD audio path before a runtime WORLD.PAK data read.
@@ -11352,10 +11354,7 @@ unsafe fn logic_use_entity(
             TITLE_LEFT_ALIGNED = rec.arg1 & 4 != 0;
             TITLE_Y_Q5 = ((rec.arg1 >> 3) & 31) as u8;
         }
-        map::LOGIC_CDTRACK => {
-            CD_TRACK_WANT = rec.arg0 as i16;
-            music_apply();
-        }
+        map::LOGIC_CDTRACK => cd_play(li, rec),
         map::LOGIC_SENTENCE => {
             if LOGIC_STATE[li] != LOGIC_STATE_BOTTOM {
                 return;
@@ -12562,6 +12561,7 @@ unsafe fn damage_player_fan_contacts(
                     let damage = logic_state::rotating_touch_damage(rec.speed, LOGIC_COUNTER[li]);
                     if damage != 0 {
                         note_damage_direction(ENT_CACHE[ei].origin);
+                        hev::set_kind(hev::Kind::Crush);
                         damage_player(health, armor, damage);
                     }
                 }
@@ -12630,6 +12630,17 @@ unsafe fn sound_room_think(m: &Map,nents: usize,li: usize,rec: map::LogicEnt,now
     let observed=(*core::ptr::addr_of_mut!(ROOM_LISTENER)).observe(li as u16,rec.arg1 as u8,range);
     LOGIC_NEXT[li]=env_sound::next(now,observed.next_ticks);
     if let Some(room)=observed.room_update {sfx::apply_room(room);}
+}
+
+/// CTargetCDAudio::Play / CTriggerCDAudio::PlayTrack: `cd play N` (N = -1
+/// stops), then the entity removes itself, so a second touch, use or poll does
+/// nothing.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn cd_play(li: usize, rec: map::LogicEnt) {
+    CD_TRACK_WANT = rec.arg0 as i16;
+    music_apply();
+    LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
 }
 
 #[optimize(size)]
@@ -13236,17 +13247,25 @@ unsafe fn logic_try_use(
                 }
             }
             _ if !edge => {}
-            _ => logic_use_entity(
-                m,
-                nlogic,
-                nents,
-                best,
-                map::USE_TOGGLE,
-                now,
-                0,
-                logic_state::CALLER_NONE,
-            ),
+            _ => {
+                #[cfg(feature = "interaction-probe")]
+                reference_trace::probe(now as u32, "use_fire", "", best as i32);
+                logic_use_entity(
+                    m,
+                    nlogic,
+                    nents,
+                    best,
+                    map::USE_TOGGLE,
+                    now,
+                    0,
+                    logic_state::CALLER_NONE,
+                );
+            }
         }
+    } else if edge {
+        // PlayerUse: nothing within reach plays common/wpn_denyselect.wav at
+        // 0.4 volume (the empty-clip click is the same sample).
+        sfx::play_vol(sfx::DRY, 2);
     }
     0
 }
@@ -13275,6 +13294,25 @@ unsafe fn logic_teleport_touch(m: &Map, nlogic: usize, rec: map::LogicEnt) {
             b.delay_ticks, // destination yaw (q12)
         ));
     }
+}
+
+/// CTargetCDAudio::Think for a point target with a radius: look every half
+/// second and start the track once the player is within the radius. True when
+/// the record is such a target (so the touch scan skips it).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn logic_cd_radius_poll(m: &Map, li: usize, player_pos: [i32; 3], now: u16) -> bool {
+    let rec = m.logic(li);
+    if rec.arg1 == 0 || rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs {
+        return false;
+    }
+    if time_reached(now, LOGIC_NEXT[li]) {
+        LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::CDAUDIO_POLL_TICKS);
+        if trigger_rules::cdaudio_in_range(rec.arg1, dist2_3(rec.origin, player_pos) as i64) {
+            cd_play(li, rec);
+        }
+    }
+    true
 }
 
 /// CEnvSpark: a toggled spark flips between sparking and stopped on every Use;
@@ -13349,9 +13387,11 @@ unsafe fn logic_hurt_touch(
             }
         } else if rec.arg0 != 0 {
             note_damage_direction(logic_center(rec));
+            let kind = hev::hurt_kind(rec.flags);
             if rec.flags & map::LOGIC_TRIGGER_HURT_BYPASS_ARMOUR != 0 {
-                fall_damage_player(health, rec.arg0);
+                fall_damage_player(health, rec.arg0, kind);
             } else {
+                hev::set_kind(kind);
                 damage_player(health, armor, rec.arg0);
             }
             if rec.flags & map::LOGIC_TRIGGER_HURT_POISON != 0 {
@@ -13627,11 +13667,9 @@ unsafe fn logic_touch_triggers(
                 map::LOGIC_CDTRACK => {
                     // trigger_cdaudio: brush touch plays once then removes
                     // itself (HL kills the trigger). target_cdaudio has no
-                    // volume and only fires via targets.
+                    // volume; it plays by use or by radius (cd_radius_think).
                     if rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs {
-                        CD_TRACK_WANT = rec.arg0 as i16;
-                        music_apply();
-                        LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+                        cd_play(li, rec);
                     }
                 }
                 _ => {}
@@ -18006,10 +18044,11 @@ unsafe fn note_damage_direction(source: [i32; 3]) {
 
 /// Fall damage: same feedback as `damage_player`, but straight to health --
 /// the HEV suit does not absorb DMG_FALL (player.cpp TakeDamage bit set).
-fn fall_damage_player(health: &mut u16, dmg: u16) {
+fn fall_damage_player(health: &mut u16, dmg: u16, kind: hev::Kind) {
     if dmg == 0 {
         return;
     }
+    let before = *health;
     unsafe {
         PUNCH_PITCH = -23;
         if PAIN_SFX_COOLDOWN == 0 {
@@ -18018,10 +18057,28 @@ fn fall_damage_player(health: &mut u16, dmg: u16) {
         }
     }
     *health = health.saturating_sub(dmg);
+    unsafe { hev_hit(kind, dmg, before, *health) };
+}
+
+/// The suit's side of a hit: what it was, and the health around it.
+unsafe fn hev_hit(kind: hev::Kind, dmg: u16, before: u16, after: u16) {
+    if LOGIC_PLAYER_SUIT == 0 {
+        return;
+    }
+    let chance = impact_rng().next() & 3 == 0;
+    hev::react(kind, dmg, before, after, chance, |sentence, secs| {
+        hev::request(sentence, secs)
+    });
 }
 
 #[optimize(size)]
 fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
+    let before = *health;
+    damage_player_hit(health, armor, dmg);
+    unsafe { hev_hit(hev::take_kind(), dmg, before, *health) };
+}
+
+fn damage_player_hit(health: &mut u16, armor: &mut u16, dmg: u16) {
     if dmg == 0 || settings::debug_on(settings::DEBUG_GOD) {
         return;
     }
@@ -19871,6 +19928,7 @@ unsafe fn tick_props(
             pi += 1;
             continue;
         }
+        hev::set_kind(hev::actor_kind(ty));
         match ai {
             // Melee aliens (zombie/houndeye/bullsquid/ichy) reuse the headcrab
             // approach+bite AI; ranged/boss/flyer types render but don't move yet.
@@ -20169,7 +20227,12 @@ unsafe fn collect_pickups(
                     PROP_ACTIVE[pi] = 0;
                     *pickup_kind = hud::PICKUP_LONGJUMP;
                     *pickup_ticks = HUD_HISTORY_TICKS;
-                    sfx::play(sfx::SUIT);
+                    // CItemLongJump::MyTouch speaks !HEV_A1 at once.
+                    if hev::can_say(hl_format::hev::S_A1) {
+                        hev::say_now(hl_format::hev::S_A1);
+                    } else {
+                        sfx::play(sfx::SUIT);
+                    }
                 }
             }
             PROP_TYPE_ITEM_BATTERY => {
@@ -20190,6 +20253,12 @@ unsafe fn collect_pickups(
                     *pickup_kind = hud::PICKUP_BATTERY;
                     *pickup_ticks = HUD_HISTORY_TICKS;
                     sfx::play(sfx::PICKUP);
+                    // CItemBattery::MyTouch: the new power level, once in 30 s.
+                    if let Some(sentence) = hl_format::hev::battery_sentence(
+                        hl_format::hev::battery_level(*armor),
+                    ) {
+                        hev::request(sentence, hl_format::hev::NEXT_IN_30SEC);
+                    }
                     telemetry::debug_log("hl-psx: HEV battery picked up");
                 }
             }
@@ -20783,6 +20852,14 @@ impl Arsenal {
                 return false;
             }
             self.clip[self.current] -= 1;
+            // The pistols, MP5, shotgun and crossbow end the shot that empties
+            // both the clip and the reserve with !HEV_AMO0 (no repeat time).
+            if self.clip[self.current] == 0
+                && self.ammo[d.ammo] == 0
+                && matches!(self.current, W_GLOCK | W_357 | W_MP5 | W_SHOTGUN | W_CROSSBOW)
+            {
+                unsafe { hev::request(hl_format::hev::S_AMO0, 0) };
+            }
         } else {
             // The Tau Cannon's primary shot consumes two uranium cells in the
             // SDK; every other clipless weapon consumes one per attack pulse.
@@ -36092,32 +36169,19 @@ fn play(
                 if li > 29 && !unsafe { feet_in_water(&m, nents, player.pos, player.half_height()) }
                 {
                     let d = ((li - 29) * 9 / 2).max(1) as u16;
-                    fall_damage_player(&mut health, d);
+                    fall_damage_player(&mut health, d, hev::Kind::Fall);
                 }
                 // One landing, one impact. PlayerMove::update clears this at
                 // the start of its tick, but a tick spent swimming or on a
                 // ladder skips update and would otherwise re-apply the fall.
                 player.land_impact = 0;
             }
-            // HEV suit voice: announce each worsening health threshold once.
+            // HEV suit voice (hev.rs): the queue of sentences, one every 3.5 s.
             unsafe {
-                let hstate = if health == 0 || !suit_equipped {
-                    0
-                } else if health < 10 {
-                    2
-                } else if health < 25 {
-                    1
-                } else {
-                    0
-                };
-                if hstate > HEV_HEALTH_STATE {
-                    sfx::play(if hstate == 2 {
-                        sfx::HEV_NEAR_DEATH
-                    } else {
-                        sfx::HEV_HEALTH_CRIT
-                    });
+                if health == 0 {
+                    hev::clear_queue();
                 }
-                HEV_HEALTH_STATE = hstate;
+                hev::tick(suit_equipped);
             }
             // Footsteps: input-magnitude cadence while grounded (full run =
             // a step roughly every 8 ticks), alternating the two samples.
@@ -36195,7 +36259,7 @@ fn play(
                 // time every two seconds.
                 let (hurt, heal) = (*core::ptr::addr_of_mut!(BREATH)).tick(eye_under, health > 0);
                 if hurt > 0 {
-                    fall_damage_player(&mut health, hurt);
+                    fall_damage_player(&mut health, hurt, hev::Kind::Drown);
                 }
                 if heal > 0 {
                     health = (health + heal).min(PLAYER_START_HEALTH);

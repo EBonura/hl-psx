@@ -58,8 +58,7 @@ pub const BC_DIE: u8 = 41;
 pub const HEV_BELL: u8 = 42;
 pub const GEIGER: u8 = 43; // radiation/toxic-zone click
 pub const HEV_ACTIVATE: u8 = 44; // suit power-on voice (pickup)
-pub const HEV_HEALTH_CRIT: u8 = 45; // "health critical"
-pub const HEV_NEAR_DEATH: u8 = 46; // "near death"
+// ids 45 and 46 held "health critical" and "near death"; hev.rs speaks them now
 pub const CHARGER_HEALTH_LOOP: u8 = 47;
 pub const CHARGER_HEV_LOOP: u8 = 48;
 pub const FLASHLIGHT: u8 = 49;
@@ -192,7 +191,10 @@ pub unsafe fn init_from_pack(pack: &[u8]) -> usize {
 
 #[inline]
 pub unsafe fn load_dialogue_pack(pack: &[u8]) -> usize {
-    let end=if pack.is_empty() {ROOM_CORE_END}else{checked_room_bank(pack,ROOM_CORE_END,96)};
+    let dialogue_end=if pack.is_empty() {ROOM_CORE_END}else{checked_room_bank(pack,ROOM_CORE_END,96)};
+    // The suit's words (hev.rs) sit above the dialogue and below the room
+    // effect's workspace.
+    let end=dialogue_end+crate::hev::spu_bytes(pack);
     // Even a same-number preset must be re-admitted against this new bank.
     mute_room_effect();
     ROOM_APPLIED=u8::MAX;
@@ -200,6 +202,11 @@ pub unsafe fn load_dialogue_pack(pack: &[u8]) -> usize {
     let spu = (*core::ptr::addr_of_mut!(SPU))
         .get_or_insert_with(|| psx_spu::Spu::new(psx_io::periph::SpuDma::steal()));
     let ready=state().load_dialogue_pack(spu, pack);
+    if pack.is_empty() {
+        crate::hev::unload();
+    } else {
+        crate::hev::load(spu, pack, dialogue_end);
+    }
     if !pack.is_empty() {
         assert_eq!(ready,u32::from_le_bytes(pack[4..8].try_into().unwrap()) as usize);
     }

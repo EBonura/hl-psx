@@ -215,9 +215,9 @@ pub fn build_music(valve: &Path, output: &Path) -> Result<()> {
 /// A sound to cook: mono samples at the authored rate, plus whether the WAV
 /// itself declares a loop (GoldSrc's rule for hardware repeats).
 #[derive(Clone)]
-struct Source {
-    wav: Wav,
-    has_loop_metadata: bool,
+pub(crate) struct Source {
+    pub(crate) wav: Wav,
+    pub(crate) has_loop_metadata: bool,
 }
 
 impl Source {
@@ -289,7 +289,7 @@ fn looping_mode(looping: bool) -> Looping {
 /// resampling, pre-emphasis for the SPU's Gaussian interpolation, trellis
 /// ADPCM, peak 0.9 as before. A loop repeats the whole sample, rounded to
 /// whole ADPCM blocks so no padding plays at the seam.
-fn cook_psau(source: &Source, rate: u32, looping: bool) -> Vec<u8> {
+pub(crate) fn cook_psau(source: &Source, rate: u32, looping: bool) -> Vec<u8> {
     let mut options = CookOptions::one_shot(rate);
     options.looping = looping_mode(looping);
     let cooked = psx_audio_cook::cook(&source.wav, &options);
@@ -346,6 +346,9 @@ fn hsfx(blobs: &[Vec<u8>]) -> Vec<u8> {
     }
     output
 }
+
+/// Core ids whose sound moved to the suit voice block of each map's chunk.
+const RETIRED_TO_SUIT_VOICE: [&str; 3] = ["hev_bell", "hev_health_crit", "hev_near_death"];
 
 const SOUNDS: [(&str, &str); 70] = [
     ("glock", "weapons/pl_gun3.wav"),
@@ -494,7 +497,11 @@ fn resident_rate(id: &str, source_rate: u32) -> u32 {
 
 /// Level (dB) a core sound may lose to its resident rate's low-pass before
 /// the rate counts as erasing it.
-const CORE_LEVEL_LIMIT_DB: f64 = -6.0;
+pub(crate) const CORE_LEVEL_LIMIT_DB: f64 = -6.0;
+/// Highest and lowest rate a suit voice word is cooked at (the lowest that keeps
+/// the recording's energy wins).
+pub(crate) const HEV_RATE_TOP: u32 = 8_000;
+pub(crate) const HEV_RATE_FLOOR: u32 = 3_200;
 /// Level a raised core sound is brought back to.
 const CORE_LEVEL_TARGET_DB: f64 = -3.0;
 /// Highest rate a core sound is raised to (the core's own top rate).
@@ -558,7 +565,7 @@ fn played_level_db(source: &Source, rate: u32, looping: bool) -> f64 {
     20.0 * (a / b).log10()
 }
 
-fn level_kept_db(source: &Source, rate: u32) -> f64 {
+pub(crate) fn level_kept_db(source: &Source, rate: u32) -> f64 {
     levels_kept_db(source, &[rate])[0]
 }
 
@@ -660,7 +667,17 @@ pub fn build_sfx(sound: &Path, output: &Path) -> Result<()> {
             )
         })
         .collect();
-    let blobs = cook_parallel(&jobs);
+    let mut blobs = cook_parallel(&jobs);
+    // The suit's bell, "health critical" and "near death" were resident in
+    // every map. The suit voice block (hev.rs) speaks the last two, from the
+    // per-map chunk and at a rate that fits it, so the ids stay (stable
+    // numbering) but hold one silent block.
+    let retired = cook_psau(&silent_source(), 5_000, false);
+    for (index, (id, _)) in SOUNDS.iter().enumerate() {
+        if RETIRED_TO_SUIT_VOICE.contains(id) {
+            blobs[index] = retired.clone();
+        }
+    }
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -1560,7 +1577,7 @@ fn prepend_scientist_dialogue_keys(
 }
 
 /// A sentence's WAVs joined at the highest of their authored rates.
-fn concat_sources(valve: &Path, wavs: &[String]) -> Result<Option<Source>> {
+pub(crate) fn concat_sources(valve: &Path, wavs: &[String]) -> Result<Option<Source>> {
     let mut parts = Vec::with_capacity(wavs.len());
     for relative in wavs {
         let path = valve.join("sound").join(normalized_sound_path(relative));
@@ -2153,6 +2170,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
         println!("  previous cooker's core {chunk}: {bytes} B");
         previous_core.insert(chunk, bytes);
     }
+    let hev_words = crate::hev::Cooked::new(valve)?;
     let sentences = load_sentences(valve)?;
     let mut manifest = Vec::new();
     let mut rates_report = vec![String::from(
@@ -2173,7 +2191,31 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             continue;
         }
         let keys = map_audio_keys(valve, &bsp, map_index as u16, &sentences)?;
+        // The suit's own sentences, from what this map can make it say.
+        let hev_chosen = hev_words.fit(
+            &crate::hev::wanted(map_name, &bsp_entities(&bsp)?, &map_classes(&bsp)?),
+            crate::hev::BLOCK_CAP,
+        );
+        let (hev_block, hev_spu) = if hev_chosen.is_empty() {
+            (Vec::new(), 0)
+        } else {
+            hev_words.block(&hev_chosen)
+        };
         if keys.is_empty() {
+            if !hev_block.is_empty() {
+                // No dialogue or loops, but the suit still speaks.
+                let chunk = 3100 + map_index;
+                let mut bytes = hsfx(&[]);
+                let at = bytes.len() as u32;
+                bytes.extend_from_slice(&hev_block);
+                bytes.extend_from_slice(&at.to_le_bytes());
+                fs::write(output.join(format!("chunk_{chunk}.psxa")), &bytes)?;
+                println!(
+                    "  {map_name} (idx {map_index}, chunk {chunk}): suit voice only, {} sentences, {} SPU bytes",
+                    hev_chosen.len(),
+                    hev_spu
+                );
+            }
             continue;
         }
         if keys.len() > RUNTIME_MAX_MAP_AUDIO {
@@ -2184,7 +2226,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             .into());
         }
         let (core_chunk, core_bytes) = core_profiles[map_index];
-        let budget = 512 * 1024 - 0x1010 - core_bytes - 4096;
+        let budget = 512 * 1024 - 0x1010 - core_bytes - 4096 - hev_spu as usize;
         let mut planned: Vec<Planned<'_>> = Vec::new();
         for entry in &keys {
             let present = entry.wavs.iter().all(|relative| {
@@ -2576,7 +2618,13 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             .into());
         }
         let chunk = 3100 + map_index;
-        fs::write(output.join(format!("chunk_{chunk}.psxa")), &pack)?;
+        let mut chunk_bytes = pack.clone();
+        if !hev_block.is_empty() {
+            // The suit block, then its offset as the chunk's last word.
+            chunk_bytes.extend_from_slice(&hev_block);
+            chunk_bytes.extend_from_slice(&(pack.len() as u32).to_le_bytes());
+        }
+        fs::write(output.join(format!("chunk_{chunk}.psxa")), &chunk_bytes)?;
         manifest.extend(
             planned
                 .iter()
@@ -2637,6 +2685,13 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             range(MapAudioClass::Loop),
             pack.len() / 1024,
         );
+        if hev_spu > 0 {
+            println!(
+                "    suit voice: {} sentences, {} SPU bytes",
+                hev_chosen.len(),
+                hev_spu
+            );
+        }
     }
     fs::write(output.join("manifest.txt"), manifest.join("\n") + "\n")?;
     fs::write(output.join("rates.txt"), rates_report.join("\n") + "\n")?;

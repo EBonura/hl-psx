@@ -218,6 +218,28 @@ pub fn target_fire(map_tick: u16, target: &str, use_type: u8, depth: u8) {
     line.finish();
 }
 
+/// The suit started the word `word` (part `part`) of `sentence`.
+pub fn hev(map_tick: u16, sentence: u8, part: u8, word: u8) {
+    let mut line = Line::new("event");
+    common(&mut line, map_tick as u32);
+    line.field_str("event", "hev");
+    line.field_u32("sentence", sentence as u32);
+    line.field_u32("part", part as u32);
+    line.field_u32("word", word as u32);
+    line.finish();
+}
+
+/// The wanted CD music track changed (`-1` stops the music); `playing` is
+/// what the drive accepted (0 when the disc lacks the song or refused).
+pub fn music(map_tick: u16, track: i16, playing: i16) {
+    let mut line = Line::new("event");
+    common(&mut line, map_tick as u32);
+    line.field_str("event", "music");
+    line.field_i32("track", track as i32);
+    line.field_i32("playing", playing as i32);
+    line.finish();
+}
+
 pub fn changelevel(map_tick: u16, next_map: &str, landmark: &str) {
     let mut line = Line::new("event");
     common(&mut line, map_tick as u32);

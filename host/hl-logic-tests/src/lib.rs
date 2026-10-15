@@ -89,3 +89,6 @@ pub mod turret_aim;
 
 #[path = "../../../game/src/sentry_wake.rs"]
 pub mod sentry_wake;
+
+#[path = "../../../game/src/hev.rs"]
+pub mod hev;
