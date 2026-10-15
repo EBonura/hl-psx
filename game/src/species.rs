@@ -65,13 +65,6 @@ unsafe fn acquire(
     Some((target, visible, aim))
 }
 
-/// Chance in percent that one MP5 bullet from a grunt reaches a standing
-/// target `dist` units away: all of them at 100 units, 45 at 300, about 20
-/// from 550 on (measured at 100, 200, 300, 550 and 700).
-fn grunt_hit_pct(dist: i32) -> u32 {
-    (130 - dist * 3 / 10).clamp(20, 100) as u32
-}
-
 /// monster_human_grunt with an MP5: ready stance, then bursts of three volleys
 /// (one bullet, sometimes three) every 10 to 14 ticks, and a short pause after
 /// five bursts. It holds its ground while it sees the enemy within 1,000 units.
@@ -200,13 +193,13 @@ pub(crate) unsafe fn tick_grunt(
         PROP_AI_TIMER[pi] = state - 1;
         if left & 1 == 0 {
             let from = prop_eye(m, pi);
-            let dist = isqrt_i32(dist2_3(from, aim));
-            let pct = grunt_hit_pct(dist);
             let dmg = skill_hit(Sk::Bullet9mmAr);
             let bullets = if impact_rng().below(4) == 0 { 3 } else { 1 };
             let mut b = 0;
             while b < bullets {
-                if impact_rng().below(100) < pct {
+                // FireBullets with VECTOR_CONE_10DEGREES: the bullet either
+                // crosses the target's body or goes wide of it.
+                if monster_shot_lands(m, from, aim, target, player_pos, nprops, 711).is_some() {
                     damage_target(target, dmg, pos, health, armor);
                     push_tracer(from, aim);
                 } else {
