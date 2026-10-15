@@ -16919,6 +16919,8 @@ unsafe fn gib_prop(pi: usize) {
 
 /// Whether a dead actor of this kind can burst: it bleeds and is no larger
 /// than a trooper (the bosses and machines have no gibs to throw).
+#[inline(never)]
+#[optimize(size)]
 unsafe fn prop_can_gib(pi: usize) -> bool {
     let ty = PROP_KIND[pi];
     prop_blood_kind(ty) != IMPACT_KIND_NONE
@@ -20022,6 +20024,8 @@ unsafe fn dry_click() {
 
 /// `CRpg::Reload` refuses while a rocket is flying and the designator is on:
 /// the dot is guiding it, so the launcher stays empty until it lands.
+#[inline(never)]
+#[optimize(size)]
 unsafe fn satchels_out() -> bool {
     let mut i = 0;
     while i < MAX_PROJECTILES {
@@ -20033,6 +20037,8 @@ unsafe fn satchels_out() -> bool {
     false
 }
 
+#[inline(never)]
+#[optimize(size)]
 unsafe fn rpg_reload_blocked() -> bool {
     if !RPG_SPOT_ACTIVE {
         return false;
@@ -20320,6 +20326,8 @@ impl Arsenal {
         None
     }
 
+    #[inline(never)]
+    #[optimize(size)]
     fn start_reload(&mut self) -> bool {
         let d = self.def();
         if d.reload == 0 || d.clip == 0 || self.reload_ticks != 0 {
@@ -20450,6 +20458,8 @@ impl Arsenal {
     /// out). Returns true if the selection changed (the caller then streams
     /// the new viewmodel). The RPG will not be put away while a rocket it
     /// guides is in the air (`CRpg::CanHolster`).
+    #[inline(never)]
+    #[optimize(size)]
     fn cycle(&mut self, forward: bool) -> bool {
         // Bucket 4 of the HUD lists the hand grenade, satchel, tripmine, snark.
         const HUD_ORDER: [u8; N_WEAPONS] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13, 12, 11];
@@ -20480,6 +20490,8 @@ impl Arsenal {
 
     /// A thrown weapon with nothing left to throw (and, for the satchel, no
     /// charge left to detonate): `ITEM_FLAG_EXHAUSTIBLE`.
+    #[inline(never)]
+    #[optimize(size)]
     fn is_spent_thrown(&self) -> bool {
         matches!(self.current, W_GRENADE | W_SNARK | W_TRIPMINE | W_SATCHEL)
             && self.owns(self.current)
@@ -20491,6 +20503,8 @@ impl Arsenal {
     /// leaves the inventory and the player is switched to a deployable weapon
     /// of the same weight, else the heaviest one (never the RPG, which needs a
     /// hand free to guide it). Returns the weapon switched to.
+    #[inline(never)]
+    #[optimize(size)]
     fn retire_spent(&mut self) -> usize {
         // iWeight by weapon id.
         const WEIGHT: [i8; N_WEAPONS] = [0, 10, 15, 15, 15, 10, 20, 20, 20, 15, 5, 5, -10, -10];
@@ -20517,6 +20531,8 @@ impl Arsenal {
     }
 
     /// `CBasePlayerWeapon::CanDeploy`.
+    #[inline(never)]
+    #[optimize(size)]
     fn can_deploy(&self, id: usize) -> bool {
         id == W_CROWBAR
             || id == W_HORNET
@@ -22153,6 +22169,7 @@ unsafe fn autoaim_rotation(
 }
 
 /// Player weapon projectile: fires forward along the view.
+#[optimize(size)]
 unsafe fn spawn_projectile(kind: u8, damage: u8, eye: [i32; 3], rot: &Mat3I16) -> usize {
     let fwd = [rot.m[2][0] as i32, rot.m[2][1] as i32, rot.m[2][2] as i32];
     let slot = spawn_projectile_dir(kind, damage, eye, fwd, false);
@@ -22319,6 +22336,8 @@ unsafe fn explode_inner(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_
 
 /// CBaseEntity RadiusDamage: the damage half of an explosion, without its
 /// sound and fireball (the Tau Cannon's bounce and exit blasts are silent).
+#[inline(never)]
+#[optimize(size)]
 unsafe fn radius_damage(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_inflicted: bool) {
     // GoldSrc RadiusDamage reaches every damageable brush, including the
     // Hazard Course's moving func_guntarget. A point trace to the live brush
@@ -22579,6 +22598,54 @@ unsafe fn think_rocket(m: &Map, movers: &[phys::Mover], i: usize) {
     PROJECTILES[i].vel = v;
 }
 
+/// The nearest live actor in front of `heading` (its direction dotted with
+/// the line to the actor at least `front_min`, q12) that `pos` can see within
+/// `max_d2` squared units, as (index, aim point, squared distance). `snark`
+/// picks the snark's prey filter, else the player's enemies. Shared by the
+/// hornet gun and the snark.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn nearest_actor_ahead(
+    m: &Map,
+    movers: &[phys::Mover],
+    pos: [i32; 3],
+    heading: [i32; 3],
+    front_min: i32,
+    max_d2: i32,
+    snark: bool,
+) -> Option<(usize, [i32; 3], i32)> {
+    let mut best: Option<(usize, [i32; 3], i32)> = None;
+    let mut best_d2 = max_d2;
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut pi = 0usize;
+    while pi < nprops {
+        let ty = PROP_KIND[pi];
+        let wanted = if snark {
+            PROP_ACTIVE[pi] != 0
+                && PROP_HEALTH[pi] != 0
+                && prop_start_health(ty) != 0
+                && snark_prey(ty)
+                && ty != 58
+        } else {
+            prop_is_enemy_target(pi)
+        };
+        if wanted {
+            let at = prop_target(ty, PROP_POS[pi]);
+            let d2 = dist2_3(pos, at);
+            if d2 < best_d2 {
+                let to = dir_q12(pos, at);
+                let front = (to[0] * heading[0] + to[1] * heading[1] + to[2] * heading[2]) >> 12;
+                if front >= front_min && actor_line_clear(m, movers, pos, at) {
+                    best = Some((pi, at, d2));
+                    best_d2 = d2;
+                }
+            }
+        }
+        pi += 1;
+    }
+    best
+}
+
 /// Whether alien military sits with the snark (R_AL in the relationship
 /// table: the alien grunt, slave and controller), roaches and the G-Man are
 /// ignored; everything else with health, the scientists included, is prey.
@@ -22632,27 +22699,18 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
     let mut best = usize::MAX; // MAX - 1 = the player
     let mut best_d2 = 512 * 512;
     let mut best_at = [0i32; 3];
-    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-    let mut pi = 0usize;
-    while pi < nprops {
-        let ty = PROP_KIND[pi];
-        if PROP_ACTIVE[pi] != 0
-            && PROP_HEALTH[pi] != 0
-            && prop_start_health(ty) != 0
-            && snark_prey(ty)
-            && PROP_KIND[pi] != 58
-        {
-            let at = prop_target(ty, PROP_POS[pi]);
-            let d2 = dist2_3(p.pos, at);
-            let to = dir_q12(p.pos, at);
-            let front = (to[0] * heading[0] + to[1] * heading[1] + to[2] * heading[2]) >> 12;
-            if d2 < best_d2 && (front > 0 || p.vel == [0; 3]) && actor_line_clear(m, movers, p.pos, at) {
-                best = pi;
-                best_d2 = d2;
-                best_at = at;
-            }
-        }
-        pi += 1;
+    if let Some((pi, at, d2)) = nearest_actor_ahead(
+        m,
+        movers,
+        p.pos,
+        heading,
+        if p.vel == [0; 3] { -4096 } else { 1 },
+        best_d2,
+        true,
+    ) {
+        best = pi;
+        best_d2 = d2;
+        best_at = at;
     }
     if armed && LOGIC_PLAYER_HEALTH > 0 {
         let at = [LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]];
@@ -22743,23 +22801,11 @@ unsafe fn track_hornet(m: &Map, movers: &[phys::Mover], i: usize) {
     }
     let fly = if p.aux & 1 != 0 { 40 } else { 30 };
     let flight = dir_q12([0; 3], p.vel);
-    let mut best = usize::MAX;
-    let mut best_d2 = 512 * 512;
-    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-    let mut pi = 0usize;
-    while pi < nprops {
-        if prop_is_enemy_target(pi) {
-            let target = prop_target(PROP_KIND[pi], PROP_POS[pi]);
-            let d2 = dist2_3(p.pos, target);
-            let to = dir_q12(p.pos, target);
-            let dot = (to[0] * flight[0] + to[1] * flight[1] + to[2] * flight[2]) >> 12;
-            if d2 < best_d2 && dot > 3686 && actor_line_clear(m, movers, p.pos, target) {
-                best = pi;
-                best_d2 = d2;
-            }
-        }
-        pi += 1;
-    }
+    let found = nearest_actor_ahead(m, movers, p.pos, flight, 3686, 512 * 512, false);
+    let (best, best_d2) = match found {
+        Some((pi, _, d2)) => (pi, d2),
+        None => (usize::MAX, 0),
+    };
     let (heading, speed) = if best == usize::MAX {
         (flight, fly)
     } else {
