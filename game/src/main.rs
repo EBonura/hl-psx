@@ -3625,6 +3625,7 @@ static mut PUSH_BOX: [[i32; 3]; 2] = [[0; 3]; 2];
 /// walkers are never turrets.
 const PROP_RUNTIME_AIRBORNE: u8 = 8;
 static mut PLAYER_GROUND_ENT: i16 = -1; // brush entity the player stands on (conveyors)
+static mut PLAYER_ON_GROUND: bool = false;
 static mut ENT_ACTIVE: [u8; MAX_ENTS] = [0; MAX_ENTS];
 
 #[derive(Clone, Copy)]
@@ -5736,14 +5737,19 @@ static mut PUNCH_YAW: i32 = 0;
 // Walk view-bob phase (advances with movement each sim tick) -> a vertical head
 // bob + a subtle strafe roll are derived from it in the render view setup.
 static mut BOB_PHASE: u32 = 0;
-// GoldSrc pain-compass edges packed as front/right/rear/left bits. This
+// GoldSrc pain-compass edge intensities (front/right/rear/left, 0..255). This
 // replaces the port-specific full-screen red wash with the original
 // directional feedback without adding a resident array.
-static mut DAMAGE_DIRECTION: u8 = 0;
-static mut DAMAGE_TICKS: u8 = 0;
+static mut DAMAGE_EDGE: [u8; 4] = [0; 4]; // front, right, rear, left
 // HEV suit voice: 0 = fine, 1 = health critical, 2 = near death (fire once per
 // worsening threshold crossing). Geiger cooldown throttles the radiation click.
-static mut HEV_HEALTH_STATE: u8 = 0;
+static mut HEV_PREV_HEALTH: u16 = 100;
+static mut HEV_LAST_DAMAGE: u16 = 0;
+static mut HEV_CRIT_READY: u32 = 0;
+static mut HEV_NEAR_READY: u32 = 0;
+/// Roll of the landing punch (player.cpp: fall speed x 0.013 degrees), Q12
+/// turns like the other punches; springs back with them.
+static mut PUNCH_ROLL: i32 = 0;
 static mut GEIGER_COOLDOWN: u8 = 0;
 
 /// Kick the view (decaying) -- HL's punchangle. `pitch` up is negative here to
@@ -7511,11 +7517,12 @@ unsafe fn touch_triggers_box(
                     0,
                     logic_state::CALLER_NONE,
                 );
-                if rec.kind == map::LOGIC_TRIGGER_ONCE {
-                    LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
-                } else if rec.wait_ticks >= 0 {
-                    LOGIC_STATE[li] = LOGIC_STATE_WAITING;
-                    LOGIC_NEXT[li] = now.wrapping_add(rec.wait_ticks as u16);
+                match trigger_rules::multiple_after_fire(rec.wait_ticks) {
+                    Some(wait) if rec.kind != map::LOGIC_TRIGGER_ONCE => {
+                        LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+                        LOGIC_NEXT[li] = now.wrapping_add(wait);
+                    }
+                    _ => LOGIC_STATE[li] = LOGIC_STATE_REMOVED,
                 }
             }
         }
@@ -8234,7 +8241,9 @@ fn logic_player_touch_candidate(rec: map::LogicEnt) -> bool {
         map::LOGIC_TRIGGER_TELEPORT | map::LOGIC_TRIGGER_GRAVITY => {
             (rec.spawnflags & SF_TRIGGER_NOCLIENTS) == 0
         }
-        map::LOGIC_CDTRACK => rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs,
+        map::LOGIC_CDTRACK => {
+            rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs || rec.arg1 != 0
+        }
         // CBreakable::BreakTouch: run into it, or stand on it.
         map::LOGIC_FUNC_BREAKABLE => {
             rec.spawnflags & (SF_BREAK_TOUCH | SF_BREAK_PRESSURE) != 0
@@ -9700,7 +9709,7 @@ unsafe fn logic_fire_targets(
     depth: u8,
     caller_li: u16,
 ) {
-    if target == 0 || depth > 8 {
+    if target == 0 || depth > trigger_rules::MAX_FIRE_DEPTH {
         return;
     }
     #[cfg(feature = "reference-trace")]
@@ -11080,7 +11089,7 @@ unsafe fn logic_use_entity(
     depth: u8,
     caller_li: u16,
 ) {
-    if li >= nlogic || depth > 8 || LOGIC_STATE[li] == LOGIC_STATE_REMOVED {
+    if li >= nlogic || depth > trigger_rules::MAX_FIRE_DEPTH || LOGIC_STATE[li] == LOGIC_STATE_REMOVED {
         return;
     }
     let rec = m.logic(li);
@@ -11339,9 +11348,12 @@ unsafe fn logic_use_entity(
             sfx::play_voice_authored(rec.arg0 as u8, rec.origin, rec.flags, rec.sound1);
         }
         map::LOGIC_ENV_SHAKE => {
-            SHAKE_AMP = rec.arg0;
-            SHAKE_DUR = rec.speed.max(1);
-            SHAKE_TICKS = rec.speed.max(1);
+            let reach = dist2_3(rec.origin, LOGIC_PLAYER_POS) as i64;
+            if trigger_rules::shake_reaches(PLAYER_ON_GROUND, rec.arg1 as i32, reach) {
+                SHAKE_AMP = rec.arg0;
+                SHAKE_DUR = rec.speed.max(1);
+                SHAKE_TICKS = rec.speed.max(1);
+            }
         }
         map::LOGIC_WALL_TOGGLE => {
             if let Some(ei) = logic_valid_brush(rec.brush, nents) {
@@ -11456,6 +11468,20 @@ unsafe fn logic_use_entity(
             LOGIC_COUNTER[li] = rec.arg0 as i16;
             LOGIC_STATE[li] = LOGIC_STATE_WAITING;
             LOGIC_NEXT[li] = now;
+        }
+        map::LOGIC_ENV_SPARK => {
+            // CEnvSpark: a toggled spark flips between sparking and stopped on
+            // every Use; the others have no Use.
+            let running = LOGIC_STATE[li] == LOGIC_STATE_BOTTOM;
+            let now_running = trigger_rules::spark_after_use(rec.spawnflags, running);
+            if now_running != running {
+                LOGIC_STATE[li] = if now_running { LOGIC_STATE_BOTTOM } else { LOGIC_STATE_TOP };
+                if now_running {
+                    LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::spark_gap_ticks(
+                        impact_rng().below(rec.arg0.max(1) as u32 + 1) as u16,
+                    ));
+                }
+            }
         }
         map::LOGIC_ENV_BUBBLES => {
             let mut schedule=env_bubbles::Scheduler {enabled:LOGIC_STATE[li]==LOGIC_STATE_TOP,next:LOGIC_NEXT[li]};
@@ -11893,11 +11919,11 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
     // per sim tick so a kick recovers over ~5-6 ticks. Snap tiny residuals to 0.
     PUNCH_PITCH -= (PUNCH_PITCH * 5) / 16 + PUNCH_PITCH.signum();
     PUNCH_YAW -= (PUNCH_YAW * 5) / 16 + PUNCH_YAW.signum();
-    if DAMAGE_TICKS > 0 {
-        DAMAGE_TICKS -= 1;
-        if DAMAGE_TICKS == 0 {
-            DAMAGE_DIRECTION = 0;
-        }
+    PUNCH_ROLL -= (PUNCH_ROLL * 5) / 16 + PUNCH_ROLL.signum();
+    let mut edge = 0;
+    while edge < 4 {
+        DAMAGE_EDGE[edge] = player_rules::compass_fade(DAMAGE_EDGE[edge]);
+        edge += 1;
     }
     if GEIGER_COOLDOWN & 0x0f != 0 {
         GEIGER_COOLDOWN -= 1;
@@ -12177,25 +12203,24 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
 /// the same screen positions and fade law without spending another atlas page
 /// or resident texture packet pool.
 fn draw_damage_compass(health: u16) {
-    let edges = unsafe { DAMAGE_DIRECTION };
-    if edges == 0 {
-        return;
-    }
-    // GoldSrc uses amber above 25 health and red below it. Keep this much
-    // softer than the removed full-screen red wash.
-    let green = if health > 25 { 40 } else { 0 };
-    let mut edge = 0usize;
+    let edges = unsafe { DAMAGE_EDGE };
     let arrows = [
         [(152, 24), (168, 24), (160, 38)],    // front / top
         [(240, 112), (240, 128), (226, 120)], // right
         [(152, 200), (168, 200), (160, 186)], // rear / bottom
         [(80, 112), (80, 128), (94, 120)],    // left
     ];
+    let mut edge = 0usize;
     while edge < arrows.len() {
-        if edges & (1 << edge) != 0 {
+        // GoldSrc draws an edge while its intensity is above 0.4, at least
+        // half bright, amber above 25 health and red below it. Kept much
+        // softer than the removed full-screen red wash.
+        if edges[edge] > player_rules::COMPASS_DRAW_MIN {
+            let red = player_rules::compass_shade(edges[edge]) >> 1;
+            let green = if health > 25 { red / 3 } else { 0 };
             fx_tri_flat_blended(
                 arrows[edge],
-                128,
+                red,
                 green,
                 0,
                 psx_gpu::material::BlendMode::Add,
@@ -13373,6 +13398,25 @@ unsafe fn logic_touch_triggers(
             } else {
                 (pmins, pmaxs)
             };
+            if LOGIC_KIND[li] == map::LOGIC_CDTRACK {
+                let rec = m.logic(li);
+                if rec.arg1 != 0 && rec.brush == map::LOGIC_BRUSH_NONE && rec.mins == rec.maxs {
+                    // CTargetCDAudio::Think: look every half second.
+                    if time_reached(now, LOGIC_NEXT[li]) {
+                        LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::CDAUDIO_POLL_TICKS);
+                        if trigger_rules::cdaudio_in_range(
+                            rec.arg1,
+                            dist2_3(rec.origin, player_pos) as i64,
+                        ) {
+                            CD_TRACK_WANT = rec.arg0 as i16;
+                            music_apply();
+                            LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+                        }
+                    }
+                    scan += 1;
+                    continue;
+                }
+            }
             if LOGIC_KIND[li] == map::LOGIC_TRIGGER_HURT {
                 // Hurt volumes are touched by monsters as well as the player,
                 // so they run whether or not the player is inside.
@@ -13435,9 +13479,15 @@ unsafe fn logic_touch_triggers(
                             LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
                         } else if is_end {
                             LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
-                        } else if rec.kind == map::LOGIC_TRIGGER_MULTIPLE && rec.wait_ticks >= 0 {
-                            LOGIC_STATE[li] = LOGIC_STATE_WAITING;
-                            LOGIC_NEXT[li] = now.wrapping_add(rec.wait_ticks as u16);
+                        } else if rec.kind == map::LOGIC_TRIGGER_MULTIPLE {
+                            // A negative wait removes it after the first fire.
+                            match trigger_rules::multiple_after_fire(rec.wait_ticks) {
+                                Some(wait) => {
+                                    LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+                                    LOGIC_NEXT[li] = now.wrapping_add(wait);
+                                }
+                                None => LOGIC_STATE[li] = LOGIC_STATE_REMOVED,
+                            }
                         }
                     }
                 }
@@ -13687,8 +13737,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     ENDING_FROM = 0;
     CAMERA_LI = u16::MAX;
     CAMERA_LOCK = false;
-    DAMAGE_DIRECTION = 0;
-    DAMAGE_TICKS = 0;
+    DAMAGE_EDGE = [0; 4];
     GEIGER_COOLDOWN = 0;
     TRACKTRAIN_SUBMODEL = m.tram_submodel.min(u16::MAX as usize) as u16;
     TRAM_NODE_ALT = [0; 8];
@@ -13875,6 +13924,18 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         if rec.kind == map::LOGIC_MONSTERMAKER && rec.targetname == 0 {
             LOGIC_STATE[li] = LOGIC_STATE_WAITING;
             LOGIC_NEXT[li] = now.wrapping_add(maker_delay(rec));
+        }
+        if rec.kind == map::LOGIC_CDTRACK && rec.arg1 != 0 {
+            LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::CDAUDIO_FIRST_POLL_TICKS);
+        }
+        if rec.kind == map::LOGIC_ENV_SPARK {
+            // Spawn: the first spark comes 0.1 s plus up to 1.5 s in.
+            if !trigger_rules::spark_starts_running(rec.spawnflags) {
+                LOGIC_STATE[li] = LOGIC_STATE_TOP;
+            }
+            LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::spark_gap_ticks(
+                impact_rng().below(trigger_rules::SPARK_DEFAULT_MAX_DELAY_TICKS as u32 + 1) as u16,
+            ));
         }
         if rec.kind==map::LOGIC_ENV_SOUND {
             assert!(rec.arg1<29,"unsupported cooked room type");
@@ -17091,7 +17152,7 @@ const SFX_NONE: u8 = 0xFF;
 static mut MON_PAIN_COOLDOWN: u8 = 0;
 static mut MOVERS: [phys::Mover; MAX_ENTS + 1] = [phys::ZERO_MOVER; MAX_ENTS + 1];
 static mut MOVER_COUNT: usize = 0;
-static mut STEP_ACC: u32 = 0;
+static mut STEP_CLOCK: u8 = 0;
 static mut STEP_ALT: u8 = 0;
 static mut MOVE_TICK: u16 = 0; // walker half-rate phase
                                // Parsed-model caches: Model::load re-parsed headers on EVERY draw call
@@ -17717,24 +17778,20 @@ unsafe fn note_damage_direction(source: [i32; 3]) {
     let dz = (source[2] - LOGIC_PLAYER_POS[2]).clamp(-4096, 4096);
     let delta = [dx, dy, dz];
     let d2 = dx * dx + dy * dy + dz * dz;
-    let mut edges = 0u8;
     if d2 <= 50 * 50 {
-        edges = 0x0f;
-    } else {
-        let distance = isqrt_i32(d2);
-        let rot = view_rotation(LOGIC_PLAYER_YAW, 0);
-        let forward = dot12(rot.m[2], delta);
-        let right = dot12(rot.m[0], delta);
-        let threshold = distance * 3;
-        if forward.abs() * 10 > threshold {
-            edges |= if forward > 0 { 1 << 0 } else { 1 << 2 };
-        }
-        if right.abs() * 10 > threshold {
-            edges |= if right > 0 { 1 << 1 } else { 1 << 3 };
-        }
+        DAMAGE_EDGE = [255; 4];
+        return;
     }
-    DAMAGE_DIRECTION |= edges;
-    DAMAGE_TICKS = 10;
+    // Each edge takes the dot of the unit direction to the source with the
+    // view axis (forward, right), kept above 0.3, and holds the larger value.
+    let distance = isqrt_i32(d2);
+    let rot = view_rotation(LOGIC_PLAYER_YAW, LOGIC_PLAYER_PITCH);
+    let forward = dot12(rot.m[2], delta);
+    let right = dot12(rot.m[0], delta);
+    let front = if forward > 0 { 0 } else { 2 };
+    let side = if right > 0 { 1 } else { 3 };
+    DAMAGE_EDGE[front] = DAMAGE_EDGE[front].max(player_rules::compass_intensity(forward, distance));
+    DAMAGE_EDGE[side] = DAMAGE_EDGE[side].max(player_rules::compass_intensity(right, distance));
 }
 
 /// Fall damage: same feedback as `damage_player`, but straight to health --
@@ -17744,6 +17801,8 @@ fn fall_damage_player(health: &mut u16, dmg: u16) {
         return;
     }
     unsafe {
+        HEV_LAST_DAMAGE = dmg;
+        PUNCH_PITCH = -23;
         if PAIN_SFX_COOLDOWN == 0 {
             sfx::play(sfx::PAIN);
             PAIN_SFX_COOLDOWN = 12;
@@ -17764,8 +17823,9 @@ fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
         }
         // GoldSrc uses the directional pain compass plus view punch, not a
         // full-screen red damage wash.
-        let r = impact_rng().next() as i32;
-        add_view_punch(dmg.min(24) as i32 + (r % 16) - 8, (r % 24) - 12);
+        // CBasePlayer::TakeDamage: a fixed 2 degree nod, whatever the damage.
+        PUNCH_PITCH = -23;
+        HEV_LAST_DAMAGE = dmg;
     }
     if *armor > 0 {
         // GoldSrc's HEV suit keeps only 20% of generic damage on health and
@@ -22781,7 +22841,7 @@ unsafe fn render_blood_fx(packets: &mut PrimitivePacketArena<'_>, np: &mut usize
 /// player is nearby (cheap -- a 1/64 per-tick chance, distance-gated).
 #[inline(never)]
 #[optimize(size)]
-unsafe fn tick_env_sparks(m: &Map, nlogic: usize) {
+unsafe fn tick_env_sparks(m: &Map, nlogic: usize, now: u16) {
     let indexed = LOGIC_SPARK_COUNT != LOGIC_HOT_FALLBACK;
     let scan_count = if indexed {
         LOGIC_SPARK_COUNT as usize
@@ -22797,16 +22857,20 @@ unsafe fn tick_env_sparks(m: &Map, nlogic: usize) {
         };
         // Full maps can exhaust the hotlist tail. Their cached kinds still
         // let us skip unrelated records without decoding 64 bytes each.
-        if LOGIC_KIND[li] != map::LOGIC_ENV_SPARK {
+        if LOGIC_KIND[li] != map::LOGIC_ENV_SPARK
+            || LOGIC_STATE[li] != LOGIC_STATE_BOTTOM
+            || !time_reached(now, LOGIC_NEXT[li])
+        {
             scan += 1;
             continue;
         }
-        // The distance test reads the origin alone; the rest of the record
-        // is decoded only for the rare spark that fires.
-        if dist2_3(m.logic_origin(li), LOGIC_PLAYER_POS) < 1200 * 1200
-            && (impact_rng().next_mixed() & 0x3F) == 0
-        {
-            let rec = m.logic(li);
+        // CEnvSpark::SparkThink: 0.1 s plus up to MaxDelay to the next one.
+        // A spark far from the player keeps its schedule but is not drawn.
+        let rec = m.logic(li);
+        LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::spark_gap_ticks(
+            impact_rng().below(rec.arg0.max(1) as u32 + 1) as u16,
+        ));
+        if dist2_3(rec.origin, LOGIC_PLAYER_POS) < 1200 * 1200 {
             let o = rec.origin;
             spark_burst(o, 4, 3, 8, 10);
             if rec.sound0 != u8::MAX {
@@ -34605,6 +34669,7 @@ fn play(
                 trace_player_hull_probes(sim_frame_no, &m, movers, &player, fwd, yaw, jump_want);
             }
             phys::clear_player_touches();
+            let was_on_ground = player.on_ground;
             if !settings::debug_on(settings::DEBUG_FLY) {
                 player.record_mover_contacts(&m, movers, |id| {
                     id >= 0 && unsafe { fan_logic_index(id as usize).is_some() }
@@ -34751,10 +34816,13 @@ fn play(
             // DAMAGE_FOR_FALL_SPEED to 100 at ~1024 u/s. Fall damage bypasses
             // armor (DMG_FALL is not in the suit's absorb set) and is uncapped
             // -- long drops are lethal, as authored.
+            let land_impact = player.land_impact as i32;
             {
-                let li = player.land_impact as i32;
+                let li = land_impact;
                 if li > 17 {
-                    unsafe { add_view_punch(-(li.min(60) / 2), 0) };
+                    // PM_CheckFalling rolls the screen by fall speed x 0.013
+                    // degrees; it does not nod the view.
+                    unsafe { PUNCH_ROLL = (PUNCH_ROLL + li * 3).min(400) };
                 }
                 // CBasePlayer::PostThink skips the damage when the landing
                 // leaves the feet in water (watertype CONTENTS_WATER): the
@@ -34769,28 +34837,28 @@ fn play(
                 // ladder skips update and would otherwise re-apply the fall.
                 player.land_impact = 0;
             }
-            // HEV suit voice: announce each worsening health threshold once.
+            // HEV suit voice: after a real hit, "health critical" under 20 and
+            // "near death" under 6, each at most once in ten minutes.
             unsafe {
-                let hstate = if health == 0 || !suit_equipped {
-                    0
-                } else if health < 10 {
-                    2
-                } else if health < 25 {
-                    1
-                } else {
-                    0
-                };
-                if hstate > HEV_HEALTH_STATE {
-                    sfx::play(if hstate == 2 {
-                        sfx::HEV_NEAR_DEATH
-                    } else {
-                        sfx::HEV_HEALTH_CRIT
-                    });
+                if suit_equipped && health > 0 {
+                    match player_rules::health_voice(
+                        HEV_PREV_HEALTH,
+                        health,
+                        HEV_LAST_DAMAGE,
+                        sim_frame_no,
+                        &mut *core::ptr::addr_of_mut!(HEV_CRIT_READY),
+                        &mut *core::ptr::addr_of_mut!(HEV_NEAR_READY),
+                    ) {
+                        player_rules::HealthVoice::NearDeath => sfx::play(sfx::HEV_NEAR_DEATH),
+                        player_rules::HealthVoice::Critical => sfx::play(sfx::HEV_HEALTH_CRIT),
+                        player_rules::HealthVoice::None => {}
+                    }
                 }
-                HEV_HEALTH_STATE = hstate;
+                HEV_PREV_HEALTH = health;
+                HEV_LAST_DAMAGE = 0;
             }
-            // Footsteps: input-magnitude cadence while grounded (full run =
-            // a step roughly every 8 ticks), alternating the two samples.
+            // Footsteps (PM_UpdateStepSound): a clock keyed to ground speed,
+            // slower and quieter when walking or ducked, a rung on a ladder.
             unsafe {
                 // View-bob phase advances with horizontal ground speed; the render
                 // derives a vertical head-bob + strafe roll from it. Frozen while
@@ -34800,25 +34868,26 @@ fn play(
                 if player.on_ground && hspeed > 4 {
                     BOB_PHASE = BOB_PHASE.wrapping_add(((hspeed as u32) / 3 + 3).min(22));
                 }
-                if player.on_ground {
-                    let mag = (fwd.unsigned_abs()).max(strafe.unsigned_abs()) as u32;
-                    if mag > 20 {
-                        STEP_ACC += mag;
-                        if STEP_ACC >= 1000 {
-                            STEP_ACC = 0;
-                            STEP_ALT ^= 1;
-                            sfx::play_vol(
-                                if STEP_ALT == 0 {
-                                    sfx::STEP1
-                                } else {
-                                    sfx::STEP2
-                                },
-                                3,
-                            );
-                        }
-                    } else {
-                        STEP_ACC = 0;
-                    }
+                let (clock, step) = player_rules::step_tick(
+                    STEP_CLOCK,
+                    player.on_ground && !in_water,
+                    on_ladder,
+                    hspeed * player_rules::Q6,
+                    player.crouch,
+                );
+                STEP_CLOCK = clock;
+                if let Some(den) = step {
+                    STEP_ALT ^= 1;
+                    sfx::play_vol(if STEP_ALT == 0 { sfx::STEP1 } else { sfx::STEP2 }, den);
+                }
+                // PM_Jump and PM_CheckFalling: a footfall at full volume leaving
+                // the ground and one on landing from 350 u/s or more.
+                if (jump_want && was_on_ground && !player.on_ground && !on_ladder && !in_water)
+                    || land_impact > 17
+                {
+                    STEP_ALT ^= 1;
+                    sfx::play(if STEP_ALT == 0 { sfx::STEP1 } else { sfx::STEP2 });
+                    STEP_CLOCK = 2;
                 }
             }
             telemetry::stage_end(telemetry::stage::SIM_COLLISION);
@@ -35134,6 +35203,7 @@ fn play(
                     tick_momentary(&m, nlogic, nents, player.pos, eye, yaw, pitch);
                 }
                 LOGIC_ACTIVATOR = 1;
+                PLAYER_ON_GROUND = player.on_ground;
                 PLAYER_GROUND_ENT = if player.on_ground {
                     player.ground_mover
                 } else {
@@ -35545,7 +35615,7 @@ fn play(
                     tick_tanks(&m, movers, view, sim_frame_no as u16);
                 }
                 tick_projectiles(&m, movers);
-                tick_env_sparks(&m, nlogic);
+                tick_env_sparks(&m, nlogic, sim_frame_no as u16);
                 tick_beams(&m, nlogic, nents, movers);
                 if PENDING_PLAYER_DAMAGE > 0 {
                     let d = PENDING_PLAYER_DAMAGE;
@@ -35779,7 +35849,7 @@ fn play(
             let right = Mat3I16::rotate_y(0u16.wrapping_sub(cam_yaw >> 4));
             let side =
                 (right.m[0][0] as i32 * player.vel[0] + right.m[0][2] as i32 * player.vel[2]) >> 12;
-            view_roll = (side / 12).clamp(-4, 4) as i16;
+            view_roll = ((side / 12).clamp(-4, 4) + PUNCH_ROLL) as i16;
             // View punch (recoil / landing / damage), decaying via tick_screen_fx.
             view_pitch =
                 (view_pitch as i32 + PUNCH_PITCH).clamp(-PITCH_MAX as i32, PITCH_MAX as i32) as i16;

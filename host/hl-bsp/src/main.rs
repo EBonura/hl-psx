@@ -7194,9 +7194,11 @@ fn collect_entities(
         {
             let is_rot_button = cls == "func_rot_button" || cls == "momentary_rot_button";
             let is_button = cls == "func_button" || is_rot_button;
+            // CBaseToggle's lip starts at zero; only a button replaces a zero lip by 4.
             let lip = ent_value(block, "lip")
                 .and_then(|a| a.parse().ok())
-                .unwrap_or(if is_button { 4.0 } else { 8.0 });
+                .unwrap_or(0.0);
+            let lip = if is_button && lip == 0.0 { 4.0 } else { lip };
             let sf = parse_spawnflags_u32(block);
             let (kind, mv, leaf_move, rot_sweep) = if is_rot_button {
                 // CRotButton uses the same AxisDir/backwards convention as a
@@ -8300,7 +8302,10 @@ fn collect_logic_entities_with_lightstyles(
         let killtarget = names.id(ent_value(block, "killtarget"));
         let delay_ticks = seconds_to_ticks_u16(parse_f32_key(block, "delay", 0.0));
         let wait_default = match kind {
-            LOGIC_FUNC_DOOR => 3.0,
+            // A plat returns after a fixed 3 s; a door's `wait` starts at zero
+            // (an absent key shuts it again at once), unlike a button's 1 s.
+            LOGIC_FUNC_DOOR if matches!(cls, "func_plat" | "func_platrot") => 3.0,
+            LOGIC_FUNC_DOOR => 0.0,
             LOGIC_FUNC_BUTTON => 1.0,
             LOGIC_TRIGGER_ONCE => -1.0,
             LOGIC_TRIGGER_MULTIPLE => 0.2,
@@ -8327,7 +8332,15 @@ fn collect_logic_entities_with_lightstyles(
                 .round()
                 .clamp(0.0, i16::MAX as f32) as i16
         } else {
-            seconds_to_ticks_i16(parse_f32_key(block, "wait", wait_default))
+            let wait = parse_f32_key(block, "wait", wait_default);
+            // CBaseButton::Spawn and CTriggerMultiple::Spawn replace a zero wait
+            // (1 s and 0.2 s); a negative one means "never again".
+            let wait = match kind {
+                LOGIC_FUNC_BUTTON if wait == 0.0 => 1.0,
+                LOGIC_TRIGGER_MULTIPLE if wait == 0.0 => 0.2,
+                _ => wait,
+            };
+            seconds_to_ticks_i16(wait)
         };
         let speed_default = match kind {
             LOGIC_FUNC_BUTTON => 40.0,
@@ -8585,6 +8598,13 @@ fn collect_logic_entities_with_lightstyles(
                     None => continue,
                 }
             }
+            // CEnvSpark::KeyValue MaxDelay in ticks; Spawn replaces zero or less by 1.5 s.
+            LOGIC_ENV_SPARK => {
+                let delay = parse_f32_key(block, "MaxDelay", 0.0);
+                (if delay > 0.0 { delay * 20.0 } else { 30.0 })
+                    .round()
+                    .clamp(1.0, u16::MAX as f32) as u16
+            }
             LOGIC_ENV_SHAKE => (parse_f32_key(block, "amplitude", 4.0) / scale)
                 .round()
                 .clamp(1.0, 64.0) as u16,
@@ -8642,6 +8662,11 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_ENV_BUBBLES => load_sprites_manifest().get(&(map_index,"bubble.spr".to_string())).map_or(255,|r|r.0),
             LOGIC_ENV_BLOOD => if parse_f32_key(block, "color", 0.0) == 1.0 {195}else{247},
             LOGIC_ENV_BEVERAGE => parse_f32_key(block, "skin", 0.0).clamp(0.0, 6.0) as u16,
+            // CTargetCDAudio's `radius`: the track starts when the player comes
+            // within it (a trigger_cdaudio has none and works by touch).
+            LOGIC_CDTRACK => (parse_f32_key(block, "radius", 0.0) / scale)
+                .round()
+                .clamp(0.0, u16::MAX as f32) as u16,
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
             LOGIC_FUNC_TRACKTRAIN => submodel.unwrap_or(0).min(u16::MAX as usize) as u16,
             LOGIC_FUNC_GUNTARGET => names.id(ent_value(block, "message")),
@@ -8678,6 +8703,17 @@ fn collect_logic_entities_with_lightstyles(
                 }
             }
             LOGIC_ENV_RENDER => brush_render_class(block),
+            // CShake: the radius within which a grounded player is shaken;
+            // zero (absent, or the EVERYONE flag) shakes wherever he is.
+            LOGIC_ENV_SHAKE => {
+                if raw_spawnflags & 1 != 0 {
+                    0
+                } else {
+                    (parse_f32_key(block, "radius", 0.0) / scale)
+                        .round()
+                        .clamp(0.0, u16::MAX as f32) as u16
+                }
+            }
             LOGIC_MULTISOURCE => global_hash(ent_value(block, "globalstate").unwrap_or("")),
             // CAutoTrigger fires only if its globalstate is on (c1a4i's
             // test-fire autos wait for c1a4fpower/c1a4doxy/c1a4dfuel).
@@ -17949,6 +17985,85 @@ mod tests {
         assert_eq!(r.brush,LOGIC_BRUSH_NONE);
         let a=&cook.aux[r.first_aux as usize]; assert_eq!((a.target as i16,a.delay_ticks as i16),(-80,0));
         assert_eq!(cook.aux[r.first_aux as usize+1].target,4096);
+    }
+    /// One submodel (index 1) box for brush entities in the tests below.
+    fn one_box_model() -> Vec<u8> {
+        let mut models = vec![0u8; 2 * 64];
+        for (i, value) in [0f32, 0., 0., 64., 64., 64.].iter().enumerate() {
+            models[64 + i * 4..64 + i * 4 + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        models
+    }
+    fn cook_one(entity: &str) -> LogicRec {
+        let text = format!("{{ {entity} }}");
+        let cook = collect_logic_entities(
+            text.as_bytes(),
+            &one_box_model(),
+            &[LOGIC_BRUSH_NONE, 0],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        cook.ents.first().unwrap_or_else(|| panic!("no record for {entity}")).clone()
+    }
+    #[test]
+    fn env_spark_keeps_its_max_delay_and_flags() {
+        let r = cook_one(r#""classname" "env_spark" "origin" "0 0 0" "MaxDelay" "2" "spawnflags" "96""#);
+        assert_eq!((r.kind, r.arg0, r.spawnflags), (LOGIC_ENV_SPARK, 40, 96));
+        // absent or zero: the 1.5 s default
+        let r = cook_one(r#""classname" "env_spark" "origin" "0 0 0""#);
+        assert_eq!(r.arg0, 30);
+        let r = cook_one(r#""classname" "env_debris" "origin" "0 0 0" "MaxDelay" "0""#);
+        assert_eq!(r.arg0, 30);
+    }
+    #[test]
+    fn target_cdaudio_keeps_its_radius() {
+        let r = cook_one(r#""classname" "target_cdaudio" "origin" "0 0 0" "health" "13" "radius" "256""#);
+        assert_eq!((r.kind, r.arg0, r.arg1), (LOGIC_CDTRACK, 13, 256));
+        let r = cook_one(r#""classname" "target_cdaudio" "origin" "0 0 0" "health" "13" "targetname" "cd""#);
+        assert_eq!(r.arg1, 0);
+    }
+    #[test]
+    fn env_shake_keeps_its_radius_unless_everyone() {
+        let r = cook_one(r#""classname" "env_shake" "origin" "0 0 0" "radius" "300" "amplitude" "4""#);
+        assert_eq!((r.kind, r.arg1), (LOGIC_ENV_SHAKE, 300));
+        let r = cook_one(r#""classname" "env_shake" "origin" "0 0 0" "radius" "300" "spawnflags" "1""#);
+        assert_eq!(r.arg1, 0);
+        let r = cook_one(r#""classname" "env_shake" "origin" "0 0 0""#);
+        assert_eq!(r.arg1, 0);
+    }
+    #[test]
+    fn trigger_hurt_flags_follow_the_damage_type() {
+        let hurt = |damagetype: &str| {
+            cook_one(&format!(
+                r#""classname" "trigger_hurt" "model" "*1" "damage" "10" "damagetype" "{damagetype}""#
+            ))
+        };
+        // generic, fall (1 << 5), drown (1 << 14), poison (1 << 17), radiation (1 << 18)
+        assert_eq!(hurt("0").flags, 0);
+        assert_eq!(hurt("32").flags, LOGIC_TRIGGER_HURT_BYPASS_ARMOUR);
+        assert_eq!(hurt("16384").flags, LOGIC_TRIGGER_HURT_BYPASS_ARMOUR);
+        assert_eq!(hurt("131072").flags, LOGIC_TRIGGER_HURT_POISON);
+        assert_eq!(hurt("262144").flags, LOGIC_TRIGGER_HURT_RADIATION);
+        assert_eq!(hurt("393216").flags, LOGIC_TRIGGER_HURT_RADIATION | LOGIC_TRIGGER_HURT_POISON);
+    }
+    #[test]
+    fn missing_waits_follow_the_base_classes() {
+        let wait = |entity: &str| cook_one(&format!(r#"{entity} "targetname" "t" "target" "x""#)).wait_ticks;
+        // a door shuts at once without a wait key; a plat waits 3 s
+        assert_eq!(wait(r#""classname" "func_door" "model" "*1""#), 0);
+        assert_eq!(wait(r#""classname" "func_door" "model" "*1" "wait" "4""#), 80);
+        assert_eq!(wait(r#""classname" "func_plat" "model" "*1""#), 60);
+        // a button turns a zero wait into one second
+        assert_eq!(wait(r#""classname" "func_button" "model" "*1" "wait" "0""#), 20);
+        assert_eq!(wait(r#""classname" "func_button" "model" "*1""#), 20);
+        assert_eq!(wait(r#""classname" "func_button" "model" "*1" "wait" "-1""#), -1);
+        // a multiple turns zero into 0.2 s and keeps a negative as "once"
+        assert_eq!(wait(r#""classname" "trigger_multiple" "model" "*1" "wait" "0""#), 4);
+        assert_eq!(wait(r#""classname" "trigger_multiple" "model" "*1""#), 4);
+        assert_eq!(wait(r#""classname" "trigger_multiple" "model" "*1" "wait" "-1""#), -1);
+        assert_eq!(wait(r#""classname" "trigger_multiple" "model" "*1" "wait" "2""#), 40);
     }
     #[test]
     fn retail_blood_keeps_amount_palette_direction_and_manager_delay() {
