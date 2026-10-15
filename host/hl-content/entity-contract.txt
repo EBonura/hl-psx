@@ -1017,12 +1017,12 @@ trigger_auto|renderfx|na|-|-
 trigger_auto|rendermode|na|-|-
 trigger_auto|skin|na|-|-
 trigger_auto|triggerstate|yes|cook:fn triggerstate_use_type|run:roots-diff
-trigger_autosave|@class|no|-|-|authored checkpoint system is absent
+trigger_autosave|@class|yes|cook:"trigger_autosave"|-|first player touch keeps a RAM save point; death reloads it
 trigger_autosave|@use|na|-|-
 trigger_autosave|flag:2|na|-|-
 trigger_autosave|flag:256|na|-|-
 trigger_autosave|flag:32|na|-|-
-trigger_autosave|master|na|-|-
+trigger_autosave|master|yes|cook:"master"|-
 trigger_camera|@class|partial|cook:"trigger_camera"|-|static camera: holds the view on its target for its wait, takes control; no path moves
 trigger_camera|@use|yes|game:fn camera_use|-
 trigger_camera|acceleration|no|-|-|the camera turns at a fixed rate

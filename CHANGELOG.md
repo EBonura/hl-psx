@@ -4,6 +4,39 @@
 
 - The stack reserve is `game/stack-reserve` (25 KiB, was the SDK's 32 KiB), and `cargo hl-build stack` holds it: it replays the shipped disc on eight maps entered through the title menu and fails when the emulator's stack watermark (9.5 KB at most) comes within 25% of the reserve, and it relinks the shipping image as an ELF and bounds every call chain statically, with the BSP trace recursion taken to the campaign's deepest trees (c2a4a, 84 levels of 136 B): 19,664 B, which with the margin sets 25 KiB. `regress` runs the same check on its shipping rebuild. Free RAM +7,168 B. `cargo hl-build ram` now reads the reserve from the link map.
 - Free RAM went from 4,008 B to 32,184 B with no change to what the game does. `cargo hl-build ram` links the shipping image and prints `free N B` (the SDK's check) with a per-section, per-crate and per-module breakdown; `--map PATH` reads an existing link map. `game/ram-budget` holds a floor (4,096 B) that every shipping compile, pack and disc build enforces, so a change that eats the headroom fails the build. The bytes came from the map staging floor (-8,192 B, weapon cache margin 13,472 to 5,280 B at c5a1), `#[optimize(size)]` on the per-tick logic, tram, scientist, leech, physics, save and setup code (-13 KB of text; the fixed update is 4.4% of a frame and measured +0.09% of the frame on c1a0 and +0.4% on c4a3), and a 768 B zero table. A fresh PGO profile does not link at any inlining rung (+55 KB at 1000, +27 KB at 125), so the committed profile stays.
+- Death waits for you. The red death screen used to end by itself after three
+  seconds. It now holds for two seconds (the cap retail puts on the death
+  animation), then waits until every action button has been let go and one is
+  pressed again, and only then reloads the latest save point (or the level
+  entry when there is none). Stick movement does not count as a press.
+- Autosave points and walking back. A trigger_autosave (a first touch by the
+  player, once) now keeps the map as a save point in RAM, and dying reloads it,
+  as retail does; the card is still written only by a manual save. Leaving a
+  map by changelevel keeps it as it stood, so walking back finds dead monsters
+  still dead, doors where they were and pending events pending, instead of a
+  fresh level (one map back; a save point in the new map replaces it).
+  Breakables with a globalname (the airlock glass, vents and busted light of
+  c1a1b/c1a1c/c1a1f) stay broken in the maps that share the name. Dying with no
+  save point restarts the map from its entry with its globals as they were on
+  arrival. A save point or a map walked back into resumes the tick count it was
+  taken at. Pushed crates (func_pushable) are kept
+  where they were left. A saved map progress that held a removed trigger (state 255) was
+  decoded wrongly and is fixed. Costs 3.2 KB of RAM over the previous commit
+  (796 B free), most of it the second capture slot.
+- A save keeps the map's progress, and dying reloads it. A manual save used to
+  keep only the player, so loading respawned every monster and reset every
+  door. It now also records which monsters are dead (and where a following
+  scientist stands), the state of every door, button, trigger, counter,
+  charger, monster maker and breakable, the removed sprites and the light
+  switches, in 0.4 to 0.9 KB measured on seven maps (limit 1 KB; a map that
+  needs more is not recorded and a death restarts it from its entry as
+  before). The save is held in RAM as well, so a death after a save reloads
+  that save, as retail does, instead of the level entry. Not recorded:
+  trains and tracktrains, scripted sequences in flight, boss
+  schedules, and where monsters other than followers stand (the living go
+  back to their spawn with their health). Delayed events not yet fired are
+  recorded.
+  Saves made before this one load as they always did.
 - Leeches swim and bite. The 105 leeches of c2a1a, c2a2a, c2a3, c2a3a, c2a3b,
   c3a1 and c3a1a were drawn but never moved. Each now drifts at 50 units a
   second inside the middle of its water column, hunts a player who is in the

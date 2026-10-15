@@ -1179,6 +1179,7 @@ fn write_probe_script(out_dir: &std::path::Path) {
     let mut map = String::new();
     let mut secs: Vec<String> = Vec::new();
     let mut chapter = false;
+    let mut chain = false;
     let mut cmds = String::new();
     let mut names: Vec<String> = vec![String::new()];
     let mut last_tp = [0.0f64; 3];
@@ -1200,6 +1201,12 @@ fn write_probe_script(out_dir: &std::path::Path) {
             }
             if w[0] == "chapter" {
                 chapter = true;
+                continue;
+            }
+            // chain: a changelevel moves on to the next map's section instead
+            // of ending the script.
+            if w[0] == "chain" {
+                chain = true;
                 continue;
             }
             let sec = secs.len().saturating_sub(1);
@@ -1314,6 +1321,22 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 "ammo" => (27, [num(2) as i32, num(3) as i32, 0, 0, 0, 0], String::new()),
                 // propdump : log every live actor once
                 "propdump" => (26, [0; 6], String::new()),
+                // snap : keep the map's progress as a manual save would
+                "snap" => (32, [0; 6], String::new()),
+                // logic NAME : log state, next and counter of the logic records with that targetname
+                "logic" => (33, [0; 6], w[2].to_string()),
+                // savecard : write the save (with the map's progress) to port 1's card
+                "savecard" => (28, [0; 6], String::new()),
+                // loadcard : read the latest save from the cards and go to its map
+                "loadcard" => (29, [0; 6], String::new()),
+                // nudge N X Y Z : push the Nth pushable of the map by that offset
+                "nudge" => (
+                    30,
+                    [num(2) as i32, num(3) as i32, num(5) as i32, num(4) as i32, 0, 0],
+                    String::new(),
+                ),
+                // pushpos N : log the Nth pushable's offset
+                "pushpos" => (31, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
                 // pos : log the player position
                 "pos" => (13, [0; 6], String::new()),
                 // die : drop the player's health to zero (god off)
@@ -1352,7 +1375,7 @@ fn write_probe_script(out_dir: &std::path::Path) {
         }
     }
     let generated = format!(
-        "#[allow(dead_code)]\npub const PROBE_MAP: &str = {map:?};\npub const PROBE_CHAPTER: bool = {chapter};\npub static PROBE_SECS: &[&str] = &{secs:?};\npub static PROBE_NAMES: &[&str] = &{names:?};\npub static PROBE_CMDS: &[Cmd] = &[\n{cmds}];\n"
+        "#[allow(dead_code)]\npub const PROBE_MAP: &str = {map:?};\npub const PROBE_CHAPTER: bool = {chapter};\npub const PROBE_CHAIN: bool = {chain};\npub static PROBE_SECS: &[&str] = &{secs:?};\npub static PROBE_NAMES: &[&str] = &{names:?};\npub static PROBE_CMDS: &[Cmd] = &[\n{cmds}];\n"
     );
     fs::write(out_dir.join("probe_script.rs"), generated).expect("write probe script");
 }

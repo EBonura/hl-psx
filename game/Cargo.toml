@@ -90,6 +90,9 @@ semantic-input = ["reference-trace"]
 route-follow = ["reference-trace"]
 # Scratch-only interaction probe: scripted teleports, target fires, inputs.
 interaction-probe = ["reference-trace"]
+# More probe ops (hp, follow, explode, weapon, club) and the leech and heal trace
+# lines, for checking those fixes; the plain probe build has no RAM left for them.
+probe-fixes = ["interaction-probe"]
 # SDK crates from the PSoXide source tree hydrated by the root Rust build
 # driver. Keeping one pinned source snapshot makes the linker, runtime decoder,
 # audio encoder, and disc writer a reproducible set. `--psoxide` can seed this

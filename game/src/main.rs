@@ -81,6 +81,7 @@ mod scientist_logic;
 mod leech;
 mod player_rules;
 mod trigger_rules;
+mod mapsnap;
 mod monsterjump;
 mod scratchpad;
 mod setpiece_logic;
@@ -1156,7 +1157,7 @@ const PROP_CLIP_ATTACK: usize = 2;
 const PROP_CLIP_PAIN: usize = 3;
 const PROP_CLIP_DEAD: usize = 4;
 const PLAYER_START_HEALTH: u16 = 100;
-const DEATH_TICKS: u8 = 60; // frozen "you died" window before respawn (3s at 20 Hz)
+const DEATH_TICKS: u8 = 40; // death window before a press is taken: the 2 s cap retail puts on the death animation
 const PLAYER_START_ARMOR: u16 = 0;
 const HEV_MAX_ARMOR: u16 = 100;
 const CHARGER_RATE: u16 = 4; // health/armor points per use pulse (8-tick cadence)
@@ -2350,7 +2351,10 @@ unsafe fn save_with_badge(
     driver::with(|gpu| fb.swap(gpu));
 
     let start = interrupts::vblank_count();
-    let result = save::write(target, cp, save_staging());
+    // The map's progress goes to the card with the checkpoint, and stays in RAM
+    // as the point a death reloads.
+    mapsnap::keep_now(cp);
+    let result = save::write(target, cp, mapsnap::bytes(), mapsnap::tick(), save_staging());
     LAST_SAVE_VBLANKS = interrupts::vblank_count().wrapping_sub(start);
     #[cfg(feature = "emulator-telemetry")]
     debug_line("save cost", &[("vblanks=", LAST_SAVE_VBLANKS as i32)]);
@@ -2574,6 +2578,7 @@ fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
                             Ok(cp) if (cp.room_id as usize) < menu::MAPS.len() => {
                                 PENDING_RESTORE = cp;
                                 PENDING_RESTORE_ACTIVE = true;
+                                arm_map_progress(&cp);
                                 // Actors spawn with the save's difficulty, before the restore.
                                 settings::set_skill(cp.skill);
                                 return PauseExit::LoadedSave(cp.room_id as usize);
@@ -5957,14 +5962,23 @@ pub fn load_saved_room() -> Option<usize> {
         }
         PENDING_RESTORE = cp;
         PENDING_RESTORE_ACTIVE = true;
+        arm_map_progress(&cp);
         // Actors spawn with the save's difficulty, before the restore.
         settings::set_skill(cp.skill);
         Some(room)
     }
 }
 
+/// A save just read: hold the map progress it carries (still in the staging
+/// buffer) for the map start.
+unsafe fn arm_map_progress(cp: &save::Checkpoint) {
+    let at = cp.snap_at as usize;
+    let end = (at + cp.snap_len as usize).min(save_staging().len());
+    mapsnap::arm_from_card(cp.room_id, *cp, &save_staging()[at.min(end)..end], cp.snap_tick);
+}
+
 unsafe fn save_staging() -> &'static mut [u8] {
-    core::slice::from_raw_parts_mut(core::ptr::addr_of_mut!(SCRATCH_XY).cast::<u8>(), 1024)
+    core::slice::from_raw_parts_mut(core::ptr::addr_of_mut!(SCRATCH_XY).cast::<u8>(), 4096)
 }
 
 static mut CARRY_VALID: bool = false;
@@ -6272,6 +6286,8 @@ fn menu_start(room_id: usize) -> RoomLaunch {
     if unsafe { PENDING_RESTORE_ACTIVE && PENDING_RESTORE.room_id as usize == room_id } {
         return launch;
     }
+    // A fresh start: no save point of an earlier session applies.
+    unsafe { mapsnap::invalidate() };
     let Some(arrival) =
         menu::chapter_starting_in(room_id).and_then(|c| CHAPTER_ARRIVALS[c].as_ref())
     else {
@@ -6726,6 +6742,7 @@ unsafe fn shatter_breakable(
     ENT_ACTIVE[ei] = 0;
     LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
     (*core::ptr::addr_of_mut!(DEAD_GLOBALS)).kill(rec.wait_ticks as u16);
+    mapsnap::on_break(m, nlogic, rec.brush);
     pvs_cam_leaf_store(-1);
     let e = ENT_CACHE[ei];
     let sound_pos = if e.kind == ENT_KIND_PUSHABLE {
@@ -8254,6 +8271,7 @@ fn logic_player_touch_candidate(rec: map::LogicEnt) -> bool {
         | map::LOGIC_TRIGGER_MULTIPLE
         | map::LOGIC_TRIGGER_HURT
         | map::LOGIC_TRIGGER_PUSH
+        | map::LOGIC_TRIGGER_AUTOSAVE
         | map::LOGIC_TRIGGER_ENDSECTION => true,
         map::LOGIC_TRIGGER_CHANGELEVEL => (rec.spawnflags & SF_CHANGELEVEL_USE_ONLY) == 0,
         map::LOGIC_FUNC_BUTTON => (rec.spawnflags & SF_BUTTON_TOUCH_ONLY) != 0,
@@ -8818,6 +8836,8 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
             PROP_STATE[pi],
             PROP_POS[pi],
         );
+        // The actor leaves this level with the player.
+        PROP_ACTIVE[pi] = 0;
         carried += 1;
         pi += 1;
     }
@@ -13433,6 +13453,7 @@ unsafe fn logic_touch_triggers(
                 | map::LOGIC_TRIGGER_PUSH
                 | map::LOGIC_TRIGGER_GRAVITY
                 | map::LOGIC_CDTRACK
+                | map::LOGIC_TRIGGER_AUTOSAVE
                 | map::LOGIC_TRIGGER_ENDSECTION => {}
                 map::LOGIC_FUNC_BREAKABLE => {
                     // A pressure plate's delayed Die() fires from here.
@@ -13537,6 +13558,18 @@ unsafe fn logic_touch_triggers(
                                 None => LOGIC_STATE[li] = LOGIC_STATE_REMOVED,
                             }
                         }
+                    }
+                }
+                // CTriggerSave::SaveTouch: the player, once, past its master;
+                // the trigger removes itself and the game autosaves. The save
+                // point lives in RAM only (manual saves are the card's).
+                map::LOGIC_TRIGGER_AUTOSAVE => {
+                    if master_ok(m, nlogic, rec.arg1) {
+                        LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+                        let checkpoint = LIVE_CHECKPOINT;
+                        mapsnap::keep_now(&checkpoint);
+                        #[cfg(feature = "interaction-probe")]
+                        reference_trace::probe(now as u32, "autosave", "", mapsnap::bytes().len() as i32);
                     }
                 }
                 map::LOGIC_FUNC_BUTTON => {
@@ -19174,7 +19207,7 @@ unsafe fn scientist_heal_tick(pi: usize, left: u8, player_pos: [i32; 3], health:
         prop_attack_cooldown_set(pi, next);
     }
     if scientist_logic::heal_event(left, d2, scientist_logic::heal_wanted(*health)) {
-        #[cfg(feature = "interaction-probe")]
+        #[cfg(feature = "probe-fixes")]
         reference_trace::probe(SIM_NOW as u32, "heal", "", *health as i32);
         *health = scientist_logic::healed_health(*health, skill_hit(Sk::ScientistHeal) as u16);
         heal_clock().start(pi as u8, SIM_NOW);
@@ -19300,7 +19333,7 @@ unsafe fn tick_scientist(
             let offer = scientist_logic::HEAL_OFFER_RANGE;
             let near = scientist_logic::HEAL_WALK_RANGE;
             if reach2 <= near * near {
-                #[cfg(feature = "interaction-probe")]
+                #[cfg(feature = "probe-fixes")]
                 reference_trace::probe(SIM_NOW as u32, "heal_start", "", *health as i32);
                 prop_attack_cooldown_set(pi, scientist_logic::HEAL_TOTAL_TICKS);
                 PROP_STATE[pi] = PROP_STATE_IDLE;
@@ -33572,7 +33605,13 @@ unsafe fn init_room_logic(
     landmark: Option<[i32; 3]>,
     launch: &RoomLaunch,
 ) {
+    mapsnap::arrive(launch.room_id);
     init_logic_state(m, nlogic, nents, 0);
+    if mapsnap::pending(launch.room_id).is_some() {
+        // A save point or a map walked back into: its world as it stood, under
+        // whatever crossed the transition.
+        mapsnap::apply_world(nlogic, nents);
+    }
     // Cache every multisource's initial master state before any auto script
     // can consult it. Refresh never fires outputs.
     logic_check_multisources(m, nlogic, nents, 0);
@@ -34191,6 +34230,9 @@ fn play(
         // not the listener position retained from the previous room.
         sfx::set_ear(player.pos);
         init_room_logic(&m, nlogic, nents, landmark_found, &launch);
+        if mapsnap::pending(launch.room_id).is_some() {
+            mapsnap::apply_props(&m, nlogic);
+        }
         #[cfg(feature = "debug-regression-viewpoints")]
         if launch.pitch == i16::MIN
             || launch.pitch == DEBUG_SAVED_VIEW_PITCH_SENTINEL
@@ -34227,7 +34269,12 @@ fn play(
     // Door-occluder state the built PVS face list was masked with.
     let mut render_seal_state = 0u32;
     let mut telemetry_frame: u32 = 1;
-    let mut sim_frame_no: u32 = 0;
+    // A reloaded save point resumes the tick count it was taken at, so the
+    // absolute deadlines in the restored map state stay valid.
+    let progress_restored = unsafe { mapsnap::pending(launch.room_id).is_some() };
+    let mut sim_frame_no: u32 =
+        unsafe { mapsnap::pending(launch.room_id).map_or(0, |(_, tick)| tick as u32) };
+    unsafe { mapsnap::consume() };
     let mut weapon = Arsenal::new();
     // Ammo is granted only WITH a weapon: the changelevel carry restores it
     // (CARRY_AMMO below), chapter-select seeds it in give_chapter_loadout. A
@@ -34245,6 +34292,7 @@ fn play(
             phys::set_longjump(logic_state::carry_longjump(launch.carry_count));
         } else {
             CARRY_VALID = false;
+            mapsnap::reset_dead();
             GLOBAL_COUNT = 0; // fresh menu launch: clear cross-map global state
             (*core::ptr::addr_of_mut!(DEAD_GLOBALS)).clear();
                               // Fresh start: no module yet, unless a chapter start is past the
@@ -34317,8 +34365,9 @@ fn play(
         health = initial_health;
     }
     let mut armor: u16 = launch.armor.min(HEV_MAX_ARMOR);
-    let mut death_ticks: u8 = 0; // >0 while dead; respawns at 0
+    let mut death_ticks: u8 = 0; // >0 while dead; waits at 1 for a button
     let mut restart_requested = false;
+    let mut death_released = false; // every button let go since dying
     unsafe {
         MOUNTED_TANK = -1; // never carry a mount across maps
         TANK_FIRE_CD = 0;
@@ -34337,6 +34386,7 @@ fn play(
     // otherwise start with. It runs after the normal setup rather than instead
     // of it, so every map-local system is initialised exactly as usual first.
     unsafe {
+        mapsnap::note_entry();
         if PENDING_RESTORE_ACTIVE && PENDING_RESTORE.room_id == launch.room_id {
             let cp = PENDING_RESTORE;
             PENDING_RESTORE_ACTIVE = false;
@@ -34381,7 +34431,11 @@ fn play(
             }
             li += 1;
         }
-        logic_fire_global_autos(&m, nlogic);
+        mapsnap::remove_dead(&m, nlogic, nents);
+        if !progress_restored {
+            // A restored map has long since fired its triggers.
+            logic_fire_global_autos(&m, nlogic);
+        }
     }
     let mut pickup_kind: u8 = hud::PICKUP_NONE;
     let mut pickup_ticks: u8 = 0;
@@ -34919,13 +34973,19 @@ fn play(
                 restart_requested = true;
             }
             // Player death: freeze for DEATH_TICKS (a red death screen renders),
-            // then reload the immutable entry handoff. That handoff is either
+            // then wait for a button press and reload the latest save point, or
+            // the immutable entry handoff when there is none. That handoff is either
             // the latest successful changelevel (full carried player state) or
             // the selected chapter start; the current room's pickups/damage
             // never leak into the retry.
-            if death_ticks > 0 {
+            if death_ticks > 1 {
                 death_ticks -= 1;
-                if death_ticks == 0 {
+            } else if death_ticks == 1 {
+                // PlayerDeathThink: after the death animation the player must let
+                // go of every button, then press one to reload the latest save.
+                if input_sample.actions == 0 {
+                    death_released = true;
+                } else if death_released {
                     restart_requested = true;
                 }
             }
@@ -36319,7 +36379,11 @@ fn play(
                     skill: settings::skill() as u8,
                     sequence: 0, // stamped by save::write
                     weaponbox_removed: WEAPONBOX_REMOVED,
+                    snap_tick: 0,
+                    snap_at: 0,
+                    snap_len: 0,
                 };
+                mapsnap::note_dims(nlogic, nents, sim_frame_no as u16);
                 let mut charger_pulse = 0u8;
                 if use_edge && MOUNTED_TANK >= 0 {
                     // Any use press while mounted dismounts (works even if the
@@ -37007,6 +37071,18 @@ fn play(
                 }
                 if restart_requested {
                     sfx::charger_stop();
+                    // Dying reloads the latest save point of this map, when
+                    // there is one, instead of its entry.
+                    let armed = mapsnap::arm_for_death(launch.room_id);
+                    match mapsnap::pending(launch.room_id) {
+                        Some((Some(cp), _)) if armed => {
+                            PENDING_RESTORE = cp;
+                            PENDING_RESTORE_ACTIVE = true;
+                        }
+                        // The entry, or the world as it was on arrival: the
+                        // map's globals come back to their entry values.
+                        _ => mapsnap::rollback_to_entry(),
+                    }
                     return PlayExit::Restart(launch);
                 }
                 if TRAINING_COMPLETE_REQUEST {
@@ -37031,6 +37107,8 @@ fn play(
                     ) {
                         sfx::charger_stop();
                         LEVEL_ENTRY_GRAVITY = phys::gravity_scale();
+                        // Walking back finds this level as it is left.
+                        mapsnap::depart(launch.room_id);
                         return PlayExit::ChangeLevel(next);
                     }
                 }

@@ -97,7 +97,7 @@ pub unsafe fn step(
     }
     if LAST_MAP != map_name || FORCE_NEXT {
         FORCE_NEXT = false;
-        if !LAST_MAP.is_empty() {
+        if !LAST_MAP.is_empty() && !PROBE_CHAIN {
             ENDED = true;
             LAST_MAP = map_name;
             crate::reference_trace::probe(now, "ended", map_name, SEC as i32);
@@ -110,6 +110,11 @@ pub unsafe fn step(
             SEC += 1;
         }
         if SEC == PROBE_SECS.len() {
+            if PROBE_CHAIN && !LAST_MAP.is_empty() {
+                ENDED = true;
+                LAST_MAP = map_name;
+                return sample;
+            }
             SEC = 0;
         }
         crate::reference_trace::probe(now, "sec", map_name, SEC as i32);
@@ -137,6 +142,9 @@ pub unsafe fn step(
                     "tp",
                     &[c.a[0] as i32, c.a[1] as i32, c.a[2] as i32],
                 );
+                if c.a[5] < 0 {
+                    HOLD_CL = false;
+                }
                 if c.a[5] > 0 {
                     PIN = true;
                     PIN_UNTIL = now + c.a[5] as u32;
@@ -285,7 +293,9 @@ pub unsafe fn step(
                     }
                 }
             }
+            #[cfg(feature = "probe-fixes")]
             18 => *health = c.a[0].clamp(0, 1000) as u16,
+            #[cfg(feature = "probe-fixes")]
             19 => {
                 // The nearest live monster of that kind starts following the player.
                 let mut best = usize::MAX;
@@ -310,6 +320,7 @@ pub unsafe fn step(
                     crate::reference_trace::probe(now, "follow", "", best as i32);
                 }
             }
+            #[cfg(feature = "probe-fixes")]
             20 => {
                 let dmg = c.a[3].clamp(1, 255) as u8;
                 crate::reference_trace::probe(now, "explode", "", dmg as i32);
@@ -321,7 +332,30 @@ pub unsafe fn step(
                     true,
                 );
             }
+            30 | 31 => {
+                let mut n = c.a[0] as i32;
+                let mut ei = 0usize;
+                while ei < crate::ENT_SOLID_COUNT {
+                    if crate::ENT_CACHE[ei].kind == crate::ENT_KIND_PUSHABLE {
+                        if n == 0 {
+                            if c.op == 30 {
+                                let o = &mut crate::ENT_CACHE[ei].origin;
+                                o[0] += c.a[1] as i32;
+                                o[1] += c.a[2] as i32;
+                                o[2] += c.a[3] as i32;
+                            }
+                            let o = crate::ENT_CACHE[ei].origin;
+                            crate::reference_trace::probe_vals(now, "pushpos", &[ei as i32, o[0], o[1], o[2]]);
+                            break;
+                        }
+                        n -= 1;
+                    }
+                    ei += 1;
+                }
+            }
+            #[cfg(feature = "probe-fixes")]
             22 => weapons.current = c.a[0].clamp(0, 13) as usize,
+            #[cfg(feature = "probe-fixes")]
             25 => {
                 let mut best = usize::MAX;
                 let mut best_d = i32::MAX;
@@ -372,6 +406,49 @@ pub unsafe fn step(
                         );
                     }
                     pi += 1;
+                }
+            }
+            32 => {
+                crate::mapsnap::keep_now(&crate::LIVE_CHECKPOINT);
+                crate::reference_trace::probe(now, "snap", "", crate::mapsnap::bytes().len() as i32);
+            }
+            33 => {
+                let id = name_id(m, cname);
+                let mut li = 0usize;
+                while li < nlogic {
+                    if id != 0 && m.logic(li).targetname == id {
+                        crate::reference_trace::probe_vals(
+                            now,
+                            "logic",
+                            &[li as i32, crate::LOGIC_STATE[li] as i32, crate::LOGIC_NEXT[li] as i32, crate::LOGIC_COUNTER[li] as i32],
+                        );
+                    }
+                    li += 1;
+                }
+            }
+            28 => {
+                let cp = crate::LIVE_CHECKPOINT;
+                crate::mapsnap::keep_now(&cp);
+                let target = crate::save::Target::choices(false)[0];
+                let r = crate::save::write(
+                    target,
+                    &cp,
+                    crate::mapsnap::bytes(),
+                    crate::mapsnap::tick(),
+                    crate::save_staging(),
+                );
+                let code = match r {
+                    crate::save::CardResult::Ok => 0,
+                    crate::save::CardResult::NoCard => 1,
+                    crate::save::CardResult::Failed => 2,
+                };
+                crate::reference_trace::probe_vals(now, "savecard", &[code, crate::mapsnap::bytes().len() as i32]);
+            }
+            29 => {
+                let room = crate::load_saved_room();
+                crate::reference_trace::probe(now, "loadcard", "", room.map_or(-1, |r| r as i32));
+                if let Some(r) = room {
+                    GOTO = Some((r, false));
                 }
             }
             16 => FACE = if cname == "-" { 0 } else { name_id(m, cname) },
