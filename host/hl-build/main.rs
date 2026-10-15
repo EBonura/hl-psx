@@ -2196,6 +2196,14 @@ fn compile_game(
         // Reduced pools are for the collect build only: no other build, the
         // shipping one included, may inherit them.
         command.env_remove("HLPSX_COLLECT_MAPS");
+        // Measurement only: `HLPSX_BENCH_MAPS=6,7` sizes the map pools for those
+        // maps so a telemetry build that overflows RAM on the fleet-worst pools
+        // still links for an A/B frame-cost run (same code, smaller arena). The
+        // result is never a shipping image and the RAM budget does not apply.
+        if let Some(maps) = env::var_os("HLPSX_BENCH_MAPS").filter(|_| !is_shipping_build(features))
+        {
+            command.env("HLPSX_COLLECT_MAPS", maps);
+        }
     }
     // A link-only argument: the map does not change the emitted bytes. Each
     // build configuration links its own map: a build cargo finds fresh does
@@ -2408,7 +2416,10 @@ fn enforce_ram_budget(repository: &Path, features: Option<&str>, free: u32) -> R
     };
     let shipping = features.is_none_or(|list| list.trim().is_empty());
     if free >= floor {
-        println!("RAM budget: {free} B free, floor {floor} B ({} B of allowance)", free - floor);
+        println!(
+            "RAM budget: {free} B free, floor {floor} B ({} B of allowance)",
+            free - floor
+        );
         return Ok(());
     }
     let message = format!(
@@ -2972,12 +2983,7 @@ fn main() -> Result<()> {
 
     if matches!(
         options.action,
-        Action::Compile
-            | Action::Ram
-            | Action::Pack
-            | Action::Disc
-            | Action::Regress
-            | Action::Pgo
+        Action::Compile | Action::Ram | Action::Pack | Action::Disc | Action::Regress | Action::Pgo
     ) {
         verify_cook_manifest(
             &repository,
