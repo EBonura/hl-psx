@@ -13238,6 +13238,20 @@ unsafe fn logic_spark_use(li: usize, rec: map::LogicEnt, now: u16) {
     }
 }
 
+/// UTIL_ShowMessage for a trigger's `message`: the text fades in, holds five
+/// seconds and fades out, like a plain title card.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn show_trigger_hint(text_id: u16) {
+    TITLE_TEXT_ID = text_id;
+    TITLE_T = 0;
+    TITLE_HOLD = 100;
+    TITLE_FADE = 10;
+    TITLE_EFFECT = 0;
+    TITLE_LEFT_ALIGNED = false;
+    TITLE_Y_Q5 = 0;
+}
+
 /// One trigger_hurt: when its half-second timer is up, hurt every toucher that
 /// can take damage (the player, unless NO_CLIENTS; monsters, unless
 /// CLIENT_ONLY_TOUCH), fire the target once per toucher hurt, and restart the
@@ -13459,6 +13473,9 @@ unsafe fn logic_touch_triggers(
                             || !master_ok(m, nlogic, rec.arg1)
                     };
                     if !gated && LOGIC_STATE[li] != LOGIC_STATE_WAITING {
+                        if rec.arg0 != 0 && !is_cl && !is_end {
+                            show_trigger_hint(rec.arg0);
+                        }
                         logic_use_entity(
                             m,
                             nlogic,

@@ -7505,6 +7505,23 @@ fn pack_title_flags(title: &TitleDef) -> u16 {
 /// Translate the PC-centric Hazard Course captions to the fixed PS1 layout.
 /// Keep this scoped to the HZ title block so campaign text remains byte-for-byte
 /// faithful to Valve's source file.
+/// The Hazard Course's trigger hints name keys in brackets and break lines with
+/// a literal backslash-n; on the PlayStation they name the pad's buttons.
+fn hazard_hint_text(text: &str) -> String {
+    let mut out = text.replace("\\n", "\n");
+    for (pc, ps1) in [
+        ("[ATTACK1]", "R2"),
+        ("[ATTACK2]", "L2"),
+        ("[RELOAD]", "CIRCLE"),
+        ("[DUCK]", "TRIANGLE"),
+        ("[JUMP]", "CROSS"),
+        ("[USE]", "SQUARE"),
+    ] {
+        out = out.replace(pc, ps1);
+    }
+    adapt_hazard_course_text(&out)
+}
+
 fn adapt_hazard_course_text(text: &str) -> String {
     let mut out = text.to_string();
     for (pc, ps1) in [
@@ -8609,6 +8626,12 @@ fn collect_logic_entities_with_lightstyles(
                     .round()
                     .clamp(1.0, u16::MAX as f32) as u16
             }
+            // ActivateMultiTrigger shows the trigger's `message` to the player
+            // (the Hazard Course hints); the text id rides in the free arg.
+            LOGIC_TRIGGER_ONCE | LOGIC_TRIGGER_MULTIPLE => match ent_value(block, "message") {
+                Some(text) if !text.is_empty() => names.id(Some(&hazard_hint_text(text))),
+                _ => 0,
+            },
             LOGIC_ENV_SHAKE => (parse_f32_key(block, "amplitude", 4.0) / scale)
                 .round()
                 .clamp(1.0, 64.0) as u16,
@@ -18014,6 +18037,16 @@ mod tests {
         assert_eq!(r.arg0, 30);
         let r = cook_one(r#""classname" "env_debris" "origin" "0 0 0" "MaxDelay" "0""#);
         assert_eq!(r.arg0, 30);
+    }
+    #[test]
+    fn hazard_course_hints_name_the_pad_buttons() {
+        let hint = hazard_hint_text("Press [ATTACK1] To Fire Weapon \\n Press [RELOAD] To Reload");
+        assert_eq!(hint, "Press R2 To Fire Weapon \n Press CIRCLE To Reload");
+        let r = cook_one(r#""classname" "trigger_once" "model" "*1" "message" "Swim Up To Hole For Air""#);
+        assert_eq!(r.kind, LOGIC_TRIGGER_ONCE);
+        assert_ne!(r.arg0, 0);
+        let none = cook_one(r#""classname" "trigger_once" "model" "*1""#);
+        assert_eq!(none.arg0, 0);
     }
     #[test]
     fn env_shake_keeps_its_radius_unless_everyone() {
