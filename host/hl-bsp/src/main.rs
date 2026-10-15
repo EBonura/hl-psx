@@ -10611,6 +10611,44 @@ fn monster_trigger_condition(block: &str) -> Option<(u16, &str)> {
     .then_some((condition, target))
 }
 
+/// Keep nondefault authored equipment without changing the 24-byte actor record.
+/// Default/zero weapons is CHGrunt's AR+hand grenade loadout.
+fn collect_grunt_equipment(
+    ents: &[u8], scale: f32,
+    props: &[(u16, [i32;3], i32, i16, u16, u16)], names: &[String],
+) -> Result<Vec<LogicRec>,String> {
+    let text=entity_text(ents);
+    let mut result=Vec::new();
+    for block in text.split('{') {
+        if ent_value(block,"classname") != Some("monster_human_grunt") {continue;}
+        let raw=ent_value(block,"weapons").unwrap_or("0").parse::<u8>()
+            .map_err(|_| "invalid grunt weapons".to_string())?;
+        if raw & !15 != 0 {return Err("unsupported grunt weapons bits".into());}
+        let weapons=if raw==0 {3}else{raw};
+        if weapons==3 {continue;}
+        let origin=to_world(ent_value(block,"origin").and_then(parse_vec3).unwrap_or([0.;3]),scale);
+        let name=ent_value(block,"targetname").unwrap_or("");
+        let named=|prop: &(u16,[i32;3],i32,i16,u16,u16)|
+            !name.is_empty() && prop.4 != 0 && names.get(prop.4 as usize-1).is_some_and(|n|n==name);
+        let valid=|prop: &(u16,[i32;3],i32,i16,u16,u16)| prop.0 & 0x0fff == 8 && prop.0 & 0x8000 == 0;
+        let exact: Vec<_>=props.iter().enumerate().filter(|(_,p)|valid(p)&&p.1==origin).collect();
+        let candidates=if exact.len()==1 {exact} else {
+            props.iter().enumerate().filter(|(_,p)|valid(p)&&named(p)).collect()
+        };
+        if candidates.len()!=1 {return Err("authored grunt equipment binding is ambiguous".into());}
+        let index=candidates[0].0;
+        if result.iter().any(|r: &LogicRec|r.arg0 as usize==index) {
+            return Err("duplicate grunt equipment binding".into());
+        }
+        result.push(LogicRec {kind:LOGIC_GRUNT_EQUIPMENT,use_type:0,spawnflags:0,
+            targetname:0,target:0,killtarget:0,brush:LOGIC_BRUSH_NONE,
+            first_aux:0,aux_count:0,flags:0,wait_ticks:0,delay_ticks:0,speed:0,
+            arg0:u16::try_from(index).map_err(|_|"grunt index overflow")?,arg1:weapons as u16,
+            sound0:u8::MAX,sound1:u8::MAX,origin,mins:origin,maxs:origin});
+    }
+    Ok(result)
+}
+
 fn collect_props(
     ents: &[u8],
     nodes: &[u8],
@@ -14355,6 +14393,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         &mut logic.names,
         &mut trigger_links,
     );
+    logic.ents.extend(collect_grunt_equipment(bsp.lump(LUMP_ENTITIES),scale,&props,&logic.names)?);
     // A map with Gonarch nodes but no Gonarch of its own gets a walker for
     // the one that follows the player in (c4a2a, c4a2b).
     let ent_text = entity_text(bsp.lump(LUMP_ENTITIES));
@@ -17797,6 +17836,48 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn grunt_equipment_binds_authored_actor_and_rejects_ambiguity() {
+        let entities = br#"{ "classname" "monster_human_grunt" "origin" "10 20 30" "weapons" "5" }
+            { "classname" "monster_human_grunt" "origin" "40 50 60" }"#;
+        let props = [(8, [5,15,10], 0, 0, 0, 0), (8,[20,30,25],0,0,0,0)];
+        let records = super::collect_grunt_equipment(entities,2.0,&props,&[]).unwrap();
+        assert_eq!(records.len(),1);
+        assert_eq!(records[0].arg0,0);
+        assert_eq!(records[0].arg1,5);
+        assert!(super::collect_grunt_equipment(entities,2.0,&[props[0],props[0]],&[]).is_err());
+        assert!(super::collect_grunt_equipment(br#"{ "classname" "monster_human_grunt" "weapons" "16" }"#,1.0,&[],&[]).is_err());
+    }
+    #[test]
+    #[ignore="requires original retail 103-map assets"]
+    fn hecu_all_original_equipment_records_bind_actual_collected_props() {
+        let root=std::path::PathBuf::from(std::env::var("HL_HECU_RETAIL_DIR").expect("explicit original maps"));
+        let mut total=0; let mut nondefault=0; let mut maps=0;
+        for name in include_str!("../../hl-content/map-list.txt").lines().filter(|s| !s.is_empty()) {
+            let bytes=std::fs::read(root.join(format!("{name}.bsp"))).unwrap();
+            let bsp=Bsp::parse(&bytes).unwrap();
+            let ents=bsp.lump(LUMP_ENTITIES);
+            let mut names=Vec::new(); let mut links=Vec::new();
+            let props=collect_props(ents,bsp.lump(LUMP_NODES),bsp.lump(LUMP_PLANES),
+                bsp.lump(LUMP_MODELS),1.0,&mut names,&mut links);
+            let records=collect_grunt_equipment(ents,1.0,&props,&names).unwrap_or_else(|e|panic!("{name}: {e}"));
+            let mut expected=0;
+            for block in entity_text(ents).split('{') {
+                if ent_value(block,"classname")!=Some("monster_human_grunt") {continue;}
+                total+=1;
+                let equipment=ent_value(block,"weapons").unwrap_or("0").parse::<u8>().unwrap();
+                if equipment!=0 && equipment!=3 {expected+=1;}
+            }
+            assert_eq!(records.len(),expected,"{name}: no equipment omission");
+            for record in records {
+                assert_eq!(props[record.arg0 as usize].0 & 0x0fff,8);
+                assert_eq!(record.kind,LOGIC_GRUNT_EQUIPMENT);
+                nondefault+=1;
+            }
+            maps+=1;
+        }
+        assert_eq!((maps,total,nondefault),(103,163,29));
+    }
     #[test]
     fn weaponbox_preserves_named_ammunition_and_scaled_original_bounds() {
         let input = br#"{ "classname" "weaponbox" "origin" "1584 -696 -248"

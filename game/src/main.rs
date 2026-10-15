@@ -34,6 +34,7 @@ mod env_bubbles_fx;
 mod env_funnel;
 mod env_funnel_fx;
 mod gman_damage;
+mod hecu_grenades;
 mod sentry_wake;
 mod pushable_transition;
 mod env_sound;
@@ -8773,6 +8774,9 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
             prop_scientist_flag(pi, PROP_SCI_PREDISASTER),
             prop_scientist_flag(pi, PROP_SCI_HELLO_SAID),
         );
+        let carry_state=if kind==8 {
+            hecu_grenades::carry_state(carry_base_state,hecu_grenades::weapons(GRUNT_GREN[pi]))
+        } else {carry_state};
         carry_mail_write(
             carried,
             kind,
@@ -9084,8 +9088,9 @@ unsafe fn restore_transition_actors(
     let mut slot = 0usize;
     while slot < logic_state::carry_record_count(requested).min(CARRY_CAPACITY) {
         let (kind, health, packed_state, carry_id, rel, yaw) = carry_mail_read(slot);
-        let (state, following, provoked, predisaster, hello_said) =
-            scientist_logic::unpack_carry_state(packed_state);
+        let (state, following, provoked, predisaster, hello_said) = if kind == 8 {
+            (packed_state & 15,false,false,false,false)
+        } else { scientist_logic::unpack_carry_state(packed_state) };
         if carry_id == 0 || carry_id == CARRY_ID_NONE || !carry_actor_capable(kind) {
             slot += 1;
             continue;
@@ -9155,6 +9160,10 @@ unsafe fn restore_transition_actors(
         PROP_AI_TIMER[pi] = 0;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_HEALTH[pi] = health;
+        if kind == 8 {
+            GRUNT_GREN[pi]=hecu_grenades::clock(hecu_grenades::carry_weapons(packed_state),
+                SIM_NOW.wrapping_add(hecu_grenades::CHECK_TICKS));
+        }
         PROP_HIT_FLASH[pi] = 0;
         PROP_DEATH_START[pi] = if health == 0 {
             0u16.wrapping_sub(300)
@@ -11726,6 +11735,10 @@ unsafe fn maker_make(
     // SF_MONSTER_FALL_TO_GROUND, so a walker drops from there instead of
     // appearing on the floor.
     let kind = PROP_KIND[pi];
+    if kind == 8 {
+        GRUNT_GREN[pi] = hecu_grenades::clock(hecu_grenades::weapons(GRUNT_GREN[pi]),
+            (SIM_NOW as u16).wrapping_add(hecu_grenades::CHECK_TICKS));
+    }
     if matches!(model_def(kind).ai, AI_MELEE | AI_RANGED | AI_ALLY | AI_FLEE)
         && kind != PROP_TYPE_CONTROLLER
         && rec.origin[1] > PROP_POS[pi][1] + 18
@@ -14530,6 +14543,10 @@ fn prop_clip(pi: usize, state: u8, hit_flash: bool) -> usize {
     if hit_flash {
         return PROP_CLIP_PAIN;
     }
+    if unsafe { PROP_KIND[pi] == 8 } {
+        if state == 6 { return 5; }
+        if state == 7 { return 6; }
+    }
     // Three species play a sequence of their own beyond the five states:
     // the houndeye's rest after a blast (idle with its cooldown running), the
     // vortigaunt's claw (attacking with no zap in flight) and the bullsquid's
@@ -14732,6 +14749,13 @@ fn prop_anim_frame<const POSE: bool>(
                 };
             }
         }
+    }
+    if unsafe { PROP_KIND[pi] } == 8 && matches!(state, 6 | 7) && hit_flash == 0 {
+        let duration = if state == 7 { hecu_grenades::LAUNCH_ANIMATION_TICKS }
+            else { hecu_grenades::TOSS_ANIMATION_TICKS } as usize;
+        let elapsed = duration.saturating_sub(unsafe { PROP_AI_TIMER[pi] } as usize);
+        forget_clip();
+        return if POSE { md.one_shot_clip_phase(clip, duration, elapsed) } else { (0, 0, 0) };
     }
     if state == PROP_STATE_ATTACK {
         // Melee and Barney attacks have a bounded AI action window.  Starting
@@ -17929,6 +17953,71 @@ unsafe fn find_actor_target(
 /// Ranged + turret AI. Acquire a target, face it, and fire a hitscan shot every
 /// `atk_cooldown` ticks while it is within `atk_range` and in line of sight.
 /// Movers (`can_move`) close to range first; turrets (`!can_move`) hold still.
+unsafe fn grunt_grenade_plan(m: &Map, movers: &[phys::Mover], pi: usize,
+    target: [i32; 3], launcher: bool, nprops: usize) -> Option<hecu_grenades::Plan> {
+    let origin = PROP_POS[pi];
+    if !hecu_grenades::safe_target(origin, target) { return None; }
+    let start = [origin[0], origin[1] + 60, origin[2]];
+    let plan = if launcher {
+        hecu_grenades::launch(start, target, skill_value(Sk::HgruntGrenadeSpeed))?
+    } else {
+        let middle = [(start[0] + target[0]) / 2, (start[1] + target[1]) / 2,
+            (start[2] + target[2]) / 2];
+        let ceiling = [middle[0], middle[1] + 500, middle[2]];
+        let top = phys::trace_line(m, movers, middle, ceiling).map_or(ceiling, |hit| hit.pos);
+        hecu_grenades::toss(start, target, top[1] - 15)?
+    };
+    if phys::trace_line(m, movers, start, plan.apex).is_some()
+        || phys::trace_line(m, movers, plan.apex, target).is_some() { return None; }
+    // The ascending trace includes live actors; descent ignores them.
+    for other in 0..nprops {
+        if other == pi || PROP_ACTIVE[other] == 0 || PROP_HEALTH[other] == 0 { continue; }
+        // The port has no squad membership registry. Keep live HECU allies
+        // outside the authored target clearance even when the arc is clear.
+        if PROP_KIND[other] == 8 && !hecu_grenades::ally_clear(PROP_POS[other], target) {
+            return None;
+        }
+        let bounds = actor_collision_bounds(PROP_KIND[other], PROP_POS[other]);
+        if segment_box_frac(start, plan.apex, bounds.0, bounds.1).is_some() { return None; }
+    }
+    Some(plan)
+}
+
+unsafe fn advance_grunt_grenade(pi: usize) -> bool {
+    let step=hecu_grenades::action_step(&mut PROP_STATE[pi],&mut PROP_AI_TIMER[pi],
+        PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0);
+    match step {
+        hecu_grenades::ActionStep::Inactive=>false,
+        hecu_grenades::ActionStep::Hold=>true,
+        hecu_grenades::ActionStep::Release(attack)=>{
+            let launcher=attack==hecu_grenades::Attack::Launcher;
+            let pos = PROP_POS[pi];
+            let damage = skill_hit(if launcher { Sk::PlrM203 } else { Sk::PlrHandGrenade });
+            spawn_grunt_grenade([pos[0], pos[1] + 60, pos[2]], PROP_SCRIPT_GOAL[pi], launcher, damage);
+            let hard = settings::skill() == 2;
+            let roll = if launcher && hard {impact_rng().below(61) as u16}else{0};
+            let recovery = hecu_grenades::recovery_ticks(launcher,hard,roll);
+            GRUNT_GREN[pi] = hecu_grenades::reschedule(GRUNT_GREN[pi], SIM_NOW as u16, recovery);
+            true
+        }
+    }
+}
+
+unsafe fn try_grunt_grenade(m: &Map, movers: &[phys::Mover], pi: usize,
+    aim: [i32;3], nprops: usize) -> bool {
+    if !matches!(PROP_STATE[pi], PROP_STATE_IDLE | PROP_STATE_ATTACK)
+        || PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0
+        || !hecu_grenades::due(GRUNT_GREN[pi],SIM_NOW as u16) {return false;}
+    GRUNT_GREN[pi]=hecu_grenades::reschedule(GRUNT_GREN[pi],SIM_NOW as u16,hecu_grenades::CHECK_TICKS);
+    let Some(attack)=hecu_grenades::attack(hecu_grenades::weapons(GRUNT_GREN[pi])) else {return false;};
+    let launcher=attack==hecu_grenades::Attack::Launcher;
+    let Some(plan)=grunt_grenade_plan(m,movers,pi,aim,launcher,nprops) else {return false;};
+    PROP_SCRIPT_GOAL[pi]=plan.velocity_q4;
+    PROP_STATE[pi]=if launcher {7}else{6};
+    PROP_AI_TIMER[pi]=if launcher {hecu_grenades::LAUNCH_ANIMATION_TICKS}else{hecu_grenades::TOSS_ANIMATION_TICKS};
+    true
+}
+
 unsafe fn tick_shooter(
     m: &Map,
     movers: &[phys::Mover],
@@ -19099,6 +19188,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
         PROP_SCRIPT_PLAY_UNTIL[pi] = 0;
         PROP_KIND[pi] = kind;
+        if kind == 8 { GRUNT_GREN[pi] = hecu_grenades::clock(3,(SIM_NOW as u16).wrapping_add(hecu_grenades::CHECK_TICKS)); }
         PROP_POS[pi] = org;
         PROP_YAW[pi] = yaw as u16;
         seed_prop_render_transform(pi);
@@ -19131,6 +19221,16 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         PROP_COUNT += 1;
         pi += 1;
     }
+    for li in 0..m.n_logic {
+        let rec=m.logic(li);
+        if rec.kind == map::LOGIC_GRUNT_EQUIPMENT && rec.arg1 <= 15 {
+            let pi=rec.arg0 as usize;
+            if pi < PROP_COUNT && PROP_KIND[pi] == 8 {
+                GRUNT_GREN[pi]=hecu_grenades::clock(rec.arg1 as u8,(SIM_NOW as u16).wrapping_add(hecu_grenades::CHECK_TICKS));
+            }
+        }
+    }
+
 }
 
 // Build exact candidate lists only after incoming actors have been appended or
@@ -21511,7 +21611,9 @@ struct Projectile {
     damage: u8,
     life: u8,
     from_enemy: bool, // enemy shots hit the player; player shots hit props
+    remainder: [i8; 3], // enemy grenade Q4 integration; existing shots remain integral
 }
+const _: () = assert!(core::mem::size_of::<Projectile>() == 32);
 
 impl Projectile {
     const ZERO: Projectile = Projectile {
@@ -21522,6 +21624,7 @@ impl Projectile {
         damage: 0,
         life: 0,
         from_enemy: false,
+        remainder: [0; 3],
     };
 }
 
@@ -21687,8 +21790,21 @@ unsafe fn spawn_projectile_dir(
         damage,
         life,
         from_enemy,
+        remainder: [0; 3],
     };
     slot
+}
+
+/// Authored enemy grenades reserve a free slot rather than evict a live charge.
+unsafe fn spawn_grunt_grenade(origin: [i32; 3], velocity: [i16; 3], launcher: bool, damage: u8) -> bool {
+    let Some(slot) = (&PROJECTILES).iter().position(|p| !p.active) else { return false; };
+    PROJECTILES[slot] = Projectile {
+        active: true, pos: origin, vel: velocity.map(i32::from),
+        kind: if launcher { PROJ_M203 } else { PROJ_GRENADE }, damage,
+        life: if launcher { u8::MAX } else { hecu_grenades::HAND_FUSE_TICKS },
+        from_enemy: true, remainder: [0; 3],
+    };
+    true
 }
 
 /// Detonate every charge thrown by the selected satchel weapon. Tripmines use
@@ -21950,7 +22066,8 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             }
         }
         let old = PROJECTILES[i].pos;
-        if gravity {
+        let grunt_grenade = PROJECTILES[i].from_enemy && matches!(kind, PROJ_GRENADE | PROJ_M203);
+        if !grunt_grenade && gravity {
             PROJECTILES[i].vel[1] -= if kind == PROJ_M203 {
                 M203_GRAVITY
             } else {
@@ -21958,7 +22075,11 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             };
         }
         let v = PROJECTILES[i].vel;
-        let new = [old[0] + v[0], old[1] + v[1], old[2] + v[2]];
+        let new = if grunt_grenade {
+            let p = &mut PROJECTILES[i];
+            let step = hecu_grenades::advance(&mut p.vel, &mut p.remainder);
+            [old[0]+step[0],old[1]+step[1],old[2]+step[2]]
+        } else { [old[0] + v[0], old[1] + v[1], old[2] + v[2]] };
         let mut hit = false;
         let mut hit_pos = new;
         let mut hit_normal = [0i32; 3];
@@ -22045,11 +22166,12 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
                 hit_pos[2] + (hit_normal[2] >> 11),
             ];
             PROJECTILES[i].vel =
-                if reflected[0].abs() + reflected[1].abs() + reflected[2].abs() < 12 {
+                if reflected[0].abs() + reflected[1].abs() + reflected[2].abs() < if grunt_grenade { 192 } else { 12 } {
                     [0; 3]
                 } else {
                     reflected
                 };
+            PROJECTILES[i].remainder = [0; 3];
             if PROJECTILES[i].life == 0 {
                 let p = PROJECTILES[i];
                 PROJECTILES[i].active = false;
