@@ -21383,16 +21383,6 @@ unsafe fn fire_hitscan(
     }
 }
 
-/// Fixed spread pattern for shotgun pellets (no RNG in the render path); pellet
-/// `i` lands `spread` px off-centre in a small fixed rosette.
-#[inline]
-fn pellet_offset(i: u8, spread: i32) -> (i32, i32) {
-    const PAT: [(i32, i32); 6] = [(0, 0), (2, -1), (-2, 1), (1, 2), (-1, -2), (2, 2)];
-    let (px, py) = PAT[(i as usize) % PAT.len()];
-    (px * spread / 2, py * spread / 2)
-}
-
-#[optimize(size)]
 /// Run a weapon's fire archetype for one shot already paid for by try_fire.
 /// Returns true when a hitscan connected with an enemy (drives the crowbar
 /// hit-vs-miss sound).
@@ -21439,11 +21429,11 @@ unsafe fn fire_weapon(
         .is_some(),
         FIRE_SPREAD => {
             let n = d.pellets.max(1);
-            let scatter = inacc + (d.spread as i32 / 4).max(1);
             let mut i = 0u8;
             let mut hit = false;
             while i < n {
-                let (cx, cy) = pellet_offset(i, d.spread);
+                // Every pellet draws its own point in the cone (FireBulletsPlayer).
+                let (cx, cy) = (jit(d.spread), jit(d.spread));
                 hit |= fire_hitscan(
                     m,
                     movers,
@@ -21455,8 +21445,8 @@ unsafe fn fire_weapon(
                     d.range,
                     GLOCK_AIM_PIX_X,
                     GLOCK_AIM_PIX_Y,
-                    cx + jit(scatter),
-                    cy + jit(scatter),
+                    cx,
+                    cy,
                 )
                 .is_some();
                 i += 1;
@@ -21607,8 +21597,8 @@ unsafe fn fire_secondary(
             w.cooldown = SHOTGUN_ALT_COOLDOWN;
             PUMP_IN = 19;
             let d = w.def();
-            fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 4);
-            fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 6);
+            fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 0);
+            fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 0);
             sfx::play(sfx::SHOTGUN_DOUBLE);
             true
         }
