@@ -84,6 +84,20 @@ impl<const N: usize> DeadGlobals<N> {
     }
 }
 
+// ------------------------------------------------------------ target_cdaudio
+
+/// CTargetCDAudio::Think: the first look comes a second after spawn, then
+/// every half second.
+pub const CDAUDIO_FIRST_POLL_TICKS: u16 = 20;
+pub const CDAUDIO_POLL_TICKS: u16 = 10;
+
+/// The track starts once the player is within `radius` of the target
+/// (`distance_sq` and `radius` share a unit; a zero radius never polls).
+pub const fn cdaudio_in_range(radius: u16, distance_sq: i64) -> bool {
+    radius > 0 && distance_sq <= (radius as i64) * (radius as i64)
+}
+
+
 // ----------------------------------------------------------- trigger_multiple
 
 /// What a trigger_multiple does after it fires: wait that long before it may
@@ -170,6 +184,13 @@ pub const HURT_REPEAT_TICKS: u16 = 10;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cd_target_starts_inside_its_radius_only() {
+        assert!(cdaudio_in_range(256, 256 * 256));
+        assert!(!cdaudio_in_range(256, 256 * 256 + 1));
+        assert!(!cdaudio_in_range(0, 0));
+    }
 
     #[test]
     fn the_longest_shipped_chain_fits_with_room_to_spare() {
