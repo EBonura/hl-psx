@@ -52,6 +52,7 @@ struct Out<'a> {
 }
 
 impl Out<'_> {
+    #[optimize(size)]
     #[inline(never)]
     fn u8(&mut self, v: u8) {
         match self.buf.get_mut(self.at) {
@@ -60,6 +61,7 @@ impl Out<'_> {
         }
         self.at += 1;
     }
+    #[optimize(size)]
     #[inline(never)]
     fn u16(&mut self, v: u16) {
         self.u8(v as u8);
@@ -73,12 +75,14 @@ struct In<'a> {
 }
 
 impl In<'_> {
+    #[optimize(size)]
     #[inline(never)]
     fn u8(&mut self) -> u8 {
         let v = self.buf.get(self.at).copied().unwrap_or(0);
         self.at += 1;
         v
     }
+    #[optimize(size)]
     #[inline(never)]
     fn u16(&mut self) -> u16 {
         u16::from(self.u8()) | (u16::from(self.u8()) << 8)
@@ -248,6 +252,7 @@ pub unsafe fn capture(nlogic: usize, nents: usize, tick: u16) -> Option<usize> {
     Some(o.at)
 }
 
+#[optimize(size)]
 /// Capture the map as it stands and keep it, with the player's checkpoint, as
 /// the map's latest save point (a manual save). False when it does not fit.
 pub unsafe fn keep_now(cp: &save::Checkpoint) -> bool {
@@ -263,6 +268,7 @@ pub unsafe fn keep_now(cp: &save::Checkpoint) -> bool {
     }
 }
 
+#[optimize(size)]
 /// A new map: nothing of another map may restore into it.
 pub unsafe fn forget_if_other_room(room: u16) {
     if ROOM != room {
@@ -271,12 +277,14 @@ pub unsafe fn forget_if_other_room(room: u16) {
     }
 }
 
+#[optimize(size)]
 /// A fresh game or chapter jump: no save point of an earlier session applies.
 pub unsafe fn invalidate() {
     ROOM = u16::MAX;
     ARMED = false;
 }
 
+#[optimize(size)]
 /// The player is dead: if this map has a save point, restore it on the next
 /// start instead of the level entry. True when armed.
 pub unsafe fn arm_for_death(room: u16) -> bool {
@@ -287,6 +295,7 @@ pub unsafe fn arm_for_death(room: u16) -> bool {
     true
 }
 
+#[optimize(size)]
 /// A save was read from the card: hold its payload for the map start.
 pub unsafe fn arm_from_card(room: u16, cp: save::Checkpoint, payload: &[u8], tick: u16) {
     ARMED = false;
@@ -302,6 +311,7 @@ pub unsafe fn arm_from_card(room: u16, cp: save::Checkpoint, payload: &[u8], tic
     ARMED = true;
 }
 
+#[optimize(size)]
 /// The checkpoint and start tick a pending restore replays, if armed for `room`.
 pub unsafe fn pending(room: u16) -> Option<(save::Checkpoint, u16)> {
     if ARMED && ROOM == room && LEN != 0 {
@@ -311,6 +321,7 @@ pub unsafe fn pending(room: u16) -> Option<(save::Checkpoint, u16)> {
     }
 }
 
+#[optimize(size)]
 /// The captured bytes, for the card.
 pub unsafe fn bytes() -> &'static [u8] {
     if ROOM == u16::MAX {
@@ -319,6 +330,7 @@ pub unsafe fn bytes() -> &'static [u8] {
     &buf()[..LEN]
 }
 
+#[optimize(size)]
 pub unsafe fn tick() -> u16 {
     TICK
 }

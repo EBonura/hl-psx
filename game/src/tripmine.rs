@@ -228,6 +228,7 @@ pub(crate) unsafe fn tick_map(m: &Map, movers: &[phys::Mover], pi: usize) {
     }
 }
 
+#[optimize(size)]
 /// A bullet or blast hit the mine: it goes off after the usual fuse.
 pub(crate) unsafe fn shot(pi: usize) {
     if PROP_STATE[pi] != PROP_STATE_ATTACK {

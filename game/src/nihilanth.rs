@@ -118,6 +118,7 @@ unsafe fn n() -> &'static mut Nih {
     &mut *core::ptr::addr_of_mut!(N)
 }
 
+#[optimize(size)]
 pub(crate) unsafe fn reset() {
     N.pi = 0xff;
     N.dead = false; // doubles as "not searched yet" while unbound
@@ -616,6 +617,7 @@ unsafe fn tick_balls(m: &Map, movers: &[phys::Mover], nlogic: usize, now: u16) {
     }
 }
 
+#[optimize(size)]
 /// The spheres circling him, for the renderer: count and centre.
 pub(crate) unsafe fn spheres() -> Option<(u8, [i32; 3])> {
     let g = n();
