@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Free RAM went from 4,008 B to 32,184 B with no change to what the game does. `cargo hl-build ram` links the shipping image and prints `free N B` (the SDK's check) with a per-section, per-crate and per-module breakdown; `--map PATH` reads an existing link map. `game/ram-budget` holds a floor (4,096 B) that every shipping compile, pack and disc build enforces, so a change that eats the headroom fails the build. The bytes came from the map staging floor (-8,192 B, weapon cache margin 13,472 to 5,280 B at c5a1), `#[optimize(size)]` on the per-tick logic, tram, scientist, leech, physics, save and setup code (-13 KB of text; the fixed update is 4.4% of a frame and measured +0.09% of the frame on c1a0 and +0.4% on c4a3), and a 768 B zero table. A fresh PGO profile does not link at any inlining rung (+55 KB at 1000, +27 KB at 125), so the committed profile stays.
 - A save keeps the map's progress, and dying reloads it. A manual save used to
   keep only the player, so loading respawned every monster and reset every
   door. It now also records which monsters are dead (and where a following
