@@ -78,6 +78,7 @@ mod save;
 mod segments;
 mod scientist_logic;
 mod leech;
+mod mapsnap;
 mod monsterjump;
 mod scratchpad;
 mod setpiece_logic;
@@ -2350,7 +2351,10 @@ unsafe fn save_with_badge(
     driver::with(|gpu| fb.swap(gpu));
 
     let start = interrupts::vblank_count();
-    let result = save::write(target, cp, save_staging());
+    // The map's progress goes to the card with the checkpoint, and stays in RAM
+    // as the point a death reloads.
+    mapsnap::keep_now(cp);
+    let result = save::write(target, cp, mapsnap::bytes(), mapsnap::tick(), save_staging());
     LAST_SAVE_VBLANKS = interrupts::vblank_count().wrapping_sub(start);
     #[cfg(feature = "emulator-telemetry")]
     debug_line("save cost", &[("vblanks=", LAST_SAVE_VBLANKS as i32)]);
@@ -2574,6 +2578,7 @@ fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
                             Ok(cp) if (cp.room_id as usize) < menu::MAPS.len() => {
                                 PENDING_RESTORE = cp;
                                 PENDING_RESTORE_ACTIVE = true;
+                                arm_map_progress(&cp);
                                 // Actors spawn with the save's difficulty, before the restore.
                                 settings::set_skill(cp.skill);
                                 return PauseExit::LoadedSave(cp.room_id as usize);
@@ -5946,14 +5951,23 @@ pub fn load_saved_room() -> Option<usize> {
         }
         PENDING_RESTORE = cp;
         PENDING_RESTORE_ACTIVE = true;
+        arm_map_progress(&cp);
         // Actors spawn with the save's difficulty, before the restore.
         settings::set_skill(cp.skill);
         Some(room)
     }
 }
 
+/// A save just read: hold the map progress it carries (still in the staging
+/// buffer) for the map start.
+unsafe fn arm_map_progress(cp: &save::Checkpoint) {
+    let at = cp.snap_at as usize;
+    let end = (at + cp.snap_len as usize).min(save_staging().len());
+    mapsnap::arm_from_card(cp.room_id, *cp, &save_staging()[at.min(end)..end], cp.snap_tick);
+}
+
 unsafe fn save_staging() -> &'static mut [u8] {
-    core::slice::from_raw_parts_mut(core::ptr::addr_of_mut!(SCRATCH_XY).cast::<u8>(), 1024)
+    core::slice::from_raw_parts_mut(core::ptr::addr_of_mut!(SCRATCH_XY).cast::<u8>(), 4096)
 }
 
 static mut CARRY_VALID: bool = false;
@@ -6259,6 +6273,8 @@ fn menu_start(room_id: usize) -> RoomLaunch {
     if unsafe { PENDING_RESTORE_ACTIVE && PENDING_RESTORE.room_id as usize == room_id } {
         return launch;
     }
+    // A fresh start: no save point of an earlier session applies.
+    unsafe { mapsnap::invalidate() };
     let Some(arrival) =
         menu::chapter_starting_in(room_id).and_then(|c| CHAPTER_ARRIVALS[c].as_ref())
     else {
@@ -18776,7 +18792,7 @@ unsafe fn scientist_heal_tick(pi: usize, left: u8, player_pos: [i32; 3], health:
         prop_attack_cooldown_set(pi, next);
     }
     if scientist_logic::heal_event(left, d2, scientist_logic::heal_wanted(*health)) {
-        #[cfg(feature = "interaction-probe")]
+        #[cfg(feature = "probe-fixes")]
         reference_trace::probe(SIM_NOW as u32, "heal", "", *health as i32);
         *health = scientist_logic::healed_health(*health, skill_hit(Sk::ScientistHeal) as u16);
         heal_clock().start(pi as u8, SIM_NOW);
@@ -18901,7 +18917,7 @@ unsafe fn tick_scientist(
             let offer = scientist_logic::HEAL_OFFER_RANGE;
             let near = scientist_logic::HEAL_WALK_RANGE;
             if reach2 <= near * near {
-                #[cfg(feature = "interaction-probe")]
+                #[cfg(feature = "probe-fixes")]
                 reference_trace::probe(SIM_NOW as u32, "heal_start", "", *health as i32);
                 prop_attack_cooldown_set(pi, scientist_logic::HEAL_TOTAL_TICKS);
                 PROP_STATE[pi] = PROP_STATE_IDLE;
@@ -32881,7 +32897,12 @@ fn play(
     // Door-occluder state the built PVS face list was masked with.
     let mut render_seal_state = 0u32;
     let mut telemetry_frame: u32 = 1;
-    let mut sim_frame_no: u32 = 0;
+    // A reloaded save point resumes the tick count it was taken at, so the
+    // absolute deadlines in the restored map state stay valid.
+    let mut sim_frame_no: u32 = unsafe {
+        mapsnap::forget_if_other_room(launch.room_id);
+        mapsnap::pending(launch.room_id).map_or(0, |(_, tick)| tick as u32)
+    };
     let mut weapon = Arsenal::new();
     // Ammo is granted only WITH a weapon: the changelevel carry restores it
     // (CARRY_AMMO below), chapter-select seeds it in give_chapter_loadout. A
@@ -33029,7 +33050,12 @@ fn play(
             }
             li += 1;
         }
-        logic_fire_global_autos(&m, nlogic);
+        if mapsnap::pending(launch.room_id).is_some() {
+            // The map as it stood: its triggers have long since fired.
+            mapsnap::apply(&m, nlogic, nents);
+        } else {
+            logic_fire_global_autos(&m, nlogic);
+        }
     }
     let mut pickup_kind: u8 = hud::PICKUP_NONE;
     let mut pickup_ticks: u8 = 0;
@@ -34943,7 +34969,11 @@ fn play(
                     skill: settings::skill() as u8,
                     sequence: 0, // stamped by save::write
                     weaponbox_removed: WEAPONBOX_REMOVED,
+                    snap_tick: 0,
+                    snap_at: 0,
+                    snap_len: 0,
                 };
+                mapsnap::note_dims(nlogic, nents, sim_frame_no as u16);
                 let mut charger_pulse = 0u8;
                 if want_use && MOUNTED_TANK >= 0 {
                     // Any use press while mounted dismounts (works even if the
@@ -35552,6 +35582,14 @@ fn play(
                 }
                 if restart_requested {
                     sfx::charger_stop();
+                    // Dying reloads the latest save point of this map, when
+                    // there is one, instead of its entry.
+                    if mapsnap::arm_for_death(launch.room_id) {
+                        if let Some((cp, _)) = mapsnap::pending(launch.room_id) {
+                            PENDING_RESTORE = cp;
+                            PENDING_RESTORE_ACTIVE = true;
+                        }
+                    }
                     return PlayExit::Restart(launch);
                 }
                 if TRAINING_COMPLETE_REQUEST {

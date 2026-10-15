@@ -109,6 +109,8 @@ impl Slot {
 
 /// Version 5 appends the authored weaponbox consumed mask; legacy versions
 /// 2..4 remain readable and start with no recorded box removals.
+/// Version 6 appends the map's progress (`mapsnap`) after the v5 fields.
+const SAVE_VERSION_SNAP: u16 = 6;
 const SAVE_VERSION: u16 = 5;
 const SAVE_VERSION_WITH_SKILL: u16 = 4;
 /// Version 3 lacks the difficulty field; those saves were played on the
@@ -154,6 +156,11 @@ pub struct Checkpoint {
     /// on the card and adds one.
     pub sequence: u32,
     pub weaponbox_removed: u32,
+    /// The map-progress payload a loaded save carries: the tick it was taken
+    /// at and where it sits in the buffer the save was decoded from.
+    pub snap_tick: u16,
+    pub snap_at: u16,
+    pub snap_len: u16,
 }
 
 impl Checkpoint {
@@ -179,6 +186,9 @@ impl Checkpoint {
         skill: 0,
         sequence: 0,
         weaponbox_removed: 0,
+        snap_tick: 0,
+        snap_at: 0,
+        snap_len: 0,
     };
 }
 
@@ -211,6 +221,12 @@ impl<'a> Writer<'a> {
     fn i32(&mut self, v: i32) {
         self.u32(v as u32);
     }
+    #[inline(never)]
+    fn bytes(&mut self, b: &[u8]) {
+        for &x in b {
+            self.u8(x);
+        }
+    }
 }
 
 struct Reader<'a> {
@@ -241,12 +257,29 @@ impl<'a> Reader<'a> {
 /// Serialise into `buf`, returning the byte count. Ends with a sum check over
 /// the payload: the card's own per-frame XOR catches media damage, this catches
 /// a short or interleaved write.
+#[cfg(test)]
 #[inline(never)]
 #[cfg_attr(target_arch = "mips", optimize(size))]
 pub fn encode(cp: &Checkpoint, buf: &mut [u8]) -> usize {
+    encode_inner(cp, None, buf)
+}
+
+/// A version 6 save: the checkpoint plus the map's progress.
+#[cfg(any(test, target_arch = "mips"))]
+pub fn encode_snap(cp: &Checkpoint, snap: &[u8], tick: u16, buf: &mut [u8]) -> usize {
+    encode_inner(cp, Some((snap, tick)), buf)
+}
+
+#[inline(never)]
+#[cfg_attr(target_arch = "mips", optimize(size))]
+fn encode_inner(cp: &Checkpoint, snap: Option<(&[u8], u16)>, buf: &mut [u8]) -> usize {
     let mut w = Writer { buf, at: 0 };
     w.u32(SAVE_MAGIC);
-    w.u16(SAVE_VERSION);
+    w.u16(if snap.is_some() {
+        SAVE_VERSION_SNAP
+    } else {
+        SAVE_VERSION
+    });
     w.u16(cp.room_id);
     for c in cp.pos {
         w.i32(c);
@@ -278,6 +311,11 @@ pub fn encode(cp: &Checkpoint, buf: &mut [u8]) -> usize {
     w.u16(cp.gravity);
     w.u8(cp.skill);
     w.u32(cp.weaponbox_removed);
+    if let Some((bytes, tick)) = snap {
+        w.u16(tick);
+        w.u16(bytes.len() as u16);
+        w.bytes(bytes);
+    }
     let end = w.at;
     let sum = checksum(&w.buf[..end]);
     w.u32(sum);
@@ -293,7 +331,8 @@ pub fn decode(buf: &[u8]) -> Option<Checkpoint> {
         return None;
     }
     let version = r.u16();
-    if version != SAVE_VERSION
+    if version != SAVE_VERSION_SNAP
+        && version != SAVE_VERSION
         && version != SAVE_VERSION_WITH_SKILL
         && version != SAVE_VERSION_NO_SKILL
         && version != SAVE_VERSION_NO_GRAVITY
@@ -341,6 +380,12 @@ pub fn decode(buf: &[u8]) -> Option<Checkpoint> {
             return None;
         }
     }
+    if version >= SAVE_VERSION_SNAP {
+        cp.snap_tick = r.u16();
+        cp.snap_len = r.u16();
+        cp.snap_at = r.at as u16;
+        r.at += cp.snap_len as usize;
+    }
     let end = r.at;
     let stored = r.u32();
     if r.at > buf.len() || stored != checksum(&buf[..end]) {
@@ -385,14 +430,14 @@ fn with_card<T>(port: Port, f: impl FnOnce(&mut psx_mc::Card<psx_mc::HardwareCar
 #[cfg(target_arch = "mips")]
 #[inline(never)]
 #[optimize(size)]
-pub fn write(target: Target, cp: &Checkpoint, staging: &mut [u8]) -> CardResult {
+pub fn write(target: Target, cp: &Checkpoint, snap: &[u8], tick: u16, staging: &mut [u8]) -> CardResult {
     if target.slot != Slot::Manual {
         return CardResult::Failed;
     }
     let next = latest_sequence(staging).wrapping_add(1);
     let mut stamped = *cp;
     stamped.sequence = next;
-    let len = encode(&stamped, staging);
+    let len = encode_snap(&stamped, snap, tick, staging);
     with_card(target.port, |card| match card.is_formatted() {
         Err(_) => CardResult::NoCard,
         Ok(formatted) => {
@@ -460,7 +505,7 @@ pub fn read(target: Target, staging: &mut [u8]) -> Result<Checkpoint, CardResult
 }
 
 #[cfg(not(target_arch = "mips"))]
-pub fn write(_target: Target, _cp: &Checkpoint, _staging: &mut [u8]) -> CardResult {
+pub fn write(_target: Target, _cp: &Checkpoint, _snap: &[u8], _tick: u16, _staging: &mut [u8]) -> CardResult {
     CardResult::NoCard
 }
 
@@ -629,5 +674,25 @@ mod tests {
         let len = encode(&sample(), &mut buf);
         assert!(len < 8192, "one block is 8192 bytes, payload is {len}");
         assert!(len < buf.len(), "sample must fit the test buffer");
+    }
+
+    #[test]
+    fn version_six_carries_the_map_progress_after_the_checkpoint() {
+        let mut buf = [0u8; 512];
+        let snap = [9u8, 8, 7, 6, 5];
+        let len = encode_snap(&sample(), &snap, 1234, &mut buf);
+        let back = decode(&buf[..len]).expect("decodes");
+        assert_eq!(back.snap_tick, 1234);
+        assert_eq!(back.snap_len, 5);
+        assert_eq!(&buf[back.snap_at as usize..back.snap_at as usize + 5], &snap);
+        assert_eq!(back.room_id, 42);
+        assert_eq!(back.weaponbox_removed, sample().weaponbox_removed);
+        // A flipped progress byte fails the checksum.
+        buf[back.snap_at as usize + 2] ^= 1;
+        assert!(decode(&buf[..len]).is_none());
+        // Older saves carry no progress.
+        let mut old = [0u8; 512];
+        let n = encode(&sample(), &mut old);
+        assert_eq!(decode(&old[..n]).unwrap().snap_len, 0);
     }
 }

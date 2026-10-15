@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- A save keeps the map's progress, and dying reloads it. A manual save used to
+  keep only the player, so loading respawned every monster and reset every
+  door. It now also records which monsters are dead (and where a following
+  scientist stands), the state of every door, button, trigger, counter,
+  charger, monster maker and breakable, the removed sprites and the light
+  switches, in 0.4 to 0.9 KB measured on seven maps (limit 1 KB; a map that
+  needs more is not recorded and a death restarts it from its entry as
+  before). The save is held in RAM as well, so a death after a save reloads
+  that save, as retail does, instead of the level entry. Not recorded:
+  trains and tracktrains, pushables, scripted sequences in flight, boss
+  schedules, delayed events not yet fired, and where monsters other than
+  followers stand (the living go back to their spawn with their health).
+  Saves made before this one load as they always did.
 - Leeches swim and bite. The 105 leeches of c2a1a, c2a2a, c2a3, c2a3a, c2a3b,
   c3a1 and c3a1a were drawn but never moved. Each now drifts at 50 units a
   second inside the middle of its water column, hunts a player who is in the
