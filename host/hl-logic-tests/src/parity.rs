@@ -181,6 +181,7 @@ enum Port {
     /// A multiple of one cvar.
     SkTimes(Sk, i64),
     /// No such attack in the port.
+    #[allow(dead_code)]
     None,
 }
 
