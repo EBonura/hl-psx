@@ -1,0 +1,10 @@
+# tripmine: c1a2 spawn faces a wall about 175 units east. First pull: out of reach, nothing placed, mine kept. Second pull from about 85 units: placed on the wall.
+map c1a2
+0 god 2
+0 trace 10
+3 weapons
+5 weapon 12
+10 projlog 1
+20 in 0 0 0 0 1 1
+40 tp 3110 -894 -507 0 0 0
+50 in 0 0 0 0 1 1

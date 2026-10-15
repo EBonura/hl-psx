@@ -21265,6 +21265,11 @@ unsafe fn fire_weapon(
             hit
         }
         FIRE_PROJ => {
+            if d.proj == PROJ_TRIPMINE {
+                // Placed, not thrown; the caller refunds the mine on a miss.
+                let fwd = [rot.m[2][0] as i32, rot.m[2][1] as i32, rot.m[2][2] as i32];
+                return tripmine::place(m, movers, eye, fwd);
+            }
             spawn_projectile(d.proj, d.damage, eye, rot);
             false
         }
@@ -22287,17 +22292,6 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
                 PROJECTILES[i].active = false;
                 explode(m, grenade_blast_origin(m, movers, p.pos, p.damage), p.damage, aoe, !p.from_enemy);
             }
-            i += 1;
-            continue;
-        }
-        if kind == PROJ_TRIPMINE && hit && hit_normal != [0; 3] {
-            PROJECTILES[i].pos = [
-                hit_pos[0] + (hit_normal[0] >> 11),
-                hit_pos[1] + (hit_normal[1] >> 11),
-                hit_pos[2] + (hit_normal[2] >> 11),
-            ];
-            PROJECTILES[i].vel = hit_normal;
-            PROJECTILES[i].life = tripmine::ARM_TICKS;
             i += 1;
             continue;
         }
@@ -35605,6 +35599,10 @@ fn play(
                         DMG_HEAVY = false;
                         hit
                     };
+                    if weapon.current == W_TRIPMINE && !hit {
+                        // Nothing within 128 units took the mine: not spent.
+                        weapon.ammo[AMMO_TRIPMINE] += 1;
+                    }
                     if weapon.current == W_CROWBAR {
                         if hit {
                             viewmodel_anim = VM_ANIM_ALT;
