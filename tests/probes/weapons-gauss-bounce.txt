@@ -1,0 +1,10 @@
+# gauss: c1a2 spawn, grazing the corridor wall. Charged shots 15 degrees off the wall plane: it must bounce.
+map c1a2
+0 god 2
+0 trace 10
+3 weapons
+5 weapon 7
+20 view 195 0
+30 in 0 0 0 0 16 95
+150 view 165 0
+160 in 0 0 0 0 16 95

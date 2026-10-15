@@ -30,6 +30,10 @@ pub use combat_defs::{N_AMMO, N_WEAPONS};
 pub mod weaponbox;
 #[path = "../../../game/src/air_navigation.rs"]
 pub mod air_navigation;
+#[path = "../../../game/src/throwable.rs"]
+pub mod throwable;
+#[path = "../../../game/src/autoaim.rs"]
+pub mod autoaim;
 #[path = "../../../game/src/leech.rs"]
 pub mod leech;
 #[path = "../../../game/src/player_rules.rs"]

@@ -1,0 +1,10 @@
+# rpg: c1a1 open space north of the zombie pit (the crossbow bolt flew 14000 units there). Rocket launch, drop, ignition, boost to 2000 u/s.
+map c1a1
+0 god 2
+0 trace 20
+3 weapons
+5 weapon 6
+9 projlog 1
+100 tp 348 2548 764 90 0 0
+118 view 90 0
+122 in 0 0 0 0 1 1

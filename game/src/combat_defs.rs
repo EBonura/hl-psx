@@ -104,6 +104,9 @@ pub struct WeaponDef {
     pub wm: u8,           // viewmodel index: geom chunk 1000+wm, tex 2000+wm
 }
 
+/// egon.cpp Fire: the beam reaches 2048 units (the Tau Cannon's reaches 8192).
+pub const EGON_RANGE: i32 = 2048;
+
 pub const W_CROWBAR: usize = 0;
 pub const W_GLOCK: usize = 1;
 pub const W_357: usize = 2;
@@ -117,7 +120,6 @@ pub const W_HORNET: usize = 9;
 pub const W_GRENADE: usize = 10;
 #[allow(dead_code)] // completes the slot table; no code names this slot
 pub const W_SNARK: usize = 11;
-#[allow(dead_code)] // completes the slot table; no code names this slot
 pub const W_TRIPMINE: usize = 12;
 pub const W_SATCHEL: usize = 13;
 pub const N_WEAPONS: usize = 14;
@@ -419,7 +421,7 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         0,
         100,
         14,
-        GLOCK_RANGE,
+        EGON_RANGE,
         1,
         0,
         2,
@@ -432,7 +434,7 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         AMMO_HORNET,
         0,
         8,
-        8,
+        7, // gamerules.cpp plrDmgHornet
         0,
         1,
         0,

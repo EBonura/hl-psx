@@ -48,7 +48,7 @@ pub(crate) unsafe fn beam_end(
 /// Whether the box `lo..hi` touches the segment a-b.
 #[inline(never)]
 #[optimize(size)]
-fn touches(a: [i32; 3], b: [i32; 3], lo: [i32; 3], hi: [i32; 3]) -> bool {
+pub(crate) fn touches(a: [i32; 3], b: [i32; 3], lo: [i32; 3], hi: [i32; 3]) -> bool {
     let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
     // Slab test in fixed point: t runs 0..=4096 along the segment.
     let mut t0 = 0i32;
@@ -181,6 +181,37 @@ pub(crate) unsafe fn tick_placed(m: &Map, movers: &[phys::Mover], i: usize) -> b
         PROJECTILES[i].life = FUSE_BASE + FUSE_TICKS;
     }
     false
+}
+
+/// CTripmine::PrimaryAttack: a 128-unit line from the eye along the view; a
+/// surface inside it takes the mine, 8 units off the wall and facing out. A
+/// miss places nothing (and costs no mine). Returns whether one was placed.
+#[inline(never)]
+#[optimize(size)]
+pub(crate) unsafe fn place(
+    m: &Map,
+    movers: &[phys::Mover],
+    eye: [i32; 3],
+    fwd: [i32; 3],
+) -> bool {
+    let end = [
+        eye[0] + ((fwd[0] * 128) >> 12),
+        eye[1] + ((fwd[1] * 128) >> 12),
+        eye[2] + ((fwd[2] * 128) >> 12),
+    ];
+    let Some(hit) = phys::trace_line(m, movers, eye, end) else {
+        return false;
+    };
+    let slot = spawn_projectile_dir(PROJ_TRIPMINE, DAMAGE, eye, [0; 3], false);
+    PROJECTILES[slot].pos = [
+        hit.pos[0] + ((hit.normal[0] * 8) >> 12),
+        hit.pos[1] + ((hit.normal[1] * 8) >> 12),
+        hit.pos[2] + ((hit.normal[2] * 8) >> 12),
+    ];
+    // A placed mine keeps its wall normal in `vel` (see tick_projectiles).
+    PROJECTILES[slot].vel = hit.normal;
+    PROJECTILES[slot].life = ARM_TICKS;
+    true
 }
 
 /// A mine a map authors (monster_tripmine). It faces away from the wall behind

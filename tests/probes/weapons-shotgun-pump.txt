@@ -1,0 +1,8 @@
+# shotgun: pump 0.5 s after a single blast, 0.95 s after the double; MP5 tracer parity is checked by the unit of the rule, not here.
+map c1a2
+0 god 2
+0 trace 20
+3 weapons
+5 weapon 4
+20 in 0 0 0 0 1 1
+80 in 0 0 0 0 16 1

@@ -1,0 +1,9 @@
+# gauss: c1a1, a primary shot straight through the still zombie at (348,2048) from 500 units north. It must hurt the zombie and go on to the wall behind.
+map c1a1
+0 god 2
+0 trace 20
+3 weapons
+5 weapon 7
+100 tp 348 2548 764 270 0 0
+118 view 270 0
+122 in 0 0 0 0 1 1

@@ -37,6 +37,7 @@ static mut GOTO: Option<(usize, bool)> = None;
 static mut FORCE_NEXT: bool = false;
 static mut WATCH_KIND: i32 = -1;
 static mut WATCH_EVERY: u32 = 10;
+static mut PROJ_LOG: bool = false;
 
 pub unsafe fn take_goto() -> Option<(usize, bool)> {
     let g = GOTO;
@@ -352,6 +353,27 @@ pub unsafe fn step(
                 WATCH_KIND = c.a[0] as i32;
                 WATCH_EVERY = if c.a[1] > 0 { c.a[1] as u32 } else { 10 };
             }
+            24 => PROJ_LOG = c.a[0] != 0,
+            27 => {
+                // ammo POOL N : set one ammo pool (and every magazine to N when POOL is 99)
+                let pool = c.a[0].clamp(0, crate::combat_defs::N_AMMO as i16 - 1) as usize;
+                weapons.ammo[pool] = c.a[1].max(0) as u16;
+            }
+            26 => {
+                // propdump : one line per live actor (index, kind, health, position)
+                let mut pi = 0usize;
+                while pi < crate::PROP_COUNT {
+                    if crate::PROP_ACTIVE[pi] != 0 && crate::PROP_HEALTH[pi] != 0 {
+                        let t = crate::PROP_POS[pi];
+                        crate::reference_trace::probe_vals(
+                            now,
+                            "prop",
+                            &[pi as i32, crate::PROP_KIND[pi] as i32, crate::PROP_HEALTH[pi] as i32, t[0], t[1], t[2]],
+                        );
+                    }
+                    pi += 1;
+                }
+            }
             16 => FACE = if cname == "-" { 0 } else { name_id(m, cname) },
             13 => crate::reference_trace::probe_vals(
                 now,
@@ -360,6 +382,9 @@ pub unsafe fn step(
             ),
             _ => {}
         }
+    }
+    if PROJ_LOG {
+        crate::probe_projectiles(now);
     }
     if WATCH_KIND >= 0 && now % WATCH_EVERY == 0 {
         let mut pi = 0usize;
