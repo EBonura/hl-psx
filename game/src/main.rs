@@ -17070,6 +17070,30 @@ unsafe fn sentry_schedule_wake(pi: usize) {
     }
 }
 
+/// Set while a bolt's damage is applied (DMG_NEVERGIB).
+static mut DMG_NEVERGIB: bool = false;
+
+/// GibMonster: the body bursts into a shower of gore and is gone.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn gib_prop(pi: usize) {
+    #[cfg(feature = "interaction-probe")]
+    reference_trace::probe_vals(SIM_NOW as u32, "gib", &[pi as i32, PROP_KIND[pi] as i32]);
+    PROP_DORMANT[pi] |= PROP_RUNTIME_RENDER_HIDDEN;
+    spawn_gibs(PROP_POS[pi], 8);
+}
+
+/// Whether a dead actor of this kind can burst: it bleeds and is no larger
+/// than a trooper (the bosses and machines have no gibs to throw).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_can_gib(pi: usize) -> bool {
+    let ty = PROP_KIND[pi];
+    prop_blood_kind(ty) != IMPACT_KIND_NONE
+        && prop_start_health(ty) <= 100
+        && PROP_DORMANT[pi] & PROP_RUNTIME_RENDER_HIDDEN == 0
+}
+
 /// The friend the player just killed (CTalkMonster::Killed), handled once per
 /// tick by tick_props; 255 when none.
 static mut ALERT_FRIENDS: u8 = 255;
@@ -17203,6 +17227,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         boss_walker_damage(dmg);
         return;
     }
+    let health_before = PROP_HEALTH[pi];
     PROP_HEALTH[pi] = PROP_HEALTH[pi].saturating_sub(dmg);
     PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
     if MONSTER_TRIGGER_END != 0 {
@@ -17231,6 +17256,11 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         // throw no gore either.
         if prop_blood_kind(PROP_KIND[pi]) != IMPACT_KIND_NONE {
             spawn_gibs(PROP_POS[pi], 3); // gore chunks arc out from the corpse
+        }
+        // ShouldGibMonster: health below -30 bursts the body (no u8 health goes
+        // negative; the overkill is the damage past the last hit point).
+        if dmg as i32 - health_before as i32 > 30 && !DMG_NEVERGIB && prop_can_gib(pi) {
+            gib_prop(pi);
         }
         sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
         let v = prop_voice(PROP_KIND[pi], true);
@@ -20276,7 +20306,10 @@ const WEAPON_FIRST_MAP: [usize; N_WEAPONS] = map_catalog::WEAPON_FIRST_MAP;
 const HORNET_REGEN_TICKS: u8 = 10; // 1 hornet / 0.5 s (hornetgun.cpp:33)
 const CROWBAR_HIT_COOLDOWN_TICKS: u8 = 5; // CCrowbar::Swing hit: 0.25 s
 const CROWBAR_MISS_COOLDOWN_TICKS: u8 = 10; // CCrowbar::Swing miss: 0.5 s
-const CROWBAR_FULL_DAMAGE_IDLE_TICKS: u8 = 20; // full damage again after one idle second
+// Full damage again a second after the attack timer a swing set has run out:
+// 0.25 s + 1.0 s after a hit, 0.5 s + 1.0 s after a miss (crowbar.cpp Swing).
+const CROWBAR_FULL_DAMAGE_HIT_TICKS: u8 = 25;
+const CROWBAR_FULL_DAMAGE_MISS_TICKS: u8 = 30;
 
 #[inline]
 fn wdef_of(id: usize) -> &'static WeaponDef {
@@ -20309,6 +20342,8 @@ unsafe fn dry_click() {
 
 /// `CRpg::Reload` refuses while a rocket is flying and the designator is on:
 /// the dot is guiding it, so the launcher stays empty until it lands.
+#[inline(never)]
+#[optimize(size)]
 unsafe fn satchels_out() -> bool {
     let mut i = 0;
     while i < MAX_PROJECTILES {
@@ -20320,6 +20355,8 @@ unsafe fn satchels_out() -> bool {
     false
 }
 
+#[inline(never)]
+#[optimize(size)]
 unsafe fn rpg_reload_blocked() -> bool {
     if !RPG_SPOT_ACTIVE {
         return false;
@@ -20607,6 +20644,8 @@ impl Arsenal {
         None
     }
 
+    #[inline(never)]
+    #[optimize(size)]
     fn start_reload(&mut self) -> bool {
         let d = self.def();
         if d.reload == 0 || d.clip == 0 || self.reload_ticks != 0 {
@@ -20737,6 +20776,8 @@ impl Arsenal {
     /// out). Returns true if the selection changed (the caller then streams
     /// the new viewmodel). The RPG will not be put away while a rocket it
     /// guides is in the air (`CRpg::CanHolster`).
+    #[inline(never)]
+    #[optimize(size)]
     fn cycle(&mut self, forward: bool) -> bool {
         // Bucket 4 of the HUD lists the hand grenade, satchel, tripmine, snark.
         const HUD_ORDER: [u8; N_WEAPONS] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13, 12, 11];
@@ -20767,6 +20808,8 @@ impl Arsenal {
 
     /// A thrown weapon with nothing left to throw (and, for the satchel, no
     /// charge left to detonate): `ITEM_FLAG_EXHAUSTIBLE`.
+    #[inline(never)]
+    #[optimize(size)]
     fn is_spent_thrown(&self) -> bool {
         matches!(self.current, W_GRENADE | W_SNARK | W_TRIPMINE | W_SATCHEL)
             && self.owns(self.current)
@@ -20778,6 +20821,8 @@ impl Arsenal {
     /// leaves the inventory and the player is switched to a deployable weapon
     /// of the same weight, else the heaviest one (never the RPG, which needs a
     /// hand free to guide it). Returns the weapon switched to.
+    #[inline(never)]
+    #[optimize(size)]
     fn retire_spent(&mut self) -> usize {
         // iWeight by weapon id.
         const WEIGHT: [i8; N_WEAPONS] = [0, 10, 15, 15, 15, 10, 20, 20, 20, 15, 5, 5, -10, -10];
@@ -20804,6 +20849,8 @@ impl Arsenal {
     }
 
     /// `CBasePlayerWeapon::CanDeploy`.
+    #[inline(never)]
+    #[optimize(size)]
     fn can_deploy(&self, id: usize) -> bool {
         id == W_CROWBAR
             || id == W_HORNET
@@ -21244,7 +21291,7 @@ unsafe fn queue_impact_marks(
     }
 }
 
-const MELEE_AIM_PIX: i32 = 70; // crowbar swing: wide forgiving cone
+const MELEE_AIM_PIX: i32 = 53; // crowbar swing: a 16 unit hull radius at its 48 unit reach
 
 #[inline(always)]
 fn inverse_rotate_scaled(
@@ -21670,16 +21717,6 @@ unsafe fn fire_hitscan(
     }
 }
 
-/// Fixed spread pattern for shotgun pellets (no RNG in the render path); pellet
-/// `i` lands `spread` px off-centre in a small fixed rosette.
-#[inline]
-fn pellet_offset(i: u8, spread: i32) -> (i32, i32) {
-    const PAT: [(i32, i32); 6] = [(0, 0), (2, -1), (-2, 1), (1, 2), (-1, -2), (2, 2)];
-    let (px, py) = PAT[(i as usize) % PAT.len()];
-    (px * spread / 2, py * spread / 2)
-}
-
-#[optimize(size)]
 /// Run a weapon's fire archetype for one shot already paid for by try_fire.
 /// Returns true when a hitscan connected with an enemy (drives the crowbar
 /// hit-vs-miss sound).
@@ -21726,11 +21763,11 @@ unsafe fn fire_weapon(
         .is_some(),
         FIRE_SPREAD => {
             let n = d.pellets.max(1);
-            let scatter = inacc + (d.spread as i32 / 4).max(1);
             let mut i = 0u8;
             let mut hit = false;
             while i < n {
-                let (cx, cy) = pellet_offset(i, d.spread);
+                // Every pellet draws its own point in the cone (FireBulletsPlayer).
+                let (cx, cy) = (jit(d.spread), jit(d.spread));
                 hit |= fire_hitscan(
                     m,
                     movers,
@@ -21742,8 +21779,8 @@ unsafe fn fire_weapon(
                     d.range,
                     GLOCK_AIM_PIX_X,
                     GLOCK_AIM_PIX_Y,
-                    cx + jit(scatter),
-                    cy + jit(scatter),
+                    cx,
+                    cy,
                 )
                 .is_some();
                 i += 1;
@@ -21894,8 +21931,8 @@ unsafe fn fire_secondary(
             w.cooldown = SHOTGUN_ALT_COOLDOWN;
             PUMP_IN = 19;
             let d = w.def();
-            fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 4);
-            fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 6);
+            fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 0);
+            fire_weapon(d, d.damage, m, movers, eye, rot, base_t, 0);
             sfx::play(sfx::SHOTGUN_DOUBLE);
             true
         }
@@ -22046,41 +22083,45 @@ unsafe fn gauss_beam(
             // Punch through: find where the beam leaves the wall within its
             // remaining damage in units, then blast there with what is left.
             punched = true;
-            let far = [
-                h.pos[0] + ((dir[0] * (dmg + 8)) >> 12),
-                h.pos[1] + ((dir[1] * (dmg + 8)) >> 12),
-                h.pos[2] + ((dir[2] * (dmg + 8)) >> 12),
-            ];
-            match phys::trace_line(m, movers, far, h.pos) {
-                Some(x) => {
-                    let d = [x.pos[0] - h.pos[0], x.pos[1] - h.pos[1], x.pos[2] - h.pos[2]];
-                    let thick = isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
-                    if thick >= dmg {
-                        DMG_BLAST = false;
-                        break;
-                    }
-                    dmg -= thick;
-                    #[cfg(feature = "interaction-probe")]
-                    reference_trace::probe_vals(SIM_NOW as u32, "gauss_punch", &[thick, dmg, x.pos[0], x.pos[1], x.pos[2]]);
-                    let blast = dmg.clamp(0, 255) as u8;
-                    let out = [
-                        x.pos[0] + ((dir[0] * 8) >> 12),
-                        x.pos[1] + ((dir[1] * 8) >> 12),
-                        x.pos[2] + ((dir[2] * 8) >> 12),
-                    ];
-                    radius_damage(m, out, blast, blast_radius(blast), true);
-                    src = [
-                        x.pos[0] + (dir[0] >> 12),
-                        x.pos[1] + (dir[1] >> 12),
-                        x.pos[2] + (dir[2] >> 12),
-                    ];
-                    tracer_from = x.pos;
-                }
-                None => {
-                    DMG_BLAST = false;
-                    break;
-                }
+            // The far point must lie in open air past the wall: try the full
+            // reach first, then shorter ones for a wall with more behind it.
+            let mut exit = None;
+            let mut reach = dmg + 8;
+            while exit.is_none() && reach >= 16 {
+                let far = [
+                    h.pos[0] + ((dir[0] * reach) >> 12),
+                    h.pos[1] + ((dir[1] * reach) >> 12),
+                    h.pos[2] + ((dir[2] * reach) >> 12),
+                ];
+                exit = phys::trace_line(m, movers, far, h.pos);
+                reach = reach * 3 / 4;
             }
+            let Some(x) = exit else {
+                DMG_BLAST = false;
+                break;
+            };
+            let d = [x.pos[0] - h.pos[0], x.pos[1] - h.pos[1], x.pos[2] - h.pos[2]];
+            let thick = isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
+            if thick >= dmg {
+                DMG_BLAST = false;
+                break;
+            }
+            dmg -= thick;
+            #[cfg(feature = "interaction-probe")]
+            reference_trace::probe_vals(SIM_NOW as u32, "gauss_punch", &[thick, dmg, x.pos[0], x.pos[1], x.pos[2]]);
+            let blast = dmg.clamp(0, 255) as u8;
+            let out = [
+                x.pos[0] + ((dir[0] * 8) >> 12),
+                x.pos[1] + ((dir[1] * 8) >> 12),
+                x.pos[2] + ((dir[2] * 8) >> 12),
+            ];
+            radius_damage(m, out, blast, blast_radius(blast), true);
+            src = [
+                x.pos[0] + (dir[0] >> 12),
+                x.pos[1] + (dir[1] >> 12),
+                x.pos[2] + (dir[2] >> 12),
+            ];
+            tracer_from = x.pos;
         } else {
             DMG_BLAST = false;
             break;
@@ -22446,6 +22487,7 @@ unsafe fn autoaim_rotation(
 }
 
 /// Player weapon projectile: fires forward along the view.
+#[optimize(size)]
 unsafe fn spawn_projectile(kind: u8, damage: u8, eye: [i32; 3], rot: &Mat3I16) -> usize {
     let fwd = [rot.m[2][0] as i32, rot.m[2][1] as i32, rot.m[2][2] as i32];
     let slot = spawn_projectile_dir(kind, damage, eye, fwd, false);
@@ -22612,6 +22654,8 @@ unsafe fn explode_inner(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_
 
 /// CBaseEntity RadiusDamage: the damage half of an explosion, without its
 /// sound and fireball (the Tau Cannon's bounce and exit blasts are silent).
+#[inline(never)]
+#[optimize(size)]
 unsafe fn radius_damage(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_inflicted: bool) {
     // GoldSrc RadiusDamage reaches every damageable brush, including the
     // Hazard Course's moving func_guntarget. A point trace to the live brush
@@ -22663,11 +22707,23 @@ unsafe fn radius_damage(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_
     let mut pi = 0;
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     while pi < nprops {
-        if PROP_ACTIVE[pi] != 0 && prop_start_health(PROP_KIND[pi]) != 0 && PROP_HEALTH[pi] != 0 {
+        // A corpse is still in reach of the blast: DMG_GIB_CORPSE bursts it.
+        let corpse = PROP_HEALTH[pi] == 0 && PROP_STATE[pi] == PROP_STATE_DEAD;
+        if PROP_ACTIVE[pi] != 0
+            && prop_start_health(PROP_KIND[pi]) != 0
+            && (PROP_HEALTH[pi] != 0 || corpse)
+        {
             let t = prop_target(PROP_KIND[pi], PROP_POS[pi]);
             let d2 = dist2_3(t, pos);
             if d2 < r2 && blast_sees(m, blast_src, blast_wet, PROP_POS[pi], t) {
                 let dmg = logic_state::radius_damage_at_distance(damage, radius, isqrt_i32(d2));
+                if corpse {
+                    if dmg > 0 && prop_can_gib(pi) {
+                        gib_prop(pi);
+                    }
+                    pi += 1;
+                    continue;
+                }
                 damage_prop(pi, dmg, player_inflicted);
                 if player_inflicted {
                     PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
@@ -22786,7 +22842,9 @@ unsafe fn tick_bolt(m: &Map, movers: &[phys::Mover], i: usize) {
     if let Some((best, _, best_box)) = next_actor_on_segment(m, p.pos, stop, (-1, 0)) {
         let ty = PROP_KIND[best];
         let at = prop_target(ty, PROP_POS[best]);
+        DMG_NEVERGIB = true;
         damage_prop(best, hit_group_damage(ty, best_box, p.damage), true);
+        DMG_NEVERGIB = false;
         sfx::play_world(sfx::BULLET_HIT1, at);
         PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
         if prop_is_scientist(ty) {
@@ -22858,6 +22916,54 @@ unsafe fn think_rocket(m: &Map, movers: &[phys::Mover], i: usize) {
     PROJECTILES[i].vel = v;
 }
 
+/// The nearest live actor in front of `heading` (its direction dotted with
+/// the line to the actor at least `front_min`, q12) that `pos` can see within
+/// `max_d2` squared units, as (index, aim point, squared distance). `snark`
+/// picks the snark's prey filter, else the player's enemies. Shared by the
+/// hornet gun and the snark.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn nearest_actor_ahead(
+    m: &Map,
+    movers: &[phys::Mover],
+    pos: [i32; 3],
+    heading: [i32; 3],
+    front_min: i32,
+    max_d2: i32,
+    snark: bool,
+) -> Option<(usize, [i32; 3], i32)> {
+    let mut best: Option<(usize, [i32; 3], i32)> = None;
+    let mut best_d2 = max_d2;
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut pi = 0usize;
+    while pi < nprops {
+        let ty = PROP_KIND[pi];
+        let wanted = if snark {
+            PROP_ACTIVE[pi] != 0
+                && PROP_HEALTH[pi] != 0
+                && prop_start_health(ty) != 0
+                && snark_prey(ty)
+                && ty != 58
+        } else {
+            prop_is_enemy_target(pi)
+        };
+        if wanted {
+            let at = prop_target(ty, PROP_POS[pi]);
+            let d2 = dist2_3(pos, at);
+            if d2 < best_d2 {
+                let to = dir_q12(pos, at);
+                let front = (to[0] * heading[0] + to[1] * heading[1] + to[2] * heading[2]) >> 12;
+                if front >= front_min && actor_line_clear(m, movers, pos, at) {
+                    best = Some((pi, at, d2));
+                    best_d2 = d2;
+                }
+            }
+        }
+        pi += 1;
+    }
+    best
+}
+
 /// Whether alien military sits with the snark (R_AL in the relationship
 /// table: the alien grunt, slave and controller), roaches and the G-Man are
 /// ignored; everything else with health, the scientists included, is prey.
@@ -22911,27 +23017,18 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
     let mut best = usize::MAX; // MAX - 1 = the player
     let mut best_d2 = 512 * 512;
     let mut best_at = [0i32; 3];
-    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-    let mut pi = 0usize;
-    while pi < nprops {
-        let ty = PROP_KIND[pi];
-        if PROP_ACTIVE[pi] != 0
-            && PROP_HEALTH[pi] != 0
-            && prop_start_health(ty) != 0
-            && snark_prey(ty)
-            && PROP_KIND[pi] != 58
-        {
-            let at = prop_target(ty, PROP_POS[pi]);
-            let d2 = dist2_3(p.pos, at);
-            let to = dir_q12(p.pos, at);
-            let front = (to[0] * heading[0] + to[1] * heading[1] + to[2] * heading[2]) >> 12;
-            if d2 < best_d2 && (front > 0 || p.vel == [0; 3]) && actor_line_clear(m, movers, p.pos, at) {
-                best = pi;
-                best_d2 = d2;
-                best_at = at;
-            }
-        }
-        pi += 1;
+    if let Some((pi, at, d2)) = nearest_actor_ahead(
+        m,
+        movers,
+        p.pos,
+        heading,
+        if p.vel == [0; 3] { -4096 } else { 1 },
+        best_d2,
+        true,
+    ) {
+        best = pi;
+        best_d2 = d2;
+        best_at = at;
     }
     if armed && LOGIC_PLAYER_HEALTH > 0 {
         let at = [LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]];
@@ -23022,23 +23119,11 @@ unsafe fn track_hornet(m: &Map, movers: &[phys::Mover], i: usize) {
     }
     let fly = if p.aux & 1 != 0 { 40 } else { 30 };
     let flight = dir_q12([0; 3], p.vel);
-    let mut best = usize::MAX;
-    let mut best_d2 = 512 * 512;
-    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-    let mut pi = 0usize;
-    while pi < nprops {
-        if prop_is_enemy_target(pi) {
-            let target = prop_target(PROP_KIND[pi], PROP_POS[pi]);
-            let d2 = dist2_3(p.pos, target);
-            let to = dir_q12(p.pos, target);
-            let dot = (to[0] * flight[0] + to[1] * flight[1] + to[2] * flight[2]) >> 12;
-            if d2 < best_d2 && dot > 3686 && actor_line_clear(m, movers, p.pos, target) {
-                best = pi;
-                best_d2 = d2;
-            }
-        }
-        pi += 1;
-    }
+    let found = nearest_actor_ahead(m, movers, p.pos, flight, 3686, 512 * 512, false);
+    let (best, best_d2) = match found {
+        Some((pi, _, d2)) => (pi, d2),
+        None => (usize::MAX, 0),
+    };
     let (heading, speed) = if best == usize::MAX {
         (flight, fly)
     } else {
@@ -36693,7 +36778,11 @@ fn play(
                         } else {
                             CROWBAR_MISS_COOLDOWN_TICKS
                         };
-                        weapon.dry_ticks = CROWBAR_FULL_DAMAGE_IDLE_TICKS;
+                        weapon.dry_ticks = if hit {
+                            CROWBAR_FULL_DAMAGE_HIT_TICKS
+                        } else {
+                            CROWBAR_FULL_DAMAGE_MISS_TICKS
+                        };
                     }
                     let start_sound = weapon.current != W_EGON || !egon_firing;
                     if weapon.current == W_EGON {

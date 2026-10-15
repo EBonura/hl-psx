@@ -1,0 +1,14 @@
+# gauss: c1a2, four full charges head on at the walls around the spawn; any wall thinner than 200 units is punched.
+map c1a2
+0 god 2
+0 trace 20
+3 weapons
+5 weapon 7
+10 view 0 0
+12 in 0 0 0 0 16 95
+120 view 90 0
+122 in 0 0 0 0 16 95
+230 view 180 0
+232 in 0 0 0 0 16 95
+340 view 270 0
+342 in 0 0 0 0 16 95

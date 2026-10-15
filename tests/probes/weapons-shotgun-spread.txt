@@ -1,0 +1,10 @@
+# shotgun spread: c1a1 zombie (348,2048). One single blast from 150 units centre to centre: pellets draw their own points in the 14 px cone; 6 x 5 damage if all land.
+map c1a1
+0 god 2
+0 trace 20
+3 weapons
+4 watch 5
+5 weapon 4
+100 tp 348 2198 764 270 0 0
+118 view 270 0
+122 in 0 0 0 0 1 1

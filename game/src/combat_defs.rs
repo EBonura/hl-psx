@@ -317,7 +317,8 @@ pub const fn wdef(
 // primary/secondary state machines live below; this table holds their shared
 // ammo, damage, cadence, and viewmodel data.
 pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
-    wdef(AMMO_NONE, 0, 0, 10, 96, 1, 0, 7, 0, FIRE_MELEE, 0, 4),
+    // crowbar.cpp Swing: a 32 unit line, then a 32 wide hull sweep: about 48 from the eye.
+    wdef(AMMO_NONE, 0, 0, 10, 48, 1, 0, 7, 0, FIRE_MELEE, 0, 4),
     wdef(
         AMMO_9MM,
         17,
