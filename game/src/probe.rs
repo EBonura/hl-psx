@@ -350,6 +350,11 @@ pub unsafe fn step(
             }
             23 => WATCH_KIND = c.a[0] as i32,
             24 => PROJ_LOG = c.a[0] != 0,
+            27 => {
+                // ammo POOL N : set one ammo pool (and every magazine to N when POOL is 99)
+                let pool = c.a[0].clamp(0, crate::combat_defs::N_AMMO as i16 - 1) as usize;
+                weapons.ammo[pool] = c.a[1].max(0) as u16;
+            }
             26 => {
                 // propdump : one line per live actor (index, kind, health, position)
                 let mut pi = 0usize;

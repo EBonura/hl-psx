@@ -19678,10 +19678,21 @@ unsafe fn collect_pickups(
                     // At the carry cap AddDuplicate fails and the world weapon
                     // remains, exactly like the original DLL.
                     let d = &WEAPON_DEFS[wid];
-                    if d.ammo != AMMO_NONE && weapon.ammo[d.ammo] < max_reserve_for(d.ammo) {
+                    if d.ammo != AMMO_NONE
+                        && (weapon.ammo[d.ammo] < max_reserve_for(d.ammo)
+                            || (d.clip > 0 && weapon.clip[wid] == 0))
+                    {
                         let before = weapon.ammo[d.ammo];
-                        weapon.give_ammo(d.ammo, WEAPON_DEFAULT_GIVE[wid].max(1));
-                        if weapon.ammo[d.ammo] != before {
+                        let give = WEAPON_DEFAULT_GIVE[wid].max(1);
+                        // AddPrimaryAmmo: an empty magazine fills first.
+                        let to_clip = if d.clip > 0 && weapon.clip[wid] == 0 {
+                            give.min(d.clip)
+                        } else {
+                            0
+                        };
+                        weapon.clip[wid] += to_clip;
+                        weapon.give_ammo(d.ammo, give - to_clip);
+                        if weapon.ammo[d.ammo] != before || to_clip != 0 {
                             consume_weapon_pickup(m, nlogic, nents, now, pi);
                             sfx::play(sfx::AMMO_PICKUP);
                         }
@@ -19912,6 +19923,17 @@ unsafe fn dry_click() {
 
 /// `CRpg::Reload` refuses while a rocket is flying and the designator is on:
 /// the dot is guiding it, so the launcher stays empty until it lands.
+unsafe fn satchels_out() -> bool {
+    let mut i = 0;
+    while i < MAX_PROJECTILES {
+        if PROJECTILES[i].active && PROJECTILES[i].kind == PROJ_SATCHEL {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 unsafe fn rpg_reload_blocked() -> bool {
     if !RPG_SPOT_ACTIVE {
         return false;
@@ -20312,20 +20334,30 @@ impl Arsenal {
         true
     }
 
-    /// Cycle to the next/prev owned weapon. Returns true if the selection changed
-    /// (the caller then streams the new viewmodel).
+    /// Cycle to the next/prev weapon in HUD order that is owned and can be
+    /// brought up (`CanDeploy`: the crowbar and hornet gun always, the rest
+    /// with a round in the magazine or pool, the satchel while a charge is
+    /// out). Returns true if the selection changed (the caller then streams
+    /// the new viewmodel). The RPG will not be put away while a rocket it
+    /// guides is in the air (`CRpg::CanHolster`).
     fn cycle(&mut self, forward: bool) -> bool {
-        if self.owned == 0 {
+        // Bucket 4 of the HUD lists the hand grenade, satchel, tripmine, snark.
+        const HUD_ORDER: [u8; N_WEAPONS] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13, 12, 11];
+        if self.owned == 0 || (self.current == W_RPG && unsafe { rpg_reload_blocked() }) {
             return false;
         }
-        let mut i = self.current;
+        let mut pos = 0;
+        while pos < N_WEAPONS && HUD_ORDER[pos] as usize != self.current {
+            pos += 1;
+        }
         for _ in 0..N_WEAPONS {
-            i = if forward {
-                (i + 1) % N_WEAPONS
+            pos = if forward {
+                (pos + 1) % N_WEAPONS
             } else {
-                (i + N_WEAPONS - 1) % N_WEAPONS
+                (pos + N_WEAPONS - 1) % N_WEAPONS
             };
-            if self.owns(i) {
+            let i = HUD_ORDER[pos] as usize;
+            if self.owns(i) && self.can_deploy(i) {
                 if i != self.current {
                     self.select(i);
                     return true;
@@ -20334,6 +20366,53 @@ impl Arsenal {
             }
         }
         false
+    }
+
+    /// A thrown weapon with nothing left to throw (and, for the satchel, no
+    /// charge left to detonate): `ITEM_FLAG_EXHAUSTIBLE`.
+    fn is_spent_thrown(&self) -> bool {
+        matches!(self.current, W_GRENADE | W_SNARK | W_TRIPMINE | W_SATCHEL)
+            && self.owns(self.current)
+            && self.ammo[self.def().ammo] == 0
+            && !(self.current == W_SATCHEL && unsafe { satchels_out() })
+    }
+
+    /// singleplay_gamerules `HLGetNextBestWeapon` for a spent thrown weapon: it
+    /// leaves the inventory and the player is switched to a deployable weapon
+    /// of the same weight, else the heaviest one (never the RPG, which needs a
+    /// hand free to guide it). Returns the weapon switched to.
+    fn retire_spent(&mut self) -> usize {
+        // iWeight by weapon id.
+        const WEIGHT: [i8; N_WEAPONS] = [0, 10, 15, 15, 15, 10, 20, 20, 20, 15, 5, 5, -10, -10];
+        let gone = self.current;
+        self.owned &= !(1 << gone);
+        let mut best = W_CROWBAR;
+        let mut best_w = -1i8;
+        let mut id = 0;
+        while id < N_WEAPONS {
+            if self.owns(id) && self.can_deploy(id) && id != W_RPG {
+                if WEIGHT[id] == WEIGHT[gone] {
+                    best = id;
+                    break;
+                }
+                if WEIGHT[id] > best_w {
+                    best_w = WEIGHT[id];
+                    best = id;
+                }
+            }
+            id += 1;
+        }
+        self.select(best);
+        best
+    }
+
+    /// `CBasePlayerWeapon::CanDeploy`.
+    fn can_deploy(&self, id: usize) -> bool {
+        id == W_CROWBAR
+            || id == W_HORNET
+            || self.clip[id] > 0
+            || self.ammo[WEAPON_DEFS[id].ammo] > 0
+            || (id == W_SATCHEL && unsafe { satchels_out() })
     }
 
     fn select(&mut self, id: usize) {
@@ -34219,6 +34298,21 @@ fn play(
                 viewmodel_anim = VM_ANIM_DRAW;
                 viewmodel_anim_start = sim_frame_no;
             }
+            if !dead
+                && !grenade_cooking
+                && weapon.cooldown == 0
+                && weapon.switch_ticks == 0
+                && weapon.reload_ticks == 0
+                && weapon.is_spent_thrown()
+            {
+                // The last grenade, snark, mine or charge is gone.
+                weapon.retire_spent();
+                zoom_aim = false;
+                pending_vm_switch = true;
+                weapon_icon_ticks = WEAPON_ICON_TICKS;
+                viewmodel_anim = VM_ANIM_DRAW;
+                viewmodel_anim_start = sim_frame_no;
+            }
             if weapon_icon_ticks > 0 {
                 weapon_icon_ticks -= 1;
             }
@@ -35641,6 +35735,17 @@ fn play(
                     // hands until the map hands gear back.
                     WEAPONSTRIP_REQUEST = false;
                     weapon.owned = 0;
+                    // RemoveAllItems: every pool and magazine goes with them,
+                    // and the satchels already thrown are deactivated.
+                    weapon.ammo = [0; N_AMMO];
+                    weapon.clip = [0; N_WEAPONS];
+                    let mut j = 0;
+                    while j < MAX_PROJECTILES {
+                        if PROJECTILES[j].kind == PROJ_SATCHEL {
+                            PROJECTILES[j].active = false;
+                        }
+                        j += 1;
+                    }
                     weapon.current = W_CROWBAR;
                     satchel_mode = SATCHEL_PACK;
                     grenade_cooking = false;
