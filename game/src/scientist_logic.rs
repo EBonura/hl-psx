@@ -759,6 +759,44 @@ pub const fn heal_wanted(player_health: u16) -> bool {
     player_health > 0 && player_health <= HEAL_HEALTH_MAX
 }
 
+// ---------------------------------------------------------------------------
+// Barney shot by the player (CBarney::TakeDamage, CTalkMonster::IsFacing).
+//
+// With no enemy of his own, a Barney the player hurts decides whether the
+// player meant it: facing him within about 15 degrees, or a second hit after
+// an earlier "hey, careful", makes him angry for good (provoked: he stops
+// following and treats the player as an enemy). Otherwise he only grows
+// suspicious. A Barney already fighting something shrugs it off as crossfire.
+// ---------------------------------------------------------------------------
+
+/// Barney's response to one player hit.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HurtReaction {
+    Ignore,
+    Suspicious,
+    Provoked,
+}
+
+#[inline(always)]
+pub const fn barney_hurt_reaction(has_enemy: bool, suspicious: bool, facing: bool) -> HurtReaction {
+    if has_enemy {
+        HurtReaction::Ignore
+    } else if suspicious || facing {
+        HurtReaction::Provoked
+    } else {
+        HurtReaction::Suspicious
+    }
+}
+
+/// IsFacing: the player's view yaw (Q12) points at the monster, whose bearing
+/// from the player is `to_him`, within a dot product of 0.96 (16.26 degrees,
+/// 185 units of 4096).
+#[inline(always)]
+pub const fn player_faces(view_yaw: u16, to_him: u16) -> bool {
+    let d = (to_him.wrapping_sub(view_yaw) & 0x0fff) as i32;
+    d <= 185 || d >= 4096 - 185
+}
+
 /// The heal event (give_shot frame 17) fires while `left` ticks remain, and
 /// does something only if the player still wants it and is within reach.
 #[inline(always)]
@@ -1148,6 +1186,28 @@ mod tests {
         assert_eq!(script_timeout_speed(1, false), 3);
         assert_eq!(script_timeout_speed(2, false), 14);
         assert_eq!(script_timeout_speed(2, true), 18);
+    }
+
+    #[test]
+    fn barney_decides_by_enemy_suspicion_and_facing() {
+        use HurtReaction::*;
+        assert_eq!(barney_hurt_reaction(true, true, true), Ignore, "crossfire");
+        assert_eq!(barney_hurt_reaction(false, false, false), Suspicious);
+        assert_eq!(barney_hurt_reaction(false, false, true), Provoked);
+        assert_eq!(barney_hurt_reaction(false, true, false), Provoked);
+    }
+
+    #[test]
+    fn facing_is_the_096_dot_cone() {
+        let deg = |d: i32| ((d * 4096 + 180) / 360) as u16 & 0x0fff;
+        assert!(player_faces(deg(90), deg(90)));
+        assert!(player_faces(deg(90), deg(90 + 16)));
+        assert!(player_faces(deg(90), deg(90 - 16)));
+        assert!(!player_faces(deg(90), deg(90 + 17)));
+        assert!(!player_faces(deg(90), deg(90 - 17)));
+        assert!(!player_faces(deg(90), deg(270)));
+        // The wrap at yaw zero.
+        assert!(player_faces(deg(5), deg(355)));
     }
 
     #[test]
