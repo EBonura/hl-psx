@@ -13,21 +13,21 @@ wait = 620
 [[step]]
 label = "open Options from the normal title menu"
 press = ["down"]
-hold = 4
+hold = 8
 wait = 12
 repeat = 2
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 25
 [[step]]
 label = "wrap Options selection to Debug"
 press = ["up"]
-hold = 4
+hold = 8
 wait = 12
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 25
 [[step]]
 checkpoint = "debug-page"
@@ -37,12 +37,12 @@ kind = "not_flat"
 [[step]]
 label = "select the additive Segment select row"
 press = ["up"]
-hold = 4
+hold = 8
 wait = 12
 repeat = 2
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 25
 [[step]]
 checkpoint = "segments-first"
@@ -52,7 +52,7 @@ kind = "not_flat"
 [[step]]
 label = "wrap to the final Hazard map"
 press = ["up"]
-hold = 4
+hold = 8
 wait = 12
 [[step]]
 checkpoint = "segments-last"
@@ -61,12 +61,12 @@ golden = false
 kind = "not_flat"
 [[step]]
 press = ["down"]
-hold = 4
+hold = 8
 wait = 12
 [[step]]
 label = "scroll beyond the first visible list window"
 press = ["down"]
-hold = 4
+hold = 8
 wait = 12
 repeat = 6
 [[step]]
@@ -76,13 +76,13 @@ golden = false
 kind = "not_flat"
 [[step]]
 press = ["up"]
-hold = 4
+hold = 8
 wait = 12
 repeat = 6
 [[step]]
 label = "Back returns to Debug"
 press = ["circle"]
-hold = 4
+hold = 8
 wait = 20
 [[step]]
 checkpoint = "debug-return"
@@ -91,12 +91,12 @@ golden = false
 kind = "not_flat"
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 25
 [[step]]
 label = "select first Hazard map by wrapping from the first campaign row"
 press = ["up"]
-hold = 4
+hold = 8
 wait = 12
 repeat = 7
 [[step]]
@@ -107,7 +107,7 @@ kind = "not_flat"
 [[step]]
 label = "launch the explicitly labeled diagnostic reset"
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 1180
 [[step]]
 checkpoint = "segment-hazard-spawn"

@@ -14,17 +14,17 @@ wait = 620
 
 [[step]]
 press = ["down"]
-hold = 4
+hold = 8
 wait = 12
 
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 25
 
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 1180
 
 [[step]]
@@ -70,17 +70,17 @@ value = -1555
 [[step]]
 label = "pause and open Save Game"
 press = ["start"]
-hold = 4
+hold = 8
 wait = 25
 
 [[step]]
 press = ["down"]
-hold = 4
+hold = 8
 wait = 12
 
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 35
 
 [[step]]
@@ -92,7 +92,7 @@ kind = "not_flat"
 [[step]]
 label = "save to Card 1 Manual"
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 400
 
 [[step]]
@@ -116,13 +116,13 @@ wait = 620
 
 [[step]]
 press = ["down"]
-hold = 4
+hold = 8
 wait = 12
 repeat = 3
 
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 1180
 
 [[step]]

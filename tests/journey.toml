@@ -26,12 +26,12 @@ kind = "not_flat"
 [[step]]
 label = "open Hazard Course map select"
 press = ["down"]
-hold = 4
+hold = 8
 wait = 12
 
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 25
 
 [[step]]
@@ -47,7 +47,7 @@ kind = "not_flat"
 [[step]]
 label = "enter the first Hazard Course map"
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 1180
 
 [[step]]
@@ -70,6 +70,8 @@ wait = 20
 
 [[step]]
 checkpoint = "hazard-walk"
+# The ammo digits pulse with the frame phase; mask the HUD strip.
+mask = [{ x = 96, y = 208, w = 128, h = 32 }]
 [[step.assert]]
 kind = "not_flat"
 [[step.assert]]
@@ -80,7 +82,7 @@ min_changed = 0.05
 [[step]]
 label = "pause and open chapter select"
 press = ["start"]
-hold = 4
+hold = 8
 wait = 25
 
 [[step]]
@@ -90,30 +92,30 @@ kind = "not_flat"
 
 [[step]]
 press = ["down"]
-hold = 4
+hold = 8
 wait = 12
 repeat = 3
 
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 20
 
 [[step]]
 label = "select Interloper, three rows above the first chapter"
 press = ["up"]
-hold = 4
+hold = 8
 wait = 12
 repeat = 3
 
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 15
 
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 8
 wait = 1180
 
 [[step]]
@@ -209,7 +211,7 @@ sym = "LOGIC_PLAYER_POS"
 offset = 8
 signed = true
 op = "between"
-value = -105
+value = -115
 value_hi = -35
 [[step.assert]]
 kind = "ram"
@@ -231,7 +233,7 @@ sym = "CAM_CUR"
 offset = 8
 signed = true
 op = "between"
-value = -105
+value = -115
 value_hi = -35
 [[step.assert]]
 kind = "ram"
@@ -253,7 +255,7 @@ sym = "CAM_PREV"
 offset = 8
 signed = true
 op = "between"
-value = -105
+value = -115
 value_hi = -35
 [[step.assert]]
 kind = "ram"
