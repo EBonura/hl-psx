@@ -21744,8 +21744,8 @@ static mut PENDING_GAUSS_SHOVE: [i32; 3] = [0; 3];
 fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
     match kind {
         PROJ_ROCKET => (90, 50, false, blast_radius(100), (250, 150, 50), 6),
-        PROJ_BOLT => (100, 40, false, 0, (210, 210, 170), 3),
-        PROJ_BOLT_WATER => (50, 80, false, 0, (210, 210, 170), 3),
+        PROJ_BOLT => (100, 120, false, 0, (210, 210, 170), 3),
+        PROJ_BOLT_WATER => (50, 160, false, 0, (210, 210, 170), 3),
         PROJ_GRENADE => (64, 60, true, blast_radius(100), (120, 150, 90), 5),
         // Retail hivehand: primary is a 300 u/s tracking hornet; secondary is
         // a straight 1200 u/s dart. At 20 Hz those are 15 and 60 units/tick.
@@ -21976,7 +21976,16 @@ unsafe fn spawn_projectile_dir(
         i += 1;
     }
     if slot == usize::MAX {
-        slot = 0; // pool full: recycle slot 0
+        // Pool full: a bolt stuck in a wall is the cheapest to lose, else slot 0.
+        slot = 0;
+        let mut j = 0;
+        while j < MAX_PROJECTILES {
+            if (PROJECTILES[j].kind == PROJ_BOLT || PROJECTILES[j].kind == PROJ_BOLT_WATER) && PROJECTILES[j].vel == [0; 3] {
+                slot = j;
+                break;
+            }
+            j += 1;
+        }
     }
     let mut vel = [
         (dir[0] * speed) >> 12,
@@ -22199,6 +22208,93 @@ unsafe fn houndeye_blast(center: [i32; 3], radius: i32, dmg: u8) {
     queue_explosion_fx(center, 40); // pale burst stand-in (a proper ring lands with the FX pool)
 }
 
+/// CCrossbowBolt: a straight flight. The first actor its path crosses takes
+/// the bolt's damage through its hit boxes (a head is worth triple) and ends
+/// it; a brush entity (glass, crate) takes the damage too; world architecture
+/// holds it 12 units short of the surface for ten seconds, where it can be
+/// seen. Swept along the whole step, so a 100 unit/tick bolt cannot skip a
+/// target.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn tick_bolt(m: &Map, movers: &[phys::Mover], i: usize) {
+    let p = PROJECTILES[i];
+    if p.vel == [0; 3] {
+        // Stuck in a wall: wait out its ten seconds.
+        PROJECTILES[i].life = p.life.saturating_sub(1);
+        if PROJECTILES[i].life == 0 {
+            PROJECTILES[i].active = false;
+        }
+        return;
+    }
+    let new = [p.pos[0] + p.vel[0], p.pos[1] + p.vel[1], p.pos[2] + p.vel[2]];
+    let wall = phys::trace_line(m, movers, p.pos, new);
+    let stop = wall.map_or(new, |h| h.pos);
+    let mut best = usize::MAX;
+    let mut best_frac = 4097;
+    let mut best_box = u8::MAX;
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut pi = 0usize;
+    while pi < nprops {
+        let ty = PROP_KIND[pi];
+        if PROP_ACTIVE[pi] != 0
+            && PROP_HEALTH[pi] != 0
+            && ty != PROP_TYPE_HOLO
+            && prop_start_health(ty) != 0
+        {
+            let slot = TYPE_TO_SLOT[(ty as usize).min(N_MODEL_TYPES - 1)];
+            let boxed = slot != MODEL_SLOT_NONE && loaded_model(slot as usize).hitbox_count() != 0;
+            let frac = if boxed {
+                prop_studio_hit_fraction(m, pi, p.pos, stop)
+            } else {
+                let (lo, hi) = actor_collision_bounds(ty, PROP_POS[pi]);
+                tripmine::touches(p.pos, stop, lo, hi).then_some(2048)
+            };
+            if let Some(f) = frac {
+                if f < best_frac {
+                    best = pi;
+                    best_frac = f;
+                    best_box = if boxed { STUDIO_HIT_BOX } else { u8::MAX };
+                }
+            }
+        }
+        pi += 1;
+    }
+    if best != usize::MAX {
+        let ty = PROP_KIND[best];
+        let at = prop_target(ty, PROP_POS[best]);
+        damage_prop(best, hit_group_damage(ty, best_box, p.damage), true);
+        sfx::play_world(sfx::BULLET_HIT1, at);
+        PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
+        if prop_is_scientist(ty) {
+            PROP_AI_TIMER[best] = SCIENTIST_FEAR_TICKS;
+        }
+        PROJECTILES[i].active = false;
+        return;
+    }
+    let Some(h) = wall else {
+        PROJECTILES[i].pos = new;
+        PROJECTILES[i].life = p.life.saturating_sub(1);
+        if PROJECTILES[i].life == 0 {
+            PROJECTILES[i].active = false;
+        }
+        return;
+    };
+    sfx::play_world(sfx::RIC, h.pos);
+    if h.mover >= 0 {
+        damage_brush_ent(m, m.n_logic, m.n_ents, h.mover as usize, p.damage, false, SIM_NOW);
+        PROJECTILES[i].active = false;
+        return;
+    }
+    let back = dir_q12([0; 3], p.vel);
+    PROJECTILES[i].pos = [
+        h.pos[0] - ((back[0] * 12) >> 12),
+        h.pos[1] - ((back[1] * 12) >> 12),
+        h.pos[2] - ((back[2] * 12) >> 12),
+    ];
+    PROJECTILES[i].vel = [0; 3];
+    PROJECTILES[i].life = 200;
+}
+
 /// CHornet::TrackTarget for a player's hornet: after a 0.1 s coast at 300 u/s,
 /// every 0.1 s it turns half way toward the nearest visible enemy inside 512
 /// units and 25 degrees of its heading, flying at 800 u/s (orange) or at 600
@@ -22333,6 +22429,11 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             continue;
         }
         let kind = PROJECTILES[i].kind;
+        if kind == PROJ_BOLT || kind == PROJ_BOLT_WATER {
+            tick_bolt(m, movers, i);
+            i += 1;
+            continue;
+        }
         let (_, _, gravity, aoe, _, _) = proj_params(kind);
         // Landed satchels and grenades remain stationary. Satchels wait for the
         // radio; hand grenades continue only their fuse countdown.

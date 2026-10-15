@@ -1,0 +1,13 @@
+# crossbow: c1a1. A bolt fired at 500 units into the still zombie at (348,2048) hurts it (50 hit points), then a bolt into the wall sticks 12 units short for 200 ticks.
+map c1a1
+0 god 2
+0 trace 20
+3 weapons
+4 watch 5
+5 weapon 5
+9 projlog 1
+100 tp 348 2548 764 270 0 0
+118 view 270 0
+122 in 0 0 0 0 1 1
+160 view 90 0
+162 in 0 0 0 0 1 1

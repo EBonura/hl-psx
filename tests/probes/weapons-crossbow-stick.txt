@@ -1,0 +1,8 @@
+# crossbow: c1a2 spawn faces a wall; the bolt must stick 12 units short of it and stay about 200 ticks.
+map c1a2
+0 god 2
+0 trace 20
+3 weapons
+5 weapon 5
+9 projlog 1
+30 in 0 0 0 0 1 1
