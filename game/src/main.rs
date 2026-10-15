@@ -9300,9 +9300,9 @@ unsafe fn restore_transition_trains(
 }
 
 #[optimize(size)]
-unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) {
+unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) -> bool {
     if CHANGE_REQUEST_ACTIVE != 0 {
-        return;
+        return false;
     }
     let map_name = m.logic_name(rec.arg0);
     let landmark_name = m.logic_name(rec.arg1);
@@ -9310,7 +9310,7 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
         tty::println("hl-psx: changelevel target not cooked");
         telemetry::debug_log("hl-psx: changelevel target not cooked");
         telemetry::debug_log(map_name);
-        return;
+        return true;
     };
     // GoldSrc requires the player to be inside a matching transition volume,
     // when one exists, in addition to touching trigger_changelevel.
@@ -9335,9 +9335,9 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
         }
         li += 1;
     }
-    if has_transition_volume && !inside_transition_volume {
+    if !trigger_rules::changelevel_goes_ahead(false, has_transition_volume, inside_transition_volume) {
         telemetry::debug_log("hl-psx: player outside transition volume");
-        return;
+        return false;
     }
     #[cfg(feature = "reference-trace")]
     reference_trace::changelevel(SIM_NOW, map_name, landmark_name);
@@ -9401,6 +9401,7 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
     // more source-map ticks moves a 300 u/s train 45 units past the landmark
     // before it is restored in c0a0a.
     CHANGE_REQUEST_ACTIVE = 1;
+    true
 }
 
 /// Cold end-of-map snapshot kept out of `play` so telemetry instrumentation
@@ -11578,8 +11579,11 @@ unsafe fn logic_use_entity(
             }
         }
         map::LOGIC_TRIGGER_CHANGELEVEL => {
-            logic_sub_use_targets(m, nlogic, nents, li, rec, now, use_type, depth + 1);
-            logic_request_changelevel(m, nlogic, rec);
+            // ChangeLevelNow tests the transition volume first and only then
+            // fires the changelevel's own target.
+            if logic_request_changelevel(m, nlogic, rec) {
+                logic_sub_use_targets(m, nlogic, nents, li, rec, now, use_type, depth + 1);
+            }
         }
         map::LOGIC_MONSTER_TRIGGER => {
             if rec.arg1 == map::AITRIGGER_COMMAND_TOUCH && use_type == map::USE_OFF {

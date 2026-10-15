@@ -21,6 +21,15 @@ pub const MAX_FIRE_DEPTH: u8 = 24;
 /// this.
 pub const CAMERA_TURN_DIVISOR: i32 = 50;
 
+// -------------------------------------------------------------- changelevel
+
+/// ChangeLevelNow: a second touch in the same frame does nothing, and a player
+/// outside the landmark's transition volume aborts before anything fires.
+/// Only a level change that goes ahead fires the changelevel's own target.
+pub const fn changelevel_goes_ahead(already_requested: bool, has_volume: bool, inside_volume: bool) -> bool {
+    !already_requested && (!has_volume || inside_volume)
+}
+
 // ---------------------------------------------------------------- use types
 
 /// CBaseEntity::ShouldToggle: an ON use does nothing to something already on,
@@ -167,6 +176,14 @@ mod tests {
         // c3a1: trigger_once -> breakable -> breakable -> breakable -> monstermaker
         let snark_nest_hops = 4;
         assert!(MAX_FIRE_DEPTH / 2 >= 2 * snark_nest_hops);
+    }
+
+    #[test]
+    fn a_changelevel_outside_its_volume_fires_nothing() {
+        assert!(changelevel_goes_ahead(false, false, false));
+        assert!(changelevel_goes_ahead(false, true, true));
+        assert!(!changelevel_goes_ahead(false, true, false));
+        assert!(!changelevel_goes_ahead(true, false, false));
     }
 
     #[test]
