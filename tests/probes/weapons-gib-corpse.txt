@@ -1,0 +1,7 @@
+# gibbing: c1a1 zombie. 60 damage kills it with only 10 overkill: a corpse remains; a later blast bursts the corpse.
+map c1a1
+0 god 2
+0 trace 20
+3 watch 5
+40 hurtkind 5 60
+70 explode 348 2048 740 30

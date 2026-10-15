@@ -1,0 +1,6 @@
+# gibbing: c1a1 zombie (50 hp) at (348,2048). A 100 damage blast at it is overkill past -30: it bursts.
+map c1a1
+0 god 2
+0 trace 20
+3 watch 5
+40 explode 348 2048 740 100

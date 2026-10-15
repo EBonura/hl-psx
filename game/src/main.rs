@@ -16904,6 +16904,28 @@ unsafe fn sentry_schedule_wake(pi: usize) {
     }
 }
 
+/// Set while a bolt's damage is applied (DMG_NEVERGIB).
+static mut DMG_NEVERGIB: bool = false;
+
+/// GibMonster: the body bursts into a shower of gore and is gone.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn gib_prop(pi: usize) {
+    #[cfg(feature = "interaction-probe")]
+    reference_trace::probe_vals(SIM_NOW as u32, "gib", &[pi as i32, PROP_KIND[pi] as i32]);
+    PROP_DORMANT[pi] |= PROP_RUNTIME_RENDER_HIDDEN;
+    spawn_gibs(PROP_POS[pi], 8);
+}
+
+/// Whether a dead actor of this kind can burst: it bleeds and is no larger
+/// than a trooper (the bosses and machines have no gibs to throw).
+unsafe fn prop_can_gib(pi: usize) -> bool {
+    let ty = PROP_KIND[pi];
+    prop_blood_kind(ty) != IMPACT_KIND_NONE
+        && prop_start_health(ty) <= 100
+        && PROP_DORMANT[pi] & PROP_RUNTIME_RENDER_HIDDEN == 0
+}
+
 #[optimize(size)]
 unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
@@ -16967,6 +16989,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         boss_walker_damage(dmg);
         return;
     }
+    let health_before = PROP_HEALTH[pi];
     PROP_HEALTH[pi] = PROP_HEALTH[pi].saturating_sub(dmg);
     PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
     if MONSTER_TRIGGER_END != 0 {
@@ -16995,6 +17018,11 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         // throw no gore either.
         if prop_blood_kind(PROP_KIND[pi]) != IMPACT_KIND_NONE {
             spawn_gibs(PROP_POS[pi], 3); // gore chunks arc out from the corpse
+        }
+        // ShouldGibMonster: health below -30 bursts the body (no u8 health goes
+        // negative; the overkill is the damage past the last hit point).
+        if dmg as i32 - health_before as i32 > 30 && !DMG_NEVERGIB && prop_can_gib(pi) {
+            gib_prop(pi);
         }
         sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
         let v = prop_voice(PROP_KIND[pi], true);
@@ -22345,11 +22373,23 @@ unsafe fn radius_damage(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_
     let mut pi = 0;
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     while pi < nprops {
-        if PROP_ACTIVE[pi] != 0 && prop_start_health(PROP_KIND[pi]) != 0 && PROP_HEALTH[pi] != 0 {
+        // A corpse is still in reach of the blast: DMG_GIB_CORPSE bursts it.
+        let corpse = PROP_HEALTH[pi] == 0 && PROP_STATE[pi] == PROP_STATE_DEAD;
+        if PROP_ACTIVE[pi] != 0
+            && prop_start_health(PROP_KIND[pi]) != 0
+            && (PROP_HEALTH[pi] != 0 || corpse)
+        {
             let t = prop_target(PROP_KIND[pi], PROP_POS[pi]);
             let d2 = dist2_3(t, pos);
             if d2 < r2 && blast_sees(m, blast_src, blast_wet, PROP_POS[pi], t) {
                 let dmg = logic_state::radius_damage_at_distance(damage, radius, isqrt_i32(d2));
+                if corpse {
+                    if dmg > 0 && prop_can_gib(pi) {
+                        gib_prop(pi);
+                    }
+                    pi += 1;
+                    continue;
+                }
                 damage_prop(pi, dmg, player_inflicted);
                 if player_inflicted {
                     PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
@@ -22468,7 +22508,9 @@ unsafe fn tick_bolt(m: &Map, movers: &[phys::Mover], i: usize) {
     if let Some((best, _, best_box)) = next_actor_on_segment(m, p.pos, stop, (-1, 0)) {
         let ty = PROP_KIND[best];
         let at = prop_target(ty, PROP_POS[best]);
+        DMG_NEVERGIB = true;
         damage_prop(best, hit_group_damage(ty, best_box, p.damage), true);
+        DMG_NEVERGIB = false;
         sfx::play_world(sfx::BULLET_HIT1, at);
         PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
         if prop_is_scientist(ty) {
