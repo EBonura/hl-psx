@@ -60,22 +60,3 @@ C-HC03. A headcrab leaps by throwing itself along a ballistic arc. The port
 glides it to the target over the eight ticks of the leap animation: an actor has
 no velocity or gravity state, and adding one for the leap costs a field in every
 prop.
-
-## Creatures
-
-C-FL01. The three flyer flocks of c5a1 stay where they are placed. The original
-flies them as boids along a path; that needs per-actor flight state the prop
-tables do not have, for three decorative placements in one map.
-
-C-TE01. The tentacles of the Blast Pit are immortal (a hit never takes them below
-1 health; only a killtarget removes them) and they tap the player for 20 when he
-touches one, at most every half second. Their sound-driven strike, with the
-killing swing worth 200 and the 25 of the rest of the sweep, is not reproduced:
-it depends on the animation events of the tentacle model's strike sequences,
-which the five cooked clips do not carry.
-
-C-RO01. Cockroaches scatter from the player inside 192 units. They do not wander
-or eat corpses.
-
-C-SN01. Snarks leap like headcrabs (the lunge) and pop after fifteen seconds
-(`sk_snark_dmg_pop`). They do not bounce or grow their bite.
