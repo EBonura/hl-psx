@@ -1172,6 +1172,7 @@ fn write_probe_script(out_dir: &std::path::Path) {
     let mut map = String::new();
     let mut secs: Vec<String> = Vec::new();
     let mut chapter = false;
+    let mut chain = false;
     let mut cmds = String::new();
     let mut names: Vec<String> = vec![String::new()];
     let mut last_tp = [0.0f64; 3];
@@ -1193,6 +1194,12 @@ fn write_probe_script(out_dir: &std::path::Path) {
             }
             if w[0] == "chapter" {
                 chapter = true;
+                continue;
+            }
+            // chain: a changelevel moves on to the next map's section instead
+            // of ending the script.
+            if w[0] == "chain" {
+                chain = true;
                 continue;
             }
             let sec = secs.len().saturating_sub(1);
@@ -1347,7 +1354,7 @@ fn write_probe_script(out_dir: &std::path::Path) {
         }
     }
     let generated = format!(
-        "#[allow(dead_code)]\npub const PROBE_MAP: &str = {map:?};\npub const PROBE_CHAPTER: bool = {chapter};\npub static PROBE_SECS: &[&str] = &{secs:?};\npub static PROBE_NAMES: &[&str] = &{names:?};\npub static PROBE_CMDS: &[Cmd] = &[\n{cmds}];\n"
+        "#[allow(dead_code)]\npub const PROBE_MAP: &str = {map:?};\npub const PROBE_CHAPTER: bool = {chapter};\npub const PROBE_CHAIN: bool = {chain};\npub static PROBE_SECS: &[&str] = &{secs:?};\npub static PROBE_NAMES: &[&str] = &{names:?};\npub static PROBE_CMDS: &[Cmd] = &[\n{cmds}];\n"
     );
     fs::write(out_dir.join("probe_script.rs"), generated).expect("write probe script");
 }

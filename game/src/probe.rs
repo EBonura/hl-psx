@@ -95,7 +95,7 @@ pub unsafe fn step(
     }
     if LAST_MAP != map_name || FORCE_NEXT {
         FORCE_NEXT = false;
-        if !LAST_MAP.is_empty() {
+        if !LAST_MAP.is_empty() && !PROBE_CHAIN {
             ENDED = true;
             LAST_MAP = map_name;
             crate::reference_trace::probe(now, "ended", map_name, SEC as i32);
@@ -108,6 +108,11 @@ pub unsafe fn step(
             SEC += 1;
         }
         if SEC == PROBE_SECS.len() {
+            if PROBE_CHAIN && !LAST_MAP.is_empty() {
+                ENDED = true;
+                LAST_MAP = map_name;
+                return sample;
+            }
             SEC = 0;
         }
         crate::reference_trace::probe(now, "sec", map_name, SEC as i32);
@@ -135,6 +140,9 @@ pub unsafe fn step(
                     "tp",
                     &[c.a[0] as i32, c.a[1] as i32, c.a[2] as i32],
                 );
+                if c.a[5] < 0 {
+                    HOLD_CL = false;
+                }
                 if c.a[5] > 0 {
                     PIN = true;
                     PIN_UNTIL = now + c.a[5] as u32;

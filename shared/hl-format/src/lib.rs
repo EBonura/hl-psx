@@ -400,6 +400,15 @@ pub mod logic {
     /// Global func_pushable identity metadata. `brush` binds destination-owned
     /// geometry; `arg0` is the stable global id. No touch/use action or HP.
     pub const GLOBAL_PUSHABLE: u8 = 65;
+    /// trigger_autosave: a touch volume (the record's bounds or brush) that
+    /// keeps a save point in RAM when the player first touches it. `arg1` is
+    /// its `master`.
+    pub const TRIGGER_AUTOSAVE: u8 = 66;
+    /// Identity of a func_breakable that carries a `globalname`: `brush`
+    /// binds the breakable's geometry, `arg0` is its global id (bit 15 set).
+    /// Breaking it marks the id dead; a later map's breakable with a dead id
+    /// is not spawned (CBaseEntity GLOBAL_DEAD).
+    pub const GLOBAL_BREAKABLE: u8 = 67;
 
     // CBaseMonster TriggerCondition values (monsters.h AITRIGGER_*). The
     // cooker emits only the ones the runtime evaluates.
@@ -531,8 +540,10 @@ pub mod logic {
     pub const LOGIC_ENV_SOUND: u8 = ENV_SOUND;
     pub const LOGIC_WEAPONBOX: u8 = WEAPONBOX;
     pub const LOGIC_GLOBAL_PUSHABLE: u8 = GLOBAL_PUSHABLE;
+    pub const LOGIC_TRIGGER_AUTOSAVE: u8 = TRIGGER_AUTOSAVE;
+    pub const LOGIC_GLOBAL_BREAKABLE: u8 = GLOBAL_BREAKABLE;
 
-    pub const KINDS: [u8; 65] = [
+    pub const KINDS: [u8; 67] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -598,6 +609,8 @@ pub mod logic {
         ENV_SOUND,
         WEAPONBOX,
         GLOBAL_PUSHABLE,
+        TRIGGER_AUTOSAVE,
+        GLOBAL_BREAKABLE,
     ];
 }
 

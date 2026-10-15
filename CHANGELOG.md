@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Autosave points and walking back. A trigger_autosave (a first touch by the
+  player, once) now keeps the map as a save point in RAM, and dying reloads it,
+  as retail does; the card is still written only by a manual save. Leaving a
+  map by changelevel keeps it as it stood, so walking back finds dead monsters
+  still dead, doors where they were and pending events pending, instead of a
+  fresh level (one map back; a save point in the new map replaces it).
+  Breakables with a globalname (the airlock glass, vents and busted light of
+  c1a1b/c1a1c/c1a1f) stay broken in the maps that share the name. Dying with no
+  save point restarts the map from its entry with its globals as they were on
+  arrival. A save point or a map walked back into resumes the tick count it was
+  taken at. A saved map progress that held a removed trigger (state 255) was
+  decoded wrongly and is fixed. Costs 3.2 KB of RAM over the previous commit
+  (796 B free), most of it the second capture slot.
 - A save keeps the map's progress, and dying reloads it. A manual save used to
   keep only the player, so loading respawned every monster and reset every
   door. It now also records which monsters are dead (and where a following
@@ -12,8 +25,9 @@
   before). The save is held in RAM as well, so a death after a save reloads
   that save, as retail does, instead of the level entry. Not recorded:
   trains and tracktrains, pushables, scripted sequences in flight, boss
-  schedules, delayed events not yet fired, and where monsters other than
-  followers stand (the living go back to their spawn with their health).
+  schedules, and where monsters other than followers stand (the living go
+  back to their spawn with their health). Delayed events not yet fired are
+  recorded.
   Saves made before this one load as they always did.
 - Leeches swim and bite. The 105 leeches of c2a1a, c2a2a, c2a3, c2a3a, c2a3b,
   c3a1 and c3a1a were drawn but never moved. Each now drifts at 50 units a

@@ -8085,6 +8085,7 @@ fn collect_logic_entities_with_lightstyles(
             "func_train" => LOGIC_FUNC_TRAIN,
             "func_guntarget" => LOGIC_FUNC_GUNTARGET,
             "trigger_endsection" => LOGIC_TRIGGER_ENDSECTION,
+            "trigger_autosave" => LOGIC_TRIGGER_AUTOSAVE,
             "env_render" => LOGIC_ENV_RENDER,
             // Static infodecals are applied at level load and are not drawn;
             // a named one waits for its Use.
@@ -8693,6 +8694,7 @@ fn collect_logic_entities_with_lightstyles(
             | LOGIC_TRIGGER_MULTIPLE
             | LOGIC_TRIGGER_COUNTER
             | LOGIC_TRIGGER_TELEPORT
+            | LOGIC_TRIGGER_AUTOSAVE
             | LOGIC_TANK => names.id(ent_value(block, "master")),
             LOGIC_MORTAR_FIELD => names.id(ent_value(block, "m_iszYController")),
             LOGIC_ENV_GLOBAL => parse_f32_key(block, "triggermode", 2.0)
@@ -9474,6 +9476,7 @@ fn collect_logic_entities_with_lightstyles(
                         | LOGIC_TRIGGER_MULTIPLE
                         | LOGIC_TRIGGER_CHANGELEVEL
                         | LOGIC_TRIGGER_ENDSECTION
+                        | LOGIC_TRIGGER_AUTOSAVE
                         | LOGIC_TRIGGER_HURT
                         | LOGIC_TRIGGER_TELEPORT
                         | LOGIC_TRIGGER_PUSH
@@ -9834,6 +9837,47 @@ fn collect_logic_entities_with_lightstyles(
             first_aux: 0, aux_count: 0, flags: 0, wait_ticks: 0, delay_ticks: 0,
             speed: 0, arg0: id, arg1: 0, sound0: u8::MAX, sound1: u8::MAX,
             origin, mins, maxs,
+        });
+    }
+
+    // A func_breakable with a globalname dies for good: its id is how a later
+    // map's copy of the same glass or crate learns it is already broken.
+    for block in s.split('{') {
+        if ent_value(block, "classname") != Some("func_breakable") {
+            continue;
+        }
+        let global = ent_value(block, "globalname").unwrap_or("").trim();
+        if global.is_empty() {
+            continue;
+        }
+        let Some(brush) = block_model(block)
+            .and_then(|sm| brush_by_submodel.get(sm).copied())
+            .filter(|&b| b != LOGIC_BRUSH_NONE)
+        else {
+            continue;
+        };
+        let (origin, mins, maxs) = entity_bounds_world(block, models, scale);
+        out.push(LogicRec {
+            kind: LOGIC_GLOBAL_BREAKABLE,
+            use_type: 0,
+            spawnflags: 0,
+            targetname: 0,
+            target: 0,
+            killtarget: 0,
+            brush,
+            first_aux: 0,
+            aux_count: 0,
+            flags: 0,
+            wait_ticks: 0,
+            delay_ticks: 0,
+            speed: 0,
+            arg0: actor_carry_id(global, true),
+            arg1: 0,
+            sound0: u8::MAX,
+            sound1: u8::MAX,
+            origin,
+            mins,
+            maxs,
         });
     }
 
@@ -18874,6 +18918,59 @@ mod tests {
             .ents
             .iter()
             .any(|rec| rec.kind == LOGIC_TRIGGER_ENDSECTION));
+    }
+
+    #[test]
+    fn cooks_trigger_autosave_as_a_gated_touch_volume() {
+        let ents = br#"
+        { "classname" "trigger_autosave" "model" "*1" "master" "gate" }
+        { "classname" "trigger_autosave" "model" "*2" }
+        "#;
+        let models = vec![0u8; 3 * SZ_MODEL];
+        let logic = collect_logic_entities(
+            ents,
+            &models,
+            &[LOGIC_BRUSH_NONE, LOGIC_BRUSH_NONE, LOGIC_BRUSH_NONE],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
+        let saves: Vec<_> = logic
+            .ents
+            .iter()
+            .filter(|rec| rec.kind == LOGIC_TRIGGER_AUTOSAVE)
+            .collect();
+        assert_eq!(saves.len(), 2);
+        assert_eq!(logic.names[saves[0].arg1 as usize - 1], "gate");
+        assert_eq!(saves[1].arg1, 0, "an unmastered one is always armed");
+    }
+
+    #[test]
+    fn cooks_a_global_identity_for_a_named_breakable() {
+        let ents = br#"
+        { "classname" "func_breakable" "model" "*1" "globalname" "airlock_glass" "health" "5" }
+        { "classname" "func_breakable" "model" "*2" "health" "5" }
+        "#;
+        let models = vec![0u8; 3 * SZ_MODEL];
+        let logic = collect_logic_entities(
+            ents,
+            &models,
+            &[LOGIC_BRUSH_NONE, 0, 1],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("logic cook");
+        let ids: Vec<_> = logic
+            .ents
+            .iter()
+            .filter(|rec| rec.kind == LOGIC_GLOBAL_BREAKABLE)
+            .collect();
+        assert_eq!(ids.len(), 1, "only the named one");
+        assert_eq!(ids[0].brush, 0);
+        assert_eq!(ids[0].arg0, actor_carry_id("airlock_glass", true));
+        assert_ne!(ids[0].arg0 & 0x8000, 0);
     }
 
     #[test]
