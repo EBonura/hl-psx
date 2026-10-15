@@ -2738,6 +2738,7 @@ static mut CROSSFADE: (u8, u16, u8) = (0, 0, 0);
 
 /// Note the pose actor `pi` is about to draw (`clip`, `pos`: source frames * 256)
 /// and set `CROSSFADE` for it.
+#[link_section = ".hlpsx_cold.crossfade"]
 #[inline(never)]
 #[optimize(size)]
 unsafe fn crossfade_prepare(pi: usize, clip: usize, pos: u32, now: u32) {
@@ -2790,6 +2791,7 @@ static mut CROSSFADE_BONES: usize = 0;
 /// toward unit length (one Newton step on each row); translations mix
 /// linearly. Done in `play`, not in the projection, which runs on the
 /// scratchpad stack and has no room for two decodes.
+#[link_section = ".hlpsx_cold.crossfade"]
 #[inline(never)]
 #[optimize(size)]
 unsafe fn crossfade_decode(md: &Model, clip: usize, pos: u32, mouth: u8) {
