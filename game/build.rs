@@ -1285,6 +1285,22 @@ fn write_probe_script(out_dir: &std::path::Path) {
                     [num(2) as i32, num(4) as i32, num(3) as i32, 0, 0, 0],
                     String::new(),
                 ),
+                // hp N : set the player's health
+                "hp" => (18, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
+                // follow KIND : the first live monster of that PROP_KIND follows the player
+                "follow" => (19, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
+                // explode X Y Z DMG : a blast of DMG damage at that HL point
+                "explode" => (
+                    20,
+                    [num(2) as i32, num(4) as i32, num(3) as i32, num(5) as i32, 0, 0],
+                    String::new(),
+                ),
+                // weapon N : select weapon slot N (0 crowbar, 1 glock ...)
+                "weapon" => (22, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
+                // watch KIND : log health and position of every live monster of that kind every half second
+                "watch" => (23, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
+                // club KIND DMG : one crowbar-class hit of DMG on the nearest live monster of that kind
+                "club" => (25, [num(2) as i32, num(3) as i32, 0, 0, 0, 0], String::new()),
                 // pos : log the player position
                 "pos" => (13, [0; 6], String::new()),
                 // die : drop the player's health to zero (god off)

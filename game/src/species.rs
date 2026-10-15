@@ -354,7 +354,7 @@ pub(crate) unsafe fn tick_slave(
 /// passive: they are the only AI_IDLE actors the actor loop does not skip.
 #[inline(always)]
 pub(crate) fn idle_thinks(ty: u8) -> bool {
-    ty == 12 || ty == tripmine::PROP_TYPE_TRIPMINE
+    ty == 12 || ty == PROP_TYPE_LEECH || ty == tripmine::PROP_TYPE_TRIPMINE
 }
 
 pub(crate) unsafe fn idle_think(
@@ -363,12 +363,198 @@ pub(crate) unsafe fn idle_think(
     pi: usize,
     ty: u8,
     player_pos: [i32; 3],
+    in_player_pvs: bool,
     health: &mut u16,
+    armor: &mut u16,
 ) {
     if ty == 12 {
         barnacle::tick(m, pi, player_pos, health);
+    } else if ty == PROP_TYPE_LEECH {
+        tick_leech(m, movers, pi, player_pos, in_player_pvs, health, armor);
     } else if ty == tripmine::PROP_TYPE_TRIPMINE {
         tripmine::tick_map(m, movers, pi);
+    }
+}
+
+pub(crate) const PROP_TYPE_LEECH: u8 = 13;
+
+static mut LEECHES: [leech::Swim; leech::SLOTS] = [leech::Swim::EMPTY; leech::SLOTS];
+
+/// A new map starts with no swimmer thinking.
+pub(crate) unsafe fn reset_leeches() {
+    LEECHES = [leech::Swim::EMPTY; leech::SLOTS];
+}
+
+/// The leech's view of the map for one think.
+struct LeechWorld<'a> {
+    m: &'a Map,
+    movers: &'a [phys::Mover],
+    pos: [i32; 3],
+    yaw: u16,
+    eye: Option<[i32; 3]>,
+}
+
+impl leech::World for LeechWorld<'_> {
+    #[inline(never)]
+    fn free_frac(&mut self, from: [i32; 3], to: [i32; 3]) -> i32 {
+        match phys::trace_line(self.m, self.movers, from, to) {
+            Some(hit) => hit.frac,
+            None => 4096,
+        }
+    }
+
+    #[inline(never)]
+    fn wet(&mut self, p: [i32; 3]) -> bool {
+        unsafe { water_touch(self.m, self.m.n_ents, p) }
+    }
+
+    #[inline(never)]
+    fn rand(&mut self, lo: i32, hi: i32) -> i32 {
+        unsafe { lo + impact_rng().below((hi - lo + 1).max(1) as u32) as i32 }
+    }
+
+    #[inline(never)]
+    fn look(&mut self) -> Option<leech::Enemy> {
+        let eye = self.eye?;
+        let (dx, dz) = (eye[0] - self.pos[0], eye[2] - self.pos[2]);
+        let delta = [dx, eye[1] - self.pos[1], dz];
+        if dist2_3([0; 3], delta) > leech::LOOK_RANGE * leech::LOOK_RANGE
+            || !leech::in_view(self.yaw, dx, dz)
+            || !actor_line_clear(self.m, self.movers, self.pos, eye)
+        {
+            return None;
+        }
+        self.enemy()
+    }
+
+    #[inline(never)]
+    fn enemy(&mut self) -> Option<leech::Enemy> {
+        // FVisible: a leech never sees a player standing on dry land, and
+        // Look only keeps enemies whose waterlevel is not zero.
+        Some(leech::Enemy {
+            eye: self.eye?,
+            wet: unsafe { PLAYER_WATER_LEVEL } != 0,
+        })
+    }
+}
+
+/// monster_leech: swim, hunt the player while he is in the water, bite.
+/// Thinks at 10 Hz and only while the player can see its room (retail
+/// FIND_CLIENT_IN_PVS); a leech outside the view keeps its place and
+/// forgets its mood.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn tick_leech(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    in_player_pvs: bool,
+    health: &mut u16,
+    armor: &mut u16,
+) {
+    let mut slot = leech::SLOTS;
+    let mut free = leech::SLOTS;
+    let mut i = 0usize;
+    while i < leech::SLOTS {
+        let owner = LEECHES[i].prop;
+        if owner == pi as u8 {
+            slot = i;
+        } else if owner != leech::FREE
+            && (PROP_ACTIVE[owner as usize] == 0 || PROP_HEALTH[owner as usize] == 0)
+        {
+            LEECHES[i] = leech::Swim::EMPTY;
+        }
+        if LEECHES[i].prop == leech::FREE && free == leech::SLOTS {
+            free = i;
+        }
+        i += 1;
+    }
+    if !in_player_pvs {
+        if slot != leech::SLOTS {
+            LEECHES[slot] = leech::Swim::EMPTY;
+        }
+        PROP_STATE[pi] = PROP_STATE_MOVE;
+        return;
+    }
+    let pos = PROP_POS[pi];
+    let yaw = prop_yaw_value(PROP_YAW[pi]);
+    let eye = if *health > 0 {
+        Some([player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]])
+    } else {
+        None
+    };
+    let mut world = LeechWorld {
+        m,
+        movers,
+        pos,
+        yaw,
+        eye,
+    };
+    if slot == leech::SLOTS {
+        if free == leech::SLOTS {
+            // Every slot is busy: this one holds its pose.
+            PROP_STATE[pi] = PROP_STATE_MOVE;
+            return;
+        }
+        slot = free;
+        LEECHES[slot] = leech::Swim::spawn(pi as u8, pos, &mut world);
+    }
+    let wet = water_touch(m, m.n_ents, [pos[0], pos[1] + 1, pos[2]]);
+    if (AI_TICK.wrapping_add(pi as u32)) % leech::THINK_TICKS == 0 {
+        let motion = LEECHES[slot].think(pos, yaw, wet, &mut world);
+        #[cfg(feature = "interaction-probe")]
+        if SIM_NOW % 10 == 0 || motion.bite {
+            reference_trace::probe_vals(
+                SIM_NOW as u32,
+                if motion.bite { "leech_bite" } else { "leech" },
+                &[pi as i32, pos[0], pos[1], pos[2], motion.biting as i32, motion.dry as i32],
+            );
+        }
+        if motion.bite {
+            // The bite event only hurts a prey the leech is facing.
+            if let Some(eye) = eye {
+                if leech::bite_connects(yaw, eye[0] - pos[0], eye[2] - pos[2]) {
+                    damage_target(
+                        PROP_TARGET_PLAYER,
+                        skill_hit(Sk::LeechBite),
+                        pos,
+                        health,
+                        armor,
+                    );
+                    LEECHES[slot].bit();
+                }
+            }
+        }
+        PROP_STATE[pi] = if motion.dry {
+            PROP_STATE_IDLE
+        } else if motion.biting {
+            PROP_STATE_ATTACK
+        } else {
+            PROP_STATE_MOVE
+        };
+        if motion.turn_q12 != 0 {
+            let turned = ((yaw as i32 + motion.turn_q12) & 0x0fff) as u16;
+            PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], turned);
+        }
+        let mut to = pos;
+        let mut axis = 0usize;
+        while axis < 3 {
+            // Slide: each axis moves on its own until a wall stops it.
+            if motion.step[axis] != 0 {
+                let mut next = to;
+                next[axis] += motion.step[axis];
+                // A start inside a hull reads as no hit, so also refuse any
+                // step that ends in solid rock.
+                if phys::trace_line(m, movers, to, next).is_none() && camera_leaf(m, next) > 0 {
+                    to = next;
+                }
+            }
+            axis += 1;
+        }
+        if to != pos {
+            prop_set_pos_exact(m, pi, to);
+        }
     }
 }
 

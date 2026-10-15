@@ -187,7 +187,7 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef_atk(60, 48, 100, AI_RANGED, 16, 500, 8, 4), // 10 alien_grunt (hornets)
     mdef_atk(60, 40, 100, AI_RANGED, 16, 1024, 3, 14), // 11 alien_controller (energy)
     mdef(25, 32, 170, AI_IDLE),                 // 12 barnacle (retail spawns it with 25)
-    mdef(16, 8, 40, AI_IDLE),                   // 13 leech (flyer: render only)
+    mdef(16, 8, 40, AI_IDLE),                   // 13 leech (swimmer; species::tick_leech)
     mdef(1, 4, 30, AI_IDLE),                    // 14 cockroach (passive; any hit kills it)
     mdef(100, 48, 90, AI_IDLE),                 // 15 gman (passive)
     // CGargantua: the melee roster wakes it; garg::tick runs its schedules.

@@ -91,6 +91,32 @@ pub const fn radius_damage_at_distance(damage: u8, radius: i32, distance: i32) -
     }
 }
 
+/// Whether a blast reaches a victim (RadiusDamage's gates). A blast set off in
+/// water only hurts victims whose feet are wet, one in air spares victims whose
+/// eyes are under (`victim_level` is the 0..=3 waterlevel), and either needs an
+/// unobstructed line from the blast to the victim.
+#[inline(always)]
+pub const fn blast_reaches(blast_in_water: bool, victim_level: u8, line_clear: bool) -> bool {
+    if blast_in_water && victim_level == 0 {
+        return false;
+    }
+    if !blast_in_water && victim_level == 3 {
+        return false;
+    }
+    line_clear
+}
+
+/// CBarnacle::TakeDamage turns any DMG_CLUB hit (the crowbar) into a hit for
+/// all of the barnacle's health. `kind` 12 is monster_barnacle.
+#[inline(always)]
+pub const fn club_damage_for(kind: u8, club: bool, damage: u8) -> u8 {
+    if kind == 12 && club {
+        u8::MAX
+    } else {
+        damage
+    }
+}
+
 #[inline(always)]
 pub const fn carry_record_count(encoded: u8) -> usize {
     (encoded & CARRY_COUNT_MASK) as usize
@@ -887,6 +913,28 @@ pub const fn sentence_rearm(now: u16, cooldown: u16, once: bool) -> Option<u16> 
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn one_crowbar_swing_kills_a_barnacle_but_nothing_else_changes() {
+        assert_eq!(club_damage_for(12, true, 10), u8::MAX);
+        assert_eq!(club_damage_for(12, false, 8), 8, "bullets are ordinary");
+        assert_eq!(club_damage_for(2, true, 10), 10, "a headcrab takes the swing");
+    }
+
+    #[test]
+    fn blasts_need_a_line_and_do_not_cross_the_water_surface() {
+        // Open air to a dry victim: hurt. Behind a wall: not.
+        assert!(blast_reaches(false, 0, true));
+        assert!(!blast_reaches(false, 0, false));
+        // Wading (levels 1 and 2) still takes a blast from the air.
+        assert!(blast_reaches(false, 1, true) && blast_reaches(false, 2, true));
+        // A submerged victim is spared from an airborne blast.
+        assert!(!blast_reaches(false, 3, true));
+        // A blast under water spares dry victims, hurts wet ones.
+        assert!(!blast_reaches(true, 0, true));
+        assert!(blast_reaches(true, 1, true) && blast_reaches(true, 3, true));
+        assert!(!blast_reaches(true, 3, false));
+    }
     use super::*;
 
     #[test]

@@ -281,7 +281,7 @@ const OBSERVED: &[Obs] = &[
         field: "bite",
         retail: [s(2), s(2), N],
         cvar: Sk::LeechBite,
-        port: Port::None,
+        port: Port::Sk(Sk::LeechBite),
         source: "profile-organic 8",
     },
     Obs {

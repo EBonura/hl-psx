@@ -706,6 +706,124 @@ pub fn script_move_timeout_ticks(distance: u32, speed_per_tick: u16) -> u16 {
     ) as u16
 }
 
+// ---------------------------------------------------------------------------
+// Healing the player (CScientist: slHeal, CanHeal, Heal).
+//
+// A scientist that is following the player and stands within 128 units of him
+// walks up to 50 units, faces him, pulls the needle (36 frames at 15 fps),
+// gives the shot (24 frames, the heal event on frame 17) and puts the needle
+// away (21 frames). The heal needs the player at or below half health and the
+// scientist's own one-minute clock to have run out; it adds `sk_scientist_heal`
+// (25 on every skill). Nothing interrupts the schedule once it has begun.
+// ---------------------------------------------------------------------------
+
+/// The player is healed only at or below half of his 100 maximum.
+pub const HEAL_HEALTH_MAX: u16 = 50;
+/// TargetDistance() the idle-follow schedule must be within to offer a heal.
+pub const HEAL_OFFER_RANGE: i32 = 128;
+/// TASK_MOVE_TO_TARGET_RANGE 50: the needle comes out only this close.
+pub const HEAL_WALK_RANGE: i32 = 50;
+/// TASK_HEAL gives up when the player gets farther than this.
+pub const HEAL_ABORT_RANGE: i32 = 90;
+/// The heal event does nothing beyond this distance.
+pub const HEAL_EVENT_RANGE: i32 = 100;
+/// m_healTime: one minute at 20 ticks per second.
+pub const HEAL_COOLDOWN_TICKS: u16 = 1_200;
+/// pull_needle, give_shot and return_needle in 20 Hz ticks (48, 32, 28).
+pub const HEAL_PULL_TICKS: u8 = 48;
+pub const HEAL_SHOT_TICKS: u8 = 32;
+pub const HEAL_RETURN_TICKS: u8 = 28;
+/// A heal in progress counts `left` down from this to zero.
+pub const HEAL_TOTAL_TICKS: u8 = HEAL_PULL_TICKS + HEAL_SHOT_TICKS + HEAL_RETURN_TICKS;
+/// Frame 17 of 24 at 15 fps is 22.7 ticks into give_shot.
+pub const HEAL_EVENT_LEFT: u8 = HEAL_RETURN_TICKS + HEAL_SHOT_TICKS - 23;
+
+/// CanHeal's health test (the clock is checked separately).
+#[inline(always)]
+pub const fn heal_wanted(player_health: u16) -> bool {
+    player_health > 0 && player_health <= HEAL_HEALTH_MAX
+}
+
+/// The heal event (give_shot frame 17) fires while `left` ticks remain, and
+/// does something only if the player still wants it and is within reach.
+#[inline(always)]
+pub const fn heal_event(left: u8, dist2: i32, still_wanted: bool) -> bool {
+    left == HEAL_EVENT_LEFT && still_wanted && dist2 <= HEAL_EVENT_RANGE * HEAL_EVENT_RANGE
+}
+
+/// TASK_HEAL completes early when the player walks off during the shot: the
+/// scientist skips straight to putting the needle away. Returns the new
+/// `left` when that happens.
+#[inline(always)]
+pub const fn heal_abort(left: u8, dist2: i32) -> Option<u8> {
+    if left > HEAL_RETURN_TICKS
+        && left < HEAL_RETURN_TICKS + HEAL_SHOT_TICKS
+        && dist2 > HEAL_ABORT_RANGE * HEAL_ABORT_RANGE
+    {
+        Some(HEAL_RETURN_TICKS)
+    } else {
+        None
+    }
+}
+
+/// TakeHealth on the player: up to the 100 maximum.
+#[inline(always)]
+pub const fn healed_health(health: u16, amount: u16) -> u16 {
+    let total = health.saturating_add(amount);
+    if total > 100 {
+        100
+    } else {
+        total
+    }
+}
+
+/// Each scientist's own one-minute heal clock. Only followers heal and at most
+/// two follow, so a handful of entries is the whole population; a scientist
+/// pushed out of the table forgets its clock (and may heal again early).
+#[derive(Clone, Copy)]
+pub struct HealClock {
+    prop: [u8; 4],
+    until: [u16; 4],
+    next: u8,
+}
+
+impl HealClock {
+    pub const EMPTY: Self = Self {
+        prop: [0xFF; 4],
+        until: [0; 4],
+        next: 0,
+    };
+
+    /// m_healTime <= now (a scientist that never healed is always ready).
+    pub fn ready(&self, prop: u8, now: u16) -> bool {
+        let mut i = 0;
+        while i < 4 {
+            if self.prop[i] == prop {
+                return now.wrapping_sub(self.until[i]) < 0x8000;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    /// m_healTime = now + 60 s.
+    pub fn start(&mut self, prop: u8, now: u16) {
+        let until = now.wrapping_add(HEAL_COOLDOWN_TICKS);
+        let mut i = 0;
+        while i < 4 {
+            if self.prop[i] == prop {
+                self.until[i] = until;
+                return;
+            }
+            i += 1;
+        }
+        let slot = (self.next & 3) as usize;
+        self.prop[slot] = prop;
+        self.until[slot] = until;
+        self.next = self.next.wrapping_add(1);
+    }
+}
+
 #[inline(always)]
 pub const fn pack_carry_state(
     base_state: u8,
@@ -1152,5 +1270,65 @@ mod tests {
         assert!(script_untargeted_idle_holds(true, false));
         assert!(!script_untargeted_idle_holds(true, true));
         assert!(!script_untargeted_idle_holds(false, false));
+    }
+
+    #[test]
+    fn heal_runs_pull_shot_return_and_fires_once_on_the_event() {
+        // The caller counts `left` down one per tick; the event sits 71 ticks in.
+        let mut heals = 0;
+        let mut fired_at = 0;
+        for tick in 0..HEAL_TOTAL_TICKS {
+            let left = HEAL_TOTAL_TICKS - tick;
+            if heal_event(left, 40 * 40, true) {
+                heals += 1;
+                fired_at = tick;
+            }
+            assert_eq!(heal_abort(left, 40 * 40), None);
+        }
+        assert_eq!(HEAL_TOTAL_TICKS, 108, "pull 2.4 s + shot 1.6 s + return 1.4 s");
+        assert_eq!(heals, 1);
+        assert_eq!(fired_at, 71);
+    }
+
+    #[test]
+    fn walking_off_during_the_shot_skips_the_heal() {
+        let mid_shot = HEAL_RETURN_TICKS + HEAL_SHOT_TICKS - 5;
+        // 91 units away mid-shot: the schedule finishes early.
+        assert_eq!(heal_abort(mid_shot, 91 * 91), Some(HEAL_RETURN_TICKS));
+        assert_eq!(heal_abort(mid_shot, 90 * 90), None);
+        // Not while pulling the needle or putting it away.
+        assert_eq!(heal_abort(HEAL_TOTAL_TICKS - 3, 500 * 500), None);
+        assert_eq!(heal_abort(HEAL_RETURN_TICKS, 500 * 500), None);
+        // Outside the 100-unit reach at the event itself: no health either.
+        assert!(!heal_event(HEAL_EVENT_LEFT, 101 * 101, true));
+        assert!(heal_event(HEAL_EVENT_LEFT, 100 * 100, true));
+        // Someone else healed him in the meantime.
+        assert!(!heal_event(HEAL_EVENT_LEFT, 0, false));
+    }
+
+    #[test]
+    fn only_half_health_or_less_is_offered_a_shot_and_it_caps_at_100() {
+        assert!(heal_wanted(50));
+        assert!(heal_wanted(1));
+        assert!(!heal_wanted(51));
+        assert!(!heal_wanted(0));
+        assert_eq!(healed_health(40, 25), 65);
+        assert_eq!(healed_health(90, 25), 100);
+    }
+
+    #[test]
+    fn each_scientist_waits_a_minute_between_shots() {
+        let mut clock = HealClock::EMPTY;
+        assert!(clock.ready(7, 10));
+        clock.start(7, 100);
+        assert!(!clock.ready(7, 100));
+        assert!(!clock.ready(7, 100 + HEAL_COOLDOWN_TICKS - 1));
+        assert!(clock.ready(7, 100 + HEAL_COOLDOWN_TICKS));
+        // Another scientist has its own clock.
+        assert!(clock.ready(8, 101));
+        // Wrapping tick counter.
+        clock.start(9, 65_000);
+        assert!(!clock.ready(9, 65_100));
+        assert!(clock.ready(9, 65_000u16.wrapping_add(HEAL_COOLDOWN_TICKS)));
     }
 }

@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- Leeches swim and bite. The 105 leeches of c2a1a, c2a2a, c2a3, c2a3a, c2a3b,
+  c3a1 and c3a1a were drawn but never moved. Each now drifts at 50 units a
+  second inside the middle of its water column, hunts a player who is in the
+  water and in view (750 units, 240 degree cone) at up to 100 units a second,
+  chases his eye height, and bites 2 on every skill from 40 units away while it
+  faces him; every bite shortens the hunt by 2 s. Out of the water it drops and
+  stops. Like retail it only thinks while the player can see its room. At most
+  eight leeches swim at once (RAM); a ninth in view holds its pose until one
+  leaves. There are no leech cries yet (the sound banks carry no leech
+  samples), and the swimming pose does not lean or bank.
+- A scientist that follows you heals you. At half health or less, a following
+  scientist within 128 units walks up to 50 units, takes out the needle and
+  gives the shot 3.6 s later: 25 health, then a minute before that scientist
+  heals again; walking more than 90 units away mid shot spoils it. The retail
+  needle animation and the "SC_HEAL" line are not in the cooked scientist, so
+  the scientist stands still while it happens.
+
+- Explosions need a line to what they hurt, and stop at the water surface.
+  Rockets, grenades, satchels, tripmines and the MP5 grenade damaged every
+  monster and the player inside their radius, through walls and doors. Like
+  retail's RadiusDamage, a blast now reaches a victim only when nothing solid
+  lies between them, a blast set off in water spares anyone with dry feet, and
+  a blast in air spares anyone whose eyes are under. Blast distance is still
+  taken to the victim's centre rather than its nearest surface.
+- One crowbar swing kills a barnacle. Retail turns any club hit into a hit for
+  all its health; the port needed three swings.
+
 - Xen's skies keep their colour. The sky was one 16 colour palette shared by
   all six cube faces, which turned the nebulae's oranges beige and their
   dither into grain. Each face is now an 8 bit texture against one 256 colour
