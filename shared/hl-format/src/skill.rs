@@ -54,10 +54,6 @@ pub enum Sk {
     HgruntGrenadeSpeed,
     PlrM203,
     PlrHandGrenade,
-    /// `sk_monster_head`: the multiplier on a hit to an actor's head.
-    MonsterHead,
-    // Cvars the port does not read (yet) and the player's weapons, which the
-    // arsenal table carries: audited by the host parity test, never cooked.
     SquidWhip,
     SlaveClawRake,
     AgruntPunch,
@@ -65,6 +61,16 @@ pub enum Sk {
     HgruntKick,
     BigMommaSlash,
     BigMommaBlast,
+    /// `sk_bigmomma_radius_blast`: the reach of Gonarch's acid mortar.
+    BigMommaRadius,
+    /// `sk_hgrunt_pellets`: pellets in one shotgun marine's blast.
+    HgruntPellets,
+    /// `sk_snark_dmg_pop`: the blast of a snark that bursts.
+    SnarkPop,
+    /// `sk_monster_head`: the multiplier on a hit to an actor's head.
+    MonsterHead,
+    // Cvars the port does not read (yet) and the player's weapons, which the
+    // arsenal table carries: audited by the host parity test, never cooked.
     PlrCrowbar,
     Plr9mm,
     Plr357,
@@ -122,7 +128,6 @@ pub const SK_KEYS: [(Sk, &str, u32); SK_COUNT] = [
     (Sk::HgruntGrenadeSpeed, "sk_hgrunt_gspeed", 1000),
     (Sk::PlrM203, "sk_plr_9mmAR_grenade", 1000),
     (Sk::PlrHandGrenade, "sk_plr_hand_grenade", 1000),
-    (Sk::MonsterHead, "sk_monster_head", 1000),
     (Sk::SquidWhip, "sk_bullsquid_dmg_whip", 1000),
     (Sk::SlaveClawRake, "sk_islave_dmg_clawrake", 1000),
     (Sk::AgruntPunch, "sk_agrunt_dmg_punch", 1000),
@@ -130,6 +135,10 @@ pub const SK_KEYS: [(Sk, &str, u32); SK_COUNT] = [
     (Sk::HgruntKick, "sk_hgrunt_kick", 1000),
     (Sk::BigMommaSlash, "sk_bigmomma_dmg_slash", 1000),
     (Sk::BigMommaBlast, "sk_bigmomma_dmg_blast", 1000),
+    (Sk::BigMommaRadius, "sk_bigmomma_radius_blast", 1000),
+    (Sk::HgruntPellets, "sk_hgrunt_pellets", 1000),
+    (Sk::SnarkPop, "sk_snark_dmg_pop", 1000),
+    (Sk::MonsterHead, "sk_monster_head", 1000),
     (Sk::PlrCrowbar, "sk_plr_crowbar", 1000),
     (Sk::Plr9mm, "sk_plr_9mm_bullet", 1000),
     (Sk::Plr357, "sk_plr_357_bullet", 1000),

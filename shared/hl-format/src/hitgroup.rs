@@ -30,11 +30,27 @@ pub const RULES: &[(u8, u8)] = &[
     (9, HEAD),
     (10, HEAD),
     (10, ARMOR),
+    // Gonarch: only her sack (group 1) is hurt by a bullet; the turrets' armour
+    // plates (group 10) turn a bullet away (`CBaseTurret::TraceAttack`).
+    (18, HEAD),
+    (21, ARMOR),
+    (22, ARMOR),
     (25, HEAD),
     (51, HEAD),
     (54, HEAD),
     (55, HEAD),
 ];
+
+/// Actor model types whose bullets only count on one group: Gonarch's sack
+/// (`CBigMomma::TraceAttack` takes 0.1 anywhere else).
+pub const fn only_group_hurts(ty: u8) -> bool {
+    ty == 18
+}
+
+/// Turret models, whose armour plates take almost nothing.
+pub const fn is_turret(ty: u8) -> bool {
+    ty == 21 || ty == 22
+}
 
 /// The damage of a bullet of `dmg` after it strikes `group`, with
 /// `sk_monster_head` as `head`.

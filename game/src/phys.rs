@@ -2332,6 +2332,7 @@ impl Player {
 
     /// Swim physics inside a func_water volume: move along the LOOK direction
     /// (pitch included), jump paddles straight up, and idle sinks slowly.
+    #[optimize(size)]
     pub fn update_swim(
         &mut self,
         map: &Map,

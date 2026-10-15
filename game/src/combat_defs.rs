@@ -32,6 +32,8 @@ pub const GLOCK_RANGE: i32 = 8192; // shared hitscan reach for the ballistic wea
                                    // CShotgun fires buckshot to 2048, a quarter of every other bullet weapon's
                                    // 8192. Without this the shotgun snipes across a hangar as well as a rifle.
 pub const SHOTGUN_RANGE: i32 = 2048;
+/// The egon's beam is traced 2048 units, a quarter of a bullet's reach.
+pub const EGON_RANGE: i32 = 2048;
 // Half-Life gives every bullet weapon a cone: FireBullets offsets the shot by
 // `spread` along the view right/up axes. Our shot offsets are screen pixels
 // against H_PROJ (160 px = the forward axis), so one SDK cone value converts as
@@ -87,6 +89,8 @@ pub const PROJ_TRIPMINE: u8 = 7;
 pub const PROJ_M203: u8 = 8;
 pub const PROJ_HORNET_FAST: u8 = 9;
 pub const PROJ_BOLT_WATER: u8 = 10;
+pub const PROJ_BMORTAR: u8 = 11; // Gonarch's acid mortar (enemy projectile)
+pub const PROJ_CBALL: u8 = 12; // the controller's energy ball (enemy projectile)
 pub const GRENADE_FUSE_TICKS: u32 = 60; // CHandGrenade: three-second fuse at 20 Hz
 
 pub struct WeaponDef {
@@ -184,8 +188,8 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef_atk(40, 32, 91, AI_RANGED, 6, 600, 15, 55), // 7 bullsquid (acid spit at range)
     mdef_atk(50, 40, 90, AI_RANGED, 16, 1000, 5, 8), // 8 hgrunt (mp5 bursts)
     mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24), // 9 alien_slave (zap)
-    mdef_atk(60, 48, 100, AI_RANGED, 16, 500, 8, 4), // 10 alien_grunt (hornets)
-    mdef_atk(60, 40, 100, AI_RANGED, 16, 1024, 3, 14), // 11 alien_controller (energy)
+    mdef_atk(60, 48, 100, AI_RANGED, 16, 1024, 8, 4), // 10 alien_grunt (hornet volleys inside 1024 units)
+    mdef_atk(60, 40, 100, AI_RANGED, 16, 2048, 3, 14), // 11 alien_controller (energy balls out to 2048)
     mdef(25, 32, 170, AI_IDLE),                 // 12 barnacle (retail spawns it with 25)
     mdef(16, 8, 40, AI_IDLE),                   // 13 leech (swimmer; species::tick_leech)
     mdef(1, 4, 30, AI_IDLE),                    // 14 cockroach (passive; any hit kills it)
@@ -193,11 +197,11 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     // CGargantua: the melee roster wakes it; garg::tick runs its schedules.
     mdef_atk(200, 90, 360, AI_MELEE, 10, 0, 0, 0), // 16 gargantua
     mdef(200, 90, 1748, AI_IDLE),                  // 17 nihilanth (boss: render only)
-    mdef(150, 70, 200, AI_IDLE),                   // 18 bigmomma (boss: render only)
+    mdef_atk(150, 70, 200, AI_MELEE, 0, 0, 0, 0),  // 18 bigmomma (gonarch.rs hunts once her path is walked)
     mdef_atk(40, 20, 223, AI_MELEE, 6, 0, 0, 0),   // 19 ichthyosaur
-    mdef_atk(40, 40, 80, AI_TURRET, 0, 1000, 7, 3), // 20 sentry
-    mdef_atk(50, 40, 80, AI_TURRET, 0, 1200, 8, 7), // 21 turret
-    mdef_atk(30, 30, 60, AI_TURRET, 0, 1000, 5, 3), // 22 miniturret
+    mdef_atk(40, 40, 80, AI_TURRET, 0, 1200, 7, 2), // 20 sentry (CBaseTurret: 1200 units, a round every 0.1 s)
+    mdef_atk(50, 40, 80, AI_TURRET, 0, 1200, 8, 2), // 21 turret
+    mdef_atk(30, 30, 60, AI_TURRET, 0, 1200, 5, 2), // 22 miniturret
     mdef(80, 60, 410, AI_IDLE),                    // 23 apache (flyer: render only)
     mdef(10, 20, 60, AI_IDLE),                     // 24 flyer_flock (passive)
     mdef(50, 25, SCIENTIST_RENDER_RADIUS, AI_IDLE), // 25 sitting scientist (50, unlike the standing 20)
@@ -313,7 +317,8 @@ pub const fn wdef(
 // primary/secondary state machines live below; this table holds their shared
 // ammo, damage, cadence, and viewmodel data.
 pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
-    wdef(AMMO_NONE, 0, 0, 10, 96, 1, 0, 7, 0, FIRE_MELEE, 0, 4),
+    // The crowbar reaches 32 units along a line and 16 more with its swept hull.
+    wdef(AMMO_NONE, 0, 0, 10, 48, 1, 0, 7, 0, FIRE_MELEE, 0, 4),
     wdef(
         AMMO_9MM,
         17,
@@ -417,7 +422,7 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         0,
         100,
         14,
-        GLOCK_RANGE,
+        EGON_RANGE,
         1,
         0,
         2,
@@ -430,7 +435,7 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         AMMO_HORNET,
         0,
         8,
-        8,
+        7, // gSkillData.plrDmgHornet: fixed in the retail code, not a cvar
         0,
         1,
         0,

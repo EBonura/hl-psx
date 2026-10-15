@@ -40,6 +40,112 @@ pub const fn follow_route_should_replan(cached_destination: u8, destination: u8,
     blocked || (cached_destination != u8::MAX && cached_destination != destination)
 }
 
+// ---- Following gait and Barney's reaction to being shot ----
+
+/// A follower walks when the player is under 190 units off and runs from 270;
+/// between the two it keeps the gait it had (the retail range overlaps so the
+/// stride does not flicker).
+pub const FOLLOW_WALK_BELOW: i32 = 190;
+pub const FOLLOW_RUN_FROM: i32 = 270;
+/// Follow speeds in world units per tick: the models walk at 58.7 (scientist)
+/// and 61.4 (Barney) units a second and run at 275.4 and 362.4.
+pub const SCIENTIST_WALK: i32 = 3;
+pub const SCIENTIST_RUN: i32 = 14;
+pub const BARNEY_WALK: i32 = 3;
+pub const BARNEY_RUN: i32 = 18;
+
+pub const fn follow_running(was_running: bool, distance: i32) -> bool {
+    if distance < FOLLOW_WALK_BELOW {
+        false
+    } else if distance >= FOLLOW_RUN_FROM {
+        true
+    } else {
+        was_running
+    }
+}
+
+pub const fn follow_speed(running: bool, barney: bool) -> i32 {
+    match (running, barney) {
+        (false, false) => SCIENTIST_WALK,
+        (true, false) => SCIENTIST_RUN,
+        (false, true) => BARNEY_WALK,
+        (true, true) => BARNEY_RUN,
+    }
+}
+
+/// `CBaseMonster::IsFacing`: whether the viewer, looking along the unit vector
+/// `(fx, fz)` (q12), has the point offset `(dx, dz)` straight ahead (cosine
+/// above 0.96, about 16 degrees).
+pub fn is_facing(fx: i32, fz: i32, dx: i32, dz: i32) -> bool {
+    let len2 = dx as i64 * dx as i64 + dz as i64 * dz as i64;
+    if len2 == 0 {
+        return true;
+    }
+    let dot = dx as i64 * fx as i64 + dz as i64 * fz as i64;
+    if dot <= 0 {
+        return false;
+    }
+    // dot / (len * 4096) > 0.96  <=>  dot^2 * 10000 > len2 * 4096^2 * 9216
+    let lhs = (dot as i128) * (dot as i128) * 10000;
+    let rhs = (len2 as i128) * 4096 * 4096 * 9216;
+    lhs > rhs
+}
+
+/// What Barney does when the player's fire hurts him (`CBarney::TakeDamage`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BarneyHurt {
+    /// He already has an enemy, so the intent cannot be told: nothing changes.
+    Crossfire,
+    /// "Hey, be careful": he is wary from now on.
+    Warning,
+    /// He is provoked for good and stops following.
+    Provoked,
+}
+
+pub const fn barney_hurt_by_player(has_enemy: bool, suspicious: bool, player_facing_him: bool) -> BarneyHurt {
+    if has_enemy {
+        BarneyHurt::Crossfire
+    } else if suspicious || player_facing_him {
+        BarneyHurt::Provoked
+    } else {
+        BarneyHurt::Warning
+    }
+}
+
+#[cfg(test)]
+mod follow_tests {
+    use super::*;
+
+    #[test]
+    fn gait_has_a_dead_band() {
+        assert!(!follow_running(true, 100));
+        assert!(follow_running(false, 300));
+        assert!(follow_running(true, 230));
+        assert!(!follow_running(false, 230));
+        assert_eq!(follow_speed(true, true), 18);
+        assert_eq!(follow_speed(true, false), 14);
+        assert_eq!(follow_speed(false, true), 3);
+    }
+
+    #[test]
+    fn facing_needs_sixteen_degrees() {
+        // looking along +z
+        assert!(is_facing(0, 4096, 0, 100));
+        assert!(is_facing(0, 4096, 20, 100));
+        assert!(!is_facing(0, 4096, 40, 100));
+        assert!(!is_facing(0, 4096, 0, -100));
+        assert!(is_facing(0, 4096, 0, 0));
+    }
+
+    #[test]
+    fn barney_forgives_one_stray_shot_not_a_deliberate_one() {
+        assert_eq!(barney_hurt_by_player(false, false, false), BarneyHurt::Warning);
+        assert_eq!(barney_hurt_by_player(false, true, false), BarneyHurt::Provoked);
+        assert_eq!(barney_hurt_by_player(false, false, true), BarneyHurt::Provoked);
+        assert_eq!(barney_hurt_by_player(true, false, true), BarneyHurt::Crossfire);
+    }
+}
+
 #[cfg(test)]
 mod follow_route_tests {
     use super::*;

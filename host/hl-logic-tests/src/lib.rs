@@ -15,6 +15,7 @@
 //! Modules shared with the other GoldSrc port (pickup, ladder, pushable,
 //! visibility, hitbox, ordering, semantic input and the core ground rules)
 //! live in `psx-goldsrc` and are tested there.
+#![feature(optimize_attribute)]
 
 /// The actor roster and arsenal tables, included from the game itself so the
 /// modules below see the real arsenal dimensions and the parity audit reads the
@@ -28,6 +29,16 @@ pub mod weaponbox;
 pub mod air_navigation;
 #[path = "../../../game/src/leech.rs"]
 pub mod leech;
+#[path = "../../../game/src/hecu_grenades.rs"]
+pub mod hecu_grenades;
+#[path = "../../../game/src/weapon_logic.rs"]
+pub mod weapon_logic;
+#[path = "../../../game/src/proj_logic.rs"]
+pub mod proj_logic;
+#[path = "../../../game/src/senses.rs"]
+pub mod senses;
+#[path = "../../../game/src/gonarch.rs"]
+pub mod gonarch;
 #[path = "../../../game/src/env_sound_audio.rs"]
 pub mod env_sound_audio;
 

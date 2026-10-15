@@ -12,7 +12,7 @@ use hl_format::room_budget;
 // worst-map slack while funding actor interpolation and world-cache replay.
 // The model pool is the live viewmodel's reserve (`viewmodel_pool_words`)
 // followed by this NPC share.
-const NPC_MODEL_POOL_WORDS: usize = 23_554;
+const NPC_MODEL_POOL_WORDS: usize = 22_720;
 const FALLBACK_VM_POOL_WORDS: usize = 20_224;
 const FALLBACK_VM_GEOM_WORDS: usize = 15_800;
 const VIEWMODEL_BACKUP_BUDGET_WORDS: usize = 1_536;

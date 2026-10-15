@@ -279,6 +279,8 @@ fn base_clip_count(ty: u8) -> usize {
         8 => 7,
         // The gargantua's swipe and stomp sequences follow its five AI clips.
         16 => 7,
+        // Gonarch's leg slash and baby-laying sequences follow hers.
+        18 => 7,
         // The nihilanth's attack2, recharge, float_open and attack1_open.
         17 => 9,
         25 => 7,
