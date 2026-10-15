@@ -8641,9 +8641,11 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_ENV_GLOBAL => global_hash(ent_value(block, "globalstate").unwrap_or("")),
             LOGIC_ENV_BUBBLES => (parse_f32_key(block,"density",0.0) as i32 as u8) as u16,
             LOGIC_ENV_BLOOD => parse_f32_key(block, "amount", 0.0).clamp(0.0, u16::MAX as f32) as u16,
+            // The SDK's commented-out 250 cap is not applied: c2a5's 300 to 350
+            // blasts keep their 2.5 x radius (damage saturates at 255 anyway).
             LOGIC_ENV_EXPLOSION => parse_f32_key(block, "iMagnitude", 100.0)
                 .round()
-                .clamp(1.0, 255.0) as u16,
+                .clamp(1.0, 1000.0) as u16,
             LOGIC_INFODECAL => infodecal_pick(ent_value(block, "texture").unwrap_or("")).0,
             LOGIC_SHOOTER => parse_f32_key(block, "m_iGibs", 0.0).clamp(0.0, 255.0) as u16,
             LOGIC_MAP_FLAGS => {
@@ -18047,6 +18049,13 @@ mod tests {
         assert_ne!(r.arg0, 0);
         let none = cook_one(r#""classname" "trigger_once" "model" "*1""#);
         assert_eq!(none.arg0, 0);
+    }
+    #[test]
+    fn env_explosion_keeps_magnitudes_above_255() {
+        let r = cook_one(r#""classname" "env_explosion" "origin" "0 0 0" "iMagnitude" "350""#);
+        assert_eq!((r.kind, r.arg0), (LOGIC_ENV_EXPLOSION, 350));
+        let r = cook_one(r#""classname" "env_explosion" "origin" "0 0 0" "iMagnitude" "90""#);
+        assert_eq!(r.arg0, 90);
     }
     #[test]
     fn env_shake_keeps_its_radius_unless_everyone() {
