@@ -5,6 +5,7 @@ use std::path::Path;
 mod audio;
 mod bonnie_logo;
 mod generators;
+mod hev;
 mod menu;
 mod sprites;
 
@@ -18,6 +19,7 @@ fn usage() -> ! {
          \x20 hl-content sfx <sound-dir> <out.psxa>\n\
          \x20 hl-content voices <valve-dir> <map-list> <out-dir>\n\
          \x20 hl-content sound-audit <valve-dir> <map-list>\n\
+         \x20 hl-content hev-report <valve-dir>\n\
          \x20 hl-content sprites <valve-dir> <map-list> <out-dir>\n\
          \x20 hl-content merge-model <geometry.psxm> <texture.psxm>\n\
          \x20 hl-content clips <models-dir> <roster.txt> <clips.txt>\n\
@@ -45,6 +47,8 @@ fn main() -> Result<()> {
             arg(&args, 3),
             Path::new(arg(&args, 4)),
         ),
+        "hev-report" => hev::report(Path::new(arg(&args, 2))),
+        "hev-activity" => hev::activity(Path::new(arg(&args, 2))),
         "sound-audit" => audio::audit_map_sounds(Path::new(arg(&args, 2)), arg(&args, 3)),
         "sprites" => sprites::build(
             Path::new(arg(&args, 2)),

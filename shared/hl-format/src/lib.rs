@@ -7,6 +7,7 @@
 //! service. Keeping both sides on this contract makes format drift a compile
 //! error instead of a visual/gameplay omission.
 
+pub mod hev;
 pub mod hitgroup;
 pub mod pvs_pair;
 pub mod room_budget;

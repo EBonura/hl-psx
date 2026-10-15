@@ -8832,6 +8832,7 @@ fn collect_logic_entities_with_lightstyles(
             if damage_type & DMG_RADIATION != 0 {
                 record_flags |= LOGIC_TRIGGER_HURT_RADIATION;
             }
+            record_flags |= hl_format::hev::hurt_kind_bits(damage_type);
             let dmg = ent_value(block, "damage")
                 .or_else(|| ent_value(block, "dmg"))
                 .and_then(|v| v.parse::<f32>().ok())
