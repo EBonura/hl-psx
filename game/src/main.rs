@@ -77,6 +77,7 @@ mod osprey;
 mod save;
 mod segments;
 mod scientist_logic;
+mod leech;
 mod monsterjump;
 mod scratchpad;
 mod setpiece_logic;
@@ -6561,6 +6562,10 @@ unsafe fn feet_in_water(m: &Map, nents: usize, pos: [i32; 3], half_height: i32) 
     }
     water_touch(m, nents, feet)
 }
+
+/// The player's PM_CheckWater level (0 dry, 1 feet, 2 waist, 3 eyes) as of the
+/// last movement tick, for actors that react to a swimmer (monster_leech).
+static mut PLAYER_WATER_LEVEL: u8 = 0;
 
 #[derive(Clone, Copy)]
 struct WaterState {
@@ -18741,6 +18746,41 @@ unsafe fn tick_barney(
     PROP_STATE[pi] = PROP_STATE_IDLE;
 }
 
+/// Each following scientist's one-minute clock between shots (m_healTime).
+static mut HEAL_CLOCK: scientist_logic::HealClock = scientist_logic::HealClock::EMPTY;
+
+#[inline(always)]
+unsafe fn heal_clock() -> &'static mut scientist_logic::HealClock {
+    &mut *core::ptr::addr_of_mut!(HEAL_CLOCK)
+}
+
+/// CScientist's heal schedule, once begun, runs to its end whatever happens
+/// (its interrupt mask is empty). The ticks left ride on the attack-cooldown
+/// byte, which no scientist uses otherwise and which already counts down.
+/// The needle sequences are not among the scientist's cooked clips, so the
+/// animation stays the idle stance while the timing is the retail one.
+#[inline(never)]
+unsafe fn scientist_heal_tick(pi: usize, left: u8, player_pos: [i32; 3], health: &mut u16) {
+    PROP_STATE[pi] = PROP_STATE_IDLE;
+    prop_face_point(
+        pi,
+        [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
+    );
+    if !prop_scientist_flag(pi, PROP_SCI_FOLLOWING) {
+        // Told to stay behind (or provoked): the shot is called off.
+        prop_attack_cooldown_set(pi, 0);
+        return;
+    }
+    let d2 = dist2_3(PROP_POS[pi], player_pos);
+    if let Some(next) = scientist_logic::heal_abort(left, d2) {
+        prop_attack_cooldown_set(pi, next);
+    }
+    if scientist_logic::heal_event(left, d2, scientist_logic::heal_wanted(*health)) {
+        *health = scientist_logic::healed_health(*health, skill_hit(Sk::ScientistHeal) as u16);
+        heal_clock().start(pi as u8, SIM_NOW);
+    }
+}
+
 unsafe fn tick_scientist(
     m: &Map,
     movers: &[phys::Mover],
@@ -18750,7 +18790,13 @@ unsafe fn tick_scientist(
     nprops: usize,
     map_index: u16,
     in_player_pvs: bool,
+    health: &mut u16,
 ) {
+    let heal_left = prop_attack_cooldown(pi);
+    if heal_left != 0 {
+        scientist_heal_tick(pi, heal_left, player_pos, health);
+        return;
+    }
     if tick_talk_move_away(m, movers, pi, player_pos) {
         return;
     }
@@ -18845,6 +18891,28 @@ unsafe fn tick_scientist(
 
     let pos = PROP_POS[pi];
     if prop_scientist_flag(pi, PROP_SCI_FOLLOWING) {
+        // slHeal comes before the plain follow: a follower within 128 units of
+        // a player at half health or less (and past its minute) walks up to 50
+        // units, faces him and gives the shot.
+        if scientist_logic::heal_wanted(*health) && heal_clock().ready(pi as u8, SIM_NOW) {
+            let reach2 = dist2_3(pos, player_pos);
+            let offer = scientist_logic::HEAL_OFFER_RANGE;
+            let near = scientist_logic::HEAL_WALK_RANGE;
+            if reach2 <= near * near {
+                prop_attack_cooldown_set(pi, scientist_logic::HEAL_TOTAL_TICKS);
+                PROP_STATE[pi] = PROP_STATE_IDLE;
+                prop_face_point(
+                    pi,
+                    [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
+                );
+                return;
+            }
+            if reach2 <= offer * offer {
+                PROP_STATE[pi] = PROP_STATE_MOVE;
+                prop_move_towards_point(m, movers, pi, player_pos, SCIENTIST_FOLLOW_SPEED);
+                return;
+            }
+        }
         let d2 = dist2_xz(pos, player_pos);
         if d2 > SCIENTIST_FOLLOW_STOP_RANGE2 {
             PROP_STATE[pi] = PROP_STATE_MOVE;
@@ -18887,6 +18955,9 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
     TALKING_PROP = TALKING_PROP_NONE;
     TALKING_UNTIL = 0;
     TALKING_VOICE = 0;
+    species::reset_leeches();
+    PLAYER_WATER_LEVEL = 0;
+    *heal_clock() = scientist_logic::HealClock::EMPTY;
     let voices = room_budget::TALK_VOICES[map_index];
     (*core::ptr::addr_of_mut!(MAP_TALK_IDS)).copy_from_slice(&voices[..6]);
     MAP_VOICE_PREFIX = voices[6];
@@ -19377,8 +19448,9 @@ unsafe fn tick_props(
                 nprops,
                 map_index,
                 in_player_pvs,
+                health,
             ),
-            _ => species::idle_think(m, pm, pi, ty, player_pos, health),
+            _ => species::idle_think(m, movers, pi, ty, player_pos, in_player_pvs, health, armor),
         }
         pi += 1;
     }
@@ -21036,7 +21108,7 @@ unsafe fn fire_hitscan(
             eye[1] + (((end[1] - eye[1]) as i64 * best_frac as i64) >> 12) as i32,
             eye[2] + (((end[2] - eye[2]) as i64 * best_frac as i64) >> 12) as i32,
         ];
-        let damage = hit_group_damage(ty, best_box, damage);
+        let damage = logic_state::club_damage_for(ty, club_damage, hit_group_damage(ty, best_box, damage));
         damage_prop(best, damage, true);
         // TEXTURETYPE_PlaySound: bullets on flesh thud (bullet_hit1/2); metal
         // turrets keep the ricochet. CCrowbar::Swing plays cbar_hitbod on any
@@ -21704,13 +21776,17 @@ unsafe fn explode_inner(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_
         }
         ei += 1;
     }
+    // RadiusDamage lifts the source a unit (a grenade lying on the floor) and
+    // keeps the blast inside or outside the water by where it went off.
+    let blast_wet = water_touch(m, nents, pos);
+    let blast_src = [pos[0], pos[1] + 1, pos[2]];
     let mut pi = 0;
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     while pi < nprops {
         if PROP_ACTIVE[pi] != 0 && prop_start_health(PROP_KIND[pi]) != 0 && PROP_HEALTH[pi] != 0 {
             let t = prop_target(PROP_KIND[pi], PROP_POS[pi]);
             let d2 = dist2_3(t, pos);
-            if d2 < r2 {
+            if d2 < r2 && blast_sees(m, blast_src, blast_wet, PROP_POS[pi], t) {
                 let dmg = logic_state::radius_damage_at_distance(damage, radius, isqrt_i32(d2));
                 damage_prop(pi, dmg, player_inflicted);
                 if player_inflicted {
@@ -21729,11 +21805,49 @@ unsafe fn explode_inner(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_
         ],
         pos,
     );
-    if pd2 < r2 {
+    let player_body = [
+        LOGIC_PLAYER_POS[0],
+        LOGIC_PLAYER_POS[1] + 18,
+        LOGIC_PLAYER_POS[2],
+    ];
+    if pd2 < r2
+        && logic_state::blast_reaches(
+            blast_wet,
+            PLAYER_WATER_LEVEL,
+            blast_line_clear(m, blast_src, player_body),
+        )
+    {
         let dmg = logic_state::radius_damage_at_distance(damage, radius, isqrt_i32(pd2));
         PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(dmg as u16);
         note_damage_direction(pos);
     }
+}
+
+/// RadiusDamage's trace: the blast "sees" a victim when nothing solid (world,
+/// doors, glass) lies between its source and the victim's body.
+#[inline(never)]
+unsafe fn blast_line_clear(m: &Map, from: [i32; 3], to: [i32; 3]) -> bool {
+    phys::trace_line(m, &MOVERS[..MOVER_COUNT.min(MAX_ENTS + 1)], from, to).is_none()
+}
+
+/// A prop victim: the line plus the water rules, its waterlevel taken from
+/// the feet (wet) and the target point (submerged).
+#[inline(never)]
+unsafe fn blast_sees(
+    m: &Map,
+    src: [i32; 3],
+    blast_wet: bool,
+    feet: [i32; 3],
+    body: [i32; 3],
+) -> bool {
+    let level = if !water_touch(m, m.n_ents, [feet[0], feet[1] + 1, feet[2]]) {
+        0
+    } else if water_touch(m, m.n_ents, body) {
+        3
+    } else {
+        1
+    };
+    logic_state::blast_reaches(blast_wet, level, blast_line_clear(m, src, body))
 }
 
 /// Houndeye sonic shockwave: radius damage centred on the animal, player only
@@ -34369,6 +34483,7 @@ fn play(
                 unsafe { water_state(&m, nents, player.pos, player.half_height(), swim_eye_height) }
             };
             let in_water = movement_water.level >= 2;
+            unsafe { PLAYER_WATER_LEVEL = movement_water.level };
             // PlayerUse runs before the movement that its held command drives.
             // Resolve a continuous-use pushable now, while the first backward
             // step is still adjacent; later ticks retain it through GoldSrc's

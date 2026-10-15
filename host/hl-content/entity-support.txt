@@ -105,7 +105,7 @@ monster_houndeye|approximated|compact blast actor behavior
 monster_human_assassin|approximated|shared ranged actor behavior
 monster_human_grunt|approximated|shared ranged actor behavior
 monster_ichthyosaur|approximated|rendered actor without complete swim AI
-monster_leech|approximated|rendered actor without complete swim AI
+monster_leech|approximated|swims, hunts and bites; no cries, lean or bank, eight swimmers at a time
 monster_miniturret|approximated|shared turret behavior
 monster_nihilanth|approximated|spheres, n_recharger crystals, zap and teleport balls, head-open phase, flight and n_dead; brain hit is a sphere test, no summons
 monster_osprey|approximated|path_corner flight, grunt resupply by rope and crash; no sounds, no hitgroups
