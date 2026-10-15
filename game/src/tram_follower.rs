@@ -160,6 +160,7 @@ pub const fn tenth_second_distance_q8(speed: i32) -> i32 {
         .saturating_add(remainder * Q8_ONE / 10)
 }
 
+#[optimize(size)]
 /// Floor an unsigned ratio into Q16 without shifting the numerator out of
 /// range and without an i64 division. `numerator` must not exceed
 /// `denominator`; values above it are clamped to one.
@@ -184,6 +185,7 @@ pub const fn ratio_q16(numerator: u32, denominator: u32) -> u32 {
     quotient
 }
 
+#[optimize(size)]
 /// Exact floor of `value * fraction_q16 / 65536` using only 32-bit products.
 /// The high/low split also handles negative values with arithmetic-floor
 /// semantics, which is important for deterministic path-side bias.
@@ -208,6 +210,7 @@ const fn scale_u32_q16_parts(value: u32, fraction: u32) -> (u32, u32) {
     (high * fraction + (low_product >> 16), low_product & 0xffff)
 }
 
+#[optimize(size)]
 /// Overflow-safe interpolation across the complete i32 range. This is equal
 /// to `start + floor((end - start) * fraction / 65536)` without ever forming
 /// the potentially overflowing signed difference or a 64-bit division.
@@ -253,11 +256,13 @@ const fn ordered_abs_diff(a: i32, b: i32) -> u32 {
     }
 }
 
+#[optimize(size)]
 /// Integer square root, rounded down. Shift/subtract only; no division.
 const fn isqrt_u64(n: u64) -> u64 {
     psx_math::int32::isqrt_u64(n) as u64
 }
 
+#[optimize(size)]
 /// Three-dimensional Q8 distance, rounded down and saturated to i32.
 pub const fn distance_q8(a: Vec3Q8, b: Vec3Q8) -> i32 {
     let dx = ordered_abs_diff(a[0], b[0]) as u64;
@@ -295,6 +300,7 @@ const fn half_chord(to: Vec3Q8, from: Vec3Q8) -> Vec3Q8 {
     [delta[0] / 2, delta[1] / 2, delta[2] / 2]
 }
 
+#[optimize(size)]
 fn project_past_pointer<P: PathSource + ?Sized>(
     path: &P,
     pointer: usize,
@@ -325,6 +331,7 @@ fn project_past_pointer<P: PathSource + ?Sized>(
     (out, true)
 }
 
+#[optimize(size)]
 /// Forward GoldSrc-style lookahead from an actual origin and an old path
 /// pointer. Segment zero is therefore `actual_origin -> next waypoint`, not
 /// `current waypoint -> next waypoint`.
@@ -458,6 +465,7 @@ pub fn look_ahead_q8<P: PathSource + ?Sized>(
     }
 }
 
+#[optimize(size)]
 /// Prepare one forward follower update. Both queries intentionally receive
 /// `old_pointer` and `actual_origin_q8`; committing `next_pointer` earlier is a
 /// visible angular-controller regression at bends.
@@ -504,6 +512,7 @@ pub fn prepare_follower_q8<P: PathSource + ?Sized>(
 mod tests {
     use super::*;
 
+    #[optimize(size)]
     const fn p(x: i32, y: i32, z: i32) -> PathPoint {
         PathPoint {
             position_q8: [units_to_q8(x), units_to_q8(y), units_to_q8(z)],
@@ -511,6 +520,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     const fn flagged(x: i32, y: i32, z: i32, flags: u8) -> PathPoint {
         PathPoint {
             position_q8: [units_to_q8(x), units_to_q8(y), units_to_q8(z)],
@@ -518,6 +528,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     fn assert_vec_within(actual: Vec3Q8, expected: Vec3Q8, tolerance: i32) {
         for axis in 0..3 {
             assert!(
@@ -531,6 +542,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     #[test]
     fn straight_path_starts_at_actual_origin_not_current_waypoint() {
         let path = [p(0, 0, 0), p(100, 0, 0), p(200, 0, 0)];
@@ -552,6 +564,7 @@ mod tests {
         assert_eq!(prepared.passed_pointer, None);
     }
 
+    #[optimize(size)]
     #[test]
     fn bend_prepares_a_chord_and_wheels_still_use_the_old_pointer() {
         // The power-of-two second-segment length makes all expected Q8 values
@@ -594,6 +607,7 @@ mod tests {
         assert_ne!(wrong.point_q8, prepared.wheels.point_q8);
     }
 
+    #[optimize(size)]
     #[test]
     fn a_query_can_skip_nodes_but_only_returns_the_final_pointer() {
         let path = [p(0, 0, 0), p(10, 0, 0), p(20, 0, 0), p(30, 0, 0)];
@@ -609,6 +623,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn dead_end_returns_null_at_the_terminal_but_wheels_project() {
         let path = [p(0, 0, 0), p(10, 0, 0)];
@@ -632,6 +647,7 @@ mod tests {
         assert!(prepared.wheels.projected);
     }
 
+    #[optimize(size)]
     #[test]
     fn movement_respects_disabled_nodes_but_wheels_ignore_them() {
         let path = [p(0, 0, 0), flagged(10, 0, 0, PATH_DISABLED), p(20, 0, 0)];
@@ -653,6 +669,7 @@ mod tests {
         assert_eq!(prepared.wheels.returned_pointer, Some(1));
     }
 
+    #[optimize(size)]
     #[test]
     fn phase_marker_allows_arrival_then_stops_outgoing_traversal() {
         let path = [p(0, 0, 0), flagged(10, 0, 0, PATH_PHASE_END), p(20, 0, 0)];
@@ -674,6 +691,7 @@ mod tests {
         assert_eq!(prepared.wheels.point_q8, [units_to_q8(15), 0, 0]);
     }
 
+    #[optimize(size)]
     #[test]
     fn exact_endpoint_advances_pointer_but_zero_distance_does_not() {
         let path = [p(0, 0, 0), p(10, 0, 0), p(20, 0, 0)];
@@ -687,6 +705,7 @@ mod tests {
         assert_eq!(zero.returned_pointer, Some(0));
     }
 
+    #[optimize(size)]
     #[test]
     fn duplicate_points_progress_without_allocating_or_looping() {
         let path = [p(0, 0, 0), p(0, 0, 0), p(0, 0, 0), p(8, 0, 0)];
@@ -695,6 +714,7 @@ mod tests {
         assert_eq!(result.returned_pointer, Some(2));
     }
 
+    #[optimize(size)]
     #[test]
     fn terminal_duplicate_matches_goldsrcs_dead_end_hack() {
         let immediate = [p(0, 0, 0), p(0, 0, 0)];
@@ -718,6 +738,7 @@ mod tests {
         assert_eq!(result.stop, LookAheadStop::Reached);
     }
 
+    #[optimize(size)]
     #[test]
     fn restoring_ratio_matches_an_exhaustive_small_integer_oracle() {
         for denominator in 1u32..=512 {
@@ -731,6 +752,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     #[test]
     fn interpolation_matches_wide_oracle_including_i32_extremes() {
         let values = [
@@ -776,6 +798,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     #[test]
     fn straight_path_exhaustively_preserves_pointer_boundaries() {
         let path = [p(0, 0, 0), p(100, 0, 0), p(200, 0, 0)];
@@ -805,6 +828,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     #[test]
     fn conversion_helpers_do_not_overflow() {
         assert_eq!(tenth_second_distance_q8(300), units_to_q8(30));
