@@ -19986,7 +19986,10 @@ const WEAPON_FIRST_MAP: [usize; N_WEAPONS] = map_catalog::WEAPON_FIRST_MAP;
 const HORNET_REGEN_TICKS: u8 = 10; // 1 hornet / 0.5 s (hornetgun.cpp:33)
 const CROWBAR_HIT_COOLDOWN_TICKS: u8 = 5; // CCrowbar::Swing hit: 0.25 s
 const CROWBAR_MISS_COOLDOWN_TICKS: u8 = 10; // CCrowbar::Swing miss: 0.5 s
-const CROWBAR_FULL_DAMAGE_IDLE_TICKS: u8 = 20; // full damage again after one idle second
+// Full damage again a second after the attack timer a swing set has run out:
+// 0.25 s + 1.0 s after a hit, 0.5 s + 1.0 s after a miss (crowbar.cpp Swing).
+const CROWBAR_FULL_DAMAGE_HIT_TICKS: u8 = 25;
+const CROWBAR_FULL_DAMAGE_MISS_TICKS: u8 = 30;
 
 #[inline]
 fn wdef_of(id: usize) -> &'static WeaponDef {
@@ -20954,7 +20957,7 @@ unsafe fn queue_impact_marks(
     }
 }
 
-const MELEE_AIM_PIX: i32 = 70; // crowbar swing: wide forgiving cone
+const MELEE_AIM_PIX: i32 = 53; // crowbar swing: a 16 unit hull radius at its 48 unit reach
 
 #[inline(always)]
 fn inverse_rotate_scaled(
@@ -36377,7 +36380,11 @@ fn play(
                         } else {
                             CROWBAR_MISS_COOLDOWN_TICKS
                         };
-                        weapon.dry_ticks = CROWBAR_FULL_DAMAGE_IDLE_TICKS;
+                        weapon.dry_ticks = if hit {
+                            CROWBAR_FULL_DAMAGE_HIT_TICKS
+                        } else {
+                            CROWBAR_FULL_DAMAGE_MISS_TICKS
+                        };
                     }
                     let start_sound = weapon.current != W_EGON || !egon_firing;
                     if weapon.current == W_EGON {
