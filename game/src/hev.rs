@@ -273,8 +273,9 @@ pub const fn actor_kind(ty: u8) -> Kind {
     }
 }
 
+#[inline(always)]
 fn rd_u32(d: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]])
+    u32::from_le_bytes(d[o..o + 4].try_into().unwrap_or([0; 4]))
 }
 
 /// The block's offset: the chunk's last word, when it points at the magic.
