@@ -14,6 +14,13 @@
 /// while still stopping a map that fires itself in a loop.
 pub const MAX_FIRE_DEPTH: u8 = 24;
 
+// ------------------------------------------------------------- trigger_camera
+
+/// CTriggerCamera::FollowTarget sets the turn rate to the angle error times
+/// 0.4 per second: 2% of the error each 50 ms tick, i.e. an error divided by
+/// this.
+pub const CAMERA_TURN_DIVISOR: i32 = 50;
+
 // ---------------------------------------------------------------- use types
 
 /// CBaseEntity::ShouldToggle: an ON use does nothing to something already on,
@@ -160,6 +167,13 @@ mod tests {
         // c3a1: trigger_once -> breakable -> breakable -> breakable -> monstermaker
         let snark_nest_hops = 4;
         assert!(MAX_FIRE_DEPTH / 2 >= 2 * snark_nest_hops);
+    }
+
+    #[test]
+    fn the_camera_closes_two_percent_of_the_error_per_tick() {
+        let per_second = 0.4_f32;
+        let dt = 0.05_f32;
+        assert_eq!(CAMERA_TURN_DIVISOR, (1.0 / (per_second * dt)).round() as i32);
     }
 
     #[test]

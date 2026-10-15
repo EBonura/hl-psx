@@ -11855,9 +11855,10 @@ unsafe fn camera_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
         pitch_goal -= 4096;
     }
     let dy = ((yaw_goal.wrapping_sub(CAMERA_YAW) & 0xFFF) as i32 + 2048) % 4096 - 2048;
-    CAMERA_YAW = ((CAMERA_YAW as i32 + dy / 30 + dy.signum()) & 0xFFF) as u16;
+    // CTriggerCamera::FollowTarget: avelocity = error x 0.4 per second, 2% a tick.
+    CAMERA_YAW = ((CAMERA_YAW as i32 + dy / trigger_rules::CAMERA_TURN_DIVISOR + dy.signum()) & 0xFFF) as u16;
     let dp = pitch_goal - CAMERA_PITCH as i32;
-    CAMERA_PITCH = (CAMERA_PITCH as i32 + dp / 30 + dp.signum())
+    CAMERA_PITCH = (CAMERA_PITCH as i32 + dp / trigger_rules::CAMERA_TURN_DIVISOR + dp.signum())
         .clamp(-(PITCH_MAX as i32), PITCH_MAX as i32) as i16;
 }
 
