@@ -283,7 +283,9 @@ pub unsafe fn step(
                     }
                 }
             }
+            #[cfg(feature = "probe-fixes")]
             18 => *health = c.a[0].clamp(0, 1000) as u16,
+            #[cfg(feature = "probe-fixes")]
             19 => {
                 // The nearest live monster of that kind starts following the player.
                 let mut best = usize::MAX;
@@ -308,6 +310,7 @@ pub unsafe fn step(
                     crate::reference_trace::probe(now, "follow", "", best as i32);
                 }
             }
+            #[cfg(feature = "probe-fixes")]
             20 => {
                 let dmg = c.a[3].clamp(1, 255) as u8;
                 crate::reference_trace::probe(now, "explode", "", dmg as i32);
@@ -319,7 +322,9 @@ pub unsafe fn step(
                     true,
                 );
             }
+            #[cfg(feature = "probe-fixes")]
             22 => weapons.current = c.a[0].clamp(0, 13) as usize,
+            #[cfg(feature = "probe-fixes")]
             25 => {
                 let mut best = usize::MAX;
                 let mut best_d = i32::MAX;
@@ -345,6 +350,49 @@ pub unsafe fn step(
                     );
                     crate::reference_trace::probe_vals(now, "club", &[best as i32, dmg as i32, crate::PROP_HEALTH[best] as i32]);
                     crate::damage_prop(best, dmg, true);
+                }
+            }
+            26 => {
+                crate::mapsnap::keep_now(&crate::LIVE_CHECKPOINT);
+                crate::reference_trace::probe(now, "snap", "", crate::mapsnap::bytes().len() as i32);
+            }
+            27 => {
+                let id = name_id(m, cname);
+                let mut li = 0usize;
+                while li < nlogic {
+                    if id != 0 && m.logic(li).targetname == id {
+                        crate::reference_trace::probe_vals(
+                            now,
+                            "logic",
+                            &[li as i32, crate::LOGIC_STATE[li] as i32, crate::LOGIC_NEXT[li] as i32, crate::LOGIC_COUNTER[li] as i32],
+                        );
+                    }
+                    li += 1;
+                }
+            }
+            28 => {
+                let cp = crate::LIVE_CHECKPOINT;
+                crate::mapsnap::keep_now(&cp);
+                let target = crate::save::Target::choices(false)[0];
+                let r = crate::save::write(
+                    target,
+                    &cp,
+                    crate::mapsnap::bytes(),
+                    crate::mapsnap::tick(),
+                    crate::save_staging(),
+                );
+                let code = match r {
+                    crate::save::CardResult::Ok => 0,
+                    crate::save::CardResult::NoCard => 1,
+                    crate::save::CardResult::Failed => 2,
+                };
+                crate::reference_trace::probe_vals(now, "savecard", &[code, crate::mapsnap::bytes().len() as i32]);
+            }
+            29 => {
+                let room = crate::load_saved_room();
+                crate::reference_trace::probe(now, "loadcard", "", room.map_or(-1, |r| r as i32));
+                if let Some(r) = room {
+                    GOTO = Some((r, false));
                 }
             }
             23 => WATCH_KIND = c.a[0] as i32,

@@ -503,7 +503,7 @@ unsafe fn tick_leech(
     let wet = water_touch(m, m.n_ents, [pos[0], pos[1] + 1, pos[2]]);
     if (AI_TICK.wrapping_add(pi as u32)) % leech::THINK_TICKS == 0 {
         let motion = LEECHES[slot].think(pos, yaw, wet, &mut world);
-        #[cfg(feature = "interaction-probe")]
+        #[cfg(feature = "probe-fixes")]
         if SIM_NOW % 10 == 0 || motion.bite {
             reference_trace::probe_vals(
                 SIM_NOW as u32,
