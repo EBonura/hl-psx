@@ -504,6 +504,7 @@ const PATCH_PX_Q3: u32 = 512;
 /// drawn behind its children (patch and screen-split underlays off).
 const WATERTIGHT_SPLITS: bool = true;
 
+#[optimize(size)]
 /// Patch-split edge midpoint moved outward (see `outward_point`); out of line
 /// so the four call sites in `emit_affine_quad_children` share one copy.
 #[inline(never)]
@@ -1367,6 +1368,7 @@ fn sort_probe_class(class: u32) {
     let _ = class;
 }
 
+#[optimize(size)]
 unsafe fn finish_deferred_overlays() {
     let Some(d) = (*core::ptr::addr_of_mut!(DEFERRED_OVERLAYS)).take() else {
         return;
@@ -5196,6 +5198,7 @@ fn tram_lerp_q8(a: [i32; 3], b: [i32; 3], dist: i32, len: i32) -> [i32; 3] {
     ]
 }
 
+#[optimize(size)]
 /// Point `ahead` 3-D path units beyond `(seg,seg_dist)`, in Q8 world space.
 /// CPathTrack::LookAhead crosses as many nodes as necessary and projects past
 /// a terminal node along the final segment; clamping at the last point makes a
@@ -5304,6 +5307,7 @@ fn tram_is_trackchange_segment(m: &Map, seg: usize) -> bool {
     a[0] == b[0] && a[2] == b[2] && a[1] != b[1]
 }
 
+#[optimize(size)]
 /// A func_trackchange carries the train while translating/rotating its
 /// platform; CFuncTrackTrain is stopped during that interval. The cooker
 /// represents the translation as a vertical path segment. Return the signed
@@ -5451,6 +5455,7 @@ fn tram_pos_ext(
     }
 }
 
+#[optimize(size)]
 /// Nearest point on the tram path to `pos` as (segment, distance-into-segment).
 /// Ride transfer seats the arriving map's car where the landmark put the
 /// player. 16-sample projection per segment: no runtime i64 division (the
@@ -6592,6 +6597,7 @@ struct WaterState {
 }
 
 #[optimize(size)]
+#[optimize(size)]
 /// GoldSrc PM_CheckWater samples the hull bottom, origin and eye rather than a
 /// single arbitrary point. Level 2 (origin submerged) selects swim movement;
 /// level 3 (eye submerged) drives drowning. This is also the surface transition
@@ -6814,6 +6820,7 @@ unsafe fn logic_breakable_touch(
     }
 }
 
+#[optimize(size)]
 /// Damage a brush entity; breakables shatter at 0 HP (vanish, fire targets).
 unsafe fn damage_brush_ent(
     m: &Map,
@@ -7227,6 +7234,7 @@ fn platrot_local_i32(p: [i16; 3]) -> [i32; 3] {
     [p[0] as i32, p[1] as i32, p[2] as i32]
 }
 
+#[optimize(size)]
 /// Publish one cart translation to render, collision, PVS and actor LOS in the
 /// same simulation tick. Kept out of `play` for MIPS branch-span safety.
 #[inline(never)]
@@ -7546,6 +7554,7 @@ unsafe fn touch_triggers_box(
     }
 }
 
+#[optimize(size)]
 /// Carry carts physically resting on a brush mover before the player carry
 /// publishes ENT_PREV_OFF. This is the sample-cart/lift parent relationship:
 /// no target link or extra resident array is involved.
@@ -9792,6 +9801,7 @@ unsafe fn logic_fire_targets(
     }
 }
 
+#[optimize(size)]
 #[inline]
 unsafe fn logic_phase_step(rec: map::LogicEnt, ei: usize) -> i32 {
     let e = ENT_CACHE[ei];
@@ -9936,6 +9946,7 @@ unsafe fn rotating_door_swing_away(ei: usize, spawnflags: u16) {
     }
 }
 
+#[optimize(size)]
 unsafe fn logic_activate_button(
     m: &Map,
     nlogic: usize,
@@ -10329,6 +10340,7 @@ unsafe fn script_local_detour(
 }
 
 #[optimize(size)]
+#[optimize(size)]
 /// GoldSrc does not trust the route selected by `BuildRoute` for the whole
 /// trip. `CBaseMonster::Move` repeats a 200-unit `CheckLocalMove` before every
 /// 10 Hz movement step and inserts an `FTriangulate` apex when that lookahead
@@ -10439,6 +10451,7 @@ unsafe fn script_dynamic_local_replan(
     }
 }
 
+#[optimize(size)]
 #[inline(never)]
 unsafe fn script_remaining_path_distance(m: &Map, pi: usize) -> u32 {
     let pos = PROP_POS[pi];
@@ -10621,6 +10634,7 @@ unsafe fn script_clip_hold_ticks(pi: usize, clip: u8, fallback: u16) -> u16 {
     }
 }
 
+#[optimize(size)]
 /// Fire source MDL event 1003 records folded into this scripted_sequence's
 /// LogicAux tail. Idle events loop over the authored sequence duration; play
 /// events run once. The actor's existing gesture timer doubles as the phase
@@ -15870,6 +15884,7 @@ unsafe fn nav_actor_vertical(pi: usize, a: [i32;3], b: [i32;3]) -> bool {
     PROP_KIND[pi] == PROP_TYPE_CONTROLLER || (a[1]-b[1]).abs() <= NAV_VERTICAL_MAX
 }
 
+#[optimize(size)]
 unsafe fn nav_nearest(m: &Map, movers: &[phys::Mover], pi: usize, pos: [i32; 3], max_d2: i32) -> u8 {
     let n = nav_node_count(m);
     let mut best = NAV_NODE_NONE;
@@ -16062,6 +16077,7 @@ unsafe fn nav_route_available(m: &Map, movers: &[phys::Mover], pi: usize, goal: 
     true
 }
 
+#[optimize(size)]
 /// Reproduce RouteSimplify's first useful cut without retaining GoldSrc's
 /// eight-waypoint Route array. The existing script goal temporarily stores a
 /// midpoint, while the packed nav cache keeps the raw next node to resume from
@@ -17386,6 +17402,7 @@ unsafe fn train_seek_position(
 }
 
 // Called from spawn, interpolation, arrival and test hooks.
+#[optimize(size)]
 #[inline(never)]
 unsafe fn train_set_offset(rec: map::LogicEnt, t: usize, pos: [i32; 3]) {
     let e = ENT_CACHE[rec.brush as usize];
@@ -17717,6 +17734,7 @@ fn fall_damage_player(health: &mut u16, dmg: u16) {
     *health = health.saturating_sub(dmg);
 }
 
+#[optimize(size)]
 fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
     if dmg == 0 || settings::debug_on(settings::DEBUG_GOD) {
         return;
@@ -18221,6 +18239,7 @@ unsafe fn scientist_ordinal(pi: usize) -> usize {
     ordinal
 }
 
+#[optimize(size)]
 /// Recreate the cooker's first-occurrence dialogue id from the resident prop
 /// order. At most 16 retail hello variants fit in a u16 seen mask; the scan is
 /// paid once per scientist lifetime and replaces a persistent per-map table.
@@ -18413,6 +18432,7 @@ unsafe fn scientist_try_hello(
     true
 }
 
+#[optimize(size)]
 #[inline(never)]
 unsafe fn scientist_talk_friend(m: &Map, sight_movers: &[phys::Mover], pi: usize) -> Option<usize> {
     let from = [PROP_POS[pi][0], PROP_POS[pi][1] + 72, PROP_POS[pi][2]];
@@ -18445,6 +18465,7 @@ unsafe fn scientist_talk_friend(m: &Map, sight_movers: &[phys::Mover], pi: usize
     nearest
 }
 
+#[optimize(size)]
 /// Forced IdleRespond ignores the global two-second conversation gap and
 /// starts as soon as the question's actual sentence finishes. A long authored
 /// scripted sentence can pre-empt the one PS1 voice channel; stale responses
@@ -18638,6 +18659,7 @@ unsafe fn tick_talk_move_away(
     false
 }
 
+#[optimize(size)]
 /// Consume CLIENT_PUSH on the next 10 Hz monster think and build the exact
 /// 100-unit endpoint behind the latest MakeIdealYaw direction.
 #[inline(never)]
@@ -19516,6 +19538,7 @@ unsafe fn tick_props(
     }
 }
 
+#[optimize(size)]
 /// The can is a point-sized MOVETYPE_TOSS entity until CanThink enables its
 /// trigger box. Reuse its idle script velocity and timer slots; no new arena.
 #[inline(never)]
@@ -21458,6 +21481,7 @@ unsafe fn fire_gauss_charge(
     GAUSS_EVENT_FIRE
 }
 
+#[optimize(size)]
 /// Advance the Tau Cannon's hold-to-charge secondary attack. Damage and ammo
 /// cadence follow gauss.cpp; the one-byte age is the complete persistent state.
 #[inline(never)]
@@ -21674,6 +21698,7 @@ unsafe fn update_rpg_spot(
         .unwrap_or(end);
 }
 
+#[optimize(size)]
 #[inline]
 unsafe fn guide_projectile(index: usize, target: [i32; 3], old_weight: i32) {
     let p = PROJECTILES[index];
@@ -21705,6 +21730,7 @@ unsafe fn spawn_projectile(kind: u8, damage: u8, eye: [i32; 3], rot: &Mat3I16) -
     spawn_projectile_dir(kind, damage, eye, fwd, false)
 }
 
+#[optimize(size)]
 /// Spawn a projectile from `origin` along the q12 direction `dir`. `from_enemy`
 /// routes its damage at the player instead of props.
 unsafe fn spawn_projectile_dir(
