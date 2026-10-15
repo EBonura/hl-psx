@@ -56,6 +56,8 @@ pub const fn edge_scaled(friction_q12: i32, over_drop: bool) -> i32 {
 /// velocity, at the feet, and 34 units below that. `None` when there is no
 /// direction. The length uses the octagon approximation (within 4%), which is
 /// plenty for a 16 unit probe and saves a square root.
+#[cfg_attr(target_arch = "mips", optimize(size))]
+#[inline(never)]
 pub fn edge_probe(vx: i32, vz: i32, feet: i32) -> Option<([i32; 3], [i32; 3])> {
     let (ax, az) = (vx.abs(), vz.abs());
     let len = ax.max(az) + ax.min(az) * 3 / 8;
@@ -85,6 +87,8 @@ pub const BUNNY_LIMIT_Q6: i32 = ups_to_q6(544);
 
 /// The jump scales a horizontal velocity above the limit down to 65% of the
 /// limit (`limit / speed * 0.65` of the velocity).
+#[cfg_attr(target_arch = "mips", optimize(size))]
+#[inline(never)]
 pub fn bunny_cap(vx: i32, vz: i32) -> (i32, i32) {
     let speed = isqrt_i32(vx * vx + vz * vz);
     if speed <= BUNNY_LIMIT_Q6 {
@@ -106,6 +110,8 @@ pub const LONGJUMP_WINDOW: u8 = 20;
 
 /// Horizontal launch velocity (Q6) along the view: `sin_yaw`, `cos_yaw` and
 /// `cos_pitch` are Q12. Looking up or down shortens the launch.
+#[cfg_attr(target_arch = "mips", optimize(size))]
+#[inline(never)]
 pub fn longjump_velocity(sin_yaw: i32, cos_yaw: i32, cos_pitch: i32) -> (i32, i32) {
     let h = LONGJUMP_Q6 * cos_pitch >> 12;
     ((sin_yaw * h) >> 12, (cos_yaw * h) >> 12)
@@ -159,6 +165,8 @@ pub const VIEW_RISE: i32 = 8;
 
 /// Next eye height above the origin. `pending` is the ticks since the press
 /// while a grounded duck is still on its way down; `crouch` the hull in use.
+#[cfg_attr(target_arch = "mips", optimize(size))]
+#[inline(never)]
 pub fn view_height_next(cur: i32, crouch: bool, was_crouch: bool, pending: Option<i32>) -> i32 {
     if crouch {
         VIEW_DUCK
@@ -179,6 +187,8 @@ pub fn view_height_next(cur: i32, crouch: bool, was_crouch: bool, pending: Optio
 /// the dot product of the unit direction to the source with the view axis,
 /// kept only above 0.3. `along` is the source's offset along that axis and
 /// `distance` its length, both in world units.
+#[cfg_attr(target_arch = "mips", optimize(size))]
+#[inline(never)]
 pub fn compass_intensity(along: i32, distance: i32) -> u8 {
     let v = along.abs() * 255 / distance.max(1);
     if v > 76 {
@@ -227,6 +237,8 @@ pub enum HealthVoice {
 /// was not trivial (damage of 5 or more while at 75 health or less), health
 /// is under 30 and was under 75 before the hit; "near death" under 6,
 /// "health critical" under 20; each sentence at most once in ten minutes.
+#[cfg_attr(target_arch = "mips", optimize(size))]
+#[inline(never)]
 pub fn health_voice(
     prev: u16,
     health: u16,
@@ -268,17 +280,17 @@ pub fn step_tick(clock: u8, grounded: bool, ladder: bool, speed_q6: i32, ducking
         return (clock, None);
     }
     let run = ups_to_q6(if ducking || ladder { 80 } else { 210 });
-    // (ticks, volume in hundredths)
-    let (ticks, vol): (u8, i32) = if ladder {
-        (7, 35)
-    } else if speed_q6 < run {
-        (8, 20)
-    } else {
-        (6, 50)
+    // (ticks, volume divisor): volumes 0.35 (rung), 0.2 (walk), 0.5 (run),
+    // times 0.35 when ducking; the divisors are the rounded reciprocals.
+    let (ticks, den): (u8, u16) = match (ladder, speed_q6 < run, ducking) {
+        (true, _, false) => (7, 3),
+        (true, _, true) => (9, 8),
+        (false, true, false) => (8, 5),
+        (false, true, true) => (10, 14),
+        (false, false, false) => (6, 2),
+        (false, false, true) => (8, 6),
     };
-    let ticks = ticks + if ducking { 2 } else { 0 };
-    let vol = if ducking { vol * 35 / 100 } else { vol };
-    (ticks, Some(((100 + vol / 2) / vol) as u16))
+    (ticks, Some(den))
 }
 
 // ---------------------------------------------------------------------- use
@@ -350,6 +362,8 @@ impl Breath {
 
     /// One tick. Returns `(damage, heal)` for this tick. `under` is "the eyes
     /// are under water", `alive` whether the player still lives.
+    #[cfg_attr(target_arch = "mips", optimize(size))]
+    #[inline(never)]
     pub fn tick(&mut self, under: bool, alive: bool) -> (u16, u16) {
         if !alive {
             return (0, 0);
@@ -423,6 +437,8 @@ impl Poison {
 
     /// One tick; returns the damage for this tick (a check happens at most
     /// every 2 s).
+    #[cfg_attr(target_arch = "mips", optimize(size))]
+    #[inline(never)]
     pub fn tick(&mut self) -> u16 {
         if !self.armed {
             return 0;

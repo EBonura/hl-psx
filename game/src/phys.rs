@@ -1584,6 +1584,8 @@ fn clip_velocity(v: [i32; 3], n: [i32; 3]) -> [i32; 3] {
 }
 
 /// `clip_velocity` with an overbounce factor (Q12, 4096 = a plain slide).
+#[inline(never)]
+#[cfg_attr(target_arch = "mips", optimize(size))]
 fn clip_velocity_over(v: [i32; 3], n: [i32; 3], over_q12: i32) -> [i32; 3] {
     let proj = ((dot_raw(v, n) >> 6) * (over_q12 >> 6)) >> 12;
     [
@@ -2581,32 +2583,7 @@ impl Player {
         if self.on_ground {
             vertical_q6 = 0;
             if jump {
-                let fx = self.vel[0] * PLANAR_FRAC_ONE + self.vel_frac_xz[0] as i32;
-                let fz = self.vel[2] * PLANAR_FRAC_ONE + self.vel_frac_xz[1] as i32;
-                // The module fires for a jump with duck held inside the second
-                // after the duck press (`duck_window`), while moving faster
-                // than 50 u/s, and throws Gordon along where he LOOKS: the
-                // horizontal part of the view direction, 560 u/s, so pitch
-                // shortens it and a strafing runner still goes where he faces.
-                if unsafe { LONGJUMP } && player_rules::longjump_ready(true, true, duck_window, fx, fz)
-                {
-                    let sy = sincos::sin_q12(yaw);
-                    let cy = sincos::sin_q12((yaw + 1024) & 0xFFF);
-                    let pa = (pitch as i32 & 0xFFF) as u16;
-                    let cp = sincos::sin_q12((pa + 1024) & 0xFFF);
-                    let (lx, lz) = player_rules::longjump_velocity(sy, cy, cp);
-                    (self.vel[0], self.vel_frac_xz[0]) = split_planar_round(lx);
-                    (self.vel[2], self.vel_frac_xz[1]) = split_planar_round(lz);
-                    vertical_q6 = LONGJUMP_UP_Q6;
-                } else {
-                    // A jump above 1.7 x the run speed is cut to 65% of that.
-                    let (cx, cz) = player_rules::bunny_cap(fx, fz);
-                    if (cx, cz) != (fx, fz) {
-                        (self.vel[0], self.vel_frac_xz[0]) = split_planar_round(cx);
-                        (self.vel[2], self.vel_frac_xz[1]) = split_planar_round(cz);
-                    }
-                    vertical_q6 = JUMP_Q6;
-                }
+                vertical_q6 = self.jump_launch(duck_window, yaw, pitch);
                 // One half gravity step is applied before the air-movement
                 // step; the second one follows the move.
                 vertical_q6 -= gravity_pre_q6;
@@ -2624,9 +2601,42 @@ impl Player {
         self.walk_move_tail(map, movers, jump, was_air, fall_speed_q6, gravity_post_q6);
     }
 
+    /// The horizontal part of a ground jump and its vertical launch speed (Q6).
+    /// The long jump module fires for a jump with duck held inside the second
+    /// after the duck press (`duck_window`), while moving faster than 50 u/s,
+    /// and throws Gordon along where he LOOKS: the horizontal part of the view
+    /// direction at 560 u/s, so pitch shortens it and a strafing runner still
+    /// goes where he faces. Any other jump above 1.7 x the run speed is cut to
+    /// 65% of that first.
+    #[inline(never)]
+    #[cfg_attr(target_arch = "mips", optimize(size))]
+    fn jump_launch(&mut self, duck_window: u8, yaw: u16, pitch: i16) -> i32 {
+        let fx = self.vel[0] * PLANAR_FRAC_ONE + self.vel_frac_xz[0] as i32;
+        let fz = self.vel[2] * PLANAR_FRAC_ONE + self.vel_frac_xz[1] as i32;
+        if unsafe { LONGJUMP } && player_rules::longjump_ready(true, true, duck_window, fx, fz) {
+            let sy = sincos::sin_q12(yaw);
+            let cy = sincos::sin_q12((yaw + 1024) & 0xFFF);
+            let pa = (pitch as i32 & 0xFFF) as u16;
+            let cp = sincos::sin_q12((pa + 1024) & 0xFFF);
+            let (lx, lz) = player_rules::longjump_velocity(sy, cy, cp);
+            (self.vel[0], self.vel_frac_xz[0]) = split_planar_round(lx);
+            (self.vel[2], self.vel_frac_xz[1]) = split_planar_round(lz);
+            LONGJUMP_UP_Q6
+        } else {
+            let (cx, cz) = player_rules::bunny_cap(fx, fz);
+            if (cx, cz) != (fx, fz) {
+                (self.vel[0], self.vel_frac_xz[0]) = split_planar_round(cx);
+                (self.vel[2], self.vel_frac_xz[1]) = split_planar_round(cz);
+            }
+            JUMP_Q6
+        }
+    }
+
     /// The retail edge rule: probe 16 units ahead along the velocity, from
     /// the feet down 34 units; with nothing under that point friction doubles
     /// so a player stops at a ledge instead of sliding off it.
+    #[inline(never)]
+    #[cfg_attr(target_arch = "mips", optimize(size))]
     fn walking_off_a_drop(&self, map: &Map, movers: &[Mover]) -> bool {
         let fx = self.vel[0] * PLANAR_FRAC_ONE + self.vel_frac_xz[0] as i32;
         let fz = self.vel[2] * PLANAR_FRAC_ONE + self.vel_frac_xz[1] as i32;

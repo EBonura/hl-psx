@@ -14,6 +14,36 @@
 /// while still stopping a map that fires itself in a loop.
 pub const MAX_FIRE_DEPTH: u8 = 24;
 
+// ------------------------------------------------------------- globalname
+
+/// Entities that carry a `globalname` and are removed (a breakable that broke)
+/// are remembered as dead, so they are not spawned again when the map is
+/// entered a second time. Only the dead are kept, not every global entity, so
+/// a few slots suffice; when they run out the newest are not remembered.
+#[derive(Clone, Copy)]
+pub struct DeadGlobals<const N: usize> {
+    hashes: [u16; N],
+    count: u8,
+}
+
+impl<const N: usize> DeadGlobals<N> {
+    pub const fn new() -> Self {
+        Self { hashes: [0; N], count: 0 }
+    }
+    pub fn contains(&self, hash: u16) -> bool {
+        hash != 0 && self.hashes[..self.count as usize].contains(&hash)
+    }
+    pub fn kill(&mut self, hash: u16) {
+        if hash != 0 && !self.contains(hash) && (self.count as usize) < N {
+            self.hashes[self.count as usize] = hash;
+            self.count += 1;
+        }
+    }
+    pub fn clear(&mut self) {
+        self.count = 0;
+    }
+}
+
 // ------------------------------------------------------------ target_cdaudio
 
 /// CTargetCDAudio::Think: the first look comes a second after spawn, then
@@ -114,6 +144,26 @@ mod tests {
         // c3a1: trigger_once -> breakable -> breakable -> breakable -> monstermaker
         let snark_nest_hops = 4;
         assert!(MAX_FIRE_DEPTH / 2 >= 2 * snark_nest_hops);
+    }
+
+    #[test]
+    fn a_dead_global_stays_dead_until_cleared() {
+        let mut dead = DeadGlobals::<4>::new();
+        assert!(!dead.contains(77));
+        dead.kill(77);
+        dead.kill(77);
+        assert!(dead.contains(77));
+        // hash zero means "no globalname" and is never dead
+        dead.kill(0);
+        assert!(!dead.contains(0));
+        // a full list drops the newest
+        for h in 1..=10 {
+            dead.kill(h);
+        }
+        assert!(dead.contains(77) && dead.contains(1) && dead.contains(2) && dead.contains(3));
+        assert!(!dead.contains(10));
+        dead.clear();
+        assert!(!dead.contains(77));
     }
 
     #[test]

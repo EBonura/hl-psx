@@ -8311,7 +8311,11 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_TRIGGER_MULTIPLE => 0.2,
             _ => 0.0,
         };
-        let wait_ticks = if kind == LOGIC_SHOOTER {
+        let wait_ticks = if kind == LOGIC_FUNC_BREAKABLE {
+            // A breakable has no wait: its signed word carries the hash of its
+            // `globalname`, so one broken for good stays broken across maps.
+            global_hash(ent_value(block, "globalname").unwrap_or("")) as i16
+        } else if kind == LOGIC_SHOOTER {
             // CGibShooter::Spawn: a zero delay means one gib every 0.1 s.
             seconds_to_ticks_i16(parse_f32_key(block, "delay", 0.0)).max(2)
         } else if kind == LOGIC_SCRIPTED {
@@ -18023,6 +18027,16 @@ mod tests {
         assert_eq!((r.kind, r.arg0, r.arg1), (LOGIC_CDTRACK, 13, 256));
         let r = cook_one(r#""classname" "target_cdaudio" "origin" "0 0 0" "health" "13" "targetname" "cd""#);
         assert_eq!(r.arg1, 0);
+    }
+    #[test]
+    fn a_breakable_carries_the_hash_of_its_globalname() {
+        let named = cook_one(r#""classname" "func_breakable" "model" "*1" "targetname" "glass" "globalname" "airlock_glass" "health" "5" "material" "1""#);
+        assert_eq!(named.kind, LOGIC_FUNC_BREAKABLE);
+        assert_ne!(named.wait_ticks, 0);
+        let again = cook_one(r#""classname" "func_breakable" "model" "*1" "targetname" "other" "globalname" "airlock_glass" "health" "5""#);
+        assert_eq!(again.wait_ticks, named.wait_ticks);
+        let plain = cook_one(r#""classname" "func_breakable" "model" "*1" "targetname" "glass" "health" "5""#);
+        assert_eq!(plain.wait_ticks, 0);
     }
     #[test]
     fn env_shake_keeps_its_radius_unless_everyone() {

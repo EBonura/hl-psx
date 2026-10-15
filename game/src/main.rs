@@ -5975,6 +5975,8 @@ static mut CARRY_CURRENT: u8 = 0;
 static mut GLOBAL_HASH: [u16; 32] = [0; 32];
 static mut GLOBAL_ON: [bool; 32] = [false; 32];
 static mut GLOBAL_COUNT: usize = 0;
+/// Breakables with a `globalname` that broke: not spawned again on re-entry.
+static mut DEAD_GLOBALS: trigger_rules::DeadGlobals<32> = trigger_rules::DeadGlobals::new();
 
 unsafe fn set_global(hash: u16, on: bool) {
     if hash == 0 {
@@ -6716,6 +6718,7 @@ unsafe fn shatter_breakable(
     LOGIC_BREAK_HP[li] = 0;
     ENT_ACTIVE[ei] = 0;
     LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+    (*core::ptr::addr_of_mut!(DEAD_GLOBALS)).kill(rec.wait_ticks as u16);
     pvs_cam_leaf_store(-1);
     let e = ENT_CACHE[ei];
     let sound_pos = if e.kind == ENT_KIND_PUSHABLE {
@@ -8185,6 +8188,10 @@ unsafe fn logic_remove_entity(li: usize, rec: map::LogicEnt, nents: usize) {
         return;
     }
     LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+    if rec.kind == map::LOGIC_FUNC_BREAKABLE {
+        // UpdateOnRemove: a removed entity with a globalname is dead for good.
+        (*core::ptr::addr_of_mut!(DEAD_GLOBALS)).kill(rec.wait_ticks as u16);
+    }
     if rec.kind == map::LOGIC_MAP_SOUND || rec.kind == map::LOGIC_FUNC_ROTATING {
         sfx::stop_map_loop(li as u16);
     }
@@ -11469,20 +11476,7 @@ unsafe fn logic_use_entity(
             LOGIC_STATE[li] = LOGIC_STATE_WAITING;
             LOGIC_NEXT[li] = now;
         }
-        map::LOGIC_ENV_SPARK => {
-            // CEnvSpark: a toggled spark flips between sparking and stopped on
-            // every Use; the others have no Use.
-            let running = LOGIC_STATE[li] == LOGIC_STATE_BOTTOM;
-            let now_running = trigger_rules::spark_after_use(rec.spawnflags, running);
-            if now_running != running {
-                LOGIC_STATE[li] = if now_running { LOGIC_STATE_BOTTOM } else { LOGIC_STATE_TOP };
-                if now_running {
-                    LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::spark_gap_ticks(
-                        impact_rng().below(rec.arg0.max(1) as u32 + 1) as u16,
-                    ));
-                }
-            }
-        }
+        map::LOGIC_ENV_SPARK => logic_spark_use(li, rec, now),
         map::LOGIC_ENV_BUBBLES => {
             let mut schedule=env_bubbles::Scheduler {enabled:LOGIC_STATE[li]==LOGIC_STATE_TOP,next:LOGIC_NEXT[li]};
             schedule.use_event(use_type,now);
@@ -12202,6 +12196,8 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
 /// GoldSrc's `320_pain.spr` is four additive edge arrows. Flat PS1 arrows keep
 /// the same screen positions and fade law without spending another atlas page
 /// or resident texture packet pool.
+#[inline(never)]
+#[optimize(size)]
 fn draw_damage_compass(health: u16) {
     let edges = unsafe { DAMAGE_EDGE };
     let arrows = [
@@ -13225,6 +13221,44 @@ unsafe fn logic_teleport_touch(m: &Map, nlogic: usize, rec: map::LogicEnt) {
     }
 }
 
+/// CTargetCDAudio::Think for a point target with a radius: look every half
+/// second and start the track once the player is within the radius. True when
+/// the record is such a target (so the touch scan skips it).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn logic_cd_radius_poll(m: &Map, li: usize, player_pos: [i32; 3], now: u16) -> bool {
+    let rec = m.logic(li);
+    if rec.arg1 == 0 || rec.brush != map::LOGIC_BRUSH_NONE || rec.mins != rec.maxs {
+        return false;
+    }
+    if time_reached(now, LOGIC_NEXT[li]) {
+        LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::CDAUDIO_POLL_TICKS);
+        if trigger_rules::cdaudio_in_range(rec.arg1, dist2_3(rec.origin, player_pos) as i64) {
+            CD_TRACK_WANT = rec.arg0 as i16;
+            music_apply();
+            LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+        }
+    }
+    true
+}
+
+/// CEnvSpark: a toggled spark flips between sparking and stopped on every Use;
+/// the others have no Use.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn logic_spark_use(li: usize, rec: map::LogicEnt, now: u16) {
+    let running = LOGIC_STATE[li] == LOGIC_STATE_BOTTOM;
+    let now_running = trigger_rules::spark_after_use(rec.spawnflags, running);
+    if now_running != running {
+        LOGIC_STATE[li] = if now_running { LOGIC_STATE_BOTTOM } else { LOGIC_STATE_TOP };
+        if now_running {
+            LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::spark_gap_ticks(
+                impact_rng().below(rec.arg0.max(1) as u32 + 1) as u16,
+            ));
+        }
+    }
+}
+
 /// One trigger_hurt: when its half-second timer is up, hurt every toucher that
 /// can take damage (the player, unless NO_CLIENTS; monsters, unless
 /// CLIENT_ONLY_TOUCH), fire the target once per toucher hurt, and restart the
@@ -13398,24 +13432,9 @@ unsafe fn logic_touch_triggers(
             } else {
                 (pmins, pmaxs)
             };
-            if LOGIC_KIND[li] == map::LOGIC_CDTRACK {
-                let rec = m.logic(li);
-                if rec.arg1 != 0 && rec.brush == map::LOGIC_BRUSH_NONE && rec.mins == rec.maxs {
-                    // CTargetCDAudio::Think: look every half second.
-                    if time_reached(now, LOGIC_NEXT[li]) {
-                        LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::CDAUDIO_POLL_TICKS);
-                        if trigger_rules::cdaudio_in_range(
-                            rec.arg1,
-                            dist2_3(rec.origin, player_pos) as i64,
-                        ) {
-                            CD_TRACK_WANT = rec.arg0 as i16;
-                            music_apply();
-                            LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
-                        }
-                    }
-                    scan += 1;
-                    continue;
-                }
+            if LOGIC_KIND[li] == map::LOGIC_CDTRACK && logic_cd_radius_poll(m, li, player_pos, now) {
+                scan += 1;
+                continue;
             }
             if LOGIC_KIND[li] == map::LOGIC_TRIGGER_HURT {
                 // Hurt volumes are touched by monsters as well as the player,
@@ -14032,6 +14051,10 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                 LOGIC_BREAK_HP[li] = rec.arg0.max(1);
                 if let Some(ei) = logic_valid_brush(rec.brush, nents) {
                     ENT_BRUSH_LOGIC[ei] = li as u16;
+                }
+                // CBaseEntity spawn: a globalname already dead is not spawned.
+                if (*core::ptr::addr_of!(DEAD_GLOBALS)).contains(rec.wait_ticks as u16) {
+                    logic_remove_entity(li, rec, nents);
                 }
             }
             map::LOGIC_FUNC_GUNTARGET => {
@@ -17772,6 +17795,7 @@ static mut PAIN_SFX_COOLDOWN: u8 = 0;
 /// current view and light every matching screen edge. Close damage lights all
 /// four, matching GoldSrc's special case for a source within 50 units.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn note_damage_direction(source: [i32; 3]) {
     let dx = (source[0] - LOGIC_PLAYER_POS[0]).clamp(-4096, 4096);
     let dy = (source[1] - LOGIC_PLAYER_POS[1]).clamp(-4096, 4096);
@@ -33045,6 +33069,7 @@ fn play(
         } else {
             CARRY_VALID = false;
             GLOBAL_COUNT = 0; // fresh menu launch: clear cross-map global state
+            (*core::ptr::addr_of_mut!(DEAD_GLOBALS)).clear();
                               // Fresh start: no module yet, unless a chapter start is past the
                               // map that hands it out.
             phys::set_longjump(
