@@ -90,6 +90,35 @@ pub fn satchel_velocity(fwd: [i32; 3], player_vel: [i32; 3]) -> [i32; 3] {
     ]
 }
 
+/// Ticks after launch at which a rocket's motor lights (0.4 s) and the
+/// first second of boost that follows ends.
+pub const ROCKET_IGNITE_AGE: u8 = 8;
+pub const ROCKET_BOOST_END_AGE: u8 = 28;
+
+/// One 0.1 s `CRpgRocket::FollowThink`: the new velocity (units/tick) from the
+/// old one, the unit heading `dir` (q12) and the rocket's age in ticks. A fifth
+/// of the old velocity stays; for the first second after ignition the heading
+/// gets 0.8 x speed + 400 u/s (20 units/tick), capped at 2000 u/s, afterwards
+/// 0.798 x speed, and below 1500 u/s in the air the rocket is spent (`true`).
+#[inline(never)]
+#[cfg_attr(target_arch = "mips", optimize(size))]
+pub fn rocket_think(vel: [i32; 3], dir: [i32; 3], age: u8) -> ([i32; 3], bool) {
+    let s = isqrt_i32(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
+    let boost = age < ROCKET_BOOST_END_AGE;
+    let along = if boost { (s * 4 + 2) / 5 + 20 } else { (s * 798 + 500) / 1000 };
+    let mut v = [0i32; 3];
+    let mut a = 0;
+    while a < 3 {
+        v[a] = (vel[a] * 819 + dir[a] * along + 2048) >> 12;
+        a += 1;
+    }
+    let len = isqrt_i32(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if boost && len > 100 {
+        return ([v[0] * 100 / len, v[1] * 100 / len, v[2] * 100 / len], false);
+    }
+    (v, !boost && len < 75)
+}
+
 /// What a bounce leaves behind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Bounce {
@@ -309,6 +338,46 @@ mod tests {
                 assert!((pos[axis] - aim[axis]).abs() <= FLIGHT, "axis {axis}: {pos:?} vs {aim:?}");
             }
         }
+    }
+
+
+    #[test]
+    fn a_rocket_gains_400_units_a_second_per_think_then_caps_at_2000() {
+        let dir = [0, 0, 4096];
+        let mut v = [0, 0, 12];
+        let mut speeds = Vec::new();
+        let mut age = ROCKET_IGNITE_AGE + 2;
+        while age < ROCKET_BOOST_END_AGE {
+            v = rocket_think(v, dir, age).0;
+            speeds.push(v[2]);
+            age += 2;
+        }
+        // 250 u/s -> about 650 -> 1050 -> 1450 -> 1850 -> 2000
+        assert!((30..=34).contains(&speeds[0]), "{speeds:?}");
+        assert!((50..=54).contains(&speeds[1]), "{speeds:?}");
+        assert_eq!(*speeds.last().unwrap(), 100);
+    }
+
+    #[test]
+    fn a_coasting_rocket_holds_its_speed_then_goes_off_below_1500() {
+        let dir = [0, 0, 4096];
+        // At full speed it loses almost nothing per think (0.998), so it stays
+        // above 1500 u/s for the rest of its life ...
+        let mut v = [0, 0, 100];
+        for _ in 0..120 {
+            let (nv, spent) = rocket_think(v, dir, 40);
+            assert!(!spent);
+            v = nv;
+        }
+        assert!(v[2] >= 75);
+        // ... and one already under 1500 u/s (75 units/tick) is spent.
+        assert!(rocket_think([0, 0, 70], dir, 40).1);
+    }
+
+    #[test]
+    fn a_rocket_turns_toward_a_new_heading() {
+        let (v, _) = rocket_think([0, 0, 40], [4096, 0, 0], 14);
+        assert!(v[0] > v[2] * 3, "{v:?}");
     }
 
     #[test]

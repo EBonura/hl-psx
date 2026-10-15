@@ -21398,19 +21398,46 @@ unsafe fn fire_secondary(
     }
 }
 
-/// Whether the segment `a`..`b` passes through live actor `pi`: its studio
-/// hit boxes when the model carries them, else its collision box.
+/// The next live actor, in order along the segment `a`..`b`, whose hit boxes
+/// (collision box when its model carries none) the segment crosses after
+/// `(fraction, index)` `after`. Returns its index, the fraction (q12 of the
+/// segment) and the hit box entered. Shared by the Tau Cannon's piercing beam
+/// and the crossbow bolt.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn beam_crosses_actor(m: &Map, pi: usize, a: [i32; 3], b: [i32; 3]) -> bool {
-    let ty = PROP_KIND[pi];
-    let slot = TYPE_TO_SLOT[(ty as usize).min(N_MODEL_TYPES - 1)];
-    if slot != MODEL_SLOT_NONE && loaded_model(slot as usize).hitbox_count() != 0 {
-        prop_studio_hit_fraction(m, pi, a, b).is_some()
-    } else {
-        let (lo, hi) = actor_collision_bounds(ty, PROP_POS[pi]);
-        tripmine::touches(a, b, lo, hi)
+unsafe fn next_actor_on_segment(
+    m: &Map,
+    a: [i32; 3],
+    b: [i32; 3],
+    after: (i32, usize),
+) -> Option<(usize, i32, u8)> {
+    let mut best: Option<(usize, i32, u8)> = None;
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut pi = 0usize;
+    while pi < nprops {
+        let ty = PROP_KIND[pi];
+        if PROP_ACTIVE[pi] != 0
+            && PROP_HEALTH[pi] != 0
+            && ty != PROP_TYPE_HOLO
+            && prop_start_health(ty) != 0
+        {
+            let slot = TYPE_TO_SLOT[(ty as usize).min(N_MODEL_TYPES - 1)];
+            let boxed = slot != MODEL_SLOT_NONE && loaded_model(slot as usize).hitbox_count() != 0;
+            let frac = if boxed {
+                prop_studio_hit_fraction(m, pi, a, b)
+            } else {
+                let (lo, hi) = actor_collision_bounds(ty, PROP_POS[pi]);
+                tripmine::touches(a, b, lo, hi).then_some(2048)
+            };
+            if let Some(f) = frac {
+                if (f, pi) > after && best.map_or(true, |(bi, bf, _)| (f, pi) < (bf, bi)) {
+                    best = Some((pi, f, if boxed { STUDIO_HIT_BOX } else { u8::MAX }));
+                }
+            }
+        }
+        pi += 1;
     }
+    best
 }
 
 /// CGauss::Fire: the Tau Cannon beam. It passes through every actor on its
@@ -21450,29 +21477,21 @@ unsafe fn gauss_beam(
         let wall = phys::trace_line(m, movers, src, end);
         let stop = wall.map_or(end, |h| h.pos);
         // Every actor the beam crosses before the surface takes the full hit.
-        let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-        let mut pi = 0usize;
-        while pi < nprops {
+        let mut seen = (-1, 0usize);
+        while let Some((pi, f, bx)) = next_actor_on_segment(m, src, stop, seen) {
+            seen = (f, pi);
             let ty = PROP_KIND[pi];
-            if PROP_ACTIVE[pi] != 0
-                && PROP_HEALTH[pi] != 0
-                && ty != PROP_TYPE_HOLO
-                && prop_start_health(ty) != 0
-                && beam_crosses_actor(m, pi, src, stop)
-            {
-                let at = prop_target(ty, PROP_POS[pi]);
-                let hurt = hit_group_damage(ty, STUDIO_HIT_BOX, dmg.min(255) as u8);
-                #[cfg(feature = "interaction-probe")]
-                reference_trace::probe_vals(SIM_NOW as u32, "gauss_hit", &[pi as i32, ty as i32, hurt as i32, PROP_HEALTH[pi] as i32]);
-                damage_prop(pi, hurt, true);
-                sfx::play_world(sfx::BULLET_HIT1, at);
-                spawn_blood(m, movers, at, src, stop, 8192, hurt, ty, rot, base_t);
-                PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
-                if prop_is_scientist(ty) {
-                    PROP_AI_TIMER[pi] = SCIENTIST_FEAR_TICKS;
-                }
+            let at = prop_target(ty, PROP_POS[pi]);
+            let hurt = hit_group_damage(ty, bx, dmg.min(255) as u8);
+            #[cfg(feature = "interaction-probe")]
+            reference_trace::probe_vals(SIM_NOW as u32, "gauss_hit", &[pi as i32, ty as i32, hurt as i32, PROP_HEALTH[pi] as i32]);
+            damage_prop(pi, hurt, true);
+            sfx::play_world(sfx::BULLET_HIT1, at);
+            spawn_blood(m, movers, at, src, stop, 8192, hurt, ty, rot, base_t);
+            PROP_AI_TARGET[pi] = PROP_TARGET_PLAYER;
+            if prop_is_scientist(ty) {
+                PROP_AI_TIMER[pi] = SCIENTIST_FEAR_TICKS;
             }
-            pi += 1;
         }
         push_tracer(tracer_from, stop);
         let Some(h) = wall else {
@@ -21706,7 +21725,10 @@ struct Projectile {
     /// Lobbed bodies: ticks since the last floor touch (255 = not recently),
     /// a body that touched within two ticks is rolling and loses speed to it.
     /// Player hornets: bit 0 orange (800 u/s, else red 600), bit 1 jetting.
+    /// A player's RPG rocket: 1 (it flies by rocket_think).
     aux: u8,
+    /// A player's RPG rocket: the heading its motor pushes along (q12).
+    dir: [i16; 3],
 }
 
 impl Projectile {
@@ -21719,6 +21741,7 @@ impl Projectile {
         life: 0,
         from_enemy: false,
         aux: 255,
+        dir: [0; 3],
     };
 }
 
@@ -21808,31 +21831,6 @@ unsafe fn update_rpg_spot(
     RPG_SPOT_POS = phys::trace_line(m, movers, eye, end)
         .map(|hit| hit.pos)
         .unwrap_or(end);
-}
-
-#[inline]
-unsafe fn guide_projectile(index: usize, target: [i32; 3], old_weight: i32) {
-    let p = PROJECTILES[index];
-    let speed = proj_params(p.kind).0;
-    let dir = dir_q12(p.pos, target);
-    let desired = [
-        (dir[0] * speed) >> 12,
-        (dir[1] * speed) >> 12,
-        (dir[2] * speed) >> 12,
-    ];
-    let blended = [
-        p.vel[0] * old_weight + desired[0],
-        p.vel[1] * old_weight + desired[1],
-        p.vel[2] * old_weight + desired[2],
-    ];
-    let len =
-        isqrt_i32(blended[0] * blended[0] + blended[1] * blended[1] + blended[2] * blended[2])
-            .max(1);
-    PROJECTILES[index].vel = [
-        blended[0] * speed / len,
-        blended[1] * speed / len,
-        blended[2] * speed / len,
-    ];
 }
 
 /// A live actor the player's weapons seek: DAMAGE_AIM and not an ally (the
@@ -21942,6 +21940,21 @@ unsafe fn spawn_projectile(kind: u8, damage: u8, eye: [i32; 3], rot: &Mat3I16) -
             eye[1] + ((fwd[1] * 16) >> 12),
             eye[2] + ((fwd[2] * 16) >> 12),
         ];
+    } else if kind == PROJ_ROCKET {
+        let up = [-(rot.m[1][0] as i32), -(rot.m[1][1] as i32), -(rot.m[1][2] as i32)];
+        let right = [rot.m[0][0] as i32, rot.m[0][1] as i32, rot.m[0][2] as i32];
+        let p = &mut PROJECTILES[slot];
+        p.aux = 1;
+        p.life = 255;
+        p.dir = [fwd[0] as i16, fwd[1] as i16, fwd[2] as i16];
+        let mut a = 0;
+        while a < 3 {
+            // 250 u/s = 12.5 units/tick along the aim lifted 30 degrees.
+            p.vel[a] = ((fwd[a] * 3547 + up[a] * 2048) / 4096 * 25 + 4096) / 8192;
+            // rpg.cpp: 16 ahead of the eye, 8 right, 8 down.
+            p.pos[a] = eye[a] + ((fwd[a] * 16 + right[a] * 8 - up[a] * 8) >> 12);
+            a += 1;
+        }
     } else if kind == PROJ_HORNET {
         // hornet.cpp Spawn: two in five are red (600 u/s), the rest orange (800).
         PROJECTILES[slot].aux = (impact_rng().below(5) >= 2) as u8;
@@ -22009,6 +22022,7 @@ unsafe fn spawn_projectile_dir(
         life,
         from_enemy,
         aux: 255,
+        dir: [0; 3],
     };
     slot
 }
@@ -22229,37 +22243,7 @@ unsafe fn tick_bolt(m: &Map, movers: &[phys::Mover], i: usize) {
     let new = [p.pos[0] + p.vel[0], p.pos[1] + p.vel[1], p.pos[2] + p.vel[2]];
     let wall = phys::trace_line(m, movers, p.pos, new);
     let stop = wall.map_or(new, |h| h.pos);
-    let mut best = usize::MAX;
-    let mut best_frac = 4097;
-    let mut best_box = u8::MAX;
-    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-    let mut pi = 0usize;
-    while pi < nprops {
-        let ty = PROP_KIND[pi];
-        if PROP_ACTIVE[pi] != 0
-            && PROP_HEALTH[pi] != 0
-            && ty != PROP_TYPE_HOLO
-            && prop_start_health(ty) != 0
-        {
-            let slot = TYPE_TO_SLOT[(ty as usize).min(N_MODEL_TYPES - 1)];
-            let boxed = slot != MODEL_SLOT_NONE && loaded_model(slot as usize).hitbox_count() != 0;
-            let frac = if boxed {
-                prop_studio_hit_fraction(m, pi, p.pos, stop)
-            } else {
-                let (lo, hi) = actor_collision_bounds(ty, PROP_POS[pi]);
-                tripmine::touches(p.pos, stop, lo, hi).then_some(2048)
-            };
-            if let Some(f) = frac {
-                if f < best_frac {
-                    best = pi;
-                    best_frac = f;
-                    best_box = if boxed { STUDIO_HIT_BOX } else { u8::MAX };
-                }
-            }
-        }
-        pi += 1;
-    }
-    if best != usize::MAX {
+    if let Some((best, _, best_box)) = next_actor_on_segment(m, p.pos, stop, (-1, 0)) {
         let ty = PROP_KIND[best];
         let at = prop_target(ty, PROP_POS[best]);
         damage_prop(best, hit_group_damage(ty, best_box, p.damage), true);
@@ -22293,6 +22277,45 @@ unsafe fn tick_bolt(m: &Map, movers: &[phys::Mover], i: usize) {
     ];
     PROJECTILES[i].vel = [0; 3];
     PROJECTILES[i].life = 200;
+}
+
+/// CRpgRocket: it leaves 30 degrees above the aim at 250 u/s and drops under
+/// half gravity for 0.4 s; the motor then lights and every 0.1 s
+/// (`FollowThink`) the velocity becomes a fifth of the old one plus the
+/// heading times (0.8 x speed + 400 u/s) for the first second, capped at 2000
+/// u/s, and afterwards a fifth plus 0.798 of the speed, detonating in the air
+/// once it slips under 1500 u/s. The heading is the aim, or the laser spot
+/// when one is in clear view ahead of it and not too far off line.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn think_rocket(m: &Map, movers: &[phys::Mover], i: usize) {
+    let p = PROJECTILES[i];
+    let age = 255 - p.life;
+    if age < 8 {
+        PROJECTILES[i].vel[1] -= throwable::LOB_GRAVITY;
+        return;
+    }
+    if age < 10 || age & 1 != 0 {
+        return;
+    }
+    let mut dir = [p.dir[0] as i32, p.dir[1] as i32, p.dir[2] as i32];
+    if RPG_SPOT_ACTIVE {
+        let to = dir_q12(p.pos, RPG_SPOT_POS);
+        let dist = isqrt_i32(dist2_3(p.pos, RPG_SPOT_POS));
+        let dot = (to[0] * dir[0] + to[1] * dir[1] + to[2] * dir[2]) >> 12;
+        if dot > 0
+            && dist * (4096 - dot) / 4096 < 4096
+            && actor_line_clear(m, movers, p.pos, RPG_SPOT_POS)
+        {
+            dir = to;
+        }
+    }
+    PROJECTILES[i].dir = [dir[0] as i16, dir[1] as i16, dir[2] as i16];
+    let (v, stalled) = throwable::rocket_think(p.vel, dir, age);
+    if stalled {
+        PROJECTILES[i].life = 1; // out of speed: goes off this tick
+    }
+    PROJECTILES[i].vel = v;
 }
 
 /// CHornet::TrackTarget for a player's hornet: after a 0.1 s coast at 300 u/s,
@@ -22464,11 +22487,8 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             i += 1;
             continue;
         }
-        if kind == PROJ_ROCKET && !PROJECTILES[i].from_enemy && RPG_SPOT_ACTIVE {
-            // The source rocket continuously homes on the active LTD spot. A
-            // 3:1 velocity blend retains the authored sweeping turn instead
-            // of snapping the missile directly onto the crosshair.
-            guide_projectile(i, RPG_SPOT_POS, 3);
+        if kind == PROJ_ROCKET && PROJECTILES[i].aux == 1 {
+            think_rocket(m, movers, i);
         } else if kind == PROJ_HORNET && !PROJECTILES[i].from_enemy {
             track_hornet(m, movers, i);
         }
@@ -22545,7 +22565,7 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             }
         }
         PROJECTILES[i].pos = new;
-        if !hit {
+        if !hit && (kind == PROJ_GRENADE || kind == PROJ_SATCHEL) {
             PROJECTILES[i].aux = PROJECTILES[i].aux.saturating_add(1);
         }
         if kind != PROJ_SATCHEL && kind != PROJ_M203 && PROJECTILES[i].life > 0 {
