@@ -33,6 +33,7 @@ pub unsafe fn bind(m: &crate::map::Map, rec: crate::map::LogicEnt) {
     }
 }
 
+#[optimize(size)]
 #[inline]
 pub unsafe fn has(slot: u8) -> bool {
     SETPIECE[slot as usize] != u8::MAX
@@ -61,11 +62,13 @@ pub unsafe fn keep_loop(slot: u8, pos: [i32; 3], owner: u16) {
     }
 }
 
+#[optimize(size)]
 #[inline]
 pub unsafe fn stop_loop(owner: u16) {
     sfx::stop_map_loop(owner);
 }
 
+#[optimize(size)]
 /// Silence a loop between bursts but keep its voice, so a source that starts
 /// and stops all fight long (the gargantua's flame) is keyed once per map
 /// rather than re-keyed on every burst. A muted loop is the first a new map

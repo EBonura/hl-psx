@@ -12,6 +12,7 @@ static mut SHELL_AT: [u16; MAX_SHELLS] = [0; MAX_SHELLS];
 /// Whether the player's Use sent each shell (the player as owner).
 static mut SHELL_PLAYER: u16 = 0;
 
+#[optimize(size)]
 pub(crate) unsafe fn reset() {
     SHELL_AT = [0; MAX_SHELLS];
 }

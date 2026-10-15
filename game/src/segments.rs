@@ -14,6 +14,7 @@ pub enum Spawn {
 
 type Descriptor = Segment<'static, u16, Spawn, &'static crate::save::Checkpoint>;
 
+#[optimize(size)]
 /// Resolve a display row without storing a second map table in resident RAM.
 pub fn descriptor(row: usize) -> Option<Descriptor> {
     let &room = crate::map_catalog::PLAY_ORDER.get(row)?;
@@ -27,6 +28,7 @@ pub fn descriptor(row: usize) -> Option<Descriptor> {
     })
 }
 
+#[optimize(size)]
 /// Consume a local control request, returning the unchanged menu load target.
 ///
 /// A successful diagnostic target still uses `menu_start` in the caller.
@@ -56,6 +58,7 @@ pub fn consume(request: &mut LaunchRequest) -> ConsumeResult<usize, core::conver
     )
 }
 
+#[optimize(size)]
 /// Start an explicitly labeled diagnostic reset from a display row.
 pub fn diagnostic_room(row: usize) -> Result<usize, LaunchError> {
     let Some(segment) = descriptor(row) else {
@@ -86,6 +89,7 @@ pub static mut SEGMENT_LAUNCH_REQUEST: LaunchRequest = LaunchRequest::IDLE;
 #[no_mangle]
 pub static mut SEGMENT_LAUNCH_RESULT: u32 = 0;
 
+#[optimize(size)]
 /// Consume a host-published request exactly once while the title menu is active.
 pub fn poll_control() -> Option<usize> {
     // The host pauses the guest for the whole write, so the request's words
@@ -128,6 +132,7 @@ pub fn poll_control() -> Option<usize> {
 mod tests {
     use super::*;
 
+    #[optimize(size)]
     #[test]
     fn every_catalog_row_preserves_its_map_target_and_rejects_earned_launch() {
         let mut seen = [false; crate::map_catalog::MAPS.len()];
@@ -156,6 +161,7 @@ mod tests {
         assert_eq!(diagnostic_room(usize::MAX), Err(LaunchError::UnknownId));
     }
 
+    #[optimize(size)]
     #[test]
     fn idle_and_unknown_controls_have_no_launch_target() {
         let mut request = LaunchRequest::IDLE;
@@ -177,6 +183,7 @@ mod tests {
         );
     }
 
+    #[optimize(size)]
     #[test]
     fn mailbox_acknowledges_and_consumes_each_request_once() {
         unsafe {

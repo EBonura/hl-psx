@@ -52,18 +52,22 @@ pub struct Program {
     pub wet: u16,
     pub used_bytes: u32,
 }
+#[optimize(size)]
 /// SPU delay offsets address four 22.05 kHz samples per eight-byte word.
 fn delay_units(tenths_ms: u32) -> u16 {
     ((tenths_ms * 22_050 + 20_000) / 40_000) as u16
 }
 // Retail feedback multiplies by256 and truncates before its8-bit shift.
+#[optimize(size)]
 fn feedback(value: u16) -> u16 {value & !127}
+#[optimize(size)]
 fn block(cursor: &mut u16, delay: u16) -> (u16,u16) {
     let read = *cursor;
     let write = read + delay;
     *cursor = write + 2;
     (read,write)
 }
+#[optimize(size)]
 pub fn program(room: u8) -> Option<Program> {
     let preset = *PRESETS.get(room as usize)?;
     let mut registers = [0u16;32];
@@ -119,6 +123,7 @@ pub fn program(room: u8) -> Option<Program> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[optimize(size)]
     #[test]
     fn original_numerical_controls_survive_without_named_preset_substitution() {
         assert_eq!((PRESETS[19].reflection,PRESETS[19].echo),(700,3000));
@@ -130,6 +135,7 @@ mod tests {
         assert_eq!(p.registers[1],274);
         assert_eq!(p.wet,11_264);
     }
+    #[optimize(size)]
     #[test]
     fn all_original_presets_have_disjoint_bounded_active_buffers() {
         for room in 1..29 {
@@ -149,6 +155,7 @@ mod tests {
         assert_eq!(program(0).unwrap().wet,0);
         assert!(program(29).is_none());
     }
+    #[optimize(size)]
     #[test]
     fn delay_quantization_is_bounded_by_half_a_hardware_word() {
         for value in 0..=3800u32 {
@@ -167,6 +174,7 @@ pub struct Workspace {
     pub base: u32,
     pub bytes: u32,
 }
+#[optimize(size)]
 pub fn workspace(program: &Program, sample_end: u32) -> Option<Workspace> {
     if program.wet == 0 || program.used_bytes == 0 || program.used_bytes > WORK_BYTES
         || sample_end > SPU_BYTES || sample_end & 15 != 0 {
@@ -184,7 +192,9 @@ pub fn workspace(program: &Program, sample_end: u32) -> Option<Workspace> {
     Some(Workspace {base,bytes:program.used_bytes})
 }
 
+#[optimize(size)]
 pub fn bank_end(pack: &[u8], base: u32, limit: usize) -> Option<u32> {
+    #[optimize(size)]
     fn word(bytes: &[u8], at: usize) -> Option<u32> {
         Some(u32::from_le_bytes(bytes.get(at..at+4)?.try_into().ok()?))
     }
@@ -209,6 +219,7 @@ pub fn bank_end(pack: &[u8], base: u32, limit: usize) -> Option<u32> {
 #[cfg(test)]
 mod bank_tests {
     use super::*;
+    #[optimize(size)]
     fn one_sample() -> [u8;64] {
         let mut bank=[0u8;64];
         bank[..4].copy_from_slice(b"HSFX");
@@ -219,12 +230,14 @@ mod bank_tests {
         bank[40..44].copy_from_slice(&1u32.to_le_bytes());
         bank
     }
+    #[optimize(size)]
     #[test]
     fn extent_matches_sdk_adpcm_alignment_and_parking_tail() {
         assert_eq!(bank_end(&one_sample(),0x1010,70),Some(0x1030));
         assert_eq!(bank_end(&one_sample(),SPU_BYTES-32,70),Some(SPU_BYTES));
         assert_eq!(bank_end(&one_sample(),SPU_BYTES-16,70),None);
     }
+    #[optimize(size)]
     #[test]
     fn optional_workspace_never_rejects_or_overwrites_valid_samples() {
         assert_eq!(bank_end(&one_sample(),SPU_BYTES-WORK_BYTES,70),Some(SPU_BYTES-WORK_BYTES+32));
@@ -240,6 +253,7 @@ mod bank_tests {
         invalid.registers[0]=invalid.registers[26]+1;
         assert_eq!(workspace(&invalid,0x1010),None);
     }
+    #[optimize(size)]
     #[test]
     fn malformed_or_oversized_banks_fail_before_any_upload() {
         let mut b=one_sample();
@@ -255,6 +269,7 @@ mod bank_tests {
 #[cfg(test)]
 mod retail_bank_tests {
     use super::*;
+    #[optimize(size)]
     #[test]
     #[ignore="requires complete cooked103-map core AND dialogue banks"]
     fn all103_actual_combined_banks_preserve_samples_and_admit_only_safe_effects() {

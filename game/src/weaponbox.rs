@@ -8,6 +8,7 @@ const RETAIL_COUNTS: [(u16, u16); 9] = [
 ];
 pub const VALID_REMOVED_MASK: u32 = (1 << 29) - 1;
 
+#[optimize(size)]
 pub const fn original_id(room: u16, ordinal: u16) -> Option<u8> {
     let mut base = 0;
     let mut index = 0;
@@ -22,6 +23,7 @@ pub const fn original_id(room: u16, ordinal: u16) -> Option<u8> {
     None
 }
 
+#[optimize(size)]
 pub const fn is_removed(mask: u32, room: u16, ordinal: u16) -> bool {
     match original_id(room, ordinal) {
         Some(id) => mask & (1 << id) != 0,
@@ -29,6 +31,7 @@ pub const fn is_removed(mask: u32, room: u16, ordinal: u16) -> bool {
     }
 }
 
+#[optimize(size)]
 /// Slots are the existing Arsenal ammo pools, including the distinct AR grenade pool.
 pub fn ammo_slot(name: &str) -> Option<u16> {
     const KEYS: [(&str, u16); 12] = [
@@ -40,16 +43,19 @@ pub fn ammo_slot(name: &str) -> Option<u16> {
     KEYS.iter().find(|(key, _)| name.eq_ignore_ascii_case(key)).map(|(_, slot)| *slot)
 }
 
+#[optimize(size)]
 pub const fn can_touch(grounded: bool, player_alive: bool) -> bool {
     grounded && player_alive
 }
 
+#[optimize(size)]
 pub fn touches(player: [i32; 3], half_height: i32, mins: [i32; 3], maxs: [i32; 3]) -> bool {
     let half = [16, half_height, 16];
     (0..3).all(|axis| player[axis] + half[axis] >= mins[axis]
         && player[axis] - half[axis] <= maxs[axis])
 }
 
+#[optimize(size)]
 /// The box clears its named slots after GiveAmmo and then removes itself,
 /// including when the player is already full. Excess is not retained.
 pub const fn after_give(current: u16, amount: u16, cap: u16) -> u16 {
@@ -61,6 +67,7 @@ pub const fn after_give(current: u16, amount: u16, cap: u16) -> u16 {
 mod tests {
     use super::*;
 
+    #[optimize(size)]
     #[test]
     fn airborne_boxes_or_dead_players_cannot_consume_a_box() {
         assert!(!can_touch(false, true));
@@ -68,6 +75,7 @@ mod tests {
         assert!(can_touch(true, true));
     }
 
+    #[optimize(size)]
     #[test]
     fn partial_and_full_caps_discard_excess_after_the_valid_touch() {
         assert_eq!(after_give(240, 50, 250), 250);
@@ -76,6 +84,7 @@ mod tests {
         assert_eq!(after_give(u16::MAX, 1, 250), 250);
     }
 
+    #[optimize(size)]
     #[test]
     fn named_ammunition_keeps_grenades_and_shared_pools_distinct() {
         assert_eq!(ammo_slot("9mm"), Some(1));
@@ -86,6 +95,7 @@ mod tests {
         assert_eq!(ammo_slot("weapon_mp5"), None);
     }
 
+    #[optimize(size)]
     #[test]
     fn original_box_bounds_require_real_player_hull_contact() {
         assert!(touches([32, 36, 0], 36, [-16, 0, -16], [16, 16, 16]));
@@ -93,6 +103,7 @@ mod tests {
         assert!(!touches([0, 53, 0], 36, [-16, 0, -16], [16, 16, 16]));
     }
 
+    #[optimize(size)]
     #[test]
     fn original_identity_survives_revisit_and_rejects_unbound_boxes() {
         assert_eq!(original_id(81,0),Some(0));

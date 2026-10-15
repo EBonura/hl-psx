@@ -79,6 +79,7 @@ unsafe fn ap() -> &'static mut Apache {
     &mut *core::ptr::addr_of_mut!(AP)
 }
 
+#[optimize(size)]
 pub(crate) unsafe fn reset() {
     AP.li = u16::MAX;
     APACHE_TILT.0 = 0xff;
@@ -462,6 +463,7 @@ unsafe fn hunt(m: &Map, movers: &[phys::Mover], now: u16) {
 #[optimize(size)]
 unsafe fn flight(a: &mut Apache, want: [i32; 3]) {
     // Aim ahead by `s` seconds of angular velocity, tilted 5 degrees down.
+    #[optimize(size)]
     fn add(a: &Apache, s: i32) -> [i32; 3] {
         [
             a.ang[0] + a.avel[0] * s + 5 * D,

@@ -13,6 +13,7 @@ pub const fn angle_dist_q12(a: i32, b: i32) -> i32 {
     ((a - b + 2048) & 0xfff) - 2048
 }
 
+#[optimize(size)]
 /// `UTIL_ApproachAngle(target, value, speed)` in q12 turns.
 #[inline]
 pub const fn approach_angle_q12(target: i32, value: i32, speed: i32) -> i32 {
@@ -41,6 +42,7 @@ pub struct Stomp {
 }
 
 impl Stomp {
+    #[optimize(size)]
     /// `CStomp::StompCreate(origin, end, 0)`: framerate 30, speed 0, the
     /// whole start-to-end distance as its life.
     pub const fn new(dist: i32) -> Self {
@@ -52,11 +54,13 @@ impl Stomp {
         }
     }
 
+    #[optimize(size)]
     /// Length (x16) of this think's damage hull trace: `speed * frametime`.
     pub const fn sweep_q4(&self) -> i32 {
         self.speed_q4 / 20
     }
 
+    #[optimize(size)]
     /// One `CStomp::Think` after its damage trace: accelerate, then advance
     /// in 0.025 s steps. The first think runs at spawn with nothing owed;
     /// each later one owes four steps, and the loop only takes a step while
@@ -83,6 +87,7 @@ impl Stomp {
     }
 }
 
+#[optimize(size)]
 /// CGargantua::FlameDamage falloff, in tenths of a hit point: full damage
 /// within 64 units of the flame line, then 0.4 less per unit. `None` when
 /// the target is out of reach.
@@ -122,6 +127,7 @@ pub enum GargChoice {
     Chase,
 }
 
+#[optimize(size)]
 pub const fn garg_choice(
     dot_q12: i32,
     dist: i32,
@@ -144,6 +150,7 @@ pub const fn garg_choice(
     }
 }
 
+#[optimize(size)]
 /// `UTIL_ScreenShake` amplitude a player `dist` units away feels, or 0
 /// outside the radius (players off the ground feel nothing either).
 pub const fn shake_amplitude(amplitude: i32, dist: i32, radius: i32) -> i32 {
@@ -158,6 +165,7 @@ pub const fn shake_amplitude(amplitude: i32, dist: i32, radius: i32) -> i32 {
 mod tests {
     use super::*;
 
+    #[optimize(size)]
     #[test]
     fn stomp_follows_the_reference_frame_acceleration() {
         // Speeds after each think at frametime 0.05: 1.5, 6.75, 15.75, ...
@@ -173,6 +181,7 @@ mod tests {
         assert_eq!(moved, 4 * (s.speed_q4 / 40));
     }
 
+    #[optimize(size)]
     #[test]
     fn stomp_crosses_a_flame_length_in_under_two_seconds() {
         // GARG_FLAME_LENGTH (330) away: the wave covers it in 16..18 thinks.
@@ -189,6 +198,7 @@ mod tests {
         assert!((16..=18).contains(&thinks), "{thinks} thinks");
     }
 
+    #[optimize(size)]
     #[test]
     fn stomp_ends_after_its_distance() {
         let mut s = Stomp::new(100);
@@ -206,6 +216,7 @@ mod tests {
         assert!(s.life_q4 <= 0);
     }
 
+    #[optimize(size)]
     #[test]
     fn flame_falloff_matches_flamedamage() {
         assert_eq!(flame_damage_tenths(3, 10), Some(30));
@@ -215,6 +226,7 @@ mod tests {
         assert_eq!(flame_damage_tenths(3, 72), None);
     }
 
+    #[optimize(size)]
     #[test]
     fn garg_prefers_stomp_then_swipe_then_flame() {
         assert_eq!(garg_choice(4096, 200, true, true), GargChoice::Stomp);
@@ -225,6 +237,7 @@ mod tests {
         assert_eq!(garg_choice(1000, 60, true, true), GargChoice::Chase);
     }
 
+    #[optimize(size)]
     #[test]
     fn angles_wrap_the_short_way() {
         assert_eq!(angle_dist_q12(100, 4000), 196);
@@ -233,6 +246,7 @@ mod tests {
         assert_eq!(approach_angle_q12(-50, 0, 91), -50);
     }
 
+    #[optimize(size)]
     #[test]
     fn shake_fades_to_the_radius() {
         assert_eq!(shake_amplitude(12, 0, 1000), 12);

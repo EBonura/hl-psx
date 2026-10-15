@@ -76,6 +76,7 @@ unsafe fn g() -> &'static mut Garg {
     &mut *core::ptr::addr_of_mut!(GARG)
 }
 
+#[optimize(size)]
 /// Forget the previous map's gargantua.
 pub(crate) unsafe fn reset() {
     let g = g();

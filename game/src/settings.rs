@@ -74,6 +74,7 @@ fn isqrt16(n: u32) -> i32 {
     psx_math::int32::isqrt_i32(n as i32)
 }
 
+#[optimize(size)]
 /// Apply the current brightness curve to one 8-bit light or shade channel. At
 /// the default level this is a load, a compare and a return; the curve itself
 /// is out of line and out of the hot text bucket, so selecting a non-default
@@ -87,6 +88,7 @@ pub fn bright(v: u8) -> u8 {
     bright_curve(v, mix)
 }
 
+#[optimize(size)]
 /// Out-of-line [`bright`], for the palette expansion. Inlining the gate at all
 /// six call sites there costs several hundred bytes of image -- and image bytes
 /// come straight out of the RAM left above `.bss` -- to save a jump on a path
@@ -97,6 +99,7 @@ pub fn bright_cold(v: u8) -> u8 {
     bright(v)
 }
 
+#[optimize(size)]
 #[inline(never)]
 #[link_section = ".hlpsx_cold.brightness"]
 fn bright_curve(v: u8, mix: i16) -> u8 {
@@ -113,6 +116,7 @@ fn bright_curve(v: u8, mix: i16) -> u8 {
     (x + (((target - x) * weight) >> 8)) as u8
 }
 
+#[optimize(size)]
 /// Select a brightness level. Marks the resident map's light palette stale; the
 /// menu that changed it re-expands on the way out.
 pub fn set_brightness_level(level: u8) {
@@ -127,6 +131,7 @@ pub fn set_brightness_level(level: u8) {
     }
 }
 
+#[optimize(size)]
 /// Consume the "light palette needs re-expanding" flag.
 #[cfg(not(feature = "semantic-input"))]
 pub fn take_brightness_dirty() -> bool {
@@ -137,6 +142,7 @@ pub fn take_brightness_dirty() -> bool {
     }
 }
 
+#[optimize(size)]
 /// Re-issue the GP1 06h/07h display windows shifted by the screen offset. Moves
 /// the picture on the TV without touching the VRAM layout (so it also shifts the
 /// menu -- a live preview of the setting).
@@ -145,6 +151,7 @@ pub fn apply_display() {
     crate::driver::with(|gpu| gpu.set_display(screen.apply_to(DISPLAY)));
 }
 
+#[optimize(size)]
 /// Apply the audio volumes: music = CD input gain, SFX = SPU main (voice) volume.
 pub fn apply_audio() {
     let (m, s) = unsafe { (MUSIC_VOL as i32, SFX_VOL as i32) };
@@ -154,11 +161,13 @@ pub fn apply_audio() {
     psx_spu::set_main_volume(vo, vo);
 }
 
+#[optimize(size)]
 pub fn apply_all() {
     apply_display();
     apply_audio();
 }
 
+#[optimize(size)]
 /// The CD (music) volume for the current setting -- music_apply() re-issues this
 /// on each track change (so it must honour the slider, not force MAX).
 pub fn music_cd_volume() -> CdVolume {
@@ -209,6 +218,7 @@ pub fn adjust(index: usize, delta: i32) -> i32 {
     }
 }
 
+#[optimize(size)]
 pub fn value(index: usize) -> i32 {
     unsafe {
         match index {
@@ -224,6 +234,7 @@ pub fn value(index: usize) -> i32 {
     }
 }
 
+#[optimize(size)]
 /// What a picture row says in words, in the shared `psx-display` text:
 /// `LEFT 4`, `DOWN 2`, `DEFAULT`, `BRIGHTER 3`. `None` for the rows that are
 /// numbers or toggles. `DEFAULT` is the shipped level (`DEFAULT_BRIGHTNESS`), so
@@ -253,14 +264,17 @@ pub fn analog_deadzone() -> Deadzone {
 // menu's New Game row, restored from a save, and kept for the session.
 static mut SKILL: u8 = 1;
 
+#[optimize(size)]
 pub fn skill() -> usize {
     unsafe { (SKILL as usize).min(2) }
 }
 
+#[optimize(size)]
 pub fn set_skill(level: u8) {
     unsafe { SKILL = level.min(2) };
 }
 
+#[optimize(size)]
 pub fn step_skill(delta: i32) {
     unsafe { SKILL = (SKILL as i32 + delta).clamp(0, 2) as u8 };
 }
@@ -287,12 +301,14 @@ pub fn debug_on(bit: u8) -> bool {
     unsafe { DEBUG_FLAGS & bit != 0 }
 }
 
+#[optimize(size)]
 pub fn debug_toggle(index: usize) {
     if index < DEBUG_LABELS.len() {
         unsafe { DEBUG_FLAGS ^= 1 << index };
     }
 }
 
+#[optimize(size)]
 /// Arm a debug bit unconditionally. Camera-pin diagnostic builds use this so
 /// every capture self-documents its pose in the stats overlay; shipping
 /// builds fold the pin away and never call it.

@@ -71,6 +71,7 @@ impl Target {
         },
     ];
     pub const MANUAL: [Target; 2] = [Self::ALL[0], Self::ALL[2]];
+    #[optimize(size)]
     /// Legacy automatic files remain readable; only explicit manual slots write.
     pub fn choices(loading: bool) -> &'static [Target] {
         if loading {
@@ -79,6 +80,7 @@ impl Target {
             &Self::MANUAL
         }
     }
+    #[optimize(size)]
     #[cfg(not(feature = "semantic-input"))]
     pub const fn label(self) -> &'static str {
         match (self.port, self.slot) {
@@ -91,6 +93,7 @@ impl Target {
 }
 
 impl Slot {
+    #[optimize(size)]
     #[cfg(any(test, target_arch = "mips"))]
     const fn file(self) -> &'static str {
         match self {
@@ -98,6 +101,7 @@ impl Slot {
             Slot::Auto => FILE_AUTO,
         }
     }
+    #[optimize(size)]
     #[cfg(any(test, target_arch = "mips"))]
     const fn title(self) -> &'static str {
         match self {
@@ -191,6 +195,7 @@ struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
+    #[optimize(size)]
     #[inline(never)]
     fn u8(&mut self, v: u8) {
         if self.at < self.buf.len() {
@@ -198,16 +203,19 @@ impl<'a> Writer<'a> {
             self.at += 1;
         }
     }
+    #[optimize(size)]
     #[inline(never)]
     fn u16(&mut self, v: u16) {
         self.u8(v as u8);
         self.u8((v >> 8) as u8);
     }
+    #[optimize(size)]
     #[inline(never)]
     fn u32(&mut self, v: u32) {
         self.u16(v as u16);
         self.u16((v >> 16) as u16);
     }
+    #[optimize(size)]
     fn i32(&mut self, v: i32) {
         self.u32(v as u32);
     }
@@ -219,20 +227,24 @@ struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
+    #[optimize(size)]
     #[inline(never)]
     fn u8(&mut self) -> u8 {
         let v = self.buf.get(self.at).copied().unwrap_or(0);
         self.at += 1;
         v
     }
+    #[optimize(size)]
     #[inline(never)]
     fn u16(&mut self) -> u16 {
         u16::from(self.u8()) | (u16::from(self.u8()) << 8)
     }
+    #[optimize(size)]
     #[inline(never)]
     fn u32(&mut self) -> u32 {
         u32::from(self.u16()) | (u32::from(self.u16()) << 16)
     }
+    #[optimize(size)]
     fn i32(&mut self) -> i32 {
         self.u32() as i32
     }
@@ -349,6 +361,7 @@ pub fn decode(buf: &[u8]) -> Option<Checkpoint> {
     Some(cp)
 }
 
+#[optimize(size)]
 fn checksum(bytes: &[u8]) -> u32 {
     // FNV-1a: the same hash the cook and runtime already share for globalnames,
     // so there is one checksum idiom in the project rather than two.
@@ -459,16 +472,19 @@ pub fn read(target: Target, staging: &mut [u8]) -> Result<Checkpoint, CardResult
     })
 }
 
+#[optimize(size)]
 #[cfg(not(target_arch = "mips"))]
 pub fn write(_target: Target, _cp: &Checkpoint, _staging: &mut [u8]) -> CardResult {
     CardResult::NoCard
 }
 
+#[optimize(size)]
 #[cfg(not(target_arch = "mips"))]
 pub fn read(_target: Target, _staging: &mut [u8]) -> Result<Checkpoint, CardResult> {
     Err(CardResult::NoCard)
 }
 
+#[optimize(size)]
 #[cfg(not(target_arch = "mips"))]
 pub fn read_latest(_staging: &mut [u8]) -> Result<Checkpoint, CardResult> {
     Err(CardResult::NoCard)
@@ -478,6 +494,7 @@ pub fn read_latest(_staging: &mut [u8]) -> Result<Checkpoint, CardResult> {
 mod tests {
     use super::*;
 
+    #[optimize(size)]
     fn sample() -> Checkpoint {
         let mut cp = Checkpoint::EMPTY;
         cp.room_id = 42;
@@ -503,6 +520,7 @@ mod tests {
         cp
     }
 
+    #[optimize(size)]
     #[test]
     fn round_trips_every_field() {
         let mut buf = [0u8; 512];
@@ -530,6 +548,7 @@ mod tests {
         assert!(back.has_pos);
     }
 
+    #[optimize(size)]
     #[test]
     fn version_two_saves_load_with_normal_gravity() {
         // A version 2 payload is the version 3 one without the trailing
@@ -546,6 +565,7 @@ mod tests {
         assert_eq!(back.weaponbox_removed, 0);
     }
 
+    #[optimize(size)]
     #[test]
     fn version_three_saves_load_on_easy() {
         let mut buf = [0u8; 512];
@@ -559,6 +579,7 @@ mod tests {
         assert_eq!(back.weaponbox_removed, 0);
     }
 
+    #[optimize(size)]
     #[test]
     fn version_four_preserves_inventory_and_defaults_box_removals() {
         let mut buf = [0u8; 512];
@@ -573,6 +594,7 @@ mod tests {
         assert_eq!(back.weaponbox_removed,0);
     }
 
+    #[optimize(size)]
     #[test]
     fn valid_checksum_cannot_admit_unbound_box_bits() {
         let mut buf = [0u8;512];
@@ -583,6 +605,7 @@ mod tests {
         assert!(decode(&buf[..len]).is_none());
     }
 
+    #[optimize(size)]
     #[test]
     fn rejects_corruption_and_stale_layouts() {
         let mut buf = [0u8; 512];
@@ -599,6 +622,7 @@ mod tests {
         assert!(decode(&buf[..len]).is_none());
     }
 
+    #[optimize(size)]
     #[test]
     fn only_manual_slots_are_available_for_writes() {
         assert_eq!(Target::choices(false).len(), 2);
@@ -611,6 +635,7 @@ mod tests {
         assert!(Target::choices(false)[1].port == Port::Two);
     }
 
+    #[optimize(size)]
     #[test]
     fn slots_are_distinct_files_so_an_autosave_cannot_clobber_a_manual_one() {
         assert_ne!(Slot::Manual.file(), Slot::Auto.file());
@@ -623,6 +648,7 @@ mod tests {
         }
     }
 
+    #[optimize(size)]
     #[test]
     fn payload_fits_one_card_block_with_room_to_spare() {
         let mut buf = [0u8; 512];
