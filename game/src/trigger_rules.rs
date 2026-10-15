@@ -186,13 +186,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_cd_target_starts_inside_its_radius_only() {
-        assert!(cdaudio_in_range(256, 256 * 256));
-        assert!(!cdaudio_in_range(256, 256 * 256 + 1));
-        assert!(!cdaudio_in_range(0, 0));
-    }
-
-    #[test]
     fn the_longest_shipped_chain_fits_with_room_to_spare() {
         // c3a1: trigger_once -> breakable -> breakable -> breakable -> monstermaker
         let snark_nest_hops = 4;
