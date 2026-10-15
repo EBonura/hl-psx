@@ -191,12 +191,18 @@ pub(crate) unsafe fn tick_grunt(
     // After that it lobs a hand grenade at an enemy 250 to 900 units off, one
     // every 155 ticks (measured: blasts 155 apart, 25 to 27 ticks after the
     // 34-tick throw begins).
-    if d2 > GRENADE_MIN_RANGE * GRENADE_MIN_RANGE
+    let weapons = grunt_weapons(pi);
+    if weapons & (GRUNT_GRENADES | GRUNT_LAUNCHER) != 0
+        && d2 > GRENADE_MIN_RANGE * GRENADE_MIN_RANGE
         && d2 < GRENADE_MAX_RANGE * GRENADE_MAX_RANGE
         && time_reached(SIM_NOW, GRUNT_GREN[pi])
     {
         GRUNT_GREN[pi] = SIM_NOW.wrapping_add(GRENADE_INTERVAL);
         PROP_AI_TIMER[pi] = 0x80 | (3 << 5) | GRENADE_THROW_TICKS;
+        return;
+    }
+    if weapons & GRUNT_SHOTGUN != 0 {
+        shotgun_blast(m, pi, target, aim, health, armor);
         return;
     }
     let state = PROP_AI_TIMER[pi]; // low nibble: burst ticks left, high: bursts since the pause
@@ -237,6 +243,55 @@ pub(crate) unsafe fn tick_grunt(
             PROP_AI_TIMER[pi] = (bursts << 4) | 6;
         }
     }
+}
+
+/// Weapon bits of a grunt's `weapons` key, carried in its body nibble; an older cook (0) means MP5 and grenades.
+const GRUNT_GRENADES: u8 = 2;
+const GRUNT_LAUNCHER: u8 = 4;
+const GRUNT_SHOTGUN: u8 = 8;
+
+#[inline(always)]
+unsafe fn grunt_weapons(pi: usize) -> u8 {
+    match prop_body_value(PROP_YAW[pi]) {
+        0 => 3,
+        w => w,
+    }
+}
+
+/// Shotgun grunt (CHGrunt::Shotgun): one blast every 14 ticks of `sk_hgrunt_pellets` pellets of
+/// `sk_9mm_bullet`, a pellet landing 70 percent of the time at 200 units and 28 percent at 400
+/// (tuned to the 17.8 damage a blast does at 200 units under the Xash3D reference, profile-ranged 1).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn shotgun_blast(
+    m: &Map,
+    pi: usize,
+    target: u8,
+    aim: [i32; 3],
+    health: &mut u16,
+    armor: &mut u16,
+) {
+    if prop_attack_cooldown(pi) != 0 {
+        return;
+    }
+    let pos = PROP_POS[pi];
+    let from = prop_eye(m, pi);
+    let dist = isqrt_i32(dist2_3(from, aim));
+    let chance = (1120 - dist * 21 / 10).clamp(50, 1000) as u32;
+    let mut hits = 0u8;
+    let mut n = skill_value(Sk::HgruntPellets);
+    while n > 0 {
+        hits += (impact_rng().below(1000) < chance) as u8;
+        n -= 1;
+    }
+    if hits > 0 {
+        damage_target(target, hits * skill_hit(Sk::Bullet9mm), pos, health, armor);
+        push_tracer(from, aim);
+    } else {
+        push_tracer(from, [aim[0] + 40, aim[1] + 20, aim[2] - 40]);
+    }
+    sfx::play_world(sfx::SHOTGUN, pos);
+    prop_attack_cooldown_set(pi, 14);
 }
 
 /// Lob a hand grenade that lands on `aim` ten ticks after its release and goes
