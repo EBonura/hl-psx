@@ -16,6 +16,10 @@
 //! visibility, hitbox, ordering, semantic input and the core ground rules)
 //! live in `psx-goldsrc` and are tested there.
 
+// The game marks cold and per-tick logic `#[optimize(size)]`; the included
+// modules carry the attribute, which the host build accepts on this nightly.
+#![feature(optimize_attribute)]
+
 /// The actor roster and arsenal tables, included from the game itself so the
 /// modules below see the real arsenal dimensions and the parity audit reads the
 /// real numbers.
