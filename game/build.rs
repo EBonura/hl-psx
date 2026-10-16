@@ -76,13 +76,13 @@ const MODEL_INDEX_VERTEX_LIMIT: usize = 1024;
 // 7,056 B and 7,680 B, which lifted c2a4e's audited margin to 2,036 B and left
 // 436 B of it after this step.
 //
-// 2,000 words (8,000 B) went back to the executable for the monster work of
+// 2,500 words (10,000 B) went back to the executable for the monster work of
 // 2026-10-16. The authored HECU grenade clips added 16 poses to every hgrunt
 // variant; the cooker now gives a map whose marines are all corpses (c5a1)
 // one pose in every slot but the dead one (host/hl-build model_variants), which
 // returned the room the clips took. The weapon-cache audit still keeps its
 // margin on the smaller pool; it re-checks this on every cook.
-const NPC_MODEL_POOL_WORDS: usize = 21_554;
+const NPC_MODEL_POOL_WORDS: usize = 21_054;
 // Viewmodel reserve when no cooked viewmodels exist yet (a fresh checkout).
 const FALLBACK_VM_POOL_WORDS: usize = 20_224;
 const FALLBACK_VM_GEOM_WORDS: usize = 15_800;
