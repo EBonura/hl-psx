@@ -1929,9 +1929,9 @@ impl Map {
         normal_q12: [i32; 3],
         first: usize,
         count: usize,
-    ) -> Option<(i64, u8)> {
+    ) -> Option<(i32, u8)> {
         let end = first.saturating_add(count).min(self.n_faces);
-        let mut best = i64::MAX;
+        let mut best = i32::MAX;
         let mut material = None;
         for f in first.min(end)..end {
             let (n, dist) = self.face_plane(f);
@@ -1950,17 +1950,19 @@ impl Map {
                 continue;
             }
             let (center, radius) = self.face_bounds(f);
-            let dx = (pos[0] - center[0]) as i64;
-            let dy = (pos[1] - center[1]) as i64;
-            let dz = (pos[2] - center[2]) as i64;
-            let distance2 = dx * dx + dy * dy + dz * dz;
-            let reach = (radius + 8) as i64;
-            if distance2 > reach * reach {
+            // Saturating: a face is a few thousand units across at most, and an
+            // outlier only has to compare farther than `reach`.
+            let sq = |v: i32| v.saturating_mul(v);
+            let distance2 = sq(pos[0] - center[0])
+                .saturating_add(sq(pos[1] - center[1]))
+                .saturating_add(sq(pos[2] - center[2]));
+            let reach = radius + 8;
+            if distance2 > reach.saturating_mul(reach) {
                 continue;
             }
             // Plane agreement dominates; the centre term disambiguates two
             // coplanar materials sharing a leaf or brush submodel.
-            let score = plane_error as i64 * 1_000_000 + distance2;
+            let score = (plane_error * 1_000_000).saturating_add(distance2);
             if score < best {
                 best = score;
                 material = Some((score, self.face_material(f)));
@@ -1975,7 +1977,7 @@ impl Map {
     pub fn world_impact_material(&self, pos: [i32; 3], normal_q12: [i32; 3], leaf: i32) -> u8 {
         if leaf >= 0 {
             let (_, mark_first, mark_count) = self.leaf(leaf as usize);
-            let mut best: Option<(i64, u8)> = None;
+            let mut best: Option<(i32, u8)> = None;
             let mut i = mark_first;
             while i < mark_first.saturating_add(mark_count).min(self.n_marks) {
                 let f = self.mark(i);

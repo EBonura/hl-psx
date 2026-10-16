@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "hl-format",
  "psx-anim-cook",
+ "psx-math",
  "psx-render-contract",
 ]
 
@@ -17,6 +18,10 @@ version = "0.1.0"
 
 [[package]]
 name = "psx-anim-cook"
+version = "0.1.0"
+
+[[package]]
+name = "psx-math"
 version = "0.1.0"
 
 [[package]]

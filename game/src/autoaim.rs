@@ -88,9 +88,71 @@ pub fn steer(yaw_off: i32, pitch_off: i32, skill: usize) -> (i32, i32) {
     )
 }
 
+/// One axis of a hitscan ray from the eye: the aim cone's direction in Q12
+/// (`[forward, right, up]` rotation entries for the axis, a pellet offset of
+/// `cx_px`/`cy_px` screen pixels at projection plane `h_proj`) scaled to
+/// `range` world units.
+///
+/// The Q12 direction is a sum of three products. Each rotation entry is at
+/// most 4096 (a unit row) and the pixel offsets stay within a screen, so the
+/// sum is far inside `i32` (it holds for offsets up to 2^16 pixels); only the
+/// scaling by `range` needs the full product, which `mul_div_i32` keeps to
+/// one `multu` and native divides.
+pub fn shot_ray_component(rot: [i16; 3], h_proj: i32, cx_px: i32, cy_px: i32, range: i32) -> i32 {
+    let q12 = rot[0] as i32 * h_proj + rot[1] as i32 * cx_px + rot[2] as i32 * cy_px;
+    psx_math::int32::mul_div_i32(q12, range, h_proj * 4096)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shot_ray_component_matches_the_wide_form() {
+        let wide = |rot: [i16; 3], h: i64, cx: i64, cy: i64, range: i64| -> i32 {
+            let q12 = rot[0] as i64 * h + rot[1] as i64 * cx + rot[2] as i64 * cy;
+            ((q12 * range) / (h * 4096)) as i32
+        };
+        let mut state = 0x9e37_79b9u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        // Edges: every rotation entry at +-4096 and 0, pixel offsets at the
+        // screen edge and well beyond, short and long ranges.
+        for &a in &[-4096i16, -1, 0, 1, 4096] {
+            for &b in &[-4096i16, 0, 4096] {
+                for &c in &[-4096i16, 0, 4096] {
+                    for &cx in &[-65_536, -320, -1, 0, 1, 7, 320, 65_536] {
+                        for &cy in &[-65_536, -240, 0, 5, 240, 65_536] {
+                            for &range in &[0, 1, 48, 8192, 12_000, i32::MAX] {
+                                assert_eq!(
+                                    shot_ray_component([a, b, c], 160, cx, cy, range),
+                                    wide([a, b, c], 160, cx as i64, cy as i64, range as i64),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for _ in 0..400_000 {
+            let rot = [
+                (next() % 8193) as i16 - 4096,
+                (next() % 8193) as i16 - 4096,
+                (next() % 8193) as i16 - 4096,
+            ];
+            let cx = (next() % 1281) as i32 - 640;
+            let cy = (next() % 961) as i32 - 480;
+            let range = (next() >> 8) as i32 % 20_000;
+            assert_eq!(
+                shot_ray_component(rot, 160, cx, cy, range),
+                wide(rot, 160, cx as i64, cy as i64, range as i64),
+            );
+        }
+    }
 
     const FWD: [i32; 3] = [0, 0, 4096];
     const RIGHT: [i32; 3] = [4096, 0, 0];

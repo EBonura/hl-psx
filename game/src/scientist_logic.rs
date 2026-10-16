@@ -4,6 +4,8 @@
 //! transition mailbox's state byte.  Keeping the decisions here makes the
 //! progression-critical rules host-testable without pulling in the PSX runtime.
 
+use psx_math::WideU;
+
 pub const SCRIPT_SELECTOR_NONE: u8 = 0;
 pub const SCRIPT_SELECTOR_MASK: u8 = 0x3F;
 pub const CARRY_FOLLOW_BIT: u8 = 0x80;
@@ -264,20 +266,20 @@ pub fn wide_view_cone(dx: i32, dz: i32, forward_x_q12: i32, forward_z_q12: i32) 
     if dx == 0 && dz == 0 {
         return true;
     }
-    let dot = (dx as i64)
-        .saturating_mul(forward_x_q12 as i64)
-        .saturating_add((dz as i64).saturating_mul(forward_z_q12 as i64));
+    // A world offset is under 2^15 and the forward vector is Q12, so the dot
+    // fits i32 and every product below fits u64 without saturating. Anything
+    // farther is not in view (the former saturating arithmetic said so too).
+    const LIMIT: u32 = 1 << 15;
+    if dx.unsigned_abs() >= LIMIT || dz.unsigned_abs() >= LIMIT {
+        return false;
+    }
+    let dot = dx * forward_x_q12 + dz * forward_z_q12;
     if dot >= 0 {
         return true;
     }
-    let dot2 = dot.saturating_mul(dot);
-    let len2 = (dx as i64)
-        .saturating_mul(dx as i64)
-        .saturating_add((dz as i64).saturating_mul(dz as i64));
-    dot2.saturating_mul(100)
-        < len2
-            .saturating_mul(4096i64.saturating_mul(4096))
-            .saturating_mul(49)
+    let dot2 = WideU::mul(dot.unsigned_abs(), dot.unsigned_abs());
+    let len2 = dx.unsigned_abs() * dx.unsigned_abs() + dz.unsigned_abs() * dz.unsigned_abs();
+    dot2.times(100) < WideU::mul(len2, 49).times(4096 * 4096)
 }
 
 /// Exact 100-unit TASK_MOVE_AWAY_PATH endpoint from the already-computed ideal
@@ -559,19 +561,21 @@ pub const fn follow_use(
     }
 }
 
+/// Largest view-space component the use score is defined for. PlayerUse only
+/// considers things within 64 units, so the vector is at most about 111
+/// units long; 4096 leaves a very wide margin and keeps every square and the
+/// 51/49 gate below 2^32, so the score is plain `u32` arithmetic.
+const USE_SCORE_MAX_COMPONENT: i32 = 4096;
+
+/// The score is the squared tangent of the angle off the view axis in Q16:
+/// `side2 / forward2` scaled by 2^16. Only called after the 0.7 gate, which
+/// keeps `side2` under 1.05 * `forward2`, so the scaled ratio stays below
+/// 70,000 and the quotient fits `u32` with room to spare. `forward2` is
+/// positive because `vz` is.
 #[optimize(size)]
 #[inline]
-fn angular_score(vx: i32, vy: i32, vz: i32) -> Option<i32> {
-    if vz <= 0 {
-        return None;
-    }
-    let ax = vx.saturating_abs();
-    let ay = vy.saturating_abs();
-    let side2 = (ax as i64)
-        .saturating_mul(ax as i64)
-        .saturating_add((ay as i64).saturating_mul(ay as i64));
-    let forward2 = (vz as i64).saturating_mul(vz as i64).max(1);
-    Some(((side2 << 16) / forward2).min(i32::MAX as i64) as i32)
+fn angular_score(side2: u32, forward2: u32) -> i32 {
+    psx_math::int32::mul_div_u32(side2, 1 << 16, forward2).min(i32::MAX as u32) as i32
 }
 
 #[optimize(size)]
@@ -639,15 +643,19 @@ pub fn scientist_use_score(vx: i32, vy: i32, vz: i32) -> Option<i32> {
     if vz <= 0 {
         return None;
     }
-    let side2 = (vx as i64)
-        .saturating_mul(vx as i64)
-        .saturating_add((vy as i64).saturating_mul(vy as i64));
-    let forward2 = (vz as i64).saturating_mul(vz as i64);
-    // vz/sqrt(vz^2+side^2) > 7/10  <=>  51*vz^2 > 49*side^2.
-    if forward2.saturating_mul(51) <= side2.saturating_mul(49) {
+    let limit = USE_SCORE_MAX_COMPONENT as u32;
+    let (ax, ay, az) = (vx.unsigned_abs(), vy.unsigned_abs(), vz.unsigned_abs());
+    if ax > limit || ay > limit || az > limit {
+        // Far beyond the 64 unit reach: nothing to use.
         return None;
     }
-    angular_score(vx, vy, vz)
+    let side2 = ax * ax + ay * ay;
+    let forward2 = az * az;
+    // vz/sqrt(vz^2+side^2) > 7/10  <=>  51*vz^2 > 49*side^2.
+    if forward2 * 51 <= side2 * 49 {
+        return None;
+    }
+    Some(angular_score(side2, forward2))
 }
 
 #[optimize(size)]
@@ -712,12 +720,12 @@ pub fn script_candidate_eligible(
     if kind != wanted_kind || !active || health == 0 || script_busy || radius < 0 {
         return false;
     }
-    let d2 = (delta[0] as i64)
-        .saturating_mul(delta[0] as i64)
-        .saturating_add((delta[1] as i64).saturating_mul(delta[1] as i64))
-        .saturating_add((delta[2] as i64).saturating_mul(delta[2] as i64));
-    let r2 = (radius as i64).saturating_mul(radius as i64);
-    d2 <= r2
+    // Three squares of at most 2^31 each stay below 2^64; the former saturating
+    // signed sum only saturated above 2^63, which no radius squared (at most
+    // 2^62) reaches, so the comparison is the same.
+    let sq = |v: i32| WideU::mul(v.unsigned_abs(), v.unsigned_abs());
+    let d2 = sq(delta[0]).saturating_add(sq(delta[1])).saturating_add(sq(delta[2]));
+    d2 <= WideU::mul(radius as u32, radius as u32)
 }
 
 #[optimize(size)]
@@ -982,6 +990,66 @@ mod tests {
             follow_use(true, false, false, false, true, false),
             FollowUse::Start
         );
+    }
+
+    #[test]
+    fn use_score_matches_the_wide_form() {
+        // The former i64 form, verbatim.
+        let wide = |vx: i32, vy: i32, vz: i32| -> Option<i32> {
+            if vz <= 0 {
+                return None;
+            }
+            let side2 = (vx as i64)
+                .saturating_mul(vx as i64)
+                .saturating_add((vy as i64).saturating_mul(vy as i64));
+            let forward2 = (vz as i64).saturating_mul(vz as i64);
+            if forward2.saturating_mul(51) <= side2.saturating_mul(49) {
+                return None;
+            }
+            let ax = vx.saturating_abs();
+            let ay = vy.saturating_abs();
+            let side2 = (ax as i64)
+                .saturating_mul(ax as i64)
+                .saturating_add((ay as i64).saturating_mul(ay as i64));
+            let forward2 = (vz as i64).saturating_mul(vz as i64).max(1);
+            Some(((side2 << 16) / forward2).min(i32::MAX as i64) as i32)
+        };
+        let edges = [
+            -4096, -4095, -111, -64, -8, -7, -1, 0, 1, 7, 8, 64, 111, 4095, 4096,
+        ];
+        for &x in &edges {
+            for &y in &edges {
+                for &z in &edges {
+                    assert_eq!(scientist_use_score(x, y, z), wide(x, y, z), "{x} {y} {z}");
+                }
+            }
+        }
+        // The whole realistic cube (use reach 64 gives vectors below 112), and
+        // a coarse pass over the full supported range.
+        for x in -120..=120 {
+            for y in -120..=120 {
+                for z in (-3..=120).step_by(1) {
+                    assert_eq!(scientist_use_score(x, y, z), wide(x, y, z), "{x} {y} {z}");
+                }
+            }
+        }
+        let mut state = 0x1234_5679u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        for _ in 0..1_000_000 {
+            let x = (next() % 8193) as i32 - 4096;
+            let y = (next() % 8193) as i32 - 4096;
+            let z = (next() % 4098) as i32 - 1;
+            assert_eq!(scientist_use_score(x, y, z), wide(x, y, z), "{x} {y} {z}");
+        }
+        // Beyond the supported range there is nothing to use.
+        assert_eq!(scientist_use_score(0, 0, 4097), None);
+        assert_eq!(scientist_use_score(4097, 0, 4096), None);
+        assert_eq!(scientist_use_score(i32::MIN, 0, i32::MAX), None);
     }
 
     #[optimize(size)]

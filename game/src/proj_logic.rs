@@ -6,6 +6,8 @@
 //! includes this file by path). Velocities are world units per 20 Hz tick
 //! (retail units per second divided by 20); directions are q12 unit vectors.
 
+use psx_math::Wide;
+
 /// A rocket's velocity is kept in sixteenths of a unit per tick (the same
 /// representation the grunt's grenade uses) so its slow decay is not eaten by
 /// whole-unit rounding.
@@ -28,15 +30,14 @@ pub const ROCKET_COAST_HALF_GRAVITY_Q4: i32 = 8;
 
 #[optimize(size)]
 
-fn isqrt64(v: i64) -> i64 {
-    psx_math::int32::isqrt_i32(v.clamp(0, i32::MAX as i64) as i32) as i64
-}
 
 /// Length of a velocity.
 #[optimize(size)]
 pub fn speed(v: [i32; 3]) -> i32 {
-    let s = v[0] as i64 * v[0] as i64 + v[1] as i64 * v[1] as i64 + v[2] as i64 * v[2] as i64;
-    isqrt64(s) as i32
+    // The sum of squares, saturated at i32::MAX before the root as it always was.
+    let sq = |c: i32| c.unsigned_abs().saturating_mul(c.unsigned_abs());
+    let s = sq(v[0]).saturating_add(sq(v[1])).saturating_add(sq(v[2]));
+    psx_math::int32::isqrt_i32(s.min(i32::MAX as u32) as i32)
 }
 
 /// One 0.1 s think of a lit rocket: `v` is its velocity (q4), `dir` the unit
@@ -50,23 +51,23 @@ pub fn speed(v: [i32; 3]) -> i32 {
 #[inline(never)]
 #[optimize(size)]
 pub fn rocket_think(v: [i32; 3], dir: [i32; 3], since_ignite: u32, in_water: bool) -> ([i32; 3], bool) {
-    let s = speed(v) as i64;
+    let s = speed(v);
     let boost = since_ignite < ROCKET_BOOST_TICKS;
     let along = if boost {
-        (s * 4 + 2) / 5 + ROCKET_BOOST_STEP_Q4 as i64
+        (s * 4 + 2) / 5 + ROCKET_BOOST_STEP_Q4
     } else {
         (s * 798 + 500) / 1000
     };
     let mut out = [0i32; 3];
     for a in 0..3 {
         // a fifth of the old velocity (819/4096) plus the new heading, rounded
-        out[a] = ((v[a] as i64 * 819 + dir[a] as i64 * along + 2048) >> 12) as i32;
+        out[a] = Wide::mul(v[a], 819).mul_add(dir[a], along).plus(2048).shr_i32(12);
     }
     let cap = if in_water { ROCKET_TOP_SPEED_WATER_Q4 } else { ROCKET_TOP_SPEED_Q4 };
     let len = speed(out);
     if boost && len > cap {
         for a in 0..3 {
-            out[a] = (out[a] as i64 * cap as i64 / len as i64) as i32;
+            out[a] = psx_math::int32::mul_div_i32(out[a], cap, len);
         }
     }
     let stalled = !boost && !in_water && len < ROCKET_STALL_SPEED_Q4;
@@ -156,12 +157,12 @@ pub fn segment_hits_cylinder(a: [i32; 3], b: [i32; 3], c: [i32; 3], r: i32, hh: 
 /// sliding part is kept.
 #[inline(never)]
 pub fn bounce(v: [i32; 3], n: [i32; 3], friction_q8: i32) -> [i32; 3] {
-    let dot = (v[0] as i64 * n[0] as i64 + v[1] as i64 * n[1] as i64 + v[2] as i64 * n[2] as i64) >> 12;
+    let dot = Wide::dot3(v, n) >> 12;
     // backoff = 2 - friction; the clip subtracts backoff * (v.n) * n
-    let backoff_q8 = 2 * 256 - friction_q8 as i64;
+    let backoff_q8 = 2 * 256 - friction_q8;
     let mut out = [0i32; 3];
     for a in 0..3 {
-        out[a] = (v[a] as i64 - ((n[a] as i64 * dot * backoff_q8) >> 20)) as i32;
+        out[a] = (Wide::of(v[a]) - (Wide::of(n[a]).mul_w(dot).times(backoff_q8) >> 20)).low();
     }
     out
 }
@@ -190,29 +191,22 @@ pub const HORNET_FOV_COS_Q12: i32 = 3686;
 /// wide the turn is (never backwards); an orange one keeps its speed.
 #[inline(never)]
 pub fn hornet_think(flight: [i32; 3], to_enemy: [i32; 3], red: bool) -> [i32; 3] {
-    let dot = ((flight[0] as i64 * to_enemy[0] as i64
-        + flight[1] as i64 * to_enemy[1] as i64
-        + flight[2] as i64 * to_enemy[2] as i64)
-        >> 12) as i32;
+    let dot = Wide::dot3(flight, to_enemy).shr_i32(12);
     let sum = [
         flight[0] + to_enemy[0],
         flight[1] + to_enemy[1],
         flight[2] + to_enemy[2],
     ];
-    let len = speed(sum).max(1) as i64;
-    let cruise = if red { HORNET_RED_SPEED } else { HORNET_ORANGE_SPEED } as i64;
+    let len = speed(sum).max(1);
+    let cruise = if red { HORNET_RED_SPEED } else { HORNET_ORANGE_SPEED };
     let scale = if red {
         // a flat-out reversal still crawls at a quarter of the speed
-        let d = if dot <= 0 { 1024 } else { dot } as i64;
-        cruise * d / 4096
+        let d = if dot <= 0 { 1024 } else { dot };
+        psx_math::int32::mul_div_i32(cruise, d, 4096)
     } else {
         cruise
     };
-    [
-        (sum[0] as i64 * scale / len) as i32,
-        (sum[1] as i64 * scale / len) as i32,
-        (sum[2] as i64 * scale / len) as i32,
-    ]
+    sum.map(|c| psx_math::int32::mul_div_i32(c, scale, len))
 }
 
 #[cfg(test)]

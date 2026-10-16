@@ -55,13 +55,15 @@ impl Listener {
 pub fn in_range(source_eye: [i32;3], listener_eye: [i32;3], radius: u16,
                 visible: bool, crosses_liquid: bool) -> Option<u32> {
     if !visible || crosses_liquid {return None;}
-    let mut distance = 0u64;
+    // Each delta is at most `radius` (below 2^16), so a square fits u32; the sum
+    // saturates, and the radius' square (under 2^32 - 1) is never reached then.
+    let mut distance = 0u32;
     for axis in 0..3 {
-        let delta = (source_eye[axis] as i64 - listener_eye[axis] as i64).unsigned_abs();
-        if delta > radius as u64 {return None;}
-        distance += delta * delta;
+        let delta = source_eye[axis].abs_diff(listener_eye[axis]);
+        if delta > radius as u32 {return None;}
+        distance = distance.saturating_add(delta * delta);
     }
-    (distance <= radius as u64 * radius as u64).then_some(distance as u32)
+    (distance <= radius as u32 * radius as u32).then_some(distance)
 }
 
 #[cfg(test)]

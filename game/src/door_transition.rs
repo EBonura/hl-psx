@@ -1,4 +1,6 @@
 //! Transient matching global-door state, separate from actor/train admission.
+use psx_math::int32::mul_div_i32;
+
 pub const ANGULAR: u8 = 1;
 pub const REVERSED: u8 = 2;
 pub const CAPACITY: usize = 9; // maximum of the 63 retail placements
@@ -38,16 +40,27 @@ impl Carry {
         let phase = if self.movement.map(i32::from) == movement {
             self.phase as i32
         } else {
-            let length: i64 = movement.iter().map(|&v| v as i64*v as i64).sum();
-            if length == 0 { return None; }
-            let dot: i64 = (0..3).map(|axis| offset[axis] as i64*movement[axis] as i64).sum();
-            ((dot*4096)/length).clamp(0,4096) as i32
+            progress_along(offset, movement)?
         };
         // Do not silently place a mismatched global model somewhere along a
         // different path. One unit accounts for the renderer's integer phase.
         (0..3).all(|axis| (base_center[axis]+((movement[axis]*phase)>>12)-expected[axis]).abs() <= 1)
             .then_some(phase)
     }
+}
+
+/// Fraction (0..=4096) of `movement` that `offset` has covered, by projection.
+/// Doors move a few thousand units at most, so both vectors fit 14 bits a
+/// component, which keeps the squared length and the dot product in `i32`;
+/// anything larger is not a door's path and has no phase.
+#[optimize(size)]
+pub fn progress_along(offset: [i32;3], movement: [i32;3]) -> Option<i32> {
+    const LIMIT: u32 = 1 << 14;
+    if movement.iter().chain(offset.iter()).any(|v| v.unsigned_abs() > LIMIT) { return None; }
+    let length: i32 = movement.iter().map(|&v| v*v).sum();
+    if length == 0 { return None; }
+    let dot: i32 = (0..3).map(|axis| offset[axis]*movement[axis]).sum();
+    Some(mul_div_i32(dot,4096,length).clamp(0,4096))
 }
 
 #[optimize(size)]
@@ -83,6 +96,51 @@ mod tests {
         carry.state=3;
         assert_eq!(carry.phase_at(source_landmark,[-1544,-2688,1442],[-58,0,0]),Some(1537));
         assert_eq!(carry.speed,150);
+    }
+    #[optimize(size)]
+    #[test]
+    fn progress_matches_the_wide_form() {
+        let wide = |offset: [i32; 3], movement: [i32; 3]| -> Option<i32> {
+            let length: i64 = movement.iter().map(|&v| v as i64 * v as i64).sum();
+            if length == 0 {
+                return None;
+            }
+            let dot: i64 = (0..3).map(|a| offset[a] as i64 * movement[a] as i64).sum();
+            Some(((dot * 4096) / length).clamp(0, 4096) as i32)
+        };
+        let mut state = 0x1357_9bdfu32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        let edges = [-16384, -16383, -4096, -64, -1, 0, 1, 2, 63, 4095, 16383, 16384];
+        for &a in &edges {
+            for &b in &edges {
+                for &c in &edges {
+                    for &m in &edges {
+                        let (o, mv) = ([a, b, c], [m, c, 0]);
+                        assert_eq!(progress_along(o, mv), wide(o, mv));
+                        let mv = [m, m, m];
+                        assert_eq!(progress_along(o, mv), wide(o, mv));
+                    }
+                }
+            }
+        }
+        for round in 0..600_000u32 {
+            let bits = 1 + round % 14;
+            let mut v = |next: &mut dyn FnMut() -> u32| -> i32 {
+                (next() % (2 << bits)) as i32 - (1 << bits)
+            };
+            let o = [v(&mut next), v(&mut next), v(&mut next)];
+            let m = [v(&mut next), v(&mut next), v(&mut next)];
+            assert_eq!(progress_along(o, m), wide(o, m), "{o:?} {m:?}");
+        }
+        // Not a door's path: no phase.
+        assert_eq!(progress_along([0, 0, 0], [16385, 0, 0]), None);
+        assert_eq!(progress_along([16385, 0, 0], [1, 0, 0]), None);
+        assert_eq!(progress_along([i32::MIN, 0, 0], [1, 0, 0]), None);
     }
     #[optimize(size)]
     #[test]

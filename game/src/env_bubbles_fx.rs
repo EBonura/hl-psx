@@ -36,8 +36,8 @@ pub unsafe fn emit(m: &Map, rec: map::LogicEnt) {
         DEBRIS[slot].blood_sprite = id as u8;
         DEBRIS[slot].blood_frame = impact_rng().below(def.n_frames as u32) as u8;
         let divisor_q8 = 512 + impact_rng().below(769) as i32;
-        DEBRIS[slot].blood_half_q4 = ((def.base_w as i64 * 8 * world_scale as i64 * 256)
-            / (4096 * divisor_q8) as i64) as i16;
+        DEBRIS[slot].blood_half_q4 =
+            env_bubbles::half_width_q4(def.base_w as i32, world_scale, divisor_q8);
     }
 }
 

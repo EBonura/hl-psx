@@ -93,8 +93,9 @@ pub const CDAUDIO_POLL_TICKS: u16 = 10;
 
 /// The track starts once the player is within `radius` of the target
 /// (`distance_sq` and `radius` share a unit; a zero radius never polls).
-pub const fn cdaudio_in_range(radius: u16, distance_sq: i64) -> bool {
-    radius > 0 && distance_sq <= (radius as i64) * (radius as i64)
+pub const fn cdaudio_in_range(radius: u16, distance_sq: i32) -> bool {
+    // radius * radius is below 2^32; a wrapped (negative) squared distance is in range.
+    radius > 0 && (distance_sq < 0 || distance_sq as u32 <= (radius as u32) * (radius as u32))
 }
 
 
@@ -116,8 +117,12 @@ pub const fn multiple_after_fire(wait_ticks: i16) -> Option<u16> {
 /// UTIL_ScreenShake: a shake reaches only a player standing on the ground, and
 /// when the volume has a radius only one inside it; radius zero means anyone.
 /// `distance_sq` and `radius` share a unit.
-pub const fn shake_reaches(on_ground: bool, radius: i32, distance_sq: i64) -> bool {
-    on_ground && (radius <= 0 || distance_sq < (radius as i64) * (radius as i64))
+pub const fn shake_reaches(on_ground: bool, radius: i32, distance_sq: i32) -> bool {
+    // The square saturates at u32::MAX, which every non-negative i32 is below.
+    on_ground
+        && (radius <= 0
+            || distance_sq < 0
+            || (distance_sq as u32) < radius.unsigned_abs().saturating_mul(radius.unsigned_abs()))
 }
 
 // ---------------------------------------------------------------- env_spark

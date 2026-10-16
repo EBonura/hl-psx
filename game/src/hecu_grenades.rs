@@ -74,8 +74,9 @@ pub fn ally_clear(origin: [i32;3], target: [i32;3]) -> bool {
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Plan { pub velocity_q4: [i16;3], pub apex: [i32;3] }
-fn sqrt(value: i64) -> Option<i32> {
-    let value=i32::try_from(value).ok()?;
+/// `None` for an overflowed or negative argument.
+fn sqrt(value: Option<i32>) -> Option<i32> {
+    let value=value?;
     if value < 0 {None} else {Some(isqrt_i32(value))}
 }
 fn velocity(values: [i32;3]) -> Option<[i16;3]> {
@@ -88,8 +89,8 @@ pub fn toss(start: [i32;3], target: [i32;3], apex_y: i32) -> Option<Plan> {
     if target[1]-start[1] > 500 {return None;}
     let up=apex_y-start[1];
     let down=apex_y-target[1];
-    let t1=sqrt(up as i64*2*256*256)?;
-    let t2=sqrt(down as i64*2*256*256)?;
+    let t1=sqrt(up.checked_mul(2*256*256))?;
+    let t2=sqrt(down.checked_mul(2*256*256))?;
     if t1 < 512 || t2 == 0 {return None;}
     let total=t1+t2;
     let delta=[0,1,2].map(|axis|target[axis]-start[axis]);
@@ -102,11 +103,11 @@ pub fn toss(start: [i32;3], target: [i32;3], apex_y: i32) -> Option<Plan> {
 pub fn launch(start: [i32;3], target: [i32;3], speed_per_second: u16) -> Option<Plan> {
     if speed_per_second == 0 {return None;}
     let delta=[0,1,2].map(|axis|target[axis]-start[axis]);
-    let distance=sqrt(delta.iter().map(|&n|n as i64*n as i64).sum())?;
+    let distance=sqrt(delta.iter().try_fold(0i32,|sum,&n|sum.checked_add(n.checked_mul(n)?)))?;
     let time=distance*20*256/speed_per_second as i32;
     if time == 0 {return None;}
     let v=velocity([delta[0]*16*256/time,delta[1]*16*256/time+time*8/256,delta[2]*16*256/time])?;
-    let fall=((time as i64*time as i64)>>19) as i32; // time*time/(8*256*256)
+    let fall=psx_math::int32::mul_shr_i32(time,time,19); // time*time/(8*256*256)
     let apex=[start[0]+delta[0]/2,start[1]+delta[1]/2+fall,start[2]+delta[2]/2];
     Some(Plan {velocity_q4:v,apex})
 }

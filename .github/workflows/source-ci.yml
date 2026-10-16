@@ -33,6 +33,9 @@ jobs:
           test "$(tr -d '\n' < VERSION)" = "$(sed -nE 's/^version = "([0-9.]+)"/\1/p' game/Cargo.toml)"
           bash scripts/check-source-only.sh
 
+      - name: Keep guest code free of 64-bit integers and floats
+        run: sh scripts/check-no64.sh
+
       - name: Hydrate the pinned PSoXide SDK
         run: cargo run --release --locked --manifest-path host/hl-build/Cargo.toml -- sdk
 

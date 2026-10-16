@@ -32,7 +32,8 @@ pub fn lifetime(sample: u8) -> u8 {
     20 + sample
 }
 pub fn velocity_q4(velocity: [i32; 3], world_scale: i32) -> [i16; 3] {
-    velocity.map(|v| ((v as i64 * 16 * world_scale as i64) / (20 * 4096)) as i16)
+    // v * 16 * scale / (20 * 4096) is v * scale / 5120 in lowest terms.
+    velocity.map(|v| psx_math::int32::mul_div_i32(v, world_scale, 5120) as i16)
 }
 pub fn admit<const N: usize>(pool: &mut [Debris; N], cursor: &mut usize, drop: Debris) {
     pool[*cursor % N] = drop;
@@ -78,7 +79,7 @@ pub fn direction(authored: [i32; 3], flags: u16, sample: [i32; 3]) -> [i32; 3] {
     }
 }
 pub fn decal_end(position: [i32; 3], direction: [i32; 3], amount: u16) -> [i32; 3] {
-    core::array::from_fn(|k| position[k] + ((direction[k] as i64 * amount as i64 * 2) >> 12) as i32)
+    core::array::from_fn(|k| position[k] + psx_math::int32::mul_shr_i32(direction[k], amount as i32 * 2, 12))
 }
 #[cfg(test)]
 mod tests {
@@ -114,6 +115,45 @@ mod tests {
             }
         }
         assert!(pool.iter().all(|d| d.ttl == 0));
+    }
+    #[test]
+    fn blood_velocity_matches_the_wide_form() {
+        let wide = |v: i32, scale: i32| ((v as i64 * 16 * scale as i64) / (20 * 4096)) as i16;
+        let mut state = 0x2468_ace1u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        // The former form multiplied in i64, which holds for products under
+        // 2^59: velocities are a few thousand and the scale is Q12.
+        for &v in &[-(1 << 28), -4096, -96, -1, 0, 1, 95, 4096, 1 << 28] {
+            for &scale in &[
+                -(1 << 28),
+                -1,
+                0,
+                1,
+                2048,
+                4095,
+                4096,
+                8192,
+                1 << 20,
+                1 << 28,
+            ] {
+                assert_eq!(velocity_q4([v, v, v], scale), [wide(v, scale); 3]);
+            }
+        }
+        for _ in 0..500_000 {
+            let (v, scale) = (
+                next() as i32 >> (3 + next() % 29),
+                next() as i32 >> (3 + next() % 29),
+            );
+            assert_eq!(
+                velocity_q4([v, 0, -v], scale),
+                [wide(v, scale), 0, wide(-v, scale)]
+            );
+        }
     }
     #[test]
     fn blood_modulation_preserves_palette_color_at_white_texels() {

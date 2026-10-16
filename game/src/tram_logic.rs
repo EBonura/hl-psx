@@ -2,6 +2,8 @@
 //! runtime path/rotation code. Keeping these integer-only avoids pulling PSX
 //! math dependencies into the host tests.
 
+use psx_math::Wide;
+
 /// Marker for the compact speed/wheels/start motion word.
 ///
 /// Bit 31 distinguishes it from the two legacy layouts. The remaining fields
@@ -237,6 +239,11 @@ pub const fn should_apply_spawn_startspeed(riding_transfer: bool) -> bool {
     !riding_transfer
 }
 
+#[inline(always)]
+const fn wide_diff(a: i32, b: i32) -> Wide {
+    Wide::of(a).sub_w(Wide::of(b))
+}
+
 /// Whether a carried train lies just before the first point of its new path.
 ///
 /// Nearest-point projection clamps such a position to waypoint zero. Preserve
@@ -246,16 +253,12 @@ pub const fn should_apply_spawn_startspeed(riding_transfer: bool) -> bool {
 /// approach.
 #[inline(always)]
 pub const fn is_upstream_of_first(car: [i32; 3], first: [i32; 3], second: [i32; 3]) -> bool {
-    let sx = second[0] as i64 - first[0] as i64;
-    let sy = second[1] as i64 - first[1] as i64;
-    let sz = second[2] as i64 - first[2] as i64;
-    if sx == 0 && sy == 0 && sz == 0 {
+    let (sx, sy, sz) = (wide_diff(second[0], first[0]), wide_diff(second[1], first[1]), wide_diff(second[2], first[2]));
+    if sx.is_zero() && sy.is_zero() && sz.is_zero() {
         return false;
     }
-    let dx = car[0] as i64 - first[0] as i64;
-    let dy = car[1] as i64 - first[1] as i64;
-    let dz = car[2] as i64 - first[2] as i64;
-    dx * sx + dy * sy + dz * sz < 0
+    let (dx, dy, dz) = (wide_diff(car[0], first[0]), wide_diff(car[1], first[1]), wide_diff(car[2], first[2]));
+    dx.mul_w(sx).add_w(dy.mul_w(sy)).add_w(dz.mul_w(sz)).is_negative()
 }
 
 /// Car-local passenger centre limit across the tram's narrow axis.
@@ -380,9 +383,161 @@ pub const fn rider_motion_decision(
     }
 }
 
+/// Squared distance between two points, saturating just below `u32::MAX`
+/// (which callers use as "no candidate yet"). Exact for any two points inside
+/// a map, where the three squares sum to under 2^32.
+#[inline]
+pub fn squared_distance(a: [i32; 3], b: [i32; 3]) -> u32 {
+    let mut sum = 0u32;
+    let mut axis = 0;
+    while axis < 3 {
+        let d = a[axis].abs_diff(b[axis]);
+        sum = sum.saturating_add(d.saturating_mul(d));
+        axis += 1;
+    }
+    sum.min(u32::MAX - 1)
+}
+
+/// Largest component of a segment, or of the offset of a point from its start,
+/// that `project_onto_segment` accepts. A map is at most 8192 units across, so
+/// every real train segment and train position is inside a third of it; three
+/// times the map is the largest limit that keeps the squared length and the
+/// dot product (3 * limit^2, under 2^31) in `i32`.
+pub const SEGMENT_LIMIT: u32 = 3 << 13;
+
+/// Project `center` onto the segment `a..b`: the squared distance to the
+/// closest point, the distance of that point along the segment (capped at
+/// `i16::MAX`) and the point itself, in whole units with the division
+/// truncated toward zero. `None` for a zero-length segment or one beyond
+/// `SEGMENT_LIMIT`.
+#[inline(never)]
+pub fn project_onto_segment(
+    a: [i32; 3],
+    b: [i32; 3],
+    center: [i32; 3],
+) -> Option<(u32, i16, [i32; 3])> {
+    let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let rel = [
+        center[0].saturating_sub(a[0]),
+        center[1].saturating_sub(a[1]),
+        center[2].saturating_sub(a[2]),
+    ];
+    if d.iter()
+        .chain(rel.iter())
+        .any(|v| v.unsigned_abs() > SEGMENT_LIMIT)
+    {
+        return None;
+    }
+    let len2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+    if len2 == 0 {
+        return None;
+    }
+    let along = (rel[0] * d[0] + rel[1] * d[1] + rel[2] * d[2]).clamp(0, len2);
+    let q = [
+        a[0] + psx_math::int32::mul_div_i32(d[0], along, len2),
+        a[1] + psx_math::int32::mul_div_i32(d[1], along, len2),
+        a[2] + psx_math::int32::mul_div_i32(d[2], along, len2),
+    ];
+    let length = psx_math::int32::isqrt_u32(len2 as u32);
+    let distance =
+        psx_math::int32::mul_div_u32(length, along as u32, len2 as u32).min(i16::MAX as u32) as i16;
+    Some((squared_distance(center, q), distance, q))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn segment_projection_matches_the_wide_form() {
+        // The former i64 body of `train_seek_position`, verbatim.
+        let wide = |a: [i32; 3], b: [i32; 3], center: [i32; 3]| -> Option<(i64, i16, [i32; 3])> {
+            let d = [
+                (b[0] - a[0]) as i64,
+                (b[1] - a[1]) as i64,
+                (b[2] - a[2]) as i64,
+            ];
+            let len2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            if len2 == 0 {
+                return None;
+            }
+            let rel = [
+                (center[0] - a[0]) as i64,
+                (center[1] - a[1]) as i64,
+                (center[2] - a[2]) as i64,
+            ];
+            let along_num = (rel[0] * d[0] + rel[1] * d[1] + rel[2] * d[2]).clamp(0, len2);
+            let q = [
+                a[0] as i64 + d[0] * along_num / len2,
+                a[1] as i64 + d[1] * along_num / len2,
+                a[2] as i64 + d[2] * along_num / len2,
+            ];
+            let error = (center[0] as i64 - q[0]).pow(2)
+                + (center[1] as i64 - q[1]).pow(2)
+                + (center[2] as i64 - q[2]).pow(2);
+            let length = psx_math::int32::isqrt_u64(len2 as u64) as u64;
+            let distance = (length * along_num as u64 / len2 as u64).min(i16::MAX as u64) as i16;
+            Some((error, distance, [q[0] as i32, q[1] as i32, q[2] as i32]))
+        };
+        let mut state = 0x31d7_5a9bu32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        let check = |a: [i32; 3], b: [i32; 3], c: [i32; 3]| {
+            let new = project_onto_segment(a, b, c);
+            let old = wide(a, b, c);
+            assert_eq!(
+                new.map(|(e, dist, q)| (e as i64, dist, q)),
+                old,
+                "{a:?} {b:?} {c:?}"
+            );
+        };
+        let edges = [-8192, -4096, -1, 0, 1, 7, 4095, 8192];
+        for &x in &edges {
+            for &y in &edges {
+                for &z in &edges {
+                    for &c in &edges {
+                        check([x, y, z], [y, z, x], [c, x, y]);
+                        check([x, y, z], [x, y, z], [c, c, c]);
+                        check([x, 0, 0], [c, 0, 0], [y, z, 0]);
+                    }
+                }
+            }
+        }
+        for round in 0..600_000u32 {
+            let range = if round % 4 == 0 { 8192 } else { 300 };
+            let mut point = |next: &mut dyn FnMut() -> u32| -> [i32; 3] {
+                let mut axis = || (next() % (2 * range as u32 + 1)) as i32 - range;
+                [axis(), axis(), axis()]
+            };
+            let (a, b) = (point(&mut next), point(&mut next));
+            // Mostly near the segment, sometimes anywhere in the map.
+            let c = if round % 3 == 0 {
+                point(&mut next)
+            } else {
+                let t = (next() % 1025) as i32;
+                let on = [
+                    a[0] + (b[0] - a[0]) * t / 1024,
+                    a[1] + (b[1] - a[1]) * t / 1024,
+                    a[2] + (b[2] - a[2]) * t / 1024,
+                ];
+                let j = point(&mut next);
+                [on[0] + j[0] / 8, on[1] + j[1] / 8, on[2] + j[2] / 8]
+            };
+            check(a, b, c);
+        }
+        // Beyond the supported size there is no projection.
+        assert!(project_onto_segment([0; 3], [24577, 0, 0], [0; 3]).is_none());
+        assert!(project_onto_segment([0; 3], [1, 0, 0], [0, i32::MIN, 0]).is_none());
+        assert_eq!(
+            squared_distance([i32::MIN, 0, 0], [i32::MAX, 0, 0]),
+            u32::MAX - 1
+        );
+        assert_eq!(squared_distance([3, 4, 12], [0, 0, 0]), 169);
+    }
 
     #[optimize(size)]
     #[test]
