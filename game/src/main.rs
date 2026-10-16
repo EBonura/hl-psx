@@ -3541,7 +3541,7 @@ unsafe fn set_emit_cached_face(m: &Map, face: usize, rec: PvsFaceRec) {
 /// Light styles step at 10 Hz of game time (two 20 Hz simulation ticks).
 /// Called from `play` on the line it shares with the liquid sway, so the
 /// shipped PGO profile's line offsets inside `play` stay aligned.
-#[inline(always)]
+#[inline(never)]
 unsafe fn light_tick(m: &Map, sim_frame_no: u32) {
     m.tick_lightstyles(sim_frame_no >> 1, LIGHTSTYLE_ACTIVE_MASK);
 }
@@ -3805,7 +3805,8 @@ const EMPTY_LOGIC_EVENT: LogicEvent = LogicEvent {
 
 #[derive(Clone, Copy)]
 struct ImpactMark {
-    pos: [i32; 3],
+    /// World position; the cooked world is i16, so a mark fits the same.
+    pos: [i16; 3],
     ttl: u8,
     kind: u8,
     /// Surface normal, Q12 >> 5: the decal lies in this plane.
@@ -21549,6 +21550,7 @@ unsafe fn put_impact_mark(m: &Map, hit: &phys::RayHit, kind: u8, family: usize, 
         hit.pos[2] + ((hit.normal[2] * 2) >> 12),
     ];
     let leaf = camera_leaf(m, pos);
+    let pos = [pos[0] as i16, pos[1] as i16, pos[2] as i16];
     let i = IMPACT_MARK_CURSOR % MAX_IMPACT_MARKS;
     IMPACT_MARKS[i] = ImpactMark {
         pos,
@@ -21788,7 +21790,7 @@ unsafe fn queue_impact_marks(
                 (mark.normal[1] as i32) << 5,
                 (mark.normal[2] as i32) << 5,
             ]);
-            pos = mark.pos;
+            pos = [mark.pos[0] as i32, mark.pos[1] as i32, mark.pos[2] as i32];
             right = across;
             down = [-up[0], -up[1], -up[2]];
             half = [hs as i32; 2];
@@ -21822,13 +21824,10 @@ unsafe fn queue_impact_marks(
             ax[1][axis] = dot12(row, down) * half[1] >> 12;
             axis += 1;
         }
-        let r = half[0].max(half[1]) * 3 / 2;
-        let zf = centre[2] + r;
-        if zf < near
-            || zf - 2 * r > far
-            || (centre[0].abs() - r) * h_proj > 224 * zf
-            || (centre[1].abs() - r) * h_proj > 184 * zf
-        {
+        // Sideways reject before any division (a wide margin: partly visible
+        // decals still draw).
+        let r = half[0].max(half[1]);
+        if (centre[0].abs() - r) * h_proj > 224 * (centre[2] + r) {
             continue;
         }
         let mut screen = [(0i16, 0i16); 4];
