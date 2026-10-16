@@ -11,12 +11,12 @@
 
 #![feature(optimize_attribute)]
 
-#[path = "../../../game/src/env_bubbles.rs"]
-mod env_bubbles;
 mod door_seal;
 mod entity_support;
-mod pvs_pair;
+#[path = "../../../game/src/env_bubbles.rs"]
+mod env_bubbles;
 mod hma1_cook;
+mod pvs_pair;
 mod quad_grid;
 mod seated_placement;
 mod testmap;
@@ -5886,7 +5886,9 @@ fn collect_nav_nodes(
         let mut origin_hl = ent_value(block, "origin")
             .and_then(parse_vec3)
             .unwrap_or([0.0; 3]);
-        if node_type == NAV_NODE_LAND { origin_hl[2] += NAV_NODE_HEIGHT; }
+        if node_type == NAV_NODE_LAND {
+            origin_hl[2] += NAV_NODE_HEIGHT;
+        }
         let origin = to_world(origin_hl, scale);
         let leaf = point_leaf(origin_hl, nodes_lump, planes);
         out.push(NavNodeRec {
@@ -5911,9 +5913,10 @@ fn collect_nav_nodes(
             }
             let a = out[i].origin_hl;
             let b = out[j].origin_hl;
-            if out[i].node_type != out[j].node_type { continue; }
-            if out[i].node_type == NAV_NODE_LAND
-                && (a[2] - b[2]).abs() > NAV_LINK_VERTICAL_MAX {
+            if out[i].node_type != out[j].node_type {
+                continue;
+            }
+            if out[i].node_type == NAV_NODE_LAND && (a[2] - b[2]).abs() > NAV_LINK_VERTICAL_MAX {
                 continue;
             }
             let d2 = nav_dist2_hl(a, b);
@@ -6095,7 +6098,9 @@ fn parse_retail_nav(
             data,
             o + if node_type & NAV_NODE_AIR != 0 {
                 RETAIL_NODE_FLY_DOOR_ROUTE
-            } else { RETAIL_NODE_HUMAN_DOOR_ROUTE },
+            } else {
+                RETAIL_NODE_HUMAN_DOOR_ROUTE
+            },
             "node movement-hull route offset",
         )?;
         original_nodes.push(RetailNavNode {
@@ -6137,10 +6142,15 @@ fn parse_retail_nav(
                 [raw_node.first_link..raw_node.first_link + raw_node.link_count]
                 .iter()
                 .any(|link| {
-                    link.source == source && link.dest == next
-                        && link.mask & if raw_node.node_type & NAV_NODE_AIR != 0 {
-                            RETAIL_LINK_FLY
-                        } else { RETAIL_LINK_HUMAN } != 0
+                    link.source == source
+                        && link.dest == next
+                        && link.mask
+                            & if raw_node.node_type & NAV_NODE_AIR != 0 {
+                                RETAIL_LINK_FLY
+                            } else {
+                                RETAIL_LINK_HUMAN
+                            }
+                            != 0
                 });
             if !usable {
                 return Err(format!(
@@ -6269,10 +6279,14 @@ fn parse_f32_key(block: &str, key: &str, default: f32) -> f32 {
 
 // These two point keys retain the retail numeric prefix (128S means128).
 fn sound_number(block: &str, key: &str) -> f32 {
-    let value = ent_value(block,key).unwrap_or("").trim_start();
+    let value = ent_value(block, key).unwrap_or("").trim_start();
     for end in (1..=value.len()).rev() {
-        if !value.is_char_boundary(end) {continue;}
-        if let Ok(number) = value[..end].parse::<f32>() {return number;}
+        if !value.is_char_boundary(end) {
+            continue;
+        }
+        if let Ok(number) = value[..end].parse::<f32>() {
+            return number;
+        }
     }
     0.0
 }
@@ -8074,9 +8088,11 @@ fn collect_logic_entities_with_lightstyles(
             "momentary_rot_button" => LOGIC_MOMENTARY,
             // Cosmetic untargeted fans keep the map-tick path. Hazardous fans
             // need live angular speed even without a FireTargets name.
-            "func_rotating" if !ent_value(block, "targetname").unwrap_or("").is_empty()
-                || parse_spawnflags(block) & 128 != 0
-                || parse_f32_key(block, "dmg", 0.0) != 0.0 => {
+            "func_rotating"
+                if !ent_value(block, "targetname").unwrap_or("").is_empty()
+                    || parse_spawnflags(block) & 128 != 0
+                    || parse_f32_key(block, "dmg", 0.0) != 0.0 =>
+            {
                 LOGIC_FUNC_ROTATING
             }
             "func_pendulum"
@@ -8257,8 +8273,8 @@ fn collect_logic_entities_with_lightstyles(
         if kind == LOGIC_WEAPONBOX {
             let low = to_world([-16.0, -16.0, 0.0], scale);
             let high = to_world([16.0, 16.0, 16.0], scale);
-            mins = [0,1,2].map(|axis| origin[axis] + low[axis]);
-            maxs = [0,1,2].map(|axis| origin[axis] + high[axis]);
+            mins = [0, 1, 2].map(|axis| origin[axis] + low[axis]);
+            maxs = [0, 1, 2].map(|axis| origin[axis] + high[axis]);
         }
         if cls == "player_loadsaved" {
             // A point record has no volume: the bounds words carry the revert's
@@ -8345,7 +8361,8 @@ fn collect_logic_entities_with_lightstyles(
                 .round()
                 .clamp(0.0, i16::MAX as f32) as i16
         } else if kind == LOGIC_ENV_BUBBLES {
-            env_bubbles::interval_ticks(parse_f32_key(block,"frequency",0.0) as i32).min(i16::MAX as u16) as i16
+            env_bubbles::interval_ticks(parse_f32_key(block, "frequency", 0.0) as i32)
+                .min(i16::MAX as u16) as i16
         } else if cls == "player_loadsaved" {
             // CRevertSaved::LoadThink reloads `loadtime` seconds after Use.
             seconds_to_ticks_i16(parse_f32_key(block, "loadtime", 0.0))
@@ -8380,7 +8397,11 @@ fn collect_logic_entities_with_lightstyles(
         };
         let speed = if kind == LOGIC_ENV_BLOOD {
             let sprites = load_sprites_manifest();
-            let id = |name: &str| sprites.get(&(map_index, name.to_string())).map_or(255, |r| r.0.min(254));
+            let id = |name: &str| {
+                sprites
+                    .get(&(map_index, name.to_string()))
+                    .map_or(255, |r| r.0.min(254))
+            };
             id("bloodspray.spr") | (id("blood.spr") << 8)
         } else if kind == LOGIC_SCRIPTED || kind == LOGIC_TRIGGER_CAMERA {
             // Scripts carry their facing yaw here (q12); they have no speed key.
@@ -8404,8 +8425,10 @@ fn collect_logic_entities_with_lightstyles(
             parse_f32_key(block, "explodemagnitude", 0.0).clamp(0.0, 1000.0) as u16
         } else if kind == LOGIC_FUNC_ROTATING {
             // Angular velocity is degrees/second, never divided by map scale.
-            parse_f32_key(block, "speed", speed_default).abs()
-                .round().clamp(1.0, u16::MAX as f32) as u16
+            parse_f32_key(block, "speed", speed_default)
+                .abs()
+                .round()
+                .clamp(1.0, u16::MAX as f32) as u16
         } else if kind == LOGIC_FUNC_PENDULUM {
             let authored = parse_f32_key(block, "speed", speed_default);
             (if authored > 0.0 {
@@ -8450,14 +8473,17 @@ fn collect_logic_entities_with_lightstyles(
             _ => USE_TOGGLE,
         };
         let arg0 = match kind {
-            LOGIC_WEAPONBOX => out.iter().filter(|r: &&LogicRec| r.kind == LOGIC_WEAPONBOX).count() as u16,
+            LOGIC_WEAPONBOX => out
+                .iter()
+                .filter(|r: &&LogicRec| r.kind == LOGIC_WEAPONBOX)
+                .count() as u16,
             LOGIC_ENV_SOUND => {
-                let radius = sound_number(block,"radius") / scale;
+                let radius = sound_number(block, "radius") / scale;
                 if !radius.is_finite() || radius < 0.0 || radius > u16::MAX as f32 {
                     return Err("env_sound radius exceeds representation".into());
                 }
                 radius.round() as u16
-            },
+            }
             // The Blocked callback's damage: CBaseDoor's dmg (no default),
             // CFuncPlat's fixed 1.
             LOGIC_FUNC_DOOR => {
@@ -8642,8 +8668,10 @@ fn collect_logic_entities_with_lightstyles(
             // a stable cooked logic index.
             LOGIC_MULTISOURCE => 0,
             LOGIC_ENV_GLOBAL => global_hash(ent_value(block, "globalstate").unwrap_or("")),
-            LOGIC_ENV_BUBBLES => (parse_f32_key(block,"density",0.0) as i32 as u8) as u16,
-            LOGIC_ENV_BLOOD => parse_f32_key(block, "amount", 0.0).clamp(0.0, u16::MAX as f32) as u16,
+            LOGIC_ENV_BUBBLES => (parse_f32_key(block, "density", 0.0) as i32 as u8) as u16,
+            LOGIC_ENV_BLOOD => {
+                parse_f32_key(block, "amount", 0.0).clamp(0.0, u16::MAX as f32) as u16
+            }
             // The SDK's commented-out 250 cap is not applied: c2a5's 300 to 350
             // blasts keep their 2.5 x radius (damage saturates at 255 anyway).
             LOGIC_ENV_EXPLOSION => parse_f32_key(block, "iMagnitude", 100.0)
@@ -8663,15 +8691,16 @@ fn collect_logic_entities_with_lightstyles(
             _ => names.id(ent_value(block, "changetarget")),
         };
         let arg1 = match kind {
-            LOGIC_FUNC_ROTATING => parse_f32_key(block, "dmg", 0.0)
-                .clamp(0.0, u16::MAX as f32) as u16,
+            LOGIC_FUNC_ROTATING => {
+                parse_f32_key(block, "dmg", 0.0).clamp(0.0, u16::MAX as f32) as u16
+            }
             LOGIC_ENV_SOUND => {
-                let room = sound_number(block,"roomtype");
+                let room = sound_number(block, "roomtype");
                 if !room.is_finite() || !(0.0..29.0).contains(&room) {
                     return Err("env_sound requires original room type 0 through28".into());
                 }
                 room.trunc() as u16
-            },
+            }
             // CFuncTrain's Blocked damage (Spawn makes 0 into 2).
             LOGIC_FUNC_TRAIN => parse_f32_key(block, "dmg", 0.0).clamp(0.0, u16::MAX as f32) as u16,
             // m_iMaxLiveChildren (0 = no limit).
@@ -8696,15 +8725,20 @@ fn collect_logic_entities_with_lightstyles(
                 (_, Some("4")) => 7,
                 _ => 5,
             },
-            LOGIC_ENV_FUNNEL => load_sprites_manifest().get(&(map_index,"flare6.spr".to_string())).map_or(255,|r|r.0),
-            LOGIC_ENV_BUBBLES => load_sprites_manifest().get(&(map_index,"bubble.spr".to_string())).map_or(255,|r|r.0),
-            LOGIC_ENV_BLOOD => if parse_f32_key(block, "color", 0.0) == 1.0 {195}else{247},
+            LOGIC_ENV_FUNNEL => load_sprites_manifest()
+                .get(&(map_index, "flare6.spr".to_string()))
+                .map_or(255, |r| r.0),
+            LOGIC_ENV_BUBBLES => load_sprites_manifest()
+                .get(&(map_index, "bubble.spr".to_string()))
+                .map_or(255, |r| r.0),
+            LOGIC_ENV_BLOOD => {
+                if parse_f32_key(block, "color", 0.0) == 1.0 {
+                    195
+                } else {
+                    247
+                }
+            }
             LOGIC_ENV_BEVERAGE => parse_f32_key(block, "skin", 0.0).clamp(0.0, 6.0) as u16,
-            // CTargetCDAudio's `radius`: the track starts when the player comes
-            // within it (a trigger_cdaudio has none and works by touch).
-            LOGIC_CDTRACK => (parse_f32_key(block, "radius", 0.0) / scale)
-                .round()
-                .clamp(0.0, u16::MAX as f32) as u16,
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
             LOGIC_FUNC_TRACKTRAIN => submodel.unwrap_or(0).min(u16::MAX as usize) as u16,
             LOGIC_FUNC_GUNTARGET => names.id(ent_value(block, "message")),
@@ -9014,7 +9048,7 @@ fn collect_logic_entities_with_lightstyles(
             }
             let global_name = ent_value(block, "globalname").unwrap_or("").trim();
             if !global_name.is_empty() {
-                if !matches!(cls,"func_door"|"func_door_rotating") {
+                if !matches!(cls, "func_door" | "func_door_rotating") {
                     return Err("global platform door transition is not supported".into());
                 }
                 global_door_count += 1;
@@ -9024,10 +9058,14 @@ fn collect_logic_entities_with_lightstyles(
                 // Preserve the close-only output at index zero, including its
                 // empty sentinel. Index one is the stable global identity.
                 if aux_count == 0 {
-                    aux.push(LogicAuxRec { target: 0, delay_ticks: 0 });
+                    aux.push(LogicAuxRec {
+                        target: 0,
+                        delay_ticks: 0,
+                    });
                 }
                 aux.push(LogicAuxRec {
-                    target: actor_carry_id(global_name, true), delay_ticks: 0,
+                    target: actor_carry_id(global_name, true),
+                    delay_ticks: 0,
                 });
                 aux_count = 2;
             }
@@ -9439,65 +9477,120 @@ fn collect_logic_entities_with_lightstyles(
         if kind == LOGIC_WEAPONBOX {
             let mut error = None;
             if std::env::var_os("MAP_INDEX").is_some()
-                && weaponbox::original_id(map_index,arg0).is_none() {
+                && weaponbox::original_id(map_index, arg0).is_none()
+            {
                 return Err("weaponbox has no supported original persistence identity".into());
             }
             iter_ent_pairs(block, |key, value| {
                 if let Some(slot) = weaponbox::ammo_slot(key) {
                     match value.parse::<u16>() {
                         Ok(amount) if aux_count < 32 => {
-                            aux.push(LogicAuxRec { target: slot, delay_ticks: amount });
+                            aux.push(LogicAuxRec {
+                                target: slot,
+                                delay_ticks: amount,
+                            });
                             aux_count += 1;
                         }
                         _ => error = Some(format!("weaponbox ammunition {key} is out of range")),
                     }
-                } else if !matches!(key, "classname" | "origin" | "angle" | "angles"
-                    | "targetname" | "target" | "killtarget" | "spawnflags") {
+                } else if !matches!(
+                    key,
+                    "classname"
+                        | "origin"
+                        | "angle"
+                        | "angles"
+                        | "targetname"
+                        | "target"
+                        | "killtarget"
+                        | "spawnflags"
+                ) {
                     error = Some(format!("weaponbox unsupported authored field {key}"));
                 }
             });
-            if let Some(error) = error { return Err(error.into()); }
-            if aux_count == 0 { return Err("weaponbox has no authored ammunition".into()); }
+            if let Some(error) = error {
+                return Err(error.into());
+            }
+            if aux_count == 0 {
+                return Err("weaponbox has no authored ammunition".into());
+            }
         }
         if kind == LOGIC_ENV_FUNNEL {
-            if out.iter().filter(|r: &&LogicRec| r.kind == LOGIC_ENV_FUNNEL).count() >= 2 {
+            if out
+                .iter()
+                .filter(|r: &&LogicRec| r.kind == LOGIC_ENV_FUNNEL)
+                .count()
+                >= 2
+            {
                 return Err("env_funnel exceeds two complete simultaneous bursts".into());
             }
             if std::env::var_os("SPRITES_MANIFEST").is_some() && arg1 == 255 {
                 return Err("env_funnel requires original flare6 sprite".into());
             }
             let q12 = (4096.0 / scale).round();
-            let source = ent_value(block,"origin").and_then(parse_vec3).unwrap_or([0.0;3]);
+            let source = ent_value(block, "origin")
+                .and_then(parse_vec3)
+                .unwrap_or([0.0; 3]);
             if !(1.0..=i16::MAX as f32).contains(&q12) || source[2].abs() > i16::MAX as f32 {
                 return Err("env_funnel scale or original height exceeds representation".into());
             }
-            aux.push(LogicAuxRec {target:q12 as u16,delay_ticks:0});
-            aux.push(LogicAuxRec {target:source[2] as i16 as u16,delay_ticks:0});
-            aux_count=2;
+            aux.push(LogicAuxRec {
+                target: q12 as u16,
+                delay_ticks: 0,
+            });
+            aux.push(LogicAuxRec {
+                target: source[2] as i16 as u16,
+                delay_ticks: 0,
+            });
+            aux_count = 2;
         }
         if kind == LOGIC_ENV_BUBBLES {
-            if submodel.is_none() {return Err("env_bubbles requires its original brush volume".into());}
-            if std::env::var_os("SPRITES_MANIFEST").is_some() && arg1 == 255 {return Err("env_bubbles requires original bubble sprite".into());}
+            if submodel.is_none() {
+                return Err("env_bubbles requires its original brush volume".into());
+            }
+            if std::env::var_os("SPRITES_MANIFEST").is_some() && arg1 == 255 {
+                return Err("env_bubbles requires original bubble sprite".into());
+            }
             let yaw = ent_yaw_degrees(block).unwrap_or(0.0).to_radians();
-            let speed = parse_f32_key(block,"current",0.0).trunc()/scale*16.0/20.0;
-            let vx=(yaw.cos()*speed).round(); let vz=(yaw.sin()*speed).round();
-            if vx.abs()>i16::MAX as f32 || vz.abs()>i16::MAX as f32 {return Err("bubble current exceeds Q4 range".into());}
-            aux.push(LogicAuxRec {target:vx as i16 as u16,delay_ticks:vz as i16 as u16});
-            if ((maxs[1]-mins[1]) as f64*scale as f64).round()*20.0/80.0+10.0 > u16::MAX as f64 {return Err("bubble lifetime exceeds current particle storage".into());}
-            let scale_q12 = (4096.0/scale).round();
-            if !(1.0..=i16::MAX as f32).contains(&scale_q12) {return Err("bubble scale exceeds Q12 range".into());}
-            aux.push(LogicAuxRec {target:scale_q12 as u16,delay_ticks:0});
-            aux_count=2;
+            let speed = parse_f32_key(block, "current", 0.0).trunc() / scale * 16.0 / 20.0;
+            let vx = (yaw.cos() * speed).round();
+            let vz = (yaw.sin() * speed).round();
+            if vx.abs() > i16::MAX as f32 || vz.abs() > i16::MAX as f32 {
+                return Err("bubble current exceeds Q4 range".into());
+            }
+            aux.push(LogicAuxRec {
+                target: vx as i16 as u16,
+                delay_ticks: vz as i16 as u16,
+            });
+            if ((maxs[1] - mins[1]) as f64 * scale as f64).round() * 20.0 / 80.0 + 10.0
+                > u16::MAX as f64
+            {
+                return Err("bubble lifetime exceeds current particle storage".into());
+            }
+            let scale_q12 = (4096.0 / scale).round();
+            if !(1.0..=i16::MAX as f32).contains(&scale_q12) {
+                return Err("bubble scale exceeds Q12 range".into());
+            }
+            aux.push(LogicAuxRec {
+                target: scale_q12 as u16,
+                delay_ticks: 0,
+            });
+            aux_count = 2;
         }
         if kind == LOGIC_ENV_BLOOD {
-            if raw_spawnflags & 2 != 0 {return Err("env_blood stream particles are not supported".into());}
+            if raw_spawnflags & 2 != 0 {
+                return Err("env_blood stream particles are not supported".into());
+            }
             // Direction is dimensionless Q12, remapped using the same axis
             // convention as positions, independently of map world scale.
             let dir = ent_move_dir(block);
             mins = to_world(dir.map(|v| v * 4096.0), 1.0);
-            maxs = [to_world([4096.0,0.0,0.0],scale)[0],0,0];
-            if !(1..=i16::MAX as i32).contains(&maxs[0]) {return Err("blood world scale exceeds Q12 representation".into());}
-            if std::env::var_os("SPRITES_MANIFEST").is_some() && (speed & 255 == 255 || speed >> 8 == 255) {
+            maxs = [to_world([4096.0, 0.0, 0.0], scale)[0], 0, 0];
+            if !(1..=i16::MAX as i32).contains(&maxs[0]) {
+                return Err("blood world scale exceeds Q12 representation".into());
+            }
+            if std::env::var_os("SPRITES_MANIFEST").is_some()
+                && (speed & 255 == 255 || speed >> 8 == 255)
+            {
                 return Err("env_blood requires both original sprite resources in manifest".into());
             }
         }
@@ -9508,12 +9601,26 @@ fn collect_logic_entities_with_lightstyles(
             let dir = ent_move_dir(block);
             let speed = 200.0;
             let height = 150.0;
-            let v = to_world([dir[0] * speed * 16.0 / 20.0,
-                dir[1] * speed * 16.0 / 20.0, height * 16.0 / 20.0], scale);
-            if v.iter().any(|&n| i16::try_from(n).is_err()) || v[1] == i16::MIN as i32 { return Err("monsterjump velocity exceeds Q4 representation".into()); }
+            let v = to_world(
+                [
+                    dir[0] * speed * 16.0 / 20.0,
+                    dir[1] * speed * 16.0 / 20.0,
+                    height * 16.0 / 20.0,
+                ],
+                scale,
+            );
+            if v.iter().any(|&n| i16::try_from(n).is_err()) || v[1] == i16::MIN as i32 {
+                return Err("monsterjump velocity exceeds Q4 representation".into());
+            }
             let checked = v.map(|n| n as i16);
-            aux.push(LogicAuxRec { target: checked[0] as u16, delay_ticks: checked[1] as u16 });
-            aux.push(LogicAuxRec { target: checked[2] as u16, delay_ticks: 0 });
+            aux.push(LogicAuxRec {
+                target: checked[0] as u16,
+                delay_ticks: checked[1] as u16,
+            });
+            aux.push(LogicAuxRec {
+                target: checked[2] as u16,
+                delay_ticks: 0,
+            });
             aux_count = 2;
         }
         if kind == LOGIC_TRIGGER_PUSH {
@@ -9903,21 +10010,46 @@ fn collect_logic_entities_with_lightstyles(
     // records continue to own HP and outputs.
     let mut pushable_ids = std::collections::HashSet::new();
     for block in s.split('{') {
-        if ent_value(block, "classname") != Some("func_pushable") { continue; }
+        if ent_value(block, "classname") != Some("func_pushable") {
+            continue;
+        }
         let global = ent_value(block, "globalname").unwrap_or("").trim();
-        if global.is_empty() { continue; }
+        if global.is_empty() {
+            continue;
+        }
         let id = actor_carry_id(global, true);
-        if !pushable_ids.insert(id) { return Err("duplicate global pushable identity".into()); }
-        if pushable_ids.len() > 10 { return Err("global pushable transition capacity exceeds ten".into()); }
-        let brush = block_model(block).and_then(|sm| brush_by_submodel.get(sm).copied())
-            .filter(|&b| b != LOGIC_BRUSH_NONE).ok_or("global pushable has no cooked brush")?;
+        if !pushable_ids.insert(id) {
+            return Err("duplicate global pushable identity".into());
+        }
+        if pushable_ids.len() > 10 {
+            return Err("global pushable transition capacity exceeds ten".into());
+        }
+        let brush = block_model(block)
+            .and_then(|sm| brush_by_submodel.get(sm).copied())
+            .filter(|&b| b != LOGIC_BRUSH_NONE)
+            .ok_or("global pushable has no cooked brush")?;
         let (origin, mins, maxs) = entity_bounds_world(block, models, scale);
         out.push(LogicRec {
-            kind: LOGIC_GLOBAL_PUSHABLE, use_type: 0, spawnflags: 0,
-            targetname: 0, target: 0, killtarget: 0, brush,
-            first_aux: 0, aux_count: 0, flags: 0, wait_ticks: 0, delay_ticks: 0,
-            speed: 0, arg0: id, arg1: 0, sound0: u8::MAX, sound1: u8::MAX,
-            origin, mins, maxs,
+            kind: LOGIC_GLOBAL_PUSHABLE,
+            use_type: 0,
+            spawnflags: 0,
+            targetname: 0,
+            target: 0,
+            killtarget: 0,
+            brush,
+            first_aux: 0,
+            aux_count: 0,
+            flags: 0,
+            wait_ticks: 0,
+            delay_ticks: 0,
+            speed: 0,
+            arg0: id,
+            arg1: 0,
+            sound0: u8::MAX,
+            sound1: u8::MAX,
+            origin,
+            mins,
+            maxs,
         });
     }
 
@@ -13710,14 +13842,20 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // hull (c1a1b prop floors ended up 37 units too high).
     let hull1_head_raw = model_headnode(models, 0, 1).unwrap_or(0); // standing player hull
     let hull3_head_raw = model_headnode(models, 0, 3).unwrap_or(0); // crouch hull, 32x32x36
-    let controller_hull_needed = entity_text(bsp.lump(LUMP_ENTITIES)).split('{').any(|block| {
-        matches!(ent_value(block,"classname"),Some("info_node_air"|"monster_alien_controller"))
-            || (ent_value(block,"classname")==Some("monstermaker")
-                && ent_value(block,"monstertype")==Some("monster_alien_controller"))
-    });
+    let controller_hull_needed = entity_text(bsp.lump(LUMP_ENTITIES))
+        .split('{')
+        .any(|block| {
+            matches!(
+                ent_value(block, "classname"),
+                Some("info_node_air" | "monster_alien_controller")
+            ) || (ent_value(block, "classname") == Some("monstermaker")
+                && ent_value(block, "monstertype") == Some("monster_alien_controller"))
+        });
     let controller_hull_raw = if controller_hull_needed {
-        model_headnode(models,0,2).unwrap_or(cooked::CONTROLLER_HULL_ABSENT)
-    } else { cooked::CONTROLLER_HULL_ABSENT };
+        model_headnode(models, 0, 2).unwrap_or(cooked::CONTROLLER_HULL_ABSENT)
+    } else {
+        cooked::CONTROLLER_HULL_ABSENT
+    };
 
     let (tram_model, tram_speed, tram_start, tram_wheels, way, _, tram_graph) =
         collect_tram_graph(bsp.lump(LUMP_ENTITIES), models, scale);
@@ -13774,7 +13912,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     };
     let mut clip_roots = Vec::with_capacity(3 + ents.len());
     clip_roots.push(hull1_head_raw);
-    if controller_hull_needed { clip_roots.push(controller_hull_raw); }
+    if controller_hull_needed {
+        clip_roots.push(controller_hull_raw);
+    }
     clip_roots.push(hull3_head_raw); // crouch hull for the world model (fits low vents)
     clip_roots.push(tram_head_raw);
     for e in &ents {
@@ -13823,8 +13963,10 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     // Preserve the on-disc field for format compatibility, but make accidental
     // legacy use fail open instead of silently tracing an expanded clip hull.
     let hull0_head = if controller_hull_needed {
-        remap_clip_head(controller_hull_raw,&clip_remap)
-    } else { cooked::CONTROLLER_HULL_ABSENT };
+        remap_clip_head(controller_hull_raw, &clip_remap)
+    } else {
+        cooked::CONTROLLER_HULL_ABSENT
+    };
     let hull1_head = remap_clip_head(hull1_head_raw, &clip_remap);
     let hull3_head = remap_clip_head(hull3_head_raw, &clip_remap);
     let tram_head = remap_clip_head(tram_head_raw, &clip_remap);
@@ -18014,22 +18156,40 @@ mod tests {
     fn weaponbox_preserves_named_ammunition_and_scaled_original_bounds() {
         let input = br#"{ "classname" "weaponbox" "origin" "1584 -696 -248"
             "uranium" "60" "Trip Mine" "7" "Satchel Charge" "5" }"#;
-        let cook = collect_logic_entities(input,&[],&[],2.0,
-            &Default::default(),&Default::default()).unwrap();
-        assert_eq!(cook.ents.len(),1);
+        let cook = collect_logic_entities(
+            input,
+            &[],
+            &[],
+            2.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        assert_eq!(cook.ents.len(), 1);
         let r = &cook.ents[0];
-        assert_eq!(r.kind,LOGIC_WEAPONBOX);
-        assert_eq!(r.origin,[792,-124,-348]);
-        assert_eq!(r.mins,[784,-124,-356]);
-        assert_eq!(r.maxs,[800,-116,-340]);
-        let ammo = cook.aux[r.first_aux as usize..r.first_aux as usize+r.aux_count as usize]
-            .iter().map(|a|(a.target,a.delay_ticks)).collect::<Vec<_>>();
-        assert_eq!(ammo,vec![(6,60),(11,7),(10,5)]);
-        for bad in [br#"{ "classname" "weaponbox" "rockets" "-1" }"#.as_slice(),
+        assert_eq!(r.kind, LOGIC_WEAPONBOX);
+        assert_eq!(r.origin, [792, -124, -348]);
+        assert_eq!(r.mins, [784, -124, -356]);
+        assert_eq!(r.maxs, [800, -116, -340]);
+        let ammo = cook.aux[r.first_aux as usize..r.first_aux as usize + r.aux_count as usize]
+            .iter()
+            .map(|a| (a.target, a.delay_ticks))
+            .collect::<Vec<_>>();
+        assert_eq!(ammo, vec![(6, 60), (11, 7), (10, 5)]);
+        for bad in [
+            br#"{ "classname" "weaponbox" "rockets" "-1" }"#.as_slice(),
             br#"{ "classname" "weaponbox" "rockets" "65536" }"#.as_slice(),
-            br#"{ "classname" "weaponbox" "weapon_mp5" "1" }"#.as_slice()] {
-            assert!(collect_logic_entities(bad,&[],&[],1.0,
-                &Default::default(),&Default::default()).is_err());
+            br#"{ "classname" "weaponbox" "weapon_mp5" "1" }"#.as_slice(),
+        ] {
+            assert!(collect_logic_entities(
+                bad,
+                &[],
+                &[],
+                1.0,
+                &Default::default(),
+                &Default::default()
+            )
+            .is_err());
         }
     }
 
@@ -18039,42 +18199,59 @@ mod tests {
         let root = std::env::var("HL_WEAPONBOX_RETAIL_DIR").expect("explicit retail map directory");
         let mut total = 0;
         let mut identities = 0u32;
-        for (room,name) in include_str!("../../hl-content/map-list.txt").lines().filter(|s| !s.is_empty()).enumerate() {
-            let bytes = std::fs::read(std::path::Path::new(&root).join(format!("{name}.bsp"))).unwrap();
+        for (room, name) in include_str!("../../hl-content/map-list.txt")
+            .lines()
+            .filter(|s| !s.is_empty())
+            .enumerate()
+        {
+            let bytes =
+                std::fs::read(std::path::Path::new(&root).join(format!("{name}.bsp"))).unwrap();
             let start = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
             let len = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
-            let text = String::from_utf8_lossy(&bytes[start..start+len]);
+            let text = String::from_utf8_lossy(&bytes[start..start + len]);
             let mut selected = String::new();
             let mut expected_boxes = Vec::new();
             for raw in text.split('{').skip(1) {
                 let block = raw.split('}').next().unwrap();
-                if ent_value(block,"classname") != Some("weaponbox") { continue; }
+                if ent_value(block, "classname") != Some("weaponbox") {
+                    continue;
+                }
                 let mut expected = Vec::new();
-                iter_ent_pairs(block,|key,value| {
+                iter_ent_pairs(block, |key, value| {
                     if let Some(slot) = weaponbox::ammo_slot(key) {
-                        expected.push((slot,value.parse::<u16>().unwrap()));
+                        expected.push((slot, value.parse::<u16>().unwrap()));
                     }
                 });
                 selected.push_str(&format!("{{{block}}}"));
                 expected_boxes.push(expected);
             }
-            let cook = collect_logic_entities(selected.as_bytes(),&[],&[],1.0,
-                &Default::default(),&Default::default()).unwrap();
-            assert_eq!(cook.ents.len(),expected_boxes.len(),"{name}");
-            for (ordinal,(rec,expected)) in cook.ents.iter().zip(expected_boxes).enumerate() {
-                assert_eq!(rec.kind,LOGIC_WEAPONBOX);
-                assert_eq!(rec.arg0,ordinal as u16);
-                let id = weaponbox::original_id(room as u16,rec.arg0).expect("original identity");
-                assert_eq!(identities & (1 << id),0,"duplicate box identity");
+            let cook = collect_logic_entities(
+                selected.as_bytes(),
+                &[],
+                &[],
+                1.0,
+                &Default::default(),
+                &Default::default(),
+            )
+            .unwrap();
+            assert_eq!(cook.ents.len(), expected_boxes.len(), "{name}");
+            for (ordinal, (rec, expected)) in cook.ents.iter().zip(expected_boxes).enumerate() {
+                assert_eq!(rec.kind, LOGIC_WEAPONBOX);
+                assert_eq!(rec.arg0, ordinal as u16);
+                let id = weaponbox::original_id(room as u16, rec.arg0).expect("original identity");
+                assert_eq!(identities & (1 << id), 0, "duplicate box identity");
                 identities |= 1 << id;
-                let actual = cook.aux[rec.first_aux as usize..rec.first_aux as usize+rec.aux_count as usize]
-                    .iter().map(|entry|(entry.target,entry.delay_ticks)).collect::<Vec<_>>();
-                assert_eq!(actual,expected,"{name}");
+                let actual = cook.aux
+                    [rec.first_aux as usize..rec.first_aux as usize + rec.aux_count as usize]
+                    .iter()
+                    .map(|entry| (entry.target, entry.delay_ticks))
+                    .collect::<Vec<_>>();
+                assert_eq!(actual, expected, "{name}");
                 total += 1;
             }
         }
-        assert_eq!(total,29);
-        assert_eq!(identities,weaponbox::VALID_REMOVED_MASK);
+        assert_eq!(total, 29);
+        assert_eq!(identities, weaponbox::VALID_REMOVED_MASK);
     }
 
     #[test]
@@ -18082,9 +18259,20 @@ mod tests {
         // CTargetCDAudio::KeyValue: radius (pev->scale); health is the track.
         let input = br#"{ "classname" "target_cdaudio" "origin" "416 -480 48" "radius" "256" "health" "13" }
 { "classname" "target_cdaudio" "origin" "0 0 0" "targetname" "gargdeathtrack" "health" "28" }"#;
-        let cook = collect_logic_entities(input, &[], &[], 2.0, &Default::default(), &Default::default()).unwrap();
+        let cook = collect_logic_entities(
+            input,
+            &[],
+            &[],
+            2.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
         assert_eq!(cook.ents.len(), 2);
-        assert_eq!((cook.ents[0].kind, cook.ents[0].arg0, cook.ents[0].arg1), (LOGIC_CDTRACK, 13, 128));
+        assert_eq!(
+            (cook.ents[0].kind, cook.ents[0].arg0, cook.ents[0].arg1),
+            (LOGIC_CDTRACK, 13, 128)
+        );
         assert_eq!(cook.ents[0].origin, [208, 24, -240]);
         // No radius: fired by name only, never polled.
         assert_eq!((cook.ents[1].arg0, cook.ents[1].arg1), (28, 0));
@@ -18093,80 +18281,143 @@ mod tests {
     #[test]
     fn env_sound_suffix_radius_and_scaled_point_use_original_controls() {
         let input=br#"{ "classname" "env_sound" "origin" "144 312 -32" "radius" "128S" "roomtype" "18" }"#;
-        let cook=collect_logic_entities(input,&[],&[],2.0,&Default::default(),&Default::default()).unwrap();
-        assert_eq!(cook.ents.len(),1);
-        let r=&cook.ents[0];
-        assert_eq!((r.kind,r.arg0,r.arg1),(LOGIC_ENV_SOUND,64,18));
-        assert_eq!(r.origin,[72,-16,156]);
-        assert_eq!(r.brush,LOGIC_BRUSH_NONE);
-        for bad in [br#"{ "classname" "env_sound" "roomtype" "29" }"#.as_slice(),
-                    br#"{ "classname" "env_sound" "radius" "1000000" }"#.as_slice()] {
-            assert!(collect_logic_entities(bad,&[],&[],1.0,&Default::default(),&Default::default()).is_err());
+        let cook = collect_logic_entities(
+            input,
+            &[],
+            &[],
+            2.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        assert_eq!(cook.ents.len(), 1);
+        let r = &cook.ents[0];
+        assert_eq!((r.kind, r.arg0, r.arg1), (LOGIC_ENV_SOUND, 64, 18));
+        assert_eq!(r.origin, [72, -16, 156]);
+        assert_eq!(r.brush, LOGIC_BRUSH_NONE);
+        for bad in [
+            br#"{ "classname" "env_sound" "roomtype" "29" }"#.as_slice(),
+            br#"{ "classname" "env_sound" "radius" "1000000" }"#.as_slice(),
+        ] {
+            assert!(collect_logic_entities(
+                bad,
+                &[],
+                &[],
+                1.0,
+                &Default::default(),
+                &Default::default()
+            )
+            .is_err());
         }
     }
     #[test]
-    #[ignore="requires original retail103-map assets"]
+    #[ignore = "requires original retail103-map assets"]
     fn env_sound_all812_retail_points_are_admitted() {
-        let root=std::env::var("HL_ENV_SOUND_RETAIL_DIR").expect("explicit retail map directory");
-        let mut total=0usize;
-        let mut suffixes=0usize;
-        for name in include_str!("../../hl-content/map-list.txt").lines().filter(|s| !s.is_empty()) {
-            let bytes=std::fs::read(std::path::Path::new(&root).join(format!("{name}.bsp"))).unwrap();
-            let start=u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
-            let len=u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
-            let text=String::from_utf8_lossy(&bytes[start..start+len]);
-            let mut selected=String::new();
-            let mut expected=0;
+        let root = std::env::var("HL_ENV_SOUND_RETAIL_DIR").expect("explicit retail map directory");
+        let mut total = 0usize;
+        let mut suffixes = 0usize;
+        for name in include_str!("../../hl-content/map-list.txt")
+            .lines()
+            .filter(|s| !s.is_empty())
+        {
+            let bytes =
+                std::fs::read(std::path::Path::new(&root).join(format!("{name}.bsp"))).unwrap();
+            let start = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+            let len = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+            let text = String::from_utf8_lossy(&bytes[start..start + len]);
+            let mut selected = String::new();
+            let mut expected = 0;
             for raw in text.split('{').skip(1) {
-                let block=raw.split('}').next().unwrap();
-                if ent_value(block,"classname")!=Some("env_sound") {continue;}
-                expected+=1;
-                if ent_value(block,"radius").is_some_and(|v| v.ends_with('S')) {suffixes+=1;}
-                selected.push('{');selected.push_str(block);selected.push('}');
+                let block = raw.split('}').next().unwrap();
+                if ent_value(block, "classname") != Some("env_sound") {
+                    continue;
+                }
+                expected += 1;
+                if ent_value(block, "radius").is_some_and(|v| v.ends_with('S')) {
+                    suffixes += 1;
+                }
+                selected.push('{');
+                selected.push_str(block);
+                selected.push('}');
             }
-            for scale in [1.0,2.0] {
-                let cook=collect_logic_entities(selected.as_bytes(),&[],&[],scale,&Default::default(),&Default::default()).unwrap();
-                assert_eq!(cook.ents.len(),expected,"{name}");
+            for scale in [1.0, 2.0] {
+                let cook = collect_logic_entities(
+                    selected.as_bytes(),
+                    &[],
+                    &[],
+                    scale,
+                    &Default::default(),
+                    &Default::default(),
+                )
+                .unwrap();
+                assert_eq!(cook.ents.len(), expected, "{name}");
                 for rec in &cook.ents {
-                    assert_eq!(rec.kind,LOGIC_ENV_SOUND);
-                    assert!(rec.arg1<29);
-                    assert_eq!(rec.brush,LOGIC_BRUSH_NONE);
+                    assert_eq!(rec.kind, LOGIC_ENV_SOUND);
+                    assert!(rec.arg1 < 29);
+                    assert_eq!(rec.brush, LOGIC_BRUSH_NONE);
                 }
             }
-            total+=expected;
+            total += expected;
         }
-        assert_eq!(total,812);
-        assert!(suffixes>0,"real numeric-suffix recipe exercised");
+        assert_eq!(total, 812);
+        assert!(suffixes > 0, "real numeric-suffix recipe exercised");
     }
     #[test]
     fn retail_funnel_pair_keeps_original_height_reverse_and_complete_admission() {
         let entities = br#"{ "classname" "env_funnel" "origin" "1664 623 -368" "targetname" "funnel" "spawnflags" "0" }
         { "classname" "env_funnel" "origin" "1664 623 -368" "targetname" "funnel2" "spawnflags" "1" }"#;
-        let cook=collect_logic_entities(entities,&[],&[],2.0,&Default::default(),&Default::default()).unwrap();
-        assert_eq!(cook.ents.len(),2);
-        for (index,r) in cook.ents.iter().enumerate() {
-            assert_eq!(r.kind,LOGIC_ENV_FUNNEL);
-            assert_eq!(r.origin,[832,-184,312]);
-            assert_eq!(r.spawnflags,index as u16);
-            assert_eq!(r.aux_count,2);
-            assert_eq!(cook.aux[r.first_aux as usize].target,2048);
-            assert_eq!(cook.aux[r.first_aux as usize+1].target as i16,-368);
+        let cook = collect_logic_entities(
+            entities,
+            &[],
+            &[],
+            2.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        assert_eq!(cook.ents.len(), 2);
+        for (index, r) in cook.ents.iter().enumerate() {
+            assert_eq!(r.kind, LOGIC_ENV_FUNNEL);
+            assert_eq!(r.origin, [832, -184, 312]);
+            assert_eq!(r.spawnflags, index as u16);
+            assert_eq!(r.aux_count, 2);
+            assert_eq!(cook.aux[r.first_aux as usize].target, 2048);
+            assert_eq!(cook.aux[r.first_aux as usize + 1].target as i16, -368);
         }
-        let mut third=entities.to_vec();third.extend_from_slice(br#"{ "classname" "env_funnel" }"#);
-        assert!(matches!(collect_logic_entities(&third,&[],&[],1.0,&Default::default(),&Default::default()),Err(e) if e.contains("two complete")));
+        let mut third = entities.to_vec();
+        third.extend_from_slice(br#"{ "classname" "env_funnel" }"#);
+        assert!(
+            matches!(collect_logic_entities(&third,&[],&[],1.0,&Default::default(),&Default::default()),Err(e) if e.contains("two complete"))
+        );
     }
     #[test]
     fn retail_bubble_brush_keeps_original_bounds_and_current_without_solid_entity() {
         let entities = br#"{ "model" "*66" "current" "100" "frequency" "3" "density" "10" "targetname" "waterbubbles1" "spawnflags" "1" "angle" "180" "classname" "env_bubbles" }"#;
-        let mut models=vec![0u8;67*64];
-        for (i,value) in [2504f32,-1158.,-448.,2531.,-1116.,-350.].iter().enumerate() {models[66*64+i*4..66*64+i*4+4].copy_from_slice(&value.to_le_bytes());}
-        let cook=collect_logic_entities(entities,&models,&vec![LOGIC_BRUSH_NONE;67],1.0,&Default::default(),&Default::default()).unwrap();
-        let r=&cook.ents[0]; assert_eq!(r.kind,LOGIC_ENV_BUBBLES);
-        assert_eq!((r.arg0,r.spawnflags,r.wait_ticks),(10,1,44));
-        assert_eq!(r.mins,[2504,-448,-1158]); assert_eq!(r.maxs,[2531,-350,-1116]);
-        assert_eq!(r.brush,LOGIC_BRUSH_NONE);
-        let a=&cook.aux[r.first_aux as usize]; assert_eq!((a.target as i16,a.delay_ticks as i16),(-80,0));
-        assert_eq!(cook.aux[r.first_aux as usize+1].target,4096);
+        let mut models = vec![0u8; 67 * 64];
+        for (i, value) in [2504f32, -1158., -448., 2531., -1116., -350.]
+            .iter()
+            .enumerate()
+        {
+            models[66 * 64 + i * 4..66 * 64 + i * 4 + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let cook = collect_logic_entities(
+            entities,
+            &models,
+            &vec![LOGIC_BRUSH_NONE; 67],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        let r = &cook.ents[0];
+        assert_eq!(r.kind, LOGIC_ENV_BUBBLES);
+        assert_eq!((r.arg0, r.spawnflags, r.wait_ticks), (10, 1, 44));
+        assert_eq!(r.mins, [2504, -448, -1158]);
+        assert_eq!(r.maxs, [2531, -350, -1116]);
+        assert_eq!(r.brush, LOGIC_BRUSH_NONE);
+        let a = &cook.aux[r.first_aux as usize];
+        assert_eq!((a.target as i16, a.delay_ticks as i16), (-80, 0));
+        assert_eq!(cook.aux[r.first_aux as usize + 1].target, 4096);
     }
     /// One submodel (index 1) box for brush entities in the tests below.
     fn one_box_model() -> Vec<u8> {
@@ -18187,11 +18438,16 @@ mod tests {
             &Default::default(),
         )
         .unwrap();
-        cook.ents.first().unwrap_or_else(|| panic!("no record for {entity}")).clone()
+        cook.ents
+            .first()
+            .unwrap_or_else(|| panic!("no record for {entity}"))
+            .clone()
     }
     #[test]
     fn env_spark_keeps_its_max_delay_and_flags() {
-        let r = cook_one(r#""classname" "env_spark" "origin" "0 0 0" "MaxDelay" "2" "spawnflags" "96""#);
+        let r = cook_one(
+            r#""classname" "env_spark" "origin" "0 0 0" "MaxDelay" "2" "spawnflags" "96""#,
+        );
         assert_eq!((r.kind, r.arg0, r.spawnflags), (LOGIC_ENV_SPARK, 40, 96));
         // absent or zero: the 1.5 s default
         let r = cook_one(r#""classname" "env_spark" "origin" "0 0 0""#);
@@ -18203,7 +18459,9 @@ mod tests {
     fn hazard_course_hints_name_the_pad_buttons() {
         let hint = hazard_hint_text("Press [ATTACK1] To Fire Weapon \\n Press [RELOAD] To Reload");
         assert_eq!(hint, "Press R2 To Fire Weapon \n Press CIRCLE To Reload");
-        let r = cook_one(r#""classname" "trigger_once" "model" "*1" "message" "Swim Up To Hole For Air""#);
+        let r = cook_one(
+            r#""classname" "trigger_once" "model" "*1" "message" "Swim Up To Hole For Air""#,
+        );
         assert_eq!(r.kind, LOGIC_TRIGGER_ONCE);
         assert_ne!(r.arg0, 0);
         let none = cook_one(r#""classname" "trigger_once" "model" "*1""#);
@@ -18218,26 +18476,38 @@ mod tests {
     }
     #[test]
     fn target_cdaudio_keeps_its_radius() {
-        let r = cook_one(r#""classname" "target_cdaudio" "origin" "0 0 0" "health" "13" "radius" "256""#);
+        let r = cook_one(
+            r#""classname" "target_cdaudio" "origin" "0 0 0" "health" "13" "radius" "256""#,
+        );
         assert_eq!((r.kind, r.arg0, r.arg1), (LOGIC_CDTRACK, 13, 256));
-        let r = cook_one(r#""classname" "target_cdaudio" "origin" "0 0 0" "health" "13" "targetname" "cd""#);
+        let r = cook_one(
+            r#""classname" "target_cdaudio" "origin" "0 0 0" "health" "13" "targetname" "cd""#,
+        );
         assert_eq!(r.arg1, 0);
     }
     #[test]
     fn a_breakable_carries_the_hash_of_its_globalname() {
-        let named = cook_one(r#""classname" "func_breakable" "model" "*1" "targetname" "glass" "globalname" "airlock_glass" "health" "5" "material" "1""#);
+        let named = cook_one(
+            r#""classname" "func_breakable" "model" "*1" "targetname" "glass" "globalname" "airlock_glass" "health" "5" "material" "1""#,
+        );
         assert_eq!(named.kind, LOGIC_FUNC_BREAKABLE);
         assert_ne!(named.wait_ticks, 0);
-        let again = cook_one(r#""classname" "func_breakable" "model" "*1" "targetname" "other" "globalname" "airlock_glass" "health" "5""#);
+        let again = cook_one(
+            r#""classname" "func_breakable" "model" "*1" "targetname" "other" "globalname" "airlock_glass" "health" "5""#,
+        );
         assert_eq!(again.wait_ticks, named.wait_ticks);
-        let plain = cook_one(r#""classname" "func_breakable" "model" "*1" "targetname" "glass" "health" "5""#);
+        let plain = cook_one(
+            r#""classname" "func_breakable" "model" "*1" "targetname" "glass" "health" "5""#,
+        );
         assert_eq!(plain.wait_ticks, 0);
     }
     #[test]
     fn env_shake_keeps_its_radius_unless_everyone() {
-        let r = cook_one(r#""classname" "env_shake" "origin" "0 0 0" "radius" "300" "amplitude" "4""#);
+        let r =
+            cook_one(r#""classname" "env_shake" "origin" "0 0 0" "radius" "300" "amplitude" "4""#);
         assert_eq!((r.kind, r.arg1), (LOGIC_ENV_SHAKE, 300));
-        let r = cook_one(r#""classname" "env_shake" "origin" "0 0 0" "radius" "300" "spawnflags" "1""#);
+        let r =
+            cook_one(r#""classname" "env_shake" "origin" "0 0 0" "radius" "300" "spawnflags" "1""#);
         assert_eq!(r.arg1, 0);
         let r = cook_one(r#""classname" "env_shake" "origin" "0 0 0""#);
         assert_eq!(r.arg1, 0);
@@ -18250,7 +18520,10 @@ mod tests {
             ))
         };
         // The suit's damage-kind code rides in bits 4..6 (hl_format::hev).
-        let kind = |damagetype: &str| (hurt(damagetype).flags & hl_format::hev::HURT_KIND_MASK) >> hl_format::hev::HURT_KIND_SHIFT;
+        let kind = |damagetype: &str| {
+            (hurt(damagetype).flags & hl_format::hev::HURT_KIND_MASK)
+                >> hl_format::hev::HURT_KIND_SHIFT
+        };
         assert_eq!(kind("32"), hl_format::hev::HURT_FALL);
         assert_eq!(kind("131072"), hl_format::hev::HURT_POISON);
         assert_eq!(kind("1048576"), hl_format::hev::HURT_ACID);
@@ -18262,53 +18535,115 @@ mod tests {
         assert_eq!(flags("16384"), LOGIC_TRIGGER_HURT_BYPASS_ARMOUR);
         assert_eq!(flags("131072"), LOGIC_TRIGGER_HURT_POISON);
         assert_eq!(flags("262144"), LOGIC_TRIGGER_HURT_RADIATION);
-        assert_eq!(flags("393216"), LOGIC_TRIGGER_HURT_RADIATION | LOGIC_TRIGGER_HURT_POISON);
+        assert_eq!(
+            flags("393216"),
+            LOGIC_TRIGGER_HURT_RADIATION | LOGIC_TRIGGER_HURT_POISON
+        );
     }
     #[test]
     fn missing_waits_follow_the_base_classes() {
-        let wait = |entity: &str| cook_one(&format!(r#"{entity} "targetname" "t" "target" "x""#)).wait_ticks;
+        let wait = |entity: &str| {
+            cook_one(&format!(r#"{entity} "targetname" "t" "target" "x""#)).wait_ticks
+        };
         // a door shuts at once without a wait key; a plat waits 3 s
         assert_eq!(wait(r#""classname" "func_door" "model" "*1""#), 0);
-        assert_eq!(wait(r#""classname" "func_door" "model" "*1" "wait" "4""#), 80);
+        assert_eq!(
+            wait(r#""classname" "func_door" "model" "*1" "wait" "4""#),
+            80
+        );
         assert_eq!(wait(r#""classname" "func_plat" "model" "*1""#), 60);
         // a button turns a zero wait into one second
-        assert_eq!(wait(r#""classname" "func_button" "model" "*1" "wait" "0""#), 20);
+        assert_eq!(
+            wait(r#""classname" "func_button" "model" "*1" "wait" "0""#),
+            20
+        );
         assert_eq!(wait(r#""classname" "func_button" "model" "*1""#), 20);
-        assert_eq!(wait(r#""classname" "func_button" "model" "*1" "wait" "-1""#), -1);
+        assert_eq!(
+            wait(r#""classname" "func_button" "model" "*1" "wait" "-1""#),
+            -1
+        );
         // a multiple turns zero into 0.2 s and keeps a negative as "once"
-        assert_eq!(wait(r#""classname" "trigger_multiple" "model" "*1" "wait" "0""#), 4);
+        assert_eq!(
+            wait(r#""classname" "trigger_multiple" "model" "*1" "wait" "0""#),
+            4
+        );
         assert_eq!(wait(r#""classname" "trigger_multiple" "model" "*1""#), 4);
-        assert_eq!(wait(r#""classname" "trigger_multiple" "model" "*1" "wait" "-1""#), -1);
-        assert_eq!(wait(r#""classname" "trigger_multiple" "model" "*1" "wait" "2""#), 40);
+        assert_eq!(
+            wait(r#""classname" "trigger_multiple" "model" "*1" "wait" "-1""#),
+            -1
+        );
+        assert_eq!(
+            wait(r#""classname" "trigger_multiple" "model" "*1" "wait" "2""#),
+            40
+        );
     }
     #[test]
     fn retail_blood_keeps_amount_palette_direction_and_manager_delay() {
         let entities = br#"{ "classname" "env_blood" "origin" "64 624 -176" "amount" "2000" "color" "1" "spawnflags" "13" "targetname" "momma_blood" }
         { "classname" "multi_manager" "targetname" "falltodeath2_mm" "momma_blood" "4.5" }"#;
-        let cook = collect_logic_entities(entities,&[],&[],1.0,&Default::default(),&Default::default()).unwrap();
-        let blood = cook.ents.iter().find(|r| r.kind == LOGIC_ENV_BLOOD).unwrap();
-        assert_eq!(blood.origin,[64,-176,624]);
-        assert_eq!((blood.arg0,blood.arg1,blood.spawnflags),(2000,195,13));
-        assert_eq!(blood.mins,[4096,0,0]);
-        let manager = cook.ents.iter().find(|r| r.kind == LOGIC_MULTI_MANAGER).unwrap();
+        let cook = collect_logic_entities(
+            entities,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        let blood = cook
+            .ents
+            .iter()
+            .find(|r| r.kind == LOGIC_ENV_BLOOD)
+            .unwrap();
+        assert_eq!(blood.origin, [64, -176, 624]);
+        assert_eq!((blood.arg0, blood.arg1, blood.spawnflags), (2000, 195, 13));
+        assert_eq!(blood.mins, [4096, 0, 0]);
+        let manager = cook
+            .ents
+            .iter()
+            .find(|r| r.kind == LOGIC_MULTI_MANAGER)
+            .unwrap();
         let event = &cook.aux[manager.first_aux as usize];
-        assert_eq!(event.target,blood.targetname);
-        assert_eq!(event.delay_ticks,90);
-        let scaled = collect_logic_entities(entities,&[],&[],2.0,&Default::default(),&Default::default()).unwrap();
-        let blood = scaled.ents.iter().find(|r| r.kind == LOGIC_ENV_BLOOD).unwrap();
-        assert_eq!(blood.origin,[32,-88,312]);
-        assert_eq!(blood.maxs[0],2048);
+        assert_eq!(event.target, blood.targetname);
+        assert_eq!(event.delay_ticks, 90);
+        let scaled = collect_logic_entities(
+            entities,
+            &[],
+            &[],
+            2.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        let blood = scaled
+            .ents
+            .iter()
+            .find(|r| r.kind == LOGIC_ENV_BLOOD)
+            .unwrap();
+        assert_eq!(blood.origin, [32, -88, 312]);
+        assert_eq!(blood.maxs[0], 2048);
         let stream = br#"{ "classname" "env_blood" "spawnflags" "2" }"#;
-        assert!(matches!(collect_logic_entities(stream,&[],&[],1.0,&Default::default(),&Default::default()),Err(e) if e.contains("stream")));
+        assert!(
+            matches!(collect_logic_entities(stream,&[],&[],1.0,&Default::default(),&Default::default()),Err(e) if e.contains("stream"))
+        );
     }
     #[test]
     fn retail_9mmarclip_alias_emits_the_existing_mp5_ammo_pickup() {
         let mut expected = None;
         for classname in ["ammo_9mmARclip", "ammo_9mmAR", "ammo_mp5clip"] {
             // Original c2a4f entity 271, changing only the alias under test.
-            let entity = format!("{{ \"origin\" \"-800 -304 464\" \"delay\" \"0\" \"classname\" \"{classname}\" }}");
-            let props = super::collect_props(entity.as_bytes(), &[], &[], &[], 1.0,
-                &mut Vec::new(), &mut Vec::new());
+            let entity = format!(
+                "{{ \"origin\" \"-800 -304 464\" \"delay\" \"0\" \"classname\" \"{classname}\" }}"
+            );
+            let props = super::collect_props(
+                entity.as_bytes(),
+                &[],
+                &[],
+                &[],
+                1.0,
+                &mut Vec::new(),
+                &mut Vec::new(),
+            );
             assert_eq!(props.len(), 1);
             assert_eq!(props[0].0, 41);
             assert_eq!(props[0].1, [-800, 464, -304]);
@@ -18328,22 +18663,47 @@ mod tests {
     #[test]
     fn monsterjump_ignores_authored_speed_and_height_like_spawn() {
         for (keys, expected) in [
-            ("\"angle\" \"61\" \"speed\" \"10\" \"height\" \"128\"", [78,120,140]),
-            ("\"angles\" \"0 120 0\" \"speed\" \"10\" \"height\" \"128\"", [-80,120,139]),
-            ("\"angle\" \"0\"", [160,120,0]),
-            ("\"speed\" \"0\" \"height\" \"0\"", [160,120,0]),
+            (
+                "\"angle\" \"61\" \"speed\" \"10\" \"height\" \"128\"",
+                [78, 120, 140],
+            ),
+            (
+                "\"angles\" \"0 120 0\" \"speed\" \"10\" \"height\" \"128\"",
+                [-80, 120, 139],
+            ),
+            ("\"angle\" \"0\"", [160, 120, 0]),
+            ("\"speed\" \"0\" \"height\" \"0\"", [160, 120, 0]),
         ] {
-            let entities=format!("{{ \"classname\" \"trigger_monsterjump\" {keys} }}");
-            let logic=collect_logic_entities(entities.as_bytes(),&[],&[],1.0,&Default::default(),&Default::default()).unwrap();
-            let rec=&logic.ents[0];
-            assert_eq!(rec.kind,LOGIC_TRIGGER_MONSTERJUMP);
-            assert_eq!(rec.aux_count,2);
-            let a=&logic.aux[rec.first_aux as usize];let b=&logic.aux[rec.first_aux as usize+1];
-            assert_eq!([a.target as i16,a.delay_ticks as i16,b.target as i16],expected);
+            let entities = format!("{{ \"classname\" \"trigger_monsterjump\" {keys} }}");
+            let logic = collect_logic_entities(
+                entities.as_bytes(),
+                &[],
+                &[],
+                1.0,
+                &Default::default(),
+                &Default::default(),
+            )
+            .unwrap();
+            let rec = &logic.ents[0];
+            assert_eq!(rec.kind, LOGIC_TRIGGER_MONSTERJUMP);
+            assert_eq!(rec.aux_count, 2);
+            let a = &logic.aux[rec.first_aux as usize];
+            let b = &logic.aux[rec.first_aux as usize + 1];
+            assert_eq!(
+                [a.target as i16, a.delay_ticks as i16, b.target as i16],
+                expected
+            );
         }
         // an absurd authored speed is ignored too
-        assert!(collect_logic_entities(br#"{ "classname" "trigger_monsterjump" "speed" "1000000" }"#,
-            &[],&[],1.0,&Default::default(),&Default::default()).is_ok());
+        assert!(collect_logic_entities(
+            br#"{ "classname" "trigger_monsterjump" "speed" "1000000" }"#,
+            &[],
+            &[],
+            1.0,
+            &Default::default(),
+            &Default::default()
+        )
+        .is_ok());
     }
 
     #[test]
@@ -18491,8 +18851,8 @@ mod tests {
         data[route_off..route_off + route.len()].copy_from_slice(&route);
 
         for i in 0..n {
-            let o=nodes_off+i*RETAIL_NODE_BYTES+RETAIL_NODE_HUMAN_DOOR_ROUTE;
-            data[o..o+4].copy_from_slice(&999i32.to_le_bytes());
+            let o = nodes_off + i * RETAIL_NODE_BYTES + RETAIL_NODE_HUMAN_DOOR_ROUTE;
+            data[o..o + 4].copy_from_slice(&999i32.to_le_bytes());
         }
         let nav = parse_retail_nav(&data, &[], &[], 1.0).expect("retail nav");
         assert_eq!(nav.nodes.len(), 2);
@@ -18501,50 +18861,77 @@ mod tests {
         assert_eq!(nav.nodes[1].route_offset, 0, "identical rows share storage");
         assert_eq!(nav.nodes[1].origin, [64, 0, 0]);
         for i in 0..l {
-            let o=links_off+i*RETAIL_LINK_BYTES+16;
-            data[o..o+4].copy_from_slice(&RETAIL_LINK_HUMAN.to_le_bytes());
+            let o = links_off + i * RETAIL_LINK_BYTES + 16;
+            data[o..o + 4].copy_from_slice(&RETAIL_LINK_HUMAN.to_le_bytes());
         }
-        assert!(parse_retail_nav(&data,&[],&[],1.0).is_err());
+        assert!(parse_retail_nav(&data, &[], &[], 1.0).is_err());
     }
 
     #[test]
     fn air_nav_bsp_preserves_height_and_node_class() {
-        let input=br#"{ "classname" "info_node" "origin" "128 256 512" }
+        let input = br#"{ "classname" "info_node" "origin" "128 256 512" }
             { "classname" "info_node_air" "origin" "128 256 512" }"#;
-        let nodes=collect_nav_nodes(input,&[],&[],&[],-1,2.0);
-        assert_eq!(nodes.len(),2);
-        assert_eq!((nodes[0].node_type,nodes[0].origin),(NAV_NODE_LAND,[64,260,128]));
-        assert_eq!((nodes[1].node_type,nodes[1].origin),(NAV_NODE_AIR,[64,256,128]));
-        assert!(nodes.iter().all(|node|node.links.is_empty()));
+        let nodes = collect_nav_nodes(input, &[], &[], &[], -1, 2.0);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(
+            (nodes[0].node_type, nodes[0].origin),
+            (NAV_NODE_LAND, [64, 260, 128])
+        );
+        assert_eq!(
+            (nodes[1].node_type, nodes[1].origin),
+            (NAV_NODE_AIR, [64, 256, 128])
+        );
+        assert!(nodes.iter().all(|node| node.links.is_empty()));
     }
     #[test]
-    #[ignore="requires original retail 103-map assets"]
+    #[ignore = "requires original retail 103-map assets"]
     fn air_nav_all261_original_nodes_and_flying_tables_are_admitted() {
-        let root=std::path::PathBuf::from(std::env::var("HL_AIR_RETAIL_DIR").expect("explicit original maps"));
-        let mut total=0;let mut maps=0;
-        for name in include_str!("../../hl-content/map-list.txt").lines().filter(|s|!s.is_empty()) {
-            let b=std::fs::read(root.join(format!("{name}.bsp"))).unwrap();
-            let start=u32::from_le_bytes(b[4..8].try_into().unwrap()) as usize;
-            let len=u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize;
-            let text=entity_text(&b[start..start+len]);let mut selected=String::new();let mut expected=Vec::new();
+        let root = std::path::PathBuf::from(
+            std::env::var("HL_AIR_RETAIL_DIR").expect("explicit original maps"),
+        );
+        let mut total = 0;
+        let mut maps = 0;
+        for name in include_str!("../../hl-content/map-list.txt")
+            .lines()
+            .filter(|s| !s.is_empty())
+        {
+            let b = std::fs::read(root.join(format!("{name}.bsp"))).unwrap();
+            let start = u32::from_le_bytes(b[4..8].try_into().unwrap()) as usize;
+            let len = u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize;
+            let text = entity_text(&b[start..start + len]);
+            let mut selected = String::new();
+            let mut expected = Vec::new();
             for block in text.split('{') {
-                if ent_value(block,"classname")!=Some("info_node_air") {continue;}
+                if ent_value(block, "classname") != Some("info_node_air") {
+                    continue;
+                }
                 selected.push_str(&format!("{{{block}"));
-                expected.push(to_world(parse_vec3(ent_value(block,"origin").unwrap()).unwrap(),1.0));
+                expected.push(to_world(
+                    parse_vec3(ent_value(block, "origin").unwrap()).unwrap(),
+                    1.0,
+                ));
             }
-            if expected.is_empty(){continue;}
-            let nodes=collect_nav_nodes(selected.as_bytes(),&[],&[],&[],-1,1.0);
-            assert_eq!(nodes.len(),expected.len(),"{name}: no AIR omission");
-            for (node,origin) in nodes.iter().zip(expected) {
-                assert_eq!(node.node_type,NAV_NODE_AIR);assert_eq!(node.origin,origin,"{name}");
-                total+=1;
+            if expected.is_empty() {
+                continue;
             }
-            let graph=std::fs::read(root.join("graphs").join(format!("{name}.nod"))).unwrap();
-            let nav=parse_retail_nav(&graph,&[],&[],1.0).unwrap_or_else(|e|panic!("{name}: {e}"));
-            assert!(nav.nodes.iter().any(|n|n.node_type & NAV_NODE_AIR !=0),"{name}");
-            assert!(nav.routes.is_some());maps+=1;
+            let nodes = collect_nav_nodes(selected.as_bytes(), &[], &[], &[], -1, 1.0);
+            assert_eq!(nodes.len(), expected.len(), "{name}: no AIR omission");
+            for (node, origin) in nodes.iter().zip(expected) {
+                assert_eq!(node.node_type, NAV_NODE_AIR);
+                assert_eq!(node.origin, origin, "{name}");
+                total += 1;
+            }
+            let graph = std::fs::read(root.join("graphs").join(format!("{name}.nod"))).unwrap();
+            let nav =
+                parse_retail_nav(&graph, &[], &[], 1.0).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(
+                nav.nodes.iter().any(|n| n.node_type & NAV_NODE_AIR != 0),
+                "{name}"
+            );
+            assert!(nav.routes.is_some());
+            maps += 1;
         }
-        assert_eq!((total,maps),(261,7));
+        assert_eq!((total, maps), (261, 7));
     }
 
     #[test]
@@ -20048,120 +20435,287 @@ mod tests {
         { "classname" "func_pushable" "model" "*1" "globalname" "safe" "health" "100" }
         { "classname" "func_pushable" "model" "*2" "globalname" "break" "spawnflags" "128" "health" "20" }
         "#;
-        let models=vec![0;3*SZ_MODEL];
-        let cooked=collect_logic_entities(ents,&models,&[0,1,2],1.0,&Default::default(),&Default::default()).unwrap();
-        let records=cooked.ents.iter().filter(|r|r.kind==LOGIC_GLOBAL_PUSHABLE).collect::<Vec<_>>();
-        assert_eq!(records.len(),2);
-        assert_eq!((records[0].brush,records[0].arg0),(1,actor_carry_id("safe",true)));
-        assert_eq!((records[1].brush,records[1].arg0),(2,actor_carry_id("break",true)));
-        assert!(records.iter().all(|r|r.targetname==0 && r.target==0 && r.killtarget==0 && r.aux_count==0));
-        let breakables=cooked.ents.iter().filter(|r|r.kind==LOGIC_FUNC_BREAKABLE).collect::<Vec<_>>();
-        assert_eq!(breakables.len(),1);
-        assert_eq!((breakables[0].brush,breakables[0].arg0),(2,20));
+        let models = vec![0; 3 * SZ_MODEL];
+        let cooked = collect_logic_entities(
+            ents,
+            &models,
+            &[0, 1, 2],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        let records = cooked
+            .ents
+            .iter()
+            .filter(|r| r.kind == LOGIC_GLOBAL_PUSHABLE)
+            .collect::<Vec<_>>();
+        assert_eq!(records.len(), 2);
+        assert_eq!(
+            (records[0].brush, records[0].arg0),
+            (1, actor_carry_id("safe", true))
+        );
+        assert_eq!(
+            (records[1].brush, records[1].arg0),
+            (2, actor_carry_id("break", true))
+        );
+        assert!(records
+            .iter()
+            .all(|r| r.targetname == 0 && r.target == 0 && r.killtarget == 0 && r.aux_count == 0));
+        let breakables = cooked
+            .ents
+            .iter()
+            .filter(|r| r.kind == LOGIC_FUNC_BREAKABLE)
+            .collect::<Vec<_>>();
+        assert_eq!(breakables.len(), 1);
+        assert_eq!((breakables[0].brush, breakables[0].arg0), (2, 20));
         let too_many=(1..=11).map(|i|format!("{{ \"classname\" \"func_pushable\" \"model\" \"*1\" \"globalname\" \"b{i}\" }}")).collect::<String>();
-        assert!(collect_logic_entities(too_many.as_bytes(),&models,&[0,1,2],1.0,&Default::default(),&Default::default()).err().unwrap().contains("capacity"));
+        assert!(collect_logic_entities(
+            too_many.as_bytes(),
+            &models,
+            &[0, 1, 2],
+            1.0,
+            &Default::default(),
+            &Default::default()
+        )
+        .err()
+        .unwrap()
+        .contains("capacity"));
         let duplicate=br#"{ "classname" "func_pushable" "model" "*1" "globalname" "same" } { "classname" "func_pushable" "model" "*2" "globalname" "same" }"#;
-        assert!(collect_logic_entities(duplicate,&models,&[0,1,2],1.0,&Default::default(),&Default::default()).err().unwrap().contains("duplicate"));
+        assert!(collect_logic_entities(
+            duplicate,
+            &models,
+            &[0, 1, 2],
+            1.0,
+            &Default::default(),
+            &Default::default()
+        )
+        .err()
+        .unwrap()
+        .contains("duplicate"));
     }
 
     #[test]
     #[ignore = "requires supplied original retail BSP data"]
     fn original_global_pushables_admit_all_50_and_matching_geometry() {
-        let catalog=include_str!("../../../game/src/map_catalog.rs");
-        let maps=catalog.split("pub const MAPS").nth(1).expect("map catalog").split("];").next().unwrap();
+        let catalog = include_str!("../../../game/src/map_catalog.rs");
+        let maps = catalog
+            .split("pub const MAPS")
+            .nth(1)
+            .expect("map catalog")
+            .split("];")
+            .next()
+            .unwrap();
         let root=std::path::Path::new("/Users/ebonura/Library/Application Support/Steam/steamapps/common/Half-Life/valve/maps");
-        let (mut count,mut maximum,mut scanned)=(0,0,0);
-        let mut identities=std::collections::HashMap::new();
-        let mut dimensions=std::collections::HashMap::new();
-        for (index,name) in maps.split('"').enumerate() {
-            if index%2==0 {continue;}
-            let raw=std::fs::read(root.join(format!("{name}.bsp"))).expect("required original map");
-            let eo=u32le(&raw,4).unwrap() as usize;let en=u32le(&raw,8).unwrap() as usize;
-            let mo=u32le(&raw,4+14*8).unwrap() as usize;let mn=u32le(&raw,8+14*8).unwrap() as usize;
-            let entities=&raw[eo..eo+en];let models=&raw[mo..mo+mn];
-            let brushes=(0..models.len()/SZ_MODEL).map(|i|i as u16).collect::<Vec<_>>();
-            let cooked=collect_logic_entities(entities,models,&brushes,1.0,&Default::default(),&Default::default()).expect("retail logic admission");
-            let mut local=0;
-            for block in entity_text(entities).split('{') {
-                if ent_value(block,"classname")!=Some("func_pushable") {continue;}
-                let global=ent_value(block,"globalname").unwrap_or("").trim();
-                if global.is_empty() {continue;}
-                let id=actor_carry_id(global,true);
-                if let Some(previous)=identities.insert(id,global.to_string()) {assert_eq!(previous,global,"identity collision");}
-                let model=block_model(block).expect("original model");
-                let half=[0,1,2].map(|a| f32le(models,model*SZ_MODEL+12+a*4).unwrap()-f32le(models,model*SZ_MODEL+a*4).unwrap());
-                if let Some(previous)=dimensions.insert(id,half) {assert_eq!(previous,half,"matching global model dimensions");}
-                let rec=cooked.ents.iter().find(|r|r.kind==LOGIC_GLOBAL_PUSHABLE && r.arg0==id).expect("original metadata");
-                assert_eq!(rec.brush,model as u16);
-                if parse_spawnflags(block)&SF_PUSH_BREAKABLE==0 {
-                    assert!(!cooked.ents.iter().any(|r|r.kind==LOGIC_FUNC_BREAKABLE && r.brush==rec.brush));
-                }
-                local+=1;
+        let (mut count, mut maximum, mut scanned) = (0, 0, 0);
+        let mut identities = std::collections::HashMap::new();
+        let mut dimensions = std::collections::HashMap::new();
+        for (index, name) in maps.split('"').enumerate() {
+            if index % 2 == 0 {
+                continue;
             }
-            assert_eq!(cooked.ents.iter().filter(|r|r.kind==LOGIC_GLOBAL_PUSHABLE).count(),local);
-            count+=local;maximum=maximum.max(local);scanned+=1;
+            let raw =
+                std::fs::read(root.join(format!("{name}.bsp"))).expect("required original map");
+            let eo = u32le(&raw, 4).unwrap() as usize;
+            let en = u32le(&raw, 8).unwrap() as usize;
+            let mo = u32le(&raw, 4 + 14 * 8).unwrap() as usize;
+            let mn = u32le(&raw, 8 + 14 * 8).unwrap() as usize;
+            let entities = &raw[eo..eo + en];
+            let models = &raw[mo..mo + mn];
+            let brushes = (0..models.len() / SZ_MODEL)
+                .map(|i| i as u16)
+                .collect::<Vec<_>>();
+            let cooked = collect_logic_entities(
+                entities,
+                models,
+                &brushes,
+                1.0,
+                &Default::default(),
+                &Default::default(),
+            )
+            .expect("retail logic admission");
+            let mut local = 0;
+            for block in entity_text(entities).split('{') {
+                if ent_value(block, "classname") != Some("func_pushable") {
+                    continue;
+                }
+                let global = ent_value(block, "globalname").unwrap_or("").trim();
+                if global.is_empty() {
+                    continue;
+                }
+                let id = actor_carry_id(global, true);
+                if let Some(previous) = identities.insert(id, global.to_string()) {
+                    assert_eq!(previous, global, "identity collision");
+                }
+                let model = block_model(block).expect("original model");
+                let half = [0, 1, 2].map(|a| {
+                    f32le(models, model * SZ_MODEL + 12 + a * 4).unwrap()
+                        - f32le(models, model * SZ_MODEL + a * 4).unwrap()
+                });
+                if let Some(previous) = dimensions.insert(id, half) {
+                    assert_eq!(previous, half, "matching global model dimensions");
+                }
+                let rec = cooked
+                    .ents
+                    .iter()
+                    .find(|r| r.kind == LOGIC_GLOBAL_PUSHABLE && r.arg0 == id)
+                    .expect("original metadata");
+                assert_eq!(rec.brush, model as u16);
+                if parse_spawnflags(block) & SF_PUSH_BREAKABLE == 0 {
+                    assert!(!cooked
+                        .ents
+                        .iter()
+                        .any(|r| r.kind == LOGIC_FUNC_BREAKABLE && r.brush == rec.brush));
+                }
+                local += 1;
+            }
+            assert_eq!(
+                cooked
+                    .ents
+                    .iter()
+                    .filter(|r| r.kind == LOGIC_GLOBAL_PUSHABLE)
+                    .count(),
+                local
+            );
+            count += local;
+            maximum = maximum.max(local);
+            scanned += 1;
         }
-        assert_eq!((scanned,count,identities.len(),maximum),(103,50,25,10));
+        assert_eq!(
+            (scanned, count, identities.len(), maximum),
+            (103, 50, 25, 10)
+        );
     }
 
     #[test]
     fn global_door_aux_preserves_close_output_and_legacy_records() {
-        let ents=br#"
+        let ents = br#"
         { "classname" "func_door" "model" "*1" "globalname" "shared" "netname" "closed" }
         { "classname" "func_door" "model" "*2" "globalname" "second" }
         { "classname" "func_door" "model" "*3" "netname" "legacy" }
         "#;
-        let models=vec![0;4*SZ_MODEL];
-        let cooked=collect_logic_entities(ents,&models,&[0,1,2,3],1.0,&Default::default(),&Default::default()).unwrap();
-        assert_eq!(cooked.ents.len(),3);
-        let a=&cooked.ents[0];
-        assert_eq!(a.aux_count,2);
-        assert_eq!(cooked.names[cooked.aux[a.first_aux as usize].target as usize-1],"closed");
-        assert_eq!(cooked.aux[a.first_aux as usize+1].target,actor_carry_id("shared",true));
-        let b=&cooked.ents[1];
-        assert_eq!(b.aux_count,2);
-        assert_eq!(cooked.aux[b.first_aux as usize].target,0);
-        assert_eq!(cooked.ents[2].aux_count,1);
-        let too_many=(1..=10).map(|i|format!("{{ \"classname\" \"func_door\" \"model\" \"*1\" \"globalname\" \"d{i}\" }}")).collect::<String>();
-        assert!(collect_logic_entities(too_many.as_bytes(),&models,&[0,1,2,3],1.0,&Default::default(),&Default::default()).err().unwrap().contains("capacity"));
+        let models = vec![0; 4 * SZ_MODEL];
+        let cooked = collect_logic_entities(
+            ents,
+            &models,
+            &[0, 1, 2, 3],
+            1.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        assert_eq!(cooked.ents.len(), 3);
+        let a = &cooked.ents[0];
+        assert_eq!(a.aux_count, 2);
+        assert_eq!(
+            cooked.names[cooked.aux[a.first_aux as usize].target as usize - 1],
+            "closed"
+        );
+        assert_eq!(
+            cooked.aux[a.first_aux as usize + 1].target,
+            actor_carry_id("shared", true)
+        );
+        let b = &cooked.ents[1];
+        assert_eq!(b.aux_count, 2);
+        assert_eq!(cooked.aux[b.first_aux as usize].target, 0);
+        assert_eq!(cooked.ents[2].aux_count, 1);
+        let too_many = (1..=10)
+            .map(|i| {
+                format!(
+                    "{{ \"classname\" \"func_door\" \"model\" \"*1\" \"globalname\" \"d{i}\" }}"
+                )
+            })
+            .collect::<String>();
+        assert!(collect_logic_entities(
+            too_many.as_bytes(),
+            &models,
+            &[0, 1, 2, 3],
+            1.0,
+            &Default::default(),
+            &Default::default()
+        )
+        .err()
+        .unwrap()
+        .contains("capacity"));
     }
 
     #[test]
     #[ignore = "requires supplied original retail BSP data"]
     fn original_global_doors_admit_all_63_and_stable_identities() {
-        let catalog=include_str!("../../../game/src/map_catalog.rs");
-        let maps=catalog.split("pub const MAPS").nth(1).expect("map catalog");
-        let maps=maps.split("];").next().unwrap();
+        let catalog = include_str!("../../../game/src/map_catalog.rs");
+        let maps = catalog.split("pub const MAPS").nth(1).expect("map catalog");
+        let maps = maps.split("];").next().unwrap();
         let root=std::path::Path::new("/Users/ebonura/Library/Application Support/Steam/steamapps/common/Half-Life/valve/maps");
-        let mut count=0;
-        let mut maximum=0;
-        let mut names=std::collections::HashMap::new();
-        let mut scanned=0;
-        for (index,name) in maps.split('"').enumerate() {
-            if index%2==0 {continue;}
-            let raw=std::fs::read(root.join(format!("{name}.bsp"))).expect("required original map");
-            let entity_off=u32le(&raw,4).unwrap() as usize;
-            let entity_len=u32le(&raw,8).unwrap() as usize;
-            let model_off=u32le(&raw,4+14*8).unwrap() as usize;
-            let model_len=u32le(&raw,8+14*8).unwrap() as usize;
-            let entities=&raw[entity_off..entity_off+entity_len];
-            let models=&raw[model_off..model_off+model_len];
-            let brushes=(0..models.len()/SZ_MODEL).map(|i|i as u16).collect::<Vec<_>>();
-            let cooked=collect_logic_entities(entities,models,&brushes,1.0,&Default::default(),&Default::default()).expect("retail logic admission");
-            let mut local=0;
-            for block in entity_text(entities).split('{') {
-                if !matches!(ent_value(block,"classname"),Some("func_door"|"func_door_rotating")) {continue;}
-                let global=ent_value(block,"globalname").unwrap_or("").trim();
-                if global.is_empty() {continue;}
-                let id=actor_carry_id(global,true);
-                if let Some(previous)=names.insert(id,global.to_string()) {assert_eq!(previous,global,"global identity collision");}
-                let original_count=entity_text(entities).split('{').filter(|candidate|matches!(ent_value(candidate,"classname"),Some("func_door"|"func_door_rotating")) && ent_value(candidate,"globalname").unwrap_or("").trim()==global).count();
-                assert_eq!(cooked.ents.iter().filter(|rec|rec.kind==LOGIC_FUNC_DOOR && rec.aux_count==2 && cooked.aux[rec.first_aux as usize+1].target==id).count(),original_count);
-                local+=1;
+        let mut count = 0;
+        let mut maximum = 0;
+        let mut names = std::collections::HashMap::new();
+        let mut scanned = 0;
+        for (index, name) in maps.split('"').enumerate() {
+            if index % 2 == 0 {
+                continue;
             }
-            count+=local;maximum=maximum.max(local);scanned+=1;
+            let raw =
+                std::fs::read(root.join(format!("{name}.bsp"))).expect("required original map");
+            let entity_off = u32le(&raw, 4).unwrap() as usize;
+            let entity_len = u32le(&raw, 8).unwrap() as usize;
+            let model_off = u32le(&raw, 4 + 14 * 8).unwrap() as usize;
+            let model_len = u32le(&raw, 8 + 14 * 8).unwrap() as usize;
+            let entities = &raw[entity_off..entity_off + entity_len];
+            let models = &raw[model_off..model_off + model_len];
+            let brushes = (0..models.len() / SZ_MODEL)
+                .map(|i| i as u16)
+                .collect::<Vec<_>>();
+            let cooked = collect_logic_entities(
+                entities,
+                models,
+                &brushes,
+                1.0,
+                &Default::default(),
+                &Default::default(),
+            )
+            .expect("retail logic admission");
+            let mut local = 0;
+            for block in entity_text(entities).split('{') {
+                if !matches!(
+                    ent_value(block, "classname"),
+                    Some("func_door" | "func_door_rotating")
+                ) {
+                    continue;
+                }
+                let global = ent_value(block, "globalname").unwrap_or("").trim();
+                if global.is_empty() {
+                    continue;
+                }
+                let id = actor_carry_id(global, true);
+                if let Some(previous) = names.insert(id, global.to_string()) {
+                    assert_eq!(previous, global, "global identity collision");
+                }
+                let original_count = entity_text(entities)
+                    .split('{')
+                    .filter(|candidate| {
+                        matches!(
+                            ent_value(candidate, "classname"),
+                            Some("func_door" | "func_door_rotating")
+                        ) && ent_value(candidate, "globalname").unwrap_or("").trim() == global
+                    })
+                    .count();
+                assert_eq!(
+                    cooked
+                        .ents
+                        .iter()
+                        .filter(|rec| rec.kind == LOGIC_FUNC_DOOR
+                            && rec.aux_count == 2
+                            && cooked.aux[rec.first_aux as usize + 1].target == id)
+                        .count(),
+                    original_count
+                );
+                local += 1;
+            }
+            count += local;
+            maximum = maximum.max(local);
+            scanned += 1;
         }
-        assert_eq!((scanned,count,names.len(),maximum),(103,63,33,9));
+        assert_eq!((scanned, count, names.len(), maximum), (103, 63, 33, 9));
     }
 
     #[test]
@@ -21324,7 +21878,10 @@ mod tests {
         assert_eq!(fan.spawnflags, 151);
         assert_eq!(fan.speed, 400);
         assert_eq!(fan.arg0, 2, "fanfriction remains an authored percentage");
-        assert_eq!(fan.arg1, 200, "Blocked dmg stays distinct from angular touch damage");
+        assert_eq!(
+            fan.arg1, 200,
+            "Blocked dmg stays distinct from angular touch damage"
+        );
         assert_eq!(logic.names[fan.targetname as usize - 1], "fanpwr");
 
         let models = vec![0u8; 2 * SZ_MODEL];
@@ -21346,8 +21903,15 @@ mod tests {
           { "classname" "func_rotating" "model" "*2" "speed" "75" "dmg" "50" "spawnflags" "139" }
           { "classname" "func_rotating" "model" "*3" "speed" "100" "spawnflags" "1" }
         "#;
-        let logic = collect_logic_entities(ents, &[], &[LOGIC_BRUSH_NONE, 7, 8, 9],
-            2.0, &Default::default(), &Default::default()).unwrap();
+        let logic = collect_logic_entities(
+            ents,
+            &[],
+            &[LOGIC_BRUSH_NONE, 7, 8, 9],
+            2.0,
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
         assert_eq!(logic.ents.len(), 2, "cosmetic fans remain allocation-free");
         assert_eq!((logic.ents[0].speed, logic.ents[0].arg1), (400, 200));
         assert_eq!((logic.ents[1].speed, logic.ents[1].arg1), (75, 50));
