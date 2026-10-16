@@ -570,17 +570,19 @@ pub struct RoomBudget {
 }
 
 /// The budget of a tight room, `None` for every other. c5a1 and c2a4e keep
-/// 580 B and 648 B of margin at b5a58b2; the 48 B census header the section
-/// replaces comes back to them, and 100 B of margin stays. With lights, c2a4e
-/// would grow by about 7.4 KB and c5a1 by about 4.2 KB.
+/// 580 B and 648 B of margin at b5a58b2, shared with every other lane that
+/// grows those rooms or their models. The 48 B census header the section
+/// replaces comes back to them; the budgets leave 300 B (c5a1) and 400 B
+/// (c2a4e) of margin, and each 10 B more is one more decal. With lights,
+/// c2a4e would grow by about 7.4 KB and c5a1 by about 4.2 KB.
 pub fn room_budget(map: &str) -> Option<RoomBudget> {
     match map {
         "c5a1" => Some(RoomBudget {
-            section: 48 + 480,
+            section: 48 + 280,
             lights: false,
         }),
         "c2a4e" => Some(RoomBudget {
-            section: 48 + 548,
+            section: 48 + 248,
             lights: false,
         }),
         _ => None,
