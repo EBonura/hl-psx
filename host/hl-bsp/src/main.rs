@@ -16,6 +16,7 @@ mod entity_support;
 #[path = "../../../game/src/env_bubbles.rs"]
 mod env_bubbles;
 mod hma1_cook;
+mod l5;
 mod pvs_pair;
 mod quad_grid;
 mod seated_placement;
@@ -2192,12 +2193,51 @@ fn median_cut(colors: &[(u8, u8, u8)], n_target: usize) -> Vec<(u8, u8, u8)> {
 /// Neutral modulation tint (PS1: 128 = 1.0x, texture unchanged).
 const NEUTRAL: u8 = 128;
 
-/// Sample the base-style lightmap at one vertex's luxel (luxels are 16 texels
-/// apart in original texture space). Boosted ~1.5x so lit surfaces aren't dim
-/// under 128=1.0x modulation. Returns neutral where there is no lightmap.
-/// `lit_layers` are the face's other qrad planes that are lit when the map
-/// starts, with their lightstyle value (256 = style 0's "m"); R_BuildLightMap
-/// sums every plane before the gamma ramp.
+/// The face's qrad planes (index, level) that are lit when the map starts.
+fn lit_layers_for(faces: &[u8], f: usize, start: &[u32; 64]) -> Vec<(usize, u32)> {
+    (0..4)
+        .filter_map(|layer| {
+            let style = *faces.get(f * SZ_FACE + 12 + layer)? as usize;
+            (style < 64 && start[style] > 0).then(|| (layer, start[style]))
+        })
+        .collect()
+}
+
+/// Sum a face's qrad light planes at one luxel: each plane's RGB sample times
+/// its current level (256 = style 0's "m"), the way `R_BuildLightMap` sums
+/// every plane before the gamma ramp. `None` where the luxel lies outside the
+/// lightmap data.
+#[allow(clippy::too_many_arguments)]
+fn plane_sums(
+    lighting: &[u8],
+    lightofs: i32,
+    lmw: usize,
+    lmh: usize,
+    ou: f32,
+    ov: f32,
+    mins_s: i32,
+    mins_t: i32,
+    layers: &[(usize, u32)],
+) -> Option<[u32; 3]> {
+    let ls = (((ou / 16.0).floor() as i32) - mins_s).clamp(0, lmw as i32 - 1) as usize;
+    let lt = (((ov / 16.0).floor() as i32) - mins_t).clamp(0, lmh as i32 - 1) as usize;
+    let o = lightofs as usize + (lt * lmw + ls) * 3;
+    let mut sum = [0u32; 3];
+    for &(layer, value) in layers {
+        let lo = o + layer * lmw * lmh * 3;
+        let plane = lighting.get(lo..lo + 3)?;
+        for c in 0..3 {
+            sum[c] += plane[c] as u32 * value;
+        }
+    }
+    Some(sum)
+}
+
+/// Sample the face's lightmap at one vertex's luxel (luxels are 16 texels
+/// apart in original texture space). Returns neutral where there is no
+/// lightmap. `lit_layers` are the face's qrad planes (index, level) that are
+/// lit when the map starts; a switchable or animated plane contributes at its
+/// start level and the runtime adds the difference from there.
 #[allow(clippy::too_many_arguments)]
 fn vertex_shade(
     lighting: &[u8],
@@ -2214,25 +2254,11 @@ fn vertex_shade(
     if lightofs < 0 || style0 == 0xFF {
         return (NEUTRAL, NEUTRAL, NEUTRAL);
     }
-    let ls = (((ou / 16.0).floor() as i32) - mins_s).clamp(0, lmw as i32 - 1) as usize;
-    let lt = (((ov / 16.0).floor() as i32) - mins_t).clamp(0, lmh as i32 - 1) as usize;
-    let o = lightofs as usize + (lt * lmw + ls) * 3;
-    let Some(base) = lighting.get(o..o + 3) else {
+    let Some(sum) = plane_sums(
+        lighting, lightofs, lmw, lmh, ou, ov, mins_s, mins_t, lit_layers,
+    ) else {
         return (NEUTRAL, NEUTRAL, NEUTRAL);
     };
-    let mut sum = [
-        base[0] as u32 * 256,
-        base[1] as u32 * 256,
-        base[2] as u32 * 256,
-    ];
-    for &(layer, value) in lit_layers {
-        let lo = o + layer * lmw * lmh * 3;
-        if let Some(plane) = lighting.get(lo..lo + 3) {
-            for c in 0..3 {
-                sum[c] += plane[c] as u32 * value;
-            }
-        }
-    }
     let lit = |c: u32| light_curve((c / 256).min(255) as u8);
     (lit(sum[0]), lit(sum[1]), lit(sum[2]))
 }
@@ -2243,35 +2269,11 @@ fn vertex_shade(
 /// style nobody sets is an empty string, which the engine treats as 256.
 /// Animated patterns are baked at their average, since the port bakes light.
 fn start_lightstyle_values(ents: &[u8]) -> [u32; 64] {
-    const PRESETS: [(usize, &str); 14] = [
-        (0, "m"),
-        (1, "mmnmmommommnonmmonqnmmo"),
-        (2, "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba"),
-        (3, "mmmmmaaaaammmmmaaaaaabcdefgabcdefg"),
-        (4, "mamamamamama"),
-        (5, "jklmnopqrstuvwxyzyxwvutsrqponmlkj"),
-        (6, "nmonqnmomnmomomno"),
-        (7, "mmmaaaabcdefgmmmmaaaammmaamm"),
-        (8, "mmmaaammmaaammmabcdefaaaammmmabcdefmmmaaaa"),
-        (9, "aaaaaaaazzzzzzzz"),
-        (10, "mmamammmmammamamaaamammma"),
-        (11, "abcdefghijklmnopqrrqponmlkjihgfedcba"),
-        (12, "mmnnmmnnnmmnn"),
-        (63, "a"),
-    ];
-    let average = |pattern: &str| -> u32 {
-        let n = pattern.len().max(1) as u32;
-        let sum: u32 = pattern
-            .bytes()
-            .map(|c| c.saturating_sub(b'a') as u32 * 22)
-            .sum();
-        sum * 256 / (n * 264)
-    };
     let mut values = [256u32; 64];
-    for (style, pattern) in PRESETS {
-        values[style] = average(pattern);
+    for (style, pattern) in PRESET_PATTERNS {
+        values[style as usize] = pattern_average(pattern);
     }
-    let mut set = [false; 64];
+    values[63] = 0;
     for block in entity_text(ents).split('{') {
         if !matches!(
             ent_value(block, "classname"),
@@ -2282,49 +2284,76 @@ fn start_lightstyle_values(ents: &[u8]) -> [u32; 64] {
         let Some(style) = ent_value(block, "style").and_then(|v| v.parse::<usize>().ok()) else {
             continue;
         };
-        if !(32..63).contains(&style) || set[style] {
+        // CLight::Spawn removes a light without a targetname ("inert light")
+        // before it sets any style, and each targeted light that spawns sets
+        // the style again, so the last one in the entity lump decides.
+        if !(32..63).contains(&style)
+            || ent_value(block, "targetname")
+                .unwrap_or("")
+                .trim()
+                .is_empty()
+        {
             continue;
         }
-        set[style] = true;
         values[style] = if parse_spawnflags(block) & 1 != 0 {
             0
         } else {
             ent_value(block, "pattern")
                 .filter(|p| !p.is_empty())
-                .map(average)
+                .map(pattern_average)
                 .unwrap_or(256)
         };
     }
     values
 }
 
-/// Sample one qrad lightstyle plane without the base plane. GoldSrc combines
-/// these RGB samples independently at runtime (`R_BuildLightMap`); keeping the
-/// contribution separate is what lets an OFF style leave the texture and the
-/// ordinary baked lighting completely unchanged.
+/// What one switchable or animated qrad plane adds at one vertex, as the
+/// per-channel size of the change in the final (gamma-ramped) colour between
+/// the plane at its start `level` and at the other end of its swing: dark
+/// when it starts lit, full ("m") when it starts dark. The runtime scales the
+/// stored magnitude by how far the style has moved toward that end, so a
+/// light that stays at its start level leaves the baked base untouched and
+/// switching one off darkens the surface by exactly what it contributed.
 #[allow(clippy::too_many_arguments)]
-fn dynamic_vertex_shade(
+fn dynamic_corner_delta(
     lighting: &[u8],
     lightofs: i32,
-    layer: usize,
     lmw: usize,
     lmh: usize,
     ou: f32,
     ov: f32,
     mins_s: i32,
     mins_t: i32,
+    lit_layers: &[(usize, u32)],
+    layer: usize,
+    level: u32,
 ) -> (u8, u8, u8) {
-    if lightofs < 0 || layer == 0 {
+    if lightofs < 0 {
         return (0, 0, 0);
     }
-    let ls = (((ou / 16.0).floor() as i32) - mins_s).clamp(0, lmw as i32 - 1) as usize;
-    let lt = (((ov / 16.0).floor() as i32) - mins_t).clamp(0, lmh as i32 - 1) as usize;
-    let plane_bytes = lmw * lmh * 3;
-    let o = lightofs as usize + layer * plane_bytes + (lt * lmw + ls) * 3;
-    match (lighting.get(o), lighting.get(o + 1), lighting.get(o + 2)) {
-        (Some(&r), Some(&g), Some(&b)) => (light_curve(r), light_curve(g), light_curve(b)),
-        _ => (0, 0, 0),
-    }
+    let sums = |layers: &[(usize, u32)]| {
+        plane_sums(lighting, lightofs, lmw, lmh, ou, ov, mins_s, mins_t, layers)
+    };
+    let Some(start) = sums(lit_layers) else {
+        return (0, 0, 0);
+    };
+    let other: Vec<(usize, u32)> = if level > 0 {
+        lit_layers
+            .iter()
+            .copied()
+            .filter(|&(l, _)| l != layer)
+            .collect()
+    } else {
+        let mut v = lit_layers.to_vec();
+        v.push((layer, 256));
+        v
+    };
+    let Some(end) = sums(&other) else {
+        return (0, 0, 0);
+    };
+    let lit = |c: u32| light_curve((c / 256).min(255) as u8) as i32;
+    let d = |c: usize| (lit(end[c]) - lit(start[c])).unsigned_abs().min(255) as u8;
+    (d(0), d(1), d(2))
 }
 
 /// Tone curve applied to every baked lightmap sample.
@@ -4706,90 +4735,153 @@ const MAX_RUNTIME_LOGIC: usize = 384; // game/src/main.rs MAX_LOGIC
 
 const DYNAMIC_LIGHTSTYLE_MAX: usize = 31;
 
+/// A lightstyle the runtime animates or switches. Every map face lit by one of
+/// these carries its plane as a sparse appendix (see `DynamicFaceCook`).
 #[derive(Clone, Debug)]
 struct DynamicLightStyle {
     style: u8,
+    /// The light's `targetname`: only a named light can be switched by Use.
     targetname: String,
+    /// The authored pattern ("a" dark .. "m" normal .. "z" double); empty is
+    /// steady "m".
+    pattern: String,
+    /// Level the map starts at: 256 is "m", 0 is dark. START_OFF lights start
+    /// at 0 and an animated one at its pattern's average, which is what the
+    /// baked base lighting already holds.
+    start_level: u32,
+    start_off: bool,
+    /// Index of the last light of this style in the entity lump's `{` blocks:
+    /// its spawn decides the style's pattern and start state, and it is the
+    /// one the runtime's switch record is cooked from.
+    last_block: usize,
     origins_hl: Vec<[f32; 3]>,
 }
 
-/// GoldSrc's `~` texture family marks emissive surfaces. The Hazard Course
-/// indicator boards use `+a~generic65`; their named lightstyles illuminate the
-/// face independently after each traversal trigger fires.
-fn is_dynamic_emissive_texture(name: &str) -> bool {
-    name.starts_with('+') && name.contains('~')
+impl DynamicLightStyle {
+    fn switchable(&self) -> bool {
+        !self.targetname.is_empty()
+    }
 }
 
-/// Keep only named dynamic lightstyles that actually touch an emissive face.
-/// This avoids serialising unrelated switchable room lighting while retaining
-/// a generic face-to-target relationship for every authored indicator panel.
+/// The standard animated styles 1 to 12 (HLSDK `CWorld::Precache`).
+const PRESET_PATTERNS: [(u8, &str); 13] = [
+    (0, "m"),
+    (1, "mmnmmommommnonmmonqnmmo"),
+    (2, "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba"),
+    (3, "mmmmmaaaaammmmmaaaaaabcdefgabcdefg"),
+    (4, "mamamamamama"),
+    (5, "jklmnopqrstuvwxyzyxwvutsrqponmlkj"),
+    (6, "nmonqnmomnmomomno"),
+    (7, "mmmaaaabcdefgmmmmaaaammmaamm"),
+    (8, "mmmaaammmaaammmabcdefaaaammmmabcdefmmmaaaa"),
+    (9, "aaaaaaaazzzzzzzz"),
+    (10, "mmamammmmammamamaaamammma"),
+    (11, "abcdefghijklmnopqrrqponmlkjihgfedcba"),
+    (12, "mmnnmmnnnmmnn"),
+];
+
+/// The level of one pattern character, with "m" (the engine's 12 * 22 = 264)
+/// normalised to 256, the unit the cooked lighting uses throughout.
+fn pattern_level(c: u8) -> u32 {
+    c.saturating_sub(b'a') as u32 * 64 / 3
+}
+
+/// A pattern's mean level; an empty pattern is steady "m".
+fn pattern_average(pattern: &str) -> u32 {
+    if pattern.is_empty() {
+        return 256;
+    }
+    let sum: u32 = pattern.bytes().map(pattern_level).sum();
+    sum / pattern.len() as u32
+}
+
+/// Every lightstyle some face is lit by that can change while the map runs:
+/// the standard animated styles 1 to 12, and any light of style 32 or more
+/// that is targeted (Use switches it, `CLight::Use`) or carries a pattern.
+/// Steady lights bake into the base lighting and stay out of this list.
 fn collect_dynamic_lightstyles(
     ents: &[u8],
     faces: &[u8],
-    texinfo: &[u8],
-    tex_names: &[String],
+    start_styles: &[u32; 64],
 ) -> Result<Vec<DynamicLightStyle>, String> {
     let mut used = std::collections::BTreeSet::<u8>::new();
     for f in 0..faces.len() / SZ_FACE {
-        let fo = f * SZ_FACE;
-        let ti = u16le(faces, fo + 10).unwrap_or(0) as usize;
-        let tex = i32le(texinfo, ti * SZ_TEXINFO + 32).unwrap_or(-1);
-        let Some(name) = (tex >= 0).then(|| tex_names.get(tex as usize)).flatten() else {
-            continue;
-        };
-        if !is_dynamic_emissive_texture(name) {
-            continue;
-        }
-        for &style in faces.get(fo + 12..fo + 16).unwrap_or(&[]) {
-            if style != 0 && style != u8::MAX {
+        for &style in faces.get(f * SZ_FACE + 12..f * SZ_FACE + 16).unwrap_or(&[]) {
+            if style != 0 && style < 63 {
                 used.insert(style);
             }
         }
     }
-
     let text = entity_text(ents);
     let mut by_style = std::collections::BTreeMap::<u8, DynamicLightStyle>::new();
-    for block in text.split('{') {
+    for &style in &used {
+        if let Some((_, pattern)) = PRESET_PATTERNS.iter().find(|(s, _)| *s == style) {
+            by_style.insert(
+                style,
+                DynamicLightStyle {
+                    style,
+                    targetname: String::new(),
+                    pattern: pattern.to_string(),
+                    start_level: start_styles[style as usize],
+                    start_off: false,
+                    last_block: 0,
+                    origins_hl: Vec::new(),
+                },
+            );
+        }
+    }
+    for (raw_index, block) in text.split('{').enumerate() {
         if !matches!(ent_value(block, "classname"), Some("light" | "light_spot")) {
             continue;
         }
         let Some(style) = ent_value(block, "style").and_then(|v| v.parse::<u8>().ok()) else {
             continue;
         };
-        if !used.contains(&style) {
+        if !(32..63).contains(&style) || !used.contains(&style) {
             continue;
         }
+        // An untargeted light is removed at spawn (`CLight::Spawn`), so its
+        // style never changes from steady "m", whatever pattern it carries.
         let targetname = ent_value(block, "targetname").unwrap_or("").trim();
         if targetname.is_empty() {
             continue;
         }
+        let pattern = ent_value(block, "pattern").unwrap_or("").trim();
         let origin = ent_value(block, "origin")
             .and_then(parse_vec3)
             .unwrap_or([0.0; 3]);
+        let start_off = parse_spawnflags(block) & 1 != 0;
         match by_style.entry(style) {
             std::collections::btree_map::Entry::Vacant(entry) => {
                 entry.insert(DynamicLightStyle {
                     style,
                     targetname: targetname.to_string(),
+                    pattern: pattern.to_string(),
+                    start_level: start_styles[style as usize],
+                    start_off,
+                    last_block: raw_index,
                     origins_hl: vec![origin],
                 });
             }
             std::collections::btree_map::Entry::Occupied(mut entry) => {
-                if entry.get().targetname != targetname {
+                let light = entry.get_mut();
+                if light.targetname != targetname {
                     return Err(format!(
                         "dynamic lightstyle {style} has conflicting targets '{}' and '{}'",
-                        entry.get().targetname,
-                        targetname
+                        light.targetname, targetname
                     ));
                 }
-                entry.get_mut().origins_hl.push(origin);
+                light.pattern = pattern.to_string();
+                light.start_off = start_off;
+                light.last_block = raw_index;
+                light.origins_hl.push(origin);
             }
         }
     }
     let out: Vec<_> = by_style.into_values().collect();
     if out.len() > DYNAMIC_LIGHTSTYLE_MAX {
         return Err(format!(
-            "{} emissive dynamic lightstyles exceed compact face limit {}",
+            "{} dynamic lightstyles exceed compact face limit {}",
             out.len(),
             DYNAMIC_LIGHTSTYLE_MAX
         ));
@@ -8050,7 +8142,6 @@ fn collect_logic_entities_with_lightstyles(
     // index, so the runtime can compare an exact caller without name scans.
     let mut source_raw_index: Vec<usize> = Vec::new();
     let mut trigger_models: Vec<(usize, usize)> = Vec::new();
-    let mut emitted_lightstyles = std::collections::HashSet::<u8>::new();
     let clips = load_clips_manifest();
     let studio_events = load_studio_events_manifest();
     let voices = load_voices_manifest();
@@ -8111,13 +8202,15 @@ fn collect_logic_entities_with_lightstyles(
                 .and_then(|style| {
                     dynamic_lightstyles
                         .iter()
-                        .position(|light| light.style == style)
+                        .position(|light| light.style == style && light.switchable())
                         .map(|index| index as u8 + 1)
                 })
         } else {
             None
         };
-        if dynamic_light_slot.is_some_and(|slot| !emitted_lightstyles.insert(slot)) {
+        if dynamic_light_slot
+            .is_some_and(|slot| dynamic_lightstyles[slot as usize - 1].last_block != raw_index)
+        {
             continue;
         }
         let kind = match cls {
@@ -10911,37 +11004,86 @@ fn monster_trigger_condition(block: &str) -> Option<(u16, &str)> {
 /// Keep nondefault authored equipment without changing the 24-byte actor record.
 /// Default/zero weapons is CHGrunt's AR+hand grenade loadout.
 fn collect_grunt_equipment(
-    ents: &[u8], scale: f32,
-    props: &[(u16, [i32;3], i32, i16, u16, u16)], names: &[String],
-) -> Result<Vec<LogicRec>,String> {
-    let text=entity_text(ents);
-    let mut result=Vec::new();
+    ents: &[u8],
+    scale: f32,
+    props: &[(u16, [i32; 3], i32, i16, u16, u16)],
+    names: &[String],
+) -> Result<Vec<LogicRec>, String> {
+    let text = entity_text(ents);
+    let mut result = Vec::new();
     for block in text.split('{') {
-        if ent_value(block,"classname") != Some("monster_human_grunt") {continue;}
-        let raw=ent_value(block,"weapons").unwrap_or("0").parse::<u8>()
+        if ent_value(block, "classname") != Some("monster_human_grunt") {
+            continue;
+        }
+        let raw = ent_value(block, "weapons")
+            .unwrap_or("0")
+            .parse::<u8>()
             .map_err(|_| "invalid grunt weapons".to_string())?;
-        if raw & !15 != 0 {return Err("unsupported grunt weapons bits".into());}
-        let weapons=if raw==0 {3}else{raw};
-        if weapons==3 {continue;}
-        let origin=to_world(ent_value(block,"origin").and_then(parse_vec3).unwrap_or([0.;3]),scale);
-        let name=ent_value(block,"targetname").unwrap_or("");
-        let named=|prop: &(u16,[i32;3],i32,i16,u16,u16)|
-            !name.is_empty() && prop.4 != 0 && names.get(prop.4 as usize-1).is_some_and(|n|n==name);
-        let valid=|prop: &(u16,[i32;3],i32,i16,u16,u16)| prop.0 & 0x0fff == 8 && prop.0 & 0x8000 == 0;
-        let exact: Vec<_>=props.iter().enumerate().filter(|(_,p)|valid(p)&&p.1==origin).collect();
-        let candidates=if exact.len()==1 {exact} else {
-            props.iter().enumerate().filter(|(_,p)|valid(p)&&named(p)).collect()
+        if raw & !15 != 0 {
+            return Err("unsupported grunt weapons bits".into());
+        }
+        let weapons = if raw == 0 { 3 } else { raw };
+        if weapons == 3 {
+            continue;
+        }
+        let origin = to_world(
+            ent_value(block, "origin")
+                .and_then(parse_vec3)
+                .unwrap_or([0.; 3]),
+            scale,
+        );
+        let name = ent_value(block, "targetname").unwrap_or("");
+        let named = |prop: &(u16, [i32; 3], i32, i16, u16, u16)| {
+            !name.is_empty()
+                && prop.4 != 0
+                && names.get(prop.4 as usize - 1).is_some_and(|n| n == name)
         };
-        if candidates.len()!=1 {return Err("authored grunt equipment binding is ambiguous".into());}
-        let index=candidates[0].0;
-        if result.iter().any(|r: &LogicRec|r.arg0 as usize==index) {
+        let valid = |prop: &(u16, [i32; 3], i32, i16, u16, u16)| {
+            prop.0 & 0x0fff == 8 && prop.0 & 0x8000 == 0
+        };
+        let exact: Vec<_> = props
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| valid(p) && p.1 == origin)
+            .collect();
+        let candidates = if exact.len() == 1 {
+            exact
+        } else {
+            props
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| valid(p) && named(p))
+                .collect()
+        };
+        if candidates.len() != 1 {
+            return Err("authored grunt equipment binding is ambiguous".into());
+        }
+        let index = candidates[0].0;
+        if result.iter().any(|r: &LogicRec| r.arg0 as usize == index) {
             return Err("duplicate grunt equipment binding".into());
         }
-        result.push(LogicRec {kind:LOGIC_GRUNT_EQUIPMENT,use_type:0,spawnflags:0,
-            targetname:0,target:0,killtarget:0,brush:LOGIC_BRUSH_NONE,
-            first_aux:0,aux_count:0,flags:0,wait_ticks:0,delay_ticks:0,speed:0,
-            arg0:u16::try_from(index).map_err(|_|"grunt index overflow")?,arg1:weapons as u16,
-            sound0:u8::MAX,sound1:u8::MAX,origin,mins:origin,maxs:origin});
+        result.push(LogicRec {
+            kind: LOGIC_GRUNT_EQUIPMENT,
+            use_type: 0,
+            spawnflags: 0,
+            targetname: 0,
+            target: 0,
+            killtarget: 0,
+            brush: LOGIC_BRUSH_NONE,
+            first_aux: 0,
+            aux_count: 0,
+            flags: 0,
+            wait_ticks: 0,
+            delay_ticks: 0,
+            speed: 0,
+            arg0: u16::try_from(index).map_err(|_| "grunt index overflow")?,
+            arg1: weapons as u16,
+            sound0: u8::MAX,
+            sound1: u8::MAX,
+            origin,
+            mins: origin,
+            maxs: origin,
+        });
     }
     Ok(result)
 }
@@ -12306,9 +12448,19 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let leaves = bsp.lump(LUMP_LEAVES);
     let models = bsp.lump(LUMP_MODELS);
     let n_faces = faces.len() / SZ_FACE;
-    let dynamic_lightstyles =
-        collect_dynamic_lightstyles(bsp.lump(LUMP_ENTITIES), faces, texinfo, &tex_names)?;
     let start_styles = start_lightstyle_values(bsp.lump(LUMP_ENTITIES));
+    // Lane L5: a room with no weapon-cache margin to spare bakes its lights at
+    // their start state (and may cap its decals) instead of carrying lightstyle planes.
+    let l5_map_name = Path::new(path)
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let l5_budget = l5::room_budget(l5_map_name);
+    let dynamic_lightstyles = if l5_budget.as_ref().is_none_or(|b| b.lights) {
+        collect_dynamic_lightstyles(bsp.lump(LUMP_ENTITIES), faces, &start_styles)?
+    } else {
+        Vec::new()
+    };
     let n_edges = edges.len() / SZ_EDGE;
     let world_first_face = u32le(models, 56).unwrap_or(0) as usize;
     let world_end_face = world_first_face
@@ -12758,19 +12910,9 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         let mins_t = (lv0 / 16.0).floor() as i32;
         face_lm_dims[f] = [lmw as u8, lmh as u8];
         face_lm_mins[f] = [mins_s as i16, mins_t as i16];
-        // Planes the runtime switches (face_dynamic_layers) stay out of the
-        // bake; every other plane lit at map start is summed in.
-        let lit_layers: Vec<(usize, u32)> = (1..4)
-            .filter_map(|layer| {
-                let style = *faces.get(fo + 12 + layer)? as usize;
-                let dynamic = face_dynamic_lightstyles[f]
-                    .iter()
-                    .zip(face_dynamic_layers[f])
-                    .any(|(&slot, l)| slot != 0 && l as usize == layer);
-                (style < 64 && !dynamic && start_styles[style] > 0)
-                    .then(|| (layer, start_styles[style]))
-            })
-            .collect();
+        // Every plane lit at map start is summed into the base, a switchable or
+        // animated one (face_dynamic_layers) at its start level.
+        let lit_layers = lit_layers_for(faces, f, &start_styles);
         let shade: Vec<(u8, u8, u8)> = ouv
             .iter()
             .map(|&(ou, ov)| {
@@ -13336,6 +13478,57 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         },
         None => None,
     };
+    // Lane L5: the map's static infodecals, with one extra atlas texture at
+    // the end of the list (no face names it; the L5X1 section does).
+    let l5_decals = {
+        let ents_text = entity_text(bsp.lump(LUMP_ENTITIES));
+        let n_visleaves =
+            world_visleaf_count(bsp.lump(LUMP_MODELS), bsp.lump(LUMP_LEAVES).len() / SZ_LEAF)?;
+        let spawn = standalone_spawn_candidates(bsp.lump(LUMP_ENTITIES))
+            .into_iter()
+            .find(|c| c.is_player_start)
+            .map(|c| c.origin_hl);
+        let geometry = l5::Geometry {
+            verts: bsp.lump(LUMP_VERTEXES),
+            edges: bsp.lump(LUMP_EDGES),
+            surf: bsp.lump(LUMP_SURFEDGES),
+            faces: bsp.lump(LUMP_FACES),
+            planes: bsp.lump(LUMP_PLANES),
+            texinfo: bsp.lump(LUMP_TEXINFO),
+            textures: bsp.lump(LUMP_TEXTURES),
+            nodes: bsp.lump(LUMP_NODES),
+            leaves: bsp.lump(LUMP_LEAVES),
+            models: bsp.lump(LUMP_MODELS),
+            n_visleaves,
+            lighting: bsp.lump(LUMP_LIGHTING),
+            start_styles: &start_styles,
+        };
+        match l5::cook_decals(
+            &ents_text,
+            &wads,
+            &geometry,
+            scale,
+            l5_budget.as_ref().map(|b| b.section),
+            spawn,
+        ) {
+            Some((cook, atlas)) => {
+                eprintln!(
+                    "  static decals: {} placed ({} no host surface, {} on moving brushes, {} unknown texture, {} budget-dropped), {} textures, {} B resident",
+                    cook.stats.placed,
+                    cook.stats.no_host,
+                    cook.stats.on_movers,
+                    cook.stats.unknown_texture,
+                    cook.stats.dropped_budget,
+                    cook.defs.len(),
+                    cook.bytes()
+                );
+                let atlas_tex = texs.len() as u8;
+                texs.push(atlas);
+                Some((cook, atlas_tex))
+            }
+            None => None,
+        }
+    };
     let n_cooked_texs = texs.len();
     if n_cooked_texs > u8::MAX as usize + 1 {
         return Err(format!(
@@ -13599,10 +13792,12 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let n_raw_tris = raw_tris.len() / 16;
 
     // ---- Sparse GoldSrc lightstyle planes (HLMG) ----
-    // Only faces that reference one of the named switchable styles carry this
-    // appendix. Each stored geometry corner keeps an RGB contribution for each
-    // authored style plane; OFF therefore adds exactly zero and cannot alter
-    // neighbouring/base textures. Loop/native-patch faces remain compact (and
+    // Only faces lit by a switchable or animated style carry this appendix
+    // (see `collect_dynamic_lightstyles`). Each stored geometry corner keeps,
+    // for each such style plane, the size of the change in the final colour
+    // between the plane at its start level and at the other end of its swing
+    // (`dynamic_corner_delta`); a style left at its start level therefore adds
+    // exactly zero and cannot alter neighbouring/base textures. Loop/native-patch faces remain compact (and
     // fast) instead of being demoted to raw triangles just to carry lighting.
     // A 64-colour RGB555 delta palette avoids another 1 KiB PS1 BSS table.
     struct DynamicFaceCook {
@@ -13639,6 +13834,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             let [lmw, lmh] = face_lm_dims[f];
             let [mins_s, mins_t] = face_lm_mins[f];
             let lightofs = i32le(faces, fo + 16).unwrap_or(-1);
+            let face_layers = lit_layers_for(faces, f, &start_styles);
             let sample = |vertex: u16, plane: usize| {
                 let p = verts[(vertex & 0x3fff) as usize];
                 // Cooked world is [HL x, HL z, HL y] / scale.
@@ -13652,16 +13848,18 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
                 if slots[plane] == 0 {
                     (0, 0, 0)
                 } else {
-                    dynamic_vertex_shade(
+                    dynamic_corner_delta(
                         lighting,
                         lightofs,
-                        face_dynamic_layers[f][plane] as usize,
                         lmw as usize,
                         lmh as usize,
                         ou,
                         ov,
                         mins_s as i32,
                         mins_t as i32,
+                        &face_layers,
+                        face_dynamic_layers[f][plane] as usize,
+                        dynamic_lightstyles[slots[plane] as usize - 1].start_level,
                     )
                 }
             };
@@ -13692,14 +13890,20 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
                     }
                 }
             }
-            dynamic_faces.push(DynamicFaceCook {
-                compact_face,
-                first: face_lc_first[f] as u16,
-                item_count: item_count as u16,
-                slots,
-                loop_pool,
-                colors,
-            });
+            // A light that never reaches this face's corners adds nothing:
+            // no record, and no reason for the runtime to visit the face.
+            if colors.iter().all(|&c| c == (0, 0, 0)) {
+                face_dynamic_lightstyles[f] = [0; 3];
+            } else {
+                dynamic_faces.push(DynamicFaceCook {
+                    compact_face,
+                    first: face_lc_first[f] as u16,
+                    item_count: item_count as u16,
+                    slots,
+                    loop_pool,
+                    colors,
+                });
+            }
         }
         compact_face = compact_face.saturating_add(1);
     }
@@ -14700,7 +14904,12 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         &mut logic.names,
         &mut trigger_links,
     );
-    logic.ents.extend(collect_grunt_equipment(bsp.lump(LUMP_ENTITIES),scale,&props,&logic.names)?);
+    logic.ents.extend(collect_grunt_equipment(
+        bsp.lump(LUMP_ENTITIES),
+        scale,
+        &props,
+        &logic.names,
+    )?);
     // A map with Gonarch nodes but no Gonarch of its own gets a walker for
     // the one that follows the player in (c4a2a, c4a2b).
     let ent_text = entity_text(bsp.lump(LUMP_ENTITIES));
@@ -15237,86 +15446,121 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             serialized_leaf_cells
         ));
     }
-    let world_pipeline_off = o.len() as u32;
+    // The census-only world pipeline header is retired: unless a diagnostic
+    // room asks for the real section, this pointer now leads to the lane L5
+    // section (static decals, light styles), or is 0 when a room has neither.
+    let style_records: Vec<l5::StyleRecord> = if dynamic_faces.is_empty() {
+        Vec::new()
+    } else {
+        dynamic_lightstyles
+            .iter()
+            .map(|light| l5::StyleRecord {
+                switchable: light.switchable(),
+                start: light.start_level,
+                pattern: light.pattern.as_bytes().to_vec(),
+            })
+            .collect()
+    };
+    let l5_section = if l5_decals.is_some() || !style_records.is_empty() {
+        l5::write_section(
+            l5_decals.as_ref().map(|(cook, _)| cook),
+            l5_decals.as_ref().map_or(0xff, |(_, tex)| *tex),
+            &l5::style_table(&style_records),
+        )
+    } else {
+        Vec::new()
+    };
+    let world_pipeline_off = if emit_world_pipeline || !l5_section.is_empty() {
+        o.len() as u32
+    } else {
+        0
+    };
     o[world_pipeline_off_pos..world_pipeline_off_pos + 4]
         .copy_from_slice(&world_pipeline_off.to_le_bytes());
-    let cells_off = cooked::WORLD_PIPELINE_HEADER_SIZE;
-    let leaf_ranges_off = cells_off + serialized_cells * cooked::WORLD_PIPELINE_CELL_SIZE;
-    let leaf_cells_off =
-        leaf_ranges_off + leaf_cells.len() * cooked::WORLD_PIPELINE_LEAF_RANGE_SIZE;
-    let vertices_off =
-        (leaf_cells_off + serialized_leaf_cells * cooked::WORLD_PIPELINE_LEAF_CELL_SIZE + 3) & !3;
-    let faces_off = vertices_off + serialized_vertices * cooked::WORLD_PIPELINE_VERTEX_SIZE;
-    let templates_off = faces_off + serialized_faces * CookedDrawSurfaceCommand::SIZE;
-    o.extend_from_slice(&cooked::WORLD_PIPELINE_MAGIC.to_le_bytes());
-    o.extend_from_slice(&cooked::WORLD_PIPELINE_VERSION.to_le_bytes());
-    o.extend_from_slice(&0u16.to_le_bytes()); // no cell has ordering proof yet
-    o.extend_from_slice(&(serialized_cells as u16).to_le_bytes());
-    o.extend_from_slice(&(serialized_vertices as u16).to_le_bytes());
-    o.extend_from_slice(&(serialized_faces as u16).to_le_bytes());
-    o.extend_from_slice(&0u16.to_le_bytes());
-    o.extend_from_slice(&(leaf_cells.len() as u16).to_le_bytes());
-    o.extend_from_slice(&(serialized_leaf_cells as u16).to_le_bytes());
-    o.extend_from_slice(&0u16.to_le_bytes());
-    o.extend_from_slice(&0u16.to_le_bytes());
-    for offset in [
-        cells_off,
-        leaf_ranges_off,
-        leaf_cells_off,
-        vertices_off,
-        faces_off,
-        templates_off,
-    ] {
-        o.extend_from_slice(&(offset as u32).to_le_bytes());
+    if !emit_world_pipeline {
+        o.extend_from_slice(&l5_section);
     }
-    debug_assert_eq!(
-        o.len(),
-        world_pipeline_off as usize + cooked::WORLD_PIPELINE_HEADER_SIZE
-    );
-    for cell in world_pipeline.cells.iter().take(serialized_cells) {
-        o.extend_from_slice(&cell.vertex_first.to_le_bytes());
-        o.extend_from_slice(&cell.vertex_count.to_le_bytes());
-        o.extend_from_slice(&cell.face_first.to_le_bytes());
-        o.extend_from_slice(&cell.face_count.to_le_bytes());
-        o.extend_from_slice(&cell.packet_count.to_le_bytes());
-        o.extend_from_slice(&cell.flags.to_le_bytes());
-        for coordinate in cell.center {
-            o.extend_from_slice(&coordinate.to_le_bytes());
+    if emit_world_pipeline {
+        let cells_off = cooked::WORLD_PIPELINE_HEADER_SIZE;
+        let leaf_ranges_off = cells_off + serialized_cells * cooked::WORLD_PIPELINE_CELL_SIZE;
+        let leaf_cells_off =
+            leaf_ranges_off + leaf_cells.len() * cooked::WORLD_PIPELINE_LEAF_RANGE_SIZE;
+        let vertices_off =
+            (leaf_cells_off + serialized_leaf_cells * cooked::WORLD_PIPELINE_LEAF_CELL_SIZE + 3)
+                & !3;
+        let faces_off = vertices_off + serialized_vertices * cooked::WORLD_PIPELINE_VERTEX_SIZE;
+        let templates_off = faces_off + serialized_faces * CookedDrawSurfaceCommand::SIZE;
+        o.extend_from_slice(&cooked::WORLD_PIPELINE_MAGIC.to_le_bytes());
+        o.extend_from_slice(&cooked::WORLD_PIPELINE_VERSION.to_le_bytes());
+        o.extend_from_slice(&0u16.to_le_bytes()); // no cell has ordering proof yet
+        o.extend_from_slice(&(serialized_cells as u16).to_le_bytes());
+        o.extend_from_slice(&(serialized_vertices as u16).to_le_bytes());
+        o.extend_from_slice(&(serialized_faces as u16).to_le_bytes());
+        o.extend_from_slice(&0u16.to_le_bytes());
+        o.extend_from_slice(&(leaf_cells.len() as u16).to_le_bytes());
+        o.extend_from_slice(&(serialized_leaf_cells as u16).to_le_bytes());
+        o.extend_from_slice(&0u16.to_le_bytes());
+        o.extend_from_slice(&0u16.to_le_bytes());
+        for offset in [
+            cells_off,
+            leaf_ranges_off,
+            leaf_cells_off,
+            vertices_off,
+            faces_off,
+            templates_off,
+        ] {
+            o.extend_from_slice(&(offset as u32).to_le_bytes());
         }
-        o.extend_from_slice(&cell.radius.to_le_bytes());
-    }
-    debug_assert_eq!(o.len(), world_pipeline_off as usize + leaf_ranges_off);
-    let mut leaf_cell_first = 0usize;
-    for cells in &leaf_cells {
-        o.extend_from_slice(&(leaf_cell_first as u16).to_le_bytes());
-        o.extend_from_slice(&(cells.len() as u16).to_le_bytes());
-        leaf_cell_first += cells.len();
-    }
-    debug_assert_eq!(o.len(), world_pipeline_off as usize + leaf_cells_off);
-    for cells in &leaf_cells {
-        for cell in cells {
-            o.extend_from_slice(&cell.to_le_bytes());
+        debug_assert_eq!(
+            o.len(),
+            world_pipeline_off as usize + cooked::WORLD_PIPELINE_HEADER_SIZE
+        );
+        for cell in world_pipeline.cells.iter().take(serialized_cells) {
+            o.extend_from_slice(&cell.vertex_first.to_le_bytes());
+            o.extend_from_slice(&cell.vertex_count.to_le_bytes());
+            o.extend_from_slice(&cell.face_first.to_le_bytes());
+            o.extend_from_slice(&cell.face_count.to_le_bytes());
+            o.extend_from_slice(&cell.packet_count.to_le_bytes());
+            o.extend_from_slice(&cell.flags.to_le_bytes());
+            for coordinate in cell.center {
+                o.extend_from_slice(&coordinate.to_le_bytes());
+            }
+            o.extend_from_slice(&cell.radius.to_le_bytes());
         }
-    }
-    while o.len() < world_pipeline_off as usize + vertices_off {
-        o.push(0);
-    }
-    debug_assert_eq!(o.len(), world_pipeline_off as usize + vertices_off);
-    for vertex in world_pipeline.vertices.iter().take(serialized_vertices) {
-        for coordinate in vertex.position {
-            o.extend_from_slice(&coordinate.to_le_bytes());
+        debug_assert_eq!(o.len(), world_pipeline_off as usize + leaf_ranges_off);
+        let mut leaf_cell_first = 0usize;
+        for cells in &leaf_cells {
+            o.extend_from_slice(&(leaf_cell_first as u16).to_le_bytes());
+            o.extend_from_slice(&(cells.len() as u16).to_le_bytes());
+            leaf_cell_first += cells.len();
         }
-        o.extend_from_slice(&vertex.source_vertex.to_le_bytes());
+        debug_assert_eq!(o.len(), world_pipeline_off as usize + leaf_cells_off);
+        for cells in &leaf_cells {
+            for cell in cells {
+                o.extend_from_slice(&cell.to_le_bytes());
+            }
+        }
+        while o.len() < world_pipeline_off as usize + vertices_off {
+            o.push(0);
+        }
+        debug_assert_eq!(o.len(), world_pipeline_off as usize + vertices_off);
+        for vertex in world_pipeline.vertices.iter().take(serialized_vertices) {
+            for coordinate in vertex.position {
+                o.extend_from_slice(&coordinate.to_le_bytes());
+            }
+            o.extend_from_slice(&vertex.source_vertex.to_le_bytes());
+        }
+        debug_assert_eq!(o.len(), world_pipeline_off as usize + faces_off);
+        for face in world_pipeline.faces.iter().take(serialized_faces) {
+            o.extend_from_slice(&face.encode());
+        }
+        debug_assert_eq!(o.len(), world_pipeline_off as usize + templates_off);
+        debug_assert_eq!(o.len(), world_pipeline_off as usize + templates_off);
     }
-    debug_assert_eq!(o.len(), world_pipeline_off as usize + faces_off);
-    for face in world_pipeline.faces.iter().take(serialized_faces) {
-        o.extend_from_slice(&face.encode());
-    }
-    debug_assert_eq!(o.len(), world_pipeline_off as usize + templates_off);
-    debug_assert_eq!(o.len(), world_pipeline_off as usize + templates_off);
     if !emit_world_pipeline {
         eprintln!(
-            "  world pipeline section: census-only (set WORLD_PIPELINE_EMIT=1 for a diagnostic room)"
+            "  L5 section: {} B (the census-only world pipeline header is retired; set WORLD_PIPELINE_EMIT=1 for a diagnostic room)",
+            l5_section.len()
         );
     } else if serialized_cells != world_pipeline.cells.len() {
         eprintln!(
@@ -18190,43 +18434,72 @@ mod tests {
     fn grunt_equipment_binds_authored_actor_and_rejects_ambiguity() {
         let entities = br#"{ "classname" "monster_human_grunt" "origin" "10 20 30" "weapons" "5" }
             { "classname" "monster_human_grunt" "origin" "40 50 60" }"#;
-        let props = [(8, [5,15,10], 0, 0, 0, 0), (8,[20,30,25],0,0,0,0)];
-        let records = super::collect_grunt_equipment(entities,2.0,&props,&[]).unwrap();
-        assert_eq!(records.len(),1);
-        assert_eq!(records[0].arg0,0);
-        assert_eq!(records[0].arg1,5);
-        assert!(super::collect_grunt_equipment(entities,2.0,&[props[0],props[0]],&[]).is_err());
-        assert!(super::collect_grunt_equipment(br#"{ "classname" "monster_human_grunt" "weapons" "16" }"#,1.0,&[],&[]).is_err());
+        let props = [(8, [5, 15, 10], 0, 0, 0, 0), (8, [20, 30, 25], 0, 0, 0, 0)];
+        let records = super::collect_grunt_equipment(entities, 2.0, &props, &[]).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].arg0, 0);
+        assert_eq!(records[0].arg1, 5);
+        assert!(super::collect_grunt_equipment(entities, 2.0, &[props[0], props[0]], &[]).is_err());
+        assert!(super::collect_grunt_equipment(
+            br#"{ "classname" "monster_human_grunt" "weapons" "16" }"#,
+            1.0,
+            &[],
+            &[]
+        )
+        .is_err());
     }
     #[test]
-    #[ignore="requires original retail 103-map assets"]
+    #[ignore = "requires original retail 103-map assets"]
     fn hecu_all_original_equipment_records_bind_actual_collected_props() {
-        let root=std::path::PathBuf::from(std::env::var("HL_HECU_RETAIL_DIR").expect("explicit original maps"));
-        let mut total=0; let mut nondefault=0; let mut maps=0;
-        for name in include_str!("../../hl-content/map-list.txt").lines().filter(|s| !s.is_empty()) {
-            let bytes=std::fs::read(root.join(format!("{name}.bsp"))).unwrap();
-            let bsp=Bsp::parse(&bytes).unwrap();
-            let ents=bsp.lump(LUMP_ENTITIES);
-            let mut names=Vec::new(); let mut links=Vec::new();
-            let props=collect_props(ents,bsp.lump(LUMP_NODES),bsp.lump(LUMP_PLANES),
-                bsp.lump(LUMP_MODELS),1.0,&mut names,&mut links);
-            let records=collect_grunt_equipment(ents,1.0,&props,&names).unwrap_or_else(|e|panic!("{name}: {e}"));
-            let mut expected=0;
+        let root = std::path::PathBuf::from(
+            std::env::var("HL_HECU_RETAIL_DIR").expect("explicit original maps"),
+        );
+        let mut total = 0;
+        let mut nondefault = 0;
+        let mut maps = 0;
+        for name in include_str!("../../hl-content/map-list.txt")
+            .lines()
+            .filter(|s| !s.is_empty())
+        {
+            let bytes = std::fs::read(root.join(format!("{name}.bsp"))).unwrap();
+            let bsp = Bsp::parse(&bytes).unwrap();
+            let ents = bsp.lump(LUMP_ENTITIES);
+            let mut names = Vec::new();
+            let mut links = Vec::new();
+            let props = collect_props(
+                ents,
+                bsp.lump(LUMP_NODES),
+                bsp.lump(LUMP_PLANES),
+                bsp.lump(LUMP_MODELS),
+                1.0,
+                &mut names,
+                &mut links,
+            );
+            let records = collect_grunt_equipment(ents, 1.0, &props, &names)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let mut expected = 0;
             for block in entity_text(ents).split('{') {
-                if ent_value(block,"classname")!=Some("monster_human_grunt") {continue;}
-                total+=1;
-                let equipment=ent_value(block,"weapons").unwrap_or("0").parse::<u8>().unwrap();
-                if equipment!=0 && equipment!=3 {expected+=1;}
+                if ent_value(block, "classname") != Some("monster_human_grunt") {
+                    continue;
+                }
+                total += 1;
+                let equipment = ent_value(block, "weapons")
+                    .unwrap_or("0")
+                    .parse::<u8>()
+                    .unwrap();
+                if equipment != 0 && equipment != 3 {
+                    expected += 1;
+                }
             }
-            assert_eq!(records.len(),expected,"{name}: no equipment omission");
+            assert_eq!(records.len(), expected, "{name}: no equipment omission");
             for record in records {
-                assert_eq!(props[record.arg0 as usize].0 & 0x0fff,8);
-                assert_eq!(record.kind,LOGIC_GRUNT_EQUIPMENT);
-                nondefault+=1;
+                assert_eq!(props[record.arg0 as usize].0 & 0x0fff, 8);
+                assert_eq!(record.kind, LOGIC_GRUNT_EQUIPMENT);
+                nondefault += 1;
             }
-            maps+=1;
+            maps += 1;
         }
-        assert_eq!((maps,total,nondefault),(103,163,29));
+        assert_eq!((maps, total, nondefault), (103, 163, 29));
     }
     #[test]
     fn weaponbox_preserves_named_ammunition_and_scaled_original_bounds() {
@@ -23851,12 +24124,13 @@ mod tests {
           "target" "jump1l"
         }
         "#;
-        let lights =
-            collect_dynamic_lightstyles(ents, &faces, &texinfo, &["+a~generic65".to_string()])
-                .expect("dynamic styles");
+        let start = start_lightstyle_values(ents);
+        let lights = collect_dynamic_lightstyles(ents, &faces, &start).expect("dynamic styles");
         assert_eq!(lights.len(), 1);
         assert_eq!(lights[0].style, 36);
         assert_eq!(lights[0].targetname, "jump1l");
+        assert!(lights[0].switchable() && lights[0].start_off);
+        assert_eq!(lights[0].start_level, 0);
 
         let logic = collect_logic_entities_with_lightstyles(
             ents,
@@ -23891,11 +24165,19 @@ mod tests {
             DynamicLightStyle {
                 style: 36,
                 targetname: "jump1l".to_string(),
+                pattern: String::new(),
+                start_level: 0,
+                start_off: true,
+                last_block: 0,
                 origins_hl: vec![[0.0, 0.0, 0.0]],
             },
             DynamicLightStyle {
                 style: 37,
                 targetname: "jump2l".to_string(),
+                pattern: String::new(),
+                start_level: 0,
+                start_off: true,
+                last_block: 0,
                 origins_hl: vec![[100.0, 0.0, 0.0]],
             },
         ];
@@ -23903,6 +24185,94 @@ mod tests {
             dynamic_lightstyle_slots_for_face(&[0, 36, 37, u8::MAX], &lights),
             ([1, 2, 0], [1, 2, 0])
         );
+    }
+
+    #[test]
+    fn animated_and_targeted_styles_are_dynamic_and_steady_ones_bake() {
+        // Faces lit by style 3 (a preset), 33 (named, patterned by its second
+        // light), 34 (steady, unnamed), 35 (named, steady, starts on) and 36
+        // (a pattern on a light with no targetname, which CLight::Spawn removes).
+        let mut faces = vec![0u8; 2 * SZ_FACE];
+        faces[12..16].copy_from_slice(&[3, 33, 34, 35]);
+        faces[SZ_FACE + 12..SZ_FACE + 16].copy_from_slice(&[36, u8::MAX, u8::MAX, u8::MAX]);
+        let ents = br#"
+        { "classname" "light" "style" "33" "targetname" "flick" "origin" "0 0 0" }
+        { "classname" "light" "style" "33" "targetname" "flick" "pattern" "mmamma" "spawnflags" "1" "origin" "8 0 0" }
+        { "classname" "light" "style" "34" "origin" "0 0 0" }
+        { "classname" "light" "style" "35" "targetname" "lamp" "origin" "0 0 0" }
+        { "classname" "light" "style" "36" "pattern" "mamam" "origin" "0 0 0" }
+        "#;
+        let start = start_lightstyle_values(ents);
+        assert_eq!(start[36], 256, "an untargeted light never sets its style");
+        let lights = collect_dynamic_lightstyles(ents, &faces, &start).expect("styles");
+        let styles: Vec<u8> = lights.iter().map(|l| l.style).collect();
+        assert_eq!(styles, vec![3, 33, 35], "34 and 36 are steady: baked");
+        // Preset 3 always plays and starts at its average.
+        assert!(!lights[0].switchable());
+        assert_eq!(lights[0].start_level, pattern_average(PRESET_PATTERNS[3].1));
+        // The last light of a style decides its pattern and start state.
+        assert!(lights[1].switchable());
+        assert_eq!(lights[1].pattern, "mmamma");
+        assert!(lights[1].start_off);
+        assert_eq!(lights[1].start_level, 0);
+        assert_eq!(
+            lights[1].last_block, 2,
+            "blocks: lump start, then each entity"
+        );
+        assert_eq!(lights[2].start_level, 256);
+        assert!(lights[2].pattern.is_empty());
+    }
+
+    #[test]
+    fn pattern_levels_are_normalised_so_m_is_256() {
+        assert_eq!(pattern_level(b'm'), 256);
+        assert_eq!(pattern_level(b'a'), 0);
+        assert_eq!(pattern_level(b'z'), 533);
+        assert_eq!(pattern_average("m"), 256);
+        assert_eq!(pattern_average(""), 256);
+        assert_eq!(pattern_average("az"), (0 + 533) / 2);
+    }
+
+    #[test]
+    fn a_plane_that_starts_lit_darkens_by_what_it_contributed() {
+        // One face, one 1x1 luxel: base plane 80, style-1 plane 60.
+        let lighting = [80u8, 80, 80, 60, 60, 60];
+        let start = [(0usize, 256u32), (1, 256)];
+        let delta = |layer: usize, level: u32, layers: &[(usize, u32)]| {
+            dynamic_corner_delta(&lighting, 0, 1, 1, 0.0, 0.0, 0, 0, layers, layer, level)
+        };
+        let lit = |v: u32| light_curve((v.min(255)) as u8) as i32;
+        let (r, _, _) = delta(1, 256, &start);
+        assert_eq!(
+            r as i32,
+            lit(80 + 60) - lit(80),
+            "off darkens by exactly the plane"
+        );
+        // A plane that starts dark brightens by the same amount when on.
+        let dark = [(0usize, 256u32)];
+        let (r, _, _) = delta(1, 0, &dark);
+        assert_eq!(r as i32, lit(80 + 60) - lit(80));
+    }
+
+    #[test]
+    fn style_table_layout_is_what_the_runtime_reads() {
+        let t = l5::style_table(&[
+            l5::StyleRecord {
+                switchable: true,
+                start: 0,
+                pattern: b"mmaa".to_vec(),
+            },
+            l5::StyleRecord {
+                switchable: false,
+                start: 256,
+                pattern: Vec::new(),
+            },
+        ]);
+        assert_eq!(t[0], 2);
+        assert_eq!(&t[4..10], &[1, 4, 0, 0, 16, 0]);
+        assert_eq!(&t[10..16], &[0, 0, 0, 1, 20, 0]);
+        assert_eq!(&t[16..20], b"mmaa");
+        assert_eq!(t.len() % 4, 0);
     }
 
     #[test]
