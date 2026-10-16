@@ -128,21 +128,22 @@ pub const LOOK_DISTANCE: i32 = 2048;
 /// the direction to the point against the facing.
 #[optimize(size)]
 pub fn in_view_cone(kind: u8, fx: i32, fz: i32, dx: i32, dz: i32) -> bool {
-    let cos = fov_cos_q12(kind) as i64;
+    let cos = fov_cos_q12(kind) as i32;
     if cos <= -4096 {
         return true;
     }
-    let len2 = dx as i64 * dx as i64 + dz as i64 * dz as i64;
-    if len2 == 0 {
+    // Scale the offset down to 11 bits a side so every product stays in 32 bits.
+    let (mut dx, mut dz) = (dx, dz);
+    while dx.abs() > 2048 || dz.abs() > 2048 {
+        dx >>= 1;
+        dz >>= 1;
+    }
+    if dx == 0 && dz == 0 {
         return true;
     }
-    let dot = dx as i64 * fx as i64 + dz as i64 * fz as i64; // q12 * len
+    let len = psx_math::int32::isqrt_i32(dx * dx + dz * dz) as i32;
     // dot / (len * 4096) >= cos / 4096   <=>   dot >= cos * len
-    if cos >= 0 {
-        dot >= 0 && dot * dot >= cos * cos * len2
-    } else {
-        dot >= 0 || dot * dot <= cos * cos * len2
-    }
+    dx * fx + dz * fz >= cos * len
 }
 
 // ---- turning ----
@@ -243,18 +244,21 @@ impl Sounds {
     /// when the distance is within the loudness).
     #[optimize(size)]
     pub fn heard(&self, ear: [i32; 3]) -> Option<[i32; 3]> {
-        let mut best: Option<([i32; 3], i64)> = None;
+        let mut best: Option<([i32; 3], i32)> = None;
         for i in 0..SLOTS {
             if self.ttl[i] == 0 {
                 continue;
             }
+            let r = self.vol[i] as i32;
             let d = [
-                (self.pos[i][0] - ear[0]) as i64,
-                (self.pos[i][1] - ear[1]) as i64,
-                (self.pos[i][2] - ear[2]) as i64,
+                self.pos[i][0] - ear[0],
+                self.pos[i][1] - ear[1],
+                self.pos[i][2] - ear[2],
             ];
+            if d[0].abs() > r || d[1].abs() > r || d[2].abs() > r {
+                continue;
+            }
             let d2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
-            let r = self.vol[i] as i64;
             if d2 <= r * r && best.map_or(true, |b| d2 < b.1) {
                 best = Some((self.pos[i], d2));
             }

@@ -110,19 +110,25 @@ pub fn segment_point_dist2(a: [i32; 3], b: [i32; 3], p: [i32; 3]) -> i64 {
 /// the segment (q12).
 #[inline(never)]
 pub fn segment_closest(a: [i32; 3], b: [i32; 3], p: [i32; 3]) -> ([i32; 3], i32) {
-    let ab = [(b[0] - a[0]) as i64, (b[1] - a[1]) as i64, (b[2] - a[2]) as i64];
-    let ap = [(p[0] - a[0]) as i64, (p[1] - a[1]) as i64, (p[2] - a[2]) as i64];
+    // Segments here are shorter than 3,000 units, so every dot product fits 32 bits.
+    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let ap = [p[0] - a[0], p[1] - a[1], p[2] - a[2]];
     let len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
-    if len2 == 0 {
+    if len2 <= 0 {
         return (a, 0);
     }
-    let t = (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]).clamp(0, len2);
-    let q12 = (t * 4096 / len2) as i32;
+    let mut t = (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]).clamp(0, len2);
+    let mut l = len2;
+    while l >= 1 << 19 {
+        t >>= 1;
+        l >>= 1;
+    }
+    let q12 = t * 4096 / l;
     (
         [
-            a[0] + (ab[0] * t / len2) as i32,
-            a[1] + (ab[1] * t / len2) as i32,
-            a[2] + (ab[2] * t / len2) as i32,
+            a[0] + ((ab[0] * q12) >> 12),
+            a[1] + ((ab[1] * q12) >> 12),
+            a[2] + ((ab[2] * q12) >> 12),
         ],
         q12,
     )
@@ -134,9 +140,9 @@ pub fn segment_closest(a: [i32; 3], b: [i32; 3], p: [i32; 3]) -> ([i32; 3], i32)
 #[inline(never)]
 pub fn segment_hits_cylinder(a: [i32; 3], b: [i32; 3], c: [i32; 3], r: i32, hh: i32, pad: i32) -> Option<i32> {
     let (near, t) = segment_closest(a, b, c);
-    let dx = (near[0] - c[0]) as i64;
-    let dz = (near[2] - c[2]) as i64;
-    let lim = (r + pad) as i64;
+    let dx = near[0] - c[0];
+    let dz = near[2] - c[2];
+    let lim = r + pad;
     if dx * dx + dz * dz <= lim * lim && ((near[1] - c[1]).abs()) <= hh + pad {
         Some(t)
     } else {
