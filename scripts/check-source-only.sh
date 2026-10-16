@@ -16,6 +16,23 @@ while IFS= read -r -d '' path; do
     source_bytes=$((source_bytes + size))
     lower_path=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')
 
+    # Chain journey tapes are controller input recordings (PXITAPE2: an 8 byte
+    # magic, a little-endian u64 sample count, then 6 bytes per sample: two
+    # button bytes and four stick bytes), compiled from the text route by
+    # tests/chain/hlroute.rs. They hold no game or disc data, so they are the
+    # one binary kind allowed, and only when the layout checks out.
+    case "$lower_path" in
+        tests/chain/tapes/*.pxtape)
+            magic=$(head -c 8 "$path")
+            count=$(od -An -tu8 -j8 -N8 "$path" | tr -d ' ')
+            if [[ "$magic" != PXITAPE2 || -z "$count" ]] || ((size != 16 + 6 * count)); then
+                printf 'chain tape is not a well-formed PXITAPE2 input recording: %s\n' "$path" >&2
+                failed=1
+            fi
+            continue
+            ;;
+    esac
+
     case "$lower_path" in
         data/*|assets/*|dist/*|captures/*|reference/*)
             printf 'forbidden generated or reference directory: %s\n' "$path" >&2
