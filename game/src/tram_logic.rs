@@ -2,6 +2,8 @@
 //! runtime path/rotation code. Keeping these integer-only avoids pulling PSX
 //! math dependencies into the host tests.
 
+use crate::wide::Wide;
+
 /// Marker for the compact speed/wheels/start motion word.
 ///
 /// Bit 31 distinguishes it from the two legacy layouts. The remaining fields
@@ -237,6 +239,11 @@ pub const fn should_apply_spawn_startspeed(riding_transfer: bool) -> bool {
     !riding_transfer
 }
 
+#[inline(always)]
+const fn wide_diff(a: i32, b: i32) -> Wide {
+    Wide::of(a).sub_w(Wide::of(b))
+}
+
 /// Whether a carried train lies just before the first point of its new path.
 ///
 /// Nearest-point projection clamps such a position to waypoint zero. Preserve
@@ -246,16 +253,12 @@ pub const fn should_apply_spawn_startspeed(riding_transfer: bool) -> bool {
 /// approach.
 #[inline(always)]
 pub const fn is_upstream_of_first(car: [i32; 3], first: [i32; 3], second: [i32; 3]) -> bool {
-    let sx = second[0] as i64 - first[0] as i64;
-    let sy = second[1] as i64 - first[1] as i64;
-    let sz = second[2] as i64 - first[2] as i64;
-    if sx == 0 && sy == 0 && sz == 0 {
+    let (sx, sy, sz) = (wide_diff(second[0], first[0]), wide_diff(second[1], first[1]), wide_diff(second[2], first[2]));
+    if sx.is_zero() && sy.is_zero() && sz.is_zero() {
         return false;
     }
-    let dx = car[0] as i64 - first[0] as i64;
-    let dy = car[1] as i64 - first[1] as i64;
-    let dz = car[2] as i64 - first[2] as i64;
-    dx * sx + dy * sy + dz * sz < 0
+    let (dx, dy, dz) = (wide_diff(car[0], first[0]), wide_diff(car[1], first[1]), wide_diff(car[2], first[2]));
+    dx.mul_w(sx).add_w(dy.mul_w(sy)).add_w(dz.mul_w(sz)).is_negative()
 }
 
 /// Car-local passenger centre limit across the tram's narrow axis.

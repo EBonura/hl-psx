@@ -56,6 +56,7 @@ mod hud;
 use psx_goldsrc::ladder_logic;
 mod logic_state;
 mod map;
+mod wide;
 mod menu;
 mod map_catalog;
 mod model;
@@ -149,7 +150,8 @@ use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
 use psx_io;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
-use psx_math::int32::{isqrt_i32, mul_div_i32};
+use psx_math::int32::{isqrt_i32, mul_div_i32, mul_shr_i32};
+use wide::{Mask64, Wide, WideU};
 use psx_math::{atan2_q12, sincos};
 use psx_pad::{button, poll_port1, require_analog_port1, AnalogRequirement, PadMode};
 #[cfg(not(feature = "semantic-input"))]
@@ -3284,7 +3286,7 @@ static mut BEAM_RAND_END: [[i16; 3]; MAX_BEAM_STATES] = [[0; 3]; MAX_BEAM_STATES
 // the beams whose pair is current, so a beam switched on after this tick's
 // update is not drawn from stale coordinates.
 static mut BEAM_LIVE_START: [[i16; 3]; MAX_BEAM_STATES] = [[0; 3]; MAX_BEAM_STATES];
-static mut BEAM_LIVE: u64 = 0;
+static mut BEAM_LIVE: Mask64 = Mask64::EMPTY;
 const BEAM_EXT_LASER: u16 = 1;
 const BEAM_EXT_SPARK_END: u16 = 2;
 const BEAM_EXT_SPARK_START: u16 = 4;
@@ -5600,7 +5602,7 @@ fn tram_pos_ext(
 /// known PSX-target miscompile), plenty of accuracy for seating a train.
 fn tram_seek_nearest(m: &Map, pos: [i32; 3]) -> (usize, i32) {
     let (mut best_seg, mut best_dist) = (0usize, 0i32);
-    let mut best_d2 = i64::MAX;
+    let mut best_d2 = Wide::MAX;
     if m.n_way < 2 {
         return (0, 0);
     }
@@ -5618,12 +5620,8 @@ fn tram_seek_nearest(m: &Map, pos: [i32; 3]) -> (usize, i32) {
                 a[1] + (b[1] - a[1]) * k / 16,
                 a[2] + (b[2] - a[2]) * k / 16,
             ];
-            let (dx, dy, dz) = (
-                (pos[0] - p[0]) as i64,
-                (pos[1] - p[1]) as i64,
-                (pos[2] - p[2]) as i64,
-            );
-            let d2 = dx * dx + dy * dy + dz * dz;
+            let (dx, dy, dz) = (pos[0] - p[0], pos[1] - p[1], pos[2] - p[2]);
+            let d2 = Wide::mul(dx, dx).mul_add(dy, dy).mul_add(dz, dz);
             if d2 < best_d2 {
                 best_d2 = d2;
                 best_seg = s;
@@ -11542,7 +11540,7 @@ unsafe fn logic_use_entity(
             sfx::play_voice_authored(rec.arg0 as u8, rec.origin, rec.flags, rec.sound1);
         }
         map::LOGIC_ENV_SHAKE => {
-            let reach = dist2_3(rec.origin, LOGIC_PLAYER_POS) as i64;
+            let reach = dist2_3(rec.origin, LOGIC_PLAYER_POS);
             if trigger_rules::shake_reaches(PLAYER_ON_GROUND, rec.arg1 as i32, reach) {
                 SHAKE_AMP = rec.arg0;
                 SHAKE_DUR = rec.speed.max(1);
@@ -13455,7 +13453,7 @@ unsafe fn logic_cd_radius_poll(m: &Map, li: usize, player_pos: [i32; 3], now: u1
     }
     if time_reached(now, LOGIC_NEXT[li]) {
         LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::CDAUDIO_POLL_TICKS);
-        if trigger_rules::cdaudio_in_range(rec.arg1, dist2_3(rec.origin, player_pos) as i64) {
+        if trigger_rules::cdaudio_in_range(rec.arg1, dist2_3(rec.origin, player_pos)) {
             cd_play(li, rec);
         }
     }
@@ -13936,10 +13934,10 @@ unsafe fn sentence_speaker(m: &Map, rec: map::LogicEnt) -> u8 {
     } else {
         None
     };
-    let radius = rec.wait_ticks.max(1) as i64;
-    let radius2 = radius * radius;
+    let radius = rec.wait_ticks.max(1) as i32;
+    let radius2 = Wide::mul(radius, radius);
     let mut best = TALKING_PROP_NONE;
-    let mut best_d2 = i64::MAX;
+    let mut best_d2 = Wide::MAX;
     let mut pi = 0usize;
     while pi < nprops {
         if PROP_ACTIVE[pi] != 0 && PROP_HEALTH[pi] != 0 && prop_is_human(PROP_KIND[pi]) {
@@ -13950,10 +13948,12 @@ unsafe fn sentence_speaker(m: &Map, rec: map::LogicEnt) -> u8 {
             };
             if kind_matches {
                 let p = PROP_POS[pi];
-                let dx = (p[0] - rec.origin[0]) as i64;
-                let dy = (p[1] - rec.origin[1]) as i64;
-                let dz = (p[2] - rec.origin[2]) as i64;
-                let d2 = dx * dx + dy * dy + dz * dz;
+                let (dx, dy, dz) = (
+                    p[0] - rec.origin[0],
+                    p[1] - rec.origin[1],
+                    p[2] - rec.origin[2],
+                );
+                let d2 = Wide::mul(dx, dx).mul_add(dy, dy).mul_add(dz, dz);
                 if d2 <= radius2 && d2 < best_d2 {
                     best = pi as u8;
                     best_d2 = d2;
@@ -14073,7 +14073,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     LOGIC_SPARK_COUNT = 0;
     LOGIC_BEAM_COUNT = 0;
     BEAM_RNG = LcgRng::new(0x4245_414d);
-    BEAM_LIVE = 0;
+    BEAM_LIVE = Mask64::EMPTY;
     let mut bi = 0usize;
     while bi < MAX_BEAM_STATES {
         BEAM_LIFE[bi] = 0;
@@ -14483,8 +14483,8 @@ fn culled_gte(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
 /// multiply is one MIPS `mult`; only i64 DIVISION is the known miscompile.
 #[inline]
 fn culled_soft(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
-    let cr = (b.0 - a.0) as i64 * (c.1 - a.1) as i64 - (c.0 - a.0) as i64 * (b.1 - a.1) as i64;
-    cr >= 0 // >= 0 (was <= 0): det -1 camera flips the projected winding
+    let cr = Wide::mul(b.0 - a.0, c.1 - a.1).mul_sub(c.0 - a.0, b.1 - a.1);
+    !cr.is_negative() // >= 0 (was <= 0): det -1 camera flips the projected winding
 }
 
 /// DEBUG: is screen point `p` inside triangle (a,b,c)? (winding-agnostic)
@@ -15541,7 +15541,7 @@ unsafe fn refresh_prop_near_ents(movers: &[phys::Mover], pi: usize) {
     let p = PROP_POS[pi];
     let mut n = 0usize;
     let mut slots = [0u8; 8];
-    let mut scores = [i64::MAX; 8];
+    let mut scores = [u32::MAX; 8];
     let mut mi = 0usize;
     while mi < movers.len() {
         let mv = movers[mi];
@@ -15554,10 +15554,12 @@ unsafe fn refresh_prop_near_ents(movers: &[phys::Mover], pi: usize) {
                 && (mv.center[2] - p[2]).abs() <= r
                 && (mv.center[1] - p[1]).abs() <= r + PROP_GROUND_PROBE_DOWN
             {
-                let dx = (mv.center[0] - p[0]) as i64;
-                let dy = (mv.center[1] - p[1]) as i64;
-                let dz = (mv.center[2] - p[2]) as i64;
-                let score = dx * dx + dy * dy + dz * dz;
+                // Each offset is within the sphere radius tested just above, so
+                // the squares are small; saturating keeps an outlier ordered last.
+                let sq = |v: i32| v.unsigned_abs().saturating_mul(v.unsigned_abs());
+                let score = sq(mv.center[0] - p[0])
+                    .saturating_add(sq(mv.center[1] - p[1]))
+                    .saturating_add(sq(mv.center[2] - p[2]));
                 if n < 8 {
                     slots[n] = mi as u8;
                     scores[n] = score;
@@ -22200,9 +22202,9 @@ unsafe fn fire_hitscan(
     } else {
         let ty = PROP_KIND[best];
         let target = [
-            eye[0] + (((end[0] - eye[0]) as i64 * best_frac as i64) >> 12) as i32,
-            eye[1] + (((end[1] - eye[1]) as i64 * best_frac as i64) >> 12) as i32,
-            eye[2] + (((end[2] - eye[2]) as i64 * best_frac as i64) >> 12) as i32,
+            eye[0] + mul_shr_i32(end[0] - eye[0], best_frac, 12),
+            eye[1] + mul_shr_i32(end[1] - eye[1], best_frac, 12),
+            eye[2] + mul_shr_i32(end[2] - eye[2], best_frac, 12),
         ];
         let damage = logic_state::club_damage_for(ty, club_damage, hit_group_damage(ty, best_box, damage));
         damage_prop(best, damage, true);
@@ -24583,7 +24585,7 @@ unsafe fn logic_blood(m: &Map, rec: map::LogicEnt) {
         let spray = sprite::def(rec.speed as u8 as usize);
         let puff_scale_q8 = scale*256/35 + impact_rng().below((scale*256/25-scale*256/35+1) as u32) as i32;
         BLOOD_FX[BLOOD_CURSOR] = BloodFx {pos,sprites:rec.speed,age:0,
-            half_q4: ((spray.base_w as i64*puff_scale_q8 as i64*rec.maxs[0] as i64)>>17) as i16,yellow:rec.arg1==195};
+            half_q4: mul_shr_i32(spray.base_w as i32*puff_scale_q8,rec.maxs[0],17) as i16,yellow:rec.arg1==195};
         BLOOD_CURSOR = (BLOOD_CURSOR+1)%4;
         let count = env_blood::drop_count(scale as u8,impact_rng().below(8) as u8+1,impact_rng().below(8) as u8+1);
         let id = (rec.speed>>8) as u8;
@@ -24598,13 +24600,13 @@ unsafe fn logic_blood(m: &Map, rec: map::LogicEnt) {
                 DEBRIS[slot].blood_sprite = id;
                 DEBRIS[slot].blood_frame = 1+impact_rng().below((d.n_frames-1) as u32) as u8;
                 let size = scale*256/25+impact_rng().below((scale*256/15-scale*256/25+1) as u32) as i32;
-                DEBRIS[slot].blood_half_q4 = ((d.base_w as i64*size as i64*rec.maxs[0] as i64)>>17) as i16;
+                DEBRIS[slot].blood_half_q4 = mul_shr_i32(d.base_w as i32*size,rec.maxs[0],17) as i16;
             }
         }
     }
     if rec.spawnflags & env_blood::DECAL != 0 {
         let start = blood_position(rec); // distinct retail position sample
-        let scaled_direction = direction.map(|v| ((v as i64*rec.maxs[0] as i64)>>12) as i32);
+        let scaled_direction = direction.map(|v| mul_shr_i32(v,rec.maxs[0],12));
         let end = env_blood::decal_end(start,scaled_direction,rec.arg0);
         let movers = core::slice::from_raw_parts(core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),MOVER_COUNT.min(MAX_ENTS+1));
         if let Some(hit) = phys::trace_line(m,movers,start,end) {
@@ -24725,7 +24727,7 @@ unsafe fn tick_beams(m: &Map, nlogic: usize, nents: usize, movers: &[phys::Mover
             if LOGIC_STATE[li] != LOGIC_STATE_TOP {
                 BEAM_LIFE[bk] = 0;
                 BEAM_STRIKE[bk] = 0;
-                BEAM_LIVE &= !(1u64 << bk);
+                BEAM_LIVE.clear(bk);
             } else {
                 // Only a beam that is on needs its record.
                 let rec = m.logic(li);
@@ -24998,7 +25000,7 @@ unsafe fn tick_beam_extended(
         BEAM_RAND_END[bk][c] = end[c].clamp(-32768, 32767) as i16;
         c += 1;
     }
-    BEAM_LIVE |= 1u64 << bk;
+    BEAM_LIVE.set(bk);
 }
 
 unsafe fn beam_sparks(at: [i32; 3]) {
@@ -26689,8 +26691,8 @@ unsafe fn emit_soft_leaf(
                 // By reference: three 32-byte SVert copies per triangle lower
                 // to memcpy calls under the sample profile's size mode.
                 let (a, b, c) = (&p[t[0]], &p[t[1]], &p[t[2]]);
-                let cr = (b.x - a.x) as i64 * (c.y - a.y) as i64
-                    - (c.x - a.x) as i64 * (b.y - a.y) as i64;
+                // Inside the guard band (1000 by 500 px) the products fit i32.
+                let cr = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
                 if !CULL || cr < 0 {
                     emit_screen_triangle(packets, a, b, c, mat, false, np);
                 }
@@ -26907,8 +26909,9 @@ unsafe fn emit_cv_flat(
         }
         if render::in_band(&p[0]) && render::in_band(&p[1]) && render::in_band(&p[2]) {
             if CULL {
-                let cr = (p[1].x - p[0].x) as i64 * (p[2].y - p[0].y) as i64
-                    - (p[2].x - p[0].x) as i64 * (p[1].y - p[0].y) as i64;
+                // Inside the guard band (1000 by 500 px) the products fit i32.
+                let cr = (p[1].x - p[0].x) * (p[2].y - p[0].y)
+                    - (p[2].x - p[0].x) * (p[1].y - p[0].y);
                 if cr >= 0 {
                     return; // same verdict the clipped path's fan cull reaches
                 }
@@ -27005,7 +27008,7 @@ unsafe fn emit_cv_clipped(
             // grazing floor fans vanished as hard-edged black holes). Walk
             // forward to the first fan triangle with real signed area and let
             // THAT decide.
-            let mut verdict = 0i64;
+            let mut verdict = Wide::ZERO;
             let mut kk = 1usize;
             while kk < n - 1 {
                 let (q0, q1, q2) = if kk == 1 {
@@ -27030,15 +27033,14 @@ unsafe fn emit_cv_clipped(
                         }),
                     )
                 };
-                let cr = (q1.x - q0.x) as i64 * (q2.y - q0.y) as i64
-                    - (q2.x - q0.x) as i64 * (q1.y - q0.y) as i64;
-                if cr != 0 {
+                let cr = Wide::mul(q1.x - q0.x, q2.y - q0.y).mul_sub(q2.x - q0.x, q1.y - q0.y);
+                if !cr.is_zero() {
                     verdict = cr;
                     break;
                 }
                 kk += 1;
             }
-            if verdict >= 0 {
+            if !verdict.is_negative() {
                 return; // back-facing (or fully degenerate: nothing to draw)
             }
         }
@@ -27893,7 +27895,7 @@ fn fog_world_rgb(rgb: [u32; 3], sz: [i32; 3], backdrop: bool) -> [u32; 3] {
 #[cfg(feature = "performance-telemetry")]
 #[inline(never)]
 fn affine_ratio_cmp(an: u32, ad: u32, bn: u32, bd: u32) -> core::cmp::Ordering {
-    (an as u64 * bd.max(1) as u64).cmp(&(bn as u64 * ad.max(1) as u64))
+    WideU::mul(an, bd.max(1)).cmp(&WideU::mul(bn, ad.max(1)))
 }
 
 #[inline(always)]
@@ -28967,7 +28969,7 @@ unsafe fn classic_native_patch_mask(
     }
     let edge_over = |a: usize, b: usize| {
         let (n, d) = affine_edge_error(&projected[a], &projected[b], uv[a], uv[b]);
-        n as u64 >= WORLD_AFFINE_SPLIT_ERROR_TEXELS as u64 * d.max(1) as u64
+        n / WORLD_AFFINE_SPLIT_ERROR_TEXELS >= d.max(1)
     };
     if edge_over(0, 1) || edge_over(1, 3) || edge_over(3, 2) || edge_over(2, 0) {
         0x0f
@@ -29028,7 +29030,7 @@ unsafe fn rank_affine_patch(
     // tessellation as the camera turned. The error is continuous, so it does
     // not.
     let over =
-        |n: u32, d: u32| n as u64 >= WORLD_AFFINE_SPLIT_ERROR_TEXELS as u64 * d.max(1) as u64;
+        |n: u32, d: u32| n / WORLD_AFFINE_SPLIT_ERROR_TEXELS >= d.max(1);
     let edge_over = |a: usize, b: usize| {
         let (n, d) = affine_edge_error(&projected[a], &projected[b], uv[a], uv[b]);
         over(n, d)
@@ -29205,7 +29207,7 @@ unsafe fn try_emit_native_affine_quad(
                 return warp_edge_over_budget(&projected[a], &projected[b], 1, PATCH_PX_Q3);
             }
             let (n, d) = affine_edge_error(&projected[a], &projected[b], uv[a], uv[b]);
-            n as u64 >= WORLD_CLASSIC_SEVERE_ERROR_TEXELS as u64 * d.max(1) as u64
+            n / WORLD_CLASSIC_SEVERE_ERROR_TEXELS >= d.max(1)
         };
         if severe(0, 1) || severe(1, 3) || severe(3, 2) || severe(2, 0) {
             WORLD_CLASSIC_SOFT_ROUTES_LEFT -= 1;
@@ -30153,7 +30155,7 @@ unsafe fn emit_submodel_face(
                         corners[i].uv,
                         corners[j].uv,
                     );
-                    n as u64 >= WORLD_CLASSIC_SEVERE_ERROR_TEXELS as u64 * d.max(1) as u64
+                    n / WORLD_CLASSIC_SEVERE_ERROR_TEXELS >= d.max(1)
                 })
                 && emit_soft_quad_split(packets, m, tex, corners, token, np, false, 48)
             {
@@ -32301,7 +32303,7 @@ unsafe fn queue_world_beams(
             let extended = rec.aux_count >= 6;
             let visible = LOGIC_STATE[li] == LOGIC_STATE_TOP
                 && (!strike_mode || (bk < MAX_BEAM_STATES && BEAM_LIFE[bk] > 0))
-                && (!extended || (bk < MAX_BEAM_STATES && BEAM_LIVE & (1u64 << bk) != 0));
+                && (!extended || (bk < MAX_BEAM_STATES && BEAM_LIVE.test(bk)));
             if visible {
                 let start = if extended {
                     let e = BEAM_LIVE_START[bk];

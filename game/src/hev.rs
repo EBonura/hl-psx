@@ -17,6 +17,7 @@
 //! RAM is the constraint here: no search loops, no per-word tables beyond the
 //! three small arrays, and every routine is built for size.
 
+use crate::wide::Mask64;
 use hl_format::hev as table;
 use hl_format::hev::{NO_WORD, SENTENCES, SENTENCE_COUNT, WORD_COUNT};
 use psx_sfx::{OneShot, Sample, PARKING_TAIL};
@@ -222,7 +223,7 @@ static mut WORD_ADDR: [u16; WORD_COUNT] = [0; WORD_COUNT];
 static mut WORD_RATE: [u16; WORD_COUNT] = [0; WORD_COUNT];
 static mut WORD_TICKS: [u8; WORD_COUNT] = [0; WORD_COUNT];
 /// Bit per sentence: every word of it is loaded.
-static mut READY: u64 = 0;
+static mut READY: Mask64 = Mask64::EMPTY;
 
 static mut SUIT: Suit = Suit::new();
 /// Sentence being spoken (`NO_WORD` = none), its next part and when the
@@ -302,7 +303,7 @@ pub unsafe fn unload() {
     voice.set_volume(Volume::SILENCE, Volume::SILENCE);
     Voice::release(voice.mask());
     WORD_ADDR = [0; WORD_COUNT];
-    READY = 0;
+    READY = Mask64::EMPTY;
     SPEAKING = NO_WORD;
     SUIT.clear_queue();
 }
@@ -348,14 +349,14 @@ pub unsafe fn load(spu: &mut Spu, chunk: &[u8], base: u32) {
             ready &= w == NO_WORD || WORD_ADDR[w as usize] != 0;
             part += 1;
         }
-        READY |= (ready as u64) << sentence;
+        READY.assign(sentence, ready);
         sentence += 1;
     }
 }
 
 /// Is `sentence` one this map can speak?
 pub unsafe fn can_say(sentence: u8) -> bool {
-    READY & (1 << sentence) != 0
+    READY.test(sentence as usize)
 }
 
 /// SetSuitUpdate for a sentence of the table. The suit must be worn.

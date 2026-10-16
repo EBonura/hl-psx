@@ -87,8 +87,12 @@ mod parity;
 #[path = "../../../game/src/setpiece_logic.rs"]
 pub mod setpiece_logic;
 
+#[path = "../../../game/src/wide.rs"]
+pub mod wide;
 #[path = "../../../game/src/env_funnel.rs"]
 pub mod env_funnel;
+#[path = "../../../game/src/env_sound.rs"]
+pub mod env_sound;
 #[path = "../../../game/src/env_blood.rs"]
 pub mod env_blood;
 #[path = "../../../game/src/env_bubbles.rs"]
@@ -104,3 +108,7 @@ pub mod sentry_wake;
 
 #[path = "../../../game/src/hev.rs"]
 pub mod hev;
+
+/// Each rewritten 64-bit site against the former wide form, verbatim.
+#[cfg(test)]
+mod sweep_oracles;

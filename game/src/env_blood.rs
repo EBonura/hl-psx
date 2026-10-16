@@ -79,7 +79,7 @@ pub fn direction(authored: [i32; 3], flags: u16, sample: [i32; 3]) -> [i32; 3] {
     }
 }
 pub fn decal_end(position: [i32; 3], direction: [i32; 3], amount: u16) -> [i32; 3] {
-    core::array::from_fn(|k| position[k] + ((direction[k] as i64 * amount as i64 * 2) >> 12) as i32)
+    core::array::from_fn(|k| position[k] + psx_math::int32::mul_shr_i32(direction[k], amount as i32 * 2, 12))
 }
 #[cfg(test)]
 mod tests {

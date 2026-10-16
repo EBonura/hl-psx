@@ -4,6 +4,8 @@
 //! transition mailbox's state byte.  Keeping the decisions here makes the
 //! progression-critical rules host-testable without pulling in the PSX runtime.
 
+use crate::wide::WideU;
+
 pub const SCRIPT_SELECTOR_NONE: u8 = 0;
 pub const SCRIPT_SELECTOR_MASK: u8 = 0x3F;
 pub const CARRY_FOLLOW_BIT: u8 = 0x80;
@@ -264,20 +266,20 @@ pub fn wide_view_cone(dx: i32, dz: i32, forward_x_q12: i32, forward_z_q12: i32) 
     if dx == 0 && dz == 0 {
         return true;
     }
-    let dot = (dx as i64)
-        .saturating_mul(forward_x_q12 as i64)
-        .saturating_add((dz as i64).saturating_mul(forward_z_q12 as i64));
+    // A world offset is under 2^15 and the forward vector is Q12, so the dot
+    // fits i32 and every product below fits u64 without saturating. Anything
+    // farther is not in view (the former saturating arithmetic said so too).
+    const LIMIT: u32 = 1 << 15;
+    if dx.unsigned_abs() >= LIMIT || dz.unsigned_abs() >= LIMIT {
+        return false;
+    }
+    let dot = dx * forward_x_q12 + dz * forward_z_q12;
     if dot >= 0 {
         return true;
     }
-    let dot2 = dot.saturating_mul(dot);
-    let len2 = (dx as i64)
-        .saturating_mul(dx as i64)
-        .saturating_add((dz as i64).saturating_mul(dz as i64));
-    dot2.saturating_mul(100)
-        < len2
-            .saturating_mul(4096i64.saturating_mul(4096))
-            .saturating_mul(49)
+    let dot2 = WideU::mul(dot.unsigned_abs(), dot.unsigned_abs());
+    let len2 = dx.unsigned_abs() * dx.unsigned_abs() + dz.unsigned_abs() * dz.unsigned_abs();
+    dot2.times(100) < WideU::mul(len2, 49).times(4096 * 4096)
 }
 
 /// Exact 100-unit TASK_MOVE_AWAY_PATH endpoint from the already-computed ideal
@@ -718,12 +720,12 @@ pub fn script_candidate_eligible(
     if kind != wanted_kind || !active || health == 0 || script_busy || radius < 0 {
         return false;
     }
-    let d2 = (delta[0] as i64)
-        .saturating_mul(delta[0] as i64)
-        .saturating_add((delta[1] as i64).saturating_mul(delta[1] as i64))
-        .saturating_add((delta[2] as i64).saturating_mul(delta[2] as i64));
-    let r2 = (radius as i64).saturating_mul(radius as i64);
-    d2 <= r2
+    // Three squares of at most 2^31 each stay below 2^64; the former saturating
+    // signed sum only saturated above 2^63, which no radius squared (at most
+    // 2^62) reaches, so the comparison is the same.
+    let sq = |v: i32| WideU::mul(v.unsigned_abs(), v.unsigned_abs());
+    let d2 = sq(delta[0]).saturating_add(sq(delta[1])).saturating_add(sq(delta[2]));
+    d2 <= WideU::mul(radius as u32, radius as u32)
 }
 
 #[optimize(size)]

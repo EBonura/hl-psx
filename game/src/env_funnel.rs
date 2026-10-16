@@ -1,6 +1,6 @@
 //! Retail funnel flight on a 9 by 9 grid. Positions/velocities use Q4;
 //! duration uses Q8 simulation ticks so the half-second fade stays distinct.
-use psx_math::int32::{isqrt_i32, mul_div_i32};
+use psx_math::int32::{isqrt_i32, mul_div_i32, mul_shr_trunc_i32};
 
 pub const PARTICLES: usize = 81;
 // Retail c1a0e has two target-dispatched emitters; c3a2d/c4a3 each have one.
@@ -52,7 +52,7 @@ impl Flight {
                        scale_q12: u16, age: u16) -> [i32; 3] {
         let offset = if reverse {[0; 3]} else {grid(index,self.height)};
         core::array::from_fn(|axis| origin[axis] * 16
-            + (offset[axis] as i64 * scale_q12 as i64 * 16 / 4096) as i32
+            + mul_shr_trunc_i32(offset[axis], scale_q12 as i32, 8)
             + self.velocity[axis] as i32 * age as i32)
     }
 }
