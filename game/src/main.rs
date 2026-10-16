@@ -21247,6 +21247,20 @@ impl Arsenal {
     /// Consume ammo for one shot. Returns true if the shot goes off (the caller
     /// then runs the archetype). Handles dry-click + auto-reload.
     fn try_fire(&mut self) -> bool {
+        let fired = self.try_fire_inner();
+        if fired {
+            // The shot is heard: loud guns carry further (`m_iWeaponVolume`).
+            unsafe {
+                make_noise(
+                    [LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + VIEW_HEIGHT, LOGIC_PLAYER_POS[2]],
+                    senses::weapon_volume(self.current),
+                );
+            }
+        }
+        fired
+    }
+
+    fn try_fire_inner(&mut self) -> bool {
         if !self.owns(self.current) {
             return false; // empty hands (pre-pickup)
         }
@@ -23816,6 +23830,7 @@ unsafe fn grenade_blast_origin(
 #[inline(never)]
 #[optimize(size)]
 unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
+    (*core::ptr::addr_of_mut!(SOUNDS)).tick(); // one tick passes for every noise
     let mut i = 0;
     while i < MAX_PROJECTILES {
         if !PROJECTILES[i].active {
@@ -37339,7 +37354,6 @@ fn play(
                     viewmodel_anim_start = sim_frame_no;
                 }
                 recoil = 16;
-                unsafe { make_noise(eye, senses::weapon_volume(weapon.current)) };
                 #[cfg(feature = "emulator-telemetry")]
                 if DEBUG_ALL_WEAPONS {
                     debug_line(
@@ -37543,7 +37557,6 @@ fn play(
                     PAIN_SFX_COOLDOWN -= 1;
                 }
                 MOVE_TICK = MOVE_TICK.wrapping_add(1);
-                (*core::ptr::addr_of_mut!(SOUNDS)).tick();
                 if MON_PAIN_COOLDOWN > 0 {
                     MON_PAIN_COOLDOWN -= 1;
                 }
