@@ -28,3 +28,13 @@ Routes may also close the loop where a PS1 line cannot be written open loop: `@h
 sym=... offset=N size=4 signed op=le value=V timeout=T` presses that input until a RAM word crosses
 a value (a gate `hold_until`, ordinary controller input throughout), and `@wait` waits on RAM without
 input. The player position is read from `LOGIC_PLAYER_POS` (x, up, y). `@stop` ends the journey.
+
+## Regenerate per build
+`inbound-anomalous.route` binds RAM symbols through `--map`, so `tests/chain-new-game.toml` is only valid for the build whose
+link map it was generated from: regenerate it for every disc (`hlroute build ... --map .hlpsx/hl-psx.map`). The c1a0e cart push
+is closed loop on the player's y: the push drifts the hull about 40 units south of where it starts, and the cart face is
+y 588..652, so a hull that ends south of 604 only grazes the cart and slides past it. A full strafe moves 16 to 32 units a tick,
+which is why the old stop at y 620 landed anywhere in 588..620 depending on frame timing. The route now lines up slowly in
+the north half of the face and nudges north between short pushes. Even so the push is sensitive to the build: it passed on
+integ 5dac694, 53fed40 and b5a58b2 and failed on one profile-only variant of the same code, so a different build may need
+the alignment band (y 630..646) moved.

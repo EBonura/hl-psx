@@ -366,8 +366,35 @@ map c1a0e next c1a0c
   @checkpoint w6
   @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1162 timeout=900
   @checkpoint w7
-  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=620 timeout=900
+  # Line up on the cart face closed loop and slowly: a full strafe moves 16 to 32 units a tick, so the old
+  # stop at y 620 landed anywhere in 588..620 depending on frame timing. The push drifts the player about 40
+  # units south (y falls) while the cart face is 588..652, so start in the north half and nudge north between
+  # short pushes; a hull that ends south of 604 only grazes the cart and slides past it.
+  @hold s40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=646 timeout=600
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=630 timeout=600
   @checkpoint w8
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1185 timeout=150
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1205 timeout=150
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1225 timeout=150
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1245 timeout=150
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1265 timeout=150
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1285 timeout=150
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1305 timeout=150
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1325 timeout=150
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1345 timeout=150
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1365 timeout=150
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1385 timeout=150
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1385 timeout=900
   @checkpoint cart-pushed
   @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
