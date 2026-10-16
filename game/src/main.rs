@@ -16861,7 +16861,9 @@ unsafe fn target_org(target: u8, player_pos: [i32; 3], nprops: usize) -> Option<
 
 unsafe fn target_aim_point(target: u8, player_pos: [i32; 3], nprops: usize) -> Option<[i32; 3]> {
     if target == PROP_TARGET_PLAYER {
-        return Some([player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]]);
+        // A dead player is no enemy: the monsters stand down.
+        return (LOGIC_PLAYER_HEALTH != 0)
+            .then(|| [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]]);
     }
     let ti = target as usize;
     if ti < nprops && PROP_ACTIVE[ti] != 0 && PROP_HEALTH[ti] > 0 {
@@ -18603,17 +18605,6 @@ unsafe fn find_actor_target(
     pick_target(m, movers, pi, player_pos, nprops, wake2, prop_eye(m, pi))
 }
 
-/// The cosine (q12) of the angle between where an actor faces and the point
-/// `aim`, flattened.
-#[inline]
-unsafe fn facing_q12(pi: usize, aim: [i32; 3]) -> i32 {
-    let pos = PROP_POS[pi];
-    let yaw = prop_yaw_value(PROP_YAW[pi]);
-    let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
-    let flat = isqrt_i32(dx * dx + dz * dz).max(1);
-    (sincos::sin_q12(yaw) * dx + sincos::sin_q12((yaw + 1024) & 0x0fff) * dz) / flat
-}
-
 /// The alien grunt's and the controller's attacks. The alien grunt punches
 /// inside 100 units (`sk_agrunt_dmg_punch`) and otherwise, from 100 to 1024
 /// units and facing within 60 degrees, sends a volley of five hornets that
@@ -18652,18 +18643,22 @@ unsafe fn tick_alien_attack(
         if prop_attack_cooldown(pi) != 0 {
             return;
         }
-        let face = facing_q12(pi, aim);
-        if d2 <= 100 * 100 && face >= 2458 {
+        let yaw = prop_yaw_value(PROP_YAW[pi]);
+        let (fx, fz) = (sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0x0fff));
+        let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
+        if d2 <= 100 * 100 && senses::within_cone(2458, fx, fz, dx, dz) {
             damage_target(target, skill_hit(Sk::AgruntPunch), pos, health, armor);
             prop_attack_cooldown_set(pi, 24);
-        } else if d2 >= 100 * 100 && d2 <= 1024 * 1024 && face >= 2048 {
+        } else if d2 >= 100 * 100 && d2 <= 1024 * 1024 && senses::within_cone(2048, fx, fz, dx, dz) {
             PROP_AI_TIMER[pi] = 24;
             prop_attack_cooldown_set(pi, 40 + impact_rng().below(61) as u8);
         }
         return;
     }
     // the controller
-    if prop_attack_cooldown(pi) != 0 || d2 < 256 * 256 || d2 > 2048 * 2048 {
+    // The controller floats: its reach is the distance in space, not on the plane.
+    let d3 = dist2_3(from, aim);
+    if prop_attack_cooldown(pi) != 0 || d3 < 256 * 256 || d3 > 2048 * 2048 {
         return;
     }
     let speed = [32, 40, 50][settings::skill().min(2)];

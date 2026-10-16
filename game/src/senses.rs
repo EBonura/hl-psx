@@ -128,7 +128,13 @@ pub const LOOK_DISTANCE: i32 = 2048;
 /// the direction to the point against the facing.
 #[optimize(size)]
 pub fn in_view_cone(kind: u8, fx: i32, fz: i32, dx: i32, dz: i32) -> bool {
-    let cos = fov_cos_q12(kind) as i32;
+    within_cone(fov_cos_q12(kind) as i32, fx, fz, dx, dz)
+}
+
+/// Whether the offset (`dx`, `dz`) lies within `cos` (q12) of the facing: the
+/// flat dot product against the facing, without a division.
+#[optimize(size)]
+pub fn within_cone(cos: i32, fx: i32, fz: i32, dx: i32, dz: i32) -> bool {
     if cos <= -4096 {
         return true;
     }
@@ -162,8 +168,8 @@ pub const fn turn_rate_q12(kind: u8) -> u16 {
     }
 }
 
-const TURN_Q12: [u16; 62] = {
-    let mut t = [250u16; 62];
+const TURN_Q12: [u16; 60] = {
+    let mut t = [250u16; 60];
     t[2] = 34; // headcrab: 30
     t[59] = 137; // baby crab, zombie, controller, roach: 120
     t[5] = 137;
