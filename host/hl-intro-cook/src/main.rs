@@ -136,6 +136,27 @@ fn measure(raw: &[u8]) -> Result<Movie, String> {
     Ok(m)
 }
 
+/// Where the data of a sector record ends and what the disc builder rebuilds
+/// begins: after the 2048 bytes of a Form 1 sector's user data, and after the
+/// 18 sound groups of 128 bytes of a Form 2 audio sector.
+const FORM1_TAIL: std::ops::Range<usize> = 8 + 2048..XA_SECTOR;
+const AUDIO_TAIL: std::ops::Range<usize> = 8 + 18 * 128..XA_SECTOR;
+
+/// Zero what follows each sector's data: the encoder leaves it as whatever its
+/// memory held, which makes the disc differ from one cook of the same movie to
+/// the next, and the disc builder rebuilds it (checksums, and for audio 20
+/// unused bytes the drive never plays) at the sector's final address.
+fn zero_sector_tails(raw: &mut [u8]) {
+    for sector in raw.chunks_exact_mut(XA_SECTOR) {
+        let tail = if sector[2] & SUBMODE_AUDIO != 0 {
+            AUDIO_TAIL
+        } else {
+            FORM1_TAIL
+        };
+        sector[tail].fill(0);
+    }
+}
+
 /// The generated constants the intro program includes.
 fn constants(m: &Movie, source: &str) -> String {
     format!(
@@ -256,7 +277,12 @@ fn run() -> Result<ExitCode, String> {
     std::fs::create_dir_all(&args.out).map_err(|e| format!("{}: {e}", args.out.display()))?;
     let target = args.out.join("INTRO.STR");
     encode(&psxavenc, &movie, &target)?;
-    let raw = std::fs::read(&target).map_err(|e| format!("{}: {e}", target.display()))?;
+    let mut raw = std::fs::read(&target).map_err(|e| format!("{}: {e}", target.display()))?;
+    // Same movie, same bytes: the encoder leaves the unused tail of each audio
+    // sector as whatever its memory held, which would make the disc differ
+    // from one cook to the next.
+    zero_sector_tails(&mut raw);
+    std::fs::write(&target, &raw).map_err(|e| format!("{}: {e}", target.display()))?;
     let m = measure(&raw).map_err(|e| format!("intro movie: {e}"))?;
     let name = movie
         .file_name()
@@ -300,6 +326,21 @@ mod tests {
     fn a_stream_that_is_not_whole_sectors_is_refused() {
         assert!(measure(&[0u8; XA_SECTOR + 1]).is_err());
         assert!(measure(&[]).is_err());
+    }
+
+    #[test]
+    fn only_what_follows_each_sectors_data_is_zeroed() {
+        let mut raw = vec![0xAAu8; XA_SECTOR * 2];
+        raw[2] = SUBMODE_AUDIO | SUBMODE_FORM2;
+        raw[XA_SECTOR + 2] = 0;
+        zero_sector_tails(&mut raw);
+        // Audio sector: the sound groups stay, the tail goes.
+        assert!(raw[AUDIO_TAIL].iter().all(|b| *b == 0));
+        assert_eq!(raw[AUDIO_TAIL.start - 1], 0xAA);
+        // Data sector: the user data stays, the tail goes.
+        let second = &raw[XA_SECTOR..];
+        assert!(second[FORM1_TAIL].iter().all(|b| *b == 0));
+        assert_eq!(second[FORM1_TAIL.start - 1], 0xAA);
     }
 
     #[test]
