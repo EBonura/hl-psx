@@ -64,13 +64,13 @@ pub fn attack(weapons: u8) -> Option<Attack> {
     else if value & LAUNCHER != 0 { Some(Attack::Launcher) } else { None }
 }
 pub fn safe_target(origin: [i32;3], target: [i32;3]) -> bool {
-    let dx=target[0] as i64-origin[0] as i64;
-    let dz=target[2] as i64-origin[2] as i64;
+    let dx=target[0]-origin[0];
+    let dz=target[2]-origin[2];
     dx*dx+dz*dz > 256*256
 }
 pub fn ally_clear(origin: [i32;3], target: [i32;3]) -> bool {
-    let delta=[0,1,2].map(|axis|origin[axis] as i64-target[axis] as i64);
-    delta.iter().map(|n|n*n).sum::<i64>() > 256*256
+    let delta=[0,1,2].map(|axis|origin[axis]-target[axis]);
+    delta.iter().map(|n|n*n).sum::<i32>() > 256*256
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Plan { pub velocity_q4: [i16;3], pub apex: [i32;3] }
@@ -78,37 +78,36 @@ fn sqrt(value: i64) -> Option<i32> {
     let value=i32::try_from(value).ok()?;
     if value < 0 {None} else {Some(isqrt_i32(value))}
 }
-fn velocity(values: [i64;3]) -> Option<[i16;3]> {
+fn velocity(values: [i32;3]) -> Option<[i16;3]> {
     Some([i16::try_from(values[0]).ok()?,i16::try_from(values[1]).ok()?,i16::try_from(values[2]).ok()?])
 }
 /// Half of800u/s² gravity is one world unit per20Hz tick². Times use Q8;
 /// velocities use Q4. Caller supplies original midpoint ceiling trace minus15.
+/// Offsets stay under a few thousand units, so every product below fits 32 bits.
 pub fn toss(start: [i32;3], target: [i32;3], apex_y: i32) -> Option<Plan> {
-    if target[1] as i64-start[1] as i64 > 500 {return None;}
-    let up=apex_y as i64-start[1] as i64;
-    let down=apex_y as i64-target[1] as i64;
-    let t1=sqrt(up*2*256*256)?;
-    let t2=sqrt(down*2*256*256)?;
+    if target[1]-start[1] > 500 {return None;}
+    let up=apex_y-start[1];
+    let down=apex_y-target[1];
+    let t1=sqrt(up as i64*2*256*256)?;
+    let t2=sqrt(down as i64*2*256*256)?;
     if t1 < 512 || t2 == 0 {return None;}
-    let total=t1 as i64+t2 as i64;
-    let delta=[0,1,2].map(|axis|target[axis] as i64-start[axis] as i64);
-    let v=velocity([delta[0]*16*256/total,t1 as i64*16/256,delta[2]*16*256/total])?;
-    let apex=[start[0]+((delta[0]*t1 as i64/total) as i32),apex_y,
-              start[2]+((delta[2]*t1 as i64/total) as i32)];
+    let total=t1+t2;
+    let delta=[0,1,2].map(|axis|target[axis]-start[axis]);
+    let v=velocity([delta[0]*16*256/total,t1*16/256,delta[2]*16*256/total])?;
+    let apex=[start[0]+delta[0]*t1/total,apex_y,start[2]+delta[2]*t1/total];
     Some(Plan {velocity_q4:v,apex})
 }
 /// Original fixed-speed throw: flight time is distance/speed, vertical launch
 /// compensates half-gravity. Caller checks both segments through the apex.
 pub fn launch(start: [i32;3], target: [i32;3], speed_per_second: u16) -> Option<Plan> {
     if speed_per_second == 0 {return None;}
-    let delta=[0,1,2].map(|axis|target[axis] as i64-start[axis] as i64);
-    let distance=sqrt(delta.iter().map(|n|n*n).sum())? as i64;
-    let time=distance*20*256/speed_per_second as i64;
+    let delta=[0,1,2].map(|axis|target[axis]-start[axis]);
+    let distance=sqrt(delta.iter().map(|&n|n as i64*n as i64).sum())?;
+    let time=distance*20*256/speed_per_second as i32;
     if time == 0 {return None;}
     let v=velocity([delta[0]*16*256/time,delta[1]*16*256/time+time*8/256,delta[2]*16*256/time])?;
-    let apex=[start[0]+(delta[0]/2) as i32,
-              start[1]+(delta[1]/2+time*time/(8*256*256)) as i32,
-              start[2]+(delta[2]/2) as i32];
+    let fall=((time as i64*time as i64)>>19) as i32; // time*time/(8*256*256)
+    let apex=[start[0]+delta[0]/2,start[1]+delta[1]/2+fall,start[2]+delta[2]/2];
     Some(Plan {velocity_q4:v,apex})
 }
 

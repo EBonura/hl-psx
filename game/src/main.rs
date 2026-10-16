@@ -17561,7 +17561,7 @@ unsafe fn make_noise(pos: [i32; 3], volume: u16) {
 /// Where each hunter last saw its enemy (`m_vecEnemyLKP`) and which enemy
 /// that memory is of. A hunter that loses sight walks to this spot, not to
 /// where the enemy really is.
-static mut PROP_LKP: [[i16; 3]; MAX_PROPS] = [[0; 3]; MAX_PROPS];
+static mut PROP_LKP: [[i16; 2]; MAX_PROPS] = [[0; 2]; MAX_PROPS];
 static mut PROP_LKP_FOR: [u8; MAX_PROPS] = [PROP_TARGET_NONE; MAX_PROPS];
 
 /// The point a hunter heads for: the enemy while it is in sight (remembering
@@ -17571,12 +17571,13 @@ static mut PROP_LKP_FOR: [u8; MAX_PROPS] = [PROP_TARGET_NONE; MAX_PROPS];
 #[optimize(size)]
 unsafe fn pursue_point(pi: usize, target: u8, true_aim: [i32; 3], visible: bool) -> Option<[i32; 3]> {
     if visible || PROP_LKP_FOR[pi] != target {
-        PROP_LKP[pi] = [true_aim[0] as i16, true_aim[1] as i16, true_aim[2] as i16];
+        PROP_LKP[pi] = [true_aim[0] as i16, true_aim[2] as i16];
         PROP_LKP_FOR[pi] = target;
         return Some(true_aim);
     }
     let l = PROP_LKP[pi];
-    let spot = [l[0] as i32, l[1] as i32, l[2] as i32];
+    // Walkers move on the plane: the spot keeps the hunter's own height.
+    let spot = [l[0] as i32, PROP_POS[pi][1], l[1] as i32];
     if dist2_xz(PROP_POS[pi], spot) < 40 * 40 {
         PROP_LKP_FOR[pi] = PROP_TARGET_NONE;
         return None;
@@ -18652,10 +18653,11 @@ unsafe fn tick_alien_attack(
         if prop_attack_cooldown(pi) != 0 {
             return;
         }
-        if d2 <= 100 * 100 && facing_q12(pi, aim) >= 2458 {
+        let face = facing_q12(pi, aim);
+        if d2 <= 100 * 100 && face >= 2458 {
             damage_target(target, skill_hit(Sk::AgruntPunch), pos, health, armor);
             prop_attack_cooldown_set(pi, 24);
-        } else if d2 >= 100 * 100 && d2 <= 1024 * 1024 && facing_q12(pi, aim) >= 2048 {
+        } else if d2 >= 100 * 100 && d2 <= 1024 * 1024 && face >= 2048 {
             PROP_AI_TIMER[pi] = 24;
             prop_attack_cooldown_set(pi, 40 + impact_rng().below(61) as u8);
         }
