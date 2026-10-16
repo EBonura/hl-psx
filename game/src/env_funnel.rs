@@ -1,6 +1,6 @@
 //! Retail funnel flight on a 9 by 9 grid. Positions/velocities use Q4;
 //! duration uses Q8 simulation ticks so the half-second fade stays distinct.
-use psx_math::int32::isqrt_i32;
+use psx_math::int32::{isqrt_i32, mul_div_i32};
 
 pub const PARTICLES: usize = 81;
 // Retail c1a0e has two target-dispatched emitters; c3a2d/c4a3 each have one.
@@ -25,15 +25,20 @@ impl Flight {
         let distance = isqrt_i32(offset.iter().map(|v|v*v).sum()).max(1);
         let start_y = source_y + if reverse {0} else {height as i32};
         let speed = (start_y / 8).max(64) + extra_speed as i32;
-        let sign = if reverse {1} else {-1};
+        let sign: i32 = if reverse {1} else {-1};
         let mut velocity = [0; 3];
+        // offset * speed * scale * 16 / (distance * 20 * 4096) reduces to
+        // offset * (speed * scale) / (distance * 5120). A component never
+        // exceeds the distance, so each quotient is at most speed * scale /
+        // 5120: if speed * scale overflows i32 the vertical axis (at least a
+        // quarter of the distance) is far past i16 anyway, so reject it.
+        let thrust = speed.checked_mul(scale_q12 as i32)?;
         for axis in 0..3 {
-            let value = offset[axis] as i64 * sign * speed as i64 * scale_q12 as i64 * 16
-                / (distance as i64 * 20 * 4096);
+            let value = mul_div_i32(offset[axis] * sign, thrust, distance * 5120);
             velocity[axis] = i16::try_from(value).ok()?;
         }
         Some(Self {velocity, height,
-            duration_q8: u16::try_from(distance as i64 * 20 * 256 / speed as i64).ok()?})
+            duration_q8: u16::try_from(mul_div_i32(distance, 5120, speed)).ok()?})
     }
     pub fn remaining_q8(&self, age: u16) -> u32 {
         (self.duration_q8 as u32).saturating_sub(age as u32 * 256)
@@ -95,6 +100,62 @@ mod tests {
         }
         assert_eq!(points.len(),81);
         assert!(points.contains(&[-256,100,-256]) && points.contains(&[256,100,256]));
+    }
+    #[test]
+    fn flight_matches_the_wide_form() {
+        // The former i64 construction, verbatim.
+        let wide = |index: usize, height: u16, extra_speed: u16, source_y: i32,
+                    reverse: bool, scale_q12: u16| -> Option<([i16; 3], u16)> {
+            if index >= PARTICLES || !(100..=800).contains(&height)
+                || !(64..=128).contains(&extra_speed) || scale_q12 == 0 { return None; }
+            let offset = grid(index, height);
+            let distance = isqrt_i32(offset.iter().map(|v|v*v).sum()).max(1);
+            let start_y = source_y + if reverse {0} else {height as i32};
+            let speed = (start_y / 8).max(64) + extra_speed as i32;
+            let sign = if reverse {1} else {-1};
+            let mut velocity = [0; 3];
+            for axis in 0..3 {
+                let value = offset[axis] as i64 * sign * speed as i64 * scale_q12 as i64 * 16
+                    / (distance as i64 * 20 * 4096);
+                velocity[axis] = i16::try_from(value).ok()?;
+            }
+            Some((velocity, u16::try_from(distance as i64 * 20 * 256 / speed as i64).ok()?))
+        };
+        let check = |index: usize, height: u16, extra: u16, y: i32, reverse: bool, scale: u16| {
+            let new = Flight::new(index, height, extra, y, reverse, scale)
+                .map(|f| (f.velocity, f.duration_q8));
+            assert_eq!(new, wide(index, height, extra, y, reverse, scale),
+                "{index} {height} {extra} {y} {reverse} {scale}");
+        };
+        let mut state = 0x0bad_cafeu32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        for index in [0usize, 1, 8, 9, 40, 72, 80, 81] {
+            for height in [99u16, 100, 101, 450, 799, 800, 801] {
+                for extra in [63u16, 64, 100, 128, 129] {
+                    for y in [i32::MIN, -1000, -1, 0, 1, 512, 2592, 100_000, 262_136, 262_144,
+                              1 << 24, i32::MAX - 800, i32::MAX] {
+                        for reverse in [false, true] {
+                            for scale in [0u16, 1, 2048, 4095, 4096, 4097, 8192, 40_000, u16::MAX] {
+                                check(index, height, extra, y, reverse, scale);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for _ in 0..600_000 {
+            let index = (next() % 81) as usize;
+            let height = 100 + (next() % 701) as u16;
+            let extra = 64 + (next() % 65) as u16;
+            let y = (next() as i32) >> (next() % 32);
+            let scale = (next() >> (next() % 16)) as u16;
+            check(index, height, extra, y, next() & 1 == 0, scale);
+        }
     }
     #[test]
     fn flight_ends_after_its_half_second_fade_not_half_second_after_arrival() {

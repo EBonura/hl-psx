@@ -89,6 +89,12 @@ pub mod setpiece_logic;
 
 #[path = "../../../game/src/env_funnel.rs"]
 pub mod env_funnel;
+#[path = "../../../game/src/env_blood.rs"]
+pub mod env_blood;
+#[path = "../../../game/src/env_bubbles.rs"]
+pub mod env_bubbles;
+#[path = "../../../game/src/door_transition.rs"]
+pub mod door_transition;
 
 #[path = "../../../game/src/turret_aim.rs"]
 pub mod turret_aim;

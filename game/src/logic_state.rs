@@ -9,14 +9,20 @@ pub const CALLER_NONE: u16 = u16::MAX;
 /// absolute authored rotation where 4096 is one turn; speed is degrees/sec.
 #[inline(always)]
 pub fn angular_move_phase_step(speed: u16, travel_q12: i32) -> i32 {
-    let travel = if travel_q12 == i32::MIN {
-        i32::MAX as i64 + 1
-    } else {
-        travel_q12.abs().max(1) as i64
-    };
-    let numerator = speed.max(1) as i64 * 4096 * 4096;
-    let denominator = 20i64 * 360 * travel;
-    ((numerator + denominator - 1) / denominator).clamp(1, 4096) as i32
+    // ceil(speed * 2^24 / (7200 * travel)): the numerator is near 2^40 and the
+    // denominator near 2^44. Nested ceilings compose,
+    // ceil(ceil(x / m) / n) == ceil(x / (m * n)), so divide by 7200 first.
+    // The numerator's high word is at most 255, below the divisor, which is
+    // the 64-by-32 shape `div_u64_by_u32` takes, and the quotient (under
+    // 1.6e8) leaves room for the second ceiling in a word.
+    let speed = speed.max(1) as u32;
+    let (high, low) = (speed >> 8, (speed & 0xff) << 24);
+    // Add 7199 to the two-word numerator so the floor divide rounds up.
+    let rounded = low.wrapping_add(7199);
+    let high = high + (rounded < low) as u32;
+    let per_travel_unit = psx_math::int32::div_u64_by_u32(high, rounded, 7200);
+    let travel = travel_q12.unsigned_abs().max(1);
+    ((per_travel_unit + (travel - 1)) / travel).clamp(1, 4096) as i32
 }
 
 /// Advance a momentary control's normalized 0..4096 position by one 20 Hz
@@ -967,6 +973,70 @@ mod tests {
     }
 
     #[optimize(size)]
+    #[test]
+    fn angular_move_phase_step_matches_the_wide_form() {
+        let wide = |speed: u16, travel_q12: i32| -> i32 {
+            let travel = if travel_q12 == i32::MIN {
+                i32::MAX as i64 + 1
+            } else {
+                travel_q12.abs().max(1) as i64
+            };
+            let numerator = speed.max(1) as i64 * 4096 * 4096;
+            let denominator = 20i64 * 360 * travel;
+            ((numerator + denominator - 1) / denominator).clamp(1, 4096) as i32
+        };
+        let mut state = 0x9e37_79b9u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        let speeds = [
+            0u16, 1, 2, 119, 120, 255, 256, 257, 4096, 32767, 32768, 65534, 65535,
+        ];
+        let travels = [
+            i32::MIN,
+            i32::MIN + 1,
+            -4096,
+            -1,
+            0,
+            1,
+            2,
+            7,
+            7200,
+            7201,
+            1024,
+            4096,
+            1 << 20,
+            i32::MAX - 1,
+            i32::MAX,
+        ];
+        for &speed in &speeds {
+            for &travel in &travels {
+                assert_eq!(
+                    angular_move_phase_step(speed, travel),
+                    wide(speed, travel),
+                    "speed {speed} travel {travel}"
+                );
+            }
+        }
+        for _ in 0..400_000 {
+            let word = next();
+            let speed = (word >> 16) as u16;
+            // Mix magnitudes so small and huge travels both get coverage.
+            let travel = (next() as i32) >> (word & 31);
+            assert_eq!(
+                angular_move_phase_step(speed, travel),
+                wide(speed, travel),
+                "speed {speed} travel {travel}"
+            );
+        }
+        for speed in 0..=u16::MAX {
+            assert_eq!(angular_move_phase_step(speed, 1820), wide(speed, 1820));
+        }
+    }
+
     #[test]
     fn angular_move_uses_the_authored_swing_not_a_nominal_angle() {
         // c1a0e motor_button_cover: 160 degrees at 120 degrees/sec.

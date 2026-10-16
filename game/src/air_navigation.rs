@@ -1,5 +1,7 @@
 //! Air-node admission and three-axis controller movement.
 
+use psx_math::int32::mul_div_i32;
+
 pub const LAND: u8 = 1;
 pub const AIR: u8 = 2;
 
@@ -23,13 +25,20 @@ impl Flight {
 
     /// Retail MoveExecute blends 80% prior velocity and 20% desired velocity
     /// on every movement update. Preserve the sub-unit integration remainder.
+    ///
+    /// The desired velocity is `d * speed * 256 / length` clamped to i16. A
+    /// component never exceeds the length it is part of, so the quotient is at
+    /// most `speed * 256` and fits `i32` while the speed is under 2^23 (larger
+    /// speeds count as 2^23 - 1, which saturates the clamp just the same). The
+    /// statement keeps the shape of the former i64 form so the shipped PGO
+    /// profile still binds to this hot function's line offsets.
     pub fn candidate(&mut self, pos: [i32;3], goal: [i32;3], speed: i32) -> [i32;3] {
         let d = [goal[0]-pos[0],goal[1]-pos[1],goal[2]-pos[2]];
         let length = sqrt(distance2(pos,goal)).max(1);
         let mut out=pos;
         for axis in 0..3 {
-            let desired=(d[axis] as i64 * speed.max(0) as i64 * 256 / length as i64)
-                .clamp(i16::MIN as i64,i16::MAX as i64) as i32;
+            let desired=mul_div_i32(d[axis],speed.clamp(0,(1<<23)-1)*256,length)
+                .clamp(i16::MIN as i32,i16::MAX as i32);
             let velocity=(self.velocity_q8[axis] as i32*4+desired)/5;
             self.velocity_q8[axis]=velocity as i16;
             let integrated=self.fraction_q8[axis] as i32+velocity;
@@ -78,6 +87,57 @@ mod tests {
         assert_eq!(flight.candidate([2,0,0],[200,0,0],10),[5,0,0]);
         assert_eq!(flight.velocity_q8,[921,0,0]);
         assert_eq!(flight.fraction_q8,[153,0,0]);
+    }
+    #[test]
+    fn candidate_matches_the_wide_form() {
+        // The former i64 body of `Flight::candidate`, verbatim.
+        let wide = |flight: &mut Flight, pos: [i32; 3], goal: [i32; 3], speed: i32| -> [i32; 3] {
+            let d = [goal[0] - pos[0], goal[1] - pos[1], goal[2] - pos[2]];
+            let length = sqrt(distance2(pos, goal)).max(1);
+            let mut out = pos;
+            for axis in 0..3 {
+                let desired = (d[axis] as i64 * speed.max(0) as i64 * 256 / length as i64)
+                    .clamp(i16::MIN as i64, i16::MAX as i64) as i32;
+                let velocity = (flight.velocity_q8[axis] as i32 * 4 + desired) / 5;
+                flight.velocity_q8[axis] = velocity as i16;
+                let integrated = flight.fraction_q8[axis] as i32 + velocity;
+                out[axis] += integrated / 256;
+                flight.fraction_q8[axis] = (integrated % 256) as i16;
+            }
+            out
+        };
+        let mut state = 0x7f4a_7c15u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        let speeds = [i32::MIN, -1, 0, 1, 2, 10, 120, 400, 3000, 65_535, 8_388_607];
+        for &speed in &speeds {
+            for &goal in &[[0, 0, 0], [1, 0, 0], [900, -300, 1200], [-4096, 4096, -4096], [0, 8192, 0]] {
+                let (mut a, mut b) = (Flight::EMPTY, Flight::EMPTY);
+                let (mut pa, mut pb) = ([5, 6, 7], [5, 6, 7]);
+                for _ in 0..30 {
+                    pa = a.candidate(pa, goal, speed);
+                    pb = wide(&mut b, pb, goal, speed);
+                    assert_eq!((pa, a.velocity_q8, a.fraction_q8), (pb, b.velocity_q8, b.fraction_q8));
+                }
+            }
+        }
+        for _ in 0..200_000 {
+            let pos = [0; 3].map(|_| (next() % 16_385) as i32 - 8192);
+            let goal = [0; 3].map(|_| (next() % 16_385) as i32 - 8192);
+            let speed = (next() % 6000) as i32;
+            let mut a = Flight::EMPTY;
+            let mut b = Flight::EMPTY;
+            a.velocity_q8 = [0; 3].map(|_| next() as i16);
+            a.fraction_q8 = [0; 3].map(|_| (next() % 256) as i16);
+            b.velocity_q8 = a.velocity_q8;
+            b.fraction_q8 = a.fraction_q8;
+            let (ra, rb) = (a.candidate(pos, goal, speed), wide(&mut b, pos, goal, speed));
+            assert_eq!((ra, a.velocity_q8, a.fraction_q8), (rb, b.velocity_q8, b.fraction_q8));
+        }
     }
     #[test]
     fn vertical_separation_is_not_a_reached_air_node() {

@@ -17860,11 +17860,6 @@ unsafe fn train_direction_code(m: &Map, li: usize, seg: usize) -> u8 {
     0
 }
 
-#[inline(never)]
-fn train_isqrt_u64(n: u64) -> u64 {
-    psx_math::int32::isqrt_u64(n) as u64
-}
-
 #[optimize(size)]
 /// Project a carried global train's authoritative center onto the destination
 /// path. Segment indices are map-local and differ on several real transitions;
@@ -17895,7 +17890,7 @@ unsafe fn train_seek_position(
     }
     let mut best_seg = 0usize;
     let mut best_dist = 0i16;
-    let mut best_error = i64::MAX;
+    let mut best_error = u32::MAX;
     let mut best_direction = false;
     let mut best_pos = center;
     let mut seg = 0usize;
@@ -17910,33 +17905,11 @@ unsafe fn train_seek_position(
             seg += 1;
             continue;
         }
-        let d = [
-            (b[0] - a[0]) as i64,
-            (b[1] - a[1]) as i64,
-            (b[2] - a[2]) as i64,
-        ];
-        let len2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
-        if len2 == 0 {
+        let Some((error, distance, q)) = tram_logic::project_onto_segment(a, b, center) else {
             seg += 1;
             continue;
-        }
-        let rel = [
-            (center[0] - a[0]) as i64,
-            (center[1] - a[1]) as i64,
-            (center[2] - a[2]) as i64,
-        ];
-        let along_num = (rel[0] * d[0] + rel[1] * d[1] + rel[2] * d[2]).clamp(0, len2);
-        let q = [
-            a[0] as i64 + d[0] * along_num / len2,
-            a[1] as i64 + d[1] * along_num / len2,
-            a[2] as i64 + d[2] * along_num / len2,
-        ];
-        let error = (center[0] as i64 - q[0]).pow(2)
-            + (center[1] as i64 - q[1]).pow(2)
-            + (center[2] as i64 - q[2]).pow(2);
-        let length = train_isqrt_u64(len2 as u64);
-        let distance = (length * along_num as u64 / len2 as u64).min(i16::MAX as u64) as i16;
-        let direction = train_direction_from_delta([d[0] as i32, d[1] as i32, d[2] as i32]);
+        };
+        let direction = train_direction_from_delta([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
         let direction_match = wanted_direction == 0 || direction == wanted_direction;
         // At a shared corner prefer the outgoing segment (distance zero) over
         // the incoming segment's endpoint, matching CFuncTrain's current target.
@@ -17948,11 +17921,11 @@ unsafe fn train_seek_position(
             best_seg = seg;
             best_dist = distance;
             best_direction = direction_match;
-            best_pos = [q[0] as i32, q[1] as i32, q[2] as i32];
+            best_pos = q;
         }
         seg += 1;
     }
-    if best_error != i64::MAX {
+    if best_error != u32::MAX {
         return (best_seg, best_dist, best_pos);
     }
 
@@ -17961,9 +17934,7 @@ unsafe fn train_seek_position(
     let mut corner = 0usize;
     while corner < ncorners {
         let (p, _, _, _) = train_corner(m, li, corner);
-        let error = (center[0] as i64 - p[0] as i64).pow(2)
-            + (center[1] as i64 - p[1] as i64).pow(2)
-            + (center[2] as i64 - p[2] as i64).pow(2);
+        let error = tram_logic::squared_distance(center, p);
         if error < best_error {
             best_error = error;
             best_seg = corner;
@@ -22053,10 +22024,13 @@ unsafe fn fire_hitscan(
     // only shifted an acceptance rectangle while decals still followed the
     // centre ray, which could report hits outside the body.
     let shot_component = |axis: usize| -> i32 {
-        let q12 = rot.m[2][axis] as i64 * H_PROJ as i64
-            + rot.m[0][axis] as i64 * cx_px as i64
-            + rot.m[1][axis] as i64 * cy_px as i64;
-        ((q12 * range as i64) / (H_PROJ as i64 * 4096)) as i32
+        autoaim::shot_ray_component(
+            [rot.m[2][axis], rot.m[0][axis], rot.m[1][axis]],
+            H_PROJ as i32,
+            cx_px,
+            cy_px,
+            range,
+        )
     };
     let end = [
         eye[0] + shot_component(0),

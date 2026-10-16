@@ -61,6 +61,11 @@ pub fn advance_position(position_q4: &mut [i32; 3], velocity_q4: [i16; 3]) {
         position_q4[axis] += velocity_q4[axis] as i32;
     }
 }
+/// Half width of a bubble sprite in Q4: `base_w * 8 * scale * 256 /
+/// (4096 * divisor_q8)`, which is `base_w * scale / (2 * divisor_q8)`.
+pub fn half_width_q4(base_w: i32, world_scale: i32, divisor_q8: i32) -> i16 {
+    psx_math::int32::mul_div_i32(base_w, world_scale, 2 * divisor_q8) as i16
+}
 pub fn velocity_q4(current: [i16; 2], rise: i32, world_scale: i32) -> [i16; 3] {
     [
         current[0],
@@ -75,7 +80,14 @@ pub fn burst_count(wire_density: u8) -> u16 {
 }
 /// Original fizz particles rise at 80..140 u/s and live height/rise + 0.5 s.
 pub fn lifetime_ticks(height: i32, rise: i32) -> u16 {
-    ((height.max(0) as i64 * 20 / rise.max(1) as i64) + 10).clamp(1, u16::MAX as i64) as u16
+    // floor(20h / r) = 20 floor(h / r) + floor(20 (h mod r) / r): the first
+    // term saturates (anything over 65,525 clamps), the second is below 20.
+    let (height, rise) = (height.max(0) as u32, rise.max(1) as u32);
+    (height / rise)
+        .saturating_mul(20)
+        .saturating_add(psx_math::int32::mul_div_u32(height % rise, 20, rise))
+        .saturating_add(10)
+        .clamp(1, u16::MAX as u32) as u16
 }
 
 pub fn advance_lifetime(remaining: &mut u16) -> bool {
@@ -85,6 +97,73 @@ pub fn advance_lifetime(remaining: &mut u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn lifetime_and_sprite_width_match_the_wide_forms() {
+        let wide_life = |height: i32, rise: i32| -> u16 {
+            ((height.max(0) as i64 * 20 / rise.max(1) as i64) + 10).clamp(1, u16::MAX as i64) as u16
+        };
+        let wide_half = |base_w: i32, scale: i32, divisor: i32| -> i16 {
+            ((base_w as i64 * 8 * scale as i64 * 256) / (4096 * divisor) as i64) as i16
+        };
+        let mut state = 0x5eed_1234u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        let edges = [
+            i32::MIN,
+            -1000,
+            -1,
+            0,
+            1,
+            2,
+            79,
+            80,
+            140,
+            141,
+            1000,
+            4095,
+            4096,
+            65_525,
+            65_526,
+            1 << 20,
+            107_374_182,
+            107_374_183,
+            i32::MAX - 1,
+            i32::MAX,
+        ];
+        for &h in &edges {
+            for &r in &edges {
+                assert_eq!(lifetime_ticks(h, r), wide_life(h, r), "{h} {r}");
+            }
+        }
+        for _ in 0..600_000 {
+            let h = (next() as i32) >> (next() % 32);
+            let r = if next() & 1 == 0 {
+                80 + (next() % 61) as i32
+            } else {
+                (next() as i32) >> (next() % 32)
+            };
+            assert_eq!(lifetime_ticks(h, r), wide_life(h, r), "{h} {r}");
+        }
+        for &w in &[0, 1, 8, 16, 64, 255, 256, 65_535] {
+            for &s in &[i32::MIN, -4096, 0, 1, 2048, 4096, 8192, 1 << 20, i32::MAX] {
+                for d in (512..=1280).step_by(7).chain([512, 1280]) {
+                    assert_eq!(half_width_q4(w, s, d), wide_half(w, s, d), "{w} {s} {d}");
+                }
+            }
+        }
+        for _ in 0..400_000 {
+            let (w, s, d) = (
+                (next() % 65_536) as i32,
+                (next() as i32) >> (next() % 32),
+                512 + (next() % 769) as i32,
+            );
+            assert_eq!(half_width_q4(w, s, d), wide_half(w, s, d), "{w} {s} {d}");
+        }
+    }
     #[test]
     fn original_startoff_toggle_and_explicit_use_preserve_state() {
         assert!(!initial_enabled(1));
