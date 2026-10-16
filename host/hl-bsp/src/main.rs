@@ -1262,14 +1262,48 @@ fn cook_miptex(l: &[u8], mo: usize, wads: &WadIndex) -> (CookedTex, (u32, u32)) 
     let px = src_mo + off0;
     // "{..." textures are masked: source palette index 255 is transparent.
     let masked = src.get(src_mo) == Some(&b'{');
-    // Nearest-neighbour downscale, keeping the source palette index per texel.
+    // Box-filter downscale: each cooked texel averages the source texels it
+    // covers. Nearest-neighbour decimation kept one texel in sixteen of a
+    // 256 px grass or gravel texture and turned its fine noise into camouflage
+    // blocks. `idxv` keeps a representative palette index per texel, and
+    // only decides transparency (a masked texel is clear when most of its
+    // block is).
     let mut idxv: Vec<u8> = Vec::with_capacity(fw * fh);
+    let mut avg: Vec<(u8, u8, u8)> = Vec::with_capacity(fw * fh);
     for y in 0..fh {
+        let (y0, y1) = (y * h0 / fh, ((y + 1) * h0 / fh).max(y * h0 / fh + 1));
         for x in 0..fw {
-            idxv.push(
-                *src.get(px + (y * h0 / fh) * w0 + (x * w0 / fw))
-                    .unwrap_or(&0),
-            );
+            let (x0, x1) = (x * w0 / fw, ((x + 1) * w0 / fw).max(x * w0 / fw + 1));
+            let (mut sum, mut n, mut clear, mut total) = ([0u32; 3], 0u32, 0u32, 0u32);
+            for sy in y0..y1 {
+                for sx in x0..x1 {
+                    let i = *src.get(px + sy * w0 + sx).unwrap_or(&0);
+                    total += 1;
+                    if masked && i == 255 {
+                        clear += 1;
+                        continue;
+                    }
+                    let c = pal[i as usize];
+                    sum[0] += c.0 as u32;
+                    sum[1] += c.1 as u32;
+                    sum[2] += c.2 as u32;
+                    n += 1;
+                }
+            }
+            let nearest = *src
+                .get(px + (y * h0 / fh) * w0 + (x * w0 / fw))
+                .unwrap_or(&0);
+            if n == 0 || (masked && clear * 2 > total) {
+                idxv.push(if masked { 255 } else { nearest });
+                avg.push(pal[nearest as usize]);
+            } else {
+                idxv.push(if nearest == 255 { 0 } else { nearest });
+                avg.push((
+                    ((sum[0] + n / 2) / n) as u8,
+                    ((sum[1] + n / 2) / n) as u8,
+                    ((sum[2] + n / 2) / n) as u8,
+                ));
+            }
         }
     }
     let mut clut = [0u16; 16];
@@ -1278,26 +1312,32 @@ fn cook_miptex(l: &[u8], mo: usize, wads: &WadIndex) -> (CookedTex, (u32, u32)) 
         // Slot 0 = 0x0000 (the PS1 GPU skips it); 15 opaque colours in 1..=15.
         let opaque: Vec<(u8, u8, u8)> = idxv
             .iter()
-            .filter(|&&i| i != 255)
-            .map(|&i| pal[i as usize])
+            .zip(&avg)
+            .filter(|(&i, _)| i != 255)
+            .map(|(_, &c)| c)
             .collect();
         let pal15 = median_cut16(&opaque);
         let n = pal15.len().min(15);
         for i in 0..n {
             clut[i + 1] = to_bgr555(pal15[i].0, pal15[i].1, pal15[i].2);
         }
-        let map = |i: u8| -> u8 {
-            if i == 255 || n == 0 {
+        let map = |t: usize| -> u8 {
+            if idxv[t] == 255 || n == 0 {
                 0
             } else {
-                nearest16(&pal15[..n], pal[i as usize]) + 1
+                nearest16(&pal15[..n], avg[t]) + 1
             }
         };
-        for (i, chunk) in idxv.chunks(2).enumerate() {
-            pix4[i] = map(chunk[0]) | (chunk.get(1).map(|&j| map(j)).unwrap_or(0) << 4);
+        for i in 0..pix4.len() {
+            let hi = if 2 * i + 1 < idxv.len() {
+                map(2 * i + 1)
+            } else {
+                0
+            };
+            pix4[i] = map(2 * i) | (hi << 4);
         }
     } else {
-        let colors: Vec<(u8, u8, u8)> = idxv.iter().map(|&i| pal[i as usize]).collect();
+        let colors: Vec<(u8, u8, u8)> = avg.clone();
         let pal16 = median_cut16(&colors);
         // A texture that is entirely (near-)black (e.g. GoldSrc's `black`, used as
         // a backdrop wall) renders as a solid black region that reads as a missing
@@ -18110,6 +18150,42 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    /// A 128 px texture of alternating black and white texels must cook to
+    /// grey, not to whichever of the two nearest-neighbour sampling lands on.
+    #[test]
+    fn miptex_downscale_averages_the_texels_it_covers() {
+        let (w, h) = (128usize, 128usize);
+        let mut mip = vec![0u8; 40];
+        mip[..4].copy_from_slice(b"test");
+        mip[16..20].copy_from_slice(&(w as u32).to_le_bytes());
+        mip[20..24].copy_from_slice(&(h as u32).to_le_bytes());
+        let mut off = 40u32;
+        for level in 0..4 {
+            mip[24 + level * 4..28 + level * 4].copy_from_slice(&off.to_le_bytes());
+            off += ((w >> level) * (h >> level)) as u32;
+        }
+        for i in 0..w * h {
+            mip.push(((i % w + i / w) % 2) as u8);
+        }
+        mip.resize(off as usize, 0);
+        mip.extend_from_slice(&[0, 1]);
+        let mut pal = [0u8; 768];
+        pal[3..6].copy_from_slice(&[255, 255, 255]);
+        mip.extend_from_slice(&pal);
+        let wads = super::WadIndex {
+            files: Vec::new(),
+            entries: std::collections::HashMap::new(),
+        };
+        let (tex, _) = super::cook_miptex(&mip, 0, &wads);
+        assert_eq!((tex.w, tex.h), (64, 64));
+        for i in 0..64 * 64 {
+            let byte = tex.pix4[i / 2];
+            let c = tex.clut[if i % 2 == 0 { byte & 15 } else { byte >> 4 } as usize];
+            let r = ((c & 31) << 3) as i32;
+            assert!((100..=156).contains(&r), "texel {i} cooked to red {r}");
+        }
+    }
+
     #[test]
     fn grunt_equipment_binds_authored_actor_and_rejects_ambiguity() {
         let entities = br#"{ "classname" "monster_human_grunt" "origin" "10 20 30" "weapons" "5" }
