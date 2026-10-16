@@ -53,7 +53,7 @@ unsafe fn acquire(
     } else {
         target_aim_point(target, player_pos, nprops)
     };
-    let aim = aim.and_then(|truth| pursue_point(pi, target, truth, visible));
+    let aim = aim.and_then(|truth| pursue_point(pi, truth, visible));
     let Some(aim) = aim else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;

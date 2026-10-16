@@ -17561,25 +17561,24 @@ unsafe fn make_noise(pos: [i32; 3], volume: u16) {
 /// Where each hunter last saw its enemy (`m_vecEnemyLKP`) and which enemy
 /// that memory is of. A hunter that loses sight walks to this spot, not to
 /// where the enemy really is.
-static mut PROP_LKP: [[i16; 2]; MAX_PROPS] = [[0; 2]; MAX_PROPS];
-static mut PROP_LKP_FOR: [u8; MAX_PROPS] = [PROP_TARGET_NONE; MAX_PROPS];
+/// `i16::MIN` in the first slot means the hunter remembers nothing.
+static mut PROP_LKP: [[i16; 2]; MAX_PROPS] = [[i16::MIN; 2]; MAX_PROPS];
 
 /// The point a hunter heads for: the enemy while it is in sight (remembering
 /// it), else the last place it was seen. `None` once the hunter has come to
 /// that spot and still sees nothing: it gives up.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn pursue_point(pi: usize, target: u8, true_aim: [i32; 3], visible: bool) -> Option<[i32; 3]> {
-    if visible || PROP_LKP_FOR[pi] != target {
+unsafe fn pursue_point(pi: usize, true_aim: [i32; 3], visible: bool) -> Option<[i32; 3]> {
+    if visible || PROP_LKP[pi][0] == i16::MIN {
         PROP_LKP[pi] = [true_aim[0] as i16, true_aim[2] as i16];
-        PROP_LKP_FOR[pi] = target;
         return Some(true_aim);
     }
     let l = PROP_LKP[pi];
     // Walkers move on the plane: the spot keeps the hunter's own height.
     let spot = [l[0] as i32, PROP_POS[pi][1], l[1] as i32];
     if dist2_xz(PROP_POS[pi], spot) < 40 * 40 {
-        PROP_LKP_FOR[pi] = PROP_TARGET_NONE;
+        PROP_LKP[pi][0] = i16::MIN;
         return None;
     }
     Some(spot)
@@ -18803,7 +18802,7 @@ unsafe fn tick_shooter(
         return;
     }
     let Some(aim) = target_aim_point(target, player_pos, nprops)
-        .and_then(|truth| pursue_point(pi, target, truth, visible))
+        .and_then(|truth| pursue_point(pi, truth, visible))
     else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
@@ -18991,7 +18990,7 @@ unsafe fn tick_headcrab(
     }
 
     let Some(aim) = target_aim_point(target, player_pos, nprops)
-        .and_then(|truth| pursue_point(pi, target, truth, visible))
+        .and_then(|truth| pursue_point(pi, truth, visible))
     else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
@@ -21247,20 +21246,6 @@ impl Arsenal {
     /// Consume ammo for one shot. Returns true if the shot goes off (the caller
     /// then runs the archetype). Handles dry-click + auto-reload.
     fn try_fire(&mut self) -> bool {
-        let fired = self.try_fire_inner();
-        if fired {
-            // The shot is heard: loud guns carry further (`m_iWeaponVolume`).
-            unsafe {
-                make_noise(
-                    [LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + VIEW_HEIGHT, LOGIC_PLAYER_POS[2]],
-                    senses::weapon_volume(self.current),
-                );
-            }
-        }
-        fired
-    }
-
-    fn try_fire_inner(&mut self) -> bool {
         if !self.owns(self.current) {
             return false; // empty hands (pre-pickup)
         }
@@ -22295,6 +22280,15 @@ unsafe fn fire_weapon(
     base_t: [i32; 3],
     inacc: i32,
 ) -> bool {
+    // The shot is heard: loud guns carry further (`m_iWeaponVolume`). The
+    // weapon is the table row `d` points at.
+    make_noise(
+        eye,
+        senses::weapon_volume(
+            (d as *const WeaponDef as usize - WEAPON_DEFS.as_ptr() as usize)
+                / core::mem::size_of::<WeaponDef>(),
+        ),
+    );
     // Random screen-space aim jitter of magnitude +-mag px. `inacc` grows with
     // player speed / being airborne (HL cone-of-fire); the shotgun adds its own
     // scatter so the pellet pattern isn't a fixed rosette.

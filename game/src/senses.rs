@@ -155,19 +155,36 @@ pub fn in_view_cone(kind: u8, fx: i32, fz: i32, dx: i32, dz: i32) -> bool {
 /// because the c1a0e cascade (tests/chain-new-game) does not complete when idle
 /// actors turn at their retail rate. The talking allies have no entry either.
 pub const fn turn_rate_q12(kind: u8) -> u16 {
-    match kind {
-        2 => 34,              // headcrab: 30
-        59 | 5 | 55 | 11 | 14 | 58 => 137, // baby crab, zombie, controller, roach: 120
-        6 | 7 | 18 => 102,    // houndeye, bullsquid, Gonarch: 90
-        8 => 171,             // marine: 150
-        9 => 80,              // vortigaunt: 70
-        10 | 19 => 114,       // alien grunt, ichthyosaur: 100
-        16 => 68,             // gargantua: 60
-        51 => 410,            // assassin: 360
-        20 | 21 | 22 => 17,   // turrets: the gun swings 30 degrees a second
-        _ => 250,
+    if (kind as usize) < TURN_Q12.len() {
+        TURN_Q12[kind as usize]
+    } else {
+        250
     }
 }
+
+const TURN_Q12: [u16; 62] = {
+    let mut t = [250u16; 62];
+    t[2] = 34; // headcrab: 30
+    t[59] = 137; // baby crab, zombie, controller, roach: 120
+    t[5] = 137;
+    t[55] = 137;
+    t[11] = 137;
+    t[14] = 137;
+    t[58] = 137;
+    t[6] = 102; // houndeye, bullsquid, Gonarch: 90
+    t[7] = 102;
+    t[18] = 102;
+    t[8] = 171; // marine: 150
+    t[9] = 80; // vortigaunt: 70
+    t[10] = 114; // alien grunt, ichthyosaur: 100
+    t[19] = 114;
+    t[16] = 68; // gargantua: 60
+    t[51] = 410; // assassin: 360
+    t[20] = 17; // turrets: the gun swings 30 degrees a second
+    t[21] = 17;
+    t[22] = 17;
+    t
+};
 
 // ---- ears ----
 
