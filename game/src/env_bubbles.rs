@@ -154,12 +154,14 @@ mod tests {
     }
     #[test]
     fn actual_countdown_preserves_tall_volume_lifetime_above_byte_range() {
-        let mut remaining = lifetime_ticks(2048,80);
-        assert_eq!(remaining,522);
-        for _ in 0..521 {assert!(advance_lifetime(&mut remaining));}
-        assert_eq!(remaining,1);
+        let mut remaining = lifetime_ticks(2048, 80);
+        assert_eq!(remaining, 522);
+        for _ in 0..521 {
+            assert!(advance_lifetime(&mut remaining));
+        }
+        assert_eq!(remaining, 1);
         assert!(!advance_lifetime(&mut remaining));
-        assert_eq!(remaining,0);
+        assert_eq!(remaining, 0);
         assert!(!advance_lifetime(&mut remaining));
     }
 }
