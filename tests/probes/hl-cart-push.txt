@@ -1,0 +1,297 @@
+# c1a0e sample cart (func_pushable on sample_cart2_lift): the player pushes the cart east from the lift's west margin.
+# The lift has a 1-unit lip at x 1180 (hull plane x 1164); the cart's west face is at x 1182 (hull plane 1166).
+# Each trial puts the cart back on the raised lift, drops the player at the margin and holds forward for 18 ticks.
+# Build: HLPSX_PROBE=this-file HLPSX_BENCH_MAPS=11 with --features interaction-probe; run map 11 (c1a0e).
+# A trial passes when its pushpos line shows the cart past x 1320 (it starts at 1302). Before the fix the cart
+# stayed at 1302 for half of these starts, the player held 3 units short of it at x 1163.
+map c1a0e
+0 god 2
+3 fire sample_cart_liftmm
+300 cartreset 0 1302 620 -347 26
+300 tp 1161 600 -347 0 0 0
+301 in 127 0 0 0 0 18
+321 pushpos 0
+321 pos
+321 mark P1:x=1161:y=600:yaw=0:f=127:s=0:pre=0:wait=1
+325 cartreset 0 1302 620 -347 26
+325 tp 1161 600 -347 0 0 0
+329 in 127 0 0 0 0 18
+349 pushpos 0
+349 pos
+349 mark P2:x=1161:y=600:yaw=0:f=127:s=0:pre=0:wait=4
+353 cartreset 0 1302 620 -347 26
+353 tp 1161 600 -347 0.35 0 0
+354 in 127 0 0 0 0 18
+374 pushpos 0
+374 pos
+374 mark P3:x=1161:y=600:yaw=0.35:f=127:s=0:pre=0:wait=1
+378 cartreset 0 1302 620 -347 26
+378 tp 1161 600 -347 0.35 0 0
+382 in 127 0 0 0 0 18
+402 pushpos 0
+402 pos
+402 mark P4:x=1161:y=600:yaw=0.35:f=127:s=0:pre=0:wait=4
+406 cartreset 0 1302 620 -347 26
+406 tp 1161 620 -347 0 0 0
+407 in 127 0 0 0 0 18
+427 pushpos 0
+427 pos
+427 mark P5:x=1161:y=620:yaw=0:f=127:s=0:pre=0:wait=1
+431 cartreset 0 1302 620 -347 26
+431 tp 1161 620 -347 0 0 0
+435 in 127 0 0 0 0 18
+455 pushpos 0
+455 pos
+455 mark P6:x=1161:y=620:yaw=0:f=127:s=0:pre=0:wait=4
+459 cartreset 0 1302 620 -347 26
+459 tp 1161 620 -347 0.35 0 0
+460 in 127 0 0 0 0 18
+480 pushpos 0
+480 pos
+480 mark P7:x=1161:y=620:yaw=0.35:f=127:s=0:pre=0:wait=1
+484 cartreset 0 1302 620 -347 26
+484 tp 1161 620 -347 0.35 0 0
+488 in 127 0 0 0 0 18
+508 pushpos 0
+508 pos
+508 mark P8:x=1161:y=620:yaw=0.35:f=127:s=0:pre=0:wait=4
+512 cartreset 0 1302 620 -347 26
+512 tp 1161 636 -347 0 0 0
+513 in 127 0 0 0 0 18
+533 pushpos 0
+533 pos
+533 mark P9:x=1161:y=636:yaw=0:f=127:s=0:pre=0:wait=1
+537 cartreset 0 1302 620 -347 26
+537 tp 1161 636 -347 0 0 0
+541 in 127 0 0 0 0 18
+561 pushpos 0
+561 pos
+561 mark P10:x=1161:y=636:yaw=0:f=127:s=0:pre=0:wait=4
+565 cartreset 0 1302 620 -347 26
+565 tp 1161 636 -347 0.35 0 0
+566 in 127 0 0 0 0 18
+586 pushpos 0
+586 pos
+586 mark P11:x=1161:y=636:yaw=0.35:f=127:s=0:pre=0:wait=1
+590 cartreset 0 1302 620 -347 26
+590 tp 1161 636 -347 0.35 0 0
+594 in 127 0 0 0 0 18
+614 pushpos 0
+614 pos
+614 mark P12:x=1161:y=636:yaw=0.35:f=127:s=0:pre=0:wait=4
+618 cartreset 0 1302 620 -347 26
+618 tp 1161 642 -347 0 0 0
+619 in 127 0 0 0 0 18
+639 pushpos 0
+639 pos
+639 mark P13:x=1161:y=642:yaw=0:f=127:s=0:pre=0:wait=1
+643 cartreset 0 1302 620 -347 26
+643 tp 1161 642 -347 0 0 0
+647 in 127 0 0 0 0 18
+667 pushpos 0
+667 pos
+667 mark P14:x=1161:y=642:yaw=0:f=127:s=0:pre=0:wait=4
+671 cartreset 0 1302 620 -347 26
+671 tp 1161 642 -347 0.35 0 0
+672 in 127 0 0 0 0 18
+692 pushpos 0
+692 pos
+692 mark P15:x=1161:y=642:yaw=0.35:f=127:s=0:pre=0:wait=1
+696 cartreset 0 1302 620 -347 26
+696 tp 1161 642 -347 0.35 0 0
+700 in 127 0 0 0 0 18
+720 pushpos 0
+720 pos
+720 mark P16:x=1161:y=642:yaw=0.35:f=127:s=0:pre=0:wait=4
+724 cartreset 0 1302 620 -347 26
+724 tp 1162 600 -347 0 0 0
+725 in 127 0 0 0 0 18
+745 pushpos 0
+745 pos
+745 mark P17:x=1162:y=600:yaw=0:f=127:s=0:pre=0:wait=1
+749 cartreset 0 1302 620 -347 26
+749 tp 1162 600 -347 0 0 0
+753 in 127 0 0 0 0 18
+773 pushpos 0
+773 pos
+773 mark P18:x=1162:y=600:yaw=0:f=127:s=0:pre=0:wait=4
+777 cartreset 0 1302 620 -347 26
+777 tp 1162 600 -347 0.35 0 0
+778 in 127 0 0 0 0 18
+798 pushpos 0
+798 pos
+798 mark P19:x=1162:y=600:yaw=0.35:f=127:s=0:pre=0:wait=1
+802 cartreset 0 1302 620 -347 26
+802 tp 1162 600 -347 0.35 0 0
+806 in 127 0 0 0 0 18
+826 pushpos 0
+826 pos
+826 mark P20:x=1162:y=600:yaw=0.35:f=127:s=0:pre=0:wait=4
+830 cartreset 0 1302 620 -347 26
+830 tp 1162 620 -347 0 0 0
+831 in 127 0 0 0 0 18
+851 pushpos 0
+851 pos
+851 mark P21:x=1162:y=620:yaw=0:f=127:s=0:pre=0:wait=1
+855 cartreset 0 1302 620 -347 26
+855 tp 1162 620 -347 0 0 0
+859 in 127 0 0 0 0 18
+879 pushpos 0
+879 pos
+879 mark P22:x=1162:y=620:yaw=0:f=127:s=0:pre=0:wait=4
+883 cartreset 0 1302 620 -347 26
+883 tp 1162 620 -347 0.35 0 0
+884 in 127 0 0 0 0 18
+904 pushpos 0
+904 pos
+904 mark P23:x=1162:y=620:yaw=0.35:f=127:s=0:pre=0:wait=1
+908 cartreset 0 1302 620 -347 26
+908 tp 1162 620 -347 0.35 0 0
+912 in 127 0 0 0 0 18
+932 pushpos 0
+932 pos
+932 mark P24:x=1162:y=620:yaw=0.35:f=127:s=0:pre=0:wait=4
+936 cartreset 0 1302 620 -347 26
+936 tp 1162 636 -347 0 0 0
+937 in 127 0 0 0 0 18
+957 pushpos 0
+957 pos
+957 mark P25:x=1162:y=636:yaw=0:f=127:s=0:pre=0:wait=1
+961 cartreset 0 1302 620 -347 26
+961 tp 1162 636 -347 0 0 0
+965 in 127 0 0 0 0 18
+985 pushpos 0
+985 pos
+985 mark P26:x=1162:y=636:yaw=0:f=127:s=0:pre=0:wait=4
+989 cartreset 0 1302 620 -347 26
+989 tp 1162 636 -347 0.35 0 0
+990 in 127 0 0 0 0 18
+1010 pushpos 0
+1010 pos
+1010 mark P27:x=1162:y=636:yaw=0.35:f=127:s=0:pre=0:wait=1
+1014 cartreset 0 1302 620 -347 26
+1014 tp 1162 636 -347 0.35 0 0
+1018 in 127 0 0 0 0 18
+1038 pushpos 0
+1038 pos
+1038 mark P28:x=1162:y=636:yaw=0.35:f=127:s=0:pre=0:wait=4
+1042 cartreset 0 1302 620 -347 26
+1042 tp 1162 642 -347 0 0 0
+1043 in 127 0 0 0 0 18
+1063 pushpos 0
+1063 pos
+1063 mark P29:x=1162:y=642:yaw=0:f=127:s=0:pre=0:wait=1
+1067 cartreset 0 1302 620 -347 26
+1067 tp 1162 642 -347 0 0 0
+1071 in 127 0 0 0 0 18
+1091 pushpos 0
+1091 pos
+1091 mark P30:x=1162:y=642:yaw=0:f=127:s=0:pre=0:wait=4
+1095 cartreset 0 1302 620 -347 26
+1095 tp 1162 642 -347 0.35 0 0
+1096 in 127 0 0 0 0 18
+1116 pushpos 0
+1116 pos
+1116 mark P31:x=1162:y=642:yaw=0.35:f=127:s=0:pre=0:wait=1
+1120 cartreset 0 1302 620 -347 26
+1120 tp 1162 642 -347 0.35 0 0
+1124 in 127 0 0 0 0 18
+1144 pushpos 0
+1144 pos
+1144 mark P32:x=1162:y=642:yaw=0.35:f=127:s=0:pre=0:wait=4
+1148 cartreset 0 1302 620 -347 26
+1148 tp 1163 600 -347 0 0 0
+1149 in 127 0 0 0 0 18
+1169 pushpos 0
+1169 pos
+1169 mark P33:x=1163:y=600:yaw=0:f=127:s=0:pre=0:wait=1
+1173 cartreset 0 1302 620 -347 26
+1173 tp 1163 600 -347 0 0 0
+1177 in 127 0 0 0 0 18
+1197 pushpos 0
+1197 pos
+1197 mark P34:x=1163:y=600:yaw=0:f=127:s=0:pre=0:wait=4
+1201 cartreset 0 1302 620 -347 26
+1201 tp 1163 600 -347 0.35 0 0
+1202 in 127 0 0 0 0 18
+1222 pushpos 0
+1222 pos
+1222 mark P35:x=1163:y=600:yaw=0.35:f=127:s=0:pre=0:wait=1
+1226 cartreset 0 1302 620 -347 26
+1226 tp 1163 600 -347 0.35 0 0
+1230 in 127 0 0 0 0 18
+1250 pushpos 0
+1250 pos
+1250 mark P36:x=1163:y=600:yaw=0.35:f=127:s=0:pre=0:wait=4
+1254 cartreset 0 1302 620 -347 26
+1254 tp 1163 620 -347 0 0 0
+1255 in 127 0 0 0 0 18
+1275 pushpos 0
+1275 pos
+1275 mark P37:x=1163:y=620:yaw=0:f=127:s=0:pre=0:wait=1
+1279 cartreset 0 1302 620 -347 26
+1279 tp 1163 620 -347 0 0 0
+1283 in 127 0 0 0 0 18
+1303 pushpos 0
+1303 pos
+1303 mark P38:x=1163:y=620:yaw=0:f=127:s=0:pre=0:wait=4
+1307 cartreset 0 1302 620 -347 26
+1307 tp 1163 620 -347 0.35 0 0
+1308 in 127 0 0 0 0 18
+1328 pushpos 0
+1328 pos
+1328 mark P39:x=1163:y=620:yaw=0.35:f=127:s=0:pre=0:wait=1
+1332 cartreset 0 1302 620 -347 26
+1332 tp 1163 620 -347 0.35 0 0
+1336 in 127 0 0 0 0 18
+1356 pushpos 0
+1356 pos
+1356 mark P40:x=1163:y=620:yaw=0.35:f=127:s=0:pre=0:wait=4
+1360 cartreset 0 1302 620 -347 26
+1360 tp 1163 636 -347 0 0 0
+1361 in 127 0 0 0 0 18
+1381 pushpos 0
+1381 pos
+1381 mark P41:x=1163:y=636:yaw=0:f=127:s=0:pre=0:wait=1
+1385 cartreset 0 1302 620 -347 26
+1385 tp 1163 636 -347 0 0 0
+1389 in 127 0 0 0 0 18
+1409 pushpos 0
+1409 pos
+1409 mark P42:x=1163:y=636:yaw=0:f=127:s=0:pre=0:wait=4
+1413 cartreset 0 1302 620 -347 26
+1413 tp 1163 636 -347 0.35 0 0
+1414 in 127 0 0 0 0 18
+1434 pushpos 0
+1434 pos
+1434 mark P43:x=1163:y=636:yaw=0.35:f=127:s=0:pre=0:wait=1
+1438 cartreset 0 1302 620 -347 26
+1438 tp 1163 636 -347 0.35 0 0
+1442 in 127 0 0 0 0 18
+1462 pushpos 0
+1462 pos
+1462 mark P44:x=1163:y=636:yaw=0.35:f=127:s=0:pre=0:wait=4
+1466 cartreset 0 1302 620 -347 26
+1466 tp 1163 642 -347 0 0 0
+1467 in 127 0 0 0 0 18
+1487 pushpos 0
+1487 pos
+1487 mark P45:x=1163:y=642:yaw=0:f=127:s=0:pre=0:wait=1
+1491 cartreset 0 1302 620 -347 26
+1491 tp 1163 642 -347 0 0 0
+1495 in 127 0 0 0 0 18
+1515 pushpos 0
+1515 pos
+1515 mark P46:x=1163:y=642:yaw=0:f=127:s=0:pre=0:wait=4
+1519 cartreset 0 1302 620 -347 26
+1519 tp 1163 642 -347 0.35 0 0
+1520 in 127 0 0 0 0 18
+1540 pushpos 0
+1540 pos
+1540 mark P47:x=1163:y=642:yaw=0.35:f=127:s=0:pre=0:wait=1
+1544 cartreset 0 1302 620 -347 26
+1544 tp 1163 642 -347 0.35 0 0
+1548 in 127 0 0 0 0 18
+1568 pushpos 0
+1568 pos
+1568 mark P48:x=1163:y=642:yaw=0.35:f=127:s=0:pre=0:wait=4

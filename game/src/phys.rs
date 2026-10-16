@@ -1885,19 +1885,39 @@ fn slide_move(
                     && !mover_clear_at_hull(map, movers, tr.mover, pos, head))
                     || (diagonal && !clear_at(map, head, movers, pos));
                 if bad {
+                    let contact = pos;
                     pos = leg_start;
-                    if diagonal {
-                        let cand = [
+                    // A diagonal plane retries at the nearest-rounded point. On an axial plane
+                    // the floored point sits on the hull plane itself, and the last clear
+                    // integer point is one unit back along the normal (GoldSrc keeps its float
+                    // origin an epsilon in front of the plane). Dropping the whole leg here
+                    // left a player hull-flush against a 1-unit lift lip 3 units short of a
+                    // func_pushable: the stair-step attempt that reaches the cart floored into
+                    // its hull, was discarded, and the cart was never touched. A retreat never
+                    // goes behind the leg start.
+                    let cand = if diagonal {
+                        [
                             gl::slide_contact_axis_q6(leg_start[0], end[0], tr.frac).0,
                             gl::slide_contact_axis_q6(leg_start[1], end[1], tr.frac).0,
                             gl::slide_contact_axis_q6(leg_start[2], end[2], tr.frac).0,
-                        ];
-                        if clear_at(map, head, movers, cand)
-                            && (tr.mover == -1
-                                || mover_clear_at_hull(map, movers, tr.mover, cand, head))
-                        {
-                            pos = cand;
-                        }
+                        ]
+                    } else {
+                        [
+                            contact[0] + tr.normal[0].signum(),
+                            contact[1] + tr.normal[1].signum(),
+                            contact[2] + tr.normal[2].signum(),
+                        ]
+                    };
+                    let ahead = diagonal
+                        || ((cand[0] - leg_start[0]) * d[0].signum() >= 0
+                            && (cand[1] - leg_start[1]) * d[1].signum() >= 0
+                            && (cand[2] - leg_start[2]) * d[2].signum() >= 0);
+                    if ahead
+                        && clear_at(map, head, movers, cand)
+                        && (tr.mover == -1
+                            || mover_clear_at_hull(map, movers, tr.mover, cand, head))
+                    {
+                        pos = cand;
                     }
                 }
                 advanced = [

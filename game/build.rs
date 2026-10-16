@@ -1349,6 +1349,12 @@ fn write_probe_script(out_dir: &std::path::Path) {
                     [num(2) as i32, num(3) as i32, num(5) as i32, num(4) as i32, 0, 0],
                     String::new(),
                 ),
+                // cartreset N X Y Z SUPPORT : put the Nth pushable back at that origin (HL axes), at rest
+                "cartreset" => (
+                    50,
+                    [num(2) as i32, num(3) as i32, num(4) as i32, num(5) as i32, num(6) as i32, 0],
+                    String::new(),
+                ),
                 // pushpos N : log the Nth pushable's offset
                 "pushpos" => (31, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
                 // scan X Y Z : log water and floor along the vertical line through that HL point

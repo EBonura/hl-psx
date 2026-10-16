@@ -575,6 +575,38 @@ pub unsafe fn step(
                 weapons.clip[weapons.current] = 1;
                 weapons.ammo[d.ammo] = 0;
             }
+            50 => {
+                // cartreset N X Y Z SUPPORT : put the Nth pushable back at that resting origin, at rest
+                let mut n = c.a[0] as i32;
+                let mut ei = 0usize;
+                while ei < crate::ENT_SOLID_COUNT {
+                    if crate::ENT_CACHE[ei].kind == crate::ENT_KIND_PUSHABLE {
+                        if n == 0 {
+                            let movers = core::slice::from_raw_parts_mut(
+                                core::ptr::addr_of_mut!(crate::MOVERS).cast::<crate::phys::Mover>(),
+                                crate::MOVER_COUNT.min(crate::MAX_ENTS + 1),
+                            );
+                            crate::pushable_publish_offset(
+                                m,
+                                movers,
+                                ei,
+                                [c.a[1] as i32, c.a[3] as i32, c.a[2] as i32],
+                            );
+                            crate::ENT_PHASE[ei] = psx_goldsrc::pushable::pack(
+                                0,
+                                0,
+                                0,
+                                c.a[4] as u16,
+                                false,
+                            );
+                            crate::reference_trace::probe_vals(now, "cartreset", &[ei as i32]);
+                            break;
+                        }
+                        n -= 1;
+                    }
+                    ei += 1;
+                }
+            }
             16 => FACE = if cname == "-" { 0 } else { name_id(m, cname) },
             13 => crate::reference_trace::probe_vals(
                 now,
