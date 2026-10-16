@@ -17,7 +17,7 @@
 //! RAM is the constraint here: no search loops, no per-word tables beyond the
 //! three small arrays, and every routine is built for size.
 
-use crate::wide::Mask64;
+use psx_math::Mask64;
 use hl_format::hev as table;
 use hl_format::hev::{NO_WORD, SENTENCES, SENTENCE_COUNT, WORD_COUNT};
 use psx_sfx::{OneShot, Sample, PARKING_TAIL};

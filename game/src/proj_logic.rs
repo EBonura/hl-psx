@@ -6,7 +6,7 @@
 //! includes this file by path). Velocities are world units per 20 Hz tick
 //! (retail units per second divided by 20); directions are q12 unit vectors.
 
-use crate::wide::Wide;
+use psx_math::Wide;
 
 /// A rocket's velocity is kept in sixteenths of a unit per tick (the same
 /// representation the grunt's grenade uses) so its slow decay is not eaten by

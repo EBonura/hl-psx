@@ -4,7 +4,7 @@
 //! transition mailbox's state byte.  Keeping the decisions here makes the
 //! progression-critical rules host-testable without pulling in the PSX runtime.
 
-use crate::wide::WideU;
+use psx_math::WideU;
 
 pub const SCRIPT_SELECTOR_NONE: u8 = 0;
 pub const SCRIPT_SELECTOR_MASK: u8 = 0x3F;

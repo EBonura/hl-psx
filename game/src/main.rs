@@ -56,7 +56,6 @@ mod hud;
 use psx_goldsrc::ladder_logic;
 mod logic_state;
 mod map;
-mod wide;
 mod menu;
 mod map_catalog;
 mod model;
@@ -151,8 +150,7 @@ use psx_gte::scene::{self, Projected};
 use psx_io;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_math::int32::{isqrt_i32, mul_div_i32, mul_shr_i32};
-use wide::{Mask64, Wide, WideU};
-use psx_math::{atan2_q12, sincos};
+use psx_math::{atan2_q12, sincos, Mask64, Wide, WideU};
 use psx_pad::{button, poll_port1, require_analog_port1, AnalogRequirement, PadMode};
 #[cfg(not(feature = "semantic-input"))]
 use psx_pad::{enable_analog_port1, PadReader, PadTracker};

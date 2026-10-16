@@ -2,7 +2,7 @@
 //! runtime path/rotation code. Keeping these integer-only avoids pulling PSX
 //! math dependencies into the host tests.
 
-use crate::wide::Wide;
+use psx_math::Wide;
 
 /// Marker for the compact speed/wheels/start motion word.
 ///

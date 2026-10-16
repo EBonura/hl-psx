@@ -8,7 +8,7 @@
 //! ordering explicit while remaining independent of the PSX runtime and map
 //! representation.
 
-use crate::wide::WideU;
+use psx_math::WideU;
 
 /// One world unit in the follower's position format.
 pub const Q8_ONE: i32 = 1 << 8;

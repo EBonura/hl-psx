@@ -87,8 +87,6 @@ mod parity;
 #[path = "../../../game/src/setpiece_logic.rs"]
 pub mod setpiece_logic;
 
-#[path = "../../../game/src/wide.rs"]
-pub mod wide;
 #[path = "../../../game/src/env_funnel.rs"]
 pub mod env_funnel;
 #[path = "../../../game/src/env_sound.rs"]
