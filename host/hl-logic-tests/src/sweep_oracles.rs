@@ -40,10 +40,22 @@ fn upstream_of_first_matches() {
     let mut next = rng(1);
     for round in 0..1_000_000 {
         let bits = [14, 20, 31, 32][round % 4];
-        let (a, b, c) = (v3(&mut next, bits), v3(&mut next, bits), v3(&mut next, bits));
-        assert_eq!(tram_logic::is_upstream_of_first(a, b, c), wide(a, b, c), "{a:?} {b:?} {c:?}");
+        let (a, b, c) = (
+            v3(&mut next, bits),
+            v3(&mut next, bits),
+            v3(&mut next, bits),
+        );
+        assert_eq!(
+            tram_logic::is_upstream_of_first(a, b, c),
+            wide(a, b, c),
+            "{a:?} {b:?} {c:?}"
+        );
     }
-    assert!(!tram_logic::is_upstream_of_first([i32::MIN; 3], [i32::MAX; 3], [i32::MAX; 3]));
+    assert!(!tram_logic::is_upstream_of_first(
+        [i32::MIN; 3],
+        [i32::MAX; 3],
+        [i32::MAX; 3]
+    ));
 }
 
 #[test]
@@ -56,7 +68,11 @@ fn follower_distance_matches() {
             .saturating_add(dy.saturating_mul(dy))
             .saturating_add(dz.saturating_mul(dz));
         let length = psx_math::int32::isqrt_u64(squared) as u64;
-        if length > i32::MAX as u64 { i32::MAX } else { length as i32 }
+        if length > i32::MAX as u64 {
+            i32::MAX
+        } else {
+            length as i32
+        }
     };
     let mut next = rng(2);
     for round in 0..1_000_000 {
@@ -66,7 +82,10 @@ fn follower_distance_matches() {
     }
     for &x in &[i32::MIN, -1, 0, 1, i32::MAX] {
         for &y in &[i32::MIN, 0, i32::MAX] {
-            assert_eq!(tram_follower::distance_q8([x, y, x], [y, x, y]), wide([x, y, x], [y, x, y]));
+            assert_eq!(
+                tram_follower::distance_q8([x, y, x], [y, x, y]),
+                wide([x, y, x], [y, x, y])
+            );
         }
     }
 }
@@ -77,13 +96,20 @@ fn view_cone_and_eligibility_match() {
         if dx == 0 && dz == 0 {
             return true;
         }
-        let dot = (dx as i64).saturating_mul(fx as i64).saturating_add((dz as i64).saturating_mul(fz as i64));
+        let dot = (dx as i64)
+            .saturating_mul(fx as i64)
+            .saturating_add((dz as i64).saturating_mul(fz as i64));
         if dot >= 0 {
             return true;
         }
         let dot2 = dot.saturating_mul(dot);
-        let len2 = (dx as i64).saturating_mul(dx as i64).saturating_add((dz as i64).saturating_mul(dz as i64));
-        dot2.saturating_mul(100) < len2.saturating_mul(4096i64.saturating_mul(4096)).saturating_mul(49)
+        let len2 = (dx as i64)
+            .saturating_mul(dx as i64)
+            .saturating_add((dz as i64).saturating_mul(dz as i64));
+        dot2.saturating_mul(100)
+            < len2
+                .saturating_mul(4096i64.saturating_mul(4096))
+                .saturating_mul(49)
     };
     let mut next = rng(3);
     let (mut far, mut far_differs) = (0u32, 0u32);
@@ -91,7 +117,10 @@ fn view_cone_and_eligibility_match() {
         let bits = [8, 13, 15, 16, 22][round % 5];
         let (dx, dz) = (any(&mut next, bits), any(&mut next, bits));
         // The caller's forward vector is Q12 (components within 4096).
-        let (fx, fz) = ((any(&mut next, 13)).clamp(-4096, 4096), (any(&mut next, 13)).clamp(-4096, 4096));
+        let (fx, fz) = (
+            (any(&mut next, 13)).clamp(-4096, 4096),
+            (any(&mut next, 13)).clamp(-4096, 4096),
+        );
         let got = scientist_logic::wide_view_cone(dx, dz, fx, fz);
         if dx.unsigned_abs() < 1 << 15 && dz.unsigned_abs() < 1 << 15 {
             assert_eq!(got, cone(dx, dz, fx, fz), "{dx} {dz} {fx} {fz}");
@@ -140,17 +169,26 @@ fn projectile_rules_match() {
         for a in 0..3 {
             out[a] = ((v[a] as i64 * 819 + dir[a] as i64 * along + 2048) >> 12) as i32;
         }
-        let cap = if water { proj_logic::ROCKET_TOP_SPEED_WATER_Q4 } else { proj_logic::ROCKET_TOP_SPEED_Q4 };
+        let cap = if water {
+            proj_logic::ROCKET_TOP_SPEED_WATER_Q4
+        } else {
+            proj_logic::ROCKET_TOP_SPEED_Q4
+        };
         let len = speed(out);
         if boost && len > cap {
             for a in 0..3 {
                 out[a] = (out[a] as i64 * cap as i64 / len as i64) as i32;
             }
         }
-        (out, !boost && !water && len < proj_logic::ROCKET_STALL_SPEED_Q4)
+        (
+            out,
+            !boost && !water && len < proj_logic::ROCKET_STALL_SPEED_Q4,
+        )
     };
     let bounce = |v: [i32; 3], n: [i32; 3], friction_q8: i32| -> [i32; 3] {
-        let dot = (v[0] as i64 * n[0] as i64 + v[1] as i64 * n[1] as i64 + v[2] as i64 * n[2] as i64) >> 12;
+        let dot =
+            (v[0] as i64 * n[0] as i64 + v[1] as i64 * n[1] as i64 + v[2] as i64 * n[2] as i64)
+                >> 12;
         let backoff_q8 = 2 * 256 - friction_q8 as i64;
         let mut out = [0i32; 3];
         for a in 0..3 {
@@ -163,9 +201,17 @@ fn projectile_rules_match() {
             + flight[1] as i64 * to_enemy[1] as i64
             + flight[2] as i64 * to_enemy[2] as i64)
             >> 12) as i32;
-        let sum = [flight[0] + to_enemy[0], flight[1] + to_enemy[1], flight[2] + to_enemy[2]];
+        let sum = [
+            flight[0] + to_enemy[0],
+            flight[1] + to_enemy[1],
+            flight[2] + to_enemy[2],
+        ];
         let len = speed(sum).max(1) as i64;
-        let cruise = if red { proj_logic::HORNET_RED_SPEED } else { proj_logic::HORNET_ORANGE_SPEED } as i64;
+        let cruise = if red {
+            proj_logic::HORNET_RED_SPEED
+        } else {
+            proj_logic::HORNET_ORANGE_SPEED
+        } as i64;
         let scale = if red {
             let d = if dot <= 0 { 1024 } else { dot } as i64;
             cruise * d / 4096
@@ -187,13 +233,25 @@ fn projectile_rules_match() {
         if round % 4 != 3 {
             let since = next() % 40;
             let water = next() & 1 == 0;
-            assert_eq!(proj_logic::rocket_think(v, dir, since, water), rocket(v, dir, since, water), "{v:?} {dir:?}");
+            assert_eq!(
+                proj_logic::rocket_think(v, dir, since, water),
+                rocket(v, dir, since, water),
+                "{v:?} {dir:?}"
+            );
         }
         let friction = any(&mut next, 9).clamp(0, 512);
-        assert_eq!(proj_logic::bounce(v, dir, friction), bounce(v, dir, friction), "{v:?} {dir:?} {friction}");
+        assert_eq!(
+            proj_logic::bounce(v, dir, friction),
+            bounce(v, dir, friction),
+            "{v:?} {dir:?} {friction}"
+        );
         let enemy = v3(&mut next, 13).map(|c| c.clamp(-4096, 4096));
         for red in [false, true] {
-            assert_eq!(proj_logic::hornet_think(dir, enemy, red), hornet(dir, enemy, red), "{dir:?} {enemy:?}");
+            assert_eq!(
+                proj_logic::hornet_think(dir, enemy, red),
+                hornet(dir, enemy, red),
+                "{dir:?} {enemy:?}"
+            );
         }
     }
 }
@@ -238,11 +296,19 @@ fn sound_range_matches() {
         let a = v3(&mut next, [10, 16, 31, 32][round % 4]);
         // Mostly close to the listener so the in-range branch is exercised.
         let b = if round % 2 == 0 {
-            [a[0].wrapping_add(any(&mut next, 16)), a[1].wrapping_add(any(&mut next, 16)), a[2].wrapping_add(any(&mut next, 16))]
+            [
+                a[0].wrapping_add(any(&mut next, 16)),
+                a[1].wrapping_add(any(&mut next, 16)),
+                a[2].wrapping_add(any(&mut next, 16)),
+            ]
         } else {
             v3(&mut next, 31)
         };
-        assert_eq!(env_sound::in_range(a, b, radius, true, false), wide(a, b, radius), "{a:?} {b:?} {radius}");
+        assert_eq!(
+            env_sound::in_range(a, b, radius, true, false),
+            wide(a, b, radius),
+            "{a:?} {b:?} {radius}"
+        );
     }
 }
 
@@ -251,29 +317,52 @@ fn effect_arithmetic_matches() {
     let mut next = rng(7);
     for round in 0..2_000_000 {
         let f = any(&mut next, [5, 12, 31, 32][round % 4]);
-        let want = if f >= 20 { 10 } else { (50i64 - f as i64 * 2).clamp(1, u16::MAX as i64) as u16 };
+        let want = if f >= 20 {
+            10
+        } else {
+            (50i64 - f as i64 * 2).clamp(1, u16::MAX as i64) as u16
+        };
         assert_eq!(env_bubbles::interval_ticks(f), want, "{f}");
         let (p, d, amount) = (v3(&mut next, 20), v3(&mut next, 24), next() as u16);
-        let want = core::array::from_fn(|k| p[k] + ((d[k] as i64 * amount as i64 * 2) >> 12) as i32);
-        assert_eq!(env_blood::decal_end(p, d, amount), want, "{p:?} {d:?} {amount}");
+        let want =
+            core::array::from_fn(|k| p[k] + ((d[k] as i64 * amount as i64 * 2) >> 12) as i32);
+        assert_eq!(
+            env_blood::decal_end(p, d, amount),
+            want,
+            "{p:?} {d:?} {amount}"
+        );
         let offset = v3(&mut next, 12);
         let (scale, age) = (next() as u16, next() as u16 >> 8);
-        let flight = env_funnel::Flight { velocity: [3, -4, 5], height: 100, duration_q8: 0 };
+        let flight = env_funnel::Flight {
+            velocity: [3, -4, 5],
+            height: 100,
+            duration_q8: 0,
+        };
         let origin = v3(&mut next, 14);
         let want: [i32; 3] = core::array::from_fn(|axis| {
-            origin[axis] * 16 + (offset[axis] as i64 * scale as i64 * 16 / 4096) as i32 + flight.velocity[axis] as i32 * age as i32
+            origin[axis] * 16
+                + (offset[axis] as i64 * scale as i64 * 16 / 4096) as i32
+                + flight.velocity[axis] as i32 * age as i32
         });
         // reverse = false uses grid(index, height); compare through a reverse flight
         // (offset zero) and the grid path separately.
         let _ = (want, offset);
         let reverse = flight.position_q4(origin, 0, true, scale, age);
-        let want_rev: [i32; 3] = core::array::from_fn(|axis| origin[axis] * 16 + flight.velocity[axis] as i32 * age as i32);
+        let want_rev: [i32; 3] = core::array::from_fn(|axis| {
+            origin[axis] * 16 + flight.velocity[axis] as i32 * age as i32
+        });
         assert_eq!(reverse, want_rev);
         let index = (next() % 81) as usize;
-        let grid = [-256 + (index / 9) as i32 * 64, 100, -256 + (index % 9) as i32 * 64];
+        let grid = [
+            -256 + (index / 9) as i32 * 64,
+            100,
+            -256 + (index % 9) as i32 * 64,
+        ];
         let forward = flight.position_q4(origin, index, false, scale, age);
         let want_fwd: [i32; 3] = core::array::from_fn(|axis| {
-            origin[axis] * 16 + (grid[axis] as i64 * scale as i64 * 16 / 4096) as i32 + flight.velocity[axis] as i32 * age as i32
+            origin[axis] * 16
+                + (grid[axis] as i64 * scale as i64 * 16 / 4096) as i32
+                + flight.velocity[axis] as i32 * age as i32
         });
         assert_eq!(forward, want_fwd);
     }
@@ -283,7 +372,11 @@ fn effect_arithmetic_matches() {
 fn grenade_plans_match() {
     let sqrt = |value: i64| -> Option<i32> {
         let value = i32::try_from(value).ok()?;
-        if value < 0 { None } else { Some(psx_math::int32::isqrt_i32(value)) }
+        if value < 0 {
+            None
+        } else {
+            Some(psx_math::int32::isqrt_i32(value))
+        }
     };
     let toss = |start: [i32; 3], target: [i32; 3], apex_y: i32| -> Option<([i16; 3], [i32; 3])> {
         if target[1] - start[1] > 500 {
@@ -303,7 +396,11 @@ fn grenade_plans_match() {
             i16::try_from(t1 * 16 / 256).ok()?,
             i16::try_from(delta[2] * 16 * 256 / total).ok()?,
         ];
-        let apex = [start[0] + delta[0] * t1 / total, apex_y, start[2] + delta[2] * t1 / total];
+        let apex = [
+            start[0] + delta[0] * t1 / total,
+            apex_y,
+            start[2] + delta[2] * t1 / total,
+        ];
         Some((v, apex))
     };
     let launch = |start: [i32; 3], target: [i32; 3], speed: u16| -> Option<([i16; 3], [i32; 3])> {
@@ -322,7 +419,11 @@ fn grenade_plans_match() {
             i16::try_from(delta[2] * 16 * 256 / time).ok()?,
         ];
         let fall = ((time as i64 * time as i64) >> 19) as i32;
-        let apex = [start[0] + delta[0] / 2, start[1] + delta[1] / 2 + fall, start[2] + delta[2] / 2];
+        let apex = [
+            start[0] + delta[0] / 2,
+            start[1] + delta[1] / 2 + fall,
+            start[2] + delta[2] / 2,
+        ];
         Some((v, apex))
     };
     let mut next = rng(8);
@@ -333,14 +434,24 @@ fn grenade_plans_match() {
         let got = hecu_grenades::toss(start, target, apex_y).map(|p| (p.velocity_q4, p.apex));
         // The former body multiplied unchecked i32 terms (debug builds panic on
         // overflow); keep to inputs where it does not.
-        let safe = [start, target].iter().all(|v| v.iter().all(|c| c.unsigned_abs() < 1 << 14));
+        let safe = [start, target]
+            .iter()
+            .all(|v| v.iter().all(|c| c.unsigned_abs() < 1 << 14));
         if safe {
-            assert_eq!(got, toss(start, target, apex_y), "{start:?} {target:?} {apex_y}");
+            assert_eq!(
+                got,
+                toss(start, target, apex_y),
+                "{start:?} {target:?} {apex_y}"
+            );
         }
         let speed = (next() % 4000) as u16;
         let got = hecu_grenades::launch(start, target, speed).map(|p| (p.velocity_q4, p.apex));
         if safe {
-            assert_eq!(got, launch(start, target, speed), "{start:?} {target:?} {speed}");
+            assert_eq!(
+                got,
+                launch(start, target, speed),
+                "{start:?} {target:?} {speed}"
+            );
         }
     }
 }

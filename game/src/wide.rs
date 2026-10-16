@@ -309,15 +309,34 @@ mod tests {
 
     #[test]
     fn wide_matches_i64() {
-        let vals = [i32::MIN, i32::MIN + 1, -65_536, -1, 0, 1, 4096, 65_537, i32::MAX];
+        let vals = [
+            i32::MIN,
+            i32::MIN + 1,
+            -65_536,
+            -1,
+            0,
+            1,
+            4096,
+            65_537,
+            i32::MAX,
+        ];
         for &a in &vals {
             for &b in &vals {
                 assert_eq!(Wide::mul(a, b).0, a as i64 * b as i64);
-                assert_eq!(Wide::mul_u(a as u32, b as u32).0, a as u32 as i64 * b as u32 as i64);
+                assert_eq!(
+                    Wide::mul_u(a as u32, b as u32).0,
+                    a as u32 as i64 * b as u32 as i64
+                );
                 assert_eq!(Wide::of(a).mul_add(a, b).0, a as i64 + a as i64 * b as i64);
                 assert_eq!((Wide::of(a) - Wide::of(b)).0, a as i64 - b as i64);
-                assert_eq!(Wide::mul(a, b).shr_i32(12), ((a as i64 * b as i64) >> 12) as i32);
-                assert_eq!(Wide::mul(a, b).saturate_i32(), (a as i64 * b as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+                assert_eq!(
+                    Wide::mul(a, b).shr_i32(12),
+                    ((a as i64 * b as i64) >> 12) as i32
+                );
+                assert_eq!(
+                    Wide::mul(a, b).saturate_i32(),
+                    (a as i64 * b as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32
+                );
             }
         }
         // The renderer's guard band is 1000 by 500 px: its cross products fit i32.

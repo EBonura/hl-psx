@@ -196,6 +196,10 @@ the profile is. The shipped profile has none: a layout from the chapter-two
 tape alone made c1a2b 14% slower when it bound, so do not pass `--polls` unless
 the layout is collected over several maps.
 
+`scripts/collect-layout.sh MAP...` collects the same layout from scripted maps instead of a
+tape (all maps in one layout, so none is favoured); see the header of the script. Redo it
+after any code change or `pgo` run: a layout that no longer binds is skipped.
+
 `--script PLAY_ORDER:POLLS` (repeatable, with `HLPSX_COLLECT_MAPS` set to the
 maps' room ids so the collect build holds them) profiles a map entered through
 the title menu with controller pulses, for that many port-1 polls, beside or
