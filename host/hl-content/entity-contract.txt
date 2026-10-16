@@ -824,7 +824,7 @@ info_target|flag:64|na|-|-
 info_teleport_destination|@class|yes|cook:"info_teleport_destination"|-|teleport destination input
 info_teleport_destination|@use|na|-|-
 info_teleport_destination|flag:8|na|-|-
-infodecal|@class|partial|cook:"infodecal"|-|targeted decals stamp a resident atlas splat; static decals are absent
+infodecal|@class|partial|cook:"infodecal"|-|targeted decals stamp a resident atlas splat; static decals are drawn as one flat quad on a fixed surface (not on moving brushes, LIMITS-L5.md)
 infodecal|@use|yes|game:LOGIC_INFODECAL|-
 infodecal|flag:2048|na|-|-
 infodecal|texture|yes|cook:fn infodecal_pick|-

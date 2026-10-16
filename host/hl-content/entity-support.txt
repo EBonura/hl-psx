@@ -73,14 +73,14 @@ info_node_air|missing_gameplay|air navigation graph is absent
 info_player_start|cook_only|spawn selection input
 info_target|cook_only|target and teleport resolution input
 info_teleport_destination|cook_only|teleport destination input
-infodecal|approximated|targeted decals stamp a resident atlas splat; static decals are absent
+infodecal|approximated|targeted decals stamp a resident atlas splat; static decals are drawn as one flat quad on a fixed surface (not on moving brushes)
 item_battery|runtime|pickup prop and logic
 item_healthkit|runtime|pickup prop
 item_longjump|runtime|pickup prop
 item_suit|runtime|pickup prop and logic
-light|cook_only|baked light input; named styles become runtime logic
+light|cook_only|baked light input; a targeted light switches its style (CLight::Use) and animated styles step at 10 Hz, on the faces they light
 light_environment|cook_only|baked world-light input
-light_spot|cook_only|baked light input; named styles become runtime logic
+light_spot|cook_only|baked light input; a targeted light switches its style (CLight::Use) and animated styles step at 10 Hz, on the faces they light
 momentary_door|runtime|door logic
 momentary_rot_button|runtime|continuous-use rotating control
 monster_alien_controller|approximated|shared ranged actor behavior

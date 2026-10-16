@@ -88,6 +88,7 @@
 //! Fields are read via `from_le_bytes` (include_bytes! is only byte-aligned).
 
 pub use hl_format::logic::*;
+use crate::decal_light::{style_gain, style_level};
 use hl_format::map as cooked;
 use psx_gte::math::Vec3I16;
 
@@ -237,7 +238,14 @@ pub fn reapply_brightness() {
 static mut DYNAMIC_TRI_FIRST: u16 = u16::MAX;
 static mut DYNAMIC_TRI_COUNT: u16 = 0;
 static mut DYNAMIC_DATA_OFF: usize = 0;
-static mut DYNAMIC_ACTIVE_PLANES: u8 = 0;
+/// Gain of each of the selected face's three style planes (0 = leave it).
+static mut DYNAMIC_GAIN: [i16; 3] = [0; 3];
+/// Per light-style slot: signed gain (256 = the full stored delta), the slots
+/// whose gain is not zero, and the step and switch mask they were computed at.
+static mut STYLE_GAIN: [i16; 32] = [0; 32];
+static mut STYLE_DEV: u32 = 0;
+static mut STYLE_STEP: u32 = u32::MAX;
+static mut STYLE_ON: u32 = 0;
 static mut DYNAMIC_LOOP_POOL: bool = false;
 const DYNAMIC_PALETTE_COLORS: usize = 64;
 const DYNAMIC_FACE_REC_SZ: usize = cooked::DYNAMIC_FACE_RECORD_SIZE;
@@ -291,6 +299,8 @@ pub struct Map {
     light_pal_off: usize, // 256 rgb555 entries, indexed by light_idx
     dynamic_off: usize,   // HLMG sparse lightstyle appendix; zero on older maps
     n_dynamic_faces: usize,
+    /// Lane L5 section (static decals, light styles); zero when the room has none.
+    l5_off: usize,
     water_alpha_supported: bool,
 
     // BSP / PVS
@@ -835,6 +845,19 @@ impl Map {
             (0, 0)
         };
 
+        // The census-only world pipeline header is retired: the same header
+        // word now points at the L5X1 section, or is zero.
+        let l5_off = if cooked::supports_world_pipeline(magic) {
+            let off = rd_u32(data, cooked::HEADER_WORLD_PIPELINE_OFFSET) as usize;
+            if off != 0 && rd_u32(data, off) == u32::from_le_bytes(cooked::L5_SECTION_MAGIC) {
+                off
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
         Map {
             data,
             n_tris,
@@ -848,6 +871,7 @@ impl Map {
             light_pal_off,
             dynamic_off,
             n_dynamic_faces,
+            l5_off,
             water_alpha_supported,
 
             n_planes,
@@ -1420,15 +1444,68 @@ impl Map {
         unsafe { *(*core::ptr::addr_of!(LIGHT_PAL_RGB)).get_unchecked(idx as usize) }
     }
 
+    /// Number of map-painted decals in this room (0 when it has none).
+    #[inline(always)]
+    pub fn l5_decal_count(&self) -> usize {
+        if self.l5_off == 0 {
+            0
+        } else {
+            rd_u16_aligned(self.data, self.l5_off + 4) as usize
+        }
+    }
+
+    /// Static map decals `(count, definitions offset, records offset, atlas
+    /// texture slot)`; count 0 when the room paints none. The records
+    /// (even-aligned) come first, the byte-packed definitions after them.
+    #[inline]
+    pub fn l5_decals(&self) -> (usize, usize, usize, usize) {
+        let o = self.l5_off;
+        let n = rd_u16_aligned(self.data, o + 4) as usize;
+        let recs = o + cooked::L5_SECTION_HEADER;
+        (
+            n,
+            recs + n * cooked::L5_DECAL_BYTES,
+            recs,
+            unsafe { *self.data.get_unchecked(o + 7) } as usize,
+        )
+    }
+
+    /// Decal definition `d`: `[u, v, w, h, half w, half h, r, g, b]`.
+    #[inline]
+    pub fn l5_def(&self, defs: usize, d: usize) -> &[u8] {
+        unsafe {
+            core::slice::from_raw_parts(
+                self.data.as_ptr().add(defs + d * cooked::L5_DEF_BYTES),
+                cooked::L5_DEF_BYTES,
+            )
+        }
+    }
+
+    /// Decal record `i`: `(position, PVS leaf, code)`.
+    #[inline]
+    pub fn l5_decal(&self, recs: usize, i: usize) -> ([i32; 3], usize, u16) {
+        let o = recs + i * cooked::L5_DECAL_BYTES;
+        (
+            [
+                rd_i16_aligned(self.data, o) as i32,
+                rd_i16_aligned(self.data, o + 2) as i32,
+                rd_i16_aligned(self.data, o + 4) as i32,
+            ],
+            rd_u16_aligned(self.data, o + 6) as usize,
+            rd_u16_aligned(self.data, o + 8),
+        )
+    }
+
     /// Select the sparse qrad style planes for one face. The records are sorted
     /// by compact face id, so a tiny binary search is paid only by the handful
-    /// of faces carrying switchable lighting; all ordinary faces reset the
-    /// context immediately through their packed zero gate.
+    /// of faces carrying switchable or animated lighting; all ordinary faces
+    /// reset the context immediately through their packed zero gate. A face
+    /// whose styles all sit at their start level (nothing in `STYLE_DEV`)
+    /// leaves the baked colours untouched.
     #[inline]
-    pub fn select_dynamic_face(&self, face: usize, active_styles: u32) {
+    pub fn select_dynamic_face(&self, face: usize) {
         Self::reset_dynamic_face();
-        // With every switchable style off, no face can add a light plane.
-        if active_styles == 0 || self.dynamic_off == 0 || self.face_lightstyle(face) == 0 {
+        if unsafe { STYLE_DEV } == 0 || self.dynamic_off == 0 || self.face_lightstyle(face) == 0 {
             return;
         }
         let records_off = self.dynamic_off + 4 + DYNAMIC_PALETTE_COLORS * 2;
@@ -1436,29 +1513,26 @@ impl Map {
         let mut hi = self.n_dynamic_faces;
         while lo < hi {
             let mid = (lo + hi) / 2;
-            let o = records_off + mid * DYNAMIC_FACE_REC_SZ;
-            let candidate = rd_u16(self.data, o) as usize;
-            if candidate < face {
+            if (rd_u16(self.data, records_off + mid * DYNAMIC_FACE_REC_SZ) as usize) < face {
                 lo = mid + 1;
             } else {
                 hi = mid;
             }
         }
-        if lo >= self.n_dynamic_faces {
-            return;
-        }
         let o = records_off + lo * DYNAMIC_FACE_REC_SZ;
-        if rd_u16(self.data, o) as usize != face {
+        if lo >= self.n_dynamic_faces || rd_u16(self.data, o) as usize != face {
             return;
         }
-        let mut active = 0u8;
-        for plane in 0..3 {
-            let slot = unsafe { *self.data.get_unchecked(o + 6 + plane) };
-            if slot != 0 && active_styles & (1u32 << slot) != 0 {
-                active |= 1 << plane;
-            }
+        let mut any = 0i16;
+        let mut plane = 0;
+        while plane < 3 {
+            let slot = unsafe { *self.data.get_unchecked(o + 6 + plane) } as usize;
+            let gain = unsafe { *(*core::ptr::addr_of!(STYLE_GAIN)).get_unchecked(slot & 31) };
+            unsafe { DYNAMIC_GAIN[plane] = if slot != 0 { gain } else { 0 } };
+            any |= unsafe { DYNAMIC_GAIN[plane] };
+            plane += 1;
         }
-        if active == 0 {
+        if any == 0 {
             return;
         }
         let data_blob = records_off + self.n_dynamic_faces * DYNAMIC_FACE_REC_SZ;
@@ -1466,7 +1540,6 @@ impl Map {
             DYNAMIC_TRI_FIRST = rd_u16(self.data, o + 2);
             DYNAMIC_TRI_COUNT = rd_u16(self.data, o + 4);
             DYNAMIC_DATA_OFF = data_blob + rd_u16(self.data, o + 10) as usize;
-            DYNAMIC_ACTIVE_PLANES = active;
             DYNAMIC_LOOP_POOL = *self.data.get_unchecked(o + 9) != 0;
         }
     }
@@ -1476,8 +1549,61 @@ impl Map {
         unsafe {
             DYNAMIC_TRI_FIRST = u16::MAX;
             DYNAMIC_TRI_COUNT = 0;
-            DYNAMIC_ACTIVE_PLANES = 0;
+            DYNAMIC_GAIN = [0; 3];
             DYNAMIC_LOOP_POOL = false;
+        }
+    }
+
+    /// Recompute every light style's gain for pattern step `step` (10 Hz) and
+    /// the switch mask `on` (bit = slot, from `LIGHTSTYLE_ACTIVE_MASK`). A
+    /// style's gain is how far its level has moved from the level the baked
+    /// base holds, toward the other end of its swing, in 1/256 of the stored
+    /// plane delta: `(level - start) / start` for a style that starts lit
+    /// (negative when it dims) and `level / 256` for one that starts dark.
+    /// Recomputed only when the step or the mask changes.
+    #[inline(always)]
+    pub fn tick_lightstyles(&self, step: u32, on: u32) {
+        if self.l5_off != 0 && unsafe { step != STYLE_STEP || on != STYLE_ON } {
+            self.retick_lightstyles(step, on);
+        }
+    }
+
+    #[inline(never)]
+    #[optimize(size)]
+    fn retick_lightstyles(&self, step: u32, on: u32) {
+        unsafe {
+            STYLE_STEP = step;
+            STYLE_ON = on;
+            let styles = rd_u16_aligned(self.data, self.l5_off + 8) as usize;
+            let t = self.l5_off + styles;
+            let n = if styles == 0 { 0 } else { *self.data.get_unchecked(t) as usize };
+            let mut dev = 0u32;
+            let mut slot = 1usize;
+            while slot <= n {
+                let r = t + 4 + (slot - 1) * 6;
+                let pattern = core::slice::from_raw_parts(
+                    self.data.as_ptr().add(t + rd_u16_aligned(self.data, r + 4) as usize),
+                    *self.data.get_unchecked(r + 1) as usize,
+                );
+                let off = *self.data.get_unchecked(r) & 1 != 0 && on >> slot & 1 == 0;
+                let gain = style_gain(
+                    style_level(off, pattern, step),
+                    rd_u16_aligned(self.data, r + 2) as i32,
+                );
+                STYLE_GAIN[slot] = gain as i16;
+                dev |= ((gain != 0) as u32) << slot;
+                slot += 1;
+            }
+            STYLE_DEV = dev;
+        }
+    }
+
+    /// Forget the previous room's styles; the first `tick_lightstyles` of a
+    /// room recomputes them.
+    pub fn reset_lightstyles() {
+        unsafe {
+            STYLE_STEP = u32::MAX;
+            STYLE_DEV = 0;
         }
     }
 
@@ -1493,12 +1619,22 @@ impl Map {
         (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)
     }
 
-    #[inline(always)]
-    fn add_light_words(base: u32, extra: u32) -> u32 {
-        let r = ((base & 0xff) + (extra & 0xff)).min(255);
-        let g = (((base >> 8) & 0xff) + ((extra >> 8) & 0xff)).min(255);
-        let b = (((base >> 16) & 0xff) + ((extra >> 16) & 0xff)).min(255);
-        r | (g << 8) | (b << 16)
+    /// One corner's colour `rgb` moved by each lit plane of the selected face:
+    /// plane `p`'s palette magnitude is the byte at `at + p * stride`, scaled by
+    /// that plane's gain / 256 per channel and clamped to the channel range.
+    #[inline(never)]
+    #[optimize(size)]
+    fn dynamic_corner(&self, at: usize, stride: usize, mut rgb: u32) -> u32 {
+        let mut plane = 0;
+        while plane < 3 {
+            let gain = unsafe { DYNAMIC_GAIN[plane] } as i32;
+            if gain != 0 {
+                let delta = self.dynamic_light_word(unsafe { *self.data.get_unchecked(at + plane * stride) });
+                rgb = crate::decal_light::shift_light(rgb, delta, gain);
+            }
+            plane += 1;
+        }
+        rgb
     }
 
     #[inline]
@@ -1512,21 +1648,16 @@ impl Map {
             return rgb;
         }
         let row = unsafe { DYNAMIC_DATA_OFF } + (tri - first) * DYNAMIC_TRI_BYTES;
-        let active = unsafe { DYNAMIC_ACTIVE_PLANES };
-        for plane in 0..3 {
-            if active & (1 << plane) == 0 {
-                continue;
-            }
-            for corner in 0..3 {
-                let idx = unsafe { *self.data.get_unchecked(row + plane * 3 + corner) };
-                rgb[corner] = Self::add_light_words(rgb[corner], self.dynamic_light_word(idx));
-            }
+        let mut corner = 0;
+        while corner < 3 {
+            rgb[corner] = self.dynamic_corner(row + corner, 3, rgb[corner]);
+            corner += 1;
         }
         rgb
     }
 
     #[inline]
-    fn apply_dynamic_loop_light(&self, vertex: usize, mut rgb: u32) -> u32 {
+    fn apply_dynamic_loop_light(&self, vertex: usize, rgb: u32) -> u32 {
         if !unsafe { DYNAMIC_LOOP_POOL } {
             return rgb;
         }
@@ -1535,15 +1666,7 @@ impl Map {
         if vertex < first || vertex >= first + count {
             return rgb;
         }
-        let row = unsafe { DYNAMIC_DATA_OFF } + (vertex - first) * 3;
-        let active = unsafe { DYNAMIC_ACTIVE_PLANES };
-        for plane in 0..3 {
-            if active & (1 << plane) != 0 {
-                let idx = unsafe { *self.data.get_unchecked(row + plane) };
-                rgb = Self::add_light_words(rgb, self.dynamic_light_word(idx));
-            }
-        }
-        rgb
+        self.dynamic_corner(unsafe { DYNAMIC_DATA_OFF } + (vertex - first) * 3, 1, rgb)
     }
 
     /// Pre-expand the 256-entry rgb555 light palette into bytes, with the
@@ -1556,6 +1679,7 @@ impl Map {
             LIGHT_PAL_SRC_OFF = self.light_pal_off;
             DYNAMIC_PAL_SRC_OFF = self.dynamic_off;
         }
+        Self::reset_lightstyles();
         expand_light_palettes();
     }
 

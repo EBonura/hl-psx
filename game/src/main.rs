@@ -48,6 +48,7 @@ mod hev;
 mod door_transition;
 mod cdstream;
 mod combat_defs;
+mod decal_light;
 mod driver;
 mod ground_logic;
 use psx_goldsrc::hitbox_logic;
@@ -149,6 +150,7 @@ use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
 use psx_io;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
+use decal_light::dir26;
 use psx_math::int32::{isqrt_i32, mul_div_i32};
 use psx_math::{atan2_q12, sincos};
 use psx_pad::{button, poll_port1, require_analog_port1, AnalogRequirement, PadMode};
@@ -3517,7 +3519,7 @@ fn face_needs_generic_emit(m: &Map, face: usize) -> bool {
 unsafe fn set_emit_face(m: &Map, face: usize, blend_override: u8) {
     EMIT_POLICY =
         EmitPolicy::for_face(m, face, blend_override).with_underwater_blend(EMIT_EYE_UNDER_LIQUID);
-    m.select_dynamic_face(face, LIGHTSTYLE_ACTIVE_MASK);
+    m.select_dynamic_face(face);
 }
 
 #[inline(always)]
@@ -3533,7 +3535,15 @@ unsafe fn set_emit_cached_face(m: &Map, face: usize, rec: PvsFaceRec) {
         0,
     )
     .with_underwater_blend(EMIT_EYE_UNDER_LIQUID);
-    m.select_dynamic_face(face, LIGHTSTYLE_ACTIVE_MASK);
+    m.select_dynamic_face(face);
+}
+
+/// Light styles step at 10 Hz of game time (two 20 Hz simulation ticks).
+/// Called from `play` on the line it shares with the liquid sway, so the
+/// shipped PGO profile's line offsets inside `play` stay aligned.
+#[inline(never)]
+unsafe fn light_tick(m: &Map, sim_frame_no: u32) {
+    m.tick_lightstyles(sim_frame_no >> 1, LIGHTSTYLE_ACTIVE_MASK);
 }
 
 #[inline(always)]
@@ -3795,7 +3805,8 @@ const EMPTY_LOGIC_EVENT: LogicEvent = LogicEvent {
 
 #[derive(Clone, Copy)]
 struct ImpactMark {
-    pos: [i32; 3],
+    /// World position; the cooked world is i16, so a mark fits the same.
+    pos: [i16; 3],
     ttl: u8,
     kind: u8,
     /// Surface normal, Q12 >> 5: the decal lies in this plane.
@@ -21539,6 +21550,7 @@ unsafe fn put_impact_mark(m: &Map, hit: &phys::RayHit, kind: u8, family: usize, 
         hit.pos[2] + ((hit.normal[2] * 2) >> 12),
     ];
     let leaf = camera_leaf(m, pos);
+    let pos = [pos[0] as i16, pos[1] as i16, pos[2] as i16];
     let i = IMPACT_MARK_CURSOR % MAX_IMPACT_MARKS;
     IMPACT_MARKS[i] = ImpactMark {
         pos,
@@ -21682,10 +21694,10 @@ unsafe fn spawn_blood(
     }
 }
 
-/// In-plane half-axes of a decal of half-size `half` on a surface with Q12
+/// In-plane unit Q12 axes `(up, across)` of a decal on a surface with Q12
 /// normal `n`. The seed axis (world X for floors and ceilings, world up for
 /// walls) is projected into the plane, so a wall decal stays upright.
-fn decal_axes(n: [i32; 3], half: i32) -> ([i32; 3], [i32; 3]) {
+fn decal_axes(n: [i32; 3]) -> ([i32; 3], [i32; 3]) {
     let floor = n[1].abs() >= n[0].abs() && n[1].abs() >= n[2].abs();
     let seed = if floor { 0 } else { 1 };
     let mut u = [0i32; 3];
@@ -21700,46 +21712,25 @@ fn decal_axes(n: [i32; 3], half: i32) -> ([i32; 3], [i32; 3]) {
         (n[2] * u[0] - n[0] * u[2]) >> 12,
         (n[0] * u[1] - n[1] * u[0]) >> 12,
     ];
-    (
-        [
-            (u[0] * half) >> 12,
-            (u[1] * half) >> 12,
-            (u[2] * half) >> 12,
-        ],
-        [
-            (v[0] * half) >> 12,
-            (v[1] * half) >> 12,
-            (v[2] * half) >> 12,
-        ],
-    )
-}
-
-/// View-space projection of a decal corner. Unlike `project_world_point` it
-/// keeps corners that fall off screen, so a decal the screen edge cuts through
-/// still draws; only the near plane rejects.
-#[inline]
-fn project_decal_corner(p: [i32; 3], rot: &Mat3I16, base_t: [i32; 3]) -> Option<(i16, i16, i32)> {
-    let vz = dot12(rot.m[2], p) + base_t[2];
-    if !(render::NEAR_Z..=far_view()).contains(&vz) {
-        return None;
-    }
-    let h = render::projection_h();
-    let sx = 160 + (dot12(rot.m[0], p) + base_t[0]) * h / vz;
-    let sy = 120 + (dot12(rot.m[1], p) + base_t[1]) * h / vz;
-    ((-1000..=1320).contains(&sx) && (-1000..=1240).contains(&sy))
-        .then_some((sx as i16, sy as i16, vz))
+    (u, v)
 }
 
 /// Emit the surface decals into the world OT, like the RPG laser dot, so a
-/// nearer wall or actor hides them as it hides the surface they lie on. Each
-/// is its decals.wad splat or gunshot hole from the shared resident texture,
-/// drawn one world unit per source texel in the plane of the surface it hit,
-/// and sorts a little in front of its centre so it stays ahead of that patch.
+/// nearer wall or actor hides them as it hides the surface they lie on. First
+/// the marks (bullet holes, blood): each is its decals.wad splat or gunshot
+/// hole from the shared resident texture, drawn one world unit per source texel
+/// in the plane of the surface it hit, tinted as GoldSrc tints the decal's
+/// palette colour (dark red, yellow, or black for bullet holes). Then the
+/// room's map-painted infodecals (host/hl-bsp `l5.rs`), from the room's own
+/// atlas texture. Each is one flat quad (two triangles) of its half extents,
+/// spanned by the unit Q12 axes the texture's u and v run along, and sorts a
+/// little in front of its centre so it stays ahead of that patch. Marks and
+/// painted decals hide outside the view's PVS; a bounding-sphere frustum test
+/// runs before any division. A corner the screen edge cuts off still draws;
+/// only the near plane (or a quad wholly off screen) rejects.
 ///
 /// A `{` decal's alpha became three texel classes in the cook: clear, half
-/// (average blend: half the lit wall shows through) and full. The CLUT is
-/// white and the vertex colour carries the tint, the decal's palette colour
-/// as GoldSrc tints it: dark red, yellow, or black for bullet holes.
+/// (average blend: half the lit wall shows through) and full.
 #[cold]
 #[optimize(size)]
 unsafe fn queue_impact_marks(
@@ -21750,65 +21741,132 @@ unsafe fn queue_impact_marks(
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) {
-    let slot = sprite::decal_slot();
-    if !slot.valid {
-        return;
-    }
-    let packet = TexturedGouraudPacketMaterial::from_texture(
-        slot.material.with_blend_mode(BlendMode::Average),
+    let marks = sprite::decal_slot();
+    let mark_packet = TexturedGouraudPacketMaterial::from_texture(
+        marks.material.with_blend_mode(BlendMode::Average),
     );
-    let mut i = 0usize;
-    while i < MAX_IMPACT_MARKS {
-        let mark = IMPACT_MARKS[i];
-        i += 1;
-        if mark.ttl == 0 || (have_pvs && mark.leaf != 0 && !pvs_leaf_visible(m, mark.leaf as usize))
-        {
+    let (n_painted, defs, recs, tex) = m.l5_decals();
+    let painted = &*tex_slot_ptr(if tex < m.n_texs && tex < MAX_TEX_SLOTS {
+        tex
+    } else {
+        0
+    });
+    let painted_packet = TexturedGouraudPacketMaterial::from_texture(
+        painted.material.with_blend_mode(BlendMode::Average),
+    );
+    let near = render::NEAR_Z;
+    let far = far_view();
+    let h_proj = render::projection_h();
+    let first = if marks.valid && IMPACT_MARKS_LIVE {
+        0
+    } else {
+        MAX_IMPACT_MARKS
+    };
+    let last = if painted.valid && n_painted != 0 {
+        MAX_IMPACT_MARKS + n_painted
+    } else {
+        MAX_IMPACT_MARKS
+    };
+    let mut i = first;
+    while i < last {
+        let (pos, right, down, half, cell, rgb, packet);
+        if i < MAX_IMPACT_MARKS {
+            let mark = IMPACT_MARKS[i];
+            i += 1;
+            if mark.ttl == 0
+                || (have_pvs && mark.leaf != 0 && !pvs_leaf_visible(m, mark.leaf as usize))
+            {
+                continue;
+            }
+            let tint = match mark.kind {
+                IMPACT_KIND_BLOOD => (40u32, 3u32, 3u32),
+                IMPACT_KIND_YBLOOD => (88, 78, 36),
+                _ => (0, 0, 0),
+            };
+            let [cu, cv, size, hs] = sprite::decal_rec(mark.decal);
+            // The texture's rows run down the surface's up axis.
+            let (up, across) = decal_axes([
+                (mark.normal[0] as i32) << 5,
+                (mark.normal[1] as i32) << 5,
+                (mark.normal[2] as i32) << 5,
+            ]);
+            pos = [mark.pos[0] as i32, mark.pos[1] as i32, mark.pos[2] as i32];
+            right = across;
+            down = [-up[0], -up[1], -up[2]];
+            half = [hs as i32; 2];
+            cell = [cu, cv, size, size];
+            rgb = tint.0 | (tint.1 << 8) | (tint.2 << 16);
+            packet = &mark_packet;
+        } else {
+            let (p, leaf, code) = m.l5_decal(recs, i - MAX_IMPACT_MARKS);
+            i += 1;
+            if have_pvs && leaf != 0 && !pvs_leaf_visible(m, leaf) {
+                continue;
+            }
+            let def = m.l5_def(defs, (code & 31) as usize);
+            pos = p;
+            right = dir26(code >> 5);
+            down = dir26(code >> 10);
+            half = [def[4] as i32, def[5] as i32];
+            cell = [def[0], def[1], def[2], def[3]];
+            rgb = def[6] as u32 | ((def[7] as u32) << 8) | ((def[8] as u32) << 16);
+            packet = &painted_packet;
+        }
+        // Everything is linear: move the centre and the two half-axes into
+        // view space once, then add them per corner.
+        let mut centre = base_t;
+        let mut ax = [[0i32; 3]; 2];
+        let mut axis = 0;
+        while axis < 3 {
+            let row = rot.m[axis];
+            centre[axis] += dot12(row, pos);
+            ax[0][axis] = dot12(row, right) * half[0] >> 12;
+            ax[1][axis] = dot12(row, down) * half[1] >> 12;
+            axis += 1;
+        }
+        // Sideways reject before any division (a wide margin: partly visible
+        // decals still draw).
+        let r = half[0].max(half[1]);
+        if (centre[0].abs() - r) * h_proj > 224 * (centre[2] + r) {
             continue;
         }
-        let tint = match mark.kind {
-            IMPACT_KIND_BLOOD => (40u32, 3u32, 3u32),
-            IMPACT_KIND_YBLOOD => (88, 78, 36),
-            _ => (0, 0, 0),
-        };
-        let rgb = tint.0 | (tint.1 << 8) | (tint.2 << 16);
-        let [cu, cv, size, half] = sprite::decal_rec(mark.decal);
-        let n = [
-            (mark.normal[0] as i32) << 5,
-            (mark.normal[1] as i32) << 5,
-            (mark.normal[2] as i32) << 5,
-        ];
-        // `up` is world up projected into a wall (world X on a floor); the
-        // texture's rows run down it, so a splat's drips hang downward.
-        let (up, across) = decal_axes(n, half as i32);
         let mut screen = [(0i16, 0i16); 4];
         let mut uvs = [0u16; 4];
         let mut depth = 0i32;
         let mut k = 0usize;
         while k < 4 {
-            let right = k & 1 != 0;
-            let down = k & 2 != 0;
-            let (a, b) = (if right { 1 } else { -1 }, if down { -1 } else { 1 });
-            let p = [
-                mark.pos[0] + a * across[0] + b * up[0],
-                mark.pos[1] + a * across[1] + b * up[1],
-                mark.pos[2] + a * across[2] + b * up[2],
-            ];
-            let Some((sx, sy, vz)) = project_decal_corner(p, rot, base_t) else {
+            let (sr, sd) = (k & 1 != 0, k & 2 != 0);
+            let mut v = centre;
+            let mut axis = 0;
+            while axis < 3 {
+                v[axis] += if sr { ax[0][axis] } else { -ax[0][axis] }
+                    + if sd { ax[1][axis] } else { -ax[1][axis] };
+                axis += 1;
+            }
+            if v[2] < near || v[2] > far {
                 break;
-            };
-            screen[k] = (sx, sy);
+            }
+            let sx = 160 + v[0] * h_proj / v[2];
+            let sy = 120 + v[1] * h_proj / v[2];
+            if sx < -1000 || sx > 1320 || sy < -1000 || sy > 1240 {
+                break;
+            }
+            screen[k] = (sx as i16, sy as i16);
             uvs[k] = uv_word((
-                cu + if right { size - 1 } else { 0 },
-                cv + if down { size - 1 } else { 0 },
+                cell[0] + if sr { cell[2] - 1 } else { 0 },
+                cell[1] + if sd { cell[3] - 1 } else { 0 },
             ));
-            depth += vz;
+            depth += v[2];
             k += 1;
         }
         if k < 4 {
             continue;
         }
         let otz = clamp_otz(((depth >> 2).saturating_sub(8) as usize) >> OT_SHIFT);
-        for (x, y, z) in [(0, 1, 2), (1, 3, 2)] {
+        let mut t = 0usize;
+        while t < 2 {
+            let (x, y, z) = if t == 0 { (0, 1, 2) } else { (1, 3, 2) };
+            t += 1;
             let prim = TriTexturedGouraud {
                 tag: 0,
                 tex_window: packet.tex_window_word,
@@ -38080,7 +38138,7 @@ fn play(
                 #[cfg(not(feature = "decoupled-present"))]
                 let wi = ((frame_no >> 3) & 15) as usize;
                 WAVE_DU = WAVE_TAB[wi] as u8;
-                WAVE_DV = WAVE_TAB[(wi + 4) & 15] as u8;
+                WAVE_DV = WAVE_TAB[(wi + 4) & 15] as u8; light_tick(&m, sim_frame_no);
                 reset_emit_policy();
 
                 // The cold PVS builder preclassifies ordinary static opaque
@@ -39394,7 +39452,7 @@ fn play(
             env_funnel_fx::render(&mut packets,&mut np,&rot,base_t);
             queue_rpg_spot(&mut packets, world_ot(), &rot, base_t);
             queue_shards(&mut packets, world_ot(), &rot, base_t);
-            if IMPACT_MARKS_LIVE {
+            if IMPACT_MARKS_LIVE || m.l5_decal_count() != 0 {
                 queue_impact_marks(&m, have_pvs, &mut packets, world_ot(), &rot, base_t);
             }
             telemetry::stage_end(telemetry::stage::MODEL_INSTANCES);

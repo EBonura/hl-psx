@@ -124,6 +124,20 @@ pub mod map {
     pub const HEADER_LOGIC_OFFSET: usize = 48;
     pub const HEADER_WORLD_PIPELINE_OFFSET: usize = 52;
 
+    /// Lane L5 section: the room's static decals and light styles. It sits
+    /// where the census-only world pipeline header used to, at the offset the
+    /// `HEADER_WORLD_PIPELINE_OFFSET` word holds (0 = none). Layout: magic,
+    /// u16 n_decals, u8 n_defs, u8 atlas texture slot, u16 light-style offset
+    /// (0 = none), u16 reserved, decals (even-aligned), definitions, light styles.
+    pub const L5_SECTION_MAGIC: [u8; 4] = *b"L5X1";
+    pub const L5_SECTION_HEADER: usize = 12;
+    /// u8 u, v, w, h (atlas cell), u8 half width, half height (world units),
+    /// u8 r, g, b (vertex tint).
+    pub const L5_DEF_BYTES: usize = 9;
+    /// i16 pos[3], u16 PVS leaf, u16 code: definition (bits 0..4), right
+    /// direction (5..9) and down direction (10..14), each one of the 26 cube
+    /// neighbours (ternary x + 3 y + 9 z, 13 unused) the texture's u and v axes run.
+    pub const L5_DECAL_BYTES: usize = 10;
     pub const WORLD_PIPELINE_MAGIC: u32 = u32::from_le_bytes(*b"WRP1");
     pub const WORLD_PIPELINE_VERSION: u16 = 9;
     pub const WORLD_PIPELINE_HEADER_SIZE: usize = 48;

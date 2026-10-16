@@ -3,6 +3,25 @@
 ## Unreleased
 
 - Pushing the c1a0e sample cart no longer stalls three units short of it. The cart rides a lift with a one-unit lip at x 1180, so a player walking east from the lift's west margin stops flush against the lip's hull and can only reach the cart by a stair step. That step's contact with the cart's hull floored onto the hull plane, `slide_move` threw the whole leg away whenever such a point was not clear, the step was rejected, and the player stayed outside the cart's touch range (hull plus two units), so the cart never moved. Whether it happened depended on the approach (position, speed and the sub-unit state of the walk): in a sweep of 216 full-speed starts between x 1161 and 1163 it happened 96 times (44%), on the 5dac694 and b5a58b2 builds alike. A rejected axial contact now gives back one unit along the contact normal instead (never behind the start of the leg); the same sweep stalls 0 times. Costs 112 B of RAM (3,196 B free). `tests/probes/hl-cart-push.txt` replays 48 starts of the same kind (new probe op `cartreset`).
+- Map decals are drawn. The maps paint 1,542 infodecals (blood, scorch marks,
+  graffiti, stencilled signs such as the Hazard Course numbers and "STORAGE
+  AREA 1") and the cook used to throw them away. 1,320 now show: each one flat
+  quad on the surface retail puts it on (the dominant fixed surface within 4
+  units, along that surface's own texture axes), sorted into the world like the
+  bullet and blood marks and hidden outside the view's visibility and frustum.
+  99 sit on moving brushes and 89 have no surface to land on, as in retail; c5a1
+  and c2a4e draw only what their weapon-cache margin allows. 10 bytes a decal in
+  the room and one 128x128 texture per room; see LIMITS-L5.md.
+- Lights switch and flicker. Every targeted light (763 in 64 maps) switches the
+  faces it lights on Use, both ways, and the standard animated styles and
+  patterned lights step at 10 Hz (the c1a0c disaster flicker, c1a3's strobes). The
+  map's start state stays baked and each lit face stores how its colours change
+  at the other end of the style's swing, so a light left alone costs a flag test
+  per face. The dynamic-light code is smaller than before, and the two features together cost 616 B of
+  RAM (2,692 B free, was 3,308). c5a1 and c2a4e bake
+  their lights at the start state: they have no weapon-cache margin to carry
+  the 4 to 7 KB. The rooms lose the 48 byte world pipeline census header the new
+  section replaces.
 - Frame rate +7 to +16% from the profile-guided build, for 1.3 KB of RAM. The sample profile kept every function the replays touched and grew `.text` by 47 KB, which is why the committed one was stale; `pgo` now keeps the 32 hottest frame functions and the inliner's hot threshold is 50 instead of 3000. Rendered fps from the title menu, old -> new: c0a0 tram 14.67 -> 16.97, c1a0 6.22 -> 7.11, c1a2b 5.02 -> 5.77, c4a3 16.49 -> 17.70, and on maps the profile never saw c1a1 29.41 -> 32.03, c3a2b 8.46 -> 9.75, c2a2 11.50 -> 12.53, c1a3 12.58 -> 13.65. The I-cache layout is no longer shipped (see the README).
 - The actor animation tracks use 1.4 grid steps (0.35 of a world unit of worst-case vertex error, was 0.5) and the map staging floor is 177,280 words (was 178,120): c5a1's weapon-cache margin is 14,164 B before the floor change and 10,804 B after it, with room for the authored HECU grenade clips. Needs `cargo hl-build assets`.
 - The stack reserve is `game/stack-reserve` (25 KiB, was the SDK's 32 KiB), and `cargo hl-build stack` holds it: it replays the shipped disc on eight maps entered through the title menu and fails when the emulator's stack watermark (9.5 KB at most) comes within 25% of the reserve, and it relinks the shipping image as an ELF and bounds every call chain statically, with the BSP trace recursion taken to the campaign's deepest trees (c2a4a, 84 levels of 136 B): 19,664 B, which with the margin sets 25 KiB. `regress` runs the same check on its shipping rebuild. Free RAM +7,168 B. `cargo hl-build ram` now reads the reserve from the link map.
