@@ -17,3 +17,7 @@ path = "src/main.rs"
 hl-format = { path = "../../shared/hl-format" }
 psx-render-contract = { path = "../../.psoxide/engine/crates/psx-render-contract" }
 psx-anim-cook = { path = "../../.psoxide/crates/psx-anim-cook" }
+
+# Game modules included by path (door_seal etc.) carry items the cooker never calls.
+[lints.rust]
+dead_code = "allow"

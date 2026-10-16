@@ -8700,11 +8700,6 @@ fn collect_logic_entities_with_lightstyles(
             LOGIC_ENV_BUBBLES => load_sprites_manifest().get(&(map_index,"bubble.spr".to_string())).map_or(255,|r|r.0),
             LOGIC_ENV_BLOOD => if parse_f32_key(block, "color", 0.0) == 1.0 {195}else{247},
             LOGIC_ENV_BEVERAGE => parse_f32_key(block, "skin", 0.0).clamp(0.0, 6.0) as u16,
-            // CTargetCDAudio's `radius`: the track starts when the player comes
-            // within it (a trigger_cdaudio has none and works by touch).
-            LOGIC_CDTRACK => (parse_f32_key(block, "radius", 0.0) / scale)
-                .round()
-                .clamp(0.0, u16::MAX as f32) as u16,
             LOGIC_TRIGGER_CHANGELEVEL => names.id(ent_value(block, "landmark")),
             LOGIC_FUNC_TRACKTRAIN => submodel.unwrap_or(0).min(u16::MAX as usize) as u16,
             LOGIC_FUNC_GUNTARGET => names.id(ent_value(block, "message")),
