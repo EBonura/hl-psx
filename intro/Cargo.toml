@@ -1,0 +1,36 @@
+# `trim-paths` is a nightly cargo feature; the PS1 build is nightly-pinned
+# anyway (bare-metal MIPS needs build-std), so the gate costs nothing.
+cargo-features = ["trim-paths"]
+
+[package]
+name    = "hl-intro"
+version = "0.2.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Boot program of the hl-psx disc: plays Half-Life's startup movie, then loads the game"
+
+# Its own workspace, built from this directory (see .cargo/config.toml). The
+# game's workspace at the repository root does not know it: the game's image
+# and crate hashes must not change with the intro's existence.
+[workspace]
+
+[[bin]]
+name = "hl-intro"
+path = "src/main.rs"
+
+[profile.release]
+panic         = "abort"
+codegen-units = 1
+lto           = true
+# The movie decoder is the only hot code here; the rest is boot-time.
+opt-level     = 2
+trim-paths    = "all"
+
+[dependencies]
+psx-rt          = { path = "../.psoxide/sdk/crates/psx-rt" }
+psx-gpu         = { path = "../.psoxide/sdk/crates/psx-gpu" }
+psx-io          = { path = "../.psoxide/sdk/crates/psx-io" }
+psx-pad         = { path = "../.psoxide/sdk/crates/psx-pad" }
+psx-spu         = { path = "../.psoxide/sdk/crates/psx-spu" }
+psx-fmv         = { path = "../.psoxide/sdk/crates/psx-fmv" }
+psx-chainloader = { path = "../.psoxide/engine/crates/psx-chainloader" }
