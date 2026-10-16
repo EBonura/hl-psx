@@ -1,0 +1,10 @@
+# Build this crate for the PlayStation 1, as game/.cargo/config.toml does.
+# Without the game's delay-slot flags: the intro is not frame-rate bound, and
+# the plain codegen leaves no load-delay hazards for the patcher to reroute.
+[build]
+target = "mipsel-sony-psx"
+target-dir = "target"
+
+[unstable]
+build-std = ["core"]
+build-std-features = ["compiler-builtins-mem"]

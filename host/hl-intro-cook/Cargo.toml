@@ -1,0 +1,17 @@
+[package]
+name = "hl-intro-cook"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Encodes the startup movie of the user's own Half-Life install for the PS1 intro program"
+
+# Its own workspace: the repository root is the PS1 game's.
+[workspace]
+
+[dependencies]
+# The movie is measured with the SDK's own bitstream decoder, so a stream the
+# player cannot decode fails the build rather than the console.
+psx-fmv = { path = "../../.psoxide/sdk/crates/psx-fmv" }
+
+[profile.release]
+codegen-units = 1

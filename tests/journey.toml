@@ -5,7 +5,16 @@ title = "Half-Life: Hazard Course and Interloper"
 disc = ["dist/hl-psx.cue"]
 symbols = [".hlpsx/hl-psx.map"]
 pad = "analog"
-max_ticks = 5000
+max_ticks = 5900
+
+[[step]]
+label = "skip the startup movie, if the disc has one (a disc without it never sees the press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
 
 [[step]]
 label = "boot through the splash to the main menu"

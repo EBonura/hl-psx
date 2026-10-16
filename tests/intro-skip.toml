@@ -1,0 +1,53 @@
+# Start skips the startup movie, and the game still comes up. Needs a disc
+# built with the intro; see tests/intro.toml for why no frame is a golden.
+name = "hl-intro-skip"
+title = "Half-Life: skip the startup movie, then the title menu"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 2000
+
+[[step]]
+label = "the movie is playing (the ten seconds run to about tick 640)"
+wait = 150
+
+[[step]]
+checkpoint = "movie-playing"
+golden = false
+[[step.assert]]
+kind = "not_dark"
+[[step.assert]]
+kind = "presenting"
+window = 60
+min_changes = 4
+
+[[step]]
+label = "Start skips it"
+press = ["start"]
+hold = 8
+wait = 30
+
+[[step]]
+checkpoint = "skipped"
+golden = false
+# Well before the movie's end: the picture is gone, the loader's black screen
+# is up, and the sound has stopped.
+[[step.assert]]
+kind = "dark"
+
+[[step]]
+label = "the game loads and reaches its title menu"
+wait_until = { kind = "pixels", color = [255, 255, 41], color_tol = 24, region = { x = 20, y = 80, w = 120, h = 150 }, min_count = 800 }
+timeout = 1800
+
+[[step]]
+checkpoint = "title-menu"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "pixels"
+color = [255, 255, 41]
+color_tol = 24
+region = { x = 20, y = 80, w = 120, h = 150 }
+min_count = 800
