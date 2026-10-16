@@ -192,7 +192,28 @@ direct-mapped, so which functions share a cache set decides how often hot code
 evicts itself. Every later build places the functions with that layout and
 links twice (the code is identical, only its addresses move); a layout that no
 longer binds to the code is reported and skipped. Collect it again whenever
-the profile is.
+the profile is. The shipped profile has none: a layout from the chapter-two
+tape alone made c1a2b 14% slower when it bound, so do not pass `--polls` unless
+the layout is collected over several maps.
+
+`--script PLAY_ORDER:POLLS` (repeatable, with `HLPSX_COLLECT_MAPS` set to the
+maps' room ids so the collect build holds them) profiles a map entered through
+the title menu with controller pulses, for that many port-1 polls, beside or
+instead of a tape. The recipe the shipped profile came from:
+
+```sh
+HLPSX_COLLECT_MAPS=0,6,7,9,10,20,94 cargo hl-build pgo \
+  --tape chapter-two.pxtape --script 0:3400 --script 6:3400 \
+  --script 20:3400 --script 94:3400
+```
+
+`pgo` keeps only the hottest functions of what it collected (the ones holding
+750/1000 of the samples outside the CD and loader code, `HLPSX_PGO_COVERAGE` to
+change it): everything it does not name stays small, and the unpruned profile
+grew `.text` by 47 KB for +19..29% frame rate where this one costs about 1 KB
+for +7..16%. The inlining ladder stops at the first rung that keeps
+`game/ram-budget`'s floor, so raising the floor reserves RAM for unmerged work and
+buys back less inlining.
 
 `HL_DIR`, `PSOXIDE`, and `GAMES_DIR` are accepted as environment defaults.
 Normal builds hydrate the exact SDK, emulator support crates, and editor/engine
