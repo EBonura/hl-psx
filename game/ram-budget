@@ -9,4 +9,7 @@
 # roughly 4.5 KB a lane. A change that needs more frees bytes elsewhere first
 # or lowers this number in the same commit and says why.
 # HLPSX_RAM_FLOOR=N overrides it for one local run.
-4096
+# 2026-10-16: 2048, the coordinator's floor for the monster work (L2): with the
+# 4096 floor the pack falls to PGO rung 60 (4,332 B free) and loses 3 to 6% fps;
+# at rung 125 it links with 2,316 B free.
+2048
