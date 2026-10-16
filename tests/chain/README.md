@@ -32,9 +32,11 @@ input. The player position is read from `LOGIC_PLAYER_POS` (x, up, y). `@stop` e
 ## Regenerate per build
 `inbound-anomalous.route` binds RAM symbols through `--map`, so `tests/chain-new-game.toml` is only valid for the build whose
 link map it was generated from: regenerate it for every disc (`hlroute build ... --map .hlpsx/hl-psx.map`). The c1a0e cart push
-is closed loop on the player's y: the push drifts the hull about 40 units south of where it starts, and the cart face is
-y 588..652, so a hull that ends south of 604 only grazes the cart and slides past it. A full strafe moves 16 to 32 units a tick,
-which is why the old stop at y 620 landed anywhere in 588..620 depending on frame timing. The route now lines up slowly in
-the north half of the face and nudges north between short pushes. Even so the push is sensitive to the build: it passed on
-integ 5dac694, 53fed40 and b5a58b2 and failed on one profile-only variant of the same code, so a different build may need
-the alignment band (y 630..646) moved.
+is closed loop on yaw, the player's y and the cart's own x (`ENT_CACHE+1732`, entity 27 of c1a0e; Ent is 64 bytes with the origin at +4):
+each `@hold` pair is a dead band (a hold whose condition already holds ends at once), so no fixed nudge depends on where a
+frame happened to end a hold. Yaw is held to 1010..1038 (east is 1024; the stick's smallest turn is 29 a tick,
+2.5 degrees), the player walks west along y >= 700 to the lift's west margin (x 1152..1163) and strafes south along it,
+settles 8 ticks, and pushes in legs ended by the cart's x. The first leg is forward 60: a full-speed start flush
+against the lift's 1-unit lip stalled 3 units short of the cart on builds before the `slide_move` fix (branch
+`fix/hl-cart-push-2026-10-16`), and nothing under forward 90 stalled. Passes on integ 5dac694, b5a58b2 and 219e7ff,
+and with the push perturbed by one tick of turn or strafe before the first leg.

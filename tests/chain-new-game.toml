@@ -10,11 +10,13 @@ max_ticks = 130000
 
 # Bound to the build this journey was written against.
 [addr]
-LOGIC_PLAYER_HEALTH = 0x800b4e6c
-LOGIC_PLAYER_POS = 0x801ba454
-LOGIC_PLAYER_SUIT = 0x801bbeec
-SIM_NOW = 0x801e5b34
-WORLD_ARENA = 0x800cfe8c
+ENT_CACHE = 0x801ec23c
+LOGIC_PLAYER_HEALTH = 0x800be76c
+LOGIC_PLAYER_POS = 0x801bf8b4
+LOGIC_PLAYER_SUIT = 0x801c1350
+LOGIC_PLAYER_YAW = 0x801bf8c0
+SIM_NOW = 0x801eb018
+WORLD_ARENA = 0x800da5dc
 
 [[step]]
 label = "boot to the title"
@@ -439,56 +441,319 @@ kind = "not_flat"
 kind = "card_unchanged"
 
 [[step]]
-lstick = [255, 128]
-rstick = [128, 128]
+lstick = [128, 128]
+rstick = [74, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=642 }
-timeout = 900
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1038 }
+timeout = 300
 
 [[step]]
-checkpoint = "w6"
-golden = false
-[[step.assert]]
-kind = "not_flat"
-[[step.assert]]
-kind = "card_unchanged"
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1010 }
+timeout = 300
+
+[[step]]
+lstick = [1, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=700 }
+timeout = 300
 
 [[step]]
 lstick = [128, 255]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=1162 }
-timeout = 900
+timeout = 400
 
 [[step]]
-checkpoint = "w7"
-golden = false
-[[step.assert]]
-kind = "not_flat"
-[[step.assert]]
-kind = "card_unchanged"
+lstick = [128, 128]
+rstick = [74, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1038 }
+timeout = 300
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1010 }
+timeout = 300
 
 [[step]]
 lstick = [255, 128]
 rstick = [128, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=620 }
-timeout = 900
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=650 }
+timeout = 600
 
 [[step]]
-checkpoint = "w8"
+label = "c1a0e controller tape 2"
+tape = "tests/chain/tapes/c1a0e-02.pxtape"
+tape_rebase = true
+timeout = 1232
+
+[[step]]
+lstick = [168, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=628 }
+timeout = 300
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=612 }
+timeout = 300
+
+[[step]]
+label = "c1a0e controller tape 3"
+tape = "tests/chain/tapes/c1a0e-03.pxtape"
+tape_rebase = true
+timeout = 1232
+
+[[step]]
+lstick = [168, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=626 }
+timeout = 300
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=614 }
+timeout = 300
+
+[[step]]
+label = "c1a0e controller tape 4"
+tape = "tests/chain/tapes/c1a0e-04.pxtape"
+tape_rebase = true
+timeout = 1232
+
+[[step]]
+checkpoint = "cart-aligned"
 golden = false
 [[step.assert]]
 kind = "not_flat"
 [[step.assert]]
 kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="ENT_CACHE"
+size=4
+signed=true
+offset=1740
+op="between"
+value=610
+value_hi=630
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=8
+op="between"
+value=590
+value_hi=650
+
+[[step]]
+lstick = [128, 128]
+rstick = [74, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1038 }
+timeout = 300
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1010 }
+timeout = 300
+
+[[step]]
+lstick = [128, 68]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="ENT_CACHE", size=4, signed=true, offset=1732, op="ge", value=1312 }
+timeout = 200
+
+[[step]]
+lstick = [128, 128]
+rstick = [74, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1038 }
+timeout = 300
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1010 }
+timeout = 300
 
 [[step]]
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=1385 }
-timeout = 900
+hold_until = { kind="ram", sym="ENT_CACHE", size=4, signed=true, offset=1732, op="ge", value=1342 }
+timeout = 200
+
+[[step]]
+lstick = [128, 128]
+rstick = [74, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1038 }
+timeout = 300
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1010 }
+timeout = 300
+
+[[step]]
+lstick = [128, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="ENT_CACHE", size=4, signed=true, offset=1732, op="ge", value=1372 }
+timeout = 200
+
+[[step]]
+lstick = [128, 128]
+rstick = [74, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1038 }
+timeout = 300
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1010 }
+timeout = 300
+
+[[step]]
+lstick = [128, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="ENT_CACHE", size=4, signed=true, offset=1732, op="ge", value=1402 }
+timeout = 200
+
+[[step]]
+lstick = [128, 128]
+rstick = [74, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1038 }
+timeout = 300
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1010 }
+timeout = 300
+
+[[step]]
+lstick = [128, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="ENT_CACHE", size=4, signed=true, offset=1732, op="ge", value=1432 }
+timeout = 200
+
+[[step]]
+lstick = [128, 128]
+rstick = [74, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1038 }
+timeout = 300
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1010 }
+timeout = 300
+
+[[step]]
+lstick = [128, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="ENT_CACHE", size=4, signed=true, offset=1732, op="ge", value=1462 }
+timeout = 200
+
+[[step]]
+lstick = [128, 128]
+rstick = [74, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1038 }
+timeout = 300
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1010 }
+timeout = 300
+
+[[step]]
+lstick = [128, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="ENT_CACHE", size=4, signed=true, offset=1732, op="ge", value=1492 }
+timeout = 200
+
+[[step]]
+lstick = [128, 128]
+rstick = [74, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1038 }
+timeout = 300
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1010 }
+timeout = 300
+
+[[step]]
+lstick = [128, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="ENT_CACHE", size=4, signed=true, offset=1732, op="ge", value=1516 }
+timeout = 200
+
+[[step]]
+checkpoint = "cart-delivered"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="ENT_CACHE"
+size=4
+signed=true
+offset=1732
+op="between"
+value=1516
+value_hi=1700
+[[step.assert]]
+kind="ram"
+sym="ENT_CACHE"
+size=4
+signed=true
+offset=1740
+op="between"
+value=590
+value_hi=650
 
 [[step]]
 checkpoint = "cart-pushed"

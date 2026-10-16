@@ -362,40 +362,60 @@ map c1a0e next c1a0c
   @hold f-127 s20 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1285 timeout=900
   @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1225 timeout=900
   @checkpoint w5
-  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=642 timeout=900
-  @checkpoint w6
-  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1162 timeout=900
-  @checkpoint w7
-  # Line up on the cart face closed loop and slowly: a full strafe moves 16 to 32 units a tick, so the old
-  # stop at y 620 landed anywhere in 588..620 depending on frame timing. The push drifts the player about 40
-  # units south (y falls) while the cart face is 588..652, so start in the north half and nudge north between
-  # short pushes; a hull that ends south of 604 only grazes the cart and slides past it.
-  @hold s40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=646 timeout=600
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=630 timeout=600
-  @checkpoint w8
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1185 timeout=150
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1205 timeout=150
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1225 timeout=150
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1245 timeout=150
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1265 timeout=150
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1285 timeout=150
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1305 timeout=150
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1325 timeout=150
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1345 timeout=150
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1365 timeout=150
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1385 timeout=150
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=628 timeout=150
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1385 timeout=900
+  # The cart push is closed loop. The cart is a 64 unit box on a rail centred at y 620, its beam trigger starts at
+  # x 1522 (cart origin 1510), and the player hull only reaches the cart's west face from the lift's west margin
+  # (x 1152..1163, between the wall and the lift lip). Every hold below ends at once when its condition already
+  # holds, so each pair is a dead band, not a fixed nudge, and a hold times out only when the player is blocked:
+  #   ENT_CACHE+1732 and +1740 are the origin x and y of entity 27, the sample cart (64 byte Ent, origin at +4)
+  #   yaw 1010..1038  east is 1024 and the smallest turn the stick can make is 29 per tick (2.5 degrees)
+  #   walk west along y >= 700 (north of the lift and of the cart's hull) to the margin, then strafe south along it
+  #   settle 8 ticks after each strafe so no lateral speed is left, then fine bands on the player's y
+  #   push in legs terminated by the cart's own x (ENT_CACHE origin x), first leg at forward 60: a full-speed
+  #   start flush against the lift lip can stall 3 units short of the cart on builds before the slide_move fix
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=700 timeout=300
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1162 timeout=400
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=650 timeout=600
+  8
+  @hold s40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=628 timeout=300
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=612 timeout=300
+  8
+  @hold s40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=626 timeout=300
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=614 timeout=300
+  8
+  @checkpoint cart-aligned
+  @assert sym=ENT_CACHE size=4 signed offset=1740 op=between value=610 value_hi=630
+  @assert sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=between value=590 value_hi=650
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f60 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1312 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1342 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1372 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1402 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1432 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1462 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1492 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1516 timeout=200
+  @checkpoint cart-delivered
+  @assert sym=ENT_CACHE size=4 signed offset=1732 op=between value=1516 value_hi=1700
+  @assert sym=ENT_CACHE size=4 signed offset=1740 op=between value=590 value_hi=650
   @checkpoint cart-pushed
   @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
