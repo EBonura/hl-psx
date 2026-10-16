@@ -1,4 +1,4 @@
-_RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
+_RNvCsa9Qy3L78YQJ_6hl_psx4play:12354808:0
  0: 2
  13: 2
  14: _RNvCsiT8caOteWf3_7psx_pad10poll_port1:1
@@ -146,7 +146,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     3: _RINvNtCsjHNIEcpe9Kk_4core3ptr13read_volatiletECsa9Qy3L78YQJ_6hl_psx:2
      11: 2
   10: 1
-  10: _RNvXs4_NtCsjHNIEcpe9Kk_4core7convertRShINtB5_7TryIntoAhj4_E8try_intoCsa9Qy3L78YQJ_6hl_psx:1
+  12: _RNvXs4_NtCsjHNIEcpe9Kk_4core7convertRShINtB5_7TryIntoAhj4_E8try_intoCsa9Qy3L78YQJ_6hl_psx:1
    1: _RNvXs5_NtCsjHNIEcpe9Kk_4core5arrayAhj4_INtNtB7_7convert7TryFromRShE8try_fromCsa9Qy3L78YQJ_6hl_psx:1
     1: _RNvMs_NtCsjHNIEcpe9Kk_4core6resultINtB4_6ResultRAhj4_NtNtB6_5array17TryFromSliceErrorE6copiedCsa9Qy3L78YQJ_6hl_psx:1
      7: 1
@@ -164,10 +164,9 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    8: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm14saturating_add:2
     1: 2
  168: 1
- 170: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx18load_dialogue_pack:22
-  1: 1
-  1.2: 2
-  4: _RNvNtCsa9Qy3L78YQJ_6hl_psx3hev9spu_bytes:7
+ 170: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx18load_dialogue_pack:21
+  4: 2
+  8: _RNvNtCsa9Qy3L78YQJ_6hl_psx3hev9spu_bytes:7
    1: _RNvNtCsa9Qy3L78YQJ_6hl_psx3hev8block_at:7
     2: 1
     5: _RNvNtCsa9Qy3L78YQJ_6hl_psx3hev6rd_u32:1
@@ -184,7 +183,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
      2: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAhj4_NtNtB6_3cmp9PartialEq2eqCsa9Qy3L78YQJ_6hl_psx:1
       1: _RNvXs7_NtNtCsjHNIEcpe9Kk_4core5array8equalityhINtB5_11SpecArrayEqhKj4_E7spec_eqCsa9Qy3L78YQJ_6hl_psx:1
        4: 1
-  6: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx16mute_room_effect:4
+  10: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx16mute_room_effect:4
    2: _RNvCs52mhn4g4tH3_6psx_io8read_u16:1
     3: _RINvNtCsjHNIEcpe9Kk_4core3ptr13read_volatiletECsa9Qy3L78YQJ_6hl_psx:1
      11: 1
@@ -194,12 +193,12 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    6: _RNvCs52mhn4g4tH3_6psx_io9write_u16:1
     3.3: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatiletECsa9Qy3L78YQJ_6hl_psx:1
      11: 1
-  7: 1
-  8: 2
-  10: _RINvMNtCsjHNIEcpe9Kk_4core6optionINtB3_6OptionNtCs1sjfLsmMsuE_7psx_spu3SpuE18get_or_insert_withNCNvNtCsa9Qy3L78YQJ_6hl_psx3sfx18load_dialogue_pack0EB1B_:1
+  11: 1
+  12: 2
+  14: _RINvMNtCsjHNIEcpe9Kk_4core6optionINtB3_6OptionNtCs1sjfLsmMsuE_7psx_spu3SpuE18get_or_insert_withNCNvNtCsa9Qy3L78YQJ_6hl_psx3sfx18load_dialogue_pack0EB1B_:1
    4: 1
-  11: 2
   15: 2
+  19: 2
  182: 1
  184: _RNvCsa9Qy3L78YQJ_6hl_psx24load_accounted_map_chunk:7
   6: _RNvCsa9Qy3L78YQJ_6hl_psx19load_streamed_chunk:2
@@ -285,251 +284,251 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    1: 2
  307: 1
  308: 1
- 308.2: 1
- 310: 2
- 316.6: 2
- 330: _RNvCsa9Qy3L78YQJ_6hl_psx11end_loading:2
+ 310: 1
+ 312: 2
+ 319: 2
+ 333: _RNvCsa9Qy3L78YQJ_6hl_psx11end_loading:2
   1: _RNvNtNtCsa9Qy3L78YQJ_6hl_psx8cdstream6target15set_sector_hook:1
    1: _RNvMs0_NtCsLzN7oAaAAf_11psx_goldsrc12chunk_streamINtB5_14CachedStreamerNtNtNtCs52mhn4g4tH3_6psx_io2cd6reader12SectorReaderNtNtNtCsa9Qy3L78YQJ_6hl_psx8cdstream6target5ArenaKj10_E15set_sector_hookB22_:1
     1: 1
   2: 1
- 331: 2
- 340: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map20expand_light_palette:6
+ 334: 2
+ 343: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map20expand_light_palette:6
   3: 2
   4: 1
   6: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map17reset_lightstyles:1
    2: 1
   7: 2
- 341: 1
- 349: 1
- 352: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys17set_gravity_scale:3
+ 344: 1
+ 352: 1
+ 355: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys17set_gravity_scale:3
   1: 2
   1: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:1
    9: 1
- 353: 1
- 353: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:1
+ 356: 1
+ 356: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:1
   5: 1
- 354: 1
- 354: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:1
+ 357: 1
+ 357: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:1
   4.3: 1
- 360: 1
- 360: _RNvCsa9Qy3L78YQJ_6hl_psx22launch_landmark_origin:5
+ 363: 1
+ 363: _RNvCsa9Qy3L78YQJ_6hl_psx22launch_landmark_origin:5
   1: 1
   1: _RINvMNtCsjHNIEcpe9Kk_4core6optionINtB3_6OptionTtAlj3_EE3mapBK_NCNvCsa9Qy3L78YQJ_6hl_psx22launch_landmark_origin0EB12_:4
    4: 1
    5: 3
- 369: _RNvCsa9Qy3L78YQJ_6hl_psx18pvs_cam_leaf_store:2
+ 372: _RNvCsa9Qy3L78YQJ_6hl_psx18pvs_cam_leaf_store:2
   1: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatilelECsa9Qy3L78YQJ_6hl_psx:2
    11: 2
- 370: 1
  373: 1
  376: 1
- 384: 1
- 388: 2
- 389.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:60
+ 379: 1
+ 387: 1
+ 391: 2
+ 392.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:60
   1: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:60
    1: 60
- 390: 51
- 391.1: 54
- 392: 45
- 392: _RNvNtCs3dFTdcjkgWj_8psx_math5int329isqrt_i32:1109
+ 393: 51
+ 394.1: 54
+ 395: 45
+ 395: _RNvNtCs3dFTdcjkgWj_8psx_math5int329isqrt_i32:1109
   1.3: 40
   4.3: _RNvNtCs3dFTdcjkgWj_8psx_math5int329isqrt_u32:1069
    3.1: 404
    7: 345
    13: 320
- 392.1: 39
- 393: 46
- 394: 41
- 395: 54
- 397: 1
- 398: 1
- 399: 3
- 400.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:40
+ 395.1: 39
+ 396: 46
+ 397: 41
+ 398: 54
+ 400: 1
+ 401: 1
+ 402: 3
+ 403.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:40
   1.1: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:40
    1.1: 40
- 401.1: 46
- 403.1: 2
- 405: _RNvMs4_NtCsjHNIEcpe9Kk_4core3numh14saturating_add:1
+ 404.1: 46
+ 406.1: 2
+ 408: _RNvMs4_NtCsjHNIEcpe9Kk_4core3numh14saturating_add:1
   1: 1
- 411: 3
- 412: 2
- 413: 1
- 428: 1
- 432: _RNvNtCsa9Qy3L78YQJ_6hl_psx4vram13vm_checkpoint:2
+ 414: 3
+ 415: 2
+ 416: 1
+ 431: 1
+ 435: _RNvNtCsa9Qy3L78YQJ_6hl_psx4vram13vm_checkpoint:2
   1: 2
- 433: 1
- 434: 1
  436: 1
  437: 1
- 437: _RNvCsa9Qy3L78YQJ_6hl_psx22vm_tail_capacity_words:3
+ 439: 1
+ 440: 1
+ 440: _RNvCsa9Qy3L78YQJ_6hl_psx22vm_tail_capacity_words:3
   1: 2
   1: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj14saturating_sub:1
    1: 1
- 439: 1
- 440: 1
- 451.1: 3
- 451.1: _RNvNtCsa9Qy3L78YQJ_6hl_psx11logic_state20unpack_landmark_axis:1
+ 442: 1
+ 443: 1
+ 454.1: 3
+ 454.1: _RNvNtCsa9Qy3L78YQJ_6hl_psx11logic_state20unpack_landmark_axis:1
   2: 1
- 456: 1
- 456.1: 1
- 475: 1
- 481: _RNvMs0_NtCsa9Qy3L78YQJ_6hl_psx4physNtB5_6Player3new:2
+ 459: 1
+ 459.1: 1
+ 478: 1
+ 484: _RNvMs0_NtCsa9Qy3L78YQJ_6hl_psx4physNtB5_6Player3new:2
   1: 2
- 504: 1
  507: 1
- 512: 1
- 570: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx7set_ear:1
+ 510: 1
+ 515: 1
+ 573: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx7set_ear:1
   1: _RNvMs0_NtCsLzN7oAaAAf_11psx_goldsrc4hsfxINtB5_4HsfxKj46_Kh2f_Kh30_E7set_earCsa9Qy3L78YQJ_6hl_psx:1
    1: 1
- 571: 1
- 572: 1
- 572: _RNvMNtCsjHNIEcpe9Kk_4core6optionINtB2_6OptionTIBv_NtNtCsa9Qy3L78YQJ_6hl_psx4save10CheckpointEtEE7is_someBQ_:2
+ 574: 1
+ 575: 1
+ 575: _RNvMNtCsjHNIEcpe9Kk_4core6optionINtB2_6OptionTIBv_NtNtCsa9Qy3L78YQJ_6hl_psx4save10CheckpointEtEE7is_someBQ_:2
   1.1: 2
- 595: 1
- 613: _RNvMNtCsjHNIEcpe9Kk_4core6optionINtB2_6OptionTIBv_NtNtCsa9Qy3L78YQJ_6hl_psx4save10CheckpointEtEE7is_someBQ_:1
+ 598: 1
+ 616: _RNvMNtCsjHNIEcpe9Kk_4core6optionINtB2_6OptionTIBv_NtNtCsa9Qy3L78YQJ_6hl_psx4save10CheckpointEtEE7is_someBQ_:1
   1.2: 1
- 615: 1
- 615: _RINvMNtCsjHNIEcpe9Kk_4core6optionINtB3_6OptionTIBw_NtNtCsa9Qy3L78YQJ_6hl_psx4save10CheckpointEtEE6map_ormNCNvBR_4plays6_0EBR_:2
+ 618: 1
+ 618: _RINvMNtCsjHNIEcpe9Kk_4core6optionINtB3_6OptionTIBw_NtNtCsa9Qy3L78YQJ_6hl_psx4save10CheckpointEtEE6map_ormNCNvBR_4plays6_0EBR_:2
   5.1: 2
- 617: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal3new:2
+ 620: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal3new:2
   1: 2
- 623: 2
- 623.3: 1
- 625: 2
- 626: 1
- 627: 2
- 631.1: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys12set_longjump:1
+ 626: 2
+ 626.3: 1
+ 628: 2
+ 629: 1
+ 630: 2
+ 634.1: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys12set_longjump:1
   1: 1
- 633: 1
- 634: _RNvNtCsa9Qy3L78YQJ_6hl_psx7mapsnap10reset_dead:1
+ 636: 1
+ 637: _RNvNtCsa9Qy3L78YQJ_6hl_psx7mapsnap10reset_dead:1
   1: 1
- 639.1: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys12set_longjump:1
+ 642.1: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys12set_longjump:1
   1: 1
- 640: 1
- 641: _RNvNtCsa9Qy3L78YQJ_6hl_psx11map_catalog9play_rank:43
+ 643: 1
+ 644: _RNvNtCsa9Qy3L78YQJ_6hl_psx11map_catalog9play_rank:43
   2.1: 14
   3.1: 15
   6: 14
- 654: 1
- 686: 2
- 697: 2
- 701: 1
- 706: _RNvYtNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:2
+ 657: 1
+ 689: 2
+ 700: 2
+ 704: 1
+ 709: _RNvYtNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:2
   4.7: 2
- 711: 1
- 713: 1
- 719: 1
- 719.1: _RNvCsa9Qy3L78YQJ_6hl_psx31standalone_room_starts_with_hev:1
+ 714: 1
+ 716: 1
+ 722: 1
+ 722.1: _RNvCsa9Qy3L78YQJ_6hl_psx31standalone_room_starts_with_hev:1
   7: _RNvNtCsa9Qy3L78YQJ_6hl_psx11map_catalog18diagnostic_has_hev:1
    1: _RNvNtCsa9Qy3L78YQJ_6hl_psx11map_catalog9play_rank:1
     3.1: 1
- 728: _RNvNtCsa9Qy3L78YQJ_6hl_psx7mapsnap10note_entry:9
+ 731: _RNvNtCsa9Qy3L78YQJ_6hl_psx7mapsnap10note_entry:9
   1: 2
   2: 1
   3: 2
   4: 2
   5: 2
- 729: 2
- 736: 1
+ 732: 2
  739: 1
- 743: _RNvYtNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:1
+ 742: 1
+ 746: _RNvYtNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:1
   4.10: 1
- 746: 1
- 747: 1
- 752: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys17set_gravity_scale:1
+ 749: 1
+ 750: 1
+ 755: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys17set_gravity_scale:1
   1: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:1
    9: 1
- 753: 1
- 755: 1
  756: 1
- 757: 1
- 762: 1
- 765.1: 258
- 766: 65
- 767: 371
- 768: 1
- 771: 236
- 773: 2
- 776: 1
- 788: _RNvCsa9Qy3L78YQJ_6hl_psx23tram_reference_waypoint:4
+ 758: 1
+ 759: 1
+ 760: 1
+ 765: 1
+ 768.1: 258
+ 769: 65
+ 770: 371
+ 771: 1
+ 775: 236
+ 777: 2
+ 780: 1
+ 792: _RNvCsa9Qy3L78YQJ_6hl_psx23tram_reference_waypoint:4
   1: 2
   2: 1
   4: 1
- 794: 2
- 808: 1
- 816.1: 1
- 817: 356
- 818: 45
- 825: 223
- 829: 1
- 829: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:1
+ 798: 2
+ 812: 1
+ 820.1: 1
+ 821: 356
+ 822: 45
+ 829: 223
+ 833: 1
+ 833: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:1
   5: 1
- 840: 1
- 846: 2
- 852: 1
- 853: 1
- 854: _RNvCsa9Qy3L78YQJ_6hl_psx25tram_authored_heading_q28:2
+ 844: 1
+ 850: 2
+ 856: 1
+ 857: 1
+ 858: _RNvCsa9Qy3L78YQJ_6hl_psx25tram_authored_heading_q28:2
   1: 2
- 876: _RNvNtCsa9Qy3L78YQJ_6hl_psx10tram_logic15visible_yaw_q12:2
+ 880: _RNvNtCsa9Qy3L78YQJ_6hl_psx10tram_logic15visible_yaw_q12:2
   1: 2
- 879: 1
- 891: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:1
+ 883: 1
+ 895: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:1
   9.3: 1
- 892: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:1
+ 896: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:1
   9.6: 1
- 901: 1
- 918: 1
- 928: 1
- 957: 1
- 967: 1
- 975: 1
- 987: _RNvCsa9Qy3L78YQJ_6hl_psx29logic_take_tracktrain_command:3
+ 905: 1
+ 922: 1
+ 932: 1
+ 961: 1
+ 971: 1
+ 979: 1
+ 991: _RNvCsa9Qy3L78YQJ_6hl_psx29logic_take_tracktrain_command:3
   1: 2
   5: 1
- 994: _RNvCsa9Qy3L78YQJ_6hl_psx18tram_apply_command:1
+ 998: _RNvCsa9Qy3L78YQJ_6hl_psx18tram_apply_command:1
   6: 1
- 1004: _RNvCsa9Qy3L78YQJ_6hl_psx24tram_should_carry_player:1
+ 1008: _RNvCsa9Qy3L78YQJ_6hl_psx24tram_should_carry_player:1
   4: 1
- 1012: 1
- 1018: 1
- 1019: 3
- 1027: 2
- 1028: 1
- 1028: _RNvCsa9Qy3L78YQJ_6hl_psx14valid_pvs_leaf:1
+ 1016: 1
+ 1022: 1
+ 1023: 3
+ 1031: 2
+ 1032: 1
+ 1032: _RNvCsa9Qy3L78YQJ_6hl_psx14valid_pvs_leaf:1
   1: 1
- 1029: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map11leaf_liquid:5
+ 1033: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map11leaf_liquid:5
   6: 2
   7: 2
   7: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map6rd_u16:1
    1: 1
- 1030: 1
- 1054: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsa_0EB4_:1
+ 1034: 1
+ 1058: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsa_0EB4_:1
   2: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playsa_0B3_:1
    0: 1
- 1056: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsc_0EB4_:1
+ 1060: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsc_0EB4_:1
   2: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playsc_0B3_:1
    0: 1
- 1064: _RNvMs0_CsgJPt85v5tve_8psx_tickNtB5_10FixedClock3new:2
+ 1068: _RNvMs0_CsgJPt85v5tve_8psx_tickNtB5_10FixedClock3new:2
   1: 1
   16: 1
- 1066: _RNvNtCsee58V50lPRe_6psx_rt10interrupts12vblank_count:4
+ 1070: _RNvNtCsee58V50lPRe_6psx_rt10interrupts12vblank_count:4
   4: _RINvNtCsjHNIEcpe9Kk_4core3ptr13read_volatilemECsa9Qy3L78YQJ_6hl_psx:4
    11: 4
- 1072: 4
- 1073: 2
- 1074: 1
- 1075: 2
+ 1076: 4
+ 1077: 2
  1078: 1
- 1085: _RNvMsa_CsiT8caOteWf3_7psx_padNtB5_9PadReader5port1:1
+ 1079: 2
+ 1082: 1
+ 1089: _RNvMsa_CsiT8caOteWf3_7psx_padNtB5_9PadReader5port1:1
   1: 1
- 1087: 2
- 1098: 2
- 1098.1: 541
- 1105: _RNvNtCsee58V50lPRe_6psx_rt10interrupts12vblank_count:552
+ 1091: 2
+ 1102: 2
+ 1102.1: 541
+ 1109: _RNvNtCsee58V50lPRe_6psx_rt10interrupts12vblank_count:552
   4.1: _RINvNtCsjHNIEcpe9Kk_4core3ptr13read_volatilemECsa9Qy3L78YQJ_6hl_psx:552
    11.1: 552
- 1105.1: _RNvMs0_CsgJPt85v5tve_8psx_tickNtB5_10FixedClock3due:6229
+ 1109.1: _RNvMs0_CsgJPt85v5tve_8psx_tickNtB5_10FixedClock3due:6229
   1: 592
   1: _RNvCsgJPt85v5tve_8psx_tick7reached:570
    1: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm12wrapping_sub:570
@@ -548,11 +547,11 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    4: 593
    4: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm14saturating_add:562
     1: 562
- 1182: 578
- 1209: 563
- 1255: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:573
+ 1186: 578
+ 1213: 563
+ 1259: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:573
   4.23: 573
- 1256: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal4tick:5085
+ 1260: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal4tick:5085
   3: 578
   14: 552
   14: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal4owns:592
@@ -563,15 +562,15 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   29: 568
   32: 567
   70: 551
- 1263: 564
- 1266: 6
- 1266: _RNvCsa9Qy3L78YQJ_6hl_psx13viewmodel_for:10
+ 1267: 564
+ 1270: 6
+ 1270: _RNvCsa9Qy3L78YQJ_6hl_psx13viewmodel_for:10
   1: 3
   2: 3
   5: 4
- 1267: 5
- 1271: 3
- 1271: _RNvCsa9Qy3L78YQJ_6hl_psx23viewmodel_anim_finished:27
+ 1271: 5
+ 1275: 3
+ 1275: _RNvCsa9Qy3L78YQJ_6hl_psx23viewmodel_anim_finished:27
   4: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:1
    4: 1
   4.2: 6
@@ -582,7 +581,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   6: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm12wrapping_sub:6
    1: 6
   6.1: 4
- 1300: _RNvCsa9Qy3L78YQJ_6hl_psx15decay_combat_fx:251938
+ 1304: _RNvCsa9Qy3L78YQJ_6hl_psx15decay_combat_fx:251938
   4: _RNvMs_NtCs7pFVxfANf1b_6psx_fx9particlesINtB4_12ParticlePoolKj40_E6updateCsa9Qy3L78YQJ_6hl_psx:104735
    1.1: _RNvXs2R_NtNtCsjHNIEcpe9Kk_4core5slice4iterINtB6_7IterMutNtNtCs7pFVxfANf1b_6psx_fx9particles8ParticleENtNtNtNtBa_4iter6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:69867
     23: 34978
@@ -624,17 +623,17 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    29.3: 2805
    32: 34736
   13: _RNvNtCsa9Qy3L78YQJ_6hl_psx13env_funnel_fx4tick:570
-   1.1: _RNvMs_NtCsa9Qy3L78YQJ_6hl_psx10env_funnelNtB4_5Burst7advance:570
+   2: _RNvMs_NtCsa9Qy3L78YQJ_6hl_psx10env_funnelNtB4_5Burst7advance:570
     1: 570
   14: _RNvCsa9Qy3L78YQJ_6hl_psx15tick_explosions:615
    3.1: 613
    5.1: 1
    5.3: 1
-  15: _RNvMs4_NtCsjHNIEcpe9Kk_4core3numh14saturating_add:583
+  16: 585
+  16: _RNvMs4_NtCsjHNIEcpe9Kk_4core3numh14saturating_add:583
    1: 583
-  15.1: 585
- 1302: 592
- 1308: _RNvCsa9Qy3L78YQJ_6hl_psx14tick_screen_fx:10911
+ 1306: 592
+ 1312: _RNvCsa9Qy3L78YQJ_6hl_psx14tick_screen_fx:10911
   1: 613
   2: 279
   3: _RNvNtCsa9Qy3L78YQJ_6hl_psx5music4poll:140
@@ -677,58 +676,58 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   56: 1
   59: 1
   60: 1
- 1309: 606
- 1320: 565
- 1321: 12
- 1325: 38
- 1332: 546
- 1337: 46
- 1344: 546
- 1345: 567
- 1346: 552
- 1348: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm12wrapping_sub:604
+ 1313: 606
+ 1324: 565
+ 1325: 12
+ 1329: 38
+ 1336: 546
+ 1341: 46
+ 1348: 546
+ 1349: 567
+ 1350: 552
+ 1352: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm12wrapping_sub:604
   1: 604
- 1350.1: 595
- 1352: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm14saturating_sub:578
+ 1354.1: 595
+ 1356: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm14saturating_sub:578
   1: 578
- 1352: _RNvYmNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:565
+ 1356: _RNvYmNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:565
   4.26: 565
- 1356: 573
- 1363: 548
- 1363: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc14semantic_inputNtB2_6Sample4held:573
+ 1360: 573
+ 1367: 548
+ 1367: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc14semantic_inputNtB2_6Sample4held:573
   1.1: 573
- 1366.1: 488
- 1380: 509
- 1380.2: 530
- 1386: 46
- 1390: 567
- 1391: 549
- 1395: 579
- 1399: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc14semantic_inputNtB2_6Sample4held:568
+ 1370.1: 488
+ 1384: 509
+ 1384.2: 530
+ 1390: 46
+ 1394: 567
+ 1395: 549
+ 1399: 579
+ 1403: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc14semantic_inputNtB2_6Sample4held:568
   1.3: 568
- 1400: 568
- 1413: 547
- 1413.6: 559
- 1414: 603
- 1415: 568
- 1419: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc14semantic_inputNtB2_6Sample4held:540
+ 1404: 568
+ 1417: 547
+ 1417.6: 559
+ 1418: 603
+ 1419: 568
+ 1423: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc14semantic_inputNtB2_6Sample4held:540
   1.4: 540
- 1420: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc14semantic_inputNtB2_6Sample4held:553
+ 1424: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc14semantic_inputNtB2_6Sample4held:553
   1.4: 553
- 1421: 583
- 1422: 581
- 1430: 598
- 1432: 532
- 1435: 501
- 1445: 577
- 1449.1: 613
- 1459: _RNvCsa9Qy3L78YQJ_6hl_psx16weapon_viewmodel:4
+ 1425: 583
+ 1426: 581
+ 1434: 598
+ 1436: 532
+ 1439: 501
+ 1449: 577
+ 1453.1: 613
+ 1463: _RNvCsa9Qy3L78YQJ_6hl_psx16weapon_viewmodel:4
   1: 2
   4: 1
   4: _RNvCsa9Qy3L78YQJ_6hl_psx7wdef_of:1
    1.1: 1
- 1460: 1
- 1468: _RNvCsa9Qy3L78YQJ_6hl_psx14vm_switch_pump:5197
+ 1464: 1
+ 1472: _RNvCsa9Qy3L78YQJ_6hl_psx14vm_switch_pump:5197
   1: 588
   6: 2
   7: 3
@@ -763,75 +762,75 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    1: _RNvNtNtCsa9Qy3L78YQJ_6hl_psx8cdstream6target12stream_abort:1
     1: _RNvMs0_NtCsLzN7oAaAAf_11psx_goldsrc12chunk_streamINtB5_14CachedStreamerNtNtNtCs52mhn4g4tH3_6psx_io2cd6reader12SectorReaderNtNtNtCsa9Qy3L78YQJ_6hl_psx8cdstream6target5ArenaKj10_E12stream_abortB22_:1
      2: 1
- 1489: _RNvCsa9Qy3L78YQJ_6hl_psx27invalidate_weapon_tri_cache:1
+ 1493: _RNvCsa9Qy3L78YQJ_6hl_psx27invalidate_weapon_tri_cache:1
   3: 1
- 1500: 1
- 1504: _RNvYhNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:2
+ 1504: 1
+ 1508: _RNvYhNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:2
   4.28: 2
- 1508: 563
- 1508.1: 518
- 1541: 571
- 1542: _RNvNtCsa9Qy3L78YQJ_6hl_psx12player_rules9use_phase:1672
+ 1512: 563
+ 1512.1: 518
+ 1545: 571
+ 1546: _RNvNtCsa9Qy3L78YQJ_6hl_psx12player_rules9use_phase:1672
   1: _RNvMs4_NtCsjHNIEcpe9Kk_4core3numh14saturating_sub:545
    1: 545
   2: 530
   2.2: 1
   5: 596
- 1551: 572
- 1551.1: 43
- 1558: 582
- 1565: 575
- 1573: 608
- 1608: 587
- 1613: _RNvNtCsLzN7oAaAAf_11psx_goldsrc14semantic_input18angle_step_nearest:1733
+ 1555: 572
+ 1555.1: 43
+ 1562: 582
+ 1569: 575
+ 1577: 608
+ 1612: 587
+ 1617: _RNvNtCsLzN7oAaAAf_11psx_goldsrc14semantic_input18angle_step_nearest:1733
   1: 560
   2: 571
   3: 588
   5: 14
- 1613.1: 547
- 1615: 570
- 1615: _RNvNtCsLzN7oAaAAf_11psx_goldsrc14semantic_input18angle_step_nearest:1667
+ 1617.1: 547
+ 1619: 570
+ 1619: _RNvNtCsLzN7oAaAAf_11psx_goldsrc14semantic_input18angle_step_nearest:1667
   1.1: 574
   2.3: 541
   3.1: 543
   5.1: 9
- 1616: _RNvXs1b_NtNtCsjHNIEcpe9Kk_4core3cmp5implssNtB8_3Ord5clamp:581
+ 1620: _RNvXs1b_NtNtCsjHNIEcpe9Kk_4core3cmp5implssNtB8_3Ord5clamp:581
   9.24: 581
- 1618: 606
- 1619: 582
- 1619.3: 540
- 1620: 556
- 1620.3: 519
- 1625: 531
- 1626: 569
- 1630: 565
- 1631: 592
- 1633: 516
- 1639: 567
- 1640: 586
- 1641: 553
- 1642: 584
- 1644: 566
- 1645: 89
- 1646: 82
- 1647: 85
- 1649: 85
- 1651: 585
- 1652.3: 526
- 1653: 567
- 1654: 580
- 1654: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal12clip_display:1137
+ 1622: 606
+ 1623: 582
+ 1623.3: 540
+ 1628: 556
+ 1628.3: 519
+ 1633: 531
+ 1634: 569
+ 1638: 565
+ 1639: 592
+ 1641: 516
+ 1647: 567
+ 1648: 586
+ 1649: 553
+ 1650: 584
+ 1652: 566
+ 1653: 89
+ 1654: 82
+ 1655: 85
+ 1657: 85
+ 1659: 585
+ 1660.3: 526
+ 1661: 567
+ 1662: 580
+ 1662: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal12clip_display:1137
   1: 572
   1.1: 565
- 1655: 583
- 1655: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal15reserve_display:1668
+ 1663: 583
+ 1663: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal15reserve_display:1668
   1: 526
   1: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal3def:586
    1: _RNvCsa9Qy3L78YQJ_6hl_psx7wdef_of:586
     1.1: 586
   1.1: 556
- 1656: 590
- 1657: _RNvCsa9Qy3L78YQJ_6hl_psx14logic_pre_tick:503609
+ 1664: 590
+ 1665: _RNvCsa9Qy3L78YQJ_6hl_psx14logic_pre_tick:503609
   1: _RNvCsa9Qy3L78YQJ_6hl_psx20logic_process_events:118434
    6: 585
    9.1: 37136
@@ -872,19 +871,19 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   18.1: 50186
   19: 3535
   19.1: 3509
-  23: 77
-  24.1: 87
-  24.3: 108
-  25: 3
-  25: _RNvMNtCsa9Qy3L78YQJ_6hl_psx11env_bubblesNtB2_9Scheduler4tick:93
+  24: 77
+  26.1: 87
+  27.1: 108
+  29: 3
+  29: _RNvMNtCsa9Qy3L78YQJ_6hl_psx11env_bubblesNtB2_9Scheduler4tick:93
    1: 89
    4: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:4
     1: 4
-  25: _RNvYsNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:2
+  29: _RNvYsNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:2
    4: 2
-  25.3: 2
-  30: 384
-  30.1: _RNvCsa9Qy3L78YQJ_6hl_psx19logic_tick_rotating:6323
+  30: 2
+  37: 384
+  37.1: _RNvCsa9Qy3L78YQJ_6hl_psx19logic_tick_rotating:6323
    1: 387
    1: _RNvCsa9Qy3L78YQJ_6hl_psx17logic_valid_brush:413
     2: 413
@@ -928,9 +927,9 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    14: 418
    15: 94
    17: 87
-  35: 501
-  35.1: 478
-  35.1: _RNvCsa9Qy3L78YQJ_6hl_psx19logic_tick_pendulum:10803
+  42: 501
+  42.1: 478
+  42.1: _RNvCsa9Qy3L78YQJ_6hl_psx19logic_tick_pendulum:10803
    1: _RNvCsa9Qy3L78YQJ_6hl_psx17logic_valid_brush:463
     2: 463
    4.1: 491
@@ -988,7 +987,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
      1.1: 167
     51: _RNvNtCsa9Qy3L78YQJ_6hl_psx11logic_state19pack_pendulum_phase:180
      1: 180
-    64665: _RNvNtCsa9Qy3L78YQJ_6hl_psx11logic_state19pack_pendulum_phase:722
+    64660: _RNvNtCsa9Qy3L78YQJ_6hl_psx11logic_state19pack_pendulum_phase:722
      1: 350
      2: 372
    6: _RNvCsa9Qy3L78YQJ_6hl_psx14pendulum_state:1962
@@ -1002,175 +1001,175 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     1: 453
     2: 486
     3: 480
-  52.1: 45783
-  53: 45456
-  61: _RNvCsa9Qy3L78YQJ_6hl_psx12time_reached:242
+  59.1: 45783
+  60: 45456
+  68: _RNvCsa9Qy3L78YQJ_6hl_psx12time_reached:242
    1: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_sub:242
     1.1: 242
-  61.1: 261
-  63.1: 7
-  67.3: 1
-  68: 1
-  69.3: 5
-  72: 5
-  73.1: 4
-  74: 2
-  74: _RNvCsa9Qy3L78YQJ_6hl_psx11maker_delay:4
+  68.1: 261
+  70.1: 7
+  74.3: 1
+  75: 1
+  76.3: 5
+  79: 5
+  80.1: 4
+  81: 2
+  81: _RNvCsa9Qy3L78YQJ_6hl_psx11maker_delay:4
    1: _RNvYtNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:4
     4: 4
-  74: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:7
+  81: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:7
    1.1: 7
-  75: 5
-  92: 4757
-  93: 4769
-  95: 671
-  95: _RNvCsa9Qy3L78YQJ_6hl_psx17logic_valid_brush:677
+  82: 5
+  99: 4757
+  100: 4769
+  102: 671
+  102: _RNvCsa9Qy3L78YQJ_6hl_psx17logic_valid_brush:677
    2: 677
-  96: 697
-  99.1: 378
-  100: 21
-  102: 3
-  104: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:345
+  103: 697
+  106.1: 378
+  107: 21
+  109: 3
+  111: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:345
    4.2: 345
-  104.1: 362
-  107: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx13stop_map_loop:24
+  111.1: 362
+  114: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx13stop_map_loop:24
    1: 24
-  108: 22
-  109: 2
-  109: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx14play_map_world:1
+  115: 22
+  116: 2
+  116: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx14play_map_world:1
    1: 1
-  112.4: 19
-  113.1: 28
-  124: 24
-  124: _RNvCsa9Qy3L78YQJ_6hl_psx17door_auto_returns:2
+  119.4: 19
+  120.1: 28
+  131: 24
+  131: _RNvCsa9Qy3L78YQJ_6hl_psx17door_auto_returns:2
    1: 2
-  125: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:1
+  132: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:1
    1.3: 1
-  125.1: 1
-  129.1: 1
-  134: 299
-  135.1: 341
-  136: 20
-  138: 3
-  140: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:333
+  132.1: 1
+  136.1: 1
+  141: 299
+  142.1: 341
+  143: 20
+  145: 3
+  147: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:333
    4.4: 333
-  140.1: 338
-  141: 336
-  142: 15
-  143: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx13stop_map_loop:24
+  147.1: 338
+  148: 336
+  149: 15
+  150: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx13stop_map_loop:24
    1.1: 24
-  144: 18
-  145: 1
-  145: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx14play_map_world:3
+  151: 18
+  152: 1
+  152: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx14play_map_world:3
    1.1: 3
-  150: 24
-  164: 18
-  164: _RNvCsa9Qy3L78YQJ_6hl_psx28logic_fire_door_close_target:15
+  157: 24
+  171: 18
+  171: _RNvCsa9Qy3L78YQJ_6hl_psx28logic_fire_door_close_target:15
    8: 12
    11: 3
-  167: 22
-  167: _RNvCsa9Qy3L78YQJ_6hl_psx17door_auto_returns:18
+  174: 22
+  174: _RNvCsa9Qy3L78YQJ_6hl_psx17door_auto_returns:18
    1.1: 18
-  177: 4161
-  177.1: 1
-  178: 2505
-  178: _RNvCsa9Qy3L78YQJ_6hl_psx17door_auto_returns:2423
+  184: 4161
+  184.1: 1
+  185: 2505
+  185: _RNvCsa9Qy3L78YQJ_6hl_psx17door_auto_returns:2423
    1.2: 2423
-  179: _RNvCsa9Qy3L78YQJ_6hl_psx12time_reached:56
+  186: _RNvCsa9Qy3L78YQJ_6hl_psx12time_reached:56
    1.1: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_sub:56
     1.2: 56
-  179.1: 95
-  183: 20
-  184: 2
-  185: _RNvCsa9Qy3L78YQJ_6hl_psx12time_reached:1
+  186.1: 95
+  190: 20
+  191: 2
+  192: _RNvCsa9Qy3L78YQJ_6hl_psx12time_reached:1
    1.2: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_sub:1
     1.3: 1
-  185.1: 2
- 1660: 590
- 1671: _RNvCsa9Qy3L78YQJ_6hl_psx29logic_take_tracktrain_command:578
+  192.1: 2
+ 1668: 590
+ 1679: _RNvCsa9Qy3L78YQJ_6hl_psx29logic_take_tracktrain_command:578
   1: 578
- 1715: 543
- 1716: _RNvNtCsa9Qy3L78YQJ_6hl_psx10tram_logic19add_camera_step_q16:62
+ 1723: 543
+ 1724: _RNvNtCsa9Qy3L78YQJ_6hl_psx10tram_logic19add_camera_step_q16:62
   1: 32
   2: 30
- 1726: 536
- 1730.1: 98
- 1733: 93
- 1742: 82
- 1742: _RNvCsa9Qy3L78YQJ_6hl_psx19tram_step_for_speed:261
+ 1734: 536
+ 1738.1: 98
+ 1741: 93
+ 1750: 82
+ 1750: _RNvCsa9Qy3L78YQJ_6hl_psx19tram_step_for_speed:261
   1: 85
   5: _RNvMs0_NtCsjHNIEcpe9Kk_4core3numl14saturating_add:88
    1: 88
   7: 88
- 1744: 98
- 1749: 93
- 1750: 77
- 1751: 96
- 1755.1: 101
- 1761: 84
- 1761.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:76
+ 1752: 98
+ 1757: 93
+ 1758: 77
+ 1759: 96
+ 1763.1: 101
+ 1769: 84
+ 1769.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:76
   1.2: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:76
    1.2: _RNvXsU_NtNtCsjHNIEcpe9Kk_4core3cmp5implsjNtB7_10PartialOrd2lt:4
     0.52: 4
    1.14: 72
- 1762: 8
- 1762.1: 4
- 1762.1: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map8way_pass:17
+ 1770: 8
+ 1770.1: 4
+ 1770.1: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map8way_pass:17
   1: 6
   1: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map6rd_u16:11
    1: 5
    1: _RINvMNtCsjHNIEcpe9Kk_4core5sliceSh13get_uncheckedjECsa9Qy3L78YQJ_6hl_psx:6
     7: _RNvXs0_NtNtCsjHNIEcpe9Kk_4core5slice5indexjINtB5_10SliceIndexShE13get_uncheckedCsa9Qy3L78YQJ_6hl_psx:6
      14: 6
- 1763: 5
- 1766: 1
- 1780: 96
- 1782: 85
- 1783: 82
- 1789: 96
- 1790: 84
- 1791: 91
- 1793: 80
- 1801: 513
- 1815: 97
- 1826: _RNvNtCsa9Qy3L78YQJ_6hl_psx10tram_logic15visible_yaw_q12:565
+ 1771: 5
+ 1774: 1
+ 1788: 96
+ 1790: 85
+ 1791: 82
+ 1797: 96
+ 1798: 84
+ 1799: 91
+ 1801: 80
+ 1809: 513
+ 1823: 97
+ 1834: _RNvNtCsa9Qy3L78YQJ_6hl_psx10tram_logic15visible_yaw_q12:565
   1: 565
- 1828: 557
- 1829: 591
- 1830: 608
- 1831: 582
- 1833: 579
- 1833: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj3_NtNtB6_3cmp9PartialEq2neCsa9Qy3L78YQJ_6hl_psx:564
+ 1836: 557
+ 1837: 591
+ 1838: 608
+ 1839: 582
+ 1841: 579
+ 1841: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj3_NtNtB6_3cmp9PartialEq2neCsa9Qy3L78YQJ_6hl_psx:564
   1.6: _RNvXs7_NtNtCsjHNIEcpe9Kk_4core5array8equalitylINtB5_11SpecArrayEqlKj3_E7spec_neCsa9Qy3L78YQJ_6hl_psx:564
    1.6: _RNvXs7_NtNtCsjHNIEcpe9Kk_4core5array8equalitylINtB5_11SpecArrayEqlKj3_E7spec_eqCsa9Qy3L78YQJ_6hl_psx:564
     4.12: 564
- 1834: 99
  1842: 99
- 1851: 90
- 1853: 43
- 1853: _RNvCsa9Qy3L78YQJ_6hl_psx24tram_should_carry_player:169
+ 1850: 99
+ 1859: 90
+ 1861: 43
+ 1861: _RNvCsa9Qy3L78YQJ_6hl_psx24tram_should_carry_player:169
   1: 48
   2: 31
   3: 38
   4: 52
- 1858: 48
- 1859: 52
- 1859: _RNvCsa9Qy3L78YQJ_6hl_psx24tram_should_carry_player:208
+ 1866: 48
+ 1867: 52
+ 1867: _RNvCsa9Qy3L78YQJ_6hl_psx24tram_should_carry_player:208
   1: 68
   2: 41
   3: 48
   4: 51
- 1866: 44
- 1872: 46
- 1873: _RNvMs0_NtCsa9Qy3L78YQJ_6hl_psx4physNtB5_6Player21set_vertical_velocity:2
+ 1874: 44
+ 1880: 46
+ 1881: _RNvMs0_NtCsa9Qy3L78YQJ_6hl_psx4physNtB5_6Player21set_vertical_velocity:2
   2: 2
- 1876: 35
- 1877: 34
- 1895: 516
- 1901: 601
- 1905: 588
- 1906: 569
- 1948: _RNvCsa9Qy3L78YQJ_6hl_psx11tick_trains:26580
+ 1884: 35
+ 1885: 34
+ 1903: 516
+ 1909: 601
+ 1913: 588
+ 1914: 569
+ 1956: _RNvCsa9Qy3L78YQJ_6hl_psx11tick_trains:26580
   2.1: 619
   3: 599
   3.1: 653
@@ -1254,10 +1253,10 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   128: 341
   128.3: 338
   130: 327
-  47482: _RNvCsa9Qy3L78YQJ_6hl_psx17train_next_corner:6
+  47212: _RNvCsa9Qy3L78YQJ_6hl_psx17train_next_corner:6
    6: 6
- 1954: 565
- 1959.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:136887
+ 1962: 565
+ 1967.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:136887
   1.3: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:136887
    1.3: _RNvXsU_NtNtCsjHNIEcpe9Kk_4core3cmp5implsjNtB7_10PartialOrd2lt:45730
     0.53: 45730
@@ -1265,8 +1264,8 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    4.3: _RNvXsD_NtNtCsjHNIEcpe9Kk_4core4iter5rangejNtB5_4Step17forward_unchecked:45593
     2.3: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj13unchecked_add:45593
      12.15: 45593
- 1960.1: 45613
- 1964: _RNvCsa9Qy3L78YQJ_6hl_psx15ent_draw_offset:186486
+ 1968.1: 45613
+ 1972: _RNvCsa9Qy3L78YQJ_6hl_psx15ent_draw_offset:186486
   1.2: 45162
   2.1: 621
   3: 633
@@ -1282,42 +1281,42 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   17: 10076
   22: 4197
   24: 30525
- 1968: 30610
- 1968.1: 3149
- 1971: 42952
- 1971: _RNvCsa9Qy3L78YQJ_6hl_psx22fan_collision_disabled:42955
+ 1976: 30610
+ 1976.1: 3149
+ 1979: 42952
+ 1979: _RNvCsa9Qy3L78YQJ_6hl_psx22fan_collision_disabled:42955
   2: 42955
- 1972: 42793
- 1972: _RNvCsa9Qy3L78YQJ_6hl_psx27pendulum_collision_disabled:42844
+ 1980: 42793
+ 1980: _RNvCsa9Qy3L78YQJ_6hl_psx27pendulum_collision_disabled:42844
   2: 42844
- 1981: 42647
- 1983: 53
- 1985: 3016
- 1986: 2127
- 1986.1: 476
- 1986.1: _RNvCsa9Qy3L78YQJ_6hl_psx18pendulum_phase_q19:481
+ 1989: 42647
+ 1991: 53
+ 1993: 3016
+ 1994: 2127
+ 1994.1: 476
+ 1994.1: _RNvCsa9Qy3L78YQJ_6hl_psx18pendulum_phase_q19:481
   1.1: 481
- 1987: _RNvNtCsLzN7oAaAAf_11psx_goldsrc16visibility_logic29brush_blocks_actor_visual_los:40889
+ 1995: _RNvNtCsLzN7oAaAAf_11psx_goldsrc16visibility_logic29brush_blocks_actor_visual_los:40889
   1.3: 469
   1.4: 40420
- 1991: 12011
- 1995: 42638
- 1999: 461
- 1999.1: 2951
- 1999.2: 51
- 1999.3: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys23mover_rotation_axis_tag:483
+ 1999: 12011
+ 2003: 42638
+ 2007: 461
+ 2007.1: 2951
+ 2007.2: 51
+ 2007.3: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys23mover_rotation_axis_tag:483
   1: 483
- 1999.4: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys23mover_rotation_axis_tag:2964
+ 2007.4: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys23mover_rotation_axis_tag:2964
   1: 2964
- 1999.5: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys23mover_rotation_axis_tag:50
+ 2007.5: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys23mover_rotation_axis_tag:50
   1: 50
- 2002: 52
- 2003: 39
- 2006: 50
- 2007: 52
- 2009.2: 573
- 2009.5: 39337
- 2013: _RNvCsa9Qy3L78YQJ_6hl_psx13fan_angle_q12:4225
+ 2010: 52
+ 2011: 39
+ 2014: 50
+ 2015: 52
+ 2017.2: 573
+ 2017.5: 39337
+ 2021: _RNvCsa9Qy3L78YQJ_6hl_psx13fan_angle_q12:4225
   2: _RNvCsa9Qy3L78YQJ_6hl_psx15fan_logic_index:1359
    4.1: 627
    5: 627
@@ -1329,7 +1328,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   11: 539
   13: 482
   17: 591
- 2013.1: _RNvCsa9Qy3L78YQJ_6hl_psx12fan_rotation:2397
+ 2021.1: _RNvCsa9Qy3L78YQJ_6hl_psx12fan_rotation:2397
   5: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I168rotate_y:2397
    1: _RNvNtCsg29Zqgvy0Hb_12psx_gte_core9transform10cos_1_3_12:1821
     2: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:610
@@ -1339,53 +1338,53 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
      1.1: 612
    2: _RNvNtCsg29Zqgvy0Hb_12psx_gte_core9transform10sin_1_3_12:576
     1.3: 576
- 2015: 38570
- 2015.2: 481
- 2016: _RNvCsa9Qy3L78YQJ_6hl_psx18pendulum_angle_q12:973
+ 2023: 38570
+ 2023.2: 481
+ 2024: _RNvCsa9Qy3L78YQJ_6hl_psx18pendulum_angle_q12:973
   1: 504
   1: _RNvCsa9Qy3L78YQJ_6hl_psx18pendulum_phase_q19:469
    1.1: 469
- 2016.1: _RNvCsa9Qy3L78YQJ_6hl_psx17pendulum_rotation:461
+ 2024.1: _RNvCsa9Qy3L78YQJ_6hl_psx17pendulum_rotation:461
   1: 461
- 2023: 3054
- 2024: _RNvCsa9Qy3L78YQJ_6hl_psx21axial_brush_angles_q8:3069
+ 2031: 3054
+ 2032: _RNvCsa9Qy3L78YQJ_6hl_psx21axial_brush_angles_q8:3069
   1: 3069
- 2025: 3047
- 2028: 2945
- 2029: 2921
- 2030: 1910
- 2031: 286
- 2032: 881
- 2038.1: 42649
- 2039: 42465
- 2040: 30767
- 2040.1: 30822
- 2041: 42699
- 2041.1: 42659
- 2045: 42269
- 2046: 42608
- 2047: 41837
- 2048: 42104
- 2049: 41817
- 2058.1: 41914
- 2058.2: 41757
- 2058.3: 41222
- 2063: 42373
- 2063: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys19mover_bounds_center:13439
+ 2033: 3047
+ 2036: 2945
+ 2037: 2921
+ 2038: 1910
+ 2039: 286
+ 2040: 881
+ 2046.1: 42649
+ 2047: 42465
+ 2048: 30767
+ 2048.1: 30822
+ 2049: 42699
+ 2049.1: 42659
+ 2053: 42269
+ 2054: 42608
+ 2055: 41837
+ 2056: 42104
+ 2057: 41817
+ 2066.1: 41914
+ 2066.2: 41757
+ 2066.3: 41222
+ 2071: 42373
+ 2071: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys19mover_bounds_center:13439
   7: 3206
   9: 3181
   10: 643
   11: 680
   13: 2586
   15: 3143
- 2064.1: 3292
- 2069: 3147
- 2077: 565
- 2078: 99
- 2079: 91
- 2080: 96
- 2081: 89
- 2086: _RNvCsa9Qy3L78YQJ_6hl_psx19tram_world_rotation:573
+ 2072.1: 3292
+ 2077: 3147
+ 2085: 565
+ 2086: 99
+ 2087: 91
+ 2088: 96
+ 2089: 89
+ 2094: _RNvCsa9Qy3L78YQJ_6hl_psx19tram_world_rotation:573
   1: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I168rotate_y:385
    1: _RNvNtCsg29Zqgvy0Hb_12psx_gte_core9transform10cos_1_3_12:298
     2: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:102
@@ -1399,36 +1398,36 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    1: 98
    1: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_sub:90
     1: 90
- 2087.1: 93
- 2088: 96
- 2091: 78
- 2093: 88
- 2093: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj3_NtNtB6_3cmp9PartialEq2neCsa9Qy3L78YQJ_6hl_psx:96
+ 2095.1: 93
+ 2096: 96
+ 2099: 78
+ 2101: 88
+ 2101: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj3_NtNtB6_3cmp9PartialEq2neCsa9Qy3L78YQJ_6hl_psx:96
   1.7: _RNvXs7_NtNtCsjHNIEcpe9Kk_4core5array8equalitylINtB5_11SpecArrayEqlKj3_E7spec_neCsa9Qy3L78YQJ_6hl_psx:96
    1.7: _RNvXs7_NtNtCsjHNIEcpe9Kk_4core5array8equalitylINtB5_11SpecArrayEqlKj3_E7spec_eqCsa9Qy3L78YQJ_6hl_psx:96
     4.13: 96
- 2099.1: 101
- 2100: 86
- 2111: 106
- 2114: 562
- 2126.2: 1
- 2127.1: 1
- 2131: 542
- 2136.2: 5727
- 2137.1: 5704
- 2141: 554
- 2143: _RNvXse_NtCsjHNIEcpe9Kk_4core5arrayANtNtCsa9Qy3L78YQJ_6hl_psx4phys5Moverjb5_INtNtNtB7_3ops5index8IndexMutINtNtB1g_5range7RangeTojEE9index_mutBB_:564
+ 2107.1: 101
+ 2108: 86
+ 2119: 106
+ 2122: 562
+ 2134.2: 1
+ 2135.1: 1
+ 2139: 542
+ 2144.2: 5727
+ 2145.1: 5704
+ 2149: 554
+ 2151: _RNvXse_NtCsjHNIEcpe9Kk_4core5arrayANtNtCsa9Qy3L78YQJ_6hl_psx4phys5Moverjb5_INtNtNtB7_3ops5index8IndexMutINtNtB1g_5range7RangeTojEE9index_mutBB_:564
   1: _RNvXs_NtNtCsjHNIEcpe9Kk_4core5slice5indexSNtNtCsa9Qy3L78YQJ_6hl_psx4phys5MoverINtNtNtB8_3ops5index8IndexMutINtNtB1j_5range7RangeTojEE9index_mutBI_:564
    1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core5slice5indexINtNtNtB9_3ops5range7RangeTojEINtB5_10SliceIndexSNtNtCsa9Qy3L78YQJ_6hl_psx4phys5MoverE9index_mutB1v_:564
     1.1: _RNvXs2_NtNtCsjHNIEcpe9Kk_4core5slice5indexINtNtNtB9_3ops5range5RangejEINtB5_10SliceIndexSNtNtCsa9Qy3L78YQJ_6hl_psx4phys5MoverE9index_mutB1t_:564
      3: 564
- 2149: 590
- 2150: 179
- 2152: 555
- 2154: 571
- 2166: 583
- 2167: 579
- 2169: _RNvCsa9Qy3L78YQJ_6hl_psx12ladder_touch:187022
+ 2157: 590
+ 2158: 179
+ 2160: 555
+ 2162: 571
+ 2174: 583
+ 2175: 579
+ 2177: _RNvCsa9Qy3L78YQJ_6hl_psx12ladder_touch:187022
   21.1: 45582
   22.1: 45475
   23: 45473
@@ -1461,23 +1460,23 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   27: 476
   27.1: 206
   31: 45212
- 2172: 561
- 2199: 539
- 2199: _RNvMNtCsjHNIEcpe9Kk_4core6optionINtB2_6OptionTAlj3_BI_EE7is_noneCsa9Qy3L78YQJ_6hl_psx:353
+ 2180: 561
+ 2207: 539
+ 2207: _RNvMNtCsjHNIEcpe9Kk_4core6optionINtB2_6OptionTAlj3_BI_EE7is_noneCsa9Qy3L78YQJ_6hl_psx:353
   1.1: _RNvMNtCsjHNIEcpe9Kk_4core6optionINtB2_6OptionTAlj3_BI_EE7is_someCsa9Qy3L78YQJ_6hl_psx:353
    65330.2: 353
- 2214: _RNvNtCsLzN7oAaAAf_11psx_goldsrc12ground_logic23advance_duck_activation:563
+ 2222: _RNvNtCsLzN7oAaAAf_11psx_goldsrc12ground_logic23advance_duck_activation:563
   6: 563
- 2215: 550
- 2221: _RNvNtCsa9Qy3L78YQJ_6hl_psx12player_rules16duck_window_next:1141
+ 2223: 550
+ 2229: _RNvNtCsa9Qy3L78YQJ_6hl_psx12player_rules16duck_window_next:1141
   1: 574
   3: 567
- 2228: 552
- 2231: 587
- 2241: 592
- 2242: 572
- 2248: 575
- 2248.1: _RNvCsa9Qy3L78YQJ_6hl_psx11water_state:12161
+ 2236: 552
+ 2239: 587
+ 2249: 592
+ 2250: 572
+ 2256: 575
+ 2256.1: _RNvCsa9Qy3L78YQJ_6hl_psx11water_state:12161
   7: 574
   8: 532
   10: 584
@@ -1519,34 +1518,34 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   36.3: 48
   46: 317
   50: 399
- 2250: 561
- 2251: 548
- 2256: 571
- 2274: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys20clear_player_touches:566
-  1: 566
- 2275: 587
- 2276: 570
- 2276: _RNvNtCsa9Qy3L78YQJ_6hl_psx8settings8debug_on:582
+ 2258: 561
+ 2259: 548
+ 2264: 571
+ 2282: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys20clear_player_touches:566
+  2: 566
+ 2283: 587
+ 2284: 570
+ 2284: _RNvNtCsa9Qy3L78YQJ_6hl_psx8settings8debug_on:582
   1: 582
- 2277: _RINvMs0_NtCsa9Qy3L78YQJ_6hl_psx4physNtB6_6Player21record_mover_contactsNCNvB8_4playsd_0EB8_:288762
-  1.1: _RNvXs2J_NtNtCsjHNIEcpe9Kk_4core5slice4iterINtB6_4IterNtNtCsa9Qy3L78YQJ_6hl_psx4phys5MoverENtNtNtNtBa_4iter6traits8iterator8Iterator4nextBT_:85448
+ 2285: _RINvMs0_NtCsa9Qy3L78YQJ_6hl_psx4physNtB6_6Player21record_mover_contactsNCNvB8_4playsd_0EB8_:288762
+  6.1: _RNvXs2J_NtNtCsjHNIEcpe9Kk_4core5slice4iterINtB6_4IterNtNtCsa9Qy3L78YQJ_6hl_psx4phys5MoverENtNtNtNtBa_4iter6traits8iterator8Iterator4nextBT_:85448
    23: 42811
    23: _RNvXse_NtNtCsjHNIEcpe9Kk_4core3ptr8non_nullINtB5_7NonNullNtNtCsa9Qy3L78YQJ_6hl_psx4phys5MoverENtNtB9_3cmp9PartialEq2eqBX_:42637
     1: 42637
-  2: 42929
-  2: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playsd_0B3_:158357
+  7: 42929
+  7: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playsd_0B3_:158357
    1: 42718
    1.2: _RNvCsa9Qy3L78YQJ_6hl_psx15fan_logic_index:115639
     4.1: 42724
     5: 42637
     5.3: 30278
-  2.1: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys14mover_may_hold:453
+  8: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys14mover_may_hold:453
    1: 144
    4: 146
    5: 153
    7: 10
-  2.2: 4
-  2.2: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys16mover_hull_clear:33
+  9: 4
+  9: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys16mover_hull_clear:33
    1: 7
    2: 8
    3: 1
@@ -1555,112 +1554,112 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     2.1: 4
     5: 1
    3.2: 6
-  6: 534
-  6.1: 469
-  6.1: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playsd_0B3_:535
+  14: 534
+  14.1: 469
+  14.1: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playsd_0B3_:535
    1: 470
    1.2: _RNvCsa9Qy3L78YQJ_6hl_psx15fan_logic_index:65
     4.1: 19
     5: 19
     5.3: 27
- 2283: 566
- 2291: 582
- 2291.4: 560
- 2304: 577
- 2310: 573
- 2315: 570
- 2322: 595
- 2322.1: 59
- 2323: 24
- 2325: 19
- 2326: 25
- 2339: 22
- 2340: 22
- 2346: 26
- 2347: 25
- 2347: _RNvNtCsa9Qy3L78YQJ_6hl_psx10tram_logic21rider_motion_decision:23
+ 2291: 566
+ 2299: 582
+ 2299.4: 560
+ 2312: 577
+ 2318: 573
+ 2323: 570
+ 2330: 595
+ 2330.1: 59
+ 2331: 24
+ 2333: 19
+ 2334: 25
+ 2347: 22
+ 2348: 22
+ 2354: 26
+ 2355: 25
+ 2355: _RNvNtCsa9Qy3L78YQJ_6hl_psx10tram_logic21rider_motion_decision:23
   4: 23
- 2348: 6
- 2356: 5
- 2358: 1
- 2359: 3
- 2385: 19
- 2385: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:27
+ 2356: 6
+ 2364: 5
+ 2366: 1
+ 2367: 3
+ 2393: 19
+ 2393: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:27
   9.27: 27
- 2385.1: 23
- 2398: 557
- 2399: 172
- 2413: 565
- 2413.3: 593
- 2422: 549
- 2425: 586
- 2428: 1
- 2428: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:1
-  4.56: 1
+ 2393.1: 23
+ 2406: 557
+ 2407: 172
+ 2421: 565
+ 2421.3: 593
+ 2430: 549
+ 2433: 586
  2436: 1
- 2445: 546
- 2446: _RNvNtCsa9Qy3L78YQJ_6hl_psx3hev11clear_queue:46
+ 2436: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:1
+  4.56: 1
+ 2444: 1
+ 2453: 546
+ 2454: _RNvNtCsa9Qy3L78YQJ_6hl_psx3hev11clear_queue:46
   1: _RNvMs_NtCsa9Qy3L78YQJ_6hl_psx3hevNtB4_4Suit11clear_queue:46
    1: 46
- 2448: 553
- 2457: 573
- 2457: _RNvNtCs3dFTdcjkgWj_8psx_math5int329isqrt_i32:5240
+ 2456: 553
+ 2465: 573
+ 2465: _RNvNtCs3dFTdcjkgWj_8psx_math5int329isqrt_i32:5240
   4.1: _RNvNtCs3dFTdcjkgWj_8psx_math5int329isqrt_u32:5240
    3.1: 3400
    7: 934
    13: 906
- 2458: 299
- 2459: 172
- 2459: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm12wrapping_add:180
+ 2466: 299
+ 2467: 172
+ 2467: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm12wrapping_add:180
   1.3: 180
- 2459: _RNvYmNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:180
+ 2467: _RNvYmNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:180
   4.58: 180
- 2459.1: 166
- 2461: 559
- 2461: _RNvNtCsa9Qy3L78YQJ_6hl_psx12player_rules9step_tick:1599
-  1: _RNvMs4_NtCsjHNIEcpe9Kk_4core3numh14saturating_sub:561
+ 2467.1: 166
+ 2469: 559
+ 2469: _RNvNtCsa9Qy3L78YQJ_6hl_psx12player_rules9step_tick:1599
+  7: _RNvMs4_NtCsjHNIEcpe9Kk_4core3numh14saturating_sub:561
    1: 561
-  2: 563
-  2.1: 354
-  5.1: 44
-  8.1: 43
-  16: 34
- 2462: 589
- 2463: 362
- 2466: 34
- 2469: 568
- 2470: 38
- 2471.3: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx8play_vol:40
+  8: 563
+  8.1: 354
+  11.1: 44
+  14.1: 43
+  22: 34
+ 2470: 589
+ 2471: 362
+ 2474: 34
+ 2477: 568
+ 2478: 38
+ 2479: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx8play_vol:40
   1: 40
- 2475: 569
- 2475.4: 11
- 2475.5: 11
- 2476: 541
- 2478: 9
- 2479.3: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx4play:12
+ 2490: 569
+ 2490.4: 11
+ 2490.5: 11
+ 2491: 541
+ 2493: 9
+ 2494.3: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx4play:12
   1: 12
- 2480: 8
- 2487: 584
- 2496: 559
- 2508: 537
- 2509: 517
- 2509: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj3_NtNtB6_3cmp9PartialEq2eqCsa9Qy3L78YQJ_6hl_psx:524
+ 2499: 8
+ 2506: 584
+ 2515: 559
+ 2527: 537
+ 2528: 517
+ 2528: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj3_NtNtB6_3cmp9PartialEq2eqCsa9Qy3L78YQJ_6hl_psx:524
   1.3: _RNvXs7_NtNtCsjHNIEcpe9Kk_4core5array8equalitylINtB5_11SpecArrayEqlKj3_E7spec_eqCsa9Qy3L78YQJ_6hl_psx:524
    4.14: 524
- 2509.1: 543
- 2509.2: 252
- 2513: 286
- 2516: 319
- 2521: 556
- 2525: 592
- 2526: 528
- 2529: 554
- 2534: 602
- 2547: 602
- 2634: 588
- 2635: 553
- 2636: 516
- 2638: _RNvCsa9Qy3L78YQJ_6hl_psx15collect_pickups:58303
+ 2528.1: 543
+ 2528.2: 252
+ 2532: 286
+ 2535: 319
+ 2540: 556
+ 2544: 592
+ 2545: 528
+ 2548: 554
+ 2553: 602
+ 2566: 602
+ 2653: 588
+ 2654: 553
+ 2655: 516
+ 2657: _RNvCsa9Qy3L78YQJ_6hl_psx15collect_pickups:58303
   15: 607
   15: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:559
    4: 559
@@ -1694,7 +1693,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
       1: _RNCNvNtCsa9Qy3L78YQJ_6hl_psx9weaponbox7touches0B5_:1140
        1.1: 660
        1.4: 480
-  33: _RINvMsm_NtCsjHNIEcpe9Kk_4core5arrayAjj3_3mapNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss_0lEBK_:638
+  35: _RINvMsm_NtCsjHNIEcpe9Kk_4core5arrayAjj3_3mapNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss_0lEBK_:638
    6.1: _RINvMsm_NtCsjHNIEcpe9Kk_4core5arrayAjj3_7try_mapINtNtNtB8_3ops9try_trait17NeverShortCircuitlEINtBN_7WrappedljNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss_0EEB1N_:638
     11: _RINvNtCsjHNIEcpe9Kk_4core5array11try_from_fnINtNtNtB4_3ops9try_trait17NeverShortCircuitlEKj3_QINtNtB2_5drain5DrainjKB1q_INtBJ_7WrappedljNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss_0EEEB2e_:638
      6: _RINvNtCsjHNIEcpe9Kk_4core5array18try_from_fn_erasedINtNtNtB4_3ops9try_trait17NeverShortCircuitlEQINtNtB2_5drain5DrainjKj3_INtBQ_7WrappedljNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss_0EEEB2g_:638
@@ -1702,7 +1701,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
        14: _RNvXs_NtNtCsjHNIEcpe9Kk_4core3ops9try_traitINtB4_7WrappedljNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss_0EINtNtB6_8function5FnMutTjEE8call_mutBZ_:638
         1: _RNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss_0B3_:638
          0.1: 638
-  34: _RINvMsm_NtCsjHNIEcpe9Kk_4core5arrayAjj3_3mapNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss0_0lEBK_:467
+  36: _RINvMsm_NtCsjHNIEcpe9Kk_4core5arrayAjj3_3mapNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss0_0lEBK_:467
    6.2: _RINvMsm_NtCsjHNIEcpe9Kk_4core5arrayAjj3_7try_mapINtNtNtB8_3ops9try_trait17NeverShortCircuitlEINtBN_7WrappedljNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss0_0EEB1N_:467
     11: _RINvNtCsjHNIEcpe9Kk_4core5array11try_from_fnINtNtNtB4_3ops9try_trait17NeverShortCircuitlEKj3_QINtNtB2_5drain5DrainjKB1q_INtBJ_7WrappedljNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss0_0EEEB2e_:467
      6: _RINvNtCsjHNIEcpe9Kk_4core5array18try_from_fn_erasedINtNtNtB4_3ops9try_trait17NeverShortCircuitlEQINtNtB2_5drain5DrainjKj3_INtBQ_7WrappedljNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss0_0EEEB2g_:467
@@ -1710,8 +1709,8 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
        14: _RNvXs_NtNtCsjHNIEcpe9Kk_4core3ops9try_traitINtB4_7WrappedljNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss0_0EINtNtB6_8function5FnMutTjEE8call_mutBZ_:467
         1: _RNCNvCsa9Qy3L78YQJ_6hl_psx15collect_pickupss0_0B3_:467
          0.1: 467
-  37.1: 3662
-  37.3: _RNvCsa9Qy3L78YQJ_6hl_psx21player_touches_pickup:14723
+  42.1: 3662
+  42.3: _RNvCsa9Qy3L78YQJ_6hl_psx21player_touches_pickup:14723
    6: 3640
    7: _RNvNtCsLzN7oAaAAf_11psx_goldsrc12pickup_logic15touches_sodacan:942
     1: _RNvNtCsLzN7oAaAAf_11psx_goldsrc12pickup_logic11touches_box:942
@@ -1743,81 +1742,81 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
       4: 946
       4.3: 23
      16.2: 23
-  39.3: 753
-  44.1: 1
-  87: 488
-  112: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx10play_voice:1
+  46.4: 753
+  50.1: 1
+  96: 488
+  121: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx10play_voice:1
    1: _RNvMs0_NtCsLzN7oAaAAf_11psx_goldsrc4hsfxINtB5_4HsfxKj46_Kh2f_Kh30_E10play_voiceCsa9Qy3L78YQJ_6hl_psx:1
     16: _RNvMs4_Cs1sjfLsmMsuE_7psx_spuNtB5_7SpuAddr3new:1
      1: 1
-  196.1: 543
- 2645: _RNvMs0_NtCsa9Qy3L78YQJ_6hl_psx4physNtB5_6Player11half_height:592
+  205.1: 543
+ 2664: _RNvMs0_NtCsa9Qy3L78YQJ_6hl_psx4physNtB5_6Player11half_height:592
   1: 592
- 2653: 489
- 2654: 552
- 2661: 566
- 2662: 506
- 2662.3: 554
- 2663: 577
- 2663.3: 561
- 2668: 574
- 2669: 563
- 2670: 582
- 2671: 554
- 2673: 566
- 2674: 516
- 2679: 575
- 2680: 564
- 2681: 548
- 2682: 575
- 2684: 518
- 2685.3: 589
- 2686: 556
- 2687: 568
- 2687: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal12clip_display:1108
+ 2672: 489
+ 2673: 552
+ 2680: 566
+ 2681: 506
+ 2681.3: 554
+ 2686: 577
+ 2686.3: 561
+ 2691: 574
+ 2692: 563
+ 2693: 582
+ 2694: 554
+ 2696: 566
+ 2697: 516
+ 2702: 575
+ 2703: 564
+ 2704: 548
+ 2705: 575
+ 2707: 518
+ 2708.3: 589
+ 2709: 556
+ 2710: 568
+ 2710: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal12clip_display:1108
   1: 563
   1.1: 545
- 2688: 575
- 2688: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal15reserve_display:1702
+ 2711: 575
+ 2711: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal15reserve_display:1702
   1: 547
   1: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal3def:594
    1: _RNvCsa9Qy3L78YQJ_6hl_psx7wdef_of:594
     1.1: 594
   1.1: 561
- 2689: 593
- 2691: 565
- 2698: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys16longjump_enabled:589
+ 2712: 593
+ 2714: 565
+ 2721: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys16longjump_enabled:589
   1: 589
- 2699: 564
- 2701: 594
- 2703: 577
- 2704: 589
- 2705: 556
- 2707: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys13gravity_scale:554
+ 2722: 564
+ 2724: 594
+ 2726: 577
+ 2727: 589
+ 2728: 556
+ 2730: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys13gravity_scale:554
   1: 554
- 2707: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:564
+ 2730: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:564
   9.33: 564
- 2708: _RNvNtCsa9Qy3L78YQJ_6hl_psx8settings5skill:1127
+ 2731: _RNvNtCsa9Qy3L78YQJ_6hl_psx8settings5skill:1127
   1: 563
   1: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:564
    4: 564
- 2710: 562
- 2715: _RNvNtCsa9Qy3L78YQJ_6hl_psx7mapsnap9note_dims:563
+ 2733: 562
+ 2738: _RNvNtCsa9Qy3L78YQJ_6hl_psx7mapsnap9note_dims:563
   1: 563
- 2717: 566
- 2722: 564
- 2722.1: 1
- 2725.1: 1
- 2742.1: 1
- 2743.2: 1
- 2744: 1
- 2748: 1
- 2760: 576
- 2778: 564
- 2788.1: 573
- 2796: 563
- 2797: 1
- 2797: _RNvCsa9Qy3L78YQJ_6hl_psx14tick_momentary:147
+ 2740: 566
+ 2745: 564
+ 2745.1: 1
+ 2748.1: 1
+ 2765.1: 1
+ 2766.2: 1
+ 2767: 1
+ 2771: 1
+ 2783: 576
+ 2801: 564
+ 2811.1: 573
+ 2819: 563
+ 2820: 1
+ 2820: _RNvCsa9Qy3L78YQJ_6hl_psx14tick_momentary:147
   9: _RNvCsa9Qy3L78YQJ_6hl_psx13view_rotation:11
    1: _RNvCsa9Qy3L78YQJ_6hl_psx18view_rotation_roll:11
     2: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I168rotate_x:5
@@ -1842,36 +1841,36 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   23: 34
   23.1: 35
   24: 31
- 2799: 563
- 2800: 564
- 2801: 517
- 2801.3: 531
- 2806: _RNvNtCs3dFTdcjkgWj_8psx_math5int329isqrt_i32:5932
+ 2822: 563
+ 2823: 564
+ 2824: 517
+ 2824.3: 531
+ 2829: _RNvNtCs3dFTdcjkgWj_8psx_math5int329isqrt_i32:5932
   4.2: _RNvNtCs3dFTdcjkgWj_8psx_math5int329isqrt_u32:5932
    3.1: 3772
    7: 1103
    13: 1057
- 2807: 572
- 2808: 565
- 2809: 593
- 2811: 569
- 2811: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:580
+ 2830: 572
+ 2831: 565
+ 2832: 593
+ 2834: 569
+ 2834: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:580
   4.34: 580
- 2811.1: 576
- 2812: 581
- 2813: 556
- 2814: 542
- 2818: 610
- 2819: 553
- 2828: 596
- 2831: _RNvMNtCsjHNIEcpe9Kk_4core6optionINtB2_6OptionTAlj3_tEE4takeCsa9Qy3L78YQJ_6hl_psx:554
+ 2834.1: 576
+ 2835: 581
+ 2836: 556
+ 2837: 542
+ 2841: 610
+ 2842: 553
+ 2851: 596
+ 2854: _RNvMNtCsjHNIEcpe9Kk_4core6optionINtB2_6OptionTAlj3_tEE4takeCsa9Qy3L78YQJ_6hl_psx:554
   2: _RINvNtCsjHNIEcpe9Kk_4core3mem7replaceINtNtB4_6option6OptionTAlj3_tEEECsa9Qy3L78YQJ_6hl_psx:554
    14: 554
- 2831.1: 1
- 2833: _RNvMs0_NtCsa9Qy3L78YQJ_6hl_psx4physNtB5_6Player14clear_velocity:1
+ 2854.1: 1
+ 2856: _RNvMs0_NtCsa9Qy3L78YQJ_6hl_psx4physNtB5_6Player14clear_velocity:1
   1: 1
- 2837: 554
- 2851: _RNvMs0_NtCsa9Qy3L78YQJ_6hl_psx4physNtB5_6Player17add_vertical_push:5
+ 2860: 554
+ 2874: _RNvMs0_NtCsa9Qy3L78YQJ_6hl_psx4physNtB5_6Player17add_vertical_push:5
   1: 2
   1: _RNvMs0_NtCsa9Qy3L78YQJ_6hl_psx4physNtB5_6Player20vertical_velocity_q6:1
    1: 1
@@ -1879,27 +1878,27 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    1: 1
    1: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys18split_planar_round:1
     4: 1
- 2857: 563
- 2858: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys7base_xz:521
+ 2880: 563
+ 2881: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys7base_xz:521
   1: 521
- 2859: 590
- 2859: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj2_NtNtB6_3cmp9PartialEq2eqCsa9Qy3L78YQJ_6hl_psx:608
+ 2882: 590
+ 2882: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj2_NtNtB6_3cmp9PartialEq2eqCsa9Qy3L78YQJ_6hl_psx:608
   1.4: _RNvXs7_NtNtCsjHNIEcpe9Kk_4core5array8equalitylINtB5_11SpecArrayEqlKj2_E7spec_eqCsa9Qy3L78YQJ_6hl_psx:608
    4.15: 608
- 2860: 534
- 2861: 571
- 2863: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys11set_base_xz:547
+ 2883: 534
+ 2884: 571
+ 2886: _RNvNtCsa9Qy3L78YQJ_6hl_psx4phys11set_base_xz:547
   1: 547
- 2864: 536
- 2867: 552
- 2888: 569
- 2889: 594
- 2908: 557
- 2933: 596
- 2942: 543
- 2954: 606
- 2955: 590
- 2963: _RNvCsa9Qy3L78YQJ_6hl_psx12aim_rotation:11330
+ 2887: 536
+ 2890: 552
+ 2911: 569
+ 2912: 594
+ 2931: 557
+ 2956: 596
+ 2965: 543
+ 2977: 606
+ 2978: 590
+ 2986: _RNvCsa9Qy3L78YQJ_6hl_psx12aim_rotation:11330
   1: _RNvCsa9Qy3L78YQJ_6hl_psx13view_rotation:9677
    1: _RNvCsa9Qy3L78YQJ_6hl_psx18view_rotation_roll:9677
     1: 551
@@ -1933,51 +1932,51 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   3: 534
   3: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:573
    9: 573
- 2965: 593
- 2968: 573
- 2971: 594
- 2972: 570
- 2972: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:605
+ 2988: 593
+ 2991: 573
+ 2994: 594
+ 2995: 570
+ 2995: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:605
   1: 605
- 2973: 594
- 2973: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:594
+ 2996: 594
+ 2996: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:594
   1: 594
- 2974: 545
- 2974: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:573
+ 2997: 545
+ 2997: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:573
   1: 573
- 2977: 567
- 2983: 593
- 2985: 573
- 2987: 549
- 3019: 551
- 3049.4: 567
- 3053: 596
- 3061: 549
- 3204: 558
- 3207: 567
- 3245: 554
- 3246: 572
- 3247: 592
- 3250: 588
- 3252.1: 324
- 3263: 2
- 3268: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx7set_ear:562
+ 3000: 567
+ 3006: 593
+ 3008: 573
+ 3010: 549
+ 3042: 551
+ 3072.4: 567
+ 3076: 596
+ 3084: 549
+ 3227: 558
+ 3230: 567
+ 3268: 554
+ 3269: 572
+ 3270: 592
+ 3273: 588
+ 3275.1: 324
+ 3286: 2
+ 3291: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx7set_ear:562
   1: _RNvMs0_NtCsLzN7oAaAAf_11psx_goldsrc4hsfxINtB5_4HsfxKj46_Kh2f_Kh30_E7set_earCsa9Qy3L78YQJ_6hl_psx:562
    1: 562
- 3269: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx16update_map_loops:567
+ 3292: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx16update_map_loops:567
   1: 567
- 3270: 562
- 3271: 18
- 3273: 570
- 3273: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:529
+ 3293: 562
+ 3294: 18
+ 3296: 570
+ 3296: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:529
   1.5: 529
- 3274: 568
- 3277: 576
- 3282: 564
- 3283: 584
- 3284: 577
- 3285: 562
- 3288: _RNvCsa9Qy3L78YQJ_6hl_psx13damage_player:27
+ 3297: 568
+ 3300: 576
+ 3305: 564
+ 3306: 584
+ 3307: 577
+ 3308: 562
+ 3311: _RNvCsa9Qy3L78YQJ_6hl_psx13damage_player:27
   1: 2
   2: _RNvCsa9Qy3L78YQJ_6hl_psx17damage_player_hit:13
    1: _RNvNtCsa9Qy3L78YQJ_6hl_psx8settings8debug_on:1
@@ -1988,7 +1987,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    8: 1
    13: 2
    15: 1
-   47224: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt14saturating_sub:3
+   46954: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt14saturating_sub:3
     1: 3
   3: _RNvCsa9Qy3L78YQJ_6hl_psx7hev_hit:10
    1: 2
@@ -2001,13 +2000,13 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   3: _RNvNtCsa9Qy3L78YQJ_6hl_psx3hev9take_kind:2
    1: 1
    2: 1
- 3290: 560
- 3290: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj3_NtNtB6_3cmp9PartialEq2neCsa9Qy3L78YQJ_6hl_psx:545
+ 3313: 560
+ 3313: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj3_NtNtB6_3cmp9PartialEq2neCsa9Qy3L78YQJ_6hl_psx:545
   1.8: _RNvXs7_NtNtCsjHNIEcpe9Kk_4core5array8equalitylINtB5_11SpecArrayEqlKj3_E7spec_neCsa9Qy3L78YQJ_6hl_psx:545
    1.8: _RNvXs7_NtNtCsjHNIEcpe9Kk_4core5array8equalitylINtB5_11SpecArrayEqlKj3_E7spec_eqCsa9Qy3L78YQJ_6hl_psx:545
     4.16: 545
- 3301: 551
- 3302: _RNvCsa9Qy3L78YQJ_6hl_psx10tick_props:524029
+ 3324: 551
+ 3325: _RNvCsa9Qy3L78YQJ_6hl_psx10tick_props:524029
   8: 538
   8: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm12wrapping_add:550
    1: 550
@@ -2038,8 +2037,8 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   42.1: 3286
   46: 10230
   46: _RNvNtCsa9Qy3L78YQJ_6hl_psx11monsterjump8airborne:4528
-   0: _RNvNtCsa9Qy3L78YQJ_6hl_psx11monsterjump20environment_eligible:4528
-    0: 4528
+   1: _RNvNtCsa9Qy3L78YQJ_6hl_psx11monsterjump20environment_eligible:4528
+    1: 4528
   46.3: 4533
   47: 5829
   52: _RNvCsa9Qy3L78YQJ_6hl_psx12ai_reacquire:81
@@ -2136,12 +2135,12 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     9: 21
     9: _RNvCsa9Qy3L78YQJ_6hl_psx19prop_scientist_flag:18
      1.1: 18
-    18: _RNvCsa9Qy3L78YQJ_6hl_psx18prop_hotlist_count:33
+    20: _RNvCsa9Qy3L78YQJ_6hl_psx18prop_hotlist_count:33
      1: 13
      2: 20
-    18.1: 14
-    22.1: 9
-    46: 13
+    20.1: 14
+    24.1: 9
+    48: 13
    22: _RNvCsa9Qy3L78YQJ_6hl_psx26prop_ai_set_target_visible:39
     1: 17
     4.1: 22
@@ -2307,78 +2306,78 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    109: 189
    109: _RNvCsa9Qy3L78YQJ_6hl_psx19prop_scientist_flag:206
     1: 206
-   153: 225
-   153: _RNvCsa9Qy3L78YQJ_6hl_psx8dist2_xz:618
+   150: 225
+   150: _RNvCsa9Qy3L78YQJ_6hl_psx8dist2_xz:618
     1: 205
     2: 201
     3: 212
-   155: 5
-   156: _RNvCsa9Qy3L78YQJ_6hl_psx16actor_line_clear:6
+   152: 5
+   153: _RNvCsa9Qy3L78YQJ_6hl_psx16actor_line_clear:6
     1: 3
     1.2: 3
-   159: _RNvCsa9Qy3L78YQJ_6hl_psx11prop_target:5
+   156: _RNvCsa9Qy3L78YQJ_6hl_psx11prop_target:5
     1.1: 5
-   162: _RNvCsa9Qy3L78YQJ_6hl_psx26prop_ai_set_target_visible:3
+   159: _RNvCsa9Qy3L78YQJ_6hl_psx26prop_ai_set_target_visible:3
     1.1: 2
     2.1: 1
-   167: 4
-   168: 7
-   171: 217
-   172: 204
+   164: 4
+   165: 7
+   168: 217
+   169: 204
   232: 484
   232: _RNvNtCsa9Qy3L78YQJ_6hl_psx7species10idle_think:904
    10: 448
    11: 320
    15: 136
- 3305: 587
- 3310: 583
- 3313: 601
- 3316: 558
- 3317: 625
- 3318: 551
- 3319: 586
- 3321: 565
- 3328: 571
- 3329: 556
- 3330: 560
- 3330: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal12clip_display:1104
+ 3328: 587
+ 3333: 583
+ 3336: 601
+ 3339: 558
+ 3340: 625
+ 3341: 551
+ 3342: 586
+ 3344: 565
+ 3351: 571
+ 3352: 556
+ 3353: 560
+ 3353: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal12clip_display:1104
   1: 553
   1.1: 551
- 3331: 545
- 3331: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal15reserve_display:1735
+ 3354: 545
+ 3354: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal15reserve_display:1735
   1: 546
   1: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal3def:631
    1: _RNvCsa9Qy3L78YQJ_6hl_psx7wdef_of:631
     1.1: 631
   1.1: 558
- 3372: 586
- 3374: 1
- 3398: 595
- 3401: 536
- 3405: _RNvNtCsa9Qy3L78YQJ_6hl_psx7mapsnap13arm_for_death:2
+ 3395: 586
+ 3397: 1
+ 3421: 595
+ 3424: 536
+ 3428: _RNvNtCsa9Qy3L78YQJ_6hl_psx7mapsnap13arm_for_death:2
   1: _RNvNtCsa9Qy3L78YQJ_6hl_psx7mapsnap4here:1
    1: _RNvNtCsa9Qy3L78YQJ_6hl_psx7mapsnap4slot:1
     1.1: 1
   2: 1
- 3408: 1
- 3413: _RNvNtCsa9Qy3L78YQJ_6hl_psx7mapsnap17rollback_to_entry:4
+ 3431: 1
+ 3436: _RNvNtCsa9Qy3L78YQJ_6hl_psx7mapsnap17rollback_to_entry:4
   1: 1
   3: 1
   4: 1
   5: 1
- 3415: 1
- 3417: 565
- 3421: 561
- 3424: 1
- 3437: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx12charger_stop:1
+ 3438: 1
+ 3440: 565
+ 3444: 561
+ 3447: 1
+ 3460: _RNvNtCsa9Qy3L78YQJ_6hl_psx3sfx12charger_stop:1
   1: 1
- 3441: 2
- 3446: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm12wrapping_add:588
+ 3464: 2
+ 3469: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm12wrapping_add:588
   1.6: 588
- 3447: 538
- 3451: 579
- 3452: 552
- 3455: _RNvMs0_CsgJPt85v5tve_8psx_tickNtB5_10FixedClock9end_frame:5322
+ 3470: 538
+ 3474: 579
+ 3475: 552
+ 3478: _RNvMs0_CsgJPt85v5tve_8psx_tickNtB5_10FixedClock9end_frame:5322
   1: 543
   1: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:516
    4: 516
@@ -2393,38 +2392,38 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   4: _RNvYtNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:555
    4: 555
   4.1: 500
- 3466: 529
- 3487: 460
- 3487: _RNvMs0_CsgJPt85v5tve_8psx_tickNtB5_10FixedClock9phase_q12:2055
+ 3489: 529
+ 3510: 460
+ 3510: _RNvMs0_CsgJPt85v5tve_8psx_tickNtB5_10FixedClock9phase_q12:2055
   1: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm12wrapping_sub:550
    1: 550
   3: 514
   6: 499
   6.3: 492
- 3487: _RNvNtCsee58V50lPRe_6psx_rt10interrupts12vblank_count:535
+ 3510: _RNvNtCsee58V50lPRe_6psx_rt10interrupts12vblank_count:535
   4.2: _RINvNtCsjHNIEcpe9Kk_4core3ptr13read_volatilemECsa9Qy3L78YQJ_6hl_psx:535
    11.2: 535
- 3493: 526
- 3494: 551
- 3501: 523
- 3506: 533
- 3519: 559
- 3519: _RNvNtCs3dFTdcjkgWj_8psx_math5int329isqrt_i32:4760
+ 3516: 526
+ 3517: 551
+ 3524: 523
+ 3529: 533
+ 3542: 559
+ 3542: _RNvNtCs3dFTdcjkgWj_8psx_math5int329isqrt_i32:4760
   4: _RNvNtCs3dFTdcjkgWj_8psx_math5int329isqrt_u32:4760
    3.1: 3118
    7: 803
    13: 839
- 3523: 537
- 3526: 220
- 3526: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:216
+ 3546: 537
+ 3549: 220
+ 3549: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:216
   4.14: 216
- 3528: 528
- 3528: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I168rotate_z:558
+ 3551: 528
+ 3551: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I168rotate_z:558
   2: _RNvNtCsg29Zqgvy0Hb_12psx_gte_core9transform10sin_1_3_12:558
    1.3: 558
- 3529: 530
- 3533: 494
- 3533: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I168rotate_y:2656
+ 3552: 530
+ 3556: 494
+ 3556: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I168rotate_y:2656
   1: _RNvNtCsg29Zqgvy0Hb_12psx_gte_core9transform10cos_1_3_12:1607
    2: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:537
     1: 537
@@ -2434,25 +2433,25 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   2: _RNvNtCsg29Zqgvy0Hb_12psx_gte_core9transform10sin_1_3_12:1049
    1.1: 530
    1.3: 519
- 3533: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_sub:511
+ 3556: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_sub:511
   1: 511
- 3535: 539
- 3536: 538
- 3536: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:1106
+ 3558: 539
+ 3559: 538
+ 3559: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:1106
   9.9: 515
   11.9: 591
- 3536.1: 500
- 3539: 555
- 3539: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:558
+ 3559.1: 500
+ 3562: 555
+ 3562: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:558
   9.12: 558
- 3540: 538
- 3541: 529
- 3542: 10
- 3542: _RNvYtNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:9
+ 3563: 538
+ 3564: 529
+ 3565: 10
+ 3565: _RNvYtNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:9
   4.9: 9
- 3542.4: 6
- 3550: 5
- 3550: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playse_0B3_:36
+ 3565.4: 6
+ 3573: 5
+ 3573: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playse_0B3_:36
   0: 6
   0: _RNvMNtCs7pFVxfANf1b_6psx_fx3rngNtB2_6LcgRng4next:23
    1: 10
@@ -2461,18 +2460,18 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    1: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm12wrapping_mul:9
     1: 9
   0.3: 7
- 3551: 5
- 3551: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playse_0B3_:18
+ 3574: 5
+ 3574: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playse_0B3_:18
   0: _RNvMNtCs7pFVxfANf1b_6psx_fx3rngNtB2_6LcgRng4next:11
    1: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm12wrapping_add:5
     1: 5
    1: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm12wrapping_mul:6
     1: 6
   0.3: 7
- 3552: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:10
+ 3575: _RNvXs1d_NtNtCsjHNIEcpe9Kk_4core3cmp5implslNtB8_3Ord5clamp:10
   9.15: 10
- 3553: 5
- 3553: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playse_0B3_:39
+ 3576: 5
+ 3576: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playse_0B3_:39
   0: 4
   0: _RNvMNtCs7pFVxfANf1b_6psx_fx3rngNtB2_6LcgRng4next:19
    1: 7
@@ -2482,14 +2481,14 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     1: 6
   0.1: 8
   0.3: 8
- 3557: 553
- 3558: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene20set_projection_plane:507
+ 3580: 553
+ 3581: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene20set_projection_plane:507
   65489: 507
- 3559: _RNvNtCsa9Qy3L78YQJ_6hl_psx6render16set_projection_h:529
+ 3582: _RNvNtCsa9Qy3L78YQJ_6hl_psx6render16set_projection_h:529
   1: _RNvMs1_NtCsLzN7oAaAAf_11psx_goldsrc6renderNtB5_8FullView16set_projection_h:529
    1: 529
- 3560: 536
- 3561: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:5300
+ 3583: 536
+ 3584: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:5300
   1: 594
   2: 534
   3: 495
@@ -2500,40 +2499,40 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   33.2: 530
   33.3: 513
   33.4: 494
- 3562: 555
- 3563: 536
- 3563: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:542
+ 3585: 555
+ 3586: 536
+ 3586: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:542
   1: 542
- 3564: 483
- 3564: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:556
+ 3587: 483
+ 3587: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:556
   1: 556
- 3565: 530
- 3565: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:594
+ 3588: 530
+ 3588: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:594
   1: 594
- 3567: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:1603
+ 3590: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:1603
   65523.7: 536
   65523.8: 531
   65523.9: 536
- 3568: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:1092
+ 3591: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:1092
   1: 536
   2: 556
- 3573: 520
- 3574.1: _RNvCsa9Qy3L78YQJ_6hl_psx19project_world_point:1
+ 3596: 520
+ 3597.1: _RNvCsa9Qy3L78YQJ_6hl_psx19project_world_point:1
   6: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:1
    1.1: 1
- 3590: 533
- 3593: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:510
+ 3613: 533
+ 3616: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:510
   1.1: 510
- 3594: 520
- 3598: 594
- 3611: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsf_0EB4_:540
+ 3617: 520
+ 3621: 594
+ 3634: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsf_0EB4_:540
   2: 540
- 3633: 545
- 3635: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsg_0EB4_:547
+ 3656: 545
+ 3658: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsg_0EB4_:547
   2: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playsg_0B3_:547
    0: _RINvMNtCs323T660O6Bz_7psx_gpu3gpuNtB3_3Gpu13submit_staticNtNtB5_5chain12DrawDoneNodeECsa9Qy3L78YQJ_6hl_psx:547
     3: 547
- 3636: _RNvMs0_NtCs323T660O6Bz_7psx_gpu7displayNtB5_12DoubleBuffer19begin_deferred_swap:2174
+ 3659: _RNvMs0_NtCs323T660O6Bz_7psx_gpu7displayNtB5_12DoubleBuffer19begin_deferred_swap:2174
   1: _RNvMs0_NtCs323T660O6Bz_7psx_gpu7displayNtB5_12DoubleBuffer11draw_origin:1363
    1: 560
    1: _RNvMs0_NtCs323T660O6Bz_7psx_gpu7displayNtB5_12DoubleBuffer3top:803
@@ -2542,10 +2541,10 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   2: 545
   3: _RNvNtNtCsvYOOMpHiQb_6psx_hw3gpu3gp113display_start:266
    1: 266
- 3636: _RNvNtCsee58V50lPRe_6psx_rt10interrupts31queue_display_control_at_vblank:543
+ 3659: _RNvNtCsee58V50lPRe_6psx_rt10interrupts31queue_display_control_at_vblank:543
   3: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatilemECsa9Qy3L78YQJ_6hl_psx:543
    11.1: 543
- 3646: _RNvMNtCs323T660O6Bz_7psx_gpu2otINtB2_13OrderingTableKj280_E5clearCsa9Qy3L78YQJ_6hl_psx:52005
+ 3669: _RNvMNtCs323T660O6Bz_7psx_gpu2otINtB2_13OrderingTableKj280_E5clearCsa9Qy3L78YQJ_6hl_psx:52005
   7: _RNvMNtCs323T660O6Bz_7psx_gpu2otINtB2_13OrderingTableKj280_E14clear_softwareCsa9Qy3L78YQJ_6hl_psx:52005
    8: _RINvNtCsjHNIEcpe9Kk_4core3ptr5writemECsa9Qy3L78YQJ_6hl_psx:546
     23: 546
@@ -2555,102 +2554,103 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     23.1: 3551
    55: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:3636
     34.2: 3636
- 3647: _RNvMNtCs323T660O6Bz_7psx_gpu2otINtB2_13OrderingTableKj1_E5clearCsa9Qy3L78YQJ_6hl_psx:540
+ 3670: _RNvMNtCs323T660O6Bz_7psx_gpu2otINtB2_13OrderingTableKj1_E5clearCsa9Qy3L78YQJ_6hl_psx:540
   7.1: _RNvMNtCs323T660O6Bz_7psx_gpu2otINtB2_13OrderingTableKj1_E14clear_softwareCsa9Qy3L78YQJ_6hl_psx:540
    8: _RINvNtCsjHNIEcpe9Kk_4core3ptr5writemECsa9Qy3L78YQJ_6hl_psx:540
     23: 540
- 3648: _RNvMNtCs323T660O6Bz_7psx_gpu2otINtB2_13OrderingTableKj1_E5clearCsa9Qy3L78YQJ_6hl_psx:528
+ 3671: _RNvMNtCs323T660O6Bz_7psx_gpu2otINtB2_13OrderingTableKj1_E5clearCsa9Qy3L78YQJ_6hl_psx:528
   7.2: _RNvMNtCs323T660O6Bz_7psx_gpu2otINtB2_13OrderingTableKj1_E14clear_softwareCsa9Qy3L78YQJ_6hl_psx:528
    8: _RINvNtCsjHNIEcpe9Kk_4core3ptr5writemECsa9Qy3L78YQJ_6hl_psx:528
     23: 528
- 3649: 511
- 3654: _RNvNtNtCsa9Qy3L78YQJ_6hl_psx8cdstream6target16invalidate_cache:537
+ 3672: 511
+ 3677: _RNvNtNtCsa9Qy3L78YQJ_6hl_psx8cdstream6target16invalidate_cache:537
   1: _RNvMs0_NtCsLzN7oAaAAf_11psx_goldsrc12chunk_streamINtB5_14CachedStreamerNtNtNtCs52mhn4g4tH3_6psx_io2cd6reader12SectorReaderNtNtNtCsa9Qy3L78YQJ_6hl_psx8cdstream6target5ArenaKj10_E16invalidate_cacheB22_:537
    1: 537
- 3657: _RNvCsa9Qy3L78YQJ_6hl_psx13tex_anim_tick:1632
+ 3680: _RNvCsa9Qy3L78YQJ_6hl_psx13tex_anim_tick:1632
   1: 545
   2: 548
   2: _RINvYINtNtNtCsjHNIEcpe9Kk_4core3ops5range5RangejENtNtNtNtBa_4iter6traits8iterator8Iterator3mapTRShB1v_ENCNvCsa9Qy3L78YQJ_6hl_psx13tex_anim_tick0EB1H_:539
    5: _RNvMNtNtNtCsjHNIEcpe9Kk_4core4iter8adapters3mapINtB2_3MapINtNtNtB8_3ops5range5RangejENCNvCsa9Qy3L78YQJ_6hl_psx13tex_anim_tick0E3newB1p_:539
     1: 539
- 3658: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map15tex_anim_select:527
+ 3681: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map15tex_anim_select:527
   1: 527
- 3665: _RINvMse_NtCsfio7irpgDw3_10psx_engine6renderNtB6_20PrimitivePacketArena3newKj598_ECsa9Qy3L78YQJ_6hl_psx:547
+ 3688: _RINvMse_NtCsfio7irpgDw3_10psx_engine6renderNtB6_20PrimitivePacketArena3newKj598_ECsa9Qy3L78YQJ_6hl_psx:547
   2: 547
- 3666: 526
- 3667: 516
- 3669: 512
- 3676: 543
- 3678: 520
- 3679: 510
- 3688: 527
- 3688: _RNvCsa9Qy3L78YQJ_6hl_psx17pvs_cam_leaf_load:532
+ 3689: 526
+ 3690: 516
+ 3692: 512
+ 3699: 543
+ 3701: 520
+ 3702: 510
+ 3711: 527
+ 3711: _RNvCsa9Qy3L78YQJ_6hl_psx17pvs_cam_leaf_load:532
   1: _RINvNtCsjHNIEcpe9Kk_4core3ptr13read_volatilelECsa9Qy3L78YQJ_6hl_psx:532
    11: 532
- 3689: 532
- 3691: 528
- 3692: 504
- 3692: _RNvCsa9Qy3L78YQJ_6hl_psx14valid_pvs_leaf:508
+ 3712: 532
+ 3714: 528
+ 3715: 504
+ 3715: _RNvCsa9Qy3L78YQJ_6hl_psx14valid_pvs_leaf:508
   1: 508
- 3694: 544
- 3694.4: 541
- 3694.4: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map11leaf_liquid:1583
+ 3717: 544
+ 3717.4: 541
+ 3717.4: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map11leaf_liquid:1583
   6: 523
   7: 501
   7: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map6rd_u16:559
    1: 559
- 3695: 542
- 3700: 493
- 3700: _RNvCsa9Qy3L78YQJ_6hl_psx17pvs_cam_leaf_load:532
+ 3718: 542
+ 3723: 493
+ 3723: _RNvCsa9Qy3L78YQJ_6hl_psx17pvs_cam_leaf_load:532
   1: _RINvNtCsjHNIEcpe9Kk_4core3ptr13read_volatilelECsa9Qy3L78YQJ_6hl_psx:532
    11: 532
- 3710: 571
- 3718: 522
- 3721: 550
- 3726: 537
- 3728: 522
- 3728.3: 558
- 3731: 526
- 3743: 16
- 3744: 21
- 3747: 23
- 3747: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map10paired_pvs:43
+ 3733: 571
+ 3741: 522
+ 3744: 550
+ 3749: 537
+ 3751: 522
+ 3751.3: 558
+ 3754: 526
+ 3766: 16
+ 3767: 21
+ 3770: 23
+ 3770: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map10paired_pvs:43
   1: 24
-  1: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map6rd_u32:19
+  2: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map6rd_u32:19
    3: 19
- 3759: 23
- 3764: 19
- 3764.1: 22
- 3767: 26
- 3779: 514
- 3805: 507
- 3808.1: 526
- 3809: 552
- 3809.1: 552
- 3810: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:2662
+ 3782: 23
+ 3787: 19
+ 3787.1: 22
+ 3790: 26
+ 3802: 514
+ 3828: 507
+ 3831.1: 526
+ 3832: 552
+ 3832.1: 552
+ 3833: 517
+ 3834: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:2662
   1: 525
   2: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18reset_dynamic_face:2137
    2: 547
    3: 521
    4: 554
    5: 515
- 3817: 515
- 3818: 514
- 3819: 573
- 3827: 503
- 3829: 537
- 3830: 514
- 3832: _RNvYtNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:1
+ 3841: 515
+ 3842: 514
+ 3843: 573
+ 3851: 503
+ 3853: 537
+ 3854: 514
+ 3856: _RNvYtNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:1
   4.18: 1
- 3837: 1
- 3841: 505
- 3842: 543
- 3842.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:96413
+ 3861: 1
+ 3865: 505
+ 3866: 543
+ 3866.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:96413
   1.5: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:96413
    1.3: 96413
- 3843: 96580
- 3843.1: 96581
- 3844: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18cooked_group_plane:1227086
+ 3867: 96580
+ 3867.1: 96581
+ 3868: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18cooked_group_plane:1227086
   1: 96890
   1: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map14rd_i16_aligned:192940
    1: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map14rd_u16_aligned:192940
@@ -2680,11 +2680,11 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     1: 41325
   20: 96777
   21: 26866
- 3845: 96772
- 3845: _RNvCsa9Qy3L78YQJ_6hl_psx9dot_plane:97589
+ 3869: 96772
+ 3869: _RNvCsa9Qy3L78YQJ_6hl_psx9dot_plane:97589
   1: 97589
- 3846: 37212
- 3847: _RNvCsa9Qy3L78YQJ_6hl_psx18scratch_bit_assign:297917
+ 3870: 37212
+ 3871: _RNvCsa9Qy3L78YQJ_6hl_psx18scratch_bit_assign:297917
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:59606
    34: 59606
   2: 59633
@@ -2695,7 +2695,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   4: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm5writeCsa9Qy3L78YQJ_6hl_psx:59477
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr5writemECsa9Qy3L78YQJ_6hl_psx:59477
     23: 59477
- 3847.1: _RNvCsa9Qy3L78YQJ_6hl_psx18scratch_bit_assign:185303
+ 3871.1: _RNvCsa9Qy3L78YQJ_6hl_psx18scratch_bit_assign:185303
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:37193
    34: 37193
   2: 37259
@@ -2706,127 +2706,127 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   4: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm5writeCsa9Qy3L78YQJ_6hl_psx:36841
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr5writemECsa9Qy3L78YQJ_6hl_psx:36841
     23: 36841
- 3848.3: 59555
- 3849: 42
- 3849.1: 56
- 3850.1: 152
- 3851: 18
- 3852: 141
- 3852.1: 135
- 3853: 19
- 3856.1: 13
- 3858: 18
- 3859: 14
- 3860: 13
- 3862: 11
- 3862: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:18
+ 3872.3: 59555
+ 3873: 42
+ 3873.1: 56
+ 3874.1: 152
+ 3875: 18
+ 3876: 141
+ 3876.1: 135
+ 3877: 19
+ 3880.1: 13
+ 3882: 18
+ 3883: 14
+ 3884: 13
+ 3886: 11
+ 3886: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:18
   1: 18
- 3862: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:14
+ 3886: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:14
   4.17: 14
- 3863: 20
- 3863: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec8set_band:11
+ 3887: 20
+ 3887: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec8set_band:11
   1: 11
- 3863: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:11
+ 3887: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:11
   4.44: 11
- 3868.1: 118
- 3868.1: _RNvCsa9Qy3L78YQJ_6hl_psx16pvs_entry_sealed:523
+ 3892.1: 118
+ 3892.1: _RNvCsa9Qy3L78YQJ_6hl_psx16pvs_entry_sealed:523
   1: 154
   4.1: 121
   5: 123
   5.1: 125
- 3871: 115
- 3872.1: 126
- 3874: 116
- 3875: 110
- 3876: 117
- 3878: 99
- 3878: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:128
+ 3895: 115
+ 3896.1: 126
+ 3898: 116
+ 3899: 110
+ 3900: 117
+ 3902: 99
+ 3902: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:128
   1: 128
- 3878: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:124
+ 3902: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:124
   4.21: 124
- 3879: 103
- 3879: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:115
+ 3903: 103
+ 3903: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:115
   4.48: 115
- 3880: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec8set_band:134
+ 3904: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec8set_band:134
   1.1: 134
- 3888: _RNvCsa9Qy3L78YQJ_6hl_psx14pvs_entry_kind:118
+ 3912: _RNvCsa9Qy3L78YQJ_6hl_psx14pvs_entry_kind:118
   3: 118
- 3895.1: 131
- 3899: 536
- 3903.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:17
+ 3919.1: 131
+ 3923: 536
+ 3927.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:17
   1.6: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:17
    1.4: 8
    1.6: _RNvXsU_NtNtCsjHNIEcpe9Kk_4core3cmp5implsjNtB7_10PartialOrd2lt:9
     0.17: 9
- 3904.1: 10
- 3905: 7
- 3907: 1
- 3908: _RNvMNtCsjHNIEcpe9Kk_4core5sliceSt15copy_from_sliceCsa9Qy3L78YQJ_6hl_psx:1
+ 3928.1: 10
+ 3929: 7
+ 3931: 1
+ 3932: _RNvMNtCsjHNIEcpe9Kk_4core5sliceSt15copy_from_sliceCsa9Qy3L78YQJ_6hl_psx:1
   5: _RINvNtCsjHNIEcpe9Kk_4core5slice20copy_from_slice_impltECsa9Qy3L78YQJ_6hl_psx:1
    23: _RINvNtCsjHNIEcpe9Kk_4core3ptr19copy_nonoverlappingtECsa9Qy3L78YQJ_6hl_psx:1
     21: 1
- 3909.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:89
+ 3933.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:89
   1.7: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:89
    1.5: 89
- 3910: _RNvCsa9Qy3L78YQJ_6hl_psx11scratch_bit:257
+ 3934: _RNvCsa9Qy3L78YQJ_6hl_psx11scratch_bit:257
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:80
    34: 80
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm4readCsa9Qy3L78YQJ_6hl_psx:90
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readmECsa9Qy3L78YQJ_6hl_psx:90
     39: 90
   2: 87
- 3913: 37
- 3913.1: 42
- 3914: 49
- 3914.1: 48
- 3915.1: 135
- 3917: 151
- 3917.1: 121
- 3918: 136
- 3918: _RNvCsa9Qy3L78YQJ_6hl_psx16pvs_entry_sealed:539
+ 3937: 37
+ 3937.1: 42
+ 3938: 49
+ 3938.1: 48
+ 3939.1: 135
+ 3941: 151
+ 3941.1: 121
+ 3942: 136
+ 3942: _RNvCsa9Qy3L78YQJ_6hl_psx16pvs_entry_sealed:539
   1: 146
   4.1: 123
   5: 121
   5.1: 149
- 3921: 111
- 3922: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec4band:97
+ 3945: 111
+ 3946: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec4band:97
   1.1: 97
- 3922.1: 125
- 3929: 125
- 3929: _RNvCsa9Qy3L78YQJ_6hl_psx14pvs_entry_kind:128
+ 3946.1: 125
+ 3953: 125
+ 3953: _RNvCsa9Qy3L78YQJ_6hl_psx14pvs_entry_kind:128
   3: 128
- 3930.1: 134
- 3931: 121
- 3931.1: 117
- 3932.1: 119
- 3933: 133
- 3942.1: 504
- 3943.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:538
+ 3954.1: 134
+ 3955: 121
+ 3955.1: 117
+ 3956.1: 119
+ 3957: 133
+ 3966.1: 504
+ 3967.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:538
   1.8: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:538
    1.13: 538
- 3947: _RNvCsa9Qy3L78YQJ_6hl_psx11scratch_bit:289759
+ 3971: _RNvCsa9Qy3L78YQJ_6hl_psx11scratch_bit:289759
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:96594
    34: 96594
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm4readCsa9Qy3L78YQJ_6hl_psx:96494
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readmECsa9Qy3L78YQJ_6hl_psx:96494
     39: 96494
   2: 96671
- 3950: 59430
- 3950.1: 59840
- 3951.1: 59524
- 3952.1: 188054
- 3953: 194572
- 3954: 194641
- 3954.1: 195027
- 3955: 194737
- 3960: 189933
- 3960.1: 128843
- 3960.2: 128922
- 3963.1: 180862
- 3964: 181451
- 3964.1: 61
- 3969: 41749
- 3969: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility16world_sphere_gte:876514
+ 3974: 59430
+ 3974.1: 59840
+ 3975.1: 59524
+ 3976.1: 188054
+ 3977: 194572
+ 3978: 194641
+ 3978.1: 195027
+ 3979: 194737
+ 3984: 189933
+ 3984.1: 128843
+ 3984.2: 128922
+ 3987.1: 180862
+ 3988: 181451
+ 3988.1: 61
+ 3993: 41749
+ 3993: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility16world_sphere_gte:876514
   1: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene26transform_vertex_scheduled:180749
    3: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene21transform_vertex_mips:180749
     11: 180749
@@ -2842,10 +2842,10 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     8: _RNvMs0_NtCsjHNIEcpe9Kk_4core3numl3abs:42038
      4.3: 42038
     8.1: 41886
- 3971: 32880
- 3971: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec7special:33391
+ 3995: 32880
+ 3995: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec7special:33391
   1: 33391
- 3972: _RNvCsa9Qy3L78YQJ_6hl_psx20set_emit_cached_face:34236
+ 3996: _RNvCsa9Qy3L78YQJ_6hl_psx20set_emit_cached_face:34236
   4: 3291
   4: _RNvMs2_Csa9Qy3L78YQJ_6hl_psxNtB5_10EmitPolicy12from_surface:13783
    13.2: 3540
@@ -2860,36 +2860,36 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   11: _RNvMs2_Csa9Qy3L78YQJ_6hl_psxNtB5_10EmitPolicy21with_underwater_blend:3443
    1: 3443
   12: 3410
- 3974: 30007
- 3975: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:3360
+ 3998: 30007
+ 3999: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:3360
   1: 704
   2: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18reset_dynamic_face:2656
    2: 695
    3: 630
    4: 689
    5: 642
- 3978: 33235
- 3978.1: 27432
- 3981: 27530
- 3986: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec5count:27305
+ 4002: 33235
+ 4002.1: 27432
+ 4005: 27530
+ 4010: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec5count:27305
   1: 27305
- 3987: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec16refined_topology:27477
+ 4011: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec16refined_topology:27477
   1: 27477
- 3993: 5669
- 3993: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec7is_loop:5714
+ 4017: 5669
+ 4017: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec7is_loop:5714
   1: 5714
- 3993.1: 1134
- 3993.2: 4571
- 3994: 4582
- 3999: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec5count:4521
+ 4017.1: 1134
+ 4017.2: 4571
+ 4018: 4582
+ 4023: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec5count:4521
   1.2: 4521
- 4007: 1200
- 4011: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec5count:1186
+ 4031: 1200
+ 4035: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec5count:1186
   1.1: 1186
- 4024: 5250
- 4024.1: 3587
- 4024.2: 3739
- 4027: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map11face_bounds:35613
+ 4048: 5250
+ 4048.1: 3587
+ 4048.2: 3739
+ 4051: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map11face_bounds:35613
   1: 5007
   2: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh3addCsa9Qy3L78YQJ_6hl_psx:4933
    34: 4933
@@ -2905,17 +2905,17 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    0.2: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:5164
     5.4: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:5164
      39: 5164
- 4028: 5044
- 4028: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:5203
+ 4052: 5044
+ 4052: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:5203
   1: 5203
- 4028: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:5052
+ 4052: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:5052
   4.13: 5052
- 4029: 2978
- 4029: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:2873
+ 4053: 2978
+ 4053: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:2873
   4.37: 2873
- 4029.1: 5096
- 4032: 690
- 4032: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility6sphere:31331
+ 4053.1: 5096
+ 4056: 690
+ 4056: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility6sphere:31331
   1: 1369
   1: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility11view_center:12979
    2: 1287
@@ -2937,7 +2937,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     8: _RNvMs0_NtCsjHNIEcpe9Kk_4core3numl3abs:674
      4.3: 674
     8.1: 749
- 4033: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map9face_tris:2590
+ 4057: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map9face_tris:2590
   4: _RNCNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB4_3Map9face_tris0B6_:2590
    0: 658
    0: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:1260
@@ -2948,8 +2948,8 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    0.1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:672
     5.2: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:672
      39: 672
- 4035: 663
- 4035: _RNvCsa9Qy3L78YQJ_6hl_psx23face_needs_generic_emit:2667
+ 4059: 663
+ 4059: _RNvCsa9Qy3L78YQJ_6hl_psx23face_needs_generic_emit:2667
   1: 722
   1: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map11face_liquid:676
    5: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:676
@@ -2960,7 +2960,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    4: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:645
     5.4: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:645
      39.3: 645
- 4037: _RNvCsa9Qy3L78YQJ_6hl_psx13set_emit_face:74
+ 4061: _RNvCsa9Qy3L78YQJ_6hl_psx13set_emit_face:74
   1: 4
   2: 9
   2: _RNvMs2_Csa9Qy3L78YQJ_6hl_psxNtB5_10EmitPolicy21with_underwater_blend:9
@@ -2975,50 +2975,50 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    3: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map16face_translucent:8
     1: 8
   3: 12
- 4039: 670
- 4040: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:23
+ 4063: 670
+ 4064: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:23
   1: 6
   2: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18reset_dynamic_face:17
    2: 4
    3: 5
    4: 4
    5: 4
- 4043: 701
- 4043: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map13face_is_patch:1940
+ 4067: 701
+ 4067: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map13face_is_patch:1940
   2: 608
   4: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh3addCsa9Qy3L78YQJ_6hl_psx:676
    34: 676
   5: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:656
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:656
     39: 656
- 4043.1: 594
- 4046: 619
- 4049: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map8face_tex:573
+ 4067.1: 594
+ 4070: 619
+ 4073: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map8face_tex:573
   5: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:573
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:573
     39: 573
- 4052: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map21face_refined_topology:602
+ 4076: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map21face_refined_topology:602
   2: 602
- 4058: 69
- 4058.1: 15
- 4059: 70
- 4062: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map8face_tex:52
+ 4082: 69
+ 4082.1: 15
+ 4083: 70
+ 4086: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map8face_tex:52
   5: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:52
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:52
     39: 52
- 4072: 22
- 4077: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map21face_refined_topology:20
+ 4096: 22
+ 4101: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map21face_refined_topology:20
   2: 20
- 4093: 3
- 4093.1: 4
- 4094: 2
- 4094.1: 6
- 4096.2: 120
- 4097.1: 134
- 4099: 108
- 4100.1: 138
- 4104: 52
- 4104: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility16world_sphere_gte:695
+ 4117: 3
+ 4117.1: 4
+ 4118: 2
+ 4118.1: 6
+ 4120.2: 120
+ 4121.1: 134
+ 4123: 108
+ 4124.1: 138
+ 4128: 52
+ 4128: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility16world_sphere_gte:695
   1: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene26transform_vertex_scheduled:132
    3: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene21transform_vertex_mips:132
     11: 132
@@ -3034,10 +3034,10 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     8: _RNvMs0_NtCsjHNIEcpe9Kk_4core3numl3abs:67
      4.3: 67
     8.1: 54
- 4106: 57
- 4106: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec7special:41
+ 4130: 57
+ 4130: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec7special:41
   1.1: 41
- 4107: _RNvCsa9Qy3L78YQJ_6hl_psx20set_emit_cached_face:22
+ 4131: _RNvCsa9Qy3L78YQJ_6hl_psx20set_emit_cached_face:22
   4: _RNvMs2_Csa9Qy3L78YQJ_6hl_psxNtB5_10EmitPolicy12from_surface:7
    13.2: 2
    14: 1
@@ -3051,66 +3051,66 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   11: _RNvMs2_Csa9Qy3L78YQJ_6hl_psxNtB5_10EmitPolicy21with_underwater_blend:4
    1: 4
   12: 3
- 4109: 50
- 4110: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:5
+ 4133: 50
+ 4134: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:5
   1: 2
   2: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18reset_dynamic_face:3
    2: 1
    3: 1
    4: 1
- 4113: 51
- 4113.1: 42
- 4116: 48
- 4121: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec5count:54
+ 4137: 51
+ 4137.1: 42
+ 4140: 48
+ 4145: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec5count:54
   1.3: 54
- 4122: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec16refined_topology:38
+ 4146: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec16refined_topology:38
   1.2: 38
- 4128: 12
- 4128: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec7is_loop:6
+ 4152: 12
+ 4152: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec7is_loop:6
   1.1: 6
- 4128.2: 12
- 4129: 17
- 4134: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec5count:10
+ 4152.2: 12
+ 4153: 17
+ 4158: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec5count:10
   1.5: 10
- 4142: 2
- 4146: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec5count:3
+ 4166: 2
+ 4170: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc9pvs_facesNtB2_10PvsFaceRec5count:3
   1.4: 3
- 4217: 522
- 4220: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:2617
+ 4241: 522
+ 4244: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:2617
   1: 499
   2: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18reset_dynamic_face:2118
    2: 543
    3: 507
    4: 536
    5: 532
- 4222: _RNvCsa9Qy3L78YQJ_6hl_psx30finish_world_affine_candidates:808
+ 4246: _RNvCsa9Qy3L78YQJ_6hl_psx30finish_world_affine_candidates:808
   1: 534
   10: 274
- 4310: 552
- 4310.2: 495
- 4311: 535
- 4311: _RNvMse_NtCsfio7irpgDw3_10psx_engine6renderNtB5_20PrimitivePacketArena9remaining:1584
+ 4334: 552
+ 4334.2: 495
+ 4335: 535
+ 4335: _RNvMse_NtCsfio7irpgDw3_10psx_engine6renderNtB5_20PrimitivePacketArena9remaining:1584
   1: 506
   1: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj14saturating_sub:544
    1: 544
   1: _RNvMse_NtCsfio7irpgDw3_10psx_engine6renderNtB5_20PrimitivePacketArena8capacity:534
    1: 534
- 4325: 507
- 4338: _RNvCsa9Qy3L78YQJ_6hl_psx16clear_group_bits:538
+ 4349: 507
+ 4362: _RNvCsa9Qy3L78YQJ_6hl_psx16clear_group_bits:538
   3: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm5writeCsa9Qy3L78YQJ_6hl_psx:538
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr5writemECsa9Qy3L78YQJ_6hl_psx:538
     23: 538
- 4339: 534
- 4342: 551
- 4347: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj8div_ceil:1002
+ 4363: 534
+ 4366: 551
+ 4371: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj8div_ceil:1002
   1.1: 477
   3.3: 525
- 4347: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:535
+ 4371: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:535
   4.20: 535
- 4349.1: 495
- 4350.1: 538
- 4354.1: 1066
- 4355.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:67127
+ 4373.1: 495
+ 4374.1: 538
+ 4378.1: 1066
+ 4379.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:67127
   1.9: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:67127
    1.9: 33207
    1.9: _RNvXsU_NtNtCsjHNIEcpe9Kk_4core3cmp5implsjNtB7_10PartialOrd2lt:687
@@ -3118,26 +3118,26 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    4.9: _RNvXsD_NtNtCsjHNIEcpe9Kk_4core4iter5rangejNtB5_4Step17forward_unchecked:33233
     2.9: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj13unchecked_add:33233
      12.9: 33233
- 4356: 33429
- 4356.1: 16698
- 4356.2: 16890
- 4359: 17526
- 4359.2: 17602
- 4359.3: 17723
- 4363: 17725
- 4363.1: 17690
- 4364: 17690
- 4365: 16878
- 4366: _RNvNtCsLzN7oAaAAf_11psx_goldsrc16visibility_logic15pvs_visible_now:10293
+ 4380: 33429
+ 4380.1: 16698
+ 4380.2: 16890
+ 4383: 17526
+ 4383.2: 17602
+ 4383.3: 17723
+ 4387: 17725
+ 4387.1: 17690
+ 4388: 17690
+ 4389: 16878
+ 4390: _RNvNtCsLzN7oAaAAf_11psx_goldsrc16visibility_logic15pvs_visible_now:10293
   5: 10293
- 4367: _RNvCsa9Qy3L78YQJ_6hl_psx20entity_uses_live_pvs:71762
+ 4391: _RNvCsa9Qy3L78YQJ_6hl_psx20entity_uses_live_pvs:71762
   1: 16904
   4.1: 15454
   5: 15710
   8: 15195
   8.1: 8499
- 4374: 8867
- 4374: _RNvCsa9Qy3L78YQJ_6hl_psx22static_brush_cacheable:47676
+ 4398: 8867
+ 4398: _RNvCsa9Qy3L78YQJ_6hl_psx22static_brush_cacheable:47676
   3: 8908
   5: _RNvMs0_NtCsjHNIEcpe9Kk_4core3numl3abs:1570
    4: 532
@@ -3154,12 +3154,12 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   18: 8649
   18.1: 478
   19: 8174
- 4375: 963
- 4375.1: 947
- 4379.1: 9021
- 4379.4: 8905
- 4382: 7992
- 4383: _RNvCsa9Qy3L78YQJ_6hl_psx15ent_draw_offset:34275
+ 4399: 963
+ 4399.1: 947
+ 4403.1: 9021
+ 4403.4: 8905
+ 4406: 7992
+ 4407: _RNvCsa9Qy3L78YQJ_6hl_psx15ent_draw_offset:34275
   1.2: 8152
   2: 89
   2.1: 99
@@ -3175,12 +3175,12 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   17: 1852
   22: 746
   24: 5428
- 4384: 5357
- 4386.1: 8122
- 4387: 8086
- 4393.1: 220
- 4394: 208
- 4394: _RNvCsa9Qy3L78YQJ_6hl_psx13fan_angle_q12:1735
+ 4408: 5357
+ 4410.1: 8122
+ 4411: 8086
+ 4417.1: 220
+ 4418: 208
+ 4418: _RNvCsa9Qy3L78YQJ_6hl_psx13fan_angle_q12:1735
   1.1: 226
   2: _RNvCsa9Qy3L78YQJ_6hl_psx15fan_logic_index:442
    4.1: 220
@@ -3193,10 +3193,10 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   11: 220
   13: 200
   17: 210
- 4394.1: _RNvCsa9Qy3L78YQJ_6hl_psx12fan_rotation:249
+ 4418.1: _RNvCsa9Qy3L78YQJ_6hl_psx12fan_rotation:249
   2: 249
- 4395: 247
- 4395: _RNvCsa9Qy3L78YQJ_6hl_psx21rotating_local_center:1558
+ 4419: 247
+ 4419: _RNvCsa9Qy3L78YQJ_6hl_psx21rotating_local_center:1558
   1: 203
   2: 223
   2: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:235
@@ -3207,15 +3207,15 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   4: 203
   4: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:239
    1: 239
- 4397: 134
- 4397: _RNvCsa9Qy3L78YQJ_6hl_psx18pendulum_angle_q12:237
+ 4421: 134
+ 4421: _RNvCsa9Qy3L78YQJ_6hl_psx18pendulum_angle_q12:237
   1: 107
   1: _RNvCsa9Qy3L78YQJ_6hl_psx18pendulum_phase_q19:130
    1.1: 130
- 4397.1: _RNvCsa9Qy3L78YQJ_6hl_psx17pendulum_rotation:237
+ 4421.1: _RNvCsa9Qy3L78YQJ_6hl_psx17pendulum_rotation:237
   1: 100
   2: 137
- 4397.2: _RNvCsa9Qy3L78YQJ_6hl_psx21rotating_local_center:857
+ 4421.2: _RNvCsa9Qy3L78YQJ_6hl_psx21rotating_local_center:857
   1: 125
   2: 115
   2: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:131
@@ -3226,26 +3226,26 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   4: 119
   4: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:130
    1: 130
- 4398.5: 517
- 4399.1: 563
- 4400: 536
- 4401: 530
- 4402: 536
- 4402: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:536
+ 4422.5: 517
+ 4423.1: 563
+ 4424: 536
+ 4425: 530
+ 4426: 536
+ 4426: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:536
   1: 536
- 4403: 543
- 4403: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:563
+ 4427: 543
+ 4427: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:563
   1: 563
- 4404: 521
- 4404: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:534
+ 4428: 521
+ 4428: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:534
   1: 534
- 4407: 7188
- 4408: 7204
- 4409: 7320
- 4410: 7311
- 4413: 7263
- 4417: 207
- 4417: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility10box_bounds:3475
+ 4431: 7188
+ 4432: 7204
+ 4433: 7320
+ 4434: 7311
+ 4437: 7263
+ 4441: 207
+ 4441: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility10box_bounds:3475
   7: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility11view_center:409
    4: 202
    4: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:207
@@ -3275,7 +3275,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   17.1: 157
   17.3: 118
   17.4: 137
- 4419: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility6sphere:75495
+ 4443: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility6sphere:75495
   1: 4446
   1: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility11view_center:32750
    2: 4372
@@ -3298,12 +3298,12 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     8: _RNvMs0_NtCsjHNIEcpe9Kk_4core3numl3abs:2420
      4.3: 2420
     8.1: 2447
- 4421: 2399
- 4426: 2277
- 4426.2: 277
- 4427: 279
- 4431: 2281
- 4458: _RNvCsa9Qy3L78YQJ_6hl_psx13fan_angle_q12:328
+ 4445: 2399
+ 4450: 2277
+ 4450.2: 277
+ 4451: 279
+ 4455: 2281
+ 4482: _RNvCsa9Qy3L78YQJ_6hl_psx13fan_angle_q12:328
   1.1: 44
   2: _RNvCsa9Qy3L78YQJ_6hl_psx15fan_logic_index:92
    4.1: 45
@@ -3316,14 +3316,14 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   11: 35
   13: 29
   17: 37
- 4460: _RNvCsa9Qy3L78YQJ_6hl_psx18pendulum_angle_q12:102
+ 4484: _RNvCsa9Qy3L78YQJ_6hl_psx18pendulum_angle_q12:102
   1: 46
   1: _RNvCsa9Qy3L78YQJ_6hl_psx18pendulum_phase_q19:56
    1.1: 56
- 4462.1: 139
- 4466: 127
- 4467: 36
- 4467: _RNvCsa9Qy3L78YQJ_6hl_psx12fan_rotation:204
+ 4486.1: 139
+ 4490: 127
+ 4491: 36
+ 4491: _RNvCsa9Qy3L78YQJ_6hl_psx12fan_rotation:204
   2: 41
   4: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I168rotate_z:9
    1: _RNvNtCsg29Zqgvy0Hb_12psx_gte_core9transform10cos_1_3_12:3
@@ -3341,9 +3341,9 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     1.3: 28
    3: 46
    4: 37
- 4468.2: 138
- 4469: 49
- 4469: _RNvCsa9Qy3L78YQJ_6hl_psx17pendulum_rotation:327
+ 4492.2: 138
+ 4493: 49
+ 4493: _RNvCsa9Qy3L78YQJ_6hl_psx17pendulum_rotation:327
   1: 34
   2: 50
   4: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I168rotate_z:1
@@ -3357,8 +3357,8 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     1.3: 44
    3: 50
    4: 59
- 4471: 131
- 4473: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I163mul:1539
+ 4495: 131
+ 4497: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I163mul:1539
   4.1: 144
   5: 242
   5: _RNvNtCsg29Zqgvy0Hb_12psx_gte_core9transform16clamp_i32_to_i16:242
@@ -3370,27 +3370,27 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     1: 218
    4.3: 241
    7: 210
- 4474: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:1096
+ 4498: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:1096
   33: 223
   33.1: 203
   33.2: 228
   33.3: 219
   33.4: 223
- 4478: 210
- 4480: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:213
+ 4502: 210
+ 4504: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:213
   1: 213
- 4481: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:242
+ 4505: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:242
   1: 242
- 4482: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:229
+ 4506: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:229
   1: 229
- 4484: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:608
+ 4508: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:608
   65523.4: 186
   65523.16: 210
   65523.17: 212
- 4485: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:413
+ 4509: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:413
   1: 210
   2: 203
- 4486: _RNvCsa9Qy3L78YQJ_6hl_psx15next_proj_token:604
+ 4510: _RNvCsa9Qy3L78YQJ_6hl_psx15next_proj_token:604
   2: 213
   2: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:179
    1: 179
@@ -3398,8 +3398,8 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   3.3: 1
   5: 1
   8: 1
- 4487: 182
- 4487: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map8submodel:2271
+ 4511: 182
+ 4511: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map8submodel:2271
   1: 210
   3: 191
   3: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map6rd_u32:1060
@@ -3415,23 +3415,23 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    4: 212
    5: 189
    7: 218
- 4488: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:1013
+ 4512: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:1013
   1: 224
   2: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18reset_dynamic_face:789
    2: 189
    3: 183
    4: 215
    5: 202
- 4489: 186
- 4489.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:9533
+ 4513: 186
+ 4513.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:9533
   1.10: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:9533
    1.10: 4798
    1.10: _RNvXsU_NtNtCsjHNIEcpe9Kk_4core3cmp5implsjNtB7_10PartialOrd2lt:4735
     0.32: 4735
- 4490: 4658
- 4490: _RNvNtCsLzN7oAaAAf_11psx_goldsrc16visibility_logic18brush_packet_blend:4729
+ 4514: 4658
+ 4514: _RNvNtCsLzN7oAaAAf_11psx_goldsrc16visibility_logic18brush_packet_blend:4729
   1: 4729
- 4490.1: _RNvCsa9Qy3L78YQJ_6hl_psx13set_emit_face:28599
+ 4514.1: _RNvCsa9Qy3L78YQJ_6hl_psx13set_emit_face:28599
   1: 4748
   2: _RNvMs2_Csa9Qy3L78YQJ_6hl_psxNtB5_10EmitPolicy21with_underwater_blend:4736
    1: 4736
@@ -3441,8 +3441,8 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     13: 4750
     14: 4712
   3: 4854
- 4491: 4726
- 4491: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map9face_tris:27991
+ 4515: 4726
+ 4515: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map9face_tris:27991
   2: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh3addCsa9Qy3L78YQJ_6hl_psx:4618
    34: 4618
   4: 4610
@@ -3456,15 +3456,15 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    0.1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:4690
     5.2: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:4690
      39: 4690
- 4492: 4779
- 4502: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:1018
+ 4516: 4779
+ 4526: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:1018
   1: 200
   2: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18reset_dynamic_face:818
    2: 198
    3: 207
    4: 209
    5: 204
- 4503: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:2020
+ 4527: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:2020
   1: 201
   2: 225
   3: 180
@@ -3475,24 +3475,24 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   33.2: 203
   33.3: 207
   33.4: 214
- 4504: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:422
+ 4528: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:422
   1: 213
   2: 209
- 4508: 2138
- 4518: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:4230
+ 4532: 2138
+ 4542: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:4230
   65523.6: 1386
   65523.20: 1439
   65523.21: 1405
- 4519: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:2825
+ 4543: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:2825
   1: 1414
   2: 1411
- 4525: 1402
- 4525.6: 1375
- 4526: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map15tex_anim_select:1390
+ 4549: 1402
+ 4549.6: 1375
+ 4550: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map15tex_anim_select:1390
   1: 1390
- 4528: 1427
- 4529: 1363
- 4529.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:77160
+ 4552: 1427
+ 4553: 1363
+ 4553.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:77160
   1.11: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:77160
    1.11: 25882
    1.11: _RNvXsU_NtNtCsjHNIEcpe9Kk_4core3cmp5implsjNtB7_10PartialOrd2lt:25647
@@ -3500,8 +3500,8 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    4.11: _RNvXsD_NtNtCsjHNIEcpe9Kk_4core4iter5rangejNtB5_4Step17forward_unchecked:25631
     2.11: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj13unchecked_add:25631
      12.11: 25631
- 4530: 25823
- 4531: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map17face_plane_cooked:46916
+ 4554: 25823
+ 4555: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map17face_plane_cooked:46916
   1: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map10face_group:14641
    1: 3678
    1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh3addCsa9Qy3L78YQJ_6hl_psx:3691
@@ -3532,17 +3532,17 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
       5.2: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readtECsa9Qy3L78YQJ_6hl_psx:3630
        39.1: 3630
    20: 3618
- 4532: 3611
- 4540: 22240
- 4540: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map10face_group:66778
+ 4556: 3611
+ 4564: 22240
+ 4564: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map10face_group:66778
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh3addCsa9Qy3L78YQJ_6hl_psx:22163
    34: 22163
   3: 22434
   3: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:22181
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:22181
     39: 22181
- 4541: 22252
- 4541: _RNvCsa9Qy3L78YQJ_6hl_psx11scratch_bit:88786
+ 4565: 22252
+ 4565: _RNvCsa9Qy3L78YQJ_6hl_psx11scratch_bit:88786
   1: 22099
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:22403
    34: 22403
@@ -3550,12 +3550,12 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readmECsa9Qy3L78YQJ_6hl_psx:22170
     39: 22170
   2: 22114
- 4542: _RNvCsa9Qy3L78YQJ_6hl_psx18scratch_bit_assign:29182
+ 4566: _RNvCsa9Qy3L78YQJ_6hl_psx18scratch_bit_assign:29182
   4: 14757
   4: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm5writeCsa9Qy3L78YQJ_6hl_psx:14425
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr5writemECsa9Qy3L78YQJ_6hl_psx:14425
     23: 14425
- 4543: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18cooked_group_plane:184625
+ 4567: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18cooked_group_plane:184625
   1: 14590
   1: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map14rd_i16_aligned:29116
    1: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map14rd_u16_aligned:29116
@@ -3585,10 +3585,10 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     1: 6088
   20: 14532
   21: 3248
- 4544: 14442
- 4544: _RNvCsa9Qy3L78YQJ_6hl_psx9dot_plane:14754
+ 4568: 14442
+ 4568: _RNvCsa9Qy3L78YQJ_6hl_psx9dot_plane:14754
   1: 14754
- 4544.1: _RNvCsa9Qy3L78YQJ_6hl_psx18scratch_bit_assign:58414
+ 4568.1: _RNvCsa9Qy3L78YQJ_6hl_psx18scratch_bit_assign:58414
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:14596
    34: 14596
   3: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm4readCsa9Qy3L78YQJ_6hl_psx:14553
@@ -3598,22 +3598,22 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   4: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm5writeCsa9Qy3L78YQJ_6hl_psx:14527
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr5writemECsa9Qy3L78YQJ_6hl_psx:14527
     23: 14527
- 4546: 22316
- 4546: _RNvCsa9Qy3L78YQJ_6hl_psx11scratch_bit:22225
+ 4570: 22316
+ 4570: _RNvCsa9Qy3L78YQJ_6hl_psx11scratch_bit:22225
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm4readCsa9Qy3L78YQJ_6hl_psx:7632
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readmECsa9Qy3L78YQJ_6hl_psx:7632
     39: 7632
   2: 14593
- 4547: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map9face_tris:34609
+ 4571: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map9face_tris:34609
   4: 11642
   4: _RNCNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB4_3Map9face_tris0B6_:22967
    0: 11521
    0.1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:11446
     5.2: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:11446
      39: 11446
- 4549: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm14saturating_add:11536
+ 4573: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm14saturating_add:11536
   1: 11536
- 4553: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map11face_bounds:59159
+ 4577: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map11face_bounds:59159
   2: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh3addCsa9Qy3L78YQJ_6hl_psx:11891
    34: 11891
   5: 11990
@@ -3625,7 +3625,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    0.2: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:11865
     5.4: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:11865
      39: 11865
- 4555: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility16world_sphere_gte:65383
+ 4579: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility16world_sphere_gte:65383
   1: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene26transform_vertex_scheduled:12002
    3: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene21transform_vertex_mips:12002
     11: 12002
@@ -3641,14 +3641,14 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     8: _RNvMs0_NtCsjHNIEcpe9Kk_4core3numl3abs:5021
      4.3: 5021
     8.1: 5130
- 4562: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map9face_tris:8382
+ 4586: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map9face_tris:8382
   4: 4176
   4: _RNCNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB4_3Map9face_tris0B6_:4206
    0: 4206
- 4564: 4274
- 4564: _RNvNtCsLzN7oAaAAf_11psx_goldsrc16visibility_logic18brush_packet_blend:4177
+ 4588: 4274
+ 4588: _RNvNtCsLzN7oAaAAf_11psx_goldsrc16visibility_logic18brush_packet_blend:4177
   1.1: 4177
- 4564.1: _RNvCsa9Qy3L78YQJ_6hl_psx13set_emit_face:24868
+ 4588.1: _RNvCsa9Qy3L78YQJ_6hl_psx13set_emit_face:24868
   1: 4009
   2: _RNvMs2_Csa9Qy3L78YQJ_6hl_psxNtB5_10EmitPolicy21with_underwater_blend:4266
    1: 4266
@@ -3658,49 +3658,49 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     13: 4222
     14: 4264
   3: 4204
- 4565: 4137
- 4565: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map12face_is_loop:12584
+ 4589: 4137
+ 4589: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map12face_is_loop:12584
   2: 4222
   4: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh3addCsa9Qy3L78YQJ_6hl_psx:4212
    34: 4212
   5: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:4150
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:4150
     39: 4150
- 4565.1: 227
- 4565.2: 3995
- 4566: 3976
- 4569: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map8face_tex:3843
+ 4589.1: 227
+ 4589.2: 3995
+ 4590: 3976
+ 4593: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map8face_tex:3843
   5: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:3843
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:3843
     39: 3843
- 4579: 235
- 4593: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:7070
+ 4603: 235
+ 4617: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:7070
   1: 1458
   2: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18reset_dynamic_face:5612
    2: 1378
    3: 1390
    4: 1400
    5: 1444
- 4594: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map15tex_anim_select:1353
+ 4618: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map15tex_anim_select:1353
   1: 1353
- 4597: 715
- 4599: 647
- 4599: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:725
+ 4621: 715
+ 4623: 647
+ 4623: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:725
   1: 725
- 4600: 633
- 4600: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:702
+ 4624: 633
+ 4624: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:702
   1: 702
- 4601: 622
- 4601: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:702
+ 4625: 622
+ 4625: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:702
   1: 702
- 4603: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:2047
+ 4627: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:2047
   65523.5: 671
   65523.18: 674
   65523.19: 702
- 4604: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:1411
+ 4628: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:1411
   1: 686
   2: 725
- 4605: _RNvCsa9Qy3L78YQJ_6hl_psx15next_proj_token:2037
+ 4629: _RNvCsa9Qy3L78YQJ_6hl_psx15next_proj_token:2037
   2: 694
   2: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:630
    1: 630
@@ -3708,8 +3708,8 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   3.3: 2
   5: 5
   8: 4
- 4606: 681
- 4606: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map8submodel:7454
+ 4630: 681
+ 4630: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map8submodel:7454
   1: 696
   3: 690
   3: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map6rd_u32:3375
@@ -3725,19 +3725,19 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    4: 691
    5: 664
    7: 696
- 4607: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:3507
+ 4631: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:3507
   1: 686
   2: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18reset_dynamic_face:2821
    2: 720
    3: 696
    4: 706
    5: 699
- 4611: 675
- 4611.3: 99
- 4612: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map15tex_anim_select:659
+ 4635: 675
+ 4635.3: 99
+ 4636: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map15tex_anim_select:659
   1: 659
- 4613: 686
- 4613.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:27757
+ 4637: 686
+ 4637.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:27757
   1.12: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:27757
    1.12: 9164
    1.12: _RNvXsU_NtNtCsjHNIEcpe9Kk_4core3cmp5implsjNtB7_10PartialOrd2lt:9212
@@ -3745,10 +3745,10 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    4.12: _RNvXsD_NtNtCsjHNIEcpe9Kk_4core4iter5rangejNtB5_4Step17forward_unchecked:9381
     2.12: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj13unchecked_add:9381
      12.12: 9381
- 4614: 9163
- 4614: _RNvNtCsLzN7oAaAAf_11psx_goldsrc16visibility_logic18brush_packet_blend:9296
+ 4638: 9163
+ 4638: _RNvNtCsLzN7oAaAAf_11psx_goldsrc16visibility_logic18brush_packet_blend:9296
   1.2: 9296
- 4614.1: _RNvCsa9Qy3L78YQJ_6hl_psx13set_emit_face:55377
+ 4638.1: _RNvCsa9Qy3L78YQJ_6hl_psx13set_emit_face:55377
   1: 9072
   2: _RNvMs2_Csa9Qy3L78YQJ_6hl_psxNtB5_10EmitPolicy21with_underwater_blend:9150
    1: 9150
@@ -3758,15 +3758,15 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     13: 9355
     14: 9327
   3: 9202
- 4615: 9142
- 4615: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map9face_tris:18465
+ 4639: 9142
+ 4639: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map9face_tris:18465
   2: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh3addCsa9Qy3L78YQJ_6hl_psx:9312
    34: 9312
   4: _RNCNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB4_3Map9face_tris0B6_:9153
    0: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:9153
     5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:9153
      39: 9153
- 4616: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map17face_plane_cooked:127567
+ 4640: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map17face_plane_cooked:127567
   1: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map10face_group:18508
    3: 9269
    3: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:9239
@@ -3802,12 +3802,12 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
      1: 3642
    20: 9267
    21: 3074
- 4617: 9390
- 4617: _RNvCsa9Qy3L78YQJ_6hl_psx9dot_plane:9302
+ 4641: 9390
+ 4641: _RNvCsa9Qy3L78YQJ_6hl_psx9dot_plane:9302
   1: 9302
- 4618: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm14saturating_add:5244
+ 4642: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm14saturating_add:5244
   1: 5244
- 4621: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map11face_bounds:32657
+ 4645: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map11face_bounds:32657
   5: 4152
   5: _RNCNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB4_3Map11face_bounds0B6_:16396
    0: 4190
@@ -3827,9 +3827,9 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
      39: 4040
     5.7: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:4008
      39: 4008
- 4622: 4174
- 4623: 2656
- 4623: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility6sphere:45353
+ 4646: 4174
+ 4647: 2656
+ 4647: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility6sphere:45353
   1: 3298
   1: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility11view_center:15091
    2: 3317
@@ -3851,31 +3851,31 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     8: _RNvMs0_NtCsjHNIEcpe9Kk_4core3numl3abs:2671
      4.3: 2671
     8.1: 2697
- 4626: 2029
- 4636: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:3412
+ 4650: 2029
+ 4660: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:3412
   1: 720
   2: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18reset_dynamic_face:2692
    2: 684
    3: 644
    4: 694
    5: 670
- 4637: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map15tex_anim_select:667
+ 4661: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map15tex_anim_select:667
   1: 667
- 4641: 498
- 4644.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:554
+ 4665: 498
+ 4668.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:554
   1.13: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:554
    1.6: 554
- 4645.1: 554
- 4655: 531
- 4657: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:253
+ 4669.1: 554
+ 4679: 531
+ 4681: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:253
   1: 51
   2: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18reset_dynamic_face:202
    2: 41
    3: 55
    4: 51
    5: 55
- 4664: 63
- 4667: _RNvCsa9Qy3L78YQJ_6hl_psx19tram_world_rotation:407
+ 4688: 63
+ 4691: _RNvCsa9Qy3L78YQJ_6hl_psx19tram_world_rotation:407
   1: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I168rotate_y:309
    1: _RNvNtCsg29Zqgvy0Hb_12psx_gte_core9transform10cos_1_3_12:157
     2: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:55
@@ -3891,63 +3891,63 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    1: 49
    1: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_sub:49
     1: 49
- 4668: 51
- 4670: 46
- 4671: 55
- 4672: 53
- 4675: 49
- 4676: 54
- 4677: 48
- 4680: 52
- 4681: 56
- 4682: 48
- 4688: 37
- 4689: 44
- 4690: 50
- 4692: 52
- 4693: 44
- 4693: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:55
+ 4692: 51
+ 4694: 46
+ 4695: 55
+ 4696: 53
+ 4699: 49
+ 4700: 54
+ 4701: 48
+ 4704: 52
+ 4705: 56
+ 4706: 48
+ 4712: 37
+ 4713: 44
+ 4714: 50
+ 4716: 52
+ 4717: 44
+ 4717: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:55
   1: 55
- 4697: 44
- 4697: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:39
+ 4721: 44
+ 4721: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:39
   1: 39
- 4701: 43
- 4701: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:60
+ 4725: 43
+ 4725: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:60
   1: 60
- 4706: 50
- 4707: 52
- 4707: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:62
+ 4730: 50
+ 4731: 52
+ 4731: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:62
   1: 62
- 4707.1: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:51
+ 4731.1: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:51
   1: 51
- 4708: 51
- 4708: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:62
+ 4732: 51
+ 4732: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:62
   1: 62
- 4708.1: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:56
+ 4732.1: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:56
   1: 56
- 4709: 51
- 4709: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:52
+ 4733: 51
+ 4733: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:52
   1: 52
- 4709.1: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:62
+ 4733.1: _RNvCsa9Qy3L78YQJ_6hl_psx5dot12:62
   1: 62
- 4712: 53
- 4713: 45
- 4713: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAAsj3_BH_NtNtB6_3cmp9PartialEq2eqCsa9Qy3L78YQJ_6hl_psx:42
+ 4736: 53
+ 4737: 45
+ 4737: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAAsj3_BH_NtNtB6_3cmp9PartialEq2eqCsa9Qy3L78YQJ_6hl_psx:42
   1.5: _RNvXs7_NtNtCsjHNIEcpe9Kk_4core5array8equalityAsj3_INtB5_11SpecArrayEqBH_KBJ_E7spec_eqCsa9Qy3L78YQJ_6hl_psx:42
    4.9: 42
- 4714: 18
- 4714: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj3_NtNtB6_3cmp9PartialEq2eqCsa9Qy3L78YQJ_6hl_psx:28
+ 4738: 18
+ 4738: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj3_NtNtB6_3cmp9PartialEq2eqCsa9Qy3L78YQJ_6hl_psx:28
   1.6: _RNvXs7_NtNtCsjHNIEcpe9Kk_4core5array8equalitylINtB5_11SpecArrayEqlKj3_E7spec_eqCsa9Qy3L78YQJ_6hl_psx:28
    4.10: 28
- 4715: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj3_NtNtB6_3cmp9PartialEq2eqCsa9Qy3L78YQJ_6hl_psx:12
+ 4739: _RNvXNtNtCsjHNIEcpe9Kk_4core5array8equalityAlj3_NtNtB6_3cmp9PartialEq2eqCsa9Qy3L78YQJ_6hl_psx:12
   1.7: _RNvXs7_NtNtCsjHNIEcpe9Kk_4core5array8equalitylINtB5_11SpecArrayEqlKj3_E7spec_eqCsa9Qy3L78YQJ_6hl_psx:12
    4.11: 12
- 4716.1: 11
- 4716.3: 7
- 4719.1: 181
- 4720: 158
- 4727: 193
- 4728: _RNvMs_NtCs323T660O6Bz_7psx_gpu5frameINtB4_7OtFrameKj280_E7add_rawCsa9Qy3L78YQJ_6hl_psx:889
+ 4740.1: 11
+ 4740.3: 7
+ 4743.1: 181
+ 4744: 158
+ 4751: 193
+ 4752: _RNvMs_NtCs323T660O6Bz_7psx_gpu5frameINtB4_7OtFrameKj280_E7add_rawCsa9Qy3L78YQJ_6hl_psx:889
   2.1: _RNvMNtCs323T660O6Bz_7psx_gpu2otINtB2_13OrderingTableKj280_E4linkCsa9Qy3L78YQJ_6hl_psx:889
    5: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:179
     4: 179
@@ -3959,11 +3959,11 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
      12: 166
      14: 184
      15: 188
- 4729.1: 184
- 4730.1: 193
- 4733: 161
- 4736: 11
- 4738: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:368
+ 4753.1: 184
+ 4754.1: 193
+ 4757: 161
+ 4760: 11
+ 4762: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:368
   1: 40
   2: 50
   3: 35
@@ -3973,30 +3973,30 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   33.2: 40
   33.3: 34
   33.4: 48
- 4739: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:113
+ 4763: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:113
   65523.2: 42
   65523.12: 35
   65523.13: 36
- 4740: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:95
+ 4764: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:95
   1: 50
   2: 45
- 4741: _RNvCsa9Qy3L78YQJ_6hl_psx15next_proj_token:125
+ 4765: _RNvCsa9Qy3L78YQJ_6hl_psx15next_proj_token:125
   2: 39
   2: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt12wrapping_add:45
    1: 45
   3: 40
   5: 1
- 4742: 47
- 4743: 35
- 4744: 36
- 4745: 43
- 4746: 42
- 4751: _RNvCsa9Qy3L78YQJ_6hl_psx16clear_group_bits:40
+ 4766: 47
+ 4767: 35
+ 4768: 36
+ 4769: 43
+ 4770: 42
+ 4775: _RNvCsa9Qy3L78YQJ_6hl_psx16clear_group_bits:40
   3: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm5writeCsa9Qy3L78YQJ_6hl_psx:40
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr5writemECsa9Qy3L78YQJ_6hl_psx:40
     23: 40
- 4752: 37
- 4752.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:20480
+ 4776: 37
+ 4776.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:20480
   1.14: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:20480
    1.7: 6786
    1.14: _RNvXsU_NtNtCsjHNIEcpe9Kk_4core3cmp5implsjNtB7_10PartialOrd2lt:6843
@@ -4004,7 +4004,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    4.14: _RNvXsD_NtNtCsjHNIEcpe9Kk_4core4iter5rangejNtB5_4Step17forward_unchecked:6851
     2.14: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj13unchecked_add:6851
      12.7: 6851
- 4753: _RNvCsa9Qy3L78YQJ_6hl_psx13set_emit_face:95780
+ 4777: _RNvCsa9Qy3L78YQJ_6hl_psx13set_emit_face:95780
   1: 6817
   2: 6831
   2: _RNvMs2_Csa9Qy3L78YQJ_6hl_psxNtB5_10EmitPolicy21with_underwater_blend:7018
@@ -4027,8 +4027,8 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    3: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map16face_translucent:6860
     1: 6860
   3: 6800
- 4754: 6786
- 4754: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map9face_tris:34091
+ 4778: 6786
+ 4778: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map9face_tris:34091
   2: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh3addCsa9Qy3L78YQJ_6hl_psx:6839
    34: 6839
   4: _RNCNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB4_3Map9face_tris0B6_:27252
@@ -4041,13 +4041,13 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    0.1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:6759
     5.2: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:6759
      39: 6759
- 4755: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map10face_group:13770
+ 4779: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map10face_group:13770
   3: 6864
   3: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:6906
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:6906
     39: 6906
- 4756: 6856
- 4756: _RNvCsa9Qy3L78YQJ_6hl_psx11scratch_bit:27191
+ 4780: 6856
+ 4780: _RNvCsa9Qy3L78YQJ_6hl_psx11scratch_bit:27191
   1: 6756
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:6828
    34: 6828
@@ -4055,12 +4055,12 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readmECsa9Qy3L78YQJ_6hl_psx:6822
     39: 6822
   2: 6785
- 4757: _RNvCsa9Qy3L78YQJ_6hl_psx18scratch_bit_assign:5556
+ 4781: _RNvCsa9Qy3L78YQJ_6hl_psx18scratch_bit_assign:5556
   4: 2811
   4: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm5writeCsa9Qy3L78YQJ_6hl_psx:2745
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr5writemECsa9Qy3L78YQJ_6hl_psx:2745
     23: 2745
- 4758: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map17face_plane_cooked:39576
+ 4782: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map17face_plane_cooked:39576
   1: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map10face_group:5536
    3: 2783
    3: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:2753
@@ -4096,10 +4096,10 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
      1: 778
    20: 2739
    21: 681
- 4759: 2670
- 4759: _RNvCsa9Qy3L78YQJ_6hl_psx9dot_plane:2801
+ 4783: 2670
+ 4783: _RNvCsa9Qy3L78YQJ_6hl_psx9dot_plane:2801
   1: 2801
- 4759.1: _RNvCsa9Qy3L78YQJ_6hl_psx18scratch_bit_assign:10975
+ 4783.1: _RNvCsa9Qy3L78YQJ_6hl_psx18scratch_bit_assign:10975
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:2738
    34: 2738
   3: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm4readCsa9Qy3L78YQJ_6hl_psx:2746
@@ -4109,23 +4109,23 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   4: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm5writeCsa9Qy3L78YQJ_6hl_psx:2761
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr5writemECsa9Qy3L78YQJ_6hl_psx:2761
     23: 2761
- 4761: 6889
- 4761: _RNvCsa9Qy3L78YQJ_6hl_psx11scratch_bit:10681
+ 4785: 6889
+ 4785: _RNvCsa9Qy3L78YQJ_6hl_psx11scratch_bit:10681
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm4readCsa9Qy3L78YQJ_6hl_psx:3976
    5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readmECsa9Qy3L78YQJ_6hl_psx:3976
     39: 3976
   2: 6705
- 4762: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm14saturating_add:3398
+ 4786: _RNvMs6_NtCsjHNIEcpe9Kk_4core3numm14saturating_add:3398
   1: 3398
- 4765: 3550
- 4776: 44
- 4777: 41
- 4778: 16
- 4780: 40
- 4781: 37
- 4782: 34
- 4783: 34
- 4786: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:458
+ 4789: 3550
+ 4800: 44
+ 4801: 41
+ 4802: 16
+ 4804: 40
+ 4805: 37
+ 4806: 34
+ 4807: 34
+ 4810: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:458
   1: 50
   2: 51
   3: 53
@@ -4136,18 +4136,18 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   33.2: 45
   33.3: 49
   33.4: 47
- 4787: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:108
+ 4811: _RNvCsa9Qy3L78YQJ_6hl_psx12set_view_fix:108
   1: 53
   2: 55
- 4788: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:268
+ 4812: _RNvCsa9Qy3L78YQJ_6hl_psx17reset_emit_policy:268
   1: 47
   2: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map18reset_dynamic_face:221
    2: 53
    3: 65
    4: 58
    5: 45
- 4797: 566
- 4801: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:5230
+ 4821: 566
+ 4825: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:5230
   1: 529
   2: 513
   3: 543
@@ -4158,20 +4158,20 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   33.2: 525
   33.3: 522
   33.4: 474
- 4802: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:1579
+ 4826: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:1579
   65523.1: 542
   65523.10: 533
   65523.11: 504
- 4805: 517
- 4805: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:575
+ 4829: 517
+ 4829: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:575
   4.22: 575
- 4811: _RNvCsa9Qy3L78YQJ_6hl_psx22vm_tail_capacity_words:1052
+ 4835: _RNvCsa9Qy3L78YQJ_6hl_psx22vm_tail_capacity_words:1052
   1: 512
   1: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj14saturating_sub:540
    1: 540
- 4811: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj14saturating_sub:507
+ 4835: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj14saturating_sub:507
   1: 507
- 4812: _RNvMse_NtCsfio7irpgDw3_10psx_engine6renderNtB5_20PrimitivePacketArena15remaining_words:2139
+ 4836: _RNvMse_NtCsfio7irpgDw3_10psx_engine6renderNtB5_20PrimitivePacketArena15remaining_words:2139
   1: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj14saturating_mul:524
    1: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj11checked_mul:524
     2: _RNvNtCsjHNIEcpe9Kk_4core10intrinsics8unlikely:524
@@ -4182,70 +4182,70 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     1: 542
    1.1: _RNvMse_NtCsfio7irpgDw3_10psx_engine6renderNtB5_20PrimitivePacketArena8capacity:528
     1.1: 528
- 4813: 515
- 4814: 522
- 4815: 443
- 4817: 95
- 4820: 424
- 4822: _RNvCsa9Qy3L78YQJ_6hl_psx9model_ptr:446
+ 4837: 515
+ 4838: 522
+ 4839: 443
+ 4841: 95
+ 4844: 424
+ 4846: _RNvCsa9Qy3L78YQJ_6hl_psx9model_ptr:446
   1: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:446
    34: 446
- 4822: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:433
+ 4846: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:433
   34: 433
- 4825: _RNvMNtCsjHNIEcpe9Kk_4core6optionINtB2_6OptionNtNtCsfio7irpgDw3_10psx_engine6render30PrimitivePacketWordReservationE6as_mutCsa9Qy3L78YQJ_6hl_psx:104
+ 4849: _RNvMNtCsjHNIEcpe9Kk_4core6optionINtB2_6OptionNtNtCsfio7irpgDw3_10psx_engine6render30PrimitivePacketWordReservationE6as_mutCsa9Qy3L78YQJ_6hl_psx:104
   1: 104
- 4826: _RNvMsc_NtCsfio7irpgDw3_10psx_engine6renderNtB5_30PrimitivePacketWordReservation9words_mut:430
+ 4850: _RNvMsc_NtCsfio7irpgDw3_10psx_engine6renderNtB5_30PrimitivePacketWordReservation9words_mut:430
   2: 115
   5: 92
   5: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrONtNtCsfio7irpgDw3_10psx_engine6render19PrimitivePacketSlot3addCsa9Qy3L78YQJ_6hl_psx:118
    34.1: 118
   8: 105
- 4831: 548
- 4836: 512
- 4836: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:494
+ 4855: 548
+ 4860: 512
+ 4860: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:494
   4.24: 494
- 4837.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:15387
+ 4861.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:15387
   1.15: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:15387
    1.8: 538
    1.15: _RNvXsU_NtNtCsjHNIEcpe9Kk_4core3cmp5implsjNtB7_10PartialOrd2lt:14849
     0.24: 14849
- 4838.1: 15206
- 4842: 12081
- 4846: 12014
- 4848: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:11882
+ 4862.1: 15206
+ 4866: 12081
+ 4870: 12014
+ 4872: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:11882
   4.32: 11882
- 4848.2: 12005
- 4849: 11927
- 4852: 11509
- 4852.1: 11718
- 4853: 11497
- 4860: 11525
- 4863: 429
- 4865: _RNvCsa9Qy3L78YQJ_6hl_psx18prop_render_radius:23610
+ 4872.2: 12005
+ 4873: 11927
+ 4876: 11509
+ 4876.1: 11718
+ 4877: 11497
+ 4884: 11525
+ 4887: 429
+ 4889: _RNvCsa9Qy3L78YQJ_6hl_psx18prop_render_radius:23610
   3: 11561
   3.2: 407
   6: _RNvCsa9Qy3L78YQJ_6hl_psx9model_def:11642
    1.2: 11642
- 4869: 11573
- 4874.1: 380
- 4875: 377
- 4876: 287
- 4878.1: 67
- 4879.1: 79
- 4880: 73
- 4882.1: 348
- 4886: 208
- 4887: 228
- 4888: 28
- 4888.2: 31
- 4890: 28
- 4898: _RNvCsa9Qy3L78YQJ_6hl_psx15prop_body_value:187
+ 4893: 11573
+ 4898.1: 380
+ 4899: 377
+ 4900: 287
+ 4902.1: 67
+ 4903.1: 79
+ 4904: 73
+ 4906.1: 348
+ 4910: 208
+ 4911: 228
+ 4912: 28
+ 4912.2: 31
+ 4914: 28
+ 4922: _RNvCsa9Qy3L78YQJ_6hl_psx15prop_body_value:187
   1: 187
- 4900: _RNvCsa9Qy3L78YQJ_6hl_psx13prop_is_human:211
+ 4924: _RNvCsa9Qy3L78YQJ_6hl_psx13prop_is_human:211
   1: _RNvCsa9Qy3L78YQJ_6hl_psx17prop_is_scientist:211
    1: 211
- 4901: 37
- 4901: _RNvCsa9Qy3L78YQJ_6hl_psx15prop_mouth_open:584
+ 4925: 37
+ 4925: _RNvCsa9Qy3L78YQJ_6hl_psx15prop_mouth_open:584
   1: _RNvCsa9Qy3L78YQJ_6hl_psx15prop_is_talking:221
    1: 124
    1: _RNvCsa9Qy3L78YQJ_6hl_psx12time_reached:45
@@ -4270,32 +4270,32 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     1.2: 18
   18: 21
   19.1: 16
- 4907: 224
- 4907: _RNvXsd_NtCsjHNIEcpe9Kk_4core5arrayANtNtCsa9Qy3L78YQJ_6hl_psx4vram7TexSlotjb0_INtNtNtB7_3ops5index5IndexINtNtB1i_5range5RangejEE5indexBB_:241
+ 4931: 224
+ 4931: _RNvXsd_NtCsjHNIEcpe9Kk_4core5arrayANtNtCsa9Qy3L78YQJ_6hl_psx4vram7TexSlotjb0_INtNtNtB7_3ops5index5IndexINtNtB1i_5range5RangejEE5indexBB_:241
   1.1: _RNvXNtNtCsjHNIEcpe9Kk_4core5slice5indexSNtNtCsa9Qy3L78YQJ_6hl_psx4vram7TexSlotINtNtNtB6_3ops5index5IndexINtNtB1j_5range5RangejEE5indexBG_:241
    1.11: _RNvXs2_NtNtCsjHNIEcpe9Kk_4core5slice5indexINtNtNtB9_3ops5range5RangejEINtB5_10SliceIndexSNtNtCsa9Qy3L78YQJ_6hl_psx4vram7TexSlotE5indexB1t_:241
     2: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj11checked_sub:241
      6: 241
- 4919: 211
- 4919.4: 212
- 4923: 237
- 4926: 228
- 4927: 204
- 4933: 224
- 4933: _RNvMs1_NtCs53xDtPaPQko_9psx_asset4hmd8NtB5_5Model10has_tracks:245
+ 4943: 211
+ 4943.4: 212
+ 4947: 237
+ 4950: 228
+ 4951: 204
+ 4957: 224
+ 4957: _RNvMs1_NtCs53xDtPaPQko_9psx_asset4hmd8NtB5_5Model10has_tracks:245
   1: 245
- 4935: 229
- 4936: 243
- 4936.2: 4
- 4937: 10
- 4942: 208
- 4946.2: 231
- 4951: 213
- 4953: 245
- 4953: _RNvCsa9Qy3L78YQJ_6hl_psx9model_def:229
+ 4959: 229
+ 4960: 243
+ 4960.2: 4
+ 4961: 10
+ 4966: 208
+ 4970.2: 231
+ 4975: 213
+ 4977: 245
+ 4977: _RNvCsa9Qy3L78YQJ_6hl_psx9model_def:229
   1.2: 229
- 4957: 244
- 4968: _RNvCsa9Qy3L78YQJ_6hl_psx18prop_authored_tilt:1379
+ 4981: 244
+ 4992: _RNvCsa9Qy3L78YQJ_6hl_psx18prop_authored_tilt:1379
   1: 229
   5: 245
   8: 239
@@ -4305,9 +4305,9 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     1: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map6rd_u32:449
      5: 214
      7: 235
- 4984: 225
- 4985: 208
- 4988: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:2066
+ 5008: 225
+ 5009: 208
+ 5012: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene13load_rotation:2066
   1: 196
   2: 212
   3: 239
@@ -4318,23 +4318,23 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
   33.2: 182
   33.3: 197
   33.4: 219
- 4989: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:665
+ 5013: _RNvNtCs2Woxx6gDBc4_7psx_gte5scene16load_translation:665
   65523.3: 222
   65523.14: 230
   65523.15: 213
- 5052: 528
- 5053: 104
- 5055: 511
- 5057: 97
- 5058: _RNvMNtCsjHNIEcpe9Kk_4core6optionINtB2_6OptionNtNtCsfio7irpgDw3_10psx_engine6render21PrimitivePacketStreamE6expectCsa9Qy3L78YQJ_6hl_psx:106
+ 5076: 528
+ 5077: 104
+ 5079: 511
+ 5081: 97
+ 5082: _RNvMNtCsjHNIEcpe9Kk_4core6optionINtB2_6OptionNtNtCsfio7irpgDw3_10psx_engine6render21PrimitivePacketStreamE6expectCsa9Qy3L78YQJ_6hl_psx:106
   1: 106
- 5061: 504
- 5063: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:536
+ 5085: 504
+ 5087: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOm3addCsa9Qy3L78YQJ_6hl_psx:536
   34.2: 536
- 5071: 515
- 5073.1: 6773
- 5075: 6674
- 5075: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map11sprite_prop:61259
+ 5095: 515
+ 5097.1: 6773
+ 5099: 6674
+ 5099: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map11sprite_prop:61259
   1: 6794
   4: 6759
   4: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map6rd_i16:6847
@@ -4353,52 +4353,52 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
     1: 6764
   10: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map6rd_u16:6933
    1: 6933
- 5077: 6791
- 5077: _RNvCsa9Qy3L78YQJ_6hl_psx17sprite_is_visible:27120
+ 5101: 6791
+ 5101: _RNvCsa9Qy3L78YQJ_6hl_psx17sprite_is_visible:27120
   1: 6718
   2: 6745
   2.1: 6886
   3: 6771
- 5080: 2981
- 5081: 3116
- 5081: _RNvNtCsa9Qy3L78YQJ_6hl_psx6sprite9n_sprites:3155
+ 5104: 2981
+ 5105: 3116
+ 5105: _RNvNtCsa9Qy3L78YQJ_6hl_psx6sprite9n_sprites:3155
   1: 3155
- 5084: 3060
- 5084: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility4leaf:14082
+ 5108: 3060
+ 5108: _RNvMs3_Csa9Qy3L78YQJ_6hl_psxNtB5_16CameraVisibility4leaf:14082
   1: 3070
   1: _RNvCsa9Qy3L78YQJ_6hl_psx16pvs_leaf_visible:11012
    1.1: 2717
    8: 2721
    8.1: 2804
    9: 2770
- 5087: _RNvNtCsa9Qy3L78YQJ_6hl_psx6sprite3def:2019
+ 5111: _RNvNtCsa9Qy3L78YQJ_6hl_psx6sprite3def:2019
   2: 990
   3: _RINvMNtCsjHNIEcpe9Kk_4core5sliceSNtNtCsa9Qy3L78YQJ_6hl_psx6sprite9SpriteDef3getjEBz_:1029
    4: _RNvXs0_NtNtCsjHNIEcpe9Kk_4core5slice5indexjINtB5_10SliceIndexSNtNtCsa9Qy3L78YQJ_6hl_psx6sprite9SpriteDefE3getB12_:1029
     1: 1029
- 5088: _RNvYhNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:1011
+ 5112: _RNvYhNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:1011
   4.11: 1011
- 5090: 952
- 5091: 980
- 5092: _RNvCsa9Qy3L78YQJ_6hl_psx18sprite_set_visible:10
+ 5114: 952
+ 5115: 980
+ 5116: _RNvCsa9Qy3L78YQJ_6hl_psx18sprite_set_visible:10
   1: 3
   5.1: 5
   9: 2
- 5095.1: 950
- 5096: 982
- 5097: 945
- 5098: 979
- 5098.3: 970
- 5102: 979
- 5117: 556
- 5118: 555
- 5119: 543
- 5120: 533
- 5121.1: 547
- 5122.1: 521
- 5123: 529
- 5123.1: 523
- 5123.1: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map14l5_decal_count:2000
+ 5119.1: 950
+ 5120: 982
+ 5121: 945
+ 5122: 979
+ 5122.3: 970
+ 5126: 979
+ 5141: 556
+ 5142: 555
+ 5143: 543
+ 5144: 533
+ 5145.1: 547
+ 5146.1: 521
+ 5147: 529
+ 5147.1: 523
+ 5147.1: _RNvMNtCsa9Qy3L78YQJ_6hl_psx3mapNtB2_3Map14l5_decal_count:2000
   1: 525
   4: 492
   4: _RNvNtCsa9Qy3L78YQJ_6hl_psx3map14rd_u16_aligned:983
@@ -4407,13 +4407,13 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    2: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPt4readCsa9Qy3L78YQJ_6hl_psx:505
     5: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readtECsa9Qy3L78YQJ_6hl_psx:505
      39: 505
- 5123.5: 359
- 5124.1: 349
- 5160: 537
- 5160.3: 388
- 5161: 402
- 5162: 348
- 5163: _RNvCsa9Qy3L78YQJ_6hl_psx16viewmodel_offset:776
+ 5147.5: 359
+ 5148.1: 349
+ 5184: 537
+ 5184.3: 388
+ 5185: 402
+ 5186: 348
+ 5187: _RNvCsa9Qy3L78YQJ_6hl_psx16viewmodel_offset:776
   2: _RNCNvCsa9Qy3L78YQJ_6hl_psx16viewmodel_offset0B3_:391
    0: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I168rotate_z:391
     2: _RNvNtCsg29Zqgvy0Hb_12psx_gte_core9transform10sin_1_3_12:391
@@ -4422,92 +4422,92 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12354292:0
    0.1: _RNvMNtCsg29Zqgvy0Hb_12psx_gte_core9transformNtNtB4_4math7Mat3I168rotate_z:385
     2: _RNvNtCsg29Zqgvy0Hb_12psx_gte_core9transform10sin_1_3_12:385
      1.3: 385
- 5169: 398
- 5169: _RNvCsa9Qy3L78YQJ_6hl_psx13viewmodel_for:1587
+ 5193: 398
+ 5193: _RNvCsa9Qy3L78YQJ_6hl_psx13viewmodel_for:1587
   1: 401
   2: 2
   5: 400
   6: 392
   7: 392
- 5170: 400
- 5176: 376
- 5179: 399
- 5183: 400
- 5187: 526
- 5202: 572
- 5212.1: 541
- 5239: 571
- 5241: 549
- 5248: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsh_0EB4_:519
+ 5194: 400
+ 5200: 376
+ 5203: 399
+ 5207: 400
+ 5211: 526
+ 5226: 572
+ 5236.1: 541
+ 5263: 571
+ 5265: 549
+ 5272: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsh_0EB4_:519
   2: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playsh_0B3_:519
    0: 519
- 5256: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsi_0EB4_:546
+ 5280: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsi_0EB4_:546
   2: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playsi_0B3_:546
    0: _RNvMNtCs323T660O6Bz_7psx_gpu3gpuNtB2_3Gpu13arm_draw_done:546
     1: _RNvNtCs52mhn4g4tH3_6psx_io3gpu21write_display_control:546
      8: _RNvCs52mhn4g4tH3_6psx_io9write_u32:546
       3: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatilemECsa9Qy3L78YQJ_6hl_psx:546
        11: 546
- 5258: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsj_0EB4_:537
+ 5282: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsj_0EB4_:537
   2: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playsj_0B3_:537
    0: 537
- 5261: 543
- 5262: 530
- 5312: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsk_0EB4_:574
+ 5285: 543
+ 5286: 530
+ 5336: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_4playsk_0EB4_:574
   2: _RNCNvCsa9Qy3L78YQJ_6hl_psx4playsk_0B3_:574
    1: _RNvNtCs323T660O6Bz_7psx_gpu5chain16submit_async_raw:574
     3: 574
- 5318: 499
- 5319: 540
- 5324: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal10any_weapon:516
+ 5342: 499
+ 5343: 540
+ 5348: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal10any_weapon:516
   1: 516
- 5328: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal12clip_display:516
+ 5352: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal12clip_display:516
   1: 516
- 5331: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal9ammo_mode:364
+ 5355: _RNvMs4_Csa9Qy3L78YQJ_6hl_psxNtB5_7Arsenal9ammo_mode:364
   2: 364
- 5334: 502
- 5340: _RNvCsa9Qy3L78YQJ_6hl_psx18train_hud_position:441
+ 5358: 502
+ 5364: _RNvCsa9Qy3L78YQJ_6hl_psx18train_hud_position:441
   1: 441
- 5349: _RNvMs4_NtCs323T660O6Bz_7psx_gpu5frameINtB5_14PrimitiveArenaNtNtB7_4prim8RectFlatE3newCsa9Qy3L78YQJ_6hl_psx:548
+ 5373: _RNvMs4_NtCs323T660O6Bz_7psx_gpu5frameINtB5_14PrimitiveArenaNtNtB7_4prim8RectFlatE3newCsa9Qy3L78YQJ_6hl_psx:548
   1: 548
- 5352: 540
- 5358.1: 549
- 5359.1: 540
- 5362: 547
- 5362.1: 381
- 5365: 394
- 5367: 381
- 5367: _RNvXsd_NtCsjHNIEcpe9Kk_4core5arrayANtNtCsa9Qy3L78YQJ_6hl_psx4vram7TexSlotj28_INtNtNtB7_3ops5index5IndexINtNtB1i_5range5RangejEE5indexBB_:772
+ 5376: 540
+ 5382.1: 549
+ 5383.1: 540
+ 5386: 547
+ 5386.1: 381
+ 5389: 394
+ 5391: 381
+ 5391: _RNvXsd_NtCsjHNIEcpe9Kk_4core5arrayANtNtCsa9Qy3L78YQJ_6hl_psx4vram7TexSlotj28_INtNtNtB7_3ops5index5IndexINtNtB1i_5range5RangejEE5indexBB_:772
   1.3: _RNvXNtNtCsjHNIEcpe9Kk_4core5slice5indexSNtNtCsa9Qy3L78YQJ_6hl_psx4vram7TexSlotINtNtNtB6_3ops5index5IndexINtNtB1j_5range5RangejEE5indexBG_:772
    1.10: _RNvXs2_NtNtCsjHNIEcpe9Kk_4core5slice5indexINtNtNtB9_3ops5range5RangejEINtB5_10SliceIndexSNtNtCsa9Qy3L78YQJ_6hl_psx4vram7TexSlotE5indexB1t_:772
     2: _RNvMs9_NtCsjHNIEcpe9Kk_4core3numj11checked_sub:404
      6: 404
     6: _RINvNtNtCsjHNIEcpe9Kk_4core5slice5index24get_offset_len_noubcheckNtNtCsa9Qy3L78YQJ_6hl_psx4vram7TexSlotEB15_:368
      7: 368
- 5375: 399
- 5375.1: 409
- 5381: 572
- 5382: _RINvMNtCsjHNIEcpe9Kk_4core6optionINtB3_6OptionTNtNtCs53xDtPaPQko_9psx_asset4hmd85ModeljjjjmEE3mapNtCsa9Qy3L78YQJ_6hl_psx17DeferredViewmodelNCNvB1z_4playsl_0EB1z_:390
+ 5399: 399
+ 5399.1: 409
+ 5405: 572
+ 5406: _RINvMNtCsjHNIEcpe9Kk_4core6optionINtB3_6OptionTNtNtCs53xDtPaPQko_9psx_asset4hmd85ModeljjjjmEE3mapNtCsa9Qy3L78YQJ_6hl_psx17DeferredViewmodelNCNvB1z_4playsl_0EB1z_:390
   5.7: 390
- 5393: _RNvMs0_NtCs323T660O6Bz_7psx_gpu7displayNtB5_12DoubleBuffer11draw_origin:1051
+ 5417: _RNvMs0_NtCs323T660O6Bz_7psx_gpu7displayNtB5_12DoubleBuffer11draw_origin:1051
   1.1: 540
   1.1: _RNvMs0_NtCs323T660O6Bz_7psx_gpu7displayNtB5_12DoubleBuffer3top:511
    1.3: 511
- 5399: _RNvCsa9Qy3L78YQJ_6hl_psx14fx_chain_reset:1053
+ 5423: _RNvCsa9Qy3L78YQJ_6hl_psx14fx_chain_reset:1053
   1: 521
   2: 532
- 5400: 533
- 5401: 542
- 5402: 519
- 5405: 526
- 5406: 532
- 5407: 539
- 5407: _RNvNtCsa9Qy3L78YQJ_6hl_psx8settings8debug_on:547
+ 5424: 533
+ 5425: 542
+ 5426: 519
+ 5429: 526
+ 5430: 532
+ 5431: 539
+ 5431: _RNvNtCsa9Qy3L78YQJ_6hl_psx8settings8debug_on:547
   1: 547
- 5417: 519
- 5418: 559
- 5590: 1
- 31228: _RNvCsa9Qy3L78YQJ_6hl_psx30finish_world_affine_candidates:254
+ 5441: 519
+ 5442: 559
+ 5614: 1
+ 30574: _RNvCsa9Qy3L78YQJ_6hl_psx30finish_world_affine_candidates:254
   23: 254
 _RNvCsa9Qy3L78YQJ_6hl_psx14draw_viewmodel:7718190:729
  0: 771
@@ -7794,18 +7794,22 @@ _RNvCsa9Qy3L78YQJ_6hl_psx18emit_submodel_face:1241025:10093
   0.1: 704
  45: _RNvCsa9Qy3L78YQJ_6hl_psx11culled_soft:11554
   1: 2148
-  1: _RNvMNtCsa9Qy3L78YQJ_6hl_psx4wideNtB2_4Wide3mul:2132
-   1: 2132
-  1: _RNvMNtCsa9Qy3L78YQJ_6hl_psx4wideNtB2_4Wide7mul_sub:2224
-   1: 2224
+  1: _RNvMNtCs3dFTdcjkgWj_8psx_math4wideNtB2_4Wide3mul:2132
+   1: _RNvMs1_NtCsjHNIEcpe9Kk_4core3numx12wrapping_mul:2132
+    1: 2132
+  1: _RNvMNtCs3dFTdcjkgWj_8psx_math4wideNtB2_4Wide7mul_sub:2224
+   1: _RNvMs1_NtCsjHNIEcpe9Kk_4core3numx12wrapping_mul:2224
+    1: 2224
   1.1: 740
-  1.1: _RNvMNtCsa9Qy3L78YQJ_6hl_psx4wideNtB2_4Wide3mul:724
-   1.1: 724
-  1.1: _RNvMNtCsa9Qy3L78YQJ_6hl_psx4wideNtB2_4Wide7mul_sub:741
-   1.1: 741
-  2: _RNvMNtCsa9Qy3L78YQJ_6hl_psx4wideNtB2_4Wide11is_negative:2126
+  1.1: _RNvMNtCs3dFTdcjkgWj_8psx_math4wideNtB2_4Wide3mul:724
+   1.1: _RNvMs1_NtCsjHNIEcpe9Kk_4core3numx12wrapping_mul:724
+    1.1: 724
+  1.1: _RNvMNtCs3dFTdcjkgWj_8psx_math4wideNtB2_4Wide7mul_sub:741
+   1.1: _RNvMs1_NtCsjHNIEcpe9Kk_4core3numx12wrapping_mul:741
+    1.1: 741
+  2: _RNvMNtCs3dFTdcjkgWj_8psx_math4wideNtB2_4Wide11is_negative:2126
    1: 2126
-  2.1: _RNvMNtCsa9Qy3L78YQJ_6hl_psx4wideNtB2_4Wide11is_negative:719
+  2.1: _RNvMNtCs3dFTdcjkgWj_8psx_math4wideNtB2_4Wide11is_negative:719
    1.1: 719
  47: 1495
  47: _RINvYINtNtNtCsjHNIEcpe9Kk_4core3ops5range5RangejENtNtNtNtBa_4iter6traits8iterator8Iterator3anyNCNvCsa9Qy3L78YQJ_6hl_psx18emit_submodel_faces1_0EB1y_:1422
