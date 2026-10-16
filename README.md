@@ -104,6 +104,24 @@ and reports stay under `.hlpsx/`, and the final image stays under `dist/`.
 Nothing is copied elsewhere unless you explicitly use `install` with
 `--games-dir`.
 
+### The startup movie
+
+The disc opens with Half-Life's own startup movie (the one named in your
+install's `media/StartupVids.txt`), skippable with Start or Cross. The game
+image has no RAM to spare for a video player, so a small boot program plays the
+movie and then loads the game's executable, which sits on the disc as the file
+`HLGAME.EXE`.
+
+The movie is encoded from your install at build time with
+[`psxavenc`](https://github.com/WonderfulToolchain/psxavenc) (zlib licence; it
+reads the movie itself, so no `ffmpeg` binary is needed). Build it and put it on
+your `PATH`, or point `PSXAVENC` at it. Without it, or without a startup movie
+in your install, the build prints a warning and makes the disc without the
+intro, which boots straight into the game. `--no-intro` does the same on
+purpose; `stack`, `regress`, `pgo` data collection and the journeys use such a
+disc because they replay input from boot. Nothing derived from the movie is
+ever written outside `.hlpsx/intro/`.
+
 ## Run
 
 Open `dist/hl-psx.cue` in PSoXide or another compatible PlayStation emulator,
@@ -257,6 +275,8 @@ the final authority for timing, audio, controller, and CD-loading behaviour.
 | `host/hl-build/` | End-to-end build orchestration (`cargo hl-build`), its own workspace |
 | `host/hl-content/` | Menu, audio, sprite, and manifest compiler |
 | `host/hl-bsp/` | GoldSrc BSP and studio-model cooker |
+| `intro/` | The disc's boot program: startup movie, then loads the game (own workspace) |
+| `host/hl-intro-cook/` | Encodes the install's startup movie for `intro/` |
 | `host/hl-logic-tests/` | Host-side gameplay and entity tests |
 | `shared/hl-format/` | Formats shared by host tools and the game |
 | `regression/` | Deterministic emulator scenarios and expectations |

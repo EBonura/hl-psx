@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 mod cook_provenance;
+mod intro;
 mod model_audit;
 mod model_variants;
 mod profile_prune;
@@ -187,10 +188,16 @@ fn source_tree_digest(repository: &Path) -> Result<String> {
             files
         }
     };
-    // The shipped profile shapes only the guest compile, never cooked data.
+    // The shipped profile shapes only the guest compile, never cooked data;
+    // neither does the intro stage, which has its own cooker and output
+    // (.hlpsx/intro).
     let files = files
         .into_iter()
-        .filter(|path| !path.starts_with("game/pgo"))
+        .filter(|path| {
+            !(path.starts_with("game/pgo")
+                || path.starts_with("intro")
+                || path.starts_with("host/hl-intro-cook"))
+        })
         .collect();
     digest_files(repository, files)
 }
@@ -718,6 +725,8 @@ struct Options {
     maps: Option<String>,
     /// `pgo`: scripted scenarios (play-order, port-1 polls) profiled beside the tapes.
     scripts: Vec<(usize, u32)>,
+    /// Pack the game alone, without the intro stage (`--no-intro`).
+    no_intro: bool,
 }
 
 const CANONICAL_GAME_NAME: &str = "Half-Life (hl-psx)";
@@ -757,6 +766,8 @@ const HELP: &str = "hl-psx Rust build\n\n\
                               to the maps' room ids so the collect build holds them)\n\
            --maps LIST|all    stack: play-order indices to run (default: a representative set)\n\
            --items            ram: list every placed section instead of the summary\n\
+           --no-intro         leave the startup-movie stage off the disc, so the game boots\n\
+                              directly (stack, regress and the journeys' disc are built so)\n\
            --map PATH         ram: report this link map (default .hlpsx/hl-psx.map) without linking\n\
            --polls FROM..TO   gameplay window (port-1 polls) of the preceding --tape; with one pgo\n\
                               also collects the I-cache layout (game/pgo/hl-psx.layout)\n\n\
@@ -850,6 +861,7 @@ fn parse_args() -> Options {
         items: false,
         maps: None,
         scripts: Vec::new(),
+        no_intro: false,
     };
     while let Some(arg) = args.next() {
         let Some(flag) = arg.to_str() else { usage() };
@@ -866,6 +878,7 @@ fn parse_args() -> Options {
                 options.regression_scenario = Some(value(&mut args).to_string_lossy().into_owned())
             }
             "--items" => options.items = true,
+            "--no-intro" => options.no_intro = true,
             "--script" => {
                 let text = value(&mut args).to_string_lossy().into_owned();
                 match text
@@ -2564,11 +2577,32 @@ fn enforce_ram_budget(repository: &Path, features: Option<&str>, free: u32) -> R
     }
 }
 
+/// Whether `pack_disc` puts the intro stage on the disc it packs: the
+/// shipping actions with a cooked movie, unless `--no-intro`. Gates and
+/// diagnostic builds replay input by poll count from boot and must not
+/// meet a movie first.
+static INTRO_ENABLED: AtomicBool = AtomicBool::new(false);
+
 fn pack_disc(repository: &Path, psoxide: &Path, exe: &Path) -> Result<PathBuf> {
-    pack_disc_into(repository, psoxide, exe, &repository.join("dist"))
+    pack_disc_into(
+        repository,
+        psoxide,
+        exe,
+        &repository.join("dist"),
+        INTRO_ENABLED.load(Ordering::Relaxed),
+    )
 }
 
-fn pack_disc_into(repository: &Path, psoxide: &Path, exe: &Path, dist: &Path) -> Result<PathBuf> {
+/// `intro`: boot the startup-movie program (when this checkout cooked one),
+/// which loads `exe` as a root file after the movie; otherwise `exe` is the
+/// boot executable, as it was before the intro existed.
+fn pack_disc_into(
+    repository: &Path,
+    psoxide: &Path,
+    exe: &Path,
+    dist: &Path,
+    intro: bool,
+) -> Result<PathBuf> {
     // Compile can update generated output, so repeat the gate immediately
     // before layout. Packing is the last point at which stale ignored assets
     // can be prevented from entering a distributable image.
@@ -2576,12 +2610,31 @@ fn pack_disc_into(repository: &Path, psoxide: &Path, exe: &Path, dist: &Path) ->
     fs::create_dir_all(dist)?;
     let image = dist.join("hl-psx.bin");
     let staged_pack = stage_world_pack(repository)?;
+    let movie = intro.then(|| intro::cooked(repository)).flatten();
+    let mut boot = exe.to_path_buf();
+    let mut game_file = None;
+    if let Some(movie) = &movie {
+        let game = intro::game_image(&fs::read(exe)?)?;
+        intro::check_fit(&game)?;
+        boot = intro::compile(repository, psoxide, &game)?;
+        game_file = Some(intro::stage_game(repository, &game)?);
+        println!(
+            "intro stage: game payload {:#x}..{:#x} (FNV {:08x}), intro at {:#x}, movie {}",
+            game.address,
+            game.address + game.size,
+            game.fnv,
+            intro::LOAD_ADDR,
+            movie.join("INTRO.STR").display()
+        );
+    } else if intro {
+        println!("warning: no cooked intro movie; packing the game as the boot executable");
+    }
     let mut command = Command::new(cargo());
     command
         .current_dir(psoxide)
         .args(["run", "--release", "-p", "mkisopsx", "--"])
         .arg("--exe")
-        .arg(exe)
+        .arg(&boot)
         .arg("--out")
         .arg(&image)
         .args(["--volume", "HLPSX", "--world-pack-rooms-dir"])
@@ -2590,6 +2643,12 @@ fn pack_disc_into(repository: &Path, psoxide: &Path, exe: &Path, dist: &Path) ->
         command
             .arg("--world-pack-extra-dir")
             .arg(staged_pack.join(directory));
+    }
+    if let Some(game_file) = &game_file {
+        command.arg("--file").arg(game_file);
+    }
+    if let Some(movie) = &movie {
+        command.arg("--xa-file").arg(movie.join("INTRO.STR"));
     }
     // The music is XA-ADPCM files inside the data track, not CD-DA tracks.
     for name in hl_format::music::FILE_NAMES {
@@ -2630,7 +2689,13 @@ fn profile_guided_pack(
     fs::create_dir_all(&work)?;
 
     let (collect_exe, collect_reserve) = compile_collect(repository, psoxide, features)?;
-    let collect_cue = pack_disc_into(repository, psoxide, &collect_exe, &work.join("collect"))?;
+    let collect_cue = pack_disc_into(
+        repository,
+        psoxide,
+        &collect_exe,
+        &work.join("collect"),
+        false,
+    )?;
     let elf = work.join("hl-psx.elf");
     fs::copy(
         compile_game(
@@ -2764,7 +2829,7 @@ fn profile_guided_pack(
     let mut shipped = trial.free;
     let mut exe = trial.exe;
     if !windows.is_empty() {
-        let layout_cue = pack_disc_into(repository, psoxide, &exe, &work.join("layout"))?;
+        let layout_cue = pack_disc_into(repository, psoxide, &exe, &work.join("layout"), false)?;
         collect_layout(repository, psoxide, &layout_cue, &windows, &work, &exe)?;
         LAYOUT_ENABLED.store(true, Ordering::Relaxed);
         // The link that ships: the rung the ladder chose, with the layout
@@ -3252,6 +3317,11 @@ fn main() -> Result<()> {
                 .as_deref()
                 .expect("asset builds hydrate PSoXide before cooking"),
         )?;
+        // The startup movie sits beside the cooked assets, outside data/ and
+        // so outside the cook provenance: it shapes no cooked byte.
+        if !options.no_intro {
+            intro::cook(&repository, &valve)?;
+        }
     }
     if options.action == Action::Assets {
         return Ok(());
@@ -3277,6 +3347,17 @@ fn main() -> Result<()> {
     }
 
     let psoxide = psoxide.expect("all build actions hydrate PSoXide");
+    // Only the shipping actions carry the startup movie; a gate or a
+    // diagnostic build replays input from boot and meets the game first.
+    INTRO_ENABLED.store(
+        !options.no_intro
+            && matches!(
+                options.action,
+                Action::Build | Action::Pack | Action::Disc | Action::Install | Action::Pgo
+            )
+            && is_shipping_build(options.features.as_deref()),
+        Ordering::Relaxed,
+    );
     let regression_features;
     let features = if options.action == Action::Regress {
         let mut required =

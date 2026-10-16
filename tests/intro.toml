@@ -1,0 +1,73 @@
+# The startup movie, played to its end, then the game. Needs a disc built with
+# the intro (`cargo hl-build pack`, the default; `--no-intro` has none).
+#
+# The movie is Half-Life's own and is never committed, nor is any frame of it:
+# every checkpoint here is `golden = false`, judged by asserts alone. The gate
+# keeps its frames in its own report directory, outside the repository.
+name = "hl-intro"
+title = "Half-Life: startup movie, then the title menu"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 2600
+
+[[step]]
+label = "the movie fades in from black, with its sound"
+wait = 130
+
+[[step]]
+checkpoint = "movie-fade-in"
+golden = false
+[[step.assert]]
+kind = "presenting"
+window = 60
+min_changes = 4
+[[step.assert]]
+kind = "audio"
+window = 120
+min_peak = 500
+
+[[step]]
+label = "the picture is up and the player is not stuck"
+wait = 170
+
+[[step]]
+checkpoint = "movie-playing"
+golden = false
+[[step.assert]]
+kind = "not_dark"
+[[step.assert]]
+kind = "audio"
+window = 120
+min_peak = 500
+[[step.assert]]
+kind = "pc_not_stuck"
+window = 120
+
+[[step]]
+label = "the movie fades to black (about ten seconds in)"
+wait_until = { kind = "dark" }
+timeout = 900
+
+[[step]]
+checkpoint = "movie-end"
+golden = false
+[[step.assert]]
+kind = "dark"
+
+[[step]]
+label = "the game loads over the player and reaches its title menu"
+wait_until = { kind = "pixels", color = [255, 255, 41], color_tol = 24, region = { x = 20, y = 80, w = 120, h = 150 }, min_count = 800 }
+timeout = 1800
+
+[[step]]
+checkpoint = "title-menu"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "pixels"
+color = [255, 255, 41]
+color_tol = 24
+region = { x = 20, y = 80, w = 120, h = 150 }
+min_count = 800
