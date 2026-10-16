@@ -2061,7 +2061,8 @@ const PGO_HOT_CALLSITE_LADDER: [u32; 6] = [1000, 500, 250, 125, 60, 0];
 /// builds (LLVM's default is 3000).
 const PGO_SAMPLE_HOT_INLINE_THRESHOLD: u32 = 50;
 
-/// How much of the replays' samples the shipped profile keeps, in permille, and
+/// How much of the replays' frame samples (those not in the cold list) the
+/// shipped profile keeps, in permille, and
 /// the functions it never keeps. A profile that names everything the replays
 /// touched inlines hot callees into dozens of callers: +47 KB of `.text` and
 /// `play()` 56 KB -> 128 KB over the committed one on 2026-10-15, for +19..+34%
@@ -2071,7 +2072,7 @@ const PGO_SAMPLE_HOT_INLINE_THRESHOLD: u32 = 50;
 /// costs 5 KB for +12% (c0a0 tram +16, c1a0 +14, c1a2b +13, c4a3 +7). The CD,
 /// stream and decompression functions are dropped first: they top the histogram
 /// while the CPU waits for the drive and do not run in a frame.
-const PGO_HOT_COVERAGE_PERMILLE: u64 = 800;
+const PGO_HOT_COVERAGE_PERMILLE: u64 = 750;
 const PGO_COLD_FUNCTIONS: [&str; 5] = [
     "6psx_io2cd",
     "chunk_stream",

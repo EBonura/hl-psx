@@ -40,10 +40,17 @@ fn blocks(text: &str) -> Vec<(String, u64, Vec<&str>)> {
 
 /// The profile with only its hottest functions, in their original order:
 /// functions are taken by descending samples, skipping any whose name contains
-/// one of `cold`, until they hold `coverage_permille` of all samples.
+/// one of `cold`, until they hold `coverage_permille` of the samples of the
+/// functions that are not `cold` (the drive and the loader are not part of the
+/// frame, so they are not part of the share either).
 pub fn prune(text: &str, coverage_permille: u64, cold: &[&str]) -> (String, Pruned) {
     let blocks = blocks(text);
-    let all: u64 = blocks.iter().map(|block| block.1).sum();
+    let is_cold = |name: &str| cold.iter().any(|fragment| name.contains(fragment));
+    let all: u64 = blocks
+        .iter()
+        .filter(|block| !is_cold(&block.0))
+        .map(|block| block.1)
+        .sum();
     let mut order: Vec<usize> = (0..blocks.len()).collect();
     order.sort_by(|&a, &b| blocks[b].1.cmp(&blocks[a].1).then(a.cmp(&b)));
     let mut keep = vec![false; blocks.len()];
@@ -52,7 +59,7 @@ pub fn prune(text: &str, coverage_permille: u64, cold: &[&str]) -> (String, Prun
         if covered * 1000 >= all * coverage_permille {
             break;
         }
-        if cold.iter().any(|name| blocks[index].0.contains(name)) {
+        if is_cold(&blocks[index].0) {
             continue;
         }
         keep[index] = true;
@@ -99,10 +106,15 @@ cold:10:0
 
     #[test]
     fn keeps_the_hottest_until_covered_and_skips_cold_names() {
-        let (text, pruned) = prune(PROFILE, 700, &["cd_read"]);
-        // hot (600) then warm (90): 690 of 1000 is under 700, so cold joins.
+        let (_, pruned) = prune(PROFILE, 700, &["cd_read"]);
+        // Without cd_read the samples are 700: hot (600) is 857 permille of
+        // them, so 700 is reached by hot alone; with 990 warm and cold join.
+        assert_eq!(pruned.kept, 1);
+        let (text, pruned) = prune(PROFILE, 990, &["cd_read"]);
         assert_eq!(pruned.kept, 3);
-        assert!(text.contains("hot:600:0") && text.contains("warm:90:0") && text.contains("cold:10:0"));
+        assert!(
+            text.contains("hot:600:0") && text.contains("warm:90:0") && text.contains("cold:10:0")
+        );
         assert!(!text.contains("cd_read"));
         // Nested lines travel with their function and the order is kept.
         assert!(text.find("hot").unwrap() < text.find("warm").unwrap());
