@@ -7457,7 +7457,6 @@ unsafe fn pushable_apply_settle(
     true
 }
 
-#[optimize(size)]
 /// Swept 3x3 samples on every leading AABB face. One Q12 minimum fraction
 /// clamps the whole move, so a 9-unit cart step cannot tunnel through a thin
 /// wall or another mover even though the cart's own hull is translated.

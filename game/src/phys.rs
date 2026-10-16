@@ -868,7 +868,6 @@ pub const NO_MOVER: Mover = Mover {
     rs: 0,
 };
 
-#[optimize(size)]
 #[inline(never)]
 fn mover_may_touch_segment(mv: &Mover, p1: [i32; 3], p2: [i32; 3]) -> bool {
     if mv.radius <= 0 {
