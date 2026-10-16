@@ -21,6 +21,11 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+mod limiter;
+mod loudness;
+mod mux;
+mod xa;
+
 use psx_fmv::bitstream as bs;
 use psx_fmv::stream::{Chunk, FrameAssembler, CHUNK_PAYLOAD_BYTES, MAX_CHUNKS};
 
@@ -39,6 +44,29 @@ const XA_CHANNEL: u8 = 0;
 /// Exit status for "no intro on this machine".
 const NO_INTRO: u8 = 3;
 
+/// Sample rate of the movie's sound on the disc.
+const SOUND_HZ: f64 = 37_800.0;
+/// VBlanks from a picture's last sector to its flip, as the intro asks the
+/// player (`Config::latency_vblanks`); written to `movie.rs`.
+const LATENCY_VBLANKS: u32 = 5;
+/// How much quieter the player's sound path is than the stream it is fed:
+/// the CD sound reaches the output through the SPU's main volume, whose
+/// full setting (0x3FFF) the emulator mixes at half scale (6.02 dB), and the
+/// 37.8 to 44.1 kHz conversion costs about 0.9 dB more. Measured on the SPU
+/// output of the headless emulator against the install's movie (-23.7 LUFS
+/// heard, -16.8 LUFS for the original played to both speakers). The cook
+/// makes the stream this much louder than the install's movie, with a
+/// limiter so that it cannot clip, so that what is heard matches it.
+const PLAYBACK_LOSS_DB: f64 = 6.9;
+/// Sectors the sound is moved later behind the encoder's placement, so that
+/// it plays together with the picture. The picture shows its frame the
+/// headroom of [`LATENCY_VBLANKS`] after the frame's last sector arrives, and
+/// a frame is read in 10 sectors (150 a second, 15 frames a second), so the
+/// sound has to wait 10 sectors plus 5 / 59.94 s (12.5 sectors) behind where
+/// the encoder starts it; 1.5 more sectors (10 ms) are what the first frame's
+/// decode and the flip to the next VBlank add, measured on the emulator.
+const AUDIO_DELAY_SECTORS: usize = 24;
+
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Movie {
     frames: u32,
@@ -56,7 +84,7 @@ struct Movie {
 /// Decodes every frame of `raw` (2336-byte sectors) and returns the figures
 /// the guest needs, or the first reason the player could not show it.
 fn measure(raw: &[u8]) -> Result<Movie, String> {
-    if raw.is_empty() || raw.len() % XA_SECTOR != 0 {
+    if raw.is_empty() || !raw.len().is_multiple_of(XA_SECTOR) {
         return Err(format!(
             "{} bytes is not a whole number of {XA_SECTOR}-byte sectors",
             raw.len()
@@ -166,8 +194,9 @@ fn constants(m: &Movie, source: &str) -> String {
          pub const HEIGHT: u16 = {};\n\
          pub const MAX_CHUNKS: u16 = {};\n\
          pub const RLE_WORDS: usize = {};\n\
-         pub const XA: Option<(u8, u8)> = {:?};\n",
-        m.frames, m.width, m.height, m.max_chunks, m.rle_words, m.xa
+         pub const XA: Option<(u8, u8)> = {:?};\n\
+         pub const LATENCY_VBLANKS: u32 = {};\n",
+        m.frames, m.width, m.height, m.max_chunks, m.rle_words, m.xa, LATENCY_VBLANKS
     )
 }
 
@@ -206,22 +235,11 @@ fn find_psxavenc(explicit: Option<PathBuf>) -> Option<PathBuf> {
     })
 }
 
-/// Mono 37.8 kHz XA beside the picture: the movie's sound is mono, so nothing is
-/// lost, the encoder's centre mix to stereo (-3 dB) is avoided, and the
-/// audio takes half the sectors a stereo stream would, which go to the
-/// picture instead. The drive plays a mono XA stream to both speakers.
-fn encode(psxavenc: &Path, movie: &Path, out: &Path) -> Result<(), String> {
+/// Runs the encoder with `args`.
+fn run_psxavenc(psxavenc: &Path, args: &[&std::ffi::OsStr]) -> Result<(), String> {
     let status = Command::new(psxavenc)
-        .args(["-q", "-t", "str", "-v", "v2", "-s"])
-        .arg(format!("{WIDTH}x{HEIGHT}"))
-        .args([
-            "-r", FPS, "-x", "2", "-f", "37800", "-c", "1", "-b", "4", "-F",
-        ])
-        .arg(XA_FILE.to_string())
-        .arg("-C")
-        .arg(XA_CHANNEL.to_string())
-        .arg(movie)
-        .arg(out)
+        .arg("-q")
+        .args(args)
         .status()
         .map_err(|e| format!("{}: {e}", psxavenc.display()))?;
     if status.success() {
@@ -229,6 +247,131 @@ fn encode(psxavenc: &Path, movie: &Path, out: &Path) -> Result<(), String> {
     } else {
         Err(format!("{} failed: {status}", psxavenc.display()))
     }
+}
+
+/// The encoder as the XA options of one audio pass: mono 37.8 kHz, `bits`
+/// per sample, filed under the movie's file and channel.
+fn xa_args(bits: &'static str) -> Vec<std::ffi::OsString> {
+    ["-f", "37800", "-c", "1", "-b", bits, "-F"]
+        .iter()
+        .map(std::ffi::OsString::from)
+        .chain([
+            XA_FILE.to_string().into(),
+            "-C".into(),
+            XA_CHANNEL.to_string().into(),
+        ])
+        .collect()
+}
+
+fn pass(psxavenc: &Path, head: &[&str], tail: &[&Path], bits: &'static str) -> Result<(), String> {
+    let xa = xa_args(bits);
+    let mut args: Vec<&std::ffi::OsStr> = head.iter().map(std::ffi::OsStr::new).collect();
+    args.extend(xa.iter().map(|a| a.as_os_str()));
+    args.extend(tail.iter().map(|p| p.as_os_str()));
+    run_psxavenc(psxavenc, &args)
+}
+
+/// What the gain stage did to the sound, for the log.
+#[derive(Debug)]
+struct Mastering {
+    source_lufs: f64,
+    target_lufs: f64,
+    gain_db: f64,
+    result_lufs: f64,
+    peak_dbfs: f64,
+    limiter: limiter::Report,
+}
+
+/// Raises the sound by [`PLAYBACK_LOSS_DB`] over the install's own loudness,
+/// through a look-ahead limiter so that it cannot clip, and returns the new
+/// samples. The movie is mastered with about 17 dB between its loudness and
+/// its peak; the player's path needs 7 dB more level than the source file
+/// to be heard as loud, which the peaks alone could not carry.
+fn master(pcm: &[i16]) -> Result<(Vec<i16>, Mastering), String> {
+    let x: Vec<f64> = pcm.iter().map(|s| f64::from(*s) / 32768.0).collect();
+    let source = loudness::integrated(&x, SOUND_HZ).ok_or("the movie's sound is silent")?;
+    let target = source + PLAYBACK_LOSS_DB;
+    let gain = limiter::gain_for(&x, SOUND_HZ, target)
+        .ok_or_else(|| format!("{target:.1} LUFS is out of reach for the movie's sound"))?;
+    let (y, report) = limiter::apply(&x, gain, SOUND_HZ);
+    let out: Vec<i16> = y
+        .iter()
+        .map(|v| (v * 32768.0).round().clamp(-32768.0, 32767.0) as i16)
+        .collect();
+    let peak = y.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+    let result = loudness::integrated(&y, SOUND_HZ).ok_or("the mastered sound is silent")?;
+    Ok((
+        out,
+        Mastering {
+            source_lufs: source,
+            target_lufs: target,
+            gain_db: 20.0 * gain.log10(),
+            result_lufs: result,
+            peak_dbfs: 20.0 * peak.log10(),
+            limiter: report,
+        },
+    ))
+}
+
+/// A 16-bit mono PCM WAV, the form the encoder reads without guessing.
+fn wav(pcm: &[i16], hz: u32) -> Vec<u8> {
+    let data = pcm.len() as u32 * 2;
+    let mut w = Vec::with_capacity(44 + data as usize);
+    w.extend_from_slice(b"RIFF");
+    w.extend_from_slice(&(36 + data).to_le_bytes());
+    w.extend_from_slice(b"WAVEfmt ");
+    w.extend_from_slice(&16u32.to_le_bytes());
+    w.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    w.extend_from_slice(&1u16.to_le_bytes()); // mono
+    w.extend_from_slice(&hz.to_le_bytes());
+    w.extend_from_slice(&(hz * 2).to_le_bytes());
+    w.extend_from_slice(&2u16.to_le_bytes());
+    w.extend_from_slice(&16u16.to_le_bytes());
+    w.extend_from_slice(b"data");
+    w.extend_from_slice(&data.to_le_bytes());
+    for s in pcm {
+        w.extend_from_slice(&s.to_le_bytes());
+    }
+    w
+}
+
+/// The movie as an STR with its sound beside the picture.
+///
+/// The encoder makes the picture (320x240, 15 frames a second, bitstream
+/// version 2) and the sound twice. First the sound at 8 bits, which the cook
+/// decodes to samples, loudens and limits ([`master`]); then those samples at
+/// 4 bits, the form the drive plays. [`mux::interleave`] puts the two streams
+/// back together with the sound [`AUDIO_DELAY_SECTORS`] later than the encoder
+/// would place it.
+///
+/// Mono 37.8 kHz XA: the movie's sound is mono, so nothing is lost, the
+/// encoder's centre mix to stereo (-3 dB) is avoided, and the sound takes
+/// half the sectors a stereo stream would, which go to the picture instead.
+/// The drive plays a mono XA stream to both speakers.
+fn encode(psxavenc: &Path, movie: &Path, work: &Path) -> Result<(Vec<u8>, Mastering), String> {
+    std::fs::create_dir_all(work).map_err(|e| format!("{}: {e}", work.display()))?;
+    let size = format!("{WIDTH}x{HEIGHT}");
+    let (picture, wide, mastered, sound) = (
+        work.join("picture.str"),
+        work.join("wide.xa"),
+        work.join("sound.wav"),
+        work.join("sound.xa"),
+    );
+    pass(
+        psxavenc,
+        &["-t", "str", "-v", "v2", "-s", &size, "-r", FPS, "-x", "2"],
+        &[movie, &picture],
+        "4",
+    )?;
+    pass(psxavenc, &["-t", "xa"], &[movie, &wide], "8")?;
+    let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
+    let (pcm, mastering) = master(&xa::decode_mono_37800(&read(&wide)?)?)?;
+    std::fs::write(&mastered, wav(&pcm, SOUND_HZ as u32))
+        .map_err(|e| format!("{}: {e}", mastered.display()))?;
+    pass(psxavenc, &["-t", "xa"], &[&mastered, &sound], "4")?;
+    let stream = mux::interleave(&read(&picture)?, &read(&sound)?, AUDIO_DELAY_SECTORS)?;
+    std::fs::remove_dir_all(work).map_err(|e| format!("{}: {e}", work.display()))?;
+    Ok((stream, mastering))
 }
 
 struct Args {
@@ -276,8 +419,7 @@ fn run() -> Result<ExitCode, String> {
     };
     std::fs::create_dir_all(&args.out).map_err(|e| format!("{}: {e}", args.out.display()))?;
     let target = args.out.join("INTRO.STR");
-    encode(&psxavenc, &movie, &target)?;
-    let mut raw = std::fs::read(&target).map_err(|e| format!("{}: {e}", target.display()))?;
+    let (mut raw, mastering) = encode(&psxavenc, &movie, &args.out.join("work"))?;
     // Same movie, same bytes: the encoder leaves the unused tail of each audio
     // sector as whatever its memory held, which would make the disc differ
     // from one cook to the next.
@@ -290,6 +432,17 @@ fn run() -> Result<ExitCode, String> {
         .unwrap_or("startup movie");
     std::fs::write(args.out.join("movie.rs"), constants(&m, name))
         .map_err(|e| format!("movie.rs: {e}"))?;
+    eprintln!(
+        "hl-intro-cook: sound {:.1} LUFS in the install, {:+.1} dB gain to reach {:.1}, {:.1} LUFS and {:.1} dBFS peak after \
+         the limiter (at most {:.1} dB, {:.1}% of the time)",
+        mastering.source_lufs,
+        mastering.gain_db,
+        mastering.target_lufs,
+        mastering.result_lufs,
+        mastering.peak_dbfs,
+        mastering.limiter.max_reduction_db,
+        mastering.limiter.active * 100.0
+    );
     eprintln!(
         "hl-intro-cook: {name}: {} frames {}x{}, {} video + {} audio + {} other sectors ({} bytes), \
          max {} chunks, max {} RLE words, bitstream versions {:?}, XA {:?}",
@@ -368,6 +521,7 @@ mod tests {
             "MAX_CHUNKS: u16 = 9",
             "RLE_WORDS: usize = 20000",
             "XA: Option<(u8, u8)> = Some((1, 0))",
+            "LATENCY_VBLANKS: u32 = 5",
         ] {
             assert!(text.contains(want), "{want}\n{text}");
         }

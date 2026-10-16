@@ -42,9 +42,6 @@ const PLAYER_MEMORY: usize = 0x8004_0000;
 /// The checksum of the game's payload (hl-build computes it from the image
 /// it packs, see build.rs).
 const GAME_FNV: u32 = parse_u32(env!("HL_INTRO_GAME_FNV_VALUE"));
-/// VBlanks from a frame's last sector to its flip: the decoder's headroom.
-/// A 15 frames a second movie at 15 bits leaves the MDEC mostly idle.
-const LATENCY_VBLANKS: u32 = 5;
 /// No sector for two seconds ends the movie.
 const STALL_VBLANKS: u32 = 120;
 
@@ -114,7 +111,8 @@ fn play_movie(port: ControllerPort, limit: u32) {
         buffers: player::DEFAULT_BUFFERS,
         screen_width: 320,
         screen_height: 240,
-        latency_vblanks: LATENCY_VBLANKS,
+        // The cook sized the sound's delay for this headroom (hl-intro-cook).
+        latency_vblanks: cooked::LATENCY_VBLANKS,
         stall_vblanks: STALL_VBLANKS,
     };
     let words = player::memory_words(&movie, config.depth);
