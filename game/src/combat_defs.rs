@@ -87,6 +87,7 @@ pub const PROJ_TRIPMINE: u8 = 7;
 pub const PROJ_M203: u8 = 8;
 pub const PROJ_HORNET_FAST: u8 = 9;
 pub const PROJ_BOLT_WATER: u8 = 10;
+pub const PROJ_CBALL: u8 = 12; // the controller's energy ball (enemy projectile)
 pub const GRENADE_FUSE_TICKS: u32 = 60; // CHandGrenade: three-second fuse at 20 Hz
 
 pub struct WeaponDef {
@@ -186,8 +187,8 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef_atk(40, 32, 91, AI_RANGED, 6, 600, 15, 55), // 7 bullsquid (acid spit at range)
     mdef_atk(50, 40, 90, AI_RANGED, 16, 1000, 5, 8), // 8 hgrunt (mp5 bursts)
     mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24), // 9 alien_slave (zap)
-    mdef_atk(60, 48, 100, AI_RANGED, 16, 500, 8, 4), // 10 alien_grunt (hornets)
-    mdef_atk(60, 40, 100, AI_RANGED, 16, 1024, 3, 14), // 11 alien_controller (energy)
+    mdef_atk(60, 48, 100, AI_RANGED, 16, 1024, 8, 4), // 10 alien_grunt (hornet volleys inside 1024 units)
+    mdef_atk(60, 40, 100, AI_RANGED, 16, 2048, 3, 14), // 11 alien_controller (energy balls out to 2048)
     mdef(25, 32, 170, AI_IDLE),                 // 12 barnacle (retail spawns it with 25)
     mdef(16, 8, 40, AI_IDLE),                   // 13 leech (swimmer; species::tick_leech)
     mdef(1, 4, 30, AI_IDLE),                    // 14 cockroach (passive; any hit kills it)
@@ -491,20 +492,6 @@ pub static WEAPON_DEFS: [WeaponDef; N_WEAPONS] = [
         10,
     ),
 ];
-
-// A HECU grunt's hand grenade, in 20 Hz ticks, measured under the Xash3D
-// reference: none in the first 80 ticks of an engagement, one every 155, the
-// blast 25 to 27 ticks after the 34-tick throw begins. The port's throw runs
-// `GRENADE_THROW_TICKS` and lets go with `GRENADE_RELEASE_LEFT` of them left.
-pub const GRENADE_FIRST_DELAY: u16 = 80;
-pub const GRENADE_INTERVAL: u16 = 155;
-pub const GRENADE_THROW_TICKS: u8 = 31;
-pub const GRENADE_RELEASE_LEFT: u8 = 16;
-/// Ticks from the release to the blast.
-pub const GRENADE_FLIGHT: i32 = 10;
-/// Nearest and farthest target a grunt throws at.
-pub const GRENADE_MIN_RANGE: i32 = 250;
-pub const GRENADE_MAX_RANGE: i32 = 900;
 
 // Secondary-fire cooldowns in ticks (the primary's live in WEAPON_DEFS).
 pub const GLOCK_ALT_COOLDOWN: u8 = 4;

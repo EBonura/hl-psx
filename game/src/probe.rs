@@ -35,9 +35,10 @@ static mut HOLD_CL: bool = false;
 static mut ENDED: bool = false;
 static mut GOTO: Option<(usize, bool)> = None;
 static mut FORCE_NEXT: bool = false;
-static mut WATCH_KIND: i32 = -1;
 static mut WATCH_EVERY: u32 = 10;
 static mut PROJ_LOG: bool = false;
+static mut WATCH_KINDS: [i32; 4] = [-1; 4];
+static mut PROJ_WATCH: bool = false;
 
 pub unsafe fn take_goto() -> Option<(usize, bool)> {
     let g = GOTO;
@@ -297,27 +298,18 @@ pub unsafe fn step(
             18 => *health = c.a[0].clamp(0, 1000) as u16,
             #[cfg(feature = "probe-fixes")]
             19 => {
-                // The nearest live monster of that kind starts following the player.
-                let mut best = usize::MAX;
-                let mut best_d = i32::MAX;
                 let mut pi = 0usize;
                 while pi < crate::PROP_COUNT {
                     if crate::PROP_ACTIVE[pi] != 0
                         && crate::PROP_HEALTH[pi] != 0
                         && crate::PROP_KIND[pi] as i32 == c.a[0] as i32
                     {
-                        let d = crate::dist2_3(crate::PROP_POS[pi], player.pos);
-                        if d < best_d {
-                            best_d = d;
-                            best = pi;
-                        }
+                        crate::prop_scientist_set_flag(pi, crate::PROP_SCI_FOLLOWING, true);
+                        crate::prop_scientist_set_flag(pi, crate::PROP_SCI_HELLO_SAID, true);
+                        crate::reference_trace::probe(now, "follow", "", pi as i32);
+                        break;
                     }
                     pi += 1;
-                }
-                if best != usize::MAX {
-                    crate::prop_scientist_set_flag(best, crate::PROP_SCI_FOLLOWING, true);
-                    crate::prop_scientist_set_flag(best, crate::PROP_SCI_HELLO_SAID, true);
-                    crate::reference_trace::probe(now, "follow", "", best as i32);
                 }
             }
             #[cfg(feature = "probe-fixes")]
@@ -353,6 +345,120 @@ pub unsafe fn step(
                     ei += 1;
                 }
             }
+            21 => {
+                let dmg = c.a[0].clamp(1, 255) as u8;
+                let body = [player.pos[0], player.pos[1] + 18, player.pos[2]];
+                let mut done = false;
+                for ring in [96i32, 128, 160] {
+                    for k in 0..16u16 {
+                        if done {
+                            break;
+                        }
+                        let a = k * 256;
+                        let src = [
+                            player.pos[0] + ((psx_math::sincos::sin_q12(a) * ring) >> 12),
+                            player.pos[1] + 18,
+                            player.pos[2]
+                                + ((psx_math::sincos::sin_q12((a + 1024) & 0xfff) * ring) >> 12),
+                        ];
+                        let leaf = crate::camera_leaf(m, src);
+                        let movers = core::slice::from_raw_parts(
+                            core::ptr::addr_of!(crate::MOVERS).cast::<crate::phys::Mover>(),
+                            crate::MOVER_COUNT.min(crate::MAX_ENTS + 1),
+                        );
+                        let hidden = crate::phys::trace_line(m, movers, [src[0], src[1] + 1, src[2]], body)
+                            .is_some();
+                        if leaf > 0 && hidden {
+                            crate::reference_trace::probe_vals(
+                                now,
+                                "blastwall",
+                                &[src[0], src[1], src[2], ring, dmg as i32, *health as i32],
+                            );
+                            crate::explode(m, src, dmg, crate::combat_defs::blast_radius(dmg), true);
+                            done = true;
+                        }
+                    }
+                }
+                if !done {
+                    crate::reference_trace::probe(now, "blastwall", "no-hidden-spot", 0);
+                }
+            }
+            40 => {
+                let x = c.a[0] as i32;
+                let z = c.a[2] as i32;
+                let movers = core::slice::from_raw_parts(
+                    core::ptr::addr_of!(crate::MOVERS).cast::<crate::phys::Mover>(),
+                    crate::MOVER_COUNT.min(crate::MAX_ENTS + 1),
+                );
+                let mut y = c.a[1] as i32 + 200;
+                while y >= c.a[1] as i32 - 400 {
+                    let wet = crate::water_touch(m, m.n_ents, [x, y, z]);
+                    let hit = crate::phys::trace_line(m, movers, [x, y, z], [x, y - 8, z]).is_some();
+                    crate::reference_trace::probe_vals(
+                        now,
+                        "scan",
+                        &[x, y, z, wet as i32, hit as i32, crate::camera_leaf(m, [x, y, z])],
+                    );
+                    y -= 8;
+                }
+            }
+            23 => {
+                let mut k = 0;
+                while k < 3 && WATCH_KINDS[k] >= 0 {
+                    k += 1;
+                }
+                WATCH_KINDS[k] = c.a[0] as i32;
+                WATCH_EVERY = if c.a[1] > 0 { c.a[1] as u32 } else { 10 };
+            }
+            41 => PROJ_WATCH = c.a[0] != 0,
+            43 | 44 => {
+                let mut pi = 0usize;
+                while pi < crate::PROP_COUNT {
+                    if crate::PROP_ACTIVE[pi] != 0
+                        && crate::PROP_HEALTH[pi] != 0
+                        && crate::PROP_KIND[pi] as i32 == c.a[0] as i32
+                    {
+                        let t = crate::PROP_POS[pi];
+                        if c.op == 43 {
+                            player.pos = [t[0] + c.a[1] as i32, t[1] + c.a[2] as i32, t[2] + c.a[3] as i32];
+                            player.clear_velocity();
+                            player.on_ground = false;
+                            player.ground_mover = -1;
+                        }
+                        let eye = [player.pos[0], player.pos[1] + crate::VIEW_HEIGHT, player.pos[2]];
+                        let aim = [t[0], t[1] + 24 + c.a[1] as i32, t[2]];
+                        let d = [aim[0] - eye[0], aim[1] - eye[1], aim[2] - eye[2]];
+                        let flat = crate::isqrt_i32(d[0] * d[0] + d[2] * d[2]).max(1);
+                        *yaw = crate::yaw_from_vec(d[0], d[2]);
+                        // pitch from the aim slope, in the view's 4096ths of a turn
+                        *pitch = (d[1] * 652 / flat).clamp(-1000, 1000) as i16;
+                        PIN_POSE = (player.pos, *yaw, *pitch);
+                        crate::reference_trace::probe_vals(
+                            now,
+                            if c.op == 43 { "tpnear" } else { "aimat" },
+                            &[pi as i32, player.pos[0], player.pos[1], player.pos[2], *yaw as i32, *pitch as i32],
+                        );
+                        break;
+                    }
+                    pi += 1;
+                }
+            }
+            42 => {
+                let cur = weapons.current;
+                let d = crate::wdef_of(cur);
+                crate::reference_trace::probe_vals(
+                    now,
+                    "arsenal",
+                    &[
+                        weapons.owned as i32,
+                        cur as i32,
+                        weapons.clip[cur] as i32,
+                        weapons.ammo[d.ammo] as i32,
+                        weapons.reload_ticks as i32,
+                        weapons.cooldown as i32,
+                    ],
+                );
+            }
             #[cfg(feature = "probe-fixes")]
             22 => weapons.current = c.a[0].clamp(0, 13) as usize,
             #[cfg(feature = "probe-fixes")]
@@ -382,10 +488,6 @@ pub unsafe fn step(
                     crate::reference_trace::probe_vals(now, "club", &[best as i32, dmg as i32, crate::PROP_HEALTH[best] as i32]);
                     crate::damage_prop(best, dmg, true);
                 }
-            }
-            23 => {
-                WATCH_KIND = c.a[0] as i32;
-                WATCH_EVERY = if c.a[1] > 0 { c.a[1] as u32 } else { 10 };
             }
             24 => PROJ_LOG = c.a[0] != 0,
             27 => {
@@ -485,15 +587,40 @@ pub unsafe fn step(
     if PROJ_LOG {
         crate::probe_projectiles(now);
     }
-    if WATCH_KIND >= 0 && now % WATCH_EVERY == 0 {
+    if PROJ_WATCH && now % 2 == 0 {
+        let mut i = 0usize;
+        while i < crate::MAX_PROJECTILES {
+            let p = crate::PROJECTILES[i];
+            if p.active {
+                crate::reference_trace::probe_vals(
+                    now,
+                    "proj",
+                    &[i as i32, p.kind as i32, p.pos[0], p.pos[1], p.pos[2], p.life as i32],
+                );
+            }
+            i += 1;
+        }
+    }
+    if WATCH_KINDS[0] >= 0 && now % WATCH_EVERY == 0 {
         let mut pi = 0usize;
         while pi < crate::PROP_COUNT {
-            if crate::PROP_KIND[pi] as i32 == WATCH_KIND && crate::PROP_ACTIVE[pi] != 0 {
+            let kind = crate::PROP_KIND[pi] as i32;
+            if crate::PROP_ACTIVE[pi] != 0 && WATCH_KINDS.contains(&kind) {
                 let t = crate::PROP_POS[pi];
                 crate::reference_trace::probe_vals(
                     now,
                     "watch",
-                    &[pi as i32, crate::PROP_HEALTH[pi] as i32, t[0], t[1], t[2], crate::PROP_STATE[pi] as i32],
+                    &[
+                        pi as i32,
+                        crate::PROP_HEALTH[pi] as i32,
+                        t[0],
+                        t[1],
+                        t[2],
+                        crate::PROP_STATE[pi] as i32,
+                        crate::PROP_OCC_VIS[pi] as i32,
+                        crate::PROP_AI_TARGET[pi] as i32,
+                        kind,
+                    ],
                 );
             }
             pi += 1;

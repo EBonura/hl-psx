@@ -33,7 +33,6 @@ unsafe fn acquire(
     player_pos: [i32; 3],
     nprops: usize,
     wake: i32,
-    cone: bool,
 ) -> Option<(u8, bool, [i32; 3])> {
     let (target, visible) = if ai_reacquire(pi) {
         let selected =
@@ -49,21 +48,12 @@ unsafe fn acquire(
     } else {
         (PROP_AI_TARGET[pi], prop_ai_target_visible(pi))
     };
-    let mut aim = if target == PROP_TARGET_NONE {
+    let aim = if target == PROP_TARGET_NONE {
         None
     } else {
         target_aim_point(target, player_pos, nprops)
     };
-    if let (true, true, Some(a)) = (cone, PROP_AI_TARGET[pi] == PROP_TARGET_NONE, aim) {
-        // A sleeper notices only what stands within 60 degrees of its facing.
-        let yaw = prop_yaw_value(PROP_YAW[pi]);
-        let dx = a[0] - PROP_POS[pi][0];
-        let dz = a[2] - PROP_POS[pi][2];
-        let along = (sincos::sin_q12(yaw) * dx + sincos::sin_q12((yaw + 1024) & 0x0fff) * dz) >> 12;
-        if along * 2 < isqrt_i32(dx * dx + dz * dz) {
-            aim = None;
-        }
-    }
+    let aim = aim.and_then(|truth| pursue_point(pi, target, truth, visible));
     let Some(aim) = aim else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
@@ -73,13 +63,6 @@ unsafe fn acquire(
     PROP_AI_TARGET[pi] = target;
     prop_face_point(pi, aim);
     Some((target, visible, aim))
-}
-
-/// Chance in percent that one MP5 bullet from a grunt reaches a standing
-/// target `dist` units away: all of them at 100 units, 45 at 300, about 20
-/// from 550 on (measured at 100, 200, 300, 550 and 700).
-fn grunt_hit_pct(dist: i32) -> u32 {
-    (130 - dist * 3 / 10).clamp(20, 100) as u32
 }
 
 /// monster_human_grunt with an MP5: ready stance, then bursts of three volleys
@@ -97,9 +80,12 @@ pub(crate) unsafe fn tick_grunt(
     armor: &mut u16,
     nprops: usize,
 ) {
-    const RANGE: i32 = 1000;
+    // CHGrunt::CheckRangeAttack1 fires out to 2048 units, the distance every
+    // monster looks.
+    const RANGE: i32 = 2048;
+    if advance_grunt_grenade(pi) { return; }
     let Some((target, visible, aim)) =
-        acquire(m, sight, pi, player_pos, nprops, RANGE + 384, false)
+        acquire(m, sight, pi, player_pos, nprops, RANGE)
     else {
         return;
     };
@@ -117,18 +103,7 @@ pub(crate) unsafe fn tick_grunt(
         let mode = (t >> 5) & 3;
         let left = t & 31;
         PROP_STATE[pi] = PROP_STATE_MOVE;
-        if mode == 3 {
-            // Throwing a hand grenade: the release is 16 ticks in.
-            PROP_STATE[pi] = PROP_STATE_ATTACK;
-            PROP_AI_TIMER[pi] = if left > 1 {
-                0x80 | (3 << 5) | (left - 1)
-            } else {
-                0
-            };
-            if left == GRENADE_RELEASE_LEFT {
-                throw_grenade(m, pi, aim);
-            }
-        } else if mode == 2 {
+        if mode == 2 {
             PROP_AI_TIMER[pi] = if left > 1 {
                 0x80 | (2 << 5) | (left - 1)
             } else {
@@ -184,19 +159,32 @@ pub(crate) unsafe fn tick_grunt(
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = 0;
         prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(ATTACK_WINDUP + 1));
-        // The retail grunt never throws in its first 80 ticks of an engagement.
-        GRUNT_GREN[pi] = SIM_NOW.wrapping_add(GRENADE_FIRST_DELAY);
         return;
     }
-    // After that it lobs a hand grenade at an enemy 250 to 900 units off, one
-    // every 155 ticks (measured: blasts 155 apart, 25 to 27 ticks after the
-    // 34-tick throw begins).
-    if d2 > GRENADE_MIN_RANGE * GRENADE_MIN_RANGE
-        && d2 < GRENADE_MAX_RANGE * GRENADE_MAX_RANGE
-        && time_reached(SIM_NOW, GRUNT_GREN[pi])
-    {
-        GRUNT_GREN[pi] = SIM_NOW.wrapping_add(GRENADE_INTERVAL);
-        PROP_AI_TIMER[pi] = 0x80 | (3 << 5) | GRENADE_THROW_TICKS;
+    if try_grunt_grenade(m,sight,pi,aim,nprops) { return; }
+    let weapons = hecu_grenades::weapons(GRUNT_GREN[pi]);
+    if weapons & 1 == 0 && weapons & 8 != 0 {
+        // A shotgun marine (`weapons` bit 8 with no MP5): one blast of
+        // `sk_hgrunt_pellets` pellets, each drawn in a 15 degree cone and worth
+        // 5 (`sk_plr_buckshot`), every 0.7 s.
+        if prop_attack_cooldown(pi) == 0 {
+            let from = prop_eye(m, pi);
+            let mut hits = 0u8;
+            let mut n = skill_value(Sk::HgruntPellets);
+            while n > 0 {
+                if monster_shot_lands(m, from, aim, target, player_pos, nprops, 535).is_some() {
+                    hits += 1;
+                }
+                n -= 1;
+            }
+            if hits > 0 {
+                damage_target(target, hits * 5, pos, health, armor);
+            }
+            push_tracer(from, aim);
+            sfx::play_world(sfx::SHOTGUN, pos);
+            make_noise(pos, senses::VOL_MONSTER_BURST);
+            prop_attack_cooldown_set(pi, 14);
+        }
         return;
     }
     let state = PROP_AI_TIMER[pi]; // low nibble: burst ticks left, high: bursts since the pause
@@ -205,13 +193,13 @@ pub(crate) unsafe fn tick_grunt(
         PROP_AI_TIMER[pi] = state - 1;
         if left & 1 == 0 {
             let from = prop_eye(m, pi);
-            let dist = isqrt_i32(dist2_3(from, aim));
-            let pct = grunt_hit_pct(dist);
             let dmg = skill_hit(Sk::Bullet9mmAr);
             let bullets = if impact_rng().below(4) == 0 { 3 } else { 1 };
             let mut b = 0;
             while b < bullets {
-                if impact_rng().below(100) < pct {
+                // FireBullets with VECTOR_CONE_10DEGREES: the bullet either
+                // crosses the target's body or goes wide of it.
+                if monster_shot_lands(m, from, aim, target, player_pos, nprops, 711).is_some() {
                     damage_target(target, dmg, pos, health, armor);
                     push_tracer(from, aim);
                 } else {
@@ -225,6 +213,7 @@ pub(crate) unsafe fn tick_grunt(
                 b += 1;
             }
             cue_or(SP::HG_MGUN, sfx::MP5, pos);
+            make_noise(pos, senses::VOL_MONSTER_BURST);
         }
     } else if prop_attack_cooldown(pi) == 0 {
         let bursts = (state >> 4) + 1;
@@ -237,30 +226,6 @@ pub(crate) unsafe fn tick_grunt(
             PROP_AI_TIMER[pi] = (bursts << 4) | 6;
         }
     }
-}
-
-/// Lob a hand grenade that lands on `aim` ten ticks after its release and goes
-/// off where it lands (the retail blast comes 25 to 27 ticks after the throw
-/// begins, 16 of them before the grenade leaves the hand).
-#[inline(never)]
-#[optimize(size)]
-unsafe fn throw_grenade(m: &Map, pi: usize, aim: [i32; 3]) {
-    const FLIGHT: i32 = GRENADE_FLIGHT;
-    let from = prop_eye(m, pi);
-    let slot = spawn_projectile_dir(
-        PROJ_GRENADE,
-        WEAPON_DEFS[W_GRENADE].damage,
-        from,
-        [0; 3],
-        true,
-    );
-    PROJECTILES[slot].vel = [
-        (aim[0] - from[0]) / FLIGHT,
-        // The projectile pass lowers vy by gravity before each move.
-        (aim[1] - from[1] + throwable::LOB_GRAVITY * FLIGHT * (FLIGHT + 1) / 2) / FLIGHT,
-        (aim[2] - from[2]) / FLIGHT,
-    ];
-    PROJECTILES[slot].life = FLIGHT as u8;
 }
 
 /// monster_alien_slave: a 46-tick zap whose two beams land 34 ticks in (20 on
@@ -283,11 +248,12 @@ pub(crate) unsafe fn tick_slave(
     armor: &mut u16,
     nprops: usize,
 ) {
-    const RANGE: i32 = 650;
+    // CISlave::CheckRangeAttack1: a zap from 64 to 784 units.
+    const RANGE: i32 = 784;
     const CLAW: i32 = 70;
     const ZAP: u8 = 46;
     let Some((target, visible, aim)) =
-        acquire(m, sight, pi, player_pos, nprops, RANGE + 300, false)
+        acquire(m, sight, pi, player_pos, nprops, RANGE)
     else {
         return;
     };
@@ -336,7 +302,7 @@ pub(crate) unsafe fn tick_slave(
             damage_target(target, claw, pos, health, armor);
             cue(SP::SLV_CLAW, pos);
         }
-    } else if visible && d2 <= RANGE * RANGE && d2 > 150 * 150 && cooldown == 0 {
+    } else if visible && d2 <= RANGE * RANGE && d2 > 64 * 64 && cooldown == 0 {
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = ZAP;
         // A far target is zapped again as the sequence ends (53 ticks a cycle);
@@ -606,7 +572,7 @@ unsafe fn tick_zombie(
     armor: &mut u16,
     nprops: usize,
 ) {
-    let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 700, true) else {
+    let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 700) else {
         return;
     };
     let pos = PROP_POS[pi];
@@ -679,7 +645,7 @@ unsafe fn tick_squid(
     armor: &mut u16,
     nprops: usize,
 ) {
-    let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 900, false) else {
+    let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 900) else {
         PROP_AI_TIMER[pi] = 0;
         return;
     };
@@ -697,7 +663,21 @@ unsafe fn tick_squid(
             cue_or(SP::BC_SPIT, sfx::HC_ATTACK, pos);
         } else if t & 32 != 0 && left == 20 && d2 <= 85 * 85 {
             cue(SP::BC_BITE, pos);
-            damage_target(target, skill_hit(Sk::SquidBite), pos, health, armor);
+            // The tail whip is the finisher: used when it would kill, the bite
+            // otherwise (CheckMeleeAttack1 and 2).
+            let victim = if target == PROP_TARGET_PLAYER {
+                *health
+            } else {
+                PROP_HEALTH[target as usize] as u16
+            };
+            let whip = skill_hit(Sk::SquidWhip);
+            damage_target(
+                target,
+                if victim <= whip as u16 { whip } else { skill_hit(Sk::SquidBite) },
+                pos,
+                health,
+                armor,
+            );
             let dir = dir_q12(pos, aim);
             KNOCK = [(dir[0] * 14) >> 12, 15, (dir[2] * 14) >> 12];
         }
@@ -705,11 +685,19 @@ unsafe fn tick_squid(
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = (t & 0xC0) | 32 | 24;
         cue(SP::BC_GROWL, pos);
-    } else if visible && d2 <= 780 * 780 && (t >> 6) < 2 && prop_attack_cooldown(pi) == 0 {
+    } else if visible
+        && d2 <= 784 * 784
+        && prop_attack_cooldown(pi) == 0
+        && !(PROP_STATE[pi] == PROP_STATE_MOVE && d2 >= 512 * 512)
+    {
+        // CBullsquid::CheckRangeAttack1: a spit between 64 and 784 units, but not
+        // from a run beyond 512; the next comes half a second later when it stood,
+        // five seconds when it spat on the move.
+        let running = PROP_STATE[pi] == PROP_STATE_MOVE;
         PROP_STATE[pi] = PROP_STATE_ATTACK;
-        PROP_AI_TIMER[pi] = ((t >> 6) + 1) << 6 | 30;
-        prop_attack_cooldown_set(pi, 4);
-    } else if d2 > 500 * 500 || (t >> 6) >= 2 || !visible {
+        PROP_AI_TIMER[pi] = 30;
+        prop_attack_cooldown_set(pi, if running { 100 } else { 10 });
+    } else if d2 > 500 * 500 || !visible {
         PROP_STATE[pi] = PROP_STATE_MOVE;
         prop_move_towards_point(m, movers, pi, aim, 15);
     } else {
@@ -738,7 +726,7 @@ unsafe fn tick_hound(
     nprops: usize,
 ) {
     let had_target = PROP_AI_TARGET[pi] != PROP_TARGET_NONE;
-    let Some((_, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 900, false) else {
+    let Some((_, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 900) else {
         PROP_AI_TIMER[pi] = 0;
         return;
     };
@@ -775,20 +763,23 @@ unsafe fn tick_hound(
                 pos,
             );
         } else if left == 4 {
-            let mut pack = 0u8;
+            // A squad adds 1.1 of the damage for every member past the first
+            // (the pack of up to four hounds within a thousand units).
+            let mut pack = 0i32;
             let mut qi = 0usize;
             while qi < nprops {
                 if PROP_KIND[qi] == PROP_TYPE_HOUNDEYE
                     && PROP_ACTIVE[qi] != 0
                     && PROP_HEALTH[qi] > 0
-                    && dist2_3(PROP_POS[qi], pos) < 150 * 150
+                    && dist2_3(PROP_POS[qi], pos) < 1024 * 1024
                 {
                     pack += 1;
                 }
                 qi += 1;
             }
-            let dmg = skill_hit(Sk::HoundeyeBlast);
-            houndeye_blast(pos, 384, dmg.saturating_mul(pack.clamp(1, 3)));
+            let dmg = skill_hit(Sk::HoundeyeBlast) as i32;
+            let squad = dmg * (10 + 11 * (pack.clamp(1, 4) - 1)) / 10;
+            houndeye_blast(m, pi, 384, squad.min(255) as u8);
             sfx::play_world(sfx::HE_BLAST, pos);
         } else if left == 1 {
             // Rest: `prop_clip` plays madidle2 while the cooldown runs.

@@ -2120,6 +2120,32 @@ const PGO_COLLECT_STACK_MARGIN: u32 = 2 * 1024;
 const PGO_COLLECT_STACK_MIN: u32 =
     (PGO_COLLECT_STACK_DEEPEST + PGO_COLLECT_STACK_MARGIN).next_multiple_of(256);
 
+/// The stack reserve the shipping links carry. The SDK reserves 32 KiB at the
+/// top of RAM for the stack, but the game has been measured to use 17,760 B of
+/// it, and a rung is judged safe by the room it leaves below the initial SP
+/// (`stack_is_safe`), not by the reserve. Reserving only the measured depth
+/// plus the margin hands the rest to `.bss` and `.text`. The link itself then
+/// guarantees the room: the image cannot end above `RAM_TOP - reserve`, which
+/// leaves `reserve - gap` below the initial SP before any free RAM.
+#[allow(dead_code)]
+const SHIP_STACK_RESERVE: u32 = PGO_COLLECT_STACK_MIN;
+
+/// The stack reserve a link carries: the shipping one, or for a developer's
+/// diagnostic build (a non-shipping feature set) the value of
+/// `HLPSX_DEV_STACK_RESERVE`, which lets the trace machinery of a probe disc
+/// fit. Such a disc is never shipped.
+fn link_stack_reserve(repository: &Path, features: Option<&str>) -> Result<u32> {
+    if !is_shipping_build(features) {
+        if let Some(value) = env::var("HLPSX_DEV_STACK_RESERVE")
+            .ok()
+            .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+        {
+            return Ok(value);
+        }
+    }
+    stack_gate::committed_reserve(repository)
+}
+
 /// Maps the profiling tapes visit; the collect build sizes the map staging
 /// window (and the arena built from it) for these only (`HLPSX_COLLECT_MAPS`,
 /// see game/build.rs), so it fits RAM when the fleet's largest map (727 KB)
@@ -2264,6 +2290,12 @@ fn compile_game(
     // 2b7288b by 192 B). It is only run on the profiling tapes and never
     // ships, so it links with a smaller stack reserve than the SDK's; the
     // code is the same (`compile_collect` picks the reserve).
+    if let GuestProfile::Use(..) = profile {
+        command.env(
+            "HLPSX_STACK_RESERVE",
+            format!("{:#x}", link_stack_reserve(repository, features)?),
+        );
+    }
     if let GuestProfile::Collect(reserve) | GuestProfile::CollectElf(reserve) = profile {
         command.env("HLPSX_STACK_RESERVE", format!("{reserve:#x}"));
         // The collect build only replays the profiling tapes; an explicit

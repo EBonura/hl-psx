@@ -40,6 +40,12 @@ pub mod leech;
 pub mod player_rules;
 #[path = "../../../game/src/trigger_rules.rs"]
 pub mod trigger_rules;
+#[path = "../../../game/src/hecu_grenades.rs"]
+pub mod hecu_grenades;
+#[path = "../../../game/src/proj_logic.rs"]
+pub mod proj_logic;
+#[path = "../../../game/src/senses.rs"]
+pub mod senses;
 #[path = "../../../game/src/env_sound_audio.rs"]
 pub mod env_sound_audio;
 

@@ -75,6 +75,12 @@ const MODEL_INDEX_VERTEX_LIMIT: usize = 1024;
 // vertices (host/hl-bsp): that shrank the largest room and c2a4e's room by
 // 7,056 B and 7,680 B, which lifted c2a4e's audited margin to 2,036 B and left
 // 436 B of it after this step.
+//
+// 3,000 words (12,000 B) went back to the executable for the monster and
+// weapon work of 2026-10-15 (hearing, relationships, gauss beam, projectile
+// flight). The cook's weapon-cache audit kept 13,472 B of margin at c5a1 on
+// the previous pool and its model audit 41,732 B at c4a1b; both re-check this
+// on every cook.
 const NPC_MODEL_POOL_WORDS: usize = 23_554;
 // Viewmodel reserve when no cooked viewmodels exist yet (a fresh checkout).
 const FALLBACK_VM_POOL_WORDS: usize = 20_224;
@@ -1314,6 +1320,8 @@ fn write_probe_script(out_dir: &std::path::Path) {
                     [num(2) as i32, num(4) as i32, num(3) as i32, num(5) as i32, 0, 0],
                     String::new(),
                 ),
+                // blastwall DMG : a blast of DMG at a spot around the player that a wall hides from him
+                "blastwall" => (21, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
                 // weapon N : select weapon slot N (0 crowbar, 1 glock ...)
                 "weapon" => (22, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
                 // watch KIND [TICKS] : log health and position of every live monster of that kind every TICKS (default 10)
@@ -1342,6 +1350,24 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 ),
                 // pushpos N : log the Nth pushable's offset
                 "pushpos" => (31, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
+                // scan X Y Z : log water and floor along the vertical line through that HL point
+                "scan" => (
+                    40,
+                    [num(2) as i32, num(4) as i32, num(3) as i32, 0, 0, 0],
+                    String::new(),
+                ),
+                // projwatch 1|0 : log every live projectile every other tick
+                "projwatch" => (41, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
+                // arsenal : log owned mask, current weapon, its magazine and reserve
+                "arsenal" => (42, [0; 6], String::new()),
+                // tpnear KIND DX DY DZ : stand at an offset (HL axes) from the first live monster of that kind, facing it
+                "tpnear" => (
+                    43,
+                    [num(2) as i32, num(3) as i32, num(5) as i32, num(4) as i32, 0, 0],
+                    String::new(),
+                ),
+                // aimat KIND DZ : look at the first live monster of that kind (DZ above its centre)
+                "aimat" => (44, [num(2) as i32, num(3) as i32, 0, 0, 0, 0], String::new()),
                 // pos : log the player position
                 "pos" => (13, [0; 6], String::new()),
                 // die : drop the player's health to zero (god off)

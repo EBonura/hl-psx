@@ -275,6 +275,8 @@ fn base_clip_count(ty: u8) -> usize {
         6 => 6,
         // The vortigaunt's claw follows its five.
         9 => 6,
+        // HECU hand toss and grenade-launcher attack events.
+        8 => 7,
         // The gargantua's swipe and stomp sequences follow its five AI clips.
         16 => 7,
         // The nihilanth's attack2, recharge, float_open and attack1_open.

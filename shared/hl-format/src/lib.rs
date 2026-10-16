@@ -416,6 +416,8 @@ pub mod logic {
     /// Breaking it marks the id dead; a later map's breakable with a dead id
     /// is not spawned (CBaseEntity GLOBAL_DEAD).
     pub const GLOBAL_BREAKABLE: u8 = 67;
+    /// Inert equipment metadata: arg0 is the cooked grunt index, arg1 its authored weapons.
+    pub const GRUNT_EQUIPMENT: u8 = 68;
 
     // CBaseMonster TriggerCondition values (monsters.h AITRIGGER_*). The
     // cooker emits only the ones the runtime evaluates.
@@ -551,8 +553,9 @@ pub mod logic {
     pub const LOGIC_GLOBAL_PUSHABLE: u8 = GLOBAL_PUSHABLE;
     pub const LOGIC_TRIGGER_AUTOSAVE: u8 = TRIGGER_AUTOSAVE;
     pub const LOGIC_GLOBAL_BREAKABLE: u8 = GLOBAL_BREAKABLE;
+    pub const LOGIC_GRUNT_EQUIPMENT: u8 = GRUNT_EQUIPMENT;
 
-    pub const KINDS: [u8; 67] = [
+    pub const KINDS: [u8; 68] = [
         FUNC_DOOR,
         FUNC_BUTTON,
         TRIGGER_ONCE,
@@ -620,6 +623,7 @@ pub mod logic {
         GLOBAL_PUSHABLE,
         TRIGGER_AUTOSAVE,
         GLOBAL_BREAKABLE,
+        GRUNT_EQUIPMENT,
     ];
 }
 
