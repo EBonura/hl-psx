@@ -287,6 +287,16 @@ fn base_clip_count(ty: u8) -> usize {
     }
 }
 
+/// The slot the game plays for a corpse (`PROP_CLIP_DEAD` in game/src/main.rs).
+const DEAD_CLIP_SLOT: usize = 4;
+
+fn single_pose(field: &str) -> String {
+    match field.rsplit_once(':') {
+        Some((sequence, _)) => format!("{sequence}:1"),
+        None => field.to_string(),
+    }
+}
+
 fn carry_field(field: &str) -> String {
     let Some((sequence, samples)) = field.rsplit_once(':') else {
         return field.to_string();
@@ -413,6 +423,7 @@ fn build_variant(
     ty: u8,
     scripts: &BTreeSet<String>,
     incoming_only: bool,
+    dead_only: bool,
     roster: &RosterEntry,
     clip_slots: &HashMap<(u8, String), usize>,
 ) -> MapVariant {
@@ -426,7 +437,22 @@ fn build_variant(
         special_fields(map, ty).unwrap_or_else(|| ("--mdl7", global_actual.clone()));
     let base_count = base_clip_count(ty).min(available.len());
     let mut geometry_fields = available[..base_count].to_vec();
-    if incoming_only {
+    if dead_only {
+        // Every actor of this type in the map is a corpse set down dead (the
+        // `*_dead` classes): only the dead clip is ever played, so the other
+        // slots keep a single pose each.
+        geometry_fields = geometry_fields
+            .iter()
+            .enumerate()
+            .map(|(slot, field)| {
+                if slot == DEAD_CLIP_SLOT {
+                    field.clone()
+                } else {
+                    single_pose(field)
+                }
+            })
+            .collect();
+    } else if incoming_only {
         geometry_fields = geometry_fields
             .iter()
             .map(|field| carry_field(field))
@@ -543,6 +569,7 @@ fn plan_maps(
             .filter_map(|entity| entity.get("m_iszEntity").cloned())
             .collect::<BTreeSet<_>>();
         let mut static_types = BTreeSet::new();
+        let mut live_types = BTreeSet::new();
         let mut target_types = HashMap::new();
         for entity in &entities {
             let Some(ty) = cooked_actor_type(entity, vent_zombies, &scripted_sitters) else {
@@ -550,6 +577,12 @@ fn plan_maps(
             };
             if uses_map_variant(ty) {
                 static_types.insert(ty);
+                if !entity
+                    .get("classname")
+                    .is_some_and(|class| class.ends_with("_dead"))
+                {
+                    live_types.insert(ty);
+                }
             }
             if let Some(name) = entity.get("targetname").filter(|name| !name.is_empty()) {
                 target_types.insert(name.clone(), ty);
@@ -618,11 +651,16 @@ fn plan_maps(
             let roster_entry = roster
                 .get(&ty)
                 .ok_or_else(|| format!("{map}: model type {ty} is absent from the roster"))?;
+            let scripted = scripts.get(&ty).is_some_and(|names| !names.is_empty());
+            let incoming = transitions
+                .get(map)
+                .is_some_and(|types| types.values().any(|&carried| carried == ty));
             variants.push(build_variant(
                 map,
                 ty,
                 scripts.get(&ty).unwrap_or(&BTreeSet::new()),
                 !static_types.contains(&ty),
+                static_types.contains(&ty) && !live_types.contains(&ty) && !scripted && !incoming,
                 roster_entry,
                 clip_slots,
             ));
@@ -808,7 +846,7 @@ mod tests {
                 .to_vec(),
         };
         let scripts = BTreeSet::from(["lying_on_stomach".to_owned()]);
-        let variant = build_variant("c1a0c", 0, &scripts, false, &roster, &HashMap::new());
+        let variant = build_variant("c1a0c", 0, &scripts, false, false, &roster, &HashMap::new());
         assert_eq!(variant.geometry.fields.len(), 6);
         assert_eq!(variant.geometry.fields[5], "lying_on_stomach:1");
         assert!(!variant
