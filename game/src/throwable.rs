@@ -92,6 +92,7 @@ pub fn satchel_velocity(fwd: [i32; 3], player_vel: [i32; 3]) -> [i32; 3] {
 
 /// Ticks after launch at which a rocket's motor lights (0.4 s) and the
 /// first second of boost that follows ends.
+#[allow(dead_code)] // read by the host runner
 pub const ROCKET_IGNITE_AGE: u8 = 8;
 pub const ROCKET_BOOST_END_AGE: u8 = 28;
 

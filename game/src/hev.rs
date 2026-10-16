@@ -305,7 +305,7 @@ pub unsafe fn unload() {
     WORD_ADDR = [0; WORD_COUNT];
     READY = Mask64::EMPTY;
     SPEAKING = NO_WORD;
-    SUIT.clear_queue();
+    (*core::ptr::addr_of_mut!(SUIT)).clear_queue();
 }
 
 /// Upload the chunk's suit block to SPU RAM from `base` up (16 byte aligned,
@@ -352,20 +352,20 @@ pub unsafe fn load(spu: &mut Spu, chunk: &[u8], base: u32) {
             ready &= w == NO_WORD || WORD_ADDR[w as usize] != 0;
             part += 1;
         }
-        READY.assign(sentence, ready);
+        (*core::ptr::addr_of_mut!(READY)).assign(sentence, ready);
         sentence += 1;
     }
 }
 
 /// Is `sentence` one this map can speak?
 pub unsafe fn can_say(sentence: u8) -> bool {
-    READY.test(sentence as usize)
+    (*core::ptr::addr_of!(READY)).test(sentence as usize)
 }
 
 /// SetSuitUpdate for a sentence of the table. The suit must be worn.
 pub unsafe fn request(sentence: u8, repeat_secs: u16) {
     if can_say(sentence) {
-        SUIT.request(sentence, repeat_secs);
+        (*core::ptr::addr_of_mut!(SUIT)).request(sentence, repeat_secs);
     }
 }
 
@@ -379,7 +379,7 @@ pub unsafe fn say_now(sentence: u8) {
 }
 
 pub unsafe fn clear_queue() {
-    SUIT.clear_queue();
+    (*core::ptr::addr_of_mut!(SUIT)).clear_queue();
 }
 
 /// One simulation tick: start the next waiting sentence, move a running one
@@ -389,8 +389,8 @@ pub unsafe fn clear_queue() {
 pub unsafe fn tick(worn: bool) {
     TICK += 1;
     if !worn {
-        SUIT.clear_queue();
-    } else if let Some(sentence) = SUIT.tick(SPEAKING == NO_WORD) {
+        (*core::ptr::addr_of_mut!(SUIT)).clear_queue();
+    } else if let Some(sentence) = (*core::ptr::addr_of_mut!(SUIT)).tick(SPEAKING == NO_WORD) {
         SPEAKING = sentence;
         PART = 0;
         PART_END = TICK;

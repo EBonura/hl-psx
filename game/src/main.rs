@@ -34,7 +34,11 @@ mod combat_defs;
 mod decal_light;
 mod door_transition;
 mod driver;
+// The modules marked allow(dead_code) are included by path into the host runner
+// (hl-logic-tests), whose oracle tests call rules the game itself does not.
+#[allow(dead_code)]
 mod env_blood;
+#[allow(dead_code)]
 mod env_bubbles;
 mod env_bubbles_fx;
 mod env_funnel;
@@ -45,13 +49,19 @@ mod gman_damage;
 mod ground_logic;
 mod hecu_grenades;
 mod hev;
+#[allow(dead_code)]
 mod proj_logic;
 mod pushable_transition;
+#[allow(dead_code)]
 mod senses;
 mod sentry_wake;
 mod turret_aim;
+#[allow(dead_code)]
 mod weaponbox;
 use psx_goldsrc::hitbox_logic;
+// Replay builds (semantic-input) have no save menu, so the card and snapshot
+// code below is dead there.
+#[cfg_attr(feature = "semantic-input", allow(dead_code))]
 mod hltext;
 mod hud;
 use psx_goldsrc::ladder_logic;
@@ -79,12 +89,14 @@ mod autoaim;
 mod barnacle;
 mod garg;
 mod leech;
+#[cfg_attr(feature = "semantic-input", allow(dead_code))]
 mod mapsnap;
 mod monsterjump;
 mod mortar;
 mod nihilanth;
 mod osprey;
 mod player_rules;
+#[cfg_attr(feature = "semantic-input", allow(dead_code))]
 mod save;
 mod scientist_logic;
 mod scratchpad;
@@ -152,7 +164,7 @@ use psx_gte::scene::{self, Projected};
 use psx_io;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_math::int32::{isqrt_i32, mul_div_i32, mul_shr_i32};
-use psx_math::{atan2_q12, sincos, Mask64, Wide, WideU};
+use psx_math::{atan2_q12, sincos, Mask64, Wide};
 use psx_pad::{button, poll_port1, require_analog_port1, AnalogRequirement, PadMode};
 #[cfg(not(feature = "semantic-input"))]
 use psx_pad::{enable_analog_port1, PadReader, PadTracker};
@@ -2331,6 +2343,7 @@ unsafe fn save_slot_row(i: usize, loading: bool) -> Row {
 /// Kept so the badge duration can be judged against a real number rather than
 /// an estimate: a write is blocking, so this is exactly how long the player
 /// sees it.
+#[cfg_attr(feature = "semantic-input", allow(dead_code))]
 static mut LAST_SAVE_VBLANKS: u32 = 0;
 
 /// Draw a "SAVING" badge top-right, present it, then perform the blocking card
@@ -2340,6 +2353,7 @@ static mut LAST_SAVE_VBLANKS: u32 = 0;
 /// the card, so a spinner would sit on one frame regardless. Showing the badge
 /// on a presented frame *before* the write and clearing it after is the honest
 /// signal -- it is visible for exactly as long as the console is busy.
+#[cfg_attr(feature = "semantic-input", allow(dead_code))]
 #[inline(never)]
 #[optimize(size)]
 unsafe fn save_with_badge(
@@ -6758,7 +6772,6 @@ struct WaterState {
 }
 
 #[optimize(size)]
-#[optimize(size)]
 /// GoldSrc PM_CheckWater samples the hull bottom, origin and eye rather than a
 /// single arbitrary point. Level 2 (origin submerged) selects swim movement;
 /// level 3 (eye submerged) drives drowning. This is also the surface transition
@@ -10632,7 +10645,6 @@ unsafe fn script_local_detour(
     None
 }
 
-#[optimize(size)]
 #[optimize(size)]
 /// GoldSrc does not trust the route selected by `BuildRoute` for the whole
 /// trip. `CBaseMonster::Move` repeats a 200-unit `CheckLocalMove` before every
@@ -17861,10 +17873,6 @@ unsafe fn pursue_point(pi: usize, true_aim: [i32; 3], visible: bool) -> Option<[
     Some(spot)
 }
 
-/// Cone of a monster's bullet as a q12 spread per unit of distance
-/// (`VECTOR_CONE_2DEGREES` is 0.01745).
-const MONSTER_CONE_2_DEGREES: i32 = 71;
-
 /// Where a monster's bullet goes: aimed at `aim` with the retail cone (two
 /// uniform draws per axis, so centre-weighted), 1024 units long. Returns the
 /// studio box it entered on the target (`u8::MAX` when the target has none) or
@@ -18520,7 +18528,6 @@ static mut PAIN_SFX_COOLDOWN: u8 = 0;
 /// current view and light every matching screen edge. Close damage lights all
 /// four, matching GoldSrc's special case for a source within 50 units.
 #[inline(never)]
-#[optimize(size)]
 unsafe fn note_damage_direction(source: [i32; 3]) {
     let dx = (source[0] - LOGIC_PLAYER_POS[0]).clamp(-4096, 4096);
     let dy = (source[1] - LOGIC_PLAYER_POS[1]).clamp(-4096, 4096);
@@ -23606,7 +23613,10 @@ unsafe fn spawn_grunt_grenade(
     launcher: bool,
     damage: u8,
 ) -> bool {
-    let Some(slot) = (&PROJECTILES).iter().position(|p| !p.active) else {
+    let Some(slot) = (*core::ptr::addr_of!(PROJECTILES))
+        .iter()
+        .position(|p| !p.active)
+    else {
         return false;
     };
     PROJECTILES[slot] = Projectile {
@@ -24108,7 +24118,7 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
         let d2 = dist2_3(p.pos, at);
         if d2 < best_d2 && actor_line_clear(m, movers, p.pos, at) {
             best = usize::MAX - 1;
-            best_d2 = d2;
+            // the player is the last candidate: nothing compares against d2 again
             best_at = at;
         }
     }
@@ -24304,7 +24314,6 @@ unsafe fn grenade_blast_origin(
 
 #[optimize(size)]
 #[inline(never)]
-#[optimize(size)]
 unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
     (*core::ptr::addr_of_mut!(SOUNDS)).tick(); // one tick passes for every noise
     let mut i = 0;
@@ -25385,7 +25394,7 @@ unsafe fn tick_beams(m: &Map, nlogic: usize, nents: usize, movers: &[phys::Mover
             if LOGIC_STATE[li] != LOGIC_STATE_TOP {
                 BEAM_LIFE[bk] = 0;
                 BEAM_STRIKE[bk] = 0;
-                BEAM_LIVE.clear(bk);
+                (*core::ptr::addr_of_mut!(BEAM_LIVE)).clear(bk);
             } else {
                 // Only a beam that is on needs its record.
                 let rec = m.logic(li);
@@ -25658,7 +25667,7 @@ unsafe fn tick_beam_extended(
         BEAM_RAND_END[bk][c] = end[c].clamp(-32768, 32767) as i16;
         c += 1;
     }
-    BEAM_LIVE.set(bk);
+    (*core::ptr::addr_of_mut!(BEAM_LIVE)).set(bk);
 }
 
 unsafe fn beam_sparks(at: [i32; 3]) {
@@ -28567,7 +28576,7 @@ fn fog_world_rgb(rgb: [u32; 3], sz: [i32; 3], backdrop: bool) -> [u32; 3] {
 #[cfg(feature = "performance-telemetry")]
 #[inline(never)]
 fn affine_ratio_cmp(an: u32, ad: u32, bn: u32, bd: u32) -> core::cmp::Ordering {
-    WideU::mul(an, bd.max(1)).cmp(&WideU::mul(bn, ad.max(1)))
+    psx_math::WideU::mul(an, bd.max(1)).cmp(&psx_math::WideU::mul(bn, ad.max(1)))
 }
 
 #[inline(always)]
@@ -33015,7 +33024,8 @@ unsafe fn queue_world_beams(
             let extended = rec.aux_count >= 6;
             let visible = LOGIC_STATE[li] == LOGIC_STATE_TOP
                 && (!strike_mode || (bk < MAX_BEAM_STATES && BEAM_LIFE[bk] > 0))
-                && (!extended || (bk < MAX_BEAM_STATES && BEAM_LIVE.test(bk)));
+                && (!extended
+                    || (bk < MAX_BEAM_STATES && (*core::ptr::addr_of!(BEAM_LIVE)).test(bk)));
             if visible {
                 let start = if extended {
                     let e = BEAM_LIVE_START[bk];
