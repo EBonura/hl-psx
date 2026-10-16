@@ -1,0 +1,685 @@
+@journey name=hl-chain-new-game-to-c1a0c title="Half-Life New Game: tram ride, station, Anomalous Materials, the resonance cascade, to the c1a0c arrival" prologue=new_game max_ticks=130000
+
+
+map c0a0 next c0a0a
+  @checkpoint arrive-c0a0
+  900
+
+map c0a0a next c0a0b
+  @checkpoint arrive-c0a0a
+  1000
+
+map c0a0b next c0a0c
+  @checkpoint arrive-c0a0b
+  1900
+
+map c0a0c next c0a0d
+  @checkpoint arrive-c0a0c
+  1500
+
+map c0a0d next c0a0e
+  @checkpoint arrive-c0a0d
+  1250
+
+map c0a0e next c1a0
+  @checkpoint arrive-c0a0e
+  560
+  15 t127
+  4 f127
+  8 t-127
+  60 f127
+  200
+  72 f127
+  8 t127
+  3 f127
+  8 t-127
+  45 f127
+  520
+  8 t127
+  7 f127
+  8 t-127
+  100 f127
+  200
+
+map c1a0 next c1a0d
+  @checkpoint arrive-c1a0
+  # The tram ride hands the player over 44 yaw units (3.9 degrees) south of the
+  # heading the oracle route assumes; one turn tick restores it.
+  20
+  1 t43
+  179
+  35 f127
+  1 s127
+  3 use
+  180
+  9 s127
+  2 f127 s-30
+  7 f127
+  20 s127
+  4 f127 s-60
+  70 f127
+  28 s-127
+  17 f-127 s-80
+  40 f127
+  # The fixed-point port stops about 16 units short of the volume the oracle reaches.
+  8 f127
+  20
+
+map c1a0d next c1a0a
+  @checkpoint arrive-c1a0d
+  @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=0
+  20
+  30 f127
+  21 f-40
+  10
+  50 s127
+  60 f127
+  16 f-40
+  10
+  44 s40
+  10
+  80 f127
+  30 s-127
+  30 f127
+  25 s127
+  4 f-127
+  4 f80 s127
+  20
+  3 s-127
+  2 s127
+  6
+  5 t-127 l-127
+  3 use
+  5 t127 l127
+  50
+  8 s-127
+  8 f127
+  20 s-127 jump
+  25 f127
+  18 f-40
+  10
+  5 s127
+  4 f127 s-127
+  5 f127
+  20 f127 s127 jump
+  80
+  20 f-127 s-127 jump
+  12 s-127
+  15 f-127
+  3 f40
+  5
+  8 s127
+  8 s-40
+  30
+  5 f127
+  8 f-40
+  5
+  19 s127
+  8 s-40
+  5
+  2 s-127
+  60 f-127
+  16 f40
+  5
+  16 s-127
+  8 s40
+  30
+  65 f-127
+  5
+  65 s-127
+  5
+  5 s127
+  10
+  90 f127
+  5
+  55 s-127
+  5
+  2 s127
+  230
+  70 f-127
+
+map c1a0a next c1a0b
+  @checkpoint arrive-c1a0a
+  @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=ge value=100
+  40
+  20 f-127
+  5 f127
+  5
+  20 s-127
+  28 f-127
+  20 s127
+  12 f-127
+  8
+  10 s127
+  8
+  4 f127
+  6
+  5 s-127
+  5
+  4 l-127
+  3 use
+  4 l127
+  100
+  6 s127
+  2 s-127
+  15 f127
+  2 f-127
+  10
+  4 s127
+  2 s-127
+  1 f-127
+  1 f127
+  10
+  8 t127
+  4 t127 l-127
+  3 use
+  4 t-127 l127
+  8 t-127
+  400
+  2 s-127
+  1 s127
+  100 f-127
+  40
+  20 s127
+  50 f-127
+  30
+  100 s-127
+  30
+  6 f127
+  2 f-127
+  100 s-127
+  30
+  2 s127
+  1 s-127
+  100 f127
+  30
+  1 s127
+  100 f127
+  20
+  100 f127
+  10 f-127
+  2 f127
+  8
+  50 s-127
+  20
+  4 s127
+  2 s-127
+  100 f-127
+  20
+  50 f-127 s127
+  20
+  100 s-127
+  20
+  30 f-127
+
+map c1a0b next c1a0e
+  @checkpoint arrive-c1a0b
+  @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=ge value=100
+  40
+  50 f-127
+  2 f127
+  20 s-127
+  30
+  10 f-127
+  2 f127
+  50 s-127
+  2 s127
+  620
+  # The scanner doorway edge sits between x=903 and x=904 in the fixed-point hull;
+  # the oracle line at 904 clears it, the PS1 line at 903 does not. Step 5 units east.
+  1 f-40
+  5
+  100 s-127
+  40
+  44 f127
+  2 f-127
+  14 s127
+  2 s-127
+  10
+  8 t127
+  3 use
+  8 t-127
+  130
+  18 f40
+  3 f-40
+  5
+  20 s127
+  2 s-127
+  20
+  8 f-40
+  2 f40
+  5
+  16 t127
+  3 use
+  16 t-127
+  200
+  7 f40
+  2 f-40
+  3
+  8 t-127
+  3
+  10 f127
+  25
+  20 f127
+  2 f-127
+  20
+  50 f127
+  2 f-127
+  5
+  100 s127
+  2 s-127
+  20
+  30 f127
+
+map c1a0e next c1a0c
+  @checkpoint arrive-c1a0e
+  @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=ge value=100
+  40
+  8 s-127
+  2 s127
+  20
+  3 f127
+  3 f-127
+  20
+  1 f127 s32
+  1 f127 s-32
+  48 f127
+  14 f-127
+  2 f127
+  971
+  45 s-127
+  2 s127
+  801
+  40 f127
+  3 f-127
+  10
+  4 s-127
+  1 f-127
+  30 s-127
+  25 f-127
+  1 f127
+  8
+  2 f127 s127
+  1 f-127 s-127
+  6
+  2 f32 s32
+  5
+  8 s-127
+  30 f127 s-40
+  2 f-127 s40
+  20
+  # Closed loop to the ladder. The catwalk above it has a hole 45 units wide (x 2142..2187)
+  # and 72 long (y 687..759); the player hull is 32 wide, so the climb only clears the
+  # catwalk when the player mounts near the middle of the ladder (y 703..743). The oracle
+  # route lands there by luck of its approach; the PS1 approach arrives 30 units off.
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=790 timeout=900
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=2100 timeout=900
+  @hold s40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=722 timeout=900
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=2158 timeout=900
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=4 op=ge value=150 timeout=900
+  2 f-127
+  20
+  30 s127
+  2 s-127
+  8
+  20 f-127 s127
+  2 f127 s-127
+  8
+  16 t127
+  5
+  # PlayerUse only accepts a target inside a 45 degree cone (normalised dot > 0.7, the
+  # oracle rejects the same press at 0.4). The PS1 stands 5 units east and 7 south of the
+  # oracle here and the button is 30 below the eye, so look down about 17 degrees first.
+  2 l-127
+  3 use
+  2 l127
+  16 t-127
+  1776
+  20 f127
+  22 s-127
+  1 f-127
+  1 f127
+  3
+  2 s-127
+  11 l-127
+  55 f127
+  11 l127
+  10
+  # The oracle route walks open loop to the sample cart, which the PS1 reaches 46 units off
+  # the oracle line. Walk the same world path as waypoints (yaw stays east, so forward is +x
+  # and strafe right is -y), then push the cart east from its west face. The cart's box is
+  # x 1181..1315, y 588..652 and the beam trigger it must enter starts at x 1522.
+  @hold f-127 s-127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1985 timeout=900
+  @checkpoint w1
+  @hold f-127 s-100 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1912 timeout=900
+  @hold f-127 s-13 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1740 timeout=900
+  @checkpoint w3
+  @hold f-127 s78 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1540 timeout=900
+  @checkpoint w4
+  @hold f-127 s20 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1285 timeout=900
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1225 timeout=900
+  @checkpoint w5
+  # The cart push is closed loop. The cart is a 64 unit box on a rail centred at y 620, its beam trigger starts at
+  # x 1522 (cart origin 1510), and the player hull only reaches the cart's west face from the lift's west margin
+  # (x 1152..1163, between the wall and the lift lip). Every hold below ends at once when its condition already
+  # holds, so each pair is a dead band, not a fixed nudge, and a hold times out only when the player is blocked:
+  #   ENT_CACHE+1732 and +1740 are the origin x and y of entity 27, the sample cart (64 byte Ent, origin at +4)
+  #   yaw 1010..1038  east is 1024 and the smallest turn the stick can make is 29 per tick (2.5 degrees)
+  #   walk west along y >= 700 (north of the lift and of the cart's hull) to the margin, then strafe south along it
+  #   settle 8 ticks after each strafe so no lateral speed is left, then fine bands on the player's y
+  #   push in legs terminated by the cart's own x (ENT_CACHE origin x), first leg at forward 60: a full-speed
+  #   start flush against the lift lip can stall 3 units short of the cart on builds before the slide_move fix
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=700 timeout=300
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1162 timeout=400
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=650 timeout=600
+  8
+  @hold s40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=628 timeout=300
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=612 timeout=300
+  8
+  @hold s40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=626 timeout=300
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=ge value=614 timeout=300
+  8
+  @checkpoint cart-aligned
+  @assert sym=ENT_CACHE size=4 signed offset=1740 op=between value=610 value_hi=630
+  @assert sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=between value=590 value_hi=650
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f60 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1312 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1342 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1372 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1402 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1432 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1462 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1492 timeout=200
+  @hold t-29 until sym=LOGIC_PLAYER_YAW size=2 op=le value=1038 timeout=300
+  @hold t29 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=1010 timeout=300
+  @hold f127 until sym=ENT_CACHE size=4 signed offset=1732 op=ge value=1516 timeout=200
+  @checkpoint cart-delivered
+  @assert sym=ENT_CACHE size=4 signed offset=1732 op=between value=1516 value_hi=1700
+  @assert sym=ENT_CACHE size=4 signed offset=1740 op=between value=590 value_hi=650
+  @checkpoint cart-pushed
+  @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  # The cart enters the beam trigger (probe_arm_mm), the arms lower and the cascade runs
+  # on its own; the changelevel to c1a0c follows about 1300 simulation ticks later.
+  @wait sym=WORLD_ARENA offset=4 size=4 op=eq value=5816 timeout=30000
+
+map c1a0c next c1a1
+  # The cascade's fade-in covers the first moments after the load.
+  100
+  @checkpoint arrive-c1a0c
+  @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  @stop
+  50
+  10 s127
+  3
+  60 s127 jump
+  5
+  # The oracle line stalls at a hop near x 1340 and stops at x 1631 when its run ends; the
+  # PS1 does not stall, so the open-loop x run overshoots. Same world path, closed loop.
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1300 timeout=900
+  3
+  @hold f127 jump until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=ge value=1600 timeout=900
+  2 f-127
+  8
+  @checkpoint c-p1
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=le value=85 timeout=900
+  5
+  # The barrier at y 40..64 is 23 units high: the oracle jumps it from a standstill at y 80
+  # and walks across its top; the same input does it here.
+  25 s127 jump
+  @checkpoint c-p2
+  5
+  7 s-127
+  1 s127
+  5
+  9 f-127
+  1 f127
+  5
+  @checkpoint c-p3
+  16 t127
+  3 use
+  @checkpoint c-u1
+  220
+  @checkpoint c-u2
+  @stop
+  16 t-127
+  5
+  8 s127
+  1 s-127
+  5
+  35 f-127
+  2 f127
+  5
+  45 s-127
+  5
+  5 f127
+  1 f-127
+  5
+  13 s-127
+  1 s127
+  5
+  45 f-127 jump
+  5
+  45 f-127 jump
+  2 f127
+  80
+  15 f-127
+  1 f127
+  5
+  3 s-127
+  1 s127
+  5
+  8 t-127
+  3 use
+  100
+  8 t127
+  30 f-127
+  2 f127
+  4 t-127
+  3 use
+  120
+  4 t-127
+  8 s127
+  40
+  18 s127
+  2 s-127
+  10 s127
+  650
+  8 t127
+  3 use
+  10
+  8 t-127
+  5
+  14 s-127
+  1 s127
+  5
+  40 f127
+  2 f-127
+  100
+  10 s-127
+  2 s127
+  256
+  5 f127
+  1 f-127
+  5
+  10 s-127
+  1 s127
+  5
+  7 f127
+  1 f-127
+  5
+  1 f-127
+  5
+  45 s-127
+  2 s127
+  207
+  15 s-127
+  1 s127
+  5
+  22 f-127
+  1 f127
+
+map c1a1 next c1a1a
+  @checkpoint arrive-c1a1
+  50
+  20 s-127
+  30 f-127
+  40 s-127
+  3 s127
+  2 s-127
+  5
+  30 f-127
+  30 s-127 jump
+  10 f40
+  65 s-127
+  50 f127
+  25 s127
+  70 f127 jump
+  35 f-40
+  55 s-127
+  10
+  3 s127
+  2 s-127
+  5
+  6 f127
+  2 f-127
+  19
+  3 s-127
+  3
+  8 t-127
+  3
+  5 l-127
+  2
+  15 attack
+  2
+  10 l127
+  2
+  15 attack
+  3
+  25 f127 jump duck
+  5 duck
+  15
+  5 t127 l-127
+  3 t127
+  3
+  15 s-127
+  2 s127
+  5
+  50 f-127
+  5
+  4 s-20
+  5
+  16 t-127
+  2
+  3 use
+  100
+  16 t-127
+  3
+  15 s127
+  10
+  8 f-127
+  10
+  6 s-40
+  5
+  16 t-127
+  3
+  15 attack
+  2
+  5 l-127
+  2
+  15 attack
+  3
+  25 f127 jump duck
+  5 duck
+  30
+  16 t127
+  3
+  6 s-127
+  2 s127
+  5
+  8 t127
+  3
+  10 l127
+  3
+  6 f127
+  1 f127 jump
+  120 f127
+  30
+  8 t-127
+  3
+  10 f127
+  15
+  25 f40 s-127
+  15
+  2 f127
+  3
+  12 f40 s-127
+  10
+  16 t-127
+  3
+  40 f127
+  2 f-127
+  10
+  8 f127
+  2 f-127
+  5
+  8 t-127
+  3
+  15 f127
+  2 f-127
+  8
+  8 t127
+  3
+  40 f127
+  20
+
+map c1a1a next c1a1f
+  @checkpoint arrive-c1a1a
+  10 l-127
+  25 f127
+  10
+  8 t127
+  3
+  48 f127
+  3
+  8 t127
+  1 t31
+  1 s127
+  228 f127 attack
+  7 f-127
+  3
+  8 t-127
+  1 t8
+  2
+  20 f127
+  3
+  8 t127
+  1 t-8
+  2
+  40 f127
+  20
+
+map c1a1f next 
+  @checkpoint arrive-c1a1f
+  200
