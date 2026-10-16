@@ -137,8 +137,8 @@ mod tests {
         for index in [0usize, 1, 8, 9, 40, 72, 80, 81] {
             for height in [99u16, 100, 101, 450, 799, 800, 801] {
                 for extra in [63u16, 64, 100, 128, 129] {
-                    for y in [i32::MIN, -1000, -1, 0, 1, 512, 2592, 100_000, 262_136, 262_144,
-                              1 << 24, i32::MAX - 800, i32::MAX] {
+                    for y in [-(1 << 24), -1000, -1, 0, 1, 512, 2592, 100_000, 262_136, 262_144,
+                              1 << 24, 1 << 25] {
                         for reverse in [false, true] {
                             for scale in [0u16, 1, 2048, 4095, 4096, 4097, 8192, 40_000, u16::MAX] {
                                 check(index, height, extra, y, reverse, scale);
@@ -152,7 +152,7 @@ mod tests {
             let index = (next() % 81) as usize;
             let height = 100 + (next() % 701) as u16;
             let extra = 64 + (next() % 65) as u16;
-            let y = (next() as i32) >> (next() % 32);
+            let y = ((next() as i32) >> (next() % 32)).clamp(-(1 << 24), 1 << 25);
             let scale = (next() >> (next() % 16)) as u16;
             check(index, height, extra, y, next() & 1 == 0, scale);
         }

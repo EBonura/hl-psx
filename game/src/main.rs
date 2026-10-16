@@ -30725,9 +30725,9 @@ unsafe fn emit_residue_children(
     // Children are triples of references into a, b, c and the three
     // midpoints: building them as `[SVert; 3]` values cost ~20 memcpy calls
     // per split under optimize(size).
-    let ab = render::perspective_screen_midpoint(a, b);
-    let bc = render::perspective_screen_midpoint(b, c);
-    let ca = render::perspective_screen_midpoint(c, a);
+    let ab = render::perspective_screen_midpoint(*a, *b);
+    let bc = render::perspective_screen_midpoint(*b, *c);
+    let ca = render::perspective_screen_midpoint(*c, *a);
     for [x, y, z] in [[a, &ab, &ca], [&ab, b, &bc], [&ca, &bc, c], [&ab, &bc, &ca]] {
         if levels & !RESIDUE_OWN_BUDGET > 1 {
             emit_residue_children(packets, x, y, z, mat, np, levels - 1);

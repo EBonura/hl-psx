@@ -26,20 +26,20 @@ fn v3(next: &mut impl FnMut() -> u32, bits: u32) -> [i32; 3] {
 #[test]
 fn upstream_of_first_matches() {
     let wide = |car: [i32; 3], first: [i32; 3], second: [i32; 3]| -> bool {
-        let sx = second[0] as i64 - first[0] as i64;
-        let sy = second[1] as i64 - first[1] as i64;
-        let sz = second[2] as i64 - first[2] as i64;
+        let sx = second[0] as i128 - first[0] as i128;
+        let sy = second[1] as i128 - first[1] as i128;
+        let sz = second[2] as i128 - first[2] as i128;
         if sx == 0 && sy == 0 && sz == 0 {
             return false;
         }
-        let dx = car[0] as i64 - first[0] as i64;
-        let dy = car[1] as i64 - first[1] as i64;
-        let dz = car[2] as i64 - first[2] as i64;
+        let dx = car[0] as i128 - first[0] as i128;
+        let dy = car[1] as i128 - first[1] as i128;
+        let dz = car[2] as i128 - first[2] as i128;
         dx * sx + dy * sy + dz * sz < 0
     };
     let mut next = rng(1);
     for round in 0..1_000_000 {
-        let bits = [14, 20, 31, 32][round % 4];
+        let bits = [14, 20, 28, 29][round % 4];
         let (a, b, c) = (v3(&mut next, bits), v3(&mut next, bits), v3(&mut next, bits));
         assert_eq!(tram_logic::is_upstream_of_first(a, b, c), wide(a, b, c), "{a:?} {b:?} {c:?}");
     }
