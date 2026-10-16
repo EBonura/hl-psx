@@ -122,15 +122,16 @@ purpose; `stack`, `regress`, `pgo` data collection and the journeys use such a
 disc because they replay input from boot. Nothing derived from the movie is
 ever written outside `.hlpsx/intro/`.
 
-The cook also fits the sound to the player. The CD sound reaches the output
-through the SPU's main volume, which the emulator mixes at half scale (a console
-run is still to confirm it), so the movie's own level would be heard about 7 dB
-under the original. The cook measures the movie's integrated loudness (EBU R128,
-in Rust, no external meter), raises the sound by 6.9 dB through a look-ahead
-limiter that holds the encoded stream under -1 dBFS, and re-encodes it. It also
-places the sound sectors 24 sectors (160 ms) later in the stream than the encoder
-does, which is the time the picture waits for its last sector and for the
-player's five VBlanks of decoder headroom, so that sound and picture meet.
+The cook also fits the sound to the player. The CD sound loses 0.9 dB of loudness
+in the 37.8 to 44.1 kHz conversion on its way to the output (the level assumes
+the SPU main volume at 0x3FFF is applied at unity, as PSX-SPX and DuckStation
+do), so the cook measures the movie's integrated loudness (EBU R128, in Rust, no
+external meter), raises the sound by that much and re-encodes it, through a
+look-ahead limiter that holds the encoded stream under -1 dBFS (the movie's own
+peak is 2.5 dB under full scale, so it does nothing here). It also places the
+sound sectors 24 sectors (160 ms) later in the stream than the encoder does,
+which is the time the picture waits for its last sector and for the player's
+five VBlanks of decoder headroom, so that sound and picture meet.
 
 ## Run
 

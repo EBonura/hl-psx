@@ -49,15 +49,18 @@ const SOUND_HZ: f64 = 37_800.0;
 /// VBlanks from a picture's last sector to its flip, as the intro asks the
 /// player (`Config::latency_vblanks`); written to `movie.rs`.
 const LATENCY_VBLANKS: u32 = 5;
-/// How much quieter the player's sound path is than the stream it is fed:
-/// the CD sound reaches the output through the SPU's main volume, whose
-/// full setting (0x3FFF) the emulator mixes at half scale (6.02 dB), and the
-/// 37.8 to 44.1 kHz conversion costs about 0.9 dB more. Measured on the SPU
-/// output of the headless emulator against the install's movie (-23.7 LUFS
-/// heard, -16.8 LUFS for the original played to both speakers). The cook
-/// makes the stream this much louder than the install's movie, with a
-/// limiter so that it cannot clip, so that what is heard matches it.
-const PLAYBACK_LOSS_DB: f64 = 6.9;
+/// How much quieter the player's sound path is than the stream it is fed: the
+/// 37.8 to 44.1 kHz conversion of the CD sound costs about 0.9 dB of
+/// loudness (the SPU's own mix is unity at the main volume 0x3FFF the intro
+/// sets, once the emulator applies that register as PSX-SPX and DuckStation do;
+/// the emulator before fix/spu-main-volume-scale-2026-10-16 played it at half
+/// scale and the cook compensated with 6.9 dB). Measured on the SPU output of
+/// the headless emulator against the install's movie: with the stream raised by
+/// this much the output reads -16.8 LUFS, the original played to both speakers.
+/// The movie's peak is 2.5 dB under full scale, so the gain stays inside the
+/// limiter's ceiling and the limiter does nothing; it remains as the guard for
+/// another install's movie.
+const PLAYBACK_LOSS_DB: f64 = 0.9;
 /// Sectors the sound is moved later behind the encoder's placement, so that
 /// it plays together with the picture. The picture shows its frame the
 /// headroom of [`LATENCY_VBLANKS`] after the frame's last sector arrives, and
@@ -284,9 +287,8 @@ struct Mastering {
 
 /// Raises the sound by [`PLAYBACK_LOSS_DB`] over the install's own loudness,
 /// through a look-ahead limiter so that it cannot clip, and returns the new
-/// samples. The movie is mastered with about 17 dB between its loudness and
-/// its peak; the player's path needs 7 dB more level than the source file
-/// to be heard as loud, which the peaks alone could not carry.
+/// samples. The movie keeps about 17 dB between its loudness and its peak, so
+/// the 0.9 dB the player's path loses fits under the ceiling untouched.
 fn master(pcm: &[i16]) -> Result<(Vec<i16>, Mastering), String> {
     let x: Vec<f64> = pcm.iter().map(|s| f64::from(*s) / 32768.0).collect();
     let source = loudness::integrated(&x, SOUND_HZ).ok_or("the movie's sound is silent")?;

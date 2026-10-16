@@ -86,7 +86,7 @@ pub fn apply(samples: &[f64], gain: f64, fs: f64) -> (Vec<f64>, Report) {
     (
         out,
         Report {
-            max_reduction_db: -20.0 * worst.log10(),
+            max_reduction_db: (-20.0 * worst.log10()).abs(),
             active: active as f64 / n.max(1) as f64,
         },
     )
