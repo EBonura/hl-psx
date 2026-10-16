@@ -259,7 +259,6 @@ const fn ordered_abs_diff(a: i32, b: i32) -> u32 {
 }
 
 #[optimize(size)]
-#[optimize(size)]
 /// Three-dimensional Q8 distance, rounded down and saturated to i32.
 pub const fn distance_q8(a: Vec3Q8, b: Vec3Q8) -> i32 {
     let (dx, dy, dz) = (

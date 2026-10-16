@@ -58,7 +58,7 @@ pub const BC_DIE: u8 = 41;
 pub const HEV_BELL: u8 = 42;
 pub const GEIGER: u8 = 43; // radiation/toxic-zone click
 pub const HEV_ACTIVATE: u8 = 44; // suit power-on voice (pickup)
-// ids 45 and 46 held "health critical" and "near death"; hev.rs speaks them now
+                                 // ids 45 and 46 held "health critical" and "near death"; hev.rs speaks them now
 pub const CHARGER_HEALTH_LOOP: u8 = 47;
 pub const CHARGER_HEV_LOOP: u8 = 48;
 pub const FLASHLIGHT: u8 = 49;
@@ -116,14 +116,14 @@ static mut ROOM_SAMPLE_END: u32 = 0x1010;
 static mut ROOM_EFFECT_BYTES: u32 = 0;
 
 fn checked_room_bank(pack: &[u8], base: u32, limit: usize) -> u32 {
-    let end=crate::env_sound_audio::bank_end(pack,base,limit)
+    let end = crate::env_sound_audio::bank_end(pack, base, limit)
         .expect("sound bank exceeds SPU RAM or has invalid layout");
-    let n=u32::from_le_bytes(pack[4..8].try_into().unwrap()) as usize;
+    let n = u32::from_le_bytes(pack[4..8].try_into().unwrap()) as usize;
     for index in 0..n {
-        let at=8+index*8;
-        let off=u32::from_le_bytes(pack[at..at+4].try_into().unwrap()) as usize;
-        let len=u32::from_le_bytes(pack[at+4..at+8].try_into().unwrap()) as usize;
-        psx_asset::Audio::from_bytes(&pack[off..off+len])
+        let at = 8 + index * 8;
+        let off = u32::from_le_bytes(pack[at..at + 4].try_into().unwrap()) as usize;
+        let len = u32::from_le_bytes(pack[at + 4..at + 8].try_into().unwrap()) as usize;
+        psx_asset::Audio::from_bytes(&pack[off..off + len])
             .expect("invalid sound payload before bank DMA");
     }
     end
@@ -131,84 +131,98 @@ fn checked_room_bank(pack: &[u8], base: u32, limit: usize) -> u32 {
 
 /// Stop old effect writes before a map bank replaces any of their storage.
 unsafe fn mute_room_effect() {
-    use psx_hw::spu::{SPUCNT,REVERB_VOL_LEFT,REVERB_VOL_RIGHT};
-    let control=psx_io::read_u16(SPUCNT);
-    psx_io::write_u16(REVERB_VOL_LEFT,0);
-    psx_io::write_u16(REVERB_VOL_RIGHT,0);
-    psx_io::write_u16(0x1f801d98,0);
-    psx_io::write_u16(0x1f801d9a,0);
-    psx_io::write_u16(SPUCNT,control & !(1<<7));
-    ROOM_EFFECT_BYTES=0;
+    use psx_hw::spu::{REVERB_VOL_LEFT, REVERB_VOL_RIGHT, SPUCNT};
+    let control = psx_io::read_u16(SPUCNT);
+    psx_io::write_u16(REVERB_VOL_LEFT, 0);
+    psx_io::write_u16(REVERB_VOL_RIGHT, 0);
+    psx_io::write_u16(0x1f801d98, 0);
+    psx_io::write_u16(0x1f801d9a, 0);
+    psx_io::write_u16(SPUCNT, control & !(1 << 7));
+    ROOM_EFFECT_BYTES = 0;
 }
 
 /// Optional effects use only their exact, safe top-of-SPU workspace. Tight
 /// banks retain every authored sample and receive neutral output instead.
 pub unsafe fn apply_room(room: u8) {
-    use psx_hw::spu::{SPUCNT,REVERB_WORK_BASE,REVERB_VOL_LEFT,REVERB_VOL_RIGHT};
-    if ROOM_APPLIED == room {return;}
-    let program=crate::env_sound_audio::program(room).expect("unsupported room program");
-    mute_room_effect();
-    let control=psx_io::read_u16(SPUCNT);
-    if let Some(work)=crate::env_sound_audio::workspace(&program,ROOM_SAMPLE_END) {
-        #[repr(C,align(4))]
-        struct Zeros([u8;256]);
-        static ZERO: Zeros=Zeros([0;256]);
-        let spu=(*core::ptr::addr_of_mut!(SPU)).as_mut().expect("room effect before SPU init");
-        let mut offset=0;
-        while offset < work.bytes {
-            let bytes=(work.bytes-offset).min(ZERO.0.len() as u32) as usize;
-            spu.upload_adpcm(psx_spu::SpuAddr::new(work.base+offset),&ZERO.0[..bytes]);
-            offset+=bytes as u32;
-        }
-        psx_io::write_u16(REVERB_WORK_BASE,(work.base/8) as u16);
-        for (index,value) in program.registers.iter().enumerate() {
-            psx_io::write_u16(0x1f801dc0+index as u32*2,*value);
-        }
-        psx_io::write_u16(0x1f801d98,0xffff);
-        psx_io::write_u16(0x1f801d9a,0x00ff);
-        psx_io::write_u16(REVERB_VOL_LEFT,program.wet);
-        psx_io::write_u16(REVERB_VOL_RIGHT,program.wet);
-        psx_io::write_u16(SPUCNT,control | (1<<7));
-        ROOM_EFFECT_BYTES=work.bytes;
+    use psx_hw::spu::{REVERB_VOL_LEFT, REVERB_VOL_RIGHT, REVERB_WORK_BASE, SPUCNT};
+    if ROOM_APPLIED == room {
+        return;
     }
-    ROOM_APPLIED=room;
+    let program = crate::env_sound_audio::program(room).expect("unsupported room program");
+    mute_room_effect();
+    let control = psx_io::read_u16(SPUCNT);
+    if let Some(work) = crate::env_sound_audio::workspace(&program, ROOM_SAMPLE_END) {
+        #[repr(C, align(4))]
+        struct Zeros([u8; 256]);
+        static ZERO: Zeros = Zeros([0; 256]);
+        let spu = (*core::ptr::addr_of_mut!(SPU))
+            .as_mut()
+            .expect("room effect before SPU init");
+        let mut offset = 0;
+        while offset < work.bytes {
+            let bytes = (work.bytes - offset).min(ZERO.0.len() as u32) as usize;
+            spu.upload_adpcm(psx_spu::SpuAddr::new(work.base + offset), &ZERO.0[..bytes]);
+            offset += bytes as u32;
+        }
+        psx_io::write_u16(REVERB_WORK_BASE, (work.base / 8) as u16);
+        for (index, value) in program.registers.iter().enumerate() {
+            psx_io::write_u16(0x1f801dc0 + index as u32 * 2, *value);
+        }
+        psx_io::write_u16(0x1f801d98, 0xffff);
+        psx_io::write_u16(0x1f801d9a, 0x00ff);
+        psx_io::write_u16(REVERB_VOL_LEFT, program.wet);
+        psx_io::write_u16(REVERB_VOL_RIGHT, program.wet);
+        psx_io::write_u16(SPUCNT, control | (1 << 7));
+        ROOM_EFFECT_BYTES = work.bytes;
+    }
+    ROOM_APPLIED = room;
 }
 
 #[inline]
 pub unsafe fn init_from_pack(pack: &[u8]) -> usize {
-    let end=checked_room_bank(pack,0x1010,MAX_SFX);
+    let end = checked_room_bank(pack, 0x1010, MAX_SFX);
     mute_room_effect();
-    ROOM_CORE_END=end;
-    ROOM_SAMPLE_END=end;
-    ROOM_APPLIED=u8::MAX;
+    ROOM_CORE_END = end;
+    ROOM_SAMPLE_END = end;
+    ROOM_APPLIED = u8::MAX;
     // SAFETY: the game drives the SPU from this module alone, one caller at a time.
     let spu =
         (*core::ptr::addr_of_mut!(SPU)).insert(psx_spu::Spu::new(psx_io::periph::SpuDma::steal()));
-    let ready=state().init_from_pack(spu, pack);
-    assert_eq!(ready,u32::from_le_bytes(pack[4..8].try_into().unwrap()) as usize);
+    let ready = state().init_from_pack(spu, pack);
+    assert_eq!(
+        ready,
+        u32::from_le_bytes(pack[4..8].try_into().unwrap()) as usize
+    );
     ready
 }
 
 #[inline]
 pub unsafe fn load_dialogue_pack(pack: &[u8]) -> usize {
-    let dialogue_end=if pack.is_empty() {ROOM_CORE_END}else{checked_room_bank(pack,ROOM_CORE_END,96)};
+    let dialogue_end = if pack.is_empty() {
+        ROOM_CORE_END
+    } else {
+        checked_room_bank(pack, ROOM_CORE_END, 96)
+    };
     // The suit's words (hev.rs) sit above the dialogue and below the room
     // effect's workspace.
-    let end=dialogue_end+crate::hev::spu_bytes(pack);
+    let end = dialogue_end + crate::hev::spu_bytes(pack);
     // Even a same-number preset must be re-admitted against this new bank.
     mute_room_effect();
-    ROOM_APPLIED=u8::MAX;
-    ROOM_SAMPLE_END=end;
+    ROOM_APPLIED = u8::MAX;
+    ROOM_SAMPLE_END = end;
     let spu = (*core::ptr::addr_of_mut!(SPU))
         .get_or_insert_with(|| psx_spu::Spu::new(psx_io::periph::SpuDma::steal()));
-    let ready=state().load_dialogue_pack(spu, pack);
+    let ready = state().load_dialogue_pack(spu, pack);
     if pack.is_empty() {
         crate::hev::unload();
     } else {
         crate::hev::load(spu, pack, dialogue_end);
     }
     if !pack.is_empty() {
-        assert_eq!(ready,u32::from_le_bytes(pack[4..8].try_into().unwrap()) as usize);
+        assert_eq!(
+            ready,
+            u32::from_le_bytes(pack[4..8].try_into().unwrap()) as usize
+        );
     }
     ready
 }

@@ -209,7 +209,13 @@ pub const fn compass_shade(v: u8) -> u8 {
 /// the ground or a ladder: a walk (under 210 u/s, 80 ducked) every 0.4 s at
 /// 0.2 volume, a run every 0.3 s at 0.5, a ladder rung every 0.35 s at 0.35;
 /// ducking adds 0.1 s and cuts the volume to 35%.
-pub fn step_tick(clock: u8, grounded: bool, ladder: bool, speed_q6: i32, ducking: bool) -> (u8, Option<u16>) {
+pub fn step_tick(
+    clock: u8,
+    grounded: bool,
+    ladder: bool,
+    speed_q6: i32,
+    ducking: bool,
+) -> (u8, Option<u16>) {
     let clock = clock.saturating_sub(1);
     if clock > 0 || !(grounded || ladder) || speed_q6 <= 0 {
         return (clock, None);
@@ -332,7 +338,6 @@ impl Breath {
         }
         (0, 0)
     }
-
 }
 
 // ---------------------------------------------------------- time based damage
@@ -574,11 +579,20 @@ mod tests {
         }
         assert_eq!(next, 8);
         // running at 320 u/s: every 6 ticks, half volume
-        assert_eq!(step_tick(0, true, false, ups_to_q6(320), false), (6, Some(2)));
+        assert_eq!(
+            step_tick(0, true, false, ups_to_q6(320), false),
+            (6, Some(2))
+        );
         // ducked run: slower, much quieter (0.5 * 0.35 = 0.175)
-        assert_eq!(step_tick(0, true, false, ups_to_q6(100), true), (8, Some(6)));
+        assert_eq!(
+            step_tick(0, true, false, ups_to_q6(100), true),
+            (8, Some(6))
+        );
         // ladder rung
-        assert_eq!(step_tick(0, false, true, ups_to_q6(100), false), (7, Some(3)));
+        assert_eq!(
+            step_tick(0, false, true, ups_to_q6(100), false),
+            (7, Some(3))
+        );
         // airborne: nothing
         assert_eq!(step_tick(0, false, false, ups_to_q6(300), false), (0, None));
     }

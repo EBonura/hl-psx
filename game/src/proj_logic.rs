@@ -28,9 +28,6 @@ pub const ROCKET_STALL_SPEED_Q4: i32 = 1200;
 /// 800 u/s^2 is one unit per tick squared), applied either side of the move.
 pub const ROCKET_COAST_HALF_GRAVITY_Q4: i32 = 8;
 
-#[optimize(size)]
-
-
 /// Length of a velocity.
 #[optimize(size)]
 pub fn speed(v: [i32; 3]) -> i32 {
@@ -50,7 +47,12 @@ pub fn speed(v: [i32; 3]) -> i32 {
 /// that it only holds 0.798 of its speed and detonates in air below 1500 u/s.
 #[inline(never)]
 #[optimize(size)]
-pub fn rocket_think(v: [i32; 3], dir: [i32; 3], since_ignite: u32, in_water: bool) -> ([i32; 3], bool) {
+pub fn rocket_think(
+    v: [i32; 3],
+    dir: [i32; 3],
+    since_ignite: u32,
+    in_water: bool,
+) -> ([i32; 3], bool) {
     let s = speed(v);
     let boost = since_ignite < ROCKET_BOOST_TICKS;
     let along = if boost {
@@ -61,9 +63,16 @@ pub fn rocket_think(v: [i32; 3], dir: [i32; 3], since_ignite: u32, in_water: boo
     let mut out = [0i32; 3];
     for a in 0..3 {
         // a fifth of the old velocity (819/4096) plus the new heading, rounded
-        out[a] = Wide::mul(v[a], 819).mul_add(dir[a], along).plus(2048).shr_i32(12);
+        out[a] = Wide::mul(v[a], 819)
+            .mul_add(dir[a], along)
+            .plus(2048)
+            .shr_i32(12);
     }
-    let cap = if in_water { ROCKET_TOP_SPEED_WATER_Q4 } else { ROCKET_TOP_SPEED_Q4 };
+    let cap = if in_water {
+        ROCKET_TOP_SPEED_WATER_Q4
+    } else {
+        ROCKET_TOP_SPEED_Q4
+    };
     let len = speed(out);
     if boost && len > cap {
         for a in 0..3 {
@@ -94,14 +103,26 @@ pub fn integrate_q4(vel: &mut [i32; 3], rem: &mut [i8; 3], half_gravity_q4: i32)
 /// The squared distance from `p` to the segment `a`..`b`.
 #[cfg(test)]
 pub fn segment_point_dist2(a: [i32; 3], b: [i32; 3], p: [i32; 3]) -> i64 {
-    let ab = [(b[0] - a[0]) as i64, (b[1] - a[1]) as i64, (b[2] - a[2]) as i64];
-    let ap = [(p[0] - a[0]) as i64, (p[1] - a[1]) as i64, (p[2] - a[2]) as i64];
+    let ab = [
+        (b[0] - a[0]) as i64,
+        (b[1] - a[1]) as i64,
+        (b[2] - a[2]) as i64,
+    ];
+    let ap = [
+        (p[0] - a[0]) as i64,
+        (p[1] - a[1]) as i64,
+        (p[2] - a[2]) as i64,
+    ];
     let len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
     let t_num = (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]).clamp(0, len2.max(0));
     let c = if len2 == 0 {
         [0, 0, 0]
     } else {
-        [ab[0] * t_num / len2, ab[1] * t_num / len2, ab[2] * t_num / len2]
+        [
+            ab[0] * t_num / len2,
+            ab[1] * t_num / len2,
+            ab[2] * t_num / len2,
+        ]
     };
     let d = [ap[0] - c[0], ap[1] - c[1], ap[2] - c[2]];
     d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
@@ -139,7 +160,14 @@ pub fn segment_closest(a: [i32; 3], b: [i32; 3], p: [i32; 3]) -> ([i32; 3], i32)
 /// touched by a projectile of radius `pad` travelling `a`..`b`. Returns where
 /// along the segment (q12) it first comes within reach.
 #[inline(never)]
-pub fn segment_hits_cylinder(a: [i32; 3], b: [i32; 3], c: [i32; 3], r: i32, hh: i32, pad: i32) -> Option<i32> {
+pub fn segment_hits_cylinder(
+    a: [i32; 3],
+    b: [i32; 3],
+    c: [i32; 3],
+    r: i32,
+    hh: i32,
+    pad: i32,
+) -> Option<i32> {
     let (near, t) = segment_closest(a, b, c);
     let dx = near[0] - c[0];
     let dz = near[2] - c[2];
@@ -198,7 +226,11 @@ pub fn hornet_think(flight: [i32; 3], to_enemy: [i32; 3], red: bool) -> [i32; 3]
         flight[2] + to_enemy[2],
     ];
     let len = speed(sum).max(1);
-    let cruise = if red { HORNET_RED_SPEED } else { HORNET_ORANGE_SPEED };
+    let cruise = if red {
+        HORNET_RED_SPEED
+    } else {
+        HORNET_ORANGE_SPEED
+    };
     let scale = if red {
         // a flat-out reversal still crawls at a quarter of the speed
         let d = if dot <= 0 { 1024 } else { dot };
@@ -258,7 +290,7 @@ mod tests {
             z += integrate_q4(&mut v, &mut r, 0)[2];
         }
         assert_eq!(z, 100); // 8 ticks at 12.5
-        // the coasting rocket falls 1 unit/tick^2: after 8 ticks about 32 units
+                            // the coasting rocket falls 1 unit/tick^2: after 8 ticks about 32 units
         let mut v = [0, 0, 0];
         let mut r = [0i8; 3];
         let mut y = 0;

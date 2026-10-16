@@ -9,7 +9,9 @@ pub fn interval_ticks(frequency: i32) -> u16 {
     if frequency >= 20 {
         10
     } else {
-        50i32.saturating_sub(frequency.saturating_mul(2)).clamp(1, u16::MAX as i32) as u16
+        50i32
+            .saturating_sub(frequency.saturating_mul(2))
+            .clamp(1, u16::MAX as i32) as u16
     }
 }
 pub fn use_enabled(current: bool, use_type: u8) -> bool {

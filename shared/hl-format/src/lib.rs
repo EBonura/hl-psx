@@ -44,7 +44,11 @@ pub mod map {
     /// controller hull-2 root. Render hull-0 still uses render nodes.
     pub const CONTROLLER_HULL_ABSENT: i32 = i32::MIN;
     pub const fn controller_hull_head(magic: u32, reserved: i32) -> i32 {
-        if magic == MAGIC_HLMK { reserved } else { CONTROLLER_HULL_ABSENT }
+        if magic == MAGIC_HLMK {
+            reserved
+        } else {
+            CONTROLLER_HULL_ABSENT
+        }
     }
 
     pub const LEGACY_HEADER_SIZE: usize = 52;
@@ -254,14 +258,23 @@ pub mod map {
     pub const fn supports_split_leaf_counts(magic: u32) -> bool {
         matches!(
             magic,
-            MAGIC_HLMC | MAGIC_HLMD | MAGIC_HLME | MAGIC_HLMF | MAGIC_HLMG | MAGIC_HLMH | MAGIC_HLMJ
+            MAGIC_HLMC
+                | MAGIC_HLMD
+                | MAGIC_HLME
+                | MAGIC_HLMF
+                | MAGIC_HLMG
+                | MAGIC_HLMH
+                | MAGIC_HLMJ
                 | MAGIC_HLMK
         )
     }
 
     #[inline(always)]
     pub const fn supports_texture_animation(magic: u32) -> bool {
-        matches!(magic, MAGIC_HLME | MAGIC_HLMF | MAGIC_HLMG | MAGIC_HLMH | MAGIC_HLMJ | MAGIC_HLMK)
+        matches!(
+            magic,
+            MAGIC_HLME | MAGIC_HLMF | MAGIC_HLMG | MAGIC_HLMH | MAGIC_HLMJ | MAGIC_HLMK
+        )
     }
 
     #[inline(always)]
@@ -869,12 +882,18 @@ mod tests {
 
     #[test]
     fn latest_format_is_supported_by_every_version_gate() {
-        for magic in [map::MAGIC_HLMA,map::MAGIC_HLMH,map::MAGIC_HLMJ] {
-            assert_eq!(map::controller_hull_head(magic,123),map::CONTROLLER_HULL_ABSENT);
+        for magic in [map::MAGIC_HLMA, map::MAGIC_HLMH, map::MAGIC_HLMJ] {
+            assert_eq!(
+                map::controller_hull_head(magic, 123),
+                map::CONTROLLER_HULL_ABSENT
+            );
         }
-        assert_eq!(map::controller_hull_head(map::MAGIC_HLMK,123),123);
-        assert_eq!(map::controller_hull_head(map::MAGIC_HLMK,-2),-2);
-        assert_eq!(map::controller_hull_head(map::MAGIC_HLMK,map::CONTROLLER_HULL_ABSENT),map::CONTROLLER_HULL_ABSENT);
+        assert_eq!(map::controller_hull_head(map::MAGIC_HLMK, 123), 123);
+        assert_eq!(map::controller_hull_head(map::MAGIC_HLMK, -2), -2);
+        assert_eq!(
+            map::controller_hull_head(map::MAGIC_HLMK, map::CONTROLLER_HULL_ABSENT),
+            map::CONTROLLER_HULL_ABSENT
+        );
         assert!(map::supports_tagged_clip_planes(map::MAGIC_LATEST));
         assert!(map::supports_split_leaf_counts(map::MAGIC_LATEST));
         assert!(map::supports_texture_animation(map::MAGIC_LATEST));

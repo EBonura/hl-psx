@@ -54,7 +54,16 @@ impl Cooked {
             };
             // Lowest rate that keeps CORE_LEVEL_LIMIT_DB of the energy.
             let rate = [
-                HEV_RATE_TOP, 7_000, 6_000, 5_500, 5_000, 4_500, 4_000, 3_600, 3_200, 2_800,
+                HEV_RATE_TOP,
+                7_000,
+                6_000,
+                5_500,
+                5_000,
+                4_500,
+                4_000,
+                3_600,
+                3_200,
+                2_800,
                 HEV_RATE_FLOOR,
             ]
             .into_iter()
@@ -242,7 +251,9 @@ pub fn wanted(map_name: &str, entities: &[Entity], classes: &HashSet<String>) ->
     if battery {
         // A battery adds 15, so the levels it can leave behind are multiples
         // of 15 first; the rest follow.
-        for level in [2u8, 5, 8, 11, 14, 17, 3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 1, 19] {
+        for level in [
+            2u8, 5, 8, 11, 14, 17, 3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 1, 19,
+        ] {
             out.push(hev::S_POWER + level);
         }
     }
@@ -299,9 +310,7 @@ pub fn report(valve: &Path) -> Result<()> {
         match word {
             Some(w) => println!(
                 "word {index:2} {:>5} Hz {:>6} SPU bytes  {}",
-                w.rate,
-                w.spu,
-                WORDS[index][0]
+                w.rate, w.spu, WORDS[index][0]
             ),
             None => println!("word {index:2} missing {}", WORDS[index][0]),
         }
@@ -315,7 +324,10 @@ pub fn report(valve: &Path) -> Result<()> {
     let mut running = Vec::new();
     for id in 0..SENTENCE_COUNT as u8 {
         running.push(id);
-        println!("through sentence {id:2}: {} SPU bytes", cooked.spu_cost(&running));
+        println!(
+            "through sentence {id:2}: {} SPU bytes",
+            cooked.spu_cost(&running)
+        );
     }
     Ok(())
 }
@@ -325,18 +337,30 @@ pub fn report(valve: &Path) -> Result<()> {
 pub fn activity(valve: &Path) -> Result<()> {
     for (index, wavs) in WORDS.iter().enumerate() {
         let wavs: Vec<String> = wavs.iter().map(|w| w.to_string()).collect();
-        let Some(source) = concat_sources(valve, &wavs)? else { continue };
+        let Some(source) = concat_sources(valve, &wavs)? else {
+            continue;
+        };
         let rate = source.wav.rate as f64;
         let win = (rate * 0.02) as usize;
         let rms: Vec<f64> = source
             .wav
             .samples
             .chunks(win.max(1))
-            .map(|c| (c.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / c.len() as f64).sqrt())
+            .map(|c| {
+                (c.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / c.len() as f64).sqrt()
+            })
             .collect();
         let peak = rms.iter().cloned().fold(0.0, f64::max);
-        let active: Vec<usize> = rms.iter().enumerate().filter(|(_, v)| **v > peak * 0.12).map(|(i, _)| i).collect();
-        let (first, last) = (active.first().copied().unwrap_or(0), active.last().copied().unwrap_or(0));
+        let active: Vec<usize> = rms
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| **v > peak * 0.12)
+            .map(|(i, _)| i)
+            .collect();
+        let (first, last) = (
+            active.first().copied().unwrap_or(0),
+            active.last().copied().unwrap_or(0),
+        );
         println!(
             "word {index:2} total {:.2}s speech {:.2}..{:.2}s ({:.0}% kept)  {}",
             source.wav.samples.len() as f64 / rate,

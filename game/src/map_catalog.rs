@@ -184,9 +184,12 @@ mod tests {
     }
 
     fn weapon_mask(room: usize) -> u16 {
-        WEAPON_FIRST_MAP.iter().enumerate().fold(0, |mask, (w, &first)| {
-            mask | ((diagnostic_has_weapon(room, first) as u16) << w)
-        })
+        WEAPON_FIRST_MAP
+            .iter()
+            .enumerate()
+            .fold(0, |mask, (w, &first)| {
+                mask | ((diagnostic_has_weapon(room, first) as u16) << w)
+            })
     }
 
     #[test]

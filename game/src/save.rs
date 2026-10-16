@@ -443,7 +443,13 @@ fn with_card<T>(port: Port, f: impl FnOnce(&mut psx_mc::Card<psx_mc::HardwareCar
 #[cfg(target_arch = "mips")]
 #[inline(never)]
 #[optimize(size)]
-pub fn write(target: Target, cp: &Checkpoint, snap: &[u8], tick: u16, staging: &mut [u8]) -> CardResult {
+pub fn write(
+    target: Target,
+    cp: &Checkpoint,
+    snap: &[u8],
+    tick: u16,
+    staging: &mut [u8],
+) -> CardResult {
     if target.slot != Slot::Manual {
         return CardResult::Failed;
     }
@@ -519,7 +525,13 @@ pub fn read(target: Target, staging: &mut [u8]) -> Result<Checkpoint, CardResult
 
 #[optimize(size)]
 #[cfg(not(target_arch = "mips"))]
-pub fn write(_target: Target, _cp: &Checkpoint, _snap: &[u8], _tick: u16, _staging: &mut [u8]) -> CardResult {
+pub fn write(
+    _target: Target,
+    _cp: &Checkpoint,
+    _snap: &[u8],
+    _tick: u16,
+    _staging: &mut [u8],
+) -> CardResult {
     CardResult::NoCard
 }
 
@@ -631,22 +643,22 @@ mod tests {
         let len = encode(&sample(), &mut buf) - 4 - 4;
         buf[4..6].copy_from_slice(&SAVE_VERSION_WITH_SKILL.to_le_bytes());
         let sum = checksum(&buf[..len]);
-        buf[len..len+4].copy_from_slice(&sum.to_le_bytes());
-        let back = decode(&buf[..len+4]).expect("version 4 decodes");
-        assert_eq!(back.ammo,sample().ammo);
-        assert_eq!(back.owned,sample().owned);
-        assert_eq!(back.skill,2);
-        assert_eq!(back.weaponbox_removed,0);
+        buf[len..len + 4].copy_from_slice(&sum.to_le_bytes());
+        let back = decode(&buf[..len + 4]).expect("version 4 decodes");
+        assert_eq!(back.ammo, sample().ammo);
+        assert_eq!(back.owned, sample().owned);
+        assert_eq!(back.skill, 2);
+        assert_eq!(back.weaponbox_removed, 0);
     }
 
     #[optimize(size)]
     #[test]
     fn valid_checksum_cannot_admit_unbound_box_bits() {
-        let mut buf = [0u8;512];
+        let mut buf = [0u8; 512];
         let len = encode(&sample(), &mut buf);
-        buf[len-8..len-4].copy_from_slice(&0x8000_0000u32.to_le_bytes());
-        let sum = checksum(&buf[..len-4]);
-        buf[len-4..len].copy_from_slice(&sum.to_le_bytes());
+        buf[len - 8..len - 4].copy_from_slice(&0x8000_0000u32.to_le_bytes());
+        let sum = checksum(&buf[..len - 4]);
+        buf[len - 4..len].copy_from_slice(&sum.to_le_bytes());
         assert!(decode(&buf[..len]).is_none());
     }
 
@@ -710,7 +722,10 @@ mod tests {
         let back = decode(&buf[..len]).expect("decodes");
         assert_eq!(back.snap_tick, 1234);
         assert_eq!(back.snap_len, 5);
-        assert_eq!(&buf[back.snap_at as usize..back.snap_at as usize + 5], &snap);
+        assert_eq!(
+            &buf[back.snap_at as usize..back.snap_at as usize + 5],
+            &snap
+        );
         assert_eq!(back.room_id, 42);
         assert_eq!(back.weaponbox_removed, sample().weaponbox_removed);
         // A flipped progress byte fails the checksum.

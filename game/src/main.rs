@@ -27,38 +27,38 @@
 
 extern crate psx_rt;
 
+mod air_navigation;
 mod beverage;
+mod cdstream;
+mod combat_defs;
+mod decal_light;
+mod door_transition;
+mod driver;
 mod env_blood;
 mod env_bubbles;
 mod env_bubbles_fx;
 mod env_funnel;
 mod env_funnel_fx;
+mod env_sound;
+mod env_sound_audio;
 mod gman_damage;
+mod ground_logic;
 mod hecu_grenades;
+mod hev;
 mod proj_logic;
+mod pushable_transition;
 mod senses;
 mod sentry_wake;
 mod turret_aim;
-mod pushable_transition;
-mod env_sound;
-mod env_sound_audio;
 mod weaponbox;
-mod air_navigation;
-mod hev;
-mod door_transition;
-mod cdstream;
-mod combat_defs;
-mod decal_light;
-mod driver;
-mod ground_logic;
 use psx_goldsrc::hitbox_logic;
 mod hltext;
 mod hud;
 use psx_goldsrc::ladder_logic;
 mod logic_state;
 mod map;
-mod menu;
 mod map_catalog;
+mod menu;
 mod model;
 mod music;
 use psx_goldsrc::ordering;
@@ -75,26 +75,26 @@ mod render;
 #[cfg(feature = "route-follow")]
 use psx_goldsrc::route_follow;
 mod apache;
+mod autoaim;
 mod barnacle;
 mod garg;
+mod leech;
+mod mapsnap;
+mod monsterjump;
 mod mortar;
 mod nihilanth;
 mod osprey;
-mod save;
-mod segments;
-mod scientist_logic;
-mod leech;
 mod player_rules;
-mod trigger_rules;
-mod mapsnap;
-mod monsterjump;
+mod save;
+mod scientist_logic;
 mod scratchpad;
+mod segments;
 mod setpiece_logic;
 mod setpiece_sfx;
 mod species;
-mod autoaim;
 mod tank;
 mod throwable;
+mod trigger_rules;
 mod tripmine;
 use osprey::{osprey_init, tick_osprey, OSPREY, OSPREY_TILT, PROP_TYPE_OSPREY};
 use psx_goldsrc::semantic_input;
@@ -136,6 +136,7 @@ static SEMANTIC_INPUT_BYTES: &[u8] = include_bytes!(env!("HLPSX_SEMANTIC_INPUT")
 #[cfg(feature = "route-follow")]
 static ROUTE_WAYPOINT_BYTES: &[u8] = include_bytes!(env!("HLPSX_ROUTE_WAYPOINTS"));
 
+use decal_light::dir26;
 use psx_fx::{LcgRng, ParticlePool};
 use psx_gpu::display::{DoubleBuffer, Resolution};
 use psx_gpu::material::{
@@ -150,7 +151,6 @@ use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, Projected};
 use psx_io;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
-use decal_light::dir26;
 use psx_math::int32::{isqrt_i32, mul_div_i32, mul_shr_i32};
 use psx_math::{atan2_q12, sincos, Mask64, Wide, WideU};
 use psx_pad::{button, poll_port1, require_analog_port1, AnalogRequirement, PadMode};
@@ -2360,7 +2360,13 @@ unsafe fn save_with_badge(
     // The map's progress goes to the card with the checkpoint, and stays in RAM
     // as the point a death reloads.
     mapsnap::keep_now(cp);
-    let result = save::write(target, cp, mapsnap::bytes(), mapsnap::tick(), save_staging());
+    let result = save::write(
+        target,
+        cp,
+        mapsnap::bytes(),
+        mapsnap::tick(),
+        save_staging(),
+    );
     LAST_SAVE_VBLANKS = interrupts::vblank_count().wrapping_sub(start);
     #[cfg(feature = "emulator-telemetry")]
     debug_line("save cost", &[("vblanks=", LAST_SAVE_VBLANKS as i32)]);
@@ -3764,7 +3770,8 @@ static mut PUSH_LI: [u16; MAX_PUSH_LI] = [0; MAX_PUSH_LI];
 static mut PUSH_N: u8 = 0;
 static mut MONSTERJUMP_N: u16 = 0;
 static mut PROP_JUMP: [monsterjump::State; MAX_PROPS] = [monsterjump::State::EMPTY; MAX_PROPS];
-static mut PROP_FLIGHT: [air_navigation::Flight; MAX_PROPS] = [air_navigation::Flight::EMPTY; MAX_PROPS];
+static mut PROP_FLIGHT: [air_navigation::Flight; MAX_PROPS] =
+    [air_navigation::Flight::EMPTY; MAX_PROPS];
 const _: () = assert!(core::mem::size_of::<monsterjump::State>() == 10);
 /// Union of the pushers' boxes: most actors are nowhere near one, and a miss here
 /// skips every per-pusher test.
@@ -5895,8 +5902,8 @@ static mut BOB_PHASE: u32 = 0;
 // replaces the port-specific full-screen red wash with the original
 // directional feedback without adding a resident array.
 static mut DAMAGE_EDGE: [u8; 4] = [0; 4]; // front, right, rear, left
-// HEV suit voice: 0 = fine, 1 = health critical, 2 = near death (fire once per
-// worsening threshold crossing). Geiger cooldown throttles the radiation click.
+                                          // HEV suit voice: 0 = fine, 1 = health critical, 2 = near death (fire once per
+                                          // worsening threshold crossing). Geiger cooldown throttles the radiation click.
 /// Roll of the landing punch (player.cpp: fall speed x 0.013 degrees), Q12
 /// turns like the other punches; springs back with them.
 static mut PUNCH_ROLL: i32 = 0;
@@ -6088,7 +6095,9 @@ static mut PENDING_RESTORE_ACTIVE: bool = false;
 static mut WEAPONBOX_REMOVED: u32 = 0;
 
 pub fn reset_weaponboxes_for_new_game() {
-    unsafe { WEAPONBOX_REMOVED = 0; }
+    unsafe {
+        WEAPONBOX_REMOVED = 0;
+    }
 }
 
 /// Save staging borrows the head of the per-frame projection scratch. A save
@@ -6117,7 +6126,12 @@ pub fn load_saved_room() -> Option<usize> {
 unsafe fn arm_map_progress(cp: &save::Checkpoint) {
     let at = cp.snap_at as usize;
     let end = (at + cp.snap_len as usize).min(save_staging().len());
-    mapsnap::arm_from_card(cp.room_id, *cp, &save_staging()[at.min(end)..end], cp.snap_tick);
+    mapsnap::arm_from_card(
+        cp.room_id,
+        *cp,
+        &save_staging()[at.min(end)..end],
+        cp.snap_tick,
+    );
 }
 
 unsafe fn save_staging() -> &'static mut [u8] {
@@ -8882,7 +8896,11 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
     let landmark_leaf = camera_leaf(m, landmark_origin);
     let use_pvs = valid_pvs_leaf(m, landmark_leaf);
     if use_pvs {
-        decompress_vis(m, landmark_leaf as usize, &mut *core::ptr::addr_of_mut!(VIS_BITS));
+        decompress_vis(
+            m,
+            landmark_leaf as usize,
+            &mut *core::ptr::addr_of_mut!(VIS_BITS),
+        );
         VIS_ROW_LEAF = -1;
     }
     snapshot_transition_doors(m, nlogic, landmark_id, landmark_origin, use_pvs);
@@ -8961,9 +8979,11 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
             prop_scientist_flag(pi, PROP_SCI_PREDISASTER),
             prop_scientist_flag(pi, PROP_SCI_HELLO_SAID),
         );
-        let carry_state=if kind==8 {
-            hecu_grenades::carry_state(carry_base_state,hecu_grenades::weapons(GRUNT_GREN[pi]))
-        } else {carry_state};
+        let carry_state = if kind == 8 {
+            hecu_grenades::carry_state(carry_base_state, hecu_grenades::weapons(GRUNT_GREN[pi]))
+        } else {
+            carry_state
+        };
         carry_mail_write(
             carried,
             kind,
@@ -9099,15 +9119,26 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
 
 #[inline]
 fn door_global_id(m: &Map, rec: map::LogicEnt) -> u16 {
-    if rec.kind != map::LOGIC_FUNC_DOOR || rec.aux_count < 2 { return 0; }
+    if rec.kind != map::LOGIC_FUNC_DOOR || rec.aux_count < 2 {
+        return 0;
+    }
     let id = m.logic_aux(rec.first_aux + 1).target;
-    if id & CARRY_GLOBAL_BIT != 0 && id != CARRY_ID_NONE { id } else { 0 }
+    if id & CARRY_GLOBAL_BIT != 0 && id != CARRY_ID_NONE {
+        id
+    } else {
+        0
+    }
 }
 
 #[inline(never)]
 #[optimize(size)]
-unsafe fn snapshot_transition_doors(m: &Map, nlogic: usize, landmark_id: u16,
-    landmark: [i32;3], use_pvs: bool) {
+unsafe fn snapshot_transition_doors(
+    m: &Map,
+    nlogic: usize,
+    landmark_id: u16,
+    landmark: [i32; 3],
+    use_pvs: bool,
+) {
     let mut li = 0;
     while li < nlogic {
         let rec = m.logic(li);
@@ -9116,31 +9147,58 @@ unsafe fn snapshot_transition_doors(m: &Map, nlogic: usize, landmark_id: u16,
             if let Some(ei) = logic_valid_brush(rec.brush, ENT_SOLID_COUNT) {
                 if ENT_ACTIVE[ei] != 0 {
                     let off = ent_draw_offset(ei);
-                    let mins = [0,1,2].map(|axis| rec.mins[axis]+off[axis]);
-                    let maxs = [0,1,2].map(|axis| rec.maxs[axis]+off[axis]);
+                    let mins = [0, 1, 2].map(|axis| rec.mins[axis] + off[axis]);
+                    let maxs = [0, 1, 2].map(|axis| rec.maxs[axis] + off[axis]);
                     let mut has_volume = false;
                     let mut inside = false;
                     for vi in 0..nlogic {
                         let volume = m.logic(vi);
-                        if volume.kind == map::LOGIC_TRIGGER_TRANSITION && volume.targetname == landmark_id {
+                        if volume.kind == map::LOGIC_TRIGGER_TRANSITION
+                            && volume.targetname == landmark_id
+                        {
                             has_volume = true;
-                            inside |= aabb_overlaps(mins,maxs,volume.mins,volume.maxs);
+                            inside |= aabb_overlaps(mins, maxs, volume.mins, volume.maxs);
                         }
                     }
-                    if (!use_pvs || box_touches_pvs_node(m,0,mins,maxs,0)) && (!has_volume || inside) {
+                    if (!use_pvs || box_touches_pvs_node(m, 0, mins, maxs, 0))
+                        && (!has_volume || inside)
+                    {
                         let e = ENT_CACHE[ei];
-                        let relative = [0,1,2].map(|axis| e.center[axis]+off[axis]-landmark[axis]);
-                        assert!(relative.iter().chain(e.mv.iter()).all(|&v| (i16::MIN as i32..=i16::MAX as i32).contains(&v)),
-                            "global door transition coordinate overflow");
-                        assert!(DOOR_CARRY_COUNT < door_transition::CAPACITY,"global door transition capacity");
+                        let relative =
+                            [0, 1, 2].map(|axis| e.center[axis] + off[axis] - landmark[axis]);
+                        assert!(
+                            relative
+                                .iter()
+                                .chain(e.mv.iter())
+                                .all(|&v| (i16::MIN as i32..=i16::MAX as i32).contains(&v)),
+                            "global door transition coordinate overflow"
+                        );
+                        assert!(
+                            DOOR_CARRY_COUNT < door_transition::CAPACITY,
+                            "global door transition capacity"
+                        );
                         DOOR_CARRY[DOOR_CARRY_COUNT] = door_transition::Carry {
-                            id, phase: ENT_PHASE[ei].clamp(0,4096) as u16,
-                            remaining: door_transition::remaining(SIM_NOW,LOGIC_NEXT[li]),
-                            speed: if LOGIC_COUNTER[li] != 0 {LOGIC_COUNTER[li] as u16} else {rec.speed},
-                            relative_center: relative.map(|v|v as i16), movement:e.mv.map(|v|v as i16),
-                            state: LOGIC_STATE[li], flags: if e.kind==7 {
-                                door_transition::ANGULAR | if ROT_DOOR_REVERSED[ei>>3] & (1<<(ei&7)) != 0 {door_transition::REVERSED} else {0}
-                            } else {0},
+                            id,
+                            phase: ENT_PHASE[ei].clamp(0, 4096) as u16,
+                            remaining: door_transition::remaining(SIM_NOW, LOGIC_NEXT[li]),
+                            speed: if LOGIC_COUNTER[li] != 0 {
+                                LOGIC_COUNTER[li] as u16
+                            } else {
+                                rec.speed
+                            },
+                            relative_center: relative.map(|v| v as i16),
+                            movement: e.mv.map(|v| v as i16),
+                            state: LOGIC_STATE[li],
+                            flags: if e.kind == 7 {
+                                door_transition::ANGULAR
+                                    | if ROT_DOOR_REVERSED[ei >> 3] & (1 << (ei & 7)) != 0 {
+                                        door_transition::REVERSED
+                                    } else {
+                                        0
+                                    }
+                            } else {
+                                0
+                            },
                         };
                         DOOR_CARRY_COUNT += 1;
                     }
@@ -9153,34 +9211,47 @@ unsafe fn snapshot_transition_doors(m: &Map, nlogic: usize, landmark_id: u16,
 
 #[inline(never)]
 #[optimize(size)]
-unsafe fn restore_transition_doors(m: &Map, nlogic: usize, landmark: Option<[i32;3]>) {
-    let count=door_transition::take_count(&mut *core::ptr::addr_of_mut!(DOOR_CARRY_COUNT));
-    let Some(landmark) = landmark else { return; };
+unsafe fn restore_transition_doors(m: &Map, nlogic: usize, landmark: Option<[i32; 3]>) {
+    let count = door_transition::take_count(&mut *core::ptr::addr_of_mut!(DOOR_CARRY_COUNT));
+    let Some(landmark) = landmark else {
+        return;
+    };
     for li in 0..nlogic {
-        let rec=m.logic(li);
-        let id=door_global_id(m,rec);
-        if id == 0 { continue; }
-        let Some(ei)=logic_valid_brush(rec.brush,ENT_SOLID_COUNT) else {continue;};
-        let e=ENT_CACHE[ei];
-        let center=[0,1,2].map(|axis|e.center[axis]+e.origin[axis]);
-        let records=&(&*core::ptr::addr_of!(DOOR_CARRY))[..count];
-        if let Some((carry,phase))=door_transition::matching(records,id,landmark,center,e.mv) {
-            ENT_CACHE[ei].mv=carry.destination_movement(e.mv);
-            let bit=1u8<<(ei&7);
-            ROT_DOOR_REVERSED[ei>>3]=(ROT_DOOR_REVERSED[ei>>3]&!bit) |
-                if carry.flags & door_transition::REVERSED != 0 {bit} else {0};
-            ENT_PHASE[ei]=phase;
-            LOGIC_STATE[li]=carry.state;
-            LOGIC_NEXT[li]=carry.remaining;
+        let rec = m.logic(li);
+        let id = door_global_id(m, rec);
+        if id == 0 {
+            continue;
+        }
+        let Some(ei) = logic_valid_brush(rec.brush, ENT_SOLID_COUNT) else {
+            continue;
+        };
+        let e = ENT_CACHE[ei];
+        let center = [0, 1, 2].map(|axis| e.center[axis] + e.origin[axis]);
+        let records = &(&*core::ptr::addr_of!(DOOR_CARRY))[..count];
+        if let Some((carry, phase)) = door_transition::matching(records, id, landmark, center, e.mv)
+        {
+            ENT_CACHE[ei].mv = carry.destination_movement(e.mv);
+            let bit = 1u8 << (ei & 7);
+            ROT_DOOR_REVERSED[ei >> 3] = (ROT_DOOR_REVERSED[ei >> 3] & !bit)
+                | if carry.flags & door_transition::REVERSED != 0 {
+                    bit
+                } else {
+                    0
+                };
+            ENT_PHASE[ei] = phase;
+            LOGIC_STATE[li] = carry.state;
+            LOGIC_NEXT[li] = carry.remaining;
             // Door counters have no other runtime role. Retain the source
             // speed even when the destination copy authors a different one.
-            LOGIC_COUNTER[li]=carry.speed as i16;
-            ent_prev_off_store(ei,ent_draw_offset(ei));
+            LOGIC_COUNTER[li] = carry.speed as i16;
+            ent_prev_off_store(ei, ent_draw_offset(ei));
             live_entity_pvs_mark_dirty(ei);
-            if matches!(carry.state,LOGIC_STATE_GOING_UP|LOGIC_STATE_GOING_DOWN) && rec.sound0 != u8::MAX {
-                sfx::play_map_loop_world(rec.sound0,e.center,li as u16);
+            if matches!(carry.state, LOGIC_STATE_GOING_UP | LOGIC_STATE_GOING_DOWN)
+                && rec.sound0 != u8::MAX
+            {
+                sfx::play_map_loop_world(rec.sound0, e.center, li as u16);
             }
-        } else if records.iter().any(|record|record.id==id) {
+        } else if records.iter().any(|record| record.id == id) {
             telemetry::debug_log("hl-psx: global door transition geometry mismatch");
         }
     }
@@ -9189,18 +9260,28 @@ unsafe fn restore_transition_doors(m: &Map, nlogic: usize, landmark: Option<[i32
 #[inline(never)]
 #[optimize(size)]
 unsafe fn snapshot_transition_pushables(
-    m: &Map, nlogic: usize, landmark_id: u16, landmark: [i32; 3], use_pvs: bool,
+    m: &Map,
+    nlogic: usize,
+    landmark_id: u16,
+    landmark: [i32; 3],
+    use_pvs: bool,
 ) {
     for li in 0..nlogic {
         let rec = m.logic(li);
-        if rec.kind != map::LOGIC_GLOBAL_PUSHABLE { continue; }
-        let Some(ei) = logic_valid_brush(rec.brush, ENT_SOLID_COUNT) else { continue; };
+        if rec.kind != map::LOGIC_GLOBAL_PUSHABLE {
+            continue;
+        }
+        let Some(ei) = logic_valid_brush(rec.brush, ENT_SOLID_COUNT) else {
+            continue;
+        };
         let e = ENT_CACHE[ei];
-        if e.kind != ENT_KIND_PUSHABLE { continue; }
+        if e.kind != ENT_KIND_PUSHABLE {
+            continue;
+        }
         let center = pushable_world_center(e, e.origin);
         let half = pushable_half_extents(e);
-        let mins = [0,1,2].map(|axis| center[axis] - half[axis]);
-        let maxs = [0,1,2].map(|axis| center[axis] + half[axis]);
+        let mins = [0, 1, 2].map(|axis| center[axis] - half[axis]);
+        let maxs = [0, 1, 2].map(|axis| center[axis] + half[axis]);
         let mut has_volume = false;
         let mut inside = false;
         for vi in 0..nlogic {
@@ -9210,18 +9291,26 @@ unsafe fn snapshot_transition_pushables(
                 inside |= aabb_overlaps(mins, maxs, volume.mins, volume.maxs);
             }
         }
-        if (has_volume && !inside) || (use_pvs && !box_touches_pvs_node(m,0,mins,maxs,0)) {
+        if (has_volume && !inside) || (use_pvs && !box_touches_pvs_node(m, 0, mins, maxs, 0)) {
             continue;
         }
         let owner = ENT_BRUSH_LOGIC[ei] as usize;
         let health = if owner < nlogic && LOGIC_KIND[owner] == map::LOGIC_FUNC_BREAKABLE {
             LOGIC_BREAK_HP[owner]
-        } else { 0 };
+        } else {
+            0
+        };
         let state = pushable::unpack(ENT_PHASE[ei]);
-        assert!(PUSHABLE_CARRY_COUNT < pushable_transition::CAPACITY, "global pushable transition capacity");
+        assert!(
+            PUSHABLE_CARRY_COUNT < pushable_transition::CAPACITY,
+            "global pushable transition capacity"
+        );
         PUSHABLE_CARRY[PUSHABLE_CARRY_COUNT] = pushable_transition::Carry {
-            relative_center: [0,1,2].map(|axis| center[axis] - landmark[axis]),
-            id: rec.arg0, health, velocity: [state.vx, state.vy, state.vz], active: ENT_ACTIVE[ei],
+            relative_center: [0, 1, 2].map(|axis| center[axis] - landmark[axis]),
+            id: rec.arg0,
+            health,
+            velocity: [state.vx, state.vy, state.vz],
+            active: ENT_ACTIVE[ei],
         };
         PUSHABLE_CARRY_COUNT += 1;
     }
@@ -9232,16 +9321,27 @@ unsafe fn snapshot_transition_pushables(
 unsafe fn restore_transition_pushables(m: &Map, nlogic: usize, landmark: Option<[i32; 3]>) {
     // Clear even without a landmark/match, so restart/manual load cannot
     // replay transient state left by an earlier natural transition.
-    let count = pushable_transition::take_count(&mut *core::ptr::addr_of_mut!(PUSHABLE_CARRY_COUNT));
-    let Some(landmark) = landmark else { return; };
+    let count =
+        pushable_transition::take_count(&mut *core::ptr::addr_of_mut!(PUSHABLE_CARRY_COUNT));
+    let Some(landmark) = landmark else {
+        return;
+    };
     for li in 0..nlogic {
         let rec = m.logic(li);
-        if rec.kind != map::LOGIC_GLOBAL_PUSHABLE { continue; }
-        let Some(ei) = logic_valid_brush(rec.brush, ENT_SOLID_COUNT) else { continue; };
+        if rec.kind != map::LOGIC_GLOBAL_PUSHABLE {
+            continue;
+        }
+        let Some(ei) = logic_valid_brush(rec.brush, ENT_SOLID_COUNT) else {
+            continue;
+        };
         let e = ENT_CACHE[ei];
-        if e.kind != ENT_KIND_PUSHABLE { continue; }
+        if e.kind != ENT_KIND_PUSHABLE {
+            continue;
+        }
         let records = &(&*core::ptr::addr_of!(PUSHABLE_CARRY))[..count];
-        let Some(carry) = pushable_transition::matching(records, rec.arg0) else { continue; };
+        let Some(carry) = pushable_transition::matching(records, rec.arg0) else {
+            continue;
+        };
         let Some(offset) = carry.destination_offset(landmark, e.center) else {
             telemetry::debug_log("hl-psx: global pushable transition offset overflow");
             continue;
@@ -9250,13 +9350,20 @@ unsafe fn restore_transition_pushables(m: &Map, nlogic: usize, landmark: Option<
         ENT_ACTIVE[ei] = carry.active;
         // Source mover indices have no meaning in this room. Preserve velocity,
         // invalidate support and request the existing destination support probe.
-        ENT_PHASE[ei] = pushable::pack(carry.velocity[0], carry.velocity[2], carry.velocity[1],
-            pushable::SUPPORT_NONE, true);
+        ENT_PHASE[ei] = pushable::pack(
+            carry.velocity[0],
+            carry.velocity[2],
+            carry.velocity[1],
+            pushable::SUPPORT_NONE,
+            true,
+        );
         ENT_RENDER_PHASE[ei] = ENT_PHASE[ei];
         let owner = ENT_BRUSH_LOGIC[ei] as usize;
         if owner < nlogic && LOGIC_KIND[owner] == map::LOGIC_FUNC_BREAKABLE {
             LOGIC_BREAK_HP[owner] = carry.health;
-            if carry.active == 0 { LOGIC_STATE[owner] = LOGIC_STATE_REMOVED; }
+            if carry.active == 0 {
+                LOGIC_STATE[owner] = LOGIC_STATE_REMOVED;
+            }
         }
         ent_prev_off_store(ei, offset);
         live_entity_pvs_mark_dirty(ei);
@@ -9278,8 +9385,10 @@ unsafe fn restore_transition_actors(
     while slot < logic_state::carry_record_count(requested).min(CARRY_CAPACITY) {
         let (kind, health, packed_state, carry_id, rel, yaw) = carry_mail_read(slot);
         let (state, following, provoked, predisaster, hello_said) = if kind == 8 {
-            (packed_state & 15,false,false,false,false)
-        } else { scientist_logic::unpack_carry_state(packed_state) };
+            (packed_state & 15, false, false, false, false)
+        } else {
+            scientist_logic::unpack_carry_state(packed_state)
+        };
         if carry_id == 0 || carry_id == CARRY_ID_NONE || !carry_actor_capable(kind) {
             slot += 1;
             continue;
@@ -9350,8 +9459,10 @@ unsafe fn restore_transition_actors(
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_HEALTH[pi] = health;
         if kind == 8 {
-            GRUNT_GREN[pi]=hecu_grenades::clock(hecu_grenades::carry_weapons(packed_state),
-                SIM_NOW.wrapping_add(hecu_grenades::CHECK_TICKS));
+            GRUNT_GREN[pi] = hecu_grenades::clock(
+                hecu_grenades::carry_weapons(packed_state),
+                SIM_NOW.wrapping_add(hecu_grenades::CHECK_TICKS),
+            );
         }
         PROP_HIT_FLASH[pi] = 0;
         PROP_DEATH_START[pi] = if health == 0 {
@@ -9523,7 +9634,11 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
         }
         li += 1;
     }
-    if !trigger_rules::changelevel_goes_ahead(false, has_transition_volume, inside_transition_volume) {
+    if !trigger_rules::changelevel_goes_ahead(
+        false,
+        has_transition_volume,
+        inside_transition_volume,
+    ) {
         telemetry::debug_log("hl-psx: player outside transition volume");
         return false;
     }
@@ -9878,8 +9993,10 @@ unsafe fn logic_restore_saved_suit(m: &Map, nlogic: usize, nents: usize, suit: b
                     continue;
                 }
                 let bits = logic_state::multisource_restore_inventory(
-                    logic_multisource_bits(gate), rec.aux_count.min(32) as u8,
-                    member as u8, suit,
+                    logic_multisource_bits(gate),
+                    rec.aux_count.min(32) as u8,
+                    member as u8,
+                    suit,
                 );
                 logic_multisource_store_bits(gate, bits);
                 logic_multisource_refresh(gate, rec);
@@ -9955,7 +10072,9 @@ unsafe fn logic_fire_targets(
                 _ => inactive,
             };
             // Explicit turret Use replaces a pending touch/damage deployment.
-            if PROP_KIND[pi] == sentry_wake::KIND { PROP_AI_TIMER[pi] = 0; }
+            if PROP_KIND[pi] == sentry_wake::KIND {
+                PROP_AI_TIMER[pi] = 0;
+            }
             if enable {
                 PROP_DORMANT[pi] &= !PROP_RUNTIME_TURRET_INACTIVE;
             } else {
@@ -9972,10 +10091,13 @@ unsafe fn logic_fire_targets(
 #[inline]
 unsafe fn logic_phase_step(rec: map::LogicEnt, ei: usize) -> i32 {
     let e = ENT_CACHE[ei];
-    let li=ENT_BRUSH_LOGIC[ei] as usize;
+    let li = ENT_BRUSH_LOGIC[ei] as usize;
     let speed = if rec.kind == map::LOGIC_FUNC_DOOR && li < MAX_LOGIC && LOGIC_COUNTER[li] != 0 {
         LOGIC_COUNTER[li] as u16 as i32
-    } else { rec.speed as i32 }.max(1);
+    } else {
+        rec.speed as i32
+    }
+    .max(1);
     if e.kind == ENT_KIND_PLATROT {
         // CFuncPlatRot uses the linear platform travel time for BOTH origin
         // and angles. Round the per-tick phase upward so 216u at 80u/s lands
@@ -10314,9 +10436,13 @@ unsafe fn script_human_chord_clear(
     goal: [i32; 3],
 ) -> bool {
     if PROP_KIND[pi] == PROP_TYPE_CONTROLLER {
-        return phys::controller_world_line_clear(m,start,goal)
-            && phys::actor_line_clear_movers(m,movers,
-                [start[0],start[1]+32,start[2]],[goal[0],goal[1]+32,goal[2]]);
+        return phys::controller_world_line_clear(m, start, goal)
+            && phys::actor_line_clear_movers(
+                m,
+                movers,
+                [start[0], start[1] + 32, start[2]],
+                [goal[0], goal[1] + 32, goal[2]],
+            );
     }
     if actor_nav_hull(m, pi).1 == 18 {
         return actor_chord_blocked(m, movers, pi, start, goal).is_none();
@@ -11293,7 +11419,10 @@ unsafe fn logic_use_entity(
     depth: u8,
     caller_li: u16,
 ) {
-    if li >= nlogic || depth > trigger_rules::MAX_FIRE_DEPTH || LOGIC_STATE[li] == LOGIC_STATE_REMOVED {
+    if li >= nlogic
+        || depth > trigger_rules::MAX_FIRE_DEPTH
+        || LOGIC_STATE[li] == LOGIC_STATE_REMOVED
+    {
         return;
     }
     let rec = m.logic(li);
@@ -11415,17 +11544,19 @@ unsafe fn logic_use_entity(
         }
         // trigger_hurt and trigger_push share the START_OFF on/off toggle
         // (TOP = off, BOTTOM = on): a fire on their targetname enables/disables.
-        map::LOGIC_TRIGGER_HURT | map::LOGIC_TRIGGER_PUSH | map::LOGIC_TRIGGER_MONSTERJUMP => match use_type {
-            map::USE_ON => LOGIC_STATE[li] = LOGIC_STATE_BOTTOM,
-            map::USE_OFF => LOGIC_STATE[li] = LOGIC_STATE_TOP,
-            _ => {
-                LOGIC_STATE[li] = if LOGIC_STATE[li] == LOGIC_STATE_TOP {
-                    LOGIC_STATE_BOTTOM
-                } else {
-                    LOGIC_STATE_TOP
-                };
+        map::LOGIC_TRIGGER_HURT | map::LOGIC_TRIGGER_PUSH | map::LOGIC_TRIGGER_MONSTERJUMP => {
+            match use_type {
+                map::USE_ON => LOGIC_STATE[li] = LOGIC_STATE_BOTTOM,
+                map::USE_OFF => LOGIC_STATE[li] = LOGIC_STATE_TOP,
+                _ => {
+                    LOGIC_STATE[li] = if LOGIC_STATE[li] == LOGIC_STATE_TOP {
+                        LOGIC_STATE_BOTTOM
+                    } else {
+                        LOGIC_STATE_TOP
+                    };
+                }
             }
-        },
+        }
         map::LOGIC_FUNC_TRACKTRAIN => {
             if rec.arg1 != 0 && rec.arg1 == TRACKTRAIN_SUBMODEL {
                 logic_queue_tracktrain_command(rec, use_type);
@@ -11675,13 +11806,22 @@ unsafe fn logic_use_entity(
         }
         map::LOGIC_ENV_SPARK => logic_spark_use(li, rec, now),
         map::LOGIC_ENV_BUBBLES => {
-            let mut schedule=env_bubbles::Scheduler {enabled:LOGIC_STATE[li]==LOGIC_STATE_TOP,next:LOGIC_NEXT[li]};
-            schedule.use_event(use_type,now);
-            LOGIC_STATE[li]=if schedule.enabled {LOGIC_STATE_TOP}else{LOGIC_STATE_BOTTOM};
-            LOGIC_NEXT[li]=schedule.next;
+            let mut schedule = env_bubbles::Scheduler {
+                enabled: LOGIC_STATE[li] == LOGIC_STATE_TOP,
+                next: LOGIC_NEXT[li],
+            };
+            schedule.use_event(use_type, now);
+            LOGIC_STATE[li] = if schedule.enabled {
+                LOGIC_STATE_TOP
+            } else {
+                LOGIC_STATE_BOTTOM
+            };
+            LOGIC_NEXT[li] = schedule.next;
         }
         map::LOGIC_ENV_FUNNEL => {
-            if env_funnel_fx::emit(m, rec) { LOGIC_STATE[li] = LOGIC_STATE_REMOVED; }
+            if env_funnel_fx::emit(m, rec) {
+                LOGIC_STATE[li] = LOGIC_STATE_REMOVED;
+            }
         }
         map::LOGIC_ENV_BLOOD => logic_blood(m, rec),
         map::LOGIC_ENV_EXPLOSION => {
@@ -11901,7 +12041,7 @@ unsafe fn maker_make(
                 PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_FRESH;
                 PROP_POS[pi] = rec.origin;
                 PROP_JUMP[pi] = monsterjump::State::EMPTY;
-        PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
+                PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
                 PROP_ACTIVE[pi] = 0;
                 PROP_DORMANT[pi] = PROP_RUNTIME_DORMANT_STOCK;
                 found = pi;
@@ -11933,7 +12073,7 @@ unsafe fn maker_make(
     prop_nav_cache_invalidate(pi);
     PROP_DORMANT[pi] = 0;
     PROP_JUMP[pi] = monsterjump::State::EMPTY;
-        PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
+    PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
     PROP_ACTIVE[pi] = 1;
     PROP_MAKER[pi] = tag;
     // The maker targetname is only an allocation-free link to its dormant
@@ -11945,8 +12085,10 @@ unsafe fn maker_make(
     // appearing on the floor.
     let kind = PROP_KIND[pi];
     if kind == 8 {
-        GRUNT_GREN[pi] = hecu_grenades::clock(hecu_grenades::weapons(GRUNT_GREN[pi]),
-            (SIM_NOW as u16).wrapping_add(hecu_grenades::CHECK_TICKS));
+        GRUNT_GREN[pi] = hecu_grenades::clock(
+            hecu_grenades::weapons(GRUNT_GREN[pi]),
+            (SIM_NOW as u16).wrapping_add(hecu_grenades::CHECK_TICKS),
+        );
     }
     if matches!(model_def(kind).ai, AI_MELEE | AI_RANGED | AI_ALLY | AI_FLEE)
         && kind != PROP_TYPE_CONTROLLER
@@ -12061,7 +12203,8 @@ unsafe fn camera_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
     }
     let dy = ((yaw_goal.wrapping_sub(CAMERA_YAW) & 0xFFF) as i32 + 2048) % 4096 - 2048;
     // CTriggerCamera::FollowTarget: avelocity = error x 0.4 per second, 2% a tick.
-    CAMERA_YAW = ((CAMERA_YAW as i32 + dy / trigger_rules::CAMERA_TURN_DIVISOR + dy.signum()) & 0xFFF) as u16;
+    CAMERA_YAW = ((CAMERA_YAW as i32 + dy / trigger_rules::CAMERA_TURN_DIVISOR + dy.signum())
+        & 0xFFF) as u16;
     let dp = pitch_goal - CAMERA_PITCH as i32;
     CAMERA_PITCH = (CAMERA_PITCH as i32 + dp / trigger_rules::CAMERA_TURN_DIVISOR + dp.signum())
         .clamp(-(PITCH_MAX as i32), PITCH_MAX as i32) as i16;
@@ -12703,9 +12846,7 @@ unsafe fn logic_tick_rotating(nents: usize, li: usize, rec: map::LogicEnt, now: 
 /// Dispatch fan impacts from the player's accepted collision path, once per
 /// fixed simulation update rather than inventing a trigger_hurt semaphore.
 #[inline(never)]
-unsafe fn damage_player_fan_contacts(
-    m: &Map, nents: usize, health: &mut u16, armor: &mut u16,
-) {
+unsafe fn damage_player_fan_contacts(m: &Map, nents: usize, health: &mut u16, armor: &mut u16) {
     let mut ei = 0;
     while ei < nents {
         if phys::player_touched_mover(ei) {
@@ -12770,20 +12911,29 @@ unsafe fn logic_tick_pendulum(nents: usize, li: usize, rec: map::LogicEnt, now: 
 
 #[inline(never)]
 #[optimize(size)]
-unsafe fn sound_room_think(m: &Map,nents: usize,li: usize,rec: map::LogicEnt,now: u16) {
-    if !env_sound::due(now,LOGIC_NEXT[li]) {return;}
-    let leaf=camera_leaf(m,rec.origin);
-    if !valid_pvs_leaf(m,leaf) || !pvs_leaf_visible(m,leaf as usize) {
-        LOGIC_NEXT[li]=env_sound::next(now,env_sound::FAR_TICKS);
+unsafe fn sound_room_think(m: &Map, nents: usize, li: usize, rec: map::LogicEnt, now: u16) {
+    if !env_sound::due(now, LOGIC_NEXT[li]) {
         return;
     }
-    let eye=[LOGIC_PLAYER_POS[0],LOGIC_PLAYER_POS[1]+LOGIC_PLAYER_VIEW_HEIGHT,LOGIC_PLAYER_POS[2]];
-    let movers=&(&*core::ptr::addr_of!(MOVERS))[..nents+1];
-    let range=env_sound::in_range(rec.origin,eye,rec.arg0,true,false)
-        .filter(|_| phys::sound_line_clear(m,movers,rec.origin,eye));
-    let observed=(*core::ptr::addr_of_mut!(ROOM_LISTENER)).observe(li as u16,rec.arg1 as u8,range);
-    LOGIC_NEXT[li]=env_sound::next(now,observed.next_ticks);
-    if let Some(room)=observed.room_update {sfx::apply_room(room);}
+    let leaf = camera_leaf(m, rec.origin);
+    if !valid_pvs_leaf(m, leaf) || !pvs_leaf_visible(m, leaf as usize) {
+        LOGIC_NEXT[li] = env_sound::next(now, env_sound::FAR_TICKS);
+        return;
+    }
+    let eye = [
+        LOGIC_PLAYER_POS[0],
+        LOGIC_PLAYER_POS[1] + LOGIC_PLAYER_VIEW_HEIGHT,
+        LOGIC_PLAYER_POS[2],
+    ];
+    let movers = &(&*core::ptr::addr_of!(MOVERS))[..nents + 1];
+    let range = env_sound::in_range(rec.origin, eye, rec.arg0, true, false)
+        .filter(|_| phys::sound_line_clear(m, movers, rec.origin, eye));
+    let observed =
+        (*core::ptr::addr_of_mut!(ROOM_LISTENER)).observe(li as u16, rec.arg1 as u8, range);
+    LOGIC_NEXT[li] = env_sound::next(now, observed.next_ticks);
+    if let Some(room) = observed.room_update {
+        sfx::apply_room(room);
+    }
 }
 
 /// CTargetCDAudio::Play / CTriggerCDAudio::PlayTrack: `cd play N` (N = -1
@@ -12817,15 +12967,22 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
             scan
         };
         if LOGIC_KIND[li] == map::LOGIC_ENV_SOUND {
-            sound_room_think(m,nents,li,m.logic(li),now);
-            scan+=1;continue;
+            sound_room_think(m, nents, li, m.logic(li), now);
+            scan += 1;
+            continue;
         }
         if LOGIC_KIND[li] == map::LOGIC_ENV_BUBBLES {
-            let rec=m.logic(li);
-            let mut schedule=env_bubbles::Scheduler {enabled:LOGIC_STATE[li]==LOGIC_STATE_TOP,next:LOGIC_NEXT[li]};
-            if schedule.tick(now,rec.wait_ticks.max(1) as u16) {env_bubbles_fx::emit(m,rec);}
-            LOGIC_NEXT[li]=schedule.next;
-            scan+=1;continue;
+            let rec = m.logic(li);
+            let mut schedule = env_bubbles::Scheduler {
+                enabled: LOGIC_STATE[li] == LOGIC_STATE_TOP,
+                next: LOGIC_NEXT[li],
+            };
+            if schedule.tick(now, rec.wait_ticks.max(1) as u16) {
+                env_bubbles_fx::emit(m, rec);
+            }
+            LOGIC_NEXT[li] = schedule.next;
+            scan += 1;
+            continue;
         }
         if LOGIC_KIND[li] == map::LOGIC_FUNC_ROTATING {
             logic_tick_rotating(nents, li, m.logic(li), now);
@@ -13477,7 +13634,11 @@ unsafe fn logic_spark_use(li: usize, rec: map::LogicEnt, now: u16) {
     let running = LOGIC_STATE[li] == LOGIC_STATE_BOTTOM;
     let now_running = trigger_rules::spark_after_use(rec.spawnflags, running);
     if now_running != running {
-        LOGIC_STATE[li] = if now_running { LOGIC_STATE_BOTTOM } else { LOGIC_STATE_TOP };
+        LOGIC_STATE[li] = if now_running {
+            LOGIC_STATE_BOTTOM
+        } else {
+            LOGIC_STATE_TOP
+        };
         if now_running {
             LOGIC_NEXT[li] = now.wrapping_add(trigger_rules::spark_gap_ticks(
                 impact_rng().below(rec.arg0.max(1) as u32 + 1) as u16,
@@ -13677,14 +13838,17 @@ unsafe fn logic_touch_triggers(
             } else {
                 (pmins, pmaxs)
             };
-            if LOGIC_KIND[li] == map::LOGIC_CDTRACK && logic_cd_radius_poll(m, li, player_pos, now) {
+            if LOGIC_KIND[li] == map::LOGIC_CDTRACK && logic_cd_radius_poll(m, li, player_pos, now)
+            {
                 scan += 1;
                 continue;
             }
             if LOGIC_KIND[li] == map::LOGIC_TRIGGER_HURT {
                 // Hurt volumes are touched by monsters as well as the player,
                 // so they run whether or not the player is inside.
-                logic_hurt_touch(m, nlogic, nents, li, pmins, pmaxs, player_pos, health, armor, now);
+                logic_hurt_touch(
+                    m, nlogic, nents, li, pmins, pmaxs, player_pos, health, armor, now,
+                );
                 scan += 1;
                 continue;
             }
@@ -13767,7 +13931,12 @@ unsafe fn logic_touch_triggers(
                         let checkpoint = LIVE_CHECKPOINT;
                         mapsnap::keep_now(&checkpoint);
                         #[cfg(feature = "interaction-probe")]
-                        reference_trace::probe(now as u32, "autosave", "", mapsnap::bytes().len() as i32);
+                        reference_trace::probe(
+                            now as u32,
+                            "autosave",
+                            "",
+                            mapsnap::bytes().len() as i32,
+                        );
                     }
                 }
                 map::LOGIC_FUNC_BUTTON => {
@@ -14000,7 +14169,7 @@ unsafe fn prop_mouth_open(pi: usize, now: u16, map_index: u16) -> u8 {
 #[inline(never)]
 #[optimize(size)]
 unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
-    ROOM_LISTENER=env_sound::Listener::NEW;
+    ROOM_LISTENER = env_sound::Listener::NEW;
     sfx::apply_room(0);
     TITLE_TEXT_ID = 0;
     TITLE_T = 0;
@@ -14108,7 +14277,9 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         LOGIC_KIND[li] = rec.kind;
         if rec.kind == map::LOGIC_TRIGGER_MONSTERJUMP {
             MONSTERJUMP_N += 1;
-            if rec.targetname != 0 { LOGIC_STATE[li] = LOGIC_STATE_TOP; }
+            if rec.targetname != 0 {
+                LOGIC_STATE[li] = LOGIC_STATE_TOP;
+            }
         }
         // Conveyors join the push list: whatever walks the belt is carried.
         if rec.kind == map::LOGIC_TRIGGER_PUSH
@@ -14169,7 +14340,8 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
         }
         // A button flagged SPARK_IF_OFF (64) sparks while it rests unpressed.
         if rec.kind == map::LOGIC_ENV_SPARK
-            || (rec.kind == map::LOGIC_FUNC_BUTTON && rec.spawnflags & trigger_rules::SF_BUTTON_SPARK_IF_OFF != 0)
+            || (rec.kind == map::LOGIC_FUNC_BUTTON
+                && rec.spawnflags & trigger_rules::SF_BUTTON_SPARK_IF_OFF != 0)
         {
             let next = LOGIC_SPARK_COUNT as usize + 1;
             let slot = LOGIC_STORAGE_WORDS - next;
@@ -14219,14 +14391,18 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
                 impact_rng().below(trigger_rules::SPARK_DEFAULT_MAX_DELAY_TICKS as u32 + 1) as u16,
             ));
         }
-        if rec.kind==map::LOGIC_ENV_SOUND {
-            assert!(rec.arg1<29,"unsupported cooked room type");
-            LOGIC_NEXT[li]=now.wrapping_add(2+impact_rng().below(7) as u16);
+        if rec.kind == map::LOGIC_ENV_SOUND {
+            assert!(rec.arg1 < 29, "unsupported cooked room type");
+            LOGIC_NEXT[li] = now.wrapping_add(2 + impact_rng().below(7) as u16);
         }
-        if rec.kind==map::LOGIC_ENV_BUBBLES {
-            let schedule=env_bubbles::Scheduler::spawn(rec.spawnflags,now);
-            LOGIC_STATE[li]=if schedule.enabled {LOGIC_STATE_TOP}else{LOGIC_STATE_BOTTOM};
-            LOGIC_NEXT[li]=schedule.next;
+        if rec.kind == map::LOGIC_ENV_BUBBLES {
+            let schedule = env_bubbles::Scheduler::spawn(rec.spawnflags, now);
+            LOGIC_STATE[li] = if schedule.enabled {
+                LOGIC_STATE_TOP
+            } else {
+                LOGIC_STATE_BOTTOM
+            };
+            LOGIC_NEXT[li] = schedule.next;
         }
         match rec.kind {
             map::LOGIC_LIGHTSTYLE => {
@@ -14959,8 +15135,12 @@ fn prop_clip(pi: usize, state: u8, hit_flash: bool) -> usize {
         return PROP_CLIP_PAIN;
     }
     if unsafe { PROP_KIND[pi] == 8 } {
-        if state == 6 { return 5; }
-        if state == 7 { return 6; }
+        if state == 6 {
+            return 5;
+        }
+        if state == 7 {
+            return 6;
+        }
     }
     // Three species play a sequence of their own beyond the five states:
     // the houndeye's rest after a blast (idle with its cooldown running), the
@@ -15166,11 +15346,18 @@ fn prop_anim_frame<const POSE: bool>(
         }
     }
     if unsafe { PROP_KIND[pi] } == 8 && matches!(state, 6 | 7) && hit_flash == 0 {
-        let duration = if state == 7 { hecu_grenades::LAUNCH_ANIMATION_TICKS }
-            else { hecu_grenades::TOSS_ANIMATION_TICKS } as usize;
+        let duration = if state == 7 {
+            hecu_grenades::LAUNCH_ANIMATION_TICKS
+        } else {
+            hecu_grenades::TOSS_ANIMATION_TICKS
+        } as usize;
         let elapsed = duration.saturating_sub(unsafe { PROP_AI_TIMER[pi] } as usize);
         forget_clip();
-        return if POSE { md.one_shot_clip_phase(clip, duration, elapsed) } else { (0, 0, 0) };
+        return if POSE {
+            md.one_shot_clip_phase(clip, duration, elapsed)
+        } else {
+            (0, 0, 0)
+        };
     }
     if state == PROP_STATE_ATTACK {
         // Melee and Barney attacks have a bounded AI action window.  Starting
@@ -15832,7 +16019,11 @@ unsafe fn prop_face_point(pi: usize, p: [i32; 3]) {
         let yaw = turn_toward(
             prop_yaw_value(PROP_YAW[pi]),
             yaw_from_vec(dx, dz),
-            if PROP_AI_TARGET[pi] == PROP_TARGET_NONE { 250 } else { senses::turn_rate_q12(PROP_KIND[pi]) },
+            if PROP_AI_TARGET[pi] == PROP_TARGET_NONE {
+                250
+            } else {
+                senses::turn_rate_q12(PROP_KIND[pi])
+            },
         );
         PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], yaw);
     }
@@ -15943,22 +16134,34 @@ unsafe fn prop_push_step(m: &Map, movers: &[phys::Mover], pi: usize, v: [i32; 3]
 unsafe fn prop_air_tick(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
     let ty = PROP_KIND[pi];
     let pos = PROP_POS[pi];
-    let a = if PROP_JUMP[pi].active {PROP_JUMP[pi].velocity}else{PROP_SCRIPT_GOAL[pi]};
+    let a = if PROP_JUMP[pi].active {
+        PROP_JUMP[pi].velocity
+    } else {
+        PROP_SCRIPT_GOAL[pi]
+    };
     // GoldSrc adds gravity before the move: the fall is 2, 4, 6, ... units per tick.
-    let fractional=PROP_JUMP[pi].active;
-    let gravity=if fractional {16}else{1};
-    let down=(a[1] as i32+gravity).min(if fractional {1600}else{100});
-    let delta=if fractional {PROP_JUMP[pi].step([a[0],down as i16,a[2]])}else{[a[0] as i32,down,a[2] as i32]};
-    let vy=delta[1];
+    let fractional = PROP_JUMP[pi].active;
+    let gravity = if fractional { 16 } else { 1 };
+    let down = (a[1] as i32 + gravity).min(if fractional { 1600 } else { 100 });
+    let delta = if fractional {
+        PROP_JUMP[pi].step([a[0], down as i16, a[2]])
+    } else {
+        [a[0] as i32, down, a[2] as i32]
+    };
+    let vy = delta[1];
     let mut cand = [pos[0] + delta[0], pos[1] - vy, pos[2] + delta[2]];
     // Zero marks "grounded", so the apex of an upward push steps to 1.
-    let next_vy = a[1] as i32 + 2*gravity;
+    let next_vy = a[1] as i32 + 2 * gravity;
     let mut momentum = [
         a[0],
         (if next_vy == 0 {
-            if fractional {0}else{1}
+            if fractional {
+                0
+            } else {
+                1
+            }
         } else {
-            next_vy.clamp(-100*gravity, 100*gravity)
+            next_vy.clamp(-100 * gravity, 100 * gravity)
         }) as i16,
         a[2],
     ];
@@ -15997,12 +16200,16 @@ unsafe fn prop_air_tick(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
                         .is_some_and(|y1| y - y1 > 8);
                 if steep {
                     momentum[1] = gravity as i16;
-                    if PROP_JUMP[pi].active {PROP_JUMP[pi].velocity=momentum;}else{PROP_SCRIPT_GOAL[pi]=momentum;}
+                    if PROP_JUMP[pi].active {
+                        PROP_JUMP[pi].velocity = momentum;
+                    } else {
+                        PROP_SCRIPT_GOAL[pi] = momentum;
+                    }
                     prop_set_pos_exact(m, pi, [cand[0], y, cand[2]]);
                     return true;
                 }
                 PROP_DORMANT[pi] &= !PROP_RUNTIME_AIRBORNE;
-                PROP_JUMP[pi]=monsterjump::State::EMPTY;
+                PROP_JUMP[pi] = monsterjump::State::EMPTY;
                 prop_set_pos_exact(m, pi, [cand[0], y, cand[2]]);
                 return false;
             }
@@ -16010,10 +16217,14 @@ unsafe fn prop_air_tick(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
     }
     if cand[1] < -20000 {
         PROP_DORMANT[pi] &= !PROP_RUNTIME_AIRBORNE;
-        PROP_JUMP[pi]=monsterjump::State::EMPTY;
+        PROP_JUMP[pi] = monsterjump::State::EMPTY;
         return false;
     }
-    if PROP_JUMP[pi].active {PROP_JUMP[pi].velocity=momentum;}else{PROP_SCRIPT_GOAL[pi]=momentum;}
+    if PROP_JUMP[pi].active {
+        PROP_JUMP[pi].velocity = momentum;
+    } else {
+        PROP_SCRIPT_GOAL[pi] = momentum;
+    }
     prop_set_pos_exact(m, pi, cand);
     true
 }
@@ -16021,31 +16232,45 @@ unsafe fn prop_air_tick(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
 /// Only live walking monsters enter this path; players, pickups, flyers and
 /// swimmers never receive the trigger's launch impulse.
 unsafe fn prop_monsterjump_touch(m: &Map, pi: usize) {
-    if MONSTERJUMP_N == 0 || PROP_HEALTH[pi] == 0
-        || !monsterjump::walker(PROP_KIND[pi]) { return; }
+    if MONSTERJUMP_N == 0 || PROP_HEALTH[pi] == 0 || !monsterjump::walker(PROP_KIND[pi]) {
+        return;
+    }
     let pos = PROP_POS[pi];
-    let (mins,maxs)=actor_collision_bounds(PROP_KIND[pi],pos);
+    let (mins, maxs) = actor_collision_bounds(PROP_KIND[pi], pos);
     for li in 0..m.n_logic.min(MAX_LOGIC) {
-        let rec=m.logic(li);
-        if rec.kind != map::LOGIC_TRIGGER_MONSTERJUMP || LOGIC_STATE[li] == LOGIC_STATE_TOP
-            || LOGIC_STATE[li] == LOGIC_STATE_REMOVED || rec.aux_count < 2
-            || !monsterjump::touches([rec.mins,rec.maxs],[mins,maxs]) { continue; }
-        // Trigger contact uses the actor box, not origin containment.
-        let a=m.logic_aux(rec.first_aux);let b=m.logic_aux(rec.first_aux+1);
-        let airborne=PROP_DORMANT[pi]&PROP_RUNTIME_AIRBORNE != 0;
-        if !PROP_JUMP[pi].active {
-            let old=PROP_SCRIPT_GOAL[pi];
-            PROP_JUMP[pi].start();
-            PROP_JUMP[pi].velocity=if airborne {old.map(|n| n.saturating_mul(16))}else{[0;3]};
+        let rec = m.logic(li);
+        if rec.kind != map::LOGIC_TRIGGER_MONSTERJUMP
+            || LOGIC_STATE[li] == LOGIC_STATE_TOP
+            || LOGIC_STATE[li] == LOGIC_STATE_REMOVED
+            || rec.aux_count < 2
+            || !monsterjump::touches([rec.mins, rec.maxs], [mins, maxs])
+        {
+            continue;
         }
-        PROP_JUMP[pi].launch([a.target as i16,a.delay_ticks as i16,b.target as i16],!airborne);
+        // Trigger contact uses the actor box, not origin containment.
+        let a = m.logic_aux(rec.first_aux);
+        let b = m.logic_aux(rec.first_aux + 1);
+        let airborne = PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0;
+        if !PROP_JUMP[pi].active {
+            let old = PROP_SCRIPT_GOAL[pi];
+            PROP_JUMP[pi].start();
+            PROP_JUMP[pi].velocity = if airborne {
+                old.map(|n| n.saturating_mul(16))
+            } else {
+                [0; 3]
+            };
+        }
+        PROP_JUMP[pi].launch(
+            [a.target as i16, a.delay_ticks as i16, b.target as i16],
+            !airborne,
+        );
         // CTriggerMonsterJump::Think: the volume switches itself off after
         // launching one monster (until a Use turns it back on).
         LOGIC_STATE[li] = LOGIC_STATE_TOP;
         if !airborne {
-            PROP_DORMANT[pi]|=PROP_RUNTIME_AIRBORNE;
-            PROP_NEAR_COUNT[pi]=0xff;
-            prop_set_pos_exact(m,pi,[pos[0],pos[1]+1,pos[2]]);
+            PROP_DORMANT[pi] |= PROP_RUNTIME_AIRBORNE;
+            PROP_NEAR_COUNT[pi] = 0xff;
+            prop_set_pos_exact(m, pi, [pos[0], pos[1] + 1, pos[2]]);
         }
     }
 }
@@ -16056,7 +16281,9 @@ unsafe fn prop_monsterjump_touch(m: &Map, pi: usize) {
 #[optimize(size)]
 unsafe fn prop_environment_move(m: &Map, movers: &[phys::Mover], pi: usize) -> bool {
     // Mounted turrets own bit 8 as inactivity, not falling momentum.
-    if !monsterjump::environment_eligible(PROP_KIND[pi]) { return false; }
+    if !monsterjump::environment_eligible(PROP_KIND[pi]) {
+        return false;
+    }
     prop_monsterjump_touch(m, pi);
     if monsterjump::airborne(PROP_KIND[pi], PROP_DORMANT[pi]) {
         return prop_air_tick(m, movers, pi);
@@ -16269,17 +16496,26 @@ unsafe fn nav_actor_node(m: &Map, pi: usize, i: usize) -> bool {
     air_navigation::accepts(m.nav_node_type(i), PROP_KIND[pi] == PROP_TYPE_CONTROLLER)
 }
 #[inline]
-unsafe fn nav_actor_distance(pi: usize, a: [i32;3], b: [i32;3]) -> i32 {
-    if PROP_KIND[pi] == PROP_TYPE_CONTROLLER { air_navigation::distance2(a,b) }
-    else { dist2_xz(a,b) }
+unsafe fn nav_actor_distance(pi: usize, a: [i32; 3], b: [i32; 3]) -> i32 {
+    if PROP_KIND[pi] == PROP_TYPE_CONTROLLER {
+        air_navigation::distance2(a, b)
+    } else {
+        dist2_xz(a, b)
+    }
 }
 #[inline]
-unsafe fn nav_actor_vertical(pi: usize, a: [i32;3], b: [i32;3]) -> bool {
-    PROP_KIND[pi] == PROP_TYPE_CONTROLLER || (a[1]-b[1]).abs() <= NAV_VERTICAL_MAX
+unsafe fn nav_actor_vertical(pi: usize, a: [i32; 3], b: [i32; 3]) -> bool {
+    PROP_KIND[pi] == PROP_TYPE_CONTROLLER || (a[1] - b[1]).abs() <= NAV_VERTICAL_MAX
 }
 
 #[optimize(size)]
-unsafe fn nav_nearest(m: &Map, movers: &[phys::Mover], pi: usize, pos: [i32; 3], max_d2: i32) -> u8 {
+unsafe fn nav_nearest(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    pos: [i32; 3],
+    max_d2: i32,
+) -> u8 {
     let n = nav_node_count(m);
     let mut best = NAV_NODE_NONE;
     let mut best_d2 = max_d2;
@@ -16290,7 +16526,16 @@ unsafe fn nav_nearest(m: &Map, movers: &[phys::Mover], pi: usize, pos: [i32; 3],
             // Retail LAND-node m_vecOriginPeek is exactly eight units above
             // m_vecOrigin. FindNearestNode ranks that 3D point, not the
             // ground-plane origin used by movement steering.
-            let peek = [node.pos[0], node.pos[1] + if PROP_KIND[pi] == PROP_TYPE_CONTROLLER { 0 } else { 8 }, node.pos[2]];
+            let peek = [
+                node.pos[0],
+                node.pos[1]
+                    + if PROP_KIND[pi] == PROP_TYPE_CONTROLLER {
+                        0
+                    } else {
+                        8
+                    },
+                node.pos[2],
+            ];
             let dy = peek[1] - pos[1];
             let d2 = dist2_xz(pos, peek) + dy * dy;
             // GoldSrc CheckNode accepts the nearest candidate only when a
@@ -16321,11 +16566,14 @@ unsafe fn nav_nearest_reachable(
         let mut best = NAV_NODE_NONE;
         let mut distance = max_d2;
         for i in 0..n {
-            if !nav_actor_node(m, pi, i) { continue; }
+            if !nav_actor_node(m, pi, i) {
+                continue;
+            }
             let node = m.nav_node(i).pos;
             let d2 = air_navigation::distance2(pos, node);
             if d2 < distance && script_human_chord_clear(m, movers, pi, PROP_POS[pi], node) {
-                best = i as u8; distance = d2;
+                best = i as u8;
+                distance = d2;
             }
         }
         prop_nav_cache_set_src(pi, best);
@@ -16569,9 +16817,7 @@ unsafe fn nav_waypoint_towards(
         // lookups keep the nearest-node range and floor band.
         let scripted = scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]);
         if next_d2 > reached_range2
-            && (scripted
-                || (nav_actor_vertical(pi, pos, next_pos)
-                    && next_d2 < NAV_NEAREST_RANGE2))
+            && (scripted || (nav_actor_vertical(pi, pos, next_pos) && next_d2 < NAV_NEAREST_RANGE2))
         {
             return Some(next_pos);
         }
@@ -16643,7 +16889,9 @@ unsafe fn nav_waypoint_towards(
     }
 
     let src_pos = m.nav_node(src as usize).pos;
-    if nav_actor_distance(pi, pos, src_pos) > reached_range2 || !nav_actor_vertical(pi, pos, src_pos) {
+    if nav_actor_distance(pi, pos, src_pos) > reached_range2
+        || !nav_actor_vertical(pi, pos, src_pos)
+    {
         if prop_scientist_flag(pi, PROP_SCI_FOLLOWING) && PROP_SCRIPT_MODE[pi] == 0 {
             // Retain the intended endpoint while approaching the source so a
             // moving player's new destination can invalidate this approach.
@@ -16697,36 +16945,46 @@ unsafe fn nav_flee_goal(m: &Map, threat: [i32; 3], pos: [i32; 3]) -> Option<[i32
 #[optimize(size)]
 #[inline(never)]
 unsafe fn prop_controller_move_towards(
-    m: &Map, movers: &[phys::Mover], pi: usize, goal: [i32;3], speed: i32,
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    goal: [i32; 3],
+    speed: i32,
 ) -> bool {
-    let pos=PROP_POS[pi];
-    let target=if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]) {
-        nav_waypoint_towards(m,movers,pi,goal).unwrap_or(goal)
-    } else if script_human_chord_clear(m,movers,pi,pos,goal) {
+    let pos = PROP_POS[pi];
+    let target = if scientist_logic::script_uses_route(PROP_SCRIPT_MODE[pi]) {
+        nav_waypoint_towards(m, movers, pi, goal).unwrap_or(goal)
+    } else if script_human_chord_clear(m, movers, pi, pos, goal) {
         goal
     } else {
-        let Some(node)=nav_waypoint_towards(m,movers,pi,goal) else { return false; };
+        let Some(node) = nav_waypoint_towards(m, movers, pi, goal) else {
+            return false;
+        };
         node
     };
-    let mut flight=PROP_FLIGHT[pi];
-    let candidate=flight.candidate(pos,target,speed);
-    let from=prop_target(PROP_TYPE_CONTROLLER,pos);
-    let to=prop_target(PROP_TYPE_CONTROLLER,candidate);
+    let mut flight = PROP_FLIGHT[pi];
+    let candidate = flight.candidate(pos, target, speed);
+    let from = prop_target(PROP_TYPE_CONTROLLER, pos);
+    let to = prop_target(PROP_TYPE_CONTROLLER, candidate);
     // World hull2 is source-sized; moving brushes keep the existing bounded
     // expanded-hull gate. Exact moving-brush hull2 remains a parity gap.
-    if !phys::controller_world_line_clear(m,pos,candidate)
-        || !phys::actor_line_clear_movers(m,movers,from,to) || in_monsterclip(to,0) {
-        PROP_FLIGHT[pi]=air_navigation::Flight::EMPTY;
+    if !phys::controller_world_line_clear(m, pos, candidate)
+        || !phys::actor_line_clear_movers(m, movers, from, to)
+        || in_monsterclip(to, 0)
+    {
+        PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
         return false;
     }
-    let (mins,maxs)=actor_collision_bounds(PROP_TYPE_CONTROLLER,candidate);
-    if PROP_SCRIPT_MODE[pi]==0 && PROP_AI_TARGET[pi]==PROP_TARGET_PLAYER
-        && ground_logic::actor_candidate_overlaps_player(mins,maxs,LOGIC_PLAYER_POS,36) {
+    let (mins, maxs) = actor_collision_bounds(PROP_TYPE_CONTROLLER, candidate);
+    if PROP_SCRIPT_MODE[pi] == 0
+        && PROP_AI_TARGET[pi] == PROP_TARGET_PLAYER
+        && ground_logic::actor_candidate_overlaps_player(mins, maxs, LOGIC_PLAYER_POS, 36)
+    {
         return false;
     }
-    PROP_FLIGHT[pi]=flight;
-    prop_face_point(pi,target);
-    prop_set_pos_exact(m,pi,candidate);
+    PROP_FLIGHT[pi] = flight;
+    prop_face_point(pi, target);
+    prop_set_pos_exact(m, pi, candidate);
     true
 }
 
@@ -16786,8 +17044,11 @@ unsafe fn prop_move_towards_point(
         nav_node_count(m),
     ) {
         let cached_dst = prop_nav_cache_get(pi, PROP_NAV_DST_SLOT);
-        let destination = if cached_dst == NAV_NODE_NONE { NAV_NODE_NONE }
-            else { nav_nearest(m, movers, pi, goal, NAV_NEAREST_RANGE2) };
+        let destination = if cached_dst == NAV_NODE_NONE {
+            NAV_NODE_NONE
+        } else {
+            nav_nearest(m, movers, pi, goal, NAV_NEAREST_RANGE2)
+        };
         if scientist_logic::follow_route_should_replan(cached_dst, destination, false) {
             prop_nav_cache_invalidate(pi);
         } else if let Some(wp) = nav_waypoint_towards(m, movers, pi, goal) {
@@ -17305,8 +17566,13 @@ unsafe fn monster_command_touch(m: &Map, nlogic: usize, target: u16) {
 }
 
 unsafe fn sentry_schedule_wake(pi: usize) {
-    if let Some(deadline) = sentry_wake::schedule(PROP_KIND[pi], PROP_ACTIVE[pi] != 0,
-        PROP_HEALTH[pi], PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_INACTIVE != 0, SIM_NOW) {
+    if let Some(deadline) = sentry_wake::schedule(
+        PROP_KIND[pi],
+        PROP_ACTIVE[pi] != 0,
+        PROP_HEALTH[pi],
+        PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_INACTIVE != 0,
+        SIM_NOW,
+    ) {
         // This timer/death timestamp is otherwise unused by a living sentry.
         PROP_AI_TIMER[pi] = 1;
         PROP_DEATH_START[pi] = deadline;
@@ -17384,14 +17650,13 @@ unsafe fn alert_friends(m: &Map, movers: &[phys::Mover], nprops: usize, vi: usiz
     let from = [PROP_POS[vi][0], PROP_POS[vi][1] + 36, PROP_POS[vi][2]];
     let mut fi = 0usize;
     while fi < nprops {
-        if fi != vi
-            && PROP_ACTIVE[fi] != 0
-            && PROP_HEALTH[fi] != 0
-            && prop_is_human(PROP_KIND[fi])
+        if fi != vi && PROP_ACTIVE[fi] != 0 && PROP_HEALTH[fi] != 0 && prop_is_human(PROP_KIND[fi])
         {
             prop_scientist_set_flag(fi, PROP_SCI_FOLLOWING, false);
             let p = PROP_POS[fi];
-            if PROP_SCRIPT_MODE[fi] == 0 && actor_line_clear(m, movers, from, [p[0], p[1] + 40, p[2]]) {
+            if PROP_SCRIPT_MODE[fi] == 0
+                && actor_line_clear(m, movers, from, [p[0], p[1] + 40, p[2]])
+            {
                 prop_scientist_set_flag(fi, PROP_SCI_PROVOKED, true);
                 #[cfg(feature = "interaction-probe")]
                 reference_trace::probe(SIM_NOW as u32, "alerted", "", fi as i32);
@@ -17621,10 +17886,16 @@ unsafe fn monster_shot_lands(
         if half <= 0 {
             0
         } else {
-            impact_rng().below((half + 1) as u32) as i32 + impact_rng().below((half + 1) as u32) as i32 - half
+            impact_rng().below((half + 1) as u32) as i32
+                + impact_rng().below((half + 1) as u32) as i32
+                - half
         }
     };
-    let end = [aim[0] + tri(spread), aim[1] + tri(spread), aim[2] + tri(spread)];
+    let end = [
+        aim[0] + tri(spread),
+        aim[1] + tri(spread),
+        aim[2] + tri(spread),
+    ];
     // carry the bullet 25 percent past the target so a graze on the far side counts
     let far = [
         from[0] + (end[0] - from[0]) * 5 / 4,
@@ -17645,7 +17916,8 @@ unsafe fn monster_shot_lands(
         return prop_studio_hit_fraction(m, ti, from, far).map(|_| STUDIO_HIT_BOX);
     }
     let (r, hh) = prop_hit_extent(ty);
-    proj_logic::segment_hits_cylinder(from, far, prop_target(ty, PROP_POS[ti]), r, hh, 0).map(|_| u8::MAX)
+    proj_logic::segment_hits_cylinder(from, far, prop_target(ty, PROP_POS[ti]), r, hh, 0)
+        .map(|_| u8::MAX)
 }
 
 const SQUAD_ALERT_RADIUS2: i32 = 400 * 400;
@@ -18393,7 +18665,15 @@ unsafe fn find_headcrab_target(
     // cover and establish the wrong initial enemy (c1a1 selected Gordon
     // instead of the scripted Barney fight).
     let from = prop_target(PROP_KIND[pi], PROP_POS[pi]);
-    pick_target(m, movers, pi, player_pos, nprops, HEADCRAB_WAKE_RANGE2, from)
+    pick_target(
+        m,
+        movers,
+        pi,
+        player_pos,
+        nprops,
+        HEADCRAB_WAKE_RANGE2,
+        from,
+    )
 }
 
 /// The enemy an idle monster picks out: among the player and every actor it
@@ -18438,7 +18718,10 @@ unsafe fn pick_target(
     while ti < nprops {
         if ti != pi && PROP_ACTIVE[ti] != 0 && PROP_HEALTH[ti] > 0 {
             let rel = senses::relation(kind, PROP_KIND[ti]);
-            if senses::is_enemy(rel) && rel >= best_rel && PROP_DORMANT[ti] & PROP_RUNTIME_PRISONER == 0 {
+            if senses::is_enemy(rel)
+                && rel >= best_rel
+                && PROP_DORMANT[ti] & PROP_RUNTIME_PRISONER == 0
+            {
                 let d2 = dist2_xz(pos, PROP_POS[ti]);
                 if d2 < wake2
                     && (rel > best_rel || d2 < best_d2)
@@ -18488,7 +18771,9 @@ unsafe fn find_barney_target(
     if prop_scientist_flag(pi, PROP_SCI_PROVOKED) {
         // A provoked Barney hates the player above everything else.
         let eye = [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]];
-        if dist2_xz(pos, player_pos) < BARNEY_ATTACK_RANGE2 && actor_line_clear(m, movers, from, eye) {
+        if dist2_xz(pos, player_pos) < BARNEY_ATTACK_RANGE2
+            && actor_line_clear(m, movers, from, eye)
+        {
             return PROP_TARGET_PLAYER;
         }
     }
@@ -18630,7 +18915,8 @@ unsafe fn tick_alien_attack(
         if d2 <= 100 * 100 && senses::within_cone(2458, fx, fz, dx, dz) {
             damage_target(target, skill_hit(Sk::AgruntPunch), pos, health, armor);
             prop_attack_cooldown_set(pi, 24);
-        } else if d2 >= 100 * 100 && d2 <= 1024 * 1024 && senses::within_cone(2048, fx, fz, dx, dz) {
+        } else if d2 >= 100 * 100 && d2 <= 1024 * 1024 && senses::within_cone(2048, fx, fz, dx, dz)
+        {
             PROP_AI_TIMER[pi] = 24;
             prop_attack_cooldown_set(pi, 40 + impact_rng().below(61) as u8);
         }
@@ -18644,7 +18930,11 @@ unsafe fn tick_alien_attack(
     }
     let speed = [32, 40, 50][settings::skill().min(2)];
     let slot = spawn_projectile_dir(PROJ_CBALL, skill_hit(Sk::ControllerBall), from, dir, true);
-    PROJECTILES[slot].vel = [(dir[0] * speed) >> 12, (dir[1] * speed) >> 12, (dir[2] * speed) >> 12];
+    PROJECTILES[slot].vel = [
+        (dir[0] * speed) >> 12,
+        (dir[1] * speed) >> 12,
+        (dir[2] * speed) >> 12,
+    ];
     species::cue_or(hl_format::setpiece_audio::CON_ATTACK, sfx::ELECTRO, pos);
     if left >= 3 {
         PROP_AI_TIMER[pi] = 0;
@@ -18668,68 +18958,119 @@ unsafe fn turret_spin_down(pi: usize) {
 /// Ranged + turret AI. Acquire a target, face it, and fire a hitscan shot every
 /// `atk_cooldown` ticks while it is within `atk_range` and in line of sight.
 /// Movers (`can_move`) close to range first; turrets (`!can_move`) hold still.
-unsafe fn grunt_grenade_plan(m: &Map, movers: &[phys::Mover], pi: usize,
-    target: [i32; 3], launcher: bool, nprops: usize) -> Option<hecu_grenades::Plan> {
+unsafe fn grunt_grenade_plan(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    target: [i32; 3],
+    launcher: bool,
+    nprops: usize,
+) -> Option<hecu_grenades::Plan> {
     let origin = PROP_POS[pi];
-    if !hecu_grenades::safe_target(origin, target) { return None; }
+    if !hecu_grenades::safe_target(origin, target) {
+        return None;
+    }
     let start = [origin[0], origin[1] + 60, origin[2]];
     let plan = if launcher {
         hecu_grenades::launch(start, target, skill_value(Sk::HgruntGrenadeSpeed))?
     } else {
-        let middle = [(start[0] + target[0]) / 2, (start[1] + target[1]) / 2,
-            (start[2] + target[2]) / 2];
+        let middle = [
+            (start[0] + target[0]) / 2,
+            (start[1] + target[1]) / 2,
+            (start[2] + target[2]) / 2,
+        ];
         let ceiling = [middle[0], middle[1] + 500, middle[2]];
         let top = phys::trace_line(m, movers, middle, ceiling).map_or(ceiling, |hit| hit.pos);
         hecu_grenades::toss(start, target, top[1] - 15)?
     };
     if phys::trace_line(m, movers, start, plan.apex).is_some()
-        || phys::trace_line(m, movers, plan.apex, target).is_some() { return None; }
+        || phys::trace_line(m, movers, plan.apex, target).is_some()
+    {
+        return None;
+    }
     // The ascending trace includes live actors; descent ignores them.
     for other in 0..nprops {
-        if other == pi || PROP_ACTIVE[other] == 0 || PROP_HEALTH[other] == 0 { continue; }
+        if other == pi || PROP_ACTIVE[other] == 0 || PROP_HEALTH[other] == 0 {
+            continue;
+        }
         // The port has no squad membership registry. Keep live HECU allies
         // outside the authored target clearance even when the arc is clear.
         if PROP_KIND[other] == 8 && !hecu_grenades::ally_clear(PROP_POS[other], target) {
             return None;
         }
         let bounds = actor_collision_bounds(PROP_KIND[other], PROP_POS[other]);
-        if segment_box_frac(start, plan.apex, bounds.0, bounds.1).is_some() { return None; }
+        if segment_box_frac(start, plan.apex, bounds.0, bounds.1).is_some() {
+            return None;
+        }
     }
     Some(plan)
 }
 
 unsafe fn advance_grunt_grenade(pi: usize) -> bool {
-    let step=hecu_grenades::action_step(&mut PROP_STATE[pi],&mut PROP_AI_TIMER[pi],
-        PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0);
+    let step = hecu_grenades::action_step(
+        &mut PROP_STATE[pi],
+        &mut PROP_AI_TIMER[pi],
+        PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0,
+    );
     match step {
-        hecu_grenades::ActionStep::Inactive=>false,
-        hecu_grenades::ActionStep::Hold=>true,
-        hecu_grenades::ActionStep::Release(attack)=>{
-            let launcher=attack==hecu_grenades::Attack::Launcher;
+        hecu_grenades::ActionStep::Inactive => false,
+        hecu_grenades::ActionStep::Hold => true,
+        hecu_grenades::ActionStep::Release(attack) => {
+            let launcher = attack == hecu_grenades::Attack::Launcher;
             let pos = PROP_POS[pi];
-            let damage = skill_hit(if launcher { Sk::PlrM203 } else { Sk::PlrHandGrenade });
-            spawn_grunt_grenade([pos[0], pos[1] + 60, pos[2]], PROP_SCRIPT_GOAL[pi], launcher, damage);
+            let damage = skill_hit(if launcher {
+                Sk::PlrM203
+            } else {
+                Sk::PlrHandGrenade
+            });
+            spawn_grunt_grenade(
+                [pos[0], pos[1] + 60, pos[2]],
+                PROP_SCRIPT_GOAL[pi],
+                launcher,
+                damage,
+            );
             let hard = settings::skill() == 2;
-            let roll = if launcher && hard {impact_rng().below(61) as u16}else{0};
-            let recovery = hecu_grenades::recovery_ticks(launcher,hard,roll);
+            let roll = if launcher && hard {
+                impact_rng().below(61) as u16
+            } else {
+                0
+            };
+            let recovery = hecu_grenades::recovery_ticks(launcher, hard, roll);
             GRUNT_GREN[pi] = hecu_grenades::reschedule(GRUNT_GREN[pi], SIM_NOW as u16, recovery);
             true
         }
     }
 }
 
-unsafe fn try_grunt_grenade(m: &Map, movers: &[phys::Mover], pi: usize,
-    aim: [i32;3], nprops: usize) -> bool {
+unsafe fn try_grunt_grenade(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    aim: [i32; 3],
+    nprops: usize,
+) -> bool {
     if !matches!(PROP_STATE[pi], PROP_STATE_IDLE | PROP_STATE_ATTACK)
         || PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0
-        || !hecu_grenades::due(GRUNT_GREN[pi],SIM_NOW as u16) {return false;}
-    GRUNT_GREN[pi]=hecu_grenades::reschedule(GRUNT_GREN[pi],SIM_NOW as u16,hecu_grenades::CHECK_TICKS);
-    let Some(attack)=hecu_grenades::attack(hecu_grenades::weapons(GRUNT_GREN[pi])) else {return false;};
-    let launcher=attack==hecu_grenades::Attack::Launcher;
-    let Some(plan)=grunt_grenade_plan(m,movers,pi,aim,launcher,nprops) else {return false;};
-    PROP_SCRIPT_GOAL[pi]=plan.velocity_q4;
-    PROP_STATE[pi]=if launcher {7}else{6};
-    PROP_AI_TIMER[pi]=if launcher {hecu_grenades::LAUNCH_ANIMATION_TICKS}else{hecu_grenades::TOSS_ANIMATION_TICKS};
+        || !hecu_grenades::due(GRUNT_GREN[pi], SIM_NOW as u16)
+    {
+        return false;
+    }
+    GRUNT_GREN[pi] =
+        hecu_grenades::reschedule(GRUNT_GREN[pi], SIM_NOW as u16, hecu_grenades::CHECK_TICKS);
+    let Some(attack) = hecu_grenades::attack(hecu_grenades::weapons(GRUNT_GREN[pi])) else {
+        return false;
+    };
+    let launcher = attack == hecu_grenades::Attack::Launcher;
+    let Some(plan) = grunt_grenade_plan(m, movers, pi, aim, launcher, nprops) else {
+        return false;
+    };
+    PROP_SCRIPT_GOAL[pi] = plan.velocity_q4;
+    PROP_STATE[pi] = if launcher { 7 } else { 6 };
+    PROP_AI_TIMER[pi] = if launcher {
+        hecu_grenades::LAUNCH_ANIMATION_TICKS
+    } else {
+        hecu_grenades::TOSS_ANIMATION_TICKS
+    };
     true
 }
 
@@ -18809,7 +19150,13 @@ unsafe fn tick_shooter(
         reference_trace::probe_vals(
             SIM_NOW as u32,
             "turret",
-            &[pi as i32, visible as i32, aim_err as i32, isqrt_i32(d2), prop_attack_cooldown(pi) as i32],
+            &[
+                pi as i32,
+                visible as i32,
+                aim_err as i32,
+                isqrt_i32(d2),
+                prop_attack_cooldown(pi) as i32,
+            ],
         );
     }
 
@@ -19807,11 +20154,8 @@ unsafe fn tick_scientist(
             }
             if reach2 <= offer * offer {
                 PROP_STATE[pi] = PROP_STATE_MOVE;
-                let speed = scientist_logic::follow_move_speed(
-                    dist2_xz(pos, player_pos),
-                    MOVE_TICK,
-                    false,
-                );
+                let speed =
+                    scientist_logic::follow_move_speed(dist2_xz(pos, player_pos), MOVE_TICK, false);
                 prop_move_towards_point(m, movers, pi, player_pos, speed);
                 return;
             }
@@ -19999,7 +20343,10 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         PROP_SCRIPT_IDLE_CLIP[pi] = 0xFF;
         PROP_SCRIPT_PLAY_UNTIL[pi] = 0;
         PROP_KIND[pi] = kind;
-        if kind == 8 { GRUNT_GREN[pi] = hecu_grenades::clock(3,(SIM_NOW as u16).wrapping_add(hecu_grenades::CHECK_TICKS)); }
+        if kind == 8 {
+            GRUNT_GREN[pi] =
+                hecu_grenades::clock(3, (SIM_NOW as u16).wrapping_add(hecu_grenades::CHECK_TICKS));
+        }
         PROP_POS[pi] = org;
         PROP_YAW[pi] = yaw as u16;
         seed_prop_render_transform(pi);
@@ -20033,15 +20380,17 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         pi += 1;
     }
     for li in 0..m.n_logic {
-        let rec=m.logic(li);
+        let rec = m.logic(li);
         if rec.kind == map::LOGIC_GRUNT_EQUIPMENT && rec.arg1 <= 15 {
-            let pi=rec.arg0 as usize;
+            let pi = rec.arg0 as usize;
             if pi < PROP_COUNT && PROP_KIND[pi] == 8 {
-                GRUNT_GREN[pi]=hecu_grenades::clock(rec.arg1 as u8,(SIM_NOW as u16).wrapping_add(hecu_grenades::CHECK_TICKS));
+                GRUNT_GREN[pi] = hecu_grenades::clock(
+                    rec.arg1 as u8,
+                    (SIM_NOW as u16).wrapping_add(hecu_grenades::CHECK_TICKS),
+                );
             }
         }
     }
-
 }
 
 // Build exact candidate lists only after incoming actors have been appended or
@@ -20488,16 +20837,22 @@ unsafe fn collect_pickups(
             let li = PROP_LOGIC_LINK[pi] as usize;
             if li < nlogic && LOGIC_KIND[li] == map::LOGIC_WEAPONBOX {
                 let rec = m.logic(li);
-                let delta = [0,1,2].map(|axis| PROP_POS[pi][axis] - rec.origin[axis]);
-                weaponbox::touches(player_pos, player_half_height,
-                    [0,1,2].map(|axis| rec.mins[axis] + delta[axis]),
-                    [0,1,2].map(|axis| rec.maxs[axis] + delta[axis]))
-            } else { false }
+                let delta = [0, 1, 2].map(|axis| PROP_POS[pi][axis] - rec.origin[axis]);
+                weaponbox::touches(
+                    player_pos,
+                    player_half_height,
+                    [0, 1, 2].map(|axis| rec.mins[axis] + delta[axis]),
+                    [0, 1, 2].map(|axis| rec.maxs[axis] + delta[axis]),
+                )
+            } else {
+                false
+            }
         } else if pi < nprops {
             player_touches_pickup(player_pos, player_half_height, PROP_POS[pi], PROP_KIND[pi])
-        } else { false };
-        if pi >= nprops || PROP_ACTIVE[pi] == 0 || !touches
-        {
+        } else {
+            false
+        };
+        if pi >= nprops || PROP_ACTIVE[pi] == 0 || !touches {
             scan += 1;
             continue;
         }
@@ -20516,8 +20871,11 @@ unsafe fn collect_pickups(
                         let entry = m.logic_aux(rec.first_aux + index);
                         let slot = entry.target as usize;
                         if slot > AMMO_NONE && slot < N_AMMO {
-                            weapon.ammo[slot] = weaponbox::after_give(weapon.ammo[slot],
-                                entry.delay_ticks, max_reserve_for(slot));
+                            weapon.ammo[slot] = weaponbox::after_give(
+                                weapon.ammo[slot],
+                                entry.delay_ticks,
+                                max_reserve_for(slot),
+                            );
                         }
                     }
                     WEAPONBOX_REMOVED |= 1 << id;
@@ -20670,9 +21028,9 @@ unsafe fn collect_pickups(
                     *pickup_ticks = HUD_HISTORY_TICKS;
                     sfx::play(sfx::PICKUP);
                     // CItemBattery::MyTouch: the new power level, once in 30 s.
-                    if let Some(sentence) = hl_format::hev::battery_sentence(
-                        hl_format::hev::battery_level(*armor),
-                    ) {
+                    if let Some(sentence) =
+                        hl_format::hev::battery_sentence(hl_format::hev::battery_level(*armor))
+                    {
                         hev::request(sentence, hl_format::hev::NEXT_IN_30SEC);
                     }
                     telemetry::debug_log("hl-psx: HEV battery picked up");
@@ -20824,8 +21182,8 @@ const WEAPON_FIRST_MAP: [usize; N_WEAPONS] = map_catalog::WEAPON_FIRST_MAP;
 const HORNET_REGEN_TICKS: u8 = 10; // 1 hornet / 0.5 s (hornetgun.cpp:33)
 const CROWBAR_HIT_COOLDOWN_TICKS: u8 = 5; // CCrowbar::Swing hit: 0.25 s
 const CROWBAR_MISS_COOLDOWN_TICKS: u8 = 10; // CCrowbar::Swing miss: 0.5 s
-// Full damage again a second after the attack timer a swing set has run out:
-// 0.25 s + 1.0 s after a hit, 0.5 s + 1.0 s after a miss (crowbar.cpp Swing).
+                                            // Full damage again a second after the attack timer a swing set has run out:
+                                            // 0.25 s + 1.0 s after a hit, 0.5 s + 1.0 s after a miss (crowbar.cpp Swing).
 const CROWBAR_FULL_DAMAGE_HIT_TICKS: u8 = 25;
 const CROWBAR_FULL_DAMAGE_MISS_TICKS: u8 = 30;
 
@@ -20881,7 +21239,8 @@ unsafe fn rpg_reload_blocked() -> bool {
     }
     let mut i = 0;
     while i < MAX_PROJECTILES {
-        if PROJECTILES[i].active && PROJECTILES[i].kind == PROJ_ROCKET && !PROJECTILES[i].from_enemy {
+        if PROJECTILES[i].active && PROJECTILES[i].kind == PROJ_ROCKET && !PROJECTILES[i].from_enemy
+        {
             return true;
         }
         i += 1;
@@ -21272,7 +21631,10 @@ impl Arsenal {
             // both the clip and the reserve with !HEV_AMO0 (no repeat time).
             if self.clip[self.current] == 0
                 && self.ammo[d.ammo] == 0
-                && matches!(self.current, W_GLOCK | W_357 | W_MP5 | W_SHOTGUN | W_CROSSBOW)
+                && matches!(
+                    self.current,
+                    W_GLOCK | W_357 | W_MP5 | W_SHOTGUN | W_CROSSBOW
+                )
             {
                 unsafe { hev::request(hl_format::hev::S_AMO0, 0) };
             }
@@ -21471,7 +21833,9 @@ unsafe fn decay_combat_fx(m: &Map) {
     tick_debris(m);
     env_funnel_fx::tick();
     tick_explosions();
-    for fx in (*core::ptr::addr_of_mut!(BLOOD_FX)).iter_mut() { fx.age = fx.age.saturating_add(1); }
+    for fx in (*core::ptr::addr_of_mut!(BLOOD_FX)).iter_mut() {
+        fx.age = fx.age.saturating_add(1);
+    }
 }
 
 /// Record a decal on the surface `hit` struck, lifted 2 units off it so its
@@ -22262,7 +22626,8 @@ unsafe fn fire_hitscan(
             eye[1] + mul_shr_i32(end[1] - eye[1], best_frac, 12),
             eye[2] + mul_shr_i32(end[2] - eye[2], best_frac, 12),
         ];
-        let damage = logic_state::club_damage_for(ty, club_damage, hit_group_damage(ty, best_box, damage));
+        let damage =
+            logic_state::club_damage_for(ty, club_damage, hit_group_damage(ty, best_box, damage));
         damage_prop(best, damage, true);
         // TEXTURETYPE_PlaySound: bullets on flesh thud (bullet_hit1/2); metal
         // turrets keep the ricochet. CCrowbar::Swing plays cbar_hitbod on any
@@ -22389,7 +22754,13 @@ unsafe fn fire_weapon(
                 return match phys::trace_line(m, movers, from, to) {
                     Some(h) if h.frac <= 1024 => false,
                     hit => {
-                        let slot = spawn_projectile_dir(PROJ_SNARK, 5, hit.map_or(to, |h| h.pos), [0; 3], false);
+                        let slot = spawn_projectile_dir(
+                            PROJ_SNARK,
+                            5,
+                            hit.map_or(to, |h| h.pos),
+                            [0; 3],
+                            false,
+                        );
                         // 200 u/s along the view plus the thrower's velocity.
                         let mut a = 0;
                         while a < 3 {
@@ -22624,7 +22995,11 @@ unsafe fn gauss_beam(
             let at = prop_target(ty, PROP_POS[pi]);
             let hurt = hit_group_damage(ty, bx, dmg.min(255) as u8);
             #[cfg(feature = "interaction-probe")]
-            reference_trace::probe_vals(SIM_NOW as u32, "gauss_hit", &[pi as i32, ty as i32, hurt as i32, PROP_HEALTH[pi] as i32]);
+            reference_trace::probe_vals(
+                SIM_NOW as u32,
+                "gauss_hit",
+                &[pi as i32, ty as i32, hurt as i32, PROP_HEALTH[pi] as i32],
+            );
             DMG_BULLET_EXACT = true;
             damage_prop(pi, hurt, true);
             DMG_BULLET_EXACT = false;
@@ -22641,10 +23016,31 @@ unsafe fn gauss_beam(
         };
         spawn_impact_fx(m, &h, rot, base_t);
         if h.mover >= 0 {
-            damage_brush_ent(m, m.n_logic, m.n_ents, h.mover as usize, dmg.min(255) as u8, false, SIM_NOW);
+            damage_brush_ent(
+                m,
+                m.n_logic,
+                m.n_ents,
+                h.mover as usize,
+                dmg.min(255) as u8,
+                false,
+                SIM_NOW,
+            );
         }
         #[cfg(feature = "interaction-probe")]
-        reference_trace::probe_vals(SIM_NOW as u32, "gauss_wall", &[dmg, h.pos[0], h.pos[1], h.pos[2], h.normal[0], h.normal[1], h.normal[2], left]);
+        reference_trace::probe_vals(
+            SIM_NOW as u32,
+            "gauss_wall",
+            &[
+                dmg,
+                h.pos[0],
+                h.pos[1],
+                h.pos[2],
+                h.normal[0],
+                h.normal[1],
+                h.normal[2],
+                left,
+            ],
+        );
         // n: cosine of the angle between the beam and the surface normal.
         let n = -((dir[0] * h.normal[0] + dir[1] * h.normal[1] + dir[2] * h.normal[2]) >> 12);
         DMG_BLAST = true;
@@ -22687,7 +23083,11 @@ unsafe fn gauss_beam(
                 DMG_BLAST = false;
                 break;
             };
-            let d = [x.pos[0] - h.pos[0], x.pos[1] - h.pos[1], x.pos[2] - h.pos[2]];
+            let d = [
+                x.pos[0] - h.pos[0],
+                x.pos[1] - h.pos[1],
+                x.pos[2] - h.pos[2],
+            ];
             let thick = isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).max(1);
             if thick >= dmg {
                 DMG_BLAST = false;
@@ -22695,7 +23095,11 @@ unsafe fn gauss_beam(
             }
             dmg -= thick;
             #[cfg(feature = "interaction-probe")]
-            reference_trace::probe_vals(SIM_NOW as u32, "gauss_punch", &[thick, dmg, x.pos[0], x.pos[1], x.pos[2]]);
+            reference_trace::probe_vals(
+                SIM_NOW as u32,
+                "gauss_punch",
+                &[thick, dmg, x.pos[0], x.pos[1], x.pos[2]],
+            );
             let blast = dmg.clamp(0, 255) as u8;
             let out = [
                 x.pos[0] + ((dir[0] * 8) >> 12),
@@ -23095,7 +23499,11 @@ unsafe fn spawn_projectile(kind: u8, damage: u8, eye: [i32; 3], rot: &Mat3I16) -
             eye[2] + ((fwd[2] * 16) >> 12),
         ];
     } else if kind == PROJ_ROCKET {
-        let up = [-(rot.m[1][0] as i32), -(rot.m[1][1] as i32), -(rot.m[1][2] as i32)];
+        let up = [
+            -(rot.m[1][0] as i32),
+            -(rot.m[1][1] as i32),
+            -(rot.m[1][2] as i32),
+        ];
         let right = [rot.m[0][0] as i32, rot.m[0][1] as i32, rot.m[0][2] as i32];
         let p = &mut PROJECTILES[slot];
         p.aux = 1;
@@ -23149,7 +23557,9 @@ unsafe fn spawn_projectile_dir(
         let mut j = 0;
         let mut oldest = u8::MAX;
         while j < MAX_PROJECTILES {
-            if (PROJECTILES[j].kind == PROJ_BOLT || PROJECTILES[j].kind == PROJ_BOLT_WATER) && PROJECTILES[j].vel == [0; 3] {
+            if (PROJECTILES[j].kind == PROJ_BOLT || PROJECTILES[j].kind == PROJ_BOLT_WATER)
+                && PROJECTILES[j].vel == [0; 3]
+            {
                 slot = j;
                 break;
             }
@@ -23190,13 +23600,30 @@ unsafe fn spawn_projectile_dir(
 }
 
 /// Authored enemy grenades reserve a free slot rather than evict a live charge.
-unsafe fn spawn_grunt_grenade(origin: [i32; 3], velocity: [i16; 3], launcher: bool, damage: u8) -> bool {
-    let Some(slot) = (&PROJECTILES).iter().position(|p| !p.active) else { return false; };
+unsafe fn spawn_grunt_grenade(
+    origin: [i32; 3],
+    velocity: [i16; 3],
+    launcher: bool,
+    damage: u8,
+) -> bool {
+    let Some(slot) = (&PROJECTILES).iter().position(|p| !p.active) else {
+        return false;
+    };
     PROJECTILES[slot] = Projectile {
-        active: true, pos: origin, vel: velocity.map(i32::from),
-        kind: if launcher { PROJ_M203 } else { PROJ_GRENADE }, damage,
-        life: if launcher { u8::MAX } else { hecu_grenades::HAND_FUSE_TICKS },
-        from_enemy: true, aux: 255, dir: [0; 3], remainder: [0; 3],
+        active: true,
+        pos: origin,
+        vel: velocity.map(i32::from),
+        kind: if launcher { PROJ_M203 } else { PROJ_GRENADE },
+        damage,
+        life: if launcher {
+            u8::MAX
+        } else {
+            hecu_grenades::HAND_FUSE_TICKS
+        },
+        from_enemy: true,
+        aux: 255,
+        dir: [0; 3],
+        remainder: [0; 3],
     };
     true
 }
@@ -23211,12 +23638,8 @@ unsafe fn detonate_satchels(m: &Map) -> bool {
         if PROJECTILES[i].active && PROJECTILES[i].kind == PROJ_SATCHEL {
             let p = PROJECTILES[i];
             PROJECTILES[i].active = false;
-            let at = grenade_blast_origin(
-                m,
-                &MOVERS[..MOVER_COUNT.min(MAX_ENTS + 1)],
-                p.pos,
-                p.damage,
-            );
+            let at =
+                grenade_blast_origin(m, &MOVERS[..MOVER_COUNT.min(MAX_ENTS + 1)], p.pos, p.damage);
             explode(m, at, p.damage, proj_params(PROJ_SATCHEL).3, true);
             detonated = true;
         }
@@ -23415,7 +23838,11 @@ unsafe fn blast_sees(
 unsafe fn houndeye_blast(m: &Map, pi: usize, radius: i32, dmg: u8) {
     let src = prop_target(PROP_KIND[pi], PROP_POS[pi]);
     let falloff = |d: i32, full: i32| (full * (radius - d).max(0) / radius).clamp(0, 255) as u8;
-    let body = [LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]];
+    let body = [
+        LOGIC_PLAYER_POS[0],
+        LOGIC_PLAYER_POS[1] + 18,
+        LOGIC_PLAYER_POS[2],
+    ];
     let d = isqrt_i32(dist2_3(body, src));
     if d < radius {
         let mut scaled = falloff(d, dmg as i32);
@@ -23466,7 +23893,11 @@ unsafe fn tick_bolt(m: &Map, movers: &[phys::Mover], i: usize) {
         }
         return;
     }
-    let new = [p.pos[0] + p.vel[0], p.pos[1] + p.vel[1], p.pos[2] + p.vel[2]];
+    let new = [
+        p.pos[0] + p.vel[0],
+        p.pos[1] + p.vel[1],
+        p.pos[2] + p.vel[2],
+    ];
     let wall = phys::trace_line(m, movers, p.pos, new);
     let stop = wall.map_or(new, |h| h.pos);
     if let Some((best, _, best_box)) = next_actor_on_segment(m, p.pos, stop, (-1, 0)) {
@@ -23493,7 +23924,15 @@ unsafe fn tick_bolt(m: &Map, movers: &[phys::Mover], i: usize) {
     };
     sfx::play_world(sfx::RIC, h.pos);
     if h.mover >= 0 {
-        damage_brush_ent(m, m.n_logic, m.n_ents, h.mover as usize, p.damage, false, SIM_NOW);
+        damage_brush_ent(
+            m,
+            m.n_logic,
+            m.n_ents,
+            h.mover as usize,
+            p.damage,
+            false,
+            SIM_NOW,
+        );
         PROJECTILES[i].active = false;
         return;
     }
@@ -23661,7 +24100,11 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
         best_at = at;
     }
     if armed && LOGIC_PLAYER_HEALTH > 0 {
-        let at = [LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]];
+        let at = [
+            LOGIC_PLAYER_POS[0],
+            LOGIC_PLAYER_POS[1] + 18,
+            LOGIC_PLAYER_POS[2],
+        ];
         let d2 = dist2_3(p.pos, at);
         if d2 < best_d2 && actor_line_clear(m, movers, p.pos, at) {
             best = usize::MAX - 1;
@@ -23672,7 +24115,11 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
     let mut bounced = false;
     // Move: gravity 0.5, a point trace, the bounce.
     p.vel[1] -= throwable::LOB_GRAVITY;
-    let new = [p.pos[0] + p.vel[0], p.pos[1] + p.vel[1], p.pos[2] + p.vel[2]];
+    let new = [
+        p.pos[0] + p.vel[0],
+        p.pos[1] + p.vel[1],
+        p.pos[2] + p.vel[2],
+    ];
     match phys::trace_line(m, movers, p.pos, new) {
         Some(h) => {
             let b = throwable::bounce_with(p.vel, h.normal, false, 64, 15);
@@ -23693,7 +24140,11 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
         } else {
             prop_hit_extent(PROP_KIND[best])
         };
-        let d = [p.pos[0] - best_at[0], p.pos[1] - best_at[1], p.pos[2] - best_at[2]];
+        let d = [
+            p.pos[0] - best_at[0],
+            p.pos[1] - best_at[1],
+            p.pos[2] - best_at[2],
+        ];
         if d[0].abs() <= r + 6 && d[2].abs() <= r + 6 && d[1].abs() <= hh + 4 {
             bounced = true;
             if p.dir[0] == 0 && (armed || best != usize::MAX - 1) {
@@ -23717,7 +24168,8 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
         p.aux = 40; // and again in two seconds
         if best != usize::MAX {
             let to = dir_q12(p.pos, best_at);
-            let speed_ups = isqrt_i32(p.vel[0] * p.vel[0] + p.vel[1] * p.vel[1] + p.vel[2] * p.vel[2]) * 20;
+            let speed_ups =
+                isqrt_i32(p.vel[0] * p.vel[0] + p.vel[1] * p.vel[1] + p.vel[2] * p.vel[2]) * 20;
             let adj = (50 * 4096 / (speed_ups + 10)).min(4915);
             let mut a = 0;
             while a < 3 {
@@ -23762,7 +24214,11 @@ unsafe fn track_hornet(m: &Map, movers: &[phys::Mover], i: usize) {
         let mut delta = (to[0] * flight[0] + to[1] * flight[1] + to[2] * flight[2]) >> 12;
         let sum = [flight[0] + to[0], flight[1] + to[1], flight[2] + to[2]];
         let len = isqrt_i32(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]).max(1);
-        let turn = [(sum[0] << 12) / len, (sum[1] << 12) / len, (sum[2] << 12) / len];
+        let turn = [
+            (sum[0] << 12) / len,
+            (sum[1] << 12) / len,
+            (sum[2] << 12) / len,
+        ];
         let mut speed = fly;
         if p.aux & 1 == 0 {
             if delta <= 0 {
@@ -23880,7 +24336,13 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             if PROJECTILES[i].life == 0 {
                 let p = PROJECTILES[i];
                 PROJECTILES[i].active = false;
-                explode(m, grenade_blast_origin(m, movers, p.pos, p.damage), p.damage, aoe, !p.from_enemy);
+                explode(
+                    m,
+                    grenade_blast_origin(m, movers, p.pos, p.damage),
+                    p.damage,
+                    aoe,
+                    !p.from_enemy,
+                );
             }
             i += 1;
             continue;
@@ -23920,8 +24382,10 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
         let new = if grunt_grenade {
             let p = &mut PROJECTILES[i];
             let step = hecu_grenades::advance(&mut p.vel, &mut p.remainder);
-            [old[0]+step[0],old[1]+step[1],old[2]+step[2]]
-        } else { [old[0] + v[0], old[1] + v[1], old[2] + v[2]] };
+            [old[0] + step[0], old[1] + step[1], old[2] + step[2]]
+        } else {
+            [old[0] + v[0], old[1] + v[1], old[2] + v[2]]
+        };
         let mut hit = false;
         let mut hit_pos = new;
         let mut hit_normal = [0i32; 3];
@@ -23993,7 +24457,8 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             let reflected = if hit_normal == [0; 3] {
                 [-v[0] / 2, -v[1] / 2, -v[2] / 2]
             } else {
-                let along = (v[0] * hit_normal[0] + v[1] * hit_normal[1] + v[2] * hit_normal[2]) >> 12;
+                let along =
+                    (v[0] * hit_normal[0] + v[1] * hit_normal[1] + v[2] * hit_normal[2]) >> 12;
                 [
                     (v[0] - ((hit_normal[0] * along * 2) >> 12)) / 2,
                     (v[1] - ((hit_normal[1] * along * 2) >> 12)) / 2,
@@ -24005,16 +24470,23 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
                 hit_pos[1] + (hit_normal[1] >> 11),
                 hit_pos[2] + (hit_normal[2] >> 11),
             ];
-            PROJECTILES[i].vel = if reflected[0].abs() + reflected[1].abs() + reflected[2].abs() < 192 {
-                [0; 3]
-            } else {
-                reflected
-            };
+            PROJECTILES[i].vel =
+                if reflected[0].abs() + reflected[1].abs() + reflected[2].abs() < 192 {
+                    [0; 3]
+                } else {
+                    reflected
+                };
             PROJECTILES[i].remainder = [0; 3];
             if PROJECTILES[i].life == 0 {
                 let p = PROJECTILES[i];
                 PROJECTILES[i].active = false;
-                explode(m, grenade_blast_origin(m, movers, p.pos, p.damage), p.damage, aoe, !p.from_enemy);
+                explode(
+                    m,
+                    grenade_blast_origin(m, movers, p.pos, p.damage),
+                    p.damage,
+                    aoe,
+                    !p.from_enemy,
+                );
             }
             i += 1;
             continue;
@@ -24046,7 +24518,13 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             } else if PROJECTILES[i].life == 0 {
                 let p = PROJECTILES[i];
                 PROJECTILES[i].active = false;
-                explode(m, grenade_blast_origin(m, movers, p.pos, p.damage), p.damage, aoe, !p.from_enemy);
+                explode(
+                    m,
+                    grenade_blast_origin(m, movers, p.pos, p.damage),
+                    p.damage,
+                    aoe,
+                    !p.from_enemy,
+                );
             }
             i += 1;
             continue;
@@ -24180,8 +24658,20 @@ static mut DEBRIS_RECTS: [RectFlat; MAX_DEBRIS_RECTS] =
 
 #[inline(never)]
 unsafe fn spawn_debris_fixed(pos: [i32; 3], vel: [i16; 3], kind: u8, ttl: u8) {
-    let debris = Debris {pos,vel,ttl,kind,blood_sprite:255,blood_frame:0,blood_half_q4:0};
-    env_blood::admit(&mut *core::ptr::addr_of_mut!(DEBRIS), &mut *core::ptr::addr_of_mut!(DEBRIS_CURSOR),debris);
+    let debris = Debris {
+        pos,
+        vel,
+        ttl,
+        kind,
+        blood_sprite: 255,
+        blood_frame: 0,
+        blood_half_q4: 0,
+    };
+    env_blood::admit(
+        &mut *core::ptr::addr_of_mut!(DEBRIS),
+        &mut *core::ptr::addr_of_mut!(DEBRIS_CURSOR),
+        debris,
+    );
 }
 
 /// Whole-unit position and velocity (units per tick), as the casing, gib,
@@ -24344,8 +24834,8 @@ unsafe fn tick_debris(m: &Map) {
                 env_blood::advance_lifetime(&mut DEBRIS[i]);
             }
             if DEBRIS[i].kind == DEBRIS_BUBBLE {
-                let velocity=DEBRIS[i].vel;
-                env_bubbles::advance_position(&mut DEBRIS[i].pos,velocity);
+                let velocity = DEBRIS[i].vel;
+                env_bubbles::advance_position(&mut DEBRIS[i].pos, velocity);
             } else if DEBRIS[i].kind & DEBRIS_SHARD != 0 {
                 if DEBRIS[i].kind & DEBRIS_REST == 0 {
                     tick_shard(m, i);
@@ -24378,8 +24868,13 @@ unsafe fn render_debris<const N: usize>(
     let mut i = 0;
     let mut rect = 0;
     while i < MAX_DEBRIS && rect < MAX_DEBRIS_RECTS {
-        if DEBRIS[i].ttl > 0 && DEBRIS[i].kind & DEBRIS_SHARD == 0
-            && !matches!(DEBRIS[i].kind,DEBRIS_RED_BLOOD|DEBRIS_YELLOW_BLOOD|DEBRIS_BUBBLE) {
+        if DEBRIS[i].ttl > 0
+            && DEBRIS[i].kind & DEBRIS_SHARD == 0
+            && !matches!(
+                DEBRIS[i].kind,
+                DEBRIS_RED_BLOOD | DEBRIS_YELLOW_BLOOD | DEBRIS_BUBBLE
+            )
+        {
             let (r, g, b, size) = match DEBRIS[i].kind {
                 DEBRIS_CASING => (200u8, 170u8, 80u8, 2i16),
                 DEBRIS_GIB => (150, 20, 15, 3),
@@ -24434,8 +24929,13 @@ unsafe fn queue_shards(
     while i < MAX_DEBRIS {
         let d = DEBRIS[i];
         i += 1;
-        if d.ttl == 0 || d.kind & DEBRIS_SHARD == 0
-            || matches!(d.kind & DEBRIS_KIND_MASK,DEBRIS_RED_BLOOD|DEBRIS_YELLOW_BLOOD) {
+        if d.ttl == 0
+            || d.kind & DEBRIS_SHARD == 0
+            || matches!(
+                d.kind & DEBRIS_KIND_MASK,
+                DEBRIS_RED_BLOOD | DEBRIS_YELLOW_BLOOD
+            )
+        {
             continue;
         }
         if d.ttl < SHARD_FADE_TICKS
@@ -24613,80 +25113,182 @@ unsafe fn spawn_gibs(pos: [i32; 3], n: u8) {
 
 // Reuse per-map texture residency; no additional persistent VRAM atlas.
 #[derive(Clone, Copy)]
-struct BloodFx { pos: [i32;3], sprites: u16, half_q4: i16, age: u8, yellow: bool }
-impl BloodFx { const EMPTY: Self = Self {pos:[0;3],sprites:0xffff,half_q4:0,age:255,yellow:false}; }
-static mut BLOOD_FX: [BloodFx;4] = [BloodFx::EMPTY;4];
+struct BloodFx {
+    pos: [i32; 3],
+    sprites: u16,
+    half_q4: i16,
+    age: u8,
+    yellow: bool,
+}
+impl BloodFx {
+    const EMPTY: Self = Self {
+        pos: [0; 3],
+        sprites: 0xffff,
+        half_q4: 0,
+        age: 255,
+        yellow: false,
+    };
+}
+static mut BLOOD_FX: [BloodFx; 4] = [BloodFx::EMPTY; 4];
 static mut BLOOD_CURSOR: usize = 0;
-unsafe fn blood_position(rec: map::LogicEnt) -> [i32;3] {
+unsafe fn blood_position(rec: map::LogicEnt) -> [i32; 3] {
     let jitter = if rec.spawnflags & env_blood::PLAYER != 0 {
-        core::array::from_fn(|_| ((impact_rng().below(21) as i32 - 10)*rec.maxs[0])>>12)
-    } else {[0;3]};
-    let eye = [LOGIC_PLAYER_POS[0],LOGIC_PLAYER_POS[1]+LOGIC_PLAYER_VIEW_HEIGHT,LOGIC_PLAYER_POS[2]];
+        core::array::from_fn(|_| ((impact_rng().below(21) as i32 - 10) * rec.maxs[0]) >> 12)
+    } else {
+        [0; 3]
+    };
+    let eye = [
+        LOGIC_PLAYER_POS[0],
+        LOGIC_PLAYER_POS[1] + LOGIC_PLAYER_VIEW_HEIGHT,
+        LOGIC_PLAYER_POS[2],
+    ];
     env_blood::position(rec.origin, eye, rec.spawnflags, jitter)
 }
 #[inline(never)]
 #[optimize(size)]
 unsafe fn logic_blood(m: &Map, rec: map::LogicEnt) {
-    if rec.arg0 == 0 { return; }
+    if rec.arg0 == 0 {
+        return;
+    }
     let sample = if rec.spawnflags & env_blood::RANDOM != 0 {
-        [impact_rng().below(8193) as i32-4096, impact_rng().below(4097) as i32,
-            impact_rng().below(8193) as i32-4096]
-    } else {[0;3]};
-    let direction = env_blood::direction(rec.mins,rec.spawnflags,sample);
+        [
+            impact_rng().below(8193) as i32 - 4096,
+            impact_rng().below(4097) as i32,
+            impact_rng().below(8193) as i32 - 4096,
+        ]
+    } else {
+        [0; 3]
+    };
+    let direction = env_blood::direction(rec.mins, rec.spawnflags, sample);
     let pos = blood_position(rec);
     // No admitted retail emitter uses STREAM; its client particle effect is
     // not substituted with a sprite burst. Its decal remains independent.
     if rec.spawnflags & env_blood::STREAM == 0 {
         let scale = env_blood::sprite_scale(rec.arg0) as i32;
         let spray = sprite::def(rec.speed as u8 as usize);
-        let puff_scale_q8 = scale*256/35 + impact_rng().below((scale*256/25-scale*256/35+1) as u32) as i32;
-        BLOOD_FX[BLOOD_CURSOR] = BloodFx {pos,sprites:rec.speed,age:0,
-            half_q4: mul_shr_i32(spray.base_w as i32*puff_scale_q8,rec.maxs[0],17) as i16,yellow:rec.arg1==195};
-        BLOOD_CURSOR = (BLOOD_CURSOR+1)%4;
-        let count = env_blood::drop_count(scale as u8,impact_rng().below(8) as u8+1,impact_rng().below(8) as u8+1);
-        let id = (rec.speed>>8) as u8;
+        let puff_scale_q8 = scale * 256 / 35
+            + impact_rng().below((scale * 256 / 25 - scale * 256 / 35 + 1) as u32) as i32;
+        BLOOD_FX[BLOOD_CURSOR] = BloodFx {
+            pos,
+            sprites: rec.speed,
+            age: 0,
+            half_q4: mul_shr_i32(spray.base_w as i32 * puff_scale_q8, rec.maxs[0], 17) as i16,
+            yellow: rec.arg1 == 195,
+        };
+        BLOOD_CURSOR = (BLOOD_CURSOR + 1) % 4;
+        let count = env_blood::drop_count(
+            scale as u8,
+            impact_rng().below(8) as u8 + 1,
+            impact_rng().below(8) as u8 + 1,
+        );
+        let id = (rec.speed >> 8) as u8;
         let d = sprite::def(id as usize);
-        if d.n_frames>1 {
+        if d.n_frames > 1 {
             for _ in 0..count {
-                let velocity = [impact_rng().below(192) as i32-96,impact_rng().below(128) as i32-32,impact_rng().below(192) as i32-96];
-                let velocity = env_blood::velocity_q4(velocity,rec.maxs[0]);
+                let velocity = [
+                    impact_rng().below(192) as i32 - 96,
+                    impact_rng().below(128) as i32 - 32,
+                    impact_rng().below(192) as i32 - 96,
+                ];
+                let velocity = env_blood::velocity_q4(velocity, rec.maxs[0]);
                 let life = env_blood::lifetime(impact_rng().below(21) as u8);
-                let slot = DEBRIS_CURSOR%MAX_DEBRIS;
-                spawn_debris_fixed(pos.map(|v|v*16),velocity,(if rec.arg1==195 {DEBRIS_YELLOW_BLOOD}else{DEBRIS_RED_BLOOD})|DEBRIS_SHARD,life);
+                let slot = DEBRIS_CURSOR % MAX_DEBRIS;
+                spawn_debris_fixed(
+                    pos.map(|v| v * 16),
+                    velocity,
+                    (if rec.arg1 == 195 {
+                        DEBRIS_YELLOW_BLOOD
+                    } else {
+                        DEBRIS_RED_BLOOD
+                    }) | DEBRIS_SHARD,
+                    life,
+                );
                 DEBRIS[slot].blood_sprite = id;
-                DEBRIS[slot].blood_frame = 1+impact_rng().below((d.n_frames-1) as u32) as u8;
-                let size = scale*256/25+impact_rng().below((scale*256/15-scale*256/25+1) as u32) as i32;
-                DEBRIS[slot].blood_half_q4 = mul_shr_i32(d.base_w as i32*size,rec.maxs[0],17) as i16;
+                DEBRIS[slot].blood_frame = 1 + impact_rng().below((d.n_frames - 1) as u32) as u8;
+                let size = scale * 256 / 25
+                    + impact_rng().below((scale * 256 / 15 - scale * 256 / 25 + 1) as u32) as i32;
+                DEBRIS[slot].blood_half_q4 =
+                    mul_shr_i32(d.base_w as i32 * size, rec.maxs[0], 17) as i16;
             }
         }
     }
     if rec.spawnflags & env_blood::DECAL != 0 {
         let start = blood_position(rec); // distinct retail position sample
-        let scaled_direction = direction.map(|v| mul_shr_i32(v,rec.maxs[0],12));
-        let end = env_blood::decal_end(start,scaled_direction,rec.arg0);
-        let movers = core::slice::from_raw_parts(core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),MOVER_COUNT.min(MAX_ENTS+1));
-        if let Some(hit) = phys::trace_line(m,movers,start,end) {
-            spawn_impact_mark(m,&hit,if rec.arg1==195 {IMPACT_KIND_YBLOOD}else{IMPACT_KIND_BLOOD});
+        let scaled_direction = direction.map(|v| mul_shr_i32(v, rec.maxs[0], 12));
+        let end = env_blood::decal_end(start, scaled_direction, rec.arg0);
+        let movers = core::slice::from_raw_parts(
+            core::ptr::addr_of!(MOVERS).cast::<phys::Mover>(),
+            MOVER_COUNT.min(MAX_ENTS + 1),
+        );
+        if let Some(hit) = phys::trace_line(m, movers, start, end) {
+            spawn_impact_mark(
+                m,
+                &hit,
+                if rec.arg1 == 195 {
+                    IMPACT_KIND_YBLOOD
+                } else {
+                    IMPACT_KIND_BLOOD
+                },
+            );
         }
     }
 }
-unsafe fn render_blood_fx(packets: &mut PrimitivePacketArena<'_>, np: &mut usize, rot: &Mat3I16, base_t: [i32;3]) {
+unsafe fn render_blood_fx(
+    packets: &mut PrimitivePacketArena<'_>,
+    np: &mut usize,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
     for fx in (*core::ptr::addr_of!(BLOOD_FX)).iter() {
         let id = fx.sprites as u8;
-        if id == 255 || fx.age>=env_blood::SPRAY_TICKS {continue;}
+        if id == 255 || fx.age >= env_blood::SPRAY_TICKS {
+            continue;
+        }
         let d = sprite::def(id as usize);
-        let frame = fx.age as usize*d.n_frames as usize/env_blood::SPRAY_TICKS as usize;
-        let half = fx.half_q4 as i32/16;
-        emit_billboard_rgb(packets,np,fx.pos,half,half,sprite::slot_for(id as usize,frame),d.crush_w,d.crush_h,
-            rot,base_t,env_blood::modulation(if fx.yellow {195}else{247}));
+        let frame = fx.age as usize * d.n_frames as usize / env_blood::SPRAY_TICKS as usize;
+        let half = fx.half_q4 as i32 / 16;
+        emit_billboard_rgb(
+            packets,
+            np,
+            fx.pos,
+            half,
+            half,
+            sprite::slot_for(id as usize, frame),
+            d.crush_w,
+            d.crush_h,
+            rot,
+            base_t,
+            env_blood::modulation(if fx.yellow { 195 } else { 247 }),
+        );
     }
     for drop in (*core::ptr::addr_of!(DEBRIS)).iter() {
-        if drop.ttl==0 || !matches!(drop.kind & DEBRIS_KIND_MASK,DEBRIS_RED_BLOOD|DEBRIS_YELLOW_BLOOD) {continue;}
+        if drop.ttl == 0
+            || !matches!(
+                drop.kind & DEBRIS_KIND_MASK,
+                DEBRIS_RED_BLOOD | DEBRIS_YELLOW_BLOOD
+            )
+        {
+            continue;
+        }
         let d = sprite::def(drop.blood_sprite as usize);
-        let half = drop.blood_half_q4 as i32/16;
-        emit_billboard_rgb(packets,np,drop.pos.map(|p|p>>4),half,half,
-            sprite::slot_for(drop.blood_sprite as usize,drop.blood_frame as usize),d.crush_w,d.crush_h,
-            rot,base_t,env_blood::modulation(if drop.kind & DEBRIS_KIND_MASK==DEBRIS_YELLOW_BLOOD {195}else{247}));
+        let half = drop.blood_half_q4 as i32 / 16;
+        emit_billboard_rgb(
+            packets,
+            np,
+            drop.pos.map(|p| p >> 4),
+            half,
+            half,
+            sprite::slot_for(drop.blood_sprite as usize, drop.blood_frame as usize),
+            d.crush_w,
+            d.crush_h,
+            rot,
+            base_t,
+            env_blood::modulation(if drop.kind & DEBRIS_KIND_MASK == DEBRIS_YELLOW_BLOOD {
+                195
+            } else {
+                247
+            }),
+        );
     }
 }
 
@@ -25225,7 +25827,10 @@ fn decompress_vis(m: &Map, leaf: usize, out: &mut [u8]) {
     // GoldSrc's model[0] visibility width excludes submodel-only leaves.
     let row = ((m.n_visleaves + 7) / 8).min(out.len());
     if m.paired_pvs() {
-        assert!(m.decode_paired_pvs(leaf, &mut out[..row], false), "HLMJ PVS row invalid");
+        assert!(
+            m.decode_paired_pvs(leaf, &mut out[..row], false),
+            "HLMJ PVS row invalid"
+        );
         return;
     }
     let (visofs, _, _) = m.leaf(leaf);
@@ -25244,7 +25849,10 @@ fn decompress_vis(m: &Map, leaf: usize, out: &mut [u8]) {
 fn merge_vis(m: &Map, leaf: usize, out: &mut [u8]) {
     let row = ((m.n_visleaves + 7) / 8).min(out.len());
     if m.paired_pvs() {
-        assert!(m.decode_paired_pvs(leaf, &mut out[..row], true), "HLMJ PVS merge invalid");
+        assert!(
+            m.decode_paired_pvs(leaf, &mut out[..row], true),
+            "HLMJ PVS merge invalid"
+        );
         return;
     }
     let (visofs, _, _) = m.leaf(leaf);
@@ -25346,7 +25954,11 @@ unsafe fn rebuild_pvs_cache(
     eye_under: bool,
     seal_state: u32,
 ) {
-    decompress_vis(m, cam_leaf as usize, &mut *core::ptr::addr_of_mut!(VIS_BITS));
+    decompress_vis(
+        m,
+        cam_leaf as usize,
+        &mut *core::ptr::addr_of_mut!(VIS_BITS),
+    );
     let mut dry = -1i32;
     if eye_under {
         if let Some(dry_leaf) = dry_leaf_above(m, eye) {
@@ -25403,7 +26015,11 @@ unsafe fn rebuild_pvs_cache(
             }
             i += 1;
         }
-        decompress_vis(m, cam_leaf as usize, &mut *core::ptr::addr_of_mut!(VIS_BITS));
+        decompress_vis(
+            m,
+            cam_leaf as usize,
+            &mut *core::ptr::addr_of_mut!(VIS_BITS),
+        );
     }
 
     let mut ei = 0usize;
@@ -26966,8 +27582,8 @@ unsafe fn emit_cv_flat(
         if render::in_band(&p[0]) && render::in_band(&p[1]) && render::in_band(&p[2]) {
             if CULL {
                 // Inside the guard band (1000 by 500 px) the products fit i32.
-                let cr = (p[1].x - p[0].x) * (p[2].y - p[0].y)
-                    - (p[2].x - p[0].x) * (p[1].y - p[0].y);
+                let cr =
+                    (p[1].x - p[0].x) * (p[2].y - p[0].y) - (p[2].x - p[0].x) * (p[1].y - p[0].y);
                 if cr >= 0 {
                     return; // same verdict the clipped path's fan cull reaches
                 }
@@ -29085,8 +29701,7 @@ unsafe fn rank_affine_patch(
     // them directly needed enter/leave hysteresis to stop a surface flipping
     // tessellation as the camera turned. The error is continuous, so it does
     // not.
-    let over =
-        |n: u32, d: u32| n / WORLD_AFFINE_SPLIT_ERROR_TEXELS >= d.max(1);
+    let over = |n: u32, d: u32| n / WORLD_AFFINE_SPLIT_ERROR_TEXELS >= d.max(1);
     let edge_over = |a: usize, b: usize| {
         let (n, d) = affine_edge_error(&projected[a], &projected[b], uv[a], uv[b]);
         over(n, d)
@@ -31845,22 +32460,63 @@ unsafe fn emit_billboard(
     base_t: [i32; 3],
     tint: u8,
 ) {
-    emit_billboard_rgb(packets, np, center, world_half_w, world_half_h, sl,
-        crush_w, crush_h, rot, base_t, (tint,tint,tint));
+    emit_billboard_rgb(
+        packets,
+        np,
+        center,
+        world_half_w,
+        world_half_h,
+        sl,
+        crush_w,
+        crush_h,
+        rot,
+        base_t,
+        (tint, tint, tint),
+    );
 }
 #[allow(clippy::too_many_arguments)]
 unsafe fn emit_billboard_rgb(
-    packets: &mut PrimitivePacketArena<'_>, np: &mut usize, center: [i32;3],
-    world_half_w: i32, world_half_h: i32, sl: TexSlot, crush_w: u16, crush_h: u16,
-    rot: &Mat3I16, base_t: [i32;3], tint: (u8,u8,u8),
+    packets: &mut PrimitivePacketArena<'_>,
+    np: &mut usize,
+    center: [i32; 3],
+    world_half_w: i32,
+    world_half_h: i32,
+    sl: TexSlot,
+    crush_w: u16,
+    crush_h: u16,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+    tint: (u8, u8, u8),
 ) {
-    emit_billboard_rgb_mode(packets,np,center,world_half_w,world_half_h,sl,crush_w,crush_h,rot,base_t,tint,BlendMode::Add);
+    emit_billboard_rgb_mode(
+        packets,
+        np,
+        center,
+        world_half_w,
+        world_half_h,
+        sl,
+        crush_w,
+        crush_h,
+        rot,
+        base_t,
+        tint,
+        BlendMode::Add,
+    );
 }
 #[allow(clippy::too_many_arguments)]
 unsafe fn emit_billboard_rgb_mode(
-    packets:&mut PrimitivePacketArena<'_>,np:&mut usize,center:[i32;3],
-    world_half_w:i32,world_half_h:i32,sl:TexSlot,crush_w:u16,crush_h:u16,
-    rot:&Mat3I16,base_t:[i32;3],tint:(u8,u8,u8),blend:BlendMode,
+    packets: &mut PrimitivePacketArena<'_>,
+    np: &mut usize,
+    center: [i32; 3],
+    world_half_w: i32,
+    world_half_h: i32,
+    sl: TexSlot,
+    crush_w: u16,
+    crush_h: u16,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+    tint: (u8, u8, u8),
+    blend: BlendMode,
 ) {
     if !sl.valid {
         return;
@@ -34611,7 +35267,9 @@ fn play(
     // Transitional formats remain readable for diagnostics; HLMH and HLMJ
     // carry the larger source-addressed header.
     if map_bytes.len() < cooked::LEGACY_HEADER_SIZE
-        || ((&map_bytes[0..4] == b"HLMH" || &map_bytes[0..4] == b"HLMJ" || &map_bytes[0..4] == b"HLMK")
+        || ((&map_bytes[0..4] == b"HLMH"
+            || &map_bytes[0..4] == b"HLMJ"
+            || &map_bytes[0..4] == b"HLMK")
             && map_bytes.len() < cooked::HEADER_SIZE)
         || (&map_bytes[0..4] != b"HLME"
             && &map_bytes[0..4] != b"HLMF"
@@ -34619,7 +35277,8 @@ fn play(
             && &map_bytes[0..4] != b"HLMH"
             && &map_bytes[0..4] != b"HLMJ"
             && &map_bytes[0..4] != b"HLMK")
-        || (matches!(&map_bytes[0..4],b"HLMJ"|b"HLMK") && !hl_format::pvs_pair::validate_room(map_bytes))
+        || (matches!(&map_bytes[0..4], b"HLMJ" | b"HLMK")
+            && !hl_format::pvs_pair::validate_room(map_bytes))
     {
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
@@ -34940,8 +35599,8 @@ fn play(
             mapsnap::reset_dead();
             GLOBAL_COUNT = 0; // fresh menu launch: clear cross-map global state
             (*core::ptr::addr_of_mut!(DEAD_GLOBALS)).clear();
-                              // Fresh start: no module yet, unless a chapter start is past the
-                              // map that hands it out.
+            // Fresh start: no module yet, unless a chapter start is past the
+            // map that hands it out.
             phys::set_longjump(
                 chapter_arrival
                     && menu::play_rank(launch.room_id as usize) > menu::play_rank(LONGJUMP_ROOM),
@@ -35071,7 +35730,8 @@ fn play(
         while li < nlogic {
             let rec = m.logic(li);
             if rec.kind == map::LOGIC_WEAPONBOX
-                && weaponbox::is_removed(WEAPONBOX_REMOVED, launch.room_id, rec.arg0) {
+                && weaponbox::is_removed(WEAPONBOX_REMOVED, launch.room_id, rec.arg0)
+            {
                 logic_remove_entity(li, rec, nents);
             }
             li += 1;
@@ -35922,7 +36582,11 @@ fn play(
                 .clamp(-PITCH_MAX, PITCH_MAX);
             unsafe {
                 LOGIC_PLAYER_POS = player.pos;
-                LOGIC_PLAYER_VIEW_HEIGHT = if player.crouch {CROUCH_VIEW_HEIGHT}else{VIEW_HEIGHT};
+                LOGIC_PLAYER_VIEW_HEIGHT = if player.crouch {
+                    CROUCH_VIEW_HEIGHT
+                } else {
+                    VIEW_HEIGHT
+                };
                 LOGIC_PLAYER_HALF_HEIGHT = if player.crouch {
                     PLAYER_DUCK_HALF_HEIGHT
                 } else {
@@ -36774,7 +37438,14 @@ fn play(
                 STEP_CLOCK = clock;
                 if let Some(den) = step {
                     STEP_ALT ^= 1;
-                    sfx::play_vol(if STEP_ALT == 0 { sfx::STEP1 } else { sfx::STEP2 }, den);
+                    sfx::play_vol(
+                        if STEP_ALT == 0 {
+                            sfx::STEP1
+                        } else {
+                            sfx::STEP2
+                        },
+                        den,
+                    );
                 }
                 // PM_Jump and PM_CheckFalling: a footfall at full volume leaving
                 // the ground and one on landing from 350 u/s or more.
@@ -36782,7 +37453,11 @@ fn play(
                     || land_impact > 17
                 {
                     STEP_ALT ^= 1;
-                    sfx::play(if STEP_ALT == 0 { sfx::STEP1 } else { sfx::STEP2 });
+                    sfx::play(if STEP_ALT == 0 {
+                        sfx::STEP1
+                    } else {
+                        sfx::STEP2
+                    });
                     STEP_CLOCK = 2;
                 }
             }
@@ -36965,7 +37640,11 @@ fn play(
                     weapon_icon_ticks = WEAPON_ICON_TICKS;
                 }
                 LOGIC_PLAYER_POS = player.pos;
-                LOGIC_PLAYER_VIEW_HEIGHT = if player.crouch {CROUCH_VIEW_HEIGHT}else{VIEW_HEIGHT};
+                LOGIC_PLAYER_VIEW_HEIGHT = if player.crouch {
+                    CROUCH_VIEW_HEIGHT
+                } else {
+                    VIEW_HEIGHT
+                };
                 LOGIC_PLAYER_HALF_HEIGHT = if player.crouch {
                     PLAYER_DUCK_HALF_HEIGHT
                 } else {
@@ -38112,7 +38791,8 @@ fn play(
                 #[cfg(not(feature = "decoupled-present"))]
                 let wi = ((frame_no >> 3) & 15) as usize;
                 WAVE_DU = WAVE_TAB[wi] as u8;
-                WAVE_DV = WAVE_TAB[(wi + 4) & 15] as u8; light_tick(&m, sim_frame_no);
+                WAVE_DV = WAVE_TAB[(wi + 4) & 15] as u8;
+                light_tick(&m, sim_frame_no);
                 reset_emit_policy();
 
                 // The cold PVS builder preclassifies ordinary static opaque
@@ -39422,8 +40102,8 @@ fn play(
             // additive-billboard path as the placed sprites above.
             render_explosions(&mut packets, &mut np, &rot, base_t);
             render_blood_fx(&mut packets, &mut np, &rot, base_t);
-            env_bubbles_fx::render(&mut packets,&mut np,&rot,base_t);
-            env_funnel_fx::render(&mut packets,&mut np,&rot,base_t);
+            env_bubbles_fx::render(&mut packets, &mut np, &rot, base_t);
+            env_funnel_fx::render(&mut packets, &mut np, &rot, base_t);
             queue_rpg_spot(&mut packets, world_ot(), &rot, base_t);
             queue_shards(&mut packets, world_ot(), &rot, base_t);
             if IMPACT_MARKS_LIVE || m.l5_decal_count() != 0 {

@@ -87,8 +87,8 @@
 //!
 //! Fields are read via `from_le_bytes` (include_bytes! is only byte-aligned).
 
-pub use hl_format::logic::*;
 use crate::decal_light::{style_gain, style_level};
+pub use hl_format::logic::*;
 use hl_format::map as cooked;
 use psx_gte::math::Vec3I16;
 
@@ -1576,13 +1576,19 @@ impl Map {
             STYLE_ON = on;
             let styles = rd_u16_aligned(self.data, self.l5_off + 8) as usize;
             let t = self.l5_off + styles;
-            let n = if styles == 0 { 0 } else { *self.data.get_unchecked(t) as usize };
+            let n = if styles == 0 {
+                0
+            } else {
+                *self.data.get_unchecked(t) as usize
+            };
             let mut dev = 0u32;
             let mut slot = 1usize;
             while slot <= n {
                 let r = t + 4 + (slot - 1) * 6;
                 let pattern = core::slice::from_raw_parts(
-                    self.data.as_ptr().add(t + rd_u16_aligned(self.data, r + 4) as usize),
+                    self.data
+                        .as_ptr()
+                        .add(t + rd_u16_aligned(self.data, r + 4) as usize),
                     *self.data.get_unchecked(r + 1) as usize,
                 );
                 let off = *self.data.get_unchecked(r) & 1 != 0 && on >> slot & 1 == 0;
@@ -1629,7 +1635,8 @@ impl Map {
         while plane < 3 {
             let gain = unsafe { DYNAMIC_GAIN[plane] } as i32;
             if gain != 0 {
-                let delta = self.dynamic_light_word(unsafe { *self.data.get_unchecked(at + plane * stride) });
+                let delta = self
+                    .dynamic_light_word(unsafe { *self.data.get_unchecked(at + plane * stride) });
                 rgb = crate::decal_light::shift_light(rgb, delta, gain);
             }
             plane += 1;
@@ -1801,7 +1808,10 @@ impl Map {
     /// signed negative visibility offsets keep their all-visible meaning.
     #[inline]
     pub fn paired_pvs(&self) -> bool {
-        matches!(rd_u32(self.data, cooked::HEADER_MAGIC_OFFSET), cooked::MAGIC_HLMJ | cooked::MAGIC_HLMK)
+        matches!(
+            rd_u32(self.data, cooked::HEADER_MAGIC_OFFSET),
+            cooked::MAGIC_HLMJ | cooked::MAGIC_HLMK
+        )
     }
 
     #[inline]
@@ -1809,7 +1819,8 @@ impl Map {
         if !self.paired_pvs() || leaf == 0 || leaf > self.n_visleaves {
             return false;
         }
-        let leaves = &self.data[self.leaves_off..self.leaves_off + (self.n_visleaves + 1) * LEAF_SZ];
+        let leaves =
+            &self.data[self.leaves_off..self.leaves_off + (self.n_visleaves + 1) * LEAF_SZ];
         hl_format::pvs_pair::decode(self.vis(), leaves, leaf, out.len(), out, merge)
     }
 

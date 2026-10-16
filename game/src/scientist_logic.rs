@@ -40,7 +40,11 @@ pub const fn follow_route_precedes_local_step(
 }
 
 #[optimize(size)]
-pub const fn follow_route_should_replan(cached_destination: u8, destination: u8, blocked: bool) -> bool {
+pub const fn follow_route_should_replan(
+    cached_destination: u8,
+    destination: u8,
+    blocked: bool,
+) -> bool {
     blocked || (cached_destination != u8::MAX && cached_destination != destination)
 }
 
@@ -60,7 +64,11 @@ mod follow_route_tests {
             let dz = target[1] - pos[1];
             let divisor = dx.abs().max(dz.abs()).max(1);
             let next = [pos[0] + dx * 14 / divisor, pos[1] + dz * 14 / divisor];
-            if next[0] >= 224 && next[1] < 160 { None } else { Some(next) }
+            if next[0] >= 224 && next[1] < 160 {
+                None
+            } else {
+                Some(next)
+            }
         }
         fn distance2(a: [i32; 2], b: [i32; 2]) -> i32 {
             (a[0] - b[0]).pow(2) + (a[1] - b[1]).pow(2)
@@ -76,15 +84,25 @@ mod follow_route_tests {
             if hop < nodes.len() && distance2(fixed, nodes[hop]) <= 48 * 48 {
                 hop += 1;
             }
-            let committed = follow_route_precedes_local_step(true, 0,
-                if hop < nodes.len() { 9 } else { 255 }, 19);
+            let committed = follow_route_precedes_local_step(
+                true,
+                0,
+                if hop < nodes.len() { 9 } else { 255 },
+                19,
+            );
             let target = if committed { nodes[hop] } else { goal };
             fixed = step(fixed, target).unwrap();
-            if distance2(fixed, goal) <= 48 * 48 { break; }
+            if distance2(fixed, goal) <= 48 * 48 {
+                break;
+            }
         }
         assert!(distance2(fixed, goal) <= 48 * 48);
         for (destination, blocked) in [(11, false), (10, true)] {
-            let source = if follow_route_should_replan(10, destination, blocked) { 255 } else { 9 };
+            let source = if follow_route_should_replan(10, destination, blocked) {
+                255
+            } else {
+                9
+            };
             assert!(!follow_route_precedes_local_step(true, 0, source, 19));
         }
         assert!(!follow_route_should_replan(10, 10, false));
@@ -353,7 +371,11 @@ pub const FOLLOW_GAIT_SPLIT: i32 = 230;
 /// TASK_MOVE_TO_TARGET_RANGE; inventory rows S7, B15).
 #[inline(never)]
 pub const fn follow_move_speed(d2: i32, move_tick: u16, barney: bool) -> i32 {
-    let mode = if d2 >= FOLLOW_GAIT_SPLIT * FOLLOW_GAIT_SPLIT { 2 } else { 1 };
+    let mode = if d2 >= FOLLOW_GAIT_SPLIT * FOLLOW_GAIT_SPLIT {
+        2
+    } else {
+        1
+    };
     script_move_speed(mode, move_tick, barney) as i32
 }
 
@@ -724,7 +746,9 @@ pub fn script_candidate_eligible(
     // signed sum only saturated above 2^63, which no radius squared (at most
     // 2^62) reaches, so the comparison is the same.
     let sq = |v: i32| WideU::mul(v.unsigned_abs(), v.unsigned_abs());
-    let d2 = sq(delta[0]).saturating_add(sq(delta[1])).saturating_add(sq(delta[2]));
+    let d2 = sq(delta[0])
+        .saturating_add(sq(delta[1]))
+        .saturating_add(sq(delta[2]));
     d2 <= WideU::mul(radius as u32, radius as u32)
 }
 
@@ -1320,7 +1344,11 @@ mod tests {
     fn followers_run_at_the_source_rate_when_far_and_walk_when_near() {
         let far = 400 * 400;
         let near = 150 * 150;
-        assert_eq!(follow_move_speed(far, 0, false), 14, "scientist run 275 u/s");
+        assert_eq!(
+            follow_move_speed(far, 0, false),
+            14,
+            "scientist run 275 u/s"
+        );
         assert_eq!(follow_move_speed(far, 0, true), 18, "Barney run 362 u/s");
         assert_eq!(follow_move_speed(near, 0, false), 3);
         assert_eq!(follow_move_speed(near, 0, true), 3);
@@ -1486,7 +1514,10 @@ mod tests {
             }
             assert_eq!(heal_abort(left, 40 * 40), None);
         }
-        assert_eq!(HEAL_TOTAL_TICKS, 108, "pull 2.4 s + shot 1.6 s + return 1.4 s");
+        assert_eq!(
+            HEAL_TOTAL_TICKS, 108,
+            "pull 2.4 s + shot 1.6 s + return 1.4 s"
+        );
         assert_eq!(heals, 1);
         assert_eq!(fired_at, 71);
     }

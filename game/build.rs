@@ -10,13 +10,13 @@ use std::{collections::HashSet, env, fs, path::PathBuf};
 #[allow(dead_code)]
 #[path = "../shared/hl-format/src/hitgroup.rs"]
 mod hitgroup;
+#[path = "../shared/hl-format/src/room_budget.rs"]
+mod room_budget;
 #[allow(dead_code)]
 #[path = "../shared/hl-format/src/skill.rs"]
 mod skill;
 #[path = "../shared/hl-format/src/skill_cfg.rs"]
 mod skill_cfg;
-#[path = "../shared/hl-format/src/room_budget.rs"]
-mod room_budget;
 
 const FALLBACK_MAP_WORDS: usize = 255_000;
 const FALLBACK_MAX_VERTS: usize = 12_288;
@@ -1289,7 +1289,11 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 "weapons" => (9, [0; 6], String::new()),
                 // hit KIND DMG : a hit on the player (1 fall 2 crush 3 bullet 4 slash
                 // 5 sonic 6 poison 7 acid 8 nerve gas 9 radiation)
-                "hit" => (37, [num(2) as i32, num(3) as i32, 0, 0, 0, 0], String::new()),
+                "hit" => (
+                    37,
+                    [num(2) as i32, num(3) as i32, 0, 0, 0, 0],
+                    String::new(),
+                ),
                 // ammo : one round left in the current weapon, nothing in reserve
                 "lastround" => (38, [0; 6], String::new()),
                 "use" => (10, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
@@ -1318,7 +1322,14 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 // explode X Y Z DMG : a blast of DMG damage at that HL point
                 "explode" => (
                     20,
-                    [num(2) as i32, num(4) as i32, num(3) as i32, num(5) as i32, 0, 0],
+                    [
+                        num(2) as i32,
+                        num(4) as i32,
+                        num(3) as i32,
+                        num(5) as i32,
+                        0,
+                        0,
+                    ],
                     String::new(),
                 ),
                 // blastwall DMG : a blast of DMG at a spot around the player that a wall hides from him
@@ -1326,13 +1337,25 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 // weapon N : select weapon slot N (0 crowbar, 1 glock ...)
                 "weapon" => (22, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
                 // watch KIND [TICKS] : log health and position of every live monster of that kind every TICKS (default 10)
-                "watch" => (23, [num(2) as i32, num(3) as i32, 0, 0, 0, 0], String::new()),
+                "watch" => (
+                    23,
+                    [num(2) as i32, num(3) as i32, 0, 0, 0, 0],
+                    String::new(),
+                ),
                 // club KIND DMG : one crowbar-class hit of DMG on the nearest live monster of that kind
-                "club" => (25, [num(2) as i32, num(3) as i32, 0, 0, 0, 0], String::new()),
+                "club" => (
+                    25,
+                    [num(2) as i32, num(3) as i32, 0, 0, 0, 0],
+                    String::new(),
+                ),
                 // projlog 1|0 : log every live projectile (kind, position, velocity) each tick
                 "projlog" => (24, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
                 // ammo POOL N : set one ammo pool to N (pools: 0 none, 1 9mm ... 8 grenade, 9 snark, 10 satchel, 11 tripmine)
-                "ammo" => (27, [num(2) as i32, num(3) as i32, 0, 0, 0, 0], String::new()),
+                "ammo" => (
+                    27,
+                    [num(2) as i32, num(3) as i32, 0, 0, 0, 0],
+                    String::new(),
+                ),
                 // propdump : log every live actor once
                 "propdump" => (26, [0; 6], String::new()),
                 // snap : keep the map's progress as a manual save would
@@ -1346,13 +1369,27 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 // nudge N X Y Z : push the Nth pushable of the map by that offset
                 "nudge" => (
                     30,
-                    [num(2) as i32, num(3) as i32, num(5) as i32, num(4) as i32, 0, 0],
+                    [
+                        num(2) as i32,
+                        num(3) as i32,
+                        num(5) as i32,
+                        num(4) as i32,
+                        0,
+                        0,
+                    ],
                     String::new(),
                 ),
                 // cartreset N X Y Z SUPPORT : put the Nth pushable back at that origin (HL axes), at rest
                 "cartreset" => (
                     50,
-                    [num(2) as i32, num(3) as i32, num(4) as i32, num(5) as i32, num(6) as i32, 0],
+                    [
+                        num(2) as i32,
+                        num(3) as i32,
+                        num(4) as i32,
+                        num(5) as i32,
+                        num(6) as i32,
+                        0,
+                    ],
                     String::new(),
                 ),
                 // pushpos N : log the Nth pushable's offset
@@ -1370,11 +1407,22 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 // tpnear KIND DX DY DZ : stand at an offset (HL axes) from the first live monster of that kind, facing it
                 "tpnear" => (
                     43,
-                    [num(2) as i32, num(3) as i32, num(5) as i32, num(4) as i32, 0, 0],
+                    [
+                        num(2) as i32,
+                        num(3) as i32,
+                        num(5) as i32,
+                        num(4) as i32,
+                        0,
+                        0,
+                    ],
                     String::new(),
                 ),
                 // aimat KIND DZ : look at the first live monster of that kind (DZ above its centre)
-                "aimat" => (44, [num(2) as i32, num(3) as i32, 0, 0, 0, 0], String::new()),
+                "aimat" => (
+                    44,
+                    [num(2) as i32, num(3) as i32, 0, 0, 0, 0],
+                    String::new(),
+                ),
                 // pos : log the player position
                 "pos" => (13, [0; 6], String::new()),
                 // die : drop the player's health to zero (god off)

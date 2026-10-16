@@ -188,12 +188,7 @@ pub(crate) unsafe fn tick_placed(m: &Map, movers: &[phys::Mover], i: usize) -> b
 /// miss places nothing (and costs no mine). Returns whether one was placed.
 #[inline(never)]
 #[optimize(size)]
-pub(crate) unsafe fn place(
-    m: &Map,
-    movers: &[phys::Mover],
-    eye: [i32; 3],
-    fwd: [i32; 3],
-) -> bool {
+pub(crate) unsafe fn place(m: &Map, movers: &[phys::Mover], eye: [i32; 3], fwd: [i32; 3]) -> bool {
     let end = [
         eye[0] + ((fwd[0] * 128) >> 12),
         eye[1] + ((fwd[1] * 128) >> 12),

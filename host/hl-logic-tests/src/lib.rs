@@ -28,28 +28,28 @@ pub mod combat_defs;
 #[path = "../../../game/src/decal_light.rs"]
 pub mod decal_light;
 pub use combat_defs::{N_AMMO, N_WEAPONS};
-#[path = "../../../game/src/weaponbox.rs"]
-pub mod weaponbox;
 #[path = "../../../game/src/air_navigation.rs"]
 pub mod air_navigation;
-#[path = "../../../game/src/throwable.rs"]
-pub mod throwable;
 #[path = "../../../game/src/autoaim.rs"]
 pub mod autoaim;
+#[path = "../../../game/src/env_sound_audio.rs"]
+pub mod env_sound_audio;
+#[path = "../../../game/src/hecu_grenades.rs"]
+pub mod hecu_grenades;
 #[path = "../../../game/src/leech.rs"]
 pub mod leech;
 #[path = "../../../game/src/player_rules.rs"]
 pub mod player_rules;
-#[path = "../../../game/src/trigger_rules.rs"]
-pub mod trigger_rules;
-#[path = "../../../game/src/hecu_grenades.rs"]
-pub mod hecu_grenades;
 #[path = "../../../game/src/proj_logic.rs"]
 pub mod proj_logic;
 #[path = "../../../game/src/senses.rs"]
 pub mod senses;
-#[path = "../../../game/src/env_sound_audio.rs"]
-pub mod env_sound_audio;
+#[path = "../../../game/src/throwable.rs"]
+pub mod throwable;
+#[path = "../../../game/src/trigger_rules.rs"]
+pub mod trigger_rules;
+#[path = "../../../game/src/weaponbox.rs"]
+pub mod weaponbox;
 
 #[path = "../../../game/src/sfx.rs"]
 pub mod sfx;
@@ -89,16 +89,16 @@ mod parity;
 #[path = "../../../game/src/setpiece_logic.rs"]
 pub mod setpiece_logic;
 
-#[path = "../../../game/src/env_funnel.rs"]
-pub mod env_funnel;
-#[path = "../../../game/src/env_sound.rs"]
-pub mod env_sound;
+#[path = "../../../game/src/door_transition.rs"]
+pub mod door_transition;
 #[path = "../../../game/src/env_blood.rs"]
 pub mod env_blood;
 #[path = "../../../game/src/env_bubbles.rs"]
 pub mod env_bubbles;
-#[path = "../../../game/src/door_transition.rs"]
-pub mod door_transition;
+#[path = "../../../game/src/env_funnel.rs"]
+pub mod env_funnel;
+#[path = "../../../game/src/env_sound.rs"]
+pub mod env_sound;
 
 #[path = "../../../game/src/turret_aim.rs"]
 pub mod turret_aim;

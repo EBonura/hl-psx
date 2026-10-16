@@ -380,7 +380,10 @@ mod inventory_restore_tests {
         let restored = multisource_restore_inventory(0, 2, 0, true);
         assert_eq!(restored, 1);
         assert!(!multisource_complete(restored, 2, false, false));
-        assert_eq!(multisource_restore_inventory(restored, 2, 0, true), restored);
+        assert_eq!(
+            multisource_restore_inventory(restored, 2, 0, true),
+            restored
+        );
         let all = multisource_restore_inventory(restored, 2, 1, true);
         assert!(multisource_complete(all, 2, false, false));
         assert!(!multisource_complete(all, 2, true, false));
@@ -648,7 +651,9 @@ mod rotating_contact_tests {
     #[test]
     fn contact_set_deduplicates_and_rejects_world_or_out_of_range() {
         let mut contacts = [0; 2];
-        for id in [-2, -1, 64, 17, 17, 63] { super::record_mover_contact(&mut contacts, id); }
+        for id in [-2, -1, 64, 17, 17, 63] {
+            super::record_mover_contact(&mut contacts, id);
+        }
         assert_eq!(contacts, [1 << 17, 1 << 31]);
         assert!(super::has_mover_contact(&contacts, 17));
         assert!(!super::has_mover_contact(&contacts, 64));
@@ -943,7 +948,11 @@ mod tests {
     fn one_crowbar_swing_kills_a_barnacle_but_nothing_else_changes() {
         assert_eq!(club_damage_for(12, true, 10), u8::MAX);
         assert_eq!(club_damage_for(12, false, 8), 8, "bullets are ordinary");
-        assert_eq!(club_damage_for(2, true, 10), 10, "a headcrab takes the swing");
+        assert_eq!(
+            club_damage_for(2, true, 10),
+            10,
+            "a headcrab takes the swing"
+        );
     }
 
     #[optimize(size)]

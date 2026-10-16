@@ -235,7 +235,6 @@ pub const fn battery_sentence(level: u8) -> Option<u8> {
     }
 }
 
-
 // ---- trigger_hurt damage kinds ----
 //
 // A `trigger_hurt` record keeps its damage type in bits 4..6 of the record
@@ -308,7 +307,10 @@ mod tests {
         assert_eq!(hurt_kind_bits(0), 0);
         assert_eq!(hurt_kind_bits(1 << 17) >> HURT_KIND_SHIFT, HURT_POISON);
         assert_eq!(hurt_kind_bits(1 << 5) >> HURT_KIND_SHIFT, HURT_FALL);
-        assert_eq!(hurt_kind_bits(1 << 20 | 1 << 18) >> HURT_KIND_SHIFT, HURT_ACID);
+        assert_eq!(
+            hurt_kind_bits(1 << 20 | 1 << 18) >> HURT_KIND_SHIFT,
+            HURT_ACID
+        );
         assert_eq!(hurt_kind_bits(1 << 16) & !HURT_KIND_MASK, 0);
     }
 

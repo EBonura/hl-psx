@@ -121,7 +121,14 @@ fn decode(path: &Path) -> Result<Sprite> {
         .map(|v| [v[0], v[1], v[2]])
         .collect();
     let mut cursor = palette_at + color_count * 3;
-    let max_frames = if matches!(path.file_name().and_then(|n|n.to_str()),Some("blood.spr" | "bloodspray.spr" | "bubble.spr")) {frame_count}else{MAX_FRAMES};
+    let max_frames = if matches!(
+        path.file_name().and_then(|n| n.to_str()),
+        Some("blood.spr" | "bloodspray.spr" | "bubble.spr")
+    ) {
+        frame_count
+    } else {
+        MAX_FRAMES
+    };
     let step = if frame_count > max_frames {
         (frame_count / max_frames).max(1)
     } else {
@@ -290,18 +297,37 @@ fn crush(frame: &Frame, blend: u8, cap: usize) -> Crushed {
 /// as its tint. PS1 represents nearest clear/half/opaque opacity; only the
 /// half entry sets STP, so Average does not blend the opaque texels.
 fn crush_bubble(frame: &Frame, cap: usize) -> Crushed {
-    let width=power_of_two_at_most(frame.width,cap);
-    let height=power_of_two_at_most(frame.height,cap);
-    let tint=frame.palette.last().copied().unwrap_or([255;3]);
-    let opaque=bgr555(tint).max(1);
-    let mut clut=[0u16;16];clut[1]=opaque|0x8000;clut[2]=opaque;
-    let mut indices=Vec::with_capacity(width*height);
-    for y in 0..height {for x in 0..width {
-        let alpha=frame.indices[(y*frame.height/height)*frame.width+x*frame.width/width];
-        indices.push(if alpha<64 {0}else if alpha<192 {1}else{2});
-    }}
-    let pixels=indices.chunks(2).map(|p|p[0]|(p.get(1).copied().unwrap_or(0)<<4)).collect();
-    Crushed {width:width as u16,height:height as u16,clut,pixels}
+    let width = power_of_two_at_most(frame.width, cap);
+    let height = power_of_two_at_most(frame.height, cap);
+    let tint = frame.palette.last().copied().unwrap_or([255; 3]);
+    let opaque = bgr555(tint).max(1);
+    let mut clut = [0u16; 16];
+    clut[1] = opaque | 0x8000;
+    clut[2] = opaque;
+    let mut indices = Vec::with_capacity(width * height);
+    for y in 0..height {
+        for x in 0..width {
+            let alpha =
+                frame.indices[(y * frame.height / height) * frame.width + x * frame.width / width];
+            indices.push(if alpha < 64 {
+                0
+            } else if alpha < 192 {
+                1
+            } else {
+                2
+            });
+        }
+    }
+    let pixels = indices
+        .chunks(2)
+        .map(|p| p[0] | (p.get(1).copied().unwrap_or(0) << 4))
+        .collect();
+    Crushed {
+        width: width as u16,
+        height: height as u16,
+        clut,
+        pixels,
+    }
 }
 
 fn texture_blob(frame: &Crushed) -> Vec<u8> {
@@ -334,22 +360,29 @@ fn map_sprite_names(bsp: &Path) -> Result<Vec<(String, bool)>> {
     for entity in bsp_entities(bsp)? {
         let class = entity.get("classname").map(String::as_str).unwrap_or("");
         if class == "env_funnel" {
-            if let Some(&i) = seen.get("flare6.spr") {result[i].1 = true;} else {
-                seen.insert("flare6.spr".to_string(),result.len());
-                result.push(("flare6.spr".to_string(),true));
+            if let Some(&i) = seen.get("flare6.spr") {
+                result[i].1 = true;
+            } else {
+                seen.insert("flare6.spr".to_string(), result.len());
+                result.push(("flare6.spr".to_string(), true));
             }
-            required_effects=true;
+            required_effects = true;
             continue;
         }
         if class == "env_bubbles" {
-            if !seen.contains_key("bubble.spr") {seen.insert("bubble.spr".to_string(),result.len());result.push(("bubble.spr".to_string(),true));}
-            required_effects=true; // required effect textures share the same fail-closed limits
+            if !seen.contains_key("bubble.spr") {
+                seen.insert("bubble.spr".to_string(), result.len());
+                result.push(("bubble.spr".to_string(), true));
+            }
+            required_effects = true; // required effect textures share the same fail-closed limits
             continue;
         }
         if class == "env_blood" {
             required_effects = true;
             for base in ["bloodspray.spr", "blood.spr"] {
-                if let Some(&i) = seen.get(base) { result[i].1 = true; } else {
+                if let Some(&i) = seen.get(base) {
+                    result[i].1 = true;
+                } else {
                     seen.insert(base.to_string(), result.len());
                     result.push((base.to_string(), true));
                 }
@@ -599,7 +632,9 @@ pub fn build(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
         let mut frames = Vec::new();
         let mut first = 0usize;
         let names = map_sprite_names(&bsp)?;
-        let required_effects = names.iter().any(|(n,_)|n=="blood.spr" || n=="bubble.spr" || n=="flare6.spr");
+        let required_effects = names
+            .iter()
+            .any(|(n, _)| n == "blood.spr" || n == "bubble.spr" || n == "flare6.spr");
         for (base, is_beam) in names {
             if !cache.contains_key(&base) {
                 let decoded = find_case_insensitive(&sprite_dir, &base)?
@@ -608,19 +643,37 @@ pub fn build(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                 cache.insert(base.clone(), decoded);
             }
             let Some(sprite) = cache.get(&base).and_then(Option::as_ref) else {
-                if base == "blood.spr" || base == "bloodspray.spr" || base == "bubble.spr" || base == "flare6.spr" {
+                if base == "blood.spr"
+                    || base == "bloodspray.spr"
+                    || base == "bubble.spr"
+                    || base == "flare6.spr"
+                {
                     return Err(format!("required effect resource missing: {base}").into());
                 }
                 continue;
             };
             // Beam textures render additive whatever their texFormat says.
-            let bubble=base=="bubble.spr";
-            if bubble && sprite.texture_format!=2 {return Err("bubble sprite must use original index alpha".into());}
-            let blend=if bubble {0}else if is_beam {1}else{sprite.blend};
+            let bubble = base == "bubble.spr";
+            if bubble && sprite.texture_format != 2 {
+                return Err("bubble sprite must use original index alpha".into());
+            }
+            let blend = if bubble {
+                0
+            } else if is_beam {
+                1
+            } else {
+                sprite.blend
+            };
             let crushed: Vec<Crushed> = sprite
                 .frames
                 .iter()
-                .map(|frame| if bubble {crush_bubble(frame,SPR_MAX)}else{crush(frame,blend,SPR_MAX)})
+                .map(|frame| {
+                    if bubble {
+                        crush_bubble(frame, SPR_MAX)
+                    } else {
+                        crush(frame, blend, SPR_MAX)
+                    }
+                })
                 .collect();
             if crushed.is_empty() {
                 continue;
@@ -675,25 +728,34 @@ mod tests {
 
     #[test]
     fn effect_resources_keep_required_frames_and_funnel_keeps_frame_zero() {
-        let root = std::env::temp_dir().join(format!("hl-blood-frames-{}",std::process::id()));
+        let root = std::env::temp_dir().join(format!("hl-blood-frames-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        for (name,count,expected) in [("blood.spr",9,9),("bloodspray.spr",10,10),("ordinary.spr",10,6),("flare6.spr",20,6)] {
-            let mut bytes=vec![0u8;42]; bytes[..4].copy_from_slice(b"IDSP");
+        for (name, count, expected) in [
+            ("blood.spr", 9, 9),
+            ("bloodspray.spr", 10, 10),
+            ("ordinary.spr", 10, 6),
+            ("flare6.spr", 20, 6),
+        ] {
+            let mut bytes = vec![0u8; 42];
+            bytes[..4].copy_from_slice(b"IDSP");
             bytes[12..16].copy_from_slice(&3i32.to_le_bytes());
             bytes[20..24].copy_from_slice(&1i32.to_le_bytes());
             bytes[24..28].copy_from_slice(&1i32.to_le_bytes());
             bytes[28..32].copy_from_slice(&(count as i32).to_le_bytes());
             bytes[40..42].copy_from_slice(&2u16.to_le_bytes());
-            bytes.extend_from_slice(&[255,255,255,0,0,0]);
+            bytes.extend_from_slice(&[255, 255, 255, 0, 0, 0]);
             for _ in 0..count {
                 bytes.extend_from_slice(&0i32.to_le_bytes());
-                for value in [0i32,0,1,1] {bytes.extend_from_slice(&value.to_le_bytes());}
+                for value in [0i32, 0, 1, 1] {
+                    bytes.extend_from_slice(&value.to_le_bytes());
+                }
                 bytes.push(0);
             }
-            let path=root.join(name);fs::write(&path,bytes).unwrap();
-            let decoded=decode(&path).unwrap();
-            assert_eq!(decoded.frames.len(),expected);
-            assert_eq!(decoded.frames[0].indices,[0]);
+            let path = root.join(name);
+            fs::write(&path, bytes).unwrap();
+            let decoded = decode(&path).unwrap();
+            assert_eq!(decoded.frames.len(), expected);
+            assert_eq!(decoded.frames[0].indices, [0]);
             fs::remove_file(path).unwrap();
         }
         fs::remove_dir(root).unwrap();
@@ -701,13 +763,19 @@ mod tests {
 
     #[test]
     fn bubble_index_alpha_encodes_clear_half_and_opaque_in_actual_blob() {
-        let frame=Frame {width:4,height:1,indices:vec![0,128,255,64],palette:vec![[255;3];256]};
-        let crushed=crush_bubble(&frame,64);let blob=texture_blob(&crushed);
-        assert_eq!(u16::from_le_bytes([blob[4],blob[5]]),0);
-        assert_eq!(u16::from_le_bytes([blob[6],blob[7]]),0xffff);
-        assert_eq!(u16::from_le_bytes([blob[8],blob[9]]),0x7fff);
-        assert_eq!((crushed.width,crushed.height),(4,2));
-        assert_eq!(&blob[36..],&[0x10,0x12,0x10,0x12]);
+        let frame = Frame {
+            width: 4,
+            height: 1,
+            indices: vec![0, 128, 255, 64],
+            palette: vec![[255; 3]; 256],
+        };
+        let crushed = crush_bubble(&frame, 64);
+        let blob = texture_blob(&crushed);
+        assert_eq!(u16::from_le_bytes([blob[4], blob[5]]), 0);
+        assert_eq!(u16::from_le_bytes([blob[6], blob[7]]), 0xffff);
+        assert_eq!(u16::from_le_bytes([blob[8], blob[9]]), 0x7fff);
+        assert_eq!((crushed.width, crushed.height), (4, 2));
+        assert_eq!(&blob[36..], &[0x10, 0x12, 0x10, 0x12]);
     }
 
     #[test]

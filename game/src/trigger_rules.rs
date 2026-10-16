@@ -26,7 +26,11 @@ pub const CAMERA_TURN_DIVISOR: i32 = 50;
 /// ChangeLevelNow: a second touch in the same frame does nothing, and a player
 /// outside the landmark's transition volume aborts before anything fires.
 /// Only a level change that goes ahead fires the changelevel's own target.
-pub const fn changelevel_goes_ahead(already_requested: bool, has_volume: bool, inside_volume: bool) -> bool {
+pub const fn changelevel_goes_ahead(
+    already_requested: bool,
+    has_volume: bool,
+    inside_volume: bool,
+) -> bool {
     !already_requested && (!has_volume || inside_volume)
 }
 
@@ -68,7 +72,10 @@ pub struct DeadGlobals<const N: usize> {
 
 impl<const N: usize> DeadGlobals<N> {
     pub const fn new() -> Self {
-        Self { hashes: [0; N], count: 0 }
+        Self {
+            hashes: [0; N],
+            count: 0,
+        }
     }
     pub fn contains(&self, hash: u16) -> bool {
         hash != 0 && self.hashes[..self.count as usize].contains(&hash)
@@ -97,7 +104,6 @@ pub const fn cdaudio_in_range(radius: u16, distance_sq: i32) -> bool {
     // radius * radius is below 2^32; a wrapped (negative) squared distance is in range.
     radius > 0 && (distance_sq < 0 || distance_sq as u32 <= (radius as u32) * (radius as u32))
 }
-
 
 // ----------------------------------------------------------- trigger_multiple
 
@@ -209,7 +215,10 @@ mod tests {
     fn the_camera_closes_two_percent_of_the_error_per_tick() {
         let per_second = 0.4_f32;
         let dt = 0.05_f32;
-        assert_eq!(CAMERA_TURN_DIVISOR, (1.0 / (per_second * dt)).round() as i32);
+        assert_eq!(
+            CAMERA_TURN_DIVISOR,
+            (1.0 / (per_second * dt)).round() as i32
+        );
     }
 
     #[test]
@@ -289,7 +298,9 @@ mod tests {
     #[test]
     fn a_resting_button_sparks_about_as_often_as_a_spark_entity() {
         // mean wait of a one-in-N chance per tick is N ticks
-        let default_mean = (0..=SPARK_DEFAULT_MAX_DELAY_TICKS).map(|r| spark_gap_ticks(r) as u32).sum::<u32>()
+        let default_mean = (0..=SPARK_DEFAULT_MAX_DELAY_TICKS)
+            .map(|r| spark_gap_ticks(r) as u32)
+            .sum::<u32>()
             / (SPARK_DEFAULT_MAX_DELAY_TICKS as u32 + 1);
         assert_eq!(BUTTON_SPARK_ODDS, default_mean);
     }
@@ -299,7 +310,9 @@ mod tests {
         assert_eq!(spark_gap_ticks(0), 2);
         assert_eq!(spark_gap_ticks(SPARK_DEFAULT_MAX_DELAY_TICKS), 32);
         // mean over a uniform roll is 0.85 s for the default 1.5 s
-        let sum: u32 = (0..=SPARK_DEFAULT_MAX_DELAY_TICKS).map(|r| spark_gap_ticks(r) as u32).sum();
+        let sum: u32 = (0..=SPARK_DEFAULT_MAX_DELAY_TICKS)
+            .map(|r| spark_gap_ticks(r) as u32)
+            .sum();
         let mean_ticks = sum as f32 / (SPARK_DEFAULT_MAX_DELAY_TICKS as f32 + 1.0);
         assert!((mean_ticks - 17.0).abs() < 0.01, "{mean_ticks}");
     }

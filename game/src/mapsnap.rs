@@ -151,8 +151,7 @@ pub unsafe fn remove_dead(m: &Map, nlogic: usize, nents: usize) {
             if is_dead(rec.arg0) {
                 let mut bi = 0;
                 while bi < nlogic {
-                    if LOGIC_KIND[bi] == map::LOGIC_FUNC_BREAKABLE
-                        && m.logic(bi).brush == rec.brush
+                    if LOGIC_KIND[bi] == map::LOGIC_FUNC_BREAKABLE && m.logic(bi).brush == rec.brush
                     {
                         if let Some(ei) = logic_valid_brush(rec.brush, nents) {
                             ENT_ACTIVE[ei] = 0;
@@ -269,7 +268,11 @@ unsafe fn phase_kept(ei: usize) -> bool {
         return false;
     }
     let li = ENT_BRUSH_LOGIC[ei] as usize;
-    li < MAX_LOGIC && matches!(LOGIC_KIND[li], map::LOGIC_FUNC_DOOR | map::LOGIC_FUNC_BUTTON)
+    li < MAX_LOGIC
+        && matches!(
+            LOGIC_KIND[li],
+            map::LOGIC_FUNC_DOOR | map::LOGIC_FUNC_BUTTON
+        )
 }
 
 /// The world: logic states (zeros run-length coded, most records sit at their
@@ -375,7 +378,11 @@ unsafe fn walk_world(p: &mut Port, nlogic: usize, nents: usize, dead: bool) {
     while ei < nents {
         if ENT_CACHE[ei].kind == ENT_KIND_PUSHABLE {
             let mut o = ENT_CACHE[ei].origin;
-            let mut moved = if !p.read && o[0].abs().max(o[1].abs()).max(o[2].abs()) > 8 { 0xFF } else { 0 };
+            let mut moved = if !p.read && o[0].abs().max(o[1].abs()).max(o[2].abs()) > 8 {
+                0xFF
+            } else {
+                0
+            };
             p.b(&mut moved);
             if moved != 0 {
                 let mut axis = 0;

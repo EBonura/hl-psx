@@ -40,13 +40,7 @@ pub struct Aim {
 /// `right` and `up` are the view axes in Q12.
 #[inline(never)]
 #[cfg_attr(target_arch = "mips", optimize(size))]
-pub fn aim_at(
-    d: [i32; 3],
-    fwd: [i32; 3],
-    right: [i32; 3],
-    up: [i32; 3],
-    cone: i32,
-) -> Option<Aim> {
+pub fn aim_at(d: [i32; 3], fwd: [i32; 3], right: [i32; 3], up: [i32; 3], cone: i32) -> Option<Aim> {
     let len = isqrt_i32(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
     if len == 0 || len > 2 * RANGE {
         return None;

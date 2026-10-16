@@ -1223,33 +1223,51 @@ fn trace_point_all(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3], skip
 // Open/liquid contents along an acoustic point ray. Unlike player hull
 // collision, a ray that visits both media must not select a room controller.
 #[optimize(size)]
-fn sound_contents(map: &Map, mut node: i32, p1: [i32;3], p2: [i32;3], mut depth: u8) -> u8 {
+fn sound_contents(map: &Map, mut node: i32, p1: [i32; 3], p2: [i32; 3], mut depth: u8) -> u8 {
     loop {
-        if depth > MAX_TRACE_DEPTH {return 4;}
-        if node < 0 {
-            let leaf=(-node-1) as usize;
-            if leaf==0 || leaf>map.n_visleaves {return 4;}
-            return if map.leaf_liquid(leaf)==0 {1}else{2};
+        if depth > MAX_TRACE_DEPTH {
+            return 4;
         }
-        if node as usize >= map.n_nodes {return 4;}
-        let nd=map.node(node as usize);
-        let a=dot_q5(nd.n,p1).wrapping_sub(nd.dist_q5);
-        let b=dot_q5(nd.n,p2).wrapping_sub(nd.dist_q5);
-        let start_front=a>=0;
-        let (near,far)=if start_front {(nd.c0,nd.c1)}else{(nd.c1,nd.c0)};
-        if start_front==(b>=0) {node=near;depth+=1;continue;}
-        let mid=lerp_q12(p1,p2,crossing_frac(a,b,0));
-        let first=sound_contents(map,near,p1,mid,depth+1);
-        if first&4!=0 {return first;}
-        return first|sound_contents(map,far,mid,p2,depth+1);
+        if node < 0 {
+            let leaf = (-node - 1) as usize;
+            if leaf == 0 || leaf > map.n_visleaves {
+                return 4;
+            }
+            return if map.leaf_liquid(leaf) == 0 { 1 } else { 2 };
+        }
+        if node as usize >= map.n_nodes {
+            return 4;
+        }
+        let nd = map.node(node as usize);
+        let a = dot_q5(nd.n, p1).wrapping_sub(nd.dist_q5);
+        let b = dot_q5(nd.n, p2).wrapping_sub(nd.dist_q5);
+        let start_front = a >= 0;
+        let (near, far) = if start_front {
+            (nd.c0, nd.c1)
+        } else {
+            (nd.c1, nd.c0)
+        };
+        if start_front == (b >= 0) {
+            node = near;
+            depth += 1;
+            continue;
+        }
+        let mid = lerp_q12(p1, p2, crossing_frac(a, b, 0));
+        let first = sound_contents(map, near, p1, mid, depth + 1);
+        if first & 4 != 0 {
+            return first;
+        }
+        return first | sound_contents(map, far, mid, p2, depth + 1);
     }
 }
 #[optimize(size)]
 /// Brush/world occlusion only; monsters do not obstruct the original sound ray.
-pub fn sound_line_clear(map: &Map,movers: &[Mover],p1: [i32;3],p2: [i32;3]) -> bool {
-    if trace_line(map,movers,p1,p2).is_some() {return false;}
-    let contents=sound_contents(map,0,p1,p2,0);
-    contents&4==0 && contents&3!=3
+pub fn sound_line_clear(map: &Map, movers: &[Mover], p1: [i32; 3], p2: [i32; 3]) -> bool {
+    if trace_line(map, movers, p1, p2).is_some() {
+        return false;
+    }
+    let contents = sound_contents(map, 0, p1, p2, 0);
+    contents & 4 == 0 && contents & 3 != 3
 }
 
 #[optimize(size)]
@@ -1509,19 +1527,22 @@ pub fn human_hull_line_clear(map: &Map, from: [i32; 3], to: [i32; 3]) -> bool {
 #[optimize(size)]
 /// Controller CheckLocalMove sweeps hull 2 at origin + 32, without a floor
 /// settle. Legacy maps use bounded conservative standing-hull corner sweeps.
-pub fn controller_world_line_clear(map: &Map, from: [i32;3], to: [i32;3]) -> bool {
-    let center = |p: [i32;3]| [p[0],p[1]+32,p[2]];
-    let a=center(from);let b=center(to);
+pub fn controller_world_line_clear(map: &Map, from: [i32; 3], to: [i32; 3]) -> bool {
+    let center = |p: [i32; 3]| [p[0], p[1] + 32, p[2]];
+    let a = center(from);
+    let b = center(to);
     if map.controller_hull_head != hl_format::map::CONTROLLER_HULL_ABSENT {
-        let tr=trace(map,map.controller_hull_head,a,b);
+        let tr = trace(map, map.controller_hull_head, a, b);
         return !tr.startsolid && tr.frac >= NAV_CHORD_REACHED;
     }
-    for dx in [-16,16] {
-        for dz in [-16,16] {
-            let start=[a[0]+dx,a[1],a[2]+dz];
-            let end=[b[0]+dx,b[1],b[2]+dz];
-            let tr=trace(map,map.hull1_head,start,end);
-            if tr.startsolid || tr.frac < NAV_CHORD_REACHED {return false;}
+    for dx in [-16, 16] {
+        for dz in [-16, 16] {
+            let start = [a[0] + dx, a[1], a[2] + dz];
+            let end = [b[0] + dx, b[1], b[2] + dz];
+            let tr = trace(map, map.hull1_head, start, end);
+            if tr.startsolid || tr.frac < NAV_CHORD_REACHED {
+                return false;
+            }
         }
     }
     true
@@ -1789,23 +1810,37 @@ static mut PLAYER_TOUCHES: [u32; PLAYER_TOUCH_WORDS] = [0; PLAYER_TOUCH_WORDS];
 
 #[optimize(size)]
 pub fn clear_player_touches() {
-    unsafe { PLAYER_TOUCHES = [0; PLAYER_TOUCH_WORDS]; }
+    unsafe {
+        PLAYER_TOUCHES = [0; PLAYER_TOUCH_WORDS];
+    }
 }
 #[optimize(size)]
-fn player_touches() -> [u32; PLAYER_TOUCH_WORDS] { unsafe { PLAYER_TOUCHES } }
+fn player_touches() -> [u32; PLAYER_TOUCH_WORDS] {
+    unsafe { PLAYER_TOUCHES }
+}
 #[optimize(size)]
 fn restore_player_touches(touches: [u32; PLAYER_TOUCH_WORDS]) {
-    unsafe { PLAYER_TOUCHES = touches; }
+    unsafe {
+        PLAYER_TOUCHES = touches;
+    }
 }
 #[optimize(size)]
 fn note_player_touch(id: i32) {
     if id >= 0 && (id as usize) < crate::MAX_ENTS {
-        unsafe { crate::logic_state::record_mover_contact(&mut *core::ptr::addr_of_mut!(PLAYER_TOUCHES), id); }
+        unsafe {
+            crate::logic_state::record_mover_contact(
+                &mut *core::ptr::addr_of_mut!(PLAYER_TOUCHES),
+                id,
+            );
+        }
     }
 }
 #[optimize(size)]
 pub fn player_touched_mover(id: usize) -> bool {
-    id < crate::MAX_ENTS && unsafe { crate::logic_state::has_mover_contact(&*core::ptr::addr_of!(PLAYER_TOUCHES), id) }
+    id < crate::MAX_ENTS
+        && unsafe {
+            crate::logic_state::has_mover_contact(&*core::ptr::addr_of!(PLAYER_TOUCHES), id)
+        }
 }
 
 #[optimize(size)]
@@ -1840,7 +1875,9 @@ fn slide_move(
         let d = remaining;
         let end = add(pos, d);
         let tr = trace_all(map, head, movers, pos, end);
-        if tr.frac < 4096 { note_player_touch(tr.mover); }
+        if tr.frac < 4096 {
+            note_player_touch(tr.mover);
+        }
         #[cfg(feature = "deep-reference-trace")]
         crate::reference_trace::player_slide(
             unsafe { PLAYER_STEP_TICK },
@@ -2087,9 +2124,17 @@ impl Player {
     /// Rotation may bring a solid brush into a stationary player before the
     /// player's slide runs. Retain that actual transformed-hull contact even
     /// though trace_all deliberately ignores mover startsolid for recovery.
-    pub fn record_mover_contacts(&self, map: &Map, movers: &[Mover], eligible: impl Fn(i32) -> bool) {
+    pub fn record_mover_contacts(
+        &self,
+        map: &Map,
+        movers: &[Mover],
+        eligible: impl Fn(i32) -> bool,
+    ) {
         for mv in movers {
-            if eligible(mv.id) && mover_may_hold(mv, self.pos) && !mover_hull_clear(map, mv, self.pos, self.head(map)) {
+            if eligible(mv.id)
+                && mover_may_hold(mv, self.pos)
+                && !mover_hull_clear(map, mv, self.pos, self.head(map))
+            {
                 note_player_touch(mv.id);
             }
         }

@@ -83,10 +83,10 @@ pub(crate) unsafe fn tick_grunt(
     // CHGrunt::CheckRangeAttack1 fires out to 2048 units, the distance every
     // monster looks.
     const RANGE: i32 = 2048;
-    if advance_grunt_grenade(pi) { return; }
-    let Some((target, visible, aim)) =
-        acquire(m, sight, pi, player_pos, nprops, RANGE)
-    else {
+    if advance_grunt_grenade(pi) {
+        return;
+    }
+    let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, RANGE) else {
         return;
     };
     let pos = PROP_POS[pi];
@@ -161,7 +161,9 @@ pub(crate) unsafe fn tick_grunt(
         prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(ATTACK_WINDUP + 1));
         return;
     }
-    if try_grunt_grenade(m,sight,pi,aim,nprops) { return; }
+    if try_grunt_grenade(m, sight, pi, aim, nprops) {
+        return;
+    }
     let weapons = hecu_grenades::weapons(GRUNT_GREN[pi]);
     if weapons & 1 == 0 && weapons & 8 != 0 {
         // A shotgun marine (`weapons` bit 8 with no MP5): one blast of
@@ -252,9 +254,7 @@ pub(crate) unsafe fn tick_slave(
     const RANGE: i32 = 784;
     const CLAW: i32 = 70;
     const ZAP: u8 = 46;
-    let Some((target, visible, aim)) =
-        acquire(m, sight, pi, player_pos, nprops, RANGE)
-    else {
+    let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, RANGE) else {
         return;
     };
     let pos = PROP_POS[pi];
@@ -474,7 +474,14 @@ unsafe fn tick_leech(
             reference_trace::probe_vals(
                 SIM_NOW as u32,
                 if motion.bite { "leech_bite" } else { "leech" },
-                &[pi as i32, pos[0], pos[1], pos[2], motion.biting as i32, motion.dry as i32],
+                &[
+                    pi as i32,
+                    pos[0],
+                    pos[1],
+                    pos[2],
+                    motion.biting as i32,
+                    motion.dry as i32,
+                ],
             );
         }
         if motion.bite {
@@ -673,7 +680,11 @@ unsafe fn tick_squid(
             let whip = skill_hit(Sk::SquidWhip);
             damage_target(
                 target,
-                if victim <= whip as u16 { whip } else { skill_hit(Sk::SquidBite) },
+                if victim <= whip as u16 {
+                    whip
+                } else {
+                    skill_hit(Sk::SquidBite)
+                },
                 pos,
                 health,
                 armor,

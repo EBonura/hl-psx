@@ -337,7 +337,11 @@ pub unsafe fn step(
                                 o[2] += c.a[3] as i32;
                             }
                             let o = crate::ENT_CACHE[ei].origin;
-                            crate::reference_trace::probe_vals(now, "pushpos", &[ei as i32, o[0], o[1], o[2]]);
+                            crate::reference_trace::probe_vals(
+                                now,
+                                "pushpos",
+                                &[ei as i32, o[0], o[1], o[2]],
+                            );
                             break;
                         }
                         n -= 1;
@@ -366,15 +370,22 @@ pub unsafe fn step(
                             core::ptr::addr_of!(crate::MOVERS).cast::<crate::phys::Mover>(),
                             crate::MOVER_COUNT.min(crate::MAX_ENTS + 1),
                         );
-                        let hidden = crate::phys::trace_line(m, movers, [src[0], src[1] + 1, src[2]], body)
-                            .is_some();
+                        let hidden =
+                            crate::phys::trace_line(m, movers, [src[0], src[1] + 1, src[2]], body)
+                                .is_some();
                         if leaf > 0 && hidden {
                             crate::reference_trace::probe_vals(
                                 now,
                                 "blastwall",
                                 &[src[0], src[1], src[2], ring, dmg as i32, *health as i32],
                             );
-                            crate::explode(m, src, dmg, crate::combat_defs::blast_radius(dmg), true);
+                            crate::explode(
+                                m,
+                                src,
+                                dmg,
+                                crate::combat_defs::blast_radius(dmg),
+                                true,
+                            );
                             done = true;
                         }
                     }
@@ -393,11 +404,19 @@ pub unsafe fn step(
                 let mut y = c.a[1] as i32 + 200;
                 while y >= c.a[1] as i32 - 400 {
                     let wet = crate::water_touch(m, m.n_ents, [x, y, z]);
-                    let hit = crate::phys::trace_line(m, movers, [x, y, z], [x, y - 8, z]).is_some();
+                    let hit =
+                        crate::phys::trace_line(m, movers, [x, y, z], [x, y - 8, z]).is_some();
                     crate::reference_trace::probe_vals(
                         now,
                         "scan",
-                        &[x, y, z, wet as i32, hit as i32, crate::camera_leaf(m, [x, y, z])],
+                        &[
+                            x,
+                            y,
+                            z,
+                            wet as i32,
+                            hit as i32,
+                            crate::camera_leaf(m, [x, y, z]),
+                        ],
                     );
                     y -= 8;
                 }
@@ -420,12 +439,20 @@ pub unsafe fn step(
                     {
                         let t = crate::PROP_POS[pi];
                         if c.op == 43 {
-                            player.pos = [t[0] + c.a[1] as i32, t[1] + c.a[2] as i32, t[2] + c.a[3] as i32];
+                            player.pos = [
+                                t[0] + c.a[1] as i32,
+                                t[1] + c.a[2] as i32,
+                                t[2] + c.a[3] as i32,
+                            ];
                             player.clear_velocity();
                             player.on_ground = false;
                             player.ground_mover = -1;
                         }
-                        let eye = [player.pos[0], player.pos[1] + crate::VIEW_HEIGHT, player.pos[2]];
+                        let eye = [
+                            player.pos[0],
+                            player.pos[1] + crate::VIEW_HEIGHT,
+                            player.pos[2],
+                        ];
                         let aim = [t[0], t[1] + 24 + c.a[1] as i32, t[2]];
                         let d = [aim[0] - eye[0], aim[1] - eye[1], aim[2] - eye[2]];
                         let flat = crate::isqrt_i32(d[0] * d[0] + d[2] * d[2]).max(1);
@@ -436,7 +463,14 @@ pub unsafe fn step(
                         crate::reference_trace::probe_vals(
                             now,
                             if c.op == 43 { "tpnear" } else { "aimat" },
-                            &[pi as i32, player.pos[0], player.pos[1], player.pos[2], *yaw as i32, *pitch as i32],
+                            &[
+                                pi as i32,
+                                player.pos[0],
+                                player.pos[1],
+                                player.pos[2],
+                                *yaw as i32,
+                                *pitch as i32,
+                            ],
                         );
                         break;
                     }
@@ -485,7 +519,11 @@ pub unsafe fn step(
                         true,
                         c.a[1].clamp(1, 255) as u8,
                     );
-                    crate::reference_trace::probe_vals(now, "club", &[best as i32, dmg as i32, crate::PROP_HEALTH[best] as i32]);
+                    crate::reference_trace::probe_vals(
+                        now,
+                        "club",
+                        &[best as i32, dmg as i32, crate::PROP_HEALTH[best] as i32],
+                    );
                     crate::damage_prop(best, dmg, true);
                 }
             }
@@ -504,7 +542,14 @@ pub unsafe fn step(
                         crate::reference_trace::probe_vals(
                             now,
                             "prop",
-                            &[pi as i32, crate::PROP_KIND[pi] as i32, crate::PROP_HEALTH[pi] as i32, t[0], t[1], t[2]],
+                            &[
+                                pi as i32,
+                                crate::PROP_KIND[pi] as i32,
+                                crate::PROP_HEALTH[pi] as i32,
+                                t[0],
+                                t[1],
+                                t[2],
+                            ],
                         );
                     }
                     pi += 1;
@@ -512,7 +557,12 @@ pub unsafe fn step(
             }
             32 => {
                 crate::mapsnap::keep_now(&crate::LIVE_CHECKPOINT);
-                crate::reference_trace::probe(now, "snap", "", crate::mapsnap::bytes().len() as i32);
+                crate::reference_trace::probe(
+                    now,
+                    "snap",
+                    "",
+                    crate::mapsnap::bytes().len() as i32,
+                );
             }
             33 => {
                 let id = name_id(m, cname);
@@ -522,7 +572,12 @@ pub unsafe fn step(
                         crate::reference_trace::probe_vals(
                             now,
                             "logic",
-                            &[li as i32, crate::LOGIC_STATE[li] as i32, crate::LOGIC_NEXT[li] as i32, crate::LOGIC_COUNTER[li] as i32],
+                            &[
+                                li as i32,
+                                crate::LOGIC_STATE[li] as i32,
+                                crate::LOGIC_NEXT[li] as i32,
+                                crate::LOGIC_COUNTER[li] as i32,
+                            ],
                         );
                     }
                     li += 1;
@@ -544,7 +599,11 @@ pub unsafe fn step(
                     crate::save::CardResult::NoCard => 1,
                     crate::save::CardResult::Failed => 2,
                 };
-                crate::reference_trace::probe_vals(now, "savecard", &[code, crate::mapsnap::bytes().len() as i32]);
+                crate::reference_trace::probe_vals(
+                    now,
+                    "savecard",
+                    &[code, crate::mapsnap::bytes().len() as i32],
+                );
             }
             29 => {
                 let room = crate::load_saved_room();
@@ -592,13 +651,8 @@ pub unsafe fn step(
                                 ei,
                                 [c.a[1] as i32, c.a[3] as i32, c.a[2] as i32],
                             );
-                            crate::ENT_PHASE[ei] = psx_goldsrc::pushable::pack(
-                                0,
-                                0,
-                                0,
-                                c.a[4] as u16,
-                                false,
-                            );
+                            crate::ENT_PHASE[ei] =
+                                psx_goldsrc::pushable::pack(0, 0, 0, c.a[4] as u16, false);
                             crate::reference_trace::probe_vals(now, "cartreset", &[ei as i32]);
                             break;
                         }
@@ -627,7 +681,14 @@ pub unsafe fn step(
                 crate::reference_trace::probe_vals(
                     now,
                     "proj",
-                    &[i as i32, p.kind as i32, p.pos[0], p.pos[1], p.pos[2], p.life as i32],
+                    &[
+                        i as i32,
+                        p.kind as i32,
+                        p.pos[0],
+                        p.pos[1],
+                        p.pos[2],
+                        p.life as i32,
+                    ],
                 );
             }
             i += 1;

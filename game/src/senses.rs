@@ -68,15 +68,15 @@ pub const KIND_PLAYER: u8 = 255;
 pub const fn class_of(kind: u8) -> u8 {
     match kind {
         KIND_PLAYER => CLASS_PLAYER,
-        0 | 25 | 54 => CLASS_HUMAN_PASSIVE,       // scientists
-        1 => CLASS_PLAYER_ALLY,                   // Barney
-        2 | 59 => CLASS_ALIEN_PREY,               // headcrabs
+        0 | 25 | 54 => CLASS_HUMAN_PASSIVE, // scientists
+        1 => CLASS_PLAYER_ALLY,             // Barney
+        2 | 59 => CLASS_ALIEN_PREY,         // headcrabs
         5 | 55 | 6 | 12 | 16 | 18 | 19 | 50 => CLASS_ALIEN_MONSTER,
-        7 => CLASS_ALIEN_PREDATOR,                // bullsquid
-        8 | 23 | 51 => CLASS_HUMAN_MILITARY,      // grunts, assassins, the apache
+        7 => CLASS_ALIEN_PREDATOR,           // bullsquid
+        8 | 23 | 51 => CLASS_HUMAN_MILITARY, // grunts, assassins, the apache
         9 | 10 | 11 | 17 | 58 => CLASS_ALIEN_MILITARY,
-        13 | 14 => CLASS_INSECT,                  // leech, cockroach
-        20 | 21 | 22 | 61 => CLASS_MACHINE,       // sentries, turrets, the osprey
+        13 | 14 => CLASS_INSECT,            // leech, cockroach
+        20 | 21 | 22 | 61 => CLASS_MACHINE, // sentries, turrets, the osprey
         _ => CLASS_NONE,
     }
 }
@@ -242,7 +242,11 @@ impl Sounds {
         let mut slot = 0;
         let mut weakest = u32::MAX;
         for i in 0..SLOTS {
-            let strength = if self.ttl[i] == 0 { 0 } else { self.vol[i] as u32 + 1 };
+            let strength = if self.ttl[i] == 0 {
+                0
+            } else {
+                self.vol[i] as u32 + 1
+            };
             if strength < weakest {
                 weakest = strength;
                 slot = i;

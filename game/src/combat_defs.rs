@@ -189,10 +189,10 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24), // 9 alien_slave (zap)
     mdef_atk(60, 48, 100, AI_RANGED, 16, 1024, 8, 4), // 10 alien_grunt (hornet volleys inside 1024 units)
     mdef_atk(60, 40, 100, AI_RANGED, 16, 2048, 3, 14), // 11 alien_controller (energy balls out to 2048)
-    mdef(25, 32, 170, AI_IDLE),                 // 12 barnacle (retail spawns it with 25)
-    mdef(16, 8, 40, AI_IDLE),                   // 13 leech (swimmer; species::tick_leech)
-    mdef(1, 4, 30, AI_IDLE),                    // 14 cockroach (passive; any hit kills it)
-    mdef(100, 48, 90, AI_IDLE),                 // 15 gman (passive)
+    mdef(25, 32, 170, AI_IDLE),                        // 12 barnacle (retail spawns it with 25)
+    mdef(16, 8, 40, AI_IDLE),                          // 13 leech (swimmer; species::tick_leech)
+    mdef(1, 4, 30, AI_IDLE),                           // 14 cockroach (passive; any hit kills it)
+    mdef(100, 48, 90, AI_IDLE),                        // 15 gman (passive)
     // CGargantua: the melee roster wakes it; garg::tick runs its schedules.
     mdef_atk(200, 90, 360, AI_MELEE, 10, 0, 0, 0), // 16 gargantua
     mdef(200, 90, 1748, AI_IDLE),                  // 17 nihilanth (boss: render only)
@@ -203,8 +203,8 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef_atk(40, 40, 80, AI_TURRET, 0, 1200, 7, 2), // 20 sentry
     mdef_atk(50, 40, 80, AI_TURRET, 0, 1200, 8, 2), // 21 turret
     mdef_atk(30, 30, 60, AI_TURRET, 0, 1200, 5, 2), // 22 miniturret
-    mdef(80, 60, 410, AI_IDLE),                    // 23 apache (flyer: render only)
-    mdef(10, 20, 60, AI_IDLE),                     // 24 flyer_flock (passive)
+    mdef(80, 60, 410, AI_IDLE),                     // 23 apache (flyer: render only)
+    mdef(10, 20, 60, AI_IDLE),                      // 24 flyer_flock (passive)
     mdef(50, 25, SCIENTIST_RENDER_RADIUS, AI_IDLE), // 25 sitting scientist (50, unlike the standing 20)
     mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 26 weapon_crowbar
     mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 27 weapon_9mmhandgun

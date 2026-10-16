@@ -19,7 +19,7 @@
 //!   a tick spans.
 
 use psx_math::int32::isqrt_i32;
-use psx_math::{atan2_q12, sin_q12, cos_q12};
+use psx_math::{atan2_q12, cos_q12, sin_q12};
 
 /// 400 units/s^2 (gravity 0.5 of 800) at 20 ticks/s is one unit per tick^2.
 pub const LOB_GRAVITY: i32 = 1;
@@ -105,7 +105,11 @@ pub const ROCKET_BOOST_END_AGE: u8 = 28;
 pub fn rocket_think(vel: [i32; 3], dir: [i32; 3], age: u8) -> ([i32; 3], bool) {
     let s = isqrt_i32(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
     let boost = age < ROCKET_BOOST_END_AGE;
-    let along = if boost { (s * 4 + 2) / 5 + 20 } else { (s * 798 + 500) / 1000 };
+    let along = if boost {
+        (s * 4 + 2) / 5 + 20
+    } else {
+        (s * 798 + 500) / 1000
+    };
     let mut v = [0i32; 3];
     let mut a = 0;
     while a < 3 {
@@ -114,7 +118,10 @@ pub fn rocket_think(vel: [i32; 3], dir: [i32; 3], age: u8) -> ([i32; 3], bool) {
     }
     let len = isqrt_i32(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
     if boost && len > 100 {
-        return ([v[0] * 100 / len, v[1] * 100 / len, v[2] * 100 / len], false);
+        return (
+            [v[0] * 100 / len, v[1] * 100 / len, v[2] * 100 / len],
+            false,
+        );
     }
     (v, !boost && len < 75)
 }
@@ -152,7 +159,11 @@ pub fn bounce_with(
     let mut v = vel;
     let ground = normal[1] > GROUND_NORMAL_Y;
     if rolling && ground {
-        v = [(v[0] * roll_64) >> 6, (v[1] * roll_64) >> 6, (v[2] * roll_64) >> 6];
+        v = [
+            (v[0] * roll_64) >> 6,
+            (v[1] * roll_64) >> 6,
+            (v[2] * roll_64) >> 6,
+        ];
     }
     if normal == [0; 3] {
         return Bounce {
@@ -354,11 +365,13 @@ mod tests {
                 pos = [pos[0] + v[0], pos[1] + v[1], pos[2] + v[2]];
             }
             for axis in 0..3 {
-                assert!((pos[axis] - aim[axis]).abs() <= FLIGHT, "axis {axis}: {pos:?} vs {aim:?}");
+                assert!(
+                    (pos[axis] - aim[axis]).abs() <= FLIGHT,
+                    "axis {axis}: {pos:?} vs {aim:?}"
+                );
             }
         }
     }
-
 
     #[test]
     fn a_rocket_gains_400_units_a_second_per_think_then_caps_at_2000() {

@@ -17,9 +17,9 @@
 //! RAM is the constraint here: no search loops, no per-word tables beyond the
 //! three small arrays, and every routine is built for size.
 
-use psx_math::Mask64;
 use hl_format::hev as table;
 use hl_format::hev::{NO_WORD, SENTENCES, SENTENCE_COUNT, WORD_COUNT};
+use psx_math::Mask64;
 use psx_sfx::{OneShot, Sample, PARKING_TAIL};
 use psx_spu::{Spu, SpuAddr, Voice, Volume};
 
@@ -57,17 +57,17 @@ const NONE: u8 = u8::MAX;
 /// damage), and the seconds before it may be said again (player.cpp
 /// TakeDamage's `SetSuitUpdate` calls).
 const REPORTS: [(u8, u8, u16); 11] = [
-    (NONE, NONE, 0),                                                // generic
-    (table::S_DMG4, table::S_DMG5, table::NEXT_IN_30SEC),           // fall
-    (table::S_DMG4, table::S_DMG5, table::NEXT_IN_30SEC),           // crush
-    (table::S_DMG6, table::S_DMG6, table::NEXT_IN_30SEC),           // bullet
-    (table::S_DMG0, table::S_DMG1, table::NEXT_IN_30SEC),           // slash
-    (NONE, table::S_DMG2, table::NEXT_IN_1MIN),                     // sonic
-    (table::S_DMG3, table::S_DMG3, table::NEXT_IN_1MIN),            // poison
-    (table::S_DET1, table::S_DET1, table::NEXT_IN_1MIN),            // acid
-    (table::S_DET0, table::S_DET0, table::NEXT_IN_1MIN),            // nerve gas
-    (table::S_DET2, table::S_DET2, table::NEXT_IN_1MIN),            // radiation
-    (NONE, NONE, 0),                                                // drowning
+    (NONE, NONE, 0),                                      // generic
+    (table::S_DMG4, table::S_DMG5, table::NEXT_IN_30SEC), // fall
+    (table::S_DMG4, table::S_DMG5, table::NEXT_IN_30SEC), // crush
+    (table::S_DMG6, table::S_DMG6, table::NEXT_IN_30SEC), // bullet
+    (table::S_DMG0, table::S_DMG1, table::NEXT_IN_30SEC), // slash
+    (NONE, table::S_DMG2, table::NEXT_IN_1MIN),           // sonic
+    (table::S_DMG3, table::S_DMG3, table::NEXT_IN_1MIN),  // poison
+    (table::S_DET1, table::S_DET1, table::NEXT_IN_1MIN),  // acid
+    (table::S_DET0, table::S_DET0, table::NEXT_IN_1MIN),  // nerve gas
+    (table::S_DET2, table::S_DET2, table::NEXT_IN_1MIN),  // radiation
+    (NONE, NONE, 0),                                      // drowning
 ];
 
 impl Kind {
@@ -324,7 +324,10 @@ pub unsafe fn load(spu: &mut Spu, chunk: &[u8], base: u32) {
     let mut word = 0;
     while word < WORD_COUNT {
         let entry = table::directory_bytes(0) + word * table::ENTRY_BYTES;
-        let (off, len) = (rd_u32(block, entry) as usize, rd_u32(block, entry + 4) as usize);
+        let (off, len) = (
+            rd_u32(block, entry) as usize,
+            rd_u32(block, entry + 4) as usize,
+        );
         if len != 0 {
             // A PSAU sample: 12 byte asset header, 20 byte audio header (rate
             // at +4, samples at +8, ADPCM blocks at +12), then the blocks.
@@ -448,29 +451,53 @@ mod tests {
             ]
         );
         // 12 damage by a fall is a minor fracture, and nothing else, at 70 HP.
-        assert_eq!(said(Kind::Fall, 12, 82, 70, false), vec![(table::S_DMG4, 30)]);
-        assert_eq!(said(Kind::Bullet, 6, 60, 54, false), vec![(table::S_DMG6, 30)]);
+        assert_eq!(
+            said(Kind::Fall, 12, 82, 70, false),
+            vec![(table::S_DMG4, 30)]
+        );
+        assert_eq!(
+            said(Kind::Bullet, 6, 60, 54, false),
+            vec![(table::S_DMG6, 30)]
+        );
         assert!(said(Kind::Bullet, 5, 60, 55, false).len() == 0);
     }
 
     #[test]
     fn health_warnings_follow_the_new_health() {
-        assert_eq!(said(Kind::Generic, 10, 40, 18, false), vec![(table::S_HLTH2, 600)]);
-        assert_eq!(said(Kind::Generic, 10, 15, 5, false), vec![(table::S_HLTH3, 600)]);
+        assert_eq!(
+            said(Kind::Generic, 10, 40, 18, false),
+            vec![(table::S_HLTH2, 600)]
+        );
+        assert_eq!(
+            said(Kind::Generic, 10, 15, 5, false),
+            vec![(table::S_HLTH3, 600)]
+        );
         // Below 50 a 1-in-4 roll adds "seek medical attention".
         assert_eq!(
             said(Kind::Generic, 10, 40, 18, true),
             vec![(table::S_HLTH2, 600), (table::S_DMG7, 300)]
         );
-        assert_eq!(said(Kind::Generic, 10, 60, 18, true), vec![(table::S_HLTH2, 600)]);
+        assert_eq!(
+            said(Kind::Generic, 10, 60, 18, true),
+            vec![(table::S_HLTH2, 600)]
+        );
     }
 
     #[test]
     fn hazards_report_even_when_the_hit_is_small() {
         // Time-based damage ignores `trivial`.
-        assert_eq!(said(Kind::Radiation, 2, 100, 98, false), vec![(table::S_DET2, 60)]);
-        assert_eq!(said(Kind::Acid, 3, 100, 97, false), vec![(table::S_DET1, 60)]);
-        assert_eq!(said(Kind::Radiation, 1, 70, 69, false), vec![(table::S_DET2, 60), (table::S_HLTH1, 600)]);
+        assert_eq!(
+            said(Kind::Radiation, 2, 100, 98, false),
+            vec![(table::S_DET2, 60)]
+        );
+        assert_eq!(
+            said(Kind::Acid, 3, 100, 97, false),
+            vec![(table::S_DET1, 60)]
+        );
+        assert_eq!(
+            said(Kind::Radiation, 1, 70, 69, false),
+            vec![(table::S_DET2, 60), (table::S_HLTH1, 600)]
+        );
     }
 
     #[test]

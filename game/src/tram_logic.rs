@@ -253,12 +253,23 @@ const fn wide_diff(a: i32, b: i32) -> Wide {
 /// approach.
 #[inline(always)]
 pub const fn is_upstream_of_first(car: [i32; 3], first: [i32; 3], second: [i32; 3]) -> bool {
-    let (sx, sy, sz) = (wide_diff(second[0], first[0]), wide_diff(second[1], first[1]), wide_diff(second[2], first[2]));
+    let (sx, sy, sz) = (
+        wide_diff(second[0], first[0]),
+        wide_diff(second[1], first[1]),
+        wide_diff(second[2], first[2]),
+    );
     if sx.is_zero() && sy.is_zero() && sz.is_zero() {
         return false;
     }
-    let (dx, dy, dz) = (wide_diff(car[0], first[0]), wide_diff(car[1], first[1]), wide_diff(car[2], first[2]));
-    dx.mul_w(sx).add_w(dy.mul_w(sy)).add_w(dz.mul_w(sz)).is_negative()
+    let (dx, dy, dz) = (
+        wide_diff(car[0], first[0]),
+        wide_diff(car[1], first[1]),
+        wide_diff(car[2], first[2]),
+    );
+    dx.mul_w(sx)
+        .add_w(dy.mul_w(sy))
+        .add_w(dz.mul_w(sz))
+        .is_negative()
 }
 
 /// Car-local passenger centre limit across the tram's narrow axis.
@@ -509,7 +520,7 @@ mod tests {
         }
         for round in 0..600_000u32 {
             let range = if round % 4 == 0 { 8192 } else { 300 };
-            let mut point = |next: &mut dyn FnMut() -> u32| -> [i32; 3] {
+            let point = |next: &mut dyn FnMut() -> u32| -> [i32; 3] {
                 let mut axis = || (next() % (2 * range as u32 + 1)) as i32 - range;
                 [axis(), axis(), axis()]
             };
