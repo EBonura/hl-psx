@@ -12,8 +12,10 @@
 # Steps: delete game/pgo/hl-psx.layout, `cargo hl-build pack` (a link without a
 # layout), run this, then `cargo hl-build pack` again: the build places the
 # functions with the layout and links twice. A layout that no longer binds to
-# the code is reported and skipped, so collect it again after any code change
-# and after every `pgo` run (the profile moves the code).
+# the code fails the build (the SDK's `place` names the unbound functions
+# and gates at 98% bound with no single function over 1% of the profile left out),
+# so collect it again after any code change and after every `pgo` run (the profile
+# moves the code).
 #
 # 2026-10-16 (maps 0 6 11 12 18 20 23 56 60 88 94): with this layout every one of
 # the 11 maps runs at least as fast as the build before the 64-bit clean-up

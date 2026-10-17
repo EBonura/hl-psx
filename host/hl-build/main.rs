@@ -2435,8 +2435,9 @@ fn compile_game(
 /// to `.hlpsx/order/` under a name that holds its hash (so a new order makes
 /// cargo rerun the build script). `None` when there is no layout to apply:
 /// a diagnostic build, a link without it, or no shipped layout. A layout that
-/// no longer binds to the code is reported and skipped, never fatal; collect
-/// a fresh one with `pgo`.
+/// no longer binds to the code fails the build (the SDK's `place` applies its
+/// coverage gate and names the unbound functions): collect a fresh one with
+/// `scripts/collect-layout.sh`.
 fn layout_order(
     repository: &Path,
     psoxide: &Path,
@@ -2465,11 +2466,13 @@ fn layout_order(
         .arg(&staging)
         .status()?;
     if !placed.success() {
-        println!(
-            "warning: {SHIPPED_LAYOUT} does not bind to this code; linking in the default \
-             function order (collect a fresh layout with `pgo`)"
-        );
-        return Ok(None);
+        return Err(format!(
+            "{SHIPPED_LAYOUT} does not bind to this code (the unbound functions are listed \
+             above, hottest first); a link in the default function order is slower and \
+             unrepresentative, so the build stops. Collect a fresh layout with \
+             scripts/collect-layout.sh"
+        )
+        .into());
     }
     let order = directory.join(format!(
         "order-{:.16}.txt",
@@ -2817,7 +2820,11 @@ fn profile_guided_pack(
         .zip(polls)
         .filter_map(|(tape, window)| Some((tape.as_path(), (*window)?)))
         .collect();
-    LAYOUT_ENABLED.store(windows.is_empty(), Ordering::Relaxed);
+    // A profile moves the code, so the shipped layout (bound to the code of an
+    // earlier profile) cannot apply to these links, and a layout that does not
+    // bind now fails the build. With tape windows `pgo` collects a layout below;
+    // with scripts only, collect it afterwards (scripts/collect-layout.sh) and pack.
+    LAYOUT_ENABLED.store(false, Ordering::Relaxed);
     let trial = link_with_profile(
         repository,
         psoxide,

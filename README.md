@@ -220,14 +220,15 @@ saves that as `game/pgo/hl-psx.layout`. The R3000's 4 KB instruction cache is
 direct-mapped, so which functions share a cache set decides how often hot code
 evicts itself. Every later build places the functions with that layout and
 links twice (the code is identical, only its addresses move); a layout that no
-longer binds to the code is reported and skipped. Collect it again whenever
-the profile is. The shipped profile has none: a layout from the chapter-two
+longer binds to the code fails the build, naming the unbound functions (the SDK's
+`psoxide-pgo place` gate: 98% of the profile bound and no single function over 1%
+left out). Collect it again whenever the profile is. The shipped profile has none: a layout from the chapter-two
 tape alone made c1a2b 14% slower when it bound, so do not pass `--polls` unless
 the layout is collected over several maps.
 
 `scripts/collect-layout.sh MAP...` collects the same layout from scripted maps instead of a
 tape (all maps in one layout, so none is favoured); see the header of the script. Redo it
-after any code change or `pgo` run: a layout that no longer binds is skipped.
+after any code change or `pgo` run: a layout that no longer binds fails the build.
 
 `--script PLAY_ORDER:POLLS` (repeatable, with `HLPSX_COLLECT_MAPS` set to the
 maps' room ids so the collect build holds them) profiles a map entered through
