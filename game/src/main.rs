@@ -35782,6 +35782,11 @@ fn play(
         FLASHLIGHT_ON = flashlight;
         FLASHLIGHT_BATTERY = flashlight_battery;
         FLASHLIGHT_TIMER = flashlight_timer;
+        // CBasePlayer::Spawn clears the time-based damage a death or a fresh start
+        // left running; a changelevel carries it (the static outlives the map).
+        if !launch.preserve_view {
+            POISON = player_rules::Poison::new();
+        }
     }
     let mut flash_prev = false; // rising-edge latch for the flashlight toggle
     let mut tram_active = false;
