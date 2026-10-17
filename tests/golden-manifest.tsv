@@ -1,7 +1,7 @@
 # file	bytes	sha256 (frames blessed on a disc cooked from a Half-Life install; kept local, see scripts/golden.sh)
 hl/hazard-maps.png	25624	3cf8b9b37dcf17ac655499c0de4eed65971bcd04151b33a026ba5511c5350239
 hl/hazard-spawn.png	42373	519e4ad3a14756cf13ee83208fa5e51b1d575e3f43a3e8cfe1d69b6756e7bd83
-hl/hazard-walk.png	35093	0978320c7ed04318f9124f8ea648cc26b87233784b9682938f734e7c05565a36
+hl/hazard-walk.png	35035	03f84aec5f16f84332bd50411c2d72bf7ebdde3371982180b6ec9ae3036dcea0
 hl/interloper-entry.png	50830	e250e3030c89db057783cf6f5cd4c1409f74e588b99839a8f466ab4e71f21f0c
 hl/interloper-walk.png	32560	d8b42312d0c196773c04bb2f8ceae346f597b563a016b13167736135fc594fc0
 hl/main-menu.png	29748	4df8b6a1553dd6a7d8f5c1b3ac118a79c22580f3251f67292877d1d71342a893
