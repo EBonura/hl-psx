@@ -1,4 +1,4 @@
-_RNvCsa9Qy3L78YQJ_6hl_psx4play:12195370:0
+_RNvCsa9Qy3L78YQJ_6hl_psx4play:12194291:0
  0: 2
  14: 1
  14: _RNvCsiT8caOteWf3_7psx_pad10poll_port1:3
@@ -833,7 +833,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12195370:0
     1.1: 580
   1.1: 564
  1669: 547
- 1670: _RNvCsa9Qy3L78YQJ_6hl_psx14logic_pre_tick:516972
+ 1670: _RNvCsa9Qy3L78YQJ_6hl_psx14logic_pre_tick:516177
   1: _RNvCsa9Qy3L78YQJ_6hl_psx20logic_process_events:118641
    6: 550
    9.1: 37223
@@ -934,11 +934,11 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12195370:0
    17: 94
   42: 548
   42.1: 491
-  42.1: _RNvCsa9Qy3L78YQJ_6hl_psx19logic_tick_pendulum:12133
+  42.1: _RNvCsa9Qy3L78YQJ_6hl_psx19logic_tick_pendulum:11338
    1: _RNvCsa9Qy3L78YQJ_6hl_psx17logic_valid_brush:542
     2: 542
    4.1: 548
-   5: _RNvNtCsa9Qy3L78YQJ_6hl_psx11logic_state13pendulum_tick:7081
+   5: _RNvNtCsa9Qy3L78YQJ_6hl_psx11logic_state13pendulum_tick:6286
     7: 538
     8: 7
     8: _RNvNtCsa9Qy3L78YQJ_6hl_psx11logic_state12tick_reached:10
@@ -991,9 +991,6 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12195370:0
      1.1: 171
     51: _RNvNtCsa9Qy3L78YQJ_6hl_psx11logic_state19pack_pendulum_phase:223
      1: 223
-    64660: _RNvNtCsa9Qy3L78YQJ_6hl_psx11logic_state19pack_pendulum_phase:795
-     1: 384
-     2: 411
    6: _RNvCsa9Qy3L78YQJ_6hl_psx14pendulum_state:2197
     2.1: 547
     3.1: 544
@@ -1176,7 +1173,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12195370:0
  1914: 573
  1918: 571
  1919: 568
- 1961: _RNvCsa9Qy3L78YQJ_6hl_psx11tick_trains:26234
+ 1961: _RNvCsa9Qy3L78YQJ_6hl_psx11tick_trains:26230
   2.1: 617
   3: 603
   3.1: 628
@@ -1260,8 +1257,6 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12195370:0
   128: 355
   128.3: 324
   130: 332
-  47204: _RNvCsa9Qy3L78YQJ_6hl_psx17train_next_corner:4
-   6: 4
  1967: 593
  1972.1: _RNvXs4_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtNtNtB7_6traits8iterator8Iterator4nextCsa9Qy3L78YQJ_6hl_psx:136360
   1.3: _RNvXs3_NtNtCsjHNIEcpe9Kk_4core4iter5rangeINtNtNtB9_3ops5range5RangejENtB5_17RangeIteratorImpl9spec_nextCsa9Qy3L78YQJ_6hl_psx:136360
@@ -1980,9 +1975,9 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12195370:0
  3311: 557
  3312: 558
  3313: 593
- 3316: _RNvCsa9Qy3L78YQJ_6hl_psx13damage_player:29
+ 3316: _RNvCsa9Qy3L78YQJ_6hl_psx13damage_player:25
   1: 1
-  2: _RNvCsa9Qy3L78YQJ_6hl_psx17damage_player_hit:13
+  2: _RNvCsa9Qy3L78YQJ_6hl_psx17damage_player_hit:9
    1: _RNvNtCsa9Qy3L78YQJ_6hl_psx8settings8debug_on:1
     1: 1
    6: 3
@@ -1991,8 +1986,6 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12195370:0
    8: 1
    13: 2
    15: 1
-   46947: _RNvMs5_NtCsjHNIEcpe9Kk_4core3numt14saturating_sub:4
-    1: 4
   3: _RNvCsa9Qy3L78YQJ_6hl_psx7hev_hit:12
    1: 5
    4: _RNvMNtCs7pFVxfANf1b_6psx_fx3rngNtB2_6LcgRng4next:5
@@ -4511,10 +4504,7 @@ _RNvCsa9Qy3L78YQJ_6hl_psx4play:12195370:0
  5446: 514
  5447: 566
  5619: 1
- 30564: _RNvCsa9Qy3L78YQJ_6hl_psx30finish_world_affine_candidates:276
-  14: 1
-  23: 275
-_RNvCsa9Qy3L78YQJ_6hl_psx14draw_viewmodel:7637607:763
+_RNvCsa9Qy3L78YQJ_6hl_psx14draw_viewmodel:7529116:763
  0: 796
  8: 805
  11: 844
@@ -4602,11 +4592,11 @@ _RNvCsa9Qy3L78YQJ_6hl_psx14draw_viewmodel:7637607:763
    1.1: 109031
    1.1: _RNvXsU_NtNtCsjHNIEcpe9Kk_4core3cmp5implsjNtB7_10PartialOrd2lt:108979
     0.4: 108979
- 78: _RNvMs1_NtCs53xDtPaPQko_9psx_asset4hmd8NtB5_5Model8triangle:1633468
+ 78: _RNvMs1_NtCs53xDtPaPQko_9psx_asset4hmd8NtB5_5Model8triangle:1524977
   1: _RNvMs1_NtCs53xDtPaPQko_9psx_asset4hmd8NtB5_5Model11tri_in_blob:109327
    3: _RNvNtCs53xDtPaPQko_9psx_asset4hmd84fits:109327
     1: 109327
-  11: _RNvMs1_NtCs53xDtPaPQko_9psx_asset4hmd8NtB5_5Model18triangle_unchecked:1524141
+  11: _RNvMs1_NtCs53xDtPaPQko_9psx_asset4hmd8NtB5_5Model18triangle_unchecked:1415650
    13: 109002
    14: _RNvNtCs53xDtPaPQko_9psx_asset4hmd86rd_u16:109033
     4: 109033
@@ -4627,8 +4617,6 @@ _RNvCsa9Qy3L78YQJ_6hl_psx14draw_viewmodel:7637607:763
     4.4: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr9const_ptrPh4readCsa9Qy3L78YQJ_6hl_psx:108934
      5.15: _RINvNtCsjHNIEcpe9Kk_4core3ptr4readhECsa9Qy3L78YQJ_6hl_psx:108934
       39.2: 108934
-   64015: _RNvNtCs53xDtPaPQko_9psx_asset4hmd86rd_u16:108491
-    4: 108491
  80: _RNvYjNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3minCsa9Qy3L78YQJ_6hl_psx:108482
   4.6: 108482
  80.2: 108934
@@ -4836,13 +4824,13 @@ _RNvCsa9Qy3L78YQJ_6hl_psx24finish_deferred_overlays:4889814:504
    1: 82
    2: 62
  38: 578
-_RNvCsa9Qy3L78YQJ_6hl_psx16split_walk_entry:4533857:23375
+_RNvCsa9Qy3L78YQJ_6hl_psx16split_walk_entry:4513087:23375
  0: 23549
  2: 23654
  3: 23452
  4: 23592
  7.1: 27733
- 8: _RNvCsa9Qy3L78YQJ_6hl_psx13split_examine:3954830
+ 8: _RNvCsa9Qy3L78YQJ_6hl_psx13split_examine:3934060
   8: 51280
   9: 51044
   10: 48133
@@ -4906,15 +4894,15 @@ _RNvCsa9Qy3L78YQJ_6hl_psx16split_walk_entry:4533857:23375
     6: 35224
    6.2: 35466
   42: 41206
-  43: _RNvCsa9Qy3L78YQJ_6hl_psx15world_order_key:510391
+  43: _RNvCsa9Qy3L78YQJ_6hl_psx15world_order_key:489621
    1: 30955
-   2: _RINvNtCsLzN7oAaAAf_11psx_goldsrc8ordering15world_order_keyKj280_ECsa9Qy3L78YQJ_6hl_psx:355788
+   2: _RINvNtCsLzN7oAaAAf_11psx_goldsrc8ordering15world_order_keyKj280_ECsa9Qy3L78YQJ_6hl_psx:335018
     4: 30798
     5: 30744
     5: _RINvNtCsLzN7oAaAAf_11psx_goldsrc8ordering9clamp_otzKj280_ECsa9Qy3L78YQJ_6hl_psx:30932
      1: _RNvXsV_NtNtCsjHNIEcpe9Kk_4core3cmp5implsjNtB7_3Ord5clamp:30932
       9: 30932
-    5: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc8orderingNtB2_15PrimitiveDepths14representative:108641
+    5: _RNvMNtCsLzN7oAaAAf_11psx_goldsrc8orderingNtB2_15PrimitiveDepths14representative:87871
      1: 30844
      2: 20926
      6.3: 20880
@@ -4922,8 +4910,6 @@ _RNvCsa9Qy3L78YQJ_6hl_psx16split_walk_entry:4533857:23375
       4.1: 9982
      16: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:5239
       4.10: 5239
-     65438: _RNvYlNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCsa9Qy3L78YQJ_6hl_psx:20770
-      4: 20770
     7: 30923
     7.3: 30735
     11: 30944
@@ -8206,105 +8192,6 @@ _RNvNtCs8A05xn2zcy9_17compiler_builtins3mem7memmove:1261369:13848
     4.8: _RNvMNtNtCsjHNIEcpe9Kk_4core3ptr7mut_ptrOh15wrapping_offsetCs8A05xn2zcy9_17compiler_builtins:1
      5.8: 1
    5.1: 2
-_RNvMs0_Cs3nhFw1xI4Xm_8psx_fontNtB5_9FontAtlas22draw_text_with_spacing:1175065:3199
- 0: 3484
- 10: _RNvMs4_CsaxIrJBfC7rO_8psx_vramNtB5_11TexturePage18apply_as_draw_mode:43187
-  1: _RNvNtCs52mhn4g4tH3_6psx_io3gpu18wait_command_ready:9639
-   1: _RNvNtCs52mhn4g4tH3_6psx_io3gpu10wait_ready:9639
-    6: _RNvMsx_NvNtCsvYOOMpHiQb_6psx_hw3gpu1__NtB7_7GpuStat8contains:3001
-     64821.1: _RNvMsf_NvNtCsvYOOMpHiQb_6psx_hw3gpu1__NtB5_16InternalBitFlags8contains:3001
-      64821: 3001
-    6: _RNvNtCs52mhn4g4tH3_6psx_io3gpu6status:3286
-     3: _RNvCs52mhn4g4tH3_6psx_io8read_u32:3286
-      3: _RINvNtCsjHNIEcpe9Kk_4core3ptr13read_volatilemECs52mhn4g4tH3_6psx_io:3286
-       11: 3286
-    6.1: 3352
-  2: _RNvNtCs52mhn4g4tH3_6psx_io3gpu13write_command:3251
-   9: _RNvCs52mhn4g4tH3_6psx_io9write_u32:3251
-    3: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatilemECsaxIrJBfC7rO_8psx_vram:3251
-     11: 3251
-  2: _RNvNtNtCsvYOOMpHiQb_6psx_hw3gpu3gp09draw_mode:9869
-   8: 3396
-   9: 3147
-   12: 3326
-  3: 3459
-  4: 3590
-  6: 3318
-  13: _RNvNtCs52mhn4g4tH3_6psx_io3gpu18wait_command_ready:10061
-   1.1: _RNvNtCs52mhn4g4tH3_6psx_io3gpu10wait_ready:10061
-    6: _RNvMsx_NvNtCsvYOOMpHiQb_6psx_hw3gpu1__NtB7_7GpuStat8contains:3147
-     64821.1: _RNvMsf_NvNtCsvYOOMpHiQb_6psx_hw3gpu1__NtB5_16InternalBitFlags8contains:3147
-      64821: 3147
-    6: _RNvNtCs52mhn4g4tH3_6psx_io3gpu6status:3437
-     3: _RNvCs52mhn4g4tH3_6psx_io8read_u32:3437
-      3: _RINvNtCsjHNIEcpe9Kk_4core3ptr13read_volatilemECs52mhn4g4tH3_6psx_io:3437
-       11: 3437
-    6.1: 3477
- 18.1: _RNvXNtNtCsjHNIEcpe9Kk_4core3str4iterNtB2_5CharsNtNtNtNtB6_4iter6traits8iterator8Iterator4next:116153
-  3: _RINvNtNtCsjHNIEcpe9Kk_4core3str11validations15next_code_pointINtNtNtB6_5slice4iter4IterhEECs3nhFw1xI4Xm_8psx_font:116153
-   2: _RNvXs2J_NtNtCsjHNIEcpe9Kk_4core5slice4iterINtB6_4IterhENtNtNtNtBa_4iter6traits8iterator8Iterator4nextCs3nhFw1xI4Xm_8psx_font:38674
-    23: 38674
-   2.1: 38327
-   3: 39152
- 19: _RNvMs0_Cs3nhFw1xI4Xm_8psx_fontNtB5_9FontAtlas8glyph_uv:427546
-  2: 38621
-  3: 39043
-  3.1: 39386
-  7: 38348
-  7.1: 39128
-  8: 39583
-  9: _RNvCs3nhFw1xI4Xm_8psx_font10cell_width:116186
-   1: 38600
-   1: _RNvYtNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCs3nhFw1xI4Xm_8psx_font:38660
-    4: 38660
-   1.1: 38926
-  10: 37714
-  11: 39537
- 21: _RNvMCs3nhFw1xI4Xm_8psx_fontNtB2_10BitmapFont13glyph_advance:38606
-  1: _RNvMCs3nhFw1xI4Xm_8psx_fontNtB2_10BitmapFont11glyph_index:38606
-   3: 38606
- 26: _RNvNtCs52mhn4g4tH3_6psx_io3gpu18wait_command_ready:115764
-  1: _RNvNtCs52mhn4g4tH3_6psx_io3gpu10wait_ready:115764
-   6: _RNvMsx_NvNtCsvYOOMpHiQb_6psx_hw3gpu1__NtB7_7GpuStat8contains:38239
-    64821.1: _RNvMsf_NvNtCsvYOOMpHiQb_6psx_hw3gpu1__NtB5_16InternalBitFlags8contains:38239
-     64821: 38239
-   6: _RNvNtCs52mhn4g4tH3_6psx_io3gpu6status:38321
-    3: _RNvCs52mhn4g4tH3_6psx_io8read_u32:38321
-     3: _RINvNtCsjHNIEcpe9Kk_4core3ptr13read_volatilemECs52mhn4g4tH3_6psx_io:38321
-      11: 38321
-   6.1: 39204
- 31: _RNvNtCs52mhn4g4tH3_6psx_io3gpu13write_command:38682
-  9: _RNvCs52mhn4g4tH3_6psx_io9write_u32:38682
-   3: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatilemECs3nhFw1xI4Xm_8psx_font:38682
-    11: 38682
- 32: _RNvNtCs52mhn4g4tH3_6psx_io3gpu13write_command:39493
-  9.1: _RNvCs52mhn4g4tH3_6psx_io9write_u32:39493
-   3.1: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatilemECs3nhFw1xI4Xm_8psx_font:39493
-    11: 39493
- 32: _RNvNtCsvYOOMpHiQb_6psx_hw3gpu11pack_vertex:39117
-  1: 39117
- 37: _RNvNtCs52mhn4g4tH3_6psx_io3gpu13write_command:38682
-  9.2: _RNvCs52mhn4g4tH3_6psx_io9write_u32:38682
-   3.2: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatilemECs3nhFw1xI4Xm_8psx_font:38682
-    11: 38682
- 37: _RNvNtCsvYOOMpHiQb_6psx_hw3gpu13pack_texcoord:37831
-  1: 37831
- 39: _RNvNtCs52mhn4g4tH3_6psx_io3gpu13write_command:38448
-  9.3: _RNvCs52mhn4g4tH3_6psx_io9write_u32:38448
-   3.3: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatilemECs3nhFw1xI4Xm_8psx_font:38448
-    11: 38448
- 42: _RNvMCs3nhFw1xI4Xm_8psx_fontNtB2_10BitmapFont13glyph_advance:155193
-  1: _RNvMCs3nhFw1xI4Xm_8psx_fontNtB2_10BitmapFont11glyph_index:77911
-   2: 38759
-   4: 39152
-  2: _RINvMNtCsjHNIEcpe9Kk_4core6optionINtB3_6OptiontE8and_thenhNCNvMCs3nhFw1xI4Xm_8psx_fontNtBZ_10BitmapFont13glyph_advance0EBZ_:77282
-   5: _RNCNvMCs3nhFw1xI4Xm_8psx_fontNtB4_10BitmapFont13glyph_advance0B4_:77282
-    1: 38676
-    2: _RINvMNtCsjHNIEcpe9Kk_4core6optionINtB3_6OptionRShE8and_thenhNCNCNvMCs3nhFw1xI4Xm_8psx_fontNtB13_10BitmapFont13glyph_advance00EB13_:38606
-     4: 38606
- 45: 3493
- 64519: _RNvMs_NtCsjHNIEcpe9Kk_4core3nums12wrapping_add:39386
-  1: 39386
 _RNvCsa9Qy3L78YQJ_6hl_psx11submit_list:1154452:1104
  0: 1117
  1: _RINvNtCsa9Qy3L78YQJ_6hl_psx6driver4withuNCNvB4_11submit_list0EB4_:1152215
@@ -8500,6 +8387,103 @@ _RNvCsa9Qy3L78YQJ_6hl_psx23emit_world_face_patches:1139390:26976
  65: 9523
  68: 26970
  69: 27268
+_RNvMs0_Cs3nhFw1xI4Xm_8psx_fontNtB5_9FontAtlas22draw_text_with_spacing:1135679:3199
+ 0: 3484
+ 10: _RNvMs4_CsaxIrJBfC7rO_8psx_vramNtB5_11TexturePage18apply_as_draw_mode:43187
+  1: _RNvNtCs52mhn4g4tH3_6psx_io3gpu18wait_command_ready:9639
+   1: _RNvNtCs52mhn4g4tH3_6psx_io3gpu10wait_ready:9639
+    6: _RNvMsx_NvNtCsvYOOMpHiQb_6psx_hw3gpu1__NtB7_7GpuStat8contains:3001
+     64821.1: _RNvMsf_NvNtCsvYOOMpHiQb_6psx_hw3gpu1__NtB5_16InternalBitFlags8contains:3001
+      64821: 3001
+    6: _RNvNtCs52mhn4g4tH3_6psx_io3gpu6status:3286
+     3: _RNvCs52mhn4g4tH3_6psx_io8read_u32:3286
+      3: _RINvNtCsjHNIEcpe9Kk_4core3ptr13read_volatilemECs52mhn4g4tH3_6psx_io:3286
+       11: 3286
+    6.1: 3352
+  2: _RNvNtCs52mhn4g4tH3_6psx_io3gpu13write_command:3251
+   9: _RNvCs52mhn4g4tH3_6psx_io9write_u32:3251
+    3: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatilemECsaxIrJBfC7rO_8psx_vram:3251
+     11: 3251
+  2: _RNvNtNtCsvYOOMpHiQb_6psx_hw3gpu3gp09draw_mode:9869
+   8: 3396
+   9: 3147
+   12: 3326
+  3: 3459
+  4: 3590
+  6: 3318
+  13: _RNvNtCs52mhn4g4tH3_6psx_io3gpu18wait_command_ready:10061
+   1.1: _RNvNtCs52mhn4g4tH3_6psx_io3gpu10wait_ready:10061
+    6: _RNvMsx_NvNtCsvYOOMpHiQb_6psx_hw3gpu1__NtB7_7GpuStat8contains:3147
+     64821.1: _RNvMsf_NvNtCsvYOOMpHiQb_6psx_hw3gpu1__NtB5_16InternalBitFlags8contains:3147
+      64821: 3147
+    6: _RNvNtCs52mhn4g4tH3_6psx_io3gpu6status:3437
+     3: _RNvCs52mhn4g4tH3_6psx_io8read_u32:3437
+      3: _RINvNtCsjHNIEcpe9Kk_4core3ptr13read_volatilemECs52mhn4g4tH3_6psx_io:3437
+       11: 3437
+    6.1: 3477
+ 18.1: _RNvXNtNtCsjHNIEcpe9Kk_4core3str4iterNtB2_5CharsNtNtNtNtB6_4iter6traits8iterator8Iterator4next:116153
+  3: _RINvNtNtCsjHNIEcpe9Kk_4core3str11validations15next_code_pointINtNtNtB6_5slice4iter4IterhEECs3nhFw1xI4Xm_8psx_font:116153
+   2: _RNvXs2J_NtNtCsjHNIEcpe9Kk_4core5slice4iterINtB6_4IterhENtNtNtNtBa_4iter6traits8iterator8Iterator4nextCs3nhFw1xI4Xm_8psx_font:38674
+    23: 38674
+   2.1: 38327
+   3: 39152
+ 19: _RNvMs0_Cs3nhFw1xI4Xm_8psx_fontNtB5_9FontAtlas8glyph_uv:427546
+  2: 38621
+  3: 39043
+  3.1: 39386
+  7: 38348
+  7.1: 39128
+  8: 39583
+  9: _RNvCs3nhFw1xI4Xm_8psx_font10cell_width:116186
+   1: 38600
+   1: _RNvYtNtNtCsjHNIEcpe9Kk_4core3cmp3Ord3maxCs3nhFw1xI4Xm_8psx_font:38660
+    4: 38660
+   1.1: 38926
+  10: 37714
+  11: 39537
+ 21: _RNvMCs3nhFw1xI4Xm_8psx_fontNtB2_10BitmapFont13glyph_advance:38606
+  1: _RNvMCs3nhFw1xI4Xm_8psx_fontNtB2_10BitmapFont11glyph_index:38606
+   3: 38606
+ 26: _RNvNtCs52mhn4g4tH3_6psx_io3gpu18wait_command_ready:115764
+  1: _RNvNtCs52mhn4g4tH3_6psx_io3gpu10wait_ready:115764
+   6: _RNvMsx_NvNtCsvYOOMpHiQb_6psx_hw3gpu1__NtB7_7GpuStat8contains:38239
+    64821.1: _RNvMsf_NvNtCsvYOOMpHiQb_6psx_hw3gpu1__NtB5_16InternalBitFlags8contains:38239
+     64821: 38239
+   6: _RNvNtCs52mhn4g4tH3_6psx_io3gpu6status:38321
+    3: _RNvCs52mhn4g4tH3_6psx_io8read_u32:38321
+     3: _RINvNtCsjHNIEcpe9Kk_4core3ptr13read_volatilemECs52mhn4g4tH3_6psx_io:38321
+      11: 38321
+   6.1: 39204
+ 31: _RNvNtCs52mhn4g4tH3_6psx_io3gpu13write_command:38682
+  9: _RNvCs52mhn4g4tH3_6psx_io9write_u32:38682
+   3: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatilemECs3nhFw1xI4Xm_8psx_font:38682
+    11: 38682
+ 32: _RNvNtCs52mhn4g4tH3_6psx_io3gpu13write_command:39493
+  9.1: _RNvCs52mhn4g4tH3_6psx_io9write_u32:39493
+   3.1: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatilemECs3nhFw1xI4Xm_8psx_font:39493
+    11: 39493
+ 32: _RNvNtCsvYOOMpHiQb_6psx_hw3gpu11pack_vertex:39117
+  1: 39117
+ 37: _RNvNtCs52mhn4g4tH3_6psx_io3gpu13write_command:38682
+  9.2: _RNvCs52mhn4g4tH3_6psx_io9write_u32:38682
+   3.2: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatilemECs3nhFw1xI4Xm_8psx_font:38682
+    11: 38682
+ 37: _RNvNtCsvYOOMpHiQb_6psx_hw3gpu13pack_texcoord:37831
+  1: 37831
+ 39: _RNvNtCs52mhn4g4tH3_6psx_io3gpu13write_command:38448
+  9.3: _RNvCs52mhn4g4tH3_6psx_io9write_u32:38448
+   3.3: _RINvNtCsjHNIEcpe9Kk_4core3ptr14write_volatilemECs3nhFw1xI4Xm_8psx_font:38448
+    11: 38448
+ 42: _RNvMCs3nhFw1xI4Xm_8psx_fontNtB2_10BitmapFont13glyph_advance:155193
+  1: _RNvMCs3nhFw1xI4Xm_8psx_fontNtB2_10BitmapFont11glyph_index:77911
+   2: 38759
+   4: 39152
+  2: _RINvMNtCsjHNIEcpe9Kk_4core6optionINtB3_6OptiontE8and_thenhNCNvMCs3nhFw1xI4Xm_8psx_fontNtBZ_10BitmapFont13glyph_advance0EBZ_:77282
+   5: _RNCNvMCs3nhFw1xI4Xm_8psx_fontNtB4_10BitmapFont13glyph_advance0B4_:77282
+    1: 38676
+    2: _RINvMNtCsjHNIEcpe9Kk_4core6optionINtB3_6OptionRShE8and_thenhNCNCNvMCs3nhFw1xI4Xm_8psx_fontNtB13_10BitmapFont13glyph_advance00EB13_:38606
+     4: 38606
+ 45: 3493
 _RNvCsa9Qy3L78YQJ_6hl_psx11camera_leaf:1012429:4938
  1: 4981
  7: 74339
