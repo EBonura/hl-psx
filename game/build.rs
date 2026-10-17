@@ -21,7 +21,7 @@ mod skill_cfg;
 const FALLBACK_MAP_WORDS: usize = 255_000;
 const FALLBACK_MAX_VERTS: usize = 12_288;
 const FALLBACK_MAX_FACES: usize = 6144;
-const FALLBACK_MAX_FACE_GROUPS: usize = 3072;
+const FALLBACK_MAX_FACE_GROUPS: usize = 2848;
 const FALLBACK_MAX_LEAVES: usize = 8192;
 const FALLBACK_MAX_ENTS: usize = 192;
 const FALLBACK_MAX_TEX_SLOTS: usize = 256;
