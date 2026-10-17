@@ -16804,13 +16804,40 @@ fn cook_mdl_tex(b: &[u8], idx: usize, w0: usize, h0: usize) -> CookedTex {
     };
     let fw = final_size(w0 as u32) as usize;
     let fh = final_size(h0 as u32) as usize;
+    // Box-filter downscale, as for the world textures: each cooked texel
+    // averages the source texels it covers, so a 256 px skin keeps its detail
+    // instead of one texel in sixteen. A block holding palette index 255 (the
+    // masked-texture key) keeps the nearest texel, so the key never bleeds
+    // into its neighbours.
     let mut colors: Vec<(u8, u8, u8)> = Vec::with_capacity(fw * fh);
     for y in 0..fh {
+        let (y0, y1) = (y * h0 / fh, ((y + 1) * h0 / fh).max(y * h0 / fh + 1));
         for x in 0..fw {
-            let pi = *b
-                .get(idx + (y * h0 / fh) * w0 + (x * w0 / fw))
-                .unwrap_or(&0) as usize;
-            colors.push(pal(pi));
+            let (x0, x1) = (x * w0 / fw, ((x + 1) * w0 / fw).max(x * w0 / fw + 1));
+            let (mut sum, mut n, mut keyed) = ([0u32; 3], 0u32, false);
+            for sy in y0..y1 {
+                for sx in x0..x1 {
+                    let i = *b.get(idx + sy * w0 + sx).unwrap_or(&0);
+                    keyed |= i == 255;
+                    let c = pal(i as usize);
+                    sum[0] += c.0 as u32;
+                    sum[1] += c.1 as u32;
+                    sum[2] += c.2 as u32;
+                    n += 1;
+                }
+            }
+            if keyed || n == 0 {
+                let pi = *b
+                    .get(idx + (y * h0 / fh) * w0 + (x * w0 / fw))
+                    .unwrap_or(&0) as usize;
+                colors.push(pal(pi));
+            } else {
+                colors.push((
+                    ((sum[0] + n / 2) / n) as u8,
+                    ((sum[1] + n / 2) / n) as u8,
+                    ((sum[2] + n / 2) / n) as u8,
+                ));
+            }
         }
     }
     let pal16 = median_cut16(&colors);
@@ -18394,6 +18421,24 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    /// A model skin of alternating black and white texels must also cook to grey.
+    #[test]
+    fn model_skin_downscale_averages_the_texels_it_covers() {
+        let (w, h) = (128usize, 128usize);
+        let mut b: Vec<u8> = (0..w * h).map(|i| ((i % w + i / w) % 2) as u8).collect();
+        let mut pal = [0u8; 768];
+        pal[3..6].copy_from_slice(&[255, 255, 255]);
+        b.extend_from_slice(&pal);
+        let tex = super::cook_mdl_tex(&b, 0, w, h);
+        assert_eq!((tex.w, tex.h), (64, 64));
+        for i in 0..64 * 64 {
+            let byte = tex.pix4[i / 2];
+            let c = tex.clut[if i % 2 == 0 { byte & 15 } else { byte >> 4 } as usize];
+            let r = ((c & 31) << 3) as i32;
+            assert!((100..=156).contains(&r), "texel {i} cooked to red {r}");
+        }
+    }
+
     /// A 128 px texture of alternating black and white texels must cook to
     /// grey, not to whichever of the two nearest-neighbour sampling lands on.
     #[test]
