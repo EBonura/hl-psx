@@ -1,0 +1,21 @@
+@journey name=hl-chain-skill-hard title="Half-Life New Game on Hard: three changelevels of the tram ride keep Hard" prologue=new_game skill=hard max_ticks=20000
+
+map c0a0 next c0a0a
+  @checkpoint arrive-c0a0
+  @assert sym=SKILL size=1 op=eq value=2
+  900
+
+map c0a0a next c0a0b
+  @checkpoint arrive-c0a0a
+  @assert sym=SKILL size=1 op=eq value=2
+  1000
+
+map c0a0b next c0a0c
+  @checkpoint arrive-c0a0b
+  @assert sym=SKILL size=1 op=eq value=2
+  1900
+
+map c0a0c next c0a0d
+  @checkpoint arrive-c0a0c
+  @assert sym=SKILL size=1 op=eq value=2
+  @stop

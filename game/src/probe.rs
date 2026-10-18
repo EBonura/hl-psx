@@ -261,6 +261,20 @@ pub unsafe fn step(
                     GOTO = Some((i, c.a[0] != 0));
                 }
             }
+            51 => {
+                let level = crate::settings::skill() as i32;
+                crate::reference_trace::probe_vals(now, "skill", &[level, c.a[0] as i32]);
+                if c.a[0] >= 0 && c.a[0] as i32 != level {
+                    crate::settings::set_skill(c.a[0].min(2) as u8);
+                    let mut i = 0usize;
+                    while i < crate::menu::MAPS.len() && crate::menu::MAPS[i] != map_name {
+                        i += 1;
+                    }
+                    if i < crate::menu::MAPS.len() {
+                        GOTO = Some((i, false));
+                    }
+                }
+            }
             15 => {
                 GOD = 0;
                 *health = 0;

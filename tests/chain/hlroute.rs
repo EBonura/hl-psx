@@ -551,7 +551,16 @@ fn compile(o: &Opts) -> Result<(), String> {
         // `new_game`: wait out the boot and press Cross on the title.
         if prologue == "new_game" {
             t.push_str("\n[[step]]\nlabel = \"boot to the title\"\nwait = 620\n");
-            t.push_str("\n[[step]]\nlabel = \"title: New Game, default skill\"\npress = [\"cross\"]\nhold = 12\nwait = 24\n");
+            // `skill=easy|hard`: Left/Right on the New game row first (Medium is the default).
+            let (skill, key) = match jv("skill").as_deref() {
+                Some("easy") => ("Easy", "left"),
+                Some("hard") => ("Hard", "right"),
+                _ => ("default", ""),
+            };
+            if !key.is_empty() {
+                let _ = writeln!(t, "\n[[step]]\nlabel = \"title: choose {skill}\"\npress = [\"{key}\"]\nhold = 8\nwait = 20");
+            }
+            let _ = writeln!(t, "\n[[step]]\nlabel = \"title: New Game, {skill} skill\"\npress = [\"cross\"]\nhold = 12\nwait = 24");
         }
     }
     let mut total_samples = 0usize;
@@ -654,13 +663,14 @@ fn compile(o: &Opts) -> Result<(), String> {
         let mut table = String::from("\n# Bound to the build this journey was written against.\n[addr]\n");
         for name in &names {
             let needle = format!("hl_psx::{name}");
+            let settings_needle = format!("hl_psx::settings::{name}");
             let hit = map_text.lines().find_map(|l| {
                 let tk: Vec<&str> = l.split_whitespace().collect();
                 let first_is_addr = tk.first().is_some_and(|a| a.len() == 8 && u32::from_str_radix(a, 16).is_ok());
                 if first_is_addr && tk.get(4).is_none() && tk.get(3).is_some_and(|x| *x == needle) {
                     return None;
                 }
-                if tk.len() >= 5 && tk[4] == needle && (tk.len() == 5 || tk[5] == "(.0)") {
+                if tk.len() >= 5 && (tk[4] == needle || tk[4] == settings_needle) && (tk.len() == 5 || tk[5] == "(.0)") {
                     return u32::from_str_radix(tk[0], 16).ok();
                 }
                 None

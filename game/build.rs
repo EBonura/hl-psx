@@ -1446,6 +1446,13 @@ fn write_probe_script(out_dir: &std::path::Path) {
                     ],
                     w[2].to_string(),
                 ),
+                // skill N : play the map on level N (0 Easy, 1 Medium, 2 Hard); a change reloads
+                // the map so its actors spawn on it. "skill" alone only logs the current level.
+                "skill" => (
+                    51,
+                    [w.get(2).map_or(-1, |_| num(2) as i32), 0, 0, 0, 0, 0],
+                    String::new(),
+                ),
                 other => panic!("unknown probe op {other}"),
             };
             let ni = match names.iter().position(|n| *n == name) {

@@ -1,0 +1,106 @@
+# Difficulty on the New game row: the title shows Medium, Left/Right chooses Easy,
+# and New Game starts c0a0 on it. Reads settings::SKILL (0 Easy, 1 Medium, 2 Hard)
+# straight from guest RAM. The damage and health the level applies are proven by
+# scripts/skill-proof.sh (a probe disc) and the host parity test; this journey
+# proves the selector reaches the game on the shipping disc.
+name = "hl-skill-easy"
+title = "Half-Life: choose Easy on the New game row and start"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 14000
+
+# Bound to the build this journey was written against: scripts/bind-skill-addr.sh rewrites it.
+[addr]
+SKILL = 0x800c3f98
+SIM_NOW = 0x801eb1a0
+WORLD_ARENA = 0x800da7fc
+
+[[step]]
+label = "skip the startup movie, if the disc has one (a disc without it never sees the press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot to the title, which opens on Medium"
+wait = 620
+
+[[step]]
+checkpoint = "title-default"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "SKILL"
+size = 1
+op = "eq"
+value = 1
+
+[[step]]
+label = "choose Easy on the New game row"
+press = ["left"]
+hold = 8
+wait = 20
+
+[[step]]
+checkpoint = "title-easy"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "SKILL"
+size = 1
+op = "eq"
+value = 0
+
+[[step]]
+label = "New Game"
+press = ["cross"]
+hold = 12
+wait = 24
+
+[[step]]
+label = "c0a0 loads"
+wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 6050 }
+timeout = 9000
+
+[[step]]
+label = "c0a0 first simulation tick"
+wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "lt", value = 64 }
+timeout = 9000
+
+[[step]]
+checkpoint = "arrive-c0a0"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "presenting"
+window = 120
+min_changes = 5
+[[step.assert]]
+kind = "ram"
+sym = "SKILL"
+size = 1
+op = "eq"
+value = 0
+
+[[step]]
+label = "still Easy after the first second of play"
+wait = 120
+
+[[step]]
+checkpoint = "playing-c0a0"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "SKILL"
+size = 1
+op = "eq"
+value = 0

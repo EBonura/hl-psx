@@ -1,0 +1,24 @@
+# difficulty proof: a fixed zombie slash on the player and a fixed hit on the zombie, per skill.cfg level.
+# c1a1 zombie (PROP_KIND 5). skill.cfg: sk_zombie_dmg_one_slash 10/20/20, sk_zombie_health 50/50/100.
+# @LEVEL@ is the difficulty (0 Easy, 1 Medium, 2 Hard): scripts/skill-proof.sh substitutes it and builds one probe disc per level
+# (HLPSX_PROBE=<file> HLPSX_BENCH_MAPS=12, --features interaction-probe), then runs room 12. The `skill` op reloads the map on that level.
+# Read the `skill`, `prop` and `pos` lines: zombie health before and after the hit, and the player's health (4th value of `pos`).
+chain
+map c1a1
+0 skill @LEVEL@
+0 trace 20
+0 god 0
+1 hp 100
+3 propdump
+10 tpnear 5 70 0 0
+12 pos
+30 pos
+50 pos
+70 pos
+100 pos
+140 pos
+200 pos
+# a fixed 60 point player hit on the zombie: dead on Easy and Medium (50 HP), alive with 40 on Hard (100 HP)
+210 tpnear 5 300 0 0
+212 hurtkind 5 60
+216 propdump

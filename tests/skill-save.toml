@@ -1,0 +1,171 @@
+# The difficulty is part of a save: choose Hard on the New game row, start the
+# Hazard Course, save to Card 1, reboot on the persisted card (the title opens
+# on Medium again), load, and the game is on Hard. Run with psoxide-gate and a
+# fresh report directory.
+name = "hl-skill-save"
+title = "Half-Life: Hard survives a save and a cold load"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 9000
+
+# Bound to the build this journey was written against: scripts/bind-skill-addr.sh rewrites it.
+[addr]
+SKILL = 0x800c3f98
+SIM_NOW = 0x801eb1a0
+WORLD_ARENA = 0x800da7fc
+
+[[step]]
+label = "skip the startup movie, if the disc has one (a disc without it never sees the press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot to the title, which opens on Medium; choose Hard"
+wait = 620
+
+[[step]]
+press = ["right"]
+hold = 8
+wait = 20
+
+[[step]]
+checkpoint = "title-hard"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "SKILL"
+size = 1
+op = "eq"
+value = 2
+
+[[step]]
+label = "Hazard Course map select, first map"
+press = ["down"]
+hold = 8
+wait = 12
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 1180
+
+[[step]]
+checkpoint = "hazard-hard"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "SKILL"
+size = 1
+op = "eq"
+value = 2
+
+[[step]]
+label = "pause and open Save Game"
+press = ["start"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 35
+
+[[step]]
+label = "save to Card 1 Manual"
+press = ["cross"]
+hold = 8
+wait = 400
+
+[[step]]
+checkpoint = "game-saved"
+golden = false
+[[step.assert]]
+kind = "card_writes"
+min_count = 5
+[[step.assert]]
+kind = "ram"
+sym = "SKILL"
+size = 1
+op = "eq"
+value = 2
+
+[[step]]
+card = { action = "snapshot" }
+
+[[step]]
+card = { action = "reboot" }
+
+[[step]]
+label = "skip the startup movie, if the disc has one (a disc without it never sees the press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "fresh title menu: the session forgot Hard, the save has not"
+wait = 620
+
+[[step]]
+checkpoint = "title-rebooted"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "SKILL"
+size = 1
+op = "eq"
+value = 1
+
+[[step]]
+label = "choose Load game"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 3
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 1180
+
+[[step]]
+checkpoint = "world-reloaded-hard"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "presenting"
+window = 120
+min_changes = 5
+[[step.assert]]
+kind = "ram"
+sym = "SKILL"
+size = 1
+op = "eq"
+value = 2
+
+[[step]]
+card = { action = "snapshot" }
