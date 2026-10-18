@@ -218,6 +218,7 @@ pub fn text_width_scaled(text: &str, scale_q8: u16) -> i16 {
     width
 }
 
+#[optimize(size)]
 pub fn draw_text_scaled(x: i16, y: i16, text: &str, scale_q8: u16, color: (u8, u8, u8)) {
     let gw = glyph_w();
     let gh = glyph_h();

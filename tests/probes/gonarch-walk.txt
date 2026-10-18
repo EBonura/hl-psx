@@ -1,0 +1,6 @@
+# Gonarch: the node walk to goose1c, then what she does there. c4a2 (room 91).
+map c4a2
+0 god 1
+0 trace 20
+0 watch 18
+5 propdump

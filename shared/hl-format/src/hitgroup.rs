@@ -30,6 +30,8 @@ pub const RULES: &[(u8, u8)] = &[
     (9, HEAD),
     (10, HEAD),
     (10, ARMOR),
+    // Gonarch: only her sack (group 1) is hurt by a bullet (CBigMomma::TraceAttack).
+    (18, HEAD),
     (25, HEAD),
     (51, HEAD),
     (54, HEAD),

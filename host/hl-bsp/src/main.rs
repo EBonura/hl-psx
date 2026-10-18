@@ -11531,6 +11531,13 @@ fn collect_props(
                     if let Some(first) = ent_value(block, "netname") {
                         boss(AITRIGGER_NODE_WALK, first, 0);
                     }
+                    // The brood she lays (CBigMomma::LayHeadcrab): dormant baby
+                    // crabs parked at her, woken one by one at runtime. The
+                    // original keeps up to 20 alive; the stock is what the
+                    // actor arrays can spare, and a dead baby is reused.
+                    for _ in 0..GONARCH_BROOD_STOCK {
+                        out.push((59 | 0x4000, origin, orientation, leaf, 0, 0));
+                    }
                 }
                 _ => {}
             }
@@ -11548,6 +11555,9 @@ fn collect_props(
     }
     out
 }
+
+/// Dormant baby headcrabs cooked beside each Gonarch for her to lay.
+const GONARCH_BROOD_STOCK: usize = 6;
 
 /// Monster classname -> model type id (the monstermaker's monstertype key).
 fn monster_type_id(cls: &str) -> Option<u16> {

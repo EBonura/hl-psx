@@ -717,7 +717,15 @@ pub mod setpiece_audio {
     pub const AG_ALERT: u8 = 32;
     pub const CON_ALERT: u8 = 33;
     pub const BC_GROWL: u8 = 34;
-    pub const COUNT: usize = 35;
+    // Gonarch (tier 3): her attack cry, the sack on a mortar, a baby's birth,
+    // a pain cry, a footfall and her death.
+    pub const GON_ATTACK: u8 = 35;
+    pub const GON_SACK: u8 = 36;
+    pub const GON_BIRTH: u8 = 37;
+    pub const GON_PAIN: u8 = 38;
+    pub const GON_STEP: u8 = 39;
+    pub const GON_DIE: u8 = 40;
+    pub const COUNT: usize = 41;
 
     /// Indexed by slot; within a tier, earlier slots are kept first.
     pub const SOUNDS: [Sound; COUNT] = [
@@ -776,6 +784,12 @@ pub mod setpiece_audio {
             false,
             3,
         ),
+        s("monster_bigmomma", "gonarch/gon_attack1.wav", false, 3),
+        s("monster_bigmomma", "gonarch/gon_sack1.wav", false, 3),
+        s("monster_bigmomma", "gonarch/gon_birth1.wav", false, 3),
+        s("monster_bigmomma", "gonarch/gon_pain2.wav", false, 3),
+        s("monster_bigmomma", "gonarch/gon_step1.wav", false, 3),
+        s("monster_bigmomma", "gonarch/gon_die1.wav", false, 3),
     ];
 }
 

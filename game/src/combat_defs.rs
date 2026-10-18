@@ -87,7 +87,9 @@ pub const PROJ_TRIPMINE: u8 = 7;
 pub const PROJ_M203: u8 = 8;
 pub const PROJ_HORNET_FAST: u8 = 9;
 pub const PROJ_BOLT_WATER: u8 = 10;
+pub const PROJ_BMORTAR: u8 = 11; // Gonarch's acid mortar (enemy projectile)
 pub const PROJ_CBALL: u8 = 12; // the controller's energy ball (enemy projectile)
+pub const PROJ_HEADBALL: u8 = 13; // the controller's head ball (enemy projectile)
 pub const GRENADE_FUSE_TICKS: u32 = 60; // CHandGrenade: three-second fuse at 20 Hz
 
 pub struct WeaponDef {
