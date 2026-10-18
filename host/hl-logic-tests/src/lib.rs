@@ -34,6 +34,8 @@ pub mod air_navigation;
 pub mod autoaim;
 #[path = "../../../game/src/env_sound_audio.rs"]
 pub mod env_sound_audio;
+#[path = "../../../game/src/gonarch.rs"]
+pub mod gonarch;
 #[path = "../../../game/src/hecu_grenades.rs"]
 pub mod hecu_grenades;
 #[path = "../../../game/src/leech.rs"]

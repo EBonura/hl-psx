@@ -392,6 +392,14 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
     let now = SIM_NOW;
     let nlogic = m.n_logic.min(MAX_LOGIC);
     tick_balls(m, movers, nlogic, now);
+    #[cfg(feature = "interaction-probe")]
+    if now % 20 == 0 {
+        reference_trace::probe_vals(
+            now as u32,
+            "nih",
+            &[g.irritation as i32, g.level as i32, g.spheres as i32, g.health, g.seq as i32, g.dead as i32],
+        );
+    }
     let pos = PROP_POS[pi];
     let p = LOGIC_PLAYER_POS;
     let head = [pos[0], (g.z >> 4) + 300, pos[2]];

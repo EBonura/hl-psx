@@ -312,9 +312,9 @@ const OBSERVED: &[Obs] = &[
         class: "monster_human_grunt",
         field: "shotgun pellet",
         retail: [s(5), s(5), s(8)],
-        cvar: Sk::LeechBite,
-        port: Port::None,
-        source: "profile-ranged 1 (no shotgun grunt in the port)",
+        cvar: Sk::Bullet9mm,
+        port: Port::Sk(Sk::Bullet9mm),
+        source: "profile-ranged 1",
     },
     Obs {
         class: "monster_alien_grunt",
@@ -406,9 +406,29 @@ fn attack_rows(cfg: &Cfg, rows: &mut Vec<Row>) {
     }
 }
 
+/// Cvars skill.cfg defines that the retail game itself never reads, with the
+/// evidence (the studio event tables of the Half-Life models, read by
+/// tools/evdump): no animation fires the event that would use them.
+const RETAIL_UNUSED: &[(Sk, &str)] = &[(
+    Sk::SlaveClawRake,
+    "islave.mdl has no AE_CLAWRAKE (event 2): attack1 fires only event 1",
+)];
+
 /// Retail attacks the cfg defines and the port never reads.
 fn coverage_rows(cfg: &Cfg, rows: &mut Vec<Row>) {
     for &(sk, key, _) in &skill::SK_KEYS {
+        if let Some((_, why)) = RETAIL_UNUSED.iter().find(|(s, _)| *s == sk) {
+            rows.push(Row {
+                area: "cvar",
+                subject: key.to_string(),
+                field: format!("{sk:?}"),
+                expected: "unused by retail".into(),
+                port: "not read".into(),
+                verdict: Verdict::Pass,
+                source: (*why).into(),
+            });
+            continue;
+        }
         // The cooked table holds only the first SK_RUNTIME columns: a cvar the
         // game reads from past them would index off the end.
         if wired(sk) && sk as usize >= skill::SK_RUNTIME {

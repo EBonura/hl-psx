@@ -1,0 +1,200 @@
+# Gonarch fight: she walks to goose1c (health 200 node) and waits there; the player stands 500 units off and is fought.
+# Read gonarch lines (slash / mortar / lay), mortar_burst, pos (4th value = player health) and watch (state of the actor 18).
+map c4a2
+0 god 0
+0 trace 20
+0 watch 18
+540 hp 100
+545 tpnear 18 -500 0 0
+550 pos
+555 hp 100
+560 pos
+565 hp 100
+570 pos
+575 hp 100
+580 pos
+585 hp 100
+590 pos
+595 hp 100
+600 pos
+605 hp 100
+610 pos
+615 hp 100
+620 pos
+625 hp 100
+630 pos
+635 hp 100
+640 pos
+645 hp 100
+650 pos
+655 hp 100
+660 pos
+665 hp 100
+670 pos
+675 hp 100
+680 pos
+685 hp 100
+690 pos
+695 hp 100
+700 pos
+705 hp 100
+710 pos
+715 hp 100
+720 pos
+725 hp 100
+730 pos
+735 hp 100
+740 pos
+745 hp 100
+750 pos
+755 hp 100
+760 pos
+765 hp 100
+770 pos
+775 hp 100
+780 pos
+785 hp 100
+790 pos
+795 hp 100
+800 pos
+805 hp 100
+810 pos
+815 hp 100
+820 pos
+825 hp 100
+830 pos
+835 hp 100
+840 pos
+845 hp 100
+850 pos
+855 hp 100
+860 pos
+865 hp 100
+870 pos
+875 hp 100
+880 pos
+885 hp 100
+890 pos
+895 hp 100
+900 pos
+905 hp 100
+910 pos
+915 hp 100
+920 pos
+925 hp 100
+930 pos
+935 hp 100
+940 pos
+945 hp 100
+950 pos
+955 hp 100
+960 pos
+965 hp 100
+970 pos
+975 hp 100
+980 pos
+985 hp 100
+990 pos
+995 hp 100
+1000 pos
+1005 hp 100
+1010 pos
+1015 hp 100
+1020 pos
+1025 hp 100
+1030 pos
+1035 hp 100
+1040 pos
+1045 hp 100
+1050 pos
+1055 hp 100
+1060 pos
+1065 hp 100
+1070 pos
+1075 hp 100
+1080 pos
+1085 hp 100
+1090 pos
+1095 hp 100
+1100 pos
+1105 hp 100
+1110 pos
+1115 hp 100
+1120 pos
+1125 hp 100
+1130 pos
+1135 hp 100
+1140 pos
+1145 hp 100
+1150 pos
+1155 hp 100
+1160 pos
+1165 hp 100
+1170 pos
+1175 hp 100
+1180 pos
+1185 hp 100
+1190 pos
+1195 hp 100
+1200 pos
+1205 hp 100
+1210 pos
+1215 hp 100
+1220 pos
+1225 hp 100
+1230 pos
+1235 hp 100
+1240 pos
+1245 hp 100
+1250 pos
+1255 hp 100
+1260 pos
+1265 hp 100
+1270 pos
+1275 hp 100
+1280 pos
+1285 hp 100
+1290 pos
+1295 hp 100
+1300 pos
+1305 hp 100
+1310 pos
+1315 hp 100
+1320 pos
+1325 hp 100
+1330 pos
+1335 hp 100
+1340 pos
+1345 hp 100
+1350 pos
+1355 hp 100
+1360 pos
+1365 hp 100
+1370 pos
+1375 hp 100
+1380 pos
+1385 hp 100
+1390 pos
+1395 hp 100
+1400 pos
+1405 hp 100
+1410 pos
+1415 hp 100
+1420 pos
+1425 hp 100
+1430 pos
+1435 hp 100
+1440 pos
+1445 hp 100
+1450 pos
+1455 hp 100
+1460 pos
+1465 hp 100
+1470 pos
+1475 hp 100
+1480 pos
+1485 hp 100
+1490 pos
+1495 hp 100
+1500 pos
+1505 hp 100

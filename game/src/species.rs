@@ -94,7 +94,7 @@ pub(crate) unsafe fn tick_grunt(
     // Close-quarters rules (retail Half-Life under Xash3D, profile-ranged.md 9.4): a grunt that
     // finds the enemy within 80 units runs back to 500..600 and shoots from there; the ones
     // that charge (which they are is not cooked yet: every odd actor stands in) fire one burst,
-    // run in until the hulls touch (the retail kick reaches 34) and kick for 15 then 10. Timer bit 7 flags these modes, bits 5-6 pick
+    // run in until the hulls touch (the retail kick reaches 34) and kick once for `sk_hgrunt_kick`. Timer bit 7 flags these modes, bits 5-6 pick
     // one (0 backing away, 1 charging, 2 kicking) and bits 0-4 count: pairs of ticks while
     // backing away or charging, ticks of the kick bout.
     let t = PROP_AI_TIMER[pi];
@@ -109,8 +109,10 @@ pub(crate) unsafe fn tick_grunt(
             } else {
                 0
             };
-            if left == 14 || left == 8 {
-                damage_target(target, if left == 14 { 15 } else { 10 }, pos, health, armor);
+            // frontkick has one HGRUNT_AE_KICK event, frame 14 at 35 fps: the 8th
+            // tick of the sequence, one hit of sk_hgrunt_kick.
+            if left == 13 {
+                damage_target(target, skill_hit(Sk::HgruntKick), pos, health, armor);
             }
         } else if mode == 1 {
             if d2 <= 64 * 64 {
@@ -168,7 +170,7 @@ pub(crate) unsafe fn tick_grunt(
     if weapons & 1 == 0 && weapons & 8 != 0 {
         // A shotgun marine (`weapons` bit 8 with no MP5): one blast of
         // `sk_hgrunt_pellets` pellets, each drawn in a 15 degree cone and worth
-        // 5 (`sk_plr_buckshot`), every 0.7 s.
+        // `sk_9mm_bullet` (5, 5, 8 in the Xash3D trace), every 0.7 s.
         if prop_attack_cooldown(pi) == 0 {
             let from = prop_eye(m, pi);
             let mut hits = 0u8;
@@ -180,7 +182,7 @@ pub(crate) unsafe fn tick_grunt(
                 n -= 1;
             }
             if hits > 0 {
-                damage_target(target, hits * 5, pos, health, armor);
+                damage_target(target, hits.saturating_mul(skill_hit(Sk::Bullet9mm)), pos, health, armor);
             }
             push_tracer(from, aim);
             sfx::play_world(sfx::SHOTGUN, pos);
@@ -320,7 +322,10 @@ pub(crate) unsafe fn tick_slave(
 /// passive: they are the only AI_IDLE actors the actor loop does not skip.
 #[inline(always)]
 pub(crate) fn idle_thinks(ty: u8) -> bool {
-    ty == 12 || ty == PROP_TYPE_LEECH || ty == tripmine::PROP_TYPE_TRIPMINE
+    ty == 12
+        || ty == PROP_TYPE_LEECH
+        || ty == PROP_TYPE_BIGMOMMA
+        || ty == tripmine::PROP_TYPE_TRIPMINE
 }
 
 pub(crate) unsafe fn idle_think(
@@ -337,6 +342,8 @@ pub(crate) unsafe fn idle_think(
         barnacle::tick(m, pi, player_pos, health);
     } else if ty == PROP_TYPE_LEECH {
         tick_leech(m, movers, pi, player_pos, in_player_pvs, health, armor);
+    } else if ty == PROP_TYPE_BIGMOMMA {
+        tick_gonarch(m, movers, pi, player_pos, health, armor);
     } else if ty == tripmine::PROP_TYPE_TRIPMINE {
         tripmine::tick_map(m, movers, pi);
     }
@@ -850,4 +857,238 @@ pub(crate) unsafe fn tick_melee(
     } else {
         tick_headcrab(m, movers, sight, pi, player_pos, health, armor, nprops);
     }
+}
+
+// ---- Gonarch (monster_bigmomma) ----
+
+/// Her mortar clock and her brood.
+static mut BROOD: crate::gonarch::Brood = crate::gonarch::Brood::NEW;
+/// The lob worked out when the mortar attack began, in sixteenths a tick.
+static mut MORTAR_VEL: [i32; 3] = [0; 3];
+/// Gonarch state clears with the map.
+pub(crate) unsafe fn reset_gonarch() {
+    BROOD = crate::gonarch::Brood::NEW;
+}
+
+/// One of her babies died (`CBigMomma::DeathNotice`).
+pub(crate) unsafe fn gonarch_child_died() {
+    BROOD.child_died();
+}
+
+/// How the node walker (`tick_boss_walker`) holds her: 0 she is walking to a
+/// node and it owns her movement, 1 she waits at a node (for its delay or for
+/// the damage it asks) and fights where she stands, 2 the path is over (or
+/// she has none) and she hunts.
+unsafe fn gonarch_phase(pi: usize) -> u8 {
+    if BOSS_WALKER == u16::MAX || LOGIC_PROP_LINK[BOSS_WALKER as usize] as usize != pi {
+        return 2;
+    }
+    match LOGIC_STATE[BOSS_WALKER as usize] {
+        LOGIC_STATE_TOP => 2,
+        LOGIC_STATE_WAITING | LOGIC_STATE_GOING_DOWN => 1,
+        _ => 0,
+    }
+}
+
+/// CBigMomma in combat: the mortar first, then the leg slash, then laying a
+/// baby, else a run at the enemy. Each action plays its sequence over
+/// `PROP_AI_TIMER` ticks and does its work at the sequence's event; the
+/// state names which (`PROP_STATE_ATTACK` the mortar, 6 the slash, 7 the lay).
+#[inline(never)]
+#[optimize(size)]
+pub(crate) unsafe fn tick_gonarch(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    health: &mut u16,
+    armor: &mut u16,
+) {
+    use crate::gonarch as G;
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let phase = gonarch_phase(pi);
+    let timer = PROP_AI_TIMER[pi];
+    let pos = PROP_POS[pi];
+    if timer > 0 {
+        PROP_AI_TIMER[pi] = timer - 1;
+        if let Some(aim) = target_aim_point(PROP_AI_TARGET[pi], player_pos, nprops) {
+            prop_face_point(pi, aim);
+        }
+        let left = timer - 1;
+        match PROP_STATE[pi] {
+            6 if left == G::SLASH_TICKS - G::SLASH_EVENT_TICK => {
+                cue(SP::GON_ATTACK, pos);
+                #[cfg(feature = "interaction-probe")]
+                reference_trace::probe(SIM_NOW as u32, "gonarch", "slash", *health as i32);
+                gonarch_slash(pi, pos, player_pos, health, armor, nprops);
+            }
+            7 if left == G::LAY_TICKS - G::LAY_EVENT_TICK => {
+                cue(SP::GON_BIRTH, pos);
+                if lay_baby(m, pi, pos) {
+                    #[cfg(feature = "interaction-probe")]
+                    reference_trace::probe(SIM_NOW as u32, "gonarch", "lay", BROOD.children as i32 + 1);
+                    BROOD.laid(SIM_NOW, impact_rng().below(1000) as u16);
+                }
+            }
+            PROP_STATE_ATTACK if left == G::MORTAR_TICKS - G::MORTAR_EVENT_TICK => {
+                cue(SP::GON_SACK, pos);
+                #[cfg(feature = "interaction-probe")]
+                reference_trace::probe(SIM_NOW as u32, "gonarch", "mortar", 0);
+                launch_mortar(pos);
+                BROOD.launched(SIM_NOW, impact_rng().below(1000) as u16);
+            }
+            _ => {}
+        }
+        if left == 0 {
+            PROP_STATE[pi] = PROP_STATE_IDLE;
+        }
+        return;
+    }
+    if phase == 0 {
+        return;
+    }
+    let Some((_, visible, aim)) = acquire(m, movers, pi, player_pos, nprops, 2048) else {
+        return;
+    };
+    let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
+    let dist = isqrt_i32(dx * dx + dz * dz);
+    if visible {
+        let yaw = prop_yaw_value(PROP_YAW[pi]);
+        let (fx, fz) = (sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0x0fff));
+        let in_cone = |cos| senses::within_cone(cos, fx, fz, dx, dz);
+        if BROOD.mortar_ready(SIM_NOW, dist, in_cone(G::MORTAR_FACING_Q12)) {
+            // VecCheckSplatToss: an arc whose apex is 150 to 500 units over
+            // the midpoint (the ceiling caps it) that the walls leave clear.
+            let start = [pos[0], pos[1] + G::MORTAR_MUZZLE_HEIGHT, pos[2]];
+            let mid = [
+                (start[0] + aim[0]) / 2,
+                (start[1] + aim[1]) / 2,
+                (start[2] + aim[2]) / 2,
+            ];
+            let rise = 150 + impact_rng().below(351) as i32;
+            let top = [mid[0], mid[1] + rise, mid[2]];
+            let apex = phys::trace_line(m, movers, mid, top).map_or(top[1], |h| h.pos[1]);
+            if phys::trace_line(m, movers, start, [mid[0], apex, mid[2]]).is_none() {
+                if let Some(v) = G::splat_toss(start, aim, apex) {
+                    MORTAR_VEL = v;
+                    PROP_STATE[pi] = PROP_STATE_ATTACK;
+                    PROP_AI_TIMER[pi] = G::MORTAR_TICKS;
+                    return;
+                }
+            }
+        }
+        if G::can_slash(in_cone(G::SLASH_FACING_Q12), dist) {
+            PROP_STATE[pi] = 6;
+            PROP_AI_TIMER[pi] = G::SLASH_TICKS;
+            return;
+        }
+        // CanLayCrab: nothing else stands in the 64-unit square under her.
+        let mut clear = true;
+        let mut q = 0usize;
+        while q < nprops {
+            if q != pi && PROP_ACTIVE[q] != 0 && PROP_HEALTH[q] != 0 {
+                let o = PROP_POS[q];
+                if (o[0] - pos[0]).abs() < 32 && (o[2] - pos[2]).abs() < 32 && (o[1] - pos[1]).abs() < 64 {
+                    clear = false;
+                }
+            }
+            q += 1;
+        }
+        if BROOD.can_lay(SIM_NOW, clear) {
+            PROP_STATE[pi] = 7;
+            PROP_AI_TIMER[pi] = G::LAY_TICKS;
+            return;
+        }
+    }
+    if phase == 2 {
+        PROP_STATE[pi] = PROP_STATE_MOVE;
+        prop_move_towards_point(m, movers, pi, aim, G::RUN_SPEED);
+    } else {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+    }
+}
+
+/// `BIG_AE_MELEE_ATTACK1`: whatever she is fighting that stands in the box
+/// 128 units in front of her (64 each side, 64 high) takes the slash; the
+/// player is flung forward and up.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn gonarch_slash(
+    pi: usize,
+    pos: [i32; 3],
+    player_pos: [i32; 3],
+    health: &mut u16,
+    armor: &mut u16,
+    nprops: usize,
+) {
+    let target = PROP_AI_TARGET[pi];
+    let Some(at) = target_org(target, player_pos, nprops) else {
+        return;
+    };
+    let yaw = prop_yaw_value(PROP_YAW[pi]);
+    let (fx, fz) = (sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0x0fff));
+    // a victim counts by its hull (16 around the player)
+    if (at[0] - pos[0] - ((fx * 128) >> 12)).abs() > 80
+        || (at[2] - pos[2] - ((fz * 128) >> 12)).abs() > 80
+        || at[1] < pos[1] - 16
+        || at[1] > pos[1] + 80
+    {
+        return;
+    }
+    damage_target(target, skill_hit(Sk::BigMommaSlash), pos, health, armor);
+    if target == PROP_TARGET_PLAYER {
+        add_view_punch(171, 0); // punchangle.x = 15
+        // velocity += forward * 220 + up 200 (units a second -> a tick)
+        PENDING_GAUSS_SHOVE = [(fx * 11) >> 12, 10, (fz * 11) >> 12];
+    }
+}
+
+/// `BIG_AE_LAY_CRAB`: a baby appears at her feet, woken from the stock cooked
+/// beside her or remade from a corpse that has lain five seconds.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn lay_baby(m: &Map, parent: usize, at: [i32; 3]) -> bool {
+    let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut q = 0usize;
+    while q < n
+        && !(PROP_KIND[q] == 59
+            && ((PROP_ACTIVE[q] == 0 && PROP_DORMANT[q] & PROP_RUNTIME_DORMANT_STOCK != 0)
+                || (PROP_ACTIVE[q] != 0
+                    && PROP_HEALTH[q] == 0
+                    && SIM_NOW.wrapping_sub(PROP_DEATH_START[q]) > 100)))
+    {
+        q += 1;
+    }
+    if q >= n {
+        return false;
+    }
+    prop_nav_cache_invalidate(q);
+    PROP_HEALTH[q] = prop_start_health(59);
+    PROP_STATE[q] = PROP_STATE_IDLE;
+    PROP_AI_TIMER[q] = 0;
+    PROP_SCRIPT_MODE[q] = 0;
+    PROP_SCRIPT_LI[q] = u16::MAX;
+    PROP_ANIM_CLIP[q] = PROP_ANIM_CLIP_FRESH;
+    PROP_DORMANT[q] = 0;
+    PROP_JUMP[q] = monsterjump::State::EMPTY;
+    PROP_FLIGHT[q] = air_navigation::Flight::EMPTY;
+    PROP_ACTIVE[q] = 1;
+    PROP_MAKER[q] = 0;
+    PROP_NAME[q] = 0;
+    PROP_AI_TARGET[q] = PROP_TARGET_NONE;
+    // CBaseEntity::Create(.., pev->angles): the child faces where she does.
+    PROP_YAW[q] = PROP_YAW[parent];
+    prop_set_pos(m, &[], q, at);
+    true
+}
+
+/// `BIG_AE_MORTAR_ATTACK`: the glob leaves her sack on the lob worked out when
+/// the attack began.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn launch_mortar(pos: [i32; 3]) {
+    let start = [pos[0], pos[1] + crate::gonarch::MORTAR_MUZZLE_HEIGHT, pos[2]];
+    let slot = spawn_projectile_dir(PROJ_BMORTAR, 0, start, [0; 3], true);
+    PROJECTILES[slot].vel = MORTAR_VEL;
+    PROJECTILES[slot].remainder = [0; 3];
 }

@@ -1,0 +1,102 @@
+# Gonarch slash: c4a2. The player stands 140 units from her at goose1c; read slash lines and the player's health/position (pos: x y z hp).
+map c4a2
+0 god 0
+0 trace 20
+0 watch 59
+545 tpnear 18 -140 0 0
+546 aimat 18 100
+546 pos
+548 aimat 18 100
+548 pos
+550 aimat 18 100
+550 pos
+552 aimat 18 100
+552 pos
+554 aimat 18 100
+554 pos
+556 aimat 18 100
+556 pos
+558 aimat 18 100
+558 pos
+560 aimat 18 100
+560 pos
+562 aimat 18 100
+562 pos
+564 aimat 18 100
+564 pos
+566 aimat 18 100
+566 pos
+568 aimat 18 100
+568 pos
+570 aimat 18 100
+570 pos
+572 aimat 18 100
+572 pos
+574 aimat 18 100
+574 pos
+576 aimat 18 100
+576 pos
+578 aimat 18 100
+578 pos
+580 aimat 18 100
+580 pos
+582 aimat 18 100
+582 pos
+584 aimat 18 100
+584 pos
+586 aimat 18 100
+586 pos
+588 aimat 18 100
+588 pos
+590 aimat 18 100
+590 pos
+592 aimat 18 100
+592 pos
+594 aimat 18 100
+594 pos
+596 aimat 18 100
+596 pos
+598 aimat 18 100
+598 pos
+600 aimat 18 100
+600 pos
+602 aimat 18 100
+602 pos
+604 aimat 18 100
+604 pos
+606 aimat 18 100
+606 pos
+608 aimat 18 100
+608 pos
+610 aimat 18 100
+610 pos
+612 aimat 18 100
+612 pos
+614 aimat 18 100
+614 pos
+616 aimat 18 100
+616 pos
+618 aimat 18 100
+618 pos
+620 aimat 18 100
+620 pos
+622 aimat 18 100
+622 pos
+624 aimat 18 100
+624 pos
+626 aimat 18 100
+626 pos
+628 aimat 18 100
+628 pos
+630 aimat 18 100
+630 pos
+632 aimat 18 100
+632 pos
+634 aimat 18 100
+634 pos
+636 aimat 18 100
+636 pos
+638 aimat 18 100
+638 pos
+640 aimat 18 100
+640 pos

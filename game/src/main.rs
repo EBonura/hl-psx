@@ -46,6 +46,7 @@ mod env_funnel_fx;
 mod env_sound;
 mod env_sound_audio;
 mod gman_damage;
+mod gonarch;
 mod ground_logic;
 mod hecu_grenades;
 mod hev;
@@ -7495,6 +7496,7 @@ unsafe fn pushable_apply_settle(
 /// clamps the whole move, so a 9-unit cart step cannot tunnel through a thin
 /// wall or another mover even though the cart's own hull is translated.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn pushable_sweep_fraction(
     m: &Map,
     movers: &mut [phys::Mover],
@@ -12331,6 +12333,7 @@ const FADE_OUT_CLEAR_TICKS: u16 = 10;
 /// Draw the screen fade and then the active title text as immediate prims (on
 /// top of the whole frame; the fade covers the HUD, the titles sit above it).
 #[inline(never)]
+#[optimize(size)]
 unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
     if PLAYER_EYE_UNDER {
         use psx_gpu::material::BlendMode;
@@ -15146,7 +15149,7 @@ fn prop_clip(pi: usize, state: u8, hit_flash: bool) -> usize {
     if hit_flash {
         return PROP_CLIP_PAIN;
     }
-    if unsafe { PROP_KIND[pi] == 8 } {
+    if unsafe { PROP_KIND[pi] == 8 || PROP_KIND[pi] == PROP_TYPE_BIGMOMMA } {
         if state == 6 {
             return 5;
         }
@@ -15196,11 +15199,12 @@ unsafe fn prop_render_radius(pi: usize, ty: u8) -> i32 {
 /// which frames were drawn or when a hit trace ran; a reader that meets a clip
 /// the simulation has not recorded yet plays it from its start.
 ///
-/// With `POSE` false only the bookkeeping runs and the result is (0, 0, 0):
+/// With `pose` false only the bookkeeping runs and the result is (0, 0, 0):
 /// the per-tick recorder discards the pose, and the clip-phase arithmetic
 /// (header decode, duration lookups) is pure.
 #[inline(never)]
-fn prop_anim_frame<const POSE: bool>(
+fn prop_anim_frame(
+    pose: bool,
     m: &Map,
     md: &Model,
     state: u8,
@@ -15232,7 +15236,7 @@ fn prop_anim_frame<const POSE: bool>(
             phase -= DURATIONS[sequence];
             sequence += 1;
         }
-        if !POSE {
+        if !pose {
             return (0, 0, 0);
         }
         let clip = SLOTS[sequence].min(md.clip_count().saturating_sub(1));
@@ -15268,7 +15272,7 @@ fn prop_anim_frame<const POSE: bool>(
             if authored & hl_format::map::PROP_CORPSE_CLIP != 0 {
                 let clip = (authored & !hl_format::map::PROP_CORPSE_CLIP) as usize;
                 if clip < md.clip_count() {
-                    return if POSE {
+                    return if pose {
                         md.one_shot_clip_phase(clip, 1, 0)
                     } else {
                         (0, 0, 0)
@@ -15277,7 +15281,7 @@ fn prop_anim_frame<const POSE: bool>(
             }
         }
         forget_clip();
-        if !POSE {
+        if !pose {
             return (0, 0, 0);
         }
         // Traverse the retained death poses once over the original sequence's
@@ -15287,7 +15291,7 @@ fn prop_anim_frame<const POSE: bool>(
     }
     if hit_flash > 0 {
         forget_clip();
-        if !POSE {
+        if !pose {
             return (0, 0, 0);
         }
         // Traverse the entire retained flinch, not merely frames 0 and 1.  A
@@ -15304,7 +15308,7 @@ fn prop_anim_frame<const POSE: bool>(
     }
     if scripted_play {
         forget_clip();
-        if !POSE {
+        if !pose {
             return (0, 0, 0);
         }
         // Script clips are aggressively RAM-sampled (often just first/last
@@ -15319,7 +15323,7 @@ fn prop_anim_frame<const POSE: bool>(
     }
     if scripted_idle {
         forget_clip();
-        if !POSE {
+        if !pose {
             return (0, 0, 0);
         }
         // Scripted idles loop at the retail sequence duration. The ordinary
@@ -15336,7 +15340,7 @@ fn prop_anim_frame<const POSE: bool>(
         if let Some((slot, ticks, elapsed)) = unsafe { nihilanth::clip(pi) } {
             if slot < md.clip_count() {
                 forget_clip();
-                return if POSE {
+                return if pose {
                     md.looped_clip_phase(slot, ticks, elapsed)
                 } else {
                     (0, 0, 0)
@@ -15349,13 +15353,32 @@ fn prop_anim_frame<const POSE: bool>(
         if let Some((gesture, ticks, elapsed)) = unsafe { garg::gesture_clip(pi) } {
             if gesture < md.clip_count() {
                 forget_clip();
-                return if POSE {
+                return if pose {
                     md.one_shot_clip_phase(gesture, ticks, elapsed)
                 } else {
                     (0, 0, 0)
                 };
             }
         }
+    }
+    if unsafe { PROP_KIND[pi] } == PROP_TYPE_BIGMOMMA
+        && matches!(state, 6 | 7 | PROP_STATE_ATTACK)
+        && hit_flash == 0
+    {
+        // Her slash, her laying and her mortar each run their sequence once
+        // over the action window the AI timer counts down.
+        let duration = match state {
+            6 => gonarch::SLASH_TICKS,
+            7 => gonarch::LAY_TICKS,
+            _ => gonarch::MORTAR_TICKS,
+        } as usize;
+        let elapsed = duration.saturating_sub(unsafe { PROP_AI_TIMER[pi] } as usize);
+        forget_clip();
+        return if pose {
+            md.one_shot_clip_phase(clip, duration, elapsed)
+        } else {
+            (0, 0, 0)
+        };
     }
     if unsafe { PROP_KIND[pi] } == 8 && matches!(state, 6 | 7) && hit_flash == 0 {
         let duration = if state == 7 {
@@ -15365,7 +15388,7 @@ fn prop_anim_frame<const POSE: bool>(
         } as usize;
         let elapsed = duration.saturating_sub(unsafe { PROP_AI_TIMER[pi] } as usize);
         forget_clip();
-        return if POSE {
+        return if pose {
             md.one_shot_clip_phase(clip, duration, elapsed)
         } else {
             (0, 0, 0)
@@ -15387,7 +15410,7 @@ fn prop_anim_frame<const POSE: bool>(
         };
         if action_ticks != 0 {
             forget_clip();
-            if !POSE {
+            if !pose {
                 return (0, 0, 0);
             }
             let timer = unsafe { PROP_AI_TIMER[pi] };
@@ -15426,7 +15449,7 @@ fn prop_anim_frame<const POSE: bool>(
         }
         (sim_frame_no as u16).wrapping_sub(start) as usize
     };
-    if !POSE {
+    if !pose {
         return (0, 0, 0);
     }
     md.looped_clip_phase(clip, md.clip_hold_ticks(clip) as usize, elapsed)
@@ -15468,7 +15491,7 @@ unsafe fn record_prop_anim_clips(m: &Map, sim_frame_no: u32) {
             continue;
         }
         let md = loaded_model(slot as usize);
-        prop_anim_frame::<false>(
+        prop_anim_frame(false, 
             m,
             &md,
             PROP_STATE[pi],
@@ -17000,6 +17023,40 @@ unsafe fn prop_controller_move_towards(
     true
 }
 
+/// A walker that cannot take its step opens the plain door in its way (the
+/// monsters of the original route through func_door brushes): a closed door
+/// with no targetname that is not USE-only, the doors the player opens by
+/// walking into them, never a button- or trigger-operated one.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn monster_opens_door(m: &Map, movers: &[phys::Mover], pi: usize, goal: [i32; 3]) {
+    let pos = PROP_POS[pi];
+    let (dx, dz) = (goal[0] - pos[0], goal[2] - pos[2]);
+    let len = isqrt_i32(dx * dx + dz * dz).max(1);
+    let from = [pos[0], pos[1] + 36, pos[2]];
+    let to = [from[0] + dx * 48 / len, from[1], from[2] + dz * 48 / len];
+    let Some(hit) = phys::trace_line(m, movers, from, to) else {
+        return;
+    };
+    let ei = hit.mover;
+    if ei < 0 || ei as usize >= m.n_ents {
+        return;
+    }
+    let li = ENT_BRUSH_LOGIC[ei as usize] as usize;
+    if li >= m.n_logic.min(MAX_LOGIC)
+        || LOGIC_KIND[li] != map::LOGIC_FUNC_DOOR
+        || LOGIC_STATE[li] != LOGIC_STATE_BOTTOM
+    {
+        return;
+    }
+    let rec = m.logic(li);
+    if rec.targetname == 0 && rec.spawnflags & SF_DOOR_USE_ONLY == 0 {
+        #[cfg(feature = "interaction-probe")]
+        reference_trace::probe_vals(SIM_NOW as u32, "monster_door", &[pi as i32, li as i32]);
+        logic_activate_door_linked(m, m.n_logic, m.n_ents, li, rec, map::USE_TOGGLE);
+    }
+}
+
 #[optimize(size)]
 unsafe fn prop_move_towards_point(
     m: &Map,
@@ -17125,6 +17182,7 @@ unsafe fn prop_move_towards_point(
         false
     };
     if !moved {
+        monster_opens_door(m, movers, pi, goal);
         PROP_MOVE_COOLDOWN[pi] = 6; // ~0.3 s pause before the next attempt
     }
     moved
@@ -17435,9 +17493,9 @@ unsafe fn monster_sight_ai_triggers(
         PROP_DORMANT[pi] &= !PROP_RUNTIME_SEE_TRIGGER;
     }
 }
-// Walk speeds are approximations of big_mom.mdl's walk and run sequences.
-const BIGMOMMA_WALK_SPEED: i32 = 4;
-const BIGMOMMA_RUN_SPEED: i32 = 8;
+// big_mom.mdl walks at 130 and runs at 400 units a second.
+const BIGMOMMA_WALK_SPEED: i32 = gonarch::WALK_SPEED;
+const BIGMOMMA_RUN_SPEED: i32 = gonarch::RUN_SPEED;
 const BIGMOMMA_MIN_RANGE: i32 = 24;
 // A walker that has not closed in on its node for this many ticks is placed
 // on it, so a navigation dead end cannot hold back the node's progression.
@@ -17456,6 +17514,8 @@ unsafe fn boss_walker_damage(dmg: u8) {
     LOGIC_COUNTER[w] = LOGIC_COUNTER[w].saturating_sub(dmg as i16);
     if LOGIC_COUNTER[w] <= 0 {
         LOGIC_COUNTER[w] = 1;
+        // pev->health = flDamage + 1: what is left of her is the last blow.
+        PROP_HEALTH[LOGIC_PROP_LINK[w] as usize] = dmg.saturating_add(1);
         if LOGIC_STATE[w] == LOGIC_STATE_GOING_DOWN {
             LOGIC_STATE[w] = LOGIC_STATE_BOTTOM;
         }
@@ -17475,6 +17535,10 @@ unsafe fn tick_boss_walker(m: &Map, movers: &[phys::Mover]) {
     if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
         LOGIC_STATE[w] = LOGIC_STATE_TOP;
         BOSS_WALKER = u16::MAX;
+        return;
+    }
+    // An attack in flight (tick_gonarch) finishes before she sets off again.
+    if PROP_AI_TIMER[pi] != 0 {
         return;
     }
     let nlogic = m.n_logic.min(MAX_LOGIC);
@@ -17508,6 +17572,10 @@ unsafe fn tick_boss_walker(m: &Map, movers: &[phys::Mover]) {
                 PROP_STATE[pi] = PROP_STATE_IDLE;
                 LOGIC_NEXT[node] = SIM_NOW.wrapping_add(rec.delay_ticks);
                 LOGIC_STATE[w] = LOGIC_STATE_WAITING;
+                if rec.spawnflags & map::INFOBM_WAIT != 0 {
+                    // The last node: she waits there for good, and can be killed.
+                    LOGIC_COUNTER[w] = -1;
+                }
                 return;
             }
             let speed = if rec.spawnflags & map::INFOBM_RUN != 0 {
@@ -17699,6 +17767,10 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         tripmine::shot(pi);
         return;
     }
+    // Acid (Gonarch's mortar) does nothing to headcrabs, babies or Gonarch.
+    if DMG_ACID && matches!(PROP_KIND[pi], 2 | 18 | 59) {
+        return;
+    }
     // CGargantua::TraceAttack/TakeDamage: only GARG_DAMAGE (blast, energy
     // beam, crush, mortar) hurts, scaled from its 800 HP onto the u8 health;
     // bullets and clubs ricochet.
@@ -17744,9 +17816,19 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     } else {
         dmg
     };
-    if BOSS_WALKER != u16::MAX && LOGIC_PROP_LINK[BOSS_WALKER as usize] as usize == pi {
+    // CBigMomma::TakeDamage: she cannot die while her path lasts, which ends
+    // when she has no next node (TOP) or waits at the last one (counter -1).
+    if BOSS_WALKER != u16::MAX
+        && LOGIC_PROP_LINK[BOSS_WALKER as usize] as usize == pi
+        && LOGIC_STATE[BOSS_WALKER as usize] != LOGIC_STATE_TOP
+        && LOGIC_COUNTER[BOSS_WALKER as usize] != -1
+    {
         PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
         boss_walker_damage(dmg);
+        if MON_PAIN_COOLDOWN == 0 {
+            setpiece_sfx::play(hl_format::setpiece_audio::GON_PAIN, PROP_POS[pi]);
+            MON_PAIN_COOLDOWN = 10;
+        }
         return;
     }
     let health_before = PROP_HEALTH[pi];
@@ -17768,6 +17850,9 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
         PROP_STATE[pi] = PROP_STATE_DEAD;
         PROP_DEATH_START[pi] = SIM_NOW; // play the death clip forward from now
+        if PROP_KIND[pi] == 59 {
+            species::gonarch_child_died();
+        }
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_AI_TIMER[pi] = 0;
         if player_inflicted && prop_is_human(PROP_KIND[pi]) {
@@ -17788,6 +17873,8 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         let v = prop_voice(PROP_KIND[pi], true);
         if v != SFX_NONE {
             sfx::play_world(v, PROP_POS[pi]);
+        } else if PROP_KIND[pi] == PROP_TYPE_BIGMOMMA {
+            setpiece_sfx::play(hl_format::setpiece_audio::GON_DIE, PROP_POS[pi]);
         }
         release_monster_loot(pi);
     } else if MON_PAIN_COOLDOWN == 0 {
@@ -18932,7 +19019,23 @@ unsafe fn tick_alien_attack(
     // the controller
     // The controller floats: its reach is the distance in space, not on the plane.
     let d3 = dist2_3(from, aim);
-    if prop_attack_cooldown(pi) != 0 || d3 < 256 * 256 || d3 > 2048 * 2048 {
+    if left >= 4 {
+        // The head ball's wind-up (attack2/shoot: BALL_SHOOT at 37 ticks).
+        PROP_AI_TIMER[pi] = left - 1;
+        if left == 4 {
+            spawn_projectile_dir(PROJ_HEADBALL, skill_hit(Sk::ControllerZap), from, dir, true);
+            PROP_AI_TIMER[pi] = 0;
+            prop_attack_cooldown_set(pi, 80);
+        }
+        return;
+    }
+    if prop_attack_cooldown(pi) != 0 || d3 <= 64 * 64 || d3 > 2048 * 2048 {
+        return;
+    }
+    if d3 < 256 * 256 {
+        // CheckRangeAttack1 needs 256 units; inside that only CheckRangeAttack2
+        // passes, and its schedule is the head ball.
+        PROP_AI_TIMER[pi] = 41;
         return;
     }
     let speed = [32, 40, 50][settings::skill().min(2)];
@@ -19081,6 +19184,7 @@ unsafe fn try_grunt_grenade(
     true
 }
 
+#[optimize(size)]
 unsafe fn tick_shooter(
     m: &Map,
     movers: &[phys::Mover],
@@ -20211,6 +20315,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
     TALKING_UNTIL = 0;
     TALKING_VOICE = 0;
     species::reset_leeches();
+    species::reset_gonarch();
     PLAYER_WATER_LEVEL = 0;
     *heal_clock() = scientist_logic::HealClock::EMPTY;
     let voices = room_budget::TALK_VOICES[map_index];
@@ -22314,7 +22419,7 @@ unsafe fn prop_studio_hit_fraction(
     if md.hitbox_count() == 0 {
         return None;
     }
-    let (frame, frame2, frac16) = prop_anim_frame::<true>(
+    let (frame, frame2, frac16) = prop_anim_frame(true, 
         m,
         &md,
         PROP_STATE[pi],
@@ -22369,11 +22474,17 @@ fn hit_group_damage(ty: u8, hitbox: u8, dmg: u8) -> u8 {
     while i < skill_table::HIT_MASKS.len() {
         let (t, group, mask) = skill_table::HIT_MASKS[i];
         if t == ty && hitbox < 32 && mask >> hitbox & 1 != 0 {
+            if ty == PROP_TYPE_BIGMOMMA {
+                return dmg; // her sack takes a bullet whole
+            }
             let scaled =
                 hl_format::hitgroup::scale(group, dmg as u16, skill_value(Sk::MonsterHead));
             return scaled.min(u8::MAX as u16) as u8;
         }
         i += 1;
+    }
+    if ty == PROP_TYPE_BIGMOMMA {
+        return 0; // CBigMomma::TraceAttack: anywhere but the sack, 0.1
     }
     dmg
 }
@@ -22435,6 +22546,7 @@ static mut TRACER_ON: bool = false;
 /// pellets). Returns `Some` for either an actor or world hit, applying damage
 /// and impact effects; `None` means the trace missed everything.
 #[allow(clippy::too_many_arguments)]
+#[optimize(size)]
 unsafe fn fire_hitscan(
     m: &Map,
     movers: &[phys::Mover],
@@ -22668,6 +22780,7 @@ unsafe fn fire_hitscan(
 /// Run a weapon's fire archetype for one shot already paid for by try_fire.
 /// Returns true when a hitscan connected with an enemy (drives the crowbar
 /// hit-vs-miss sound).
+#[optimize(size)]
 unsafe fn fire_weapon(
     d: &WeaponDef,
     damage: u8,
@@ -22763,7 +22876,7 @@ unsafe fn fire_weapon(
                     hit => {
                         let slot = spawn_projectile_dir(
                             PROJ_SNARK,
-                            5,
+                            skill_hit(Sk::SnarkPop),
                             hit.map_or(to, |h| h.pos),
                             [0; 3],
                             false,
@@ -23340,6 +23453,12 @@ fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
         // Measured on the retail game: about 45 units per tick (900 u/s) along a straight
         // line, 9 ticks from the start of the spit animation at 150 units, 17 at 500.
         PROJ_SPIT => (45, 55, false, 0, (150, 220, 80), 4), // bullsquid acid glob
+        // Gonarch's mortar: the lob sets its velocity; it flies on its own gravity.
+        PROJ_BMORTAR => (0, 200, false, 0, (150, 230, 90), 6),
+        // The controller's head ball: 400 u/s for 3.8 s (renderamt 255 falls 5 a think
+        // to 64). The original homes on the enemy; this one flies straight at where
+        // he stood when it left.
+        PROJ_HEADBALL => (20, 76, false, 0, (225, 230, 255), 8),
         // The controller's ball: 800 u/s at Medium (650 and 1000 at Easy and Hard).
         PROJ_CBALL => (40, 60, false, 0, (130, 170, 255), 4),
         PROJ_SATCHEL => (40, u8::MAX, true, blast_radius(150), (170, 70, 50), 5),
@@ -24159,13 +24278,13 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
             bounced = true;
             if p.dir[0] == 0 && (armed || best != usize::MAX - 1) {
                 if best == usize::MAX - 1 {
-                    PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(10);
+                    PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(skill_hit(Sk::SnarkBite) as u16);
                     note_damage_direction(p.pos);
                 } else {
-                    damage_prop(best, 10, true);
+                    damage_prop(best, skill_hit(Sk::SnarkBite), true);
                     PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
                 }
-                p.damage = p.damage.saturating_add(5);
+                p.damage = p.damage.saturating_add(skill_hit(Sk::SnarkPop));
                 p.dir[0] = 10; // half a second between bites
             }
         }
@@ -24193,6 +24312,59 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
         }
     }
     PROJECTILES[i] = p;
+}
+
+/// Set while acid damage is applied: headcrabs, babies and Gonarch are immune
+/// (`CBigMomma::TakeDamage` zeroes DMG_ACID; headcrabs take none from it).
+static mut DMG_ACID: bool = false;
+
+/// A flying mortar glob (CBMortar, MOVETYPE_TOSS at gravity 1): it falls under
+/// 800 u/s^2 and bursts into acid where it first touches the world, the player
+/// or an actor that is not her brood.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn tick_mortar(m: &Map, movers: &[phys::Mover], i: usize) {
+    let p = PROJECTILES[i];
+    let mut vel = p.vel;
+    let mut rem = p.remainder;
+    let step = proj_logic::integrate_q4(&mut vel, &mut rem, gonarch::MORTAR_HALF_GRAVITY_Q4);
+    let old = p.pos;
+    let new = [old[0] + step[0], old[1] + step[1], old[2] + step[2]];
+    PROJECTILES[i].vel = vel;
+    PROJECTILES[i].remainder = rem;
+    let world = phys::trace_line(m, movers, old, new);
+    let mut at = world.map(|h| h.pos);
+    let body = [LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]];
+    if LOGIC_PLAYER_HEALTH > 0 && proj_logic::segment_hits_cylinder(old, new, body, 16, 36, 6).is_some() {
+        at = Some(body);
+    }
+    if let Some(at) = at {
+        PROJECTILES[i].active = false;
+        // CBMortar::Touch: the splat, a spray of flecks, and a RadiusDamage of
+        // sk_bigmomma_dmg_blast out to sk_bigmomma_radius_blast, as acid.
+        sfx::play_world(sfx::HE_BLAST, at);
+        let mut k = 0;
+        while k < 6 {
+            let v = [
+                (impact_rng().below(13) as i32) - 6,
+                2 + (impact_rng().below(8) as i32),
+                (impact_rng().below(13) as i32) - 6,
+            ];
+            spawn_debris(at, v, DEBRIS_YELLOW_BLOOD, 14);
+            k += 1;
+        }
+        #[cfg(feature = "interaction-probe")]
+        reference_trace::probe_vals(SIM_NOW as u32, "mortar_burst", &[at[0], at[1], at[2]]);
+        DMG_ACID = true;
+        radius_damage(m, at, skill_hit(Sk::BigMommaBlast), skill_value(Sk::BigMommaRadius) as i32, false);
+        DMG_ACID = false;
+        return;
+    }
+    PROJECTILES[i].pos = new;
+    PROJECTILES[i].life = p.life.saturating_sub(1);
+    if PROJECTILES[i].life == 0 {
+        PROJECTILES[i].active = false;
+    }
 }
 
 /// CHornet::TrackTarget for a player's hornet: after a 0.1 s coast at 300 u/s,
@@ -24330,6 +24502,11 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
         }
         if kind == PROJ_SNARK {
             tick_snark(m, movers, i);
+            i += 1;
+            continue;
+        }
+        if kind == PROJ_BMORTAR {
+            tick_mortar(m, movers, i);
             i += 1;
             continue;
         }
@@ -25242,6 +25419,7 @@ unsafe fn logic_blood(m: &Map, rec: map::LogicEnt) {
         }
     }
 }
+#[optimize(size)]
 unsafe fn render_blood_fx(
     packets: &mut PrimitivePacketArena<'_>,
     np: &mut usize,
@@ -30935,6 +31113,7 @@ unsafe fn emit_submodel_face(
 /// Draw an entity-local `func_platrot`. Keep this cold/out-of-line: the main
 /// render loop is already near the MIPS PC16 branch span in diagnostic builds.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn emit_platrot_entity(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
@@ -32713,6 +32892,7 @@ fn project_beam_segment(
 ///
 /// The beam packets stay linked into `ot`: `packets` must stay live and
 /// unmodified until that table's walk has finished.
+#[optimize(size)]
 unsafe fn draw_beam(
     packets: &mut PrimitivePacketArena<'_>,
     ot: &mut OrderingTable<OT_LEN>,
@@ -32784,6 +32964,7 @@ unsafe fn draw_beam(
 /// when the sprite frame is not resident (pack cap overflow).
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
+#[optimize(size)]
 unsafe fn draw_beam_textured(
     packets: &mut PrimitivePacketArena<'_>,
     ot: &mut OrderingTable<OT_LEN>,
@@ -32932,6 +33113,7 @@ unsafe fn draw_beam_textured(
 
 /// Draw armed tripmine lasers from the wall normal retained in the projectile.
 /// This costs two tiny OT triangles per live mine and no persistent RAM.
+#[optimize(size)]
 unsafe fn draw_tripmine_beams(
     packets: &mut PrimitivePacketArena<'_>,
     ot: &mut OrderingTable<OT_LEN>,
@@ -32978,6 +33160,7 @@ unsafe fn draw_tripmine_beams(
 
 /// Queue every world-space beam before the world OT is submitted. Static map
 /// beams, bullet tracers, and armed tripmines share the same depth behavior.
+#[optimize(size)]
 unsafe fn queue_world_beams(
     packets: &mut PrimitivePacketArena<'_>,
     ot: &mut OrderingTable<OT_LEN>,
@@ -39921,7 +40104,7 @@ fn play(
                 {
                     (0, 0, 0)
                 } else {
-                    prop_anim_frame::<true>(
+                    prop_anim_frame(true, 
                         &m,
                         md,
                         PROP_STATE[pi],

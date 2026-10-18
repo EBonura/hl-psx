@@ -49,10 +49,14 @@ pack bonus (C-HE04), the marine and alien relationships (C-F10), view cones
 
 ## Navigation
 
-C-F25, C-F27, C-F28, C-Z09. The original builds a node route for each far goal
-with hull-class link masks and opens doors on the route. The port steers toward
-the goal and uses the cooked flee goals; there is one hull class and monsters do
-not use doors.
+C-F27, C-F28. The original builds a node route for each far goal with
+hull-class link masks. The port steers toward the goal and uses the cooked flee
+goals; there is one hull class.
+
+C-F25, C-Z09. A walker whose step is blocked by a closed plain door (a func_door
+with no targetname that is not USE-only, the doors the player opens by walking
+into them) opens it (`monster_opens_door`). Button- and trigger-operated doors
+stay shut for monsters, as they do for the player's own touch.
 
 ## Movement
 
@@ -60,3 +64,19 @@ C-HC03. A headcrab leaps by throwing itself along a ballistic arc. The port
 glides it to the target over the eight ticks of the leap animation: an actor has
 no velocity or gravity state, and adding one for the leap costs a field in every
 prop.
+
+## Bosses and the controller
+
+BM02..BM06 (Gonarch). She fights while she waits at a node (for its delay or for
+the damage a health node asks) and hunts once her path is over; between nodes the
+walker owns her. A bullet only counts on her sack (hit group 1); acid does
+nothing to her, her babies or headcrabs. Her babies are the six dormant stock
+copies cooked beside her plus any corpse that has lain five seconds (the original
+keeps up to twenty alive). The slash hurts what she is fighting, not the first
+monster in the box.
+
+C-CO03 (controller head ball). The original's ball homes on the enemy at up to
+400 u/s; this one flies straight at where he stood when it left (a homing
+projectile costs a ticker of its own in the executable). The damage
+(`sk_controller_dmgzap`), the 37 tick wind-up and the 64..256 unit window are
+the original's.
