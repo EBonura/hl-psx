@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The startup movie program hands the game the disc bases the launcher gave it. It used to start the game with both at zero, so on a multi-program disc such as the demo disc the game read its packs at unshifted sectors and failed to stream its world and sound.
 - Pushing the c1a0e sample cart no longer stalls three units short of it. The cart rides a lift with a one-unit lip at x 1180, so a player walking east from the lift's west margin stops flush against the lip's hull and can only reach the cart by a stair step. That step's contact with the cart's hull floored onto the hull plane, `slide_move` threw the whole leg away whenever such a point was not clear, the step was rejected, and the player stayed outside the cart's touch range (hull plus two units), so the cart never moved. Whether it happened depended on the approach (position, speed and the sub-unit state of the walk): in a sweep of 216 full-speed starts between x 1161 and 1163 it happened 96 times (44%), on the 5dac694 and b5a58b2 builds alike. A rejected axial contact now gives back one unit along the contact normal instead (never behind the start of the leg); the same sweep stalls 0 times. Costs 112 B of RAM (3,196 B free). `tests/probes/hl-cart-push.txt` replays 48 starts of the same kind (new probe op `cartreset`).
 - Map decals are drawn. The maps paint 1,542 infodecals (blood, scorch marks,
   graffiti, stencilled signs such as the Hazard Course numbers and "STORAGE

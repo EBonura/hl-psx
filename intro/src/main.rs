@@ -233,8 +233,22 @@ fn main() {
             interrupts::wait_vblank();
         }
     };
+    // The game is on the same disc as this program, so it takes over the
+    // bases the launcher gave this one. Passing zero here made the game read
+    // its packs at unshifted sectors whenever the disc is a multi-program one.
+    let lba_offset = psx_io::disc_base::lba_offset();
+    let cdda_track_base = u32::from(psx_io::disc_base::cdda_track_base());
     // SAFETY: the game's payload ends below this image (hl-build checks it
     // when it packs the disc), the player has returned, and nothing else
     // uses the drive. `run` never returns.
-    unsafe { runtime::run(lba, 0, 0, GAME_FNV, image_start(), Loading) }
+    unsafe {
+        runtime::run(
+            lba,
+            lba_offset,
+            cdda_track_base,
+            GAME_FNV,
+            image_start(),
+            Loading,
+        )
+    }
 }
