@@ -118,9 +118,9 @@ env_fade|flag:1|yes|cook:"holdtime"|-
 env_fade|holdtime|yes|cook:"holdtime"|-
 env_fade|renderamt|partial|cook:"rendercolor"|-|only whether the colour is light
 env_fade|rendercolor|partial|cook:"rendercolor"|-|only whether the colour is light
-env_funnel|@class|runtime|-|-|one-shot authored funnel
-env_funnel|@use|runtime|-|-
-env_funnel|flag:1|runtime|-|-
+env_funnel|@class|yes|game:LOGIC_ENV_FUNNEL|-|one-shot authored funnel
+env_funnel|@use|yes|game:LOGIC_ENV_FUNNEL|-
+env_funnel|flag:1|yes|game:LOGIC_ENV_FUNNEL|-
 env_global|@class|yes|cook:"env_global"|-|persistent global state logic
 env_global|@use|yes|game:LOGIC_ENV_GLOBAL|run:roots-diff
 env_global|flag:1|na|-|-
@@ -200,13 +200,13 @@ env_shooter|scale|unreviewed|cook:"scale"|-|a source file names the key
 env_shooter|shootmodel|cosmetic|-|-|debris is a material-coloured shard
 env_shooter|shootsounds|unreviewed|cook:"shootsounds"|-|a source file names the key
 env_shooter|skin|unreviewed|cook:"skin"|-|a source file names the key
-env_sound|@class|partial|cook:"env_sound"|run:sound_room_think|authored room selection and bounded SPU delay/reflection effects; original DSP topology parity remains open
+env_sound|@class|partial|cook:"env_sound"|-|authored room selection and bounded SPU delay/reflection effects; original DSP topology parity remains open
 env_sound|flag:16|cosmetic|-|-|class flag semantics remain unreviewed
 env_sound|flag:32|cosmetic|-|-|class flag semantics remain unreviewed
 env_sound|flag:4|cosmetic|-|-|class flag semantics remain unreviewed
 env_sound|flag:8|cosmetic|-|-|class flag semantics remain unreviewed
-env_sound|radius|yes|cook:sound_number|run:sound_room_think|scaled radius and original numeric-prefix parsing
-env_sound|roomtype|partial|cook:sound_number|run:apply_room|original numerical controls; device filter/modulation/stereo parity open
+env_sound|radius|yes|cook:sound_number|-|scaled radius and original numeric-prefix parsing
+env_sound|roomtype|partial|cook:sound_number|-|original numerical controls; device filter/modulation/stereo parity open
 env_spark|@class|partial|cook:"env_spark"|-|compact spark emitter
 env_spark|@kill|yes|game:fn logic_kill_targets|-
 env_spark|@use|yes|game:LOGIC_ENV_SPARK|-
@@ -1056,11 +1056,11 @@ trigger_gravity|sounds|na|-|-
 trigger_gravity|style|na|-|-
 trigger_hurt|@class|yes|cook:"trigger_hurt"|-|damage volume
 trigger_hurt|@kill|yes|game:fn logic_kill_targets|-
-trigger_hurt|@use|yes|game:SF_TRIGGER_HURT_START_OFF|run:roots-diff|toggles the damage volume
+trigger_hurt|@use|yes|game:SF_HURT_START_OFF|run:roots-diff|toggles the damage volume
 trigger_hurt|damagetype|partial|cook:DMG_RADIATION|-|only the radiation bit is read
 trigger_hurt|delay|yes|cook:"dmg"|-
 trigger_hurt|dmg|yes|cook:"dmg"|-
-trigger_hurt|flag:2|yes|game:SF_TRIGGER_HURT_START_OFF|-
+trigger_hurt|flag:2|yes|game:SF_HURT_START_OFF|-
 trigger_hurt|flag:32|no|-|-|no-clients / touch-client-only variants are not honoured
 trigger_hurt|flag:8|no|-|-|no-clients / touch-client-only variants are not honoured
 trigger_hurt|master|yes|cook:"dmg"|-
