@@ -1423,6 +1423,38 @@ fn write_probe_script(out_dir: &std::path::Path) {
                     [num(2) as i32, num(3) as i32, 0, 0, 0, 0],
                     String::new(),
                 ),
+                // tpfreeany MINX MINY MINZ MAXX MAXY MAXZ : as tpfree for a trigger_transition box (no changelevel touch needed)
+                "tpfreeany" => (
+                    47,
+                    [
+                        num(2) as i32,
+                        num(4) as i32,
+                        num(3) as i32,
+                        num(5) as i32,
+                        num(7) as i32,
+                        num(6) as i32,
+                    ],
+                    String::new(),
+                ),
+                // tppref X Y Z : the next tpfree searches outward from the point of its box nearest this one (HL axes)
+                "tppref" => (
+                    46,
+                    [num(2) as i32, num(4) as i32, num(3) as i32, 0, 0, 0],
+                    String::new(),
+                ),
+                // tpfree MINX MINY MINZ MAXX MAXY MAXZ : stand on the free spot nearest the centre of that box (HL axes), touch fires
+                "tpfree" => (
+                    45,
+                    [
+                        num(2) as i32,
+                        num(4) as i32,
+                        num(3) as i32,
+                        num(5) as i32,
+                        num(7) as i32,
+                        num(6) as i32,
+                    ],
+                    String::new(),
+                ),
                 // pos : log the player position
                 "pos" => (13, [0; 6], String::new()),
                 // die : drop the player's health to zero (god off)

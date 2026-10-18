@@ -444,6 +444,115 @@ pub unsafe fn step(
                 WATCH_EVERY = if c.a[1] > 0 { c.a[1] as u32 } else { 10 };
             }
             41 => PROJ_WATCH = c.a[0] != 0,
+            46 => {
+                PREF = [c.a[0] as i32, c.a[1] as i32, c.a[2] as i32];
+                HAS_PREF = true;
+            }
+            45 | 47 => {
+                // tpfree (47: tpfreeany, no changelevel touch needed, for a trigger_transition box): nearest world-free standing spot to the centre of a box (engine axes
+                // x, up, y), kept within one hull half-width of the box so its touch fires.
+                let lo = [c.a[0] as i32, c.a[1] as i32, c.a[2] as i32];
+                let hi = [c.a[3] as i32, c.a[4] as i32, c.a[5] as i32];
+                let (cx, cy, cz) = if HAS_PREF {
+                    (
+                        PREF[0].clamp(lo[0], hi[0]),
+                        PREF[1].clamp(lo[1], hi[1]) - 20,
+                        PREF[2].clamp(lo[2], hi[2]),
+                    )
+                } else {
+                    (
+                        (lo[0] + hi[0]) / 2,
+                        (lo[1] + hi[1]) / 2 - 20,
+                        (lo[2] + hi[2]) / 2,
+                    )
+                };
+                HAS_PREF = false;
+                let mut found = false;
+                let mut crouched = false;
+                let mut pass = 0usize;
+                while pass < 4 && !found {
+                    crouched = pass & 1 == 1;
+                    let need_floor = pass < 2;
+                    let mut zi = 0usize;
+                    while zi < 5 && !found {
+                        let dy = [0, 24, -24, 48, -48][zi];
+                        let y = (cy + dy).clamp(lo[1] - 30, hi[1] + 30);
+                        let mut r = 0i32;
+                        while r <= 192 && !found {
+                            let mut dx = -r;
+                            while dx <= r && !found {
+                                let mut dz = -r;
+                                while dz <= r && !found {
+                                    if dx.abs() == r || dz.abs() == r {
+                                        let p = [cx + dx, y, cz + dz];
+                                        if p[0] >= lo[0] - 14
+                                            && p[0] <= hi[0] + 14
+                                            && p[2] >= lo[2] - 14
+                                            && p[2] <= hi[2] + 14
+                                            && crate::phys::probe_pos_free(m, p, crouched)
+                                            && (!need_floor
+                                                || crate::phys::probe_pos_supported(m, p, crouched))
+                                            && (c.op == 47
+                                                || touches_changelevel(m, nlogic, p, crouched))
+                                        {
+                                            player.pos = p;
+                                            found = true;
+                                        }
+                                    }
+                                    dz += 8;
+                                }
+                                dx += 8;
+                            }
+                            r += 8;
+                        }
+                        zi += 1;
+                    }
+                    pass += 1;
+                }
+                let (mut n_free, mut n_touch) = (0i32, 0i32);
+                if !found {
+                    // Diagnose: grid points of the box that are hull-free, and that touch a changelevel.
+                    let mut gx = lo[0] - 14;
+                    while gx <= hi[0] + 14 {
+                        let mut gz = lo[2] - 14;
+                        while gz <= hi[2] + 14 {
+                            let mut gi = 0usize;
+                            while gi < 5 {
+                                let gy = ((lo[1] + hi[1]) / 2 - 20 + [0, 24, -24, 48, -48][gi])
+                                    .clamp(lo[1] - 30, hi[1] + 30);
+                                let gp = [gx, gy, gz];
+                                if crate::phys::probe_pos_free(m, gp, false) {
+                                    n_free += 1;
+                                }
+                                if touches_changelevel(m, nlogic, gp, false) {
+                                    n_touch += 1;
+                                }
+                                gi += 1;
+                            }
+                            gz += 8;
+                        }
+                        gx += 8;
+                    }
+                }
+                player.crouch = found && crouched;
+                HOLD_CL = false;
+                player.clear_velocity();
+                player.on_ground = false;
+                player.ground_mover = -1;
+                PIN_POSE = (player.pos, *yaw, *pitch);
+                crate::reference_trace::probe_vals(
+                    now,
+                    if found { "tpfree" } else { "tpfree-none" },
+                    &[
+                        player.pos[0],
+                        player.pos[1],
+                        player.pos[2],
+                        crouched as i32,
+                        n_free,
+                        n_touch,
+                    ],
+                );
+            }
             43 | 44 => {
                 let mut pi = 0usize;
                 while pi < crate::PROP_COUNT {
@@ -782,4 +891,45 @@ pub unsafe fn step(
     } else {
         sample
     }
+}
+
+/// Preferred centre (engine axes) for the next `tpfree`, set by `tppref`.
+static mut PREF: [i32; 3] = [0; 3];
+static mut HAS_PREF: bool = false;
+
+/// Would the player standing (or ducking) at `p` set off a trigger_changelevel? The same
+/// bounds and clip-hull tests `logic_touch_triggers` applies.
+unsafe fn touches_changelevel(
+    m: &crate::map::Map,
+    nlogic: usize,
+    p: [i32; 3],
+    crouched: bool,
+) -> bool {
+    let hh = if crouched {
+        crate::PLAYER_DUCK_HALF_HEIGHT
+    } else {
+        crate::PLAYER_HULL_HALF_HEIGHT
+    };
+    let mins = [p[0] - 16, p[1] - hh, p[2] - 16];
+    let maxs = [p[0] + 16, p[1] + hh, p[2] + 16];
+    let mut li = 0usize;
+    while li < nlogic {
+        if crate::LOGIC_KIND[li] == crate::map::LOGIC_TRIGGER_CHANGELEVEL
+            && m.logic_touches_bounds(li, mins, maxs)
+        {
+            let rec = m.logic(li);
+            if rec.brush == crate::map::LOGIC_BRUSH_NONE
+                || rec.brush & crate::map::LOGIC_BRUSH_SHAPE == 0
+                || crate::phys::inside_clip_hull(
+                    m,
+                    (rec.brush & !crate::map::LOGIC_BRUSH_SHAPE) as i16,
+                    p,
+                )
+            {
+                return true;
+            }
+        }
+        li += 1;
+    }
+    false
 }

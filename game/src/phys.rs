@@ -3041,3 +3041,29 @@ impl Player {
         }
     }
 }
+
+/// Probe-only: true when the standing player hull at `pos` is clear of the world brushes.
+#[cfg(feature = "interaction-probe")]
+pub fn probe_pos_free(map: &Map, pos: [i32; 3], crouch: bool) -> bool {
+    let head = if crouch {
+        map.hull3_head
+    } else {
+        map.hull1_head
+    };
+    head >= 0 && !trace(map, head, pos, pos).startsolid
+}
+
+/// Probe-only: the hull at `pos` is free and a floor lies within 40 units below it.
+#[cfg(feature = "interaction-probe")]
+pub fn probe_pos_supported(map: &Map, pos: [i32; 3], crouch: bool) -> bool {
+    let head = if crouch {
+        map.hull3_head
+    } else {
+        map.hull1_head
+    };
+    if head < 0 {
+        return false;
+    }
+    let t = trace(map, head, pos, [pos[0], pos[1] - 40, pos[2]]);
+    !t.startsolid && t.frac < 4096
+}
