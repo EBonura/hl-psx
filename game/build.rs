@@ -1404,6 +1404,14 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 "projwatch" => (41, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
                 // arsenal : log owned mask, current weapon, its magazine and reserve
                 "arsenal" => (42, [0; 6], String::new()),
+                // montp KIND X Y Z : put the first live monster of that kind at an HL point
+                "montp" => (
+                    48,
+                    [num(2) as i32, num(3) as i32, num(5) as i32, num(4) as i32, 0, 0],
+                    String::new(),
+                ),
+                // nihhead : the Nihilanth's next hit counts as a shot on his open head
+                "nihhead" => (47, [0; 6], String::new()),
                 // tpnear KIND DX DY DZ : stand at an offset (HL axes) from the first live monster of that kind, facing it
                 "tpnear" => (
                     43,

@@ -1,0 +1,37 @@
+# c1a1c: the squid teleports in over the catwalk and the catwalk breaks. The squid (kind 7) must fall to the floor, not hang in the air.
+# watch 7: health, x, y (up), z, state. `fall` lines mark the tick an actor lost its support.
+map c1a1c
+0 god 1
+0 trace 20
+0 watch 7
+5 fire squid_catwalk_start on
+20 pos
+40 pos
+60 pos
+80 pos
+100 pos
+120 pos
+140 pos
+160 pos
+180 pos
+200 pos
+220 pos
+240 pos
+260 pos
+280 pos
+300 pos
+320 pos
+340 pos
+360 pos
+380 pos
+400 pos
+420 pos
+440 pos
+460 pos
+480 pos
+500 pos
+520 pos
+540 pos
+560 pos
+580 pos
+600 pos

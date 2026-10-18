@@ -1216,6 +1216,18 @@ const SCIENTIST_FEAR_TICKS: u8 = 80;
 const SCIENTIST_FLEE_SPEED: i32 = 7;
 const SCIENTIST_FACE_RANGE2: i32 = 192 * 192;
 const SCIENTIST_FOLLOW_STOP_RANGE2: i32 = 128 * 128;
+/// A follower has arrived when it is within the stop range on the plane and on
+/// the player's floor: a scientist 150 units under a platform is not beside him.
+const FOLLOW_SAME_FLOOR: i32 = 72;
+#[inline]
+fn follower_distance2(pos: [i32; 3], player_pos: [i32; 3]) -> i32 {
+    let d2 = dist2_xz(pos, player_pos);
+    if (pos[1] - player_pos[1]).abs() > FOLLOW_SAME_FLOOR {
+        d2.max(SCIENTIST_FOLLOW_STOP_RANGE2 + 1)
+    } else {
+        d2
+    }
+}
 const SCIENTIST_USE_REACH: i32 = 64; // PlayerUse radius in the GoldSrc SDK
 const PROP_HIT_FLASH_TICKS: u8 = 4;
 const ATTACK_WINDUP: u8 = 5; // telegraph ticks before a ranged enemy's first shot
@@ -17026,6 +17038,32 @@ unsafe fn prop_controller_move_towards(
     true
 }
 
+/// SV_Physics_Step's gravity: a walker with nothing under it falls. Every eighth
+/// tick a free-standing walker looks 28 units below its feet; with no floor,
+/// brush or platform there (a spawn in mid-air, a catwalk that broke, a lift
+/// that went down) it becomes airborne and `prop_air_tick` drops it to the
+/// next floor. Seated, scripted and dormant actors keep their authored pose.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_check_support(m: &Map, movers: &[phys::Mover], pi: usize) {
+    let ty = PROP_KIND[pi];
+    if !monsterjump::walker(ty)
+        || matches!(ty, 25 | 54)
+        || PROP_SCRIPT_MODE[pi] != 0
+        || PROP_SCRIPT_LI[pi] != u16::MAX
+        || PROP_DORMANT[pi] & (PROP_RUNTIME_AIRBORNE | PROP_RUNTIME_PRISONER) != 0
+    {
+        return;
+    }
+    let p = PROP_POS[pi];
+    if phys::trace_line(m, movers, [p[0], p[1] + 8, p[2]], [p[0], p[1] - 28, p[2]]).is_none() {
+        PROP_DORMANT[pi] |= PROP_RUNTIME_AIRBORNE;
+        PROP_JUMP[pi].start();
+        #[cfg(feature = "interaction-probe")]
+        reference_trace::probe(SIM_NOW as u32, "fall", "", pi as i32);
+    }
+}
+
 /// A walker that cannot take its step opens the plain door in its way (the
 /// monsters of the original route through func_door brushes): a closed door
 /// with no targetname that is not USE-only, the doors the player opens by
@@ -20079,6 +20117,7 @@ unsafe fn tick_barney(
         } else {
             prop_face_point(pi, player_pos);
         }
+        let d2 = follower_distance2(pos, player_pos);
         if d2 > BARNEY_STOP_RANGE2 {
             PROP_STATE[pi] = PROP_STATE_MOVE;
             let speed = scientist_logic::follow_move_speed(d2, MOVE_TICK, true);
@@ -20274,7 +20313,7 @@ unsafe fn tick_scientist(
                 return;
             }
         }
-        let d2 = dist2_xz(pos, player_pos);
+        let d2 = follower_distance2(pos, player_pos);
         if d2 > SCIENTIST_FOLLOW_STOP_RANGE2 {
             PROP_STATE[pi] = PROP_STATE_MOVE;
             let speed = scientist_logic::follow_move_speed(d2, MOVE_TICK, false);
@@ -20650,6 +20689,9 @@ unsafe fn tick_props(
             PROP_AI_TIMER[pi] = 0;
             pi += 1;
             continue;
+        }
+        if (pi as u32).wrapping_add(AI_TICK) & 7 == 0 {
+            prop_check_support(m, movers, pi);
         }
         if (PUSH_N != 0 || MONSTERJUMP_N != 0 || monsterjump::airborne(ty, PROP_DORMANT[pi]))
             && prop_environment_move(m, movers, pi)

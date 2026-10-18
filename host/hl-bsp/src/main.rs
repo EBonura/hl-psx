@@ -17267,7 +17267,13 @@ fn cook_mdl(
             if spec.seq >= 0 && spec.seq < numseq {
                 let sd = seqindex + spec.seq as usize * 176;
                 let group = i(sd + 156) as usize;
+                // A blended sequence (the aim pitch of a shooting Barney or marine, the turn
+                // of a walk) holds one animation per blend, `numbones` records each. The game
+                // drives the blend from the enemy's pitch; the cook keeps the middle one, the
+                // level aim, instead of blend 0, which looks down (or fully turned).
+                let blends = i(sd + 120).max(1) as usize;
                 let ai = i(sd + 124) as usize;
+                let ai = if ai != 0 { ai + (blends - 1) / 2 * numbones * 12 } else { 0 };
                 let nf = i(sd + 56).max(1) as usize;
                 let fps = f(sd + 32);
                 let looping = i(sd + 36) & 1 != 0; // STUDIO_LOOPING

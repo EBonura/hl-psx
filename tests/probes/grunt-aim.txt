@@ -1,0 +1,199 @@
+# Marines aim (c2a1a, room 38): the first marine shoots the player standing level (ticks 5..150), 160 units higher (150..300, pinned) and 160 lower (300..450).
+map c2a1a
+0 trace 20
+0 god 0
+0 watch 8
+5 tpnear 8 300 0 0
+6 pin 1
+6 hp 100
+8 aimat 8 40
+12 aimat 8 40
+12 hp 100
+16 aimat 8 40
+18 hp 100
+20 aimat 8 40
+24 aimat 8 40
+24 hp 100
+28 aimat 8 40
+30 hp 100
+32 aimat 8 40
+36 aimat 8 40
+36 hp 100
+40 aimat 8 40
+42 hp 100
+44 aimat 8 40
+48 aimat 8 40
+48 hp 100
+52 aimat 8 40
+54 hp 100
+56 aimat 8 40
+60 aimat 8 40
+60 hp 100
+64 aimat 8 40
+66 hp 100
+68 aimat 8 40
+72 aimat 8 40
+72 hp 100
+76 aimat 8 40
+78 hp 100
+80 aimat 8 40
+84 aimat 8 40
+84 hp 100
+88 aimat 8 40
+90 hp 100
+92 aimat 8 40
+96 aimat 8 40
+96 hp 100
+100 aimat 8 40
+102 hp 100
+104 aimat 8 40
+108 aimat 8 40
+108 hp 100
+112 aimat 8 40
+114 hp 100
+116 aimat 8 40
+120 aimat 8 40
+120 hp 100
+124 aimat 8 40
+126 hp 100
+128 aimat 8 40
+132 aimat 8 40
+132 hp 100
+136 aimat 8 40
+138 hp 100
+140 aimat 8 40
+144 aimat 8 40
+144 hp 100
+148 aimat 8 40
+150 tpnear 8 300 0 160
+150 hp 100
+152 aimat 8 40
+156 aimat 8 40
+156 hp 100
+160 aimat 8 40
+162 hp 100
+164 aimat 8 40
+168 aimat 8 40
+168 hp 100
+172 aimat 8 40
+174 hp 100
+176 aimat 8 40
+180 aimat 8 40
+180 hp 100
+184 aimat 8 40
+186 hp 100
+188 aimat 8 40
+192 aimat 8 40
+192 hp 100
+196 aimat 8 40
+198 hp 100
+200 aimat 8 40
+204 aimat 8 40
+204 hp 100
+208 aimat 8 40
+210 hp 100
+212 aimat 8 40
+216 aimat 8 40
+216 hp 100
+220 aimat 8 40
+222 hp 100
+224 aimat 8 40
+228 aimat 8 40
+228 hp 100
+232 aimat 8 40
+234 hp 100
+236 aimat 8 40
+240 aimat 8 40
+240 hp 100
+244 aimat 8 40
+246 hp 100
+248 aimat 8 40
+252 aimat 8 40
+252 hp 100
+256 aimat 8 40
+258 hp 100
+260 aimat 8 40
+264 aimat 8 40
+264 hp 100
+268 aimat 8 40
+270 hp 100
+272 aimat 8 40
+276 aimat 8 40
+276 hp 100
+280 aimat 8 40
+282 hp 100
+284 aimat 8 40
+288 aimat 8 40
+288 hp 100
+292 aimat 8 40
+294 hp 100
+296 aimat 8 40
+300 tpnear 8 300 0 -160
+300 aimat 8 40
+300 hp 100
+304 aimat 8 40
+306 hp 100
+308 aimat 8 40
+312 aimat 8 40
+312 hp 100
+316 aimat 8 40
+318 hp 100
+320 aimat 8 40
+324 aimat 8 40
+324 hp 100
+328 aimat 8 40
+330 hp 100
+332 aimat 8 40
+336 aimat 8 40
+336 hp 100
+340 aimat 8 40
+342 hp 100
+344 aimat 8 40
+348 aimat 8 40
+348 hp 100
+352 aimat 8 40
+354 hp 100
+356 aimat 8 40
+360 aimat 8 40
+360 hp 100
+364 aimat 8 40
+366 hp 100
+368 aimat 8 40
+372 aimat 8 40
+372 hp 100
+376 aimat 8 40
+378 hp 100
+380 aimat 8 40
+384 aimat 8 40
+384 hp 100
+388 aimat 8 40
+390 hp 100
+392 aimat 8 40
+396 aimat 8 40
+396 hp 100
+400 aimat 8 40
+402 hp 100
+404 aimat 8 40
+408 aimat 8 40
+408 hp 100
+412 aimat 8 40
+414 hp 100
+416 aimat 8 40
+420 aimat 8 40
+420 hp 100
+424 aimat 8 40
+426 hp 100
+428 aimat 8 40
+432 aimat 8 40
+432 hp 100
+436 aimat 8 40
+438 hp 100
+440 aimat 8 40
+444 aimat 8 40
+444 hp 100
+448 aimat 8 40
+450 hp 100
+452 aimat 8 40
+456 aimat 8 40
+456 hp 100
+460 aimat 8 40

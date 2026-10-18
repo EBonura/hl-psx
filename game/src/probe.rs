@@ -309,6 +309,24 @@ pub unsafe fn step(
                 }
             }
             #[cfg(feature = "probe-fixes")]
+            47 => crate::nihilanth::probe_head(),
+            #[cfg(feature = "probe-fixes")]
+            48 => {
+                let mut pi = 0usize;
+                while pi < crate::PROP_COUNT {
+                    if crate::PROP_ACTIVE[pi] != 0
+                        && crate::PROP_HEALTH[pi] != 0
+                        && crate::PROP_KIND[pi] as i32 == c.a[0] as i32
+                    {
+                        let at = [c.a[1] as i32, c.a[2] as i32, c.a[3] as i32];
+                        crate::prop_set_pos_grounded(m, pi, crate::prop_grounded_pos(m, pi, at));
+                        crate::reference_trace::probe(now, "montp", "", pi as i32);
+                        break;
+                    }
+                    pi += 1;
+                }
+            }
+            #[cfg(feature = "probe-fixes")]
             18 => *health = c.a[0].clamp(0, 1000) as u16,
             #[cfg(feature = "probe-fixes")]
             19 => {

@@ -193,6 +193,12 @@ pub(crate) unsafe fn bind(m: &Map, pi: usize) {
     g.max_z = z("n_max").unwrap_or(4096);
 }
 
+/// Probe only: the next hit on him counts as a shot on his open head.
+#[cfg(feature = "probe-fixes")]
+pub(crate) unsafe fn probe_head() {
+    n().head_hit = true;
+}
+
 /// CNihilanth::CommandUse(USE_ON): the fight starts.
 #[optimize(size)]
 pub(crate) unsafe fn command_on() {
