@@ -8799,6 +8799,7 @@ fn aabb_overlaps(amins: [i32; 3], amaxs: [i32; 3], bmins: [i32; 3], bmaxs: [i32;
 /// origin. Returning true on malformed trees is deliberately conservative:
 /// visibility false positives cost draw work, while false negatives make
 /// gameplay objects disappear.
+#[optimize(size)]
 fn box_touches_pvs_node(m: &Map, node: i32, mins: [i32; 3], maxs: [i32; 3], depth: u16) -> bool {
     if node < 0 {
         return pvs_leaf_visible(m, (-node - 1) as usize);
@@ -12861,6 +12862,7 @@ unsafe fn logic_tick_rotating(nents: usize, li: usize, rec: map::LogicEnt, now: 
 /// Dispatch fan impacts from the player's accepted collision path, once per
 /// fixed simulation update rather than inventing a trigger_hurt semaphore.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn damage_player_fan_contacts(m: &Map, nents: usize, health: &mut u16, armor: &mut u16) {
     let mut ei = 0;
     while ei < nents {
@@ -13211,6 +13213,7 @@ unsafe fn momentary_owner(m: &Map, source_li: usize, target: u16) -> usize {
 
 /// GoldSrc calls Off 0.1 seconds after the last Use. Auto-return wheels then
 /// drive every linked wheel and the momentary door back toward position zero.
+#[optimize(size)]
 unsafe fn logic_tick_momentary(
     m: &Map,
     nlogic: usize,
