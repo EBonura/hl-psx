@@ -1,0 +1,66 @@
+# c1a1b retinal scanner: the scientist is stood near the scanner, then the player walks into trigger_for_retinal (volume x 85..188, y -751..-544, z -76..20; scripted_sequence origin 117 -710 -64 radius 150).
+map c1a1b
+0 god 1
+0 trace 20
+0 watch 0
+1 killat 1284 -1024 -268
+1 killat -192 -664 -64
+1 killat 160 -626 -216
+1 killat 712 -450 -228
+5 montp 0 125 -690 -64
+8 follow 0
+20 pos
+40 tp -100 -640 -62 0 0 0
+40 pos
+60 pos
+80 pos
+100 tp 140 -640 -62 0 0 0
+100 pos
+101 logic retinal_scanner_door
+120 pos
+140 pos
+160 pos
+180 pos
+200 pos
+220 pos
+240 pos
+260 pos
+280 pos
+300 pos
+320 pos
+340 pos
+360 pos
+380 pos
+400 logic retinal_scanner_door
+400 pos
+420 pos
+440 pos
+460 pos
+480 pos
+500 pos
+520 pos
+540 pos
+560 pos
+580 pos
+600 pos
+620 pos
+640 pos
+660 pos
+680 pos
+700 pos
+720 pos
+740 pos
+760 pos
+780 pos
+800 logic retinal_scanner_door
+800 pos
+820 pos
+840 pos
+860 pos
+880 pos
+900 pos
+920 pos
+940 pos
+960 pos
+980 pos
+1000 pos

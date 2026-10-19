@@ -1,0 +1,19 @@
+# c1a1b retinal scanner, scientist out of reach at first: the player enters trigger_for_retinal while the scientist stands 158 units from the
+# scripted_sequence origin (117 -710 -64, radius 150), so the sequence finds nobody. When the scientist is then moved inside the radius the
+# door (logic 78) must open: retail CineThink retries every second.
+map c1a1b
+0 god 1
+0 trace 20
+0 watch 0
+1 killat 1284 -1024 -268
+1 killat -192 -664 -64
+1 killat 160 -626 -216
+1 killat 712 -450 -228
+5 montp 0 275 -710 -64
+100 tp 117 -690 -62 0 0 0
+101 logic retinal_scanner_door
+250 logic retinal_scanner_door
+299 logic retinal_scanner_door
+300 montp 0 200 -700 -64
+400 logic retinal_scanner_door
+500 logic retinal_scanner_door
