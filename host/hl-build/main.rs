@@ -3227,6 +3227,9 @@ fn run_stack_gate(repository: &Path, psoxide: &Path, cue: &Path, maps: Option<&s
         )?);
     }
     let bound = static_stack_bound(repository, psoxide, None)?;
+    for (total, what) in bound.chains.iter().take(6) {
+        println!("  call chain bound {total:>6} B  ends in {what}");
+    }
     for (total, what) in bound.recursion.iter().take(6) {
         println!("  recursion bound {total:>6} B  {what}");
     }
