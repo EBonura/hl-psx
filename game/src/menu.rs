@@ -959,9 +959,6 @@ pub const OPT_LABELS: [&str; 7] = [
     "Brightness",
 ];
 pub const N_OPTIONS: i32 = 8; // 7 adjustable values + Debug
-/// Index of the brightness row inside [`OPT_LABELS`]; `settings::adjust` and
-/// `settings::value` dispatch on the same number.
-pub const OPT_BRIGHTNESS: usize = 6;
 
 /// Title shown above a chapter's sub-map list.
 pub fn chapter_title(chapter: usize) -> &'static str {
