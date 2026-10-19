@@ -8,8 +8,13 @@ pad = "analog"
 max_ticks = 5900
 
 [[step]]
-label = "skip the startup movie, if the disc has one (a disc without it never sees the press)"
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
 wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
 
 [[step]]
 press = ["start"]

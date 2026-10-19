@@ -5,10 +5,24 @@ title = "Half-Life: skip the startup movie, then the title menu"
 disc = ["dist/hl-psx.cue"]
 symbols = [".hlpsx/hl-psx.map"]
 pad = "analog"
-max_ticks = 2000
+max_ticks = 2200
 
 [[step]]
-label = "the movie is playing (the ten seconds run to about tick 640)"
+label = "the studio splash plays first, before the movie"
+wait = 100
+
+[[step]]
+checkpoint = "studio-splash"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "the splash fades out and the movie starts"
+wait = 90
+
+[[step]]
+label = "the movie is playing (the ten seconds run to about tick 830)"
 wait = 150
 
 [[step]]

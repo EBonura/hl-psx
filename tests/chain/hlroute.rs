@@ -550,6 +550,11 @@ fn compile(o: &Opts) -> Result<(), String> {
     if let Some(prologue) = jv("prologue") {
         // `new_game`: wait out the boot and press Cross on the title.
         if prologue == "new_game" {
+            // A disc with the intro stage opens with the studio splash and then the
+            // movie, each skipped with Start; a disc without them ignores the presses.
+            t.push_str("\n[[step]]\nlabel = \"skip the studio splash and the startup movie, if the disc has them\"\nwait = 100\n");
+            t.push_str("\n[[step]]\npress = [\"start\"]\nhold = 8\nwait = 62\n");
+            t.push_str("\n[[step]]\npress = [\"start\"]\nhold = 8\nwait = 200\n");
             t.push_str("\n[[step]]\nlabel = \"boot to the title\"\nwait = 620\n");
             // `skill=easy|hard`: Left/Right on the New game row first (Medium is the default).
             let (skill, key) = match jv("skill").as_deref() {
