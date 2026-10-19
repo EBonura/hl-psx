@@ -17277,7 +17277,11 @@ fn cook_mdl(
                 let mut ai = i(sd + 124) as usize;
                 if ai != 0 && blends > 1 {
                     let (start, end) = (f(sd + 136), f(sd + 144));
-                    let w = if end != start { ((0.0 - start) / (end - start)).clamp(0.0, 1.0) } else { 0.0 };
+                    let w = if end != start {
+                        ((0.0 - start) / (end - start)).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
                     let t = w * (blends - 1) as f32;
                     let i0 = (t.floor() as usize).min(blends - 1);
                     blend_frac = t - i0 as f32;
@@ -17307,9 +17311,11 @@ fn cook_mdl(
                 let mut dof = bm.value;
                 let at = base + bi * 12; // this bone's mstudioanim_t
                 for d in 0..6 {
-                    let off = u16::from_le_bytes([anim_b[at + d * 2], anim_b[at + d * 2 + 1]]) as usize;
+                    let off =
+                        u16::from_le_bytes([anim_b[at + d * 2], anim_b[at + d * 2 + 1]]) as usize;
                     if off != 0 {
-                        dof[d] = bm.value[d] + anim_value(anim_b, at + off, sframe) as f32 * bm.scale[d];
+                        dof[d] =
+                            bm.value[d] + anim_value(anim_b, at + off, sframe) as f32 * bm.scale[d];
                     }
                 }
                 dof

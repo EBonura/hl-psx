@@ -1929,7 +1929,10 @@ fn cook_assets(repository: &Path, valve: &Path, psoxide: &Path) -> Result<()> {
     if std::env::var_os("HLPSX_REUSE_MUSIC").is_some()
         && fs::read_dir(&music).is_ok_and(|mut entries| entries.next().is_some())
     {
-        println!("==> extract and decode CD audio: reusing {} (HLPSX_REUSE_MUSIC)", music.display());
+        println!(
+            "==> extract and decode CD audio: reusing {} (HLPSX_REUSE_MUSIC)",
+            music.display()
+        );
     } else {
         run_content(
             &bins.content,

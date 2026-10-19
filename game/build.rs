@@ -1407,7 +1407,14 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 // montp KIND X Y Z : put the first live monster of that kind at an HL point
                 "montp" => (
                     48,
-                    [num(2) as i32, num(3) as i32, num(5) as i32, num(4) as i32, 0, 0],
+                    [
+                        num(2) as i32,
+                        num(3) as i32,
+                        num(5) as i32,
+                        num(4) as i32,
+                        0,
+                        0,
+                    ],
                     String::new(),
                 ),
                 // talkas KIND : the first live monster of that kind is mid-sentence (the dialogue channel is his for 400 ticks)

@@ -10579,7 +10579,6 @@ unsafe fn script_human_chord_clear(
 /// kind of temporary obstruction that `CBaseMonster::Move` is designed to
 /// triangulate around.
 #[inline(never)]
-#[optimize(size)]
 unsafe fn script_human_actor_blocked_fraction(
     pi: usize,
     start: [i32; 3],
@@ -10661,7 +10660,6 @@ unsafe fn script_human_chord_clear_actors(
 /// rings, exactly matching monsters.cpp.  This cold path runs only once when a
 /// blocked walk/run script possesses an actor.
 #[inline(never)]
-#[optimize(size)]
 unsafe fn script_local_detour(
     m: &Map,
     movers: &[phys::Mover],
@@ -10765,7 +10763,6 @@ unsafe fn script_local_detour(
 /// Everything here is stack-only, so the source behavior costs no persistent
 /// actor or map RAM.
 #[inline(never)]
-#[optimize(size)]
 unsafe fn script_dynamic_local_replan(
     m: &Map,
     movers: &[phys::Mover],
@@ -15611,7 +15608,8 @@ unsafe fn record_prop_anim_clips(m: &Map, sim_frame_no: u32) {
             continue;
         }
         let md = loaded_model(slot as usize);
-        prop_anim_frame(false, 
+        prop_anim_frame(
+            false,
             m,
             &md,
             PROP_STATE[pi],
@@ -19534,7 +19532,12 @@ unsafe fn tick_headcrab(
                         skill_damage(kind).unwrap_or(HEADCRAB_ATTACK_DAMAGE as u8)
                     };
                     #[cfg(feature = "interaction-probe")]
-                    reference_trace::probe(SIM_NOW as u32, "melee", "", damage as i32 * 1000 + pi as i32);
+                    reference_trace::probe(
+                        SIM_NOW as u32,
+                        "melee",
+                        "",
+                        damage as i32 * 1000 + pi as i32,
+                    );
                     damage_target(target, damage, pos, health, armor);
                 }
             }
@@ -22570,7 +22573,8 @@ unsafe fn prop_studio_hit_fraction(
     if md.hitbox_count() == 0 {
         return None;
     }
-    let (frame, frame2, frac16) = prop_anim_frame(true, 
+    let (frame, frame2, frac16) = prop_anim_frame(
+        true,
         m,
         &md,
         PROP_STATE[pi],
@@ -22697,7 +22701,6 @@ static mut TRACER_ON: bool = false;
 /// pellets). Returns `Some` for either an actor or world hit, applying damage
 /// and impact effects; `None` means the trace missed everything.
 #[allow(clippy::too_many_arguments)]
-#[optimize(size)]
 unsafe fn fire_hitscan(
     m: &Map,
     movers: &[phys::Mover],
@@ -24429,7 +24432,8 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
             bounced = true;
             if p.dir[0] == 0 && (armed || best != usize::MAX - 1) {
                 if best == usize::MAX - 1 {
-                    PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(skill_hit(Sk::SnarkBite) as u16);
+                    PENDING_PLAYER_DAMAGE =
+                        PENDING_PLAYER_DAMAGE.saturating_add(skill_hit(Sk::SnarkBite) as u16);
                     note_damage_direction(p.pos);
                 } else {
                     damage_prop(best, skill_hit(Sk::SnarkBite), true);
@@ -24485,8 +24489,14 @@ unsafe fn tick_mortar(m: &Map, movers: &[phys::Mover], i: usize) {
     PROJECTILES[i].remainder = rem;
     let world = phys::trace_line(m, movers, old, new);
     let mut at = world.map(|h| h.pos);
-    let body = [LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]];
-    if LOGIC_PLAYER_HEALTH > 0 && proj_logic::segment_hits_cylinder(old, new, body, 16, 36, 6).is_some() {
+    let body = [
+        LOGIC_PLAYER_POS[0],
+        LOGIC_PLAYER_POS[1] + 18,
+        LOGIC_PLAYER_POS[2],
+    ];
+    if LOGIC_PLAYER_HEALTH > 0
+        && proj_logic::segment_hits_cylinder(old, new, body, 16, 36, 6).is_some()
+    {
         at = Some(body);
     }
     if let Some(at) = at {
@@ -24507,7 +24517,13 @@ unsafe fn tick_mortar(m: &Map, movers: &[phys::Mover], i: usize) {
         #[cfg(feature = "interaction-probe")]
         reference_trace::probe_vals(SIM_NOW as u32, "mortar_burst", &[at[0], at[1], at[2]]);
         DMG_ACID = true;
-        radius_damage(m, at, skill_hit(Sk::BigMommaBlast), skill_value(Sk::BigMommaRadius) as i32, false);
+        radius_damage(
+            m,
+            at,
+            skill_hit(Sk::BigMommaBlast),
+            skill_value(Sk::BigMommaRadius) as i32,
+            false,
+        );
         DMG_ACID = false;
         return;
     }
@@ -40286,7 +40302,8 @@ fn play(
                 {
                     (0, 0, 0)
                 } else {
-                    prop_anim_frame(true, 
+                    prop_anim_frame(
+                        true,
                         &m,
                         md,
                         PROP_STATE[pi],

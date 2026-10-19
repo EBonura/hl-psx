@@ -1686,8 +1686,15 @@ fn setpiece_candidates(map: &Path) -> Result<Vec<(usize, MapAudioKey)>> {
             }
         }
         // SF_BUTTON_SPARK_IF_OFF: a resting button or valve sparks.
-        if matches!(entity.get("classname").map(String::as_str), Some("func_button" | "func_rot_button"))
-            && entity.get("spawnflags").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0) & 64 != 0
+        if matches!(
+            entity.get("classname").map(String::as_str),
+            Some("func_button" | "func_rot_button")
+        ) && entity
+            .get("spawnflags")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0)
+            & 64
+            != 0
         {
             classes.insert("@button_spark".to_string());
         }

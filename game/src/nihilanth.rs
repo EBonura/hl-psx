@@ -236,7 +236,14 @@ pub(crate) unsafe fn note_shot(pi: usize, start: [i32; 3], end: [i32; 3]) {
     reference_trace::probe_vals(
         SIM_NOW as u32,
         "nshot",
-        &[N.head_hit as i32, isqrt_i32(dist2_3(q, c)), t, c[1], start[1], end[1]],
+        &[
+            N.head_hit as i32,
+            isqrt_i32(dist2_3(q, c)),
+            t,
+            c[1],
+            start[1],
+            end[1],
+        ],
     );
 }
 
@@ -415,7 +422,14 @@ pub(crate) unsafe fn tick(m: &Map, movers: &[phys::Mover]) {
         reference_trace::probe_vals(
             now as u32,
             "nih",
-            &[g.irritation as i32, g.level as i32, g.spheres as i32, g.health, g.seq as i32, g.dead as i32],
+            &[
+                g.irritation as i32,
+                g.level as i32,
+                g.spheres as i32,
+                g.health,
+                g.seq as i32,
+                g.dead as i32,
+            ],
         );
     }
     let pos = PROP_POS[pi];

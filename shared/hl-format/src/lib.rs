@@ -830,7 +830,11 @@ pub mod setpiece_audio {
         sc("monster_ichthyosaur", "ichy/ichy_pain2.wav", 3),
         sc("monster_ichthyosaur", "ichy/ichy_die2.wav", 3),
         sc("monster_barnacle", "barnacle/bcl_bite3.wav", 3),
-        sc("monster_sentry,monster_miniturret,monster_turret", "turret/tu_die.wav", 3),
+        sc(
+            "monster_sentry,monster_miniturret,monster_turret",
+            "turret/tu_die.wav",
+            3,
+        ),
         sc("monster_scientist", "scientist/sci_pain1.wav", 3),
     ];
 }

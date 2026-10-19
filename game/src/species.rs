@@ -182,7 +182,13 @@ pub(crate) unsafe fn tick_grunt(
                 n -= 1;
             }
             if hits > 0 {
-                damage_target(target, hits.saturating_mul(skill_hit(Sk::Bullet9mm)), pos, health, armor);
+                damage_target(
+                    target,
+                    hits.saturating_mul(skill_hit(Sk::Bullet9mm)),
+                    pos,
+                    health,
+                    armor,
+                );
             }
             push_tracer(from, aim);
             sfx::play_world(sfx::SHOTGUN, pos);
@@ -872,6 +878,11 @@ pub(crate) unsafe fn tick_melee(
 
 /// Her mortar clock and her brood.
 static mut BROOD: crate::gonarch::Brood = crate::gonarch::Brood::NEW;
+
+#[inline(always)]
+unsafe fn brood() -> &'static mut crate::gonarch::Brood {
+    &mut *core::ptr::addr_of_mut!(BROOD)
+}
 /// The lob worked out when the mortar attack began, in sixteenths a tick.
 static mut MORTAR_VEL: [i32; 3] = [0; 3];
 /// Gonarch state clears with the map.
@@ -881,7 +892,7 @@ pub(crate) unsafe fn reset_gonarch() {
 
 /// One of her babies died (`CBigMomma::DeathNotice`).
 pub(crate) unsafe fn gonarch_child_died() {
-    BROOD.child_died();
+    brood().child_died();
 }
 
 /// How the node walker (`tick_boss_walker`) holds her: 0 she is walking to a
@@ -935,8 +946,13 @@ pub(crate) unsafe fn tick_gonarch(
                 cue(SP::GON_BIRTH, pos);
                 if lay_baby(m, pi, pos) {
                     #[cfg(feature = "interaction-probe")]
-                    reference_trace::probe(SIM_NOW as u32, "gonarch", "lay", BROOD.children as i32 + 1);
-                    BROOD.laid(SIM_NOW, impact_rng().below(1000) as u16);
+                    reference_trace::probe(
+                        SIM_NOW as u32,
+                        "gonarch",
+                        "lay",
+                        brood().children as i32 + 1,
+                    );
+                    brood().laid(SIM_NOW, impact_rng().below(1000) as u16);
                 }
             }
             PROP_STATE_ATTACK if left == G::MORTAR_TICKS - G::MORTAR_EVENT_TICK => {
@@ -944,7 +960,7 @@ pub(crate) unsafe fn tick_gonarch(
                 #[cfg(feature = "interaction-probe")]
                 reference_trace::probe(SIM_NOW as u32, "gonarch", "mortar", 0);
                 launch_mortar(pos);
-                BROOD.launched(SIM_NOW, impact_rng().below(1000) as u16);
+                brood().launched(SIM_NOW, impact_rng().below(1000) as u16);
             }
             _ => {}
         }
@@ -965,7 +981,7 @@ pub(crate) unsafe fn tick_gonarch(
         let yaw = prop_yaw_value(PROP_YAW[pi]);
         let (fx, fz) = (sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0x0fff));
         let in_cone = |cos| senses::within_cone(cos, fx, fz, dx, dz);
-        if BROOD.mortar_ready(SIM_NOW, dist, in_cone(G::MORTAR_FACING_Q12)) {
+        if brood().mortar_ready(SIM_NOW, dist, in_cone(G::MORTAR_FACING_Q12)) {
             // VecCheckSplatToss: an arc whose apex is 150 to 500 units over
             // the midpoint (the ceiling caps it) that the walls leave clear.
             let start = [pos[0], pos[1] + G::MORTAR_MUZZLE_HEIGHT, pos[2]];
@@ -997,13 +1013,16 @@ pub(crate) unsafe fn tick_gonarch(
         while q < nprops {
             if q != pi && PROP_ACTIVE[q] != 0 && PROP_HEALTH[q] != 0 {
                 let o = PROP_POS[q];
-                if (o[0] - pos[0]).abs() < 32 && (o[2] - pos[2]).abs() < 32 && (o[1] - pos[1]).abs() < 64 {
+                if (o[0] - pos[0]).abs() < 32
+                    && (o[2] - pos[2]).abs() < 32
+                    && (o[1] - pos[1]).abs() < 64
+                {
                     clear = false;
                 }
             }
             q += 1;
         }
-        if BROOD.can_lay(SIM_NOW, clear) {
+        if brood().can_lay(SIM_NOW, clear) {
             PROP_STATE[pi] = 7;
             PROP_AI_TIMER[pi] = G::LAY_TICKS;
             return;
@@ -1047,7 +1066,7 @@ unsafe fn gonarch_slash(
     damage_target(target, skill_hit(Sk::BigMommaSlash), pos, health, armor);
     if target == PROP_TARGET_PLAYER {
         add_view_punch(171, 0); // punchangle.x = 15
-        // velocity += forward * 220 + up 200 (units a second -> a tick)
+                                // velocity += forward * 220 + up 200 (units a second -> a tick)
         PENDING_GAUSS_SHOVE = [(fx * 11) >> 12, 10, (fz * 11) >> 12];
     }
 }
@@ -1096,7 +1115,11 @@ unsafe fn lay_baby(m: &Map, parent: usize, at: [i32; 3]) -> bool {
 #[inline(never)]
 #[optimize(size)]
 unsafe fn launch_mortar(pos: [i32; 3]) {
-    let start = [pos[0], pos[1] + crate::gonarch::MORTAR_MUZZLE_HEIGHT, pos[2]];
+    let start = [
+        pos[0],
+        pos[1] + crate::gonarch::MORTAR_MUZZLE_HEIGHT,
+        pos[2],
+    ];
     let slot = spawn_projectile_dir(PROJ_BMORTAR, 0, start, [0; 3], true);
     PROJECTILES[slot].vel = MORTAR_VEL;
     PROJECTILES[slot].remainder = [0; 3];
