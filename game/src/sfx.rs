@@ -249,6 +249,13 @@ pub unsafe fn voice_ticks(local_id: u8) -> u16 {
     state().voice_ticks(local_id)
 }
 
+/// Silence the dialogue channel: a speaker died mid-sentence (CTalkMonster::Killed
+/// calls StopTalking).
+#[inline(never)]
+pub unsafe fn stop_dialogue() {
+    state().stop_dialogue()
+}
+
 #[inline]
 pub unsafe fn play_voice_world(local_id: u8, pos: [i32; 3]) -> u16 {
     trace(1, local_id, pos);

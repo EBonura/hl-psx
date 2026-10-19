@@ -1,0 +1,300 @@
+# Zombie swings keep their heading (TASK_MELEE_ATTACK1 does not turn the zombie) and the claws only reach a 32-wide hull 70 units straight ahead.
+# c1a4d, room 30, the first zombie at Medium. Ticks 5..70: the player stands 50 units in front (every claw lands: 20 each, 12 ticks apart).
+# At tick 72, in the middle of a bout, he steps 70 units to the side: the heading is frozen, so the claws at +12 and +24 of that bout whiff; the next bout turns and hits again.
+map c1a4d
+0 god 0
+0 trace 20
+0 watch 5
+5 tpnear 5 50 0 0
+6 pin 1
+8 aimat 5 40
+8 pos
+10 aimat 5 40
+10 pos
+12 aimat 5 40
+12 pos
+14 aimat 5 40
+14 pos
+16 aimat 5 40
+16 pos
+18 aimat 5 40
+18 pos
+20 aimat 5 40
+20 pos
+22 aimat 5 40
+22 pos
+24 aimat 5 40
+24 pos
+26 aimat 5 40
+26 pos
+28 aimat 5 40
+28 pos
+30 aimat 5 40
+30 pos
+32 aimat 5 40
+32 pos
+34 aimat 5 40
+34 pos
+36 aimat 5 40
+36 pos
+38 aimat 5 40
+38 pos
+40 aimat 5 40
+40 pos
+42 aimat 5 40
+42 pos
+44 aimat 5 40
+44 pos
+46 aimat 5 40
+46 pos
+48 aimat 5 40
+48 pos
+50 aimat 5 40
+50 pos
+52 aimat 5 40
+52 pos
+54 aimat 5 40
+54 pos
+56 aimat 5 40
+56 pos
+58 aimat 5 40
+58 pos
+60 aimat 5 40
+60 pos
+62 aimat 5 40
+62 pos
+64 aimat 5 40
+64 pos
+66 aimat 5 40
+66 pos
+68 aimat 5 40
+68 pos
+70 aimat 5 40
+70 pos
+72 hp 100
+72 tpnear 5 0 70 0
+76 pos
+77 pos
+78 pos
+79 pos
+80 pos
+81 pos
+82 pos
+83 pos
+84 pos
+85 pos
+86 pos
+87 pos
+88 pos
+89 pos
+90 pos
+91 pos
+92 pos
+93 pos
+94 pos
+95 pos
+96 pos
+97 pos
+98 pos
+99 pos
+100 pos
+101 pos
+102 pos
+103 pos
+104 pos
+105 pos
+106 pos
+107 pos
+108 pos
+109 pos
+110 pos
+111 pos
+112 pos
+113 pos
+114 pos
+115 pos
+116 pos
+117 pos
+118 pos
+119 pos
+120 pos
+121 pos
+122 pos
+123 pos
+124 pos
+125 pos
+126 pos
+127 pos
+128 pos
+129 pos
+130 pos
+131 pos
+132 pos
+133 pos
+134 pos
+135 pos
+136 pos
+137 pos
+138 pos
+139 pos
+140 pos
+141 pos
+142 pos
+143 pos
+144 pos
+145 pos
+146 pos
+147 pos
+148 pos
+149 pos
+150 pos
+151 pos
+152 pos
+153 pos
+154 pos
+155 pos
+156 pos
+157 pos
+158 pos
+159 pos
+160 pos
+161 pos
+162 pos
+163 pos
+164 pos
+165 pos
+166 pos
+167 pos
+168 pos
+169 pos
+170 pos
+171 pos
+172 pos
+173 pos
+174 pos
+175 pos
+176 pos
+177 pos
+178 pos
+179 pos
+180 pos
+181 pos
+182 pos
+183 pos
+184 pos
+185 pos
+186 pos
+187 pos
+188 pos
+189 pos
+190 pos
+191 pos
+192 pos
+193 pos
+194 pos
+195 pos
+196 pos
+197 pos
+198 pos
+199 pos
+200 pos
+201 pos
+202 pos
+203 pos
+204 pos
+205 pos
+206 pos
+207 pos
+208 pos
+209 pos
+210 pos
+211 pos
+212 pos
+213 pos
+214 pos
+215 pos
+216 pos
+217 pos
+218 pos
+219 pos
+220 pos
+221 pos
+222 pos
+223 pos
+224 pos
+225 pos
+226 pos
+227 pos
+228 pos
+229 pos
+230 pos
+231 pos
+232 pos
+233 pos
+234 pos
+235 pos
+236 pos
+237 pos
+238 pos
+239 pos
+240 pos
+241 pos
+242 pos
+243 pos
+244 pos
+245 pos
+246 pos
+247 pos
+248 pos
+249 pos
+250 pos
+251 pos
+252 pos
+253 pos
+254 pos
+255 pos
+256 pos
+257 pos
+258 pos
+259 pos
+260 pos
+261 pos
+262 pos
+263 pos
+264 pos
+265 pos
+266 pos
+267 pos
+268 pos
+269 pos
+270 pos
+271 pos
+272 pos
+273 pos
+274 pos
+275 pos
+276 pos
+277 pos
+278 pos
+279 pos
+280 pos
+281 pos
+282 pos
+283 pos
+284 pos
+285 pos
+286 pos
+287 pos
+288 pos
+289 pos
+290 pos
+291 pos
+292 pos
+293 pos
+294 pos
+295 pos
+296 pos
+297 pos
+298 pos
+299 pos
+300 pos

@@ -1,0 +1,404 @@
+# Zombie melee rate (c1a4d, room 30): the player stands 50 units from the first zombie at Medium
+# and loses health to each claw; read the `pos` lines (the last value is the player health) to count hits and their spacing. Retail attack1 is 36 frames at 15 fps
+# with claw events at frames 10 and 19 (two hits of sk_zombie_dmg_one_slash, 20 at Medium, 0.6 s apart per 2.4 s swing); attack2 is 21 frames
+# at 15 fps with one both-arms hit (sk_zombie_dmg_both_slash, 40 at Medium).
+map c1a4d
+0 god 0
+0 trace 20
+0 watch 5
+5 tpnear 5 50 0 0
+6 pin 1
+8 aimat 5 40
+8 pos
+10 aimat 5 40
+10 pos
+12 aimat 5 40
+12 pos
+14 aimat 5 40
+14 pos
+16 aimat 5 40
+16 pos
+18 aimat 5 40
+18 pos
+20 aimat 5 40
+20 pos
+22 aimat 5 40
+22 pos
+24 aimat 5 40
+24 pos
+26 aimat 5 40
+26 pos
+28 aimat 5 40
+28 pos
+30 aimat 5 40
+30 pos
+32 aimat 5 40
+32 pos
+34 aimat 5 40
+34 pos
+36 aimat 5 40
+36 pos
+38 aimat 5 40
+38 pos
+40 aimat 5 40
+40 pos
+42 aimat 5 40
+42 pos
+44 aimat 5 40
+44 pos
+46 aimat 5 40
+46 pos
+48 aimat 5 40
+48 pos
+50 aimat 5 40
+50 pos
+52 aimat 5 40
+52 pos
+54 aimat 5 40
+54 pos
+56 aimat 5 40
+56 pos
+58 aimat 5 40
+58 pos
+60 aimat 5 40
+60 pos
+62 aimat 5 40
+62 pos
+64 aimat 5 40
+64 pos
+66 aimat 5 40
+66 pos
+68 aimat 5 40
+68 pos
+70 aimat 5 40
+70 pos
+72 aimat 5 40
+72 pos
+74 aimat 5 40
+74 pos
+76 aimat 5 40
+76 pos
+78 aimat 5 40
+78 pos
+80 aimat 5 40
+80 pos
+82 aimat 5 40
+82 pos
+84 aimat 5 40
+84 pos
+86 aimat 5 40
+86 pos
+88 aimat 5 40
+88 pos
+90 aimat 5 40
+90 pos
+92 aimat 5 40
+92 pos
+94 aimat 5 40
+94 pos
+96 aimat 5 40
+96 pos
+98 aimat 5 40
+98 pos
+100 aimat 5 40
+100 pos
+102 aimat 5 40
+102 pos
+104 aimat 5 40
+104 pos
+106 aimat 5 40
+106 pos
+108 aimat 5 40
+108 pos
+110 aimat 5 40
+110 pos
+112 aimat 5 40
+112 pos
+114 aimat 5 40
+114 pos
+116 aimat 5 40
+116 pos
+118 aimat 5 40
+118 pos
+120 aimat 5 40
+120 pos
+122 aimat 5 40
+122 pos
+124 aimat 5 40
+124 pos
+126 aimat 5 40
+126 pos
+128 aimat 5 40
+128 pos
+130 aimat 5 40
+130 pos
+132 aimat 5 40
+132 pos
+134 aimat 5 40
+134 pos
+136 aimat 5 40
+136 pos
+138 aimat 5 40
+138 pos
+140 aimat 5 40
+140 pos
+142 aimat 5 40
+142 pos
+144 aimat 5 40
+144 pos
+146 aimat 5 40
+146 pos
+148 aimat 5 40
+148 pos
+150 aimat 5 40
+150 pos
+152 aimat 5 40
+152 pos
+154 aimat 5 40
+154 pos
+156 aimat 5 40
+156 pos
+158 aimat 5 40
+158 pos
+160 aimat 5 40
+160 pos
+162 aimat 5 40
+162 pos
+164 aimat 5 40
+164 pos
+166 aimat 5 40
+166 pos
+168 aimat 5 40
+168 pos
+170 aimat 5 40
+170 pos
+172 aimat 5 40
+172 pos
+174 aimat 5 40
+174 pos
+176 aimat 5 40
+176 pos
+178 aimat 5 40
+178 pos
+180 aimat 5 40
+180 pos
+182 aimat 5 40
+182 pos
+184 aimat 5 40
+184 pos
+186 aimat 5 40
+186 pos
+188 aimat 5 40
+188 pos
+190 aimat 5 40
+190 pos
+192 aimat 5 40
+192 pos
+194 aimat 5 40
+194 pos
+196 aimat 5 40
+196 pos
+198 aimat 5 40
+198 pos
+200 aimat 5 40
+200 pos
+202 aimat 5 40
+202 pos
+204 aimat 5 40
+204 pos
+206 aimat 5 40
+206 pos
+208 aimat 5 40
+208 pos
+210 aimat 5 40
+210 pos
+212 aimat 5 40
+212 pos
+214 aimat 5 40
+214 pos
+216 aimat 5 40
+216 pos
+218 aimat 5 40
+218 pos
+220 aimat 5 40
+220 pos
+222 aimat 5 40
+222 pos
+224 aimat 5 40
+224 pos
+226 aimat 5 40
+226 pos
+228 aimat 5 40
+228 pos
+230 aimat 5 40
+230 pos
+232 aimat 5 40
+232 pos
+234 aimat 5 40
+234 pos
+236 aimat 5 40
+236 pos
+238 aimat 5 40
+238 pos
+240 aimat 5 40
+240 pos
+242 aimat 5 40
+242 pos
+244 aimat 5 40
+244 pos
+246 aimat 5 40
+246 pos
+248 aimat 5 40
+248 pos
+250 aimat 5 40
+250 pos
+252 aimat 5 40
+252 pos
+254 aimat 5 40
+254 pos
+256 aimat 5 40
+256 pos
+258 aimat 5 40
+258 pos
+260 aimat 5 40
+260 pos
+262 aimat 5 40
+262 pos
+264 aimat 5 40
+264 pos
+266 aimat 5 40
+266 pos
+268 aimat 5 40
+268 pos
+270 aimat 5 40
+270 pos
+272 aimat 5 40
+272 pos
+274 aimat 5 40
+274 pos
+276 aimat 5 40
+276 pos
+278 aimat 5 40
+278 pos
+280 aimat 5 40
+280 pos
+282 aimat 5 40
+282 pos
+284 aimat 5 40
+284 pos
+286 aimat 5 40
+286 pos
+288 aimat 5 40
+288 pos
+290 aimat 5 40
+290 pos
+292 aimat 5 40
+292 pos
+294 aimat 5 40
+294 pos
+296 aimat 5 40
+296 pos
+298 aimat 5 40
+298 pos
+300 aimat 5 40
+300 pos
+302 aimat 5 40
+302 pos
+304 aimat 5 40
+304 pos
+306 aimat 5 40
+306 pos
+308 aimat 5 40
+308 pos
+310 aimat 5 40
+310 pos
+312 aimat 5 40
+312 pos
+314 aimat 5 40
+314 pos
+316 aimat 5 40
+316 pos
+318 aimat 5 40
+318 pos
+320 aimat 5 40
+320 pos
+322 aimat 5 40
+322 pos
+324 aimat 5 40
+324 pos
+326 aimat 5 40
+326 pos
+328 aimat 5 40
+328 pos
+330 aimat 5 40
+330 pos
+332 aimat 5 40
+332 pos
+334 aimat 5 40
+334 pos
+336 aimat 5 40
+336 pos
+338 aimat 5 40
+338 pos
+340 aimat 5 40
+340 pos
+342 aimat 5 40
+342 pos
+344 aimat 5 40
+344 pos
+346 aimat 5 40
+346 pos
+348 aimat 5 40
+348 pos
+350 aimat 5 40
+350 pos
+352 aimat 5 40
+352 pos
+354 aimat 5 40
+354 pos
+356 aimat 5 40
+356 pos
+358 aimat 5 40
+358 pos
+360 aimat 5 40
+360 pos
+362 aimat 5 40
+362 pos
+364 aimat 5 40
+364 pos
+366 aimat 5 40
+366 pos
+368 aimat 5 40
+368 pos
+370 aimat 5 40
+370 pos
+372 aimat 5 40
+372 pos
+374 aimat 5 40
+374 pos
+376 aimat 5 40
+376 pos
+378 aimat 5 40
+378 pos
+380 aimat 5 40
+380 pos
+382 aimat 5 40
+382 pos
+384 aimat 5 40
+384 pos
+386 aimat 5 40
+386 pos
+388 aimat 5 40
+388 pos
+390 aimat 5 40
+390 pos
+392 aimat 5 40
+392 pos
+394 aimat 5 40
+394 pos
+396 aimat 5 40
+396 pos
+398 aimat 5 40
+398 pos
+400 aimat 5 40
+400 pos

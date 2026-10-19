@@ -586,6 +586,7 @@ unsafe fn tick_zombie(
     armor: &mut u16,
     nprops: usize,
 ) {
+    let yaw_before = PROP_YAW[pi];
     let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 700) else {
         return;
     };
@@ -594,6 +595,8 @@ unsafe fn tick_zombie(
     let t = PROP_AI_TIMER[pi]; // low 6 bits: bout ticks left, bit 6: the single heavy swing
     let left = t & 63;
     if left > 0 {
+        // TASK_MELEE_ATTACK1 never turns the zombie: the bout keeps the heading it started with.
+        PROP_YAW[pi] = yaw_before;
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = t - 1;
         let done = if t & 64 != 0 { 32 - left } else { 52 - left };
@@ -602,7 +605,13 @@ unsafe fn tick_zombie(
         } else {
             done == 12 || done == 24
         };
-        if hit && d2 <= 76 * 76 {
+        // CheckTraceHullAttack(70): a 32-wide hull swept 70 units straight ahead; the target's
+        // centre is reached within 70 + 16 in front and 16 + 16 to the side.
+        let yaw = prop_yaw_value(PROP_YAW[pi]);
+        let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
+        let fwd = (sincos::sin_q12(yaw) * dx + sincos::sin_q12((yaw + 1024) & 0x0fff) * dz) >> 12;
+        let side = (sincos::sin_q12((yaw + 1024) & 0x0fff) * dx - sincos::sin_q12(yaw) * dz) >> 12;
+        if hit && (0..=86).contains(&fwd) && side.abs() <= 32 {
             let swing = skill_hit(if t & 64 != 0 {
                 Sk::ZombieBothSlash
             } else {

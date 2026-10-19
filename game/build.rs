@@ -1410,6 +1410,10 @@ fn write_probe_script(out_dir: &std::path::Path) {
                     [num(2) as i32, num(3) as i32, num(5) as i32, num(4) as i32, 0, 0],
                     String::new(),
                 ),
+                // talkas KIND : the first live monster of that kind is mid-sentence (the dialogue channel is his for 400 ticks)
+                "talkas" => (49, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
+                // talkwho : log who owns the dialogue channel (255 = nobody) and the ticks left
+                "talkwho" => (49, [-1, 0, 0, 0, 0, 0], String::new()),
                 // nihhead : the Nihilanth's next hit counts as a shot on his open head
                 "nihhead" => (47, [0; 6], String::new()),
                 // tpnear KIND DX DY DZ : stand at an offset (HL axes) from the first live monster of that kind, facing it

@@ -1,0 +1,11 @@
+# A speaker who dies mid-sentence goes quiet (CTalkMonster::Killed -> StopTalking). c1a1b, the first scientist: talkas gives him the dialogue
+# channel, talkwho logs owner*1000 + ticks left (255xxx = nobody), hurtkind kills him, talkwho again must read 255000.
+map c1a1b
+0 god 1
+10 talkas 0
+11 talkwho
+20 talkwho
+30 hurtkind 0 255
+40 talkwho
+50 hurtkind 0 255
+60 talkwho
