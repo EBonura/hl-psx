@@ -17914,7 +17914,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
         let v = prop_voice(PROP_KIND[pi], true);
         if v != SFX_NONE {
-            sfx::play_world(v, PROP_POS[pi]);
+            play_prop_voice(v, PROP_POS[pi]);
         } else if PROP_KIND[pi] == PROP_TYPE_BIGMOMMA {
             setpiece_sfx::play(hl_format::setpiece_audio::GON_DIE, PROP_POS[pi]);
         }
@@ -17922,7 +17922,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     } else if MON_PAIN_COOLDOWN == 0 {
         let v = prop_voice(PROP_KIND[pi], false);
         if v != SFX_NONE {
-            sfx::play_world(v, PROP_POS[pi]);
+            play_prop_voice(v, PROP_POS[pi]);
             MON_PAIN_COOLDOWN = 10;
         }
     }
@@ -18599,54 +18599,44 @@ static mut PROP_NEAR_ENTS: [[u16; 8]; MAX_PROPS] = [[0; 8]; MAX_PROPS];
 static mut PROP_NEAR_COUNT: [u8; MAX_PROPS] = [0xFF; MAX_PROPS];
 const PROP_NEAR_SLACK: i32 = 96; // covers max step + door travel between refreshes
 
-/// Per-class pain/death vocal (SFX_NONE = silent; scientists keep quiet
-/// rather than borrowing a wrong species' bark).
+/// A pain or death cry played from the map bank instead of the resident core: bit 7 set, the
+/// set-piece slot below it (silent when the map's bank could not hold the sample).
+const VOICE_SLOT: u8 = 0x80;
+
+/// Per-class pain/death vocal: a core id, `VOICE_SLOT | slot`, or SFX_NONE (silent). Every
+/// class has the cry its own SDK class plays (hl-catalogue lists them); a class with no
+/// sample in the bank is silent rather than borrowing another species' bark.
 fn prop_voice(kind: u8, dying: bool) -> u8 {
-    match kind {
-        1 => {
-            if dying {
-                sfx::BA_DIE
-            } else {
-                sfx::BA_PAIN
-            }
-        }
-        2 | 3 | 4 => {
-            if dying {
-                sfx::HC_DIE
-            } else {
-                sfx::HC_PAIN
-            }
-        }
-        5 | PROP_TYPE_VENT_ZOMBIE => sfx::ZO_PAIN, // no die vocal; pain growl covers both
-        6 => {
-            if dying {
-                sfx::HE_DIE
-            } else {
-                sfx::HE_PAIN
-            }
-        }
-        7 | 19 => {
-            if dying {
-                sfx::BC_DIE
-            } else {
-                sfx::BC_PAIN
-            }
-        }
-        8 => {
-            if dying {
-                sfx::GR_DIE
-            } else {
-                sfx::GR_PAIN
-            }
-        }
-        9 | 10 | 11 => {
-            if dying {
-                sfx::SLV_DIE
-            } else {
-                sfx::SLV_PAIN
-            }
-        }
-        _ => SFX_NONE,
+    use hl_format::setpiece_audio as SP;
+    let (pain, die) = match kind {
+        0 => (VOICE_SLOT | SP::SCI_PAIN, SFX_NONE),
+        1 => (sfx::BA_PAIN, sfx::BA_DIE),
+        2 | 3 | 4 | 59 => (sfx::HC_PAIN, sfx::HC_DIE),
+        5 | PROP_TYPE_VENT_ZOMBIE => (sfx::ZO_PAIN, SFX_NONE), // zombie.cpp has no DeathSound
+        6 => (sfx::HE_PAIN, sfx::HE_DIE),
+        7 => (sfx::BC_PAIN, sfx::BC_DIE),
+        8 => (sfx::GR_PAIN, sfx::GR_DIE),
+        9 => (sfx::SLV_PAIN, sfx::SLV_DIE),
+        10 => (VOICE_SLOT | SP::AG_PAIN, VOICE_SLOT | SP::AG_DIE),
+        11 => (VOICE_SLOT | SP::CON_PAIN, VOICE_SLOT | SP::CON_DIE),
+        19 => (VOICE_SLOT | SP::ICHY_PAIN, VOICE_SLOT | SP::ICHY_DIE),
+        20..=22 => (SFX_NONE, VOICE_SLOT | SP::TU_DIE),
+        _ => (SFX_NONE, SFX_NONE),
+    };
+    if dying {
+        die
+    } else {
+        pain
+    }
+}
+
+#[inline(never)]
+#[optimize(size)]
+unsafe fn play_prop_voice(v: u8, at: [i32; 3]) {
+    if v & VOICE_SLOT != 0 {
+        setpiece_sfx::play(v & !VOICE_SLOT, at);
+    } else {
+        sfx::play_world(v, at);
     }
 }
 
@@ -25527,6 +25517,18 @@ unsafe fn render_blood_fx(
     }
 }
 
+/// DoSpark's sound: buttons/spark1.wav at 0.1 to 0.3 of full volume (RANDOM_FLOAT(0.25, 0.75) * 0.4,
+/// ATTN_NORM). Silent when the map bank carries no spark sample: the ricochet whine
+/// this used to fall back to is a different sound.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn spark_sound(id: u8, at: [i32; 3]) {
+    if id != u8::MAX {
+        // Not impact_rng: a draw here would shift every later random outcome of the replay.
+        sfx::play_map_authored(id, at, 20, 2);
+    }
+}
+
 /// env_spark: each spark emitter throws a small shower now and then when the
 /// player is nearby (cheap -- a 1/64 per-tick chance, distance-gated).
 #[inline(never)]
@@ -25559,7 +25561,7 @@ unsafe fn tick_env_sparks(m: &Map, nlogic: usize, now: u16) {
                     && dist2_3(o, LOGIC_PLAYER_POS) < 1200 * 1200
                 {
                     spark_burst(o, 4, 3, 8, 10);
-                    sfx::play_world(sfx::RIC, o);
+                    spark_sound(setpiece_sfx::id(hl_format::setpiece_audio::SPARK), o);
                 }
             }
             scan += 1;
@@ -25581,11 +25583,7 @@ unsafe fn tick_env_sparks(m: &Map, nlogic: usize, now: u16) {
         if dist2_3(rec.origin, LOGIC_PLAYER_POS) < 1200 * 1200 {
             let o = rec.origin;
             spark_burst(o, 4, 3, 8, 10);
-            if rec.sound0 != u8::MAX {
-                sfx::play_map_world(rec.sound0, o);
-            } else {
-                sfx::play_world(sfx::RIC, o);
-            }
+            spark_sound(rec.sound0, o);
         }
         scan += 1;
     }

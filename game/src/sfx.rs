@@ -229,6 +229,7 @@ pub unsafe fn load_dialogue_pack(pack: &[u8]) -> usize {
 
 #[inline]
 pub unsafe fn play_voice(local_id: u8, den: u16) -> u16 {
+    trace(1, local_id, [0; 3]);
     state().play_voice(local_id, den)
 }
 
@@ -239,6 +240,7 @@ pub unsafe fn play_voice_authored(
     volume_percent: u8,
     packed_attenuation: u8,
 ) -> u16 {
+    trace(1, local_id, pos);
     state().play_voice_authored(local_id, pos, volume_percent, packed_attenuation)
 }
 
@@ -249,6 +251,7 @@ pub unsafe fn voice_ticks(local_id: u8) -> u16 {
 
 #[inline]
 pub unsafe fn play_voice_world(local_id: u8, pos: [i32; 3]) -> u16 {
+    trace(1, local_id, pos);
     state().play_voice_world(local_id, pos)
 }
 
@@ -259,11 +262,13 @@ pub unsafe fn play_map_authored(
     volume_percent: u8,
     packed_attenuation: u8,
 ) {
+    trace(2, local_id, pos);
     state().play_map_authored(local_id, pos, volume_percent, packed_attenuation)
 }
 
 #[inline]
 pub unsafe fn play_map_world(local_id: u8, pos: [i32; 3]) {
+    trace(2, local_id, pos);
     state().play_map_world(local_id, pos)
 }
 
@@ -272,6 +277,7 @@ pub unsafe fn play_map_world(local_id: u8, pos: [i32; 3]) {
 #[inline(never)]
 #[cfg_attr(target_arch = "mips", optimize(size))]
 pub unsafe fn play_map_loop_world(local_id: u8, pos: [i32; 3], owner: u16) {
+    trace(3, local_id, pos);
     state().play_map_loop_world(local_id, pos, owner)
 }
 
@@ -283,6 +289,7 @@ pub unsafe fn play_map_loop_authored(
     volume_percent: u8,
     packed_attenuation: u8,
 ) {
+    trace(3, local_id, pos);
     state().play_map_loop_authored(local_id, pos, owner, volume_percent, packed_attenuation)
 }
 
@@ -314,11 +321,13 @@ pub unsafe fn set_map_loop_world(owner: u16, pos: [i32; 3]) -> bool {
 
 #[inline]
 pub unsafe fn play_vol(id: u8, den: u16) {
+    trace(0, id, [0; 3]);
     state().play_vol(id, den)
 }
 
 #[inline]
 pub unsafe fn play(id: u8) {
+    trace(0, id, [0; 3]);
     state().play(id)
 }
 
@@ -334,5 +343,24 @@ pub unsafe fn set_ear(pos: [i32; 3]) {
 
 #[inline]
 pub unsafe fn play_world(id: u8, pos: [i32; 3]) {
+    trace(0, id, pos);
     state().play_world(id, pos)
 }
+
+/// Interaction-probe trace: one `probe event=sfx` line per playback request.
+/// a = path (0 resident core id, 1 dialogue voice, 2 map-bank one-shot, 3 map
+/// loop), b = the id in that path's table, c..e = world position (0 when the
+/// sound is not positional). Never part of a shipping build.
+#[cfg(feature = "interaction-probe")]
+#[inline(never)]
+unsafe fn trace(path: i32, id: u8, pos: [i32; 3]) {
+    crate::reference_trace::probe_vals(
+        crate::SIM_NOW as u32,
+        "sfx",
+        &[path, id as i32, pos[0], pos[1], pos[2]],
+    );
+}
+
+#[cfg(not(feature = "interaction-probe"))]
+#[inline(always)]
+unsafe fn trace(_path: i32, _id: u8, _pos: [i32; 3]) {}

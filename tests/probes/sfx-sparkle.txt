@@ -1,0 +1,8 @@
+# Water tunnel sparkle (Manny 10-18, c1a1b room 14): stand under the ceiling glows, then at the valve; read the sfx lines (a path 0 core/1 voice/2 map bank/3 loop, b id).
+map c1a1b
+0 god 1
+0 trace 40
+10 tp 1557 -1064 -240 0 0 5
+300 tp 2380 -1161 -340 0 0 5
+600 tp 1300 -950 -240 0 0 5
+900 tp 1700 -430 -240 0 0 5

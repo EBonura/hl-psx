@@ -134,7 +134,7 @@ pub(crate) unsafe fn tick(m: &Map, pi: usize, player_pos: [i32; 3], health: &mut
                 }
                 PROP_STATE[pi] = PROP_STATE_ATTACK;
                 PROP_AI_TIMER[pi] = CHEW_TICKS;
-                sfx::play_world(sfx::HC_ATTACK, b);
+                setpiece_sfx::play(hl_format::setpiece_audio::BCL_BITE, b);
             }
         }
         PROP_STATE_ATTACK => {

@@ -1,0 +1,243 @@
+# Monster and effect sound proof. One section per map (separate launch each: rooms 14, 24, 12, 28, 52, 86, 88).
+# Read the `sfx` lines (a path 0 core/1 voice/2 map bank/3 loop, b id), `slot` lines (slot -> bank id) and data/voices/rates.txt for bank ids.
+# Ticks are in file order per section (the probe runs a command when its turn comes).
+map c1a1b
+0 god 1
+0 trace 40
+10 tp 2380 -1161 -340 0 0 5
+map c1a3a
+0 god 1
+0 trace 40
+10 tpnear 20 -350 0 0
+20 aimat 20 20
+30 aimat 20 20
+40 aimat 20 20
+50 aimat 20 20
+60 aimat 20 20
+70 aimat 20 20
+80 aimat 20 20
+90 aimat 20 20
+100 aimat 20 20
+110 aimat 20 20
+120 aimat 20 20
+130 aimat 20 20
+140 aimat 20 20
+140 hurtkind 20 2
+150 aimat 20 20
+160 aimat 20 20
+170 aimat 20 20
+180 aimat 20 20
+190 aimat 20 20
+200 aimat 20 20
+210 aimat 20 20
+220 aimat 20 20
+230 aimat 20 20
+240 aimat 20 20
+250 aimat 20 20
+260 aimat 20 20
+260 killkind 20
+270 aimat 20 20
+280 aimat 20 20
+290 aimat 20 20
+300 aimat 20 20
+300 tpnear 0 -150 0 0
+310 aimat 20 20
+320 aimat 20 20
+320 hurtkind 0 1
+330 aimat 20 20
+340 aimat 20 20
+350 aimat 20 20
+360 aimat 20 20
+370 aimat 20 20
+380 aimat 20 20
+390 aimat 20 20
+400 aimat 20 20
+400 killkind 12
+410 aimat 20 20
+420 aimat 20 20
+430 aimat 20 20
+440 aimat 20 20
+450 aimat 20 20
+460 aimat 20 20
+470 aimat 20 20
+480 aimat 20 20
+490 aimat 20 20
+500 aimat 20 20
+map c1a1
+0 god 1
+0 trace 40
+10 tpnear 5 70 0 0
+12 pos
+32 pos
+52 pos
+72 pos
+92 pos
+112 pos
+132 pos
+152 pos
+172 pos
+192 pos
+212 pos
+232 pos
+252 pos
+272 pos
+292 pos
+map c1a4
+0 god 1
+0 trace 40
+10 tpnear 6 -250 0 0
+14 aimat 6 20
+20 aimat 6 20
+26 aimat 6 20
+32 aimat 6 20
+38 aimat 6 20
+44 aimat 6 20
+50 aimat 6 20
+56 aimat 6 20
+62 aimat 6 20
+68 aimat 6 20
+74 aimat 6 20
+80 aimat 6 20
+86 aimat 6 20
+92 aimat 6 20
+98 aimat 6 20
+104 aimat 6 20
+110 aimat 6 20
+116 aimat 6 20
+122 aimat 6 20
+128 aimat 6 20
+134 aimat 6 20
+140 aimat 6 20
+146 aimat 6 20
+152 aimat 6 20
+158 aimat 6 20
+164 aimat 6 20
+170 aimat 6 20
+176 aimat 6 20
+182 aimat 6 20
+188 aimat 6 20
+194 aimat 6 20
+200 aimat 6 20
+206 aimat 6 20
+212 aimat 6 20
+218 aimat 6 20
+224 aimat 6 20
+230 aimat 6 20
+236 aimat 6 20
+242 aimat 6 20
+248 aimat 6 20
+254 aimat 6 20
+260 aimat 6 20
+266 aimat 6 20
+272 aimat 6 20
+278 aimat 6 20
+284 aimat 6 20
+290 aimat 6 20
+296 aimat 6 20
+302 aimat 6 20
+308 aimat 6 20
+314 aimat 6 20
+320 aimat 6 20
+326 aimat 6 20
+332 aimat 6 20
+338 aimat 6 20
+344 aimat 6 20
+350 aimat 6 20
+356 aimat 6 20
+362 aimat 6 20
+368 aimat 6 20
+374 aimat 6 20
+380 aimat 6 20
+386 aimat 6 20
+392 aimat 6 20
+398 aimat 6 20
+map c2a3b
+0 god 1
+0 trace 40
+10 tpnear 19 -400 0 0
+20 aimat 19 0
+30 aimat 19 0
+40 aimat 19 0
+50 aimat 19 0
+60 aimat 19 0
+70 aimat 19 0
+80 aimat 19 0
+90 aimat 19 0
+100 aimat 19 0
+100 hurtkind 19 1
+140 killkind 19
+map c4a1b
+0 god 1
+0 trace 40
+10 tpnear 10 -400 0 0
+20 aimat 10 20
+30 aimat 10 20
+40 aimat 10 20
+50 aimat 10 20
+60 aimat 10 20
+70 aimat 10 20
+80 aimat 10 20
+90 aimat 10 20
+100 aimat 10 20
+110 aimat 10 20
+120 aimat 10 20
+130 aimat 10 20
+140 aimat 10 20
+150 aimat 10 20
+160 aimat 10 20
+170 aimat 10 20
+180 aimat 10 20
+190 aimat 10 20
+200 aimat 10 20
+210 aimat 10 20
+220 aimat 10 20
+230 aimat 10 20
+240 aimat 10 20
+250 aimat 10 20
+260 aimat 10 20
+270 aimat 10 20
+280 aimat 10 20
+290 aimat 10 20
+300 aimat 10 20
+300 hurtkind 10 5
+310 aimat 10 20
+320 aimat 10 20
+330 aimat 10 20
+340 aimat 10 20
+350 aimat 10 20
+360 aimat 10 20
+360 killkind 10
+370 aimat 10 20
+380 aimat 10 20
+390 aimat 10 20
+400 aimat 10 20
+map c4a1d
+0 god 1
+0 trace 40
+10 tpnear 11 -500 0 0
+20 aimat 11 0
+30 aimat 11 0
+40 aimat 11 0
+50 aimat 11 0
+60 aimat 11 0
+70 aimat 11 0
+80 aimat 11 0
+90 aimat 11 0
+100 aimat 11 0
+110 aimat 11 0
+120 aimat 11 0
+130 aimat 11 0
+140 aimat 11 0
+140 hurtkind 11 5
+150 aimat 11 0
+160 aimat 11 0
+170 aimat 11 0
+180 aimat 11 0
+190 aimat 11 0
+200 aimat 11 0
+210 aimat 11 0
+220 aimat 11 0
+230 aimat 11 0
+240 aimat 11 0
+250 aimat 11 0
+260 killkind 11

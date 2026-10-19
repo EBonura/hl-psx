@@ -80,3 +80,53 @@ C-CO03 (controller head ball). The original's ball homes on the enemy at up to
 projectile costs a ticker of its own in the executable). The damage
 (`sk_controller_dmgzap`), the 37 tick wind-up and the 64..256 unit window are
 the original's.
+
+## Sound
+
+The catalogue of every sound each placed monster and effect class makes against the
+original (`host/hl-catalogue`, port side in `host/hl-content/sound-contract.txt`)
+lists what the port plays at each point and what it does not. The gaps have three causes.
+
+The RAM floor. The executable is linked at the highest PGO hot-callsite rung that leaves
+2,048 B free; inlining moves `.text` by kilobytes on tiny source or profile changes, and at
+rung 125 main has 2,276 B free. What this batch adds (sparks, and the pain and death cries
+below) leaves 2,084 B free at rung 125. Everything else the catalogue found missing costs
+RAM that rung 125 does not have: the alert, idle and footstep logic in the actor
+loop (`monster_voice::think`) costs 784 B at rung 125, the headbite, bite, claw miss, punch,
+Gargantua slash, barnacle, leech, roach and turret hooks together about 800 B more, and the
+full set (1.6 KB in all) leaves 500 B free at rung 125 (and overflows the image by 572 B with a freshly
+collected profile), which drops the link to rung 60, 2 to 6 percent slower on the profiled
+maps (hl-features measured that cost with the Gonarch batch and the walker gravity batch).
+The full set is built, probed and was gated (at rung 60) before the rebase onto the walker gravity batch on `feat/hl-sound-cues-full-2026-10-19`; it lands
+when the executable has about 2 KB more room. Rows left out for this reason are `limit`
+rows of the catalogue: headcrab headbite, idle and alert cries (headcrab, zombie,
+houndeye, bullsquid, alien grunt, controller, ichthyosaur, turret, leech), zombie claw
+miss, alien grunt punch, ichthyosaur attack and bite, barnacle death, leech bite, roach
+death, `monster_turret` fire (`tu_fire1`), Gargantua slash, the marine's M203 launch and
+the npc footsteps of scientists, Barney and zombies.
+
+SPU RAM. A map's bank has to fit what is left of the 512 KiB after the resident core, and
+the rate allocator spends every byte it has on the map's own sounds (0 to 8 B left in the
+maps that hold an alien grunt, controller or turret; a pain cry needs 880 to 1,232 B at its
+lowest rate). The cries added here compete for rate with a ladder capped at 6,000 Hz and
+never take rate from an authored dialogue line; 206 of the 2,564 other bank entries (63
+loops, 132 one-shot effects and 11 chatter lines) give up one or more ladder steps for them,
+none below the floor the previous cooker set, and 26 gain a step where a cry was left out.
+Where a cry still does not fit the runtime stays silent: it never plays another sample.
+Maps that place the class and carry the sample: alien grunt pain and death 11 of 14,
+controller pain and death 6 of 8, scientist pain 28 of 32, turret death 15 of 16, sparks
+20 of 20, ichthyosaur pain and death 5 of 5, barnacle bite 21 of 21.
+`hl-catalogue limits` regenerates the per-slot table from a cook.
+
+Spoken lines. The marine, vortigaunt, Barney and scientist voices of the original are
+sentence groups of whole recordings (`HG_*`, `SLV_*`, `BA_*`, `SC_*`): 116, 11, 160 and
+304 distinct files, 1.3 MB, 107 KB, 4.7 MB and 12.1 MB of source audio. The marines' and
+vortigaunts' callouts (alert, cover, grenade, idle) and the autonomous Barney and scientist
+lines beyond the authored ones are not played: even the smallest group, the marines' 1.3 MB
+of source, is far more than any bank has left.
+
+Sequences the retail models carry but the port does not play: the alien grunt's footsteps
+(`player/pl_ladder*`), the vortigaunt's gibberish idle events, tentacle, snark, tripmine
+and Gargantua breath sounds, Big Momma's claw, alert and footsteps (`gon_step1` is cooked
+and never played), the apache and osprey crash `mortarhit`, the turrets' deploy, ping and
+spin sounds. They stay open rows of the catalogue.
