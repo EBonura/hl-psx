@@ -12623,9 +12623,7 @@ unsafe fn draw_debug_stats(
     append_kv(&mut buf, &mut n, "map ", room);
     append_kv(&mut buf, &mut n, "leaf ", leaf);
     append_kv(&mut buf, &mut n, "fps ", STATS_FPS as i32);
-    if let Ok(line) = core::str::from_utf8(&buf[..n]) {
-        hltext::draw_text_scaled(16, 6, line, hltext::SMALL_Q8, COLOR);
-    }
+    hltext::draw_text_scaled(16, 6, kv_text(&buf[..n]), hltext::SMALL_Q8, COLOR);
     // The pose lines are the reproduction contract: feed them verbatim to a
     // build's HLPSX_DBG_CAM="x y z yaw pitch" to pin this exact view in the
     // emulator, e.g. against a photo of this frame from real hardware. `vh`
@@ -12635,16 +12633,12 @@ unsafe fn draw_debug_stats(
     append_kv(&mut buf, &mut n, "x ", pos[0]);
     append_kv(&mut buf, &mut n, "y ", pos[1]);
     append_kv(&mut buf, &mut n, "z ", pos[2]);
-    if let Ok(line) = core::str::from_utf8(&buf[..n]) {
-        hltext::draw_text_scaled(16, 18, line, hltext::SMALL_Q8, COLOR);
-    }
+    hltext::draw_text_scaled(16, 18, kv_text(&buf[..n]), hltext::SMALL_Q8, COLOR);
     n = 0;
     append_kv(&mut buf, &mut n, "yaw ", yaw);
     append_kv(&mut buf, &mut n, "pit ", pitch);
     append_kv(&mut buf, &mut n, "vh ", eye[1].wrapping_sub(pos[1]));
-    if let Ok(line) = core::str::from_utf8(&buf[..n]) {
-        hltext::draw_text_scaled(16, 30, line, hltext::SMALL_Q8, COLOR);
-    }
+    hltext::draw_text_scaled(16, 30, kv_text(&buf[..n]), hltext::SMALL_Q8, COLOR);
 }
 
 #[optimize(size)]
@@ -14806,7 +14800,7 @@ fn debug_line(tag: &str, vals: &[(&str, i32)]) {
     for &(k, v) in vals {
         append_kv(&mut buf, &mut n, k, v);
     }
-    telemetry::debug_log(core::str::from_utf8(&buf[..n]).unwrap_or(tag));
+    telemetry::debug_log(kv_text(&buf[..n]));
 }
 
 fn append_kv(buf: &mut [u8], n: &mut usize, label: &str, v: i32) {
@@ -14825,6 +14819,15 @@ fn append_kv(buf: &mut [u8], n: &mut usize, label: &str, v: i32) {
         buf[*n] = b' ';
         *n += 1;
     }
+}
+
+/// The text `append_kv` built. It only ever copies ASCII labels and decimal
+/// digits, so the bytes are valid UTF-8 and the checked conversion (a
+/// kilobyte of code and tables in the image) is not needed.
+fn kv_text(buf: &[u8]) -> &str {
+    debug_assert!(buf.is_ascii());
+    // SAFETY: ASCII only, see above.
+    unsafe { core::str::from_utf8_unchecked(buf) }
 }
 
 /// DEBUG: one compact line per dump -> PSoXide's Play debug terminal. Two lines
@@ -14859,7 +14862,7 @@ unsafe fn xhair_dump(
     // Guest debug-log port: the PSoXide emulator frontend now eprintln's these to
     // the host console (drain_debug_logs), so they show in the terminal in the
     // plain library frontend too, not just the editor's Play debug terminal.
-    telemetry::console(core::str::from_utf8(&buf[..n]).unwrap_or("?"));
+    telemetry::console(kv_text(&buf[..n]));
 }
 
 /// The sole camera-space visibility entry point used by rendering.

@@ -1338,8 +1338,14 @@ impl Map {
         {
             end += 1;
         }
-        core::str::from_utf8(&self.data[self.logic_names_off + start..self.logic_names_off + end])
-            .unwrap_or("")
+        // SAFETY: the cooker writes each name from a Rust `String` (entity text
+        // goes through `from_utf8_lossy`), so the bytes are valid UTF-8; the
+        // checked conversion would cost a kilobyte of code and tables.
+        unsafe {
+            core::str::from_utf8_unchecked(
+                &self.data[self.logic_names_off + start..self.logic_names_off + end],
+            )
+        }
     }
 
     #[inline(always)]
