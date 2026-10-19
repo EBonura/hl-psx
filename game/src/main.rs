@@ -11767,6 +11767,12 @@ unsafe fn logic_use_entity(
             // that actor's source mouth controller active for the sample's
             // exact cooked duration.
             let speaker = sentence_speaker(m, rec);
+            // CScriptedSentence::AcceptableSpeaker needs CanPlaySentence, which is IsAlive:
+            // when the named speaker is dead nobody speaks (the sentence keeps waiting).
+            if speaker == TALKING_PROP_NONE && sentence_speaker_is_dead(rec) {
+                LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
+                return;
+            }
             let sound_pos = if speaker != TALKING_PROP_NONE {
                 PROP_POS[speaker as usize]
             } else {
@@ -14200,6 +14206,27 @@ unsafe fn logic_find_matching_prop(kind: u8, arg0: u16, origin: [i32; 3]) -> u8 
         pi += 1;
     }
     LOGIC_PROP_NONE
+}
+
+/// True when the sentence's named speaker exists but is dead.
+#[optimize(size)]
+unsafe fn sentence_speaker_is_dead(rec: map::LogicEnt) -> bool {
+    if rec.arg1 == 0 {
+        return false;
+    }
+    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut pi = 0usize;
+    while pi < nprops {
+        if PROP_ACTIVE[pi] != 0
+            && PROP_HEALTH[pi] == 0
+            && prop_is_human(PROP_KIND[pi])
+            && PROP_NAME[pi] == rec.arg1
+        {
+            return true;
+        }
+        pi += 1;
+    }
+    false
 }
 
 /// Resolve scripted_sentence's speaker exactly by targetname when possible,
@@ -17985,6 +18012,12 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         }
         PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         PROP_AI_TIMER[pi] = 0;
+        // CTalkMonster::Killed: StopTalking. A speaker who dies mid-sentence goes quiet.
+        if TALKING_PROP == pi as u8 && !time_reached(SIM_NOW, TALKING_UNTIL) {
+            sfx::stop_dialogue();
+            TALKING_PROP = TALKING_PROP_NONE;
+            TALKING_UNTIL = SIM_NOW;
+        }
         if player_inflicted && prop_is_human(PROP_KIND[pi]) {
             ALERT_FRIENDS = pi as u8; // CTalkMonster::Killed, run by tick_props
         }
@@ -19510,6 +19543,8 @@ unsafe fn tick_headcrab(
                     } else {
                         skill_damage(kind).unwrap_or(HEADCRAB_ATTACK_DAMAGE as u8)
                     };
+                    #[cfg(feature = "interaction-probe")]
+                    reference_trace::probe(SIM_NOW as u32, "melee", "", damage as i32 * 1000 + pi as i32);
                     damage_target(target, damage, pos, health, armor);
                 }
             }

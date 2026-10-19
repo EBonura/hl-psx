@@ -311,6 +311,31 @@ pub unsafe fn step(
             #[cfg(feature = "probe-fixes")]
             47 => crate::nihilanth::probe_head(),
             #[cfg(feature = "probe-fixes")]
+            49 => {
+                if c.a[0] >= 0 {
+                    let mut pi = 0usize;
+                    while pi < crate::PROP_COUNT {
+                        if crate::PROP_ACTIVE[pi] != 0
+                            && crate::PROP_HEALTH[pi] != 0
+                            && crate::PROP_KIND[pi] as i32 == c.a[0] as i32
+                        {
+                            crate::TALKING_PROP = pi as u8;
+                            crate::TALKING_VOICE = 0;
+                            crate::TALKING_UNTIL = now as u16 + 400;
+                            break;
+                        }
+                        pi += 1;
+                    }
+                }
+                crate::reference_trace::probe(
+                    now,
+                    "talkwho",
+                    "",
+                    crate::TALKING_PROP as i32 * 1000
+                        + (crate::TALKING_UNTIL.wrapping_sub(now as u16) as i32).min(999),
+                );
+            }
+            #[cfg(feature = "probe-fixes")]
             48 => {
                 let mut pi = 0usize;
                 while pi < crate::PROP_COUNT {
