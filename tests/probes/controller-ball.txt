@@ -1,0 +1,304 @@
+# c4a1a (room 85): count the 'fall' lines; stand 150 u from the first controller (head ball window 64..256) and watch the player's health
+map c4a1a
+0 trace 20
+0 god 0
+0 watch 11
+6 hp 100
+10 tpnear 11 -150 0 0
+12 aimat 11 0
+12 pos
+12 hp 100
+18 aimat 11 0
+18 pos
+18 hp 100
+24 aimat 11 0
+24 pos
+24 hp 100
+30 aimat 11 0
+30 pos
+30 hp 100
+36 aimat 11 0
+36 pos
+36 hp 100
+42 aimat 11 0
+42 pos
+42 hp 100
+48 aimat 11 0
+48 pos
+48 hp 100
+54 aimat 11 0
+54 pos
+54 hp 100
+60 aimat 11 0
+60 pos
+60 hp 100
+66 aimat 11 0
+66 pos
+66 hp 100
+72 aimat 11 0
+72 pos
+72 hp 100
+78 aimat 11 0
+78 pos
+78 hp 100
+84 aimat 11 0
+84 pos
+84 hp 100
+90 aimat 11 0
+90 pos
+90 hp 100
+96 aimat 11 0
+96 pos
+96 hp 100
+102 aimat 11 0
+102 pos
+102 hp 100
+108 aimat 11 0
+108 pos
+108 hp 100
+114 aimat 11 0
+114 pos
+114 hp 100
+120 aimat 11 0
+120 pos
+120 hp 100
+126 aimat 11 0
+126 pos
+126 hp 100
+132 aimat 11 0
+132 pos
+132 hp 100
+138 aimat 11 0
+138 pos
+138 hp 100
+144 aimat 11 0
+144 pos
+144 hp 100
+150 aimat 11 0
+150 pos
+150 hp 100
+156 aimat 11 0
+156 pos
+156 hp 100
+162 aimat 11 0
+162 pos
+162 hp 100
+168 aimat 11 0
+168 pos
+168 hp 100
+174 aimat 11 0
+174 pos
+174 hp 100
+180 aimat 11 0
+180 pos
+180 hp 100
+186 aimat 11 0
+186 pos
+186 hp 100
+192 aimat 11 0
+192 pos
+192 hp 100
+198 aimat 11 0
+198 pos
+198 hp 100
+204 aimat 11 0
+204 pos
+204 hp 100
+210 aimat 11 0
+210 pos
+210 hp 100
+216 aimat 11 0
+216 pos
+216 hp 100
+222 aimat 11 0
+222 pos
+222 hp 100
+228 aimat 11 0
+228 pos
+228 hp 100
+234 aimat 11 0
+234 pos
+234 hp 100
+240 aimat 11 0
+240 pos
+240 hp 100
+246 aimat 11 0
+246 pos
+246 hp 100
+252 aimat 11 0
+252 pos
+252 hp 100
+258 aimat 11 0
+258 pos
+258 hp 100
+264 aimat 11 0
+264 pos
+264 hp 100
+270 aimat 11 0
+270 pos
+270 hp 100
+276 aimat 11 0
+276 pos
+276 hp 100
+282 aimat 11 0
+282 pos
+282 hp 100
+288 aimat 11 0
+288 pos
+288 hp 100
+294 aimat 11 0
+294 pos
+294 hp 100
+300 aimat 11 0
+300 pos
+300 hp 100
+306 aimat 11 0
+306 pos
+306 hp 100
+312 aimat 11 0
+312 pos
+312 hp 100
+318 aimat 11 0
+318 pos
+318 hp 100
+324 aimat 11 0
+324 pos
+324 hp 100
+330 aimat 11 0
+330 pos
+330 hp 100
+336 aimat 11 0
+336 pos
+336 hp 100
+342 aimat 11 0
+342 pos
+342 hp 100
+348 aimat 11 0
+348 pos
+348 hp 100
+354 aimat 11 0
+354 pos
+354 hp 100
+360 aimat 11 0
+360 pos
+360 hp 100
+366 aimat 11 0
+366 pos
+366 hp 100
+372 aimat 11 0
+372 pos
+372 hp 100
+378 aimat 11 0
+378 pos
+378 hp 100
+384 aimat 11 0
+384 pos
+384 hp 100
+390 aimat 11 0
+390 pos
+390 hp 100
+396 aimat 11 0
+396 pos
+396 hp 100
+402 aimat 11 0
+402 pos
+402 hp 100
+408 aimat 11 0
+408 pos
+408 hp 100
+414 aimat 11 0
+414 pos
+414 hp 100
+420 aimat 11 0
+420 pos
+420 hp 100
+426 aimat 11 0
+426 pos
+426 hp 100
+432 aimat 11 0
+432 pos
+432 hp 100
+438 aimat 11 0
+438 pos
+438 hp 100
+444 aimat 11 0
+444 pos
+444 hp 100
+450 aimat 11 0
+450 pos
+450 hp 100
+456 aimat 11 0
+456 pos
+456 hp 100
+462 aimat 11 0
+462 pos
+462 hp 100
+468 aimat 11 0
+468 pos
+468 hp 100
+474 aimat 11 0
+474 pos
+474 hp 100
+480 aimat 11 0
+480 pos
+480 hp 100
+486 aimat 11 0
+486 pos
+486 hp 100
+492 aimat 11 0
+492 pos
+492 hp 100
+498 aimat 11 0
+498 pos
+498 hp 100
+504 aimat 11 0
+504 pos
+504 hp 100
+510 aimat 11 0
+510 pos
+510 hp 100
+516 aimat 11 0
+516 pos
+516 hp 100
+522 aimat 11 0
+522 pos
+522 hp 100
+528 aimat 11 0
+528 pos
+528 hp 100
+534 aimat 11 0
+534 pos
+534 hp 100
+540 aimat 11 0
+540 pos
+540 hp 100
+546 aimat 11 0
+546 pos
+546 hp 100
+552 aimat 11 0
+552 pos
+552 hp 100
+558 aimat 11 0
+558 pos
+558 hp 100
+564 aimat 11 0
+564 pos
+564 hp 100
+570 aimat 11 0
+570 pos
+570 hp 100
+576 aimat 11 0
+576 pos
+576 hp 100
+582 aimat 11 0
+582 pos
+582 hp 100
+588 aimat 11 0
+588 pos
+588 hp 100
+594 aimat 11 0
+594 pos
+594 hp 100
+600 aimat 11 0
+600 pos
+600 hp 100
