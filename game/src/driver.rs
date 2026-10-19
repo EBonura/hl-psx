@@ -53,13 +53,41 @@ pub fn quad_flat(verts: [(i16, i16); 4], r: u8, g: u8, b: u8) {
     with(|gpu| gpu.draw(&QuadFlat::new(verts, r, g, b)));
 }
 
-/// A flat quad drawn through a semi-transparency equation, now: the draw mode
-/// is written first, as for [`tri_flat_blended`].
+/// GP0(E1h) (the semi-transparency equation) and then a flat semi-transparent quad
+/// (GP0(2Ah)) as one packet: written out, because the SDK's material route costs
+/// several hundred bytes of image for the two rectangles the pause menu draws.
+#[repr(C, align(4))]
+struct QuadBlended {
+    tag: u32,
+    mode: u32,
+    command: u32,
+    verts: [u32; 4],
+}
+
+// SAFETY: `repr(C)`, 4-byte aligned, a tag word and then six initialised `u32`
+// payload words that nothing mutates while the packet is borrowed.
+unsafe impl psx_gpu::prim::GpuPacket for QuadBlended {
+    const WORDS: u8 = 6;
+}
+
+/// A flat quad drawn through a semi-transparency equation, now: `abr` is GP0(E1h)
+/// bits 5..6 (0 average, 1 add, 2 subtract, 3 add a quarter).
 #[inline(never)]
-pub fn quad_flat_blended(verts: [(i16, i16); 4], r: u8, g: u8, b: u8, blend_mode: BlendMode) {
+pub fn quad_flat_blended(verts: [(i16, i16); 4], rgb: (u8, u8, u8), abr: u32) {
+    let pack = |(x, y): (i16, i16)| (y as u16 as u32) << 16 | x as u16 as u32;
     with(|gpu| {
-        gpu.set_draw_mode(TextureMaterial::blended(0, 0, (r, g, b), blend_mode));
-        gpu.draw(&QuadFlat::new(verts, r, g, b).translucent());
+        gpu.draw(&QuadBlended {
+            tag: 0,
+            // Drawing to the display area allowed (bit 10); no texture page, no dither.
+            mode: 0xE100_0400 | abr << 5,
+            command: 0x2A00_0000 | (rgb.2 as u32) << 16 | (rgb.1 as u32) << 8 | rgb.0 as u32,
+            verts: [
+                pack(verts[0]),
+                pack(verts[1]),
+                pack(verts[2]),
+                pack(verts[3]),
+            ],
+        })
     });
 }
 

@@ -474,18 +474,35 @@ pub fn write(
     })
 }
 
+/// The record codec, out of line and sized for space: inlined into the card
+/// closures below it costs about twice as much.
+#[cfg(target_arch = "mips")]
+#[inline(never)]
+#[optimize(size)]
+fn settings_decode(bytes: &[u8]) -> Option<crate::options_record::Saved> {
+    crate::options_record::Saved::decode(bytes).ok()
+}
+
+#[cfg(target_arch = "mips")]
+#[inline(never)]
+#[optimize(size)]
+fn settings_encode(p: &crate::options_record::Saved, out: &mut [u8]) -> Option<usize> {
+    p.encode(out).ok()
+}
+
 /// The options record from the first card that holds one, port 1 first.
 #[cfg(target_arch = "mips")]
 #[inline(never)]
 #[optimize(size)]
 pub fn read_settings() -> Option<crate::options_record::Saved> {
+    let mut bytes = [0u8; psx_settings::MAX_RECORD_LEN];
     for port in [Port::One, Port::Two] {
-        let found = with_card(port, |card| match card.is_formatted() {
-            Ok(true) => psx_settings::load(card, FILE_SETTINGS).ok(),
+        let len = with_card(port, |card| match card.is_formatted() {
+            Ok(true) => card.read(FILE_SETTINGS, &mut bytes).ok(),
             _ => None,
         });
-        if found.is_some() {
-            return found;
+        if let Some(p) = len.and_then(|len| settings_decode(&bytes[..len])) {
+            return Some(p);
         }
     }
     None
@@ -498,9 +515,16 @@ pub fn read_settings() -> Option<crate::options_record::Saved> {
 #[inline(never)]
 #[optimize(size)]
 pub fn write_settings(p: &crate::options_record::Saved) -> bool {
+    let mut bytes = [0u8; psx_settings::MAX_RECORD_LEN];
+    let Some(len) = settings_encode(p, &mut bytes) else {
+        return false;
+    };
     for port in [Port::One, Port::Two] {
-        let done = with_card(port, |card| {
-            psx_settings::save(card, FILE_SETTINGS, "HALF-LIFE SETTINGS", p).is_ok()
+        let done = with_card(port, |card| match card.is_formatted() {
+            Ok(true) => card
+                .write(FILE_SETTINGS, "HALF-LIFE SETTINGS", &bytes[..len])
+                .is_ok(),
+            _ => false,
         });
         if done {
             return true;

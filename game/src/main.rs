@@ -853,10 +853,6 @@ static mut CAM_CUR: TickCamera = TickCamera {
     yaw: 0,
     pitch: 0,
 };
-/// The interpolation phase of the last frame built, so a frame built again
-/// behind the pause menu (a brightness change) takes the same camera.
-#[cfg(feature = "decoupled-present")]
-static mut RENDER_PHASE_LAST: i32 = 0;
 /// Render-only randomness (view shake, explosion burst scatter). The
 /// simulation's `IMPACT_RNG` must not advance with presented-frame count, or
 /// a faster renderer would replay a different combat sequence from the same
@@ -2202,13 +2198,7 @@ fn draw_next_loading_screen(fb: &mut DoubleBuffer) {
 #[cfg(not(feature = "semantic-input"))]
 fn pause_dim(x0: i16, y0: i16, x1: i16, y1: i16) {
     for _ in 0..2 {
-        driver::quad_flat_blended(
-            [(x0, y0), (x1, y0), (x0, y1), (x1, y1)],
-            0,
-            0,
-            0,
-            psx_gpu::material::BlendMode::Average,
-        );
+        driver::quad_flat_blended([(x0, y0), (x1, y0), (x0, y1), (x1, y1)], (0, 0, 0), 0);
     }
 }
 
@@ -2218,13 +2208,7 @@ fn pause_dim(x0: i16, y0: i16, x1: i16, y1: i16) {
 #[optimize(size)]
 #[cfg(not(feature = "semantic-input"))]
 fn pause_glow(x0: i16, y0: i16, x1: i16, y1: i16) {
-    driver::quad_flat_blended(
-        [(x0, y0), (x1, y0), (x0, y1), (x1, y1)],
-        PAUSE_ARMED.0,
-        PAUSE_ARMED.1,
-        PAUSE_ARMED.2,
-        psx_gpu::material::BlendMode::Add,
-    );
+    driver::quad_flat_blended([(x0, y0), (x1, y0), (x0, y1), (x1, y1)], PAUSE_ARMED, 1);
 }
 
 #[inline(never)]
@@ -4394,9 +4378,6 @@ fn performance_walk_sample(sim_tick: u32) -> semantic_input::Sample {
 enum LiveInputPoll {
     Sample(semantic_input::Sample),
     Resumed,
-    /// The menu closed to have the frame behind it built again, and opens
-    /// again on the next poll.
-    Rerender,
     MainMenu,
     Chapter(usize),
 }
@@ -4418,10 +4399,8 @@ fn poll_live_semantic_input(
     let pause_button = pad.buttons.is_held(button::START) || pad.buttons.is_held(button::SELECT);
     let reopen = unsafe { PAUSE_REENTER };
     if reopen || (pause_button && !*prev_pause_button) {
-        if !reopen {
-            telemetry::stage_end(telemetry::stage::UPDATE);
-            telemetry::task_end(telemetry::task::FIXED_UPDATE);
-        }
+        telemetry::stage_end(telemetry::stage::UPDATE);
+        telemetry::task_end(telemetry::task::FIXED_UPDATE);
         // The pause screen draws over the finished frame, so that frame's
         // deferred overlay lists go out first.
         unsafe { finish_deferred_overlays() };
@@ -4431,8 +4410,11 @@ fn poll_live_semantic_input(
             // Same relaunch path as a chapter jump: PENDING_RESTORE is already
             // armed, and play() overrides the spawn it computes.
             PauseExit::LoadedSave(room) => LiveInputPoll::Chapter(room),
-            PauseExit::Rerender => LiveInputPoll::Rerender,
-            PauseExit::Resume => {
+            // A brightness change closes the menu only so the frame behind it is built
+            // again with the new light palette: the same exit as Resume, except that
+            // the next tick is due after one VBlank, where this poll opens the menu
+            // again on the row it was on (`PAUSE_REENTER`).
+            PauseExit::Resume | PauseExit::Rerender => {
                 // The pause screen is the only way brightness can move with a
                 // map already resident, so the palette re-expansion is paid
                 // here rather than tested every frame. Every other exit reloads
@@ -4443,7 +4425,12 @@ fn poll_live_semantic_input(
                 let _ = enable_analog_port1();
                 reader.accept(poll_port1());
                 *prev_pause_button = true;
-                sim_clock.realign(interrupts::vblank_count().wrapping_add(SIM_VBLANKS));
+                let next = if unsafe { PAUSE_REENTER } {
+                    1
+                } else {
+                    SIM_VBLANKS
+                };
+                sim_clock.realign(interrupts::vblank_count().wrapping_add(next));
                 LiveInputPoll::Resumed
             }
         };
@@ -36448,28 +36435,8 @@ fn play(
         // simulation ticks keep firing on their unchanged 20 Hz schedule below.
         #[cfg(not(feature = "decoupled-present"))]
         wait_until_vblank(sim_clock.next_due());
-        // A brightness change closed the pause menu only so this frame can be
-        // built again with the new light palette: skip the ticks (the world stays
-        // exactly as it was), render, and the menu opens again where it was.
-        #[cfg_attr(feature = "semantic-input", allow(unused_mut))]
-        let mut rerender = false;
-        #[cfg(not(feature = "semantic-input"))]
-        if unsafe { PAUSE_REENTER } {
-            match poll_live_semantic_input(
-                fb,
-                &mut pad_reader,
-                &mut prev_pause_button,
-                &mut sim_clock,
-            ) {
-                LiveInputPoll::Resumed => continue 'gameplay,
-                LiveInputPoll::Rerender => rerender = true,
-                LiveInputPoll::MainMenu => return PlayExit::BackToMenu,
-                LiveInputPoll::Chapter(room) => return PlayExit::Chapter(menu_start(room)),
-                LiveInputPoll::Sample(_) => {}
-            }
-        }
         let mut ticks_this_visual = 0u16;
-        while !rerender && sim_clock.due(interrupts::vblank_count()) {
+        while sim_clock.due(interrupts::vblank_count()) {
             telemetry::frame_begin(telemetry_frame);
             // Reuse PSoXide's standard current-room column for this linear
             // campaign. It makes direct-boot regression tapes self-verifying.
@@ -36554,10 +36521,6 @@ fn play(
             ) {
                 LiveInputPoll::Sample(sample) => sample,
                 LiveInputPoll::Resumed => continue 'gameplay,
-                LiveInputPoll::Rerender => {
-                    rerender = true;
-                    break;
-                }
                 LiveInputPoll::MainMenu => return PlayExit::BackToMenu,
                 LiveInputPoll::Chapter(room) => return PlayExit::Chapter(menu_start(room)),
             };
@@ -38874,16 +38837,7 @@ fn play(
         // pose as the next tick's deadline approaches. Simulation state is
         // untouched; only what the camera looks like this frame changes.
         #[cfg(feature = "decoupled-present")]
-        let render_phase_q12: i32 = if rerender {
-            // The same camera the paused frame was built with.
-            unsafe { RENDER_PHASE_LAST }
-        } else {
-            sim_clock.phase_q12(interrupts::vblank_count()) as i32
-        };
-        #[cfg(feature = "decoupled-present")]
-        unsafe {
-            RENDER_PHASE_LAST = render_phase_q12;
-        }
+        let render_phase_q12: i32 = sim_clock.phase_q12(interrupts::vblank_count()) as i32;
         #[cfg(feature = "decoupled-present")]
         let (cam_pos, cam_h, cam_yaw, cam_pitch) =
             if DBG_CAM || reference_checkpoint::DBG_CAM_OVERRIDE.is_some() {
