@@ -20690,9 +20690,6 @@ unsafe fn tick_props(
             pi += 1;
             continue;
         }
-        if (pi as u32).wrapping_add(AI_TICK) & 7 == 0 {
-            prop_check_support(m, movers, pi);
-        }
         if (PUSH_N != 0 || MONSTERJUMP_N != 0 || monsterjump::airborne(ty, PROP_DORMANT[pi]))
             && prop_environment_move(m, movers, pi)
         {
@@ -20788,6 +20785,11 @@ unsafe fn tick_props(
         }
         // SAFETY: slots 0..pm_count were written above.
         let pm = core::slice::from_raw_parts(pm_storage.as_ptr().cast::<phys::Mover>(), pm_count);
+        // Gravity (SV_Physics_Step): the eight-entry shortlist is every brush that can
+        // hold an actor up, so the support look never scans the level's movers.
+        if near_count != 0xFF && (pi as u32).wrapping_add(AI_TICK) & 7 == 0 {
+            prop_check_support(m, pm, pi);
+        }
         // Scripted actor work lives out of line to keep this MIPS function's
         // conditional branches in PC16 range. Ordinary props avoid the call.
         if (PROP_SCRIPT_MODE[pi] != 0
