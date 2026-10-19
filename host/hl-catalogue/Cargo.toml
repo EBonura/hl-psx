@@ -1,0 +1,16 @@
+[package]
+name = "hl-catalogue"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Monster and effect catalogue: every sound, attack and sequence the original game uses per class, joined with what hl-psx plays"
+
+[workspace]
+
+[[bin]]
+name = "hl-catalogue"
+path = "src/main.rs"
+
+[dependencies]
+hl-census = { path = "../hl-census" }
+hl-format = { path = "../../shared/hl-format" }

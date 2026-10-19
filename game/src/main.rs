@@ -103,6 +103,7 @@ mod scientist_logic;
 mod scratchpad;
 mod segments;
 mod setpiece_logic;
+mod monster_voice;
 mod setpiece_sfx;
 mod species;
 mod tank;
@@ -17913,7 +17914,8 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         }
         sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
         let v = prop_voice(PROP_KIND[pi], true);
-        if v != SFX_NONE {
+        if monster_voice::cue(PROP_KIND[pi], monster_voice::DIE, PROP_POS[pi]) {
+        } else if v != SFX_NONE {
             sfx::play_world(v, PROP_POS[pi]);
         } else if PROP_KIND[pi] == PROP_TYPE_BIGMOMMA {
             setpiece_sfx::play(hl_format::setpiece_audio::GON_DIE, PROP_POS[pi]);
@@ -17921,7 +17923,9 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         release_monster_loot(pi);
     } else if MON_PAIN_COOLDOWN == 0 {
         let v = prop_voice(PROP_KIND[pi], false);
-        if v != SFX_NONE {
+        if monster_voice::cue(PROP_KIND[pi], monster_voice::PAIN, PROP_POS[pi]) {
+            MON_PAIN_COOLDOWN = 10;
+        } else if v != SFX_NONE {
             sfx::play_world(v, PROP_POS[pi]);
             MON_PAIN_COOLDOWN = 10;
         }
@@ -18610,14 +18614,14 @@ fn prop_voice(kind: u8, dying: bool) -> u8 {
                 sfx::BA_PAIN
             }
         }
-        2 | 3 | 4 => {
+        2 | 3 | 4 | 59 => {
             if dying {
                 sfx::HC_DIE
             } else {
                 sfx::HC_PAIN
             }
         }
-        5 | PROP_TYPE_VENT_ZOMBIE => sfx::ZO_PAIN, // no die vocal; pain growl covers both
+        5 | PROP_TYPE_VENT_ZOMBIE if !dying => sfx::ZO_PAIN, // zombie.cpp has no DeathSound
         6 => {
             if dying {
                 sfx::HE_DIE
@@ -18625,7 +18629,7 @@ fn prop_voice(kind: u8, dying: bool) -> u8 {
                 sfx::HE_PAIN
             }
         }
-        7 | 19 => {
+        7 => {
             if dying {
                 sfx::BC_DIE
             } else {
@@ -18639,7 +18643,7 @@ fn prop_voice(kind: u8, dying: bool) -> u8 {
                 sfx::GR_PAIN
             }
         }
-        9 | 10 | 11 => {
+        9 => {
             if dying {
                 sfx::SLV_DIE
             } else {
@@ -19050,6 +19054,7 @@ unsafe fn tick_alien_attack(
         let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
         if d2 <= 100 * 100 && senses::within_cone(2458, fx, fz, dx, dz) {
             damage_target(target, skill_hit(Sk::AgruntPunch), pos, health, armor);
+            setpiece_sfx::play(hl_format::setpiece_audio::AG_PUNCH, pos);
             prop_attack_cooldown_set(pi, 24);
         } else if d2 >= 100 * 100 && d2 <= 1024 * 1024 && senses::within_cone(2048, fx, fz, dx, dz)
         {
@@ -19181,6 +19186,9 @@ unsafe fn advance_grunt_grenade(pi: usize) -> bool {
                 launcher,
                 damage,
             );
+            if launcher {
+                sfx::play_world(sfx::M203, pos);
+            }
             let hard = settings::skill() == 2;
             let roll = if launcher && hard {
                 impact_rng().below(61) as u16
@@ -19351,6 +19359,7 @@ unsafe fn tick_shooter(
                     10 => species::cue_or(hl_format::setpiece_audio::AG_FIRE, sfx::ELECTRO, pos),
                     11 => species::cue_or(hl_format::setpiece_audio::CON_ATTACK, sfx::ELECTRO, pos),
                     51 => sfx::play_world(sfx::GLOCK, pos),
+                    21 => species::cue_or(hl_format::setpiece_audio::TU_FIRE, sfx::MP5, pos),
                     8 | 20.. => sfx::play_world(sfx::MP5, pos),
                     _ => sfx::play_world(sfx::ELECTRO, pos),
                 }
@@ -19433,6 +19442,11 @@ unsafe fn tick_headcrab(
                         skill_damage(kind).unwrap_or(HEADCRAB_ATTACK_DAMAGE as u8)
                     };
                     damage_target(target, damage, pos, health, armor);
+                    if leaper {
+                        setpiece_sfx::play(hl_format::setpiece_audio::HC_BITE, pos);
+                    } else if kind == 19 {
+                        setpiece_sfx::play(hl_format::setpiece_audio::ICHY_BITE, pos);
+                    }
                 }
             }
         }
@@ -19508,9 +19522,14 @@ unsafe fn tick_headcrab(
         let snd = match PROP_KIND[pi] {
             5 => sfx::ZO_ATTACK, // zombie swipe
             6 => sfx::HE_BLAST,  // houndeye sonic blast
+            19 => SFX_NONE,      // the ichthyosaur has its own cry below
             _ => sfx::HC_ATTACK, // headcrab-family shriek
         };
-        sfx::play_world(snd, pos);
+        if PROP_KIND[pi] == 19 {
+            setpiece_sfx::play(hl_format::setpiece_audio::ICHY_ATTACK, pos);
+        } else {
+            sfx::play_world(snd, pos);
+        }
     } else {
         PROP_STATE[pi] = PROP_STATE_MOVE;
         let step_d2 = d2.saturating_sub(HEADCRAB_STOP_RANGE * HEADCRAB_STOP_RANGE);
@@ -20854,6 +20873,7 @@ unsafe fn tick_props(
             continue;
         }
         hev::set_kind(hev::actor_kind(ty));
+        let had_enemy = PROP_AI_TARGET[pi] != PROP_TARGET_NONE;
         match ai {
             // Melee aliens (zombie/houndeye/bullsquid/ichy) reuse the headcrab
             // approach+bite AI; ranged/boss/flyer types render but don't move yet.
@@ -20883,6 +20903,20 @@ unsafe fn tick_props(
                 health,
             ),
             _ => species::idle_think(m, movers, pi, ty, player_pos, in_player_pvs, health, armor),
+        }
+        if PROP_STATE[pi] == PROP_STATE_MOVE && matches!(ty, 0 | 1 | 5 | 55) {
+            monster_voice::step(ty, pi, SIM_NOW as u32, PROP_POS[pi]);
+        }
+        // AlertSound on first sight of the enemy, and the 1 in 100 per think IdleSound
+        // of CBaseMonster::RunAI while idle (a think every 5 ticks).
+        if monster_voice::speaks_unprompted(ty) {
+            if PROP_AI_TARGET[pi] != PROP_TARGET_NONE {
+                if !had_enemy && ty != PROP_TYPE_HOUNDEYE {
+                    monster_voice::cue(ty, monster_voice::ALERT, PROP_POS[pi]);
+                }
+            } else if in_player_pvs && AI_TICK.wrapping_add(pi as u32) % 5 == 0 && monster_voice::idle_roll(pi, SIM_NOW as u32) {
+                monster_voice::cue(ty, monster_voice::IDLE, PROP_POS[pi]);
+            }
         }
         pi += 1;
     }
@@ -25527,6 +25561,19 @@ unsafe fn render_blood_fx(
     }
 }
 
+/// DoSpark's sound: buttons/spark1.wav at 0.1 to 0.3 of full volume (RANDOM_FLOAT(0.25, 0.75) * 0.4,
+/// ATTN_NORM). Silent when the map bank carries no spark sample: the ricochet whine
+/// this used to fall back to is a different sound.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn spark_sound(id: u8, at: [i32; 3]) {
+    if id != u8::MAX {
+        // Not impact_rng: a draw here would shift every later random outcome of the replay.
+        let roll = (SIM_NOW as u32 ^ at[0] as u32 ^ (at[2] as u32).rotate_left(11)).wrapping_mul(2_654_435_761) >> 16;
+        sfx::play_map_authored(id, at, 10 + (roll % 21) as u8, 2);
+    }
+}
+
 /// env_spark: each spark emitter throws a small shower now and then when the
 /// player is nearby (cheap -- a 1/64 per-tick chance, distance-gated).
 #[inline(never)]
@@ -25559,7 +25606,7 @@ unsafe fn tick_env_sparks(m: &Map, nlogic: usize, now: u16) {
                     && dist2_3(o, LOGIC_PLAYER_POS) < 1200 * 1200
                 {
                     spark_burst(o, 4, 3, 8, 10);
-                    sfx::play_world(sfx::RIC, o);
+                    spark_sound(setpiece_sfx::id(hl_format::setpiece_audio::SPARK), o);
                 }
             }
             scan += 1;
@@ -25581,11 +25628,7 @@ unsafe fn tick_env_sparks(m: &Map, nlogic: usize, now: u16) {
         if dist2_3(rec.origin, LOGIC_PLAYER_POS) < 1200 * 1200 {
             let o = rec.origin;
             spark_burst(o, 4, 3, 8, 10);
-            if rec.sound0 != u8::MAX {
-                sfx::play_map_world(rec.sound0, o);
-            } else {
-                sfx::play_world(sfx::RIC, o);
-            }
+            spark_sound(rec.sound0, o);
         }
         scan += 1;
     }

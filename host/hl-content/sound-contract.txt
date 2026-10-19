@@ -1,0 +1,254 @@
+# Sound contract: what hl-psx plays at each point where the original game makes a
+# sound. The original side is generated from the SDK sources and the retail
+# models (host/hl-catalogue); this file is the port side, one row per
+# (entity class, state). `hl-catalogue check` verifies every evidence string
+# against the source tree and every sample name against the cooker's tables;
+# `hl-catalogue gen` writes docs/CATALOGUE-monsters.md.
+#
+# class|state|port|evidence|note
+#
+# port: comma list of  core:ID (resident core id, audio.rs SOUNDS),
+#   sp:NAME (set-piece slot, hl_format::setpiece_audio), voice:GROUP (streamed
+#   sentence group), none (the port is silent there), limit:TEXT (kept out for
+#   a reason with numbers), na:TEXT (the original path cannot run with retail
+#   data, or the sound is not the entity's).
+# state `*` covers every state of the class not named by another row.
+# evidence: game:"literal" / cook:"literal" joined by ;  ('-' for none).
+
+# ---- corpses and static props: no think, no voice ----
+monster_scientist_dead|*|na:a corpse never thinks or speaks|-|
+monster_barney_dead|*|na:a corpse never thinks or speaks|-|
+monster_hgrunt_dead|*|na:a corpse never thinks or speaks|-|
+monster_hevsuit_dead|*|na:a corpse never thinks or speaks|-|
+monster_furniture|*|na:furniture|-|
+monster_generic|*|na:scripted prop; its sounds come from scripted_sequence events and ambient_generic|-|
+monster_sitting_scientist|*|na:the seated scientist stands up as a monster_scientist (type 0); its rows are that class's|-|
+monster_flyer_flock|*|na:boids make no sound in retail|-|
+
+# ---- monster_headcrab / monster_babycrab ----
+monster_headcrab|attack|core:hc_attack|game:"HC_ATTACK"|shriek at the leap
+monster_headcrab|leaptouch|sp:HC_BITE|game:"setpiece_audio::HC_BITE"|hc_headbite when the leap connects
+monster_headcrab|idle|sp:HC_IDLE|game:"SP::HC_IDLE"|1 in 100 per 5-tick think while idle in the player's view
+monster_headcrab|alert|sp:HC_ALERT|game:"SP::HC_ALERT"|on first sight of the enemy
+monster_headcrab|pain|core:hc_pain|game:"sfx::HC_PAIN"|one of three pain cries
+monster_headcrab|die|core:hc_die|game:"sfx::HC_DIE"|one of two death cries
+monster_babycrab|attack|core:hc_attack|game:"HC_ATTACK"|
+monster_babycrab|leaptouch|sp:HC_BITE|game:"setpiece_audio::HC_BITE"|
+monster_babycrab|idle|sp:HC_IDLE|game:"SP::HC_IDLE"|
+monster_babycrab|alert|sp:HC_ALERT|game:"SP::HC_ALERT"|
+monster_babycrab|pain|core:hc_pain|game:"2 | 3 | 4 | 59"|
+monster_babycrab|die|core:hc_die|game:"2 | 3 | 4 | 59"|
+
+# ---- monster_zombie ----
+monster_zombie|pain|core:zo_pain|game:"sfx::ZO_PAIN"|
+monster_zombie|alert|sp:ZO_ALERT|game:"SP::ZO_ALERT"|
+monster_zombie|idle|sp:ZO_IDLE|game:"SP::ZO_IDLE"|
+monster_zombie|attack|core:zo_attack|game:"sfx::ZO_ATTACK"|the roar after the second claw
+monster_zombie|ae:ZOMBIE_AE_ATTACK_RIGHT|sp:ZO_CLAW,sp:ZO_MISS|game:"SP::ZO_MISS"|claw_strike on a hit, claw_miss on a swing that finds nothing
+monster_zombie|ae:ZOMBIE_AE_ATTACK_LEFT|sp:ZO_CLAW,sp:ZO_MISS|game:"SP::ZO_MISS"|
+monster_zombie|ae:ZOMBIE_AE_ATTACK_BOTH|sp:ZO_CLAW,sp:ZO_MISS|game:"SP::ZO_MISS"|
+monster_zombie|mdl:walk|sp:NPC_STEP1,sp:NPC_STEP3|game:"SP::NPC_STEP1"|
+monster_zombie|mdl:soda|na:scripted c1a1b animation, no gameplay|-|
+monster_zombie|mdl:ripdoor|na:scripted animation, no gameplay|-|
+
+# ---- monster_houndeye ----
+monster_houndeye|ae:HOUND_AE_ANGERSOUND1|sp:HE_GROWL|game:"SP::HE_GROWL"|madidle2 events
+monster_houndeye|ae:HOUND_AE_ANGERSOUND2|sp:HE_GROWL2|game:"SP::HE_GROWL2"|
+monster_houndeye|idle|sp:HE_IDLE|game:"SP::HE_IDLE"|
+monster_houndeye|warmupsound|sp:HE_WARM1,sp:HE_WARM3|game:"SP::HE_WARM1"|at the start of the charge
+monster_houndeye|warnsound|sp:HE_HUNT|game:"SP::HE_HUNT"|
+monster_houndeye|alert|sp:HE_ALERT|game:"SP::HE_ALERT"|
+monster_houndeye|die|core:he_die|game:"sfx::HE_DIE"|
+monster_houndeye|pain|core:he_pain|game:"sfx::HE_PAIN"|
+monster_houndeye|sonicattack|core:he_blast|game:"sfx::HE_BLAST, pos"|
+
+# ---- monster_bullchicken ----
+monster_bullchicken|idle|sp:BC_IDLE|game:"SP::BC_IDLE"|
+monster_bullchicken|pain|core:bc_pain|game:"sfx::BC_PAIN"|
+monster_bullchicken|alert|sp:BC_IDLE|game:"SP::BC_IDLE"|
+monster_bullchicken|ae:BSQUID_AE_THROW|sp:BC_BITE|game:"SP::BC_BITE"|bullsquid bite/whip
+monster_bullchicken|die|core:bc_die|game:"sfx::BC_DIE"|
+monster_bullchicken|attack|sp:BC_SPIT|game:"SP::BC_SPIT"|the spit
+monster_bullchicken|starttask|sp:BC_GROWL|game:"SP::BC_GROWL"|attack growl
+monster_bullchicken|mdl:draghole|none|-|
+monster_bullchicken|mdl:draggrunt|na:scripted animation, no gameplay|-|
+monster_bullchicken|mdl:scare|na:scripted animation, no gameplay|-|
+monster_bullchicken|mdl:squidfall|na:scripted animation, no gameplay|-|
+
+# ---- monster_human_grunt ----
+monster_human_grunt|idle|none|-|HG_CHECK / HG_QUEST / HG_IDLE sentences
+monster_human_grunt|ae:HGRUNT_AE_RELOAD|none|-|the marine has no reload animation
+monster_human_grunt|ae:HGRUNT_AE_GREN_LAUNCH|core:m203|game:"sfx::M203, pos"|
+monster_human_grunt|ae:HGRUNT_AE_BURST1|sp:HG_MGUN|game:"SP::HG_MGUN"|the MP5 core sample stands in when the bank cannot hold gr_mgun1
+monster_human_grunt|ae:HGRUNT_AE_CAUGHT_ENEMY|none|-|HG_ALERT sentence
+monster_human_grunt|pain|core:gr_pain|game:"sfx::GR_PAIN"|
+monster_human_grunt|die|core:gr_die|game:"sfx::GR_DIE"|
+monster_human_grunt|getschedule|none|-|HG_GREN / HG_COVER / HG_CHARGE ... sentences
+monster_human_grunt|getscheduleoftype|none|-|HG_THROW
+monster_human_grunt|mdl:draghole|na:scripted animation|-|
+monster_human_grunt|mdl:flyback|na:scripted animation|-|
+
+# ---- monster_alien_slave ----
+monster_alien_slave|alert|none|-|SLV_ALERT sentence of aslave/slv_word*.wav
+monster_alien_slave|idle|none|-|SLV_IDLE sentence
+monster_alien_slave|pain|core:slv_pain|game:"sfx::SLV_PAIN"|
+monster_alien_slave|die|core:slv_die|game:"sfx::SLV_DIE"|
+monster_alien_slave|ae:ISLAVE_AE_CLAW|sp:SLV_CLAW|game:"SP::SLV_CLAW"|
+monster_alien_slave|ae:ISLAVE_AE_CLAWRAKE|na:islave.mdl carries no event 2, so the retail game never runs it|-|
+monster_alien_slave|ae:ISLAVE_AE_ZAP_POWERUP|sp:SLV_CHARGE|game:"SP::SLV_CHARGE"|
+monster_alien_slave|ae:ISLAVE_AE_ZAP_SHOOT|sp:SLV_BEAM|game:"SP::SLV_BEAM"|
+monster_alien_slave|zapbeam|core:electro|game:"sfx::ELECTRO, pos"|
+monster_alien_slave|clearbeams|none|-|the beam's end zap
+monster_alien_slave|mdl:jibber|none|-|slv_word idle chatter
+monster_alien_slave|mdl:jabber|none|-|
+
+# ---- monster_alien_grunt ----
+monster_alien_grunt|idle|sp:AG_IDLE|game:"SP::AG_IDLE"|
+monster_alien_grunt|die|sp:AG_DIE|game:"SP::AG_DIE"|
+monster_alien_grunt|alert|sp:AG_ALERT|game:"SP::AG_ALERT"|
+monster_alien_grunt|attack|none|-|
+monster_alien_grunt|pain|sp:AG_PAIN|game:"SP::AG_PAIN"|
+monster_alien_grunt|ae:AGRUNT_AE_HORNET5|sp:AG_FIRE|game:"AG_FIRE"|
+monster_alien_grunt|ae:AGRUNT_AE_LEFT_FOOT|none|-|
+monster_alien_grunt|ae:AGRUNT_AE_RIGHT_FOOT|none|-|
+monster_alien_grunt|ae:AGRUNT_AE_LEFT_PUNCH|sp:AG_PUNCH|game:"setpiece_audio::AG_PUNCH"|
+monster_alien_grunt|ae:AGRUNT_AE_RIGHT_PUNCH|sp:AG_PUNCH|game:"setpiece_audio::AG_PUNCH"|
+monster_alien_grunt|mdl:scare|na:scripted animation|-|
+monster_alien_grunt|mdl:bigopen|na:scripted animation|-|
+
+# ---- monster_alien_controller ----
+monster_alien_controller|pain|sp:CON_PAIN|game:"SP::CON_PAIN"|
+monster_alien_controller|alert|sp:CON_ALERT|game:"SP::CON_ALERT"|
+monster_alien_controller|idle|sp:CON_IDLE|game:"SP::CON_IDLE"|
+monster_alien_controller|attack|sp:CON_ATTACK|game:"CON_ATTACK"|
+monster_alien_controller|die|sp:CON_DIE|game:"SP::CON_DIE"|
+
+# ---- monster_scientist / monster_barney: voices stream per map ----
+monster_scientist|declinefollowing|none|-|
+monster_scientist|scream|none|-|SC_SCREAM sentence
+monster_scientist|starttask|none|-|SC_HEAL / SC_FEAR sentences
+monster_scientist|talkinit|na:registers the sentence groups, makes no sound|-|
+monster_scientist|pain|sp:SCI_PAIN|game:"SP::SCI_PAIN"|one of five pain cries
+monster_scientist|mdl:walk|sp:NPC_STEP1,sp:NPC_STEP3|game:"SP::NPC_STEP1"|every 8 ticks while moving (the walk events)
+monster_scientist|mdl:walk_scared|sp:NPC_STEP1,sp:NPC_STEP3|game:"SP::NPC_STEP1"|
+monster_scientist|mdl:run|none|-|the port animates the walk sequence at every speed, so no run steps
+monster_scientist|mdl:run1|none|-|
+monster_scientist|mdl:run2|none|-|
+monster_scientist|mdl:*|na:scripted animations; their sounds belong to the scripted sequence|-|
+monster_barney|alert|none|-|BA_ATTACK sentence
+monster_barney|barneyfirepistol|core:barney_attack|game:"sfx::BARNEY_ATTACK"|
+monster_barney|talkinit|na:registers the sentence groups, makes no sound|-|
+monster_barney|takedamage|none|-|BA_MAD sentence
+monster_barney|pain|core:ba_pain|game:"sfx::BA_PAIN"|
+monster_barney|die|core:ba_die|game:"sfx::BA_DIE"|
+monster_barney|getschedule|none|-|BA_KILL sentence
+monster_barney|declinefollowing|none|-|BA_POK sentence
+monster_barney|mdl:walk|sp:NPC_STEP1,sp:NPC_STEP3|game:"SP::NPC_STEP1"|every 10 ticks while moving
+monster_barney|mdl:run|none|-|the port animates the walk sequence at every speed
+monster_barney|mdl:flashlight|na:scripted animation|-|
+monster_barney|mdl:intropush|na:scripted animation|-|
+monster_barney|mdl:fence|na:scripted animation|-|
+monster_barney|mdl:barneyfall|na:scripted animation|-|
+
+# ---- barnacle, leech, roach ----
+monster_barnacle|barnaclethink|sp:BCL_BITE|game:"setpiece_audio::BCL_BITE"|
+monster_barnacle|killed|sp:BCL_DIE|game:"SP::BCL_DIE"|
+monster_leech|attack|sp:LEECH_BITE|game:"setpiece_audio::LEECH_BITE"|
+monster_leech|alert|none|-|
+monster_cockroach|killed|sp:ROACH_DIE|game:"SP::ROACH_DIE"|
+monster_cockroach|picknewdest|none|-|
+
+# ---- sentry / turrets ----
+monster_sentry|shoot|core:mp5|game:"8 | 20.. => sfx::play_world(sfx::MP5"|hks1 is the MP5 sample
+monster_sentry|sentrydeath|sp:TU_DIE|game:"SP::TU_DIE"|
+monster_sentry|ping|none|-|
+monster_sentry|deploy|none|-|
+monster_sentry|retire|none|-|
+monster_sentry|autosearchthink|sp:TU_ALERT|game:"SP::TU_ALERT"|on first sight of the enemy
+monster_sentry|turretdeath|sp:TU_DIE|game:"SP::TU_DIE"|
+monster_miniturret|shoot|core:mp5|game:"8 | 20.. => sfx::play_world(sfx::MP5"|
+monster_miniturret|ping|none|-|
+monster_miniturret|deploy|none|-|
+monster_miniturret|retire|none|-|
+monster_miniturret|autosearchthink|sp:TU_ALERT|game:"SP::TU_ALERT"|
+monster_miniturret|turretdeath|sp:TU_DIE|game:"SP::TU_DIE"|
+monster_turret|shoot|sp:TU_FIRE|game:"setpiece_audio::TU_FIRE"|the MP5 core sample stands in when the bank cannot hold tu_fire1
+monster_turret|spinupcall|none|-|
+monster_turret|spindowncall|none|-|
+monster_turret|ping|none|-|
+monster_turret|deploy|none|-|
+monster_turret|retire|none|-|
+monster_turret|autosearchthink|sp:TU_ALERT|game:"SP::TU_ALERT"|
+monster_turret|turretdeath|sp:TU_DIE|game:"SP::TU_DIE"|
+
+# ---- the bosses and set pieces ----
+monster_gargantua|stompattack|sp:GARG_STOMP|game:"SP::GARG_STOMP"|
+monster_gargantua|flamecreate|sp:GARG_FLAME_ON|game:"SP::GARG_FLAME_ON"|
+monster_gargantua|flamedestroy|sp:GARG_FLAME_OFF|game:"SP::GARG_FLAME_OFF"|
+monster_gargantua|pain|sp:GARG_PAIN|game:"SP::GARG_PAIN"|
+monster_gargantua|ae:GARG_AE_SLASH_LEFT|sp:GARG_SLASH|game:"SP::GARG_SLASH"|claw_strike on a hit
+monster_gargantua|ae:GARG_AE_LEFT_FOOT|sp:GARG_STEP|game:"SP::GARG_STEP"|
+monster_gargantua|ae:GARG_AE_BREATHE|none|-|
+monster_gargantua|attack|none|-|
+monster_gargantua|mdl:idle2|none|-|
+monster_bigmomma|ae:BIG_AE_MELEE_ATTACK1|none|-|
+monster_bigmomma|alert|none|-|
+monster_bigmomma|pain|sp:GON_PAIN|game:"setpiece_audio::GON_PAIN"|
+monster_bigmomma|attack|sp:GON_ATTACK|game:"SP::GON_ATTACK"|
+monster_bigmomma|ae:BIG_AE_BIRTH_SOUND|sp:GON_BIRTH|game:"SP::GON_BIRTH"|
+monster_bigmomma|ae:BIG_AE_SACK|sp:GON_SACK|game:"SP::GON_SACK"|
+monster_bigmomma|ae:BIG_AE_DEATHSOUND|sp:GON_DIE|game:"setpiece_audio::GON_DIE"|
+monster_bigmomma|ae:BIG_AE_STEP3|none|-|slot GON_STEP is cooked and never played
+monster_bigmomma|ae:BIG_AE_STEP2|none|-|
+monster_bigmomma|layheadcrab|sp:GON_BIRTH|game:"SP::GON_BIRTH"|
+monster_bigmomma|deathnotice|none|-|
+monster_bigmomma|launchmortar|sp:GON_SACK|game:"SP::GON_SACK"|
+monster_nihilanth|pain|sp:NIH_PAIN,sp:NIH_LAUGH|game:"SP::NIH_PAIN"|
+monster_nihilanth|die|sp:NIH_DIE|game:"SP::NIH_DIE"|
+monster_nihilanth|makefriend|none|-|
+monster_nihilanth|attack|sp:NIH_ATTACK|game:"SP::NIH_ATTACK"|
+monster_nihilanth|handleanimevent|sp:NIH_BALL,sp:NIH_RECHARGE|game:"SP::NIH_RECHARGE"|ball launch and the recharge cry; x_teleattack1 belongs to the teleport ball (NIH_TELE)
+
+monster_apache|killed|na:a stop-sound for the rotor loop, not a sound|-|
+monster_apache|dyingthink|none|-|
+monster_apache|flight|sp:APACHE_ROTOR|game:"SP::APACHE_ROTOR"|
+monster_apache|firegun|sp:APACHE_GUN|game:"SP::APACHE_GUN"|
+monster_osprey|flight|sp:OSPREY_ROTOR|game:"SP::OSPREY_ROTOR"|
+monster_osprey|killed|na:a stop-sound for the rotor loop, not a sound|-|
+monster_osprey|dyingthink|none|-|
+monster_ichthyosaur|idle|sp:ICHY_IDLE|game:"SP::ICHY_IDLE"|
+monster_ichthyosaur|alert|none|-|
+monster_ichthyosaur|attack|sp:ICHY_ATTACK|game:"setpiece_audio::ICHY_ATTACK"|
+monster_ichthyosaur|bitesound|sp:ICHY_BITE|game:"setpiece_audio::ICHY_BITE"|
+monster_ichthyosaur|pain|sp:ICHY_PAIN|game:"SP::ICHY_PAIN"|
+monster_ichthyosaur|die|sp:ICHY_DIE|game:"SP::ICHY_DIE"|
+monster_tentacle|*|none|-|
+monster_gman|*|none|-|
+monster_human_assassin|*|none|-|
+monster_tripmine|*|none|-|
+monster_snark|*|none|-|
+monster_rat|*|none|-|
+
+# ---- effects ----
+func_button|sentencestop|na:the locked and unlocked sentences are authored speech, not a gameplay sound|-|
+func_rot_button|sentencestop|na:the locked and unlocked sentences are authored speech, not a gameplay sound|-|
+func_breakable|materialsoundlist|na:a table of the damage sounds, not a sound|-|
+func_breakable|damagesound|none|-|a damaged but unbroken breakable is silent
+func_breakable|traceattack|none|-|
+func_breakable|die|map:debris/bustglass1.wav,map:debris/bustcrate1.wav,map:debris/bustmetal1.wav,map:debris/bustflesh1.wav,map:debris/bustconcrete1.wav,map:debris/bustceiling.wav|cook:"debris/bustceiling.wav"|one per material, from the map bank
+env_spark|spark|map:buttons/spark1.wav|game:"spark_sound(rec.sound0, o)"|one of six; silent when the bank lacks it
+func_button|spark|sp:SPARK|game:"setpiece_audio::SPARK"|a resting button with the spark flag
+func_rot_button|spark|sp:SPARK|game:"setpiece_audio::SPARK"|the valve wheels of c1a1b
+monster_nihilanth|zapinit|none|-|the lightning ball's debris/zap4 start is not played
+monster_nihilanth|zapthink|none|-|
+monster_nihilanth|zaptouch|none|-|
+monster_nihilanth|teleportinit|sp:NIH_TELE|game:"SP::NIH_TELE"|
+monster_nihilanth|teleportthink|na:a stop-sound for the teleport ball loop, not a sound|-|
+monster_nihilanth|teleporttouch|na:a stop-sound for the teleport ball loop, not a sound|-|
+monster_nihilanth|removetouch|na:a stop-sound for the teleport ball loop, not a sound|-|
+
+# ---- originals the SDK scan cannot see: sounds of a helper class shared by entities ----
+!env_shooter|bounce|debris/glass1.wav,debris/glass2.wav,debris/glass3.wav,debris/wood1.wav,debris/wood2.wav,debris/wood3.wav,debris/metal1.wav,debris/metal2.wav,debris/metal3.wav,debris/concrete1.wav,debris/concrete2.wav,debris/concrete3.wav,debris/flesh1.wav,debris/flesh2.wav,debris/flesh3.wav,debris/flesh5.wav,debris/flesh6.wav,debris/flesh7.wav|combat.cpp:739 CGib::BounceGibTouch calls CBreakable::MaterialSoundRandom on one bounce in three
+env_shooter|bounce|none|-|flying debris bounces silent
+!env_beverage|canthink|weapons/g_bounce3.wav|effects.cpp:2237 CItemSoda::CanThink, the can landing
+env_beverage|canthink|map:weapons/g_bounce3.wav|game:"tick_soda_can"|the can's own bank sample

@@ -311,6 +311,7 @@ unsafe fn swipe(pi: usize, target: u8, f: [i32; 3]) {
     if player_frac(from, to, 16).is_some() {
         hurt_player(dmg, pos);
         add_view_punch(-341, -341); // punchangle (-30, -30, 30)
+        setpiece_sfx::play(SP::GARG_SLASH, pos);
     } else if target != PROP_TARGET_PLAYER {
         let (mn, mx) =
             actor_collision_bounds(PROP_KIND[target as usize], PROP_POS[target as usize]);
@@ -323,6 +324,7 @@ unsafe fn swipe(pi: usize, target: u8, f: [i32; 3]) {
         .is_some()
         {
             damage_prop(target as usize, dmg.min(255) as u8, false);
+            setpiece_sfx::play(SP::GARG_SLASH, pos);
         }
     }
 }

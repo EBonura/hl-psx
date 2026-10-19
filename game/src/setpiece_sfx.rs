@@ -28,9 +28,17 @@ pub unsafe fn bind(m: &crate::map::Map, rec: crate::map::LogicEnt) {
         let a = m.logic_aux(rec.first_aux as usize + k);
         if (a.target as usize) < setpiece_audio::COUNT {
             SETPIECE[a.target as usize] = a.delay_ticks as u8;
+            #[cfg(feature = "interaction-probe")]
+            crate::reference_trace::probe_vals(0, "slot", &[a.target as i32, a.delay_ticks as i32]);
         }
         k += 1;
     }
+}
+
+/// The map-bank id bound to `slot` (u8::MAX when the bank lacks it).
+#[inline]
+pub unsafe fn id(slot: u8) -> u8 {
+    SETPIECE[slot as usize]
 }
 
 #[optimize(size)]

@@ -495,6 +495,7 @@ unsafe fn tick_leech(
             // The bite event only hurts a prey the leech is facing.
             if let Some(eye) = eye {
                 if leech::bite_connects(yaw, eye[0] - pos[0], eye[2] - pos[2]) {
+                    setpiece_sfx::play(hl_format::setpiece_audio::LEECH_BITE, pos);
                     damage_target(
                         PROP_TARGET_PLAYER,
                         skill_hit(Sk::LeechBite),
@@ -633,6 +634,9 @@ unsafe fn tick_zombie(
             } else {
                 sfx::play_world(sfx::ZO_ATTACK, pos);
             }
+        } else if hit {
+            // A swing that finds nothing: claw_miss.
+            cue(SP::ZO_MISS, pos);
         }
     } else if d2 <= 64 * 64 && visible {
         let heavy = impact_rng().below(5) == 0;
