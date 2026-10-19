@@ -20,10 +20,15 @@ pub const ANALOG_DEADZONE_MAX: u8 = 64;
 pub static mut SCREEN: ScreenOffset<24> = ScreenOffset::CENTRE;
 pub static mut MUSIC_VOL: u8 = VOL_MAX; // CD-DA (music) 0..8
 pub static mut SFX_VOL: u8 = VOL_MAX; // SPU voices (SFX + speech) 0..8
-static mut ANALOG_DEADZONE: u8 = ANALOG_DEADZONE_DEFAULT; // radial, axis units 0..128
-                                                          // psx_pad::Deadzone owns the radial test and squares the radius itself, so
-                                                          // there is one implementation of that shape rather than one per game.
-static mut ANALOG_DEADZONE_ZONE: Deadzone = Deadzone::new(ANALOG_DEADZONE_DEFAULT as i16);
+
+// Radial dead regions, axis units 0..128, one per stick: MOVE is the left stick
+// (walk and strafe), LOOK the right stick (turn and pitch). psx_pad::Deadzone
+// owns the radial test and squares the radius itself, so there is one
+// implementation of that shape rather than one per game.
+static mut MOVE_DEADZONE: u8 = ANALOG_DEADZONE_DEFAULT;
+static mut MOVE_DEADZONE_ZONE: Deadzone = Deadzone::new(ANALOG_DEADZONE_DEFAULT as i16);
+static mut LOOK_DEADZONE: u8 = ANALOG_DEADZONE_DEFAULT;
+static mut LOOK_DEADZONE_ZONE: Deadzone = Deadzone::new(ANALOG_DEADZONE_DEFAULT as i16);
 
 // ---- Brightness ------------------------------------------------------------
 // Quake-PSX cooks six gamma'd copies of its one shared 256-colour palette into
@@ -176,8 +181,8 @@ pub fn music_cd_volume() -> CdVolume {
 }
 
 /// Adjust a setting by index (0 screen X, 1 screen Y, 2 music, 3 SFX,
-/// 4 analog deadzone, 6 brightness) by `delta` and apply it live. Returns the
-/// new value.
+/// 4 move deadzone, 5 look deadzone, 6 brightness) by `delta` and apply it
+/// live. Returns the new value.
 #[optimize(size)]
 pub fn adjust(index: usize, delta: i32) -> i32 {
     unsafe {
@@ -203,12 +208,18 @@ pub fn adjust(index: usize, delta: i32) -> i32 {
                 SFX_VOL as i32
             }
             4 => {
-                ANALOG_DEADZONE =
-                    (ANALOG_DEADZONE as i32 + delta).clamp(0, ANALOG_DEADZONE_MAX as i32) as u8;
-                ANALOG_DEADZONE_ZONE = Deadzone::new(ANALOG_DEADZONE as i16);
-                ANALOG_DEADZONE as i32
+                MOVE_DEADZONE =
+                    (MOVE_DEADZONE as i32 + delta).clamp(0, ANALOG_DEADZONE_MAX as i32) as u8;
+                MOVE_DEADZONE_ZONE = Deadzone::new(MOVE_DEADZONE as i16);
+                MOVE_DEADZONE as i32
             }
             5 => {
+                LOOK_DEADZONE =
+                    (LOOK_DEADZONE as i32 + delta).clamp(0, ANALOG_DEADZONE_MAX as i32) as u8;
+                LOOK_DEADZONE_ZONE = Deadzone::new(LOOK_DEADZONE as i16);
+                LOOK_DEADZONE as i32
+            }
+            6 => {
                 let level = (BRIGHTNESS as i32 + delta).clamp(0, BRIGHTNESS_LEVELS as i32 - 1);
                 set_brightness_level(level as u8);
                 BRIGHTNESS as i32 + 1
@@ -226,9 +237,10 @@ pub fn value(index: usize) -> i32 {
             1 => SCREEN.y() as i32,
             2 => MUSIC_VOL as i32,
             3 => SFX_VOL as i32,
-            4 => ANALOG_DEADZONE as i32,
+            4 => MOVE_DEADZONE as i32,
+            5 => LOOK_DEADZONE as i32,
             // The 1-based level; the menus print `option_label` instead.
-            5 => BRIGHTNESS as i32 + 1,
+            6 => BRIGHTNESS as i32 + 1,
             _ => 0,
         }
     }
@@ -244,7 +256,7 @@ pub fn option_label(index: usize) -> Option<Label> {
         match index {
             0 => Some(SCREEN.label_x()),
             1 => Some(SCREEN.label_y()),
-            5 => Some(Brightness::label_for_level(
+            6 => Some(Brightness::label_for_level(
                 BRIGHTNESS as i8 - DEFAULT_BRIGHTNESS as i8,
             )),
             _ => None,
@@ -252,11 +264,18 @@ pub fn option_label(index: usize) -> Option<Label> {
     }
 }
 
-/// The configured stick dead region.
+/// The left stick's (movement) dead region.
 #[inline(always)]
 #[cfg(not(feature = "semantic-input"))]
-pub fn analog_deadzone() -> Deadzone {
-    unsafe { ANALOG_DEADZONE_ZONE }
+pub fn move_deadzone() -> Deadzone {
+    unsafe { MOVE_DEADZONE_ZONE }
+}
+
+/// The right stick's (look) dead region.
+#[inline(always)]
+#[cfg(not(feature = "semantic-input"))]
+pub fn look_deadzone() -> Deadzone {
+    unsafe { LOOK_DEADZONE_ZONE }
 }
 
 // ---- Difficulty ------------------------------------------------------------
