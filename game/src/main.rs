@@ -2351,10 +2351,7 @@ static mut LAST_SAVE_VBLANKS: u32 = 0;
 #[cfg_attr(feature = "semantic-input", allow(dead_code))]
 #[inline(never)]
 #[optimize(size)]
-unsafe fn save_with_badge(
-    target: save::Target,
-    cp: &save::Checkpoint,
-) -> save::CardResult {
+unsafe fn save_with_badge(target: save::Target, cp: &save::Checkpoint) -> save::CardResult {
     use psx_font::TextSink;
     let text = hltext::Sink::SMALL;
     // Amber on a dark plate, top right of the menu's area, drawn straight onto

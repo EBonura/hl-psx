@@ -13,10 +13,10 @@ use psx_spu::{CdVolume, Volume};
 /// The display mode `main` starts the GPU in; the screen offset moves its window.
 pub const DISPLAY: DisplayConfig = DisplayConfig::new(VideoMode::Ntsc, Resolution::R320X240);
 
+use crate::options_record::{Options, Saved, SCREEN_RANGE};
 pub use crate::options_record::{
     ANALOG_DEADZONE_DEFAULT, ANALOG_DEADZONE_MAX, BRIGHTNESS_LEVELS, DEFAULT_BRIGHTNESS, VOL_MAX,
 };
-use crate::options_record::{Options, Saved, SCREEN_RANGE};
 
 /// TV centering: +-24 px (X) and lines (Y) of screen shift.
 pub static mut SCREEN: ScreenOffset<SCREEN_RANGE> = ScreenOffset::CENTRE;

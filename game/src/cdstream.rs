@@ -37,10 +37,6 @@ mod target {
         unsafe { owner().prime_persistent_entries(first_id, count) }
     }
     #[inline]
-    pub fn set_sector_hook(hook: Option<fn(usize, usize)>) {
-        unsafe { owner().set_sector_hook(hook) }
-    }
-    #[inline]
     pub fn load_chunk_decompressed(id: u32, dst: &mut [u32]) -> Option<super::ChunkLoad> {
         unsafe { owner().load_chunk_decompressed(id, dst) }
     }
@@ -69,7 +65,6 @@ pub use target::*;
 mod host {
     pub unsafe fn invalidate_cache() {}
     pub fn prime_persistent_entries(_: u32, _: usize) {}
-    pub fn set_sector_hook(_: Option<fn(usize, usize)>) {}
     pub fn load_chunk(_: u32, _: &mut [u32]) -> Option<usize> {
         None
     }

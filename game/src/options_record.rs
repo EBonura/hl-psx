@@ -48,6 +48,9 @@ pub struct Options {
 }
 
 impl Options {
+    /// What the game boots with, for the tests: the statics in `settings` start from
+    /// the same constants.
+    #[cfg(test)]
     pub const DEFAULT: Options = Options {
         move_deadzone: ANALOG_DEADZONE_DEFAULT,
         look_deadzone: ANALOG_DEADZONE_DEFAULT,
