@@ -20873,7 +20873,8 @@ unsafe fn tick_props(
             continue;
         }
         hev::set_kind(hev::actor_kind(ty));
-        let had_enemy = PROP_AI_TARGET[pi] != PROP_TARGET_NONE;
+        let voiced = monster_voice::voiced(ty);
+        let had_enemy = voiced && PROP_AI_TARGET[pi] != PROP_TARGET_NONE;
         match ai {
             // Melee aliens (zombie/houndeye/bullsquid/ichy) reuse the headcrab
             // approach+bite AI; ranged/boss/flyer types render but don't move yet.
@@ -20904,19 +20905,8 @@ unsafe fn tick_props(
             ),
             _ => species::idle_think(m, movers, pi, ty, player_pos, in_player_pvs, health, armor),
         }
-        if PROP_STATE[pi] == PROP_STATE_MOVE && matches!(ty, 0 | 1 | 5 | 55) {
-            monster_voice::step(ty, pi, SIM_NOW as u32, PROP_POS[pi]);
-        }
-        // AlertSound on first sight of the enemy, and the 1 in 100 per think IdleSound
-        // of CBaseMonster::RunAI while idle (a think every 5 ticks).
-        if monster_voice::speaks_unprompted(ty) {
-            if PROP_AI_TARGET[pi] != PROP_TARGET_NONE {
-                if !had_enemy && ty != PROP_TYPE_HOUNDEYE {
-                    monster_voice::cue(ty, monster_voice::ALERT, PROP_POS[pi]);
-                }
-            } else if in_player_pvs && AI_TICK.wrapping_add(pi as u32) % 5 == 0 && monster_voice::idle_roll(pi, SIM_NOW as u32) {
-                monster_voice::cue(ty, monster_voice::IDLE, PROP_POS[pi]);
-            }
+        if voiced {
+            monster_voice::think(ty, pi, had_enemy, in_player_pvs);
         }
         pi += 1;
     }

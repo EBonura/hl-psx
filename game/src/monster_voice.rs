@@ -36,10 +36,36 @@ static CRIES: [(u8, [u8; 4]); 17] = [
     (18, [N, N, N, N]),
 ];
 
-/// Kinds that cry on seeing the enemy or while idle.
-#[inline]
-pub fn speaks_unprompted(kind: u8) -> bool {
-    matches!(kind, 2 | 5 | 6 | 7 | 10 | 11 | 19 | 20 | 21 | 22 | 55 | 59)
+/// Kinds `think` has work for: the ones that cry on seeing the enemy or while idle, and the
+/// walkers with npc footsteps (scientist, Barney, zombie).
+const VOICED: u64 = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 10) | (1 << 11)
+    | (1 << 19) | (1 << 20) | (1 << 21) | (1 << 22) | (1 << 55) | (1 << 59);
+
+/// One shift and test for the actors that never speak (most of a map's props).
+#[inline(always)]
+pub fn voiced(kind: u8) -> bool {
+    kind < 64 && (VOICED >> kind) & 1 != 0
+}
+
+/// After an actor's own think: AlertSound on first sight of the enemy, the 1 in 100 per
+/// think IdleSound of CBaseMonster::RunAI while idle (a think every 5 ticks), and the
+/// footstep of a walker on its way.
+#[inline(never)]
+#[optimize(size)]
+pub unsafe fn think(kind: u8, pi: usize, had_enemy: bool, in_player_pvs: bool) {
+    if crate::PROP_STATE[pi] == crate::PROP_STATE_MOVE {
+        step(kind, pi, crate::SIM_NOW as u32, crate::PROP_POS[pi]);
+    }
+    if crate::PROP_AI_TARGET[pi] != crate::PROP_TARGET_NONE {
+        if !had_enemy && kind != crate::PROP_TYPE_HOUNDEYE {
+            cue(kind, ALERT, crate::PROP_POS[pi]);
+        }
+    } else if in_player_pvs
+        && crate::AI_TICK.wrapping_add(pi as u32) % 5 == 0
+        && idle_roll(pi, crate::SIM_NOW as u32)
+    {
+        cue(kind, IDLE, crate::PROP_POS[pi]);
+    }
 }
 
 /// Play `kind`'s cry for `event` at `pos`; false when it has none or the bank lacks it.
