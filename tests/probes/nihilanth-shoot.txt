@@ -1,0 +1,286 @@
+# Nihilanth, real .357 shots (c4a3, room 94). NOT usable in a probe build: the probe config drops the boss model (pool pass 2), so no shot can hit him; the shipping build keeps TYPE_TO_SLOT[17] resident (read from a --dump-ram at p94). Kept for a shipping-config journey.
+# destroy one crystal per cycle, then irritation 2 opens the head; .357 shots at the head take the floor away. Read `nih` lines
+# (irritation level spheres health seq dead).
+# Head open: real .357 shots aimed at the brain (aimat adds 24 to the offset: 253 puts the aim point 277 above his origin, the head centre).
+0 god 1
+0 trace 20
+0 watch 17
+2 weapons
+4 weapon 2
+400 hurtkind 17 255
+410 hurtkind 17 255
+420 hurtkind 17 255
+600 fire crystal1 on
+730 hurtkind 17 255
+740 hurtkind 17 255
+750 hurtkind 17 255
+930 fire crystal2 on
+1060 hurtkind 17 255
+1070 hurtkind 17 255
+1080 hurtkind 17 255
+1260 fire crystal3 on
+1390 hurtkind 17 255
+1400 hurtkind 17 255
+1410 hurtkind 17 255
+1590 fire crystal4 on
+1720 hurtkind 17 255
+1730 hurtkind 17 255
+1740 hurtkind 17 255
+1745 arsenal
+1750 tpnear 17 350 0 0
+1760 tpnear 17 350 0 0
+1760 aimat 17 253
+1762 in 0 0 0 0 1 3
+1768 tpnear 17 350 0 0
+1768 aimat 17 253
+1770 in 0 0 0 0 1 3
+1776 tpnear 17 350 0 0
+1776 aimat 17 253
+1778 in 0 0 0 0 1 3
+1784 tpnear 17 350 0 0
+1784 aimat 17 253
+1786 in 0 0 0 0 1 3
+1792 tpnear 17 350 0 0
+1792 aimat 17 253
+1794 in 0 0 0 0 1 3
+1800 tpnear 17 350 0 0
+1800 aimat 17 253
+1802 in 0 0 0 0 1 3
+1808 tpnear 17 350 0 0
+1808 aimat 17 253
+1810 in 0 0 0 0 1 3
+1816 tpnear 17 350 0 0
+1816 aimat 17 253
+1818 in 0 0 0 0 1 3
+1824 tpnear 17 350 0 0
+1824 aimat 17 253
+1826 in 0 0 0 0 1 3
+1832 tpnear 17 350 0 0
+1832 aimat 17 253
+1834 in 0 0 0 0 1 3
+1840 tpnear 17 350 0 0
+1840 aimat 17 253
+1842 in 0 0 0 0 1 3
+1848 tpnear 17 350 0 0
+1848 aimat 17 253
+1850 in 0 0 0 0 1 3
+1856 tpnear 17 350 0 0
+1856 aimat 17 253
+1858 in 0 0 0 0 1 3
+1864 tpnear 17 350 0 0
+1864 aimat 17 253
+1866 in 0 0 0 0 1 3
+1872 tpnear 17 350 0 0
+1872 aimat 17 253
+1874 in 0 0 0 0 1 3
+1880 tpnear 17 350 0 0
+1880 aimat 17 253
+1882 in 0 0 0 0 1 3
+1888 tpnear 17 350 0 0
+1888 aimat 17 253
+1890 in 0 0 0 0 1 3
+1896 tpnear 17 350 0 0
+1896 aimat 17 253
+1898 in 0 0 0 0 1 3
+1904 tpnear 17 350 0 0
+1904 aimat 17 253
+1906 in 0 0 0 0 1 3
+1912 tpnear 17 350 0 0
+1912 aimat 17 253
+1914 in 0 0 0 0 1 3
+1920 tpnear 17 350 0 0
+1920 aimat 17 253
+1922 in 0 0 0 0 1 3
+1928 tpnear 17 350 0 0
+1928 aimat 17 253
+1930 in 0 0 0 0 1 3
+1936 tpnear 17 350 0 0
+1936 aimat 17 253
+1938 in 0 0 0 0 1 3
+1944 tpnear 17 350 0 0
+1944 aimat 17 253
+1946 in 0 0 0 0 1 3
+1952 tpnear 17 350 0 0
+1952 aimat 17 253
+1954 in 0 0 0 0 1 3
+1960 tpnear 17 350 0 0
+1960 aimat 17 253
+1962 in 0 0 0 0 1 3
+1968 tpnear 17 350 0 0
+1968 aimat 17 253
+1970 in 0 0 0 0 1 3
+1976 tpnear 17 350 0 0
+1976 aimat 17 253
+1978 in 0 0 0 0 1 3
+1984 tpnear 17 350 0 0
+1984 aimat 17 253
+1986 in 0 0 0 0 1 3
+1992 tpnear 17 350 0 0
+1992 aimat 17 253
+1994 in 0 0 0 0 1 3
+2000 tpnear 17 350 0 0
+2000 aimat 17 253
+2000 arsenal
+2002 in 0 0 0 0 1 3
+2008 tpnear 17 350 0 0
+2008 aimat 17 253
+2010 in 0 0 0 0 1 3
+2016 tpnear 17 350 0 0
+2016 aimat 17 253
+2018 in 0 0 0 0 1 3
+2024 tpnear 17 350 0 0
+2024 aimat 17 253
+2026 in 0 0 0 0 1 3
+2032 tpnear 17 350 0 0
+2032 aimat 17 253
+2034 in 0 0 0 0 1 3
+2040 tpnear 17 350 0 0
+2040 aimat 17 253
+2042 in 0 0 0 0 1 3
+2048 tpnear 17 350 0 0
+2048 aimat 17 253
+2050 in 0 0 0 0 1 3
+2056 tpnear 17 350 0 0
+2056 aimat 17 253
+2058 in 0 0 0 0 1 3
+2064 tpnear 17 350 0 0
+2064 aimat 17 253
+2066 in 0 0 0 0 1 3
+2072 tpnear 17 350 0 0
+2072 aimat 17 253
+2074 in 0 0 0 0 1 3
+2080 tpnear 17 350 0 0
+2080 aimat 17 253
+2082 in 0 0 0 0 1 3
+2088 tpnear 17 350 0 0
+2088 aimat 17 253
+2090 in 0 0 0 0 1 3
+2096 tpnear 17 350 0 0
+2096 aimat 17 253
+2098 in 0 0 0 0 1 3
+2100 arsenal
+2104 tpnear 17 350 0 0
+2104 aimat 17 253
+2106 in 0 0 0 0 1 3
+2112 tpnear 17 350 0 0
+2112 aimat 17 253
+2114 in 0 0 0 0 1 3
+2120 tpnear 17 350 0 0
+2120 aimat 17 253
+2122 in 0 0 0 0 1 3
+2128 tpnear 17 350 0 0
+2128 aimat 17 253
+2130 in 0 0 0 0 1 3
+2136 tpnear 17 350 0 0
+2136 aimat 17 253
+2138 in 0 0 0 0 1 3
+2144 tpnear 17 350 0 0
+2144 aimat 17 253
+2146 in 0 0 0 0 1 3
+2152 tpnear 17 350 0 0
+2152 aimat 17 253
+2154 in 0 0 0 0 1 3
+2160 tpnear 17 350 0 0
+2160 aimat 17 253
+2162 in 0 0 0 0 1 3
+2168 tpnear 17 350 0 0
+2168 aimat 17 253
+2170 in 0 0 0 0 1 3
+2176 tpnear 17 350 0 0
+2176 aimat 17 253
+2178 in 0 0 0 0 1 3
+2184 tpnear 17 350 0 0
+2184 aimat 17 253
+2186 in 0 0 0 0 1 3
+2192 tpnear 17 350 0 0
+2192 aimat 17 253
+2194 in 0 0 0 0 1 3
+2200 tpnear 17 350 0 0
+2200 aimat 17 253
+2202 in 0 0 0 0 1 3
+2208 tpnear 17 350 0 0
+2208 aimat 17 253
+2210 in 0 0 0 0 1 3
+2216 tpnear 17 350 0 0
+2216 aimat 17 253
+2218 in 0 0 0 0 1 3
+2224 tpnear 17 350 0 0
+2224 aimat 17 253
+2226 in 0 0 0 0 1 3
+2232 tpnear 17 350 0 0
+2232 aimat 17 253
+2234 in 0 0 0 0 1 3
+2240 tpnear 17 350 0 0
+2240 aimat 17 253
+2242 in 0 0 0 0 1 3
+2248 tpnear 17 350 0 0
+2248 aimat 17 253
+2250 in 0 0 0 0 1 3
+2256 tpnear 17 350 0 0
+2256 aimat 17 253
+2258 in 0 0 0 0 1 3
+2264 tpnear 17 350 0 0
+2264 aimat 17 253
+2266 in 0 0 0 0 1 3
+2272 tpnear 17 350 0 0
+2272 aimat 17 253
+2274 in 0 0 0 0 1 3
+2280 tpnear 17 350 0 0
+2280 aimat 17 253
+2282 in 0 0 0 0 1 3
+2288 tpnear 17 350 0 0
+2288 aimat 17 253
+2290 in 0 0 0 0 1 3
+2296 tpnear 17 350 0 0
+2296 aimat 17 253
+2298 in 0 0 0 0 1 3
+2304 tpnear 17 350 0 0
+2304 aimat 17 253
+2306 in 0 0 0 0 1 3
+2312 tpnear 17 350 0 0
+2312 aimat 17 253
+2314 in 0 0 0 0 1 3
+2320 tpnear 17 350 0 0
+2320 aimat 17 253
+2322 in 0 0 0 0 1 3
+2328 tpnear 17 350 0 0
+2328 aimat 17 253
+2330 in 0 0 0 0 1 3
+2336 tpnear 17 350 0 0
+2336 aimat 17 253
+2338 in 0 0 0 0 1 3
+2344 tpnear 17 350 0 0
+2344 aimat 17 253
+2346 in 0 0 0 0 1 3
+2352 tpnear 17 350 0 0
+2352 aimat 17 253
+2354 in 0 0 0 0 1 3
+2360 tpnear 17 350 0 0
+2360 aimat 17 253
+2362 in 0 0 0 0 1 3
+2368 tpnear 17 350 0 0
+2368 aimat 17 253
+2370 in 0 0 0 0 1 3
+2376 tpnear 17 350 0 0
+2376 aimat 17 253
+2378 in 0 0 0 0 1 3
+2384 tpnear 17 350 0 0
+2384 aimat 17 253
+2386 in 0 0 0 0 1 3
+2392 tpnear 17 350 0 0
+2392 aimat 17 253
+2394 in 0 0 0 0 1 3
+2400 tpnear 17 350 0 0
+2400 aimat 17 253
+2402 in 0 0 0 0 1 3
+2500 pos
+2600 pos
+2700 pos
+2800 pos
+2900 pos
+3000 pos
+3100 pos
+3200 pos
+3300 pos
+3400 pos
+3500 pos
