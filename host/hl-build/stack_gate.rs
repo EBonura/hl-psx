@@ -8,9 +8,10 @@
 //! the stack pointer without touching guest RAM). A scenario fails when its
 //! watermark plus the safety margin no longer fits the reserve.
 //!
-//! The profile is rooted at `play()`: the title menu, the intro and the ending
-//! run on a stack borrowed from the idle world arena (`on_idle_arena_stack`),
-//! so the CPU stack the reserve has to cover is `main` plus `play`.
+//! The profile is rooted at `play()`, so it does not see the title menu, the
+//! intro or the ending (their 18 KB, set by the 16 KB frame of the SDK's
+//! `FontAtlas::upload`, is covered by the static bound below, which starts at
+//! `main`).
 
 use std::fs;
 use std::path::{Path, PathBuf};

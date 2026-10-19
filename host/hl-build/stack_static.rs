@@ -45,6 +45,8 @@ pub struct Analysis {
     pub limiter: String,
     /// One line per recursive function group: its bound.
     pub recursion: Vec<(u32, String)>,
+    /// The deepest plain call chains, by the function they end in.
+    pub chains: Vec<(u32, String)>,
 }
 
 struct Func {
@@ -263,6 +265,7 @@ pub fn analyse(text: &str, root: &str, depths: Depths, zero_frame: &[&str]) -> O
 
     let mut worst = (0u32, String::new());
     let mut recursion = Vec::new();
+    let mut chains = Vec::new();
     for c in 0..ncomp {
         if entry[c] == i64::MIN {
             continue;
@@ -306,17 +309,32 @@ pub fn analyse(text: &str, root: &str, depths: Depths, zero_frame: &[&str]) -> O
         };
         let total = entry[c] as u32 + recur + below[c];
         if cyclic {
-            recursion.push((total, format!("{label}: {}", short(names[0]))));
+            recursion.push((
+                total,
+                format!(
+                    "{label}: {} (above {} + recursion {recur} + below {})",
+                    short(names[0]),
+                    entry[c],
+                    below[c]
+                ),
+            ));
+        } else if below[c] == 0 {
+            chains.push((
+                total,
+                format!("{} ({} B frame)", short(names[0]), component_frame[c]),
+            ));
         }
         if total > worst.0 {
             worst = (total, format!("{label}: {}", short(names[0])));
         }
     }
     recursion.sort_by(|a, b| b.0.cmp(&a.0));
+    chains.sort_by(|a, b| b.0.cmp(&a.0));
     Some(Analysis {
         worst: worst.0,
         limiter: worst.1,
         recursion,
+        chains,
     })
 }
 
