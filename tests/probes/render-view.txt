@@ -1,0 +1,18 @@
+# render-lane view probe. c1a1: roll punch held at 150 (Q12) for 40 ticks, then a 1000 u/s landing. c1a1c: water poses.
+map c1a1
+0 god 2
+0 trace 40
+300 tp 348 2108 774 270 0
+300 holdroll 150 40
+360 fallv 1000
+map c1a1b
+0 god 2
+0 trace 40
+300 tp 2000 -800 -350 180 15 160
+300 fire water_door_move3 on
+map c1a1c
+0 god 2
+0 trace 40
+300 tp -400 280 -3060 90 5 29
+330 tp -400 520 -3060 270 5 29
+360 tp 624 -1000 -2760 90 15 29

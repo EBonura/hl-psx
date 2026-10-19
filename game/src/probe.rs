@@ -39,6 +39,7 @@ static mut WATCH_EVERY: u32 = 10;
 static mut PROJ_LOG: bool = false;
 static mut WATCH_KINDS: [i32; 4] = [-1; 4];
 static mut PROJ_WATCH: bool = false;
+static mut HOLD_ROLL: (i32, u32) = (0, 0);
 
 pub unsafe fn take_goto() -> Option<(usize, bool)> {
     let g = GOTO;
@@ -127,6 +128,9 @@ pub unsafe fn step(
         // A debug spawn can sit inside a changelevel volume; touch-fired level
         // changes stay off for the whole script (use-fired ones still run).
         HOLD_CL = true;
+    }
+    if now < HOLD_ROLL.1 {
+        crate::PUNCH_ROLL = HOLD_ROLL.0;
     }
     while NEXT < PROBE_CMDS.len()
         && PROBE_CMDS[NEXT].sec as usize == SEC
@@ -808,6 +812,13 @@ pub unsafe fn step(
                 "pos",
                 &[player.pos[0], player.pos[1], player.pos[2], *health as i32],
             ),
+            61 => HOLD_ROLL = (c.a[0] as i32, now + c.a[1] as u32),
+            60 => {
+                player.clear_velocity();
+                player.vel[1] = -(c.a[0] as i32 / 20);
+                player.on_ground = false;
+                crate::reference_trace::probe_vals(now, "fallv", &[player.vel[1]]);
+            }
             _ => {}
         }
     }
