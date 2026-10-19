@@ -22,7 +22,7 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 frontend=${HLPSX_FRONTEND:?set HLPSX_FRONTEND to a psoxide frontend binary}
 work=${1:-$root/.hlpsx/sfx-proof}
-rooms="14 24 12 28 52 86 88"
+rooms="14 24 12 28 13 52 86 88"
 frames=${SFX_PROOF_FRAMES:-1800}
 mkdir -p "$work"
 
@@ -122,19 +122,24 @@ silent_core 14 "no ricochet at the valve" RIC 2408
 echo "c1a3a sentry, scientist, barnacle (room 24)"
 slot 24 "sentry death" TU_DIE
 slot 24 "scientist pain" SCI_PAIN
+slot 24 "barnacle death" BCL_DIE
 echo "c1a1 zombie (room 12)"
 slot 12 "zombie claw" ZO_CLAW
 echo "c1a4 houndeye (room 28)"
 slot 28 "houndeye warm-up" HE_WARM3
 core 28 "houndeye blast" HE_BLAST
 slot 28 "houndeye growl" HE_GROWL
+echo "c1a1a headcrab (room 13)"
+any_attack 13 "headcrab leap" HC_ATTACK HC_BITE
 echo "c2a3b ichthyosaur (room 52)"
 slot 52 "ichthyosaur pain" ICHY_PAIN
 slot 52 "ichthyosaur death" ICHY_DIE
 echo "c4a1b alien grunt (room 86)"
+slot 86 "alien grunt alert" AG_ALERT
 slot 86 "alien grunt pain" AG_PAIN
 slot 86 "alien grunt death" AG_DIE
 echo "c4a1d controller (room 88)"
+slot 88 "controller alert" CON_ALERT
 slot 88 "controller pain" CON_PAIN
 slot 88 "controller death" CON_DIE
 

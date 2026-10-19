@@ -27,34 +27,34 @@ monster_flyer_flock|*|na:boids make no sound in retail|-|
 
 # ---- monster_headcrab / monster_babycrab ----
 monster_headcrab|attack|core:hc_attack|game:"HC_ATTACK"|shriek at the leap
-monster_headcrab|leaptouch|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
-monster_headcrab|idle|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
-monster_headcrab|alert|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_headcrab|leaptouch|sp:HC_BITE|game:"setpiece_audio::HC_BITE"|hc_headbite when the leap connects
+monster_headcrab|idle|sp:HC_IDLE|game:"SP::HC_IDLE"|1 in 100 per 5-tick think while idle in the player's view
+monster_headcrab|alert|sp:HC_ALERT|game:"SP::HC_ALERT"|on first sight of the enemy
 monster_headcrab|pain|core:hc_pain|game:"sfx::HC_PAIN"|one of three pain cries
 monster_headcrab|die|core:hc_die|game:"sfx::HC_DIE"|one of two death cries
 monster_babycrab|attack|core:hc_attack|game:"HC_ATTACK"|
-monster_babycrab|leaptouch|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
-monster_babycrab|idle|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
-monster_babycrab|alert|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_babycrab|leaptouch|sp:HC_BITE|game:"setpiece_audio::HC_BITE"|
+monster_babycrab|idle|sp:HC_IDLE|game:"SP::HC_IDLE"|
+monster_babycrab|alert|sp:HC_ALERT|game:"SP::HC_ALERT"|
 monster_babycrab|pain|core:hc_pain|game:"2 | 3 | 4 | 59"|
 monster_babycrab|die|core:hc_die|game:"2 | 3 | 4 | 59"|
 
 # ---- monster_zombie ----
 monster_zombie|pain|core:zo_pain|game:"sfx::ZO_PAIN"|
-monster_zombie|alert|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
-monster_zombie|idle|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_zombie|alert|sp:ZO_ALERT|game:"SP::ZO_ALERT"|
+monster_zombie|idle|sp:ZO_IDLE|game:"SP::ZO_IDLE"|
 monster_zombie|attack|core:zo_attack|game:"sfx::ZO_ATTACK"|the roar after the second claw
-monster_zombie|ae:ZOMBIE_AE_ATTACK_RIGHT|sp:ZO_CLAW|game:"SP::ZO_CLAW"|claw_miss on a swing that finds nothing is not played (RAM floor)
-monster_zombie|ae:ZOMBIE_AE_ATTACK_LEFT|sp:ZO_CLAW|game:"SP::ZO_CLAW"|claw_miss on a swing that finds nothing is not played (RAM floor)
-monster_zombie|ae:ZOMBIE_AE_ATTACK_BOTH|sp:ZO_CLAW|game:"SP::ZO_CLAW"|claw_miss on a swing that finds nothing is not played (RAM floor)
-monster_zombie|mdl:walk|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_zombie|ae:ZOMBIE_AE_ATTACK_RIGHT|sp:ZO_CLAW,sp:ZO_MISS|game:"SP::ZO_MISS"|claw_strike on a hit, claw_miss on a swing that finds nothing
+monster_zombie|ae:ZOMBIE_AE_ATTACK_LEFT|sp:ZO_CLAW,sp:ZO_MISS|game:"SP::ZO_MISS"|
+monster_zombie|ae:ZOMBIE_AE_ATTACK_BOTH|sp:ZO_CLAW,sp:ZO_MISS|game:"SP::ZO_MISS"|
+monster_zombie|mdl:walk|sp:NPC_STEP1,sp:NPC_STEP3|game:"SP::NPC_STEP1"|
 monster_zombie|mdl:soda|na:scripted c1a1b animation, no gameplay|-|
 monster_zombie|mdl:ripdoor|na:scripted animation, no gameplay|-|
 
 # ---- monster_houndeye ----
 monster_houndeye|ae:HOUND_AE_ANGERSOUND1|sp:HE_GROWL|game:"SP::HE_GROWL"|madidle2 events
 monster_houndeye|ae:HOUND_AE_ANGERSOUND2|sp:HE_GROWL2|game:"SP::HE_GROWL2"|
-monster_houndeye|idle|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_houndeye|idle|sp:HE_IDLE|game:"SP::HE_IDLE"|
 monster_houndeye|warmupsound|sp:HE_WARM1,sp:HE_WARM3|game:"SP::HE_WARM1"|at the start of the charge
 monster_houndeye|warnsound|sp:HE_HUNT|game:"SP::HE_HUNT"|
 monster_houndeye|alert|sp:HE_ALERT|game:"SP::HE_ALERT"|
@@ -63,9 +63,9 @@ monster_houndeye|pain|core:he_pain|game:"sfx::HE_PAIN"|
 monster_houndeye|sonicattack|core:he_blast|game:"sfx::HE_BLAST, pos"|
 
 # ---- monster_bullchicken ----
-monster_bullchicken|idle|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_bullchicken|idle|sp:BC_IDLE|game:"SP::BC_IDLE"|
 monster_bullchicken|pain|core:bc_pain|game:"sfx::BC_PAIN"|
-monster_bullchicken|alert|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_bullchicken|alert|sp:BC_IDLE|game:"SP::BC_IDLE"|
 monster_bullchicken|ae:BSQUID_AE_THROW|sp:BC_BITE|game:"SP::BC_BITE"|bullsquid bite/whip
 monster_bullchicken|die|core:bc_die|game:"sfx::BC_DIE"|
 monster_bullchicken|attack|sp:BC_SPIT|game:"SP::BC_SPIT"|the spit
@@ -78,7 +78,7 @@ monster_bullchicken|mdl:squidfall|na:scripted animation, no gameplay|-|
 # ---- monster_human_grunt ----
 monster_human_grunt|idle|none|-|HG_CHECK / HG_QUEST / HG_IDLE sentences
 monster_human_grunt|ae:HGRUNT_AE_RELOAD|none|-|the marine has no reload animation
-monster_human_grunt|ae:HGRUNT_AE_GREN_LAUNCH|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_human_grunt|ae:HGRUNT_AE_GREN_LAUNCH|core:m203|game:"sfx::M203, pos"|
 monster_human_grunt|ae:HGRUNT_AE_BURST1|sp:HG_MGUN|game:"SP::HG_MGUN"|the MP5 core sample stands in when the bank cannot hold gr_mgun1
 monster_human_grunt|ae:HGRUNT_AE_CAUGHT_ENEMY|none|-|HG_ALERT sentence
 monster_human_grunt|pain|core:gr_pain|game:"sfx::GR_PAIN"|
@@ -103,23 +103,23 @@ monster_alien_slave|mdl:jibber|none|-|slv_word idle chatter
 monster_alien_slave|mdl:jabber|none|-|
 
 # ---- monster_alien_grunt ----
-monster_alien_grunt|idle|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_alien_grunt|idle|sp:AG_IDLE|game:"SP::AG_IDLE"|
 monster_alien_grunt|die|sp:AG_DIE|game:"SP::AG_DIE"|
-monster_alien_grunt|alert|none|-|slot AG_ALERT is cooked into banks and never played
+monster_alien_grunt|alert|sp:AG_ALERT|game:"SP::AG_ALERT"|
 monster_alien_grunt|attack|none|-|
 monster_alien_grunt|pain|sp:AG_PAIN|game:"SP::AG_PAIN"|
 monster_alien_grunt|ae:AGRUNT_AE_HORNET5|sp:AG_FIRE|game:"AG_FIRE"|
 monster_alien_grunt|ae:AGRUNT_AE_LEFT_FOOT|none|-|
 monster_alien_grunt|ae:AGRUNT_AE_RIGHT_FOOT|none|-|
-monster_alien_grunt|ae:AGRUNT_AE_LEFT_PUNCH|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
-monster_alien_grunt|ae:AGRUNT_AE_RIGHT_PUNCH|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_alien_grunt|ae:AGRUNT_AE_LEFT_PUNCH|sp:AG_PUNCH|game:"setpiece_audio::AG_PUNCH"|
+monster_alien_grunt|ae:AGRUNT_AE_RIGHT_PUNCH|sp:AG_PUNCH|game:"setpiece_audio::AG_PUNCH"|
 monster_alien_grunt|mdl:scare|na:scripted animation|-|
 monster_alien_grunt|mdl:bigopen|na:scripted animation|-|
 
 # ---- monster_alien_controller ----
 monster_alien_controller|pain|sp:CON_PAIN|game:"SP::CON_PAIN"|
-monster_alien_controller|alert|none|-|slot CON_ALERT is cooked into banks and never played
-monster_alien_controller|idle|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_alien_controller|alert|sp:CON_ALERT|game:"SP::CON_ALERT"|
+monster_alien_controller|idle|sp:CON_IDLE|game:"SP::CON_IDLE"|
 monster_alien_controller|attack|sp:CON_ATTACK|game:"CON_ATTACK"|
 monster_alien_controller|die|sp:CON_DIE|game:"SP::CON_DIE"|
 
@@ -129,8 +129,8 @@ monster_scientist|scream|none|-|SC_SCREAM sentence
 monster_scientist|starttask|none|-|SC_HEAL / SC_FEAR sentences
 monster_scientist|talkinit|na:registers the sentence groups, makes no sound|-|
 monster_scientist|pain|sp:SCI_PAIN|game:"SP::SCI_PAIN"|one of five pain cries
-monster_scientist|mdl:walk|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
-monster_scientist|mdl:walk_scared|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_scientist|mdl:walk|sp:NPC_STEP1,sp:NPC_STEP3|game:"SP::NPC_STEP1"|every 8 ticks while moving (the walk events)
+monster_scientist|mdl:walk_scared|sp:NPC_STEP1,sp:NPC_STEP3|game:"SP::NPC_STEP1"|
 monster_scientist|mdl:run|none|-|the port animates the walk sequence at every speed, so no run steps
 monster_scientist|mdl:run1|none|-|
 monster_scientist|mdl:run2|none|-|
@@ -143,7 +143,7 @@ monster_barney|pain|core:ba_pain|game:"sfx::BA_PAIN"|
 monster_barney|die|core:ba_die|game:"sfx::BA_DIE"|
 monster_barney|getschedule|none|-|BA_KILL sentence
 monster_barney|declinefollowing|none|-|BA_POK sentence
-monster_barney|mdl:walk|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_barney|mdl:walk|sp:NPC_STEP1,sp:NPC_STEP3|game:"SP::NPC_STEP1"|every 10 ticks while moving
 monster_barney|mdl:run|none|-|the port animates the walk sequence at every speed
 monster_barney|mdl:flashlight|na:scripted animation|-|
 monster_barney|mdl:intropush|na:scripted animation|-|
@@ -152,10 +152,10 @@ monster_barney|mdl:barneyfall|na:scripted animation|-|
 
 # ---- barnacle, leech, roach ----
 monster_barnacle|barnaclethink|sp:BCL_BITE|game:"setpiece_audio::BCL_BITE"|
-monster_barnacle|killed|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
-monster_leech|attack|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_barnacle|killed|sp:BCL_DIE|game:"SP::BCL_DIE"|
+monster_leech|attack|sp:LEECH_BITE|game:"setpiece_audio::LEECH_BITE"|
 monster_leech|alert|none|-|
-monster_cockroach|killed|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_cockroach|killed|sp:ROACH_DIE|game:"SP::ROACH_DIE"|
 monster_cockroach|picknewdest|none|-|
 
 # ---- sentry / turrets ----
@@ -164,21 +164,21 @@ monster_sentry|sentrydeath|sp:TU_DIE|game:"SP::TU_DIE"|
 monster_sentry|ping|none|-|
 monster_sentry|deploy|none|-|
 monster_sentry|retire|none|-|
-monster_sentry|autosearchthink|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_sentry|autosearchthink|sp:TU_ALERT|game:"SP::TU_ALERT"|on first sight of the enemy
 monster_sentry|turretdeath|sp:TU_DIE|game:"SP::TU_DIE"|
 monster_miniturret|shoot|core:mp5|game:"8 | 20.. => sfx::play_world(sfx::MP5"|
 monster_miniturret|ping|none|-|
 monster_miniturret|deploy|none|-|
 monster_miniturret|retire|none|-|
-monster_miniturret|autosearchthink|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_miniturret|autosearchthink|sp:TU_ALERT|game:"SP::TU_ALERT"|
 monster_miniturret|turretdeath|sp:TU_DIE|game:"SP::TU_DIE"|
-monster_turret|shoot|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_turret|shoot|sp:TU_FIRE|game:"setpiece_audio::TU_FIRE"|the MP5 core sample stands in when the bank cannot hold tu_fire1
 monster_turret|spinupcall|none|-|
 monster_turret|spindowncall|none|-|
 monster_turret|ping|none|-|
 monster_turret|deploy|none|-|
 monster_turret|retire|none|-|
-monster_turret|autosearchthink|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_turret|autosearchthink|sp:TU_ALERT|game:"SP::TU_ALERT"|
 monster_turret|turretdeath|sp:TU_DIE|game:"SP::TU_DIE"|
 
 # ---- the bosses and set pieces ----
@@ -186,7 +186,7 @@ monster_gargantua|stompattack|sp:GARG_STOMP|game:"SP::GARG_STOMP"|
 monster_gargantua|flamecreate|sp:GARG_FLAME_ON|game:"SP::GARG_FLAME_ON"|
 monster_gargantua|flamedestroy|sp:GARG_FLAME_OFF|game:"SP::GARG_FLAME_OFF"|
 monster_gargantua|pain|sp:GARG_PAIN|game:"SP::GARG_PAIN"|
-monster_gargantua|ae:GARG_AE_SLASH_LEFT|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_gargantua|ae:GARG_AE_SLASH_LEFT|sp:GARG_SLASH|game:"SP::GARG_SLASH"|claw_strike on a hit
 monster_gargantua|ae:GARG_AE_LEFT_FOOT|sp:GARG_STEP|game:"SP::GARG_STEP"|
 monster_gargantua|ae:GARG_AE_BREATHE|none|-|
 monster_gargantua|attack|none|-|
@@ -216,10 +216,10 @@ monster_apache|firegun|sp:APACHE_GUN|game:"SP::APACHE_GUN"|
 monster_osprey|flight|sp:OSPREY_ROTOR|game:"SP::OSPREY_ROTOR"|
 monster_osprey|killed|na:a stop-sound for the rotor loop, not a sound|-|
 monster_osprey|dyingthink|none|-|
-monster_ichthyosaur|idle|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_ichthyosaur|idle|sp:ICHY_IDLE|game:"SP::ICHY_IDLE"|
 monster_ichthyosaur|alert|none|-|
-monster_ichthyosaur|attack|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
-monster_ichthyosaur|bitesound|limit:left out to keep the executable above the 2,048 B RAM floor at PGO rung 125 (about 16 to 800 B each at that rung; see LIMITS-monsters.md)|-|
+monster_ichthyosaur|attack|sp:ICHY_ATTACK|game:"setpiece_audio::ICHY_ATTACK"|
+monster_ichthyosaur|bitesound|sp:ICHY_BITE|game:"setpiece_audio::ICHY_BITE"|
 monster_ichthyosaur|pain|sp:ICHY_PAIN|game:"SP::ICHY_PAIN"|
 monster_ichthyosaur|die|sp:ICHY_DIE|game:"SP::ICHY_DIE"|
 monster_tentacle|*|none|-|

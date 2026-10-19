@@ -744,20 +744,44 @@ pub mod setpiece_audio {
     pub const GON_PAIN: u8 = 38;
     pub const GON_STEP: u8 = 39;
     pub const GON_DIE: u8 = 40;
-    // Sounds the original plays that the port used to leave out or to cover with a wrong
-    // sample, the set that fits the RAM floor (LIMITS-monsters.md has the rest). They compete
-    // for rate with a ladder capped at CUE_CAP_HZ and never take rate from dialogue.
+    // Cries and effect sounds the original plays that the port used to leave out or
+    // to cover with a wrong sample. Tier 3 here competes for rate with a ladder capped
+    // at 6,000 Hz (so each costs little); tier 4 is spare SPU RAM only.
+    // Sparks of a resting button or valve (CBaseButton::ButtonSpark -> DoSpark).
     pub const SPARK: u8 = 41;
-    pub const AG_PAIN: u8 = 42;
-    pub const AG_DIE: u8 = 43;
-    pub const CON_PAIN: u8 = 44;
-    pub const CON_DIE: u8 = 45;
-    pub const ICHY_PAIN: u8 = 46;
-    pub const ICHY_DIE: u8 = 47;
-    pub const BCL_BITE: u8 = 48;
-    pub const TU_DIE: u8 = 49;
-    pub const SCI_PAIN: u8 = 50;
-    pub const COUNT: usize = 51;
+    pub const HC_BITE: u8 = 42;
+    pub const ZO_MISS: u8 = 43;
+    pub const AG_PAIN: u8 = 44;
+    pub const AG_DIE: u8 = 45;
+    pub const AG_PUNCH: u8 = 46;
+    pub const CON_PAIN: u8 = 47;
+    pub const CON_DIE: u8 = 48;
+    pub const ICHY_PAIN: u8 = 49;
+    pub const ICHY_DIE: u8 = 50;
+    pub const ICHY_ATTACK: u8 = 51;
+    pub const ICHY_BITE: u8 = 52;
+    pub const BCL_BITE: u8 = 53;
+    pub const BCL_DIE: u8 = 54;
+    pub const LEECH_BITE: u8 = 55;
+    pub const ROACH_DIE: u8 = 56;
+    pub const TU_DIE: u8 = 57;
+    pub const TU_FIRE: u8 = 58;
+    pub const SCI_PAIN: u8 = 59;
+    pub const GARG_SLASH: u8 = 60;
+    pub const HC_IDLE: u8 = 61;
+    pub const HC_ALERT: u8 = 62;
+    pub const ZO_ALERT: u8 = 63;
+    pub const ZO_IDLE: u8 = 64;
+    pub const HE_IDLE: u8 = 65;
+    pub const BC_IDLE: u8 = 66;
+    pub const AG_IDLE: u8 = 67;
+    pub const CON_IDLE: u8 = 68;
+    pub const ICHY_IDLE: u8 = 69;
+    pub const LEECH_ALERT: u8 = 70;
+    pub const TU_ALERT: u8 = 71;
+    pub const NPC_STEP1: u8 = 72;
+    pub const NPC_STEP3: u8 = 73;
+    pub const COUNT: usize = 74;
 
     /// Indexed by slot; within a tier, earlier slots are kept first.
     pub const SOUNDS: [Sound; COUNT] = [
@@ -823,19 +847,42 @@ pub mod setpiece_audio {
         s("monster_bigmomma", "gonarch/gon_step1.wav", false, 3),
         s("monster_bigmomma", "gonarch/gon_die1.wav", false, 3),
         sc("@button_spark", "buttons/spark1.wav", 3),
+        sc("monster_headcrab,monster_babycrab", "headcrab/hc_headbite.wav", 3),
+        sc("monster_zombie", "zombie/claw_miss1.wav", 3),
         sc("monster_alien_grunt", "agrunt/ag_pain1.wav", 3),
         sc("monster_alien_grunt", "agrunt/ag_die1.wav", 3),
+        sc("monster_alien_grunt", "zombie/claw_strike1.wav", 3),
         sc("monster_alien_controller", "controller/con_pain1.wav", 3),
         sc("monster_alien_controller", "controller/con_die1.wav", 3),
         sc("monster_ichthyosaur", "ichy/ichy_pain2.wav", 3),
         sc("monster_ichthyosaur", "ichy/ichy_die2.wav", 3),
+        sc("monster_ichthyosaur", "ichy/ichy_attack1.wav", 3),
+        sc("monster_ichthyosaur", "ichy/ichy_bite1.wav", 3),
         sc("monster_barnacle", "barnacle/bcl_bite3.wav", 3),
+        sc("monster_barnacle", "barnacle/bcl_die1.wav", 3),
+        sc("monster_leech", "leech/leech_bite1.wav", 3),
+        sc("monster_cockroach", "roach/rch_die.wav", 3),
         sc(
             "monster_sentry,monster_miniturret,monster_turret",
             "turret/tu_die.wav",
             3,
         ),
+        sc("monster_turret", "turret/tu_fire1.wav", 3),
         sc("monster_scientist", "scientist/sci_pain1.wav", 3),
+        sc("monster_gargantua", "zombie/claw_strike1.wav", 3),
+        sc("monster_headcrab,monster_babycrab", "headcrab/hc_idle1.wav", 4),
+        sc("monster_headcrab,monster_babycrab", "headcrab/hc_alert1.wav", 4),
+        sc("monster_zombie", "zombie/zo_alert10.wav", 4),
+        sc("monster_zombie", "zombie/zo_idle1.wav", 4),
+        sc("monster_houndeye", "houndeye/he_idle1.wav", 4),
+        sc("monster_bullchicken", "bullchicken/bc_idle1.wav", 4),
+        sc("monster_alien_grunt", "agrunt/ag_idle1.wav", 4),
+        sc("monster_alien_controller", "controller/con_idle1.wav", 4),
+        sc("monster_ichthyosaur", "ichy/ichy_idle1.wav", 4),
+        sc("monster_leech", "leech/leech_alert1.wav", 4),
+        sc("monster_sentry,monster_miniturret,monster_turret", "turret/tu_alert.wav", 4),
+        sc("monster_scientist,monster_barney,monster_zombie,monster_gman", "common/npc_step1.wav", 4),
+        sc("monster_scientist,monster_barney,monster_zombie,monster_gman", "common/npc_step3.wav", 4),
     ];
 }
 

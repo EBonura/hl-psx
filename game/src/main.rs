@@ -103,6 +103,7 @@ mod scientist_logic;
 mod scratchpad;
 mod segments;
 mod setpiece_logic;
+mod monster_voice;
 mod setpiece_sfx;
 mod species;
 mod tank;
@@ -18097,16 +18098,19 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         }
         sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
         let v = prop_voice(PROP_KIND[pi], true);
-        if v != SFX_NONE {
-            play_prop_voice(v, PROP_POS[pi]);
+        if monster_voice::cue(PROP_KIND[pi], monster_voice::DIE, PROP_POS[pi]) {
+        } else if v != SFX_NONE {
+            sfx::play_world(v, PROP_POS[pi]);
         } else if PROP_KIND[pi] == PROP_TYPE_BIGMOMMA {
             setpiece_sfx::play(hl_format::setpiece_audio::GON_DIE, PROP_POS[pi]);
         }
         release_monster_loot(pi);
     } else if MON_PAIN_COOLDOWN == 0 {
         let v = prop_voice(PROP_KIND[pi], false);
-        if v != SFX_NONE {
-            play_prop_voice(v, PROP_POS[pi]);
+        if monster_voice::cue(PROP_KIND[pi], monster_voice::PAIN, PROP_POS[pi]) {
+            MON_PAIN_COOLDOWN = 10;
+        } else if v != SFX_NONE {
+            sfx::play_world(v, PROP_POS[pi]);
             MON_PAIN_COOLDOWN = 10;
         }
     }
@@ -18783,44 +18787,54 @@ static mut PROP_NEAR_ENTS: [[u16; 8]; MAX_PROPS] = [[0; 8]; MAX_PROPS];
 static mut PROP_NEAR_COUNT: [u8; MAX_PROPS] = [0xFF; MAX_PROPS];
 const PROP_NEAR_SLACK: i32 = 96; // covers max step + door travel between refreshes
 
-/// A pain or death cry played from the map bank instead of the resident core: bit 7 set, the
-/// set-piece slot below it (silent when the map's bank could not hold the sample).
-const VOICE_SLOT: u8 = 0x80;
-
-/// Per-class pain/death vocal: a core id, `VOICE_SLOT | slot`, or SFX_NONE (silent). Every
-/// class has the cry its own SDK class plays (hl-catalogue lists them); a class with no
-/// sample in the bank is silent rather than borrowing another species' bark.
+/// Per-class pain/death vocal (SFX_NONE = silent; scientists keep quiet
+/// rather than borrowing a wrong species' bark).
 fn prop_voice(kind: u8, dying: bool) -> u8 {
-    use hl_format::setpiece_audio as SP;
-    let (pain, die) = match kind {
-        0 => (VOICE_SLOT | SP::SCI_PAIN, SFX_NONE),
-        1 => (sfx::BA_PAIN, sfx::BA_DIE),
-        2 | 3 | 4 | 59 => (sfx::HC_PAIN, sfx::HC_DIE),
-        5 | PROP_TYPE_VENT_ZOMBIE => (sfx::ZO_PAIN, SFX_NONE), // zombie.cpp has no DeathSound
-        6 => (sfx::HE_PAIN, sfx::HE_DIE),
-        7 => (sfx::BC_PAIN, sfx::BC_DIE),
-        8 => (sfx::GR_PAIN, sfx::GR_DIE),
-        9 => (sfx::SLV_PAIN, sfx::SLV_DIE),
-        10 => (VOICE_SLOT | SP::AG_PAIN, VOICE_SLOT | SP::AG_DIE),
-        11 => (VOICE_SLOT | SP::CON_PAIN, VOICE_SLOT | SP::CON_DIE),
-        19 => (VOICE_SLOT | SP::ICHY_PAIN, VOICE_SLOT | SP::ICHY_DIE),
-        20..=22 => (SFX_NONE, VOICE_SLOT | SP::TU_DIE),
-        _ => (SFX_NONE, SFX_NONE),
-    };
-    if dying {
-        die
-    } else {
-        pain
-    }
-}
-
-#[inline(never)]
-#[optimize(size)]
-unsafe fn play_prop_voice(v: u8, at: [i32; 3]) {
-    if v & VOICE_SLOT != 0 {
-        setpiece_sfx::play(v & !VOICE_SLOT, at);
-    } else {
-        sfx::play_world(v, at);
+    match kind {
+        1 => {
+            if dying {
+                sfx::BA_DIE
+            } else {
+                sfx::BA_PAIN
+            }
+        }
+        2 | 3 | 4 | 59 => {
+            if dying {
+                sfx::HC_DIE
+            } else {
+                sfx::HC_PAIN
+            }
+        }
+        5 | PROP_TYPE_VENT_ZOMBIE if !dying => sfx::ZO_PAIN, // zombie.cpp has no DeathSound
+        6 => {
+            if dying {
+                sfx::HE_DIE
+            } else {
+                sfx::HE_PAIN
+            }
+        }
+        7 => {
+            if dying {
+                sfx::BC_DIE
+            } else {
+                sfx::BC_PAIN
+            }
+        }
+        8 => {
+            if dying {
+                sfx::GR_DIE
+            } else {
+                sfx::GR_PAIN
+            }
+        }
+        9 => {
+            if dying {
+                sfx::SLV_DIE
+            } else {
+                sfx::SLV_PAIN
+            }
+        }
+        _ => SFX_NONE,
     }
 }
 
@@ -19226,6 +19240,7 @@ unsafe fn tick_alien_attack(
         let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
         if d2 <= 100 * 100 && senses::within_cone(2458, fx, fz, dx, dz) {
             damage_target(target, skill_hit(Sk::AgruntPunch), pos, health, armor);
+            setpiece_sfx::play(hl_format::setpiece_audio::AG_PUNCH, pos);
             prop_attack_cooldown_set(pi, 24);
         } else if d2 >= 100 * 100 && d2 <= 1024 * 1024 && senses::within_cone(2048, fx, fz, dx, dz)
         {
@@ -19357,6 +19372,9 @@ unsafe fn advance_grunt_grenade(pi: usize) -> bool {
                 launcher,
                 damage,
             );
+            if launcher {
+                sfx::play_world(sfx::M203, pos);
+            }
             let hard = settings::skill() == 2;
             let roll = if launcher && hard {
                 impact_rng().below(61) as u16
@@ -19527,6 +19545,7 @@ unsafe fn tick_shooter(
                     10 => species::cue_or(hl_format::setpiece_audio::AG_FIRE, sfx::ELECTRO, pos),
                     11 => species::cue_or(hl_format::setpiece_audio::CON_ATTACK, sfx::ELECTRO, pos),
                     51 => sfx::play_world(sfx::GLOCK, pos),
+                    21 => species::cue_or(hl_format::setpiece_audio::TU_FIRE, sfx::MP5, pos),
                     8 | 20.. => sfx::play_world(sfx::MP5, pos),
                     _ => sfx::play_world(sfx::ELECTRO, pos),
                 }
@@ -19616,6 +19635,11 @@ unsafe fn tick_headcrab(
                         damage as i32 * 1000 + pi as i32,
                     );
                     damage_target(target, damage, pos, health, armor);
+                    if leaper {
+                        setpiece_sfx::play(hl_format::setpiece_audio::HC_BITE, pos);
+                    } else if kind == 19 {
+                        setpiece_sfx::play(hl_format::setpiece_audio::ICHY_BITE, pos);
+                    }
                 }
             }
         }
@@ -19691,9 +19715,14 @@ unsafe fn tick_headcrab(
         let snd = match PROP_KIND[pi] {
             5 => sfx::ZO_ATTACK, // zombie swipe
             6 => sfx::HE_BLAST,  // houndeye sonic blast
+            19 => SFX_NONE,      // the ichthyosaur has its own cry below
             _ => sfx::HC_ATTACK, // headcrab-family shriek
         };
-        sfx::play_world(snd, pos);
+        if PROP_KIND[pi] == 19 {
+            setpiece_sfx::play(hl_format::setpiece_audio::ICHY_ATTACK, pos);
+        } else {
+            sfx::play_world(snd, pos);
+        }
     } else {
         PROP_STATE[pi] = PROP_STATE_MOVE;
         let step_d2 = d2.saturating_sub(HEADCRAB_STOP_RANGE * HEADCRAB_STOP_RANGE);
@@ -21037,6 +21066,8 @@ unsafe fn tick_props(
             continue;
         }
         hev::set_kind(hev::actor_kind(ty));
+        let voiced = monster_voice::voiced(ty);
+        let had_enemy = voiced && PROP_AI_TARGET[pi] != PROP_TARGET_NONE;
         match ai {
             // Melee aliens (zombie/houndeye/bullsquid/ichy) reuse the headcrab
             // approach+bite AI; ranged/boss/flyer types render but don't move yet.
@@ -21066,6 +21097,9 @@ unsafe fn tick_props(
                 health,
             ),
             _ => species::idle_think(m, movers, pi, ty, player_pos, in_player_pvs, health, armor),
+        }
+        if voiced {
+            monster_voice::think(ty, pi, had_enemy, in_player_pvs);
         }
         pi += 1;
     }
@@ -25731,7 +25765,8 @@ unsafe fn render_blood_fx(
 unsafe fn spark_sound(id: u8, at: [i32; 3]) {
     if id != u8::MAX {
         // Not impact_rng: a draw here would shift every later random outcome of the replay.
-        sfx::play_map_authored(id, at, 20, 2);
+        let roll = (SIM_NOW as u32 ^ at[0] as u32 ^ (at[2] as u32).rotate_left(11)).wrapping_mul(2_654_435_761) >> 16;
+        sfx::play_map_authored(id, at, 10 + (roll % 21) as u8, 2);
     }
 }
 

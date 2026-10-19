@@ -1,4 +1,4 @@
-# Monster and effect sound proof. One section per map (separate launch each: rooms 14, 24, 12, 28, 52, 86, 88).
+# Monster and effect sound proof. One section per map (separate launch each: rooms 14, 24, 12, 28, 13, 52, 86, 88).
 # Read the `sfx` lines (a path 0 core/1 voice/2 map bank/3 loop, b id), `slot` lines (slot -> bank id) and data/voices/rates.txt for bank ids.
 # Ticks are in file order per section (the probe runs a command when its turn comes).
 map c1a1b
@@ -151,6 +151,76 @@ map c1a4
 386 aimat 6 20
 392 aimat 6 20
 398 aimat 6 20
+map c1a1a
+0 god 1
+0 trace 40
+10 tpnear 2 -100 0 0
+14 aimat 2 10
+20 aimat 2 10
+26 aimat 2 10
+30 hurtkind 2 1
+32 aimat 2 10
+38 aimat 2 10
+44 aimat 2 10
+50 aimat 2 10
+56 aimat 2 10
+62 aimat 2 10
+68 aimat 2 10
+74 aimat 2 10
+80 aimat 2 10
+86 aimat 2 10
+92 aimat 2 10
+98 aimat 2 10
+104 aimat 2 10
+110 aimat 2 10
+116 aimat 2 10
+122 aimat 2 10
+128 aimat 2 10
+134 aimat 2 10
+140 aimat 2 10
+146 aimat 2 10
+152 aimat 2 10
+158 aimat 2 10
+164 aimat 2 10
+170 aimat 2 10
+176 aimat 2 10
+182 aimat 2 10
+188 aimat 2 10
+194 aimat 2 10
+200 aimat 2 10
+206 aimat 2 10
+212 aimat 2 10
+218 aimat 2 10
+224 aimat 2 10
+230 aimat 2 10
+236 aimat 2 10
+242 aimat 2 10
+248 aimat 2 10
+254 aimat 2 10
+260 aimat 2 10
+266 aimat 2 10
+272 aimat 2 10
+278 aimat 2 10
+284 aimat 2 10
+290 aimat 2 10
+296 aimat 2 10
+302 aimat 2 10
+308 aimat 2 10
+314 aimat 2 10
+320 aimat 2 10
+326 aimat 2 10
+332 aimat 2 10
+338 aimat 2 10
+344 aimat 2 10
+350 aimat 2 10
+356 aimat 2 10
+362 aimat 2 10
+368 aimat 2 10
+374 aimat 2 10
+380 aimat 2 10
+386 aimat 2 10
+392 aimat 2 10
+398 aimat 2 10
 map c2a3b
 0 god 1
 0 trace 40
