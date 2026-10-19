@@ -10,13 +10,13 @@ max_ticks = 130000
 
 # Bound to the build this journey was written against.
 [addr]
-ENT_CACHE = 0x801ec574
-LOGIC_PLAYER_HEALTH = 0x800bed94
-LOGIC_PLAYER_POS = 0x801bfbf4
-LOGIC_PLAYER_SUIT = 0x801c1690
-LOGIC_PLAYER_YAW = 0x801bfc00
-SIM_NOW = 0x801eb350
-WORLD_ARENA = 0x800da9ac
+ENT_CACHE = 0x801ec634
+LOGIC_PLAYER_HEALTH = 0x800bee5c
+LOGIC_PLAYER_POS = 0x801bfcb4
+LOGIC_PLAYER_SUIT = 0x801c1750
+LOGIC_PLAYER_YAW = 0x801bfcc0
+SIM_NOW = 0x801eb410
+WORLD_ARENA = 0x800daa6c
 
 [[step]]
 label = "boot to the title"
