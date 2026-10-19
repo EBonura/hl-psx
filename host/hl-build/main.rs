@@ -3324,6 +3324,12 @@ fn main() -> Result<()> {
             // refresh the dependent room logic tokens and sparse variant index.
             cook_rooms(&repository, &valve, &bins)?;
             model_audit::audit_model_residency(&repository, Some(&valve), &maps())?;
+            // HLPSX_SEAL=1 (iteration cooks, never a release): record the current tree as the
+            // cook after a partial recook, so pack and pgo accept it.
+            if std::env::var_os("HLPSX_SEAL").is_some() {
+                write_cook_manifest(&repository, &valve, psoxide.as_deref().expect("hydrated"))?;
+                return Ok(());
+            }
             println!(
                 "model-only cook invalidated {}; run a full `assets` cook before packing",
                 cook_manifest_path(&repository).display()

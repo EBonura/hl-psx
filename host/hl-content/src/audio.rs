@@ -2605,9 +2605,10 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             break (candidates, steps, relaxed);
         })
         };
-        // First without the cues, then with them. If the cues cost any dialogue or chatter
-        // line rate (a line the map's speech has at one rate without them and a lower one
-        // with), they go back to the spare-only list instead: speech never pays for a cry.
+        // First without the cues, then with them. If the cues cost any dialogue line rate
+        // (a line the map's story has at one rate without them and a lower one with), they
+        // go back to the spare-only list instead: authored speech never pays for a cry.
+        // Small talk (chatter), loops and effects may give up a step.
         let mut base = allocate(&mut planned)?;
         if !cues.is_empty() {
             let speech_rates = |planned: &[Planned<'_>], steps: &Option<Vec<usize>>| -> Vec<(String, u32)> {
@@ -2615,7 +2616,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                     .iter()
                     .flatten()
                     .zip(planned)
-                    .filter(|(_, p)| matches!(p.entry.class, MapAudioClass::Dialogue | MapAudioClass::Chatter))
+                    .filter(|(_, p)| p.entry.class == MapAudioClass::Dialogue)
                     .map(|(&s, p)| (p.entry.key.clone(), p.ladder[s]))
                     .collect()
             };

@@ -22,7 +22,7 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 frontend=${HLPSX_FRONTEND:?set HLPSX_FRONTEND to a psoxide frontend binary}
 work=${1:-$root/.hlpsx/sfx-proof}
-rooms="14 23 12 28 18 51 86 88"
+rooms="14 24 12 28 13 52 86 88"
 frames=${SFX_PROOF_FRAMES:-1800}
 mkdir -p "$work"
 
@@ -100,6 +100,10 @@ core() { # ROOM LABEL CONSTNAME
         fail=1
     fi
 }
+any_attack() { # ROOM LABEL CORECONST SLOTNAME: the leap shriek, then the bite when it lands
+    core "$1" "$2 (shriek)" "$3"
+    slot "$1" "$2 (bite)" "$4"
+}
 silent_core() { # ROOM LABEL CONSTNAME POSX : the core sample never plays at that x
     local id c
     id=$(core_const "$3")
@@ -115,25 +119,21 @@ silent_core() { # ROOM LABEL CONSTNAME POSX : the core sample never plays at tha
 echo "c1a1b valve (room 14)"
 slot 14 "valve spark" SPARK
 silent_core 14 "no ricochet at the valve" RIC 2408
-echo "c1a3 sentry (room 23)"
-slot 23 "sentry alert" TU_ALERT
-slot 23 "sentry death" TU_DIE
+echo "c1a3a sentry, scientist, barnacle (room 24)"
+slot 24 "sentry death" TU_DIE
+slot 24 "scientist pain" SCI_PAIN
+slot 24 "barnacle death" BCL_DIE
 echo "c1a1 zombie (room 12)"
 slot 12 "zombie claw" ZO_CLAW
 echo "c1a4 houndeye (room 28)"
 slot 28 "houndeye warm-up" HE_WARM3
 core 28 "houndeye blast" HE_BLAST
 slot 28 "houndeye growl" HE_GROWL
-echo "c1a2 headcrab (room 18)"
-core 18 "headcrab attack" HC_ATTACK
-slot 18 "headcrab bite" HC_BITE
-slot 18 "headcrab alert" HC_ALERT
-core 18 "headcrab death" HC_DIE
-echo "c2a3a ichthyosaur, scientist, barnacle (room 51)"
-slot 51 "ichthyosaur pain" ICHY_PAIN
-slot 51 "ichthyosaur death" ICHY_DIE
-slot 51 "scientist pain" SCI_PAIN
-slot 51 "barnacle death" BCL_DIE
+echo "c1a1a headcrab (room 13)"
+any_attack 13 "headcrab leap" HC_ATTACK HC_BITE
+echo "c2a3b ichthyosaur (room 52)"
+slot 52 "ichthyosaur pain" ICHY_PAIN
+slot 52 "ichthyosaur death" ICHY_DIE
 echo "c4a1b alien grunt (room 86)"
 slot 86 "alien grunt alert" AG_ALERT
 slot 86 "alien grunt pain" AG_PAIN
