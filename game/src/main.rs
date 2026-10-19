@@ -201,8 +201,17 @@ const MODEL_WORDS: usize = room_budget::MODEL_WORDS;
 // pool -- but the pool starts where the *loaded* map ends, so a 603 KiB map on a
 // 928 KiB arena gets 325 KiB of models instead of 219. Every map is >= its old
 // budget and most are far above it; nothing shrank to pay for it.
-const ARENA_WORDS: usize = MAP_WORDS + MODEL_WORDS;
+//
+// The arena also ends in the face region: the render faces of the resident
+// actor models are baked into blocks at its top, growing down, instead of into
+// statics sized for the heaviest roster of any map (see
+// `room_budget::FACE_REGION_FACES`). The model pool and everything measured
+// from the arena's end stop where the blocks start (`FACE_USED_WORDS`).
+const FACE_REGION_WORDS: usize = hl_format::room_budget::FACE_REGION_WORDS;
+const ARENA_WORDS: usize = MAP_WORDS + MODEL_WORDS + FACE_REGION_WORDS;
 static mut WORLD_ARENA: [u32; ARENA_WORDS] = [0; ARENA_WORDS];
+/// Words of the arena's top taken by the resident models' face blocks.
+static mut FACE_USED_WORDS: usize = 0;
 /// First arena word owned by the model pool. Conservative (= the full staging
 /// capacity, i.e. the old fixed split) until a map is resident, because model
 /// streaming only ever runs after `Map::load`.
@@ -228,7 +237,7 @@ unsafe fn model_ptr() -> *mut u32 {
 /// Words the model pool may use on the currently loaded map.
 #[inline(always)]
 unsafe fn model_capacity() -> usize {
-    ARENA_WORDS - MODEL_BASE_WORDS
+    ARENA_WORDS - FACE_USED_WORDS - MODEL_BASE_WORDS
 }
 static mut ACTIVE_SFX_CHUNK: u32 = 0;
 /// Core SFX chunk per map index from the cooker's table (0 = use the built-in
@@ -1058,10 +1067,11 @@ const MAX_LOADED_MODELS: usize = 24; // c3a2d roster, weaponbox and carried-weap
                                      // each TexSlot is 32 bytes.
 const POOL_TEX_SLOTS: usize = 176;
 // Authored weaponboxes raise the full-campaign c4a3 model roster to 8,027
-// faces. Keep 37 faces of guard without dropping models. Each face occupies
-// ten bytes across the index and UV pools: this adds 1,280 resident bytes.
-// The Rust campaign model-pool audit rejects any later overflow.
-const POOL_FACE_CAP: usize = 8064;
+// faces. Each face occupies ten bytes across the index and UV streams, in the
+// arena's face region (`room_budget::FACE_REGION_FACES`) and, past it, the
+// model pool's spare tail. The Rust campaign model-pool audit rejects any later
+// overflow.
+const _: () = assert!(core::mem::size_of::<ModelRenderFacePayload>() == 6);
 // Body/texture runs peak at 184 on the carry-heavy c1a1f -> c1a1b edge after
 // compact carry variants make every actor resident. Keep eight aligned guards.
 // Texture ids live here rather than in every face payload, saving over 15 KiB
@@ -1153,7 +1163,10 @@ struct LoadedModel {
     type_id: u8,
     run_start: u8, // index into POOL_FACE_RUNS
     n_runs: u8,
-    face_start: usize, // index into the split POOL_FACE_* streams
+    /// This model's packed-index stream and UV payloads: one block in the
+    /// arena's face region.
+    face_indices: *const u32,
+    face_payloads: *const ModelRenderFacePayload,
     n_faces: usize,
     tex_start: usize, // index into POOL_TEX
     n_tex: usize,
@@ -1164,7 +1177,8 @@ impl LoadedModel {
         type_id: 0,
         run_start: 0,
         n_runs: 0,
-        face_start: 0,
+        face_indices: core::ptr::null(),
+        face_payloads: core::ptr::null(),
         n_faces: 0,
         tex_start: 0,
         n_tex: 0,
@@ -1867,7 +1881,7 @@ static mut VM_LIVE_TAIL_WORDS: usize = 0;
 /// splice together.
 #[inline(always)]
 unsafe fn vm_tail_capacity_words() -> usize {
-    ARENA_WORDS.saturating_sub(MODEL_BASE_WORDS + MODEL_RESIDENT_WORDS)
+    ARENA_WORDS.saturating_sub(FACE_USED_WORDS + MODEL_BASE_WORDS + MODEL_RESIDENT_WORDS)
 }
 
 #[inline(always)]
@@ -2016,11 +2030,8 @@ unsafe fn vm_evict_selected() {
 static mut POOL_TEX: [TexSlot; POOL_TEX_SLOTS] = [EMPTY_SLOT; POOL_TEX_SLOTS];
 // Split face storage: rejected faces read one packed index word; only survivors
 // touch the six-byte UV payload. Texture ids occur once per ordered run. The
-// resulting 10 B/face + 768 B run table is materially smaller than the old
-// per-face texture-id records.
-static mut POOL_FACE_INDICES: [u32; POOL_FACE_CAP] = [0; POOL_FACE_CAP];
-static mut POOL_FACE_PAYLOADS: [ModelRenderFacePayload; POOL_FACE_CAP] =
-    [ModelRenderFacePayload::ZERO; POOL_FACE_CAP];
+// resulting 10 B/face (in the arena's face region) + 768 B run table is
+// materially smaller than the old per-face texture-id records.
 static mut POOL_FACE_RUNS: [u32; POOL_FACE_RUN_CAP] = [0; POOL_FACE_RUN_CAP];
 static mut LOADED_MODELS: [LoadedModel; MAX_LOADED_MODELS] = [LoadedModel::ZERO; MAX_LOADED_MODELS];
 static mut TYPE_TO_SLOT: [u8; N_MODEL_TYPES] = [MODEL_SLOT_NONE; N_MODEL_TYPES];
@@ -4805,7 +4816,7 @@ unsafe fn model_visible_bodies(
 
 /// Stream the model types this map places (distinct prop kinds) into the shared
 /// pool: geometry into MODEL_BUF after the viewmodel, render faces into the
-/// split POOL_FACE_* streams, textures into VRAM (POOL_TEX). `TYPE_TO_SLOT` maps a type id to
+/// per-model blocks at the top of the arena, textures into VRAM (POOL_TEX). `TYPE_TO_SLOT` maps a type id to
 /// its `LOADED_MODELS` entry; types that don't fit the buffers are skipped (the
 /// prop simply doesn't render).
 #[optimize(size)]
@@ -4825,7 +4836,7 @@ unsafe fn stream_map_models(
     }
     let buf_ptr = model_ptr();
     let mut geom_word = weapon_len.div_ceil(4); // viewmodel reserves the head
-    let mut face_off = 0usize;
+    FACE_USED_WORDS = 0;
     let mut run_off = 0usize;
     let mut tex_off = 0usize;
     let mut slot_idx = 0usize;
@@ -4991,24 +5002,32 @@ unsafe fn stream_map_models(
         if compact_body_textures && used_textures.count_ones() as usize > POOL_TEX_SLOTS - tex_off {
             continue;
         }
-        if face_off + model_faces > POOL_FACE_CAP || run_off + model_runs > POOL_FACE_RUN_CAP {
-            continue; // face/run pool exhausted: drop the whole type (a pass-2
-                      // statue by tier order) instead of baking it partially
+        // The faces take a block at the top of the arena, so the chunk just
+        // loaded (still whole) and the block must both fit below the blocks
+        // already placed. Too many runs or too little room: drop the whole type
+        // (a pass-2 statue by tier order) instead of baking it partially.
+        let block_words = hl_format::room_budget::face_block_words(model_faces);
+        if geom_word + clen.div_ceil(4) + block_words > model_capacity()
+            || run_off + model_runs > POOL_FACE_RUN_CAP
+        {
+            continue;
         }
+        let faces_before = FACE_USED_WORDS;
+        FACE_USED_WORDS += block_words;
+        let face_indices = arena_ptr().add(ARENA_WORDS - FACE_USED_WORDS);
+        let face_payloads = face_indices
+            .add(model_faces)
+            .cast::<ModelRenderFacePayload>();
         let (nf, nr) = md.fill_render_faces_split_raw(
-            core::ptr::addr_of_mut!(POOL_FACE_INDICES)
-                .cast::<u32>()
-                .add(face_off),
-            core::ptr::addr_of_mut!(POOL_FACE_PAYLOADS)
-                .cast::<ModelRenderFacePayload>()
-                .add(face_off),
+            face_indices,
+            face_payloads,
             core::ptr::addr_of_mut!(POOL_FACE_RUNS)
                 .cast::<u32>()
                 .add(run_off),
-            POOL_FACE_CAP - face_off,
+            model_faces,
             visible_bodies,
         );
-        // The pool draw reads topology from POOL_FACE_* (baked above) and only
+        // The pool draw reads topology from the face block (baked above) and only
         // verts/clips from the blob, so the TriRec tail is dead weight now.
         // Keep just the frame section; the NEXT type's chunk loads over the
         // dropped tail + the in-chunk texture once it's uploaded.
@@ -5026,9 +5045,7 @@ unsafe fn stream_map_models(
                 core::slice::from_raw_parts_mut(remap, MAX_MODEL_VERTS),
             ) {
                 kept = compact_kept;
-                let indices = core::ptr::addr_of_mut!(POOL_FACE_INDICES)
-                    .cast::<u32>()
-                    .add(face_off);
+                let indices = face_indices;
                 for face in 0..nf {
                     let packed = core::ptr::read(indices.add(face));
                     let a = core::ptr::read(
@@ -5052,6 +5069,7 @@ unsafe fn stream_map_models(
         let tex_bytes = if split_model {
             let stage_word = gw + kept.div_ceil(4);
             if stage_word >= model_capacity() {
+                FACE_USED_WORDS = faces_before; // the type is dropped: give its block back
                 continue;
             }
             let dst = core::slice::from_raw_parts_mut(
@@ -5066,6 +5084,7 @@ unsafe fn stream_map_models(
                 MODEL_TEX_CHUNK_BASE + ty as u32
             };
             let Some(load) = load_streamed_chunk(texture_chunk, dst) else {
+                FACE_USED_WORDS = faces_before; // the type is dropped: give its block back
                 continue;
             };
             account_streamed_chunk(load, stream_chunks, stream_bytes, stream_sectors);
@@ -5074,6 +5093,7 @@ unsafe fn stream_map_models(
                 || stage_word + tlen.div_ceil(4) > model_capacity()
                 || *buf_ptr.add(stage_word) != u32::from_le_bytes(*b"HLTX")
             {
+                FACE_USED_WORDS = faces_before; // the type is dropped: give its block back
                 continue;
             }
             streamed_model_bytes_at(stage_word * 4, tlen)
@@ -5094,6 +5114,7 @@ unsafe fn stream_map_models(
             );
             telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
             let Some((ntex, _tex_fail)) = uploaded else {
+                FACE_USED_WORDS = faces_before; // the type is dropped: give its block back
                 continue;
             };
             // Face runs still contain the original texture ids. Retarget them
@@ -5125,6 +5146,7 @@ unsafe fn stream_map_models(
             ntex
         };
         if ntex > POOL_TEX_SLOTS - tex_off {
+            FACE_USED_WORDS = faces_before; // the type is dropped: give its block back
             continue;
         }
         LOADED_MODELS[slot_idx] = LoadedModel {
@@ -5132,7 +5154,8 @@ unsafe fn stream_map_models(
             type_id: ty as u8,
             run_start: run_off as u8,
             n_runs: nr as u8,
-            face_start: face_off,
+            face_indices: face_indices.cast_const(),
+            face_payloads: face_payloads.cast_const(),
             n_faces: nf,
             tex_start: tex_off,
             n_tex: ntex,
@@ -5141,7 +5164,6 @@ unsafe fn stream_map_models(
         // Parse once (post-repack header) -- draws read the cached copy.
         LOADED_MODEL_CACHE[slot_idx] = model::load(streamed_model_bytes_at(gw * 4, kept));
         geom_word = gw + kept.div_ceil(4);
-        face_off += nf;
         run_off += nr;
         tex_off += ntex;
         slot_idx += 1;
@@ -35428,6 +35450,7 @@ fn play(
         // keeps every streamed chunk on the same boundary it had when the pool
         // was its own static, so the aligned TriRec/frame decoders are unmoved.
         MODEL_BASE_WORDS = map_len.div_ceil(4).next_multiple_of(4);
+        FACE_USED_WORDS = 0;
     }
     draw_next_loading_screen(fb);
     // Stream the resident Glock; other viewmodels load on first selection and
@@ -40001,7 +40024,12 @@ fn play(
             // Leave both weapon-cache regions and their guard untouched: a
             // later weapon switch may write them even if no cache is live yet.
             let tail_start = VM_TAIL_CACHE_WORDS + VM_TAIL_BACKUP_WORDS + VM_TAIL_GUARD_WORDS;
-            let tail_words = vm_tail_capacity_words().saturating_sub(tail_start);
+            // The face region's spare words are not offered to the actor
+            // stream: its choice below matches what it was when the faces
+            // had statics of their own, and the stream stays inside the map
+            // and model pool.
+            let tail_words = vm_tail_capacity_words()
+                .saturating_sub(tail_start + FACE_REGION_WORDS.saturating_sub(FACE_USED_WORDS));
             let model_packet_capacity = packets.remaining_words();
             let use_model_tail = tail_words > model_packet_capacity;
             let mut model_packet_reservation = if use_model_tail {
@@ -40098,12 +40126,8 @@ fn play(
                 // Passed every cull: only now parse the blob header for drawing.
                 let md = loaded_model(slot as usize);
                 let slots = &POOL_TEX[lm.tex_start..lm.tex_start + lm.n_tex];
-                let face_indices = core::ptr::addr_of!(POOL_FACE_INDICES)
-                    .cast::<u32>()
-                    .add(lm.face_start);
-                let face_payloads = core::ptr::addr_of!(POOL_FACE_PAYLOADS)
-                    .cast::<ModelRenderFacePayload>()
-                    .add(lm.face_start);
+                let face_indices = lm.face_indices;
+                let face_payloads = lm.face_payloads;
                 let face_runs = core::ptr::addr_of!(POOL_FACE_RUNS)
                     .cast::<u32>()
                     .add(lm.run_start as usize);
@@ -40190,12 +40214,8 @@ fn play(
                     }
                     let md = loaded_model(slot);
                     let slots = &POOL_TEX[lm.tex_start..lm.tex_start + lm.n_tex];
-                    let face_indices = core::ptr::addr_of!(POOL_FACE_INDICES)
-                        .cast::<u32>()
-                        .add(lm.face_start);
-                    let face_payloads = core::ptr::addr_of!(POOL_FACE_PAYLOADS)
-                        .cast::<ModelRenderFacePayload>()
-                        .add(lm.face_start);
+                    let face_indices = lm.face_indices;
+                    let face_payloads = lm.face_payloads;
                     let face_runs = core::ptr::addr_of!(POOL_FACE_RUNS)
                         .cast::<u32>()
                         .add(lm.run_start as usize);
