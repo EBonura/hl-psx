@@ -10,13 +10,13 @@ max_ticks = 130000
 
 # Bound to the build this journey was written against.
 [addr]
-ENT_CACHE = 0x801e9e0c
-LOGIC_PLAYER_HEALTH = 0x800bc5cc
-LOGIC_PLAYER_POS = 0x801bd484
-LOGIC_PLAYER_SUIT = 0x801bef20
-LOGIC_PLAYER_YAW = 0x801bd490
-SIM_NOW = 0x801e8be8
-WORLD_ARENA = 0x800d823c
+ENT_CACHE = 0x801ec5cc
+LOGIC_PLAYER_HEALTH = 0x800bedac
+LOGIC_PLAYER_POS = 0x801bfc44
+LOGIC_PLAYER_SUIT = 0x801c16e0
+LOGIC_PLAYER_YAW = 0x801bfc50
+SIM_NOW = 0x801eb3a8
+WORLD_ARENA = 0x800da9fc
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"

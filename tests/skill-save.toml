@@ -11,9 +11,9 @@ max_ticks = 9000
 
 # Bound to the build this journey was written against: scripts/bind-skill-addr.sh rewrites it.
 [addr]
-SKILL = 0x800c1950
-SIM_NOW = 0x801e8be8
-WORLD_ARENA = 0x800d823c
+SKILL = 0x800c4130
+SIM_NOW = 0x801eb3a8
+WORLD_ARENA = 0x800da9fc
 
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
