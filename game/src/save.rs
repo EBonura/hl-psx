@@ -26,6 +26,9 @@ use crate::{N_AMMO, N_WEAPONS};
 const FILE_MANUAL: &str = "BESLES-00000HLPSX001";
 #[cfg(any(test, target_arch = "mips"))]
 const FILE_AUTO: &str = "BESLES-00000HLPSX002";
+/// The options record (`settings::Saved`), one block beside the two saves.
+#[cfg(target_arch = "mips")]
+const FILE_SETTINGS: &str = "BESLES-00000HLPSX003";
 
 /// Two slots, because one is a data-loss bug waiting to happen: an autosave
 /// firing at a level change would silently replace the save the player made
@@ -439,6 +442,48 @@ fn with_card<T>(port: Port, f: impl FnOnce(&mut psx_mc::Card<psx_mc::HardwareCar
     f(&mut card)
 }
 
+/// Read `file` from the card in `port` into `buf`: its length. The one read path:
+/// the save slots and the options record share it, so the card driver's read
+/// exists once in the image (a second call site next to an inlined one doubled it
+/// under the profile-guided build).
+#[cfg(target_arch = "mips")]
+#[inline(never)]
+#[optimize(size)]
+fn card_read(port: Port, file: &str, buf: &mut [u8]) -> Result<usize, CardResult> {
+    with_card(port, |card| match card.is_formatted() {
+        Err(_) => Err(CardResult::NoCard),
+        Ok(false) => Err(CardResult::Failed),
+        Ok(true) => card.read(file, buf).map_err(|_| CardResult::Failed),
+    })
+}
+
+/// Write `data` as `file` on the card in `port`. A blank card is formatted first
+/// only when `format_blank` says so: a save asks the player, a setting never
+/// takes a card's directory.
+#[cfg(target_arch = "mips")]
+#[inline(never)]
+#[optimize(size)]
+fn card_write(
+    port: Port,
+    file: &str,
+    title: &str,
+    data: &[u8],
+    format_blank: bool,
+) -> CardResult {
+    with_card(port, |card| match card.is_formatted() {
+        Err(_) => CardResult::NoCard,
+        Ok(formatted) => {
+            if !formatted && (!format_blank || card.format().is_err()) {
+                return CardResult::Failed;
+            }
+            match card.write(file, title, data) {
+                Ok(()) => CardResult::Ok,
+                Err(_) => CardResult::Failed,
+            }
+        }
+    })
+}
+
 /// Write the checkpoint to port 1, formatting an unformatted card first.
 #[cfg(target_arch = "mips")]
 #[inline(never)]
@@ -457,18 +502,71 @@ pub fn write(
     let mut stamped = *cp;
     stamped.sequence = next;
     let len = encode_snap(&stamped, snap, tick, staging);
-    with_card(target.port, |card| match card.is_formatted() {
-        Err(_) => CardResult::NoCard,
-        Ok(formatted) => {
-            if !formatted && card.format().is_err() {
-                return CardResult::Failed;
-            }
-            match card.write(target.slot.file(), target.slot.title(), &staging[..len]) {
-                Ok(()) => CardResult::Ok,
-                Err(_) => CardResult::Failed,
+    card_write(
+        target.port,
+        target.slot.file(),
+        target.slot.title(),
+        &staging[..len],
+        true,
+    )
+}
+
+/// The record codec, out of line and sized for space: inlined into the card
+/// closures below it costs about twice as much.
+#[cfg(target_arch = "mips")]
+#[inline(never)]
+#[optimize(size)]
+fn settings_decode(bytes: &[u8]) -> Option<crate::options_record::Saved> {
+    crate::options_record::Saved::decode(bytes).ok()
+}
+
+#[cfg(target_arch = "mips")]
+#[inline(never)]
+#[optimize(size)]
+fn settings_encode(p: &crate::options_record::Saved, out: &mut [u8]) -> Option<usize> {
+    p.encode(out).ok()
+}
+
+/// The options record from the first card that holds one, port 1 first.
+#[cfg(target_arch = "mips")]
+#[inline(never)]
+#[optimize(size)]
+pub fn read_settings() -> Option<crate::options_record::Saved> {
+    let mut bytes = [0u8; psx_settings::MAX_RECORD_LEN];
+    for port in [Port::One, Port::Two] {
+        if let Ok(len) = card_read(port, FILE_SETTINGS, &mut bytes) {
+            if let Some(p) = settings_decode(&bytes[..len]) {
+                return Some(p);
             }
         }
-    })
+    }
+    None
+}
+
+/// Write the options record to the first formatted card with room for it. An
+/// unformatted card is left alone: a setting is not worth a card's directory,
+/// so only a save (which asks first) formats.
+#[cfg(target_arch = "mips")]
+#[inline(never)]
+#[optimize(size)]
+pub fn write_settings(p: &crate::options_record::Saved) -> bool {
+    let mut bytes = [0u8; psx_settings::MAX_RECORD_LEN];
+    let Some(len) = settings_encode(p, &mut bytes) else {
+        return false;
+    };
+    for port in [Port::One, Port::Two] {
+        let result = card_write(
+            port,
+            FILE_SETTINGS,
+            "HALF-LIFE SETTINGS",
+            &bytes[..len],
+            false,
+        );
+        if result == CardResult::Ok {
+            return true;
+        }
+    }
+    false
 }
 
 /// Highest sequence already on the card, 0 when neither slot is readable.
@@ -513,14 +611,8 @@ pub fn read_latest(staging: &mut [u8]) -> Result<Checkpoint, CardResult> {
 #[inline(never)]
 #[optimize(size)]
 pub fn read(target: Target, staging: &mut [u8]) -> Result<Checkpoint, CardResult> {
-    with_card(target.port, |card| match card.is_formatted() {
-        Err(_) => Err(CardResult::NoCard),
-        Ok(false) => Err(CardResult::Failed),
-        Ok(true) => match card.read(target.slot.file(), staging) {
-            Ok(len) => decode(&staging[..len]).ok_or(CardResult::Failed),
-            Err(_) => Err(CardResult::Failed),
-        },
-    })
+    let len = card_read(target.port, target.slot.file(), staging)?;
+    decode(&staging[..len]).ok_or(CardResult::Failed)
 }
 
 #[optimize(size)]

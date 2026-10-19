@@ -1,0 +1,246 @@
+# Options survive a power cycle: change the screen offset, both stick deadzones
+# and the brightness on the title screen's Configuration page, leave it (the
+# page writes one psx-settings record to the memory card), reboot on the
+# persisted card, and read the values back from guest RAM and from the page.
+# Run with psoxide-gate and a fresh report directory.
+name = "hl-settings-persist"
+title = "Half-Life: options persist on the memory card"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 4200
+
+# Bound to the build this journey was written against: scripts/bind-skill-addr.sh rewrites it.
+[addr]
+MOVE_DEADZONE = 0x800c3b14
+LOOK_DEADZONE = 0x800c3b10
+BRIGHTNESS = 0x800c3b08
+
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot to the title menu"
+wait = 620
+
+[[step]]
+checkpoint = "defaults"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "MOVE_DEADZONE"
+size = 1
+op = "eq"
+value = 28
+[[step.assert]]
+kind = "ram"
+sym = "LOOK_DEADZONE"
+size = 1
+op = "eq"
+value = 28
+[[step.assert]]
+kind = "ram"
+sym = "BRIGHTNESS"
+size = 1
+op = "eq"
+value = 1
+
+[[step]]
+label = "Configuration is the third row"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 2
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 30
+
+[[step]]
+checkpoint = "options-default"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "Screen X: three steps right"
+press = ["right"]
+hold = 8
+wait = 10
+repeat = 3
+
+[[step]]
+label = "Move Deadzone: two steps up from 28 (four counts a step)"
+press = ["down"]
+hold = 8
+wait = 10
+repeat = 4
+
+[[step]]
+press = ["right"]
+hold = 8
+wait = 10
+repeat = 2
+
+[[step]]
+label = "Look Deadzone: two steps down"
+press = ["down"]
+hold = 8
+wait = 10
+
+[[step]]
+press = ["left"]
+hold = 8
+wait = 10
+repeat = 2
+
+[[step]]
+label = "Brightness: two levels up"
+press = ["down"]
+hold = 8
+wait = 10
+
+[[step]]
+press = ["right"]
+hold = 8
+wait = 10
+repeat = 2
+
+[[step]]
+checkpoint = "changed"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "MOVE_DEADZONE"
+size = 1
+op = "eq"
+value = 36
+[[step.assert]]
+kind = "ram"
+sym = "LOOK_DEADZONE"
+size = 1
+op = "eq"
+value = 20
+[[step.assert]]
+kind = "ram"
+sym = "BRIGHTNESS"
+size = 1
+op = "eq"
+value = 3
+
+[[step]]
+label = "leave the page: the record goes to the card"
+press = ["circle"]
+hold = 8
+wait = 200
+
+[[step]]
+checkpoint = "written"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_writes"
+min_count = 1
+
+[[step]]
+card = { action = "snapshot" }
+
+[[step]]
+card = { action = "reboot" }
+
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "the fresh boot reads the record"
+wait = 620
+
+[[step]]
+checkpoint = "rebooted"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "MOVE_DEADZONE"
+size = 1
+op = "eq"
+value = 36
+[[step.assert]]
+kind = "ram"
+sym = "LOOK_DEADZONE"
+size = 1
+op = "eq"
+value = 20
+[[step.assert]]
+kind = "ram"
+sym = "BRIGHTNESS"
+size = 1
+op = "eq"
+value = 3
+
+[[step]]
+label = "open Configuration: the page says the same"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 2
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 30
+
+[[step]]
+checkpoint = "options-after-reboot"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "frame_diff"
+from = "options-default"
+min_changed = 0.01
+
+[[step]]
+label = "scroll down to the deadzones and the brightness"
+press = ["down"]
+hold = 8
+wait = 10
+repeat = 6
+
+[[step]]
+checkpoint = "options-after-reboot-lower"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+card = { action = "snapshot" }

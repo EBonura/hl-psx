@@ -70,6 +70,7 @@ mod logic_state;
 mod map;
 mod map_catalog;
 mod menu;
+mod options_record;
 mod model;
 mod music;
 use psx_goldsrc::ordering;
@@ -2655,6 +2656,9 @@ fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
         }
         if pad.just_pressed(button::CIRCLE) {
             unsafe { sfx::play_vol(sfx::MENU_ACCEPT, 2) };
+            if matches!(st.page, PausePage::Options) {
+                settings::persist_if_changed();
+            }
             st.page = match st.page {
                 PausePage::Root => break PauseExit::Resume,
                 PausePage::Maps => PausePage::Chapters,
@@ -34822,6 +34826,15 @@ fn main() {
                     CORE_SFX_PROFILE[i] = u16::from_le_bytes([bytes[8 + i * 2], bytes[9 + i * 2]]);
                 }
             }
+        }
+    }
+
+    // Options saved on a card (deadzones, volumes, picture). Not read by the
+    // deterministic direct-map builds, whose route timing starts from a fixed state.
+    if !DBG_PAD_BOOT {
+        if let Some(saved) = save::read_settings() {
+            settings::restore(&saved);
+            settings::apply_all();
         }
     }
 
