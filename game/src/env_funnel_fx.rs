@@ -37,6 +37,7 @@ pub unsafe fn tick() {
         burst.advance();
     }
 }
+#[cfg_attr(target_arch = "mips", optimize(size))]
 pub unsafe fn render(
     packets: &mut PrimitivePacketArena<'_>,
     np: &mut usize,

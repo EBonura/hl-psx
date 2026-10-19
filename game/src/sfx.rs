@@ -143,6 +143,7 @@ unsafe fn mute_room_effect() {
 
 /// Optional effects use only their exact, safe top-of-SPU workspace. Tight
 /// banks retain every authored sample and receive neutral output instead.
+#[cfg_attr(target_arch = "mips", optimize(size))]
 pub unsafe fn apply_room(room: u8) {
     use psx_hw::spu::{REVERB_VOL_LEFT, REVERB_VOL_RIGHT, REVERB_WORK_BASE, SPUCNT};
     if ROOM_APPLIED == room {

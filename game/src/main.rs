@@ -3951,6 +3951,8 @@ static mut GRUNT_GREN: [u16; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_AI_TIMER: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_AI_TARGET: [u8; MAX_PROPS] = [PROP_TARGET_NONE; MAX_PROPS];
 const TALKING_PROP_NONE: u8 = 0xff;
+/// `sentence_speaker`: the named speaker is dead and nobody else qualifies.
+const SENTENCE_SPEAKER_DEAD: u8 = 0xfe;
 static mut TALKING_PROP: u8 = TALKING_PROP_NONE;
 static mut TALKING_UNTIL: u16 = 0;
 static mut TALKING_VOICE: u8 = 0;
@@ -10489,6 +10491,7 @@ unsafe fn script_human_chord_clear(
 /// kind of temporary obstruction that `CBaseMonster::Move` is designed to
 /// triangulate around.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn script_human_actor_blocked_fraction(
     pi: usize,
     start: [i32; 3],
@@ -10570,6 +10573,7 @@ unsafe fn script_human_chord_clear_actors(
 /// rings, exactly matching monsters.cpp.  This cold path runs only once when a
 /// blocked walk/run script possesses an actor.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn script_local_detour(
     m: &Map,
     movers: &[phys::Mover],
@@ -10673,6 +10677,7 @@ unsafe fn script_local_detour(
 /// Everything here is stack-only, so the source behavior costs no persistent
 /// actor or map RAM.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn script_dynamic_local_replan(
     m: &Map,
     movers: &[phys::Mover],
@@ -11681,7 +11686,7 @@ unsafe fn logic_use_entity(
             let speaker = sentence_speaker(m, rec);
             // CScriptedSentence::AcceptableSpeaker needs CanPlaySentence, which is IsAlive:
             // when the named speaker is dead nobody speaks (the sentence keeps waiting).
-            if speaker == TALKING_PROP_NONE && sentence_speaker_is_dead(rec) {
+            if speaker == SENTENCE_SPEAKER_DEAD {
                 LOGIC_STATE[li] = LOGIC_STATE_BOTTOM;
                 return;
             }
@@ -14120,41 +14125,23 @@ unsafe fn logic_find_matching_prop(kind: u8, arg0: u16, origin: [i32; 3]) -> u8 
     LOGIC_PROP_NONE
 }
 
-/// True when the sentence's named speaker exists but is dead.
-#[optimize(size)]
-unsafe fn sentence_speaker_is_dead(rec: map::LogicEnt) -> bool {
-    if rec.arg1 == 0 {
-        return false;
-    }
-    let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
-    let mut pi = 0usize;
-    while pi < nprops {
-        if PROP_ACTIVE[pi] != 0
-            && PROP_HEALTH[pi] == 0
-            && prop_is_human(PROP_KIND[pi])
-            && PROP_NAME[pi] == rec.arg1
-        {
-            return true;
-        }
-        pi += 1;
-    }
-    false
-}
-
 /// Resolve scripted_sentence's speaker exactly by targetname when possible,
 /// then by the authored classname/radius search used by GoldSrc.
 #[optimize(size)]
 unsafe fn sentence_speaker(m: &Map, rec: map::LogicEnt) -> u8 {
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
+    let mut dead_named = false;
     if rec.arg1 != 0 {
         let mut pi = 0usize;
         while pi < nprops {
             if PROP_ACTIVE[pi] != 0
-                && PROP_HEALTH[pi] != 0
                 && (prop_is_human(PROP_KIND[pi]) || PROP_KIND[pi] == PROP_TYPE_HOLO)
                 && PROP_NAME[pi] == rec.arg1
             {
-                return pi as u8;
+                if PROP_HEALTH[pi] != 0 {
+                    return pi as u8;
+                }
+                dead_named = true;
             }
             pi += 1;
         }
@@ -14196,6 +14183,9 @@ unsafe fn sentence_speaker(m: &Map, rec: map::LogicEnt) -> u8 {
             }
         }
         pi += 1;
+    }
+    if best == TALKING_PROP_NONE && dead_named {
+        return SENTENCE_SPEAKER_DEAD;
     }
     best
 }
