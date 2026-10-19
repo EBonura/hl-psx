@@ -38,6 +38,7 @@ static CRIES: [(u8, [u8; 4]); 17] = [
 
 /// Kinds `think` has work for: the ones that cry on seeing the enemy or while idle, and the
 /// walkers with npc footsteps (scientist, Barney, zombie).
+// psx-numeric-allow-next-line: a constant bit mask tested with one shift, no arithmetic; the shipped profile and layout were collected on this form (the two-word form moved the layout and cost 1 to 3% on four maps). Replace with psx_math::Mask64 at the next repin.
 const VOICED: u64 = (1 << 0)
     | (1 << 1)
     | (1 << 2)
