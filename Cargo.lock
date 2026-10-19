@@ -29,6 +29,7 @@ dependencies = [
  "psx-gte",
  "psx-hw",
  "psx-io",
+ "psx-loading",
  "psx-math",
  "psx-mc",
  "psx-pack",
@@ -187,6 +188,14 @@ name = "psx-level"
 version = "0.1.0"
 dependencies = [
  "psx-math",
+]
+
+[[package]]
+name = "psx-loading"
+version = "0.1.0"
+dependencies = [
+ "psx-font",
+ "psx-io",
 ]
 
 [[package]]

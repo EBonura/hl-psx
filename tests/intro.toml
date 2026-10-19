@@ -1,4 +1,4 @@
-# The startup movie, played to its end, then the game. Needs a disc built with
+# The studio splash, then the startup movie played to its end, then the game. Needs a disc built with
 # the intro (`cargo hl-build pack`, the default; `--no-intro` has none).
 #
 # The movie is Half-Life's own and is never committed, nor is any frame of it:
@@ -9,7 +9,21 @@ title = "Half-Life: startup movie, then the title menu"
 disc = ["dist/hl-psx.cue"]
 symbols = [".hlpsx/hl-psx.map"]
 pad = "analog"
-max_ticks = 2600
+max_ticks = 2800
+
+[[step]]
+label = "the studio splash plays first, before the movie"
+wait = 100
+
+[[step]]
+checkpoint = "studio-splash"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "the splash fades out and the movie starts"
+wait = 90
 
 [[step]]
 label = "the movie fades in from black, with its sound"

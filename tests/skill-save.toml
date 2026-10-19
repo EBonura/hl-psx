@@ -11,13 +11,18 @@ max_ticks = 9000
 
 # Bound to the build this journey was written against: scripts/bind-skill-addr.sh rewrites it.
 [addr]
-SKILL = 0x800c3f98
-SIM_NOW = 0x801eb1a0
-WORLD_ARENA = 0x800da7fc
+SKILL = 0x800c1950
+SIM_NOW = 0x801e8be8
+WORLD_ARENA = 0x800d823c
 
 [[step]]
-label = "skip the startup movie, if the disc has one (a disc without it never sees the press)"
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
 wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
 
 [[step]]
 press = ["start"]
@@ -115,8 +120,13 @@ card = { action = "snapshot" }
 card = { action = "reboot" }
 
 [[step]]
-label = "skip the startup movie, if the disc has one (a disc without it never sees the press)"
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
 wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
 
 [[step]]
 press = ["start"]

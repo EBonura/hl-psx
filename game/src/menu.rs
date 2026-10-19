@@ -552,6 +552,8 @@ fn upload_glow_atlas() {
     let mut blurred = [0u8; GLOW_CELL_W * GLOW_CELL_H];
     let mut packed = [0u8; GLOW_CELL_W * GLOW_CELL_H / 2];
     for index in 0..GLOW_CHAR_COUNT {
+        // The loading widget, if one is up, keeps turning through this CPU-bound setup.
+        crate::loading_idle();
         alpha.fill(0);
         let glyph = GLOW_FIRST_CHAR as usize + index;
         for row in 0..font.glyph_h as usize {
@@ -947,18 +949,19 @@ fn draw_chapter_menu(font: &FontAtlas, sel: i32) {
 /// Row labels for the settings list, shared with the in-game pause menu so the
 /// two cannot drift apart. The pause version shows exactly these rows: the
 /// Debug row that follows them here is already a page of its own there.
-pub const OPT_LABELS: [&str; 6] = [
+pub const OPT_LABELS: [&str; 7] = [
     "Screen X",
     "Screen Y",
     "Music",
     "SFX",
-    "Stick Deadzone",
+    "Move Deadzone",
+    "Look Deadzone",
     "Brightness",
 ];
-pub const N_OPTIONS: i32 = 7; // 6 adjustable values + Debug
+pub const N_OPTIONS: i32 = 8; // 7 adjustable values + Debug
 /// Index of the brightness row inside [`OPT_LABELS`]; `settings::adjust` and
 /// `settings::value` dispatch on the same number.
-pub const OPT_BRIGHTNESS: usize = 5;
+pub const OPT_BRIGHTNESS: usize = 6;
 
 /// Title shown above a chapter's sub-map list.
 pub fn chapter_title(chapter: usize) -> &'static str {
@@ -1310,6 +1313,8 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
     pad.update(menu_buttons());
     pad.prime(); // swallow buttons (or stick) still held at menu entry until re-pressed
 
+    // The setup above ran under the loading widget; the first frame replaces it.
+    crate::end_loading();
     loop {
         if let Some(room) = crate::segments::poll_control() {
             return room;
@@ -1391,10 +1396,10 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
             MenuScreen::Options => {
                 wrap_move(&mut options_sel, N_OPTIONS, input);
                 let idx = options_sel as usize;
-                if (idx < 5 || idx == OPT_BRIGHTNESS) && (input.left || input.right) {
+                if idx < OPT_LABELS.len() && (input.left || input.right) {
                     let step = if idx < 2 {
                         2 // screen +-2 px
-                    } else if idx == 4 {
+                    } else if idx == 4 || idx == 5 {
                         4 // radial deadzone axis units
                     } else {
                         1 // volume, brightness level
