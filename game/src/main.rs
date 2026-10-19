@@ -16103,16 +16103,17 @@ unsafe fn prop_push_vector(m: &Map, pi: usize) -> [i32; 3] {
     while k < PUSH_N as usize {
         let li = PUSH_LI[k] as usize;
         k += 1;
-        // A belt in TOP state runs backwards; a field in TOP state is off.
-        let brush = m.logic(li).brush;
-        let belt = brush != map::LOGIC_BRUSH_NONE && brush & map::LOGIC_BRUSH_SHAPE == 0;
-        let Some(sign) = trigger_rules::push_sign(belt, LOGIC_STATE[li] == LOGIC_STATE_TOP) else {
-            continue;
-        };
+        // Most pushers miss the hull: test the six bounds words before decoding the record.
         if LOGIC_STATE[li] == LOGIC_STATE_REMOVED || !m.logic_touches_bounds(li, mins, maxs) {
             continue;
         }
         let rec = m.logic(li);
+        // A belt in TOP state runs backwards; a field in TOP state is off.
+        let brush = rec.brush;
+        let belt = brush != map::LOGIC_BRUSH_NONE && brush & map::LOGIC_BRUSH_SHAPE == 0;
+        let Some(sign) = trigger_rules::push_sign(belt, LOGIC_STATE[li] == LOGIC_STATE_TOP) else {
+            continue;
+        };
         if rec.brush != map::LOGIC_BRUSH_NONE
             && rec.brush & map::LOGIC_BRUSH_SHAPE != 0
             && !phys::inside_clip_hull(m, (rec.brush & !map::LOGIC_BRUSH_SHAPE) as i16, p)
