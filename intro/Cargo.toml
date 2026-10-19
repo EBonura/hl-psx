@@ -33,4 +33,7 @@ psx-io          = { path = "../.psoxide/sdk/crates/psx-io" }
 psx-pad         = { path = "../.psoxide/sdk/crates/psx-pad" }
 psx-spu         = { path = "../.psoxide/sdk/crates/psx-spu" }
 psx-fmv         = { path = "../.psoxide/sdk/crates/psx-fmv" }
+psx-font        = { path = "../.psoxide/sdk/crates/psx-font" }
+psx-loading     = { path = "../.psoxide/sdk/crates/psx-loading" }
+psx-vram        = { path = "../.psoxide/sdk/crates/psx-vram" }
 psx-chainloader = { path = "../.psoxide/engine/crates/psx-chainloader" }

@@ -1,5 +1,5 @@
-//! The boot program of the hl-psx disc: Half-Life's startup movie, then the
-//! game.
+//! The boot program of the hl-psx disc: the studio splash, Half-Life's startup
+//! movie, then the game.
 //!
 //! The game's image has almost no RAM to spare, so the movie cannot live in
 //! it. The BIOS boots this small program instead (`PSX.EXE`, linked high in
@@ -22,12 +22,16 @@ extern crate psx_rt;
 use psx_chainloader::paint;
 use psx_chainloader::runtime::{self, Presentation};
 use psx_fmv::player::{self, Config, Depth, Movie, Stop};
+use psx_font::fonts::BASIC_8X16;
 use psx_gpu::display::{DisplayConfig, Resolution, VideoMode};
 use psx_gpu::Gpu;
 use psx_io::periph::ControllerPort;
+use psx_loading::{Gp0, Indicator, Rgb, Style, Tail};
 use psx_pad::{button, Port};
 use psx_rt::{interrupts, tty, Peripherals};
 use psx_spu::{self as spu, Spu, Volume};
+
+mod splash;
 
 mod cooked {
     include!("../../.hlpsx/intro/movie.rs");
@@ -66,13 +70,18 @@ fn image_start() -> u32 {
 }
 
 /// Start or Cross, newly pressed since the poll before.
-struct Skip {
+pub(crate) struct Skip {
     port: ControllerPort,
     held: bool,
     last_vblank: u32,
 }
 
 impl Skip {
+    /// The pad's buttons now, polled on the spot.
+    pub(crate) fn buttons(&mut self) -> psx_pad::ButtonState {
+        psx_pad::poll_on(&mut self.port, Port::One).buttons
+    }
+
     fn poll(&mut self) -> bool {
         // The pad answers once per VBlank at most; the player calls this far
         // more often.
@@ -90,7 +99,7 @@ impl Skip {
     }
 }
 
-fn play_movie(port: ControllerPort, limit: u32) {
+fn play_movie(skip: &mut Skip, limit: u32) {
     let Some((lba, _)) = player::find_root_file(MOVIE_FILE) else {
         tty::println("hl-intro: no INTRO.STR on this disc");
         return;
@@ -123,11 +132,9 @@ fn play_movie(port: ControllerPort, limit: u32) {
     // SAFETY: low RAM between the kernel's area and this image: nothing lives
     // there until the game is loaded over it, after the player has returned.
     let memory = unsafe { core::slice::from_raw_parts_mut(PLAYER_MEMORY as *mut u32, words) };
-    let mut skip = Skip {
-        port,
-        held: true,
-        last_vblank: interrupts::vblank_count(),
-    };
+    // A button still held from the splash must be let go before it can skip.
+    skip.held = true;
+    skip.last_vblank = interrupts::vblank_count();
     let outcome = player::play(&movie, &config, memory, &mut || skip.poll());
     report(&outcome);
 }
@@ -178,16 +185,34 @@ fn print_decimal(mut v: u32) {
     tty::print(core::str::from_utf8(&digits[at..]).unwrap_or("?"));
 }
 
-/// A dim track and a bar over it, at the foot of a black screen, while the
-/// game's image streams in.
-struct Loading;
+/// Half-Life's loading indicator (the game's `draw_loading_strip` draws the same
+/// one for every load it does): a small black square in the bottom-right
+/// corner with the orange dot spinner in it. It runs from the end of the movie
+/// through the chain-load, and the game carries on with it through its boot, so
+/// the corner stays the same across the hand-off.
+const WIDGET: Style = Style::new(&BASIC_8X16, "", Rgb(255, 170, 0), Rgb(0, 0, 0))
+    .with_tail(Tail::Spinner {
+        lit: Rgb(255, 214, 96),
+        unlit: Rgb(40, 34, 20),
+    })
+    .scaled(2)
+    .in_corner(32, 320, 240, 12)
+    .timed(2, 64);
 
-const BAR_X: i16 = 80;
-const BAR_Y: i16 = 222;
-const BAR_W: i16 = 160;
-const BAR_H: i16 = 4;
-const TRACK: u32 = 0x0030_3030;
-const FILL: u32 = 0x00B0_B0B0;
+/// The widget over black while the game's image streams in.
+struct Loading {
+    widget: Indicator,
+    ticks: u32,
+}
+
+impl Loading {
+    const fn new() -> Self {
+        Loading {
+            widget: Indicator::new(WIDGET),
+            ticks: 0,
+        }
+    }
+}
 
 impl Presentation for Loading {
     fn setup(&mut self) {
@@ -195,20 +220,28 @@ impl Presentation for Loading {
     }
     fn begin(&mut self) {
         paint::rect(0, 0, 320, 240, 0);
-        paint::rect(BAR_X, BAR_Y, BAR_W, BAR_H, TRACK);
         paint::draw_sync();
         paint::show();
+        paint::ack_vblank();
+        self.widget.begin(self.ticks);
+        self.widget.poll(&mut Gp0, self.ticks);
     }
-    fn update(&mut self, done: u32, total: u32) {
-        let width = (done * BAR_W as u32 / total.max(1)).min(BAR_W as u32) as i16;
-        paint::rect(BAR_X, BAR_Y, width, BAR_H, FILL);
+    fn update(&mut self, _done: u32, _total: u32) {}
+    fn finish(&mut self) {
         paint::draw_sync();
     }
-    fn finish(&mut self) {}
     fn diagnostic_mode(&mut self) {
         paint::diagnostic_mode();
     }
     fn no_scratchpad(&mut self) {}
+    fn tick(&mut self) {
+        // One animation tick per VBlank edge; the loader runs with interrupts
+        // masked, so the edge is polled.
+        if paint::take_vblank() {
+            self.ticks = self.ticks.wrapping_add(1);
+        }
+        self.widget.poll(&mut Gp0, self.ticks);
+    }
 }
 
 #[no_mangle]
@@ -218,14 +251,20 @@ fn main() {
     // The player and the chain loader take the drive, the MDEC and the GPU's
     // channel over themselves, as their docs say; the display and the SPU are
     // set up here.
-    let _gpu = Gpu::new(
+    let mut gpu = Gpu::new(
         peripherals.gpu_dma,
         DisplayConfig::new(VideoMode::Ntsc, Resolution::R320X240),
     );
     let _spu = Spu::new(peripherals.spu_dma);
     spu::set_main_volume(Volume::MAX, Volume::MAX);
 
-    play_movie(peripherals.controller_port, image_start());
+    let mut skip = Skip {
+        port: peripherals.controller_port,
+        held: true,
+        last_vblank: interrupts::vblank_count(),
+    };
+    splash::play(&mut gpu, &mut skip);
+    play_movie(&mut skip, image_start());
 
     let Some((lba, _)) = player::find_root_file(GAME_FILE) else {
         tty::println("hl-intro: no HLGAME.EXE on this disc");
@@ -248,7 +287,7 @@ fn main() {
             cdda_track_base,
             GAME_FNV,
             image_start(),
-            Loading,
+            Loading::new(),
         )
     }
 }

@@ -68,6 +68,17 @@ unsafe fn read_sector<'a>(
 ///
 /// # Safety
 /// Drives the CD controller: call it once at boot, before any other CD use.
+/// The game's own file on a disc with the intro stage: that stage boots first (it
+/// plays the studio splash and the movie, then loads this).
+const INTRO_GAME_FILE: &str = "HLGAME.EXE";
+static mut BOOTED_BY_INTRO: bool = false;
+
+/// Whether the disc's intro stage opened this boot. Known once `locate_files` ran.
+pub fn booted_by_intro() -> bool {
+    // SAFETY: written once at boot by `locate_files`, read afterwards.
+    unsafe { BOOTED_BY_INTRO }
+}
+
 #[optimize(size)]
 #[inline(never)]
 pub unsafe fn locate_files(sector: &mut [u32; SECTOR_WORDS]) {
@@ -90,6 +101,9 @@ pub unsafe fn locate_files(sector: &mut [u32; SECTOR_WORDS]) {
             if let Some((lba, bytes)) = iso::find_in_directory(directory, name) {
                 DIRECTORY[file] = (lba, bytes / 2048);
             }
+        }
+        if iso::find_in_directory(directory, INTRO_GAME_FILE).is_some() {
+            BOOTED_BY_INTRO = true;
         }
     }
 }

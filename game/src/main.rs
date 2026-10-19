@@ -2063,132 +2063,68 @@ const PAUSE_AMBER: (u8, u8, u8) = (255, 170, 0);
 const PAUSE_DIM: (u8, u8, u8) = (96, 96, 92);
 #[cfg(not(feature = "semantic-input"))]
 const PAUSE_ARMED: (u8, u8, u8) = (75, 53, 10);
-// cli-spinners "dots" (the classic braille terminal spinner ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏),
-// drawn as its 2x3 dot grid since the bitmap font has no braille glyphs. Each
-// entry is the low 6 braille bits: bit0..2 = left column top->bottom, bit3..5 =
-// right column top->bottom. A rotating subset lights each frame.
-const SPINNER_DOTS: [u8; 10] = [0x0B, 0x19, 0x39, 0x38, 0x3C, 0x34, 0x26, 0x27, 0x07, 0x0F];
 
-/// Draw one "dots" spinner frame as a 2x3 grid of small dots at (x, y).
-fn draw_spinner_dots(x: i16, y: i16, frame: u8) {
-    let mask = SPINNER_DOTS[(frame as usize) % SPINNER_DOTS.len()];
-    const D: i16 = 3; // dot size
-    const G: i16 = 5; // dot spacing
-    let mut i = 0;
-    while i < 6 {
-        let col = (i / 3) as i16;
-        let row = (i % 3) as i16;
-        let dx = x + col * G;
-        let dy = y + row * G;
-        let (r, g, b) = if mask & (1 << i) != 0 {
-            (255, 214, 96) // lit: bright HEV amber
-        } else {
-            (40, 34, 20) // unlit: dim, so the grid reads as a spinner
-        };
-        driver::quad_flat(
-            [(dx, dy), (dx + D, dy), (dx, dy + D), (dx + D, dy + D)],
-            r,
-            g,
-            b,
-        );
-        i += 1;
-    }
-}
-
-// One loading strip for every load, drawn HL-style over whatever is already on
-// screen: the menu when a level is picked, the frozen scene across a
-// changelevel. There used to be three of these -- a black card with nested
-// panels, this strip, and a third in the menu with an ASCII spinner that popped
-// up for eight frames and vanished -- in three fonts with two spinners. One
-// concept should look like one thing, and keeping the previous image also
-// removes the black flash between picking a level and seeing it.
+// One loading indicator for every load: a small black square in the bottom-right
+// corner with the orange dot spinner in it, drawn over whatever is already on
+// screen (the menu when a level is picked, the frozen scene across a
+// changelevel, the black the boot sits on while it reads its sound bank). It is
+// the SDK's psx-loading widget, shared with the disc's intro program, which draws
+// the same square while this image streams in, so the corner stays put across the
+// hand-off. It is plain rectangles, so it needs no atlas in VRAM and works before
+// the menu has uploaded one. There used to be three loading screens here, a black
+// card with nested panels, a text strip and a menu spinner, in three fonts with two
+// spinners; keeping the previous image also removes the black flash between
+// picking a level and seeing it.
 //
-// The image lives in the FRONT buffer (the one we are not drawing to), so the
-// GPU is retargeted at it and nothing is swapped.
-const LOADING_STRIP_Y: i16 = 208;
-const LOADING_STRIP_H: i16 = 24;
-/// Padding either side of "Loading <spinner>". The plate is sized to its
-/// contents rather than spanning the frame: a full-width band reads as a letterbox
-/// bar, and it hides more of the scene behind it than it needs to.
-const LOADING_PAD: i16 = 12;
-/// `draw_spinner_dots` lays a 2x3 grid of 3-pixel dots on a 5-pixel pitch.
-const SPINNER_W: i16 = 8;
-const SPINNER_H: i16 = 13;
-/// hltext at SMALL_Q8 is the 8x16 cell at 1:1.
-const LOADING_TEXT_H: i16 = 16;
-
-/// Slow amber breathe, the loading screen's version of the menu's halo. The
-/// glyph-halo atlas itself cannot be reused here: it sits at VRAM X=832, inside
-/// the X=320..960 region `vram.rs` hands to world textures, and those stream in
-/// while this very screen is up, so the atlas would be overwritten mid-load. A
-/// pulse on the ink reads much the same at 320x240, where the halo on a
-/// one-pixel stroke is only a rim.
-fn loading_amber(tick: u32) -> (u8, u8, u8) {
-    // Triangle wave over 64 frames, a little over a second.
-    let phase = (tick % 64) as i32;
-    let up = if phase < 32 { phase } else { 64 - phase };
-    let lift = (up * 70 / 32) as u8;
-    (
-        PAUSE_AMBER.0,
-        PAUSE_AMBER.1.saturating_add(lift),
-        PAUSE_AMBER.2.saturating_add(lift / 2),
-    )
-}
+// The widget is drawn into both buffers, the drawing side last, so the GPU is left
+// aimed at the side the game draws into and nothing is swapped.
+const LOADING_STRIP: psx_loading::Style = psx_loading::Style::new(
+    &psx_font::fonts::BASIC_8X16,
+    "",
+    psx_loading::Rgb(255, 170, 0),
+    psx_loading::Rgb(0, 0, 0),
+)
+.with_tail(psx_loading::Tail::Spinner {
+    lit: psx_loading::Rgb(255, 214, 96),
+    unlit: psx_loading::Rgb(40, 34, 20),
+})
+.scaled(2)
+.in_corner(32, 320, 240, 12)
+.timed(2, 64);
 
 #[optimize(size)]
 fn draw_loading_strip(fb: &mut DoubleBuffer, tick: u32) {
     let (width, height) = fb.size();
-    let front_y = fb.display_origin().1;
-    driver::with(|gpu| {
-        gpu.set_draw_area((0, front_y), (width - 1, front_y + height - 1));
-        gpu.set_draw_offset((0, front_y as i16));
-    });
-
-    let loading = "Loading";
-    let lw = hltext::text_width_scaled(loading, hltext::SMALL_Q8);
-    let content = lw + 8 + SPINNER_W;
-    let (x0, x1) = (
-        160 - content / 2 - LOADING_PAD,
-        160 + content / 2 + LOADING_PAD,
-    );
-    let (y0, y1) = (LOADING_STRIP_Y, LOADING_STRIP_Y + LOADING_STRIP_H);
-    driver::quad_flat([(x0, y0), (x1, y0), (x0, y1), (x1, y1)], 5, 5, 7);
-    driver::quad_flat([(x0, y0), (x1, y0), (x0, y0 + 1), (x1, y0 + 1)], 24, 21, 16);
-
-    // Text and spinner are different heights, so each is centred on the plate
-    // rather than sharing one baseline.
-    let tx = x0 + LOADING_PAD;
-    hltext::draw_text_scaled(
-        tx,
-        y0 + (LOADING_STRIP_H - LOADING_TEXT_H) / 2,
-        loading,
-        hltext::SMALL_Q8,
-        loading_amber(tick),
-    );
-    draw_spinner_dots(
-        tx + lw + 8,
-        y0 + (LOADING_STRIP_H - SPINNER_H) / 2,
-        (tick / 2) as u8,
-    );
-    driver::with(|gpu| gpu.wait_idle());
-
     let back_y = fb.draw_origin().1;
-    driver::with(|gpu| {
-        gpu.set_draw_area((0, back_y), (width - 1, back_y + height - 1));
-        gpu.set_draw_offset((0, back_y as i16));
-    });
+    // Both buffers get the widget. Until the first swap the buffer the hardware
+    // shows is the one `fb` calls the drawing side (a program that was handed the
+    // display, as the boot is by the disc's intro, has not flipped yet), so the
+    // front side alone would draw out of sight. The side drawn behind the shown
+    // one is overdrawn by the next frame anyway.
+    // The program that handed over the display may have left the mask bit on.
+    psx_loading::prepare(&mut psx_loading::Gp0);
+    for y in [fb.display_origin().1, back_y] {
+        driver::with(|gpu| {
+            gpu.set_draw_area((0, y), (width - 1, y + height - 1));
+            gpu.set_draw_offset((0, y as i16));
+        });
+        psx_loading::Indicator::new(LOADING_STRIP)
+            .draw(&mut psx_loading::Gp0, LOADING_STRIP.look(tick));
+    }
+    driver::with(|gpu| gpu.wait_idle());
 }
 
-// The CD payload loop calls back here every few sectors while it blocks. Without
-// it the strip is redrawn five times across a two-and-a-half second load, at
-// stage boundaries, so the spinner does not visibly spin and a pulse would be a
-// slideshow. The frame buffer cannot travel through a plain `fn` pointer, so the
-// loader parks it before it starts reading.
+// The SDK's polled CD reader calls back here from every spin of every wait it
+// makes (psx_io::cd::reader::set_idle_hook): between sectors, through seeks and
+// across a pack's table scan. Without it the strip is redrawn at stage
+// boundaries only, so the spinner does not visibly spin. The frame buffer cannot
+// travel through a plain `fn` pointer, so the loader parks it before it starts
+// reading.
 static mut LOADING_FB: *mut DoubleBuffer = core::ptr::null_mut();
 static mut LOADING_TICK: u32 = 0;
 static mut LOADING_VBLANK: u32 = 0;
 
-fn loading_sector_hook(_done: usize, _needed: usize) {
+pub(crate) fn loading_idle() {
     unsafe {
         let fb = LOADING_FB;
         if fb.is_null() {
@@ -2204,24 +2140,26 @@ fn loading_sector_hook(_done: usize, _needed: usize) {
         if now == LOADING_VBLANK {
             return;
         }
+        // The spinner runs on elapsed VBlanks, so it keeps its speed when a long
+        // wait (a seek, a table scan) went by between two calls.
+        LOADING_TICK = LOADING_TICK.wrapping_add(now.wrapping_sub(LOADING_VBLANK));
         LOADING_VBLANK = now;
-        LOADING_TICK = LOADING_TICK.wrapping_add(1);
         draw_loading_strip(&mut *fb, LOADING_TICK);
     }
 }
 
-/// Park the strip's context and take over the CD progress hook for this load.
+/// Park the strip's context and take over the CD reader's idle hook for this load.
 fn begin_loading(fb: &mut DoubleBuffer) {
     unsafe {
         LOADING_FB = fb as *mut DoubleBuffer;
         LOADING_TICK = 0;
         LOADING_VBLANK = interrupts::vblank_count();
     }
-    cdstream::set_sector_hook(Some(loading_sector_hook));
+    psx_io::cd::reader::set_idle_hook(Some(loading_idle));
 }
 
-fn end_loading() {
-    cdstream::set_sector_hook(None);
+pub(crate) fn end_loading() {
+    psx_io::cd::reader::set_idle_hook(None);
     unsafe { LOADING_FB = core::ptr::null_mut() };
 }
 
@@ -4218,12 +4156,11 @@ fn live_semantic_sample(pad: psx_pad::PadState) -> semantic_input::Sample {
     if pad.is_analog() {
         let (lx, ly) = pad.sticks.left_centered();
         let (rx, ry) = pad.sticks.right_centered();
-        let deadzone = settings::analog_deadzone();
-        if deadzone.is_outside(lx, ly) {
+        if settings::move_deadzone().is_outside(lx, ly) {
             fwd = -(ly as i32);
             strafe = lx as i32;
         }
-        if deadzone.is_outside(rx, ry) {
+        if settings::look_deadzone().is_outside(rx, ry) {
             turn = aim_curve(rx as i32);
             look = aim_curve(-(ry as i32));
         }
@@ -34515,6 +34452,16 @@ fn main() {
     // SFX: stream the cooked SPU-ADPCM pack once and park it in SPU RAM (its
     // own 512 KB; no main-RAM cost). MAP_BUF is free until the first map loads,
     // so stage through it.
+    // The boot's CD reads (music files, sound bank, core table, menu assets) sit
+    // on whatever the previous program left on screen: the disc's intro leaves
+    // its loading strip there, so keep that strip moving instead of freezing it.
+    if !DBG_PAD_BOOT {
+        // The strip counts VBlanks, and the game installs the counter only when play()
+        // starts: do it now, or the boot loads would draw it once and freeze it.
+        interrupts::install_vblank_counter();
+        begin_loading(&mut fb);
+        draw_next_loading_screen(&mut fb);
+    }
     // Music: find the XA files by name before any other CD use. MAP_BUF is
     // free until the first map loads.
     if let Some(sector) = unsafe { map_buf() }.first_chunk_mut() {
@@ -34562,7 +34509,13 @@ fn main() {
     // guest state. Shipping boots mirror the Celeste collection's PSoXide
     // splash before entering the original-style Half-Life menu.
     if !DBG_PAD_BOOT {
-        menu::intro(&mut fb, unsafe { stream_menu_assets() }, pad_notice);
+        let assets = unsafe { stream_menu_assets() };
+        end_loading();
+        // A disc with the intro stage opened with this splash already (the intro
+        // program plays it before the movie); a pad notice still needs a screen.
+        if !music::booted_by_intro() || !pad_notice[0].is_empty() {
+            menu::intro(&mut fb, assets, pad_notice);
+        }
     }
 
     // Boot flow: pick a map in the menu, stream + play it, return on Select.
@@ -34640,7 +34593,14 @@ fn main() {
         let sel = if DBG_PAD_BOOT {
             dbg_sel.unwrap_or(0)
         } else {
-            menu::run(&mut fb, unsafe { stream_menu_assets() })
+            // The menu's assets stream in again (play() clobbered them): the
+            // strip keeps the screen alive until the first menu frame.
+            begin_loading(&mut fb);
+            draw_next_loading_screen(&mut fb);
+            let assets = unsafe { stream_menu_assets() };
+            // The widget keeps moving through the menu's own setup (its glow atlas is
+            // blurred on the CPU); `menu::run` ends it before the first frame.
+            menu::run(&mut fb, assets)
         };
         // Debug direct-map boots keep the map's own spawn; menu choices arrive
         // the way normal play would.
