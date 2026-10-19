@@ -7059,6 +7059,108 @@ fn blocked_cosmetic_rotators(s: &str, models: &[u8], scale: f32) -> HashSet<usiz
 /// classes that never move or animate, drawn unblended (opaque or alpha-test
 /// cutout -- both emit ordinary opaque packets) at a zero origin. Breakables,
 /// pushables, conveyors and every mover class stay on the entity path.
+/// For each moving water brush submodel (a func_train with skin -3), the offsets (HL units, added to a BSP vertex) at which its
+/// surface can sit: zero for a pool, the path corners (and points between them)
+/// minus the model centre for a flood, matching the runtime's TRAIN_OFF.
+fn water_submodel_paths(ents: &[u8], models: &[u8], n_models: usize) -> Vec<Option<Vec<[f32; 3]>>> {
+    let s = entity_text(ents);
+    let mut out: Vec<Option<Vec<[f32; 3]>>> = vec![None; n_models];
+    for block in s.split('{') {
+        let sm: usize = match ent_value(block, "model") {
+            Some(m) if m.starts_with('*') => m[1..].parse().unwrap_or(0),
+            _ => continue,
+        };
+        if sm == 0 || sm >= n_models {
+            continue;
+        }
+        let cls = ent_value(block, "classname").unwrap_or("");
+        let train = cls == "func_train" && parse_f32_key(block, "skin", 0.0) as i32 == -3;
+        // Only a moving flood needs the cut: a static pool is drawn right as it
+        // is (its quads stay put under the floor patches that fit around them).
+        if !train {
+            continue;
+        }
+        let mut offs = vec![[0.0f32; 3]];
+        if train {
+            let o = sm * SZ_MODEL;
+            let f = |k: usize| f32le(models, o + k * 4).unwrap_or(0.0);
+            let center = [(f(0) + f(3)) * 0.5, (f(1) + f(4)) * 0.5, (f(2) + f(5)) * 0.5];
+            let mut corners: Vec<[f32; 3]> = Vec::new();
+            let mut name = ent_value(block, "target").unwrap_or("").to_string();
+            while !name.is_empty() && corners.len() < 32 {
+                let Some(node) = s.split('{').find(|b| {
+                    path_node_class(b, "path_corner") && ent_value(b, "targetname") == Some(name.as_str())
+                }) else {
+                    break;
+                };
+                corners.push(ent_value(node, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]));
+                let next = ent_value(node, "target").unwrap_or("").to_string();
+                name = if next == ent_value(block, "target").unwrap_or("") { String::new() } else { next };
+            }
+            offs.clear();
+            for (i, c) in corners.iter().enumerate() {
+                let next = corners.get(i + 1).unwrap_or(c);
+                for k in 0..4 {
+                    let t = k as f32 / 4.0;
+                    offs.push([
+                        c[0] + (next[0] - c[0]) * t - center[0],
+                        c[1] + (next[1] - c[1]) * t - center[1],
+                        c[2] + (next[2] - c[2]) * t - center[2],
+                    ]);
+                }
+            }
+            if offs.is_empty() {
+                offs.push([0.0; 3]);
+            }
+        }
+        out[sm] = Some(offs);
+    }
+    out
+}
+
+/// A water brush is a flood (as opposed to a pool that fits its brush) when
+/// under half of its footprint, sampled every 64 units at the surface height,
+/// is open air at the positions it reaches (averaged over them).
+fn water_is_flood(
+    models: &[u8],
+    sm: usize,
+    offs: &[[f32; 3]],
+    nodes: &[u8],
+    planes: &[u8],
+) -> bool {
+    let o = sm * SZ_MODEL;
+    let f = |k: usize| f32le(models, o + k * 4).unwrap_or(0.0);
+    let (mut total, mut open) = (0usize, 0usize);
+    for d in offs {
+        let mut x = f(0);
+        while x <= f(3) {
+            let mut y = f(1);
+            while y <= f(4) {
+                total += 1;
+                if point_leaf_from(0, [x + d[0], y + d[1], f(5) + 2.0 + d[2]], nodes, planes) != 0 {
+                    open += 1;
+                }
+                y += 64.0;
+            }
+            x += 64.0;
+        }
+    }
+    total > 0 && open * 2 < total
+}
+
+/// The face's plane normal points up (HL +z) on its drawn side.
+fn face_up_hl(planes: &[u8], planenum: usize, faces: &[u8], fo: usize) -> bool {
+    let nz = f32le(planes, planenum * SZ_PLANE + 8).unwrap_or(0.0);
+    let side = u16le(faces, fo + 2).unwrap_or(0);
+    (if side != 0 { -nz } else { nz }) > 0.7
+}
+
+/// Every corner of the polygon sits at the same HL height.
+fn raw_poly_flat(poly: &[u16], raw_verts: &[[f32; 3]]) -> bool {
+    poly.iter()
+        .all(|&v| (raw_verts[v as usize][2] - raw_verts[poly[0] as usize][2]).abs() < 0.5)
+}
+
 fn pipeline_static_submodels(ents: &[u8], n_models: usize) -> Vec<bool> {
     let s = entity_text(ents);
     let mut eligible = vec![false; n_models];
@@ -12487,6 +12589,16 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     } else {
         vec![false; n_models_total]
     };
+    let mut water_paths = water_submodel_paths(bsp.lump(LUMP_ENTITIES), models, n_models_total);
+    for sm in 0..n_models_total {
+        if let Some(offs) = &water_paths[sm] {
+            if !water_is_flood(models, sm, offs, bsp.lump(LUMP_NODES), bsp.lump(LUMP_PLANES)) {
+                water_paths[sm] = None;
+            }
+        }
+    }
+    // Water cell triangles kept so far this map (the cut is skipped past a cap).
+    let mut water_cell_tris = 0usize;
     // Source-face -> submodel index (u16::MAX = world model 0 / none).
     let mut face_submodel = vec![u16::MAX; n_faces];
     for mi in 1..n_models_total {
@@ -13090,16 +13202,121 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             let first_tri = tri_idx.len() / 3;
             face_first[f] = first_tri as u32;
             let fan0 = best_fan_anchor(&shifted_uv);
-            emit_source_fan(
-                &source_corners,
-                tex_id as u16,
-                fan0,
-                &mut verts,
-                &mut tri_idx,
-                &mut tri_tex,
-                &mut tri_uv,
-                &mut tri_rgb,
-            );
+            // A water brush's flat top is one box face as wide as the whole
+            // flood (c1a1b's pipe water is a 2472 x 992 sheet), far wider than
+            // the pipe: on a PS1 with no z-buffer it either sorts behind the
+            // floor patches or paints over the rock around it. Cut it into
+            // 64-unit cells (GoldSrc's GL_SubdivideSurface) and keep only the
+            // cells that are open air at some height the water reaches.
+            let mut water_cut = false;
+            if let Some(offs) = face_submodel[f]
+                .checked_sub(0)
+                .filter(|&sm| sm != u16::MAX)
+                .and_then(|sm| water_paths[sm as usize].as_ref())
+                .filter(|_| {
+                    logical_poly.len() == 4
+                        && face_up_hl(planes, planenum, faces, fo)
+                        && raw_poly_flat(&render_poly, &raw_verts)
+                })
+            {
+                let density = (s[0].hypot(s[1]).hypot(s[2])).max(t[0].hypot(t[1]).hypot(t[2]))
+                    * fw
+                    / ow as f32;
+                let want = (64.0 * density).max(16.0);
+                let step = [128.0f32, 64.0, 32.0, 16.0]
+                    .into_iter()
+                    .find(|&g| g <= want)
+                    .unwrap_or(16.0);
+                let verts_before = verts.len();
+                let cut = emit_uv_grid_poly(
+                    &source_corners,
+                    tex_id as u16,
+                    step,
+                    &mut verts,
+                    &mut tri_idx,
+                    &mut tri_tex,
+                    &mut tri_uv,
+                    &mut tri_rgb,
+                    None,
+                );
+                if cut.is_some() {
+                    let n = tri_idx.len() / 3 - first_tri;
+                    let open: Vec<bool> = (0..n)
+                        .map(|i| {
+                            let c = |k: usize| verts[tri_idx[(first_tri + i) * 3 + k] as usize];
+                            let hl = [
+                                (c(0)[0] as f32 + c(1)[0] as f32 + c(2)[0] as f32) / 3.0 * scale,
+                                (c(0)[2] as f32 + c(1)[2] as f32 + c(2)[2] as f32) / 3.0 * scale,
+                                (c(0)[1] as f32 + c(1)[1] as f32 + c(2)[1] as f32) / 3.0 * scale + 2.0,
+                            ];
+                            offs.iter().any(|o| {
+                                let leaf = point_leaf_from(
+                                    0,
+                                    [hl[0] + o[0], hl[1] + o[1], hl[2] + o[2]],
+                                    bsp.lump(LUMP_NODES),
+                                    bsp.lump(LUMP_PLANES),
+                                );
+                                leaf != 0
+                            })
+                        })
+                        .collect();
+                    let kept = open.iter().filter(|&&k| k).count();
+                    if water_cell_tris + kept <= 1500 {
+                        let mut w = first_tri;
+                        for (i, keep) in open.iter().enumerate() {
+                            if !keep {
+                                continue;
+                            }
+                            let r = first_tri + i;
+                            if r != w {
+                                for k in 0..3 {
+                                    tri_idx[w * 3 + k] = tri_idx[r * 3 + k];
+                                }
+                                tri_tex[w] = tri_tex[r];
+                                for k in 0..6 {
+                                    tri_uv[w * 6 + k] = tri_uv[r * 6 + k];
+                                }
+                                for k in 0..9 {
+                                    tri_rgb[w * 9 + k] = tri_rgb[r * 9 + k];
+                                }
+                            }
+                            w += 1;
+                        }
+                        tri_idx.truncate(w * 3);
+                        tri_tex.truncate(w);
+                        tri_uv.truncate(w * 6);
+                        tri_rgb.truncate(w * 9);
+                        water_cell_tris += kept;
+                        if let Some(st) = &cut {
+                            grid_cells += st.cells;
+                            grid_quad_cells += st.quad_cells;
+                            grid_boundary_tris += st.boundary_tris;
+                        }
+                        face_affine_refined[f] = true;
+                        face_affine_candidate[f] = true;
+                        water_cut = true;
+                    }
+                }
+                if !water_cut {
+                    verts.truncate(verts_before);
+                    tri_idx.truncate(first_tri * 3);
+                    tri_tex.truncate(first_tri);
+                    tri_uv.truncate(first_tri * 6);
+                    tri_rgb.truncate(first_tri * 9);
+                }
+            }
+            if !water_cut {
+                emit_source_fan(
+                    &source_corners,
+                    tex_id as u16,
+                    fan0,
+                    &mut verts,
+                    &mut tri_idx,
+                    &mut tri_tex,
+                    &mut tri_uv,
+                    &mut tri_rgb,
+                );
+            }
             face_ntri[f] = ((tri_idx.len() / 3) - first_tri).min(u16::MAX as usize) as u16;
         }
     }

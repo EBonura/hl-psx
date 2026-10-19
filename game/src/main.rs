@@ -3680,6 +3680,29 @@ unsafe fn reset_emit_policy() {
 // triangles, and the quad path still rejects a pair whose child keys diverge.
 static mut WAVE_DU: u8 = 0;
 static mut WAVE_DV: u8 = 0;
+/// Set while a water brush is emitted. The cook keeps every water cell that is
+/// open at any height the flood reaches; this drops the ones that are in solid
+/// rock right now (the triangle's centroid, two units above the surface, in
+/// the BSP's solid leaf), which GoldSrc's z-buffer would have hidden. The
+/// offset is the brush's draw offset (local to world).
+static mut WATER_VOID_ON: bool = false;
+static mut WATER_VOID_OFF: [i32; 3] = [0; 3];
+
+#[inline(never)]
+#[optimize(size)]
+unsafe fn water_tri_hidden(m: &Map, tt: usize) -> bool {
+    let i = m.tri_idx(tt);
+    let (a, b, c) = (m.vert(i[0] as usize), m.vert(i[1] as usize), m.vert(i[2] as usize));
+    let o = WATER_VOID_OFF;
+    camera_leaf(
+        m,
+        [
+            (a.x as i32 + b.x as i32 + c.x as i32) / 3 + o[0],
+            (a.y as i32 + b.y as i32 + c.y as i32) / 3 + o[1] + 2,
+            (a.z as i32 + b.z as i32 + c.z as i32) / 3 + o[2],
+        ],
+    ) == 0
+}
 // Adaptive near-first world ordering. Bit 0 requests bands for this frame;
 // bit 1 records a room packet overflow while emitting this frame.
 const WORLD_BAND_NEEDS: u8 = 1;
@@ -4457,14 +4480,26 @@ fn view_rotation(yaw: u16, pitch: i16) -> Mat3I16 {
 }
 
 /// As `view_rotation` but with a camera ROLL (rotation about the view forward
-/// axis) -- GoldSrc's `V_CalcRoll` banks the view slightly when you strafe. `roll`
-/// is an 8-bit angle (256 = full turn), applied in view space before the Y-down
-/// row flip so it tilts the horizon.
-fn view_rotation_roll(yaw: u16, pitch: i16, roll: i16) -> Mat3I16 {
+/// axis): GoldSrc's `V_CalcRoll` banks the view a little when you strafe and a
+/// hard landing rolls it by the punch angle. `roll_q12` is in 4096-per-turn
+/// units, like every other view angle, so the rotation is built with the
+/// interpolated Q12 sine (the SDK's `rotate_z` is 256 per turn, which turned a
+/// 13 degree landing punch into a 211 degree spin). It is applied in view space
+/// before the Y-down row flip so it tilts the horizon.
+fn view_rotation_roll(yaw: u16, pitch: i16, roll_q12: i32) -> Mat3I16 {
     let view_yaw = 0u16.wrapping_sub(yaw >> 4);
     let mut look = Mat3I16::rotate_x((pitch >> 4) as u16).mul(&Mat3I16::rotate_y(view_yaw));
-    if roll != 0 {
-        look = Mat3I16::rotate_z(roll as u16).mul(&look);
+    if roll_q12 != 0 {
+        // Rz(roll) * look: rows 0 and 1 turn into each other.
+        let a = roll_q12 as u16;
+        let (s, c) = (sincos::sin_q12(a), sincos::cos_q12(a));
+        let mut j = 0;
+        while j < 3 {
+            let (r0, r1) = (look.m[0][j] as i32, look.m[1][j] as i32);
+            look.m[0][j] = ((c * r0 - s * r1) >> 12) as i16;
+            look.m[1][j] = ((s * r0 + c * r1) >> 12) as i16;
+            j += 1;
+        }
     }
     let mut r = look;
     let mut j = 0;
@@ -6034,9 +6069,12 @@ static mut SHAKE_AMP: u16 = 0;
 // weapon recoil, hard landings, taking damage, and enemy hits. HL's punchangle.
 static mut PUNCH_PITCH: i32 = 0;
 static mut PUNCH_YAW: i32 = 0;
-// Walk view-bob phase (advances with movement each sim tick) -> a vertical head
-// bob + a subtle strafe roll are derived from it in the render view setup.
+// GoldSrc V_CalcBob state. The phase is a Q12 turn of the 0.8 s cl_bobcycle and
+// advances on every grounded sim tick whatever the speed; the offset (Q4 world
+// units) is recomputed on those ticks and held while airborne or on a ladder,
+// exactly as the client's early return holds `bob`.
 static mut BOB_PHASE: u32 = 0;
+static mut BOB_Q4: i32 = 0;
 // GoldSrc pain-compass edge intensities (front/right/rear/left, 0..255). This
 // replaces the port-specific full-screen red wash with the original
 // directional feedback without adding a resident array.
@@ -12392,6 +12430,22 @@ unsafe fn revert_saved_tick() {
     }
 }
 
+/// PM_DropPunchAngle at the 20 Hz tick: a punch loses (10 + len / 2) degrees per
+/// second, 50 ms at a time. In Q12 turns that is 5.69 units plus len / 40 per
+/// tick; applied per axis, which is the same curve for a single-axis kick.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn drop_punch_angle() {
+    for p in [
+        &mut *core::ptr::addr_of_mut!(PUNCH_PITCH),
+        &mut *core::ptr::addr_of_mut!(PUNCH_YAW),
+        &mut *core::ptr::addr_of_mut!(PUNCH_ROLL),
+    ] {
+        let a = p.abs();
+        *p = p.signum() * ((a * 16 - 91 - a * 2 / 5 + 8) / 16).max(0);
+    }
+}
+
 #[optimize(size)]
 /// Advance the screen-title + fade timers once per sim tick; auto-fire the
 /// worldspawn chapter title shortly after load (like HL's chapter cards).
@@ -12403,11 +12457,7 @@ unsafe fn tick_screen_fx(sim_frame_no: u32) {
     if SHAKE_TICKS > 0 {
         SHAKE_TICKS -= 1;
     }
-    // Spring the view punch back to centre (HL's V_DropPunchAngle): decay ~30%
-    // per sim tick so a kick recovers over ~5-6 ticks. Snap tiny residuals to 0.
-    PUNCH_PITCH -= (PUNCH_PITCH * 5) / 16 + PUNCH_PITCH.signum();
-    PUNCH_YAW -= (PUNCH_YAW * 5) / 16 + PUNCH_YAW.signum();
-    PUNCH_ROLL -= (PUNCH_ROLL * 5) / 16 + PUNCH_ROLL.signum();
+    drop_punch_angle();
     let mut edge = 0;
     while edge < 4 {
         DAMAGE_EDGE[edge] = player_rules::compass_fade(DAMAGE_EDGE[edge]);
@@ -18811,7 +18861,9 @@ fn fall_damage_player(health: &mut u16, dmg: u16, kind: hev::Kind) {
     }
     let before = *health;
     unsafe {
-        PUNCH_PITCH = -23;
+        // CBasePlayer::PostThink calls TakeDamage and then clears the nod it
+        // set (`punchangle.x = 0`): a damaging landing only rolls the view.
+        PUNCH_PITCH = 0;
         if PAIN_SFX_COOLDOWN == 0 {
             sfx::play(sfx::PAIN);
             PAIN_SFX_COOLDOWN = 12;
@@ -27226,19 +27278,7 @@ unsafe fn emit_projected(
         return;
     }
 
-    let n = render::near_clip(&cv, &mut *core::ptr::addr_of_mut!(CLIP_CV));
-    if n < 3 {
-        return;
-    }
-    for k in 1..n - 1 {
-        emit_cv(
-            packets,
-            &[CLIP_CV[0], CLIP_CV[k], CLIP_CV[k + 1]],
-            emit_packet_of(slot, tri.tex),
-            slot.backdrop,
-            np,
-        );
-    }
+    emit_cv_near_fan(packets, &cv, emit_packet_of(slot, tri.tex), slot.backdrop, np);
 }
 
 #[inline(never)]
@@ -30992,6 +31032,17 @@ unsafe fn emit_submodel_tri(
     proj_submodel_vert(m, b, token);
     proj_submodel_vert(m, c, token);
     let (pa, pb, pc) = (scratch_get(a), scratch_get(b), scratch_get(c));
+    // A moving water brush: skip the cells that sit in rock at its current
+    // position, but only once the cheap screen test says they could be seen.
+    if WATER_VOID_ON
+        && !(pa.sz >= NEAR
+            && pb.sz >= NEAR
+            && pc.sz >= NEAR
+            && render::tri_outside_band([(pa.sx, pa.sy), (pb.sx, pb.sy), (pc.sx, pc.sy)]))
+        && water_tri_hidden(m, tt)
+    {
+        return;
+    }
     xhair_consider(m, tt, pa, pb, pc); // pick covers fast + soft-clip paths
     if SUBMODEL_ACTOR_OVERLAP {
         let tri = m.render_tri(tt, cached_world_uv_words(m, tt));
@@ -31155,6 +31206,24 @@ fn is_intro_tram_floor_quad(m: &Map, corners: [map::PackedLoopVert; 4]) -> bool 
         }
     }
     (min == [-141, 7, -64] && max == [83, 7, 0]) || (min == [-62, 7, 0] && max == [141, 7, 64])
+}
+
+/// Near-clip one view-space triangle and emit its fan.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn emit_cv_near_fan(
+    packets: &mut PrimitivePacketArena<'_>,
+    cv: &[render::CVert; 3],
+    mat: TexturedGouraudPacketMaterial,
+    backdrop: bool,
+    np: &mut usize,
+) {
+    let n = render::near_clip(cv, &mut *core::ptr::addr_of_mut!(CLIP_CV));
+    let mut k = 1;
+    while k + 1 < n {
+        emit_cv(packets, &[CLIP_CV[0], CLIP_CV[k], CLIP_CV[k + 1]], mat, backdrop, np);
+        k += 1;
+    }
 }
 
 /// Draw one brush-entity/tram face: fan its loop, or iterate its raw tris.
@@ -35250,6 +35319,12 @@ unsafe fn trace_sim_tick(m: &Map, state: reference_trace::TickState) {
     let due = probe::trace_due(map_tick);
     #[cfg(not(feature = "interaction-probe"))]
     let due = map_tick % 20 == 0;
+    #[cfg(feature = "interaction-probe")]
+    reference_trace::probe_vals(
+        map_tick,
+        "punch",
+        &[PUNCH_PITCH, PUNCH_YAW, PUNCH_ROLL, state.player_vel[1], state.on_ground as i32],
+    );
     if due {
         trace_brush_entities(m, map_tick);
         trace_point_actors(m, map_tick);
@@ -37815,9 +37890,11 @@ fn play(
             {
                 let li = land_impact;
                 if li > 17 {
-                    // PM_CheckFalling rolls the screen by fall speed x 0.013
-                    // degrees; it does not nod the view.
-                    unsafe { PUNCH_ROLL = (PUNCH_ROLL + li * 3).min(400) };
+                    // PM_CheckFalling: punchangle[ROLL] = fall speed x 0.013
+                    // degrees (assigned, not added; sv_maxvelocity 2000 u/s caps
+                    // the speed). One tick holds 20 u/s, so 0.26 degrees per
+                    // unit = 2.958 Q12 units; the view is not nodded.
+                    unsafe { PUNCH_ROLL = li.min(100) * 2958 / 1000 };
                 }
                 // CBasePlayer::PostThink skips the damage when the landing
                 // leaves the feet in water (watertype CONTENTS_WATER): the
@@ -37842,13 +37919,18 @@ fn play(
             // Footsteps (PM_UpdateStepSound): a clock keyed to ground speed,
             // slower and quieter when walking or ducked, a rung on a ladder.
             unsafe {
-                // View-bob phase advances with horizontal ground speed; the render
-                // derives a vertical head-bob + strafe roll from it. Frozen while
-                // airborne/stopped (the amplitude, speed-scaled, eases it to rest).
+                // V_CalcBob: on every grounded tick the 0.8 s cycle advances
+                // (Q12 turn, 16 ticks) and the offset is speed * cl_bob 0.01
+                // (speed in u/tick x 20 = u/s, so speed / 5 units), shaped as
+                // 0.3 + 0.7 sin(cycle) and clamped to [-7, 4]. Airborne or on a
+                // ladder the previous offset is held.
                 let hspeed =
                     isqrt_i32(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
-                if player.on_ground && hspeed > 4 {
-                    BOB_PHASE = BOB_PHASE.wrapping_add(((hspeed as u32) / 3 + 3).min(22));
+                if player.on_ground {
+                    BOB_PHASE = (BOB_PHASE + 256) & 0xFFF;
+                    let amp = hspeed * 16 / 5;
+                    let wave = sincos::sin_q12(BOB_PHASE as u16);
+                    BOB_Q4 = (amp * 3 / 10 + ((amp * 7 / 10) * wave >> 12)).clamp(-7 * 16, 4 * 16);
                 }
                 let (clock, step) = player_rules::step_tick(
                     STEP_CLOCK,
@@ -38917,30 +38999,25 @@ fn play(
                 view_pitch = CAMERA_PITCH;
             }
         }
-        // Head-bob: a vertical bob (doubled frequency, like HL) scaled by ground
-        // speed, plus a subtle strafe roll -- both derived from BOB_PHASE + the
-        // current horizontal velocity so a walking camera breathes instead of
-        // gliding on rails.
+        // Head bob (V_CalcBob, held in BOB_Q4 by the sim tick) and strafe roll
+        // (V_CalcRoll: sv_rollangle 2 degrees reached at sv_rollspeed 200 u/s,
+        // linear below) in Q12 turns, plus the landing punch roll.
         let view_roll;
         unsafe {
-            let hspeed = isqrt_i32(player.vel[0] * player.vel[0] + player.vel[2] * player.vel[2]);
-            // No bob on a ladder: BOB_PHASE freezes off the ground, but the
-            // climb's lateral velocity kept scaling the stale phase into a
-            // per-tick eye jiggle. HL suspends the walk bob while climbing.
-            let bob_amp = if active_ladder >= 0 {
-                0
-            } else {
-                (hspeed.min(90) * 5) >> 4 // world units of vertical bob
-            };
-            let bob_sin = Mat3I16::rotate_z(((BOB_PHASE * 2) as u16) & 0xFF).m[1][0] as i32;
-            eye[1] += (bob_amp * bob_sin) >> 12;
-            // Strafe bank: the perpendicular (right) component of velocity tilts
-            // the horizon a few degrees. rot.m[0] would be circular, so derive the
-            // world right vector straight from the yaw.
+            // A trigger_camera shot is not the player's eye: no bob, no bank.
+            let player_eye = CAMERA_LI == u16::MAX;
+            if player_eye {
+                eye[1] += (BOB_Q4 + 8) >> 4;
+            }
             let right = Mat3I16::rotate_y(0u16.wrapping_sub(cam_yaw >> 4));
             let side =
                 (right.m[0][0] as i32 * player.vel[0] + right.m[0][2] as i32 * player.vel[2]) >> 12;
-            view_roll = ((side / 12).clamp(-4, 4) + PUNCH_ROLL) as i16;
+            // 2 degrees = 22.76 Q12 units at 10 u/tick (200 u/s).
+            view_roll = if player_eye {
+                side.clamp(-10, 10) * 2276 / 1000 + PUNCH_ROLL
+            } else {
+                0
+            };
             // View punch (recoil / landing / damage), decaying via tick_screen_fx.
             view_pitch =
                 (view_pitch as i32 + PUNCH_PITCH).clamp(-PITCH_MAX as i32, PITCH_MAX as i32) as i16;
@@ -40018,10 +40095,17 @@ fn play(
                     // kind-3 button's ENT_PHASE is nonzero exactly then.
                     let alt_tex = e.kind == 3 && ENT_PHASE[ei] != 0;
                     map::tex_anim_select(alt_tex);
+                    WATER_VOID_ON = e.kind == 6;
+                    WATER_VOID_OFF = off;
                     for f in ff..ff + nf {
                         set_emit_face(&m, f, visibility_logic::brush_packet_blend(e.blend));
                         let (first, cnt) = m.face_tris(f);
                         let (fnrm, fd) = m.face_plane_cooked(f);
+                        // A water brush's side and bottom faces sit inside the
+                        // rock around it; only the surface is ever exposed.
+                        if e.kind == 6 && fnrm[1] < (map::PLANE_NORMAL_ONE / 2) as i16 {
+                            continue;
+                        }
                         if dot_plane(fnrm, es) <= fd {
                             model_culled_tris = model_culled_tris.saturating_add(cnt as u32);
                             continue;
@@ -40041,6 +40125,7 @@ fn play(
                             &mut np,
                         );
                     }
+                    WATER_VOID_ON = false;
                     reset_emit_policy();
                     map::tex_anim_select(false);
                 }
