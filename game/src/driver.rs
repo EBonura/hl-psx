@@ -53,6 +53,46 @@ pub fn quad_flat(verts: [(i16, i16); 4], r: u8, g: u8, b: u8) {
     with(|gpu| gpu.draw(&QuadFlat::new(verts, r, g, b)));
 }
 
+/// Raw GP0 words, now: one ready-wait, then the words in order. The pause menu's
+/// two odd commands (a semi-transparent quad and a VRAM copy) go through this one
+/// function: the SDK's material route and a packet type apiece cost several hundred
+/// bytes of image for a menu.
+#[cfg(not(feature = "semantic-input"))]
+#[inline(never)]
+fn gp0_words(words: &[u32]) {
+    psx_io::gpu::wait_command_ready();
+    for &word in words {
+        psx_io::gpu::write_command(word);
+    }
+}
+
+/// Half of the picture under a rectangle, now: black through the average
+/// semi-transparency equation (GP0(E1h) with no texture page and drawing to the
+/// display area allowed, then a semi-transparent flat quad, GP0(2Ah)).
+#[cfg(not(feature = "semantic-input"))]
+#[inline(never)]
+pub fn quad_half_black(x0: i16, y0: i16, x1: i16, y1: i16) {
+    let pack = |x: i16, y: i16| (y as u16 as u32) << 16 | x as u16 as u32;
+    gp0_words(&[
+        0xE100_0400,
+        0x2A00_0000,
+        pack(x0, y0),
+        pack(x1, y0),
+        pack(x0, y1),
+        pack(x1, y1),
+    ]);
+}
+
+/// Copy a rectangle of VRAM, now (GP0(80h)): `size` pixels from `from` to `to`, each
+/// a top-left (x, y). The copy follows the mask-bit mode, so a caller that needs
+/// every pixel copied clears it first (`MaskMode::empty()`).
+#[cfg(not(feature = "semantic-input"))]
+#[inline(never)]
+pub fn copy_vram(from: (u16, u16), to: (u16, u16), size: (u16, u16)) {
+    let pack = |(x, y): (u16, u16)| (y as u32) << 16 | x as u32;
+    gp0_words(&[0x8000_0000, pack(from), pack(to), pack(size)]);
+}
+
 /// A flat triangle, now. A translucent mode first writes its draw mode.
 #[inline(never)]
 pub fn tri_flat_blended(verts: [(i16, i16); 3], r: u8, g: u8, b: u8, blend_mode: BlendMode) {
