@@ -232,6 +232,12 @@ pub(crate) unsafe fn note_shot(pi: usize, start: [i32; 3], end: [i32; 3]) {
         start[2] + (d[2] * t >> 12),
     ];
     N.head_hit = t > 0 && dist2_3(q, c) < 100 * 100;
+    #[cfg(feature = "interaction-probe")]
+    reference_trace::probe_vals(
+        SIM_NOW as u32,
+        "nshot",
+        &[N.head_hit as i32, isqrt_i32(dist2_3(q, c)), t, c[1], start[1], end[1]],
+    );
 }
 
 /// CNihilanth::TraceAttack + TakeDamage. Returns the u8 health to show.
@@ -242,6 +248,12 @@ pub(crate) unsafe fn damage(pi: usize, dmg: u8) -> u8 {
     if g.pi as usize != pi || g.dead {
         return PROP_HEALTH[pi];
     }
+    #[cfg(feature = "interaction-probe")]
+    reference_trace::probe_vals(
+        SIM_NOW as u32,
+        "ndmg",
+        &[dmg as i32, g.head_hit as i32, g.irritation as i32, g.health],
+    );
     if g.irritation == 3 {
         g.irritation = 2;
     }

@@ -1,0 +1,13 @@
+# Marines aim, close view (c2a1a, room 38): the first marine shoots the player standing 140 units away, level; frames show where the barrel points.
+map c2a1a
+0 trace 20
+0 god 1
+0 watch 8
+5 tpnear 8 140 0 0
+6 pin 1
+8 aimat 8 40
+20 aimat 8 40
+40 aimat 8 40
+60 aimat 8 40
+80 aimat 8 40
+100 aimat 8 40
