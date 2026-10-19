@@ -38,7 +38,7 @@ static CRIES: [(u8, [u8; 4]); 17] = [
 
 /// Kinds `think` has work for: the ones that cry on seeing the enemy or while idle, and the
 /// walkers with npc footsteps (scientist, Barney, zombie).
-const VOICED: u64 = (1 << 0)
+const VOICED_LOW: u32 = (1 << 0)
     | (1 << 1)
     | (1 << 2)
     | (1 << 5)
@@ -49,14 +49,18 @@ const VOICED: u64 = (1 << 0)
     | (1 << 19)
     | (1 << 20)
     | (1 << 21)
-    | (1 << 22)
-    | (1 << 55)
-    | (1 << 59);
+    | (1 << 22);
+/// Kinds 32..64 (the mask is two words: the guest does no 64-bit arithmetic): 55 and 59.
+const VOICED_HIGH: u32 = (1 << (55 - 32)) | (1 << (59 - 32));
 
 /// One shift and test for the actors that never speak (most of a map's props).
 #[inline(always)]
 pub fn voiced(kind: u8) -> bool {
-    kind < 64 && (VOICED >> kind) & 1 != 0
+    if kind < 32 {
+        (VOICED_LOW >> kind) & 1 != 0
+    } else {
+        kind < 64 && (VOICED_HIGH >> (kind - 32)) & 1 != 0
+    }
 }
 
 /// After an actor's own think: AlertSound on first sight of the enemy, the 1 in 100 per
