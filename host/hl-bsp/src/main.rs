@@ -17263,17 +17263,27 @@ fn cook_mdl(
             max_frames: spec.max_frames,
         };
         let spec = &spec;
+        // A blended sequence (the aim pitch of a shooting Barney or marine, the turn of a walk)
+        // holds one animation per blend, `numbones` records each. GoldSrc mixes the blends by the
+        // controller value; the cook bakes the value 0 pose (the level aim): the mix of the two
+        // blends that straddle 0 over the controller's range. Blend 0 alone looks down.
+        let mut blend_next = 0usize;
+        let mut blend_frac = 0.0f32;
         let (anim_b, animindex, numframes, fps, looping): (&[u8], usize, usize, f32, bool) =
             if spec.seq >= 0 && spec.seq < numseq {
                 let sd = seqindex + spec.seq as usize * 176;
                 let group = i(sd + 156) as usize;
-                // A blended sequence (the aim pitch of a shooting Barney or marine, the turn
-                // of a walk) holds one animation per blend, `numbones` records each. The game
-                // drives the blend from the enemy's pitch; the cook keeps the middle one, the
-                // level aim, instead of blend 0, which looks down (or fully turned).
                 let blends = i(sd + 120).max(1) as usize;
-                let ai = i(sd + 124) as usize;
-                let ai = if ai != 0 { ai + (blends - 1) / 2 * numbones * 12 } else { 0 };
+                let mut ai = i(sd + 124) as usize;
+                if ai != 0 && blends > 1 {
+                    let (start, end) = (f(sd + 136), f(sd + 144));
+                    let w = if end != start { ((0.0 - start) / (end - start)).clamp(0.0, 1.0) } else { 0.0 };
+                    let t = w * (blends - 1) as f32;
+                    let i0 = (t.floor() as usize).min(blends - 1);
+                    blend_frac = t - i0 as f32;
+                    blend_next = ai + (i0 + 1).min(blends - 1) * numbones * 12;
+                    ai += i0 * numbones * 12;
+                }
                 let nf = i(sd + 56).max(1) as usize;
                 let fps = f(sd + 32);
                 let looping = i(sd + 36) & 1 != 0; // STUDIO_LOOPING
@@ -17290,6 +17300,39 @@ fn cook_mdl(
             } else {
                 unreachable!("sequence bounds validated above")
             };
+        let (blend_next, blend_frac) = (blend_next, blend_frac);
+        // The six channels of bone `bi` at source frame `sframe`, the blends mixed.
+        let eval_dof = |bm: &BMeta, bi: usize, sframe: usize| -> [f32; 6] {
+            let at_dof = |base: usize| -> [f32; 6] {
+                let mut dof = bm.value;
+                let at = base + bi * 12; // this bone's mstudioanim_t
+                for d in 0..6 {
+                    let off = u16::from_le_bytes([anim_b[at + d * 2], anim_b[at + d * 2 + 1]]) as usize;
+                    if off != 0 {
+                        dof[d] = bm.value[d] + anim_value(anim_b, at + off, sframe) as f32 * bm.scale[d];
+                    }
+                }
+                dof
+            };
+            if animindex == 0 {
+                return bm.value;
+            }
+            let a = at_dof(animindex);
+            if blend_frac <= 0.0 {
+                return a;
+            }
+            let c = at_dof(blend_next);
+            let mut out = a;
+            for d in 0..6 {
+                let mut delta = c[d] - a[d];
+                if d >= 3 {
+                    let tau = core::f32::consts::TAU;
+                    delta -= tau * (delta / tau).round();
+                }
+                out[d] = a[d] + delta * blend_frac;
+            }
+            out
+        };
         let nbake = mdl_baked_frame_count(animindex, numframes, spec.max_frames, looping);
         let clip_first = frames.len().min(u16::MAX as usize) as u16;
         let bake_pose = |sframe: usize| -> BakedMdlPose {
@@ -17297,18 +17340,7 @@ fn cook_mdl(
             let mut open_bones: Vec<Mat34> = Vec::with_capacity(numbones);
             for bi in 0..numbones {
                 let bm = &bmeta[bi];
-                let mut dof = bm.value;
-                if animindex != 0 {
-                    let at = animindex + bi * 12; // this bone's mstudioanim_t
-                    for d in 0..6 {
-                        let off = u16::from_le_bytes([anim_b[at + d * 2], anim_b[at + d * 2 + 1]])
-                            as usize;
-                        if off != 0 {
-                            dof[d] = bm.value[d]
-                                + anim_value(anim_b, at + off, sframe) as f32 * bm.scale[d];
-                        }
-                    }
-                }
+                let mut dof = eval_dof(bm, bi, sframe);
                 let mut open_dof = dof;
                 if let Some(mouth) = mouth_controller {
                     if bi == mouth.bone {
@@ -17403,21 +17435,7 @@ fn cook_mdl(
                     (0..numbones)
                         .map(|bi| {
                             let bm = &bmeta[bi];
-                            let mut dof = bm.value;
-                            if animindex != 0 {
-                                let at = animindex + bi * 12;
-                                for d in 0..6 {
-                                    let off = u16::from_le_bytes([
-                                        anim_b[at + d * 2],
-                                        anim_b[at + d * 2 + 1],
-                                    ]) as usize;
-                                    if off != 0 {
-                                        dof[d] = bm.value[d]
-                                            + anim_value(anim_b, at + off, sframe) as f32
-                                                * bm.scale[d];
-                                    }
-                                }
-                            }
+                            let mut dof = eval_dof(bm, bi, sframe);
                             if let Some(mouth) = mouth_controller {
                                 if bi == mouth.bone {
                                     studio_controller_add(&mut dof, mouth.kind, mouth.start);
