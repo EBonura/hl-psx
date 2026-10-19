@@ -70,9 +70,9 @@ mod logic_state;
 mod map;
 mod map_catalog;
 mod menu;
-mod options_record;
 mod model;
 mod music;
+mod options_record;
 use psx_goldsrc::ordering;
 #[cfg(feature = "order-trace")]
 mod order_trace;
@@ -93,6 +93,7 @@ mod garg;
 mod leech;
 #[cfg_attr(feature = "semantic-input", allow(dead_code))]
 mod mapsnap;
+mod monster_voice;
 mod monsterjump;
 mod mortar;
 mod nihilanth;
@@ -104,7 +105,6 @@ mod scientist_logic;
 mod scratchpad;
 mod segments;
 mod setpiece_logic;
-mod monster_voice;
 mod setpiece_sfx;
 mod species;
 mod tank;
@@ -3697,7 +3697,11 @@ static mut WATER_VOID_OFF: [i32; 3] = [0; 3];
 #[optimize(size)]
 unsafe fn water_tri_hidden(m: &Map, tt: usize) -> bool {
     let i = m.tri_idx(tt);
-    let (a, b, c) = (m.vert(i[0] as usize), m.vert(i[1] as usize), m.vert(i[2] as usize));
+    let (a, b, c) = (
+        m.vert(i[0] as usize),
+        m.vert(i[1] as usize),
+        m.vert(i[2] as usize),
+    );
     let o = WATER_VOID_OFF;
     camera_leaf(
         m,
@@ -25769,7 +25773,9 @@ unsafe fn render_blood_fx(
 unsafe fn spark_sound(id: u8, at: [i32; 3]) {
     if id != u8::MAX {
         // Not impact_rng: a draw here would shift every later random outcome of the replay.
-        let roll = (SIM_NOW as u32 ^ at[0] as u32 ^ (at[2] as u32).rotate_left(11)).wrapping_mul(2_654_435_761) >> 16;
+        let roll = (SIM_NOW as u32 ^ at[0] as u32 ^ (at[2] as u32).rotate_left(11))
+            .wrapping_mul(2_654_435_761)
+            >> 16;
         sfx::play_map_authored(id, at, 10 + (roll % 21) as u8, 2);
     }
 }
@@ -27317,7 +27323,13 @@ unsafe fn emit_projected(
         return;
     }
 
-    emit_cv_near_fan(packets, &cv, emit_packet_of(slot, tri.tex), slot.backdrop, np);
+    emit_cv_near_fan(
+        packets,
+        &cv,
+        emit_packet_of(slot, tri.tex),
+        slot.backdrop,
+        np,
+    );
 }
 
 #[inline(never)]
@@ -31260,7 +31272,13 @@ unsafe fn emit_cv_near_fan(
     let n = render::near_clip(cv, &mut *core::ptr::addr_of_mut!(CLIP_CV));
     let mut k = 1;
     while k + 1 < n {
-        emit_cv(packets, &[CLIP_CV[0], CLIP_CV[k], CLIP_CV[k + 1]], mat, backdrop, np);
+        emit_cv(
+            packets,
+            &[CLIP_CV[0], CLIP_CV[k], CLIP_CV[k + 1]],
+            mat,
+            backdrop,
+            np,
+        );
         k += 1;
     }
 }
@@ -35371,7 +35389,13 @@ unsafe fn trace_sim_tick(m: &Map, state: reference_trace::TickState) {
     reference_trace::probe_vals(
         map_tick,
         "punch",
-        &[PUNCH_PITCH, PUNCH_YAW, PUNCH_ROLL, state.player_vel[1], state.on_ground as i32],
+        &[
+            PUNCH_PITCH,
+            PUNCH_YAW,
+            PUNCH_ROLL,
+            state.player_vel[1],
+            state.on_ground as i32,
+        ],
     );
     if due {
         trace_brush_entities(m, map_tick);

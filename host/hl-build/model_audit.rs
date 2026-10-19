@@ -83,8 +83,10 @@ fn map_pool_budgets(repository: &Path, maps: usize, model_pool_words: usize) -> 
         .map(|index| {
             let world =
                 fs::metadata(rooms.join(format!("room_{}.psxc", index * 2)))?.len() as usize;
-            Ok(staging_words + model_pool_words + room_budget::FACE_REGION_WORDS
-                - world.div_ceil(4).min(staging_words))
+            Ok(
+                staging_words + model_pool_words + room_budget::FACE_REGION_WORDS
+                    - world.div_ceil(4).min(staging_words),
+            )
         })
         .collect()
 }

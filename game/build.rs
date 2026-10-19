@@ -1289,7 +1289,11 @@ fn write_probe_script(out_dir: &std::path::Path) {
                 "weapons" => (9, [0; 6], String::new()),
                 // fallv SPEED : downward vertical speed in u/s, airborne (lands next tick on a floor)
                 // holdroll Q12 TICKS : keep the landing roll punch at that value for TICKS ticks
-                "holdroll" => (61, [num(2) as i32, num(3) as i32, 0, 0, 0, 0], String::new()),
+                "holdroll" => (
+                    61,
+                    [num(2) as i32, num(3) as i32, 0, 0, 0, 0],
+                    String::new(),
+                ),
                 "fallv" => (60, [num(2) as i32, 0, 0, 0, 0, 0], String::new()),
                 // hit KIND DMG : a hit on the player (1 fall 2 crush 3 bullet 4 slash
                 // 5 sonic 6 poison 7 acid 8 nerve gas 9 radiation)

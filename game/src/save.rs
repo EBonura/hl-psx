@@ -463,13 +463,7 @@ fn card_read(port: Port, file: &str, buf: &mut [u8]) -> Result<usize, CardResult
 #[cfg(target_arch = "mips")]
 #[inline(never)]
 #[optimize(size)]
-fn card_write(
-    port: Port,
-    file: &str,
-    title: &str,
-    data: &[u8],
-    format_blank: bool,
-) -> CardResult {
+fn card_write(port: Port, file: &str, title: &str, data: &[u8], format_blank: bool) -> CardResult {
     with_card(port, |card| match card.is_formatted() {
         Err(_) => CardResult::NoCard,
         Ok(formatted) => {

@@ -847,7 +847,11 @@ pub mod setpiece_audio {
         s("monster_bigmomma", "gonarch/gon_step1.wav", false, 3),
         s("monster_bigmomma", "gonarch/gon_die1.wav", false, 3),
         sc("@button_spark", "buttons/spark1.wav", 3),
-        sc("monster_headcrab,monster_babycrab", "headcrab/hc_headbite.wav", 3),
+        sc(
+            "monster_headcrab,monster_babycrab",
+            "headcrab/hc_headbite.wav",
+            3,
+        ),
         sc("monster_zombie", "zombie/claw_miss1.wav", 3),
         sc("monster_alien_grunt", "agrunt/ag_pain1.wav", 3),
         sc("monster_alien_grunt", "agrunt/ag_die1.wav", 3),
@@ -870,8 +874,16 @@ pub mod setpiece_audio {
         sc("monster_turret", "turret/tu_fire1.wav", 3),
         sc("monster_scientist", "scientist/sci_pain1.wav", 3),
         sc("monster_gargantua", "zombie/claw_strike1.wav", 3),
-        sc("monster_headcrab,monster_babycrab", "headcrab/hc_idle1.wav", 4),
-        sc("monster_headcrab,monster_babycrab", "headcrab/hc_alert1.wav", 4),
+        sc(
+            "monster_headcrab,monster_babycrab",
+            "headcrab/hc_idle1.wav",
+            4,
+        ),
+        sc(
+            "monster_headcrab,monster_babycrab",
+            "headcrab/hc_alert1.wav",
+            4,
+        ),
         sc("monster_zombie", "zombie/zo_alert10.wav", 4),
         sc("monster_zombie", "zombie/zo_idle1.wav", 4),
         sc("monster_houndeye", "houndeye/he_idle1.wav", 4),
@@ -880,9 +892,21 @@ pub mod setpiece_audio {
         sc("monster_alien_controller", "controller/con_idle1.wav", 4),
         sc("monster_ichthyosaur", "ichy/ichy_idle1.wav", 4),
         sc("monster_leech", "leech/leech_alert1.wav", 4),
-        sc("monster_sentry,monster_miniturret,monster_turret", "turret/tu_alert.wav", 4),
-        sc("monster_scientist,monster_barney,monster_zombie,monster_gman", "common/npc_step1.wav", 4),
-        sc("monster_scientist,monster_barney,monster_zombie,monster_gman", "common/npc_step3.wav", 4),
+        sc(
+            "monster_sentry,monster_miniturret,monster_turret",
+            "turret/tu_alert.wav",
+            4,
+        ),
+        sc(
+            "monster_scientist,monster_barney,monster_zombie,monster_gman",
+            "common/npc_step1.wav",
+            4,
+        ),
+        sc(
+            "monster_scientist,monster_barney,monster_zombie,monster_gman",
+            "common/npc_step3.wav",
+            4,
+        ),
     ];
 }
 

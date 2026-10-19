@@ -38,8 +38,20 @@ static CRIES: [(u8, [u8; 4]); 17] = [
 
 /// Kinds `think` has work for: the ones that cry on seeing the enemy or while idle, and the
 /// walkers with npc footsteps (scientist, Barney, zombie).
-const VOICED: u64 = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 10) | (1 << 11)
-    | (1 << 19) | (1 << 20) | (1 << 21) | (1 << 22) | (1 << 55) | (1 << 59);
+const VOICED: u64 = (1 << 0)
+    | (1 << 1)
+    | (1 << 2)
+    | (1 << 5)
+    | (1 << 6)
+    | (1 << 7)
+    | (1 << 10)
+    | (1 << 11)
+    | (1 << 19)
+    | (1 << 20)
+    | (1 << 21)
+    | (1 << 22)
+    | (1 << 55)
+    | (1 << 59);
 
 /// One shift and test for the actors that never speak (most of a map's props).
 #[inline(always)]
@@ -121,5 +133,7 @@ pub unsafe fn step(kind: u8, pi: usize, tick: u32, pos: [i32; 3]) {
 /// stream the rest of the simulation (and every recorded route) depends on.
 #[inline]
 pub fn idle_roll(pi: usize, tick: u32) -> bool {
-    (tick.wrapping_mul(2_654_435_761) ^ (pi as u32).wrapping_mul(40_503).rotate_left(7)) >> 8 & 0xffff < 656
+    (tick.wrapping_mul(2_654_435_761) ^ (pi as u32).wrapping_mul(40_503).rotate_left(7)) >> 8
+        & 0xffff
+        < 656
 }

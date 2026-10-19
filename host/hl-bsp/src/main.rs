@@ -7084,18 +7084,31 @@ fn water_submodel_paths(ents: &[u8], models: &[u8], n_models: usize) -> Vec<Opti
         if train {
             let o = sm * SZ_MODEL;
             let f = |k: usize| f32le(models, o + k * 4).unwrap_or(0.0);
-            let center = [(f(0) + f(3)) * 0.5, (f(1) + f(4)) * 0.5, (f(2) + f(5)) * 0.5];
+            let center = [
+                (f(0) + f(3)) * 0.5,
+                (f(1) + f(4)) * 0.5,
+                (f(2) + f(5)) * 0.5,
+            ];
             let mut corners: Vec<[f32; 3]> = Vec::new();
             let mut name = ent_value(block, "target").unwrap_or("").to_string();
             while !name.is_empty() && corners.len() < 32 {
                 let Some(node) = s.split('{').find(|b| {
-                    path_node_class(b, "path_corner") && ent_value(b, "targetname") == Some(name.as_str())
+                    path_node_class(b, "path_corner")
+                        && ent_value(b, "targetname") == Some(name.as_str())
                 }) else {
                     break;
                 };
-                corners.push(ent_value(node, "origin").and_then(parse_vec3).unwrap_or([0.0; 3]));
+                corners.push(
+                    ent_value(node, "origin")
+                        .and_then(parse_vec3)
+                        .unwrap_or([0.0; 3]),
+                );
                 let next = ent_value(node, "target").unwrap_or("").to_string();
-                name = if next == ent_value(block, "target").unwrap_or("") { String::new() } else { next };
+                name = if next == ent_value(block, "target").unwrap_or("") {
+                    String::new()
+                } else {
+                    next
+                };
             }
             offs.clear();
             for (i, c) in corners.iter().enumerate() {
@@ -12592,7 +12605,13 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
     let mut water_paths = water_submodel_paths(bsp.lump(LUMP_ENTITIES), models, n_models_total);
     for sm in 0..n_models_total {
         if let Some(offs) = &water_paths[sm] {
-            if !water_is_flood(models, sm, offs, bsp.lump(LUMP_NODES), bsp.lump(LUMP_PLANES)) {
+            if !water_is_flood(
+                models,
+                sm,
+                offs,
+                bsp.lump(LUMP_NODES),
+                bsp.lump(LUMP_PLANES),
+            ) {
                 water_paths[sm] = None;
             }
         }
@@ -13219,8 +13238,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
                         && raw_poly_flat(&render_poly, &raw_verts)
                 })
             {
-                let density = (s[0].hypot(s[1]).hypot(s[2])).max(t[0].hypot(t[1]).hypot(t[2]))
-                    * fw
+                let density = (s[0].hypot(s[1]).hypot(s[2])).max(t[0].hypot(t[1]).hypot(t[2])) * fw
                     / ow as f32;
                 let want = (64.0 * density).max(16.0);
                 let step = [128.0f32, 64.0, 32.0, 16.0]
@@ -13247,7 +13265,8 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
                             let hl = [
                                 (c(0)[0] as f32 + c(1)[0] as f32 + c(2)[0] as f32) / 3.0 * scale,
                                 (c(0)[2] as f32 + c(1)[2] as f32 + c(2)[2] as f32) / 3.0 * scale,
-                                (c(0)[1] as f32 + c(1)[1] as f32 + c(2)[1] as f32) / 3.0 * scale + 2.0,
+                                (c(0)[1] as f32 + c(1)[1] as f32 + c(2)[1] as f32) / 3.0 * scale
+                                    + 2.0,
                             ];
                             offs.iter().any(|o| {
                                 let leaf = point_leaf_from(
