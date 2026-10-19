@@ -666,7 +666,9 @@ pub mod setpiece_audio {
         /// Kept on an owner-addressed loop voice rather than as a one-shot.
         pub looping: bool,
         /// 1 carries gameplay information and may lower the quality of the
-        /// map's other effects to fit; 2 and 3 only use spare SPU RAM.
+        /// map's other effects to fit; 2 and 3 compete for rate like the rest but
+        /// are dropped first; 4 is spare SPU RAM only (placed after the allocation,
+        /// so no other sound loses rate for it).
         pub tier: u8,
     }
 
@@ -678,6 +680,23 @@ pub mod setpiece_audio {
             tier,
         }
     }
+
+    /// A one-shot that competes for rate with its ladder capped at [`CUE_CAP_HZ`]
+    /// (tier 3), or takes spare SPU RAM only (tier 4); see [`Sound::tier`].
+    const fn sc(class: &'static str, path: &'static str, tier: u8) -> Sound {
+        Sound {
+            class,
+            path,
+            looping: false,
+            tier,
+        }
+    }
+
+    /// Highest rate the tier-3 cues added after the original set are cooked at.
+    pub const CUE_CAP_HZ: u32 = 6_000;
+
+    /// First slot of the cues that use [`CUE_CAP_HZ`].
+    pub const FIRST_CUE: usize = 41;
 
     pub const GARG_STOMP: u8 = 0;
     pub const GARG_FLAME: u8 = 1;
@@ -725,7 +744,20 @@ pub mod setpiece_audio {
     pub const GON_PAIN: u8 = 38;
     pub const GON_STEP: u8 = 39;
     pub const GON_DIE: u8 = 40;
-    pub const COUNT: usize = 41;
+    // Sounds the original plays that the port used to leave out or to cover with a wrong
+    // sample, the set that fits the RAM floor (LIMITS-monsters.md has the rest). They compete
+    // for rate with a ladder capped at CUE_CAP_HZ and never take rate from dialogue.
+    pub const SPARK: u8 = 41;
+    pub const AG_PAIN: u8 = 42;
+    pub const AG_DIE: u8 = 43;
+    pub const CON_PAIN: u8 = 44;
+    pub const CON_DIE: u8 = 45;
+    pub const ICHY_PAIN: u8 = 46;
+    pub const ICHY_DIE: u8 = 47;
+    pub const BCL_BITE: u8 = 48;
+    pub const TU_DIE: u8 = 49;
+    pub const SCI_PAIN: u8 = 50;
+    pub const COUNT: usize = 51;
 
     /// Indexed by slot; within a tier, earlier slots are kept first.
     pub const SOUNDS: [Sound; COUNT] = [
@@ -790,6 +822,16 @@ pub mod setpiece_audio {
         s("monster_bigmomma", "gonarch/gon_pain2.wav", false, 3),
         s("monster_bigmomma", "gonarch/gon_step1.wav", false, 3),
         s("monster_bigmomma", "gonarch/gon_die1.wav", false, 3),
+        sc("@button_spark", "buttons/spark1.wav", 3),
+        sc("monster_alien_grunt", "agrunt/ag_pain1.wav", 3),
+        sc("monster_alien_grunt", "agrunt/ag_die1.wav", 3),
+        sc("monster_alien_controller", "controller/con_pain1.wav", 3),
+        sc("monster_alien_controller", "controller/con_die1.wav", 3),
+        sc("monster_ichthyosaur", "ichy/ichy_pain2.wav", 3),
+        sc("monster_ichthyosaur", "ichy/ichy_die2.wav", 3),
+        sc("monster_barnacle", "barnacle/bcl_bite3.wav", 3),
+        sc("monster_sentry,monster_miniturret,monster_turret", "turret/tu_die.wav", 3),
+        sc("monster_scientist", "scientist/sci_pain1.wav", 3),
     ];
 }
 
@@ -954,7 +996,7 @@ mod tests {
         for sound in SOUNDS.iter() {
             assert!(sound.path.ends_with(".wav"));
             assert_eq!(sound.path, sound.path.to_ascii_lowercase());
-            assert!((1..=3).contains(&sound.tier));
+            assert!((1..=4).contains(&sound.tier));
         }
         assert!(SOUNDS.windows(2).all(|w| w[0].tier <= w[1].tier));
     }

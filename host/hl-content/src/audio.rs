@@ -1685,10 +1685,16 @@ fn setpiece_candidates(map: &Path) -> Result<Vec<(usize, MapAudioKey)>> {
                 classes.insert(kind.to_ascii_lowercase());
             }
         }
+        // SF_BUTTON_SPARK_IF_OFF: a resting button or valve sparks.
+        if matches!(entity.get("classname").map(String::as_str), Some("func_button" | "func_rot_button"))
+            && entity.get("spawnflags").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0) & 64 != 0
+        {
+            classes.insert("@button_spark".to_string());
+        }
     }
     let mut out = Vec::new();
     for (slot, sound) in hl_format::setpiece_audio::SOUNDS.iter().enumerate() {
-        if !classes.contains(sound.class) {
+        if !sound.class.split(',').any(|c| classes.contains(c)) {
             continue;
         }
         let class = if sound.looping {
@@ -2172,10 +2178,29 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
     }
     let hev_words = crate::hev::Cooked::new(valve)?;
     let sentences = load_sentences(valve)?;
+    // Maps are independent of each other: only the memoised band losses, blobs and
+    // floors are shared, and they depend on the source alone. Each worker thread
+    // takes a contiguous run of maps (neighbouring maps share sounds) with its own
+    // caches, and the per-map rows are joined in map order, so the output is the
+    // same for any thread count (HL_VOICES_THREADS, default 1).
+    let all_maps: Vec<(usize, &str)> = map_list.split_whitespace().enumerate().collect();
+    let threads = std::env::var("HL_VOICES_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(1)
+        .clamp(1, 16);
+    let per_thread = all_maps.len().div_ceil(threads).max(1);
+    type Part = (Vec<String>, Vec<String>);
+    let parts: Vec<std::result::Result<Part, String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = all_maps
+            .chunks(per_thread)
+            .map(|run| {
+                let (valve, output, sentences, hev_words, core_profiles, previous_core) =
+                    (valve, output, &sentences, &hev_words, &core_profiles, &previous_core);
+                scope.spawn(move || -> std::result::Result<Part, String> {
+                    (|| -> Result<Part> {
     let mut manifest = Vec::new();
-    let mut rates_report = vec![String::from(
-        "map|id|key|class|rate_hz|bytes|seconds|predicted_loss_db|wavs",
-    )];
+    let mut rates_report: Vec<String> = Vec::new();
     // Band loss depends only on the source, and blobs only on (source, rate,
     // loop); many maps share both.
     let mut loss_cache: HashMap<String, Vec<(u32, f64)>> = HashMap::new();
@@ -2185,7 +2210,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
     // per (source, ladder): one sound can be a loop in one map and a shot in
     // another.
     let mut kept_cache: HashMap<String, Vec<(u32, f64)>> = HashMap::new();
-    for (map_index, map_name) in map_list.split_whitespace().enumerate() {
+    for &(map_index, map_name) in run {
         let bsp = valve.join("maps").join(format!("{map_name}.bsp"));
         if !bsp.exists() {
             continue;
@@ -2289,6 +2314,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
         let mut setpiece_kept: Vec<String> = Vec::new();
         let mut setpiece_dropped: Vec<String> = Vec::new();
         let mut joined: Vec<(u8, String)> = Vec::new();
+        let mut cue_keys: Vec<String> = Vec::new();
         for (slot, entry) in setpiece.iter() {
             let path = &entry.wavs[0];
             if planned.iter().any(|p| p.entry.key == entry.key) {
@@ -2303,11 +2329,46 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                 setpiece_dropped.push(format!("{path} (missing)"));
                 continue;
             }
-            planned.push(plan_entry(valve, entry)?);
+            let mut cue = plan_entry(valve, entry)?;
+            if *slot >= hl_format::setpiece_audio::FIRST_CUE
+                && hl_format::setpiece_audio::SOUNDS[*slot].tier == 3
+            {
+                // A cue that competes for rate is cooked no higher than the cap, so it
+                // takes little from the sounds it shares the bank with.
+                let cap = hl_format::setpiece_audio::CUE_CAP_HZ;
+                let from = cue.ladder.iter().position(|&r| r <= cap).unwrap_or(0);
+                cue.ladder.drain(..from);
+                cue.bytes.drain(..from);
+                cue_keys.push(entry.key.clone());
+            }
+            planned.push(cue);
             joined.push((
                 hl_format::setpiece_audio::SOUNDS[*slot].tier,
                 entry.key.clone(),
             ));
+        }
+        // Tier 4 (hl_format::setpiece_audio) is spare SPU RAM only: those samples
+        // stay out of the allocation, so every other sound gets exactly the rate
+        // it would get without them, and they take what is left afterwards.
+        let mut spare: Vec<Planned<'_>> = Vec::new();
+        let spare_keys: Vec<String> = joined
+            .iter()
+            .filter(|(tier, _)| *tier >= 4)
+            .map(|(_, key)| key.clone())
+            .collect();
+        for key in &spare_keys {
+            if let Some(i) = planned.iter().position(|p| &p.entry.key == key) {
+                spare.push(planned.remove(i));
+            }
+        }
+        joined.retain(|(tier, _)| *tier < 4);
+        // The capped tier-3 cues are allocated against everything else only if that leaves
+        // the map's speech at the rates it has without them (see below).
+        let mut cues: Vec<Planned<'_>> = Vec::new();
+        for key in &cue_keys {
+            if let Some(i) = planned.iter().position(|p| &p.entry.key == key) {
+                cues.push(planned.remove(i));
+            }
         }
         while minimum_pack_size(&planned) > budget || planned.len() > RUNTIME_MAX_MAP_AUDIO {
             let Some(victim) = joined
@@ -2338,9 +2399,14 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
         // The previous cooker left the full HEV logon out of maps whose other
         // speech filled the bank. Keep that choice when including it would
         // push the map's other sounds below their previous quality.
-        let (candidates, steps, relaxed) = loop {
+        let mut allocate = |planned: &mut Vec<Planned<'_>>| -> Result<(
+            Vec<psx_audio_cook::rate::Candidate>,
+            Option<Vec<usize>>,
+            Vec<MapAudioClass>,
+        )> {
+        Ok(loop {
             let mut candidates = Vec::with_capacity(planned.len());
-            for p in &planned {
+            for p in planned.iter() {
                 let cache_key = p.entry.wavs.join("|");
                 let losses = loss_cache.entry(cache_key).or_insert_with(|| {
                     let rates: Vec<u32> = RATE_LADDER
@@ -2537,7 +2603,64 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                 }
             }
             break (candidates, steps, relaxed);
+        })
         };
+        // First without the cues, then with them. If the cues cost any dialogue line rate
+        // (a line the map's story has at one rate without them and a lower one with), they
+        // go back to the spare-only list instead: authored speech never pays for a cry.
+        // Small talk (chatter), loops and effects may give up a step.
+        let mut base = allocate(&mut planned)?;
+        if !cues.is_empty() {
+            let speech_rates = |planned: &[Planned<'_>], steps: &Option<Vec<usize>>| -> Vec<(String, u32)> {
+                steps
+                    .iter()
+                    .flatten()
+                    .zip(planned)
+                    .filter(|(_, p)| p.entry.class == MapAudioClass::Dialogue)
+                    .map(|(&s, p)| (p.entry.key.clone(), p.ladder[s]))
+                    .collect()
+            };
+            let before = speech_rates(&planned, &base.1);
+            let kept_len = planned.len();
+            let fits = {
+                let cue_min: usize = cues.iter().map(|c| *c.bytes.last().unwrap()).sum();
+                minimum_pack_size(&planned) + cue_min + pack_overhead(planned.len() + cues.len()) - pack_overhead(planned.len()) <= budget
+                    && planned.len() + cues.len() <= RUNTIME_MAX_MAP_AUDIO
+            };
+            let mut accepted = false;
+            if fits && base.1.is_some() {
+                let held: Vec<String> = planned.iter().map(|p| p.entry.key.clone()).collect();
+                let cue_entries = std::mem::take(&mut cues);
+                planned.extend(cue_entries);
+                let trial = allocate(&mut planned)?;
+                let after = speech_rates(&planned, &trial.1);
+                let intact = trial.1.is_some()
+                    && before.iter().all(|(k, rate)| after.iter().find(|(a, _)| a == k).is_none_or(|(_, r)| r >= rate));
+                if intact {
+                    base = trial;
+                    accepted = true;
+                    for p in planned.iter().filter(|p| cue_keys.contains(&p.entry.key)) {
+                        setpiece_kept.push(format!("{} (cue)", p.entry.wavs[0]));
+                    }
+                } else {
+                    // Take the cues back out and redo the allocation without them.
+                    let mut at = planned.len();
+                    while at > 0 {
+                        at -= 1;
+                        if cue_keys.contains(&planned[at].entry.key) {
+                            cues.push(planned.remove(at));
+                        }
+                    }
+                    let _ = (kept_len, held);
+                    base = allocate(&mut planned)?;
+                }
+            }
+            if !accepted {
+                // The cues that did not make it compete as spare-only samples instead.
+                spare.extend(cues.drain(..));
+            }
+        }
+        let (candidates, steps, relaxed) = base;
         if !relaxed.is_empty() {
             println!(
                 "  {map_name}: no-regression floors relaxed for {} class(es)",
@@ -2562,6 +2685,75 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             )
             .into());
         };
+        let mut candidates = candidates;
+        let mut steps = steps;
+        // Place the spare-only samples in the bytes the allocation left over, each at
+        // the highest rate of its ladder that still fits (and under the entry cap).
+        for p in spare {
+            let used = pack_overhead(planned.len())
+                + planned
+                    .iter()
+                    .zip(&steps)
+                    .map(|(q, &s)| q.bytes[s])
+                    .sum::<usize>();
+            let grown = pack_overhead(planned.len() + 1) + used - pack_overhead(planned.len());
+            let fit = (0..p.ladder.len()).find(|&s| grown + p.bytes[s] <= budget);
+            match fit {
+                Some(step) if planned.len() < RUNTIME_MAX_MAP_AUDIO => {
+                    let cache_key = p.entry.wavs.join("|");
+                    let losses = loss_cache.entry(cache_key).or_insert_with(|| {
+                        let rates: Vec<u32> = RATE_LADDER
+                            .iter()
+                            .copied()
+                            .chain(std::iter::once(p.source.wav.rate.min(11_025)))
+                            .collect();
+                        let loss = psx_audio_cook::rate::band_loss(
+                            &p.source.wav.samples,
+                            p.source.wav.rate,
+                            &rates,
+                        );
+                        rates.into_iter().zip(loss).collect()
+                    });
+                    let loss: Vec<f64> = p
+                        .ladder
+                        .iter()
+                        .map(|rate| {
+                            losses
+                                .iter()
+                                .find(|(r, _)| r == rate)
+                                .map(|(_, l)| *l)
+                                .unwrap_or(0.0)
+                        })
+                        .collect();
+                    setpiece_kept.push(format!("{} (spare)", p.entry.wavs[0]));
+                    candidates.push(psx_audio_cook::rate::Candidate {
+                        bytes: p.bytes.clone(),
+                        loss,
+                        weight: 0.0,
+                        max_step: p.ladder.len() - 1,
+                    });
+                    steps.push(step);
+                    planned.push(p);
+                }
+                _ => setpiece_dropped.push(format!(
+                    "{} (no spare SPU: needs {} B at its lowest rate, {} B left)",
+                    p.entry.wavs[0],
+                    p.bytes.last().copied().unwrap_or(0),
+                    budget.saturating_sub(used)
+                )),
+            }
+        }
+        println!(
+            "  {map_name}: spare SPU {} B of {budget} after the bank",
+            budget.saturating_sub(
+                pack_overhead(planned.len())
+                    + planned
+                        .iter()
+                        .zip(&steps)
+                        .map(|(q, &s)| q.bytes[s])
+                        .sum::<usize>()
+            )
+        );
         if !setpiece_kept.is_empty() || !setpiece_dropped.is_empty() {
             println!(
                 "  {map_name}: set-piece audio kept [{}] dropped [{}]",
@@ -2692,6 +2884,26 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                 hev_spu
             );
         }
+    }
+                    Ok((manifest, rates_report))
+                    })()
+                    .map_err(|e| e.to_string())
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("voice cooking thread"))
+            .collect()
+    });
+    let mut manifest = Vec::new();
+    let mut rates_report = vec![String::from(
+        "map|id|key|class|rate_hz|bytes|seconds|predicted_loss_db|wavs",
+    )];
+    for part in parts {
+        let (m, r) = part?;
+        manifest.extend(m);
+        rates_report.extend(r);
     }
     fs::write(output.join("manifest.txt"), manifest.join("\n") + "\n")?;
     fs::write(output.join("rates.txt"), rates_report.join("\n") + "\n")?;

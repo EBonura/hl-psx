@@ -1923,11 +1923,20 @@ fn cook_assets(repository: &Path, valve: &Path, psoxide: &Path) -> Result<()> {
         &[OsStr::new("menu"), valve.as_os_str(), menu.as_os_str()],
         "extract menu and HUD assets",
     )?;
-    run_content(
-        &bins.content,
-        &[OsStr::new("music"), valve.as_os_str(), music.as_os_str()],
-        "extract and decode CD audio",
-    )?;
+    // The CD audio is the longest stage and depends on nothing a sound-bank change touches.
+    // HLPSX_REUSE_MUSIC=1 keeps an existing data/music for an iteration cook; a release
+    // cook leaves it unset.
+    if std::env::var_os("HLPSX_REUSE_MUSIC").is_some()
+        && fs::read_dir(&music).is_ok_and(|mut entries| entries.next().is_some())
+    {
+        println!("==> extract and decode CD audio: reusing {} (HLPSX_REUSE_MUSIC)", music.display());
+    } else {
+        run_content(
+            &bins.content,
+            &[OsStr::new("music"), valve.as_os_str(), music.as_os_str()],
+            "extract and decode CD audio",
+        )?;
+    }
     fs::create_dir_all(&sfx)?;
     let sound = valve.join("sound");
     let sfx_pack = sfx.join("chunk_3000.psxa");
@@ -3306,11 +3315,21 @@ fn main() -> Result<()> {
         if options.action == Action::Models {
             invalidate_cook_manifest(&repository)?;
             let bins = build_host_tools(&repository)?;
-            cook_models(&repository, &valve, &bins)?;
+            // HLPSX_ROOMS_ONLY=1 (iteration cooks after a sound-bank change): the models did
+            // not change, only the rooms' slot bindings did.
+            if std::env::var_os("HLPSX_ROOMS_ONLY").is_none() {
+                cook_models(&repository, &valve, &bins)?;
+            }
             // Script clip slots are map-local now, so a model recook must also
             // refresh the dependent room logic tokens and sparse variant index.
             cook_rooms(&repository, &valve, &bins)?;
             model_audit::audit_model_residency(&repository, Some(&valve), &maps())?;
+            // HLPSX_SEAL=1 (iteration cooks, never a release): record the current tree as the
+            // cook after a partial recook, so pack and pgo accept it.
+            if std::env::var_os("HLPSX_SEAL").is_some() {
+                write_cook_manifest(&repository, &valve, psoxide.as_deref().expect("hydrated"))?;
+                return Ok(());
+            }
             println!(
                 "model-only cook invalidated {}; run a full `assets` cook before packing",
                 cook_manifest_path(&repository).display()
