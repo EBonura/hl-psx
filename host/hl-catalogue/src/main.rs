@@ -700,6 +700,30 @@ fn render(
                         format!("{}:ev{}@f{}(t{})", s.label, e.id, e.frame, tick)
                     })
                     .collect();
+                let roster = std::fs::read_to_string(ctx.repo.join("host/hl-content/model-roster.txt")).unwrap_or_default();
+                let base = Path::new(mp).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+                let spec = roster
+                    .lines()
+                    .filter(|l| !l.starts_with('#'))
+                    .filter_map(|l| {
+                        let mut f = l.splitn(3, '|');
+                        let _ty = f.next()?;
+                        let model = f.next()?;
+                        let spec = f.next()?;
+                        (model.to_ascii_lowercase() == base).then(|| spec.to_string())
+                    })
+                    .next();
+                if let Some(spec) = spec {
+                    let cooked: Vec<String> = spec.split(',').filter(|t| !t.contains('=')).map(|t| t.split(':').next().unwrap_or("").to_ascii_lowercase()).collect();
+                    let uncooked: Vec<String> = m
+                        .seqs
+                        .iter()
+                        .filter(|s| s.events.iter().any(|e| matches!(e.id, 1004 | 1008 | 5004) || e.id < 1000))
+                        .filter(|s| !cooked.contains(&s.label.to_ascii_lowercase()) && !cooked.contains(&s.index.to_string()))
+                        .map(|s| s.label.clone())
+                        .collect();
+                    let _ = writeln!(d, "\nport clips: `{spec}`; sequences with sound or attack events the port does not cook: {}", if uncooked.is_empty() { "none".to_string() } else { uncooked.join(", ") });
+                }
                 let _ = writeln!(d, "\nsequences {} (blended: {}), bone controllers {}; animation events: {}", m.seqs.len(), if blends.is_empty() { "none".into() } else { blends.join(", ") }, m.bone_controllers.len(), if events.is_empty() { "none".into() } else { events.join(" ") });
             }
         }

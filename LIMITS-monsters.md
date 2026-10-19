@@ -96,9 +96,9 @@ original set therefore come in two kinds. The ones that replace a wrong sample o
 combat feedback (spark, bites, claw miss and strike, alien grunt, controller,
 ichthyosaur, barnacle, leech, roach and turret death, scientist pain, Gargantua slash)
 compete for rate with a ladder capped at 6,000 Hz, and never take rate from an authored
-dialogue line; 351 of the 2,564 loop and effect entries of the other sounds, and 12 of
-the chatter lines, give up one or more ladder steps for them (none below the floor the
-previous cooker set; the rates of all 2,564 entries are otherwise unchanged). Where the
+dialogue line; 351 of the 2,564 other bank entries (129 loops, 210 one-shot effects and 12
+chatter lines; no dialogue) give up one or more ladder steps for them, none below the
+floor the previous cooker set, and 16 gain a step where a cry was left out. Where the
 cry still does not fit the runtime stays silent: it never plays another sample. Not
 carried, as maps that place the class / maps carried: headcrab bite 7 / 49, zombie claw
 miss 1 / 19, alien grunt pain, death and punch 4 / 14 each, controller pain and death
