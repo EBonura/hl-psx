@@ -1,7 +1,8 @@
 //! User options: screen position (TV centering), brightness, music/SFX volume,
-//! analog-stick deadzone. Held in RAM -- they persist
-//! across menu<->play within a session and reset on power cycle (no memory-card
-//! save). Modelled on the Celeste Classic Collection's options.
+//! analog-stick deadzones. Held in RAM across menu<->play within a session and
+//! written to the memory card (one `psx-settings` record, see `options_record`)
+//! when an options page is left, then read back at boot. Modelled on the Celeste
+//! Classic Collection's options.
 
 use psx_display::{Brightness, Label, ScreenOffset};
 use psx_pad::Deadzone;
@@ -12,12 +13,13 @@ use psx_spu::{CdVolume, Volume};
 /// The display mode `main` starts the GPU in; the screen offset moves its window.
 pub const DISPLAY: DisplayConfig = DisplayConfig::new(VideoMode::Ntsc, Resolution::R320X240);
 
-pub const VOL_MAX: u8 = 8; // slider steps 0..8
-pub const ANALOG_DEADZONE_DEFAULT: u8 = 28;
-pub const ANALOG_DEADZONE_MAX: u8 = 64;
+pub use crate::options_record::{
+    ANALOG_DEADZONE_DEFAULT, ANALOG_DEADZONE_MAX, BRIGHTNESS_LEVELS, DEFAULT_BRIGHTNESS, VOL_MAX,
+};
+use crate::options_record::{Options, Saved, SCREEN_RANGE};
 
 /// TV centering: +-24 px (X) and lines (Y) of screen shift.
-pub static mut SCREEN: ScreenOffset<24> = ScreenOffset::CENTRE;
+pub static mut SCREEN: ScreenOffset<SCREEN_RANGE> = ScreenOffset::CENTRE;
 pub static mut MUSIC_VOL: u8 = VOL_MAX; // CD-DA (music) 0..8
 pub static mut SFX_VOL: u8 = VOL_MAX; // SPU voices (SFX + speech) 0..8
 
@@ -46,11 +48,9 @@ static mut LOOK_DEADZONE_ZONE: Deadzone = Deadzone::new(ANALOG_DEADZONE_DEFAULT 
 // changes), and the model paths pay one call that returns immediately at the
 // default level.
 
-pub const BRIGHTNESS_LEVELS: u8 = 8;
-/// Default to displayed level 2 (zero-based index 1).
-/// Index 4 preserves cooked lighting; lower levels darken and higher levels
-/// lift mid-tones. The full eight-level range remains available in Options.
-pub const DEFAULT_BRIGHTNESS: u8 = 1;
+// Level 4 (zero-based) preserves cooked lighting; lower levels darken and higher
+// levels lift mid-tones. The full eight-level range remains available in Options,
+// and `DEFAULT_BRIGHTNESS` (level 2) is what a fresh boot starts on.
 
 /// Q8 blend weight from `v` toward the curve target for each level: negative
 /// pulls toward `v^2` (darker), positive toward `sqrt(v)` (brighter), and zero
@@ -182,9 +182,19 @@ pub fn music_cd_volume() -> CdVolume {
 
 /// Adjust a setting by index (0 screen X, 1 screen Y, 2 music, 3 SFX,
 /// 4 move deadzone, 5 look deadzone, 6 brightness) by `delta` and apply it
-/// live. Returns the new value.
+/// live. Returns the new value, and remembers a change for the card.
 #[optimize(size)]
 pub fn adjust(index: usize, delta: i32) -> i32 {
+    let before = value(index);
+    let now = adjust_value(index, delta);
+    if now != before {
+        unsafe { PERSIST_DIRTY = true };
+    }
+    now
+}
+
+#[optimize(size)]
+fn adjust_value(index: usize, delta: i32) -> i32 {
     unsafe {
         match index {
             0 => {
@@ -276,6 +286,62 @@ pub fn move_deadzone() -> Deadzone {
 #[cfg(not(feature = "semantic-input"))]
 pub fn look_deadzone() -> Deadzone {
     unsafe { LOOK_DEADZONE_ZONE }
+}
+
+// ---- Persistence -----------------------------------------------------------
+// The card record is `options_record` (pure, host-tested); these three move
+// the statics in and out of it.
+
+/// An option changed since the card was last written.
+static mut PERSIST_DIRTY: bool = false;
+
+#[optimize(size)]
+fn current() -> Options {
+    unsafe {
+        Options {
+            move_deadzone: MOVE_DEADZONE,
+            look_deadzone: LOOK_DEADZONE,
+            music: MUSIC_VOL,
+            sfx: SFX_VOL,
+            brightness: BRIGHTNESS,
+            screen: SCREEN,
+        }
+    }
+}
+
+/// Take the options from a card record. Nothing is applied to the hardware
+/// here; the caller follows with `apply_all`.
+#[optimize(size)]
+pub fn restore(record: &Saved) {
+    let o = Options::from_record(record);
+    unsafe {
+        MOVE_DEADZONE = o.move_deadzone;
+        MOVE_DEADZONE_ZONE = Deadzone::new(o.move_deadzone as i16);
+        LOOK_DEADZONE = o.look_deadzone;
+        LOOK_DEADZONE_ZONE = Deadzone::new(o.look_deadzone as i16);
+        MUSIC_VOL = o.music;
+        SFX_VOL = o.sfx;
+        BRIGHTNESS = o.brightness;
+        BRIGHT_MIX = BRIGHTNESS_MIX[o.brightness as usize];
+        SCREEN = o.screen;
+        PERSIST_DIRTY = false;
+    }
+}
+
+/// Write the options to the card when one changed since the last write. Called
+/// where a player leaves an options page, so a run of adjustments is one card
+/// write. A missing, unformatted or full card is not an error here: the
+/// options simply last for the session, as they did before they were saved.
+#[optimize(size)]
+pub fn persist_if_changed() {
+    let dirty = unsafe {
+        let dirty = PERSIST_DIRTY;
+        PERSIST_DIRTY = false;
+        dirty
+    };
+    if dirty {
+        let _ = crate::save::write_settings(&current().to_record());
+    }
 }
 
 // ---- Difficulty ------------------------------------------------------------

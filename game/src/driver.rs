@@ -53,6 +53,50 @@ pub fn quad_flat(verts: [(i16, i16); 4], r: u8, g: u8, b: u8) {
     with(|gpu| gpu.draw(&QuadFlat::new(verts, r, g, b)));
 }
 
+/// A flat quad drawn through a semi-transparency equation, now: the draw mode
+/// is written first, as for [`tri_flat_blended`].
+#[inline(never)]
+pub fn quad_flat_blended(verts: [(i16, i16); 4], r: u8, g: u8, b: u8, blend_mode: BlendMode) {
+    with(|gpu| {
+        gpu.set_draw_mode(TextureMaterial::blended(0, 0, (r, g, b), blend_mode));
+        gpu.draw(&QuadFlat::new(verts, r, g, b).translucent());
+    });
+}
+
+/// GP0(80h), a VRAM-to-VRAM rectangle copy. The SDK has no packet for it; the
+/// pause menu is the only user.
+#[repr(C, align(4))]
+struct VramCopy {
+    tag: u32,
+    command: u32,
+    from: u32,
+    to: u32,
+    size: u32,
+}
+
+// SAFETY: `repr(C)`, 4-byte aligned, a tag word and then four initialised `u32`
+// payload words that nothing mutates while the packet is borrowed.
+unsafe impl psx_gpu::prim::GpuPacket for VramCopy {
+    const WORDS: u8 = 4;
+}
+
+/// Copy a rectangle of VRAM, now: `size` pixels from `from` to `to`, each a
+/// top-left (x, y). The copy follows the mask-bit mode, so a caller that
+/// needs every pixel copied clears it first (`MaskMode::empty()`).
+#[inline(never)]
+pub fn copy_vram(from: (u16, u16), to: (u16, u16), size: (u16, u16)) {
+    let pack = |(x, y): (u16, u16)| (y as u32) << 16 | x as u32;
+    with(|gpu| {
+        gpu.draw(&VramCopy {
+            tag: 0,
+            command: 0x8000_0000,
+            from: pack(from),
+            to: pack(to),
+            size: pack((size.0, size.1)),
+        })
+    });
+}
+
 /// A flat triangle, now. A translucent mode first writes its draw mode.
 #[inline(never)]
 pub fn tri_flat_blended(verts: [(i16, i16); 3], r: u8, g: u8, b: u8, blend_mode: BlendMode) {

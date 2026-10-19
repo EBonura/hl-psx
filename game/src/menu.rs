@@ -1415,6 +1415,7 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
                 } else if input.back {
                     play_menu_accept();
                     screen = MenuScreen::Main;
+                    crate::settings::persist_if_changed();
                 }
             }
             MenuScreen::Debug => {

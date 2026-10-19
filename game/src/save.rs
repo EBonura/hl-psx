@@ -26,6 +26,9 @@ use crate::{N_AMMO, N_WEAPONS};
 const FILE_MANUAL: &str = "BESLES-00000HLPSX001";
 #[cfg(any(test, target_arch = "mips"))]
 const FILE_AUTO: &str = "BESLES-00000HLPSX002";
+/// The options record (`settings::Saved`), one block beside the two saves.
+#[cfg(target_arch = "mips")]
+const FILE_SETTINGS: &str = "BESLES-00000HLPSX003";
 
 /// Two slots, because one is a data-loss bug waiting to happen: an autosave
 /// firing at a level change would silently replace the save the player made
@@ -469,6 +472,41 @@ pub fn write(
             }
         }
     })
+}
+
+/// The options record from the first card that holds one, port 1 first.
+#[cfg(target_arch = "mips")]
+#[inline(never)]
+#[optimize(size)]
+pub fn read_settings() -> Option<crate::options_record::Saved> {
+    for port in [Port::One, Port::Two] {
+        let found = with_card(port, |card| match card.is_formatted() {
+            Ok(true) => psx_settings::load(card, FILE_SETTINGS).ok(),
+            _ => None,
+        });
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+/// Write the options record to the first formatted card with room for it. An
+/// unformatted card is left alone: a setting is not worth a card's directory,
+/// so only a save (which asks first) formats.
+#[cfg(target_arch = "mips")]
+#[inline(never)]
+#[optimize(size)]
+pub fn write_settings(p: &crate::options_record::Saved) -> bool {
+    for port in [Port::One, Port::Two] {
+        let done = with_card(port, |card| {
+            psx_settings::save(card, FILE_SETTINGS, "HALF-LIFE SETTINGS", p).is_ok()
+        });
+        if done {
+            return true;
+        }
+    }
+    false
 }
 
 /// Highest sequence already on the card, 0 when neither slot is readable.

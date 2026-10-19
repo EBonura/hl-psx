@@ -73,6 +73,7 @@ mod menu;
 mod model;
 mod music;
 use psx_goldsrc::ordering;
+mod options_record;
 #[cfg(feature = "order-trace")]
 mod order_trace;
 mod phys;
@@ -852,6 +853,10 @@ static mut CAM_CUR: TickCamera = TickCamera {
     yaw: 0,
     pitch: 0,
 };
+/// The interpolation phase of the last frame built, so a frame built again
+/// behind the pause menu (a brightness change) takes the same camera.
+#[cfg(feature = "decoupled-present")]
+static mut RENDER_PHASE_LAST: i32 = 0;
 /// Render-only randomness (view shake, explosion burst scatter). The
 /// simulation's `IMPACT_RNG` must not advance with presented-frame count, or
 /// a faster renderer would replay a different combat sequence from the same
@@ -2034,6 +2039,9 @@ enum PauseExit {
     /// A save was loaded: relaunch this room, then PENDING_RESTORE overrides
     /// the spawn play() would otherwise compute.
     LoadedSave(usize),
+    /// The menu closed only so the frame behind it can be built again (a new
+    /// brightness); it opens again where it was.
+    Rerender,
 }
 
 #[cfg(not(feature = "semantic-input"))]
@@ -2061,6 +2069,13 @@ const PAUSE_WHITE: (u8, u8, u8) = (238, 238, 230);
 const PAUSE_AMBER: (u8, u8, u8) = (255, 170, 0);
 #[cfg(not(feature = "semantic-input"))]
 const PAUSE_DIM: (u8, u8, u8) = (96, 96, 92);
+/// Page titles and detail columns: lighter than a disabled row.
+#[cfg(not(feature = "semantic-input"))]
+const PAUSE_TITLE: (u8, u8, u8) = (170, 170, 160);
+/// Left, top, right and bottom of the area the menu draws in, as the rows of
+/// the clean frame it is restored from before every redraw.
+#[cfg(not(feature = "semantic-input"))]
+const PAUSE_BOX: (i16, i16, i16, i16) = (8, 12, 312, 212);
 #[cfg(not(feature = "semantic-input"))]
 const PAUSE_ARMED: (u8, u8, u8) = (75, 53, 10);
 
@@ -2171,41 +2186,70 @@ fn draw_next_loading_screen(fb: &mut DoubleBuffer) {
     draw_loading_strip(fb, unsafe { LOADING_TICK });
 }
 
+// The pause menu is drawn over the finished frame, which stays on screen
+// behind it: black at three quarters under the text, rows left-aligned as on the
+// title screen. `run_pause_menu` restores the frame under the menu before each
+// redraw, so these only ever add the menu.
+//
 // Pause UI is independent of gameplay throughput. Keep its renderer out of
 // the game loop and optimize its command setup for the console code budget.
+
+/// Dim a rectangle of the frame: two passes of black at half strength, a quarter
+/// of the picture left, so the game stays in view and the menu text stays
+/// readable over whatever the frame holds there.
 #[inline(never)]
 #[optimize(size)]
 #[cfg(not(feature = "semantic-input"))]
-fn draw_pause_menu(fb: &mut DoubleBuffer, sel: usize, status: &str) {
-    driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
-    // Six rows plus a status line: the panel is taller and the rows tighter
-    // than the original four-item menu, which ran out of frame at "Debug".
-    // Seven rows 18 apart end at 201, so the status line at 206 sits below
-    // "Main Menu" instead of on top of it, inside a panel that reaches 226.
-    driver::quad_flat([(40, 22), (280, 22), (40, 230), (280, 230)], 10, 10, 10);
-    driver::quad_flat([(44, 26), (276, 26), (44, 226), (276, 226)], 20, 18, 14);
-    hltext::draw_centered_scaled(34, "HALF-LIFE", hltext::SMALL_Q8, PAUSE_WHITE);
-    hltext::draw_centered_scaled(52, "Paused", hltext::SMALL_Q8, PAUSE_DIM);
+fn pause_dim(x0: i16, y0: i16, x1: i16, y1: i16) {
+    for _ in 0..2 {
+        driver::quad_flat_blended(
+            [(x0, y0), (x1, y0), (x0, y1), (x1, y1)],
+            0,
+            0,
+            0,
+            psx_gpu::material::BlendMode::Average,
+        );
+    }
+}
+
+/// The armed row's plate: amber added to the dimmed frame, so the game still
+/// shows through it.
+#[inline(never)]
+#[optimize(size)]
+#[cfg(not(feature = "semantic-input"))]
+fn pause_glow(x0: i16, y0: i16, x1: i16, y1: i16) {
+    driver::quad_flat_blended(
+        [(x0, y0), (x1, y0), (x0, y1), (x1, y1)],
+        PAUSE_ARMED.0,
+        PAUSE_ARMED.1,
+        PAUSE_ARMED.2,
+        psx_gpu::material::BlendMode::Add,
+    );
+}
+
+#[inline(never)]
+#[optimize(size)]
+#[cfg(not(feature = "semantic-input"))]
+fn draw_pause_menu(sel: usize, status: &str) {
+    // Seven rows 18 apart, a title above them and a status line below.
+    pause_dim(PAUSE_BOX.0, PAUSE_BOX.1, 196, PAUSE_BOX.3);
+    hltext::draw_text_scaled(24, 22, "HALF-LIFE", hltext::SMALL_Q8, PAUSE_WHITE);
+    hltext::draw_text_scaled(24, 38, "Paused", hltext::SMALL_Q8, PAUSE_TITLE);
 
     let mut i = 0usize;
     while i < PAUSE_ITEMS.len() {
-        let y = 76 + i as i16 * 18;
+        let y = 64 + i as i16 * 18;
         if i == sel {
-            driver::quad_flat(
-                [(88, y - 3), (232, y - 3), (88, y + 17), (232, y + 17)],
-                PAUSE_ARMED.0,
-                PAUSE_ARMED.1,
-                PAUSE_ARMED.2,
-            );
-            hltext::draw_centered_scaled(y, PAUSE_ITEMS[i], hltext::SMALL_Q8, PAUSE_WHITE);
+            pause_glow(14, y - 3, 164, y + 15);
+            hltext::draw_text_scaled(24, y, PAUSE_ITEMS[i], hltext::SMALL_Q8, PAUSE_WHITE);
         } else {
-            hltext::draw_centered_scaled(y, PAUSE_ITEMS[i], hltext::SMALL_Q8, PAUSE_AMBER);
+            hltext::draw_text_scaled(24, y, PAUSE_ITEMS[i], hltext::SMALL_Q8, PAUSE_AMBER);
         }
         i += 1;
     }
 
     if !status.is_empty() {
-        hltext::draw_centered_scaled(206, status, hltext::SMALL_Q8, PAUSE_WHITE);
+        hltext::draw_text_scaled(24, 192, status, hltext::SMALL_Q8, PAUSE_WHITE);
     }
 }
 
@@ -2308,18 +2352,18 @@ static mut LAST_SAVE_VBLANKS: u32 = 0;
 #[inline(never)]
 #[optimize(size)]
 unsafe fn save_with_badge(
-    fb: &mut DoubleBuffer,
     target: save::Target,
     cp: &save::Checkpoint,
 ) -> save::CardResult {
     use psx_font::TextSink;
     let text = hltext::Sink::SMALL;
-    // Amber on a dark plate, clear of the HUD's own top-right weapon icon.
-    driver::quad_flat([(228, 6), (314, 6), (228, 26), (314, 26)], 12, 10, 6);
-    text.draw(234, 9, "SAVING", PAUSE_AMBER);
+    // Amber on a dark plate, top right of the menu's area, drawn straight onto
+    // the buffer that is on screen (the redraw after the write restores the
+    // frame under it).
+    driver::quad_flat([(226, 14), (306, 14), (226, 34), (306, 34)], 12, 10, 6);
+    text.draw(232, 17, "SAVING", PAUSE_AMBER);
     driver::with(|gpu| gpu.wait_idle());
     interrupts::wait_vblank();
-    driver::with(|gpu| fb.swap(gpu));
 
     let start = interrupts::vblank_count();
     // The map's progress goes to the card with the checkpoint, and stays in RAM
@@ -2369,41 +2413,28 @@ impl Row {
     }
 }
 
-/// Scrolling full-screen pause page. Draws through `psx_font::TextSink` rather
-/// than a concrete renderer, so the same widget serves the menu atlas and the
-/// in-game one instead of existing twice.
+/// Scrolling pause page. Draws through `psx_font::TextSink` rather than a
+/// concrete renderer, so the same widget serves the menu atlas and the in-game
+/// one instead of existing twice.
 #[inline(never)]
 #[optimize(size)]
 #[cfg(not(feature = "semantic-input"))]
-fn draw_pause_list(
-    fb: &mut DoubleBuffer,
-    title: &str,
-    rows: usize,
-    sel: usize,
-    row: &dyn Fn(usize) -> Row,
-) {
+fn draw_pause_list(title: &str, rows: usize, sel: usize, row: &dyn Fn(usize) -> Row) {
     use psx_font::TextSink;
     const VISIBLE: usize = 7;
     let text = hltext::Sink::SMALL;
-    driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
-    driver::quad_flat([(10, 18), (310, 18), (10, 226), (310, 226)], 10, 10, 10);
-    driver::quad_flat([(14, 22), (306, 22), (14, 222), (306, 222)], 20, 18, 14);
-    text.draw_centered(160, 38, title, PAUSE_DIM);
+    pause_dim(PAUSE_BOX.0, PAUSE_BOX.1, PAUSE_BOX.2, PAUSE_BOX.3);
+    text.draw(22, 22, title, PAUSE_TITLE);
 
     let max_first = rows.saturating_sub(VISIBLE);
     let first = sel.saturating_sub(VISIBLE / 2).min(max_first);
     let last = (first + VISIBLE).min(rows);
     let mut i = first;
     while i < last {
-        let y = 62 + (i - first) as i16 * 20;
+        let y = 44 + (i - first) as i16 * 20;
         let r = row(i);
         if i == sel {
-            driver::quad_flat(
-                [(20, y - 3), (300, y - 3), (20, y + 17), (300, y + 17)],
-                PAUSE_ARMED.0,
-                PAUSE_ARMED.1,
-                PAUSE_ARMED.2,
-            );
+            pause_glow(12, y - 3, 300, y + 17);
         }
         let tint = if !r.enabled {
             PAUSE_DIM
@@ -2412,22 +2443,20 @@ fn draw_pause_list(
         } else {
             PAUSE_AMBER
         };
-        if r.detail.is_empty() {
-            text.draw_centered(160, y, r.label, tint);
-        } else {
+        text.draw(22, y, r.label, tint);
+        if !r.detail.is_empty() {
             // Label left, detail right: a two-column row stays readable at 320
-            // where a centred "label detail" run would drift as either grows.
-            text.draw(28, y, r.label, tint);
+            // where a run of "label detail" would drift as either grows.
             let dw = text.width(r.detail);
-            text.draw(292 - dw, y, r.detail, PAUSE_DIM);
+            text.draw(296 - dw, y, r.detail, PAUSE_TITLE);
         }
         i += 1;
     }
     if first > 0 {
-        text.draw_centered(160, 52, "^", PAUSE_AMBER);
+        text.draw(302, 26, "^", PAUSE_AMBER);
     }
     if last < rows {
-        text.draw_centered(160, 204, "v", PAUSE_AMBER);
+        text.draw(302, 180, "v", PAUSE_AMBER);
     }
 }
 
@@ -2447,17 +2476,127 @@ enum PausePage {
     },
 }
 
+/// Where the pause menu was left, kept across the re-render of the frame behind
+/// it that a brightness change needs.
+#[cfg(not(feature = "semantic-input"))]
+struct PauseState {
+    page: PausePage,
+    sel: usize,
+    chapter_sel: usize,
+    map_sel: usize,
+    debug_sel: usize,
+    options_sel: usize,
+    slot_sel: usize,
+}
+
+#[cfg(not(feature = "semantic-input"))]
+impl PauseState {
+    const NEW: Self = Self {
+        page: PausePage::Root,
+        sel: 0,
+        chapter_sel: 0,
+        map_sel: 0,
+        debug_sel: 0,
+        options_sel: 0,
+        slot_sel: 0,
+    };
+}
+
+#[cfg(not(feature = "semantic-input"))]
+static mut PAUSE_STATE: PauseState = PauseState::NEW;
+
+/// The menu closed only so the frame behind it could be built again (the light
+/// palette was re-expanded for a new brightness): the next poll opens it again,
+/// where it was.
+#[cfg(not(feature = "semantic-input"))]
+static mut PAUSE_REENTER: bool = false;
+
+/// The two buffers the pause menu works between, as the VRAM row each starts at.
+/// `clean` holds the finished game frame and is never drawn on; `shown` is on
+/// screen and carries the menu. Every redraw copies the frame back over the
+/// menu's area and draws the menu again, which is what lets the menu be
+/// translucent without a third frame buffer to keep a clean copy in.
+#[cfg(not(feature = "semantic-input"))]
+#[derive(Clone, Copy)]
+struct PauseSurface {
+    clean: u16,
+    shown: u16,
+}
+
+/// Copy `rect` (x0, y0, x1, y1) of the clean frame over the shown one. Callers
+/// run it right after a VBlank, so the copy and the redraw that follows stay
+/// ahead of the beam.
+#[inline(never)]
+#[optimize(size)]
+#[cfg(not(feature = "semantic-input"))]
+fn pause_restore(s: &PauseSurface, rect: (i16, i16, i16, i16)) {
+    driver::with(|gpu| gpu.wait_idle());
+    driver::copy_vram(
+        (rect.0 as u16, s.clean + rect.1 as u16),
+        (rect.0 as u16, s.shown + rect.1 as u16),
+        ((rect.2 - rect.0) as u16, (rect.3 - rect.1) as u16),
+    );
+}
+
+/// Point the drawing at the shown buffer, with the state the menu's rectangles
+/// and text expect: no mask bit, and the draw area and offset on that buffer.
+#[inline(never)]
+#[optimize(size)]
+#[cfg(not(feature = "semantic-input"))]
+fn pause_aim(s: &PauseSurface) {
+    driver::with(|gpu| {
+        gpu.wait_idle();
+        gpu.set_mask_mode(psx_gpu::MaskMode::empty());
+        gpu.set_draw_area((0, s.shown), (319, s.shown + 239));
+        gpu.set_draw_offset((0, s.shown as i16));
+    });
+}
+
+/// Close the menu. The game frame goes back on screen and the buffers back to
+/// the roles the frame loop expects: the clean frame is the finished one, waiting
+/// to be presented, and the other buffer is the next to draw into. A close that
+/// only wants the frame behind the menu built again leaves the menu on screen
+/// until that frame is ready, and hands the loop the shown buffer as the
+/// finished one so the loop's own present flips to it (already there) and builds
+/// into the clean buffer.
+#[inline(never)]
+#[optimize(size)]
+#[cfg(not(feature = "semantic-input"))]
+fn pause_close(fb: &mut DoubleBuffer, s: &PauseSurface, exit: PauseExit) -> PauseExit {
+    driver::with(|gpu| gpu.wait_idle());
+    if exit == PauseExit::Rerender {
+        let _ = fb.begin_deferred_swap();
+        unsafe { PAUSE_REENTER = true };
+    } else {
+        interrupts::wait_vblank();
+    }
+    driver::with(|gpu| {
+        if exit != PauseExit::Rerender {
+            gpu.set_display_start((0, s.clean));
+        }
+        fb.apply_draw_target(gpu);
+    });
+    exit
+}
+
 #[inline(never)]
 #[optimize(size)]
 #[cfg(not(feature = "semantic-input"))]
 fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
-    let mut sel = 0usize;
-    let mut page = PausePage::Root;
-    let mut chapter_sel = 0usize;
-    let mut map_sel = 0usize;
-    let mut debug_sel = 0usize;
-    let mut options_sel = 0usize;
-    let mut slot_sel = 0usize;
+    // The frame the player paused on is the one waiting in the draw buffer;
+    // after a re-render it is the same, and the menu is still on screen in the
+    // other.
+    let surface = PauseSurface {
+        clean: fb.draw_origin().1,
+        shown: fb.display_origin().1,
+    };
+    let st = unsafe {
+        if !PAUSE_REENTER {
+            PAUSE_STATE = PauseState::NEW;
+        }
+        PAUSE_REENTER = false;
+        &mut *core::ptr::addr_of_mut!(PAUSE_STATE)
+    };
     // One-line result of the last card operation. Card I/O is the only thing
     // here that can fail for reasons outside the game, so it has to say so.
     let mut status = "";
@@ -2465,7 +2604,13 @@ fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
     pad.update(poll_port1().buttons.bits());
     pad.prime(); // swallow buttons still held from gameplay until re-pressed
 
+    pause_aim(&surface);
+    interrupts::wait_vblank();
+    pause_restore(&surface, (0, 0, 320, 240));
+    let mut dirty = true;
+
     loop {
+        interrupts::wait_vblank();
         pad.update(poll_port1().buttons.bits());
 
         let up = pad.just_pressed(button::UP);
@@ -2475,81 +2620,98 @@ fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
         }
         // Left/Right adjust the armed setting, on the settings page only, and
         // through the same settings::adjust the front end calls.
-        if matches!(page, PausePage::Options) {
+        if matches!(st.page, PausePage::Options) {
             let dec = pad.just_pressed(button::LEFT);
             let inc = pad.just_pressed(button::RIGHT);
             if dec || inc {
                 unsafe { sfx::play_vol(sfx::MENU_MOVE, 3) };
-                settings::adjust(options_sel, if inc { 1 } else { -1 });
+                settings::adjust(st.options_sel, if inc { 1 } else { -1 });
+                dirty = true;
+                // Brightness is applied to the world's light palette, which is
+                // expanded once per map: re-expand it, then have the frame
+                // behind the menu built again with it.
+                if settings::take_brightness_dirty() {
+                    map::reapply_brightness();
+                    return pause_close(fb, &surface, PauseExit::Rerender);
+                }
             }
         }
-        let (chapter_start, chapter_end) = menu::chapter_rooms(chapter_sel);
+        let (chapter_start, chapter_end) = menu::chapter_rooms(st.chapter_sel);
         let map_rows = chapter_end - chapter_start;
         let debug_rows = settings::DEBUG_LABELS.len();
-        let (cursor, rows) = match page {
-            PausePage::Root => (&mut sel, PAUSE_ITEMS.len()),
-            PausePage::Options => (&mut options_sel, PAUSE_OPTION_ROWS),
-            PausePage::Chapters => (&mut chapter_sel, menu::CHAPTERS.len()),
-            PausePage::Maps => (&mut map_sel, map_rows),
-            PausePage::Debug => (&mut debug_sel, debug_rows),
-            PausePage::Slots { loading } => (&mut slot_sel, save::Target::choices(loading).len()),
+        let (cursor, rows) = match st.page {
+            PausePage::Root => (&mut st.sel, PAUSE_ITEMS.len()),
+            PausePage::Options => (&mut st.options_sel, PAUSE_OPTION_ROWS),
+            PausePage::Chapters => (&mut st.chapter_sel, menu::CHAPTERS.len()),
+            PausePage::Maps => (&mut st.map_sel, map_rows),
+            PausePage::Debug => (&mut st.debug_sel, debug_rows),
+            PausePage::Slots { loading } => {
+                (&mut st.slot_sel, save::Target::choices(loading).len())
+            }
         };
         if up {
             *cursor = (*cursor + rows - 1) % rows;
+            dirty = true;
         }
         if down {
             *cursor = (*cursor + 1) % rows;
+            dirty = true;
         }
         if pad.just_pressed(button::CIRCLE) {
             unsafe { sfx::play_vol(sfx::MENU_ACCEPT, 2) };
-            page = match page {
-                PausePage::Root => return PauseExit::Resume,
+            if matches!(st.page, PausePage::Options) {
+                settings::persist_if_changed();
+            }
+            st.page = match st.page {
+                PausePage::Root => return pause_close(fb, &surface, PauseExit::Resume),
                 PausePage::Maps => PausePage::Chapters,
                 _ => PausePage::Root,
             };
+            dirty = true;
         }
         if pad.just_pressed(button::CROSS | button::START) {
             unsafe { sfx::play_vol(sfx::MENU_ACCEPT, 2) };
-            match page {
-                PausePage::Root => match sel {
-                    0 => return PauseExit::Resume,
+            dirty = true;
+            match st.page {
+                PausePage::Root => match st.sel {
+                    0 => return pause_close(fb, &surface, PauseExit::Resume),
                     1 | 2 => unsafe {
-                        let loading = sel == 2;
+                        let loading = st.sel == 2;
                         scan_save_targets();
-                        slot_sel = 0;
-                        page = PausePage::Slots { loading };
+                        st.slot_sel = 0;
+                        st.page = PausePage::Slots { loading };
                     },
                     3 => {
-                        map_sel = 0;
-                        page = PausePage::Chapters;
+                        st.map_sel = 0;
+                        st.page = PausePage::Chapters;
                     }
                     4 => {
-                        options_sel = 0;
-                        page = PausePage::Options;
+                        st.options_sel = 0;
+                        st.page = PausePage::Options;
                     }
                     5 => {
-                        debug_sel = 0;
-                        page = PausePage::Debug;
+                        st.debug_sel = 0;
+                        st.page = PausePage::Debug;
                     }
-                    _ => return PauseExit::MainMenu,
+                    _ => return pause_close(fb, &surface, PauseExit::MainMenu),
                 },
                 PausePage::Chapters => {
-                    map_sel = 0;
-                    page = PausePage::Maps;
+                    st.map_sel = 0;
+                    st.page = PausePage::Maps;
                 }
                 PausePage::Maps => {
-                    let room = menu::chapter_map(chapter_sel, map_sel);
+                    let room = menu::chapter_map(st.chapter_sel, st.map_sel);
                     if room < menu::MAPS.len() {
-                        return PauseExit::Chapter(room);
+                        return pause_close(fb, &surface, PauseExit::Chapter(room));
                     }
                 }
                 // Cross on a settings row does nothing: Left/Right adjust,
                 // Circle goes back. Nudging right on Cross would make a
                 // mis-press change a setting the player was only inspecting.
                 PausePage::Options => {}
-                PausePage::Debug => settings::debug_toggle(debug_sel),
+                PausePage::Debug => settings::debug_toggle(st.debug_sel),
                 PausePage::Slots { loading } => unsafe {
-                    let target = save::Target::choices(loading)[slot_sel];
+                    let target = save::Target::choices(loading)[st.slot_sel];
                     if loading {
                         match save::read(target, save_staging()) {
                             Ok(cp) if (cp.room_id as usize) < menu::MAPS.len() => {
@@ -2558,73 +2720,74 @@ fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
                                 arm_map_progress(&cp);
                                 // Actors spawn with the save's difficulty, before the restore.
                                 settings::set_skill(cp.skill);
-                                return PauseExit::LoadedSave(cp.room_id as usize);
+                                return pause_close(
+                                    fb,
+                                    &surface,
+                                    PauseExit::LoadedSave(cp.room_id as usize),
+                                );
                             }
                             Err(save::CardResult::NoCard) => status = "No card in that port",
                             _ => status = "Nothing to load there",
                         }
-                        page = PausePage::Root;
+                        st.page = PausePage::Root;
                     } else {
                         let cp = LIVE_CHECKPOINT;
-                        status = match save_with_badge(fb, target, &cp) {
+                        status = match save_with_badge(target, &cp) {
                             save::CardResult::Ok => "Game saved",
                             save::CardResult::NoCard => "No card in that port",
                             save::CardResult::Failed => "Save failed",
                         };
-                        page = PausePage::Root;
+                        st.page = PausePage::Root;
                     }
                 },
             }
         }
 
-        match page {
-            PausePage::Root => draw_pause_menu(fb, sel, status),
-            PausePage::Chapters => draw_pause_list(
-                fb,
-                "Chapter Select",
-                menu::CHAPTERS.len(),
-                chapter_sel,
-                &|i| Row::new(menu::CHAPTERS[i]),
-            ),
-            PausePage::Maps => draw_pause_list(
-                fb,
-                menu::chapter_title(chapter_sel),
-                map_rows,
-                map_sel,
-                &|i| {
-                    let r = Row::new(menu::MAPS[menu::chapter_map(chapter_sel, i)]);
-                    if i == 0 {
-                        r.with_detail("(default)")
+        if dirty {
+            dirty = false;
+            pause_restore(&surface, PAUSE_BOX);
+            match st.page {
+                PausePage::Root => draw_pause_menu(st.sel, status),
+                PausePage::Chapters => draw_pause_list(
+                    "Chapter Select",
+                    menu::CHAPTERS.len(),
+                    st.chapter_sel,
+                    &|i| Row::new(menu::CHAPTERS[i]),
+                ),
+                PausePage::Maps => draw_pause_list(
+                    menu::chapter_title(st.chapter_sel),
+                    map_rows,
+                    st.map_sel,
+                    &|i| {
+                        let r = Row::new(menu::MAPS[menu::chapter_map(st.chapter_sel, i)]);
+                        if i == 0 {
+                            r.with_detail("(default)")
+                        } else {
+                            r
+                        }
+                    },
+                ),
+                PausePage::Slots { loading } => draw_pause_list(
+                    if loading { "Load Game" } else { "Save Game" },
+                    save::Target::choices(loading).len(),
+                    st.slot_sel,
+                    &|i| unsafe { save_slot_row(i, loading) },
+                ),
+                PausePage::Options => draw_pause_list(
+                    "Configuration",
+                    PAUSE_OPTION_ROWS,
+                    st.options_sel,
+                    &|i| unsafe { pause_option_row(i) },
+                ),
+                PausePage::Debug => draw_pause_list("Debug", debug_rows, st.debug_sel, &|i| {
+                    Row::new(settings::DEBUG_LABELS[i]).with_detail(if settings::debug_on(1 << i) {
+                        "ON"
                     } else {
-                        r
-                    }
-                },
-            ),
-            PausePage::Slots { loading } => draw_pause_list(
-                fb,
-                if loading { "Load Game" } else { "Save Game" },
-                save::Target::choices(loading).len(),
-                slot_sel,
-                &|i| unsafe { save_slot_row(i, loading) },
-            ),
-            PausePage::Options => draw_pause_list(
-                fb,
-                "Configuration",
-                PAUSE_OPTION_ROWS,
-                options_sel,
-                &|i| unsafe { pause_option_row(i) },
-            ),
-            PausePage::Debug => draw_pause_list(fb, "Debug", debug_rows, debug_sel, &|i| {
-                Row::new(settings::DEBUG_LABELS[i]).with_detail(if settings::debug_on(1 << i) {
-                    "ON"
-                } else {
-                    "OFF"
-                })
-            }),
+                        "OFF"
+                    })
+                }),
+            }
         }
-        driver::with(|gpu| gpu.wait_idle());
-        interrupts::wait_vblank();
-        driver::with(|gpu| fb.swap(gpu));
     }
 }
 
@@ -4234,6 +4397,9 @@ fn performance_walk_sample(sim_tick: u32) -> semantic_input::Sample {
 enum LiveInputPoll {
     Sample(semantic_input::Sample),
     Resumed,
+    /// The menu closed to have the frame behind it built again, and opens
+    /// again on the next poll.
+    Rerender,
     MainMenu,
     Chapter(usize),
 }
@@ -4253,9 +4419,12 @@ fn poll_live_semantic_input(
     // as released for one tick and pressed again on the next.
     let pad = reader.poll();
     let pause_button = pad.buttons.is_held(button::START) || pad.buttons.is_held(button::SELECT);
-    if pause_button && !*prev_pause_button {
-        telemetry::stage_end(telemetry::stage::UPDATE);
-        telemetry::task_end(telemetry::task::FIXED_UPDATE);
+    let reopen = unsafe { PAUSE_REENTER };
+    if reopen || (pause_button && !*prev_pause_button) {
+        if !reopen {
+            telemetry::stage_end(telemetry::stage::UPDATE);
+            telemetry::task_end(telemetry::task::FIXED_UPDATE);
+        }
         // The pause screen draws over the finished frame, so that frame's
         // deferred overlay lists go out first.
         unsafe { finish_deferred_overlays() };
@@ -4265,6 +4434,7 @@ fn poll_live_semantic_input(
             // Same relaunch path as a chapter jump: PENDING_RESTORE is already
             // armed, and play() overrides the spawn it computes.
             PauseExit::LoadedSave(room) => LiveInputPoll::Chapter(room),
+            PauseExit::Rerender => LiveInputPoll::Rerender,
             PauseExit::Resume => {
                 // The pause screen is the only way brightness can move with a
                 // map already resident, so the palette re-expansion is paid
@@ -34505,6 +34675,15 @@ fn main() {
         }
     }
 
+    // Options saved on a card (deadzones, volumes, picture). Not read by the
+    // deterministic direct-map builds, whose route timing starts from a fixed state.
+    if !DBG_PAD_BOOT {
+        if let Some(saved) = save::read_settings() {
+            settings::restore(&saved);
+            settings::apply_all();
+        }
+    }
+
     // Keep the branded presentation out of deterministic direct-map builds so
     // their route timing and performance counters begin at exactly the same
     // guest state. Shipping boots mirror the Celeste collection's PSoXide
@@ -36272,8 +36451,28 @@ fn play(
         // simulation ticks keep firing on their unchanged 20 Hz schedule below.
         #[cfg(not(feature = "decoupled-present"))]
         wait_until_vblank(sim_clock.next_due());
+        // A brightness change closed the pause menu only so this frame can be
+        // built again with the new light palette: skip the ticks (the world stays
+        // exactly as it was), render, and the menu opens again where it was.
+        #[cfg_attr(feature = "semantic-input", allow(unused_mut))]
+        let mut rerender = false;
+        #[cfg(not(feature = "semantic-input"))]
+        if unsafe { PAUSE_REENTER } {
+            match poll_live_semantic_input(
+                fb,
+                &mut pad_reader,
+                &mut prev_pause_button,
+                &mut sim_clock,
+            ) {
+                LiveInputPoll::Resumed => continue 'gameplay,
+                LiveInputPoll::Rerender => rerender = true,
+                LiveInputPoll::MainMenu => return PlayExit::BackToMenu,
+                LiveInputPoll::Chapter(room) => return PlayExit::Chapter(menu_start(room)),
+                LiveInputPoll::Sample(_) => {}
+            }
+        }
         let mut ticks_this_visual = 0u16;
-        while sim_clock.due(interrupts::vblank_count()) {
+        while !rerender && sim_clock.due(interrupts::vblank_count()) {
             telemetry::frame_begin(telemetry_frame);
             // Reuse PSoXide's standard current-room column for this linear
             // campaign. It makes direct-boot regression tapes self-verifying.
@@ -36358,6 +36557,10 @@ fn play(
             ) {
                 LiveInputPoll::Sample(sample) => sample,
                 LiveInputPoll::Resumed => continue 'gameplay,
+                LiveInputPoll::Rerender => {
+                    rerender = true;
+                    break;
+                }
                 LiveInputPoll::MainMenu => return PlayExit::BackToMenu,
                 LiveInputPoll::Chapter(room) => return PlayExit::Chapter(menu_start(room)),
             };
@@ -38674,7 +38877,16 @@ fn play(
         // pose as the next tick's deadline approaches. Simulation state is
         // untouched; only what the camera looks like this frame changes.
         #[cfg(feature = "decoupled-present")]
-        let render_phase_q12: i32 = sim_clock.phase_q12(interrupts::vblank_count()) as i32;
+        let render_phase_q12: i32 = if rerender {
+            // The same camera the paused frame was built with.
+            unsafe { RENDER_PHASE_LAST }
+        } else {
+            sim_clock.phase_q12(interrupts::vblank_count()) as i32
+        };
+        #[cfg(feature = "decoupled-present")]
+        unsafe {
+            RENDER_PHASE_LAST = render_phase_q12;
+        }
         #[cfg(feature = "decoupled-present")]
         let (cam_pos, cam_h, cam_yaw, cam_pitch) =
             if DBG_CAM || reference_checkpoint::DBG_CAM_OVERRIDE.is_some() {

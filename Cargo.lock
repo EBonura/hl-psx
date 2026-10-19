@@ -37,6 +37,7 @@ dependencies = [
  "psx-render-contract",
  "psx-rt",
  "psx-segments",
+ "psx-settings",
  "psx-sfx",
  "psx-spu",
  "psx-telemetry",
@@ -247,6 +248,7 @@ name = "psx-settings"
 version = "0.1.0"
 dependencies = [
  "psx-display",
+ "psx-mc",
  "psx-pad",
 ]
 

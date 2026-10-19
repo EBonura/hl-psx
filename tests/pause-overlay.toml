@@ -1,0 +1,170 @@
+# The pause menu is drawn over the finished game frame, not on a black screen:
+# half-strength black under left-aligned rows, the frame untouched outside it.
+# Brightness changes show live: the world behind the menu is built again with
+# the re-expanded light palette. Run with psoxide-gate and a fresh report
+# directory.
+name = "hl-pause-overlay"
+title = "Half-Life: the pause menu over the live game, brightness live"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 4800
+
+# Bound to the build this journey was written against: scripts/bind-skill-addr.sh rewrites it.
+[addr]
+BRIGHTNESS = 0x800c3b08
+
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot to title, then choose Hazard Course"
+wait = 620
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 1180
+
+[[step]]
+label = "walk a little, then stand still on the training route"
+lstick = [128, 0]
+hold = 60
+wait = 40
+
+[[step]]
+checkpoint = "game"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "presenting"
+window = 60
+min_changes = 3
+
+[[step]]
+label = "pause"
+press = ["start"]
+hold = 8
+wait = 40
+
+[[step]]
+checkpoint = "pause-root"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+# Under the menu the frame is dimmed, so the pixels there move a lot ...
+[[step.assert]]
+kind = "frame_diff"
+from = "game"
+min_changed = 0.2
+# ... and below it (the HUD strip) nothing moves.
+[[step.assert]]
+kind = "frame_diff"
+from = "game"
+region = { x = 0, y = 216, w = 320, h = 24 }
+max_changed = 0.05
+
+[[step]]
+label = "Configuration is the fifth row"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 4
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 30
+
+[[step]]
+checkpoint = "options-before"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "BRIGHTNESS"
+size = 1
+op = "eq"
+value = 1
+
+[[step]]
+label = "Brightness is the seventh row: three levels up"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 6
+
+[[step]]
+press = ["right"]
+hold = 8
+wait = 90
+repeat = 3
+
+[[step]]
+checkpoint = "options-bright"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "BRIGHTNESS"
+size = 1
+op = "eq"
+value = 4
+# The world behind the menu is built again with the new palette.
+[[step.assert]]
+kind = "frame_diff"
+from = "options-before"
+min_changed = 0.2
+
+[[step]]
+label = "back to the root page and resume"
+press = ["circle"]
+hold = 8
+wait = 40
+
+[[step]]
+press = ["circle"]
+hold = 8
+wait = 90
+
+[[step]]
+checkpoint = "resumed"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "presenting"
+window = 60
+min_changes = 3
+[[step.assert]]
+kind = "pc_not_stuck"
+window = 60
+# The game goes on at the brighter level.
+[[step.assert]]
+kind = "frame_diff"
+from = "game"
+min_changed = 0.2

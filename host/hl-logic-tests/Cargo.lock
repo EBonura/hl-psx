@@ -18,12 +18,15 @@ version = "0.1.0"
 dependencies = [
  "hl-format",
  "psx-asset",
+ "psx-display",
  "psx-engine",
  "psx-goldsrc",
  "psx-hw",
  "psx-io",
  "psx-math",
+ "psx-pad",
  "psx-segments",
+ "psx-settings",
  "psx-sfx",
  "psx-spu",
 ]
