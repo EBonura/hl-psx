@@ -83,7 +83,8 @@ fn map_pool_budgets(repository: &Path, maps: usize, model_pool_words: usize) -> 
         .map(|index| {
             let world =
                 fs::metadata(rooms.join(format!("room_{}.psxc", index * 2)))?.len() as usize;
-            Ok(staging_words + model_pool_words - world.div_ceil(4).min(staging_words))
+            Ok(staging_words + model_pool_words + room_budget::FACE_REGION_WORDS
+                - world.div_ceil(4).min(staging_words))
         })
         .collect()
 }
@@ -103,7 +104,6 @@ fn room_staging_words(rooms: &Path) -> Result<usize> {
     Ok(room_budget::map_staging_words(largest))
 }
 const MAX_LOADED_MODELS: usize = 24;
-const POOL_FACE_CAP: usize = 8_064;
 const POOL_FACE_RUN_CAP: usize = 192;
 const POOL_TEX_SLOTS: usize = 176;
 const N_MODEL_TYPES: usize = 77;
@@ -269,6 +269,8 @@ struct AuditRow {
     resident_words: usize,
     peak_words: usize,
     faces: usize,
+    /// Words the resident models' face blocks take at the top of the arena.
+    face_words: usize,
     runs: usize,
     textures: usize,
     slots: usize,
@@ -846,6 +848,7 @@ fn simulate(
     let mut geom_word = vm_pool_words;
     let mut peak_words = geom_word;
     let mut faces = 0usize;
+    let mut face_words = 0usize;
     let mut runs = 0usize;
     let mut textures = 0usize;
     let mut slots = 0usize;
@@ -919,7 +922,10 @@ fn simulate(
                 let (model_faces, model_runs, model_textures, kept_bytes) =
                     chunk.visible_stats(bodies);
                 let transient_end = chunk.transient_end_words(geom_word, kept_bytes);
-                peak_words = peak_words.max(transient_end);
+                // The face block sits at the arena's top and the model pool ends
+                // below the blocks placed so far, this one included.
+                let block_words = room_budget::face_block_words(model_faces);
+                peak_words = peak_words.max(transient_end + face_words + block_words);
                 if verbose {
                     println!(
                     "  {label}: T{:02} {:<20} start={} kept={} transient_end={} faces={} runs={} tex={} bodies=0x{bodies:02x}",
@@ -935,15 +941,10 @@ fn simulate(
                 }
                 let reason = if slots >= MAX_LOADED_MODELS {
                     Some(format!("model slots {}/{}", slots + 1, MAX_LOADED_MODELS))
-                } else if transient_end > pool_words {
+                } else if transient_end + face_words + block_words > pool_words {
                     Some(format!(
-                        "transient model RAM {transient_end}/{pool_words} words"
-                    ))
-                } else if faces + model_faces > POOL_FACE_CAP {
-                    Some(format!(
-                        "face pool {}/{}",
-                        faces + model_faces,
-                        POOL_FACE_CAP
+                        "transient model RAM {}/{pool_words} words",
+                        transient_end + face_words + block_words
                     ))
                 } else if runs + model_runs > POOL_FACE_RUN_CAP {
                     Some(format!(
@@ -968,6 +969,7 @@ fn simulate(
                 // frame section. Split streams begin directly at geom_word.
                 geom_word += usize::from(chunk.merged) * 2 + kept_bytes.div_ceil(4);
                 faces += model_faces;
+                face_words += block_words;
                 runs += model_runs;
                 textures += model_textures;
                 slots += 1;
@@ -983,6 +985,7 @@ fn simulate(
         resident_words: geom_word,
         peak_words,
         faces,
+        face_words,
         runs,
         textures,
         slots,
@@ -1553,16 +1556,17 @@ fn write_report(path: &Path, rows: &[AuditRow]) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     let mut output = String::from(
-        "map_or_transition,resident_words,transient_peak_words,slack_bytes,faces,face_runs,textures,model_slots\n",
+        "map_or_transition,resident_words,transient_peak_words,slack_bytes,faces,face_words,face_runs,textures,model_slots\n",
     );
     for row in rows {
         output.push_str(&format!(
-            "{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{}\n",
             row.label,
             row.resident_words,
             row.peak_words,
             row.pool_words.saturating_sub(row.peak_words) * 4,
             row.faces,
+            row.face_words,
             row.runs,
             row.textures,
             row.slots
@@ -1640,7 +1644,8 @@ fn audit_weapon_cache_tail(
         let world = fs::metadata(rooms.join(format!("room_{}.psxc", index * 2)))?.len() as usize;
         let world_words = world.div_ceil(4);
         let combined_words = map_pool_words.saturating_sub(world_words)
-            + model_pool_words.saturating_sub(row.resident_words);
+            + (model_pool_words + room_budget::FACE_REGION_WORDS)
+                .saturating_sub(row.resident_words + row.face_words);
         if combined_words < required_words {
             return Err(format!(
                 "{}: weapon cache needs {} B but combined resident tails provide {} B",
@@ -1657,7 +1662,7 @@ fn audit_weapon_cache_tail(
         output.push_str(&format!(
             "{},{destination},{world_words},{},{},{},{}\n",
             row.label,
-            row.resident_words,
+            row.resident_words + row.face_words,
             combined_words * 4,
             required_words * 4,
             margin * 4
@@ -2321,8 +2326,9 @@ mod tests {
         for declaration in [
             "const MAX_LOADED_MODELS: usize = 24;",
             "const POOL_TEX_SLOTS: usize = 176;",
-            "const POOL_FACE_CAP: usize = 8064;",
             "const POOL_FACE_RUN_CAP: usize = 192;",
+            "const FACE_REGION_WORDS: usize = hl_format::room_budget::FACE_REGION_WORDS;",
+            "const ARENA_WORDS: usize = MAP_WORDS + MODEL_WORDS + FACE_REGION_WORDS;",
             "const VM_POOL_WORDS: usize = room_budget::VM_POOL_WORDS;",
             "const MAX_WEAPON_TRIS: usize = 1152;",
             "const VM_TAIL_GUARD_WORDS: usize = 0;",

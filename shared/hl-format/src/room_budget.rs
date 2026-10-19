@@ -22,9 +22,39 @@ pub const fn map_staging_words(max_room_bytes: usize) -> usize {
     }
 }
 
+/// Model render faces the arena's face region holds. The faces of the resident
+/// actor models (a 4-byte packed-index word and a 6-byte UV payload each) are
+/// baked into blocks at the top of the arena, below the end of the map and
+/// model pool, instead of into fixed-size statics sized for the heaviest
+/// roster in the campaign (c4a3, 8,027 faces: 80 KB of `.bss` that every other
+/// map left mostly idle). The region is the roster of the heaviest map whose
+/// weapon-cache tail is short enough for the actor packet stream to depend on
+/// it (c4a1b, 7,179 faces): for every map up to that size the face region
+/// leaves the tail exactly as the statics did, and a heavier roster (c4a3) takes
+/// the rest from its own 200 KB of spare tail. The model-pool audit
+/// (`cargo hl-build audit`) proves the fit of every map and transition.
+pub const FACE_REGION_FACES: usize = 7_200;
+
+/// Words one model's render faces take in the face region: one index word per
+/// face, then the 6-byte payloads rounded up to a whole word.
+pub const fn face_block_words(faces: usize) -> usize {
+    faces + (faces * 6).div_ceil(4)
+}
+
+/// Words the arena adds for the face region.
+pub const FACE_REGION_WORDS: usize = face_block_words(FACE_REGION_FACES);
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn face_blocks_are_ten_bytes_a_face_to_the_word() {
+        assert_eq!(face_block_words(0), 0);
+        assert_eq!(face_block_words(1), 3);
+        assert_eq!(face_block_words(2), 5);
+        assert_eq!(FACE_REGION_WORDS * 4, FACE_REGION_FACES * 10);
+    }
 
     #[test]
     fn staging_keeps_installed_capacity_and_grows_for_larger_rooms() {
