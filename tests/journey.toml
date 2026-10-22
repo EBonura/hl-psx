@@ -210,7 +210,7 @@ kind = "ram"
 sym = "LOGIC_PLAYER_POS"
 signed = true
 op = "eq"
-value = -166
+value = -118
 [[step.assert]]
 kind = "ram"
 sym = "LOGIC_PLAYER_POS"
@@ -232,7 +232,7 @@ kind = "ram"
 sym = "CAM_CUR"
 signed = true
 op = "eq"
-value = -166
+value = -118
 [[step.assert]]
 kind = "ram"
 sym = "CAM_CUR"
@@ -254,7 +254,7 @@ kind = "ram"
 sym = "CAM_PREV"
 signed = true
 op = "eq"
-value = -166
+value = -118
 [[step.assert]]
 kind = "ram"
 sym = "CAM_PREV"
