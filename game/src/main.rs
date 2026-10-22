@@ -26335,6 +26335,12 @@ fn recover_camera_leaf(m: &Map, eye: [i32; 3], player_pos: [i32; 3], train_hint:
 fn decompress_vis(m: &Map, leaf: usize, out: &mut [u8]) {
     // GoldSrc's model[0] visibility width excludes submodel-only leaves.
     let row = ((m.n_visleaves + 7) / 8).min(out.len());
+    // Leaf 0 is the solid leaf outside the world, which has no visibility data; GoldSrc
+    // draws every leaf for an eye in it (a noclip flight through a wall).
+    if leaf == 0 {
+        out[..row].fill(0xff);
+        return;
+    }
     if m.paired_pvs() {
         assert!(
             m.decode_paired_pvs(leaf, &mut out[..row], false),
@@ -39299,6 +39305,12 @@ fn play(
             }
             let mut cam_leaf = recover_camera_leaf(&m, eye, player.pos, train_hint);
             let mut have_pvs = valid_pvs_leaf(&m, cam_leaf);
+            if !have_pvs && settings::debug_on(settings::DEBUG_FLY) {
+                // Flying out of the world: no leaf holds the eye. Draw every leaf, as GoldSrc
+                // does, instead of the last leaf's small PVS (a black screen past it).
+                cam_leaf = 0;
+                have_pvs = true;
+            }
             let render_eye_under =
                 PLAYER_EYE_UNDER || (have_pvs && m.leaf_liquid(cam_leaf as usize) != 0);
             EMIT_EYE_UNDER_LIQUID = render_eye_under;
