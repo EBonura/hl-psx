@@ -1,0 +1,101 @@
+# Fly Mode (noclip) through a wall and out of the world: the eye ends up in the solid leaf, which has no
+# visibility data. GoldSrc draws every leaf for an eye there. The game used to keep the last valid
+# leaf's small PVS, so the frame past the wall was almost all black.
+# Run with psoxide-gate and a fresh report directory.
+name = "hl-fly-outside"
+title = "Half-Life: Fly Mode outside the world still draws the map"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 6000
+
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot to title, then choose Hazard Course"
+wait = 620
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 1180
+
+[[step]]
+checkpoint = "start"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "pause, open Debug (sixth row) and switch Fly Mode (first row) on"
+press = ["start"]
+hold = 8
+wait = 40
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 5
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 20
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 20
+
+[[step]]
+label = "back to the pause root and resume"
+press = ["circle"]
+hold = 8
+wait = 20
+
+[[step]]
+press = ["circle"]
+hold = 8
+wait = 90
+
+[[step]]
+label = "fly straight ahead, through the walls, until the eye is inside the solid"
+lstick = [128, 0]
+hold = 40
+wait = 10
+repeat = 6
+
+[[step]]
+checkpoint = "inside-the-wall"
+golden = false
+# Before the fix the frame was black here (YAVG about 20 against 53 now); a single texture
+# fills the view while the eye sits in the wall, so the check is that the frame is not dark.
+[[step.assert]]
+kind = "not_dark"
+[[step.assert]]
+kind = "presenting"
+window = 60
+min_changes = 1
