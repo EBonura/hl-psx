@@ -13454,6 +13454,7 @@ unsafe fn logic_tick_momentary(
     }
 }
 
+#[inline(never)]
 #[optimize(size)]
 /// Hold-to-turn valve: while +use is held on a momentary_rot_button, advance
 /// one normalized mechanism phase and publish it to the complete linked rig.
@@ -13977,6 +13978,7 @@ unsafe fn logic_hurt_touch(
     }
 }
 
+#[inline(never)]
 #[optimize(size)]
 unsafe fn logic_touch_triggers(
     m: &Map,
@@ -15167,7 +15169,7 @@ impl CameraVisibility<'_> {
         self.view_sphere(self.view_center(center), radius)
     }
 
-    #[inline]
+    #[inline(always)] // per visible entity per frame; outlined, it cost 2% of a c3a2 run
     fn world_sphere_gte(&self, center: [i16; 3], radius: i32) -> bool {
         let v = scene::transform_vertex_scheduled(Vec3I16::new(center[0], center[1], center[2]));
         self.view_sphere([v.x, v.y, v.z], radius)

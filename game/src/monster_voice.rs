@@ -54,10 +54,20 @@ const VOICED: Mask64 = Mask64::bit(0)
     .or(Mask64::bit(55))
     .or(Mask64::bit(59));
 
-/// One word select, shift and test for the actors that never speak (most of a map's props).
+const VOICED_LOW: u32 = VOICED.low();
+const VOICED_HIGH: u32 = VOICED.high();
+
+/// One range test, shift and mask on an immediate word for the actors that never speak (most
+/// of a map's props). The words are the mask's two halves as constants: `Mask64::test` reads
+/// its word out of memory, a load the old single shift did not have.
 #[inline(always)]
 pub fn voiced(kind: u8) -> bool {
-    VOICED.test(kind as usize)
+    let k = kind as u32;
+    if k < 32 {
+        VOICED_LOW >> k & 1 != 0
+    } else {
+        k < 64 && VOICED_HIGH >> (k - 32) & 1 != 0
+    }
 }
 
 /// After an actor's own think: AlertSound on first sight of the enemy, the 1 in 100 per
