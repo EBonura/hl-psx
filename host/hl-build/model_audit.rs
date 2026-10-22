@@ -751,7 +751,7 @@ fn parse_map_actors(path: &Path) -> Result<Vec<Actor>> {
     Ok(actors)
 }
 
-fn ai_pass(ty: u8) -> usize {
+pub(crate) fn ai_pass(ty: u8) -> usize {
     if (3..=4).contains(&ty) || (26..=49).contains(&ty) || matches!(ty, 75 | 76) {
         1
     } else if matches!(ty, 12..=18 | 23..=25 | 50 | 52 | 53) {

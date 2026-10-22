@@ -13,6 +13,7 @@ mod cook_provenance;
 mod intro;
 mod model_audit;
 mod model_variants;
+mod pack_order;
 mod profile_prune;
 mod ram_report;
 mod regression;
@@ -2659,6 +2660,10 @@ fn pack_disc_into(
             .arg("--world-pack-extra-dir")
             .arg(staged_pack.join(directory));
     }
+    // Lay the chunks out in the order a map load reads them (pack_order.rs).
+    command
+        .arg("--world-pack-order-file")
+        .arg(pack_order::write_order_file(repository, &staged_pack)?);
     if let Some(game_file) = &game_file {
         command.arg("--file").arg(game_file);
     }
