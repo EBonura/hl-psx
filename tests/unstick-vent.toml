@@ -1,0 +1,33 @@
+# Embedded hull release: a hull sunk 4 to 6 units into the clip slab of the c1a1b vent mouth
+# (room 14) froze the player for good, because the unstick pass only reached 2 units.
+# The tape is a playtest on the shipping disc from the title (intro, menu, chapter select
+# "Unforeseen Consequences", c1a1f, the c1a1b changelevel, the scientist at the vent mouth) up to
+# poll 2420, followed by 60 polls of the left stick pushed forward. It is absolute (poll-bound
+# from boot), so this journey needs the disc WITH the startup movie. The embed lands at poll
+# ~2376 at (-511, -180, -718). Before the fix the player never leaves z -718; after it the
+# forward stick walks him out along +z.
+name = "hl-unstick-vent"
+title = "Half-Life: a hull embedded in the c1a1b vent clip slab is released"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 14000
+
+[[step]]
+label = "replay the playtest tape from boot, then push the stick forward"
+tape = "tests/unstick/c1a1b-vent-embed.pxtape"
+timeout = 13000
+
+[[step]]
+checkpoint = "vent-released"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+offset = 8
+signed = true
+op = "between"
+value = -709
+value_hi = 400
