@@ -7,6 +7,7 @@
 
 use crate::setpiece_sfx;
 use hl_format::setpiece_audio as SP;
+use psx_math::Mask64;
 
 pub const ALERT: usize = 0;
 pub const IDLE: usize = 1;
@@ -38,26 +39,25 @@ static CRIES: [(u8, [u8; 4]); 17] = [
 
 /// Kinds `think` has work for: the ones that cry on seeing the enemy or while idle, and the
 /// walkers with npc footsteps (scientist, Barney, zombie).
-// psx-numeric-allow-next-line: a constant bit mask tested with one shift, no arithmetic; the shipped profile and layout were collected on this form (the two-word form moved the layout and cost 1 to 3% on four maps). Replace with psx_math::Mask64 at the next repin.
-const VOICED: u64 = (1 << 0)
-    | (1 << 1)
-    | (1 << 2)
-    | (1 << 5)
-    | (1 << 6)
-    | (1 << 7)
-    | (1 << 10)
-    | (1 << 11)
-    | (1 << 19)
-    | (1 << 20)
-    | (1 << 21)
-    | (1 << 22)
-    | (1 << 55)
-    | (1 << 59);
+const VOICED: Mask64 = Mask64::bit(0)
+    .or(Mask64::bit(1))
+    .or(Mask64::bit(2))
+    .or(Mask64::bit(5))
+    .or(Mask64::bit(6))
+    .or(Mask64::bit(7))
+    .or(Mask64::bit(10))
+    .or(Mask64::bit(11))
+    .or(Mask64::bit(19))
+    .or(Mask64::bit(20))
+    .or(Mask64::bit(21))
+    .or(Mask64::bit(22))
+    .or(Mask64::bit(55))
+    .or(Mask64::bit(59));
 
-/// One shift and test for the actors that never speak (most of a map's props).
+/// One word select, shift and test for the actors that never speak (most of a map's props).
 #[inline(always)]
 pub fn voiced(kind: u8) -> bool {
-    kind < 64 && (VOICED >> kind) & 1 != 0
+    VOICED.test(kind as usize)
 }
 
 /// After an actor's own think: AlertSound on first sight of the enemy, the 1 in 100 per
