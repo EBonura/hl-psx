@@ -4,7 +4,8 @@
 # rest of the load showed a frozen spinner, the same picture as a hung load.
 # Frames are taken 6 ticks apart through the last part of the load of the shipping disc
 # (no intro); each must differ from the one before inside the strip. The window is bound
-# to this build's load timing and only has to sit inside the model streams.
+# to this build's load timing (the clear that ends the load comes after the last frame, with
+# three frames to spare) and only has to sit inside the model streams.
 name = "hl-hazard-load"
 title = "Half-Life: the Hazard Course load keeps its loading strip alive"
 disc = ["dist/hl-psx.cue"]
@@ -282,74 +283,3 @@ min_changed = 0.0001
 [[step]]
 wait = 6
 
-[[step]]
-checkpoint = "strip-20"
-golden = false
-[[step.assert]]
-kind = "frame_diff"
-from = "strip-19"
-region = { x = 270, y = 160, w = 50, h = 80 }
-min_changed = 0.0001
-
-[[step]]
-wait = 6
-
-[[step]]
-checkpoint = "strip-21"
-golden = false
-[[step.assert]]
-kind = "frame_diff"
-from = "strip-20"
-region = { x = 270, y = 160, w = 50, h = 80 }
-min_changed = 0.0001
-
-[[step]]
-wait = 6
-
-[[step]]
-checkpoint = "strip-22"
-golden = false
-[[step.assert]]
-kind = "frame_diff"
-from = "strip-21"
-region = { x = 270, y = 160, w = 50, h = 80 }
-min_changed = 0.0001
-
-[[step]]
-wait = 6
-
-[[step]]
-checkpoint = "strip-23"
-golden = false
-[[step.assert]]
-kind = "frame_diff"
-from = "strip-22"
-region = { x = 270, y = 160, w = 50, h = 80 }
-min_changed = 0.0001
-
-[[step]]
-wait = 6
-
-[[step]]
-checkpoint = "strip-24"
-golden = false
-[[step.assert]]
-kind = "frame_diff"
-from = "strip-23"
-region = { x = 270, y = 160, w = 50, h = 80 }
-min_changed = 0.0001
-
-[[step]]
-wait = 6
-
-[[step]]
-checkpoint = "strip-25"
-golden = false
-[[step.assert]]
-kind = "frame_diff"
-from = "strip-24"
-region = { x = 270, y = 160, w = 50, h = 80 }
-min_changed = 0.0001
-
-[[step]]
-wait = 6
