@@ -1786,19 +1786,23 @@ fn try_unstick(
 ) -> Option<[i32; 3]> {
     // World recovery passes -1 and retains its usual clearance test. A carried
     // player also checks the supporting mover, whose startsolid flag ordinary
-    // movement traces intentionally ignore.
-    if impact_contact_clear_at(map, head, movers, mover_id, pos) {
-        return Some(pos);
-    }
-    let mut i = 0;
-    while i < crate::ground_logic::CONTACT_RECOVERY_OFFSETS.len() {
-        let p = add(pos, crate::ground_logic::CONTACT_RECOVERY_OFFSETS[i]);
-        if impact_contact_clear_at(map, head, movers, mover_id, p) {
-            return Some(p);
+    // movement traces intentionally ignore. The player may be sunk further
+    // than the contact offsets reach (a clip slab met beside an actor), so
+    // world recovery keeps searching in rings out to 18 units while stuck.
+    let reach = if mover_id == -1 {
+        crate::ground_logic::RecoveryReach::Wide
+    } else {
+        crate::ground_logic::RecoveryReach::Local
+    };
+    let mut candidate = pos;
+    let mut index = 0;
+    loop {
+        if impact_contact_clear_at(map, head, movers, mover_id, candidate) {
+            return Some(candidate);
         }
-        i += 1;
+        candidate = add(pos, crate::ground_logic::recovery_offset(index, reach)?);
+        index += 1;
     }
-    None
 }
 
 /// Slide `vel` from `pos` for one frame, sliding along walls (4 iterations).
