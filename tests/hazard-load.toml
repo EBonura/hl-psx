@@ -1,0 +1,355 @@
+# Hazard Course load: the loading strip (progress bar and spinner, bottom right) keeps
+# moving until the first gameplay frame. It used to stop when the world chunk was
+# validated, so the model streams that follow (six blocking chunk loads on t0a0) and the
+# rest of the load showed a frozen spinner, the same picture as a hung load.
+# Frames are taken 6 ticks apart through the last part of the load of the shipping disc
+# (no intro); each must differ from the one before inside the strip. The window is bound
+# to this build's load timing and only has to sit inside the model streams.
+name = "hl-hazard-load"
+title = "Half-Life: the Hazard Course load keeps its loading strip alive"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 2000
+
+
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+checkpoint = "main-menu"
+golden = false
+# The title film advances on presentation frames; compare the stable menu UI.
+mask = [{ x = 0, y = 0, w = 320, h = 85 }]
+
+[[step]]
+checkpoint = "main-menu-full-render"
+golden = false
+# Capture again without advancing time or masking the CPU/HW renderer matrix.
+
+[[step]]
+label = "open Hazard Course map select"
+press = ["down"]
+hold = 8
+wait = 12
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+label = "enter the first Hazard Course map, wait for the model streams"
+press = ["cross"]
+hold = 8
+wait = 478
+
+[[step]]
+checkpoint = "strip-01"
+golden = false
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-02"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-01"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-03"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-02"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-04"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-03"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-05"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-04"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-06"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-05"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-07"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-06"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-08"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-07"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-09"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-08"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-10"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-09"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-11"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-10"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-12"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-11"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-13"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-12"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-14"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-13"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-15"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-14"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-16"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-15"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-17"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-16"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-18"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-17"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-19"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-18"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-20"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-19"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-21"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-20"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-22"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-21"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-23"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-22"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-24"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-23"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6
+
+[[step]]
+checkpoint = "strip-25"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "strip-24"
+region = { x = 270, y = 160, w = 50, h = 80 }
+min_changed = 0.0001
+
+[[step]]
+wait = 6

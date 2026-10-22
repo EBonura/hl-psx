@@ -30,6 +30,9 @@ main-ram-render-scratch = []
 # and viewmodel bucket heads in hardware scratchpad. Regression builds use this
 # to run the same projection entry on the ordinary main-RAM CPU stack.
 main-ram-projection-stack = []
+# Console diagnostic pressings only: name the load stage the program has reached for the
+# stop panel (psx_io::diag, present only in the SDK diag branch). Never in a shipping build.
+console-diag = []
 # Emits PSoXide-only MMIO telemetry so `frontend launch` can stop on guest
 # frames and write profile/counter CSVs. Keep it off for burn/shipping builds.
 emulator-telemetry = ["psx-goldsrc/emulator-telemetry"]

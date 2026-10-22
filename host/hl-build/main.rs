@@ -2080,7 +2080,7 @@ fn stack_is_safe(room: u32) -> bool {
 /// profile changes: final-7's source left 5,500 B free at 1000, 17,788 B at
 /// 500 and 28,028 B at 250. With the ACK-paced pad driver and the analog request
 /// at boot, 250 left 14,428 B, so the ladder has one more rung.
-const PGO_HOT_CALLSITE_LADDER: [u32; 6] = [1000, 500, 250, 125, 60, 0];
+const PGO_HOT_CALLSITE_LADDER: [u32; 12] = [1000, 500, 250, 175, 125, 110, 100, 90, 80, 70, 60, 0];
 
 /// The sample-profile loader's hot call-site threshold for `-Zprofile-sample-use`
 /// builds (LLVM's default is 3000).

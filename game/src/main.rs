@@ -2186,6 +2186,27 @@ pub(crate) fn end_loading() {
     unsafe { LOADING_FB = core::ptr::null_mut() };
 }
 
+// Load-stage names for the console diagnostic build's stop panel (feature `console-diag`, SDK
+// pins carrying `psx_io::diag`): the panel prints the last id and text, so one photo of a
+// stalled load says which stage it stopped in. Without the feature both compile to nothing.
+#[cfg(feature = "console-diag")]
+#[inline(never)]
+fn diag_stage(id: u32, text: &str) {
+    psx_io::diag::step(id, text);
+}
+#[cfg(not(feature = "console-diag"))]
+#[inline(always)]
+fn diag_stage(_id: u32, _text: &str) {}
+
+#[cfg(feature = "console-diag")]
+#[inline(never)]
+fn diag_hex(id: u32, tag: &str, a: u32, b: u32) {
+    psx_io::diag::step_hex(id, tag, a, b);
+}
+#[cfg(not(feature = "console-diag"))]
+#[inline(always)]
+fn diag_hex(_id: u32, _tag: &str, _a: u32, _b: u32) {}
+
 /// Stage-boundary redraw. Between chunks the CD hook is idle, so this keeps the
 /// spinner moving across the gaps.
 #[optimize(size)]
@@ -5161,6 +5182,7 @@ unsafe fn stream_map_models(
         } else {
             MODEL_GEOM_CHUNK_BASE + ty as u32
         };
+        diag_hex(0x0210, "MDLGEO", chunk_id, ty as u32);
         let Some(load) = load_streamed_chunk(chunk_id, dst) else {
             continue;
         };
@@ -5280,6 +5302,7 @@ unsafe fn stream_map_models(
             } else {
                 MODEL_TEX_CHUNK_BASE + ty as u32
             };
+            diag_hex(0x0220, "MDLTEX", texture_chunk, ty as u32);
             let Some(load) = load_streamed_chunk(texture_chunk, dst) else {
                 FACE_USED_WORDS = faces_before; // the type is dropped: give its block back
                 continue;
@@ -35098,10 +35121,24 @@ fn account_streamed_chunk(
     *sectors = sectors.saturating_add(((load.stored_len as u32) + 2047) / 2048);
 }
 
+// One retry: a read the drive dropped (the Hazard Course load stalls on the console somewhere
+// in these loads) gets a second pass before the caller skips the chunk or sends the player
+// back to the menu. A chunk the table does not hold fails again at once. Kept out of line so
+// the many inlined call sites pay one branch and a call, not a second copy of the read.
+#[cold]
+#[inline(never)]
+fn retry_streamed_chunk(chunk_id: u32, dst: &mut [u32]) -> Option<cdstream::ChunkLoad> {
+    diag_hex(0x0F00, "RETRY", chunk_id, 0);
+    cdstream::load_chunk_decompressed(chunk_id, dst)
+}
+
 #[inline]
 fn load_streamed_chunk(chunk_id: u32, dst: &mut [u32]) -> Option<cdstream::ChunkLoad> {
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
-    let loaded = cdstream::load_chunk_decompressed(chunk_id, dst);
+    let mut loaded = cdstream::load_chunk_decompressed(chunk_id, dst);
+    if loaded.is_none() {
+        loaded = retry_streamed_chunk(chunk_id, dst);
+    }
     telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
     loaded
 }
@@ -35564,6 +35601,7 @@ fn play(
     begin_loading(fb);
     draw_next_loading_screen(fb);
 
+    diag_hex(0x0100, "WORLDT", texture_chunk_id, world_chunk_id);
     let tex_load = load_streamed_chunk(texture_chunk_id, unsafe { map_buf() });
     let tex_len = tex_load.map_or(0, |load| load.raw_len);
     let mut stream_bytes = 0u32;
@@ -35854,9 +35892,12 @@ fn play(
         end_loading();
         return PlayExit::BackToMenu;
     }
-    // Loading is over: the CD hook must not survive into gameplay, where the
-    // weapon-switch and model streams would redraw the strip over the world.
-    end_loading();
+    // The strip stays alive through the model streams that follow (six more
+    // blocking chunk loads on the Hazard Course): `end_loading` runs just before
+    // the first gameplay frame, so a stall in this stretch shows as a frozen
+    // spinner at the stage it stopped in. Every path out of here to that point
+    // falls through; the early returns above end the load themselves.
+    diag_stage(0x0102, "MAP LOAD");
     let m = Map::load(map_bytes);
     #[cfg(feature = "semantic-input")]
     if semantic_player.begin_map(map_name).is_err() {
@@ -35938,7 +35979,9 @@ fn play(
         // frame-0 display tables. Needs ENT_CACHE for the per-brush flags.
         tex_anim_init(&m);
         init_prop_state(&m, launch.room_id as usize, !launch.preserve_view);
+        diag_stage(0x0103, "PROP INIT");
         let restored = restore_transition_actors(&m, landmark_found, launch.carry_count);
+        diag_stage(0x0200, "MODEL STREAM");
         stream_map_models(
             VM_POOL_WORDS * 4,
             if landmark_found.is_some() {
@@ -35951,9 +35994,11 @@ fn play(
             &mut stream_bytes,
             &mut stream_sectors,
         ); // enemies stream after the viewmodel reserve
-           // Pre-scale the modal font into the unused right strip of the HUD tpage.
-           // This has no resident RAM cost and turns chapter-card glyphs into one
-           // transparent textured quad each instead of hundreds of flat pixel runs.
+        diag_stage(0x0300, "MODELS DONE");
+        // Pre-scale the modal font into the unused right strip of the HUD tpage.
+        // This has no resident RAM cost and turns chapter-card glyphs into one
+        // transparent textured quad each instead of hundreds of flat pixel runs.
+        diag_stage(0x0400, "ATLAS UPLOAD");
         hltext::upload_gameplay_atlas();
         // Every non-viewmodel texture plus the glock is resident now. Snapshot
         // the allocators so each switch can free the selected weapon's textures;
@@ -36562,6 +36607,7 @@ fn play(
         let initial_leaf = recover_camera_leaf(&m, initial_eye, player.pos, initial_train_hint);
         if valid_pvs_leaf(&m, initial_leaf) {
             let initial_eye_under = m.leaf_liquid(initial_leaf as usize) != 0;
+            diag_stage(0x0410, "PVS CACHE");
             rebuild_pvs_cache(&m, initial_leaf, nents, initial_eye, initial_eye_under, 0);
             telemetry::counter(telemetry::counter::ROOM_SURFACE_CACHE_BUILDS, 1);
             telemetry::counter(
@@ -36576,6 +36622,10 @@ fn play(
     }
     telemetry::stage_end(telemetry::stage::ROOM_SURFACE_CACHE);
 
+    // Loading is over: the CD hook must not survive into gameplay, where the
+    // weapon-switch and model streams would redraw the strip over the world.
+    diag_stage(0x0420, "BUFFER CLEAR");
+    end_loading();
     // Menu loading cards are drawn directly into the double buffers, so clear
     // both pages once before the first gameplay frame -- otherwise sparse world
     // coverage could leave a stale loading panel behind. On a level->level
@@ -36628,6 +36678,7 @@ fn play(
     #[cfg(feature = "decoupled-present")]
     let mut flip_queued = false;
 
+    diag_stage(0x0430, "FIRST FRAME");
     // Only the live pad's resume path continues the loop by label.
     #[cfg_attr(feature = "semantic-input", allow(unused_labels))]
     'gameplay: loop {
