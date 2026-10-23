@@ -1,0 +1,43 @@
+@journey name=hl-chain-hazard title="Half-Life Hazard Course: title, Hazard Course row, t0a0 start corridor, doors td1 and td2, the observation hall, the catwalk to the swim shaft" prologue=hazard hazard_row=0 max_ticks=30000
+
+# Work in progress, written against the Hazard Course start (t0a0). The course is a long scripted
+# tutorial; this block gets the player from the start lift to the east end of the observation hall.
+# Positions are LOGIC_PLAYER_POS (x, up, y); yaw 0 faces +y.
+map t0a0 next t0a0a
+  # The lift room opens on the player; the narrator speaks and the first pedestal stands in the middle.
+  200
+  @checkpoint hazard-start
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=-1390 value_hi=-1370
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=-1975 value_hi=-1955
+  # Walk to the pedestal (the button at y -1532 only starts a sentence), then round it on the east side.
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1570 timeout=300
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-1300 timeout=300
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1450 timeout=300
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-1380 timeout=300
+  # Door td1 opens 15 s after the player passes the trigger at y -1680; holding forward waits for it.
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1300 timeout=3000
+  @checkpoint td1-passed
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=-1310 value_hi=-1280
+  # The corridor to door td2 (y -460), which opens on the trigger at y -636, then the observation hall.
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-366 timeout=3000
+  @checkpoint observation-hall
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=-380 value_hi=-350
+  # East along the rail, then the hall's north wall, then the opening at its east end.
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-1000 timeout=300
+  30 f127
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-780 timeout=300
+  @checkpoint hall-east-end
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=-790 value_hi=-740
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=-330 value_hi=-290
+  # North along the catwalk: along the east rail to y -100, left past the wall, then up the long grate
+  # to the door of the swimming shaft (a ladder at x -692, y 778 is inside it).
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-640 timeout=100
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-100 timeout=300
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-640 timeout=100
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=600 timeout=600
+  @checkpoint swim-shaft-door
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=-790 value_hi=-700
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=600 value_hi=640
+  # Stop here. The door ahead (waterout, at y 648) opens only from its north side, on the trigger at
+  # (-692, 664): a dead end from this side. The course continues by another way, not yet written.
+  @stop

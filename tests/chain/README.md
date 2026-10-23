@@ -57,3 +57,20 @@ position (x, up, y) and yaw in the report, which is how a route is surveyed.
 `segments.rs` prints the 103 maps in play order with chapter, exits and content counts straight from the retail BSPs
 and `game/src/map_catalog.rs` (`rustc --edition=2021 -O tests/chain/segments.rs -o /tmp/segments`,
 `/tmp/segments "$HL_DIR/maps" game/src/map_catalog.rs`).
+
+## What the committed chains cover
+
+`inbound-anomalous.route` (`tests/chain-new-game.toml`): New Game, the tram ride (c0a0 to c0a0d), the walk to the test
+chamber (c0a0e), Anomalous Materials (c1a0, c1a0d, c1a0a, c1a0b, c1a0e) and the first half of c1a0c: the first airlock
+button, the pump room, the pipe corridor (a crouch jump: a plain jump peaks 3 units short of the fallen pipes on the PS1) and the elevator lobby. It stops at the lobby: the lift there (`ele_2`, a
+`func_platrot`) does not carry the player on the PS1 (the cab floor has no collision under him), so the route cannot
+continue. The c1a0c legs were derived from a trace of the retail engine (positions agree within 16 units up to the
+lobby) and are closed loop on the player's x and y.
+
+`hazard.route` (`tests/chain-hazard.toml`): title, Hazard Course row, t0a0 from the start lift through doors td1 and
+td2 and the observation hall to the catwalk north of it. That catwalk ends at the door of the swimming shaft (`waterout`),
+which opens from the water side; the course continues elsewhere and the rest of t0a0 is unwritten.
+
+A closed-loop `@hold` that times out aborts the journey, so a leg that stops moving shows as a timeout with the value
+the word held. Keep every leg's timeout generous and its target a few units short of the retail position (the player
+can stop against a wall one unit short of the value the retail engine reached).
