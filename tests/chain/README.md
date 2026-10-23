@@ -63,7 +63,7 @@ and `game/src/map_catalog.rs` (`rustc --edition=2021 -O tests/chain/segments.rs 
 `inbound-anomalous.route` (`tests/chain-new-game.toml`): New Game, the tram ride (c0a0 to c0a0d), the walk to the test
 chamber (c0a0e), Anomalous Materials (c1a0, c1a0d, c1a0a, c1a0b, c1a0e) and the first half of c1a0c: the first airlock
 button, the pump room, the pipe corridor (a crouch jump: a plain jump peaks 3 units short of the fallen pipes on the PS1) and the elevator lobby. It stops at the lobby: the lift there (`ele_2`, a
-`func_platrot`) does not carry the player on the PS1 (the cab floor has no collision under him), so the route cannot
+`func_platrot`) does not carry the player on the PS1 (the cab starts 216 units above the floor he boards from: its phase word is 0 at load where the authored position is 4096), so the route cannot
 continue. The c1a0c legs were derived from a trace of the retail engine (positions agree within 16 units up to the
 lobby) and are closed loop on the player's x and y.
 
