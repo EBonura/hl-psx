@@ -410,8 +410,10 @@ fn parse_route(text: &str) -> Result<Route, String> {
                 });
             }
             "@face" => {
-                // `@face YAW right|left [timeout=N]`: turn until the player's yaw (0..4095, 1024 is
-                // a quarter turn) lands in a 60-unit band, which one tick of a t60 turn cannot jump.
+                // `@face YAW right|left [timeout=N]`: turn until the player's yaw word (0..4095, 1024 is
+                // a quarter turn, right is increasing) is within 30 units past YAW. Two holds: a t60 turn
+                // into an 80-unit band short of the target (one t60 tick moves 61, so it cannot jump the
+                // band), then a t30 turn onto the target (30 units a tick, band of 30).
                 let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
                 let yaw: i32 = tok
                     .get(1)
@@ -428,19 +430,40 @@ fn parse_route(text: &str) -> Result<Route, String> {
                     .find(|(k, _)| k == "timeout")
                     .map(|(_, v)| v.parse().unwrap_or(600))
                     .unwrap_or(600);
-                let (lo, hi) = if right { (yaw, yaw + 59) } else { (yaw - 59, yaw) };
-                if lo < 0 || hi > 4095 {
-                    return Err(at("@face band crosses the yaw wrap: pick the other direction".into()));
+                // Bands as (low, high), both inside 0..=4095.
+                let (coarse, fine) = if right {
+                    ((yaw - 170, yaw - 90), (yaw, yaw + 29))
+                } else {
+                    ((yaw + 90, yaw + 170), (yaw - 29, yaw))
+                };
+                for (lo, hi) in [coarse, fine] {
+                    if lo < 0 || hi > 4095 {
+                        return Err(at("@face band crosses the yaw wrap: pick another target or direction".into()));
+                    }
                 }
-                let sample = Sample { turn: if right { 60 } else { -60 }, ..Sample::default() };
-                let cond = vec![
-                    ("sym".to_string(), "LOGIC_PLAYER_YAW".to_string()),
-                    ("size".to_string(), "2".to_string()),
-                    ("op".to_string(), "between".to_string()),
-                    ("value".to_string(), lo.to_string()),
-                    ("value_hi".to_string(), hi.to_string()),
-                ];
-                b.items.push(Item::Hold { sample, until: assert_table("ram", &cond), timeout });
+                let cond = |lo: i32, hi: i32| {
+                    assert_table(
+                        "ram",
+                        &[
+                            ("sym".to_string(), "LOGIC_PLAYER_YAW".to_string()),
+                            ("size".to_string(), "2".to_string()),
+                            ("op".to_string(), "between".to_string()),
+                            ("value".to_string(), lo.to_string()),
+                            ("value_hi".to_string(), hi.to_string()),
+                        ],
+                    )
+                };
+                let sign = if right { 1 } else { -1 };
+                b.items.push(Item::Hold {
+                    sample: Sample { turn: 60 * sign, ..Sample::default() },
+                    until: cond(coarse.0, coarse.1),
+                    timeout,
+                });
+                b.items.push(Item::Hold {
+                    sample: Sample { turn: 30 * sign, ..Sample::default() },
+                    until: cond(fine.0, fine.1),
+                    timeout,
+                });
             }
             "@stop" => {
                 let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;

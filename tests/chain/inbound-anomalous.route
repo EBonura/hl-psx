@@ -1,4 +1,4 @@
-@journey name=hl-chain-new-game-to-c1a0c title="Half-Life New Game: tram ride, station, Anomalous Materials, the resonance cascade, to the c1a0c arrival" prologue=new_game max_ticks=130000
+@journey name=hl-chain-new-game-to-c1a0c title="Half-Life New Game: tram ride, station, Anomalous Materials, the resonance cascade, c1a0c to the elevator lobby" prologue=new_game max_ticks=130000
 
 
 map c0a0 next c0a0a
@@ -429,7 +429,6 @@ map c1a0c next c1a1
   @checkpoint arrive-c1a0c
   @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
-  @stop
   50
   10 s127
   3
@@ -461,84 +460,60 @@ map c1a0c next c1a1
   3 use
   @checkpoint c-u1
   220
-  @checkpoint c-u2
-  @stop
-  16 t-127
+  @face 1024 left
   5
-  8 s127
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-176 timeout=92
   1 s-127
   5
-  35 f-127
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=994 timeout=200
   2 f127
   5
-  45 s-127
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=432 timeout=240
   5
-  5 f127
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=878 timeout=80
   1 f-127
   5
-  13 s-127
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=629 timeout=112
   1 s127
   5
-  45 f-127 jump
+  @hold f-127 jump until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=579 timeout=240
   5
-  45 f-127 jump
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=573 timeout=60
+  1 f-127 jump
+  1 f-127
+  6 f-127 duck
+  4 f-127 duck
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=292 timeout=240
+  @checkpoint pipes-crossed
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=270 value_hi=300
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=620 value_hi=650
   2 f127
   80
-  15 f-127
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=228 timeout=120
   1 f127
   5
   3 s-127
   1 s127
   5
-  8 t-127
+  @face 3925 left
   3 use
   100
-  8 t127
-  30 f-127
-  2 f127
-  4 t-127
-  3 use
-  120
-  4 t-127
-  8 s127
-  40
-  18 s127
-  2 s-127
-  10 s127
-  650
-  8 t127
-  3 use
-  10
-  8 t-127
-  5
-  14 s-127
-  1 s127
-  5
-  40 f127
-  2 f-127
-  100
-  10 s-127
-  2 s127
-  256
-  5 f127
-  1 f-127
-  5
-  10 s-127
-  1 s127
-  5
-  7 f127
-  1 f-127
-  5
-  1 f-127
-  5
-  45 s-127
-  2 s127
-  207
-  15 s-127
-  1 s127
-  5
-  22 f-127
-  1 f127
+  @face 1024 right
+  @hold s40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=626 timeout=60
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=96 timeout=180
+  @checkpoint lobby-west
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=60 value_hi=110
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=622 timeout=100
+  @hold f40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=140 timeout=100
+  @face 508 left
+  @checkpoint elevator-lobby
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=148 value_hi=168
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=622 value_hi=640
+  # Known parity bug, not yet a journey step: the call button here (ele_2) does not carry the player in the port.
+  # In retail the next steps are: ride the lift to z -100, wait for the console scientist, open the retinal door at (770, 246),
+  # cross the control room beams at (919, 788) and leave by the changelevel at (574, 984).
+  @stop
+
 
 map c1a1 next c1a1a
   @checkpoint arrive-c1a1
