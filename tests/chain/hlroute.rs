@@ -323,7 +323,7 @@ fn parse_route(text: &str) -> Result<Route, String> {
         }
         let tok = split_line(line);
         let head = tok[0];
-        if head != "@assert" {
+        if head != "@assert" && head != "@probe" {
             if let (Some((name, asserts)), Some(b)) =
                 (pending_checkpoint.take(), route.blocks.last_mut())
             {
@@ -363,6 +363,18 @@ fn parse_route(text: &str) -> Result<Route, String> {
             "@checkpoint" => {
                 pending_checkpoint = Some((tok.get(1).ok_or_else(|| at("name".into()))?.to_string(), Vec::new()));
             }
+            "@probe" => {
+                // Authoring aid: print the player's position (x, up, y) and yaw in the report.
+                let (_, asserts) = pending_checkpoint
+                    .as_mut()
+                    .ok_or_else(|| at("@probe outside a checkpoint".into()))?;
+                for (off, size) in [(0, 4), (4, 4), (8, 4)] {
+                    let kv = parse_kv(&["sym=LOGIC_PLAYER_POS", &format!("size={size}"), "signed=true", &format!("offset={off}"), "op=between", "value=-100000", "value_hi=100000"]);
+                    asserts.push(assert_table("ram", &kv));
+                }
+                let kv = parse_kv(&["sym=LOGIC_PLAYER_YAW", "size=2", "op=between", "value=0", "value_hi=65535"]);
+                asserts.push(assert_table("ram", &kv));
+            }
             "@assert" => {
                 let (_, asserts) = pending_checkpoint
                     .as_mut()
@@ -396,6 +408,39 @@ fn parse_route(text: &str) -> Result<Route, String> {
                     until: assert_table("ram", &kv),
                     timeout,
                 });
+            }
+            "@face" => {
+                // `@face YAW right|left [timeout=N]`: turn until the player's yaw (0..4095, 1024 is
+                // a quarter turn) lands in a 60-unit band, which one tick of a t60 turn cannot jump.
+                let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
+                let yaw: i32 = tok
+                    .get(1)
+                    .and_then(|v| v.parse().ok())
+                    .ok_or_else(|| at("@face needs a yaw".into()))?;
+                let right = match tok.get(2).copied() {
+                    Some("right") => true,
+                    Some("left") => false,
+                    _ => return Err(at("@face needs right or left".into())),
+                };
+                let kv = parse_kv(&tok[3..]);
+                let timeout = kv
+                    .iter()
+                    .find(|(k, _)| k == "timeout")
+                    .map(|(_, v)| v.parse().unwrap_or(600))
+                    .unwrap_or(600);
+                let (lo, hi) = if right { (yaw, yaw + 59) } else { (yaw - 59, yaw) };
+                if lo < 0 || hi > 4095 {
+                    return Err(at("@face band crosses the yaw wrap: pick the other direction".into()));
+                }
+                let sample = Sample { turn: if right { 60 } else { -60 }, ..Sample::default() };
+                let cond = vec![
+                    ("sym".to_string(), "LOGIC_PLAYER_YAW".to_string()),
+                    ("size".to_string(), "2".to_string()),
+                    ("op".to_string(), "between".to_string()),
+                    ("value".to_string(), lo.to_string()),
+                    ("value_hi".to_string(), hi.to_string()),
+                ];
+                b.items.push(Item::Hold { sample, until: assert_table("ram", &cond), timeout });
             }
             "@stop" => {
                 let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
@@ -549,13 +594,41 @@ fn compile(o: &Opts) -> Result<(), String> {
     }
     if let Some(prologue) = jv("prologue") {
         // `new_game`: wait out the boot and press Cross on the title.
-        if prologue == "new_game" {
+        if prologue == "new_game" || prologue == "hazard" || prologue == "segment" {
             // A disc with the intro stage opens with the studio splash and then the
             // movie, each skipped with Start; a disc without them ignores the presses.
             t.push_str("\n[[step]]\nlabel = \"skip the studio splash and the startup movie, if the disc has them\"\nwait = 100\n");
             t.push_str("\n[[step]]\npress = [\"start\"]\nhold = 8\nwait = 62\n");
             t.push_str("\n[[step]]\npress = [\"start\"]\nhold = 8\nwait = 200\n");
             t.push_str("\n[[step]]\nlabel = \"boot to the title\"\nwait = 620\n");
+        }
+        // `hazard`: the title's Hazard Course row, then the map list; `hazard_row=N` moves
+        // down N rows (0 is the first Hazard Course map).
+        if prologue == "hazard" {
+            t.push_str("\n[[step]]\nlabel = \"title: open Hazard Course map select\"\npress = [\"down\"]\nhold = 8\nwait = 12\n");
+            t.push_str("\n[[step]]\npress = [\"cross\"]\nhold = 8\nwait = 25\n");
+            let rows: u32 = jv("hazard_row").and_then(|v| v.parse().ok()).unwrap_or(0);
+            if rows > 0 {
+                let _ = writeln!(t, "\n[[step]]\nlabel = \"select Hazard Course map row {rows}\"\npress = [\"down\"]\nhold = 8\nwait = 12\nrepeat = {rows}");
+            }
+            t.push_str("\n[[step]]\nlabel = \"enter the selected Hazard Course map\"\npress = [\"cross\"]\nhold = 8\nwait = 12\n");
+        }
+        // `segment`: authoring aid, the Debug page's diagnostic Segment select launch;
+        // `segment_row=N` is the row in play order. Never part of a shipping chain journey.
+        if prologue == "segment" {
+            let rows: u32 = jv("segment_row").and_then(|v| v.parse().ok()).unwrap_or(0);
+            t.push_str("\n[[step]]\nlabel = \"open Options\"\npress = [\"down\"]\nhold = 8\nwait = 12\nrepeat = 2\n");
+            t.push_str("\n[[step]]\npress = [\"cross\"]\nhold = 8\nwait = 25\n");
+            t.push_str("\n[[step]]\nlabel = \"wrap to Debug\"\npress = [\"up\"]\nhold = 8\nwait = 12\n");
+            t.push_str("\n[[step]]\npress = [\"cross\"]\nhold = 8\nwait = 25\n");
+            t.push_str("\n[[step]]\nlabel = \"select Segment select\"\npress = [\"up\"]\nhold = 8\nwait = 12\nrepeat = 2\n");
+            t.push_str("\n[[step]]\npress = [\"cross\"]\nhold = 8\nwait = 25\n");
+            if rows > 0 {
+                let _ = writeln!(t, "\n[[step]]\nlabel = \"scroll to row {rows}\"\npress = [\"down\"]\nhold = 8\nwait = 12\nrepeat = {rows}");
+            }
+            t.push_str("\n[[step]]\nlabel = \"launch the diagnostic segment\"\npress = [\"cross\"]\nhold = 8\nwait = 12\n");
+        }
+        if prologue == "new_game" {
             // `skill=easy|hard`: Left/Right on the New game row first (Medium is the default).
             let (skill, key) = match jv("skill").as_deref() {
                 Some("easy") => ("Easy", "left"),

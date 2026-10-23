@@ -40,3 +40,20 @@ settles 8 ticks, and pushes in legs ended by the cart's x. The first leg is forw
 against the lift's 1-unit lip stalled 3 units short of the cart on builds before the `slide_move` fix (branch
 `fix/hl-cart-push-2026-10-16`), and nothing under forward 90 stalled. Passes on integ 5dac694, b5a58b2 and 219e7ff,
 and with the push perturbed by one tick of turn or strafe before the first leg.
+
+## Prologues, `@face`, `@probe` and the segment table
+
+`@journey ... prologue=new_game` presses New Game on the title. Two more prologues exist for routes that do not start
+at New Game: `prologue=hazard` (the title's Hazard Course row and the map list; `hazard_row=N` moves N rows down the
+list, 0 is t0a0) and `prologue=segment` (the Debug page's Segment select, `segment_row=N` rows down in play order; a
+diagnostic launch for fast authoring, never part of a shipping chain, because it does not come from the previous
+segment's end state).
+
+`@face YAW right|left [timeout=N]` turns the player until `LOGIC_PLAYER_YAW` (0..4095, 0 faces +y, 1024 faces +x)
+lands in a 60-unit band that one tick of a t60 turn cannot jump. A band that crosses the 4095 to 0 wrap is refused:
+pick the other direction. `@probe` after a `@checkpoint` adds four assertions that always pass and print the player's
+position (x, up, y) and yaw in the report, which is how a route is surveyed.
+
+`segments.rs` prints the 103 maps in play order with chapter, exits and content counts straight from the retail BSPs
+and `game/src/map_catalog.rs` (`rustc --edition=2021 -O tests/chain/segments.rs -o /tmp/segments`,
+`/tmp/segments "$HL_DIR/maps" game/src/map_catalog.rs`).

@@ -11,7 +11,7 @@ max_ticks = 130000
 # Bound to the build this journey was written against.
 [addr]
 ENT_CACHE = 0x801ec61c
-LOGIC_PLAYER_HEALTH = 0x800c0fdc
+LOGIC_PLAYER_HEALTH = 0x800c0fbc
 LOGIC_PLAYER_POS = 0x801d378c
 LOGIC_PLAYER_SUIT = 0x801d5228
 LOGIC_PLAYER_YAW = 0x801d3798
