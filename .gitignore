@@ -35,7 +35,8 @@ assets/
 config.mk
 
 # ---- Local-only material (kept on disk, never committed) ----
-docs/
+docs/*
+!docs/parity/
 reference/
 /tools/*
 !/tools/census/
