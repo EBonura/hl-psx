@@ -263,7 +263,21 @@ fn main() {
         held: true,
         last_vblank: interrupts::vblank_count(),
     };
-    splash::play(&mut gpu, &mut skip);
+    // The splash counts its fade in frames, one flip per VBlank: keep the display rate here
+    // (the SDK caps every program at 30 fps unless it says otherwise).
+    interrupts::set_min_flip_vblanks(1);
+    // Ask the pad for analog mode now, so a pad that cannot be seen on the splash, before the
+    // movie, instead of after it. The game asks again and locks the mode.
+    let notice = match psx_pad::require_analog_on(&mut skip.port, Port::One) {
+        psx_pad::AnalogRequirement::Analog => ["", ""],
+        psx_pad::AnalogRequirement::DigitalOnly => {
+            ["Digital pad detected", "Half-Life needs a DualShock"]
+        }
+        psx_pad::AnalogRequirement::Absent => {
+            ["No controller found", "Plug a DualShock into port 1"]
+        }
+    };
+    splash::play(&mut gpu, &mut skip, notice);
     play_movie(&mut skip, image_start());
 
     let Some((lba, _)) = player::find_root_file(GAME_FILE) else {

@@ -5,7 +5,9 @@
 //! `menu::intro`, which an intro disc now skips): the mark's pixels are the
 //! Rust-embedded ones the content compiler also uses (shared, not copied), and
 //! the text sweeps a highlight across it as it did there. A button held for more
-//! than a few frames walks out of it.
+//! than a few frames walks out of it. A pad that is not a DualShock in analog mode
+//! gets a two-line notice under the tag, here and not on a second splash after the
+//! movie.
 
 use psx_font::fonts::BASIC_8X16;
 use psx_font::FontAtlas;
@@ -49,8 +51,10 @@ fn bytes_of(words: &'static [u16]) -> &'static [u8] {
     unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), words.len() * 2) }
 }
 
-/// Play the splash on `gpu`, ending on a black picture.
-pub fn play(gpu: &mut Gpu, skip: &mut Skip) {
+/// Play the splash on `gpu`, ending on a black picture. `notice` is two lines under the tag,
+/// empty when the pad is fine (the game asks the pad for analog mode too, and used to
+/// show this notice on a second splash after the movie).
+pub fn play(gpu: &mut Gpu, skip: &mut Skip, notice: [&str; 2]) {
     let mut fb = DoubleBuffer::new(Resolution::R320X240);
     // 4bpp pixels, then the palette in the row below, as the game uploads it.
     upload_bytes(
@@ -96,6 +100,13 @@ pub fn play(gpu: &mut Gpu, skip: &mut Skip) {
             frame,
             level,
         );
+        let mut y = 190;
+        for line in notice {
+            let x = 160 - font.text_width(line) as i16 / 2;
+            let tint = level as u8 / 2;
+            font.draw_text(x, y, line, (tint + tint / 2, tint, tint / 2));
+            y += 18;
+        }
 
         gpu.wait_idle();
         interrupts::wait_vblank();

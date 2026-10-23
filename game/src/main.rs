@@ -34889,8 +34889,9 @@ fn main() {
         let assets = unsafe { stream_menu_assets() };
         end_loading();
         // A disc with the intro stage opened with this splash already (the intro
-        // program plays it before the movie); a pad notice still needs a screen.
-        if !music::booted_by_intro() || !pad_notice[0].is_empty() {
+        // program plays it before the movie, pad notice included); showing it again
+        // here would put the logo after the movie.
+        if !music::booted_by_intro() {
             menu::intro(&mut fb, assets, pad_notice);
         }
     }
