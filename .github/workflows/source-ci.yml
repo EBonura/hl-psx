@@ -66,6 +66,7 @@ jobs:
           cargo fmt --manifest-path intro/Cargo.toml --package hl-intro -- --check
           cargo fmt --manifest-path host/hl-census/Cargo.toml --package hl-census -- --check
           cargo fmt --manifest-path host/hl-logic-tests/Cargo.toml --package hl-logic-tests -- --check
+          cargo fmt --manifest-path tools/hl-order-oracle/Cargo.toml --package hl-order-oracle -- --check
           cargo fmt --manifest-path shared/hl-format/Cargo.toml --package hl-format -- --check
 
       - name: Deny warnings in the host crates
@@ -77,6 +78,7 @@ jobs:
           cargo check --manifest-path host/hl-content/Cargo.toml --all-targets --locked
           cargo check --manifest-path host/hl-census/Cargo.toml --all-targets --locked
           cargo check --manifest-path host/hl-logic-tests/Cargo.toml --all-targets --locked
+          cargo check --manifest-path tools/hl-order-oracle/Cargo.toml --all-targets --locked
           cargo check --manifest-path shared/hl-format/Cargo.toml --all-targets
 
       - name: Run host tests
@@ -87,6 +89,7 @@ jobs:
           cargo test --manifest-path host/hl-intro-cook/Cargo.toml --locked
           cargo test --manifest-path host/hl-census/Cargo.toml --locked
           cargo test --manifest-path host/hl-logic-tests/Cargo.toml --locked
+          cargo test --manifest-path tools/hl-order-oracle/Cargo.toml --locked
           cargo test --manifest-path shared/hl-format/Cargo.toml
 
       - name: Install cargo-deny
@@ -100,6 +103,7 @@ jobs:
           cargo deny --manifest-path game/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
           cargo deny --manifest-path host/hl-bsp/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
           cargo deny --manifest-path host/hl-content/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
+          cargo deny --manifest-path tools/hl-order-oracle/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
           cargo deny --manifest-path host/hl-logic-tests/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
           cargo deny --manifest-path shared/hl-format/Cargo.toml check -A unmatched-source --config deny.toml advisories licenses sources
 
