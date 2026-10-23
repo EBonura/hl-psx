@@ -2087,8 +2087,17 @@ const PAUSE_BOX: (i16, i16, i16, i16) = (8, 12, 312, 212);
 #[cfg(not(feature = "semantic-input"))]
 const PAUSE_ARMED: (u8, u8, u8) = (75, 53, 10);
 
+/// Presentation cap while a map is being played: the display never flips sooner than two
+/// VBlanks after the last flip (30 fps), so a frame built inside one VBlank interval waits
+/// instead of flipping at 60 for a moment (the SDK's default for every game; see
+/// sdk/docs/PRESENT-CAP.md).
+const GAMEPLAY_PRESENT_CAP: psx_tick::PresentCap = psx_tick::PresentCap::HZ30;
+/// The boot, menus, pause screens, loading and the ending count their animations in
+/// frames, one flip per VBlank, so they keep the display rate.
+const MENU_PRESENT_CAP: psx_tick::PresentCap = psx_tick::PresentCap::UNCAPPED;
+
 // One loading indicator for every load: a small black square in the bottom-right
-// corner with the orange dot spinner in it, drawn over whatever is already on
+// corner with a ring of orange lights in it, drawn over whatever is already on
 // screen (the menu when a level is picked, the frozen scene across a
 // changelevel, the black the boot sits on while it reads its sound bank). It is
 // the SDK's psx-loading widget, shared with the disc's intro program, which draws
@@ -34827,6 +34836,7 @@ fn main() {
         // The strip counts VBlanks, and the game installs the counter only when play()
         // starts: do it now, or the boot loads would draw it once and freeze it.
         interrupts::install_vblank_counter();
+        interrupts::set_min_flip_vblanks(MENU_PRESENT_CAP.min_vblanks());
         begin_loading(&mut fb);
         draw_next_loading_screen(&mut fb);
     }
@@ -35048,7 +35058,11 @@ fn main() {
         // so keep it frozen and overlay only a tiny "Loading" strip.
         let mut keep_frame = false;
         loop {
-            match play(
+            interrupts::set_min_flip_vblanks(GAMEPLAY_PRESENT_CAP.min_vblanks());
+            // The flip-interval histogram then describes this stretch of play only (the journey
+            // tests/present-cap.toml reads it).
+            interrupts::reset_flip_histogram();
+            let exit = play(
                 &mut fb,
                 launch,
                 keep_frame,
@@ -35060,7 +35074,9 @@ fn main() {
                 follow_route,
                 #[cfg(feature = "route-follow")]
                 &mut follower,
-            ) {
+            );
+            interrupts::set_min_flip_vblanks(MENU_PRESENT_CAP.min_vblanks());
+            match exit {
                 exit @ (PlayExit::BackToMenu | PlayExit::Ending) => {
                     // Silence the physical drive and SPU route before the first
                     // menu frame. Keeping this out of the cold boot path also

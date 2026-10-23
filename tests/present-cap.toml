@@ -1,0 +1,43 @@
+# Presentation cap: while a map is played the display never flips sooner than two VBlanks after
+# the last flip (30 fps), so a frame built inside one VBlank interval cannot show at 60 for a
+# moment. The SDK's VBlank handler keeps a histogram of the VBlanks between flips
+# (`__psx_rt_flip_hist`, eight words: index k counts flips k VBlanks after the previous one) and
+# the game clears it when a map starts playing. The tape is the playtest of the vent journey
+# (title, chapter select, c1a1f, the c1a1b changelevel, the scientist at the vent mouth) up to the
+# last stretch of play; the histogram then covers the c1a1b play since its changelevel. Buckets 0
+# and 1 must be empty and the 2-VBlank bucket must hold flips, so a build that stops capping fails.
+# Needs the disc WITH the startup movie, like the tape.
+name = "hl-present-cap"
+title = "Half-Life: no display flip comes sooner than two VBlanks after the last during play"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 14000
+
+[[step]]
+label = "replay the playtest tape from boot into c1a1b"
+tape = "tests/unstick/c1a1b-vent-embed.pxtape"
+timeout = 13000
+
+[[step]]
+checkpoint = "flip-intervals"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "__psx_rt_flip_hist"
+offset = 0
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "__psx_rt_flip_hist"
+offset = 4
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "__psx_rt_flip_hist"
+offset = 8
+op = "between"
+value = 1
+value_hi = 100000
