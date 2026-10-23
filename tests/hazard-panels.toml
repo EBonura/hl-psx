@@ -1,0 +1,180 @@
+# Hazard Course number panels light up. The shooting range (t0a0b) has seven numbered score
+# panels; each has a switchable light (targ1score .. targ7score, start off) whose qrad plane the
+# cooker stores per vertex. The plates are small faces whose lamp sits a few units in front of
+# their middle, so reading the lightmap only under each corner left some of them (the digits
+# above all) with no change at all when the light came on, and the others with a faint one.
+#
+# Runs on a probe disc built by scripts/panel-proof.sh from tests/probes/hazard-panels.txt (a
+# probe disc boots the room named by L1 and the pad's low byte, so no menu): the probe stands
+# the player in front of the wall and switches the seven lights on in turn, 60 map ticks apart.
+# Each digit waits for LIGHTSTYLE_ACTIVE_MASK to take its bit (the t0a0b style slots: darkrooml
+# 2, rangel 5 and targ2a 6 start on, 100; then targ1score 7, targ2score 8, targ3score 9,
+# targ4score 12, targ5score 11, targ6score 10, targ7score 24), gives the lit frame a moment to
+# reach the screen, and requires the plate to differ from the frame before by more than half
+# its pixels at a channel tolerance of 20. Measured on this disc: 79 to 89 percent; with the
+# corner reads the cooker used before, 0.2 to 17 percent.
+
+name = "hl-hazard-panels"
+title = "Half-Life: the Hazard Course number panels light up"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 6000
+
+[[step]]
+label = "a probe disc boots the map the held buttons name: L1 with the room id in the low byte of the pad (t0a0b is room 98: L3, Right and Down)"
+press = ["l1", "l3", "right", "down"]
+hold = 180
+
+[[step]]
+label = "wait for the world"
+wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 10926 }
+timeout = 3000
+
+[[step]]
+label = "the map starts with its three lights on (darkrooml, rangel, targ2a)"
+wait_until = { kind = "ram", sym = "LIGHTSTYLE_ACTIVE_MASK", size = 4, op = "eq", value = 100 }
+timeout = 1200
+
+[[step]]
+label = "the probe stands the player in front of the wall at map tick 30 and lights the first digit at 100: look in between"
+wait = 200
+
+[[step]]
+checkpoint = "before"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "digit 1: its light switches on (mask 228)"
+wait_until = { kind = "ram", sym = "LIGHTSTYLE_ACTIVE_MASK", size = 4, op = "eq", value = 228 }
+timeout = 600
+
+[[step]]
+label = "the lit frame reaches the screen a few frames after the switch"
+wait = 100
+
+[[step]]
+checkpoint = "lit-1"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "before"
+region = { x = 80, y = 45, w = 44, h = 38 }
+color_tol = 20
+min_changed = 0.5
+
+[[step]]
+label = "digit 2: its light switches on (mask 484)"
+wait_until = { kind = "ram", sym = "LIGHTSTYLE_ACTIVE_MASK", size = 4, op = "eq", value = 484 }
+timeout = 600
+
+[[step]]
+label = "the lit frame reaches the screen a few frames after the switch"
+wait = 100
+
+[[step]]
+checkpoint = "lit-2"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "lit-1"
+region = { x = 135, y = 45, w = 44, h = 38 }
+color_tol = 20
+min_changed = 0.5
+
+[[step]]
+label = "digit 3: its light switches on (mask 996)"
+wait_until = { kind = "ram", sym = "LIGHTSTYLE_ACTIVE_MASK", size = 4, op = "eq", value = 996 }
+timeout = 600
+
+[[step]]
+label = "the lit frame reaches the screen a few frames after the switch"
+wait = 100
+
+[[step]]
+checkpoint = "lit-3"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "lit-2"
+region = { x = 190, y = 45, w = 44, h = 38 }
+color_tol = 20
+min_changed = 0.5
+
+[[step]]
+label = "digit 4: its light switches on (mask 5092)"
+wait_until = { kind = "ram", sym = "LIGHTSTYLE_ACTIVE_MASK", size = 4, op = "eq", value = 5092 }
+timeout = 600
+
+[[step]]
+label = "the lit frame reaches the screen a few frames after the switch"
+wait = 100
+
+[[step]]
+checkpoint = "lit-4"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "lit-3"
+region = { x = 80, y = 92, w = 44, h = 38 }
+color_tol = 20
+min_changed = 0.5
+
+[[step]]
+label = "digit 5: its light switches on (mask 7140)"
+wait_until = { kind = "ram", sym = "LIGHTSTYLE_ACTIVE_MASK", size = 4, op = "eq", value = 7140 }
+timeout = 600
+
+[[step]]
+label = "the lit frame reaches the screen a few frames after the switch"
+wait = 100
+
+[[step]]
+checkpoint = "lit-5"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "lit-4"
+region = { x = 135, y = 92, w = 44, h = 38 }
+color_tol = 20
+min_changed = 0.5
+
+[[step]]
+label = "digit 6: its light switches on (mask 8164)"
+wait_until = { kind = "ram", sym = "LIGHTSTYLE_ACTIVE_MASK", size = 4, op = "eq", value = 8164 }
+timeout = 600
+
+[[step]]
+label = "the lit frame reaches the screen a few frames after the switch"
+wait = 100
+
+[[step]]
+checkpoint = "lit-6"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "lit-5"
+region = { x = 190, y = 92, w = 44, h = 38 }
+color_tol = 20
+min_changed = 0.5
+
+[[step]]
+label = "digit 7: its light switches on (mask 16785380)"
+wait_until = { kind = "ram", sym = "LIGHTSTYLE_ACTIVE_MASK", size = 4, op = "eq", value = 16785380 }
+timeout = 600
+
+[[step]]
+label = "the lit frame reaches the screen a few frames after the switch"
+wait = 100
+
+[[step]]
+checkpoint = "lit-7"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "lit-6"
+region = { x = 135, y = 148, w = 44, h = 38 }
+color_tol = 20
+min_changed = 0.5

@@ -1,0 +1,16 @@
+# Hazard Course number panels (journey tests/hazard-panels.toml, scripts/panel-proof.sh).
+# t0a0b, the shooting range: the player stands in front of the wall of seven numbered score
+# panels (HL x -2612, y 632..728, z -148..-50) and each score light is switched on in turn, the
+# way the range's multi_managers do when a target falls (`fire` runs the same switch as a
+# trigger's target would).
+map t0a0b
+0 god 1
+30 tp -2480 680 -128 180 0 700
+31 view 180 0
+100 fire targ1score on
+160 fire targ2score on
+220 fire targ3score on
+280 fire targ4score on
+340 fire targ5score on
+400 fire targ6score on
+460 fire targ7score on
