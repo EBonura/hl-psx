@@ -1739,6 +1739,7 @@ fn cook_rooms(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
             .env("SUBDIVISION_REPORT", &subdivision_report)
             .env("ENTITY_COVERAGE_REPORT", &entity_coverage_report)
             .env("ENTITY_COVERAGE_STRICT", "1")
+            .env("DYNAMIC_LIGHT_STRICT", "1")
             .env("MAP_NAME", map)
             .env("MAP_INDEX", index.to_string())
             .stdout(Stdio::null())

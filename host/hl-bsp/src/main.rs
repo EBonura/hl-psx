@@ -2307,6 +2307,105 @@ fn start_lightstyle_values(ents: &[u8]) -> [u32; 64] {
     values
 }
 
+/// Sum a face's qrad light planes at the point `(ou, ov)` of its texture
+/// space the way the GoldSrc renderer filters a lightmap: luxel `i` holds the
+/// light at texture coordinate `(mins + i) * 16`, and a point between two
+/// luxels takes their linear blend before the gamma ramp. `plane_sums` (the
+/// baked base colours) reads the luxel at the floor of the coordinate instead,
+/// which turns a small panel that spans two luxels into "every corner reads
+/// the dark luxel and the lit one is never sampled".
+#[allow(clippy::too_many_arguments)]
+fn plane_sums_bilinear(
+    lighting: &[u8],
+    lightofs: i32,
+    lmw: usize,
+    lmh: usize,
+    ou: f32,
+    ov: f32,
+    mins_s: i32,
+    mins_t: i32,
+    layers: &[(usize, u32)],
+) -> Option<[f32; 3]> {
+    let xs = ou / 16.0 - mins_s as f32;
+    let xt = ov / 16.0 - mins_t as f32;
+    let (i0, j0) = (xs.floor(), xt.floor());
+    let (fs, ft) = (xs - i0, xt - j0);
+    let luxel = |i: f32, j: f32| {
+        (i as i32).clamp(0, lmw as i32 - 1) as usize
+            + (j as i32).clamp(0, lmh as i32 - 1) as usize * lmw
+    };
+    let corners = [
+        (luxel(i0, j0), (1.0 - fs) * (1.0 - ft)),
+        (luxel(i0 + 1.0, j0), fs * (1.0 - ft)),
+        (luxel(i0, j0 + 1.0), (1.0 - fs) * ft),
+        (luxel(i0 + 1.0, j0 + 1.0), fs * ft),
+    ];
+    let mut sum = [0.0f32; 3];
+    for &(layer, value) in layers {
+        for &(at, weight) in &corners {
+            if weight == 0.0 {
+                continue;
+            }
+            let lo = lightofs as usize + (layer * lmw * lmh + at) * 3;
+            let plane = lighting.get(lo..lo + 3)?;
+            for c in 0..3 {
+                sum[c] += plane[c] as f32 * value as f32 * weight;
+            }
+        }
+    }
+    Some(sum)
+}
+
+/// [`light_curve`] on a fractional input, for blended lightmap sums.
+fn light_curve_f32(v: f32) -> f32 {
+    (v.clamp(0.0, 255.0) / 255.0).powf(1.0 / LIGHT_GAMMA) * 255.0
+}
+
+/// [`dynamic_corner_delta`] for a panel: the lightmap is filtered between luxels
+/// ([`plane_sums_bilinear`]) and the result stays fractional, so a panel's vertex
+/// values can be compared with its interior mean ([`polygon_mean`]).
+#[allow(clippy::too_many_arguments)]
+fn panel_corner_delta(
+    lighting: &[u8],
+    lightofs: i32,
+    lmw: usize,
+    lmh: usize,
+    ou: f32,
+    ov: f32,
+    mins_s: i32,
+    mins_t: i32,
+    lit_layers: &[(usize, u32)],
+    layer: usize,
+    level: u32,
+) -> [f32; 3] {
+    if lightofs < 0 {
+        return [0.0; 3];
+    }
+    let sums = |layers: &[(usize, u32)]| {
+        plane_sums_bilinear(lighting, lightofs, lmw, lmh, ou, ov, mins_s, mins_t, layers)
+    };
+    let Some(start) = sums(lit_layers) else {
+        return [0.0; 3];
+    };
+    let other: Vec<(usize, u32)> = if level > 0 {
+        lit_layers
+            .iter()
+            .copied()
+            .filter(|&(l, _)| l != layer)
+            .collect()
+    } else {
+        let mut v = lit_layers.to_vec();
+        v.push((layer, 256));
+        v
+    };
+    let Some(end) = sums(&other) else {
+        return [0.0; 3];
+    };
+    let lit = |c: f32| light_curve_f32(c / 256.0);
+    let d = |c: usize| (lit(end[c]) - lit(start[c])).abs().min(255.0);
+    [d(0), d(1), d(2)]
+}
+
 /// What one switchable or animated qrad plane adds at one vertex, as the
 /// per-channel size of the change in the final (gamma-ramped) colour between
 /// the plane at its start `level` and at the other end of its swing: dark
@@ -2354,6 +2453,103 @@ fn dynamic_corner_delta(
     let lit = |c: u32| light_curve((c / 256).min(255) as u8) as i32;
     let d = |c: usize| (lit(end[c]) - lit(start[c])).unsigned_abs().min(255) as u8;
     (d(0), d(1), d(2))
+}
+
+/// A face this small (in lightmap luxels) is a panel: a lamp, a number, a
+/// button. Its few vertices cannot show a light that sits between them, so
+/// the switchable planes are lifted to the face's true mean ([`panel_lift`]).
+const PANEL_MAX_LUXELS: usize = 16;
+
+/// A panel plane whose lightmap mean is at least this (0 to 255, after the
+/// gamma ramp) must cook to a visible change; the cook fails otherwise when
+/// `DYNAMIC_LIGHT_STRICT=1` (set by `hl-build`).
+const PANEL_AUDIT_MIN_MEAN: f32 = 6.0;
+
+/// Corners of the convex hull of `points`, in order. Faces are convex, so the
+/// hull of a face's vertices is the face.
+fn convex_hull(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    let mut pts: Vec<(f32, f32)> = points.to_vec();
+    pts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+    pts.dedup();
+    if pts.len() < 3 {
+        return pts;
+    }
+    let cross = |o: (f32, f32), a: (f32, f32), b: (f32, f32)| {
+        (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0)
+    };
+    let mut hull: Vec<(f32, f32)> = Vec::with_capacity(pts.len() * 2);
+    for &p in &pts {
+        while hull.len() >= 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], p) <= 0.0 {
+            hull.pop();
+        }
+        hull.push(p);
+    }
+    let lower = hull.len() + 1;
+    for &p in pts.iter().rev().skip(1) {
+        while hull.len() >= lower && cross(hull[hull.len() - 2], hull[hull.len() - 1], p) <= 0.0 {
+            hull.pop();
+        }
+        hull.push(p);
+    }
+    hull.pop();
+    hull
+}
+
+/// Mean of `value` over the interior of the polygon spanned by `points`: an
+/// `n` by `n` grid of cell centres clipped to the hull. `None` for a polygon
+/// with no area.
+fn polygon_mean(
+    points: &[(f32, f32)],
+    n: usize,
+    value: &mut dyn FnMut(f32, f32) -> [f32; 3],
+) -> Option<[f32; 3]> {
+    let hull = convex_hull(points);
+    if hull.len() < 3 {
+        return None;
+    }
+    let (mut x0, mut x1, mut y0, mut y1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+    for &(x, y) in &hull {
+        x0 = x0.min(x);
+        x1 = x1.max(x);
+        y0 = y0.min(y);
+        y1 = y1.max(y);
+    }
+    let mut sum = [0.0f32; 3];
+    let mut count = 0u32;
+    for i in 0..n {
+        for j in 0..n {
+            let x = x0 + (x1 - x0) * (i as f32 + 0.5) / n as f32;
+            let y = y0 + (y1 - y0) * (j as f32 + 0.5) / n as f32;
+            let inside = (0..hull.len()).all(|k| {
+                let (a, b) = (hull[k], hull[(k + 1) % hull.len()]);
+                (b.0 - a.0) * (y - a.1) - (b.1 - a.1) * (x - a.0) >= 0.0
+            });
+            if inside {
+                let v = value(x, y);
+                for c in 0..3 {
+                    sum[c] += v[c];
+                }
+                count += 1;
+            }
+        }
+    }
+    (count > 0).then(|| {
+        let k = count as f32;
+        [sum[0] / k, sum[1] / k, sum[2] / k]
+    })
+}
+
+/// What to add to every vertex value of one switchable plane of a panel so
+/// the face's mean matches the lightmap's: `true_mean - vertex_mean` per
+/// channel, never negative. Vertices sample the lightmap at the face's
+/// corners, and a lamp a few units in front of a panel lights its middle and
+/// leaves the corners dark.
+fn panel_lift(true_mean: [f32; 3], vertex_mean: [f32; 3]) -> [f32; 3] {
+    [
+        (true_mean[0] - vertex_mean[0]).max(0.0),
+        (true_mean[1] - vertex_mean[1]).max(0.0),
+        (true_mean[2] - vertex_mean[2]).max(0.0),
+    ]
 }
 
 /// Tone curve applied to every baked lightmap sample.
@@ -12472,10 +12668,49 @@ fn door_seal_report(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// How the switchable lightmap planes of small faces (panels) are cooked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PanelFilter {
+    /// Read the lightmap the way the renderer filters it and lift a panel's
+    /// planes to the face's true mean (`panel_corner_delta`, `panel_lift`).
+    Lightmap,
+    /// The luxel under each corner, as every other face is read.
+    Corners,
+}
+
+/// Bytes of the largest room the fleet ships (c2a4c). The biggest room sizes
+/// the resident map buffer, so a room above this costs free RAM that the
+/// committed floor (`game/ram-budget`) does not have to spare, and the build's
+/// inlining ladder would give up fps to find it. A room that the panel filter
+/// would push past it is cooked with `PanelFilter::Corners` instead.
+const ROOM_BYTES_CEILING: usize = 702_192;
+
+/// Prefix of the error a pass returns when its room is over [`ROOM_BYTES_CEILING`].
+const ROOM_OVER_CEILING: &str = "room over the RAM ceiling";
+
 fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
+    match cook_pass(path, out, tex_out, PanelFilter::Lightmap) {
+        Err(e) if e.starts_with(ROOM_OVER_CEILING) => {
+            eprintln!("note: {e}; cooking its panels with corner reads");
+            cook_pass(path, out, tex_out, PanelFilter::Corners)
+        }
+        result => result,
+    }
+}
+
+fn cook_pass(
+    path: &str,
+    out: &str,
+    tex_out: Option<&str>,
+    panels: PanelFilter,
+) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {}", path, e))?;
     let bsp = Bsp::parse(&bytes)?;
-    let coverage_report = std::env::var("ENTITY_COVERAGE_REPORT").ok();
+    // The second pass of a map repeats rows the first one already reported.
+    let coverage_report = match panels {
+        PanelFilter::Lightmap => std::env::var("ENTITY_COVERAGE_REPORT").ok(),
+        PanelFilter::Corners => None,
+    };
     let strict_coverage = std::env::var("ENTITY_COVERAGE_STRICT").as_deref() == Ok("1");
     entity_support::audit(
         &entity_text(bsp.lump(LUMP_ENTITIES)),
@@ -14055,6 +14290,7 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         colors: Vec<(u8, u8, u8)>,
     }
     let mut dynamic_faces = Vec::<DynamicFaceCook>::new();
+    let mut unlit_panels = Vec::<String>::new();
     let mut compact_face = 0u16;
     for f in 0..n_faces {
         if face_ntri[f] == 0 {
@@ -14081,7 +14317,8 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             let [mins_s, mins_t] = face_lm_mins[f];
             let lightofs = i32le(faces, fo + 16).unwrap_or(-1);
             let face_layers = lit_layers_for(faces, f, &start_styles);
-            let sample = |vertex: u16, plane: usize| {
+            // Texture-space point of a cooked vertex (original texels).
+            let uv_of = |vertex: u16| {
                 let p = verts[(vertex & 0x3fff) as usize];
                 // Cooked world is [HL x, HL z, HL y] / scale.
                 let hl = [
@@ -14089,12 +14326,24 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
                     p[2] as f32 * scale,
                     p[1] as f32 * scale,
                 ];
-                let ou = hl[0] * s[0] + hl[1] * s[1] + hl[2] * s[2] + s_off;
-                let ov = hl[0] * t_axis[0] + hl[1] * t_axis[1] + hl[2] * t_axis[2] + t_off;
+                (
+                    hl[0] * s[0] + hl[1] * s[1] + hl[2] * s[2] + s_off,
+                    hl[0] * t_axis[0] + hl[1] * t_axis[1] + hl[2] * t_axis[2] + t_off,
+                )
+            };
+            // Panels (see `PANEL_MAX_LUXELS`) read the lightmap the way the
+            // renderer filters it; every other face keeps the luxel read the
+            // base colours use, so only panel records change.
+            let is_panel = panels == PanelFilter::Lightmap
+                && (lmw as usize) * (lmh as usize) <= PANEL_MAX_LUXELS;
+            let delta_at = |(ou, ov): (f32, f32), plane: usize| {
                 if slots[plane] == 0 {
-                    (0, 0, 0)
-                } else {
-                    dynamic_corner_delta(
+                    return [0.0; 3];
+                }
+                let layer = face_dynamic_layers[f][plane] as usize;
+                let level = dynamic_lightstyles[slots[plane] as usize - 1].start_level;
+                if is_panel {
+                    panel_corner_delta(
                         lighting,
                         lightofs,
                         lmw as usize,
@@ -14104,9 +14353,24 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
                         mins_s as i32,
                         mins_t as i32,
                         &face_layers,
-                        face_dynamic_layers[f][plane] as usize,
-                        dynamic_lightstyles[slots[plane] as usize - 1].start_level,
+                        layer,
+                        level,
                     )
+                } else {
+                    let (r, g, b) = dynamic_corner_delta(
+                        lighting,
+                        lightofs,
+                        lmw as usize,
+                        lmh as usize,
+                        ou,
+                        ov,
+                        mins_s as i32,
+                        mins_t as i32,
+                        &face_layers,
+                        layer,
+                        level,
+                    );
+                    [r as f32, g as f32, b as f32]
                 }
             };
             let loop_pool = face_lc_flag[f] & 0x11 != 0;
@@ -14116,13 +14380,14 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             } else {
                 face_lc_count[f] as usize
             };
-            let mut colors = Vec::with_capacity(item_count * if loop_pool { 3 } else { 9 });
+            // Every stored value in record order: (plane, vertex).
+            let mut entries = Vec::<(usize, u16)>::with_capacity(item_count * 9);
             if loop_pool {
                 for item in 0..item_count {
                     let o = (first + item) * 5;
                     let vertex = u16::from_le_bytes([loopverts[o], loopverts[o + 1]]);
                     for plane in 0..3 {
-                        colors.push(sample(vertex, plane));
+                        entries.push((plane, vertex));
                     }
                 }
             } else {
@@ -14131,9 +14396,59 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
                     let tri = source_first + local;
                     for plane in 0..3 {
                         for corner in 0..3 {
-                            colors.push(sample(tri_idx[tri * 3 + corner], plane));
+                            entries.push((plane, tri_idx[tri * 3 + corner]));
                         }
                     }
+                }
+            }
+            let mut values: Vec<[f32; 3]> = entries
+                .iter()
+                .map(|&(plane, vertex)| delta_at(uv_of(vertex), plane))
+                .collect();
+            // A panel's switchable plane is lifted so the face keeps the mean
+            // brightness its lightmap gives it (see `panel_lift`).
+            let mut panel_means = Vec::<(usize, f32)>::new();
+            if is_panel {
+                let mut points: Vec<(f32, f32)> = entries.iter().map(|&(_, v)| uv_of(v)).collect();
+                points.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+                points.dedup();
+                for plane in (0..3).filter(|&plane| slots[plane] != 0) {
+                    let mine: Vec<usize> = (0..entries.len())
+                        .filter(|&i| entries[i].0 == plane)
+                        .collect();
+                    let Some(true_mean) =
+                        polygon_mean(&points, 9, &mut |u, v| delta_at((u, v), plane))
+                    else {
+                        continue;
+                    };
+                    let mut vertex_mean = [0.0f32; 3];
+                    for &i in &mine {
+                        for c in 0..3 {
+                            vertex_mean[c] += values[i][c] / mine.len() as f32;
+                        }
+                    }
+                    let lift = panel_lift(true_mean, vertex_mean);
+                    for &i in &mine {
+                        for c in 0..3 {
+                            values[i][c] = (values[i][c] + lift[c]).min(255.0);
+                        }
+                    }
+                    panel_means.push((plane, true_mean[0].max(true_mean[1]).max(true_mean[2])));
+                }
+            }
+            let colors: Vec<(u8, u8, u8)> = values
+                .iter()
+                .map(|v| ((v[0] + 0.5) as u8, (v[1] + 0.5) as u8, (v[2] + 0.5) as u8))
+                .collect();
+            // Audit: a panel whose lightmap lights it must not cook to nothing.
+            for &(plane, mean) in &panel_means {
+                let stored = (0..entries.len())
+                    .filter(|&i| entries[i].0 == plane)
+                    .map(|i| colors[i].0.max(colors[i].1).max(colors[i].2))
+                    .max()
+                    .unwrap_or(0);
+                if mean >= PANEL_AUDIT_MIN_MEAN && stored == 0 {
+                    unlit_panels.push(format!("face {f} plane {plane} (mean {mean:.1})"));
                 }
             }
             // A light that never reaches this face's corners adds nothing:
@@ -14152,6 +14467,15 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
             }
         }
         compact_face = compact_face.saturating_add(1);
+    }
+    if !unlit_panels.is_empty() {
+        let list = unlit_panels.join(", ");
+        if std::env::var("DYNAMIC_LIGHT_STRICT").as_deref() == Ok("1") {
+            return Err(format!(
+                "{path}: switchable panels that never light: {list}"
+            ));
+        }
+        eprintln!("warning: switchable panels that never light: {list}");
     }
     let nonzero_dynamic_colors: Vec<_> = dynamic_faces
         .iter()
@@ -15853,6 +16177,12 @@ fn cook(path: &str, out: &str, tex_out: Option<&str>) -> Result<(), String> {
         );
     }
 
+    if panels == PanelFilter::Lightmap && o.len() > ROOM_BYTES_CEILING {
+        return Err(format!(
+            "{ROOM_OVER_CEILING}: {} bytes against {ROOM_BYTES_CEILING}",
+            o.len()
+        ));
+    }
     std::fs::write(out, &o).map_err(|e| format!("write {}: {}", out, e))?;
     let tex_kb = if let (Some(tex_out), Some(texture_chunk)) = (tex_out, texture_chunk.as_ref()) {
         std::fs::write(tex_out, texture_chunk).map_err(|e| format!("write {}: {}", tex_out, e))?;
@@ -24573,8 +24903,77 @@ mod tests {
         let dark = [(0usize, 256u32)];
         let (r, _, _) = delta(1, 0, &dark);
         assert_eq!(r as i32, lit(80 + 60) - lit(80));
+        // The panel filter agrees on a single luxel, to within the ramp's rounding.
+        let d = panel_corner_delta(&lighting, 0, 1, 1, 0.0, 0.0, 0, 0, &dark, 1, 0);
+        assert!((d[0] - r as f32).abs() <= 1.0);
     }
 
+    /// A three luxel wide lightmap: a dark base plane and a switchable plane
+    /// that is lit only at the middle luxel (a lamp a few units in front of
+    /// the middle of a panel).
+    fn lamp_in_the_middle() -> Vec<u8> {
+        let mut lighting = vec![0u8; 3 * 3 * 2];
+        // plane 0 (base): 20 everywhere; plane 1: 0, 200, 0.
+        for luxel in 0..3 {
+            lighting[luxel * 3..luxel * 3 + 3].copy_from_slice(&[20, 20, 20]);
+        }
+        lighting[9 + 3..9 + 6].copy_from_slice(&[200, 200, 200]);
+        lighting
+    }
+
+    #[test]
+    fn lightmap_sums_blend_the_two_nearest_luxels() {
+        let lighting = lamp_in_the_middle();
+        let at = |ou: f32| {
+            plane_sums_bilinear(&lighting, 0, 3, 1, ou, 0.0, 0, 0, &[(1, 256)]).expect("inside")[0]
+        };
+        assert_eq!(at(0.0), 0.0, "luxel 0 sits at texture coordinate 0");
+        assert_eq!(at(16.0), 200.0 * 256.0, "luxel 1 at 16");
+        assert_eq!(at(8.0), 100.0 * 256.0, "halfway between them is the blend");
+        assert_eq!(at(24.0), 100.0 * 256.0);
+        // The floor read the old code used finds nothing lit anywhere in
+        // [0, 16): a panel that ends at 14 never sees the lamp.
+        let floor = plane_sums(&lighting, 0, 3, 1, 14.0, 0.0, 0, 0, &[(1, 256)]).expect("inside");
+        assert_eq!(floor[0], 0);
+        assert!(at(14.0) > 0.8 * 200.0 * 256.0);
+    }
+
+    #[test]
+    fn a_lamp_between_the_corners_of_a_panel_lights_the_panel() {
+        // A 32 unit panel over the whole three luxel lightmap: its corners
+        // read luxels 0 and 2, which the lamp does not reach.
+        let lighting = lamp_in_the_middle();
+        let base = [(0usize, 256u32)];
+        let delta =
+            |u: f32, v: f32| panel_corner_delta(&lighting, 0, 3, 1, u, v, 0, 0, &base, 1, 0);
+        let corners = [(0.0, 0.0), (32.0, 0.0), (32.0, 16.0), (0.0, 16.0)];
+        let corner_mean: f32 = corners.iter().map(|&(u, v)| delta(u, v)[0]).sum::<f32>() / 4.0;
+        assert_eq!(corner_mean, 0.0, "the corners see no light");
+        let true_mean = polygon_mean(&corners, 9, &mut |u, v| delta(u, v)).expect("a polygon");
+        assert!(
+            true_mean[0] > 20.0,
+            "the lamp lights the face: {}",
+            true_mean[0]
+        );
+        let lift = panel_lift(true_mean, [corner_mean; 3]);
+        assert_eq!(lift, true_mean);
+        // Never negative: a face already brighter at its corners keeps them.
+        assert_eq!(panel_lift([5.0; 3], [9.0; 3]), [0.0; 3]);
+    }
+
+    #[test]
+    fn polygon_mean_of_a_triangle_stays_inside_the_triangle() {
+        // Value 1 inside the triangle (0,0) (10,0) (0,10), 100 outside it:
+        // a mean of 1 shows no sample left the hull.
+        let tri = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)];
+        let mean = polygon_mean(&tri, 12, &mut |u, v| {
+            let v = if u + v <= 10.0 { 1.0 } else { 100.0 };
+            [v; 3]
+        })
+        .expect("a polygon");
+        assert_eq!(mean, [1.0; 3]);
+        assert!(polygon_mean(&[(0.0, 0.0), (5.0, 5.0)], 4, &mut |_, _| [1.0; 3]).is_none());
+    }
     #[test]
     fn style_table_layout_is_what_the_runtime_reads() {
         let t = l5::style_table(&[
