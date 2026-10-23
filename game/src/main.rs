@@ -2120,8 +2120,7 @@ const LOADING_STRIP: psx_loading::Style = psx_loading::Style::new(
     lit: psx_loading::Rgb(255, 214, 96),
     unlit: psx_loading::Rgb(40, 34, 20),
 })
-.scaled(2)
-.in_corner(32, 320, 240, 12)
+.in_corner(24, 320, 240, 12)
 .timed(2, 64);
 
 #[optimize(size)]

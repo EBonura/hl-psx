@@ -187,7 +187,7 @@ fn print_decimal(mut v: u32) {
 
 /// Half-Life's loading indicator (the game's `draw_loading_strip` draws the same
 /// one for every load it does): a small black square in the bottom-right
-/// corner with the orange dot spinner in it. It runs from the end of the movie
+/// corner with a ring of orange lights in it. It runs from the end of the movie
 /// through the chain-load, and the game carries on with it through its boot, so
 /// the corner stays the same across the hand-off.
 const WIDGET: Style = Style::new(&BASIC_8X16, "", Rgb(255, 170, 0), Rgb(0, 0, 0))
@@ -195,8 +195,7 @@ const WIDGET: Style = Style::new(&BASIC_8X16, "", Rgb(255, 170, 0), Rgb(0, 0, 0)
         lit: Rgb(255, 214, 96),
         unlit: Rgb(40, 34, 20),
     })
-    .scaled(2)
-    .in_corner(32, 320, 240, 12)
+    .in_corner(24, 320, 240, 12)
     .timed(2, 64);
 
 /// The widget over black while the game's image streams in.
