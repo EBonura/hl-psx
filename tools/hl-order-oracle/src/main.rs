@@ -3,6 +3,7 @@
 
 mod analyze;
 mod bsp;
+mod lab2;
 mod log;
 mod poses;
 mod pvsmax;
@@ -65,7 +66,7 @@ fn map_of(stem: &str) -> &str {
     stem.split('-').next().unwrap_or(stem)
 }
 
-fn write_png(path: &Path, width: u32, height: u32, rgb: &[u8]) -> Result<(), String> {
+pub(crate) fn write_png(path: &Path, width: u32, height: u32, rgb: &[u8]) -> Result<(), String> {
     let file = fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
     encoder.set_color(png::ColorType::Rgb);
@@ -75,7 +76,7 @@ fn write_png(path: &Path, width: u32, height: u32, rgb: &[u8]) -> Result<(), Str
 }
 
 /// Three panes side by side: painter order, depth test, mask.
-fn compose(images: &analyze::Images, scale: usize) -> (u32, u32, Vec<u8>) {
+pub(crate) fn compose(images: &analyze::Images, scale: usize) -> (u32, u32, Vec<u8>) {
     let (w, h) = (raster::WIDTH as usize, raster::HEIGHT as usize);
     let out_w = w * 3 * scale;
     let out_h = h * scale;
@@ -180,6 +181,7 @@ fn lab_command() -> Result<(), String> {
         let ctx = Context {
             class_of: &class_of,
             plane_of: &plane_of,
+            pixel_key: None,
         };
         let mut parsed = log::parse(&text);
         if let Some(face_dir) = std::env::var_os("FACE_MAP") {
@@ -213,7 +215,9 @@ fn lab_command() -> Result<(), String> {
             // points of its bounding sphere along the eye ray, and the span of its game keys.
             let mut spans: std::collections::HashMap<(u16, [i16; 3]), (u32, u32, i32, i32, f32)> =
                 Default::default();
-            if std::env::var("LAB_BRUSH").as_deref() == Ok("span") || std::env::var("LAB_BRUSH").as_deref() == Ok("hyb") {
+            if std::env::var("LAB_BRUSH").as_deref() == Ok("span")
+                || std::env::var("LAB_BRUSH").as_deref() == Ok("hyb")
+            {
                 let mut verts: std::collections::HashMap<
                     (u16, [i16; 3]),
                     (Vec<[f32; 3]>, i32, i32),
@@ -449,7 +453,8 @@ fn lab_command() -> Result<(), String> {
                             strategy = if big { "span".into() } else { "pkt".into() };
                         }
                         if strategy == "span" {
-                            if let Some(&(lo, hi, kmin, kmax, _)) = spans.get(&(model, inf.offset)) {
+                            if let Some(&(lo, hi, kmin, kmax, _)) = spans.get(&(model, inf.offset))
+                            {
                                 let k = i32::from(inf.key).clamp(kmin, kmax);
                                 let span = (kmax - kmin).max(1) as f64;
                                 let pos =
@@ -849,6 +854,106 @@ fn main() {
         poses_command()
     } else if command.as_deref() == Some("lab") {
         lab_command()
+    } else if command.as_deref() == Some("lab2") {
+        lab2::lab2_command()
+    } else if command.as_deref() == Some("cellcount") {
+        // cellcount BSP_DIR MAP... : brush faces of the maps and the cells they would make at several sizes
+        let mut it = std::env::args().skip(2);
+        let dir = PathBuf::from(it.next().unwrap_or_default());
+        for map in it {
+            let (Ok(bsp), Ok(info)) = (
+                bsp::Bsp::load(&dir.join(format!("{map}.bsp"))),
+                poses::MapInfo::load(&dir.join(format!("{map}.bsp"))),
+            ) else {
+                continue;
+            };
+            let mut faces = 0usize;
+            let mut cells = [0f64; 4];
+            let sizes = [32.0f64, 48.0, 64.0, 128.0];
+            for (m, (first, num)) in info.models.iter().enumerate().skip(1) {
+                let _ = m;
+                for f in *first..*first + *num {
+                    let poly = &bsp.faces[f as usize];
+                    if poly.len() < 3 {
+                        continue;
+                    }
+                    faces += 1;
+                    let mut area = 0f64;
+                    let mut per = 0f64;
+                    for i in 1..poly.len() - 1 {
+                        let a = [
+                            poly[i][0] - poly[0][0],
+                            poly[i][1] - poly[0][1],
+                            poly[i][2] - poly[0][2],
+                        ];
+                        let b = [
+                            poly[i + 1][0] - poly[0][0],
+                            poly[i + 1][1] - poly[0][1],
+                            poly[i + 1][2] - poly[0][2],
+                        ];
+                        let c = [
+                            a[1] * b[2] - a[2] * b[1],
+                            a[2] * b[0] - a[0] * b[2],
+                            a[0] * b[1] - a[1] * b[0],
+                        ];
+                        area += 0.5 * f64::from((c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt());
+                    }
+                    for i in 0..poly.len() {
+                        let j = (i + 1) % poly.len();
+                        let d = [
+                            poly[i][0] - poly[j][0],
+                            poly[i][1] - poly[j][1],
+                            poly[i][2] - poly[j][2],
+                        ];
+                        per += f64::from((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt());
+                    }
+                    for (k, sz) in sizes.iter().enumerate() {
+                        cells[k] += (area / (sz * sz) + per / (2.0 * sz)).max(1.0).ceil();
+                    }
+                }
+            }
+            println!("{map} brush faces {faces} cells32 {:.0} cells48 {:.0} cells64 {:.0} cells128 {:.0}", cells[0], cells[1], cells[2], cells[3]);
+        }
+        Ok(())
+    } else if command.as_deref() == Some("splitcount") {
+        // splitcount BSP_DIR MAP... : fragments the brush faces make when cut through the world tree at their cooked place
+        let mut it = std::env::args().skip(2);
+        let dir = PathBuf::from(it.next().unwrap_or_default());
+        let (mut tf, mut tfr, mut ts, mut tso) = (0usize, 0usize, 0usize, 0usize);
+        for map in it {
+            let (Ok(bsp), Ok(info)) = (
+                bsp::Bsp::load(&dir.join(format!("{map}.bsp"))),
+                poses::MapInfo::load(&dir.join(format!("{map}.bsp"))),
+            ) else {
+                continue;
+            };
+            let (mut faces, mut frags, mut solid, mut multi) = (0usize, 0usize, 0usize, 0usize);
+            for (m, (first, num)) in info.models.iter().enumerate().skip(1) {
+                if std::env::var_os("SPLIT_STATIC").is_some() && !lab2::is_static(&info.names[m]) {
+                    continue;
+                }
+                for f in *first..*first + *num {
+                    let poly = &bsp.faces[f as usize];
+                    if poly.len() < 3 {
+                        continue;
+                    }
+                    // a brush's cooked place: the BSP model origin is its centre, faces are already placed
+                    let parts = bsp.split_polygon(poly);
+                    let open = parts.iter().filter(|p| !p.2).count();
+                    faces += 1;
+                    frags += parts.len();
+                    solid += parts.iter().filter(|p| p.2).count();
+                    multi += usize::from(open > 1);
+                }
+            }
+            println!("{map} brush faces {faces} fragments {frags} (solid {solid}) faces split into >1 open slots {multi}");
+            tf += faces;
+            tfr += frags;
+            ts += solid;
+            tso += multi;
+        }
+        println!("total faces {tf} fragments {tfr} solid {ts} multi-open {tso}");
+        Ok(())
     } else if command.as_deref() == Some("fit") {
         fit_command()
     } else if command.as_deref() == Some("inspect") {
@@ -990,6 +1095,7 @@ fn run() -> Result<(), String> {
         let ctx = Context {
             class_of: &class_of,
             plane_of: &plane_of,
+            pixel_key: None,
         };
         let mut frames = log::parse(&text);
         if let Some(dir) = &args.face_map {

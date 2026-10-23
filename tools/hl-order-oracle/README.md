@@ -53,6 +53,36 @@ space), `span` (map the entity's depth span onto the leaves it spans). `LAB_PNG_
 mask of every sequenced frame with at least 1500 major pixels. `leafrange BSP_DIR MAP...` reports
 whether the leaves under each BSP node are a contiguous run of numbers (they are not).
 
+`lab2 BSP_DIR LOG...` is the second lab. It paints every pixel with its own painter key, so an
+experiment can ask what would happen if each piece of a brush face were ordered on its own,
+without cutting the traced packets. World faces draw at the farthest visible leaf that marks them
+(`L2_NODE=1`: at the position of their BSP node), every other fragment at the position of the tree
+slot that holds its 3D point. Rock counts: every child slot of the tree, solid ones included, has a
+rank in the back-to-front walk, so a point inside a wall has a place in the order. Environment:
+
+- `L2_BRUSH` (static brush entities: func_wall, func_illusionary, func_breakable ...) and
+  `L2_MOVER` (every other brush entity): `frag` (the slot of each pixel's own 3D point, an ideal cut
+  of the face at the tree planes), `pkt` (slot of the packet centroid), `pktz` (screen centroid at
+  the mean vertex depth, what the guest can compute), `pktmin` / `pktmax`, `cent` (face centroid),
+  `cell` (cells of `L2_CELL` units), `ent` (entity bounds centre), `entmin` / `entmax` (farthest /
+  nearest slot of any vertex), `fallback` (an entity spanning several slots draws with the world
+  faces of that slot range, all by the game's depth key), `last`.
+- `L2_MODEL`: `frag`, `pkt` or `last` for studio models. `L2_WATER_LEGACY=1` keeps func_water at the
+  slot of the world packet nearest in the game's key.
+- `L2_LEGACY=game|min|mean|max|minb|meanb` keeps the game's depth space and re-keys brush packets
+  (`game` reproduces the shipping census exactly, a check on the replay itself).
+- `L2_GROUP=1` keys a world face at the farthest slot of any face on its plane in the frame.
+- `L2_FRAME_HYBRID=1|entity` falls back to the game's order for frames that show a mover spanning
+  several slots (or any entity).
+- Output: `L2_FACES=1` worst face pairs, `L2_ENTITIES=1` and `L2_SELF=1` per entity tables,
+  `L2_FRAMECSV=file` per frame class table, `L2_PAIR=map:frame,...` with `L2_PAIR_DIR=dir` writes
+  four panes (game painter, game mask, lab painter, lab mask), `L2_DEBUG_PIX=frame,x,y` prints the
+  fragments of one pixel.
+
+`cellcount BSP_DIR MAP...` counts the brush faces and the cells they would make at 32 to 128 units.
+`splitcount BSP_DIR MAP...` cuts every brush face through the world tree at its cooked place and
+counts the fragments (`SPLIT_STATIC=1` for the static entities only).
+
 ```sh
 cargo test --manifest-path tools/hl-order-oracle/Cargo.toml
 ```

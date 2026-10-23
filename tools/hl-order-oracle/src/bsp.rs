@@ -401,3 +401,159 @@ impl Bsp {
         (leaf != 0 && rank.get(leaf).is_some_and(|r| *r != u32::MAX)).then_some(leaf)
     }
 }
+
+impl Bsp {
+    /// Back-to-front rank of every child slot of the world tree from `eye`: index `2 * node +
+    /// side` (side 0 = the plane's front child). Solid children (leaf 0) get a rank of their own,
+    /// so a point in rock has a position in the sequence. Also returns the slot of every leaf.
+    pub fn slot_ranks(&self, eye: [f32; 3]) -> (Vec<u32>, Vec<u32>) {
+        let mut slot_rank = vec![u32::MAX; self.nodes.len() * 2];
+        let mut leaf_slot = vec![u32::MAX; self.leaf_faces.len()];
+        let mut next = 0u32;
+        // (node, state, slot of this node's own entry): state 0 = enter, 1 = after far child.
+        let mut stack: Vec<(i32, u8)> = vec![(self.models[0].head_node, 0)];
+        let mut near_of: Vec<usize> = vec![0; self.nodes.len()];
+        while let Some((node, state)) = stack.pop() {
+            if node < 0 {
+                continue;
+            }
+            let n = node as usize;
+            let front = self.side(n, eye) >= 0.0;
+            let (near, far) = if front { (0usize, 1usize) } else { (1, 0) };
+            near_of[n] = near;
+            let mut visit = |side: usize, next: &mut u32, stack: &mut Vec<(i32, u8)>| {
+                let c = self.nodes[n].children[side];
+                if c < 0 {
+                    slot_rank[2 * n + side] = *next;
+                    *next += 1;
+                    let leaf = (-1 - c) as usize;
+                    if leaf != 0 && leaf < leaf_slot.len() {
+                        leaf_slot[leaf] = (2 * n + side) as u32;
+                    }
+                } else {
+                    stack.push((c, 0));
+                }
+            };
+            if state == 0 {
+                stack.push((node, 1));
+                visit(far, &mut next, &mut stack);
+            } else {
+                visit(near, &mut next, &mut stack);
+            }
+        }
+        (slot_rank, leaf_slot)
+    }
+
+    /// Child slot (`2 * node + side`) of the world tree that holds `p`.
+    pub fn point_slot(&self, p: [f32; 3]) -> usize {
+        let mut node = self.models[0].head_node;
+        loop {
+            let n = node as usize;
+            let side = usize::from(self.side(n, p) < 0.0);
+            node = self.nodes[n].children[side];
+            if node < 0 {
+                return 2 * n + side;
+            }
+        }
+    }
+}
+
+impl Bsp {
+    /// One back-to-front walk numbering every event: child slots (`2 * node + side`) and node
+    /// emissions (a node's own faces draw between its far and near subtrees) share a counter.
+    /// Returns (slot ranks, node ranks).
+    pub fn event_ranks(&self, eye: [f32; 3]) -> (Vec<u32>, Vec<u32>) {
+        let mut slot_rank = vec![u32::MAX; self.nodes.len() * 2];
+        let mut node_rank = vec![u32::MAX; self.nodes.len()];
+        let mut next = 0u32;
+        let mut stack: Vec<(i32, u8)> = vec![(self.models[0].head_node, 0)];
+        while let Some((node, state)) = stack.pop() {
+            if node < 0 {
+                continue;
+            }
+            let n = node as usize;
+            let front = self.side(n, eye) >= 0.0;
+            let (near, far) = if front { (0usize, 1usize) } else { (1, 0) };
+            let side = if state == 0 { far } else { near };
+            if state == 1 {
+                node_rank[n] = next;
+                next += 1;
+            }
+            let c = self.nodes[n].children[side];
+            if state == 0 {
+                stack.push((node, 1));
+            }
+            if c < 0 {
+                slot_rank[2 * n + side] = next;
+                next += 1;
+            } else {
+                stack.push((c, 0));
+            }
+        }
+        (slot_rank, node_rank)
+    }
+}
+
+impl Bsp {
+    /// Cut a convex polygon (BSP axes) through the world tree. Returns one fragment per child
+    /// slot it touches: (slot `2 * node + side`, polygon, whether the slot is solid).
+    pub fn split_polygon(&self, poly: &[[f32; 3]]) -> Vec<(usize, Vec<[f32; 3]>, bool)> {
+        let mut out = Vec::new();
+        self.split_into(self.models[0].head_node, poly.to_vec(), &mut out);
+        out
+    }
+
+    fn split_into(
+        &self,
+        node: i32,
+        poly: Vec<[f32; 3]>,
+        out: &mut Vec<(usize, Vec<[f32; 3]>, bool)>,
+    ) {
+        if poly.len() < 3 {
+            return;
+        }
+        let n = node as usize;
+        let d: Vec<f32> = poly.iter().map(|v| self.side(n, *v)).collect();
+        const EPS: f32 = 0.05;
+        let all_front = d.iter().all(|x| *x >= -EPS);
+        let all_back = d.iter().all(|x| *x <= EPS);
+        let mut parts: [Vec<[f32; 3]>; 2] = [Vec::new(), Vec::new()];
+        if all_front || all_back {
+            parts[usize::from(!all_front)] = poly;
+        } else {
+            for i in 0..poly.len() {
+                let j = (i + 1) % poly.len();
+                let (a, b) = (poly[i], poly[j]);
+                let (da, db) = (d[i], d[j]);
+                if da >= -EPS {
+                    parts[0].push(a);
+                }
+                if da <= EPS {
+                    parts[1].push(a);
+                }
+                if (da > EPS && db < -EPS) || (da < -EPS && db > EPS) {
+                    let t = da / (da - db);
+                    let m = [
+                        a[0] + (b[0] - a[0]) * t,
+                        a[1] + (b[1] - a[1]) * t,
+                        a[2] + (b[2] - a[2]) * t,
+                    ];
+                    parts[0].push(m);
+                    parts[1].push(m);
+                }
+            }
+        }
+        for side in 0..2 {
+            let part = std::mem::take(&mut parts[side]);
+            if part.len() < 3 {
+                continue;
+            }
+            let c = self.nodes[n].children[side];
+            if c < 0 {
+                out.push((2 * n + side, part, c == -1));
+            } else {
+                self.split_into(c, part, out);
+            }
+        }
+    }
+}

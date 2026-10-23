@@ -91,7 +91,7 @@ struct Packet {
 
 #[derive(Clone, Copy)]
 struct Frag {
-    order: u32,
+    order: u64,
     z: f32,
     id: u32,
 }
@@ -125,7 +125,9 @@ pub struct FrameStats {
     pub pairs: BTreeMap<(&'static str, &'static str), PairCount>,
     /// Wrong pixels attributed to each brush submodel (as painter or as victim).
     pub brush: BTreeMap<u16, u64>,
-    /// Most-offending face pairs: (painter kind, painter face, victim kind, victim face) -> pixels.
+    /// Major wrong pixels where a brush entity painted over its own surface, by submodel.
+    pub brush_self: BTreeMap<u16, u64>,
+    /// Most-offending face pairs (major pixels only): (painter kind, painter face, victim kind, victim face) -> pixels.
     pub face_pairs: BTreeMap<(u8, u16, u8, u16), u64>,
 }
 
@@ -158,6 +160,10 @@ pub struct Context<'a> {
     /// offset; lets the oracle compute exact per-pixel depth instead of interpolating vertex
     /// depths the guest could only partly recover.
     pub plane_of: &'a dyn Fn(u16, [i32; 3]) -> Option<([f64; 3], f64)>,
+    /// Optional per-pixel painter key `(walk index, packet info, x, y, depth)`: a fragment draws
+    /// later the larger its key (ties by walk order). Lets the lab emulate geometry split into
+    /// pieces, each ordered on its own, without cutting the traced packets.
+    pub pixel_key: Option<&'a dyn Fn(usize, &Info, i32, i32, f32) -> u64>,
 }
 
 fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
@@ -304,8 +310,12 @@ pub fn analyze(
                 Some(f) => f(f64::from(x) + 0.5, f64::from(y) + 0.5),
                 None => depth,
             };
+            let frag_order = match ctx.pixel_key {
+                Some(f) => (f(order, &info, x, y, depth).min((1 << 42) - 1) << 20) | order as u64,
+                None => order as u64,
+            };
             let frag = Frag {
-                order: order as u32,
+                order: frag_order,
                 z: depth,
                 id,
             };
@@ -329,6 +339,11 @@ pub fn analyze(
         depth: vec![0; npix * 3],
         mask: vec![0; npix * 3],
     });
+    if ctx.pixel_key.is_some() {
+        for v in opaque.iter_mut() {
+            v.sort_by_key(|f| f.order);
+        }
+    }
     for p in 0..npix {
         let frags = &opaque[p];
         let any = !frags.is_empty() || !trans[p].is_empty();
@@ -371,6 +386,9 @@ pub fn analyze(
                     stats.by_cause[ci] += 1;
                     let key = match (a.class, b.class) {
                         (Class::Brush(x), Class::Brush(y)) if x == y && x != 0 => {
+                            if major {
+                                *stats.brush_self.entry(x).or_default() += 1;
+                            }
                             ("brush-self", "brush-self")
                         }
                         _ => (a.class.group(), b.class.group()),
@@ -384,10 +402,12 @@ pub fn analyze(
                             *stats.brush.entry(m).or_default() += 1;
                         }
                     }
-                    *stats
-                        .face_pairs
-                        .entry((a.info.kind, a.info.face, b.info.kind, b.info.face))
-                        .or_default() += 1;
+                    if major {
+                        *stats
+                            .face_pairs
+                            .entry((a.info.kind, a.info.face, b.info.kind, b.info.face))
+                            .or_default() += 1;
+                    }
                     verdict = Some((major, cause));
                 }
             }
@@ -505,6 +525,7 @@ mod tests {
         let ctx = Context {
             class_of: &class_of,
             plane_of: &plane_of,
+            pixel_key: None,
         };
         analyze(&frame, Tolerance::default(), &ctx, false).0
     }
