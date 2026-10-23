@@ -11,7 +11,7 @@ max_ticks = 20000
 # Bound to the build this journey was written against.
 [addr]
 SIM_NOW = 0x801eb3f4
-SKILL = 0x800c6360
+SKILL = 0x800c6340
 WORLD_ARENA = 0x800dcb8c
 
 [[step]]
