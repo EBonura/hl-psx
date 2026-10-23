@@ -1,0 +1,18 @@
+[package]
+name = "hl-order-oracle"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Ordering oracle: compares the GPU draw order of a frame against a per-pixel depth test of the same vertices"
+
+[workspace]
+
+[[bin]]
+name = "hl-order-oracle"
+path = "src/main.rs"
+
+[dependencies]
+png = "0.18"
+
+[profile.release]
+opt-level = 3

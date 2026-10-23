@@ -1512,6 +1512,8 @@ fn write_probe_script(out_dir: &std::path::Path) {
                     [w.get(2).map_or(-1, |_| num(2) as i32), 0, 0, 0, 0, 0],
                     String::new(),
                 ),
+                // osnap : stream the next rendered frame to the ordering oracle (feature `order-trace`)
+                "osnap" => (90, [0; 6], String::new()),
                 other => panic!("unknown probe op {other}"),
             };
             let ni = match names.iter().position(|n| *n == name) {

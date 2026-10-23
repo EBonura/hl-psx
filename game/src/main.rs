@@ -32939,7 +32939,7 @@ unsafe fn insert_model_depth_stream(first: *mut u32, end: *mut u32) {
                 .max(16);
             (*packet).uv2 &= 0xffff;
             #[cfg(feature = "order-trace")]
-            order_trace::note_model(key, packet.cast::<u32>());
+            order_trace::note_model(key, MODEL_KEY_BIAS << 4, packet.cast::<u32>());
             world_ot().resume_frame().add_raw(
                 (key >> 4) as usize,
                 core::ptr::from_mut(&mut *packet).cast(),
@@ -39253,6 +39253,8 @@ fn play(
         }
         unsafe {
             world_ot().clear();
+            #[cfg(feature = "order-trace")]
+            order_trace::begin_frame(frame_no as u32, eye);
             hud_ot().clear();
             fx_ot().clear();
             update_flashlight_reach(&m, eye, &rot);
@@ -40038,6 +40040,8 @@ fn play(
                         }
                     }
                     model_draws = model_draws.saturating_add(1);
+                    #[cfg(feature = "order-trace")]
+                    order_trace::note_brush(e.submodel as u32, off);
                     if e.kind == ENT_KIND_PLATROT {
                         emit_platrot_entity(
                             &mut packets,
@@ -40256,6 +40260,8 @@ fn play(
                 }
                 brush_pass += 1;
             }
+            #[cfg(feature = "order-trace")]
+            order_trace::note_brush(0, [0; 3]);
             SUBMODEL_ACTOR_OVERLAP = false;
             // Delay this snapshot until both passes have used the prior visual
             // state for the same static/moving decision.
@@ -40921,6 +40927,8 @@ fn play(
                 }
             }
 
+            #[cfg(feature = "order-trace")]
+            order_trace::end_frame(world_ot());
             telemetry::stage_begin(telemetry::stage::WORLD_FLUSH);
             // SAFETY: the world table and its packets stay untouched until
             // finish_deferred_overlays waits this walk out before the overlay
