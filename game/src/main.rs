@@ -22610,7 +22610,10 @@ unsafe fn queue_impact_marks(
         if k < 4 {
             continue;
         }
-        let otz = clamp_otz(((depth >> 2).saturating_sub(8) as usize) >> OT_SHIFT);
+        let otz = seq_fx_otz(
+            pos,
+            clamp_otz(((depth >> 2).saturating_sub(8) as usize) >> OT_SHIFT),
+        );
         let mut t = 0usize;
         while t < 2 {
             let (x, y, z) = if t == 0 { (0, 1, 2) } else { (1, 3, 2) };
@@ -25099,7 +25102,10 @@ unsafe fn queue_rpg_spot(
             packets.push(RectFlat::new(sx - half, sy - half, size, size, 255, 24, 16))
         {
             ot.resume_frame().add_raw(
-                clamp_otz((vz.saturating_sub(4) as usize) >> OT_SHIFT),
+                seq_fx_otz(
+                    RPG_SPOT_POS,
+                    clamp_otz((vz.saturating_sub(4) as usize) >> OT_SHIFT),
+                ),
                 core::ptr::from_mut(packet).cast(),
                 RectFlat::WORDS,
             );
@@ -25480,7 +25486,7 @@ unsafe fn queue_shards(
             b,
         )) {
             ot.resume_frame().add_raw(
-                clamp_otz((vz.saturating_sub(4) as usize) >> OT_SHIFT),
+                seq_fx_otz(p, clamp_otz((vz.saturating_sub(4) as usize) >> OT_SHIFT)),
                 core::ptr::from_mut(packet).cast(),
                 RectFlat::WORDS,
             );
@@ -26238,6 +26244,7 @@ unsafe fn seq_prepare(_m: &Map) {}
 #[cfg(feature = "seq-order")]
 #[inline(always)]
 unsafe fn seq_sequence(m: &Map, eye: [i32; 3], depth_row: [i16; 3], depth_offset: i32) {
+    SEQ_MAP = m;
     seq_order::sequence(
         m,
         &*core::ptr::addr_of!(VIS_BITS),
@@ -26290,6 +26297,76 @@ unsafe fn seq_entity_gap(m: &Map, point: [i32; 3]) -> (i32, i32) {
     } else {
         (OT_LEN as i32 - 1, OT_LEN as i32 - 1)
     }
+}
+
+/// The map the sequence was computed for, for effects that anchor themselves.
+#[cfg(feature = "seq-order")]
+static mut SEQ_MAP: *const Map = core::ptr::null();
+
+/// Table key for an effect at world `point`: one bucket nearer than the slot of the leaf that
+/// holds it (after that leaf's world faces, before every nearer leaf's), else `legacy`, the
+/// depth key the effect would have used before the sequence existed.
+#[cfg(feature = "seq-order")]
+#[inline(never)]
+unsafe fn seq_fx_otz(point: [i32; 3], legacy: usize) -> usize {
+    if !seq_order::ready() || SEQ_MAP.is_null() {
+        return legacy;
+    }
+    let gap = seq_gap_at(&*SEQ_MAP, point);
+    if gap.1 != 0 {
+        gap.1 as usize
+    } else {
+        legacy
+    }
+}
+#[cfg(not(feature = "seq-order"))]
+#[inline(always)]
+unsafe fn seq_fx_otz(_point: [i32; 3], legacy: usize) -> usize {
+    legacy
+}
+
+/// The point `t` (Q12) of the way along a beam.
+#[inline(always)]
+fn beam_point(start: [i32; 3], end: [i32; 3], t: i32) -> [i32; 3] {
+    [
+        start[0] + (((end[0] - start[0]) * t) >> 12),
+        start[1] + (((end[1] - start[1]) * t) >> 12),
+        start[2] + (((end[2] - start[2]) * t) >> 12),
+    ]
+}
+
+/// Key range of a studio model of radius `radius` centred at `centre`: after the world faces of
+/// the nearest leaf among its centre and six extreme points, so no leaf it reaches can paint over
+/// it from behind. Behind everything when none of them was visited.
+#[inline(always)]
+unsafe fn seq_model_gap(m: &Map, centre: [i32; 3], radius: i32) -> (i32, i32) {
+    if !seq_active() {
+        return (0, 0);
+    }
+    #[cfg(feature = "seq-order")]
+    {
+        let r = radius;
+        let points = [
+            centre,
+            [centre[0] + r, centre[1], centre[2]],
+            [centre[0] - r, centre[1], centre[2]],
+            [centre[0], centre[1] + r, centre[2]],
+            [centre[0], centre[1] - r, centre[2]],
+            [centre[0], centre[1], centre[2] + r],
+            [centre[0], centre[1], centre[2] - r],
+        ];
+        let mut leaves = [0i32; 7];
+        let mut i = 0;
+        while i < 7 {
+            leaves[i] = camera_leaf(m, points[i]);
+            i += 1;
+        }
+        if let Some(gap) = seq_order::gap_nearest(&leaves) {
+            return gap;
+        }
+    }
+    let _ = (m, centre, radius);
+    (OT_LEN as i32 - 1, OT_LEN as i32 - 1)
 }
 
 /// Key range of a brush face drawn at `off` from its cooked place: the leaf in front of the
@@ -33221,7 +33298,7 @@ unsafe fn emit_billboard_rgb_mode(
     // texels from opaque texels, while zero texels remain transparent.
     let mat = sl.material.with_blend_mode(blend);
     let packet = TexturedGouraudPacketMaterial::from_texture(mat);
-    let otz = clamp_otz((sz >> OT_SHIFT) as usize);
+    let otz = seq_fx_otz(center, clamp_otz((sz >> OT_SHIFT) as usize));
     let (uv_tl, uv_tr, uv_bl, uv_br) = (
         uv_word((0, 0)),
         uv_word((uw, 0)),
@@ -33434,7 +33511,10 @@ unsafe fn draw_beam(
         let tm = (ta + tb) / 2;
         let iz = (iz0 + (((iz1 - iz0) * tm) >> 12)).max(1);
         let z = ((1i32 << 20) / iz - BEAM_DEPTH_BIAS).max(render::NEAR_Z);
-        let otz = clamp_otz((z as usize) >> OT_SHIFT);
+        let otz = seq_fx_otz(
+            beam_point(start, end, tm),
+            clamp_otz((z as usize) >> OT_SHIFT),
+        );
         if let Some(packet) = packets.push(BeamTri::new([a, b, d], color)) {
             ot.resume_frame()
                 .add_raw(otz, core::ptr::from_mut(packet).cast(), BeamTri::WORDS);
@@ -33507,7 +33587,7 @@ unsafe fn draw_beam_textured(
         let t = ((2 * i as i32 + 1) * 2048) / segs as i32;
         let iz = (iz0 + (((iz1 - iz0) * t) >> 12)).max(1);
         let z = ((1i32 << 20) / iz - BEAM_DEPTH_BIAS).max(render::NEAR_Z);
-        clamp_otz((z as usize) >> OT_SHIFT)
+        seq_fx_otz(beam_point(start, end, t), clamp_otz((z as usize) >> OT_SHIFT))
     };
     let mat = sl.material.with_blend_mode(BlendMode::Add);
     let packet = TexturedGouraudPacketMaterial::from_texture(mat);
@@ -40754,7 +40834,11 @@ fn play(
                     eye,
                     &rot,
                 );
-                MODEL_GAP = seq_entity_gap(&m, [org[0], org[1] + model_def(ty).target_h / 2, org[2]]);
+                MODEL_GAP = seq_model_gap(
+                    &m,
+                    [org[0], org[1] + model_def(ty).target_h / 2, org[2]],
+                    model_def(ty).target_h as i32 / 2,
+                );
                 model_projected_vertices = model_projected_vertices.saturating_add(draw_model(
                     &mut model_packets,
                     md,

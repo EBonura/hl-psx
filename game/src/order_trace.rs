@@ -14,7 +14,7 @@
 //!         one per packet at its table insertion. `addr` is the packet address (24 bits), `kind`
 //!         is the emission class (1 loop face, 2 raw-tri face, 3 patch face, 4 submodel face,
 //!         5 crack backstop of a split quad, 6 patch underlay, 7 depth-split cell, 8 beam,
-//!         9 studio model), `mode` how the depths were derived (1 refined pair, 2 one key call,
+//!         9 studio model, 10 blocked-edge skirt), `mode` how the depths were derived (1 refined pair, 2 one key call,
 //!         3 one key call with a vertex count mismatch, 0 not derivable), `n` is 3 or 4,
 //!         `key` the table slot, `face` the cooked face, `policy` the emit policy byte (blend 0x03,
 //!         wave 0x04, cutout-backed 0x08, local depth 0x10, coplanar backdrop 0x20, tram grid 0x40,
@@ -218,7 +218,14 @@ pub unsafe fn note_packet(site: u32, otz: usize, p: *const u32, words: u8) {
             mode = 3;
         }
     }
-    let kind = if site >= 6 { site } else { KIND & 15 };
+    let kind = if site >= 6 {
+        site
+    } else if site == 3 {
+        // A blocked-edge skirt: a one pixel strip keyed behind everything, not an occluder.
+        10
+    } else {
+        KIND & 15
+    };
     put_byte(b'O');
     put_byte(b'P');
     put_byte(b'|');

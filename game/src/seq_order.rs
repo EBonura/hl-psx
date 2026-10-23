@@ -51,18 +51,19 @@ static mut READY: bool = false;
 pub unsafe fn prepare(m: &Map, visibility: &[u8]) {
     let words = core::ptr::addr_of_mut!(NODE_VIS).cast::<u32>();
     let n_nodes = m.n_nodes.min(MAX_NODES);
+    let n_vis = m.n_visleaves.min(MAX_LEAVES);
+    // Bits past the last node stay clear; clear only the words in use.
+    let used = n_nodes.div_ceil(32);
     let mut w = 0;
-    while w < NODE_VIS_WORDS {
+    while w < used {
         *words.add(w) = 0;
         w += 1;
     }
-    let n_vis = m.n_visleaves.min(MAX_LEAVES);
+    let row = visibility.as_ptr();
     let mut visible = 0u32;
     let mut i = 0;
     while i < n_vis {
-        if visibility[i >> 3] & (1 << (i & 7)) != 0 {
-            visible += 1;
-        }
+        visible += u32::from(*row.add(i >> 3) >> (i & 7) & 1);
         i += 1;
     }
     VISIBLE_LEAVES = visible;
@@ -71,19 +72,21 @@ pub unsafe fn prepare(m: &Map, visibility: &[u8]) {
     while n > 0 {
         n -= 1;
         let (c0, c1) = m.node_children(n);
-        if child_visible(words, visibility, n_vis, c0) || child_visible(words, visibility, n_vis, c1) {
+        let mut any = false;
+        let mut k = 0;
+        while k < 2 {
+            let child = if k == 0 { c0 } else { c1 };
+            any |= if child < 0 {
+                let leaf = (-child - 1) as usize;
+                leaf >= 1 && leaf <= n_vis && (*row.add((leaf - 1) >> 3) >> ((leaf - 1) & 7)) & 1 != 0
+            } else {
+                *words.add((child as usize) >> 5) & (1 << (child as usize & 31)) != 0
+            };
+            k += 1;
+        }
+        if any {
             *words.add(n >> 5) |= 1 << (n & 31);
         }
-    }
-}
-
-#[inline(always)]
-unsafe fn child_visible(words: *const u32, visibility: &[u8], n_vis: usize, child: i32) -> bool {
-    if child < 0 {
-        let leaf = (-child - 1) as usize;
-        leaf >= 1 && leaf <= n_vis && visibility[(leaf - 1) >> 3] & (1 << ((leaf - 1) & 7)) != 0
-    } else {
-        *words.add((child as usize) >> 5) & (1 << (child as usize & 31)) != 0
     }
 }
 
@@ -200,6 +203,25 @@ unsafe fn emit_leaf(m: &Map, visibility: &[u8], leaf: usize, stamp: u16, slots: 
         j += 1;
     }
     LEAF_SLOT[leaf] = key;
+}
+
+/// Gap of the nearest visited leaf among `leaves`: an object spanning several leaves draws after
+/// the world faces of every leaf it touches. `None` when none was visited.
+#[inline(always)]
+pub unsafe fn gap_nearest(leaves: &[i32]) -> Option<(i32, i32)> {
+    if !READY {
+        return None;
+    }
+    let mut best = 0i32;
+    for &leaf in leaves {
+        if leaf >= 1 && leaf as usize <= MAX_LEAVES {
+            let key = LEAF_SLOT[leaf as usize] as i32;
+            if key != 0 && (best == 0 || key < best) {
+                best = key;
+            }
+        }
+    }
+    (best != 0).then(|| (best - 1, best - 1))
 }
 
 /// Key range an entity in the leaf holding it may use: the odd bucket just nearer than the leaf's
