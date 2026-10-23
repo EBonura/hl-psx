@@ -15,6 +15,8 @@ usage: hl-census <command> [--repo DIR] [--hl DIR] [--strict]
            contract pointer does not resolve (--strict: stale rows too)
   seed     print contract rows for every unclassified class+item, guessing
            status from whether the cooker names the key (edit before commit)
+  map      per-map gap table (markdown): `map c0a0,c0a0a` or `map all`; lists every
+           class, key and spawnflag a map uses whose contract row is not `yes`
 ";
 
 fn arg(args: &[String], name: &str) -> Option<String> {
@@ -734,6 +736,21 @@ fn main() {
             }
         }
         "report" => report(&census, &contract, &tally, &findings),
+        "map" => {
+            let wanted: Vec<String> = match args.get(1).map(String::as_str) {
+                Some("all") => census.maps.clone(),
+                Some(list) if !list.starts_with("--") => {
+                    list.split(',').map(str::to_string).collect()
+                }
+                _ => {
+                    print!("{HELP}");
+                    exit(2)
+                }
+            };
+            for map in &wanted {
+                map_gaps(&census, &contract, map);
+            }
+        }
         _ => {
             print!("{HELP}");
             exit(2)
@@ -863,4 +880,99 @@ fn retail_spawn(ref_dir: &std::path::Path, map: &str) -> Option<[f64; 4]> {
             .find_map(|p| p.strip_prefix(&format!("{k}="))?.parse().ok())
     };
     Some([f("px")?, f("py")?, f("pz")?, f("yaw")?])
+}
+
+/// Entities of `map` that use `item` of `class` (`@class`, a key, or `flag:<bit>`).
+fn uses_in_map(c: &census::Census, map: &str, class: &str, item: &str) -> Option<usize> {
+    let ents = c.entities.get(map)?;
+    let n = ents
+        .iter()
+        .filter(|e| e.class().eq_ignore_ascii_case(class))
+        .filter(|e| match item {
+            census::CLASS_ITEM => true,
+            _ if item.starts_with('@') => false,
+            _ => match item
+                .strip_prefix("flag:")
+                .and_then(|b| b.parse::<u32>().ok())
+            {
+                Some(bit) => e.spawnflags() & bit != 0,
+                None => e.kv.iter().any(|(k, _)| census::item_key(class, k) == item),
+            },
+        })
+        .count();
+    Some(n)
+}
+
+/// One map's view of the contract: the classes it places and every non-`yes` row it touches.
+fn map_gaps(c: &census::Census, ct: &Contract, map: &str) {
+    let Some(ents) = c.entities.get(map) else {
+        println!("## {map}\n\nnot a shipped map\n");
+        return;
+    };
+    let mut classes: BTreeMap<String, usize> = BTreeMap::new();
+    for e in ents {
+        *classes.entry(e.class().to_ascii_lowercase()).or_default() += 1;
+    }
+    println!("## {map}\n");
+    println!("{} entities, {} classes.\n", ents.len(), classes.len());
+    println!("Classes placed (count): {}\n", {
+        let mut v: Vec<_> = classes.iter().collect();
+        v.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        v.iter()
+            .map(|(k, n)| format!("{k} {n}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    });
+    let mut groups: [Vec<String>; 4] = Default::default();
+    let mut notes: Vec<String> = Vec::new();
+    for ((class, item), u) in &c.items {
+        if !u.maps.contains(map)
+            || census::COMMON_KEYS.contains(&item.as_str())
+            || (ct.get(class, item).is_none() && ct.scope_of(class).is_some())
+        {
+            continue;
+        }
+        let (status, note) = match ct.get(class, item) {
+            Some(r) => (r.status, r.note.clone()),
+            None => (Status::Unreviewed, "no contract row".to_string()),
+        };
+        let rank = match status {
+            Status::No => 0,
+            Status::Partial => 1,
+            Status::Unreviewed => 2,
+            Status::Cosmetic => 3,
+            _ => continue,
+        };
+        let uses = uses_in_map(c, map, class, item)
+            .map(|n| format!(" x{n}"))
+            .unwrap_or_default();
+        groups[rank].push(format!("{class}.{item}{uses}"));
+        if rank == 0 && !note.is_empty() {
+            notes.push(format!("{class}.{item}: {note}"));
+        }
+    }
+    let titles = [
+        "Gap (the port does not honour it)",
+        "Partial (honoured with a stated deviation)",
+        "Unreviewed (not yet checked against retail)",
+        "Cosmetic (look or sound only)",
+    ];
+    for (i, (g, title)) in groups.iter().zip(titles).enumerate() {
+        if g.is_empty() {
+            continue;
+        }
+        if i == 3 {
+            // Look and sound shaping is noise at map scale: the count is enough.
+            println!("- {title}: {} class/key pairs", g.len());
+        } else {
+            println!("- {title}: {}", g.join(", "));
+        }
+    }
+    for n in &notes {
+        println!("  - {n}");
+    }
+    if groups.iter().all(Vec::is_empty) {
+        println!("- Every contract row this map touches is `yes` or retail-ignored.");
+    }
+    println!();
 }
