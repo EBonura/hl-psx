@@ -116,6 +116,7 @@ psx-vram = { path = "../.psoxide/sdk/crates/psx-vram" }
 psx-io   = { path = "../.psoxide/sdk/crates/psx-io" }
 psx-hw   = { path = "../.psoxide/crates/psx-hw" }
 psx-pack = { path = "../.psoxide/sdk/crates/psx-pack" }
+psx-cdstream = { path = "../.psoxide/sdk/crates/psx-cdstream" }
 psx-spu  = { path = "../.psoxide/sdk/crates/psx-spu" }
 psx-asset = { path = "../.psoxide/sdk/crates/psx-asset" }
 psx-fmv  = { path = "../.psoxide/sdk/crates/psx-fmv" }

@@ -1,6 +1,6 @@
 //! GoldSrc chunk streaming uses the shared owner; this facade supplies the
 //! game's render-arena lease and persistent viewmodel-entry capacity.
-pub use psx_goldsrc::chunk_stream::{ChunkLoad, StreamPump};
+pub use psx_goldsrc::chunk_stream::{ChunkLoad, StreamPump, PACK_LBA};
 
 #[cfg(target_arch = "mips")]
 mod target {
@@ -34,27 +34,119 @@ mod target {
     }
     #[inline]
     pub fn prime_persistent_entries(first_id: u32, count: usize) {
+        stream_abort();
         unsafe { owner().prime_persistent_entries(first_id, count) }
     }
     #[inline]
     pub fn load_chunk_decompressed(id: u32, dst: &mut [u32]) -> Option<super::ChunkLoad> {
+        // A blocking read takes the drive: close any interrupt-driven session first.
+        stream_abort();
         unsafe { owner().load_chunk_decompressed(id, dst) }
     }
-    #[inline]
+
+    // ---- Interrupt-serviced chunk sessions (the weapon-switch viewmodel stream) ----
+    //
+    // The controller delivers a sector every 6.7 ms at double speed and keeps only a
+    // few, handing over the newest when software is late. A pump that looks once per
+    // tick (50 ms or more) therefore lost most of a chunk, and the game threw the
+    // holes away and read the chunk again with everything stopped. A session starts the
+    // read exactly as before (the owner's `stream_begin`: prepare, Setloc, ReadN) and
+    // then lets the CD interrupt pop each sector into the destination
+    // (`psx_cdstream::drain`); the tick only asks how far it got, and ends the read with
+    // the owner's `stream_abort` (the polled reader's Pause). While a session is open
+    // nothing else touches the drive: every polled entry point below closes it first.
+    use core::ptr::addr_of_mut;
+    use psx_cdstream::drain::{self, DrainState};
+
+    /// The open session, if any.
+    struct Session {
+        active: bool,
+        dst: *mut u32,
+        dst_words: usize,
+        byte_size: usize,
+    }
+    static mut SESSION: Session = Session {
+        active: false,
+        dst: core::ptr::null_mut(),
+        dst_words: 0,
+        byte_size: 0,
+    };
+    /// VBlanks without a sector before a session is given up (the drive's worst
+    /// measured start after audio is about a second).
+    const SESSION_TIMEOUT_VBLANKS: u32 = 300;
+
+    #[optimize(size)]
+    #[inline(never)]
     pub unsafe fn stream_begin(id: u32, dst: *mut u32, words: usize) -> bool {
-        owner().stream_begin(id, dst, words)
+        stream_abort();
+        let Some((_, byte_size)) = owner().resolve_entry(id) else {
+            return false;
+        };
+        if byte_size == 0 || byte_size > words * 4 || !owner().stream_begin(id, dst, words) {
+            return false;
+        }
+        let sectors = byte_size.div_ceil(psx_pack::SECTOR_BYTES) as u32;
+        if !drain::start(dst, sectors, byte_size as u32, SESSION_TIMEOUT_VBLANKS) {
+            owner().stream_abort();
+            return false;
+        }
+        *addr_of_mut!(SESSION) = Session {
+            active: true,
+            dst,
+            dst_words: words,
+            byte_size,
+        };
+        true
     }
-    #[inline]
+
+    #[optimize(size)]
+    #[inline(never)]
     pub unsafe fn stream_pump() -> super::StreamPump {
-        owner().stream_pump()
+        let session = &mut *addr_of_mut!(SESSION);
+        if !session.active {
+            return super::StreamPump::Idle;
+        }
+        match drain::poll() {
+            DrainState::Running { .. } => super::StreamPump::InFlight,
+            DrainState::Done => {
+                stream_abort();
+                let buf = core::slice::from_raw_parts_mut(session.dst, session.dst_words);
+                let raw_len =
+                    psx_goldsrc::chunk_stream::decompress_in_place(buf, session.byte_size);
+                if raw_len == 0 {
+                    super::StreamPump::Failed
+                } else {
+                    super::StreamPump::Done(super::ChunkLoad {
+                        stored_len: session.byte_size,
+                        raw_len,
+                    })
+                }
+            }
+            // Failed, or forgotten: the caller falls back to a blocking read.
+            _ => {
+                stream_abort();
+                super::StreamPump::Failed
+            }
+        }
     }
+
+    /// Whether a session owns the drive.
     #[inline]
     pub fn stream_active() -> bool {
-        unsafe { owner().stream_active() }
+        unsafe { (*addr_of_mut!(SESSION)).active }
     }
-    #[inline]
+
+    /// Close the open session and stop the drive, so a polled command can follow.
+    #[optimize(size)]
+    #[inline(never)]
     pub fn stream_abort() {
-        unsafe { owner().stream_abort() }
+        unsafe {
+            if (*addr_of_mut!(SESSION)).active {
+                (*addr_of_mut!(SESSION)).active = false;
+                drain::cancel();
+            }
+            owner().stream_abort();
+        }
     }
 }
 #[cfg(target_arch = "mips")]
@@ -74,12 +166,16 @@ mod host {
     pub unsafe fn stream_begin(_: u32, _: *mut u32, _: usize) -> bool {
         false
     }
+    #[optimize(size)]
+    #[inline(never)]
     pub unsafe fn stream_pump() -> super::StreamPump {
         super::StreamPump::Idle
     }
     pub fn stream_active() -> bool {
         false
     }
+    #[optimize(size)]
+    #[inline(never)]
     pub fn stream_abort() {}
 }
 #[cfg(not(target_arch = "mips"))]

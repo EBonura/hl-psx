@@ -1,0 +1,185 @@
+# Weapon switch: a cold viewmodel reads from the disc while the world keeps running.
+# The switch used to pump one sector per tick from a drive that delivers 150 a second and
+# keeps only a few: the chunk landed with holes, the game threw it away and read it again
+# with the whole game stopped, and the weapon took up to 85 vblanks to appear with the
+# display frozen for up to 27. The read now starts as before and the CD interrupt pops the
+# sectors (psx_cdstream::drain), so a switch is the drive's own seek and read time (30
+# vblanks at most here) and the picture never stops for more than a few frames.
+#
+# Chapter select at play-order map 60, whose arrival loadout holds the crowbar, glock,
+# .357, shotgun and more. R1 steps to the next owned weapon (models 1, 2, 12, 3, 7).
+# VM_ENTRY.valid (byte 8 of the struct as rustc lays it out) is 0 while the hands render
+# empty. After each press the hands must go empty within 20 vblanks and the new viewmodel
+# must be published within 45 more; the old path needed up to 85 and fails the first switch.
+name = "hl-weapon-switch"
+title = "Half-Life: a weapon switch streams from the CD interrupt without dropping a sector"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 14000
+
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+label = "open chapter select (fifth entry), the eleventh chapter, its first map"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 4
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 10
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+label = "enter the map and wait for the glock to be the live viewmodel"
+press = ["cross"]
+hold = 8
+wait = 60
+
+[[step]]
+label = "the map is loaded when the glock's viewmodel entry is published (VM_ENTRY.valid)"
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 9000
+
+[[step]]
+label = "settle: the first ticks of a map run the arrival"
+wait = 400
+
+[[step]]
+checkpoint = "glock"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "R1: the next weapon, a cold chunk, live within 45 vblanks"
+press = ["r1"]
+hold = 8
+
+[[step]]
+label = "the hands go empty while the chunk reads"
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "eq", value = 0 }
+timeout = 20
+
+[[step]]
+label = "the new viewmodel is published within 45 vblanks"
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 45
+
+[[step]]
+label = "settle, then R1 again"
+wait = 120
+
+[[step]]
+press = ["r1"]
+hold = 8
+
+[[step]]
+label = "the hands go empty while the chunk reads"
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "eq", value = 0 }
+timeout = 20
+
+[[step]]
+label = "the new viewmodel is published within 45 vblanks"
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 45
+
+[[step]]
+label = "settle, then R1 again"
+wait = 120
+
+[[step]]
+press = ["r1"]
+hold = 8
+
+[[step]]
+label = "the hands go empty while the chunk reads"
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "eq", value = 0 }
+timeout = 20
+
+[[step]]
+label = "the new viewmodel is published within 45 vblanks"
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 45
+
+[[step]]
+label = "settle, then R1 again"
+wait = 120
+
+[[step]]
+press = ["r1"]
+hold = 8
+
+[[step]]
+label = "the hands go empty while the chunk reads"
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "eq", value = 0 }
+timeout = 20
+
+[[step]]
+label = "the new viewmodel is published within 45 vblanks"
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 45
+
+[[step]]
+label = "settle, then R1 again"
+wait = 120
+
+[[step]]
+press = ["r1"]
+hold = 8
+
+[[step]]
+label = "the hands go empty while the chunk reads"
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "eq", value = 0 }
+timeout = 20
+
+[[step]]
+label = "the new viewmodel is published within 45 vblanks"
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 45
+
+[[step]]
+label = "the stream settles and the picture is still running"
+wait = 120
+
+[[step]]
+checkpoint = "last-weapon"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "presenting"
+window = 120
+min_changes = 5
+[[step.assert]]
+kind = "pc_not_stuck"
+window = 120
