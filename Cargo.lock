@@ -19,6 +19,7 @@ dependencies = [
  "hl-format",
  "lz4_flex",
  "psx-asset",
+ "psx-cdstream",
  "psx-display",
  "psx-engine",
  "psx-fmv",
