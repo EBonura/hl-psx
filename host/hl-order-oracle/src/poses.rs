@@ -85,6 +85,48 @@ fn dist2(a: [i32; 3], b: [i32; 3]) -> i64 {
     (0..3).map(|k| i64::from(a[k] - b[k]).pow(2)).sum()
 }
 
+/// Centres of the roomy empty leaves of the world model, in the game's axes: guaranteed open
+/// space, so a camera placed there sees geometry instead of the inside of a wall.
+pub fn empty_leaf_centres(bsp: &Path) -> Result<Vec<[i32; 3]>, String> {
+    let data = fs::read(bsp).map_err(|e| format!("{}: {e}", bsp.display()))?;
+    let word = |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
+    let (offset, length) = (word(4 + 8 * 10), word(8 + 8 * 10));
+    let mut out = Vec::new();
+    for i in 0..length / 28 {
+        let l = &data[offset + i * 28..offset + i * 28 + 28];
+        let contents = i32::from_le_bytes([l[0], l[1], l[2], l[3]]);
+        let g = |o: usize| i32::from(i16::from_le_bytes([l[o], l[o + 1]]));
+        let (min, max) = ([g(8), g(10), g(12)], [g(14), g(16), g(18)]);
+        let ext = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+        if contents == -1 && ext.iter().all(|e| *e >= 96) {
+            // BSP (x, y, z-up) to the probe's tp axes (the same x y z).
+            out.push([(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2]);
+        }
+    }
+    Ok(out)
+}
+
+/// Up to `count` spread-out points of `pool` (plus `first`) by farthest-point sampling.
+pub fn spread(pool: &[[i32; 3]], first: Option<[i32; 3]>, count: usize) -> Vec<[i32; 3]> {
+    let mut chosen: Vec<[i32; 3]> = first.into_iter().collect();
+    if chosen.is_empty() {
+        if let Some(p) = pool.first() {
+            chosen.push(*p);
+        }
+    }
+    while chosen.len() < count {
+        let next = pool
+            .iter()
+            .copied()
+            .max_by_key(|s| chosen.iter().map(|c| dist2(*s, *c)).min().unwrap_or(0));
+        match next {
+            Some(s) if chosen.iter().all(|c| dist2(*c, s) > 96 * 96) => chosen.push(s),
+            _ => break,
+        }
+    }
+    chosen
+}
+
 /// Up to `count` spread-out spots by farthest-point sampling, starting at the player start.
 pub fn pick_spots(entities: &[Entity], count: usize) -> Vec<[i32; 3]> {
     let spots: Vec<[i32; 3]> = entities
@@ -115,14 +157,14 @@ pub fn pick_spots(entities: &[Entity], count: usize) -> Vec<[i32; 3]> {
 }
 
 /// A probe-script section for one map: `spots` x `yaws` snapshots.
-pub fn section(map: &str, spots: &[[i32; 3]], yaws: &[i32], spacing: u32) -> String {
+pub fn section(map: &str, spots: &[[i32; 3]], yaws: &[i32], spacing: u32, start: u32) -> String {
     let mut out = format!("map {map}\n0 god 2\n");
-    let mut tick = 40;
+    let mut tick = start;
     for (i, s) in spots.iter().enumerate() {
         for (j, base) in yaws.iter().enumerate() {
             let yaw = (base + 37 * (i as i32)) % 360;
             out.push_str(&format!("{tick} tp {} {} {} {yaw} 0 {}\n", s[0], s[1], s[2], spacing));
-            out.push_str(&format!("{} snap\n", tick + 3 + j as u32 % 2));
+            out.push_str(&format!("{} osnap\n", tick + 3 + j as u32 % 2));
             tick += spacing;
         }
     }

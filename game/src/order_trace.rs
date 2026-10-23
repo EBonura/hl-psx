@@ -8,7 +8,8 @@
 //! so shipping images are unchanged; there is no RAM ring, every record leaves through the port.
 //!
 //! Lines (all numbers are fixed-width lowercase hex, `|` separated):
-//!   `OF|frame|eye x|eye y|eye z`            frame header (eye is the cooked world position)
+//!   `OF|frame|eye x|eye y|eye z|r00..r22|h`  frame header (eye is the cooked world position, r the
+//!         view rotation rows in Q12, h the projection distance; screen centre is 160,120)
 //!   `OP|addr|kind|mode|n|key|face|policy|z0|z1|z2|z3|brush|ox|oy|oz`
 //!         one per packet at its table insertion. `addr` is the packet address (24 bits), `kind`
 //!         is the emission class (1 loop face, 2 raw-tri face, 3 patch face, 4 submodel face,
@@ -93,7 +94,7 @@ pub unsafe fn arm() {
 
 /// Called once per frame as the world table is cleared. Starts a capture when armed.
 #[inline(never)]
-pub unsafe fn begin_frame(frame: u32, eye: [i32; 3]) {
+pub unsafe fn begin_frame(frame: u32, eye: [i32; 3], rot: [[i16; 3]; 3], h: i32) {
     ACTIVE = ARMED;
     ARMED = false;
     CALLS = 0;
@@ -110,6 +111,16 @@ pub unsafe fn begin_frame(frame: u32, eye: [i32; 3]) {
         put_hex(eye[i] as u32, 8);
         i += 1;
     }
+    // View rotation (rows, Q12) and the projection distance: the host recovers exact per-pixel
+    // depth of a planar face from them.
+    let mut r = 0;
+    while r < 9 {
+        put_byte(b'|');
+        put_hex(rot[r / 3][r % 3] as u16 as u32, 4);
+        r += 1;
+    }
+    put_byte(b'|');
+    put_hex(h as u32, 4);
     flush_line();
 }
 

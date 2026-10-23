@@ -48,6 +48,8 @@ affine-heatmap = ["performance-telemetry"]
 # debug log (game/src/order_trace.rs): per-vertex depth, ordering key, source face, and the
 # table walk in draw order, for the host tool host/hl-order-oracle. Not for shipping discs.
 order-trace = ["interaction-probe"]
+# BSP-sequenced draw order for the world pass (game/src/seq_order.rs).
+seq-order = []
 # Diagnostic build: tint every world primitive by the emit mechanism that
 # produced it (patch quad / refined child / triangle record / loop face /
 # raw tri). Tints replace the lightmap colour only, so packets, ordering,

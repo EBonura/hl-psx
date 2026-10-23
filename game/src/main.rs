@@ -84,6 +84,8 @@ mod probe;
 #[cfg(feature = "reference-trace")]
 mod reference_trace;
 mod render;
+#[cfg(feature = "seq-order")]
+mod seq_order;
 #[cfg(feature = "route-follow")]
 use psx_goldsrc::route_follow;
 mod apache;
@@ -357,6 +359,7 @@ const MAX_TEX_SLOTS: usize = room_budget::MAX_TEX_SLOTS;
 const MAX_FACES: usize = room_budget::MAX_FACES;
 const MAX_FACE_GROUPS: usize = room_budget::MAX_FACE_GROUPS;
 const MAX_LEAVES: usize = room_budget::MAX_LEAVES;
+const MAX_NODES: usize = room_budget::MAX_NODES;
 const MAX_ENTS: usize = room_budget::MAX_ENTS;
 
 const MAX_PVS_FACE_RECS: usize = 1024;
@@ -26214,9 +26217,137 @@ static mut KEY_MIN: i32 = 0;
 /// Studio-model packets draw this many table buckets nearer than their centroid depth.
 const MODEL_KEY_BIAS: u32 = 4;
 
+#[cfg(feature = "seq-order")]
+#[inline(always)]
+unsafe fn seq_face_key(face: usize) -> i32 {
+    seq_order::face_key(face)
+}
+#[cfg(not(feature = "seq-order"))]
+#[inline(always)]
+unsafe fn seq_face_key(_face: usize) -> i32 {
+    0
+}
+#[cfg(feature = "seq-order")]
+#[inline(always)]
+unsafe fn seq_prepare(m: &Map) {
+    seq_order::prepare(m, &*core::ptr::addr_of!(VIS_BITS));
+}
+#[cfg(not(feature = "seq-order"))]
+#[inline(always)]
+unsafe fn seq_prepare(_m: &Map) {}
+#[cfg(feature = "seq-order")]
+#[inline(always)]
+unsafe fn seq_sequence(m: &Map, eye: [i32; 3], depth_row: [i16; 3], depth_offset: i32) {
+    seq_order::sequence(
+        m,
+        &*core::ptr::addr_of!(VIS_BITS),
+        eye,
+        dot12_q5,
+        &|c| dot12(depth_row, c) + depth_offset,
+    );
+}
+#[cfg(not(feature = "seq-order"))]
+#[inline(always)]
+unsafe fn seq_sequence(_m: &Map, _eye: [i32; 3], _depth_row: [i16; 3], _depth_offset: i32) {}
+#[cfg(feature = "seq-order")]
+#[inline(always)]
+unsafe fn seq_active() -> bool {
+    seq_order::ready()
+}
+#[cfg(not(feature = "seq-order"))]
+#[inline(always)]
+unsafe fn seq_active() -> bool {
+    false
+}
+
+/// The key range `(lowest, highest)` an entity standing at `point` may use: after the world
+/// faces of the leaf that holds it and not past the next nearer leaf's. `(0, 0)` when there is
+/// no sequence, which leaves the entity on its own depth key.
+#[cfg(feature = "seq-order")]
+#[inline(never)]
+unsafe fn seq_gap_at(m: &Map, point: [i32; 3]) -> (i32, i32) {
+    if !seq_order::ready() {
+        return (0, 0);
+    }
+    seq_order::gap_of_leaf(camera_leaf(m, point)).unwrap_or((0, 0))
+}
+#[cfg(not(feature = "seq-order"))]
+#[inline(always)]
+unsafe fn seq_gap_at(_m: &Map, _point: [i32; 3]) -> (i32, i32) {
+    (0, 0)
+}
+
+/// Key range of a whole entity near `point`; behind everything when its leaf was not visited
+/// (nothing of it can be seen then).
+#[inline(always)]
+unsafe fn seq_entity_gap(m: &Map, point: [i32; 3]) -> (i32, i32) {
+    if !seq_active() {
+        return (0, 0);
+    }
+    let gap = seq_gap_at(m, point);
+    if gap.1 != 0 {
+        gap
+    } else {
+        (OT_LEN as i32 - 1, OT_LEN as i32 - 1)
+    }
+}
+
+/// Key range of a brush face drawn at `off` from its cooked place: the leaf in front of the
+/// face centre (nudged out of rock along the face normal).
+#[inline(always)]
+unsafe fn seq_brush_gap(m: &Map, face: usize, off: [i32; 3]) -> (i32, i32) {
+    if !seq_active() {
+        return (0, 0);
+    }
+    let (c, _) = m.face_bounds(face);
+    let (n, _) = m.face_plane_cooked(face);
+    seq_entity_gap(
+        m,
+        [
+            c[0] + off[0] + ((n[0] as i32 * 4) >> map::PLANE_NORMAL_FRAC_BITS),
+            c[1] + off[1] + ((n[1] as i32 * 4) >> map::PLANE_NORMAL_FRAC_BITS),
+            c[2] + off[2] + ((n[2] as i32 * 4) >> map::PLANE_NORMAL_FRAC_BITS),
+        ],
+    )
+}
+
+/// The clamp window of the studio model being drawn, `(0, 0)` for none.
+static mut MODEL_GAP: (i32, i32) = (0, 0);
+
+/// The clamp window of the non-world primitive being emitted, `(0, 0)` for none.
+static mut SEQ_GAP: (i32, i32) = (0, 0);
+
+#[inline(always)]
+unsafe fn seq_reset() {
+    SEQ_FACE_KEY = 0;
+    SEQ_GAP = (0, 0);
+}
+
+/// Table key of the face being emitted from the BSP sequence (`seq_order`), 0 when the face has
+/// none and the primitive keys at its own depth.
+static mut SEQ_FACE_KEY: i32 = 0;
+
 #[inline(always)]
 unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: bool) -> usize {
     let policy = EMIT_POLICY;
+    let seq = SEQ_FACE_KEY;
+    if seq != 0 {
+        // The sequence orders faces; the odd bucket between two slots carries the few
+        // intra-surface relations the order cannot express: a parent or backstop behind its own
+        // children, a liquid or backdrop behind the terrain it is coplanar with, a backed
+        // cutout in front of what it is backed by.
+        let key = if policy.far_key() || policy.coplanar_backdrop() || texture_backdrop {
+            seq + 1
+        } else if policy.cutout() {
+            seq - 1
+        } else {
+            seq
+        }
+        .clamp(1, OT_LEN as i32 - 1) as usize;
+        #[cfg(feature = "order-trace")]
+        order_trace::note_key(depths, key);
+        return key;
+    }
     let key = ordering::world_order_key::<OT_LEN>(
         depths,
         ordering::SurfaceOrder {
@@ -26230,9 +26361,14 @@ unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: b
             texture_backdrop,
         },
     );
-    let key = (key as i32 + KEY_BIAS)
+    let mut key = (key as i32 + KEY_BIAS)
         .max(KEY_MIN)
         .clamp(1, OT_LEN as i32 - 1) as usize;
+    let gap = SEQ_GAP;
+    if gap.1 != 0 {
+        // A brush face keeps its depth key inside the window of the leaf it stands in.
+        key = (key as i32).clamp(gap.0.min(gap.1), gap.1) as usize;
+    }
     #[cfg(feature = "order-trace")]
     order_trace::note_key(depths, key);
     key
@@ -26501,6 +26637,7 @@ unsafe fn rebuild_pvs_cache(
     PVS_FACE_COUNT = compiled.face_count;
     PVS_GROUP_COUNT = compiled.group_count;
     PVS_TRI_REF_COUNT = compiled.triangle_references;
+    seq_prepare(m);
     // Closed doors: the face list stays the full PVS, so a door opening only
     // stops the hiding. PVS_FACE_MARK, which the compile leaves holding
     // every listed face, is cut down to the faces no leaf on the camera's
@@ -32774,6 +32911,7 @@ unsafe fn draw_model(
         -dot12(rot.m[1], es) * s,
         -dot12(rot.m[2], es) * s,
     ];
+    let gap = MODEL_GAP;
     let near_s = (NEAR as i32 * s) as u16;
     let nv = md.vertex_count().min(MAX_MODEL_VERTS);
     telemetry::stage_begin(telemetry::stage::TEXTURED_MODEL_PROJECT);
@@ -32889,7 +33027,12 @@ unsafe fn draw_model(
             // PS1 choice for compact triangles and matches the viewmodel path.
             // Retain quarter-unit precision until the shared model pass sorts
             // ties inside each existing four-unit world bucket.
-            let depth_key = ordering::model_depth_key::<OT_LEN>(pa_z, pb_z, pc_z, scale_shift);
+            let mut depth_key =
+                ordering::model_depth_key::<OT_LEN>(pa_z, pb_z, pc_z, scale_shift);
+            if gap.1 != 0 {
+                // Keep the model's own fine depth, inside the leaf's window.
+                depth_key = (depth_key as i32).clamp(gap.0 << 4, (gap.1 << 4) + 15) as u16;
+            }
             let payload = *face_payloads.add(t);
             // XY is already in the GPU packet's packed word layout. Preserve
             // it directly instead of unpacking to i16 pairs only to repack it.
@@ -32935,7 +33078,7 @@ unsafe fn insert_model_depth_stream(first: *mut u32, end: *mut u32) {
             // model at the pixels where the model is the nearer surface. Draw models
             // MODEL_KEY_BIAS buckets (four world units each) nearer; the fine rank is kept.
             let key = ((*packet).uv2 >> 16)
-                .saturating_sub(MODEL_KEY_BIAS << 4)
+                .saturating_sub(if seq_active() { 0 } else { MODEL_KEY_BIAS << 4 })
                 .max(16);
             (*packet).uv2 &= 0xffff;
             #[cfg(feature = "order-trace")]
@@ -39254,7 +39397,7 @@ fn play(
         unsafe {
             world_ot().clear();
             #[cfg(feature = "order-trace")]
-            order_trace::begin_frame(frame_no as u32, eye);
+            order_trace::begin_frame(frame_no as u32, eye, rot.m, render::projection_h());
             hud_ot().clear();
             fx_ot().clear();
             update_flashlight_reach(&m, eye, &rot);
@@ -39392,6 +39535,7 @@ fn play(
                 // Presentation happens just before `fb.clear` (see below): the entire
                 // world build is framebuffer-independent, so it all hides the
                 // previous frame's raster.
+                seq_sequence(&m, eye, rot.m[2], base_t[2]);
                 let mut room_counts = WorldCounters::new();
                 room_counts.set_pvs(PVS_LEAF_COUNT as u32, PVS_FACE_COUNT as u32);
                 telemetry::stage_begin(telemetry::stage::ROOM_SURFACE_DRAW);
@@ -39576,6 +39720,7 @@ fn play(
                                 if nbands > 1 && rec.band() as i32 != band {
                                     continue;
                                 }
+                                SEQ_FACE_KEY = seq_face_key(face);
 
                                 if !WORLD_BOUNDS_CULL
                                     || visibility.world_sphere_gte(rec.center, rec.radius as i32)
@@ -39636,6 +39781,7 @@ fn play(
                                 if seal_hide && PVS_FACE_MARK[face >> 5] & (1 << (face & 31)) != 0 {
                                     continue;
                                 }
+                                SEQ_FACE_KEY = seq_face_key(face);
                                 let (bc, be) = m.face_bounds(face);
                                 let depth = (dot12(rot.m[2], bc) + base_t[2]).max(0);
                                 if (depth >> DEPTH_BAND_SHIFT).min(nbands - 1) != band {
@@ -39712,6 +39858,7 @@ fn play(
                                 let rec = PVS_FACE_REC.0[e];
                                 let face = PVS_FACE_INDEX.0[e] as usize;
 
+                                SEQ_FACE_KEY = seq_face_key(face);
                                 if !WORLD_BOUNDS_CULL
                                     || visibility.world_sphere_gte(rec.center, rec.radius as i32)
                                 {
@@ -39768,6 +39915,7 @@ fn play(
                             } else {
                                 let face = PVS_FACE_INDEX.0[e] as usize;
 
+                                SEQ_FACE_KEY = seq_face_key(face);
                                 let (bc, be) = m.face_bounds(face);
                                 if !WORLD_BOUNDS_CULL || visibility.sphere(bc, be) {
                                     let (first, cnt) = m.face_tris(face);
@@ -39830,6 +39978,7 @@ fn play(
                 }
                 telemetry::stage_end(telemetry::stage::ROOM_PROJECT);
                 reset_emit_policy();
+                seq_reset();
                 room_affine_split_tris = WORLD_AFFINE_SPLIT_TRIS;
                 finish_world_affine_candidates();
                 affine_finalize_percentiles();
@@ -40043,6 +40192,14 @@ fn play(
                     #[cfg(feature = "order-trace")]
                     order_trace::note_brush(e.submodel as u32, off);
                     if e.kind == ENT_KIND_PLATROT {
+                        SEQ_GAP = seq_entity_gap(
+                            &m,
+                            [
+                                e.center[0] + off[0],
+                                e.center[1] + off[1],
+                                e.center[2] + off[2],
+                            ],
+                        );
                         emit_platrot_entity(
                             &mut packets,
                             &m,
@@ -40056,6 +40213,7 @@ fn play(
                             &mut np,
                             &mut model_culled_tris,
                         );
+                        seq_reset();
                         continue;
                     }
                     // Rotating brushes (fans kind 5, swinging doors kind 7 and
@@ -40100,6 +40258,14 @@ fn play(
                         let submodel_token = next_proj_token();
                         let (ff, nf) = m.submodel(e.submodel);
                         reset_emit_policy();
+                        SEQ_GAP = seq_entity_gap(
+                            &m,
+                            [
+                                e.center[0] + off[0],
+                                e.center[1] + off[1],
+                                e.center[2] + off[2],
+                            ],
+                        );
                         for f in ff..ff + nf {
                             set_emit_face(&m, f, visibility_logic::brush_packet_blend(e.blend));
                             let (first, cnt) = m.face_tris(f);
@@ -40113,6 +40279,7 @@ fn play(
                                 &mut np,
                             );
                         }
+                        seq_reset();
                         reset_emit_policy();
                         scene::load_rotation(&rot); // restore the world transform
                         set_view_fix(&rot, et); // mirror registers (translation still ent's)
@@ -40174,6 +40341,7 @@ fn play(
                                 continue;
                             }
                             let (first, cnt) = m.face_tris(f);
+                            SEQ_GAP = seq_brush_gap(&m, f, [0, 0, 0]);
                             // Glass/glow entities blend; liquid faces also sway.
                             set_emit_face(&m, f, visibility_logic::brush_packet_blend(e.blend));
                             if m.face_is_loop(f) {
@@ -40204,6 +40372,7 @@ fn play(
                                 );
                             }
                         }
+                        seq_reset();
                         reset_emit_policy();
                         map::tex_anim_select(false);
                         continue;
@@ -40244,6 +40413,7 @@ fn play(
                         if WORLD_BOUNDS_CULL && !visibility.sphere(moved_center, be) {
                             continue;
                         }
+                        SEQ_GAP = seq_brush_gap(&m, f, off);
                         emit_submodel_face(
                             &mut packets,
                             &m,
@@ -40254,6 +40424,7 @@ fn play(
                             &mut np,
                         );
                     }
+                    seq_reset();
                     WATER_VOID_ON = false;
                     reset_emit_policy();
                     map::tex_anim_select(false);
@@ -40333,6 +40504,7 @@ fn play(
                     dot12(rot.m[2], tp_e) + dot12(mr.m[2], tbw),
                 ];
                 let cache_hit = TRAM_PACKET_CACHE
+                    && !seq_active()
                     && TRAM_CACHE_VALID
                     && TRAM_CACHE_ROT == mr.m
                     && TRAM_CACHE_T == et
@@ -40373,6 +40545,7 @@ fn play(
                     // world visibility bits after world emission and compute
                     // each tram-local facing verdict once per group.
                     clear_group_bits(group_seen);
+                    SEQ_GAP = seq_entity_gap(&m, train_pos);
                     for f in ff..ff + nf {
                         set_emit_face(&m, f, 0);
                         let (first, cnt) = m.face_tris(f);
@@ -40396,6 +40569,7 @@ fn play(
                             &mut np,
                         );
                     }
+                    seq_reset();
                     reset_emit_policy();
                     TRAM_CACHE_BUILDING = false;
                     if !TRAM_PACKET_CACHE || TRAM_CACHE_OVERFLOW {
@@ -40580,6 +40754,7 @@ fn play(
                     eye,
                     &rot,
                 );
+                MODEL_GAP = seq_entity_gap(&m, [org[0], org[1] + model_def(ty).target_h / 2, org[2]]);
                 model_projected_vertices = model_projected_vertices.saturating_add(draw_model(
                     &mut model_packets,
                     md,
@@ -40607,6 +40782,7 @@ fn play(
                     &rot,
                     &mut np,
                 ));
+                MODEL_GAP = (0, 0);
                 CROSSFADE = (0, 0, 0);
                 CROSSFADE_BONES = 0;
                 // HMD8 projection leaves the final bone affine resident. The
@@ -40636,6 +40812,7 @@ fn play(
                         eye[1] + ((fwd[1] as i32 * 240 + right[1] as i32 * side) >> 12) - 40,
                         eye[2] + ((fwd[2] as i32 * 240 + right[2] as i32 * side) >> 12),
                     ];
+                    MODEL_GAP = seq_entity_gap(&m, pos);
                     draw_model(
                         &mut model_packets,
                         &md,
@@ -40668,6 +40845,7 @@ fn play(
                         &rot,
                         &mut np,
                     );
+                    MODEL_GAP = (0, 0);
                     k += 1;
                 }
             }

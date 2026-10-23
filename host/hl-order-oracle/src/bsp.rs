@@ -17,6 +17,9 @@ pub struct Node {
 }
 
 pub struct Model {
+    pub center: [f32; 3],
+    pub mins: [f32; 3],
+    pub maxs: [f32; 3],
     pub head_node: i32,
     pub first_face: u32,
     pub num_faces: u32,
@@ -28,6 +31,16 @@ pub struct Bsp {
     pub models: Vec<Model>,
     /// Node owning each face (`u32::MAX` when no node lists it).
     pub node_of_face: Vec<u32>,
+    /// Polygon of every face.
+    pub faces: Vec<Vec<[f32; 3]>>,
+    /// (plane number, back side) of every face.
+    pub face_plane: Vec<(usize, bool)>,
+    /// Marked faces of every leaf.
+    pub leaf_faces: Vec<Vec<u32>>,
+    /// Leaves that mark each face.
+    pub face_leaves: Vec<Vec<u32>>,
+    /// Bounding box centre of every leaf (BSP axes).
+    pub leaf_center: Vec<[f32; 3]>,
 }
 
 fn lump(data: &[u8], index: usize) -> Result<&[u8], String> {
@@ -71,6 +84,13 @@ impl Bsp {
         let models: Vec<Model> = lump(&data, 14)?
             .chunks_exact(64)
             .map(|m| Model {
+                mins: [f32le(m, 0), f32le(m, 4), f32le(m, 8)],
+                maxs: [f32le(m, 12), f32le(m, 16), f32le(m, 20)],
+                center: [
+                    (f32le(m, 0) + f32le(m, 12)) / 2.0,
+                    (f32le(m, 4) + f32le(m, 16)) / 2.0,
+                    (f32le(m, 8) + f32le(m, 20)) / 2.0,
+                ],
                 head_node: le32(m, 36) as i32,
                 first_face: le32(m, 56),
                 num_faces: le32(m, 60),
@@ -85,7 +105,67 @@ impl Bsp {
                 }
             }
         }
+        let verts: Vec<[f32; 3]> = lump(&data, 3)?
+            .chunks_exact(12)
+            .map(|v| [f32le(v, 0), f32le(v, 4), f32le(v, 8)])
+            .collect();
+        let edges: Vec<[usize; 2]> = lump(&data, 12)?
+            .chunks_exact(4)
+            .map(|e| [usize::from(le16(e, 0)), usize::from(le16(e, 2))])
+            .collect();
+        let surf: Vec<i32> = lump(&data, 13)?.chunks_exact(4).map(|e| le32(e, 0) as i32).collect();
+        let faces = lump(&data, 7)?
+            .chunks_exact(20)
+            .map(|f| {
+                let first = le32(f, 4) as usize;
+                let num = usize::from(le16(f, 8));
+                (first..first + num)
+                    .map(|i| {
+                        let se = surf[i];
+                        let e = edges[se.unsigned_abs() as usize];
+                        verts[if se >= 0 { e[0] } else { e[1] }]
+                    })
+                    .collect()
+            })
+            .collect();
+        let face_plane = lump(&data, 7)?
+            .chunks_exact(20)
+            .map(|f| (usize::from(le16(f, 0)), le16(f, 2) != 0))
+            .collect();
+        let marks: Vec<u32> = lump(&data, 11)?
+            .chunks_exact(2)
+            .map(|m| u32::from(le16(m, 0)))
+            .collect();
+        let leaf_faces = lump(&data, 10)?
+            .chunks_exact(28)
+            .map(|l| {
+                let first = usize::from(le16(l, 20));
+                let num = usize::from(le16(l, 22));
+                marks[first..(first + num).min(marks.len())].to_vec()
+            })
+            .collect();
+        let leaf_center = lump(&data, 10)?
+            .chunks_exact(28)
+            .map(|l| {
+                let g = |o: usize| f32::from(le16(l, o) as i16);
+                [(g(8) + g(14)) / 2.0, (g(10) + g(16)) / 2.0, (g(12) + g(18)) / 2.0]
+            })
+            .collect();
+        let mut face_leaves: Vec<Vec<u32>> = vec![Vec::new(); face_count];
+        let leaf_faces_ref: &Vec<Vec<u32>> = &leaf_faces;
+        for (leaf, fs) in leaf_faces_ref.iter().enumerate() {
+            for f in fs {
+                if let Some(v) = face_leaves.get_mut(*f as usize) {
+                    v.push(leaf as u32);
+                }
+            }
+        }
         Ok(Self {
+            face_leaves,
+            leaf_center,
+            leaf_faces,
+            face_plane,
+            faces,
             planes,
             nodes,
             models,
@@ -123,5 +203,134 @@ impl Bsp {
             }
         }
         rank
+    }
+}
+
+impl Bsp {
+    /// Signed distance of a point from a face's own node plane.
+    pub fn face_side(&self, face: usize, p: [f32; 3]) -> f32 {
+        let node = self.node_of_face[face];
+        if node == u32::MAX {
+            return 0.0;
+        }
+        self.side(node as usize, p)
+    }
+
+    /// (min, max) signed distance of a face polygon from another face's node plane.
+    pub fn span_against(&self, plane_of: usize, face: usize) -> (f32, f32) {
+        let mut lo = f32::MAX;
+        let mut hi = f32::MIN;
+        for v in &self.faces[face] {
+            let d = self.face_side(plane_of, *v);
+            lo = lo.min(d);
+            hi = hi.max(d);
+        }
+        (lo, hi)
+    }
+}
+
+impl Bsp {
+    /// The plane a face lies on in the game's (cooked) axes, as (normal, distance) with the
+    /// normal facing out of the face, translated by a brush draw offset (cooked units).
+    pub fn face_plane_cooked(&self, face: usize, offset: [i32; 3]) -> Option<([f64; 3], f64)> {
+        let &(plane, back) = self.face_plane.get(face)?;
+        let plane = self.planes.get(plane)?;
+        let sign = if back { -1.0 } else { 1.0 };
+        // Cooked axes are (x, z, y) of the BSP's.
+        let n = [
+            sign * f64::from(plane.normal[0]),
+            sign * f64::from(plane.normal[2]),
+            sign * f64::from(plane.normal[1]),
+        ];
+        let o = [f64::from(offset[0]), f64::from(offset[1]), f64::from(offset[2])];
+        let d = sign * f64::from(plane.dist) + n[0] * o[0] + n[1] * o[1] + n[2] * o[2];
+        Some((n, d))
+    }
+}
+
+impl Bsp {
+    /// Rank of every leaf in the same back-to-front walk of `model` from `eye`.
+    pub fn leaf_ranks(&self, model: usize, eye: [f32; 3]) -> Vec<u32> {
+        let mut rank = vec![u32::MAX; self.leaf_faces.len()];
+        let mut next = 0u32;
+        let mut stack: Vec<(i32, u8)> = vec![(self.models[model].head_node, 0)];
+        while let Some((node, state)) = stack.pop() {
+            if node < 0 {
+                let leaf = (-1 - node) as usize;
+                if leaf < rank.len() {
+                    rank[leaf] = next;
+                    next += 1;
+                }
+                continue;
+            }
+            let n = node as usize;
+            let front = self.side(n, eye) >= 0.0;
+            let (near, far) = if front { (0, 1) } else { (1, 0) };
+            if state == 0 {
+                stack.push((node, 1));
+                stack.push((self.nodes[n].children[far], 0));
+            } else {
+                stack.push((self.nodes[n].children[near], 0));
+            }
+        }
+        rank
+    }
+}
+
+impl Bsp {
+    /// Leaf containing `p` in the world tree.
+    pub fn point_leaf(&self, p: [f32; 3]) -> usize {
+        let mut node = self.models[0].head_node;
+        while node >= 0 {
+            let n = node as usize;
+            node = self.nodes[n].children[usize::from(self.side(n, p) < 0.0)];
+        }
+        (-1 - node) as usize
+    }
+}
+
+impl Bsp {
+    /// Every leaf of the world tree the box touches.
+    pub fn box_leaves(&self, mins: [f32; 3], maxs: [f32; 3]) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mut stack = vec![self.models[0].head_node];
+        while let Some(node) = stack.pop() {
+            if node < 0 {
+                out.push((-1 - node) as usize);
+                continue;
+            }
+            let n = &self.nodes[node as usize];
+            let plane = &self.planes[n.plane];
+            // Box corner extremes along the plane normal.
+            let mut near = -plane.dist;
+            let mut far = -plane.dist;
+            for k in 0..3 {
+                let (lo, hi) = (plane.normal[k] * mins[k], plane.normal[k] * maxs[k]);
+                near += lo.min(hi);
+                far += lo.max(hi);
+            }
+            if far >= 0.0 {
+                stack.push(n.children[0]);
+            }
+            if near < 0.0 {
+                stack.push(n.children[1]);
+            }
+        }
+        out
+    }
+}
+
+impl Bsp {
+    /// Outward normal of a face in the BSP's own axes.
+    pub fn face_normal(&self, face: usize) -> [f32; 3] {
+        let Some(&(plane, back)) = self.face_plane.get(face) else {
+            return [0.0; 3];
+        };
+        let n = self.planes[plane].normal;
+        if back {
+            [-n[0], -n[1], -n[2]]
+        } else {
+            n
+        }
     }
 }

@@ -112,6 +112,9 @@ pub struct FrameStats {
     pub unknown_packets: usize,
     /// Packets whose depths were not derivable and so use the flat key depth.
     pub approx_packets: usize,
+    /// Packets whose depth came from their plane / from vertex depths / disagreed and fell back.
+    pub plane_used: usize,
+    pub plane_disagree: usize,
     pub covered: u64,
     pub unknown_covered: u64,
     pub wrong_minor: u64,
@@ -147,13 +150,28 @@ fn color_of(class: Class, id: u32) -> [u8; 3] {
     }
 }
 
-/// Analyse one frame. `class_of(kind, face)` names the surface class (world or brush submodel).
+/// What the census knows about the map being analysed.
+pub struct Context<'a> {
+    /// Names the surface class of a packet (world or brush submodel).
+    pub class_of: &'a dyn Fn(u8, u16) -> Class,
+    /// The plane a face lies on, (normal, distance) in the game's axes, shifted by the brush
+    /// offset; lets the oracle compute exact per-pixel depth instead of interpolating vertex
+    /// depths the guest could only partly recover.
+    pub plane_of: &'a dyn Fn(u16, [i32; 3]) -> Option<([f64; 3], f64)>,
+}
+
+fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// Analyse one frame.
 pub fn analyze(
     frame: &Frame,
     tol: Tolerance,
-    class_of: &dyn Fn(u8, u16) -> Class,
+    ctx: &Context<'_>,
     want_images: bool,
 ) -> (FrameStats, Option<Images>) {
+    let class_of = ctx.class_of;
     let mut stats = FrameStats {
         index: frame.index,
         label: frame.label.clone(),
@@ -179,6 +197,21 @@ pub fn analyze(
             packets.push(None);
             continue;
         };
+        // A blocked-edge skirt (a one pixel strip keyed at the far end of the table so that it
+        // only shows where nothing else was drawn) is deliberately behind everything, however
+        // near its own plane is: it fills cracks and is not an occluder. The guest tags it
+        // `kind::SKIRT`; logs from before the tag are recognised by shape.
+        let thin_strip = {
+            let xs = poly.verts[..poly.n].iter().map(|v| v.0);
+            let ys = poly.verts[..poly.n].iter().map(|v| v.1);
+            let w = xs.clone().max().unwrap_or(0) - xs.min().unwrap_or(0);
+            let h = ys.clone().max().unwrap_or(0) - ys.min().unwrap_or(0);
+            w.min(h) <= 2
+        };
+        if info.kind == kind::SKIRT || (info.mode == 0 && info.key >= 639 && thin_strip) {
+            packets.push(None);
+            continue;
+        }
         let reliable = matches!(info.mode, 1 | 2) && info.kind != kind::MODEL;
         let mut z = [0.0f32; 4];
         if reliable || info.kind == kind::MODEL {
@@ -194,6 +227,68 @@ pub fn analyze(
                 z[k] = 1.0;
             }
         }
+        // Exact depth from the face plane when the face is known and, where the guest recorded
+        // trustworthy vertex depths, agrees with them (a rotating brush moves off its plane).
+        let plane_fn = if info.kind == kind::MODEL || info.kind == kind::BEAM {
+            None
+        } else {
+            let offset = if info.brush != 0 {
+                [
+                    i32::from(info.offset[0]),
+                    i32::from(info.offset[1]),
+                    i32::from(info.offset[2]),
+                ]
+            } else {
+                [0; 3]
+            };
+            (ctx.plane_of)(info.face, offset).and_then(|(n, d)| {
+                let nc = [
+                    dot3(frame.rot[0], n),
+                    dot3(frame.rot[1], n),
+                    dot3(frame.rot[2], n),
+                ];
+                let eye = [
+                    f64::from(frame.eye[0]),
+                    f64::from(frame.eye[1]),
+                    f64::from(frame.eye[2]),
+                ];
+                let dp = d - dot3(n, eye);
+                let h = frame.h;
+                let f = move |x: f64, y: f64| -> f32 {
+                    let den = dot3(nc, [(x - 160.0) / h, (y - 120.0) / h, 1.0]);
+                    if den.abs() < 1e-9 {
+                        return f32::MAX;
+                    }
+                    ((dp / den) as f32).clamp(1.0, 60000.0)
+                };
+                let vz: Vec<f32> = (0..poly.n)
+                    .map(|k| f(f64::from(poly.verts[k].0), f64::from(poly.verts[k].1)))
+                    .collect();
+                // World faces always take the plane (the guest's per-vertex depths for patch cells
+                // are the parent's); a brush face keeps vertex depths when the plane is off.
+                if reliable && info.brush != 0 {
+                    let agree = (0..poly.n).all(|k| (vz[k] - z[k]).abs() <= 4.0 + 0.03 * z[k]);
+                    if !agree {
+                        stats.plane_disagree += 1;
+                        return None;
+                    }
+                }
+                if reliable && info.brush == 0 {
+                    let agree = (0..poly.n).all(|k| (vz[k] - z[k]).abs() <= 4.0 + 0.03 * z[k]);
+                    if !agree {
+                        stats.plane_disagree += 1;
+                    }
+                }
+                if vz.iter().any(|&v| v >= 59999.0) {
+                    return None;
+                }
+                for k in 0..poly.n {
+                    z[k] = vz[k];
+                }
+                stats.plane_used += 1;
+                Some(f)
+            })
+        };
         let zs = &z[..poly.n];
         let span = zs.iter().cloned().fold(0.0, f32::max) - zs.iter().cloned().fold(f32::MAX, f32::min);
         let class = match info.kind {
@@ -204,6 +299,10 @@ pub fn analyze(
         let translucent = poly.semi || info.policy & 0x03 != 0;
         let id = packets.len() as u32;
         raster::polygon(&poly, z, |x, y, depth| {
+            let depth = match &plane_fn {
+                Some(f) => f(f64::from(x) + 0.5, f64::from(y) + 0.5),
+                None => depth,
+            };
             let frag = Frag {
                 order: order as u32,
                 z: depth,
@@ -269,7 +368,11 @@ pub fn analyze(
                     stats.wrong_major += major as u64;
                     let ci = CAUSES.iter().position(|&c| c == cause).unwrap_or(0);
                     stats.by_cause[ci] += 1;
-                    let pair = stats.pairs.entry((a.class.group(), b.class.group())).or_default();
+                    let key = match (a.class, b.class) {
+                        (Class::Brush(x), Class::Brush(y)) if x == y && x != 0 => ("brush-self", "brush-self"),
+                        _ => (a.class.group(), b.class.group()),
+                    };
+                    let pair = stats.pairs.entry(key).or_default();
                     pair.minor += 1;
                     pair.major += major as u64;
                     pair.by_cause[ci] += 1;
@@ -310,4 +413,32 @@ pub fn analyze(
         }
     }
     (stats, images)
+}
+
+/// Depth range (near, far) of a packet from its face plane at its vertices, for packets whose
+/// plane is known and trustworthy (world faces).
+pub fn plane_depth_range(frame: &Frame, walked: &crate::log::Walked, ctx: &Context<'_>) -> Option<(f32, f32)> {
+    let info = walked.info?;
+    let poly = raster::decode(&walked.words)?;
+    let (n, d) = (ctx.plane_of)(info.face, [0; 3])?;
+    let nc = [dot3(frame.rot[0], n), dot3(frame.rot[1], n), dot3(frame.rot[2], n)];
+    let eye = [f64::from(frame.eye[0]), f64::from(frame.eye[1]), f64::from(frame.eye[2])];
+    let dp = d - dot3(n, eye);
+    let mut lo = f32::MAX;
+    let mut hi = f32::MIN;
+    for k in 0..poly.n {
+        let u = [
+            (f64::from(poly.verts[k].0) - 160.0) / frame.h,
+            (f64::from(poly.verts[k].1) - 120.0) / frame.h,
+            1.0,
+        ];
+        let den = dot3(nc, u);
+        if den.abs() < 1e-9 {
+            return None;
+        }
+        let z = (dp / den) as f32;
+        lo = lo.min(z);
+        hi = hi.max(z);
+    }
+    Some((lo.max(1.0), hi.max(1.0)))
 }

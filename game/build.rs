@@ -25,6 +25,7 @@ const FALLBACK_MAX_FACE_GROUPS: usize = 2848;
 const FALLBACK_MAX_LEAVES: usize = 8192;
 const FALLBACK_MAX_ENTS: usize = 192;
 const FALLBACK_MAX_TEX_SLOTS: usize = 256;
+const FALLBACK_MAX_NODES: usize = 8192;
 const FALLBACK_MODEL_WORDS: usize = 24_576;
 const FALLBACK_PACK_CACHE_ENTRIES: usize = 512;
 const MODEL_INDEX_VERTEX_LIMIT: usize = 1024;
@@ -589,7 +590,7 @@ fn collect_maps() -> Option<Vec<usize>> {
 
 fn scan_room_budget(
     repo_root: &std::path::Path,
-) -> (usize, usize, usize, usize, usize, usize, usize) {
+) -> (usize, usize, usize, usize, usize, usize, usize, usize) {
     let rooms = repo_root.join("data/rooms");
     println!("cargo:rerun-if-changed={}", rooms.display());
 
@@ -602,6 +603,7 @@ fn scan_room_budget(
             FALLBACK_MAX_LEAVES,
             FALLBACK_MAX_ENTS,
             FALLBACK_MAX_TEX_SLOTS,
+            FALLBACK_MAX_NODES,
         );
     };
 
@@ -612,6 +614,7 @@ fn scan_room_budget(
     let mut max_leaves = 0usize;
     let mut max_ents = 0usize;
     let mut max_texs = 0usize;
+    let mut max_nodes = 0usize;
     let only_maps = collect_maps();
     let mut found_maps = std::collections::BTreeSet::new();
 
@@ -674,6 +677,7 @@ fn scan_room_budget(
 
         if bsp_off + 24 <= data.len() {
             let n_face_groups = rd_u32(&data, bsp_off + 4).unwrap_or(0) as usize;
+            max_nodes = max_nodes.max(rd_u32(&data, bsp_off + 8).unwrap_or(0) as usize);
             let leaf_counts = rd_u32(&data, bsp_off + 12).unwrap_or(0);
             // VIS_BITS only holds world PVS clusters. HLMC/D separate those
             // from submodel-only leaf records; legacy formats assumed every
@@ -767,6 +771,7 @@ fn scan_room_budget(
             FALLBACK_MAX_LEAVES,
             FALLBACK_MAX_ENTS,
             FALLBACK_MAX_TEX_SLOTS,
+            FALLBACK_MAX_NODES,
         );
     }
 
@@ -792,6 +797,7 @@ fn scan_room_budget(
         // drift; a recook automatically grows the generated cap.
         round_up(max_ents + 2, 2),
         round_up(max_texs + 8, 16),
+        round_up(max_nodes + 8, 32),
     )
 }
 
@@ -1628,7 +1634,7 @@ fn main() {
         }
     }
 
-    let (map_words, max_verts, max_faces, max_face_groups, max_leaves, max_ents, max_tex_slots) =
+    let (map_words, max_verts, max_faces, max_face_groups, max_leaves, max_ents, max_tex_slots, max_nodes) =
         scan_room_budget(repo_root);
     let ModelBudget {
         model_words,
@@ -1671,6 +1677,7 @@ fn main() {
          pub const MAX_LEAVES: usize = {max_leaves};\n\
          pub const MAX_ENTS: usize = {max_ents};\n\
          pub const MAX_TEX_SLOTS: usize = {max_tex_slots};\n\
+         pub const MAX_NODES: usize = {max_nodes};\n\
          pub const PACK_CACHE_ENTRIES: usize = {pack_cache_entries};\n",
         talk_voices.len(),
         model_variant_offsets.len(),

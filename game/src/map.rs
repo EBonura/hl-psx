@@ -1767,6 +1767,17 @@ impl Map {
         }
     }
 
+    /// Child references of node `i` without decoding its plane: a node index
+    /// when non-negative, `-1 - leaf` otherwise.
+    #[inline]
+    pub fn node_children(&self, i: usize) -> (i32, i32) {
+        let o = self.nodes_off + i * NODE_SZ;
+        (
+            rd_i16(self.data, o + 2) as i32,
+            rd_i16(self.data, o + 4) as i32,
+        )
+    }
+
     #[inline]
     fn plane(&self, i: usize) -> ([i16; 3], i32) {
         let (n, dist_q5) = self.plane_q5(i);

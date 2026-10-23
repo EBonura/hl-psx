@@ -13,6 +13,7 @@ pub mod kind {
     pub const DEPTH_SPLIT: u8 = 7;
     pub const BEAM: u8 = 8;
     pub const MODEL: u8 = 9;
+    pub const SKIRT: u8 = 10;
 }
 
 /// Depth information the guest recorded for one packet at its table insertion.
@@ -25,6 +26,9 @@ pub struct Info {
     pub face: u16,
     pub policy: u8,
     pub z: [u16; 4],
+    /// Submodel number of the brush entity being drawn (0 = world) and its draw offset.
+    pub brush: u16,
+    pub offset: [i16; 3],
 }
 
 /// One packet of the table walk, in draw order.
@@ -41,6 +45,9 @@ pub struct Walked {
 pub struct Frame {
     pub index: u32,
     pub eye: [i32; 3],
+    /// View rotation rows (Q12) and projection distance.
+    pub rot: [[f64; 3]; 3],
+    pub h: f64,
     pub walk: Vec<Walked>,
     /// The `OE` count the guest reported (must equal `walk.len()`).
     pub reported: u32,
@@ -68,7 +75,8 @@ pub fn parse(text: &str) -> Vec<Frame> {
         let line = &raw[pos..];
         let fields: Vec<&str> = line.trim_end().split('|').collect();
         match fields[0] {
-            "OF" if fields.len() >= 5 => {
+            "OF" if fields.len() >= 15 => {
+                let q = |i: usize| f64::from(hex(fields[i]).unwrap_or(0) as u16 as i16) / 4096.0;
                 infos.clear();
                 current = Some(Frame {
                     index: hex(fields[1]).unwrap_or(0),
@@ -77,11 +85,17 @@ pub fn parse(text: &str) -> Vec<Frame> {
                         hex(fields[3]).unwrap_or(0) as i32,
                         hex(fields[4]).unwrap_or(0) as i32,
                     ],
+                    rot: [
+                        [q(5), q(6), q(7)],
+                        [q(8), q(9), q(10)],
+                        [q(11), q(12), q(13)],
+                    ],
+                    h: f64::from(hex(fields[14]).unwrap_or(256)),
                     label: label.clone(),
                     ..Frame::default()
                 });
             }
-            "OP" if fields.len() >= 12 => {
+            "OP" if fields.len() >= 16 => {
                 let (Some(addr), Some(kind), Some(mode), Some(n), Some(key), Some(face), Some(pol)) = (
                     hex(fields[1]),
                     hex(fields[2]),
@@ -107,6 +121,12 @@ pub fn parse(text: &str) -> Vec<Frame> {
                         face: face as u16,
                         policy: pol as u8,
                         z,
+                        brush: hex(fields[12]).unwrap_or(0) as u16,
+                        offset: [
+                            hex(fields[13]).unwrap_or(0) as u16 as i16,
+                            hex(fields[14]).unwrap_or(0) as u16 as i16,
+                            hex(fields[15]).unwrap_or(0) as u16 as i16,
+                        ],
                     },
                 );
             }
@@ -150,4 +170,28 @@ fn find_record(line: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// Rewrite every packet's cooked face number to the source BSP's, with the cooker's
+/// `source_face,cooked_face` provenance report (`HLPSX_FACE_TOPOLOGY_REPORT`).
+pub fn remap_faces(frames: &mut [Frame], csv: &str) {
+    let mut cooked_to_source: Vec<u32> = Vec::new();
+    for line in csv.lines().skip(1) {
+        let mut f = line.split(',');
+        let (Some(src), Some(cooked)) = (f.next(), f.next()) else { continue };
+        let (Ok(src), Ok(cooked)) = (src.parse::<u32>(), cooked.parse::<usize>()) else { continue };
+        if cooked_to_source.len() <= cooked {
+            cooked_to_source.resize(cooked + 1, u32::MAX);
+        }
+        cooked_to_source[cooked] = src;
+    }
+    for frame in frames {
+        for walked in &mut frame.walk {
+            if let Some(info) = walked.info.as_mut() {
+                if let Some(src) = cooked_to_source.get(usize::from(info.face)).filter(|s| **s != u32::MAX) {
+                    info.face = *src as u16;
+                }
+            }
+        }
+    }
 }

@@ -186,7 +186,10 @@ pub unsafe fn step(
                 IN_UNTIL = now + c.a[5].max(1) as u32;
             }
             #[cfg(feature = "order-trace")]
-            90 => crate::order_trace::arm(),
+            90 => {
+                crate::order_trace::arm();
+                crate::reference_trace::probe(now, "osnap", "", 0);
+            }
             4 => PIN = c.a[0] != 0,
             5 => GOD = c.a[0] as i32,
             6 => TRACE_EVERY = c.a[0].max(1) as u32,
