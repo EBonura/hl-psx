@@ -26276,7 +26276,7 @@ unsafe fn seq_gap_at(m: &Map, point: [i32; 3]) -> (i32, i32) {
     if !seq_order::ready() {
         return (0, 0);
     }
-    seq_order::gap_of_leaf(camera_leaf(m, point)).unwrap_or((0, 0))
+    seq_order::anchor_gap(m, &*core::ptr::addr_of!(VIS_BITS), point, dot12_q5).unwrap_or((0, 0))
 }
 #[cfg(not(feature = "seq-order"))]
 #[inline(always)]
@@ -26335,38 +26335,11 @@ fn beam_point(start: [i32; 3], end: [i32; 3], t: i32) -> [i32; 3] {
     ]
 }
 
-/// Key range of a studio model of radius `radius` centred at `centre`: after the world faces of
-/// the nearest leaf among its centre and six extreme points, so no leaf it reaches can paint over
-/// it from behind. Behind everything when none of them was visited.
+/// Key range of a studio model centred at `centre`: after the world faces of the leaf that
+/// holds the centre (or the visited leaf nearest to it), before every nearer leaf's.
 #[inline(always)]
-unsafe fn seq_model_gap(m: &Map, centre: [i32; 3], radius: i32) -> (i32, i32) {
-    if !seq_active() {
-        return (0, 0);
-    }
-    #[cfg(feature = "seq-order")]
-    {
-        let r = radius;
-        let points = [
-            centre,
-            [centre[0] + r, centre[1], centre[2]],
-            [centre[0] - r, centre[1], centre[2]],
-            [centre[0], centre[1] + r, centre[2]],
-            [centre[0], centre[1] - r, centre[2]],
-            [centre[0], centre[1], centre[2] + r],
-            [centre[0], centre[1], centre[2] - r],
-        ];
-        let mut leaves = [0i32; 7];
-        let mut i = 0;
-        while i < 7 {
-            leaves[i] = camera_leaf(m, points[i]);
-            i += 1;
-        }
-        if let Some(gap) = seq_order::gap_nearest(&leaves) {
-            return gap;
-        }
-    }
-    let _ = (m, centre, radius);
-    (OT_LEN as i32 - 1, OT_LEN as i32 - 1)
+unsafe fn seq_model_gap(m: &Map, centre: [i32; 3], _radius: i32) -> (i32, i32) {
+    seq_entity_gap(m, centre)
 }
 
 /// Key range of a brush face drawn at `off` from its cooked place: the leaf in front of the
@@ -26398,6 +26371,21 @@ static mut SEQ_GAP: (i32, i32) = (0, 0);
 unsafe fn seq_reset() {
     SEQ_FACE_KEY = 0;
     SEQ_GAP = (0, 0);
+}
+
+/// Depth key (table buckets, as `world_order_key` gives) of the centre of the entity being drawn:
+/// the reference its faces' own keys are measured against inside the leaf window, so a brush that
+/// spans a few buckets keeps its faces in depth order instead of collapsing onto the window edge.
+/// 0 when there is no sequence.
+static mut SEQ_REF: i32 = 0;
+
+#[inline(always)]
+unsafe fn seq_set_ref(point: [i32; 3], depth_row: [i16; 3], depth_offset: i32) {
+    SEQ_REF = if seq_active() {
+        (((dot12(depth_row, point) + depth_offset) >> OT_SHIFT) + KEY_BIAS).clamp(1, OT_LEN as i32 - 1)
+    } else {
+        0
+    };
 }
 
 /// Table key of the face being emitted from the BSP sequence (`seq_order`), 0 when the face has
@@ -26443,8 +26431,11 @@ unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: b
         .clamp(1, OT_LEN as i32 - 1) as usize;
     let gap = SEQ_GAP;
     if gap.1 != 0 {
-        // A brush face keeps its depth key inside the window of the leaf it stands in.
-        key = (key as i32).clamp(gap.0.min(gap.1), gap.1) as usize;
+        // A brush face keeps its depth relative to its entity's centre, inside the window of
+        // the leaf it stands in.
+        let (lo, hi) = (gap.0.min(gap.1), gap.1);
+        let rel = if SEQ_REF != 0 { ((lo + hi) >> 1) + (key as i32 - SEQ_REF) } else { key as i32 };
+        key = rel.clamp(lo, hi) as usize;
     }
     #[cfg(feature = "order-trace")]
     order_trace::note_key(depths, key);
@@ -32989,6 +32980,8 @@ unsafe fn draw_model(
         -dot12(rot.m[2], es) * s,
     ];
     let gap = MODEL_GAP;
+    // The origin's depth in the fine key's own units (quarter world units).
+    let origin_fine = -dot12(rot.m[2], es) * 4;
     let near_s = (NEAR as i32 * s) as u16;
     let nv = md.vertex_count().min(MAX_MODEL_VERTS);
     telemetry::stage_begin(telemetry::stage::TEXTURED_MODEL_PROJECT);
@@ -33106,9 +33099,12 @@ unsafe fn draw_model(
             // ties inside each existing four-unit world bucket.
             let mut depth_key =
                 ordering::model_depth_key::<OT_LEN>(pa_z, pb_z, pc_z, scale_shift);
+            #[cfg(feature = "order-trace")]
+            let pre_key = depth_key;
             if gap.1 != 0 {
-                // Keep the model's own fine depth, inside the leaf's window.
-                depth_key = (depth_key as i32).clamp(gap.0 << 4, (gap.1 << 4) + 15) as u16;
+                // Keep the model's own fine depth relative to its origin, inside the leaf's window.
+                let (lo, hi) = (gap.0 << 4, (gap.1 << 4) + 15);
+                depth_key = (((lo + hi) >> 1) + (depth_key as i32 - origin_fine)).clamp(lo, hi) as u16;
             }
             let payload = *face_payloads.add(t);
             // XY is already in the GPU packet's packed word layout. Preserve
@@ -33126,6 +33122,10 @@ unsafe fn draw_model(
             };
             if unsafe { packets.push(prim) } {
                 *np += 1;
+                #[cfg(feature = "order-trace")]
+                unsafe {
+                    order_trace::model_pushed(pre_key)
+                };
             } else {
                 note_render_packet_drop(true);
             }
@@ -33159,7 +33159,12 @@ unsafe fn insert_model_depth_stream(first: *mut u32, end: *mut u32) {
                 .max(16);
             (*packet).uv2 &= 0xffff;
             #[cfg(feature = "order-trace")]
-            order_trace::note_model(key, MODEL_KEY_BIAS << 4, packet.cast::<u32>());
+            order_trace::note_model(
+                (packet as usize - first as usize) / (ordering::MODEL_PACKET_WORDS * 4),
+                key,
+                MODEL_KEY_BIAS << 4,
+                packet.cast::<u32>(),
+            );
             world_ot().resume_frame().add_raw(
                 (key >> 4) as usize,
                 core::ptr::from_mut(&mut *packet).cast(),
@@ -40269,6 +40274,11 @@ fn play(
                         }
                     }
                     model_draws = model_draws.saturating_add(1);
+                    seq_set_ref(
+                        [e.center[0] + off[0], e.center[1] + off[1], e.center[2] + off[2]],
+                        rot.m[2],
+                        base_t[2],
+                    );
                     #[cfg(feature = "order-trace")]
                     order_trace::note_brush(e.submodel as u32, off);
                     if e.kind == ENT_KIND_PLATROT {

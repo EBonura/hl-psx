@@ -44,7 +44,8 @@ pub struct Bsp {
 }
 
 fn lump(data: &[u8], index: usize) -> Result<&[u8], String> {
-    let word = |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
+    let word =
+        |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
     let (offset, length) = (word(4 + 8 * index), word(8 + 8 * index));
     data.get(offset..offset + length)
         .ok_or_else(|| format!("lump {index} out of range"))
@@ -113,7 +114,10 @@ impl Bsp {
             .chunks_exact(4)
             .map(|e| [usize::from(le16(e, 0)), usize::from(le16(e, 2))])
             .collect();
-        let surf: Vec<i32> = lump(&data, 13)?.chunks_exact(4).map(|e| le32(e, 0) as i32).collect();
+        let surf: Vec<i32> = lump(&data, 13)?
+            .chunks_exact(4)
+            .map(|e| le32(e, 0) as i32)
+            .collect();
         let faces = lump(&data, 7)?
             .chunks_exact(20)
             .map(|f| {
@@ -148,7 +152,11 @@ impl Bsp {
             .chunks_exact(28)
             .map(|l| {
                 let g = |o: usize| f32::from(le16(l, o) as i16);
-                [(g(8) + g(14)) / 2.0, (g(10) + g(16)) / 2.0, (g(12) + g(18)) / 2.0]
+                [
+                    (g(8) + g(14)) / 2.0,
+                    (g(10) + g(16)) / 2.0,
+                    (g(12) + g(18)) / 2.0,
+                ]
             })
             .collect();
         let mut face_leaves: Vec<Vec<u32>> = vec![Vec::new(); face_count];
@@ -242,7 +250,11 @@ impl Bsp {
             sign * f64::from(plane.normal[2]),
             sign * f64::from(plane.normal[1]),
         ];
-        let o = [f64::from(offset[0]), f64::from(offset[1]), f64::from(offset[2])];
+        let o = [
+            f64::from(offset[0]),
+            f64::from(offset[1]),
+            f64::from(offset[2]),
+        ];
         let d = sign * f64::from(plane.dist) + n[0] * o[0] + n[1] * o[1] + n[2] * o[2];
         Some((n, d))
     }
@@ -332,5 +344,60 @@ impl Bsp {
         } else {
             n
         }
+    }
+}
+
+impl Bsp {
+    /// Whether a node has an open leaf with a rank below it, for each node (memoised).
+    pub fn open_nodes(&self, rank: &[u32]) -> Vec<bool> {
+        let mut open = vec![false; self.nodes.len()];
+        let mut done = vec![false; self.nodes.len()];
+        fn walk(b: &Bsp, n: usize, rank: &[u32], open: &mut [bool], done: &mut [bool]) -> bool {
+            if done[n] {
+                return open[n];
+            }
+            let mut any = false;
+            for c in b.nodes[n].children {
+                any |= if c < 0 {
+                    let leaf = (-1 - c) as usize;
+                    leaf != 0 && rank.get(leaf).is_some_and(|r| *r != u32::MAX)
+                } else {
+                    walk(b, c as usize, rank, open, done)
+                };
+            }
+            done[n] = true;
+            open[n] = any;
+            any
+        }
+        for n in 0..self.nodes.len() {
+            walk(self, n, rank, &mut open, &mut done);
+        }
+        open
+    }
+
+    /// The open leaf at `p`, or when `p` is in rock the open leaf nearest to it in the tree
+    /// (the guest's `anchor_gap`): follow the point's side while it still has an open leaf below.
+    pub fn open_leaf(&self, p: [f32; 3], rank: &[u32], open: &[bool]) -> Option<usize> {
+        let mut node = self.models[0].head_node;
+        let ok = |c: i32| {
+            if c < 0 {
+                let leaf = (-1 - c) as usize;
+                leaf != 0 && rank.get(leaf).is_some_and(|r| *r != u32::MAX)
+            } else {
+                open[c as usize]
+            }
+        };
+        while node >= 0 {
+            let n = node as usize;
+            let side = usize::from(self.side(n, p) < 0.0);
+            let own = self.nodes[n].children[side];
+            node = if ok(own) {
+                own
+            } else {
+                self.nodes[n].children[1 - side]
+            };
+        }
+        let leaf = (-1 - node) as usize;
+        (leaf != 0 && rank.get(leaf).is_some_and(|r| *r != u32::MAX)).then_some(leaf)
     }
 }

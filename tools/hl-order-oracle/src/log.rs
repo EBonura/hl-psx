@@ -178,8 +178,12 @@ pub fn remap_faces(frames: &mut [Frame], csv: &str) {
     let mut cooked_to_source: Vec<u32> = Vec::new();
     for line in csv.lines().skip(1) {
         let mut f = line.split(',');
-        let (Some(src), Some(cooked)) = (f.next(), f.next()) else { continue };
-        let (Ok(src), Ok(cooked)) = (src.parse::<u32>(), cooked.parse::<usize>()) else { continue };
+        let (Some(src), Some(cooked)) = (f.next(), f.next()) else {
+            continue;
+        };
+        let (Ok(src), Ok(cooked)) = (src.parse::<u32>(), cooked.parse::<usize>()) else {
+            continue;
+        };
         if cooked_to_source.len() <= cooked {
             cooked_to_source.resize(cooked + 1, u32::MAX);
         }
@@ -188,7 +192,10 @@ pub fn remap_faces(frames: &mut [Frame], csv: &str) {
     for frame in frames {
         for walked in &mut frame.walk {
             if let Some(info) = walked.info.as_mut() {
-                if let Some(src) = cooked_to_source.get(usize::from(info.face)).filter(|s| **s != u32::MAX) {
+                if let Some(src) = cooked_to_source
+                    .get(usize::from(info.face))
+                    .filter(|s| **s != u32::MAX)
+                {
                     info.face = *src as u16;
                 }
             }

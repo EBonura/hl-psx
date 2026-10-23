@@ -108,3 +108,76 @@ pub fn polygon(poly: &Poly, z: [f32; 4], mut emit: impl FnMut(i32, i32, f32)) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn word(x: i32, y: i32) -> u32 {
+        (x as u32 & 0x7ff) | ((y as u32 & 0x7ff) << 16)
+    }
+
+    #[test]
+    fn decodes_a_gouraud_textured_quad_after_its_window_word() {
+        // GP0 E2 window word, then 0x3c quad: colour|cmd, v0, uv0, colour, v1, uv1, ...
+        let words = [
+            0xe200_0000,
+            0x3c80_8080,
+            word(10, 20),
+            0,
+            0x8080_80,
+            word(30, 20),
+            0,
+            0x8080_80,
+            word(10, 40),
+            0,
+            0x8080_80,
+            word(30, 40),
+            0,
+        ];
+        let poly = decode(&words).expect("polygon");
+        assert_eq!(poly.n, 4);
+        assert_eq!(poly.verts[0], (10, 20));
+        assert_eq!(poly.verts[3], (30, 40));
+        assert!(!poly.semi);
+    }
+
+    #[test]
+    fn sign_extends_eleven_bit_coordinates() {
+        let words = [0x2000_0000, word(-5, -7), word(5, -7), word(0, 9)];
+        let poly = decode(&words).expect("polygon");
+        assert_eq!(poly.verts[0], (-5, -7));
+    }
+
+    #[test]
+    fn a_triangle_covers_its_area_once_and_depth_is_perspective_correct() {
+        let mut covered = 0;
+        let mut nearest = f32::MAX;
+        let mut farthest = 0.0f32;
+        triangle(
+            [(0, 0), (16, 0), (0, 16)],
+            [100.0, 100.0, 400.0],
+            |_, _, z| {
+                covered += 1;
+                nearest = nearest.min(z);
+                farthest = farthest.max(z);
+            },
+        );
+        // Half of a 16x16 square, up to the fill rule's edge pixels.
+        assert!((120..=136).contains(&covered), "{covered}");
+        assert!(nearest >= 100.0 && farthest <= 400.0);
+        assert!(farthest > 200.0, "the far corner must pull the depth out");
+    }
+
+    #[test]
+    fn shared_edges_of_two_triangles_are_not_covered_twice() {
+        let mut hits = std::collections::HashMap::new();
+        for tri in [[(0, 0), (8, 0), (0, 8)], [(8, 0), (8, 8), (0, 8)]] {
+            triangle(tri, [1.0; 3], |x, y, _| {
+                *hits.entry((x, y)).or_insert(0) += 1
+            });
+        }
+        assert!(hits.values().all(|&n| n == 1));
+        assert_eq!(hits.len(), 64);
+    }
+}

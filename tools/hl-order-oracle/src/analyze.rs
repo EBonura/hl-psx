@@ -290,7 +290,8 @@ pub fn analyze(
             })
         };
         let zs = &z[..poly.n];
-        let span = zs.iter().cloned().fold(0.0, f32::max) - zs.iter().cloned().fold(f32::MAX, f32::min);
+        let span =
+            zs.iter().cloned().fold(0.0, f32::max) - zs.iter().cloned().fold(f32::MAX, f32::min);
         let class = match info.kind {
             kind::MODEL => Class::Model,
             kind::BEAM => Class::Beam,
@@ -369,7 +370,9 @@ pub fn analyze(
                     let ci = CAUSES.iter().position(|&c| c == cause).unwrap_or(0);
                     stats.by_cause[ci] += 1;
                     let key = match (a.class, b.class) {
-                        (Class::Brush(x), Class::Brush(y)) if x == y && x != 0 => ("brush-self", "brush-self"),
+                        (Class::Brush(x), Class::Brush(y)) if x == y && x != 0 => {
+                            ("brush-self", "brush-self")
+                        }
                         _ => (a.class.group(), b.class.group()),
                     };
                     let pair = stats.pairs.entry(key).or_default();
@@ -393,9 +396,9 @@ pub fn analyze(
         for &t in &trans[p] {
             let tz = t.z;
             let tol_t = tol.minor_abs + tol.minor_rel * tz;
-            trans_wrong |= frags
-                .iter()
-                .any(|o| (o.z < tz - tol_t && o.order < t.order) || (o.z > tz + tol_t && o.order > t.order));
+            trans_wrong |= frags.iter().any(|o| {
+                (o.z < tz - tol_t && o.order < t.order) || (o.z > tz + tol_t && o.order > t.order)
+            });
         }
         if trans_wrong {
             stats.translucent_wrong += 1;
@@ -417,12 +420,24 @@ pub fn analyze(
 
 /// Depth range (near, far) of a packet from its face plane at its vertices, for packets whose
 /// plane is known and trustworthy (world faces).
-pub fn plane_depth_range(frame: &Frame, walked: &crate::log::Walked, ctx: &Context<'_>) -> Option<(f32, f32)> {
+pub fn plane_depth_range(
+    frame: &Frame,
+    walked: &crate::log::Walked,
+    ctx: &Context<'_>,
+) -> Option<(f32, f32)> {
     let info = walked.info?;
     let poly = raster::decode(&walked.words)?;
     let (n, d) = (ctx.plane_of)(info.face, [0; 3])?;
-    let nc = [dot3(frame.rot[0], n), dot3(frame.rot[1], n), dot3(frame.rot[2], n)];
-    let eye = [f64::from(frame.eye[0]), f64::from(frame.eye[1]), f64::from(frame.eye[2])];
+    let nc = [
+        dot3(frame.rot[0], n),
+        dot3(frame.rot[1], n),
+        dot3(frame.rot[2], n),
+    ];
+    let eye = [
+        f64::from(frame.eye[0]),
+        f64::from(frame.eye[1]),
+        f64::from(frame.eye[2]),
+    ];
     let dp = d - dot3(n, eye);
     let mut lo = f32::MAX;
     let mut hi = f32::MIN;
@@ -441,4 +456,74 @@ pub fn plane_depth_range(frame: &Frame, walked: &crate::log::Walked, ctx: &Conte
         hi = hi.max(z);
     }
     Some((lo.max(1.0), hi.max(1.0)))
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::log::{Frame, Info, Walked};
+
+    fn word(x: i32, y: i32) -> u32 {
+        (x as u32 & 0x7ff) | ((y as u32 & 0x7ff) << 16)
+    }
+
+    /// A flat-coloured quad packet (words after the tag) covering (x0,y0)-(x1,y1).
+    fn quad(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<u32> {
+        vec![
+            0x2880_8080,
+            word(x0, y0),
+            word(x1, y0),
+            word(x0, y1),
+            word(x1, y1),
+        ]
+    }
+
+    fn packet(words: Vec<u32>, depth: u16, key: u16) -> Walked {
+        Walked {
+            addr: 0,
+            words,
+            info: Some(Info {
+                kind: 4,
+                mode: 2,
+                n: 4,
+                key,
+                face: 0,
+                policy: 0,
+                z: [depth; 4],
+                brush: 0,
+                offset: [0; 3],
+            }),
+        }
+    }
+
+    fn analyse(walk: Vec<Walked>) -> FrameStats {
+        let frame = Frame {
+            walk,
+            ..Frame::default()
+        };
+        let class_of = |_: u8, _: u16| Class::World;
+        let plane_of = |_: u16, _: [i32; 3]| None;
+        let ctx = Context {
+            class_of: &class_of,
+            plane_of: &plane_of,
+        };
+        analyze(&frame, Tolerance::default(), &ctx, false).0
+    }
+
+    #[test]
+    fn far_then_near_is_right_and_near_then_far_is_wrong() {
+        let near = packet(quad(0, 0, 8, 8), 100, 25);
+        let far = packet(quad(0, 0, 8, 8), 300, 75);
+        let right = analyse(vec![far.clone(), near.clone()]);
+        assert_eq!(right.wrong_minor, 0);
+        let wrong = analyse(vec![near, far]);
+        assert_eq!(wrong.wrong_minor, 64);
+        assert_eq!(wrong.wrong_major, 64);
+    }
+
+    #[test]
+    fn coplanar_noise_inside_the_tolerance_is_not_an_error() {
+        let a = packet(quad(0, 0, 8, 8), 200, 50);
+        let b = packet(quad(0, 0, 8, 8), 200, 50);
+        assert_eq!(analyse(vec![a, b]).wrong_minor, 0);
+    }
 }

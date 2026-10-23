@@ -95,6 +95,7 @@ pub unsafe fn arm() {
 /// Called once per frame as the world table is cleared. Starts a capture when armed.
 #[inline(never)]
 pub unsafe fn begin_frame(frame: u32, eye: [i32; 3], rot: [[i16; 3]; 3], h: i32) {
+    model_frame_reset();
     ACTIVE = ARMED;
     ARMED = false;
     CALLS = 0;
@@ -260,15 +261,39 @@ pub unsafe fn note_packet(site: u32, otz: usize, p: *const u32, words: u8) {
     CALLS = 0;
 }
 
+/// Unclamped depth keys of this frame's model packets, in push order (the stream is contiguous,
+/// so a packet's index is its word offset / MODEL_PACKET_WORDS). The table key a packet ends up
+/// with can be a leaf slot, which says nothing about depth.
+const MODEL_PRE_MAX: usize = 1536;
+static mut MODEL_PRE: [u16; MODEL_PRE_MAX] = [0; MODEL_PRE_MAX];
+static mut MODEL_PRE_COUNT: usize = 0;
+
+pub unsafe fn model_frame_reset() {
+    MODEL_PRE_COUNT = 0;
+}
+
+pub unsafe fn model_pushed(pre_key: u16) {
+    if MODEL_PRE_COUNT < MODEL_PRE_MAX {
+        MODEL_PRE[MODEL_PRE_COUNT] = pre_key;
+    }
+    MODEL_PRE_COUNT += 1;
+}
+
 /// Record one studio-model triangle at its table insertion. `key` is the fractional model key
 /// (quarter units of depth, sixteen per table bucket) with the model bias applied; `bias` is that
 /// bias in the same units so the host can compare true depths.
+/// `index` is the packet's position in the model stream, which selects its unclamped depth key.
 #[inline(never)]
-pub unsafe fn note_model(key: u32, bias: u32, p: *const u32) {
+pub unsafe fn note_model(index: usize, key: u32, bias: u32, p: *const u32) {
     if !ACTIVE {
         return;
     }
-    let z = ((key + bias) >> 2).min(0xffff);
+    let z = if index < MODEL_PRE_MAX && index < MODEL_PRE_COUNT {
+        (MODEL_PRE[index] as u32) >> 2
+    } else {
+        (key + bias) >> 2
+    };
+    let z = z.min(0xffff);
     put_byte(b'O');
     put_byte(b'P');
     put_byte(b'|');

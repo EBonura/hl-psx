@@ -18,7 +18,8 @@ pub fn read_entities(bsp: &Path) -> Result<Vec<Entity>, String> {
     if data.len() < 12 {
         return Err(format!("{}: too short", bsp.display()));
     }
-    let word = |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
+    let word =
+        |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
     let (offset, length) = (word(4), word(8));
     let text = String::from_utf8_lossy(
         data.get(offset..offset + length)
@@ -48,13 +49,19 @@ pub fn read_entities(bsp: &Path) -> Result<Vec<Entity>, String> {
 fn entity_of(pairs: &[(String, String)]) -> Entity {
     let get = |k: &str| pairs.iter().find(|p| p.0 == k).map(|p| p.1.as_str());
     let origin = get("origin").and_then(|v| {
-        let n: Vec<i32> = v.split_whitespace().filter_map(|t| t.parse::<f64>().ok()).map(|f| f as i32).collect();
+        let n: Vec<i32> = v
+            .split_whitespace()
+            .filter_map(|t| t.parse::<f64>().ok())
+            .map(|f| f as i32)
+            .collect();
         (n.len() == 3).then(|| [n[0], n[1], n[2]])
     });
     Entity {
         class: get("classname").unwrap_or("").to_string(),
         origin,
-        model: get("model").and_then(|m| m.strip_prefix('*')).and_then(|m| m.parse().ok()),
+        model: get("model")
+            .and_then(|m| m.strip_prefix('*'))
+            .and_then(|m| m.parse().ok()),
         target: get("targetname").unwrap_or("").to_string(),
     }
 }
@@ -89,7 +96,8 @@ fn dist2(a: [i32; 3], b: [i32; 3]) -> i64 {
 /// space, so a camera placed there sees geometry instead of the inside of a wall.
 pub fn empty_leaf_centres(bsp: &Path) -> Result<Vec<[i32; 3]>, String> {
     let data = fs::read(bsp).map_err(|e| format!("{}: {e}", bsp.display()))?;
-    let word = |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
+    let word =
+        |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
     let (offset, length) = (word(4 + 8 * 10), word(8 + 8 * 10));
     let mut out = Vec::new();
     for i in 0..length / 28 {
@@ -100,7 +108,11 @@ pub fn empty_leaf_centres(bsp: &Path) -> Result<Vec<[i32; 3]>, String> {
         let ext = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
         if contents == -1 && ext.iter().all(|e| *e >= 96) {
             // BSP (x, y, z-up) to the probe's tp axes (the same x y z).
-            out.push([(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2]);
+            out.push([
+                (min[0] + max[0]) / 2,
+                (min[1] + max[1]) / 2,
+                (min[2] + max[2]) / 2,
+            ]);
         }
     }
     Ok(out)
@@ -163,7 +175,10 @@ pub fn section(map: &str, spots: &[[i32; 3]], yaws: &[i32], spacing: u32, start:
     for (i, s) in spots.iter().enumerate() {
         for (j, base) in yaws.iter().enumerate() {
             let yaw = (base + 37 * (i as i32)) % 360;
-            out.push_str(&format!("{tick} tp {} {} {} {yaw} 0 {}\n", s[0], s[1], s[2], spacing));
+            out.push_str(&format!(
+                "{tick} tp {} {} {} {yaw} 0 {}\n",
+                s[0], s[1], s[2], spacing
+            ));
             out.push_str(&format!("{} osnap\n", tick + 3 + j as u32 % 2));
             tick += spacing;
         }
@@ -174,7 +189,8 @@ pub fn section(map: &str, spots: &[[i32; 3]], yaws: &[i32], spacing: u32, start:
 /// First face and face count of every model of a GoldSrc BSP (lump 14, 64 bytes each).
 pub fn read_models(bsp: &Path) -> Result<Vec<(u32, u32)>, String> {
     let data = fs::read(bsp).map_err(|e| format!("{}: {e}", bsp.display()))?;
-    let word = |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
+    let word =
+        |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
     let (offset, length) = (word(4 + 8 * 14), word(8 + 8 * 14));
     let mut models = Vec::new();
     for i in 0..length / 64 {

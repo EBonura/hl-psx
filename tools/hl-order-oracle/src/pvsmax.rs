@@ -33,7 +33,12 @@ pub fn bound(bsp: &Path) -> Result<(usize, usize, usize, usize, usize), String> 
     let mut seen = vec![0u32; le32(&d, 8 + 8 * 7) / 20 + 1];
     let mut stamp = 0u32;
     for cam in 1..world_leaves.min(n_leaves) {
-        let visofs = i32::from_le_bytes([leaves[cam * 28 + 4], leaves[cam * 28 + 5], leaves[cam * 28 + 6], leaves[cam * 28 + 7]]);
+        let visofs = i32::from_le_bytes([
+            leaves[cam * 28 + 4],
+            leaves[cam * 28 + 5],
+            leaves[cam * 28 + 6],
+            leaves[cam * 28 + 7],
+        ]);
         let mut row = vec![0u8; (world_leaves + 7) / 8];
         if visofs < 0 {
             row.fill(0xff);
@@ -78,7 +83,14 @@ pub fn bound(bsp: &Path) -> Result<(usize, usize, usize, usize, usize), String> 
             let mut any = false;
             for c in 0..2 {
                 let ch = i16::from_le_bytes([nodes[n * 24 + 4 + c * 2], nodes[n * 24 + 5 + c * 2]]);
-                any |= if ch < 0 { leaf_vis.get((-1 - i32::from(ch)) as usize).copied().unwrap_or(false) } else { nv[ch as usize] };
+                any |= if ch < 0 {
+                    leaf_vis
+                        .get((-1 - i32::from(ch)) as usize)
+                        .copied()
+                        .unwrap_or(false)
+                } else {
+                    nv[ch as usize]
+                };
             }
             nv[n] = any;
         }

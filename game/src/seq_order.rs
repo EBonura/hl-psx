@@ -22,8 +22,13 @@ use crate::{MAX_FACES, MAX_LEAVES, MAX_NODES};
 
 /// Key of the farthest slot.
 const FAR_KEY: u32 = 639;
-/// Distinct slots (each two buckets wide) a frame's leaf sequence is spread over.
-const SLOT_PAIRS: u32 = 319;
+/// Buckets in the world table.
+const OT_BUCKETS: u32 = FAR_KEY + 1;
+/// Widest and narrowest slot pitch in buckets. A slot's world faces key at its bucket `K`; `K + 1`
+/// is the far-biased bucket (a parent behind its children), `K - 1` the cutout bucket, and the
+/// buckets `K - pitch + 2 ..= K - 2` form the window objects standing in that leaf draw in.
+const MAX_PITCH: u32 = 12;
+const MIN_PITCH: u32 = 4;
 /// Stamp field of a face key (the key itself needs ten bits).
 const STAMP_SHIFT: u32 = 10;
 const KEY_MASK: u16 = (1 << STAMP_SHIFT) - 1;
@@ -43,6 +48,8 @@ static mut VISIBLE_LEAVES: u32 = 0;
 static mut LAST_USED: u32 = 0;
 /// Whether the last `sequence` call produced a usable sequence.
 static mut READY: bool = false;
+/// Buckets between two slots in the current sequence.
+static mut PITCH: u32 = MIN_PITCH;
 
 /// Mark the nodes that have a visible leaf below them. Cold: run once per visibility rebuild.
 ///
@@ -114,48 +121,69 @@ pub unsafe fn sequence(
     if visible == 0 || m.n_nodes == 0 || !node_visible(0) {
         return;
     }
-    STAMP = (STAMP + 1) & 0x3f;
-    if STAMP == 0 {
-        STAMP = 1;
-    }
-    let stamp = STAMP << STAMP_SHIFT;
     let n_vis = m.n_visleaves.min(MAX_LEAVES);
-    let mut slots = Slots {
-        estimate: LAST_USED.max(1),
-        acc: 0,
-        pair: 0,
-        last: FAR_KEY as u16,
-        used: 0,
-    };
-    let mut stack = [0i16; 160];
-    let mut sp = 1usize;
-    stack[0] = 0;
-    while sp > 0 {
-        sp -= 1;
-        let item = stack[sp] as i32;
-        if item < 0 {
-            let leaf = (-item - 1) as usize;
-            if leaf >= 1 && leaf <= n_vis {
-                emit_leaf(m, visibility, leaf, stamp, &mut slots);
+    // Spread the slots as wide as the frame's leaf count allows: the room between two slots is
+    // what objects standing in a leaf order themselves in. A leaf that adds faces needs a slot,
+    // and no more of them do than there are visible leaves.
+    let pitch = (OT_BUCKETS / (visible + 8)).clamp(MIN_PITCH, MAX_PITCH);
+    PITCH = pitch;
+    // The first pass spaces the slots by the leaf count of the previous frame. When this frame
+    // needs more slots than there are, the nearest leaves would pile into the last one, so the
+    // pass is run again with the exact count.
+    let mut estimate = LAST_USED.max(1);
+    let mut pass = 0;
+    loop {
+        STAMP = (STAMP + 1) & 0x3f;
+        if STAMP == 0 {
+            STAMP = 1;
+        }
+        let stamp = STAMP << STAMP_SHIFT;
+        let mut slots = Slots {
+            estimate,
+            acc: 0,
+            pair: 0,
+            count: FAR_KEY / pitch - 1,
+            pitch,
+            last: FAR_KEY as u16,
+            used: 0,
+            over: false,
+        };
+        let mut stack = [0i16; 160];
+        let mut sp = 1usize;
+        stack[0] = 0;
+        while sp > 0 {
+            sp -= 1;
+            let item = stack[sp] as i32;
+            if item < 0 {
+                let leaf = (-item - 1) as usize;
+                if leaf >= 1 && leaf <= n_vis {
+                    emit_leaf(m, visibility, leaf, stamp, &mut slots);
+                }
+                continue;
             }
+            let n = item as usize;
+            if !node_visible(n) {
+                continue;
+            }
+            let nd = m.node(n);
+            let front = dot(nd.n, eye) - nd.dist_q5 >= 0;
+            let (near, far) = if front { (nd.c0, nd.c1) } else { (nd.c1, nd.c0) };
+            if sp + 2 > stack.len() {
+                return;
+            }
+            // Far is popped first, so it is pushed last.
+            stack[sp] = near as i16;
+            stack[sp + 1] = far as i16;
+            sp += 2;
+        }
+        LAST_USED = slots.used;
+        if slots.over && pass == 0 {
+            pass = 1;
+            estimate = slots.used.max(1);
             continue;
         }
-        let n = item as usize;
-        if !node_visible(n) {
-            continue;
-        }
-        let nd = m.node(n);
-        let front = dot(nd.n, eye) - nd.dist_q5 >= 0;
-        let (near, far) = if front { (nd.c0, nd.c1) } else { (nd.c1, nd.c0) };
-        if sp + 2 > stack.len() {
-            return;
-        }
-        // Far is popped first, so it is pushed last.
-        stack[sp] = near as i16;
-        stack[sp + 1] = far as i16;
-        sp += 2;
+        break;
     }
-    LAST_USED = slots.used;
     READY = true;
 }
 
@@ -165,9 +193,14 @@ struct Slots {
     estimate: u32,
     acc: u32,
     pair: u32,
+    /// Slots available at this pitch, and the pitch.
+    count: u32,
+    pitch: u32,
     /// Key of the most recently allocated slot, shared by leaves that add no face.
     last: u16,
     used: u32,
+    /// Whether the pass wanted a slot past the last one.
+    over: bool,
 }
 
 /// Give `leaf` a slot and key the faces it marks that no farther leaf has. A leaf that adds no
@@ -187,12 +220,17 @@ unsafe fn emit_leaf(m: &Map, visibility: &[u8], leaf: usize, stamp: u16, slots: 
         if face < MAX_FACES && FACE_KEY[face] & !KEY_MASK != stamp {
             if !have {
                 have = true;
-                let pair = if slots.pair < SLOT_PAIRS { slots.pair } else { SLOT_PAIRS - 1 };
-                key = (FAR_KEY - 2 * pair) as u16;
+                let pair = if slots.pair < slots.count {
+                    slots.pair
+                } else {
+                    slots.over = true;
+                    slots.count - 1
+                };
+                key = (FAR_KEY - slots.pitch * pair) as u16;
                 slots.last = key;
                 slots.used += 1;
-                // Once there are more leaves than slots, advance every `estimate / SLOT_PAIRS`.
-                slots.acc += if slots.estimate < SLOT_PAIRS { slots.estimate } else { SLOT_PAIRS };
+                // Once there are more leaves than slots, advance every `estimate / count`.
+                slots.acc += if slots.estimate < slots.count { slots.estimate } else { slots.count };
                 if slots.acc >= slots.estimate {
                     slots.acc -= slots.estimate;
                     slots.pair += 1;
@@ -203,6 +241,15 @@ unsafe fn emit_leaf(m: &Map, visibility: &[u8], leaf: usize, stamp: u16, slots: 
         j += 1;
     }
     LEAF_SLOT[leaf] = key;
+}
+
+/// The buckets objects standing in the leaf whose slot is `key` draw in: after the slot's world
+/// and cutout buckets, before the next nearer slot's far-biased bucket.
+#[inline(always)]
+unsafe fn window(key: i32) -> (i32, i32) {
+    let hi = key - 2;
+    let lo = (key - PITCH as i32 + 2).min(hi);
+    (lo.max(1), hi.max(1))
 }
 
 /// Gap of the nearest visited leaf among `leaves`: an object spanning several leaves draws after
@@ -221,7 +268,7 @@ pub unsafe fn gap_nearest(leaves: &[i32]) -> Option<(i32, i32)> {
             }
         }
     }
-    (best != 0).then(|| (best - 1, best - 1))
+    (best != 0).then(|| window(best))
 }
 
 /// Key range an entity in the leaf holding it may use: the odd bucket just nearer than the leaf's
@@ -235,7 +282,63 @@ pub unsafe fn gap_of_leaf(leaf: i32) -> Option<(i32, i32)> {
     if key == 0 {
         return None;
     }
-    Some((key - 1, key - 1))
+    Some(window(key))
+}
+
+/// Key range of an object at `point`: the slot of the visited leaf the point is in, or when that
+/// leaf was not visited (the point is inside rock, or in a leaf the PVS hides) the visited leaf
+/// nearest to it in the tree: at each node the descent follows the point's side while that side
+/// still has a visible leaf below it, else the other side. `None` when nothing is visible.
+#[inline(always)]
+pub unsafe fn anchor_gap(
+    m: &Map,
+    visibility: &[u8],
+    point: [i32; 3],
+    dot: fn([i16; 3], [i32; 3]) -> i32,
+) -> Option<(i32, i32)> {
+    if !READY {
+        return None;
+    }
+    let n_vis = m.n_visleaves.min(MAX_LEAVES);
+    let mut item = 0i32;
+    let mut guard = 0;
+    loop {
+        if item < 0 {
+            let leaf = (-item - 1) as usize;
+            if leaf >= 1 && leaf <= n_vis {
+                let key = LEAF_SLOT[leaf] as i32;
+                if key != 0 {
+                    return Some(window(key));
+                }
+            }
+            return None;
+        }
+        guard += 1;
+        if guard > 256 {
+            return None;
+        }
+        let n = item as usize;
+        if n >= m.n_nodes.min(MAX_NODES) {
+            return None;
+        }
+        let nd = m.node(n);
+        let (own, other) = if dot(nd.n, point) - nd.dist_q5 >= 0 {
+            (nd.c0, nd.c1)
+        } else {
+            (nd.c1, nd.c0)
+        };
+        item = if child_visible(visibility, n_vis, own) { own } else { other };
+    }
+}
+
+#[inline(always)]
+unsafe fn child_visible(visibility: &[u8], n_vis: usize, child: i32) -> bool {
+    if child < 0 {
+        let leaf = (-child - 1) as usize;
+        leaf >= 1 && leaf <= n_vis && visibility[(leaf - 1) >> 3] & (1 << ((leaf - 1) & 7)) != 0
+    } else {
+        node_visible(child as usize)
+    }
 }
 
 /// Table key of `face` in the current sequence, or 0 when it has none (no sequence, or the face
