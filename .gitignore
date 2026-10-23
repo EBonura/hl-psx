@@ -39,6 +39,7 @@ docs/
 reference/
 /tools/*
 !/tools/census/
+!/tools/hl-order-oracle/
 
 # ---- OS / editor cruft ----
 .DS_Store
