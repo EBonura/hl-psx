@@ -1,0 +1,156 @@
+# Crossbow: R1 four times (weapon 5, 5 bolts loaded, 15 in reserve).
+name = "hl-weapons-crossbow"
+title = "Half-Life: the crossbow fires one bolt that sticks in the wall"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 30000
+
+# Bound to the build these journeys were written against (hud::PREV_* are the HUD's
+# last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
+[addr]
+PREV_WEAPON = 0x800c89d0
+PREV_CLIP = 0x800c89d8
+PREV_RESERVE = 0x800c89d4
+PREV_HEALTH = 0x800c89cc
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+label = "open chapter select (fifth entry), then the chapter row"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 4
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 13
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+label = "enter the chapter's first map and wait for the live viewmodel"
+press = ["cross"]
+hold = 8
+wait = 60
+
+[[step]]
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 9000
+
+[[step]]
+label = "settle: the first ticks of a map run the arrival"
+wait = 400
+
+[[step]]
+label = "R1 steps to the next owned weapon"
+press = ["r1"]
+hold = 8
+wait = 100
+repeat = 4
+
+[[step]]
+label = "turn to face the wall"
+rstick = [255, 128]
+press = []
+hold = 40
+wait = 2
+
+[[step]]
+rstick = [128, 128]
+press = []
+wait = 20
+
+[[step]]
+label = "crossbow up"
+checkpoint = "crossbow-ready"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_WEAPON"
+size = 2
+op = "eq"
+value = 5
+[[step.assert]]
+kind = "ram"
+sym = "PREV_CLIP"
+size = 2
+op = "eq"
+value = 5
+[[step.assert]]
+kind = "ram"
+sym = "PREV_RESERVE"
+size = 2
+op = "eq"
+value = 15
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+label = "fire"
+press = ["r2"]
+hold = 8
+wait = 0
+
+[[step]]
+label = "wait until PREV_CLIP eq 4"
+wait_until = { kind = "ram", sym = "PREV_CLIP", size = 2, op = "eq", value = 4 }
+timeout = 300
+
+[[step]]
+label = "bolt away"
+checkpoint = "crossbow-fired"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_CLIP"
+size = 2
+op = "eq"
+value = 4
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "audio"
+window = 60
+min_peak = 500
+[[step]]
+label = "the bolt hits and sticks"
+wait = 40
+
+[[step]]
+label = "bolt in the wall"
+checkpoint = "crossbow-stuck"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_CLIP"
+size = 2
+op = "eq"
+value = 4
+[[step.assert]]
+kind = "not_flat"

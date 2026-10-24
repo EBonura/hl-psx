@@ -1,0 +1,146 @@
+# Gluon Gun: chapter select at Xen (the Gluon Gun is first found at Lambda Core, so a later chapter carries it).
+# R1 seven times reaches it (weapon 8). Holding the trigger keeps a blue beam to the far end and spends a cell every tenth of a second.
+name = "hl-weapons-egon"
+title = "Half-Life: the Gluon Gun holds a blue beam while the trigger is down and burns cells"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 30000
+
+# Bound to the build these journeys were written against (hud::PREV_* are the HUD's
+# last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
+[addr]
+PREV_WEAPON = 0x800c89d0
+PREV_CLIP = 0x800c89d8
+PREV_RESERVE = 0x800c89d4
+PREV_HEALTH = 0x800c89cc
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+label = "open chapter select (fifth entry), then the chapter row"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 4
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 14
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+label = "enter the chapter's first map and wait for the live viewmodel"
+press = ["cross"]
+hold = 8
+wait = 60
+
+[[step]]
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 9000
+
+[[step]]
+label = "settle: the first ticks of a map run the arrival"
+wait = 400
+
+[[step]]
+label = "R1 steps to the next owned weapon"
+press = ["r1"]
+hold = 8
+wait = 100
+repeat = 7
+
+[[step]]
+label = "turn to face the wall"
+rstick = [255, 128]
+press = []
+hold = 40
+wait = 2
+
+[[step]]
+rstick = [128, 128]
+press = []
+wait = 20
+
+[[step]]
+label = "Gluon Gun up"
+checkpoint = "egon-ready"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_WEAPON"
+size = 2
+op = "eq"
+value = 8
+[[step.assert]]
+kind = "ram"
+sym = "PREV_RESERVE"
+size = 2
+op = "eq"
+value = 15
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+label = "hold the beam"
+press = ["r2"]
+hold = 60
+wait = 0
+
+[[step]]
+label = "beam on"
+checkpoint = "egon-beam"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_RESERVE"
+size = 2
+op = "lt"
+value = 10
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "pixels"
+color = [30, 40, 110]
+color_tol = 70
+region = { x = 100, y = 60, w = 220, h = 150 }
+min_count = 40
+[[step.assert]]
+kind = "audio"
+window = 60
+min_peak = 300
+[[step]]
+label = "release and the beam goes out"
+wait = 30
+
+[[step]]
+label = "beam off"
+checkpoint = "egon-off"
+golden = false
+[[step.assert]]
+kind = "not_flat"

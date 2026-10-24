@@ -1,0 +1,185 @@
+# RPG: chapter select at Lambda Core (a full loadout, a hall with a wall ahead). R1 five times reaches the
+# launcher (weapon 6, one rocket loaded, five in reserve). The designator dot is on by default (CRpg::Spawn)
+# and shows as a red glow on the wall; a shot takes the one rocket from the launcher, the rocket's flame glows
+# orange on the way, and the blast on the wall costs the player health at this distance.
+name = "hl-weapons-rpg"
+title = "Half-Life: the RPG fires a rocket that follows the laser dot and blows up on the wall"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 30000
+
+# Bound to the build these journeys were written against (hud::PREV_* are the HUD's
+# last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
+[addr]
+PREV_WEAPON = 0x800c89d0
+PREV_CLIP = 0x800c89d8
+PREV_RESERVE = 0x800c89d4
+PREV_HEALTH = 0x800c89cc
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+label = "open chapter select (fifth entry), then the chapter row"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 4
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 13
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+label = "enter the chapter's first map and wait for the live viewmodel"
+press = ["cross"]
+hold = 8
+wait = 60
+
+[[step]]
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 9000
+
+[[step]]
+label = "settle: the first ticks of a map run the arrival"
+wait = 400
+
+[[step]]
+label = "R1 steps to the next owned weapon"
+press = ["r1"]
+hold = 8
+wait = 100
+repeat = 5
+
+[[step]]
+label = "turn to face the wall"
+rstick = [255, 128]
+press = []
+hold = 40
+wait = 2
+
+[[step]]
+rstick = [128, 128]
+press = []
+wait = 20
+
+[[step]]
+label = "launcher up, dot on the wall"
+checkpoint = "rpg-ready"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_WEAPON"
+size = 2
+op = "eq"
+value = 6
+[[step.assert]]
+kind = "ram"
+sym = "PREV_CLIP"
+size = 2
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "PREV_RESERVE"
+size = 2
+op = "eq"
+value = 5
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "pixels"
+color = [255, 40, 26]
+color_tol = 70
+region = { x = 100, y = 80, w = 120, h = 80 }
+min_count = 2
+
+[[step]]
+label = "fire the rocket"
+press = ["r2"]
+hold = 8
+wait = 0
+
+[[step]]
+label = "wait until PREV_CLIP eq 0"
+wait_until = { kind = "ram", sym = "PREV_CLIP", size = 2, op = "eq", value = 0 }
+timeout = 300
+
+[[step]]
+label = "the rocket is away"
+checkpoint = "rpg-fired"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_CLIP"
+size = 2
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "PREV_RESERVE"
+size = 2
+op = "eq"
+value = 5
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+label = "wait until the effect shows"
+wait_until = { kind = "pixels", color = [255, 150, 50], color_tol = 70, region = { x = 40, y = 40, w = 240, h = 160 }, min_count = 12 }
+timeout = 400
+
+[[step]]
+label = "flame in flight"
+checkpoint = "rpg-flight"
+golden = false
+[[step.assert]]
+kind = "pixels"
+color = [255, 150, 50]
+color_tol = 70
+region = { x = 40, y = 40, w = 240, h = 160 }
+min_count = 12
+
+[[step]]
+label = "wait until PREV_HEALTH lt 100"
+wait_until = { kind = "ram", sym = "PREV_HEALTH", size = 2, op = "lt", value = 100 }
+timeout = 600
+
+[[step]]
+label = "blast on the wall"
+checkpoint = "rpg-blast"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_HEALTH"
+size = 2
+op = "lt"
+value = 100
+[[step.assert]]
+kind = "not_flat"
