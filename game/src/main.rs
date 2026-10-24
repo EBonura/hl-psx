@@ -77,6 +77,7 @@ use psx_goldsrc::ordering;
 #[cfg(feature = "order-trace")]
 mod order_trace;
 mod phys;
+mod pvs_compile;
 use psx_goldsrc::pickup_logic;
 use psx_goldsrc::pushable;
 #[cfg(feature = "interaction-probe")]
@@ -356,6 +357,11 @@ const VM_SORT_NONE: u16 = VM_SORT_LINK_MASK as u16;
 const MAX_TEX_SLOTS: usize = room_budget::MAX_TEX_SLOTS;
 const MAX_FACES: usize = room_budget::MAX_FACES;
 const MAX_FACE_GROUPS: usize = room_budget::MAX_FACE_GROUPS;
+/// Most entries one PVS row (or the merge of two) lists, by the build script's scan.
+const MAX_PVS_FACES: usize = room_budget::MAX_PVS_FACES;
+/// Most face groups one PVS row (or the merge of two) lists.
+const MAX_PVS_GROUPS: usize = room_budget::MAX_PVS_GROUPS;
+const _: () = assert!(MAX_PVS_FACES <= MAX_FACES && MAX_PVS_GROUPS <= MAX_FACE_GROUPS);
 const MAX_LEAVES: usize = room_budget::MAX_LEAVES;
 const MAX_ENTS: usize = room_budget::MAX_ENTS;
 
@@ -3118,13 +3124,13 @@ static mut PVS_LEAF_COUNT: usize = 0;
 // the next even link index, so the live representation and byte count are
 // unchanged.
 #[repr(C, align(4))]
-struct AlignedPvsFaceLinks([u16; MAX_FACES]);
-static mut PVS_FACE_INDEX: AlignedPvsFaceLinks = AlignedPvsFaceLinks([0; MAX_FACES]);
+struct AlignedPvsFaceLinks([u16; MAX_PVS_FACES]);
+static mut PVS_FACE_INDEX: AlignedPvsFaceLinks = AlignedPvsFaceLinks([0; MAX_PVS_FACES]);
 // Sentinel-filled at boot by `init_pvs_link_sentinels`, not by a static
 // initializer: a non-zero initializer would put these tables in `.data`, which
 // is stored in the executable and copied to RAM at load, where `.bss` costs
 // neither. Nothing reads them before boot fills them.
-static mut PVS_FACE_NEXT: AlignedPvsFaceLinks = AlignedPvsFaceLinks([0; MAX_FACES]);
+static mut PVS_FACE_NEXT: AlignedPvsFaceLinks = AlignedPvsFaceLinks([0; MAX_PVS_FACES]);
 #[repr(C, align(4))]
 struct AlignedPvsFaceRecs([PvsFaceRec; MAX_PVS_FACE_RECS]);
 static mut PVS_FACE_REC: AlignedPvsFaceRecs =
@@ -3167,7 +3173,7 @@ unsafe fn init_pvs_link_sentinels() {
         *face = PVS_LINK_END;
     }
 }
-static mut PVS_GROUP_ACTIVE: [u16; MAX_FACE_GROUPS] = [0; MAX_FACE_GROUPS];
+static mut PVS_GROUP_ACTIVE: [u16; MAX_PVS_GROUPS] = [0; MAX_PVS_GROUPS];
 static mut PVS_GROUP_COUNT: usize = 0;
 // Bit i = compact texture i belongs to an animation chain (per-map, built at
 // load from the HLMF chain section).
@@ -14968,7 +14974,7 @@ unsafe fn xhair_consider(m: &Map, tt: usize, pa: Projected, pb: Projected, pc: P
 /// the world GTE transform first (the entity passes leave their own loaded).
 unsafe fn xhair_pick_pvs(m: &Map, frame: u16) {
     let mut e = 0usize;
-    while e < PVS_FACE_COUNT && e < MAX_FACES {
+    while e < PVS_FACE_COUNT && e < MAX_PVS_FACES {
         let face = PVS_FACE_INDEX.0[e] as usize;
         e += 1;
         if m.face_is_loop(face) || m.face_is_patch(face) {
@@ -26489,7 +26495,7 @@ unsafe fn rebuild_pvs_cache(
     RENDER_ROW_DRY = dry;
     PVS_TEX_ANIM_GEN = 0;
     PVS_ENT_COUNT = 0;
-    let compiled = psx_goldsrc::pvs_faces::compile_faces(
+    let compiled = pvs_compile::compile_faces_capped(
         m,
         &*core::ptr::addr_of!(VIS_BITS),
         &*core::ptr::addr_of!(TEX_ANIM_MASK),

@@ -22,6 +22,8 @@ const FALLBACK_MAP_WORDS: usize = 255_000;
 const FALLBACK_MAX_VERTS: usize = 12_288;
 const FALLBACK_MAX_FACES: usize = 6144;
 const FALLBACK_MAX_FACE_GROUPS: usize = 2848;
+const FALLBACK_MAX_PVS_FACES: usize = 6144;
+const FALLBACK_MAX_PVS_GROUPS: usize = 2848;
 const FALLBACK_MAX_LEAVES: usize = 8192;
 const FALLBACK_MAX_ENTS: usize = 192;
 const FALLBACK_MAX_TEX_SLOTS: usize = 256;
@@ -793,6 +795,154 @@ fn scan_room_budget(
         round_up(max_ents + 2, 2),
         round_up(max_texs + 8, 16),
     )
+}
+
+/// The most faces and face groups one PVS row (or the merge of two rows, which
+/// an underwater camera makes) can list, over every cooked room. The renderer's
+/// visible-face lists are sized from this instead of from the largest room's
+/// total, which they can never reach: a room's biggest row lists a third of its
+/// faces at most. A merge lists at most the faces of its two largest rows, so
+/// the bound is that sum capped at the room's total.
+fn scan_pvs_capacity(repo_root: &std::path::Path) -> (usize, usize) {
+    let rooms = repo_root.join("data/rooms");
+    let Ok(entries) = fs::read_dir(&rooms) else {
+        return (FALLBACK_MAX_PVS_FACES, FALLBACK_MAX_PVS_GROUPS);
+    };
+    let only_maps = collect_maps();
+    let (mut max_faces, mut max_groups) = (0usize, 0usize);
+    let mut scanned = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("room_") || !(name.ends_with(".psxc") || name.ends_with(".psxw")) {
+            continue;
+        }
+        let Ok(data) = fs::read(&path) else {
+            continue;
+        };
+        if data.len() < 56 || !matches!(&data[0..4], b"HLMJ" | b"HLMK") {
+            continue;
+        }
+        if let Some(maps) = &only_maps {
+            let map = name["room_".len()..]
+                .split('.')
+                .next()
+                .and_then(|id| id.parse::<usize>().ok())
+                .map(|id| id / 2);
+            if !map.is_some_and(|map| maps.contains(&map)) {
+                continue;
+            }
+        }
+        let (faces, groups) = room_pvs_capacity(&data);
+        max_faces = max_faces.max(faces);
+        max_groups = max_groups.max(groups);
+        scanned = true;
+    }
+    if !scanned {
+        return (FALLBACK_MAX_PVS_FACES, FALLBACK_MAX_PVS_GROUPS);
+    }
+    (max_faces, max_groups)
+}
+
+/// `(faces, groups)` bound for one HLMJ/HLMK room; see `scan_pvs_capacity`.
+fn room_pvs_capacity(data: &[u8]) -> (usize, usize) {
+    let u32_at = |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
+    let u16_at = |o: usize| u16::from_le_bytes([data[o], data[o + 1]]) as usize;
+    let align4 = |x: usize| (x + 3) & !3;
+    let n_faces = u32_at(16);
+    let bsp = u32_at(20);
+    let planes = u32_at(bsp);
+    let n_groups = u32_at(bsp + 4);
+    let nodes = u32_at(bsp + 8);
+    let counts = u32_at(bsp + 12);
+    let n_marks = u32_at(bsp + 16);
+    let vis_len = u32_at(bsp + 20);
+    let total_leaves = counts & 0xffff;
+    let world = counts >> 16;
+    let faces_off = bsp + 24 + planes * 10 + n_groups * 2;
+    let leaves_off = faces_off + n_faces * 16 + nodes * 6;
+    let marks_off = align4(leaves_off + total_leaves * 8);
+    let vis = &data[align4(marks_off + n_marks * 2)..][..vis_len];
+    let width = world.div_ceil(8);
+    // Same row grammar as hl_format::pvs_pair: zero byte + run length.
+    let decode = |start: usize, out: &mut [u8], xor: bool| {
+        let (mut pos, mut at) = (start, 0usize);
+        while at < width {
+            let value = vis[pos];
+            pos += 1;
+            if value != 0 {
+                if xor {
+                    out[at] ^= value;
+                } else {
+                    out[at] = value;
+                }
+                at += 1;
+            } else {
+                at += vis[pos] as usize;
+                pos += 1;
+            }
+        }
+    };
+    let mut rows: Vec<Vec<u8>> = Vec::with_capacity(world);
+    for leaf in 1..=world {
+        let tagged = u32_at(leaves_off + leaf * 8) as u32;
+        let mut row = vec![0u8; width];
+        decode((tagged & 0x00ff_ffff) as usize, &mut row, false);
+        if tagged & 0x8000_0000 != 0 {
+            let distance = ((tagged >> 24) & 0x7f) as usize;
+            let reference = rows[leaf - 1 - distance].clone();
+            for (a, b) in row.iter_mut().zip(&reference) {
+                *a ^= b;
+            }
+        }
+        rows.push(row);
+    }
+    let group_of = |face: usize| u16_at(faces_off + face * 16 + 4) & 0x0fff;
+    let mut face_seen = vec![0u32; n_faces.div_ceil(32)];
+    let mut group_seen = vec![0u32; n_groups.max(4096).div_ceil(32)];
+    let (mut faces_a, mut faces_b) = (0usize, 0usize);
+    let (mut groups_a, mut groups_b) = (0usize, 0usize);
+    for row in &rows {
+        face_seen.fill(0);
+        group_seen.fill(0);
+        let (mut faces, mut groups) = (0usize, 0usize);
+        for leaf0 in 0..world {
+            if row[leaf0 >> 3] & (1 << (leaf0 & 7)) == 0 {
+                continue;
+            }
+            let leaf = leaf0 + 1;
+            let first = u16_at(leaves_off + leaf * 8 + 4);
+            let count = u16_at(leaves_off + leaf * 8 + 6) & 0x0fff;
+            for mark in first..(first + count).min(n_marks) {
+                let face = u16_at(marks_off + mark * 2);
+                if face >= n_faces || face_seen[face >> 5] & (1 << (face & 31)) != 0 {
+                    continue;
+                }
+                face_seen[face >> 5] |= 1 << (face & 31);
+                faces += 1;
+                let group = group_of(face);
+                if group_seen[group >> 5] & (1 << (group & 31)) == 0 {
+                    group_seen[group >> 5] |= 1 << (group & 31);
+                    groups += 1;
+                }
+            }
+        }
+        if faces > faces_a {
+            faces_b = faces_a;
+            faces_a = faces;
+        } else if faces > faces_b {
+            faces_b = faces;
+        }
+        if groups > groups_a {
+            groups_b = groups_a;
+            groups_a = groups;
+        } else if groups > groups_b {
+            groups_b = groups;
+        }
+    }
+    ((faces_a + faces_b).min(n_faces), (groups_a + groups_b).min(n_groups.max(1)))
 }
 
 /// Model type count, mirrored by game/src/main.rs N_MODEL_TYPES.
@@ -1628,6 +1778,9 @@ fn main() {
 
     let (map_words, max_verts, max_faces, max_face_groups, max_leaves, max_ents, max_tex_slots) =
         scan_room_budget(repo_root);
+    let (pvs_faces, pvs_groups) = scan_pvs_capacity(repo_root);
+    let max_pvs_faces = round_up(pvs_faces + 64, 32);
+    let max_pvs_groups = round_up(pvs_groups + 32, 32);
     let ModelBudget {
         model_words,
         model_verts: max_model_verts,
@@ -1666,6 +1819,8 @@ fn main() {
          pub const REGRESSION_VIEWPOINTS: [([i32; 3], u16, i16); 8] = {regression_viewpoints:?};\n\
          pub const MAX_FACES: usize = {max_faces};\n\
          pub const MAX_FACE_GROUPS: usize = {max_face_groups};\n\
+         pub const MAX_PVS_FACES: usize = {max_pvs_faces};\n\
+         pub const MAX_PVS_GROUPS: usize = {max_pvs_groups};\n\
          pub const MAX_LEAVES: usize = {max_leaves};\n\
          pub const MAX_ENTS: usize = {max_ents};\n\
          pub const MAX_TEX_SLOTS: usize = {max_tex_slots};\n\
