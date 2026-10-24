@@ -51,6 +51,7 @@ mod ground_logic;
 mod hecu_grenades;
 mod hev;
 #[allow(dead_code)]
+mod proj_fx;
 mod proj_logic;
 mod pushable_transition;
 #[allow(dead_code)]
@@ -1744,7 +1745,14 @@ const TRACER_TELE: u8 = 6;
 /// A vortigaunt's arm lightning (ZAP_BEAM 180,255,96) and a gun's muzzle flash.
 const TRACER_BEAM: u8 = 8;
 const TRACER_FLASH: u8 = 9;
-const TRACER_LOOKS: [(i32, (u8, u8, u8)); 10] = [
+/// The Gluon Gun's beam; `proj_fx::egon_beam` draws it.
+const TRACER_EGON: u8 = 10;
+/// The Tau Cannon's beam: amber for the primary shot, a wide white-hot one for a charged shot.
+const TRACER_GAUSS: u8 = 11;
+const TRACER_GAUSS_CHARGED: u8 = 12;
+/// Look of the tracer the next hitscan pushes (the Gluon Gun asks for its own).
+static mut TRACER_NEXT: u8 = TRACER_BULLET;
+const TRACER_LOOKS: [(i32, (u8, u8, u8)); 13] = [
     (3, (250, 220, 120)),
     (24, (255, 130, 90)),
     (14, (0, 120, 255)),
@@ -1755,6 +1763,9 @@ const TRACER_LOOKS: [(i32, (u8, u8, u8)); 10] = [
     (12, (255, 224, 192)),
     (5, (180, 255, 96)),
     (7, (255, 224, 160)),
+    (6, (60, 80, 255)),
+    (3, (255, 170, 60)),
+    (7, (255, 235, 200)),
 ];
 // Drowning state (player.cpp:1215-1329): air timer, escalation, and the
 // recoverable damage tally. Self-resetting the first tick the eye surfaces.
@@ -23048,7 +23059,7 @@ unsafe fn fire_hitscan(
             end // shot into the void: streak to the far range point
         };
         if range > 1000 && TRACER_ON {
-            push_tracer(muzzle, tracer_end);
+            push_tracer_styled(muzzle, tracer_end, TRACER_NEXT);
         }
         world_hit.map(|_| usize::MAX)
     } else {
@@ -23080,7 +23091,7 @@ unsafe fn fire_hitscan(
         }
         spawn_blood(m, movers, target, eye, end, range, damage, ty, rot, base_t);
         if range > 1000 && TRACER_ON {
-            push_tracer(muzzle, target);
+            push_tracer_styled(muzzle, target, TRACER_NEXT);
         }
         PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
         if prop_is_scientist(ty) {
@@ -23443,7 +23454,11 @@ unsafe fn gauss_beam(
                 PROP_AI_TIMER[pi] = SCIENTIST_FEAR_TICKS;
             }
         }
-        push_tracer(tracer_from, stop);
+        push_tracer_styled(
+            tracer_from,
+            stop,
+            if secondary { TRACER_GAUSS_CHARGED } else { TRACER_GAUSS },
+        );
         let Some(h) = wall else {
             break;
         };
@@ -23733,8 +23748,6 @@ impl Projectile {
 }
 
 static mut PROJECTILES: [Projectile; MAX_PROJECTILES] = [Projectile::ZERO; MAX_PROJECTILES];
-static mut PROJ_RECTS: [RectFlat; MAX_PROJECTILES] =
-    [const { RectFlat::new(0, 0, 0, 0, 0, 0, 0) }; MAX_PROJECTILES];
 // The RPG designator is map-local like GoldSrc's CLaserSpot. Keeping one
 // position instead of an entity saves a projectile slot; active rockets steer
 // toward it and the render path emits one depth-sorted red marker.
@@ -23797,6 +23810,7 @@ fn dir_q12(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
 }
 
 unsafe fn clear_projectiles() {
+    proj_fx::clear();
     let mut i = 0;
     while i < MAX_PROJECTILES {
         PROJECTILES[i] = Projectile::ZERO;
@@ -24384,6 +24398,7 @@ unsafe fn tick_bolt(m: &Map, movers: &[phys::Mover], i: usize) {
         h.pos[1] - ((back[1] * 12) >> 12),
         h.pos[2] - ((back[2] * 12) >> 12),
     ];
+    PROJECTILES[i].dir = [-back[0] as i16, -back[1] as i16, -back[2] as i16];
     PROJECTILES[i].vel = [0; 3];
     PROJECTILES[i].life = 200;
 }
@@ -24814,6 +24829,7 @@ unsafe fn grenade_blast_origin(
 #[inline(never)]
 unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
     (*core::ptr::addr_of_mut!(SOUNDS)).tick(); // one tick passes for every noise
+    proj_fx::tick();
     let mut i = 0;
     while i < MAX_PROJECTILES {
         if !PROJECTILES[i].active {
@@ -25067,57 +25083,6 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             PROJECTILES[i].active = false;
         }
         i += 1;
-    }
-}
-
-unsafe fn render_projectiles<const N: usize>(
-    ot: &mut OrderingTable<N>,
-    rot: &Mat3I16,
-    base_t: [i32; 3],
-) {
-    let mut i = 0;
-    while i < MAX_PROJECTILES {
-        if PROJECTILES[i].active {
-            let (_, _, _, _, (r, g, b), size) = proj_params(PROJECTILES[i].kind);
-            if let Some((sx, sy, _)) = project_world_point(PROJECTILES[i].pos, rot, base_t) {
-                let half = (size / 2) as i16;
-                PROJ_RECTS[i] = RectFlat::new(sx - half, sy - half, size, size, r, g, b);
-                ot.resume_frame().add_raw(
-                    0,
-                    core::ptr::from_mut(&mut PROJ_RECTS[i]).cast(),
-                    RectFlat::WORDS,
-                );
-            }
-        }
-        i += 1;
-    }
-}
-
-/// Emit the RPG laser-designator dot into the world OT. Unlike transient FX,
-/// this must sort at the traced wall depth so intervening geometry hides it.
-unsafe fn queue_rpg_spot(
-    packets: &mut PrimitivePacketArena<'_>,
-    ot: &mut OrderingTable<OT_LEN>,
-    rot: &Mat3I16,
-    base_t: [i32; 3],
-) {
-    if !RPG_SPOT_ACTIVE {
-        return;
-    }
-    if let Some((sx, sy, vz)) = project_world_point(RPG_SPOT_POS, rot, base_t) {
-        let size = if vz < 640 { 5 } else { 3 };
-        let half = size as i16 / 2;
-        if let Some(packet) =
-            packets.push(RectFlat::new(sx - half, sy - half, size, size, 255, 24, 16))
-        {
-            ot.resume_frame().add_raw(
-                clamp_otz((vz.saturating_sub(4) as usize) >> OT_SHIFT),
-                core::ptr::from_mut(packet).cast(),
-                RectFlat::WORDS,
-            );
-        } else {
-            note_render_packet_drop(false);
-        }
     }
 }
 
@@ -33094,7 +33059,8 @@ unsafe fn emit_billboard_rgb_mode(
     // Perspective size follows the same focal length as the world GTE.
     let h = render::projection_h();
     let shw = ((world_half_w * h) / sz).clamp(1, 400);
-    let shh = ((world_half_h * h) / sz).clamp(1, 400);
+    // The GPU drops a polygon whose vertices lie more than 511 apart vertically.
+    let shh = ((world_half_h * h) / sz).clamp(1, 255);
     let l = (sx as i32 - shw).clamp(-1023, 1023) as i16;
     let r = (sx as i32 + shw).clamp(-1023, 1023) as i16;
     let t = (sy as i32 - shh).clamp(-1023, 1023) as i16;
@@ -33681,6 +33647,10 @@ unsafe fn draw_look(
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) {
+    if style == TRACER_EGON {
+        proj_fx::egon_beam(packets, ot, start, end, rot, base_t);
+        return;
+    }
     let (half, color) = TRACER_LOOKS[(style as usize).min(TRACER_LOOKS.len() - 1)];
     draw_beam(packets, ot, start, end, half, color, rot, base_t);
 }
@@ -38762,7 +38732,12 @@ fn play(
                     let inacc = 0;
                     FIRE_VEL = player.vel;
                     // Only the MP5 draws tracers, every second round (iTracerFreq).
-                    TRACER_ON = weapon.current == W_MP5 && sim_frame_no & 1 == 0;
+                    TRACER_ON = (weapon.current == W_MP5 && sim_frame_no & 1 == 0) || weapon.current == W_EGON;
+                    TRACER_NEXT = if weapon.current == W_EGON {
+                        TRACER_EGON
+                    } else {
+                        TRACER_BULLET
+                    };
                     // GoldSrc's first crowbar swing after a one-second idle gap
                     // does full damage; a held combo does half. `dry_ticks` was
                     // otherwise write-only and is zeroed on weapon switches, so
@@ -40770,7 +40745,7 @@ fn play(
             render_blood_fx(&mut packets, &mut np, &rot, base_t);
             env_bubbles_fx::render(&mut packets, &mut np, &rot, base_t);
             env_funnel_fx::render(&mut packets, &mut np, &rot, base_t);
-            queue_rpg_spot(&mut packets, world_ot(), &rot, base_t);
+            proj_fx::queue(&mut packets, world_ot(), &rot, base_t);
             queue_shards(&mut packets, world_ot(), &rot, base_t);
             if IMPACT_MARKS_LIVE || m.l5_decal_count() != 0 {
                 queue_impact_marks(&m, have_pvs, &mut packets, world_ot(), &rot, base_t);
@@ -41007,7 +40982,6 @@ fn play(
                 0,
                 (0, 0),
             );
-            render_projectiles(fx_ot(), &rot, base_t);
             render_debris(fx_ot(), &rot, base_t);
             // Hide CPU-only HMD8 projection/cull/sort behind the world's DMA.
             // Packet/cache storage is disjoint and remains live until the wait.
