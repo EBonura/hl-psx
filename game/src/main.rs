@@ -77,6 +77,7 @@ use psx_goldsrc::ordering;
 #[cfg(feature = "order-trace")]
 mod order_trace;
 mod phys;
+#[cfg(feature = "pvs-check")]
 mod pvs_compile;
 use psx_goldsrc::pickup_logic;
 use psx_goldsrc::pushable;
@@ -26495,8 +26496,7 @@ unsafe fn rebuild_pvs_cache(
     RENDER_ROW_DRY = dry;
     PVS_TEX_ANIM_GEN = 0;
     PVS_ENT_COUNT = 0;
-    let compiled = pvs_compile::compile_faces_capped(
-        m,
+    let compiled = m.compile_visible_faces(
         &*core::ptr::addr_of!(VIS_BITS),
         &*core::ptr::addr_of!(TEX_ANIM_MASK),
         PVS_GROUP_COUNT,
@@ -26510,6 +26510,20 @@ unsafe fn rebuild_pvs_cache(
             active_groups: &mut *core::ptr::addr_of_mut!(PVS_GROUP_ACTIVE),
             animated_textures: &mut *core::ptr::addr_of_mut!(PVS_TEX_ANIM_MASK),
         },
+    );
+    #[cfg(feature = "pvs-check")]
+    pvs_compile::check_against_reference(
+        m,
+        &*core::ptr::addr_of!(VIS_BITS),
+        &*core::ptr::addr_of!(TEX_ANIM_MASK),
+        &compiled,
+        &*core::ptr::addr_of!(PVS_FACE_INDEX.0),
+        &*core::ptr::addr_of!(PVS_FACE_NEXT.0),
+        &*core::ptr::addr_of!(PVS_FACE_REC.0),
+        &*core::ptr::addr_of!(PVS_FACE_MARK),
+        &*core::ptr::addr_of!(PVS_GROUP_FACE),
+        &*core::ptr::addr_of!(PVS_GROUP_FIRST),
+        &*core::ptr::addr_of!(PVS_GROUP_ACTIVE),
     );
     PVS_LEAF_COUNT = compiled.leaf_count;
     PVS_FACE_COUNT = compiled.face_count;

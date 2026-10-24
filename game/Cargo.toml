@@ -26,6 +26,9 @@ default = ["decoupled-present"]
 # backs the identical layout with main RAM so regression profiles can isolate
 # the memory-location effect without changing renderer behavior.
 main-ram-render-scratch = []
+# Diagnostic build: every visible-face rebuild also runs the reference walk (pvs_compile.rs) and
+# panics on the first difference from the fast one. Needs HLPSX_RAM_FLOOR=0 (about 40 KB more RAM).
+pvs-check = []
 # Isolates the projection-stack experiment while leaving the visibility bits
 # and viewmodel bucket heads in hardware scratchpad. Regression builds use this
 # to run the same projection entry on the ordinary main-RAM CPU stack.

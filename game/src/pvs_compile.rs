@@ -11,6 +11,9 @@
 //! and the group capacity is `active_groups.len()`. For any room whose row fits
 //! the capacity the output is identical, entry for entry.
 
+//! `Map::compile_visible_faces` is the walk the renderer runs. This module is the reference
+//! it is checked against, and exists only in the `pvs-check` diagnostic build.
+
 use psx_goldsrc::pvs_faces::{
     build_pvs_face_rec, FaceBuffers, FaceSource, FaceSummary, PVS_FACE_COUNT_MASK,
     PVS_GROUP_FACE_MASK, PVS_GROUP_LIQUID, PVS_LINK_END,
@@ -119,4 +122,94 @@ pub fn compile_faces_capped<M: FaceSource>(
     }
 
     summary
+}
+
+use crate::{MAX_FACES, MAX_FACE_GROUPS, MAX_PVS_FACES, MAX_PVS_FACE_RECS, MAX_PVS_GROUPS};
+use psx_goldsrc::pvs_faces::PvsFaceRec;
+
+static mut REF_INDEX: [u16; MAX_PVS_FACES] = [0; MAX_PVS_FACES];
+static mut REF_NEXT: [u16; MAX_PVS_FACES] = [0; MAX_PVS_FACES];
+static mut REF_REC: [PvsFaceRec; MAX_PVS_FACE_RECS] =
+    [psx_goldsrc::pvs_faces::EMPTY_PVS_FACE_REC; MAX_PVS_FACE_RECS];
+static mut REF_MARK: [u32; MAX_FACES.div_ceil(32)] = [0; MAX_FACES.div_ceil(32)];
+static mut REF_GROUP_FIRST: [u16; MAX_FACE_GROUPS] = [PVS_LINK_END; MAX_FACE_GROUPS];
+static mut REF_GROUP_FACE: [u16; MAX_FACE_GROUPS] = [PVS_LINK_END; MAX_FACE_GROUPS];
+static mut REF_GROUP_ACTIVE: [u16; MAX_PVS_GROUPS] = [0; MAX_PVS_GROUPS];
+static mut REF_GROUP_COUNT: usize = 0;
+static mut REF_REBUILDS: u32 = 0;
+
+/// Run the reference walk on the same row and panic, naming the first field that
+/// differs, unless it produced exactly what the fast walk left in the live lists.
+///
+/// # Safety
+/// Called from the render loop only, once per rebuild, after the fast walk.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn check_against_reference(
+    m: &crate::map::Map,
+    visibility: &[u8],
+    animated: &[u32],
+    fast: &FaceSummary,
+    index: &[u16],
+    next: &[u16],
+    records: &[PvsFaceRec],
+    marks: &[u32],
+    group_face: &[u16],
+    group_first: &[u16],
+    group_active: &[u16],
+) {
+    // The reference needs its own copy of the animation mask output.
+    let mut ref_animated = [0u32; crate::map::TEX_ANIM_MAX / 32];
+    let reference = compile_faces_capped(
+        m,
+        visibility,
+        animated,
+        REF_GROUP_COUNT,
+        FaceBuffers {
+            indices: &mut *core::ptr::addr_of_mut!(REF_INDEX),
+            next: &mut *core::ptr::addr_of_mut!(REF_NEXT),
+            records: &mut *core::ptr::addr_of_mut!(REF_REC),
+            marks: &mut *core::ptr::addr_of_mut!(REF_MARK),
+            group_first: &mut *core::ptr::addr_of_mut!(REF_GROUP_FIRST),
+            group_face: &mut *core::ptr::addr_of_mut!(REF_GROUP_FACE),
+            active_groups: &mut *core::ptr::addr_of_mut!(REF_GROUP_ACTIVE),
+            animated_textures: &mut ref_animated,
+        },
+    );
+    REF_GROUP_COUNT = reference.group_count;
+    REF_REBUILDS += 1;
+    let fail = |what: &str| -> ! { panic!("pvs-check: {what} differs on rebuild {}", REF_REBUILDS) };
+    if reference != *fast {
+        fail("summary");
+    }
+    let faces = reference.face_count;
+    if index[..faces] != (&*core::ptr::addr_of!(REF_INDEX))[..faces] {
+        fail("indices");
+    }
+    if next[..faces] != (&*core::ptr::addr_of!(REF_NEXT))[..faces] {
+        fail("next links");
+    }
+    let rec_count = faces.min(records.len());
+    if records[..rec_count] != (&*core::ptr::addr_of!(REF_REC))[..rec_count] {
+        fail("records");
+    }
+    if marks != &*core::ptr::addr_of!(REF_MARK) {
+        fail("face marks");
+    }
+    let groups = reference.group_count;
+    if group_active[..groups] != (&*core::ptr::addr_of!(REF_GROUP_ACTIVE))[..groups] {
+        fail("active groups");
+    }
+    let mut g = 0usize;
+    while g < groups {
+        let group = group_active[g] as usize;
+        if group_face[group] != (&*core::ptr::addr_of!(REF_GROUP_FACE))[group]
+            || group_first[group] != (&*core::ptr::addr_of!(REF_GROUP_FIRST))[group]
+        {
+            fail("group heads");
+        }
+        g += 1;
+    }
+    if animated.len() != ref_animated.len() {
+        fail("animation mask width");
+    }
 }

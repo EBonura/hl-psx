@@ -1799,6 +1799,174 @@ impl Map {
         }
     }
 
+    /// Compile one already-unioned visibility row into the renderer's visible-face
+    /// lists. This is `psx_goldsrc::pvs_faces::compile_faces` with the face-id
+    /// bound split from the entry capacity (see `pvs_compile`) and every field of
+    /// a face read once, as halfwords, from its 16-byte record: the generic walk
+    /// asks the map for each flag and field separately, and the byte readers
+    /// behind those calls were most of the cost of a rebuild. The output is the
+    /// same entry for entry (`pvs_compile::compile_faces_capped` is the reference;
+    /// the `pvs-check` feature compares the two on every rebuild).
+    ///
+    /// # Panics
+    /// Panics on inconsistent buffer shapes, as `compile_faces` does.
+    #[inline(never)]
+    pub fn compile_visible_faces(
+        &self,
+        visibility: &[u8],
+        animated: &[u32],
+        previous_groups: usize,
+        out: psx_goldsrc::pvs_faces::FaceBuffers<'_>,
+    ) -> psx_goldsrc::pvs_faces::FaceSummary {
+        use psx_goldsrc::pvs_faces::{
+            FaceSummary, PVS_FACE_COUNT_MASK, PVS_FACE_CUTOUT, PVS_FACE_SPECIAL,
+            PVS_GROUP_FACE_MASK, PVS_GROUP_LIQUID, PVS_LINK_END,
+        };
+        let face_limit = out.marks.len() * 32;
+        let entry_capacity = out.indices.len();
+        let max_groups = out.group_first.len();
+        let group_capacity = out.active_groups.len();
+        let max_leaves = visibility.len() * 8;
+        let texture_count = animated.len() * 32;
+        assert!(face_limit <= u16::MAX as usize + 1 && max_groups <= u16::MAX as usize);
+        assert!(out.next.len() >= entry_capacity);
+        assert!(out.group_face.len() == max_groups && group_capacity <= max_groups);
+        assert!(previous_groups <= group_capacity);
+        assert!(out.animated_textures.len() == animated.len() && texture_count.is_power_of_two());
+        let mut old_group = 0usize;
+        while old_group < previous_groups {
+            out.group_face[out.active_groups[old_group] as usize] = PVS_LINK_END;
+            old_group += 1;
+        }
+        let mut summary = FaceSummary::default();
+        out.animated_textures.fill(0);
+        out.marks.fill(0);
+
+        let base = self.data.as_ptr();
+        let n_marks = self.n_marks;
+        let record_count = out.records.len();
+        let texture_mask = texture_count - 1;
+        let mut face_count = 0usize;
+        let mut group_count = 0usize;
+        let mut triangle_references = 0usize;
+        let mut has_translucent = false;
+        let mut has_texture_animation = false;
+        let mut leaf_count = 0usize;
+
+        let leaves = self.n_visleaves.min(max_leaves);
+        let mut i = 0usize;
+        while i < leaves {
+            let bit = visibility[i >> 3] & (1u8 << (i & 7));
+            i += 1;
+            if bit == 0 {
+                continue;
+            }
+            leaf_count += 1;
+            let leaf_record = self.leaves_off + i * LEAF_SZ;
+            let first_mark = rd_u16(self.data, leaf_record + 4) as usize;
+            let mark_end = (first_mark
+                + cooked::leaf_mark_count(rd_u16(self.data, leaf_record + 6)) as usize)
+                .min(n_marks);
+            let mut mj = first_mark;
+            while mj < mark_end {
+                // SAFETY: mark indices below n_marks lie inside the marks section.
+                let face = unsafe {
+                    base.add(self.marks_off + mj * 2).cast::<u16>().read()
+                } as usize;
+                mj += 1;
+                if face >= face_limit {
+                    continue;
+                }
+                let mark_bit = 1u32 << (face & 31);
+                let mark_word = &mut out.marks[face >> 5];
+                if *mark_word & mark_bit != 0 {
+                    continue;
+                }
+                *mark_word |= mark_bit;
+                // SAFETY: a marked face id indexes a record of the faces section (the
+                // cooker emits only valid marks); records are 16 bytes at an even offset.
+                let rec = unsafe { base.add(self.faces_off + face * FACE_SZ).cast::<u16>() };
+                let (first, raw_count, packed_group, cx, cy, cz, radius, tex_flags) = unsafe {
+                    (
+                        rec.read(),
+                        rec.add(1).read(),
+                        rec.add(2).read(),
+                        rec.add(3).read(),
+                        rec.add(4).read(),
+                        rec.add(5).read(),
+                        rec.add(6).read(),
+                        rec.add(7).read(),
+                    )
+                };
+                let count = raw_count & cooked::FACE_COUNT_MASK;
+                if count == 0 || count > PVS_FACE_COUNT_MASK {
+                    continue;
+                }
+                if face_count >= entry_capacity {
+                    continue;
+                }
+                let group = (packed_group & cooked::FACE_GROUP_MASK) as usize;
+                if group >= max_groups {
+                    continue;
+                }
+                let flags = (tex_flags >> 8) as u8;
+                let liquid = flags & 2 != 0;
+                if out.group_face[group] == PVS_LINK_END {
+                    if group_count >= group_capacity {
+                        break;
+                    }
+                    out.group_first[group] = PVS_LINK_END;
+                    out.group_face[group] = face as u16 & PVS_GROUP_FACE_MASK;
+                    out.active_groups[group_count] = group as u16;
+                    group_count += 1;
+                }
+                if liquid {
+                    out.group_face[group] |= PVS_GROUP_LIQUID;
+                }
+
+                let entry = face_count;
+                out.indices[entry] = face as u16;
+                let tex = (tex_flags & 0xff) as usize;
+                let tex_index = tex & texture_mask;
+                let is_animated = animated[tex_index >> 5] & (1 << (tex_index & 31)) != 0;
+                has_translucent |= liquid;
+                has_texture_animation |= is_animated;
+                if is_animated {
+                    out.animated_textures[tex_index >> 5] |= 1u32 << (tex_index & 31);
+                }
+                if entry < record_count {
+                    // Cutout-backed (0x40), liquid (2), coplanar backdrop (8) and a
+                    // lightstyle plane all send a face down the generic emit path.
+                    let special = flags & (0x40 | 2 | 8) != 0
+                        || (packed_group >> cooked::FACE_GROUP_BITS) & 1 != 0;
+                    out.records[entry] = psx_goldsrc::pvs_faces::PvsFaceRec {
+                        first,
+                        count: count
+                            | if special { PVS_FACE_SPECIAL } else { 0 }
+                            | if flags & 0x40 != 0 { PVS_FACE_CUTOUT } else { 0 },
+                        center: [cx as i16, cy as i16, cz as i16],
+                        radius,
+                        tex: tex as u8,
+                        // loop 1, liquid 2, refined 4, backdrop 8, patch 0x10 move up three bits.
+                        meta: (flags & 0x1f) << 3,
+                    };
+                }
+                triangle_references += count as usize;
+                out.next[entry] = out.group_first[group];
+                out.group_first[group] = entry as u16;
+                face_count += 1;
+            }
+        }
+
+        summary.leaf_count = leaf_count;
+        summary.face_count = face_count;
+        summary.group_count = group_count;
+        summary.triangle_references = triangle_references;
+        summary.has_translucent = has_translucent;
+        summary.has_texture_animation = has_texture_animation;
+        summary
+    }
+
     /// `(visofs, mark_start, mark_count)` for leaf `i`.
     #[inline]
     pub fn leaf(&self, i: usize) -> (i32, usize, usize) {
