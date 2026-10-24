@@ -1,17 +1,18 @@
 //! Resident room staging capacity shared by the guest build and host audits.
 
-/// Keep the installed map window when the resident room format shrinks.
-/// This is a capacity floor, not permission to reduce a stack or model guard.
-///
-/// The largest cooked room (c5a1, 695,220 B) needs 173,821 words staged. The
-/// floor sits above it because the weapon cache in the arena tail is sized from
-/// the same arena (`cargo hl-build audit`, weapon cache RAM audit: the minimum
-/// margin is at c5a1, 5,280 B or more is kept). History: 180,168 words left
-/// 13,472 B; 178,120 left 5,280 B; the actor tracks at 1.4 grid steps (hl-bsp
-/// HMA1_NPC_MIN_TOLERANCE) and the authored HECU grenade clips together leave
-/// 13,844 B at 179,400, so 177,280 words keeps 5,364 B with both. Lowering the
-/// floor further spends that margin.
-pub const INSTALLED_MAP_WORDS_FLOOR: usize = 177_280;
+/// Floor of the shared map/model arena's map window, in words. The window must
+/// hold the largest cooked room (c5a1 after the delta-chain PVS rows, 659,004 B
+/// staged in 164,768 words), but it is kept higher than that on purpose: the
+/// arena tail after the resident map and models feeds the weapon cache and the
+/// actor packet stream (`use_model_tail` in the renderer chooses the larger of
+/// that tail and the packet arena's remainder), and every word the window gives
+/// up comes out of every map's tail. A map whose room shrank by less than the
+/// window did would lose actor packet capacity, which can drop actor triangles
+/// in dense frames. The floor therefore gives up no more than the smallest room
+/// shrink among the maps with a small tail: 20,000 B (c1a2 saved 20,552 B when
+/// the PVS rows became delta chains). Lowering it further needs those rooms to
+/// shrink again; `cargo hl-build audit` still proves the weapon cache fits.
+pub const INSTALLED_MAP_WORDS_FLOOR: usize = 172_280;
 
 pub const fn map_staging_words(max_room_bytes: usize) -> usize {
     let cooked_words = max_room_bytes.div_ceil(4);
@@ -58,8 +59,8 @@ mod tests {
 
     #[test]
     fn staging_keeps_installed_capacity_and_grows_for_larger_rooms() {
-        assert_eq!(map_staging_words(690_520), INSTALLED_MAP_WORDS_FLOOR);
-        assert_eq!(map_staging_words(709_120), INSTALLED_MAP_WORDS_FLOOR);
+        assert_eq!(map_staging_words(659_072), INSTALLED_MAP_WORDS_FLOOR);
+        assert_eq!(map_staging_words(689_120), INSTALLED_MAP_WORDS_FLOOR);
         assert_eq!(map_staging_words(800_001), 200_001);
     }
 }

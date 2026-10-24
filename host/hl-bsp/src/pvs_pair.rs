@@ -5,7 +5,6 @@ use hl_format::pvs_pair;
 
 const SOURCE_LEAF_SIZE: usize = 28;
 const SOURCE_VISOFS: usize = 4;
-const DELTA: u32 = 0x8000_0000;
 
 fn source_row(vis: &[u8], leaves: &[u8], leaf: usize, width: usize) -> Result<Vec<u8>, String> {
     let pos = leaf
@@ -66,6 +65,9 @@ fn rle(row: &[u8]) -> Vec<u8> {
     encoded
 }
 
+/// A delta must be at least this many bytes shorter than the anchor row to earn its chain.
+const MIN_SAVING: usize = 1;
+
 pub(crate) fn encode(
     vis: &[u8],
     leaves: &[u8],
@@ -81,22 +83,44 @@ pub(crate) fn encode(
     }
     let mut blob = Vec::new();
     let mut offsets = vec![0u32; world_leaves + 1];
+    // Chain length of each leaf's row so far (0 = anchor).
+    let mut depth = vec![0usize; world_leaves + 1];
     for (i, row) in rows.iter().enumerate() {
         let leaf = i + 1;
-        let raw = rle(row);
-        let delta = if leaf & 1 == 0 {
-            let xor: Vec<_> = row.iter().zip(&rows[i - 1]).map(|(&a, &b)| a ^ b).collect();
-            Some(rle(&xor))
-        } else {
-            None
-        };
-        let chosen = delta.as_ref().filter(|encoded| encoded.len() < raw.len());
-        let offset = u32::try_from(blob.len()).map_err(|_| "PVS offset exceeds u32")?;
-        if offset & DELTA != 0 {
-            return Err("PVS offset exceeds 31-bit tagged range".into());
+        let anchor = rle(row);
+        let mut best: Option<(usize, Vec<u8>)> = None;
+        let mut best_len = anchor.len();
+        for distance in 1..=pvs_pair::MAX_DISTANCE.min(i) {
+            let reference = leaf - distance;
+            if depth[reference] + 1 > pvs_pair::MAX_DELTAS {
+                continue;
+            }
+            let xor: Vec<_> = row
+                .iter()
+                .zip(&rows[reference - 1])
+                .map(|(&a, &b)| a ^ b)
+                .collect();
+            let encoded = rle(&xor);
+            if encoded.len() + MIN_SAVING <= best_len {
+                best_len = encoded.len();
+                best = Some((distance, encoded));
+            }
         }
-        offsets[leaf] = offset | if chosen.is_some() { DELTA } else { 0 };
-        blob.extend_from_slice(chosen.unwrap_or(&raw));
+        let offset = u32::try_from(blob.len()).map_err(|_| "PVS offset exceeds u32")?;
+        if offset as usize > pvs_pair::MAX_OFFSET {
+            return Err("PVS offset exceeds the 24-bit tagged range".into());
+        }
+        match best {
+            Some((distance, encoded)) => {
+                offsets[leaf] = pvs_pair::delta_tag(offset, distance as u32);
+                depth[leaf] = depth[leaf - distance] + 1;
+                blob.extend_from_slice(&encoded);
+            }
+            None => {
+                offsets[leaf] = pvs_pair::anchor_tag(offset);
+                blob.extend_from_slice(&anchor);
+            }
+        }
     }
     offsets[0] = offsets[1];
     let mut packed_leaves = Vec::with_capacity(offsets.len() * 8);
@@ -151,7 +175,7 @@ mod tests {
         source_offsets[2] = 8;
         let (blob, offsets) = encode(&source, &leaves(&source_offsets), 57).unwrap();
         assert_eq!(offsets[0], offsets[1]);
-        assert_eq!(offsets[2] & DELTA, DELTA);
+        assert_eq!(offsets[2] & 0x8000_0000, 0x8000_0000);
         assert!(!blob.is_empty());
     }
 
