@@ -1,4 +1,4 @@
-@journey name=hl-chain-new-game-to-c1a0c title="Half-Life New Game: tram ride, station, Anomalous Materials, the resonance cascade, c1a0c to the elevator lobby" prologue=new_game max_ticks=130000
+@journey name=hl-chain-new-game title="Half-Life New Game: tram ride, station, Anomalous Materials, the resonance cascade, c1a0c (lift, console scientist, retinal door, control room) to the arrival in c1a1" prologue=new_game max_ticks=130000
 
 
 map c0a0 next c0a0a
@@ -496,7 +496,6 @@ map c1a0c next c1a1
   1 s127
   5
   @face 3925 left
-  3 use
   100
   @face 1024 right
   @hold s40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=626 timeout=60
@@ -509,14 +508,85 @@ map c1a0c next c1a1
   @checkpoint elevator-lobby
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=148 value_hi=168
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=622 value_hi=640
-  # Known parity bug, not yet a journey step: the call button here (ele_2) does not carry the player in the port.
-  # In retail the next steps are: ride the lift to z -100, wait for the console scientist, open the retinal door at (770, 246),
-  # cross the control room beams at (919, 788) and leave by the changelevel at (574, 984).
-  @stop
+  3 use
+  @checkpoint lift-called
+  120
+  @checkpoint lift-top
+  @probe
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=4 op=between value=-110 value_hi=-90
+  @face 1018 left
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=480 timeout=92
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=152 timeout=60
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=162 timeout=60
+  20
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=204 timeout=132
+  2 s-127
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=80 timeout=100
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=152 timeout=80
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=162 timeout=80
+  @checkpoint console-room
+  @probe
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=150 value_hi=170
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=66 value_hi=80
+  650
+  @face 2050 right
+  3 use
+  10
+  @face 1018 left
+  5
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=276 timeout=116
+  1 s127
+  5
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=560 timeout=220
+  1 f-127
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=252 timeout=60
+  1 s-127
+  5
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=761 timeout=220
+  2 f-127
+  # The scientist follows the player to the scanner and takes the sequence there; its door (entity 64) swings open.
+  @wait sym=ENT_PHASE offset=256 size=4 op=ge value=4096 timeout=1500
+  @checkpoint retinal-door-open
+  @probe
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=194 timeout=100
+  1 s-127
+  5
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=838 timeout=100
+  1 f-127
+  5
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=276 timeout=100
+  1 s127
+  5
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=950 timeout=100
+  1 f-127
+  5
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=926 timeout=80
+  1 f127
+  5
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=918 timeout=40
+  1 f-127
+  5
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=802 timeout=240
+  2 s127
+  @checkpoint control-room-beams
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  # The beams run their course and shatter the control-room door (breakables of `control_door_shatter`); the hold below leans on it
+  # until it has gone, so no fixed wait depends on the beam timing.
+  # Centre on the doorway of the control-room door (opening x 908..936 once its breakables are gone) before leaning on it.
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=920 timeout=80
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=930 timeout=80
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=938 timeout=1800
+  1 s127
+  5
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=590 timeout=200
 
 
 map c1a1 next c1a1a
   @checkpoint arrive-c1a1
+  @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  @stop
   50
   20 s-127
   30 f-127

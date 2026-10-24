@@ -9,7 +9,7 @@ rustc --edition=2021 -O tests/chain/segments.rs -o /tmp/segments
 
 The journey column was filled in by hand from the committed journeys under `tests/`. "Traversed" means a controller-only journey starts from the previous segment's end state and plays the segment to its exit; every other value is weaker than the completion standard. Segments with no parity chapter file are covered by the static entity census only: `hl-census map <name>` prints the same table for any map.
 
-Counts at the landing of this ledger: 11 traversed (all in `tests/chain-new-game.toml`), 2 partly traversed (c1a0c to its elevator lobby in the same journey, t0a0 from the start lift to the catwalk in `tests/chain-hazard.toml`), 2 entry and a short walk (t0a0 also, c4a1a), 2 narrow replays or probe discs (t0a0b, c1a1b), 87 with no journey.
+Counts: 12 traversed (all in `tests/chain-new-game.toml`; the chain also arrives in c1a1 and checks the arrival), 1 partly traversed (t0a0, start lift to the catwalk, in `tests/chain-hazard.toml`), 1 entry and a short walk (c4a1a), 2 narrow replays or probe discs (t0a0b, c1a1b), 87 with no journey.
 
 Columns: actors = `monster_*` placements (not the `_dead` props); scripts = `scripted_*`; exits list `destination@landmark[trigger targetname]`, `END` is a `trigger_endsection`.
 
@@ -26,7 +26,7 @@ Columns: actors = `monster_*` placements (not the `_dead` props); scripts = `scr
 | 9 | c1a0a | Anomalous Materials | c1a0d@c1a0dtoa[airlocktransition1]<br>c1a0b@c1a0atob[] | 5 | 4 | 11 | 14 | traversed (chain-new-game) | [anomalous-materials](anomalous-materials.md#c1a0a) |
 | 10 | c1a0b | Anomalous Materials | c1a0a@c1a0atob[]<br>c1a0c@c1a0btoc[change_level]<br>c1a0e@c1a0btoe[change_to_c1a0e] | 8 | 18 | 10 | 12 | traversed (chain-new-game) | [anomalous-materials](anomalous-materials.md#c1a0b) |
 | 11 | c1a0e | Anomalous Materials | c1a0c@c1a0etoc[change_level]<br>c1a0b@c1a0btoe[] | 9 | 16 | 45 | 57 | traversed (chain-new-game) | [anomalous-materials](anomalous-materials.md#c1a0e) |
-| 12 | c1a0c | Unforeseen Consequences | c1a1@c1a0catoc1a1[]<br>c1a0e@c1a0etoc[change_level] | 5 | 14 | 16 | 41 | first half (blocked at the elevator) (chain-new-game) | [unforeseen-consequences](unforeseen-consequences.md#c1a0c) |
+| 12 | c1a0c | Unforeseen Consequences | c1a1@c1a0catoc1a1[]<br>c1a0e@c1a0etoc[change_level] | 5 | 14 | 16 | 41 | traversed (chain-new-game) | [unforeseen-consequences](unforeseen-consequences.md#c1a0c) |
 | 13 | c1a1 | Unforeseen Consequences | c1a1a@c1a1[]<br>c1a0c@c1a0catoc1a1[] | 7 | 4 | 5 | 17 | none | [unforeseen-consequences](unforeseen-consequences.md#c1a1) |
 | 14 | c1a1a | Unforeseen Consequences | c1a1f@c1a1atof[]<br>c1a1@c1a1[] | 3 | 1 | 2 | 10 | none | [unforeseen-consequences](unforeseen-consequences.md#c1a1a) |
 | 15 | c1a1f | Unforeseen Consequences | c1a1a@c1a1atof[]<br>c1a1b@c1a1b[] | 11 | 8 | 18 | 25 | none | [unforeseen-consequences](unforeseen-consequences.md#c1a1f) |
@@ -111,7 +111,7 @@ Columns: actors = `monster_*` placements (not the `_dead` props); scripts = `scr
 | 94 | c4a1f | Interloper | c4a1e@c4a1f[]<br>c4a3@c4a3[change] | 0 | 0 | 16 | 14 | none | census only |
 | 95 | c4a3 | Nihilanth | c5a1@c4a3toc5a1[change_to_c5a1]<br>c4a1f@c4a3[] | 11 | 1 | 21 | 77 | none | census only |
 | 96 | c5a1 | Endgame | c4a3@c4a3toc5a1[change_to_c5a1] | 17 | 10 | 12 | 26 | none | census only |
-| 97 | t0a0 | Hazard Course | t0a0a@t0a0t0a0a[] | 17 | 14 | 15 | 43 | start corridor to the catwalk (chain-hazard; entry journeys: journey, save-repin, skill-save, hazard-load, pause-overlay, segment-select) | [hazard-course](hazard-course.md#t0a0) |
+| 97 | t0a0 | Hazard Course | t0a0a@t0a0t0a0a[] | 17 | 14 | 15 | 43 | start corridor to the catwalk (the way on is by water, see hazard-course.md) (chain-hazard; entry journeys: journey, save-repin, skill-save, hazard-load, pause-overlay, segment-select) | [hazard-course](hazard-course.md#t0a0) |
 | 98 | t0a0a | Hazard Course | t0a0@t0a0t0a0a[]<br>t0a0b1@t0a0at0a0b[] | 9 | 8 | 9 | 35 | none | [hazard-course](hazard-course.md#t0a0a) |
 | 99 | t0a0b | Hazard Course | t0a0a@t0a0at0a0b[]<br>t0a0c@t0a0bt0a0c[]<br>t0a0c@t0a0bt0a0c2[] | 26 | 12 | 18 | 30 | probe disc (hazard-panels) | [hazard-course](hazard-course.md#t0a0b) |
 | 100 | t0a0b1 | Hazard Course | t0a0a@t0a0at0a0b[]<br>t0a0b2@t0a0b12[] | 14 | 5 | 3 | 19 | none | [hazard-course](hazard-course.md#t0a0b1) |

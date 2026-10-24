@@ -1,4 +1,4 @@
-@journey name=hl-chain-hazard title="Half-Life Hazard Course: title, Hazard Course row, t0a0 start corridor, doors td1 and td2, the observation hall, the catwalk to the swim shaft" prologue=hazard hazard_row=0 max_ticks=30000
+@journey name=hl-chain-hazard title="Half-Life Hazard Course: title, Hazard Course row, t0a0 start corridor, doors td1 and td2, the observation hall, the catwalk, round the canal, the jump course and the duck course" prologue=hazard hazard_row=0 max_ticks=30000
 
 # Work in progress, written against the Hazard Course start (t0a0). The course is a long scripted
 # tutorial; this block gets the player from the start lift to the east end of the observation hall.
@@ -35,9 +35,50 @@ map t0a0 next t0a0a
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-100 timeout=300
   @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-640 timeout=100
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=600 timeout=600
-  @checkpoint swim-shaft-door
+  @checkpoint catwalk-end
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=-790 value_hi=-700
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=600 value_hi=640
-  # Stop here. The door ahead (waterout, at y 648) opens only from its north side, on the trigger at
-  # (-692, 664): a dead end from this side. The course continues by another way, not yet written.
+  # The door ahead (waterout, y 648) opens only from its north side and the water canal east of it has a railing: the course goes
+  # round the canal. East to the railing at x -413, north to the wall at y 931, east across the top of the canal, back south down its
+  # east bank, then east through door td3 (opened by the trigger at x -132) into the corridor at y 500..628.
+  60 s127
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=925 timeout=400
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-160 timeout=300
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=600 timeout=300
+  @checkpoint canal-east-bank
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=-200 value_hi=-120
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-10 timeout=300
+  @face 1024 right
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=555 timeout=100
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=100 timeout=300
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=600 timeout=500
+  @checkpoint jump-course-entry
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=590 value_hi=660
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=560 value_hi=660
+  # The jump course: west to x 492, then north along the corridor. Three ridges (y 1168, 1424, 1680) are jumped from 46 units before
+  # each; the shallow pits between them cost nothing.
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=492 timeout=200
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1100 timeout=400
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1122 timeout=200
+  2 s-127 jump
+  12 s-127
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1378 timeout=200
+  2 s-127 jump
+  12 s-127
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1634 timeout=200
+  2 s-127 jump
+  12 s-127
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1990 timeout=400
+  @checkpoint jump-course-done
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=1985 value_hi=2030
+  # Door td4 has opened on the trigger at y 1870. The duck course runs east along y 2200: walk to x 1120, then crouch (Triangle)
+  # through the wells and low tunnels to x 1770, stand, and walk through door td5 (trigger at x 1868).
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=2150 timeout=400
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=900 timeout=300
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1120 timeout=200
+  @hold f127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1770 timeout=600
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1900 timeout=300
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2100 timeout=600
+  @checkpoint duck-course-done
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=2090 value_hi=2200
   @stop

@@ -29,20 +29,20 @@ Every segment section has the same parts: position and exits, what the retail ma
 the static entity contract for that map (`hl-census map <name>`), and the behaviours the 10-15 inventory first meets
 in that map with their state on main. The state vocabulary is in each chapter file.
 
-## Status on main b3a64f2
+## Status on main c84818f
 
 | coverage | segments |
 |---|---:|
-| traversed by a controller-only journey from the previous segment (`tests/chain-new-game.toml`) | 11 |
-| partly traversed: c1a0c to its elevator lobby (same journey), t0a0 from the start lift to the catwalk (`tests/chain-hazard.toml`) | 2 |
-| entry and a short walk (t0a0 also, c4a1a) | 2 |
+| traversed by a controller-only journey from the previous segment (`tests/chain-new-game.toml`) | 12 |
+| partly traversed: t0a0 from the start lift to the catwalk (`tests/chain-hazard.toml`) | 1 |
+| entry and a short walk (c4a1a) | 1 |
 | narrow replay or probe disc (t0a0b, c1a1b) | 2 |
 | no journey | 87 |
 
-The chain runs the New Game from the title through the tram ride and Anomalous Materials into c1a0c and on to its
-elevator lobby: 69,621 emulator ticks, 72 of 72 checks green on the CPU renderer (`psoxide-gate run
-tests/chain-new-game.toml --no-hw`, about 10 minutes on a loaded machine). Controller input only; the memory card is
-checked unchanged at every checkpoint. It stops there because of the two c1a0c bugs below.
+The chain runs the New Game from the title through the tram ride and Anomalous Materials into c1a0c, through its
+lift, the console scientist, the retinal door and the control room, and into the arrival in c1a1
+(`psoxide-gate run tests/chain-new-game.toml --no-hw`, about 11 minutes on a loaded machine). Controller input only;
+the memory card is checked unchanged at every checkpoint. It stops at the arrival in c1a1: no journey plays c1a1 yet.
 
 ### Evidence gaps against the standard
 
@@ -63,12 +63,12 @@ checked unchanged at every checkpoint. It stops there because of the two c1a0c b
 
 ## Parity findings that matter most for the first chapters
 
-Rows 1 and 2 were reproduced on b3a64f2 in this work (repro column). The others come from the 10-15 inventory or the census and are still unverified on b3a64f2.
+Rows 1 and 2 were investigated in this work (repro column). The others come from the 10-15 inventory or the census and are still unverified on b3a64f2.
 
 | # | difference | first seen | evidence | state |
 |---|---|---|---|---|
-| 1 | c1a0c, west corridor: the fallen pipes at x 572 stop a plain jump (the PS1 apex there is 42 units, retail clears them at 45); a crouch jump passes | c1a0c | route lines `1 f-127 jump` in `inbound-anomalous.route`, retail trace (z -324 to -279) | open, reproduced |
-| 2 | c1a0c, elevator `ele_2` (`func_platrot`): the cab starts 216 units too high (phase word 0 at load, authored position 4096), so the player stands on the corridor floor (z -324, retail -316 on the cab floor) and the call button sends the cab down onto him instead of lifting him | c1a0c | `elevator-lobby` checkpoint then `3 use` | open, reproduced, progression blocker |
+| 1 | c1a0c, west corridor: the fallen pipes at x 572 stop a plain jump (retail clears them at apex 44.7; open-air PS1 jumps match retail, the difference is the contact with the pipe's hull edge); a crouch jump passes | c1a0c | route lines `1 f-127 jump` in `inbound-anomalous.route`, retail trace (z -324 to -279) | open, narrowed (see unforeseen-consequences.md) |
+| 2 | c1a0c, elevator `ele_2`: not a port bug. The cab does start at its authored position (phase 4096); the journey's own extra `use` called it away before the player boarded | c1a0c | `lift-called`, `lift-top` checkpoints (player rides to z -100 in 120 ticks, as retail) | closed, route error |
 | 3 | Heads never turn toward the player or a friend (bone controllers); scientists and Barney look stiff | c0a0 | inventory D S24, E | open |
 | 4 | Sequence cross-fade is lost on main: every idle, walk and attack change snaps (it exists only on `consistency/with-crossfade`, d7d8507, and costs model RAM) | c0a0 | inventory D CC1 | open, a RAM decision |
 | 5 | The sitting scientist stands up and runs when alarmed (retail stays seated) and does not speak | c0a0 | inventory D S33 | open |
