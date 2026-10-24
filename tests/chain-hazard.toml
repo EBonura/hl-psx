@@ -10,10 +10,10 @@ max_ticks = 30000
 
 # Bound to the build this journey was written against.
 [addr]
-LOGIC_PLAYER_POS = 0x801cb514
-LOGIC_PLAYER_YAW = 0x801cb520
-SIM_NOW = 0x801e25fc
-WORLD_ARENA = 0x800de3b4
+LOGIC_PLAYER_POS = 0x801ce178
+LOGIC_PLAYER_YAW = 0x801ce184
+SIM_NOW = 0x801e5260
+WORLD_ARENA = 0x800e1018
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"
@@ -144,6 +144,14 @@ offset=8
 op="between"
 value=-1310
 value_hi=-1280
+
+[[step]]
+label = "back to the corridor's middle: the sidestep round the pedestal can end up to 30 units further west, against the stair rail"
+lstick = [255, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1408 }
+timeout = 100
 
 [[step]]
 lstick = [128, 1]
