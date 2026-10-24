@@ -177,7 +177,8 @@ pub unsafe fn check_against_reference(
     );
     REF_GROUP_COUNT = reference.group_count;
     REF_REBUILDS += 1;
-    let fail = |what: &str| -> ! { panic!("pvs-check: {what} differs on rebuild {}", REF_REBUILDS) };
+    let fail =
+        |what: &str| -> ! { panic!("pvs-check: {what} differs on rebuild {}", REF_REBUILDS) };
     if reference != *fast {
         fail("summary");
     }

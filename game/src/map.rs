@@ -1870,9 +1870,8 @@ impl Map {
             let mut mj = first_mark;
             while mj < mark_end {
                 // SAFETY: mark indices below n_marks lie inside the marks section.
-                let face = unsafe {
-                    base.add(self.marks_off + mj * 2).cast::<u16>().read()
-                } as usize;
+                let face =
+                    unsafe { base.add(self.marks_off + mj * 2).cast::<u16>().read() } as usize;
                 mj += 1;
                 if face >= face_limit {
                     continue;
@@ -1943,7 +1942,11 @@ impl Map {
                         first,
                         count: count
                             | if special { PVS_FACE_SPECIAL } else { 0 }
-                            | if flags & 0x40 != 0 { PVS_FACE_CUTOUT } else { 0 },
+                            | if flags & 0x40 != 0 {
+                                PVS_FACE_CUTOUT
+                            } else {
+                                0
+                            },
                         center: [cx as i16, cy as i16, cz as i16],
                         radius,
                         tex: tex as u8,

@@ -848,7 +848,8 @@ fn scan_pvs_capacity(repo_root: &std::path::Path) -> (usize, usize) {
 
 /// `(faces, groups)` bound for one HLMJ/HLMK room; see `scan_pvs_capacity`.
 fn room_pvs_capacity(data: &[u8]) -> (usize, usize) {
-    let u32_at = |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
+    let u32_at =
+        |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
     let u16_at = |o: usize| u16::from_le_bytes([data[o], data[o + 1]]) as usize;
     let align4 = |x: usize| (x + 3) & !3;
     let n_faces = u32_at(16);
@@ -942,7 +943,10 @@ fn room_pvs_capacity(data: &[u8]) -> (usize, usize) {
             groups_b = groups;
         }
     }
-    ((faces_a + faces_b).min(n_faces), (groups_a + groups_b).min(n_groups.max(1)))
+    (
+        (faces_a + faces_b).min(n_faces),
+        (groups_a + groups_b).min(n_groups.max(1)),
+    )
 }
 
 /// Model type count, mirrored by game/src/main.rs N_MODEL_TYPES.
