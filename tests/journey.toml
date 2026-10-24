@@ -101,6 +101,9 @@ wait = 25
 
 [[step]]
 checkpoint = "pause-menu"
+# The held weapon at the bottom of the frozen frame is shaded by the animation phase the pause
+# arrives in, which moves with every change of load time; the strip it occupies is left out of the comparison.
+mask = [{ x = 0, y = 216, w = 320, h = 24 }]
 [[step.assert]]
 kind = "not_flat"
 

@@ -10,9 +10,9 @@ max_ticks = 30000
 
 # Bound to the build this journey was written against.
 [addr]
-LOGIC_PLAYER_POS = 0x801d378c
-LOGIC_PLAYER_YAW = 0x801d3798
-SIM_NOW = 0x801eb3f4
+LOGIC_PLAYER_POS = 0x801ce96c
+LOGIC_PLAYER_YAW = 0x801ce978
+SIM_NOW = 0x801e65d4
 WORLD_ARENA = 0x800dcb8c
 
 [[step]]
@@ -230,11 +230,11 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8
 timeout = 300
 
 [[step]]
-lstick = [1, 128]
+lstick = [88, 128]
 rstick = [128, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-640 }
-timeout = 100
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-650 }
+timeout = 200
 
 [[step]]
 lstick = [128, 1]
@@ -331,6 +331,13 @@ timeout = 600
 lstick = [128, 128]
 rstick = [184, 128]
 press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="between", value=960, value_hi=1015 }
+timeout = 600
+
+[[step]]
+lstick = [128, 128]
+rstick = [160, 128]
+press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="between", value=1024, value_hi=1053 }
 timeout = 600
 
@@ -382,11 +389,11 @@ value=560
 value_hi=660
 
 [[step]]
-lstick = [128, 255]
+lstick = [128, 188]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=492 }
-timeout = 200
+timeout = 400
 
 [[step]]
 lstick = [1, 128]

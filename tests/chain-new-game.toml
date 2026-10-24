@@ -10,13 +10,13 @@ max_ticks = 130000
 
 # Bound to the build this journey was written against.
 [addr]
-ENT_CACHE = 0x801ec61c
-ENT_PHASE = 0x801ef31c
+ENT_CACHE = 0x801e77fc
+ENT_PHASE = 0x801ea4fc
 LOGIC_PLAYER_HEALTH = 0x800c0fbc
-LOGIC_PLAYER_POS = 0x801d378c
-LOGIC_PLAYER_SUIT = 0x801d5228
-LOGIC_PLAYER_YAW = 0x801d3798
-SIM_NOW = 0x801eb3f4
+LOGIC_PLAYER_POS = 0x801ce96c
+LOGIC_PLAYER_SUIT = 0x801d0408
+LOGIC_PLAYER_YAW = 0x801ce978
+SIM_NOW = 0x801e65d4
 WORLD_ARENA = 0x800dcb8c
 
 [[step]]
@@ -1181,6 +1181,13 @@ timeout = 600
 [[step]]
 lstick = [128, 128]
 rstick = [72, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=560 }
+timeout = 600
+
+[[step]]
+lstick = [128, 128]
+rstick = [92, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="between", value=479, value_hi=508 }
 timeout = 600
