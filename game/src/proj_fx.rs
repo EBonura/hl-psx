@@ -620,6 +620,7 @@ pub(crate) unsafe fn draw_bodies(
         if !p.active {
             continue;
         }
+        let mut tilt = 0u16;
         let (ty, yaw, clip) = match p.kind {
             PROJ_SNARK => {
                 let moving = p.vel[0].abs() + p.vel[2].abs() > 1;
@@ -629,11 +630,18 @@ pub(crate) unsafe fn draw_bodies(
                     if moving { PROP_CLIP_MOVE } else { PROP_CLIP_IDLE },
                 )
             }
-            PROJ_TRIPMINE if p.vel[0].abs().max(p.vel[1].abs()).max(p.vel[2].abs()) > 512 => (
-                tripmine::PROP_TYPE_TRIPMINE,
-                yaw_from_vec(p.vel[0], p.vel[2]),
-                PROP_CLIP_IDLE,
-            ),
+            PROJ_TRIPMINE if p.vel[0].abs().max(p.vel[1].abs()).max(p.vel[2].abs()) > 512 => {
+                // The mine faces out of its surface along the normal kept in `vel`:
+                // yaw from its horizontal part, pitch up (floor) or down (ceiling)
+                // from the vertical one, in the 256ths of a turn the model matrix takes.
+                let flat = isqrt_i32(p.vel[0] * p.vel[0] + p.vel[2] * p.vel[2]);
+                tilt = (atan2_q12(p.vel[1], flat) >> 4) & 0xff;
+                (
+                    tripmine::PROP_TYPE_TRIPMINE,
+                    yaw_from_vec(p.vel[0], p.vel[2]),
+                    PROP_CLIP_IDLE,
+                )
+            }
             _ => continue,
         };
         let Some(slot) = resident(ty) else {
@@ -663,7 +671,7 @@ pub(crate) unsafe fn draw_bodies(
             lm.n_faces,
             p.pos,
             yaw,
-            0,
+            tilt,
             0,
             0,
             sf,
@@ -760,7 +768,7 @@ pub(crate) unsafe fn mine_beam(
     base_t: [i32; 3],
 ) {
     draw_beam_textured(
-        packets, ot, from, end, 1, (0, 170, 156), sprite::WPN_LASER_BEAM, 0, 8, 5, rot, base_t,
+        packets, ot, from, end, 1, (0, 214, 198), sprite::WPN_LASER_BEAM, 0, 8, 5, rot, base_t,
     );
     glow(packets, ot, end, 2, (0, 150, 140), rot, base_t);
 }

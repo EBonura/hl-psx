@@ -1,0 +1,92 @@
+# The player's own mine and snark models on c2a5e. The map's roster plus the two weapon models
+# wanted 25 model slots on c2a5e and 26 on c3a2d; the pool held 24, so both rooms drew the
+# weapons as small solids. TYPE_TO_SLOT[57] (tripmine) and [58] (snark) hold a slot once the
+# map's models are streamed, and 0xff when the model was dropped.
+name = "hl-weapon-models-c2a5e"
+title = "Half-Life: c2a5e keeps the tripmine and snark models resident"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 14000
+
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+label = "open chapter select (fifth entry), then chapter row 11, then its map row 7"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 4
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 11
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 7
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 60
+
+[[step]]
+label = "the map is loaded when the glock's viewmodel entry is published"
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 9000
+
+[[step]]
+label = "the models stream after the viewmodel: wait for the mine's slot"
+wait_until = { kind = "ram", sym = "TYPE_TO_SLOT", offset = 57, size = 1, op = "ne", value = 255 }
+timeout = 3000
+
+[[step]]
+label = "settle"
+wait = 60
+checkpoint = "models"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "TYPE_TO_SLOT"
+offset = 57
+size = 1
+op = "ne"
+value = 255
+[[step.assert]]
+kind = "ram"
+sym = "TYPE_TO_SLOT"
+offset = 58
+size = 1
+op = "ne"
+value = 255

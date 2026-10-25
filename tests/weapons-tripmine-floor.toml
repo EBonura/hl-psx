@@ -1,0 +1,173 @@
+# Tripmine on the floor: R1 ten times, look down, R2 places a mine on the floor ahead. Its model faces up out of the floor (pitch from the surface normal), not along the wall-facing yaw alone.
+name = "hl-weapons-tripmine-floor"
+title = "Half-Life: a tripmine placed on the floor stands on it and arms a beam"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 30000
+
+# Bound to the build these journeys were written against (hud::PREV_* are the HUD's
+# last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
+[addr]
+PREV_WEAPON = 0x800c99a8
+PREV_CLIP = 0x800c99b0
+PREV_RESERVE = 0x800c99ac
+PREV_HEALTH = 0x800c99a4
+LAST_CORE = 0x800ca474
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+label = "open chapter select (fifth entry), then the chapter row"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 4
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 13
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+label = "enter the chapter's first map and wait for the live viewmodel"
+press = ["cross"]
+hold = 8
+wait = 60
+
+[[step]]
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 9000
+
+[[step]]
+label = "settle: the first ticks of a map run the arrival"
+wait = 400
+
+[[step]]
+label = "R1 steps to the next owned weapon"
+press = ["r1"]
+hold = 8
+wait = 100
+repeat = 10
+
+[[step]]
+label = "look down at the floor ahead"
+rstick = [128, 255]
+press = []
+hold = 18
+wait = 2
+
+[[step]]
+rstick = [128, 128]
+press = []
+wait = 20
+
+[[step]]
+label = "mine in hand, looking at the floor"
+checkpoint = "tripmine-ready"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_WEAPON"
+size = 2
+op = "eq"
+value = 12
+[[step.assert]]
+kind = "ram"
+sym = "PREV_RESERVE"
+size = 2
+op = "eq"
+value = 5
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+label = "place the mine"
+press = ["r2"]
+hold = 8
+wait = 0
+
+[[step]]
+label = "the sound asked for is core id 70"
+wait_until = { kind = "ram", sym = "LAST_CORE", size = 1, op = "eq", value = 70 }
+timeout = 300
+
+[[step]]
+label = "wait until PREV_RESERVE eq 4"
+wait_until = { kind = "ram", sym = "PREV_RESERVE", size = 2, op = "eq", value = 4 }
+timeout = 300
+
+[[step]]
+label = "mine on the wall"
+checkpoint = "tripmine-placed"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_RESERVE"
+size = 2
+op = "eq"
+value = 4
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+label = "the sound asked for is core id 71"
+wait_until = { kind = "ram", sym = "LAST_CORE", size = 1, op = "eq", value = 71 }
+timeout = 900
+
+[[step]]
+label = "armed beam"
+checkpoint = "tripmine-armed"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_HEALTH"
+size = 2
+op = "eq"
+value = 100
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+label = "step back from the wall"
+lstick = [128, 255]
+rstick = [128, 128]
+press = []
+hold = 40
+wait = 2
+
+[[step]]
+lstick = [128, 128]
+rstick = [128, 128]
+press = []
+wait = 20
+
+[[step]]
+label = "the mine and its beam from a few steps back"
+checkpoint = "tripmine-far"
+golden = false
+[[step.assert]]
+kind = "not_flat"
