@@ -12,7 +12,7 @@ max_ticks = 4800
 
 # Bound to the build this journey was written against: scripts/bind-skill-addr.sh rewrites it.
 [addr]
-BRIGHTNESS = 0x800cb5f0
+BRIGHTNESS = 0x800cb0a8
 
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
@@ -51,7 +51,7 @@ wait = 1200
 label = "walk a little, then stand still on the training route"
 lstick = [128, 0]
 hold = 60
-wait = 40
+wait = 400
 
 [[step]]
 checkpoint = "game"

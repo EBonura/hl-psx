@@ -10,9 +10,9 @@ max_ticks = 20000
 
 # Bound to the build this journey was written against.
 [addr]
-SIM_NOW = 0x801e6330
-SKILL = 0x800cb608
-WORLD_ARENA = 0x800e20e8
+SIM_NOW = 0x801e5e10
+SKILL = 0x800cb0c0
+WORLD_ARENA = 0x800e1b98
 
 [[step]]
 label = "boot to the title"

@@ -10,11 +10,11 @@ max_ticks = 30000
 # Bound to the build these journeys were written against (hud::PREV_* are the HUD's
 # last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
 [addr]
-PREV_WEAPON = 0x800c9760
-PREV_CLIP = 0x800c9768
-PREV_RESERVE = 0x800c9764
-PREV_HEALTH = 0x800c975c
-LAST_CORE = 0x800ca22c
+PREV_WEAPON = 0x800c9218
+PREV_CLIP = 0x800c9220
+PREV_RESERVE = 0x800c921c
+PREV_HEALTH = 0x800c9214
+LAST_CORE = 0x800c9ce4
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
 wait = 100
@@ -148,17 +148,14 @@ value = 9
 [[step.assert]]
 kind = "not_flat"
 [[step]]
-label = "the sound asked for is core id 9"
-wait_until = { kind = "ram", sym = "LAST_CORE", size = 1, op = "eq", value = 9 }
-timeout = 600
-
-[[step]]
 label = "wait until PREV_HEALTH lt 100"
 wait_until = { kind = "ram", sym = "PREV_HEALTH", size = 2, op = "lt", value = 100 }
 timeout = 600
 
 [[step]]
 label = "after the blast"
+# The blast sound (core id 9) and the pain it causes can land in one tick, so LAST_CORE
+# cannot be waited on here; the satchel and RPG journeys assert id 9. The blast is heard instead.
 checkpoint = "grenade-blast"
 golden = false
 [[step.assert]]
@@ -169,3 +166,7 @@ op = "lt"
 value = 100
 [[step.assert]]
 kind = "not_flat"
+[[step.assert]]
+kind = "audio"
+window = 120
+min_peak = 3000

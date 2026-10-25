@@ -15,7 +15,7 @@ for entry in hud::PREV_WEAPON hud::PREV_CLIP hud::PREV_RESERVE hud::PREV_HEALTH 
     name=${entry#*::}
     addr=$(awk -v a="hl_psx::$entry" '$5 == a && ($6 == "" || $6 == "(.0)") { print $1; exit }' "$map")
     [ -n "$addr" ] || { echo "no $name in $map" >&2; exit 1; }
-    for f in tests/weapons-*.toml tests/music-swap.toml; do
+    for f in tests/weapons-*.toml tests/music-swap.toml tests/voice-pool.toml; do
         [ -f "$f" ] || continue
         sed -i.bak -E "s/^$name = 0x[0-9a-f]+$/$name = 0x$addr/" "$f" && rm -f "$f.bak"
     done
