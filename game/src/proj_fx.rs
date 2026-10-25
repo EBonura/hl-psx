@@ -634,8 +634,9 @@ pub(crate) unsafe fn draw_bodies(
                 // The mine faces out of its surface along the normal kept in `vel`:
                 // yaw from its horizontal part, pitch up (floor) or down (ceiling)
                 // from the vertical one, in the 256ths of a turn the model matrix takes.
-                let flat = isqrt_i32(p.vel[0] * p.vel[0] + p.vel[2] * p.vel[2]);
-                tilt = (atan2_q12(p.vel[1], flat) >> 4) & 0xff;
+                // The horizontal length is taken as |x| + |z| (exact on a wall or a floor, a
+                // few degrees low on a diagonal slope), which spares a square root.
+                tilt = (atan2_q12(p.vel[1], p.vel[0].abs() + p.vel[2].abs()) >> 4) & 0xff;
                 (
                     tripmine::PROP_TYPE_TRIPMINE,
                     yaw_from_vec(p.vel[0], p.vel[2]),

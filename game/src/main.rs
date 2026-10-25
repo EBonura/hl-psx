@@ -21599,9 +21599,9 @@ const MUZZLE_FLASH_WEAPONS: [bool; 14] = [
     true,  // mp5
     true,  // shotgun
     false, // crossbow
-    true,  // rpg
-    true,  // gauss
-    true,  // egon
+    false, // rpg: its flame and smoke are the rocket's
+    false, // gauss: the beam's own glow at the muzzle (`proj_fx::gauss_beam`)
+    false, // egon: likewise (`proj_fx::egon_beam`)
     false, // hornet gun
     false, // grenade
     false, // snark
@@ -21609,35 +21609,31 @@ const MUZZLE_FLASH_WEAPONS: [bool; 14] = [
     false, // satchel
 ];
 
-/// GoldSrc-style additive muzzle star over the viewmodel barrel: a warm core
-/// quad + four spikes, size jittered per frame. Immediate draws (post-OT),
-/// Add blend so it brightens whatever is behind it.
+/// The gun's muzzle flash: the original's soft round glow (`hotglow.spr`, kept
+/// resident beside the weapon sprites) as one additive quad over the barrel tip,
+/// its size jittered per frame. The first version drew a four-spike star and a
+/// hard core triangle (a quad's half) in flat colour. Immediate draw (post-OT).
 fn draw_muzzle_flash(phase: u32) {
     use psx_gpu::material::BlendMode;
     // Barrel tip in screen space, projected from the model's own muzzle
     // attachment by `draw_viewmodel` (see VM_MUZZLE_MODEL).
     let (cx, cy) = unsafe { VM_MUZZLE_SCREEN };
-    let r: i16 = if phase & 1 == 0 { 13 } else { 10 };
-    let core = r - 4;
-    let spikes = [
-        [(cx, cy - r), (cx + 3, cy), (cx - 3, cy)],
-        [(cx, cy + r), (cx - 3, cy), (cx + 3, cy)],
-        [(cx - r, cy), (cx, cy - 3), (cx, cy + 3)],
-        [(cx + r, cy), (cx, cy + 3), (cx, cy - 3)],
-    ];
-    for sp in spikes {
-        fx_tri_flat_blended(sp, 255, 150, 40, BlendMode::Add);
+    let r: i16 = if phase & 1 == 0 { 22 } else { 17 };
+    let slot = sprite::slot_for(sprite::WPN_HOT_GLOW, 0);
+    if !slot.valid {
+        return;
     }
-    fx_tri_flat_blended(
-        [
-            (cx - core, cy - core),
-            (cx + core, cy - core),
-            (cx, cy + core),
-        ],
-        255,
-        236,
-        170,
-        BlendMode::Add,
+    let d = sprite::def(sprite::WPN_HOT_GLOW);
+    let (uw, uh) = (
+        d.crush_w.saturating_sub(1).min(255) as u8,
+        d.crush_h.saturating_sub(1).min(255) as u8,
+    );
+    fx_quad_textured_material(
+        [(cx - r, cy - r), (cx + r, cy - r), (cx - r, cy + r), (cx + r, cy + r)],
+        [(0, 0), (uw, 0), (0, uh), (uw, uh)],
+        slot.material
+            .with_blend_mode(BlendMode::Add)
+            .with_tint((150, 140, 110)),
     );
 }
 
