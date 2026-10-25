@@ -144,6 +144,72 @@ pub unsafe fn call_on_projection_stack(
     true
 }
 
+/// A closure and its result, handed to the stack entry through a pointer.
+struct StackJob<F, R> {
+    f: Option<F>,
+    out: Option<R>,
+}
+
+#[inline(never)]
+unsafe extern "C" fn stack_job_entry<R, F: FnOnce() -> R>(context: *mut u8) {
+    // SAFETY: `context` is the `StackJob` that `run_on_projection_stack` built
+    // for exactly this monomorphisation and keeps alive until the call returns.
+    let job = unsafe { &mut *context.cast::<StackJob<F, R>>() };
+    if let Some(f) = job.f.take() {
+        job.out = Some(f());
+    }
+}
+
+/// Set once a scratchpad-stack run reached its canary; later runs use the
+/// ordinary stack.
+static mut STACK_JOB_OVERFLOWED: bool = false;
+
+// A/B switch: 1 runs closures on the scratchpad stack, 2 runs the same non-inlined
+// entry on the ordinary stack. A volatile read keeps both paths in either build.
+const JOBS_ON_SCRATCHPAD: bool = true;
+static mut STACK_JOB_MODE: u8 = if JOBS_ON_SCRATCHPAD { 1 } else { 2 };
+
+/// Run `f` with the stack pointer on the recyclable projection stack, bytes
+/// 172..1024 of the scratchpad, and return its result. The same region and the
+/// same limits as [`call_on_projection_stack`]: everything `f` calls must fit
+/// in 852 bytes and nothing in bytes 128..840 may be live. If a run reaches
+/// the canary the hardware stack is used from then on.
+///
+/// # Safety
+/// The caller must ensure bytes 128..1024 are dead, the CPU is not already on
+/// a scratchpad stack, and `f`'s deepest call chain fits in 852 bytes.
+#[inline(always)]
+pub unsafe fn run_on_projection_stack<R, F: FnOnce() -> R>(f: F) -> R {
+    let mut job = StackJob {
+        f: Some(f),
+        out: None,
+    };
+    if unsafe { STACK_JOB_OVERFLOWED }
+        || unsafe { core::ptr::addr_of!(STACK_JOB_MODE).read_volatile() } == 2
+    {
+        unsafe { stack_job_entry::<R, F>(core::ptr::addr_of_mut!(job).cast::<u8>()) };
+        return match job.out {
+            Some(out) => out,
+            // SAFETY: the entry stores a result whenever it runs, and it always runs.
+            None => unsafe { core::hint::unreachable_unchecked() },
+        };
+    }
+    let intact = unsafe {
+        call_on_projection_stack(
+            core::ptr::addr_of_mut!(job).cast::<u8>(),
+            stack_job_entry::<R, F>,
+        )
+    };
+    if !intact {
+        unsafe { STACK_JOB_OVERFLOWED = true };
+    }
+    match job.out {
+        Some(out) => out,
+        // SAFETY: the entry stores a result whenever it runs, and it always runs.
+        None => unsafe { core::hint::unreachable_unchecked() },
+    }
+}
+
 /// Run `entry(context)` with the stack pointer at scratchpad byte
 /// `stack_top`, the trampoline's 12-byte save record at `save`.
 ///

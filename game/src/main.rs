@@ -34622,56 +34622,60 @@ unsafe fn draw_viewmodel(
         let heads = weapon_tri_heads_ptr();
         let records = weapon_tri_records_ptr();
         let indices = weapon_tri_indices_ptr();
-        for bucket in 0..VM_SORT_BUCKETS {
-            heads.add(bucket).write(VM_SORT_NONE);
-        }
-        for t in 0..md.triangle_count() {
-            let tri = md.triangle(t);
-            let tex_id = tri.tex;
-            let slot = slots[tex_id.min(slots.len() - 1)];
-            if !slot.valid {
-                continue;
+        // The bucket sort reloads its loop state from a frame the CPU has no
+        // cache for: run it on the scratchpad stack instead.
+        scratchpad::run_on_projection_stack(move || {
+            for bucket in 0..VM_SORT_BUCKETS {
+                heads.add(bucket).write(VM_SORT_NONE);
             }
-            let (a, b, c) = (
-                tri.idx[0] as usize,
-                tri.idx[1] as usize,
-                tri.idx[2] as usize,
-            );
-            let (pa, pb, pc) = (
-                projected_soa_get(projected_xy, projected_z, a),
-                projected_soa_get(projected_xy, projected_z, b),
-                projected_soa_get(projected_xy, projected_z, c),
-            );
-            if pa.sz < near_s || pb.sz < near_s || pc.sz < near_s {
-                continue;
-            }
-            if VM_CULL && tex_id != VM_TWO_SIDED_TEX {
-                if culled_gte(
-                    (pa.sx as i32, pa.sy as i32),
-                    (pb.sx as i32, pb.sy as i32),
-                    (pc.sx as i32, pc.sy as i32),
-                ) == VM_CULL_POS
-                {
+            for t in 0..md.triangle_count() {
+                let tri = md.triangle(t);
+                let tex_id = tri.tex;
+                let slot = slots[tex_id.min(slots.len() - 1)];
+                if !slot.valid {
                     continue;
                 }
+                let (a, b, c) = (
+                    tri.idx[0] as usize,
+                    tri.idx[1] as usize,
+                    tri.idx[2] as usize,
+                );
+                let (pa, pb, pc) = (
+                    projected_soa_get(projected_xy, projected_z, a),
+                    projected_soa_get(projected_xy, projected_z, b),
+                    projected_soa_get(projected_xy, projected_z, c),
+                );
+                if pa.sz < near_s || pb.sz < near_s || pc.sz < near_s {
+                    continue;
+                }
+                if VM_CULL && tex_id != VM_TWO_SIDED_TEX {
+                    if culled_gte(
+                        (pa.sx as i32, pa.sy as i32),
+                        (pb.sx as i32, pb.sy as i32),
+                        (pc.sx as i32, pc.sy as i32),
+                    ) == VM_CULL_POS
+                    {
+                        continue;
+                    }
+                }
+                let avgz = model_unscale_depth(
+                    ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3,
+                    scale_shift,
+                );
+                let bucket = viewmodel_otz(avgz);
+                let packed_indices = (tri.idx[0] as u32 & model::RENDER_FACE_INDEX_MASK)
+                    | ((tri.idx[1] as u32 & model::RENDER_FACE_INDEX_MASK) << 10)
+                    | ((tri.idx[2] as u32 & model::RENDER_FACE_INDEX_MASK) << 20);
+                indices.add(t).write(packed_indices);
+                records.add(t).write(
+                    *heads.add(bucket) as u32
+                        | ((tex_id as u32 & 0xff) << VM_SORT_TEX_SHIFT)
+                        | ((settings::bright(vm_normal_shade(tri.normal)) as u32)
+                            << VM_SORT_SHADE_SHIFT),
+                );
+                heads.add(bucket).write(t as u16);
             }
-            let avgz = model_unscale_depth(
-                ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3,
-                scale_shift,
-            );
-            let bucket = viewmodel_otz(avgz);
-            let packed_indices = (tri.idx[0] as u32 & model::RENDER_FACE_INDEX_MASK)
-                | ((tri.idx[1] as u32 & model::RENDER_FACE_INDEX_MASK) << 10)
-                | ((tri.idx[2] as u32 & model::RENDER_FACE_INDEX_MASK) << 20);
-            indices.add(t).write(packed_indices);
-            records.add(t).write(
-                *heads.add(bucket) as u32
-                    | ((tex_id as u32 & 0xff) << VM_SORT_TEX_SHIFT)
-                    | ((settings::bright(vm_normal_shade(tri.normal)) as u32)
-                        << VM_SORT_SHADE_SHIFT),
-            );
-            heads.add(bucket).write(t as u16);
-        }
+        });
     }
 
     // The world OT can DMA while the CPU projects and sorts the held model.
@@ -34684,42 +34688,44 @@ unsafe fn draw_viewmodel(
     let heads = weapon_tri_heads_ptr();
     let records = weapon_tri_records_ptr();
     let indices = weapon_tri_indices_ptr();
-    let mut submitted = 0usize;
-    // E2 is global GPU state, not part of the polygon itself. Viewmodel tris
-    // are emitted consecutively, so repeat it only when the authored material
-    // window changes; the first triangle always establishes a known value.
-    let mut texture_window = u32::MAX;
-    // Consecutive triangles mostly share a texture: reload the 16-byte packet
-    // material only when it changes.
-    let mut packet_tex = usize::MAX;
-    let mut packet = slots[0].packet;
-    for bucket in (0..VM_SORT_BUCKETS).rev() {
-        let mut link = *heads.add(bucket);
-        while link != VM_SORT_NONE {
-            let t = link as usize;
-            let record = records.add(t).read();
-            let packed_indices = indices.add(t).read();
-            let tex = ((record >> VM_SORT_TEX_SHIFT) & 0xff) as usize;
-            let shade = ((record >> VM_SORT_SHADE_SHIFT) & 0xff) as u8;
-            if tex != packet_tex {
-                packet = slots[tex.min(slots.len() - 1)].packet;
-                packet_tex = tex;
+    scratchpad::run_on_projection_stack(move || {
+        let mut submitted = 0usize;
+        // E2 is global GPU state, not part of the polygon itself. Viewmodel tris
+        // are emitted consecutively, so repeat it only when the authored material
+        // window changes; the first triangle always establishes a known value.
+        let mut texture_window = u32::MAX;
+        // Consecutive triangles mostly share a texture: reload the 16-byte packet
+        // material only when it changes.
+        let mut packet_tex = usize::MAX;
+        let mut packet = slots[0].packet;
+        for bucket in (0..VM_SORT_BUCKETS).rev() {
+            let mut link = *heads.add(bucket);
+            while link != VM_SORT_NONE {
+                let t = link as usize;
+                let record = records.add(t).read();
+                let packed_indices = indices.add(t).read();
+                let tex = ((record >> VM_SORT_TEX_SHIFT) & 0xff) as usize;
+                let shade = ((record >> VM_SORT_SHADE_SHIFT) & 0xff) as u8;
+                if tex != packet_tex {
+                    packet = slots[tex.min(slots.len() - 1)].packet;
+                    packet_tex = tex;
+                }
+                let a = (packed_indices & model::RENDER_FACE_INDEX_MASK) as usize;
+                let b = ((packed_indices >> 10) & model::RENDER_FACE_INDEX_MASK) as usize;
+                let c = ((packed_indices >> 20) & model::RENDER_FACE_INDEX_MASK) as usize;
+                let packed_xy = [
+                    projected_xy.add(a).read(),
+                    projected_xy.add(b).read(),
+                    projected_xy.add(c).read(),
+                ];
+                let uv_words = md.triangle_uv_words(t);
+                draw_vm_tri(packed_xy, uv_words, packet, shade, &mut texture_window);
+                submitted += 1;
+                link = (record & VM_SORT_LINK_MASK) as u16;
             }
-            let a = (packed_indices & model::RENDER_FACE_INDEX_MASK) as usize;
-            let b = ((packed_indices >> 10) & model::RENDER_FACE_INDEX_MASK) as usize;
-            let c = ((packed_indices >> 20) & model::RENDER_FACE_INDEX_MASK) as usize;
-            let packed_xy = [
-                projected_xy.add(a).read(),
-                projected_xy.add(b).read(),
-                projected_xy.add(c).read(),
-            ];
-            let uv_words = md.triangle_uv_words(t);
-            draw_vm_tri(packed_xy, uv_words, packet, shade, &mut texture_window);
-            submitted += 1;
-            link = (record & VM_SORT_LINK_MASK) as u16;
         }
-    }
-    submitted
+        submitted
+    })
 }
 
 /// Stack high-water probe (telemetry builds only): paint the free region
