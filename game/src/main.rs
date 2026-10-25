@@ -1078,7 +1078,7 @@ const WEAPON_MODEL_TYPES: [(u8, usize); 2] = [
     (PROP_TYPE_SNARK, W_SNARK),
 ];
 const PROP_TYPE_SNARK: u8 = 58;
-const MAX_LOADED_MODELS: usize = 24; // c3a2d roster, weaponbox and carried-weapon death drop
+const MAX_LOADED_MODELS: usize = 26; // c3a2d roster, weaponbox, death drop, the player's mine and snark
                                      // Full 96-map + 222-transition roster audit peaks at 174 resident actor
                                      // textures on c1a1f -> c1a1b. Two spare slots cover alignment/roster churn;
                                      // each TexSlot is 32 bytes.
@@ -4834,6 +4834,12 @@ unsafe fn load_weapon_bank(wm: usize) {
     if wm >= wa::VIEWMODELS || wa::BANK_IDS[wm].is_empty() || sfx::bank_live() as usize == wm {
         return;
     }
+    // A cached swap reaches here with the song playing: the read would kill the
+    // XA stream while `CD_TRACK_CUR` still claimed it, and open the SPU CD route
+    // over a data sector (the buzz `music_apply` describes). Park the music the
+    // way a stream load does; `music_apply` replays it on the next tick. A path
+    // that already parked it (the pump, a map load) makes this a cheap no-op.
+    music_suspend_for_stream();
     let dst = core::slice::from_raw_parts_mut(
         core::ptr::addr_of_mut!(SCRATCH_XY).cast::<u32>(),
         MAX_VERTS,
@@ -22245,7 +22251,11 @@ impl Arsenal {
         self.cooldown = 0;
         self.dry_ticks = 0;
         self.switch_ticks = 10; // DefaultDeploy: m_flNextAttack = time + 0.5
-        self.gauss_charge = 0;
+        if self.gauss_charge != 0 {
+            // The charge hum is a loop on the bank's voice: it ends with the charge.
+            unsafe { sfx::bank_stop() };
+            self.gauss_charge = 0;
+        }
     }
 }
 
@@ -23685,10 +23695,14 @@ unsafe fn tick_gauss_secondary(
     base_t: [i32; 3],
 ) -> u8 {
     if w.current != W_GAUSS {
-        w.gauss_charge = 0;
+        if w.gauss_charge != 0 {
+            sfx::bank_stop();
+            w.gauss_charge = 0;
+        }
         return GAUSS_EVENT_NONE;
     }
     if eye_under && (held || w.gauss_charge != 0) {
+        sfx::bank_stop();
         w.gauss_charge = 0;
         w.cooldown = 10;
         sfx::play(sfx::ELECTRO);
@@ -23725,6 +23739,7 @@ unsafe fn tick_gauss_secondary(
             }
         }
         if age >= GAUSS_OVERCHARGE_TICKS {
+            sfx::bank_stop();
             w.gauss_charge = 0;
             w.cooldown = 20;
             PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(50);

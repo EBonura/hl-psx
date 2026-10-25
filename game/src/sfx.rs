@@ -124,7 +124,8 @@ pub const VOICE_CHUNK_BASE: u32 = 3100;
 
 #[inline]
 pub unsafe fn stop_all() {
-    state().stop_all()
+    state().stop_all();
+    bank_stop();
 }
 
 /// The SPU driver the pack loaders upload through. `Spu::new` resets the SPU
@@ -216,10 +217,14 @@ const BANK_NONE: u8 = u8::MAX;
 static mut BANK_ADDR: [(u16, u16); wa::BANK_MAX_IDS] = [(0, 0); wa::BANK_MAX_IDS];
 /// Where the core reserves the region (SPU byte address) and its length in bytes; 0 when it has none.
 static mut BANK_REGION: (u32, u32) = (0, 0);
-/// The last voice of Hsfx's rotating one-shot pool (0..=14). The suit's words and the
-/// chargers own 16, which a shot must not cut; the pool gives a shot up to fifteen
-/// sounds of grace before it is overwritten.
+/// The bank's own voice: the tail of what was Hsfx's 15-voice one-shot pool (the
+/// suit's words are 15 and the chargers 16). `init_from_pack` takes it out of the
+/// pool's rotation (`reserve_pool_tail`), so no pool sound starts on it and cuts a
+/// shotgun's second barrel, and a banked sound cuts nothing of the pool's.
 const BANK_VOICE: u8 = 14;
+/// The one banked sound that holds until it is stopped (the Tau Cannon's charge hum
+/// loops, `bank_stop` ends it); every other banked sound is a one-shot.
+const BANK_HELD: u8 = GAUSS_CHARGE;
 
 /// Find the bank region of a freshly uploaded core `pack`: the ADPCM of its last entry.
 #[cfg_attr(target_arch = "mips", optimize(size))]
@@ -296,6 +301,16 @@ pub unsafe fn load_bank(wm: usize, pack: &[u8]) -> bool {
     true
 }
 
+/// End whatever the bank's voice is playing (the Tau Cannon's charge hum, which
+/// loops until told to stop).
+#[inline(never)]
+#[cfg_attr(target_arch = "mips", optimize(size))]
+pub unsafe fn bank_stop() {
+    let voice = psx_spu::Voice::new(BANK_VOICE);
+    voice.set_volume(psx_spu::Volume::SILENCE, psx_spu::Volume::SILENCE);
+    psx_spu::Voice::release(voice.mask());
+}
+
 /// Play a banked sound when its weapon's bank is the live one.
 #[inline(never)]
 #[cfg_attr(target_arch = "mips", optimize(size))]
@@ -308,11 +323,17 @@ unsafe fn bank_play(id: u8, den: u16) {
     while k < ids.len() {
         if ids[k] == id {
             let (addr, rate) = BANK_ADDR[k];
-            psx_sfx::OneShot::new(
-                psx_sfx::Sample::resident(psx_spu::SpuAddr::new(addr as u32 * 8), rate as u32, 0),
-                psx_spu::Volume::linear(1, den.max(1)),
-            )
-            .play(psx_spu::Voice::new(BANK_VOICE));
+            let at = psx_spu::SpuAddr::new(addr as u32 * 8);
+            let volume = psx_spu::Volume::linear(1, den.max(1));
+            let voice = psx_spu::Voice::new(BANK_VOICE);
+            if id == BANK_HELD {
+                // A loop keeps its sustain until `bank_stop`, like the chargers' beds.
+                voice.configure_sample(at, rate as u32, volume, psx_spu::Adsr::sample());
+                psx_spu::Voice::start(voice.mask());
+            } else {
+                psx_sfx::OneShot::new(psx_sfx::Sample::resident(at, rate as u32, 0), volume)
+                    .play(voice);
+            }
             return;
         }
         k += 1;
@@ -335,6 +356,8 @@ pub unsafe fn init_from_pack(pack: &[u8]) -> usize {
     let spu =
         (*core::ptr::addr_of_mut!(SPU)).insert(psx_spu::Spu::new(psx_io::periph::SpuDma::steal()));
     let ready = state().init_from_pack(spu, pack);
+    // The bank plays on the pool's last voice: take it out of the rotation.
+    state().reserve_pool_tail(BANK_VOICE);
     locate_bank_region(pack);
     assert_eq!(
         ready,

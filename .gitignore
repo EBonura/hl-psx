@@ -40,6 +40,7 @@ docs/*
 reference/
 /tools/*
 !/tools/census/
+!/tools/cdcheck/
 
 # ---- OS / editor cruft ----
 .DS_Store

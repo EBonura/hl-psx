@@ -1,0 +1,146 @@
+# Music swap: a cached weapon swap reads its sound bank from the disc, so the song is parked first.
+# The bank read (vm_publish_streamed -> load_weapon_bank) used to run with the song playing: the
+# read killed the XA stream while CD_TRACK_CUR still said it played (so it never came back), and
+# opened the SPU CD route over a data sector, which buzzes on hardware. It now parks the song the
+# way a stream load does and music_apply replays it from where it was on the next tick.
+#
+# Chapter 15 (play-order map 84) plays CD track 26 from its first tick and arrives with the whole
+# arsenal. R1 twice streams two cold viewmodels (each with a bank of its own), then L1 swaps back
+# to the first one from the tail cache: that swap is the one that read a bank with the song on.
+# CD_TRACK_CUR is the track the drive is playing (0 while parked), CD_TRACK_WANT the one to play.
+# The CD command order (no data read while the song plays) is checked on the emulator's CD command
+# log by tools/cdcheck, run by scratch/music-swap.sh next to this journey.
+name = "hl-music-swap"
+title = "Half-Life: a cached weapon swap parks the song for its bank read and plays it again"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 14000
+
+# Bound to the build by scripts/bind-weapon-addr.sh (hl_psx::CD_TRACK_* are split statics).
+[addr]
+CD_TRACK_CUR = 0x801bdf5c
+CD_TRACK_WANT = 0x801c2e7c
+
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+label = "open chapter select (fifth entry), then the fifteenth chapter, its first map"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 4
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 14
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 60
+
+[[step]]
+label = "the map is loaded when the glock's viewmodel entry is published"
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 9000
+
+[[step]]
+label = "the song plays: CD_TRACK_CUR is its track"
+wait_until = { kind = "ram", sym = "CD_TRACK_CUR", size = 2, op = "ne", value = 0 }
+timeout = 2000
+
+[[step]]
+label = "settle, then R1 twice (two cold viewmodels, each parks and replays the song)"
+wait = 200
+
+[[step]]
+press = ["r1"]
+hold = 8
+wait = 200
+
+[[step]]
+press = ["r1"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "the song is playing before the swap"
+checkpoint = "song-before"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "CD_TRACK_CUR"
+size = 2
+op = "ne"
+value = 0
+
+[[step]]
+label = "L1: back to the first weapon from the tail cache"
+press = ["l1"]
+hold = 8
+
+[[step]]
+label = "the bank read parks the song: CD_TRACK_CUR drops to 0 while CD_TRACK_WANT keeps the track"
+wait_until = { kind = "ram", sym = "CD_TRACK_CUR", size = 2, op = "eq", value = 0 }
+timeout = 40
+
+[[step]]
+label = "parked"
+checkpoint = "song-parked"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "CD_TRACK_WANT"
+size = 2
+op = "ne"
+value = 0
+
+[[step]]
+label = "the first tick after the read replays it"
+wait_until = { kind = "ram", sym = "CD_TRACK_CUR", size = 2, op = "ne", value = 0 }
+timeout = 300
+
+[[step]]
+label = "settle: the song is the one that was wanted"
+wait = 60
+checkpoint = "song-after"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "CD_TRACK_CUR"
+size = 2
+op = "ne"
+value = 0
+[[step.assert]]
+kind = "audio"
+window = 60
+min_peak = 500

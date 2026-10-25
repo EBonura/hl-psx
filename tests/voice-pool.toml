@@ -1,0 +1,128 @@
+# Voice pool: the shotgun's second barrel is a banked sound on the bank's own voice (14), and a burst of pool sounds must not take that voice. Hsfx rotates its one-shot pool over voices 0..13 now (next_voice, the byte at STATE+2214 in this build, never reaches 14); with the old 15-voice pool the 15th sound of a burst cut the barrel's tail and the bank cut a pool sound in turn.
+name = "hl-voice-pool"
+title = "Half-Life: a pool-sound burst never takes the weapon bank's voice"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 30000
+
+# Bound to the build these journeys were written against (hud::PREV_* are the HUD's
+# last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
+[addr]
+PREV_WEAPON = 0x800c99a8
+PREV_CLIP = 0x800c99b0
+PREV_RESERVE = 0x800c99ac
+PREV_HEALTH = 0x800c99a4
+LAST_CORE = 0x800ca474
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+label = "open chapter select (fifth entry), then the chapter row"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 4
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 13
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+label = "enter the chapter's first map and wait for the live viewmodel"
+press = ["cross"]
+hold = 8
+wait = 60
+
+[[step]]
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 9000
+
+[[step]]
+label = "settle: the first ticks of a map run the arrival"
+wait = 400
+
+[[step]]
+label = "R1 steps to the next owned weapon; three presses reach the shotgun"
+press = ["r1"]
+hold = 8
+wait = 100
+repeat = 3
+
+[[step]]
+label = "double barrel: the sound asked for is core id 51, on the bank's voice"
+press = ["l2"]
+hold = 30
+wait = 0
+
+[[step]]
+wait_until = { kind = "ram", sym = "LAST_CORE", size = 1, op = "eq", value = 51 }
+timeout = 300
+
+[[step]]
+label = "a burst of pool sounds: the flashlight toggled eighteen times, one sound each"
+press = ["l3"]
+hold = 3
+wait = 3
+repeat = 18
+
+[[step]]
+label = "the pool has gone round: its next voice is below the bank's voice (14), never on it"
+checkpoint = "pool-burst"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "STATE"
+offset = 2214
+size = 1
+op = "lt"
+value = 14
+
+[[step]]
+label = "and a second burst, so the rotation wraps at least once more"
+press = ["l3"]
+hold = 3
+wait = 3
+repeat = 18
+
+[[step]]
+checkpoint = "pool-burst-2"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "STATE"
+offset = 2214
+size = 1
+op = "lt"
+value = 14
+[[step.assert]]
+kind = "audio"
+window = 60
+min_peak = 500
