@@ -105,7 +105,7 @@ fn room_staging_words(rooms: &Path) -> Result<usize> {
         .ok_or("model residency audit found no cooked room chunks")?;
     Ok(room_budget::map_staging_words(largest))
 }
-const MAX_LOADED_MODELS: usize = 24;
+const MAX_LOADED_MODELS: usize = 26;
 const POOL_FACE_RUN_CAP: usize = 192;
 const POOL_TEX_SLOTS: usize = 176;
 const N_MODEL_TYPES: usize = 77;
@@ -164,8 +164,8 @@ const LUMP_MODELS: usize = 14;
 struct Actor {
     ty: u8,
     body: u8,
-    /// A model the runtime keeps when it fits and draws a solid without otherwise
-    /// (the player's own mines and snarks): its drop is no error.
+    /// A model that comes after every actor in the stream order (the player's own
+    /// mines and snarks); its drop is an error like any other.
     optional: bool,
 }
 
@@ -970,9 +970,10 @@ fn simulate(
                     None
                 };
                 if let Some(reason) = reason {
-                    if !actor.optional {
-                        drops.push(format!("{}:{reason}", model_name(actor.ty)));
-                    }
+                    // Optional or not, a model that does not fit is a failure: the player
+                    // holds the mine and the snark on every room that has them, and a
+                    // room that cannot keep their models would draw solids instead.
+                    drops.push(format!("{}:{reason}", model_name(actor.ty)));
                     continue;
                 }
                 // Merged chunks retain their two-word envelope before the HMD
@@ -2363,7 +2364,7 @@ mod tests {
             "runtime drift: N_MODEL_TYPES"
         );
         for declaration in [
-            "const MAX_LOADED_MODELS: usize = 24;",
+            "const MAX_LOADED_MODELS: usize = 26;",
             "const POOL_TEX_SLOTS: usize = 176;",
             "const POOL_FACE_RUN_CAP: usize = 192;",
             "const FACE_REGION_WORDS: usize = hl_format::room_budget::FACE_REGION_WORDS;",

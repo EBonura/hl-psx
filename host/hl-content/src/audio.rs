@@ -426,7 +426,7 @@ const SOUNDS: [(&str, &str); 89] = [
     ("flashlight", "items/flashlight1.wav"),
     ("m203", "weapons/glauncher.wav"),
     ("shotgun_double", "weapons/dbarrel1.wav"),
-    ("gauss_charge", "weapons/electro5.wav"),
+    ("gauss_charge", "ambience/pulsemachine.wav"),
     // Compact, resident gameplay feedback restored by the sound sweep. These
     // are shared across the campaign, so keeping one low-rate SPU copy is much
     // cheaper than repeating them in all 96 per-map banks.
@@ -572,6 +572,10 @@ fn resident_rate(id: &str, source_rate: u32) -> u32 {
     } else if matches!(id, "mine_deploy" | "mine_activate" | "xbow_hit") {
         // Clicks and thuds with some top to them.
         8_000
+    } else if id == "gauss_charge" {
+        // A low hum that loops for as long as the charge is held: 5 kHz keeps
+        // all of it in about 5 KB of the weapon's bank.
+        5_000
     } else if id.starts_with("charger_") || id == "button" {
         // The two continuous charger beds are long enough that the ordinary
         // SFX rate would crowd the largest per-map dialogue bank out of SPU
@@ -775,8 +779,10 @@ pub fn build_sfx(sound: &Path, output: &Path) -> Result<()> {
                 source,
                 rate,
                 // The runtime owns the charger beds through a reserved voice
-                // and needs them as hardware loops.
-                id.starts_with("charger_"),
+                // and needs them as hardware loops; the Tau Cannon's charge hum
+                // (pulsemachine, a whole-sample loop in the original) holds the
+                // bank's voice the same way until it is stopped.
+                id.starts_with("charger_") || *id == "gauss_charge",
             )
         })
         .collect();
@@ -2291,6 +2297,74 @@ fn no_regression_rate(p: &Planned<'_>, previous: u32) -> u32 {
     p.ladder[floor]
 }
 
+/// Viewmodel (`weapon_audio::BANK_IDS` index) of each pickup class a map can place.
+const PICKUP_VIEWMODELS: [(&str, usize); 14] = [
+    ("weapon_9mmhandgun", 0),
+    ("weapon_357", 1),
+    ("weapon_9mmar", 2),
+    ("weapon_crossbow", 3),
+    ("weapon_crowbar", 4),
+    ("weapon_egon", 5),
+    ("weapon_gauss", 6),
+    ("weapon_handgrenade", 7),
+    ("weapon_hornetgun", 8),
+    ("weapon_rpg", 9),
+    ("weapon_satchel", 10),
+    ("weapon_shotgun", 12),
+    ("weapon_snark", 13),
+    ("weapon_tripmine", 14),
+];
+
+/// The Hazard Course's core region holds the bank of `TRAINING_VIEWMODELS` only (the
+/// profile has no room for more), so a weapon with a bank of its own that a training
+/// map places and the region cannot hold would be silent there. Fails the cook then.
+fn check_training_banks(valve: &Path, map_list: &str) -> Result<()> {
+    for map_name in map_list.split_whitespace().filter(|m| m.starts_with("t0a0")) {
+        let bsp = valve.join("maps").join(format!("{map_name}.bsp"));
+        if !bsp.exists() {
+            continue;
+        }
+        for entity in bsp_entities(&bsp)? {
+            let Some(class) = entity.get("classname") else {
+                continue;
+            };
+            let Some(&(_, wm)) = PICKUP_VIEWMODELS
+                .iter()
+                .find(|(name, _)| class.eq_ignore_ascii_case(name))
+            else {
+                continue;
+            };
+            if !weapon_audio::BANK_IDS[wm].is_empty() && !TRAINING_VIEWMODELS.contains(&wm) {
+                return Err(format!(
+                    "{map_name} places {class}, whose sounds are in viewmodel {wm}'s bank; the Hazard Course core region holds only viewmodels {TRAINING_VIEWMODELS:?}"
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Every map-audio sample of the base disc (hl-psx e03e9bc) and the rate it was cooked at,
+/// one `map TAB key TAB Hz` row each. Regenerated from that disc's `rates.txt`, never
+/// edited: it is the floor the cooker holds every later cook to (`build_voices`).
+const VOICE_REFERENCE: &str = include_str!("../base-disc/voices-e03e9bc.tsv");
+
+/// The base disc's rate of each of `map`'s samples, by key.
+fn voice_reference(map: &str) -> HashMap<&'static str, u32> {
+    VOICE_REFERENCE
+        .lines()
+        .filter_map(|line| {
+            let mut field = line.split('\t');
+            let (row_map, key, rate) = (field.next()?, field.next()?, field.next()?);
+            if row_map != map {
+                return None;
+            }
+            Some((key, rate.parse().ok()?))
+        })
+        .collect()
+}
+
 pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
     const RUNTIME_MAX_MAP_AUDIO: usize = 96;
     fs::create_dir_all(output)?;
@@ -2301,6 +2375,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             fs::remove_file(path)?;
         }
     }
+    check_training_banks(valve, map_list)?;
     let sfx_dir = output.parent().unwrap_or(output).join("sfx");
     let core_profiles = build_core_profiles(valve, map_list, &sfx_dir)?;
     let mut previous_core: HashMap<u32, usize> = HashMap::new();
@@ -2349,6 +2424,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             continue;
         }
         let keys = map_audio_keys(valve, &bsp, map_index as u16, &sentences)?;
+        let reference = voice_reference(map_name);
         // The suit's own sentences, from what this map can make it say.
         let hev_chosen = hev_words.fit(
             &crate::hev::wanted(map_name, &bsp_entities(&bsp)?, &map_classes(&bsp)?),
@@ -2472,7 +2548,9 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                 let from = cue.ladder.iter().position(|&r| r <= cap).unwrap_or(0);
                 cue.ladder.drain(..from);
                 cue.bytes.drain(..from);
-                cue_keys.push(entry.key.clone());
+                if !reference.contains_key(entry.key.as_str()) {
+                    cue_keys.push(entry.key.clone());
+                }
             }
             planned.push(cue);
             joined.push((
@@ -2484,9 +2562,11 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
         // stay out of the allocation, so every other sound gets exactly the rate
         // it would get without them, and they take what is left afterwards.
         let mut spare: Vec<Planned<'_>> = Vec::new();
+        // A sample the base disc (hl-psx e03e9bc) also placed is never spare: it keeps
+        // its rate floor, so it joins the allocation like the rest of the map's sounds.
         let spare_keys: Vec<String> = joined
             .iter()
-            .filter(|(tier, _)| *tier >= 4)
+            .filter(|(tier, key)| *tier >= 4 && !reference.contains_key(key.as_str()))
             .map(|(_, key)| key.clone())
             .collect();
         for key in &spare_keys {
@@ -2494,7 +2574,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                 spare.push(planned.remove(i));
             }
         }
-        joined.retain(|(tier, _)| *tier < 4);
+        joined.retain(|(tier, key)| *tier < 4 || reference.contains_key(key.as_str()));
         // The capped tier-3 cues are allocated against everything else only if that leaves
         // the map's speech at the rates it has without them (see below).
         let mut cues: Vec<Planned<'_>> = Vec::new();
@@ -2507,6 +2587,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             let Some(victim) = joined
                 .iter()
                 .enumerate()
+                .filter(|(_, (_, key))| !reference.contains_key(key.as_str()))
                 .max_by_key(|(order, (tier, _))| (*tier, *order))
                 .map(|(order, _)| order)
             else {
@@ -2622,6 +2703,15 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                     "  {map_name}: erase floors dropped for {} class(es)",
                     erase_relaxed.len()
                 );
+            }
+            // The base disc's rate of each sample is a hard floor, applied after the
+            // class relaxations above so no later step can take it back: the lowest
+            // ladder step that is not below that rate is the last this entry may take.
+            for (p, c) in planned.iter().zip(candidates.iter_mut()) {
+                if let Some(&rate) = reference.get(p.entry.key.as_str()) {
+                    let step = p.ladder.iter().rposition(|&r| r >= rate).unwrap_or(0);
+                    c.max_step = c.max_step.min(step);
+                }
             }
             // No regressions: an entry the previous cooker also placed keeps at
             // least the playback quality it had there (measured, both pipelines,
@@ -2900,6 +2990,26 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             .zip(&steps)
             .map(|(p, &step)| p.ladder[step])
             .collect();
+        // Nothing the base disc had may be missing or slower. The floors above are
+        // soft when the allocation cannot meet them, so the result is checked.
+        let mut lost: Vec<String> = reference
+            .iter()
+            .filter(|(key, _)| !planned.iter().any(|p| p.entry.key == **key))
+            .map(|(key, rate)| format!("{key} ({rate} Hz) missing"))
+            .collect();
+        lost.extend(planned.iter().zip(&rates).filter_map(|(p, &rate)| {
+            let base = *reference.get(p.entry.key.as_str())?;
+            (rate < base).then(|| format!("{} {base} -> {rate} Hz", p.entry.key))
+        }));
+        if !lost.is_empty() {
+            lost.sort();
+            return Err(format!(
+                "{map_name}: {} sample(s) of the base disc lost or slower: {}",
+                lost.len(),
+                lost.join(", ")
+            )
+            .into());
+        }
         let blob_key = |p: &Planned<'_>, rate: u32| (p.entry.wavs.join("|"), rate, p.looping);
         // One job per distinct (sound, rate, loop): a map can list the same
         // sound under two keys (an NPC use reply and its sentence).
@@ -3386,5 +3496,16 @@ mod tests {
                 .count()
                 <= 2
         );
+    }
+
+    #[test]
+    fn the_voice_reference_is_the_base_disc_table() {
+        // 2,876 samples over 103 maps, one row each; the barnacle's bite and death
+        // cries are the ones an earlier cook starved out of c2a2.
+        assert_eq!(VOICE_REFERENCE.lines().count(), 2876);
+        let c2a2 = voice_reference("c2a2");
+        assert_eq!(c2a2["sfx:shot:barnacle/bcl_bite3.wav"], 4500);
+        assert_eq!(c2a2["sfx:shot:barnacle/bcl_die1.wav"], 3200);
+        assert!(voice_reference("no-such-map").is_empty());
     }
 }
