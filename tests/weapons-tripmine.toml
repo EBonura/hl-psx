@@ -10,10 +10,11 @@ max_ticks = 30000
 # Bound to the build these journeys were written against (hud::PREV_* are the HUD's
 # last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
 [addr]
-PREV_WEAPON = 0x800c89d0
-PREV_CLIP = 0x800c89d8
-PREV_RESERVE = 0x800c89d4
-PREV_HEALTH = 0x800c89cc
+PREV_WEAPON = 0x800c9760
+PREV_CLIP = 0x800c9768
+PREV_RESERVE = 0x800c9764
+PREV_HEALTH = 0x800c975c
+LAST_CORE = 0x800ca22c
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
 wait = 100
@@ -127,6 +128,11 @@ hold = 8
 wait = 0
 
 [[step]]
+label = "the sound asked for is core id 70"
+wait_until = { kind = "ram", sym = "LAST_CORE", size = 1, op = "eq", value = 70 }
+timeout = 300
+
+[[step]]
 label = "wait until PREV_RESERVE eq 4"
 wait_until = { kind = "ram", sym = "PREV_RESERVE", size = 2, op = "eq", value = 4 }
 timeout = 300
@@ -145,8 +151,13 @@ value = 4
 kind = "not_flat"
 [[step]]
 label = "wait until the effect shows"
-wait_until = { kind = "pixels", color = [255, 30, 20], color_tol = 60, region = { x = 0, y = 90, w = 320, h = 60 }, min_count = 100 }
+wait_until = { kind = "pixels", color = [0, 170, 156], color_tol = 90, region = { x = 0, y = 90, w = 320, h = 60 }, min_count = 100 }
 timeout = 700
+
+[[step]]
+label = "the sound asked for is core id 71"
+wait_until = { kind = "ram", sym = "LAST_CORE", size = 1, op = "eq", value = 71 }
+timeout = 900
 
 [[step]]
 label = "armed beam"
@@ -162,7 +173,27 @@ value = 100
 kind = "not_flat"
 [[step.assert]]
 kind = "pixels"
-color = [255, 30, 20]
-color_tol = 60
+color = [0, 170, 156]
+color_tol = 90
 region = { x = 0, y = 90, w = 320, h = 60 }
 min_count = 100
+[[step]]
+label = "step back from the wall"
+lstick = [128, 255]
+rstick = [128, 128]
+press = []
+hold = 40
+wait = 2
+
+[[step]]
+lstick = [128, 128]
+rstick = [128, 128]
+press = []
+wait = 20
+
+[[step]]
+label = "the mine and its beam from a few steps back"
+checkpoint = "tripmine-far"
+golden = false
+[[step.assert]]
+kind = "not_flat"

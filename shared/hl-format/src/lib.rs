@@ -12,6 +12,7 @@ pub mod hitgroup;
 pub mod pvs_pair;
 pub mod room_budget;
 pub mod skill;
+pub mod weapon_audio;
 
 pub mod map {
     pub const SCIENTIST_CORPSE_POSES: [&str; 7] = [

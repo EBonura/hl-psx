@@ -174,6 +174,10 @@ pub(crate) unsafe fn tick_placed(m: &Map, movers: &[phys::Mover], i: usize) -> b
     }
     if p.life > 0 {
         PROJECTILES[i].life = p.life - 1;
+        if p.life == 1 {
+            // The charge-up ends: the beam comes up with a beep.
+            sfx::play_world(sfx::MINE_ACTIVATE, p.pos);
+        }
         return false;
     }
     let end = beam_end(m, movers, p.pos, p.vel);
@@ -206,6 +210,8 @@ pub(crate) unsafe fn place(m: &Map, movers: &[phys::Mover], eye: [i32; 3], fwd: 
     // A placed mine keeps its wall normal in `vel` (see tick_projectiles).
     PROJECTILES[slot].vel = hit.normal;
     PROJECTILES[slot].life = ARM_TICKS;
+    // CTripmineGrenade::Spawn: the deploy click.
+    sfx::play_world(sfx::MINE_DEPLOY, PROJECTILES[slot].pos);
     true
 }
 

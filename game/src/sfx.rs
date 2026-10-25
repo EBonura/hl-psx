@@ -1,4 +1,6 @@
 //! Authored sound identifiers and the game-owned shared playback state.
+use hl_format::weapon_audio as wa;
+
 pub const CHUNK_ID: u32 = 3000;
 pub const CHUNK_ID_LIGHT: u32 = 3050;
 pub const CHUNK_ID_TRAINING_WEAPONS: u32 = 3051;
@@ -82,11 +84,33 @@ pub const BULLET_HIT1: u8 = 66; // flesh bullet impact (TEXTURETYPE CHAR_TEX_FLE
 pub const BULLET_HIT2: u8 = 67;
 pub const WOOD_IMPACT: u8 = 68; // debris/wood1: crowbar against CHAR_TEX_WOOD
 pub const CBAR_HITBOD: u8 = 69; // crowbar landing on flesh (never the world dong)
+// ---- the weapons' own sounds (ids 70.. of the cooked core) ----
+pub const MINE_DEPLOY: u8 = 70; // tripmine stuck on a wall (mine_deploy)
+pub const MINE_ACTIVATE: u8 = 71; // its beam comes up (mine_activate)
+pub const SQK_HUNT1: u8 = 72; // a snark squeaks as it springs
+pub const SQK_HUNT2: u8 = 73;
+pub const SQK_HUNT3: u8 = 74;
+pub const SQK_BITE: u8 = 75; // sqk_deploy1, the sound a bite makes
+pub const SQK_BLAST: u8 = 76; // a snark pops
+pub const EGON_WINDUP: u8 = 77; // the Gluon Gun spinning up
+pub const EGON_RUN: u8 = 78; // its running hum, restarted while the beam holds
+pub const EGON_OFF: u8 = 79; // and spinning down
+pub const HORNET_FIRE: u8 = 80; // the hive hand's shot
+pub const HORNET_BUZZ: u8 = 81; // a hornet in flight
+pub const HORNET_HIT: u8 = 82; // and where it lands
+pub const ROCKET_FLY: u8 = 83; // a rocket's motor (rocket1)
+pub const XBOW_HIT: u8 = 84; // a bolt into the world
+pub const XBOW_HITBOD: u8 = 85; // and into flesh
+pub const GRENADE_HIT: u8 = 86; // a grenade's bounce (grenade_hit1)
+pub const SATCHEL_BOUNCE: u8 = 87; // a satchel's (g_bounce2)
+pub const GRENADE_PIN: u8 = 88; // the pin of a hand grenade
+/// "No sound": past the bank, so `Hsfx` ignores it.
+pub const NO_SOUND: u8 = u8::MAX;
 pub const MENU_ACCEPT: u8 = BUTTON;
 // Dialogue is not a global SFX id anymore -- it streams per-map (chunk
 // 3100+idx) and plays via play_voice / play_voice_world (local ids).
 
-const MAX_SFX: usize = 70;
+const MAX_SFX: usize = 90;
 
 static mut STATE: psx_goldsrc::hsfx::Hsfx<MAX_SFX, CHARGER_HEALTH_LOOP, CHARGER_HEV_LOOP> =
     psx_goldsrc::hsfx::Hsfx::new();
@@ -179,6 +203,127 @@ pub unsafe fn apply_room(room: u8) {
     ROOM_APPLIED = room;
 }
 
+// ---- the held weapon's bank ----
+//
+// The sounds of `hl_format::weapon_audio::BANK_IDS` are not in the core bank: the
+// weapon in hand brings them (a bank chunk streamed when it is drawn) into the
+// region the core's last entry reserves. They play on the pool's last voice.
+
+/// The viewmodel whose bank sits in the region, `BANK_NONE` before any does.
+static mut BANK_LIVE: u8 = BANK_NONE;
+const BANK_NONE: u8 = u8::MAX;
+/// SPU address / 8 and rate of each sound of the live bank.
+static mut BANK_ADDR: [(u16, u16); wa::BANK_MAX_IDS] = [(0, 0); wa::BANK_MAX_IDS];
+/// Where the core reserves the region (SPU byte address) and its length in bytes; 0 when it has none.
+static mut BANK_REGION: (u32, u32) = (0, 0);
+/// The last voice of Hsfx's rotating one-shot pool (0..=14). The suit's words and the
+/// chargers own 16, which a shot must not cut; the pool gives a shot up to fifteen
+/// sounds of grace before it is overwritten.
+const BANK_VOICE: u8 = 14;
+
+/// Find the bank region of a freshly uploaded core `pack`: the ADPCM of its last entry.
+#[cfg_attr(target_arch = "mips", optimize(size))]
+unsafe fn locate_bank_region(pack: &[u8]) {
+    BANK_LIVE = BANK_NONE;
+    BANK_REGION = (0, 0);
+    let n = u32::from_le_bytes(pack[4..8].try_into().unwrap()) as usize;
+    // A pack of the original ids and no more holds no weapon at all (the
+    // lightweight profile); otherwise the region is its last entry.
+    if n <= wa::CORE_IDS {
+        return;
+    }
+    let mut at = 0x1010u32;
+    let mut index = 0;
+    while index < n {
+        let len = u32::from_le_bytes(pack[12 + index * 8..16 + index * 8].try_into().unwrap()) - 32;
+        if index == n - 1 {
+            BANK_REGION = (at, len);
+        }
+        at = ((at + len + 15) & !15) + 16;
+        index += 1;
+    }
+}
+
+/// The viewmodel whose bank is live.
+#[inline]
+pub unsafe fn bank_live() -> u8 {
+    BANK_LIVE
+}
+
+/// Lay the bank chunk of viewmodel `wm` (an HSFX pack) into the region, in the
+/// order `BANK_IDS[wm]` names. False when it does not fit or does not match.
+#[inline(never)]
+#[cfg_attr(target_arch = "mips", optimize(size))]
+pub unsafe fn load_bank(wm: usize, pack: &[u8]) -> bool {
+    use psx_sfx::PARKING_TAIL;
+    // Whatever the old bank was playing is about to be overwritten.
+    let voice = psx_spu::Voice::new(BANK_VOICE);
+    voice.set_volume(psx_spu::Volume::SILENCE, psx_spu::Volume::SILENCE);
+    psx_spu::Voice::key_off(voice.mask());
+    BANK_LIVE = BANK_NONE;
+    let ids = wa::BANK_IDS[wm];
+    let (base, room) = BANK_REGION;
+    if ids.is_empty() || pack.len() < 8 || &pack[0..4] != b"HSFX" {
+        return false;
+    }
+    if u32::from_le_bytes(pack[4..8].try_into().unwrap()) as usize != ids.len() {
+        return false;
+    }
+    let Some(spu) = (*core::ptr::addr_of_mut!(SPU)).as_mut() else {
+        return false;
+    };
+    let mut at = base;
+    let mut k = 0;
+    while k < ids.len() {
+        let off = u32::from_le_bytes(pack[8 + k * 8..12 + k * 8].try_into().unwrap()) as usize;
+        let len = u32::from_le_bytes(pack[12 + k * 8..16 + k * 8].try_into().unwrap()) as usize;
+        let sample = &pack[off..off + len];
+        let adpcm = &sample[32..];
+        if at + wa::spu_bytes(adpcm.len()) as u32 > base + room {
+            return false;
+        }
+        BANK_ADDR[k] = (
+            (at / 8) as u16,
+            u32::from_le_bytes(sample[16..20].try_into().unwrap()) as u16,
+        );
+        spu.upload_adpcm(psx_spu::SpuAddr::new(at), adpcm);
+        at = (at + adpcm.len() as u32 + 15) & !15;
+        spu.upload_adpcm(psx_spu::SpuAddr::new(at), &PARKING_TAIL);
+        at += PARKING_TAIL.len() as u32;
+        k += 1;
+    }
+    BANK_LIVE = wm as u8;
+    true
+}
+
+/// Play a banked sound when its weapon's bank is the live one.
+#[inline(never)]
+#[cfg_attr(target_arch = "mips", optimize(size))]
+unsafe fn bank_play(id: u8, den: u16) {
+    if BANK_LIVE == BANK_NONE {
+        return;
+    }
+    let ids = wa::BANK_IDS[BANK_LIVE as usize];
+    let mut k = 0;
+    while k < ids.len() {
+        if ids[k] == id {
+            let (addr, rate) = BANK_ADDR[k];
+            psx_sfx::OneShot::new(
+                psx_sfx::Sample::resident(psx_spu::SpuAddr::new(addr as u32 * 8), rate as u32, 0),
+                psx_spu::Volume::linear(1, den.max(1)),
+            )
+            .play(psx_spu::Voice::new(BANK_VOICE));
+            return;
+        }
+        k += 1;
+    }
+}
+
+#[inline(always)]
+fn banked(id: u8) -> bool {
+    (id as usize) < wa::REGION_ENTRY && wa::BANKED_MASK[(id >> 5) as usize] >> (id & 31) & 1 != 0
+}
+
 #[inline]
 pub unsafe fn init_from_pack(pack: &[u8]) -> usize {
     let end = checked_room_bank(pack, 0x1010, MAX_SFX);
@@ -190,6 +335,7 @@ pub unsafe fn init_from_pack(pack: &[u8]) -> usize {
     let spu =
         (*core::ptr::addr_of_mut!(SPU)).insert(psx_spu::Spu::new(psx_io::periph::SpuDma::steal()));
     let ready = state().init_from_pack(spu, pack);
+    locate_bank_region(pack);
     assert_eq!(
         ready,
         u32::from_le_bytes(pack[4..8].try_into().unwrap()) as usize
@@ -329,14 +475,20 @@ pub unsafe fn set_map_loop_world(owner: u16, pos: [i32; 3]) -> bool {
 
 #[inline]
 pub unsafe fn play_vol(id: u8, den: u16) {
+    if id == NO_SOUND {
+        return;
+    }
     trace(0, id, [0; 3]);
-    state().play_vol(id, den)
+    if banked(id) {
+        bank_play(id, den)
+    } else {
+        state().play_vol(id, den)
+    }
 }
 
 #[inline]
 pub unsafe fn play(id: u8) {
-    trace(0, id, [0; 3]);
-    state().play(id)
+    play_vol(id, 1)
 }
 
 #[inline]
@@ -369,6 +521,15 @@ unsafe fn trace(path: i32, id: u8, pos: [i32; 3]) {
     );
 }
 
+/// The resident sound last asked for (u8::MAX before any). The weapon journeys
+/// read it to prove which sample a shot, a blast or a placed mine plays, so
+/// the link map must keep the symbol: a volatile store does.
+pub static mut LAST_CORE: u8 = u8::MAX;
+
 #[cfg(not(feature = "interaction-probe"))]
 #[inline(always)]
-unsafe fn trace(_path: i32, _id: u8, _pos: [i32; 3]) {}
+unsafe fn trace(path: i32, id: u8, _pos: [i32; 3]) {
+    if path == 0 {
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(LAST_CORE), id);
+    }
+}

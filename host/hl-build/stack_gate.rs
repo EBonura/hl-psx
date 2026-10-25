@@ -61,7 +61,7 @@ pub fn parse_profile(text: &str) -> Option<(u32, u32)> {
 }
 
 /// Numbers of the first `const NAME: [..] = [ ... ];` array in `source`.
-fn array_of(source: &str, name: &str) -> Option<Vec<usize>> {
+pub(crate) fn array_of(source: &str, name: &str) -> Option<Vec<usize>> {
     let start = source.find(&format!("const {name}:"))?;
     let rest = &source[start..];
     let open = rest.find("= [")? + 3;

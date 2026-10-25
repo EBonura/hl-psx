@@ -1071,6 +1071,13 @@ const MOVE_AWAY_TIMEOUT_TICKS: u8 = 80;
 // geometry chunk `1300+id`, texture chunk `1100+id`. The runtime keeps only the
 // types a map places resident (TYPE_TO_SLOT -> LOADED_MODELS).
 const MODEL_STREAM_ORDER: [u8; N_MODEL_TYPES] = room_budget::MODEL_STREAM_ORDER;
+/// The world models of the player's own tripmines and snarks, with the weapon
+/// that brings each: streamed on every map from that weapon's first one on.
+const WEAPON_MODEL_TYPES: [(u8, usize); 2] = [
+    (tripmine::PROP_TYPE_TRIPMINE, W_TRIPMINE),
+    (PROP_TYPE_SNARK, W_SNARK),
+];
+const PROP_TYPE_SNARK: u8 = 58;
 const MAX_LOADED_MODELS: usize = 24; // c3a2d roster, weaponbox and carried-weapon death drop
                                      // Full 96-map + 222-transition roster audit peaks at 174 resident actor
                                      // textures on c1a1f -> c1a1b. Two spare slots cover alignment/roster churn;
@@ -4812,7 +4819,31 @@ unsafe fn vm_publish_streamed(wm: usize, word: usize, slot: usize, clen: usize) 
     if word == 0 {
         vm_backup_live_tail();
     }
+    load_weapon_bank(wm);
     true
+}
+
+/// Bring the sounds the drawn weapon owns (its bank chunk,
+/// `hl_format::weapon_audio`) into the SPU region the core reserves. The chunk
+/// lands in the world projection scratch, which no frame needs between ticks;
+/// a failed read leaves the weapon quiet, never the game stopped.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn load_weapon_bank(wm: usize) {
+    use hl_format::weapon_audio as wa;
+    if wm >= wa::VIEWMODELS || wa::BANK_IDS[wm].is_empty() || sfx::bank_live() as usize == wm {
+        return;
+    }
+    let dst = core::slice::from_raw_parts_mut(
+        core::ptr::addr_of_mut!(SCRATCH_XY).cast::<u32>(),
+        MAX_VERTS,
+    );
+    if let Some(load) = cdstream::load_chunk_decompressed(wa::BANK_CHUNK_BASE + wm as u32, dst) {
+        let bytes = core::slice::from_raw_parts(dst.as_ptr().cast::<u8>(), load.raw_len);
+        sfx::load_bank(wm, bytes);
+    }
+    // The projection cache is keyed by frame; nothing of it survives this.
+    (*core::ptr::addr_of_mut!(VERT_FRAME)).fill(0);
 }
 
 /// Outcome of [`vm_switch_begin`].
@@ -4966,6 +4997,10 @@ unsafe fn load_resident_viewmodels(
     cdstream::stream_abort();
     VM_STREAM_WM = VM_NONE;
     cdstream::prime_persistent_entries(MODEL_CHUNK_V_9MMHANDGUN, N_VIEWMODELS);
+    cdstream::prime_persistent_entries(
+        hl_format::weapon_audio::BANK_CHUNK_BASE,
+        hl_format::weapon_audio::VIEWMODELS,
+    );
     VM_ENTRY = VmEntry::NONE;
     VM_LIVE_WM = VM_NONE;
     VM_MODEL_CACHE = Model::EMPTY;
@@ -5090,25 +5125,42 @@ unsafe fn stream_map_models(
     // decorative render-only types (AI_IDLE: bosses, flyers, statues). A heavy
     // roster drops a statue -- never a fighting enemy, and pickups outrank
     // scenery (an invisible medkit still collects, but shouldn't happen).
+    // The player's own tripmines and snarks need their models wherever the
+    // player can hold the weapon: every map from the one it first turns up in
+    // (the chapter and arrival loadouts hand out exactly those).
+    let mut weapon_types = [0u8; WEAPON_MODEL_TYPES.len()];
+    let mut weapon_n = 0usize;
+    for (wty, w) in WEAPON_MODEL_TYPES {
+        if map_catalog::diagnostic_has_weapon(map_index, WEAPON_FIRST_MAP[w]) {
+            weapon_types[weapon_n] = wty;
+            weapon_n += 1;
+        }
+    }
     let mut pass = 0;
-    let mut source = 0; // incoming mailbox first, then the complete live roster
+    let mut source = 0; // incoming mailbox first, then the live roster, then the player's weapons
     let mut rank = 0usize;
     let mut pi = 0usize;
     loop {
-        let source_len = if source == 0 { ncarry } else { nprops };
+        let source_len = match source {
+            0 => ncarry,
+            1 => nprops,
+            // The player's own models come after every other type has had its slot.
+            _ if pass == 3 => weapon_n,
+            _ => 0,
+        };
         if pi >= source_len {
             if rank + 1 < N_MODEL_TYPES {
                 rank += 1;
                 pi = 0;
                 continue;
             }
-            if source == 0 {
-                source = 1;
+            if source < 2 {
+                source += 1;
                 rank = 0;
                 pi = 0;
                 continue;
             }
-            if pass < 2 {
+            if pass < 3 {
                 pass += 1;
                 source = 0;
                 rank = 0;
@@ -5122,8 +5174,10 @@ unsafe fn stream_map_models(
         // model to a destination decoration when a pool is tight.
         let ty = if source == 0 {
             carry_mail_read(pi).0 as usize
-        } else {
+        } else if source == 1 {
             PROP_KIND[pi] as usize
+        } else {
+            weapon_types[pi] as usize
         };
         pi += 1;
         if ty != MODEL_STREAM_ORDER[rank] as usize {
@@ -5133,6 +5187,7 @@ unsafe fn stream_map_models(
             continue; // out of range, or this type is already resident
         }
         let want_pass = match model_def(ty as u8).ai {
+            _ if source == 2 => 3,
             AI_IDLE => 2,
             AI_ITEM => 1,
             _ => 0,
@@ -23198,6 +23253,12 @@ unsafe fn fire_weapon(
                 return match phys::trace_line(m, movers, from, to) {
                     Some(h) if h.frac <= 1024 => false,
                     hit => {
+                        // CSqueak::PrimaryAttack: sqk_hunt2 or sqk_hunt3 as it leaves.
+                        sfx::play(if SIM_NOW & 1 == 0 {
+                            sfx::SQK_HUNT2
+                        } else {
+                            sfx::SQK_HUNT3
+                        });
                         let slot = spawn_projectile_dir(
                             PROJ_SNARK,
                             skill_hit(Sk::SnarkPop),
@@ -23346,7 +23407,7 @@ unsafe fn fire_secondary(
             w.hornet_regen = 0;
             w.cooldown = HORNET_ALT_COOLDOWN;
             spawn_projectile(PROJ_HORNET_FAST, w.def().damage, eye, rot);
-            sfx::play(sfx::ELECTRO);
+            sfx::play(sfx::HORNET_FIRE);
             true
         }
         _ => false,
@@ -23569,6 +23630,9 @@ unsafe fn gauss_beam(
     }
 }
 
+/// The Gluon Gun's windup, as cooked (1.3 s), and the length of its hum (2.0 s).
+const EGON_WINDUP_TICKS: u8 = 26;
+const EGON_HUM_TICKS: u8 = 38;
 const GAUSS_FULL_CHARGE_TICKS: u8 = 80; // GetFullChargeTime(): 4.0 s in SP
 const GAUSS_SPINUP_TICKS: u8 = 10; // gauss.cpp switches SPINUP -> SPIN at 0.5 s
 const GAUSS_AMMO_BURN_TICKS: u8 = 6; // one uranium cell every 0.3 s in SP
@@ -23697,9 +23761,13 @@ fn weapon_fire_sfx(id: usize, hit: bool) -> u8 {
         W_SHOTGUN => sfx::SHOTGUN,
         W_CROSSBOW => sfx::XBOW,
         W_RPG => sfx::RPG,
-        W_GAUSS | W_EGON => sfx::GAUSS,
-        W_HORNET => sfx::ELECTRO,
-        _ => sfx::CBAR_MISS, // thrown/placed: a swing whoosh
+        W_GAUSS => sfx::GAUSS,
+        // The Gluon Gun's windup and hum are the beam's own (`egon_sound`).
+        W_EGON => sfx::EGON_WINDUP,
+        W_HORNET => sfx::HORNET_FIRE,
+        // A thrown or placed weapon has no shot of its own: the grenade's pin,
+        // the mine's deploy and the snark's squeak play where they happen.
+        _ => sfx::NO_SOUND,
     }
 }
 
@@ -24362,7 +24430,7 @@ unsafe fn tick_bolt(m: &Map, movers: &[phys::Mover], i: usize) {
         DMG_NEVERGIB = true;
         damage_prop(best, hit_group_damage(ty, best_box, p.damage), true);
         DMG_NEVERGIB = false;
-        sfx::play_world(sfx::BULLET_HIT1, at);
+        sfx::play_world(sfx::XBOW_HITBOD, at);
         PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
         if prop_is_scientist(ty) {
             PROP_AI_TIMER[best] = SCIENTIST_FEAR_TICKS;
@@ -24378,7 +24446,7 @@ unsafe fn tick_bolt(m: &Map, movers: &[phys::Mover], i: usize) {
         }
         return;
     };
-    sfx::play_world(sfx::RIC, h.pos);
+    sfx::play_world(sfx::XBOW_HIT, h.pos);
     if h.mover >= 0 {
         damage_brush_ent(
             m,
@@ -24415,6 +24483,11 @@ unsafe fn tick_bolt(m: &Map, movers: &[phys::Mover], i: usize) {
 unsafe fn think_rocket(m: &Map, movers: &[phys::Mover], i: usize) {
     let p = PROJECTILES[i];
     let age = 255 - p.life;
+    // rocket1.wav is the motor's roar; the original loops it, so it is struck
+    // again each time it runs out (2.3 s).
+    if age % 46 == 0 {
+        sfx::play_world(sfx::ROCKET_FLY, p.pos);
+    }
     if age < 8 {
         PROJECTILES[i].vel[1] -= throwable::LOB_GRAVITY;
         return;
@@ -24518,6 +24591,7 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
     }
     if p.life == 0 {
         PROJECTILES[i].active = false;
+        sfx::play_world(sfx::SQK_BLAST, p.pos);
         DMG_BLAST = true;
         radius_damage(m, p.pos, p.damage, blast_radius(p.damage), true);
         DMG_BLAST = false;
@@ -24590,6 +24664,10 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
         }
         None => p.pos = new,
     }
+    // The model heads the way the snark last ran (`proj_fx::draw_bodies`).
+    if p.vel[0].abs() + p.vel[2].abs() > 1 {
+        p.remainder[0] = (atan2_q12(p.vel[0], p.vel[2]) >> 4) as u8 as i8;
+    }
     // Touch: inside the target's box, the bite.
     if best != usize::MAX {
         let (r, hh) = if best == usize::MAX - 1 {
@@ -24615,6 +24693,7 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
                 }
                 p.damage = p.damage.saturating_add(skill_hit(Sk::SnarkPop));
                 p.dir[0] = 10; // half a second between bites
+                sfx::play_world(sfx::SQK_BITE, p.pos);
             }
         }
     }
@@ -24624,6 +24703,8 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
     }
     if p.dir[1] != 0 && p.aux == 0 {
         p.aux = 40; // and again in two seconds
+        // HuntThink's squeak, one of the three.
+        sfx::play_world(sfx::SQK_HUNT1 + (SIM_NOW % 3) as u8, p.pos);
         if best != usize::MAX {
             let to = dir_q12(p.pos, best_at);
             let speed_ups =
@@ -24891,6 +24972,10 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
         if kind == PROJ_ROCKET && PROJECTILES[i].aux == 1 {
             think_rocket(m, movers, i);
         } else if kind == PROJ_HORNET && !PROJECTILES[i].from_enemy {
+            // hornet.cpp BuzzThink: a buzz as it flies, quiet beside the gun.
+            if (SIM_NOW as usize + i) % 12 == 0 {
+                sfx::play_vol(sfx::HORNET_BUZZ, 3);
+            }
             track_hornet(m, movers, i);
         }
         let old = PROJECTILES[i].pos;
@@ -25029,6 +25114,15 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
                 throwable::GRENADE_ROLL_64
             };
             let b = throwable::bounce(PROJECTILES[i].vel, hit_normal, rolling, roll_64);
+            // BounceSound / the satchel's g_bounce: only a real knock, not the
+            // settling of a body already rolling.
+            if !rolling && (b.vel[0].abs() + b.vel[1].abs() + b.vel[2].abs()) > 3 {
+                if kind == PROJ_SATCHEL {
+                    sfx::play_world(sfx::SATCHEL_BOUNCE, hit_pos);
+                } else {
+                    sfx::play_world(sfx::GRENADE_HIT, hit_pos);
+                }
+            }
             PROJECTILES[i].vel = b.vel;
             PROJECTILES[i].pos = if hit_normal == [0; 3] {
                 old
@@ -25079,6 +25173,9 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
                 PENDING_PLAYER_DAMAGE =
                     PENDING_PLAYER_DAMAGE.saturating_add(PROJECTILES[i].damage as u16);
                 note_damage_direction(hit_pos);
+            }
+            if matches!(kind, PROJ_HORNET | PROJ_HORNET_FAST) && !from_enemy {
+                sfx::play_world(sfx::HORNET_HIT, hit_pos);
             }
             PROJECTILES[i].active = false;
         }
@@ -33483,7 +33580,7 @@ unsafe fn draw_tripmine_beams(
             ];
             let from = PROP_POS[pi];
             let end = tripmine::beam_end(m, movers, from, dir);
-            draw_beam(packets, ot, from, end, 1, (255, 30, 20), rot, base_t);
+            proj_fx::mine_beam(packets, ot, from, end, rot, base_t);
         } else if PROP_KIND[pi] == 12 && PROP_ACTIVE[pi] != 0 && PROP_HEALTH[pi] > 0 {
             if let Some((from, tip)) = barnacle::tongue(m, pi) {
                 draw_beam(packets, ot, from, tip, 1, (64, 56, 50), rot, base_t);
@@ -33497,7 +33594,7 @@ unsafe fn draw_tripmine_beams(
         let normal_sized = p.vel[0].abs().max(p.vel[1].abs()).max(p.vel[2].abs()) > 512;
         if p.active && p.kind == PROJ_TRIPMINE && p.life == 0 && normal_sized {
             let end = tripmine::beam_end(m, movers, p.pos, p.vel);
-            draw_beam(packets, ot, p.pos, end, 1, (255, 30, 20), rot, base_t);
+            proj_fx::mine_beam(packets, ot, p.pos, end, rot, base_t);
         }
         i += 1;
     }
@@ -33649,6 +33746,10 @@ unsafe fn draw_look(
 ) {
     if style == TRACER_EGON {
         proj_fx::egon_beam(packets, ot, start, end, rot, base_t);
+        return;
+    }
+    if style == TRACER_GAUSS || style == TRACER_GAUSS_CHARGED {
+        proj_fx::gauss_beam(packets, ot, start, end, style == TRACER_GAUSS_CHARGED, rot, base_t);
         return;
     }
     let (half, color) = TRACER_LOOKS[(style as usize).min(TRACER_LOOKS.len() - 1)];
@@ -36373,6 +36474,7 @@ fn play(
     let mut zoom_aim = false; // crossbow L2 toggled 20-degree sight state
     let mut rpg_laser = true; // CRpg::Spawn enables the LTD by default
     let mut egon_firing = false; // prevents restarting the beam sound every pulse
+    let mut egon_hum = 0u8; // ticks to the next restart of the running hum
     let mut crouching; // TRIANGLE held: lower eye + slower, persists into render
     let mut flashlight = launch.preserve_view && suit_equipped && unsafe { FLASHLIGHT_ON };
     let mut flashlight_battery = if launch.preserve_view {
@@ -38534,6 +38636,7 @@ fn play(
                 {
                     grenade_cooking = true;
                     grenade_cook_start = sim_frame_no;
+                    unsafe { sfx::play(sfx::GRENADE_PIN) };
                     viewmodel_anim = VM_ANIM_ALT; // retail pinpull sequence
                     viewmodel_anim_start = sim_frame_no;
                     #[cfg(feature = "emulator-telemetry")]
@@ -38572,11 +38675,21 @@ fn play(
                 zoom_aim = false;
             }
             if weapon.current != W_EGON || !fire_held {
-                if egon_firing && weapon.current == W_EGON {
-                    // EndAttack: 0.5 s before the beam can start again.
-                    weapon.cooldown = weapon.cooldown.max(10);
+                if egon_firing {
+                    if weapon.current == W_EGON {
+                        // EndAttack: 0.5 s before the beam can start again.
+                        weapon.cooldown = weapon.cooldown.max(10);
+                    }
+                    unsafe { sfx::play(sfx::EGON_OFF) };
                 }
                 egon_firing = false;
+            } else if egon_firing {
+                // The hum the windup runs into: restarted just before it ends.
+                egon_hum = egon_hum.saturating_sub(1);
+                if egon_hum == 0 {
+                    unsafe { sfx::play(sfx::EGON_RUN) };
+                    egon_hum = EGON_HUM_TICKS;
+                }
             }
 
             let alt_rot = unsafe {
@@ -38804,6 +38917,9 @@ fn play(
                     }
                     let start_sound = weapon.current != W_EGON || !egon_firing;
                     if weapon.current == W_EGON {
+                        if !egon_firing {
+                            egon_hum = EGON_WINDUP_TICKS;
+                        }
                         egon_firing = true;
                     }
                     if start_sound {
@@ -38813,6 +38929,10 @@ fn play(
                             }
                         } else {
                             sfx::play(weapon_fire_sfx(weapon.current, hit));
+                            if weapon.current == W_RPG {
+                                // EV_FireRpg lays the launcher's thump under the rocket.
+                                sfx::play_vol(sfx::M203, 2);
+                            }
                         }
                     }
                     if weapon.current == W_SATCHEL {
@@ -40619,6 +40739,9 @@ fn play(
                 scene::load_rotation(&rot);
                 scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
             }
+            model_projected_vertices = model_projected_vertices.saturating_add(
+                proj_fx::draw_bodies(&mut model_packets, eye, &rot, base_t, sim_frame_no, &mut np),
+            );
             if DBG_MODEL_SHOWCASE {
                 let mut k = 0i32;
                 for slot in 0..MAX_LOADED_MODELS {

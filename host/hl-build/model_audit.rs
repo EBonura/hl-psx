@@ -164,6 +164,9 @@ const LUMP_MODELS: usize = 14;
 struct Actor {
     ty: u8,
     body: u8,
+    /// A model the runtime keeps when it fits and draws a solid without otherwise
+    /// (the player's own mines and snarks): its drop is no error.
+    optional: bool,
 }
 
 #[derive(Debug)]
@@ -745,6 +748,7 @@ fn parse_map_actors(path: &Path) -> Result<Vec<Actor>> {
             actors.push(Actor {
                 ty,
                 body: ((yaw >> 12) & 7) as u8,
+                optional: false,
             });
         }
     }
@@ -871,7 +875,8 @@ fn simulate(
         )
     });
     let carry_count = carry_count.min(actors.len());
-    for pass in 0..3 {
+    // The optional models (the player's own mines and snarks) come last of all.
+    for pass in 0..4 {
         for source in 0..2 {
             let source_actors = if source == 0 {
                 &actors[..carry_count]
@@ -886,7 +891,8 @@ fn simulate(
                     continue;
                 };
                 let ty = actor.ty as usize;
-                if ty >= N_MODEL_TYPES || seen[ty] || ai_pass(actor.ty) != pass {
+                let actor_pass = if actor.optional { 3 } else { ai_pass(actor.ty) };
+                if ty >= N_MODEL_TYPES || seen[ty] || actor_pass != pass {
                     continue;
                 }
                 seen[ty] = true;
@@ -964,7 +970,9 @@ fn simulate(
                     None
                 };
                 if let Some(reason) = reason {
-                    drops.push(format!("{}:{reason}", model_name(actor.ty)));
+                    if !actor.optional {
+                        drops.push(format!("{}:{reason}", model_name(actor.ty)));
+                    }
                     continue;
                 }
                 // Merged chunks retain their two-word envelope before the HMD
@@ -1522,6 +1530,7 @@ fn transition_rows(
                 carry.push(Actor {
                     ty,
                     body: actor_body(entity, ty, origin),
+                    optional: false,
                 });
                 if carry.len() == CARRY_CAPACITY {
                     break;
@@ -1551,6 +1560,33 @@ fn transition_rows(
         }
     }
     Ok(rows)
+}
+
+/// The tripmine (type 57) and snark (type 58) models the runtime keeps on every
+/// room from the one where each weapon first turns up (`stream_map_models`),
+/// read from the game's own map table so the two cannot drift.
+fn weapon_actors(room: usize) -> Vec<Actor> {
+    const CATALOG: &str = include_str!("../../game/src/map_catalog.rs");
+    let (Some(order), Some(first)) = (
+        super::stack_gate::array_of(CATALOG, "PLAY_ORDER"),
+        super::stack_gate::array_of(CATALOG, "WEAPON_FIRST_MAP"),
+    ) else {
+        return Vec::new();
+    };
+    let rank = |room: usize| order.iter().position(|&r| r == room);
+    let Some(here) = rank(room).filter(|_| room < 96) else {
+        return Vec::new();
+    };
+    // (model type, index into WEAPON_FIRST_MAP): the tripmine, then the snark.
+    [(57u8, 12usize), (58, 11)]
+        .into_iter()
+        .filter(|&(_, weapon)| rank(first[weapon]).is_some_and(|at| at <= here))
+        .map(|(ty, _)| Actor {
+            ty,
+            body: 0,
+            optional: true,
+        })
+        .collect()
 }
 
 fn write_report(path: &Path, rows: &[AuditRow]) -> Result<()> {
@@ -2237,11 +2273,12 @@ pub fn audit_model_residency(
     let mut static_actors = Vec::with_capacity(maps.len());
     let mut rows = Vec::with_capacity(maps.len() + 256);
     for (index, &name) in maps.iter().enumerate() {
-        let actors = parse_map_actors(
+        let mut actors = parse_map_actors(
             &repository
                 .join("data/rooms")
                 .join(format!("room_{}.psxc", index * 2)),
         )?;
+        actors.extend(weapon_actors(index));
         rows.push(simulate(
             name,
             budgets[index],

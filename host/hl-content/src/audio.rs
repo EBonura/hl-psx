@@ -1,6 +1,7 @@
 use crate::generators::bsp_entities;
 use crate::Result;
 use hl_format::music;
+use hl_format::weapon_audio;
 use psx_audio_cook::resample::Sinc;
 use psx_audio_cook::xa;
 use psx_audio_cook::{CookOptions, Looping, Wav};
@@ -277,6 +278,21 @@ fn read_source(path: &Path) -> Result<Source> {
     })
 }
 
+/// A core sound's source: the WAV, cut short where `CORE_TRIMS` says, with a
+/// 60 ms fade over the cut.
+fn read_core_source(path: &Path, id: &str) -> Result<Source> {
+    let mut source = read_source(path)?;
+    if let Some(&(_, ms)) = CORE_TRIMS.iter().find(|(name, _)| *name == id) {
+        let keep = (source.wav.rate as usize * ms / 1000).min(source.wav.samples.len());
+        let fade = (source.wav.rate as usize * 60 / 1000).min(keep);
+        source.wav.samples.truncate(keep);
+        for (i, v) in source.wav.samples[keep - fade..].iter_mut().enumerate() {
+            *v *= 1.0 - (i + 1) as f64 / fade as f64;
+        }
+    }
+    Ok(source)
+}
+
 fn looping_mode(looping: bool) -> Looping {
     if looping {
         Looping::Whole
@@ -350,7 +366,7 @@ fn hsfx(blobs: &[Vec<u8>]) -> Vec<u8> {
 /// Core ids whose sound moved to the suit voice block of each map's chunk.
 const RETIRED_TO_SUIT_VOICE: [&str; 3] = ["hev_bell", "hev_health_crit", "hev_near_death"];
 
-const SOUNDS: [(&str, &str); 70] = [
+const SOUNDS: [(&str, &str); 89] = [
     ("glock", "weapons/pl_gun3.wav"),
     ("mp5", "weapons/hks1.wav"),
     ("shotgun", "weapons/sbarrel1.wav"),
@@ -442,7 +458,86 @@ const SOUNDS: [(&str, &str); 70] = [
     // whose Classify() is neither CLASS_NONE nor CLASS_MACHINE -- the wet
     // thwack, never the metal dong the world hit uses.
     ("cbar_hitbod", "weapons/cbar_hitbod1.wav"),
+    // The weapons' own sounds (ids 70..): what the tripmine, snark, hive hand,
+    // Gluon Gun, rocket, crossbow bolt and thrown bodies play in the SDK
+    // (tripmine.cpp, squeakgrenade.cpp, hornet.cpp, egon.cpp, rpg.cpp,
+    // crossbow.cpp, ggrenade.cpp, satchel.cpp, handgrenade event). They sit at
+    // the end so no earlier id moves, and `weapon_sound_owner` lets a map that
+    // cannot hold the weapon yet give the bytes back to its own bank.
+    ("mine_deploy", "weapons/mine_deploy.wav"),
+    ("mine_activate", "weapons/mine_activate.wav"),
+    ("sqk_hunt1", "squeek/sqk_hunt1.wav"),
+    ("sqk_hunt2", "squeek/sqk_hunt2.wav"),
+    ("sqk_hunt3", "squeek/sqk_hunt3.wav"),
+    ("sqk_bite", "squeek/sqk_deploy1.wav"),
+    ("sqk_blast", "squeek/sqk_blast1.wav"),
+    ("egon_windup", "weapons/egon_windup2.wav"),
+    ("egon_run", "weapons/egon_run3.wav"),
+    ("egon_off", "weapons/egon_off1.wav"),
+    ("hornet_fire", "agrunt/ag_fire1.wav"),
+    ("hornet_buzz", "hornet/ag_buzz1.wav"),
+    ("hornet_hit", "hornet/ag_hornethit1.wav"),
+    ("rocket_fly", "weapons/rocket1.wav"),
+    ("xbow_hit", "weapons/xbow_hit1.wav"),
+    ("xbow_hitbod", "weapons/xbow_hitbod1.wav"),
+    ("grenade_hit", "weapons/grenade_hit1.wav"),
+    ("satchel_bounce", "weapons/g_bounce2.wav"),
+    ("grenade_pin", "weapons/gren_cock1.wav"),
 ];
+
+/// How long a sound may run, in milliseconds, where the original is longer than
+/// the SPU RAM is worth (the tails of three long, fading sounds). The cut
+/// fades out over its last 60 ms.
+const CORE_TRIMS: [(&str, usize); 3] = [("egon_windup", 1300), ("egon_off", 1000), ("rocket_fly", 1300)];
+
+/// Core sounds from before the weapons' own (ids 0..69): the reference the
+/// previous cooker's budgets are measured against.
+const PREVIOUS_CORE_IDS: usize = 70;
+
+/// Viewmodels whose banks the Hazard Course can need: its weapons are the
+/// crowbar (no bank) and the MP5.
+const TRAINING_VIEWMODELS: [usize; 1] = [2];
+
+/// Move each weapon's own sounds (`hl_format::weapon_audio`) out of the core
+/// blobs into one bank chunk per viewmodel, leaving a one-block silence at the
+/// moved ids (the numbering is stable), and return the SPU bytes the bank
+/// region must hold: the largest bank, and the largest of the Hazard Course's.
+fn bank_weapon_sounds(blobs: &mut [Vec<u8>], dir: &Path) -> Result<(usize, usize)> {
+    let silence = cook_psau(&silent_source(), 5_000, false);
+    let (mut full, mut training) = (0usize, 0usize);
+    for (wm, ids) in weapon_audio::BANK_IDS.iter().enumerate() {
+        if ids.is_empty() {
+            continue;
+        }
+        let bank: Vec<Vec<u8>> = ids.iter().map(|&id| blobs[id as usize].clone()).collect();
+        let bytes: usize = bank.iter().map(|b| weapon_audio::spu_bytes(b.len() - 32)).sum();
+        full = full.max(bytes);
+        if TRAINING_VIEWMODELS.contains(&wm) {
+            training = training.max(bytes);
+        }
+        let chunk = weapon_audio::BANK_CHUNK_BASE as usize + wm;
+        let pack = hsfx(&bank);
+        fs::write(dir.join(format!("chunk_{chunk}.psxa")), &pack)?;
+        println!(
+            "sfx bank: viewmodel {wm}: ids {ids:?}, {bytes} B of SPU RAM, {} B -> chunk_{chunk}",
+            pack.len()
+        );
+    }
+    for ids in weapon_audio::BANK_IDS {
+        for &id in ids {
+            blobs[id as usize] = silence.clone();
+        }
+    }
+    Ok((full, training))
+}
+
+/// The core's last entry: `bytes` of SPU RAM the weapon banks stream into.
+fn region_blob(bytes: usize) -> Vec<u8> {
+    let blocks = bytes / 16;
+    psx_audio_cook::psau(5_000, blocks * 28, &vec![0u8; blocks * 16])
+}
+
+
 
 /// Resident rate per core id. These are the rates the core has always used;
 /// the encoder change keeps every core size the same and only changes how
@@ -459,6 +554,24 @@ fn resident_rate(id: &str, source_rate: u32) -> u32 {
         // any higher tier pushes that map over its budget. Buttons and the
         // two continuous chargers retain 5 kHz.
         4_000
+    } else if matches!(
+        id,
+        "sqk_bite" | "egon_windup" | "egon_run" | "egon_off" | "rocket_fly" | "grenade_pin"
+    ) {
+        // Long, soft or rumbling: 4 kHz keeps the body of them.
+        4_000
+    } else if matches!(
+        id,
+        "sqk_hunt1" | "sqk_hunt2" | "sqk_hunt3" | "hornet_buzz" | "hornet_hit" | "grenade_hit"
+            | "satchel_bounce"
+    ) {
+        // Short squeaks, buzzes and knocks.
+        5_000
+    } else if matches!(id, "sqk_blast" | "hornet_fire" | "xbow_hitbod") {
+        6_000
+    } else if matches!(id, "mine_deploy" | "mine_activate" | "xbow_hit") {
+        // Clicks and thuds with some top to them.
+        8_000
     } else if id.starts_with("charger_") || id == "button" {
         // The two continuous charger beds are long enough that the ordinary
         // SFX rate would crowd the largest per-map dialogue bank out of SPU
@@ -597,8 +710,8 @@ fn core_rate(source: &Source, resident: u32) -> u32 {
 /// budget of the no-regression reference, not the current core, which grows
 /// where `core_rate` raises a sound.
 fn previous_core_bytes(sound: &Path, chunk: u32) -> Result<usize> {
-    let mut bytes = 8 + SOUNDS.len() * 8;
-    for (index, (id, relative)) in SOUNDS.iter().enumerate() {
+    let mut bytes = 8 + PREVIOUS_CORE_IDS * 8;
+    for (index, (id, relative)) in SOUNDS.iter().enumerate().take(PREVIOUS_CORE_IDS) {
         let kept = match chunk {
             3050 => light_profile_keeps(index),
             3051 => training_weapon_profile_keeps(index),
@@ -635,7 +748,7 @@ fn silent_source() -> Source {
 pub fn build_sfx(sound: &Path, output: &Path) -> Result<()> {
     let sources: Vec<Source> = SOUNDS
         .iter()
-        .map(|(_, relative)| read_source(&sound.join(relative)))
+        .map(|(id, relative)| read_core_source(&sound.join(relative), id))
         .collect::<Result<_>>()?;
     let rates: Vec<u32> = SOUNDS
         .iter()
@@ -681,6 +794,10 @@ pub fn build_sfx(sound: &Path, output: &Path) -> Result<()> {
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
     }
+    let dir = output.parent().unwrap_or_else(|| Path::new("."));
+    let (region_full, region_training) = bank_weapon_sounds(&mut blobs, dir)?;
+    assert_eq!(blobs.len(), weapon_audio::REGION_ENTRY);
+    blobs.push(region_blob(region_full));
     let pack = hsfx(&blobs);
     fs::write(output, &pack)?;
     println!(
@@ -717,6 +834,14 @@ pub fn build_sfx(sound: &Path, output: &Path) -> Result<()> {
             }
         })
         .collect();
+    let (mut anomalous, mut training) = (anomalous, training);
+    // The lightweight profile holds no weapon, so its bank region is one block;
+    // the Hazard Course's holds the MP5's bank.
+    // Entries past the original ids (the weapons' own, which need no bank here)
+    // stay out of both packs, and the Hazard Course's ends in its region.
+    anomalous.truncate(weapon_audio::CORE_IDS);
+    training.truncate(weapon_audio::CORE_IDS);
+    training.push(region_blob(region_training));
     let parent = output.parent().unwrap_or_else(|| Path::new("."));
     for (chunk, label, profile) in [
         (3050, "narrative/lightweight", anomalous),
@@ -1934,7 +2059,8 @@ fn build_core_profiles(
             slot.insert(hsfx_entries(&fs::read(&base_path)?)?);
         }
         let entries = &bases[&base];
-        let silenced = unreachable_core_ids(&census[map_index])
+        let unreachable = unreachable_core_ids(&census[map_index]);
+        let silenced = unreachable
             .into_iter()
             .filter(|&id| {
                 entries

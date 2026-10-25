@@ -22,7 +22,7 @@ mod target {
     const _: () = assert!(
         core::mem::size_of::<crate::RenderPacketScratch>() >= Arena::CAPACITY * CACHE_ENTRY_BYTES
     );
-    type Owner = CachedStreamer<psx_pack::cd::SectorReader, Arena, 16>;
+    type Owner = CachedStreamer<psx_pack::cd::SectorReader, Arena, 32>;
     static mut OWNER: Owner = unsafe { Owner::new(psx_pack::cd::SectorReader::new()) };
     #[inline(always)]
     unsafe fn owner() -> &'static mut Owner {

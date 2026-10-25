@@ -29,6 +29,8 @@ use std::path::Path;
 
 /// First chunk id of the viewmodels (`MODEL_CHUNK_V_9MMHANDGUN`) and their count.
 const VIEWMODEL_FIRST: u32 = 1000;
+/// `hl_format::weapon_audio::BANK_CHUNK_BASE`: the weapon sound banks.
+const BANK_FIRST: u32 = hl_format::weapon_audio::BANK_CHUNK_BASE;
 const VIEWMODEL_COUNT: u32 = 15;
 /// Texture, geometry and carry-over chunk bases: `base + model type`.
 const TEXTURE_BASE: u32 = 1100;
@@ -119,11 +121,15 @@ pub fn layout(contents: &PackContents) -> Vec<u32> {
     for id in HUD_FIRST {
         place(id, &mut order);
     }
-    for id in contents.ids.range(3000..3100) {
+    let banks = BANK_FIRST..BANK_FIRST + VIEWMODEL_COUNT;
+    for id in contents.ids.range(3000..3100).filter(|id| !banks.contains(id)) {
         place(*id, &mut order);
     }
+    // A weapon's sound bank lies right behind its viewmodel: drawing the weapon
+    // reads the two one after the other, with no seek between them.
     for id in VIEWMODEL_FIRST..VIEWMODEL_FIRST + VIEWMODEL_COUNT {
         place(id, &mut order);
+        place(BANK_FIRST + (id - VIEWMODEL_FIRST), &mut order);
     }
 
     let mut types: BTreeSet<u8> = BTreeSet::new();

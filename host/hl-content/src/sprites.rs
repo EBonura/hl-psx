@@ -12,8 +12,22 @@ const MAX_FRAMES_PER_MAP: usize = 49;
 // gap so adding training maps cannot collide with per-map sprite chunks.
 const CHUNK_BASE: usize = 3300;
 const EXPLOSION_CHUNK: usize = 3002;
+/// Frames the explosion itself keeps; the weapon sprites follow them in the pack.
+const EXPLOSION_FRAMES: usize = 5;
 /// Resident decal splats (decals.wad), loaded every map like the explosion.
 const DECAL_CHUNK: usize = 3004;
+/// The weapon effects' sprites, resident on every map in the explosion's pack
+/// (sprites 1.. of it): the tripmine and laser beams, the designator dot, the
+/// glows, the Tau Cannon's beam, the Gluon Gun's beam and its flare. (name,
+/// frames kept)
+const WEAPON_SPRITES: [(&str, usize); 6] = [
+    ("laserbeam.spr", 1),
+    ("laserdot.spr", 1),
+    ("hotglow.spr", 1),
+    ("smoke.spr", 1),
+    ("xbeam1.spr", 1),
+    ("xspark1.spr", 4),
+];
 /// The SDK's random choices, in the order the runtime indexes them: bullet and
 /// crowbar hits take DECAL_GUNSHOT1 + RANDOM_LONG(0,4) (CBaseEntity::DamageDecal),
 /// red blood DECAL_BLOOD1 + RANDOM_LONG(0,5) and yellow blood DECAL_YBLOOD1 +
@@ -459,7 +473,7 @@ fn build_explosion(valve: &Path, output: &Path) -> Result<()> {
     if crushed.is_empty() {
         return Ok(());
     }
-    let records = vec![(
+    let mut records = vec![(
         crushed.len() as u8,
         1,
         0,
@@ -468,14 +482,39 @@ fn build_explosion(valve: &Path, output: &Path) -> Result<()> {
         crushed[0].width,
         crushed[0].height,
     )];
-    let frames: Vec<Vec<u8>> = crushed.iter().map(texture_blob).collect();
+    let mut frames: Vec<Vec<u8>> = crushed.iter().map(texture_blob).collect();
+    // Then the weapon effects' sprites, frame numbers counted from the pack's start.
+    for (name, keep) in WEAPON_SPRITES {
+        let path = find_case_insensitive(&sprites, name)?
+            .ok_or_else(|| format!("weapon sprite {name} not found"))?;
+        let sprite = decode(&path)?;
+        let crushed: Vec<Crushed> = sprite
+            .frames
+            .iter()
+            .take(keep)
+            .map(|frame| crush(frame, 1, SPR_MAX))
+            .collect();
+        if crushed.is_empty() {
+            return Err(format!("weapon sprite {name} has no frames").into());
+        }
+        records.push((
+            crushed.len() as u8,
+            1,
+            (frames.len() - EXPLOSION_FRAMES) as u16,
+            sprite.base_width,
+            sprite.base_height,
+            crushed[0].width,
+            crushed[0].height,
+        ));
+        frames.extend(crushed.iter().map(texture_blob));
+    }
     write_pack(
         &output.join(format!("chunk_{EXPLOSION_CHUNK}.psxa")),
         &records,
         &frames,
     )?;
     println!(
-        "resident explosion -> chunk_{EXPLOSION_CHUNK} ({}, {} frames)",
+        "resident explosion and weapon sprites -> chunk_{EXPLOSION_CHUNK} ({}, {} frames)",
         path.display(),
         frames.len()
     );

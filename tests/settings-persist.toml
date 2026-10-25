@@ -12,9 +12,9 @@ max_ticks = 4200
 
 # Bound to the build this journey was written against: scripts/bind-skill-addr.sh rewrites it.
 [addr]
-MOVE_DEADZONE = 0x800ca6a4
-LOOK_DEADZONE = 0x800ca6a0
-BRIGHTNESS = 0x800ca698
+MOVE_DEADZONE = 0x800cb5fc
+LOOK_DEADZONE = 0x800cb5f8
+BRIGHTNESS = 0x800cb5f0
 
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"

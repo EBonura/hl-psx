@@ -248,48 +248,90 @@ fn lit(rgb: (u8, u8, u8), n: [i32; 3]) -> (u8, u8, u8) {
     (s(rgb.0), s(rgb.1), s(rgb.2))
 }
 
-/// An additive glow: three nested diamonds of falling brightness, `half` world
-/// units across at the middle. `at` is its centre.
-unsafe fn glow(
+/// A resident weapon sprite as an additive camera-facing square `half` world
+/// units out from `at`, tinted `rgb`, sorted a little nearer than its centre.
+/// Beams and glows are overlays: the packets go straight into the ordering table
+/// and never into the world plan the cache replays.
+unsafe fn sprite_quad(
     packets: &mut PrimitivePacketArena<'_>,
     ot: &mut OrderingTable<OT_LEN>,
     at: [i32; 3],
     half: i32,
-    min_px: i32,
+    id: usize,
+    frame: usize,
     rgb: (u8, u8, u8),
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) {
+    let slot = sprite::slot_for(id, frame);
     let Some((cx, cy, z)) = cam(at, rot, base_t) else {
         return;
     };
-    let r = ((half * render::projection_h()) / z).clamp(min_px, 70);
-    let otz = clamp_otz(((z - 10).max(render::NEAR_Z) as usize) >> OT_SHIFT);
-    let layers = [(r, 4u32), (r * 2 / 3, 3), (r / 3, 2)];
-    let mut l = 0;
-    while l < 3 {
-        let (rr, div) = layers[l];
-        let c = |v: u8| (v as u32 / div).min(255) as u8;
-        let col = (c(rgb.0), c(rgb.1), c(rgb.2));
-        let (t, rt, b, lf) = (
-            (cx as i16, (cy - rr) as i16),
-            ((cx + rr) as i16, cy as i16),
-            (cx as i16, (cy + rr) as i16),
-            ((cx - rr) as i16, cy as i16),
-        );
-        let mut half_tri = 0;
-        while half_tri < 2 {
-            let verts = if half_tri == 0 { [t, rt, b] } else { [t, b, lf] };
-            if let Some(packet) = packets.push(BeamTri::new(verts, col)) {
-                ot.resume_frame()
-                    .add_raw(otz, core::ptr::from_mut(packet).cast(), BeamTri::WORDS);
-            } else {
-                note_render_packet_drop(false);
-            }
-            half_tri += 1;
-        }
-        l += 1;
+    if !slot.valid {
+        return;
     }
+    let d = sprite::def(id);
+    let r = ((half * render::projection_h()) / z).clamp(1, 110);
+    let otz = clamp_otz(((z - 10).max(render::NEAR_Z) as usize) >> OT_SHIFT);
+    let packet = TexturedGouraudPacketMaterial::from_texture(
+        slot.material.with_blend_mode(BlendMode::Add),
+    );
+    let uw = d.crush_w.saturating_sub(1).min(255) as u8;
+    let uh = d.crush_h.saturating_sub(1).min(255) as u8;
+    let (l, t, rr, b) = (
+        (cx - r) as i16,
+        (cy - r) as i16,
+        (cx + r) as i16,
+        (cy + r) as i16,
+    );
+    let tris = [
+        [(l, t), (rr, t), (l, b)],
+        [(rr, t), (rr, b), (l, b)],
+    ];
+    let uvs = [
+        [uv_word((0, 0)), uv_word((uw, 0)), uv_word((0, uh))],
+        [uv_word((uw, 0)), uv_word((uw, uh)), uv_word((0, uh))],
+    ];
+    let mut k = 0;
+    while k < 2 {
+        let prim = TriTexturedGouraud {
+            tag: 0,
+            tex_window: packet.tex_window_word,
+            color0_cmd: (packet.color0_command_word | 0x0200_0000) | pack_rgb_word(rgb),
+            v0: pack_vertex_word(tris[k][0].0, tris[k][0].1),
+            uv0_clut: uvs[k][0] as u32 | packet.clut_high_word,
+            color1: pack_rgb_word(rgb),
+            v1: pack_vertex_word(tris[k][1].0, tris[k][1].1),
+            uv1_tpage: uvs[k][1] as u32 | packet.tpage_high_word,
+            color2: pack_rgb_word(rgb),
+            v2: pack_vertex_word(tris[k][2].0, tris[k][2].1),
+            uv2: uvs[k][2] as u32,
+        };
+        if let Some(pk) = packets.push(prim) {
+            ot.resume_frame().add_raw(
+                otz,
+                core::ptr::from_mut(pk).cast(),
+                TriTexturedGouraud::WORDS,
+            );
+        } else {
+            note_render_packet_drop(false);
+        }
+        k += 1;
+    }
+}
+
+/// A soft round glow (the hot glow sprite).
+#[inline]
+pub(crate) unsafe fn glow(
+    packets: &mut PrimitivePacketArena<'_>,
+    ot: &mut OrderingTable<OT_LEN>,
+    at: [i32; 3],
+    half: i32,
+    rgb: (u8, u8, u8),
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
+    sprite_quad(packets, ot, at, half, sprite::WPN_HOT_GLOW, 0, rgb, rot, base_t);
 }
 
 /// Draw one `body` at `pos` pointing along the q12 unit vector `f`, turned by
@@ -443,7 +485,7 @@ pub(crate) unsafe fn queue(
         if p.live {
             let v = (70 * (PUFF_TICKS - p.age) as i32 / PUFF_TICKS as i32) as u8;
             let at = [p.pos[0] as i32, p.pos[1] as i32, p.pos[2] as i32];
-            glow(packets, ot, at, 2 + p.age as i32 / 3, 2, (v, v, v), rot, base_t);
+            glow(packets, ot, at, 2 + p.age as i32 / 3, (v, v, v), rot, base_t);
         }
         i += 1;
     }
@@ -468,7 +510,7 @@ pub(crate) unsafe fn queue(
                         p.pos[1] - ((f[1] * 18) >> 12),
                         p.pos[2] - ((f[2] * 18) >> 12),
                     ];
-                    glow(packets, ot, tail, 7, 3, (255, 150, 50), rot, base_t);
+                    glow(packets, ot, tail, 7, (255, 150, 50), rot, base_t);
                 }
             }
             PROJ_GRENADE | PROJ_M203 => {
@@ -497,16 +539,20 @@ pub(crate) unsafe fn queue(
                 let red = p.kind == PROJ_HORNET && p.aux & 1 == 0 && !p.from_enemy;
                 body(packets, ot, HORNET, p.pos, f, tumble, rot, base_t);
                 let col = if red { (255, 70, 40) } else { (255, 170, 40) };
-                glow(packets, ot, p.pos, 4, 3, col, rot, base_t);
+                glow(packets, ot, p.pos, 4, col, rot, base_t);
             }
             PROJ_SNARK => {
-                let f = vel_dir.unwrap_or([0, 0, 4096]);
-                body(packets, ot, SNARK, p.pos, f, 0, rot, base_t);
+                if resident(PROP_TYPE_SNARK).is_none() {
+                    let f = vel_dir.unwrap_or([0, 0, 4096]);
+                    body(packets, ot, SNARK, p.pos, f, 0, rot, base_t);
+                }
             }
             PROJ_TRIPMINE => {
                 let placed = p.vel[0].abs().max(p.vel[1].abs()).max(p.vel[2].abs()) > 512;
                 if let (true, Some(n)) = (placed, vel_dir) {
-                    body(packets, ot, MINE, p.pos, n, 512, rot, base_t);
+                    if resident(tripmine::PROP_TYPE_TRIPMINE).is_none() {
+                        body(packets, ot, MINE, p.pos, n, 512, rot, base_t);
+                    }
                     let lens = [
                         p.pos[0] + ((n[0] * 5) >> 12),
                         p.pos[1] + ((n[1] * 5) >> 12),
@@ -514,73 +560,134 @@ pub(crate) unsafe fn queue(
                     ];
                     let armed = p.life == 0 || p.life >= tripmine::FUSE_BASE;
                     let col = if armed { (255, 40, 30) } else { (160, 110, 20) };
-                    glow(packets, ot, lens, 2, 2, col, rot, base_t);
+                    glow(packets, ot, lens, 2, col, rot, base_t);
                 } else {
-                    glow(packets, ot, p.pos, 3, 2, (255, 60, 40), rot, base_t);
+                    glow(packets, ot, p.pos, 3, (255, 60, 40), rot, base_t);
                 }
             }
             PROJ_SPIT | PROJ_BMORTAR => {
-                glow(packets, ot, p.pos, 6, 3, (150, 230, 80), rot, base_t);
+                glow(packets, ot, p.pos, 6, (150, 230, 80), rot, base_t);
             }
-            PROJ_CBALL => glow(packets, ot, p.pos, 8, 3, (130, 170, 255), rot, base_t),
-            PROJ_HEADBALL => glow(packets, ot, p.pos, 14, 4, (225, 230, 255), rot, base_t),
+            PROJ_CBALL => glow(packets, ot, p.pos, 8, (130, 170, 255), rot, base_t),
+            PROJ_HEADBALL => glow(packets, ot, p.pos, 14, (225, 230, 255), rot, base_t),
             _ => {}
         }
     }
     if RPG_SPOT_ACTIVE {
         // CLaserSpot: a small red glow where the designator lands, pulled off
         // the surface a unit so it sorts in front of it.
-        glow(packets, ot, RPG_SPOT_POS, 4, 4, (255, 36, 24), rot, base_t);
+        glow(packets, ot, RPG_SPOT_POS, 5, (255, 40, 30), rot, base_t);
+        sprite_quad(
+            packets,
+            ot,
+            RPG_SPOT_POS,
+            4,
+            sprite::WPN_LASER_DOT,
+            0,
+            (255, 255, 255),
+            rot,
+            base_t,
+        );
     }
 }
 
-/// One flat additive segment of `half` world units either side, thick enough
-/// to read (up to 18 px), sorted at its own depth. `draw_beam` caps a line at
-/// four pixels, which suits tracers and lasers but not the Gluon Gun.
-unsafe fn thick_segment(
-    packets: &mut PrimitivePacketArena<'_>,
-    ot: &mut OrderingTable<OT_LEN>,
-    a: [i32; 3],
-    b: [i32; 3],
-    half: i32,
-    rgb: (u8, u8, u8),
+/// The slot of the resident model of type `ty`, when this map has it.
+unsafe fn resident(ty: u8) -> Option<usize> {
+    let slot = TYPE_TO_SLOT[ty as usize];
+    (slot != MODEL_SLOT_NONE && LOADED_MODELS[slot as usize].valid).then_some(slot as usize)
+}
+
+/// Draw the player's own snarks and placed tripmines from their models (the
+/// types `stream_map_models` keeps resident on every map from the weapon's
+/// first one). Returns the vertices projected. A snark heads the way it last
+/// ran (its heading is kept in the slot's spare `remainder`), and runs while it
+/// moves; a mine faces out of its wall.
+#[inline(never)]
+#[optimize(size)]
+pub(crate) unsafe fn draw_bodies(
+    packets: &mut ModelPacketWriter<'_>,
+    eye: [i32; 3],
     rot: &Mat3I16,
     base_t: [i32; 3],
-) {
-    let (Some((x0, y0, z0)), Some((x1, y1, z1))) = (cam(a, rot, base_t), cam(b, rot, base_t))
-    else {
-        return;
-    };
-    let (dx, dy) = (x1 - x0, y1 - y0);
-    let len = isqrt_i32(dx * dx + dy * dy);
-    if len < 2 {
-        return;
-    }
-    let z = (z0 + z1) / 2;
-    let hw = ((half * render::projection_h()) / z.max(1)).clamp(1, 18);
-    let (px, py) = ((-dy * hw) / len, (dx * hw) / len);
-    let otz = clamp_otz(((z - BEAM_DEPTH_BIAS).max(render::NEAR_Z) as usize) >> OT_SHIFT);
-    let p = |x: i32, y: i32| (x as i16, y as i16);
-    let quad = [
-        [p(x0 + px, y0 + py), p(x0 - px, y0 - py), p(x1 + px, y1 + py)],
-        [p(x0 - px, y0 - py), p(x1 - px, y1 - py), p(x1 + px, y1 + py)],
-    ];
-    let mut t = 0;
-    while t < 2 {
-        if let Some(packet) = packets.push(BeamTri::new(quad[t], rgb)) {
-            ot.resume_frame()
-                .add_raw(otz, core::ptr::from_mut(packet).cast(), BeamTri::WORDS);
-        } else {
-            note_render_packet_drop(false);
+    now: u32,
+    np: &mut usize,
+) -> u32 {
+    let mut projected = 0u32;
+    let mut i = 0;
+    while i < MAX_PROJECTILES {
+        let p = PROJECTILES[i];
+        i += 1;
+        if !p.active {
+            continue;
         }
-        t += 1;
+        let (ty, yaw, clip) = match p.kind {
+            PROJ_SNARK => {
+                let moving = p.vel[0].abs() + p.vel[2].abs() > 1;
+                (
+                    PROP_TYPE_SNARK,
+                    (p.remainder[0] as u8 as u16) << 4,
+                    if moving { PROP_CLIP_MOVE } else { PROP_CLIP_IDLE },
+                )
+            }
+            PROJ_TRIPMINE if p.vel[0].abs().max(p.vel[1].abs()).max(p.vel[2].abs()) > 512 => (
+                tripmine::PROP_TYPE_TRIPMINE,
+                yaw_from_vec(p.vel[0], p.vel[2]),
+                PROP_CLIP_IDLE,
+            ),
+            _ => continue,
+        };
+        let Some(slot) = resident(ty) else {
+            continue;
+        };
+        // Past the view or far behind it, nothing to draw.
+        let rel = [p.pos[0] - eye[0], p.pos[1] - eye[1], p.pos[2] - eye[2]];
+        let vz = dot12(rot.m[2], rel);
+        if !(-24..=3000).contains(&vz) {
+            continue;
+        }
+        let lm = LOADED_MODELS[slot];
+        let md = loaded_model(slot);
+        let clip = clip.min(md.clip_count().saturating_sub(1));
+        let (sf, sf2, sfrac) = md.looped_clip_phase(clip, md.clip_hold_ticks(clip) as usize, now as usize);
+        CROSSFADE = (0, 0, 0);
+        projected = projected.saturating_add(draw_model(
+            packets,
+            md,
+            &POOL_TEX[lm.tex_start..lm.tex_start + lm.n_tex],
+            lm.face_indices,
+            lm.face_payloads,
+            core::ptr::addr_of!(POOL_FACE_RUNS)
+                .cast::<u32>()
+                .add(lm.run_start as usize),
+            lm.n_runs as usize,
+            lm.n_faces,
+            p.pos,
+            yaw,
+            0,
+            0,
+            0,
+            sf,
+            sf2,
+            sfrac,
+            BlendMode::Opaque,
+            MODEL_SHADE,
+            eye,
+            rot,
+            np,
+        ));
+        CROSSFADE_BONES = 0;
+        // HMD8 projection leaves the last bone affine loaded; the next body's
+        // sphere test and every later draw need the camera again.
+        scene::load_rotation(rot);
+        scene::load_translation(Vec3I32::new(base_t[0], base_t[1], base_t[2]));
     }
+    projected
 }
 
-/// The Gluon Gun's beam from `start` (the gun) to `end` (what it hit): a wide
-/// blue ribbon that wanders sideways along its length (`SetNoise`), a bright
-/// core, and the flare at the far end (`EGON_FLARE_SPRITE`). The blue pulses
-/// as `CEgon::UpdateEffect` does.
+/// The Gluon Gun's beam from `start` (the gun) to `end` (what it hit), after
+/// `CEgon::UpdateEffect`: the `xbeam1` ribbon that wanders sideways along its
+/// length (`SetNoise`), a narrower, brighter one inside it, a glow at the gun,
+/// and the `XSpark1` flare where it lands. The blue pulses with time.
 #[inline(never)]
 #[optimize(size)]
 pub(crate) unsafe fn egon_beam(
@@ -591,49 +698,69 @@ pub(crate) unsafe fn egon_beam(
     rot: &Mat3I16,
     base_t: [i32; 3],
 ) {
-    const SEGMENTS: usize = 8;
-    let span = [end[0] - start[0], end[1] - start[1], end[2] - start[2]];
-    let Some(f) = unit(span) else {
-        return;
-    };
-    let up = if f[1].abs() > 3900 {
-        [4096, 0, 0]
-    } else {
-        [0, 4096, 0]
-    };
-    let Some(r) = unit(cross(f, up)) else {
-        return;
-    };
-    let u = cross(r, f);
     let t = SIM_NOW as i32;
     let pulse = sincos::sin_q12(((t * 330) & 0x0fff) as u16).abs();
-    let blue = (64 + ((80 * pulse) >> 12)) as u8;
-    let mut pts = [[0i32; 3]; SEGMENTS + 1];
-    let mut i = 0;
-    while i <= SEGMENTS {
-        let mut p = [
-            start[0] + span[0] * i as i32 / SEGMENTS as i32,
-            start[1] + span[1] * i as i32 / SEGMENTS as i32,
-            start[2] + span[2] * i as i32 / SEGMENTS as i32,
-        ];
-        if i > 0 && i < SEGMENTS {
-            let a = ((i as i32 * 1531 + t * 700) & 0x0fff) as u16;
-            let (s, c) = (sincos::sin_q12(a), sincos::sin_q12((a + 1024) & 0x0fff));
-            let amp = 5;
-            let mut k = 0;
-            while k < 3 {
-                p[k] += ((r[k] * c + u[k] * s) >> 12) * amp >> 12;
-                k += 1;
-            }
-        }
-        pts[i] = p;
-        i += 1;
-    }
-    let mut i = 0;
-    while i < SEGMENTS {
-        thick_segment(packets, ot, pts[i], pts[i + 1], 6, (22, 30, blue), rot, base_t);
-        thick_segment(packets, ot, pts[i], pts[i + 1], 2, (90, 120, 255), rot, base_t);
-        i += 1;
-    }
-    glow(packets, ot, end, 10, 4, (140, 190, 255), rot, base_t);
+    let blue = (150 + ((105 * pulse) >> 12)) as u8;
+    draw_beam_textured(
+        packets, ot, start, end, 7, (50, 70, blue), sprite::WPN_XBEAM, 6, 3, 1, rot, base_t,
+    );
+    draw_beam_textured(
+        packets, ot, start, end, 3, (190, 210, 255), sprite::WPN_XBEAM, 2, 5, 7, rot, base_t,
+    );
+    glow(packets, ot, start, 7, (70, 90, 255), rot, base_t);
+    sprite_quad(
+        packets,
+        ot,
+        end,
+        11,
+        sprite::WPN_XSPARK,
+        (t / 2) as usize % 4,
+        (200, 220, 255),
+        rot,
+        base_t,
+    );
+}
+
+/// The Tau Cannon's beam (`EV_FireGauss`): the smoke sprite as a beam,
+/// amber for the primary shot and white for a charged one, with a bright core
+/// line, a hot glow at the muzzle and a bigger one where it lands.
+#[inline(never)]
+#[optimize(size)]
+pub(crate) unsafe fn gauss_beam(
+    packets: &mut PrimitivePacketArena<'_>,
+    ot: &mut OrderingTable<OT_LEN>,
+    start: [i32; 3],
+    end: [i32; 3],
+    charged: bool,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
+    let (half, body, core, big) = if charged {
+        (7, (255, 255, 255), (255, 255, 255), 14)
+    } else {
+        (4, (255, 140, 30), (255, 230, 150), 9)
+    };
+    draw_beam_textured(
+        packets, ot, start, end, half, body, sprite::WPN_SMOKE, 0, 0, 3, rot, base_t,
+    );
+    draw_beam(packets, ot, start, end, half / 3, core, rot, base_t);
+    glow(packets, ot, start, big / 2, body, rot, base_t);
+    glow(packets, ot, end, big, body, rot, base_t);
+}
+
+/// A tripmine's laser, `laserbeam` in the SDK's 0,214,198, scrolling along.
+#[inline(never)]
+#[optimize(size)]
+pub(crate) unsafe fn mine_beam(
+    packets: &mut PrimitivePacketArena<'_>,
+    ot: &mut OrderingTable<OT_LEN>,
+    from: [i32; 3],
+    end: [i32; 3],
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
+    draw_beam_textured(
+        packets, ot, from, end, 1, (0, 170, 156), sprite::WPN_LASER_BEAM, 0, 8, 5, rot, base_t,
+    );
+    glow(packets, ot, end, 2, (0, 150, 140), rot, base_t);
 }

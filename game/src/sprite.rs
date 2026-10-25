@@ -50,8 +50,11 @@ static mut N_SPRITE_FRAMES: usize = 0;
 // reset() never clears it; it re-appends to the atlas each map load.
 pub const EXPL_CHUNK_ID: u32 = 3002;
 pub const MAX_EXPL_FRAMES: usize = 5;
+/// Frames of the whole resident pack: the explosion's five and the weapon sprites' nine.
+const RES_FRAMES: usize = MAX_EXPL_FRAMES + 9;
 static mut EXPL_DEF: SpriteDef = EMPTY_DEF;
-static mut EXPL_SLOTS: [TexSlot; MAX_EXPL_FRAMES] = [EMPTY_SLOT; MAX_EXPL_FRAMES];
+static mut EXPL_SLOTS: [TexSlot; RES_FRAMES] = [EMPTY_SLOT; RES_FRAMES];
+static mut WPN_DEFS: [SpriteDef; WPN_SPRITES] = [EMPTY_DEF; WPN_SPRITES];
 
 /// Reset the sprite tables (called each map load before the pack streams).
 pub unsafe fn reset() {
@@ -115,33 +118,64 @@ pub unsafe fn load_pack(data: &[u8]) {
     upload_tex_blob_raw(&data[off..], n_frames, slots, MAX_SPRITE_FRAMES);
 }
 
-/// Parse the resident single-sprite explosion pack (same HSPR layout, n=1) into
-/// EXPL_DEF/EXPL_SLOTS, appending its frames to the atlas. Call each map load.
+/// Parse the resident pack (HSPR: the explosion, then the weapon effects' sprites)
+/// into EXPL_DEF/WPN_DEFS/EXPL_SLOTS, appending its frames to the atlas. Call
+/// each map load.
 #[inline(never)]
 #[optimize(size)]
 pub unsafe fn load_explosion(data: &[u8]) {
     EXPL_DEF = EMPTY_DEF;
+    WPN_DEFS = [EMPTY_DEF; WPN_SPRITES];
     for s in (*core::ptr::addr_of_mut!(EXPL_SLOTS)).iter_mut() {
         *s = EMPTY_SLOT;
     }
     if data.len() < 20 || &data[0..4] != b"HSPR" {
         return;
     }
+    let n_sprites = u16::from_le_bytes([data[4], data[5]]) as usize;
     let n_frames = u16::from_le_bytes([data[6], data[7]]) as usize;
-    if n_frames == 0 || n_frames > MAX_EXPL_FRAMES {
+    if n_sprites == 0
+        || n_sprites > 1 + WPN_SPRITES
+        || n_frames > RES_FRAMES
+        || data.len() < 8 + n_sprites * 12
+    {
         return;
     }
-    EXPL_DEF = SpriteDef {
-        n_frames: data[8],
-        first_frame: 0,
-        base_w: u16::from_le_bytes([data[12], data[13]]),
-        base_h: u16::from_le_bytes([data[14], data[15]]),
-        crush_w: u16::from_le_bytes([data[16], data[17]]),
-        crush_h: u16::from_le_bytes([data[18], data[19]]),
-    };
+    let mut i = 0;
+    while i < n_sprites {
+        let o = 8 + i * 12;
+        let def = SpriteDef {
+            n_frames: data[o],
+            first_frame: u16::from_le_bytes([data[o + 2], data[o + 3]]),
+            base_w: u16::from_le_bytes([data[o + 4], data[o + 5]]),
+            base_h: u16::from_le_bytes([data[o + 6], data[o + 7]]),
+            crush_w: u16::from_le_bytes([data[o + 8], data[o + 9]]),
+            crush_h: u16::from_le_bytes([data[o + 10], data[o + 11]]),
+        };
+        if i == 0 {
+            EXPL_DEF = def;
+        } else {
+            WPN_DEFS[i - 1] = def;
+        }
+        i += 1;
+    }
     let slots = core::ptr::addr_of_mut!(EXPL_SLOTS) as *mut TexSlot;
-    upload_tex_blob_raw(&data[20..], n_frames, slots, MAX_EXPL_FRAMES);
+    upload_tex_blob_raw(&data[8 + n_sprites * 12..], n_frames, slots, RES_FRAMES);
 }
+
+// The weapon effects' sprites (laser beam and dot, hot glow, smoke, Gluon beam
+// and flare) ride in the explosion's resident pack, sprites 1.. of it (the
+// explosion is sprite 0), so one read brings them. They answer to `def` and
+// `slot_for` as sprite ids `WPN_BASE + k`, so every beam and billboard routine
+// takes them as it takes a map's own sprites.
+pub const WPN_BASE: usize = 64;
+pub const WPN_LASER_BEAM: usize = WPN_BASE;
+pub const WPN_LASER_DOT: usize = WPN_BASE + 1;
+pub const WPN_HOT_GLOW: usize = WPN_BASE + 2;
+pub const WPN_SMOKE: usize = WPN_BASE + 3;
+pub const WPN_XBEAM: usize = WPN_BASE + 4;
+pub const WPN_XSPARK: usize = WPN_BASE + 5;
+const WPN_SPRITES: usize = 6;
 
 // Resident decals (decals.wad splats and gunshot holes): one 4bpp texture and
 // one CLUT holding every decal, loaded each map after the explosion. Each
@@ -247,6 +281,11 @@ pub fn n_sprites() -> usize {
 #[inline]
 pub fn def(id: usize) -> SpriteDef {
     unsafe {
+        if id >= WPN_BASE {
+            return *(*core::ptr::addr_of!(WPN_DEFS))
+                .get(id - WPN_BASE)
+                .unwrap_or(&EMPTY_DEF);
+        }
         *(*core::ptr::addr_of!(SPRITE_DEFS))
             .get(id)
             .unwrap_or(&EMPTY_DEF)
@@ -262,6 +301,11 @@ pub fn slot_for(id: usize, frame: usize) -> TexSlot {
             return EMPTY_SLOT;
         }
         let fi = d.first_frame as usize + frame.min(d.n_frames as usize - 1);
+        if id >= WPN_BASE {
+            return *(*core::ptr::addr_of!(EXPL_SLOTS))
+                .get(MAX_EXPL_FRAMES + fi)
+                .unwrap_or(&EMPTY_SLOT);
+        }
         *(*core::ptr::addr_of!(SPRITE_SLOTS))
             .get(fi)
             .unwrap_or(&EMPTY_SLOT)
