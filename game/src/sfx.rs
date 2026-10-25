@@ -104,13 +104,14 @@ pub const XBOW_HITBOD: u8 = 85; // and into flesh
 pub const GRENADE_HIT: u8 = 86; // a grenade's bounce (grenade_hit1)
 pub const SATCHEL_BOUNCE: u8 = 87; // a satchel's (g_bounce2)
 pub const GRENADE_PIN: u8 = 88; // the pin of a hand grenade
+pub const WPN_MOVESELECT: u8 = 89; // the weapon list steps (R1/L1)
 /// "No sound": past the bank, so `Hsfx` ignores it.
 pub const NO_SOUND: u8 = u8::MAX;
 pub const MENU_ACCEPT: u8 = BUTTON;
 // Dialogue is not a global SFX id anymore -- it streams per-map (chunk
 // 3100+idx) and plays via play_voice / play_voice_world (local ids).
 
-const MAX_SFX: usize = 90;
+const MAX_SFX: usize = 91;
 
 static mut STATE: psx_goldsrc::hsfx::Hsfx<MAX_SFX, CHARGER_HEALTH_LOOP, CHARGER_HEV_LOOP> =
     psx_goldsrc::hsfx::Hsfx::new();

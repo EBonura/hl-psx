@@ -14,7 +14,8 @@
 
 use psx_gpu::material::{BlendMode, TextureMaterial};
 use psx_gpu::ot::OrderingTable;
-use psx_gpu::prim::Sprite;
+use crate::{max_reserve_for, Arsenal, AMMO_ARGREN, AMMO_NONE, WEAPON_DEFS};
+use psx_gpu::prim::{RectFlat, Sprite};
 use psx_vram::{upload_bytes, Clut, TextureDepth, TexturePage, VramRect};
 
 const HUD_VRAM_X: u16 = 960; // fixed final band-1 page, excluded from room allocation
@@ -36,7 +37,11 @@ const HUD_BLOB_BYTES: usize = HUD_HEADER_BYTES + HUD_LEFT_BYTES + HUD_RIGHT_BYTE
 /// strip + item history + active flashlight. Each packet explicitly restores
 /// TextureWindow::NONE: world materials can leave a window active before the
 /// HUD OT is submitted.
-pub const DRAW_CAP: usize = 34;
+pub const DRAW_CAP: usize = 44;
+/// Flat rectangles of the weapon list: a box for each weapon of the closed buckets (at most
+/// thirteen) and the two halves of each ammo bar of the open one (at most eight).
+pub const RECT_CAP: usize = 20;
+pub const EMPTY_RECT: RectFlat = RectFlat::new(0, 0, 0, 0, 0, 0, 0);
 pub const EMPTY_SPRITE: Sprite = Sprite::with_material(
     0,
     0,
@@ -125,8 +130,6 @@ const CROSS_INDEX: [i8; N_WEAPONS] = [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, -1, -1, -1,
 // and carried explosives.
 const WEAPON_BUCKET: [u8; N_WEAPONS] = [0, 1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4];
 
-pub const PICKUP_NONE: u8 = 0;
-pub const PICKUP_SUIT: u8 = 1;
 pub const PICKUP_BATTERY: u8 = 2;
 pub const PICKUP_HEALTHKIT: u8 = 3;
 pub const PICKUP_LONGJUMP: u8 = 4;
@@ -350,19 +353,79 @@ fn weapon_icon_uv(weapon: usize) -> (u8, u8) {
     }
 }
 
+/// `WeaponsResource::HasAmmo`: melee has no ammo type, anything else needs a
+/// round in the magazine or the pool (the MP5's grenades count).
+fn has_ammo(a: &Arsenal, w: usize) -> bool {
+    let d = &WEAPON_DEFS[w];
+    d.ammo == AMMO_NONE
+        || a.clip[w] > 0
+        || a.ammo[d.ammo] > 0
+        || (w == W_MP5 && a.ammo[AMMO_ARGREN] > 0)
+}
+
+/// One flat additive box of the weapon list (`FillRGBA`).
+unsafe fn flat<const N: usize>(
+    ot: &mut OrderingTable<N>,
+    rects: &mut [RectFlat; RECT_CAP],
+    count: &mut usize,
+    x: i16,
+    y: i16,
+    w: i16,
+    h: u16,
+    rgb: (u8, u8, u8),
+) {
+    if *count >= RECT_CAP || w <= 0 {
+        return;
+    }
+    rects[*count] = RectFlat::new(x, y, w as u16, h, rgb.0, rgb.1, rgb.2);
+    rects[*count].color_cmd |= 0x0200_0000; // semi-transparent: added to the frame
+    ot.resume_frame()
+        .add_raw(0, core::ptr::from_mut(&mut rects[*count]).cast(), RectFlat::WORDS);
+    *count += 1;
+}
+
+/// `DrawAmmoBar` for one pool: a bright part for what is carried against the
+/// weapon's cap, the rest of the 10 pixels dim. Nothing when the pool is empty.
+unsafe fn ammo_bar<const N: usize>(
+    a: &Arsenal,
+    pool: usize,
+    x: i16,
+    y: i16,
+    ot: &mut OrderingTable<N>,
+    rects: &mut [RectFlat; RECT_CAP],
+    count: &mut usize,
+) -> i16 {
+    let have = a.ammo[pool] as u32;
+    if have == 0 {
+        return x;
+    }
+    let fill = (have * 10 / max_reserve_for(pool).max(1) as u32).clamp(1, 10) as i16;
+    flat(ot, rects, count, x, y, fill, 2, (0, 160, 0));
+    flat(ot, rects, count, x + fill, y, 10 - fill, 2, (128, 80, 0));
+    x + 10
+}
+
+/// CHudAmmo::DrawWList: the bucket numbers along the top; under the bucket the
+/// selection is in, every weapon owned there (the selected one in full with its
+/// frame, the others dimmer, red when empty) with its ammo bar; under the
+/// others a box per weapon. Sprites are queued back to front: the frame last
+/// drawn first, so it lands on the icon.
 unsafe fn draw_weapon_selection<const N: usize>(
     mat: TextureMaterial,
     weapon: usize,
+    a: &Arsenal,
     ot: &mut OrderingTable<N>,
     prims: &mut [Sprite; DRAW_CAP],
     count: &mut usize,
+    rects: &mut [RectFlat; RECT_CAP],
 ) {
     let active = WEAPON_BUCKET[weapon] as usize;
-    let active_x = 10 + active as i16 * (BUCKET_W as i16 + 5);
+    let full = alpha_mat(mat, 255);
+    let mut nrect = 0usize;
     let mut x = 10i16;
     for bucket in 0..5usize {
         sprite(
-            alpha_mat(mat, 255),
+            full,
             ot,
             prims,
             count,
@@ -373,31 +436,46 @@ unsafe fn draw_weapon_selection<const N: usize>(
             x,
             10,
         );
+        let mut y = 22i16;
+        let mut w = 0usize;
+        while w < N_WEAPONS {
+            if WEAPON_BUCKET[w] as usize == bucket && a.owns(w) {
+                let have = has_ammo(a, w);
+                if bucket == active {
+                    let (u, v) = weapon_icon_uv(w);
+                    let tint = if have {
+                        alpha_mat(mat, 192)
+                    } else {
+                        mat.with_tint((64, 0, 0))
+                    };
+                    if w == weapon {
+                        sprite(full, ot, prims, count, SELECTION_U, SELECTION_V, SELECTION_W, SELECTION_H, x, y);
+                        sprite(full, ot, prims, count, u, v, WEAPON_W, WEAPON_H, x, y);
+                    } else {
+                        sprite(tint, ot, prims, count, u, v, WEAPON_W, WEAPON_H, x, y);
+                    }
+                    let d = &WEAPON_DEFS[w];
+                    if d.ammo != AMMO_NONE {
+                        let bx = ammo_bar(a, d.ammo, x + 5, y, ot, rects, &mut nrect);
+                        if w == W_MP5 && bx != x + 5 {
+                            ammo_bar(a, AMMO_ARGREN, bx + 5, y, ot, rects, &mut nrect);
+                        }
+                    }
+                    y += WEAPON_H as i16 + 5;
+                } else {
+                    let rgb = if have { (128, 80, 0) } else { (96, 6, 6) };
+                    flat(ot, rects, &mut nrect, x, y, BUCKET_W as i16, BUCKET_H as u16, rgb);
+                    y += BUCKET_H as i16 + 5;
+                }
+            }
+            w += 1;
+        }
         x += if bucket == active {
             WEAPON_W as i16 + 5
         } else {
             BUCKET_W as i16 + 5
         };
     }
-    let (u, v) = weapon_icon_uv(weapon);
-    let full = alpha_mat(mat, 255);
-    // OT insertion is LIFO: enqueue the border first so traversal draws the
-    // weapon and then overlays the selection frame, as GoldSrc does.
-    sprite(
-        full,
-        ot,
-        prims,
-        count,
-        SELECTION_U,
-        SELECTION_V,
-        SELECTION_W,
-        SELECTION_H,
-        active_x,
-        22,
-    );
-    sprite(
-        full, ot, prims, count, u, v, WEAPON_W, WEAPON_H, active_x, 22,
-    );
 }
 
 /// # Safety
@@ -418,13 +496,13 @@ pub unsafe fn draw<const N: usize>(
     reserve_ammo: u16,
     secondary_ammo: u16,
     ammo_mode: u8, // 0 = melee, 1 = reserve-only, 2 = clip + reserve
-    pickup_kind: u8,
-    pickup_ticks: u8,
     weapon_id: i32,
     selection_ticks: u8,
     train_position: u8,
+    arsenal: &Arsenal,
     ot: &mut OrderingTable<N>,
     prims: &mut [Sprite; DRAW_CAP],
+    rects: &mut [RectFlat; RECT_CAP],
 ) -> usize {
     let mut count = 0usize;
     let weapon = (weapon_id >= 0).then_some((weapon_id as usize).min(N_WEAPONS - 1));
@@ -463,7 +541,7 @@ pub unsafe fn draw<const N: usize>(
                 }
             }
             if selection_ticks > 0 {
-                draw_weapon_selection(mats.amber, w, ot, prims, &mut count);
+                draw_weapon_selection(mats.amber, w, arsenal, ot, prims, &mut count, rects);
             }
         }
     }
@@ -718,41 +796,127 @@ pub unsafe fn draw<const N: usize>(
         }
     }
 
-    // CItemSuit never sends ItemPickup in the original. Other carried items use
-    // the history column at the right edge, at native 20x20 size (not a centre pop).
-    if matches!(
-        pickup_kind,
-        PICKUP_BATTERY | PICKUP_HEALTHKIT | PICKUP_LONGJUMP
-    ) && pickup_ticks > 0
-    {
-        // GoldSrc holds history for five seconds and uses remaining_seconds*80
-        // as brightness: at 20 Hz this is exactly four alpha steps per tick.
-        let fade = (pickup_ticks as u16 * 4).min(255) as u8;
-        let u = match pickup_kind {
-            PICKUP_HEALTHKIT => HEALTHKIT_U,
-            PICKUP_LONGJUMP => LONGJUMP_U,
-            _ => BATTERY_U,
-        };
-        let v = if pickup_kind == PICKUP_BATTERY {
-            BATTERY_V
-        } else {
-            ITEM_V
-        };
-        sprite(
-            alpha_mat(mats.amber, fade),
-            ot,
-            prims,
-            &mut count,
-            u,
-            v,
-            BATTERY_W,
-            BATTERY_H,
-            320 - BATTERY_W as i16 - 10,
-            168,
-        );
+    // CHudAmmoHistory: what was just picked up stacks up the right edge, newest
+    // last, each fading out over its five seconds (`remaining * 80`, so four alpha
+    // steps per 20 Hz tick). Weapons show their sprite at the right edge (red when
+    // they came without ammo), ammo the count then its icon, items their sprite.
+    let now = unsafe { crate::SIM_NOW };
+    let mut slot = 0usize;
+    while slot < HIST_SLOTS {
+        let h = unsafe { HIST[slot] };
+        let y = 240 - (72 + 25 * slot as i16);
+        slot += 1;
+        // The simulation clock wraps (u16): an entry shows for the 100 ticks before `until`.
+        let left = h.until.wrapping_sub(now);
+        if h.kind == HIST_NONE || left == 0 || left > HIST_TICKS {
+            continue;
+        }
+        let fade = (left * 4).min(255) as u8;
+        let tint = alpha_mat(mats.amber, fade);
+        match h.kind {
+            HIST_WEAPON => {
+                let (u, v) = weapon_icon_uv(h.id as usize);
+                let mat = if has_ammo(arsenal, h.id as usize) {
+                    tint
+                } else {
+                    mats.amber.with_tint((((fade as u16 + 1) / 2) as u8, 0, 0))
+                };
+                sprite(mat, ot, prims, &mut count, u, v, WEAPON_W, WEAPON_H, 320 - WEAPON_W as i16, y);
+            }
+            HIST_AMMO => {
+                // Icon of the first weapon that fires this pool (the MP5's grenades have their own).
+                let (u, v) = if h.id as usize == AMMO_ARGREN {
+                    (MP5_SECONDARY_U, AMMO_V)
+                } else {
+                    let mut w = 0usize;
+                    while w + 1 < N_WEAPONS && WEAPON_DEFS[w].ammo != h.id as usize {
+                        w += 1;
+                    }
+                    ((w % 7) as u8 * AMMO_W, AMMO_V + (w / 7) as u8 * AMMO_H)
+                };
+                sprite(tint, ot, prims, &mut count, u, v, AMMO_W, AMMO_H, 320 - AMMO_W as i16, y);
+                // The count, right-aligned 14 pixels left of the icon.
+                let mut digits = 1i16;
+                let mut n = h.count / 10;
+                while n > 0 {
+                    digits += 1;
+                    n /= 10;
+                }
+                let mut at = 320 - AMMO_W as i16 - 14 - digits * DW as i16;
+                let mut place = 1u16;
+                let mut k = 1;
+                while k < digits {
+                    place *= 10;
+                    k += 1;
+                }
+                while place > 0 {
+                    digit(tint, ot, prims, &mut count, ((h.count / place) % 10) as u8, at, y);
+                    at += DW as i16;
+                    place /= 10;
+                }
+            }
+            _ => {
+                let (u, v) = match h.id {
+                    PICKUP_HEALTHKIT => (HEALTHKIT_U, ITEM_V),
+                    PICKUP_LONGJUMP => (LONGJUMP_U, ITEM_V),
+                    _ => (BATTERY_U, BATTERY_V),
+                };
+                sprite(tint, ot, prims, &mut count, u, v, BATTERY_W, BATTERY_H, 320 - BATTERY_W as i16 - 10, y);
+            }
+        }
     }
 
     count
+}
+
+// ---- pickup history (CHudAmmoHistory) ----
+const HIST_SLOTS: usize = 4;
+const HIST_NONE: u8 = 0;
+/// A weapon came into the arsenal (`id` = its weapon number).
+pub const HIST_WEAPON: u8 = 1;
+/// Rounds were taken (`id` = the ammo pool, `count` = how many).
+pub const HIST_AMMO: u8 = 2;
+/// A carried item (`id` = one of the `PICKUP_*` kinds).
+pub const HIST_ITEM: u8 = 3;
+/// Five seconds at the 20 Hz simulation.
+const HIST_TICKS: u16 = 100;
+
+#[derive(Copy, Clone)]
+struct Hist {
+    kind: u8,
+    id: u8,
+    count: u16,
+    until: u16,
+}
+static mut HIST: [Hist; HIST_SLOTS] = [Hist {
+    kind: HIST_NONE,
+    id: 0,
+    count: 0,
+    until: 0,
+}; HIST_SLOTS];
+static mut HIST_NEXT: usize = 0;
+
+/// Put a pickup on the history column. The entries fill the column from the
+/// bottom while any is showing and start over when none is.
+pub unsafe fn history_add(kind: u8, id: u8, count: u16) {
+    let now = crate::SIM_NOW;
+    let mut live = false;
+    let mut i = 0;
+    while i < HIST_SLOTS {
+        let left = HIST[i].until.wrapping_sub(now);
+        live |= HIST[i].kind != HIST_NONE && left != 0 && left <= HIST_TICKS;
+        i += 1;
+    }
+    if !live || HIST_NEXT >= HIST_SLOTS {
+        HIST_NEXT = 0;
+    }
+    HIST[HIST_NEXT] = Hist {
+        kind,
+        id,
+        count,
+        until: now.wrapping_add(HIST_TICKS),
+    };
+    HIST_NEXT += 1;
 }
 
 #[cfg(test)]
@@ -769,7 +933,7 @@ mod tests {
         assert_eq!(HEALTHKIT_U as usize, CROSS_W as usize * 3);
         assert!(FLASH_BEAM_U as usize + FLASH_BEAM_W as usize <= HUD_LEFT_W);
         assert!(FLASH_V as usize + FLASH_H as usize <= 128);
-        assert_eq!(DRAW_CAP, 34);
+        assert_eq!(DRAW_CAP, 44);
         // Gameplay text owns u=160..255 only for v=0..127.
         assert!(WEAPON_RIGHT_V >= 128);
         assert_eq!(HUD_BLOB_BYTES, 23_108);

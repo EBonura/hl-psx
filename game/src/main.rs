@@ -1211,8 +1211,6 @@ const DEATH_TICKS: u8 = 40; // death window before a press is taken: the 2 s cap
 const PLAYER_START_ARMOR: u16 = 0;
 const HEV_MAX_ARMOR: u16 = 100;
 const CHARGER_RATE: u16 = 4; // health/armor points per use pulse (8-tick cadence)
-const HEV_PICKUP_TICKS: u8 = 36;
-const HUD_HISTORY_TICKS: u8 = 100; // GoldSrc hud_drawhistory_time default: 5 s
 const PROP_LINK_MATCH_XZ_EPS: i32 = 24;
 const PROP_LINK_MATCH_Y_EPS: i32 = 96;
 const PROP_GROUND_PROBE_UP: i32 = 24;
@@ -1697,6 +1695,7 @@ static mut TRAM_CACHE_ROT: [[i16; 3]; 3] = [[0; 3]; 3];
 static mut TRAM_CACHE_T: [i32; 3] = [0; 3];
 static mut TRAM_CACHE_EYE: [i32; 3] = [0; 3];
 static mut HUD_PRIMS: [Sprite; hud::DRAW_CAP] = [hud::EMPTY_SPRITE; hud::DRAW_CAP];
+static mut HUD_RECTS: [RectFlat; hud::RECT_CAP] = [hud::EMPTY_RECT; hud::RECT_CAP];
 static mut IMPACT_PARTICLES: ParticlePool<MAX_IMPACT_PARTICLES> = ParticlePool::new();
 
 // Explosion visual FX: explode()/env_explosion queue a world point here; the
@@ -21315,8 +21314,6 @@ unsafe fn collect_pickups(
     armor: &mut u16,
     health: &mut u16,
     weapon: &mut Arsenal,
-    pickup_kind: &mut u8,
-    pickup_ticks: &mut u8,
 ) {
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     let hot_count = prop_hotlist_count(PROP_ACTIVE[nprops], nprops);
@@ -21415,8 +21412,6 @@ unsafe fn collect_pickups(
                         PROP_ACTIVE[pi] = 0;
                         PROP_LOGIC_LINK[pi] = u16::MAX;
                     }
-                    *pickup_kind = hud::PICKUP_SUIT;
-                    *pickup_ticks = HEV_PICKUP_TICKS;
                     // CItemSuit::MyTouch emits !HEV_AAx (or !HEV_A0 for the
                     // short-logon spawnflag). The cooker stores that exact
                     // concatenated sentence's map-local voice id in arg0.
@@ -21445,6 +21440,7 @@ unsafe fn collect_pickups(
                     // newly-added, holsterable weapon. Duplicate weapon pickups
                     // only add ammo below and deliberately keep the current gun.
                     weapon.select(wid);
+                    hud::history_add(hud::HIST_WEAPON, wid as u8, 0);
                     consume_weapon_pickup(m, nlogic, nents, now, pi);
                     sfx::play(sfx::PICKUP);
                 } else {
@@ -21467,6 +21463,7 @@ unsafe fn collect_pickups(
                         weapon.clip[wid] += to_clip;
                         weapon.give_ammo(d.ammo, give - to_clip);
                         if weapon.ammo[d.ammo] != before || to_clip != 0 {
+                            hud::history_add(hud::HIST_AMMO, d.ammo as u8, give);
                             consume_weapon_pickup(m, nlogic, nents, now, pi);
                             sfx::play(sfx::AMMO_PICKUP);
                         }
@@ -21476,7 +21473,9 @@ unsafe fn collect_pickups(
             ty @ PROP_TYPE_AMMO_FIRST..=PROP_TYPE_AMMO_LAST => {
                 let (pool, rounds) = AMMO_PICKUPS[(ty - PROP_TYPE_AMMO_FIRST) as usize];
                 if weapon.ammo[pool] < max_reserve_for(pool) {
+                    let before = weapon.ammo[pool];
                     weapon.give_ammo(pool, rounds);
+                    hud::history_add(hud::HIST_AMMO, pool as u8, weapon.ammo[pool] - before);
                     PROP_ACTIVE[pi] = 0;
                     sfx::play(sfx::AMMO_PICKUP);
                 }
@@ -21485,8 +21484,7 @@ unsafe fn collect_pickups(
                 if *health < PLAYER_START_HEALTH {
                     *health = (*health + skill_value(Sk::HealthKit)).min(PLAYER_START_HEALTH);
                     PROP_ACTIVE[pi] = 0;
-                    *pickup_kind = hud::PICKUP_HEALTHKIT;
-                    *pickup_ticks = HUD_HISTORY_TICKS;
+                    hud::history_add(hud::HIST_ITEM, hud::PICKUP_HEALTHKIT, 0);
                     sfx::play(sfx::HEALTHKIT);
                 }
             }
@@ -21496,8 +21494,7 @@ unsafe fn collect_pickups(
                 if *suit_equipped {
                     phys::set_longjump(true);
                     PROP_ACTIVE[pi] = 0;
-                    *pickup_kind = hud::PICKUP_LONGJUMP;
-                    *pickup_ticks = HUD_HISTORY_TICKS;
+                    hud::history_add(hud::HIST_ITEM, hud::PICKUP_LONGJUMP, 0);
                     // CItemLongJump::MyTouch speaks !HEV_A1 at once.
                     if hev::can_say(hl_format::hev::S_A1) {
                         hev::say_now(hl_format::hev::S_A1);
@@ -21521,8 +21518,7 @@ unsafe fn collect_pickups(
                         PROP_ACTIVE[pi] = 0;
                         PROP_LOGIC_LINK[pi] = u16::MAX;
                     }
-                    *pickup_kind = hud::PICKUP_BATTERY;
-                    *pickup_ticks = HUD_HISTORY_TICKS;
+                    hud::history_add(hud::HIST_ITEM, hud::PICKUP_BATTERY, 0);
                     sfx::play(sfx::PICKUP);
                     // CItemBattery::MyTouch: the new power level, once in 30 s.
                     if let Some(sentence) =
@@ -36475,8 +36471,6 @@ fn play(
             logic_fire_global_autos(&m, nlogic);
         }
     }
-    let mut pickup_kind: u8 = hud::PICKUP_NONE;
-    let mut pickup_ticks: u8 = 0;
     let mut use_cooldown: u8 = 0;
     let mut use_was_held = false; // press edge: impulse objects react to the press only
     let mut charger_sound: u8 = 0;
@@ -37010,12 +37004,6 @@ fn play(
             unsafe {
                 decay_combat_fx(&m);
             }
-            if pickup_ticks > 0 {
-                pickup_ticks -= 1;
-                if pickup_ticks == 0 {
-                    pickup_kind = hud::PICKUP_NONE;
-                }
-            }
             unsafe { tick_screen_fx(sim_frame_no) };
             if unsafe { REVERT_REQUEST } {
                 // player_loadsaved's LoadThink: "reload", the death restart.
@@ -37131,6 +37119,7 @@ fn play(
             let sw_prev = input_sample.held(semantic_input::ACTION_PREV_WEAPON);
             let sw_held = sw_next || sw_prev;
             if !dead && sw_held && !switch_prev && weapon.cycle(sw_next) {
+                unsafe { sfx::play(sfx::WPN_MOVESELECT) };
                 grenade_cooking = false;
                 zoom_aim = false; // CCrossbow::Holster restores the default FOV
                 pending_vm_switch = true;
@@ -38380,8 +38369,6 @@ fn play(
                     &mut armor,
                     &mut health,
                     &mut weapon,
-                    &mut pickup_kind,
-                    &mut pickup_ticks,
                 );
                 if weapon.current != pickup_weapon_before
                     || (pickup_owned_before == 0 && weapon.owned != 0)
@@ -41094,8 +41081,6 @@ fn play(
                     weapon.reserve_display(),
                     weapon.ammo[AMMO_ARGREN],
                     weapon.ammo_mode(),
-                    pickup_kind,
-                    pickup_ticks,
                     if weapon.any_weapon() {
                         weapon.current as i32
                     } else {
@@ -41103,8 +41088,10 @@ fn play(
                     },
                     weapon_icon_ticks,
                     train_hud_position(tram_controlling, tram_speed, TRACKTRAIN_USE_SPEED as i32),
+                    &weapon,
                     hud_ot(),
                     &mut *core::ptr::addr_of_mut!(HUD_PRIMS),
+                    &mut *core::ptr::addr_of_mut!(HUD_RECTS),
                 );
             }
             // SAFETY: FX_OT is still being built, not walked, and every packet it

@@ -79,7 +79,7 @@ pub const CORE_IDS: usize = 70;
 
 /// The index, in the full core pack, of the entry that reserves the bank
 /// region. Every profile that has a region has it as its last entry.
-pub const REGION_ENTRY: usize = 89;
+pub const REGION_ENTRY: usize = 90;
 
 /// Bytes SPU RAM one sample of `adpcm_bytes` takes in a bank or the core: the
 /// ADPCM rounded up to a block, then the 16-byte parking tail.

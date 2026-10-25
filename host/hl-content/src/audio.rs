@@ -366,7 +366,7 @@ fn hsfx(blobs: &[Vec<u8>]) -> Vec<u8> {
 /// Core ids whose sound moved to the suit voice block of each map's chunk.
 const RETIRED_TO_SUIT_VOICE: [&str; 3] = ["hev_bell", "hev_health_crit", "hev_near_death"];
 
-const SOUNDS: [(&str, &str); 89] = [
+const SOUNDS: [(&str, &str); 90] = [
     ("glock", "weapons/pl_gun3.wav"),
     ("mp5", "weapons/hks1.wav"),
     ("shotgun", "weapons/sbarrel1.wav"),
@@ -483,6 +483,8 @@ const SOUNDS: [(&str, &str); 89] = [
     ("grenade_hit", "weapons/grenade_hit1.wav"),
     ("satchel_bounce", "weapons/g_bounce2.wav"),
     ("grenade_pin", "weapons/gren_cock1.wav"),
+    // The weapon list's move sound (CHudAmmo::UserCmd_NextWeapon).
+    ("wpn_moveselect", "common/wpn_moveselect.wav"),
 ];
 
 /// How long a sound may run, in milliseconds, where the original is longer than
@@ -556,7 +558,7 @@ fn resident_rate(id: &str, source_rate: u32) -> u32 {
         4_000
     } else if matches!(
         id,
-        "sqk_bite" | "egon_windup" | "egon_run" | "egon_off" | "rocket_fly" | "grenade_pin"
+        "sqk_bite" | "egon_windup" | "egon_run" | "egon_off" | "rocket_fly" | "grenade_pin" | "wpn_moveselect"
     ) {
         // Long, soft or rumbling: 4 kHz keeps the body of them.
         4_000
