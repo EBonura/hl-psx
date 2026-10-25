@@ -1,35 +1,34 @@
 //! Shared GoldSrc projection/clipping; local state selects the current view.
 use psx_goldsrc::render as shared;
 pub use shared::*;
-static mut VIEW: FullView = FullView::new();
 static mut SCRATCH: ClipScratch = ClipScratch::new();
 #[inline(always)]
 pub unsafe fn set_projection_h(h: i32) {
-    (*core::ptr::addr_of_mut!(VIEW)).set_projection_h(h);
+    (*core::ptr::addr_of_mut!(crate::hot_cells().view)).set_projection_h(h);
 }
 #[inline(always)]
 pub fn projection_h() -> i32 {
-    unsafe { (&*core::ptr::addr_of!(VIEW)).projection_h() }
+    unsafe { (&*core::ptr::addr_of!(crate::hot_cells().view)).projection_h() }
 }
 pub const OFX: i32 = 160;
 pub const OFY: i32 = 120;
 #[inline(always)]
 pub fn close_inv_q12(z: i32) -> i32 {
-    unsafe { shared::close_inv_q12(&*core::ptr::addr_of!(VIEW), z) }
+    unsafe { shared::close_inv_q12(&*core::ptr::addr_of!(crate::hot_cells().view), z) }
 }
 #[inline(always)]
 pub fn project_soft(v: &CVert) -> SVert {
-    unsafe { shared::project_soft(&*core::ptr::addr_of!(VIEW), v) }
+    unsafe { shared::project_soft(&*core::ptr::addr_of!(crate::hot_cells().view), v) }
 }
 #[inline(always)]
 pub fn quad_outside_vertical(c: &[&CVert; 4]) -> bool {
-    unsafe { shared::quad_outside_vertical(&*core::ptr::addr_of!(VIEW), c) }
+    unsafe { shared::quad_outside_vertical(&*core::ptr::addr_of!(crate::hot_cells().view), c) }
 }
 /// Consume the result before the next clipping call; rendering is serialized.
 #[inline]
 pub unsafe fn visible_clip(poly: [&CVert; 3]) -> (*const SVert, usize) {
     shared::visible_clip(
-        &*core::ptr::addr_of!(VIEW),
+        &*core::ptr::addr_of!(crate::hot_cells().view),
         &mut *core::ptr::addr_of_mut!(SCRATCH),
         poly,
     )

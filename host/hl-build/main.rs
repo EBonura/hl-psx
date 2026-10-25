@@ -2503,8 +2503,15 @@ const PROJECTION_STACK_ENTRY: &str = r"^hl_psx::project_hmd7_model_stack_entry(:
 /// Bytes the projection chain may use: it grows down from the top of the
 /// 1 KiB scratchpad to the canary ending at `PROJECTION_GUARD_END`.
 fn projection_stack_budget(scratchpad_rs: &Path) -> Result<usize> {
-    const SCRATCHPAD_BYTES: usize = 1024;
     let source = fs::read_to_string(scratchpad_rs)?;
+    let stack_top = source
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("pub const PROJECTION_STACK_TOP: usize = ")
+        })
+        .and_then(|value| value.strip_suffix(';'))
+        .and_then(|value| value.parse::<usize>().ok());
     let guard_end = source
         .lines()
         .find_map(|line| {
@@ -2519,7 +2526,19 @@ fn projection_stack_budget(scratchpad_rs: &Path) -> Result<usize> {
                 scratchpad_rs.display()
             )
         })?;
-    Ok(SCRATCHPAD_BYTES - guard_end)
+    // `PROJECTION_STACK_TOP` is an alias of `HOT_OFFSET`; read the literal.
+    let top = match stack_top {
+        Some(top) => top,
+        None => source
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("pub const HOT_OFFSET: usize = "))
+            .and_then(|value| value.strip_suffix(';'))
+            .and_then(|value| value.parse::<usize>().ok())
+            .ok_or_else(|| {
+                format!("HOT_OFFSET not found in {}", scratchpad_rs.display())
+            })?,
+    };
+    Ok(top - guard_end)
 }
 
 /// The ordinary build: the committed profile at the threshold it shipped at,

@@ -55,6 +55,14 @@ unsafe extern "C" {
     );
 }
 
+/// First byte of the hot globals that live at the top of the scratchpad (see `HotCells`
+/// in main.rs). The projection stack grows down from here, not from byte 1024: its
+/// longest chain is 640 bytes (the SDK stack-guard proves it after every link), and
+/// the bytes above it are too hot to give up.
+pub const HOT_OFFSET: usize = 984;
+/// Where the recyclable projection stack starts, growing down.
+pub const PROJECTION_STACK_TOP: usize = HOT_OFFSET;
+
 const PROJECTION_SAVE_OFFSET: usize = 128;
 const PROJECTION_GUARD_OFFSET: usize = PROJECTION_SAVE_OFFSET + 3 * core::mem::size_of::<u32>();
 // A profile-guided build inlines more into the bone chain and needs 824 bytes
@@ -124,7 +132,7 @@ pub unsafe fn call_on_projection_stack(
         __hlpsx_call_on_projection_stack(
             context,
             entry,
-            arena.add(SIZE),
+            arena.add(PROJECTION_STACK_TOP),
             arena.add(PROJECTION_SAVE_OFFSET).cast::<u32>(),
         );
     }
@@ -180,13 +188,8 @@ static mut STACK_JOB_MODE: u8 = if JOBS_ON_SCRATCHPAD { 1 } else { 2 };
 /// a scratchpad stack, and `f`'s deepest call chain fits in 852 bytes.
 #[inline(always)]
 pub unsafe fn run_on_projection_stack<R, F: FnOnce() -> R>(f: F) -> R {
-    let mut job = StackJob {
-        f: Some(f),
-        out: None,
-    };
-    if unsafe { STACK_JOB_OVERFLOWED }
-        || unsafe { core::ptr::addr_of!(STACK_JOB_MODE).read_volatile() } == 2
-    {
+    let mut job = StackJob { f: Some(f), out: None };
+    if unsafe { STACK_JOB_OVERFLOWED } || unsafe { core::ptr::addr_of!(STACK_JOB_MODE).read_volatile() } == 2 {
         unsafe { stack_job_entry::<R, F>(core::ptr::addr_of_mut!(job).cast::<u8>()) };
         return match job.out {
             Some(out) => out,
@@ -195,10 +198,7 @@ pub unsafe fn run_on_projection_stack<R, F: FnOnce() -> R>(f: F) -> R {
         };
     }
     let intact = unsafe {
-        call_on_projection_stack(
-            core::ptr::addr_of_mut!(job).cast::<u8>(),
-            stack_job_entry::<R, F>,
-        )
+        call_on_projection_stack(core::ptr::addr_of_mut!(job).cast::<u8>(), stack_job_entry::<R, F>)
     };
     if !intact {
         unsafe { STACK_JOB_OVERFLOWED = true };

@@ -774,28 +774,25 @@ const _: () = assert!(OT_LEN > (FAR_VIEW_WIDE as usize >> OT_SHIFT));
 const FAR_VIEW_WIDE: i32 = 2400;
 const FOG_START_WIDE: i32 = 1600;
 const FOG_INV_WIDE: i32 = (256i32 << 12) / (FAR_VIEW_WIDE - FOG_START_WIDE);
-static mut FAR_NOW: i32 = FAR_VIEW;
-static mut FOG_START_NOW: i32 = FOG_START;
-static mut FOG_INV_NOW: i32 = FOG_INV;
 /// The loaded map may widen its view (see FAR_VIEW_WIDE).
 static mut FAR_WIDE_MAP: bool = false;
 /// The current far plane: FAR_VIEW, or FAR_VIEW_WIDE on c0a0b while the sky
 /// shows.
 #[inline(always)]
 fn far_view() -> i32 {
-    unsafe { FAR_NOW }
+    unsafe { hot_cells().far_now }
 }
 #[inline(always)]
 fn set_far(wide: bool) {
     unsafe {
         if wide {
-            FAR_NOW = FAR_VIEW_WIDE;
-            FOG_START_NOW = FOG_START_WIDE;
-            FOG_INV_NOW = FOG_INV_WIDE;
+            hot_cells().far_now = FAR_VIEW_WIDE;
+            hot_cells().fog_start_now = FOG_START_WIDE;
+            hot_cells().fog_inv_now = FOG_INV_WIDE;
         } else {
-            FAR_NOW = FAR_VIEW;
-            FOG_START_NOW = FOG_START;
-            FOG_INV_NOW = FOG_INV;
+            hot_cells().far_now = FAR_VIEW;
+            hot_cells().fog_start_now = FOG_START;
+            hot_cells().fog_inv_now = FOG_INV;
         }
     }
 }
@@ -1682,7 +1679,6 @@ static mut TRAM_QUAD_CACHE: [QuadTexturedGouraud; MAX_TRAM_CACHE_QUADS] =
 static mut TRAM_QUAD_OTZ: [u16; MAX_TRAM_CACHE_QUADS] = [0; MAX_TRAM_CACHE_QUADS];
 static mut TRAM_QUAD_AFTER_TRIS: [u16; MAX_TRAM_CACHE_QUADS] = [0; MAX_TRAM_CACHE_QUADS];
 static mut TRAM_QUAD_COUNT: usize = 0;
-static mut TRAM_CACHE_BUILDING: bool = false;
 static mut TRAM_CACHE_OVERFLOW: bool = false;
 static mut TRAM_CACHE_VALID: bool = false;
 static mut TRAM_CACHE_ROT: [[i16; 3]; 3] = [[0; 3]; 3];
@@ -3475,13 +3471,12 @@ static mut SOFT_CACHED_CV: [[i32; 3]; 3] = [[0; 3]; 3];
 // shared edge. Leaves and the crack backstop take the GTE coordinate for any
 // vertex that is one of these corners.
 static mut SOFT_SNAP: [([i32; 3], i16, i16); 4] = [([0; 3], 0, 0); 4];
-static mut SOFT_SNAP_N: usize = 0;
 
 /// Replace a soft-projected vertex by the GTE coordinate of the same corner.
 /// Out of line: inlined into the two leaf emitters it cost 2.6 KB of RAM.
 #[inline(never)]
 unsafe fn soft_snap_corner(v: &[i32; 3], s: &mut render::SVert) {
-    let n = SOFT_SNAP_N;
+    let n = hot_cells().soft_snap_n;
     let mut k = 0usize;
     while k < n {
         let e = &SOFT_SNAP[k];
@@ -3664,7 +3659,71 @@ const _: () = {
     assert!(liquid_glass.coplanar_backdrop());
 };
 
-static mut EMIT_POLICY: EmitPolicy = EmitPolicy::OPAQUE;
+/// The hottest small globals, packed into one struct that lives in the last
+/// 40 bytes of the scratchpad. Each was read from main RAM (no data cache,
+/// one stall per load) on every face, vertex or quad of the emit paths; here
+/// a read costs the same as a register spill reload from the scratchpad.
+/// Chosen by main-RAM load stall per byte on gameplay replays (see
+/// `scratchpad::HOT_OFFSET`).
+#[repr(C)]
+struct HotCells {
+    far_now: i32,
+    fog_start_now: i32,
+    fog_inv_now: i32,
+    key_bias: i32,
+    key_min: i32,
+    soft_snap_n: usize,
+    view: render::FullView,
+    emit_policy: EmitPolicy,
+    tex_anim_select: u8,
+    flashlight_on: bool,
+    tram_cache_building: bool,
+    dyn_loop_pool: bool,
+}
+
+impl HotCells {
+    const DEFAULT: HotCells = HotCells {
+        far_now: FAR_VIEW,
+        fog_start_now: FOG_START,
+        fog_inv_now: FOG_INV,
+        key_bias: 0,
+        key_min: 0,
+        soft_snap_n: 0,
+        view: render::FullView::new(),
+        emit_policy: EmitPolicy::OPAQUE,
+        tex_anim_select: 0,
+        flashlight_on: false,
+        tram_cache_building: false,
+        dyn_loop_pool: false,
+    };
+}
+
+const _: () = assert!(
+    scratchpad::HOT_OFFSET >= QUAD_CTX_SCRATCH_OFFSET + core::mem::size_of::<QuadCtx>()
+        && scratchpad::HOT_OFFSET % 4 == 0
+        && scratchpad::HOT_OFFSET + core::mem::size_of::<HotCells>() <= scratchpad::SIZE
+);
+
+/// A/B switch: false keeps the cells in main RAM, same layout and code.
+const HOT_CELLS_ON_SCRATCHPAD: bool = true;
+static mut HOT_CELLS_RAM: HotCells = HotCells::DEFAULT;
+
+/// The hot globals. Rendering is serialized, as for every `static mut` here.
+#[inline(always)]
+pub(crate) unsafe fn hot_cells() -> &'static mut HotCells {
+    if HOT_CELLS_ON_SCRATCHPAD {
+        &mut *scratchpad::ptr_at::<HotCells>(scratchpad::HOT_OFFSET)
+    } else {
+        &mut *core::ptr::addr_of_mut!(HOT_CELLS_RAM)
+    }
+}
+
+/// Give the cells their starting values. The scratchpad has unspecified
+/// contents at boot, so this runs right after `scratchpad::clear`.
+unsafe fn hot_cells_init() {
+    *hot_cells() = HotCells::DEFAULT;
+}
+
 // Moving brushes which touch an actor need depth samples across their faces.
 // The fixed cap also bounds the cost when several doors overlap a crowd.
 static mut SUBMODEL_ACTOR_OVERLAP: bool = false;
@@ -3681,7 +3740,7 @@ fn face_needs_generic_emit(m: &Map, face: usize) -> bool {
 
 #[inline(always)]
 unsafe fn set_emit_face(m: &Map, face: usize, blend_override: u8) {
-    EMIT_POLICY =
+    hot_cells().emit_policy =
         EmitPolicy::for_face(m, face, blend_override).with_underwater_blend(EMIT_EYE_UNDER_LIQUID);
     m.select_dynamic_face(face);
 }
@@ -3691,7 +3750,7 @@ unsafe fn set_emit_cached_face(m: &Map, face: usize, rec: PvsFaceRec) {
     // The compact PVS record already carries the hot translucent/backdrop
     // bits, including backed cutout in the spare count bit. The hot path stays
     // cache-only while retaining the exact same 14-byte record layout.
-    EMIT_POLICY = EmitPolicy::from_surface(
+    hot_cells().emit_policy = EmitPolicy::from_surface(
         rec.liquid(),
         m.water_alpha_supported() && rec.liquid(),
         rec.cutout(),
@@ -3712,7 +3771,7 @@ unsafe fn light_tick(m: &Map, sim_frame_no: u32) {
 
 #[inline(always)]
 unsafe fn reset_emit_policy() {
-    EMIT_POLICY = EmitPolicy::OPAQUE;
+    hot_cells().emit_policy = EmitPolicy::OPAQUE;
     Map::reset_dynamic_face();
 }
 
@@ -3915,7 +3974,7 @@ static mut BLEND_PACKET_KEY: u32 = u32::MAX; // tex id | blend class << 16
 
 #[inline(always)]
 unsafe fn emit_packet_of(slot: &TexSlot, tex: usize) -> TexturedGouraudPacketMaterial {
-    let blend = EMIT_POLICY.blend();
+    let blend = hot_cells().emit_policy.blend();
     if blend == 0 {
         return slot.packet;
     }
@@ -3942,7 +4001,7 @@ unsafe fn sway_uv(w: u16) -> u16 {
 
 #[inline(always)]
 unsafe fn sway_uv3(uv: [u16; 3]) -> [u16; 3] {
-    if !EMIT_POLICY.wave() {
+    if !hot_cells().emit_policy.wave() {
         return uv;
     }
     [sway_uv(uv[0]), sway_uv(uv[1]), sway_uv(uv[2])]
@@ -26216,7 +26275,6 @@ unsafe fn spark_burst(at: [i32; 3], count: u8, vy_base: i32, vy_range: u32, ttl:
 // later, as if three buckets nearer.
 const KEY_BIAS_LOOP: i32 = -3;
 const KEY_BIAS_LOOP_MAX_RADIUS: i32 = 128;
-static mut KEY_BIAS: i32 = 0;
 /// Patch faces (the cook's big tessellated floors and walls) draw this many buckets farther
 /// than their depth key says: everything cooked as a detail face, brush entity or studio
 /// model that sits on or in front of one is nearer than a long polygon's mean key admits.
@@ -26225,13 +26283,12 @@ const KEY_BIAS_PATCH: i32 = 2;
 // must draw before every cell of its own refinement, which only holds if all of its
 // leaves share the parent's far key (each leaf's own far key lets nearer leaves interleave
 // with the cells and paint the backstop's shading over them). Zero outside the backstop.
-static mut KEY_MIN: i32 = 0;
 /// Studio-model packets draw this many table buckets nearer than their centroid depth.
 const MODEL_KEY_BIAS: u32 = 4;
 
 #[inline(always)]
 unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: bool) -> usize {
-    let policy = EMIT_POLICY;
+    let policy = hot_cells().emit_policy;
     let key = ordering::world_order_key::<OT_LEN>(
         depths,
         ordering::SurfaceOrder {
@@ -26245,8 +26302,8 @@ unsafe fn world_order_key(depths: ordering::PrimitiveDepths, texture_backdrop: b
             texture_backdrop,
         },
     );
-    let key = (key as i32 + KEY_BIAS)
-        .max(KEY_MIN)
+    let key = (key as i32 + hot_cells().key_bias)
+        .max(hot_cells().key_min)
         .clamp(1, OT_LEN as i32 - 1) as usize;
     #[cfg(feature = "order-trace")]
     order_trace::note_key(depths, key);
@@ -27211,7 +27268,7 @@ unsafe fn push_tri_uv_words_packed(
     }) else {
         note_render_packet_drop(false);
         WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
-        if TRAM_CACHE_BUILDING {
+        if hot_cells().tram_cache_building {
             TRAM_CACHE_OVERFLOW = true;
         }
         return;
@@ -27228,7 +27285,7 @@ unsafe fn push_tri_uv_words_packed(
 /// Copy one tram GT3 before OT insertion overwrites its tag.
 #[inline(always)]
 unsafe fn tram_cache_capture_tri(packet: *const TriTexturedGouraud, otz: usize) {
-    if !TRAM_CACHE_BUILDING {
+    if !hot_cells().tram_cache_building {
         return;
     }
     let i = TRAM_TRI_COUNT;
@@ -27251,7 +27308,7 @@ unsafe fn tram_cache_capture_tri(packet: *const TriTexturedGouraud, otz: usize) 
 /// surrounding triangle stream.
 #[inline(always)]
 unsafe fn tram_cache_capture_quad(packet: *const QuadTexturedGouraud, otz: usize) {
-    if !TRAM_CACHE_BUILDING {
+    if !hot_cells().tram_cache_building {
         return;
     }
     let i = TRAM_QUAD_COUNT;
@@ -27302,7 +27359,7 @@ unsafe fn emit_projected(
         [pa.sz as i32, pb.sz as i32, pc.sz as i32],
         slot.backdrop,
     );
-    if FLASHLIGHT_ON && !slot.backdrop {
+    if hot_cells().flashlight_on && !slot.backdrop {
         shade_world_rgb(&mut rgb, &p);
     }
 
@@ -27339,8 +27396,8 @@ unsafe fn emit_projected(
         if WORLD_AFFINE_NEAR_SUBDIVISION
             && (affine_level != 0 || hit_guard)
             && !slot.backdrop
-            && EMIT_POLICY.blend() == 0
-            && !EMIT_POLICY.wave()
+            && hot_cells().emit_policy.blend() == 0
+            && !hot_cells().emit_policy.wave()
         {
             emit_cv_split_route(
                 packets,
@@ -27363,8 +27420,8 @@ unsafe fn emit_projected(
 
     if WORLD_AFFINE_NEAR_SUBDIVISION
         && !slot.backdrop
-        && EMIT_POLICY.blend() == 0
-        && !EMIT_POLICY.wave()
+        && hot_cells().emit_policy.blend() == 0
+        && !hot_cells().emit_policy.wave()
     {
         emit_cv_split_route(
             packets,
@@ -27568,7 +27625,7 @@ unsafe fn emit_soft_quad_split(
     let slot = &*tex_slot_ptr(tex);
     // Backdrop/liquid/blended surfaces keep the proven path: sky must not be
     // fogged or split, and swaying UVs are generated per source vertex.
-    if !slot.valid || slot.backdrop || EMIT_POLICY.blend() != 0 || EMIT_POLICY.wave() {
+    if !slot.valid || slot.backdrop || hot_cells().emit_policy.blend() != 0 || hot_cells().emit_policy.wave() {
         return false;
     }
     // Require initial headroom; the recursive tree repeats its reserve check
@@ -27599,7 +27656,7 @@ unsafe fn emit_soft_quad_split(
         fog_rgb_word_no_flash(corners[order[2]].rgb, p[2].sz as i32),
         fog_rgb_word_no_flash(corners[order[3]].rgb, p[3].sz as i32),
     ];
-    if FLASHLIGHT_ON {
+    if hot_cells().flashlight_on {
         shade_world_rgb(&mut words, &p);
     }
     if fixed_grid {
@@ -27623,14 +27680,14 @@ unsafe fn emit_soft_quad_split(
         }
     };
     let q = [corner_cv(0), corner_cv(1), corner_cv(2), corner_cv(3)];
-    SOFT_SNAP_N = 0;
+    hot_cells().soft_snap_n = 0;
     let mut k = 0usize;
     while k < 4 {
         let g = &p[k];
         let clamped = g.sx <= -1023 || g.sx >= 1023 || g.sy <= -1023 || g.sy >= 1023;
         if g.sz >= NEAR && !clamped {
-            SOFT_SNAP[SOFT_SNAP_N] = (q[k].v, g.sx, g.sy);
-            SOFT_SNAP_N += 1;
+            SOFT_SNAP[hot_cells().soft_snap_n] = (q[k].v, g.sx, g.sy);
+            hot_cells().soft_snap_n += 1;
         }
         k += 1;
     }
@@ -27666,19 +27723,19 @@ unsafe fn emit_soft_quad_split(
     // Re-emit the whole quad behind its own refinement -- its conservative
     // far-depth key orders it earlier than every nearer child, and within an
     // equal bucket the LAST insert draws FIRST (OT insertion prepends).
-    let saved_policy = EMIT_POLICY;
-    EMIT_POLICY = saved_policy.with_local_depth(false).with_far_key();
+    let saved_policy = hot_cells().emit_policy;
+    hot_cells().emit_policy = saved_policy.with_local_depth(false).with_far_key();
     #[cfg(feature = "order-trace")]
     let traced_kind = order_trace::set_kind(5);
     let far = q[0].v[2].max(q[1].v[2]).max(q[2].v[2]).max(q[3].v[2]);
-    KEY_MIN = ((far.max(1) >> ordering::OT_SHIFT) + KEY_BIAS).clamp(1, OT_LEN as i32 - 1);
+    hot_cells().key_min = ((far.max(1) >> ordering::OT_SHIFT) + hot_cells().key_bias).clamp(1, OT_LEN as i32 - 1);
     emit_cv_flat(packets, [&q[0], &q[1], &q[2]], mat, np);
     emit_cv_flat(packets, [&q[1], &q[3], &q[2]], mat, np);
-    KEY_MIN = 0;
+    hot_cells().key_min = 0;
     #[cfg(feature = "order-trace")]
     order_trace::set_kind(traced_kind);
-    EMIT_POLICY = saved_policy;
-    SOFT_SNAP_N = 0;
+    hot_cells().emit_policy = saved_policy;
+    hot_cells().soft_snap_n = 0;
     true
 }
 
@@ -27882,7 +27939,7 @@ unsafe fn emit_soft_leaf(
             render::project_soft(c[2]),
             render::project_soft(c[3]),
         ];
-        if SOFT_SNAP_N != 0 {
+        if hot_cells().soft_snap_n != 0 {
             soft_snap_corner(&c[0].v, &mut p[0]);
             soft_snap_corner(&c[1].v, &mut p[1]);
             soft_snap_corner(&c[2].v, &mut p[2]);
@@ -28105,7 +28162,7 @@ unsafe fn emit_cv_flat(
             render::project_soft(cv[1]),
             render::project_soft(cv[2]),
         ];
-        if SOFT_SNAP_N != 0 {
+        if hot_cells().soft_snap_n != 0 {
             soft_snap_corner(&cv[0].v, &mut p[0]);
             soft_snap_corner(&cv[1].v, &mut p[1]);
             soft_snap_corner(&cv[2].v, &mut p[2]);
@@ -28534,7 +28591,7 @@ unsafe fn try_emit_quad_ctx(
     // their own and split back to GT3s when one shared key would hide a real
     // depth transition. Four buckets = sixteen world units at OT_SHIFT=2;
     // larger spans can visibly interleave with nearby pipes, rails, and walls.
-    let local_pair_otz = if EMIT_POLICY.local_depth() || EMIT_POLICY.cutout() {
+    let local_pair_otz = if hot_cells().emit_policy.local_depth() || hot_cells().emit_policy.cutout() {
         let first = world_order_key(
             ordering::PrimitiveDepths::tri(pb.sz as i32, pa.sz as i32, pc.sz as i32),
             slot.backdrop,
@@ -28614,11 +28671,11 @@ unsafe fn try_emit_quad_ctx(
             fog_rgb_word_no_flash(rgb_d, pd.sz as i32),
         ]
     };
-    if FLASHLIGHT_ON && !slot.backdrop {
+    if hot_cells().flashlight_on && !slot.backdrop {
         let p = [pb, pa, pc, pd];
         shade_world_rgb(&mut qrgb, &p);
     }
-    let uv = if EMIT_POLICY.wave() {
+    let uv = if hot_cells().emit_policy.wave() {
         [
             sway_uv(corners[1].uv),
             sway_uv(corners[0].uv),
@@ -28752,7 +28809,7 @@ unsafe fn try_emit_quad_ctx(
     }) else {
         note_render_packet_drop(false);
         WORLD_BAND_STATE |= WORLD_BAND_OVERFLOW;
-        if TRAM_CACHE_BUILDING {
+        if hot_cells().tram_cache_building {
             TRAM_CACHE_OVERFLOW = true;
         }
         return false;
@@ -28894,7 +28951,6 @@ const FLASH_CONE_INNER: i32 = 64;
 const FLASH_CONE_OUTER: i32 = 112;
 const FLASH_DRAIN_TICKS: u8 = 24; // SDK FLASH_DRAIN_TIME: 1.2 s at 20 Hz
 const FLASH_CHARGE_TICKS: u8 = 4; // SDK FLASH_CHARGE_TIME: 0.2 s at 20 Hz
-static mut FLASHLIGHT_ON: bool = false;
 static mut FLASHLIGHT_BATTERY: u8 = 99; // CBasePlayer::Spawn starts at 99
 static mut FLASHLIGHT_TIMER: u8 = 1; // force the initial 99 -> 100 HUD update
 static mut FLASHLIGHT_REACH: u16 = FLASH_RANGE as u16;
@@ -28930,7 +28986,7 @@ fn tick_flashlight_battery(on: bool, mut battery: u8, mut timer: u8) -> (bool, u
 /// movers both stop it, so a closed door cannot light the room behind it.
 #[inline(never)]
 unsafe fn update_flashlight_reach(m: &Map, eye: [i32; 3], rot: &Mat3I16) {
-    if !FLASHLIGHT_ON {
+    if !hot_cells().flashlight_on {
         FLASHLIGHT_REACH = FLASH_RANGE as u16;
         return;
     }
@@ -29018,7 +29074,7 @@ unsafe fn push_affine_heatmap_tri(
 /// entirely inline and avoids touching the color when no fade is required.
 #[inline(always)]
 fn fog_rgb_word_no_flash(rgb: u32, sz: i32) -> u32 {
-    let (start, far, inv) = unsafe { (FOG_START_NOW, FAR_NOW, FOG_INV_NOW) };
+    let (start, far, inv) = unsafe { (hot_cells().fog_start_now, hot_cells().far_now, hot_cells().fog_inv_now) };
     if sz <= start {
         return rgb;
     }
@@ -29805,8 +29861,8 @@ fn affine_triangle_error_level(projected: [&Projected; 3], uv: [u16; 3], previou
 #[inline(always)]
 unsafe fn affine_triangle_eligible(projected: [&Projected; 3], texture_backdrop: bool) -> bool {
     !texture_backdrop
-        && EMIT_POLICY.blend() == 0
-        && !EMIT_POLICY.wave()
+        && hot_cells().emit_policy.blend() == 0
+        && !hot_cells().emit_policy.wave()
         && projected[0].sz >= NEAR
         && projected[1].sz >= NEAR
         && projected[2].sz >= NEAR
@@ -29918,7 +29974,7 @@ unsafe fn emit_affine_quad_child(
     mat: TexturedGouraudPacketMaterial,
     nq: &mut usize,
 ) -> bool {
-    if EMIT_POLICY.tram_grid() {
+    if hot_cells().emit_policy.tram_grid() {
         let area = |a: &Projected, b: &Projected, c: &Projected| -> i32 {
             (b.sx as i32 - a.sx as i32) * (c.sy as i32 - a.sy as i32)
                 - (b.sy as i32 - a.sy as i32) * (c.sx as i32 - a.sx as i32)
@@ -30076,7 +30132,7 @@ unsafe fn emit_affine_quad_children(
     // Diagnostic heatmaps replace every GT4 with two GT3s, so retain their
     // existing per-child insertion path. The shipping path below emits the
     // same four GT4s in the same order.
-    if affine_heatmap_active() || EMIT_POLICY.tram_grid() {
+    if affine_heatmap_active() || hot_cells().emit_policy.tram_grid() {
         let mut child = 0usize;
         while child < children.len() {
             emit_affine_quad_child(packets, children[child], mat, nq);
@@ -30502,7 +30558,7 @@ unsafe fn try_emit_native_affine_quad(
 /// cheaper than touching every HMD8 face and shares the world beam's occlusion.
 #[inline]
 fn flashlight_model_shade(base: u8, center: [i32; 3], eye: [i32; 3], rot: &Mat3I16) -> u8 {
-    if !unsafe { FLASHLIGHT_ON } {
+    if !unsafe { hot_cells().flashlight_on } {
         return base;
     }
     let rel = [center[0] - eye[0], center[1] - eye[1], center[2] - eye[2]];
@@ -30583,7 +30639,7 @@ unsafe fn emit_proj_fast(
             [pa.sz as i32, pb.sz as i32, pc.sz as i32],
             slot.backdrop,
         );
-        if FLASHLIGHT_ON && !slot.backdrop {
+        if hot_cells().flashlight_on && !slot.backdrop {
             let p = [pa, pb, pc];
             shade_world_rgb(&mut rgb, &p);
         }
@@ -31043,7 +31099,7 @@ unsafe fn emit_proj_fast_tri(
             [pa.sz as i32, pb.sz as i32, pc.sz as i32],
             slot.backdrop,
         );
-        if FLASHLIGHT_ON && !slot.backdrop {
+        if hot_cells().flashlight_on && !slot.backdrop {
             let p = [pa, pb, pc];
             shade_world_rgb(&mut rgb, &p);
         }
@@ -31214,9 +31270,9 @@ unsafe fn emit_actor_occluding_face(
 ) -> bool {
     if SUBMODEL_OCCLUSION_EXTRAS < 20
         || packets.remaining() < WORLD_AFFINE_PACKET_RESERVE + 21
-        || EMIT_POLICY.blend() != 0
-        || EMIT_POLICY.wave()
-        || EMIT_POLICY.cutout()
+        || hot_cells().emit_policy.blend() != 0
+        || hot_cells().emit_policy.wave()
+        || hot_cells().emit_policy.cutout()
         || tri.tex >= MAX_TEX_SLOTS
         || tri.tex >= m.n_texs
         || p.iter()
@@ -31244,7 +31300,7 @@ unsafe fn emit_actor_occluding_face(
         [p[0].sz as i32, p[1].sz as i32, p[2].sz as i32],
         false,
     );
-    if FLASHLIGHT_ON {
+    if hot_cells().flashlight_on {
         shade_world_rgb(&mut rgb, &p);
     }
     let vertex = |i: usize| {
@@ -31258,8 +31314,8 @@ unsafe fn emit_actor_occluding_face(
         }
     };
     let vertices = [vertex(0), vertex(1), vertex(2)];
-    let saved = EMIT_POLICY;
-    EMIT_POLICY = saved.with_local_depth(true);
+    let saved = hot_cells().emit_policy;
+    hot_cells().emit_policy = saved.with_local_depth(true);
     emit_residue_children(
         packets,
         &vertices[0],
@@ -31269,7 +31325,7 @@ unsafe fn emit_actor_occluding_face(
         np,
         RESIDUE_OWN_BUDGET | 2,
     );
-    EMIT_POLICY = saved;
+    hot_cells().emit_policy = saved;
     SUBMODEL_OCCLUSION_EXTRAS -= 20;
     true
 }
@@ -31346,7 +31402,7 @@ unsafe fn emit_submodel_face(
     token: u16,
     np: &mut usize,
 ) {
-    KEY_BIAS = 0;
+    hot_cells().key_bias = 0;
     #[cfg(feature = "order-trace")]
     order_trace::set_face(4, f, m.face_bounds(f).1);
     // The caller establishes the complete policy atomically before entering
@@ -31439,7 +31495,7 @@ unsafe fn emit_submodel_face(
         }
     } else {
         let (center, radius) = m.face_bounds(f);
-        let tram_floor_face = TRAM_CACHE_BUILDING
+        let tram_floor_face = hot_cells().tram_cache_building
             && ((cnt == 9 && center == [-29, 7, -32] && radius == 122)
                 || (cnt == 6 && center == [39, 7, 32] && radius == 112));
         let end = first + cnt;
@@ -31450,8 +31506,8 @@ unsafe fn emit_submodel_face(
                 let t1 = m.render_tri(tt + 1, m.tri_uv_words(tt + 1));
                 if let Some(corners) = map::tri_pair_quad_corners(t0, t1) {
                     if is_intro_tram_floor_quad(m, corners) {
-                        let saved_policy = EMIT_POLICY;
-                        EMIT_POLICY = saved_policy.with_local_depth(true).with_tram_grid();
+                        let saved_policy = hot_cells().emit_policy;
+                        hot_cells().emit_policy = saved_policy.with_local_depth(true).with_tram_grid();
                         let emitted = emit_soft_quad_split(
                             packets,
                             m,
@@ -31462,7 +31518,7 @@ unsafe fn emit_submodel_face(
                             true,
                             SOFT_SPLIT_TARGET_SPAN_PX,
                         );
-                        EMIT_POLICY = saved_policy;
+                        hot_cells().emit_policy = saved_policy;
                         if emitted {
                             tt += 2;
                             continue;
@@ -31506,7 +31562,7 @@ unsafe fn emit_platrot_entity(
     np: &mut usize,
     model_culled_tris: &mut u32,
 ) {
-    KEY_BIAS = 0;
+    hot_cells().key_bias = 0;
     let local_rot = platrot_rotation(e, phase);
     let mr = rot.mul(&local_rot);
     let ome = [off[0] - eye[0], off[1] - eye[1], off[2] - eye[2]];
@@ -31564,7 +31620,7 @@ unsafe fn emit_world_face_tris(
     nq: &mut usize,
     counts: &mut WorldCounters,
 ) {
-    KEY_BIAS = 0;
+    hot_cells().key_bias = 0;
     #[cfg(feature = "order-trace")]
     order_trace::set_face(2, _face, m.face_bounds(_face).1);
     #[cfg(feature = "seam-census")]
@@ -31579,8 +31635,8 @@ unsafe fn emit_world_face_tris(
     let end = first + cnt;
     let mut tt = first;
     let affine_face = 0;
-    let saved_policy = EMIT_POLICY;
-    EMIT_POLICY = saved_policy.with_local_depth(refined_topology);
+    let saved_policy = hot_cells().emit_policy;
+    hot_cells().emit_policy = saved_policy.with_local_depth(refined_topology);
     while tt < end {
         if WORLD_QUAD_PAIRING && tt + 1 < end && tt + 1 < m.n_tris {
             let paired = if refined_topology {
@@ -31617,7 +31673,7 @@ unsafe fn emit_world_face_tris(
         emit_world_tri(packets, m, tt, frame, np, counts, affine_face);
         tt += 1;
     }
-    EMIT_POLICY = saved_policy;
+    hot_cells().emit_policy = saved_policy;
 }
 
 unsafe fn emit_world_loop_tri(
@@ -31664,7 +31720,7 @@ unsafe fn emit_world_face_loop(
     if count < 3 {
         return;
     }
-    KEY_BIAS = if m.face_bounds(face).1 < KEY_BIAS_LOOP_MAX_RADIUS {
+    hot_cells().key_bias = if m.face_bounds(face).1 < KEY_BIAS_LOOP_MAX_RADIUS {
         KEY_BIAS_LOOP
     } else {
         0
@@ -31772,7 +31828,7 @@ unsafe fn try_emit_native_residue(
         return false;
     }
     let slot = &*tex_slot_ptr(tri.tex);
-    if !slot.valid || EMIT_POLICY.cutout() {
+    if !slot.valid || hot_cells().emit_policy.cutout() {
         return false;
     }
     let mut p = [Projected {
@@ -31820,7 +31876,7 @@ unsafe fn try_emit_native_residue(
         [p[0].sz as i32, p[1].sz as i32, p[2].sz as i32],
         false,
     );
-    if FLASHLIGHT_ON {
+    if hot_cells().flashlight_on {
         shade_world_rgb(&mut rgb, &p);
     }
     let vertex = |i: usize| {
@@ -31863,9 +31919,9 @@ unsafe fn try_emit_clipped_residue(
         || WORLD_AFFINE_EXTRA_BUDGET_LEFT < 4
         || packets.remaining() < WORLD_AFFINE_PACKET_RESERVE + 5
         || backdrop
-        || EMIT_POLICY.blend() != 0
-        || EMIT_POLICY.wave()
-        || EMIT_POLICY.cutout()
+        || hot_cells().emit_policy.blend() != 0
+        || hot_cells().emit_policy.wave()
+        || hot_cells().emit_policy.cutout()
         || p.iter()
             .any(|v| !(render::NEAR_Z..=65535).contains(&v.z) || !render::in_band(v))
     {
@@ -31919,10 +31975,10 @@ unsafe fn emit_residue_children(
     }
     // A far-depth parent must draw before every child, including when the
     // cooked face uses local centroid ordering. Restore policy immediately.
-    let saved_policy = EMIT_POLICY;
-    EMIT_POLICY = saved_policy.with_local_depth(false).with_far_key();
+    let saved_policy = hot_cells().emit_policy;
+    hot_cells().emit_policy = saved_policy.with_local_depth(false).with_far_key();
     emit_screen_triangle(packets, a, b, c, mat, false, np);
-    EMIT_POLICY = saved_policy;
+    hot_cells().emit_policy = saved_policy;
     if levels & RESIDUE_OWN_BUDGET == 0 {
         WORLD_AFFINE_EXTRA_BUDGET_LEFT -= 4;
         WORLD_AFFINE_NATIVE_TRI_SPLITS += 1;
@@ -32036,7 +32092,7 @@ unsafe fn emit_depth_split_quad(
     nq: &mut usize,
 ) -> bool {
     let slot = &*tex_slot_ptr(tex);
-    if !slot.valid || slot.backdrop || EMIT_POLICY.blend() != 0 || EMIT_POLICY.wave() {
+    if !slot.valid || slot.backdrop || hot_cells().emit_policy.blend() != 0 || hot_cells().emit_policy.wave() {
         return false;
     }
     // (b, a, c, d) is (q00, q10, q01, q11), the GT4 Z order the fast path
@@ -32119,7 +32175,7 @@ unsafe fn emit_depth_split_quad(
         words[k] = fog_rgb_word_no_flash(corners[order[k]].rgb, p[k].sz as i32);
         k += 1;
     }
-    if FLASHLIGHT_ON {
+    if hot_cells().flashlight_on {
         shade_world_rgb(&mut words, &p);
     }
     let mut q = [AffineVertex {
@@ -32190,8 +32246,8 @@ unsafe fn emit_world_face_patches(
 ) {
     // Translucent, swaying and coplanar-backdrop surfaces (water, glass, terrain under water)
     // carry their own ordering rules and stay at their depth key.
-    KEY_BIAS =
-        if EMIT_POLICY.blend() == 0 && !EMIT_POLICY.wave() && !EMIT_POLICY.coplanar_backdrop() {
+    hot_cells().key_bias =
+        if hot_cells().emit_policy.blend() == 0 && !hot_cells().emit_policy.wave() && !hot_cells().emit_policy.coplanar_backdrop() {
             KEY_BIAS_PATCH
         } else {
             0
@@ -32199,8 +32255,8 @@ unsafe fn emit_world_face_patches(
     #[cfg(feature = "order-trace")]
     order_trace::set_face(3, base, 0);
     let tex = map::tex_anim_display(tex);
-    let saved_policy = EMIT_POLICY;
-    EMIT_POLICY = saved_policy.with_local_depth(refined_topology);
+    let saved_policy = hot_cells().emit_policy;
+    hot_cells().emit_policy = saved_policy.with_local_depth(refined_topology);
     // Everything the quads share goes to the scratchpad once; the loop below
     // then carries only its own counters across the emitter calls.
     let cx = scratchpad::ptr_at::<QuadCtx>(QUAD_CTX_SCRATCH_OFFSET);
@@ -32244,7 +32300,7 @@ unsafe fn emit_world_face_patches(
         emit_patch_fallback(cx, corners, counts);
         patch += 1;
     }
-    EMIT_POLICY = saved_policy;
+    hot_cells().emit_policy = saved_policy;
 }
 
 /// A patch record marked as a triangle (an irregular seam fragment).
@@ -34625,56 +34681,56 @@ unsafe fn draw_viewmodel(
         // The bucket sort reloads its loop state from a frame the CPU has no
         // cache for: run it on the scratchpad stack instead.
         scratchpad::run_on_projection_stack(move || {
-            for bucket in 0..VM_SORT_BUCKETS {
-                heads.add(bucket).write(VM_SORT_NONE);
+        for bucket in 0..VM_SORT_BUCKETS {
+            heads.add(bucket).write(VM_SORT_NONE);
+        }
+        for t in 0..md.triangle_count() {
+            let tri = md.triangle(t);
+            let tex_id = tri.tex;
+            let slot = slots[tex_id.min(slots.len() - 1)];
+            if !slot.valid {
+                continue;
             }
-            for t in 0..md.triangle_count() {
-                let tri = md.triangle(t);
-                let tex_id = tri.tex;
-                let slot = slots[tex_id.min(slots.len() - 1)];
-                if !slot.valid {
+            let (a, b, c) = (
+                tri.idx[0] as usize,
+                tri.idx[1] as usize,
+                tri.idx[2] as usize,
+            );
+            let (pa, pb, pc) = (
+                projected_soa_get(projected_xy, projected_z, a),
+                projected_soa_get(projected_xy, projected_z, b),
+                projected_soa_get(projected_xy, projected_z, c),
+            );
+            if pa.sz < near_s || pb.sz < near_s || pc.sz < near_s {
+                continue;
+            }
+            if VM_CULL && tex_id != VM_TWO_SIDED_TEX {
+                if culled_gte(
+                    (pa.sx as i32, pa.sy as i32),
+                    (pb.sx as i32, pb.sy as i32),
+                    (pc.sx as i32, pc.sy as i32),
+                ) == VM_CULL_POS
+                {
                     continue;
                 }
-                let (a, b, c) = (
-                    tri.idx[0] as usize,
-                    tri.idx[1] as usize,
-                    tri.idx[2] as usize,
-                );
-                let (pa, pb, pc) = (
-                    projected_soa_get(projected_xy, projected_z, a),
-                    projected_soa_get(projected_xy, projected_z, b),
-                    projected_soa_get(projected_xy, projected_z, c),
-                );
-                if pa.sz < near_s || pb.sz < near_s || pc.sz < near_s {
-                    continue;
-                }
-                if VM_CULL && tex_id != VM_TWO_SIDED_TEX {
-                    if culled_gte(
-                        (pa.sx as i32, pa.sy as i32),
-                        (pb.sx as i32, pb.sy as i32),
-                        (pc.sx as i32, pc.sy as i32),
-                    ) == VM_CULL_POS
-                    {
-                        continue;
-                    }
-                }
-                let avgz = model_unscale_depth(
-                    ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3,
-                    scale_shift,
-                );
-                let bucket = viewmodel_otz(avgz);
-                let packed_indices = (tri.idx[0] as u32 & model::RENDER_FACE_INDEX_MASK)
-                    | ((tri.idx[1] as u32 & model::RENDER_FACE_INDEX_MASK) << 10)
-                    | ((tri.idx[2] as u32 & model::RENDER_FACE_INDEX_MASK) << 20);
-                indices.add(t).write(packed_indices);
-                records.add(t).write(
-                    *heads.add(bucket) as u32
-                        | ((tex_id as u32 & 0xff) << VM_SORT_TEX_SHIFT)
-                        | ((settings::bright(vm_normal_shade(tri.normal)) as u32)
-                            << VM_SORT_SHADE_SHIFT),
-                );
-                heads.add(bucket).write(t as u16);
             }
+            let avgz = model_unscale_depth(
+                ((pa.sz as u32) + (pb.sz as u32) + (pc.sz as u32)) / 3,
+                scale_shift,
+            );
+            let bucket = viewmodel_otz(avgz);
+            let packed_indices = (tri.idx[0] as u32 & model::RENDER_FACE_INDEX_MASK)
+                | ((tri.idx[1] as u32 & model::RENDER_FACE_INDEX_MASK) << 10)
+                | ((tri.idx[2] as u32 & model::RENDER_FACE_INDEX_MASK) << 20);
+            indices.add(t).write(packed_indices);
+            records.add(t).write(
+                *heads.add(bucket) as u32
+                    | ((tex_id as u32 & 0xff) << VM_SORT_TEX_SHIFT)
+                    | ((settings::bright(vm_normal_shade(tri.normal)) as u32)
+                        << VM_SORT_SHADE_SHIFT),
+            );
+            heads.add(bucket).write(t as u16);
+        }
         });
     }
 
@@ -34689,42 +34745,42 @@ unsafe fn draw_viewmodel(
     let records = weapon_tri_records_ptr();
     let indices = weapon_tri_indices_ptr();
     scratchpad::run_on_projection_stack(move || {
-        let mut submitted = 0usize;
-        // E2 is global GPU state, not part of the polygon itself. Viewmodel tris
-        // are emitted consecutively, so repeat it only when the authored material
-        // window changes; the first triangle always establishes a known value.
-        let mut texture_window = u32::MAX;
-        // Consecutive triangles mostly share a texture: reload the 16-byte packet
-        // material only when it changes.
-        let mut packet_tex = usize::MAX;
-        let mut packet = slots[0].packet;
-        for bucket in (0..VM_SORT_BUCKETS).rev() {
-            let mut link = *heads.add(bucket);
-            while link != VM_SORT_NONE {
-                let t = link as usize;
-                let record = records.add(t).read();
-                let packed_indices = indices.add(t).read();
-                let tex = ((record >> VM_SORT_TEX_SHIFT) & 0xff) as usize;
-                let shade = ((record >> VM_SORT_SHADE_SHIFT) & 0xff) as u8;
-                if tex != packet_tex {
-                    packet = slots[tex.min(slots.len() - 1)].packet;
-                    packet_tex = tex;
-                }
-                let a = (packed_indices & model::RENDER_FACE_INDEX_MASK) as usize;
-                let b = ((packed_indices >> 10) & model::RENDER_FACE_INDEX_MASK) as usize;
-                let c = ((packed_indices >> 20) & model::RENDER_FACE_INDEX_MASK) as usize;
-                let packed_xy = [
-                    projected_xy.add(a).read(),
-                    projected_xy.add(b).read(),
-                    projected_xy.add(c).read(),
-                ];
-                let uv_words = md.triangle_uv_words(t);
-                draw_vm_tri(packed_xy, uv_words, packet, shade, &mut texture_window);
-                submitted += 1;
-                link = (record & VM_SORT_LINK_MASK) as u16;
+    let mut submitted = 0usize;
+    // E2 is global GPU state, not part of the polygon itself. Viewmodel tris
+    // are emitted consecutively, so repeat it only when the authored material
+    // window changes; the first triangle always establishes a known value.
+    let mut texture_window = u32::MAX;
+    // Consecutive triangles mostly share a texture: reload the 16-byte packet
+    // material only when it changes.
+    let mut packet_tex = usize::MAX;
+    let mut packet = slots[0].packet;
+    for bucket in (0..VM_SORT_BUCKETS).rev() {
+        let mut link = *heads.add(bucket);
+        while link != VM_SORT_NONE {
+            let t = link as usize;
+            let record = records.add(t).read();
+            let packed_indices = indices.add(t).read();
+            let tex = ((record >> VM_SORT_TEX_SHIFT) & 0xff) as usize;
+            let shade = ((record >> VM_SORT_SHADE_SHIFT) & 0xff) as u8;
+            if tex != packet_tex {
+                packet = slots[tex.min(slots.len() - 1)].packet;
+                packet_tex = tex;
             }
+            let a = (packed_indices & model::RENDER_FACE_INDEX_MASK) as usize;
+            let b = ((packed_indices >> 10) & model::RENDER_FACE_INDEX_MASK) as usize;
+            let c = ((packed_indices >> 20) & model::RENDER_FACE_INDEX_MASK) as usize;
+            let packed_xy = [
+                projected_xy.add(a).read(),
+                projected_xy.add(b).read(),
+                projected_xy.add(c).read(),
+            ];
+            let uv_words = md.triangle_uv_words(t);
+            draw_vm_tri(packed_xy, uv_words, packet, shade, &mut texture_window);
+            submitted += 1;
+            link = (record & VM_SORT_LINK_MASK) as u16;
         }
-        submitted
+    }
+    submitted
     })
 }
 
@@ -34820,6 +34876,7 @@ fn main() {
     // Hardware scratchpad sits outside BSS and has unspecified warm-boot
     // contents. Clear it before interrupts or a render cache can observe it.
     unsafe { scratchpad::clear() };
+    unsafe { hot_cells_init() };
     #[cfg(feature = "emulator-telemetry")]
     stackprobe::paint();
 
@@ -35986,7 +36043,7 @@ fn play(
         PVS_LEAF_COUNT = 0;
         PVS_ENT_COUNT = 0;
         TRAM_CACHE_VALID = false;
-        TRAM_CACHE_BUILDING = false;
+        hot_cells().tram_cache_building = false;
         TRAM_TRI_COUNT = 0;
         TRAM_QUAD_COUNT = 0;
         WORLD_BAND_STATE = WORLD_BAND_NEEDS;
@@ -36410,7 +36467,7 @@ fn play(
     let mut rpg_laser = true; // CRpg::Spawn enables the LTD by default
     let mut egon_firing = false; // prevents restarting the beam sound every pulse
     let mut crouching; // TRIANGLE held: lower eye + slower, persists into render
-    let mut flashlight = launch.preserve_view && suit_equipped && unsafe { FLASHLIGHT_ON };
+    let mut flashlight = launch.preserve_view && suit_equipped && unsafe { hot_cells().flashlight_on };
     let mut flashlight_battery = if launch.preserve_view {
         unsafe { FLASHLIGHT_BATTERY }
     } else {
@@ -36422,7 +36479,7 @@ fn play(
         1
     };
     unsafe {
-        FLASHLIGHT_ON = flashlight;
+        hot_cells().flashlight_on = flashlight;
         FLASHLIGHT_BATTERY = flashlight_battery;
         FLASHLIGHT_TIMER = flashlight_timer;
         // CBasePlayer::Spawn clears the time-based damage a death or a fresh start
@@ -37040,7 +37097,7 @@ fn play(
             }
             flash_prev = flash_now;
             unsafe {
-                FLASHLIGHT_ON = flashlight && suit_equipped && !dead;
+                hot_cells().flashlight_on = flashlight && suit_equipped && !dead;
                 FLASHLIGHT_BATTERY = flashlight_battery;
                 FLASHLIGHT_TIMER = flashlight_timer;
             }
@@ -40403,7 +40460,7 @@ fn play(
                     TRAM_TRI_COUNT = 0;
                     TRAM_QUAD_COUNT = 0;
                     TRAM_CACHE_OVERFLOW = false;
-                    TRAM_CACHE_BUILDING = TRAM_PACKET_CACHE;
+                    hot_cells().tram_cache_building = TRAM_PACKET_CACHE;
                     // The c0a0 car has 341 faces but only 118 signed plane
                     // groups (some planes are shared by 12 faces). Reuse the
                     // world visibility bits after world emission and compute
@@ -40433,7 +40490,7 @@ fn play(
                         );
                     }
                     reset_emit_policy();
-                    TRAM_CACHE_BUILDING = false;
+                    hot_cells().tram_cache_building = false;
                     if !TRAM_PACKET_CACHE || TRAM_CACHE_OVERFLOW {
                         TRAM_CACHE_VALID = false;
                     } else {

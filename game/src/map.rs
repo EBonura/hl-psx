@@ -246,7 +246,6 @@ static mut STYLE_GAIN: [i16; 32] = [0; 32];
 static mut STYLE_DEV: u32 = 0;
 static mut STYLE_STEP: u32 = u32::MAX;
 static mut STYLE_ON: u32 = 0;
-static mut DYNAMIC_LOOP_POOL: bool = false;
 const DYNAMIC_PALETTE_COLORS: usize = 64;
 const DYNAMIC_FACE_REC_SZ: usize = cooked::DYNAMIC_FACE_RECORD_SIZE;
 const DYNAMIC_TRI_BYTES: usize = 9; // 3 style planes x 3 triangle corners
@@ -403,14 +402,13 @@ const fn tex_anim_identity() -> [u8; TEX_ANIM_MAX] {
 }
 
 static mut TEX_ANIM_REMAP: [[u8; TEX_ANIM_MAX]; 2] = [tex_anim_identity(); 2];
-static mut TEX_ANIM_SELECT: u8 = 0;
 
 /// Select which frame-state row the triangle decoders resolve through. Set
 /// alongside EMIT_BLEND by the entity walkers (frame-toggled func_walls,
 /// pressed buttons); the world always draws with frame-state 0.
 #[inline(always)]
 pub fn tex_anim_select(alt_frame: bool) {
-    unsafe { TEX_ANIM_SELECT = alt_frame as u8 };
+    unsafe { crate::hot_cells().tex_anim_select = alt_frame as u8 };
 }
 
 /// Reset both rows to identity (per-map, textures change meaning on load).
@@ -418,7 +416,7 @@ pub fn tex_anim_reset() {
     let identity = tex_anim_identity();
     unsafe {
         TEX_ANIM_REMAP = [identity; 2];
-        TEX_ANIM_SELECT = 0;
+        crate::hot_cells().tex_anim_select = 0;
     }
 }
 
@@ -441,7 +439,7 @@ pub fn tex_anim_set(id: usize, frame0: u8, frame1: u8) -> bool {
 pub fn tex_anim_display(tex: usize) -> usize {
     unsafe {
         *(*core::ptr::addr_of!(TEX_ANIM_REMAP))
-            .get_unchecked(TEX_ANIM_SELECT as usize)
+            .get_unchecked(crate::hot_cells().tex_anim_select as usize)
             .get_unchecked(tex & (TEX_ANIM_MAX - 1)) as usize
     }
 }
@@ -1546,7 +1544,7 @@ impl Map {
             DYNAMIC_TRI_FIRST = rd_u16(self.data, o + 2);
             DYNAMIC_TRI_COUNT = rd_u16(self.data, o + 4);
             DYNAMIC_DATA_OFF = data_blob + rd_u16(self.data, o + 10) as usize;
-            DYNAMIC_LOOP_POOL = *self.data.get_unchecked(o + 9) != 0;
+            crate::hot_cells().dyn_loop_pool = *self.data.get_unchecked(o + 9) != 0;
         }
     }
 
@@ -1556,7 +1554,7 @@ impl Map {
             DYNAMIC_TRI_FIRST = u16::MAX;
             DYNAMIC_TRI_COUNT = 0;
             DYNAMIC_GAIN = [0; 3];
-            DYNAMIC_LOOP_POOL = false;
+            crate::hot_cells().dyn_loop_pool = false;
         }
     }
 
@@ -1652,7 +1650,7 @@ impl Map {
 
     #[inline]
     fn apply_dynamic_light(&self, tri: usize, mut rgb: [u32; 3]) -> [u32; 3] {
-        if unsafe { DYNAMIC_LOOP_POOL } {
+        if unsafe { crate::hot_cells().dyn_loop_pool } {
             return rgb;
         }
         let first = unsafe { DYNAMIC_TRI_FIRST } as usize;
@@ -1671,7 +1669,7 @@ impl Map {
 
     #[inline]
     fn apply_dynamic_loop_light(&self, vertex: usize, rgb: u32) -> u32 {
-        if !unsafe { DYNAMIC_LOOP_POOL } {
+        if !unsafe { crate::hot_cells().dyn_loop_pool } {
             return rgb;
         }
         let first = unsafe { DYNAMIC_TRI_FIRST } as usize;
@@ -2374,7 +2372,7 @@ impl Map {
 
     #[inline(always)]
     pub fn dynamic_loop_active() -> bool {
-        unsafe { DYNAMIC_LOOP_POOL }
+        unsafe { crate::hot_cells().dyn_loop_pool }
     }
 
     /// General loop-vertex decode used by rolling fans. It retains switchable
