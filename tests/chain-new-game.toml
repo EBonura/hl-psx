@@ -420,6 +420,51 @@ kind = "not_flat"
 kind = "card_unchanged"
 
 [[step]]
+label = "c1a0e controller tape 2"
+tape = "tests/chain/tapes/c1a0e-02.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=1056 }
+timeout = 360
+
+[[step]]
+label = "c1a0e controller tape 3"
+tape = "tests/chain/tapes/c1a0e-03.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [168, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=1072 }
+timeout = 360
+
+[[step]]
+label = "c1a0e controller tape 4"
+tape = "tests/chain/tapes/c1a0e-04.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=1056 }
+timeout = 360
+
+[[step]]
+label = "c1a0e controller tape 5"
+tape = "tests/chain/tapes/c1a0e-05.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
 lstick = [206, 255]
 rstick = [128, 128]
 press = []
@@ -506,8 +551,8 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8
 timeout = 3600
 
 [[step]]
-label = "c1a0e controller tape 2"
-tape = "tests/chain/tapes/c1a0e-02.pxtape"
+label = "c1a0e controller tape 6"
+tape = "tests/chain/tapes/c1a0e-06.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -526,8 +571,8 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8
 timeout = 1800
 
 [[step]]
-label = "c1a0e controller tape 3"
-tape = "tests/chain/tapes/c1a0e-03.pxtape"
+label = "c1a0e controller tape 7"
+tape = "tests/chain/tapes/c1a0e-07.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -546,8 +591,8 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8
 timeout = 1800
 
 [[step]]
-label = "c1a0e controller tape 4"
-tape = "tests/chain/tapes/c1a0e-04.pxtape"
+label = "c1a0e controller tape 8"
+tape = "tests/chain/tapes/c1a0e-08.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -1209,8 +1254,8 @@ size=4
 signed=true
 offset=8
 op="between"
-value=622
-value_hi=640
+value=618
+value_hi=656
 
 [[step]]
 label = "c1a0c controller tape 19"

@@ -357,6 +357,9 @@ map c1a0e next c1a0c
   @hold f-127 s-100 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1912 timeout=900
   @hold f-127 s-13 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1740 timeout=900
   @checkpoint w3
+  # The next leg squeezes past the lift's rail: the x where the leg starts differs by about 30 units between a
+  # build with and without the intro stage, and with it the y at the end of the leg (766 or 1034). Centre y first.
+  @align s-40 sym=LOGIC_PLAYER_POS size=4 signed offset=8 lo=1056 hi=1072 timeout=60
   @hold f-127 s78 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1540 timeout=900
   @checkpoint w4
   @hold f-127 s20 until sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=le value=1285 timeout=900
@@ -507,7 +510,7 @@ map c1a0c next c1a1
   @face 508 left
   @checkpoint elevator-lobby
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=148 value_hi=168
-  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=622 value_hi=640
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=618 value_hi=656
   3 use
   @checkpoint lift-called
   120
