@@ -184,7 +184,13 @@ Play order 14 of 103, room id 13. Exits: c1a1f@c1a1atof[], c1a1@c1a1[].
 
 Original contents: 3 actors, 1 scripted sequences or sentences, 2 multi_managers, 10 triggers, 12 buttons, 8 doors. Classes: infodecal 154, func_wall 25, func_breakable 12, func_button 12, ambient_generic 10, env_spark 6, func_door 6, multisource 5, env_beverage 3, monster_scientist_dead 3, trigger_multiple 3, ammo_glockclip 2 ....
 
-Journey: none.
+Journey: arrival only (see the findings below).
+
+Findings from a first walk (evidence kind: emulator replay from the arrival, Xash3D run of the same transition):
+
+- Arrival differs from retail. Walking west into the changelevel plane of c1a1 at (42, 2146) gives a retail arrival at (-2511.97, -756) (the Xash3D run of the same transition: landmark `c1a1` at (-2460,-752) plus the player's offset from c1a1's landmark (84,2112)). The PS1 carries the correct offset (decoded from `CHANGE_REQUEST`: -42, 28, 34, velocity -16,0,1) and finds the landmark in the cooked room (origin -2460,-280,-752, name `c1a1`), yet the player is at (-2998, -252, -565) when the map finishes loading (before the first simulation tick), 500 units from the retail spot in a north-south corridor. Neither the cooked spawn (-2880,-231,1174) nor the landmark sum gives that point; the cause is not found. Open bug.
+- From the PS1 arrival and from the retail arrival the planner reaches the same long east-west corridor and (-1696, 320), where a gentle ramp (floor -252 to -204, nodes (-1688,320) and (-1408,320)) climbs to the exit plane at x -1356..-1350.
+- Three zombies (`monster_zombie`, health 50 on the PS1) wait in that corridor, at (-1938,2), (-1794,54) and one near (-2021,-1016), plus a headcrab at (-2402,-64). A crowbar-only open-loop walk (health 90 at the first contact) loses to the first two: the player dies about 100 polls after contact. The retail player has the same weapon; the fight needs a closed loop on the zombie's health (`PROP_HEALTH[3]`, `[4]`) with retreats, not written yet.
 
 Static entity contract (`hl-census map c1a1a`, current main):
 
