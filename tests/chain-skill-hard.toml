@@ -15,6 +15,20 @@ SKILL = 0x800cb0c0
 WORLD_ARENA = 0x800e1b98
 
 [[step]]
+label = "skip the studio splash and the startup movie, if the disc has them"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
 label = "boot to the title"
 wait = 620
 

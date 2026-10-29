@@ -41,6 +41,24 @@ against the lift's 1-unit lip stalled 3 units short of the cart on builds before
 `fix/hl-cart-push-2026-10-16`), and nothing under forward 90 stalled. Passes on integ 5dac694, b5a58b2 and 219e7ff,
 and with the push perturbed by one tick of turn or strafe before the first leg.
 
+## Timing: polls, settling and staleness
+
+Every route time is in controller polls (simulation ticks, 20 Hz when the frame is built in time), never in
+video frames. A tape sample is one poll. `@hold`, `@wait` and `@face` take `timeout=N` in polls; the compiler
+writes `6 * N` gate ticks (the gate counts video frames, three per poll nominally), so a slower build still
+gets its legs and a leg that has really stopped still aborts the journey with the value it held. A step that
+waits on the game (map load, the scientist reaching the scanner) waits on RAM, not on a count.
+
+A full-stick hold leaves the player sliding for tens of units after the stick is released (about 50 at full
+stick), so the position read at the end of a hold is not where he stops. Where a later step depends on the
+resting position (a use cone, a doorway), use `@align SAMPLE sym=.. offset=.. signed=true lo=A hi=B timeout=N`:
+slow nudges with a neutral settle (25 polls by default) after each, read again, ending inside the band.
+
+`hlroute verify ROUTE REPO JOURNEY.toml --map ...` compiles the route into a scratch directory and compares the
+journey and every tape with the committed ones. Run it after any route or compiler edit: a journey that no longer
+matches its route fails here instead of as a red chain run (the committed journey was once a compile older than
+its route and broke at a leg that the route had already fixed).
+
 ## Prologues, `@face`, `@probe` and the segment table
 
 `@journey ... prologue=new_game` presses New Game on the title. Two more prologues exist for routes that do not start
@@ -61,11 +79,10 @@ and `game/src/map_catalog.rs` (`rustc --edition=2021 -O tests/chain/segments.rs 
 ## What the committed chains cover
 
 `inbound-anomalous.route` (`tests/chain-new-game.toml`): New Game, the tram ride (c0a0 to c0a0d), the walk to the test
-chamber (c0a0e), Anomalous Materials (c1a0, c1a0d, c1a0a, c1a0b, c1a0e) and the first half of c1a0c: the first airlock
-button, the pump room, the pipe corridor (a crouch jump: a plain jump peaks 3 units short of the fallen pipes on the PS1) and the elevator lobby. It stops at the lobby: the lift there (`ele_2`, a
-`func_platrot`) does not carry the player on the PS1 (the cab starts 216 units above the floor he boards from: its phase word is 0 at load where the authored position is 4096), so the route cannot
-continue. The c1a0c legs were derived from a trace of the retail engine (positions agree within 16 units up to the
-lobby) and are closed loop on the player's x and y.
+chamber (c0a0e), Anomalous Materials (c1a0, c1a0d, c1a0a, c1a0b, c1a0e) and Unforeseen Consequences' first map (c1a0c): the
+airlock, the pump room, the pipe corridor (a crouch jump: a plain jump peaks 3 units short of the fallen pipes on the PS1),
+the lift, the console scientist (use him, he follows to the retinal scanner) and the control room, to the arrival in c1a1.
+The c1a0c legs were derived from a trace of the retail engine and are closed loop on the player's x and y.
 
 `hazard.route` (`tests/chain-hazard.toml`): title, Hazard Course row, t0a0 from the start lift through doors td1 and
 td2 and the observation hall to the catwalk north of it. That catwalk ends at the door of the swimming shaft (`waterout`),

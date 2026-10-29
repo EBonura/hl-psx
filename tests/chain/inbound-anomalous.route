@@ -522,8 +522,10 @@ map c1a0c next c1a1
   @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=204 timeout=132
   2 s-127
   @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=80 timeout=100
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=152 timeout=80
-  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=162 timeout=80
+  # A full-stick hold leaves the player sliding for about 50 units after the stick is released, so the
+  # position read at the end of the hold is not where he stops (and the scientist's use cone is only
+  # 45 degrees). Settle, then close the last stretch with a slow approach and settle again.
+  @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=152 hi=168 timeout=120
   @checkpoint console-room
   @probe
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=150 value_hi=170
@@ -542,7 +544,7 @@ map c1a0c next c1a1
   @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=252 timeout=60
   1 s-127
   5
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=761 timeout=220
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=800 timeout=220
   2 f-127
   # The scientist follows the player to the scanner and takes the sequence there; its door (entity 64) swings open.
   @wait sym=ENT_PHASE offset=256 size=4 op=ge value=4096 timeout=1500
@@ -574,9 +576,8 @@ map c1a0c next c1a1
   # The beams run their course and shatter the control-room door (breakables of `control_door_shatter`); the hold below leans on it
   # until it has gone, so no fixed wait depends on the beam timing.
   # Centre on the doorway of the control-room door (opening x 908..936 once its breakables are gone) before leaning on it.
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=920 timeout=80
-  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=930 timeout=80
-  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=938 timeout=1800
+  @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=912 hi=930 timeout=120
+  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=938 timeout=6000
   1 s127
   5
   @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=590 timeout=200

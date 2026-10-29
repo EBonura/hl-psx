@@ -98,35 +98,35 @@ lstick = [128, 1]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1570 }
-timeout = 300
+timeout = 1800
 
 [[step]]
 lstick = [255, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1300 }
-timeout = 300
+timeout = 1800
 
 [[step]]
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1450 }
-timeout = 300
+timeout = 1800
 
 [[step]]
 lstick = [1, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-1380 }
-timeout = 300
+timeout = 1800
 
 [[step]]
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1300 }
-timeout = 3000
+timeout = 18000
 
 [[step]]
 checkpoint = "td1-passed"
@@ -146,19 +146,11 @@ value=-1310
 value_hi=-1280
 
 [[step]]
-label = "back to the corridor's middle: the sidestep round the pedestal can end up to 30 units further west, against the stair rail"
-lstick = [255, 128]
-rstick = [128, 128]
-press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1408 }
-timeout = 100
-
-[[step]]
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-366 }
-timeout = 3000
+timeout = 18000
 
 [[step]]
 checkpoint = "observation-hall"
@@ -182,7 +174,7 @@ lstick = [255, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1000 }
-timeout = 300
+timeout = 1800
 
 [[step]]
 label = "t0a0 controller tape 1"
@@ -195,7 +187,7 @@ lstick = [255, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-780 }
-timeout = 300
+timeout = 1800
 
 [[step]]
 checkpoint = "hall-east-end"
@@ -228,28 +220,28 @@ lstick = [255, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-640 }
-timeout = 100
+timeout = 600
 
 [[step]]
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-100 }
-timeout = 300
+timeout = 1800
 
 [[step]]
-lstick = [88, 128]
+lstick = [1, 128]
 rstick = [128, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-650 }
-timeout = 200
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-640 }
+timeout = 600
 
 [[step]]
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=600 }
-timeout = 600
+timeout = 3600
 
 [[step]]
 checkpoint = "catwalk-end"
@@ -288,21 +280,21 @@ lstick = [128, 1]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=925 }
-timeout = 400
+timeout = 2400
 
 [[step]]
 lstick = [255, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-160 }
-timeout = 300
+timeout = 1800
 
 [[step]]
 lstick = [128, 255]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=600 }
-timeout = 300
+timeout = 1800
 
 [[step]]
 checkpoint = "canal-east-bank"
@@ -326,49 +318,42 @@ lstick = [255, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-10 }
-timeout = 300
+timeout = 1800
 
 [[step]]
 lstick = [128, 128]
 rstick = [214, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="between", value=854, value_hi=934 }
-timeout = 600
+timeout = 3600
 
 [[step]]
 lstick = [128, 128]
 rstick = [184, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="between", value=960, value_hi=1015 }
-timeout = 600
-
-[[step]]
-lstick = [128, 128]
-rstick = [160, 128]
-press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="between", value=1024, value_hi=1053 }
-timeout = 600
+timeout = 3600
 
 [[step]]
 lstick = [1, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=555 }
-timeout = 100
+timeout = 600
 
 [[step]]
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=100 }
-timeout = 300
+timeout = 1800
 
 [[step]]
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=600 }
-timeout = 500
+timeout = 3000
 
 [[step]]
 checkpoint = "jump-course-entry"
@@ -397,25 +382,25 @@ value=560
 value_hi=660
 
 [[step]]
-lstick = [128, 188]
+lstick = [128, 255]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=492 }
-timeout = 400
+timeout = 1200
 
 [[step]]
 lstick = [1, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=1100 }
-timeout = 400
+timeout = 2400
 
 [[step]]
 lstick = [1, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=1122 }
-timeout = 200
+timeout = 1200
 
 [[step]]
 label = "t0a0 controller tape 3"
@@ -428,7 +413,7 @@ lstick = [1, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=1378 }
-timeout = 200
+timeout = 1200
 
 [[step]]
 label = "t0a0 controller tape 4"
@@ -441,7 +426,7 @@ lstick = [1, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=1634 }
-timeout = 200
+timeout = 1200
 
 [[step]]
 label = "t0a0 controller tape 5"
@@ -454,7 +439,7 @@ lstick = [1, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=1990 }
-timeout = 400
+timeout = 2400
 
 [[step]]
 checkpoint = "jump-course-done"
@@ -478,42 +463,42 @@ lstick = [1, 128]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=2150 }
-timeout = 400
+timeout = 2400
 
 [[step]]
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=900 }
-timeout = 300
+timeout = 1800
 
 [[step]]
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=1120 }
-timeout = 200
+timeout = 1200
 
 [[step]]
 lstick = [128, 1]
 rstick = [128, 128]
 press = ["triangle"]
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=1770 }
-timeout = 600
+timeout = 3600
 
 [[step]]
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=1900 }
-timeout = 300
+timeout = 1800
 
 [[step]]
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=2100 }
-timeout = 600
+timeout = 3600
 
 [[step]]
 checkpoint = "duck-course-done"

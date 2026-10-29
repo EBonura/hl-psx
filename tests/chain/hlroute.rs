@@ -24,8 +24,9 @@
 //!   8 t127 l-127 jump                       # axes: f s t l, buttons by name
 //!   @checkpoint name                        # frame capture; splits the tape
 //!   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=ge value=50
-//!   @wait sym=... size=.. op=.. value=.. timeout=N   # route-tick RAM wait
-//!   @hold f127 until sym=... op=.. value=.. timeout=N # closed-loop input
+//!   @wait sym=... size=.. op=.. value=.. timeout=N   # RAM wait, N in polls (sim ticks)
+//!   @hold f127 until sym=... op=.. value=.. timeout=N # closed-loop input, N in polls
+//!   @align f40 sym=... offset=.. signed=true lo=A hi=B timeout=N  # settle onto a band, slowly
 //!   @raw <toml line>                        # copied verbatim into the journey
 //! ```
 //!
@@ -37,6 +38,12 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Gate ticks are video frames; a simulation tick (one controller poll) takes three of them
+/// when the frame is built in time. Route timeouts are written in polls and compiled to gate
+/// ticks with this factor, twice the nominal three, so a slower build still gets its stick
+/// moves and waits but a leg that has really stopped still times out.
+const GATE_TICKS_PER_POLL: u32 = 6;
 
 const BTN_SELECT: u16 = 0x0001;
 const BTN_L3: u16 = 0x0002;
@@ -386,7 +393,7 @@ fn parse_route(text: &str) -> Result<Route, String> {
                 let mut kv = parse_kv(&tok[1..]);
                 let timeout = match kv.iter().position(|(k, _)| k == "timeout") {
                     Some(i) => kv.remove(i).1.parse().map_err(|_| at("timeout".into()))?,
-                    None => 9000,
+                    None => 1500,
                 };
                 b.items.push(Item::Wait(assert_table("ram", &kv), timeout));
             }
@@ -408,6 +415,44 @@ fn parse_route(text: &str) -> Result<Route, String> {
                     until: assert_table("ram", &kv),
                     timeout,
                 });
+            }
+            "@align" => {
+                // `@align SAMPLE sym=.. [offset=..] [size=..] [signed=true] lo=A hi=B timeout=N [settle=N]`:
+                // bring a RAM word into [lo, hi] with slow nudges. SAMPLE is the (slow) input that
+                // raises the word; its negation lowers it. A full-stick hold leaves the player
+                // sliding for tens of units after the release, so each nudge is followed by a
+                // neutral settle (default 25 ticks) before the word is read again.
+                let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
+                let up = parse_sample(&tok[1..2]).map_err(at)?;
+                let down = Sample {
+                    forward: -up.forward,
+                    strafe: -up.strafe,
+                    turn: -up.turn,
+                    look: -up.look,
+                    ..up
+                };
+                let mut kv = parse_kv(&tok[2..]);
+                let mut take = |k: &str| -> Option<String> {
+                    kv.iter().position(|(n, _)| n == k).map(|i| kv.remove(i).1)
+                };
+                let lo: i64 = take("lo").and_then(|v| v.parse().ok()).ok_or_else(|| at("@align needs lo=".into()))?;
+                let hi: i64 = take("hi").and_then(|v| v.parse().ok()).ok_or_else(|| at("@align needs hi=".into()))?;
+                let timeout: u32 = take("timeout").and_then(|v| v.parse().ok()).ok_or_else(|| at("@align needs timeout=".into()))?;
+                let settle: u32 = take("settle").and_then(|v| v.parse().ok()).unwrap_or(25);
+                if lo > hi {
+                    return Err(at("@align lo is above hi".into()));
+                }
+                let cond = |op: &str, value: i64| {
+                    let mut k = kv.clone();
+                    k.push(("op".into(), op.into()));
+                    k.push(("value".into(), value.to_string()));
+                    assert_table("ram", &k)
+                };
+                for (sample, until) in [(up, cond("ge", lo)), (down, cond("le", hi)), (up, cond("ge", lo))] {
+                    b.items.push(Item::Run(settle, Sample::default()));
+                    b.items.push(Item::Hold { sample, until, timeout });
+                }
+                b.items.push(Item::Run(settle, Sample::default()));
             }
             "@face" => {
                 // `@face YAW right|left [timeout=N]`: turn until the player's yaw word (0..4095, 1024 is
@@ -721,7 +766,7 @@ fn compile(o: &Opts) -> Result<(), String> {
                 }
                 Item::Wait(cond, timeout) => {
                     flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
-                    let _ = writeln!(t, "\n[[step]]\nwait_until = {cond}\ntimeout = {timeout}");
+                    let _ = writeln!(t, "\n[[step]]\nwait_until = {cond}\ntimeout = {}", timeout * GATE_TICKS_PER_POLL);
                 }
                 Item::Hold { sample, until, timeout } => {
                     flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
@@ -732,7 +777,7 @@ fn compile(o: &Opts) -> Result<(), String> {
                             press.push(match bit { BTN_SQUARE => "square", BTN_CROSS => "cross", BTN_TRIANGLE => "triangle", BTN_R2 => "r2", BTN_L2 => "l2", BTN_CIRCLE => "circle", BTN_R1 => "r1", BTN_L1 => "l1", _ => "l3" });
                         }
                     }
-                    let _ = writeln!(t, "\n[[step]]\nlstick = [{}, {}]\nrstick = [{}, {}]\npress = {press:?}\nhold_until = {until}\ntimeout = {timeout}", e[4], e[5], e[2], e[3]);
+                    let _ = writeln!(t, "\n[[step]]\nlstick = [{}, {}]\nrstick = [{}, {}]\npress = {press:?}\nhold_until = {until}\ntimeout = {}", e[4], e[5], e[2], e[3], timeout * GATE_TICKS_PER_POLL);
                     let _ = button_name(0);
                 }
                 Item::Stop => {}
@@ -865,6 +910,67 @@ fn export(route: &Path, maps: &[String], out: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// `hlroute verify ROUTE REPO TOML [--map P] [--disc P] [--symbols P] [--tape-dir D]`: compile the
+/// route into a scratch directory and compare the journey and every tape with the committed ones,
+/// byte for byte. A committed journey that no longer matches its route (an edited route or
+/// compiler with the old output left behind) fails here instead of as a red chain run.
+fn verify(args: &[String]) -> Result<(), String> {
+    let repo = PathBuf::from(&args[3]);
+    let committed = PathBuf::from(&args[4]);
+    let scratch = std::env::temp_dir().join(format!("hlroute-verify-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    fs::create_dir_all(scratch.join("tests/chain")).map_err(|e| e.to_string())?;
+    let ids = repo.join("tests/chain/map-ids.txt");
+    if ids.exists() {
+        fs::copy(&ids, scratch.join("tests/chain/map-ids.txt")).map_err(|e| e.to_string())?;
+    }
+    let mut o = Opts {
+        route: PathBuf::from(&args[2]),
+        tape_dir: "tests/chain/tapes".into(),
+        repo: scratch.clone(),
+        out: scratch.join("out.toml"),
+        disc: "dist/hl-psx.cue".into(),
+        symbols: ".hlpsx/hl-psx.map".into(),
+        header: "sym = \"WORLD_ARENA\", offset = 4".into(),
+        map: None,
+        until: None,
+    };
+    let mut i = 5;
+    while i + 1 < args.len() {
+        match args[i].as_str() {
+            "--disc" => o.disc = args[i + 1].clone(),
+            "--symbols" => o.symbols = args[i + 1].clone(),
+            "--tape-dir" => o.tape_dir = args[i + 1].clone(),
+            "--map" => o.map = Some(PathBuf::from(&args[i + 1])),
+            "--until" => o.until = Some(args[i + 1].clone()),
+            _ => {}
+        }
+        i += 2;
+    }
+    compile(&o)?;
+    let mut stale: Vec<String> = Vec::new();
+    let fresh = fs::read(&o.out).map_err(|e| e.to_string())?;
+    if fs::read(&committed).map_err(|e| format!("{}: {e}", committed.display()))? != fresh {
+        stale.push(committed.display().to_string());
+    }
+    let tapes = scratch.join(&o.tape_dir);
+    let mut names: Vec<_> = fs::read_dir(&tapes).map(|d| d.filter_map(|e| e.ok()).collect()).unwrap_or_default();
+    names.sort_by_key(|e| e.file_name());
+    for e in names {
+        let have = repo.join(&o.tape_dir).join(e.file_name());
+        if fs::read(&have).ok() != fs::read(e.path()).ok() {
+            stale.push(have.display().to_string());
+        }
+    }
+    let _ = fs::remove_dir_all(&scratch);
+    if stale.is_empty() {
+        println!("hlroute: {} matches its route", committed.display());
+        Ok(())
+    } else {
+        Err(format!("stale against the route, regenerate with `hlroute build`: {}", stale.join(", ")))
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let result = match args.get(1).map(String::as_str) {
@@ -876,6 +982,7 @@ fn main() {
             let maps: Vec<String> = args[3].split(',').map(String::from).collect();
             block_tape(Path::new(&args[2]), &maps, args[4].parse().unwrap_or(0), Path::new(&args[5]))
         }
+        Some("verify") if args.len() >= 5 => verify(&args),
         Some("import") if args.len() == 3 => import(Path::new(&args[2])).map(|s| print!("{s}")),
         Some("build") if args.len() >= 5 => {
             let mut o = Opts {
@@ -903,7 +1010,7 @@ fn main() {
             }
             compile(&o)
         }
-        _ => Err("usage: hlroute import FILE.hlinput | hlroute build ROUTE REPO OUT.toml [--disc P] [--symbols P] [--tape-dir D]".into()),
+        _ => Err("usage: hlroute import FILE.hlinput | hlroute verify ROUTE REPO OUT.toml | hlroute build ROUTE REPO OUT.toml [--disc P] [--symbols P] [--tape-dir D]".into()),
     };
     if let Err(e) = result {
         eprintln!("hlroute: {e}");
