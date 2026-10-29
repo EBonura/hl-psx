@@ -70,6 +70,10 @@ label = "settle: the first ticks of a map run the arrival"
 wait = 400
 
 [[step]]
+label = "let the last swap settle"
+wait = 150
+
+[[step]]
 label = "R1: weapon 2"
 press = ["r1"]
 hold = 8
@@ -78,6 +82,10 @@ wait = 30
 [[step]]
 wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 2 }
 timeout = 900
+
+[[step]]
+label = "let the last swap settle"
+wait = 150
 
 [[step]]
 label = "R1: weapon 3"
@@ -90,6 +98,10 @@ wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 3
 timeout = 900
 
 [[step]]
+label = "let the last swap settle"
+wait = 150
+
+[[step]]
 label = "R1: weapon 4"
 press = ["r1"]
 hold = 8
@@ -98,6 +110,10 @@ wait = 30
 [[step]]
 wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 4 }
 timeout = 900
+
+[[step]]
+label = "let the last swap settle"
+wait = 150
 
 [[step]]
 label = "R1: weapon 5"
@@ -110,6 +126,10 @@ wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 5
 timeout = 900
 
 [[step]]
+label = "let the last swap settle"
+wait = 150
+
+[[step]]
 label = "R1: weapon 6"
 press = ["r1"]
 hold = 8
@@ -118,6 +138,10 @@ wait = 30
 [[step]]
 wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 6 }
 timeout = 900
+
+[[step]]
+label = "let the last swap settle"
+wait = 150
 
 [[step]]
 label = "R1: weapon 7"
@@ -130,6 +154,10 @@ wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 7
 timeout = 900
 
 [[step]]
+label = "let the last swap settle"
+wait = 150
+
+[[step]]
 label = "R1: weapon 8"
 press = ["r1"]
 hold = 8
@@ -140,6 +168,10 @@ wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 8
 timeout = 900
 
 [[step]]
+label = "let the last swap settle"
+wait = 150
+
+[[step]]
 label = "R1: weapon 9"
 press = ["r1"]
 hold = 8
@@ -148,6 +180,10 @@ wait = 30
 [[step]]
 wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 9 }
 timeout = 900
+
+[[step]]
+label = "let the last swap settle"
+wait = 150
 
 [[step]]
 label = "R1: weapon 10"
