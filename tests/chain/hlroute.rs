@@ -423,7 +423,8 @@ fn parse_route(text: &str) -> Result<Route, String> {
                 // sliding for tens of units after the release, so each nudge is followed by a
                 // neutral settle (default 25 ticks) before the word is read again.
                 let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
-                let up = parse_sample(&tok[1..2]).map_err(at)?;
+                let parts: Vec<&str> = tok[1].split('+').collect(); // `s40+duck`: axes and buttons joined
+                let up = parse_sample(&parts).map_err(at)?;
                 let down = Sample {
                     forward: -up.forward,
                     strafe: -up.strafe,
@@ -456,9 +457,9 @@ fn parse_route(text: &str) -> Result<Route, String> {
             }
             "@face" => {
                 // `@face YAW right|left [timeout=N]`: turn until the player's yaw word (0..4095, 1024 is
-                // a quarter turn, right is increasing) is within 30 units past YAW. Two holds: a t60 turn
-                // into an 80-unit band short of the target (one t60 tick moves 61, so it cannot jump the
-                // band), then a t30 turn onto the target (30 units a tick, band of 30).
+                // a quarter turn, right is increasing) is within 60 units past YAW (before it, turning left).
+                // A coarse t60 turn to 90 units short of the target (one-sided), then a dead-band triple of
+                // single-step turns (29 units) that recovers from a late stop in either direction.
                 let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
                 let yaw: i32 = tok
                     .get(1)
@@ -475,40 +476,45 @@ fn parse_route(text: &str) -> Result<Route, String> {
                     .find(|(k, _)| k == "timeout")
                     .map(|(_, v)| v.parse().unwrap_or(600))
                     .unwrap_or(600);
-                // Bands as (low, high), both inside 0..=4095.
+                // Bands as (low, high), both inside 0..=4095. The fine band is 60 wide on the target's own
+                // side, so a coarse hold that ends one poll late (the gate looks every frame, the game polls every
+                // third) and overshoots can still be recovered by turning back instead of a full circle.
                 let (coarse, fine) = if right {
-                    ((yaw - 170, yaw - 90), (yaw, yaw + 29))
+                    ((yaw - 170, yaw - 90), (yaw, yaw + 59))
                 } else {
-                    ((yaw + 90, yaw + 170), (yaw - 29, yaw))
+                    ((yaw + 90, yaw + 170), (yaw - 59, yaw))
                 };
                 for (lo, hi) in [coarse, fine] {
                     if lo < 0 || hi > 4095 {
                         return Err(at("@face band crosses the yaw wrap: pick another target or direction".into()));
                     }
                 }
-                let cond = |lo: i32, hi: i32| {
+                let word = |op: &str, value: i32| {
                     assert_table(
                         "ram",
                         &[
                             ("sym".to_string(), "LOGIC_PLAYER_YAW".to_string()),
                             ("size".to_string(), "2".to_string()),
-                            ("op".to_string(), "between".to_string()),
-                            ("value".to_string(), lo.to_string()),
-                            ("value_hi".to_string(), hi.to_string()),
+                            ("op".to_string(), op.to_string()),
+                            ("value".to_string(), value.to_string()),
                         ],
                     )
                 };
                 let sign = if right { 1 } else { -1 };
+                // Coarse: one-sided, so a start already past the band (or an overshoot) ends the hold at once
+                // and the fine stage turns back, where a two-sided window would send it round the circle.
                 b.items.push(Item::Hold {
                     sample: Sample { turn: 60 * sign, ..Sample::default() },
-                    until: cond(coarse.0, coarse.1),
+                    until: if right { word("ge", coarse.0 + 80) } else { word("le", coarse.1 - 80) },
                     timeout,
                 });
-                b.items.push(Item::Hold {
-                    sample: Sample { turn: 30 * sign, ..Sample::default() },
-                    until: cond(fine.0, fine.1),
-                    timeout,
-                });
+                // Fine: dead-band triple with the smallest turn (29 a tick, narrower than the band): up to the
+                // low edge, back down to the high edge, up again. Each hold that already holds ends at once.
+                let up = Sample { turn: 29, ..Sample::default() };
+                let down = Sample { turn: -29, ..Sample::default() };
+                for (sample, until) in [(up, word("ge", fine.0)), (down, word("le", fine.1)), (up, word("ge", fine.0))] {
+                    b.items.push(Item::Hold { sample, until, timeout });
+                }
             }
             "@stop" => {
                 let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;

@@ -489,7 +489,10 @@ map c1a0c next c1a1
   @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=292 timeout=240
   @checkpoint pipes-crossed
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=270 value_hi=300
-  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=620 value_hi=650
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=605 value_hi=650
+  # The door ahead (edoor_2) is only 30 units wider than the player and the jump lands anywhere in a 30 unit y range
+  # depending on the build's timing: centre on the doorway before pushing into it.
+  @align s-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=630 hi=648 timeout=60
   2 f127
   80
   @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=228 timeout=120
@@ -643,6 +646,10 @@ map c1a1 next c1a1a
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=916 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=972 timeout=40
   @hold f-125 s23 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=130 timeout=77
+  # The floor from x 76 to 720 and y 900 to 1096 is a func_friction volume: the full-stick leg above slides 15 to 60 units
+  # depending on the build's tick alignment, and past x 72 the notch wall at y 908 pins the player. Settle, then walk back into
+  # the channel with a slow closed-loop nudge (facing +x).
+  @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=96 hi=124 timeout=100 settle=60
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=874 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=902 timeout=40
   @hold f-61 s-111 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=907 timeout=44
@@ -770,6 +777,10 @@ map c1a1 next c1a1a
   # Breaking the shaft window fires dethvmm: the cab plunges and the trigger_hurt `kill_pain` stays on for 3.5 s (70 polls).
   # Wait it out (a timing-dependent 55 damage otherwise).
   120
+  # Centre on the broken pane and face west before the crouched walk in: the pane opening is y 2052..2104 and the hull
+  # is 16 either side, so 2072 with a 4 degree slant still drags along the pillar. Facing west, strafe right raises y.
+  @align s40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=2075 hi=2083 timeout=60
+  @face 3080 left
   @hold f127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=900 timeout=40
   200
   @checkpoint c1a1-in-shaft

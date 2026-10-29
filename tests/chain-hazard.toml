@@ -378,14 +378,28 @@ timeout = 1800
 lstick = [128, 128]
 rstick = [214, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="between", value=854, value_hi=934 }
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=934 }
 timeout = 3600
 
 [[step]]
 lstick = [128, 128]
-rstick = [184, 128]
+rstick = [182, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="between", value=1024, value_hi=1053 }
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1024 }
+timeout = 3600
+
+[[step]]
+lstick = [128, 128]
+rstick = [74, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1083 }
+timeout = 3600
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1024 }
 timeout = 3600
 
 [[step]]

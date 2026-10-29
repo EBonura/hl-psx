@@ -53,6 +53,12 @@ A full-stick hold leaves the player sliding for tens of units after the stick is
 stick), so the position read at the end of a hold is not where he stops. Where a later step depends on the
 resting position (a use cone, a doorway), use `@align SAMPLE sym=.. offset=.. signed=true lo=A hi=B timeout=N`:
 slow nudges with a neutral settle (25 polls by default) after each, read again, ending inside the band.
+`settle=N` lengthens the neutral wait, and the sample may carry buttons (`s40+duck`). Floors under a `func_friction`
+(the c1a1 pipe room from x 76 to 720) keep the player sliding much longer and by an amount that depends on the
+build's tick alignment: leave such a volume with `@align ... settle=60` and never chain full-stick holds whose
+end position matters. A route is robust when every stop that a later leg depends on is read from RAM (`@align`,
+`@face`, `@hold until`) and none counts ticks; `chain-new-game` is kept green on both the intro and the no-intro
+disc, so check both after a route edit.
 
 `hlroute verify ROUTE REPO JOURNEY.toml --map ...` compiles the route into a scratch directory and compares the
 journey and every tape with the committed ones. Run it after any route or compiler edit: a journey that no longer
