@@ -661,6 +661,7 @@ map c1a1 next c1a1a
   @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1250 timeout=100
   @checkpoint c1a1-north-corridor
   @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
   @hold f107 s-69 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=326 timeout=61
   @hold f107 s-69 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=326 timeout=61
   @hold f105 s-71 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=500 timeout=40
@@ -763,6 +764,9 @@ map c1a1 next c1a1a
   12 duck
   4 attack duck
   12 duck
+  # Breaking the shaft window fires dethvmm: the cab plunges and the trigger_hurt `kill_pain` stays on for 3.5 s (70 polls).
+  # Wait it out (a timing-dependent 55 damage otherwise).
+  120
   @hold f127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=900 timeout=40
   200
   @checkpoint c1a1-in-shaft
@@ -849,11 +853,18 @@ map c1a1 next c1a1a
   @hold f-108 s-67 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=176 timeout=44
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=2104 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=2128 timeout=40
-  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=50 timeout=60
-  60 f-127
+  # Walk into the changelevel plane. The hold ends when the player position jumps to the next map's
+  # landmark (a tape of 60 polls would keep pushing west inside c1a1a and walk him 500 units from the arrival).
+  # The plane sits behind a ledge at y 2110 (the player stops at x 42 there); the walk drifts to y 2136, where it is clear.
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=60 timeout=60
+  5
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-1000 timeout=60
 
 
 map c1a1a next c1a1f
   @checkpoint arrive-c1a1a
+  @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=-2540 value_hi=-2480
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=-800 value_hi=-680
   @stop

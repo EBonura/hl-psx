@@ -2413,6 +2413,13 @@ size=2
 op="between"
 value=0
 value_hi=65535
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_HEALTH"
+size=2
+op="between"
+value=1
+value_hi=100
 
 [[step]]
 lstick = [59, 21]
@@ -3300,7 +3307,7 @@ value_hi=100
 label = "c1a1 controller tape 23"
 tape = "tests/chain/tapes/c1a1-23.pxtape"
 tape_rebase = true
-timeout = 1520
+timeout = 2000
 
 [[step]]
 lstick = [128, 1]
@@ -4023,14 +4030,21 @@ timeout = 240
 lstick = [128, 255]
 rstick = [128, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=50 }
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=60 }
 timeout = 360
 
 [[step]]
 label = "c1a1 controller tape 35"
 tape = "tests/chain/tapes/c1a1-35.pxtape"
 tape_rebase = true
-timeout = 1440
+timeout = 1220
+
+[[step]]
+lstick = [128, 255]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-1000 }
+timeout = 360
 # trailing wait of 0 ticks is replaced by the next block's load wait
 
 # ---- c1a1a -> c1a1f ----
@@ -4053,9 +4067,61 @@ kind = "not_flat"
 kind = "card_unchanged"
 [[step.assert]]
 kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=0
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=4
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=8
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_YAW"
+size=2
+op="between"
+value=0
+value_hi=65535
+[[step.assert]]
+kind="ram"
 sym="LOGIC_PLAYER_HEALTH"
 size=2
 op="between"
 value=1
 value_hi=100
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=0
+op="between"
+value=-2540
+value_hi=-2480
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=8
+op="between"
+value=-800
+value_hi=-680
 # trailing wait of 0 ticks is replaced by the next block's load wait
