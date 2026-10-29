@@ -16,8 +16,12 @@ map t0a0 next t0a0a
   @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-1380 timeout=300
   # Door td1 opens 15 s after the player passes the trigger at y -1680; holding forward waits for it.
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1300 timeout=3000
+  # The slide after the release is 20 to 30 units and the stair rails further on leave about 30 units of width:
+  # settle and centre the player before the corridor instead of trusting where the hold ended.
+  @align s40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=-1392 hi=-1368 timeout=120
   @checkpoint td1-passed
-  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=-1310 value_hi=-1280
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=-1330 value_hi=-1190
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=-1396 value_hi=-1364
   # The corridor to door td2 (y -460), which opens on the trigger at y -636, then the observation hall.
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-366 timeout=3000
   @checkpoint observation-hall

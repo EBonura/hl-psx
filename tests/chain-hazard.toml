@@ -10,10 +10,10 @@ max_ticks = 30000
 
 # Bound to the build this journey was written against.
 [addr]
-LOGIC_PLAYER_POS = 0x801ced28
-LOGIC_PLAYER_YAW = 0x801ced34
-SIM_NOW = 0x801e5e10
-WORLD_ARENA = 0x800e1b98
+LOGIC_PLAYER_POS = 0x801ced68
+LOGIC_PLAYER_YAW = 0x801ced74
+SIM_NOW = 0x801e5e50
+WORLD_ARENA = 0x800e1bd8
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"
@@ -129,6 +129,51 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8
 timeout = 18000
 
 [[step]]
+label = "t0a0 controller tape 1"
+tape = "tests/chain/tapes/t0a0-01.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [168, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1392 }
+timeout = 720
+
+[[step]]
+label = "t0a0 controller tape 2"
+tape = "tests/chain/tapes/t0a0-02.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-1368 }
+timeout = 720
+
+[[step]]
+label = "t0a0 controller tape 3"
+tape = "tests/chain/tapes/t0a0-03.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [168, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1392 }
+timeout = 720
+
+[[step]]
+label = "t0a0 controller tape 4"
+tape = "tests/chain/tapes/t0a0-04.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
 checkpoint = "td1-passed"
 golden = false
 [[step.assert]]
@@ -142,8 +187,17 @@ size=4
 signed=true
 offset=8
 op="between"
-value=-1310
-value_hi=-1280
+value=-1330
+value_hi=-1190
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=0
+op="between"
+value=-1396
+value_hi=-1364
 
 [[step]]
 lstick = [128, 1]
@@ -177,8 +231,8 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0
 timeout = 1800
 
 [[step]]
-label = "t0a0 controller tape 1"
-tape = "tests/chain/tapes/t0a0-01.pxtape"
+label = "t0a0 controller tape 5"
+tape = "tests/chain/tapes/t0a0-05.pxtape"
 tape_rebase = true
 timeout = 1320
 
@@ -270,8 +324,8 @@ value=600
 value_hi=640
 
 [[step]]
-label = "t0a0 controller tape 2"
-tape = "tests/chain/tapes/t0a0-02.pxtape"
+label = "t0a0 controller tape 6"
+tape = "tests/chain/tapes/t0a0-06.pxtape"
 tape_rebase = true
 timeout = 1440
 
@@ -403,8 +457,8 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8
 timeout = 1200
 
 [[step]]
-label = "t0a0 controller tape 3"
-tape = "tests/chain/tapes/t0a0-03.pxtape"
+label = "t0a0 controller tape 7"
+tape = "tests/chain/tapes/t0a0-07.pxtape"
 tape_rebase = true
 timeout = 1256
 
@@ -416,8 +470,8 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8
 timeout = 1200
 
 [[step]]
-label = "t0a0 controller tape 4"
-tape = "tests/chain/tapes/t0a0-04.pxtape"
+label = "t0a0 controller tape 8"
+tape = "tests/chain/tapes/t0a0-08.pxtape"
 tape_rebase = true
 timeout = 1256
 
@@ -429,8 +483,8 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8
 timeout = 1200
 
 [[step]]
-label = "t0a0 controller tape 5"
-tape = "tests/chain/tapes/t0a0-05.pxtape"
+label = "t0a0 controller tape 9"
+tape = "tests/chain/tapes/t0a0-09.pxtape"
 tape_rebase = true
 timeout = 1256
 

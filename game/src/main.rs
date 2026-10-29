@@ -22725,6 +22725,7 @@ unsafe fn queue_impact_marks(
     }
 }
 
+const MELEE_HULL_RADIUS: i32 = 16; // the swept head hull of CCrowbar::Swing
 const MELEE_AIM_PIX: i32 = 53; // crowbar swing: a 16 unit hull radius at its 48 unit reach
 
 #[inline(always)]
@@ -22996,7 +22997,12 @@ unsafe fn fire_hitscan(
             // screen-space fallback for melee and legacy chunks only.
             let target = prop_target(ty, PROP_POS[pi]);
             let vz = dot12(rot.m[2], target) + base_t[2];
-            if !(render::NEAR_Z..=range).contains(&vz) {
+            // CCrowbar::Swing: a 32 unit line trace (reaches the target's edge, so its centre
+            // sits at 48 with a 16 unit half-extent) and then, when the line misses, a 32 unit
+            // swept head hull of 16 units half-width: a 32 wide actor is hit up to a centre
+            // distance of 64. The player's hull radius is added for a melee swing.
+            let reach = if club_damage { range + MELEE_HULL_RADIUS } else { range };
+            if !(render::NEAR_Z..=reach).contains(&vz) {
                 None
             } else {
                 let vx = dot12(rot.m[0], target) + base_t[0];
@@ -23007,7 +23013,7 @@ unsafe fn fire_hitscan(
                 let lim_x = (hit_r * H_PROJ as i32).max(vz * aim_x);
                 let lim_y = (hit_hh * H_PROJ as i32).max(vz * aim_y);
                 (dx.abs() <= lim_x && dy.abs() <= lim_y)
-                    .then(|| mul_div_i32(vz, 4096, range.max(1)))
+                    .then(|| mul_div_i32(vz, 4096, range.max(1)).min(4096))
             }
         };
         let Some(hit_frac) = hit_frac else {

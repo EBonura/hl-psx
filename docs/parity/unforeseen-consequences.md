@@ -184,13 +184,25 @@ Play order 14 of 103, room id 13. Exits: c1a1f@c1a1atof[], c1a1@c1a1[].
 
 Original contents: 3 actors, 1 scripted sequences or sentences, 2 multi_managers, 10 triggers, 12 buttons, 8 doors. Classes: infodecal 154, func_wall 25, func_breakable 12, func_button 12, ambient_generic 10, env_spark 6, func_door 6, multisource 5, env_beverage 3, monster_scientist_dead 3, trigger_multiple 3, ammo_glockclip 2 ....
 
-Journey: arrival only (the chain checks the arrival point within 30 units; see the findings below).
+Journey: arrival only (the chain checks the arrival point within 30 units; see the findings below). Transition arrivals checked against the retail landmark formula: c1a0c to c1a1 retail (1030.3, 622) against PS1 (1027, 621) with the same offset (retail leaves c1a0c at x 579, the PS1 at about 576; the 3-unit difference is the carried velocity over the first ticks); c1a1 to c1a1a as above.
 
 Findings from a first walk (evidence kind: emulator replay from the arrival, Xash3D run of the same transition):
 
 - Arrival matches retail. Both sides apply landmark(c1a1 in c1a1a) = (-2460, -752, -280) plus the player's offset from c1a1's landmark (84, 2112, 736). Same tick (the first simulation tick), same stance (standing, the origin height is -252 in both, so there is no crouch or eye-height term): retail walking into the plane from (120, 2108) arrives at (x -2511.97, y -756, z -252); the PS1 chain, leaving the plane at y 2146 (offset 34 instead of -4), arrives at (x -2512, up -252, y -717). The 38-unit y difference is exactly the 38-unit difference in where the two runs touched the plane (-752 + (2108-2112) = -756 and -752 + (2146-2112) = -718, the PS1 reads -717). An earlier note here claimed a 500-unit error: that was the journey's own 60-poll walk tape playing on inside c1a1a, not a game defect.
 - From the PS1 arrival and from the retail arrival the planner reaches the same long east-west corridor and (-1696, 320), where a gentle ramp (floor -252 to -204, nodes (-1688,320) and (-1408,320)) climbs to the exit plane at x -1356..-1350.
-- Three zombies (`monster_zombie`, health 50 on the PS1) wait in that corridor, at (-1938,2), (-1794,54) and one near (-2021,-1016), plus a headcrab at (-2402,-64). A crowbar-only open-loop walk (health 90 at the first contact) loses to the first two: the player dies about 100 polls after contact. The retail player has the same weapon; the fight needs a closed loop on the zombie's health (`PROP_HEALTH[3]`, `[4]`) with retreats, not written yet.
+- Three zombies (`monster_zombie`, health 50 on both sides) wait in that corridor, at (-1938,2), (-1794,54) and one near (-2003,-1017), plus a headcrab at (-2402,-64). Measured against the retail engine (Xash3D, same corridor, player standing at (-2325,35), skill 2, one tick = 50 ms):
+
+  | number | retail | PS1 |
+  |---|---|---|
+  | walk speed | 3.6 u/tick (325 units in 91 ticks) | about 4 u/tick |
+  | attack starts at | about 62 units from the player | about 62 units observed (its claw trigger is 83) |
+  | claw lands | both-claw `attack` (seq 9) 11 ticks after the start, 40 damage; one-claw (seq 8) 15 ticks, 20 damage | 8 ticks after the start, always one 20 damage claw |
+  | attack animation / next attack | 28 to 52 ticks, next attack 40 to 60 ticks after the start | 21 ticks locked, cooldown 35 |
+  | player dead after first contact (standing, no weapon) | 118 ticks | not measured standing |
+  | crowbar reach to an actor's centre | 32 line + 16 swept head hull + 16 actor half-extent = 64 | 48 (fixed on branch fix/hl-crowbar-reach-2026-10-29: 48 + 16 hull = 64) |
+  | crowbar damage | 10 first swing, 5 on a quick second (CCrowbar::Swing) | same |
+
+  The zombie stops at 62 and claws from there, so a retail player standing still hits it (reach 64) while the PS1 player could not (48): a port bug, fixed in the reach. The claw timing, the both-claw variant and the attack cadence still differ from retail (open); they make the PS1 zombie slightly easier, not harder. A crowbar-only walk with 35 HP still loses to two zombies on both sides; the retail player arrives with more health.
 
 Static entity contract (`hl-census map c1a1a`, current main):
 
