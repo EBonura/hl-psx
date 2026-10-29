@@ -491,6 +491,7 @@ unsafe fn draw_weapon_selection<const N: usize>(
 /// The sprites in `prims` stay linked into `ot`: they must stay live and
 /// unmodified until that table's walk has finished.
 #[allow(clippy::too_many_arguments)]
+#[inline(never)]
 pub unsafe fn draw<const N: usize>(
     mats: Materials,
     suit_equipped: bool,
