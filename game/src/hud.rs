@@ -416,6 +416,8 @@ unsafe fn ammo_bar<const N: usize>(
 /// frame, the others dimmer, red when empty) with its ammo bar; under the
 /// others a box per weapon. Sprites are queued back to front: the frame last
 /// drawn first, so it lands on the icon.
+#[inline(never)]
+#[optimize(size)]
 unsafe fn draw_weapon_selection<const N: usize>(
     mat: TextureMaterial,
     weapon: usize,
@@ -568,39 +570,7 @@ pub unsafe fn draw<const N: usize>(
         );
     }
 
-    // CHudHealth::DrawDamage: the active icons flash in the health colour from the lower left,
-    // the newest lowest, and leave at the dark end of a flash once their time is up.
-    {
-        let now = unsafe { crate::SIM_NOW };
-        let a = damage_flash(now);
-        let mut i = 0usize;
-        while i < unsafe { DMG_COUNT } {
-            let (cell, until) = unsafe { DMG_ICONS[i] };
-            if now.wrapping_sub(until) < 0x8000 && a < 40 {
-                let mut j = i + 1;
-                while j < unsafe { DMG_COUNT } {
-                    unsafe { DMG_ICONS[j - 1] = DMG_ICONS[j] };
-                    j += 1;
-                }
-                unsafe { DMG_COUNT -= 1 };
-                continue;
-            }
-            let rank = unsafe { DMG_COUNT } - 1 - i;
-            sprite(
-                alpha_mat(mats.amber, a as u8),
-                ot,
-                prims,
-                &mut count,
-                160 + cell * DMG_SIZE,
-                DMG_V,
-                DMG_SIZE,
-                DMG_SIZE,
-                DMG_SIZE as i16 / 8,
-                240 - 2 * DMG_SIZE as i16 - rank as i16 * DMG_SIZE as i16,
-            );
-            i += 1;
-        }
-    }
+    draw_damage_icons(mats.amber, ot, prims, &mut count);
 
     if suit_equipped {
         // GoldSrc fades changed values from a bright flash back to MIN_ALPHA=100.
@@ -836,75 +806,7 @@ pub unsafe fn draw<const N: usize>(
         }
     }
 
-    // CHudAmmoHistory: what was just picked up stacks up the right edge, newest
-    // last, each fading out over its five seconds (`remaining * 80`, so four alpha
-    // steps per 20 Hz tick). Weapons show their sprite at the right edge (red when
-    // they came without ammo), ammo the count then its icon, items their sprite.
-    let now = unsafe { crate::SIM_NOW };
-    let mut slot = 0usize;
-    while slot < HIST_SLOTS {
-        let h = unsafe { HIST[slot] };
-        let y = 240 - (72 + 25 * slot as i16);
-        slot += 1;
-        // The simulation clock wraps (u16): an entry shows for the 100 ticks before `until`.
-        let left = h.until.wrapping_sub(now);
-        if h.kind == HIST_NONE || left == 0 || left > HIST_TICKS {
-            continue;
-        }
-        let fade = (left * 4).min(255) as u8;
-        let tint = alpha_mat(mats.amber, fade);
-        match h.kind {
-            HIST_WEAPON => {
-                let (u, v) = weapon_icon_uv(h.id as usize);
-                let mat = if has_ammo(arsenal, h.id as usize) {
-                    tint
-                } else {
-                    mats.amber.with_tint((((fade as u16 + 1) / 2) as u8, 0, 0))
-                };
-                sprite(mat, ot, prims, &mut count, u, v, WEAPON_W, WEAPON_H, 320 - WEAPON_W as i16, y);
-            }
-            HIST_AMMO => {
-                // Icon of the first weapon that fires this pool (the MP5's grenades have their own).
-                let (u, v) = if h.id as usize == AMMO_ARGREN {
-                    (MP5_SECONDARY_U, AMMO_V)
-                } else {
-                    let mut w = 0usize;
-                    while w + 1 < N_WEAPONS && WEAPON_DEFS[w].ammo != h.id as usize {
-                        w += 1;
-                    }
-                    ((w % 7) as u8 * AMMO_W, AMMO_V + (w / 7) as u8 * AMMO_H)
-                };
-                sprite(tint, ot, prims, &mut count, u, v, AMMO_W, AMMO_H, 320 - AMMO_W as i16, y);
-                // The count, right-aligned 14 pixels left of the icon.
-                let mut digits = 1i16;
-                let mut n = h.count / 10;
-                while n > 0 {
-                    digits += 1;
-                    n /= 10;
-                }
-                let mut at = 320 - AMMO_W as i16 - 14 - digits * DW as i16;
-                let mut place = 1u16;
-                let mut k = 1;
-                while k < digits {
-                    place *= 10;
-                    k += 1;
-                }
-                while place > 0 {
-                    digit(tint, ot, prims, &mut count, ((h.count / place) % 10) as u8, at, y);
-                    at += DW as i16;
-                    place /= 10;
-                }
-            }
-            _ => {
-                let (u, v) = match h.id {
-                    PICKUP_HEALTHKIT => (HEALTHKIT_U, ITEM_V),
-                    PICKUP_LONGJUMP => (LONGJUMP_U, ITEM_V),
-                    _ => (BATTERY_U, BATTERY_V),
-                };
-                sprite(tint, ot, prims, &mut count, u, v, BATTERY_W, BATTERY_H, 320 - BATTERY_W as i16 - 10, y);
-            }
-        }
-    }
+    draw_history(mats.amber, arsenal, ot, prims, &mut count);
 
     count
 }
@@ -955,6 +857,50 @@ fn damage_flash(now: u16) -> u16 {
     ((x * (256 - x)) / 64).min(255) as u16
 }
 
+/// CHudHealth::DrawDamage's icons, out of line like the history.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn draw_damage_icons<const N: usize>(
+    amber: TextureMaterial,
+    ot: &mut OrderingTable<N>,
+    prims: &mut [Sprite; DRAW_CAP],
+    count: &mut usize,
+) {
+    // CHudHealth::DrawDamage: the active icons flash in the health colour from the lower left,
+    // the newest lowest, and leave at the dark end of a flash once their time is up.
+    {
+        let now = unsafe { crate::SIM_NOW };
+        let a = damage_flash(now);
+        let mut i = 0usize;
+        while i < unsafe { DMG_COUNT } {
+            let (cell, until) = unsafe { DMG_ICONS[i] };
+            if now.wrapping_sub(until) < 0x8000 && a < 40 {
+                let mut j = i + 1;
+                while j < unsafe { DMG_COUNT } {
+                    unsafe { DMG_ICONS[j - 1] = DMG_ICONS[j] };
+                    j += 1;
+                }
+                unsafe { DMG_COUNT -= 1 };
+                continue;
+            }
+            let rank = unsafe { DMG_COUNT } - 1 - i;
+            sprite(
+                alpha_mat(amber, a as u8),
+                ot,
+                prims,
+                count,
+                160 + cell * DMG_SIZE,
+                DMG_V,
+                DMG_SIZE,
+                DMG_SIZE,
+                DMG_SIZE as i16 / 8,
+                240 - 2 * DMG_SIZE as i16 - rank as i16 * DMG_SIZE as i16,
+            );
+            i += 1;
+        }
+    }
+}
+
 // ---- pickup history (CHudAmmoHistory) ----
 const HIST_SLOTS: usize = 4;
 const HIST_NONE: u8 = 0;
@@ -1003,6 +949,88 @@ pub unsafe fn history_add(kind: u8, id: u8, count: u16) {
         until: now.wrapping_add(HIST_TICKS),
     };
     HIST_NEXT += 1;
+}
+
+/// CHudAmmoHistory: what was just picked up stacks up the right edge. Out of line and sized for
+/// space: it draws nothing most of the time.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn draw_history<const N: usize>(
+    amber: TextureMaterial,
+    arsenal: &Arsenal,
+    ot: &mut OrderingTable<N>,
+    prims: &mut [Sprite; DRAW_CAP],
+    count: &mut usize,
+) {
+    // CHudAmmoHistory: what was just picked up stacks up the right edge, newest
+    // last, each fading out over its five seconds (`remaining * 80`, so four alpha
+    // steps per 20 Hz tick). Weapons show their sprite at the right edge (red when
+    // they came without ammo), ammo the count then its icon, items their sprite.
+    let now = unsafe { crate::SIM_NOW };
+    let mut slot = 0usize;
+    while slot < HIST_SLOTS {
+        let h = unsafe { HIST[slot] };
+        let y = 240 - (72 + 25 * slot as i16);
+        slot += 1;
+        // The simulation clock wraps (u16): an entry shows for the 100 ticks before `until`.
+        let left = h.until.wrapping_sub(now);
+        if h.kind == HIST_NONE || left == 0 || left > HIST_TICKS {
+            continue;
+        }
+        let fade = (left * 4).min(255) as u8;
+        let tint = alpha_mat(amber, fade);
+        match h.kind {
+            HIST_WEAPON => {
+                let (u, v) = weapon_icon_uv(h.id as usize);
+                let mat = if has_ammo(arsenal, h.id as usize) {
+                    tint
+                } else {
+                    amber.with_tint((((fade as u16 + 1) / 2) as u8, 0, 0))
+                };
+                sprite(mat, ot, prims, count, u, v, WEAPON_W, WEAPON_H, 320 - WEAPON_W as i16, y);
+            }
+            HIST_AMMO => {
+                // Icon of the first weapon that fires this pool (the MP5's grenades have their own).
+                let (u, v) = if h.id as usize == AMMO_ARGREN {
+                    (MP5_SECONDARY_U, AMMO_V)
+                } else {
+                    let mut w = 0usize;
+                    while w + 1 < N_WEAPONS && WEAPON_DEFS[w].ammo != h.id as usize {
+                        w += 1;
+                    }
+                    ((w % 7) as u8 * AMMO_W, AMMO_V + (w / 7) as u8 * AMMO_H)
+                };
+                sprite(tint, ot, prims, count, u, v, AMMO_W, AMMO_H, 320 - AMMO_W as i16, y);
+                // The count, right-aligned 14 pixels left of the icon.
+                let mut digits = 1i16;
+                let mut n = h.count / 10;
+                while n > 0 {
+                    digits += 1;
+                    n /= 10;
+                }
+                let mut at = 320 - AMMO_W as i16 - 14 - digits * DW as i16;
+                let mut place = 1u16;
+                let mut k = 1;
+                while k < digits {
+                    place *= 10;
+                    k += 1;
+                }
+                while place > 0 {
+                    digit(tint, ot, prims, count, ((h.count / place) % 10) as u8, at, y);
+                    at += DW as i16;
+                    place /= 10;
+                }
+            }
+            _ => {
+                let (u, v) = match h.id {
+                    PICKUP_HEALTHKIT => (HEALTHKIT_U, ITEM_V),
+                    PICKUP_LONGJUMP => (LONGJUMP_U, ITEM_V),
+                    _ => (BATTERY_U, BATTERY_V),
+                };
+                sprite(tint, ot, prims, count, u, v, BATTERY_W, BATTERY_H, 320 - BATTERY_W as i16 - 10, y);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

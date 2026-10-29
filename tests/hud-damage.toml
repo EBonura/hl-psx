@@ -70,11 +70,98 @@ label = "settle: the first ticks of a map run the arrival"
 wait = 400
 
 [[step]]
-label = "R1 steps to the next owned weapon"
+label = "R1: weapon 2"
 press = ["r1"]
-hold = 4
-wait = 220
-repeat = 10
+hold = 8
+wait = 30
+
+[[step]]
+wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 2 }
+timeout = 900
+
+[[step]]
+label = "R1: weapon 3"
+press = ["r1"]
+hold = 8
+wait = 30
+
+[[step]]
+wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 3 }
+timeout = 900
+
+[[step]]
+label = "R1: weapon 4"
+press = ["r1"]
+hold = 8
+wait = 30
+
+[[step]]
+wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 4 }
+timeout = 900
+
+[[step]]
+label = "R1: weapon 5"
+press = ["r1"]
+hold = 8
+wait = 30
+
+[[step]]
+wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 5 }
+timeout = 900
+
+[[step]]
+label = "R1: weapon 6"
+press = ["r1"]
+hold = 8
+wait = 30
+
+[[step]]
+wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 6 }
+timeout = 900
+
+[[step]]
+label = "R1: weapon 7"
+press = ["r1"]
+hold = 8
+wait = 30
+
+[[step]]
+wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 7 }
+timeout = 900
+
+[[step]]
+label = "R1: weapon 8"
+press = ["r1"]
+hold = 8
+wait = 30
+
+[[step]]
+wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 8 }
+timeout = 900
+
+[[step]]
+label = "R1: weapon 9"
+press = ["r1"]
+hold = 8
+wait = 30
+
+[[step]]
+wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 9 }
+timeout = 900
+
+[[step]]
+label = "R1: weapon 10"
+press = ["r1"]
+hold = 8
+wait = 30
+
+[[step]]
+wait_until = { kind = "ram", sym = "PREV_WEAPON", size = 2, op = "eq", value = 10 }
+timeout = 900
+
+[[step]]
+label = "let the swap finish"
+wait = 150
 
 [[step]]
 label = "turn to face the wall"
