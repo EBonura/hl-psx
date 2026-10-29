@@ -1,0 +1,188 @@
+# HUD damage arrows: the grenade at the feet, then frames while the blast edges fade.
+name = "hl-hud-damage"
+title = "Half-Life: the damage arrows after a grenade blast"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 30000
+
+# Bound to the build these journeys were written against (hud::PREV_* are the HUD's
+# last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
+[addr]
+PREV_WEAPON = 0x800c9218
+PREV_CLIP = 0x800c9220
+PREV_RESERVE = 0x800c921c
+PREV_HEALTH = 0x800c9214
+LAST_CORE = 0x800c9ce4
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+label = "open chapter select (fifth entry), then the chapter row"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 4
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 14
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+label = "enter the chapter's first map and wait for the live viewmodel"
+press = ["cross"]
+hold = 8
+wait = 60
+
+[[step]]
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 9000
+
+[[step]]
+label = "settle: the first ticks of a map run the arrival"
+wait = 400
+
+[[step]]
+label = "R1 steps to the next owned weapon"
+press = ["r1"]
+hold = 4
+wait = 220
+repeat = 10
+
+[[step]]
+label = "turn to face the wall"
+rstick = [255, 128]
+press = []
+hold = 40
+wait = 2
+
+[[step]]
+rstick = [128, 128]
+press = []
+wait = 20
+
+[[step]]
+label = "look down at the floor ahead"
+rstick = [128, 255]
+press = []
+hold = 40
+wait = 2
+
+[[step]]
+rstick = [128, 128]
+press = []
+wait = 20
+
+[[step]]
+label = "hand grenade up"
+checkpoint = "grenade-ready"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_WEAPON"
+size = 2
+op = "eq"
+value = 10
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "throw it at the floor ahead"
+press = ["r2"]
+hold = 8
+wait = 0
+
+[[step]]
+label = "wait until PREV_HEALTH lt 100"
+wait_until = { kind = "ram", sym = "PREV_HEALTH", size = 2, op = "lt", value = 100 }
+timeout = 900
+
+[[step]]
+wait = 1
+checkpoint = "dmg-0"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+wait = 1
+checkpoint = "dmg-1"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+wait = 1
+checkpoint = "dmg-2"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+wait = 1
+checkpoint = "dmg-3"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+wait = 1
+checkpoint = "dmg-4"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+wait = 1
+checkpoint = "dmg-5"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+wait = 1
+checkpoint = "dmg-6"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+wait = 1
+checkpoint = "dmg-7"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+wait = 1
+checkpoint = "dmg-8"
+golden = false
+[[step.assert]]
+kind = "not_flat"

@@ -1,0 +1,169 @@
+# HUD interaction matrix: states that touch the HUD at once (selection list, flashlight, pause, damage icons) in sequence; after each step the weapon and the list must be what the steps left, nothing flips by itself.
+name = "hl-hud-interact"
+title = "Half-Life: the HUD across weapon list, flashlight, pause and weapon steps (interaction sequences)"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 30000
+
+# Bound to the build these journeys were written against (hud::PREV_* are the HUD's
+# last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
+[addr]
+PREV_WEAPON = 0x800c9378
+PREV_CLIP = 0x800c9380
+PREV_RESERVE = 0x800c937c
+PREV_HEALTH = 0x800c9374
+LAST_CORE = 0x800c9e44
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+label = "open chapter select (fifth entry), then the chapter row"
+press = ["down"]
+hold = 8
+wait = 40
+repeat = 4
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 40
+repeat = 14
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+label = "enter the chapter's first map and wait for the live viewmodel"
+press = ["cross"]
+hold = 8
+wait = 60
+
+[[step]]
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 9000
+
+[[step]]
+label = "settle: the first ticks of a map run the arrival"
+wait = 400
+
+
+
+
+[[step]]
+label = "R1: the 357 is up and the list opens"
+press = ["r1"]
+hold = 4
+wait = 60
+checkpoint = "i-list"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_WEAPON"
+size = 2
+op = "eq"
+value = 2
+
+[[step]]
+label = "flashlight on while the list is open: the weapon stays"
+press = ["l3"]
+hold = 4
+wait = 30
+checkpoint = "i-flash-list"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_WEAPON"
+size = 2
+op = "eq"
+value = 2
+
+[[step]]
+label = "pause with the list open"
+press = ["start"]
+hold = 8
+wait = 40
+checkpoint = "i-pause"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "resume: the weapon is still the 357"
+press = ["start"]
+hold = 8
+wait = 40
+checkpoint = "i-resume"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_WEAPON"
+size = 2
+op = "eq"
+value = 2
+
+[[step]]
+label = "the list times out on its own"
+wait = 200
+checkpoint = "i-timeout"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_WEAPON"
+size = 2
+op = "eq"
+value = 2
+
+[[step]]
+label = "flashlight off, then L1 back to the pistol and R1 forward again: the list opens each time"
+press = ["l3"]
+hold = 4
+wait = 30
+
+[[step]]
+press = ["l1"]
+hold = 4
+wait = 120
+checkpoint = "i-back"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_WEAPON"
+size = 2
+op = "eq"
+value = 1
+
+[[step]]
+press = ["r1"]
+hold = 4
+wait = 120
+checkpoint = "i-fwd"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "PREV_WEAPON"
+size = 2
+op = "eq"
+value = 2

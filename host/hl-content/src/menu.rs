@@ -752,6 +752,15 @@ fn build_hud(valve: &Path, output: &Path) -> Result<()> {
         return Err(format!("expected 9 native weapon crosshairs, found {cross_index}").into());
     }
 
+    // Damage-type icons (CHudHealth::DrawDamage), 32x32 each from 320hud4: radiation, drowning
+    // and acid, in that order along u=160..255 at v=208..239, the last free block of the page.
+    // Poison, nerve gas, cold, heat and shock would need 64 more columns of it.
+    let (damage_sheet, _) = sprite_first_frame(&valve.join("sprites/320hud4.spr"))?;
+    for (slot, source_x) in [192u32, 96, 32].into_iter().enumerate() {
+        let icon = crop_resize(&damage_sheet, source_x, 0, 32, 32, 32, 32);
+        blit(&mut atlas, WIDTH, &icon, 160 + slot * 32, 208);
+    }
+
     // Sparse HUD2 storage: the gameplay font owns u=160..255/v=0..127 and
     // four explosive weapon icons occupy u=160..239/v=128..207, and the train
     // states use the final 16-pixel tail. Packing
@@ -762,7 +771,7 @@ fn build_hud(valve: &Path, output: &Path) -> Result<()> {
     const RIGHT_X: usize = 160;
     const RIGHT_Y: usize = 128;
     const RIGHT_W: usize = 96;
-    const RIGHT_H: usize = 80;
+    const RIGHT_H: usize = 112;
     let mut blob = Vec::with_capacity(4 + 64 + LEFT_W * HEIGHT / 2 + RIGHT_W * RIGHT_H / 2);
     blob.extend_from_slice(b"HUD2");
     // Index zero is transparent. Mark every visible entry semi-transparent so
