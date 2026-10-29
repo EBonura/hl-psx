@@ -1,0 +1,306 @@
+# HUD frames: the weapon selection list and the status line with every weapon owned (Xen arrival).
+name = "hl-hud-weapons"
+title = "Half-Life: the crosshair and ammo line of every weapon owned at Xen"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 30000
+
+# Bound to the build these journeys were written against (hud::PREV_* are the HUD's
+# last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
+[addr]
+PREV_WEAPON = 0x800c9378
+PREV_CLIP = 0x800c9380
+PREV_RESERVE = 0x800c937c
+PREV_HEALTH = 0x800c9374
+LAST_CORE = 0x800c9e44
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+label = "open chapter select (fifth entry), then the chapter row"
+press = ["down"]
+hold = 8
+wait = 40
+repeat = 4
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 40
+repeat = 14
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+label = "enter the chapter's first map and wait for the live viewmodel"
+press = ["cross"]
+hold = 8
+wait = 60
+
+[[step]]
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 9000
+
+[[step]]
+label = "settle: the first ticks of a map run the arrival"
+wait = 400
+
+
+
+[[step]]
+label = "R1: weapon 0 of the Xen arsenal, list open"
+press = ["r1"]
+hold = 4
+wait = 40
+checkpoint = "hud-w0-list"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "weapon 0 ready, list timed out"
+wait = 200
+checkpoint = "hud-w0"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "R1: weapon 1 of the Xen arsenal, list open"
+press = ["r1"]
+hold = 4
+wait = 40
+checkpoint = "hud-w1-list"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "weapon 1 ready, list timed out"
+wait = 200
+checkpoint = "hud-w1"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "R1: weapon 2 of the Xen arsenal, list open"
+press = ["r1"]
+hold = 4
+wait = 40
+checkpoint = "hud-w2-list"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "weapon 2 ready, list timed out"
+wait = 200
+checkpoint = "hud-w2"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "R1: weapon 3 of the Xen arsenal, list open"
+press = ["r1"]
+hold = 4
+wait = 40
+checkpoint = "hud-w3-list"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "weapon 3 ready, list timed out"
+wait = 200
+checkpoint = "hud-w3"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "R1: weapon 4 of the Xen arsenal, list open"
+press = ["r1"]
+hold = 4
+wait = 40
+checkpoint = "hud-w4-list"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "weapon 4 ready, list timed out"
+wait = 200
+checkpoint = "hud-w4"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "R1: weapon 5 of the Xen arsenal, list open"
+press = ["r1"]
+hold = 4
+wait = 40
+checkpoint = "hud-w5-list"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "weapon 5 ready, list timed out"
+wait = 200
+checkpoint = "hud-w5"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "R1: weapon 6 of the Xen arsenal, list open"
+press = ["r1"]
+hold = 4
+wait = 40
+checkpoint = "hud-w6-list"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "weapon 6 ready, list timed out"
+wait = 200
+checkpoint = "hud-w6"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "R1: weapon 7 of the Xen arsenal, list open"
+press = ["r1"]
+hold = 4
+wait = 40
+checkpoint = "hud-w7-list"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "weapon 7 ready, list timed out"
+wait = 200
+checkpoint = "hud-w7"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "R1: weapon 8 of the Xen arsenal, list open"
+press = ["r1"]
+hold = 4
+wait = 40
+checkpoint = "hud-w8-list"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "weapon 8 ready, list timed out"
+wait = 200
+checkpoint = "hud-w8"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "R1: weapon 9 of the Xen arsenal, list open"
+press = ["r1"]
+hold = 4
+wait = 40
+checkpoint = "hud-w9-list"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "weapon 9 ready, list timed out"
+wait = 200
+checkpoint = "hud-w9"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "R1: weapon 10 of the Xen arsenal, list open"
+press = ["r1"]
+hold = 4
+wait = 40
+checkpoint = "hud-w10-list"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "weapon 10 ready, list timed out"
+wait = 200
+checkpoint = "hud-w10"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "R1: weapon 11 of the Xen arsenal, list open"
+press = ["r1"]
+hold = 4
+wait = 40
+checkpoint = "hud-w11-list"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "weapon 11 ready, list timed out"
+wait = 200
+checkpoint = "hud-w11"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "R1: weapon 12 of the Xen arsenal, list open"
+press = ["r1"]
+hold = 4
+wait = 40
+checkpoint = "hud-w12-list"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "weapon 12 ready, list timed out"
+wait = 200
+checkpoint = "hud-w12"
+golden = false
+[[step.assert]]
+kind = "not_flat"

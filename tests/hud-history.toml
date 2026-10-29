@@ -1,0 +1,98 @@
+# HUD pickup history: the glock, a clip and two grenades on the floor of c1a1b.
+name = "hl-hud-history"
+title = "Half-Life: the pickup history column"
+disc = ["dist/hl-psx.cue"]
+symbols = [".hlpsx/hl-psx.map"]
+pad = "analog"
+max_ticks = 30000
+
+# Bound to the build these journeys were written against (hud::PREV_* are the HUD's
+# last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
+[addr]
+PREV_WEAPON = 0x800c9378
+PREV_CLIP = 0x800c9380
+PREV_RESERVE = 0x800c937c
+PREV_HEALTH = 0x800c9374
+LAST_CORE = 0x800c9e44
+[[step]]
+label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
+wait = 100
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 62
+
+[[step]]
+press = ["start"]
+hold = 8
+wait = 200
+
+[[step]]
+label = "boot through the splash to the main menu"
+wait = 620
+
+[[step]]
+label = "open chapter select (fifth entry), then the chapter row"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 4
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 2
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 25
+
+[[step]]
+label = "the fifth map of the chapter: c1a1b"
+press = ["down"]
+hold = 8
+wait = 12
+repeat = 4
+
+[[step]]
+label = "enter the map and wait for the live viewmodel"
+press = ["cross"]
+hold = 8
+wait = 60
+
+[[step]]
+wait_until = { kind = "ram", sym = "VM_ENTRY", offset = 8, size = 1, op = "ne", value = 0 }
+timeout = 9000
+
+[[step]]
+label = "settle: the first ticks of a map run the arrival"
+wait = 400
+checkpoint = "start"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+label = "walk forward"
+lstick = [128, 0]
+rstick = [128, 128]
+press = []
+hold = 30
+wait = 2
+
+[[step]]
+lstick = [128, 128]
+press = []
+wait = 10
+checkpoint = "walk1"
+golden = false
+[[step.assert]]
+kind = "not_flat"

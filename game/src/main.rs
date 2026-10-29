@@ -1211,8 +1211,6 @@ const DEATH_TICKS: u8 = 40; // death window before a press is taken: the 2 s cap
 const PLAYER_START_ARMOR: u16 = 0;
 const HEV_MAX_ARMOR: u16 = 100;
 const CHARGER_RATE: u16 = 4; // health/armor points per use pulse (8-tick cadence)
-const HEV_PICKUP_TICKS: u8 = 36;
-const HUD_HISTORY_TICKS: u8 = 100; // GoldSrc hud_drawhistory_time default: 5 s
 const PROP_LINK_MATCH_XZ_EPS: i32 = 24;
 const PROP_LINK_MATCH_Y_EPS: i32 = 96;
 const PROP_GROUND_PROBE_UP: i32 = 24;
@@ -1697,6 +1695,7 @@ static mut TRAM_CACHE_ROT: [[i16; 3]; 3] = [[0; 3]; 3];
 static mut TRAM_CACHE_T: [i32; 3] = [0; 3];
 static mut TRAM_CACHE_EYE: [i32; 3] = [0; 3];
 static mut HUD_PRIMS: [Sprite; hud::DRAW_CAP] = [hud::EMPTY_SPRITE; hud::DRAW_CAP];
+static mut HUD_RECTS: [RectFlat; hud::RECT_CAP] = [hud::EMPTY_RECT; hud::RECT_CAP];
 static mut IMPACT_PARTICLES: ParticlePool<MAX_IMPACT_PARTICLES> = ParticlePool::new();
 
 // Explosion visual FX: explode()/env_explosion queue a world point here; the
@@ -12857,34 +12856,106 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
     }
 }
 
-/// GoldSrc's `320_pain.spr` is four additive edge arrows. Flat PS1 arrows keep
-/// the same screen positions and fade law without spending another atlas page
-/// or resident texture packet pool.
+/// One additive quad of the damage arrows, flat (`colors[0]` only) or Gouraud, in the same
+/// GP0 words whether the overlay chain is armed or the packet goes straight out. The
+/// vertices are in GPU quad order: top-left, top-right, bottom-left, bottom-right.
 #[inline(never)]
 #[optimize(size)]
-fn draw_damage_compass(health: u16) {
-    let edges = unsafe { DAMAGE_EDGE };
-    let arrows = [
-        [(152, 24), (168, 24), (160, 38)],    // front / top
-        [(240, 112), (240, 128), (226, 120)], // right
-        [(152, 200), (168, 200), (160, 186)], // rear / bottom
-        [(80, 112), (80, 128), (94, 120)],    // left
-    ];
-    let mut edge = 0usize;
-    while edge < arrows.len() {
-        // GoldSrc draws an edge while its intensity is above 0.4, at least
-        // half bright, amber above 25 health and red below it. Kept much
-        // softer than the removed full-screen red wash.
-        if edges[edge] > player_rules::COMPASS_DRAW_MIN {
-            let red = player_rules::compass_shade(edges[edge]) >> 1;
-            let green = if health > 25 { red / 3 } else { 0 };
-            fx_tri_flat_blended(
-                arrows[edge],
-                red,
-                green,
+fn fx_quad_add(verts: [(i16, i16); 4], colors: [(u8, u8, u8); 4], gouraud: bool) {
+    unsafe {
+        if FX_CAPTURE {
+            let material = psx_gpu::material::TextureMaterial::blended(
                 0,
+                0,
+                (0, 0, 0),
                 psx_gpu::material::BlendMode::Add,
             );
+            let mut words = [0u32; 10];
+            words[0] = material.draw_mode_word();
+            words[1] = material.texture_window_word();
+            let mut n = 2;
+            let mut i = 0;
+            while i < 4 {
+                if gouraud || i == 0 {
+                    let c = colors[i];
+                    // GP0(3Ah) Gouraud quad, GP0(2Ah) flat quad: untextured, semi-transparent.
+                    let cmd = if i == 0 {
+                        if gouraud {
+                            0x3A00_0000
+                        } else {
+                            0x2A00_0000
+                        }
+                    } else {
+                        0
+                    };
+                    words[n] = cmd | gp0_color(c.0, c.1, c.2);
+                    n += 1;
+                }
+                words[n] = gp0_vertex(verts[i].0, verts[i].1);
+                n += 1;
+                i += 1;
+            }
+            if fx_chain_push(&words[..n]) {
+                return;
+            }
+        }
+        // No overlay chain to join: two flat triangles in the mean colour.
+        let c = colors[0];
+        let m = if gouraud { colors[3] } else { c };
+        let mid = (
+            ((c.0 as u16 + m.0 as u16) / 2) as u8,
+            ((c.1 as u16 + m.1 as u16) / 2) as u8,
+            ((c.2 as u16 + m.2 as u16) / 2) as u8,
+        );
+        let add = psx_gpu::material::BlendMode::Add;
+        driver::tri_flat_blended([verts[0], verts[1], verts[2]], mid.0, mid.1, mid.2, add);
+        driver::tri_flat_blended([verts[1], verts[2], verts[3]], mid.0, mid.1, mid.2, add);
+    }
+}
+
+/// GoldSrc's `320_pain.spr` is four additive edge arrows (`CHudHealth::DrawPain`): a
+/// trapezoid 60 wide at the outer edge and 24 at the inner, 20 deep, brightening from
+/// 11 to 239 toward the screen centre, with a 2-pixel outline at 151 and a closing line
+/// on the inner edge. They sit at (128,48) top, (208,88) right, (128,168) bottom and
+/// (88,88) left, in the redish tint (255,16,16) whatever the health. The sprite needs
+/// 6,144 texels the full HUD atlas has no room for, so each arrow is a Gouraud quad for
+/// the gradient and three flat quads for the outline, built in the top arrow's frame and
+/// turned for the others. Not reproduced: the faint 5-pixel serifs at the outer corners.
+#[inline(never)]
+#[optimize(size)]
+fn draw_damage_compass() {
+    let edges = unsafe { DAMAGE_EDGE };
+    let mut edge = 0usize;
+    while edge < 4 {
+        if edges[edge] > player_rules::COMPASS_DRAW_MIN {
+            let shade = player_rules::compass_shade(edges[edge]) as u32;
+            // Level (0..=239) of the sprite to the colour the tint and shade make of it.
+            let tone = |level: u32| -> (u8, u8, u8) {
+                let v = level * shade / 255;
+                (v as u8, (v * 16 / 255) as u8, (v * 16 / 255) as u8)
+            };
+            // The top arrow's frame (x across, y toward the centre) to the screen.
+            let at = |x: i16, y: i16| -> (i16, i16) {
+                match edge {
+                    0 => (128 + x, 48 + y),
+                    1 => (208 + 19 - y, 88 + x),
+                    2 => (128 + x, 168 + 19 - y),
+                    _ => (88 + y, 88 + x),
+                }
+            };
+            let quad = |p: [(i16, i16); 4]| [at(p[0].0, p[0].1), at(p[1].0, p[1].1), at(p[2].0, p[2].1), at(p[3].0, p[3].1)];
+            let line = tone(151);
+            let dim = tone(11);
+            let bright = tone(239);
+            fx_quad_add(
+                quad([(3, 1), (58, 1), (19, 19), (41, 19)]),
+                [dim, dim, bright, bright],
+                true,
+            );
+            let flat = [line; 4];
+            fx_quad_add(quad([(0, 0), (2, 0), (17, 19), (19, 19)]), flat, false);
+            fx_quad_add(quad([(58, 0), (60, 0), (41, 19), (43, 19)]), flat, false);
+            fx_quad_add(quad([(18, 19), (42, 19), (18, 20), (42, 20)]), flat, false);
         }
         edge += 1;
     }
@@ -19004,6 +19075,7 @@ fn fall_damage_player(health: &mut u16, dmg: u16, kind: hev::Kind) {
         }
     }
     *health = health.saturating_sub(dmg);
+    hud::damage_kind(kind);
     unsafe { hev_hit(kind, dmg, before, *health) };
 }
 
@@ -19022,7 +19094,11 @@ unsafe fn hev_hit(kind: hev::Kind, dmg: u16, before: u16, after: u16) {
 fn damage_player(health: &mut u16, armor: &mut u16, dmg: u16) {
     let before = *health;
     damage_player_hit(health, armor, dmg);
-    unsafe { hev_hit(hev::take_kind(), dmg, before, *health) };
+    let kind = unsafe { hev::take_kind() };
+    if dmg != 0 {
+        hud::damage_kind(kind);
+    }
+    unsafe { hev_hit(kind, dmg, before, *health) };
 }
 
 fn damage_player_hit(health: &mut u16, armor: &mut u16, dmg: u16) {
@@ -21315,8 +21391,6 @@ unsafe fn collect_pickups(
     armor: &mut u16,
     health: &mut u16,
     weapon: &mut Arsenal,
-    pickup_kind: &mut u8,
-    pickup_ticks: &mut u8,
 ) {
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     let hot_count = prop_hotlist_count(PROP_ACTIVE[nprops], nprops);
@@ -21415,8 +21489,6 @@ unsafe fn collect_pickups(
                         PROP_ACTIVE[pi] = 0;
                         PROP_LOGIC_LINK[pi] = u16::MAX;
                     }
-                    *pickup_kind = hud::PICKUP_SUIT;
-                    *pickup_ticks = HEV_PICKUP_TICKS;
                     // CItemSuit::MyTouch emits !HEV_AAx (or !HEV_A0 for the
                     // short-logon spawnflag). The cooker stores that exact
                     // concatenated sentence's map-local voice id in arg0.
@@ -21445,6 +21517,7 @@ unsafe fn collect_pickups(
                     // newly-added, holsterable weapon. Duplicate weapon pickups
                     // only add ammo below and deliberately keep the current gun.
                     weapon.select(wid);
+                    hud::history_add(hud::HIST_WEAPON, wid as u8, 0);
                     consume_weapon_pickup(m, nlogic, nents, now, pi);
                     sfx::play(sfx::PICKUP);
                 } else {
@@ -21467,6 +21540,7 @@ unsafe fn collect_pickups(
                         weapon.clip[wid] += to_clip;
                         weapon.give_ammo(d.ammo, give - to_clip);
                         if weapon.ammo[d.ammo] != before || to_clip != 0 {
+                            hud::history_add(hud::HIST_AMMO, d.ammo as u8, give);
                             consume_weapon_pickup(m, nlogic, nents, now, pi);
                             sfx::play(sfx::AMMO_PICKUP);
                         }
@@ -21476,7 +21550,9 @@ unsafe fn collect_pickups(
             ty @ PROP_TYPE_AMMO_FIRST..=PROP_TYPE_AMMO_LAST => {
                 let (pool, rounds) = AMMO_PICKUPS[(ty - PROP_TYPE_AMMO_FIRST) as usize];
                 if weapon.ammo[pool] < max_reserve_for(pool) {
+                    let before = weapon.ammo[pool];
                     weapon.give_ammo(pool, rounds);
+                    hud::history_add(hud::HIST_AMMO, pool as u8, weapon.ammo[pool] - before);
                     PROP_ACTIVE[pi] = 0;
                     sfx::play(sfx::AMMO_PICKUP);
                 }
@@ -21485,8 +21561,7 @@ unsafe fn collect_pickups(
                 if *health < PLAYER_START_HEALTH {
                     *health = (*health + skill_value(Sk::HealthKit)).min(PLAYER_START_HEALTH);
                     PROP_ACTIVE[pi] = 0;
-                    *pickup_kind = hud::PICKUP_HEALTHKIT;
-                    *pickup_ticks = HUD_HISTORY_TICKS;
+                    hud::history_add(hud::HIST_ITEM, hud::PICKUP_HEALTHKIT, 0);
                     sfx::play(sfx::HEALTHKIT);
                 }
             }
@@ -21496,8 +21571,7 @@ unsafe fn collect_pickups(
                 if *suit_equipped {
                     phys::set_longjump(true);
                     PROP_ACTIVE[pi] = 0;
-                    *pickup_kind = hud::PICKUP_LONGJUMP;
-                    *pickup_ticks = HUD_HISTORY_TICKS;
+                    hud::history_add(hud::HIST_ITEM, hud::PICKUP_LONGJUMP, 0);
                     // CItemLongJump::MyTouch speaks !HEV_A1 at once.
                     if hev::can_say(hl_format::hev::S_A1) {
                         hev::say_now(hl_format::hev::S_A1);
@@ -21521,8 +21595,7 @@ unsafe fn collect_pickups(
                         PROP_ACTIVE[pi] = 0;
                         PROP_LOGIC_LINK[pi] = u16::MAX;
                     }
-                    *pickup_kind = hud::PICKUP_BATTERY;
-                    *pickup_ticks = HUD_HISTORY_TICKS;
+                    hud::history_add(hud::HIST_ITEM, hud::PICKUP_BATTERY, 0);
                     sfx::play(sfx::PICKUP);
                     // CItemBattery::MyTouch: the new power level, once in 30 s.
                     if let Some(sentence) =
@@ -36471,8 +36544,6 @@ fn play(
             logic_fire_global_autos(&m, nlogic);
         }
     }
-    let mut pickup_kind: u8 = hud::PICKUP_NONE;
-    let mut pickup_ticks: u8 = 0;
     let mut use_cooldown: u8 = 0;
     let mut use_was_held = false; // press edge: impulse objects react to the press only
     let mut charger_sound: u8 = 0;
@@ -37005,12 +37076,6 @@ fn play(
             }
             unsafe {
                 decay_combat_fx(&m);
-            }
-            if pickup_ticks > 0 {
-                pickup_ticks -= 1;
-                if pickup_ticks == 0 {
-                    pickup_kind = hud::PICKUP_NONE;
-                }
             }
             unsafe { tick_screen_fx(sim_frame_no) };
             if unsafe { REVERT_REQUEST } {
@@ -38376,8 +38441,6 @@ fn play(
                     &mut armor,
                     &mut health,
                     &mut weapon,
-                    &mut pickup_kind,
-                    &mut pickup_ticks,
                 );
                 if weapon.current != pickup_weapon_before
                     || (pickup_owned_before == 0 && weapon.owned != 0)
@@ -41090,8 +41153,6 @@ fn play(
                     weapon.reserve_display(),
                     weapon.ammo[AMMO_ARGREN],
                     weapon.ammo_mode(),
-                    pickup_kind,
-                    pickup_ticks,
                     if weapon.any_weapon() {
                         weapon.current as i32
                     } else {
@@ -41099,8 +41160,10 @@ fn play(
                     },
                     weapon_icon_ticks,
                     train_hud_position(tram_controlling, tram_speed, TRACKTRAIN_USE_SPEED as i32),
+                    &weapon,
                     hud_ot(),
                     &mut *core::ptr::addr_of_mut!(HUD_PRIMS),
+                    &mut *core::ptr::addr_of_mut!(HUD_RECTS),
                 );
             }
             // SAFETY: FX_OT is still being built, not walked, and every packet it
@@ -41162,7 +41225,7 @@ fn play(
             if draw_viewmodel_now && recoil >= 13 && MUZZLE_FLASH_WEAPONS[weapon.current] {
                 draw_muzzle_flash(sim_frame_no);
             }
-            draw_damage_compass(health);
+            draw_damage_compass();
             draw_screen_fx(&m, suit_equipped);
             if settings::debug_on(settings::DEBUG_STATS) {
                 draw_debug_stats(
