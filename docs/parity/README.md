@@ -22,7 +22,7 @@ The full-game journey is complete only when it is green on CPU1, HW1 and HW3 wit
 | [SEGMENTS.md](SEGMENTS.md) | the 103 segments in play order with exits, content counts and the journey that covers each |
 | [black-mesa-inbound.md](black-mesa-inbound.md) | c0a0 to c0a0e (tram ride and walk to the test chamber) |
 | [anomalous-materials.md](anomalous-materials.md) | c1a0, c1a0d, c1a0a, c1a0b, c1a0e |
-| [unforeseen-consequences.md](unforeseen-consequences.md) | c1a0c to c1a1d (arrival in c1a0c only) |
+| [unforeseen-consequences.md](unforeseen-consequences.md) | c1a0c to c1a1d (c1a0c and c1a1 traversed) |
 | [hazard-course.md](hazard-course.md) | t0a0 to t0a0d |
 
 Every segment section has the same parts: position and exits, what the retail map contains, the journey evidence,
@@ -33,16 +33,16 @@ in that map with their state on main. The state vocabulary is in each chapter fi
 
 | coverage | segments |
 |---|---:|
-| traversed by a controller-only journey from the previous segment (`tests/chain-new-game.toml`) | 12 |
+| traversed by a controller-only journey from the previous segment (`tests/chain-new-game.toml`) | 13 |
 | partly traversed: t0a0 from the start lift to the catwalk (`tests/chain-hazard.toml`) | 1 |
 | entry and a short walk (c4a1a) | 1 |
 | narrow replay or probe disc (t0a0b, c1a1b) | 2 |
-| no journey | 87 |
+| no journey | 86 |
 
 The chain runs the New Game from the title through the tram ride and Anomalous Materials into c1a0c, through its
-lift, the console scientist, the retinal door and the control room, and into the arrival in c1a1
+lift, the console scientist, the retinal door and the control room, through c1a1 (pipe room, two lasers, the glass window, the shaft ladder) and into the arrival in c1a1a
 (`psoxide-gate run tests/chain-new-game.toml --no-hw`, about 11 minutes on a loaded machine). Controller input only;
-the memory card is checked unchanged at every checkpoint. It stops at the arrival in c1a1: no journey plays c1a1 yet.
+the memory card is checked unchanged at every checkpoint. It plays c1a1 as well and stops at the arrival in c1a1a: no journey plays c1a1a yet.
 
 ### Evidence gaps against the standard
 

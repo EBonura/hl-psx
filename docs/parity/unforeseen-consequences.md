@@ -2,7 +2,7 @@
 
 Retail order: c1a0c, c1a1, c1a1a, c1a1f, c1a1b, c1a1c, c1a1d (c1a1c also leads on to c1a2, Office Complex). The chapter title is shown on arrival in c1a0c. Method and evidence kinds: [README.md](README.md).
 
-Chapter result: c1a0c is traversed by the chain from arrival to its changelevel, and the chain arrives in c1a1. None of c1a1, c1a1a, c1a1f, c1a1b, c1a1c or c1a1d has a journey that plays the map yet. `tests/unstick-vent.toml` and `tests/present-cap.toml` replay a recorded playtest tape into c1a1b for two narrow checks (a hull embedded in the vent clip slab; display flip spacing) and are not segment journeys. The open-loop draft for c1a1 in `inbound-anomalous.route` after its `@stop` does not reach the exit (it ends at (263, 802) after 1,584 ticks).
+Chapter result: c1a0c and c1a1 are traversed by the chain, which arrives in c1a1a. None of c1a1a, c1a1f, c1a1b, c1a1c or c1a1d has a journey that plays the map yet. `tests/unstick-vent.toml` and `tests/present-cap.toml` replay a recorded playtest tape into c1a1b for two narrow checks (a hull embedded in the vent clip slab; display flip spacing) and are not segment journeys. The open-loop draft for c1a1 in `inbound-anomalous.route` after its `@stop` does not reach the exit (it ends at (263, 802) after 1,584 ticks).
 
 State column: `fixed` = a commit or CHANGELOG entry on main fixes it; `limit-recorded` = a LIMITS-*.md file records it; `limit-claimed` = the inventory calls it a PS1 limit but no LIMITS file lists it (a bug under the completion standard until it is written down with evidence); `limit-unrecorded` = same, and no code comment records it either; `open` = the 10-15 inventory read the SDK and the port and found a difference that nobody has re-checked on this build.
 
@@ -66,7 +66,24 @@ Play order 13 of 103, room id 12. Exits: c1a1a@c1a1[], c1a0c@c1a0catoc1a1[].
 
 Original contents: 7 actors, 4 scripted sequences or sentences, 5 multi_managers, 17 triggers, 2 buttons, 19 doors. Classes: infodecal 68, func_wall 31, func_breakable 29, env_beam 24, info_target 23, func_door_rotating 14, env_spark 13, path_corner 13, ambient_generic 12, env_explosion 10, env_sound 9, trigger_once 6 ....
 
-Journey: none.
+Journey: traversed by `tests/chain-new-game.toml` (block `map c1a1` of `inbound-anomalous.route`), from the arrival in c1a1 to the arrival in c1a1a. The route is closed loop (about 270 steps) and was authored in segment-start mode, then confirmed in the chain.
+
+Path parity against the retail engine (evidence kind: emulator replay and Xash3D runs of the same inputs from a stated origin; the oracle logs the player, every func_train and the fired targets):
+
+| leg | what the player does | retail | PS1 |
+|---|---|---|---|
+| 1 | start room, west through the pipe room, north corridor (labs1 door) | not run | (185, 1262) |
+| 2 | first laser (`1_beam_target`, damage 5000, on from the start, target sweeps east along y 1305 at 64 u/s, cycle about 400 polls): run the north strip y 1584..1599, where the beam passes over the head | running the middle of the corridor kills (health -400) | same, alive at HP 90 |
+| 3 | second laser (emitter 1160,1621, trigger x 996..1068): lethal on the north wall in most phases; pass south of the beam while its target is on the north side | retail run along y 1590 dies at x 1197 | same; the safe window is read from `BEAM_RAND_END[10]` |
+| 4 | NE corridor, crowbar at (1745,1847), glass window (panes `*67..*70`, health 15) | blocked at y 1881.97, a standing swing hits nothing breakable | blocked at y 1881, same |
+| 5 | crouched swing breaks the lower pane in two hits, crouch through, hall | pane `*68` hp 15, 5, -5, solid 0; y 1881 to 2206 | same, y 1961 on the first pass |
+| 6 | hall west end, crouched swing at the shaft window (`*71..*74`, target `dethvmm`), crouch into the shaft | not run | (899, 2074), HP 90 |
+| 7 | ladder `*105` (z -148 to 805), jump off backwards at the top, walk east out of the shaft, south ring west | not run | upper level z 758, then (176, 2108) |
+| 8 | west to the changelevel plane x 24..28 | not run | arrival in c1a1a |
+
+The window and the elevator hall are the gate nobody sees: no walkable path joins the start region to the hall (3D free-space flood and a stepping planner agree; the only link is the glass). The retail engine and the PS1 agree on every point that was run on both.
+
+Differences still open here: the PS1 half-way points of the shaft and ladder legs were not run in retail; the dethvmm cab sequence was not watched on the PS1 frame by frame (it fires, HP stays 90, and the route waits no fixed time for it).
 
 Static entity contract (`hl-census map c1a1`, current main):
 

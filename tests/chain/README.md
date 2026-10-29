@@ -81,7 +81,7 @@ and `game/src/map_catalog.rs` (`rustc --edition=2021 -O tests/chain/segments.rs 
 `inbound-anomalous.route` (`tests/chain-new-game.toml`): New Game, the tram ride (c0a0 to c0a0d), the walk to the test
 chamber (c0a0e), Anomalous Materials (c1a0, c1a0d, c1a0a, c1a0b, c1a0e) and Unforeseen Consequences' first map (c1a0c): the
 airlock, the pump room, the pipe corridor (a crouch jump: a plain jump peaks 3 units short of the fallen pipes on the PS1),
-the lift, the console scientist (use him, he follows to the retinal scanner) and the control room, to the arrival in c1a1.
+the lift, the console scientist (use him, he follows to the retinal scanner) and the control room, then c1a1 (the west detour to the north corridor, the two lasers, the crowbar and the glass window broken with crouched swings, the hall, the shaft window, the ladder and the upper level) to the arrival in c1a1a. The c1a1 legs were authored with a scratch waypoint planner and corrected by hand; the second laser's safe window is read from the live beam end (`BEAM_RAND_END`).
 The c1a0c legs were derived from a trace of the retail engine and are closed loop on the player's x and y.
 
 `hazard.route` (`tests/chain-hazard.toml`): title, Hazard Course row, t0a0 from the start lift through doors td1 and
