@@ -75,7 +75,7 @@ wait = 400
 [[step]]
 label = "R1: the 357 is up and the list opens"
 press = ["r1"]
-hold = 4
+hold = 8
 wait = 60
 checkpoint = "i-list"
 golden = false
@@ -89,7 +89,7 @@ value = 2
 [[step]]
 label = "flashlight on while the list is open: the weapon stays"
 press = ["l3"]
-hold = 4
+hold = 8
 wait = 30
 checkpoint = "i-flash-list"
 golden = false
@@ -139,12 +139,12 @@ value = 2
 [[step]]
 label = "flashlight off, then L1 back to the pistol and R1 forward again: the list opens each time"
 press = ["l3"]
-hold = 4
+hold = 8
 wait = 30
 
 [[step]]
 press = ["l1"]
-hold = 4
+hold = 8
 wait = 120
 checkpoint = "i-back"
 golden = false
@@ -157,7 +157,7 @@ value = 1
 
 [[step]]
 press = ["r1"]
-hold = 4
+hold = 8
 wait = 120
 checkpoint = "i-fwd"
 golden = false
